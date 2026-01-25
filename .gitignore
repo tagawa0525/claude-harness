@@ -1,1 +1,2 @@
-.claude
+# Claude Code - ローカル設定のみ除外、コマンドとスキルはバージョン管理
+.claude/settings.local.json
