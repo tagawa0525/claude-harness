@@ -13,6 +13,7 @@ allowed-tools:
   - Bash(nixpkgs-fmt *)
   - Bash(statix *)
   - Bash(nix flake check*)
+  - Bash(markdownlint*)
   - Bash(command -v *)
   - Bash(test -f *)
   - Bash(find *)
@@ -53,6 +54,7 @@ git diff --cached --name-only
 - Rust: `Cargo.toml` が存在する、または `.rs` ファイルがstaged
 - Python: `pyproject.toml`, `setup.py`, `requirements.txt` のいずれかが存在する、または `.py` ファイルがstaged
 - Nix: `flake.nix` が存在する、または `.nix` ファイルがstaged
+- Markdown: `.md` ファイルがstaged
 
 ## Quality Checks
 
@@ -131,6 +133,24 @@ fi
 - Statix失敗: エラー箇所を表示し、手動修正を要求
 - Flake check失敗: エラー詳細を表示し、手動修正を要求
 
+### Markdown Checks
+
+**実行条件**: `.md` ファイルがstagedされている場合
+
+```bash
+# Get staged .md files
+STAGED_MD_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.md$')
+
+if [ -n "$STAGED_MD_FILES" ]; then
+  echo "🔍 Checking Markdown style..."
+  echo "$STAGED_MD_FILES" | xargs markdownlint
+fi
+```
+
+**失敗時の対応**:
+- Lint失敗: `markdownlint --fix <file>` で自動修正可能な場合は提案
+- 手動修正が必要な場合はエラー箇所を表示
+
 ## Tool Availability Check
 
 チェック実行前に、必要なツールがインストールされているか確認してください:
@@ -193,7 +213,7 @@ EOF
 
 ```
 1. git status を確認
-2. staged files から言語を検出 → Rust と Nix を検出
+2. staged files から言語を検出 → Rust、Nix、Markdown を検出
 3. Rust checks を実行:
    - cargo fmt --check ✅
    - cargo clippy ✅
@@ -202,8 +222,10 @@ EOF
    - nixpkgs-fmt --check ✅
    - statix check ✅
    - nix flake check ✅
-5. 全てのチェック成功 → commit 作成
-6. "feat: add language quality checks to commit command"
+5. Markdown checks を実行:
+   - markdownlint *.md ✅
+6. 全てのチェック成功 → commit 作成
+7. "feat: add language quality checks to commit command"
 ```
 
 ## Important Notes
