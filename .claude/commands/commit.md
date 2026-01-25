@@ -1,6 +1,12 @@
 ---
+model: haiku
 allowed-tools:
-  - Bash(git *)
+  - Bash(git status*)
+  - Bash(git diff*)
+  - Bash(git branch*)
+  - Bash(git log*)
+  - Bash(git add*)
+  - Bash(git commit*)
   - Bash(cargo *)
   - Bash(ruff *)
   - Bash(pytest*)
