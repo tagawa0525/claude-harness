@@ -10,15 +10,48 @@ allowed-tools:
   - Bash(git commit*)
 ---
 
-# Commit Command
+# Git Commit Command
 
 ステージされた変更に対してConventional Commits形式のコミットメッセージを作成しコミットを実行。
 
 ## 現在の状態
 
+!`git branch --show-current`
 !`git status --short`
 !`git diff --cached --stat`
-!`git log -5 --oneline`
+
+## mainブランチでの作業警告
+
+現在のブランチが `main` または `master` の場合:
+
+```text
+⚠️ mainブランチで作業中です。
+
+作業方法を選択してください:
+1. /git-branch feat/xxx   - 通常の作業（このディレクトリで切り替え）
+2. /git-worktree feat/xxx - 並行作業（別ディレクトリで作業）
+
+※ 既に別の作業が進行中、または長時間かかる場合は worktree がおすすめ
+```
+
+この警告を表示し、ユーザーの選択を待つ。強制的にコミットを続行しない。
+
+## 大規模変更の警告
+
+ステージされた変更が以下の条件を満たす場合は警告:
+
+- ファイル数が5以上
+- または変更行数が100行以上
+
+```text
+⚠️ 大規模な変更です（[N]ファイル、[M]行）
+
+小さなコミットに分割することを推奨します:
+- 関連する変更のみをステージング: git add [file]
+- 部分的なステージング: git add -p
+
+このまま続行しますか？
+```
 
 ## コミットメッセージ作成
 
@@ -58,4 +91,18 @@ EOF
 
 ```bash
 git status
+git log --oneline -1
+```
+
+## 次のステップ
+
+コミット完了後:
+
+```text
+✅ コミットしました: [commit-hash] [message]
+
+次のステップ:
+- さらに変更を続ける場合 → 編集して /git-commit
+- プッシュする場合 → /git-push
+- コミットを整理する場合 → /git-tidy
 ```
