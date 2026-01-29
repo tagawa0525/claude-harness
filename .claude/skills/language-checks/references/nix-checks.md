@@ -35,7 +35,7 @@ nixpkgs-fmt flake.nix
 
 ### エラー例
 
-```
+```text
 flake.nix
 configuration.nix
 2 files would be reformatted
@@ -88,7 +88,7 @@ statix check flake.nix
 
 ### エラー例
 
-```
+```text
 [W04] Warning: Found empty let-in block
    ╭────
  5 │   let
@@ -105,6 +105,7 @@ statix check flake.nix
 - **E01-E10**: エラーレベル（Error）
 
 主要なルール:
+
 - `empty_let_in`: 空のlet-inブロック
 - `deprecated_*`: 非推奨な関数の使用
 - `useless_*`: 不要なコード
@@ -146,7 +147,7 @@ nix flake check
 
 ### エラー例
 
-```
+```text
 error: attribute 'packages.x86_64-linux.mypackage' is not a derivation
        at /nix/store/...-source/flake.nix:25:7:
            24|       packages = {
@@ -332,11 +333,13 @@ alejandra .
 ## nixpkgs-fmt vs alejandra
 
 ### nixpkgs-fmt
+
 - Nixpkgs公式のフォーマッタ
 - 保守的なフォーマット
 - Nixpkgsプロジェクトで使用
 
 ### alejandra
+
 - より現代的なフォーマット
 - 積極的な改行とインデント
 - 個人プロジェクトで人気
@@ -372,3 +375,5 @@ alejandra .
 ```
 
 これにより `nix flake check` で自動的にフォーマットとlintがチェックされます。
+
+<!-- markdownlint-disable-file MD024 MD013 -->

@@ -13,6 +13,7 @@
 ### Rustプロジェクト
 
 **検出条件**:
+
 - `Cargo.toml` が存在する
 - または `.rs` ファイルがstaged
 
@@ -21,6 +22,7 @@
 ### Pythonプロジェクト
 
 **検出条件**:
+
 - `pyproject.toml`, `setup.py`, `requirements.txt` のいずれかが存在する
 - または `.py` ファイルがstaged
 
@@ -29,6 +31,7 @@
 ### Nixプロジェクト
 
 **検出条件**:
+
 - `flake.nix` が存在する
 - または `.nix` ファイルがstaged
 
@@ -85,7 +88,7 @@ nix flake check
 
 ### 例: Rustフォーマットエラー
 
-```
+```text
 ❌ Rust format check failed:
    Command: cargo fmt --check
 
@@ -97,7 +100,7 @@ nix flake check
 
 ### 例: Pythonリントエラー
 
-```
+```text
 ❌ Python lint check failed:
    Command: ruff check .
 
@@ -134,6 +137,16 @@ command -v statix >/dev/null 2>&1 || echo "statix not found"
 ## 参照
 
 詳細なチェック項目については、以下を参照:
+
 - [Rust Checks](./references/rust-checks.md)
 - [Python Checks](./references/python-checks.md)
 - [Nix Checks](./references/nix-checks.md)
+
+## ユーザーへの質問
+
+選択肢を提示する場合は `AskUserQuestion` ツールを使用する。
+
+- 2-4択の明確な選択肢がある場合に使用
+- 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問
+
+<!-- markdownlint-disable-file MD024 -->

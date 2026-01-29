@@ -31,7 +31,7 @@ cargo fmt
 
 ### エラー例
 
-```
+```text
 Diff in src/main.rs at line 42
 Diff in src/lib.rs at line 15
 ```
@@ -73,7 +73,7 @@ cargo clippy --all-targets -- -D warnings
 
 ### エラー例
 
-```
+```text
 warning: unused variable: `x`
  --> src/main.rs:5:9
   |
@@ -115,7 +115,7 @@ cargo test
 
 ### エラー例
 
-```
+```text
 running 3 tests
 test tests::it_works ... ok
 test tests::it_fails ... FAILED
@@ -210,3 +210,5 @@ cargo test test_name
 3. **警告ゼロ**: 警告を放置せず、すぐに対処
 4. **テストカバレッジ**: 重要な機能は必ずテストを書く
 5. **フォーマット統一**: チーム全体で rustfmt を使用
+
+<!-- markdownlint-disable-file MD024 -->
