@@ -32,7 +32,7 @@ ruff format .
 
 ### エラー例
 
-```
+```text
 Would reformat: src/app.py
 1 file would be reformatted
 ```
@@ -76,7 +76,7 @@ ruff check --ignore F401 .
 
 ### エラー例
 
-```
+```text
 src/app.py:15:1: F401 [*] `os` imported but unused
 src/app.py:42:1: E501 Line too long (95 > 88 characters)
 src/utils.py:10:5: F841 Local variable `result` is assigned to but never used
@@ -128,13 +128,14 @@ pytest -n auto
 ### テストの発見
 
 pytest は以下のパターンでテストを自動発見:
+
 - `test_*.py` または `*_test.py` ファイル
 - `Test*` クラス
 - `test_*` 関数/メソッド
 
 ### エラー例
 
-```
+```text
 ================================ FAILURES =================================
 __________________________ test_addition __________________________
 src/test_math.py:5: in test_addition
@@ -315,6 +316,7 @@ interrogate -v src/
 ## Ruff vs 他のツール
 
 Ruffは以下のツールを置き換え可能:
+
 - **Flake8**: リント
 - **Black**: フォーマット
 - **isort**: インポート整理
@@ -322,6 +324,9 @@ Ruffは以下のツールを置き換え可能:
 - **pydocstyle**: docstring スタイルチェック
 
 Ruffの利点:
+
 - 10-100倍高速
 - 単一ツールで複数機能
 - Rust実装による高パフォーマンス
+
+<!-- markdownlint-disable-file MD024 -->
