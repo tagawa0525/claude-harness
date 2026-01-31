@@ -39,27 +39,15 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 
 ## マージ実行
 
-### 通常マージ（マージコミット作成）
+### マージコミット方式のみ（必須）
+
+**マージコミットを作成してPRの履歴を保持する。**
 
 ```bash
 gh pr merge [PR番号] --merge
 ```
 
-### --squash オプション（コミットを1つにまとめる）
-
-```bash
-gh pr merge [PR番号] --squash
-```
-
-feature ブランチの細かいコミットを1つにまとめたい場合に使用。
-
-### --rebase オプション（リベースマージ）
-
-```bash
-gh pr merge [PR番号] --rebase
-```
-
-直線的な履歴を保ちたい場合に使用。
+⚠️ **squash、rebase は基本禁止**。マージの記録を残すため、常にマージコミット方式を使用する。
 
 ## ブランチ削除（--delete 指定時）
 
