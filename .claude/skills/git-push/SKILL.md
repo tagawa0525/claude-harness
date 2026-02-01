@@ -1,4 +1,8 @@
 ---
+name: git-push
+description: |
+  ローカルコミットをリモートにプッシュ。main/masterへの直接プッシュは禁止。
+  /git-push [--force] で呼び出し。
 model: haiku
 argument-hint: [--force]
 allowed-tools:
