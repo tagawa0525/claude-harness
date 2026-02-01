@@ -1,8 +1,6 @@
 ---
 name: gh-pr-merge
-description: |
-  GitHub Pull Requestをマージ（gh CLI使用）。マージ後のブランチ削除や
-  worktreeクリーンアップも対応。/gh-pr-merge [PR番号] [--squash] で呼び出し。
+description: GitHub PRをマージ。マージ後のブランチ削除やworktreeクリーンアップも対応。
 model: haiku
 argument-hint: [PR番号] [--squash] [--rebase] [--delete]
 allowed-tools:

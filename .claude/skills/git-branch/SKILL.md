@@ -1,8 +1,6 @@
 ---
 name: git-branch
-description: |
-  featureブランチを作成して作業開始。mainブランチからのみ実行可能。
-  /git-branch <branch-name> で呼び出し。
+description: featureブランチを作成して作業開始。mainブランチからのみ実行可能。
 model: haiku
 argument-hint: <branch-name>
 allowed-tools:

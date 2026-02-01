@@ -1,8 +1,6 @@
 ---
 name: git-commit
-description: |
-  ステージされた変更をConventional Commits形式でコミット。
-  /git-commit [message] で呼び出し。メッセージ省略時は自動生成。
+description: ステージされた変更をConventional Commits形式でコミット。メッセージ省略時は自動生成。
 model: haiku
 argument-hint: [message]
 allowed-tools:
@@ -32,13 +30,23 @@ allowed-tools:
 ⚠️ mainブランチで作業中です。
 
 作業方法を選択してください:
-1. /git-branch feat/xxx   - 通常の作業（このディレクトリで切り替え）
-2. /git-worktree feat/xxx - 並行作業（別ディレクトリで作業）
-
-※ 既に別の作業が進行中、または長時間かかる場合は worktree がおすすめ
+1. worktree作成        - 並行作業（別ディレクトリで作業）
+2. featureブランチ作成  - 通常の機能開発（このディレクトリで切り替え）
+3. mainのまま続行       - 小さな修正、設定変更など
 ```
 
 この警告を表示し、ユーザーの選択を待つ。強制的にコミットを続行しない。
+
+### featureブランチ/worktree選択時
+
+ステージされた変更内容を分析し、適切なブランチ名の候補を2-3個生成して `AskUserQuestion` で提示。
+ユーザーは候補から選択するか、「Other」でカスタム名を入力できる。
+
+候補生成の例:
+
+- 変更がスキル関連 → `feat/skills-xxx`, `refactor/skills-xxx`
+- バグ修正 → `fix/xxx`
+- ドキュメント → `docs/xxx`
 
 ## 大規模変更の警告
 
