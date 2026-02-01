@@ -13,7 +13,7 @@ allowed-tools:
   - Task
 ---
 
-# Git Review Respond Command
+# GitHub PR Review Command
 
 PRについたレビューコメントを確認し、対応する。
 
@@ -207,7 +207,7 @@ PR: {url}
 
 次のステップ:
 - 追加のレビューを待つ
-- マージ可能な場合 → /git-merge
+- マージ可能な場合 → /gh-pr-merge
 - 状態を確認する場合 → /git-info
 ```
 

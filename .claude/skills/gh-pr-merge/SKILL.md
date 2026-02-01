@@ -12,7 +12,7 @@ allowed-tools:
   - Bash(rm -rf*)
 ---
 
-# Git Merge Command
+# GitHub PR Merge Command
 
 GitHub Pull Requestをマージする（gh CLI使用）。
 
