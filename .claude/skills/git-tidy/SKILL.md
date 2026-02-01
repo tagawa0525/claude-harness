@@ -1,5 +1,9 @@
 ---
-model: haiku
+name: git-tidy
+description: |
+  同一ブランチ内のコミットを整理。squash、分割、並べ替えに対応。
+  /git-tidy [squash|split|reorder] で呼び出し。
+model: sonnet
 argument-hint: [squash|split|reorder]
 allowed-tools:
   - Bash(git status*)

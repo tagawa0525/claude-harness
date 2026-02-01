@@ -1,4 +1,8 @@
 ---
+name: gh-pr-merge
+description: |
+  GitHub Pull Requestをマージ（gh CLI使用）。マージ後のブランチ削除や
+  worktreeクリーンアップも対応。/gh-pr-merge [PR番号] [--squash] で呼び出し。
 model: haiku
 argument-hint: [PR番号] [--squash] [--rebase] [--delete]
 allowed-tools:
@@ -12,7 +16,7 @@ allowed-tools:
   - Bash(rm -rf*)
 ---
 
-# Git Merge Command
+# GitHub PR Merge Command
 
 GitHub Pull Requestをマージする（gh CLI使用）。
 
@@ -37,6 +41,72 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 - レビュー: 承認されているか
 - コンフリクト: なしか
 
+## マージコミットメッセージの生成
+
+マージ前にPRの情報を収集し、意味のあるマージコミットメッセージを生成する。
+
+### 1. PR情報の収集
+
+```bash
+# PRの詳細情報を取得
+gh pr view [PR番号] --json title,body,commits,files,additions,deletions
+
+# コミット一覧を確認
+gh pr view [PR番号] --json commits --jq '.commits[].messageHeadline'
+```
+
+### 2. マージコミットメッセージの作成
+
+以下の構造でマージコミットメッセージを作成する：
+
+**Subject行（1行目）:**
+
+```text
+Merge: [PRタイトルを簡潔に要約]
+```
+
+**Body（本文）:**
+
+```text
+## Why（なぜこの変更が必要か）
+[PRの目的・背景を1-2文で説明]
+
+## What（何が変わるか）
+[主要な変更点を箇条書きで3-5項目]
+
+## Impact（影響範囲）
+[どのモジュール/機能に影響するか]
+
+PR: #[番号]
+```
+
+### 3. マージコミットの良い例・悪い例
+
+**❌ 悪い例（GitHubデフォルト）:**
+
+```text
+Merge pull request #42 from user/fix-typo
+```
+
+**✅ 良い例:**
+
+```text
+Merge: ユーザー認証のタイムアウト処理を修正
+
+## Why
+セッションタイムアウト時にユーザーが無限ループに陥るバグがあった
+
+## What
+- セッション期限切れ時のリダイレクト処理を追加
+- エラーメッセージを日本語化
+- タイムアウト値を環境変数で設定可能に
+
+## Impact
+認証関連のコンポーネント（Login, Session, AuthGuard）
+
+PR: #42
+```
+
 ## マージ実行
 
 ### マージコミット方式のみ（必須）
@@ -44,7 +114,9 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 **マージコミットを作成してPRの履歴を保持する。**
 
 ```bash
-gh pr merge [PR番号] --merge
+gh pr merge [PR番号] --merge \
+  --subject "Merge: [生成したsubject]" \
+  --body "[生成したbody]"
 ```
 
 ⚠️ **squash、rebase は基本禁止**。マージの記録を残すため、常にマージコミット方式を使用する。

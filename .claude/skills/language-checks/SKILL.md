@@ -1,6 +1,14 @@
+---
+name: language-checks
+description: |
+  プログラミング言語別の品質チェック知識ベース。Rust、Python、Nixプロジェクトの
+  フォーマット、リント、テストコマンドを提供。コミット前チェックで自動参照される。
+user-invocable: false
+---
+
 # Language Quality Checks Skill
 
-このスキルは、プログラミング言語ごとの品質チェック（フォーマット、リント、テスト）を実行するための知識ベースです。
+プログラミング言語ごとの品質チェック（フォーマット、リント、テスト）の知識ベース。
 
 ## 対応言語
 
@@ -148,5 +156,3 @@ command -v statix >/dev/null 2>&1 || echo "statix not found"
 
 - 2-4択の明確な選択肢がある場合に使用
 - 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問
-
-<!-- markdownlint-disable-file MD024 -->
