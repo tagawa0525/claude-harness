@@ -1,8 +1,6 @@
 ---
 name: gh-pr-review
-description: |
-  PRレビューコメントを確認し対応。コード修正、返信、resolve を実行。
-  /gh-pr-review [PR番号|コメントURL] で呼び出し。--unresolved で未解決のみ表示。
+description: PRレビューコメントを確認し対応。コード修正、返信、resolveを実行。
 model: sonnet
 argument-hint: [PR番号 | コメントURL] [--unresolved]
 allowed-tools:

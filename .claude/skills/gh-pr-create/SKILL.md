@@ -1,8 +1,6 @@
 ---
 name: gh-pr-create
-description: |
-  GitHub Pull Requestを作成（gh CLI使用）。変更内容からPRタイトルと
-  本文を自動生成。/gh-pr-create [--draft] [--reviewer REVIEWER] で呼び出し。
+description: GitHub PRを作成。変更内容からPRタイトルと本文を自動生成。
 model: haiku
 argument-hint: [--draft] [--reviewer REVIEWER]
 allowed-tools:

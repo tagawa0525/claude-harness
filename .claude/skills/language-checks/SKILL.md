@@ -1,8 +1,6 @@
 ---
 name: language-checks
-description: |
-  プログラミング言語別の品質チェック知識ベース。Rust、Python、Nixプロジェクトの
-  フォーマット、リント、テストコマンドを提供。コミット前チェックで自動参照される。
+description: 言語別の品質チェック知識ベース。Rust、Python、Nixのフォーマット/リント/テストコマンドを提供。
 user-invocable: false
 ---
 

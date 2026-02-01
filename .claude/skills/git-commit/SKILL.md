@@ -1,8 +1,6 @@
 ---
 name: git-commit
-description: |
-  ステージされた変更をConventional Commits形式でコミット。
-  /git-commit [message] で呼び出し。メッセージ省略時は自動生成。
+description: ステージされた変更をConventional Commits形式でコミット。メッセージ省略時は自動生成。
 model: haiku
 argument-hint: [message]
 allowed-tools:

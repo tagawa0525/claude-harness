@@ -1,8 +1,6 @@
 ---
 name: git-info
-description: |
-  現在のGit状態を俯瞰表示。ブランチ、未コミット変更、未プッシュコミット、
-  PR状態、worktree、stashを一覧表示。/git-info で呼び出し。
+description: 現在のGit状態を俯瞰表示。ブランチ、変更、コミット、PR、worktree、stashを一覧。
 model: haiku
 allowed-tools:
   - Bash(git status*)

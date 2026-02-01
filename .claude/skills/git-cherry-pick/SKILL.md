@@ -1,9 +1,6 @@
 ---
 name: git-cherry-pick
-description: |
-  ブランチ間でコミットを移動（元ブランチからの除去含む）。
-  mainで作業してしまった変更をfeatureブランチに移す場合などに使用。
-  /git-cherry-pick <commit> [--to <branch>] で呼び出し。
+description: ブランチ間でコミットを移動（元ブランチからの除去含む）。mainで作業してしまった変更を移す場合などに。
 model: sonnet
 argument-hint: <commit> [--to <branch>]
 allowed-tools:
