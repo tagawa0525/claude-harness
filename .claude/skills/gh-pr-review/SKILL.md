@@ -21,11 +21,20 @@ allowed-tools:
 
 PRについたレビューコメントを確認し、対応する。
 
+## ヘルパースクリプト
+
+このスキルは `scripts/` ディレクトリのスクリプトを使用:
+
+- `get-pr-info.sh [pr_number]` - PR情報を取得
+- `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
+- `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
+- `resolve-thread.sh <pr_number> <thread_node_id>` - スレッドを解決
+
 ## 事前確認
 
-!`gh auth status`
+!`gh auth status 2>&1 | head -3`
 !`git status --short`
-!`git branch -vv`
+!`git branch -vv | head -5`
 
 ## Step 1: 引数の解析
 
@@ -44,23 +53,19 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 → 現在のブランチに関連するPRを特定
 
 ```bash
-gh pr view --json number,title,url,state,reviewDecision
+.claude/skills/gh-pr-review/scripts/get-pr-info.sh
 ```
 
 ---
 
 ## Step 2: レビューコメントの取得
 
-### gh pr-review 拡張がある場合（推奨）
-
 ```bash
 # 未解決コメントのみ取得（--unresolved オプション時）
-gh pr-review review view {pr_number} -R {owner}/{repo} \
-  --unresolved --include-comment-node-id
+.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number} --unresolved
 
 # 全コメント取得
-gh pr-review review view {pr_number} -R {owner}/{repo} \
-  --include-comment-node-id
+.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number}
 ```
 
 ---
@@ -139,26 +144,22 @@ git push
 
 ## Step 5: レビューコメントへの返信
 
-### gh pr-review 拡張がある場合
+### コメントへの返信
 
 ```bash
-# スレッドに返信
-gh pr-review comments reply {pr_number} -R {owner}/{repo} \
-  --thread-id {thread_id} --body "{返信内容}"
-
-# スレッドを解決済みにする
-gh pr-review threads resolve {pr_number} -R {owner}/{repo} \
-  --thread-id {thread_id}
+.claude/skills/gh-pr-review/scripts/reply-to-comment.sh \
+  {pr_number} {comment_id} "{返信内容}"
 ```
 
-### 標準 gh CLI の場合
+### スレッドを解決済みにする
 
 ```bash
-# インラインコメントに返信
-gh api repos/{owner}/{repo}/pulls/{pr_number}/comments/{comment_id}/replies \
-  -f body="{返信内容}"
+.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {thread_node_id}
+```
 
-# 一般コメントとして返信
+### 一般コメントとして返信（スレッドに属さない場合）
+
+```bash
 gh pr comment {pr_number} --body "{返信内容}"
 ```
 
