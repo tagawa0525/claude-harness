@@ -1,13 +1,12 @@
 ---
 name: git-branch
 description: featureブランチを作成して作業開始。mainブランチからのみ実行可能。
-model: haiku
-argument-hint: <branch-name>
+model: sonnet
 allowed-tools:
-  - Bash(git status*)
-  - Bash(git branch*)
-  - Bash(git switch*)
-  - Bash(git checkout*)
+  - Bash(git *)
+  - Read
+  - Glob
+  - AskUserQuestion
 ---
 
 # Git Branch Command
@@ -18,6 +17,7 @@ featureブランチを作成して作業を開始する。
 
 !`git branch -vv`
 !`git status --short`
+!`git fetch -q; git log --oneline HEAD..origin/main 2>/dev/null | head -3`
 
 ## 動作条件
 
@@ -32,12 +32,19 @@ featureブランチを作成して作業を開始する。
   git switch main
 ```
 
-## ブランチ名
+## ブランチ名の自動生成
 
-$ARGUMENTS が指定されている場合はそれをブランチ名として使用。
-指定がない場合はユーザーに確認。
+**常にLLMがブランチ名を生成する。** 引数は受け付けない。
 
-### 命名規則
+### Step 1: 変更内容の分析
+
+以下を確認してブランチ名を決定:
+
+1. ステージされた変更: `git diff --cached --name-only`
+2. 未ステージの変更: `git diff --name-only`
+3. 変更ファイルの内容を読んで意図を把握
+
+### Step 2: 命名規則に従い候補を生成
 
 - `feat/xxx` - 新機能
 - `fix/xxx` - バグ修正
@@ -45,10 +52,33 @@ $ARGUMENTS が指定されている場合はそれをブランチ名として使
 - `docs/xxx` - ドキュメント
 - `chore/xxx` - その他
 
+### Step 3: AskUserQuestion で候補を提示
+
+2-3個の候補を生成し、ユーザーに選択させる。
+「Other」で自由入力も可能。
+
 ## ブランチ作成
 
+### 起点の確認
+
+ローカルmainが `origin/main` より遅れている場合（上記のログ出力がある場合）は警告:
+
+```text
+⚠️ ローカルmainがorigin/mainより遅れています。
+
+1. pullしてから分岐 (推奨)
+2. origin/mainから直接分岐
+3. このまま続行
+```
+
+### ブランチ作成コマンド
+
 ```bash
+# 通常（ローカルHEADから分岐）
 git switch -c [branch-name]
+
+# origin/mainから分岐する場合
+git switch -c [branch-name] origin/main
 ```
 
 ## 完了確認

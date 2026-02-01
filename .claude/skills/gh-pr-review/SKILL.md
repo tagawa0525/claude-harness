@@ -101,38 +101,52 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 ## Step 4: 対応の実施
 
+### Atomicコミットの原則
+
+**1コメント = 1コミット** を徹底する。各レビューコメントに対して個別にコミットを作成することで:
+
+- 変更の追跡が容易になる
+- 問題発生時のrevertが簡単
+- レビュアーが対応を確認しやすい
+
 ### 優先順位: Critical → Warning → Suggestion → Question
 
-### 4.1 コード修正が必要な場合
+### 4.1 各コメントへの対応サイクル
+
+**以下のサイクルをコメントごとに繰り返す:**
+
+#### (a) コード修正
 
 1. 対象ファイルを読み取り（Read）
 2. 関連コードを調査（Grep, Glob, Task で Explore）
 3. 外部情報が必要なら調査（WebSearch, WebFetch）
 4. 修正を実施（Edit）
-5. ビルド/テスト確認
+
+#### (b) ビルド/テスト確認
 
 ```bash
 cargo check && cargo test
 ```
 
-### 4.2 修正をコミット
+#### (c) Atomicコミット
 
-レビュー対応であることを明記:
+レビュー対応であることとコメントIDを明記:
 
 ```bash
 git add {修正ファイル}
 git commit -m "$(cat <<'EOF'
-fix: address review feedback
+fix: {コメントで指摘された内容を簡潔に}
 
-- [Critical] {対応内容}
-- [Warning] {対応内容}
-
-Co-Authored-By: Claude Sonnet <noreply@anthropic.com>
+Refs: {コメントURL または #discussion_r{comment_id}}
 EOF
 )"
 ```
 
-### 4.3 プッシュ
+#### (d) 次のコメントへ
+
+全コメントの対応が完了するまで (a)〜(c) を繰り返す。
+
+### 4.2 全対応完了後にプッシュ
 
 ```bash
 git push
@@ -218,10 +232,10 @@ PR: {url}
 
 ## 注意事項
 
+- **Atomicコミット**: 1コメント = 1コミットを徹底
 - Force push は避け、追加コミットで対応（レビュー履歴を保持）
 - Critical は必ず対応、Suggestion は見送り可（理由を返信）
 - レビュアーの意図が不明な場合は、修正前に確認コメントを投稿
-- 複数の Critical/Warning は論理的にまとめて1コミットにしても可
 
 ---
 
