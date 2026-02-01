@@ -148,5 +148,3 @@ command -v statix >/dev/null 2>&1 || echo "statix not found"
 
 - 2-4択の明確な選択肢がある場合に使用
 - 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問
-
-<!-- markdownlint-disable-file MD024 -->

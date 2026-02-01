@@ -6,24 +6,24 @@ Nixプロジェクトで実行する品質チェックの詳細です。
 
 ## 1. Format Check (nixpkgs-fmt)
 
-### コマンド
+### コマンド (nixpkgs-fmt)
 
 ```bash
 nixpkgs-fmt --check *.nix
 ```
 
-### 目的
+### 目的 (nixpkgs-fmt)
 
 - Nixコードが標準的なフォーマットスタイルに従っているか確認
 - `--check` フラグにより、ファイルを変更せずにチェックのみ実行
 - Nixpkgs公式のフォーマットスタイルを適用
 
-### 成功条件
+### 成功条件 (nixpkgs-fmt)
 
 - 全ての `.nix` ファイルが既にフォーマット済み
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (nixpkgs-fmt)
 
 ```bash
 # 自動修正
@@ -33,7 +33,7 @@ nixpkgs-fmt *.nix
 nixpkgs-fmt flake.nix
 ```
 
-### エラー例
+### エラー例 (nixpkgs-fmt)
 
 ```text
 flake.nix
@@ -50,24 +50,24 @@ configuration.nix
 
 ## 2. Static Analysis (statix)
 
-### コマンド
+### コマンド (statix)
 
 ```bash
 statix check
 ```
 
-### 目的
+### 目的 (statix)
 
 - Nixコードの静的解析
 - アンチパターン、非推奨な構文、最適化の余地を検出
 - Nixpkgsのベストプラクティスに従っているか確認
 
-### 成功条件
+### 成功条件 (statix)
 
 - 警告・エラーが0件
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (statix)
 
 ```bash
 # 自動修正可能なものを修正
@@ -86,7 +86,7 @@ statix check flake.nix
 - **bool_comparison**: `x == true` の代わりに `x` を使用
 - **redundant_pattern_bind**: 冗長なパターンバインディング
 
-### エラー例
+### エラー例 (statix)
 
 ```text
 [W04] Warning: Found empty let-in block
@@ -113,25 +113,25 @@ statix check flake.nix
 
 ## 3. Flake Check (nix flake check)
 
-### コマンド
+### コマンド (nix flake check)
 
 ```bash
 nix flake check
 ```
 
-### 目的
+### 目的 (nix flake check)
 
 - Flakeの整合性を検証
 - 全ての outputs が正しく評価できるか確認
 - パッケージ、devShells、nixosConfigurations などをテスト
 
-### 成功条件
+### 成功条件 (nix flake check)
 
 - 全ての outputs が評価成功
 - テストが全て成功
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (nix flake check)
 
 - エラーメッセージを確認
 - 該当する output を修正
@@ -145,7 +145,7 @@ nix flake check
 4. **Checks**: 定義された checks を実行
 5. **NixOS configurations**: システム設定が評価可能か
 
-### エラー例
+### エラー例 (nix flake check)
 
 ```text
 error: attribute 'packages.x86_64-linux.mypackage' is not a derivation
@@ -332,13 +332,13 @@ alejandra .
 
 ## nixpkgs-fmt vs alejandra
 
-### nixpkgs-fmt
+### nixpkgs-fmt (Official)
 
 - Nixpkgs公式のフォーマッタ
 - 保守的なフォーマット
 - Nixpkgsプロジェクトで使用
 
-### alejandra
+### alejandra (Alternative)
 
 - より現代的なフォーマット
 - 積極的な改行とインデント
@@ -355,16 +355,20 @@ alejandra .
   outputs = { self, nixpkgs }: {
     checks.x86_64-linux = {
       # フォーマットチェック
-      format-check = nixpkgs.legacyPackages.x86_64-linux.runCommand "format-check" {
-        buildInputs = [ nixpkgs.legacyPackages.x86_64-linux.nixpkgs-fmt ];
+      format-check =
+        nixpkgs.legacyPackages.x86_64-linux.runCommand "format-check" {
+          buildInputs =
+            [ nixpkgs.legacyPackages.x86_64-linux.nixpkgs-fmt ];
       } ''
         nixpkgs-fmt --check ${self}
         touch $out
       '';
 
       # Statix チェック
-      statix-check = nixpkgs.legacyPackages.x86_64-linux.runCommand "statix-check" {
-        buildInputs = [ nixpkgs.legacyPackages.x86_64-linux.statix ];
+      statix-check =
+        nixpkgs.legacyPackages.x86_64-linux.runCommand "statix-check" {
+          buildInputs =
+            [ nixpkgs.legacyPackages.x86_64-linux.statix ];
       } ''
         statix check ${self}
         touch $out
@@ -375,5 +379,3 @@ alejandra .
 ```
 
 これにより `nix flake check` で自動的にフォーマットとlintがチェックされます。
-
-<!-- markdownlint-disable-file MD024 MD013 -->

@@ -6,31 +6,31 @@ Pythonプロジェクトで実行する品質チェックの詳細です。
 
 ## 1. Format Check (ruff format)
 
-### コマンド
+### コマンド (ruff format)
 
 ```bash
 ruff format --check .
 ```
 
-### 目的
+### 目的 (ruff format)
 
 - コードが一貫したフォーマットスタイルに従っているか確認
 - `--check` フラグにより、ファイルを変更せずにチェックのみ実行
 - Black互換のフォーマットを提供
 
-### 成功条件
+### 成功条件 (ruff format)
 
 - 全てのファイルが既にフォーマット済み
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (ruff format)
 
 ```bash
 # 自動修正
 ruff format .
 ```
 
-### エラー例
+### エラー例 (ruff format)
 
 ```text
 Would reformat: src/app.py
@@ -39,24 +39,24 @@ Would reformat: src/app.py
 
 ## 2. Lint Check (ruff check)
 
-### コマンド
+### コマンド (ruff check)
 
 ```bash
 ruff check .
 ```
 
-### 目的
+### 目的 (ruff check)
 
 - コードの品質問題、バグの可能性、スタイル違反を検出
 - Flake8, isort, pyupgrade などの機能を統合
 - 高速な静的解析
 
-### 成功条件
+### 成功条件 (ruff check)
 
 - エラー・警告が0件
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (ruff check)
 
 ```bash
 # 自動修正可能なものを修正
@@ -74,7 +74,7 @@ ruff check --ignore F401 .
 - `I001`: インポートの順序が正しくない
 - `N806`: 変数名が小文字のスネークケースではない
 
-### エラー例
+### エラー例 (ruff check)
 
 ```text
 src/app.py:15:1: F401 [*] `os` imported but unused
@@ -86,13 +86,13 @@ Found 3 errors.
 
 ## 3. Test (pytest)
 
-### コマンド
+### コマンド (pytest)
 
 ```bash
 pytest
 ```
 
-### オプション
+### オプション (pytest)
 
 ```bash
 # 詳細出力
@@ -108,18 +108,18 @@ pytest --cov=src --cov-report=term-missing
 pytest -n auto
 ```
 
-### 目的
+### 目的 (pytest)
 
 - 全てのテストを実行
 - コードの正確性を検証
 - リグレッションを防ぐ
 
-### 成功条件
+### 成功条件 (pytest)
 
 - 全てのテストが成功
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (pytest)
 
 - テスト失敗の詳細を確認
 - コードまたはテストを修正
@@ -133,7 +133,7 @@ pytest は以下のパターンでテストを自動発見:
 - `Test*` クラス
 - `test_*` 関数/メソッド
 
-### エラー例
+### エラー例 (pytest)
 
 ```text
 ================================ FAILURES =================================
@@ -328,5 +328,3 @@ Ruffの利点:
 - 10-100倍高速
 - 単一ツールで複数機能
 - Rust実装による高パフォーマンス
-
-<!-- markdownlint-disable-file MD024 -->

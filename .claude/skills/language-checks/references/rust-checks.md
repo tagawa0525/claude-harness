@@ -6,30 +6,30 @@ Rustプロジェクトで実行する品質チェックの詳細です。
 
 ## 1. Format Check (cargo fmt)
 
-### コマンド
+### コマンド (cargo fmt)
 
 ```bash
 cargo fmt --check
 ```
 
-### 目的
+### 目的 (cargo fmt)
 
 - コードが Rust の標準フォーマットスタイルに従っているか確認
 - `--check` フラグにより、ファイルを変更せずにチェックのみ実行
 
-### 成功条件
+### 成功条件 (cargo fmt)
 
 - 全てのファイルが既にフォーマット済み
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (cargo fmt)
 
 ```bash
 # 自動修正
 cargo fmt
 ```
 
-### エラー例
+### エラー例 (cargo fmt)
 
 ```text
 Diff in src/main.rs at line 42
@@ -38,28 +38,28 @@ Diff in src/lib.rs at line 15
 
 ## 2. Lint Check (cargo clippy)
 
-### コマンド
+### コマンド (cargo clippy)
 
 ```bash
 cargo clippy --all-targets -- -D warnings
 ```
 
-### オプション説明
+### オプション説明 (cargo clippy)
 
 - `--all-targets`: tests, benches, examples を含む全ターゲットをチェック
 - `-- -D warnings`: 全ての警告をエラーとして扱う
 
-### 目的
+### 目的 (cargo clippy)
 
 - コードの品質問題、バグの可能性、非推奨パターンを検出
 - Rustのベストプラクティスに従っているか確認
 
-### 成功条件
+### 成功条件 (cargo clippy)
 
 - 警告が0件
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (cargo clippy)
 
 - エラーメッセージを確認し、手動で修正
 - 一部の警告は `#[allow(clippy::lint_name)]` で抑制可能（ただし慎重に）
@@ -71,7 +71,7 @@ cargo clippy --all-targets -- -D warnings
 - `redundant_clone`: 不要な clone()
 - `match_single_binding`: 単一パターンの match
 
-### エラー例
+### エラー例 (cargo clippy)
 
 ```text
 warning: unused variable: `x`
@@ -85,23 +85,23 @@ warning: unused variable: `x`
 
 ## 3. Test (cargo test)
 
-### コマンド
+### コマンド (cargo test)
 
 ```bash
 cargo test
 ```
 
-### 目的
+### 目的 (cargo test)
 
 - 全てのユニットテスト、統合テスト、doctestを実行
 - コードの正確性を検証
 
-### 成功条件
+### 成功条件 (cargo test)
 
 - 全てのテストが成功
 - 終了コード 0
 
-### 失敗時の対応
+### 失敗時の対応 (cargo test)
 
 - テスト失敗の詳細を確認
 - コードまたはテストを修正
@@ -113,7 +113,7 @@ cargo test
 2. **Integration tests**: `tests/` ディレクトリ内
 3. **Doc tests**: ドキュメントコメント内の例
 
-### エラー例
+### エラー例 (cargo test)
 
 ```text
 running 3 tests
@@ -210,5 +210,3 @@ cargo test test_name
 3. **警告ゼロ**: 警告を放置せず、すぐに対処
 4. **テストカバレッジ**: 重要な機能は必ずテストを書く
 5. **フォーマット統一**: チーム全体で rustfmt を使用
-
-<!-- markdownlint-disable-file MD024 -->
