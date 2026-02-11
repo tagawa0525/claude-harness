@@ -36,6 +36,7 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 ### マージ可能性チェック
 
 - CIステータス: 全てパスしているか
+  - CI失敗やCopilotレビュー未到着時は `/gh-actions-check` で診断
 - レビュー: 承認されているか
 - コンフリクト: なしか
 
@@ -154,7 +155,10 @@ git worktree remove [path]
 ### 3. ローカルブランチの削除
 
 ```bash
-git branch -d [branch]
+# ブランチが存在する場合のみ削除
+if git show-ref --verify --quiet "refs/heads/[branch]"; then
+  git branch -d [branch]
+fi
 ```
 
 ## 完了確認
