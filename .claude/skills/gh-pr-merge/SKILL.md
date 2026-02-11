@@ -154,7 +154,8 @@ git worktree remove [path]
 ### 3. ローカルブランチの削除
 
 ```bash
-git branch -d [branch]
+# ブランチが存在する場合のみ削除
+git branch -d [branch] 2>/dev/null || true
 ```
 
 ## 完了確認
