@@ -155,7 +155,9 @@ git worktree remove [path]
 
 ```bash
 # ブランチが存在する場合のみ削除
-git branch -d [branch] 2>/dev/null || true
+if git show-ref --verify --quiet "refs/heads/[branch]"; then
+  git branch -d [branch]
+fi
 ```
 
 ## 完了確認
