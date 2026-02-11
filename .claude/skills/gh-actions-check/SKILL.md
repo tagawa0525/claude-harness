@@ -31,8 +31,13 @@ git branch --show-current
 # ブランチ指定の場合
 gh run list --branch <branch> --limit 5
 
-# PR番号指定の場合
-gh run list --limit 10 2>&1 | grep "refs/pull/<pr_number>"
+# PR番号指定の場合（厳密なフィルタ）
+gh run list --limit 50 \
+  --json databaseId,headBranch,status,conclusion,workflowName,createdAt \
+  --jq '.[]
+    | select(.headBranch | startswith("refs/pull/<pr_number>/"))
+    | {run_id: .databaseId, workflow: .workflowName, status, conclusion,
+       created: .createdAt}'
 ```
 
 確認ポイント:
