@@ -36,6 +36,7 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 ### マージ可能性チェック
 
 - CIステータス: 全てパスしているか
+  - CI失敗やCopilotレビュー未到着時は `/gh-actions-check` で診断
 - レビュー: 承認されているか
 - コンフリクト: なしか
 
