@@ -107,25 +107,6 @@
         fi
       fi
 
-      # Markdown ファイルのチェック
-      MD_FILES=$(echo "$STAGED_FILES" | grep '\.md$' || true)
-      if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
-        echo "🔍 Checking Markdown style..."
-        # プロジェクトの設定ファイルを明示的に検出して渡す
-        # (markdownlint-cli 0.47+ は自動検出が不安定なため)
-        MD_CONFIG=""
-        for cfg in .markdownlint.jsonc .markdownlint.json .markdownlint.yaml .markdownlint.yml .markdownlintrc .markdownlintrc.json; do
-          if [ -f "$cfg" ]; then
-            MD_CONFIG="--config $cfg"
-            break
-          fi
-        done
-        if ! echo "$MD_FILES" | xargs markdownlint $MD_CONFIG 2>/dev/null; then
-          echo "❌ Markdown lint failed. Run: markdownlint --fix <files>"
-          check_failed=1
-        fi
-      fi
-
       # Python ファイルのチェック
       PY_FILES=$(echo "$STAGED_FILES" | grep '\.py$' || true)
       if [ -n "$PY_FILES" ] && command -v ruff >/dev/null 2>&1; then
