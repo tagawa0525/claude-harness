@@ -83,9 +83,12 @@ git cherry-pick [commit-hash]
 # 元ブランチに戻る
 git switch [source-branch]
 
-# rebase -i で対象コミットを drop
-git rebase -i [base-commit]
+# rebase --onto で対象コミットをスキップ
+git rebase --onto [commit-hash]^ [commit-hash]
 ```
+
+注: `[commit-hash]^` は除去対象の親コミット、`[commit-hash]` は除去対象自体。
+これにより除去対象をスキップしてその後のコミットを再適用する。
 
 ## 注意事項
 
