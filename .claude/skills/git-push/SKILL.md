@@ -35,7 +35,7 @@ allowed-tools:
 PRワークフローを使用してください:
 1. /git-cherry-pick でブランチを分離
 2. /git-push で feature ブランチをプッシュ
-3. /git-pull-request でプルリクエストを作成
+3. /gh-pr-create でプルリクエストを作成
 ```
 
 ## プッシュ対象の確認
@@ -83,13 +83,6 @@ git log --oneline -3
 ✅ プッシュしました。
 
 次のステップ:
-- PRを作成する場合 → /git-pull-request
+- PRを作成する場合 → /gh-pr-create
 - 状態を確認する場合 → /git-info
 ```
-
-## ユーザーへの質問
-
-選択肢を提示する場合は `AskUserQuestion` ツールを使用する。
-
-- 2-4択の明確な選択肢がある場合に使用
-- 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問

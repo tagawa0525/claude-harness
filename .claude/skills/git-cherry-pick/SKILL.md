@@ -83,8 +83,19 @@ git cherry-pick [commit-hash]
 # 元ブランチに戻る
 git switch [source-branch]
 
-# rebase -i で対象コミットを drop
-git rebase -i [base-commit]
+# rebase --onto で対象コミットをスキップ
+# 構文: git rebase --onto <newbase> <upstream> [<branch>]
+#   newbase  = [commit-hash]^  (除去対象の親 = 新しい接続先)
+#   upstream = [commit-hash]   (除去対象自体 = ここ以降のコミットを移動)
+#   branch   = 省略時は HEAD (現在のブランチ)
+git rebase --onto [commit-hash]^ [commit-hash]
+```
+
+例: ブランチが `A - B - C - D`（Cを除去したい）の場合:
+
+```bash
+git rebase --onto C^ C
+# 結果: A - B - D'
 ```
 
 ## 注意事項
@@ -118,10 +129,3 @@ git log --oneline -5 [target-branch]
 
 - `/git-tidy` - 同一ブランチ内のコミット整理
 - `/git-branch` - 新規ブランチ作成
-
-## ユーザーへの質問
-
-選択肢を提示する場合は `AskUserQuestion` ツールを使用する。
-
-- 2-4択の明確な選択肢がある場合に使用
-- 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問

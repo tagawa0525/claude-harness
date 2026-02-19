@@ -2,6 +2,7 @@
 name: git-info
 description: 現在のGit状態を俯瞰表示。ブランチ、変更、コミット、PR、worktree、stashを一覧。
 model: haiku
+context: fork
 allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)
@@ -93,13 +94,6 @@ gh pr status 2>/dev/null || echo "(GitHub CLI未認証)"
 
 - 未コミット変更がある → `/git-commit`
 - 未プッシュコミットがある → `/git-push`
-- PRがない → `/git-pull-request`
+- PRがない → `/gh-pr-create`
 - mainブランチで作業中 → `/git-branch` または `/git-worktree`
 - 不要なworktreeがある → `/git-worktree --remove`
-
-## ユーザーへの質問
-
-選択肢を提示する場合は `AskUserQuestion` ツールを使用する。
-
-- 2-4択の明確な選択肢がある場合に使用
-- 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問

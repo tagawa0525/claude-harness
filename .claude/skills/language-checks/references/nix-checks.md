@@ -2,8 +2,6 @@
 
 Nixプロジェクトで実行する品質チェック。
 
-詳細情報は [nix-checks-detail.md](./nix-checks-detail.md) を参照。
-
 ## 1. Format Check (nixpkgs-fmt)
 
 ```bash
@@ -72,3 +70,19 @@ nix flake check --show-trace           # 詳細ログ
 | nixpkgs-fmt | `--check *.nix`  | `*.nix`  |
 | statix      | `check`          | `fix`    |
 | nix flake   | `check`          | -        |
+
+## トラブルシューティング
+
+### "infinite recursion" エラー
+
+```bash
+nix flake check --show-trace  # スタックトレース表示
+```
+
+## 追加ツール
+
+### deadnix (デッドコード検出)
+
+```bash
+nix shell nixpkgs#deadnix -c deadnix
+```

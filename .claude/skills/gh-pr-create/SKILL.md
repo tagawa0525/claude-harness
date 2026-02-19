@@ -1,7 +1,7 @@
 ---
 name: gh-pr-create
 description: GitHub PRを作成。変更内容からPRタイトルと本文を自動生成。
-model: haiku
+model: sonnet
 argument-hint: [--draft] [--reviewer REVIEWER]
 allowed-tools:
   - Bash(git status*)
@@ -110,10 +110,3 @@ gh pr view --web
 - レビュー後にマージする場合 → /gh-pr-merge
 - 状態を確認する場合 → /git-info
 ```
-
-## ユーザーへの質問
-
-選択肢を提示する場合は `AskUserQuestion` ツールを使用する。
-
-- 2-4択の明確な選択肢がある場合に使用
-- 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問

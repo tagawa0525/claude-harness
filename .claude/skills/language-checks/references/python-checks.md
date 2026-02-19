@@ -2,8 +2,6 @@
 
 Pythonプロジェクトで実行する品質チェック。
 
-詳細情報は [python-checks-detail.md](./python-checks-detail.md) を参照。
-
 ## 1. Format Check (ruff format)
 
 ```bash
@@ -79,3 +77,19 @@ pytest -n auto                         # 並列実行
 | ruff format | `--check .`  | `.`       |
 | ruff check  | `.`          | `--fix .` |
 | pytest      | (なし)       | -         |
+
+## トラブルシューティング
+
+### テストが見つからない
+
+```bash
+pytest tests/           # ディレクトリ明示
+pytest --collect-only   # 発見ログ表示
+```
+
+### インポートエラー
+
+```bash
+PYTHONPATH=. pytest     # パス追加
+pip install -e .        # 開発モード
+```

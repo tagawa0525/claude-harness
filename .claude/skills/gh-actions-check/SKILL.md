@@ -2,6 +2,7 @@
 name: gh-actions-check
 description: GitHub Actionsの実行状況を確認。Copilotレビュー待ちやCI失敗時の診断に。
 model: haiku
+context: fork
 argument-hint: [PR番号 | ブランチ名]
 allowed-tools:
   - Bash(gh *)
@@ -31,13 +32,8 @@ git branch --show-current
 # ブランチ指定の場合
 gh run list --branch <branch> --limit 5
 
-# PR番号指定の場合（厳密なフィルタ）
-gh run list --limit 50 \
-  --json databaseId,headBranch,status,conclusion,workflowName,createdAt \
-  --jq '.[]
-    | select(.headBranch | startswith("refs/pull/<pr_number>/"))
-    | {run_id: .databaseId, workflow: .workflowName, status, conclusion,
-       created: .createdAt}'
+# PR番号指定の場合
+gh run list --limit 10 2>&1 | grep "refs/pull/<pr_number>"
 ```
 
 確認ポイント:
@@ -51,11 +47,7 @@ gh run list --limit 50 \
 
 ```bash
 gh run view <run_id> --json jobs \
-  --jq '.jobs[]
-    | select(.conclusion=="failure")
-    | {name, steps: [.steps[]
-      | select(.conclusion=="failure")
-      | .name]}'
+  --jq '.jobs[] | select(.conclusion=="failure") | {name, steps: [.steps[] | select(.conclusion=="failure") | .name]}'
 ```
 
 ## Step 4: 失敗ステップの詳細ログ
@@ -98,10 +90,3 @@ GitHub Actions 状況:
 - 原因: <分類>
 - 推奨対応: <対応>
 ```
-
-## ユーザーへの質問
-
-選択肢を提示する場合は `AskUserQuestion` ツールを使用する。
-
-- 2-4択の明確な選択肢がある場合に使用
-- 自由入力が必要な場合は通常のテキスト質問

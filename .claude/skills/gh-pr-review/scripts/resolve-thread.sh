@@ -24,14 +24,16 @@ if gh extension list | grep -q 'pr-review'; then
     --thread-id "$THREAD_NODE_ID"
 else
   # GraphQL API でスレッドを解決
-  gh api graphql -f query="
-    mutation {
-      resolveReviewThread(input: {threadId: \"${THREAD_NODE_ID}\"}) {
+  gh api graphql \
+    -f threadId="$THREAD_NODE_ID" \
+    -f query='
+    mutation($threadId: ID!) {
+      resolveReviewThread(input: {threadId: $threadId}) {
         thread {
           id
           isResolved
         }
       }
     }
-  " --jq '.data.resolveReviewThread.thread'
+  ' --jq '.data.resolveReviewThread.thread'
 fi

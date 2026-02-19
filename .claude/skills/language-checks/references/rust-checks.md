@@ -2,8 +2,6 @@
 
 Rustプロジェクトで実行する品質チェック。
 
-詳細情報は [rust-checks-detail.md](./rust-checks-detail.md) を参照。
-
 ## 1. Format Check (cargo fmt)
 
 ```bash
@@ -73,3 +71,19 @@ cargo test
 | cargo fmt    | `--check`                      | (引数なし) |
 | cargo clippy | `--all-targets -- -D warnings` | -          |
 | cargo test   | (引数なし)                     | -          |
+
+## トラブルシューティング
+
+### "cargo fmt not found" / "cargo clippy not found"
+
+```bash
+rustup component add rustfmt
+rustup component add clippy
+```
+
+### テストが遅い
+
+```bash
+cargo test -- --test-threads=1  # 並列実行数を制限
+cargo test test_name            # 特定テストのみ
+```

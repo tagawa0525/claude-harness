@@ -1,8 +1,8 @@
 ---
 name: gh-pr-merge
 description: GitHub PRをマージ。マージ後のブランチ削除やworktreeクリーンアップも対応。
-model: haiku
-argument-hint: [PR番号] [--squash] [--rebase] [--delete]
+model: sonnet
+argument-hint: [PR番号] [--delete]
 allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)
@@ -36,7 +36,6 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 ### マージ可能性チェック
 
 - CIステータス: 全てパスしているか
-  - CI失敗やCopilotレビュー未到着時は `/gh-actions-check` で診断
 - レビュー: 承認されているか
 - コンフリクト: なしか
 
@@ -156,9 +155,7 @@ git worktree remove [path]
 
 ```bash
 # ブランチが存在する場合のみ削除
-if git show-ref --verify --quiet "refs/heads/[branch]"; then
-  git branch -d [branch]
-fi
+git branch -d [branch] 2>/dev/null || true
 ```
 
 ## 完了確認
@@ -180,10 +177,3 @@ git worktree list
 
 現在の状態を確認: /git-info
 ```
-
-## ユーザーへの質問
-
-選択肢を提示する場合は `AskUserQuestion` ツールを使用する。
-
-- 2-4択の明確な選択肢がある場合に使用
-- 自由入力が必要な場合（ブランチ名など）は通常のテキスト質問
