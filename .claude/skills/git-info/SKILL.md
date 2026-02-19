@@ -2,6 +2,7 @@
 name: git-info
 description: 現在のGit状態を俯瞰表示。ブランチ、変更、コミット、PR、worktree、stashを一覧。
 model: haiku
+context: fork
 allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)

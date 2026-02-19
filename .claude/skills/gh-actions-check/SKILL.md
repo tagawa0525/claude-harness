@@ -2,6 +2,7 @@
 name: gh-actions-check
 description: GitHub Actionsの実行状況を確認。Copilotレビュー待ちやCI失敗時の診断に。
 model: haiku
+context: fork
 argument-hint: [PR番号 | ブランチ名]
 allowed-tools:
   - Bash(gh *)

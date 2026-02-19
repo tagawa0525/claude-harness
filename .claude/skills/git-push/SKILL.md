@@ -2,6 +2,7 @@
 name: git-push
 description: ローカルコミットをリモートにプッシュ。main/masterへの直接プッシュは禁止。
 model: haiku
+context: fork
 argument-hint: [--force]
 allowed-tools:
   - Bash(git status*)
