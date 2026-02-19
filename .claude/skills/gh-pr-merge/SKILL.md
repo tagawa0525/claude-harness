@@ -1,7 +1,7 @@
 ---
 name: gh-pr-merge
 description: GitHub PRをマージ。マージ後のブランチ削除やworktreeクリーンアップも対応。
-model: haiku
+model: sonnet
 argument-hint: [PR番号] [--delete]
 allowed-tools:
   - Bash(git status*)
