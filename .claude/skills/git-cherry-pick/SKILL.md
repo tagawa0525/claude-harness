@@ -84,11 +84,19 @@ git cherry-pick [commit-hash]
 git switch [source-branch]
 
 # rebase --onto で対象コミットをスキップ
+# 構文: git rebase --onto <newbase> <upstream> [<branch>]
+#   newbase  = [commit-hash]^  (除去対象の親 = 新しい接続先)
+#   upstream = [commit-hash]   (除去対象自体 = ここ以降のコミットを移動)
+#   branch   = 省略時は HEAD (現在のブランチ)
 git rebase --onto [commit-hash]^ [commit-hash]
 ```
 
-注: `[commit-hash]^` は除去対象の親コミット、`[commit-hash]` は除去対象自体。
-これにより除去対象をスキップしてその後のコミットを再適用する。
+例: ブランチが `A - B - C - D`（Cを除去したい）の場合:
+
+```bash
+git rebase --onto C^ C
+# 結果: A - B - D'
+```
 
 ## 注意事項
 
