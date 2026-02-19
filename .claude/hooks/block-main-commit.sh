@@ -27,11 +27,12 @@ CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
 
 # main または master ブランチの場合はブロック
 if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
-  cat <<RESULT
-{
-  "decision": "block",
-  "reason": "mainブランチへの直接コミットは禁止されています。featureブランチを作成してください: /git-branch"
-}
-RESULT
+  jq -n '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "mainブランチへの直接コミットは禁止されています。featureブランチを作成してください: /git-branch"
+    }
+  }'
   exit 0
 fi
