@@ -31,13 +31,8 @@ git branch --show-current
 # ブランチ指定の場合
 gh run list --branch <branch> --limit 5
 
-# PR番号指定の場合（厳密なフィルタ）
-gh run list --limit 50 \
-  --json databaseId,headBranch,status,conclusion,workflowName,createdAt \
-  --jq '.[]
-    | select(.headBranch | startswith("refs/pull/<pr_number>/"))
-    | {run_id: .databaseId, workflow: .workflowName, status, conclusion,
-       created: .createdAt}'
+# PR番号指定の場合
+gh run list --limit 10 2>&1 | grep "refs/pull/<pr_number>"
 ```
 
 確認ポイント:
@@ -51,11 +46,7 @@ gh run list --limit 50 \
 
 ```bash
 gh run view <run_id> --json jobs \
-  --jq '.jobs[]
-    | select(.conclusion=="failure")
-    | {name, steps: [.steps[]
-      | select(.conclusion=="failure")
-      | .name]}'
+  --jq '.jobs[] | select(.conclusion=="failure") | {name, steps: [.steps[] | select(.conclusion=="failure") | .name]}'
 ```
 
 ## Step 4: 失敗ステップの詳細ログ

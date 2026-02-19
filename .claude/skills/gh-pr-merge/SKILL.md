@@ -36,7 +36,6 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 ### マージ可能性チェック
 
 - CIステータス: 全てパスしているか
-  - CI失敗やCopilotレビュー未到着時は `/gh-actions-check` で診断
 - レビュー: 承認されているか
 - コンフリクト: なしか
 
@@ -156,9 +155,7 @@ git worktree remove [path]
 
 ```bash
 # ブランチが存在する場合のみ削除
-if git show-ref --verify --quiet "refs/heads/[branch]"; then
-  git branch -d [branch]
-fi
+git branch -d [branch] 2>/dev/null || true
 ```
 
 ## 完了確認
