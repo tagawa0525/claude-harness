@@ -93,7 +93,7 @@ gh pr status 2>/dev/null || echo "(GitHub CLI未認証)"
 
 - 未コミット変更がある → `/git-commit`
 - 未プッシュコミットがある → `/git-push`
-- PRがない → `/git-pull-request`
+- PRがない → `/gh-pr-create`
 - mainブランチで作業中 → `/git-branch` または `/git-worktree`
 - 不要なworktreeがある → `/git-worktree --remove`
 

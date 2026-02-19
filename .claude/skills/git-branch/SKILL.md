@@ -96,7 +96,7 @@ git branch -vv
 1. コードを編集
 2. /git-commit でコミット
 3. /git-push でプッシュ
-4. /git-pull-request でPR作成
+4. /gh-pr-create でPR作成
 ```
 
 ## ユーザーへの質問

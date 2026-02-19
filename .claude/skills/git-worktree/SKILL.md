@@ -103,7 +103,7 @@ git worktree prune
 
 - `/git-branch` - 通常のブランチ切り替え（同じディレクトリ）
 - `/git-info` - 不要なworktreeの検出
-- `/git-merge` - マージ後にworktreeを自動削除
+- `/gh-pr-merge` - マージ後にworktreeを自動削除
 
 ## ユーザーへの質問
 
