@@ -142,8 +142,6 @@ command -v statix >/dev/null 2>&1 || echo "statix not found"
 
 ## 参照
 
-詳細なチェック項目については、以下を参照:
-
 - [Rust Checks](./references/rust-checks.md)
 - [Python Checks](./references/python-checks.md)
 - [Nix Checks](./references/nix-checks.md)
