@@ -2,7 +2,7 @@
 name: gh-pr-merge
 description: GitHub PRをマージ。マージ後のブランチ削除やworktreeクリーンアップも対応。
 model: haiku
-argument-hint: [PR番号] [--squash] [--rebase] [--delete]
+argument-hint: [PR番号] [--delete]
 allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)
