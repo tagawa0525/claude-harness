@@ -51,7 +51,7 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 → 現在のブランチに関連するPRを特定
 
 ```bash
-.claude/skills/gh-pr-review/scripts/get-pr-info.sh
+~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh
 ```
 
 ---
@@ -60,10 +60,10 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 ```bash
 # 未解決コメントのみ取得（--unresolved オプション時）
-.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number} --unresolved
+~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number} --unresolved
 
 # 全コメント取得
-.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number}
+~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number}
 ```
 
 ---
@@ -159,14 +159,14 @@ git push
 ### コメントへの返信
 
 ```bash
-.claude/skills/gh-pr-review/scripts/reply-to-comment.sh \
+~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh \
   {pr_number} {comment_id} "{返信内容}"
 ```
 
 ### スレッドを解決済みにする
 
 ```bash
-.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {thread_node_id}
+~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {thread_node_id}
 ```
 
 ### 一般コメントとして返信（スレッドに属さない場合）
