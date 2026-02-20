@@ -162,8 +162,9 @@ in
   # ===========================================================================
 
   # Claude Code グローバル設定の同期
-  # flakeソースの .claude を ~/.claude にコピー（既存ファイルは上書きしない）
-  # これにより、Nixで管理された初期設定を提供しつつ、ユーザーが自由に追加・編集可能
+  # flakeソースの .claude を ~/.claude に同期
+  # - commands: --ignore-existing でユーザーカスタマイズを保護
+  # - skills/hooks: 常に上書き（flakeソースが正）。手動追加ファイルは保持
   # claudeCodeSourceがnullの場合は何もしない（オプトイン）
   home.activation.claudeCodeSetup = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     CLAUDE_DIR="$HOME/.claude"
@@ -174,21 +175,21 @@ in
     ${lib.optionalString (claudeCodeSource != null) ''
       SOURCE_DIR="${claudeCodeSource}/.claude"
 
-      # commands と skills を再帰的にコピー（既存ファイルは上書きしない）
-      # --ignore-existing: 既存ファイルを上書きしない（ユーザーのカスタマイズを保護）
-      # -a: アーカイブモード（パーミッション等を保持）
+      # commands: ユーザーカスタマイズを保護（--ignore-existing で既存ファイルは上書きしない）
       if [ -d "$SOURCE_DIR/commands" ]; then
         ${pkgs.rsync}/bin/rsync -a --ignore-existing "$SOURCE_DIR/commands/" "$CLAUDE_DIR/commands/"
         $DRY_RUN_CMD echo "Claude Code: commands synced to ~/.claude/"
       fi
 
+      # skills: flakeソースで常に上書き（手動追加ファイルは --delete なしのため保持される）
       if [ -d "$SOURCE_DIR/skills" ]; then
-        ${pkgs.rsync}/bin/rsync -a --ignore-existing "$SOURCE_DIR/skills/" "$CLAUDE_DIR/skills/"
+        ${pkgs.rsync}/bin/rsync -a "$SOURCE_DIR/skills/" "$CLAUDE_DIR/skills/"
         $DRY_RUN_CMD echo "Claude Code: skills synced to ~/.claude/"
       fi
 
+      # hooks: flakeソースで常に上書き（手動追加ファイルは --delete なしのため保持される）
       if [ -d "$SOURCE_DIR/hooks" ]; then
-        ${pkgs.rsync}/bin/rsync -a --ignore-existing "$SOURCE_DIR/hooks/" "$CLAUDE_DIR/hooks/"
+        ${pkgs.rsync}/bin/rsync -a "$SOURCE_DIR/hooks/" "$CLAUDE_DIR/hooks/"
         $DRY_RUN_CMD echo "Claude Code: hooks synced to ~/.claude/"
       fi
 
