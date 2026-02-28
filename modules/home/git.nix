@@ -3,7 +3,7 @@
 # =============================================================================
 # Git, Git Hooks, delta, GitHub CLI の設定
 # =============================================================================
-{ pkgs, ... }:
+{ ... }:
 
 {
   # ===========================================================================
@@ -118,6 +118,16 @@
         echo "🔍 Checking Python lint..."
         if ! ruff check $PY_FILES 2>/dev/null; then
           echo "❌ Python lint failed. Run: ruff check --fix <files>"
+          check_failed=1
+        fi
+      fi
+
+      # Markdown ファイルのチェック
+      MD_FILES=$(echo "$STAGED_FILES" | grep '\.md$' || true)
+      if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
+        echo "🔍 Checking Markdown lint..."
+        if ! echo "$MD_FILES" | xargs markdownlint 2>/dev/null; then
+          echo "❌ Markdown lint failed. Run: markdownlint --fix <files>"
           check_failed=1
         fi
       fi
