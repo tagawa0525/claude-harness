@@ -187,7 +187,7 @@
         if [ -z "''${DRY_RUN_CMD:-}" ]; then
           tmp_conf="$(mktemp "$HOME/.config/nix/nix.conf.XXXXXX")"
           if [ -f "$HOME/.config/nix/nix.conf" ]; then
-            grep -v '^access-tokens[[:space:]]*=' "$HOME/.config/nix/nix.conf" > "$tmp_conf"
+            grep -v '^access-tokens[[:space:]]*=' "$HOME/.config/nix/nix.conf" > "$tmp_conf" || true
           fi
           echo "access-tokens = github.com=$TOKEN" >> "$tmp_conf"
           chmod 600 "$tmp_conf"
