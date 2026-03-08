@@ -3,7 +3,7 @@
 # =============================================================================
 # Git, Git Hooks, delta, GitHub CLI の設定
 # =============================================================================
-{ ... }:
+{ lib, pkgs, ... }:
 
 {
   # ===========================================================================
@@ -173,4 +173,19 @@
     };
     gitCredentialHelper.enable = true;
   };
+
+  # ===========================================================================
+  # Nix の GitHub access-tokens 自動設定
+  # ===========================================================================
+  # gh auth のトークンを ~/.config/nix/nix.conf に書き出し、
+  # nix flake update 時の rate limit (60回/時→5000回/時) を回避する
+  home.activation.nixGithubToken = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    if ${pkgs.gh}/bin/gh auth status &>/dev/null; then
+      TOKEN=$(${pkgs.gh}/bin/gh auth token)
+      if [ -n "$TOKEN" ]; then
+        mkdir -p ~/.config/nix
+        echo "access-tokens = github.com=$TOKEN" > ~/.config/nix/nix.conf
+      fi
+    fi
+  '';
 }
