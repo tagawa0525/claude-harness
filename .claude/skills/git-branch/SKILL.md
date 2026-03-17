@@ -1,7 +1,7 @@
 ---
 name: git-branch
 description: featureブランチを作成して作業開始。mainブランチからのみ実行可能。
-model: sonnet
+model: opus
 allowed-tools:
   - Bash(git *)
   - Read

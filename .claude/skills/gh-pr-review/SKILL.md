@@ -1,7 +1,7 @@
 ---
 name: gh-pr-review
 description: PRレビューコメントを確認し対応。コード修正、返信、resolveを実行。
-model: sonnet
+model: opus
 argument-hint: [PR番号 | コメントURL] [--unresolved]
 allowed-tools:
   - Bash(git *)
