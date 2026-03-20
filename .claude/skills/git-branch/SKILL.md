@@ -36,10 +36,11 @@ allowed-tools:
 `docs/plans/` に計画書があるか確認する:
 
 ```bash
-ls -t docs/plans/*.md 2>/dev/null | head -5
+# 連番プレフィックスのないファイル（ランダム名）のみ抽出
+ls -t docs/plans/*.md 2>/dev/null | grep -v '/[0-9]\{3\}_' | head -5
 ```
 
-計画書が見つかった場合、最新のファイル（ランダム名のもの）を読み、タイトル（`# ...` 行）から意図を把握する。
+ランダム名の計画書が見つかった場合、その内容を読み、タイトル（`# ...` 行）から意図を把握する。
 計画書の情報はブランチ名生成の最優先ソースとして使用する。
 
 ### Step 2: 変更内容の分析
@@ -97,8 +98,8 @@ git switch -c [branch-name] origin/main
 ### リモート追跡の有無で分岐
 
 ```bash
-# リモートにpush済みかチェック
-git ls-remote --heads origin [current-branch]
+# リモートにpush済みかチェック（出力があればpush済み）
+git ls-remote --heads origin [current-branch] | grep -q .
 ```
 
 **リモートにpush済みの場合:**
