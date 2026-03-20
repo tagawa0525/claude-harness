@@ -80,13 +80,13 @@ $ARGUMENTS が指定されている場合はそれをコミットメッセージ
 
 ```bash
 git diff --cached --name-only --diff-filter=ACM | grep '\.md$' | \
-  xargs python3 ~/.claude/skills/git-commit/scripts/fix-markdown-lint.py
+  xargs -r python3 ~/.claude/skills/git-commit/scripts/fix-markdown-lint.py
 ```
 
 修正されたファイルを再ステージ:
 
 ```bash
-git diff --cached --name-only --diff-filter=ACM | grep '\.md$' | xargs git add
+git diff --cached --name-only --diff-filter=ACM | grep '\.md$' | xargs -r git add
 ```
 
 このスクリプトは `markdownlint --fix` では対応できない以下を修正:
