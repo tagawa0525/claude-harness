@@ -1,6 +1,6 @@
 ---
 name: git-branch
-description: featureブランチを作成して作業開始。mainブランチからのみ実行可能。
+description: featureブランチの作成・リネーム。変更内容から適切なブランチ名を自動生成。
 model: opus
 allowed-tools:
   - Bash(git *)
@@ -11,26 +11,21 @@ allowed-tools:
 
 # Git Branch Command
 
-featureブランチを作成して作業を開始する。
+変更内容から適切なブランチ名を自動生成し、ブランチの作成またはリネームを行う。
 
 ## 現在の状態
 
 !`git branch -vv`
 !`git status --short`
+!`git log --oneline -5`
 !`git fetch -q; git log --oneline HEAD..origin/main 2>/dev/null | head -3`
 
-## 動作条件
+## 動作モードの判定
 
-このコマンドは **mainまたはmasterブランチ** で実行された場合のみ動作する。
+現在のブランチによって動作が変わる:
 
-### 既にfeatureブランチにいる場合
-
-```text
-⚠️ 既にfeatureブランチ「[current-branch]」で作業中です。
-
-新しいブランチを作成する場合は、先にmainに戻ってください:
-  git switch main
-```
+- **mainブランチ** → 新規featureブランチを作成
+- **featureブランチ** → 現在のブランチをリネーム
 
 ## ブランチ名の自動生成
 
@@ -40,9 +35,14 @@ featureブランチを作成して作業を開始する。
 
 以下を確認してブランチ名を決定:
 
-1. ステージされた変更: `git diff --cached --name-only`
-2. 未ステージの変更: `git diff --name-only`
-3. 変更ファイルの内容を読んで意図を把握
+- mainブランチの場合:
+  1. ステージされた変更: `git diff --cached --name-only`
+  2. 未ステージの変更: `git diff --name-only`
+  3. 変更ファイルの内容を読んで意図を把握
+- featureブランチの場合:
+  1. mainとの差分: `git log --oneline main..HEAD`
+  2. 未コミットの変更: `git diff --name-only`
+  3. コミットメッセージとファイルの内容から全体の意図を把握
 
 ### Step 2: 命名規則に従い候補を生成
 
@@ -57,7 +57,7 @@ featureブランチを作成して作業を開始する。
 2-3個の候補を生成し、ユーザーに選択させる。
 「Other」で自由入力も可能。
 
-## ブランチ作成
+## mainブランチの場合: ブランチ作成
 
 ### 起点の確認
 
@@ -81,20 +81,48 @@ git switch -c [branch-name]
 git switch -c [branch-name] origin/main
 ```
 
+## featureブランチの場合: リネーム
+
+### リモート追跡の有無で分岐
+
+```bash
+# リモートにpush済みかチェック
+git ls-remote --heads origin [current-branch]
+```
+
+**リモートにpush済みの場合:**
+
+```text
+⚠️ リモートブランチが存在します。リネームするとリモートも更新されます。
+
+続行しますか？
+```
+
+承認後:
+
+```bash
+git branch -m [old-name] [new-name]
+git push origin :[old-name] [new-name]
+git push -u origin [new-name]
+```
+
+**ローカルのみの場合:**
+
+```bash
+git branch -m [old-name] [new-name]
+```
+
 ## 完了確認
 
 ```bash
 git branch -vv
 ```
 
-作成後のメッセージ:
-
 ```text
-✅ ブランチ「[branch-name]」を作成しました。
+✅ ブランチ「[branch-name]」を[作成|リネーム]しました。
 
 次のステップ:
-1. コードを編集
-2. /git-commit でコミット
-3. /git-push でプッシュ
-4. /gh-pr-create でPR作成
+- コードを編集 → /git-commit
+- プッシュ → /git-push
+- PR作成 → /gh-pr-create
 ```
