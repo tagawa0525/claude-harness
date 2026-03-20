@@ -125,9 +125,12 @@
       # Markdown ファイルのチェック
       MD_FILES=$(echo "$STAGED_FILES" | grep '\.md$' || true)
       if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
+        echo "🔧 Auto-fixing Markdown lint..."
+        echo "$MD_FILES" | xargs markdownlint --fix 2>/dev/null || true
+        echo "$MD_FILES" | xargs git add
         echo "🔍 Checking Markdown lint..."
         if ! echo "$MD_FILES" | xargs markdownlint 2>/dev/null; then
-          echo "❌ Markdown lint failed. Run: markdownlint --fix <files>"
+          echo "❌ Markdown lint failed (unfixable issues remain)"
           check_failed=1
         fi
       fi
