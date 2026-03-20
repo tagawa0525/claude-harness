@@ -132,6 +132,7 @@ git branch -d [branch]
 git push origin --delete [branch]
 
 # 4. main を最新化
+git switch main
 git fetch --prune
 git pull
 ```
