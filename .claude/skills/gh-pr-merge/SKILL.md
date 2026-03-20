@@ -109,7 +109,7 @@ PR: #42
 
 ### マージコミット方式のみ（必須）
 
-**マージコミットを作成してPRの履歴を保持する。**
+⚠️ **squash、rebase は基本禁止**。マージの記録を残すため、常にマージコミット方式を使用する。
 
 ```bash
 gh pr merge [PR番号] --merge \
@@ -117,45 +117,24 @@ gh pr merge [PR番号] --merge \
   --body "[生成したbody]"
 ```
 
-⚠️ **squash、rebase は基本禁止**。マージの記録を残すため、常にマージコミット方式を使用する。
+## クリーンアップ
 
-## ブランチ削除（--delete 指定時）
-
-マージ後にリモートブランチを削除:
+マージ完了後、以下を順に実行する。各ステップは前のステップに依存しないか、依存する場合は安全な順序で並んでいる。
 
 ```bash
-gh pr merge [PR番号] --delete-branch
-```
+# 1. worktree を削除（ブランチのロックを解放）
+git worktree remove [path]          # 該当がなければスキップ
 
-## ローカルの同期とクリーンアップ
+# 2. ローカルブランチを削除
+git branch -d [branch]
 
-マージ完了後:
+# 3. リモートブランチを削除
+git push origin --delete [branch]
 
-### 1. ローカルを最新化
-
-```bash
-git fetch --prune
+# 4. main を最新化
 git switch main
+git fetch --prune
 git pull
-```
-
-### 2. 関連worktreeの削除
-
-マージされたブランチに関連するworktreeがあれば削除:
-
-```bash
-# worktree一覧を確認
-git worktree list
-
-# 該当するworktreeがあれば削除
-git worktree remove [path]
-```
-
-### 3. ローカルブランチの削除
-
-```bash
-# ブランチが存在する場合のみ削除
-git branch -d [branch] 2>/dev/null || true
 ```
 
 ## 完了確認
@@ -163,7 +142,6 @@ git branch -d [branch] 2>/dev/null || true
 ```bash
 gh pr view [PR番号] --json state,mergedAt,mergedBy
 git log --oneline -5
-git worktree list
 ```
 
 ## 完了メッセージ
@@ -172,8 +150,8 @@ git worktree list
 ✅ PRをマージしました。
 
 クリーンアップ完了:
-- ローカルブランチ [branch] を削除
 - worktree [path] を削除（該当する場合）
+- ブランチ [branch] を削除
 
 現在の状態を確認: /git-info
 ```

@@ -1,6 +1,6 @@
 ---
 name: gh-pr-review
-description: PRレビューコメントを確認し対応。コード修正、返信、resolveを実行。
+description: PRレビューコメントを確認し対応。コード修正、返信を実行。
 model: opus
 argument-hint: [PR番号 | コメントURL] [--unresolved]
 allowed-tools:
@@ -26,7 +26,6 @@ PRについたレビューコメントを確認し、対応する。
 - `get-pr-info.sh [pr_number]` - PR情報を取得
 - `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
-- `resolve-thread.sh <pr_number> <thread_node_id>` - スレッドを解決
 
 ## 事前確認
 
@@ -161,12 +160,6 @@ git push
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh \
   {pr_number} {comment_id} "{返信内容}"
-```
-
-### スレッドを解決済みにする
-
-```bash
-~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {thread_node_id}
 ```
 
 ### 一般コメントとして返信（スレッドに属さない場合）
