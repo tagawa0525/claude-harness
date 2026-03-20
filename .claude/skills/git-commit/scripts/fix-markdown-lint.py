@@ -217,13 +217,22 @@ def guess_language(content_lines: list[str]) -> str:
 def fix_markdown(content: str) -> str:
     lines = content.split("\n")
 
-    # Pass 1: Format tables (MD060 - CJK aware)
+    # Pass 1: Format tables (MD060 - CJK aware), skip fenced code blocks
     output: list[str] = []
     i = 0
+    in_code = False
     while i < len(lines):
         line = lines[i]
 
-        if is_table_row(line) and i + 1 < len(lines) and is_separator_row(lines[i + 1]):
+        if line.strip().startswith("```"):
+            in_code = not in_code
+
+        if (
+            not in_code
+            and is_table_row(line)
+            and i + 1 < len(lines)
+            and is_separator_row(lines[i + 1])
+        ):
             table = []
             j = i
             while j < len(lines) and is_table_row(lines[j]):
