@@ -10,6 +10,7 @@ allowed-tools:
   - Bash(git log*)
   - Bash(git add*)
   - Bash(git commit*)
+  - Bash(python3*)
 ---
 
 # Git Commit Command
@@ -72,6 +73,26 @@ $ARGUMENTS が指定されている場合はそれをコミットメッセージ
 
 - **Type**: feat, fix, docs, style, refactor, test, chore
 - **Subject**: 50文字以内、命令形、先頭小文字、末尾ピリオドなし
+
+## Markdown自動修正（コミット前）
+
+ステージされたファイルに `.md` ファイルが含まれる場合、コミット前に自動修正を実行:
+
+```bash
+git diff --cached --name-only --diff-filter=ACM | grep '\.md$' | \
+  xargs python3 ~/.claude/skills/git-commit/scripts/fix-markdown-lint.py
+```
+
+修正されたファイルを再ステージ:
+
+```bash
+git diff --cached --name-only --diff-filter=ACM | grep '\.md$' | xargs git add
+```
+
+このスクリプトは `markdownlint --fix` では対応できない以下を修正:
+
+- **MD040**: コードブロックの言語をヒューリスティックで推測・付与
+- **MD060**: CJK全角文字を考慮したテーブル列幅の整列
 
 ## コミット実行
 
