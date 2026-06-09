@@ -1,7 +1,6 @@
 ---
 name: git-cherry-pick
 description: ブランチ間でコミットを移動（元ブランチからの除去含む）。mainで作業してしまった変更を移す場合などに。
-model: opus
 argument-hint: <commit> [--to <branch>]
 allowed-tools:
   - Bash(git status*)

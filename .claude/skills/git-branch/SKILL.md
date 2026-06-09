@@ -1,7 +1,6 @@
 ---
 name: git-branch
 description: featureブランチの作成・リネーム。変更内容から適切なブランチ名を自動生成。
-model: opus
 allowed-tools:
   - Bash(git *)
   - Read
