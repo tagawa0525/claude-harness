@@ -6,7 +6,8 @@ Nixプロジェクトで実行する品質チェック。
 
 ```bash
 # git管理下の全 .nix ファイルを対象（*.nix だけではサブディレクトリが漏れる）
-git ls-files '*.nix' | xargs -r nixpkgs-fmt --check
+# NUL区切り（-z/-0）でスペースを含むパスにも対応
+git ls-files -z '*.nix' | xargs -0 -r nixpkgs-fmt --check
 ```
 
 **目的**: Nixコードが標準的なフォーマットスタイルに従っているか確認
@@ -16,7 +17,7 @@ git ls-files '*.nix' | xargs -r nixpkgs-fmt --check
 **失敗時の対応**:
 
 ```bash
-git ls-files '*.nix' | xargs -r nixpkgs-fmt
+git ls-files -z '*.nix' | xargs -0 -r nixpkgs-fmt
 ```
 
 ## 2. Static Analysis (statix)

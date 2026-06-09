@@ -75,7 +75,7 @@ pytest
 
 ```bash
 # 1. フォーマットチェック（サブディレクトリ含む全 .nix ファイル）
-git ls-files '*.nix' | xargs -r nixpkgs-fmt --check
+git ls-files -z '*.nix' | xargs -0 -r nixpkgs-fmt --check
 
 # 2. 静的解析
 statix check
