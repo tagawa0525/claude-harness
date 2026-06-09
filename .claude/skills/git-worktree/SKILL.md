@@ -43,6 +43,7 @@ git worktree add ../[repo-name]-[branch-name] -b [branch-name]
 
 - リポジトリが `myapp` でブランチが `feat/login` の場合
 - → `../myapp-feat-login`
+- ブランチ名に含まれる `/` はディレクトリ名では `-` に変換する
 
 ### 新規worktree作成（既存ブランチ）
 

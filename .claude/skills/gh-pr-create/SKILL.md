@@ -1,7 +1,6 @@
 ---
 name: gh-pr-create
 description: GitHub PRを作成。変更内容からPRタイトルと本文を自動生成。
-model: opus
 argument-hint: [--draft] [--reviewer REVIEWER]
 allowed-tools:
   - Bash(git status*)
@@ -95,10 +94,11 @@ gh pr create --reviewer [REVIEWER] --title "[タイトル]" --body "[本文]"
 
 ## 完了
 
-PR作成後、URLを表示:
+`gh pr create` が出力したURLを報告する（ブラウザは開かない）。
+URLを取り直す場合:
 
 ```bash
-gh pr view --web
+gh pr view --json url -q .url
 ```
 
 ## 次のステップ
@@ -107,6 +107,8 @@ gh pr view --web
 ✅ PRを作成しました: [URL]
 
 次のステップ:
+- Copilotレビュー/CIの状況を確認する場合 → /gh-actions-check
+- レビューコメントに対応する場合 → /gh-pr-review
 - レビュー後にマージする場合 → /gh-pr-merge
 - 状態を確認する場合 → /git-info
 ```

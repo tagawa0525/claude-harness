@@ -1,17 +1,18 @@
 ---
 name: gh-pr-merge
 description: GitHub PRをマージ。マージ後のブランチ削除やworktreeクリーンアップも対応。
-model: opus
 argument-hint: [PR番号] [--delete]
 allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)
+  - Bash(git log*)
+  - Bash(git switch*)
   - Bash(git fetch*)
   - Bash(git pull*)
   - Bash(git worktree*)
+  - Bash(git push origin --delete*)
   - Bash(gh pr*)
   - Bash(gh auth*)
-  - Bash(rm -rf*)
 ---
 
 # GitHub PR Merge Command
@@ -36,7 +37,8 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 ### マージ可能性チェック
 
 - CIステータス: 全てパスしているか
-- レビュー: 承認されているか
+- レビュー: Copilot等の自動レビューが完了し、指摘事項に対応済みか
+  （レビューが来ない場合は /gh-actions-check で診断）
 - コンフリクト: なしか
 
 ## マージコミットメッセージの生成

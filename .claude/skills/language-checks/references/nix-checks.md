@@ -5,7 +5,9 @@ Nixプロジェクトで実行する品質チェック。
 ## 1. Format Check (nixpkgs-fmt)
 
 ```bash
-nixpkgs-fmt --check *.nix
+# git管理下の全 .nix ファイルを対象（*.nix だけではサブディレクトリが漏れる）
+# NUL区切り（-z/-0）でスペースを含むパスにも対応
+git ls-files -z '*.nix' | xargs -0 -r nixpkgs-fmt --check
 ```
 
 **目的**: Nixコードが標準的なフォーマットスタイルに従っているか確認
@@ -15,7 +17,7 @@ nixpkgs-fmt --check *.nix
 **失敗時の対応**:
 
 ```bash
-nixpkgs-fmt *.nix
+git ls-files -z '*.nix' | xargs -0 -r nixpkgs-fmt
 ```
 
 ## 2. Static Analysis (statix)
@@ -65,11 +67,11 @@ nix flake check --show-trace           # 詳細ログ
 
 ## クイックリファレンス
 
-| ツール      | チェック         | 自動修正 |
-| ----------- | ---------------- | -------- |
-| nixpkgs-fmt | `--check *.nix`  | `*.nix`  |
-| statix      | `check`          | `fix`    |
-| nix flake   | `check`          | -        |
+| ツール      | チェック           | 自動修正   |
+| ----------- | ------------------ | ---------- |
+| nixpkgs-fmt | `--check <files>`  | `<files>`  |
+| statix      | `check`            | `fix`      |
+| nix flake   | `check`            | -          |
 
 ## トラブルシューティング
 
