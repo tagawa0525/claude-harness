@@ -32,8 +32,11 @@ git branch --show-current
 # ブランチ指定の場合
 gh run list --branch <branch> --limit 5
 
-# PR番号指定の場合
-gh run list --limit 10 2>&1 | grep "refs/pull/<pr_number>"
+# PR番号指定の場合（チェック一覧を直接確認）
+gh pr checks <pr_number>
+
+# PR番号からheadブランチを特定してrun一覧を取得
+gh run list --branch "$(gh pr view <pr_number> --json headRefName -q .headRefName)" --limit 5
 ```
 
 確認ポイント:
