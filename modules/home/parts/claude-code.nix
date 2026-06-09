@@ -156,16 +156,22 @@ in
   # ===========================================================================
   home.packages = with pkgs; [
     llm-agents.claude-code # Claude Code CLI（自動更新）
+    rsync # claude-sync スクリプトの実行時依存
   ];
+
+  # .claude（commands/skills/hooks）を ~/.claude に手動同期するコマンド
+  # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）
+  home.file.".local/bin/claude-sync" = {
+    source = ../scripts/claude-sync.sh;
+    executable = true;
+  };
 
   # ===========================================================================
   # アクティベーションスクリプト
   # ===========================================================================
 
   # Claude Code グローバル設定の同期
-  # flakeソースの .claude を ~/.claude に同期
-  # - commands: --ignore-existing でユーザーカスタマイズを保護
-  # - skills/hooks: 常に上書き（flakeソースが正）。手動追加ファイルは保持
+  # flakeソースの .claude を ~/.claude に同期（ポリシーは scripts/claude-sync.sh を参照）
   # claudeCodeSourceがnullの場合は何もしない（オプトイン）
   home.activation.claudeCodeSetup = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     CLAUDE_DIR="$HOME/.claude"
@@ -174,28 +180,10 @@ in
     mkdir -p "$CLAUDE_DIR"
 
     ${lib.optionalString (claudeCodeSource != null) ''
-      SOURCE_DIR="${claudeCodeSource}/.claude"
-
-      # commands: ユーザーカスタマイズを保護（--ignore-existing で既存ファイルは上書きしない）
-      if [ -d "$SOURCE_DIR/commands" ]; then
-        ${pkgs.rsync}/bin/rsync -a --ignore-existing "$SOURCE_DIR/commands/" "$CLAUDE_DIR/commands/"
-        $DRY_RUN_CMD echo "Claude Code: commands synced to ~/.claude/"
-      fi
-
-      # skills: flakeソースで常に上書き（手動追加ファイルは --delete なしのため保持される）
-      if [ -d "$SOURCE_DIR/skills" ]; then
-        ${pkgs.rsync}/bin/rsync -a "$SOURCE_DIR/skills/" "$CLAUDE_DIR/skills/"
-        $DRY_RUN_CMD echo "Claude Code: skills synced to ~/.claude/"
-      fi
-
-      # hooks: flakeソースで常に上書き（手動追加ファイルは --delete なしのため保持される）
-      if [ -d "$SOURCE_DIR/hooks" ]; then
-        ${pkgs.rsync}/bin/rsync -a "$SOURCE_DIR/hooks/" "$CLAUDE_DIR/hooks/"
-        $DRY_RUN_CMD echo "Claude Code: hooks synced to ~/.claude/"
-      fi
-
-      # ファイルの書き込み権限を確保（Nix storeからコピーしたファイルは読み取り専用のため）
-      $DRY_RUN_CMD chmod -R u+w "$CLAUDE_DIR/commands" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/hooks" 2>/dev/null || true
+      # commands/skills/hooks の同期（claude-sync コマンドと共通実装）
+      # 同期ポリシーは modules/home/scripts/claude-sync.sh を参照
+      PATH="${pkgs.rsync}/bin:$PATH" $DRY_RUN_CMD ${pkgs.bash}/bin/bash \
+        ${../scripts/claude-sync.sh} "${claudeCodeSource}"
     ''}
 
     # 静的設定と hooks を settings.json に反映
