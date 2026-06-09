@@ -1,7 +1,6 @@
 ---
 name: gh-pr-review
 description: PRレビューコメントを確認し対応。コード修正、返信を実行。
-model: opus
 argument-hint: [PR番号 | コメントURL] [--unresolved]
 allowed-tools:
   - Bash(git *)
@@ -12,7 +11,7 @@ allowed-tools:
   - Grep
   - WebSearch
   - WebFetch
-  - Task
+  - Agent
 ---
 
 # GitHub PR Review Command
@@ -117,13 +116,19 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 #### (a) コード修正
 
 1. 対象ファイルを読み取り（Read）
-2. 関連コードを調査（Grep, Glob, Task で Explore）
+2. 関連コードを調査（Grep, Glob, または Agent ツールで Explore）
 3. 外部情報が必要なら調査（WebSearch, WebFetch）
 4. 修正を実施（Edit）
 
 #### (b) ビルド/テスト確認
 
+プロジェクトの言語に応じたチェックを実行する（コマンドの詳細は language-checks スキルを参照）:
+
 ```bash
+# 例: Nix の場合
+git ls-files '*.nix' | xargs -r nixpkgs-fmt --check && statix check
+
+# 例: Rust の場合
 cargo check && cargo test
 ```
 
