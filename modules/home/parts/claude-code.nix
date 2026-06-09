@@ -156,6 +156,7 @@ in
   # ===========================================================================
   home.packages = with pkgs; [
     llm-agents.claude-code # Claude Code CLI（自動更新）
+    rsync # claude-sync スクリプトの実行時依存
   ];
 
   # .claude（commands/skills/hooks）を ~/.claude に手動同期するコマンド
