@@ -1,6 +1,8 @@
 ---
 name: gh-pr-merge
 description: GitHub PRをマージ。マージ後のブランチ削除やworktreeクリーンアップも対応。
+# マージコミットメッセージ（Why/What/Impact）生成の品質を優先
+model: sonnet
 argument-hint: [PR番号]
 allowed-tools:
   - Bash(git status*)

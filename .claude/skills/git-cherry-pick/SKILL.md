@@ -1,6 +1,7 @@
 ---
 name: git-cherry-pick
 description: ブランチ間でコミットを移動（元ブランチからの除去含む）。mainで作業してしまった変更を移す場合などに。
+# model 未指定: 履歴書き換えとコンフリクト解決の判断が必要なためセッションモデルを継承する
 argument-hint: <commit> [--to <branch>]
 allowed-tools:
   - Bash(git status*)

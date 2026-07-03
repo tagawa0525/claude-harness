@@ -1,6 +1,8 @@
 ---
 name: gh-pr-create
 description: GitHub PRを作成。変更内容からPRタイトルと本文を自動生成。
+# 差分の要約とPR本文生成の品質を優先
+model: sonnet
 argument-hint: [--draft] [--reviewer REVIEWER]
 allowed-tools:
   - Bash(git status*)
