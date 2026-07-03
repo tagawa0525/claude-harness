@@ -80,8 +80,12 @@ git switch -c [new-branch]
 
 # mainに戻り、リモートと同じ位置まで巻き戻す
 git switch main
+git fetch origin        # origin/main を最新化してから巻き戻す
 git reset --hard origin/main
 ```
+
+⚠️ `git reset --hard` は未コミットの変更を破棄する。実行前に `git status` で
+ワーキングツリーがクリーンであることを確認する（必要なら stash に退避）。
 
 ⚠️ mainのコミットの一部だけを移動する場合はこの方法は使えない。
 `git switch -c [new-branch] origin/main` でブランチを作成し、
