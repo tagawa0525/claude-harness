@@ -86,7 +86,7 @@ let
         "Bash(nix-build:*)"
         "Bash(nix-instantiate:*)"
         "Bash(nix-prefetch-url:*)"
-        "Bash(nixpkgs-fmt:*)"
+        "Bash(nixfmt:*)"
         "Bash(statix:*)"
         # 言語ツール
         "Bash(cargo:*)"

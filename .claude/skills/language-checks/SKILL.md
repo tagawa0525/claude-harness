@@ -12,7 +12,7 @@ user-invocable: false
 
 - **Rust**: cargo fmt, clippy, test
 - **Python**: ruff format, ruff check, pytest
-- **Nix**: nixpkgs-fmt, statix, nix flake check
+- **Nix**: nixfmt, statix, nix flake check
 
 ## 言語検出方法
 
@@ -54,7 +54,7 @@ pytest
 
 ```bash
 # 1. フォーマットチェック（サブディレクトリ含む全 .nix ファイル）
-git ls-files -z '*.nix' | xargs -0 -r nixpkgs-fmt --check
+git ls-files -z '*.nix' | xargs -0 -r nixfmt --check
 
 # 2. 静的解析
 statix check
