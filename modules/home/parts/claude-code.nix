@@ -125,7 +125,6 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh:*)"
         # Web
         "WebFetch(domain:api.github.com)"
         "WebFetch(domain:claude.ai)"

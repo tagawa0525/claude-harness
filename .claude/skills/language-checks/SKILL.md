@@ -16,32 +16,11 @@ user-invocable: false
 
 ## 言語検出方法
 
-### Rustプロジェクト
+いずれかの条件を満たす言語のチェックを実行する:
 
-**検出条件**:
-
-- `Cargo.toml` が存在する
-- または `.rs` ファイルがstaged
-
-**プロジェクトマーカー**: `Cargo.toml`
-
-### Pythonプロジェクト
-
-**検出条件**:
-
-- `pyproject.toml`, `setup.py`, `requirements.txt` のいずれかが存在する
-- または `.py` ファイルがstaged
-
-**プロジェクトマーカー**: `pyproject.toml`, `setup.py`, `requirements.txt`
-
-### Nixプロジェクト
-
-**検出条件**:
-
-- `flake.nix` が存在する
-- または `.nix` ファイルがstaged
-
-**プロジェクトマーカー**: `flake.nix`
+- **Rust**: `Cargo.toml` が存在、または `.rs` ファイルがstaged
+- **Python**: `pyproject.toml` / `setup.py` / `requirements.txt` のいずれかが存在、または `.py` ファイルがstaged
+- **Nix**: `flake.nix` が存在、または `.nix` ファイルがstaged
 
 ## チェックコマンド
 
@@ -84,61 +63,11 @@ statix check
 nix flake check
 ```
 
-## エラーハンドリング
+## チェック失敗時の対応
 
-### チェック失敗時の動作
-
-1. **即座に中断**: いずれかのチェックが失敗した場合、後続のチェックは実行せずに中断
-2. **詳細なエラー表示**: 失敗したコマンドと出力を表示
-3. **修正方法の提案**: 可能な場合、自動修正コマンドを提案
-
-### 例: Rustフォーマットエラー
-
-```text
-❌ Rust format check failed:
-   Command: cargo fmt --check
-
-   Error output:
-   Diff in src/main.rs at line 42
-
-   💡 Fix: Run 'cargo fmt' to auto-format
-```
-
-### 例: Pythonリントエラー
-
-```text
-❌ Python lint check failed:
-   Command: ruff check .
-
-   Error output:
-   src/app.py:15:1: F401 [*] `os` imported but unused
-
-   💡 Fix: Run 'ruff check --fix .' to auto-fix
-```
-
-## ベストプラクティス
-
-1. **段階的チェック**: フォーマット → リント → テストの順で実行
-2. **早期失敗**: 最初の失敗で中断し、修正を促す
-3. **明確なフィードバック**: どのチェックが失敗したか、どう修正するかを明示
-4. **スコープの限定**: staged filesに関連するチェックのみ実行
-
-## ツールの可用性確認
-
-チェック実行前に、必要なツールがインストールされているか確認:
-
-```bash
-# Rust
-command -v cargo >/dev/null 2>&1 || echo "cargo not found"
-
-# Python
-command -v ruff >/dev/null 2>&1 || echo "ruff not found"
-command -v pytest >/dev/null 2>&1 || echo "pytest not found"
-
-# Nix
-command -v nixpkgs-fmt >/dev/null 2>&1 || echo "nixpkgs-fmt not found"
-command -v statix >/dev/null 2>&1 || echo "statix not found"
-```
+フォーマット → リント → テストの順に実行し、最初に失敗したチェックで中断する。
+失敗したコマンドと出力を提示し、自動修正コマンドがあれば提案する。
+各言語の自動修正コマンドは下記リファレンスを参照。
 
 ## 参照
 

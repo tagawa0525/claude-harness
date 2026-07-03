@@ -1,7 +1,7 @@
 ---
 name: gh-pr-merge
 description: GitHub PRをマージ。マージ後のブランチ削除やworktreeクリーンアップも対応。
-argument-hint: [PR番号] [--delete]
+argument-hint: [PR番号]
 allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)
@@ -121,22 +121,23 @@ gh pr merge [PR番号] --merge \
 
 ## クリーンアップ
 
-マージ完了後、以下を順に実行する。各ステップは前のステップに依存しないか、依存する場合は安全な順序で並んでいる。
+マージ完了後、以下を順に実行する。
 
 ```bash
 # 1. worktree を削除（ブランチのロックを解放）
 git worktree remove [path]          # 該当がなければスキップ
 
-# 2. ローカルブランチを削除
-git branch -d [branch]
-
-# 3. リモートブランチを削除
-git push origin --delete [branch]
-
-# 4. main を最新化
+# 2. main に切り替えて最新化
+#    （PRブランチ上にいる状態では branch -d できないため、削除より先に行う）
 git switch main
 git fetch --prune
 git pull
+
+# 3. ローカルブランチを削除
+git branch -d [branch]
+
+# 4. リモートブランチを削除（GitHub側で自動削除済みならエラーになるがスキップしてよい）
+git push origin --delete [branch]
 ```
 
 ## 完了確認

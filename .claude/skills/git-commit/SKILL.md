@@ -39,14 +39,10 @@ allowed-tools:
 
 この警告を表示し、ユーザーの選択を待つ。コミットを試行しない。
 
-ステージされた変更内容を分析し、適切なブランチ名の候補を2-3個生成して `AskUserQuestion` で提示。
-ユーザーは候補から選択するか、「Other」でカスタム名を入力できる。
+選択後は各スキルに委譲する（ブランチ名の候補生成も委譲先で行う）:
 
-候補生成の例:
-
-- 変更がスキル関連 → `feat/skills-xxx`, `refactor/skills-xxx`
-- バグ修正 → `fix/xxx`
-- ドキュメント → `docs/xxx`
+- featureブランチ作成 → git-branch スキル
+- worktree作成 → git-worktree スキル
 
 ## 大規模変更の警告
 

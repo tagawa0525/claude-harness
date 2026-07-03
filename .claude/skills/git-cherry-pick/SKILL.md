@@ -65,7 +65,33 @@ $ARGUMENTS でコミットハッシュが指定されている場合はそれを
 - 新規ブランチを作成するか確認
 - ブランチ名の候補を提案（コミット内容に基づく）
 
-### Step 3: cherry-pick 実行
+### Step 3-4: コミットの移動と除去
+
+シナリオによって手順が異なる。
+
+#### シナリオ1: mainからの移動（移動元 = main）
+
+mainのHEADからブランチを作成すると対象コミットは既に含まれているため、
+cherry-pickは不要。ブランチを作成してからmainを巻き戻すだけでよい。
+
+```bash
+# 対象コミットを含んだまま新規ブランチを作成
+git switch -c [new-branch]
+
+# mainに戻り、リモートと同じ位置まで巻き戻す
+git switch main
+git fetch origin        # origin/main を最新化してから巻き戻す
+git reset --hard origin/main
+```
+
+⚠️ `git reset --hard` は未コミットの変更を破棄する。実行前に `git status` で
+ワーキングツリーがクリーンであることを確認する（必要なら stash に退避）。
+
+⚠️ mainのコミットの一部だけを移動する場合はこの方法は使えない。
+`git switch -c [new-branch] origin/main` でブランチを作成し、
+対象コミットを cherry-pick してから main を巻き戻す。
+
+#### シナリオ2: featureブランチ間の移動
 
 ```bash
 # 移動先ブランチに切り替え（または作成）
@@ -74,11 +100,7 @@ git switch [existing-branch]      # 既存の場合
 
 # コミットを適用
 git cherry-pick [commit-hash]
-```
 
-### Step 4: 元ブランチからコミットを除去
-
-```bash
 # 元ブランチに戻る
 git switch [source-branch]
 
