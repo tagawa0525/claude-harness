@@ -115,10 +115,10 @@
 
       # Nix ファイルのチェック
       NIX_FILES=$(echo "$STAGED_FILES" | grep '\.nix$' || true)
-      if [ -n "$NIX_FILES" ] && command -v nixpkgs-fmt >/dev/null 2>&1; then
+      if [ -n "$NIX_FILES" ] && command -v nixfmt >/dev/null 2>&1; then
         echo "🔍 Checking Nix format..."
-        if ! echo "$NIX_FILES" | xargs nixpkgs-fmt --check 2>/dev/null; then
-          echo "❌ Nix format check failed. Run: nixpkgs-fmt <files>"
+        if ! echo "$NIX_FILES" | xargs nixfmt --check 2>/dev/null; then
+          echo "❌ Nix format check failed. Run: nixfmt <files>"
           check_failed=1
         fi
       fi

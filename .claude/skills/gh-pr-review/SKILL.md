@@ -131,7 +131,7 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 ```bash
 # 例: Nix の場合
-git ls-files -z '*.nix' | xargs -0 -r nixpkgs-fmt --check && statix check
+git ls-files -z '*.nix' | xargs -0 -r nixfmt --check && statix check
 
 # 例: Rust の場合
 cargo check && cargo test
