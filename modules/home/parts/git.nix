@@ -84,7 +84,8 @@
       if [ "''${CLAUDECODE:-}" = "1" ]; then
         BRANCH=$(git branch --show-current 2>/dev/null || echo "")
         if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
-          if [ "$(git diff --cached --name-only)" != "flake.lock" ]; then
+          # 変更(M)の flake.lock 1件のみ許可（削除・リネーム等は通さない）
+          if [ "$(git diff --cached --name-status)" != "$(printf 'M\tflake.lock')" ]; then
             echo "❌ mainブランチへの直接コミットは禁止されています"
             echo "   featureブランチを作成してください: /git-branch"
             exit 1
