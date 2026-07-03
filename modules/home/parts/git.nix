@@ -77,6 +77,21 @@
       #!/usr/bin/env bash
       set -euo pipefail
 
+      # Claude Code セッションからの main/master 直接コミットをブロック
+      # （PreToolUse hook と異なり必ず対象リポジトリ内で実行されるため、
+      #   worktree でも誤判定しない構造的なゲート。
+      #   flake.lock のみのコミットは nix-rebuild update の正規フローなので除外）
+      if [ "''${CLAUDECODE:-}" = "1" ]; then
+        BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+        if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+          if [ "$(git diff --cached --name-only)" != "flake.lock" ]; then
+            echo "❌ mainブランチへの直接コミットは禁止されています"
+            echo "   featureブランチを作成してください: /git-branch"
+            exit 1
+          fi
+        fi
+      fi
+
       # プロジェクトローカルの pre-commit があれば優先実行
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$GIT_DIR/hooks/pre-commit"
