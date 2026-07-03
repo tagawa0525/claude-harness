@@ -17,13 +17,30 @@ if [[ "$TOOL_NAME" != "Bash" ]]; then
   exit 0
 fi
 
-# git commit コマンドかどうか判定（git commit で始まるコマンドを検出）
-if ! echo "$TOOL_INPUT" | grep -qE '(^|\b|&&\s*|;\s*)git commit\b'; then
+# git commit コマンドかどうか判定（git -C <path> commit も捕捉）
+if ! echo "$TOOL_INPUT" | grep -qE '(^|\b|&&\s*|;\s*)git\s+(-C\s+\S+\s+)?commit\b'; then
   exit 0
 fi
 
-# 現在のブランチを取得
-CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+# コマンドが対象とするディレクトリを推定（worktree での誤判定を防ぐ）
+# - git -C <path> commit    → <path>
+# - cd <path> && git commit → <path>
+# - それ以外                → hook の cwd
+TARGET_DIR="."
+if [[ "$TOOL_INPUT" =~ git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
+  TARGET_DIR="${BASH_REMATCH[1]}"
+elif [[ "$TOOL_INPUT" =~ (^|\&\&|\;)[[:space:]]*cd[[:space:]]+([^[:space:]\;\&\|]+) ]]; then
+  TARGET_DIR="${BASH_REMATCH[2]}"
+fi
+# クォート除去とチルダ展開
+TARGET_DIR="${TARGET_DIR%\"}"
+TARGET_DIR="${TARGET_DIR#\"}"
+TARGET_DIR="${TARGET_DIR%\'}"
+TARGET_DIR="${TARGET_DIR#\'}"
+TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
+
+# 対象ディレクトリのブランチを取得
+CURRENT_BRANCH=$(git -C "$TARGET_DIR" branch --show-current 2>/dev/null || echo "")
 
 # main または master ブランチの場合はブロック
 if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
