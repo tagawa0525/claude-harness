@@ -24,7 +24,11 @@ PRについたレビューコメントを確認し、対応する。
 
 - `get-pr-info.sh [pr_number]` - PR情報を取得
 - `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
+  （[gh pr-review 拡張](https://github.com/agynio/gh-pr-review)があれば使用、なければ gh api にフォールバック）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
+
+注: GitHub Copilot のレビュースレッドは API から resolve できないため、
+resolve 操作は行わない（返信のみ）。
 
 ## 事前確認
 
@@ -234,10 +238,3 @@ PR: {url}
 - Force push は避け、追加コミットで対応（レビュー履歴を保持）
 - Critical は必ず対応、Suggestion は見送り可（理由を返信）
 - レビュアーの意図が不明な場合は、修正前に確認コメントを投稿
-
----
-
-## 参考
-
-- [gh pr-review 拡張](https://github.com/agynio/gh-pr-review) - AIエージェント向けPRレビューツール
-- [GitHub CLI マニュアル](https://cli.github.com/manual/gh_pr_review)
