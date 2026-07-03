@@ -1,6 +1,7 @@
 ---
 name: gh-pr-review
 description: PRレビューコメントを確認し対応。コード修正、返信を実行。
+# model 未指定: コード修正を伴うためセッションモデルを継承する
 argument-hint: [PR番号 | コメントURL] [--unresolved]
 allowed-tools:
   - Bash(git *)

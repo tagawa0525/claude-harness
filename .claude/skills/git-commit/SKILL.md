@@ -1,7 +1,8 @@
 ---
 name: git-commit
 description: ステージされた変更をConventional Commits形式でコミット。メッセージ省略時は自動生成。
-model: haiku
+# 差分分析とコミットメッセージ生成の品質を優先
+model: sonnet
 argument-hint: [message]
 allowed-tools:
   - Bash(git status*)

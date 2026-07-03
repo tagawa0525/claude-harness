@@ -1,6 +1,7 @@
 ---
 name: git-tidy
 description: 同一ブランチ内のコミットを整理。squash、分割、並べ替えに対応。
+# model 未指定: 履歴書き換えの判断が必要なためセッションモデルを継承する
 argument-hint: [squash|split|reorder]
 allowed-tools:
   - Bash(git status*)

@@ -1,6 +1,8 @@
 ---
 name: git-branch
 description: featureブランチの作成・リネーム。変更内容から適切なブランチ名を自動生成。
+# 変更内容の分析とブランチ名生成の品質を優先
+model: sonnet
 allowed-tools:
   - Bash(git *)
   - Read
