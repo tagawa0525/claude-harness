@@ -5,14 +5,27 @@
 # gh-pr-review 拡張のインストール
 # （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
-{ pkgs, lib, claudeCodeSource ? null, ... }:
+{
+  pkgs,
+  lib,
+  claudeCodeSource ? null,
+  ...
+}:
 
 let
   # グローバルに登録する Claude Code hooks
   # nixos-rebuild 時に ~/.claude/settings.json へ自動登録される
   claudeGlobalHooks = [
-    { file = "block-main-commit.sh"; matcher = "Bash"; timeout = 10000; }
-    { file = "pre-merge-check.sh"; matcher = "Bash"; timeout = 30000; }
+    {
+      file = "block-main-commit.sh";
+      matcher = "Bash";
+      timeout = 10000;
+    }
+    {
+      file = "pre-merge-check.sh";
+      matcher = "Bash";
+      timeout = 30000;
+    }
   ];
 
   # Claude Code settings.json の静的設定
