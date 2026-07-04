@@ -1,7 +1,7 @@
 # =============================================================================
 # Claude Code の設定
 # =============================================================================
-# Claude Code CLI、グローバル hooks/skills/commands の同期、settings.json 管理、
+# Claude Code CLI、グローバル hooks/skills/commands/scripts の同期、settings.json 管理、
 # gh-pr-review 拡張のインストール
 # （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
@@ -138,6 +138,8 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
+        # 共有スクリプト（PRレビュー待ち）
+        "Bash(~/.claude/scripts/gh-wait-review.sh:*)"
         # Web
         "WebFetch(domain:api.github.com)"
         "WebFetch(domain:claude.ai)"
@@ -171,7 +173,7 @@ in
     rsync # claude-sync スクリプトの実行時依存
   ];
 
-  # .claude（commands/skills/hooks）を ~/.claude に手動同期するコマンド
+  # .claude（commands/skills/hooks/scripts）を ~/.claude に手動同期するコマンド
   # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）
   home.file.".local/bin/claude-sync" = {
     source = ../scripts/claude-sync.sh;
@@ -192,7 +194,7 @@ in
     mkdir -p "$CLAUDE_DIR"
 
     ${lib.optionalString (claudeCodeSource != null) ''
-      # commands/skills/hooks の同期（claude-sync コマンドと共通実装）
+      # commands/skills/hooks/scripts の同期（claude-sync コマンドと共通実装）
       # 同期ポリシーは modules/home/scripts/claude-sync.sh を参照
       PATH="${pkgs.rsync}/bin:$PATH" $DRY_RUN_CMD ${pkgs.bash}/bin/bash \
         ${../scripts/claude-sync.sh} "${claudeCodeSource}"
