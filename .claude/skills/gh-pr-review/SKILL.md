@@ -211,7 +211,9 @@ pushしても再レビューは自動では走らない（Copilotの自動レビ
 gh api "repos/{owner}/{repo}/pulls/{pr_number}/requested_reviewers" \
   -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
 
-# 新しいレビューの到着を待機（漸増バックオフで約10分。バックグラウンドで実行する）
+# 新しいレビューの到着を待機（漸増バックオフで約10分）
+# フォアグラウンドの最大タイムアウトを超えるため、シェルの & ではなく
+# Bashツールの run_in_background=true で実行する（完了時に通知される）
 ~/.claude/scripts/gh-wait-review.sh {pr_number}
 ```
 
