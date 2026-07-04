@@ -49,27 +49,36 @@ report_reviews() {
   gh pr view "$pr" --json reviews -q '.reviews[] | "- \(.author.login): \(.state)"'
 }
 
+# 開始時点の件数を基準にし、増加をもって「新しいレビューの到着」と判定する
+# （指摘対応後の再レビュー待ちで、過去のレビューを誤検知しないため）
+baseline=$(review_count)
+if (( baseline > 0 )); then
+  echo "INFO: 既存レビュー${baseline}件。新しいレビューの到着を待ちます"
+fi
+
+# 新しいレビューが到着していれば報告して成功(0)、未着なら失敗(1)
+check_new_reviews() {
+  local count
+  count=$(review_count)
+  if (( count > baseline )); then
+    echo "OK: PR #${pr} に新しいレビューが到着しました（計${count}件、待機${elapsed}秒）"
+    report_reviews
+    return 0
+  fi
+  return 1
+}
+
 # 漸増バックオフ: 15+30+45+60+90+120+120+120 = 600秒（約10分）
 elapsed=0
 for interval in 15 30 45 60 90 120 120 120; do
-  count=$(review_count)
-  if (( count > 0 )); then
-    echo "OK: PR #${pr} にレビューが到着しました（${count}件、待機${elapsed}秒）"
-    report_reviews
-    exit 0
-  fi
+  check_new_reviews && exit 0
   echo "待機中: レビュー未着（経過${elapsed}秒）。${interval}秒後に再確認します"
   sleep "$interval"
   (( elapsed += interval ))
 done
 
-count=$(review_count)
-if (( count > 0 )); then
-  echo "OK: PR #${pr} にレビューが到着しました（${count}件、待機${elapsed}秒）"
-  report_reviews
-  exit 0
-fi
+check_new_reviews && exit 0
 
-echo "TIMEOUT: 約10分待ちましたがPR #${pr} にレビューが来ていません"
+echo "TIMEOUT: 約10分待ちましたがPR #${pr} に新しいレビューが来ていません"
 echo "次の一手: /gh-actions-check ${pr} でActionsの状況を診断してください"
 exit 1
