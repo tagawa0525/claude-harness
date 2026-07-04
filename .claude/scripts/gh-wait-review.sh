@@ -16,8 +16,8 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 2
 fi
 
-origin=$(git remote get-url origin 2>/dev/null || true)
-if [[ "$origin" != *github.com* ]]; then
+# いずれかのリモートにGitHubがあればPRフロー対象（originという名前には依存しない）
+if ! git remote -v 2>/dev/null | grep -q 'github\.com'; then
   echo "SKIP: GitHubリモートがありません（ローカルのみ・PRフロー適用外）"
   exit 2
 fi
