@@ -41,6 +41,13 @@ if [[ -z "$pr" ]]; then
   fi
 fi
 
+# ポーリング中のreview_count()はghの失敗を0件扱いするため、
+# PRの存在はここで一度だけ検証し「PRなし」がtimeoutに化けるのを防ぐ
+if ! gh pr view "$pr" --json number >/dev/null 2>&1; then
+  echo "ERROR: PR #${pr} が見つからないか、アクセスできません"
+  exit 3
+fi
+
 review_count() {
   gh pr view "$pr" --json reviews -q '.reviews | length' 2>/dev/null || echo 0
 }
