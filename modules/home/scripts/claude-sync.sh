@@ -30,7 +30,7 @@ mkdir -p "$CLAUDE_DIR"
 
 # CLAUDE.md: ソースが正として常に上書き（グローバル指針）
 if [ -f "$SOURCE_DIR/CLAUDE.md" ]; then
-  install -m 644 "$SOURCE_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+  rsync -a "$SOURCE_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
   echo "✅ CLAUDE.md synced"
 fi
 
@@ -59,6 +59,6 @@ if [ -d "$SOURCE_DIR/scripts" ]; then
 fi
 
 # Nix storeからコピーした読み取り専用ファイルに書き込み権限を付与
-chmod -R u+w "$CLAUDE_DIR/commands" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/scripts" 2>/dev/null || true
+chmod -R u+w "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/scripts" 2>/dev/null || true
 
 echo "🎉 Claude Code 設定を同期しました: $SOURCE_DIR → $CLAUDE_DIR"
