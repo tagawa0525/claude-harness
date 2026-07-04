@@ -109,6 +109,7 @@ gh pr view --json url -q .url
 ✅ PRを作成しました: [URL]
 
 次のステップ:
+- Copilotレビューの到着を待つ場合 → ~/.claude/scripts/gh-wait-review.sh（漸増バックオフで約10分待機。バックグラウンドで実行）
 - Copilotレビュー/CIの状況を確認する場合 → /gh-actions-check
 - レビューコメントに対応する場合 → /gh-pr-review
 - レビュー後にマージする場合 → /gh-pr-merge
