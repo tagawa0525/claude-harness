@@ -201,7 +201,26 @@ I've decided to keep the current approach because {理由}.
 
 ---
 
-## Step 6: CI確認
+## Step 6: 再レビューの依頼と待機
+
+pushしても再レビューは自動では走らない（Copilotの自動レビューはPR作成時の1回のみ）。
+対応をプッシュしたら明示的に再レビューを依頼し、新しいレビューの到着を待つ:
+
+```bash
+# Copilotに再レビューを依頼（{owner}/{repo}はghが現在のリポジトリから補完）
+gh api "repos/{owner}/{repo}/pulls/{pr_number}/requested_reviewers" \
+  -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+
+# 新しいレビューの到着を待機（漸増バックオフで約10分。バックグラウンドで実行する）
+~/.claude/scripts/gh-wait-review.sh {pr_number}
+```
+
+- 新しいレビューに指摘がある場合 → Step 2 に戻り、指摘ゼロになるまで繰り返す
+- 指摘なし（no new comments）になったらマージ可能
+
+---
+
+## Step 7: CI確認
 
 ```bash
 gh pr checks {pr_number}
@@ -211,7 +230,7 @@ gh pr checks {pr_number}
 
 ---
 
-## Step 7: 完了報告
+## Step 8: 完了報告
 
 ```text
 ✅ レビュー対応が完了しました
@@ -226,8 +245,7 @@ PR: {url}
 - ℹ️ Question: {n}件 回答済み
 
 次のステップ:
-- 追加のレビューを待つ
-- マージ可能な場合 → /gh-pr-merge
+- マージする場合 → /gh-pr-merge
 - 状態を確認する場合 → /git-info
 ```
 
