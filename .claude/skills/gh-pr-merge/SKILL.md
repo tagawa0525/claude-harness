@@ -15,6 +15,7 @@ allowed-tools:
   - Bash(git push origin --delete*)
   - Bash(gh pr*)
   - Bash(gh auth*)
+  - Bash(~/.claude/scripts/gh-wait-review.sh*)
 ---
 
 # GitHub PR Merge Command
@@ -40,7 +41,8 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 
 - CIステータス: 全てパスしているか
 - レビュー: Copilot等の自動レビューが完了し、指摘事項に対応済みか
-  （レビューが来ない場合は /gh-actions-check で診断）
+  - 未着の場合は `~/.claude/scripts/gh-wait-review.sh [PR番号]` で待機（漸増バックオフで約10分。フォアグラウンドの最大タイムアウトを超えるため、必ずバックグラウンドで実行）
+  - タイムアウト（exit 1）時は /gh-actions-check で診断
 - コンフリクト: なしか
 
 ## マージコミットメッセージの生成

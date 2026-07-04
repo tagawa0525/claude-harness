@@ -19,14 +19,16 @@ def display_width(s: str) -> int:
     """Calculate display width accounting for CJK wide characters.
 
     East Asian Width categories treated as width 2:
-      F (Fullwidth), W (Wide), A (Ambiguous)
-    Ambiguous characters (e.g. →, ←, ★, ●) display as width 2
-    in CJK locale terminals, which is our target environment.
+      F (Fullwidth), W (Wide)
+    Ambiguous characters (e.g. →, ←, ★, ●) are treated as width 1
+    to match markdownlint MD060, which uses the string-width package
+    (ambiguous = narrow). Treating them as width 2 makes the two tools
+    fight over alignment and the pre-commit gate fail.
     """
     w = 0
     for c in s:
         eaw = unicodedata.east_asian_width(c)
-        if eaw in ("F", "W", "A"):
+        if eaw in ("F", "W"):
             w += 2
         else:
             w += 1

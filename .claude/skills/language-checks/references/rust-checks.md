@@ -37,12 +37,12 @@ cargo clippy --all-targets -- -D warnings
 
 ### よくある警告
 
-| リント               | 説明                   |
-| -------------------- | ---------------------- |
-| unused_variables     | 未使用の変数           |
-| needless_return      | 不要な return 文       |
-| redundant_clone      | 不要な clone()         |
-| match_single_binding | 単一パターンの match   |
+| リント               | 説明                 |
+| -------------------- | -------------------- |
+| unused_variables     | 未使用の変数         |
+| needless_return      | 不要な return 文     |
+| redundant_clone      | 不要な clone()       |
+| match_single_binding | 単一パターンの match |
 
 ## 3. Test (cargo test)
 
