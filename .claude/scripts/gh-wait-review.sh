@@ -9,6 +9,7 @@
 #   1 = タイムアウト（約10分）
 #   2 = PRフロー適用外（gitリポジトリでない / GitHubリモートなし）
 #   3 = 対象PRが見つからない
+#   4 = gh が利用できない（未インストール / 未認証）
 set -u
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -22,10 +23,22 @@ if ! git remote -v 2>/dev/null | grep -q 'github\.com'; then
   exit 2
 fi
 
-pr="${1:-$(gh pr view --json number -q .number 2>/dev/null || true)}"
+# PR解決やポーリングの失敗を「PRなし」と混同しないよう、ghの利用可否を先に検証する
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh コマンドが見つかりません"
+  exit 4
+fi
+if ! gh auth status >/dev/null 2>&1; then
+  echo "ERROR: gh が未認証です。gh auth login を実行してください"
+  exit 4
+fi
+
+pr="${1:-}"
 if [[ -z "$pr" ]]; then
-  echo "ERROR: 対象PRが見つかりません。PR番号を指定するか、PRのあるブランチで実行してください"
-  exit 3
+  if ! pr=$(gh pr view --json number -q .number 2>/dev/null) || [[ -z "$pr" ]]; then
+    echo "ERROR: 現在のブランチに紐づくPRが見つかりません。PR番号を指定してください"
+    exit 3
+  fi
 fi
 
 review_count() {
