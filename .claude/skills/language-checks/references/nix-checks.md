@@ -38,12 +38,12 @@ statix fix
 
 ### よくある警告
 
-| ルール               | 説明                              |
-| -------------------- | --------------------------------- |
-| empty_let_in         | 空の `let ... in` ブロック        |
-| deprecated_is_null   | `isNull` → `== null` を推奨       |
-| useless_parens       | 不要な括弧                        |
-| bool_comparison      | `x == true` → `x` を推奨          |
+| ルール             | 説明                        |
+| ------------------ | --------------------------- |
+| empty_let_in       | 空の `let ... in` ブロック  |
+| deprecated_is_null | `isNull` → `== null` を推奨 |
+| useless_parens     | 不要な括弧                  |
+| bool_comparison    | `x == true` → `x` を推奨    |
 
 ## 3. Flake Check (nix flake check)
 
@@ -67,11 +67,11 @@ nix flake check --show-trace           # 詳細ログ
 
 ## クイックリファレンス
 
-| ツール      | チェック           | 自動修正   |
-| ----------- | ------------------ | ---------- |
-| nixfmt      | `--check <files>`  | `<files>`  |
-| statix      | `check`            | `fix`      |
-| nix flake   | `check`            | -          |
+| ツール    | チェック          | 自動修正  |
+| --------- | ----------------- | --------- |
+| nixfmt    | `--check <files>` | `<files>` |
+| statix    | `check`           | `fix`     |
+| nix flake | `check`           | -         |
 
 ## トラブルシューティング
 
