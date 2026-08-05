@@ -111,10 +111,11 @@ detach() {
   tmux -S "$SOCKET" detach-client -s "$2" 2>/dev/null || true
 }
 
-# 最終アタッチが最新のセッション名
+# 最終アタッチが最新のセッション名。サーバーが落ちている場合は空を返す
+# （set -e で即死すると fail() の診断出力が出ないため）
 newest_attached() {
   tmux -S "$SOCKET" list-sessions -F '#{session_last_attached}|#{session_name}' 2>/dev/null \
-    | sort -t'|' -k1,1nr | head -n 1 | cut -d'|' -f2
+    | sort -t'|' -k1,1nr | head -n 1 | cut -d'|' -f2 || true
 }
 
 fail() {
