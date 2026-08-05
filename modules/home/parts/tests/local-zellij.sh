@@ -35,6 +35,8 @@
 #   3. タブを閉じても他のタブ名が変わらず、次の new は空いた番号を再利用する
 #   4. 「goto:N」パイプで名前指定のタブへフォーカスが移る
 #   5. デタッチしてもセッションが残り、local-zellij で同セッションに再接続する
+#   6. キー入力で操作できる（kitty形式・レガシー0x1C・Ctrl保持の数字）
+#   7. 多重接続中に prefix+c を1回押してもタブは1つしか増えない
 # =============================================================================
 set -euo pipefail
 
@@ -105,6 +107,27 @@ EOF
 launch() {
   script -qec "'$SCRIPT'" /dev/null </dev/null >/dev/null 2>&1 &
   echo $!
+}
+
+# キー入力を送り込めるクライアントを起動する（stdinをFIFOから供給）。
+# $1: FIFOのパス（この関数が作成する）。呼び出し側で書き込み用fdを
+# 開いたままにすること（閉じるとEOFでクライアントが終了するため）:
+#   pid=$(launch_with_input "$WORK/in"); exec {fd}<>"$WORK/in"
+# 呼び出し側の open は <> にする（> はFIFOの読み手が現れるまでブロックする）。
+# この関数内でも FIFO の open (< "$1") は最後に書く。先に書くと、コマンド
+# 置換のパイプを持ったままバックグラウンドのシェルがブロックし、呼び出し側
+# とデッドロックする
+launch_with_input() {
+  mkfifo "$1"
+  script -qec "'$SCRIPT'" /dev/null >/dev/null 2>&1 < "$1" &
+  echo $!
+}
+
+# fdへキーのバイト列を書き込む（バックスラッシュエスケープを解釈）
+# $1: fd番号  $2: バイト列
+# 引数をフォーマット文字列にすると % で誤展開するため %b 固定にする
+send_keys() {
+  printf '%b' "$2" >&"$1"
 }
 
 Z() {
@@ -229,6 +252,53 @@ sleep 3
 [ "$(tab_names_csv)" = "3,2,8,4" ] \
   || fail "再接続後にタブ構成が変わった ($(tab_names_csv))"
 kill "$pid2" 2>/dev/null || true
+sleep 2
 echo "PASS: デタッチ後もセッションが残り、同セッションに再接続した"
+
+# ---------------------------------------------------------------------------
+# シナリオ6: キー入力で操作できる
+# ---------------------------------------------------------------------------
+# 端末は Ctrl+\ を2通りの形式で送ってくる:
+#   - kitty keyboard protocol 対応端末（Alacritty）: CSI-u形式 \x1b[92;5u
+#   - 非対応端末（VSCodeターミナル等）: レガシーの生バイト 0x1C
+# Zellijが同梱するtermwizは 0x1C を「Ctrl \」に変換しないため、レガシー側は
+# 生の制御文字 \u{1c} としてバインドしている。また数字はCtrlを押したまま
+# （Ctrl+3 = \x1b[51;5u）でも離しても効くようにしている
+echo "=== シナリオ6: キー入力（kitty形式・レガシー0x1C・Ctrl保持の数字） ==="
+pidA=$(launch_with_input "$WORK/inA")
+exec 8<>"$WORK/inA"
+sleep 3
+
+send_keys 8 '\x1b[92;5u2'          # CSI-u prefix + 素の数字
+sleep 1.5
+[ "$(focused_tab)" = "2" ] || fail "kitty形式の prefix+2 でフォーカスが移らなかった ($(focused_tab))"
+
+send_keys 8 '\x1c\x1b[51;5u'       # レガシー prefix + Ctrl保持の3
+sleep 1.5
+[ "$(focused_tab)" = "3" ] || fail "レガシー0x1C prefix + Ctrl+3 でフォーカスが移らなかった ($(focused_tab))"
+
+send_keys 8 '\x1b[92;5u\x1b[92;5u' # prefix 2回押しでlast-window相当
+sleep 1.5
+[ "$(focused_tab)" = "2" ] || fail "prefix 2回押しで直前のタブに戻らなかった ($(focused_tab))"
+echo "PASS: kitty形式・レガシー0x1C・Ctrl保持の数字・2回押しが効いた"
+
+# ---------------------------------------------------------------------------
+# シナリオ7: 多重接続中に prefix+c を1回押してもタブは1つしか増えない
+# ---------------------------------------------------------------------------
+# config の load_plugins はクライアントのアタッチごとにプラグインインスタンスを
+# 増やし、MessagePlugin のパイプは全インスタンスに配送される。作成が冪等で
+# ないと、1回の prefix+c で接続クライアント数だけ同名タブが作られてしまう
+echo "=== シナリオ7: 多重接続時のタブ作成の冪等性 ==="
+pidB=$(launch_with_input "$WORK/inB")
+exec 9<>"$WORK/inB"
+sleep 3
+
+send_keys 8 '\x1b[92;5uc'          # クライアントAから prefix+c を1回
+sleep 2
+[ "$(tab_names_csv)" = "3,2,8,4,7" ] \
+  || fail "2クライアント接続中の prefix+c でタブが重複した ($(tab_names_csv) 期待値: 3,2,8,4,7)"
+kill "$pidA" "$pidB" 2>/dev/null || true
+exec 8>&- 9>&-
+echo "PASS: 多重接続中でもタブは1つだけ増えた"
 
 echo "すべてのシナリオが PASS"
