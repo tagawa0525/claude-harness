@@ -50,6 +50,9 @@ trap teardown EXIT
 setup() {
   teardown
   WORK=$(mktemp -d)
+  # tmux内から実行された場合、$TMUX があると隔離サーバーではなく
+  # 既存サーバーに繋ぎにいってしまう
+  unset TMUX TMUX_PANE
   export TMUX_TMPDIR="$WORK"
   # ホストの ~/.tmux.conf や ~/.config/tmux/tmux.conf を読ませない
   export HOME="$WORK/home"
@@ -90,10 +93,22 @@ wait_for_sessions() {
   return 1
 }
 
+# local-tmuxを介さず特定セッションに直接アタッチする（状態を組むため）
+attach_to() {
+  script -qec "tmux -S $SOCKET attach -t '=$1'" /dev/null >/dev/null 2>&1 &
+  echo $!
+}
+
 # 指定セッションのクライアントを切断する。既に終了している場合は無視
 detach() {
   kill "$1" 2>/dev/null || true
   tmux -S "$SOCKET" detach-client -s "$2" 2>/dev/null || true
+}
+
+# 最終アタッチが最新のセッション名
+newest_attached() {
+  tmux -S "$SOCKET" list-sessions -F '#{session_last_attached}|#{session_name}' 2>/dev/null \
+    | sort -t'|' -k1,1nr | head -n 1 | cut -d'|' -f2
 }
 
 fail() {
@@ -143,8 +158,13 @@ echo "PASS: 未接続セッションを回収し、セッション数は1のま�
 # 動いているサーバーには効かず、未接続セッションが複数残る。その状況で名前順に
 # 選ぶと常に main が選ばれ、切断前の current window に戻れない。
 #
-# 選別キーの session_last_attached は detach では更新されないため、
-# アタッチ順と切断順を逆にして「アタッチ時刻で選んでいる」ことを確定させる。
+# main, main-1, main-2 の3つを作り、期待値の main-1 が
+#   名前順   → main が先頭
+#   作成順   → main-2 が最新
+#   切断順   → main が最後
+# のいずれとも一致しない状態を組んで、アタッチ時刻で選んでいることを確定させる
+# （選別キーの session_last_attached は detach では更新されないため、
+#   main-1 だけアタッチし直して最新にする）
 echo "=== シナリオ2: 最後にアタッチしたセッションの回収 ==="
 setup
 
@@ -157,27 +177,41 @@ tmux -S "$SOCKET" set-option -g destroy-unattached off
 pidB=$(launch)
 wait_for_sessions 2 || fail "2クライアント目でグループセッションが作られなかった"
 sleep 1
-[ "$(session_count)" -eq 2 ] || fail "セッションが2つにならなかった"
+pidC=$(launch)
+wait_for_sessions 3 || fail "3クライアント目でグループセッションが作られなかった"
+sleep 1
+[ "$(session_count)" -eq 3 ] || fail "セッションが3つにならなかった"
 
-# アタッチ順は main → main-1 なので、切断は逆順の main-1 → main にする。
-# 切断順で選んでいるなら main、アタッチ順で選んでいるなら main-1 が回収される
+# main-1 をアタッチし直して最終アタッチを最新にする
 detach "$pidB" main-1
+sleep 2
+pidD=$(attach_to main-1)
+sleep 2
+
+# 切断順は main-1 → main-2 → main（main が最後に切断される）
+detach "$pidD" main-1
+sleep 2
+detach "$pidC" main-2
 sleep 2
 detach "$pidA" main
 sleep 2
 [ -z "$(attached_names)" ] || fail "デタッチ後もクライアントが残っている ($(attached_names))"
-[ "$(session_count)" -eq 2 ] || fail "未接続セッションが2つ残っていない"
+[ "$(session_count)" -eq 3 ] || fail "未接続セッションが3つ残っていない"
 
-pidC=$(launch)
+# 前提が崩れていたら回収結果を評価しても意味がないので先に確認する
+[ "$(newest_attached)" = "main-1" ] \
+  || fail "前提が崩れている: 最終アタッチが最新なのは $(newest_attached)"
+
+pidE=$(launch)
 sleep 3
 count=$(session_count)
 attached=$(attached_names)
 sessions
-detach "$pidC" main-1
+detach "$pidE" main-1
 
-[ -n "$attached" ] || fail "3回目の接続がアタッチできていない（起動失敗の可能性）"
-[ "$count" -eq 2 ] || fail "セッションが ${count} 個に増えた（期待値: 2）"
+[ -n "$attached" ] || fail "回収後の接続がアタッチできていない（起動失敗の可能性）"
+[ "$count" -eq 3 ] || fail "セッションが ${count} 個に増えた（期待値: 3）"
 [ "$attached" = "main-1" ] || fail "最後にアタッチした main-1 ではなく ${attached} を回収した"
-echo "PASS: 最後にアタッチした main-1 を回収した（切断は main-1 が先）"
+echo "PASS: 最後にアタッチした main-1 を回収した（名前順なら main、作成順なら main-2、切断順なら main）"
 
 echo "すべてのシナリオが PASS"
