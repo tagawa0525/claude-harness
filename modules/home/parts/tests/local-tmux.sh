@@ -82,9 +82,10 @@ attached_names() {
   sessions | awk -F'|' '$2 == 1 { print $1 }' | paste -sd, -
 }
 
-# attach には端末が必要なので疑似端末上で起動する
+# attach には端末が必要なので疑似端末上で起動する。
+# script -c は文字列をシェルで解釈するため、パスは中でもクォートする
 launch() {
-  script -qec "$SCRIPT" /dev/null >/dev/null 2>&1 &
+  script -qec "'$SCRIPT'" /dev/null >/dev/null 2>&1 &
   echo $!
 }
 
@@ -101,7 +102,7 @@ wait_for_sessions() {
 
 # local-tmuxを介さず特定セッションに直接アタッチする（状態を組むため）
 attach_to() {
-  script -qec "tmux -S $SOCKET attach -t '=$1'" /dev/null >/dev/null 2>&1 &
+  script -qec "tmux -S '$SOCKET' attach -t '=$1'" /dev/null >/dev/null 2>&1 &
   echo $!
 }
 
