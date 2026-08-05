@@ -40,10 +40,16 @@ WORK=""
 SOCKET=""
 
 teardown() {
-  [ -n "$WORK" ] || return 0
-  tmux -S "$SOCKET" kill-server 2>/dev/null || true
-  rm -rf "$WORK"
-  WORK=""
+  # SOCKET は setup の最後に設定されるため、途中で失敗すると空のまま
+  # ここに来る。空の -S で無関係なサーバーに触らないようガードする
+  if [ -n "$SOCKET" ]; then
+    tmux -S "$SOCKET" kill-server 2>/dev/null || true
+    SOCKET=""
+  fi
+  if [ -n "$WORK" ]; then
+    rm -rf "$WORK"
+    WORK=""
+  fi
 }
 trap teardown EXIT
 
