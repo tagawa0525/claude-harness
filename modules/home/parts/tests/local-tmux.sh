@@ -141,7 +141,9 @@ sleep 1
 detach "$pid1" main
 sleep 1
 [ -z "$(attached_names)" ] || fail "デタッチ後もクライアントが残っている ($(attached_names))"
-[ "$(session_count)" -eq 1 ] || fail "アンカーの main が残っていない"
+# main が破棄されて main-1 だけ残った状態でも件数は1なので、名前で確認する
+[ "$(sessions | cut -d'|' -f1 | paste -sd, -)" = "main" ] \
+  || fail "デタッチ後にアンカーの main だけが残っていない"
 
 # 2回目の接続: 未接続の main を回収すべき
 pid2=$(launch)
