@@ -12,25 +12,39 @@
 #     in builtins.head (builtins.filter (p: (p.name or "") == "local-tmux") ps)'
 #   ./modules/home/parts/tests/local-tmux.sh <上記のstore path>/bin/local-tmux
 #
-# 隔離した TMUX_TMPDIR に専用の tmux サーバーを立て、
-#   1回目の接続 → デタッチ → 2回目の接続
-# を行い、2回目が新規セッションを作らずに未接続セッションを回収したかを判定する。
+# シナリオごとに隔離した TMUX_TMPDIR で専用の tmux サーバーを立てて検証する:
+#   1. 未接続セッションを回収し、セッション数が増えない
+#   2. 未接続セッションが複数ある場合、最後に切断したものを回収する
 # =============================================================================
 set -euo pipefail
 
 SCRIPT="${1:?usage: local-tmux.sh <path-to-local-tmux>}"
 
-WORK=$(mktemp -d)
-export TMUX_TMPDIR="$WORK"
-SOCKET="$WORK/tmux-$(id -u)/default"
+# 前提の欠落は「セッションが増えなかった」と区別がつかず false green になるため、
+# テスト本体に入る前に落とす
+command -v tmux >/dev/null || { echo "FAIL: tmux が見つからない"; exit 1; }
+command -v script >/dev/null || { echo "FAIL: script(util-linux) が見つからない"; exit 1; }
+[ -x "$SCRIPT" ] || { echo "FAIL: $SCRIPT が実行可能でない"; exit 1; }
 
-cleanup() {
+WORK=""
+SOCKET=""
+
+teardown() {
+  [ -n "$WORK" ] || return 0
   tmux -S "$SOCKET" kill-server 2>/dev/null || true
   rm -rf "$WORK"
+  WORK=""
 }
-trap cleanup EXIT
+trap teardown EXIT
 
-# サーバー未起動時も空文字を返す（呼び出し側で件数0として扱う）
+setup() {
+  teardown
+  WORK=$(mktemp -d)
+  export TMUX_TMPDIR="$WORK"
+  SOCKET="$WORK/tmux-$(id -u)/default"
+}
+
+# サーバー未起動時も空を返す（呼び出し側で件数0として扱う）
 sessions() {
   tmux -S "$SOCKET" list-sessions \
     -F '#{session_name}|#{session_attached}|#{session_group}' 2>/dev/null | sort || true
@@ -38,6 +52,10 @@ sessions() {
 
 session_count() {
   sessions | grep -c . || true
+}
+
+attached_names() {
+  sessions | awk -F'|' '$2 == 1 { print $1 }' | paste -sd, -
 }
 
 # attach には端末が必要なので疑似端末上で起動する
@@ -57,6 +75,12 @@ wait_for_sessions() {
   return 1
 }
 
+# 指定セッションのクライアントを切断する。既に終了している場合は無視
+detach() {
+  kill "$1" 2>/dev/null || true
+  tmux -S "$SOCKET" detach-client -s "$2" 2>/dev/null || true
+}
+
 fail() {
   echo "FAIL: $1"
   echo "--- sessions ---"
@@ -64,34 +88,69 @@ fail() {
   exit 1
 }
 
-# --- 1回目の接続: main が作られる ---
+# ---------------------------------------------------------------------------
+# シナリオ1: 未接続セッションを回収し、セッション数が増えない
+# ---------------------------------------------------------------------------
+echo "=== シナリオ1: 未接続セッションの回収 ==="
+setup
+
 pid1=$(launch)
 wait_for_sessions 1 || fail "1回目の接続でセッションが作られなかった"
 sleep 1
-
 [ "$(session_count)" -eq 1 ] || fail "1回目の接続でセッションが1つにならなかった"
 
-# --- デタッチ（ssh が切れた状況を再現）---
-# 既に終了している場合があるので失敗は無視する
-kill "$pid1" 2>/dev/null || true
-tmux -S "$SOCKET" detach-client -s main 2>/dev/null || true
+# ssh が切れた状況を再現
+detach "$pid1" main
 sleep 1
+[ -z "$(attached_names)" ] || fail "デタッチ後もクライアントが残っている ($(attached_names))"
 
-attached=$(tmux -S "$SOCKET" list-sessions -F '#{session_attached}' | paste -sd, -)
-[ "$attached" = "0" ] || fail "デタッチ後もクライアントが残っている (attached=$attached)"
-
-# --- 2回目の接続: 未接続の main を回収すべき ---
+# 2回目の接続: 未接続の main を回収すべき
 pid2=$(launch)
 sleep 3
-
 count=$(session_count)
-echo "--- 2回目の接続後 ---"
+attached=$(attached_names)
 sessions
+detach "$pid2" main
 
-kill "$pid2" 2>/dev/null || true
-
-if [ "$count" -ne 1 ]; then
-  fail "未接続セッションを回収せず ${count} 個に増えた（期待値: 1）"
-fi
-
+# 「起動に失敗してセッションが増えなかっただけ」を PASS と誤判定しないよう、
+# 実際にアタッチできていることを先に確認する
+[ -n "$attached" ] || fail "2回目の接続がアタッチできていない（起動失敗の可能性）"
+[ "$count" -eq 1 ] || fail "未接続セッションを回収せず ${count} 個に増えた（期待値: 1）"
 echo "PASS: 未接続セッションを回収し、セッション数は1のまま"
+
+# ---------------------------------------------------------------------------
+# シナリオ2: 未接続セッションが複数ある場合、最後に切断したものを回収する
+# ---------------------------------------------------------------------------
+# 切断前の current window に戻れることが回収の利点なので、名前順ではなく
+# 最終アタッチ時刻で選ぶ必要がある
+echo "=== シナリオ2: 最後に切断したセッションの回収 ==="
+setup
+
+pidA=$(launch)
+wait_for_sessions 1 || fail "1クライアント目の接続に失敗した"
+sleep 1
+pidB=$(launch)
+wait_for_sessions 2 || fail "2クライアント目でグループセッションが作られなかった"
+sleep 1
+[ "$(session_count)" -eq 2 ] || fail "セッションが2つにならなかった"
+
+# main → main-1 の順に切断する（main-1 が「最後に切断」になる）
+detach "$pidA" main
+sleep 2
+detach "$pidB" main-1
+sleep 2
+[ -z "$(attached_names)" ] || fail "デタッチ後もクライアントが残っている ($(attached_names))"
+
+pidC=$(launch)
+sleep 3
+count=$(session_count)
+attached=$(attached_names)
+sessions
+detach "$pidC" main-1
+
+[ -n "$attached" ] || fail "3回目の接続がアタッチできていない（起動失敗の可能性）"
+[ "$count" -eq 2 ] || fail "セッションが ${count} 個に増えた（期待値: 2）"
+[ "$attached" = "main-1" ] || fail "最後に切断した main-1 ではなく ${attached} を回収した"
+echo "PASS: 最後に切断した main-1 を回収した"
+
+echo "すべてのシナリオが PASS"
