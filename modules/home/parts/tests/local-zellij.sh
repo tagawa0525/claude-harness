@@ -50,11 +50,13 @@ command -v script >/dev/null || { echo "FAIL: script(util-linux) が見つから
 [ -r "$CONF" ] || { echo "FAIL: $CONF が読めない"; exit 1; }
 [ -r "$LAYOUT" ] || { echo "FAIL: $LAYOUT が読めない"; exit 1; }
 
-# プラグインの権限プロンプトは対話でしか承認できないため、レイアウトから
-# wasm のパスを取り出して権限キャッシュを事前に与える
-WASM=$(grep -o 'file:[^"]*\.wasm' "$LAYOUT" | head -n1 | sed 's/^file://')
-[ -n "$WASM" ] || { echo "FAIL: レイアウトからプラグインのパスを特定できない"; exit 1; }
-[ -r "$WASM" ] || { echo "FAIL: プラグイン $WASM が読めない"; exit 1; }
+# プラグインの権限プロンプトは対話でしか承認できないため、設定とレイアウトから
+# wasm のパス（zellij-slotsとzjstatus）を取り出して権限キャッシュを事前に与える
+WASMS=$(grep -oh 'file:[^"]*\.wasm' "$CONF" "$LAYOUT" | sed 's/^file://' | sort -u)
+[ -n "$WASMS" ] || { echo "FAIL: レイアウトからプラグインのパスを特定できない"; exit 1; }
+while IFS= read -r wasm; do
+  [ -r "$wasm" ] || { echo "FAIL: プラグイン $wasm が読めない"; exit 1; }
+done <<< "$WASMS"
 
 WORK=""
 
@@ -81,13 +83,21 @@ setup() {
     "$XDG_DATA_HOME" "$ZELLIJ_SOCKET_DIR"
   cp "$CONF" "$XDG_CONFIG_HOME/zellij/config.kdl"
   cp "$LAYOUT" "$XDG_CONFIG_HOME/zellij/layouts/slots.kdl"
-  # 権限キャッシュを事前投入（ノード名はプラグインの絶対パス）
-  cat > "$XDG_CACHE_HOME/zellij/permissions.kdl" <<EOF
-"$WASM" {
+  # 権限キャッシュを事前投入（ノード名はプラグインの絶対パス）。
+  # 要求される権限がキャッシュを上回るとプロンプトが出て詰まるため、
+  # 実際の要求より広めに与えておく
+  : > "$XDG_CACHE_HOME/zellij/permissions.kdl"
+  while IFS= read -r wasm; do
+    cat >> "$XDG_CACHE_HOME/zellij/permissions.kdl" <<EOF
+"$wasm" {
     ReadApplicationState
     ChangeApplicationState
+    RunCommands
+    ReadCliPipes
+    MessageAndLaunchOtherPlugins
 }
 EOF
+  done <<< "$WASMS"
 }
 
 # attach には端末が必要なので疑似端末上で起動する。
