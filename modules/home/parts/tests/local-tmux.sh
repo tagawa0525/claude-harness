@@ -8,9 +8,17 @@
 #   nix build --impure --no-link --print-out-paths --expr '
 #     let
 #       f = builtins.getFlake (toString ./.);
-#       ps = f.nixosConfigurations.t14g4.config.home-manager.users.tagawa.home.packages;
-#     in builtins.head (builtins.filter (p: (p.name or "") == "local-tmux") ps)'
-#   ./modules/home/parts/tests/local-tmux.sh <上記のstore path>/bin/local-tmux
+#       hm = f.nixosConfigurations.t14g4.config.home-manager.users.tagawa;
+#       script = builtins.head (
+#         builtins.filter (p: (p.name or "") == "local-tmux") hm.home.packages
+#       );
+#     in [ script hm.xdg.configFile."tmux/tmux.conf".source ]'
+#   ./modules/home/parts/tests/local-tmux.sh <1つ目>/bin/local-tmux <2つ目>
+#
+# tmux.conf を引数で受け取り HOME/XDG_CONFIG_HOME ごと隔離するのは、
+# インストール済みの設定を読ませるとホストの rebuild 状況で結果が変わるため。
+# destroy-unattached の有無で残る未接続セッションの数が変わるので、必ず
+# ブランチの設定で検証する。
 #
 # シナリオごとに隔離した TMUX_TMPDIR で専用の tmux サーバーを立てて検証する:
 #   1. 未接続セッションを回収し、セッション数が増えない
@@ -18,13 +26,15 @@
 # =============================================================================
 set -euo pipefail
 
-SCRIPT="${1:?usage: local-tmux.sh <path-to-local-tmux>}"
+SCRIPT="${1:?usage: local-tmux.sh <path-to-local-tmux> <path-to-tmux.conf>}"
+CONF="${2:?usage: local-tmux.sh <path-to-local-tmux> <path-to-tmux.conf>}"
 
 # 前提の欠落は「セッションが増えなかった」と区別がつかず false green になるため、
 # テスト本体に入る前に落とす
 command -v tmux >/dev/null || { echo "FAIL: tmux が見つからない"; exit 1; }
 command -v script >/dev/null || { echo "FAIL: script(util-linux) が見つからない"; exit 1; }
 [ -x "$SCRIPT" ] || { echo "FAIL: $SCRIPT が実行可能でない"; exit 1; }
+[ -r "$CONF" ] || { echo "FAIL: $CONF が読めない"; exit 1; }
 
 WORK=""
 SOCKET=""
@@ -41,6 +51,11 @@ setup() {
   teardown
   WORK=$(mktemp -d)
   export TMUX_TMPDIR="$WORK"
+  # ホストの ~/.tmux.conf や ~/.config/tmux/tmux.conf を読ませない
+  export HOME="$WORK/home"
+  export XDG_CONFIG_HOME="$HOME/.config"
+  mkdir -p "$XDG_CONFIG_HOME/tmux"
+  cp "$CONF" "$XDG_CONFIG_HOME/tmux/tmux.conf"
   SOCKET="$WORK/tmux-$(id -u)/default"
 }
 
@@ -91,6 +106,8 @@ fail() {
 # ---------------------------------------------------------------------------
 # シナリオ1: 未接続セッションを回収し、セッション数が増えない
 # ---------------------------------------------------------------------------
+# destroy-unattached の対象外である main は detach 後も残るため、回収しないと
+# 接続のたびに main-1 を作り直すことになる
 echo "=== シナリオ1: 未接続セッションの回収 ==="
 setup
 
@@ -103,6 +120,7 @@ sleep 1
 detach "$pid1" main
 sleep 1
 [ -z "$(attached_names)" ] || fail "デタッチ後もクライアントが残っている ($(attached_names))"
+[ "$(session_count)" -eq 1 ] || fail "アンカーの main が残っていない"
 
 # 2回目の接続: 未接続の main を回収すべき
 pid2=$(launch)
@@ -121,14 +139,18 @@ echo "PASS: 未接続セッションを回収し、セッション数は1のま�
 # ---------------------------------------------------------------------------
 # シナリオ2: 未接続セッションが複数ある場合、最後に切断したものを回収する
 # ---------------------------------------------------------------------------
-# 切断前の current window に戻れることが回収の利点なので、名前順ではなく
-# 最終アタッチ時刻で選ぶ必要がある
+# destroy-unattached はサーバー起動時に読まれるため、この設定が入る前から
+# 動いているサーバーには効かず、未接続セッションが複数残る。その状況で名前順に
+# 選ぶと常に main が選ばれ、切断前の current window に戻れない。
 echo "=== シナリオ2: 最後に切断したセッションの回収 ==="
 setup
 
 pidA=$(launch)
 wait_for_sessions 1 || fail "1クライアント目の接続に失敗した"
 sleep 1
+# destroy-unattached 導入前から動いているサーバーを再現する
+tmux -S "$SOCKET" set-option -g destroy-unattached off
+
 pidB=$(launch)
 wait_for_sessions 2 || fail "2クライアント目でグループセッションが作られなかった"
 sleep 1
@@ -140,6 +162,7 @@ sleep 2
 detach "$pidB" main-1
 sleep 2
 [ -z "$(attached_names)" ] || fail "デタッチ後もクライアントが残っている ($(attached_names))"
+[ "$(session_count)" -eq 2 ] || fail "未接続セッションが2つ残っていない"
 
 pidC=$(launch)
 sleep 3
