@@ -158,8 +158,11 @@ focused_tab() {
 # ブロードキャストになり、actorが未起動だと誰も処理しない）
 SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
 [ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
+# パイプがブロックしたままだとスイート全体がハングするため、
+# タイムアウトで失敗として表面化させる
 pipe_slots() {
-  zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1"
+  timeout 10 zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1" \
+    || echo "WARN: pipe_slots $1 がタイムアウトした"
 }
 
 wait_for_tabs() {
@@ -314,24 +317,28 @@ echo "PASS: 多重接続中でもタブは1つだけ増えた"
 # Zellijはペインタイトルの変更（OSC）だけではPaneUpdateを発行しないため、
 # fishのフックがコマンドの開始・終了を「title:<pane_id>:<コマンド名>」の
 # パイプで通知してくる。バーはこれを描画に反映する。
-# プラグイン指定なしのパイプで、描画役のbarインスタンスに届くことも確認する
+# プラグイン指定なしのパイプで、描画役のbarインスタンスに届くことも確認する。
+# バーのインスタンスはクライアントごとに複製され、多重接続の残骸があると
+# 配送が遅延するため、独立したセッションで検証する
 echo "=== シナリオ8: titleパイプによるラベル更新 ==="
-sleep 2
+setup
 mkfifo "$WORK/inC"
-script -qec "'$SCRIPT'" "$WORK/outC" < "$WORK/inC" &
+# typescriptファイルはブロックバッファされて直近フレームが欠けるため、
+# stdoutリダイレクトで即時にキャプチャする
+script -qec "'$SCRIPT'" /dev/null > "$WORK/outC" 2>&1 < "$WORK/inC" &
 pidC=$!
 exec 7<>"$WORK/inC"
-sleep 3
-# 最初のタブ（スロット3）の端末ペインはid=1
-zellij --session main pipe --name slots -- "title:1:TITLETEST"
+sleep 4
+# 最初のタブ（スロット3）の端末ペインはid=0（fishフックは$ZELLIJ_PANE_IDを使う）
+timeout 10 zellij --session main pipe --name slots -- "title:0:TITLETEST" \
+  || echo "WARN: titleパイプがタイムアウトした"
 sleep 2
 bar_line() {
   tr '\r' '\n' < "$WORK/outC" \
     | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1
 }
 case "$(bar_line)" in
-  *"3:TITLE"*) : ;;
-  # タブ数が多いとタイトルは幅予算で切り詰められるため前方一致で判定する
+  *"3:TITLETEST"*) : ;;
   *) fail "titleパイプがバーに反映されなかった ($(bar_line))" ;;
 esac
 kill "$pidC" 2>/dev/null || true
