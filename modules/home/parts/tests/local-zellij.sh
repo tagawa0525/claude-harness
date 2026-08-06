@@ -37,6 +37,7 @@
 #   5. デタッチしてもセッションが残り、local-zellij で同セッションに再接続する
 #   6. キー入力で操作できる（kitty形式・レガシー0x1C・Ctrl保持の数字）
 #   7. 多重接続中に prefix+c を1回押してもタブは1つしか増えない
+#   8. 「title:」パイプでバーのタブラベルが更新される（tmuxの#W相当）
 # =============================================================================
 set -euo pipefail
 
@@ -306,5 +307,34 @@ sleep 2
 kill "$pidA" "$pidB" 2>/dev/null || true
 exec 8>&- 9>&-
 echo "PASS: 多重接続中でもタブは1つだけ増えた"
+
+# ---------------------------------------------------------------------------
+# シナリオ8: 「title:」パイプでバーのタブラベルが更新される
+# ---------------------------------------------------------------------------
+# Zellijはペインタイトルの変更（OSC）だけではPaneUpdateを発行しないため、
+# fishのフックがコマンドの開始・終了を「title:<pane_id>:<コマンド名>」の
+# パイプで通知してくる。バーはこれを描画に反映する。
+# プラグイン指定なしのパイプで、描画役のbarインスタンスに届くことも確認する
+echo "=== シナリオ8: titleパイプによるラベル更新 ==="
+sleep 2
+mkfifo "$WORK/inC"
+script -qec "'$SCRIPT'" "$WORK/outC" < "$WORK/inC" &
+pidC=$!
+exec 7<>"$WORK/inC"
+sleep 3
+# 最初のタブ（スロット3）の端末ペインはid=1
+zellij --session main pipe --name slots -- "title:1:TITLETEST"
+sleep 2
+bar_line() {
+  tr '\r' '\n' < "$WORK/outC" \
+    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1
+}
+case "$(bar_line)" in
+  *"3:TITLETEST"*) : ;;
+  *) fail "titleパイプがバーに反映されなかった ($(bar_line))" ;;
+esac
+kill "$pidC" 2>/dev/null || true
+exec 7>&-
+echo "PASS: titleパイプでタブ3のラベルが更新された"
 
 echo "すべてのシナリオが PASS"
