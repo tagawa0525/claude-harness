@@ -37,6 +37,7 @@
 #   5. デタッチしてもセッションが残り、local-zellij で同セッションに再接続する
 #   6. キー入力で操作できる（kitty形式・レガシー0x1C・Ctrl保持の数字）
 #   7. 多重接続中に prefix+c を1回押してもタブは1つしか増えない
+#   8. 「title:」パイプでバーのタブラベルが更新される（tmuxの#W相当）
 # =============================================================================
 set -euo pipefail
 
@@ -157,8 +158,12 @@ focused_tab() {
 # ブロードキャストになり、actorが未起動だと誰も処理しない）
 SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
 [ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
+# パイプの送信コマンドは、受信インスタンスの処理待ちでブロックしたまま
+# になることがある（Zellijの仕様。配送自体は行われる）。スイートが
+# ハングしないよう打ち切り、実際の挙動は後続のアサーションで検証する
 pipe_slots() {
-  zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1"
+  timeout 10 zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1" \
+    || echo "WARN: pipe_slots $1 がタイムアウトした"
 }
 
 wait_for_tabs() {
@@ -306,5 +311,39 @@ sleep 2
 kill "$pidA" "$pidB" 2>/dev/null || true
 exec 8>&- 9>&-
 echo "PASS: 多重接続中でもタブは1つだけ増えた"
+
+# ---------------------------------------------------------------------------
+# シナリオ8: 「title:」パイプでバーのタブラベルが更新される
+# ---------------------------------------------------------------------------
+# Zellijはペインタイトルの変更（OSC）だけではPaneUpdateを発行しないため、
+# fishのフックがコマンドの開始・終了を「title:<pane_id>:<コマンド名>」の
+# パイプで通知してくる。バーはこれを描画に反映する。
+# プラグイン指定なしのパイプで、描画役のbarインスタンスに届くことも確認する。
+# バーのインスタンスはクライアントごとに複製され、多重接続の残骸があると
+# 配送が遅延するため、独立したセッションで検証する
+echo "=== シナリオ8: titleパイプによるラベル更新 ==="
+setup
+mkfifo "$WORK/inC"
+# typescriptファイルはブロックバッファされて直近フレームが欠けるため、
+# stdoutリダイレクトで即時にキャプチャする
+script -qec "'$SCRIPT'" /dev/null > "$WORK/outC" 2>&1 < "$WORK/inC" &
+pidC=$!
+exec 7<>"$WORK/inC"
+sleep 4
+# 最初のタブ（スロット3）の端末ペインはid=0（fishフックは$ZELLIJ_PANE_IDを使う）
+timeout 10 zellij --session main pipe --name slots -- "title:0:TITLETEST" \
+  || echo "WARN: titleパイプがタイムアウトした"
+sleep 2
+bar_line() {
+  tr '\r' '\n' < "$WORK/outC" \
+    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1
+}
+case "$(bar_line)" in
+  *"3:TITLETEST"*) : ;;
+  *) fail "titleパイプがバーに反映されなかった ($(bar_line))" ;;
+esac
+kill "$pidC" 2>/dev/null || true
+exec 7>&-
+echo "PASS: titleパイプでタブ3のラベルが更新された"
 
 echo "すべてのシナリオが PASS"
