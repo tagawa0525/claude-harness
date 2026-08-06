@@ -158,8 +158,9 @@ focused_tab() {
 # ブロードキャストになり、actorが未起動だと誰も処理しない）
 SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
 [ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
-# パイプがブロックしたままだとスイート全体がハングするため、
-# タイムアウトで失敗として表面化させる
+# パイプの送信コマンドは、受信インスタンスの処理待ちでブロックしたまま
+# になることがある（Zellijの仕様。配送自体は行われる）。スイートが
+# ハングしないよう打ち切り、実際の挙動は後続のアサーションで検証する
 pipe_slots() {
   timeout 10 zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1" \
     || echo "WARN: pipe_slots $1 がタイムアウトした"
