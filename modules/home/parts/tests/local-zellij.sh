@@ -150,9 +150,15 @@ focused_tab() {
     | grep -o 'name="[^"]*"' | head -n1 | cut -d'"' -f2 || true
 }
 
-# パイプでプラグインへメッセージを送る
+# パイプでプラグインへメッセージを送る。
+# キーバインドのMessagePluginと同様に --plugin を指定する（描画用のbar
+# インスタンスではなく、設定なしのactorシングルトンに配送し、未起動なら
+# 起動させるため。プラグインなしのパイプは起動済みインスタンスへの
+# ブロードキャストになり、actorが未起動だと誰も処理しない）
+SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
+[ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
 pipe_slots() {
-  zellij --session main pipe --name slots -- "$1"
+  zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1"
 }
 
 wait_for_tabs() {
