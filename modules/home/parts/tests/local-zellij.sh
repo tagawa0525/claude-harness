@@ -330,7 +330,8 @@ bar_line() {
     | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1
 }
 case "$(bar_line)" in
-  *"3:TITLETEST"*) : ;;
+  *"3:TITLE"*) : ;;
+  # タブ数が多いとタイトルは幅予算で切り詰められるため前方一致で判定する
   *) fail "titleパイプがバーに反映されなかった ($(bar_line))" ;;
 esac
 kill "$pidC" 2>/dev/null || true
