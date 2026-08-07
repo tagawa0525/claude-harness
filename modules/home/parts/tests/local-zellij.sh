@@ -97,7 +97,14 @@ setup() {
   # 独自にシードすると、プラグインの要求権限とシード内容の乖離
   # （不足すると不可視の承認プロンプトでプラグインがブロックし、
   # バーが消える）をテストで検出できないため
-  bash "$SEED"
+  seed_permissions
+}
+
+# activation は home-manager の限られた PATH で実行され、裸のコマンド名は
+# 落ちうる（awk: command not found の実績）。取りこぼしを検出できるよう
+# PATH を空にし、activation 同様にエラーで即失敗させる
+seed_permissions() {
+  PATH="" "$BASH" -eu "$SEED"
 }
 
 # attach には端末が必要なので疑似端末上で起動する。
@@ -205,7 +212,7 @@ cat > "$PERMS_FILE" <<EOF
     ReadApplicationState
 }
 EOF
-bash "$SEED"
+seed_permissions
 [ "$(cat "$PERMS_FILE")" = "$fresh" ] \
   || fail "不完全なエントリが補正されなかった ($(cat "$PERMS_FILE"))"
 
@@ -215,7 +222,7 @@ cat > "$PERMS_FILE" <<EOF
     RunCommands
 }
 EOF
-bash "$SEED"
+seed_permissions
 grep -qF '"/nix/store/other-plugin.wasm"' "$PERMS_FILE" \
   || fail "他プラグインのエントリが消えた ($(cat "$PERMS_FILE"))"
 grep -qF "\"$SLOTS_WASM\"" "$PERMS_FILE" \
