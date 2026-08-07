@@ -42,6 +42,7 @@
 #   6. キー入力で操作できる（kitty形式・レガシー0x1C・Ctrl保持の数字）
 #   7. 多重接続中に prefix+c を1回押してもタブは1つしか増えない
 #   8. 「title:」パイプでバーのタブラベルが更新される（tmuxの#W相当）
+#   9. 多重接続時、タブのフォーカスはクライアントごとに独立する
 # =============================================================================
 set -euo pipefail
 
@@ -115,7 +116,9 @@ launch() {
 }
 
 # キー入力を送り込めるクライアントを起動する（stdinをFIFOから供給）。
-# $1: FIFOのパス（この関数が作成する）。呼び出し側で書き込み用fdを
+# $1: FIFOのパス（この関数が作成する）。画面出力は "$1.out" に残す
+# （typescriptファイルはブロックバッファされて直近フレームが欠けるため、
+# stdoutリダイレクトで即時にキャプチャする）。呼び出し側で書き込み用fdを
 # 開いたままにすること（閉じるとEOFでクライアントが終了するため）:
 #   pid=$(launch_with_input "$WORK/in"); exec {fd}<>"$WORK/in"
 # 呼び出し側の open は <> にする（> はFIFOの読み手が現れるまでブロックする）。
@@ -124,8 +127,18 @@ launch() {
 # とデッドロックする
 launch_with_input() {
   mkfifo "$1"
-  script -qec "'$SCRIPT'" /dev/null >/dev/null 2>&1 < "$1" &
+  script -qec "'$SCRIPT'" /dev/null > "$1.out" 2>&1 < "$1" &
   echo $!
+}
+
+# そのクライアントの画面でハイライトされているタブ名（バーの反転表示）。
+# フォーカスはクライアントごとに異なりうるので、セッション全体を見る
+# focused_tab ではなく各クライアントの画面出力から読む。
+# プラグインは "\e[47;30m" と書くが、Zellijは属性を組み直して出力するため
+# 分割形式（"\e[30m\e[47m"）でも拾えるようにする
+# $1: クライアントの出力ファイル（launch_with_input の "$FIFO.out"）
+client_tab() {
+  grep -aoP '\x1b\[(30m\x1b\[47|47;30)m \K[0-9]' "$1" | tail -1
 }
 
 # fdへキーのバイト列を書き込む（バックスラッシュエスケープを解釈）
@@ -392,11 +405,7 @@ echo "PASS: 多重接続中でもタブは1つだけ増えた"
 # 配送が遅延するため、独立したセッションで検証する
 echo "=== シナリオ8: titleパイプによるラベル更新 ==="
 setup
-mkfifo "$WORK/inC"
-# typescriptファイルはブロックバッファされて直近フレームが欠けるため、
-# stdoutリダイレクトで即時にキャプチャする
-script -qec "'$SCRIPT'" /dev/null > "$WORK/outC" 2>&1 < "$WORK/inC" &
-pidC=$!
+pidC=$(launch_with_input "$WORK/inC")
 exec 7<>"$WORK/inC"
 sleep 4
 # 最初のタブ（スロット3）の端末ペインはid=0（fishフックは$ZELLIJ_PANE_IDを使う）
@@ -404,7 +413,7 @@ timeout 10 zellij --session main pipe --name slots -- "title:0:TITLETEST" \
   || echo "WARN: titleパイプがタイムアウトした"
 sleep 2
 bar_line() {
-  tr '\r' '\n' < "$WORK/outC" \
+  tr '\r' '\n' < "$WORK/inC.out" \
     | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1
 }
 case "$(bar_line)" in
@@ -414,5 +423,51 @@ esac
 kill "$pidC" 2>/dev/null || true
 exec 7>&-
 echo "PASS: titleパイプでタブ3のラベルが更新された"
+
+# ---------------------------------------------------------------------------
+# シナリオ9: 多重接続時、タブのフォーカスはクライアントごとに独立する
+# ---------------------------------------------------------------------------
+# 旧tmuxのグループセッションでは、複数端末が同じセッションを共有しつつ
+# 別々のwindowを見られた。Zellijでも標準のタブ切り替えはクライアント単位で
+# 動くが、プラグインのパイプはクライアントごとに複製された全インスタンスへ
+# 配送されるため、素朴に実装すると全クライアントが同じタブへ移動してしまう。
+# 押したクライアントだけが動くことを検証する
+echo "=== シナリオ9: フォーカスのクライアント独立性 ==="
+setup
+pidD=$(launch_with_input "$WORK/inD")
+exec 6<>"$WORK/inD"
+sleep 4
+send_keys 6 '\x1b[92;5uc'          # D: スロット4を作成（Dはそこへ移動する）
+sleep 2
+pidE=$(launch_with_input "$WORK/inE")
+exec 5<>"$WORK/inE"
+sleep 4
+[ "$(client_tab "$WORK/inD.out")" = "4" ] \
+  || fail "Dが作成したスロット4にいない ($(client_tab "$WORK/inD.out"))"
+[ "$(client_tab "$WORK/inE.out")" = "4" ] \
+  || fail "接続直後のEが既存クライアントのタブを表示していない ($(client_tab "$WORK/inE.out"))"
+
+send_keys 5 '\x1b[92;5u3'          # E: スロット3へジャンプ
+sleep 2
+[ "$(client_tab "$WORK/inE.out")" = "3" ] \
+  || fail "Eがスロット3へ移動しなかった ($(client_tab "$WORK/inE.out"))"
+[ "$(client_tab "$WORK/inD.out")" = "4" ] \
+  || fail "Eのジャンプに他クライアントDが引きずられた ($(client_tab "$WORK/inD.out"))"
+
+send_keys 6 '\x1b[92;5uc'          # D: 新規タブ（スロット2）を作成
+sleep 2
+[ "$(client_tab "$WORK/inD.out")" = "2" ] \
+  || fail "Dが作成したスロット2へ移動しなかった ($(client_tab "$WORK/inD.out"))"
+[ "$(client_tab "$WORK/inE.out")" = "3" ] \
+  || fail "Dのタブ作成に他クライアントEが引きずられた ($(client_tab "$WORK/inE.out"))"
+
+# プレフィックス操作の後はlockedモードに戻り、通常のキーがペインへ届く
+send_keys 5 'echo LOCKEDBACK\n'
+sleep 2
+grep -aq 'LOCKEDBACK' "$WORK/inE.out" \
+  || fail "操作後にlockedモードへ戻らずキー入力がペインに届かなかった"
+kill "$pidD" "$pidE" 2>/dev/null || true
+exec 6>&- 5>&-
+echo "PASS: フォーカスはクライアントごとに独立した"
 
 echo "すべてのシナリオが PASS"
