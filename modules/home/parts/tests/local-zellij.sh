@@ -13,7 +13,8 @@
 #   nix build --impure --no-link --print-out-paths --expr '
 #     let
 #       f = builtins.getFlake (toString ./.);
-#       hm = f.nixosConfigurations.t14g4.config.home-manager.users.tagawa;
+#       cfg = f.nixosConfigurations.t14g4;
+#       hm = cfg.config.home-manager.users.tagawa;
 #       script = builtins.head (
 #         builtins.filter (p: (p.name or "") == "local-zellij") hm.home.packages
 #       );
@@ -21,15 +22,18 @@
 #       script
 #       hm.xdg.configFile."zellij/config.kdl".source
 #       hm.xdg.configFile."zellij/layouts/slots.kdl".source
+#       (cfg.pkgs.writeScript "zellij-perm-seed"
+#         hm.home.activation.zellijPluginPermissions.data)
 #     ]'
 #   nix shell nixpkgs#zellij -c \
 #     ./modules/home/parts/tests/local-zellij.sh \
-#     <1つ目>/bin/local-zellij <2つ目> <3つ目>
+#     <1つ目>/bin/local-zellij <2つ目> <3つ目> <4つ目>
 #
 # config.kdl / layout を引数で受け取り HOME/XDG ごと隔離するのは、
 # インストール済みの設定を読ませるとホストの rebuild 状況で結果が変わるため。
 #
 # シナリオ:
+#   0. 権限シードが不完全な既存エントリを補正し、他のエントリを保持する
 #   1. 初回起動でセッション main が作られ、初期タブ名が「3」になる
 #   2. 「new」パイプで優先順位どおり 4, 2, 8 のスロットにタブが増える
 #   3. タブを閉じても他のタブ名が変わらず、次の new は空いた番号を再利用する
@@ -41,9 +45,11 @@
 # =============================================================================
 set -euo pipefail
 
-SCRIPT="${1:?usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl>}"
-CONF="${2:?usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl>}"
-LAYOUT="${3:?usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl>}"
+USAGE="usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl> <perm-seed.sh>"
+SCRIPT="${1:?$USAGE}"
+CONF="${2:?$USAGE}"
+LAYOUT="${3:?$USAGE}"
+SEED="${4:?$USAGE}"
 
 # 前提の欠落は「タブが増えなかった」と区別がつかず false green になるため、
 # テスト本体に入る前に落とす
@@ -52,6 +58,7 @@ command -v script >/dev/null || { echo "FAIL: script(util-linux) が見つから
 [ -x "$SCRIPT" ] || { echo "FAIL: $SCRIPT が実行可能でない"; exit 1; }
 [ -r "$CONF" ] || { echo "FAIL: $CONF が読めない"; exit 1; }
 [ -r "$LAYOUT" ] || { echo "FAIL: $LAYOUT が読めない"; exit 1; }
+[ -r "$SEED" ] || { echo "FAIL: $SEED が読めない"; exit 1; }
 
 # プラグインの権限プロンプトは対話でしか承認できないため、設定とレイアウトから
 # wasm のパス（zellij-slotsとzjstatus）を取り出して権限キャッシュを事前に与える
@@ -86,21 +93,18 @@ setup() {
     "$XDG_DATA_HOME" "$ZELLIJ_SOCKET_DIR"
   cp "$CONF" "$XDG_CONFIG_HOME/zellij/config.kdl"
   cp "$LAYOUT" "$XDG_CONFIG_HOME/zellij/layouts/slots.kdl"
-  # 権限キャッシュを事前投入（ノード名はプラグインの絶対パス）。
-  # 要求される権限がキャッシュを上回るとプロンプトが出て詰まるため、
-  # 実際の要求より広めに与えておく
-  : > "$XDG_CACHE_HOME/zellij/permissions.kdl"
-  while IFS= read -r wasm; do
-    cat >> "$XDG_CACHE_HOME/zellij/permissions.kdl" <<EOF
-"$wasm" {
-    ReadApplicationState
-    ChangeApplicationState
-    RunCommands
-    ReadCliPipes
-    MessageAndLaunchOtherPlugins
+  # 権限キャッシュは本番と同じ activation スクリプトで事前投入する。
+  # 独自にシードすると、プラグインの要求権限とシード内容の乖離
+  # （不足すると不可視の承認プロンプトでプラグインがブロックし、
+  # バーが消える）をテストで検出できないため
+  seed_permissions
 }
-EOF
-  done <<< "$WASMS"
+
+# activation は home-manager の限られた PATH で実行され、裸のコマンド名は
+# 落ちうる（awk: command not found の実績）。取りこぼしを検出できるよう
+# PATH を空にし、activation 同様にエラーで即失敗させる
+seed_permissions() {
+  PATH="" "$BASH" -eu "$SEED"
 }
 
 # attach には端末が必要なので疑似端末上で起動する。
@@ -189,6 +193,71 @@ fail() {
   tab_names
   exit 1
 }
+
+# ---------------------------------------------------------------------------
+# シナリオ0: 権限シードが不完全な既存エントリを補正し、他のエントリを保持する
+# ---------------------------------------------------------------------------
+# プラグインの要求権限が増えたとき（例: PR #126のReadCliPipes）、キャッシュに
+# 同じwasmパスの古いエントリが残っていると権限不足で承認プロンプトが出て
+# プラグインがブロックする。シードは既存エントリを検出してスキップするの
+# ではなく、あるべき内容に補正しなければならない
+echo "=== シナリオ0: 権限シードによる不完全エントリの補正 ==="
+setup
+PERMS_FILE="$XDG_CACHE_HOME/zellij/permissions.kdl"
+fresh=$(cat "$PERMS_FILE")
+
+# rebuildでwasmは変わらず要求権限だけが増えた状況を再現する
+cat > "$PERMS_FILE" <<EOF
+"$SLOTS_WASM" {
+    ReadApplicationState
+}
+EOF
+seed_permissions
+[ "$(cat "$PERMS_FILE")" = "$fresh" ] \
+  || fail "不完全なエントリが補正されなかった ($(cat "$PERMS_FILE"))"
+
+# 別プラグインのエントリ（Zellij自身が承認時に書いたもの等）は壊さない
+cat > "$PERMS_FILE" <<EOF
+"/nix/store/other-plugin.wasm" {
+    RunCommands
+}
+EOF
+seed_permissions
+grep -qF '"/nix/store/other-plugin.wasm"' "$PERMS_FILE" \
+  || fail "他プラグインのエントリが消えた ($(cat "$PERMS_FILE"))"
+grep -qF "\"$SLOTS_WASM\"" "$PERMS_FILE" \
+  || fail "他エントリ保持時に自エントリが追加されなかった ($(cat "$PERMS_FILE"))"
+
+# Zellij側の書式ゆらぎがあっても、自エントリの除去が行単位の完全一致に
+# 失敗して他エントリを巻き込み削除したり、古いブロックを残したりしない
+other_block='"/nix/store/other-plugin.wasm" {
+    RunCommands
+}'
+expected="$other_block"$'\n'"$fresh"
+
+# 閉じ括弧がインデントされている場合（除去の終了判定を誤ると後続の
+# 他エントリがすべて消える）
+{
+  printf '"%s" {\n' "$SLOTS_WASM"
+  printf '    ReadApplicationState\n'
+  printf '  }\n'
+  printf '%s\n' "$other_block"
+} > "$PERMS_FILE"
+seed_permissions
+[ "$(cat "$PERMS_FILE")" = "$expected" ] \
+  || fail "インデントされた閉じ括弧で補正が壊れた ($(cat "$PERMS_FILE"))"
+
+# 開始行に末尾空白がある場合（開始判定を逃すと古いブロックが残る）
+{
+  printf '"%s" { \n' "$SLOTS_WASM"
+  printf '    ReadApplicationState\n'
+  printf '}\n'
+  printf '%s\n' "$other_block"
+} > "$PERMS_FILE"
+seed_permissions
+[ "$(cat "$PERMS_FILE")" = "$expected" ] \
+  || fail "末尾空白つき開始行で古いブロックが残った ($(cat "$PERMS_FILE"))"
+echo "PASS: 不完全なエントリを補正し、他のエントリを保持した"
 
 # ---------------------------------------------------------------------------
 # シナリオ1: 初回起動でセッション main が作られ、初期タブ名が「3」になる
