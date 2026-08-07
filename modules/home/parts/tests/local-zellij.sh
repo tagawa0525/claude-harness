@@ -227,6 +227,36 @@ grep -qF '"/nix/store/other-plugin.wasm"' "$PERMS_FILE" \
   || fail "他プラグインのエントリが消えた ($(cat "$PERMS_FILE"))"
 grep -qF "\"$SLOTS_WASM\"" "$PERMS_FILE" \
   || fail "他エントリ保持時に自エントリが追加されなかった ($(cat "$PERMS_FILE"))"
+
+# Zellij側の書式ゆらぎがあっても、自エントリの除去が行単位の完全一致に
+# 失敗して他エントリを巻き込み削除したり、古いブロックを残したりしない
+other_block='"/nix/store/other-plugin.wasm" {
+    RunCommands
+}'
+expected="$other_block"$'\n'"$fresh"
+
+# 閉じ括弧がインデントされている場合（除去の終了判定を誤ると後続の
+# 他エントリがすべて消える）
+{
+  printf '"%s" {\n' "$SLOTS_WASM"
+  printf '    ReadApplicationState\n'
+  printf '  }\n'
+  printf '%s\n' "$other_block"
+} > "$PERMS_FILE"
+seed_permissions
+[ "$(cat "$PERMS_FILE")" = "$expected" ] \
+  || fail "インデントされた閉じ括弧で補正が壊れた ($(cat "$PERMS_FILE"))"
+
+# 開始行に末尾空白がある場合（開始判定を逃すと古いブロックが残る）
+{
+  printf '"%s" { \n' "$SLOTS_WASM"
+  printf '    ReadApplicationState\n'
+  printf '}\n'
+  printf '%s\n' "$other_block"
+} > "$PERMS_FILE"
+seed_permissions
+[ "$(cat "$PERMS_FILE")" = "$expected" ] \
+  || fail "末尾空白つき開始行で古いブロックが残った ($(cat "$PERMS_FILE"))"
 echo "PASS: 不完全なエントリを補正し、他のエントリを保持した"
 
 # ---------------------------------------------------------------------------
