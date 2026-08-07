@@ -13,7 +13,8 @@
 #   nix build --impure --no-link --print-out-paths --expr '
 #     let
 #       f = builtins.getFlake (toString ./.);
-#       hm = f.nixosConfigurations.t14g4.config.home-manager.users.tagawa;
+#       cfg = f.nixosConfigurations.t14g4;
+#       hm = cfg.config.home-manager.users.tagawa;
 #       script = builtins.head (
 #         builtins.filter (p: (p.name or "") == "local-zellij") hm.home.packages
 #       );
@@ -21,10 +22,12 @@
 #       script
 #       hm.xdg.configFile."zellij/config.kdl".source
 #       hm.xdg.configFile."zellij/layouts/slots.kdl".source
+#       (cfg.pkgs.writeScript "zellij-perm-seed"
+#         hm.home.activation.zellijPluginPermissions.data)
 #     ]'
 #   nix shell nixpkgs#zellij -c \
 #     ./modules/home/parts/tests/local-zellij.sh \
-#     <1つ目>/bin/local-zellij <2つ目> <3つ目>
+#     <1つ目>/bin/local-zellij <2つ目> <3つ目> <4つ目>
 #
 # config.kdl / layout を引数で受け取り HOME/XDG ごと隔離するのは、
 # インストール済みの設定を読ませるとホストの rebuild 状況で結果が変わるため。
@@ -41,9 +44,11 @@
 # =============================================================================
 set -euo pipefail
 
-SCRIPT="${1:?usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl>}"
-CONF="${2:?usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl>}"
-LAYOUT="${3:?usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl>}"
+USAGE="usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl> <perm-seed.sh>"
+SCRIPT="${1:?$USAGE}"
+CONF="${2:?$USAGE}"
+LAYOUT="${3:?$USAGE}"
+SEED="${4:?$USAGE}"
 
 # 前提の欠落は「タブが増えなかった」と区別がつかず false green になるため、
 # テスト本体に入る前に落とす
@@ -52,6 +57,7 @@ command -v script >/dev/null || { echo "FAIL: script(util-linux) が見つから
 [ -x "$SCRIPT" ] || { echo "FAIL: $SCRIPT が実行可能でない"; exit 1; }
 [ -r "$CONF" ] || { echo "FAIL: $CONF が読めない"; exit 1; }
 [ -r "$LAYOUT" ] || { echo "FAIL: $LAYOUT が読めない"; exit 1; }
+[ -r "$SEED" ] || { echo "FAIL: $SEED が読めない"; exit 1; }
 
 # プラグインの権限プロンプトは対話でしか承認できないため、設定とレイアウトから
 # wasm のパス（zellij-slotsとzjstatus）を取り出して権限キャッシュを事前に与える
@@ -86,21 +92,11 @@ setup() {
     "$XDG_DATA_HOME" "$ZELLIJ_SOCKET_DIR"
   cp "$CONF" "$XDG_CONFIG_HOME/zellij/config.kdl"
   cp "$LAYOUT" "$XDG_CONFIG_HOME/zellij/layouts/slots.kdl"
-  # 権限キャッシュを事前投入（ノード名はプラグインの絶対パス）。
-  # 要求される権限がキャッシュを上回るとプロンプトが出て詰まるため、
-  # 実際の要求より広めに与えておく
-  : > "$XDG_CACHE_HOME/zellij/permissions.kdl"
-  while IFS= read -r wasm; do
-    cat >> "$XDG_CACHE_HOME/zellij/permissions.kdl" <<EOF
-"$wasm" {
-    ReadApplicationState
-    ChangeApplicationState
-    RunCommands
-    ReadCliPipes
-    MessageAndLaunchOtherPlugins
-}
-EOF
-  done <<< "$WASMS"
+  # 権限キャッシュは本番と同じ activation スクリプトで事前投入する。
+  # 独自にシードすると、プラグインの要求権限とシード内容の乖離
+  # （不足すると不可視の承認プロンプトでプラグインがブロックし、
+  # バーが消える）をテストで検出できないため
+  bash "$SEED"
 }
 
 # attach には端末が必要なので疑似端末上で起動する。
