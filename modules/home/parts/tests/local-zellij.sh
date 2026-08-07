@@ -35,9 +35,9 @@
 # シナリオ:
 #   0. 権限シードが不完全な既存エントリを補正し、他のエントリを保持する
 #   1. 初回起動でセッション main が作られ、初期タブ名が「3」になる
-#   2. 「new」パイプで優先順位どおり 4, 2, 8 のスロットにタブが増える
-#   3. タブを閉じても他のタブ名が変わらず、次の new は空いた番号を再利用する
-#   4. 「goto:N」パイプで名前指定のタブへフォーカスが移る
+#   2. prefix+c で優先順位どおり 4, 2, 8 のスロットにタブが増える
+#   3. タブを閉じても他のタブ名が変わらず、次の作成は空いた番号を再利用する
+#   4. prefix+N で名前指定のタブへフォーカスが移る
 #   5. デタッチしてもセッションが残り、local-zellij で同セッションに再接続する
 #   6. キー入力で操作できる（kitty形式・レガシー0x1C・Ctrl保持の数字）
 #   7. 多重接続中に prefix+c を1回押してもタブは1つしか増えない
@@ -68,6 +68,9 @@ WASMS=$(grep -oh 'file:[^"]*\.wasm' "$CONF" "$LAYOUT" | sed 's/^file://' | sort 
 while IFS= read -r wasm; do
   [ -r "$wasm" ] || { echo "FAIL: プラグイン $wasm が読めない"; exit 1; }
 done <<< "$WASMS"
+# 権限キャッシュの検証（シナリオ0）で、シード対象のエントリを名指しする
+SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
+[ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
 
 WORK=""
 
@@ -168,19 +171,13 @@ focused_tab() {
     | grep -o 'name="[^"]*"' | head -n1 | cut -d'"' -f2 || true
 }
 
-# パイプでプラグインへメッセージを送る。
-# キーバインドのMessagePluginと同様に --plugin を指定する（描画用のbar
-# インスタンスではなく、設定なしのactorシングルトンに配送し、未起動なら
-# 起動させるため。プラグインなしのパイプは起動済みインスタンスへの
-# ブロードキャストになり、actorが未起動だと誰も処理しない）
-SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
-[ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
-# パイプの送信コマンドは、受信インスタンスの処理待ちでブロックしたまま
-# になることがある（Zellijの仕様。配送自体は行われる）。スイートが
-# ハングしないよう打ち切り、実際の挙動は後続のアサーションで検証する
-pipe_slots() {
-  timeout 10 zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1" \
-    || echo "WARN: pipe_slots $1 がタイムアウトした"
+# スロット操作（prefix+c / prefix+N）をキー入力で送る。
+# CLIパイプではなく実際のキーバインドを通す。プラグインは操作の発信元を
+# 「そのクライアントがprefixを押しているか」で見分けるため（シナリオ9）、
+# クライアント不在のCLIパイプでは本番と同じ経路にならない
+# $1: 書き込み用fd  $2: prefixに続けて送るキー
+send_prefix() {
+  send_keys "$1" "\x1b[92;5u$2"
 }
 
 wait_for_tabs() {
@@ -278,7 +275,8 @@ echo "PASS: 不完全なエントリを補正し、他のエントリを保持�
 echo "=== シナリオ1: 初回起動と初期スロット ==="
 setup
 
-pid1=$(launch)
+pid1=$(launch_with_input "$WORK/in1")
+exec 4<>"$WORK/in1"
 wait_for_tabs 1 || fail "初回起動でセッションが作られなかった"
 sleep 1
 [ "$(sessions)" = "main" ] || fail "セッション名が main でない ($(sessions))"
@@ -286,56 +284,57 @@ sleep 1
 echo "PASS: セッション main、初期タブ 3"
 
 # ---------------------------------------------------------------------------
-# シナリオ2: 「new」パイプで優先順位どおり 4, 2, 8 のスロットにタブが増える
+# シナリオ2: prefix+c で優先順位どおり 4, 2, 8 のスロットにタブが増える
 # ---------------------------------------------------------------------------
 echo "=== シナリオ2: 優先順位による新規タブ作成 ==="
-pipe_slots new
-wait_for_tabs 2 || fail "new でタブが増えなかった"
-pipe_slots new
-wait_for_tabs 3 || fail "2回目の new でタブが増えなかった"
-pipe_slots new
-wait_for_tabs 4 || fail "3回目の new でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 2 || fail "prefix+c でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 3 || fail "2回目の prefix+c でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 4 || fail "3回目の prefix+c でタブが増えなかった"
 sleep 1
 [ "$(tab_names_csv)" = "3,4,2,8" ] \
   || fail "優先順位どおりに増えていない ($(tab_names_csv) 期待値: 3,4,2,8)"
 echo "PASS: 3 → 4 → 2 → 8 の順にタブが増えた"
 
 # ---------------------------------------------------------------------------
-# シナリオ3: タブを閉じても他のタブ名が変わらず、次の new は空き番号を再利用
+# シナリオ3: タブを閉じても他のタブ名が変わらず、次の作成は空き番号を再利用
 # ---------------------------------------------------------------------------
 # tmux の renumber-windows off 相当。位置は詰まってもスロット名は動かない
 echo "=== シナリオ3: タブ削除後の番号安定性と再利用 ==="
-pipe_slots goto:4
+send_prefix 4 4
 sleep 1
-[ "$(focused_tab)" = "4" ] || fail "goto:4 でフォーカスが移らなかった ($(focused_tab))"
+[ "$(focused_tab)" = "4" ] || fail "prefix+4 でフォーカスが移らなかった ($(focused_tab))"
 Z close-tab
 sleep 1
 [ "$(tab_names_csv)" = "3,2,8" ] \
   || fail "タブ4を閉じた後に名前が変わった ($(tab_names_csv) 期待値: 3,2,8)"
-pipe_slots new
-wait_for_tabs 4 || fail "削除後の new でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 4 || fail "削除後の prefix+c でタブが増えなかった"
 sleep 1
 [ "$(tab_names_csv)" = "3,2,8,4" ] \
   || fail "空きスロット 4 を再利用しなかった ($(tab_names_csv) 期待値: 3,2,8,4)"
 echo "PASS: タブ名は安定し、空いた 4 を再利用した"
 
 # ---------------------------------------------------------------------------
-# シナリオ4: 「goto:N」パイプで名前指定のタブへフォーカスが移る
+# シナリオ4: prefix+N で名前指定のタブへフォーカスが移る
 # ---------------------------------------------------------------------------
 echo "=== シナリオ4: 名前ジャンプ ==="
-pipe_slots goto:2
+send_prefix 4 2
 sleep 1
-[ "$(focused_tab)" = "2" ] || fail "goto:2 でフォーカスが移らなかった ($(focused_tab))"
-pipe_slots goto:3
+[ "$(focused_tab)" = "2" ] || fail "prefix+2 でフォーカスが移らなかった ($(focused_tab))"
+send_prefix 4 3
 sleep 1
-[ "$(focused_tab)" = "3" ] || fail "goto:3 でフォーカスが移らなかった ($(focused_tab))"
-echo "PASS: goto でタブ間を移動できた"
+[ "$(focused_tab)" = "3" ] || fail "prefix+3 でフォーカスが移らなかった ($(focused_tab))"
+echo "PASS: prefix+数字でタブ間を移動できた"
 
 # ---------------------------------------------------------------------------
 # シナリオ5: デタッチ後もセッションが残り、local-zellij で再接続する
 # ---------------------------------------------------------------------------
 echo "=== シナリオ5: デタッチと再接続 ==="
 kill "$pid1" 2>/dev/null || true
+exec 4>&-
 sleep 2
 [ "$(sessions)" = "main" ] || fail "デタッチ後にセッションが残っていない ($(sessions))"
 
@@ -386,7 +385,7 @@ pidB=$(launch_with_input "$WORK/inB")
 exec 9<>"$WORK/inB"
 sleep 3
 
-send_keys 8 '\x1b[92;5uc'          # クライアントAから prefix+c を1回
+send_prefix 8 c                    # クライアントAから prefix+c を1回
 sleep 2
 [ "$(tab_names_csv)" = "3,2,8,4,7" ] \
   || fail "2クライアント接続中の prefix+c でタブが重複した ($(tab_names_csv) 期待値: 3,2,8,4,7)"
@@ -437,7 +436,7 @@ setup
 pidD=$(launch_with_input "$WORK/inD")
 exec 6<>"$WORK/inD"
 sleep 4
-send_keys 6 '\x1b[92;5uc'          # D: スロット4を作成（Dはそこへ移動する）
+send_prefix 6 c                    # D: スロット4を作成（Dはそこへ移動する）
 sleep 2
 pidE=$(launch_with_input "$WORK/inE")
 exec 5<>"$WORK/inE"
@@ -447,14 +446,14 @@ sleep 4
 [ "$(client_tab "$WORK/inE.out")" = "4" ] \
   || fail "接続直後のEが既存クライアントのタブを表示していない ($(client_tab "$WORK/inE.out"))"
 
-send_keys 5 '\x1b[92;5u3'          # E: スロット3へジャンプ
+send_prefix 5 3                    # E: スロット3へジャンプ
 sleep 2
 [ "$(client_tab "$WORK/inE.out")" = "3" ] \
   || fail "Eがスロット3へ移動しなかった ($(client_tab "$WORK/inE.out"))"
 [ "$(client_tab "$WORK/inD.out")" = "4" ] \
   || fail "Eのジャンプに他クライアントDが引きずられた ($(client_tab "$WORK/inD.out"))"
 
-send_keys 6 '\x1b[92;5uc'          # D: 新規タブ（スロット2）を作成
+send_prefix 6 c                    # D: 新規タブ（スロット2）を作成
 sleep 2
 [ "$(client_tab "$WORK/inD.out")" = "2" ] \
   || fail "Dが作成したスロット2へ移動しなかった ($(client_tab "$WORK/inD.out"))"
