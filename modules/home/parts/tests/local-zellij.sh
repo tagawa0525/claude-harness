@@ -35,13 +35,14 @@
 # シナリオ:
 #   0. 権限シードが不完全な既存エントリを補正し、他のエントリを保持する
 #   1. 初回起動でセッション main が作られ、初期タブ名が「3」になる
-#   2. 「new」パイプで優先順位どおり 4, 2, 8 のスロットにタブが増える
-#   3. タブを閉じても他のタブ名が変わらず、次の new は空いた番号を再利用する
-#   4. 「goto:N」パイプで名前指定のタブへフォーカスが移る
+#   2. prefix+c で優先順位どおり 4, 2, 8 のスロットにタブが増える
+#   3. タブを閉じても他のタブ名が変わらず、次の作成は空いた番号を再利用する
+#   4. prefix+N で名前指定のタブへフォーカスが移る
 #   5. デタッチしてもセッションが残り、local-zellij で同セッションに再接続する
 #   6. キー入力で操作できる（kitty形式・レガシー0x1C・Ctrl保持の数字）
 #   7. 多重接続中に prefix+c を1回押してもタブは1つしか増えない
 #   8. 「title:」パイプでバーのタブラベルが更新される（tmuxの#W相当）
+#   9. 多重接続時、タブのフォーカスはクライアントごとに独立する
 # =============================================================================
 set -euo pipefail
 
@@ -67,6 +68,9 @@ WASMS=$(grep -oh 'file:[^"]*\.wasm' "$CONF" "$LAYOUT" | sed 's/^file://' | sort 
 while IFS= read -r wasm; do
   [ -r "$wasm" ] || { echo "FAIL: プラグイン $wasm が読めない"; exit 1; }
 done <<< "$WASMS"
+# 権限キャッシュの検証（シナリオ0）で、シード対象のエントリを名指しする
+SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
+[ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
 
 WORK=""
 
@@ -115,7 +119,9 @@ launch() {
 }
 
 # キー入力を送り込めるクライアントを起動する（stdinをFIFOから供給）。
-# $1: FIFOのパス（この関数が作成する）。呼び出し側で書き込み用fdを
+# $1: FIFOのパス（この関数が作成する）。画面出力は "$1.out" に残す
+# （typescriptファイルはブロックバッファされて直近フレームが欠けるため、
+# stdoutリダイレクトで即時にキャプチャする）。呼び出し側で書き込み用fdを
 # 開いたままにすること（閉じるとEOFでクライアントが終了するため）:
 #   pid=$(launch_with_input "$WORK/in"); exec {fd}<>"$WORK/in"
 # 呼び出し側の open は <> にする（> はFIFOの読み手が現れるまでブロックする）。
@@ -124,8 +130,18 @@ launch() {
 # とデッドロックする
 launch_with_input() {
   mkfifo "$1"
-  script -qec "'$SCRIPT'" /dev/null >/dev/null 2>&1 < "$1" &
+  script -qec "'$SCRIPT'" /dev/null > "$1.out" 2>&1 < "$1" &
   echo $!
+}
+
+# そのクライアントの画面でハイライトされているタブ名（バーの反転表示）。
+# フォーカスはクライアントごとに異なりうるので、セッション全体を見る
+# focused_tab ではなく各クライアントの画面出力から読む。
+# プラグインは "\e[47;30m" と書くが、Zellijは属性を組み直して出力するため
+# 分割形式（"\e[30m\e[47m"）でも拾えるようにする
+# $1: クライアントの出力ファイル（launch_with_input の "$FIFO.out"）
+client_tab() {
+  grep -aoP '\x1b\[(30m\x1b\[47|47;30)m \K[0-9]' "$1" | tail -1 || true
 }
 
 # fdへキーのバイト列を書き込む（バックスラッシュエスケープを解釈）
@@ -155,19 +171,13 @@ focused_tab() {
     | grep -o 'name="[^"]*"' | head -n1 | cut -d'"' -f2 || true
 }
 
-# パイプでプラグインへメッセージを送る。
-# キーバインドのMessagePluginと同様に --plugin を指定する（描画用のbar
-# インスタンスではなく、設定なしのactorシングルトンに配送し、未起動なら
-# 起動させるため。プラグインなしのパイプは起動済みインスタンスへの
-# ブロードキャストになり、actorが未起動だと誰も処理しない）
-SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
-[ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
-# パイプの送信コマンドは、受信インスタンスの処理待ちでブロックしたまま
-# になることがある（Zellijの仕様。配送自体は行われる）。スイートが
-# ハングしないよう打ち切り、実際の挙動は後続のアサーションで検証する
-pipe_slots() {
-  timeout 10 zellij --session main pipe --plugin "file:$SLOTS_WASM" --name slots -- "$1" \
-    || echo "WARN: pipe_slots $1 がタイムアウトした"
+# スロット操作（prefix+c / prefix+N）をキー入力で送る。
+# CLIパイプではなく実際のキーバインドを通す。プラグインは操作の発信元を
+# 「そのクライアントがprefixを押しているか」で見分けるため（シナリオ9）、
+# クライアント不在のCLIパイプでは本番と同じ経路にならない
+# $1: 書き込み用fd  $2: prefixに続けて送るキー
+send_prefix() {
+  send_keys "$1" "\x1b[92;5u$2"
 }
 
 wait_for_tabs() {
@@ -265,7 +275,8 @@ echo "PASS: 不完全なエントリを補正し、他のエントリを保持�
 echo "=== シナリオ1: 初回起動と初期スロット ==="
 setup
 
-pid1=$(launch)
+pid1=$(launch_with_input "$WORK/in1")
+exec 4<>"$WORK/in1"
 wait_for_tabs 1 || fail "初回起動でセッションが作られなかった"
 sleep 1
 [ "$(sessions)" = "main" ] || fail "セッション名が main でない ($(sessions))"
@@ -273,56 +284,57 @@ sleep 1
 echo "PASS: セッション main、初期タブ 3"
 
 # ---------------------------------------------------------------------------
-# シナリオ2: 「new」パイプで優先順位どおり 4, 2, 8 のスロットにタブが増える
+# シナリオ2: prefix+c で優先順位どおり 4, 2, 8 のスロットにタブが増える
 # ---------------------------------------------------------------------------
 echo "=== シナリオ2: 優先順位による新規タブ作成 ==="
-pipe_slots new
-wait_for_tabs 2 || fail "new でタブが増えなかった"
-pipe_slots new
-wait_for_tabs 3 || fail "2回目の new でタブが増えなかった"
-pipe_slots new
-wait_for_tabs 4 || fail "3回目の new でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 2 || fail "prefix+c でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 3 || fail "2回目の prefix+c でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 4 || fail "3回目の prefix+c でタブが増えなかった"
 sleep 1
 [ "$(tab_names_csv)" = "3,4,2,8" ] \
   || fail "優先順位どおりに増えていない ($(tab_names_csv) 期待値: 3,4,2,8)"
 echo "PASS: 3 → 4 → 2 → 8 の順にタブが増えた"
 
 # ---------------------------------------------------------------------------
-# シナリオ3: タブを閉じても他のタブ名が変わらず、次の new は空き番号を再利用
+# シナリオ3: タブを閉じても他のタブ名が変わらず、次の作成は空き番号を再利用
 # ---------------------------------------------------------------------------
 # tmux の renumber-windows off 相当。位置は詰まってもスロット名は動かない
 echo "=== シナリオ3: タブ削除後の番号安定性と再利用 ==="
-pipe_slots goto:4
+send_prefix 4 4
 sleep 1
-[ "$(focused_tab)" = "4" ] || fail "goto:4 でフォーカスが移らなかった ($(focused_tab))"
+[ "$(focused_tab)" = "4" ] || fail "prefix+4 でフォーカスが移らなかった ($(focused_tab))"
 Z close-tab
 sleep 1
 [ "$(tab_names_csv)" = "3,2,8" ] \
   || fail "タブ4を閉じた後に名前が変わった ($(tab_names_csv) 期待値: 3,2,8)"
-pipe_slots new
-wait_for_tabs 4 || fail "削除後の new でタブが増えなかった"
+send_prefix 4 c
+wait_for_tabs 4 || fail "削除後の prefix+c でタブが増えなかった"
 sleep 1
 [ "$(tab_names_csv)" = "3,2,8,4" ] \
   || fail "空きスロット 4 を再利用しなかった ($(tab_names_csv) 期待値: 3,2,8,4)"
 echo "PASS: タブ名は安定し、空いた 4 を再利用した"
 
 # ---------------------------------------------------------------------------
-# シナリオ4: 「goto:N」パイプで名前指定のタブへフォーカスが移る
+# シナリオ4: prefix+N で名前指定のタブへフォーカスが移る
 # ---------------------------------------------------------------------------
 echo "=== シナリオ4: 名前ジャンプ ==="
-pipe_slots goto:2
+send_prefix 4 2
 sleep 1
-[ "$(focused_tab)" = "2" ] || fail "goto:2 でフォーカスが移らなかった ($(focused_tab))"
-pipe_slots goto:3
+[ "$(focused_tab)" = "2" ] || fail "prefix+2 でフォーカスが移らなかった ($(focused_tab))"
+send_prefix 4 3
 sleep 1
-[ "$(focused_tab)" = "3" ] || fail "goto:3 でフォーカスが移らなかった ($(focused_tab))"
-echo "PASS: goto でタブ間を移動できた"
+[ "$(focused_tab)" = "3" ] || fail "prefix+3 でフォーカスが移らなかった ($(focused_tab))"
+echo "PASS: prefix+数字でタブ間を移動できた"
 
 # ---------------------------------------------------------------------------
 # シナリオ5: デタッチ後もセッションが残り、local-zellij で再接続する
 # ---------------------------------------------------------------------------
 echo "=== シナリオ5: デタッチと再接続 ==="
 kill "$pid1" 2>/dev/null || true
+exec 4>&-
 sleep 2
 [ "$(sessions)" = "main" ] || fail "デタッチ後にセッションが残っていない ($(sessions))"
 
@@ -373,7 +385,7 @@ pidB=$(launch_with_input "$WORK/inB")
 exec 9<>"$WORK/inB"
 sleep 3
 
-send_keys 8 '\x1b[92;5uc'          # クライアントAから prefix+c を1回
+send_prefix 8 c                    # クライアントAから prefix+c を1回
 sleep 2
 [ "$(tab_names_csv)" = "3,2,8,4,7" ] \
   || fail "2クライアント接続中の prefix+c でタブが重複した ($(tab_names_csv) 期待値: 3,2,8,4,7)"
@@ -392,11 +404,7 @@ echo "PASS: 多重接続中でもタブは1つだけ増えた"
 # 配送が遅延するため、独立したセッションで検証する
 echo "=== シナリオ8: titleパイプによるラベル更新 ==="
 setup
-mkfifo "$WORK/inC"
-# typescriptファイルはブロックバッファされて直近フレームが欠けるため、
-# stdoutリダイレクトで即時にキャプチャする
-script -qec "'$SCRIPT'" /dev/null > "$WORK/outC" 2>&1 < "$WORK/inC" &
-pidC=$!
+pidC=$(launch_with_input "$WORK/inC")
 exec 7<>"$WORK/inC"
 sleep 4
 # 最初のタブ（スロット3）の端末ペインはid=0（fishフックは$ZELLIJ_PANE_IDを使う）
@@ -404,8 +412,8 @@ timeout 10 zellij --session main pipe --name slots -- "title:0:TITLETEST" \
   || echo "WARN: titleパイプがタイムアウトした"
 sleep 2
 bar_line() {
-  tr '\r' '\n' < "$WORK/outC" \
-    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1
+  tr '\r' '\n' < "$WORK/inC.out" \
+    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1 || true
 }
 case "$(bar_line)" in
   *"3:TITLETEST"*) : ;;
@@ -414,5 +422,51 @@ esac
 kill "$pidC" 2>/dev/null || true
 exec 7>&-
 echo "PASS: titleパイプでタブ3のラベルが更新された"
+
+# ---------------------------------------------------------------------------
+# シナリオ9: 多重接続時、タブのフォーカスはクライアントごとに独立する
+# ---------------------------------------------------------------------------
+# 旧tmuxのグループセッションでは、複数端末が同じセッションを共有しつつ
+# 別々のwindowを見られた。Zellijでも標準のタブ切り替えはクライアント単位で
+# 動くが、プラグインのパイプはクライアントごとに複製された全インスタンスへ
+# 配送されるため、素朴に実装すると全クライアントが同じタブへ移動してしまう。
+# 押したクライアントだけが動くことを検証する
+echo "=== シナリオ9: フォーカスのクライアント独立性 ==="
+setup
+pidD=$(launch_with_input "$WORK/inD")
+exec 6<>"$WORK/inD"
+sleep 4
+send_prefix 6 c                    # D: スロット4を作成（Dはそこへ移動する）
+sleep 2
+pidE=$(launch_with_input "$WORK/inE")
+exec 5<>"$WORK/inE"
+sleep 4
+[ "$(client_tab "$WORK/inD.out")" = "4" ] \
+  || fail "Dが作成したスロット4にいない ($(client_tab "$WORK/inD.out"))"
+[ "$(client_tab "$WORK/inE.out")" = "4" ] \
+  || fail "接続直後のEが既存クライアントのタブを表示していない ($(client_tab "$WORK/inE.out"))"
+
+send_prefix 5 3                    # E: スロット3へジャンプ
+sleep 2
+[ "$(client_tab "$WORK/inE.out")" = "3" ] \
+  || fail "Eがスロット3へ移動しなかった ($(client_tab "$WORK/inE.out"))"
+[ "$(client_tab "$WORK/inD.out")" = "4" ] \
+  || fail "Eのジャンプに他クライアントDが引きずられた ($(client_tab "$WORK/inD.out"))"
+
+send_prefix 6 c                    # D: 新規タブ（スロット2）を作成
+sleep 2
+[ "$(client_tab "$WORK/inD.out")" = "2" ] \
+  || fail "Dが作成したスロット2へ移動しなかった ($(client_tab "$WORK/inD.out"))"
+[ "$(client_tab "$WORK/inE.out")" = "3" ] \
+  || fail "Dのタブ作成に他クライアントEが引きずられた ($(client_tab "$WORK/inE.out"))"
+
+# プレフィックス操作の後はlockedモードに戻り、通常のキーがペインへ届く
+send_keys 5 'echo LOCKEDBACK\n'
+sleep 2
+grep -aq 'LOCKEDBACK' "$WORK/inE.out" \
+  || fail "操作後にlockedモードへ戻らずキー入力がペインに届かなかった"
+kill "$pidD" "$pidE" 2>/dev/null || true
+exec 6>&- 5>&-
+echo "PASS: フォーカスはクライアントごとに独立した"
 
 echo "すべてのシナリオが PASS"
