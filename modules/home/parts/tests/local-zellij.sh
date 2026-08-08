@@ -457,13 +457,8 @@ send_prefix 6 c                    # D: 新規タブ（スロット2）を作成
 sleep 2
 [ "$(client_tab "$WORK/inD.out")" = "2" ] \
   || fail "Dが作成したスロット2へ移動しなかった ($(client_tab "$WORK/inD.out"))"
-# タブ作成だけは全クライアントが新しいタブへ移動する。空きスロットの計算に
-# 最新のタブ一覧が要るためバックグラウンドのインスタンスが担当するが、
-# そのインスタンスはどのクライアントが押したのかを知る手段がない（Zellijの
-# 制約。zellij.nix と zellij-slots/src/main.rs を参照）。Zellij側で
-# 送信元クライアントが分かるようになったらここも独立させる
-[ "$(client_tab "$WORK/inE.out")" = "2" ] \
-  || fail "タブ作成後の状態が想定と違う ($(client_tab "$WORK/inE.out"))"
+[ "$(client_tab "$WORK/inE.out")" = "3" ] \
+  || fail "Dのタブ作成に他クライアントEが引きずられた ($(client_tab "$WORK/inE.out"))"
 
 # プレフィックス操作の後はlockedモードに戻り、通常のキーがペインへ届く
 send_keys 5 'echo LOCKEDBACK\n'
