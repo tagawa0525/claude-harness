@@ -413,7 +413,7 @@ timeout 10 zellij --session main pipe --name slots -- "title:0:TITLETEST" \
 sleep 2
 bar_line() {
   tr '\r' '\n' < "$WORK/inC.out" \
-    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1
+    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -a 'main | ' | tail -1 || true
 }
 case "$(bar_line)" in
   *"3:TITLETEST"*) : ;;
