@@ -141,7 +141,7 @@ launch_with_input() {
 # 分割形式（"\e[30m\e[47m"）でも拾えるようにする
 # $1: クライアントの出力ファイル（launch_with_input の "$FIFO.out"）
 client_tab() {
-  grep -aoP '\x1b\[(30m\x1b\[47|47;30)m \K[0-9]' "$1" | tail -1
+  grep -aoP '\x1b\[(30m\x1b\[47|47;30)m \K[0-9]' "$1" | tail -1 || true
 }
 
 # fdへキーのバイト列を書き込む（バックスラッシュエスケープを解釈）
