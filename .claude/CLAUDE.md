@@ -59,4 +59,4 @@
 ### ツール
 
 - コンテナランタイムは Podman を優先する（Docker より好み）
-- 大きなソースファイルの構造把握は全文 Read より先に `zat <file>`。シンボル一覧と行番号を得て、必要箇所だけを Read する。対応は Rust/C#/Python/Go 等14言語（Nix・シェルは非対応）。Rust は pub シンボル限定（private 関数・`#[test]`・trait impl メソッドは出ない）なので、それらが必要なら通常どおり Read する
+- 大きなソースファイルの構造把握は全文 Read より先に `zat <file>`。ただし Rust は pub シンボル限定で、private 関数・`#[test]`・trait impl メソッドはエラーなく静かに省かれる点に注意
