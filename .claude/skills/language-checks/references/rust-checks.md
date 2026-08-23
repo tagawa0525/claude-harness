@@ -74,6 +74,17 @@ cargo test
 
 ## トラブルシューティング
 
+### テストが "memory allocation of N bytes failed" / SIGABRT で落ちる
+
+テストバイナリはデフォルトで CPU 数ぶん並列実行される。メモリ上限のある
+環境（サンドボックスの ulimit、コンテナ等）では大きなテストスイートが
+確保失敗で abort することがある。コードの問題ではないので、並列度を
+下げて再実行する:
+
+```bash
+cargo test -- --test-threads=4
+```
+
 ### "cargo fmt not found" / "cargo clippy not found"
 
 ```bash

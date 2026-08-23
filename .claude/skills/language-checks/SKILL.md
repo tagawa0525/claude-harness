@@ -22,6 +22,13 @@ user-invocable: false
 - **Python**: `pyproject.toml` / `setup.py` / `requirements.txt` のいずれかが存在、または `.py` ファイルがstaged
 - **Nix**: `flake.nix` が存在、または `.nix` ファイルがstaged
 
+## プロジェクト設定の優先
+
+プロジェクトの CLAUDE.md やドキュメントにチェックコマンドが明記されている
+場合は**そちらを優先する**。本スキルのコマンドは既定値であり、たとえば
+feature gate のあるクレートでは `--all-features` が付かないと feature 配下の
+コードが一切検査されず、チェックが通っても CI で落ちる。
+
 ## チェックコマンド
 
 ### Rust
