@@ -106,11 +106,22 @@ cargo test test_name            # 特定テストのみ
 ### cargo / rustc が "No such file or directory (os error 2)" で起動しない
 
 過去に patchelf で ELF インタープリタを nix store パス直指定に書き換えた
-バイナリは、システム更新後の GC でそのパスが消えると壊れる。
-`file <binary>` でインタープリタを確認し、store パス直指定なら再パッチせず
-`rustup toolchain uninstall/install` で未加工バイナリに戻す（rustup 製
-バイナリは nix-ld 経由でそのまま動き、GC 耐性がある）。追加ターゲット
-（wasm32 等）の入れ直しも忘れない。
+バイナリは、システム更新後の GC でそのパスが消えると壊れる。再パッチせず
+ツールチェーンを入れ直して未加工バイナリに戻す（rustup 製バイナリは
+nix-ld 経由でそのまま動き、GC 耐性がある）:
+
+```bash
+# インタープリタが /nix/store/... 直指定なら patchelf 痕（要入れ直し）
+file ~/.rustup/toolchains/*/bin/cargo
+
+# 対象のツールチェーン名を確認して入れ直す
+rustup toolchain list
+rustup toolchain uninstall stable
+rustup toolchain install stable
+
+# 追加ターゲットを使っていた場合は入れ直す
+rustup target add wasm32-unknown-unknown
+```
 
 ### `error: command failed: 'cargo-fmt': No such file or directory`
 
