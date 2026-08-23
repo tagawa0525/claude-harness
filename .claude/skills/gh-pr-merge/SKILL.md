@@ -134,8 +134,8 @@ git worktree remove [path]          # 該当がなければスキップ
 
 # 2. main に切り替えて最新化
 #    （PRブランチ上にいる状態では branch -d できないため、削除より先に行う）
-#    --ff-only: ローカル main が汚れていた場合に意図しないマージコミットを
-#    作らず、その場で失敗させて気づけるようにする
+#    --ff-only: ローカル main とリモートの履歴が分岐していた場合に
+#    意図しないマージコミットを作らず、その場で失敗させて気づけるようにする
 git switch main
 git fetch --prune
 git pull --ff-only

@@ -59,11 +59,17 @@ review_count() {
 }
 
 # Copilot からのPRコメント（issue comment）のID列（作成順）。
-# 自分やレビュアー以外のコメントで誤検知しないよう作者をcopilotに限定する。
+# 部分一致では my-copilot 等の無関係ユーザーを誤検知するため、
+# Bot種別かつ既知のCopilotログイン名への完全一致に限定する
+# （同一コメントでも list API は "Copilot"、単体取得は
+#   "copilot-swe-agent[bot]" と表記が揺れるため両方を許可リストに含める）。
 # コメント100件超のPRで新着を取りこぼさないよう --paginate で全ページを走査する
 copilot_comment_ids() {
   gh api --paginate "repos/{owner}/{repo}/issues/${pr}/comments?per_page=100" \
-    --jq '.[] | select(.user.login | ascii_downcase | contains("copilot")) | .id' \
+    --jq '.[] | select(.user.type == "Bot"
+                       and ((.user.login | ascii_downcase)
+                            | IN("copilot", "copilot-swe-agent[bot]", "copilot-pull-request-reviewer[bot]")))
+             | .id' \
     2>/dev/null
 }
 
