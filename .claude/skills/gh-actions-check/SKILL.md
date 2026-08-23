@@ -2,7 +2,8 @@
 name: gh-actions-check
 description: GitHub Actionsの実行状況を確認。Copilotレビュー待ちやCI失敗時の診断に。
 model: haiku
-context: fork
+# context: fork は廃止。fork 起動時にスキル本文が実行されず引数が失われる
+# 事象を確認したため、インラインで実行する（診断のみで出力も小さい）
 argument-hint: [PR番号 | ブランチ名]
 allowed-tools:
   - Bash(gh *)

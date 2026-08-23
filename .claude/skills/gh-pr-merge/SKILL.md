@@ -42,6 +42,7 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 - CIステータス: 全てパスしているか
 - レビュー: Copilot等の自動レビューが完了し、指摘事項に対応済みか
   - 未着の場合は `~/.claude/scripts/gh-wait-review.sh [PR番号]` で待機（漸増バックオフで約10分。フォアグラウンドの最大タイムアウトを超えるため、必ずバックグラウンドで実行）
+  - スクリプトは新しいレビュー提出と Copilot の PR コメント応答の両方を検出する。コメント検出時（`NOTE:` 行付き）は内容を読んで承認相当（「対応を確認しました」等）か追加指摘かを判断する
   - タイムアウト（exit 1）時は /gh-actions-check で診断
 - コンフリクト: なしか
 
@@ -133,9 +134,11 @@ git worktree remove [path]          # 該当がなければスキップ
 
 # 2. main に切り替えて最新化
 #    （PRブランチ上にいる状態では branch -d できないため、削除より先に行う）
+#    --ff-only: ローカル main とリモートの履歴が分岐していた場合に
+#    意図しないマージコミットを作らず、その場で失敗させて気づけるようにする
 git switch main
 git fetch --prune
-git pull
+git pull --ff-only
 
 # 3. ローカルブランチを削除
 git branch -d [branch]

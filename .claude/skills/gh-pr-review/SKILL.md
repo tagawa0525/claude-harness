@@ -203,22 +203,32 @@ I've decided to keep the current approach because {理由}.
 
 ## Step 6: 再レビューの依頼と待機
 
-pushしても再レビューは自動では走らない（Copilotの自動レビューはPR作成時の1回のみ）。
-対応をプッシュしたら明示的に再レビューを依頼し、新しいレビューの到着を待つ:
+pushしても再レビューは自動では走らないことがある。対応をプッシュしたら
+PRコメントで @copilot にメンションして再レビューを依頼し、応答を待つ:
 
 ```bash
-# Copilotに再レビューを依頼（{owner}/{repo}はghが現在のリポジトリから補完）
-gh api "repos/{owner}/{repo}/pulls/{pr_number}/requested_reviewers" \
-  -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+# 再レビューを依頼（@copilot メンションが Copilot の応答をトリガーする）
+gh pr comment {pr_number} --body "@copilot 指摘に対応しました ({commit_hash})。再レビューをお願いします。"
 
-# 新しいレビューの到着を待機（漸増バックオフで約10分）
+# 応答の到着を待機（漸増バックオフで約10分）
 # フォアグラウンドの最大タイムアウトを超えるため、シェルの & ではなく
 # Bashツールの run_in_background=true で実行する（完了時に通知される）
 ~/.claude/scripts/gh-wait-review.sh {pr_number}
 ```
 
-- 新しいレビューに指摘がある場合 → Step 2 に戻り、指摘ゼロになるまで繰り返す
-- 指摘なし（no new comments）になったらマージ可能
+注意:
+
+- `requested_reviewers` API に `copilot-pull-request-reviewer[bot]` を渡す
+  方法は、bot が collaborator ではないリポジトリでは 422 で失敗する。
+  @copilot メンションコメントを使うこと
+- Copilot は正式なレビュー提出ではなく **PRコメントだけで応答する**ことが
+  ある（「対応を確認しました」等）。gh-wait-review.sh は両方を検出し、
+  コメント検出時は `NOTE:` 行を付けるので、内容を読んで対応要否を判断する
+
+判定:
+
+- 新しい指摘がある場合 → Step 2 に戻り、指摘ゼロになるまで繰り返す
+- 指摘なし（no new comments / 対応確認のコメントのみ）→ マージ可能
 
 ---
 
