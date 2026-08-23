@@ -134,9 +134,11 @@ git worktree remove [path]          # 該当がなければスキップ
 
 # 2. main に切り替えて最新化
 #    （PRブランチ上にいる状態では branch -d できないため、削除より先に行う）
+#    --ff-only: ローカル main が汚れていた場合に意図しないマージコミットを
+#    作らず、その場で失敗させて気づけるようにする
 git switch main
 git fetch --prune
-git pull
+git pull --ff-only
 
 # 3. ローカルブランチを削除
 git branch -d [branch]
