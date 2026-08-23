@@ -98,3 +98,45 @@ rustup component add clippy
 cargo test -- --test-threads=1  # 並列実行数を制限
 cargo test test_name            # 特定テストのみ
 ```
+
+## NixOS環境特有の問題
+
+いずれもコードの問題に見えるが環境起因。プロダクトコード側での回避は禁止。
+
+### cargo / rustc が "No such file or directory (os error 2)" で起動しない
+
+過去に patchelf で ELF インタープリタを nix store パス直指定に書き換えた
+バイナリは、システム更新後の GC でそのパスが消えると壊れる。再パッチせず
+ツールチェーンを入れ直して未加工バイナリに戻す（rustup 製バイナリは
+nix-ld 経由でそのまま動き、GC 耐性がある）:
+
+```bash
+# インタープリタが /nix/store/... 直指定なら patchelf 痕（要入れ直し）
+file ~/.rustup/toolchains/*/bin/cargo
+
+# 対象のツールチェーン名を確認して入れ直す
+rustup toolchain list
+rustup toolchain uninstall stable
+rustup toolchain install stable
+
+# 追加ターゲットを使っていた場合は入れ直す
+rustup target add wasm32-unknown-unknown
+```
+
+### `error: command failed: 'cargo-fmt': No such file or directory`
+
+`~/.cargo/bin/cargo-fmt` / `cargo-clippy` が rustup proxy で、その環境で
+rustup バイナリが実行不能な場合に全プロジェクトで失敗する。該当 proxy を
+削除すると cargo が PATH 上の実バイナリ（devenv / nix のツールチェーン）に
+フォールバックして動く。
+
+### bindgen が "Unable to find libclang" で panic する
+
+開発環境に libclang が宣言されていない。恒久対応は devenv.nix / flake.nix に
+libclang を追加。暫定なら `LIBCLANG_PATH` を設定してから実行する。
+
+### build script が "could not execute process … (never executed)" で失敗する
+
+古い環境世代でビルドされた `target/` 内の build script の ELF インタープリタが
+GC 済み。`cargo clean -p <crate>` で該当クレートのみ再ビルドする
+（フルクリーンは大規模プロジェクトでは高コスト）。

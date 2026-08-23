@@ -28,8 +28,10 @@ PRについたレビューコメントを確認し、対応する。
   （[gh pr-review 拡張](https://github.com/agynio/gh-pr-review)があれば使用、なければ gh api にフォールバック）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
 
-注: GitHub Copilot のレビュースレッドは API から resolve できないため、
-resolve 操作は行わない（返信のみ）。
+注: レビュースレッドの resolve は GraphQL `resolveReviewThread` で可能
+（Copilot のスレッドも対象。REST には resolve API がない）。リポジトリに
+よってはスレッド解決が bot の再レビュー自動化のトリガーになるため、
+対応済みスレッドは返信後に resolve してよい。
 
 ## 事前確認
 
@@ -219,11 +221,16 @@ gh pr comment {pr_number} --body "@copilot 指摘に対応しました ({commit_
 注意:
 
 - `requested_reviewers` API に `copilot-pull-request-reviewer[bot]` を渡す
-  方法は、bot が collaborator ではないリポジトリでは 422 で失敗する。
+  方法は、bot が collaborator ではないリポジトリでは 422、自分に push 権限が
+  ないリポジトリ（fork からの upstream PR）では 404 で失敗する。
   @copilot メンションコメントを使うこと
 - Copilot は正式なレビュー提出ではなく **PRコメントだけで応答する**ことが
   ある（「対応を確認しました」等）。gh-wait-review.sh は両方を検出し、
   コメント検出時は `NOTE:` 行を付けるので、内容を読んで対応要否を判断する
+- レビューボットによっては（例: Greptile）**指摘ゼロのとき何も投稿せず**
+  check-run だけ成功させるため、gh-wait-review.sh はクリーンな結果でも
+  タイムアウトする。タイムアウトを「トリガー失敗」と誤読せず、head SHA の
+  check-run と未解決スレッド数で判断する
 
 判定:
 

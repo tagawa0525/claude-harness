@@ -99,6 +99,11 @@ git worktree prune
 - 同じブランチを複数のworktreeでチェックアウトすることはできない
 - worktreeのディレクトリを手動で削除した場合は `git worktree prune` が必要
 - マージ済みブランチのworktreeは `/git-info` で検出される
+- **複数リモート（fork運用）のリポジトリ**では、`gh repo set-default` の設定が
+  新しいworktreeに引き継がれないことがある。未設定のままだと `gh pr view` 等が
+  PR番号を意図しない側のリポジトリで解決し「PRが見つからない」になるため、
+  worktree作成後に `gh repo set-default [owner]/[repo]` を実行してから
+  `gh pr` 系コマンドや gh-wait-review.sh を使う
 
 ## 関連コマンド
 
