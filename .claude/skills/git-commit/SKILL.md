@@ -11,6 +11,10 @@ allowed-tools:
   - Bash(git log*)
   - Bash(git add*)
   - Bash(git commit*)
+  - Bash(git remote*)
+  - Bash(git stash*)
+  - Bash(git switch*)
+  - Bash(git worktree*)
   - Bash(python3*)
   - AskUserQuestion
 ---
@@ -25,25 +29,56 @@ allowed-tools:
 !`git status --short`
 !`git diff --cached --stat`
 
-## mainブランチでの作業禁止
+## mainブランチからの自動退避
 
-現在のブランチが `main` または `master` の場合、コミットは実行できない（hookで禁止）。
-必ずfeatureブランチまたはworktreeを作成してからコミットすること。
+現在のブランチが `main` または `master` の場合、コミットはhookで禁止されている。
+**ユーザーには質問せず**、以下の手順で自動的に退避してからコミットする。
+ブランチはマージ後すぐ削除される使い捨てであり、名前の確認も不要。
 
-```text
-⚠️ mainブランチではコミットできません。
+### Step 1: ブランチ名の自動生成
 
-作業方法を選択してください:
-1. featureブランチ作成  - 通常の機能開発（このディレクトリで切り替え）
-2. worktree作成        - 並行作業（別ディレクトリで作業）
+変更内容（変更ファイルと差分）から意図を読み取り、git-branch スキルと同じ
+命名規則（`feat/` `fix/` `refactor/` `docs/` `chore/` + kebab-case）で
+ブランチ名を自動決定する。候補の提示はしない。
+
+### Step 2: リモート有無で退避先を分岐
+
+判定は gh-wait-review.sh の exit 2 と同一基準:
+
+```bash
+git remote -v | grep -q 'github\.com'
 ```
 
-この警告を表示し、ユーザーの選択を待つ。コミットを試行しない。
+**GitHubリモートあり（PRフロー適用）→ worktreeを自動作成:**
 
-選択後は各スキルに委譲する（ブランチ名の候補生成も委譲先で行う）:
+レビュー待ちの間ブランチが生き続けるため、worktreeに隔離して
+元ディレクトリのmainを空ける。未コミット変更はstashで移送する
+（stashはworktree間で共有されるため機械的に移せる）:
 
-- featureブランチ作成 → git-branch スキル
-- worktree作成 → git-worktree スキル
+```bash
+git stash push -u -m "wip: move to worktree"
+git worktree add ../[repo-name]-[branch-dirname] -b [branch-name]
+git -C ../[repo-name]-[branch-dirname] stash pop
+```
+
+- `[branch-dirname]` はブランチ名の `/` を `-` に変換したもの
+- 未コミット変更がない場合（stash push が "No local changes" を返す場合）は
+  stash pop をスキップする
+- stash pop はステージ状態を復元しないが、この後コミット単位で
+  再ステージするため問題ない
+- 以降のステージング・コミット・プッシュはすべてworktree側で行う
+- fork運用リポジトリではworktree作成後に `gh repo set-default` を確認する
+  （git-worktree スキル参照）
+
+**GitHubリモートなし（PRフロー適用外）→ その場でfeatureブランチ:**
+
+コミット→ローカルマージ→ブランチ削除が即時に完結し、worktree隔離の
+利点がないため、カレントディレクトリで切り替える（未コミット変更は
+そのまま引き継がれる）:
+
+```bash
+git switch -c [branch-name]
+```
 
 ## 大規模変更の警告
 
