@@ -144,6 +144,9 @@ git pull --ff-only
 git branch -d [branch]
 
 # 4. リモートブランチを削除（GitHub側で自動削除済みならエラーになるがスキップしてよい）
+#    ⚠️ そのブランチを head とする open PR（特にクロスリポジトリ/forkからの
+#    upstream PR）は削除と同時に自動クローズされる。削除前に
+#    `gh pr list --head [branch] --state open` で該当がないことを確認する
 git push origin --delete [branch]
 ```
 
