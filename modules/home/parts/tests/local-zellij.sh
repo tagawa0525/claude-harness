@@ -46,6 +46,7 @@
 #   7. 多重接続中に prefix+c を1回押してもタブは1つしか増えない
 #   8. 「title:」パイプでバーのタブラベルが更新される（tmuxの#W相当）
 #   9. 多重接続時、タブのフォーカスはクライアントごとに独立する
+#  10. サーバー終了後、復元キャッシュから固定パスでプラグインが読み込まれる
 # =============================================================================
 set -euo pipefail
 
@@ -66,19 +67,24 @@ command -v script >/dev/null || { echo "FAIL: script(util-linux) が見つから
 [ -r "$SEED" ] || { echo "FAIL: $SEED が読めない"; exit 1; }
 [ -r "$WASM" ] || { echo "FAIL: $WASM が読めない"; exit 1; }
 
-# レイアウトが参照するプラグインのパス。Zellij はセッション復元キャッシュ
-# （session-layout.kdl）にこのパスをそのまま保存する。rebuild ごとに変わる
-# store パスを直接参照していると、旧世代が GC された後の再起動で復元に
-# 失敗し、全タブのバーが「ERROR IN PLUGIN」になる。世代に依存しない
-# `~` 始まりの固定パス（Zellij が $HOME で展開する）を経由すること
-SLOTS_LOCATION=$(grep -oh 'file:[^"]*zellij-slots\.wasm' "$LAYOUT" | sed 's/^file://' | sort -u)
-[ -n "$SLOTS_LOCATION" ] || { echo "FAIL: レイアウトからzellij-slotsのパスを特定できない"; exit 1; }
-[ "$(echo "$SLOTS_LOCATION" | wc -l)" -eq 1 ] \
-  || { echo "FAIL: zellij-slotsのパスが一意でない ($SLOTS_LOCATION)"; exit 1; }
+# 設定とレイアウトが参照するプラグインのパス。Zellij はセッション復元
+# キャッシュ（session-layout.kdl）にこのパスをそのまま保存する。rebuild
+# ごとに変わる store パスを直接参照していると、旧世代が GC された後の
+# 再起動で復元に失敗し、全タブのバーが「ERROR IN PLUGIN」になる。
+# 世代に依存しない固定パスを経由すること（シナリオ10で復元まで確認する）
+WASMS=$(grep -oh 'file:[^"]*\.wasm' "$CONF" "$LAYOUT" | sed 's/^file://' | sort -u)
+[ -n "$WASMS" ] || { echo "FAIL: 設定からプラグインのパスを特定できない"; exit 1; }
+case "$WASMS" in
+  */nix/store/*) echo "FAIL: プラグインが store パスを直接参照している ($WASMS)"; exit 1 ;;
+esac
+# zellij-slots は `~` 始まり（Zellij が $HOME で展開する）で、隔離した HOME
+# にも同じ相対位置で置く
+SLOTS_LOCATION=$(echo "$WASMS" | grep 'zellij-slots\.wasm$' || true)
+[ "$(echo "$SLOTS_LOCATION" | grep -c .)" -eq 1 ] \
+  || { echo "FAIL: zellij-slotsのパスを一意に特定できない ($SLOTS_LOCATION)"; exit 1; }
 case "$SLOTS_LOCATION" in
-  */nix/store/*) echo "FAIL: プラグインが store パスを直接参照している ($SLOTS_LOCATION)"; exit 1 ;;
   "~/"*) ;;
-  *) echo "FAIL: プラグインのパスが ~ 始まりでない ($SLOTS_LOCATION)"; exit 1 ;;
+  *) echo "FAIL: zellij-slotsのパスが ~ 始まりでない ($SLOTS_LOCATION)"; exit 1 ;;
 esac
 
 WORK=""
@@ -104,7 +110,9 @@ setup() {
   export ZELLIJ_SOCKET_DIR="$WORK/socket"
   mkdir -p "$XDG_CONFIG_HOME/zellij/layouts" "$XDG_CACHE_HOME/zellij" \
     "$XDG_DATA_HOME" "$ZELLIJ_SOCKET_DIR"
-  cp "$CONF" "$XDG_CONFIG_HOME/zellij/config.kdl"
+  # 復元キャッシュ（シナリオ10）は既定で60秒間隔でしか書かれないため、
+  # テストでは毎秒書かせる。本番設定には影響しない
+  { cat "$CONF"; echo 'serialization_interval 1'; } > "$XDG_CONFIG_HOME/zellij/config.kdl"
   cp "$LAYOUT" "$XDG_CONFIG_HOME/zellij/layouts/slots.kdl"
   # 隔離した HOME に、レイアウトが指す固定パスで wasm を置く。展開後の
   # 絶対パスが permissions.kdl のキーになる（シナリオ0で名指しする）
@@ -281,6 +289,22 @@ seed_permissions
 seed_permissions
 [ "$(cat "$PERMS_FILE")" = "$expected" ] \
   || fail "末尾空白つき開始行で古いブロックが残った ($(cat "$PERMS_FILE"))"
+
+# 固定パスに切り替える前の rebuild で溜まった、旧世代の store パスを
+# キーにした zellij-slots のエントリは消す（他プラグインのエントリは残す）
+{
+  printf '"/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-zellij-slots-static-wasm32-unknown-wasip1-0.1.0/bin/zellij-slots.wasm" {\n'
+  printf '    ReadApplicationState\n'
+  printf '}\n'
+  printf '%s\n' "$other_block"
+  printf '"/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-zellij-slots-static-wasm32-unknown-wasip1-0.1.0/bin/zellij-slots.wasm" {\n'
+  printf '    ReadApplicationState\n'
+  printf '    ChangeApplicationState\n'
+  printf '}\n'
+} > "$PERMS_FILE"
+seed_permissions
+[ "$(cat "$PERMS_FILE")" = "$expected" ] \
+  || fail "旧世代の store パスのエントリが残った ($(cat "$PERMS_FILE"))"
 echo "PASS: 不完全なエントリを補正し、他のエントリを保持した"
 
 # ---------------------------------------------------------------------------
@@ -482,5 +506,42 @@ grep -aq 'LOCKEDBACK' "$WORK/inE.out" \
 kill "$pidD" "$pidE" 2>/dev/null || true
 exec 6>&- 5>&-
 echo "PASS: フォーカスはクライアントごとに独立した"
+
+# ---------------------------------------------------------------------------
+# シナリオ10: サーバー終了後、復元キャッシュから固定パスでプラグインが読み込まれる
+# ---------------------------------------------------------------------------
+# 再起動でサーバーが消えても、Zellij は session-layout.kdl からセッションを
+# 復元する（attach --create はこれを default_layout より優先する）。
+# そこに保存されるプラグインのパスが `~` を展開した固定パスであること、
+# 復元後にバーが描画されることを確認する。store パスへ正規化されて保存
+# される・`~` が生のまま保存される等の退行は、GC 後の再起動で
+# 「ERROR IN PLUGIN」として現れるため、ここで止める
+echo "=== シナリオ10: 復元キャッシュからの再開 ==="
+before=$(tab_names_csv)
+sleep 2                            # serialization_interval 1 での書き出しを待つ
+zellij kill-session main >/dev/null 2>&1 || fail "kill-session に失敗した"
+sleep 2
+# kill-session はサーバーだけを止め、復元キャッシュは残す（list-sessions
+# には EXITED として載る）。delete-session と違い再起動後の状態に相当する
+zellij list-sessions 2>/dev/null | grep -q 'main.*EXITED' \
+  || fail "kill-session 後に main が EXITED（復元可能）になっていない ($(zellij list-sessions 2>/dev/null))"
+cache=$(find "$XDG_CACHE_HOME/zellij" -path '*/session_info/main/session-layout.kdl' | head -n1)
+[ -n "$cache" ] || fail "復元キャッシュ session-layout.kdl が無い"
+grep -q "/nix/store/" "$cache" \
+  && fail "復元キャッシュに store パスが保存されている ($(grep 'plugin location' "$cache" | head -n1))"
+grep -qF "location=\"file:$SLOTS_WASM\"" "$cache" \
+  || fail "復元キャッシュのプラグインが固定パスでない ($(grep 'plugin location' "$cache" | head -n1))"
+
+pidR=$(launch_with_input "$WORK/inR")
+exec 9<>"$WORK/inR"
+wait_for_tabs 1 || fail "復元キャッシュからセッションが再開しなかった"
+sleep 3
+[ "$(tab_names_csv)" = "$before" ] \
+  || fail "復元後のタブ構成が違う ($(tab_names_csv) 期待値: $before)"
+[ -n "$(client_tab "$WORK/inR.out")" ] \
+  || fail "復元後にバーが描画されない（プラグインの読み込み失敗）"
+kill "$pidR" 2>/dev/null || true
+exec 9>&-
+echo "PASS: 復元キャッシュから固定パスでプラグインが読み込まれた"
 
 echo "すべてのシナリオが PASS"
