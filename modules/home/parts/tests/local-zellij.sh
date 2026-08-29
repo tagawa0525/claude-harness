@@ -24,10 +24,13 @@
 #       hm.xdg.configFile."zellij/layouts/slots.kdl".source
 #       (cfg.pkgs.writeScript "zellij-perm-seed"
 #         hm.home.activation.zellijPluginPermissions.data)
+#       (cfg.pkgs.runCommandLocal "zellij-slots-wasm" { } ''
+#         ln -s ${hm.xdg.dataFile."zellij/plugins/zellij-slots.wasm".source} $out
+#       '')
 #     ]'
 #   nix shell nixpkgs#zellij -c \
 #     ./modules/home/parts/tests/local-zellij.sh \
-#     <1つ目>/bin/local-zellij <2つ目> <3つ目> <4つ目>
+#     <1つ目>/bin/local-zellij <2つ目> <3つ目> <4つ目> <5つ目>
 #
 # config.kdl / layout を引数で受け取り HOME/XDG ごと隔離するのは、
 # インストール済みの設定を読ませるとホストの rebuild 状況で結果が変わるため。
@@ -46,11 +49,12 @@
 # =============================================================================
 set -euo pipefail
 
-USAGE="usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl> <perm-seed.sh>"
+USAGE="usage: local-zellij.sh <path-to-local-zellij> <config.kdl> <slots.kdl> <perm-seed.sh> <zellij-slots.wasm>"
 SCRIPT="${1:?$USAGE}"
 CONF="${2:?$USAGE}"
 LAYOUT="${3:?$USAGE}"
 SEED="${4:?$USAGE}"
+WASM="${5:?$USAGE}"
 
 # 前提の欠落は「タブが増えなかった」と区別がつかず false green になるため、
 # テスト本体に入る前に落とす
@@ -60,24 +64,22 @@ command -v script >/dev/null || { echo "FAIL: script(util-linux) が見つから
 [ -r "$CONF" ] || { echo "FAIL: $CONF が読めない"; exit 1; }
 [ -r "$LAYOUT" ] || { echo "FAIL: $LAYOUT が読めない"; exit 1; }
 [ -r "$SEED" ] || { echo "FAIL: $SEED が読めない"; exit 1; }
+[ -r "$WASM" ] || { echo "FAIL: $WASM が読めない"; exit 1; }
 
-# プラグインの権限プロンプトは対話でしか承認できないため、設定とレイアウトから
-# wasm のパス（zellij-slotsとzjstatus）を取り出して権限キャッシュを事前に与える
-WASMS=$(grep -oh 'file:[^"]*\.wasm' "$CONF" "$LAYOUT" | sed 's/^file://' | sort -u)
-[ -n "$WASMS" ] || { echo "FAIL: レイアウトからプラグインのパスを特定できない"; exit 1; }
-while IFS= read -r wasm; do
-  [ -r "$wasm" ] || { echo "FAIL: プラグイン $wasm が読めない"; exit 1; }
-done <<< "$WASMS"
-# Zellij はセッション復元キャッシュ（session-layout.kdl）にこのパスを
-# そのまま保存する。rebuild ごとに変わる store パスを直接参照していると、
-# 旧世代が GC された後の再起動で復元に失敗し、全タブのバーが
-# 「ERROR IN PLUGIN」になる。世代に依存しない固定パスを経由すること
-case "$WASMS" in
-  */nix/store/*) echo "FAIL: プラグインが store パスを直接参照している ($WASMS)"; exit 1 ;;
+# レイアウトが参照するプラグインのパス。Zellij はセッション復元キャッシュ
+# （session-layout.kdl）にこのパスをそのまま保存する。rebuild ごとに変わる
+# store パスを直接参照していると、旧世代が GC された後の再起動で復元に
+# 失敗し、全タブのバーが「ERROR IN PLUGIN」になる。世代に依存しない
+# `~` 始まりの固定パス（Zellij が $HOME で展開する）を経由すること
+SLOTS_LOCATION=$(grep -oh 'file:[^"]*zellij-slots\.wasm' "$LAYOUT" | sed 's/^file://' | sort -u)
+[ -n "$SLOTS_LOCATION" ] || { echo "FAIL: レイアウトからzellij-slotsのパスを特定できない"; exit 1; }
+[ "$(echo "$SLOTS_LOCATION" | wc -l)" -eq 1 ] \
+  || { echo "FAIL: zellij-slotsのパスが一意でない ($SLOTS_LOCATION)"; exit 1; }
+case "$SLOTS_LOCATION" in
+  */nix/store/*) echo "FAIL: プラグインが store パスを直接参照している ($SLOTS_LOCATION)"; exit 1 ;;
+  "~/"*) ;;
+  *) echo "FAIL: プラグインのパスが ~ 始まりでない ($SLOTS_LOCATION)"; exit 1 ;;
 esac
-# 権限キャッシュの検証（シナリオ0）で、シード対象のエントリを名指しする
-SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
-[ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
 
 WORK=""
 
@@ -104,6 +106,11 @@ setup() {
     "$XDG_DATA_HOME" "$ZELLIJ_SOCKET_DIR"
   cp "$CONF" "$XDG_CONFIG_HOME/zellij/config.kdl"
   cp "$LAYOUT" "$XDG_CONFIG_HOME/zellij/layouts/slots.kdl"
+  # 隔離した HOME に、レイアウトが指す固定パスで wasm を置く。展開後の
+  # 絶対パスが permissions.kdl のキーになる（シナリオ0で名指しする）
+  SLOTS_WASM="$HOME/${SLOTS_LOCATION#\~/}"
+  mkdir -p "$(dirname "$SLOTS_WASM")"
+  cp "$WASM" "$SLOTS_WASM"
   # 権限キャッシュは本番と同じ activation スクリプトで事前投入する。
   # 独自にシードすると、プラグインの要求権限とシード内容の乖離
   # （不足すると不可視の承認プロンプトでプラグインがブロックし、
