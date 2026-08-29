@@ -24,16 +24,16 @@
 #       hm.xdg.configFile."zellij/layouts/slots.kdl".source
 #       (cfg.pkgs.writeScript "zellij-perm-seed"
 #         hm.home.activation.zellijPluginPermissions.data)
-#       (cfg.pkgs.runCommandLocal "zellij-slots-wasm" { } ''
-#         ln -s ${hm.xdg.dataFile."zellij/plugins/zellij-slots.wasm".source} $out
-#       '')
+#       (cfg.pkgs.runCommandLocal "zellij-slots-wasm" { }
+#         "ln -s ${hm.home.file.".local/share/zellij/plugins/zellij-slots.wasm".source} $out")
 #     ]'
 #   nix shell nixpkgs#zellij -c \
 #     ./modules/home/parts/tests/local-zellij.sh \
 #     <1つ目>/bin/local-zellij <2つ目> <3つ目> <4つ目> <5つ目>
 #
-# config.kdl / layout を引数で受け取り HOME/XDG ごと隔離するのは、
-# インストール済みの設定を読ませるとホストの rebuild 状況で結果が変わるため。
+# config.kdl / layout / wasm を引数で受け取り HOME/XDG ごと隔離するのは、
+# インストール済みの設定やプラグインを読ませるとホストの rebuild 状況で
+# 結果が変わるため。
 #
 # シナリオ:
 #   0. 権限シードが不完全な既存エントリを補正し、他のエントリを保持する
@@ -114,11 +114,12 @@ setup() {
   # テストでは毎秒書かせる。本番設定には影響しない
   { cat "$CONF"; echo 'serialization_interval 1'; } > "$XDG_CONFIG_HOME/zellij/config.kdl"
   cp "$LAYOUT" "$XDG_CONFIG_HOME/zellij/layouts/slots.kdl"
-  # 隔離した HOME に、レイアウトが指す固定パスで wasm を置く。展開後の
-  # 絶対パスが permissions.kdl のキーになる（シナリオ0で名指しする）
+  # 隔離した HOME に、レイアウトが指す固定パスで wasm を置く（本番の
+  # home-manager と同じくシンボリックリンク）。展開後の絶対パスが
+  # permissions.kdl のキーになる（シナリオ0で名指しする）
   SLOTS_WASM="$HOME/${SLOTS_LOCATION#\~/}"
   mkdir -p "$(dirname "$SLOTS_WASM")"
-  cp "$WASM" "$SLOTS_WASM"
+  ln -s "$WASM" "$SLOTS_WASM"
   # 権限キャッシュは本番と同じ activation スクリプトで事前投入する。
   # 独自にシードすると、プラグインの要求権限とシード内容の乖離
   # （不足すると不可視の承認プロンプトでプラグインがブロックし、
