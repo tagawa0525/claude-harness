@@ -68,6 +68,13 @@ WASMS=$(grep -oh 'file:[^"]*\.wasm' "$CONF" "$LAYOUT" | sed 's/^file://' | sort 
 while IFS= read -r wasm; do
   [ -r "$wasm" ] || { echo "FAIL: プラグイン $wasm が読めない"; exit 1; }
 done <<< "$WASMS"
+# Zellij はセッション復元キャッシュ（session-layout.kdl）にこのパスを
+# そのまま保存する。rebuild ごとに変わる store パスを直接参照していると、
+# 旧世代が GC された後の再起動で復元に失敗し、全タブのバーが
+# 「ERROR IN PLUGIN」になる。世代に依存しない固定パスを経由すること
+case "$WASMS" in
+  */nix/store/*) echo "FAIL: プラグインが store パスを直接参照している ($WASMS)"; exit 1 ;;
+esac
 # 権限キャッシュの検証（シナリオ0）で、シード対象のエントリを名指しする
 SLOTS_WASM=$(echo "$WASMS" | grep 'zellij-slots' | head -n1)
 [ -n "$SLOTS_WASM" ] || { echo "FAIL: zellij-slotsのwasmを特定できない"; exit 1; }
