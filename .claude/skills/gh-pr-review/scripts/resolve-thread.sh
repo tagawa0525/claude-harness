@@ -20,6 +20,16 @@ if [[ -z "$PR_NUMBER" ]] || [[ -z "$COMMENT_ID" ]]; then
   exit 1
 fi
 
+# 数値以外（URL 断片の discussion_r123 など）は jq --argjson でパースエラーになるため先に弾く
+if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: pr_number は数値で指定してください: '${PR_NUMBER}'" >&2
+  exit 1
+fi
+if ! [[ "$COMMENT_ID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: comment_id は数値で指定してください（URL の #discussion_r の後ろの数字）: '${COMMENT_ID}'" >&2
+  exit 1
+fi
+
 OWNER=$(gh repo view --json owner -q '.owner.login')
 NAME=$(gh repo view --json name -q '.name')
 
