@@ -21,7 +21,7 @@
 # プロジェクトの CLAUDE.md にチェックコマンドが明記されていればそちらを優先する
 # （例: feature gate のあるクレートでは --all-features が必要）。ここでの既定値は汎用。
 
-set -uo pipefail
+set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "ERROR: git リポジトリ内で実行してください" >&2
