@@ -44,7 +44,7 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 
 - `--merge` 指定・`--squash` / `--rebase` なし
 - `--delete-branch` あり
-- `--body` に `## Why` / `## What` / `## Impact`
+- `--body`（または `--body-file`）に `## Why` / `## What` / `## Impact`
 - CI チェックが未完了・失敗でない、reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
 - 未解決のレビュースレッドがない（対応後は `resolve-thread.sh` で resolve する）
 
