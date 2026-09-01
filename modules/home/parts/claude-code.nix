@@ -138,6 +138,8 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh:*)"
+        "Bash(~/.claude/skills/gh-pr-review/scripts/decide-next.sh:*)"
+        "Bash(~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
         # 共有スクリプト（PRレビュー待ち）
         "Bash(~/.claude/scripts/gh-wait-review.sh:*)"
