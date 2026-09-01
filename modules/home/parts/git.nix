@@ -148,7 +148,10 @@
         # 直後の markdownlint 検査で残った違反として検出される
         MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"
         if [ -f "$MD_FIXER" ] && command -v python3 >/dev/null 2>&1; then
-          git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 python3 "$MD_FIXER"
+          if ! git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 python3 "$MD_FIXER"; then
+            echo "❌ fix-markdown-lint.py failed. Run: python3 $MD_FIXER <files>"
+            check_failed=1
+          fi
         fi
         git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 git add --
         echo "🔍 Checking Markdown lint..."
