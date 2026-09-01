@@ -24,6 +24,10 @@ allowed-tools:
 
 ## main/master ブランチへの直接プッシュ禁止
 
+main/master への push と force push は `guard-git-push.sh` hook が機械的に deny する。
+どうしても必要な場合はユーザーの明示的な指示のもと、コマンドに `ALLOW_PROTECTED_PUSH=1`
+を付けて実行する（勝手に付けない）。
+
 現在のブランチが `main` または `master` の場合:
 
 1. **プッシュを実行しない**
