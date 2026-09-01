@@ -27,8 +27,23 @@ fi
 # merge 以降の部分（フラグ解析の対象）
 MERGE_PART="${COMMAND#*"${BASH_REMATCH[0]}"}"
 
-# PR番号（merge の直後にある数値。無ければ現在のブランチの PR）
-PR_REF=$(echo "$MERGE_PART" | grep -oE '^[[:space:]]*[0-9]+' | tr -d '[:space:]' || true)
+# PR番号: 本文（--body/-b/--subject/-t 以降）より前のトークンから、値を取るフラグ
+# （-R/--repo/-F/--body-file とその値）を飛ばして最初の数値を採る。
+# `gh pr merge -R owner/repo 12 …` のように番号が merge の直後に来ない形にも対応する
+PR_REF=""
+SKIP_NEXT=0
+for tok in $MERGE_PART; do
+  if (( SKIP_NEXT )); then SKIP_NEXT=0; continue; fi
+  case "$tok" in
+    --body|-b|--subject|-t|--body=*|--subject=*) break ;;
+    -R|--repo|-F|--body-file) SKIP_NEXT=1 ;;
+    --repo=*|--body-file=*) ;;
+    -*) ;;
+    *)
+      if [[ "$tok" =~ ^[0-9]+$ ]]; then PR_REF="$tok"; break; fi
+      ;;
+  esac
+done
 
 REASONS=()
 
