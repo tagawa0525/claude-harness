@@ -20,6 +20,20 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 - 上記以外で複数スキルが使う → `scripts/`
 - Claude Code が settings.json 経由で起動するもの → `hooks/`
 
+## 外部リポジトリ由来のスキル
+
+`~/.claude/skills/` には、このリポジトリの `.claude/skills/` 以外に外部リポジトリの
+スキルも配備される。出所は flake input として `flake.nix` / `flake.lock` に記録し、
+対象は `modules/home/parts/claude-code.nix` の `externalSkills` で列挙する。
+
+| スキル | 出所 |
+| ------ | ---- |
+| `grilling`, `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills) `skills/productivity/` |
+
+- 更新追従: `nix flake update mattpocock-skills` → rebuild
+- 配備先は上流の完全なコピー（`rsync --delete`）。ローカルで編集しても rebuild で戻る
+- `claude-sync` コマンドは flake input を知らないため、外部スキルは rebuild でのみ同期される
+
 ## スクリプトの書き方
 
 - `set -euo pipefail`。失敗を黙って 0 件扱いにしない（する場合はコメントで明記）
