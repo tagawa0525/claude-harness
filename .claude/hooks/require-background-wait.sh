@@ -15,12 +15,11 @@ IN_BACKGROUND=$(echo "$INPUT" | jq -r '.tool_input.run_in_background // false')
 
 [[ "$TOOL_NAME" == "Bash" ]] || exit 0
 
-if ! echo "$COMMAND" | grep -qE '(gh-wait-review|request-rereview)\.sh'; then
-  exit 0
-fi
-
-# ヘルプ表示や構文チェックなど、待機しない呼び出しは対象外
-if echo "$COMMAND" | grep -qE '(^|[[:space:]])(bash[[:space:]]+-n|shellcheck|cat|head|tail|sed|grep|less)[[:space:]]'; then
+# 「コマンドとして実行されている」位置（行頭またはコマンド区切りの直後、任意で
+# bash/sh 経由）にあるときだけ対象にする。`echo request-rereview.sh` や
+# `bash -n …`、`cat …` のように引数として現れるだけの場合は対象外
+EXEC_RE='(^|[;&|(]|&&|\|\|)[[:space:]]*((bash|sh)[[:space:]]+)?([^[:space:]]*/)?(gh-wait-review|request-rereview)\.sh([[:space:]]|$)'
+if [[ ! "$COMMAND" =~ $EXEC_RE ]]; then
   exit 0
 fi
 
