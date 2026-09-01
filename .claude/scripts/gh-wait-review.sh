@@ -21,6 +21,7 @@
 #   2 = PRフロー適用外（gitリポジトリでない / GitHubリモートなし）
 #   3 = 対象PRが見つからない
 #   4 = gh が利用できない（未インストール / 未認証）
+#   5 = 引数エラー（不明なオプション / --since の値なし / PR番号の重複指定）
 set -u
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -52,15 +53,19 @@ while (( $# > 0 )); do
       since="${2:-}"
       if [[ -z "$since" ]]; then
         echo "ERROR: --since には ISO 8601 の時刻が必要です"
-        exit 1
+        exit 5
       fi
       shift 2
       ;;
     -*)
       echo "ERROR: 不明なオプション: $1"
-      exit 1
+      exit 5
       ;;
     *)
+      if [[ -n "$pr" ]]; then
+        echo "ERROR: PR番号は1つだけ指定してください: '$pr' と '$1'"
+        exit 5
+      fi
       pr="$1"
       shift
       ;;
