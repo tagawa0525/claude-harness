@@ -9,10 +9,25 @@
   pkgs,
   lib,
   claudeCodeSource ? null,
+  mattpocock-skills ? null,
   ...
 }:
 
 let
+  # 外部リポジトリ由来のスキル。出所は flake input（rev は flake.lock）で記録し、
+  # 更新は `nix flake update <input>` → rebuild で追従する。
+  # 配備先ディレクトリは丸ごと上流のコピーとして扱う（ローカル編集は上書きされる）
+  externalSkills = lib.optionals (mattpocock-skills != null) [
+    {
+      name = "grilling";
+      src = "${mattpocock-skills}/skills/productivity/grilling";
+    }
+    {
+      name = "grill-me";
+      src = "${mattpocock-skills}/skills/productivity/grill-me";
+    }
+  ];
+
   # グローバルに登録する Claude Code hooks
   # nixos-rebuild 時に ~/.claude/settings.json へ自動登録される
   claudeGlobalHooks = [
@@ -203,6 +218,13 @@ in
       PATH="${pkgs.rsync}/bin:$PATH" $DRY_RUN_CMD ${pkgs.bash}/bin/bash \
         ${../scripts/claude-sync.sh} "${claudeCodeSource}"
     ''}
+
+    # 外部スキルの配備（externalSkills）。上流のコピーなので --delete で完全一致させる。
+    # claude-sync コマンドは flake input を知らないため、ここ（rebuild）でのみ同期される
+    ${lib.concatMapStringsSep "\n" (s: ''
+      $DRY_RUN_CMD mkdir -p "$CLAUDE_DIR/skills/${s.name}"
+      $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
+    '') externalSkills}
 
     # 静的設定と hooks を settings.json に反映
     # claudeCodeSource の有無に関わらず常に実行（宣言的管理を保証）
