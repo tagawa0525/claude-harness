@@ -27,7 +27,10 @@ fi
 shift
 
 if (( $# > 0 )); then
-  body="@copilot 指摘に対応しました ($(IFS=', '; echo "$*"))。再レビューをお願いします。"
+  # "$*" の区切りは IFS の先頭1文字だけなので ", " にはならない。printf で明示的に join する
+  hashes=$(printf '%s, ' "$@")
+  hashes=${hashes%, }
+  body="@copilot 指摘に対応しました (${hashes})。再レビューをお願いします。"
 else
   body="@copilot 指摘に対応しました。再レビューをお願いします。"
 fi
