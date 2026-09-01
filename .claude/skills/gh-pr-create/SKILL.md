@@ -16,25 +16,25 @@ allowed-tools:
 
 # GitHub PR Create Command
 
-GitHub Pull Requestを作成する（gh CLI使用）。
+GitHub Pull Requestを作成する（gh CLI使用）。このスキルの本体はタイトルと本文を書くこと。
 
 ## 事前確認
 
 !`gh auth status`
 !`git status --short`
 !`git branch -vv`
+!`git log @{upstream}..HEAD --oneline 2>/dev/null || echo "(上流ブランチ未設定)"`
 
 ## 未プッシュコミットの確認
 
-```bash
-git log @{upstream}..HEAD --oneline 2>/dev/null
-```
-
-未プッシュコミットがある場合は先にプッシュ:
+未プッシュコミットがある（または上流が未設定）なら先にプッシュする（上流は自動設定される）:
 
 ```bash
-git push -u origin $(git branch --show-current)
+git push
 ```
+
+`pre-pr-create-check.sh` hook は未プッシュのまま `gh pr create` すると deny する
+（gh が対話的に push 先を尋ねて固まるのを防ぐ）。
 
 ## PR内容の生成
 
@@ -48,9 +48,11 @@ git diff main..HEAD --stat
 ### PRタイトル
 
 - 最初のコミットメッセージまたは変更の要約から生成
-- 70文字以内
+- 70文字以内（超えると hook が deny する）
 
 ### PR本文テンプレート
+
+見出し `## 概要` / `## 変更点` / `## テスト` は必須（欠けると hook が deny する）:
 
 ```markdown
 ## 概要
@@ -65,6 +67,9 @@ git diff main..HEAD --stat
 ```
 
 ## PR作成
+
+`--title` と `--body` は必ず指定する（`--fill` や本文省略はエディタが開くので hook が deny する）。
+`--web` は使わない。
 
 ### 通常のPR
 
