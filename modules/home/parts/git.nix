@@ -63,6 +63,8 @@
       user.email = "tagawa0525@gmail.com";
       init.defaultBranch = "main"; # 新規リポジトリのデフォルトブランチ
       pull.rebase = true; # pull時にrebaseを使用（マージコミットを避ける）
+      # 初回 push で上流を自動設定する。スキルの手順から「上流の有無で -u を付け分ける」分岐をなくす
+      push.autoSetupRemote = true;
       core.hooksPath = "~/.config/git/hooks"; # グローバルhooksを使用
     };
   };
