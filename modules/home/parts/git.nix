@@ -182,6 +182,56 @@
     '';
   };
 
+  # commit-msg: Claude Code セッションのコミットに Conventional Commits を強制する。
+  # 形式は決定的に判定できるため SKILL.md の文章ではなく hook で守る。
+  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多）。
+  # 手動コミットの自由度を残すため、pre-commit の main ガードと同じく CLAUDECODE=1 のときのみ
+  xdg.configFile."git/hooks/commit-msg" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      set -euo pipefail
+      # 文字数を UTF-8 の文字単位で数える（LANG=C だとバイト数になり日本語件名が誤って超過する）
+      export LC_ALL=C.UTF-8
+
+      MSG_FILE="$1"
+
+      # プロジェクトローカルの commit-msg があれば優先実行
+      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+      LOCAL_HOOK="$GIT_DIR/hooks/commit-msg"
+      if [ -x "$LOCAL_HOOK" ]; then
+        exec "$LOCAL_HOOK" "$@"
+      fi
+
+      [ "''${CLAUDECODE:-}" = "1" ] || exit 0
+
+      # 1行目（コメント行を除く）
+      SUBJECT=$(grep -v '^#' "$MSG_FILE" | sed -n '1p')
+
+      # マージ・fixup/squash・Revert は Conventional Commits の対象外
+      case "$SUBJECT" in
+        Merge*|fixup!*|squash!*|Revert*) exit 0 ;;
+      esac
+
+      TYPES='feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert'
+      if ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
+        echo "❌ Conventional Commits 形式ではありません: $SUBJECT"
+        echo "   形式: <type>(<scope>)?: <subject>    type: $TYPES"
+        exit 1
+      fi
+
+      LEN=''${#SUBJECT}
+      if [ "$LEN" -gt 72 ]; then
+        echo "❌ 件名が 72 文字を超えています ($LEN 文字): $SUBJECT"
+        exit 1
+      fi
+      if [ "$LEN" -gt 50 ]; then
+        echo "⚠️  件名が 50 文字を超えています ($LEN 文字)。短くできないか検討してください"
+      fi
+      exit 0
+    '';
+  };
+
   # deltaでdiffを見やすく表示
   programs.delta = {
     enable = true;
