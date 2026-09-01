@@ -14,7 +14,11 @@
 
 set -euo pipefail
 
-PR_NUMBER="${1:-}"
+if (( $# < 1 || $# > 2 )); then
+  echo "Usage: $0 <pr_number> [--unresolved]" >&2
+  exit 1
+fi
+PR_NUMBER="$1"
 UNRESOLVED_ONLY="${2:-}"
 
 if [[ -z "$PR_NUMBER" ]]; then
