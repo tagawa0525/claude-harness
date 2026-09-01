@@ -42,4 +42,13 @@ created_at=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$body"
 echo "POSTED: ${body}"
 echo "SINCE: ${created_at}"
 
-exec "$HOME/.claude/scripts/gh-wait-review.sh" "$PR_NUMBER" --since "$created_at"
+# 共有スクリプトは自身の位置から相対で解決する（<root>/skills/gh-pr-review/scripts → <root>/scripts）。
+# リポジトリの .claude/ と配備先の ~/.claude/ は同じ構造なので、どちらから実行しても
+# 同じ版の gh-wait-review.sh が使われる（$HOME 固定だと未同期の旧版を呼びうる）
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+WAIT_SCRIPT="${SCRIPT_DIR}/../../../scripts/gh-wait-review.sh"
+if [[ ! -x "$WAIT_SCRIPT" ]]; then
+  echo "ERROR: gh-wait-review.sh が見つかりません: ${WAIT_SCRIPT}" >&2
+  exit 1
+fi
+exec "$WAIT_SCRIPT" "$PR_NUMBER" --since "$created_at"
