@@ -150,16 +150,19 @@ if [[ -z "$PR_NUMBER" ]]; then
 else
   OWNER=$(gh repo view "${REPO_ARGS[@]}" --json owner --jq '.owner.login' 2>/dev/null || true)
   NAME=$(gh repo view "${REPO_ARGS[@]}" --json name --jq '.name' 2>/dev/null || true)
-  UNRESOLVED=$(gh api graphql -F owner="$OWNER" -F name="$NAME" -F number="$PR_NUMBER" -f query='
-    query($owner: String!, $name: String!, $number: Int!) {
+  # --paginate は $endCursor 変数と pageInfo を使って全ページを辿る。--jq はページごとに
+  # 適用されるので、ページ単位の配列を jq -s add で 1 つにまとめる
+  UNRESOLVED=$(gh api graphql --paginate -F owner="$OWNER" -F name="$NAME" -F number="$PR_NUMBER" -f query='
+    query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
-          reviewThreads(first: 100) {
+          reviewThreads(first: 100, after: $endCursor) {
+            pageInfo { hasNextPage endCursor }
             nodes { isResolved path }
           }
         }
       }
-    }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | .path]' 2>/dev/null || true)
+    }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | .path]' 2>/dev/null | jq -s 'add // []' || true)
   if [[ -z "$UNRESOLVED" ]]; then
     REASONS+=("未解決レビュースレッドを確認できませんでした（gh api graphql が失敗）")
   else
