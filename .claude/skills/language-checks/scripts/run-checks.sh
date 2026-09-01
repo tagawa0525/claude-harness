@@ -95,8 +95,15 @@ staged_md() {
   git diff --cached --name-only -z --diff-filter=ACM -- '*.md'
 }
 md_autofix() {
+  # markdownlint --fix は直せない違反があると非 0 を返すので、ここでは止めない（直後の lint で検出する）
   staged_md | xargs -0 -r markdownlint --fix -- 2>/dev/null || true
-  staged_md | xargs -0 -r python3 "$MD_FIXER" || return 1
+  # 補完修正（MD040 / MD060）。python3 がなければ飛ばし、残った違反は lint で検出される
+  # （if の条件として呼ばれる関数内では -e が効かないので、失敗は明示的に返す）
+  if command -v python3 >/dev/null 2>&1; then
+    staged_md | xargs -0 -r python3 "$MD_FIXER" || return 1
+  else
+    echo "SKIP: markdown fixer (python3 not found)"
+  fi
   staged_md | xargs -0 -r git add --
 }
 md_lint() {
