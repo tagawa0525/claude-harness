@@ -1,6 +1,6 @@
 ---
 name: language-checks
-description: 言語別の品質チェック知識ベース。Rust、Python、Nixのフォーマット/リント/テストコマンドを提供。
+description: 言語別の品質チェック知識ベース。Rust、Python、Nix、Markdownのフォーマット/リント/テストコマンドを提供。
 user-invocable: false
 ---
 
@@ -13,6 +13,7 @@ user-invocable: false
 - **Rust**: cargo fmt, clippy, test
 - **Python**: ruff format, ruff check, pytest
 - **Nix**: nixfmt, statix, nix flake check
+- **Markdown**: markdownlint, fix-markdown-lint.py
 
 ## 言語検出方法
 
@@ -21,6 +22,7 @@ user-invocable: false
 - **Rust**: `Cargo.toml` が存在、または `.rs` ファイルがstaged
 - **Python**: `pyproject.toml` / `setup.py` / `requirements.txt` のいずれかが存在、または `.py` ファイルがstaged
 - **Nix**: `flake.nix` が存在、または `.nix` ファイルがstaged
+- **Markdown**: `.md` ファイルがstaged
 
 ## プロジェクト設定の優先
 
@@ -70,6 +72,19 @@ statix check
 nix flake check
 ```
 
+### Markdown
+
+```bash
+# 1. 自動修正（markdownlint が直せるもの）
+markdownlint --fix <files>
+
+# 2. 自動修正の補完（MD040 言語指定なし / MD060 CJK テーブル整列）
+python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py <files>
+
+# 3. 残った違反の確認
+markdownlint <files>
+```
+
 ## チェック失敗時の対応
 
 フォーマット → リント → テストの順に実行し、最初に失敗したチェックで中断する。
@@ -81,3 +96,4 @@ nix flake check
 - [Rust Checks](./references/rust-checks.md)
 - [Python Checks](./references/python-checks.md)
 - [Nix Checks](./references/nix-checks.md)
+- [Markdown Checks](./references/markdown-checks.md)

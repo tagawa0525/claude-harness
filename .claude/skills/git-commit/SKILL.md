@@ -79,17 +79,18 @@ git switch -c [branch-name]
 
 ## Markdown自動修正
 
-ステージに `.md` が含まれる場合、コミットメッセージ作成の前に実行:
+ステージに `.md` が含まれる場合、コミットメッセージ作成の前に実行
+（チェック内容の詳細は language-checks スキルの markdown-checks.md を参照）:
 
 ```bash
-git diff --cached --name-only -z --diff-filter=ACM | grep -z '\.md$' | \
-  xargs -r0 python3 ~/.claude/skills/git-commit/scripts/fix-markdown-lint.py
+git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | \
+  xargs -0 -r python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py
 ```
 
 修正されたファイルを再ステージ:
 
 ```bash
-git diff --cached --name-only -z --diff-filter=ACM | grep -z '\.md$' | xargs -r0 git add
+git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | xargs -0 -r git add --
 ```
 
 ## コミットメッセージ作成
