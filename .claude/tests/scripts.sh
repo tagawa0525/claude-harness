@@ -174,6 +174,8 @@ REPO="$TEST_ROOT/info/app"
 make_repo "$REPO"
 make_remote "$REPO"
 cd "$REPO" || exit 1
+# 呼ばれないことを検証するため記録を空にしておく
+make_fake_gh ''
 
 it "git-info: 各セクションを見出し付きで出力する"
 out=$("$SCRIPTS_DIR/git-info.sh")
@@ -386,7 +388,7 @@ assert_eq "" "$(fake_log pytest)"
 it "run-checks: ツールがなければ SKIP を出して続行する"
 remove_fake_tool ruff
 remove_fake_tool pytest
-out=$(PATH="$TEST_ROOT/fakebin:/usr/bin:/bin" "$LANG_SCRIPTS/run-checks.sh")
+out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_contains "$out" "SKIP: python format (ruff not found)"
 
