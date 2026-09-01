@@ -169,8 +169,15 @@ fi
 if [[ -z "$PR_NUMBER" ]]; then
   REASONS+=("対象 PR を特定できません（PR番号を指定するか、PR のあるブランチで実行してください）")
 else
-  OWNER=$(gh repo view "${REPO_ARGS[@]}" --json owner --jq '.owner.login' 2>/dev/null || true)
-  NAME=$(gh repo view "${REPO_ARGS[@]}" --json name --jq '.name' 2>/dev/null || true)
+  # gh repo view は -R を受け付けない（位置引数）。-R 指定時はその文字列から owner/name を取る
+  if [[ ${#REPO_ARGS[@]} -gt 0 ]]; then
+    OWNER="${REPO_ARGS[1]%%/*}"
+    NAME="${REPO_ARGS[1]#*/}"
+    NAME="${NAME%.git}"
+  else
+    OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)
+    NAME=$(gh repo view --json name --jq '.name' 2>/dev/null || true)
+  fi
   # --paginate は $endCursor 変数と pageInfo を使って全ページを辿る。--jq はページごとに
   # 適用されるので、ページ単位の配列を jq -s add で 1 つにまとめる
   # gh はエラー時に生の応答（errors 配列入り）を標準出力に出すため、終了コードと
