@@ -126,7 +126,8 @@ else
 fi
 
 # --- 5. レビュー判定 ---
-REVIEW_DECISION=$(gh pr view "${CHECK_ARGS[@]}" --json reviewDecision --jq '.reviewDecision' 2>/dev/null || true)
+# PR_META（取得失敗は 4 で deny 済み）から読む。空文字は「レビュー要件なし」で正常
+REVIEW_DECISION=$(jq -r '.reviewDecision // ""' <<<"${PR_META:-null}")
 
 if [[ "$REVIEW_DECISION" == "CHANGES_REQUESTED" ]]; then
   REASONS+=("レビューで変更が要求されています (CHANGES_REQUESTED)")
