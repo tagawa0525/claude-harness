@@ -208,8 +208,8 @@
 
       [ "''${CLAUDECODE:-}" = "1" ] || exit 0
 
-      # 1行目（コメント行を除く）
-      SUBJECT=$(grep -v '^#' "$MSG_FILE" | sed -n '1p')
+      # 最初の非コメント行（sed のみ。grep を挟むとコメント行だけのとき exit 1 で静かに落ちる）
+      SUBJECT=$(sed -n '/^#/!{p;q}' "$MSG_FILE")
 
       # マージ・fixup/squash・Revert は Conventional Commits の対象外
       case "$SUBJECT" in
