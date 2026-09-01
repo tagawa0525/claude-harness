@@ -32,6 +32,27 @@ PR_REF=$(echo "$MERGE_PART" | grep -oE '^[[:space:]]*[0-9]+' | tr -d '[:space:]'
 
 REASONS=()
 
+# gh の実行コンテキストをコマンドに合わせる。
+# - `cd <path> && gh pr merge` → 最後の cd 先で gh を実行（block-main-commit と同方式）
+# - `-R/--repo owner/name`     → そのリポジトリを対象にする
+# hook の cwd のまま実行すると、別ディレクトリを対象にしたコマンドで誤った PR を見る
+CD_RE='.*(^|&&|;)[[:space:]]*cd[[:space:]]+("[^"]*"|'\''[^'\'']*'\''|[^;&|[:space:]]+)'
+if [[ "$COMMAND" =~ $CD_RE ]]; then
+  TARGET_DIR="${BASH_REMATCH[2]}"
+  TARGET_DIR="${TARGET_DIR%\"}"; TARGET_DIR="${TARGET_DIR#\"}"
+  TARGET_DIR="${TARGET_DIR%\'}"; TARGET_DIR="${TARGET_DIR#\'}"
+  TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
+  if ! cd "$TARGET_DIR" 2>/dev/null; then
+    REASONS+=("コマンド中の cd 先に移動できません: ${TARGET_DIR}")
+  fi
+fi
+
+REPO_ARGS=()
+REPO_RE='(^|[[:space:]])(-R|--repo)[[:space:]=]+([^[:space:]]+)'
+if [[ "$MERGE_PART" =~ $REPO_RE ]]; then
+  REPO_ARGS=(-R "${BASH_REMATCH[3]}")
+fi
+
 # フラグの有無（単語境界で判定。-m のような短縮形も許容）
 has_flag() {
   local re="(^|[[:space:]])($1)([[:space:]=]|$)"
@@ -69,7 +90,7 @@ else
 fi
 
 # --- 4. CI チェック ---
-CHECK_ARGS=()
+CHECK_ARGS=("${REPO_ARGS[@]}")
 if [[ -n "${PR_REF:-}" ]]; then
   CHECK_ARGS+=("$PR_REF")
 fi
@@ -107,13 +128,13 @@ fi
 # gh-pr-review の resolve-thread.sh で resolve する運用）
 PR_NUMBER="${PR_REF:-}"
 if [[ -z "$PR_NUMBER" ]]; then
-  PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null || true)
+  PR_NUMBER=$(gh pr view "${REPO_ARGS[@]}" --json number --jq '.number' 2>/dev/null || true)
 fi
 if [[ -z "$PR_NUMBER" ]]; then
   REASONS+=("対象 PR を特定できません（PR番号を指定するか、PR のあるブランチで実行してください）")
 else
-  OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)
-  NAME=$(gh repo view --json name --jq '.name' 2>/dev/null || true)
+  OWNER=$(gh repo view "${REPO_ARGS[@]}" --json owner --jq '.owner.login' 2>/dev/null || true)
+  NAME=$(gh repo view "${REPO_ARGS[@]}" --json name --jq '.name' 2>/dev/null || true)
   UNRESOLVED=$(gh api graphql -F owner="$OWNER" -F name="$NAME" -F number="$PR_NUMBER" -f query='
     query($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
