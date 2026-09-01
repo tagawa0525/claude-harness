@@ -67,11 +67,13 @@ if (( review_count > 0 )); then
   last_review_at=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}" --jq '.submitted_at')
 fi
 
-# 直近の依頼より後に届いた応答のうち、最新のものを採用する（ISO 8601 は文字列比較で時系列順）
+# 直近の依頼より後に届いた応答を採用する（ISO 8601 は文字列比較で時系列順）。
+# レビュー提出があれば、その後にフォローコメントが付いていても常にレビューを優先する
+# （コメントを優先するとインライン指摘のあるレビューを COMMENT_ONLY で見落とす）
 review_is_new=$([[ -n "$last_review_at" && "$last_review_at" > "$last_request_at" ]] && echo 1 || echo 0)
 comment_is_new=$([[ -n "$last_comment_at" && "$last_comment_at" > "$last_request_at" ]] && echo 1 || echo 0)
 
-if (( review_is_new )) && { (( ! comment_is_new )) || [[ "$last_review_at" > "$last_comment_at" ]]; }; then
+if (( review_is_new )); then
   response=review
 elif (( comment_is_new )); then
   response=comment
