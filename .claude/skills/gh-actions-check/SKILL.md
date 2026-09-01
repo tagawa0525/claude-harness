@@ -6,91 +6,51 @@ model: haiku
 # 事象を確認したため、インラインで実行する（診断のみで出力も小さい）
 argument-hint: [PR番号 | ブランチ名]
 allowed-tools:
-  - Bash(gh *)
-  - Bash(git branch*)
+  - Bash(~/.claude/scripts/gh-actions-diagnose.sh*)
+  - Bash(gh run*)
 ---
 
 # GitHub Actions Check Command
 
 GitHub Actionsの実行状況を確認し、失敗時は原因を診断する。
+run の取得・失敗ジョブの特定・エラー行の抽出・原因の分類はスクリプトが行う。
 
 ## 事前確認
 
 !`gh auth status 2>&1 | head -3`
 
-## Step 1: 対象の特定
+## Step 1: 診断
 
-$ARGUMENTS にPR番号またはブランチ名が指定されている場合はそれを使用。
-指定がない場合は現在のブランチを使用。
-
-```bash
-git branch --show-current
-```
-
-## Step 2: Actions実行一覧の確認
+$ARGUMENTS（PR番号またはブランチ名。省略時は現在のブランチ）をそのまま渡す:
 
 ```bash
-# ブランチ指定の場合
-gh run list --branch <branch> --limit 5
-
-# PR番号指定の場合（チェック一覧を直接確認）
-gh pr checks <pr_number>
-
-# PR番号からheadブランチを特定してrun一覧を取得
-gh run list --branch "$(gh pr view <pr_number> --json headRefName -q .headRefName)" --limit 5
+~/.claude/scripts/gh-actions-diagnose.sh $ARGUMENTS
 ```
 
-確認ポイント:
+## Step 2: CAUSE に従って対応する
 
-- `completed/success` → 正常完了
-- `completed/failure` → Step 3で診断
-- `in_progress` → 実行中（待機）
-- 出力が空 → ワークフロー未設定
+| CAUSE              | 意味                                          | 対応                                                                   |
+| ------------------ | --------------------------------------------- | ---------------------------------------------------------------------- |
+| `NONE`             | run がない、または最新 run が成功             | `RUNS: 0` ならワークフロー未設定・未実行と報告。成功なら正常完了と報告 |
+| `IN_PROGRESS`      | 最新 run が実行中                             | 待機を提案                                                             |
+| `TRANSIENT_API`    | GitHub API 側の一時障害（HTTP 5xx 等）        | `NEXT:` の `gh run rerun <id>` を提案                                  |
+| `COPILOT_INTERNAL` | Copilot の内部エラー（ccrcli / autofind cli） | 同上（Copilot 側の一時的な問題）                                       |
+| `CODE`             | ビルド・テスト・lint の失敗                   | `--- errors ---` 以下を読み、原因と修正を提案                          |
 
-## Step 3: 失敗ジョブの特定
+`CODE` でエラー行だけでは原因が読み取れない場合はログ全文を確認する:
 
 ```bash
-gh run view <run_id> --json jobs \
-  --jq '.jobs[] | select(.conclusion=="failure") | {name, steps: [.steps[] | select(.conclusion=="failure") | .name]}'
+gh run view <run_id> --log-failed
 ```
 
-## Step 4: 失敗ステップの詳細ログ
-
-```bash
-gh run view <run_id> --log 2>&1 | grep -B 2 -A 10 "##\[error\]"
-```
-
-## Step 5: 原因の分類と対応
-
-### GitHub API側の一時障害
-
-- HTTP 500, 502, 503 エラー
-- `Unexpected end of JSON input`
-- `RequestError`, `HttpError`
-
-→ 再実行を提案: `gh run rerun <run_id>`
-
-### Copilot内部エラー
-
-- `Download ccrcli` 失敗
-- `Download autofind cli` 失敗
-
-→ 再実行を提案（Copilot側の一時的な問題）
-
-### コード起因のエラー
-
-- ビルド失敗、テスト失敗、lint違反
-
-→ エラー内容を報告し修正を提案
-
-## Step 6: 報告
+## Step 3: 報告
 
 ```text
 GitHub Actions 状況:
-- Run: <run_id>
-- Status: <status>/<conclusion>
-- 失敗ジョブ: <job_name>
-- 失敗ステップ: <step_name>
-- 原因: <分類>
-- 推奨対応: <対応>
+- Run: <RUN>
+- Status: <STATUS>
+- 失敗ジョブ: <FAILED_JOB>
+- 失敗ステップ: <FAILED_STEP>
+- 原因: <CAUSE>
+- 推奨対応: <NEXT または修正案>
 ```
