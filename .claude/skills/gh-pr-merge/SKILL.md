@@ -39,6 +39,15 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 
 ### マージ可能性チェック
 
+以下は `pre-merge-check.sh` hook が `gh pr merge` 実行時に機械的に検証し、
+満たさなければ deny する（手順で確認するのは判断が必要な項目だけでよい）:
+
+- `--merge` 指定・`--squash` / `--rebase` なし
+- `--delete-branch` あり
+- `--body`（または `--body-file`）に `## Why` / `## What` / `## Impact`
+- CI チェックが未完了・失敗でない、reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
+- 未解決のレビュースレッドがない（対応後は `resolve-thread.sh` で resolve する）
+
 - CIステータス: 全てパスしているか
 - レビュー: Copilot等の自動レビューが完了し、指摘事項に対応済みか
   - 未着の場合は `~/.claude/scripts/gh-wait-review.sh [PR番号]` で待機（漸増バックオフで約10分。フォアグラウンドの最大タイムアウトを超えるため、必ずバックグラウンドで実行）
