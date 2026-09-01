@@ -90,24 +90,38 @@ else
 fi
 
 # --- 4. CI チェック ---
+# `gh pr checks --json` は「チェックなし」を exit 1 + メッセージで返し API エラーと
+# 区別できない（さらに以前使っていた status フィールドは存在せず常に失敗していた）。
+# head コミットの check-runs / commit status を REST で直接読み、取得失敗は deny する
 CHECK_ARGS=("${REPO_ARGS[@]}")
 if [[ -n "${PR_REF:-}" ]]; then
   CHECK_ARGS+=("$PR_REF")
 fi
 
-CHECKS=$(gh pr checks "${CHECK_ARGS[@]}" --json name,state,status 2>/dev/null || echo '[]')
-
-if [[ "$(echo "$CHECKS" | jq 'length')" -gt 0 ]]; then
-  PENDING=$(echo "$CHECKS" | jq '[.[] | select(.status != "COMPLETED")] | length')
-  if [[ "$PENDING" -gt 0 ]]; then
-    PENDING_NAMES=$(echo "$CHECKS" | jq -r '[.[] | select(.status != "COMPLETED") | .name] | join(", ")')
-    REASONS+=("実行中/待機中のチェックがあります (${PENDING}件): ${PENDING_NAMES}")
-  fi
-
-  FAILED=$(echo "$CHECKS" | jq '[.[] | select(.status == "COMPLETED" and .state != "SUCCESS" and .state != "NEUTRAL" and .state != "SKIPPED")] | length')
-  if [[ "$FAILED" -gt 0 ]]; then
-    FAILED_NAMES=$(echo "$CHECKS" | jq -r '[.[] | select(.status == "COMPLETED" and .state != "SUCCESS" and .state != "NEUTRAL" and .state != "SKIPPED") | "\(.name) (\(.state))"] | join(", ")')
-    REASONS+=("失敗したチェックがあります (${FAILED}件): ${FAILED_NAMES}")
+PR_META=$(gh pr view "${CHECK_ARGS[@]}" --json number,headRefOid,headRepository,headRepositoryOwner,reviewDecision 2>/dev/null || true)
+if [[ -z "$PR_META" ]]; then
+  REASONS+=("PR 情報を取得できません（gh pr view が失敗。PR番号・認証・ネットワークを確認）")
+else
+  HEAD_SHA=$(jq -r '.headRefOid' <<<"$PR_META")
+  HEAD_REPO="$(jq -r '.headRepositoryOwner.login' <<<"$PR_META")/$(jq -r '.headRepository.name' <<<"$PR_META")"
+  CHECK_RUNS=$(gh api --paginate "repos/${HEAD_REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+    --jq '.check_runs[] | {name, status, conclusion}' 2>/dev/null | jq -s '.' || true)
+  STATUSES=$(gh api "repos/${HEAD_REPO}/commits/${HEAD_SHA}/status" \
+    --jq '[.statuses[] | {name: .context, status: (if .state == "pending" then "in_progress" else "completed" end), conclusion: .state}]' 2>/dev/null || true)
+  if [[ -z "$CHECK_RUNS" || -z "$STATUSES" ]]; then
+    REASONS+=("CI チェック状態を取得できません（check-runs / status API が失敗）")
+  else
+    ALL_CHECKS=$(jq -s 'add' <<<"$CHECK_RUNS $STATUSES")
+    PENDING=$(jq '[.[] | select(.status != "completed")] | length' <<<"$ALL_CHECKS")
+    if [[ "$PENDING" -gt 0 ]]; then
+      PENDING_NAMES=$(jq -r '[.[] | select(.status != "completed") | .name] | unique | join(", ")' <<<"$ALL_CHECKS")
+      REASONS+=("実行中/待機中のチェックがあります (${PENDING}件): ${PENDING_NAMES}")
+    fi
+    FAILED=$(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' <<<"$ALL_CHECKS")
+    if [[ "$FAILED" -gt 0 ]]; then
+      FAILED_NAMES=$(jq -r '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not)) | "\(.name) (\(.conclusion))"] | unique | join(", ")' <<<"$ALL_CHECKS")
+      REASONS+=("失敗したチェックがあります (${FAILED}件): ${FAILED_NAMES}")
+    fi
   fi
 fi
 
