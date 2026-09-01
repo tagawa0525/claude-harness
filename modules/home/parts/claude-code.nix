@@ -46,6 +46,11 @@ let
       matcher = "Bash";
       timeout = 10000;
     }
+    {
+      file = "require-background-wait.sh";
+      matcher = "Bash";
+      timeout = 5000;
+    }
   ];
 
   # Claude Code settings.json の静的設定
