@@ -123,28 +123,44 @@ commit_file() {
 # 偽 gh
 # ---------------------------------------------------------------------------
 
-# make_fake_gh <case-body>: 引数全体（"$*"）で分岐する gh を PATH 先頭に置く。
+# make_fake_tool <name> <case-body>: 引数全体（"$*"）で分岐する偽コマンドを PATH 先頭に置く。
 # case-body には `"pr view"*) echo ...;;` のような case 節を書く。
-# 一致しなければ "fake gh: unexpected: <args>" を stderr に出して exit 1。
-# 呼び出しは $FAKE_GH_LOG に1行ずつ記録される
-make_fake_gh() {
-  local bin="$TEST_ROOT/fakebin"
+# 一致しなければ "fake <name>: unexpected: <args>" を stderr に出して exit 1。
+# 呼び出しは $TEST_ROOT/<name>.log に1行ずつ記録される（fake_log <name> で読む）
+make_fake_tool() {
+  local name="$1" body="$2"
+  local bin="$TEST_ROOT/fakebin" log="$TEST_ROOT/$name.log"
   mkdir -p "$bin"
-  export FAKE_GH_LOG="$TEST_ROOT/gh.log"
-  : > "$FAKE_GH_LOG"
-  cat > "$bin/gh" <<FAKE
+  : > "$log"
+  cat > "$bin/$name" <<FAKE
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$FAKE_GH_LOG"
+printf '%s\n' "\$*" >> "$log"
 case "\$*" in
-$1
-  *) echo "fake gh: unexpected: \$*" >&2; exit 1 ;;
+$body
+  *) echo "fake $name: unexpected: \$*" >&2; exit 1 ;;
 esac
 FAKE
-  chmod +x "$bin/gh"
+  chmod +x "$bin/$name"
   case ":$PATH:" in
     *":$bin:"*) ;;
     *) export PATH="$bin:$PATH" ;;
   esac
+}
+
+# fake_log <name>: 偽コマンドの呼び出し記録
+fake_log() {
+  cat "$TEST_ROOT/$1.log"
+}
+
+# remove_fake_tool <name>: 偽コマンドを PATH から外す（「ツールなし」の状況を作る）
+remove_fake_tool() {
+  rm -f "$TEST_ROOT/fakebin/$1"
+}
+
+# make_fake_gh <case-body>: gh 用のショートカット。記録は $FAKE_GH_LOG
+make_fake_gh() {
+  make_fake_tool gh "$1"
+  export FAKE_GH_LOG="$TEST_ROOT/gh.log"
 }
 
 # ---------------------------------------------------------------------------
