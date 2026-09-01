@@ -143,6 +143,13 @@
       if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
         echo "🔧 Auto-fixing Markdown lint..."
         git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint --fix -- 2>/dev/null || true
+        # markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完。
+        # 実体は language-checks スキルの同期先（~/.claude）。無ければこの段は飛ばし、
+        # 直後の markdownlint 検査で残った違反として検出される
+        MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"
+        if [ -f "$MD_FIXER" ] && command -v python3 >/dev/null 2>&1; then
+          git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 python3 "$MD_FIXER"
+        fi
         git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 git add --
         echo "🔍 Checking Markdown lint..."
         if ! git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint -- 2>/dev/null; then
