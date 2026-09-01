@@ -29,11 +29,13 @@ PRについたレビューコメントを確認し、対応する。
 - `get-latest-review.sh <pr_number>` - 最新の Copilot レビューの要約を取得
   （周回数 ROUND、インライン指摘数、Suppressed comments の本文。Step 6 の判定に使う）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
+- `resolve-thread.sh <pr_number> <comment_id>` - コメントを含むスレッドを resolve
+  （GraphQL `resolveReviewThread`。REST には resolve API がない。Copilot のスレッドも対象）
+- `decide-next.sh <pr_number> [--max-rounds N]` - 周回数と直近の Copilot 応答から
+  次の行動（VERDICT）を判定。Step 6 の分岐はこの出力に従う
 
-注: レビュースレッドの resolve は GraphQL `resolveReviewThread` で可能
-（Copilot のスレッドも対象。REST には resolve API がない）。リポジトリに
-よってはスレッド解決が bot の再レビュー自動化のトリガーになるため、
-対応済みスレッドは返信後に resolve してよい。
+判断はモデルが行い、取得・集計・状態判定はスクリプトに寄せる。手順中で
+「数える」「比べる」「探す」が必要な箇所は、記憶に頼らずスクリプトの出力を使う。
 
 ## 事前確認
 
@@ -190,6 +192,15 @@ git push
 gh pr comment {pr_number} --body "{返信内容}"
 ```
 
+### 対応済みスレッドの resolve
+
+返信したスレッドは resolve する（リポジトリによってはスレッド解決が bot の
+再レビュー自動化のトリガーになる）:
+
+```bash
+~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {comment_id}
+```
+
 ### 返信テンプレート
 
 **修正完了時:**
@@ -218,21 +229,30 @@ I've decided to keep the current approach because {理由}.
 ### 6.1 再レビューを依頼するかの判定
 
 再レビューは毎周必ず新しい指摘を生みうるため、「指摘ゼロになるまで」を
-終了条件にすると収束しない。**周回数の上限は 5 周**。
+終了条件にすると収束しない。**周回数の上限は 5 周**（周回数 = 1 + 再レビュー
+依頼の回数。Copilot がコメントだけで応答した周も数える）。
 
-周回数 = 1 + これまでに送った再レビュー依頼の回数。通常は
-`get-latest-review.sh` の `ROUND`（Copilot レビュー件数）と一致するが、
-Copilot が正式なレビューを提出せず PR コメントだけで応答した周は `ROUND` が
-増えないため、依頼回数で数える。
+判定はスクリプトに任せる:
 
-今周のレビュー内容に応じて分岐する:
+```bash
+~/.claude/skills/gh-pr-review/scripts/decide-next.sh {pr_number}
+```
 
-| 今周のレビュー | 対応 | 再レビュー依頼 |
-| --- | --- | --- |
-| インライン指摘あり、かつ ROUND < 5 | 対応・push | **する** → 6.2 へ |
-| インライン指摘あり、かつ ROUND = 5 | 対応・push | **しない** → 上限到達として Step 7 へ |
-| **Suppressed comments のみ**（INLINE_COMMENTS = 0） | 対応・push | **しない** → Step 7 へ |
-| 指摘なし | — | しない → Step 7 へ |
+`VERDICT` に従って分岐する:
+
+| VERDICT | 意味 | 対応 | 再レビュー依頼 |
+| --- | --- | --- | --- |
+| `REREVIEW` | インライン指摘あり、ROUND < 5 | 対応・push | **する** → 6.2 へ |
+| `STOP_LIMIT` | インライン指摘あり、ROUND = 5 | 対応・push | **しない** → Step 7 へ |
+| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ | 対応・push | **しない** → Step 7 へ |
+| `STOP_CLEAN` | 指摘なし | — | しない → Step 7 へ |
+| `COMMENT_ONLY` | Copilot がコメントだけで応答 | 本文を読んで判定（下記） | 本文次第 |
+| `WAITING` | 依頼後の応答が未着 | gh-wait-review.sh で待つ | — |
+
+`COMMENT_ONLY` はスクリプトでは判定できない唯一の分岐。出力された本文を読み、
+対応確認のみ（「対応を確認しました」「追加修正は不要」等）なら `STOP_CLEAN`
+相当、新しい指摘を含むなら `ROUND` を見て `REREVIEW` / `STOP_LIMIT` 相当として
+扱う。
 
 Suppressed comments は Copilot 自身が低確度と判断したものなので、対応は
 するが再レビューで確認は求めない。上限到達時は、5 周目で見送った指摘を
@@ -267,15 +287,10 @@ gh pr comment {pr_number} --body "@copilot 指摘に対応しました ({commit_
   タイムアウトする。タイムアウトを「トリガー失敗」と誤読せず、head SHA の
   check-run と未解決スレッド数で判断する
 
-応答が届いたら、gh-wait-review.sh の出力に応じて分岐する:
-
-- **新しいレビュー提出**（`OK: ... 新しいレビューが到着`）→ Step 2 に戻り、
-  `get-latest-review.sh` の結果で 6.1 の判定をやり直す
-- **PR コメントのみ**（`NOTE:` 行付き）→ `get-latest-review.sh` は前回の
-  レビューを返すので使わない。コメント本文を読んで判定する:
-  - 対応確認のみ（「対応を確認しました」等）→ 指摘なしとして Step 7 へ
-  - 新しい指摘を含む → インライン指摘ありと同じ扱いで対応し、6.1 の周回数
-    判定に従う（Suppressed comments の区別はないので、上限判定のみ適用）
+応答が届いたら `decide-next.sh` を再実行し、6.1 の表に従う。新しいレビュー
+提出なら Step 2 に戻ってコメントを取得・対応する。`decide-next.sh` は直近の
+依頼より後に届いた応答だけを見るので、前回レビューの指摘を今周のものと
+取り違えることはない。
 
 ---
 
