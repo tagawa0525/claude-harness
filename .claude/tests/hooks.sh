@@ -16,7 +16,7 @@ make_remote "$REPO" github
 git -C "$REPO" switch -q -c feat/x
 commit_file "$REPO" "a.txt" "feat: a"
 git -C "$REPO" push -q -u origin feat/x
-cd "$REPO"
+cd "$REPO" || exit 1
 
 GOOD_BODY='## 概要
 x
@@ -107,10 +107,10 @@ it "pre-pr-create: cd 先のリポジトリで判定する"
 OTHER="$TEST_ROOT/prcreate-other"
 make_repo "$OTHER"
 git -C "$OTHER" switch -q -c feat/y
-cd "$TEST_ROOT"
+cd "$TEST_ROOT" || exit 1
 out=$(run_hook pre-pr-create-check.sh "cd $OTHER && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
-cd "$REPO"
+cd "$REPO" || exit 1
 
 # ===========================================================================
 # warn-large-commit.sh
@@ -119,7 +119,7 @@ cd "$REPO"
 REPO="$TEST_ROOT/large"
 make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
-cd "$REPO"
+cd "$REPO" || exit 1
 
 it "warn-large-commit: 小さな変更では何も出さない"
 seq 3 > small.txt && git add small.txt
@@ -154,7 +154,7 @@ assert_eq "" "$out"
 git checkout -q big.txt
 
 it "warn-large-commit: -C 指定のリポジトリを見る"
-cd "$TEST_ROOT"
+cd "$TEST_ROOT" || exit 1
 seq 150 > "$REPO/c.txt" && git -C "$REPO" add c.txt
 out=$(run_hook warn-large-commit.sh "git -C $REPO commit -m 'feat: c'")
 assert_contains "$(additional_context "$out")" "150 行"
@@ -170,7 +170,7 @@ make_remote "$REPO" github
 git -C "$REPO" switch -q -c feat/x
 commit_file "$REPO" "a.txt" "feat: a"
 git -C "$REPO" push -q -u origin feat/x
-cd "$REPO"
+cd "$REPO" || exit 1
 
 it "guard-git-push: 既存動作 — main への push は deny、feature への通常 push は許可"
 out=$(run_hook guard-git-push.sh 'git push origin main')
@@ -214,7 +214,7 @@ LOCAL="$TEST_ROOT/push-local"
 make_repo "$LOCAL"
 make_remote "$LOCAL"
 git -C "$LOCAL" switch -q -c feat/x
-cd "$LOCAL"
+cd "$LOCAL" || exit 1
 make_fake_gh '"pr view feat/x"*) echo OPEN ;;'
 out=$(run_hook guard-git-push.sh 'git push --force-with-lease')
 assert_eq allow "$(decision "$out")"

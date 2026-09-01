@@ -12,6 +12,7 @@ set -uo pipefail
 
 CLAUDE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 HOOKS_DIR="$CLAUDE_DIR/hooks"
+# shellcheck disable=SC2034  # scripts.sh が使う
 SCRIPTS_DIR="$CLAUDE_DIR/scripts"
 
 TEST_ROOT=$(mktemp -d)
@@ -95,18 +96,17 @@ make_repo() {
 }
 
 # make_remote <repo> [github]: bare リポジトリを origin として追加し main を送る。
-# 第2引数 github を渡すと URL を github.com 風にし、insteadOf で bare に向ける
-# （`git remote -v` で GitHub リモートと判定させるため）
+# 第2引数 github を渡すと、github.com の URL を持つ remote（upstream）も追加する。
+# hook / script は「いずれかの remote の URL に github.com が含まれるか」で
+# GitHub リモートの有無を判定するので、実際の通信は origin（bare）だけで済む
 make_remote() {
   local repo="$1" kind="${2:-local}"
   local bare="$repo.git"
   git init -q --bare "$bare"
-  local url="$bare"
+  git -C "$repo" remote add origin "$bare"
   if [[ "$kind" == "github" ]]; then
-    url="https://github.com/example/$(basename "$repo").git"
-    git config --global "url.$bare.insteadOf" "$url"
+    git -C "$repo" remote add upstream "https://github.com/example/$(basename "$repo").git"
   fi
-  git -C "$repo" remote add origin "$url"
   git -C "$repo" push -q -u origin main
 }
 
