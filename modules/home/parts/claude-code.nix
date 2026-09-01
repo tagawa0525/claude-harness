@@ -50,6 +50,16 @@ let
       matcher = "Bash";
       timeout = 5000;
     }
+    {
+      file = "pre-pr-create-check.sh";
+      matcher = "Bash";
+      timeout = 10000;
+    }
+    {
+      file = "warn-large-commit.sh";
+      matcher = "Bash";
+      timeout = 10000;
+    }
   ];
 
   # Claude Code settings.json の静的設定
@@ -166,8 +176,16 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/request-rereview.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
-        # 共有スクリプト（PRレビュー待ち）
+        # language-checks スキルスクリプト
+        "Bash(~/.claude/skills/language-checks/scripts/run-checks.sh:*)"
+        # 共有スクリプト（PRレビュー待ち、git/gh の決定的な手順）
         "Bash(~/.claude/scripts/gh-wait-review.sh:*)"
+        "Bash(~/.claude/scripts/git-info.sh:*)"
+        "Bash(~/.claude/scripts/worktree-add.sh:*)"
+        "Bash(~/.claude/scripts/rename-branch.sh:*)"
+        "Bash(~/.claude/scripts/rename-plan.sh:*)"
+        "Bash(~/.claude/scripts/post-merge-cleanup.sh:*)"
+        "Bash(~/.claude/scripts/gh-actions-diagnose.sh:*)"
         # Web
         "WebFetch(domain:api.github.com)"
         "WebFetch(domain:claude.ai)"

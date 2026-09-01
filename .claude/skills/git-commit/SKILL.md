@@ -11,13 +11,9 @@ allowed-tools:
   - Bash(git add*)
   - Bash(git commit*)
   - Bash(git remote*)
-  - Bash(git stash*)
   - Bash(git switch*)
-  - Bash(git worktree*)
+  - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(cd*)
-  - Bash(grep*)
-  - Bash(xargs*)
-  - Bash(python3*)
   - AskUserQuestion
 ---
 
@@ -42,16 +38,14 @@ allowed-tools:
 git remote -v | grep -q 'github\.com'
 ```
 
-**GitHubリモートあり → worktree**（リポジトリルートで実行する。サブディレクトリからだと `../` がリポジトリ内部を指す）:
+**GitHubリモートあり → worktree**（未コミットの変更も一緒に移す）:
 
 ```bash
-git stash push -u -m "wip: move to worktree"
-git worktree add ../[repo-name]-[branch-dirname] -b [branch-name]
-cd ../[repo-name]-[branch-dirname] && git stash pop --index
+~/.claude/scripts/worktree-add.sh [branch-name] --carry-changes
+cd <出力の WORKTREE の値>
 ```
 
-- `[branch-dirname]` はブランチ名の `/` を `-` に変換したもの
-- 以降のステージング・コミット・プッシュはworktree側で実行する
+以降のステージング・コミット・プッシュはworktree側で実行する。
 
 **GitHubリモートなし → その場でfeatureブランチ:**
 
@@ -63,19 +57,9 @@ git switch -c [branch-name]
 
 何もステージされていない場合は、変更を論理単位に分けて `git add` し、単位ごとにコミットする。
 
-### 大規模変更の警告
-
-ステージされた変更がファイル数5以上、または変更行数（追加+削除の合計）100行以上の場合は警告:
-
-```text
-⚠️ 大規模な変更です（[N]ファイル、[M]行）
-
-小さなコミットに分割することを推奨します:
-- 関連する変更のみをステージング: git add [file]
-- 部分的なステージング: git add -p
-
-このまま続行しますか？
-```
+ステージ済みの変更が大きい（5 ファイル以上または 100 行以上）と、`warn-large-commit.sh` hook が
+コミット時に件数を知らせる。1 つの論理的変更に収まっているか確認し、複数の変更が混在していれば
+`git add [file]` / `git add -p` で分けて別々にコミットする。大きくても 1 つの変更ならそのまま続行してよい。
 
 ## Markdown自動修正
 

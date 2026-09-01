@@ -6,6 +6,8 @@ argument-hint: [PR番号 | コメントURL] [--unresolved]
 allowed-tools:
   - Bash(git *)
   - Bash(gh *)
+  - Bash(~/.claude/skills/gh-pr-review/scripts/*)
+  - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh)
   - Read
   - Edit
   - Glob
@@ -23,7 +25,7 @@ PRについたレビューコメントを確認し、対応する。
 
 このスキルは `scripts/` ディレクトリのスクリプトを使用:
 
-- `get-pr-info.sh [pr_number]` - PR情報を取得
+- `get-pr-info.sh [pr_number | URL]` - PR情報を取得。コメント URL を渡すと `comment_id` も返す
 - `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
   （GraphQL `reviewThreads` から。各コメントに `thread_id` / `is_resolved` / `is_outdated` を含む）
 - `get-latest-review.sh <pr_number>` - 最新の Copilot レビューの要約を取得
@@ -51,7 +53,12 @@ PRについたレビューコメントを確認し、対応する。
 
 URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comment_id}`
 
-→ 特定のコメントに対応
+```bash
+~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh "{URL}"
+```
+
+出力の `number` が PR 番号、`comment_id` が対象コメント → そのコメントだけに対応する
+（Step 2 で取得した一覧から `id` が一致するものを使う）
 
 ### パターン B: PR番号が指定された場合
 
@@ -143,15 +150,14 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 #### (b) ビルド/テスト確認
 
-プロジェクトの言語に応じたチェックを実行する（コマンドの詳細は language-checks スキルを参照）:
+プロジェクトの言語を検出してフォーマット → リント → テストを実行する
+（プロジェクトの CLAUDE.md にチェックコマンドが明記されていればそちらを優先。詳細は language-checks スキル）:
 
 ```bash
-# 例: Nix の場合
-git ls-files -z '*.nix' | xargs -0 -r nixfmt --check && statix check
-
-# 例: Rust の場合
-cargo check && cargo test
+~/.claude/skills/language-checks/scripts/run-checks.sh
 ```
+
+`FAILED:` で止まったら `FIX:` の自動修正コマンドを使うか手で直し、`ALL_OK` になるまで繰り返す。
 
 #### (c) Atomicコミット
 
@@ -242,14 +248,14 @@ I've decided to keep the current approach because {理由}.
 
 `VERDICT` に従って分岐する:
 
-| VERDICT | 意味 | 対応 | 再レビュー依頼 |
-| --- | --- | --- | --- |
-| `REREVIEW` | インライン指摘あり、ROUND < 5 | 対応・push | **する** → 6.2 へ |
-| `STOP_LIMIT` | インライン指摘あり、ROUND = 5 | 対応・push | **しない** → Step 7 へ |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ | 対応・push | **しない** → Step 7 へ |
-| `STOP_CLEAN` | 指摘なし | — | しない → Step 7 へ |
-| `COMMENT_ONLY` | Copilot がコメントだけで応答 | 本文を読んで判定（下記） | 本文次第 |
-| `WAITING` | 依頼後の応答が未着 | gh-wait-review.sh で待つ | — |
+| VERDICT                | 意味                          | 対応                     | 再レビュー依頼         |
+| ---------------------- | ----------------------------- | ------------------------ | ---------------------- |
+| `REREVIEW`             | インライン指摘あり、ROUND < 5 | 対応・push               | **する** → 6.2 へ      |
+| `STOP_LIMIT`           | インライン指摘あり、ROUND = 5 | 対応・push               | **しない** → Step 7 へ |
+| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ      | 対応・push               | **しない** → Step 7 へ |
+| `STOP_CLEAN`           | 指摘なし                      | —                        | しない → Step 7 へ     |
+| `COMMENT_ONLY`         | Copilot がコメントだけで応答  | 本文を読んで判定（下記） | 本文次第               |
+| `WAITING`              | 依頼後の応答が未着            | gh-wait-review.sh で待つ | —                      |
 
 `COMMENT_ONLY` はスクリプトでは判定できない唯一の分岐。出力された本文を読み、
 対応確認のみ（「対応を確認しました」「追加修正は不要」等）なら `STOP_CLEAN`

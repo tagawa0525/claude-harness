@@ -8,14 +8,10 @@ allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)
   - Bash(git log*)
-  - Bash(git switch*)
-  - Bash(git fetch*)
-  - Bash(git pull*)
-  - Bash(git worktree*)
-  - Bash(git push origin --delete*)
   - Bash(gh pr*)
   - Bash(gh auth*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
+  - Bash(~/.claude/scripts/post-merge-cleanup.sh*)
 ---
 
 # GitHub PR Merge Command
@@ -140,29 +136,17 @@ gh pr merge [PR番号] --merge \
 
 ## クリーンアップ
 
-マージ完了後、以下を順に実行する。
+マージ完了後、PR の head ブランチ名を渡して実行する:
 
 ```bash
-# 1. worktree を削除（ブランチのロックを解放）
-git worktree remove [path]          # 該当がなければスキップ
-
-# 2. main に切り替えて最新化
-#    （PRブランチ上にいる状態では branch -d できないため、削除より先に行う）
-#    --ff-only: ローカル main とリモートの履歴が分岐していた場合に
-#    意図しないマージコミットを作らず、その場で失敗させて気づけるようにする
-git switch main
-git fetch --prune
-git pull --ff-only
-
-# 3. ローカルブランチを削除
-git branch -d [branch]
-
-# 4. リモートブランチを削除（GitHub側で自動削除済みならエラーになるがスキップしてよい）
-#    ⚠️ そのブランチを head とする open PR（特にクロスリポジトリ/forkからの
-#    upstream PR）は削除と同時に自動クローズされる。削除前に
-#    `gh pr list --head [branch] --state open` で該当がないことを確認する
-git push origin --delete [branch]
+~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
+
+スクリプトが順に行う: worktree の削除 → main へ切り替えて `fetch --prune` / `pull --ff-only` →
+ローカルブランチ削除 → リモートブランチ削除。そのブランチを head とする open PR
+（fork からの upstream PR 等）があれば、削除で PR が閉じるためリモートは残す（`REMOTE_BRANCH: kept`）。
+worktree に未コミットの変更が残っている、main とリモートの履歴が分岐している、といった場合は
+その場で失敗するので、原因を確認して対処する。
 
 ## 完了確認
 
@@ -178,7 +162,7 @@ git log --oneline -5
 
 クリーンアップ完了:
 - worktree [path] を削除（該当する場合）
-- ブランチ [branch] を削除
+- ブランチ [branch] を削除（リモートを残した場合はその理由）
 
 現在の状態を確認: /git-info
 ```

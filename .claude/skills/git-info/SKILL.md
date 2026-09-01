@@ -4,96 +4,23 @@ description: 現在のGit状態を俯瞰表示。ブランチ、変更、コミ�
 model: haiku
 context: fork
 allowed-tools:
-  - Bash(git status*)
-  - Bash(git branch*)
-  - Bash(git log*)
-  - Bash(git diff*)
-  - Bash(git remote*)
-  - Bash(git worktree*)
-  - Bash(git stash*)
-  - Bash(gh pr*)
-  - Bash(gh auth*)
+  - Bash(~/.claude/scripts/git-info.sh)
 ---
 
 # Git Info Command
 
-現在のGit状態を俯瞰する。
+現在のGit状態を俯瞰する。収集・整形・マージ済み worktree の検出はスクリプトが行う。
 
 ## 情報収集
 
-### ブランチ情報
-
-!`git branch -vv`
-
-### 未コミット変更
-
-!`git status --short`
-
-### 未プッシュコミット
-
-```bash
-git log @{upstream}..HEAD --oneline 2>/dev/null || echo "(上流ブランチ未設定)"
-```
-
-### stash一覧
-
-```bash
-git stash list
-```
-
-### worktree一覧
-
-```bash
-git worktree list
-```
-
-### 関連PR状態
-
-```bash
-gh pr status 2>/dev/null || echo "(GitHub CLI未認証)"
-```
-
-## 出力フォーマット
-
-```text
-📍 現在のブランチ: [branch-name]
-   上流: [origin/branch-name] [ahead/behind情報]
-
-📝 未コミット変更:
-   [git status --short の出力、またはなし]
-
-📤 未プッシュコミット:
-   [コミット一覧、またはなし]
-
-📦 stash:
-   [stash一覧、またはなし]
-
-🌳 worktree:
-   [worktree一覧]
-
-🔗 関連PR:
-   [PR情報、またはなし]
-```
-
-## 不要なworktreeの検出
-
-マージ済みブランチのworktreeがある場合:
-
-```text
-⚠️ マージ済みブランチのworktreeがあります:
-
-- ../myapp-feat-login (feat/login) - マージ済み
-
-削除するには:
-  /git-worktree feat/login --remove
-```
+!`~/.claude/scripts/git-info.sh`
 
 ## 推奨アクション
 
-状態に応じて次のアクションを提案:
+上の出力をそのまま提示し、状態に応じて次のアクションを提案する:
 
 - 未コミット変更がある → `/git-commit`
 - 未プッシュコミットがある → `/git-push`
 - PRがない → `/gh-pr-create`
 - mainブランチで作業中 → `/git-branch` または `/git-worktree`
-- 不要なworktreeがある → `/git-worktree --remove`
+- 「⚠️ マージ済みブランチのworktreeがあります」が出ている → 一覧にある `/git-worktree <branch> --remove`

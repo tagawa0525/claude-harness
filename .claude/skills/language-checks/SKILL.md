@@ -15,81 +15,31 @@ user-invocable: false
 - **Nix**: nixfmt, statix, nix flake check
 - **Markdown**: markdownlint, fix-markdown-lint.py
 
-## 言語検出方法
+## 実行
 
-いずれかの条件を満たす言語のチェックを実行する:
+言語の検出とチェックの実行はスクリプトが行う:
 
-- **Rust**: `Cargo.toml` が存在、または `.rs` ファイルがstaged
-- **Python**: `pyproject.toml` / `setup.py` / `requirements.txt` のいずれかが存在、または `.py` ファイルがstaged
-- **Nix**: `flake.nix` が存在、または `.nix` ファイルがstaged
-- **Markdown**: `.md` ファイルがstaged
+```bash
+~/.claude/skills/language-checks/scripts/run-checks.sh
+```
+
+- 検出条件: プロジェクトマーカー（`Cargo.toml` / `pyproject.toml` `setup.py` `requirements.txt` /
+  `flake.nix`）があるか、その言語のファイルがステージ済み。Markdown はステージ済みの `.md` のみ
+- フォーマット → リント → テストの順に実行し、最初に失敗したチェックで止まる
+- 失敗時は `FAILED:` に続けて `FIX:`（自動修正コマンド）を出す。ツールがなければ `SKIP:` で続行
 
 ## プロジェクト設定の優先
 
 プロジェクトの CLAUDE.md やドキュメントにチェックコマンドが明記されている
-場合は**そちらを優先する**。本スキルのコマンドは既定値であり、たとえば
+場合は**そちらを優先する**。スクリプトのコマンドは既定値であり、たとえば
 feature gate のあるクレートでは `--all-features` が付かないと feature 配下の
 コードが一切検査されず、チェックが通っても CI で落ちる。
 
-## チェックコマンド
-
-### Rust
-
-```bash
-# 1. フォーマットチェック（変更を加えない）
-cargo fmt --check
-
-# 2. リント（全警告をエラー扱い）
-cargo clippy --all-targets -- -D warnings
-
-# 3. テスト実行
-cargo test
-```
-
-### Python
-
-```bash
-# 1. フォーマットチェック
-ruff format --check .
-
-# 2. リント
-ruff check .
-
-# 3. テスト実行（テストディレクトリが存在する場合）
-pytest
-```
-
-### Nix
-
-```bash
-# 1. フォーマットチェック（サブディレクトリ含む全 .nix ファイル）
-git ls-files -z '*.nix' | xargs -0 -r nixfmt --check
-
-# 2. 静的解析
-statix check
-
-# 3. Flakeの検証（flake.nixが存在する場合）
-nix flake check
-```
-
-### Markdown
-
-```bash
-# 1. 自動修正（markdownlint が直せるもの）
-markdownlint --fix <files>
-
-# 2. 自動修正の補完（MD040 言語指定なし / MD060 CJK テーブル整列）
-python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py <files>
-
-# 3. 残った違反の確認
-markdownlint <files>
-```
-
 ## チェック失敗時の対応
 
-フォーマット → リント → テストの順に実行し、最初に失敗したチェックで中断する。
-失敗したコマンドと出力を提示し、自動修正コマンドがあれば提案する。
-各言語の自動修正コマンドは下記リファレンスを参照。
+`FAILED:` のコマンドと出力を提示し、`FIX:` があればそれを提案する。
+自動修正で直らない違反の読み解きと、環境起因の失敗（NixOS 特有の問題など）は
+下記リファレンスのトラブルシューティングを参照する。
 
 ## 参照
 

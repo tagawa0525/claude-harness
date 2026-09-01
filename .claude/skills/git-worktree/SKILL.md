@@ -4,12 +4,9 @@ description: 並行作業用に別ディレクトリで作業環境を作成。�
 model: haiku
 argument-hint: <branch-name> [--remove]
 allowed-tools:
-  - Bash(git status*)
-  - Bash(git branch*)
   - Bash(git worktree*)
-  - Bash(git switch*)
-  - Bash(ls*)
-  - Bash(pwd*)
+  - Bash(git branch*)
+  - Bash(~/.claude/scripts/worktree-add.sh*)
 ---
 
 # Git Worktree Command
@@ -26,46 +23,29 @@ allowed-tools:
 - 複数のPRを同時に進める
 - レビュー待ちの間に別作業
 - 長時間かかる作業を中断せず別タスク
-- 本番環境の緊急修正（既存作業を保持したまま）
 
-## 操作モード
+## 作成
 
-### 新規worktree作成（新規ブランチ）
-
-$ARGUMENTS にブランチ名が指定されている場合:
+$ARGUMENTS のブランチ名で作成する:
 
 ```bash
-# 親ディレクトリに worktree を作成
-git worktree add ../[repo-name]-[branch-name] -b [branch-name]
+~/.claude/scripts/worktree-add.sh <branch-name>
 ```
 
-ディレクトリ名の例:
+スクリプトが決めること（手順で考えなくてよい）:
 
-- リポジトリが `myapp` でブランチが `feat/login` の場合
-- → `../myapp-feat-login`
-- ブランチ名に含まれる `/` はディレクトリ名では `-` に変換する
+- 作成先は親ディレクトリの `<repo>-<branch>`（ブランチ名の `/` は `-` に変換）
+- ブランチがローカル/リモートに既にあればそれをチェックアウト、なければ HEAD から新規作成
+- `NOTE:` 行が出たら（GitHub リモートが複数ある fork 運用）、worktree で `gh pr` 系を使う前に
+  `gh repo set-default --view` で解決先を確認する。未設定だと PR 番号が意図しない側の
+  リポジトリで解決され「PRが見つからない」になる
 
-### 新規worktree作成（既存ブランチ）
+## 削除（--remove 指定時）
 
-既存のリモートブランチをチェックアウトする場合:
-
-```bash
-git worktree add ../[dir-name] [branch-name]
-```
-
-### worktree一覧
+ブランチ名で指定された場合は `git worktree list` からパスを特定する。
 
 ```bash
-git worktree list
-```
-
-### worktree削除（--remove 指定時）
-
-```bash
-# worktree を削除
-git worktree remove [path]
-
-# pruneで不要な参照をクリーンアップ
+git worktree remove <path>
 git worktree prune
 ```
 
@@ -76,22 +56,20 @@ git worktree prune
 ```text
 ✅ worktree を作成しました。
 
-場所: ../[dir-name]
-ブランチ: [branch-name]
+場所: <WORKTREE の値>
+ブランチ: <branch-name>
 
 作業を開始するには:
-  cd ../[dir-name]
-
-※ このディレクトリと並行して作業できます
+  cd <WORKTREE の値>
 ```
 
 ### 削除時
 
 ```text
-✅ worktree を削除しました: [path]
+✅ worktree を削除しました: <path>
 
 現在の worktree:
-[git worktree list の出力]
+<git worktree list の出力>
 ```
 
 ## 注意事項
@@ -99,11 +77,6 @@ git worktree prune
 - 同じブランチを複数のworktreeでチェックアウトすることはできない
 - worktreeのディレクトリを手動で削除した場合は `git worktree prune` が必要
 - マージ済みブランチのworktreeは `/git-info` で検出される
-- **複数リモート（fork運用）のリポジトリ**では、`gh repo set-default` の設定が
-  新しいworktreeに引き継がれないことがある。未設定のままだと `gh pr view` 等が
-  PR番号を意図しない側のリポジトリで解決し「PRが見つからない」になるため、
-  worktree作成後に `gh repo set-default [owner]/[repo]` を実行してから
-  `gh pr` 系コマンドや gh-wait-review.sh を使う
 
 ## 関連コマンド
 
