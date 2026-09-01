@@ -74,8 +74,14 @@ fi
 # --- 3. 本文形式 ---
 BODY_TEXT="$MERGE_PART"
 BODY_FILE=$(echo "$MERGE_PART" | grep -oE '(--body-file|-F)[[:space:]=]+[^[:space:]]+' | head -n 1 | sed -E 's/^(--body-file|-F)[[:space:]=]+//' || true)
-if [[ -n "$BODY_FILE" && -r "$BODY_FILE" ]]; then
-  BODY_TEXT=$(cat "$BODY_FILE")
+if [[ -n "$BODY_FILE" ]]; then
+  BODY_FILE="${BODY_FILE/#\~/$HOME}"
+  if [[ -r "$BODY_FILE" ]]; then
+    BODY_TEXT=$(cat "$BODY_FILE")
+  else
+    REASONS+=("--body-file のファイルが読めません: ${BODY_FILE}")
+    BODY_TEXT=""
+  fi
 fi
 if ! has_flag '--body|-b|--body-file|-F'; then
   REASONS+=("--body でマージコミット本文を指定してください（## Why / ## What / ## Impact）")
