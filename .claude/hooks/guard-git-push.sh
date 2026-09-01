@@ -24,9 +24,12 @@ OPT='-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?'
 PATH_TOKEN='"[^"]*"|'\''[^'\'']*'\''|[^[:space:]]+'
 
 DETECT_RE='(^|[[:space:];&|(])git[[:space:]]+(('"$OPT"')[[:space:]]+)*push([[:space:]]|$|[;&|])'
-if ! echo "$COMMAND" | grep -qE "$DETECT_RE"; then
+if [[ ! "$COMMAND" =~ $DETECT_RE ]]; then
   exit 0
 fi
+# 最初に検出した git push の直後から、次のコマンド区切りまでを引数部分とする
+PUSH_PART="${COMMAND#*"${BASH_REMATCH[0]}"}"
+PUSH_PART="${PUSH_PART%%[;&|]*}"
 
 # エスケープ
 if echo "$COMMAND" | grep -qE '(^|[[:space:];&|(])ALLOW_PROTECTED_PUSH=1([[:space:]]|$)'; then
@@ -43,9 +46,6 @@ deny() {
   }'
   exit 0
 }
-
-# push 以降の部分（最初の git push の引数）
-PUSH_PART=$(echo "$COMMAND" | sed -E 's/.*(^|[[:space:];&|(])git[[:space:]]+(('"$OPT"')[[:space:]]+)*push([[:space:]]|$)//' | sed -E 's/[;&|].*$//')
 
 # 対象ディレクトリ（-C / 最後の cd）
 GIT_C_RE='git[[:space:]]+-C[[:space:]]+('"$PATH_TOKEN"')([[:space:]]+'"$OPT"')*[[:space:]]+push'
