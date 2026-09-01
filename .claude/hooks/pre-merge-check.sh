@@ -110,6 +110,17 @@ else
   fi
 fi
 
+# 対象リポジトリ（base）。check-run と review thread はどちらも base 側に紐づく
+# gh repo view は -R を受け付けない（位置引数）ため、-R 指定時はその文字列から取る
+if [[ ${#REPO_ARGS[@]} -gt 0 ]]; then
+  OWNER="${REPO_ARGS[1]%%/*}"
+  NAME="${REPO_ARGS[1]#*/}"
+  NAME="${NAME%.git}"
+else
+  OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)
+  NAME=$(gh repo view --json name --jq '.name' 2>/dev/null || true)
+fi
+
 # --- 4. CI チェック ---
 # `gh pr checks --json` は「チェックなし」を exit 1 + メッセージで返し API エラーと
 # 区別できない（さらに以前使っていた status フィールドは存在せず常に失敗していた）。
@@ -119,15 +130,15 @@ if [[ -n "${PR_REF:-}" ]]; then
   CHECK_ARGS+=("$PR_REF")
 fi
 
-PR_META=$(gh pr view "${CHECK_ARGS[@]}" --json number,headRefOid,headRepository,headRepositoryOwner,reviewDecision 2>/dev/null || true)
-if [[ -z "$PR_META" ]]; then
+PR_META=$(gh pr view "${CHECK_ARGS[@]}" --json number,headRefOid,reviewDecision 2>/dev/null || true)
+if [[ -z "$PR_META" || -z "$OWNER" || -z "$NAME" ]]; then
   REASONS+=("PR 情報を取得できません（gh pr view が失敗。PR番号・認証・ネットワークを確認）")
 else
+  # fork からの PR でも check-run は base リポジトリの head SHA に紐づく
   HEAD_SHA=$(jq -r '.headRefOid' <<<"$PR_META")
-  HEAD_REPO="$(jq -r '.headRepositoryOwner.login' <<<"$PR_META")/$(jq -r '.headRepository.name' <<<"$PR_META")"
-  CHECK_RUNS=$(gh api --paginate "repos/${HEAD_REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+  CHECK_RUNS=$(gh api --paginate "repos/${OWNER}/${NAME}/commits/${HEAD_SHA}/check-runs?per_page=100" \
     --jq '.check_runs[] | {name, status, conclusion}' 2>/dev/null | jq -s '.' || true)
-  STATUSES=$(gh api "repos/${HEAD_REPO}/commits/${HEAD_SHA}/status" \
+  STATUSES=$(gh api "repos/${OWNER}/${NAME}/commits/${HEAD_SHA}/status" \
     --jq '[.statuses[] | {name: .context, status: (if .state == "pending" then "in_progress" else "completed" end), conclusion: .state}]' 2>/dev/null || true)
   if [[ -z "$CHECK_RUNS" || -z "$STATUSES" ]]; then
     REASONS+=("CI チェック状態を取得できません（check-runs / status API が失敗）")
@@ -169,15 +180,6 @@ fi
 if [[ -z "$PR_NUMBER" ]]; then
   REASONS+=("対象 PR を特定できません（PR番号を指定するか、PR のあるブランチで実行してください）")
 else
-  # gh repo view は -R を受け付けない（位置引数）。-R 指定時はその文字列から owner/name を取る
-  if [[ ${#REPO_ARGS[@]} -gt 0 ]]; then
-    OWNER="${REPO_ARGS[1]%%/*}"
-    NAME="${REPO_ARGS[1]#*/}"
-    NAME="${NAME%.git}"
-  else
-    OWNER=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null || true)
-    NAME=$(gh repo view --json name --jq '.name' 2>/dev/null || true)
-  fi
   # --paginate は $endCursor 変数と pageInfo を使って全ページを辿る。--jq はページごとに
   # 適用されるので、ページ単位の配列を jq -s add で 1 つにまとめる
   # gh はエラー時に生の応答（errors 配列入り）を標準出力に出すため、終了コードと
