@@ -143,6 +143,16 @@
       if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
         echo "🔧 Auto-fixing Markdown lint..."
         git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint --fix -- 2>/dev/null || true
+        # markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完。
+        # 実体は language-checks スキルの同期先（~/.claude）。無ければこの段は飛ばし、
+        # 直後の markdownlint 検査で残った違反として検出される
+        MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"
+        if [ -f "$MD_FIXER" ] && command -v python3 >/dev/null 2>&1; then
+          if ! git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 python3 "$MD_FIXER"; then
+            echo "❌ fix-markdown-lint.py failed. Run: python3 $MD_FIXER <files>"
+            check_failed=1
+          fi
+        fi
         git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 git add --
         echo "🔍 Checking Markdown lint..."
         if ! git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint -- 2>/dev/null; then
@@ -172,6 +182,56 @@
       fi
 
       exit $check_failed
+    '';
+  };
+
+  # commit-msg: Claude Code セッションのコミットに Conventional Commits を強制する。
+  # 形式は決定的に判定できるため SKILL.md の文章ではなく hook で守る。
+  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多）。
+  # 手動コミットの自由度を残すため、pre-commit の main ガードと同じく CLAUDECODE=1 のときのみ
+  xdg.configFile."git/hooks/commit-msg" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      set -euo pipefail
+      # 文字数を UTF-8 の文字単位で数える（LANG=C だとバイト数になり日本語件名が誤って超過する）
+      export LC_ALL=C.UTF-8
+
+      MSG_FILE="$1"
+
+      # プロジェクトローカルの commit-msg があれば優先実行
+      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+      LOCAL_HOOK="$GIT_DIR/hooks/commit-msg"
+      if [ -x "$LOCAL_HOOK" ]; then
+        exec "$LOCAL_HOOK" "$@"
+      fi
+
+      [ "''${CLAUDECODE:-}" = "1" ] || exit 0
+
+      # 最初の非コメント行（sed のみ。grep を挟むとコメント行だけのとき exit 1 で静かに落ちる）
+      SUBJECT=$(sed -n '/^#/!{p;q}' "$MSG_FILE")
+
+      # マージ・fixup/squash・Revert は Conventional Commits の対象外
+      case "$SUBJECT" in
+        Merge*|fixup!*|squash!*|Revert*) exit 0 ;;
+      esac
+
+      TYPES='feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert'
+      if ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
+        echo "❌ Conventional Commits 形式ではありません: $SUBJECT"
+        echo "   形式: <type>(<scope>)?: <subject>    type: $TYPES"
+        exit 1
+      fi
+
+      LEN=''${#SUBJECT}
+      if [ "$LEN" -gt 72 ]; then
+        echo "❌ 件名が 72 文字を超えています ($LEN 文字): $SUBJECT"
+        exit 1
+      fi
+      if [ "$LEN" -gt 50 ]; then
+        echo "⚠️  件名が 50 文字を超えています ($LEN 文字)。短くできないか検討してください"
+      fi
+      exit 0
     '';
   };
 

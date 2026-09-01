@@ -45,6 +45,10 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 | `pre-merge-check.sh`         | `gh pr merge` の `--merge` / `--delete-branch` / 本文見出し、CI、reviewDecision、未解決スレッド            | なし                                         |
 | `require-background-wait.sh` | `gh-wait-review.sh` / `request-rereview.sh` の `run_in_background=true`                                    | なし                                         |
 
+git 側の hook（`modules/home/parts/git.nix`、`core.hooksPath` でグローバル配布）も同じ考え方で、
+Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-commit が main 直接コミットの
+拒否と言語別チェック・Markdown 自動修正を、commit-msg が Conventional Commits の形式検証を行う。
+
 判定できないルール（1 コミット 1 論理変更、TDD の分離、指摘の要否判断）は SKILL.md に残す。
 
 ## スクリプトの書き方

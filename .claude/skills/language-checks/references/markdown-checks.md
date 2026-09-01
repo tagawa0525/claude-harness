@@ -52,5 +52,6 @@ git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | xargs -0 -r git a
 git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | xargs -0 -r markdownlint --
 ```
 
-注: home-manager が配布する git の pre-commit フック（`modules/home/parts/git.nix`）は
-1 と 3 を実行するが 2 は実行しない。MD040 / MD060 でゲートが落ちる場合は 2 を手で実行する。
+注: home-manager が配布する git の pre-commit フック（`modules/home/parts/git.nix`）が
+1〜3 をこの順で実行し、修正済みファイルを再ステージする。手で実行するのは、hook を
+経由しない場面（`--no-verify` 後の確認など）に限る。

@@ -79,19 +79,10 @@ git switch -c [branch-name]
 
 ## Markdown自動修正
 
-ステージに `.md` が含まれる場合、コミットメッセージ作成の前に実行
-（チェック内容の詳細は language-checks スキルの markdown-checks.md を参照）:
-
-```bash
-git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | \
-  xargs -0 -r python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py
-```
-
-修正されたファイルを再ステージ:
-
-```bash
-git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | xargs -0 -r git add --
-```
+`.md` の自動修正（`markdownlint --fix` と `fix-markdown-lint.py`）は git の pre-commit hook
+（`modules/home/parts/git.nix`）がコミット時に行い、修正済みファイルを再ステージする。
+手順としては何もしなくてよい。hook が「unfixable issues remain」で止めた場合だけ、
+language-checks の markdown-checks.md を参照して手で直す。
 
 ## コミットメッセージ作成
 
@@ -99,7 +90,7 @@ $ARGUMENTS が指定されている場合はConventional Commits形式に整形�
 指定がない場合はステージされた変更を分析して生成。
 
 - **Type**: feat, fix, docs, style, refactor, test, chore
-- **Subject**: 50文字以内、命令形、先頭小文字、末尾ピリオドなし
+- **Subject**: 50文字以内を目安（72文字超は commit-msg hook が拒否）、命令形、先頭小文字、末尾ピリオドなし
 - **Body**: 理由がsubjectから自明でない場合のみ
 
 ## コミット実行
