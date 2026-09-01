@@ -25,7 +25,7 @@ PRについたレビューコメントを確認し、対応する。
 
 - `get-pr-info.sh [pr_number]` - PR情報を取得
 - `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
-  （[gh pr-review 拡張](https://github.com/agynio/gh-pr-review)があれば使用、なければ gh api にフォールバック）
+  （GraphQL `reviewThreads` から。各コメントに `thread_id` / `is_resolved` を含む）
 - `get-latest-review.sh <pr_number>` - 最新の Copilot レビューの要約を取得
   （周回数 ROUND、インライン指摘数、Suppressed comments の本文。Step 6 の判定に使う）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
