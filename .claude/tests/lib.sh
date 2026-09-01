@@ -157,6 +157,22 @@ remove_fake_tool() {
   rm -f "$TEST_ROOT/fakebin/$1"
 }
 
+# minimal_path: 偽コマンドと基本ツール（git / jq / coreutils 等）だけを含む PATH を返す。
+# ホストに実在する ruff 等を見せずに「ツールがない」状況を作るために使う
+minimal_path() {
+  local bin="$TEST_ROOT/minbin" tool src
+  if [[ ! -d "$bin" ]]; then
+    mkdir -p "$bin"
+    for tool in bash sh env git jq awk sed grep xargs head tail sort uniq cut tr wc cat ls \
+                mktemp rm mv cp mkdir dirname basename readlink realpath printf echo test \
+                date seq; do
+      src=$(command -v "$tool" 2>/dev/null) || continue
+      ln -s "$src" "$bin/$tool"
+    done
+  fi
+  echo "$TEST_ROOT/fakebin:$bin"
+}
+
 # make_fake_gh <case-body>: gh 用のショートカット。記録は $FAKE_GH_LOG
 make_fake_gh() {
   make_fake_tool gh "$1"
