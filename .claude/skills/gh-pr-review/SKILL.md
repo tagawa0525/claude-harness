@@ -33,6 +33,8 @@ PRについたレビューコメントを確認し、対応する。
   （GraphQL `resolveReviewThread`。REST には resolve API がない。Copilot のスレッドも対象）
 - `decide-next.sh <pr_number> [--max-rounds N]` - 周回数と直近の Copilot 応答から
   次の行動（VERDICT）を判定。Step 6 の分岐はこの出力に従う
+- `request-rereview.sh <pr_number> [commit_hash ...]` - @copilot に再レビューを依頼し、
+  依頼コメントの時刻を基準に応答を待つ（約10分。バックグラウンドで実行）
 
 判断はモデルが行い、取得・集計・状態判定はスクリプトに寄せる。手順中で
 「数える」「比べる」「探す」が必要な箇所は、記憶に頼らずスクリプトの出力を使う。
@@ -261,17 +263,17 @@ Step 8 の完了報告に列挙してユーザーの判断に委ねる（自分�
 ### 6.2 再レビューの依頼
 
 pushしても再レビューは自動では走らないことがある。対応をプッシュしたら
-PRコメントで @copilot にメンションして再レビューを依頼し、応答を待つ:
+@copilot に再レビューを依頼し、応答を待つ:
 
 ```bash
-# 再レビューを依頼（@copilot メンションが Copilot の応答をトリガーする）
-gh pr comment {pr_number} --body "@copilot 指摘に対応しました ({commit_hash})。再レビューをお願いします。"
-
-# 応答の到着を待機（漸増バックオフで約10分）
+# 依頼コメントを投稿し、その created_at を基準に応答を待つ（漸増バックオフで約10分）
 # フォアグラウンドの最大タイムアウトを超えるため、シェルの & ではなく
 # Bashツールの run_in_background=true で実行する（完了時に通知される）
-~/.claude/scripts/gh-wait-review.sh {pr_number}
+~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {pr_number} {commit_hash...}
 ```
+
+依頼の投稿と待機を分けると、その間に届いた応答を取りこぼして約10分
+タイムアウトする競合がある。必ずこのスクリプトで一体化して実行する。
 
 注意:
 
