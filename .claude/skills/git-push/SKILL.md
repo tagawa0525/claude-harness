@@ -7,8 +7,6 @@ allowed-tools:
   - Bash(git status*)
   - Bash(git branch*)
   - Bash(git log*)
-  - Bash(git remote*)
-  - Bash(git rev-list*)
   - Bash(git push*)
 ---
 
@@ -20,18 +18,18 @@ allowed-tools:
 
 !`git status --short`
 !`git branch -vv`
-!`git remote -v`
 
-## main/master ブランチへの直接プッシュ禁止
+## hook が守るルール
 
-main/master への push と force push は `guard-git-push.sh` hook が機械的に deny する。
-どうしても必要な場合はユーザーの明示的な指示のもと、コマンドに `ALLOW_PROTECTED_PUSH=1`
-を付けて実行する（勝手に付けない）。
+以下は `guard-git-push.sh` hook が機械的に deny する。手順で判断することはない:
 
-現在のブランチが `main` または `master` の場合:
+- main/master への push、force push（`--force` / `-f` / `+refspec`）、`--all` / `--mirror`
+- open PR のあるブランチへの `--force-with-lease`（レビュー履歴・コメントの対応行がずれる）
 
-1. **プッシュを実行しない**
-2. 以下のメッセージを表示:
+deny されたら、そのまま従う。どうしても必要な場合はユーザーの明示的な指示のもと、コマンドに
+`ALLOW_PROTECTED_PUSH=1` を付けて実行する（勝手に付けない）。
+
+現在のブランチが `main` / `master` なら push せず、PRワークフローを案内する:
 
 ```text
 ⚠️ main/master ブランチへの直接プッシュは推奨されません。
@@ -45,20 +43,12 @@ PRワークフローを使用してください:
 ## プッシュ対象の確認
 
 ```bash
-git log @{upstream}..HEAD --oneline 2>/dev/null \
-  || git log origin/$(git branch --show-current)..HEAD --oneline 2>/dev/null \
-  || echo "上流ブランチ未設定"
+git log @{upstream}..HEAD --oneline 2>/dev/null || echo "上流ブランチ未設定（push で自動設定される）"
 ```
 
 ## プッシュ実行
 
-### 上流ブランチが未設定の場合
-
-```bash
-git push -u origin $(git branch --show-current)
-```
-
-### 上流ブランチが設定済みの場合
+上流ブランチの有無は気にしなくてよい（`push.autoSetupRemote` により初回 push で自動設定される）:
 
 ```bash
 git push
@@ -66,17 +56,13 @@ git push
 
 ### --force オプションが指定された場合
 
-`--force-with-lease` の使用を推奨:
+`--force` ではなく `--force-with-lease` を使う（他の人がプッシュした変更を誤って上書きしない）:
 
 ```bash
 git push --force-with-lease
 ```
 
-理由: 他の人がプッシュした変更を誤って上書きすることを防ぐ
-
-⚠️ **open PR のあるブランチには force push しない**（レビュー履歴・コメントの
-対応行がずれる。特にクロスリポジトリのupstream PRでは事故時の復旧が難しい）。
-rebaseで整理したい場合はマージ後に行うか、PRを閉じてから行う
+open PR のあるブランチでは hook が拒否する。履歴を整理したい場合はマージ後に行うか、PRを閉じてから行う。
 
 ## 完了確認
 
