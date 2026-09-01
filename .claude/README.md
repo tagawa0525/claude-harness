@@ -5,12 +5,12 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 
 ## スクリプトの置き場所
 
-| 場所                              | 用途                                                                                                                            | 例                                                               |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `hooks/`                          | Claude Code の hook（PreToolUse 等）。`modules/home/parts/claude-code.nix` の `claudeGlobalHooks` で settings.json に登録される | `block-main-commit.sh`                                           |
-| `scripts/`                        | 複数スキルから呼ばれる共有スクリプト                                                                                            | `gh-wait-review.sh`（gh-pr-create / gh-pr-merge / gh-pr-review） |
-| `skills/<name>/scripts/`          | そのスキル専用のスクリプト                                                                                                      | `gh-pr-review/scripts/decide-next.sh`                            |
-| `skills/language-checks/scripts/` | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                | `fix-markdown-lint.py`                                           |
+| 場所                              | 用途                                                                                                                            | 例                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `hooks/`                          | Claude Code の hook（PreToolUse 等）。`modules/home/parts/claude-code.nix` の `claudeGlobalHooks` で settings.json に登録される | `block-main-commit.sh`, `guard-git-push.sh`, `pre-merge-check.sh`, `require-background-wait.sh` |
+| `scripts/`                        | 複数スキルから呼ばれる共有スクリプト                                                                                            | `gh-wait-review.sh`（gh-pr-create / gh-pr-merge / gh-pr-review）                                |
+| `skills/<name>/scripts/`          | そのスキル専用のスクリプト                                                                                                      | `gh-pr-review/scripts/decide-next.sh`                                                           |
+| `skills/language-checks/scripts/` | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                | `fix-markdown-lint.py`                                                                          |
 
 判断基準:
 
@@ -26,13 +26,26 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 スキルも配備される。出所は flake input として `flake.nix` / `flake.lock` に記録し、
 対象は `modules/home/parts/claude-code.nix` の `externalSkills` で列挙する。
 
-| スキル | 出所 |
-| ------ | ---- |
+| スキル                 | 出所                                                                             |
+| ---------------------- | -------------------------------------------------------------------------------- |
 | `grilling`, `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills) `skills/productivity/` |
 
 - 更新追従: `nix flake update mattpocock-skills` → rebuild
 - 配備先は上流の完全なコピー（`rsync --delete`）。ローカルで編集しても rebuild で戻る
 - `claude-sync` コマンドは flake input を知らないため、外部スキルは rebuild でのみ同期される
+
+## hook が強制するルール
+
+決定的に判定できるルールは SKILL.md の文章ではなく hook で強制する（迂回できないゲート）。
+
+| hook                         | 強制するルール                                                                                             | エスケープ                                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `block-main-commit.sh`       | main / master での `git commit`                                                                            | なし                                         |
+| `guard-git-push.sh`          | main / master への push、force push（`--force-with-lease` は feature branch のみ可）、`--all` / `--mirror` | コマンドに `ALLOW_PROTECTED_PUSH=1` を付ける |
+| `pre-merge-check.sh`         | `gh pr merge` の `--merge` / `--delete-branch` / 本文見出し、CI、reviewDecision、未解決スレッド            | なし                                         |
+| `require-background-wait.sh` | `gh-wait-review.sh` / `request-rereview.sh` の `run_in_background=true`                                    | なし                                         |
+
+判定できないルール（1 コミット 1 論理変更、TDD の分離、指摘の要否判断）は SKILL.md に残す。
 
 ## スクリプトの書き方
 
