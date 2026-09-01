@@ -73,10 +73,16 @@ fi
 
 # --- main / master への push ---
 # 引数の refspec を集める（フラグと remote 名を除く）。`+refspec` は force 扱い
+# クォート付き引数（例: "/path with space"）を壊さないよう xargs でシェル風に分割する
+# （xargs はクォートとバックスラッシュを解釈するだけで、コマンド置換等は実行しない）。
+# 分割に失敗（クォート不整合）した場合は解析不能として deny する
+if ! mapfile -t TOKENS < <(printf '%s' "$PUSH_PART" | xargs -n1 printf '%s\n' 2>/dev/null); then
+  deny "git push の引数を解析できません（クォートが不整合）: ${PUSH_PART}"
+fi
 REFSPECS=()
 SKIP_NEXT=0
 POSITIONAL=0
-for tok in $PUSH_PART; do
+for tok in "${TOKENS[@]}"; do
   if (( SKIP_NEXT )); then SKIP_NEXT=0; continue; fi
   case "$tok" in
     -o|--push-option|--receive-pack|--exec|--repo) SKIP_NEXT=1 ;;
