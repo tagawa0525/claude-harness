@@ -23,8 +23,11 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 ## スクリプトの書き方
 
 - `set -euo pipefail`。失敗を黙って 0 件扱いにしない（する場合はコメントで明記）
-- 共有スクリプトはスクリプト自身の位置から相対で解決する
+- **スクリプトから別のスクリプトを呼ぶ**ときは自身の位置から相対で解決する
   （`$HOME/.claude` 固定はリポジトリから実行したとき未同期の旧版を呼ぶ）
+- **SKILL.md の手順からスクリプトを呼ぶ**ときは配備先の `~/.claude/...` を使う。
+  スキルは任意のプロジェクトのカレントディレクトリで実行されるため、
+  `./.claude/...` は nixfiles 以外では存在しない
 - Bash ツールから呼ぶスクリプトは `claude-code.nix` の許可リストに追加する
   （反映は activation なので rebuild が必要。`claude-sync` では反映されない）
 - shellcheck を通す: `nix shell nixpkgs#shellcheck -c shellcheck -S warning <file>`
