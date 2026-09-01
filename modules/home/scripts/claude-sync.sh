@@ -13,6 +13,8 @@
 #   - commands: --ignore-existing でユーザーカスタマイズを保護
 #   - CLAUDE.md/skills/hooks/scripts: ソースが正として常に上書き
 #   - --delete は使わないため、手動追加ファイルは保持される
+#   - 外部リポジトリ由来のスキル（claude-code.nix の externalSkills）は flake input
+#     から取るため、このコマンドでは同期されない（rebuild 時のアクティベーションのみ）
 
 set -euo pipefail
 
