@@ -5,6 +5,8 @@ description: featureブランチの作成・リネーム。変更内容から適
 model: sonnet
 allowed-tools:
   - Bash(git *)
+  - Bash(~/.claude/scripts/rename-plan.sh*)
+  - Bash(~/.claude/scripts/rename-branch.sh*)
   - Read
   - Glob
   - AskUserQuestion
@@ -13,6 +15,7 @@ allowed-tools:
 # Git Branch Command
 
 変更内容から適切なブランチ名を自動生成し、ブランチの作成またはリネームを行う。
+このスキルの本体はブランチ名を考えること。作成・リネーム・計画書のリネームはスクリプトに任せる。
 
 ## 現在の状態
 
@@ -20,6 +23,7 @@ allowed-tools:
 !`git status --short`
 !`git log --oneline -5`
 !`git fetch -q; git log --oneline HEAD..origin/main 2>/dev/null | head -3`
+!`~/.claude/scripts/rename-plan.sh --list`
 
 ## 動作モードの判定
 
@@ -32,17 +36,10 @@ allowed-tools:
 
 **常にLLMがブランチ名を生成する。** 引数は受け付けない。
 
-### Step 1: 計画書の検出
+### Step 1: 計画書の把握
 
-`docs/plans/` に計画書があるか確認する:
-
-```bash
-# 連番プレフィックスのないファイル（ランダム名）のみ抽出
-ls -t docs/plans/*.md 2>/dev/null | grep -v '/[0-9]\{3\}_' | head -5
-```
-
-ランダム名の計画書が見つかった場合、その内容を読み、タイトル（`# ...` 行）から意図を把握する。
-計画書の情報はブランチ名生成の最優先ソースとして使用する。
+上の `rename-plan.sh --list` の出力（連番のない計画書）があれば、その内容を読み、
+タイトル（`# ...` 行）から意図を把握する。計画書の情報はブランチ名生成の最優先ソースとして使用する。
 
 ### Step 2: 変更内容の分析
 
@@ -96,66 +93,26 @@ git switch -c [branch-name] origin/main
 
 ## featureブランチの場合: リネーム
 
-### リモート追跡の有無で分岐
+```bash
+~/.claude/scripts/rename-branch.sh [new-name]
+```
+
+- exit 2（`STOP:` 行）: リモートに同名ブランチがある。リモートも更新されることをユーザーに
+  伝えて承認を得てから `--remote` を付けて再実行する
+- open PR の head ブランチはスクリプトが拒否する（リモート削除で PR が閉じるため）。
+  その場合はリネームせず、PR をマージ/クローズしてから行うよう案内する
+
+## 計画書のリネーム
+
+ブランチ作成・リネーム後、連番のない計画書があれば連番付きにリネームする:
 
 ```bash
-# リモートにpush済みかチェック（出力があればpush済み）
-git ls-remote --heads origin [current-branch] | grep -q .
+~/.claude/scripts/rename-plan.sh [branch-name]
 ```
 
-**リモートにpush済みの場合:**
-
-```text
-⚠️ リモートブランチが存在します。リネームするとリモートも更新されます。
-
-続行しますか？
-```
-
-承認後:
-
-```bash
-git branch -m [old-name] [new-name]
-git push origin :[old-name] [new-name]
-git push -u origin [new-name]
-```
-
-**ローカルのみの場合:**
-
-```bash
-git branch -m [old-name] [new-name]
-```
-
-## 計画書のリネームとコミット
-
-ブランチ作成・リネーム後、`docs/plans/` にランダム名の計画書があればリネームする。
-
-### ランダム名の判定
-
-ファイル名が `NNN_` プレフィックスを持たないものはランダム名とみなす。
-
-### 連番の決定
-
-```bash
-# 既存の最大番号を取得
-ls docs/plans/ | grep -oP '^\d+' | sort -n | tail -1
-```
-
-次の番号 = 最大番号 + 1。既存ファイルがなければ `001` から開始。
-
-### リネーム規則
-
-ブランチ名から意味のあるファイル名を生成:
-
-- プレフィックス `feat/`, `fix/` 等を除去
-- ハイフンをアンダースコアに変換
-- 連番を付与
-
-例: ブランチ `refactor/skills-markdown-lint` → `004_skills_markdown_lint.md`
-
-```bash
-git mv docs/plans/[random-name].md docs/plans/[NNN]_[name].md
-git commit -m "docs: rename plan [random-name] to [NNN]_[name]"
-```
+連番・名前（`NNN_<ブランチ名から type/ を除き - を _ に>.md`）・`git mv` とコミットはスクリプトが行う。
+`COMMITTED: no` の場合は計画書が git 追跡外（`docs/plans/*.md` が gitignore されている等）なので、
+リネームだけ行われている。複数の候補があってエラーになったら、対象を確認して `--file` で指定する。
 
 ## 完了確認
 
