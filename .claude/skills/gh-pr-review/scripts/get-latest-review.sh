@@ -50,14 +50,15 @@ inline_count=$(gh api --paginate \
   "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}/comments?per_page=100" \
   --jq '.[].id' | wc -l)
 
-# "### Suppressed comments (N)" から次の </details> までを抜き出す
+# "Suppressed comments (N)" の行から次の </details> までを抜き出す。
+# 見出しは <summary> タグに包まれる形式もありうるため行頭に固定しない
 suppressed=$(awk '
-  /^### Suppressed comments/ { on=1 }
+  /Suppressed comments \([0-9]+\)/ { on=1 }
   on && (/<\/details>/ || /^- \*\*Files reviewed:/) { exit }
   on { print }
 ' <<<"$body")
-suppressed_count=$(grep -o -E '^### Suppressed comments \([0-9]+\)' <<<"$suppressed" \
-  | grep -o -E '[0-9]+' || echo 0)
+suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" \
+  | head -n 1 | grep -o -E '[0-9]+' || echo 0)
 
 echo "ROUND: ${round}"
 echo "REVIEW_ID: ${review_id}"
