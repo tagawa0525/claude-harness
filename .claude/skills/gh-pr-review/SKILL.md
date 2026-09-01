@@ -26,6 +26,8 @@ PRについたレビューコメントを確認し、対応する。
 - `get-pr-info.sh [pr_number]` - PR情報を取得
 - `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
   （[gh pr-review 拡張](https://github.com/agynio/gh-pr-review)があれば使用、なければ gh api にフォールバック）
+- `get-latest-review.sh <pr_number>` - 最新の Copilot レビューの要約を取得
+  （周回数 ROUND、インライン指摘数、Suppressed comments の本文。Step 6 の判定に使う）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
 
 注: レビュースレッドの resolve は GraphQL `resolveReviewThread` で可能
@@ -69,7 +71,15 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 # 全コメント取得
 ~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number}
+
+# 最新 Copilot レビューの要約（周回数・インライン指摘数・Suppressed comments）
+~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh {pr_number}
 ```
+
+**Suppressed comments** は Copilot が低確度と判断した指摘で、インラインスレッドに
+ならずレビュー本文にだけ現れる（`get-review-comments.sh` では見えない）。
+通常のコメントと同様に Step 3 で分類し、Step 4 で対応する。ただしスレッドが
+ないため個別返信はできず、Step 6 の再レビュー依頼の対象にもならない。
 
 ---
 
@@ -205,6 +215,27 @@ I've decided to keep the current approach because {理由}.
 
 ## Step 6: 再レビューの依頼と待機
 
+### 6.1 再レビューを依頼するかの判定
+
+再レビューは毎周必ず新しい指摘を生みうるため、「指摘ゼロになるまで」を
+終了条件にすると収束しない。**周回数の上限は 5 周**（`get-latest-review.sh` の
+`ROUND` が Copilot レビュー件数 = 現在の周回数）。
+
+今周のレビュー内容に応じて分岐する:
+
+| 今周のレビュー | 対応 | 再レビュー依頼 |
+| --- | --- | --- |
+| インライン指摘あり、かつ ROUND < 5 | 対応・push | **する** → 6.2 へ |
+| インライン指摘あり、かつ ROUND = 5 | 対応・push | **しない** → 上限到達として Step 7 へ |
+| **Suppressed comments のみ**（INLINE_COMMENTS = 0） | 対応・push | **しない** → Step 7 へ |
+| 指摘なし | — | しない → Step 7 へ |
+
+Suppressed comments は Copilot 自身が低確度と判断したものなので、対応は
+するが再レビューで確認は求めない。上限到達時は、5 周目で見送った指摘を
+Step 8 の完了報告に列挙してユーザーの判断に委ねる（自分で 6 周目を始めない）。
+
+### 6.2 再レビューの依頼
+
 pushしても再レビューは自動では走らないことがある。対応をプッシュしたら
 PRコメントで @copilot にメンションして再レビューを依頼し、応答を待つ:
 
@@ -232,10 +263,8 @@ gh pr comment {pr_number} --body "@copilot 指摘に対応しました ({commit_
   タイムアウトする。タイムアウトを「トリガー失敗」と誤読せず、head SHA の
   check-run と未解決スレッド数で判断する
 
-判定:
-
-- 新しい指摘がある場合 → Step 2 に戻り、指摘ゼロになるまで繰り返す
-- 指摘なし（no new comments / 対応確認のコメントのみ）→ マージ可能
+応答が届いたら Step 2 に戻り、`get-latest-review.sh` の結果で 6.1 の判定を
+やり直す（対応確認のコメントのみ = 指摘なし）。
 
 ---
 
@@ -257,11 +286,15 @@ gh pr checks {pr_number}
 PR: {url}
 コミット: {hash}
 
+レビュー周回: {ROUND}/5
+終了理由: {指摘なし | Suppressed comments のみ（再レビュー未依頼） | 周回上限到達}
+
 対応サマリー:
 - 🔴 Critical: {n}件 対応済み
 - 🟡 Warning: {n}件 対応済み
 - 🟢 Suggestion: {n}件 対応済み/{m}件 見送り
 - ℹ️ Question: {n}件 回答済み
+- 未確認の対応: {周回上限到達時、最終周で対応・見送りした指摘の一覧。該当なしなら省略}
 
 次のステップ:
 - マージする場合 → /gh-pr-merge
@@ -275,4 +308,5 @@ PR: {url}
 - **Atomicコミット**: 1コメント = 1コミットを徹底
 - Force push は避け、追加コミットで対応（レビュー履歴を保持）
 - Critical は必ず対応、Suggestion は見送り可（理由を返信）
+- 再レビューは最大 5 周。Suppressed comments のみの周は対応して終了し、再レビューを依頼しない
 - レビュアーの意図が不明な場合は、修正前に確認コメントを投稿
