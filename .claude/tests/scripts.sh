@@ -406,6 +406,17 @@ assert_contains "$(fake_log nixfmt)" "--check"
 assert_eq "check" "$(fake_log statix)"
 assert_eq "" "$(fake_log nix)"
 
+it "run-checks: Markdown の補完修正は python3 がなければ SKIP して続行する"
+REPO="$TEST_ROOT/checks/md"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo "# doc" > doc.md && git add doc.md
+make_fake_tool markdownlint '*) exit 0 ;;'
+out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_contains "$out" "SKIP: markdown fixer (python3 not found)"
+assert_contains "$out" "ALL_OK"
+
 it "run-checks: 該当言語がなければ NOTE を出して exit 0"
 REPO="$TEST_ROOT/checks/none"
 make_repo "$REPO"
