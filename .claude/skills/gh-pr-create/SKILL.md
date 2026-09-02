@@ -23,7 +23,7 @@ GitHub Pull Requestを作成する（gh CLI使用）。このスキルの本体�
 !`gh auth status`
 !`git status --short`
 !`git branch -vv`
-!`git log @{upstream}..HEAD --oneline 2>/dev/null || echo "(上流ブランチ未設定)"`
+!`git log '@{upstream}..HEAD' --oneline 2>/dev/null || echo "(上流ブランチ未設定)"`
 
 ## 未プッシュコミットの確認
 
