@@ -31,7 +31,7 @@
 # 終端行を同じ長さの空白に置き換えて標準出力に返す。開始行はそのまま残す。
 mask_heredoc_bodies() {
   local -a lines=() out=() delims=() dashes=()
-  local line scan body d arith_open arith_pre arith_post arith_mid
+  local line scan body d arith_open arith_post
   mapfile -t lines
   arith_open=0
 
@@ -52,34 +52,30 @@ mask_heredoc_bodies() {
     out+=("$line")
 
     # この行で始まるヒアドキュメントの終端子を出現順に集める。
-    # 走査用のコピーからは、本文を持たない `<<` を先に潰しておく:
+    # 走査用のコピー（scan）からは、本文を持たない `<<` を先に取り除く:
     #   <<<        ヒアストリング
-    #   (( ... ))  算術式のシフト演算子（複数行も含む）
-    # 潰さないと終端子のない開始として扱われ、以降の行がすべて本文になり、
-    # 実行されるコマンドが hook から見えなくなる
-    scan="${line//<<</%%%}"
-    while :; do
-      if (( arith_open )); then
-        if [[ "$scan" == *"))"* ]]; then
-          arith_pre="${scan%%"))"*}"
-          scan="$(printf '%*s' "$(( ${#arith_pre} + 2 ))" '' | tr ' ' '%')${scan#*"))"}"
-          arith_open=0
-        else
-          scan="$(printf '%*s' "${#scan}" '' | tr ' ' '%')"
-          break
-        fi
-      elif [[ "$scan" == *"(("* ]]; then
-        arith_pre="${scan%%"(("*}"
-        arith_post="${scan#*"(("}"
-        if [[ "$arith_post" == *"))"* ]]; then
-          arith_mid="${arith_post%%"))"*}"
-          scan="${arith_pre}%%$(printf '%*s' "${#arith_mid}" '' | tr ' ' '%')%%${arith_post#*"))"}"
-        else
-          scan="${arith_pre}%%$(printf '%*s' "${#arith_post}" '' | tr ' ' '%')"
-          arith_open=1
-          break
-        fi
+    #   (( ... ))  算術式のシフト演算子。`$(( 1 << 3 ))` や `if (( n << 2 ))`。
+    #              行をまたぐこともあるので arith_open で持ち越す
+    # 取り除かないと終端子のない開始として扱われ、以降の行がすべて本文になり、
+    # 実行されるコマンドが hook から見えなくなる。
+    # scan は `<<` の位置を探すためだけに使うので、ここでは長さを保たなくてよい
+    scan="${line//<<</ }"
+
+    if (( arith_open )); then
+      if [[ "$scan" == *"))"* ]]; then
+        scan="${scan#*"))"}"
+        arith_open=0
       else
+        scan=""   # 行全体が算術式の途中
+      fi
+    fi
+    while [[ "$scan" == *"(("* ]]; do
+      arith_post="${scan#*"(("}"
+      if [[ "$arith_post" == *"))"* ]]; then
+        scan="${scan%%"(("*} ${arith_post#*"))"}"
+      else
+        scan="${scan%%"(("*}"
+        arith_open=1
         break
       fi
     done
