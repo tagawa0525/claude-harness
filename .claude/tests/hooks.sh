@@ -309,4 +309,23 @@ out=$(run_hook pre-merge-check.sh "$BAD_MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "## What"
 
+it "heredoc: 本文中の見出しでゲートを通せない（見出し検査は実際に渡す本文だけを見る）"
+# ヒアドキュメント本文に「見出しの揃った例」を書いておき、実際の PR 本文には
+# 見出しを書かない。本文検査が本文の外まで拾うと、これで deny をすり抜けられる
+DECOY_CREATE="cat > doc.md <<'SENTINEL'
+gh pr create --title t --body \"## 概要 x ## 変更点 y ## テスト z\"
+SENTINEL
+gh pr create --title \"feat: x\" --body \"見出しなし\""
+out=$(run_hook pre-pr-create-check.sh "$DECOY_CREATE")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "## 概要"
+
+DECOY_MERGE="cat > doc.md <<'SENTINEL'
+gh pr merge 1 --merge --delete-branch --body \"## Why x ## What y ## Impact z\"
+SENTINEL
+gh pr merge 1 --merge --delete-branch --subject \"Merge: x\" --body \"見出しなし\""
+out=$(run_hook pre-merge-check.sh "$DECOY_MERGE")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "## Why"
+
 finish
