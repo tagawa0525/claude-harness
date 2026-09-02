@@ -52,7 +52,7 @@ setup_repo() {
   git -C "$dir" add flake.lock other.txt
   git -C "$dir" -c core.hooksPath=/dev/null commit -q -m "chore: files"
   if [[ "$kind" == "github" ]]; then
-    git -C "$dir" remote add origin https://github.com/example/$(basename "$dir").git
+    git -C "$dir" remote add origin "https://github.com/example/$(basename "$dir").git"
   fi
 }
 
