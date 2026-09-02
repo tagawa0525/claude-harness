@@ -59,8 +59,15 @@ TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 # 対象ディレクトリのブランチを取得
 CURRENT_BRANCH=$(git -C "$TARGET_DIR" branch --show-current 2>/dev/null || echo "")
 
-# main または master ブランチの場合はブロック
+# main または master ブランチの場合はブロック。
+# ただし flake.lock だけの変更（M 1 件）は nix-rebuild update の正規フローなので通す。
+# git 側の pre-commit hook（modules/home/parts/git.nix）と同じ例外にしないと、
+# 片方だけが塞いで update がコミットできなくなる
 if [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
+  STAGED=$(git -C "$TARGET_DIR" diff --cached --name-status 2>/dev/null || echo "")
+  if [[ "$STAGED" == "$(printf 'M\tflake.lock')" ]]; then
+    exit 0
+  fi
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
