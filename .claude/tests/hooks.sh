@@ -278,6 +278,16 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook pre-pr-create-check.sh "$(write_doc '例: 説明')"$'\ngh pr create --fill')
 assert_eq deny "$(decision "$out")"
 
+it "heredoc: 算術式のシフト演算子をヒアドキュメントの開始とみなさない"
+# $(( 1 << 3 )) の << はシフト演算子。これを開始と誤認すると終端子が現れず、
+# 以降の行がすべて本文としてマスクされ、実コマンドが hook から見えなくなる
+out=$(run_hook guard-git-push.sh 'SIZE=$(( 1 << 3 ))
+git push origin main')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-push.sh 'if (( n << 2 )); then :; fi
+git push origin main')
+assert_eq deny "$(decision "$out")"
+
 it "heredoc: ハイフン入りの終端子でも本文の後ろの実コマンドは検出する"
 out=$(run_hook guard-git-push.sh "cat > doc.md <<END-TEXT
 例: git push origin main は禁止
