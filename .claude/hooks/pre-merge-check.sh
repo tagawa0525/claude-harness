@@ -233,7 +233,9 @@ if [[ -n "${PR_META:-}" && -n "$OWNER" && -n "$NAME" ]]; then
   BASE_REF=$(jq -r '.baseRefName // ""' <<<"$PR_META")
   BEHIND_BY=""
   if [[ -n "$BASE_REF" && -n "${HEAD_SHA:-}" ]]; then
-    BEHIND_BY=$(gh api "repos/${OWNER}/${NAME}/compare/${BASE_REF}...${HEAD_SHA}" --jq '.behind_by' 2>/dev/null || true)
+    # ブランチ名の / を URL パスの区切りと誤読されないようエンコードする（release/x 等）
+    BASE_REF_ENC=$(jq -rn --arg r "$BASE_REF" '$r | @uri')
+    BEHIND_BY=$(gh api "repos/${OWNER}/${NAME}/compare/${BASE_REF_ENC}...${HEAD_SHA}" --jq '.behind_by' 2>/dev/null || true)
   fi
   if [[ ! "$BEHIND_BY" =~ ^[0-9]+$ ]]; then
     REASONS+=("base ブランチとの差を確認できません（compare API が失敗）")
