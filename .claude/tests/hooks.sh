@@ -456,6 +456,17 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "2 コミット"
 assert_contains "$(reason "$out")" "リベース"
 
+it "pre-merge-check: base 名に / があっても compare のパスとして正しく渡す（URL エンコード）"
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"release/x\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/release%2Fx...abc"*) echo 0 ;;
+  "api graphql"*) echo "[]" ;;'
+out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
 it "pre-merge-check: base との差を取得できなければ deny"
 make_fake_gh_merge 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
