@@ -1,0 +1,10 @@
+# statix の設定（`statix check` はリポジトリルートのこのファイルを読む）
+#
+# repeated_keys (W20) を無効化する。このリポジトリでは
+#   home.packages = [ ... ];
+#   home.file.".local/bin/x" = { ... };
+#   home.activation.y = ...;
+# のように先頭キーを繰り返し、間にセクションコメントを挟んで区切る書き方を
+# 全モジュールで一貫して使っている。W20 の提案どおり home = { ... } に入れ子にすると
+# セクションの区切りが崩れ、可読性が下がる。スタイルの選択なので lint では強制しない。
+disabled = ["repeated_keys"]
