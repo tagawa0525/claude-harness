@@ -55,8 +55,8 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 | hook                         | 強制するルール                                                                                                                                      | エスケープ                                   |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | `block-main-commit.sh`       | main / master での `git commit`                                                                                                                     | なし                                         |
-| `guard-git-push.sh`          | main / master への push、force push（`--force-with-lease` は feature branch のみ可。ただし open PR のあるブランチには不可）、`--all` / `--mirror`   | コマンドに `ALLOW_PROTECTED_PUSH=1` を付ける |
-| `pre-merge-check.sh`         | `gh pr merge` の `--merge` / `--delete-branch` / 本文見出し、CI、reviewDecision、未解決スレッド                                                     | なし                                         |
+| `guard-git-push.sh`          | main / master への push、force push（`--force-with-lease` は feature branch なら open PR があっても可）、`--all` / `--mirror`                       | コマンドに `ALLOW_PROTECTED_PUSH=1` を付ける |
+| `pre-merge-check.sh`         | `gh pr merge` の `--merge` / `--delete-branch` / 本文見出し、CI、reviewDecision、未解決スレッド、head が base より遅れていない（リベース済み）      | なし                                         |
 | `pre-pr-create-check.sh`     | `gh pr create` の `--title`（70 文字以内）、`--body` / `--body-file`（`## 概要` / `## 変更点` / `## テスト`）、未プッシュコミットなし、`--web` なし | なし                                         |
 | `require-background-wait.sh` | `gh-wait-review.sh` / `request-rereview.sh` の `run_in_background=true`                                                                             | なし                                         |
 | `warn-large-commit.sh`       | （ゲートではない）ステージ済みが 5 ファイル以上または 100 行以上なら件数を `additionalContext` で伝える。分割するかの判断はモデルに残す             | —                                            |

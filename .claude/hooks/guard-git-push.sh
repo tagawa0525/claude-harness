@@ -4,6 +4,7 @@
 # CLAUDE.md / git-push スキルのルールをツールレベルで強制する:
 #   - main / master への直接 push（PR を経由する）
 #   - force push（--force / -f / +refspec）。--force-with-lease は feature branch に限り許可
+#     （open PR があっても可。origin/main にリベースしてからマージコミットする運用のため）
 #   - --all / --mirror（main を含む全ブランチを押し出す）
 #
 # エスケープ: どうしても必要なときはコマンドに `ALLOW_PROTECTED_PUSH=1` を付ける。
@@ -71,46 +72,12 @@ if ! git -C "$TARGET_DIR" remote -v 2>/dev/null | grep -q 'github\.com'; then
   exit 0
 fi
 
-# open PR のあるブランチへの force push（--force-with-lease）を止める。
-# レビュー履歴・コメントの対応行がずれるため、履歴の整理はマージ後か PR を閉じてから行う。
-# GitHub リモートがなければ PR の概念がないので何もしない。確認できない場合は
-# 通さない（pre-merge-check と同じ方針）
-check_open_pr() {
-  local branch="$1"
-  [[ -n "$branch" ]] || return 0
-  git -C "$TARGET_DIR" remote -v 2>/dev/null | grep -q 'github\.com' || return 0
-  if ! command -v gh >/dev/null 2>&1; then
-    deny "ブランチ ${branch} に open PR があるか確認できません（gh がありません）"
-  fi
-  local state err_file err
-  err_file=$(mktemp)
-  if state=$(cd "$TARGET_DIR" && gh pr view "$branch" --json state --jq .state 2>"$err_file"); then
-    rm -f "$err_file"
-    if [[ "$state" == "OPEN" ]]; then
-      deny "open PR のあるブランチ ${branch} への force push は禁止です（レビュー履歴・コメントの対応行がずれる）。履歴の整理はマージ後か PR を閉じてから行ってください"
-    fi
-  else
-    err=$(cat "$err_file")
-    rm -f "$err_file"
-    if [[ "$err" == *"no pull requests found"* ]]; then
-      return 0
-    fi
-    deny "ブランチ ${branch} に open PR があるか確認できません（gh pr view が失敗: ${err})"
-  fi
-}
-
 check_push() {
   local PUSH_PART="$1"
   # --- force push ---
   # -f / --force（単独でも -fu のようなクラスタでも）。--force-with-lease / --force-if-includes は対象外
   if echo "$PUSH_PART" | grep -qE '(^|[[:space:]])(--force|-[a-zA-Z]*f[a-zA-Z]*)([[:space:]]|$)'; then
     deny "force push は禁止です（レビュー履歴を保持するため）。feature branch で履歴を書き換える必要がある場合は --force-with-lease を使ってください"
-  fi
-
-  # --force-with-lease は feature branch で許可するが、open PR のあるブランチには許可しない
-  local LEASE=0
-  if echo "$PUSH_PART" | grep -qE '(^|[[:space:]])--force-with-lease(=[^[:space:]]*)?([[:space:]]|$)'; then
-    LEASE=1
   fi
 
   # --- --all / --mirror ---
@@ -170,9 +137,6 @@ check_push() {
       if is_protected_ref "$dst"; then
         deny "main / master への直接 push は禁止です（refspec: ${rs}）。feature branch から PR を作成してください: /gh-pr-create"
       fi
-      if (( LEASE )); then
-        check_open_pr "${dst#refs/heads/}"
-      fi
     done
   else
     # refspec なし → 現在のブランチ（upstream 名が異なる場合は upstream で判定）
@@ -181,9 +145,6 @@ check_push() {
     UPSTREAM="${UPSTREAM#*/}"
     if is_protected_ref "$CURRENT" || is_protected_ref "$UPSTREAM"; then
       deny "main / master への直接 push は禁止です（現在のブランチ: ${CURRENT}）。feature branch から PR を作成してください: /gh-pr-create"
-    fi
-    if (( LEASE )); then
-      check_open_pr "${UPSTREAM:-$CURRENT}"
     fi
   fi
 }

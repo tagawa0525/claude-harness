@@ -2,7 +2,7 @@
 # .claude/hooks のテスト
 #
 # 実行: bash .claude/tests/hooks.sh
-# 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh（open PR への force push）
+# 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh / pre-merge-check.sh
 
 source "$(dirname "$0")/lib.sh"
 
@@ -161,7 +161,8 @@ assert_contains "$(additional_context "$out")" "150 行"
 git -C "$REPO" commit -q -m "feat: c"
 
 # ===========================================================================
-# guard-git-push.sh: open PR のあるブランチへの force push
+# guard-git-push.sh: feature branch への --force-with-lease は open PR があっても許可
+# （origin/main にリベースしてからマージコミットする運用。--force / +refspec は引き続き禁止）
 # ===========================================================================
 
 REPO="$TEST_ROOT/push"
@@ -178,35 +179,27 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-git-push.sh 'git push')
 assert_eq allow "$(decision "$out")"
 
-it "guard-git-push: open PR のあるブランチへの --force-with-lease は deny"
+it "guard-git-push: open PR のあるブランチへの --force-with-lease も許可し、gh に問い合わせない"
 make_fake_gh '"pr view feat/x"*) echo OPEN ;;'
 out=$(run_hook guard-git-push.sh 'git push --force-with-lease')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "open"
-
-it "guard-git-push: refspec で指定したブランチの PR を見る"
+assert_eq allow "$(decision "$out")"
 out=$(run_hook guard-git-push.sh 'git push --force-with-lease origin feat/x')
+assert_eq allow "$(decision "$out")"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
+it "guard-git-push: --force-with-lease でも main 宛ては deny"
+out=$(run_hook guard-git-push.sh 'git push --force-with-lease origin main')
 assert_eq deny "$(decision "$out")"
 
-it "guard-git-push: PR がなければ --force-with-lease を許可"
-make_fake_gh '"pr view feat/x"*) echo "no pull requests found for branch \"feat/x\"" >&2; exit 1 ;;'
-out=$(run_hook guard-git-push.sh 'git push --force-with-lease')
-assert_eq allow "$(decision "$out")"
-
-it "guard-git-push: PR が閉じていれば --force-with-lease を許可"
-make_fake_gh '"pr view feat/x"*) echo MERGED ;;'
-out=$(run_hook guard-git-push.sh 'git push --force-with-lease')
-assert_eq allow "$(decision "$out")"
-
-it "guard-git-push: PR の状態を確認できなければ deny"
-make_fake_gh '"pr view feat/x"*) echo "error connecting to api.github.com" >&2; exit 1 ;;'
-out=$(run_hook guard-git-push.sh 'git push --force-with-lease')
+it "guard-git-push: --force / +refspec は feature branch でも deny"
+out=$(run_hook guard-git-push.sh 'git push --force')
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "確認できません"
+assert_contains "$(reason "$out")" "--force-with-lease"
+out=$(run_hook guard-git-push.sh 'git push origin +feat/x')
+assert_eq deny "$(decision "$out")"
 
 it "guard-git-push: ALLOW_PROTECTED_PUSH=1 で迂回できる"
-make_fake_gh '"pr view feat/x"*) echo OPEN ;;'
-out=$(run_hook guard-git-push.sh 'ALLOW_PROTECTED_PUSH=1 git push --force-with-lease')
+out=$(run_hook guard-git-push.sh 'ALLOW_PROTECTED_PUSH=1 git push --force')
 assert_eq allow "$(decision "$out")"
 
 it "guard-git-push: GitHub リモートがなければ gh を呼ばず許可"
@@ -215,8 +208,8 @@ make_repo "$LOCAL"
 make_remote "$LOCAL"
 git -C "$LOCAL" switch -q -c feat/x
 cd "$LOCAL" || exit 1
-make_fake_gh '"pr view feat/x"*) echo OPEN ;;'
-out=$(run_hook guard-git-push.sh 'git push --force-with-lease')
+make_fake_gh ''
+out=$(run_hook guard-git-push.sh 'git push origin main')
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
@@ -410,13 +403,18 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "## 変更点"
 
 it "heredoc: マージ本文がヒアドキュメントでも見出しを読める（pre-merge-check）"
-make_fake_gh '"pr view --json number,headRefOid,reviewDecision"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\"}" ;;
-  "pr view 1 --json number,headRefOid,reviewDecision"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\"}" ;;
+# make_fake_gh_merge <behind_by>: マージ可能な PR #1 の gh 応答。compare は base...head の遅れを返す
+make_fake_gh_merge() {
+  make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/main...abc"*) '"$1"' ;;
   "api graphql"*) echo "[]" ;;'
+}
+make_fake_gh_merge 'echo 0'
 out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 BAD_MERGE_CMD="gh pr merge 1 --merge --delete-branch --subject \"Merge: x\" --body \"\$(cat <<'EOF'
@@ -446,5 +444,33 @@ gh pr merge 1 --merge --delete-branch --subject \"Merge: x\" --body \"見出し�
 out=$(run_hook pre-merge-check.sh "$DECOY_MERGE")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "## Why"
+
+# ===========================================================================
+# pre-merge-check.sh: head が base より遅れていれば deny（origin/main にリベースしてからマージする）
+# ===========================================================================
+
+it "pre-merge-check: base より遅れていれば deny し、リベースを求める"
+make_fake_gh_merge 'echo 2'
+out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "2 コミット"
+assert_contains "$(reason "$out")" "リベース"
+
+it "pre-merge-check: base 名に / があっても compare のパスとして正しく渡す（URL エンコード）"
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"release/x\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/release%2Fx...abc"*) echo 0 ;;
+  "api graphql"*) echo "[]" ;;'
+out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: base との差を取得できなければ deny"
+make_fake_gh_merge 'echo "error connecting to api.github.com" >&2; exit 1'
+out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "確認できません"
 
 finish
