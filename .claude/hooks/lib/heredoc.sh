@@ -31,8 +31,9 @@
 # 終端行を同じ長さの空白に置き換えて標準出力に返す。開始行はそのまま残す。
 mask_heredoc_bodies() {
   local -a lines=() out=() delims=() dashes=()
-  local line scan body d arith_post
+  local line scan body d arith_open arith_pre arith_post arith_mid
   mapfile -t lines
+  arith_open=0
 
   for line in "${lines[@]}"; do
     if (( ${#delims[@]} > 0 )); then
@@ -53,13 +54,34 @@ mask_heredoc_bodies() {
     # この行で始まるヒアドキュメントの終端子を出現順に集める。
     # 走査用のコピーからは、本文を持たない `<<` を先に潰しておく:
     #   <<<        ヒアストリング
-    #   (( ... ))  算術式のシフト演算子（$(( 1 << 3 )) や if (( n << 2 ))）
+    #   (( ... ))  算術式のシフト演算子（複数行も含む）
     # 潰さないと終端子のない開始として扱われ、以降の行がすべて本文になり、
     # 実行されるコマンドが hook から見えなくなる
     scan="${line//<<</%%%}"
-    while [[ "$scan" == *"(("* && "${scan#*"(("}" == *"))"* ]]; do
-      arith_post="${scan#*"(("}"
-      scan="${scan%%"(("*}%${arith_post#*"))"}"
+    while :; do
+      if (( arith_open )); then
+        if [[ "$scan" == *"))"* ]]; then
+          arith_pre="${scan%%"))"*}"
+          scan="$(printf '%*s' "$(( ${#arith_pre} + 2 ))" '' | tr ' ' '%')${scan#*"))"}"
+          arith_open=0
+        else
+          scan="$(printf '%*s' "${#scan}" '' | tr ' ' '%')"
+          break
+        fi
+      elif [[ "$scan" == *"(("* ]]; then
+        arith_pre="${scan%%"(("*}"
+        arith_post="${scan#*"(("}"
+        if [[ "$arith_post" == *"))"* ]]; then
+          arith_mid="${arith_post%%"))"*}"
+          scan="${arith_pre}%%$(printf '%*s' "${#arith_mid}" '' | tr ' ' '%')%%${arith_post#*"))"}"
+        else
+          scan="${arith_pre}%%$(printf '%*s' "${#arith_post}" '' | tr ' ' '%')"
+          arith_open=1
+          break
+        fi
+      else
+        break
+      fi
     done
     while [[ "$scan" =~ (\<\<-?)[[:space:]]*(\"[^\"]*\"|\'[^\']*\'|[^[:space:]<>()|;&]+) ]]; do
       d="${BASH_REMATCH[2]}"

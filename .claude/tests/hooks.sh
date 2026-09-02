@@ -287,6 +287,10 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-git-push.sh 'if (( n << 2 )); then :; fi
 git push origin main')
 assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-push.sh 'if (( n << foo &&
+ m )); then :; fi
+git push origin main')
+assert_eq deny "$(decision "$out")"
 
 it "heredoc: ハイフン入りの終端子でも本文の後ろの実コマンドは検出する"
 out=$(run_hook guard-git-push.sh "cat > doc.md <<END-TEXT
@@ -294,6 +298,10 @@ out=$(run_hook guard-git-push.sh "cat > doc.md <<END-TEXT
 END-TEXT
 git push origin main")
 assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-push.sh "cat > doc.md <<123
+例: git push origin main は禁止
+123")
+assert_eq allow "$(decision "$out")"
 
 it "heredoc: PR 本文がヒアドキュメントでも見出しを読める（pre-pr-create）"
 git -C "$REPO" push -q -u origin feat/x 2>/dev/null || true
