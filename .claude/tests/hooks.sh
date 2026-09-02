@@ -220,4 +220,137 @@ out=$(run_hook guard-git-push.sh 'git push --force-with-lease')
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
+# ===========================================================================
+# 全 hook 共通: ヒアドキュメント本文は「実行されるコマンド」ではない
+# ===========================================================================
+# hook はコマンド文字列を正規表現で検査するため、ヒアドキュメント本文に現れる
+# だけの `git push` / `gh pr create` 等に誤反応してはならない。
+# ただし本文の中身を読む検査（PR 本文の見出し）は、本文がヒアドキュメントで
+# 渡されるのが普通なので、これまでどおり本文を読めなければならない。
+
+REPO="$TEST_ROOT/heredoc"
+make_repo "$REPO"
+make_remote "$REPO" github
+cd "$REPO" || exit 1
+
+# ファイルにコマンド例を書き出すだけのコマンド（実行はしない）
+write_doc() {
+  printf 'cat > doc.md <<%s\n%s\nSENTINEL\n' "'SENTINEL'" "$1"
+}
+
+it "heredoc: 本文中の git push はコマンドとみなさない（guard-git-push）"
+out=$(run_hook guard-git-push.sh "$(write_doc '例: git push origin main は禁止')")
+assert_eq allow "$(decision "$out")"
+
+it "heredoc: 本文中の git commit はコマンドとみなさない（block-main-commit / warn-large-commit）"
+git switch -q main
+seq 200 > many.txt && git add many.txt
+out=$(run_hook block-main-commit.sh "$(write_doc '例: git commit -m msg')")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook warn-large-commit.sh "$(write_doc '例: git commit -m msg')")
+assert_eq "" "$out"
+git reset -q && rm -f many.txt
+git switch -q feat/x 2>/dev/null || git switch -q -c feat/x
+
+it "heredoc: 本文中の gh-wait-review.sh はコマンドとみなさない（require-background-wait）"
+out=$(run_hook require-background-wait.sh "$(write_doc '待機は gh-wait-review.sh を使う')")
+assert_eq allow "$(decision "$out")"
+
+it "heredoc: gh pr merge の本文が gh pr create に触れても PR 作成とみなさない"
+MERGE_BODY='## Why
+x
+
+## What
+- push と gh pr create は別々に実行する
+
+## Impact
+なし'
+MERGE_CMD="gh pr merge 1 --merge --delete-branch --subject \"Merge: x\" --body \"\$(cat <<'EOF'
+$MERGE_BODY
+EOF
+)\""
+out=$(run_hook pre-pr-create-check.sh "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "heredoc: 本物のコマンドは引き続き検出する（誤って全部素通しにしない）"
+out=$(run_hook guard-git-push.sh "$(write_doc '例: 説明')"$'\ngit push origin main')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook pre-pr-create-check.sh "$(write_doc '例: 説明')"$'\ngh pr create --fill')
+assert_eq deny "$(decision "$out")"
+
+it "heredoc: 算術式のシフト演算子をヒアドキュメントの開始とみなさない"
+# $(( 1 << 3 )) の << はシフト演算子。これを開始と誤認すると終端子が現れず、
+# 以降の行がすべて本文としてマスクされ、実コマンドが hook から見えなくなる
+out=$(run_hook guard-git-push.sh 'SIZE=$(( 1 << 3 ))
+git push origin main')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-push.sh 'if (( n << 2 )); then :; fi
+git push origin main')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-push.sh 'if (( n << foo &&
+ m )); then :; fi
+git push origin main')
+assert_eq deny "$(decision "$out")"
+
+it "heredoc: ハイフン入りの終端子でも本文の後ろの実コマンドは検出する"
+out=$(run_hook guard-git-push.sh "cat > doc.md <<END-TEXT
+例: git push origin main は禁止
+END-TEXT
+git push origin main")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-push.sh "cat > doc.md <<123
+例: git push origin main は禁止
+123")
+assert_eq allow "$(decision "$out")"
+
+it "heredoc: PR 本文がヒアドキュメントでも見出しを読める（pre-pr-create）"
+git -C "$REPO" push -q -u origin feat/x 2>/dev/null || true
+out=$(run_hook pre-pr-create-check.sh "$GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook pre-pr-create-check.sh "gh pr create --title \"feat: x\" --body \"\$(cat <<'EOF'
+## 概要
+x
+EOF
+)\"")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "## 変更点"
+
+it "heredoc: マージ本文がヒアドキュメントでも見出しを読める（pre-merge-check）"
+make_fake_gh '"pr view --json number,headRefOid,reviewDecision"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\"}" ;;
+  "pr view 1 --json number,headRefOid,reviewDecision"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api graphql"*) echo "[]" ;;'
+out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+BAD_MERGE_CMD="gh pr merge 1 --merge --delete-branch --subject \"Merge: x\" --body \"\$(cat <<'EOF'
+## Why
+x
+EOF
+)\""
+out=$(run_hook pre-merge-check.sh "$BAD_MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "## What"
+
+it "heredoc: 本文中の見出しでゲートを通せない（見出し検査は実際に渡す本文だけを見る）"
+# ヒアドキュメント本文に「見出しの揃った例」を書いておき、実際の PR 本文には
+# 見出しを書かない。本文検査が本文の外まで拾うと、これで deny をすり抜けられる
+DECOY_CREATE="cat > doc.md <<'SENTINEL'
+gh pr create --title t --body \"## 概要 x ## 変更点 y ## テスト z\"
+SENTINEL
+gh pr create --title \"feat: x\" --body \"見出しなし\""
+out=$(run_hook pre-pr-create-check.sh "$DECOY_CREATE")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "## 概要"
+
+DECOY_MERGE="cat > doc.md <<'SENTINEL'
+gh pr merge 1 --merge --delete-branch --body \"## Why x ## What y ## Impact z\"
+SENTINEL
+gh pr merge 1 --merge --delete-branch --subject \"Merge: x\" --body \"見出しなし\""
+out=$(run_hook pre-merge-check.sh "$DECOY_MERGE")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "## Why"
+
 finish

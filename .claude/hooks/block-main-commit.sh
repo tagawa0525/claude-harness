@@ -17,6 +17,12 @@ if [[ "$TOOL_NAME" != "Bash" ]]; then
   exit 0
 fi
 
+# ヒアドキュメント本文はデータであってコマンドではない
+# （ドキュメントやコミットメッセージに書かれたコマンド例に反応しないため）
+# shellcheck source=lib/heredoc.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/heredoc.sh"
+TOOL_INPUT=$(mask_heredoc_bodies <<<"$TOOL_INPUT")
+
 # 正規表現の部品（\b や \s は GNU 拡張のため POSIX 文字クラスで境界を表現）
 # OPT: 「-」で始まるオプション。引数を1つ取る形（-C <path>, -c key=val 等）にも対応
 # PATH_TOKEN: "..." / '...' のクォート付き、または裸のパス
