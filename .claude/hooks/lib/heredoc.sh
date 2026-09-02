@@ -31,7 +31,7 @@
 # 終端行を同じ長さの空白に置き換えて標準出力に返す。開始行はそのまま残す。
 mask_heredoc_bodies() {
   local -a lines=() out=() delims=() dashes=()
-  local line scan body d
+  local line scan body d arith_post
   mapfile -t lines
 
   for line in "${lines[@]}"; do
@@ -51,8 +51,16 @@ mask_heredoc_bodies() {
     out+=("$line")
 
     # この行で始まるヒアドキュメントの終端子を出現順に集める。
-    # <<< はヒアストリング（本文を持たない）なので、走査用のコピーから潰しておく
+    # 走査用のコピーからは、本文を持たない `<<` を先に潰しておく:
+    #   <<<        ヒアストリング
+    #   (( ... ))  算術式のシフト演算子（$(( 1 << 3 )) や if (( n << 2 ))）
+    # 潰さないと終端子のない開始として扱われ、以降の行がすべて本文になり、
+    # 実行されるコマンドが hook から見えなくなる
     scan="${line//<<</%%%}"
+    while [[ "$scan" == *"(("* && "${scan#*"(("}" == *"))"* ]]; do
+      arith_post="${scan#*"(("}"
+      scan="${scan%%"(("*}%${arith_post#*"))"}"
+    done
     while [[ "$scan" =~ (\<\<-?)[[:space:]]*(\"[^\"]*\"|\'[^\']*\'|[^[:space:]<>()|;&]+) ]]; do
       d="${BASH_REMATCH[2]}"
       d="${d%\"}"; d="${d#\"}"
