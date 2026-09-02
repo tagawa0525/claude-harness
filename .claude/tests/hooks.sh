@@ -278,6 +278,13 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook pre-pr-create-check.sh "$(write_doc '例: 説明')"$'\ngh pr create --fill')
 assert_eq deny "$(decision "$out")"
 
+it "heredoc: ハイフン入りの終端子でも本文の後ろの実コマンドは検出する"
+out=$(run_hook guard-git-push.sh "cat > doc.md <<END-TEXT
+例: git push origin main は禁止
+END-TEXT
+git push origin main")
+assert_eq deny "$(decision "$out")"
+
 it "heredoc: PR 本文がヒアドキュメントでも見出しを読める（pre-pr-create）"
 git -C "$REPO" push -q -u origin feat/x 2>/dev/null || true
 out=$(run_hook pre-pr-create-check.sh "$GOOD_CMD")
