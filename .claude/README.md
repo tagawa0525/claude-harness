@@ -75,8 +75,9 @@ git 側の hook（`modules/home/parts/git.nix`、`core.hooksPath` でグロー�
 Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-commit が main 直接コミットの
 拒否と言語別チェック・Markdown 自動修正を、commit-msg が Conventional Commits の形式検証を行う。
 
-**PR フローのゲートは GitHub リモートのあるリポジトリだけに効く**。`block-main-commit.sh` /
-`guard-git-push.sh` / git の pre-commit は、いずれもリモートに `github.com` がなければ何もしない。
+**PR フローのゲートは GitHub リモートのあるリポジトリだけに効く**。リモートに `github.com` がなければ、
+`block-main-commit.sh` と `guard-git-push.sh` は何もせず、git の pre-commit は main 直接コミットの拒否**だけ**を
+飛ばす（言語別チェックと Markdown 自動修正はリモートの有無に関係なく走る）。
 PR を作れないリポジトリで feature branch を強制すると、マージする手段がないまま作業が止まるため。
 判定は `gh-wait-review.sh`（`SKIP: GitHubリモートがありません`）と同じで、GitHub 以外のリモートは
 扱わない前提（無い場合と同じ扱い）。
