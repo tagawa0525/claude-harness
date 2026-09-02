@@ -24,7 +24,7 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 | `scripts/`                        | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                        | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh`            |
 | `skills/<name>/scripts/`          | そのスキル専用のスクリプト                                                                                                      | `gh-pr-review/scripts/decide-next.sh`                                                                               |
 | `skills/language-checks/scripts/` | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                | `run-checks.sh`, `fix-markdown-lint.py`                                                                             |
-| `tests/`                          | hooks / scripts のテスト（`claude-sync` の同期対象外）                                                                          | `hooks.sh`, `scripts.sh`                                                                                            |
+| `tests/`                          | hooks / scripts / skills のテスト（`claude-sync` の同期対象外）                                                                 | `hooks.sh`, `scripts.sh`, `skills.sh`                                                                               |
 
 判断基準:
 
@@ -119,6 +119,6 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 - 結果は `KEY: value` 形式の行で出す（`WORKTREE:` / `CAUSE:` / `VERDICT:` 等）。
   SKILL.md はその行を読んで分岐する
 - shellcheck を通す: `nix shell nixpkgs#shellcheck -c shellcheck -S warning <file>`
-- hook / script を変えたら `bash .claude/tests/hooks.sh` / `bash .claude/tests/scripts.sh` を通す。
+- hook / script / SKILL.md を変えたら `bash .claude/tests/{hooks,scripts,skills}.sh` を通す。
   テストは一時 HOME と偽の `gh` / 言語ツールで隔離実行され、実環境の設定・認証を参照しない。
   TDD（テストを先にコミットしてから実装）で進める
