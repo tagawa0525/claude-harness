@@ -56,6 +56,14 @@ TARGET_DIR="${TARGET_DIR%\'}"
 TARGET_DIR="${TARGET_DIR#\'}"
 TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 
+# GitHub リモートがなければ PR フロー適用外（ローカル専用リポジトリ）。
+# PR を作れない以上 feature branch を強制してもマージする手段がない。
+# 判定は gh-wait-review.sh / git.nix の pre-commit と同じ「github.com を含むリモート」。
+# GitHub 以外のリモートは扱わない前提なので、無い場合と同じ扱いにする
+if ! git -C "$TARGET_DIR" remote -v 2>/dev/null | grep -q 'github\.com'; then
+  exit 0
+fi
+
 # 対象ディレクトリのブランチを取得
 CURRENT_BRANCH=$(git -C "$TARGET_DIR" branch --show-current 2>/dev/null || echo "")
 

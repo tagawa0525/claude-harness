@@ -229,6 +229,7 @@ assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
 REPO="$TEST_ROOT/lock"
 make_repo "$REPO"
+make_remote "$REPO" github
 cd "$REPO" || exit 1
 echo '{"nodes":{}}' > flake.lock
 echo 'x' > other.txt
@@ -266,6 +267,52 @@ echo 'z' > other.txt && git add other.txt
 out=$(run_hook block-main-commit.sh 'git commit -m "feat: x"')
 assert_eq allow "$(decision "$out")"
 git switch -q main
+
+# ===========================================================================
+# GitHub リモートがなければ PR フロー適用外
+# ===========================================================================
+# PR を作れないリポジトリで feature branch を強制しても、マージする手段がなく
+# 作業が進まない。判定は gh-wait-review.sh と同じ「GitHub リモートがあるか」に揃える。
+# GitHub 以外のリモートは扱わない前提なので、GitHub でなければローカル専用と同じ扱い
+
+LOCAL="$TEST_ROOT/localonly"
+make_repo "$LOCAL"
+cd "$LOCAL" || exit 1
+
+it "block-main-commit: リモートのないリポジトリなら main でもコミットできる"
+echo 'x' > a.txt && git add a.txt
+out=$(run_hook block-main-commit.sh 'git commit -m "feat: x"')
+assert_eq allow "$(decision "$out")"
+
+it "block-main-commit: GitHub 以外のリモートだけならローカル専用と同じ扱い"
+make_remote "$LOCAL"
+out=$(run_hook block-main-commit.sh 'git commit -m "feat: x"')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-push: GitHub リモートがなければ main への push も force push も止めない"
+# 直前の make_remote でローカルの bare リモートだけがある状態
+BARE="$TEST_ROOT/localonly.git"
+out=$(run_hook guard-git-push.sh "git push origin main")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-git-push.sh "git push --force origin main")
+assert_eq allow "$(decision "$out")"
+assert_file_exists "$BARE"
+
+it "block-main-commit / guard-git-push: GitHub リモートがあれば従来どおり止める"
+git remote add gh https://github.com/example/localonly.git
+out=$(run_hook block-main-commit.sh 'git commit -m "feat: x"')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-push.sh "git push origin main")
+assert_eq deny "$(decision "$out")"
+git remote remove gh
+
+it "block-main-commit: -C で指定した別リポジトリのリモートで判定する"
+cd "$TEST_ROOT" || exit 1
+out=$(run_hook block-main-commit.sh "git -C $LOCAL commit -m 'feat: x'")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-main-commit.sh "git -C $TEST_ROOT/lock commit -m 'feat: x'")
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
 
 # ===========================================================================
 # 全 hook 共通: ヒアドキュメント本文は「実行されるコマンド」ではない

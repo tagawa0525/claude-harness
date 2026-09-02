@@ -63,6 +63,14 @@ TARGET_DIR="${TARGET_DIR%\"}"; TARGET_DIR="${TARGET_DIR#\"}"
 TARGET_DIR="${TARGET_DIR%\'}"; TARGET_DIR="${TARGET_DIR#\'}"
 TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 
+# GitHub リモートがなければ PR フロー適用外（ローカル専用リポジトリ）。
+# ここで守っているのは PR とレビュー履歴を前提としたルールなので、
+# PR のないリポジトリでは main への push も履歴の書き換えも止めない。
+# 判定は block-main-commit.sh / gh-wait-review.sh と同じ
+if ! git -C "$TARGET_DIR" remote -v 2>/dev/null | grep -q 'github\.com'; then
+  exit 0
+fi
+
 # open PR のあるブランチへの force push（--force-with-lease）を止める。
 # レビュー履歴・コメントの対応行がずれるため、履歴の整理はマージ後か PR を閉じてから行う。
 # GitHub リモートがなければ PR の概念がないので何もしない。確認できない場合は

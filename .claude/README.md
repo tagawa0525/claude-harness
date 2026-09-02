@@ -75,10 +75,18 @@ git 側の hook（`modules/home/parts/git.nix`、`core.hooksPath` でグロー�
 Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-commit が main 直接コミットの
 拒否と言語別チェック・Markdown 自動修正を、commit-msg が Conventional Commits の形式検証を行う。
 
+**PR フローのゲートは GitHub リモートのあるリポジトリだけに効く**。リモートに `github.com` がなければ、
+`block-main-commit.sh` と `guard-git-push.sh` は何もせず、git の pre-commit は main 直接コミットの拒否**だけ**を
+飛ばす（言語別チェックと Markdown 自動修正はリモートの有無に関係なく走る）。
+PR を作れないリポジトリで feature branch を強制すると、マージする手段がないまま作業が止まるため。
+判定は `gh-wait-review.sh`（`SKIP: GitHubリモートがありません`）と同じで、GitHub 以外のリモートは
+扱わない前提（無い場合と同じ扱い）。
+
 **2 つの層で同じルールを守るときは例外も揃える**。`block-main-commit.sh` と git の pre-commit は
-どちらも main への直接コミットを拒否するが、`flake.lock` だけの更新（`nix-rebuild update` の正規フロー）は
-両方で例外にする。片方だけが塞ぐと update が止まる。また、リポジトリ内で自動コミットするスクリプトの
-件名は commit-msg hook を通る形式にする必要があり、
+どちらも main への直接コミットを拒否するが、`flake.lock` だけの更新（`nix-rebuild update` の正規フロー）と
+GitHub リモートなしは両方で例外にする。片方だけが塞ぐと作業が止まる（PR #165）。
+`modules/home/parts/tests/main-commit-gates.sh` が両層の判定の一致を検証する。
+また、リポジトリ内で自動コミットするスクリプトの件名は commit-msg hook を通る形式にする必要があり、
 `modules/home/parts/tests/commit-msg-conventions.sh` がその整合を検証する
 （スクリプトの `git commit -m` を集めて hook 自身に通す）。
 

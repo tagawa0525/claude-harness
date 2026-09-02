@@ -82,8 +82,11 @@
       # Claude Code セッションからの main/master 直接コミットをブロック
       # （PreToolUse hook と異なり必ず対象リポジトリ内で実行されるため、
       #   worktree でも誤判定しない構造的なゲート。
-      #   flake.lock のみのコミットは nix-rebuild update の正規フローなので除外）
-      if [ "''${CLAUDECODE:-}" = "1" ]; then
+      #   flake.lock のみのコミットは nix-rebuild update の正規フローなので除外。
+      #   GitHub リモートがなければ PR を作れないので PR フロー適用外。
+      #   例外は .claude/hooks/block-main-commit.sh と必ず揃える
+      #   → modules/home/parts/tests/main-commit-gates.sh が一致を検証する）
+      if [ "''${CLAUDECODE:-}" = "1" ] && git remote -v 2>/dev/null | grep -q 'github\.com'; then
         BRANCH=$(git branch --show-current 2>/dev/null || echo "")
         if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
           # 変更(M)の flake.lock 1件のみ許可（削除・リネーム等は通さない）
