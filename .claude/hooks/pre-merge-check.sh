@@ -10,9 +10,10 @@ set -euo pipefail
 #   4. CI チェックが未完了・失敗していない
 #   5. reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
 #   6. 未解決のレビュースレッドがない
+#   7. head が base（origin/main）より遅れていない（リベースしてからマージコミットする）
 #
-# 1〜3 はコマンド文字列だけで判定する。4〜6 は gh で GitHub に問い合わせる。
-# 6 は問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
+# 1〜3 はコマンド文字列だけで判定する。4〜7 は gh で GitHub に問い合わせる。
+# 6・7 は問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -144,7 +145,7 @@ if [[ -n "${PR_REF:-}" ]]; then
   CHECK_ARGS+=("$PR_REF")
 fi
 
-PR_META=$(gh pr view "${CHECK_ARGS[@]}" --json number,headRefOid,reviewDecision 2>/dev/null || true)
+PR_META=$(gh pr view "${CHECK_ARGS[@]}" --json number,headRefOid,reviewDecision,baseRefName 2>/dev/null || true)
 if [[ -z "$PR_META" || -z "$OWNER" || -z "$NAME" ]]; then
   REASONS+=("PR 情報を取得できません（gh pr view が失敗。PR番号・認証・ネットワークを確認）")
 else
@@ -221,6 +222,23 @@ else
       UNRESOLVED_PATHS=$(jq -r 'unique | join(", ")' <<<"$UNRESOLVED")
       REASONS+=("未解決のレビュースレッドがあります (${UNRESOLVED_COUNT}件): ${UNRESOLVED_PATHS}。対応して返信し、resolve-thread.sh で resolve してください")
     fi
+  fi
+fi
+
+# --- 7. base からの遅れ ---
+# git graph を整えるため、マージ前に base（origin/main）へリベースしておく運用。
+# ローカルの fetch 状態に依存しないよう、GitHub の compare API で base...head の
+# behind_by（base にあって head にないコミット数）を読む。取得失敗は deny する
+if [[ -n "${PR_META:-}" && -n "$OWNER" && -n "$NAME" ]]; then
+  BASE_REF=$(jq -r '.baseRefName // ""' <<<"$PR_META")
+  BEHIND_BY=""
+  if [[ -n "$BASE_REF" && -n "${HEAD_SHA:-}" ]]; then
+    BEHIND_BY=$(gh api "repos/${OWNER}/${NAME}/compare/${BASE_REF}...${HEAD_SHA}" --jq '.behind_by' 2>/dev/null || true)
+  fi
+  if [[ ! "$BEHIND_BY" =~ ^[0-9]+$ ]]; then
+    REASONS+=("base ブランチとの差を確認できません（compare API が失敗）")
+  elif [[ "$BEHIND_BY" -gt 0 ]]; then
+    REASONS+=("head が ${BASE_REF} より ${BEHIND_BY} コミット遅れています。origin/${BASE_REF} にリベースして --force-with-lease で push し直してからマージしてください")
   fi
 fi
 
