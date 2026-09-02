@@ -18,7 +18,7 @@ IN_BACKGROUND=$(echo "$INPUT" | jq -r '.tool_input.run_in_background // false')
 # ヒアドキュメント本文はデータであってコマンドではない
 # shellcheck source=lib/heredoc.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/heredoc.sh"
-COMMAND=$(strip_heredoc_bodies <<<"$COMMAND")
+COMMAND=$(mask_heredoc_bodies <<<"$COMMAND")
 
 # 「コマンドとして実行されている」位置（行頭またはコマンド区切りの直後、任意で
 # bash/sh 経由）にあるときだけ対象にする。`echo request-rereview.sh` や

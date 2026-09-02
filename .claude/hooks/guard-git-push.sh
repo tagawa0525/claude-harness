@@ -23,7 +23,7 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # （ドキュメントやコミットメッセージに書かれたコマンド例に反応しないため）
 # shellcheck source=lib/heredoc.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/heredoc.sh"
-COMMAND=$(strip_heredoc_bodies <<<"$COMMAND")
+COMMAND=$(mask_heredoc_bodies <<<"$COMMAND")
 
 # 正規表現の部品（block-main-commit.sh と同じ）
 OPT='-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?'
