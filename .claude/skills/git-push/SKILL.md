@@ -24,7 +24,9 @@ allowed-tools:
 以下は `guard-git-push.sh` hook が機械的に deny する。手順で判断することはない:
 
 - main/master への push、force push（`--force` / `-f` / `+refspec`）、`--all` / `--mirror`
-- open PR のあるブランチへの `--force-with-lease`（レビュー履歴・コメントの対応行がずれる）
+
+feature branch への `--force-with-lease` は open PR があっても許可される
+（マージ前に origin/main へリベースして push し直す運用のため）。
 
 deny されたら、そのまま従う。どうしても必要な場合はユーザーの明示的な指示のもと、コマンドに
 `ALLOW_PROTECTED_PUSH=1` を付けて実行する（勝手に付けない）。

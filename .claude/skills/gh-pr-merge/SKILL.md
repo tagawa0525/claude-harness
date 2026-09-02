@@ -43,6 +43,7 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 - `--body`（または `--body-file`）に `## Why` / `## What` / `## Impact`
 - CI チェックが未完了・失敗でない、reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
 - 未解決のレビュースレッドがない（対応後は `resolve-thread.sh` で resolve する）
+- head が base より遅れていない（`git fetch && git rebase origin/main && git push --force-with-lease` で整えてからマージする）
 
 - CIステータス: 全てパスしているか
 - レビュー: Copilot等の自動レビューが完了し、指摘事項に対応済みか
