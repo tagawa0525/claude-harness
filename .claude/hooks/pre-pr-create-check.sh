@@ -22,12 +22,22 @@ COMMAND=$(jq -r '.tool_input.command // empty' <<<"$INPUT")
 
 [[ "$TOOL_NAME" == "Bash" ]] || exit 0
 
+# 検出とフラグ解析はヒアドキュメント本文を除いた文字列に対して行う。
+# 本文はデータ（PR 本文やマージコミットの説明）であり、そこに書かれた
+# `gh pr create` の例に反応してはいけない
+# shellcheck source=lib/heredoc.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/heredoc.sh"
+COMMAND_RAW="$COMMAND"
+COMMAND=$(strip_heredoc_bodies <<<"$COMMAND")
+
 # gh pr create の検出（行頭だけでなく `cd x && gh pr create` の形も対象）
 DETECT_RE='(^|[[:space:];&|(])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$|[;&|])'
 [[ "$COMMAND" =~ $DETECT_RE ]] || exit 0
 
 # create 以降（フラグ解析の対象）
 CREATE_PART="${COMMAND#*"${BASH_REMATCH[0]}"}"
+# 本文の中身を読む検査だけは元の文字列を使う（本文はヒアドキュメントで渡される）
+CREATE_PART_RAW="${COMMAND_RAW#*"${BASH_REMATCH[0]}"}"
 
 REASONS=()
 
@@ -66,7 +76,7 @@ else
 fi
 
 # --- 2. 本文 ---
-BODY_TEXT="$CREATE_PART"
+BODY_TEXT="$CREATE_PART_RAW"
 BODY_FILE=$(grep -oE '(--body-file|-F)[[:space:]=]+[^[:space:]]+' <<<"$CREATE_PART" | head -n 1 \
   | sed -E 's/^(--body-file|-F)[[:space:]=]+//' || true)
 if [[ -n "$BODY_FILE" ]]; then

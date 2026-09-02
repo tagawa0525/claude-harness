@@ -19,6 +19,14 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 # gh pr merge の検出。行頭だけでなく `cd x && gh pr merge` のようにコマンド区切りの
 # 後ろにある場合も対象にする（行頭限定だと cd 付きで迂回できてしまう）
+# 検出とフラグ解析はヒアドキュメント本文を除いた文字列に対して行う。
+# 本文はデータ（マージコミットの説明）であり、そこに書かれたコマンド例や
+# `--squash` といった語に反応してはいけない
+# shellcheck source=lib/heredoc.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/heredoc.sh"
+COMMAND_RAW="$COMMAND"
+COMMAND=$(strip_heredoc_bodies <<<"$COMMAND")
+
 DETECT_RE='(^|[[:space:];&|(])gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$|[;&|])'
 if [[ ! "$COMMAND" =~ $DETECT_RE ]]; then
   exit 0
@@ -26,6 +34,8 @@ fi
 
 # merge 以降の部分（フラグ解析の対象）
 MERGE_PART="${COMMAND#*"${BASH_REMATCH[0]}"}"
+# 本文の中身を読む検査だけは元の文字列を使う（本文はヒアドキュメントで渡される）
+MERGE_PART_RAW="${COMMAND_RAW#*"${BASH_REMATCH[0]}"}"
 
 # PR番号: 本文（--body/-b/--subject/-t 以降）より前のトークンから、値を取るフラグ
 # （-R/--repo/-F/--body-file とその値）を飛ばして最初の数値を採る。
@@ -87,7 +97,7 @@ if ! has_flag '--delete-branch|-d'; then
 fi
 
 # --- 3. 本文形式 ---
-BODY_TEXT="$MERGE_PART"
+BODY_TEXT="$MERGE_PART_RAW"
 BODY_FILE=$(echo "$MERGE_PART" | grep -oE '(--body-file|-F)[[:space:]=]+[^[:space:]]+' | head -n 1 | sed -E 's/^(--body-file|-F)[[:space:]=]+//' || true)
 if [[ -n "$BODY_FILE" ]]; then
   BODY_FILE="${BODY_FILE/#\~/$HOME}"
