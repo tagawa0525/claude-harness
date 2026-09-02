@@ -221,6 +221,53 @@ assert_eq allow "$(decision "$out")"
 assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
 # ===========================================================================
+# block-main-commit.sh: flake.lock だけの更新は main でも通す
+# ===========================================================================
+# nix-rebuild update は検証済みの flake.lock を main に直接コミットする正規フロー。
+# git 側の pre-commit hook（modules/home/parts/git.nix）は既にこれを例外として
+# 許可しているので、PreToolUse hook 側も同じ判定にする（片方だけ塞ぐと update が止まる）
+
+REPO="$TEST_ROOT/lock"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo '{"nodes":{}}' > flake.lock
+echo 'x' > other.txt
+git add flake.lock other.txt
+git commit -q -m "chore: add lock"
+
+it "block-main-commit: main でも flake.lock だけの変更なら通す"
+echo '{"nodes":{"updated":1}}' > flake.lock
+git add flake.lock
+out=$(run_hook block-main-commit.sh 'git commit -m "chore(flake): update (r995)"')
+assert_eq allow "$(decision "$out")"
+
+it "block-main-commit: flake.lock 以外が混ざっていれば main では deny"
+echo 'y' > other.txt
+git add other.txt
+out=$(run_hook block-main-commit.sh 'git commit -m "chore: mixed"')
+assert_eq deny "$(decision "$out")"
+git restore --staged other.txt && git checkout -q other.txt
+
+it "block-main-commit: flake.lock の削除・リネームは main では deny"
+git rm -q --cached flake.lock
+out=$(run_hook block-main-commit.sh 'git commit -m "chore(flake): remove"')
+assert_eq deny "$(decision "$out")"
+git restore --staged flake.lock
+
+it "block-main-commit: 何もステージされていなければ main では deny"
+git restore --staged flake.lock 2>/dev/null || true
+git checkout -q flake.lock
+out=$(run_hook block-main-commit.sh 'git commit -m "chore: nothing"')
+assert_eq deny "$(decision "$out")"
+
+it "block-main-commit: feature ブランチでは従来どおり何でも通す"
+git switch -q -c feat/x
+echo 'z' > other.txt && git add other.txt
+out=$(run_hook block-main-commit.sh 'git commit -m "feat: x"')
+assert_eq allow "$(decision "$out")"
+git switch -q main
+
+# ===========================================================================
 # 全 hook 共通: ヒアドキュメント本文は「実行されるコマンド」ではない
 # ===========================================================================
 # hook はコマンド文字列を正規表現で検査するため、ヒアドキュメント本文に現れる
