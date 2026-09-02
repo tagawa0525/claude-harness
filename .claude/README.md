@@ -61,6 +61,12 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 | `require-background-wait.sh` | `gh-wait-review.sh` / `request-rereview.sh` の `run_in_background=true`                                                                             | なし                                         |
 | `warn-large-commit.sh`       | （ゲートではない）ステージ済みが 5 ファイル以上または 100 行以上なら件数を `additionalContext` で伝える。分割するかの判断はモデルに残す             | —                                            |
 
+hook はコマンド文字列を検査するが、**ヒアドキュメントの本文は検査対象から外す**
+（`hooks/lib/heredoc.sh` の `strip_heredoc_bodies`）。本文は実行されるコマンドではなくデータ
+（ファイルの中身、PR 本文、コミットメッセージ）であり、そこに書かれたコマンド例に反応すると
+説明文を書くだけの操作が deny されるため。ただし本文の中身そのものを読む検査（PR 本文・
+マージコミット本文の見出し）は元の文字列を使う。新しい hook を書くときも同じ使い分けにする。
+
 git 側の hook（`modules/home/parts/git.nix`、`core.hooksPath` でグローバル配布）も同じ考え方で、
 Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-commit が main 直接コミットの
 拒否と言語別チェック・Markdown 自動修正を、commit-msg が Conventional Commits の形式検証を行う。
