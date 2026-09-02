@@ -289,7 +289,8 @@ make_remote "$LOCAL"
 out=$(run_hook block-main-commit.sh 'git commit -m "feat: x"')
 assert_eq allow "$(decision "$out")"
 
-it "guard-git-push: リモートのないリポジトリなら main への push も止めない"
+it "guard-git-push: GitHub リモートがなければ main への push も force push も止めない"
+# 直前の make_remote でローカルの bare リモートだけがある状態
 BARE="$TEST_ROOT/localonly.git"
 out=$(run_hook guard-git-push.sh "git push origin main")
 assert_eq allow "$(decision "$out")"
