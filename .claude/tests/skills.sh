@@ -15,9 +15,18 @@ unquoted_brace() {
   sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g" <<<"$1" | grep -q '{'
 }
 
-for skill in "$CLAUDE_DIR"/skills/*/SKILL.md; do
+shopt -s nullglob
+skills=("$CLAUDE_DIR"/skills/*/SKILL.md)
+shopt -u nullglob
+
+it "skills: SKILL.md が 1 つ以上見つかる（0 件なら探索先が誤り）"
+if (( ${#skills[@]} > 0 )); then _pass; else _fail "no SKILL.md under $CLAUDE_DIR/skills"; fi
+
+for skill in "${skills[@]}"; do
   name=$(basename "$(dirname "$skill")")
-  while IFS= read -r cmd; do
+  while IFS= read -r line; do
+    cmd=${line#'!`'}
+    cmd=${cmd%'`'}
     it "skills: $name の動的コマンドにクォート外の { がない: $cmd"
     if unquoted_brace "$cmd"; then
       _fail "クォート外の { は権限チェックでブレース展開と判定され deny される"
