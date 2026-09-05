@@ -78,6 +78,10 @@ printf 'fn main(){println!("x");}\n' > tools/loose.rs
 git add tools/loose.rs
 check 1 "クレート外の未整形 .rs は止める"
 
+printf 'fn main() {\n    println!("x");\n}\n' > "tools/my tool.rs"
+git add "tools/my tool.rs"
+check 0 "空白を含むパスのクレート外 .rs も 1 つのファイルとして検査される"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 (( FAIL == 0 ))

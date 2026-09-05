@@ -370,6 +370,26 @@ mod tests {
     }
 
     #[test]
+    fn cd_inside_substitution_or_subshell_does_not_change_parent_dir() {
+        let base = Path::new("/base");
+        let sh = Shell::parse("echo $(cd /a && pwd) && git commit");
+        let cs = sh.commands();
+        let git = cs.iter().find(|c| c.name == "git").unwrap();
+        assert_eq!(sh.target_dir(git, base), PathBuf::from("/base"));
+
+        let sh = Shell::parse("(cd /a) ; git commit");
+        let cs = sh.commands();
+        let git = cs.iter().find(|c| c.name == "git").unwrap();
+        assert_eq!(sh.target_dir(git, base), PathBuf::from("/base"));
+
+        // 同じサブシェルの中なら効く
+        let sh = Shell::parse("(cd /a && git commit)");
+        let cs = sh.commands();
+        let git = cs.iter().find(|c| c.name == "git").unwrap();
+        assert_eq!(sh.target_dir(git, base), PathBuf::from("/a"));
+    }
+
+    #[test]
     fn command_in_message_is_data() {
         let cs = cmds("git commit -m \"docs: run git add -A\"");
         assert_eq!(cs.len(), 1);

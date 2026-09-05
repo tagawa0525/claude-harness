@@ -310,6 +310,12 @@ out=$(run_hook block-main-commit "git -C $TEST_ROOT/lock commit -m 'feat: x'")
 assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
+it "block-main-commit: コマンド置換やサブシェルの中の cd は親の対象ディレクトリを変えない"
+out=$(run_hook block-main-commit "echo \$(cd $LOCAL && pwd) && git commit -m 'feat: x'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook block-main-commit "(cd $LOCAL); git commit -m 'feat: x'")
+assert_eq deny "$(decision "$out")"
+
 it "block-main-commit: コマンドより後ろの cd は対象ディレクトリにしない"
 # $REPO（github リモートあり・main）で実行。後ろの cd $LOCAL（リモートなし）を見てしまうと allow になる
 out=$(run_hook block-main-commit "git commit -m 'feat: x' && cd $LOCAL")
