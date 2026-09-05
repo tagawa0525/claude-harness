@@ -426,6 +426,15 @@ out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
 assert_contains "$out" "RUNS: 0"
 assert_contains "$out" "CAUSE: EXTERNAL"
 
+it "gh-actions-diagnose: head SHA はあっても check-run API が失敗したら unavailable（外部 CI なしと誤認しない）"
+make_fake_gh "\"run list --branch feat/x\"*) echo '$RUN_OK' ;;
+  \"api repos/{owner}/{repo}/git/ref/heads/feat/x\"*) echo abc ;;
+  \"api --paginate repos/{owner}/{repo}/commits/abc/check-runs\"*) echo 'HTTP 502' >&2; exit 1 ;;
+  \"api repos/{owner}/{repo}/commits/abc/status\"*) echo '[]' ;;"
+out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
+assert_contains "$out" "EXTERNAL_CHECKS: unavailable"
+assert_not_contains "$out" "EXTERNAL_CHECKS: 0"
+
 it "gh-actions-diagnose: Actions が失敗なら外部 CI の結果に関わらず Actions 側の原因を出す"
 fake_gh_actions "$RUN_FAIL" "$JOBS_FAIL" 'build\tTest\t##[error]test_login failed\n' '{"name":"buildkite/app","status":"completed","conclusion":"failure","app":"buildkite","url":"https://buildkite.com/x/5"}'
 out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")

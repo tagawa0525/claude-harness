@@ -586,6 +586,15 @@ out=$(run_hook block-secret-commit.sh 'git commit -m "chore: nothing staged"')
 assert_eq allow "$(decision "$out")"
 git checkout -q a.txt
 
+it "block-secret-commit: HEAD のない初回コミットでも -a 指定の検査を飛ばさない"
+UNBORN="$TEST_ROOT/secret-unborn"
+mkdir -p "$UNBORN" && git -C "$UNBORN" init -q -b main
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > "$UNBORN/conf.txt" && git -C "$UNBORN" add conf.txt # gitleaks:allow
+cd "$UNBORN" || exit 1
+out=$(run_hook block-secret-commit.sh 'git commit -am "chore: first"')
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
+
 it "block-secret-commit: -C 指定のリポジトリを見る"
 cd "$TEST_ROOT" || exit 1
 echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > "$REPO/c.txt" && git -C "$REPO" add c.txt # gitleaks:allow
@@ -689,6 +698,14 @@ it "guard-gh-run-rerun: -R 指定のリポジトリで attempt を確認する"
 make_fake_gh '"run view -R octo/repo 100 --json attempt"*) echo "{\"attempt\":3}" ;;'
 out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun -R octo/repo 100')
 assert_eq deny "$(decision "$out")"
+
+it "guard-gh-run-rerun: --job の値（数値のジョブ ID）を run ID と取り違えない"
+make_fake_gh '"run view 100 --json attempt"*) echo "{\"attempt\":1}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun --job 555 100')
+assert_eq allow "$(decision "$out")"
+assert_contains "$(cat "$FAKE_GH_LOG")" "run view 100 --json attempt"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100 -j 555')
+assert_eq allow "$(decision "$out")"
 
 it "guard-gh-run-rerun: attempt を確認できなければ deny"
 make_fake_gh '"run view 100 --json attempt"*) echo "not found" >&2; exit 1 ;;'
