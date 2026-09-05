@@ -3,7 +3,7 @@
 #
 # 実行: bash .claude/tests/hooks.sh
 # 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh / pre-merge-check.sh /
-#       block-secret-commit.sh / guard-git-add.sh
+#       block-secret-commit.sh / guard-git-add.sh / guard-gh-run-rerun.sh
 
 source "$(dirname "$0")/lib.sh"
 
@@ -661,5 +661,57 @@ assert_eq allow "$(decision "$out")"
 it "guard-git-add: ヒアドキュメント本文の git add -A には反応しない"
 out=$(run_hook guard-git-add.sh "$(write_doc 'git add -A は禁止')")
 assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# guard-gh-run-rerun.sh: 既に再実行済みの run の gh run rerun を止める
+# ===========================================================================
+# 一時障害の再実行は 1 回まで。attempt 2 以上で同じ失敗なら一時障害ではないので、
+# 無制限に再実行せず原因を報告してユーザーの判断に委ねる
+
+cd "$TEST_ROOT" || exit 1
+
+it "guard-gh-run-rerun: 初回の失敗（attempt 1）の再実行は許可する"
+make_fake_gh '"run view 100 --json attempt"*) echo "{\"attempt\":1}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100 --failed')
+assert_eq allow "$(decision "$out")"
+
+it "guard-gh-run-rerun: attempt 2 以上の run は deny し、報告に切り替えるよう示す"
+make_fake_gh '"run view 100 --json attempt"*) echo "{\"attempt\":2}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "2 回"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun --failed 100')
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-run-rerun: -R 指定のリポジトリで attempt を確認する"
+make_fake_gh '"run view -R octo/repo 100 --json attempt"*) echo "{\"attempt\":3}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun -R octo/repo 100')
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-run-rerun: attempt を確認できなければ deny"
+make_fake_gh '"run view 100 --json attempt"*) echo "not found" >&2; exit 1 ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "確認できません"
+
+it "guard-gh-run-rerun: gh run rerun 以外は対象外で gh を呼ばない"
+make_fake_gh ''
+out=$(run_hook guard-gh-run-rerun.sh 'gh run view 100 --log-failed')
+assert_eq "" "$out"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run list')
+assert_eq "" "$out"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
+it "guard-gh-run-rerun: ALLOW_RERUN=1 で迂回できる（gh を呼ばない）"
+out=$(run_hook guard-gh-run-rerun.sh 'ALLOW_RERUN=1 gh run rerun 100')
+assert_eq allow "$(decision "$out")"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
+it "guard-gh-run-rerun: ヒアドキュメント本文の gh run rerun には反応しない"
+out=$(run_hook guard-gh-run-rerun.sh "$(write_doc '再実行: gh run rerun 100')")
+assert_eq allow "$(decision "$out")"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
 finish
