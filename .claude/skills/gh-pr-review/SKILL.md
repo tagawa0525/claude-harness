@@ -28,12 +28,14 @@ PRについたレビューコメントを確認し、対応する。
 
 - `get-pr-info.sh [pr_number | URL]` - PR情報を取得。コメント URL を渡すと `comment_id` も返す
 - `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
-  （GraphQL `reviewThreads` から。各コメントに `thread_id` / `is_resolved` / `is_outdated` を含む）
+  （GraphQL `reviewThreads` から。各コメントに `thread_id` / `is_resolved` / `is_outdated` /
+  `user_type`（Bot / User）を含む）
 - `get-latest-review.sh <pr_number>` - 最新の Copilot レビューの要約を取得
   （周回数 ROUND、インライン指摘数、Suppressed comments の本文。Step 6 の判定に使う）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
-- `resolve-thread.sh <pr_number> <comment_id>` - コメントを含むスレッドを resolve
-  （GraphQL `resolveReviewThread`。REST には resolve API がない。Copilot のスレッドも対象）
+- `resolve-thread.sh <pr_number> <comment_id> [--allow-human]` - コメントを含むスレッドを resolve
+  （GraphQL `resolveReviewThread`。人間が起こしたスレッドは既定で拒否する。
+  生の `gh api graphql` による resolve は `guard-gh-api.sh` hook が deny する）
 - `decide-next.sh <pr_number> [--max-rounds N]` - 周回数と直近の Copilot 応答から
   次の行動（VERDICT）を判定。Step 6 の分岐はこの出力に従う
 - `request-rereview.sh <pr_number> [commit_hash ...]` - @copilot に再レビューを依頼し、
@@ -203,12 +205,20 @@ gh pr comment {pr_number} --body "{返信内容}"
 
 ### 対応済みスレッドの resolve
 
-返信したスレッドは resolve する（リポジトリによってはスレッド解決が bot の
-再レビュー自動化のトリガーになる）:
+スレッドを閉じるのはレビュアーの権限。`user_type` で分ける:
+
+- **bot（`Bot`。Copilot 等）のスレッド**: 返信したら resolve する（リポジトリによっては
+  スレッド解決が bot の再レビュー自動化のトリガーになる）
+- **人間（`User`）のスレッド**: 返信だけ行い、resolve はレビュアーに委ねる。修正済みでも
+  閉じない（相手が確認して閉じる）。スクリプトは人間のスレッドを既定で拒否する。
+  `--allow-human` はユーザーから明示的に「resolve してよい」と言われたときだけ付ける
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {comment_id}
 ```
+
+人間のスレッドが未解決のままだと `pre-merge-check.sh` がマージを止める。それは正しい状態なので、
+resolve で回避せず、レビュアーの確認を待つ（または Step 8 で「レビュアーの確認待ち」として報告する）。
 
 ### 返信テンプレート
 
