@@ -21,7 +21,7 @@ allowed-tools:
 
 ## hook が守るルール
 
-以下は `guard-git-push.sh` hook が機械的に deny する。手順で判断することはない:
+以下は `guard-git-push` hook が機械的に deny する。手順で判断することはない:
 
 - main/master への push、force push（`--force` / `-f` / `+refspec`）、`--all` / `--mirror`
 

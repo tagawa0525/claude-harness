@@ -84,7 +84,7 @@
       #   worktree でも誤判定しない構造的なゲート。
       #   flake.lock のみのコミットは nix-rebuild update の正規フローなので除外。
       #   GitHub リモートがなければ PR を作れないので PR フロー適用外。
-      #   例外は .claude/hooks/block-main-commit.sh と必ず揃える
+      #   例外は modules/home/parts/claude-hooks/src/rules/block_main_commit.rs と必ず揃える
       #   → modules/home/parts/tests/main-commit-gates.sh が一致を検証する）
       if [ "''${CLAUDECODE:-}" = "1" ] && git remote -v 2>/dev/null | grep -q 'github\.com'; then
         BRANCH=$(git branch --show-current 2>/dev/null || echo "")
@@ -167,19 +167,43 @@
       fi
 
       # Rust ファイルのチェック
+      # ステージ済み .rs ごとに最寄りの Cargo.toml を探し、クレート単位で cargo fmt --check する
+      # （edition はそのクレートの Cargo.toml から取れる。hook はリポジトリ直下で実行されるため、
+      #   直下に Cargo.toml が無いとサブディレクトリのクレートを見失っていた）。
+      # クレート外の .rs は rustfmt を直接使う（edition 2024）。
+      # 検証: modules/home/parts/tests/pre-commit-rust-format.sh
       RS_FILES=$(echo "$STAGED_FILES" | grep '\.rs$' || true)
       if [ -n "$RS_FILES" ]; then
-        if command -v cargo >/dev/null 2>&1 && cargo locate-project &>/dev/null; then
-          # Cargo プロジェクト内: cargo fmt を使用（edition は Cargo.toml から取得）
-          echo "🔍 Checking Rust format..."
-          if ! cargo fmt --check 2>/dev/null; then
-            echo "❌ Rust format check failed. Run: cargo fmt"
-            check_failed=1
+        echo "🔍 Checking Rust format..."
+        MANIFESTS=""
+        LOOSE_RS=()
+        while IFS= read -r f; do
+          [ -n "$f" ] || continue
+          d=$(dirname "$f")
+          m=""
+          while :; do
+            if [ -f "$d/Cargo.toml" ]; then m="$d/Cargo.toml"; break; fi
+            [ "$d" = "." ] && break
+            d=$(dirname "$d")
+          done
+          if [ -n "$m" ]; then
+            grep -qxF -- "$m" <<<"$MANIFESTS" || MANIFESTS="$MANIFESTS$m"$'\n'
+          else
+            LOOSE_RS+=("$f")
           fi
-        elif command -v rustfmt >/dev/null 2>&1; then
-          # Cargo プロジェクト外: rustfmt を直接使用（edition 2024）
-          echo "🔍 Checking Rust format..."
-          if ! echo "$RS_FILES" | xargs rustfmt --edition 2024 --check 2>/dev/null; then
+        done <<<"$RS_FILES"
+        if [ -n "$MANIFESTS" ] && command -v cargo >/dev/null 2>&1; then
+          while IFS= read -r m; do
+            [ -n "$m" ] || continue
+            if ! cargo fmt --check --manifest-path "$m" 2>/dev/null; then
+              echo "❌ Rust format check failed. Run: cargo fmt --manifest-path $m"
+              check_failed=1
+            fi
+          done <<<"$MANIFESTS"
+        fi
+        # パスに空白があっても壊れないよう NUL 区切りで渡す（Nix / Markdown の検査と同じ）
+        if [ "''${#LOOSE_RS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
+          if ! printf '%s\0' "''${LOOSE_RS[@]}" | xargs -0 rustfmt --edition 2024 --check 2>/dev/null; then
             echo "❌ Rust format check failed. Run: rustfmt --edition 2024 <files>"
             check_failed=1
           fi

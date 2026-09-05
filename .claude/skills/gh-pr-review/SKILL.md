@@ -35,7 +35,7 @@ PRについたレビューコメントを確認し、対応する。
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
 - `resolve-thread.sh <pr_number> <comment_id> [--allow-human]` - コメントを含むスレッドを resolve
   （GraphQL `resolveReviewThread`。人間が起こしたスレッドは既定で拒否する。
-  生の `gh api graphql` による resolve は `guard-gh-api.sh` hook が deny する）
+  生の `gh api graphql` による resolve は `guard-gh-api` hook が deny する）
 - `decide-next.sh <pr_number> [--max-rounds N]` - 周回数と直近の Copilot 応答から
   次の行動（VERDICT）を判定。Step 6 の分岐はこの出力に従う
 - `request-rereview.sh <pr_number> [commit_hash ...]` - @copilot に再レビューを依頼し、
@@ -233,7 +233,7 @@ gh pr comment {pr_number} --body "{返信内容}"
 ~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {comment_id}
 ```
 
-人間のスレッドが未解決のままだと `pre-merge-check.sh` がマージを止める。それは正しい状態なので、
+人間のスレッドが未解決のままだと `pre-merge-check` がマージを止める。それは正しい状態なので、
 resolve で回避せず、レビュアーの確認を待つ（または Step 8 で「レビュアーの確認待ち」として報告する）。
 
 ### 返信テンプレート

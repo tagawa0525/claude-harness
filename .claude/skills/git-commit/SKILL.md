@@ -56,16 +56,15 @@ git switch -c [branch-name]
 ## ステージング
 
 何もステージされていない場合は、変更を論理単位に分けて `git add [file]` / `git add -p` し、
-単位ごとにコミットする。対象を絞らない `git add -A` / `git add .` は `guard-git-add.sh` hook が deny する。
+単位ごとにコミットする。対象を絞らない `git add -A` / `git add .` は `guard-git-add` hook が deny する。
 
-ステージ済みの変更が大きい（5 ファイル以上または 100 行以上）と、`warn-large-commit.sh` hook が
+ステージ済みの変更が大きい（5 ファイル以上または 100 行以上）と、`warn-large-commit` hook が
 コミット時に件数を知らせる。1 つの論理的変更に収まっているか確認し、複数の変更が混在していれば
 `git add [file]` / `git add -p` で分けて別々にコミットする。大きくても 1 つの変更ならそのまま続行してよい。
 
-コミット対象に機密情報（.env や秘密鍵のファイル、追加行のトークンや `password = "…"`）があると
-`block-secret-commit.sh` hook が deny する。該当ファイルを `git restore --staged` で外して
-`.gitignore` に追加し、push 済みの値はローテーションする。誤検出のときだけ、その行に
-`gitleaks:allow` を書くかコマンドに `ALLOW_SECRET_COMMIT=1` を付ける。
+コミット対象に機密情報があると `block-secret-commit` hook が deny する（検出は gitleaks）。
+該当ファイルを `git restore --staged` で外して `.gitignore` に追加し、push 済みの値はローテーションする。
+誤検出のときだけ、その行に `gitleaks:allow` を書くかコマンドに `ALLOW_SECRET_COMMIT=1` を付ける。
 
 ## Markdown自動修正
 

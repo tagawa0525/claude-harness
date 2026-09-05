@@ -3,7 +3,7 @@
 # main 直接コミットを止める 2 つの層が同じ判定になることを検証する
 # =============================================================================
 # 同じルールを次の 2 か所で守っている:
-#   1. .claude/hooks/block-main-commit.sh   Claude Code の PreToolUse hook
+#   1. ../claude-hooks の block-main-commit   Claude Code の PreToolUse hook（Rust 製バイナリ）
 #   2. ../git.nix の pre-commit hook        git 側（core.hooksPath でグローバル配布）
 #
 # 片方だけが塞ぐと作業が止まる。実際に PR #165 で、flake.lock の例外が git 側にだけ
@@ -16,7 +16,8 @@
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
-HOOK="$ROOT/.claude/hooks/block-main-commit.sh"
+# PreToolUse hook バイナリ。CLAUDE_HOOKS_BIN で差し替え可（既定は nix build の成果物）
+HOOK_BIN="${CLAUDE_HOOKS_BIN:-$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-hooks")/bin/claude-hooks}"
 
 HOST="${1:-r995}"
 WORK=$(mktemp -d)
@@ -69,7 +70,7 @@ check() {
   fi
 
   out=$(cd "$repo" && jq -n '{hook_event_name: "PreToolUse", tool_name: "Bash",
-        tool_input: {command: "git commit -m msg"}}' | "$HOOK")
+        tool_input: {command: "git commit -m msg"}}' | "$HOOK_BIN" pre-tool-use --rule block-main-commit)
   if [[ -z "$out" ]] || [[ "$(jq -r '.hookSpecificOutput.permissionDecision // "allow"' <<<"$out")" == "allow" ]]; then
     hook_result=allow
   else

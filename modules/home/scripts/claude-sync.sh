@@ -2,7 +2,8 @@
 # =============================================================================
 # Claude Code Config Sync
 # =============================================================================
-# リポジトリの .claude（CLAUDE.md/commands/skills/hooks/scripts）を ~/.claude に同期する。
+# リポジトリの .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に同期する。
+# PreToolUse hook は Rust 製バイナリ（modules/home/parts/claude-hooks）で、rebuild でのみ配置される。
 # nixos-rebuild を待たずに作業中のスキル変更を即座に反映するためのコマンド。
 # home-manager アクティベーション（claude-code.nix）からも同じ実装が呼ばれる。
 #
@@ -11,7 +12,7 @@
 #
 # 同期ポリシー（アクティベーションと同一）:
 #   - commands: --ignore-existing でユーザーカスタマイズを保護
-#   - CLAUDE.md/skills/hooks/scripts: ソースが正として常に上書き
+#   - CLAUDE.md/skills/scripts: ソースが正として常に上書き
 #   - --delete は使わないため、手動追加ファイルは保持される
 #   - 外部リポジトリ由来のスキル（claude-code.nix の externalSkills）は flake input
 #     から取るため、このコマンドでは同期されない（rebuild 時のアクティベーションのみ）
@@ -48,12 +49,6 @@ if [ -d "$SOURCE_DIR/skills" ]; then
   echo "✅ skills synced"
 fi
 
-# hooks: ソースが正として常に上書き
-if [ -d "$SOURCE_DIR/hooks" ]; then
-  rsync -a "$SOURCE_DIR/hooks/" "$CLAUDE_DIR/hooks/"
-  echo "✅ hooks synced"
-fi
-
 # scripts: ソースが正として常に上書き（スキル横断で使う共有スクリプト）
 if [ -d "$SOURCE_DIR/scripts" ]; then
   rsync -a "$SOURCE_DIR/scripts/" "$CLAUDE_DIR/scripts/"
@@ -61,6 +56,6 @@ if [ -d "$SOURCE_DIR/scripts" ]; then
 fi
 
 # Nix storeからコピーした読み取り専用ファイルに書き込み権限を付与
-chmod -R u+w "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/scripts" 2>/dev/null || true
+chmod -R u+w "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/scripts" 2>/dev/null || true
 
 echo "🎉 Claude Code 設定を同期しました: $SOURCE_DIR → $CLAUDE_DIR"
