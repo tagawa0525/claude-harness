@@ -3,7 +3,7 @@
 #
 # 実行: bash .claude/tests/hooks.sh
 # 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh / pre-merge-check.sh /
-#       block-secret-commit.sh / guard-git-add.sh / guard-gh-run-rerun.sh
+#       block-secret-commit.sh / guard-git-add.sh / guard-gh-run-rerun.sh / guard-gh-api.sh
 
 source "$(dirname "$0")/lib.sh"
 
@@ -713,5 +713,56 @@ it "guard-gh-run-rerun: ヒアドキュメント本文の gh run rerun には反
 out=$(run_hook guard-gh-run-rerun.sh "$(write_doc '再実行: gh run rerun 100')")
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
+# ===========================================================================
+# guard-gh-api.sh: 生の gh api で行ってはいけない操作を止める
+# ===========================================================================
+# 1. Actions の権限設定（actions/permissions 配下）への書き込み。CI の権限エラーを
+#    リポジトリ設定 default_workflow_permissions の緩和で回避させない
+# 2. GraphQL の resolveReviewThread / unresolveReviewThread。resolve は resolve-thread.sh
+#    経由に固定し、人間のレビュアーのスレッドを勝手に閉じない判定を迂回できなくする
+
+it "guard-gh-api: actions/permissions の読み取り（GET）は許可する"
+out=$(run_hook guard-gh-api.sh 'gh api repos/octo/repo/actions/permissions/workflow')
+assert_eq allow "$(decision "$out")"
+
+it "guard-gh-api: actions/permissions への書き込みは deny し、permissions: の宣言を示す"
+out=$(run_hook guard-gh-api.sh 'gh api -X PUT repos/octo/repo/actions/permissions/workflow -f default_workflow_permissions=write')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "permissions:"
+out=$(run_hook guard-gh-api.sh 'gh api --method PATCH repos/octo/repo/actions/permissions')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-gh-api.sh 'gh api repos/octo/repo/actions/permissions/workflow -f default_workflow_permissions=write')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-gh-api.sh 'gh api "repos/{owner}/{repo}/actions/permissions/workflow" --input body.json')
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-api: GraphQL の resolveReviewThread は deny し、resolve-thread.sh を示す"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "resolve-thread.sh"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query='mutation { unresolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-api: ヒアドキュメントで渡した mutation も deny する（本文が操作そのもの）"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query=\"\$(cat <<'EOF'
+mutation { resolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }
+EOF
+)\"")
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-api: reviewThreads の読み取りクエリは許可する"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query='query { repository(owner: \"o\", name: \"r\") { pullRequest(number: 1) { reviewThreads(first: 100) { nodes { id isResolved } } } } }'")
+assert_eq allow "$(decision "$out")"
+
+it "guard-gh-api: resolve-thread.sh の実行と gh api 以外は対象外"
+out=$(run_hook guard-gh-api.sh '~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh 1 2')
+assert_eq "" "$out"
+out=$(run_hook guard-gh-api.sh 'gh pr view 1')
+assert_eq "" "$out"
+
+it "guard-gh-api: 説明文の中の resolveReviewThread や actions/permissions には反応しない"
+out=$(run_hook guard-gh-api.sh "$(write_doc 'resolveReviewThread は gh api で叩かない。actions/permissions も PUT しない')")
+assert_eq allow "$(decision "$out")"
 
 finish
