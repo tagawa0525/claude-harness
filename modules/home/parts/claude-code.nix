@@ -65,6 +65,11 @@ let
       matcher = "Bash";
       timeout = 10000;
     }
+    {
+      file = "guard-git-add.sh";
+      matcher = "Bash";
+      timeout = 5000;
+    }
   ];
 
   # Claude Code settings.json の静的設定
