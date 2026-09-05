@@ -3,7 +3,7 @@
 #
 # 実行: bash .claude/tests/hooks.sh
 # 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh / pre-merge-check.sh /
-#       block-secret-commit.sh
+#       block-secret-commit.sh / guard-git-add.sh
 
 source "$(dirname "$0")/lib.sh"
 
@@ -606,5 +606,60 @@ git add block-secret-commit.sh hooks.sh 2>/dev/null
 out=$(run_hook block-secret-commit.sh 'git commit -m "feat: hook"')
 assert_eq allow "$(decision "$out")"
 git reset -q && rm -f block-secret-commit.sh hooks.sh
+
+# ===========================================================================
+# guard-git-add.sh: 対象を絞らない git add（-A / --all / . / :/ / *）を止める
+# ===========================================================================
+# 1 コミット 1 論理変更と、機密情報の混入防止（block-secret-commit.sh と対）のため。
+# パスで範囲を限定した -A（git add -A src/）と、追跡済みだけを対象にする -u は通す
+
+REPO="$TEST_ROOT/gitadd"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
+cd "$REPO" || exit 1
+mkdir -p src && echo x > src/a.txt
+
+it "guard-git-add: パスを指定した git add は許可する"
+for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt'; do
+  out=$(run_hook guard-git-add.sh "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "guard-git-add: -A / --all / . / :/ / * は deny し、代わりの手順を示す"
+for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An'; do
+  out=$(run_hook guard-git-add.sh "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+assert_contains "$(reason "$out")" "git add -p"
+
+it "guard-git-add: パスで範囲を限定した -A は許可する"
+out=$(run_hook guard-git-add.sh 'git add -A src/')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-git-add.sh 'git add --all -- src/')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-add: git add 以外は対象外"
+out=$(run_hook guard-git-add.sh 'git commit -am "feat: x"')
+assert_eq "" "$out"
+out=$(run_hook guard-git-add.sh 'git log --grep "add -A"')
+assert_eq "" "$out"
+
+it "guard-git-add: 連結コマンドの 2 つ目以降も検査する"
+out=$(run_hook guard-git-add.sh 'git add src/a.txt && git add -A')
+assert_eq deny "$(decision "$out")"
+
+it "guard-git-add: -C で指定した別リポジトリでも検査する"
+cd "$TEST_ROOT" || exit 1
+out=$(run_hook guard-git-add.sh "git -C $REPO add -A")
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
+
+it "guard-git-add: ALLOW_GIT_ADD_ALL=1 で迂回できる"
+out=$(run_hook guard-git-add.sh 'ALLOW_GIT_ADD_ALL=1 git add -A')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-add: ヒアドキュメント本文の git add -A には反応しない"
+out=$(run_hook guard-git-add.sh "$(write_doc 'git add -A は禁止')")
+assert_eq allow "$(decision "$out")"
 
 finish
