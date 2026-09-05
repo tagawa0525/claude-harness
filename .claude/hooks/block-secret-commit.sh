@@ -63,8 +63,10 @@ TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 
 # -a / --all ならワーキングツリーの追跡ファイルの変更も対象（warn-large-commit.sh と同じ判定）
 ALL_RE='(^|[[:space:]])(--all|-[a-zA-Z]*a[a-zA-Z]*)([[:space:]]|$)'
+# HEAD のない初回コミットでは HEAD との diff が取れず検査が丸ごと飛ぶため、
+# その場合は --cached に戻す（未追跡ファイルは -a でも対象外なので取りこぼしはない）
 DIFF_ARGS=(--cached)
-if [[ "$COMMIT_PART" =~ $ALL_RE ]]; then
+if [[ "$COMMIT_PART" =~ $ALL_RE ]] && git -C "$TARGET_DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
   DIFF_ARGS=(HEAD)
 fi
 
