@@ -75,6 +75,11 @@ let
       matcher = "Bash";
       timeout = 15000;
     }
+    {
+      file = "guard-gh-api.sh";
+      matcher = "Bash";
+      timeout = 5000;
+    }
   ];
 
   # Claude Code settings.json の静的設定
