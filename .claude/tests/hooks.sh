@@ -485,146 +485,95 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
 
 # ===========================================================================
-# block-secret-commit.sh: 機密情報を含む変更のコミットを止める
+# block-secret-commit: 機密情報を含む変更のコミットを gitleaks で止める
 # ===========================================================================
-# .env や秘密鍵のファイル名、追加行に現れるトークン・秘密鍵本文を検出して deny する。
-# 検査するのは追加行だけ（秘密を消す変更は通す）。理由に秘密の値そのものは出さない。
-# このテスト自身に書く見本の値は `gitleaks:allow` で hook の検査対象から外す
+# 検出そのものは自前で持たず gitleaks に委ねる（既存の定番ツールを使う）。hook が担うのは
+# 「いつ・何を渡して呼ぶか」「結果をどう deny に変換するか」だけなので、偽の gitleaks で
+# 呼び出しと結果の扱いを検証する。値は理由に出さない（gitleaks 側でも --redact する）
 
 REPO="$TEST_ROOT/secret"
 make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
-
-it "block-secret-commit: 通常の変更は許可する"
 echo 'plain' > a.txt && git add a.txt
+
+LEAK_JSON='[{"File":"conf.txt","StartLine":3,"RuleID":"aws-access-token","Secret":"REDACTED","Fingerprint":"conf.txt:aws-access-token:3"}]'
+# fake_gitleaks <staged-json|exit-code> <pre-commit-json|exit-code>
+#   JSON を渡すと exit 1（漏えいあり）、"ok" なら [] と exit 0、"fail" なら JSON なしで exit 2
+fake_gitleaks() {
+  local body="" mode
+  for mode in "--staged:$1" "--pre-commit:$2"; do
+    local flag="${mode%%:*}" spec="${mode#*:}"
+    case "$spec" in
+      ok)   body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) pwd >> \"$TEST_ROOT/gitleaks.pwd\"; echo '[]' ;;"$'\n' ;;
+      fail) body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo 'error: not a git repo' >&2; exit 2 ;;"$'\n' ;;
+      *)    body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) pwd >> \"$TEST_ROOT/gitleaks.pwd\"; echo '$spec'; exit 1 ;;"$'\n' ;;
+    esac
+  done
+  : > "$TEST_ROOT/gitleaks.pwd"
+  make_fake_tool gitleaks "$body"
+}
+
+it "block-secret-commit: gitleaks がステージ済みに漏えいを見つけなければ許可する"
+fake_gitleaks ok ok
 out=$(run_hook block-secret-commit.sh 'git commit -m "feat: a"')
 assert_eq allow "$(decision "$out")"
-git commit -q -m "feat: a"
+assert_eq "git --staged --no-banner --redact --report-format json --report-path - ." "$(fake_log gitleaks)"
 
-it "block-secret-commit: git commit 以外は対象外"
+it "block-secret-commit: git commit 以外は対象外で gitleaks を呼ばない"
+fake_gitleaks ok ok
 out=$(run_hook block-secret-commit.sh 'git log --grep commit')
 assert_eq "" "$out"
+assert_eq "" "$(fake_log gitleaks)"
 
-it "block-secret-commit: .env / .env.<name> は deny、.env.example は許可"
-echo 'X=1' > .env && git add -f .env
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: env"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" ".env"
-git rm -q --cached .env && rm .env
-echo 'X=1' > .env.local && git add -f .env.local
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: env"')
-assert_eq deny "$(decision "$out")"
-git rm -q --cached .env.local && rm .env.local
-echo 'X=' > .env.example && git add .env.example
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: env example"')
-assert_eq allow "$(decision "$out")"
-git commit -q -m "chore: env example"
-
-it "block-secret-commit: 秘密鍵ファイル（*.pem / id_ed25519）は deny、公開鍵は許可"
-echo 'x' > server.pem && git add server.pem
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: pem"')
-assert_eq deny "$(decision "$out")"
-git rm -q --cached server.pem && rm server.pem
-mkdir -p keys && echo 'x' > keys/id_ed25519 && git add keys/id_ed25519
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: key"')
-assert_eq deny "$(decision "$out")"
-git rm -q --cached keys/id_ed25519 && rm -r keys
-echo 'ssh-ed25519 AAAA test' > id_ed25519.pub && git add id_ed25519.pub
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: pubkey"')
-assert_eq allow "$(decision "$out")"
-git commit -q -m "chore: pubkey"
-
-it "block-secret-commit: 追加行の秘密鍵本文は deny"
-printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n' > notes.txt && git add notes.txt # gitleaks:allow
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: notes"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "notes.txt"
-git reset -q notes.txt && rm notes.txt
-
-it "block-secret-commit: トークン（AWS / GitHub）を含む追加行は deny し、値は理由に出さない"
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > conf.txt && git add conf.txt # gitleaks:allow
+it "block-secret-commit: 漏えいがあれば deny し、場所とルール ID を示す（値は出さない）"
+fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit.sh 'git commit -m "chore: conf"')
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "conf.txt"
-assert_not_contains "$(reason "$out")" "AKIAIOSFODNN7EXAMPLE" # gitleaks:allow
-echo 'GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij' > conf.txt && git add conf.txt # gitleaks:allow
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: conf"')
-assert_eq deny "$(decision "$out")"
-git reset -q conf.txt && rm conf.txt
+assert_contains "$(reason "$out")" "conf.txt:3"
+assert_contains "$(reason "$out")" "aws-access-token"
+assert_contains "$(reason "$out")" "gitleaks:allow"
+assert_not_contains "$(reason "$out")" "REDACTED"
 
-it "block-secret-commit: 値の代入（password/secret/token = \"…\"）は deny、プレースホルダは許可"
-echo 'password = "Xk9v2LmQ8pRt4WzB7nYc"' > cfg.ini && git add cfg.ini # gitleaks:allow
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
-assert_eq deny "$(decision "$out")"
-echo 'password = "changeme"' > cfg.ini && git add cfg.ini
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
-assert_eq allow "$(decision "$out")"
-echo 'token = "${GITHUB_TOKEN}"' > cfg.ini && git add cfg.ini
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
-assert_eq allow "$(decision "$out")"
-echo 'api_key = "<your-api-key-here>"' > cfg.ini && git add cfg.ini
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
-assert_eq allow "$(decision "$out")"
-git reset -q cfg.ini && rm cfg.ini
-
-it "block-secret-commit: gitleaks:allow を付けた行は検査しない"
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE # gitleaks:allow' > conf.txt && git add conf.txt
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: conf"')
-assert_eq allow "$(decision "$out")"
-git reset -q conf.txt && rm conf.txt
-
-it "block-secret-commit: 秘密を消す変更（削除行）は通す"
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > leaked.txt && git add leaked.txt # gitleaks:allow
-git commit -q -m "chore: leaked"
-git rm -q leaked.txt
-out=$(run_hook block-secret-commit.sh 'git commit -m "fix: remove leaked"')
-assert_eq allow "$(decision "$out")"
-git commit -q -m "fix: remove leaked"
-
-it "block-secret-commit: ALLOW_SECRET_COMMIT=1 で迂回できる"
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > conf.txt && git add conf.txt # gitleaks:allow
-out=$(run_hook block-secret-commit.sh 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
-assert_eq allow "$(decision "$out")"
-git reset -q conf.txt && rm conf.txt
-
-it "block-secret-commit: -a 指定時は未ステージの追跡ファイルの変更も検査する"
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE' >> a.txt # gitleaks:allow
+it "block-secret-commit: -a 指定時は未ステージの変更（--pre-commit）も検査する"
+fake_gitleaks ok "$LEAK_JSON"
 out=$(run_hook block-secret-commit.sh 'git commit -am "chore: a"')
 assert_eq deny "$(decision "$out")"
-out=$(run_hook block-secret-commit.sh 'git commit -m "chore: nothing staged"')
+assert_contains "$(fake_log gitleaks)" "git --pre-commit"
+fake_gitleaks ok "$LEAK_JSON"
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: staged only"')
 assert_eq allow "$(decision "$out")"
-git checkout -q a.txt
+assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
 
-it "block-secret-commit: HEAD のない初回コミットでも -a 指定の検査を飛ばさない"
-UNBORN="$TEST_ROOT/secret-unborn"
-mkdir -p "$UNBORN" && git -C "$UNBORN" init -q -b main
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > "$UNBORN/conf.txt" && git -C "$UNBORN" add conf.txt # gitleaks:allow
-cd "$UNBORN" || exit 1
-out=$(run_hook block-secret-commit.sh 'git commit -am "chore: first"')
+it "block-secret-commit: gitleaks が実行できなければ deny（検査できない状態でコミットさせない）"
+fake_gitleaks fail ok
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: x"')
 assert_eq deny "$(decision "$out")"
-cd "$REPO" || exit 1
+assert_contains "$(reason "$out")" "gitleaks"
+remove_fake_tool gitleaks
+out=$(PATH="$(minimal_path)" run_hook block-secret-commit.sh 'git commit -m "chore: x"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "gitleaks"
 
-it "block-secret-commit: -C 指定のリポジトリを見る"
+it "block-secret-commit: ALLOW_SECRET_COMMIT=1 で迂回できる（gitleaks を呼ばない）"
+fake_gitleaks "$LEAK_JSON" ok
+out=$(run_hook block-secret-commit.sh 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
+assert_eq allow "$(decision "$out")"
+assert_eq "" "$(fake_log gitleaks)"
+
+it "block-secret-commit: -C 指定のリポジトリで gitleaks を実行する"
+fake_gitleaks ok ok
 cd "$TEST_ROOT" || exit 1
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > "$REPO/c.txt" && git -C "$REPO" add c.txt # gitleaks:allow
 out=$(run_hook block-secret-commit.sh "git -C $REPO commit -m 'chore: c'")
-assert_eq deny "$(decision "$out")"
-git -C "$REPO" reset -q c.txt && rm "$REPO/c.txt"
+assert_eq allow "$(decision "$out")"
+assert_eq "$REPO" "$(cat "$TEST_ROOT/gitleaks.pwd")"
 cd "$REPO" || exit 1
 
 it "block-secret-commit: ヒアドキュメント本文の git commit には反応しない"
-echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > conf.txt && git add conf.txt # gitleaks:allow
+fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit.sh "$(write_doc '例: git commit -m msg')")
 assert_eq "" "$out"
-git reset -q conf.txt && rm conf.txt
-
-it "block-secret-commit: ルールの実装とこのテストはコミットできる（パターン文字列と gitleaks:allow の見本を誤検出しない）"
-cp "$CRATE_DIR/src/rules/block_secret_commit.rs" "$CLAUDE_DIR/tests/hooks.sh" . 2>/dev/null
-git add block_secret_commit.rs hooks.sh 2>/dev/null
-out=$(run_hook block-secret-commit.sh 'git commit -m "feat: hook"')
-assert_eq allow "$(decision "$out")"
-git reset -q && rm -f block_secret_commit.rs hooks.sh
+assert_eq "" "$(fake_log gitleaks)"
 
 # ===========================================================================
 # guard-git-add.sh: 対象を絞らない git add（-A / --all / . / :/ / *）を止める
