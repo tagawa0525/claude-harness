@@ -237,6 +237,7 @@ in
   home.packages = with pkgs; [
     llm-agents.claude-code # Claude Code CLI（自動更新）
     rsync # claude-sync スクリプトの実行時依存
+    gitleaks # block-secret-commit hook が git commit 前に機密情報を検査する
   ];
 
   # .claude（CLAUDE.md/commands/skills/hooks/scripts）を ~/.claude に手動同期するコマンド
