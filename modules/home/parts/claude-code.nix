@@ -60,6 +60,11 @@ let
       matcher = "Bash";
       timeout = 10000;
     }
+    {
+      file = "block-secret-commit.sh";
+      matcher = "Bash";
+      timeout = 10000;
+    }
   ];
 
   # Claude Code settings.json の静的設定

@@ -61,6 +61,11 @@ git switch -c [branch-name]
 コミット時に件数を知らせる。1 つの論理的変更に収まっているか確認し、複数の変更が混在していれば
 `git add [file]` / `git add -p` で分けて別々にコミットする。大きくても 1 つの変更ならそのまま続行してよい。
 
+コミット対象に機密情報（.env や秘密鍵のファイル、追加行のトークンや `password = "…"`）があると
+`block-secret-commit.sh` hook が deny する。該当ファイルを `git restore --staged` で外して
+`.gitignore` に追加し、push 済みの値はローテーションする。誤検出のときだけ、その行に
+`gitleaks:allow` を書くかコマンドに `ALLOW_SECRET_COMMIT=1` を付ける。
+
 ## Markdown自動修正
 
 `.md` の自動修正（`markdownlint --fix` と `fix-markdown-lint.py`）は git の pre-commit hook
