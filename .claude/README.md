@@ -18,13 +18,13 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 
 ## スクリプトの置き場所
 
-| 場所                              | 用途                                                                                                                            | 例                                                                                                                  |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `hooks/`                          | Claude Code の hook（PreToolUse 等）。`modules/home/parts/claude-code.nix` の `claudeGlobalHooks` で settings.json に登録される | `block-main-commit.sh`, `guard-git-push.sh`, `pre-merge-check.sh`, `pre-pr-create-check.sh`, `warn-large-commit.sh` |
-| `scripts/`                        | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                        | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh`            |
-| `skills/<name>/scripts/`          | そのスキル専用のスクリプト                                                                                                      | `gh-pr-review/scripts/decide-next.sh`                                                                               |
-| `skills/language-checks/scripts/` | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                | `run-checks.sh`, `fix-markdown-lint.py`                                                                             |
-| `tests/`                          | hooks / scripts / skills のテスト（`claude-sync` の同期対象外）                                                                 | `hooks.sh`, `scripts.sh`, `skills.sh`                                                                               |
+| 場所                              | 用途                                                                                                                            | 例                                                                                                                                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/`                          | Claude Code の hook（PreToolUse 等）。`modules/home/parts/claude-code.nix` の `claudeGlobalHooks` で settings.json に登録される | `block-main-commit.sh`, `block-secret-commit.sh`, `guard-git-add.sh`, `guard-git-push.sh`, `guard-gh-api.sh`, `guard-gh-run-rerun.sh`, `pre-merge-check.sh`, `pre-pr-create-check.sh`, `warn-large-commit.sh` |
+| `scripts/`                        | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                        | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh`                                                                                                      |
+| `skills/<name>/scripts/`          | そのスキル専用のスクリプト                                                                                                      | `gh-pr-review/scripts/decide-next.sh`                                                                                                                                                                         |
+| `skills/language-checks/scripts/` | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                | `run-checks.sh`, `fix-markdown-lint.py`                                                                                                                                                                       |
+| `tests/`                          | hooks / scripts / skills のテスト（`claude-sync` の同期対象外）                                                                 | `hooks.sh`, `scripts.sh`, `skills.sh`                                                                                                                                                                         |
 
 判断基準:
 
@@ -52,14 +52,18 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 
 決定的に判定できるルールは SKILL.md の文章ではなく hook で強制する（迂回できないゲート）。
 
-| hook                         | 強制するルール                                                                                                                                      | エスケープ                                   |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `block-main-commit.sh`       | main / master での `git commit`                                                                                                                     | なし                                         |
-| `guard-git-push.sh`          | main / master への push、force push（`--force-with-lease` は feature branch なら open PR があっても可）、`--all` / `--mirror`                       | コマンドに `ALLOW_PROTECTED_PUSH=1` を付ける |
-| `pre-merge-check.sh`         | `gh pr merge` の `--merge` / `--delete-branch` / 本文見出し、CI、reviewDecision、未解決スレッド、head が base より遅れていない（リベース済み）      | なし                                         |
-| `pre-pr-create-check.sh`     | `gh pr create` の `--title`（70 文字以内）、`--body` / `--body-file`（`## 概要` / `## 変更点` / `## テスト`）、未プッシュコミットなし、`--web` なし | なし                                         |
-| `require-background-wait.sh` | `gh-wait-review.sh` / `request-rereview.sh` の `run_in_background=true`                                                                             | なし                                         |
-| `warn-large-commit.sh`       | （ゲートではない）ステージ済みが 5 ファイル以上または 100 行以上なら件数を `additionalContext` で伝える。分割するかの判断はモデルに残す             | —                                            |
+| hook                         | 強制するルール                                                                                                                                                                              | エスケープ                                            |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `block-main-commit.sh`       | main / master での `git commit`                                                                                                                                                             | なし                                                  |
+| `block-secret-commit.sh`     | コミット対象に機密情報がある `git commit`（.env・秘密鍵のファイル名、追加行の秘密鍵本文・トークン・`password = "…"` 型の代入。値は理由に出さない）                                          | 行に `gitleaks:allow`、または `ALLOW_SECRET_COMMIT=1` |
+| `guard-git-add.sh`           | 対象を絞らない `git add`（`-A` / `--all` / `.` / `:/` / `*`）。パスで範囲を限定した `-A src/` と `-u` は可                                                                                  | コマンドに `ALLOW_GIT_ADD_ALL=1` を付ける             |
+| `guard-git-push.sh`          | main / master への push、force push（`--force-with-lease` は feature branch なら open PR があっても可）、`--all` / `--mirror`                                                               | コマンドに `ALLOW_PROTECTED_PUSH=1` を付ける          |
+| `guard-gh-api.sh`            | 生の `gh api` による Actions 権限設定（`actions/permissions`、`default_workflow_permissions`）への書き込みと、GraphQL の `resolveReviewThread`（resolve は `resolve-thread.sh` 経由に固定） | なし                                                  |
+| `guard-gh-run-rerun.sh`      | 既に attempt 2 以上の run への `gh run rerun`（一時障害の再実行は 1 回まで。確認できなければ deny）                                                                                         | コマンドに `ALLOW_RERUN=1` を付ける                   |
+| `pre-merge-check.sh`         | `gh pr merge` の `--merge` / `--delete-branch` / 本文見出し、CI、reviewDecision、未解決スレッド、head が base より遅れていない（リベース済み）                                              | なし                                                  |
+| `pre-pr-create-check.sh`     | `gh pr create` の `--title`（70 文字以内）、`--body` / `--body-file`（`## 概要` / `## 変更点` / `## テスト`）、未プッシュコミットなし、`--web` なし                                         | なし                                                  |
+| `require-background-wait.sh` | `gh-wait-review.sh` / `request-rereview.sh` の `run_in_background=true`                                                                                                                     | なし                                                  |
+| `warn-large-commit.sh`       | （ゲートではない）ステージ済みが 5 ファイル以上または 100 行以上なら件数を `additionalContext` で伝える。分割するかの判断はモデルに残す                                                     | —                                                     |
 
 hook はコマンド文字列を検査するが、**ヒアドキュメントの本文は同じ長さの空白でマスクしてから
 検査する**（`hooks/lib/heredoc.sh` の `mask_heredoc_bodies`）。本文は実行されるコマンドではなく

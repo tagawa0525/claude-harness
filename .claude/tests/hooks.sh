@@ -2,7 +2,8 @@
 # .claude/hooks のテスト
 #
 # 実行: bash .claude/tests/hooks.sh
-# 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh / pre-merge-check.sh
+# 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh / pre-merge-check.sh /
+#       block-secret-commit.sh / guard-git-add.sh / guard-gh-run-rerun.sh / guard-gh-api.sh
 
 source "$(dirname "$0")/lib.sh"
 
@@ -472,5 +473,313 @@ make_fake_gh_merge 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check.sh "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
+
+# ===========================================================================
+# block-secret-commit.sh: 機密情報を含む変更のコミットを止める
+# ===========================================================================
+# .env や秘密鍵のファイル名、追加行に現れるトークン・秘密鍵本文を検出して deny する。
+# 検査するのは追加行だけ（秘密を消す変更は通す）。理由に秘密の値そのものは出さない。
+# このテスト自身に書く見本の値は `gitleaks:allow` で hook の検査対象から外す
+
+REPO="$TEST_ROOT/secret"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
+cd "$REPO" || exit 1
+
+it "block-secret-commit: 通常の変更は許可する"
+echo 'plain' > a.txt && git add a.txt
+out=$(run_hook block-secret-commit.sh 'git commit -m "feat: a"')
+assert_eq allow "$(decision "$out")"
+git commit -q -m "feat: a"
+
+it "block-secret-commit: git commit 以外は対象外"
+out=$(run_hook block-secret-commit.sh 'git log --grep commit')
+assert_eq "" "$out"
+
+it "block-secret-commit: .env / .env.<name> は deny、.env.example は許可"
+echo 'X=1' > .env && git add -f .env
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: env"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" ".env"
+git rm -q --cached .env && rm .env
+echo 'X=1' > .env.local && git add -f .env.local
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: env"')
+assert_eq deny "$(decision "$out")"
+git rm -q --cached .env.local && rm .env.local
+echo 'X=' > .env.example && git add .env.example
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: env example"')
+assert_eq allow "$(decision "$out")"
+git commit -q -m "chore: env example"
+
+it "block-secret-commit: 秘密鍵ファイル（*.pem / id_ed25519）は deny、公開鍵は許可"
+echo 'x' > server.pem && git add server.pem
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: pem"')
+assert_eq deny "$(decision "$out")"
+git rm -q --cached server.pem && rm server.pem
+mkdir -p keys && echo 'x' > keys/id_ed25519 && git add keys/id_ed25519
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: key"')
+assert_eq deny "$(decision "$out")"
+git rm -q --cached keys/id_ed25519 && rm -r keys
+echo 'ssh-ed25519 AAAA test' > id_ed25519.pub && git add id_ed25519.pub
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: pubkey"')
+assert_eq allow "$(decision "$out")"
+git commit -q -m "chore: pubkey"
+
+it "block-secret-commit: 追加行の秘密鍵本文は deny"
+printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n' > notes.txt && git add notes.txt # gitleaks:allow
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: notes"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "notes.txt"
+git reset -q notes.txt && rm notes.txt
+
+it "block-secret-commit: トークン（AWS / GitHub）を含む追加行は deny し、値は理由に出さない"
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > conf.txt && git add conf.txt # gitleaks:allow
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: conf"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "conf.txt"
+assert_not_contains "$(reason "$out")" "AKIAIOSFODNN7EXAMPLE" # gitleaks:allow
+echo 'GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij' > conf.txt && git add conf.txt # gitleaks:allow
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: conf"')
+assert_eq deny "$(decision "$out")"
+git reset -q conf.txt && rm conf.txt
+
+it "block-secret-commit: 値の代入（password/secret/token = \"…\"）は deny、プレースホルダは許可"
+echo 'password = "Xk9v2LmQ8pRt4WzB7nYc"' > cfg.ini && git add cfg.ini # gitleaks:allow
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
+assert_eq deny "$(decision "$out")"
+echo 'password = "changeme"' > cfg.ini && git add cfg.ini
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
+assert_eq allow "$(decision "$out")"
+echo 'token = "${GITHUB_TOKEN}"' > cfg.ini && git add cfg.ini
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
+assert_eq allow "$(decision "$out")"
+echo 'api_key = "<your-api-key-here>"' > cfg.ini && git add cfg.ini
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: cfg"')
+assert_eq allow "$(decision "$out")"
+git reset -q cfg.ini && rm cfg.ini
+
+it "block-secret-commit: gitleaks:allow を付けた行は検査しない"
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE # gitleaks:allow' > conf.txt && git add conf.txt
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: conf"')
+assert_eq allow "$(decision "$out")"
+git reset -q conf.txt && rm conf.txt
+
+it "block-secret-commit: 秘密を消す変更（削除行）は通す"
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > leaked.txt && git add leaked.txt # gitleaks:allow
+git commit -q -m "chore: leaked"
+git rm -q leaked.txt
+out=$(run_hook block-secret-commit.sh 'git commit -m "fix: remove leaked"')
+assert_eq allow "$(decision "$out")"
+git commit -q -m "fix: remove leaked"
+
+it "block-secret-commit: ALLOW_SECRET_COMMIT=1 で迂回できる"
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > conf.txt && git add conf.txt # gitleaks:allow
+out=$(run_hook block-secret-commit.sh 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
+assert_eq allow "$(decision "$out")"
+git reset -q conf.txt && rm conf.txt
+
+it "block-secret-commit: -a 指定時は未ステージの追跡ファイルの変更も検査する"
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' >> a.txt # gitleaks:allow
+out=$(run_hook block-secret-commit.sh 'git commit -am "chore: a"')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook block-secret-commit.sh 'git commit -m "chore: nothing staged"')
+assert_eq allow "$(decision "$out")"
+git checkout -q a.txt
+
+it "block-secret-commit: HEAD のない初回コミットでも -a 指定の検査を飛ばさない"
+UNBORN="$TEST_ROOT/secret-unborn"
+mkdir -p "$UNBORN" && git -C "$UNBORN" init -q -b main
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > "$UNBORN/conf.txt" && git -C "$UNBORN" add conf.txt # gitleaks:allow
+cd "$UNBORN" || exit 1
+out=$(run_hook block-secret-commit.sh 'git commit -am "chore: first"')
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
+
+it "block-secret-commit: -C 指定のリポジトリを見る"
+cd "$TEST_ROOT" || exit 1
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > "$REPO/c.txt" && git -C "$REPO" add c.txt # gitleaks:allow
+out=$(run_hook block-secret-commit.sh "git -C $REPO commit -m 'chore: c'")
+assert_eq deny "$(decision "$out")"
+git -C "$REPO" reset -q c.txt && rm "$REPO/c.txt"
+cd "$REPO" || exit 1
+
+it "block-secret-commit: ヒアドキュメント本文の git commit には反応しない"
+echo 'aws_key = AKIAIOSFODNN7EXAMPLE' > conf.txt && git add conf.txt # gitleaks:allow
+out=$(run_hook block-secret-commit.sh "$(write_doc '例: git commit -m msg')")
+assert_eq "" "$out"
+git reset -q conf.txt && rm conf.txt
+
+it "block-secret-commit: hook 自身とこのテストはコミットできる（パターン文字列と gitleaks:allow の見本を誤検出しない）"
+cp "$HOOKS_DIR/block-secret-commit.sh" "$CLAUDE_DIR/tests/hooks.sh" . 2>/dev/null
+git add block-secret-commit.sh hooks.sh 2>/dev/null
+out=$(run_hook block-secret-commit.sh 'git commit -m "feat: hook"')
+assert_eq allow "$(decision "$out")"
+git reset -q && rm -f block-secret-commit.sh hooks.sh
+
+# ===========================================================================
+# guard-git-add.sh: 対象を絞らない git add（-A / --all / . / :/ / *）を止める
+# ===========================================================================
+# 1 コミット 1 論理変更と、機密情報の混入防止（block-secret-commit.sh と対）のため。
+# パスで範囲を限定した -A（git add -A src/）と、追跡済みだけを対象にする -u は通す
+
+REPO="$TEST_ROOT/gitadd"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
+cd "$REPO" || exit 1
+mkdir -p src && echo x > src/a.txt
+
+it "guard-git-add: パスを指定した git add は許可する"
+for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt'; do
+  out=$(run_hook guard-git-add.sh "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "guard-git-add: -A / --all / . / :/ / * は deny し、代わりの手順を示す"
+for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An'; do
+  out=$(run_hook guard-git-add.sh "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+assert_contains "$(reason "$out")" "git add -p"
+
+it "guard-git-add: パスで範囲を限定した -A は許可する"
+out=$(run_hook guard-git-add.sh 'git add -A src/')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-git-add.sh 'git add --all -- src/')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-add: git add 以外は対象外"
+out=$(run_hook guard-git-add.sh 'git commit -am "feat: x"')
+assert_eq "" "$out"
+out=$(run_hook guard-git-add.sh 'git log --grep "add -A"')
+assert_eq "" "$out"
+
+it "guard-git-add: 連結コマンドの 2 つ目以降も検査する"
+out=$(run_hook guard-git-add.sh 'git add src/a.txt && git add -A')
+assert_eq deny "$(decision "$out")"
+
+it "guard-git-add: -C で指定した別リポジトリでも検査する"
+cd "$TEST_ROOT" || exit 1
+out=$(run_hook guard-git-add.sh "git -C $REPO add -A")
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
+
+it "guard-git-add: ALLOW_GIT_ADD_ALL=1 で迂回できる"
+out=$(run_hook guard-git-add.sh 'ALLOW_GIT_ADD_ALL=1 git add -A')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-add: ヒアドキュメント本文の git add -A には反応しない"
+out=$(run_hook guard-git-add.sh "$(write_doc 'git add -A は禁止')")
+assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# guard-gh-run-rerun.sh: 既に再実行済みの run の gh run rerun を止める
+# ===========================================================================
+# 一時障害の再実行は 1 回まで。attempt 2 以上で同じ失敗なら一時障害ではないので、
+# 無制限に再実行せず原因を報告してユーザーの判断に委ねる
+
+cd "$TEST_ROOT" || exit 1
+
+it "guard-gh-run-rerun: 初回の失敗（attempt 1）の再実行は許可する"
+make_fake_gh '"run view 100 --json attempt"*) echo "{\"attempt\":1}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100 --failed')
+assert_eq allow "$(decision "$out")"
+
+it "guard-gh-run-rerun: attempt 2 以上の run は deny し、報告に切り替えるよう示す"
+make_fake_gh '"run view 100 --json attempt"*) echo "{\"attempt\":2}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "2 回"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun --failed 100')
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-run-rerun: -R 指定のリポジトリで attempt を確認する"
+make_fake_gh '"run view -R octo/repo 100 --json attempt"*) echo "{\"attempt\":3}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun -R octo/repo 100')
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-run-rerun: --job の値（数値のジョブ ID）を run ID と取り違えない"
+make_fake_gh '"run view 100 --json attempt"*) echo "{\"attempt\":1}" ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun --job 555 100')
+assert_eq allow "$(decision "$out")"
+assert_contains "$(cat "$FAKE_GH_LOG")" "run view 100 --json attempt"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100 -j 555')
+assert_eq allow "$(decision "$out")"
+
+it "guard-gh-run-rerun: attempt を確認できなければ deny"
+make_fake_gh '"run view 100 --json attempt"*) echo "not found" >&2; exit 1 ;;'
+out=$(run_hook guard-gh-run-rerun.sh 'gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "確認できません"
+
+it "guard-gh-run-rerun: gh run rerun 以外は対象外で gh を呼ばない"
+make_fake_gh ''
+out=$(run_hook guard-gh-run-rerun.sh 'gh run view 100 --log-failed')
+assert_eq "" "$out"
+out=$(run_hook guard-gh-run-rerun.sh 'gh run list')
+assert_eq "" "$out"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
+it "guard-gh-run-rerun: ALLOW_RERUN=1 で迂回できる（gh を呼ばない）"
+out=$(run_hook guard-gh-run-rerun.sh 'ALLOW_RERUN=1 gh run rerun 100')
+assert_eq allow "$(decision "$out")"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
+it "guard-gh-run-rerun: ヒアドキュメント本文の gh run rerun には反応しない"
+out=$(run_hook guard-gh-run-rerun.sh "$(write_doc '再実行: gh run rerun 100')")
+assert_eq allow "$(decision "$out")"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
+# ===========================================================================
+# guard-gh-api.sh: 生の gh api で行ってはいけない操作を止める
+# ===========================================================================
+# 1. Actions の権限設定（actions/permissions 配下）への書き込み。CI の権限エラーを
+#    リポジトリ設定 default_workflow_permissions の緩和で回避させない
+# 2. GraphQL の resolveReviewThread / unresolveReviewThread。resolve は resolve-thread.sh
+#    経由に固定し、人間のレビュアーのスレッドを勝手に閉じない判定を迂回できなくする
+
+it "guard-gh-api: actions/permissions の読み取り（GET）は許可する"
+out=$(run_hook guard-gh-api.sh 'gh api repos/octo/repo/actions/permissions/workflow')
+assert_eq allow "$(decision "$out")"
+
+it "guard-gh-api: actions/permissions への書き込みは deny し、permissions: の宣言を示す"
+out=$(run_hook guard-gh-api.sh 'gh api -X PUT repos/octo/repo/actions/permissions/workflow -f default_workflow_permissions=write')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "permissions:"
+out=$(run_hook guard-gh-api.sh 'gh api --method PATCH repos/octo/repo/actions/permissions')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-gh-api.sh 'gh api repos/octo/repo/actions/permissions/workflow -f default_workflow_permissions=write')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-gh-api.sh 'gh api "repos/{owner}/{repo}/actions/permissions/workflow" --input body.json')
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-api: GraphQL の resolveReviewThread は deny し、resolve-thread.sh を示す"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "resolve-thread.sh"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query='mutation { unresolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-api: ヒアドキュメントで渡した mutation も deny する（本文が操作そのもの）"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query=\"\$(cat <<'EOF'
+mutation { resolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }
+EOF
+)\"")
+assert_eq deny "$(decision "$out")"
+
+it "guard-gh-api: reviewThreads の読み取りクエリは許可する"
+out=$(run_hook guard-gh-api.sh "gh api graphql -f query='query { repository(owner: \"o\", name: \"r\") { pullRequest(number: 1) { reviewThreads(first: 100) { nodes { id isResolved } } } } }'")
+assert_eq allow "$(decision "$out")"
+
+it "guard-gh-api: resolve-thread.sh の実行と gh api 以外は対象外"
+out=$(run_hook guard-gh-api.sh '~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh 1 2')
+assert_eq "" "$out"
+out=$(run_hook guard-gh-api.sh 'gh pr view 1')
+assert_eq "" "$out"
+
+it "guard-gh-api: 説明文の中の resolveReviewThread や actions/permissions には反応しない"
+out=$(run_hook guard-gh-api.sh "$(write_doc 'resolveReviewThread は gh api で叩かない。actions/permissions も PUT しない')")
+assert_eq allow "$(decision "$out")"
 
 finish

@@ -4,7 +4,8 @@
 # Usage: get-review-comments.sh <pr_number> [--unresolved]
 #
 # Output: JSON 配列。1 要素 = 1 コメント（スレッド内の返信も含む、作成順）
-#   id, node_id, path, line, body, user, created_at, in_reply_to_id, html_url,
+#   id, node_id, path, line, body, user, user_type（Bot / User。resolve の可否判断に使う）,
+#   created_at, in_reply_to_id, html_url,
 #   thread_id（resolve-thread.sh の対象）, is_resolved, is_outdated
 #
 # REST の /pulls/{n}/comments はスレッドの resolve 状態を持たないため、GraphQL の
@@ -59,7 +60,7 @@ raw=$(gh api graphql --paginate \
                   databaseId
                   id
                   body
-                  author { login }
+                  author { __typename login }
                   createdAt
                   url
                   replyTo { databaseId }
@@ -90,6 +91,7 @@ jq -s --argjson unresolved "$unresolved" '
         line: $t.line,
         body: .body,
         user: (.author.login // null),
+        user_type: (.author.__typename // null),
         created_at: .createdAt,
         in_reply_to_id: (.replyTo.databaseId // null),
         html_url: .url,

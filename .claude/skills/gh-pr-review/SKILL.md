@@ -8,6 +8,7 @@ allowed-tools:
   - Bash(gh *)
   - Bash(~/.claude/skills/gh-pr-review/scripts/*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh)
+  - Bash(~/.claude/scripts/gh-actions-diagnose.sh*)
   - Read
   - Edit
   - Glob
@@ -27,12 +28,14 @@ PRについたレビューコメントを確認し、対応する。
 
 - `get-pr-info.sh [pr_number | URL]` - PR情報を取得。コメント URL を渡すと `comment_id` も返す
 - `get-review-comments.sh <pr_number> [--unresolved]` - レビューコメントを取得
-  （GraphQL `reviewThreads` から。各コメントに `thread_id` / `is_resolved` / `is_outdated` を含む）
+  （GraphQL `reviewThreads` から。各コメントに `thread_id` / `is_resolved` / `is_outdated` /
+  `user_type`（Bot / User）を含む）
 - `get-latest-review.sh <pr_number>` - 最新の Copilot レビューの要約を取得
   （周回数 ROUND、インライン指摘数、Suppressed comments の本文。Step 6 の判定に使う）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
-- `resolve-thread.sh <pr_number> <comment_id>` - コメントを含むスレッドを resolve
-  （GraphQL `resolveReviewThread`。REST には resolve API がない。Copilot のスレッドも対象）
+- `resolve-thread.sh <pr_number> <comment_id> [--allow-human]` - コメントを含むスレッドを resolve
+  （GraphQL `resolveReviewThread`。人間が起こしたスレッドは既定で拒否する。
+  生の `gh api graphql` による resolve は `guard-gh-api.sh` hook が deny する）
 - `decide-next.sh <pr_number> [--max-rounds N]` - 周回数と直近の Copilot 応答から
   次の行動（VERDICT）を判定。Step 6 の分岐はこの出力に従う
 - `request-rereview.sh <pr_number> [commit_hash ...]` - @copilot に再レビューを依頼し、
@@ -94,34 +97,50 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 ---
 
-## Step 3: コメントの優先度分類
+## Step 3: 前提の検証と処置の決定
 
-取得したコメントを以下の優先度で分類:
+### 3.1 前提を一次情報で検証する
 
-### 🔴 Critical（必須対応）
+レビュアー（特に bot）の指摘は前提が誤っていることがある。**着手前に、指摘が依拠している
+事実を自分で確かめる**。確かめ方は記憶や指摘文ではなく一次情報:
 
-- バグ指摘
-- セキュリティ問題
-- ビルド/テスト失敗の原因
-- "must", "required", "blocking" などのキーワード
+- コードの実際の挙動: 対象ファイルと呼び出し元を Read し、必要なら実行・テストで確認する
+- API・ライブラリ・ツールの仕様: 公式ドキュメント、man ページ、ライブラリのソース（WebFetch /
+  Grep）。バージョンが関係するなら lock ファイルで実際のバージョンを見る
+- プロジェクトの規約: CLAUDE.md、既存コードの慣習、過去のコミット履歴（`git log -S`）
 
-### 🟡 Warning（対応推奨）
+検証で分かったことは処置の根拠になる。「指摘が正しいか分からないまま直す」「指摘文を
+そのまま信じて見送る」のどちらもしない。
 
-- コード品質の問題
-- パフォーマンス懸念
-- "should", "consider", "recommend" などのキーワード
+### 3.2 処置を決める
 
-### 🟢 Suggestion（任意対応）
+各コメントを 3 つのいずれかに決める。判断が付かないものは escalate に倒す（自分で決めない）:
 
-- スタイル提案
-- リファクタリング案
-- "nit", "optional", "nice to have" などのキーワード
+| 処置         | 条件                                                                                              | 行動                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **fix**      | 検証の結果、指摘が正しく、修正が PR の範囲内に収まる                                              | Step 4 で修正・コミット → Step 5 で `Fixed in {hash}` と返信                            |
+| **decline**  | 検証の結果、指摘の前提が誤っている、または意図的な設計判断（CLAUDE.md・過去の決定・仕様上の理由） | 修正せず、Step 5 で根拠（検証で得た事実）を添えて返信                                   |
+| **escalate** | 設計方針の変更、PR の範囲を超える修正、要件の衝突、検証しても正誤が確定しない、破壊的な変更を伴う | 修正も返信もせず、Step 8 の「要判断」に検証結果と選択肢を添えて列挙し、ユーザーに委ねる |
 
-### ℹ️ Question（回答のみ）
+decline は「面倒だから見送る」ではなく、事実に基づく反論があるときだけ。根拠を書けないなら fix か escalate。
 
-- 設計意図の質問
-- 確認事項
-- "?" を含む、"why", "how" で始まる
+### 3.3 優先度（対応順）
+
+fix / escalate の対応順は次の優先度で決める:
+
+- 🔴 **Critical**: バグ、セキュリティ、ビルド/テスト失敗の原因、"must" / "required" / "blocking"
+- 🟡 **Warning**: コード品質、パフォーマンス懸念、"should" / "consider" / "recommend"
+- 🟢 **Suggestion**: スタイル、リファクタリング案、"nit" / "optional" / "nice to have"
+- ℹ️ **Question**: 設計意図の確認（"?" / "why" / "how"）。回答のみ
+
+### 3.4 同一指摘の再提起を見分ける（2 周目以降）
+
+再レビューでは、前の周で decline した指摘や、別の場所に移った同じ論点が再び来ることがある。
+Step 8 の台帳（前の周の完了報告）と突き合わせ、**同じ論点なら新規として扱わない**:
+
+- 前の周で decline 済み → 前回の返信（URL）を引いて同じ根拠で返信する。再検証は前提が変わったときだけ
+- 前の周で fix 済みの箇所への同趣旨の指摘 → 修正が反映されているか（push 漏れ、別箇所の取り残し）を確認する
+- 台帳の同じ行に周回を追記し、件数には数えない
 
 ---
 
@@ -139,7 +158,7 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 ### 4.1 各コメントへの対応サイクル
 
-**以下のサイクルをコメントごとに繰り返す:**
+**fix と決めたコメントごとに以下を繰り返す**（decline は Step 5 の返信のみ、escalate は何もしない）:
 
 #### (a) コード修正
 
@@ -202,12 +221,20 @@ gh pr comment {pr_number} --body "{返信内容}"
 
 ### 対応済みスレッドの resolve
 
-返信したスレッドは resolve する（リポジトリによってはスレッド解決が bot の
-再レビュー自動化のトリガーになる）:
+スレッドを閉じるのはレビュアーの権限。`user_type` で分ける:
+
+- **bot（`Bot`。Copilot 等）のスレッド**: 返信したら resolve する（リポジトリによっては
+  スレッド解決が bot の再レビュー自動化のトリガーになる）
+- **人間（`User`）のスレッド**: 返信だけ行い、resolve はレビュアーに委ねる。修正済みでも
+  閉じない（相手が確認して閉じる）。スクリプトは人間のスレッドを既定で拒否する。
+  `--allow-human` はユーザーから明示的に「resolve してよい」と言われたときだけ付ける
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {comment_id}
 ```
+
+人間のスレッドが未解決のままだと `pre-merge-check.sh` がマージを止める。それは正しい状態なので、
+resolve で回避せず、レビュアーの確認を待つ（または Step 8 で「レビュアーの確認待ち」として報告する）。
 
 ### 返信テンプレート
 
@@ -217,11 +244,17 @@ gh pr comment {pr_number} --body "{返信内容}"
 Fixed in {commit_hash}.
 ```
 
-**対応不要と判断した場合:**
+**decline（対応不要と判断した場合）:**
 
 ```text
 Thank you for the suggestion.
-I've decided to keep the current approach because {理由}.
+I've decided to keep the current approach because {検証で得た事実に基づく理由}.
+```
+
+**同じ指摘の再提起（前の周で decline 済み）:**
+
+```text
+This is the same point as {前回の返信 URL}; the reasoning there still applies.
 ```
 
 **質問への回答:**
@@ -296,7 +329,9 @@ pushしても再レビューは自動では走らないことがある。対応�
   check-run と未解決スレッド数で判断する
 
 応答が届いたら `decide-next.sh` を再実行し、6.1 の表に従う。新しいレビュー
-提出なら Step 2 に戻ってコメントを取得・対応する。`decide-next.sh` は直近の
+提出なら **周回の台帳（Step 8 の形式）を先に出力してから** Step 2 に戻る。
+台帳を周回ごとに残すのは、コンテキストが要約されても処置の履歴を失わず、
+Step 3.4 の同一指摘の判定と Step 8 の件数に使うため。`decide-next.sh` は直近の
 依頼より後に届いた応答だけを見るので、前回レビューの指摘を今周のものと
 取り違えることはない。
 
@@ -305,14 +340,24 @@ pushしても再レビューは自動では走らないことがある。対応�
 ## Step 7: CI確認
 
 ```bash
-gh pr checks {pr_number}
+~/.claude/scripts/gh-actions-diagnose.sh {pr_number}
 ```
 
-失敗している場合は原因を調査し、追加修正を行う。
+`CAUSE:` に従う（分類の意味は gh-actions-check スキル）。特に:
+
+- `PERMISSION`: ワークフローの `permissions:` に必要な権限を最小限で宣言する。リポジトリ設定
+  `default_workflow_permissions` を write に緩めるのは回避策であり使わない
+- `TRANSIENT_API` / `COPILOT_INTERNAL`: 再実行は `NEXT:` が提案する 1 回だけ。`ATTEMPT: 2` 以上で
+  同じ失敗なら再実行せず、Step 8 の完了報告に載せてユーザー判断に委ねる
+- `EXTERNAL`: 外部 CI のログを `EXTERNAL_CHECK:` の URL で確認する。`gh run rerun` では直らない
+- `CODE`: 原因を修正し、レビュー対応と同じくコミットして push する
 
 ---
 
 ## Step 8: 完了報告
+
+周回ごとに台帳を出力し、最終周でまとめる。件数は**論点の数**（同じ指摘の再提起は同じ行に周回を追記し、
+重ねて数えない）。
 
 ```text
 ✅ レビュー対応が完了しました
@@ -323,14 +368,26 @@ PR: {url}
 レビュー周回: {ROUND}/5
 終了理由: {指摘なし | Suppressed comments のみ（再レビュー未依頼） | 周回上限到達}
 
-対応サマリー:
-- 🔴 Critical: {n}件 対応済み
-- 🟡 Warning: {n}件 対応済み
-- 🟢 Suggestion: {n}件 対応済み/{m}件 見送り
-- ℹ️ Question: {n}件 回答済み
+台帳:
+| 周 | コメント | 場所 | 優先度 | 処置 | 結果（commit / 理由 / 前回参照） |
+| -- | -------- | ---- | ------ | ---- | -------------------------------- |
+| 1 | #discussion_r{id} | path:line | 🔴 | fix | {hash} |
+| 1 | #discussion_r{id} | path:line | 🟢 | decline | {根拠} |
+| 1,2 | #discussion_r{id} | path:line | 🟡 | decline | 2 周目は同一指摘。前回返信を参照 |
+
+対応サマリー（論点数）:
+- fix: {n}件（🔴 {n} / 🟡 {n} / 🟢 {n}）
+- decline: {n}件
+- Question 回答: {n}件
+- 要判断（escalate）: {n}件 → 下記
+- レビュアーの確認待ち: {人間のスレッドで返信済み・未 resolve のもの。なければ省略}
 - 未確認の対応: {周回上限到達時、最終周で対応・見送りした指摘の一覧。該当なしなら省略}
 
+要判断:
+- {コメント URL}: {指摘の要旨} / 検証結果: {事実} / 選択肢: {A: …, B: …}
+
 次のステップ:
+- 要判断があれば → 指示をもらってから /gh-pr-review で続行
 - マージする場合 → /gh-pr-merge
 - 状態を確認する場合 → /git-info
 ```
@@ -341,6 +398,8 @@ PR: {url}
 
 - **Atomicコミット**: 1コメント = 1コミットを徹底
 - Force push は避け、追加コミットで対応（レビュー履歴を保持）
-- Critical は必ず対応、Suggestion は見送り可（理由を返信）
+- 処置は fix / decline / escalate のいずれか。着手前に一次情報で前提を検証し、判断が付かなければ escalate
+- decline は事実に基づく根拠があるときだけ。根拠を返信に書く
 - 再レビューは最大 5 周。Suppressed comments のみの周は対応して終了し、再レビューを依頼しない
+- 周回ごとに台帳を出力し、同じ指摘の再提起は数え直さない
 - レビュアーの意図が不明な場合は、修正前に確認コメントを投稿
