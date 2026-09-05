@@ -70,6 +70,11 @@ let
       matcher = "Bash";
       timeout = 5000;
     }
+    {
+      file = "guard-gh-run-rerun.sh";
+      matcher = "Bash";
+      timeout = 15000;
+    }
   ];
 
   # Claude Code settings.json の静的設定

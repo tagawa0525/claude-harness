@@ -39,8 +39,9 @@ $ARGUMENTS（PR番号またはブランチ名。省略時は現在のブラン�
 | `EXTERNAL`         | Actions は問題なく、外部 CI（Buildkite 等）が失敗       | `EXTERNAL_CHECK:` の URL でログを確認する。GitHub Actions の run ではないので `gh run rerun` では再実行できない                                                                                                                 |
 | `CODE`             | ビルド・テスト・lint の失敗                             | `--- errors ---` 以下を読み、原因と修正を提案                                                                                                                                                                                   |
 
-再実行は 1 回まで。`gh run rerun` は `NEXT:` が提案したときだけ実行し、`ATTEMPT: 2` 以上なら
-実行しない（同じ失敗が繰り返されるなら一時障害ではない。原因を添えてユーザーの判断に委ねる）。
+再実行は 1 回まで。`gh run rerun` は `NEXT:` が提案したときだけ実行する。`ATTEMPT: 2` 以上の run は
+`guard-gh-run-rerun.sh` hook が deny する（同じ失敗が繰り返されるなら一時障害ではない。
+原因を添えてユーザーの判断に委ねる）。
 
 `CODE` でエラー行だけでは原因が読み取れない場合はログ全文を確認する:
 
