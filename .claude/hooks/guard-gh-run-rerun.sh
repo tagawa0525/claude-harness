@@ -45,18 +45,20 @@ deny() {
 check_rerun() {
   local RERUN_PART="$1"
   local -a REPO_ARGS=()
-  local RUN_ID="" tok skip=0
+  # skip: 次のトークンの扱い。repo = -R の値として保持、value = 読み飛ばすだけ（--job の値）
+  local RUN_ID="" tok skip=""
   for tok in $RERUN_PART; do
-    if (( skip )); then skip=0; REPO_ARGS+=(-R "$tok"); continue; fi
+    case "$skip" in
+      repo)  REPO_ARGS+=(-R "$tok"); skip=""; continue ;;
+      value) skip=""; continue ;;
+    esac
     case "$tok" in
-      -R|--repo) skip=1 ;;
+      -R|--repo) skip=repo ;;
       --repo=*) REPO_ARGS+=(-R "${tok#--repo=}") ;;
-      -j|--job) skip=2 ;;   # ジョブ指定は run ID ではない
+      -j|--job) skip=value ;;   # ジョブ指定（数値のジョブ ID もある）は run ID ではない
       -*) ;;
       *) if [[ -z "$RUN_ID" && "$tok" =~ ^[0-9]+$ ]]; then RUN_ID="$tok"; fi ;;
     esac
-    # --job の値は読み飛ばすだけ（REPO_ARGS に入れない）
-    if (( skip == 2 )); then skip=0; continue; fi
   done
   [[ -n "$RUN_ID" ]] || return 0
 
