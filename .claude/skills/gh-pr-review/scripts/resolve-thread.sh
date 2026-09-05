@@ -13,7 +13,7 @@
 # スレッドを閉じるのはレビュアーの権限。bot（Copilot 等）が起こしたスレッドは対応後に
 # resolve するが、人間が起こしたスレッドは返信だけにして相手に委ねる。人間のスレッドは
 # 既定で拒否（exit 1）し、ユーザーが明示的に求めたときだけ --allow-human で resolve する。
-# 生の GraphQL でこの判定を迂回しないよう、hooks/guard-gh-api.sh が resolveReviewThread を deny する
+# 生の GraphQL でこの判定を迂回しないよう、claude-hooks の guard-gh-api ルールが resolveReviewThread を deny する
 
 set -euo pipefail
 

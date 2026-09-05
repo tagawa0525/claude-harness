@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# .claude/hooks と .claude/scripts のテスト共通ライブラリ
+# claude-hooks（PreToolUse hook のルール）と .claude/scripts のテスト共通ライブラリ
 #
 # 各テストファイルから `source "$(dirname "$0")/lib.sh"` で読み込む。
 # 実行のたびに一時ディレクトリを HOME として使い、実環境の git 設定・gh 認証・
@@ -199,7 +199,7 @@ run_hook() {
   jq -n --arg cmd "$command" --argjson bg "$bg" \
     '{hook_event_name: "PreToolUse", tool_name: "Bash", cwd: env.PWD,
       tool_input: {command: $cmd, run_in_background: $bg}}' \
-    | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "${hook%.sh}"
+    | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
 }
 
 # decision <hook-output> → permissionDecision（出力が空なら "allow"）

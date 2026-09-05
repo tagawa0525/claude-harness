@@ -35,7 +35,7 @@ gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
 
 ### マージ可能性チェック
 
-以下は `pre-merge-check.sh` hook が `gh pr merge` 実行時に機械的に検証し、
+以下は `pre-merge-check` hook が `gh pr merge` 実行時に機械的に検証し、
 満たさなければ deny する（手順で確認するのは判断が必要な項目だけでよい）:
 
 - `--merge` 指定・`--squash` / `--rebase` なし
