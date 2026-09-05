@@ -4,7 +4,8 @@
 # 実行: bash .claude/tests/scripts.sh
 # 対象: worktree-add.sh / rename-branch.sh / rename-plan.sh / git-info.sh /
 #       post-merge-cleanup.sh / gh-actions-diagnose.sh /
-#       language-checks/scripts/run-checks.sh / gh-pr-review/scripts/get-pr-info.sh
+#       language-checks/scripts/run-checks.sh /
+#       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread}.sh
 #
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
@@ -519,5 +520,60 @@ assert_eq 123456 "$(jq -r .comment_id <<<"$out")"
 it "get-pr-info: PR の URL（コメントなし）は comment_id が null"
 out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42")
 assert_eq null "$(jq -r .comment_id <<<"$out")"
+
+# ===========================================================================
+# gh-pr-review/scripts/get-review-comments.sh: 投稿者が bot か人間かを user_type で返す
+# ===========================================================================
+# resolve の可否（bot のスレッドは対応後に resolve、人間のスレッドは返信のみ）を
+# SKILL.md で判断するため、GraphQL の author.__typename（Bot / User）をそのまま出す
+
+BOT_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-01T00:00:00Z","url":"u1","replyTo":null}]}}'
+HUMAN_THREAD='{"id":"T2","isResolved":false,"isOutdated":false,"path":"b.txt","line":5,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":22,"id":"C2","body":"why?","author":{"__typename":"User","login":"alice"},"createdAt":"2026-09-01T00:01:00Z","url":"u2","replyTo":null}]}}'
+
+it "get-review-comments: 各コメントに user_type（Bot / User）を付ける"
+make_fake_gh "\"repo view --json owner\"*) echo octo ;;
+  \"repo view --json name\"*) echo repo ;;
+  \"api graphql --paginate\"*) printf '%s\n' '$BOT_THREAD' '$HUMAN_THREAD' ;;"
+out=$("$REVIEW_SCRIPTS/get-review-comments.sh" 1)
+assert_eq 0 $?
+assert_eq Bot "$(jq -r '.[] | select(.id == 11) | .user_type' <<<"$out")"
+assert_eq User "$(jq -r '.[] | select(.id == 22) | .user_type' <<<"$out")"
+
+# ===========================================================================
+# gh-pr-review/scripts/resolve-thread.sh: 人間のスレッドは既定で resolve しない
+# ===========================================================================
+# スレッドを閉じるのはレビュアーの権限。bot（Copilot 等）のスレッドは対応後に resolve するが、
+# 人間が起こしたスレッドは返信だけにして相手に委ねる。明示的に --allow-human を付けたときだけ resolve する
+
+# fake_gh_threads <threads_json>: resolve-thread.sh が読む reviewThreads と mutation を偽装する
+fake_gh_threads() {
+  make_fake_gh "\"repo view --json owner\"*) echo octo ;;
+  \"repo view --json name\"*) echo repo ;;
+  \"api graphql -F owner=\"*) echo '$1' ;;
+  \"api graphql -F id=\"*) echo 'resolved' ;;"
+}
+THREADS='{"pageInfo":{"hasNextPage":false},"nodes":[
+  {"id":"T1","isResolved":false,"comments":{"nodes":[{"databaseId":11,"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]}},
+  {"id":"T2","isResolved":false,"comments":{"nodes":[{"databaseId":22,"author":{"__typename":"User","login":"alice"}},{"databaseId":23,"author":{"__typename":"User","login":"me"}}]}}
+]}'
+
+it "resolve-thread: bot が起こしたスレッドは resolve する"
+fake_gh_threads "$THREADS"
+out=$("$REVIEW_SCRIPTS/resolve-thread.sh" 1 11)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "-F id=T1"
+
+it "resolve-thread: 人間が起こしたスレッドは既定では resolve せず exit 1（mutation を呼ばない）"
+fake_gh_threads "$THREADS"
+err=$("$REVIEW_SCRIPTS/resolve-thread.sh" 1 23 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "--allow-human"
+assert_not_contains "$(fake_log gh)" "-F id="
+
+it "resolve-thread: --allow-human を付ければ人間のスレッドも resolve する"
+fake_gh_threads "$THREADS"
+out=$("$REVIEW_SCRIPTS/resolve-thread.sh" 1 22 --allow-human)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "-F id=T2"
 
 finish
