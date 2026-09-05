@@ -176,7 +176,7 @@
       if [ -n "$RS_FILES" ]; then
         echo "🔍 Checking Rust format..."
         MANIFESTS=""
-        LOOSE_RS=""
+        LOOSE_RS=()
         while IFS= read -r f; do
           [ -n "$f" ] || continue
           d=$(dirname "$f")
@@ -189,7 +189,7 @@
           if [ -n "$m" ]; then
             grep -qxF -- "$m" <<<"$MANIFESTS" || MANIFESTS="$MANIFESTS$m"$'\n'
           else
-            LOOSE_RS="$LOOSE_RS$f"$'\n'
+            LOOSE_RS+=("$f")
           fi
         done <<<"$RS_FILES"
         if [ -n "$MANIFESTS" ] && command -v cargo >/dev/null 2>&1; then
@@ -201,8 +201,9 @@
             fi
           done <<<"$MANIFESTS"
         fi
-        if [ -n "$LOOSE_RS" ] && command -v rustfmt >/dev/null 2>&1; then
-          if ! printf '%s' "$LOOSE_RS" | xargs rustfmt --edition 2024 --check 2>/dev/null; then
+        # パスに空白があっても壊れないよう NUL 区切りで渡す（Nix / Markdown の検査と同じ）
+        if [ "''${#LOOSE_RS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
+          if ! printf '%s\0' "''${LOOSE_RS[@]}" | xargs -0 rustfmt --edition 2024 --check 2>/dev/null; then
             echo "❌ Rust format check failed. Run: rustfmt --edition 2024 <files>"
             check_failed=1
           fi
