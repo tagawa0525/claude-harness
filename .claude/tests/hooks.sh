@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# .claude/hooks のテスト
+# PreToolUse hook（modules/home/parts/claude-hooks、Rust 製 1 バイナリ）のルールごとのテスト
 #
 # 実行: bash .claude/tests/hooks.sh
+#   lib.sh が cargo build してから各ルールを --rule で個別に評価する
 # 対象: pre-pr-create-check.sh / warn-large-commit.sh / guard-git-push.sh / pre-merge-check.sh /
 #       block-secret-commit.sh / guard-git-add.sh / guard-gh-run-rerun.sh / guard-gh-api.sh
 
@@ -308,6 +309,11 @@ out=$(run_hook block-main-commit.sh "git -C $TEST_ROOT/lock commit -m 'feat: x'"
 assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
+it "block-main-commit: コマンドより後ろの cd は対象ディレクトリにしない"
+# $REPO（github リモートあり・main）で実行。後ろの cd $LOCAL（リモートなし）を見てしまうと allow になる
+out=$(run_hook block-main-commit.sh "git commit -m 'feat: x' && cd $LOCAL")
+assert_eq deny "$(decision "$out")"
+
 # ===========================================================================
 # 全 hook 共通: ヒアドキュメント本文は「実行されるコマンド」ではない
 # ===========================================================================
@@ -378,6 +384,10 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-git-push.sh 'if (( n << foo &&
  m )); then :; fi
 git push origin main')
+assert_eq deny "$(decision "$out")"
+
+it "heredoc: クォートの中の << はヒアドキュメントの開始ではない（bash 版の既知の限界）"
+out=$(run_hook guard-git-push.sh 'echo "a << b"; git push origin main')
 assert_eq deny "$(decision "$out")"
 
 it "heredoc: ハイフン入りの終端子でも本文の後ろの実コマンドは検出する"
@@ -609,12 +619,12 @@ out=$(run_hook block-secret-commit.sh "$(write_doc '例: git commit -m msg')")
 assert_eq "" "$out"
 git reset -q conf.txt && rm conf.txt
 
-it "block-secret-commit: hook 自身とこのテストはコミットできる（パターン文字列と gitleaks:allow の見本を誤検出しない）"
-cp "$HOOKS_DIR/block-secret-commit.sh" "$CLAUDE_DIR/tests/hooks.sh" . 2>/dev/null
-git add block-secret-commit.sh hooks.sh 2>/dev/null
+it "block-secret-commit: ルールの実装とこのテストはコミットできる（パターン文字列と gitleaks:allow の見本を誤検出しない）"
+cp "$CRATE_DIR/src/rules/block_secret_commit.rs" "$CLAUDE_DIR/tests/hooks.sh" . 2>/dev/null
+git add block_secret_commit.rs hooks.sh 2>/dev/null
 out=$(run_hook block-secret-commit.sh 'git commit -m "feat: hook"')
 assert_eq allow "$(decision "$out")"
-git reset -q && rm -f block-secret-commit.sh hooks.sh
+git reset -q && rm -f block_secret_commit.rs hooks.sh
 
 # ===========================================================================
 # guard-git-add.sh: 対象を絞らない git add（-A / --all / . / :/ / *）を止める
@@ -640,6 +650,10 @@ for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 
   assert_eq deny "$(decision "$out")"
 done
 assert_contains "$(reason "$out")" "git add -p"
+
+it "guard-git-add: 文字列引数の中の git add -A はコマンドではない（bash 版の誤検出）"
+out=$(run_hook guard-git-add.sh 'git commit -m "docs: run git add -A"')
+assert_eq allow "$(decision "$out")"
 
 it "guard-git-add: パスで範囲を限定した -A は許可する"
 out=$(run_hook guard-git-add.sh 'git add -A src/')

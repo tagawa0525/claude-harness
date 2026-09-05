@@ -11,9 +11,18 @@
 set -uo pipefail
 
 CLAUDE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-HOOKS_DIR="$CLAUDE_DIR/hooks"
 # shellcheck disable=SC2034  # scripts.sh が使う
 SCRIPTS_DIR="$CLAUDE_DIR/scripts"
+
+# hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
+# HOME を退避する前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
+# CLAUDE_HOOKS_BIN で差し替えられる（nix でビルドしたバイナリの検証用）
+# shellcheck disable=SC2034  # hooks.sh が使う
+CRATE_DIR="$CLAUDE_DIR/../modules/home/parts/claude-hooks"
+if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
+  cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
+  CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
+fi
 
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -183,14 +192,14 @@ make_fake_gh() {
 # hook 実行
 # ---------------------------------------------------------------------------
 
-# run_hook <hook-file> <command> [run_in_background]
-# PreToolUse の入力 JSON を組み立てて hook を実行し、stdout を返す
+# run_hook <rule> <command> [run_in_background]
+# PreToolUse の入力 JSON を組み立てて、そのルールだけを評価した stdout を返す
 run_hook() {
   local hook="$1" command="$2" bg="${3:-false}"
   jq -n --arg cmd "$command" --argjson bg "$bg" \
     '{hook_event_name: "PreToolUse", tool_name: "Bash", cwd: env.PWD,
       tool_input: {command: $cmd, run_in_background: $bg}}' \
-    | "$HOOKS_DIR/$hook"
+    | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "${hook%.sh}"
 }
 
 # decision <hook-output> → permissionDecision（出力が空なら "allow"）
