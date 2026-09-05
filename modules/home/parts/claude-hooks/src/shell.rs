@@ -34,6 +34,9 @@ pub struct Cmd {
     pub start: usize,
     /// 引数に構文エラーがある、または直後に解析できない断片（閉じていないクォート等）が続く
     pub has_error: bool,
+    /// 属するシェルのスコープ（最も近い `$(…)` / `(…)` / `<(…)` のノード ID）。トップレベルは None。
+    /// これらの中で実行した `cd` は親のカレントディレクトリを変えない
+    pub scope: Option<usize>,
 }
 
 impl Shell {
@@ -92,11 +95,24 @@ impl Shell {
             args.push(self.unquote(child));
         }
         let trailing_error = node.next_sibling().is_some_and(|n| n.kind() == "ERROR");
+        let mut scope = None;
+        let mut p = node.parent();
+        while let Some(n) = p {
+            if matches!(
+                n.kind(),
+                "command_substitution" | "subshell" | "process_substitution"
+            ) {
+                scope = Some(n.id());
+                break;
+            }
+            p = n.parent();
+        }
         Some(Cmd {
             name,
             args,
             start: node.start_byte(),
             has_error: node.has_error() || trailing_error,
+            scope,
         })
     }
 
@@ -144,7 +160,8 @@ impl Shell {
     }
 
     /// コマンドが対象にするディレクトリ。同じコマンドの `git -C <dir>` が最優先、
-    /// なければそのコマンドより前にある `cd <dir>` を順に畳み込む
+    /// なければそのコマンドより前にあり、同じシェルのスコープで実行される `cd <dir>` を順に畳み込む
+    /// （`$(cd x && …)` や `(cd x)` の cd は親のディレクトリを変えないので見ない）
     pub fn target_dir(&self, cmd: &Cmd, base: &Path) -> PathBuf {
         if cmd.name == "git" {
             let mut dir: Option<PathBuf> = None;
@@ -171,7 +188,7 @@ impl Shell {
             if c.start >= cmd.start {
                 break;
             }
-            if c.name == "cd" {
+            if c.name == "cd" && c.scope == cmd.scope {
                 match c.args.iter().find(|a| !a.text.starts_with('-')) {
                     Some(a) => dir = resolve(&dir, &a.text),
                     None => dir = home(),
