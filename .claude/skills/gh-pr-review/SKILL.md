@@ -8,6 +8,7 @@ allowed-tools:
   - Bash(gh *)
   - Bash(~/.claude/skills/gh-pr-review/scripts/*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh)
+  - Bash(~/.claude/scripts/gh-actions-diagnose.sh*)
   - Read
   - Edit
   - Glob
@@ -305,10 +306,17 @@ pushしても再レビューは自動では走らないことがある。対応�
 ## Step 7: CI確認
 
 ```bash
-gh pr checks {pr_number}
+~/.claude/scripts/gh-actions-diagnose.sh {pr_number}
 ```
 
-失敗している場合は原因を調査し、追加修正を行う。
+`CAUSE:` に従う（分類の意味は gh-actions-check スキル）。特に:
+
+- `PERMISSION`: ワークフローの `permissions:` に必要な権限を最小限で宣言する。リポジトリ設定
+  `default_workflow_permissions` を write に緩めるのは回避策であり使わない
+- `TRANSIENT_API` / `COPILOT_INTERNAL`: 再実行は `NEXT:` が提案する 1 回だけ。`ATTEMPT: 2` 以上で
+  同じ失敗なら再実行せず、Step 8 の完了報告に載せてユーザー判断に委ねる
+- `EXTERNAL`: 外部 CI のログを `EXTERNAL_CHECK:` の URL で確認する。`gh run rerun` では直らない
+- `CODE`: 原因を修正し、レビュー対応と同じくコミットして push する
 
 ---
 

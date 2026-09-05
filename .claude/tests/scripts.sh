@@ -294,7 +294,7 @@ git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
 
 RUN_FAIL='[{"databaseId":100,"name":"CI","status":"completed","conclusion":"failure","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/100"}]'
-JOBS_FAIL='{"jobs":[{"name":"build","conclusion":"failure","steps":[{"name":"Setup","conclusion":"success"},{"name":"Test","conclusion":"failure"}]}]}'
+JOBS_FAIL='{"attempt":1,"jobs":[{"name":"build","conclusion":"failure","steps":[{"name":"Setup","conclusion":"success"},{"name":"Test","conclusion":"failure"}]}]}'
 
 it "gh-actions-diagnose: run がなければ CAUSE: NONE と未設定の旨を出す"
 make_fake_gh '"run list --branch feat/x"*) echo "[]" ;;'
@@ -302,6 +302,9 @@ out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
 assert_eq 0 $?
 assert_contains "$out" "CAUSE: NONE"
 assert_contains "$out" "未設定"
+
+it "gh-actions-diagnose: head SHA の check-run を取得できなければ unavailable と出し、Actions の判定はそのまま"
+assert_contains "$out" "EXTERNAL_CHECKS: unavailable"
 
 it "gh-actions-diagnose: 実行中なら CAUSE: IN_PROGRESS"
 make_fake_gh '"run list --branch feat/x"*) echo "[{\"databaseId\":1,\"name\":\"CI\",\"status\":\"in_progress\",\"conclusion\":\"\",\"createdAt\":\"2026-09-01T00:00:00Z\",\"url\":\"u\"}]" ;;'
@@ -315,11 +318,12 @@ assert_contains "$out" "CAUSE: NONE"
 
 it "gh-actions-diagnose: 失敗ログに HTTP 5xx があれば TRANSIENT_API と再実行コマンドを出す"
 make_fake_gh "\"run list --branch feat/x\"*) echo '$RUN_FAIL' ;;
-  \"run view 100 --json jobs\"*) echo '$JOBS_FAIL' ;;
+  \"run view 100 --json jobs,attempt\"*) echo '$JOBS_FAIL' ;;
   \"run view 100 --log-failed\"*) printf 'build\tTest\t##[error]RequestError: HTTP 502 Bad Gateway\n' ;;"
 out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
 assert_eq 0 $?
 assert_contains "$out" "RUN: 100"
+assert_contains "$out" "ATTEMPT: 1"
 assert_contains "$out" "FAILED_JOB: build"
 assert_contains "$out" "FAILED_STEP: Test"
 assert_contains "$out" "CAUSE: TRANSIENT_API"
@@ -327,24 +331,28 @@ assert_contains "$out" "gh run rerun 100"
 
 it "gh-actions-diagnose: Copilot の内部エラーなら COPILOT_INTERNAL"
 make_fake_gh "\"run list --branch feat/x\"*) echo '$RUN_FAIL' ;;
-  \"run view 100 --json jobs\"*) echo '$JOBS_FAIL' ;;
+  \"run view 100 --json jobs,attempt\"*) echo '$JOBS_FAIL' ;;
   \"run view 100 --log-failed\"*) printf 'review\tSetup\t##[error]Download ccrcli failed\n' ;;"
 out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
 assert_contains "$out" "CAUSE: COPILOT_INTERNAL"
 
 it "gh-actions-diagnose: それ以外の失敗は CODE としてエラー行を出す"
 make_fake_gh "\"run list --branch feat/x\"*) echo '$RUN_FAIL' ;;
-  \"run view 100 --json jobs\"*) echo '$JOBS_FAIL' ;;
+  \"run view 100 --json jobs,attempt\"*) echo '$JOBS_FAIL' ;;
   \"run view 100 --log-failed\"*) printf 'build\tTest\t##[error]test_login failed: assertion error\n' ;;"
 out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
 assert_contains "$out" "CAUSE: CODE"
 assert_contains "$out" "test_login failed"
 
 it "gh-actions-diagnose: PR 番号を渡すと head ブランチを解決する"
-make_fake_gh "\"pr view 7 --json headRefName\"*) echo feat/pr7 ;;
-  \"run list --branch feat/pr7\"*) echo '[]' ;;"
+make_fake_gh "\"pr view 7 --json headRefName,headRefOid\"*) echo '{\"headRefName\":\"feat/pr7\",\"headRefOid\":\"def\"}' ;;
+  \"run list --branch feat/pr7\"*) echo '[]' ;;
+  \"api --paginate repos/{owner}/{repo}/commits/def/check-runs\"*) : ;;
+  \"api repos/{owner}/{repo}/commits/def/status\"*) echo '[]' ;;"
 out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh" 7)
 assert_contains "$out" "BRANCH: feat/pr7"
+assert_contains "$out" "EXTERNAL_CHECKS: 0"
+assert_not_contains "$(fake_log gh)" "git/ref"
 
 it "gh-actions-diagnose: ブランチ名を渡すとそのブランチを見る"
 make_fake_gh '"run list --branch other"*) echo "[]" ;;'
