@@ -23,8 +23,6 @@ pub struct Arg {
     pub text: String,
     /// ノードの原文。`"$(cat <<EOF …)"` のように入れ子のヒアドキュメント本文も含む
     pub raw: String,
-    /// 構文エラーを含む（クォート不整合など）
-    pub has_error: bool,
 }
 
 /// 単純コマンド 1 つ（`command` ノード）
@@ -105,7 +103,6 @@ impl Shell {
     /// ノードを引数として読む。クォートを外し、展開は原文のまま残す
     pub fn unquote(&self, node: Node) -> Arg {
         let raw = self.text(node).to_string();
-        let has_error = node.has_error();
         let text = match node.kind() {
             "word" | "number" => raw.clone(),
             "raw_string" => strip(&raw, "'", "'"),
@@ -128,11 +125,7 @@ impl Shell {
             }
             _ => raw.clone(),
         };
-        Arg {
-            text,
-            raw,
-            has_error,
-        }
+        Arg { text, raw }
     }
 
     /// `NAME=1` の代入がプログラム内のどこかにあるか（hook のエスケープ指定）
@@ -310,7 +303,7 @@ mod tests {
         )
         .unwrap();
         assert!(body.raw.contains("## 概要"));
-        assert!(!body.has_error);
+        assert!(!cs[0].has_error);
     }
 
     #[test]
@@ -325,7 +318,7 @@ mod tests {
         let cs = cmds("x 'a b' \"c d\" e --title=\"f g\" -f query='h' $'i'");
         let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
         assert_eq!(t, ["a b", "c d", "e", "--title=f g", "-f", "query=h", "i"]);
-        assert!(cs[0].args.iter().all(|a| !a.has_error));
+        assert!(!cs[0].has_error);
     }
 
     #[test]
@@ -404,16 +397,14 @@ mod tests {
         assert!(short_cluster_has(
             &Arg {
                 text: "-am".into(),
-                raw: "-am".into(),
-                has_error: false
+                raw: "-am".into()
             },
             'a'
         ));
         assert!(!short_cluster_has(
             &Arg {
                 text: "--all".into(),
-                raw: "--all".into(),
-                has_error: false
+                raw: "--all".into()
             },
             'a'
         ));
