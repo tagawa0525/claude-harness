@@ -136,13 +136,21 @@ if [[ -z "$HEAD_SHA" ]]; then
   HEAD_SHA=$(gh api "repos/{owner}/{repo}/git/ref/heads/${BRANCH}" --jq '.object.sha' 2>/dev/null || true)
 fi
 if [[ -n "$HEAD_SHA" ]]; then
-  CHECKS=$(gh api --paginate "repos/{owner}/{repo}/commits/${HEAD_SHA}/check-runs?per_page=100" \
-    --jq '.check_runs[] | select(.app.slug != "github-actions")
-          | {name, status, conclusion, app: .app.slug, url: .details_url}' 2>/dev/null | jq -s '.' || true)
-  STATUSES=$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}/status" \
-    --jq '[.statuses[] | {name: .context,
-                          status: (if .state == "pending" then "in_progress" else "completed" end),
-                          conclusion: .state, app: "commit-status", url: .target_url}]' 2>/dev/null || true)
+  # gh の成否で先に分ける。`gh … | jq -s` を || true で受けると、gh が失敗しても jq が
+  # 空入力から [] を作り「外部 CI なし」と誤認するため、gh の出力を先に受け取ってから整形する
+  CHECKS=""
+  STATUSES=""
+  if CHECKS_RAW=$(gh api --paginate "repos/{owner}/{repo}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+      --jq '.check_runs[] | select(.app.slug != "github-actions")
+            | {name, status, conclusion, app: .app.slug, url: .details_url}' 2>/dev/null); then
+    CHECKS=$(jq -s '.' <<<"$CHECKS_RAW")
+  fi
+  if STATUSES_RAW=$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}/status" \
+      --jq '[.statuses[] | {name: .context,
+                            status: (if .state == "pending" then "in_progress" else "completed" end),
+                            conclusion: .state, app: "commit-status", url: .target_url}]' 2>/dev/null); then
+    STATUSES="$STATUSES_RAW"
+  fi
   if jq -e 'type == "array"' <<<"$CHECKS" >/dev/null 2>&1 && jq -e 'type == "array"' <<<"$STATUSES" >/dev/null 2>&1; then
     EXT_AVAILABLE=1
     EXTERNAL=$(jq -s 'add' <<<"$CHECKS $STATUSES")
