@@ -1,7 +1,8 @@
 # =============================================================================
 # Claude Code の設定
 # =============================================================================
-# Claude Code CLI、グローバル CLAUDE.md/hooks/skills/commands/scripts の同期、settings.json 管理
+# Claude Code CLI、グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook
+# （./claude-hooks、Rust 製 1 バイナリ）の配置、settings.json 管理
 # （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
 {
@@ -27,59 +28,25 @@ let
     }
   ];
 
-  # グローバルに登録する Claude Code hooks
-  # nixos-rebuild 時に ~/.claude/settings.json へ自動登録される
-  claudeGlobalHooks = [
-    {
-      file = "block-main-commit.sh";
-      matcher = "Bash";
-      timeout = 10000;
-    }
-    {
-      file = "pre-merge-check.sh";
-      matcher = "Bash";
-      timeout = 30000;
-    }
-    {
-      file = "guard-git-push.sh";
-      matcher = "Bash";
-      timeout = 10000;
-    }
-    {
-      file = "require-background-wait.sh";
-      matcher = "Bash";
-      timeout = 5000;
-    }
-    {
-      file = "pre-pr-create-check.sh";
-      matcher = "Bash";
-      timeout = 10000;
-    }
-    {
-      file = "warn-large-commit.sh";
-      matcher = "Bash";
-      timeout = 10000;
-    }
-    {
-      file = "block-secret-commit.sh";
-      matcher = "Bash";
-      timeout = 10000;
-    }
-    {
-      file = "guard-git-add.sh";
-      matcher = "Bash";
-      timeout = 5000;
-    }
-    {
-      file = "guard-gh-run-rerun.sh";
-      matcher = "Bash";
-      timeout = 15000;
-    }
-    {
-      file = "guard-gh-api.sh";
-      matcher = "Bash";
-      timeout = 5000;
-    }
+  # PreToolUse hook。10 本あった bash hook を Rust 製 1 バイナリ（./claude-hooks）に統合し、
+  # settings.json には 1 件だけ登録する。Bash ツールの呼び出しごとに 1 プロセスで全ルールを評価する。
+  # バイナリは store パスではなく固定パス ~/.claude/bin/claude-hooks 経由で参照する
+  # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
+  claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
+  claudeHooksBinRel = ".claude/bin/claude-hooks";
+  claudeHookTimeout = 30000; # pre-merge-check が gh に数回問い合わせる
+  # 旧 bash hook のファイル名。settings.json の登録と ~/.claude/hooks の残骸を掃除するために残す
+  legacyHookFiles = [
+    "block-main-commit.sh"
+    "block-secret-commit.sh"
+    "guard-gh-api.sh"
+    "guard-gh-run-rerun.sh"
+    "guard-git-add.sh"
+    "guard-git-push.sh"
+    "pre-merge-check.sh"
+    "pre-pr-create-check.sh"
+    "require-background-wait.sh"
+    "warn-large-commit.sh"
   ];
 
   # Claude Code settings.json の静的設定
@@ -240,7 +207,10 @@ in
     gitleaks # block-secret-commit hook が git commit 前に機密情報を検査する
   ];
 
-  # .claude（CLAUDE.md/commands/skills/hooks/scripts）を ~/.claude に手動同期するコマンド
+  # PreToolUse hook バイナリ（settings.json はこの固定パスを参照する）
+  home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
+
+  # .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド
   # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）
   home.file.".local/bin/claude-sync" = {
     source = ../scripts/claude-sync.sh;
@@ -261,7 +231,7 @@ in
     mkdir -p "$CLAUDE_DIR"
 
     ${lib.optionalString (claudeCodeSource != null) ''
-      # CLAUDE.md/commands/skills/hooks/scripts の同期（claude-sync コマンドと共通実装）
+      # CLAUDE.md/commands/skills/scripts の同期（claude-sync コマンドと共通実装）
       # 同期ポリシーは modules/home/scripts/claude-sync.sh を参照
       PATH="${pkgs.rsync}/bin:$PATH" $DRY_RUN_CMD ${pkgs.bash}/bin/bash \
         ${../scripts/claude-sync.sh} "${claudeCodeSource}"
@@ -274,7 +244,7 @@ in
       $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
     '') externalSkills}
 
-    # 静的設定と hooks を settings.json に反映
+    # 静的設定と hook を settings.json に反映
     # claudeCodeSource の有無に関わらず常に実行（宣言的管理を保証）
     SETTINGS="$CLAUDE_DIR/settings.json"
     if [ ! -f "$SETTINGS" ]; then
@@ -282,32 +252,36 @@ in
     fi
     if [ "''${DRY_RUN:-0}" != "1" ]; then
       ${pkgs.jq}/bin/jq \
-        --argjson managed '${builtins.toJSON claudeGlobalHooks}' \
+        --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
+        --argjson timeout ${toString claudeHookTimeout} \
+        --argjson legacy '${builtins.toJSON legacyHookFiles}' \
         --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
-        --arg hooks_dir "$CLAUDE_DIR/hooks" \
         '. + $static |
         .skipDangerousModePermissionPrompt = true |
         .hooks.PreToolUse |= (
-          (. // []) as $existing |
-          reduce ($managed | .[]) as $hook ($existing;
-            ($hooks_dir + "/" + $hook.file) as $cmd |
-            if any(.[]; any(.hooks[]?; .command | tostring | endswith($hook.file))) then
-              map(
-                if any(.hooks[]?; .command | tostring | endswith($hook.file)) then
-                  .hooks |= map(
-                    if .command | tostring | endswith($hook.file) then .command = $cmd else . end
-                  )
-                else . end
-              )
+          (. // [])
+          # 旧 bash hook（ファイル名で識別）の登録を外し、空になった matcher を消す
+          | map(.hooks |= map(select((.command | tostring) as $c | ($legacy | any(. as $f | $c | endswith("/" + $f))) | not)))
+          | map(select((.hooks | length) > 0))
+          # バイナリの登録を 1 件にする（あれば command / timeout を更新、なければ追加）
+          | if any(.[]; any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use"))) then
+              map(.hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .command = $cmd | .timeout = $timeout else . end))
             else
-              . + [{"matcher": $hook.matcher, "hooks": [{"type": "command", "command": $cmd, "timeout": $hook.timeout}]}]
+              . + [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
             end
-          )
         )' \
         "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
       echo "Claude Code: settings and hooks updated in settings.json"
     else
       $DRY_RUN_CMD echo "Claude Code: (dry run) settings and hooks would be updated in settings.json"
     fi
+
+    # 旧 bash hook の残骸を消す（claude-sync は --delete を使わないため残り続ける）。
+    # activation は限られた PATH で実行されるため、外部コマンドはストアパスで参照する
+    ${lib.concatMapStringsSep "\n" (
+      f: ''$DRY_RUN_CMD ${pkgs.coreutils}/bin/rm -f "$CLAUDE_DIR/hooks/${f}"''
+    ) legacyHookFiles}
+    $DRY_RUN_CMD ${pkgs.coreutils}/bin/rm -f "$CLAUDE_DIR/hooks/lib/heredoc.sh"
+    $DRY_RUN_CMD ${pkgs.coreutils}/bin/rmdir --ignore-fail-on-non-empty "$CLAUDE_DIR/hooks/lib" "$CLAUDE_DIR/hooks" 2>/dev/null || true
   '';
 }
