@@ -123,6 +123,14 @@ assert_eq 0 $?
 assert_eq "" "$out"
 
 mkdir -p docs/plans
+
+# docs/plans はあるが .md が 1 つもない状態。*.md が展開されず ls が exit 2 を返し、
+# pipefail + set -e でスクリプトごと落ちていた（git-branch スキルの読み込みが失敗した）
+it "rename-plan: docs/plans が空でも --list は exit 0 で何も出さない"
+out=$("$SCRIPTS_DIR/rename-plan.sh" --list)
+assert_eq 0 $?
+assert_eq "" "$out"
+
 for n in 001_a 002_b 003_c; do echo "# $n" > "docs/plans/$n.md"; done
 echo "# random plan" > docs/plans/optimized-cooking-mochi.md
 git add docs && git commit -q -m "docs: plans"
