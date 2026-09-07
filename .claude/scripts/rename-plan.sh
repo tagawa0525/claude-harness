@@ -55,9 +55,16 @@ done
 # 連番のない計画書を新しい順に（ルート相対パスで）
 list_random() {
   local f
+  local -a plans
   [[ -d "$PLANS_DIR" ]] || return 0
+  # glob は ls に任せず自分で展開する。0 件のとき ls に "docs/plans/*.md" が
+  # そのまま渡ると exit 2 になり、pipefail + set -e でスクリプトごと落ちる
+  shopt -s nullglob
+  plans=("$PLANS_DIR"/*.md)
+  shopt -u nullglob
+  (( ${#plans[@]} > 0 )) || return 0
   # shellcheck disable=SC2012  # 更新順が必要で、パスにスペースは想定しない
-  ls -t "$PLANS_DIR"/*.md 2>/dev/null | while read -r f; do
+  ls -t -- "${plans[@]}" | while read -r f; do
     [[ "$(basename "$f")" =~ ^[0-9]{3}_ ]] || printf '%s\n' "$f"
   done
 }
