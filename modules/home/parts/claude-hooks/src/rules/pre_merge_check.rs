@@ -263,7 +263,7 @@ impl Rule for PreMergeCheck {
                     ),
                 }
             } else {
-                reasons.push("PR 情報を取得できません（gh pr view が失敗。PR番号・認証・ネットワークを確認）".to_string());
+                reasons.push("PR またはリポジトリの情報を取得できません（gh pr view / gh repo view が失敗。PR番号・リポジトリ指定・認証・ネットワークを確認）".to_string());
             }
 
             // --- 5. レビュー判定 ---
