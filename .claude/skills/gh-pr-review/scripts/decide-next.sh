@@ -4,11 +4,13 @@
 # Usage: decide-next.sh <pr_number> [--max-rounds N]   (デフォルト 5)
 #
 # 出力（テキスト）:
-#   ROUND: <n>          1 + これまでに送った再レビュー依頼（@copilot メンション）の回数
+#   ROUND: <n>          周回数。Copilot へのレビュー要求の件数（PR 作成時の自動要求を
+#                       含む）と Copilot レビュー件数の多い方。要求イベントを伴わずに
+#                       レビューが付くリポジトリでも周回を見失わないため
 #   MAX_ROUNDS: <n>
-#   RESPONSE: review | comment | none
-#                       直近の再レビュー依頼より後に届いた Copilot の応答種別
-#                       （依頼がまだ無ければ最初のレビューを対象にする）
+#   RESPONSE: review | none
+#                       直近のレビュー要求より後に提出された Copilot レビューの有無
+#                       （要求イベントが無ければ最初のレビューを対象にする）
 #   INLINE_COMMENTS / SUPPRESSED_COMMENTS （RESPONSE=review のとき）
 #   VERDICT: <判定>
 #     REREVIEW             インライン指摘あり・上限未満 → 対応して再レビューを依頼する
@@ -16,15 +18,16 @@
 #                          残指摘を完了報告に列挙してユーザー判断に委ねる
 #     STOP_SUPPRESSED_ONLY Suppressed comments のみ → 対応するが再レビューは依頼しない
 #     STOP_CLEAN           指摘なし → マージへ
-#     COMMENT_ONLY         Copilot がコメントだけで応答 → 本文を読んで判定する
-#                          （対応確認のみなら STOP_CLEAN 相当、新しい指摘を含むなら
-#                            ROUND を見て REREVIEW / STOP_LIMIT 相当として扱う）
-#     WAITING              依頼後の応答がまだ無い → gh-wait-review.sh で待つ
-#   --- suppressed --- / --- comment ---  以降に本文
+#     REVIEW_FAILED        Copilot がレビューできずに終わった → 原因を調べて依頼し直す
+#                          （指摘ゼロと同じ見た目になるため別扱いにする）
+#     WAITING              要求後のレビューがまだ無い → gh-wait-review.sh で待つ
+#   --- suppressed --- 以降に本文
 #
-# 周回数は再レビュー依頼の回数から算出する。Copilot が正式なレビューを提出せず
-# コメントだけで応答した周は Copilot レビュー件数が増えないため、レビュー件数を
-# 周回数に使うと上限判定がずれる。
+# 周回数はレビュー要求（review_requested）の件数で数える。Copilot のコメントは
+# 数えない。@copilot メンションに応答するのは copilot-swe-agent（コーディング
+# エージェント）で、「対応を確認しました」等のコメントを返してもレビューは
+# 提出されない。これをレビュー応答として扱っていたため、指摘が残っていても
+# 1 周で終わっていた（2026-08-23〜09-08）。
 
 set -euo pipefail
 
@@ -42,21 +45,20 @@ fi
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
 
-# PR コメント（issue comment）を作成順に取得
-comments=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-  --jq '.[] | {created_at, login: .user.login, type: .user.type, body}' | jq -s '.')
-
-# 再レビュー依頼 = Bot 以外が投稿した @copilot メンション
-requests=$(jq '[.[] | select(.type != "Bot" and (.body | test("@copilot"; "i")))]' <<<"$comments")
-request_count=$(jq 'length' <<<"$requests")
-last_request_at=$(jq -r 'if length > 0 then .[-1].created_at else "" end' <<<"$requests")
-round=$(( request_count + 1 ))
-
-# Copilot の応答コメント（gh-wait-review.sh と同じ許可リスト）
-copilot_comments=$(jq '[.[] | select(.type == "Bot"
-  and ((.login | ascii_downcase)
-       | IN("copilot", "copilot-swe-agent[bot]", "copilot-pull-request-reviewer[bot]")))]' <<<"$comments")
-last_comment_at=$(jq -r 'if length > 0 then .[-1].created_at else "" end' <<<"$copilot_comments")
+# Copilot 宛て review_requested の created_at を発生順に取得。
+# レビュアーのログイン表記は API により Copilot / copilot-pull-request-reviewer[bot] と
+# 揺れるため、Bot 種別かつ login に copilot を含むもので判定する
+# 取得に失敗したら空扱いで続けない。周回数を過少に見積もり、上限判定がずれる
+if ! requests=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/timeline?per_page=100" \
+  --jq '.[] | select(.event == "review_requested"
+                     and (.requested_reviewer.type? // "") == "Bot"
+                     and ((.requested_reviewer.login? // "") | ascii_downcase | test("copilot")))
+           | .created_at'); then
+  echo "ERROR: PR #${PR_NUMBER} の timeline を取得できませんでした（レビュー要求の件数が数えられません）" >&2
+  exit 1
+fi
+request_count=$(grep -c . <<<"$requests" || true)
+last_request_at=$(tail -n 1 <<<"$requests")
 
 # 最新の Copilot レビュー
 latest=$("${SCRIPT_DIR}/get-latest-review.sh" "$PR_NUMBER")
@@ -67,16 +69,13 @@ if (( review_count > 0 )); then
   last_review_at=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}" --jq '.submitted_at')
 fi
 
-# 直近の依頼より後に届いた応答を採用する（ISO 8601 は文字列比較で時系列順）。
-# レビュー提出があれば、その後にフォローコメントが付いていても常にレビューを優先する
-# （コメントを優先するとインライン指摘のあるレビューを COMMENT_ONLY で見落とす）
-review_is_new=$([[ -n "$last_review_at" && "$last_review_at" > "$last_request_at" ]] && echo 1 || echo 0)
-comment_is_new=$([[ -n "$last_comment_at" && "$last_comment_at" > "$last_request_at" ]] && echo 1 || echo 0)
+# 要求イベントを取得できないリポジトリでも周回を見失わないよう、多い方を周回数とする
+round=$(( request_count > review_count ? request_count : review_count ))
 
-if (( review_is_new )); then
+# 直近の要求より後に提出されたレビューだけを今周の応答とみなす
+# （ISO 8601 は文字列比較で時系列順。要求が無ければ最初のレビューが対象）
+if [[ -n "$last_review_at" && "$last_review_at" > "$last_request_at" ]]; then
   response=review
-elif (( comment_is_new )); then
-  response=comment
 else
   response=none
 fi
@@ -85,35 +84,31 @@ echo "ROUND: ${round}"
 echo "MAX_ROUNDS: ${MAX_ROUNDS}"
 echo "RESPONSE: ${response}"
 
-case "$response" in
-  review)
-    inline=$(sed -n 's/^INLINE_COMMENTS: //p' <<<"$latest")
-    suppressed=$(sed -n 's/^SUPPRESSED_COMMENTS: //p' <<<"$latest")
-    echo "REVIEW_ID: ${review_id}"
-    echo "HEADLINE: $(sed -n 's/^HEADLINE: //p' <<<"$latest")"
-    echo "INLINE_COMMENTS: ${inline}"
-    echo "SUPPRESSED_COMMENTS: ${suppressed}"
-    if (( inline > 0 )); then
-      if (( round < MAX_ROUNDS )); then
-        echo "VERDICT: REREVIEW"
-      else
-        echo "VERDICT: STOP_LIMIT"
-      fi
-    elif (( suppressed > 0 )); then
-      echo "VERDICT: STOP_SUPPRESSED_ONLY"
-    else
-      echo "VERDICT: STOP_CLEAN"
-    fi
-    if (( suppressed > 0 )); then
-      sed -n '/^--- suppressed ---$/,$p' <<<"$latest"
-    fi
-    ;;
-  comment)
-    echo "VERDICT: COMMENT_ONLY"
-    echo "--- comment ---"
-    jq -r '.[-1] | "\(.login) (\(.created_at)):\n\(.body)"' <<<"$copilot_comments"
-    ;;
-  none)
-    echo "VERDICT: WAITING"
-    ;;
-esac
+if [[ "$response" == "none" ]]; then
+  echo "VERDICT: WAITING"
+  exit 0
+fi
+
+failed=$(sed -n 's/^REVIEW_FAILED: //p' <<<"$latest")
+inline=$(sed -n 's/^INLINE_COMMENTS: //p' <<<"$latest")
+suppressed=$(sed -n 's/^SUPPRESSED_COMMENTS: //p' <<<"$latest")
+echo "REVIEW_ID: ${review_id}"
+echo "HEADLINE: $(sed -n 's/^HEADLINE: //p' <<<"$latest")"
+echo "INLINE_COMMENTS: ${inline}"
+echo "SUPPRESSED_COMMENTS: ${suppressed}"
+if [[ "$failed" == "yes" ]]; then
+  echo "VERDICT: REVIEW_FAILED"
+elif (( inline > 0 )); then
+  if (( round < MAX_ROUNDS )); then
+    echo "VERDICT: REREVIEW"
+  else
+    echo "VERDICT: STOP_LIMIT"
+  fi
+elif (( suppressed > 0 )); then
+  echo "VERDICT: STOP_SUPPRESSED_ONLY"
+else
+  echo "VERDICT: STOP_CLEAN"
+fi
+if (( suppressed > 0 )); then
+  sed -n '/^--- suppressed ---$/,$p' <<<"$latest"
+fi

@@ -31,15 +31,17 @@ PRについたレビューコメントを確認し、対応する。
   （GraphQL `reviewThreads` から。各コメントに `thread_id` / `is_resolved` / `is_outdated` /
   `user_type`（Bot / User）を含む）
 - `get-latest-review.sh <pr_number>` - 最新の Copilot レビューの要約を取得
-  （周回数 ROUND、インライン指摘数、Suppressed comments の本文。Step 6 の判定に使う）
+  （レビュー件数 ROUND、インライン指摘数、Suppressed comments の本文、
+  レビューできずに終わったレビューかの REVIEW_FAILED。Step 6 の判定に使う）
 - `reply-to-comment.sh <pr_number> <comment_id> <body>` - コメントに返信
 - `resolve-thread.sh <pr_number> <comment_id> [--allow-human]` - コメントを含むスレッドを resolve
   （GraphQL `resolveReviewThread`。人間が起こしたスレッドは既定で拒否する。
   生の `gh api graphql` による resolve は `guard-gh-api` hook が deny する）
 - `decide-next.sh <pr_number> [--max-rounds N]` - 周回数と直近の Copilot 応答から
   次の行動（VERDICT）を判定。Step 6 の分岐はこの出力に従う
-- `request-rereview.sh <pr_number> [commit_hash ...]` - @copilot に再レビューを依頼し、
-  依頼コメントの時刻を基準に応答を待つ（約10分。バックグラウンドで実行）
+- `request-rereview.sh <pr_number>` - requested_reviewers API で Copilot にレビューを
+  要求し、登録された review_requested の時刻を基準にレビューを待つ
+  （約10分。バックグラウンドで実行）
 
 判断はモデルが行い、取得・集計・状態判定はスクリプトに寄せる。手順中で
 「数える」「比べる」「探す」が必要な箇所は、記憶に頼らずスクリプトの出力を使う。
@@ -270,8 +272,10 @@ This is the same point as {前回の返信 URL}; the reasoning there still appli
 ### 6.1 再レビューを依頼するかの判定
 
 再レビューは毎周必ず新しい指摘を生みうるため、「指摘ゼロになるまで」を
-終了条件にすると収束しない。**周回数の上限は 5 周**（周回数 = 1 + 再レビュー
-依頼の回数。Copilot がコメントだけで応答した周も数える）。
+終了条件にすると収束しない。**周回数の上限は 5 周**（周回数 = Copilot への
+レビュー要求の件数と Copilot レビュー件数の多い方。レビュー要求には PR 作成時の
+自動要求を含む。要求イベントを伴わずにレビューが付くリポジトリでも周回を
+見失わないよう、多い方を採る）。
 
 判定はスクリプトに任せる:
 
@@ -281,19 +285,24 @@ This is the same point as {前回の返信 URL}; the reasoning there still appli
 
 `VERDICT` に従って分岐する:
 
-| VERDICT                | 意味                          | 対応                     | 再レビュー依頼         |
-| ---------------------- | ----------------------------- | ------------------------ | ---------------------- |
-| `REREVIEW`             | インライン指摘あり、ROUND < 5 | 対応・push               | **する** → 6.2 へ      |
-| `STOP_LIMIT`           | インライン指摘あり、ROUND = 5 | 対応・push               | **しない** → Step 7 へ |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ      | 対応・push               | **しない** → Step 7 へ |
-| `STOP_CLEAN`           | 指摘なし                      | —                        | しない → Step 7 へ     |
-| `COMMENT_ONLY`         | Copilot がコメントだけで応答  | 本文を読んで判定（下記） | 本文次第               |
-| `WAITING`              | 依頼後の応答が未着            | gh-wait-review.sh で待つ | —                      |
+| VERDICT                | 意味                               | 対応                     | 再レビュー依頼         |
+| ---------------------- | ---------------------------------- | ------------------------ | ---------------------- |
+| `REREVIEW`             | インライン指摘あり、ROUND < 5      | 対応・push               | **する** → 6.2 へ      |
+| `STOP_LIMIT`           | インライン指摘あり、ROUND = 5      | 対応・push               | **しない** → Step 7 へ |
+| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ           | 対応・push               | **しない** → Step 7 へ |
+| `STOP_CLEAN`           | 指摘なし                           | —                        | しない → Step 7 へ     |
+| `REVIEW_FAILED`        | Copilot がレビューできずに終わった | Step 7 で原因を診断      | 直せたら 6.2 へ        |
+| `WAITING`              | レビュー要求後のレビューが未着     | gh-wait-review.sh で待つ | —                      |
 
-`COMMENT_ONLY` はスクリプトでは判定できない唯一の分岐。出力された本文を読み、
-対応確認のみ（「対応を確認しました」「追加修正は不要」等）なら `STOP_CLEAN`
-相当、新しい指摘を含むなら `ROUND` を見て `REREVIEW` / `STOP_LIMIT` 相当として
-扱う。
+**Copilot の PR コメントはレビューではない**。`@copilot` メンションに応答するのは
+copilot-swe-agent（コーディングエージェント）で、「対応を確認しました」「追加修正は
+不要です」等のコメントを返しても copilot-pull-request-reviewer のレビューは提出
+されない。`decide-next.sh` はコメントを応答に数えないので、`WAITING` のときは
+コメントの有無にかかわらずレビューを待つ（来なければ Step 7 で原因を診断する）。
+
+`REVIEW_FAILED` は「Copilot wasn't able to review any files」等、レビュー本文だけが
+提出された状態。インライン指摘 0 件は `STOP_CLEAN` と同じだが、レビューされていない
+のでマージへ進んではいけない。
 
 Suppressed comments は Copilot 自身が低確度と判断したものなので、対応は
 するが再レビューで確認は求めない。上限到達時は、5 周目で見送った指摘を
@@ -301,39 +310,40 @@ Step 8 の完了報告に列挙してユーザーの判断に委ねる（自分�
 
 ### 6.2 再レビューの依頼
 
-pushしても再レビューは自動では走らないことがある。対応をプッシュしたら
-@copilot に再レビューを依頼し、応答を待つ:
+push しても再レビューは自動では走らない。対応をプッシュしたら Copilot に
+レビューを要求し、到着を待つ:
 
 ```bash
-# 依頼コメントを投稿し、その created_at を基準に応答を待つ（漸増バックオフで約10分）
+# requested_reviewers API で要求し、登録された review_requested の created_at を
+# 基準にレビューを待つ（漸増バックオフで約10分）
 # フォアグラウンドの最大タイムアウトを超えるため、シェルの & ではなく
 # Bashツールの run_in_background=true で実行する（完了時に通知される）
-~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {pr_number} {commit_hash...}
+~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {pr_number}
 ```
 
-依頼の投稿と待機を分けると、その間に届いた応答を取りこぼして約10分
+要求と待機を分けると、その間に届いたレビューを取りこぼして約10分
 タイムアウトする競合がある。必ずこのスクリプトで一体化して実行する。
 
 注意:
 
-- `requested_reviewers` API に `copilot-pull-request-reviewer[bot]` を渡す
-  方法は、bot が collaborator ではないリポジトリでは 422、自分に push 権限が
-  ないリポジトリ（fork からの upstream PR）では 404 で失敗する。
-  @copilot メンションコメントを使うこと
-- Copilot は正式なレビュー提出ではなく **PRコメントだけで応答する**ことが
-  ある（「対応を確認しました」等）。gh-wait-review.sh は両方を検出し、
-  コメント検出時は `NOTE:` 行を付けるので、内容を読んで対応要否を判断する
+- **`@copilot` メンションコメントでは再レビューは依頼できない**。応答するのは
+  copilot-swe-agent（コーディングエージェント）で、コメントを返すだけで
+  copilot-pull-request-reviewer のレビューは提出されない。2026-08-23 に依頼を
+  メンションへ切り替えて以降、このリポジトリの全 PR が 1 周で終わっていた
+- 要求に失敗したとき（fork からの upstream PR は push 権限がないので 404）は
+  スクリプトが理由を出して止まる。**フォールバックしない**。再レビューを
+  依頼できない状態なので、対応内容を PR コメントで伝えてレビュアーの判断を待つ
 - レビューボットによっては（例: Greptile）**指摘ゼロのとき何も投稿せず**
   check-run だけ成功させるため、gh-wait-review.sh はクリーンな結果でも
   タイムアウトする。タイムアウトを「トリガー失敗」と誤読せず、head SHA の
   check-run と未解決スレッド数で判断する
 
-応答が届いたら `decide-next.sh` を再実行し、6.1 の表に従う。新しいレビュー
+レビューが届いたら `decide-next.sh` を再実行し、6.1 の表に従う。新しいレビュー
 提出なら **周回の台帳（Step 8 の形式）を先に出力してから** Step 2 に戻る。
 台帳を周回ごとに残すのは、コンテキストが要約されても処置の履歴を失わず、
 Step 3.4 の同一指摘の判定と Step 8 の件数に使うため。`decide-next.sh` は直近の
-依頼より後に届いた応答だけを見るので、前回レビューの指摘を今周のものと
-取り違えることはない。
+レビュー要求より後に提出されたレビューだけを見るので、前回レビューの指摘を
+今周のものと取り違えることはない。
 
 ---
 
@@ -400,6 +410,7 @@ PR: {url}
 - Force push は避け、追加コミットで対応（レビュー履歴を保持）
 - 処置は fix / decline / escalate のいずれか。着手前に一次情報で前提を検証し、判断が付かなければ escalate
 - decline は事実に基づく根拠があるときだけ。根拠を返信に書く
+- 再レビューの依頼は requested_reviewers API のみ。`@copilot` メンションでは走らない
 - 再レビューは最大 5 周。Suppressed comments のみの周は対応して終了し、再レビューを依頼しない
 - 周回ごとに台帳を出力し、同じ指摘の再提起は数え直さない
 - レビュアーの意図が不明な場合は、修正前に確認コメントを投稿

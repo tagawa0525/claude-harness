@@ -3,9 +3,10 @@
 #
 # 実行: bash .claude/tests/scripts.sh
 # 対象: worktree-add.sh / rename-branch.sh / rename-plan.sh / git-info.sh /
-#       post-merge-cleanup.sh / gh-actions-diagnose.sh /
+#       post-merge-cleanup.sh / gh-actions-diagnose.sh / gh-wait-review.sh /
 #       language-checks/scripts/run-checks.sh /
-#       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread}.sh
+#       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread,
+#                            request-rereview,decide-next,get-latest-review}.sh
 #
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
@@ -592,5 +593,196 @@ fake_gh_threads "$THREADS"
 out=$("$REVIEW_SCRIPTS/resolve-thread.sh" 1 22 --allow-human)
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "-F id=T2"
+
+# ===========================================================================
+# gh-pr-review/scripts/request-rereview.sh: 再レビューはレビュー要求 API で依頼する
+# ===========================================================================
+# @copilot メンションコメントに応答するのは copilot-swe-agent（コーディング
+# エージェント）で、copilot-pull-request-reviewer のレビューは提出されない。
+# 依頼は requested_reviewers API に一本化し、要求が登録されたことを timeline の
+# review_requested イベントで確かめてから待機する
+
+REPO="$TEST_ROOT/rereview/app"
+make_repo "$REPO"
+make_remote "$REPO" github
+cd "$REPO" || exit 1
+
+# fake_gh_rereview: POST 後にだけ review_requested が現れる gh。
+# 引数に "nogrow" を渡すと POST しても timeline が増えない状況を作る
+fake_gh_rereview() {
+  local grow="${1:-grow}"
+  rm -f "$TEST_ROOT/requested"
+  local event="if [ -f \"$TEST_ROOT/requested\" ]; then echo 2026-09-08T00:00:00Z; fi"
+  [[ "$grow" == "nogrow" ]] && event=":"
+  make_fake_gh "\"auth status\"*) ;;
+  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) $event ;;
+  \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
+  \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
+  \"pr view 1 --json reviews\"*) echo 2026-09-08T00:05:00Z ;;"
+}
+
+it "request-rereview: requested_reviewers API で Copilot にレビューを要求する"
+fake_gh_rereview
+out=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "api -X POST repos/octo/repo/pulls/1/requested_reviewers"
+assert_contains "$(fake_log gh)" "reviewers[]=copilot-pull-request-reviewer[bot]"
+
+it "request-rereview: @copilot メンションコメントは投稿しない（応答するのは swe-agent でレビューは走らない）"
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+it "request-rereview: 登録された review_requested の時刻を基準に待機する"
+assert_contains "$out" "SINCE: 2026-09-08T00:00:00Z"
+assert_contains "$out" "新しいレビューが到着"
+
+it "request-rereview: review_requested が増えなければ待機せずエラーで止まる"
+fake_gh_rereview nogrow
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "ERROR"
+assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
+
+it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
+make_fake_gh "\"auth status\"*) ;;
+  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) ;;
+  \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 1 $?
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
+
+# ===========================================================================
+# gh-pr-review/scripts/decide-next.sh: 周回と応答はレビュー要求とレビュー提出で数える
+# ===========================================================================
+# Copilot のコメント（swe-agent の「対応を確認しました」等）はレビューではないので
+# 周回を終わらせない。数えるのは Copilot へのレビュー要求とレビュー提出だけにする
+
+# fake_gh_decide <review_submitted_at>: レビュー要求2件・レビュー1件の PR を模す gh。
+# swe-agent のコメントは（読みに行かないことの検証用に）応答しても構わない
+fake_gh_decide() {
+  make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
+  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo $1 ;;"
+}
+
+it "decide-next: ROUND は Copilot へのレビュー要求の件数で数える"
+fake_gh_decide 2026-09-08T03:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "ROUND: 2"
+
+it "decide-next: 最後の要求より後のレビューがあれば REREVIEW"
+assert_contains "$out" "RESPONSE: review"
+assert_contains "$out" "INLINE_COMMENTS: 2"
+assert_contains "$out" "VERDICT: REREVIEW"
+
+it "decide-next: 要求後にレビューが来ていなければ WAITING（Copilot のコメントは応答に数えない）"
+fake_gh_decide 2026-09-08T01:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "RESPONSE: none"
+assert_contains "$out" "VERDICT: WAITING"
+assert_not_contains "$out" "COMMENT_ONLY"
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+# ===========================================================================
+# gh-wait-review.sh: 待つのはレビュー提出だけ
+# ===========================================================================
+# Copilot のコメント（swe-agent の応答）で待機を打ち切ると、レビューが来ていないのに
+# 「応答あり」になる。待機間隔は GH_WAIT_INTERVALS で上書きできる（テスト用）
+
+REPO="$TEST_ROOT/wait/app"
+make_repo "$REPO"
+make_remote "$REPO" github
+cd "$REPO" || exit 1
+
+# fake_gh_wait <latest_review_at>
+fake_gh_wait() {
+  make_fake_gh "\"auth status\"*) ;;
+  \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
+  \"pr view 1 --json reviews\"*) echo $1 ;;"
+}
+
+it "gh-wait-review: 基準時刻より新しいレビュー提出で成功する"
+fake_gh_wait 2026-09-08T01:00:00Z
+out=$("$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 2026-09-08T00:00:00Z)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着"
+
+it "gh-wait-review: 新しいレビューが無ければタイムアウトする（Copilot のコメントは見ない）"
+fake_gh_wait 2026-09-08T00:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 2026-09-08T00:00:00Z)
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+# ===========================================================================
+# gh-pr-review/scripts/get-latest-review.sh: レビュー失敗を指摘ゼロと区別する
+# ===========================================================================
+# Copilot はレビューできなかったときも本文だけのレビューを提出する
+# （"Copilot wasn't able to review any files in this pull request."）。
+# インライン指摘 0 件なので、区別しないと「指摘なし」と同じ扱いでマージへ進む
+
+# fake_gh_review_body <body> [inline_ids...]
+# 本文はアポストロフィを含むため、偽 gh のソースに埋め込まず JSON ファイルから読ませる
+fake_gh_review_body() {
+  local body="$1"; shift
+  local ids="printf '%s\n' $*"
+  [[ $# -eq 0 ]] && ids=":"
+  jq -n --arg body "$body" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
+  make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
+  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+}
+
+it "get-latest-review: レビューできなかったレビューは REVIEW_FAILED: yes"
+fake_gh_review_body "Copilot wasn't able to review any files in this pull request."
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "REVIEW_FAILED: yes"
+
+it "get-latest-review: 通常のレビューは REVIEW_FAILED: no"
+fake_gh_review_body "### 🟡 Changes recommended" 101 102
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" 1)
+assert_contains "$out" "REVIEW_FAILED: no"
+assert_contains "$out" "INLINE_COMMENTS: 2"
+
+it "decide-next: レビュー失敗は指摘なし（STOP_CLEAN）と区別する"
+fake_gh_review_body "Copilot encountered an error and was unable to review this pull request."
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: REVIEW_FAILED"
+assert_not_contains "$out" "STOP_CLEAN"
+
+# ===========================================================================
+# timeline の取得失敗は「レビュー要求なし」と区別する
+# ===========================================================================
+# 取得できないまま空として続けると、要求が登録されているのに「登録されません
+# でした」と誤診したり、周回数を過少に見積もったりする。理由を出して止める
+
+# fake_gh_timeline_fails: timeline だけが失敗する gh
+fake_gh_timeline_fails() {
+  make_fake_gh "\"auth status\"*) ;;
+  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) echo 'gh: HTTP 502' >&2; exit 1 ;;"
+}
+
+it "request-rereview: timeline を取得できなければ理由を出して止まり、レビューを要求しない"
+fake_gh_timeline_fails
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "timeline"
+assert_not_contains "$(fake_log gh)" "requested_reviewers"
+
+it "decide-next: timeline を取得できなければ周回数を推測せず止まる"
+fake_gh_timeline_fails
+err=$("$REVIEW_SCRIPTS/decide-next.sh" 1 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "timeline"
+assert_not_contains "$err" "ROUND:"
 
 finish
