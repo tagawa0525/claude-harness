@@ -5,7 +5,8 @@
 # 対象: worktree-add.sh / rename-branch.sh / rename-plan.sh / git-info.sh /
 #       post-merge-cleanup.sh / gh-actions-diagnose.sh /
 #       language-checks/scripts/run-checks.sh /
-#       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread,request-rereview}.sh
+#       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread,
+#                            request-rereview,decide-next}.sh
 #
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
@@ -651,5 +652,40 @@ err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
 assert_eq 1 $?
 assert_not_contains "$(fake_log gh)" "issues/1/comments"
 assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
+
+# ===========================================================================
+# gh-pr-review/scripts/decide-next.sh: 周回と応答はレビュー要求とレビュー提出で数える
+# ===========================================================================
+# Copilot のコメント（swe-agent の「対応を確認しました」等）はレビューではないので
+# 周回を終わらせない。数えるのは Copilot へのレビュー要求とレビュー提出だけにする
+
+# fake_gh_decide <review_submitted_at>: レビュー要求2件・レビュー1件の PR を模す gh。
+# swe-agent のコメントは（読みに行かないことの検証用に）応答しても構わない
+fake_gh_decide() {
+  make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
+  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo $1 ;;"
+}
+
+it "decide-next: ROUND は Copilot へのレビュー要求の件数で数える"
+fake_gh_decide 2026-09-08T03:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "ROUND: 2"
+
+it "decide-next: 最後の要求より後のレビューがあれば REREVIEW"
+assert_contains "$out" "RESPONSE: review"
+assert_contains "$out" "INLINE_COMMENTS: 2"
+assert_contains "$out" "VERDICT: REREVIEW"
+
+it "decide-next: 要求後にレビューが来ていなければ WAITING（Copilot のコメントは応答に数えない）"
+fake_gh_decide 2026-09-08T01:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "RESPONSE: none"
+assert_contains "$out" "VERDICT: WAITING"
+assert_not_contains "$out" "COMMENT_ONLY"
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
 
 finish
