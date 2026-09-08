@@ -3,7 +3,7 @@
 #
 # 実行: bash .claude/tests/scripts.sh
 # 対象: worktree-add.sh / rename-branch.sh / rename-plan.sh / git-info.sh /
-#       post-merge-cleanup.sh / gh-actions-diagnose.sh /
+#       post-merge-cleanup.sh / gh-actions-diagnose.sh / gh-wait-review.sh /
 #       language-checks/scripts/run-checks.sh /
 #       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread,
 #                            request-rereview,decide-next}.sh
@@ -686,6 +686,37 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "RESPONSE: none"
 assert_contains "$out" "VERDICT: WAITING"
 assert_not_contains "$out" "COMMENT_ONLY"
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+# ===========================================================================
+# gh-wait-review.sh: 待つのはレビュー提出だけ
+# ===========================================================================
+# Copilot のコメント（swe-agent の応答）で待機を打ち切ると、レビューが来ていないのに
+# 「応答あり」になる。待機間隔は GH_WAIT_INTERVALS で上書きできる（テスト用）
+
+REPO="$TEST_ROOT/wait/app"
+make_repo "$REPO"
+make_remote "$REPO" github
+cd "$REPO" || exit 1
+
+# fake_gh_wait <latest_review_at>
+fake_gh_wait() {
+  make_fake_gh "\"auth status\"*) ;;
+  \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
+  \"pr view 1 --json reviews\"*) echo $1 ;;"
+}
+
+it "gh-wait-review: 基準時刻より新しいレビュー提出で成功する"
+fake_gh_wait 2026-09-08T01:00:00Z
+out=$("$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 2026-09-08T00:00:00Z)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着"
+
+it "gh-wait-review: 新しいレビューが無ければタイムアウトする（Copilot のコメントは見ない）"
+fake_gh_wait 2026-09-08T00:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 2026-09-08T00:00:00Z)
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
 assert_not_contains "$(fake_log gh)" "issues/1/comments"
 
 finish
