@@ -21,13 +21,13 @@ commit_file "$REPO" "a.txt" "feat: a"
 git -C "$REPO" push -q -u origin feat/x
 cd "$REPO" || exit 1
 
-GOOD_BODY='## 概要
+GOOD_BODY='## Summary
 x
 
-## 変更点
+## Changes
 - y
 
-## テスト
+## Tests
 - [ ] z'
 GOOD_CMD="gh pr create --title \"feat: x\" --body \"\$(cat <<'EOF'
 $GOOD_BODY
@@ -70,19 +70,31 @@ out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" --fill")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "--body"
 
-it "pre-pr-create: 本文に見出しが欠けていたら欠けた見出しを列挙して deny"
-out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" --body \"## 概要
+it "pre-pr-create: 本文に見出しが欠けていたら欠けた見出しを列挙して deny（見出しは常に英語）"
+out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" --body \"## Summary
 x\"")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "## 変更点"
-assert_contains "$(reason "$out")" "## テスト"
-assert_not_contains "$(reason "$out")" "## 概要"
+assert_contains "$(reason "$out")" "## Changes"
+assert_contains "$(reason "$out")" "## Tests"
+assert_not_contains "$(reason "$out")" "## Summary"
+
+it "pre-pr-create: 日本語の見出し（## 概要 / ## 変更点 / ## テスト）は受け付けない"
+out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" --body \"## 概要
+x
+
+## 変更点
+- y
+
+## テスト
+- z\"")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "## Summary"
 
 it "pre-pr-create: --body-file の内容で見出しを判定する"
 printf '%s\n' "$GOOD_BODY" > "$TEST_ROOT/body.md"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" --body-file $TEST_ROOT/body.md")
 assert_eq allow "$(decision "$out")"
-echo "## 概要" > "$TEST_ROOT/bad-body.md"
+echo "## Summary" > "$TEST_ROOT/bad-body.md"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" -F $TEST_ROOT/bad-body.md")
 assert_eq deny "$(decision "$out")"
 
@@ -413,12 +425,12 @@ git -C "$REPO" push -q -u origin feat/x 2>/dev/null || true
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq allow "$(decision "$out")"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" --body \"\$(cat <<'EOF'
-## 概要
+## Summary
 x
 EOF
 )\"")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "## 変更点"
+assert_contains "$(reason "$out")" "## Changes"
 
 it "heredoc: マージ本文がヒアドキュメントでも見出しを読める（pre-merge-check）"
 # make_fake_gh_merge <behind_by> [reviews]: マージ可能な PR #1 の gh 応答。
@@ -452,12 +464,12 @@ it "heredoc: 本文中の見出しでゲートを通せない（見出し検査�
 # ヒアドキュメント本文に「見出しの揃った例」を書いておき、実際の PR 本文には
 # 見出しを書かない。本文検査が本文の外まで拾うと、これで deny をすり抜けられる
 DECOY_CREATE="cat > doc.md <<'SENTINEL'
-gh pr create --title t --body \"## 概要 x ## 変更点 y ## テスト z\"
+gh pr create --title t --body \"## Summary x ## Changes y ## Tests z\"
 SENTINEL
 gh pr create --title \"feat: x\" --body \"見出しなし\""
 out=$(run_hook pre-pr-create-check "$DECOY_CREATE")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "## 概要"
+assert_contains "$(reason "$out")" "## Summary"
 
 DECOY_MERGE="cat > doc.md <<'SENTINEL'
 gh pr merge 1 --merge --delete-branch --body \"## Why x ## What y ## Impact z\"
