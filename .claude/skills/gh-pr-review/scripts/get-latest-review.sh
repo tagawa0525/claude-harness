@@ -4,7 +4,8 @@
 # Usage: get-latest-review.sh <pr_number>
 #
 # 出力（テキスト）:
-#   ROUND: <n>              PR 上の Copilot レビュー件数 = 現在の周回数
+#   ROUND: <n>              PR 上の Copilot レビュー件数（周回数そのものではない。
+#                           decide-next.sh がレビュー要求件数と突き合わせて周回を決める）
 #   REVIEW_ID: <id>
 #   STATE: <state>
 #   HEADLINE: <本文1行目>    例: "### 🟢 Approval recommended"

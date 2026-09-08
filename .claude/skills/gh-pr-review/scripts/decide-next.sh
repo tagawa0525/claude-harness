@@ -4,7 +4,9 @@
 # Usage: decide-next.sh <pr_number> [--max-rounds N]   (デフォルト 5)
 #
 # 出力（テキスト）:
-#   ROUND: <n>          Copilot へのレビュー要求の件数（PR 作成時の自動要求を含む）
+#   ROUND: <n>          周回数。Copilot へのレビュー要求の件数（PR 作成時の自動要求を
+#                       含む）と Copilot レビュー件数の多い方。要求イベントを伴わずに
+#                       レビューが付くリポジトリでも周回を見失わないため
 #   MAX_ROUNDS: <n>
 #   RESPONSE: review | none
 #                       直近のレビュー要求より後に提出された Copilot レビューの有無
