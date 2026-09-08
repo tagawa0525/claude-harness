@@ -6,7 +6,7 @@
 #       post-merge-cleanup.sh / gh-actions-diagnose.sh / gh-wait-review.sh /
 #       language-checks/scripts/run-checks.sh /
 #       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread,
-#                            request-rereview,decide-next}.sh
+#                            request-rereview,decide-next,get-latest-review}.sh
 #
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
@@ -718,5 +718,44 @@ out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 
 assert_eq 1 $?
 assert_contains "$out" "TIMEOUT"
 assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+# ===========================================================================
+# gh-pr-review/scripts/get-latest-review.sh: レビュー失敗を指摘ゼロと区別する
+# ===========================================================================
+# Copilot はレビューできなかったときも本文だけのレビューを提出する
+# （"Copilot wasn't able to review any files in this pull request."）。
+# インライン指摘 0 件なので、区別しないと「指摘なし」と同じ扱いでマージへ進む
+
+# fake_gh_review_body <body> [inline_ids...]
+# 本文はアポストロフィを含むため、偽 gh のソースに埋め込まず JSON ファイルから読ませる
+fake_gh_review_body() {
+  local body="$1"; shift
+  local ids="printf '%s\n' $*"
+  [[ $# -eq 0 ]] && ids=":"
+  jq -n --arg body "$body" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
+  make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
+  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+}
+
+it "get-latest-review: レビューできなかったレビューは REVIEW_FAILED: yes"
+fake_gh_review_body "Copilot wasn't able to review any files in this pull request."
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "REVIEW_FAILED: yes"
+
+it "get-latest-review: 通常のレビューは REVIEW_FAILED: no"
+fake_gh_review_body "### 🟡 Changes recommended" 101 102
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" 1)
+assert_contains "$out" "REVIEW_FAILED: no"
+assert_contains "$out" "INLINE_COMMENTS: 2"
+
+it "decide-next: レビュー失敗は指摘なし（STOP_CLEAN）と区別する"
+fake_gh_review_body "Copilot encountered an error and was unable to review this pull request."
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: REVIEW_FAILED"
+assert_not_contains "$out" "STOP_CLEAN"
 
 finish
