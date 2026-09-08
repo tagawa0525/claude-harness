@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn heredoc_inside_substitution_is_not_a_command() {
-        let src = "gh pr create --title \"feat: x\" --body \"$(cat <<'EOF'\n## 概要\ngit push origin main\nEOF\n)\"";
+        let src = "gh pr create --title \"feat: x\" --body \"$(cat <<'EOF'\n## Summary\ngit push origin main\nEOF\n)\"";
         let cs = cmds(src);
         let names: Vec<&str> = cs.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["gh", "cat"]);
@@ -319,7 +319,7 @@ mod tests {
             &["--body", "-b"],
         )
         .unwrap();
-        assert!(body.raw.contains("## 概要"));
+        assert!(body.raw.contains("## Summary"));
         assert!(!cs[0].has_error);
     }
 
