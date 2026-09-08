@@ -3,8 +3,9 @@
 //! gh-pr-create スキルの手順のうち、コマンド文字列と git の状態だけで決定的に判定できるものを
 //! ゲートにする（スキルを経由しない gh pr create にも効く）:
 //! 1. --title がある（--fill は使わない）。70 文字以内
-//! 2. --body / --body-file がある。本文に ## 概要 / ## 変更点 / ## テスト が揃っている
-//!    （--body を省くと gh がエディタを開き、Claude Code セッションでは固まる）
+//! 2. --body / --body-file がある。本文に ## Summary / ## Changes / ## Tests が揃っている
+//!    （見出しは常に英語。本文の言語は問わない。--body を省くと gh がエディタを開き、
+//!    Claude Code セッションでは固まる）
 //! 3. 現在のブランチに上流があり、未プッシュのコミットがない（--head 指定時は見ない）
 //! 4. --web を使わない（ブラウザを開かず URL を報告する）
 //!
@@ -109,9 +110,9 @@ impl Rule for PrePrCreateCheck {
             // --- 2. 本文 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
                 Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}")),
-                Ok(None) => reasons.push("--body または --body-file で PR 本文を指定してください（## 概要 / ## 変更点 / ## テスト）".to_string()),
+                Ok(None) => reasons.push("--body または --body-file で PR 本文を指定してください（## Summary / ## Changes / ## Tests）".to_string()),
                 Ok(Some(body)) => {
-                    let missing = missing_headings(&body, &["## 概要", "## 変更点", "## テスト"]);
+                    let missing = missing_headings(&body, &["## Summary", "## Changes", "## Tests"]);
                     if !missing.is_empty() {
                         reasons.push(format!("PR 本文に見出しがありません: {}", missing.join(" ")));
                     }
