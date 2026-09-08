@@ -54,7 +54,7 @@ git diff main..HEAD --stat
 
 ### PR本文テンプレート
 
-見出し `## Summary` / `## Changes` / `## Tests` は必須（欠けると hook が deny する）。見出しは常に英語で、本文は日本語でよい。上流のリポジトリへ fork から出す PR（`-R owner/repo --head my-account:branch`）は本文も英語:
+見出し `## Summary` / `## Changes` / `## Tests` は必須（欠けると hook が deny する）。hook が見るのは見出しだけで、本文の言語は問わない。同じリポジトリへの PR は本文を日本語で書き、上流のリポジトリへ fork から出す PR（`-R owner/repo --head my-account:branch`）は相手のリポジトリの言語（ふつう英語）で書く:
 
 ```markdown
 ## Summary
