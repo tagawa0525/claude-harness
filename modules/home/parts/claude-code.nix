@@ -10,6 +10,7 @@
   lib,
   claudeCodeSource ? null,
   mattpocock-skills ? null,
+  lsp-det ? null,
   ...
 }:
 
@@ -56,7 +57,9 @@ let
     autoUpdatesChannel = "stable";
     enabledPlugins = {
       "code-simplifier@claude-plugins-official" = true;
-      "rust-analyzer-lsp@claude-plugins-official" = true;
+      # lsp-det のドッグフーディング（~/.claude/skills/lsp-det-dogfood）と .rs を取り合う。
+      # 同じ拡張子は先に登録された方が勝ち、skills とマーケットプレイスの順序は文書化されていない
+      "rust-analyzer-lsp@claude-plugins-official" = false;
     };
     language = "Japanese";
     permissions = {
@@ -201,11 +204,22 @@ in
   # ===========================================================================
   # Claude Code パッケージ
   # ===========================================================================
-  home.packages = with pkgs; [
-    llm-agents.claude-code # Claude Code CLI（自動更新）
-    rsync # claude-sync スクリプトの実行時依存
-    gitleaks # block-secret-commit hook が git commit 前に機密情報を検査する
-  ];
+  home.packages =
+    with pkgs;
+    [
+      llm-agents.claude-code # Claude Code CLI（自動更新）
+      rsync # claude-sync スクリプトの実行時依存
+      gitleaks # block-secret-commit hook が git commit 前に機密情報を検査する
+      pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
+    ]
+    ++ lib.optional (lsp-det != null) lsp-det.packages.${pkgs.stdenv.hostPlatform.system}.default;
+
+  # lsp-det のドッグフーディングのプラグイン（flake input の固定 rev の dogfood/claude-plugin）。
+  # skills 直下のプラグインは Claude Code が毎回読む（lsp-det-dogfood@skills-dir）。
+  # 上流は .lsp.json が PATH に求める（rust-analyzer は各リポジトリの devShell、nixd はシステム、pyright は上）
+  home.file.".claude/skills/lsp-det-dogfood" = lib.mkIf (lsp-det != null) {
+    source = "${lsp-det}/dogfood/claude-plugin";
+  };
 
   # PreToolUse hook バイナリ（settings.json はこの固定パスを参照する）
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
