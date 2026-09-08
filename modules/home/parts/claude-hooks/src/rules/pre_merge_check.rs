@@ -184,10 +184,10 @@ impl Rule for PreMergeCheck {
                 .and_then(|s| serde_json::from_str(&s).ok());
 
             let mut head_sha = String::new();
-            if pr_meta.is_none() || owner.is_empty() || name.is_empty() {
-                reasons.push("PR 情報を取得できません（gh pr view が失敗。PR番号・認証・ネットワークを確認）".to_string());
-            } else {
-                let meta = pr_meta.as_ref().unwrap();
+            if let Some(meta) = pr_meta
+                .as_ref()
+                .filter(|_| !owner.is_empty() && !name.is_empty())
+            {
                 head_sha = meta["headRefOid"].as_str().unwrap_or("").to_string();
                 let check_runs = gh::gh(
                     &dir,
@@ -262,6 +262,8 @@ impl Rule for PreMergeCheck {
                             .to_string(),
                     ),
                 }
+            } else {
+                reasons.push("PR 情報を取得できません（gh pr view が失敗。PR番号・認証・ネットワークを確認）".to_string());
             }
 
             // --- 5. レビュー判定 ---

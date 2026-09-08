@@ -74,10 +74,10 @@ impl Shell {
     pub fn commands(&self) -> Vec<Cmd> {
         let mut out = Vec::new();
         self.walk(self.tree.root_node(), &mut |n| {
-            if n.kind() == "command" {
-                if let Some(c) = self.command(n) {
-                    out.push(c);
-                }
+            if n.kind() == "command"
+                && let Some(c) = self.command(n)
+            {
+                out.push(c);
             }
         });
         out
