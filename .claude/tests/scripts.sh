@@ -5,7 +5,7 @@
 # 対象: worktree-add.sh / rename-branch.sh / rename-plan.sh / git-info.sh /
 #       post-merge-cleanup.sh / gh-actions-diagnose.sh /
 #       language-checks/scripts/run-checks.sh /
-#       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread}.sh
+#       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread,request-rereview}.sh
 #
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
@@ -592,5 +592,64 @@ fake_gh_threads "$THREADS"
 out=$("$REVIEW_SCRIPTS/resolve-thread.sh" 1 22 --allow-human)
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "-F id=T2"
+
+# ===========================================================================
+# gh-pr-review/scripts/request-rereview.sh: 再レビューはレビュー要求 API で依頼する
+# ===========================================================================
+# @copilot メンションコメントに応答するのは copilot-swe-agent（コーディング
+# エージェント）で、copilot-pull-request-reviewer のレビューは提出されない。
+# 依頼は requested_reviewers API に一本化し、要求が登録されたことを timeline の
+# review_requested イベントで確かめてから待機する
+
+REPO="$TEST_ROOT/rereview/app"
+make_repo "$REPO"
+make_remote "$REPO" github
+cd "$REPO" || exit 1
+
+# fake_gh_rereview: POST 後にだけ review_requested が現れる gh。
+# 引数に "nogrow" を渡すと POST しても timeline が増えない状況を作る
+fake_gh_rereview() {
+  local grow="${1:-grow}"
+  rm -f "$TEST_ROOT/requested"
+  local event="if [ -f \"$TEST_ROOT/requested\" ]; then echo 2026-09-08T00:00:00Z; fi"
+  [[ "$grow" == "nogrow" ]] && event=":"
+  make_fake_gh "\"auth status\"*) ;;
+  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) $event ;;
+  \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
+  \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
+  \"pr view 1 --json reviews\"*) echo 2026-09-08T00:05:00Z ;;"
+}
+
+it "request-rereview: requested_reviewers API で Copilot にレビューを要求する"
+fake_gh_rereview
+out=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "api -X POST repos/octo/repo/pulls/1/requested_reviewers"
+assert_contains "$(fake_log gh)" "reviewers[]=copilot-pull-request-reviewer[bot]"
+
+it "request-rereview: @copilot メンションコメントは投稿しない（応答するのは swe-agent でレビューは走らない）"
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+it "request-rereview: 登録された review_requested の時刻を基準に待機する"
+assert_contains "$out" "SINCE: 2026-09-08T00:00:00Z"
+assert_contains "$out" "新しいレビューが到着"
+
+it "request-rereview: review_requested が増えなければ待機せずエラーで止まる"
+fake_gh_rereview nogrow
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "ERROR"
+assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
+
+it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
+make_fake_gh "\"auth status\"*) ;;
+  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) ;;
+  \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 1 $?
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 
 finish
