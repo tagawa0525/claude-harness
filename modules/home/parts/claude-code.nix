@@ -208,6 +208,8 @@ in
     with pkgs;
     [
       llm-agents.claude-code # Claude Code CLI（自動更新）
+      # Anthropic 公式の Linux 版 deb（downloads.claude.ai の APT）を展開したもの
+      llm-agents.claude-desktop # Claude Desktop（GUI、自動更新）
       rsync # claude-sync スクリプトの実行時依存
       gitleaks # block-secret-commit hook が git commit 前に機密情報を検査する
       pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
