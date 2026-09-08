@@ -23,10 +23,10 @@ fn runs_wait_script(cmd: &Cmd) -> bool {
     if SCRIPTS.contains(&basename(&cmd.name)) {
         return true;
     }
-    if cmd.name == "bash" || cmd.name == "sh" {
-        if let Some(first) = cmd.args.first() {
-            return SCRIPTS.contains(&basename(&first.text));
-        }
+    if (cmd.name == "bash" || cmd.name == "sh")
+        && let Some(first) = cmd.args.first()
+    {
+        return SCRIPTS.contains(&basename(&first.text));
     }
     false
 }
