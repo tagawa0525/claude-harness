@@ -485,6 +485,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/release%2Fx...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo abc ;;
   "api graphql"*) echo "[]" ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"

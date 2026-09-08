@@ -8,8 +8,9 @@
 //! 5. reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
 //! 6. 未解決のレビュースレッドがない
 //! 7. head が base（origin/main）より遅れていない（リベースしてからマージコミットする）
+//! 8. 最後の push が自動レビューを受けている（bot レビューの commit_id が head と一致）
 //!
-//! 1〜3 はコマンド文字列だけで判定する。4〜7 は gh で GitHub に問い合わせ、
+//! 1〜3 はコマンド文字列だけで判定する。4〜8 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
@@ -50,6 +51,11 @@ fn pr_ref(args: &[Arg]) -> Option<String> {
         }
     }
     None
+}
+
+/// SHA を短縮して読みやすくする（7 文字未満はそのまま）
+fn short(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
 }
 
 /// jq `@uri` と同じ集合（A-Za-z0-9 -_.~）以外をパーセントエンコードする
@@ -280,7 +286,7 @@ impl Rule for PreMergeCheck {
                     .and_then(|m| m["number"].as_u64())
                     .map(|n| n.to_string())
             });
-            match pr_number {
+            match pr_number.as_deref() {
                 None => reasons.push("対象 PR を特定できません（PR番号を指定するか、PR のあるブランチで実行してください）".to_string()),
                 Some(number) => {
                     let unresolved = gh::gh(
@@ -357,6 +363,50 @@ impl Rule for PreMergeCheck {
                     None => reasons.push("base ブランチとの差を確認できません（compare API が失敗）".to_string()),
                     Some(n) if n > 0 => reasons.push(format!(
                         "head が {base_ref} より {n} コミット遅れています。origin/{base_ref} にリベースして --force-with-lease で push し直してからマージしてください"
+                    )),
+                    Some(_) => {}
+                }
+            }
+
+            // --- 8. 最後の push がレビュー済みか ---
+            // push だけでは再レビューは走らない（requested_reviewers での依頼が要る）。
+            // 依頼を忘れるとレビューされていない版をマージできてしまうため、bot が
+            // レビューした commit と head SHA の一致で機械的に確かめる。
+            // bot レビューが 1 件も無いリポジトリ（自動レビュー未設定）では検査しない
+            if let Some(number) = pr_number
+                .as_deref()
+                .filter(|_| !owner.is_empty() && !name.is_empty() && !head_sha.is_empty())
+            {
+                let reviewed = gh::gh(
+                    &dir,
+                    &[
+                        "api",
+                        "--paginate",
+                        &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
+                        "--jq",
+                        "[.[] | select(.user.type == \"Bot\") | .commit_id] | last // \"\"",
+                    ],
+                )
+                .ok()
+                // --paginate はページごとに --jq を適用するため複数行になりうる。
+                // レビューは提出順に返るので最後の非空行が最新の bot レビュー
+                .map(|s| {
+                    s.lines()
+                        .map(str::trim)
+                        .rfind(|l| !l.is_empty())
+                        .unwrap_or("")
+                        .to_string()
+                });
+                match reviewed {
+                    None => reasons.push(
+                        "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
+                            .to_string(),
+                    ),
+                    Some(sha) if sha.is_empty() => {}
+                    Some(sha) if sha != head_sha => reasons.push(format!(
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください",
+                        short(&head_sha),
+                        short(&sha)
                     )),
                     Some(_) => {}
                 }
