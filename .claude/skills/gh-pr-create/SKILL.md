@@ -54,16 +54,16 @@ git diff main..HEAD --stat
 
 ### PR本文テンプレート
 
-見出し `## 概要` / `## 変更点` / `## テスト` は必須（欠けると hook が deny する）:
+見出し `## Summary` / `## Changes` / `## Tests` は必須（欠けると hook が deny する）。見出しは常に英語で、本文は日本語でよい。上流のリポジトリへ fork から出す PR（`-R owner/repo --head my-account:branch`）は本文も英語:
 
 ```markdown
-## 概要
+## Summary
 [変更内容の要約]
 
-## 変更点
+## Changes
 - [主要な変更点をリスト]
 
-## テスト
+## Tests
 - [ ] 動作確認済み
 - [ ] テスト追加/更新済み
 ```
@@ -77,13 +77,13 @@ git diff main..HEAD --stat
 
 ```bash
 gh pr create --title "[タイトル]" --body "$(cat <<'EOF'
-## 概要
+## Summary
 [要約]
 
-## 変更点
+## Changes
 - [変更点]
 
-## テスト
+## Tests
 - [ ] 動作確認済み
 EOF
 )"
