@@ -421,8 +421,11 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "## 変更点"
 
 it "heredoc: マージ本文がヒアドキュメントでも見出しを読める（pre-merge-check）"
-# make_fake_gh_merge <behind_by>: マージ可能な PR #1 の gh 応答。compare は base...head の遅れを返す
+# make_fake_gh_merge <behind_by> [reviews]: マージ可能な PR #1 の gh 応答。
+# compare は base...head の遅れを、reviews は最新の bot レビューが見た commit を返す
+# （既定は head と同じ abc = 最後の push がレビュー済み）
 make_fake_gh_merge() {
+  local reviews="${2:-echo abc}"
   make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
@@ -430,6 +433,7 @@ make_fake_gh_merge() {
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) '"$1"' ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviews"' ;;
   "api graphql"*) echo "[]" ;;'
 }
 make_fake_gh_merge 'echo 0'
@@ -481,6 +485,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/release%2Fx...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo abc ;;
   "api graphql"*) echo "[]" ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
@@ -751,5 +756,35 @@ assert_eq "" "$out"
 it "guard-gh-api: 説明文の中の resolveReviewThread や actions/permissions には反応しない"
 out=$(run_hook guard-gh-api "$(write_doc 'resolveReviewThread は gh api で叩かない。actions/permissions も PUT しない')")
 assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# pre-merge-check: 最後の push が自動レビューを受けているか
+# ===========================================================================
+# push しても再レビューは走らない（依頼して初めて走る）。依頼を忘れると
+# 「レビューされていない版」をマージできてしまうため、bot レビューが見た
+# commit と head SHA の一致を機械的に確かめる
+
+it "pre-merge-check: 最後の push がレビューされていなければ deny し、再レビュー依頼を促す"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビュー"
+assert_contains "$(reason "$out")" "request-rereview.sh"
+
+it "pre-merge-check: bot のレビューが head を見ていればマージできる"
+make_fake_gh_merge 'echo 0' 'echo abc'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: bot のレビューが 1 件も無いリポジトリではこの検査をしない"
+make_fake_gh_merge 'echo 0' 'echo ""'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: レビュー一覧を取得できなければ deny"
+make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit 1'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "確認できません"
 
 finish
