@@ -758,4 +758,31 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "VERDICT: REVIEW_FAILED"
 assert_not_contains "$out" "STOP_CLEAN"
 
+# ===========================================================================
+# timeline の取得失敗は「レビュー要求なし」と区別する
+# ===========================================================================
+# 取得できないまま空として続けると、要求が登録されているのに「登録されません
+# でした」と誤診したり、周回数を過少に見積もったりする。理由を出して止める
+
+# fake_gh_timeline_fails: timeline だけが失敗する gh
+fake_gh_timeline_fails() {
+  make_fake_gh "\"auth status\"*) ;;
+  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/issues/1/timeline\"*) echo 'gh: HTTP 502' >&2; exit 1 ;;"
+}
+
+it "request-rereview: timeline を取得できなければ理由を出して止まり、レビューを要求しない"
+fake_gh_timeline_fails
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "timeline"
+assert_not_contains "$(fake_log gh)" "requested_reviewers"
+
+it "decide-next: timeline を取得できなければ周回数を推測せず止まる"
+fake_gh_timeline_fails
+err=$("$REVIEW_SCRIPTS/decide-next.sh" 1 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "timeline"
+assert_not_contains "$err" "ROUND:"
+
 finish
