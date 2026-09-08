@@ -184,9 +184,9 @@ impl Rule for PreMergeCheck {
                 .and_then(|s| serde_json::from_str(&s).ok());
 
             let mut head_sha = String::new();
-            if let Some(meta) = pr_meta
-                .as_ref()
-                .filter(|_| !owner.is_empty() && !name.is_empty())
+            if !owner.is_empty()
+                && !name.is_empty()
+                && let Some(meta) = pr_meta.as_ref()
             {
                 head_sha = meta["headRefOid"].as_str().unwrap_or("").to_string();
                 let check_runs = gh::gh(
@@ -338,9 +338,9 @@ impl Rule for PreMergeCheck {
             }
 
             // --- 7. base からの遅れ ---
-            if let Some(meta) = pr_meta
-                .as_ref()
-                .filter(|_| !owner.is_empty() && !name.is_empty())
+            if !owner.is_empty()
+                && !name.is_empty()
+                && let Some(meta) = pr_meta.as_ref()
             {
                 let base_ref = meta["baseRefName"].as_str().unwrap_or("").to_string();
                 let behind = if base_ref.is_empty() || head_sha.is_empty() {
@@ -375,9 +375,10 @@ impl Rule for PreMergeCheck {
             // 依頼を忘れるとレビューされていない版をマージできてしまうため、bot が
             // レビューした commit と head SHA の一致で機械的に確かめる。
             // bot レビューが 1 件も無いリポジトリ（自動レビュー未設定）では検査しない
-            if let Some(number) = pr_number
-                .as_deref()
-                .filter(|_| !owner.is_empty() && !name.is_empty() && !head_sha.is_empty())
+            if !owner.is_empty()
+                && !name.is_empty()
+                && !head_sha.is_empty()
+                && let Some(number) = pr_number.as_deref()
             {
                 let reviewed = gh::gh(
                     &dir,
