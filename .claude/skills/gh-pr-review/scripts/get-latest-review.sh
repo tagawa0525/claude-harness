@@ -8,6 +8,7 @@
 #   REVIEW_ID: <id>
 #   STATE: <state>
 #   HEADLINE: <本文1行目>    例: "### 🟢 Approval recommended"
+#   REVIEW_FAILED: yes|no   Copilot がレビューできずに終わったレビューか
 #   INLINE_COMMENTS: <n>    このレビューに紐づくインラインコメント数（通常の指摘）
 #   SUPPRESSED_COMMENTS: <n>
 #   --- suppressed ---      以降、Suppressed comments セクションの本文
@@ -15,6 +16,10 @@
 # Suppressed comments は Copilot が低確度と判断した指摘で、インラインスレッドには
 # ならずレビュー本文の <details> 内にだけ現れる。get-review-comments.sh では
 # 取得できないため、このスクリプトで別途読む。
+#
+# Copilot はレビューできなかったときも本文だけのレビューを提出する
+# （"Copilot wasn't able to review any files in this pull request." など）。
+# インライン指摘は 0 件なので、区別しないと「指摘なし」と同じ扱いになる。
 
 set -euo pipefail
 
@@ -60,10 +65,18 @@ suppressed=$(awk '
 suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" \
   | head -n 1 | grep -o -E '[0-9]+' || echo 0)
 
+# レビュー失敗は本文1行目に出る（インライン指摘もサマリーも無い）
+review_failed=no
+if head -n 1 <<<"$body" \
+   | grep -q -i -E "(wasn'?t able to review|unable to review|encountered an error)"; then
+  review_failed=yes
+fi
+
 echo "ROUND: ${round}"
 echo "REVIEW_ID: ${review_id}"
 echo "STATE: ${state}"
 echo "HEADLINE: $(head -n 1 <<<"$body")"
+echo "REVIEW_FAILED: ${review_failed}"
 echo "INLINE_COMMENTS: ${inline_count}"
 echo "SUPPRESSED_COMMENTS: ${suppressed_count}"
 if (( suppressed_count > 0 )); then

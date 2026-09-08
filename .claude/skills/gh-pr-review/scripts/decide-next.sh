@@ -16,6 +16,8 @@
 #                          残指摘を完了報告に列挙してユーザー判断に委ねる
 #     STOP_SUPPRESSED_ONLY Suppressed comments のみ → 対応するが再レビューは依頼しない
 #     STOP_CLEAN           指摘なし → マージへ
+#     REVIEW_FAILED        Copilot がレビューできずに終わった → 原因を調べて依頼し直す
+#                          （指摘ゼロと同じ見た目になるため別扱いにする）
 #     WAITING              要求後のレビューがまだ無い → gh-wait-review.sh で待つ
 #   --- suppressed --- 以降に本文
 #
@@ -81,13 +83,16 @@ if [[ "$response" == "none" ]]; then
   exit 0
 fi
 
+failed=$(sed -n 's/^REVIEW_FAILED: //p' <<<"$latest")
 inline=$(sed -n 's/^INLINE_COMMENTS: //p' <<<"$latest")
 suppressed=$(sed -n 's/^SUPPRESSED_COMMENTS: //p' <<<"$latest")
 echo "REVIEW_ID: ${review_id}"
 echo "HEADLINE: $(sed -n 's/^HEADLINE: //p' <<<"$latest")"
 echo "INLINE_COMMENTS: ${inline}"
 echo "SUPPRESSED_COMMENTS: ${suppressed}"
-if (( inline > 0 )); then
+if [[ "$failed" == "yes" ]]; then
+  echo "VERDICT: REVIEW_FAILED"
+elif (( inline > 0 )); then
   if (( round < MAX_ROUNDS )); then
     echo "VERDICT: REREVIEW"
   else
