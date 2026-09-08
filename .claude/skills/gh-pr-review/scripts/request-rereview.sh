@@ -40,13 +40,19 @@ REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
 # Copilot 宛て review_requested のうち最新の created_at（無ければ空）。
 # レビュアーのログイン表記は API により Copilot / copilot-pull-request-reviewer[bot] と
 # 揺れるため、Bot 種別かつ login に copilot を含むもので判定する
+# 取得に失敗したら空を返さず止める。空扱いで続けると、要求が登録されているのに
+# 「登録されませんでした」と誤診する
 latest_request_at() {
-  gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/timeline?per_page=100" \
+  local events
+  if ! events=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/timeline?per_page=100" \
     --jq '.[] | select(.event == "review_requested"
                        and (.requested_reviewer.type? // "") == "Bot"
                        and ((.requested_reviewer.login? // "") | ascii_downcase | test("copilot")))
-             | .created_at' \
-    | tail -n 1
+             | .created_at'); then
+    echo "ERROR: PR #${PR_NUMBER} の timeline を取得できませんでした（レビュー要求の登録を確認できません）" >&2
+    return 1
+  fi
+  tail -n 1 <<<"$events"
 }
 
 before=$(latest_request_at)
