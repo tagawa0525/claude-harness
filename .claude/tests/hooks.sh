@@ -147,10 +147,11 @@ long_title="fix(typescript): surface a tsserver crash on every cross-file query,
 out=$(run_hook pre-pr-create-check "gh pr create --repo example/theirs --head me:fix/theirs --title \"$long_title\" --body \"$THEIR_BODY\"")
 assert_eq allow "$(decision "$out")"
 
-it "pre-pr-create: fork でも --body / --body-file がなければ deny"
+it "pre-pr-create: fork でも --body / --body-file がなければ deny（見出しは求めない）"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"$long_title\" --fill")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "--body"
+assert_contains "$(reason "$out")" "上流の PR template"
 
 it "pre-pr-create: fork でも --web は deny"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"$long_title\" --body \"$THEIR_BODY\" --web")

@@ -119,6 +119,7 @@ impl Rule for PrePrCreateCheck {
             // --- 2. 本文 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
                 Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}")),
+                Ok(None) if fork => reasons.push("--body または --body-file で PR 本文を指定してください（上流の PR template に合わせる。省くと gh がエディタを開いて固まる）".to_string()),
                 Ok(None) => reasons.push("--body または --body-file で PR 本文を指定してください（## Summary / ## Changes / ## Tests）".to_string()),
                 Ok(Some(body)) if !fork => {
                     let missing = missing_headings(&body, &["## Summary", "## Changes", "## Tests"]);
