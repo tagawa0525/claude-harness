@@ -105,7 +105,8 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                 | git-branch                           |
 | `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → ローカル/リモートブランチ削除         | gh-pr-merge                          |
 | `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）          | gh-actions-check                     |
-| `scripts/gh-wait-review.sh`             | レビュー到着の待機                                                  | gh-pr-create/merge/review            |
+| `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                      | gh-pr-create/merge/review            |
+| `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                        | gh-wait-review, gh-pr-review         |
 | `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                      | gh-pr-review（language-checks 経由） |
 | `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                 | gh-pr-review                         |
 
