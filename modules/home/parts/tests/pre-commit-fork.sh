@@ -105,6 +105,12 @@ if run_hook "$FORK"; then
   else
     ng "fork なのにステージ済みの README.md が書き換えられた"
   fi
+  staged_py=$(git -C "$FORK" show :bad.py; printf x); staged_py=${staged_py%x}
+  if [[ "$staged_py" == "$BAD_PY" ]]; then
+    ok "fork ではステージ済みの bad.py も 1 バイトも変わらない（将来の自動修正の見逃しを防ぐ）"
+  else
+    ng "fork なのにステージ済みの bad.py が書き換えられた"
+  fi
   if grep -q "飛ばします" "$WORK/out"; then
     ok "fork では検査を飛ばした旨を出力する"
   else
