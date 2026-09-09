@@ -810,6 +810,21 @@ assert_contains "$(reason "$out")" "レビューが実行されていません"
 assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=1"
 assert_not_contains "$(reason "$out")" "失敗したチェックがあります"
 
+it "pre-merge-check: レビューが 1 件も無くてもチェックが失敗していれば止める"
+# 初回レビューがトークン枯渇で落ちた PR。レビュー 0 件なので commit_id の比較では
+# 検出できないが、レビュー未実施であることに変わりはない
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo "" ;;
+  "api graphql"*) echo "[]" ;;'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビューが実行されていません"
+
 it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=1 なら未レビューの head でもマージできる"
 out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=1 $MERGE_CMD")
 assert_eq allow "$(decision "$out")"

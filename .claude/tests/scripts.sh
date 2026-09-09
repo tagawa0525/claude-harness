@@ -661,6 +661,7 @@ assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 
 # 未解決／解決済みのレビュースレッド（GraphQL reviewThreads の 1 ノード）
 OPEN_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
+OPEN_THREAD_WITH_REPLY='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null},{"databaseId":12,"id":"C2","body":"Fixed in abc","author":{"__typename":"User","login":"me"},"createdAt":"2026-09-08T02:40:00Z","url":"u2","replyTo":{"databaseId":11}}]}}'
 DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
 
 # fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread]
@@ -692,6 +693,13 @@ fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD"
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "UNRESOLVED: 1"
 assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: UNRESOLVED はスレッド数（返信を数えない）"
+# get-review-comments.sh はスレッド内のコメントをフラットに返すので、
+# 素朴に数えると返信の分だけ多くなる
+fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD_WITH_REPLY"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "UNRESOLVED: 1"
 
 it "decide-next: 対応を push したのに要求していなければ REREVIEW_NEEDED（レビューのし忘れ）"
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
