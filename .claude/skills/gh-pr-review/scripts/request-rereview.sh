@@ -37,19 +37,17 @@ fi
 
 REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
 
-# Copilot 宛て review_requested のうち最新の created_at（無ければ空）。
-# レビュアーのログイン表記は API により Copilot / copilot-pull-request-reviewer[bot] と
-# 揺れるため、Bot 種別かつ login に copilot を含むもので判定する
+# 共有スクリプトは自身の位置から相対で解決する（<root>/skills/gh-pr-review/scripts → <root>/scripts）
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REQUESTS_SCRIPT="${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh"
+
+# Copilot 宛てレビュー要求のうち最新の created_at（無ければ空）。
 # 取得に失敗したら空を返さず止める。空扱いで続けると、要求が登録されているのに
 # 「登録されませんでした」と誤診する
 latest_request_at() {
   local events
-  if ! events=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/timeline?per_page=100" \
-    --jq '.[] | select(.event == "review_requested"
-                       and (.requested_reviewer.type? // "") == "Bot"
-                       and ((.requested_reviewer.login? // "") | ascii_downcase | test("copilot")))
-             | .created_at'); then
-    echo "ERROR: PR #${PR_NUMBER} の timeline を取得できませんでした（レビュー要求の登録を確認できません）" >&2
+  if ! events=$("$REQUESTS_SCRIPT" "$PR_NUMBER"); then
+    echo "ERROR: PR #${PR_NUMBER} のレビュー要求を取得できませんでした（登録を確認できません）" >&2
     return 1
   fi
   tail -n 1 <<<"$events"
@@ -75,10 +73,8 @@ fi
 echo "REQUESTED: ${REVIEWER}"
 echo "SINCE: ${after}"
 
-# 共有スクリプトは自身の位置から相対で解決する（<root>/skills/gh-pr-review/scripts → <root>/scripts）。
 # リポジトリの .claude/ と配備先の ~/.claude/ は同じ構造なので、どちらから実行しても
 # 同じ版の gh-wait-review.sh が使われる（$HOME 固定だと未同期の旧版を呼びうる）
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WAIT_SCRIPT="${SCRIPT_DIR}/../../../scripts/gh-wait-review.sh"
 if [[ ! -x "$WAIT_SCRIPT" ]]; then
   echo "ERROR: gh-wait-review.sh が見つかりません: ${WAIT_SCRIPT}" >&2

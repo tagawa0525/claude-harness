@@ -616,7 +616,7 @@ fake_gh_rereview() {
   [[ "$grow" == "nogrow" ]] && event=":"
   make_fake_gh "\"auth status\"*) ;;
   \"repo view --json nameWithOwner\"*) echo octo/repo ;;
-  \"api --paginate repos/octo/repo/issues/1/timeline\"*) $event ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $event ;;
   \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
   \"pr view 1 --json reviews\"*) echo 2026-09-08T00:05:00Z ;;"
@@ -646,7 +646,7 @@ assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
 make_fake_gh "\"auth status\"*) ;;
   \"repo view --json nameWithOwner\"*) echo octo/repo ;;
-  \"api --paginate repos/octo/repo/issues/1/timeline\"*) ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) ;;
   \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
 assert_eq 1 $?
@@ -663,7 +663,7 @@ assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 # swe-agent のコメントは（読みに行かないことの検証用に）応答しても構わない
 fake_gh_decide() {
   make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
-  \"api --paginate repos/octo/repo/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
   \"api repos/octo/repo/pulls/1/reviews/9\"*) echo $1 ;;"
@@ -764,7 +764,7 @@ fake_gh_review_body() {
   \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
   \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z ;;
-  \"api --paginate repos/octo/repo/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
 }
 
 it "get-latest-review: レビューできなかったレビューは REVIEW_FAILED: yes"
@@ -786,30 +786,30 @@ assert_contains "$out" "VERDICT: REVIEW_FAILED"
 assert_not_contains "$out" "STOP_CLEAN"
 
 # ===========================================================================
-# timeline の取得失敗は「レビュー要求なし」と区別する
+# レビュー要求の取得失敗は「要求なし」と区別する
 # ===========================================================================
 # 取得できないまま空として続けると、要求が登録されているのに「登録されません
 # でした」と誤診したり、周回数を過少に見積もったりする。理由を出して止める
 
-# fake_gh_timeline_fails: timeline だけが失敗する gh
+# fake_gh_timeline_fails: レビュー要求（timeline）の取得だけが失敗する gh
 fake_gh_timeline_fails() {
   make_fake_gh "\"auth status\"*) ;;
   \"repo view --json nameWithOwner\"*) echo octo/repo ;;
-  \"api --paginate repos/octo/repo/issues/1/timeline\"*) echo 'gh: HTTP 502' >&2; exit 1 ;;"
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 'gh: HTTP 502' >&2; exit 1 ;;"
 }
 
-it "request-rereview: timeline を取得できなければ理由を出して止まり、レビューを要求しない"
+it "request-rereview: レビュー要求を取得できなければ理由を出して止まり、要求もしない"
 fake_gh_timeline_fails
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
 assert_eq 1 $?
-assert_contains "$err" "timeline"
+assert_contains "$err" "レビュー要求"
 assert_not_contains "$(fake_log gh)" "requested_reviewers"
 
-it "decide-next: timeline を取得できなければ周回数を推測せず止まる"
+it "decide-next: レビュー要求を取得できなければ周回数を推測せず止まる"
 fake_gh_timeline_fails
 err=$("$REVIEW_SCRIPTS/decide-next.sh" 1 2>&1)
 assert_eq 1 $?
-assert_contains "$err" "timeline"
+assert_contains "$err" "レビュー要求"
 assert_not_contains "$err" "ROUND:"
 
 finish
