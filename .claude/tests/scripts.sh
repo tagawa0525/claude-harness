@@ -659,14 +659,25 @@ assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 # Copilot のコメント（swe-agent の「対応を確認しました」等）はレビューではないので
 # 周回を終わらせない。数えるのは Copilot へのレビュー要求とレビュー提出だけにする
 
-# fake_gh_decide <review_submitted_at>: レビュー要求2件・レビュー1件の PR を模す gh。
-# swe-agent のコメントは（読みに行かないことの検証用に）応答しても構わない
+# 未解決／解決済みのレビュースレッド（GraphQL reviewThreads の 1 ノード）
+OPEN_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
+OPEN_THREAD_WITH_REPLY='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null},{"databaseId":12,"id":"C2","body":"Fixed in abc","author":{"__typename":"User","login":"me"},"createdAt":"2026-09-08T02:40:00Z","url":"u2","replyTo":{"databaseId":11}}]}}'
+DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
+
+# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread]
+# レビュー要求2件・レビュー1件（インライン指摘2件）の PR を模す。
+# 既定では head とレビュー対象が一致し、スレッドは解決済み
 fake_gh_decide() {
+  local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
   make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"repo view --json owner\"*) echo octo ;;
+  \"repo view --json name\"*) echo repo ;;
+  \"pr view 1 --json headRefOid\"*) echo $head ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
-  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo $1 ;;"
+  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo \"$1 $reviewed\" ;;
+  \"api graphql --paginate\"*) echo '$thread' ;;"
 }
 
 it "decide-next: ROUND は Copilot へのレビュー要求の件数で数える"
@@ -674,11 +685,49 @@ fake_gh_decide 2026-09-08T03:00:00Z
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_eq 0 $?
 assert_contains "$out" "ROUND: 2"
-
-it "decide-next: 最後の要求より後のレビューがあれば REREVIEW"
 assert_contains "$out" "RESPONSE: review"
 assert_contains "$out" "INLINE_COMMENTS: 2"
-assert_contains "$out" "VERDICT: REREVIEW"
+
+it "decide-next: 未解決スレッドがあれば ACT（対応する）"
+fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "UNRESOLVED: 1"
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: UNRESOLVED はスレッド数（返信を数えない）"
+# get-review-comments.sh はスレッド内のコメントをフラットに返すので、
+# 素朴に数えると返信の分だけ多くなる
+fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD_WITH_REPLY"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "UNRESOLVED: 1"
+
+it "decide-next: 未解決が残っていれば、push 済みでもまず ACT（対応が先）"
+# 一部だけ直して push した状態。未対応のまま再レビューを要求しない
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "UNRESOLVED: 1"
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: 対応を push したのに要求していなければ REREVIEW_NEEDED（レビューのし忘れ）"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: 周回上限に達していれば要求せず STOP_LIMIT"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1 --max-rounds 2)
+assert_contains "$out" "VERDICT: STOP_LIMIT"
+
+it "decide-next: 指摘に対応済み（未解決ゼロ・head レビュー済み）なら STOP_DECLINED"
+# 全件 decline のように push を伴わない対応で終わった周。再度要求しても同じ
+# レビューが返るだけなので、依頼せず終了する
+fake_gh_decide 2026-09-08T03:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "HEAD_REVIEWED: yes"
+assert_contains "$out" "UNRESOLVED: 0"
+assert_contains "$out" "VERDICT: STOP_DECLINED"
 
 it "decide-next: 要求後にレビューが来ていなければ WAITING（Copilot のコメントは応答に数えない）"
 fake_gh_decide 2026-09-08T01:00:00Z
@@ -784,9 +833,13 @@ fake_gh_review_body() {
   [[ $# -eq 0 ]] && ids=":"
   jq -n --arg body "$body" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
   make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"repo view --json owner\"*) echo octo ;;
+  \"repo view --json name\"*) echo repo ;;
+  \"pr view 1 --json headRefOid\"*) echo abc1234 ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
-  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z ;;
+  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
 }
 
