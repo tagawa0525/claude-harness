@@ -2,16 +2,22 @@
 //!
 //! gh-pr-create スキルの手順のうち、コマンド文字列と git の状態だけで決定的に判定できるものを
 //! ゲートにする（スキルを経由しない gh pr create にも効く）:
-//! 1. --title がある（--fill は使わない）。70 文字以内
-//! 2. --body / --body-file がある。本文に ## Summary / ## Changes / ## Tests が揃っている
-//!    （見出しは常に英語。本文の言語は問わない。--body を省くと gh がエディタを開き、
-//!    Claude Code セッションでは固まる）
+//! 1. --title がある（--fill は使わない）。fork でなければ 70 文字以内
+//! 2. --body / --body-file がある。fork でなければ本文に ## Summary / ## Changes / ## Tests が
+//!    揃っている（見出しは常に英語。本文の言語は問わない。--body を省くと gh がエディタを
+//!    開き、Claude Code セッションでは固まる）
 //! 3. 現在のブランチに上流があり、未プッシュのコミットがない（--head 指定時は見ない）
 //! 4. --web を使わない（ブラウザを開かず URL を報告する）
 //!
 //! 本文の見出しは `--body` 引数ノードの原文（ヒアドキュメント本文を含む）だけを見る。
 //! 別のヒアドキュメントに書かれた見出しの例でゲートを通すことはできない。
 //! エスケープは設けない（いずれも満たしてから実行し直せばよい）
+//!
+//! `upstream` リモートのある clone（他人のプロジェクトの fork。上流に PR を出す作業木）では、
+//! 件名の長さと本文の見出しはこちらの規約なので検査しない。上流の PR template と
+//! CONTRIBUTING が正で、それに合わせた本文（Serena の Checklist 等）を通す。
+//! --title と本文の存在、--web、未プッシュの検査は fork でも要る（gh が固まる・失敗する条件）。
+//! git の pre-commit / commit-msg hook と同じ判定（modules/home/parts/git.nix）
 
 use std::path::Path;
 
@@ -90,6 +96,9 @@ impl Rule for PrePrCreateCheck {
                 dir = input.cwd.clone();
             }
 
+            // fork ではこちらの規約（件名の長さ、本文の見出し）を検査しない
+            let fork = git::is_fork(&dir);
+
             // --- 4. --web ---
             if has_flag(args, &["--web", "-w"]) {
                 reasons.push("--web は使わないでください（ブラウザを開かず、gh pr create が出力した URL を報告する）".to_string());
@@ -100,7 +109,7 @@ impl Rule for PrePrCreateCheck {
                 Some(t) => {
                     let title = strip_opt_prefix(t, &["--title", "-t"]);
                     let n = title.chars().count();
-                    if n > 70 {
+                    if !fork && n > 70 {
                         reasons.push(format!("--title は 70 文字以内にしてください（現在 {n} 文字）"));
                     }
                 }
@@ -110,13 +119,15 @@ impl Rule for PrePrCreateCheck {
             // --- 2. 本文 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
                 Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}")),
+                Ok(None) if fork => reasons.push("--body または --body-file で PR 本文を指定してください（上流の PR template に合わせる。省くと gh がエディタを開いて固まる）".to_string()),
                 Ok(None) => reasons.push("--body または --body-file で PR 本文を指定してください（## Summary / ## Changes / ## Tests）".to_string()),
-                Ok(Some(body)) => {
+                Ok(Some(body)) if !fork => {
                     let missing = missing_headings(&body, &["## Summary", "## Changes", "## Tests"]);
                     if !missing.is_empty() {
                         reasons.push(format!("PR 本文に見出しがありません: {}", missing.join(" ")));
                     }
                 }
+                Ok(Some(_)) => {}
             }
 
             // --- 3. 未プッシュコミット ---

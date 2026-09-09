@@ -105,16 +105,18 @@ make_repo() {
 }
 
 # make_remote <repo> [github]: bare リポジトリを origin として追加し main を送る。
-# 第2引数 github を渡すと、github.com の URL を持つ remote（upstream）も追加する。
+# 第2引数 github を渡すと、github.com の URL を持つ remote（github）も追加する。
 # hook / script は「いずれかの remote の URL に github.com が含まれるか」で
-# GitHub リモートの有無を判定するので、実際の通信は origin（bare）だけで済む
+# GitHub リモートの有無を判定するので、実際の通信は origin（bare）だけで済む。
+# 名前を upstream にしないのは、upstream リモートの有無が「他人のプロジェクトの fork」の
+# 判定（git hook と claude-hooks の pre-pr-create-check）に使われるから
 make_remote() {
   local repo="$1" kind="${2:-local}"
   local bare="$repo.git"
   git init -q --bare "$bare"
   git -C "$repo" remote add origin "$bare"
   if [[ "$kind" == "github" ]]; then
-    git -C "$repo" remote add upstream "https://github.com/example/$(basename "$repo").git"
+    git -C "$repo" remote add github "https://github.com/example/$(basename "$repo").git"
   fi
   git -C "$repo" push -q -u origin main
 }
