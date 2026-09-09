@@ -843,7 +843,8 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "挙動を変えない"
 assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=1"
-assert_contains "$(reason "$out")" "テストが通ること"
+assert_contains "$(reason "$out")" "run-checks.sh"
+assert_contains "$(reason "$out")" "ALL_OK"
 assert_contains "$(reason "$out")" "完了報告"
 
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
