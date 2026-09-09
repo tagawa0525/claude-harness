@@ -82,9 +82,7 @@ def format_table(table_lines: list[str]) -> list[str]:
             continue
         for i, cell in enumerate(row):
             if i < ncols:
-                w = display_width(cell)
-                if w > col_widths[i]:
-                    col_widths[i] = w
+                col_widths[i] = max(col_widths[i], display_width(cell))
 
     # Build formatted rows
     result = []
@@ -216,25 +214,66 @@ def guess_language(content_lines: list[str]) -> str:
     return "text"
 
 
+FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def fence_open(line: str) -> tuple[str, int, str] | None:
+    """Parse an opening code fence (CommonMark).
+
+    Returns (fence character, fence length, info string) or None. A backtick
+    fence whose info string contains a backtick is not a fence.
+    """
+    m = FENCE_OPEN.match(line)
+    if not m:
+        return None
+    fence, info = m.group(1), m.group(2)
+    if fence[0] == "`" and "`" in info:
+        return None
+    return fence[0], len(fence), info.strip()
+
+
+def fence_close(line: str, char: str, length: int) -> bool:
+    """Whether `line` closes a fence opened with `char` x `length`.
+
+    The closing fence uses the same character, at least the same length, and
+    nothing but whitespace after it. A shorter fence, or one of the other
+    character, is content.
+    """
+    m = re.match(r"^ {0,3}(`{3,}|~{3,})\s*$", line)
+    return m is not None and m.group(1)[0] == char and len(m.group(1)) >= length
+
+
+def fence_end(lines: list[str], start: int) -> int:
+    """Index of the line closing the fence opened at `start`, or len(lines).
+
+    Every line in between is content, including shorter fences and fences of
+    the other character (a ```` block may contain ``` blocks verbatim).
+    """
+    opened = fence_open(lines[start])
+    assert opened is not None
+    char, length, _ = opened
+    for j in range(start + 1, len(lines)):
+        if fence_close(lines[j], char, length):
+            return j
+    return len(lines)
+
+
 def fix_markdown(content: str) -> str:
     lines = content.split("\n")
 
     # Pass 1: Format tables (MD060 - CJK aware), skip fenced code blocks
     output: list[str] = []
     i = 0
-    in_code = False
     while i < len(lines):
         line = lines[i]
 
-        if line.strip().startswith("```"):
-            in_code = not in_code
+        if fence_open(line) is not None:
+            end = fence_end(lines, i)
+            output.extend(lines[i : end + 1])
+            i = end + 1
+            continue
 
-        if (
-            not in_code
-            and is_table_row(line)
-            and i + 1 < len(lines)
-            and is_separator_row(lines[i + 1])
-        ):
+        if is_table_row(line) and i + 1 < len(lines) and is_separator_row(lines[i + 1]):
             table = []
             j = i
             while j < len(lines) and is_table_row(lines[j]):
@@ -247,29 +286,28 @@ def fix_markdown(content: str) -> str:
         output.append(line)
         i += 1
 
-    # Pass 2: Fix fenced code block languages (MD040)
+    # Pass 2: Fix fenced code block languages (MD040). Only an opening fence
+    # without an info string gets one; the closing fence and everything up to
+    # it are copied as they are.
     lines = output
     output = []
-    in_code = False
-    for i, line in enumerate(lines):
-        if line.strip().startswith("```"):
-            if not in_code:
-                if line.strip() == "```":
-                    content_lines = []
-                    for j in range(i + 1, len(lines)):
-                        if lines[j].strip().startswith("```"):
-                            break
-                        content_lines.append(lines[j])
-                    lang = guess_language(content_lines)
-                    output.append(f"```{lang}")
-                else:
-                    output.append(line)
-                in_code = True
-            else:
-                output.append(line)
-                in_code = False
-        else:
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        opened = fence_open(line)
+        if opened is None:
             output.append(line)
+            i += 1
+            continue
+        _, _, info = opened
+        end = fence_end(lines, i)
+        if info:
+            output.append(line)
+        else:
+            lang = guess_language(lines[i + 1 : end])
+            output.append(line.rstrip() + lang)
+        output.extend(lines[i + 1 : end + 1])
+        i = end + 1
 
     return "\n".join(output)
 

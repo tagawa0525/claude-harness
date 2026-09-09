@@ -4,7 +4,7 @@
 # 実行: bash .claude/tests/scripts.sh
 # 対象: worktree-add.sh / rename-branch.sh / rename-plan.sh / git-info.sh /
 #       post-merge-cleanup.sh / gh-actions-diagnose.sh / gh-wait-review.sh /
-#       language-checks/scripts/run-checks.sh /
+#       language-checks/scripts/{run-checks.sh,fix-markdown-lint.py} /
 #       gh-pr-review/scripts/{get-pr-info,get-review-comments,resolve-thread,
 #                            request-rereview,decide-next,get-latest-review}.sh
 #
@@ -523,6 +523,52 @@ cd "$REPO" || exit 1
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_contains "$out" "NOTE"
+
+# ===========================================================================
+# language-checks/scripts/fix-markdown-lint.py: コードフェンスの判定は CommonMark に従う
+# ===========================================================================
+# フェンスは「``` で始まる行のたびにトグル」ではなく、開きフェンスの文字（` / ~）と本数を
+# 覚え、同じ文字が同じ本数以上で後ろが空白だけの行で閉じる。中の短いフェンスは内容。
+# 以前は ````markdown の中の ``` の閉じフェンスを「言語のない開きフェンス」と誤認して
+# ```rust に書き換え、文書を壊していた。
+
+MD_FIXER="$LANG_SCRIPTS/fix-markdown-lint.py"
+MD_DIR="$TEST_ROOT/mdfix"
+mkdir -p "$MD_DIR"
+
+it "fix-markdown-lint: \`\`\`\`markdown の中の \`\`\`typescript … \`\`\` は 1 バイトも変わらない"
+printf '````markdown\n```typescript\nconst x: string = "a";\n```\n````\n' > "$MD_DIR/nested.md"
+cp "$MD_DIR/nested.md" "$MD_DIR/nested.orig"
+out=$(python3 "$MD_FIXER" "$MD_DIR/nested.md")
+assert_eq 0 $?
+assert_contains "$out" "OK:"
+assert_eq "" "$(cmp "$MD_DIR/nested.md" "$MD_DIR/nested.orig" 2>&1)"
+
+it "fix-markdown-lint: 4 本で開いた言語のない外側のブロックには言語が付き、閉じは 4 本のまま"
+printf '````\nfn main() {}\n````\n' > "$MD_DIR/outer4.md"
+python3 "$MD_FIXER" "$MD_DIR/outer4.md" >/dev/null
+assert_eq $'````rust\nfn main() {}\n````' "$(cat "$MD_DIR/outer4.md")"
+
+it "fix-markdown-lint: ~~~ のフェンスの中の表は整形されず、閉じ ~~~ は変わらない"
+printf '~~~text\n| a | b |\n| --- | --- |\n| ccc | d |\n~~~\n' > "$MD_DIR/tilde.md"
+cp "$MD_DIR/tilde.md" "$MD_DIR/tilde.orig"
+python3 "$MD_FIXER" "$MD_DIR/tilde.md" >/dev/null
+assert_eq "" "$(cmp "$MD_DIR/tilde.md" "$MD_DIR/tilde.orig" 2>&1)"
+
+it "fix-markdown-lint: ~~~ の中の \`\`\` は内容で、閉じるのは ~~~ だけ"
+printf '~~~\n```\nfn main() {}\n```\n~~~\n' > "$MD_DIR/tilde-inner.md"
+python3 "$MD_FIXER" "$MD_DIR/tilde-inner.md" >/dev/null
+assert_eq $'~~~rust\n```\nfn main() {}\n```\n~~~' "$(cat "$MD_DIR/tilde-inner.md")"
+
+it "fix-markdown-lint: \`\`\` のみのブロックには内容から言語を推定して付ける（既存の挙動）"
+printf '```\nfn main() {}\n```\n' > "$MD_DIR/plain.md"
+python3 "$MD_FIXER" "$MD_DIR/plain.md" >/dev/null
+assert_eq $'```rust\nfn main() {}\n```' "$(cat "$MD_DIR/plain.md")"
+
+it "fix-markdown-lint: フェンスの外の表は整形され、フェンスの中の表は触らない（既存の挙動）"
+printf '| a | b |\n| --- | --- |\n| ccc | d |\n\n```text\n| a | b |\n| --- | --- |\n| ccc | d |\n```\n' > "$MD_DIR/table.md"
+python3 "$MD_FIXER" "$MD_DIR/table.md" >/dev/null
+assert_eq $'| a   | b |\n| --- | - |\n| ccc | d |\n\n```text\n| a | b |\n| --- | --- |\n| ccc | d |\n```' "$(cat "$MD_DIR/table.md")"
 
 # ===========================================================================
 # gh-pr-review/scripts/get-pr-info.sh: コメント URL の解析
