@@ -711,7 +711,7 @@ fake_gh_wait() {
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
   \"pr view 1 --json reviews\"*) echo $1 ;;
   \"pr view 1 --json headRefOid\"*) echo abc ;;
-  \"api repos/{owner}/{repo}/commits/abc/check-runs\"*) echo $failed_runs ;;
+  \"api --paginate repos/{owner}/{repo}/commits/abc/check-runs?per_page=100\"*) seq 0 $failed_runs | tail -n +2 ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $timeline ;;"
 }
 
@@ -736,6 +736,8 @@ out=$(GH_WAIT_INTERVALS=0 "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
 assert_eq 6 $?
 assert_contains "$out" "レビュー要求"
 assert_not_contains "$out" "TIMEOUT"
+# 案内はこのスクリプトと同じツリーの request-rereview.sh を指す（配備版の旧版を案内しない）
+assert_contains "$out" "$CLAUDE_DIR/skills/gh-pr-review/scripts/request-rereview.sh"
 
 it "gh-wait-review: 要求後にまだレビューが無ければ待つ"
 fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z
