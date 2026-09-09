@@ -699,11 +699,16 @@ make_repo "$REPO"
 make_remote "$REPO" github
 cd "$REPO" || exit 1
 
-# fake_gh_wait <latest_review_at>
+# fake_gh_wait <latest_review_at> [review_requested_at]
+# review_requested_at に "" を渡すと「レビュー要求なし」の PR を模す
 fake_gh_wait() {
+  local requested="${2-2026-09-08T00:00:00Z}"
+  local timeline="echo $requested"
+  [[ -z "$requested" ]] && timeline=":"
   make_fake_gh "\"auth status\"*) ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
-  \"pr view 1 --json reviews\"*) echo $1 ;;"
+  \"pr view 1 --json reviews\"*) echo $1 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $timeline ;;"
 }
 
 it "gh-wait-review: 基準時刻より新しいレビュー提出で成功する"
@@ -711,6 +716,28 @@ fake_gh_wait 2026-09-08T01:00:00Z
 out=$("$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 2026-09-08T00:00:00Z)
 assert_eq 0 $?
 assert_contains "$out" "新しいレビューが到着"
+
+it "gh-wait-review: --since 省略時は最後のレビュー要求以降のレビューを待つ"
+# 要求(02:00)より後のレビュー(03:00)が既にあるので、待たずに成功する。
+# これにより request-rereview.sh のあとに続けて呼んでも無害になる
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+out=$(GH_WAIT_INTERVALS=0 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着"
+
+it "gh-wait-review: レビュー要求が無ければ待たずにエラーで終わる"
+# 要求していないレビューは来ない。待つ意味がないので即座に理由を出して止まる
+fake_gh_wait 2026-09-08T03:00:00Z ""
+out=$(GH_WAIT_INTERVALS=0 "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
+assert_eq 6 $?
+assert_contains "$out" "レビュー要求"
+assert_not_contains "$out" "TIMEOUT"
+
+it "gh-wait-review: 要求後にまだレビューが無ければ待つ"
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
 
 it "gh-wait-review: 新しいレビューが無ければタイムアウトする（Copilot のコメントは見ない）"
 fake_gh_wait 2026-09-08T00:00:00Z
