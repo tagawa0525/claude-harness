@@ -285,16 +285,16 @@ This is the same point as {前回の返信 URL}; the reasoning there still appli
 
 `VERDICT` に従って分岐する:
 
-| VERDICT                | 意味                                         | 次の一手                                                                  |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------- |
-| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                      |
-| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | **6.2 で要求する**                                                        |
-| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ（残りを報告）                                          |
-| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ                                                        |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 4、しないなら Step 7 へ |
-| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                 |
-| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | Step 7 で原因を診断、直せたら 6.2                                         |
-| `WAITING`              | 要求後のレビューが未着                       | gh-wait-review.sh で待つ                                                  |
+| VERDICT                | 意味                                         | 次の一手                                                                                  |
+| ---------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                                      |
+| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | **6.2 で要求する**                                                                        |
+| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ（残りを報告）                                                          |
+| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ                                                                        |
+| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 6.2、しないなら Step 7 へ |
+| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                 |
+| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | Step 7 で原因を診断、直せたら 6.2                                                         |
+| `WAITING`              | 要求後のレビューが未着                       | gh-wait-review.sh で待つ                                                                  |
 
 未解決が残っている間は、push 済みでも `ACT`（対応が先）。全部対応してから
 `REREVIEW_NEEDED` に進む。
