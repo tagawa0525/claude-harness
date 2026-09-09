@@ -699,8 +699,9 @@ make_repo "$REPO"
 make_remote "$REPO" github
 cd "$REPO" || exit 1
 
-# fake_gh_wait <latest_review_at> [review_requested_at]
-# review_requested_at に "" を渡すと「レビュー要求なし」の PR を模す
+# fake_gh_wait <latest_review_at> [review_requested_at] [failed_check_runs]
+# review_requested_at に "" を渡すと「レビュー要求なし」の PR を模す。
+# failed_check_runs は head の Copilot チェックのうち失敗した件数（既定 0）
 fake_gh_wait() {
   local requested="${2-2026-09-08T00:00:00Z}"
   local failed_runs="${3:-0}"
@@ -749,6 +750,15 @@ out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
 assert_eq 7 $?
 assert_contains "$out" "レビューの実行が失敗"
 assert_not_contains "$out" "TIMEOUT"
+
+it "gh-wait-review: 待機のたびに head を取り直す（待機中の push で古い head を見ない）"
+# 起動時の 1 回だけで固定すると、待機中に push されても古い head の失敗を見て
+# 打ち切ってしまう
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z 0
+out=$(GH_WAIT_INTERVALS="0 0" timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
+assert_eq 1 $?
+head_lookups=$(grep -c 'json headRefOid' "$TEST_ROOT/gh.log")
+assert_eq yes "$( ((head_lookups >= 2)) && echo yes || echo "no($head_lookups)" )"
 
 it "gh-wait-review: 新しいレビューが無ければタイムアウトする（Copilot のコメントは見ない）"
 fake_gh_wait 2026-09-08T00:00:00Z
