@@ -84,6 +84,22 @@ check ok "sanity" "feat(scope): 追加する"
 check ng "sanity" "flake: update (testhost)"
 check ng "sanity" "何の型もない件名"
 
+echo "==> fork（upstream リモートのある clone）では Conventional Commits の検査を飛ばす"
+# 他人のプロジェクトの fork では上流の慣習（"Fix socket transport when …" のような文）が正で、
+# こちらの形式を強いると上流向けのコミットが歪む。件名の長さの検査は残る
+git init -q "$WORK/fork"
+git -C "$WORK/fork" remote add upstream https://example.invalid/upstream.git
+cd "$WORK/fork"
+check ok "fork" "Add the proposed request"
+if grep -q "飛ばします" "$WORK/out"; then
+  PASS=$((PASS + 1)); echo "✓ fork: 飛ばした旨を出力する"
+else
+  FAIL=$((FAIL + 1)); echo "✗ fork: 飛ばした旨の出力がない" >&2; sed 's/^/    /' "$WORK/out" >&2
+fi
+check ng "fork" "Add a subject that is far too long for the seventy-two character limit of the hook"
+cd "$WORK/repo"
+check ng "plain" "Add the proposed request"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 (( FAIL == 0 ))
