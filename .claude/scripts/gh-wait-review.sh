@@ -32,6 +32,7 @@
 #   4 = gh が利用できない（未インストール / 未認証）
 #   5 = 引数エラー（不明なオプション / --since の値なし / PR番号の重複指定）
 #   6 = レビュー要求がない（待っても来ない）、または要求を取得できない
+#   7 = レビューの実行が失敗している（トークン切れ・内部エラー等。待っても来ない）
 set -u
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -100,6 +101,22 @@ latest_review_at() {
   gh pr view "$pr" --json reviews -q '[.reviews[].submittedAt] | max // ""' 2>/dev/null || echo ""
 }
 
+# head の Copilot チェックが失敗しているか（トークン切れ・内部エラーでレビューが
+# 走らなかった場合。待っても来ないので、10分待たずに切り上げるために見る）。
+# 取得できないときは「失敗していない」として待機を続ける（誤って打ち切らない）
+head_sha=$(gh pr view "$pr" --json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+copilot_run_failed() {
+  [[ -n "$head_sha" ]] || return 1
+  local failed
+  failed=$(gh api "repos/{owner}/{repo}/commits/${head_sha}/check-runs" \
+    --jq '[.check_runs[]
+           | select((.name | ascii_downcase | test("copilot"))
+                    and .status == "completed"
+                    and ((.conclusion // "") | IN("success", "neutral", "skipped") | not))]
+          | length' 2>/dev/null) || return 1
+  [[ "${failed:-0}" =~ ^[0-9]+$ ]] && (( failed > 0 ))
+}
+
 report_reviews() {
   gh pr view "$pr" --json reviews -q '.reviews[] | "- \(.author.login): \(.state)"'
 }
@@ -141,6 +158,11 @@ read -ra intervals <<<"${GH_WAIT_INTERVALS:-15 30 45 60 90 120 120 120}"
 elapsed=0
 for interval in "${intervals[@]}"; do
   check_new_review && exit 0
+  if copilot_run_failed; then
+    echo "ERROR: PR #${pr} の head でレビューの実行が失敗しています。待ってもレビューは来ません"
+    echo "次の一手: /gh-actions-check ${pr} で原因を確認してください（レビュー用トークンの枯渇・内部エラーなど）"
+    exit 7
+  fi
   echo "待機中: レビュー未着（経過${elapsed}秒）。${interval}秒後に再確認します"
   sleep "$interval"
   (( elapsed += interval ))
