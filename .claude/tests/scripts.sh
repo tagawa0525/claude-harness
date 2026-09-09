@@ -817,9 +817,13 @@ fake_gh_review_body() {
   [[ $# -eq 0 ]] && ids=":"
   jq -n --arg body "$body" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
   make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"repo view --json owner\"*) echo octo ;;
+  \"repo view --json name\"*) echo repo ;;
+  \"pr view 1 --json headRefOid\"*) echo abc1234 ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
   \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
-  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z ;;
+  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
 }
 
