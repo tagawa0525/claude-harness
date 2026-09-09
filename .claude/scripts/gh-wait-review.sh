@@ -106,16 +106,18 @@ latest_review_at() {
 # head は待機中の push で変わるので毎回取り直す（古い head の失敗で打ち切らない）。
 # 取得できないときは「失敗していない」として待機を続ける（誤って打ち切らない）
 copilot_run_failed() {
-  local head_sha failed
+  local head_sha names
   head_sha=$(gh pr view "$pr" --json headRefOid -q '.headRefOid' 2>/dev/null) || return 1
   [[ -n "$head_sha" ]] || return 1
-  failed=$(gh api "repos/{owner}/{repo}/commits/${head_sha}/check-runs" \
-    --jq '[.check_runs[]
-           | select((.name | ascii_downcase | test("copilot"))
-                    and .status == "completed"
-                    and ((.conclusion // "") | IN("success", "neutral", "skipped") | not))]
-          | length' 2>/dev/null) || return 1
-  [[ "${failed:-0}" =~ ^[0-9]+$ ]] && (( failed > 0 ))
+  # チェックの多い PR で取りこぼさないよう全ページ見る。--paginate に配列を返す --jq を
+  # 渡すと不正な JSON になるため、名前をストリーム出力して行数で数える
+  names=$(gh api --paginate "repos/{owner}/{repo}/commits/${head_sha}/check-runs?per_page=100" \
+    --jq '.check_runs[]
+          | select((.name | ascii_downcase | test("copilot"))
+                   and .status == "completed"
+                   and ((.conclusion // "") | IN("success", "neutral", "skipped") | not))
+          | .name' 2>/dev/null) || return 1
+  [[ -n "$names" ]]
 }
 
 report_reviews() {
@@ -138,7 +140,8 @@ if [[ -z "$since" ]]; then
   since=$(tail -n 1 <<<"$requests")
   if [[ -z "$since" ]]; then
     echo "ERROR: PR #${pr} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません"
-    echo "次の一手: ~/.claude/skills/gh-pr-review/scripts/request-rereview.sh ${pr} でレビューを要求してください"
+    # 配備版（~/.claude）の旧版を案内しないよう、自分と同じツリーのスクリプトを指す
+    echo "次の一手: $(cd "$(dirname "$requests_script")/.." && pwd)/skills/gh-pr-review/scripts/request-rereview.sh ${pr} でレビューを要求してください"
     exit 6
   fi
   echo "INFO: 最後のレビュー要求は ${since}。それ以降のレビューの到着を待ちます"
