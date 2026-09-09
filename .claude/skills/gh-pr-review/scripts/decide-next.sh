@@ -45,16 +45,10 @@ fi
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
 
-# Copilot 宛て review_requested の created_at を発生順に取得。
-# レビュアーのログイン表記は API により Copilot / copilot-pull-request-reviewer[bot] と
-# 揺れるため、Bot 種別かつ login に copilot を含むもので判定する
+# Copilot 宛てレビュー要求の created_at を発生順に取得。
 # 取得に失敗したら空扱いで続けない。周回数を過少に見積もり、上限判定がずれる
-if ! requests=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/timeline?per_page=100" \
-  --jq '.[] | select(.event == "review_requested"
-                     and (.requested_reviewer.type? // "") == "Bot"
-                     and ((.requested_reviewer.login? // "") | ascii_downcase | test("copilot")))
-           | .created_at'); then
-  echo "ERROR: PR #${PR_NUMBER} の timeline を取得できませんでした（レビュー要求の件数が数えられません）" >&2
+if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_NUMBER"); then
+  echo "ERROR: PR #${PR_NUMBER} のレビュー要求を取得できませんでした（周回数が数えられません）" >&2
   exit 1
 fi
 request_count=$(grep -c . <<<"$requests" || true)
