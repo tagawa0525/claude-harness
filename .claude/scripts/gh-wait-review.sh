@@ -103,11 +103,12 @@ latest_review_at() {
 
 # head の Copilot チェックが失敗しているか（トークン切れ・内部エラーでレビューが
 # 走らなかった場合。待っても来ないので、10分待たずに切り上げるために見る）。
+# head は待機中の push で変わるので毎回取り直す（古い head の失敗で打ち切らない）。
 # 取得できないときは「失敗していない」として待機を続ける（誤って打ち切らない）
-head_sha=$(gh pr view "$pr" --json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
 copilot_run_failed() {
+  local head_sha failed
+  head_sha=$(gh pr view "$pr" --json headRefOid -q '.headRefOid' 2>/dev/null) || return 1
   [[ -n "$head_sha" ]] || return 1
-  local failed
   failed=$(gh api "repos/{owner}/{repo}/commits/${head_sha}/check-runs" \
     --jq '[.check_runs[]
            | select((.name | ascii_downcase | test("copilot"))
