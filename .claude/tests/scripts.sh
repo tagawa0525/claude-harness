@@ -701,6 +701,14 @@ fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD_WITH_REPLY"
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "UNRESOLVED: 1"
 
+it "decide-next: 未解決が残っていれば、push 済みでもまず ACT（対応が先）"
+# 一部だけ直して push した状態。未対応のまま再レビューを要求しない
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "UNRESOLVED: 1"
+assert_contains "$out" "VERDICT: ACT"
+
 it "decide-next: 対応を push したのに要求していなければ REREVIEW_NEEDED（レビューのし忘れ）"
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
