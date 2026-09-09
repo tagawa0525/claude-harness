@@ -127,6 +127,10 @@ report_reviews() {
 # --since 未指定なら最後の Copilot へのレビュー要求を基準にする
 if [[ -z "$since" ]]; then
   requests_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-review-requests.sh"
+  if [[ ! -x "$requests_script" ]]; then
+    echo "ERROR: gh-review-requests.sh が見つかりません: ${requests_script}"
+    exit 6
+  fi
   if ! requests=$("$requests_script" "$pr"); then
     echo "ERROR: PR #${pr} のレビュー要求を取得できません（timeline API が失敗）"
     exit 6
