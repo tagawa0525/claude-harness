@@ -145,6 +145,14 @@
 
       # Markdown ファイルのチェック
       MD_FILES=$(git diff --cached --name-only --diff-filter=ACM -- '*.md' || true)
+      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す作業木）。
+      # 自動修正はこちらの規約を上流の文書に押し付け、無関係な差分（``` → ```text 等）を
+      # 上流向けのコミットに混ぜるので、この段を飛ばす。上流の文書の規約は上流の CI が見る。
+      # 検証: modules/home/parts/tests/pre-commit-markdown-fork.sh
+      if [ -n "$MD_FILES" ] && git remote get-url upstream >/dev/null 2>&1; then
+        echo "⏭️  upstream リモートのある fork なので Markdown の自動修正と検査を飛ばします"
+        MD_FILES=""
+      fi
       if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
         echo "🔧 Auto-fixing Markdown lint..."
         git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint --fix -- 2>/dev/null || true
