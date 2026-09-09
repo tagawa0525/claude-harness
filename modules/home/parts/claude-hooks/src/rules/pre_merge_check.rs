@@ -422,7 +422,10 @@ impl Rule for PreMergeCheck {
                         "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
                             .to_string(),
                     ),
-                    Some(sha) if sha.is_empty() => {}
+                    // レビューが 1 件も無い場合、通常は「自動レビューが無いリポジトリ」なので
+                    // 検査しない。ただしチェックが失敗しているなら初回レビューが走らなかった
+                    // ということなので、下の分岐でレビュー未実施として報告する
+                    Some(sha) if sha.is_empty() && !copilot_check_failed => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
                         short(&head_sha)

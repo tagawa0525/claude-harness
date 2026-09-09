@@ -81,7 +81,10 @@ fi
 # 対応が残っているか（未解決スレッド）と、その対応を push したあと要求し忘れて
 # いないか（head とレビュー対象の一致）。取得できなければ判定せず止める
 head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid')
-if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_NUMBER" --unresolved | jq 'length'); then
+# get-review-comments.sh はスレッド内のコメントをフラットに返すので、返信を
+# 数えないよう thread_id で畳む
+if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_NUMBER" --unresolved \
+  | jq '[.[].thread_id] | unique | length'); then
   echo "ERROR: PR #${PR_NUMBER} の未解決スレッドを取得できませんでした" >&2
   exit 1
 fi
