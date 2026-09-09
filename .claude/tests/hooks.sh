@@ -845,6 +845,8 @@ assert_contains "$(reason "$out")" "挙動を変えない"
 assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=1"
 assert_contains "$(reason "$out")" "run-checks.sh"
 assert_contains "$(reason "$out")" "ALL_OK"
+# run-checks.sh はツール未導入なら SKIP でも ALL_OK になるので、テストの通過も条件
+assert_contains "$(reason "$out")" "既存テスト"
 assert_contains "$(reason "$out")" "完了報告"
 
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
