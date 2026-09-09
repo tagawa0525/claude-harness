@@ -3,9 +3,16 @@
 #
 # 使い方: gh-wait-review.sh [PR番号] [--since <ISO 8601 時刻>]
 #   PR番号省略時は現在のブランチに紐づくPRを対象とする
-#   --since 省略時は起動時点で最新のレビューの時刻を基準にし、それより新しいレビューを待つ
-#   --since 指定時はその時刻より新しい応答を待つ（レビュー要求の created_at を
-#   渡せば、要求と待機開始の間に届いたレビューも取りこぼさない）
+#   --since 省略時は「最後の Copilot へのレビュー要求」を基準にし、それ以降に提出された
+#   レビューを待つ。要求が 1 件も無ければ待たずにエラーで終わる（要求していない
+#   レビューは来ないため）
+#   --since 指定時はその時刻を基準にする（request-rereview.sh が要求の created_at を渡す）
+#
+# 基準を「起動時点の最新レビュー」にすると、直前に届いたレビューを基準にして
+# 「絶対に来ない次のレビュー」を 10 分待ててしまう。実際に、要求と待機を続けて
+# 実行したセッションが空待ちを繰り返し、届いたレビューに気づけなかった
+# （2026-09-08）。基準を要求に紐づけると、要求後のレビューが既にあれば即座に
+# 成功して終わるので、続けて呼んでも無害になる
 #
 # 検出するのは基準時刻より新しいレビュー提出（submittedAt）だけ。Copilot の
 # PRコメントは待機の打ち切り条件にしない。@copilot メンションに応答するのは
@@ -24,6 +31,7 @@
 #   3 = 対象PRが見つからない
 #   4 = gh が利用できない（未インストール / 未認証）
 #   5 = 引数エラー（不明なオプション / --since の値なし / PR番号の重複指定）
+#   6 = レビュー要求がない（待っても来ない）、または要求を取得できない
 set -u
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -96,14 +104,22 @@ report_reviews() {
   gh pr view "$pr" --json reviews -q '.reviews[] | "- \(.author.login): \(.state)"'
 }
 
-# 基準時刻より新しいレビュー提出をもって「新しい応答」と判定する
-# （指摘対応後の再レビュー待ちで、過去のレビューを誤検知しないため）。
-# --since 未指定なら起動時点の最新レビューの時刻を基準にする（ISO 8601 は文字列比較で時系列順）
+# 基準時刻より後のレビュー提出をもって「待っていたレビュー」と判定する
+# （ISO 8601 は文字列比較で時系列順）。
+# --since 未指定なら最後の Copilot へのレビュー要求を基準にする
 if [[ -z "$since" ]]; then
-  since=$(latest_review_at)
-  if [[ -n "$since" ]]; then
-    echo "INFO: 既存の最新レビューは ${since}。それより新しいレビューの到着を待ちます"
+  requests_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-review-requests.sh"
+  if ! requests=$("$requests_script" "$pr"); then
+    echo "ERROR: PR #${pr} のレビュー要求を取得できません（timeline API が失敗）"
+    exit 6
   fi
+  since=$(tail -n 1 <<<"$requests")
+  if [[ -z "$since" ]]; then
+    echo "ERROR: PR #${pr} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません"
+    echo "次の一手: ~/.claude/skills/gh-pr-review/scripts/request-rereview.sh ${pr} でレビューを要求してください"
+    exit 6
+  fi
+  echo "INFO: 最後のレビュー要求は ${since}。それ以降のレビューの到着を待ちます"
 else
   echo "INFO: ${since} より新しいレビューの到着を待ちます"
 fi
