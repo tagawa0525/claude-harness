@@ -253,8 +253,15 @@
         Merge*|fixup!*|squash!*|Revert*) exit 0 ;;
       esac
 
+      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す作業木）。
+      # Conventional Commits はこちらの規約で、上流の慣習（"Fix socket transport when …" の
+      # ような文）と衝突して上流向けのコミットを歪めるので、形式の検査を飛ばす。件名の長さの
+      # 検査は上流の慣習と衝突しないので残す。pre-commit の Markdown 段と同じ判定。
+      # 検証: modules/home/parts/tests/commit-msg-conventions.sh
       TYPES='feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert'
-      if ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
+      if git remote get-url upstream >/dev/null 2>&1; then
+        echo "⏭️  upstream リモートのある fork なので Conventional Commits の検査を飛ばします"
+      elif ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
         echo "❌ Conventional Commits 形式ではありません: $SUBJECT"
         echo "   形式: <type>(<scope>)?: <subject>    type: $TYPES"
         exit 1
