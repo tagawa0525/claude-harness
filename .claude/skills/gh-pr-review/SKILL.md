@@ -296,6 +296,9 @@ This is the same point as {前回の返信 URL}; the reasoning there still appli
 | `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | Step 7 で原因を診断、直せたら 6.2 |
 | `WAITING`              | 要求後のレビューが未着                       | gh-wait-review.sh で待つ          |
 
+未解決が残っている間は、push 済みでも `ACT`（対応が先）。全部対応してから
+`REREVIEW_NEEDED` に進む。
+
 `ACT` → 対応して push → `REREVIEW_NEEDED` → 要求 → `WAITING` → レビュー到着、と
 段階が進む。どの段階にいるかは `HEAD_REVIEWED`（head とレビュー対象コミットの一致）と
 `UNRESOLVED`（未解決スレッド数）で決まるので、記憶に頼らずスクリプトの出力に従う。

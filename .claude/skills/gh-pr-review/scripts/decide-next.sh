@@ -124,17 +124,19 @@ echo "HEADLINE: $(sed -n 's/^HEADLINE: //p' <<<"$latest")"
 echo "INLINE_COMMENTS: ${inline}"
 echo "SUPPRESSED_COMMENTS: ${suppressed}"
 # 段階ごとに 1 つの次の一手へ落とす。順序に意味がある:
-# レビュー失敗 → 要求し忘れ → 未対応 → 対応済み
+# レビュー失敗 → 未対応 → 要求し忘れ → 対応済み。
+# 一部だけ直して push した状態（未解決あり・head 未レビュー）では、要求より先に
+# 残りの対応を促す
 if [[ "$failed" == "yes" ]]; then
   echo "VERDICT: REVIEW_FAILED"
+elif (( unresolved > 0 )); then
+  echo "VERDICT: ACT"
 elif [[ "$head_reviewed" == "no" ]]; then
   if (( round < MAX_ROUNDS )); then
     echo "VERDICT: REREVIEW_NEEDED"
   else
     echo "VERDICT: STOP_LIMIT"
   fi
-elif (( unresolved > 0 )); then
-  echo "VERDICT: ACT"
 elif (( inline > 0 )); then
   echo "VERDICT: STOP_DECLINED"
 elif (( suppressed > 0 )); then
