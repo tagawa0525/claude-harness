@@ -8,7 +8,10 @@
 //! 5. reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
 //! 6. 未解決のレビュースレッドがない
 //! 7. head が base（origin/main）より遅れていない（リベースしてからマージコミットする）
-//! 8. 最後の push が自動レビューを受けている（bot レビューの commit_id が head と一致）
+//! 8. 最後の push が自動レビューを受けている（bot レビューの commit_id が head と一致）。
+//!    レビュー自体が失敗している（トークン枯渇・内部エラー）ときは、コードの問題では
+//!    ないので 4 の CI 失敗としては数えず、ここでレビュー未実施として報告する。
+//!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる
 //!
 //! 1〜3 はコマンド文字列だけで判定する。4〜8 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
@@ -184,6 +187,7 @@ impl Rule for PreMergeCheck {
                 .and_then(|s| serde_json::from_str(&s).ok());
 
             let mut head_sha = String::new();
+            let mut copilot_check_failed = false;
             if !owner.is_empty()
                 && !name.is_empty()
                 && let Some(meta) = pr_meta.as_ref()
@@ -231,12 +235,24 @@ impl Rule for PreMergeCheck {
                                 names.join(", ")
                             ));
                         }
-                        let failed: Vec<&Value> = all
+                        let all_failed: Vec<&Value> = all
                             .iter()
                             .filter(|c| {
                                 c["status"] == "completed" && !is_ok_conclusion(&c["conclusion"])
                             })
                             .collect();
+                        // Copilot のレビュー実行の失敗はコードの問題ではないので CI 失敗に
+                        // 数えず、検証 8 でレビュー未実施として扱う
+                        let is_copilot = |c: &&Value| {
+                            c["name"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .contains("copilot")
+                        };
+                        copilot_check_failed = all_failed.iter().any(is_copilot);
+                        let failed: Vec<&Value> =
+                            all_failed.into_iter().filter(|c| !is_copilot(c)).collect();
                         if !failed.is_empty() {
                             let mut names: Vec<String> = failed
                                 .iter()
@@ -378,6 +394,7 @@ impl Rule for PreMergeCheck {
             if !owner.is_empty()
                 && !name.is_empty()
                 && !head_sha.is_empty()
+                && !shell.has_escape("ALLOW_UNREVIEWED_HEAD")
                 && let Some(number) = pr_number.as_deref()
             {
                 let reviewed = gh::gh(
@@ -406,6 +423,10 @@ impl Rule for PreMergeCheck {
                             .to_string(),
                     ),
                     Some(sha) if sha.is_empty() => {}
+                    Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
+                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
+                        short(&head_sha)
+                    )),
                     Some(sha) if sha != head_sha => reasons.push(format!(
                         "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください",
                         short(&head_sha),
