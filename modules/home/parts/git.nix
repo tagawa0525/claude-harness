@@ -116,6 +116,17 @@
       STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
       [ -z "$STAGED_FILES" ] && exit 0
 
+      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す作業木）。
+      # 以下の検査はどれもこちらの道具の版と規約（ruff の新しいルール、markdownlint の設定、
+      # rustfmt の edition）を当てるもので、fork では上流の固定版と CI が正。新しい ruff は
+      # 触っていない上流の行を上流の版にないルール（RUF043 等）で落とし、Markdown の自動修正は
+      # 無関係な差分（``` → ```text 等）を上流向けのコミットに混ぜるので、fork では全部飛ばす。
+      # 検証: modules/home/parts/tests/pre-commit-fork.sh
+      if git remote get-url upstream >/dev/null 2>&1; then
+        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust）を飛ばします"
+        exit 0
+      fi
+
       check_failed=0
 
       # Nix ファイルのチェック（NUL区切りでスペースを含むパスにも対応）
@@ -145,14 +156,6 @@
 
       # Markdown ファイルのチェック
       MD_FILES=$(git diff --cached --name-only --diff-filter=ACM -- '*.md' || true)
-      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す作業木）。
-      # 自動修正はこちらの規約を上流の文書に押し付け、無関係な差分（``` → ```text 等）を
-      # 上流向けのコミットに混ぜるので、この段を飛ばす。上流の文書の規約は上流の CI が見る。
-      # 検証: modules/home/parts/tests/pre-commit-markdown-fork.sh
-      if [ -n "$MD_FILES" ] && git remote get-url upstream >/dev/null 2>&1; then
-        echo "⏭️  upstream リモートのある fork なので Markdown の自動修正と検査を飛ばします"
-        MD_FILES=""
-      fi
       if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
         echo "🔧 Auto-fixing Markdown lint..."
         git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint --fix -- 2>/dev/null || true
