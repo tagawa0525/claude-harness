@@ -11,7 +11,8 @@
 //! 8. 最後の push が自動レビューを受けている（bot レビューの commit_id が head と一致）。
 //!    レビュー自体が失敗している（トークン枯渇・内部エラー）ときは、コードの問題では
 //!    ないので 4 の CI 失敗としては数えず、ここでレビュー未実施として報告する。
-//!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる
+//!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる。
+//!    表記・コメント・整形など挙動を変えない修正で 1 周回す価値がないときも同じ
 //!
 //! 1〜3 はコマンド文字列だけで判定する。4〜8 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
@@ -431,7 +432,7 @@ impl Rule for PreMergeCheck {
                         short(&head_sha)
                     )),
                     Some(sha) if sha != head_sha => reasons.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、ALLOW_UNREVIEWED_HEAD=1 を付けて再レビューを省いても構いません（完了報告にその差分を必ず載せてください）",
                         short(&head_sha),
                         short(&sha)
                     )),
