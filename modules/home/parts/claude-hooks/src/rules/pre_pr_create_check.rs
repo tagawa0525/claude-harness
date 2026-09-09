@@ -12,6 +12,12 @@
 //! 本文の見出しは `--body` 引数ノードの原文（ヒアドキュメント本文を含む）だけを見る。
 //! 別のヒアドキュメントに書かれた見出しの例でゲートを通すことはできない。
 //! エスケープは設けない（いずれも満たしてから実行し直せばよい）
+//!
+//! `upstream` リモートのある clone（他人のプロジェクトの fork。上流に PR を出す作業木）では、
+//! 件名の長さと本文の見出しはこちらの規約なので検査しない。上流の PR template と
+//! CONTRIBUTING が正で、それに合わせた本文（Serena の Checklist 等）を通す。
+//! --title と本文の存在、--web、未プッシュの検査は fork でも要る（gh が固まる・失敗する条件）。
+//! git の pre-commit / commit-msg hook と同じ判定（modules/home/parts/git.nix）
 
 use std::path::Path;
 
@@ -90,6 +96,9 @@ impl Rule for PrePrCreateCheck {
                 dir = input.cwd.clone();
             }
 
+            // fork ではこちらの規約（件名の長さ、本文の見出し）を検査しない
+            let fork = git::is_fork(&dir);
+
             // --- 4. --web ---
             if has_flag(args, &["--web", "-w"]) {
                 reasons.push("--web は使わないでください（ブラウザを開かず、gh pr create が出力した URL を報告する）".to_string());
@@ -100,7 +109,7 @@ impl Rule for PrePrCreateCheck {
                 Some(t) => {
                     let title = strip_opt_prefix(t, &["--title", "-t"]);
                     let n = title.chars().count();
-                    if n > 70 {
+                    if !fork && n > 70 {
                         reasons.push(format!("--title は 70 文字以内にしてください（現在 {n} 文字）"));
                     }
                 }
@@ -111,12 +120,13 @@ impl Rule for PrePrCreateCheck {
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
                 Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}")),
                 Ok(None) => reasons.push("--body または --body-file で PR 本文を指定してください（## Summary / ## Changes / ## Tests）".to_string()),
-                Ok(Some(body)) => {
+                Ok(Some(body)) if !fork => {
                     let missing = missing_headings(&body, &["## Summary", "## Changes", "## Tests"]);
                     if !missing.is_empty() {
                         reasons.push(format!("PR 本文に見出しがありません: {}", missing.join(" ")));
                     }
                 }
+                Ok(Some(_)) => {}
             }
 
             // --- 3. 未プッシュコミット ---
