@@ -793,6 +793,34 @@ make_fake_gh_merge 'echo 0' 'echo ""'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
+it "pre-merge-check: レビューの実行が失敗していたら、CI 失敗ではなくレビュー未実施として報告する"
+# トークン枯渇や内部エラーで Copilot のチェックが落ちた場合、コードの問題ではない。
+# CI 失敗として止めると、レビューが回らない間まったくマージできなくなる
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
+  "api graphql"*) echo "[]" ;;'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビューが実行されていません"
+assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=1"
+assert_not_contains "$(reason "$out")" "失敗したチェックがあります"
+
+it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=1 なら未レビューの head でもマージできる"
+out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=1 $MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: レビューは走っているのに未レビューなら、要求を促す（エスケープは案内しない）"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "request-rereview.sh"
+assert_not_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD"
+
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
