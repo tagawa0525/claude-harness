@@ -94,8 +94,8 @@ URL形式: `https://github.com/{owner}/{repo}/pull/{pr_number}#discussion_r{comm
 
 **Suppressed comments** は Copilot が低確度と判断した指摘で、インラインスレッドに
 ならずレビュー本文にだけ現れる（`get-review-comments.sh` では見えない）。
-通常のコメントと同様に Step 3 で分類し、Step 4 で対応する。ただしスレッドが
-ないため個別返信はできず、Step 6 の再レビュー依頼の対象にもならない。
+既定では対応せず、Step 8 の完了報告に列挙してユーザーの判断に委ねる。
+スレッドがないため個別返信もできない。
 
 ---
 
@@ -285,14 +285,23 @@ This is the same point as {前回の返信 URL}; the reasoning there still appli
 
 `VERDICT` に従って分岐する:
 
-| VERDICT                | 意味                               | 対応                     | 再レビュー依頼         |
-| ---------------------- | ---------------------------------- | ------------------------ | ---------------------- |
-| `REREVIEW`             | インライン指摘あり、ROUND < 5      | 対応・push               | **する** → 6.2 へ      |
-| `STOP_LIMIT`           | インライン指摘あり、ROUND = 5      | 対応・push               | **しない** → Step 7 へ |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ           | 対応・push               | **しない** → Step 7 へ |
-| `STOP_CLEAN`           | 指摘なし                           | —                        | しない → Step 7 へ     |
-| `REVIEW_FAILED`        | Copilot がレビューできずに終わった | Step 7 で原因を診断      | 直せたら 6.2 へ        |
-| `WAITING`              | レビュー要求後のレビューが未着     | gh-wait-review.sh で待つ | —                      |
+| VERDICT                | 意味                                         | 次の一手                          |
+| ---------------------- | -------------------------------------------- | --------------------------------- |
+| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する              |
+| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | **6.2 で要求する**                |
+| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ（残りを報告）  |
+| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ                |
+| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 対応せず Step 7 へ（下記）        |
+| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                         |
+| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | Step 7 で原因を診断、直せたら 6.2 |
+| `WAITING`              | 要求後のレビューが未着                       | gh-wait-review.sh で待つ          |
+
+`ACT` → 対応して push → `REREVIEW_NEEDED` → 要求 → `WAITING` → レビュー到着、と
+段階が進む。どの段階にいるかは `HEAD_REVIEWED`（head とレビュー対象コミットの一致）と
+`UNRESOLVED`（未解決スレッド数）で決まるので、記憶に頼らずスクリプトの出力に従う。
+
+`STOP_DECLINED` は、全件 decline のように push を伴わずに対応が終わった周。再度
+要求しても同じレビューが返るだけなので依頼しない。
 
 **Copilot の PR コメントはレビューではない**。`@copilot` メンションに応答するのは
 copilot-swe-agent（コーディングエージェント）で、「対応を確認しました」「追加修正は
@@ -304,9 +313,11 @@ copilot-swe-agent（コーディングエージェント）で、「対応を確
 提出された状態。インライン指摘 0 件は `STOP_CLEAN` と同じだが、レビューされていない
 のでマージへ進んではいけない。
 
-Suppressed comments は Copilot 自身が低確度と判断したものなので、対応は
-するが再レビューで確認は求めない。上限到達時は、5 周目で見送った指摘を
-Step 8 の完了報告に列挙してユーザーの判断に委ねる（自分で 6 周目を始めない）。
+**Suppressed comments は既定では対応しない**。Copilot 自身が低確度と判断した
+指摘であり、対応すると push が必要になって再レビューが 1 周増える（レビュー用
+トークンを消費する）。内容は Step 8 の完了報告に列挙し、拾うかどうかはユーザーの
+判断に委ねる。上限到達時に見送った指摘も同じく完了報告に列挙する（自分で 6 周目を
+始めない）。
 
 ### 6.2 再レビューの依頼
 
@@ -411,6 +422,7 @@ PR: {url}
 - 処置は fix / decline / escalate のいずれか。着手前に一次情報で前提を検証し、判断が付かなければ escalate
 - decline は事実に基づく根拠があるときだけ。根拠を返信に書く
 - 再レビューの依頼は requested_reviewers API のみ。`@copilot` メンションでは走らない
+- Suppressed comments は既定では対応しない（完了報告に列挙してユーザーに委ねる）
 - 再レビューは最大 5 周。Suppressed comments のみの周は対応して終了し、再レビューを依頼しない
 - 周回ごとに台帳を出力し、同じ指摘の再提起は数え直さない
 - レビュアーの意図が不明な場合は、修正前に確認コメントを投稿
