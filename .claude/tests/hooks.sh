@@ -837,9 +837,14 @@ assert_contains "$(reason "$out")" "request-rereview.sh"
 
 it "pre-merge-check: 挙動を変えない修正に限る条件付きでエスケープを案内する"
 # typo 1 文字の修正にレビュー 1 周（数分＋レビュー用トークン）は見合わない。
-# ただし条件を書かずに案内すると迂回路になるので、対象を明示する
+# ただし条件を書かずに案内すると迂回路になるので、対象と記録の要件を明示する
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "挙動を変えない"
 assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=1"
+assert_contains "$(reason "$out")" "テストが通ること"
+assert_contains "$(reason "$out")" "完了報告"
 
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit 1'
