@@ -825,6 +825,14 @@ add_review() {
   mv "$TEST_ROOT/reviews.json.new" "$TEST_ROOT/reviews.json"
 }
 
+# add_review_without_author <submitted_at>: author が null のレビューを足す
+# （投稿者のアカウントが削除されたレビューなど）
+add_review_without_author() {
+  jq --arg at "$1" '.reviews += [{author: null, state: "COMMENTED", submittedAt: $at}]' \
+    "$TEST_ROOT/reviews.json" > "$TEST_ROOT/reviews.json.new"
+  mv "$TEST_ROOT/reviews.json.new" "$TEST_ROOT/reviews.json"
+}
+
 it "gh-wait-review: 基準時刻より新しいレビュー提出で成功する"
 fake_gh_wait 2026-09-08T01:00:00Z
 out=$("$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 2026-09-08T00:00:00Z)
@@ -892,6 +900,16 @@ assert_contains "$out" "TIMEOUT"
 it "gh-wait-review: 作成者のレビューが後にあっても Copilot のレビューの時刻で報告する"
 fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
 add_review me 2026-09-08T04:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着しました（2026-09-08T03:00:00Z"
+
+it "gh-wait-review: author が null のレビューがあっても Copilot のレビューを拾う"
+# 投稿者が削除されたレビューは author が null になる。login をそのまま
+# ascii_downcase に渡すと jq ごと失敗し、同じ一覧にある Copilot のレビューまで
+# 捨てて時間切れになる
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+add_review_without_author 2026-09-08T01:00:00Z
 out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
 assert_eq 0 $?
 assert_contains "$out" "新しいレビューが到着しました（2026-09-08T03:00:00Z"
