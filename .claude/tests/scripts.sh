@@ -660,12 +660,14 @@ fake_gh_rereview() {
   rm -f "$TEST_ROOT/requested"
   local event="if [ -f \"$TEST_ROOT/requested\" ]; then echo 2026-09-08T00:00:00Z; fi"
   [[ "$grow" == "nogrow" ]] && event=":"
+  jq -n '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: "2026-09-08T00:05:00Z"}]}' \
+    > "$TEST_ROOT/reviews.json"
   make_fake_gh "\"auth status\"*) ;;
   \"repo view --json nameWithOwner\"*) echo octo/repo ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $event ;;
   \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
-  \"pr view 1 --json reviews\"*) echo 2026-09-08T00:05:00Z ;;"
+  \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;"
 }
 
 it "request-rereview: requested_reviewers API で Copilot にレビューを要求する"
@@ -794,20 +796,41 @@ make_repo "$REPO"
 make_remote "$REPO" github
 cd "$REPO" || exit 1
 
-# fake_gh_wait <latest_review_at> [review_requested_at] [failed_check_runs]
+# fake_gh_wait <copilot_review_at> [review_requested_at] [failed_check_runs]
+# copilot_review_at に提出された Copilot のレビューが 1 件ある PR を模す。
 # review_requested_at に "" を渡すと「レビュー要求なし」の PR を模す。
 # failed_check_runs は head の Copilot チェックのうち失敗した件数（既定 0）
+# レビュー一覧は gh が返す JSON の形で渡し、絞り込みはスクリプト側の jq に任せる
 fake_gh_wait() {
   local requested="${2-2026-09-08T00:00:00Z}"
   local failed_runs="${3:-0}"
   local timeline="echo $requested"
   [[ -z "$requested" ]] && timeline=":"
+  jq -n --arg at "$1" \
+    '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: $at}]}' \
+    > "$TEST_ROOT/reviews.json"
   make_fake_gh "\"auth status\"*) ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
-  \"pr view 1 --json reviews\"*) echo $1 ;;
+  \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;
   \"pr view 1 --json headRefOid\"*) echo abc ;;
   \"api --paginate repos/{owner}/{repo}/commits/abc/check-runs?per_page=100\"*) seq 0 $failed_runs | tail -n +2 ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $timeline ;;"
+}
+
+# add_review <login> <submitted_at>: fake_gh_wait のレビュー一覧にレビューを 1 件足す
+add_review() {
+  jq --arg login "$1" --arg at "$2" \
+    '.reviews += [{author: {login: $login}, state: "COMMENTED", submittedAt: $at}]' \
+    "$TEST_ROOT/reviews.json" > "$TEST_ROOT/reviews.json.new"
+  mv "$TEST_ROOT/reviews.json.new" "$TEST_ROOT/reviews.json"
+}
+
+# add_review_without_author <submitted_at>: author が null のレビューを足す
+# （投稿者のアカウントが削除されたレビューなど）
+add_review_without_author() {
+  jq --arg at "$1" '.reviews += [{author: null, state: "COMMENTED", submittedAt: $at}]' \
+    "$TEST_ROOT/reviews.json" > "$TEST_ROOT/reviews.json.new"
+  mv "$TEST_ROOT/reviews.json.new" "$TEST_ROOT/reviews.json"
 }
 
 it "gh-wait-review: 基準時刻より新しいレビュー提出で成功する"
@@ -863,6 +886,33 @@ out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 
 assert_eq 1 $?
 assert_contains "$out" "TIMEOUT"
 assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+it "gh-wait-review: PR 作成者自身のレビューでは打ち切らない"
+# インラインコメントに返信すると、作成者名義の COMMENTED レビューが作られる。
+# 待っているのは要求した Copilot のレビューなので、これを到着とみなしてはいけない
+# （2026-09-23、PR #201 で返信直後に「到着」と誤判定した）
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z
+add_review me 2026-09-08T03:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
+
+it "gh-wait-review: 作成者のレビューが後にあっても Copilot のレビューの時刻で報告する"
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+add_review me 2026-09-08T04:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着しました（2026-09-08T03:00:00Z"
+
+it "gh-wait-review: author が null のレビューがあっても Copilot のレビューを拾う"
+# 投稿者が削除されたレビューは author が null になる。login をそのまま
+# ascii_downcase に渡すと jq ごと失敗し、同じ一覧にある Copilot のレビューまで
+# 捨てて時間切れになる
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+add_review_without_author 2026-09-08T01:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着しました（2026-09-08T03:00:00Z"
 
 # ===========================================================================
 # gh-pr-review/scripts/get-latest-review.sh: レビュー失敗を指摘ゼロと区別する

@@ -14,7 +14,7 @@
 # （2026-09-08）。基準を要求に紐づけると、要求後のレビューが既にあれば即座に
 # 成功して終わるので、続けて呼んでも無害になる
 #
-# 検出するのは基準時刻より新しいレビュー提出（submittedAt）だけ。Copilot の
+# 検出するのは基準時刻より新しい Copilot のレビュー提出（submittedAt）だけ。Copilot の
 # PRコメントは待機の打ち切り条件にしない。@copilot メンションに応答するのは
 # copilot-swe-agent（コーディングエージェント）で、「対応を確認しました」等の
 # コメントを返してもレビューは提出されない。これを応答として扱っていたため、
@@ -96,9 +96,22 @@ if ! gh pr view "$pr" --json number >/dev/null 2>&1; then
   exit 3
 fi
 
-# 最新レビューの提出時刻（ISO 8601、レビューが無ければ空）
+# PR のレビュー一覧（JSON）。取得に失敗したら空の一覧として扱い、待機を続ける
+reviews_json() {
+  gh pr view "$pr" --json reviews 2>/dev/null || echo '{"reviews":[]}'
+}
+
+# 最新の Copilot レビューの提出時刻（ISO 8601、無ければ空）。
+# 待っているのは要求した Copilot のレビューだけ。PR 作成者がインラインコメントに
+# 返信すると作成者名義の COMMENTED レビューが作られるため、投稿者を問わずに見ると
+# 返信を「到着」と誤判定する（2026-09-23、PR #201）。reviews の author には種別が
+# 無いので、gh-review-requests.sh と同じく login に copilot を含むかで判定する。
+# 投稿者が削除されたレビューは author が null になる。そのまま文字列処理に渡すと
+# jq ごと失敗して Copilot のレビューまで捨てるため、空文字に寄せてから判定する
 latest_review_at() {
-  gh pr view "$pr" --json reviews -q '[.reviews[].submittedAt] | max // ""' 2>/dev/null || echo ""
+  reviews_json | jq -r '[.reviews[]
+                         | select((.author.login // "") | ascii_downcase | test("copilot"))
+                         | .submittedAt] | max // ""' 2>/dev/null || echo ""
 }
 
 # head の Copilot チェックが失敗しているか（トークン切れ・内部エラーでレビューが
@@ -121,7 +134,7 @@ copilot_run_failed() {
 }
 
 report_reviews() {
-  gh pr view "$pr" --json reviews -q '.reviews[] | "- \(.author.login): \(.state)"'
+  reviews_json | jq -r '.reviews[] | "- \(.author.login): \(.state)"'
 }
 
 # 基準時刻より後のレビュー提出をもって「待っていたレビュー」と判定する
