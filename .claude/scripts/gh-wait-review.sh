@@ -96,9 +96,14 @@ if ! gh pr view "$pr" --json number >/dev/null 2>&1; then
   exit 3
 fi
 
+# PR のレビュー一覧（JSON）。取得に失敗したら空の一覧として扱い、待機を続ける
+reviews_json() {
+  gh pr view "$pr" --json reviews 2>/dev/null || echo '{"reviews":[]}'
+}
+
 # 最新レビューの提出時刻（ISO 8601、レビューが無ければ空）
 latest_review_at() {
-  gh pr view "$pr" --json reviews -q '[.reviews[].submittedAt] | max // ""' 2>/dev/null || echo ""
+  reviews_json | jq -r '[.reviews[].submittedAt] | max // ""' 2>/dev/null || echo ""
 }
 
 # head の Copilot チェックが失敗しているか（トークン切れ・内部エラーでレビューが
@@ -121,7 +126,7 @@ copilot_run_failed() {
 }
 
 report_reviews() {
-  gh pr view "$pr" --json reviews -q '.reviews[] | "- \(.author.login): \(.state)"'
+  reviews_json | jq -r '.reviews[] | "- \(.author.login): \(.state)"'
 }
 
 # 基準時刻より後のレビュー提出をもって「待っていたレビュー」と判定する

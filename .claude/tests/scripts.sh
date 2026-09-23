@@ -660,12 +660,14 @@ fake_gh_rereview() {
   rm -f "$TEST_ROOT/requested"
   local event="if [ -f \"$TEST_ROOT/requested\" ]; then echo 2026-09-08T00:00:00Z; fi"
   [[ "$grow" == "nogrow" ]] && event=":"
+  jq -n '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: "2026-09-08T00:05:00Z"}]}' \
+    > "$TEST_ROOT/reviews.json"
   make_fake_gh "\"auth status\"*) ;;
   \"repo view --json nameWithOwner\"*) echo octo/repo ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $event ;;
   \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
-  \"pr view 1 --json reviews\"*) echo 2026-09-08T00:05:00Z ;;"
+  \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;"
 }
 
 it "request-rereview: requested_reviewers API で Copilot にレビューを要求する"
@@ -794,17 +796,22 @@ make_repo "$REPO"
 make_remote "$REPO" github
 cd "$REPO" || exit 1
 
-# fake_gh_wait <latest_review_at> [review_requested_at] [failed_check_runs]
+# fake_gh_wait <copilot_review_at> [review_requested_at] [failed_check_runs]
+# copilot_review_at に提出された Copilot のレビューが 1 件ある PR を模す。
 # review_requested_at に "" を渡すと「レビュー要求なし」の PR を模す。
 # failed_check_runs は head の Copilot チェックのうち失敗した件数（既定 0）
+# レビュー一覧は gh が返す JSON の形で渡し、絞り込みはスクリプト側の jq に任せる
 fake_gh_wait() {
   local requested="${2-2026-09-08T00:00:00Z}"
   local failed_runs="${3:-0}"
   local timeline="echo $requested"
   [[ -z "$requested" ]] && timeline=":"
+  jq -n --arg at "$1" \
+    '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: $at}]}' \
+    > "$TEST_ROOT/reviews.json"
   make_fake_gh "\"auth status\"*) ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
-  \"pr view 1 --json reviews\"*) echo $1 ;;
+  \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;
   \"pr view 1 --json headRefOid\"*) echo abc ;;
   \"api --paginate repos/{owner}/{repo}/commits/abc/check-runs?per_page=100\"*) seq 0 $failed_runs | tail -n +2 ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $timeline ;;"
