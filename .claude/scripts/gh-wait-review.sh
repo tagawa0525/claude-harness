@@ -105,10 +105,12 @@ reviews_json() {
 # 待っているのは要求した Copilot のレビューだけ。PR 作成者がインラインコメントに
 # 返信すると作成者名義の COMMENTED レビューが作られるため、投稿者を問わずに見ると
 # 返信を「到着」と誤判定する（2026-09-23、PR #201）。reviews の author には種別が
-# 無いので、gh-review-requests.sh と同じく login に copilot を含むかで判定する
+# 無いので、gh-review-requests.sh と同じく login に copilot を含むかで判定する。
+# 投稿者が削除されたレビューは author が null になる。そのまま文字列処理に渡すと
+# jq ごと失敗して Copilot のレビューまで捨てるため、空文字に寄せてから判定する
 latest_review_at() {
   reviews_json | jq -r '[.reviews[]
-                         | select(.author.login | ascii_downcase | test("copilot"))
+                         | select((.author.login // "") | ascii_downcase | test("copilot"))
                          | .submittedAt] | max // ""' 2>/dev/null || echo ""
 }
 
