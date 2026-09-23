@@ -817,6 +817,14 @@ fake_gh_wait() {
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $timeline ;;"
 }
 
+# add_review <login> <submitted_at>: fake_gh_wait のレビュー一覧にレビューを 1 件足す
+add_review() {
+  jq --arg login "$1" --arg at "$2" \
+    '.reviews += [{author: {login: $login}, state: "COMMENTED", submittedAt: $at}]' \
+    "$TEST_ROOT/reviews.json" > "$TEST_ROOT/reviews.json.new"
+  mv "$TEST_ROOT/reviews.json.new" "$TEST_ROOT/reviews.json"
+}
+
 it "gh-wait-review: 基準時刻より新しいレビュー提出で成功する"
 fake_gh_wait 2026-09-08T01:00:00Z
 out=$("$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 2026-09-08T00:00:00Z)
@@ -870,6 +878,23 @@ out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1 --since 
 assert_eq 1 $?
 assert_contains "$out" "TIMEOUT"
 assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+it "gh-wait-review: PR 作成者自身のレビューでは打ち切らない"
+# インラインコメントに返信すると、作成者名義の COMMENTED レビューが作られる。
+# 待っているのは要求した Copilot のレビューなので、これを到着とみなしてはいけない
+# （2026-09-23、PR #201 で返信直後に「到着」と誤判定した）
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z
+add_review me 2026-09-08T03:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
+
+it "gh-wait-review: 作成者のレビューが後にあっても Copilot のレビューの時刻で報告する"
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+add_review me 2026-09-08T04:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着しました（2026-09-08T03:00:00Z"
 
 # ===========================================================================
 # gh-pr-review/scripts/get-latest-review.sh: レビュー失敗を指摘ゼロと区別する
