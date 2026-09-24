@@ -15,6 +15,32 @@
 }:
 
 let
+  # Cowork の VM（QEMU/KVM）は app.asar が Debian のパス固定で依存を探す：
+  # qemu-system-x86_64 は PATH、ファームウェアは /usr/share/OVMF/OVMF_CODE{_4M,}.fd
+  # （VARS は同じディレクトリの OVMF_VARS*.fd）、virtiofsd は /usr/{libexec,bin}/virtiofsd。
+  # 同梱の virtiofsd は Ubuntu 22.04 でしか使われないため、FHS 環境へ揃えて置く。
+  ovmfDebianLayout = pkgs.runCommand "ovmf-debian-layout" { } ''
+    mkdir -p $out/share
+    ln -s ${pkgs.OVMF.fd}/FV $out/share/OVMF
+  '';
+  claude-desktop = pkgs.llm-agents.claude-desktop.override {
+    buildFHSEnv =
+      args:
+      pkgs.buildFHSEnv (
+        args
+        // {
+          targetPkgs =
+            p:
+            args.targetPkgs p
+            ++ [
+              pkgs.qemu
+              pkgs.virtiofsd
+              ovmfDebianLayout
+            ];
+        }
+      );
+  };
+
   # 外部リポジトリ由来のスキル。出所は flake input（rev は flake.lock）で記録し、
   # 更新は `nix flake update <input>` → rebuild で追従する。
   # 配備先ディレクトリは丸ごと上流のコピーとして扱う（ローカル編集は上書きされる）
@@ -209,7 +235,7 @@ in
     [
       llm-agents.claude-code # Claude Code CLI（自動更新）
       # Anthropic 公式の Linux 版 deb（downloads.claude.ai の APT）を展開したもの
-      llm-agents.claude-desktop # Claude Desktop（GUI、自動更新）
+      claude-desktop # Claude Desktop（GUI、自動更新）。Cowork 用の VM 依存を追加したもの
       rsync # claude-sync スクリプトの実行時依存
       gitleaks # block-secret-commit hook が git commit 前に機密情報を検査する
       pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
