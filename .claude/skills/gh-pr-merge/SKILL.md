@@ -16,143 +16,64 @@ allowed-tools:
 
 # GitHub PR Merge Command
 
-GitHub Pull Requestをマージする（gh CLI使用）。
+GitHub Pull Requestをマージする。マージ方式・本文の見出し・CI・未解決スレッド・
+head の遅れなど機械的に判定できる条件は `pre-merge-check` hook が検査し、満たさなければ
+理由と直し方を示して deny する。手順で扱うのは判断が要るものだけ。
 
 ## 事前確認
 
-!`gh auth status`
+!`gh auth status 2>&1 | head -3`
 !`git branch -vv`
 
-## PR状態の確認
+## マージ前の判断
 
-$ARGUMENTS にPR番号が指定されている場合はそのPRを対象。
-指定がない場合は現在のブランチに関連するPRを検索。
+$ARGUMENTS の PR（省略時は現在のブランチの PR）について:
 
-```bash
-gh pr status
-gh pr view [PR番号] --json state,title,mergeable,reviewDecision,headRefName
-```
+- 自動レビューが未着なら `~/.claude/scripts/gh-wait-review.sh [PR番号]` で待つ（約 10 分。
+  Bash ツールの `run_in_background=true`）。タイムアウト（exit 1）は /gh-actions-check で診断
+- 指摘への対応が残っていれば /gh-pr-review に戻る
+- 周回上限到達で未確認の対応・見送りが残っていれば、一覧を提示してユーザーの承認を得る
 
-### マージ可能性チェック
+## マージコミットメッセージ
 
-以下は `pre-merge-check` hook が `gh pr merge` 実行時に機械的に検証し、
-満たさなければ deny する（手順で確認するのは判断が必要な項目だけでよい）:
-
-- `--merge` 指定・`--squash` / `--rebase` なし
-- `--delete-branch` あり
-- `--body`（または `--body-file`）に `## Why` / `## What` / `## Impact`
-- CI チェックが未完了・失敗でない、reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
-- 未解決のレビュースレッドがない（対応後は `resolve-thread.sh` で resolve する）
-- head が base より遅れていない（`git fetch && git rebase origin/main && git push --force-with-lease` で整えてからマージする）
-
-- CIステータス: 全てパスしているか
-- レビュー: Copilot等の自動レビューが完了し、指摘事項に対応済みか
-  - 未着の場合は `~/.claude/scripts/gh-wait-review.sh [PR番号]` で待機（漸増バックオフで約10分。フォアグラウンドの最大タイムアウトを超えるため、必ずバックグラウンドで実行）
-  - スクリプトが待つのは、最後のレビュー要求以降に提出されるレビューだけ。Copilot の PR コメント（「対応を確認しました」等）はレビューではない（応答しているのは copilot-swe-agent で、レビューは提出されていない）
-  - 要求後のレビューが既に届いていれば待たずに成功し、要求が無ければ待たずに終わる（exit 6）ので、状態が分からないまま待ち続けることはない
-  - タイムアウト（exit 1）時は /gh-actions-check で診断
-  - 周回上限到達で対応・見送りした指摘が未確認のまま残っている場合は、
-    その一覧を提示してユーザーの承認を得てからマージする
-- コンフリクト: なしか
-
-## マージコミットメッセージの生成
-
-マージ前にPRの情報を収集し、意味のあるマージコミットメッセージを生成する。
-
-### 1. PR情報の収集
+PR の内容を把握してから書く:
 
 ```bash
-# PRの詳細情報を取得
-gh pr view [PR番号] --json title,body,commits,files,additions,deletions
-
-# コミット一覧を確認
-gh pr view [PR番号] --json commits --jq '.commits[].messageHeadline'
+gh pr view [PR番号] --json title,body,commits,files
 ```
-
-### 2. マージコミットメッセージの作成
-
-以下の構造でマージコミットメッセージを作成する：
-
-**Subject行（1行目）:**
 
 ```text
 Merge: [PRタイトルを簡潔に要約]
-```
 
-**Body（本文）:**
+## Why
+[PRの目的・背景を1-2文]
 
-```text
-## Why（なぜこの変更が必要か）
-[PRの目的・背景を1-2文で説明]
+## What
+- [主要な変更点を3-5項目]
 
-## What（何が変わるか）
-[主要な変更点を箇条書きで3-5項目]
-
-## Impact（影響範囲）
-[どのモジュール/機能に影響するか]
+## Impact
+[影響するモジュール/機能]
 
 PR: #[番号]
 ```
 
-### 3. マージコミットの良い例・悪い例
-
-**❌ 悪い例（GitHubデフォルト）:**
-
-```text
-Merge pull request #42 from user/fix-typo
-```
-
-**✅ 良い例:**
-
-```text
-Merge: ユーザー認証のタイムアウト処理を修正
-
-## Why
-セッションタイムアウト時にユーザーが無限ループに陥るバグがあった
-
-## What
-- セッション期限切れ時のリダイレクト処理を追加
-- エラーメッセージを日本語化
-- タイムアウト値を環境変数で設定可能に
-
-## Impact
-認証関連のコンポーネント（Login, Session, AuthGuard）
-
-PR: #42
-```
-
 ## マージ実行
 
-### マージコミット方式のみ（必須）
-
-⚠️ **squash、rebase は基本禁止**。マージの記録を残すため、常にマージコミット方式を使用する。
-
 ```bash
-gh pr merge [PR番号] --merge \
-  --subject "Merge: [生成したsubject]" \
-  --body "[生成したbody]"
+gh pr merge [PR番号] --merge --delete-branch \
+  --subject "Merge: [subject]" \
+  --body "[body]"
 ```
 
 ## クリーンアップ
 
-マージ完了後、PR の head ブランチ名を渡して実行する:
-
 ```bash
-~/.claude/scripts/post-merge-cleanup.sh [branch]
+~/.claude/scripts/post-merge-cleanup.sh [headブランチ名]
 ```
 
-スクリプトが順に行う: worktree の削除 → main へ切り替えて `fetch --prune` / `pull --ff-only` →
-ローカルブランチ削除 → リモートブランチ削除。そのブランチを head とする open PR
-（fork からの upstream PR 等）があれば、削除で PR が閉じるためリモートは残す（`REMOTE_BRANCH: kept`）。
-worktree に未コミットの変更が残っている、main とリモートの履歴が分岐している、といった場合は
-その場で失敗するので、原因を確認して対処する。
-
-## 完了確認
-
-```bash
-gh pr view [PR番号] --json state,mergedAt,mergedBy
-git log --oneline -5
-```
+worktree 削除 → main へ切り替えて pull → ローカル・リモートのブランチ削除までを行う。
+そのブランチを head とする open PR（fork からの upstream PR 等）があればリモートは残す
+（`REMOTE_BRANCH: kept`）。未コミットの変更や履歴の分岐で失敗したら原因を確認して対処する。
 
 ## 完了メッセージ
 
@@ -162,6 +83,4 @@ git log --oneline -5
 クリーンアップ完了:
 - worktree [path] を削除（該当する場合）
 - ブランチ [branch] を削除（リモートを残した場合はその理由）
-
-現在の状態を確認: /git-info
 ```
