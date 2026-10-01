@@ -45,11 +45,11 @@ markdownlint <files>
 コミット前にステージされた `.md` だけを対象にする場合:
 
 ```bash
-git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | xargs -0 -r markdownlint --fix --
-git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | \
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --fix --
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | \
   xargs -0 -r python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py
-git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | xargs -0 -r git add --
-git diff --cached --name-only -z --diff-filter=ACM -- '*.md' | xargs -0 -r markdownlint --
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r git add --
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --
 ```
 
 注: home-manager が配布する git の pre-commit フック（`modules/home/parts/git.nix`）が
