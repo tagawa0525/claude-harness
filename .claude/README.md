@@ -18,13 +18,13 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 
 ## スクリプトの置き場所
 
-| 場所                                  | 用途                                                                                                                                                        | 例                                                                                                       |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `../modules/home/parts/claude-hooks/` | Claude Code の PreToolUse hook（Rust 製 1 バイナリ）。`claude-code.nix` がビルドして `~/.claude/bin/claude-hooks` に置き、settings.json に 1 件だけ登録する | `src/rules/block_main_commit.rs`, `src/shell.rs`                                                         |
-| `scripts/`                            | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                                                    | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh` |
-| `skills/<name>/scripts/`              | そのスキル専用のスクリプト                                                                                                                                  | `gh-pr-review/scripts/decide-next.sh`                                                                    |
-| `skills/language-checks/scripts/`     | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                                            | `run-checks.sh`, `fix-markdown-lint.py`                                                                  |
-| `tests/`                              | hook のルール / scripts / skills のテスト（`claude-sync` の同期対象外）                                                                                     | `hooks.sh`, `scripts.sh`, `skills.sh`                                                                    |
+| 場所                                  | 用途                                                                                                                                                           | 例                                                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `../modules/home/parts/claude-hooks/` | Claude Code の PreToolUse hook（Rust 製 1 バイナリ）。`claude-code.nix` がビルドして `~/.claude/bin/claude-hooks` に置き、settings.json に 1 件だけ登録する    | `src/rules/block_main_commit.rs`, `src/shell.rs`                                                         |
+| `scripts/`                            | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                                                       | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh` |
+| `skills/<name>/scripts/`              | そのスキル専用のスクリプト                                                                                                                                     | `gh-pr-review/scripts/decide-next.sh`                                                                    |
+| `skills/language-checks/scripts/`     | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                                               | `run-checks.sh`, `fix-markdown-lint.py`                                                                  |
+| `tests/`                              | hook のルール / scripts / skills のテスト（`claude-sync` の同期対象外）。scripts のテストは対象ごとに `tests/scripts/` に分け、`scripts.sh` がまとめて実行する | `hooks.sh`, `scripts.sh`, `scripts/gh-pr-review.sh`, `skills.sh`                                         |
 
 判断基準:
 

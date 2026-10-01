@@ -11,7 +11,7 @@
 set -uo pipefail
 
 CLAUDE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck disable=SC2034  # scripts.sh が使う
+# shellcheck disable=SC2034  # scripts/*.sh が使う
 SCRIPTS_DIR="$CLAUDE_DIR/scripts"
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
