@@ -133,7 +133,7 @@ EOF
 | `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ |
 | `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                        |
 | `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                      |
-| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh` で待つ（下記と同様 background）                            |
+| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh {pr_number}` で待つ（下記と同様 background）                |
 
 **再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分。
 `run_in_background=true` で実行）。
