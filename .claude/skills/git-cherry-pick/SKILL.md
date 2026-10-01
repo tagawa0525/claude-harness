@@ -10,6 +10,7 @@ allowed-tools:
   - Bash(git diff*)
   - Bash(git show*)
   - Bash(git switch*)
+  - Bash(git fetch*)
   - Bash(git checkout*)
   - Bash(git cherry-pick*)
   - Bash(git rebase*)
@@ -34,20 +35,28 @@ allowed-tools:
 
 ## main で作業してしまったコミットを移す
 
-main の未 push コミットを**すべて**移すなら cherry-pick は不要（新ブランチが既に含む）:
+main は最後に origin/main へ巻き戻す。`reset --hard` は未コミットの変更も消すので、先に
+`git status` で確認して必要なら stash する。
+
+**すべて**移すなら cherry-pick は不要（新ブランチが既に含む）:
 
 ```bash
+git fetch origin
 git switch -c [new-branch]
 git switch main
-git fetch origin
 git reset --hard origin/main
 ```
 
-`reset --hard` は未コミットの変更を消すので、先に `git status` で確認して必要なら stash する。
-一部だけ移すなら、main は origin/main に戻すので残りのコミットの行き先（別ブランチ・破棄）も
-先に決める。`git branch [backup] main` で元の HEAD を残してから、行き先ごとに
-`git switch -c [branch] origin/main` → cherry-pick し、最後に main を巻き戻す。backup は
-全コミットの行き先を確認してから消す。
+**一部だけ**移すなら、残りのコミットの行き先（別ブランチ・破棄）も先に決める:
+
+```bash
+git fetch origin
+git branch [backup] main                    # 全コミットの行き先を確認してから消す
+git switch -c [branch] origin/main          # 行き先ごとに繰り返す
+git cherry-pick [commit...]
+git switch main
+git reset --hard origin/main
+```
 
 ## feature ブランチ間で移す
 
@@ -60,5 +69,5 @@ git rebase --onto [commit]^ [commit]   # 移動元から対象コミットだけ
 
 ## 注意
 
-- push 済みのコミットを移すと、移動元は `--force-with-lease` での push が要る。実行前にユーザーに確認する
+- 移動元が push 済みなら `/git-push --force`（`--force-with-lease`）が要ることを伝え、確認を得てから実行する
 - コンフリクトしたら内容と解決案を示し、`--continue` か `--abort` を案内する

@@ -15,6 +15,7 @@ allowed-tools:
   - Bash(git stash*)
   - Bash(git cherry-pick*)
   - Bash(git merge-base*)
+  - Bash(git fetch*)
 ---
 
 # Git Tidy Command
@@ -29,10 +30,11 @@ allowed-tools:
 
 ## 前提
 
-- `main` / `master` では実行しない（/git-branch で feature ブランチを作るよう案内する）
+- `main` / `master` では実行しない（/git-cherry-pick で feature ブランチへ移すよう案内する）
 - 未コミットの変更があれば `git stash` で退避し、終わったら復元を提案する
-- 書き換え前に元の HEAD のハッシュを記録する（`git reset --hard <元のHEAD>` で戻せるように）
-- 履歴を分析して操作を提案し、ユーザーの確認を得てから実行する
+- 書き換え前に `git branch [backup]` で元の HEAD を残し、結果を確認してから消す
+- 履歴を分析して操作を提案し、ユーザーの確認を得てから実行する。push 済みなら
+  `/git-push --force`（`--force-with-lease`）が要ることも確認の時点で伝える
 
 ## 操作
 
@@ -41,8 +43,13 @@ allowed-tools:
 - **squash**: `git reset --soft HEAD~N` → 新しいメッセージで `git commit`
 - **split**: `git reset HEAD~1` → 目的別に `git add` してコミットを繰り返す。対象が直前の
   コミットでなければ、先に reorder で末尾へ移す
-- **reorder**: 分岐点以降の**全**コミットを `git log --reverse --format=%h "$(git merge-base HEAD main)"..HEAD`
-  で記録し、新しい順序を決める → `git reset --hard "$(git merge-base HEAD main)"` →
-  記録した全コミットを 1 回ずつ新しい順序で `git cherry-pick`（並べ替えない分も含める。漏らすと消える）
+- **reorder**: 分岐点以降の**全**コミットを記録 → 分岐点まで `reset --hard` → 全件を新しい順に
+  cherry-pick（並べ替えないコミットも含める。漏らすと消える）
 
-push 済みのコミットを書き換えた場合は `/git-push --force`（`--force-with-lease`）が要ることを伝える。
+```bash
+git fetch origin
+BASE=$(git merge-base HEAD origin/main)   # ローカル main は古いことがある
+git log --reverse --format=%h "$BASE"..HEAD
+git reset --hard "$BASE"
+git cherry-pick [全ハッシュを新しい順で]
+```
