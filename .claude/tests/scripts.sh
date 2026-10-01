@@ -516,6 +516,82 @@ assert_eq 0 $?
 assert_contains "$out" "SKIP: markdown fixer (python3 not found)"
 assert_contains "$out" "ALL_OK"
 
+# fake_cargo_pwd: 偽 cargo。どのディレクトリで実行されたかを cargo.pwd に記録する
+fake_cargo_pwd() {
+  : > "$TEST_ROOT/cargo.pwd"
+  make_fake_tool cargo '*) echo "$PWD" >> "'"$TEST_ROOT"'/cargo.pwd" ;;'
+}
+
+it "run-checks: ルートに Cargo.toml が無ければ、ステージ済みの .rs を含む crate で cargo を実行する"
+# ルートで実行すると Cargo.toml が見つからず、Rust を含むコミットが必ず FAILED になっていた
+REPO="$TEST_ROOT/checks/nested-rust"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p tools/a/src tools/b/src
+touch tools/a/Cargo.toml tools/b/Cargo.toml
+echo 'fn main() {}' > tools/a/src/main.rs && git add tools/a
+echo 'fn main() {}' > tools/b/src/main.rs
+fake_cargo_pwd
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+assert_eq "$(printf '%s\n' "$REPO/tools/a" "$REPO/tools/a" "$REPO/tools/a")" "$(cat "$TEST_ROOT/cargo.pwd")"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks: 複数の crate の .rs がステージされていれば、それぞれで cargo を実行する"
+git add tools/b
+fake_cargo_pwd
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq 3 "$(grep -c "^$REPO/tools/a\$" "$TEST_ROOT/cargo.pwd")"
+assert_eq 3 "$(grep -c "^$REPO/tools/b\$" "$TEST_ROOT/cargo.pwd")"
+
+it "run-checks: - で始まるディレクトリの crate でも cargo を実行する（オプションと誤認しない）"
+REPO="$TEST_ROOT/checks/dash-rust"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p -- -crate/src
+touch -- -crate/Cargo.toml
+echo 'fn main() {}' > -crate/src/main.rs && git add -- -crate
+fake_cargo_pwd
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "$(printf '%s\n' "$REPO/-crate" "$REPO/-crate" "$REPO/-crate")" "$(cat "$TEST_ROOT/cargo.pwd")"
+
+it "run-checks: crate の fmt が失敗したら、そのまま実行できる修正コマンドを示す"
+REPO="$TEST_ROOT/checks/space-rust"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p "my crate/src"
+touch "my crate/Cargo.toml"
+echo 'fn main() {}' > "my crate/src/main.rs" && git add "my crate"
+make_fake_tool cargo '"fmt --check"*) exit 1 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 1 $?
+assert_contains "$out" 'FIX: (cd -- my\ crate && cargo fmt)'
+
+it "run-checks: crate の外の .rs だけなら cargo を実行せず SKIP を出す"
+REPO="$TEST_ROOT/checks/stray-rust"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo 'fn main() {}' > stray.rs && git add stray.rs
+fake_cargo_pwd
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "" "$(fake_log cargo)"
+assert_contains "$out" "SKIP: rust"
+assert_contains "$out" "stray.rs"
+
+it "run-checks: ルートに Cargo.toml があればルートで cargo を実行する"
+REPO="$TEST_ROOT/checks/root-rust"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+touch Cargo.toml
+fake_cargo_pwd
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "$(printf '%s\n' "$REPO" "$REPO" "$REPO")" "$(cat "$TEST_ROOT/cargo.pwd")"
+
 it "run-checks: 該当言語がなければ NOTE を出して exit 0"
 REPO="$TEST_ROOT/checks/none"
 make_repo "$REPO"
