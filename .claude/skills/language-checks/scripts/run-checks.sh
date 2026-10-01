@@ -9,6 +9,7 @@
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み
 #   Nix:      flake.nix がある、または .nix がステージ済み
 #   Markdown: .md がステージ済み（自動修正 → 補完 → 再ステージ → 検査）
+#   Shell:    .sh がステージ済み（ステージ済みのファイルだけを shellcheck で検査）
 #
 # 最初に失敗したチェックで止まり、失敗したコマンドと自動修正コマンド（あれば）を出す。
 # ツールがなければ SKIP を出して続行する。
@@ -154,8 +155,17 @@ if staged_has '*.md'; then
   run_stage markdown lint markdownlint "" md_lint
 fi
 
+# --- Shell（ステージ済みのみ）---
+sh_lint() {
+  git diff --cached --name-only -z --diff-filter=ACM -- '*.sh' | xargs -0 -r shellcheck -S warning --
+}
+if staged_has '*.sh'; then
+  DETECTED=1
+  run_stage shell lint shellcheck "" sh_lint
+fi
+
 if (( DETECTED == 0 )); then
-  echo "NOTE: 対象言語が見つかりません（Cargo.toml / pyproject.toml / flake.nix、またはステージ済みの .rs / .py / .nix / .md）"
+  echo "NOTE: 対象言語が見つかりません（Cargo.toml / pyproject.toml / flake.nix、またはステージ済みの .rs / .py / .nix / .md / .sh）"
   exit 0
 fi
 

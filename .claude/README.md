@@ -122,7 +122,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
   （反映は activation なので rebuild が必要。`claude-sync` では反映されない）
 - 結果は `KEY: value` 形式の行で出す（`WORKTREE:` / `CAUSE:` / `VERDICT:` 等）。
   SKILL.md はその行を読んで分岐する
-- shellcheck を通す: `nix shell nixpkgs#shellcheck -c shellcheck -S warning <file>`
+- shellcheck を通す（`run-checks.sh` がステージ済みの `.sh` を `shellcheck -S warning` で検査する）
 - hook / script / SKILL.md を変えたら `bash .claude/tests/{hooks,scripts,skills}.sh` を通す
   （hooks.sh は `cargo build` してからバイナリを `--rule` でルールごとに評価する。構文解析の単体テストは
   `cargo test --manifest-path modules/home/parts/claude-hooks/Cargo.toml`）。
