@@ -52,8 +52,6 @@ if [[ -z "$PR_NUMBER" ]]; then
 fi
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
-
 # Copilot 宛てレビュー要求の created_at を発生順に取得。
 # 取得に失敗したら空扱いで続けない。周回数を過少に見積もり、上限判定がずれる
 if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_NUMBER"); then
@@ -71,7 +69,7 @@ reviewed_sha=""
 if (( review_count > 0 )); then
   review_id=$(sed -n 's/^REVIEW_ID: //p' <<<"$latest")
   read -r last_review_at reviewed_sha < <(
-    gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}" \
+    gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/reviews/${review_id}" \
       --jq '"\(.submitted_at) \(.commit_id)"'
   )
 fi
@@ -92,7 +90,7 @@ fi
 plan_only() {
   local files
   # gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
-  files=$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename') || return 1
+  files=$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR_NUMBER}/files" --jq '.[].filename') || return 1
   [[ -n "$files" ]] && ! grep -qv '^docs/plans/' <<<"$files"
 }
 

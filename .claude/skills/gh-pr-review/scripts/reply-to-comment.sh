@@ -16,10 +16,7 @@ if [[ -z "$PR_NUMBER" ]] || [[ -z "$COMMENT_ID" ]] || [[ -z "$BODY" ]]; then
   exit 1
 fi
 
-# リポジトリ情報を取得
-REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
-
 # コメントに返信
-gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${COMMENT_ID}/replies" \
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments/${COMMENT_ID}/replies" \
   -f body="$BODY" \
   --jq '{id: .id, html_url: .html_url, body: .body}'
