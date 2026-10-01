@@ -558,6 +558,18 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "$(printf '%s\n' "$REPO/-crate" "$REPO/-crate" "$REPO/-crate")" "$(cat "$TEST_ROOT/cargo.pwd")"
 
+it "run-checks: crate の fmt が失敗したら、そのまま実行できる修正コマンドを示す"
+REPO="$TEST_ROOT/checks/space-rust"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p "my crate/src"
+touch "my crate/Cargo.toml"
+echo 'fn main() {}' > "my crate/src/main.rs" && git add "my crate"
+make_fake_tool cargo '"fmt --check"*) exit 1 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 1 $?
+assert_contains "$out" 'FIX: (cd -- my\ crate && cargo fmt)'
+
 it "run-checks: crate の外の .rs だけなら cargo を実行せず SKIP を出す"
 REPO="$TEST_ROOT/checks/stray-rust"
 make_repo "$REPO"
