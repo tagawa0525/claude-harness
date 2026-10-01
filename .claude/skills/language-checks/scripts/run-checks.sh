@@ -78,7 +78,8 @@ cargo_in() {
 }
 run_rust() {
   local dir="$1"
-  run_stage rust format cargo "(cd $dir && cargo fmt)" cargo_in "$dir" fmt --check
+  # 修正コマンドはコピーしてそのまま実行できるよう、空白や - で始まるパスも引用する
+  run_stage rust format cargo "(cd -- $(printf '%q' "$dir") && cargo fmt)" cargo_in "$dir" fmt --check
   run_stage rust lint cargo "" cargo_in "$dir" clippy --all-targets -- -D warnings
   run_stage rust test cargo "" cargo_in "$dir" test
 }
