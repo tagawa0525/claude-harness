@@ -37,7 +37,7 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 ## 外部リポジトリ由来のスキル
 
 `~/.claude/skills/` には、このリポジトリの `.claude/skills/` 以外に外部リポジトリの
-スキルも配備される。出所は flake input として `flake.nix` / `flake.lock` に記録し、
+スキルもデプロイされる。出所は flake input として `flake.nix` / `flake.lock` に記録し、
 対象は `modules/home/parts/claude-code.nix` の `externalSkills` で列挙する。
 
 | スキル                 | 出所                                                                             |
@@ -45,7 +45,7 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 | `grilling`, `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills) `skills/productivity/` |
 
 - 更新追従: `nix flake update mattpocock-skills` → rebuild
-- 配備先は上流の完全なコピー（`rsync --delete`）。ローカルで編集しても rebuild で戻る
+- デプロイ先は上流の完全なコピー（`rsync --delete`）。ローカルで編集しても rebuild で戻る
 - `claude-sync` コマンドは flake input を知らないため、外部スキルは rebuild でのみ同期される
 
 ## hook が強制するルール
@@ -115,7 +115,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 - `set -euo pipefail`。失敗を黙って 0 件扱いにしない（する場合はコメントで明記）
 - **スクリプトから別のスクリプトを呼ぶ**ときは自身の位置から相対で解決する
   （`$HOME/.claude` 固定はリポジトリから実行したとき未同期の旧版を呼ぶ）
-- **SKILL.md の手順からスクリプトを呼ぶ**ときは配備先の `~/.claude/...` を使う。
+- **SKILL.md の手順からスクリプトを呼ぶ**ときはデプロイ先の `~/.claude/...` を使う。
   スキルは任意のプロジェクトのカレントディレクトリで実行されるため、
   `./.claude/...` は nixfiles 以外では存在しない
 - Bash ツールから呼ぶスクリプトは `claude-code.nix` の許可リストに追加する
