@@ -10,6 +10,8 @@ source "$(dirname "$0")/../lib.sh"
 
 REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
 
+# リポジトリは gh api の {owner} / {repo} で解決させる（gh repo view と同じ解決で、呼び出しが減る）。
+# 偽 gh に repo view の分岐は置かないので、呼べば unexpected で失敗する
 REPO="$TEST_ROOT/review/app"
 make_repo "$REPO"
 make_remote "$REPO" github
@@ -40,13 +42,14 @@ BOT_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","lin
 HUMAN_THREAD='{"id":"T2","isResolved":false,"isOutdated":false,"path":"b.txt","line":5,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":22,"id":"C2","body":"why?","author":{"__typename":"User","login":"alice"},"createdAt":"2026-09-01T00:01:00Z","url":"u2","replyTo":null}]}}'
 
 it "get-review-comments: 各コメントに user_type（Bot / User）を付ける"
-make_fake_gh "\"repo view --json owner\"*) echo octo ;;
-  \"repo view --json name\"*) echo repo ;;
-  \"api graphql --paginate\"*) printf '%s\n' '$BOT_THREAD' '$HUMAN_THREAD' ;;"
+make_fake_gh "\"api graphql --paginate\"*) printf '%s\n' '$BOT_THREAD' '$HUMAN_THREAD' ;;"
 out=$("$REVIEW_SCRIPTS/get-review-comments.sh" 1)
 assert_eq 0 $?
 assert_eq Bot "$(jq -r '.[] | select(.id == 11) | .user_type' <<<"$out")"
 assert_eq User "$(jq -r '.[] | select(.id == 22) | .user_type' <<<"$out")"
+
+it "get-review-comments: owner / name は gh の {owner} / {repo} に解決させる"
+assert_contains "$(fake_log gh)" "-F owner={owner} -F name={repo}"
 
 # ===========================================================================
 # gh-pr-review/scripts/resolve-thread.sh: 人間のスレッドは既定で resolve しない
@@ -56,9 +59,7 @@ assert_eq User "$(jq -r '.[] | select(.id == 22) | .user_type' <<<"$out")"
 
 # fake_gh_threads <threads_json>: resolve-thread.sh が読む reviewThreads と mutation を偽装する
 fake_gh_threads() {
-  make_fake_gh "\"repo view --json owner\"*) echo octo ;;
-  \"repo view --json name\"*) echo repo ;;
-  \"api graphql -F owner=\"*) echo '$1' ;;
+  make_fake_gh "\"api graphql -F owner=\"*) echo '$1' ;;
   \"api graphql -F id=\"*) echo 'resolved' ;;"
 }
 THREADS='{"pageInfo":{"hasNextPage":false},"nodes":[
@@ -71,6 +72,9 @@ fake_gh_threads "$THREADS"
 out=$("$REVIEW_SCRIPTS/resolve-thread.sh" 1 11)
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "-F id=T1"
+
+it "resolve-thread: owner / name は gh の {owner} / {repo} に解決させる"
+assert_contains "$(fake_log gh)" "-F owner={owner} -F name={repo}"
 
 it "resolve-thread: 人間が起こしたスレッドは既定では resolve せず exit 1（mutation を呼ばない）"
 fake_gh_threads "$THREADS"
@@ -103,9 +107,8 @@ fake_gh_rereview() {
   jq -n '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: "2026-09-08T00:05:00Z"}]}' \
     > "$TEST_ROOT/reviews.json"
   make_fake_gh "\"auth status\"*) ;;
-  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $event ;;
-  \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
+  \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
   \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;"
 }
@@ -114,7 +117,7 @@ it "request-rereview: requested_reviewers API で Copilot にレビューを要�
 fake_gh_rereview
 out=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
 assert_eq 0 $?
-assert_contains "$(fake_log gh)" "api -X POST repos/octo/repo/pulls/1/requested_reviewers"
+assert_contains "$(fake_log gh)" "api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers"
 assert_contains "$(fake_log gh)" "reviewers[]=copilot-pull-request-reviewer[bot]"
 
 it "request-rereview: @copilot メンションコメントは投稿しない（応答するのは swe-agent でレビューは走らない）"
@@ -133,9 +136,8 @@ assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 
 it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
 make_fake_gh "\"auth status\"*) ;;
-  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) ;;
-  \"api -X POST repos/octo/repo/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
+  \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" 1 2>&1)
 assert_eq 1 $?
 assert_not_contains "$(fake_log gh)" "issues/1/comments"
@@ -160,15 +162,12 @@ DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","lin
 fake_gh_decide() {
   local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
   local files="${5:-echo a.txt}"
-  make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
-  \"api --paginate repos/octo/repo/pulls/1/files\"*) $files ;;
-  \"repo view --json owner\"*) echo octo ;;
-  \"repo view --json name\"*) echo repo ;;
+  make_fake_gh "\"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
   \"pr view 1 --json headRefOid\"*) echo $head ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
-  \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
-  \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
-  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo \"$1 $reviewed\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo \"$1 $reviewed\" ;;
   \"api graphql --paginate\"*) echo '$thread' ;;"
 }
 
@@ -395,13 +394,10 @@ fake_gh_review_body() {
   local ids="printf '%s\n' $*"
   [[ $# -eq 0 ]] && ids=":"
   jq -n --arg body "$body" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
-  make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
-  \"repo view --json owner\"*) echo octo ;;
-  \"repo view --json name\"*) echo repo ;;
-  \"pr view 1 --json headRefOid\"*) echo abc1234 ;;
-  \"api --paginate repos/octo/repo/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
-  \"api --paginate repos/octo/repo/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
-  \"api repos/octo/repo/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  make_fake_gh "\"pr view 1 --json headRefOid\"*) echo abc1234 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
   \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
 }
@@ -433,7 +429,6 @@ assert_not_contains "$out" "STOP_CLEAN"
 # fake_gh_timeline_fails: レビュー要求（timeline）の取得だけが失敗する gh
 fake_gh_timeline_fails() {
   make_fake_gh "\"auth status\"*) ;;
-  \"repo view --json nameWithOwner\"*) echo octo/repo ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 'gh: HTTP 502' >&2; exit 1 ;;"
 }
 
