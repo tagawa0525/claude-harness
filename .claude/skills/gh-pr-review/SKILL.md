@@ -32,10 +32,14 @@ PRについたレビューコメントを確認し、対応する。取得・集
 
 ## Step 1: 対象の特定
 
-- コメント URL（`…/pull/{n}#discussion_r{id}`）→ `get-pr-info.sh "{URL}"` の `number` と
-  `comment_id`。そのコメントだけに対応する
+- コメント URL（`…/pull/{n}#discussion_r{id}`）→ 下記に URL を渡し、出力の `number` と
+  `comment_id` のコメントだけに対応する
 - PR 番号 → その PR の全コメント
-- 引数なし → `get-pr-info.sh` で現在のブランチの PR
+- 引数なし → 下記を引数なしで実行し、現在のブランチの PR を得る
+
+```bash
+~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh ["{URL}"]
+```
 
 ## Step 2: レビューコメントの取得
 
@@ -133,10 +137,15 @@ EOF
 | `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で原因を診断し、直せたら再レビュー                                        |
 | `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh` で待つ（約 10 分かかるので `run_in_background=true` で実行） |
 
-**再レビューの要求**は `request-rereview.sh {pr_number}` だけで行う（要求後そのまま待機する。
-約 10 分かかるので `run_in_background=true` で実行）。`@copilot` メンションには
-copilot-swe-agent がコメントを返すだけで、レビューは走らない。要求が失敗したら
-フォールバックせず、対応内容を PR コメントで伝えてレビュアーの判断を待つ。
+**再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分かかるので
+`run_in_background=true` で実行）。
+
+```bash
+~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {pr_number}
+```
+
+`@copilot` メンションには copilot-swe-agent がコメントを返すだけで、レビューは走らない。
+要求が失敗したらフォールバックせず、対応内容を PR コメントで伝えてレビュアーの判断を待つ。
 
 **待機のタイムアウト**: Greptile のように指摘ゼロだと何も投稿しないボットもある。
 タイムアウトを要求の失敗と決めつけず、head SHA の check-run と未解決スレッド数で判断する。
