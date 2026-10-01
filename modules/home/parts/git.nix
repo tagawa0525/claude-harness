@@ -113,7 +113,7 @@
       # ========================================
       # デフォルト: ステージされたファイルをチェック
       # ========================================
-      STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+      STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
       [ -z "$STAGED_FILES" ] && exit 0
 
       # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
@@ -130,10 +130,10 @@
       check_failed=0
 
       # Nix ファイルのチェック（NUL区切りでスペースを含むパスにも対応）
-      NIX_FILES=$(git diff --cached --name-only --diff-filter=ACM -- '*.nix' || true)
+      NIX_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- '*.nix' || true)
       if [ -n "$NIX_FILES" ] && command -v nixfmt >/dev/null 2>&1; then
         echo "🔍 Checking Nix format..."
-        if ! git diff --cached --name-only --diff-filter=ACM -z -- '*.nix' | xargs -0 nixfmt --check 2>/dev/null; then
+        if ! git diff --cached --name-only --diff-filter=ACMR -z -- '*.nix' | xargs -0 nixfmt --check 2>/dev/null; then
           echo "❌ Nix format check failed. Run: nixfmt <files>"
           check_failed=1
         fi
@@ -155,23 +155,23 @@
       fi
 
       # Markdown ファイルのチェック
-      MD_FILES=$(git diff --cached --name-only --diff-filter=ACM -- '*.md' || true)
+      MD_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- '*.md' || true)
       if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
         echo "🔧 Auto-fixing Markdown lint..."
-        git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint --fix -- 2>/dev/null || true
+        git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 markdownlint --fix -- 2>/dev/null || true
         # markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完。
         # 実体は language-checks スキルの同期先（~/.claude）。無ければこの段は飛ばし、
         # 直後の markdownlint 検査で残った違反として検出される
         MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"
         if [ -f "$MD_FIXER" ] && command -v python3 >/dev/null 2>&1; then
-          if ! git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 python3 "$MD_FIXER"; then
+          if ! git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 python3 "$MD_FIXER"; then
             echo "❌ fix-markdown-lint.py failed. Run: python3 $MD_FIXER <files>"
             check_failed=1
           fi
         fi
-        git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 git add --
+        git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 git add --
         echo "🔍 Checking Markdown lint..."
-        if ! git diff --cached --name-only --diff-filter=ACM -z -- '*.md' | xargs -0 markdownlint -- 2>/dev/null; then
+        if ! git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 markdownlint -- 2>/dev/null; then
           echo "❌ Markdown lint failed (unfixable issues remain)"
           check_failed=1
         fi
