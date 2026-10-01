@@ -83,11 +83,12 @@ decline は事実に基づく反論があるときだけ。根拠を書けない
 
 fix のコメントごとに、修正 → チェック → コミットを繰り返す（**1 コメント = 1 コミット**）。
 
-チェックは `~/.claude/skills/language-checks/scripts/run-checks.sh`（プロジェクトの
-CLAUDE.md にチェックコマンドがあればそちらを優先）。`ALL_OK` になるまで直す。
+修正したファイルを `git add` してから `~/.claude/skills/language-checks/scripts/run-checks.sh`
+を実行する（Markdown はステージ済みのものしか検査しない。プロジェクトの CLAUDE.md に
+チェックコマンドがあればそちらを優先）。`ALL_OK` になるまで直し、自動修正が入ったら
+もう一度 `git add` してからコミットする。
 
 ```bash
-git add {今回の修正ファイル}
 git commit -m "$(cat <<'EOF'
 fix: {指摘内容を簡潔に}
 
