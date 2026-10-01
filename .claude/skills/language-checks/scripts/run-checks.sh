@@ -32,7 +32,7 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 cd "$ROOT" || exit 1
 
 staged_has() {
-  git diff --cached --name-only --diff-filter=ACM -- "$1" | grep -q .
+  git diff --cached --name-only --diff-filter=ACMR -- "$1" | grep -q .
 }
 
 # run_stage <lang> <stage> <tool> <fix-command|""> <command...>
@@ -71,7 +71,7 @@ rust_targets() {
     else
       echo "stray $f"
     fi
-  done < <(git diff --cached --name-only -z --diff-filter=ACM -- '*.rs')
+  done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs')
 }
 # cargo_in <dir> <args...>: crate のディレクトリで cargo を実行する
 cargo_in() {
@@ -132,7 +132,7 @@ fi
 # --- Markdown（ステージ済みのみ）---
 MD_FIXER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fix-markdown-lint.py"
 staged_md() {
-  git diff --cached --name-only -z --diff-filter=ACM -- '*.md'
+  git diff --cached --name-only -z --diff-filter=ACMR -- '*.md'
 }
 md_autofix() {
   # markdownlint --fix は直せない違反があると非 0 を返すので、ここでは止めない（直後の lint で検出する）
@@ -157,7 +157,7 @@ fi
 
 # --- Shell（ステージ済みのみ）---
 sh_lint() {
-  git diff --cached --name-only -z --diff-filter=ACM -- '*.sh' | xargs -0 -r shellcheck -S warning --
+  git diff --cached --name-only -z --diff-filter=ACMR -- '*.sh' | xargs -0 -r shellcheck -S warning --
 }
 if staged_has '*.sh'; then
   DETECTED=1
