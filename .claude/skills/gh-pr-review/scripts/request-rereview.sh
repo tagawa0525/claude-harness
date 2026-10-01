@@ -29,8 +29,6 @@ if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
-
 # 共有スクリプトは自身の位置から相対で解決する（<root>/skills/gh-pr-review/scripts → <root>/scripts）
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REQUESTS_SCRIPT="${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh"
@@ -49,7 +47,7 @@ latest_request_at() {
 
 before=$(latest_request_at)
 
-if ! err=$(gh api -X POST "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
+if ! err=$(gh api -X POST "repos/{owner}/{repo}/pulls/${PR_NUMBER}/requested_reviewers" \
              -f "reviewers[]=${REVIEWER}" 2>&1 >/dev/null); then
   echo "$err" >&2
   echo "ERROR: PR #${PR_NUMBER} に ${REVIEWER} のレビューを要求できませんでした" >&2

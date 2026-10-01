@@ -31,12 +31,10 @@ if [[ -z "$PR_NUMBER" ]]; then
   exit 1
 fi
 
-REPO=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
-
 # Copilot のレビューを提出順に全件取得（周回数の算出に全件必要）。
 # --paginate に配列を返す --jq を渡すとページごとの配列が連結されて不正な JSON に
 # なるため、要素をストリーム出力してから jq -s で1つの配列にまとめる
-reviews=$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/reviews?per_page=100" \
+reviews=$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR_NUMBER}/reviews?per_page=100" \
   --jq '.[] | select(.user.login == "copilot-pull-request-reviewer[bot]")' \
   | jq -s '.')
 
@@ -53,7 +51,7 @@ state=$(jq -r '.state' <<<"$latest")
 body=$(jq -r '.body' <<<"$latest")
 
 inline_count=$(gh api --paginate \
-  "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}/comments?per_page=100" \
+  "repos/{owner}/{repo}/pulls/${PR_NUMBER}/reviews/${review_id}/comments?per_page=100" \
   --jq '.[].id' | wc -l)
 
 # "Suppressed comments (N)" の行から次の </details> までを抜き出す。

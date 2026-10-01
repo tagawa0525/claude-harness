@@ -33,13 +33,10 @@ if [[ -n "$UNRESOLVED_ONLY" && "$UNRESOLVED_ONLY" != "--unresolved" ]]; then
   exit 1
 fi
 
-OWNER=$(gh repo view --json owner -q '.owner.login')
-NAME=$(gh repo view --json name -q '.name')
-
 # スレッドは --paginate で全件。スレッド内コメントは 100 件まで（通常十分。超える場合は
 # 末尾を取りこぼすので、hasNextPage を見て警告する）
 raw=$(gh api graphql --paginate \
-  -F owner="$OWNER" -F name="$NAME" -F number="$PR_NUMBER" \
+  -F owner='{owner}' -F name='{repo}' -F number="$PR_NUMBER" \
   -f query='
     query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
       repository(owner: $owner, name: $name) {

@@ -42,12 +42,9 @@ if ! [[ "$COMMENT_ID" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-OWNER=$(gh repo view --json owner -q '.owner.login')
-NAME=$(gh repo view --json name -q '.name')
-
 # コメント ID を含むスレッドを探す（スレッド 100 件・スレッド内コメント 100 件まで）
 threads=$(gh api graphql \
-  -F owner="$OWNER" -F name="$NAME" -F number="$PR_NUMBER" \
+  -F owner='{owner}' -F name='{repo}' -F number="$PR_NUMBER" \
   -f query='
     query($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
