@@ -715,12 +715,13 @@ DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","lin
 # fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread] [files]
 # レビュー要求2件・レビュー1件（インライン指摘2件）の PR を模す。
 # 既定では head とレビュー対象が一致し、スレッドは解決済み。
-# files は PR の変更ファイルを出力するコマンド（既定はコードのファイル 1 件）
+# files は PR の変更ファイルを出力するコマンド（既定はコードのファイル 1 件）。
+# gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
 fake_gh_decide() {
   local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
   local files="${5:-echo a.txt}"
   make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
-  \"pr view 1 --json files\"*) $files ;;
+  \"api --paginate repos/octo/repo/pulls/1/files\"*) $files ;;
   \"repo view --json owner\"*) echo octo ;;
   \"repo view --json name\"*) echo repo ;;
   \"pr view 1 --json headRefOid\"*) echo $head ;;

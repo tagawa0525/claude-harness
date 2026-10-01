@@ -892,15 +892,19 @@ assert_contains "$(reason "$out")" "ユーザーが承認"
 # 計画（docs/plans/）だけの PR は、最初の自動レビューで方針の指摘を受ければ足りる。
 # 文章の計画は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない
 # （nucrawler #145 は 22 コミット・74 コメント、#146 も指摘 0 件の後に毎回新しい論点が出た）
+# make_fake_gh_merge_files <files> [reviewed] [check_run]
+# files は PR の変更ファイル、reviewed は bot レビューの対象コミットを出力するコマンド
+# （既定は head と違う "old"）、check_run は head のチェック 1 件の JSON（既定は CI の成功）
 make_fake_gh_merge_files() {
-  local files="$1"
+  local files="$1" reviewed="${2:-echo old}"
+  local check_run="${3:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
-  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo '"'$check_run'"' ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
-  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviewed"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
   "api graphql"*) echo "[]" ;;'
 }
@@ -909,6 +913,19 @@ it "pre-merge-check: 計画（docs/plans/）だけの PR は、最後の push �
 make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md docs/plans/011_y.md'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: 計画だけの PR は、一度レビューを受けていれば最後の push のレビューが失敗していてもマージできる"
+make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo old' \
+  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: 計画だけの PR でも、レビューが一度も成功していなければ止める"
+make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo ""' \
+  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビューが実行されていません"
 
 it "pre-merge-check: 計画以外のファイルも含む PR は、これまでどおり再レビューを求める"
 make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md src/main.rs'
