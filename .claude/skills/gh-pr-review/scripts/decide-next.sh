@@ -91,7 +91,8 @@ fi
 # （再レビューを求める側に倒す）
 plan_only() {
   local files
-  files=$(gh pr view "$PR_NUMBER" --json files -q '.files[].path') || return 1
+  # gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
+  files=$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename') || return 1
   [[ -n "$files" ]] && ! grep -qv '^docs/plans/' <<<"$files"
 }
 
