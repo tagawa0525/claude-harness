@@ -712,12 +712,16 @@ OPEN_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","li
 OPEN_THREAD_WITH_REPLY='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null},{"databaseId":12,"id":"C2","body":"Fixed in abc","author":{"__typename":"User","login":"me"},"createdAt":"2026-09-08T02:40:00Z","url":"u2","replyTo":{"databaseId":11}}]}}'
 DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
 
-# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread]
+# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread] [files]
 # レビュー要求2件・レビュー1件（インライン指摘2件）の PR を模す。
-# 既定では head とレビュー対象が一致し、スレッドは解決済み
+# 既定では head とレビュー対象が一致し、スレッドは解決済み。
+# files は PR の変更ファイルを出力するコマンド（既定はコードのファイル 1 件）。
+# gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
 fake_gh_decide() {
   local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
+  local files="${5:-echo a.txt}"
   make_fake_gh "\"repo view --json nameWithOwner\"*) echo octo/repo ;;
+  \"api --paginate repos/octo/repo/pulls/1/files\"*) $files ;;
   \"repo view --json owner\"*) echo octo ;;
   \"repo view --json name\"*) echo repo ;;
   \"pr view 1 --json headRefOid\"*) echo $head ;;
@@ -761,6 +765,29 @@ it "decide-next: 対応を push したのに要求していなければ REREVIEW
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: 計画（docs/plans/）だけの PR は、対応を push しても再レビューを要求せず STOP_PLAN_REVIEWED"
+# 文章の計画は細部をいくらでも掘れるので、最初のレビューで方針の指摘を受けたら周回を止める
+# （hook の pre-merge-check も同じ条件で再レビューを求めない）
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/plans/010_x.md docs/plans/sub/011_y.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "VERDICT: STOP_PLAN_REVIEWED"
+
+it "decide-next: 計画だけの PR でも、未解決スレッドが残っていればまず ACT"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD" 'echo docs/plans/010_x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: 計画以外のファイルも含む PR は、これまでどおり REREVIEW_NEEDED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/plans/010_x.md src/docs/plans/x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: 変更ファイルを取得できなければ、計画だけとみなさず REREVIEW_NEEDED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'exit 1'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
 it "decide-next: 周回上限に達していれば要求せず STOP_LIMIT"
