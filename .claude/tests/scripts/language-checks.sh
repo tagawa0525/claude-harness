@@ -173,6 +173,45 @@ assert_eq 1 $?
 assert_contains "$out" "FAILED: shell lint"
 assert_not_contains "$out" "ALL_OK"
 
+# rename したファイルも、追加・変更と同じく検査する。
+# pathspec での絞り込みは rename の検出より先に効くので、old.sh → new.sh のように
+# 前後とも同じ拡張子の rename だけが R になり、--diff-filter=ACM から漏れていた
+
+it "run-checks: .sh から .sh への rename を shellcheck で検査する"
+REPO="$TEST_ROOT/checks/rename-sh"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+printf '#!/usr/bin/env bash\necho tool\n' > old.sh && git add old.sh && git commit -q -m "chore: old"
+git mv old.sh new.sh
+make_fake_tool shellcheck '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "-S warning -- new.sh" "$(fake_log shellcheck)"
+
+it "run-checks: .md から .md への rename を markdownlint で検査する"
+REPO="$TEST_ROOT/checks/rename-md"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+printf '# notes\n\nbody\n' > old.md && git add old.md && git commit -q -m "chore: old"
+git mv old.md new.md
+make_fake_tool markdownlint '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_contains "$(fake_log markdownlint)" "new.md"
+
+it "run-checks: .rs から .rs への rename でも crate で cargo を実行する"
+REPO="$TEST_ROOT/checks/rename-rs"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p tools/a/src
+touch tools/a/Cargo.toml
+echo 'fn main() {}' > tools/a/src/old.rs && git add tools/a && git commit -q -m "chore: crate"
+git mv tools/a/src/old.rs tools/a/src/main.rs
+fake_cargo_pwd
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "$(printf '%s\n' "$REPO/tools/a" "$REPO/tools/a" "$REPO/tools/a")" "$(cat "$TEST_ROOT/cargo.pwd")"
+
 it "run-checks: 該当言語がなければ NOTE を出して exit 0"
 REPO="$TEST_ROOT/checks/none"
 make_repo "$REPO"
