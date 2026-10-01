@@ -64,6 +64,8 @@ ng() { FAIL=$((FAIL + 1)); echo "✗ $1" >&2; sed 's/^/    /' "$WORK/out" >&2; }
 
 echo "==> feature branch 上の update"
 before=$(git -C "$REPO" rev-parse HEAD)
+# origin/main は clone 後に other から進めてあり、ローカルの追跡 ref は古いまま
+tracking_before=$(git -C "$REPO" rev-parse origin/main)
 if bash "$SCRIPT" update >"$WORK/out" 2>&1; then
   ng "失敗終了する"
 else
@@ -73,6 +75,11 @@ if [[ "$(git -C "$REPO" rev-parse HEAD)" == "$before" ]]; then
   ok "ブランチを動かさない（main 上へリベースしない）"
 else
   ng "ブランチを動かさない（main 上へリベースしない）"
+fi
+if [[ "$(git -C "$REPO" rev-parse origin/main)" == "$tracking_before" ]]; then
+  ok "fetch しない（origin/main の追跡 ref が古いまま）"
+else
+  ng "fetch しない（origin/main の追跡 ref が古いまま）"
 fi
 if grep -q "main ブランチで実行してください（現在: feat/x）" "$WORK/out"; then
   ok "現在のブランチと main で実行すべき旨を出力する"
