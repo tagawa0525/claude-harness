@@ -453,11 +453,15 @@ impl Rule for PreMergeCheck {
                     // 検査しない。ただしチェックが失敗しているなら初回レビューが走らなかった
                     // ということなので、下の分岐でレビュー未実施として報告する
                     Some(sha) if sha.is_empty() && !copilot_check_failed => {}
+                    // 計画だけの PR は一度レビューを受けていれば足りる。後のレビューが失敗していても止めない
+                    Some(sha)
+                        if !sha.is_empty()
+                            && sha != head_sha
+                            && is_plan_only(&dir, &owner, &name, number) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
                         short(&head_sha)
                     )),
-                    Some(sha) if sha != head_sha && is_plan_only(&dir, &owner, &name, number) => {}
                     Some(sha) if sha != head_sha => reasons.push(format!(
                         "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
                         short(&head_sha),
