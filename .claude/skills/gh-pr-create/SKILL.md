@@ -20,7 +20,7 @@ GitHub Pull Requestを作成する（gh CLI使用）。このスキルの本体�
 
 ## 事前確認
 
-!`gh auth status`
+!`gh auth status 2>&1 | head -3`
 !`git status --short`
 !`git branch -vv`
 !`git log '@{upstream}..HEAD' --oneline 2>/dev/null || echo "(上流ブランチ未設定)"`
@@ -89,17 +89,7 @@ EOF
 )"
 ```
 
-### ドラフトPR（--draft 指定時）
-
-```bash
-gh pr create --draft --title "[タイトル]" --body "[本文]"
-```
-
-### レビュアー指定（--reviewer 指定時）
-
-```bash
-gh pr create --reviewer [REVIEWER] --title "[タイトル]" --body "[本文]"
-```
+`--draft` / `--reviewer` が指定されていればそのまま付ける。
 
 ## 完了
 

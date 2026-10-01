@@ -56,22 +56,10 @@ git switch -c [branch-name]
 ## ステージング
 
 何もステージされていない場合は、変更を論理単位に分けて `git add [file]` / `git add -p` し、
-単位ごとにコミットする。対象を絞らない `git add -A` / `git add .` は `guard-git-add` hook が deny する。
+単位ごとにコミットする。
 
-ステージ済みの変更が大きい（5 ファイル以上または 100 行以上）と、`warn-large-commit` hook が
-コミット時に件数を知らせる。1 つの論理的変更に収まっているか確認し、複数の変更が混在していれば
-`git add [file]` / `git add -p` で分けて別々にコミットする。大きくても 1 つの変更ならそのまま続行してよい。
-
-コミット対象に機密情報があると `block-secret-commit` hook が deny する（検出は gitleaks）。
-該当ファイルを `git restore --staged` で外して `.gitignore` に追加し、push 済みの値はローテーションする。
-誤検出のときだけ、その行に `gitleaks:allow` を書くかコマンドに `ALLOW_SECRET_COMMIT=1` を付ける。
-
-## Markdown自動修正
-
-`.md` の自動修正（`markdownlint --fix` と `fix-markdown-lint.py`）は git の pre-commit hook
-（`modules/home/parts/git.nix`）がコミット時に行い、修正済みファイルを再ステージする。
-手順としては何もしなくてよい。hook が「unfixable issues remain」で止めた場合だけ、
-language-checks の markdown-checks.md を参照して手で直す。
+`.md` の lint 修正は git の pre-commit hook が自動で行い再ステージする。
+「unfixable issues remain」で止まったときだけ language-checks の markdown-checks.md を見て直す。
 
 ## コミットメッセージ作成
 

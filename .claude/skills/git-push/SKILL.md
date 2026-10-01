@@ -19,28 +19,14 @@ allowed-tools:
 !`git status --short`
 !`git branch -vv`
 
-## hook が守るルール
+## main / master では push しない
 
-以下は `guard-git-push` hook が機械的に deny する。手順で判断することはない:
+main/master への push・force push・`--all` / `--mirror` は `guard-git-push` hook が deny する
+（feature branch への `--force-with-lease` は許可）。deny を回避する `ALLOW_PROTECTED_PUSH=1` は
+ユーザーの明示的な指示があるときだけ付ける。
 
-- main/master への push、force push（`--force` / `-f` / `+refspec`）、`--all` / `--mirror`
-
-feature branch への `--force-with-lease` は open PR があっても許可される
-（マージ前に origin/main へリベースして push し直す運用のため）。
-
-deny されたら、そのまま従う。どうしても必要な場合はユーザーの明示的な指示のもと、コマンドに
-`ALLOW_PROTECTED_PUSH=1` を付けて実行する（勝手に付けない）。
-
-現在のブランチが `main` / `master` なら push せず、PRワークフローを案内する:
-
-```text
-⚠️ main/master ブランチへの直接プッシュは推奨されません。
-
-PRワークフローを使用してください:
-1. /git-cherry-pick でブランチを分離
-2. /git-push で feature ブランチをプッシュ
-3. /gh-pr-create でプルリクエストを作成
-```
+現在のブランチが `main` / `master` なら push せず、/git-cherry-pick で feature ブランチに
+移してから /gh-pr-create へ進むよう案内する。
 
 ## プッシュ対象の確認
 
