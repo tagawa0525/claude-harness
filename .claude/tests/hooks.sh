@@ -801,6 +801,7 @@ out=$(run_hook guard-gh-api "gh api graphql -f query='query { repository(owner: 
 assert_eq allow "$(decision "$out")"
 
 it "guard-gh-api: resolve-thread.sh の実行と gh api 以外は対象外"
+# shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 out=$(run_hook guard-gh-api '~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh 1 2')
 assert_eq "" "$out"
 out=$(run_hook guard-gh-api 'gh pr view 1')

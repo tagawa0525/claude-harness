@@ -82,6 +82,7 @@ esac
 SLOTS_LOCATION=$(echo "$WASMS" | grep 'zellij-slots\.wasm$' || true)
 [ "$(echo "$SLOTS_LOCATION" | grep -c .)" -eq 1 ] \
   || { echo "FAIL: zellij-slotsのパスを一意に特定できない ($SLOTS_LOCATION)"; exit 1; }
+# shellcheck disable=SC2088  # 展開していない ~ 始まりの文字列かを判定する
 case "$SLOTS_LOCATION" in
   "~/"*) ;;
   *) echo "FAIL: zellij-slotsのパスが ~ 始まりでない ($SLOTS_LOCATION)"; exit 1 ;;
@@ -204,8 +205,8 @@ send_prefix() {
 }
 
 wait_for_tabs() {
-  local want=$1 i
-  for i in $(seq 40); do
+  local want=$1
+  for _ in $(seq 40); do
     if [ "$(tab_names | grep -c .)" -ge "$want" ]; then
       return 0
     fi
