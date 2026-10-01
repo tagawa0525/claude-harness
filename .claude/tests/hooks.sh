@@ -881,6 +881,14 @@ assert_contains "$(reason "$out")" "ALL_OK"
 assert_contains "$(reason "$out")" "既存テスト"
 assert_contains "$(reason "$out")" "完了報告"
 
+it "pre-merge-check: 周回上限に達したときはユーザーの承認を条件にエスケープを案内する"
+# 上限到達後は再レビューを依頼できないので、案内が「依頼」と「挙動を変えない修正」だけだと
+# ユーザーが承認しても次の一手がない
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_contains "$(reason "$out")" "周回上限"
+assert_contains "$(reason "$out")" "ユーザーが承認"
+
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
