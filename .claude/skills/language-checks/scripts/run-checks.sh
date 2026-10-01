@@ -4,7 +4,8 @@
 # Usage: run-checks.sh
 #
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
-#   Rust:     Cargo.toml がある、または .rs がステージ済み
+#   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
+#             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み
 #   Nix:      flake.nix がある、または .nix がステージ済み
 #   Markdown: .md がステージ済み（自動修正 → 補完 → 再ステージ → 検査）
@@ -55,11 +56,48 @@ run_stage() {
 DETECTED=0
 
 # --- Rust ---
-if [[ -f Cargo.toml ]] || staged_has '*.rs'; then
+# rust_targets: ステージ済みの .rs ごとに、上へたどって最も近い Cargo.toml のディレクトリ（crate）を
+# "crate <dir>" で出す。crate に属さない .rs は "stray <file>" で出す
+rust_targets() {
+  local f dir
+  while IFS= read -r -d '' f; do
+    dir=$(dirname "$f")
+    while [[ "$dir" != . && ! -f "$dir/Cargo.toml" ]]; do
+      dir=$(dirname "$dir")
+    done
+    if [[ -f "$dir/Cargo.toml" ]]; then
+      echo "crate $dir"
+    else
+      echo "stray $f"
+    fi
+  done < <(git diff --cached --name-only -z --diff-filter=ACM -- '*.rs')
+}
+# cargo_in <dir> <args...>: crate のディレクトリで cargo を実行する
+cargo_in() {
+  (cd "$1" && shift && cargo "$@")
+}
+run_rust() {
+  local dir="$1"
+  run_stage rust format cargo "(cd $dir && cargo fmt)" cargo_in "$dir" fmt --check
+  run_stage rust lint cargo "" cargo_in "$dir" clippy --all-targets -- -D warnings
+  run_stage rust test cargo "" cargo_in "$dir" test
+}
+if [[ -f Cargo.toml ]]; then
   DETECTED=1
-  run_stage rust format cargo "cargo fmt" cargo fmt --check
-  run_stage rust lint cargo "" cargo clippy --all-targets -- -D warnings
-  run_stage rust test cargo "" cargo test
+  run_rust .
+elif staged_has '*.rs'; then
+  DETECTED=1
+  mapfile -t targets < <(rust_targets | sort -u)
+  stray=()
+  for t in "${targets[@]}"; do
+    case "$t" in
+      "crate "*) run_rust "${t#crate }" ;;
+      "stray "*) stray+=("${t#stray }") ;;
+    esac
+  done
+  if (( ${#stray[@]} > 0 )); then
+    echo "SKIP: rust (Cargo.toml の無い場所の .rs: ${stray[*]})"
+  fi
 fi
 
 # --- Python ---
