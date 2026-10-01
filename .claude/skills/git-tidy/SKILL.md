@@ -41,7 +41,8 @@ allowed-tools:
 - **squash**: `git reset --soft HEAD~N` → 新しいメッセージで `git commit`
 - **split**: `git reset HEAD~1` → 目的別に `git add` してコミットを繰り返す。対象が直前の
   コミットでなければ、先に reorder で末尾へ移す
-- **reorder**: 並べ替えるハッシュを記録 → `git reset --hard "$(git merge-base HEAD main)"` →
-  `git cherry-pick` で希望順に再適用
+- **reorder**: 分岐点以降の**全**コミットを `git log --reverse --format=%h "$(git merge-base HEAD main)"..HEAD`
+  で記録し、新しい順序を決める → `git reset --hard "$(git merge-base HEAD main)"` →
+  記録した全コミットを 1 回ずつ新しい順序で `git cherry-pick`（並べ替えない分も含める。漏らすと消える）
 
 push 済みのコミットを書き換えた場合は `/git-push --force`（`--force-with-lease`）が要ることを伝える。
