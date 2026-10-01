@@ -889,6 +889,44 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_contains "$(reason "$out")" "周回上限"
 assert_contains "$(reason "$out")" "ユーザーが承認"
 
+# 計画（docs/plans/）だけの PR は、最初の自動レビューで方針の指摘を受ければ足りる。
+# 文章の計画は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない
+# （nucrawler #145 は 22 コミット・74 コメント、#146 も指摘 0 件の後に毎回新しい論点が出た）
+make_fake_gh_merge_files() {
+  local files="$1"
+  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
+  "api graphql"*) echo "[]" ;;'
+}
+
+it "pre-merge-check: 計画（docs/plans/）だけの PR は、最後の push が未レビューでもマージできる"
+make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md docs/plans/011_y.md'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: 計画以外のファイルも含む PR は、これまでどおり再レビューを求める"
+make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md src/main.rs'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "request-rereview.sh"
+
+it "pre-merge-check: docs/plans/ に似た別の場所は計画として扱わない"
+make_fake_gh_merge_files 'printf "%s\n" docs/plans.md src/docs/plans/x.md'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 変更ファイルを取得できなければ、計画だけとみなさず再レビューを求める"
+make_fake_gh_merge_files 'echo "error connecting to api.github.com" >&2; exit 1'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "request-rereview.sh"
+
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
