@@ -152,6 +152,27 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "$(printf '%s\n' "$REPO" "$REPO" "$REPO")" "$(cat "$TEST_ROOT/cargo.pwd")"
 
+it "run-checks: ステージ済みの .sh だけを shellcheck で検査する"
+# 既存の .sh 全体を見ると、shellcheck を通していない既存ファイルでコミットが止まる
+REPO="$TEST_ROOT/checks/shell"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo 'echo old' > old.sh && git add old.sh && git commit -q -m "chore: old"
+printf '#!/usr/bin/env bash\necho a\n' > a.sh && git add a.sh
+make_fake_tool shellcheck '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "-S warning -- a.sh" "$(fake_log shellcheck)"
+assert_contains "$out" "OK: shell lint"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks: shellcheck の警告で止まる"
+make_fake_tool shellcheck '*) echo "SC2034 (warning)"; exit 1 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 1 $?
+assert_contains "$out" "FAILED: shell lint"
+assert_not_contains "$out" "ALL_OK"
+
 it "run-checks: 該当言語がなければ NOTE を出して exit 0"
 REPO="$TEST_ROOT/checks/none"
 make_repo "$REPO"
