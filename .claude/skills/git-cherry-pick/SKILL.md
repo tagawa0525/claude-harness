@@ -44,7 +44,10 @@ git reset --hard origin/main
 ```
 
 `reset --hard` は未コミットの変更を消すので、先に `git status` で確認して必要なら stash する。
-一部だけ移すなら `git switch -c [new-branch] origin/main` → 対象を cherry-pick → main を巻き戻す。
+一部だけ移すなら、main は origin/main に戻すので残りのコミットの行き先（別ブランチ・破棄）も
+先に決める。`git branch [backup] main` で元の HEAD を残してから、行き先ごとに
+`git switch -c [branch] origin/main` → cherry-pick し、最後に main を巻き戻す。backup は
+全コミットの行き先を確認してから消す。
 
 ## feature ブランチ間で移す
 
