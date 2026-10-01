@@ -77,18 +77,18 @@ decline は事実に基づく反論があるときだけ。根拠を書けない
 
 - decline 済み → 前回の返信 URL を引いて同じ根拠で返信する。再検証は前提が変わったときだけ
 - fix 済みの箇所 → 修正の反映漏れ（push 漏れ、別箇所の取り残し）を確認する
-- 台帳の同じ行に周回を追記し、件数には数えない
+- 台帳の同じ行に周回を追記する（Step 8）
 
 ## Step 4: 修正
 
-fix のコメントごとに、修正 → チェック → コミットを繰り返す（**1 コメント = 1 コミット**）。
+fix のコメントごとに、修正 → `git add` → チェック → コミットを繰り返す（**1 コメント = 1 コミット**）。
 
-修正したファイルを `git add` してから `~/.claude/skills/language-checks/scripts/run-checks.sh`
-を実行する（Markdown はステージ済みのものしか検査しない。プロジェクトの CLAUDE.md に
-チェックコマンドがあればそちらを優先）。`ALL_OK` になるまで直し、自動修正が入ったら
-もう一度 `git add` してからコミットする。
+チェックはステージ済みのファイルが対象なので、先に `git add` する。`FAILED:` なら `FIX:` か
+手直しで `ALL_OK` まで直し、変わったファイルを再度 `git add` する。プロジェクトの CLAUDE.md に
+チェックコマンドがあればそちらを使う。
 
 ```bash
+~/.claude/skills/language-checks/scripts/run-checks.sh
 git commit -m "$(cat <<'EOF'
 fix: {指摘内容を簡潔に}
 
@@ -122,23 +122,24 @@ EOF
 ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {pr_number}
 ```
 
-| VERDICT                | 意味                                         | 次の一手                                                                                         |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                                             |
-| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | `request-rereview.sh` で要求する（挙動を変えない修正だけなら下記の省略条件）                     |
-| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ。最終周の対応・見送りを報告し、マージはユーザーの承認を得てから               |
-| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                         |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ |
-| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                        |
-| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で原因を診断し、直せたら再レビュー                                      |
-| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh` で待つ                                                     |
+| VERDICT                | 意味                                         | 次の一手                                                                                           |
+| ---------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                                               |
+| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | `request-rereview.sh` で要求する（挙動を変えない修正だけなら下記の省略条件）                       |
+| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ。最終周の対応・見送りを報告し、マージはユーザーの承認を得てから                 |
+| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                           |
+| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ   |
+| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                          |
+| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で原因を診断し、直せたら再レビュー                                        |
+| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh` で待つ（約 10 分かかるので `run_in_background=true` で実行） |
 
-**再レビューの要求**は `request-rereview.sh {pr_number}` だけで行う（要求と待機を一体化して
-いるので取りこぼさない。約 10 分かかるので Bash ツールの `run_in_background=true`）。
-`@copilot` メンションには copilot-swe-agent がコメントを返すだけで、レビューは走らない。
-要求が失敗したら（fork からの upstream PR は 404）フォールバックせず、対応内容を
-PR コメントで伝えてレビュアーの判断を待つ。Greptile のように指摘ゼロだと何も投稿しない
-ボットでは待機がタイムアウトするので、head SHA の check-run と未解決スレッド数で判断する。
+**再レビューの要求**は `request-rereview.sh {pr_number}` だけで行う（要求後そのまま待機する。
+約 10 分かかるので `run_in_background=true` で実行）。`@copilot` メンションには
+copilot-swe-agent がコメントを返すだけで、レビューは走らない。要求が失敗したら
+フォールバックせず、対応内容を PR コメントで伝えてレビュアーの判断を待つ。
+
+**待機のタイムアウト**: Greptile のように指摘ゼロだと何も投稿しないボットもある。
+タイムアウトを要求の失敗と決めつけず、head SHA の check-run と未解決スレッド数で判断する。
 
 **Suppressed comments**: 実害（誤動作・データ破損・機能の穴）があれば対応する。理論上の
 可能性・スタイル・些末な表記は対応せず、Step 8 に列挙してユーザーに委ねる。対応には
@@ -180,7 +181,7 @@ PR: {url}
 | 1 | #discussion_r{id} | path:line | 🔴 | fix | {hash} |
 | 1,2 | #discussion_r{id} | path:line | 🟡 | decline | 2 周目は同一指摘。前回返信を参照 |
 
-対応サマリー（論点数）: fix {n}（🔴{n} / 🟡{n} / 🟢{n}）、decline {n}、回答 {n}、要判断 {n}
+対応サマリー: fix {n}（🔴{n} / 🟡{n} / 🟢{n}）、decline {n}、回答 {n}、要判断 {n}
 以下は該当があるときだけ:
 - レビュアーの確認待ち: {人間のスレッドで返信済み・未 resolve}
 - 未確認の対応: {周回上限到達時、最終周で対応・見送りした指摘}
