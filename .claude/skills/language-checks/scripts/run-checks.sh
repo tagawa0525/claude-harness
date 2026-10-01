@@ -61,9 +61,9 @@ DETECTED=0
 rust_targets() {
   local f dir
   while IFS= read -r -d '' f; do
-    dir=$(dirname "$f")
+    dir=$(dirname -- "$f")
     while [[ "$dir" != . && ! -f "$dir/Cargo.toml" ]]; do
-      dir=$(dirname "$dir")
+      dir=$(dirname -- "$dir")
     done
     if [[ -f "$dir/Cargo.toml" ]]; then
       echo "crate $dir"
@@ -74,7 +74,7 @@ rust_targets() {
 }
 # cargo_in <dir> <args...>: crate のディレクトリで cargo を実行する
 cargo_in() {
-  (cd "$1" && shift && cargo "$@")
+  (cd -- "$1" && shift && cargo "$@")
 }
 run_rust() {
   local dir="$1"
