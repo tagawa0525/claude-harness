@@ -64,8 +64,6 @@ git push
 git push --force-with-lease
 ```
 
-open PR のあるブランチでは hook が拒否する。履歴を整理したい場合はマージ後に行うか、PRを閉じてから行う。
-
 ## 完了確認
 
 ```bash
