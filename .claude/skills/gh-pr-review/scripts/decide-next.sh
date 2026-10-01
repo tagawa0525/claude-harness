@@ -19,6 +19,10 @@
 #   VERDICT: <判定>
 #     ACT                  未解決スレッドあり → 対応する（fix / decline / escalate）
 #     REREVIEW_NEEDED      対応を push したが再レビューを要求していない → 要求する
+#     STOP_PLAN_REVIEWED   計画（docs/plans/）だけの PR で、対応済み・head 未レビュー
+#                          → 依頼しない。文章の計画は細部をいくらでも掘れるので、
+#                            方針の指摘は最初のレビューで受けて周回を止める
+#                            （pre-merge-check も同じ条件で再レビューを求めない）
 #     STOP_LIMIT           要求が必要だが上限到達 → 依頼せず、残りを報告して委ねる
 #     STOP_DECLINED        未解決ゼロ・head はレビュー済み → 対応は済んでいる。マージへ
 #                          （全件 decline のように push を伴わない周。再度要求しても
@@ -83,6 +87,14 @@ if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_NUMBER" --unresolv
   exit 1
 fi
 
+# PR の変更ファイルがすべて計画か。取得できない・1 件も無いときは計画だけとみなさない
+# （再レビューを求める側に倒す）
+plan_only() {
+  local files
+  files=$(gh pr view "$PR_NUMBER" --json files -q '.files[].path') || return 1
+  [[ -n "$files" ]] && ! grep -qv '^docs/plans/' <<<"$files"
+}
+
 # 要求イベントを取得できないリポジトリでも周回を見失わないよう、多い方を周回数とする
 round=$(( request_count > review_count ? request_count : review_count ))
 
@@ -126,7 +138,9 @@ if [[ "$failed" == "yes" ]]; then
 elif (( unresolved > 0 )); then
   echo "VERDICT: ACT"
 elif [[ "$head_reviewed" == "no" ]]; then
-  if (( round < MAX_ROUNDS )); then
+  if plan_only; then
+    echo "VERDICT: STOP_PLAN_REVIEWED"
+  elif (( round < MAX_ROUNDS )); then
     echo "VERDICT: REREVIEW_NEEDED"
   else
     echo "VERDICT: STOP_LIMIT"
