@@ -2,10 +2,19 @@
 # PreToolUse hook（modules/home/parts/claude-hooks、Rust 製 1 バイナリ）のルールごとのテスト
 #
 # 実行: bash .claude/tests/hooks.sh
-#   lib.sh が cargo build してから各ルールを --rule で個別に評価する
+#   claude-hooks を cargo build してから各ルールを --rule で個別に評価する
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait
+
+# hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
+# lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
+# CLAUDE_HOOKS_BIN で差し替えられる（nix でビルドしたバイナリの検証用）
+if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
+  CRATE_DIR=$(cd "$(dirname "$0")/../../modules/home/parts/claude-hooks" && pwd)
+  cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
+  CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
+fi
 
 source "$(dirname "$0")/lib.sh"
 
