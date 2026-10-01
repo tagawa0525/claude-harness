@@ -424,7 +424,7 @@ out=$(run_hook pre-pr-create-check "$(write_doc '例: 説明')"$'\ngh pr create 
 assert_eq deny "$(decision "$out")"
 
 it "heredoc: 算術式のシフト演算子をヒアドキュメントの開始とみなさない"
-# $(( 1 << 3 )) の << はシフト演算子。これを開始と誤認すると終端子が現れず、
+# $(( 1 << 3 )) の << はシフト演算子。これを開始と誤認すると区切り文字が現れず、
 # 以降の行がすべて本文としてマスクされ、実コマンドが hook から見えなくなる
 out=$(run_hook guard-git-push 'SIZE=$(( 1 << 3 ))
 git push origin main')
@@ -441,7 +441,7 @@ it "heredoc: クォートの中の << はヒアドキュメントの開始では
 out=$(run_hook guard-git-push 'echo "a << b"; git push origin main')
 assert_eq deny "$(decision "$out")"
 
-it "heredoc: ハイフン入りの終端子でも本文の後ろの実コマンドは検出する"
+it "heredoc: ハイフン入りの区切り文字でも本文の後ろの実コマンドは検出する"
 out=$(run_hook guard-git-push "cat > doc.md <<END-TEXT
 例: git push origin main は禁止
 END-TEXT

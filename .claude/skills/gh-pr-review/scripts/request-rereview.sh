@@ -67,7 +67,7 @@ fi
 echo "REQUESTED: ${REVIEWER}"
 echo "SINCE: ${after}"
 
-# リポジトリの .claude/ と配備先の ~/.claude/ は同じ構造なので、どちらから実行しても
+# リポジトリの .claude/ とデプロイ先の ~/.claude/ は同じ構造なので、どちらから実行しても
 # 同じ版の gh-wait-review.sh が使われる（$HOME 固定だと未同期の旧版を呼びうる）
 WAIT_SCRIPT="${SCRIPT_DIR}/../../../scripts/gh-wait-review.sh"
 if [[ ! -x "$WAIT_SCRIPT" ]]; then

@@ -116,7 +116,7 @@
       STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
       [ -z "$STAGED_FILES" ] && exit 0
 
-      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す作業木）。
+      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
       # 以下の検査はどれもこちらの道具の版と規約（ruff の新しいルール、markdownlint の設定、
       # rustfmt の edition）を当てるもので、fork では上流の固定版と CI が正。新しい ruff は
       # 触っていない上流の行を上流の版にないルール（RUF043 等）で落とし、Markdown の自動修正は
@@ -256,7 +256,7 @@
         Merge*|fixup!*|squash!*|Revert*) exit 0 ;;
       esac
 
-      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す作業木）。
+      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
       # Conventional Commits も件名の長さもこちらの規約で、上流の慣習（"Fix socket transport
       # when …" のような文。Serena の main には 72 文字を超える件名が普通にある）と衝突して
       # 上流向けのコミットを歪めるので、検査を全部飛ばす。pre-commit と同じ判定。

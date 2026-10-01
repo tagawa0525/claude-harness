@@ -147,7 +147,7 @@ if [[ -z "$since" ]]; then
   since=$(tail -n 1 <<<"$requests")
   if [[ -z "$since" ]]; then
     echo "ERROR: PR #${pr} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません"
-    # 配備版（~/.claude）の旧版を案内しないよう、自分と同じツリーのスクリプトを指す
+    # デプロイ先（~/.claude）の旧版を案内しないよう、自分と同じツリーのスクリプトを指す
     echo "次の一手: $(cd "$(dirname "$requests_script")/.." && pwd)/skills/gh-pr-review/scripts/request-rereview.sh ${pr} でレビューを要求してください"
     exit 6
   fi

@@ -881,7 +881,7 @@ out=$(GH_WAIT_INTERVALS=0 "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
 assert_eq 6 $?
 assert_contains "$out" "レビュー要求"
 assert_not_contains "$out" "TIMEOUT"
-# 案内はこのスクリプトと同じツリーの request-rereview.sh を指す（配備版の旧版を案内しない）
+# 案内はこのスクリプトと同じツリーの request-rereview.sh を指す（デプロイ先の旧版を案内しない）
 assert_contains "$out" "$CLAUDE_DIR/skills/gh-pr-review/scripts/request-rereview.sh"
 
 it "gh-wait-review: 要求後にまだレビューが無ければ待つ"
