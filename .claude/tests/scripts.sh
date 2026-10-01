@@ -546,6 +546,18 @@ assert_eq 0 $?
 assert_eq 3 "$(grep -c "^$REPO/tools/a\$" "$TEST_ROOT/cargo.pwd")"
 assert_eq 3 "$(grep -c "^$REPO/tools/b\$" "$TEST_ROOT/cargo.pwd")"
 
+it "run-checks: - で始まるディレクトリの crate でも cargo を実行する（オプションと誤認しない）"
+REPO="$TEST_ROOT/checks/dash-rust"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p -- -crate/src
+touch -- -crate/Cargo.toml
+echo 'fn main() {}' > -crate/src/main.rs && git add -- -crate
+fake_cargo_pwd
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "$(printf '%s\n' "$REPO/-crate" "$REPO/-crate" "$REPO/-crate")" "$(cat "$TEST_ROOT/cargo.pwd")"
+
 it "run-checks: crate の外の .rs だけなら cargo を実行せず SKIP を出す"
 REPO="$TEST_ROOT/checks/stray-rust"
 make_repo "$REPO"
