@@ -38,7 +38,7 @@ PRについたレビューコメントを確認し、対応する。取得・集
 - 引数なし → 引数なしで実行し、現在のブランチの PR を得る
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh ["{URL}"]
+~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh [{pr_number} | "{URL}"]
 ```
 
 ## Step 2: レビューコメントの取得
