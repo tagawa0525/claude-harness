@@ -39,7 +39,7 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
 PR の内容を把握してから書く:
 
 ```bash
-gh pr view [PR番号] --json title,body,commits,files
+gh pr view [PR番号] --json title,body,commits,files,headRefName
 ```
 
 ```text
@@ -68,7 +68,7 @@ gh pr merge [PR番号] --merge --delete-branch \
 ## クリーンアップ
 
 ```bash
-~/.claude/scripts/post-merge-cleanup.sh [headブランチ名]
+~/.claude/scripts/post-merge-cleanup.sh [headRefName]
 ```
 
 worktree 削除 → main へ切り替えて pull → ローカル・リモートのブランチ削除までを行う。
