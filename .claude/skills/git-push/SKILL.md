@@ -19,28 +19,11 @@ allowed-tools:
 !`git status --short`
 !`git branch -vv`
 
-## hook が守るルール
+## main / master では push しない
 
-以下は `guard-git-push` hook が機械的に deny する。手順で判断することはない:
-
-- main/master への push、force push（`--force` / `-f` / `+refspec`）、`--all` / `--mirror`
-
-feature branch への `--force-with-lease` は open PR があっても許可される
-（マージ前に origin/main へリベースして push し直す運用のため）。
-
-deny されたら、そのまま従う。どうしても必要な場合はユーザーの明示的な指示のもと、コマンドに
-`ALLOW_PROTECTED_PUSH=1` を付けて実行する（勝手に付けない）。
-
-現在のブランチが `main` / `master` なら push せず、PRワークフローを案内する:
-
-```text
-⚠️ main/master ブランチへの直接プッシュは推奨されません。
-
-PRワークフローを使用してください:
-1. /git-cherry-pick でブランチを分離
-2. /git-push で feature ブランチをプッシュ
-3. /gh-pr-create でプルリクエストを作成
-```
+現在のブランチが `main` / `master` なら push せず、/git-cherry-pick で feature ブランチに
+移してから /gh-pr-create へ進むよう案内する。hook に deny されたときの
+`ALLOW_PROTECTED_PUSH=1` は、ユーザーの明示的な指示があるときだけ付ける。
 
 ## プッシュ対象の確認
 
@@ -50,7 +33,7 @@ git log @{upstream}..HEAD --oneline 2>/dev/null || echo "上流ブランチ未�
 
 ## プッシュ実行
 
-上流ブランチの有無は気にしなくてよい（`push.autoSetupRemote` により初回 push で自動設定される）:
+上流ブランチは `push.autoSetupRemote` により初回 push で設定される:
 
 ```bash
 git push
@@ -58,13 +41,11 @@ git push
 
 ### --force オプションが指定された場合
 
-`--force` ではなく `--force-with-lease` を使う（他の人がプッシュした変更を誤って上書きしない）:
+`--force` ではなく `--force-with-lease` を使う:
 
 ```bash
 git push --force-with-lease
 ```
-
-open PR のあるブランチでは hook が拒否する。履歴を整理したい場合はマージ後に行うか、PRを閉じてから行う。
 
 ## 完了確認
 

@@ -10,8 +10,6 @@
 #
 # REST の /pulls/{n}/comments はスレッドの resolve 状態を持たないため、GraphQL の
 # reviewThreads から取得する。--unresolved は isResolved == false のスレッドに限定する。
-# 以前は gh pr-review 拡張を優先していたが、拡張のフラグ変更で常に REST へ
-# フォールバックし --unresolved が効かない状態になっていたため、拡張依存をやめた。
 
 set -euo pipefail
 

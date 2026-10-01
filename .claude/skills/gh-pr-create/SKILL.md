@@ -20,7 +20,7 @@ GitHub Pull Requestを作成する（gh CLI使用）。このスキルの本体�
 
 ## 事前確認
 
-!`gh auth status`
+!`gh auth status 2>&1 | head -3`
 !`git status --short`
 !`git branch -vv`
 !`git log '@{upstream}..HEAD' --oneline 2>/dev/null || echo "(上流ブランチ未設定)"`
@@ -50,11 +50,13 @@ git diff main..HEAD --stat
 ### PRタイトル
 
 - 最初のコミットメッセージまたは変更の要約から生成
-- 70文字以内（超えると hook が deny する）
+- 70文字以内
 
 ### PR本文テンプレート
 
-見出し `## Summary` / `## Changes` / `## Tests` は必須（欠けると hook が deny する）。hook が見るのは見出しだけで、本文の言語は問わない。同じリポジトリへの PR は本文を日本語で書き、上流のリポジトリへ fork から出す PR（`-R owner/repo --head my-account:branch`）は相手のリポジトリの言語（ふつう英語）で書く:
+見出し `## Summary` / `## Changes` / `## Tests` は必須。本文は、同じリポジトリへの PR なら日本語、
+fork から上流へ出す PR（`-R owner/repo --head my-account:branch`）なら相手のリポジトリの言語
+（ふつう英語）で書く:
 
 ```markdown
 ## Summary
@@ -70,7 +72,7 @@ git diff main..HEAD --stat
 
 ## PR作成
 
-`--title` と `--body` は必ず指定する（`--fill` や本文省略はエディタが開くので hook が deny する）。
+`--title` と `--body` は必ず指定する（`--fill` や本文省略はエディタが開いて止まる）。
 `--web` は使わない。
 
 ### 通常のPR
@@ -89,17 +91,7 @@ EOF
 )"
 ```
 
-### ドラフトPR（--draft 指定時）
-
-```bash
-gh pr create --draft --title "[タイトル]" --body "[本文]"
-```
-
-### レビュアー指定（--reviewer 指定時）
-
-```bash
-gh pr create --reviewer [REVIEWER] --title "[タイトル]" --body "[本文]"
-```
+`--draft` / `--reviewer` が指定されていればそのまま付ける。
 
 ## 完了
 
@@ -116,7 +108,7 @@ gh pr view --json url -q .url
 ✅ PRを作成しました: [URL]
 
 次のステップ:
-- Copilotのレビューを待つ場合 → ~/.claude/scripts/gh-wait-review.sh（漸増バックオフで約10分待機。バックグラウンドで実行）
+- Copilotのレビューを待つ場合 → ~/.claude/scripts/gh-wait-review.sh（約 10 分。`run_in_background=true` で実行）
 - Copilotレビュー/CIの状況を確認する場合 → /gh-actions-check
 - レビューコメントに対応する場合 → /gh-pr-review
 - レビュー後にマージする場合 → /gh-pr-merge
