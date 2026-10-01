@@ -14,6 +14,9 @@
 //!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる。
 //!    表記・コメント・整形など挙動を変えない修正で 1 周回す価値がないときも同じ。
 //!    どちらも完了報告に何をマージしたかを残す前提で外す。
+//!    計画（docs/plans/）だけの PR は、一度でも自動レビューを受けていれば検査しない。
+//!    文章の計画は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
+//!    方針の指摘は最初のレビューで受け、競合や端のケースは実装の PR でテストとともに詰める
 //!
 //! 1〜3 はコマンド文字列だけで判定する。4〜8 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
@@ -82,6 +85,28 @@ fn json_stream(s: &str) -> Option<Vec<Value>> {
         .into_iter::<Value>()
         .collect::<Result<Vec<_>, _>>()
         .ok()
+}
+
+/// 計画の置き場所。ここだけを変える PR は最初の自動レビューで足りる（検証 8）
+const PLAN_DIR: &str = "docs/plans/";
+
+/// PR の変更ファイルがすべて計画か。取得できない・1 件も無いときは計画だけとみなさない
+fn is_plan_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
+    gh::gh(
+        dir,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{owner}/{name}/pulls/{number}/files"),
+            "--jq",
+            ".[].filename",
+        ],
+    )
+    .ok()
+    .is_some_and(|s| {
+        let files: Vec<&str> = s.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        !files.is_empty() && files.iter().all(|f| f.starts_with(PLAN_DIR))
+    })
 }
 
 fn is_ok_conclusion(c: &Value) -> bool {
@@ -432,6 +457,7 @@ impl Rule for PreMergeCheck {
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
                         short(&head_sha)
                     )),
+                    Some(sha) if sha != head_sha && is_plan_only(&dir, &owner, &name, number) => {}
                     Some(sha) if sha != head_sha => reasons.push(format!(
                         "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
                         short(&head_sha),
