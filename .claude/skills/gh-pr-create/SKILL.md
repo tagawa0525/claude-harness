@@ -54,9 +54,9 @@ git diff main..HEAD --stat
 
 ### PR本文テンプレート
 
-見出し `## Summary` / `## Changes` / `## Tests` は必須（見出しの文言だけが検査され、本文の言語は問わない）。
-同じリポジトリへの PR は日本語で書き、fork から上流へ出す PR（`-R owner/repo --head my-account:branch`）は
-相手のリポジトリの言語（ふつう英語）で書く:
+見出し `## Summary` / `## Changes` / `## Tests` は必須。本文は、同じリポジトリへの PR なら日本語、
+fork から上流へ出す PR（`-R owner/repo --head my-account:branch`）なら相手のリポジトリの言語
+（ふつう英語）で書く:
 
 ```markdown
 ## Summary
@@ -108,7 +108,7 @@ gh pr view --json url -q .url
 ✅ PRを作成しました: [URL]
 
 次のステップ:
-- Copilotのレビューを待つ場合 → ~/.claude/scripts/gh-wait-review.sh（約 10 分かかるので `run_in_background=true` で実行）
+- Copilotのレビューを待つ場合 → ~/.claude/scripts/gh-wait-review.sh（約 10 分。`run_in_background=true` で実行）
 - Copilotレビュー/CIの状況を確認する場合 → /gh-actions-check
 - レビューコメントに対応する場合 → /gh-pr-review
 - レビュー後にマージする場合 → /gh-pr-merge

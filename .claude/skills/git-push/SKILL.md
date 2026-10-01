@@ -41,7 +41,7 @@ git push
 
 ### --force オプションが指定された場合
 
-`--force` ではなく `--force-with-lease` を使う（open PR があっても可）:
+`--force` ではなく `--force-with-lease` を使う:
 
 ```bash
 git push --force-with-lease

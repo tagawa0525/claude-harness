@@ -34,7 +34,7 @@ allowed-tools:
 - 未コミットの変更があれば `git stash` で退避し、終わったら復元を提案する
 - 書き換え前に `git branch [backup]` で元の HEAD を残し、結果を確認してから消す
 - 履歴を分析して操作を提案し、ユーザーの確認を得てから実行する。push 済みなら
-  `/git-push --force`（`--force-with-lease`）が要ることも確認の時点で伝える
+  `/git-push --force` が要ることも確認の時点で伝える
 
 ## 操作
 

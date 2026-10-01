@@ -30,11 +30,10 @@ head の遅れなど機械的に判定できる条件は `pre-merge-check` hook 
 $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
 
 - 自動レビューが未着なら `~/.claude/scripts/gh-wait-review.sh [PR番号]` で待つ（約 10 分。
-  Bash ツールの `run_in_background=true`）。タイムアウト（exit 1）は /gh-actions-check で診断
+  `run_in_background=true` で実行）。タイムアウト（exit 1）は /gh-actions-check で診断
 - 指摘への対応が残っていれば /gh-pr-review に戻る
-- head がレビューを受けていない（gh-pr-review の「レビューを受けていない変更」、または周回上限
-  到達）なら `pre-merge-check` が止める。挙動を変えない修正だけか、ユーザーが一覧を見て承認した
-  ときに限り、`gh pr merge` に `ALLOW_UNREVIEWED_HEAD=1` を付ける
+- 未レビューの head で `pre-merge-check` に止められたら、挙動を変えない修正だけのときか、
+  周回上限到達をユーザーが承認したときに限り `ALLOW_UNREVIEWED_HEAD=1` を付ける
 
 ## マージコミットメッセージ
 

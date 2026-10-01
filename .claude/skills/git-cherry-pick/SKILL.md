@@ -35,8 +35,7 @@ allowed-tools:
 
 ## main で作業してしまったコミットを移す
 
-main は最後に origin/main へ巻き戻す。`reset --hard` は未コミットの変更も消すので、先に
-`git status` で確認して必要なら stash する。
+`reset --hard` は未コミットの変更も消すので、先に `git status` で確認して必要なら stash する。
 
 **すべて**移すなら cherry-pick は不要（新ブランチが既に含む）:
 
@@ -47,12 +46,12 @@ git switch main
 git reset --hard origin/main
 ```
 
-**一部だけ**移すなら、残りのコミットの行き先（別ブランチ・破棄）も先に決める:
+**一部だけ**移すなら、全コミットの行き先（各ブランチ・破棄）を先に決める:
 
 ```bash
 git fetch origin
-git branch [backup] main                    # 全コミットの行き先を確認してから消す
-git switch -c [branch] origin/main          # 行き先ごとに繰り返す
+git branch [backup] main             # 確認後に削除
+git switch -c [branch] origin/main   # 行き先ごとに
 git cherry-pick [commit...]
 git switch main
 git reset --hard origin/main
@@ -69,5 +68,5 @@ git rebase --onto [commit]^ [commit]   # 移動元から対象コミットだけ
 
 ## 注意
 
-- 移動元が push 済みなら `/git-push --force`（`--force-with-lease`）が要ることを伝え、確認を得てから実行する
+- 移動元が push 済みなら `/git-push --force` が要ることを伝え、確認を得てから実行する
 - コンフリクトしたら内容と解決案を示し、`--continue` か `--abort` を案内する
