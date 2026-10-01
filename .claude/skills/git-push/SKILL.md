@@ -21,12 +21,9 @@ allowed-tools:
 
 ## main / master では push しない
 
-main/master への push・force push・`--all` / `--mirror` は `guard-git-push` hook が deny する
-（feature branch への `--force-with-lease` は許可）。deny を回避する `ALLOW_PROTECTED_PUSH=1` は
-ユーザーの明示的な指示があるときだけ付ける。
-
 現在のブランチが `main` / `master` なら push せず、/git-cherry-pick で feature ブランチに
-移してから /gh-pr-create へ進むよう案内する。
+移してから /gh-pr-create へ進むよう案内する。hook に deny されたときの
+`ALLOW_PROTECTED_PUSH=1` は、ユーザーの明示的な指示があるときだけ付ける。
 
 ## プッシュ対象の確認
 
@@ -36,7 +33,7 @@ git log @{upstream}..HEAD --oneline 2>/dev/null || echo "上流ブランチ未�
 
 ## プッシュ実行
 
-上流ブランチの有無は気にしなくてよい（`push.autoSetupRemote` により初回 push で自動設定される）:
+上流ブランチは `push.autoSetupRemote` により初回 push で設定される:
 
 ```bash
 git push
@@ -44,7 +41,7 @@ git push
 
 ### --force オプションが指定された場合
 
-`--force` ではなく `--force-with-lease` を使う（他の人がプッシュした変更を誤って上書きしない）:
+`--force` ではなく `--force-with-lease` を使う（open PR があっても可）:
 
 ```bash
 git push --force-with-lease

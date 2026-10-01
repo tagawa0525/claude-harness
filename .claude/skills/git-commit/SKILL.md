@@ -59,7 +59,6 @@ git switch -c [branch-name]
 単位ごとにコミットする。
 
 `.md` の lint 修正は git の pre-commit hook が自動で行い再ステージする。
-「unfixable issues remain」で止まったときだけ language-checks の markdown-checks.md を見て直す。
 
 ## コミットメッセージ作成
 
@@ -67,7 +66,7 @@ $ARGUMENTS が指定されている場合はConventional Commits形式に整形�
 指定がない場合はステージされた変更を分析して生成。
 
 - **Type**: feat, fix, docs, style, refactor, test, chore
-- **Subject**: 50文字以内を目安（72文字超は commit-msg hook が拒否）、命令形、先頭小文字、末尾ピリオドなし
+- **Subject**: 50文字以内を目安、72文字が上限、命令形、先頭小文字、末尾ピリオドなし
 - **Body**: 理由がsubjectから自明でない場合のみ
 
 ## コミット実行
@@ -85,7 +84,8 @@ EOF
 
 pre-commit hookエラー等で失敗した場合、エラー内容を表示し、
 自動修正（フォーマッタ等の `--fix`）/ 手動修正 / 中断 を選択させる。
-自動修正後は再ステージして再試行。
+自動修正後は再ステージして再試行。Markdown で「unfixable issues remain」と出たら
+language-checks の markdown-checks.md を見て手で直す。
 
 ## 完了確認
 
