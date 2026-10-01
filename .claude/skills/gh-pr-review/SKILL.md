@@ -72,7 +72,7 @@ bot の指摘は前提が誤っていることがある。**着手前に、指�
 
 decline は事実に基づく反論があるときだけ。根拠を書けないなら fix か escalate。
 
-計画（`docs/plans/`）だけの PR は、方針に関わる指摘だけを計画で直す。競合・端のケースなど
+計画（`docs/plans/`）だけの PR は、方針に関わる指摘だけを計画で直す。競合状態・エッジケースなど
 実装の細部は `This will be settled with tests in the implementation PR.` と返信して decline する
 （レビューは最初の 1 周で止まる。Step 6 の `STOP_PLAN_REVIEWED`）。
 
