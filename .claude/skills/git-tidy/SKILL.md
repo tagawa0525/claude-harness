@@ -19,7 +19,7 @@ allowed-tools:
 
 # Git Tidy Command
 
-同一ブランチ内のコミットを整理する（squash、分割、reorder）。
+同一ブランチ内のコミットを整理する（squash、split、reorder）。
 
 ## 現在の状態
 
@@ -27,110 +27,21 @@ allowed-tools:
 !`git branch -vv`
 !`git log --oneline -10`
 
-## mainブランチでの実行禁止
+## 前提
 
-現在のブランチが `main` または `master` の場合:
+- `main` / `master` では実行しない（/git-branch で feature ブランチを作るよう案内する）
+- 未コミットの変更があれば `git stash` で退避し、終わったら復元を提案する
+- 書き換え前に元の HEAD のハッシュを記録する（`git reset --hard <元のHEAD>` で戻せるように）
+- 履歴を分析して操作を提案し、ユーザーの確認を得てから実行する
 
-```text
-⚠️ mainブランチでは履歴の書き換えは推奨されません。
+## 操作
 
-featureブランチで作業してください:
-  /git-branch feat/xxx
-```
+`git rebase -i` は対話的で使えないので、reset と cherry-pick で組み立てる:
 
-## 操作モード
+- **squash**: `git reset --soft HEAD~N` → 新しいメッセージで `git commit`
+- **split**: `git reset HEAD~1` → 目的別に `git add` してコミットを繰り返す。対象が直前の
+  コミットでなければ、先に reorder で末尾へ移す
+- **reorder**: 並べ替えるハッシュを記録 → `git reset --hard "$(git merge-base HEAD main)"` →
+  `git cherry-pick` で希望順に再適用
 
-### squash - 複数コミットを1つにまとめる
-
-```text
-Before:
-├── "WIP"
-├── "typo fix"
-└── "完成"
-
-After:
-└── "feat: ログイン機能追加"
-```
-
-手順:
-
-1. 対象コミット数 N を確認
-2. `git reset --soft HEAD~N` で変更をステージに戻す
-3. `git commit` で新しいメッセージでコミット
-
-```bash
-# 例: 直近3コミットを1つにまとめる
-git reset --soft HEAD~3
-git commit -m "feat: ログイン機能追加"
-```
-
-### split - 1コミットを複数に分割
-
-```text
-Before:
-└── "feat + fix 混在"
-
-After:
-├── "feat: 新機能"
-└── "fix: バグ修正"
-```
-
-手順:
-
-1. `git reset HEAD~1` で直前コミットの変更をワーキングツリーに戻す
-2. 目的別にファイルを `git add` してコミット
-3. 残りの変更も `git add` してコミット
-
-```bash
-# 例: 直前コミットを分割
-git reset HEAD~1
-git add src/feature.rs
-git commit -m "feat: 新機能"
-git add src/bugfix.rs
-git commit -m "fix: バグ修正"
-```
-
-注: 分割対象が直前コミットでない場合は、先にreorderで直前に移動してから分割する。
-
-### reorder - コミット順序の入れ替え
-
-分岐点まで `git reset --hard` し、`git cherry-pick` で希望順に再配置。
-
-手順:
-
-1. 分岐点を特定: `git merge-base HEAD main`
-2. 並べ替えたいコミットハッシュを記録
-3. 分岐点まで `git reset --hard [merge-base]`
-4. `git cherry-pick` で希望順にコミットを再適用
-
-```bash
-# 例: コミット A, B, C を C, A, B の順に並べ替え
-BASE=$(git merge-base HEAD main)
-git reset --hard "$BASE"
-git cherry-pick [C-hash] [A-hash] [B-hash]
-```
-
-⚠️ `git reset --hard` 前に、対象コミットハッシュを必ず記録すること。
-
-## 処理フロー
-
-1. 未コミット変更がある場合は `git stash` で退避
-2. コミット履歴を分析
-3. 適切な操作を提案
-4. ユーザー確認後に実行
-5. stash があれば復元を提案
-
-## 注意事項
-
-- リモートにプッシュ済みの場合は force push が必要:
-
-  ```text
-  ⚠️ リモートにプッシュ済みのコミットを変更します。
-  /git-push --force でforce pushが必要になります。
-  ```
-
-- 操作前にコミットハッシュを記録しておけば、`git reset --hard [元のHEAD]` で復元可能
-
-## 関連コマンド
-
-- `/git-cherry-pick` - ブランチ間のコミット移動
+push 済みのコミットを書き換えた場合は `/git-push --force`（`--force-with-lease`）が要ることを伝える。

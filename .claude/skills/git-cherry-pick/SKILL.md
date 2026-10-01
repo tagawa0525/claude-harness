@@ -27,127 +27,35 @@ allowed-tools:
 !`git branch -vv`
 !`git log --oneline -15`
 
-## 使用シナリオ
+## 対象と移動先
 
-### シナリオ1: mainで作業してしまった → featureブランチに移動
+- 移動するコミット: $ARGUMENTS のハッシュ。なければ履歴を分析して候補を提案する
+- 移動先: `--to` のブランチ。なければ新規ブランチを作るか確認し、名前を提案する
 
-```text
-Before:
-main ─── A(feat) ─── B(feat)
+## main で作業してしまったコミットを移す
 
-After:
-main (reset)
-feat/xxx ─── A' ─── B'
-```
-
-### シナリオ2: featureブランチで複数目的が混在 → 別ブランチに分離
-
-```text
-Before:
-feat/login ─── A(login) ─── B(fix) ─── C(login)
-
-After:
-feat/login ─── A ─── C'
-fix/xxx ─── B'
-```
-
-## 処理の流れ
-
-### Step 1: 移動するコミットを特定
-
-$ARGUMENTS でコミットハッシュが指定されている場合はそれを使用。
-指定がない場合はコミット履歴を分析し、移動候補を提案。
-
-### Step 2: 移動先ブランチを決定
-
-`--to` オプションで指定されている場合はそれを使用。
-指定がない場合:
-
-- 新規ブランチを作成するか確認
-- ブランチ名の候補を提案（コミット内容に基づく）
-
-### Step 3-4: コミットの移動と除去
-
-シナリオによって手順が異なる。
-
-#### シナリオ1: mainからの移動（移動元 = main）
-
-mainのHEADからブランチを作成すると対象コミットは既に含まれているため、
-cherry-pickは不要。ブランチを作成してからmainを巻き戻すだけでよい。
+main の未 push コミットを**すべて**移すなら cherry-pick は不要（新ブランチが既に含む）:
 
 ```bash
-# 対象コミットを含んだまま新規ブランチを作成
 git switch -c [new-branch]
-
-# mainに戻り、リモートと同じ位置まで巻き戻す
 git switch main
-git fetch origin        # origin/main を最新化してから巻き戻す
+git fetch origin
 git reset --hard origin/main
 ```
 
-⚠️ `git reset --hard` は未コミットの変更を破棄する。実行前に `git status` で
-ワーキングツリーがクリーンであることを確認する（必要なら stash に退避）。
+`reset --hard` は未コミットの変更を消すので、先に `git status` で確認して必要なら stash する。
+一部だけ移すなら `git switch -c [new-branch] origin/main` → 対象を cherry-pick → main を巻き戻す。
 
-⚠️ mainのコミットの一部だけを移動する場合はこの方法は使えない。
-`git switch -c [new-branch] origin/main` でブランチを作成し、
-対象コミットを cherry-pick してから main を巻き戻す。
-
-#### シナリオ2: featureブランチ間の移動
+## feature ブランチ間で移す
 
 ```bash
-# 移動先ブランチに切り替え（または作成）
-git switch -c [new-branch] main  # 新規の場合
-git switch [existing-branch]      # 既存の場合
-
-# コミットを適用
-git cherry-pick [commit-hash]
-
-# 元ブランチに戻る
-git switch [source-branch]
-
-# rebase --onto で対象コミットをスキップ
-# 構文: git rebase --onto <newbase> <upstream> [<branch>]
-#   newbase  = [commit-hash]^  (除去対象の親 = 新しい接続先)
-#   upstream = [commit-hash]   (除去対象自体 = ここ以降のコミットを移動)
-#   branch   = 省略時は HEAD (現在のブランチ)
-git rebase --onto [commit-hash]^ [commit-hash]
+git switch [移動先]            # 新規なら git switch -c [移動先] main
+git cherry-pick [commit]
+git switch [移動元]
+git rebase --onto [commit]^ [commit]   # 移動元から対象コミットだけを除く
 ```
 
-例: ブランチが `A - B - C - D`（Cを除去したい）の場合:
+## 注意
 
-```bash
-git rebase --onto C^ C
-# 結果: A - B - D'
-```
-
-## 注意事項
-
-### リモートにプッシュ済みの場合
-
-```text
-⚠️ リモートにプッシュ済みのコミットを移動します。
-
-以下の操作が必要になります:
-1. 元ブランチ: force push（履歴が変わるため）
-2. 新ブランチ: 通常のpush
-
-続行しますか？
-```
-
-### コンフリクトが発生した場合
-
-1. コンフリクトの内容を表示
-2. 解決方法を提案
-3. `git cherry-pick --continue` または `--abort` を案内
-
-## 完了確認
-
-```bash
-git log --oneline -5 [source-branch]
-git log --oneline -5 [target-branch]
-```
-
-## 関連コマンド
-
-- `/git-tidy` - 同一ブランチ内のコミット整理
-- `/git-branch` - 新規ブランチ作成
+- push 済みのコミットを移すと、移動元は `--force-with-lease` での push が要る。実行前にユーザーに確認する
+- コンフリクトしたら内容と解決案を示し、`--continue` か `--abort` を案内する
