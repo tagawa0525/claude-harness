@@ -43,13 +43,13 @@ allowed-tools:
 - **squash**: `git reset --soft HEAD~N` → 新しいメッセージで `git commit`
 - **split**: `git reset HEAD~1` → 目的別に `git add` してコミットを繰り返す。対象が直前の
   コミットでなければ、先に reorder で末尾へ移す
-- **reorder**: 分岐点以降の**全**コミットを記録 → 分岐点まで `reset --hard` → 全件を新しい順に
-  cherry-pick（並べ替えないコミットも含める。漏らすと消える）
+- **reorder**: 分岐点以降の**全**コミットを希望順に cherry-pick し直す（並べ替えないものも含める。
+  漏らすと消える）:
 
 ```bash
 git fetch origin
 BASE=$(git merge-base HEAD origin/main)   # ローカル main は古いことがある
 git log --reverse --format=%h "$BASE"..HEAD
 git reset --hard "$BASE"
-git cherry-pick [全ハッシュを新しい順で]
+git cherry-pick [全ハッシュを希望順で]
 ```
