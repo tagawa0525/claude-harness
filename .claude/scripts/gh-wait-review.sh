@@ -4,8 +4,8 @@
 # 使い方: gh-wait-review.sh [PR番号] [--since <ISO 8601 時刻>]
 #   PR番号省略時は現在のブランチに紐づくPRを対象とする
 #   --since 省略時は「最後の Copilot へのレビュー要求」を基準にし、それ以降に提出された
-#   レビューを待つ。要求が 1 件も無ければ待たずにエラーで終わる（要求していない
-#   レビューは来ないため）
+#   レビューを待つ。要求が 1 件も無ければ、PR 作成直後の自動要求の記録を約 10 秒
+#   待ったうえでエラーで終わる（要求していないレビューは来ないため）
 #   --since 指定時はその時刻を基準にする（~/.claude/skills/gh-pr-review/scripts/
 #   request-rereview.sh が要求の created_at を渡す。このディレクトリには無い）
 #
@@ -16,7 +16,8 @@
 # 検出するのは Copilot のレビュー提出（submittedAt）だけ。PR コメントは数えない
 # （@copilot に応答する copilot-swe-agent はコメントを返すだけでレビューを提出しない）
 #
-# 待機間隔（秒）は GH_WAIT_INTERVALS で上書きできる（テスト用）
+# 待機間隔（秒）は GH_WAIT_INTERVALS、要求の記録待ちの間隔は GH_WAIT_REQUEST_INTERVALS
+# で上書きできる（テスト用）
 #
 # 終了コード:
 #   0 = レビュー到着
@@ -140,11 +141,20 @@ if [[ -z "$since" ]]; then
     echo "ERROR: gh-review-requests.sh が見つかりません: ${requests_script}"
     exit 6
   fi
-  if ! requests=$("$requests_script" "$pr"); then
-    echo "ERROR: PR #${pr} のレビュー要求を取得できません（timeline API が失敗）"
-    exit 6
-  fi
-  since=$(tail -n 1 <<<"$requests")
+  # PR 作成時の自動要求は作成の 1〜5 秒後に記録される（PR #239〜#241 で実測）。
+  # gh pr create の直後に呼ばれても取りこぼさないよう、要求が見つかるまで少し読み直す。
+  # 間隔（秒）は GH_WAIT_REQUEST_INTERVALS で上書きできる（テスト用）
+  read -ra request_intervals <<<"${GH_WAIT_REQUEST_INTERVALS:-2 3 5}"
+  since=""
+  for interval in 0 "${request_intervals[@]}"; do
+    sleep "$interval"
+    if ! requests=$("$requests_script" "$pr"); then
+      echo "ERROR: PR #${pr} のレビュー要求を取得できません（timeline API が失敗）"
+      exit 6
+    fi
+    since=$(tail -n 1 <<<"$requests")
+    [[ -n "$since" ]] && break
+  done
   if [[ -z "$since" ]]; then
     echo "ERROR: PR #${pr} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません"
     # デプロイ先（~/.claude）の旧版を案内しないよう、自分と同じツリーのスクリプトを指す

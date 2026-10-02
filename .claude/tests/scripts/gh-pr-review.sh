@@ -262,16 +262,23 @@ make_repo "$REPO"
 make_remote "$REPO" github
 cd "$REPO" || exit 1
 
-# fake_gh_wait <copilot_review_at> [review_requested_at] [failed_check_runs]
+# fake_gh_wait <copilot_review_at> [review_requested_at] [failed_check_runs] [lag_reads]
 # copilot_review_at に提出された Copilot のレビューが 1 件ある PR を模す。
 # review_requested_at に "" を渡すと「レビュー要求なし」の PR を模す。
 # failed_check_runs は head の Copilot チェックのうち失敗した件数（既定 0）
+# lag_reads は要求が timeline に現れるまでの空振り回数（既定 0）。PR 作成時の
+# 自動要求は作成の 1〜5 秒後に記録される（PR #239〜#241 で実測）
 # レビュー一覧は gh が返す JSON の形で渡し、絞り込みはスクリプト側の jq に任せる
 fake_gh_wait() {
   local requested="${2-2026-09-08T00:00:00Z}"
   local failed_runs="${3:-0}"
+  local lag_reads="${4:-0}"
   local timeline="echo $requested"
   [[ -z "$requested" ]] && timeline=":"
+  rm -f "$TEST_ROOT/timeline_reads"
+  if (( lag_reads > 0 )); then
+    timeline="echo x >> \"$TEST_ROOT/timeline_reads\"; if [ \$(wc -l < \"$TEST_ROOT/timeline_reads\") -gt $lag_reads ]; then $timeline; fi"
+  fi
   jq -n --arg at "$1" \
     '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: $at}]}' \
     > "$TEST_ROOT/reviews.json"
@@ -313,10 +320,16 @@ out=$(GH_WAIT_INTERVALS=0 "$SCRIPTS_DIR/gh-wait-review.sh" 1)
 assert_eq 0 $?
 assert_contains "$out" "新しいレビューが到着"
 
+it "gh-wait-review: PR 作成直後で自動要求が未記録でも、記録を待ってから待機に入る"
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z 0 2
+out=$(GH_WAIT_INTERVALS=0 GH_WAIT_REQUEST_INTERVALS="0 0 0" "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "最後のレビュー要求は 2026-09-08T02:00:00Z"
+
 it "gh-wait-review: レビュー要求が無ければ待たずにエラーで終わる"
-# 要求していないレビューは来ない。待つ意味がないので即座に理由を出して止まる
+# 要求していないレビューは来ない。待つ意味がないので短い確認のあと理由を出して止まる
 fake_gh_wait 2026-09-08T03:00:00Z ""
-out=$(GH_WAIT_INTERVALS=0 "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
+out=$(GH_WAIT_INTERVALS=0 GH_WAIT_REQUEST_INTERVALS="0 0 0" "$SCRIPTS_DIR/gh-wait-review.sh" 1 2>&1)
 assert_eq 6 $?
 assert_contains "$out" "レビュー要求"
 assert_not_contains "$out" "TIMEOUT"
