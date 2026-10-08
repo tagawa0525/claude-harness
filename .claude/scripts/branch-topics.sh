@@ -98,7 +98,8 @@ report() {
         [[ "$old" == "$new" ]] || echo "${prefix}_STATUS: $path $old -> $new"
         ;;
     esac
-  done < <(git diff --no-renames --name-status "$FORK" HEAD -- "$dir")
+  # 改名（R）は新しいファイルとして数えない。claude-hooks のマージ前の判定と同じ
+  done < <(git diff --diff-filter=AM --name-status "$FORK" HEAD -- "$dir")
 }
 report docs/adr ADR
 report docs/issues ISSUE
