@@ -92,7 +92,8 @@ status() {
 }
 
 # report <dir> <prefix>: dir 直下の NNNN-*.md の追加と status の変化。
-# 改名（R）は新しいファイルとして数えず（claude-hooks のマージ前の判定と同じ）、改名前の status と比べる
+# 改名（R）は新しいファイルとして数えず（claude-hooks のマージ前の判定と同じ）、改名前の status と比べる。
+# 改名の検出は diff.renames の設定に左右されないよう --find-renames で明示する
 report() {
   local dir="$1" prefix="$2" kind src path old new
   while IFS=$'\t' read -r kind src path; do
@@ -107,7 +108,7 @@ report() {
         ;;
     esac
   # 非 ASCII のパスをクォートさせない（NNNN-*.md の判定と出力のため）
-  done < <(git -c core.quotePath=false diff --diff-filter=AMR --name-status "$FORK" "$TIP" -- "$dir")
+  done < <(git -c core.quotePath=false diff --find-renames --diff-filter=AMR --name-status "$FORK" "$TIP" -- "$dir")
 }
 report docs/adr ADR
 report docs/issues ISSUE
