@@ -187,6 +187,14 @@ mod tests {
     }
 
     #[test]
+    fn stdin_targets_are_unknown() {
+        assert_eq!(
+            targets("git merge --stdin"),
+            Some(vec!["--stdin".to_string()])
+        );
+    }
+
+    #[test]
     fn merge_control_is_not_a_target() {
         assert_eq!(targets("git merge --abort"), None);
         assert_eq!(targets("git merge --continue"), None);

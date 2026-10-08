@@ -1250,6 +1250,11 @@ out=$(run_hook pre-git-merge-check 'git switch - && git merge --no-ff feat/two')
 assert_eq deny "$(decision "$out")"
 git switch -q main
 
+it "pre-git-merge-check: マージ対象を標準入力で渡す --stdin は確かめられないので deny"
+out=$(run_hook pre-git-merge-check "printf 'feat/two\\n' | git merge --no-ff --stdin")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "--stdin"
+
 it "pre-git-merge-check: docs/adr の無いリポジトリでは何もしない"
 PLAIN="$TEST_ROOT/localmerge-plain"
 make_repo "$PLAIN"
