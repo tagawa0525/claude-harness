@@ -32,7 +32,7 @@ struct NewBranch {
 struct Parsed {
     /// ブランチ名を値に取るフラグ（`-c` / `-b` など）の値
     branch: Option<String>,
-    /// 位置引数（`--` より前）
+    /// 位置引数（`--` の後も含む）
     positional: Vec<String>,
     /// それ以外のフラグ
     flags: Vec<String>,
@@ -45,6 +45,8 @@ fn read(args: &[Arg], create: &[&str], takes_value: &[&str]) -> Parsed {
     while let Some(a) = it.next() {
         let t = a.text.as_str();
         if t == "--" {
+            // -- の後はすべて位置引数（`git branch -- <b>` もブランチを作る）
+            p.positional.extend(it.map(|v| v.text.clone()));
             break;
         }
         if create.contains(&t) {
