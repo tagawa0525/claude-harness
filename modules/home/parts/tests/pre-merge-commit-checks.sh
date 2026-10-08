@@ -259,6 +259,37 @@ else
 fi
 mv "$HOME/.claude.off" "$HOME/.claude"
 
+# --- 11. プロジェクトローカルの pre-merge-commit は検査の前に走り、検査を置き換えない --------------
+# 置き換えると、ローカルの hook があるだけで --no-verify なしに検査を外せてしまう
+R="$WORK/local-hook"
+new_repo "$R"
+branch_with "$R" feat bad.py "$BAD_PY"
+mkdir -p "$R/.git/hooks"
+printf '#!/bin/sh\necho "local hook ran"\n' > "$R/.git/hooks/pre-merge-commit"
+chmod +x "$R/.git/hooks/pre-merge-commit"
+if run "$R" git merge --no-ff -m "Merge: local" feat; then
+  ng "ローカルの pre-merge-commit があると、lint に落ちるマージ結果が検査なしで main に入る"
+elif grep -q "local hook ran" "$WORK/out" && grep -q "FAILED: python lint" "$WORK/out"; then
+  ok "ローカルの pre-merge-commit を実行したうえで、グローバルの検査も行う"
+else
+  ng "マージは止まったが、ローカルの hook か検査のどちらかが走っていない"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+R="$WORK/local-hook-fail"
+new_repo "$R"
+branch_with "$R" feat good.py "$GOOD_PY"
+mkdir -p "$R/.git/hooks"
+printf '#!/bin/sh\necho "local hook rejects"\nexit 1\n' > "$R/.git/hooks/pre-merge-commit"
+chmod +x "$R/.git/hooks/pre-merge-commit"
+if run "$R" git merge --no-ff -m "Merge: local fail" feat; then
+  ng "ローカルの pre-merge-commit が失敗したのにマージコミットが作られた"
+elif grep -q "local hook rejects" "$WORK/out"; then
+  ok "ローカルの pre-merge-commit が失敗すればマージコミットを作らない"
+else
+  ng "マージは止まったが、ローカルの hook の出力がない"
+fi
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 (( FAIL == 0 ))
