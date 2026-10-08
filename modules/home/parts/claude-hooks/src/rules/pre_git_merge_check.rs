@@ -5,12 +5,14 @@
 //! NNNN-*.md）を 2 件以上加えていれば deny する。ADR は 1 件 1 決定なので、新しい ADR の数が
 //! トピックの数の目安になる。既存の ADR の変更（status の superseded への変更など）は数えない。
 //!
-//! 対象はローカルのブランチ（refs/heads/）を既定ブランチの上でマージするときだけ。
+//! 対象はローカルのブランチ（refs/heads/）を既定ブランチの上でマージするときだけ。今のブランチは
+//! 同じコマンドの前の git switch / checkout を反映し（branch_at）、移り先が分からなければ確かめる。
 //! リモート追跡ブランチの取り込み（`git merge origin/main`）は別々にマージ済みのトピックの
 //! 集まりなので対象外。docs/adr の無いリポジトリでは数える ADR が無いので何もしない。
 //! エスケープ: `ALLOW_MULTI_TOPIC=1`（1 つの決定を複数の ADR に分けて書いたときだけ）
 
 use super::Rule;
+use super::guard_branch_base::branch_at;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -87,7 +89,10 @@ impl Rule for PreGitMergeCheck {
             let Some(default_ref) = git::default_branch(&dir) else {
                 continue;
             };
-            if git::current_branch(&dir) != git::local_name(&default_ref) {
+            // 同じコマンドの前の git switch で移った先で判定する。分からなければ確かめる側に倒す
+            if branch_at(shell, &cmd, &input.cwd, &dir)
+                .is_some_and(|b| b != git::local_name(&default_ref))
+            {
                 continue;
             }
             for t in targets {

@@ -13,7 +13,8 @@ use super::Rule;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell};
+use crate::shell::{Arg, Cmd, Shell};
+use std::path::Path;
 
 pub struct GuardBranchBase;
 
@@ -177,6 +178,69 @@ fn new_branch(sub: &str, args: &[Arg]) -> Option<NewBranch> {
     }
 }
 
+/// `git switch` / `git checkout` で移る先のブランチ。ブランチを変えなければ Ok(None)、
+/// 移った先が分からなければ（`-`、`--detach`、ローカルにないブランチやファイルの名前）Err(())
+fn switched_to(dir: &Path, sub: &str, args: &[Arg]) -> Result<Option<String>, ()> {
+    let create: &[&str] = match sub {
+        "switch" => &["-c", "-C", "--create", "--force-create", "--orphan"],
+        "checkout" => &["-b", "-B", "--orphan"],
+        _ => return Ok(None),
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let t = a.text.as_str();
+        if let Some(v) = create_value(t, create) {
+            // 新しいブランチを作ってそこへ移る
+            return match v {
+                Some(inline) => Ok(Some(inline)),
+                None => it.next().map(|v| Some(v.text.clone())).ok_or(()),
+            };
+        }
+    }
+    let p = read(args, &[], &[]);
+    if sub == "checkout" && args.iter().any(|a| a.text == "--") {
+        // `git checkout [<tree-ish>] -- <paths>` はファイルを戻すだけ
+        return Ok(None);
+    }
+    if has_any(&p.flags, &["--detach", "-d"]) {
+        return Err(());
+    }
+    match p.positional.first() {
+        Some(b) if b != "-" => {
+            let r = format!("refs/heads/{b}");
+            match git::git(dir, &["show-ref", "--verify", "--quiet", &r]) {
+                Some(_) => Ok(Some(b.clone())),
+                None => Err(()),
+            }
+        }
+        Some(_) => Err(()),
+        None => Ok(None),
+    }
+}
+
+/// cmd を実行する時点の今のブランチ。同じシェルのスコープで cmd より前にあり、同じディレクトリを
+/// 対象にする git switch / checkout の後のブランチ（`git switch main && git merge …` の main）。
+/// 移った先が分からなければ None。detached HEAD は空文字列
+pub(super) fn branch_at(shell: &Shell, cmd: &Cmd, base: &Path, dir: &Path) -> Option<String> {
+    let mut branch = Some(git::current_branch(dir));
+    for c in shell.commands() {
+        if c.start >= cmd.start {
+            break;
+        }
+        if c.scope != cmd.scope || shell.target_dir(&c, base) != dir {
+            continue;
+        }
+        if let Some((sub, args)) = c.git_subcommand() {
+            match switched_to(dir, sub, args) {
+                Ok(Some(b)) => branch = Some(b),
+                Ok(None) => {}
+                Err(()) => branch = None,
+            }
+        }
+    }
+    branch
+}
+
 impl Rule for GuardBranchBase {
     fn name(&self) -> &'static str {
         "guard-branch-base"
@@ -204,14 +268,12 @@ impl Rule for GuardBranchBase {
                 continue;
             };
             let default = git::local_name(&default_ref);
-            let current = git::current_branch(&dir);
-            if current == default {
-                continue;
-            }
-            let here = if current.is_empty() {
-                "detached HEAD".to_string()
-            } else {
-                current
+            let here = match branch_at(shell, &cmd, &input.cwd, &dir) {
+                Some(current) if current == default => continue,
+                Some(current) if current.is_empty() => "detached HEAD".to_string(),
+                Some(current) => current,
+                // 前の git switch で移った先が分からない。既定ブランチとは確かめられないので止める
+                None => "（同じコマンドの前の git switch / checkout の移り先）".to_string(),
             };
             let b = &nb.name;
             return vec![Finding::Deny(format!(
