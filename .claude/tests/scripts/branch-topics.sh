@@ -79,14 +79,21 @@ RENAME="$TEST_ROOT/topics/rename"
 make_repo "$RENAME"
 cd "$RENAME" || exit 1
 write_front docs/adr/0001-keep-a.md accepted
+write_front docs/adr/0002-keep-b.md accepted
 git add docs && git commit -q -m "docs: seed"
 git switch -q -c docs/rename
 git mv docs/adr/0001-keep-a.md docs/adr/0001-keep-aa.md
-git commit -q -m "docs(adr): rename a"
+git mv docs/adr/0002-keep-b.md docs/adr/0002-keep-bb.md
+sed -i 's/^status: accepted$/status: superseded/' docs/adr/0002-keep-bb.md
+git add docs && git commit -q -m "docs(adr): rename a and b"
 
 it "branch-topics: ADR の改名は新しい ADR として出さない（マージ前の hook と同じ数え方）"
 out=$("$SCRIPTS_DIR/branch-topics.sh" main)
 assert_not_contains "$out" "ADR_NEW"
+
+it "branch-topics: 改名と同時の status の変化は、改名前の status と比べて出す"
+assert_contains "$out" "ADR_STATUS: docs/adr/0002-keep-bb.md accepted -> superseded"
+assert_not_contains "$out" "0001-keep-aa"
 
 NUMERIC="$TEST_ROOT/topics/numeric"
 make_repo "$NUMERIC"
