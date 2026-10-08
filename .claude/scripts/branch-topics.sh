@@ -7,7 +7,7 @@
 # 最初にあるもの。worktree-add.sh と同じ）と比べる。変更は merge-base から HEAD まで
 # （base...HEAD）を見るので、分岐した後に base が進んでいても混ざらない。
 #
-# ADR と issue は docs/adr/・docs/issues/ の直下にある、数字で始まる .md（NNNN-name.md）。
+# ADR と issue は docs/adr/・docs/issues/ の直下にある NNNN-name.md（4 桁の番号とハイフンで始まる）。
 # README などは含めない。status は前付け（先頭の --- と --- の間）の `status:` の値。
 # ディレクトリが無いリポジトリでは該当の行を出さない。
 #
@@ -89,7 +89,7 @@ status() {
 report() {
   local dir="$1" prefix="$2" kind path old new
   while IFS=$'\t' read -r kind path; do
-    [[ "$path" =~ ^$dir/[0-9][^/]*\.md$ ]] || continue
+    [[ "$path" =~ ^$dir/[0-9]{4}-[^/]*\.md$ ]] || continue
     case "$kind" in
       A) echo "${prefix}_NEW: $path ($(status HEAD "$path"))" ;;
       M)
