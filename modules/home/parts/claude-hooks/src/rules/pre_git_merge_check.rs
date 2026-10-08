@@ -9,7 +9,8 @@
 //! 同じコマンドの前の git switch / checkout を反映し（branch_at）、移り先が分からなければ確かめる。
 //! リモート追跡ブランチの取り込み（`git merge origin/main`）は別々にマージ済みのトピックの
 //! 集まりなので対象外。docs/adr の無いリポジトリでは数える ADR が無いので何もしない。
-//! エスケープ: `ALLOW_MULTI_TOPIC=1`（1 つの決定を複数の ADR に分けて書いたときだけ）
+//! エスケープ: `ALLOW_MULTI_TOPIC=1`（1 つの決定を複数の ADR に分けて書いたときと、
+//! 決定前の案（status: proposed）の ADR をまとめて加えるときだけ）
 
 use super::Rule;
 use super::guard_branch_base::branch_at;
@@ -41,8 +42,8 @@ pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
     let list: Vec<String> = new_adrs.iter().map(|a| format!("  - {a}")).collect();
     Some(format!(
         "このブランチは新しい ADR を {} 件加えています（1 ブランチ 1 トピック、ADR は 1 件 1 決定）:\n{}\n\
-         決定ごとにブランチを分けてください（/topic-triage）。1 つの決定を複数の ADR に分けて書いた場合に限り、\
-         ALLOW_MULTI_TOPIC=1 を付けてマージし、マージのメッセージにその理由を書いてください。",
+         決定ごとにブランチを分けてください（/topic-triage）。1 つの決定を複数の ADR に分けて書いた場合と、\
+         決定前の案（status: proposed）の ADR をまとめて加える場合に限り、ALLOW_MULTI_TOPIC=1 を付けてマージし、マージのメッセージにその理由を書いてください。",
         new_adrs.len(),
         list.join("\n")
     ))
