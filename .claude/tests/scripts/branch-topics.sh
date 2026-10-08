@@ -88,6 +88,19 @@ it "branch-topics: ADR の改名は新しい ADR として出さない（マー�
 out=$("$SCRIPTS_DIR/branch-topics.sh" main)
 assert_not_contains "$out" "ADR_NEW"
 
+NUMERIC="$TEST_ROOT/topics/numeric"
+make_repo "$NUMERIC"
+cd "$NUMERIC" || exit 1
+git switch -q -c docs/notes
+write_front docs/adr/1-notes.md accepted
+write_front docs/issues/2026notes.md open
+git add docs && git commit -q -m "docs: notes"
+
+it "branch-topics: NNNN-*.md でない数字で始まるファイルは ADR / issue として出さない（hook と同じ条件）"
+out=$("$SCRIPTS_DIR/branch-topics.sh" main)
+assert_not_contains "$out" "ADR_NEW"
+assert_not_contains "$out" "ISSUE_NEW"
+
 PLAIN="$TEST_ROOT/topics/plain"
 make_repo "$PLAIN"
 cd "$PLAIN" || exit 1
