@@ -48,7 +48,8 @@ pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
     ))
 }
 
-/// `git merge args…` のマージ対象。中断・再開（--abort / --continue / --quit）なら None
+/// `git merge args…` のマージ対象。中断・再開（--abort / --continue / --quit）なら None。
+/// 対象を標準入力で受け取る `--stdin` はそのまま対象に入れる（check で確かめられないとして止める）
 fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
     let mut out = Vec::new();
     let mut it = args.iter();
@@ -60,7 +61,7 @@ fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
             | "--into-name" => {
                 it.next();
             }
-            "-" => out.push(t.to_string()),
+            "-" | "--stdin" => out.push(t.to_string()),
             _ if t.starts_with('-') => {}
             _ => out.push(t.to_string()),
         }
@@ -96,6 +97,11 @@ impl Rule for PreGitMergeCheck {
                 continue;
             }
             for t in targets {
+                if t == "--stdin" {
+                    return vec![Finding::Deny(
+                        "git merge --stdin はマージ対象を標準入力で受け取るので、新しい ADR の数を確かめられません。ブランチ名を引数で渡してください".to_string(),
+                    )];
+                }
                 let spec = if t == "-" { "@{-1}" } else { t.as_str() };
                 // ローカルのブランチだけ。解決できない名前は git merge 自身が失敗する
                 let Some(full) = git::git(&dir, &["rev-parse", "--symbolic-full-name", spec])
