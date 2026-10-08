@@ -381,6 +381,9 @@ mod tests {
         assert_eq!(name("git branch -- feat/a").as_deref(), Some("feat/a"));
         assert_eq!(name("git switch -c feat/a --").as_deref(), Some("feat/a"));
         assert_eq!(parse("git switch -c feat/a -- main"), None);
+        assert_eq!(name("git branch -qf feat/a").as_deref(), Some("feat/a"));
+        assert_eq!(name("git branch -ft feat/a").as_deref(), Some("feat/a"));
+        assert_eq!(parse("git branch -qd feat/a"), None);
         assert_eq!(parse("git branch feat/a main"), None);
         assert_eq!(parse("git branch -t feat/a origin/feat/a"), None);
     }
