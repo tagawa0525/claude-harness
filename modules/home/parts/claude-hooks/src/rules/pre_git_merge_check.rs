@@ -143,6 +143,9 @@ mod tests {
         assert!(!is_adr("docs/adrs/0004-x.md"));
         assert!(!is_adr("sub/docs/adr/0005-x.md"));
         assert!(!is_adr("docs/adr/0006-x.txt"));
+        assert!(!is_adr("docs/adr/1-notes.md"));
+        assert!(!is_adr("docs/adr/2026notes.md"));
+        assert!(!is_adr("docs/adr/00012-x.md"));
     }
 
     #[test]
