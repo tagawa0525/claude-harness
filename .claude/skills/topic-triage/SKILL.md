@@ -51,9 +51,7 @@ allowed-tools:
 ## 止めるものを先に片付ける
 
 1. issue を書く
-2. `git branch <branch> main` で main からブランチを作り（`worktree-add.sh` は新しいブランチを今の HEAD から作るので、
-   作業中のブランチの未完了のコミットが入らないようにする）、`~/.claude/scripts/worktree-add.sh <branch>` で
-   worktree を作って、そこで片付けてマージする
+2. `~/.claude/scripts/worktree-add.sh <branch>` で main から worktree を作り、そこで片付けてマージする
 3. 元のブランチを main に rebase して作業に戻る
 
 ## 完了
