@@ -18,13 +18,16 @@ use crate::shell::{Arg, Shell};
 
 pub struct PreGitMergeCheck;
 
-/// ADR のファイルか（docs/adr/ 直下の、数字で始まる .md）。README やテンプレートは含めない。
-/// .claude/scripts/branch-topics.sh も同じ条件で数える
+/// ADR のファイルか（docs/adr/ 直下の NNNN-*.md。4 桁の番号とハイフンで始まる）。
+/// README やテンプレートは含めない。.claude/scripts/branch-topics.sh も同じ条件で数える
 pub(super) fn is_adr(path: &str) -> bool {
     path.strip_prefix("docs/adr/").is_some_and(|name| {
+        let b = name.as_bytes();
         !name.contains('/')
             && name.ends_with(".md")
-            && name.starts_with(|c: char| c.is_ascii_digit())
+            && b.len() > 5
+            && b[..4].iter().all(u8::is_ascii_digit)
+            && b[4] == b'-'
     })
 }
 
