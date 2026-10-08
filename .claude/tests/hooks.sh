@@ -1250,6 +1250,17 @@ out=$(run_hook pre-git-merge-check 'git switch - && git merge --no-ff feat/two')
 assert_eq deny "$(decision "$out")"
 git switch -q main
 
+it "pre-git-merge-check: diff.renames=false の設定でも ADR の改名は新しい ADR と数えない"
+git switch -q -c feat/rename main
+git mv docs/adr/0001-keep-a.md docs/adr/0001-keep-aa.md
+write_adr "$REPO" 0007-use-g.md
+git add docs && git commit -q -m "docs(adr): rename a, add g"
+git switch -q main
+git config diff.renames false
+out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/rename')
+assert_eq allow "$(decision "$out")"
+git config --unset diff.renames
+
 it "pre-git-merge-check: マージ対象を標準入力で渡す --stdin は確かめられないので deny"
 out=$(run_hook pre-git-merge-check "printf 'feat/two\\n' | git merge --no-ff --stdin")
 assert_eq deny "$(decision "$out")"
