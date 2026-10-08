@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(git push*)
   - Bash(gh pr*)
   - Bash(gh auth*)
+  - Bash(~/.claude/scripts/branch-topics.sh*)
 ---
 
 # GitHub PR Create Command
@@ -24,6 +25,12 @@ GitHub Pull Requestを作成する（gh CLI使用）。このスキルの本体�
 !`git status --short`
 !`git branch -vv`
 !`git log '@{upstream}..HEAD' --oneline 2>/dev/null || echo "(上流ブランチ未設定)"`
+
+## トピックの確認
+
+!`~/.claude/scripts/branch-topics.sh`
+
+PR の Why を1文で書く。2文要る（無関係な決定や話題が混ざっている）なら PR を作らず /topic-triage で分ける。
 
 ## 未プッシュコミットの確認
 
