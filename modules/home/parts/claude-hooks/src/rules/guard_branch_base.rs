@@ -49,14 +49,11 @@ fn read(args: &[Arg], create: &[&str], takes_value: &[&str]) -> Parsed {
             p.positional.extend(it.map(|v| v.text.clone()));
             break;
         }
-        if create.contains(&t) {
-            p.branch = it.next().map(|v| v.text.clone());
-        } else if let Some(v) = create
-            .iter()
-            .filter(|c| c.starts_with("--"))
-            .find_map(|c| t.strip_prefix(&format!("{c}=")))
-        {
-            p.branch = Some(v.to_string());
+        if let Some(v) = create_value(t, create) {
+            p.branch = match v {
+                Some(inline) => Some(inline),
+                None => it.next().map(|v| v.text.clone()),
+            };
         } else if takes_value.contains(&t) {
             it.next();
         } else if t.starts_with('-') && t != "-" {
@@ -66,6 +63,33 @@ fn read(args: &[Arg], create: &[&str], takes_value: &[&str]) -> Parsed {
         }
     }
     p
+}
+
+/// t がブランチ名を値に取るフラグなら Some。値が t に含まれていれば Some(Some(値))、
+/// 次の引数なら Some(None)。git の受け付ける書き方に合わせて、くっつけた短い形（`-cfeat/a`）と
+/// 一意に略した長い形（`--cre feat/a`、`--force-c=feat/a`）も読む。ただし git は完全一致する
+/// オプションを優先するので、`--force`（switch の --discard-changes の別名）は --force-create の略ではない
+fn create_value(t: &str, create: &[&str]) -> Option<Option<String>> {
+    if let Some(long) = t.strip_prefix("--") {
+        let (name, value) = match long.split_once('=') {
+            Some((n, v)) => (n, Some(v.to_string())),
+            None => (long, None),
+        };
+        if name.is_empty() || name == "force" {
+            return None;
+        }
+        let hit = create
+            .iter()
+            .filter_map(|c| c.strip_prefix("--"))
+            .any(|c| c.starts_with(name));
+        return hit.then_some(value);
+    }
+    // 2 バイト目が文字の境界でなければ（`-日` など）短いフラグではない
+    let (flag, rest) = (t.get(..2)?, t.get(2..)?);
+    if t.starts_with('-') && create.contains(&flag) {
+        return Some((!rest.is_empty()).then(|| rest.to_string()));
+    }
+    None
 }
 
 fn has_any(flags: &[String], names: &[&str]) -> bool {
@@ -248,6 +272,7 @@ mod tests {
         );
         assert_eq!(parse("git switch -cfeat/a main"), None);
         assert_eq!(parse("git switch --conflict=merge main"), None);
+        assert_eq!(parse("git switch -日"), None);
     }
 
     #[test]
