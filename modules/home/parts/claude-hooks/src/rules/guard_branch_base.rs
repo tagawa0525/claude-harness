@@ -260,6 +260,9 @@ mod tests {
             Some("feat/a")
         );
         assert_eq!(name("git branch -f feat/a").as_deref(), Some("feat/a"));
+        assert_eq!(name("git branch -- feat/a").as_deref(), Some("feat/a"));
+        assert_eq!(name("git switch -c feat/a --").as_deref(), Some("feat/a"));
+        assert_eq!(parse("git switch -c feat/a -- main"), None);
         assert_eq!(parse("git branch feat/a main"), None);
         assert_eq!(parse("git branch -t feat/a origin/feat/a"), None);
     }

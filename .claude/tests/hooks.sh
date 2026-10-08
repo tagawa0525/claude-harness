@@ -1015,6 +1015,8 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "git branch feat/other HEAD"
 out=$(run_hook guard-branch-base 'git branch --no-track feat/other')
 assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-branch-base 'git branch -- feat/other')
+assert_eq deny "$(decision "$out")"
 
 it "guard-branch-base: 起点のない git worktree add -b / -B は deny"
 out=$(run_hook guard-branch-base 'git worktree add ../wt -b feat/other')
