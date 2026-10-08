@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # run-checks.sh — プロジェクトの言語を検出し、フォーマット → リント → テストを実行する
 #
-# Usage: run-checks.sh
+# Usage: run-checks.sh [--merge]
+#
+#   --merge  マージ結果を検査する（git の pre-merge-commit hook が使う）。「ステージ済み」の代わりに
+#            HEAD（マージ先）と作業ツリーの差分で言語と対象を決め、自動修正はしない
+#            （直した内容はどちらの親にもない変更としてマージコミットに紛れ込むため、lint で止める）。
+#            commit -a でマージを締めるとき hook に渡る index は一時ファイルなので、index に頼らない
 #
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
 #   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
@@ -31,8 +36,29 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$ROOT" || exit 1
 
+MERGE=0
+for arg in "$@"; do
+  case "$arg" in
+    --merge) MERGE=1 ;;
+    *)
+      echo "ERROR: 知らないオプション: $arg（Usage: run-checks.sh [--merge]）" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# changed_files [git diff の追加引数...]: 検査対象の変更ファイル。通常はステージ済み、
+# --merge では HEAD と作業ツリーの差分
+changed_files() {
+  if (( MERGE )); then
+    git diff HEAD --name-only --diff-filter=ACMR "$@"
+  else
+    git diff --cached --name-only --diff-filter=ACMR "$@"
+  fi
+}
+
 staged_has() {
-  git diff --cached --name-only --diff-filter=ACMR -- "$1" | grep -q .
+  changed_files -- "$1" | grep -q .
 }
 
 # run_stage <lang> <stage> <tool> <fix-command|""> <command...>
@@ -71,7 +97,7 @@ rust_targets() {
     else
       echo "stray $f"
     fi
-  done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs')
+  done < <(changed_files -z -- '*.rs')
 }
 # cargo_in <dir> <args...>: crate のディレクトリで cargo を実行する
 cargo_in() {
@@ -132,7 +158,7 @@ fi
 # --- Markdown（ステージ済みのみ）---
 MD_FIXER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fix-markdown-lint.py"
 staged_md() {
-  git diff --cached --name-only -z --diff-filter=ACMR -- '*.md'
+  changed_files -z -- '*.md'
 }
 md_autofix() {
   # markdownlint --fix は直せない違反があると非 0 を返すので、ここでは止めない（直後の lint で検出する）
@@ -151,13 +177,17 @@ md_lint() {
 }
 if staged_has '*.md'; then
   DETECTED=1
-  run_stage markdown format markdownlint "" md_autofix
+  if (( MERGE )); then
+    echo "SKIP: markdown format (--merge では自動修正しない)"
+  else
+    run_stage markdown format markdownlint "" md_autofix
+  fi
   run_stage markdown lint markdownlint "" md_lint
 fi
 
 # --- Shell（ステージ済みのみ）---
 sh_lint() {
-  git diff --cached --name-only -z --diff-filter=ACMR -- '*.sh' | xargs -0 -r shellcheck -S warning --
+  changed_files -z -- '*.sh' | xargs -0 -r shellcheck -S warning --
 }
 if staged_has '*.sh'; then
   DETECTED=1

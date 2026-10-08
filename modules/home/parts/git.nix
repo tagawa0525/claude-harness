@@ -98,6 +98,13 @@
         fi
       fi
 
+      # マージを締めるコミット（競合を解決した後の git commit / git merge --continue、
+      # git merge --no-commit の後の git commit）では git が pre-merge-commit を呼ばないので、
+      # 同じ検査をここで行う
+      if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+        "$(dirname "$0")/pre-merge-commit"
+      fi
+
       # プロジェクトローカルの pre-commit があれば優先実行
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$GIT_DIR/hooks/pre-commit"
@@ -222,6 +229,80 @@
       fi
 
       exit $check_failed
+    '';
+  };
+
+  # pre-merge-commit: main / master へのマージコミットを、マージ結果が品質チェック
+  # （run-checks.sh --merge。フォーマット・リント・テスト）を通ったときだけ作る。
+  # git はマージを用意した後（作業ツリーと index がマージ結果の状態）、コミットの前に呼ぶ。
+  # fast-forward はマージコミットを作らないので呼ばれない。競合を解決して締めるときは
+  # 代わりに pre-commit が呼ばれるので、pre-commit が MERGE_HEAD を見てここに回す。
+  #
+  # 守るのはローカルのマージ（GitHub リモートのないリポジトリ。xlc など）。gh pr merge は
+  # GitHub 側でマージするのでこの hook は走らない。GitHub のマージは CI と claude-hooks の
+  # pre-merge-check（CI 成功、未解決スレッドなし、head が base より遅れていない）が守る
+  # （必要なら GitHub の branch protection / merge queue も使える）。
+  #
+  # 対象は main / master だけ。統合先に入る内容を守るゲートで、ほかのブランチへのマージは
+  # 途中経過（最終的に main へのマージで検査される）なので、テストを毎回走らせる重さに見合わない。
+  # 手動コミットも対象（品質の基準は誰がマージしても同じ）。外すのは git merge --no-verify
+  # （git の標準。pre-commit / commit-msg と同じ）。
+  # 検証: modules/home/parts/tests/pre-merge-commit-checks.sh
+  xdg.configFile."git/hooks/pre-merge-commit" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # プロジェクトローカルの pre-merge-commit があれば先に実行する（失敗すれば set -e で止まる）。
+      # pre-commit / commit-msg と違って exec で置き換えない。置き換えると、ローカルの hook が
+      # あるだけで --no-verify なしにこのゲートが外れる
+      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+      LOCAL_HOOK="$GIT_DIR/hooks/pre-merge-commit"
+      if [ -x "$LOCAL_HOOK" ]; then
+        "$LOCAL_HOOK" "$@"
+      fi
+
+      BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+      case "$BRANCH" in
+        main|master) ;;
+        *) exit 0 ;;
+      esac
+
+      # 他人のプロジェクトの fork では、こちらの道具の版と規約で検査しない（pre-commit と同じ判定）
+      if git remote get-url upstream >/dev/null 2>&1; then
+        echo "⏭️  upstream リモートのある fork なので、マージ結果の品質チェック（run-checks.sh）を飛ばします"
+        exit 0
+      fi
+
+      # 検査は作業ツリーで走る。コミットされない変更が残っていると、マージコミットとは別の内容を
+      # 検査してしまうので止める（比べる index は git が渡す GIT_INDEX_FILE。commit -a なら index.lock）。
+      # 追跡していないファイルも、ruff check . や pytest のような木全体の検査が拾うので含める。
+      # .gitignore で除外したもの（ビルド成果物など）は検査の道具も除外するので含めない
+      DIRTY=$(git diff --name-only; git ls-files --others --exclude-standard)
+      if [ -n "$DIRTY" ]; then
+        echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
+        printf '%s\n' "$DIRTY" | sed 's/^/     /'
+        echo "   直し方: git merge --abort で取り消し、変更をコミットするか git stash -u で退避して（不要なファイルは消して）から、もう一度マージしてください"
+        exit 1
+      fi
+
+      RUN_CHECKS="$HOME/.claude/skills/language-checks/scripts/run-checks.sh"
+      if [ ! -f "$RUN_CHECKS" ]; then
+        echo "❌ $RUN_CHECKS がないので、マージ結果を検査できません"
+        echo "   直し方: claude-sync（または rebuild）で ~/.claude を同期してから、もう一度マージしてください"
+        exit 1
+      fi
+
+      echo "🔍 マージ結果の品質チェック（run-checks.sh --merge）..."
+      # git が hook に渡す GIT_INDEX_FILE（.git/index や index.lock）は、検査が起動するテストの中の
+      # git にも引き継がれ、別のリポジトリでこの index を読み書きさせてしまうので外す
+      # （--merge は HEAD と作業ツリーの差分で判定し、index に頼らない）
+      if ! env -u GIT_INDEX_FILE bash "$RUN_CHECKS" --merge; then
+        echo "❌ マージ結果が品質チェックに通らないので、マージコミットを作りません"
+        echo "   直し方: git merge --abort で取り消し、マージするブランチで直してコミットしてから、もう一度マージしてください"
+        exit 1
+      fi
     '';
   };
 
