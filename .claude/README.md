@@ -77,6 +77,9 @@ GraphQL の mutation）は、その引数ノードの原文（入れ子のヒア
 git 側の hook（`modules/home/parts/git.nix`、`core.hooksPath` でグローバル配布）も同じ考え方で、
 Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-commit が main 直接コミットの
 拒否と言語別チェック・Markdown 自動修正を、commit-msg が Conventional Commits の形式検証を行う。
+pre-merge-commit は main / master へのローカルのマージ（GitHub リモートのないリポジトリ）を、
+マージ結果が `run-checks.sh --merge` を通ったときだけコミットさせる（セッションを問わない）。
+`gh pr merge` は GitHub 側のマージなので、CI と `pre-merge-check` が守る。
 
 **PR フローのゲートは GitHub リモートのあるリポジトリだけに効く**。リモートに `github.com` がなければ、
 `block-main-commit` と `guard-git-push` は何もせず、git の pre-commit は main 直接コミットの拒否**だけ**を
