@@ -10,6 +10,7 @@
 //! 既定ブランチが見つからないリポジトリでは起点を示せないので何もしない。
 
 use super::Rule;
+use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -26,9 +27,128 @@ struct NewBranch {
     with_head: String,
 }
 
+/// 引数を読んだ結果
+#[derive(Default)]
+struct Parsed {
+    /// ブランチ名を値に取るフラグ（`-c` / `-b` など）の値
+    branch: Option<String>,
+    /// 位置引数（`--` より前）
+    positional: Vec<String>,
+    /// それ以外のフラグ
+    flags: Vec<String>,
+}
+
+/// `create` はブランチ名を値に取るフラグ（長い形は `--x=<b>` も）、`takes_value` は値を飛ばすフラグ
+fn read(args: &[Arg], create: &[&str], takes_value: &[&str]) -> Parsed {
+    let mut p = Parsed::default();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let t = a.text.as_str();
+        if t == "--" {
+            break;
+        }
+        if create.contains(&t) {
+            p.branch = it.next().map(|v| v.text.clone());
+        } else if let Some(v) = create
+            .iter()
+            .filter(|c| c.starts_with("--"))
+            .find_map(|c| t.strip_prefix(&format!("{c}=")))
+        {
+            p.branch = Some(v.to_string());
+        } else if takes_value.contains(&t) {
+            it.next();
+        } else if t.starts_with('-') && t != "-" {
+            p.flags.push(t.to_string());
+        } else {
+            p.positional.push(t.to_string());
+        }
+    }
+    p
+}
+
+fn has_any(flags: &[String], names: &[&str]) -> bool {
+    flags.iter().any(|f| names.contains(&f.as_str()))
+}
+
+/// 起点を省いていれば、HEAD を明示した同じコマンドとともに返す
+fn without_start(sub: &str, args: &[Arg], name: String, positional: usize) -> Option<NewBranch> {
+    if positional > 0 {
+        return None;
+    }
+    let raw: Vec<&str> = args.iter().map(|a| a.raw.as_str()).collect();
+    Some(NewBranch {
+        name,
+        implicit: false,
+        with_head: format!("git {sub} {} HEAD", raw.join(" ")),
+    })
+}
+
 /// `git <sub> args…` が起点を省いたブランチ作成なら、その内容
-fn new_branch(_sub: &str, _args: &[Arg]) -> Option<NewBranch> {
-    todo!()
+fn new_branch(sub: &str, args: &[Arg]) -> Option<NewBranch> {
+    match sub {
+        "switch" => {
+            let p = read(
+                args,
+                &["-c", "-C", "--create", "--force-create"],
+                &["--orphan"],
+            );
+            if has_any(&p.flags, &["--orphan"]) {
+                return None;
+            }
+            without_start(sub, args, p.branch?, p.positional.len())
+        }
+        "checkout" => {
+            let p = read(args, &["-b", "-B"], &["--orphan"]);
+            without_start(sub, args, p.branch?, p.positional.len())
+        }
+        "branch" => {
+            // 作成の形（git branch [--track|--no-track] [-f] <name> [<start>]）に現れるフラグ以外が
+            // あれば一覧・削除・リネームなどの別の操作
+            let p = read(args, &[], &[]);
+            let creating = p.flags.iter().all(|f| {
+                matches!(
+                    f.as_str(),
+                    "-f" | "--force"
+                        | "-t"
+                        | "--track"
+                        | "--no-track"
+                        | "--recurse-submodules"
+                        | "-q"
+                        | "--quiet"
+                        | "--create-reflog"
+                ) || f.starts_with("--track=")
+            });
+            if !creating || p.positional.len() != 1 {
+                return None;
+            }
+            without_start(sub, args, p.positional[0].clone(), 0)
+        }
+        "worktree" => {
+            let (first, rest) = args.split_first()?;
+            if first.text != "add" {
+                return None;
+            }
+            let p = read(rest, &["-b", "-B"], &["--reason"]);
+            if has_any(&p.flags, &["--detach", "-d", "--orphan"]) {
+                return None;
+            }
+            match (p.branch, p.positional.as_slice()) {
+                (Some(name), [_path]) => without_start(sub, args, name, 0),
+                // パスだけなら、パスの名前のブランチ（無ければ HEAD から作る）
+                (None, [path]) => {
+                    let name = path.trim_end_matches('/').rsplit('/').next()?.to_string();
+                    let raw: Vec<&str> = rest.iter().map(|a| a.raw.as_str()).collect();
+                    Some(NewBranch {
+                        with_head: format!("git worktree add -b {name} {} HEAD", raw.join(" ")),
+                        name,
+                        implicit: true,
+                    })
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 impl Rule for GuardBranchBase {
@@ -36,11 +156,45 @@ impl Rule for GuardBranchBase {
         "guard-branch-base"
     }
 
-    fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
+    fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
         for cmd in shell.commands() {
-            if let Some((sub, args)) = cmd.git_subcommand() {
-                let _ = new_branch(sub, args);
+            let Some(nb) = cmd
+                .git_subcommand()
+                .and_then(|(sub, args)| new_branch(sub, args))
+            else {
+                continue;
+            };
+            let dir = shell.target_dir(&cmd, &input.cwd);
+            if git::git(&dir, &["rev-parse", "--git-dir"]).is_none() {
+                continue;
             }
+            let ref_name = format!("refs/heads/{}", nb.name);
+            if nb.implicit
+                && git::git(&dir, &["show-ref", "--verify", "--quiet", &ref_name]).is_some()
+            {
+                continue;
+            }
+            let Some(default_ref) = git::default_branch(&dir) else {
+                continue;
+            };
+            let default = git::local_name(&default_ref);
+            let current = git::current_branch(&dir);
+            if current == default {
+                continue;
+            }
+            let here = if current.is_empty() {
+                "detached HEAD".to_string()
+            } else {
+                current
+            };
+            let b = &nb.name;
+            return vec![Finding::Deny(format!(
+                "今のブランチ {here} は既定ブランチ（{default}）ではありません。起点を省くと新しいブランチ {b} は\
+                 今の HEAD から作られ、{here} の未完了のコミット（別のトピック）が入ります。\n\
+                 - 別のトピックなら既定ブランチから作る: ~/.claude/scripts/worktree-add.sh {b}（worktree を作る）か git branch {b} {default}\n\
+                 - 今のブランチの続きにするのが意図なら、起点を明示する（HEAD でもよい）: {}",
+                nb.with_head
+            ))];
         }
         Vec::new()
     }

@@ -35,3 +35,39 @@ pub fn is_fork(dir: &Path) -> bool {
 pub fn current_branch(dir: &Path) -> String {
     git(dir, &["branch", "--show-current"]).unwrap_or_default()
 }
+
+/// 既定ブランチ。新しいトピックのブランチの起点に使う ref（`origin/main` や `main`）。
+/// origin/HEAD → origin/main → origin/master → main → master の最初にあるもの。
+/// .claude/scripts/worktree-add.sh と branch-topics.sh も同じ順で探す
+pub fn default_branch(dir: &Path) -> Option<String> {
+    if let Some(r) = git(
+        dir,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    ) {
+        return Some(r);
+    }
+    [
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/master",
+        "refs/heads/main",
+        "refs/heads/master",
+    ]
+    .into_iter()
+    .find(|r| git(dir, &["show-ref", "--verify", "--quiet", r]).is_some())
+    .map(|r| {
+        r.strip_prefix("refs/remotes/")
+            .or_else(|| r.strip_prefix("refs/heads/"))
+            .unwrap_or(r)
+            .to_string()
+    })
+}
+
+/// 既定ブランチの ref（`origin/main`）をローカルのブランチ名（`main`）にする
+pub fn local_name(default_ref: &str) -> &str {
+    default_ref.strip_prefix("origin/").unwrap_or(default_ref)
+}
