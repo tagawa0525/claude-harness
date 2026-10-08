@@ -332,6 +332,14 @@ mod tests {
             name("git worktree add -bfeat/a ../wt").as_deref(),
             Some("feat/a")
         );
+        assert_eq!(name("git switch -qc feat/a").as_deref(), Some("feat/a"));
+        assert_eq!(name("git switch -qcfeat/a").as_deref(), Some("feat/a"));
+        assert_eq!(name("git checkout -qb feat/a").as_deref(), Some("feat/a"));
+        assert_eq!(
+            name("git worktree add -fqb feat/a ../wt").as_deref(),
+            Some("feat/a")
+        );
+        assert_eq!(parse("git switch -qc feat/a main"), None);
         assert_eq!(parse("git switch -cfeat/a main"), None);
         assert_eq!(parse("git switch --conflict=merge main"), None);
         assert_eq!(parse("git switch -日"), None);
