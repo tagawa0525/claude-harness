@@ -104,6 +104,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | --------------------------------------- | ------------------------------------------------------------------- | ------------------------------------ |
 | `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                | git-info                             |
 | `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み | git-worktree, git-commit             |
+| `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数      | gh-pr-create, gh-pr-merge            |
 | `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）      | git-branch                           |
 | `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                 | git-branch                           |
 | `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → ローカル/リモートブランチ削除         | gh-pr-merge                          |
