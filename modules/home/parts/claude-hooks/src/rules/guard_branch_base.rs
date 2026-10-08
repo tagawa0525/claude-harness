@@ -139,15 +139,17 @@ fn new_branch(sub: &str, args: &[Arg]) -> Option<NewBranch> {
             let creating = p.flags.iter().all(|f| {
                 matches!(
                     f.as_str(),
-                    "-f" | "--force"
-                        | "-t"
+                    "--force"
                         | "--track"
                         | "--no-track"
                         | "--recurse-submodules"
-                        | "-q"
                         | "--quiet"
                         | "--create-reflog"
                 ) || f.starts_with("--track=")
+                    // 短いオプション（-f / -t / -q）とそのまとまり（-qf）
+                    || f.strip_prefix('-').is_some_and(|c| {
+                        !c.is_empty() && !c.starts_with('-') && c.chars().all(|ch| "ftq".contains(ch))
+                    })
             });
             if !creating || p.positional.len() != 1 {
                 return None;
