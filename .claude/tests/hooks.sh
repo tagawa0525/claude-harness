@@ -1070,6 +1070,16 @@ git switch -q feat/wip
 out=$(run_hook guard-branch-base "git -C $OTHER switch -c feat/other")
 assert_eq allow "$(decision "$out")"
 
+it "guard-branch-base: 同じコマンドの前の git switch で移った先のブランチで判定する"
+git switch -q main
+out=$(run_hook guard-branch-base 'git switch feat/wip && git switch -c feat/other')
+assert_eq deny "$(decision "$out")"
+git switch -q feat/wip
+out=$(run_hook guard-branch-base 'git switch main && git switch -c feat/other')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-branch-base 'git checkout main && git checkout -b feat/other')
+assert_eq allow "$(decision "$out")"
+
 it "guard-branch-base: origin/HEAD があればそれを既定ブランチとする"
 git push -q origin main:trunk
 git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
@@ -1224,6 +1234,21 @@ git switch -q main
 out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/ja')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0005-日本語.md"
+
+it "pre-git-merge-check: 同じコマンドの前の git switch で移った先のブランチで判定する"
+git switch -q feat/one
+out=$(run_hook pre-git-merge-check 'git switch main && git merge --no-ff feat/two')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook pre-git-merge-check 'git checkout main; git merge --no-ff feat/two')
+assert_eq deny "$(decision "$out")"
+git switch -q main
+out=$(run_hook pre-git-merge-check 'git switch feat/one && git merge feat/two')
+assert_eq allow "$(decision "$out")"
+# 移った先が分からない（git switch -）なら、確かめる側に倒す
+git switch -q feat/one
+out=$(run_hook pre-git-merge-check 'git switch - && git merge --no-ff feat/two')
+assert_eq deny "$(decision "$out")"
+git switch -q main
 
 it "pre-git-merge-check: docs/adr の無いリポジトリでは何もしない"
 PLAIN="$TEST_ROOT/localmerge-plain"
