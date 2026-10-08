@@ -234,6 +234,23 @@ mod tests {
     }
 
     #[test]
+    fn attached_and_abbreviated_create_options() {
+        assert_eq!(name("git switch -cfeat/a").as_deref(), Some("feat/a"));
+        assert_eq!(name("git switch --cre feat/a").as_deref(), Some("feat/a"));
+        assert_eq!(
+            name("git switch --force-c=feat/a").as_deref(),
+            Some("feat/a")
+        );
+        assert_eq!(name("git checkout -Bfeat/a").as_deref(), Some("feat/a"));
+        assert_eq!(
+            name("git worktree add -bfeat/a ../wt").as_deref(),
+            Some("feat/a")
+        );
+        assert_eq!(parse("git switch -cfeat/a main"), None);
+        assert_eq!(parse("git switch --conflict=merge main"), None);
+    }
+
+    #[test]
     fn switch_with_start_or_without_create_is_not_a_target() {
         assert_eq!(parse("git switch -c feat/a main"), None);
         assert_eq!(parse("git switch -c feat/a --no-track origin/main"), None);
