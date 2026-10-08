@@ -113,6 +113,8 @@ impl Rule for PreGitMergeCheck {
                     &dir,
                     &[
                         "diff",
+                        // 改名は新しい ADR ではない。検出を diff.renames の設定に左右させない
+                        "--find-renames",
                         "--diff-filter=A",
                         "--name-only",
                         // パスをクォートせずに NUL 区切りで受け取る（非 ASCII のファイル名）
