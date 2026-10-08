@@ -67,7 +67,7 @@ fn read(args: &[Arg], create: &[&str], takes_value: &[&str]) -> Parsed {
 }
 
 /// t がブランチ名を値に取るフラグなら Some。値が t に含まれていれば Some(Some(値))、
-/// 次の引数なら Some(None)。git の受け付ける書き方に合わせて、くっつけた短い形（`-cfeat/a`）と
+/// 次の引数なら Some(None)。git の受け付ける書き方に合わせて、くっつけた・まとめた短い形（`-cfeat/a`、`-qc`）と
 /// 一意に略した長い形（`--cre feat/a`、`--force-c=feat/a`）も読む。ただし git は完全一致する
 /// オプションを優先するので、`--force`（switch の --discard-changes の別名）は --force-create の略ではない
 fn create_value(t: &str, create: &[&str]) -> Option<Option<String>> {
@@ -85,10 +85,14 @@ fn create_value(t: &str, create: &[&str]) -> Option<Option<String>> {
             .any(|c| c.starts_with(name));
         return hit.then_some(value);
     }
-    // 2 バイト目が文字の境界でなければ（`-日` など）短いフラグではない
-    let (flag, rest) = (t.get(..2)?, t.get(2..)?);
-    if t.starts_with('-') && create.contains(&flag) {
-        return Some((!rest.is_empty()).then(|| rest.to_string()));
+    // 短いオプションのまとまり（`-qc`、`-qcfeat/a`）。作成のオプションの文字までを読み、
+    // その後ろが値（空なら次の引数）。対象のコマンドで作成の前に値を取る短いオプションはない
+    let cluster = t.strip_prefix('-')?;
+    for (i, c) in cluster.char_indices() {
+        if create.contains(&format!("-{c}").as_str()) {
+            let rest = &cluster[i + c.len_utf8()..];
+            return Some((!rest.is_empty()).then(|| rest.to_string()));
+        }
     }
     None
 }
