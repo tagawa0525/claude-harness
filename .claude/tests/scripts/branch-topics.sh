@@ -113,6 +113,14 @@ write_front docs/adr/1-notes.md accepted
 write_front docs/issues/2026notes.md open
 git add docs && git commit -q -m "docs: notes"
 
+it "branch-topics: 日本語のファイル名の ADR もクォートせずに出す"
+git switch -q -c docs/ja main
+write_front docs/adr/0001-日本語.md proposed
+git add docs && git commit -q -m "docs(adr): ja"
+out=$("$SCRIPTS_DIR/branch-topics.sh" main)
+assert_contains "$out" "ADR_NEW: docs/adr/0001-日本語.md (proposed)"
+git switch -q docs/notes
+
 it "branch-topics: NNNN-*.md でない数字で始まるファイルは ADR / issue として出さない（hook と同じ条件）"
 out=$("$SCRIPTS_DIR/branch-topics.sh" main)
 assert_not_contains "$out" "ADR_NEW"
