@@ -254,11 +254,13 @@
       #!/usr/bin/env bash
       set -euo pipefail
 
-      # プロジェクトローカルの pre-merge-commit があれば優先実行
+      # プロジェクトローカルの pre-merge-commit があれば先に実行する（失敗すれば set -e で止まる）。
+      # pre-commit / commit-msg と違って exec で置き換えない。置き換えると、ローカルの hook が
+      # あるだけで --no-verify なしにこのゲートが外れる
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$GIT_DIR/hooks/pre-merge-commit"
       if [ -x "$LOCAL_HOOK" ]; then
-        exec "$LOCAL_HOOK" "$@"
+        "$LOCAL_HOOK" "$@"
       fi
 
       BRANCH=$(git branch --show-current 2>/dev/null || echo "")
