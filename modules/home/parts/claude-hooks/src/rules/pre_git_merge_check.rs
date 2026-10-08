@@ -11,6 +11,7 @@
 //! エスケープ: `ALLOW_MULTI_TOPIC=1`（1 つの決定を複数の ADR に分けて書いたときだけ）
 
 use super::Rule;
+use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -19,18 +20,47 @@ pub struct PreGitMergeCheck;
 
 /// ADR のファイルか（docs/adr/ 直下の、数字で始まる .md）。README やテンプレートは含めない。
 /// .claude/scripts/branch-topics.sh も同じ条件で数える
-pub(super) fn is_adr(_path: &str) -> bool {
-    todo!()
+pub(super) fn is_adr(path: &str) -> bool {
+    path.strip_prefix("docs/adr/").is_some_and(|name| {
+        !name.contains('/')
+            && name.ends_with(".md")
+            && name.starts_with(|c: char| c.is_ascii_digit())
+    })
 }
 
 /// 新しい ADR が 2 件以上なら deny の理由
-pub(super) fn multi_topic_reason(_new_adrs: &[String]) -> Option<String> {
-    todo!()
+pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
+    if new_adrs.len() < 2 {
+        return None;
+    }
+    let list: Vec<String> = new_adrs.iter().map(|a| format!("  - {a}")).collect();
+    Some(format!(
+        "このブランチは新しい ADR を {} 件加えています（1 ブランチ 1 トピック、ADR は 1 件 1 決定）:\n{}\n\
+         決定ごとにブランチを分けてください（/topic-triage）。1 つの決定を複数の ADR に分けて書いた場合に限り、\
+         ALLOW_MULTI_TOPIC=1 を付けてマージし、マージのメッセージにその理由を書いてください。",
+        new_adrs.len(),
+        list.join("\n")
+    ))
 }
 
 /// `git merge args…` のマージ対象。中断・再開（--abort / --continue / --quit）なら None
-fn merge_targets(_args: &[Arg]) -> Option<Vec<String>> {
-    todo!()
+fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let t = a.text.as_str();
+        match t {
+            "--abort" | "--continue" | "--quit" => return None,
+            "-m" | "-F" | "--file" | "-s" | "--strategy" | "-X" | "--strategy-option"
+            | "--into-name" => {
+                it.next();
+            }
+            "-" => out.push(t.to_string()),
+            _ if t.starts_with('-') => {}
+            _ => out.push(t.to_string()),
+        }
+    }
+    Some(out)
 }
 
 impl Rule for PreGitMergeCheck {
@@ -38,10 +68,56 @@ impl Rule for PreGitMergeCheck {
         "pre-git-merge-check"
     }
 
-    fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
+    fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        if shell.has_escape("ALLOW_MULTI_TOPIC") {
+            return Vec::new();
+        }
         for cmd in shell.commands() {
-            if let Some(("merge", args)) = cmd.git_subcommand() {
-                let _ = merge_targets(args);
+            let Some(targets) = cmd
+                .git_subcommand()
+                .filter(|(sub, _)| *sub == "merge")
+                .and_then(|(_, args)| merge_targets(args))
+            else {
+                continue;
+            };
+            let dir = shell.target_dir(&cmd, &input.cwd);
+            let Some(default_ref) = git::default_branch(&dir) else {
+                continue;
+            };
+            if git::current_branch(&dir) != git::local_name(&default_ref) {
+                continue;
+            }
+            for t in targets {
+                let spec = if t == "-" { "@{-1}" } else { t.as_str() };
+                // ローカルのブランチだけ。解決できない名前は git merge 自身が失敗する
+                let Some(full) = git::git(&dir, &["rev-parse", "--symbolic-full-name", spec])
+                    .filter(|f| f.starts_with("refs/heads/"))
+                else {
+                    continue;
+                };
+                let Some(added) = git::git(
+                    &dir,
+                    &[
+                        "diff",
+                        "--diff-filter=A",
+                        "--name-only",
+                        &format!("HEAD...{full}"),
+                        "--",
+                        "docs/adr",
+                    ],
+                ) else {
+                    return vec![Finding::Deny(format!(
+                        "{t} が加える ADR を確認できません（git diff HEAD...{full} が失敗）"
+                    ))];
+                };
+                let adrs: Vec<String> = added
+                    .lines()
+                    .filter(|p| is_adr(p))
+                    .map(str::to_string)
+                    .collect();
+                if let Some(reason) = multi_topic_reason(&adrs) {
+                    return vec![Finding::Deny(reason)];
+                }
             }
         }
         Vec::new()
