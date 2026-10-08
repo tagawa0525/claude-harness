@@ -276,12 +276,14 @@
       fi
 
       # 検査は作業ツリーで走る。コミットされない変更が残っていると、マージコミットとは別の内容を
-      # 検査してしまうので止める（比べる index は git が渡す GIT_INDEX_FILE。commit -a なら index.lock）
-      DIRTY=$(git diff --name-only)
+      # 検査してしまうので止める（比べる index は git が渡す GIT_INDEX_FILE。commit -a なら index.lock）。
+      # 追跡していないファイルも、ruff check . や pytest のような木全体の検査が拾うので含める。
+      # .gitignore で除外したもの（ビルド成果物など）は検査の道具も除外するので含めない
+      DIRTY=$(git diff --name-only; git ls-files --others --exclude-standard)
       if [ -n "$DIRTY" ]; then
         echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
         printf '%s\n' "$DIRTY" | sed 's/^/     /'
-        echo "   直し方: git merge --abort で取り消し、変更をコミットするか git stash で退避してから、もう一度マージしてください"
+        echo "   直し方: git merge --abort で取り消し、変更をコミットするか git stash -u で退避して（不要なファイルは消して）から、もう一度マージしてください"
         exit 1
       fi
 
