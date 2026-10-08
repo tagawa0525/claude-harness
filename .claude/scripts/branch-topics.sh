@@ -106,12 +106,13 @@ report() {
         [[ "$old" == "$new" ]] || echo "${prefix}_STATUS: $path $old -> $new"
         ;;
     esac
-  done < <(git diff --diff-filter=AMR --name-status "$FORK" "$TIP" -- "$dir")
+  # 非 ASCII のパスをクォートさせない（NNNN-*.md の判定と出力のため）
+  done < <(git -c core.quotePath=false diff --diff-filter=AMR --name-status "$FORK" "$TIP" -- "$dir")
 }
 report docs/adr ADR
 report docs/issues ISSUE
 
-DIRS=$(git diff --name-only "$FORK" "$TIP" \
+DIRS=$(git -c core.quotePath=false diff --name-only "$FORK" "$TIP" \
   | awk -F/ '{ if (NF == 1) print "."; else if (NF == 2) print $1; else print $1 "/" $2 }' \
   | sort -u | paste -sd ' ')
 [[ -z "$DIRS" ]] || echo "DIRS: $DIRS"
