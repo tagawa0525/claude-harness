@@ -16,6 +16,7 @@ mod guard_gh_api;
 mod guard_gh_run_rerun;
 mod guard_git_add;
 mod guard_git_push;
+mod pre_git_merge_check;
 mod pre_merge_check;
 mod pre_pr_create_check;
 mod require_background_wait;
@@ -34,6 +35,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_gh_api::GuardGhApi,
         &pre_pr_create_check::PrePrCreateCheck,
         &pre_merge_check::PreMergeCheck,
+        &pre_git_merge_check::PreGitMergeCheck,
     ]
 }
 

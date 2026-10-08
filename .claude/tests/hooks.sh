@@ -474,11 +474,12 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "## Changes"
 
 it "heredoc: マージ本文がヒアドキュメントでも見出しを読める（pre-merge-check）"
-# make_fake_gh_merge <behind_by> [reviews]: マージ可能な PR #1 の gh 応答。
+# make_fake_gh_merge <behind_by> [reviews] [files]: マージ可能な PR #1 の gh 応答。
 # compare は base...head の遅れを、reviews は最新の bot レビューが見た commit を返す
-# （既定は head と同じ abc = 最後の push がレビュー済み）
+# （既定は head と同じ abc = 最後の push がレビュー済み）。files は PR の変更ファイルを
+# "status<TAB>path" の行で返す（既定は無し）
 make_fake_gh_merge() {
-  local reviews="${2:-echo abc}"
+  local reviews="${2:-echo abc}" files="${3:-true}"
   make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
@@ -487,6 +488,7 @@ make_fake_gh_merge() {
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) '"$1"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviews"' ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
   "api graphql"*) echo "[]" ;;'
 }
 make_fake_gh_merge 'echo 0'
@@ -539,6 +541,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/release%2Fx...abc"*) echo 0 ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo abc ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api graphql"*) echo "[]" ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
@@ -845,6 +848,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api graphql"*) echo "[]" ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
@@ -862,6 +866,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo "" ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api graphql"*) echo "[]" ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
@@ -1097,6 +1102,131 @@ assert_eq allow "$(decision "$out")"
 it "guard-branch-base: ヒアドキュメント本文のコマンドには反応しない"
 cd "$REPO" || exit 1
 out=$(run_hook guard-branch-base "$(write_doc '例: git switch -c feat/other')")
+assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# マージ前のトピック確認: 新しい ADR が 2 件以上のブランチは止める（1 ブランチ 1 トピック）
+# ===========================================================================
+# 決定は ADR に 1 件 1 決定で書くので、新しい ADR の数はブランチのトピックの数の目安になる。
+# 既存の ADR の status の変化（superseded など）は数えない
+
+TWO_ADRS='printf "added\t%s\n" docs/adr/0002-use-b.md docs/adr/0003-use-c.md src/x.rs'
+
+it "pre-merge-check: 新しい ADR を 2 件以上加える PR は deny し、ADR を挙げて /topic-triage を示す"
+cd "$TEST_ROOT/heredoc" || exit 1
+make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+assert_contains "$(reason "$out")" "docs/adr/0003-use-c.md"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=1"
+assert_not_contains "$(reason "$out")" "src/x.rs"
+
+it "pre-merge-check: 新しい ADR が 1 件で、ほかは既存の ADR の変更・改名・README なら許可する"
+make_fake_gh_merge 'echo 0' 'echo abc' 'printf "%s\t%s\n" added docs/adr/0002-use-b.md modified docs/adr/0001-keep-a.md renamed docs/adr/0004-new-name.md added docs/adr/README.md added docs/adr/drafts/0005-x.md added docs/adrs/0006-y.md'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: ALLOW_MULTI_TOPIC=1 なら新しい ADR が複数でもマージできる"
+make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS"
+out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=1 $MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: PR の変更ファイルを取得できなければ deny"
+make_fake_gh_merge 'echo 0' 'echo abc' 'echo "error connecting to api.github.com" >&2; exit 1'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "変更ファイル"
+
+# --- ローカルの git merge（GitHub を使わないリポジトリは main に git merge --no-ff する）---
+
+# write_adr <repo> <name> [status]
+write_adr() {
+  mkdir -p "$1/docs/adr"
+  printf -- '---\nstatus: %s\n---\n\n# %s\n' "${3:-accepted}" "$2" > "$1/docs/adr/$2"
+}
+
+REPO="$TEST_ROOT/localmerge"
+make_repo "$REPO"
+write_adr "$REPO" 0001-keep-a.md
+git -C "$REPO" add docs && git -C "$REPO" commit -q -m "docs: seed"
+git -C "$REPO" switch -q -c feat/two
+write_adr "$REPO" 0002-use-b.md proposed
+write_adr "$REPO" 0003-use-c.md proposed
+git -C "$REPO" add docs && git -C "$REPO" commit -q -m "docs(adr): b and c"
+git -C "$REPO" switch -q -c feat/one main
+write_adr "$REPO" 0004-use-d.md
+write_adr "$REPO" 0001-keep-a.md superseded
+echo "readme" > "$REPO/docs/adr/README.md"
+git -C "$REPO" add docs && git -C "$REPO" commit -q -m "docs(adr): d supersedes a"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+
+it "pre-git-merge-check: 既定ブランチに新しい ADR が 2 件以上のブランチをマージするなら deny"
+out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/two -m "Merge: two"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+assert_contains "$(reason "$out")" "docs/adr/0003-use-c.md"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=1"
+out=$(run_hook pre-git-merge-check 'git merge -m "Merge: two" --no-ff feat/two')
+assert_eq deny "$(decision "$out")"
+
+it "pre-git-merge-check: 既存の ADR の status の変化と README は数えない"
+out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/one')
+assert_eq allow "$(decision "$out")"
+
+it "pre-git-merge-check: ALLOW_MULTI_TOPIC=1 で通す"
+out=$(run_hook pre-git-merge-check 'ALLOW_MULTI_TOPIC=1 git merge --no-ff feat/two')
+assert_eq allow "$(decision "$out")"
+
+it "pre-git-merge-check: git merge - は直前のブランチとして判定する"
+git switch -q feat/two && git switch -q main
+out=$(run_hook pre-git-merge-check 'git merge --no-ff -')
+assert_eq deny "$(decision "$out")"
+
+it "pre-git-merge-check: -C / cd で指定したリポジトリで判定する"
+cd "$TEST_ROOT" || exit 1
+out=$(run_hook pre-git-merge-check "git -C $REPO merge --no-ff feat/two")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook pre-git-merge-check "cd $REPO && git merge --no-ff feat/two")
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
+
+it "pre-git-merge-check: 既定ブランチ以外へのマージ、マージの中断・再開は対象外"
+git switch -q feat/one
+out=$(run_hook pre-git-merge-check 'git merge feat/two')
+assert_eq allow "$(decision "$out")"
+git switch -q main
+for cmd in 'git merge --abort' 'git merge --continue' 'git merge --quit' 'git merge-base main feat/two'; do
+  out=$(run_hook pre-git-merge-check "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "pre-git-merge-check: リモート追跡ブランチの取り込み（main の更新）は対象外"
+# origin/main には別々にマージされた複数のトピックが入っている
+git -C "$REPO" init -q --bare "$REPO-origin.git"
+git remote add origin "$REPO-origin.git"
+git push -q origin feat/two:main
+git fetch -q origin
+out=$(run_hook pre-git-merge-check 'git merge --ff-only origin/main')
+assert_eq allow "$(decision "$out")"
+
+it "pre-git-merge-check: docs/adr の無いリポジトリでは何もしない"
+PLAIN="$TEST_ROOT/localmerge-plain"
+make_repo "$PLAIN"
+git -C "$PLAIN" switch -q -c feat/x
+commit_file "$PLAIN" a.txt "feat: a"
+commit_file "$PLAIN" b.txt "feat: b"
+git -C "$PLAIN" switch -q main
+cd "$PLAIN" || exit 1
+out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/x')
+assert_eq allow "$(decision "$out")"
+
+it "pre-git-merge-check: ヒアドキュメント本文のコマンドには反応しない"
+cd "$REPO" || exit 1
+out=$(run_hook pre-git-merge-check "$(write_doc '例: git merge --no-ff feat/two')")
 assert_eq allow "$(decision "$out")"
 
 finish
