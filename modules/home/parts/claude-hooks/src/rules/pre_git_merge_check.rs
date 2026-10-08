@@ -104,6 +104,8 @@ impl Rule for PreGitMergeCheck {
                         "diff",
                         "--diff-filter=A",
                         "--name-only",
+                        // パスをクォートせずに NUL 区切りで受け取る（非 ASCII のファイル名）
+                        "-z",
                         &format!("HEAD...{full}"),
                         "--",
                         "docs/adr",
@@ -114,7 +116,7 @@ impl Rule for PreGitMergeCheck {
                     ))];
                 };
                 let adrs: Vec<String> = added
-                    .lines()
+                    .split('\0')
                     .filter(|p| is_adr(p))
                     .map(str::to_string)
                     .collect();
