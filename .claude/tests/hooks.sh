@@ -1215,6 +1215,16 @@ git fetch -q origin
 out=$(run_hook pre-git-merge-check 'git merge --ff-only origin/main')
 assert_eq allow "$(decision "$out")"
 
+it "pre-git-merge-check: 日本語のファイル名の ADR も数える（git のパスのクォートに左右されない）"
+git switch -q -c feat/ja main
+write_adr "$REPO" 0005-日本語.md
+write_adr "$REPO" 0006-別の決定.md
+git add docs && git commit -q -m "docs(adr): ja"
+git switch -q main
+out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/ja')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0005-日本語.md"
+
 it "pre-git-merge-check: docs/adr の無いリポジトリでは何もしない"
 PLAIN="$TEST_ROOT/localmerge-plain"
 make_repo "$PLAIN"
