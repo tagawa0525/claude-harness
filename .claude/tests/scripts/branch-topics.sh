@@ -71,6 +71,16 @@ out=$("$SCRIPTS_DIR/branch-topics.sh" main)
 assert_not_contains "$out" "0005-on-main"
 assert_contains "$out" "COMMITS: 5"
 
+it "branch-topics: 2 つ目の引数で、チェックアウトしていないブランチを要約できる"
+git switch -q main
+out=$("$SCRIPTS_DIR/branch-topics.sh" main feat/x)
+assert_eq 0 $?
+assert_contains "$out" "HEAD: feat/x"
+assert_contains "$out" "COMMITS: 5"
+assert_contains "$out" "ADR_NEW: docs/adr/0003-use-c.md (proposed)"
+assert_contains "$out" "ISSUE_STATUS: docs/issues/0001-bug.md open -> closed"
+git switch -q feat/x
+
 it "branch-topics: 起点の ref が無ければエラー"
 "$SCRIPTS_DIR/branch-topics.sh" no-such-ref >/dev/null 2>&1
 assert_eq 1 $?
