@@ -5,7 +5,7 @@
 #   claude-hooks を cargo build してから各ルールを --rule で個別に評価する
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
-#       block-main-commit / require-background-wait
+#       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -969,5 +969,134 @@ make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
+
+# ===========================================================================
+# guard-branch-base: 既定ブランチ以外の上で、起点を省いてブランチを作らせない
+# ===========================================================================
+# 起点を省くと今の HEAD から作られ、作業中のブランチの未完了のコミット（別のトピック）が
+# 新しいブランチに入る。既定ブランチの上なら HEAD = 既定ブランチなので止めない
+
+REPO="$TEST_ROOT/branchbase"
+make_repo "$REPO"
+make_remote "$REPO"
+git -C "$REPO" switch -q -c feat/wip
+commit_file "$REPO" "wip.txt" "feat: wip"
+git -C "$REPO" branch exist main
+cd "$REPO" || exit 1
+
+it "guard-branch-base: 起点のない git switch -c / -C は deny し、理由と直し方を示す"
+out=$(run_hook guard-branch-base 'git switch -c feat/other')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "feat/wip"
+assert_contains "$(reason "$out")" "未完了のコミット"
+assert_contains "$(reason "$out")" "worktree-add.sh feat/other"
+assert_contains "$(reason "$out")" "git branch feat/other main"
+assert_contains "$(reason "$out")" "git switch -c feat/other HEAD"
+out=$(run_hook guard-branch-base 'git switch -C feat/other')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-branch-base 'git switch --create=feat/other')
+assert_eq deny "$(decision "$out")"
+
+it "guard-branch-base: 起点のない git checkout -b / -B は deny"
+out=$(run_hook guard-branch-base 'git checkout -b feat/other')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "git checkout -b feat/other HEAD"
+out=$(run_hook guard-branch-base 'git checkout -B feat/other')
+assert_eq deny "$(decision "$out")"
+
+it "guard-branch-base: 起点のない git branch <b> は deny"
+out=$(run_hook guard-branch-base 'git branch feat/other')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "git branch feat/other HEAD"
+out=$(run_hook guard-branch-base 'git branch --no-track feat/other')
+assert_eq deny "$(decision "$out")"
+
+it "guard-branch-base: 起点のない git worktree add -b / -B は deny"
+out=$(run_hook guard-branch-base 'git worktree add ../wt -b feat/other')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "git worktree add ../wt -b feat/other HEAD"
+out=$(run_hook guard-branch-base 'git worktree add -B feat/other ../wt')
+assert_eq deny "$(decision "$out")"
+
+it "guard-branch-base: git worktree add <path> がパスの名前で新しいブランチを作るときも deny"
+out=$(run_hook guard-branch-base 'git worktree add ../newname')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "newname"
+
+it "guard-branch-base: 起点を明示すれば（HEAD でも）許可する"
+for cmd in 'git switch -c feat/other main' 'git switch -c feat/other HEAD' \
+           'git checkout -b feat/other origin/main' 'git branch feat/other main' \
+           'git branch -f feat/other HEAD' 'git worktree add ../wt -b feat/other main' \
+           'git worktree add -b feat/other ../wt HEAD'; do
+  out=$(run_hook guard-branch-base "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "guard-branch-base: ブランチを作らない操作は対象外"
+for cmd in 'git switch main' 'git switch -' 'git checkout main' 'git checkout -- wip.txt' \
+           'git branch' 'git branch -a' 'git branch -d exist' 'git branch -D exist' \
+           'git branch -m feat/renamed' 'git branch --show-current' 'git branch -vv' \
+           'git branch --set-upstream-to=origin/main' 'git branch --list "feat/*"' \
+           'git worktree add ../exist' 'git worktree add --detach ../det' \
+           'git worktree list' 'git switch --orphan fresh' 'git checkout --orphan fresh'; do
+  out=$(run_hook guard-branch-base "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "guard-branch-base: 既定ブランチの上なら起点を省いても許可する"
+git switch -q main
+out=$(run_hook guard-branch-base 'git switch -c feat/other')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-branch-base 'git worktree add ../wt -b feat/other')
+assert_eq allow "$(decision "$out")"
+
+it "guard-branch-base: -C / cd で指定したリポジトリの今のブランチで判定する"
+OTHER="$TEST_ROOT/branchbase-other"
+make_repo "$OTHER"
+git -C "$OTHER" switch -q -c feat/y
+out=$(run_hook guard-branch-base "git -C $OTHER switch -c feat/other")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-branch-base "cd $OTHER && git switch -c feat/other")
+assert_eq deny "$(decision "$out")"
+git -C "$OTHER" switch -q main
+git switch -q feat/wip
+out=$(run_hook guard-branch-base "git -C $OTHER switch -c feat/other")
+assert_eq allow "$(decision "$out")"
+
+it "guard-branch-base: origin/HEAD があればそれを既定ブランチとする"
+git push -q origin main:trunk
+git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
+out=$(run_hook guard-branch-base 'git switch -c feat/other')
+assert_contains "$(reason "$out")" "git branch feat/other trunk"
+git symbolic-ref --delete refs/remotes/origin/HEAD
+
+LOCAL="$TEST_ROOT/branchbase-local"
+make_repo "$LOCAL"
+git -C "$LOCAL" switch -q -c feat/wip
+cd "$LOCAL" || exit 1
+
+it "guard-branch-base: リモートのないリポジトリでもローカルの main を既定ブランチとして止める"
+out=$(run_hook guard-branch-base 'git switch -c feat/other')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "git branch feat/other main"
+
+it "guard-branch-base: 既定ブランチが見つからないリポジトリでは止めない（起点を示せない）"
+NOMAIN="$TEST_ROOT/branchbase-nomain"
+mkdir -p "$NOMAIN"
+git -C "$NOMAIN" init -q -b work
+commit_file "$NOMAIN" "a.txt" "chore: init"
+cd "$NOMAIN" || exit 1
+out=$(run_hook guard-branch-base 'git switch -c feat/other')
+assert_eq allow "$(decision "$out")"
+
+it "guard-branch-base: git リポジトリの外では何もしない"
+cd "$TEST_ROOT" || exit 1
+out=$(run_hook guard-branch-base 'git switch -c feat/other')
+assert_eq allow "$(decision "$out")"
+
+it "guard-branch-base: ヒアドキュメント本文のコマンドには反応しない"
+cd "$REPO" || exit 1
+out=$(run_hook guard-branch-base "$(write_doc '例: git switch -c feat/other')")
+assert_eq allow "$(decision "$out")"
 
 finish
