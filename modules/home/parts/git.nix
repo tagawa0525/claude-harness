@@ -240,7 +240,7 @@
   #
   # 守るのはローカルのマージ（GitHub リモートのないリポジトリ。xlc など）。gh pr merge は
   # GitHub 側でマージするのでこの hook は走らない。GitHub のマージは CI と claude-hooks の
-  # pre_merge_check（CI 成功、未解決スレッドなし、head が base より遅れていない）が守る
+  # pre-merge-check（CI 成功、未解決スレッドなし、head が base より遅れていない）が守る
   # （必要なら GitHub の branch protection / merge queue も使える）。
   #
   # 対象は main / master だけ。統合先に入る内容を守るゲートで、ほかのブランチへのマージは
