@@ -75,6 +75,19 @@ it "branch-topics: 起点の ref が無ければエラー"
 "$SCRIPTS_DIR/branch-topics.sh" no-such-ref >/dev/null 2>&1
 assert_eq 1 $?
 
+RENAME="$TEST_ROOT/topics/rename"
+make_repo "$RENAME"
+cd "$RENAME" || exit 1
+write_front docs/adr/0001-keep-a.md accepted
+git add docs && git commit -q -m "docs: seed"
+git switch -q -c docs/rename
+git mv docs/adr/0001-keep-a.md docs/adr/0001-keep-aa.md
+git commit -q -m "docs(adr): rename a"
+
+it "branch-topics: ADR の改名は新しい ADR として出さない（マージ前の hook と同じ数え方）"
+out=$("$SCRIPTS_DIR/branch-topics.sh" main)
+assert_not_contains "$out" "ADR_NEW"
+
 PLAIN="$TEST_ROOT/topics/plain"
 make_repo "$PLAIN"
 cd "$PLAIN" || exit 1
