@@ -60,6 +60,66 @@ out=$("$SCRIPTS_DIR/worktree-add.sh" feat/from-sub)
 assert_contains "$out" "WORKTREE: $TEST_ROOT/wt/app-feat-from-sub"
 cd "$REPO" || exit 1
 
+it "worktree-add: 新しいブランチは今の HEAD ではなく既定ブランチ（origin/main）から作り、上流を設定しない"
+# 作業中のブランチの未完了のコミットを別のトピックのブランチに持ち込まない
+git switch -q -c feat/wip
+commit_file "$REPO" "wip.txt" "feat: wip"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/other)
+assert_eq 0 $?
+assert_contains "$out" "BASE: origin/main"
+assert_eq "$(git rev-parse origin/main)" "$(git -C "$TEST_ROOT/wt/app-feat-other" rev-parse HEAD)"
+# 上流が origin/main だと、引数なしの git push が main 宛てとして扱われる
+assert_eq "" "$(git -C "$TEST_ROOT/wt/app-feat-other" rev-parse --abbrev-ref '@{u}' 2>/dev/null)"
+
+it "worktree-add: --from で起点を明示できる（--from HEAD は今のブランチの続き）"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/continue --from HEAD)
+assert_eq 0 $?
+assert_contains "$out" "BASE: HEAD"
+assert_eq "$(git rev-parse feat/wip)" "$(git -C "$TEST_ROOT/wt/app-feat-continue" rev-parse HEAD)"
+
+it "worktree-add: --from の ref が無ければエラーで、worktree を作らない"
+"$SCRIPTS_DIR/worktree-add.sh" feat/nobase --from no-such-ref >/dev/null 2>&1
+assert_eq 1 $?
+assert_file_missing "$TEST_ROOT/wt/app-feat-nobase"
+
+it "worktree-add: 既存のブランチに --from を付けたらエラー（起点は新しいブランチにだけ効く）"
+git branch fix/exists main
+"$SCRIPTS_DIR/worktree-add.sh" fix/exists --from HEAD >/dev/null 2>&1
+assert_eq 1 $?
+assert_file_missing "$TEST_ROOT/wt/app-fix-exists"
+
+it "worktree-add: origin/HEAD があればそれを既定ブランチとする"
+git push -q origin main:trunk
+git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/on-trunk)
+assert_contains "$out" "BASE: origin/trunk"
+git symbolic-ref --delete refs/remotes/origin/HEAD
+git switch -q main
+
+LOCAL="$TEST_ROOT/wt/local"
+make_repo "$LOCAL"
+cd "$LOCAL" || exit 1
+
+it "worktree-add: リモートが無ければローカルの main から作る"
+git switch -q -c feat/wip
+commit_file "$LOCAL" "wip.txt" "feat: wip"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/other)
+assert_contains "$out" "BASE: main"
+assert_eq "$(git rev-parse main)" "$(git -C "$TEST_ROOT/wt/local-feat-other" rev-parse HEAD)"
+
+NOMAIN="$TEST_ROOT/wt/nomain"
+mkdir -p "$NOMAIN"
+git -C "$NOMAIN" init -q -b work
+commit_file "$NOMAIN" "a.txt" "chore: init"
+cd "$NOMAIN" || exit 1
+
+it "worktree-add: 既定ブランチが見つからなければエラーで、--from を案内する"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "--from"
+assert_file_missing "$TEST_ROOT/wt/nomain-feat-x"
+cd "$REPO" || exit 1
+
 # ===========================================================================
 # rename-branch.sh
 # ===========================================================================
