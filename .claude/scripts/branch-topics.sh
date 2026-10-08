@@ -85,21 +85,22 @@ status() {
     END { if (!found) print "-" }' <<<"$text"
 }
 
-# report <dir> <prefix>: dir 直下の NNNN-*.md の追加と status の変化
+# report <dir> <prefix>: dir 直下の NNNN-*.md の追加と status の変化。
+# 改名（R）は新しいファイルとして数えず（claude-hooks のマージ前の判定と同じ）、改名前の status と比べる
 report() {
-  local dir="$1" prefix="$2" kind path old new
-  while IFS=$'\t' read -r kind path; do
+  local dir="$1" prefix="$2" kind src path old new
+  while IFS=$'\t' read -r kind src path; do
+    [[ -n "$path" ]] || path="$src"
     [[ "$path" =~ ^$dir/[0-9]{4}-[^/]*\.md$ ]] || continue
     case "$kind" in
       A) echo "${prefix}_NEW: $path ($(status HEAD "$path"))" ;;
-      M)
-        old=$(status "$FORK" "$path")
+      M | R*)
+        old=$(status "$FORK" "$src")
         new=$(status HEAD "$path")
         [[ "$old" == "$new" ]] || echo "${prefix}_STATUS: $path $old -> $new"
         ;;
     esac
-  # 改名（R）は新しいファイルとして数えない。claude-hooks のマージ前の判定と同じ
-  done < <(git diff --diff-filter=AM --name-status "$FORK" HEAD -- "$dir")
+  done < <(git diff --diff-filter=AMR --name-status "$FORK" HEAD -- "$dir")
 }
 report docs/adr ADR
 report docs/issues ISSUE
