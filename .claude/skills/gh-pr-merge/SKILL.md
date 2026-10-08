@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(gh auth*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
   - Bash(~/.claude/scripts/post-merge-cleanup.sh*)
+  - Bash(~/.claude/scripts/branch-topics.sh*)
 ---
 
 # GitHub PR Merge Command
@@ -27,8 +28,12 @@ head の遅れなど機械的に判定できる条件は `pre-merge-check` hook 
 
 ## マージ前の判断
 
+!`~/.claude/scripts/branch-topics.sh`
+
 $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
 
+- 上の出力を見て、マージのメッセージの Why を1文で書けるか確かめる。2文要るならマージせず /topic-triage で分ける。
+  PR の head が今のブランチでなければ、`git fetch` のあと `~/.claude/scripts/branch-topics.sh origin/<base> origin/<head>` で見る
 - 自動レビューが未着なら `~/.claude/scripts/gh-wait-review.sh [PR番号]` で待つ（約 10 分。
   `run_in_background=true` で実行）。タイムアウト（exit 1）は /gh-actions-check で診断
 - 指摘への対応が残っていれば /gh-pr-review に戻る

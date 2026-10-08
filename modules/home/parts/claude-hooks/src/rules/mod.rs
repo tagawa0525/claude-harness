@@ -11,10 +11,12 @@ pub trait Rule: Sync {
 
 mod block_main_commit;
 mod block_secret_commit;
+mod guard_branch_base;
 mod guard_gh_api;
 mod guard_gh_run_rerun;
 mod guard_git_add;
 mod guard_git_push;
+mod pre_git_merge_check;
 mod pre_merge_check;
 mod pre_pr_create_check;
 mod require_background_wait;
@@ -27,11 +29,13 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &warn_large_commit::WarnLargeCommit,
         &guard_git_add::GuardGitAdd,
         &guard_git_push::GuardGitPush,
+        &guard_branch_base::GuardBranchBase,
         &block_secret_commit::BlockSecretCommit,
         &guard_gh_run_rerun::GuardGhRunRerun,
         &guard_gh_api::GuardGhApi,
         &pre_pr_create_check::PrePrCreateCheck,
         &pre_merge_check::PreMergeCheck,
+        &pre_git_merge_check::PreGitMergeCheck,
     ]
 }
 

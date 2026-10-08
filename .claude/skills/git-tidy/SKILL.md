@@ -32,7 +32,7 @@ allowed-tools:
 
 - `main` / `master` では実行しない（/git-cherry-pick で feature ブランチへ移すよう案内する）
 - 未コミットの変更があれば `git stash` で退避し、終わったら復元を提案する
-- 書き換え前に `git branch [backup]` で元の HEAD を残し、結果を確認してから消す
+- 書き換え前に `git branch [backup] HEAD` で元の HEAD を残し、結果を確認してから消す
 - 履歴を分析して操作を提案し、ユーザーの確認を得てから実行する。push 済みなら
   `/git-push --force` が要ることも確認の時点で伝える
 

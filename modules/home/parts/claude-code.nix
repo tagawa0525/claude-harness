@@ -198,6 +198,7 @@ let
         "Bash(~/.claude/scripts/gh-wait-review.sh:*)"
         "Bash(~/.claude/scripts/git-info.sh:*)"
         "Bash(~/.claude/scripts/worktree-add.sh:*)"
+        "Bash(~/.claude/scripts/branch-topics.sh:*)"
         "Bash(~/.claude/scripts/rename-branch.sh:*)"
         "Bash(~/.claude/scripts/rename-plan.sh:*)"
         "Bash(~/.claude/scripts/post-merge-cleanup.sh:*)"

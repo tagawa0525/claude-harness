@@ -17,12 +17,16 @@
 //!    計画（docs/plans/）だけの PR は、一度でも自動レビューに成功していれば検査しない。
 //!    文章の計画は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
 //!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める
+//! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
+//!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
+//!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=1 で外す
 //!
-//! 1〜3 はコマンド文字列だけで判定する。4〜8 は gh で GitHub に問い合わせ、
+//! 1〜3 はコマンド文字列だけで判定する。4〜9 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
 use super::Rule;
+use super::pre_git_merge_check::{is_adr, multi_topic_reason};
 use super::pre_pr_create_check::{body_text, missing_headings};
 use crate::gh;
 use crate::input::Input;
@@ -487,6 +491,39 @@ impl Rule for PreMergeCheck {
                         short(&sha)
                     )),
                     Some(_) => {}
+                }
+            }
+
+            // --- 9. トピックが 1 つか（新しい ADR の数）---
+            // 変更ファイルの status が added のものだけ数える（既存の ADR の変更・改名は数えない）
+            if !owner.is_empty()
+                && !name.is_empty()
+                && !shell.has_escape("ALLOW_MULTI_TOPIC")
+                && let Some(number) = pr_number.as_deref()
+            {
+                match gh::gh(
+                    &dir,
+                    &[
+                        "api",
+                        "--paginate",
+                        &format!("repos/{owner}/{name}/pulls/{number}/files"),
+                        "--jq",
+                        ".[] | [.status, .filename] | @tsv",
+                    ],
+                ) {
+                    Err(()) => reasons.push(
+                        "PR の変更ファイルを取得できず、新しい ADR の数を確認できません（pulls/files API が失敗）"
+                            .to_string(),
+                    ),
+                    Ok(s) => {
+                        let adrs: Vec<String> = s
+                            .lines()
+                            .filter_map(|l| l.split_once('\t'))
+                            .filter(|(status, path)| *status == "added" && is_adr(path))
+                            .map(|(_, path)| path.to_string())
+                            .collect();
+                        reasons.extend(multi_topic_reason(&adrs));
+                    }
                 }
             }
 
