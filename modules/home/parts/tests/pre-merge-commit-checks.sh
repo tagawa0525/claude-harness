@@ -233,6 +233,35 @@ else
   ng "作業ツリーの変更で止まったが、ファイルを示していないか変更が消えた"
 fi
 
+# 追跡していないファイルもコミットされないが、ruff check . や pytest のような木全体の検査は見る
+# （検査を通る中身でも、コミットされる内容と違うものを検査したことになる）
+R="$WORK/untracked"
+new_repo "$R"
+branch_with "$R" feat good.py "$GOOD_PY"
+printf '%s' "$GOOD_PY" > "$R/scratch.py"
+if run "$R" git merge --no-ff -m "Merge: untracked" feat; then
+  ng "追跡していないファイルがあるのにマージコミットが作られた"
+elif grep -q "マージ結果以外" "$WORK/out" && grep -q "scratch.py" "$WORK/out" && [ -f "$R/scratch.py" ]; then
+  ok "追跡していないファイルがあれば止め、そのファイルを示す（ファイルは残す）"
+else
+  ng "追跡していないファイルで止まったが、ファイルを示していないかファイルが消えた"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+# .gitignore で除外したファイル（ビルド成果物など）は検査の道具も除外するので止めない
+R="$WORK/ignored"
+new_repo "$R"
+echo "scratch/" > "$R/.gitignore"
+git -C "$R" add .gitignore
+git -C "$R" commit -q --no-verify -m "chore: ignore"
+branch_with "$R" feat good.py "$GOOD_PY"
+mkdir -p "$R/scratch" && echo x > "$R/scratch/note.txt"
+if run "$R" git merge --no-ff -m "Merge: ignored" feat && [ "$(parents "$R")" -eq 3 ]; then
+  ok ".gitignore で除外したファイルは止めない"
+else
+  ng ".gitignore で除外したファイルでマージが止められた"
+fi
+
 # --- 9. fork（upstream リモートあり）では検査しない ---------------------------------------------
 R="$WORK/fork"
 new_repo "$R"
