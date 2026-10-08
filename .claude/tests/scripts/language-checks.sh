@@ -212,6 +212,40 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "$(printf '%s\n' "$REPO/tools/a" "$REPO/tools/a" "$REPO/tools/a")" "$(cat "$TEST_ROOT/cargo.pwd")"
 
+# --merge: git の pre-merge-commit hook がマージ結果を検査するときのモード。
+# 変更は HEAD（マージ先）と作業ツリーの差分で判定し（commit -a でマージを締めるときは
+# hook に渡る index が一時ファイルなので、index に頼らない）、自動修正はしない
+# （直した内容がどちらの親にもない変更としてマージコミットに紛れ込む）
+
+it "run-checks --merge: HEAD との差分（未ステージを含む）で言語を検出する"
+REPO="$TEST_ROOT/checks/merge-diff"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+printf '#!/usr/bin/env bash\necho a\n' > a.sh && git add a.sh && git commit -q -m "chore: a"
+printf '#!/usr/bin/env bash\necho b\n' > a.sh
+make_fake_tool shellcheck '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" --merge)
+assert_eq 0 $?
+assert_eq "-S warning -- a.sh" "$(fake_log shellcheck)"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks --merge: Markdown を自動修正せず、lint だけを実行する"
+REPO="$TEST_ROOT/checks/merge-md"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo "# doc" > doc.md && git add doc.md
+make_fake_tool markdownlint '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" --merge)
+assert_eq 0 $?
+assert_eq "-- doc.md" "$(fake_log markdownlint)"
+assert_contains "$out" "SKIP: markdown format (--merge では自動修正しない)"
+assert_contains "$out" "OK: markdown lint"
+
+it "run-checks: 知らないオプションはエラーで止まる"
+out=$("$LANG_SCRIPTS/run-checks.sh" --bogus 2>&1)
+assert_eq 2 $?
+assert_contains "$out" "--bogus"
+
 it "run-checks: 該当言語がなければ NOTE を出して exit 0"
 REPO="$TEST_ROOT/checks/none"
 make_repo "$REPO"
