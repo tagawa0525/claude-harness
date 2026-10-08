@@ -105,6 +105,13 @@ it "branch-topics: 改名と同時の status の変化は、改名前の status 
 assert_contains "$out" "ADR_STATUS: docs/adr/0002-keep-bb.md accepted -> superseded"
 assert_not_contains "$out" "0001-keep-aa"
 
+it "branch-topics: diff.renames=false の設定でも改名を検出する"
+git config diff.renames false
+out=$("$SCRIPTS_DIR/branch-topics.sh" main)
+assert_not_contains "$out" "ADR_NEW"
+assert_contains "$out" "ADR_STATUS: docs/adr/0002-keep-bb.md accepted -> superseded"
+git config --unset diff.renames
+
 NUMERIC="$TEST_ROOT/topics/numeric"
 make_repo "$NUMERIC"
 cd "$NUMERIC" || exit 1
