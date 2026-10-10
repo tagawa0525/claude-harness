@@ -8,7 +8,8 @@
 # -t: かかる時間の見積もり（sbatch --time の形。分か H:MM:SS）。待ち行列の見込み（squeue --start）に
 #     使う。超えても止めない（slurm.conf の OverTimeLimit=UNLIMITED）
 # --top: 待っているジョブより先に走らせる（scontrol top。走っているジョブは止めない）
-# 連絡先として、投げた場所と git のブランチをジョブのコメントに書く（squeue の %k）。
+# 連絡先として、git のブランチ、投げた場所、Claude Code のセッションの ID をジョブのコメントに書く
+# （squeue の %k）。サブエージェントは親と同じセッションなので、ブランチで見分ける。
 #
 # ログは r995 の ~/github/slurm-logs/<name>-<job>.out。ジョブは投げたときのパスで r995 の上で走るので、
 # r995 以外のホストでは ~/r995（r995 の ~/github の NFS）の下で投げる。
@@ -70,6 +71,9 @@ mkdir -p "$local_logs"
 contact=$PWD
 if branch=$(git symbolic-ref --short -q HEAD 2>/dev/null); then
   contact="$branch $PWD"
+fi
+if [[ -n ${CLAUDE_CODE_SESSION_ID:-} ]]; then
+  contact+=" claude=$CLAUDE_CODE_SESSION_ID"
 fi
 
 # sbatch --wait は終わるまで戻らないので、裏で走らせ、最初の行から番号を読む
