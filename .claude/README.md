@@ -84,6 +84,9 @@ Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-c
 pre-merge-commit は main / master へのローカルのマージ（GitHub リモートのないリポジトリ）を、
 マージ結果が `run-checks.sh --merge` を通ったときだけコミットさせる（セッションを問わない）。
 `gh pr merge` は GitHub 側のマージなので、CI と `pre-merge-check` が守る。
+post-rewrite はゲートではなく、`git config remap.commitRefs true` でオプトインしたリポジトリで、
+rebase と amend の後に `scripts/remap-commit-refs.sh` を呼び、文書の中の変わったコミットの番号を付け直す
+（コミットはしない。git filter-repo の後は `.git/filter-repo/commit-map` を渡して手で呼ぶ）。
 
 **PR フローのゲートは GitHub リモートのあるリポジトリだけに効く**。リモートに `github.com` がなければ、
 `block-main-commit` と `guard-git-push` は何もせず、git の pre-commit は main 直接コミットの拒否**だけ**を
@@ -114,6 +117,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/git-merge-state.sh`            | 対象の検証（main 自身・GitHub リモート・未コミット）と、BEHIND・STACKED_ON・worktree の収集 | git-merge                             |
 | `scripts/review-level.sh`               | ローカルの `/code-review` のレベル（docs/ だけなら medium、他は high）と対象ブランチの決定  | gh-pr-create, gh-pr-review, git-merge |
 | `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → ローカル/リモートブランチ削除                                 | gh-pr-merge, git-merge                |
+| `scripts/remap-commit-refs.sh`          | 履歴の書き換えで変わったコミットの番号を、追跡している文書の中で付け直す                    | git の post-rewrite hook              |
 | `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                  | gh-actions-check                      |
 | `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                              | gh-pr-create/merge/review             |
 | `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                | gh-wait-review, gh-pr-review          |

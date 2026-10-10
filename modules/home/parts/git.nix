@@ -385,6 +385,69 @@ in
     '';
   };
 
+  # post-rewrite: rebase と amend で変わったコミットの番号を、作業ツリーの追跡している文書の中で
+  # 付け直す（~/.claude/scripts/remap-commit-refs.sh）。検証の記録などに測ったコミットの番号を書く
+  # リポジトリだけが要るので、`git config remap.commitRefs true` でオプトインする。置き換えは
+  # コミットしない（どのコミットに含めるかは書き換えた人が決める）。
+  # git は書き換えの後に呼ぶので、この hook の失敗は書き換えを止めない（表示するだけ）。
+  # 検証: modules/home/parts/tests/post-rewrite-remap.sh
+  xdg.configFile."git/hooks/post-rewrite" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # 旧と新の対応は標準入力で一度だけ渡されるので、ローカルの hook と置き換えの両方に渡すため取っておく
+      INPUT=$(cat)
+
+      # プロジェクトローカルの post-rewrite があれば先に呼ぶ。exec で置き換えないのは、ローカルの hook が
+      # あるだけで置き換えが外れないようにするため。失敗しても置き換えは行い、終了コードは最後に返す
+      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+      LOCAL_HOOK="$GIT_DIR/hooks/post-rewrite"
+      local_rc=0
+      if [ -x "$LOCAL_HOOK" ]; then
+        printf '%s\n' "$INPUT" | "$LOCAL_HOOK" "$@" || local_rc=$?
+      fi
+
+      if [ "$(git config --type=bool --get remap.commitRefs || true)" != "true" ]; then
+        exit "$local_rc"
+      fi
+
+      # rebase の途中（edit で止めた所）の amend でも git は呼ぶが、rebase の終わりにもう一度、
+      # 元のコミットから最後のコミットへの対応を渡す。途中で置き換えると作業ツリーを汚して
+      # rebase --continue に混ざり、途中の番号に置き換えた文書は最後の対応で引けなくなるので、
+      # rebase の終わりに任せる
+      if [ "$1" = "amend" ] && { [ -d "$(git rev-parse --git-path rebase-merge)" ] \
+        || [ -d "$(git rev-parse --git-path rebase-apply)" ]; }; then
+        exit "$local_rc"
+      fi
+
+      # 失敗したときに対応を残す場所。書き換えは済んでいて、この対応は二度と渡されないので、
+      # 直してから手で呼び直せるようにする
+      SAVED="$GIT_DIR/remap-commit-refs.input"
+      SCRIPT="$HOME/.claude/scripts/remap-commit-refs.sh"
+      if [ ! -x "$SCRIPT" ]; then
+        printf '%s\n' "$INPUT" > "$SAVED"
+        echo "❌ $SCRIPT がないので、文書の中のコミットの番号を付け直せません"
+        echo "   直し方: claude-sync（または rebuild）で ~/.claude を同期してから、remap-commit-refs.sh $SAVED"
+        exit 1
+      fi
+
+      echo "🔁 文書の中のコミットの番号を付け直します（remap.commitRefs）"
+      if ! OUT=$(printf '%s\n' "$INPUT" | "$SCRIPT"); then
+        printf '%s\n' "$INPUT" > "$SAVED"
+        echo "❌ コミットの番号を付け直せませんでした（何も書き換えていません）"
+        echo "   直し方: 上の ERROR の箇所を文書の中で直してから、remap-commit-refs.sh $SAVED"
+        exit 1
+      fi
+      printf '%s\n' "$OUT"
+      if ! printf '%s\n' "$OUT" | grep -qx 'REFS: 0'; then
+        echo "📝 置き換えはコミットしていません。git diff で確かめて、コミットしてください"
+      fi
+      exit "$local_rc"
+    '';
+  };
+
   # deltaでdiffを見やすく表示
   programs.delta = {
     enable = true;
