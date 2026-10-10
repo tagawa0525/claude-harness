@@ -154,15 +154,17 @@ OPEN_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","li
 OPEN_THREAD_WITH_REPLY='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null},{"databaseId":12,"id":"C2","body":"Fixed in abc","author":{"__typename":"User","login":"me"},"createdAt":"2026-09-08T02:40:00Z","url":"u2","replyTo":{"databaseId":11}}]}}'
 DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
 
-# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread] [files]
-# レビュー要求2件・レビュー1件（インライン指摘2件）の PR を模す。
+# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread] [files] [resets]
+# レビュー要求2件（00:00 と 02:00）・レビュー1件（インライン指摘2件）の PR を模す。
 # 既定では head とレビュー対象が一致し、スレッドは解決済み。
 # files は PR の変更ファイルを出力するコマンド（既定はコードのファイル 1 件）。
 # gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
+# resets は周回を数え直した印のコメントの時刻を出力するコマンド（既定は無し）
 fake_gh_decide() {
   local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
-  local files="${5:-echo a.txt}"
+  local files="${5:-echo a.txt}" resets="${6:-true}"
   make_fake_gh "\"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
   \"pr view 1 --json headRefOid\"*) echo $head ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
   \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
@@ -250,6 +252,44 @@ fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1 --max-rounds 2)
 assert_contains "$out" "VERDICT: STOP_LIMIT"
 
+it "decide-next: 周回を数え直した印があれば、それより後の要求だけを数える"
+# ユーザーの追加の要望に対応した変更は、新しい周回として数える（reset-rounds.sh）
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'echo 2026-09-08T01:00:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1 --max-rounds 2)
+assert_contains "$out" "ROUND: 1"
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: 印は書き込みの権限を持つ人のコメントだけを受け付ける"
+# PR にコメントできる第三者が印を付けて上限を外せないようにする
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'echo 2026-09-08T01:00:00Z'
+"$REVIEW_SCRIPTS/decide-next.sh" 1 >/dev/null
+assert_contains "$(fake_log gh)" "author_association"
+
+it "decide-next: 印が複数あれば最後の印から数える"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' \
+  'printf %s\\n 2026-09-07T00:00:00Z 2026-09-08T02:30:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "ROUND: 0"
+
+it "decide-next: 印のコメントを取得できなければ、周回を数えずにエラー"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'exit 1'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "reset-rounds: 理由を書いた印のコメントを PR に付ける"
+make_fake_gh '"pr comment 7 --body"*) ;;'
+"$REVIEW_SCRIPTS/reset-rounds.sh" 7 "ユーザーの追加の要望（エスケープ）に対応した"
+assert_eq 0 $?
+log=$(fake_log gh)
+assert_contains "$log" "<!-- review-rounds-reset -->"
+assert_contains "$log" "ユーザーの追加の要望（エスケープ）に対応した"
+
+it "reset-rounds: 理由がなければ使い方を出してエラー"
+out=$("$REVIEW_SCRIPTS/reset-rounds.sh" 7 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+
 it "decide-next: 指摘に対応済み（未解決ゼロ・head レビュー済み）なら STOP_DECLINED"
 # 全件 decline のように push を伴わない対応で終わった周。再度要求しても同じ
 # レビューが返るだけなので、依頼せず終了する
@@ -265,7 +305,6 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "RESPONSE: none"
 assert_contains "$out" "VERDICT: WAITING"
 assert_not_contains "$out" "COMMENT_ONLY"
-assert_not_contains "$(fake_log gh)" "issues/1/comments"
 
 # ===========================================================================
 # gh-wait-review.sh: 待つのはレビュー提出だけ
@@ -428,7 +467,8 @@ fake_gh_review_body() {
   \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
   \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
   \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
 }
 
 it "get-latest-review: レビューできなかったレビューは REVIEW_FAILED: yes"
@@ -466,7 +506,8 @@ fake_gh_failed_after_success() {
   \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
   \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
   \"api graphql --paginate\"*) echo '$thread' ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
 }
 
 it "get-latest-review: SUCCESSFUL_REVIEWS は失敗していないレビューの件数"

@@ -6,7 +6,8 @@
 # 出力（テキスト）:
 #   ROUND: <n>          周回数。Copilot へのレビュー要求の件数（PR 作成時の自動要求を
 #                       含む）と Copilot レビュー件数の多い方。要求イベントを伴わずに
-#                       レビューが付くリポジトリでも周回を見失わないため
+#                       レビューが付くリポジトリでも周回を見失わないため。
+#                       reset-rounds.sh の印があれば、最後の印より後の要求の件数
 #   MAX_ROUNDS: <n>
 #   RESPONSE: review | none
 #                       直近のレビュー要求より後に提出された Copilot レビューの有無
@@ -59,8 +60,23 @@ if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_NUMB
   echo "ERROR: PR #${PR_NUMBER} のレビュー要求を取得できませんでした（周回数が数えられません）" >&2
   exit 1
 fi
-request_count=$(grep -c . <<<"$requests" || true)
 last_request_at=$(tail -n 1 <<<"$requests")
+
+# 周回を数え直した印（reset-rounds.sh のコメント）。最後の印より後の要求だけを数える。
+# 印はリポジトリに書き込める人のものだけ受け付ける（PR にコメントできる第三者が上限を
+# 外せないように）。取得に失敗したら、印を見落として上限を早く迎えないよう止める
+if ! resets=$(gh api --paginate "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments?per_page=100" \
+  --jq '.[] | select((.body | startswith("<!-- review-rounds-reset -->"))
+                     and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR")))
+           | .created_at'); then
+  echo "ERROR: PR #${PR_NUMBER} のコメントを取得できませんでした（周回数が数えられません）" >&2
+  exit 1
+fi
+last_reset_at=$(sort <<<"$resets" | tail -n 1)
+if [[ -n "$last_reset_at" ]]; then
+  requests=$(awk -v t="$last_reset_at" '$0 > t' <<<"$requests")
+fi
+request_count=$(grep -c . <<<"$requests" || true)
 
 # 最新の Copilot レビュー
 latest=$("${SCRIPT_DIR}/get-latest-review.sh" "$PR_NUMBER")
@@ -97,8 +113,13 @@ docs_only() {
   [[ -n "$files" ]] && ! grep -qv '^docs/' <<<"$files"
 }
 
-# 要求イベントを取得できないリポジトリでも周回を見失わないよう、多い方を周回数とする
-round=$(( request_count > review_count ? request_count : review_count ))
+# 要求イベントを取得できないリポジトリでも周回を見失わないよう、多い方を周回数とする。
+# 数え直した後は要求だけで数える（レビューの件数は PR 全体の通算なので）
+if [[ -n "$last_reset_at" ]]; then
+  round=$request_count
+else
+  round=$(( request_count > review_count ? request_count : review_count ))
+fi
 
 # 直近の要求より後に提出されたレビューだけを今周の応答とみなす
 # （ISO 8601 は文字列比較で時系列順。要求が無ければ最初のレビューが対象）
