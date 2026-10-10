@@ -6,7 +6,7 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge
+#       guard-git-merge / guard-sbatch
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -1373,5 +1373,31 @@ it "guard-git-merge: 同じコマンドの前の git switch で移った先の�
 git switch -q feat/rebased
 out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
 assert_eq deny "$(decision "$out")"
+
+it "guard-sbatch: sbatch を直接投げたら slurm-run.sh を示して止める"
+out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "slurm-run.sh"
+
+it "guard-sbatch: パイプやつなぎの中の sbatch も止める"
+out=$(run_hook guard-sbatch "cd ~/github/xlc && sbatch --wrap 'true' | tail -1")
+assert_eq deny "$(decision "$out")"
+
+it "guard-sbatch: slurm-run.sh をフォアグラウンドで走らせたら止める"
+out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "run_in_background"
+
+it "guard-sbatch: slurm-run.sh を background で走らせるのは通す"
+out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'" true)
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: squeue、scontrol、引数に現れるだけの sbatch は通す"
+out=$(run_hook guard-sbatch "squeue; scontrol top 42; echo sbatch; grep -n sbatch CLAUDE.md")
+assert_eq allow "$(decision "$out")"
+
+it "heredoc: 本文中の sbatch はコマンドとみなさない（guard-sbatch）"
+out=$(run_hook guard-sbatch "$(write_doc '重い計算は sbatch でなく slurm-run.sh で投げる')")
+assert_eq allow "$(decision "$out")"
 
 finish
