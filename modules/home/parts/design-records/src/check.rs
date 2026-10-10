@@ -878,6 +878,34 @@ mod tests {
     }
 
     #[test]
+    fn old_adr_is_superseded_only_after_the_new_one_took_effect() {
+        // 置き換える側が決まる前は、古い ADR はまだ採用中
+        for status in ["proposed", "deferred", "rejected", "withdrawn"] {
+            let set = adrs(&[
+                Adr {
+                    n: 1,
+                    status: "superseded",
+                    superseded_by: "ADR-0002",
+                    ..Default::default()
+                },
+                Adr {
+                    n: 2,
+                    status,
+                    supersedes: "[ADR-0001]",
+                    ..Default::default()
+                },
+            ]);
+            assert_eq!(
+                run(&set),
+                [format!(
+                    "docs/adr/0001-decide-1.md: error: superseded-by ADR-0002, but ADR-0002 is {status}"
+                )],
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
     fn adr_references_name_existing_adrs() {
         let set = adrs(&[Adr {
             n: 1,
