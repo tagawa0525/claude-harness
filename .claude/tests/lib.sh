@@ -194,6 +194,15 @@ run_hook() {
     | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
 }
 
+# run_tool <hook> <tool_name> <tool_input-json> [session_id]: Bash 以外のツール（Write / Edit / Skill）の
+# 呼び出しで hook を評価する
+run_tool() {
+  local hook="$1" tool="$2" tin="$3" sid="${4:-session-1}"
+  jq -n --arg tool "$tool" --argjson tin "$tin" --arg sid "$sid" \
+    '{hook_event_name: "PreToolUse", tool_name: $tool, session_id: $sid, cwd: env.PWD, tool_input: $tin}' \
+    | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
+}
+
 # decision <hook-output> → permissionDecision（出力が空なら "allow"）
 decision() {
   if [[ -z "$1" ]]; then echo allow; else jq -r '.hookSpecificOutput.permissionDecision // "allow"' <<<"$1"; fi

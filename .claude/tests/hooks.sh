@@ -1374,4 +1374,186 @@ git switch -q feat/rebased
 out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
 assert_eq deny "$(decision "$out")"
 
+# ===========================================================================
+# require-adr-skill: ADR（docs/adr/）を書く前に /adr スキルを読ませる
+# ===========================================================================
+# 手元の ADR を手本に形を真似ると、欠陥ごと複製される。書く時点でスキル（一般的な形）が
+# 読み込まれていることを、Skill ツールの呼び出しを hook 自身が記録して確かめる。
+# 他人のプロジェクトでは、そのプロジェクトの流儀に従うので外す（git config claude-hooks.own-project）
+
+export XDG_RUNTIME_DIR="$TEST_ROOT/run"
+mkdir -p "$XDG_RUNTIME_DIR"
+git config --global claude-hooks.owner me
+
+# write_input <path>: Write ツールの tool_input
+write_input() { jq -n --arg p "$1" '{file_path: $p, content: "# x\n"}'; }
+
+ADR_REPO="$TEST_ROOT/adr/mine"
+make_repo "$ADR_REPO"
+git -C "$ADR_REPO" remote add origin "https://github.com/me/mine.git"
+mkdir -p "$ADR_REPO/docs/adr"
+cd "$ADR_REPO" || exit 1
+
+it "require-adr-skill: スキルを読まずに自分のプロジェクトの ADR を書こうとすると止める"
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-a)
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "/adr"
+assert_contains "$(reason "$out")" "claude-hooks.own-project"
+
+it "require-adr-skill: 判定の結果を git config に書く（自分のプロジェクトは true）"
+assert_eq true "$(git -C "$ADR_REPO" config --get claude-hooks.own-project)"
+
+it "require-adr-skill: 同じセッションで /adr スキルを読んだあとは書ける"
+out=$(run_tool require-adr-skill Skill '{"skill": "adr"}' s-b)
+assert_eq allow "$(decision "$out")"
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-b)
+assert_eq allow "$(decision "$out")"
+
+it "require-adr-skill: 別のセッションで読んだだけでは書けない"
+out=$(run_tool require-adr-skill Edit "$(jq -n --arg p "$ADR_REPO/docs/adr/0001-x.md" '{file_path: $p, old_string: "a", new_string: "b"}')" s-c)
+assert_eq deny "$(decision "$out")"
+
+it "require-adr-skill: ほかのスキルを読んでも書けない"
+run_tool require-adr-skill Skill '{"skill": "git-commit"}' s-d >/dev/null
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-d)
+assert_eq deny "$(decision "$out")"
+
+it "require-adr-skill: ADR 以外のファイルは止めない（docs/adr に似た場所も）"
+for p in docs/plans/x.md docs/adr.md src/docs/adr/x.md docs/adr/x.txt; do
+  out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/$p")" s-e)
+  assert_eq allow "$(decision "$out")"
+done
+
+it "require-adr-skill: まだ無いディレクトリの ADR でも判定する"
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/sub/docs/adr/0001-x.md")" s-e)
+assert_eq allow "$(decision "$out")"
+rm -rf "$ADR_REPO/docs/adr"
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-e)
+assert_eq deny "$(decision "$out")"
+mkdir -p "$ADR_REPO/docs/adr"
+
+it "require-adr-skill: git config で false にしたリポジトリでは止めない"
+git -C "$ADR_REPO" config claude-hooks.own-project false
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-f)
+assert_eq allow "$(decision "$out")"
+git -C "$ADR_REPO" config --unset claude-hooks.own-project
+
+it "require-adr-skill: GitHub の remote が無いリポジトリは自分のプロジェクトとして扱う"
+LOCAL_REPO="$TEST_ROOT/adr/local"
+make_repo "$LOCAL_REPO"
+mkdir -p "$LOCAL_REPO/docs/adr"
+out=$(run_tool require-adr-skill Write "$(write_input "$LOCAL_REPO/docs/adr/0001-x.md")" s-g)
+assert_eq deny "$(decision "$out")"
+assert_eq true "$(git -C "$LOCAL_REPO" config --get claude-hooks.own-project)"
+
+it "require-adr-skill: 所有者が自分以外の remote を持つリポジトリは他人のプロジェクト（false を書いて止めない）"
+OTHER_REPO="$TEST_ROOT/adr/other"
+make_repo "$OTHER_REPO"
+git -C "$OTHER_REPO" remote add origin "git@github.com:someone/proj.git"
+mkdir -p "$OTHER_REPO/docs/adr"
+out=$(run_tool require-adr-skill Write "$(write_input "$OTHER_REPO/docs/adr/0001-x.md")" s-h)
+assert_eq allow "$(decision "$out")"
+assert_eq false "$(git -C "$OTHER_REPO" config --get claude-hooks.own-project)"
+
+it "require-adr-skill: origin が自分でも upstream を持つ fork は他人のプロジェクト"
+FORK_REPO="$TEST_ROOT/adr/fork"
+make_repo "$FORK_REPO"
+git -C "$FORK_REPO" remote add origin "https://github.com/me/proj.git"
+git -C "$FORK_REPO" remote add upstream "https://github.com/someone/proj.git"
+mkdir -p "$FORK_REPO/docs/adr"
+out=$(run_tool require-adr-skill Write "$(write_input "$FORK_REPO/docs/adr/0001-x.md")" s-i)
+assert_eq allow "$(decision "$out")"
+assert_eq false "$(git -C "$FORK_REPO" config --get claude-hooks.own-project)"
+
+it "require-adr-skill: 手で true にした値は判定より優先する"
+git -C "$OTHER_REPO" config claude-hooks.own-project true
+out=$(run_tool require-adr-skill Write "$(write_input "$OTHER_REPO/docs/adr/0001-x.md")" s-j)
+assert_eq deny "$(decision "$out")"
+
+it "require-adr-skill: Bash のコマンドには反応しない"
+out=$(run_hook require-adr-skill "echo x > docs/adr/0001-x.md")
+assert_eq allow "$(decision "$out")"
+
+it "require-adr-skill: Bash 向けの規則は Write の呼び出しで評価しない"
+cd "$ADR_REPO" || exit 1
+out=$(run_tool block-main-commit Write "$(write_input "$ADR_REPO/a.txt")" s-k)
+assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# check-adr-sections: ADR の節を一般的な形（MADR）に限る
+# ===========================================================================
+# 背景・検討した案・決定と理由・帰結・確認。ホストの状態や再開手順の節を足さない
+
+SEC_REPO="$TEST_ROOT/adr/sections"
+make_repo "$SEC_REPO"
+git -C "$SEC_REPO" remote add origin "https://github.com/me/sections.git"
+git -C "$SEC_REPO" switch -q -c feat/adr
+cd "$SEC_REPO" || exit 1
+
+# stage_adr <path> <headings...>: 見出しだけの ADR をステージする
+stage_adr() {
+  local path="$1"; shift
+  mkdir -p "$(dirname "$path")"
+  { echo "# ADR"; for h in "$@"; do printf '\n## %s\n\n本文\n' "$h"; done; } > "$path"
+  git add "$path"
+}
+
+it "check-adr-sections: 一般的な節だけの ADR は通す"
+stage_adr docs/adr/0001-a.md 背景 検討した案 決定と理由 帰結 確認
+out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
+assert_eq allow "$(decision "$out")"
+git commit -q -m "docs: adr"
+
+it "check-adr-sections: 決まっていない節を含む ADR は止め、節の名前を示す"
+stage_adr docs/adr/0002-b.md 背景 決定と理由 再開するとき
+out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-b.md"
+assert_contains "$(reason "$out")" "再開するとき"
+assert_contains "$(reason "$out")" "/adr"
+
+it "check-adr-sections: 背景か決定と理由が無い ADR は止める"
+stage_adr docs/adr/0002-b.md 検討した案 帰結
+out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "背景"
+assert_contains "$(reason "$out")" "決定と理由"
+
+it "check-adr-sections: コードブロックの中の ## は節として数えない"
+{ printf '# ADR\n\n## 背景\n\n```md\n## 再開するとき\n```\n\n## 決定と理由\n\n本文\n'; } > docs/adr/0002-b.md
+git add docs/adr/0002-b.md
+out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
+assert_eq allow "$(decision "$out")"
+git reset -q
+
+it "check-adr-sections: ADR 以外の Markdown は検査しない"
+stage_adr docs/plans/001-x.md 目的 範囲
+stage_adr docs/adr.md 何でも
+out=$(run_hook check-adr-sections 'git commit -m "docs: plan"')
+assert_eq allow "$(decision "$out")"
+git reset -q
+
+it "check-adr-sections: ADR を消すコミットは検査しない"
+git rm -q docs/adr/0001-a.md
+out=$(run_hook check-adr-sections 'git commit -m "docs: rm"')
+assert_eq allow "$(decision "$out")"
+git reset -q
+git checkout -q -- docs/adr/0001-a.md
+
+it "check-adr-sections: 他人のプロジェクト（own-project=false）では検査しない"
+git config claude-hooks.own-project false
+stage_adr docs/adr/0002-b.md Context Decision
+out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
+assert_eq allow "$(decision "$out")"
+git config --unset claude-hooks.own-project
+git reset -q
+
+it "check-adr-sections: 判定がまだなら判定して、他人のプロジェクトでは検査しない"
+git remote set-url origin "https://github.com/someone/sections.git"
+stage_adr docs/adr/0002-b.md Context Decision
+out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
+assert_eq allow "$(decision "$out")"
+assert_eq false "$(git config --get claude-hooks.own-project)"
+git reset -q
+
 finish
