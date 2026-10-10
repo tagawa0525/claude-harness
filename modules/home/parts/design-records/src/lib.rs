@@ -76,24 +76,53 @@ pub const NOTES_SECTION: Section = Section {
 
 /// ADR のファイルか（docs/adr/ 直下の、4 桁の番号とハイフンで始まる .md）。README やテンプレートは含めない。
 /// 名前の残りの形（kebab-case）は問わない。形の崩れは検査（[`check`]）が示す。
-pub fn is_adr_path(_path: &str) -> bool {
-    todo!()
+pub fn is_adr_path(path: &str) -> bool {
+    path.strip_prefix(ADR_DIR)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .is_some_and(|name| {
+            let b = name.as_bytes();
+            !name.contains('/')
+                && name.ends_with(".md")
+                && b.len() > 5
+                && b[..4].iter().all(u8::is_ascii_digit)
+                && b[4] == b'-'
+        })
 }
 
 /// `NNNN-kebab-case.md` の形のファイル名から番号を取り出す。形が違えば `None`。
-pub fn adr_number(_name: &str) -> Option<u32> {
-    todo!()
+pub fn adr_number(name: &str) -> Option<u32> {
+    let (number, rest) = name.strip_suffix(".md")?.split_once('-')?;
+    if number.len() != 4 || !number.bytes().all(|b| b.is_ascii_digit()) || !is_slug(rest) {
+        return None;
+    }
+    number.parse().ok()
 }
 
 /// 英小文字と数字の語を `-` でつないだもの（`[a-z0-9]+(-[a-z0-9]+)*`）か。
-pub fn is_slug(_name: &str) -> bool {
-    todo!()
+pub fn is_slug(name: &str) -> bool {
+    name.split('-').all(|word| {
+        !word.is_empty()
+            && word
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    })
 }
 
 /// 次の ADR の番号。`paths` のうち `docs/adr/<数字>-*.md` の番号の最大 + 1（桁数は問わない。3 桁で振っていた
 /// ADR も数える）。無ければ 1。
-pub fn next_number<'a>(_paths: impl IntoIterator<Item = &'a str>) -> u32 {
-    todo!()
+pub fn next_number<'a>(paths: impl IntoIterator<Item = &'a str>) -> u32 {
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let name = path.strip_prefix(ADR_DIR)?.strip_prefix('/')?;
+            let (number, _) = name.strip_suffix(".md")?.split_once('-')?;
+            if name.contains('/') || number.is_empty() {
+                return None;
+            }
+            number.parse::<u32>().ok()
+        })
+        .max()
+        .map_or(1, |n| n + 1)
 }
 
 /// ADR のファイルのパス（`docs/adr/NNNN-<slug>.md`）。
@@ -102,8 +131,39 @@ pub fn adr_path(number: u32, slug: &str) -> String {
 }
 
 /// 新しい ADR の雛形。status は proposed、前付けのキーは空、必須と推奨の見出しを持つ。
-pub fn template(_number: u32, _title: &str, _date: &str) -> String {
-    todo!()
+pub fn template(number: u32, title: &str, date: &str) -> String {
+    let mut text = String::from("---\n");
+    for key in KEYS {
+        let value = match key {
+            "status" => " proposed".to_string(),
+            "date" => format!(" {date}"),
+            // 置き換えられた ADR は 1 つの番号を書くので、一覧にしない
+            "superseded-by" => String::new(),
+            _ => " []".to_string(),
+        };
+        text.push_str(&format!("{key}:{value}\n"));
+    }
+    text.push_str(&format!("---\n\n# ADR-{number:04}: {title}\n"));
+    // 必須の節は MADR と同じ 2 段目、推奨の節は決定と理由の下の 3 段目
+    for section in REQUIRED_SECTIONS {
+        text.push_str(&format!("\n## {}\n", section.ja));
+    }
+    for section in RECOMMENDED_SECTIONS {
+        text.push_str(&format!("\n### {}\n", section.ja));
+    }
+    text
+}
+
+/// 前付けの `status` の値。前付けか `status` の値が無ければ `None`。前付けの形が崩れていればエラー。
+pub fn status(text: &str) -> Result<Option<String>, parse::Error> {
+    match parse::parse_front_matter(text) {
+        Ok(front) => Ok(front
+            .get("status")
+            .map(|value| value.items().join(", "))
+            .filter(|s| !s.is_empty())),
+        Err(parse::Error::MissingFrontMatter) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(test)]

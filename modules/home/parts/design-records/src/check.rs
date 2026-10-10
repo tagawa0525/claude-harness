@@ -3,6 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
+use crate::{
+    ADR_DIR, KEYS, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section,
+    adr_number,
+};
+
 /// 違反か注意か。違反があればコミットを止める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -22,8 +28,15 @@ pub struct Finding {
 }
 
 impl fmt::Display for Finding {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let severity = match self.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        match self.line {
+            Some(line) => write!(f, "{}:{line}: {severity}: {}", self.path, self.message),
+            None => write!(f, "{}: {severity}: {}", self.path, self.message),
+        }
     }
 }
 
@@ -31,16 +44,467 @@ impl fmt::Display for Finding {
 /// issue の番号で、`None`（docs/issues の無いリポジトリ）なら `issues` の要素は形だけを見る。`scanned` は置き換え
 /// られた ADR への参照を探すファイル（docs/adr の中のものは見ない）。
 pub fn check(
-    _adrs: &BTreeMap<String, String>,
-    _issues: Option<&BTreeSet<u32>>,
-    _scanned: &BTreeMap<String, String>,
+    adrs: &BTreeMap<String, String>,
+    issues: Option<&BTreeSet<u32>>,
+    scanned: &BTreeMap<String, String>,
 ) -> Vec<Finding> {
-    todo!()
+    let mut out = Found::default();
+    let docs = parse_adrs(adrs, &mut out);
+    let existing: BTreeSet<u32> = docs.iter().map(|d| d.number).collect();
+    check_unique(&docs, &mut out);
+    for doc in &docs {
+        check_front(doc, &mut out);
+        check_heading(doc, &mut out);
+        check_sections(doc, &mut out);
+        check_issues(doc, issues, &mut out);
+    }
+    check_supersession(&docs, &existing, &mut out);
+    check_mentions(&docs, scanned, &mut out);
+    let mut found = out.0;
+    found.sort();
+    found
+}
+
+/// 置き換えの関係が効く status（決定が一度は効力を持った）。決める前（proposed、deferred）と、効力を持たずに
+/// 終わった（rejected、withdrawn）ADR の `supersedes` は、古い ADR をまだ置き換えていない。
+const TOOK_EFFECT: [&str; 3] = ["accepted", "superseded", "deprecated"];
+
+/// 集めている違反と注意。
+#[derive(Default)]
+struct Found(Vec<Finding>);
+
+impl Found {
+    fn push(
+        &mut self,
+        severity: Severity,
+        path: &str,
+        line: Option<usize>,
+        message: impl ToString,
+    ) {
+        self.0.push(Finding {
+            path: path.to_string(),
+            line,
+            severity,
+            message: message.to_string(),
+        });
+    }
+
+    fn error(&mut self, path: &str, line: Option<usize>, message: impl ToString) {
+        self.push(Severity::Error, path, line, message);
+    }
+
+    fn warning(&mut self, path: &str, line: Option<usize>, message: impl ToString) {
+        self.push(Severity::Warning, path, line, message);
+    }
+}
+
+/// 1 件の ADR。
+struct Adr<'a> {
+    path: &'a str,
+    number: u32,
+    front: FrontMatter,
+    /// コードブロックの外の行（前付けを含む）。コードブロックが閉じていなければ `None` で、行を見る検査を飛ばす。
+    lines: Option<Vec<(usize, &'a str)>>,
+}
+
+impl Adr<'_> {
+    /// 1 つの文字列の `status`。ないか一覧なら空。
+    fn status(&self) -> &str {
+        match self.front.get("status") {
+            Some(Value::Scalar(s)) => s,
+            _ => "",
+        }
+    }
+
+    fn items(&self, key: &str) -> Vec<&str> {
+        self.front.get(key).map(Value::items).unwrap_or_default()
+    }
+
+    /// `key` の要素のうち、`ADR-NNNN` の形のものの番号。
+    fn adr_items(&self, key: &str) -> BTreeSet<u32> {
+        self.items(key).into_iter().filter_map(single_adr).collect()
+    }
+}
+
+/// docs/adr の直下の .md（README.md を除く）を読む。名前と前付けが読めないものは違反にして除く。
+fn parse_adrs<'a>(adrs: &'a BTreeMap<String, String>, out: &mut Found) -> Vec<Adr<'a>> {
+    let mut docs = Vec::new();
+    for (path, text) in adrs {
+        let Some(name) = path
+            .strip_prefix(ADR_DIR)
+            .and_then(|rest| rest.strip_prefix('/'))
+        else {
+            continue;
+        };
+        if name.contains('/') || !name.ends_with(".md") || name == "README.md" {
+            continue;
+        }
+        let Some(number) = adr_number(name) else {
+            out.error(path, None, "file name is not NNNN-kebab-case.md");
+            continue;
+        };
+        let front = match parse_front_matter(text) {
+            Ok(front) => front,
+            Err(e) => {
+                out.error(path, None, e);
+                continue;
+            }
+        };
+        let lines = match markdown_lines(text) {
+            Ok(lines) => Some(lines),
+            Err(e) => {
+                out.error(path, None, e);
+                None
+            }
+        };
+        docs.push(Adr {
+            path,
+            number,
+            front,
+            lines,
+        });
+    }
+    docs
+}
+
+/// 番号の重複。
+fn check_unique(docs: &[Adr], out: &mut Found) {
+    let mut by_number: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
+    for doc in docs {
+        by_number.entry(doc.number).or_default().push(doc.path);
+    }
+    for (number, paths) in by_number {
+        if let [first, rest @ ..] = paths.as_slice()
+            && !rest.is_empty()
+        {
+            out.error(
+                first,
+                None,
+                format!("number {number:04} is also used by {}", rest.join(", ")),
+            );
+        }
+    }
+}
+
+/// 前付けの値の表示（違反の文に入れる）。
+fn show(value: &Value) -> String {
+    match value {
+        Value::Empty => "empty".to_string(),
+        Value::Scalar(s) => format!("{s:?}"),
+        Value::List(items) => format!("{items:?}"),
+    }
+}
+
+/// 前付けのキー、`status` の値、日付。
+fn check_front(doc: &Adr, out: &mut Found) {
+    for key in KEYS {
+        if doc.front.get(key).is_none() {
+            out.error(doc.path, None, format!("front matter has no `{key}`"));
+        }
+    }
+    for key in doc.front.keys() {
+        if !KEYS.contains(&key) {
+            out.error(
+                doc.path,
+                None,
+                format!("unexpected front matter key `{key}`"),
+            );
+        }
+    }
+    match doc.front.get("status") {
+        Some(Value::Scalar(s)) if STATUSES.contains(&s.as_str()) => {}
+        Some(value) => out.error(
+            doc.path,
+            None,
+            format!(
+                "`status` must be one of {}, not {}",
+                STATUSES.join(", "),
+                show(value)
+            ),
+        ),
+        None => {}
+    }
+    match doc.front.get("date") {
+        Some(Value::Scalar(s)) if is_date(s) => {}
+        Some(value) => out.error(
+            doc.path,
+            None,
+            format!("`date` is not YYYY-MM-DD: {}", show(value)),
+        ),
+        None => {}
+    }
+}
+
+/// 暦にある日付の `YYYY-MM-DD` か（月の日数と閏年を見る）。
+fn is_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let digits = |r: std::ops::Range<usize>| bytes[r].iter().all(u8::is_ascii_digit);
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !digits(0..4)
+        || !digits(5..7)
+        || !digits(8..10)
+    {
+        return false;
+    }
+    let (Ok(year), Ok(month), Ok(day)) = (
+        s[0..4].parse::<u32>(),
+        s[5..7].parse::<u32>(),
+        s[8..10].parse::<u32>(),
+    ) else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&day)
+}
+
+/// 最初の見出しが `# ADR-NNNN: 題名` で、番号がファイルの番号と同じか。
+fn check_heading(doc: &Adr, out: &mut Found) {
+    let Some(lines) = &doc.lines else {
+        return;
+    };
+    let prefix = format!("# ADR-{:04}: ", doc.number);
+    let heading = lines.iter().find(|(_, l)| l.starts_with("# "));
+    let ok = heading.is_some_and(|(_, l)| {
+        l.strip_prefix(&prefix)
+            .is_some_and(|t| !t.trim().is_empty())
+    });
+    if !ok {
+        out.error(
+            doc.path,
+            heading.map(|(n, _)| *n),
+            format!("first heading must be `{prefix}<title>`"),
+        );
+    }
+}
+
+/// 2 段目以下の見出しの文字列。
+fn subheadings<'a>(lines: &[(usize, &'a str)]) -> BTreeSet<&'a str> {
+    lines
+        .iter()
+        .filter_map(|(_, line)| {
+            let rest = line.strip_prefix("##")?.trim_start_matches('#');
+            rest.strip_prefix(' ').map(str::trim)
+        })
+        .collect()
+}
+
+/// 必須の節（無ければ違反）と推奨の節（無ければ注意）。日本語の見出しか、MADR の英語の原文で書く。
+fn check_sections(doc: &Adr, out: &mut Found) {
+    let Some(lines) = &doc.lines else {
+        return;
+    };
+    let headings = subheadings(lines);
+    let missing = |s: &Section| !headings.contains(s.ja) && !headings.contains(s.en);
+    for section in REQUIRED_SECTIONS.iter().filter(|s| missing(s)) {
+        out.error(
+            doc.path,
+            None,
+            format!("no section `{}` (or `{}`)", section.ja, section.en),
+        );
+    }
+    for section in RECOMMENDED_SECTIONS.iter().filter(|s| missing(s)) {
+        out.warning(
+            doc.path,
+            None,
+            format!(
+                "no section `{}` (or `{}`) (recommended)",
+                section.ja, section.en
+            ),
+        );
+    }
+}
+
+/// `ADR-NNNN` のちょうど 1 つの参照なら、その番号。
+fn single_adr(item: &str) -> Option<u32> {
+    match adr_refs(item).as_slice() {
+        [n] if item == format!("ADR-{n:04}") => Some(*n),
+        _ => None,
+    }
+}
+
+/// `issues` の要素が `#<番号>` か。docs/issues のあるリポジトリでは、その番号の issue があるか。
+fn check_issues(doc: &Adr, issues: Option<&BTreeSet<u32>>, out: &mut Found) {
+    for item in doc.items("issues") {
+        let number = item
+            .strip_prefix('#')
+            .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|n| n.parse::<u32>().ok());
+        match (number, issues) {
+            (None, _) => out.error(
+                doc.path,
+                None,
+                format!("`issues` item {item:?} is not #<number>"),
+            ),
+            (Some(n), Some(known)) if !known.contains(&n) => out.error(
+                doc.path,
+                None,
+                format!("`issues` names {item}, which does not exist in docs/issues"),
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// `requires`、`supersedes`、`superseded-by` の参照先と、置き換えの状態と両方向の一致。
+fn check_supersession(docs: &[Adr], existing: &BTreeSet<u32>, out: &mut Found) {
+    for doc in docs {
+        for key in ["requires", "supersedes", "superseded-by"] {
+            for item in doc.items(key) {
+                match single_adr(item) {
+                    Some(n) if existing.contains(&n) => {}
+                    Some(_) => out.error(
+                        doc.path,
+                        None,
+                        format!("`{key}` names {item}, which does not exist"),
+                    ),
+                    None => out.error(
+                        doc.path,
+                        None,
+                        format!("`{key}` item {item:?} is not ADR-NNNN"),
+                    ),
+                }
+            }
+        }
+        let superseded = doc.status() == "superseded";
+        let by_set = !doc.items("superseded-by").is_empty();
+        if superseded && !by_set {
+            out.error(
+                doc.path,
+                None,
+                "status is superseded but `superseded-by` is empty",
+            );
+        }
+        if !superseded && by_set {
+            out.error(
+                doc.path,
+                None,
+                "`superseded-by` is set but status is not superseded",
+            );
+        }
+    }
+    // 番号が重なっていれば、最初の ADR で比べる（重なりは check_unique が示す）
+    let mut by_number: BTreeMap<u32, &Adr> = BTreeMap::new();
+    for doc in docs {
+        by_number.entry(doc.number).or_insert(doc);
+    }
+    for (&new, doc) in &by_number {
+        if !TOOK_EFFECT.contains(&doc.status()) {
+            continue;
+        }
+        for old in doc.adr_items("supersedes") {
+            if by_number
+                .get(&old)
+                .is_some_and(|o| !o.adr_items("superseded-by").contains(&new))
+            {
+                out.error(
+                    doc.path,
+                    None,
+                    format!(
+                        "supersedes ADR-{old:04}, but ADR-{old:04} is not superseded-by ADR-{new:04}"
+                    ),
+                );
+            }
+        }
+    }
+    for (&old, doc) in &by_number {
+        for new in doc.adr_items("superseded-by") {
+            if by_number
+                .get(&new)
+                .is_some_and(|n| !n.adr_items("supersedes").contains(&old))
+            {
+                out.error(
+                    doc.path,
+                    None,
+                    format!(
+                        "superseded-by ADR-{new:04}, but ADR-{new:04} does not supersede ADR-{old:04}"
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// 置き換えられた ADR への参照（docs/adr の外）。今の決定を指すよう、置き換えた ADR の番号を示す。
+fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Found) {
+    let successors: BTreeMap<u32, Vec<String>> = docs
+        .iter()
+        .filter(|d| d.status() == "superseded")
+        .map(|d| {
+            let by = d.adr_items("superseded-by");
+            (d.number, by.iter().map(|n| format!("ADR-{n:04}")).collect())
+        })
+        .filter(|(_, by): &(u32, Vec<String>)| !by.is_empty())
+        .collect();
+    if successors.is_empty() {
+        return;
+    }
+    for (path, text) in scanned {
+        if path.starts_with(&format!("{ADR_DIR}/")) {
+            continue;
+        }
+        // Markdown のコードブロックは例なので見ない。閉じていないコードブロックの扱いはこの検査の外
+        // （ADR でないファイルの形は問わない）なので、そのときはすべての行を見る
+        let all = || text.lines().enumerate().map(|(i, l)| (i + 1, l)).collect();
+        let lines: Vec<(usize, &str)> = if path.ends_with(".md") {
+            markdown_lines(text).unwrap_or_else(|_| all())
+        } else {
+            all()
+        };
+        for (number, line) in lines {
+            for n in adr_refs(line) {
+                if let Some(by) = successors.get(&n) {
+                    out.warning(
+                        path,
+                        Some(number),
+                        format!("ADR-{n:04} is superseded by {}", by.join(", ")),
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// 前付けと補足の節を除いた本文が変わったか（確定した ADR に許す変更を除いて比べる）。
-pub fn body_changed(_old: &str, _new: &str) -> bool {
-    todo!()
+pub fn body_changed(old: &str, new: &str) -> bool {
+    body(old) != body(new)
+}
+
+/// 前付けと補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
+/// 変更ではない）。
+fn body(text: &str) -> Vec<&str> {
+    let mut lines = text.lines().peekable();
+    if lines.peek() == Some(&"---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line == "---" {
+                break;
+            }
+        }
+    }
+    let mut in_notes = false;
+    let mut kept: Vec<&str> = lines
+        .filter(|line| {
+            if line.starts_with("# ") || line.starts_with("## ") {
+                let title = line.trim_start_matches('#').trim();
+                in_notes = line.starts_with("## ")
+                    && (title == NOTES_SECTION.ja || title == NOTES_SECTION.en);
+            }
+            !in_notes
+        })
+        .collect();
+    while kept.last().is_some_and(|l| l.trim().is_empty()) {
+        kept.pop();
+    }
+    kept
 }
 
 #[cfg(test)]
