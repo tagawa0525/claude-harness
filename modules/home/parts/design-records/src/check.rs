@@ -5,8 +5,8 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, KEYS, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section,
-    adr_number, is_adr_path,
+    ADR_DIR, AMENDABLE_KEYS, KEYS, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
+    STATUSES, Section, adr_number, is_adr_path,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -478,7 +478,7 @@ pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
 }
 
-/// 前付けと補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
+/// 確定した後も直してよい前付けのキー（[`AMENDABLE_KEYS`]）と、補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
 /// 変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で比べる（その違反は
 /// check が示す）。
 fn body(text: &str) -> Vec<&str> {
@@ -491,11 +491,16 @@ fn body(text: &str) -> Vec<&str> {
         .map(|(n, _)| *n)
         .collect();
     let mut lines = text.lines().enumerate().map(|(i, l)| (i + 1, l)).peekable();
+    let mut front = Vec::new();
     if lines.peek().map(|(_, l)| *l) == Some("---") {
         lines.next();
         for (_, line) in lines.by_ref() {
             if line == "---" {
                 break;
+            }
+            let key = line.split(':').next().unwrap_or("").trim();
+            if !line.trim().is_empty() && !AMENDABLE_KEYS.contains(&key) {
+                front.push(line);
             }
         }
     }
@@ -511,6 +516,7 @@ fn body(text: &str) -> Vec<&str> {
         })
         .map(|(_, line)| line)
         .collect();
+    kept.splice(0..0, front);
     while kept.last().is_some_and(|l| l.trim().is_empty()) {
         kept.pop();
     }

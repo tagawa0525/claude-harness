@@ -146,12 +146,15 @@ fn today() -> Result<String> {
 
 fn run_check(files: &[&str]) -> Result<ExitCode> {
     let root = repo_root()?;
+    // 追跡している（ステージ済みを含む）ADR だけを見る。prek は追跡していないファイルを退避しないので、作業ツリーを
+    // そのまま読むと、コミットに入らない下書きでコミットが止まる。作業ツリーで消したものは読まない
     let mut adrs = BTreeMap::new();
-    for name in file_names(&root.join(ADR_DIR))? {
-        if name.ends_with(".md") {
-            let path = format!("{ADR_DIR}/{name}");
-            let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
-            adrs.insert(path, text);
+    let tracked = git(&root, &["ls-files", "-z", "--", ADR_DIR])?;
+    for path in tracked.split('\0').filter(|p| p.ends_with(".md")) {
+        let file = root.join(path);
+        if file.is_file() {
+            let text = fs::read_to_string(file).map_err(|e| format!("{path}: {e}"))?;
+            adrs.insert(path.to_string(), text);
         }
     }
     let issues = issue_numbers(&root)?;
@@ -238,12 +241,11 @@ fn body_changes(
         return Ok(Vec::new());
     }
     let (base, shown) = match default_branch(root)? {
-        Some(branch) => (
-            git(root, &["merge-base", "HEAD", &branch])?
-                .trim()
-                .to_string(),
-            branch,
-        ),
+        // 分岐点が無ければ（orphan のブランチ、浅い clone）、比べる版が無いので見ない（注意だけの検査で止めない）
+        Some(branch) => match git(root, &["merge-base", "HEAD", &branch]) {
+            Ok(base) => (base.trim().to_string(), branch),
+            Err(_) => return Ok(Vec::new()),
+        },
         None => ("HEAD".to_string(), "HEAD".to_string()),
     };
     let mut found = Vec::new();

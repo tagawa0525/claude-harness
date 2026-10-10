@@ -33,6 +33,9 @@ pub const STATUSES: [&str; 7] = [
 /// 決める前の status。この間は本文を自由に直してよい。
 pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 
+/// 確定した後も直してよい前付けのキー。
+pub const AMENDABLE_KEYS: [&str; 3] = ["status", "superseded-by", "date"];
+
 /// 節の見出し（日本語と、MADR の英語の原文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Section {
@@ -169,12 +172,12 @@ pub fn status(text: &str) -> Option<String> {
     let line = lines
         .take_while(|l| *l != "---")
         .find_map(|l| l.strip_prefix("status:"))?;
-    let value = line
-        .split(" #")
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_matches('"');
+    // 空白に続く `#` からはコメント
+    let end = line
+        .char_indices()
+        .find(|&(i, c)| c == '#' && line[..i].ends_with(char::is_whitespace))
+        .map_or(line.len(), |(i, _)| i);
+    let value = line[..end].trim().trim_matches('"');
     (!value.is_empty()).then(|| value.to_string())
 }
 

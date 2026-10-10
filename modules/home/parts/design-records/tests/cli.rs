@@ -419,9 +419,8 @@ fn check_compares_bodies_even_when_the_base_front_matter_is_broken() {
 #[test]
 fn check_skips_body_comparison_without_a_merge_base() {
     let t = superseded_repo("orphan");
-    t.git(&["switch", "-q", "--orphan", "lone"]);
-    t.git(&["rm", "-q", "-r", "--cached", "."]);
-    t.git(&["add", "-A"]);
+    // main と履歴を共有しないブランチ（index と作業ツリーは引き継ぐ）
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
     t.git(&["commit", "-q", "-m", "docs(adr): lone"]);
     let b = "docs/adr/0002-use-b.md";
     t.write(b, &(t.read(b) + "\n本文を足す\n"));
