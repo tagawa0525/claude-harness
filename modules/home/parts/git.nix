@@ -402,8 +402,10 @@ in
 
       # プロジェクトローカルの post-rewrite があれば先に呼ぶ。exec で置き換えないのは、ローカルの hook が
       # あるだけで置き換えが外れないようにするため。失敗しても置き換えは行い、終了コードは最後に返す
+      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
+      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$GIT_DIR/hooks/post-rewrite"
+      LOCAL_HOOK="$(git rev-parse --git-common-dir)/hooks/post-rewrite"
       local_rc=0
       if [ -x "$LOCAL_HOOK" ]; then
         printf '%s\n' "$INPUT" | "$LOCAL_HOOK" "$@" || local_rc=$?
