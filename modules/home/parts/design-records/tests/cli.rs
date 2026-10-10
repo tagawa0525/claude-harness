@@ -199,8 +199,10 @@ fn new_rejects_bad_slugs_and_missing_titles_without_writing() {
     let out = t.run(&["new", "use-g"]);
     assert!(!out.status.success());
     assert!(stderr(&out).contains("Usage:"), "{}", stderr(&out));
-    let out = t.run(&["new", "use-g", ""]);
-    assert!(!out.status.success());
+    for title in ["", "  ", "a\nb"] {
+        let out = t.run(&["new", "use-g", title]);
+        assert!(!out.status.success(), "{title:?}");
+    }
     assert!(!t.dir.join("docs").exists());
 }
 
@@ -395,6 +397,20 @@ fn check_lets_adrs_change_freely_before_they_are_decided_on_main() {
 }
 
 #[test]
+fn check_compares_bodies_even_when_the_base_front_matter_is_broken() {
+    let t = superseded_repo("broken-base");
+    let b = "docs/adr/0002-use-b.md";
+    // main の ADR-0002 の前付けに空行がある（check の違反）
+    t.write(b, &t.read(b).replacen("requires:", "\nrequires:", 1));
+    t.commit_all("docs(adr): break b");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.write(b, &t.read(b).replacen("\nrequires:", "requires:", 1));
+    let out = t.run(&["check", b]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
 fn status_reads_the_front_matter_from_stdin() {
     let dir = std::env::temp_dir();
     let out = run(&dir, &["status"], Some("---\nstatus: accepted\n---\n# t\n"));
@@ -403,9 +419,11 @@ fn status_reads_the_front_matter_from_stdin() {
     assert_eq!(stdout(&out), "-\n");
     let out = run(&dir, &["status"], Some("---\ndate: 2026-10-11\n---\n"));
     assert_eq!(stdout(&out), "-\n");
-    let out = run(&dir, &["status"], Some("---\nstatus: a\nstatus: b\n---\n"));
-    assert!(!out.status.success());
-    assert!(stderr(&out).contains("appears twice"), "{}", stderr(&out));
+    // 前付けのほかの行の形は問わない（docs/issues などの、検査していない文書も読む）。形の検査は check が行う
+    let lenient = "---\ntags:\n  - a\n\nrefs: [1, 2\nstatus: \"accepted\" # note\nstatus: b\n---\n";
+    let out = run(&dir, &["status"], Some(lenient));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "accepted\n");
 }
 
 #[test]

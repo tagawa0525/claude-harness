@@ -89,6 +89,11 @@ pub fn is_adr_path(path: &str) -> bool {
         })
 }
 
+/// 表題（`# ADR-NNNN: ` の後ろ）にできるか: 空白だけでない 1 行。
+pub fn is_title(_title: &str) -> bool {
+    todo!()
+}
+
 /// `NNNN-kebab-case.md` の形のファイル名から番号を取り出す。形が違えば `None`。
 pub fn adr_number(name: &str) -> Option<u32> {
     let (number, rest) = name.strip_suffix(".md")?.split_once('-')?;
@@ -154,16 +159,10 @@ pub fn template(number: u32, title: &str, date: &str) -> String {
     text
 }
 
-/// 前付けの `status` の値。前付けか `status` の値が無ければ `None`。前付けの形が崩れていればエラー。
-pub fn status(text: &str) -> Result<Option<String>, parse::Error> {
-    match parse::parse_front_matter(text) {
-        Ok(front) => Ok(front
-            .get("status")
-            .map(|value| value.items().join(", "))
-            .filter(|s| !s.is_empty())),
-        Err(parse::Error::MissingFrontMatter) => Ok(None),
-        Err(e) => Err(e),
-    }
+/// 前付けの最初の `status:` の行の値（後ろの ` # コメント` と引用符は外す）。前付けか値が無ければ `None`。
+/// 前付けのほかの行の形は問わない（形を検査していない文書も読むため。形の検査は [`check`] が行う）。
+pub fn status(_text: &str) -> Option<String> {
+    todo!()
 }
 
 #[cfg(test)]
@@ -231,6 +230,33 @@ mod tests {
             ]),
             3
         );
+    }
+
+    #[test]
+    fn next_number_ignores_numbers_longer_than_four_digits() {
+        assert_eq!(
+            next_number(["docs/adr/0002-b.md", "docs/adr/20261010-notes.md"]),
+            3
+        );
+    }
+
+    #[test]
+    fn status_is_read_from_the_first_status_line_of_the_front_matter() {
+        assert_eq!(
+            status("---\nstatus: accepted\n---\n").as_deref(),
+            Some("accepted")
+        );
+        assert_eq!(status("# no front matter\nstatus: x\n"), None);
+        assert_eq!(status("---\ndate: 2026-10-11\n---\nstatus: x\n"), None);
+        assert_eq!(status("---\nstatus:\n---\n"), None);
+    }
+
+    #[test]
+    fn titles_are_one_non_blank_line() {
+        assert!(is_title("foo を使う"));
+        assert!(!is_title(""));
+        assert!(!is_title("  "));
+        assert!(!is_title("a\nb"));
     }
 
     #[test]

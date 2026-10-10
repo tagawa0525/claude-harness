@@ -650,6 +650,14 @@ mod tests {
     }
 
     #[test]
+    fn unnumbered_files_are_not_adrs() {
+        // claude-hooks（is_adr_path）と同じく、番号で始まらないファイルは ADR として数えない
+        let mut set = adrs(&[Adr::default()]);
+        set.insert("docs/adr/template.md".into(), "# template\n".into());
+        assert_eq!(run(&set), Vec::<String>::new());
+    }
+
+    #[test]
     fn file_names_are_numbered_kebab_case() {
         let set = files(&[("docs/adr/0001-Use_F.md".into(), Adr::default().text())]);
         assert_eq!(
@@ -950,6 +958,15 @@ mod tests {
             &old,
             &(old.clone() + "- 2026-10-11: added\n")
         ));
+    }
+
+    #[test]
+    fn hashes_in_code_blocks_do_not_end_or_start_notes() {
+        let new =
+            BODY.to_string() + "```bash\n# comment\n## not a heading\n```\n- 2026-10-11: 追記\n";
+        assert!(!body_changed(BODY, &new));
+        let old = BODY.replace("文\n", "文\n\n```markdown\n## 補足\n```\n\nあと\n");
+        assert!(body_changed(&old, &old.replace("あと", "別")));
     }
 
     #[test]

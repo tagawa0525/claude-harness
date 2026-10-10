@@ -248,8 +248,9 @@ fn body_changes(
             continue;
         }
         let old = git(root, &["show", &spec])?;
-        let status = design_records::status(&old).map_err(|e| format!("{spec}: {e}"))?;
-        let Some(status) = status.filter(|s| !OPEN_STATUSES.contains(&s.as_str())) else {
+        let Some(status) =
+            design_records::status(&old).filter(|s| !OPEN_STATUSES.contains(&s.as_str()))
+        else {
             continue;
         };
         if body_changed(&old, &adrs[path]) {
@@ -273,7 +274,7 @@ fn status() -> Result<ExitCode> {
     std::io::stdin()
         .read_to_string(&mut text)
         .map_err(|e| format!("cannot read stdin: {e}"))?;
-    let status = design_records::status(&text).map_err(|e| e.to_string())?;
+    let status = design_records::status(&text);
     println!("{}", status.as_deref().unwrap_or("-"));
     Ok(ExitCode::SUCCESS)
 }
