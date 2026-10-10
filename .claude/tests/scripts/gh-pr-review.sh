@@ -449,6 +449,58 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "VERDICT: REVIEW_FAILED"
 assert_not_contains "$out" "STOP_CLEAN"
 
+# 過去に成功したレビューがある文書だけの PR は、後のレビューが失敗しても止めない
+# （pre-merge-check と同じ条件。ADR-0004）。最初のレビューが失敗しただけの PR は止める
+
+# fake_gh_failed_after_success <files> [thread] [first_body]
+# レビューが 2 件（1 件目は first_body、2 件目は失敗）ある PR の偽 gh
+fake_gh_failed_after_success() {
+  local files="$1" thread="${2:-$DONE_THREAD}" first="${3:-### 🟡 Changes recommended}"
+  {
+    jq -n --arg body "$first" '{id: 8, state: "COMMENTED", body: $body}'
+    jq -n --arg body "Copilot wasn't able to review any files in this pull request." '{id: 9, state: "COMMENTED", body: $body}'
+  } > "$TEST_ROOT/review.json"
+  make_fake_gh "\"pr view 1 --json headRefOid\"*) echo abc1234 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$thread' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+}
+
+it "get-latest-review: SUCCESSFUL_REVIEWS は失敗していないレビューの件数"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md'
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" 1)
+assert_contains "$out" "ROUND: 2"
+assert_contains "$out" "REVIEW_FAILED: yes"
+assert_contains "$out" "SUCCESSFUL_REVIEWS: 1"
+
+it "get-latest-review: レビューが失敗した 1 件だけなら SUCCESSFUL_REVIEWS は 0"
+fake_gh_review_body "Copilot wasn't able to review any files in this pull request."
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" 1)
+assert_contains "$out" "SUCCESSFUL_REVIEWS: 0"
+
+it "decide-next: 文書だけの PR は、成功したレビューの後に失敗しても STOP_DOCS_REVIEWED"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: 文書だけの PR でも、失敗の後に未解決スレッドが残っていればまず ACT"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md' "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: 文書以外を含む PR は、成功したレビューの後に失敗したら REVIEW_FAILED"
+fake_gh_failed_after_success 'printf "%s\n" docs/adr/0004-x.md src/main.rs'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: REVIEW_FAILED"
+
+it "decide-next: 文書だけの PR でも、最初のレビューが失敗しただけなら REVIEW_FAILED"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md' "$DONE_THREAD" "Copilot wasn't able to review any files in this pull request."
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: REVIEW_FAILED"
+
 # ===========================================================================
 # レビュー要求の取得失敗は「要求なし」と区別する
 # ===========================================================================
