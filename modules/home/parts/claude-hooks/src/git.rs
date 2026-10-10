@@ -32,6 +32,42 @@ pub fn is_fork(dir: &Path) -> bool {
     git(dir, &["remote", "get-url", "upstream"]).is_some()
 }
 
+/// 自分のプロジェクトか（自分の規約を当てるか）。`git config claude-hooks.own-project` の値に従い、
+/// 未設定なら判定して書き込む（一度だけ判定し、手で書いた値を優先する）。
+/// 他人のプロジェクト = upstream リモートを持つ fork、または GitHub のリモートの所有者に
+/// `git config claude-hooks.owner`（自分のアカウント）以外がいる。GitHub のリモートが無ければ自分のもの
+pub fn own_project(dir: &Path) -> bool {
+    match git(
+        dir,
+        &["config", "--type=bool", "--get", "claude-hooks.own-project"],
+    )
+    .as_deref()
+    {
+        Some("true") => return true,
+        Some("false") => return false,
+        _ => {}
+    }
+    let own = !is_fork(dir) && !has_foreign_github_remote(dir);
+    let value = if own { "true" } else { "false" };
+    let _ = git(
+        dir,
+        &["config", "--local", "claude-hooks.own-project", value],
+    );
+    own
+}
+
+/// GitHub のリモートの所有者に自分以外がいるか。自分のアカウントが設定されていなければ判定しない
+fn has_foreign_github_remote(dir: &Path) -> bool {
+    let Some(me) = git(dir, &["config", "--get", "claude-hooks.owner"]) else {
+        return false;
+    };
+    let remotes = git(dir, &["remote", "-v"]).unwrap_or_default();
+    let owner = regex::Regex::new(r"github\.com[:/]([^/\s]+)/").expect("固定の正規表現");
+    owner
+        .captures_iter(&remotes)
+        .any(|c| !c[1].eq_ignore_ascii_case(&me))
+}
+
 pub fn current_branch(dir: &Path) -> String {
     git(dir, &["branch", "--show-current"]).unwrap_or_default()
 }

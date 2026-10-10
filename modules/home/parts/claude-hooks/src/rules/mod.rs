@@ -6,11 +6,16 @@ use crate::shell::Shell;
 
 pub trait Rule: Sync {
     fn name(&self) -> &'static str;
+    /// 評価するツール。Bash 以外のツールでは shell は空のコマンド列になる
+    fn tools(&self) -> &'static [&'static str] {
+        &["Bash"]
+    }
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding>;
 }
 
 mod block_main_commit;
 mod block_secret_commit;
+mod check_adr_sections;
 mod guard_branch_base;
 mod guard_gh_api;
 mod guard_gh_run_rerun;
@@ -20,6 +25,7 @@ mod guard_git_push;
 mod pre_git_merge_check;
 mod pre_merge_check;
 mod pre_pr_create_check;
+mod require_adr_skill;
 mod require_background_wait;
 mod warn_large_commit;
 
@@ -38,6 +44,8 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &pre_merge_check::PreMergeCheck,
         &pre_git_merge_check::PreGitMergeCheck,
         &guard_git_merge::GuardGitMerge,
+        &require_adr_skill::RequireAdrSkill,
+        &check_adr_sections::CheckAdrSections,
     ]
 }
 

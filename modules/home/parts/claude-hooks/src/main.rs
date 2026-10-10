@@ -1,7 +1,7 @@
 //! claude-hooks: Claude Code の PreToolUse hook。
 //!
-//! 標準入力の hook JSON（tool_name / tool_input.command / tool_input.run_in_background / cwd）を読み、
-//! Bash ツールのコマンドを構文解析して各ルールを評価し、deny / additionalContext を JSON で返す。
+//! 標準入力の hook JSON（tool_name / session_id / tool_input / cwd）を読み、ツールごとに対象の
+//! ルールを評価して deny / additionalContext を JSON で返す。Bash はコマンドを構文解析して渡す。
 //! 出力なし = 許可。終了コードは常に 0（hook の不具合でツール呼び出しを壊さない）。
 //!
 //! Usage: claude-hooks pre-tool-use [--rule <name>]...
@@ -51,15 +51,20 @@ fn main() {
     let Some(input) = input::Input::parse(&raw) else {
         return;
     };
-    if input.tool_name != "Bash" {
-        return;
-    }
 
     // ルール側の panic は「判定できない」であって「ツールを止める」ではない
     let result = std::panic::catch_unwind(|| {
-        let shell = shell::Shell::parse(&input.command);
+        let command = if input.tool_name == "Bash" {
+            input.command.as_str()
+        } else {
+            ""
+        };
+        let shell = shell::Shell::parse(command);
         let mut findings = Vec::new();
         for rule in rules::all() {
+            if !rule.tools().contains(&input.tool_name.as_str()) {
+                continue;
+            }
             if selected.is_empty() || selected.contains(&rule.name()) {
                 findings.extend(rule.check(&input, &shell));
             }
