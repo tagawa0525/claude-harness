@@ -317,6 +317,17 @@ assert_file_missing "$TEST_ROOT/cleanup2/app-feat-x"
 assert_eq "" "$(git -C "$TEST_ROOT/cleanup2/app" branch --list feat/x)"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: 無関係な別のブランチの worktree から実行しても動く"
+setup_merged_branch "$TEST_ROOT/cleanup7"
+git -C "$TEST_ROOT/cleanup7/app" worktree add -q -b feat/other "$TEST_ROOT/cleanup7/app-feat-other"
+cd "$TEST_ROOT/cleanup7/app-feat-other" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_file_missing "$TEST_ROOT/cleanup7/app-feat-x"
+assert_eq "" "$(git -C "$TEST_ROOT/cleanup7/app" branch --list feat/x)"
+assert_eq "feat/other" "$(git branch --show-current)"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: リモートブランチを head とする open PR があれば削除しない"
 setup_merged_branch "$TEST_ROOT/cleanup3" github
 cd "$TEST_ROOT/cleanup3/app" || exit 1
