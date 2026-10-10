@@ -12,7 +12,7 @@ allowed-tools:
 調整は次の 4 つだけ（ADR-0005）:
 
 - 置き場所は `docs/adr/NNNN-title-with-dashes.md`（MADR の既定は `docs/decisions/`）
-- 見出しはテンプレートの英語のまま、本文は日本語で書く
+- 見出しは下の対応表の日本語にし、本文も日本語で書く（節を足せる以上、見出しは固定されないので読みやすさを取る）
 - 下の「書かないもの」を守る
 - 他人のプロジェクトでは使わない
 
@@ -32,8 +32,22 @@ allowed-tools:
 
 ## テンプレート
 
-必須の節は Context and Problem Statement / Considered Options / Decision Outcome（git の pre-commit が
-`claude-hooks adr-sections` で検査する）。任意の節は、要らなければテンプレートの指示どおり消す。
+見出しは次の日本語で書く（hook は英語の原文も受け付ける）。必須の 3 節は git の pre-commit が
+`claude-hooks adr-sections` で検査する。任意の節は、要らなければテンプレートの指示どおり消す。
+
+| MADR                                  | 見出し           |
+| ------------------------------------- | ---------------- |
+| Context and Problem Statement（必須） | 背景             |
+| Decision Drivers                      | 決定の要因       |
+| Considered Options（必須）            | 検討した案       |
+| Decision Outcome（必須）              | 決定と理由       |
+| Consequences                          | 帰結             |
+| Confirmation                          | 確認             |
+| Pros and Cons of the Options          | 各案の長所と短所 |
+| More Information                      | 補足             |
+
+本文の決まった言い回し（`Chosen option: …, because …`、`Good, because …` など）も日本語にする
+（「採用: …。理由は…」「良い点: …」「悪い点: …」「どちらでもない: …」）。
 
 MADR 4.0.0 の `template/adr-template.md` を手を加えずに収めたもの（ライセンスは MIT OR CC0-1.0）:
 
