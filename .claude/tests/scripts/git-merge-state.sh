@@ -151,4 +151,29 @@ assert_eq "" "$(git -C "$REPO" branch --list feat/x)"
 assert_eq 1 "$(git -C "$REPO" rev-list --count --merges main)"
 cd "$TEST_ROOT" || exit 1
 
+it "git-merge の手順: worktree が 1 つだけでも、取り出して rebase → チェック → main に戻してマージ → 片付けまで通せる"
+REPO="$TEST_ROOT/flow1/app"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
+echo "# doc" > "$REPO/doc.md"
+git -C "$REPO" add doc.md
+git -C "$REPO" commit -q -m "docs: doc"
+git -C "$REPO" switch -q main
+commit_file "$REPO" b.txt "feat: main moves on"
+cd "$REPO" || exit 1
+
+out=$("$SCRIPT" feat/x)
+assert_contains "$out" "TARGET_WORKTREE: none"
+assert_contains "$out" "DEFAULT_WORKTREE: $REPO"
+git -C "$REPO" switch -q feat/x
+git -C "$REPO" rebase -q main
+"$SCRIPTS_DIR/../skills/language-checks/scripts/run-checks.sh" -C "$REPO" --base main >/dev/null
+assert_eq 0 $?
+git -C "$REPO" switch -q main
+git -C "$REPO" merge -q --no-ff feat/x -m "Merge: doc"
+assert_eq 1 "$(git -C "$REPO" rev-list --count --merges main)"
+"$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x >/dev/null
+assert_eq "" "$(git -C "$REPO" branch --list feat/x)"
+cd "$TEST_ROOT" || exit 1
+
 finish

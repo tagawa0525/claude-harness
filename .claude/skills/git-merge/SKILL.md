@@ -34,7 +34,11 @@ $ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上
 
 対象の `TARGET_WORKTREE` と main の `DEFAULT_WORKTREE` は、そのブランチをチェックアウトしている場所。
 別の worktree にあるブランチへは switch できないので、ブランチの操作は `git -C [TARGET_WORKTREE]`、
-マージは `git -C [DEFAULT_WORKTREE]` で行う。none なら今の worktree で switch する。
+マージは `git -C [DEFAULT_WORKTREE]` で行う。
+
+`TARGET_WORKTREE` が none（対象がどこにもチェックアウトされていない。worktree が 1 つだけのときなど）なら、
+`git -C [DEFAULT_WORKTREE] switch [branch]` で main の worktree に取り出し、以降の `[TARGET_WORKTREE]` はそこを指す。
+マージの前に `git -C [DEFAULT_WORKTREE] switch main` で main に戻す。`DEFAULT_WORKTREE` も none なら今の worktree を使う。
 
 ## 止まる条件
 
@@ -114,7 +118,8 @@ Branch: [branch]
 ### マージ
 
 必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）。
-`DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う:
+`DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う。
+main の worktree が feature ブランチのままだと、ブランチを自分自身にマージして何も起きない:
 
 ```bash
 git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'
