@@ -1314,6 +1314,10 @@ out=$(run_hook guard-git-merge 'git merge --ff-only feat/rebased')
 assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-git-merge 'git merge --squash feat/rebased')
 assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-merge 'git merge --no-ff --ff feat/rebased')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-merge 'git merge --ff-only --no-ff feat/rebased')
+assert_eq deny "$(decision "$out")"
 
 it "guard-git-merge: 既定ブランチが先に進んでいて rebase していないブランチは deny"
 out=$(run_hook guard-git-merge 'git merge --no-ff feat/behind -m "Merge: behind"')
