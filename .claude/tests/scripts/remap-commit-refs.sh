@@ -137,6 +137,17 @@ out=$("$SCRIPT" "$TEST_ROOT/conflict-map" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 
+it "同じ旧が変わらない行や消えた行と、別の新の行の両方にある入力も止める"
+for first in abcdef0123456789abcdef0123456789abcdef01 0000000000000000000000000000000000000000; do
+  printf '%s %s\n%s %s\n' \
+    abcdef0123456789abcdef0123456789abcdef01 "$first" \
+    abcdef0123456789abcdef0123456789abcdef01 5555555555555555555555555555555555555555 \
+    > "$TEST_ROOT/conflict-map2"
+  out=$("$SCRIPT" "$TEST_ROOT/conflict-map2" 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "ERROR:"
+done
+
 it "完全な番号でない行は止める"
 printf 'abcdef0 4444444\n' > "$TEST_ROOT/bad-map"
 out=$("$SCRIPT" "$TEST_ROOT/bad-map" 2>&1)
