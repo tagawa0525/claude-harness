@@ -325,6 +325,25 @@ fn check_with_files_shows_warnings_only_for_them_but_errors_for_all() {
     );
 }
 
+#[test]
+fn check_counts_only_tracked_issues() {
+    let t = TempRepo::new("issues");
+    t.write("docs/issues/0001-bug.md", "---\nstatus: open\n---\n");
+    t.run(&["new", "use-a", "a を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    t.write(a, &t.read(a).replace("issues: []", "issues: [\"#0012\"]"));
+    t.git(&["add", "-A"]);
+    // 追跡していない issue の下書きは、参照先として数えない
+    t.write("docs/issues/0012-draft.md", "---\nstatus: open\n---\n");
+    let out = t.run(&["check", a]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("`issues` names #0012, which does not exist in docs/issues"),
+        "{}",
+        stdout(&out)
+    );
+}
+
 /// ADR-0001 を ADR-0002 で置き換えた main
 fn superseded_repo(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
