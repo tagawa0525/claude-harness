@@ -2,7 +2,6 @@
 name: adr
 description: ADR（docs/adr/）を書く・直すときに使う。テンプレート、前付け、各節の書き方、確定後の運用。
 allowed-tools:
-  - Bash(git config*)
   - Bash(git ls-files*)
 ---
 
@@ -10,13 +9,11 @@ allowed-tools:
 
 何をなぜ決めたかを、1 件 1 決定で残す。
 
-## このリポジトリの扱い
+## どのプロジェクトで使うか
 
-!`git config --default unset --get claude-hooks.own-project`
-
-`false` なら他人のプロジェクト。そのプロジェクトの流儀（テンプレート、CONTRIBUTING）に従い、このスキルは使わない。
-`unset` は、最初に `docs/adr/` へ書くときに hook が remote から判定して書き込む。自分の組織など、自分のアカウント
-以外の GitHub のリポジトリを自分のものとして扱うなら、`git config --global --add claude-hooks.owner <組織>` で足す。
+自分のプロジェクトの ADR はこの形で書く。他人のプロジェクトでは、そのプロジェクトの流儀（テンプレート、
+CONTRIBUTING）に従う。既存の ADR が別の形の自分のプロジェクトでは、新しい ADR からこの形で書き、既存の ADR を
+揃えるかはプロジェクトごとに決める。
 
 ## ADR にするもの
 
@@ -116,9 +113,8 @@ issues: []
 | 各案の長所と短所 | 任意 | 案ごとの良い点と悪い点。検討した案だけで足りれば書かない                                                     |
 | 補足             | 任意 | 裏付けの資料、関係する ADR と issue、確定後に分かったこと                                                    |
 
-- 必須の節が無ければ git の pre-commit がコミットを止め、推奨の節が無ければ警告する（`claude-hooks adr-sections`。
-  見出しは英語の Context and Problem Statement / Considered Options / Decision Outcome / Consequences /
-  Confirmation でも受け付ける）
+- 見出しは英語（MADR の原文: Context and Problem Statement / Considered Options / Decision Outcome / Consequences /
+  Confirmation）でもよい
 - 任意の節は、要るときだけ書く。表に無い節を足してもよい
 - 測った値や、変わりうる値（費用、規模）には、出典のファイルとコミットと日付を添える
   （例: 「1B で −3080 pcm（examples/vera/verification.md、a0af869、2026-10-07）」）
@@ -130,7 +126,7 @@ issues: []
 
 - **proposed の間**: 実装の前に proposed で書き、自由に直す。実装をマージするブランチで、本文（「確認」の実際の
   テストと結果、「帰結」）を実装に合わせて直し、同じ変更で `status: accepted` にして `date` をその日にする
-- **確定した後**（accepted、rejected、withdrawn、superseded）に新しい ADR なしで直すのは、次だけ:
+- **確定した後**（accepted、rejected、withdrawn、superseded、deprecated）に新しい ADR なしで直すのは、次だけ:
   - 誤字、文法、マークアップ、壊れたリンク
   - 前付けの `status`、`superseded-by`、`date`
   - 「補足」の節への、日付つきの追記（`- YYYY-MM-DD: …`）。決定の後に分かったことのうち、決定を変えないもの
