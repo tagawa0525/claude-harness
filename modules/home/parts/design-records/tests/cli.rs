@@ -418,6 +418,50 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     );
 }
 
+/// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ
+fn decided_topic(name: &str) -> TempRepo {
+    let t = TempRepo::new(name);
+    t.run(&["new", "use-a", "a を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a).replace("status: proposed", "status: accepted"),
+    );
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t
+}
+
+#[test]
+fn check_warns_when_a_decided_adr_is_deleted() {
+    let t = decided_topic("deleted");
+    t.git(&["rm", "-q", "docs/adr/0001-use-a.md"]);
+    // 消したファイルは pre-commit から渡されない
+    let out = t.run(&["check", "--changed"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out).starts_with("docs/adr/0001-use-a.md: warning: the ADR was deleted"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_follows_renames_when_comparing_the_body() {
+    let t = decided_topic("renamed");
+    let new = "docs/adr/0001-use-aa.md";
+    t.git(&["mv", "docs/adr/0001-use-a.md", new]);
+    t.write(new, &(t.read(new) + "\n本文を足す\n"));
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check", "--changed", new]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out).starts_with(&format!("{new}: warning: the body changed")),
+        "{}",
+        stdout(&out)
+    );
+}
+
 #[test]
 fn check_lets_adrs_change_freely_before_they_are_decided_on_main() {
     let t = superseded_repo("free");
