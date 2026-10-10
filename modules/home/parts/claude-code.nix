@@ -193,6 +193,7 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/request-rereview.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
+        "Bash(~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh:*)"
         # language-checks スキルスクリプト
         "Bash(~/.claude/skills/language-checks/scripts/run-checks.sh:*)"
         # adr スキルスクリプト
