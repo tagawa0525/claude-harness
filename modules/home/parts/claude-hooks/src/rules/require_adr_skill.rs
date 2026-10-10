@@ -54,13 +54,34 @@ impl Rule for RequireAdrSkill {
     }
 }
 
-/// Skill ツールが成功したとき（PostToolUse）に、読み込んだスキルを記録する
+/// Skill ツールが成功したとき（PostToolUse）に、読み込んだスキルを記録する。
+/// 名前は `adr`、`/adr`、プラグインの `<plugin>:adr` のどれでもよい
 pub fn record_skill(input: &Input) {
+    let name = input.skill.trim_start_matches('/');
     if input.tool_name == "Skill"
         && !input.session_id.is_empty()
-        && (input.skill == SKILL || input.skill.ends_with(&format!(":{SKILL}")))
+        && (name == SKILL || name.ends_with(&format!(":{SKILL}")))
     {
         record(&input.session_id, SKILL);
+    }
+}
+
+/// ユーザーが `/adr` と打ったとき（UserPromptSubmit）に記録する。スラッシュコマンドは
+/// Skill ツールを通らずに展開されるので、PostToolUse では捉えられない
+pub fn record_prompt(input: &Input) {
+    let Some(rest) = input.prompt.trim_start().strip_prefix(&format!("/{SKILL}")) else {
+        return;
+    };
+    if !input.session_id.is_empty() && rest.chars().next().is_none_or(char::is_whitespace) {
+        record(&input.session_id, SKILL);
+    }
+}
+
+/// 会話を要約する前（PreCompact）に記録を消す。要約でスキルの本文が文脈から消えるので、
+/// 要約の後に ADR を書くときは読み込み直させる
+pub fn forget(input: &Input) {
+    if let Some(file) = record_file(&input.session_id) {
+        let _ = std::fs::remove_file(file);
     }
 }
 
@@ -97,11 +118,16 @@ fn repo_relative(path: &Path) -> Option<(PathBuf, PathBuf)> {
     Some((root, rel))
 }
 
-/// セッションで読み込んだスキルの記録。XDG_RUNTIME_DIR（再起動で消える）に置く
-fn record_file(session_id: &str) -> PathBuf {
+/// セッションで読み込んだスキルの記録。XDG_RUNTIME_DIR（再起動で消える）に置き、無ければ
+/// XDG_CACHE_HOME か ~/.cache に置く。共有の /tmp は、ほかのユーザーが記録を作れてしまうので使わない
+fn record_file(session_id: &str) -> Option<PathBuf> {
+    if session_id.is_empty() {
+        return None;
+    }
     let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .or_else(|| std::env::var_os("XDG_CACHE_HOME"))
         .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
     let safe: String = session_id
         .chars()
         .map(|c| {
@@ -112,12 +138,14 @@ fn record_file(session_id: &str) -> PathBuf {
             }
         })
         .collect();
-    base.join("claude-hooks").join("skills").join(safe)
+    Some(base.join("claude-hooks").join("skills").join(safe))
 }
 
 fn record(session_id: &str, skill: &str) {
     use std::io::Write;
-    let file = record_file(session_id);
+    let Some(file) = record_file(session_id) else {
+        return;
+    };
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -131,5 +159,7 @@ fn record(session_id: &str, skill: &str) {
 }
 
 fn loaded(session_id: &str, skill: &str) -> bool {
-    std::fs::read_to_string(record_file(session_id)).is_ok_and(|s| s.lines().any(|l| l == skill))
+    record_file(session_id)
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .is_some_and(|s| s.lines().any(|l| l == skill))
 }

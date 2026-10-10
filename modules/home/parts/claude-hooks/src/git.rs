@@ -49,11 +49,13 @@ pub fn own_project(dir: &Path) -> bool {
         Some("false") => return false,
         _ => {}
     }
+    // 真偽値でない値が手で書かれていれば、判定はするが上書きしない
+    let hand_written = git(dir, &["config", "--get", "claude-hooks.own-project"]).is_some();
     let owners: Vec<String> = git(dir, &["config", "--get-all", "claude-hooks.owner"])
         .map(|s| s.lines().map(str::to_string).collect())
         .unwrap_or_default();
     let own = !is_fork(dir) && !has_foreign_github_remote(dir, &owners);
-    if !owners.is_empty() {
+    if !owners.is_empty() && !hand_written {
         let value = if own { "true" } else { "false" };
         let _ = git(
             dir,
@@ -70,8 +72,9 @@ fn has_foreign_github_remote(dir: &Path, owners: &[String]) -> bool {
         return false;
     }
     let remotes = git(dir, &["remote", "-v"]).unwrap_or_default();
-    let owner = regex::Regex::new(r"github\.com[:/]([^/\s]+)/").expect("固定の正規表現");
-    owner
+    static OWNER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    OWNER
+        .get_or_init(|| regex::Regex::new(r"github\.com[:/]([^/\s]+)/").expect("固定の正規表現"))
         .captures_iter(&remotes)
         .any(|c| !owners.iter().any(|o| o.eq_ignore_ascii_case(&c[1])))
 }

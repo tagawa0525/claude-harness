@@ -11,6 +11,8 @@ pub struct Input {
     pub file_path: String,
     /// Skill ツールで読み込むスキルの名前
     pub skill: String,
+    /// UserPromptSubmit の入力（ユーザーが打った文）
+    pub prompt: String,
     pub run_in_background: bool,
     /// hook 実行時のカレントディレクトリ。JSON の cwd が無ければプロセスの cwd
     pub cwd: PathBuf,
@@ -30,6 +32,7 @@ impl Input {
             command: s("/tool_input/command").unwrap_or_default(),
             file_path: s("/tool_input/file_path").unwrap_or_default(),
             skill: s("/tool_input/skill").unwrap_or_default(),
+            prompt: s("/prompt").unwrap_or_default(),
             run_in_background: v
                 .pointer("/tool_input/run_in_background")
                 .and_then(|x| x.as_bool())

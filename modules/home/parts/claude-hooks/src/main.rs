@@ -7,6 +7,8 @@
 //! Usage: claude-hooks pre-tool-use [--rule <name>]...
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
 //!        claude-hooks post-tool-use   ツールの成功後の記録（読み込んだスキル）。出力しない
+//!        claude-hooks user-prompt-submit  ユーザーが打ったスラッシュコマンドの記録。出力しない
+//!        claude-hooks pre-compact     会話の要約の前に記録を消す。出力しない
 //!        claude-hooks adr-sections    ステージ済みの ADR の節を検査する（git の pre-commit から呼ぶ）。
 //!                                     必須の節が無ければ標準エラーに出して終了コード 1。
 //!                                     推奨の節が無いだけなら警告を出して 0
@@ -22,7 +24,9 @@ mod shell;
 use std::io::Read;
 
 fn usage() -> ! {
-    eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]... | post-tool-use | adr-sections");
+    eprintln!(
+        "Usage: claude-hooks pre-tool-use [--rule <name>]... | post-tool-use | user-prompt-submit | pre-compact | adr-sections"
+    );
     eprintln!("rules: {}", rules::names().join(", "));
     std::process::exit(2);
 }
@@ -38,6 +42,19 @@ fn main() {
                 && let Some(input) = input::Input::parse(&raw)
             {
                 rules::require_adr_skill::record_skill(&input);
+            }
+            return;
+        }
+        Some(sub @ ("user-prompt-submit" | "pre-compact")) => {
+            let mut raw = String::new();
+            if std::io::stdin().read_to_string(&mut raw).is_ok()
+                && let Some(input) = input::Input::parse(&raw)
+            {
+                if sub == "user-prompt-submit" {
+                    rules::require_adr_skill::record_prompt(&input);
+                } else {
+                    rules::require_adr_skill::forget(&input);
+                }
             }
             return;
         }

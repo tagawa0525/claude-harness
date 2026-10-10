@@ -42,25 +42,38 @@ pub struct Report {
     pub warning: Option<String>,
 }
 
-/// ステージ済みの ADR の節を検査する（git の pre-commit が表示し、error があれば止める）
+/// ステージ済みの ADR の節を検査する（git の pre-commit が表示し、error があれば止める）。
+/// 必須の節で止めるのは新しく加える ADR だけ。既存の ADR の変更（確定した ADR の前付けの更新、
+/// 別の形式で書いた古い ADR の直しなど）は警告にとどめる
 pub fn check_staged(dir: &Path) -> Report {
     let mut report = Report::default();
-    let Some((errors, warnings)) = collect(dir) else {
+    let Some(found) = collect(dir) else {
         return report;
     };
-    if !errors.is_empty() {
+    if !found.added.is_empty() {
         report.error = Some(format!(
             "ADR に MADR の必須の節（{}）がありません。/adr スキルのテンプレートで直してください。\n{}",
             names(REQUIRED),
-            errors.join("\n")
+            found.added.join("\n")
+        ));
+    }
+    let mut warnings = Vec::new();
+    if !found.modified.is_empty() {
+        warnings.push(format!(
+            "変更した既存の ADR に MADR の必須の節（{}）がありません。新しい ADR ではないのでコミットは止めません。\n{}",
+            names(REQUIRED),
+            found.modified.join("\n")
+        ));
+    }
+    if !found.recommended.is_empty() {
+        warnings.push(format!(
+            "ADR に推奨の節（{}）がありません。要らないと判断したのでなければ足してください（/adr）。\n{}",
+            names(RECOMMENDED),
+            found.recommended.join("\n")
         ));
     }
     if !warnings.is_empty() {
-        report.warning = Some(format!(
-            "ADR に推奨の節（{}）がありません。要らないと判断したのでなければ足してください（/adr）。\n{}",
-            names(RECOMMENDED),
-            warnings.join("\n")
-        ));
+        report.warning = Some(warnings.join("\n"));
     }
     report
 }
@@ -73,49 +86,94 @@ fn names(sections: &[(&str, &str)]) -> String {
         .join("・")
 }
 
-/// ADR ごとの、足りない必須の節と推奨の節の行
-fn collect(dir: &Path) -> Option<(Vec<String>, Vec<String>)> {
-    // -z: 日本語などのパスを引用符で囲ませない（core.quotePath）
+/// 足りない節の行。added は新しい ADR の必須の節、modified は既存の ADR の必須の節、
+/// recommended は推奨の節
+#[derive(Default)]
+struct Found {
+    added: Vec<String>,
+    modified: Vec<String>,
+    recommended: Vec<String>,
+}
+
+fn collect(dir: &Path) -> Option<Found> {
+    // -z: 日本語などのパスを引用符で囲ませない（core.quotePath）。
+    // --no-renames: 改名を「消して加えた」と数え、改名で入った ADR も新しい ADR として検査する
     let staged = git::git(
         dir,
-        &["diff", "--cached", "--name-only", "-z", "--diff-filter=AM"],
+        &[
+            "diff",
+            "--cached",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            "--diff-filter=AM",
+        ],
     )?;
-    let adrs: Vec<&str> = staged.split('\0').filter(|p| is_adr(p)).collect();
+    let fields: Vec<&str> = staged.split('\0').filter(|f| !f.is_empty()).collect();
+    let adrs: Vec<(&str, &str)> = fields
+        .chunks(2)
+        .filter_map(|c| match c {
+            [status, path] if is_adr(path) => Some((*status, *path)),
+            _ => None,
+        })
+        .collect();
     if adrs.is_empty() || !git::own_project(dir) {
         return None;
     }
-    let mut errors = Vec::new();
-    let mut warnings = Vec::new();
-    for p in adrs {
+    let mut found = Found::default();
+    for (status, p) in adrs {
         let Some(body) = git::git(dir, &["show", &format!(":{p}")]) else {
             continue;
         };
         let hs = headings(&body);
         if let Some(line) = missing(p, REQUIRED, &hs) {
-            errors.push(line);
+            if status == "A" {
+                found.added.push(line);
+            } else {
+                found.modified.push(line);
+            }
         }
         if let Some(line) = missing(p, RECOMMENDED, &hs) {
-            warnings.push(line);
+            found.recommended.push(line);
         }
     }
-    Some((errors, warnings))
+    Some(found)
 }
 
-/// `##` 以下の見出し（コードブロックの中は除く）
+/// `##` 以下の見出し（コードブロックの中は除く）。コードブロックは、開いた記号（``` か ~~~）と
+/// 同じ記号を同じ数以上並べた行で閉じる。見出しの閉じの `#`（`## 背景 ##`）は外す
 fn headings(body: &str) -> Vec<String> {
-    let mut in_fence = false;
+    let mut fence: Option<(char, usize)> = None;
     let mut out = Vec::new();
     for line in body.lines() {
         let t = line.trim_start();
-        if t.starts_with("```") || t.starts_with("~~~") {
-            in_fence = !in_fence;
+        if let Some(c) = t.chars().next().filter(|c| *c == '`' || *c == '~') {
+            let n = t.chars().take_while(|x| *x == c).count();
+            if n >= 3 {
+                match fence {
+                    None => fence = Some((c, n)),
+                    Some((open, len)) if open == c && n >= len && t[n..].trim().is_empty() => {
+                        fence = None
+                    }
+                    Some(_) => {}
+                }
+                continue;
+            }
+        }
+        if fence.is_some() {
             continue;
         }
-        if !in_fence
-            && let Some(rest) = line.strip_prefix("##")
+        if let Some(rest) = line.strip_prefix("##")
             && let Some(h) = rest.trim_start_matches('#').strip_prefix(' ')
         {
-            out.push(h.trim().to_string());
+            let h = h.trim_end();
+            let closed = h.trim_end_matches('#');
+            let h = if closed.len() < h.len() && (closed.is_empty() || closed.ends_with(' ')) {
+                closed.trim_end()
+            } else {
+                h
+            };
+            out.push(h.to_string());
         }
     }
     out
