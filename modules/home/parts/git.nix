@@ -66,6 +66,9 @@
       # 初回 push で上流を自動設定する。スキルの手順から「上流の有無で -u を付け分ける」分岐をなくす
       push.autoSetupRemote = true;
       core.hooksPath = "~/.config/git/hooks"; # グローバルhooksを使用
+      # Claude Code の hook（claude-hooks）が他人のプロジェクトを見分けるための自分の GitHub アカウント。
+      # GitHub のリモートの所有者がこれ以外なら、自分の規約（ADR の形など）を当てない
+      claude-hooks.owner = "tagawa0525";
     };
   };
 

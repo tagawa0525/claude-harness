@@ -56,7 +56,8 @@ let
   ];
 
   # PreToolUse hook。10 本あった bash hook を Rust 製 1 バイナリ（./claude-hooks）に統合し、
-  # settings.json には 1 件だけ登録する。Bash ツールの呼び出しごとに 1 プロセスで全ルールを評価する。
+  # settings.json には 1 件だけ登録する。ツールの呼び出しごとに 1 プロセスで、そのツールが対象の
+  # ルールを評価する（Bash のほか、ADR の規則のために Skill / Write / Edit / MultiEdit）。
   # バイナリは store パスではなく固定パス ~/.claude/bin/claude-hooks 経由で参照する
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
@@ -299,6 +300,7 @@ in
       ${pkgs.jq}/bin/jq \
         --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
         --argjson timeout ${toString claudeHookTimeout} \
+        --arg matcher "Bash|Skill|Write|Edit|MultiEdit" \
         --argjson legacy '${builtins.toJSON legacyHookFiles}' \
         --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
         '. + $static |
@@ -310,9 +312,10 @@ in
           | map(select((.hooks | length) > 0))
           # バイナリの登録を 1 件にする（あれば command / timeout を更新、なければ追加）
           | if any(.[]; any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use"))) then
-              map(.hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .command = $cmd | .timeout = $timeout else . end))
+              map(if any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .matcher = $matcher else . end
+                | .hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .command = $cmd | .timeout = $timeout else . end))
             else
-              . + [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
+              . + [{"matcher": $matcher, "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
             end
         )' \
         "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
