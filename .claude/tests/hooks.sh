@@ -6,7 +6,7 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge / require-adr-skill / check-adr-sections
+#       guard-git-merge / require-adr-skill（と post-tool-use の記録）/ adr-sections（git の pre-commit から呼ぶ）
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -1375,10 +1375,10 @@ out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
 assert_eq deny "$(decision "$out")"
 
 # ===========================================================================
-# require-adr-skill: ADR（docs/adr/）を書く前に /adr スキルを読ませる
+# require-adr-skill: ADR（docs/adr/NNNN-*.md）を書く前に /adr スキルを読ませる
 # ===========================================================================
 # 手元の ADR を手本に形を真似ると、欠陥ごと複製される。書く時点でスキル（一般的な形）が
-# 読み込まれていることを、Skill ツールの呼び出しを hook 自身が記録して確かめる。
+# 読み込まれていることを、Skill ツールの成功（PostToolUse）を hook 自身が記録して確かめる。
 # 他人のプロジェクトでは、そのプロジェクトの流儀に従うので外す（git config claude-hooks.own-project）
 
 export XDG_RUNTIME_DIR="$TEST_ROOT/run"
@@ -1403,34 +1403,42 @@ assert_contains "$(reason "$out")" "claude-hooks.own-project"
 it "require-adr-skill: 判定の結果を git config に書く（自分のプロジェクトは true）"
 assert_eq true "$(git -C "$ADR_REPO" config --get claude-hooks.own-project)"
 
-it "require-adr-skill: 同じセッションで /adr スキルを読んだあとは書ける"
-out=$(run_tool require-adr-skill Skill '{"skill": "adr"}' s-b)
-assert_eq allow "$(decision "$out")"
+it "require-adr-skill: 同じセッションで /adr スキルの読み込みが成功したあとは書ける"
+run_post Skill '{"skill": "adr"}' s-b
 out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-b)
 assert_eq allow "$(decision "$out")"
+
+it "require-adr-skill: Skill を呼ぼうとしただけ（PreToolUse）では読み込んだことにしない"
+# 呼び出しが拒否されたり、展開に失敗したりすると、本文は読み込まれない
+out=$(run_tool require-adr-skill Skill '{"skill": "adr"}' s-p)
+assert_eq allow "$(decision "$out")"
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-p)
+assert_eq deny "$(decision "$out")"
 
 it "require-adr-skill: 別のセッションで読んだだけでは書けない"
 out=$(run_tool require-adr-skill Edit "$(jq -n --arg p "$ADR_REPO/docs/adr/0001-x.md" '{file_path: $p, old_string: "a", new_string: "b"}')" s-c)
 assert_eq deny "$(decision "$out")"
 
 it "require-adr-skill: ほかのスキルを読んでも書けない"
-run_tool require-adr-skill Skill '{"skill": "git-commit"}' s-d >/dev/null
+run_post Skill '{"skill": "git-commit"}' s-d
 out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-d)
 assert_eq deny "$(decision "$out")"
 
-it "require-adr-skill: ADR 以外のファイルは止めない（docs/adr に似た場所も）"
-for p in docs/plans/x.md docs/adr.md src/docs/adr/x.md docs/adr/x.txt; do
+it "require-adr-skill: ADR 以外のファイルは止めない（docs/adr の索引やテンプレート、似た場所も）"
+for p in docs/plans/x.md docs/adr.md src/docs/adr/0001-x.md docs/adr/0001-x.txt docs/adr/README.md docs/adr/template.md docs/adr/sub/0001-x.md; do
   out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/$p")" s-e)
   assert_eq allow "$(decision "$out")"
 done
 
 it "require-adr-skill: まだ無いディレクトリの ADR でも判定する"
-out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/sub/docs/adr/0001-x.md")" s-e)
-assert_eq allow "$(decision "$out")"
 rm -rf "$ADR_REPO/docs/adr"
 out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-e)
 assert_eq deny "$(decision "$out")"
 mkdir -p "$ADR_REPO/docs/adr"
+
+it "require-adr-skill: .. を含むパスも正規化して判定する（途中のディレクトリが無くても）"
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/tmp/../adr/0001-x.md")" s-e)
+assert_eq deny "$(decision "$out")"
 
 it "require-adr-skill: git config で false にしたリポジトリでは止めない"
 git -C "$ADR_REPO" config claude-hooks.own-project false
@@ -1465,12 +1473,36 @@ out=$(run_tool require-adr-skill Write "$(write_input "$FORK_REPO/docs/adr/0001-
 assert_eq allow "$(decision "$out")"
 assert_eq false "$(git -C "$FORK_REPO" config --get claude-hooks.own-project)"
 
+it "require-adr-skill: 自分のアカウントを複数（組織など）持てる"
+ORG_REPO="$TEST_ROOT/adr/org"
+make_repo "$ORG_REPO"
+git -C "$ORG_REPO" remote add origin "https://github.com/my-org/proj.git"
+mkdir -p "$ORG_REPO/docs/adr"
+git config --global --add claude-hooks.owner my-org
+out=$(run_tool require-adr-skill Write "$(write_input "$ORG_REPO/docs/adr/0001-x.md")" s-o)
+assert_eq deny "$(decision "$out")"
+assert_eq true "$(git -C "$ORG_REPO" config --get claude-hooks.own-project)"
+git config --global --unset claude-hooks.owner my-org
+
+it "require-adr-skill: 自分のアカウントが未設定なら判定を書き込まない（設定した後に判定し直す）"
+UNSET_REPO="$TEST_ROOT/adr/unset"
+make_repo "$UNSET_REPO"
+git -C "$UNSET_REPO" remote add origin "https://github.com/someone/proj.git"
+mkdir -p "$UNSET_REPO/docs/adr"
+git config --global --unset-all claude-hooks.owner
+out=$(run_tool require-adr-skill Write "$(write_input "$UNSET_REPO/docs/adr/0001-x.md")" s-u)
+assert_eq "" "$(git -C "$UNSET_REPO" config --get claude-hooks.own-project)"
+git config --global claude-hooks.owner me
+out=$(run_tool require-adr-skill Write "$(write_input "$UNSET_REPO/docs/adr/0001-x.md")" s-u)
+assert_eq allow "$(decision "$out")"
+assert_eq false "$(git -C "$UNSET_REPO" config --get claude-hooks.own-project)"
+
 it "require-adr-skill: 手で true にした値は判定より優先する"
 git -C "$OTHER_REPO" config claude-hooks.own-project true
 out=$(run_tool require-adr-skill Write "$(write_input "$OTHER_REPO/docs/adr/0001-x.md")" s-j)
 assert_eq deny "$(decision "$out")"
 
-it "require-adr-skill: Bash のコマンドには反応しない"
+it "require-adr-skill: Bash のコマンドには反応しない（Bash で書いた ADR はコミット時の adr-sections が検査する）"
 out=$(run_hook require-adr-skill "echo x > docs/adr/0001-x.md")
 assert_eq allow "$(decision "$out")"
 
@@ -1480,9 +1512,11 @@ out=$(run_tool block-main-commit Write "$(write_input "$ADR_REPO/a.txt")" s-k)
 assert_eq allow "$(decision "$out")"
 
 # ===========================================================================
-# check-adr-sections: ADR の節を一般的な形（MADR）に限る
+# adr-sections: コミットする ADR の節を一般的な形（MADR）に限る（git の pre-commit から呼ぶ）
 # ===========================================================================
-# 背景・検討した案・決定と理由・帰結・確認。ホストの状態や再開手順の節を足さない
+# 背景・検討した案・決定と理由・帰結・確認。ホストの状態や再開手順の節を足さない。
+# index が確定するのはコミットの時なので、PreToolUse ではなく git の pre-commit で検査する
+# （git add && git commit、git commit -a も捕まえる）
 
 SEC_REPO="$TEST_ROOT/adr/sections"
 make_repo "$SEC_REPO"
@@ -1497,62 +1531,68 @@ stage_adr() {
   { echo "# ADR"; for h in "$@"; do printf '\n## %s\n\n本文\n' "$h"; done; } > "$path"
   git add "$path"
 }
+# adr_sections: 終了コードと出力を "rc=<n>" と本文で返す
+adr_sections() { local o rc; o=$("$CLAUDE_HOOKS_BIN" adr-sections 2>&1); rc=$?; printf 'rc=%s\n%s' "$rc" "$o"; }
 
-it "check-adr-sections: 一般的な節だけの ADR は通す"
+it "adr-sections: 一般的な節だけの ADR は通す"
 stage_adr docs/adr/0001-a.md 背景 検討した案 決定と理由 帰結 確認
-out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
-assert_eq allow "$(decision "$out")"
+assert_contains "$(adr_sections)" "rc=0"
 git commit -q -m "docs: adr"
 
-it "check-adr-sections: 決まっていない節を含む ADR は止め、節の名前を示す"
+it "adr-sections: 決まっていない節を含む ADR は止め、節の名前を示す"
 stage_adr docs/adr/0002-b.md 背景 決定と理由 再開するとき
-out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "docs/adr/0002-b.md"
-assert_contains "$(reason "$out")" "再開するとき"
-assert_contains "$(reason "$out")" "/adr"
+out=$(adr_sections)
+assert_contains "$out" "rc=1"
+assert_contains "$out" "docs/adr/0002-b.md"
+assert_contains "$out" "再開するとき"
+assert_contains "$out" "/adr"
 
-it "check-adr-sections: 背景か決定と理由が無い ADR は止める"
+it "adr-sections: 背景か決定と理由が無い ADR は止める"
 stage_adr docs/adr/0002-b.md 検討した案 帰結
-out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "背景"
-assert_contains "$(reason "$out")" "決定と理由"
-
-it "check-adr-sections: コードブロックの中の ## は節として数えない"
-{ printf '# ADR\n\n## 背景\n\n```md\n## 再開するとき\n```\n\n## 決定と理由\n\n本文\n'; } > docs/adr/0002-b.md
-git add docs/adr/0002-b.md
-out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
-assert_eq allow "$(decision "$out")"
+out=$(adr_sections)
+assert_contains "$out" "rc=1"
+assert_contains "$out" "背景"
+assert_contains "$out" "決定と理由"
 git reset -q
 
-it "check-adr-sections: ADR 以外の Markdown は検査しない"
+it "adr-sections: 日本語のファイル名の ADR も検査する"
+stage_adr "docs/adr/0003-日本語.md" 背景 決定と理由 残るもの
+out=$(adr_sections)
+assert_contains "$out" "rc=1"
+assert_contains "$out" "0003-日本語.md"
+git reset -q
+
+it "adr-sections: コードブロックの中の ## は節として数えない"
+printf '# ADR\n\n## 背景\n\n```md\n## 再開するとき\n```\n\n## 決定と理由\n\n本文\n' > docs/adr/0002-b.md
+git add docs/adr/0002-b.md
+assert_contains "$(adr_sections)" "rc=0"
+git reset -q
+
+it "adr-sections: ADR 以外の Markdown（計画、docs/adr の索引やテンプレート）は検査しない"
 stage_adr docs/plans/001-x.md 目的 範囲
 stage_adr docs/adr.md 何でも
-out=$(run_hook check-adr-sections 'git commit -m "docs: plan"')
-assert_eq allow "$(decision "$out")"
+stage_adr docs/adr/README.md 一覧
+stage_adr docs/adr/template.md 何でも
+assert_contains "$(adr_sections)" "rc=0"
 git reset -q
 
-it "check-adr-sections: ADR を消すコミットは検査しない"
+it "adr-sections: ADR を消すコミットは検査しない"
 git rm -q docs/adr/0001-a.md
-out=$(run_hook check-adr-sections 'git commit -m "docs: rm"')
-assert_eq allow "$(decision "$out")"
+assert_contains "$(adr_sections)" "rc=0"
 git reset -q
 git checkout -q -- docs/adr/0001-a.md
 
-it "check-adr-sections: 他人のプロジェクト（own-project=false）では検査しない"
+it "adr-sections: 他人のプロジェクト（own-project=false）では検査しない"
 git config claude-hooks.own-project false
 stage_adr docs/adr/0002-b.md Context Decision
-out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
-assert_eq allow "$(decision "$out")"
+assert_contains "$(adr_sections)" "rc=0"
 git config --unset claude-hooks.own-project
 git reset -q
 
-it "check-adr-sections: 判定がまだなら判定して、他人のプロジェクトでは検査しない"
+it "adr-sections: 判定がまだなら判定して、他人のプロジェクトでは検査しない"
 git remote set-url origin "https://github.com/someone/sections.git"
 stage_adr docs/adr/0002-b.md Context Decision
-out=$(run_hook check-adr-sections 'git commit -m "docs: adr"')
-assert_eq allow "$(decision "$out")"
+assert_contains "$(adr_sections)" "rc=0"
 assert_eq false "$(git config --get claude-hooks.own-project)"
 git reset -q
 
