@@ -17,7 +17,8 @@ use super::guard_branch_base::branch_at;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell};
+use crate::shell::{Arg, Shell, has_flag};
+use std::path::{Path, PathBuf};
 
 pub struct PreGitMergeCheck;
 
@@ -70,6 +71,55 @@ fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// 既定ブランチの上で行う `git merge` 1 回分
+pub(super) struct DefaultBranchMerge {
+    pub dir: PathBuf,
+    /// ローカルの既定ブランチ名（`main`）
+    pub default: String,
+    /// マージ対象の指定（ブランチ名、`-`、`--stdin`）
+    pub targets: Vec<String>,
+    pub no_ff: bool,
+}
+
+/// コマンドに含まれる、既定ブランチの上で行う `git merge`。
+/// 今のブランチは同じコマンドの前の git switch / checkout を反映し（branch_at）、移り先が分からなければ
+/// 既定ブランチとして扱う（確かめる側に倒す）。中断・再開は含めない
+pub(super) fn default_branch_merges(input: &Input, shell: &Shell) -> Vec<DefaultBranchMerge> {
+    let mut out = Vec::new();
+    for cmd in shell.commands() {
+        let Some((targets, no_ff)) = cmd
+            .git_subcommand()
+            .filter(|(sub, _)| *sub == "merge")
+            .and_then(|(_, args)| merge_targets(args).map(|t| (t, has_flag(args, &["--no-ff"]))))
+        else {
+            continue;
+        };
+        let dir = shell.target_dir(&cmd, &input.cwd);
+        let Some(default_ref) = git::default_branch(&dir) else {
+            continue;
+        };
+        let default = git::local_name(&default_ref).to_string();
+        if branch_at(shell, &cmd, &input.cwd, &dir).is_some_and(|b| b != default) {
+            continue;
+        }
+        out.push(DefaultBranchMerge {
+            dir,
+            default,
+            targets,
+            no_ff,
+        });
+    }
+    out
+}
+
+/// マージ対象の指定をローカルのブランチの完全な ref（`refs/heads/feat/x`）にする。
+/// リモート追跡ブランチや解決できない名前は None（解決できない名前は git merge 自身が失敗する）
+pub(super) fn local_branch_ref(dir: &Path, target: &str) -> Option<String> {
+    let spec = if target == "-" { "@{-1}" } else { target };
+    git::git(dir, &["rev-parse", "--symbolic-full-name", spec])
+        .filter(|f| f.starts_with("refs/heads/"))
+}
+
 impl Rule for PreGitMergeCheck {
     fn name(&self) -> &'static str {
         "pre-git-merge-check"
@@ -79,39 +129,19 @@ impl Rule for PreGitMergeCheck {
         if shell.has_escape("ALLOW_MULTI_TOPIC") {
             return Vec::new();
         }
-        for cmd in shell.commands() {
-            let Some(targets) = cmd
-                .git_subcommand()
-                .filter(|(sub, _)| *sub == "merge")
-                .and_then(|(_, args)| merge_targets(args))
-            else {
-                continue;
-            };
-            let dir = shell.target_dir(&cmd, &input.cwd);
-            let Some(default_ref) = git::default_branch(&dir) else {
-                continue;
-            };
-            // 同じコマンドの前の git switch で移った先で判定する。分からなければ確かめる側に倒す
-            if branch_at(shell, &cmd, &input.cwd, &dir)
-                .is_some_and(|b| b != git::local_name(&default_ref))
-            {
-                continue;
-            }
-            for t in targets {
+        for merge in default_branch_merges(input, shell) {
+            let dir = &merge.dir;
+            for t in &merge.targets {
                 if t == "--stdin" {
                     return vec![Finding::Deny(
                         "git merge --stdin はマージ対象を標準入力で受け取るので、新しい ADR の数を確かめられません。ブランチ名を引数で渡してください".to_string(),
                     )];
                 }
-                let spec = if t == "-" { "@{-1}" } else { t.as_str() };
-                // ローカルのブランチだけ。解決できない名前は git merge 自身が失敗する
-                let Some(full) = git::git(&dir, &["rev-parse", "--symbolic-full-name", spec])
-                    .filter(|f| f.starts_with("refs/heads/"))
-                else {
+                let Some(full) = local_branch_ref(dir, t) else {
                     continue;
                 };
                 let Some(added) = git::git(
-                    &dir,
+                    dir,
                     &[
                         "diff",
                         // 改名は新しい ADR ではない。検出を diff.renames の設定に左右させない
