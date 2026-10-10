@@ -299,35 +299,38 @@ in
     fi
     if [ "''${DRY_RUN:-0}" != "1" ]; then
       ${pkgs.jq}/bin/jq \
-        --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
+        --arg bin "$HOME/${claudeHooksBinRel}" \
         --argjson timeout ${toString claudeHookTimeout} \
-        --arg matcher "Bash|Write|Edit|MultiEdit" \
-        --arg postcmd "$HOME/${claudeHooksBinRel} post-tool-use" \
         --argjson legacy '${builtins.toJSON legacyHookFiles}' \
         --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
-        '. + $static |
+        '# イベントごとにバイナリの登録を 1 件にする（あれば command / timeout / matcher を更新、
+        # なければ追加）。$sub はサブコマンド、$matcher が null なら matcher を持たないイベント
+        def upsert($sub; $matcher):
+          ($bin + " " + $sub) as $cmd
+          | ("/bin/claude-hooks " + $sub) as $suffix
+          | def mine: any(.hooks[]?; (.command | tostring) | endswith($suffix));
+            def entry: {"type": "command", "command": $cmd, "timeout": $timeout};
+          (. // [])
+          | if any(.[]; mine) then
+              map(if mine then (if $matcher == null then del(.matcher) else .matcher = $matcher end) else . end
+                | .hooks |= map(if ((.command | tostring) | endswith($suffix)) then entry else . end))
+            else
+              . + [{"hooks": [entry]} + (if $matcher == null then {} else {"matcher": $matcher} end)]
+            end;
+        . + $static |
         .skipDangerousModePermissionPrompt = true |
         .hooks.PreToolUse |= (
           (. // [])
           # 旧 bash hook（ファイル名で識別）の登録を外し、空になった matcher を消す
           | map(.hooks |= map(select((.command | tostring) as $c | ($legacy | any(. as $f | $c | endswith("/" + $f))) | not)))
           | map(select((.hooks | length) > 0))
-          # バイナリの登録を 1 件にする（あれば command / timeout を更新、なければ追加）
-          | if any(.[]; any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use"))) then
-              map(if any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .matcher = $matcher else . end
-                | .hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .command = $cmd | .timeout = $timeout else . end))
-            else
-              . + [{"matcher": $matcher, "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
-            end
+          | upsert("pre-tool-use"; "Bash|Write|Edit|MultiEdit")
         ) |
-        .hooks.PostToolUse |= (
-          (. // [])
-          | if any(.[]; any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks post-tool-use"))) then
-              map(.hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks post-tool-use")) then .command = $postcmd | .timeout = $timeout else . end))
-            else
-              . + [{"matcher": "Skill", "hooks": [{"type": "command", "command": $postcmd, "timeout": $timeout}]}]
-            end
-        )' \
+        # ADR の規則（ADR-0005）: スキルの読み込みの記録（Skill の成功、ユーザーが打った /adr）と、
+        # 会話の要約の前の記録の消去
+        .hooks.PostToolUse |= upsert("post-tool-use"; "Skill") |
+        .hooks.UserPromptSubmit |= upsert("user-prompt-submit"; null) |
+        .hooks.PreCompact |= upsert("pre-compact"; null)' \
         "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
       echo "Claude Code: settings and hooks updated in settings.json"
     else
