@@ -285,6 +285,38 @@ fn check_fails_on_errors_and_lists_them() {
     );
 }
 
+#[test]
+fn check_with_files_shows_warnings_only_for_them_but_errors_for_all() {
+    let t = TempRepo::new("scope");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    let b = "docs/adr/0002-use-b.md";
+    // どちらも推奨の節（確認）が無い。a は status も違反
+    t.write(
+        a,
+        &t.read(a)
+            .replace("### 確認\n", "")
+            .replace("proposed", "approved"),
+    );
+    t.write(b, &t.read(b).replace("### 確認\n", ""));
+    let out = t.run(&["check", b]);
+    assert_eq!(out.status.code(), Some(1));
+    let shown = stdout(&out);
+    assert!(shown.contains(&format!("{a}: error: `status`")), "{shown}");
+    assert!(
+        shown.contains(&format!("{b}: warning: no section `確認`")),
+        "{shown}"
+    );
+    assert!(!shown.contains(&format!("{a}: warning")), "{shown}");
+    // FILE を渡さなければ、すべての ADR の warning を出す
+    let shown = stdout(&t.run(&["check"]));
+    assert!(
+        shown.contains(&format!("{a}: warning: no section `確認`")),
+        "{shown}"
+    );
+}
+
 /// ADR-0001 を ADR-0002 で置き換えた main
 fn superseded_repo(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
