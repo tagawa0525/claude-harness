@@ -108,6 +108,14 @@
         "$(dirname "$0")/pre-merge-commit"
       fi
 
+      # ADR の節を一般的な形に限る（ADR-0005）。index が確定するのはここなので、PreToolUse ではなく
+      # この hook で検査する（git add && git commit、git commit -a も捕まえる）。プロジェクトローカルの
+      # hook より前に置く（そちらは exec で置き換わる）。他人のプロジェクトでは claude-hooks が外す
+      # （git config claude-hooks.own-project）。バイナリの置き場所は claude-code.nix の claudeHooksBinRel
+      if [ -x "$HOME/.claude/bin/claude-hooks" ]; then
+        "$HOME/.claude/bin/claude-hooks" adr-sections
+      fi
+
       # プロジェクトローカルの pre-commit があれば優先実行
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$GIT_DIR/hooks/pre-commit"
