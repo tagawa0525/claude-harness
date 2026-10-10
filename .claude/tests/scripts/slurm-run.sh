@@ -29,6 +29,7 @@ EOF
 cat >"$FAKE_BIN/scontrol" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >>"$TEST_ROOT/scontrol.calls"
+exit "${FAKE_TOP_EXIT:-0}"
 EOF
 cat >"$FAKE_BIN/hostname" <<'EOF'
 #!/usr/bin/env bash
@@ -72,6 +73,12 @@ it "slurm-run: --top を付けると、投げたジョブを待ち行列の先�
 rm -f "$TEST_ROOT/scontrol.calls"
 "$RUN" --top -t 5 xlc-0005-1B 'true' >/dev/null
 assert_eq "top 42" "$(cat "$TEST_ROOT/scontrol.calls")"
+
+it "slurm-run: 並べ替えに失敗しても、警告してジョブの終わりまで待つ"
+out=$(FAKE_TOP_EXIT=1 FAKE_JOB_EXIT=3 "$RUN" --top -t 5 xlc-0005-1B 'true' 2>&1)
+assert_eq 3 $?
+assert_contains "$out" "WARN:"
+assert_contains "$out" "EXIT: 3"
 
 it "slurm-run: --top を付けなければ順番に触らない"
 rm -f "$TEST_ROOT/scontrol.calls"
