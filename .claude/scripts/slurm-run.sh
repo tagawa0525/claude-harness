@@ -98,8 +98,9 @@ done
 echo "JOB: $job"
 log="$local_logs/$name-$job.out"
 echo "LOG: $log"
-if $top; then
-  scontrol top "$job"
+# 並べ替えに失敗しても、投げたジョブは待ち行列にあるので、終わりまで待つ
+if $top && ! scontrol top "$job"; then
+  echo "WARN: ジョブ $job を待ち行列の先頭に移せなかった。投げた順に走る" >&2
 fi
 
 status=0
