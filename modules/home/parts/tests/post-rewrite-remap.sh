@@ -204,6 +204,26 @@ else
   ng "プロジェクトローカルの post-rewrite がある repo で rebase が失敗した"
 fi
 
+# --- 4b. linked worktree でも、共通の .git/hooks の post-rewrite を呼ぶ ---------------------------
+REPO="$WORK/wt-main"
+new_repo "$REPO" opt-in
+cat > "$REPO/.git/hooks/post-rewrite" <<'HOOK'
+#!/usr/bin/env bash
+cat > /dev/null
+echo called > "$(git rev-parse --git-common-dir)/local-hook-called"
+HOOK
+chmod +x "$REPO/.git/hooks/post-rewrite"
+git -C "$REPO" worktree add -q -b wt "$WORK/wt-linked" main
+echo x > "$WORK/wt-linked/x.txt"
+git -C "$WORK/wt-linked" add x.txt
+git -C "$WORK/wt-linked" commit -q -m "feat: x"
+if git -C "$WORK/wt-linked" commit -q --amend -m "feat: x2" >"$WORK/out" 2>&1 \
+  && [[ -f "$REPO/.git/local-hook-called" ]]; then
+  ok "linked worktree でも、共通の .git/hooks の post-rewrite を呼ぶ"
+else
+  ng "linked worktree で共通の .git/hooks の post-rewrite が呼ばれない"
+fi
+
 # --- 5. 曖昧なら置き換えず、エラーを表示する ------------------------------------------------------
 REPO="$WORK/ambiguous"
 new_repo "$REPO" opt-in
