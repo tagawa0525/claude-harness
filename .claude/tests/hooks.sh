@@ -1430,6 +1430,10 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
 
+it "guard-sbatch: command -v と -V は探すだけなので通す"
+out=$(run_hook guard-sbatch "command -v sbatch && command -V sbatch")
+assert_eq allow "$(decision "$out")"
+
 it "guard-sbatch: squeue、scontrol、引数に現れるだけの sbatch は通す"
 out=$(run_hook guard-sbatch "squeue; scontrol top 42; echo sbatch; grep -n sbatch CLAUDE.md")
 assert_eq allow "$(decision "$out")"
