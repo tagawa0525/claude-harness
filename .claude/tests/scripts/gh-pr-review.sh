@@ -234,6 +234,12 @@ fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
+it "decide-next: src/ から docs/ への移動は、旧パスも数えて文書だけとみなさず REREVIEW_NEEDED"
+# files API は移動の旧パスを previous_filename で返す。要求していなければ docs/ だけに見える
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'case "$*" in *previous_filename*) printf "%s\n" docs/foo.md src/foo.rs ;; *) echo docs/foo.md ;; esac'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
 it "decide-next: 変更ファイルを取得できなければ、文書だけとみなさず REREVIEW_NEEDED"
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'exit 1'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)

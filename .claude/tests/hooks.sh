@@ -969,6 +969,14 @@ make_fake_gh_merge_files 'printf "%s\n" docs.md docs-extra/x.md src/docs/adr/x.m
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
+it "pre-merge-check: src/ から docs/ への移動は、旧パスも数えて文書だけとみなさない"
+# files API は移動の新しいパスを filename、旧パスを previous_filename で返す。
+# 旧パスを要求していれば src/foo.rs が見え、要求していなければ docs/ だけに見える
+make_fake_gh_merge_files 'case "$*" in *previous_filename*) printf "%s\n" docs/foo.md src/foo.rs ;; *) echo docs/foo.md ;; esac'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "request-rereview.sh"
+
 it "pre-merge-check: 変更ファイルを取得できなければ、文書だけとみなさず再レビューを求める"
 make_fake_gh_merge_files 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
