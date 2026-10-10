@@ -3,7 +3,8 @@
 //! sbatch を直接投げると、名前・ログ・見積もり・連絡先が抜け、待ち行列から誰の何の計算かが
 //! 読めなくなる（docs/adr/0007）。slurm-run.sh はジョブが終わるまで戻らず、待ち行列の長さ次第で
 //! Bash ツールのフォアグラウンドの上限を超えるので、run_in_background=true でのみ許可する。
-//! 回避する正当な理由がないため、エスケープは設けない。
+//! 回避する正当な理由がないため、エスケープは設けない。`command`・`env`・`exec`・`nohup`・`time` で
+//! 包んでも、中のプログラムで判定する。
 //! `echo sbatch` や `grep sbatch …` のように引数に現れるだけの場合は対象外。
 
 use super::Rule;
@@ -19,16 +20,34 @@ fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// コマンドとして実行されているか（直接、または `bash <path>` / `sh <path>` 経由）
-fn runs(cmd: &Cmd, program: &str) -> bool {
-    if basename(&cmd.name) == program {
-        return true;
+/// 引数のプログラムをそのまま走らせる前置き。後ろのオプション（`-` で始まる語）と、`env` の
+/// 変数の代入（`NAME=value`）を読み飛ばす
+const WRAPPERS: &[&str] = &["command", "env", "exec", "nohup", "time"];
+
+/// 前置きと `bash <path>` / `sh <path>` を外して、実際に走るプログラムの名前を返す
+fn program(cmd: &Cmd) -> &str {
+    let words = std::iter::once(cmd.name.as_str()).chain(cmd.args.iter().map(|a| a.text.as_str()));
+    let mut words = words.peekable();
+    while let Some(word) = words.next() {
+        let name = basename(word);
+        if WRAPPERS.contains(&name) {
+            while words
+                .next_if(|w| w.starts_with('-') || (name == "env" && w.contains('=')))
+                .is_some()
+            {}
+            continue;
+        }
+        if name == "bash" || name == "sh" {
+            return words.next().map_or(name, basename);
+        }
+        return name;
     }
-    (cmd.name == "bash" || cmd.name == "sh")
-        && cmd
-            .args
-            .first()
-            .is_some_and(|first| basename(&first.text) == program)
+    ""
+}
+
+/// コマンドとして実行されているか（直接、前置き越し、または `bash <path>` / `sh <path>` 経由）
+fn runs(cmd: &Cmd, target: &str) -> bool {
+    program(cmd) == target
 }
 
 impl Rule for GuardSbatch {
