@@ -60,6 +60,10 @@ fn program(cmd: &Cmd) -> String {
                 .is_some_and(|w| w.starts_with('-') || (name == "env" && w.contains('=')))
             {
                 let option = words.pop_front().unwrap_or_default();
+                // `command -v` / `-V` はプログラムを探して表示するだけで、実行しない
+                if name == "command" && (option == "-v" || option == "-V") {
+                    return String::new();
+                }
                 if name == "env"
                     && let Some(split) = split_string(&option, &mut words)
                 {
