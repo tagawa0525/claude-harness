@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# post-merge-cleanup.sh — PR マージ後にブランチと worktree を片付ける
+# post-merge-cleanup.sh — PR マージ後（または /git-merge の後）にブランチと worktree を片付ける
 #
 # Usage: post-merge-cleanup.sh <branch>
 #
 # 順に行う（gh-pr-merge スキルの「クリーンアップ」）:
 #   1. <branch> をチェックアウトしている worktree があれば削除（変更が残っていれば失敗する）
 #      自分がその worktree にいる場合はメイン worktree に移ってから行う
-#   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only
+#   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
 #   3. ローカルブランチを削除（-d。未マージなら失敗する）
 #   4. リモートブランチを削除。ただし GitHub リモートでは、そのブランチを head とする
@@ -65,8 +65,11 @@ fi
 if [[ "$(git branch --show-current)" != "$DEFAULT" ]]; then
   git switch -q "$DEFAULT"
 fi
-git fetch -q --prune
-git pull -q --ff-only
+# リモートのないリポジトリ（/git-merge でローカルにマージした後）では最新化する先がない
+if [[ -n "$(git remote)" ]]; then
+  git fetch -q --prune
+  git pull -q --ff-only
+fi
 
 # --- 3. ローカルブランチ ---
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
