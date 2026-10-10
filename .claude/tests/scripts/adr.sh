@@ -74,4 +74,24 @@ out=$("$NEW_ADR" use-g 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "Usage:"
 
+git switch -q -c other
+touch docs/adr/0009-on-other.md
+git add docs && git commit -q -m "docs(adr): on other branch"
+git switch -q main
+
+it "new-adr: 番号は、別のブランチにだけコミットされた ADR も含めた最大 + 1"
+out=$("$NEW_ADR" use-h "h を使う")
+assert_eq "docs/adr/0010-use-h.md" "$out"
+
+REPO="$TEST_ROOT/adr/three-digits"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p docs/adr
+touch docs/adr/001-keep-a.md docs/adr/007-keep-g.md
+git add docs && git commit -q -m "docs(adr): three digits"
+
+it "new-adr: 3 桁の番号の ADR も数え、その最大 + 1 から 4 桁で振る"
+out=$("$NEW_ADR" use-i "i を使う")
+assert_eq "docs/adr/0008-use-i.md" "$out"
+
 finish
