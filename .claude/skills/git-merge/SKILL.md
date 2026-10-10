@@ -32,13 +32,17 @@ GitHub での PR の流れ（CI → 自動レビュー → `gh pr merge --merge`
 $ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上が `ERROR:` で終わっていれば、その指示に従う
 （main 自身、GitHub リモートあり、未コミットの変更は、ここで止まる）。
 
-## 守られるゲート
+対象の `TARGET_WORKTREE` と main の `DEFAULT_WORKTREE` は、そのブランチをチェックアウトしている場所。
+別の worktree にあるブランチへは switch できないので、ブランチの操作は `git -C [TARGET_WORKTREE]`、
+マージは `git -C [DEFAULT_WORKTREE]` で行う。none なら今の worktree で switch する。
 
-次は hook が強制する。通らないときは理由に従って直す（文言や書き方を変えて迂回しない）:
+## 止まる条件
 
-- main への `git merge` は `--no-ff` で、main の上に rebase 済みのブランチだけ（guard-git-merge）
-- 新しい ADR を 2 件以上加えるブランチはマージしない。決定ごとにブランチを分ける（pre-git-merge-check、/topic-triage）
-- マージ結果が `run-checks.sh --merge` を通らなければマージコミットを作らない（git の pre-merge-commit）
+次は hook が止める。通らないときは理由に従って直す（文言や書き方を変えて迂回しない）:
+
+- main への `git merge` に `--no-ff` がない、または対象が main の上に rebase されていない
+- 新しい ADR を 2 件以上加えるブランチ。決定ごとにブランチを分ける（/topic-triage）
+- マージ結果が品質チェックを通らない
 
 ## 判断が要る手順
 
@@ -57,13 +61,6 @@ git branch main [root-commit]
 対象は、まだマージしていない別のブランチの上に積まれている。土台のブランチから順にこの手順でマージし、
 対象は後で rebase する。
 
-### worktree
-
-main を別の worktree（`DEFAULT_WORKTREE`）でチェックアウトしていると、別の worktree からは `git switch main`
-できない。ブランチも、ほかの worktree（`TARGET_WORKTREE`）にあると `git switch [branch]` できない。
-ブランチの操作はそのブランチの worktree で、マージは main の worktree で行う（`git -C <path>`）。
-`TARGET_WORKTREE` が none なら、今の worktree で `git switch [branch]` してよい。
-
 ### rebase（`BEHIND` が 0 でない）
 
 ```bash
@@ -75,11 +72,10 @@ git -C [TARGET_WORKTREE] rebase main
 
 ### チェック（CI の代わり）
 
-対象ブランチの worktree で、main との分岐点からの変更を検査する。マージ時にも hook が走るが、ここで先に直しておく
-（コミット済みでステージ済みの差分がないので、`--base` で範囲を渡す）:
+main との分岐点からの変更を検査する。マージ時にも hook が走るが、ここで先に直しておく:
 
 ```bash
-cd [TARGET_WORKTREE] && ~/.claude/skills/language-checks/scripts/run-checks.sh --base main
+~/.claude/skills/language-checks/scripts/run-checks.sh -C [TARGET_WORKTREE] --base main
 ```
 
 失敗したら原因を直してコミットし、もう一度チェックする。通らないままマージしない。
@@ -117,7 +113,7 @@ Branch: [branch]
 
 ### マージ
 
-main の worktree で、必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）。
+必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）。
 `DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う:
 
 ```bash
@@ -131,11 +127,10 @@ EOF
 
 ## 後片付け
 
-対象の worktree とブランチを削除する（変更が残っていたり、未マージだったりすれば失敗する。確認して対処する）。
-`DEFAULT_WORKTREE` か `TARGET_WORKTREE` で実行する:
+対象の worktree とブランチを削除する（変更が残っていたり、未マージだったりすれば失敗する。確認して対処する）:
 
 ```bash
-cd [DEFAULT_WORKTREE] && ~/.claude/scripts/post-merge-cleanup.sh [branch]
+~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
 ## 完了確認
