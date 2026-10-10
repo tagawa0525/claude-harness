@@ -208,6 +208,7 @@ let
         "Bash(~/.claude/scripts/post-merge-cleanup.sh:*)"
         "Bash(~/.claude/scripts/gh-actions-diagnose.sh:*)"
         "Bash(~/.claude/scripts/review-level.sh:*)"
+        "Bash(~/.claude/scripts/slurm-run.sh:*)"
         # Web
         "WebFetch(domain:api.github.com)"
         "WebFetch(domain:claude.ai)"
