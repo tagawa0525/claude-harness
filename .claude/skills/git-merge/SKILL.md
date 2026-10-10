@@ -4,6 +4,9 @@ description: featureブランチをローカルでmainにマージ。GitHubを�
 # model 未指定: レビュー指摘への対応、コンフリクト解決、マージコミットメッセージの判断が必要なためセッションモデルを継承する
 argument-hint: [branch]
 allowed-tools:
+  - Bash(~/.claude/scripts/git-merge-state.sh*)
+  - Bash(~/.claude/scripts/post-merge-cleanup.sh*)
+  - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
   - Bash(git status*)
   - Bash(git branch*)
   - Bash(git log*)
@@ -13,9 +16,7 @@ allowed-tools:
   - Bash(git rebase*)
   - Bash(git merge*)
   - Bash(git rev-list*)
-  - Bash(git rev-parse*)
   - Bash(git worktree*)
-  - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
 ---
 
 # Git Merge Command
@@ -25,41 +26,38 @@ GitHub での PR の流れ（CI → 自動レビュー → `gh pr merge --merge`
 
 ## 現在の状態
 
-!`git status --short`
-!`git branch -vv`
-!`git worktree list`
+!`~/.claude/scripts/git-merge-state.sh $ARGUMENTS`
 !`git log --oneline --graph --all -20`
 
-## 対象
+$ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上が `ERROR:` で終わっていれば、その指示に従う
+（main 自身、GitHub リモートあり、未コミットの変更は、ここで止まる）。
 
-$ARGUMENTS のブランチ（省略時は現在のブランチ）をマージする。
+## 守られるゲート
 
-- `main` / `master` 自身は対象にしない
-- 未コミットの変更があれば中断し、/git-commit を案内する
-- GitHub リモートがあるリポジトリでは使わず、/gh-pr-create と /gh-pr-merge を案内する
+次は hook が強制する。通らないときは理由に従って直す（文言や書き方を変えて迂回しない）:
 
-## main がまだない場合（最初のマージ）
+- main への `git merge` は `--no-ff` で、main の上に rebase 済みのブランチだけ（guard-git-merge）
+- 新しい ADR を 2 件以上加えるブランチはマージしない。決定ごとにブランチを分ける（pre-git-merge-check、/topic-triage）
+- マージ結果が `run-checks.sh --merge` を通らなければマージコミットを作らない（git の pre-merge-commit）
 
-リポジトリの最初のコミットが feature ブランチ上にあって main が存在しないときは、
-ルートコミット（プロジェクトの初期化コミット）を指す main を作る:
+## 判断が要る手順
+
+### main がまだない（`DEFAULT: none`）
+
+`ROOT_COMMITS` が 1 つで、初期化だけの内容であることを `git show` で確認してから、ルートコミットを指す main を作る:
 
 ```bash
-git rev-list --max-parents=0 [branch]   # ルートコミットが1つで、初期化だけの内容であることを確認する
 git branch main [root-commit]
 ```
 
 ルートコミットに初期化以外の変更が含まれていれば、作らずにユーザーに確認する。
 
-## ブランチの積み重なりの確認
+### 積み重なり（`STACKED_ON` が none でない）
 
-対象ブランチが、まだマージしていない別の feature ブランチの上に積まれていることがある
-（`git log --oneline main..[branch]` に他のブランチのコミットが含まれる）。
-その場合は土台のブランチから順にこの手順でマージし、対象ブランチは後で rebase する。
+対象は、まだマージしていない別のブランチの上に積まれている。土台のブランチから順にこの手順でマージし、
+対象は後で rebase する。
 
-## rebase
-
-main が対象ブランチの分岐点より進んでいれば、対象ブランチを main の上に rebase して
-git graph を整える（GitHub での「head の遅れ」の解消に相当）:
+### rebase（`BEHIND` が 0 でない）
 
 ```bash
 git switch [branch]
@@ -69,9 +67,9 @@ git rebase main
 コンフリクトしたら内容と解決案を示し、解決して `git rebase --continue` するか
 `git rebase --abort` するかを決める。
 
-## チェック（CI の代わり）
+### チェック（CI の代わり）
 
-対象ブランチで品質チェックを実行する:
+対象ブランチで品質チェックを実行する。マージ時にも hook が走るが、ここで先に直しておく:
 
 ```bash
 ~/.claude/skills/language-checks/scripts/run-checks.sh
@@ -79,14 +77,14 @@ git rebase main
 
 失敗したら原因を直してコミットし、もう一度チェックする。通らないままマージしない。
 
-## レビュー（自動レビューの代わり）
+### レビュー（自動レビューの代わり）
 
 `/code-review` で main との差分をレビューし、指摘に対応してからマージする:
 
-- 指摘を修正したら、コミットしてチェックからやり直す
+- 指摘を修正したら、コミットして rebase の要否とチェックからやり直す
 - 対応しない指摘は、その理由をユーザーに伝える
 
-## マージコミットメッセージ
+### マージコミットメッセージ
 
 ブランチの内容を把握してから書く:
 
@@ -110,9 +108,9 @@ Merge: [ブランチの変更を簡潔に要約]
 Branch: [branch]
 ```
 
-## マージ実行
+### マージ
 
-fast-forward せず、必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）:
+main へ移り、必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）:
 
 ```bash
 git switch main
@@ -126,10 +124,10 @@ EOF
 
 ## 後片付け
 
+対象の worktree とブランチを削除する（変更が残っていたり、未マージだったりすれば失敗する。確認して対処する）:
+
 ```bash
-git worktree list                 # 対象ブランチの worktree があれば
-git worktree remove [path]        # 変更が残っていれば失敗するので、確認して対処する
-git branch -d [branch]            # -d なので、未マージなら失敗する
+~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
 ## 完了確認
