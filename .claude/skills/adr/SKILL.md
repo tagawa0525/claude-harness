@@ -2,7 +2,8 @@
 name: adr
 description: ADR（docs/adr/）を書く・直すときに使う。MADR を基準にした形、前付け、確定後の運用。
 allowed-tools:
-  - Bash(~/.claude/skills/adr/scripts/new-adr.sh*)
+  - Bash(design-records new:*)
+  - Bash(design-records check:*)
 ---
 
 # ADR
@@ -21,14 +22,34 @@ allowed-tools:
 試して捨てた方式は、何を試し、なぜ捨てたか（測った値や反例）を、関係する ADR の検討した案か補足、または issue に書く。
 コミットの本文だけに置くと、後から引けない。
 
-## 作る
+## 作る・検査する
+
+形（前付けのキーと status、必須と推奨の節、番号）を持つのは CLI の `design-records` で、下の説明と食い違えば CLI が正。
 
 ```bash
-~/.claude/skills/adr/scripts/new-adr.sh <slug> "<決めたことの 1 文>"
+design-records new <slug> "<決めたことの 1 文>"
+design-records check [FILE]...
 ```
 
-`docs/adr/NNNN-<slug>.md` を、次の番号、前付け、必須と推奨の見出しつきで作る。slug は決めたことを動詞で始めた英語の
-kebab-case にする。
+`new` は `docs/adr/NNNN-<slug>.md` を、全ブランチの履歴から振った次の番号、前付け、必須と推奨の見出しつきで作る。
+slug は決めたことを動詞で始めた英語の kebab-case にする。
+
+`check` は docs/adr の形と、ADR どうしの参照（置き換えの双方向の一致、参照先の有無）を確かめ、違反（error）があれば
+失敗する。FILE を渡すと、そこから置き換えられた ADR への参照と、確定した ADR の本文の変更を探して注意（warning）を
+出す。プロジェクトは `.pre-commit-config.yaml` に次を足してオプトインし、コミットのたびに検査する:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: design-records
+        name: design-records
+        entry: design-records check
+        language: system
+        always_run: true
+        types: [text]
+        verbose: true # 通ったときも warning を見せる
+```
 
 ## MADR と違う点
 
