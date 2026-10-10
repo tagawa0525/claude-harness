@@ -106,4 +106,41 @@ assert_contains "$out" "BASE: main"
 assert_contains "$out" "FILES: 1"
 assert_contains "$out" "LEVEL: medium"
 
+# 既定ブランチが main でないリポジトリ（master など）でも使える。
+# 既定ブランチの探し方は worktree-add.sh / branch-topics.sh と同じ順
+MASTER="$TEST_ROOT/rl/master-repo"
+mkdir -p "$MASTER"
+git -C "$MASTER" init -q -b master
+echo init > "$MASTER/README.md"
+git -C "$MASTER" add README.md
+git -C "$MASTER" commit -q -m "chore: init"
+cd "$MASTER" || exit 1
+
+it "review-level: 既定ブランチが master なら master を比較元にする"
+git switch -q -c feat/doc
+commit_file "$MASTER" docs/adr/0001-x.md "docs: adr"
+out=$("$SCRIPTS_DIR/review-level.sh")
+assert_eq 0 $?
+assert_contains "$out" "BASE: master"
+assert_contains "$out" "LEVEL: medium"
+
+it "review-level: master のローカルが origin/master より古ければ origin/master を比較元にする"
+git init -q --bare "$MASTER.git"
+git remote add origin "$MASTER.git"
+git push -q origin master
+git switch -q master
+commit_file "$MASTER" src/other.rs "feat: other pr"
+git push -q origin master
+git reset -q --hard HEAD~1
+git rebase -q origin/master feat/doc
+out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
+assert_contains "$out" "BASE: origin/master"
+assert_contains "$out" "FILES: 1"
+assert_contains "$out" "LEVEL: medium"
+
+it "review-level: origin/HEAD が指すブランチを既定ブランチにする"
+git remote set-head origin master
+out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
+assert_contains "$out" "BASE: origin/master"
+
 finish
