@@ -20,9 +20,17 @@ fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// 引数のプログラムをそのまま走らせる前置き。後ろのオプション（`-` で始まる語）と、`env` の
-/// 変数の代入（`NAME=value`）を読み飛ばす
-const WRAPPERS: &[&str] = &["command", "env", "exec", "nohup", "time"];
+/// 引数のプログラムをそのまま走らせる前置きと、そのうち値を別の語で取るオプション
+/// （env と GNU time は coreutils と time の man、exec は bash の組み込み）。後ろのオプション
+/// （`-` で始まる語。`--unset=FOO` のように値をつないだ形を含む）と、`env` の変数の代入
+/// （`NAME=value`）を読み飛ばす
+const WRAPPERS: &[(&str, &[&str])] = &[
+    ("command", &[]),
+    ("env", &["-u", "--unset", "-C", "--chdir"]),
+    ("exec", &["-a"]),
+    ("nohup", &[]),
+    ("time", &["-f", "--format", "-o", "--output"]),
+];
 
 /// 前置きと `bash <path>` / `sh <path>` を外して、実際に走るプログラムの名前を返す
 fn program(cmd: &Cmd) -> &str {
@@ -30,11 +38,14 @@ fn program(cmd: &Cmd) -> &str {
     let mut words = words.peekable();
     while let Some(word) = words.next() {
         let name = basename(word);
-        if WRAPPERS.contains(&name) {
-            while words
-                .next_if(|w| w.starts_with('-') || (name == "env" && w.contains('=')))
-                .is_some()
-            {}
+        if let Some((_, valued)) = WRAPPERS.iter().find(|(wrapper, _)| *wrapper == name) {
+            while let Some(option) =
+                words.next_if(|w| w.starts_with('-') || (name == "env" && w.contains('=')))
+            {
+                if valued.contains(&option) {
+                    words.next();
+                }
+            }
             continue;
         }
         if name == "bash" || name == "sh" {
