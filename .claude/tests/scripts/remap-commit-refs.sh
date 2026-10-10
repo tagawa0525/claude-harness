@@ -171,6 +171,15 @@ assert_eq "$line" "$(cat other.md)"
 assert_eq "untracked ${old:0:8}" "$(cat untracked.md)"
 assert_not_contains "$out" "other.md"
 
+it "名前が UTF-8 でないファイルも置き換える"
+weird=$(printf 'n\xff.md')
+printf 'at %s\n' "${old:0:8}" > "$weird"
+git add -- "$weird"
+git commit -q -m "docs: weird name"
+out=$("$SCRIPT" "$TEST_ROOT/untouched-map" 2>&1)
+assert_eq 0 $?
+assert_eq "at 66666666" "$(cat -- "$weird")"
+
 it "バイナリのファイルは変えない"
 printf 'bin\0%s\n' "${old:0:8}" > blob.bin
 git add blob.bin
