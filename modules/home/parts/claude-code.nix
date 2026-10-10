@@ -195,6 +195,8 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
         # language-checks スキルスクリプト
         "Bash(~/.claude/skills/language-checks/scripts/run-checks.sh:*)"
+        # adr スキルスクリプト
+        "Bash(~/.claude/skills/adr/scripts/new-adr.sh:*)"
         # 共有スクリプト（PRレビュー待ち、git/gh の決定的な手順）
         "Bash(~/.claude/scripts/gh-wait-review.sh:*)"
         "Bash(~/.claude/scripts/git-info.sh:*)"
