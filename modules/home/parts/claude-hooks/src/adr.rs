@@ -2,7 +2,10 @@
 //!
 //! 検査するのは MADR 4.0.0 の必須の節があるかだけ（ADR-0005）。見出しは日本語（スキルの対応表）でも
 //! MADR の原文の英語でもよい。任意の節や MADR に無い節は止めない: MADR は節を足すことを禁じておらず、
-//! 中身（決定か状態か）の判断はレビューの役目。対応表は .claude/skills/adr/SKILL.md と揃える。
+//! 中身（決定か状態か）の判断はレビューの役目。推奨の節（帰結・確認）が無ければ警告だけ出す。
+//! 推奨は MADR の minimal テンプレート（必須 + 帰結）と、テンプレートの注記（確認は「任意だが多くの
+//! ADR が含める」）に基づく。見出しの深さは問わない（MADR では帰結と確認は決定と理由の下の ###）。
+//! 対応表は .claude/skills/adr/SKILL.md と揃える。
 //! index が確定するのはコミットの時なので、PreToolUse ではなく git の pre-commit
 //! （modules/home/parts/git.nix）から呼ぶ。git add && git commit や git commit -a も捕まえる
 
@@ -29,8 +32,49 @@ const REQUIRED: &[(&str, &str)] = &[
     ("決定と理由", "Decision Outcome"),
 ];
 
-/// ステージ済みの ADR の節を検査する。問題があれば理由を返す（git の pre-commit が表示して止める）
-pub fn check_staged(dir: &Path) -> Option<String> {
+/// MADR 4.0.0 の推奨の節（日本語の見出し, 英語の見出し）。無ければ警告だけ出す
+const RECOMMENDED: &[(&str, &str)] = &[("帰結", "Consequences"), ("確認", "Confirmation")];
+
+/// 検査の結果。error があればコミットを止め、warning は表示だけする
+#[derive(Default)]
+pub struct Report {
+    pub error: Option<String>,
+    pub warning: Option<String>,
+}
+
+/// ステージ済みの ADR の節を検査する（git の pre-commit が表示し、error があれば止める）
+pub fn check_staged(dir: &Path) -> Report {
+    let mut report = Report::default();
+    let Some((errors, warnings)) = collect(dir) else {
+        return report;
+    };
+    if !errors.is_empty() {
+        report.error = Some(format!(
+            "ADR に MADR の必須の節（{}）がありません。/adr スキルのテンプレートで直してください。\n{}",
+            names(REQUIRED),
+            errors.join("\n")
+        ));
+    }
+    if !warnings.is_empty() {
+        report.warning = Some(format!(
+            "ADR に推奨の節（{}）がありません。要らないと判断したのでなければ足してください（/adr）。\n{}",
+            names(RECOMMENDED),
+            warnings.join("\n")
+        ));
+    }
+    report
+}
+
+fn names(sections: &[(&str, &str)]) -> String {
+    sections
+        .iter()
+        .map(|(ja, _)| *ja)
+        .collect::<Vec<_>>()
+        .join("・")
+}
+
+/// ADR ごとの、足りない必須の節と推奨の節の行
+fn collect(dir: &Path) -> Option<(Vec<String>, Vec<String>)> {
     // -z: 日本語などのパスを引用符で囲ませない（core.quotePath）
     let staged = git::git(
         dir,
@@ -40,28 +84,24 @@ pub fn check_staged(dir: &Path) -> Option<String> {
     if adrs.is_empty() || !git::own_project(dir) {
         return None;
     }
-    let problems: Vec<String> = adrs
-        .iter()
-        .filter_map(|p| {
-            let body = git::git(dir, &["show", &format!(":{p}")])?;
-            problem(p, &headings(&body))
-        })
-        .collect();
-    if problems.is_empty() {
-        return None;
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for p in adrs {
+        let Some(body) = git::git(dir, &["show", &format!(":{p}")]) else {
+            continue;
+        };
+        let hs = headings(&body);
+        if let Some(line) = missing(p, REQUIRED, &hs) {
+            errors.push(line);
+        }
+        if let Some(line) = missing(p, RECOMMENDED, &hs) {
+            warnings.push(line);
+        }
     }
-    Some(format!(
-        "ADR に MADR の必須の節（{}）がありません。/adr スキルのテンプレートで直してください。\n{}",
-        REQUIRED
-            .iter()
-            .map(|(ja, _)| *ja)
-            .collect::<Vec<_>>()
-            .join("・"),
-        problems.join("\n")
-    ))
+    Some((errors, warnings))
 }
 
-/// `## ` の見出し（コードブロックの中は除く）
+/// `##` 以下の見出し（コードブロックの中は除く）
 fn headings(body: &str) -> Vec<String> {
     let mut in_fence = false;
     let mut out = Vec::new();
@@ -71,23 +111,27 @@ fn headings(body: &str) -> Vec<String> {
             in_fence = !in_fence;
             continue;
         }
-        if !in_fence && let Some(h) = line.strip_prefix("## ") {
+        if !in_fence
+            && let Some(rest) = line.strip_prefix("##")
+            && let Some(h) = rest.trim_start_matches('#').strip_prefix(' ')
+        {
             out.push(h.trim().to_string());
         }
     }
     out
 }
 
-fn problem(path: &str, hs: &[String]) -> Option<String> {
-    let missing: Vec<String> = REQUIRED
+/// 足りない節があれば `- <path>: 足りない節「…」` の行
+fn missing(path: &str, sections: &[(&str, &str)], hs: &[String]) -> Option<String> {
+    let lacking: Vec<String> = sections
         .iter()
         .filter(|(ja, en)| !hs.iter().any(|h| h == ja || h == en))
         .map(|(ja, en)| format!("{ja}（{en}）"))
         .collect();
-    if missing.is_empty() {
+    if lacking.is_empty() {
         return None;
     }
-    Some(format!("- {path}: 足りない節「{}」", missing.join("」「")))
+    Some(format!("- {path}: 足りない節「{}」", lacking.join("」「")))
 }
 
 #[cfg(test)]

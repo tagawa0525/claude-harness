@@ -8,7 +8,8 @@
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
 //!        claude-hooks post-tool-use   ツールの成功後の記録（読み込んだスキル）。出力しない
 //!        claude-hooks adr-sections    ステージ済みの ADR の節を検査する（git の pre-commit から呼ぶ）。
-//!                                     問題があれば標準エラーに出して終了コード 1
+//!                                     必須の節が無ければ標準エラーに出して終了コード 1。
+//!                                     推奨の節が無いだけなら警告を出して 0
 
 mod adr;
 mod gh;
@@ -42,8 +43,12 @@ fn main() {
         }
         Some("adr-sections") => {
             let dir = std::env::current_dir().unwrap_or_default();
-            if let Some(reason) = adr::check_staged(&dir) {
-                eprintln!("❌ {reason}");
+            let report = adr::check_staged(&dir);
+            if let Some(warning) = report.warning {
+                eprintln!("⚠️  {warning}");
+            }
+            if let Some(error) = report.error {
+                eprintln!("❌ {error}");
                 std::process::exit(1);
             }
             return;
