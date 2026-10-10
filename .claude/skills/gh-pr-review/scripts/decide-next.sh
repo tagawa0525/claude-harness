@@ -21,7 +21,8 @@
 #     REREVIEW_NEEDED      対応を push したが再レビューを要求していない → 要求する
 #     STOP_DOCS_REVIEWED   文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR で、対応済み・head 未レビュー
 #                          → 依頼しない。文章は細部をいくらでも掘れるので、
-#                            指摘は最初のレビューで受けて周回を止める
+#                            指摘は最初のレビューで受けて周回を止める。最新のレビューが
+#                            失敗していても、成功したレビューが一度でもあれば同じ扱い
 #                            （pre-merge-check も同じ条件で再レビューを求めない）
 #     STOP_LIMIT           要求が必要だが上限到達 → 依頼せず、残りを報告して委ねる
 #     STOP_DECLINED        未解決ゼロ・head はレビュー済み → 対応は済んでいる。マージへ
@@ -124,6 +125,7 @@ if [[ "$response" == "none" ]]; then
 fi
 
 failed=$(sed -n 's/^REVIEW_FAILED: //p' <<<"$latest")
+successful=$(sed -n 's/^SUCCESSFUL_REVIEWS: //p' <<<"$latest")
 inline=$(sed -n 's/^INLINE_COMMENTS: //p' <<<"$latest")
 suppressed=$(sed -n 's/^SUPPRESSED_COMMENTS: //p' <<<"$latest")
 echo "REVIEW_ID: ${review_id}"
@@ -134,10 +136,14 @@ echo "SUPPRESSED_COMMENTS: ${suppressed}"
 # レビュー失敗 → 未対応 → 要求し忘れ → 対応済み。
 # 一部だけ直して push した状態（未解決あり・head 未レビュー）では、要求より先に
 # 残りの対応を促す
-if [[ "$failed" == "yes" ]]; then
+# 文書だけの PR は、一度でも成功したレビューがあれば後のレビューの失敗で止めない
+# （pre-merge-check と同じ条件）。最初のレビューが失敗しただけの PR は止める
+if [[ "$failed" == "yes" ]] && ! { (( successful > 0 )) && docs_only; }; then
   echo "VERDICT: REVIEW_FAILED"
 elif (( unresolved > 0 )); then
   echo "VERDICT: ACT"
+elif [[ "$failed" == "yes" ]]; then
+  echo "VERDICT: STOP_DOCS_REVIEWED"
 elif [[ "$head_reviewed" == "no" ]]; then
   if docs_only; then
     echo "VERDICT: STOP_DOCS_REVIEWED"
