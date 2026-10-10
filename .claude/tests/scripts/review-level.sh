@@ -75,4 +75,35 @@ assert_contains "$out" "BASE: feat/docs"
 assert_contains "$out" "FILES: 1"
 assert_contains "$out" "LEVEL: high"
 
+# ローカルの main が origin/main より古いとき（他の PR がマージされた直後など）、main を比較元にすると
+# origin/main 側の変更が差分に混ざる。新しい方を比較元にする
+STALE="$TEST_ROOT/rl/stale"
+make_repo "$STALE"
+make_remote "$STALE"
+cd "$STALE" || exit 1
+
+it "review-level: ローカルの main が origin/main より古ければ origin/main を比較元にする"
+git switch -q -c feat/doc
+commit_file "$STALE" docs/adr/0001-x.md "docs: adr"
+git switch -q main
+commit_file "$STALE" src/other.rs "feat: other pr"
+git push -q origin main
+git reset -q --hard HEAD~1
+git rebase -q origin/main feat/doc
+out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
+assert_contains "$out" "BASE: origin/main"
+assert_contains "$out" "FILES: 1"
+assert_contains "$out" "LEVEL: medium"
+
+it "review-level: ローカルの main が origin/main より進んでいれば main を比較元にする（git-merge の流れ）"
+git switch -q main
+git merge -q --ff-only origin/main
+commit_file "$STALE" src/unpushed.rs "feat: unpushed"
+git switch -q -c feat/doc2
+commit_file "$STALE" docs/adr/0002-y.md "docs: adr2"
+out=$("$SCRIPTS_DIR/review-level.sh")
+assert_contains "$out" "BASE: main"
+assert_contains "$out" "FILES: 1"
+assert_contains "$out" "LEVEL: medium"
+
 finish
