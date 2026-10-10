@@ -71,6 +71,12 @@ fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// マージコミットを必ず作る指定か。`--no-ff` があっても、後ろの `--ff` / `--ff-only` / `--squash` が
+/// 勝って fast-forward や squash になることがあるので、順序を読まずに併用ごと認めない
+fn always_merge_commit(args: &[Arg]) -> bool {
+    has_flag(args, &["--no-ff"]) && !has_flag(args, &["--ff", "--ff-only", "--squash"])
+}
+
 /// 既定ブランチの上で行う `git merge` 1 回分
 pub(super) struct DefaultBranchMerge {
     pub dir: PathBuf,
@@ -78,6 +84,7 @@ pub(super) struct DefaultBranchMerge {
     pub default: String,
     /// マージ対象の指定（ブランチ名、`-`、`--stdin`）
     pub targets: Vec<String>,
+    /// `--no-ff` で、fast-forward や squash になる指定がない
     pub no_ff: bool,
 }
 
@@ -90,7 +97,7 @@ pub(super) fn default_branch_merges(input: &Input, shell: &Shell) -> Vec<Default
         let Some((targets, no_ff)) = cmd
             .git_subcommand()
             .filter(|(sub, _)| *sub == "merge")
-            .and_then(|(_, args)| merge_targets(args).map(|t| (t, has_flag(args, &["--no-ff"]))))
+            .and_then(|(_, args)| merge_targets(args).map(|t| (t, always_merge_commit(args))))
         else {
             continue;
         };

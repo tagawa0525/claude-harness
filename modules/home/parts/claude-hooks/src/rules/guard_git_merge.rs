@@ -36,7 +36,7 @@ impl Rule for GuardGitMerge {
             let default = &merge.default;
             if !merge.no_ff {
                 out.push(Finding::Deny(format!(
-                    "{default} へのマージは --no-ff を付けてマージコミットを作ってください（fast-forward や --squash では、ブランチの履歴とマージの単位が残りません）"
+                    "{default} へのマージは --no-ff を付けてマージコミットを作ってください（--ff / --ff-only / --squash は併用できません。fast-forward や squash では、ブランチの履歴とマージの単位が残りません）"
                 )));
             }
             for (name, full) in branches {
