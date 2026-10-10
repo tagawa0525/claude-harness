@@ -63,9 +63,12 @@ fi
 last_request_at=$(tail -n 1 <<<"$requests")
 
 # 周回を数え直した印（reset-rounds.sh のコメント）。最後の印より後の要求だけを数える。
-# 取得に失敗したら、印を見落として上限を早く迎えないよう止める
+# 印はリポジトリに書き込める人のものだけ受け付ける（PR にコメントできる第三者が上限を
+# 外せないように）。取得に失敗したら、印を見落として上限を早く迎えないよう止める
 if ! resets=$(gh api --paginate "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments?per_page=100" \
-  --jq '.[] | select(.body | startswith("<!-- review-rounds-reset -->")) | .created_at'); then
+  --jq '.[] | select((.body | startswith("<!-- review-rounds-reset -->"))
+                     and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR")))
+           | .created_at'); then
   echo "ERROR: PR #${PR_NUMBER} のコメントを取得できませんでした（周回数が数えられません）" >&2
   exit 1
 fi
