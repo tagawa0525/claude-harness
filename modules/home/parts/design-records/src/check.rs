@@ -508,8 +508,10 @@ fn body(text: &str) -> Vec<&str> {
             if line == "---" {
                 break;
             }
-            let key = line.split(':').next().unwrap_or("").trim();
-            if !line.trim().is_empty() && !AMENDABLE_KEYS.contains(&key) {
+            let (key, value) = line.split_once(':').unwrap_or((line, ""));
+            // 空のキーはキーが無いのと同じ（前付けの形を揃えるだけの変更を本文の変更にしない）
+            let empty = matches!(value.trim(), "" | "[]");
+            if !empty && !AMENDABLE_KEYS.contains(&key.trim()) {
                 front.push(line);
             }
         }
