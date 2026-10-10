@@ -3,6 +3,12 @@
 #
 # 実行: bash .claude/tests/scripts/branch-topics.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
+# 前付けの status は design-records（設計の記録の CLI）が読む。リポジトリのクレートをビルドして PATH の先頭に置く。
+# lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
+DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
+cargo build -q --manifest-path "$DESIGN_RECORDS_DIR/Cargo.toml" || exit 1
+export PATH="$DESIGN_RECORDS_DIR/target/debug:$PATH"
+
 source "$(dirname "$0")/../lib.sh"
 
 # write_front <path> <status>: 前付けに status を持つ文書を書く

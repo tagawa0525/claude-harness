@@ -9,7 +9,8 @@
 # そのコミットを要約する（チェックアウトしていない PR のブランチを見るとき。例: origin/main origin/feat/x）。
 #
 # ADR と issue は docs/adr/・docs/issues/ の直下にある NNNN-name.md（4 桁の番号とハイフンで始まる）。
-# README などは含めない。status は前付け（先頭の --- と --- の間）の `status:` の値。
+# README などは含めない。status は前付けの `status:` の値（design-records status で読む。前付けの形が
+# 崩れていれば失敗する）。
 # ディレクトリが無いリポジトリでは該当の行を出さない。
 #
 # 出力（行がないものは省く）:
@@ -79,16 +80,11 @@ TYPES=$(git log --format=%s "$BASE..$TIP" \
   | awk '{ printf "%s%s=%s", (NR > 1 ? " " : ""), $2, $1 }')
 [[ -z "$TYPES" ]] || echo "TYPES: $TYPES"
 
-# status <rev> <path>: 前付けの status の値（無ければ -）
+# status <rev> <path>: 前付けの status の値（無ければ -）。前付けの形は design-records（ADR-0009）が持つ
 status() {
-  # 先に全部読む（awk が途中で抜けたときの SIGPIPE で pipefail に掛からないように）
   local text
   text=$(git show "$1:$2")
-  awk '
-    NR == 1 { if ($0 != "---") exit; next }
-    $0 == "---" { exit }
-    /^status:/ { sub(/^status:[ \t]*/, ""); sub(/[ \t]+#.*$/, ""); print; found = 1; exit }
-    END { if (!found) print "-" }' <<<"$text"
+  design-records status <<<"$text"
 }
 
 # report <dir> <prefix>: dir 直下の NNNN-*.md の追加と status の変化。
@@ -100,7 +96,11 @@ report() {
     [[ -n "$path" ]] || path="$src"
     [[ "$path" =~ ^$dir/[0-9]{4}-[^/]*\.md$ ]] || continue
     case "$kind" in
-      A) echo "${prefix}_NEW: $path ($(status "$TIP" "$path"))" ;;
+      A)
+        # echo の引数の中のコマンド置換は、失敗しても set -e に掛からないので先に受ける
+        new=$(status "$TIP" "$path")
+        echo "${prefix}_NEW: $path ($new)"
+        ;;
       M | R*)
         old=$(status "$FORK" "$src")
         new=$(status "$TIP" "$path")
