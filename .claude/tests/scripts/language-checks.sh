@@ -241,6 +241,37 @@ assert_eq "-- doc.md" "$(fake_log markdownlint)"
 assert_contains "$out" "SKIP: markdown format (--merge では自動修正しない)"
 assert_contains "$out" "OK: markdown lint"
 
+it "run-checks --base: コミット済みのブランチの変更（分岐点から）で言語を検出する"
+REPO="$TEST_ROOT/checks/base"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+git switch -q -c feat/x
+printf '#!/usr/bin/env bash\necho a\n' > branch.sh && git add branch.sh && git commit -q -m "feat: branch"
+git switch -q main
+printf '#!/usr/bin/env bash\necho m\n' > main.sh && git add main.sh && git commit -q -m "feat: main"
+git switch -q feat/x
+make_fake_tool shellcheck '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" --base main)
+assert_eq 0 $?
+assert_eq "-S warning -- branch.sh" "$(fake_log shellcheck)"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks --base: Markdown を自動修正しない（--merge と同じ）"
+REPO="$TEST_ROOT/checks/base-md"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+git switch -q -c feat/doc
+echo "# doc" > doc.md && git add doc.md && git commit -q -m "docs: doc"
+make_fake_tool markdownlint '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" --base main)
+assert_eq "-- doc.md" "$(fake_log markdownlint)"
+assert_contains "$out" "SKIP: markdown format"
+
+it "run-checks --base: 解決できない ref はエラー"
+out=$("$LANG_SCRIPTS/run-checks.sh" --base nonexistent 2>&1)
+assert_eq 2 $?
+assert_contains "$out" "nonexistent"
+
 it "run-checks: 知らないオプションはエラーで止まる"
 out=$("$LANG_SCRIPTS/run-checks.sh" --bogus 2>&1)
 assert_eq 2 $?
