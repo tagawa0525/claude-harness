@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # run-checks.sh — プロジェクトの言語を検出し、フォーマット → リント → テストを実行する
 #
-# Usage: run-checks.sh [--merge] [--base <ref>]
+# Usage: run-checks.sh [-C <dir>] [--merge] [--base <ref>]
 #
 #   --merge  マージ結果を検査する（git の pre-merge-commit hook が使う）。「ステージ済み」の代わりに
 #            HEAD（マージ先）と作業ツリーの差分で言語と対象を決め、自動修正はしない
 #            （直した内容はどちらの親にもない変更としてマージコミットに紛れ込むため、lint で止める）。
 #            commit -a でマージを締めるとき hook に渡る index は一時ファイルなので、index に頼らない
+#   -C <dir>  <dir> の worktree を検査する（git -C と同じ。今いる場所と別の worktree のブランチを検査するとき）
 #   --base <ref>  コミット済みのブランチを検査する（/git-merge がマージの前に走らせる）。<ref> との分岐点から
 #            作業ツリーまでの差分で言語と対象を決め、--merge と同じく自動修正はしない。
 #            ステージ済みの差分は、クリーンなブランチでは空なので使えない
@@ -33,36 +34,43 @@
 
 set -euo pipefail
 
+MERGE=0
+BASE_REF=""
+DIR=""
+while (( $# > 0 )); do
+  case "$1" in
+    --merge) MERGE=1 ;;
+    --base | -C)
+      if (( $# < 2 )); then
+        echo "ERROR: $1 には引数が要ります" >&2
+        exit 2
+      fi
+      if [[ "$1" == "-C" ]]; then DIR="$2"; else BASE_REF="$2"; MERGE=1; fi
+      shift
+      ;;
+    *)
+      echo "ERROR: 知らないオプション: $1（Usage: run-checks.sh [-C <dir>] [--merge] [--base <ref>]）" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ -n "$DIR" ]] && ! cd -- "$DIR" 2>/dev/null; then
+  echo "ERROR: -C $DIR に移れません" >&2
+  exit 2
+fi
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "ERROR: git リポジトリ内で実行してください" >&2
   exit 1
 }
 cd "$ROOT" || exit 1
 
-MERGE=0
 DIFF_BASE=HEAD
-while (( $# > 0 )); do
-  case "$1" in
-    --merge) MERGE=1 ;;
-    --base)
-      if (( $# < 2 )); then
-        echo "ERROR: --base には ref が要ります" >&2
-        exit 2
-      fi
-      if ! DIFF_BASE=$(git merge-base "$2" HEAD 2>/dev/null); then
-        echo "ERROR: --base $2 と HEAD の分岐点を求められません" >&2
-        exit 2
-      fi
-      MERGE=1
-      shift
-      ;;
-    *)
-      echo "ERROR: 知らないオプション: $1（Usage: run-checks.sh [--merge] [--base <ref>]）" >&2
-      exit 2
-      ;;
-  esac
-  shift
-done
+if [[ -n "$BASE_REF" ]] && ! DIFF_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/null); then
+  echo "ERROR: --base $BASE_REF と HEAD の分岐点を求められません" >&2
+  exit 2
+fi
 
 # changed_files [git diff の追加引数...]: 検査対象の変更ファイル。通常はステージ済み、
 # --merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分
