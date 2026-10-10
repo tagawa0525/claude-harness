@@ -1397,7 +1397,7 @@ for wrapped in "command sbatch --wrap true" "env FOO=1 sbatch --wrap true" "env 
   "exec sbatch --wrap true" "nohup sbatch --wrap true" "time sbatch --wrap true" "command -p env sbatch --wrap true" \
   "env -u FOO sbatch --wrap true" "env -C /tmp sbatch --wrap true" "env --unset=FOO sbatch --wrap true" \
   "exec -a alias sbatch --wrap true" "time -o t.txt sbatch --wrap true" "time -f %e sbatch --wrap true" \
-  "env -S 'sbatch --wrap true'" "env --split-string='sbatch --wrap true'" "env -S'sbatch --wrap true'"; do
+  "env -a alias sbatch --wrap true" "env --argv0 alias sbatch --wrap true" "env -S 'sbatch --wrap true'" "env --split-string='sbatch --wrap true'" "env -S'sbatch --wrap true'"; do
   out=$(run_hook guard-sbatch "$wrapped")
   assert_eq deny "$(decision "$out")"
 done
