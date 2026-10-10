@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # review-level.sh — ローカルの /code-review に渡すレベルと対象を決める
 #
-# Usage: review-level.sh [branch] [--base BASE]   (branch は省略時に今のブランチ、BASE は main)
+# Usage: review-level.sh [branch] [--base BASE]
+#   branch  省略時は今のブランチ
+#   BASE    省略時は main。origin/main がそれより新しければ origin/main
+#           （他の PR がマージされた直後はローカルの main が古く、比較元にすると
+#           その PR の変更が差分に混ざる）。積み重なったブランチは土台のブランチを渡す
 #
 # 出力:
 #   BASE: <比較元>
@@ -19,7 +23,7 @@
 
 set -euo pipefail
 
-BASE=main
+BASE=""
 TARGET=""
 while (($# > 0)); do
   case "$1" in
@@ -37,6 +41,14 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+if [[ -z "$BASE" ]]; then
+  BASE=main
+  if git rev-parse --verify -q "origin/main^{commit}" >/dev/null \
+    && git merge-base --is-ancestor main origin/main 2>/dev/null; then
+    BASE=origin/main
+  fi
+fi
 
 if [[ -z "$TARGET" ]]; then
   TARGET=$(git branch --show-current)
