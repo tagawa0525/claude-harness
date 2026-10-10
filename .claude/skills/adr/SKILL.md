@@ -1,6 +1,6 @@
 ---
 name: adr
-description: ADR（docs/adr/）を書く・直すときに使う。MADR 4.0.0 のテンプレートと、ADR に書かないもの。
+description: ADR（docs/adr/）を書く・直すときに使う。MADR 4.0.0 を基準に、前付け、見出し、運用を調整した形。
 allowed-tools:
   - Bash(git config*)
   - Bash(git ls-files*)
@@ -8,48 +8,73 @@ allowed-tools:
 
 # ADR
 
-何をなぜ決めたかを、1 件 1 決定で残す。形は [MADR](https://adr.github.io/madr/) 4.0.0 をそのまま使い、
-調整は次の 4 つだけ（ADR-0005）:
-
-- 置き場所は `docs/adr/NNNN-title-with-dashes.md`（MADR の既定は `docs/decisions/`）
-- 見出しは下の対応表の日本語にし、本文も日本語で書く（節を足せる以上、見出しは固定されないので読みやすさを取る）
-- 下の「書かないもの」を守る
-- 他人のプロジェクトでは使わない
+何をなぜ決めたかを、1 件 1 決定で残す。形は [MADR](https://adr.github.io/madr/) 4.0.0 を基準にし、ほかの仕組みの
+良いところ（xlc、PEP、KEP、ADR の事例集）を取り入れて調整している（ADR-0005）。
 
 ## このリポジトリの扱い
 
 !`git config --default unset --get claude-hooks.own-project`
 
-`false` なら他人のプロジェクト。このスキルではなく、そのプロジェクトの流儀（テンプレート、CONTRIBUTING）に
-従う。`unset` は、最初に `docs/adr/` へ書くときに hook が remote から判定して書き込む。自分の組織など、
-自分のアカウント以外の GitHub のリポジトリを自分のものとして扱うなら、
-`git config --global --add claude-hooks.owner <組織>` で足す。
+`false` なら他人のプロジェクト。そのプロジェクトの流儀（テンプレート、CONTRIBUTING）に従い、このスキルは使わない。
+`unset` は、最初に `docs/adr/` へ書くときに hook が remote から判定して書き込む。自分の組織など、自分のアカウント
+以外の GitHub のリポジトリを自分のものとして扱うなら、`git config --global --add claude-hooks.owner <組織>` で足す。
 
-## 手元の ADR を手本にしない
+## ADR にするもの
 
-既存の ADR は形の手本ではなく、下のテンプレートに照らして評価する対象。欠陥を見つけたら真似ず、直す提案を
-する（別のトピック。/topic-triage）。
+範囲、期間、危険、費用のどれかが大きい決定を ADR にする。範囲の小さい決定、規約で決まっていること、一時的な
+回避策や実験は、issue の「経緯」か、コミットの本文に書く（事例集）。
 
-## テンプレート
+## ファイルと題名
 
-見出しは次の日本語で書く（hook は英語の原文も受け付ける）。必須の 3 節は git の pre-commit が
-`claude-hooks adr-sections` で検査する。任意の節は、要らなければテンプレートの指示どおり消す。
+- 置き場所は `docs/adr/NNNN-verb-phrase.md`。4 桁の連番と、決めたことを動詞で始めた英語の kebab-case
+  （例: `0005-adopt-madr-for-adrs.md`）。番号は既存の最大 + 1 で、一度使った番号は使い回さない
+- 題名は `# ADR-NNNN: 決めたことを 1 文で`
+- 一覧のファイルは作らない。採用中の ADR は `grep -l '^status: accepted$' docs/adr/[0-9]*.md` で引く
 
-| MADR                                  | 見出し           |
-| ------------------------------------- | ---------------- |
-| Context and Problem Statement（必須） | 背景             |
-| Decision Drivers                      | 決定の要因       |
-| Considered Options（必須）            | 検討した案       |
-| Decision Outcome（必須）              | 決定と理由       |
-| Consequences                          | 帰結             |
-| Confirmation                          | 確認             |
-| Pros and Cons of the Options          | 各案の長所と短所 |
-| More Information                      | 補足             |
+!`git ls-files docs/adr`
 
-本文の決まった言い回し（`Chosen option: …, because …`、`Good, because …` など）も日本語にする
-（「採用: …。理由は…」「良い点: …」「悪い点: …」「どちらでもない: …」）。
+## 前付け
 
-MADR 4.0.0 の `template/adr-template.md` を手を加えずに収めたもの（ライセンスは MIT OR CC0-1.0）:
+MADR の前付けの代わりに、次を使う。キーは 1 行に 1 つ、一覧は `[a, b]` の形で 1 行に書く（grep で引けるように）。
+
+```yaml
+---
+status: proposed      # proposed | accepted | rejected | withdrawn | deferred | superseded | deprecated
+date: 2026-10-11      # 最後に status が変わった日
+requires: []          # 前提にしている ADR（例: [ADR-0002]）
+supersedes: []        # この ADR が置き換えた ADR
+superseded-by:        # この ADR を置き換えた ADR
+issues: []            # きっかけになった issue と、この ADR で解決した issue
+---
+```
+
+- `withdrawn` は決める前に取り下げたもの、`rejected` は決めて採らなかったもの、`deferred` は決めるのを後回しに
+  したもの（PEP、KEP）
+- `requires` に挙げた ADR を置き換えるときは、`grep -l 'requires:.*ADR-NNNN' docs/adr` で見直す ADR を引く（PEP）
+- `supersedes` と `superseded-by` は両方の ADR に書く（古い ADR だけを読んでも置き換えに気づけるように）
+
+## 本文
+
+見出しは次の日本語で書く（hook は MADR の英語の原文も受け付ける）。必須の節が無ければ git の pre-commit が
+コミットを止め、推奨の節が無ければ警告する（`claude-hooks adr-sections`）。任意の節は、要るときだけ書く。
+
+| MADR                          | 見出し           |      |
+| ----------------------------- | ---------------- | ---- |
+| Context and Problem Statement | 背景             | 必須 |
+| Decision Drivers              | 決定の要因       | 任意 |
+| Considered Options            | 検討した案       | 必須 |
+| Decision Outcome              | 決定と理由       | 必須 |
+| Consequences                  | 帰結             | 推奨 |
+| Confirmation                  | 確認             | 推奨 |
+| Pros and Cons of the Options  | 各案の長所と短所 | 任意 |
+| More Information              | 補足             | 任意 |
+
+- 決まった言い回しも日本語にする: 「採用: …。理由は…」「良い点: …」「悪い点: …」「どちらでもない: …」
+- 測った値や、変わりうる値（費用、規模）には、出典のファイルとコミットと日付を添える（xlc、事例集）
+- 「帰結」に、あとで見直す条件を書く（MADR、xlc）
+- 実装が決定に追いついていないときは、その差を「帰結」に書き、issue を立てて `issues` に入れる（xlc）
+
+MADR 4.0.0 の `template/adr-template.md`（ライセンスは MIT OR CC0-1.0）。見出しと前付けは上の調整に読み替える:
 
 ```markdown
 ---
@@ -128,18 +153,18 @@ Chosen option: "{title of option 1}", because {justification. e.g., only option,
 {You might want to provide additional evidence/confidence for the decision outcome here and/or document the team agreement on the decision and/or define when/how this decision the decision should be realized and if/when it should be re-visited. Links to other decisions and resources might appear here as well.}
 ```
 
-## 書かないもの
+## 運用
 
-| 書きたくなるもの                                           | 置き場所                                                                 |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------ |
-| ホストやリポジトリの今の状態（何が残っている、何を消した） | 書かない。状態は変わり、ADR が古くなる                                   |
-| 未解決の問題、やること                                     | issue                                                                    |
-| コードや設定の写し                                         | コミットハッシュやファイルへの参照。写しは古くなる                       |
-| 手順書（導入・再開の手順）                                 | 手順の置き場（README、docs、そのコードのリポジトリ）。ADR からは参照する |
-| 実装の細部（競合状態、エッジケース）                       | 実装の PR でテストとともに                                               |
+決定の中身は変えず、変えるときは新しい ADR で置き換える（MADR、AWS の手引き、PEP 1、xlc）。
 
-## 番号
-
-!`git ls-files docs/adr`
-
-最大の番号 + 1。1 ブランチに新しい ADR は 1 件（hook が 2 件以上を止める）。
+- **proposed の間**: 実装の前に proposed で書き、自由に直す。実装をマージするブランチで、本文（「確認」の実際の
+  テストと結果、「帰結」）を実装に合わせて直し、同じ変更で `status: accepted` にして `date` をその日にする（xlc、PEP）
+- **確定した後**（accepted、rejected、withdrawn、superseded）に新しい ADR なしで直すのは、次だけ:
+  - 誤字、文法、マークアップ、壊れたリンク（PEP 1、xlc）
+  - 前付けの `status`、`superseded-by`、`date`（AWS の手引き、xlc）
+  - 「補足」の節への、日付つきの追記（`- 2026-11-02: …`）。決定の後に分かったことのうち、決定を変えないもの
+    （事例集）
+- **決定を変えるとき**: 新しい ADR を書き、新しい方の `supersedes` と古い方の `superseded-by` で結び、古い方を
+  `status: superseded` にする。新しい ADR は、古い決定のうちまだ有効な部分を書き直して含める（採用中の ADR だけで
+  今の決定が分かるように。xlc）
+- main にマージする前は、ブランチの上の ADR を status によらず直してよい（xlc）
