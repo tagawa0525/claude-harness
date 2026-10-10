@@ -259,6 +259,12 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" 1 --max-rounds 2)
 assert_contains "$out" "ROUND: 1"
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
+it "decide-next: 印は書き込みの権限を持つ人のコメントだけを受け付ける"
+# PR にコメントできる第三者が印を付けて上限を外せないようにする
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'echo 2026-09-08T01:00:00Z'
+"$REVIEW_SCRIPTS/decide-next.sh" 1 >/dev/null
+assert_contains "$(fake_log gh)" "author_association"
+
 it "decide-next: 印が複数あれば最後の印から数える"
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' \
   'printf %s\\n 2026-09-07T00:00:00Z 2026-09-08T02:30:00Z'
