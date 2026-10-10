@@ -70,6 +70,8 @@ ADR の形をどこで示し、どう守らせるか。
 - 悪い点: 既存の ADR の前付けは新しいキー（`requires` など）を持たず、MADR に無い節（ADR-0001 の「結果」、
   ADR-0002・0003 の「再開するとき」）も残る。直すのは別の PR
 - 悪い点: hook の対象が Write / Edit に広がり、そのたびに hook が 1 回走る（ADR 以外のパスでは git を呼ばずに返す）
+- 悪い点: 他人のプロジェクトかの判定は一度だけで、後から remote を足したり変えたりしても判定し直さない。判定し直す
+  ときは `git config --unset claude-hooks.own-project` で消す
 - 悪い点: SSH の別名（`git@github-work:…`）のように github.com を含まないリモートは、所有者を判定できない。
   そのリポジトリが他人のものなら、`git config claude-hooks.own-project false` を手で書く
 - 悪い点: 中身（決定か状態か）と、確定後の変更が許された範囲かは検査できず、レビューに頼る
