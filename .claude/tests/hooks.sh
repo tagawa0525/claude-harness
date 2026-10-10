@@ -1394,7 +1394,9 @@ assert_eq allow "$(decision "$out")"
 
 it "guard-sbatch: command、env、exec、nohup、time で包んだ sbatch も止める"
 for wrapped in "command sbatch --wrap true" "env FOO=1 sbatch --wrap true" "env -i sbatch --wrap true" \
-  "exec sbatch --wrap true" "nohup sbatch --wrap true" "time sbatch --wrap true" "command -p env sbatch --wrap true"; do
+  "exec sbatch --wrap true" "nohup sbatch --wrap true" "time sbatch --wrap true" "command -p env sbatch --wrap true" \
+  "env -u FOO sbatch --wrap true" "env -C /tmp sbatch --wrap true" "env --unset=FOO sbatch --wrap true" \
+  "exec -a alias sbatch --wrap true" "time -o t.txt sbatch --wrap true" "time -f %e sbatch --wrap true"; do
   out=$(run_hook guard-sbatch "$wrapped")
   assert_eq deny "$(decision "$out")"
 done
@@ -1403,6 +1405,8 @@ it "guard-sbatch: 包んだ slurm-run.sh もフォアグラウンドなら止め
 out=$(run_hook guard-sbatch "command $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-sbatch "nohup bash $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "env -u FOO $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
 
 it "guard-sbatch: squeue、scontrol、引数に現れるだけの sbatch は通す"
