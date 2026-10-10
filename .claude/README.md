@@ -119,7 +119,6 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                | gh-wait-review, gh-pr-review          |
 | `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                              | gh-pr-review（language-checks 経由）  |
 | `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                         | gh-pr-review                          |
-| `adr/scripts/new-adr.sh`                | ADR の雛形（全ブランチの履歴から振った番号、前付け、必須と推奨の見出し）                    | adr                                   |
 
 ## スクリプトの書き方
 

@@ -26,12 +26,13 @@
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
 use super::Rule;
-use super::pre_git_merge_check::{is_adr, multi_topic_reason};
+use super::pre_git_merge_check::multi_topic_reason;
 use super::pre_pr_create_check::{body_text, missing_headings};
 use crate::gh;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell, has_flag, opt_value};
+use design_records::is_adr_path;
 use serde_json::Value;
 
 pub struct PreMergeCheck;
@@ -521,7 +522,7 @@ impl Rule for PreMergeCheck {
                         let adrs: Vec<String> = s
                             .lines()
                             .filter_map(|l| l.split_once('\t'))
-                            .filter(|(status, path)| *status == "added" && is_adr(path))
+                            .filter(|(status, path)| *status == "added" && is_adr_path(path))
                             .map(|(_, path)| path.to_string())
                             .collect();
                         reasons.extend(multi_topic_reason(&adrs));

@@ -18,3 +18,5 @@ tree-sitter-bash = "0.25.1"
 serde_json = "1"
 # 機密情報パターンと GraphQL mutation の検出。tree-sitter が既に依存している
 regex = "1"
+# ADR のパスの判定。ADR の形を持つのは design-records だけにする（ADR-0009）
+design-records = { path = "../design-records" }

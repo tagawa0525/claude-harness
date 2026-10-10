@@ -25,11 +25,16 @@ dependencies = [
 name = "claude-hooks"
 version = "0.1.0"
 dependencies = [
+ "design-records",
  "regex",
  "serde_json",
  "tree-sitter",
  "tree-sitter-bash",
 ]
+
+[[package]]
+name = "design-records"
+version = "0.1.0"
 
 [[package]]
 name = "equivalent"

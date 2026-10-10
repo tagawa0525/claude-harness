@@ -1,6 +1,10 @@
 ---
 status: accepted
 date: 2026-10-10
+requires: []
+supersedes: []
+superseded-by:
+issues: []
 ---
 
 # ADR-0004: 文書（docs/）だけの PR は最初の自動レビューで足りるとする

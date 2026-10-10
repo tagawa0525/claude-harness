@@ -5,7 +5,17 @@
 # =============================================================================
 { lib, pkgs, ... }:
 
+let
+  # 設計の記録（ADR）の雛形と検査（ADR-0009）。各プロジェクトの pre-commit が PATH から呼ぶ
+  design-records = pkgs.callPackage ./design-records/package.nix { };
+in
 {
+  # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
+  home.packages = [
+    design-records
+    pkgs.prek
+  ];
+
   # ===========================================================================
   # Git設定
   # ===========================================================================
@@ -72,7 +82,8 @@
   # ===========================================================================
   # Git Hooks（グローバル）
   # ===========================================================================
-  # プロジェクトローカルの .git/hooks/ があれば優先、なければデフォルトチェック
+  # プロジェクトローカルの .git/hooks/ があれば優先、なければプロジェクトの pre-commit の設定と
+  # デフォルトチェック
   xdg.configFile."git/hooks/pre-commit" = {
     executable = true;
     text = ''
@@ -112,16 +123,26 @@
         exec "$LOCAL_HOOK" "$@"
       fi
 
-      # pre-commit フレームワークの設定があれば使用
-      if [ -f ".pre-commit-config.yaml" ] && command -v pre-commit >/dev/null 2>&1; then
-        exec pre-commit run --hook-stage pre-commit "$@"
+      check_failed=0
+
+      # プロジェクトの pre-commit の設定（.pre-commit-config.yaml）があれば prek で走らせる
+      # （設計の記録の検査などへのオプトイン。ADR-0009）。core.hooksPath があると prek install は
+      # 拒否されるので、ここから呼ぶ。exec しないのは、オプトインしたプロジェクトでも以下の既定の
+      # 検査を走らせるため。設定はそのプロジェクトの規約なので、fork でも走らせる。
+      # 検証: modules/home/parts/tests/pre-commit-prek.sh
+      if [ -f ".pre-commit-config.yaml" ]; then
+        if command -v prek >/dev/null 2>&1; then
+          prek run --hook-stage pre-commit "$@" || check_failed=1
+        else
+          echo "⚠️  .pre-commit-config.yaml がありますが prek が PATH に無いので、その検査を飛ばします"
+        fi
       fi
 
       # ========================================
       # デフォルト: ステージされたファイルをチェック
       # ========================================
       STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-      [ -z "$STAGED_FILES" ] && exit 0
+      [ -z "$STAGED_FILES" ] && exit $check_failed
 
       # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
       # 以下の検査はどれもこちらの道具の版と規約（ruff の新しいルール、markdownlint の設定、
@@ -131,10 +152,8 @@
       # 検証: modules/home/parts/tests/pre-commit-fork.sh
       if git remote get-url upstream >/dev/null 2>&1; then
         echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust）を飛ばします"
-        exit 0
+        exit $check_failed
       fi
-
-      check_failed=0
 
       # Nix ファイルのチェック（NUL区切りでスペースを含むパスにも対応）
       NIX_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- '*.nix' || true)
