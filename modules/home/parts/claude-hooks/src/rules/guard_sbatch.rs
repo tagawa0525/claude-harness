@@ -11,6 +11,7 @@ use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Cmd, Shell};
+use std::collections::VecDeque;
 
 pub struct GuardSbatch;
 
@@ -32,28 +33,49 @@ const WRAPPERS: &[(&str, &[&str])] = &[
     ("time", &["-f", "--format", "-o", "--output"]),
 ];
 
+/// `env -S <文字列>`（`-S<文字列>`、`--split-string=<文字列>` も）の文字列。env はこれを空白で
+/// 語に分けて、続く語の前に置く
+fn split_string(option: &str, words: &mut VecDeque<String>) -> Option<String> {
+    match option {
+        "-S" | "--split-string" => words.pop_front(),
+        _ => option
+            .strip_prefix("--split-string=")
+            .or_else(|| option.strip_prefix("-S"))
+            .map(str::to_string),
+    }
+}
+
 /// 前置きと `bash <path>` / `sh <path>` を外して、実際に走るプログラムの名前を返す
-fn program(cmd: &Cmd) -> &str {
-    let words = std::iter::once(cmd.name.as_str()).chain(cmd.args.iter().map(|a| a.text.as_str()));
-    let mut words = words.peekable();
-    while let Some(word) = words.next() {
-        let name = basename(word);
+fn program(cmd: &Cmd) -> String {
+    let mut words: VecDeque<String> = std::iter::once(cmd.name.clone())
+        .chain(cmd.args.iter().map(|a| a.text.clone()))
+        .collect();
+    while let Some(word) = words.pop_front() {
+        let name = basename(&word).to_string();
         if let Some((_, valued)) = WRAPPERS.iter().find(|(wrapper, _)| *wrapper == name) {
-            while let Some(option) =
-                words.next_if(|w| w.starts_with('-') || (name == "env" && w.contains('=')))
+            while words
+                .front()
+                .is_some_and(|w| w.starts_with('-') || (name == "env" && w.contains('=')))
             {
-                if valued.contains(&option) {
-                    words.next();
+                let option = words.pop_front().unwrap_or_default();
+                if name == "env"
+                    && let Some(split) = split_string(&option, &mut words)
+                {
+                    for part in split.split_whitespace().rev() {
+                        words.push_front(part.to_string());
+                    }
+                } else if valued.contains(&option.as_str()) {
+                    words.pop_front();
                 }
             }
             continue;
         }
         if name == "bash" || name == "sh" {
-            return words.next().map_or(name, basename);
+            return words.pop_front().map_or(name, |w| basename(&w).to_string());
         }
         return name;
     }
-    ""
+    String::new()
 }
 
 /// コマンドとして実行されているか（直接、前置き越し、または `bash <path>` / `sh <path>` 経由）
