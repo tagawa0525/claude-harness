@@ -38,13 +38,18 @@ git config --global user.name test
 git config --global user.email test@example.com
 git config --global init.defaultBranch main
 
-# 本物の prek（rebuild 後は PATH にある）を見つけないよう、prek のあるディレクトリを PATH から外す
-CLEAN_PATH=""
+# prek が PATH に無いときの PATH: 今の PATH のコマンドのうち prek 以外へのリンクを 1 つのディレクトリに並べる。
+# prek のあるディレクトリごと外すと、同じディレクトリの git や ruff（home-manager の profile）まで消える
+NO_PREK="$WORK/no-prek-bin"
+mkdir -p "$NO_PREK"
 IFS=: read -ra DIRS <<<"$PATH"
 for d in "${DIRS[@]}"; do
-  [[ -x "$d/prek" ]] || CLEAN_PATH="${CLEAN_PATH:+$CLEAN_PATH:}$d"
+  for f in "$d"/*; do
+    name=$(basename "$f")
+    # PATH の前のものが勝つので、先に置いたリンクは上書きしない
+    [[ "$name" == prek || -e "$NO_PREK/$name" || ! -x "$f" ]] || ln -s "$f" "$NO_PREK/$name"
+  done
 done
-export PATH="$CLEAN_PATH"
 
 # 偽の prek: 引数を $WORK/prek-args に書き、PREK_EXIT（既定 0）で終わる
 FAKE="$WORK/fake-bin"
@@ -78,10 +83,11 @@ repo() {
   echo "$dir"
 }
 
-# run_hook <repo> [with-prek]: ステージ済みの状態で pre-commit を実行し、終了コードを返す
+# run_hook <repo> <with-prek|no-prek>: ステージ済みの状態で pre-commit を実行し、終了コードを返す。
+# with-prek は偽の prek を PATH の先頭に置き（本物の prek より先に見つかる）、no-prek は prek の無い PATH にする
 run_hook() {
-  local rc=0 path="$PATH"
-  [[ "${2:-}" == with-prek ]] && path="$FAKE:$PATH"
+  local rc=0 path="$FAKE:$PATH"
+  [[ "$2" == no-prek ]] && path="$NO_PREK"
   rm -f "$WORK/prek-args"
   (cd "$1" && PATH="$path" "$WORK/pre-commit") >"$WORK/out" 2>&1 || rc=$?
   return $rc
@@ -120,7 +126,7 @@ fi
 
 # --- 4. 設定があって prek が PATH に無ければ、知らせて既定の検査だけで通す ----------------
 R=$(repo missing config)
-if run_hook "$R" && grep -q "prek" "$WORK/out"; then
+if run_hook "$R" no-prek && grep -q "prek" "$WORK/out"; then
   ok "prek が PATH に無ければ、その旨を出して既定の検査だけで通す"
 else
   ng "prek が PATH に無いときに、知らせずに通したか、フックが失敗した"
