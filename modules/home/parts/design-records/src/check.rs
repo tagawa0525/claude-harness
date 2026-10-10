@@ -1016,6 +1016,16 @@ mod tests {
     }
 
     #[test]
+    fn adding_empty_keys_keeps_the_body() {
+        // 空のキーはキーが無いのと同じ（前付けの形を揃えるだけの変更）
+        let new = BODY.replace(
+            "date: 2026-10-01\n",
+            "date: 2026-10-01\nrequires: []\nsuperseded-by:\nissues: []\n",
+        );
+        assert!(!body_changed(BODY, &new));
+    }
+
+    #[test]
     fn english_notes_section_is_also_open() {
         let old = BODY.replace("## 補足", "## More Information");
         assert!(!body_changed(
