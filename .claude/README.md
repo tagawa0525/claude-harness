@@ -103,21 +103,21 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 
 ## スクリプトが担う手順
 
-| script                                  | 元の SKILL.md の手順                                                                        | 呼び出すスキル                       |
-| --------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                                        | git-info                             |
-| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み                         | git-worktree, git-commit             |
-| `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数                              | gh-pr-create, gh-pr-merge            |
-| `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）                              | git-branch                           |
-| `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                                         | git-branch                           |
-| `scripts/git-merge-state.sh`            | 対象の検証（main 自身・GitHub リモート・未コミット）と、BEHIND・STACKED_ON・worktree の収集 | git-merge                            |
-| `scripts/review-level.sh`               | ローカルの `/code-review` のレベル（docs/ だけなら medium、他は high）と対象ブランチの決定  | gh-pr-create, git-merge              |
-| `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → ローカル/リモートブランチ削除                                 | gh-pr-merge, git-merge               |
-| `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                  | gh-actions-check                     |
-| `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                              | gh-pr-create/merge/review            |
-| `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                | gh-wait-review, gh-pr-review         |
-| `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                              | gh-pr-review（language-checks 経由） |
-| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                         | gh-pr-review                         |
+| script                                  | 元の SKILL.md の手順                                                                        | 呼び出すスキル                        |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                                        | git-info                              |
+| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み                         | git-worktree, git-commit              |
+| `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数                              | gh-pr-create, gh-pr-merge             |
+| `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）                              | git-branch                            |
+| `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                                         | git-branch                            |
+| `scripts/git-merge-state.sh`            | 対象の検証（main 自身・GitHub リモート・未コミット）と、BEHIND・STACKED_ON・worktree の収集 | git-merge                             |
+| `scripts/review-level.sh`               | ローカルの `/code-review` のレベル（docs/ だけなら medium、他は high）と対象ブランチの決定  | gh-pr-create, gh-pr-review, git-merge |
+| `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → ローカル/リモートブランチ削除                                 | gh-pr-merge, git-merge                |
+| `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                  | gh-actions-check                      |
+| `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                              | gh-pr-create/merge/review             |
+| `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                | gh-wait-review, gh-pr-review          |
+| `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                              | gh-pr-review（language-checks 経由）  |
+| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                         | gh-pr-review                          |
 
 ## スクリプトの書き方
 
