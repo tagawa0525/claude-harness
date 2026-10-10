@@ -117,4 +117,38 @@ assert_contains "$out" "DEFAULT: none"
 assert_contains "$out" "DEFAULT_WORKTREE: none"
 assert_contains "$out" "ROOT_COMMITS: $(git rev-parse --short HEAD)"
 
+# ---------------------------------------------------------------------------
+# SKILL.md の手順を、リンクされた worktree をまたいで通す
+# ---------------------------------------------------------------------------
+
+it "git-merge の手順: worktree の feature ブランチを rebase → チェック → マージ → 片付けまで通せる"
+REPO="$TEST_ROOT/flow/app"
+make_repo "$REPO"
+git -C "$REPO" worktree add -q -b feat/x "$TEST_ROOT/flow/app-feat-x"
+echo "# doc" > "$TEST_ROOT/flow/app-feat-x/doc.md"
+git -C "$TEST_ROOT/flow/app-feat-x" add doc.md
+git -C "$TEST_ROOT/flow/app-feat-x" commit -q -m "docs: doc"
+commit_file "$REPO" b.txt "feat: main moves on"
+git -C "$REPO" worktree add -q -b feat/other "$TEST_ROOT/flow/app-feat-other"
+cd "$TEST_ROOT/flow/app-feat-other" || exit 1
+make_fake_tool markdownlint '*) exit 0 ;;'
+
+out=$("$SCRIPT" feat/x)
+assert_contains "$out" "BEHIND: 1"
+git -C "$TEST_ROOT/flow/app-feat-x" rebase -q main
+assert_contains "$("$SCRIPT" feat/x)" "BEHIND: 0"
+
+out=$("$SCRIPTS_DIR/../skills/language-checks/scripts/run-checks.sh" -C "$TEST_ROOT/flow/app-feat-x" --base main)
+assert_eq 0 $?
+assert_eq "-- doc.md" "$(fake_log markdownlint)"
+
+git -C "$REPO" merge -q --no-ff feat/x -m "Merge: doc"
+assert_eq 0 $?
+"$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x >/dev/null
+assert_eq 0 $?
+assert_file_missing "$TEST_ROOT/flow/app-feat-x"
+assert_eq "" "$(git -C "$REPO" branch --list feat/x)"
+assert_eq 1 "$(git -C "$REPO" rev-list --count --merges main)"
+cd "$TEST_ROOT" || exit 1
+
 finish

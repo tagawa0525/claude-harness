@@ -1332,6 +1332,8 @@ out=$(run_hook guard-git-merge "git -C $REPO merge feat/rebased")
 assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-git-merge "cd $REPO && git merge --no-ff feat/behind")
 assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-merge "git -C $REPO merge --no-ff feat/rebased -m 'Merge: rebased'")
+assert_eq allow "$(decision "$out")"
 cd "$REPO" || exit 1
 
 it "guard-git-merge: 既定ブランチ以外へのマージ、中断・再開、リモート追跡ブランチの取り込みは対象外"
