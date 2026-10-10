@@ -103,7 +103,9 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
             "--paginate",
             &format!("repos/{owner}/{name}/pulls/{number}/files"),
             "--jq",
-            ".[].filename",
+            // 移動は旧パスも数える。src/ から docs/ への移動は、filename だけを見ると
+            // コードを消す変更が文書だけに見える
+            ".[] | .filename, (.previous_filename // empty)",
         ],
     )
     .ok()

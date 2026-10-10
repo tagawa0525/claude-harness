@@ -90,7 +90,9 @@ fi
 docs_only() {
   local files
   # gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
-  files=$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR_NUMBER}/files" --jq '.[].filename') || return 1
+  # 移動は旧パスも数える（src/ から docs/ への移動は filename だけだと文書だけに見える）
+  files=$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR_NUMBER}/files" \
+    --jq '.[] | .filename, (.previous_filename // empty)') || return 1
   [[ -n "$files" ]] && ! grep -qv '^docs/' <<<"$files"
 }
 
