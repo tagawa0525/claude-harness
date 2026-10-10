@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # run-checks.sh — プロジェクトの言語を検出し、フォーマット → リント → テストを実行する
 #
-# Usage: run-checks.sh [--merge]
+# Usage: run-checks.sh [--merge] [--base <ref>]
 #
 #   --merge  マージ結果を検査する（git の pre-merge-commit hook が使う）。「ステージ済み」の代わりに
 #            HEAD（マージ先）と作業ツリーの差分で言語と対象を決め、自動修正はしない
 #            （直した内容はどちらの親にもない変更としてマージコミットに紛れ込むため、lint で止める）。
 #            commit -a でマージを締めるとき hook に渡る index は一時ファイルなので、index に頼らない
+#   --base <ref>  コミット済みのブランチを検査する（/git-merge がマージの前に走らせる）。<ref> との分岐点から
+#            作業ツリーまでの差分で言語と対象を決め、--merge と同じく自動修正はしない。
+#            ステージ済みの差分は、クリーンなブランチでは空なので使えない
 #
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
 #   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
@@ -37,21 +40,35 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 cd "$ROOT" || exit 1
 
 MERGE=0
-for arg in "$@"; do
-  case "$arg" in
+DIFF_BASE=HEAD
+while (( $# > 0 )); do
+  case "$1" in
     --merge) MERGE=1 ;;
+    --base)
+      if (( $# < 2 )); then
+        echo "ERROR: --base には ref が要ります" >&2
+        exit 2
+      fi
+      if ! DIFF_BASE=$(git merge-base "$2" HEAD 2>/dev/null); then
+        echo "ERROR: --base $2 と HEAD の分岐点を求められません" >&2
+        exit 2
+      fi
+      MERGE=1
+      shift
+      ;;
     *)
-      echo "ERROR: 知らないオプション: $arg（Usage: run-checks.sh [--merge]）" >&2
+      echo "ERROR: 知らないオプション: $1（Usage: run-checks.sh [--merge] [--base <ref>]）" >&2
       exit 2
       ;;
   esac
+  shift
 done
 
 # changed_files [git diff の追加引数...]: 検査対象の変更ファイル。通常はステージ済み、
-# --merge では HEAD と作業ツリーの差分
+# --merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分
 changed_files() {
   if (( MERGE )); then
-    git diff HEAD --name-only --diff-filter=ACMR "$@"
+    git diff "$DIFF_BASE" --name-only --diff-filter=ACMR "$@"
   else
     git diff --cached --name-only --diff-filter=ACMR "$@"
   fi
