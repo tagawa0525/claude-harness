@@ -146,16 +146,10 @@ fn today() -> Result<String> {
 
 fn run_check(files: &[&str]) -> Result<ExitCode> {
     let root = repo_root()?;
-    // 追跡している（ステージ済みを含む）ADR だけを見る。prek は追跡していないファイルを退避しないので、作業ツリーを
-    // そのまま読むと、コミットに入らない下書きでコミットが止まる。作業ツリーで消したものは読まない
     let mut adrs = BTreeMap::new();
-    let tracked = git(&root, &["ls-files", "-z", "--", ADR_DIR])?;
-    for path in tracked.split('\0').filter(|p| p.ends_with(".md")) {
-        let file = root.join(path);
-        if file.is_file() {
-            let text = fs::read_to_string(file).map_err(|e| format!("{path}: {e}"))?;
-            adrs.insert(path.to_string(), text);
-        }
+    for path in tracked(&root, ADR_DIR)? {
+        let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+        adrs.insert(path, text);
     }
     let issues = issue_numbers(&root)?;
     let mut scanned = BTreeMap::new();
@@ -185,16 +179,36 @@ fn run_check(files: &[&str]) -> Result<ExitCode> {
     })
 }
 
-/// docs/issues があれば、その issue の番号（`NNNN-*.md`）。無ければ `None`（GitHub などの issue を使う）。
+/// `dir` の直下の、追跡している（ステージ済みを含む）.md のうち、作業ツリーにあるもの。prek は追跡していない
+/// ファイルを退避しないので、作業ツリーをそのまま読むと、コミットに入らない下書きで結果が変わる。
+fn tracked(root: &Path, dir: &str) -> Result<Vec<String>> {
+    let listed = git(root, &["ls-files", "-z", "--", dir])?;
+    Ok(listed
+        .split('\0')
+        .filter(|p| {
+            p.strip_prefix(dir)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .is_some_and(|name| !name.contains('/') && name.ends_with(".md"))
+                && root.join(p).is_file()
+        })
+        .map(str::to_string)
+        .collect())
+}
+
+/// 追跡している docs/issues があれば、その issue の番号（`NNNN-*.md`）。無ければ `None`（GitHub などの issue を
+/// 使う）。
 fn issue_numbers(root: &Path) -> Result<Option<BTreeSet<u32>>> {
-    let dir = root.join("docs/issues");
-    if !dir.is_dir() {
+    let paths = tracked(root, "docs/issues")?;
+    if paths.is_empty() {
         return Ok(None);
     }
     Ok(Some(
-        file_names(&dir)?
+        paths
             .iter()
-            .filter_map(|name| name.strip_suffix(".md")?.split_once('-')?.0.parse().ok())
+            .filter_map(|path| {
+                let name = path.rsplit('/').next()?;
+                name.strip_suffix(".md")?.split_once('-')?.0.parse().ok()
+            })
             .collect(),
     ))
 }
