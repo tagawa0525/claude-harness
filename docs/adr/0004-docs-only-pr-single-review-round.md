@@ -47,3 +47,7 @@ ADR や文書の PR で、自動レビューが何周も続く。文章は細部
 
 - `.claude/tests/hooks.sh` と `.claude/tests/scripts/gh-pr-review.sh` に、ADR だけの PR、`docs/` に似た別の場所、
   移動の旧パスのテストを足した
+- `.claude/tests/scripts/review-level.sh` に、ローカルレビューのレベル判定（docs/ だけは medium、似た別の場所と
+  移動は high、差分が空ならエラー、古い main の扱い）のテストを足した。`docs/` の前方一致は
+  `pre-merge-check`、`decide-next.sh`、`review-level.sh` の 3 か所にあり、Rust と bash で共有できないため、
+  それぞれのテストで同じ規則を確かめている

@@ -9,6 +9,7 @@ allowed-tools:
   - Bash(~/.claude/skills/gh-pr-review/scripts/*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh)
   - Bash(~/.claude/scripts/gh-actions-diagnose.sh*)
+  - Bash(~/.claude/scripts/review-level.sh*)
   - Read
   - Edit
   - Glob
@@ -81,7 +82,8 @@ decline は事実に基づく反論があるときだけ。根拠を書けない
 
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
 受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を一度だけ回す
-（対象は `~/.claude/scripts/review-level.sh` が出す `TARGET`。2 周目はしない）。
+（PR を出す前のローカルレビューとは別枠。2 周目はしない）。対象は `~/.claude/scripts/review-level.sh`
+が出す `TARGET`（積み重なった PR は `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に写さず、コードへの参照（ファイルと関数名）で書く。
 
 対応順は 🔴 Critical（バグ・セキュリティ・ビルド失敗）→ 🟡 Warning（品質・性能）→
