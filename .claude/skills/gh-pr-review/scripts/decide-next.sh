@@ -19,9 +19,10 @@
 #   VERDICT: <判定>
 #     ACT                  未解決スレッドあり → 対応する（fix / decline / escalate）
 #     REREVIEW_NEEDED      対応を push したが再レビューを要求していない → 要求する
-#     STOP_PLAN_REVIEWED   計画（docs/plans/）だけの PR で、対応済み・head 未レビュー
-#                          → 依頼しない。文章の計画は細部をいくらでも掘れるので、
-#                            方針の指摘は最初のレビューで受けて周回を止める
+#     STOP_DOCS_REVIEWED   文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR で、対応済み・head 未レビュー
+#                          → 依頼しない。文章は細部をいくらでも掘れるので、
+#                            指摘は最初のレビューで受けて周回を止める。最新のレビューが
+#                            失敗していても、成功したレビューが一度でもあれば同じ扱い
 #                            （pre-merge-check も同じ条件で再レビューを求めない）
 #     STOP_LIMIT           要求が必要だが上限到達 → 依頼せず、残りを報告して委ねる
 #     STOP_DECLINED        未解決ゼロ・head はレビュー済み → 対応は済んでいる。マージへ
@@ -85,13 +86,15 @@ if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_NUMBER" --unresolv
   exit 1
 fi
 
-# PR の変更ファイルがすべて計画か。取得できない・1 件も無いときは計画だけとみなさない
+# PR の変更ファイルがすべて文書か。取得できない・1 件も無いときは文書だけとみなさない
 # （再レビューを求める側に倒す）
-plan_only() {
+docs_only() {
   local files
   # gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
-  files=$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR_NUMBER}/files" --jq '.[].filename') || return 1
-  [[ -n "$files" ]] && ! grep -qv '^docs/plans/' <<<"$files"
+  # 移動は旧パスも数える（src/ から docs/ への移動は filename だけだと文書だけに見える）
+  files=$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR_NUMBER}/files" \
+    --jq '.[] | .filename, (.previous_filename // empty)') || return 1
+  [[ -n "$files" ]] && ! grep -qv '^docs/' <<<"$files"
 }
 
 # 要求イベントを取得できないリポジトリでも周回を見失わないよう、多い方を周回数とする
@@ -122,6 +125,7 @@ if [[ "$response" == "none" ]]; then
 fi
 
 failed=$(sed -n 's/^REVIEW_FAILED: //p' <<<"$latest")
+successful=$(sed -n 's/^SUCCESSFUL_REVIEWS: //p' <<<"$latest")
 inline=$(sed -n 's/^INLINE_COMMENTS: //p' <<<"$latest")
 suppressed=$(sed -n 's/^SUPPRESSED_COMMENTS: //p' <<<"$latest")
 echo "REVIEW_ID: ${review_id}"
@@ -132,13 +136,17 @@ echo "SUPPRESSED_COMMENTS: ${suppressed}"
 # レビュー失敗 → 未対応 → 要求し忘れ → 対応済み。
 # 一部だけ直して push した状態（未解決あり・head 未レビュー）では、要求より先に
 # 残りの対応を促す
-if [[ "$failed" == "yes" ]]; then
+# 文書だけの PR は、一度でも成功したレビューがあれば後のレビューの失敗で止めない
+# （pre-merge-check と同じ条件）。最初のレビューが失敗しただけの PR は止める
+if [[ "$failed" == "yes" ]] && ! { (( successful > 0 )) && docs_only; }; then
   echo "VERDICT: REVIEW_FAILED"
 elif (( unresolved > 0 )); then
   echo "VERDICT: ACT"
+elif [[ "$failed" == "yes" ]]; then
+  echo "VERDICT: STOP_DOCS_REVIEWED"
 elif [[ "$head_reviewed" == "no" ]]; then
-  if plan_only; then
-    echo "VERDICT: STOP_PLAN_REVIEWED"
+  if docs_only; then
+    echo "VERDICT: STOP_DOCS_REVIEWED"
   elif (( round < MAX_ROUNDS )); then
     echo "VERDICT: REREVIEW_NEEDED"
   else

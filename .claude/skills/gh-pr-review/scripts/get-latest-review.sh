@@ -10,6 +10,8 @@
 #   STATE: <state>
 #   HEADLINE: <本文1行目>    例: "### 🟢 Approval recommended"
 #   REVIEW_FAILED: yes|no   Copilot がレビューできずに終わったレビューか
+#   SUCCESSFUL_REVIEWS: <n> 失敗していない Copilot レビューの件数（文書だけの PR は、
+#                           一度でも成功していれば後のレビューが失敗しても止めない）
 #   INLINE_COMMENTS: <n>    このレビューに紐づくインラインコメント数（通常の指摘）
 #   SUPPRESSED_COMMENTS: <n>
 #   --- suppressed ---      以降、Suppressed comments セクションの本文
@@ -65,17 +67,22 @@ suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" 
   | head -n 1 | grep -o -E '[0-9]+' || echo 0)
 
 # レビュー失敗は本文1行目に出る（インライン指摘もサマリーも無い）
+failed_pattern="(wasn'?t able to review|unable to review|encountered an error)"
 review_failed=no
-if head -n 1 <<<"$body" \
-   | grep -q -i -E "(wasn'?t able to review|unable to review|encountered an error)"; then
+if head -n 1 <<<"$body" | grep -q -i -E "$failed_pattern"; then
   review_failed=yes
 fi
+successful_reviews=0
+while IFS= read -r first_line; do
+  grep -q -i -E "$failed_pattern" <<<"$first_line" || successful_reviews=$((successful_reviews + 1))
+done < <(jq -r '.[] | (.body // "") | split("\n")[0]' <<<"$reviews")
 
 echo "ROUND: ${round}"
 echo "REVIEW_ID: ${review_id}"
 echo "STATE: ${state}"
 echo "HEADLINE: $(head -n 1 <<<"$body")"
 echo "REVIEW_FAILED: ${review_failed}"
+echo "SUCCESSFUL_REVIEWS: ${successful_reviews}"
 echo "INLINE_COMMENTS: ${inline_count}"
 echo "SUPPRESSED_COMMENTS: ${suppressed_count}"
 if (( suppressed_count > 0 )); then

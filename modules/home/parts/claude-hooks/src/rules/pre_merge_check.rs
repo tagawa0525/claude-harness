@@ -14,8 +14,8 @@
 //!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる。
 //!    表記・コメント・整形など挙動を変えない修正で 1 周回す価値がないときも同じ。
 //!    どちらも完了報告に何をマージしたかを残す前提で外す。
-//!    計画（docs/plans/）だけの PR は、一度でも自動レビューに成功していれば検査しない。
-//!    文章の計画は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
+//!    文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR は、一度でも自動レビューに成功
+//!    していれば検査しない。文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
 //!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
@@ -91,11 +91,11 @@ fn json_stream(s: &str) -> Option<Vec<Value>> {
         .ok()
 }
 
-/// 計画の置き場所。ここだけを変える PR は最初の自動レビューで足りる（検証 8）
-const PLAN_DIR: &str = "docs/plans/";
+/// 文書の置き場所。ここだけを変える PR は最初の自動レビューで足りる（検証 8、ADR-0004）
+const DOCS_DIR: &str = "docs/";
 
-/// PR の変更ファイルがすべて計画か。取得できない・1 件も無いときは計画だけとみなさない
-fn is_plan_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
+/// PR の変更ファイルがすべて文書か。取得できない・1 件も無いときは文書だけとみなさない
+fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
     gh::gh(
         dir,
         &[
@@ -103,13 +103,15 @@ fn is_plan_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
             "--paginate",
             &format!("repos/{owner}/{name}/pulls/{number}/files"),
             "--jq",
-            ".[].filename",
+            // 移動は旧パスも数える。src/ から docs/ への移動は、filename だけを見ると
+            // コードを消す変更が文書だけに見える
+            ".[] | .filename, (.previous_filename // empty)",
         ],
     )
     .ok()
     .is_some_and(|s| {
         let files: Vec<&str> = s.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-        !files.is_empty() && files.iter().all(|f| f.starts_with(PLAN_DIR))
+        !files.is_empty() && files.iter().all(|f| f.starts_with(DOCS_DIR))
     })
 }
 
@@ -475,11 +477,11 @@ impl Rule for PreMergeCheck {
                     // 検査しない。ただしチェックが失敗しているなら初回レビューが走らなかった
                     // ということなので、下の分岐でレビュー未実施として報告する
                     Some(sha) if sha.is_empty() && !copilot_check_failed => {}
-                    // 計画だけの PR は一度レビューを受けていれば足りる。後のレビューが失敗していても止めない
+                    // 文書だけの PR は一度レビューを受けていれば足りる。後のレビューが失敗していても止めない
                     Some(sha)
                         if !sha.is_empty()
                             && sha != head_sha
-                            && is_plan_only(&dir, &owner, &name, number)
+                            && is_docs_only(&dir, &owner, &name, number)
                             && has_successful_review(&dir, &owner, &name, number) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
