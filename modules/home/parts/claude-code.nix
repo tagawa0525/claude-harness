@@ -98,6 +98,7 @@ let
         "Skill(git-tidy)"
         "Skill(git-cherry-pick)"
         "Skill(git-info)"
+        "Skill(git-merge)"
         "Skill(gh-pr-merge)"
         "Skill(gh-pr-create)"
         "Skill(gh-pr-review)"
