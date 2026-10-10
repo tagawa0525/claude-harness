@@ -70,3 +70,13 @@
 
 - コンテナランタイムは Podman を優先する（Docker より好み）
 - 大きなソースファイルの構造把握は全文 Read より先に `zat <file>`。ただし Rust は pub シンボル限定で、private 関数・`#[test]`・trait impl メソッドはエラーなく静かに省かれる点に注意
+
+## Compact Instructions
+
+会話を要約するとき、次を必ず残す。
+
+- 現在のブランチと worktree のパス、作業中のトピック、次にやること
+- 直近のチェック（`run-checks.sh`）とテストの結果、失敗していれば原因
+- 未対応のレビュー指摘と、マージ（/gh-pr-merge、GitHub リモートがなければ /git-merge）のどの段階まで進んだか
+- ユーザーが会話中に出した指示・決定のうち、CLAUDE.md、ADR、issue にまだ書かれていないもの
+- 試して捨てた方式と、その理由（ADR か issue に書く前のもの）
