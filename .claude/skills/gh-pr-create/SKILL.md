@@ -13,6 +13,7 @@ allowed-tools:
   - Bash(gh pr*)
   - Bash(gh auth*)
   - Bash(~/.claude/scripts/branch-topics.sh*)
+  - Bash(~/.claude/scripts/review-level.sh*)
 ---
 
 # GitHub PR Create Command
@@ -37,10 +38,18 @@ PR の Why を1文で書く。2文要る（無関係な決定や話題が混ざ�
 GitHub の自動レビューを何周も回すより、ローカルの `/code-review` のほうが早い。PR を出す前に回し、
 指摘がなくなってから出す。GitHub の自動レビューは最終ゲートとして残す:
 
-- `/code-review high` で main との差分をレビューする。変更が `docs/` だけなら `medium`
+- レベルと対象はスクリプトが決める。`LEVEL`（docs/ だけなら medium、他は high）と `TARGET` を
+  `/code-review` に渡す。worktree で作業していると、引数なしの `/code-review` は呼び出し元の cwd
+  （main の worktree など）の差分を見て「指摘なし」と返すので、`TARGET` は必ず渡す:
+
+  ```bash
+  ~/.claude/scripts/review-level.sh
+  ```
+
+  差分が空だとスクリプトが止まる。出力の `LEVEL` と `TARGET` で `/code-review <LEVEL> <TARGET>` を回す
 - 直すのは検証できる誤りだけ（バグ、コードや事実と食い違う記述、壊れた参照）。直したらコミットして、
-  もう一度だけ回す。周回は最大 2 回で、3 周目はしない。残った指摘は、PR 本文の Tests に
-  見送った理由を添えて書く
+  もう一度だけ回す。ローカルの周回は最大 2 回で、3 周目はしない。GitHub の自動レビュー
+  （`gh-pr-review` の周回）とは別に数える。残った指摘は、PR 本文の Tests に見送った理由を添えて書く
 - 文書にはコードの挙動を写さず、コードへの参照（ファイルと関数名）を書く。写した記述は、
   コードが変わると古くなり、次のレビューの的になる
 - 別の PR を先にマージしないと成り立たないとき（別リポジトリの変更を指す ADR など）は、PR 本文の

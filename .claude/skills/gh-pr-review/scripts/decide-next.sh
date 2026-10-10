@@ -19,7 +19,7 @@
 #   VERDICT: <判定>
 #     ACT                  未解決スレッドあり → 対応する（fix / decline / escalate）
 #     REREVIEW_NEEDED      対応を push したが再レビューを要求していない → 要求する
-#     STOP_DOCS_REVIEWED   文書（docs/ 配下の ADR・計画・issue）だけの PR で、対応済み・head 未レビュー
+#     STOP_DOCS_REVIEWED   文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR で、対応済み・head 未レビュー
 #                          → 依頼しない。文章は細部をいくらでも掘れるので、
 #                            指摘は最初のレビューで受けて周回を止める
 #                            （pre-merge-check も同じ条件で再レビューを求めない）

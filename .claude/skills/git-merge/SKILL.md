@@ -6,6 +6,7 @@ argument-hint: [branch]
 allowed-tools:
   - Bash(~/.claude/scripts/git-merge-state.sh*)
   - Bash(~/.claude/scripts/post-merge-cleanup.sh*)
+  - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
   - Bash(git status*)
   - Bash(git branch*)
@@ -86,12 +87,19 @@ main との分岐点からの変更を検査する。マージ時にも hook が
 
 ### レビュー（自動レビューの代わり）
 
-`/code-review high` で main との差分をレビューし（変更が `docs/` だけなら `medium`）、
-指摘に対応してからマージする。ブランチを切ってから一度も回していなければ、ここが最初のレビューになる:
+レベルと対象はスクリプトが決める。worktree で作業していると、引数なしの `/code-review` は呼び出し元の cwd
+（main の worktree など）の差分を見て「指摘なし」と返すので、対象は必ず渡す:
+
+```bash
+~/.claude/scripts/review-level.sh [branch]
+```
+
+差分が空だとスクリプトが止まる。出力の `LEVEL`（docs/ だけなら medium、他は high）と `TARGET` で
+`/code-review <LEVEL> <TARGET>` を回し、指摘に対応してからマージする:
 
 - 直すのは検証できる誤りだけ（バグ、コードや事実と食い違う記述、壊れた参照）。
   修正したら、コミットして rebase の要否とチェックからやり直す
-- 周回は最大 2 回。3 周目はしない
+- マージ前のレビューは最大 2 回。3 周目はしない
 - 対応しない指摘は、その理由をユーザーに伝える
 
 ### マージコミットメッセージ

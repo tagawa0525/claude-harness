@@ -72,14 +72,17 @@ bot の指摘は前提が誤っていることがある。**着手前に、指�
 
 decline は事実に基づく反論があるときだけ。根拠を書けないなら fix か escalate。
 
-文書（`docs/` 配下の ADR・計画・issue）だけの PR は、直すものを絞る:
+文書（変更ファイルがすべて `docs/` 配下。判定は `decide-next.sh` の `docs_only`、決定は ADR-0004）だけの PR は、
+直すものを絞る:
 
 - fix: 検証できる誤り（コードや事実と食い違う記述、壊れた参照・リンク）と、方針に関わる指摘
 - decline: 競合状態・エッジケースなど実装の細部、言い回しや網羅性の指摘。
   `This will be settled with tests in the implementation PR.` か、不要な理由の事実を添えて返信する
 
-レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。指摘の的を増やさないよう、
-直すときもコードの挙動を文書に写さず、コードへの参照（ファイルと関数名）で書く。
+レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
+受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を一度だけ回す
+（対象は `~/.claude/scripts/review-level.sh` が出す `TARGET`。2 周目はしない）。
+直すときも、コードの挙動を文書に写さず、コードへの参照（ファイルと関数名）で書く。
 
 対応順は 🔴 Critical（バグ・セキュリティ・ビルド失敗）→ 🟡 Warning（品質・性能）→
 🟢 Suggestion（スタイル・nit）→ ℹ️ Question（回答のみ）。
@@ -133,17 +136,17 @@ EOF
 ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {pr_number}
 ```
 
-| VERDICT                | 意味                                         | 次の一手                                                                                         |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                                             |
-| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | `request-rereview.sh` で要求する（挙動を変えない修正だけなら下記の省略条件）                     |
-| `STOP_DOCS_REVIEWED`   | 文書だけの PR で、対応を push 済み           | 要求せず Step 7 へ（文書は最初のレビューで足りる。マージ時の hook も再レビューを求めない）       |
-| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ。最終周の対応・見送りを報告に列挙する                                         |
-| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                         |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ |
-| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                        |
-| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                      |
-| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh {pr_number}` で待つ（下記と同様 background）                |
+| VERDICT                | 意味                                         | 次の一手                                                                                                                 |
+| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                                                                     |
+| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | `request-rereview.sh` で要求する（挙動を変えない修正だけなら下記の省略条件）                                             |
+| `STOP_DOCS_REVIEWED`   | 文書だけの PR で、対応を push 済み           | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない） |
+| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ。最終周の対応・見送りを報告に列挙する                                                                 |
+| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                 |
+| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                         |
+| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                                                |
+| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                                              |
+| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh {pr_number}` で待つ（下記と同様 background）                                        |
 
 **再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分。
 `run_in_background=true` で実行）。

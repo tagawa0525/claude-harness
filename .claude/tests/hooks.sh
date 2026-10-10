@@ -905,7 +905,7 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_contains "$(reason "$out")" "周回上限"
 assert_contains "$(reason "$out")" "ユーザーが承認"
 
-# 文書（docs/）だけの PR は、最初の自動レビューで指摘を受ければ足りる。
+# 文書（docs/）だけの PR は、最初の自動レビューで指摘を受ければ足りる（ADR-0004）。
 # 文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない
 # （nucrawler #145 は 22 コミット・74 コメント、#146 も指摘 0 件の後に毎回新しい論点が出た）
 # make_fake_gh_merge_files <files> [reviewed] [check_run] [succeeded]
