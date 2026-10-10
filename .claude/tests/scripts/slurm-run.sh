@@ -40,9 +40,10 @@ export PATH="$FAKE_BIN:$PATH" TEST_ROOT
 RUN="$SCRIPTS_DIR/slurm-run.sh"
 mkdir -p "$HOME/github/proj" "$HOME/r995/proj"
 
-it "slurm-run: 排他・待機・環境の引き継ぎ・名前・ログを付けてコマンドを投げる"
+it "slurm-run: 排他・待機・環境の引き継ぎ・名前・ログ・見積もり・連絡先を付けてコマンドを投げる"
 cd "$HOME/github/proj" || exit 1
-out=$("$RUN" xlc-2G 'cargo run --release -- p2/assembly-2G.toml')
+git init -q -b feat/vera-2g .
+out=$("$RUN" -t 30 xlc-2G 'cargo run --release -- p2/assembly-2G.toml')
 assert_eq 0 $?
 args=$(cat "$TEST_ROOT/sbatch.args")
 assert_contains "$args" "--exclusive"
@@ -51,6 +52,8 @@ assert_contains "$args" "--export=ALL"
 assert_contains "$args" $'-J\nxlc-2G'
 assert_contains "$args" $'-o\n'"$HOME/github/slurm-logs/%x-%j.out"
 assert_contains "$args" $'--wrap\ncargo run --release -- p2/assembly-2G.toml'
+assert_contains "$args" $'--time\n30'
+assert_contains "$args" $'--comment\nfeat/vera-2g '"$HOME/github/proj"
 
 it "slurm-run: ジョブの番号、ログの場所、ログの末尾、終了コードを出す"
 assert_contains "$out" "JOB: 42"
@@ -59,24 +62,29 @@ assert_contains "$out" "job output"
 assert_contains "$out" "EXIT: 0"
 
 it "slurm-run: ジョブが失敗したら、その終了コードで終わる"
-out=$(FAKE_JOB_EXIT=3 "$RUN" xlc-2G 'false')
+out=$(FAKE_JOB_EXIT=3 "$RUN" -t 1 xlc-2G 'false')
 assert_eq 3 $?
 assert_contains "$out" "EXIT: 3"
 
 it "slurm-run: --top を付けると、投げたジョブを待ち行列の先頭に移す"
 rm -f "$TEST_ROOT/scontrol.calls"
-"$RUN" --top xlc-0005-1B 'true' >/dev/null
+"$RUN" --top -t 5 xlc-0005-1B 'true' >/dev/null
 assert_eq "top 42" "$(cat "$TEST_ROOT/scontrol.calls")"
 
 it "slurm-run: --top を付けなければ順番に触らない"
 rm -f "$TEST_ROOT/scontrol.calls"
-"$RUN" xlc-2G 'true' >/dev/null
+"$RUN" -t 1 xlc-2G 'true' >/dev/null
 assert_file_missing "$TEST_ROOT/scontrol.calls"
+
+it "slurm-run: git の外では連絡先に場所だけを書く"
+mkdir -p "$HOME/github/plain" && cd "$HOME/github/plain" || exit 1
+"$RUN" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\n'"$HOME/github/plain"
 
 it "slurm-run: r995 以外では ~/r995 の下で投げ、ログは NFS の側に作る"
 rm -rf "$HOME/github/slurm-logs" "$HOME/r995/slurm-logs"
 cd "$HOME/r995/proj" || exit 1
-out=$(FAKE_HOST=t14g4 "$RUN" xlc-2G 'true')
+out=$(FAKE_HOST=t14g4 "$RUN" -t 1 xlc-2G 'true')
 assert_eq 0 $?
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'-o\n'"$HOME/github/slurm-logs/%x-%j.out"
 assert_contains "$out" "LOG: $HOME/r995/slurm-logs/xlc-2G-42.out"
@@ -85,19 +93,24 @@ assert_file_exists "$HOME/r995/slurm-logs"
 it "slurm-run: r995 以外で ~/r995 の外から投げたら、投げずにエラー"
 rm -f "$TEST_ROOT/sbatch.args"
 cd "$HOME/github/proj" || exit 1
-out=$(FAKE_HOST=t14g4 "$RUN" xlc-2G 'true' 2>&1)
+out=$(FAKE_HOST=t14g4 "$RUN" -t 1 xlc-2G 'true' 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
 it "slurm-run: 名前がファイル名に使えない文字を含んだらエラー"
 cd "$HOME/github/proj" || exit 1
-out=$("$RUN" 'xlc 2G/a' 'true' 2>&1)
+out=$("$RUN" -t 1 'xlc 2G/a' 'true' 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 
 it "slurm-run: 名前かコマンドがなければ使い方を出してエラー"
-out=$("$RUN" xlc-2G 2>&1)
+out=$("$RUN" -t 1 xlc-2G 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+
+it "slurm-run: 見積もりの時間がなければ使い方を出してエラー"
+out=$("$RUN" xlc-2G 'true' 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "Usage:"
 
