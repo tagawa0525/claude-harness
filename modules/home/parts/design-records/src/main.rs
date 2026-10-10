@@ -246,19 +246,16 @@ fn default_branch(root: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
-/// 確定した ADR の本文の変更（注意）。比べるのは既定ブランチとの分岐点（main にマージする前のブランチの上の
-/// 変更は status によらず自由）。分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない。
+/// 確定した ADR の本文の変更と削除（注意）。比べるのは既定ブランチとの分岐点（main にマージする前のブランチの上の
+/// 変更は status によらず自由）。分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない。本文は `files`
+/// の ADR だけを比べ（改名は改名前の版と比べる）、削除は渡されたかによらず示す（pre-commit は消したファイルを
+/// 渡さない）。
 fn body_changes(
     root: &Path,
     adrs: &BTreeMap<String, String>,
     files: &[&str],
 ) -> Result<Vec<Finding>> {
-    let changed: Vec<&str> = files
-        .iter()
-        .copied()
-        .filter(|f| is_adr_path(f) && adrs.contains_key(*f))
-        .collect();
-    if changed.is_empty() || !git_ok(root, &["rev-parse", "--verify", "--quiet", "HEAD"])? {
+    if !git_ok(root, &["rev-parse", "--verify", "--quiet", "HEAD"])? {
         return Ok(Vec::new());
     }
     let (base, shown) = match default_branch(root)? {
@@ -269,9 +266,34 @@ fn body_changes(
         },
         None => ("HEAD".to_string(), "HEAD".to_string()),
     };
+    // 分岐点から作業ツリーまでの変更（pre-commit の中では、ステージしていない変更は退避されている）。
+    // 改名の検出は diff.renames の設定に左右されないよう明示する
+    let diff = git(
+        root,
+        &[
+            "diff",
+            "-z",
+            "--name-status",
+            "--find-renames",
+            &base,
+            "--",
+            ADR_DIR,
+        ],
+    )?;
+    let mut fields = diff.split('\0').filter(|f| !f.is_empty());
     let mut found = Vec::new();
-    for path in changed {
-        let spec = format!("{base}:{path}");
+    while let Some(kind) = fields.next() {
+        let old_path = fields.next().unwrap_or_default();
+        let new_path = if kind.starts_with('R') || kind.starts_with('C') {
+            fields.next().unwrap_or_default()
+        } else {
+            old_path
+        };
+        let deleted = kind == "D";
+        if !is_adr_path(old_path) || !(deleted || files.contains(&new_path)) {
+            continue;
+        }
+        let spec = format!("{base}:{old_path}");
         if !git_ok(root, &["cat-file", "-e", &spec])? {
             continue;
         }
@@ -281,18 +303,29 @@ fn body_changes(
         else {
             continue;
         };
-        if body_changed(&old, &adrs[path]) {
-            found.push(Finding {
-                path: path.to_string(),
-                line: None,
-                severity: Severity::Warning,
-                message: format!(
-                    "the body changed although the ADR is {status} on {shown}; \
-                     after a decision, fix only typos, grammar, markup and broken links \
-                     (append dated notes to the notes section), or supersede it with a new ADR"
-                ),
-            });
-        }
+        let message = if deleted {
+            format!(
+                "the ADR was deleted although it is {status} on {shown}; \
+                 keep decided ADRs and supersede them with a new ADR"
+            )
+        } else if adrs
+            .get(new_path)
+            .is_some_and(|new| body_changed(&old, new))
+        {
+            format!(
+                "the body changed although the ADR is {status} on {shown}; \
+                 after a decision, fix only typos, grammar, markup and broken links \
+                 (append dated notes to the notes section), or supersede it with a new ADR"
+            )
+        } else {
+            continue;
+        };
+        found.push(Finding {
+            path: if deleted { old_path } else { new_path }.to_string(),
+            line: None,
+            severity: Severity::Warning,
+            message,
+        });
     }
     Ok(found)
 }
