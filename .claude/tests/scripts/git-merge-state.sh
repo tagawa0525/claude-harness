@@ -55,12 +55,25 @@ cd "$TEST_ROOT/s3" || exit 1
 git worktree add -q "$TEST_ROOT/s3-feat-x" feat/x
 out=$("$SCRIPT" feat/x)
 assert_contains "$out" "TARGET_WORKTREE: $TEST_ROOT/s3-feat-x"
+assert_contains "$out" "DEFAULT_WORKTREE: $TEST_ROOT/s3"
+
+it "git-merge-state: 対象の worktree の中から実行しても、既定ブランチの worktree を出す"
+out=$(cd "$TEST_ROOT/s3-feat-x" && "$SCRIPT")
+assert_contains "$out" "DEFAULT_WORKTREE: $TEST_ROOT/s3"
 
 it "git-merge-state: 対象の worktree に未コミットの変更があればエラー"
 echo dirty >> "$TEST_ROOT/s3-feat-x/a.txt"
 out=$("$SCRIPT" feat/x 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "未コミット"
+
+it "git-merge-state: 既定ブランチの worktree に未コミットの変更があればエラー"
+git -C "$TEST_ROOT/s3-feat-x" checkout -q -- a.txt
+echo dirty >> "$TEST_ROOT/s3/README.md"
+out=$("$SCRIPT" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "$TEST_ROOT/s3"
+git -C "$TEST_ROOT/s3" checkout -q -- README.md
 
 it "git-merge-state: main / master 自身は対象にしない"
 local_repo "$TEST_ROOT/s4"
@@ -101,6 +114,7 @@ cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/first)
 assert_eq 0 $?
 assert_contains "$out" "DEFAULT: none"
+assert_contains "$out" "DEFAULT_WORKTREE: none"
 assert_contains "$out" "ROOT_COMMITS: $(git rev-parse --short HEAD)"
 
 finish
