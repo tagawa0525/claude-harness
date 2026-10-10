@@ -17,6 +17,7 @@ mod guard_gh_run_rerun;
 mod guard_git_add;
 mod guard_git_merge;
 mod guard_git_push;
+mod guard_sbatch;
 mod pre_git_merge_check;
 mod pre_merge_check;
 mod pre_pr_create_check;
@@ -26,6 +27,7 @@ mod warn_large_commit;
 pub fn all() -> &'static [&'static dyn Rule] {
     &[
         &require_background_wait::RequireBackgroundWait,
+        &guard_sbatch::GuardSbatch,
         &block_main_commit::BlockMainCommit,
         &warn_large_commit::WarnLargeCommit,
         &guard_git_add::GuardGitAdd,
