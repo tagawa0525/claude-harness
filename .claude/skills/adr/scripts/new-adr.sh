@@ -29,9 +29,11 @@ ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 mkdir -p docs/adr
 
+# パイプラインの中では git log の失敗が後ろの find の成功に隠れるので、先に取り出す
+HISTORY=$(git log --all --format= --name-only -- docs/adr)
 LAST=$(
   {
-    git log --all --format= --name-only -- docs/adr
+    printf '%s\n' "$HISTORY"
     find docs/adr -maxdepth 1 -name '[0-9]*-*.md'
   } | sed -nE 's|^docs/adr/([0-9]+)-[^/]*\.md$|\1|p' | sort -n | tail -1
 )
