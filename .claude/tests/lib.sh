@@ -211,6 +211,11 @@ run_post() {
     | "$CLAUDE_HOOKS_BIN" post-tool-use
 }
 
+# run_event <subcommand> <json>: ツール以外の hook（UserPromptSubmit、PreCompact）を評価する
+run_event() {
+  "$CLAUDE_HOOKS_BIN" "$1" <<<"$2"
+}
+
 # decision <hook-output> → permissionDecision（出力が空なら "allow"）
 decision() {
   if [[ -z "$1" ]]; then echo allow; else jq -r '.hookSpecificOutput.permissionDecision // "allow"' <<<"$1"; fi

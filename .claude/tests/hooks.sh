@@ -1415,6 +1415,41 @@ assert_eq allow "$(decision "$out")"
 out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-p)
 assert_eq deny "$(decision "$out")"
 
+it "require-adr-skill: ユーザーが /adr と打って読み込んだ（UserPromptSubmit）あとも書ける"
+# ユーザーが打ったスラッシュコマンドは Skill ツールを通らずに展開される
+run_event user-prompt-submit '{"hook_event_name": "UserPromptSubmit", "session_id": "s-u1", "prompt": "/adr 0006 を書いて"}'
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-u1)
+assert_eq allow "$(decision "$out")"
+
+it "require-adr-skill: /adr で始まらない入力（/adrx、文中の /adr）は読み込んだことにしない"
+run_event user-prompt-submit '{"hook_event_name": "UserPromptSubmit", "session_id": "s-u2", "prompt": "/adrx"}'
+run_event user-prompt-submit '{"hook_event_name": "UserPromptSubmit", "session_id": "s-u2", "prompt": "あとで /adr を使う"}'
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-u2)
+assert_eq deny "$(decision "$out")"
+
+it "require-adr-skill: Skill の名前が /adr の形でも記録する"
+run_post Skill '{"skill": "/adr"}' s-u3
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-u3)
+assert_eq allow "$(decision "$out")"
+
+it "require-adr-skill: 会話の要約（PreCompact）の前に記録を消す（要約でスキルの本文が消えるため）"
+run_post Skill '{"skill": "adr"}' s-u4
+run_event pre-compact '{"hook_event_name": "PreCompact", "session_id": "s-u4", "trigger": "auto"}'
+out=$(run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-u4)
+assert_eq deny "$(decision "$out")"
+
+it "require-adr-skill: XDG_RUNTIME_DIR が無ければ、ほかのユーザーと共有しない ~/.cache に記録する"
+( unset XDG_RUNTIME_DIR; run_post Skill '{"skill": "adr"}' s-u5 )
+assert_file_exists "$HOME/.cache/claude-hooks/skills/s-u5"
+out=$( unset XDG_RUNTIME_DIR; run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-u5 )
+assert_eq allow "$(decision "$out")"
+
+it "require-adr-skill: 真偽値でない手書きの値は上書きしない"
+git -C "$ADR_REPO" config claude-hooks.own-project off-for-now
+run_tool require-adr-skill Write "$(write_input "$ADR_REPO/docs/adr/0001-x.md")" s-u6 >/dev/null
+assert_eq off-for-now "$(git -C "$ADR_REPO" config --get claude-hooks.own-project)"
+git -C "$ADR_REPO" config --unset claude-hooks.own-project
+
 it "require-adr-skill: 別のセッションで読んだだけでは書けない"
 out=$(run_tool require-adr-skill Edit "$(jq -n --arg p "$ADR_REPO/docs/adr/0001-x.md" '{file_path: $p, old_string: "a", new_string: "b"}')" s-c)
 assert_eq deny "$(decision "$out")"
@@ -1596,6 +1631,43 @@ assert_contains "$out" "docs/adr/0002-b.md"
 assert_contains "$out" "検討した案（Considered Options）"
 assert_not_contains "$out" "決定と理由（Decision Outcome）」"
 assert_contains "$out" "/adr"
+git reset -q
+
+it "adr-sections: 改名で入った ADR も新しい ADR として検査する"
+printf '# draft\n' > docs/adr/draft.md
+git add docs/adr/draft.md
+git commit -q -m "docs: draft"
+git mv docs/adr/draft.md docs/adr/0004-moved.md
+out=$(adr_sections)
+assert_contains "$out" "rc=1"
+assert_contains "$out" "0004-moved.md"
+git reset -q
+git checkout -q -- docs/adr/draft.md
+rm -f docs/adr/0004-moved.md
+
+it "adr-sections: 既存の ADR を変えるときは、必須の節が無くても止めず警告する（確定した ADR の前付けの更新など）"
+printf -- '---\nstatus: accepted\n---\n# ADR\n\n## Context\n\n## Decision\n' > docs/adr/0005-old.md
+git add docs/adr/0005-old.md
+git commit -q --no-verify -m "docs: old style adr"
+sed -i 's/accepted/superseded/' docs/adr/0005-old.md
+git add docs/adr/0005-old.md
+out=$(adr_sections)
+assert_contains "$out" "rc=0"
+assert_contains "$out" "0005-old.md"
+assert_contains "$out" "背景（Context and Problem Statement）"
+git reset -q
+git checkout -q -- docs/adr/0005-old.md
+
+it "adr-sections: コードブロックは開いた記号と同じ記号で閉じる（~~~ の中の ``` で閉じない）"
+printf '# ADR\n\n## 背景\n\n~~~\n```\n~~~\n\n## 検討した案\n\n## 決定と理由\n' > docs/adr/0002-b.md
+git add docs/adr/0002-b.md
+assert_contains "$(adr_sections)" "rc=0"
+git reset -q
+
+it "adr-sections: 閉じの # がある見出し（## 背景 ##）も読む"
+printf '# ADR\n\n## 背景 ##\n\n## 検討した案\n\n## 決定と理由 ##\n' > docs/adr/0002-b.md
+git add docs/adr/0002-b.md
+assert_contains "$(adr_sections)" "rc=0"
 git reset -q
 
 it "adr-sections: 日本語のファイル名の ADR も検査する"
