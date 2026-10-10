@@ -1,8 +1,8 @@
 //! ADR（docs/adr/ 直下の NNNN-*.md）の判定と、コミット時の節の検査（`claude-hooks adr-sections`）
 //!
-//! 検査するのは MADR 4.0.0 の必須の節があるかだけ（ADR-0005）。任意の節や MADR に無い節は
-//! 止めない: MADR は節を足すことを禁じておらず、中身（決定か状態か）の判断はレビューの役目。
-//! 節の名前は .claude/skills/adr/SKILL.md のテンプレートと揃える。
+//! 検査するのは MADR 4.0.0 の必須の節があるかだけ（ADR-0005）。見出しは日本語（スキルの対応表）でも
+//! MADR の原文の英語でもよい。任意の節や MADR に無い節は止めない: MADR は節を足すことを禁じておらず、
+//! 中身（決定か状態か）の判断はレビューの役目。対応表は .claude/skills/adr/SKILL.md と揃える。
 //! index が確定するのはコミットの時なので、PreToolUse ではなく git の pre-commit
 //! （modules/home/parts/git.nix）から呼ぶ。git add && git commit や git commit -a も捕まえる
 
@@ -22,11 +22,11 @@ pub fn is_adr(path: &str) -> bool {
     })
 }
 
-/// MADR 4.0.0 の必須の節
-const REQUIRED: &[&str] = &[
-    "Context and Problem Statement",
-    "Considered Options",
-    "Decision Outcome",
+/// MADR 4.0.0 の必須の節（日本語の見出し, 英語の見出し）
+const REQUIRED: &[(&str, &str)] = &[
+    ("背景", "Context and Problem Statement"),
+    ("検討した案", "Considered Options"),
+    ("決定と理由", "Decision Outcome"),
 ];
 
 /// ステージ済みの ADR の節を検査する。問題があれば理由を返す（git の pre-commit が表示して止める）
@@ -52,7 +52,11 @@ pub fn check_staged(dir: &Path) -> Option<String> {
     }
     Some(format!(
         "ADR に MADR の必須の節（{}）がありません。/adr スキルのテンプレートで直してください。\n{}",
-        REQUIRED.join("・"),
+        REQUIRED
+            .iter()
+            .map(|(ja, _)| *ja)
+            .collect::<Vec<_>>()
+            .join("・"),
         problems.join("\n")
     ))
 }
@@ -75,10 +79,10 @@ fn headings(body: &str) -> Vec<String> {
 }
 
 fn problem(path: &str, hs: &[String]) -> Option<String> {
-    let missing: Vec<&str> = REQUIRED
+    let missing: Vec<String> = REQUIRED
         .iter()
-        .copied()
-        .filter(|r| !hs.iter().any(|h| h == r))
+        .filter(|(ja, en)| !hs.iter().any(|h| h == ja || h == en))
+        .map(|(ja, en)| format!("{ja}（{en}）"))
         .collect();
     if missing.is_empty() {
         return None;
