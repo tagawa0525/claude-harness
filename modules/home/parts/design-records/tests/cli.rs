@@ -264,6 +264,7 @@ fn check_passes_a_new_template_and_a_repository_without_adrs() {
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}", stdout(&out));
     t.run(&["new", "use-foo", "foo を使う"]);
+    t.git(&["add", "-A"]);
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}", stdout(&out));
     assert_eq!(stdout(&out), "");
@@ -278,6 +279,10 @@ fn check_fails_on_errors_and_lists_them() {
         path,
         &t.read(path).replace("status: proposed", "status: approved"),
     );
+    // 追跡していない ADR（コミットに入らない下書き）は見ない
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    t.git(&["add", "-A"]);
     let out = t.run(&["check"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(
@@ -302,6 +307,7 @@ fn check_with_files_shows_warnings_only_for_them_but_errors_for_all() {
             .replace("proposed", "approved"),
     );
     t.write(b, &t.read(b).replace("### 確認\n", ""));
+    t.git(&["add", "-A"]);
     let out = t.run(&["check", b]);
     assert_eq!(out.status.code(), Some(1));
     let shown = stdout(&out);
@@ -408,6 +414,19 @@ fn check_compares_bodies_even_when_the_base_front_matter_is_broken() {
     let out = t.run(&["check", b]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_skips_body_comparison_without_a_merge_base() {
+    let t = superseded_repo("orphan");
+    t.git(&["switch", "-q", "--orphan", "lone"]);
+    t.git(&["rm", "-q", "-r", "--cached", "."]);
+    t.git(&["add", "-A"]);
+    t.git(&["commit", "-q", "-m", "docs(adr): lone"]);
+    let b = "docs/adr/0002-use-b.md";
+    t.write(b, &(t.read(b) + "\n本文を足す\n"));
+    let out = t.run(&["check", b]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
 
 #[test]

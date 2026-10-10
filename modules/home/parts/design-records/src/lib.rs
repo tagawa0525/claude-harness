@@ -262,6 +262,10 @@ mod tests {
         assert_eq!(status("# no front matter\nstatus: x\n"), None);
         assert_eq!(status("---\ndate: 2026-10-11\n---\nstatus: x\n"), None);
         assert_eq!(status("---\nstatus:\n---\n"), None);
+        assert_eq!(
+            status("---\nstatus:\taccepted\t# x\n---\n").as_deref(),
+            Some("accepted")
+        );
     }
 
     #[test]

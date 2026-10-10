@@ -962,6 +962,16 @@ mod tests {
     }
 
     #[test]
+    fn other_front_matter_changes_change_the_body() {
+        // 確定した後に直してよい前付けは status、superseded-by、date だけ
+        let old = BODY.replace("date: 2026-10-01\n", "date: 2026-10-01\nsupersedes: []\n");
+        assert!(body_changed(
+            &old,
+            &old.replace("supersedes: []", "supersedes: [ADR-0003]")
+        ));
+    }
+
+    #[test]
     fn english_notes_section_is_also_open() {
         let old = BODY.replace("## 補足", "## More Information");
         assert!(!body_changed(
