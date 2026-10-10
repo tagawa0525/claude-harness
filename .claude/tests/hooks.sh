@@ -5,7 +5,8 @@
 #   claude-hooks を cargo build してから各ルールを --rule で個別に評価する
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
-#       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check
+#       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
+#       guard-git-merge
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -1283,5 +1284,75 @@ it "pre-git-merge-check: ヒアドキュメント本文のコマンドには反�
 cd "$REPO" || exit 1
 out=$(run_hook pre-git-merge-check "$(write_doc '例: git merge --no-ff feat/two')")
 assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# guard-git-merge: 既定ブランチへのローカルのマージの形（--no-ff で、既定ブランチの上に rebase 済み）
+# ===========================================================================
+
+REPO="$TEST_ROOT/mergeshape"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/behind
+commit_file "$REPO" behind.txt "feat: behind"
+git -C "$REPO" switch -q main
+commit_file "$REPO" main2.txt "feat: main moves on"
+git -C "$REPO" switch -q -c feat/rebased
+commit_file "$REPO" rebased.txt "feat: rebased"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+
+it "guard-git-merge: --no-ff で、既定ブランチの上に積まれたブランチなら通す"
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/rebased -m "Merge: rebased"')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-git-merge 'git merge -m "Merge: rebased" --no-ff feat/rebased')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-merge: --no-ff がなければ deny（fast-forward ではマージコミットが残らない）"
+out=$(run_hook guard-git-merge 'git merge feat/rebased')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "--no-ff"
+out=$(run_hook guard-git-merge 'git merge --ff-only feat/rebased')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-merge 'git merge --squash feat/rebased')
+assert_eq deny "$(decision "$out")"
+
+it "guard-git-merge: 既定ブランチが先に進んでいて rebase していないブランチは deny"
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/behind -m "Merge: behind"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "feat/behind"
+assert_contains "$(reason "$out")" "git rebase main"
+
+it "guard-git-merge: git merge - は直前のブランチとして判定する"
+git switch -q feat/behind && git switch -q main
+out=$(run_hook guard-git-merge 'git merge --no-ff -')
+assert_eq deny "$(decision "$out")"
+
+it "guard-git-merge: -C / cd で指定したリポジトリで判定する"
+cd "$TEST_ROOT" || exit 1
+out=$(run_hook guard-git-merge "git -C $REPO merge feat/rebased")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-merge "cd $REPO && git merge --no-ff feat/behind")
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
+
+it "guard-git-merge: 既定ブランチ以外へのマージ、中断・再開、リモート追跡ブランチの取り込みは対象外"
+git switch -q feat/rebased
+out=$(run_hook guard-git-merge 'git merge feat/behind')
+assert_eq allow "$(decision "$out")"
+git switch -q main
+for cmd in 'git merge --abort' 'git merge --continue' 'git merge --quit' 'git merge-base main feat/behind'; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+git init -q --bare "$REPO-origin.git"
+git remote add origin "$REPO-origin.git"
+git push -q origin main
+git fetch -q origin
+out=$(run_hook guard-git-merge 'git merge --ff-only origin/main')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-merge: 同じコマンドの前の git switch で移った先のブランチで判定する"
+git switch -q feat/rebased
+out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
+assert_eq deny "$(decision "$out")"
 
 finish
