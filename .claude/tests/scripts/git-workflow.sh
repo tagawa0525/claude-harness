@@ -334,6 +334,21 @@ out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq "" "$(git ls-remote --heads origin feat/x)"
 assert_contains "$out" "REMOTE_BRANCH: deleted"
 
+it "post-merge-cleanup: リモートのないリポジトリ（/git-merge の後）でも worktree とブランチを片付ける"
+REPO="$TEST_ROOT/cleanup6/app"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
+commit_file "$REPO" a.txt "feat: a"
+git -C "$REPO" switch -q main
+git -C "$REPO" merge -q --no-ff -m "Merge: feat/x" feat/x
+git -C "$REPO" worktree add -q "$TEST_ROOT/cleanup6/app-feat-x" feat/x
+cd "$REPO" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_file_missing "$TEST_ROOT/cleanup6/app-feat-x"
+assert_eq "" "$(git branch --list feat/x)"
+assert_contains "$out" "REMOTE_BRANCH: none"
+
 it "post-merge-cleanup: 未マージのブランチは削除せず失敗する"
 REPO="$TEST_ROOT/cleanup5/app"
 make_repo "$REPO"
