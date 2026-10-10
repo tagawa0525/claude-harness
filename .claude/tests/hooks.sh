@@ -6,7 +6,7 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge
+#       guard-git-merge / require-adr-skill / check-adr-sections
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
