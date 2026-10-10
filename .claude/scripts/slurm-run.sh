@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # slurm-run.sh — r995 の Slurm に重い計算を 1 本投げ、終わるまで待つ
 #
-# Usage: slurm-run.sh [--top] <name> <command>
+# Usage: slurm-run.sh [--top] -t <見積もり> <name> <command>
 #
 # ほかの計算と重ならないよう排他で走らせる（sbatch --exclusive --wait --export=ALL）。
 # <name> はジョブの名前（squeue で見分ける）とログのファイル名に使う。例: xlc-2G、openmc-2G
+# -t: かかる時間の見積もり（sbatch --time の形。分か H:MM:SS）。待ち行列の見込み（squeue --start）に
+#     使う。超えても止めない（slurm.conf の OverTimeLimit=UNLIMITED）
 # --top: 待っているジョブより先に走らせる（scontrol top。走っているジョブは止めない）
+# 連絡先として、投げた場所と git のブランチをジョブのコメントに書く（squeue の %k）。
 #
 # ログは r995 の ~/github/slurm-logs/<name>-<job>.out。ジョブは投げたときのパスで r995 の上で走るので、
 # r995 以外のホストでは ~/r995（r995 の ~/github の NFS）の下で投げる。
@@ -20,15 +23,25 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--top] <name> <command>" >&2
+  echo "Usage: $0 [--top] -t <見積もり> <name> <command>" >&2
   exit 1
 }
 
 top=false
-if [[ ${1:-} == --top ]]; then
-  top=true
+estimate=""
+while (($#)); do
+  case "$1" in
+    --top) top=true ;;
+    -t)
+      (($# >= 2)) || usage
+      estimate=$2
+      shift
+      ;;
+    *) break ;;
+  esac
   shift
-fi
+done
+[[ -n $estimate ]] || usage
 (($# == 2)) || usage
 name=$1
 command=$2
@@ -54,11 +67,16 @@ else
 fi
 mkdir -p "$local_logs"
 
+contact=$PWD
+if branch=$(git symbolic-ref --short -q HEAD 2>/dev/null); then
+  contact="$branch $PWD"
+fi
+
 # sbatch --wait は終わるまで戻らないので、裏で走らせ、最初の行から番号を読む
 submitted=$(mktemp)
 trap 'rm -f "$submitted"' EXIT
 sbatch --exclusive --wait --export=ALL -J "$name" -o "$remote_logs/%x-%j.out" \
-  --wrap "$command" >"$submitted" &
+  --time "$estimate" --comment "$contact" --wrap "$command" >"$submitted" &
 pid=$!
 job=""
 while [[ -z $job ]]; do
