@@ -7,7 +7,8 @@
 # title: 決めたことの 1 文（表題の「ADR-NNNN: 」の後ろ）
 # Output: 作ったファイルの、リポジトリの直下からのパス
 #
-# 番号は、作業ツリーと全ブランチの履歴に現れた docs/adr/NNNN-*.md の最大 + 1。
+# 番号は、作業ツリーと全ブランチの履歴に現れた docs/adr/<数字>-*.md の最大 + 1 を 4 桁で振る
+# （3 桁で振っていた既存の ADR も数える）。
 # 削除した ADR の番号を使い回すと、古い参照が別の決定を指してしまうため、履歴も数える。
 
 set -euo pipefail
@@ -31,8 +32,8 @@ mkdir -p docs/adr
 LAST=$(
   {
     git log --all --format= --name-only -- docs/adr
-    find docs/adr -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.md'
-  } | sed -nE 's|^docs/adr/([0-9]{4})-[^/]*\.md$|\1|p' | sort -n | tail -1
+    find docs/adr -maxdepth 1 -name '[0-9]*-*.md'
+  } | sed -nE 's|^docs/adr/([0-9]+)-[^/]*\.md$|\1|p' | sort -n | tail -1
 )
 NUM=$(printf '%04d' $((10#${LAST:-0} + 1)))
 FILE="docs/adr/$NUM-$SLUG.md"
