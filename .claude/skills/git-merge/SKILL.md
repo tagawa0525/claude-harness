@@ -57,11 +57,17 @@ git branch main [root-commit]
 対象は、まだマージしていない別のブランチの上に積まれている。土台のブランチから順にこの手順でマージし、
 対象は後で rebase する。
 
+### worktree
+
+main を別の worktree（`DEFAULT_WORKTREE`）でチェックアウトしていると、別の worktree からは `git switch main`
+できない。ブランチも、ほかの worktree（`TARGET_WORKTREE`）にあると `git switch [branch]` できない。
+ブランチの操作はそのブランチの worktree で、マージは main の worktree で行う（`git -C <path>`）。
+`TARGET_WORKTREE` が none なら、今の worktree で `git switch [branch]` してよい。
+
 ### rebase（`BEHIND` が 0 でない）
 
 ```bash
-git switch [branch]
-git rebase main
+git -C [TARGET_WORKTREE] rebase main
 ```
 
 コンフリクトしたら内容と解決案を示し、解決して `git rebase --continue` するか
@@ -69,10 +75,11 @@ git rebase main
 
 ### チェック（CI の代わり）
 
-対象ブランチで品質チェックを実行する。マージ時にも hook が走るが、ここで先に直しておく:
+対象ブランチの worktree で、main との分岐点からの変更を検査する。マージ時にも hook が走るが、ここで先に直しておく
+（コミット済みでステージ済みの差分がないので、`--base` で範囲を渡す）:
 
 ```bash
-~/.claude/skills/language-checks/scripts/run-checks.sh
+cd [TARGET_WORKTREE] && ~/.claude/skills/language-checks/scripts/run-checks.sh --base main
 ```
 
 失敗したら原因を直してコミットし、もう一度チェックする。通らないままマージしない。
@@ -110,11 +117,11 @@ Branch: [branch]
 
 ### マージ
 
-main へ移り、必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）:
+main の worktree で、必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）。
+`DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う:
 
 ```bash
-git switch main
-git merge --no-ff [branch] -m "$(cat <<'EOF'
+git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'
 [マージコミットメッセージ]
 EOF
 )"
@@ -124,10 +131,11 @@ EOF
 
 ## 後片付け
 
-対象の worktree とブランチを削除する（変更が残っていたり、未マージだったりすれば失敗する。確認して対処する）:
+対象の worktree とブランチを削除する（変更が残っていたり、未マージだったりすれば失敗する。確認して対処する）。
+`DEFAULT_WORKTREE` か `TARGET_WORKTREE` で実行する:
 
 ```bash
-~/.claude/scripts/post-merge-cleanup.sh [branch]
+cd [DEFAULT_WORKTREE] && ~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
 ## 完了確認
