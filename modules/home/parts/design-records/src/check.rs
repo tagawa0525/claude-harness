@@ -417,15 +417,25 @@ fn check_supersession(docs: &[Adr], existing: &BTreeSet<u32>, out: &mut Found) {
     }
     for (&old, doc) in &by_number {
         for new in doc.adr_items("superseded-by") {
-            if by_number
-                .get(&new)
-                .is_some_and(|n| !n.adr_items("supersedes").contains(&old))
-            {
+            let Some(successor) = by_number.get(&new) else {
+                continue;
+            };
+            if !successor.adr_items("supersedes").contains(&old) {
                 out.error(
                     doc.path,
                     None,
                     format!(
                         "superseded-by ADR-{new:04}, but ADR-{new:04} does not supersede ADR-{old:04}"
+                    ),
+                );
+            } else if !TOOK_EFFECT.contains(&successor.status()) {
+                // 置き換える側が効力を持つまで、古い ADR は採用中
+                out.error(
+                    doc.path,
+                    None,
+                    format!(
+                        "superseded-by ADR-{new:04}, but ADR-{new:04} is {}",
+                        successor.status()
                     ),
                 );
             }
