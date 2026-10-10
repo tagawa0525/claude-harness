@@ -61,6 +61,7 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 | `guard-git-push`          | main / master への push、force push（`--force-with-lease` は feature branch なら open PR があっても可）、`--all` / `--mirror`                                                                                                                                                                                                                       | コマンドに `ALLOW_PROTECTED_PUSH=1` を付ける                                                                                                                  |
 | `guard-gh-api`            | 生の `gh api` による Actions 権限設定（`actions/permissions`、`default_workflow_permissions`）への書き込みと、GraphQL の `resolveReviewThread`（resolve は `resolve-thread.sh` 経由に固定）                                                                                                                                                         | なし                                                                                                                                                          |
 | `guard-gh-run-rerun`      | 既に attempt 2 以上の run への `gh run rerun`（一時障害の再実行は 1 回まで。確認できなければ deny）                                                                                                                                                                                                                                                 | コマンドに `ALLOW_RERUN=1` を付ける                                                                                                                           |
+| `guard-git-merge`         | 既定ブランチへのローカルの `git merge`（GitHub リモートのないリポジトリの /git-merge）に `--no-ff` を付けること、対象のブランチが既定ブランチの上に rebase 済みであること（`gh pr merge` の `--merge` と「head が base より遅れていない」に相当）。対象の判定は `pre-git-merge-check` と共有する                                                    | なし（直し方は理由に示す）                                                                                                                                    |
 | `pre-merge-check`         | `gh pr merge` の `--merge` / `--delete-branch` / 本文見出し、CI、reviewDecision、未解決スレッド、head が base より遅れていない（リベース済み）、最後の push が自動レビュー済み（bot レビューの commit_id が head と一致。bot レビューが無いリポジトリでは検査しない）。レビュー自体が失敗しているときは CI 失敗に数えずレビュー未実施として報告する | コマンドに `ALLOW_UNREVIEWED_HEAD=1` を付ける（レビューが回らないとき、または挙動を変えない修正のみのとき）                                                   |
 | `pre-git-merge-check`     | 既定ブランチへのローカルのブランチの `git merge` と、`gh pr merge`（`pre-merge-check` の中で同じ判定）で、ブランチが新しい ADR（`docs/adr/` 直下の `NNNN-*.md`）を 2 件以上加えていれば止める（1 ブランチ 1 トピック）。既存の ADR の変更は数えない                                                                                                 | `ALLOW_MULTI_TOPIC=1`（1 つの決定を複数の ADR に分けたときと、決定前の案（status: proposed）の ADR をまとめて加えるときだけ。マージのメッセージに理由を書く） |
 | `pre-pr-create-check`     | `gh pr create` の `--title`（70 文字以内）、`--body` / `--body-file`（`## Summary` / `## Changes` / `## Tests`）、未プッシュコミットなし、`--web` なし                                                                                                                                                                                              | なし                                                                                                                                                          |
@@ -102,19 +103,20 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 
 ## スクリプトが担う手順
 
-| script                                  | 元の SKILL.md の手順                                                | 呼び出すスキル                       |
-| --------------------------------------- | ------------------------------------------------------------------- | ------------------------------------ |
-| `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                | git-info                             |
-| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み | git-worktree, git-commit             |
-| `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数      | gh-pr-create, gh-pr-merge            |
-| `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）      | git-branch                           |
-| `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                 | git-branch                           |
-| `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → ローカル/リモートブランチ削除         | gh-pr-merge                          |
-| `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）          | gh-actions-check                     |
-| `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                      | gh-pr-create/merge/review            |
-| `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                        | gh-wait-review, gh-pr-review         |
-| `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                      | gh-pr-review（language-checks 経由） |
-| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                 | gh-pr-review                         |
+| script                                  | 元の SKILL.md の手順                                                                        | 呼び出すスキル                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                                        | git-info                             |
+| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み                         | git-worktree, git-commit             |
+| `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数                              | gh-pr-create, gh-pr-merge            |
+| `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）                              | git-branch                           |
+| `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                                         | git-branch                           |
+| `scripts/git-merge-state.sh`            | 対象の検証（main 自身・GitHub リモート・未コミット）と、BEHIND・STACKED_ON・worktree の収集 | git-merge                            |
+| `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → ローカル/リモートブランチ削除                                 | gh-pr-merge, git-merge               |
+| `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                  | gh-actions-check                     |
+| `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                              | gh-pr-create/merge/review            |
+| `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                | gh-wait-review, gh-pr-review         |
+| `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                              | gh-pr-review（language-checks 経由） |
+| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                         | gh-pr-review                         |
 
 ## スクリプトの書き方
 
