@@ -26,9 +26,8 @@
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
 use super::Rule;
-use super::pre_git_merge_check::multi_topic_reason;
+use super::pre_git_merge_check::{is_adr, multi_topic_reason};
 use super::pre_pr_create_check::{body_text, missing_headings};
-use crate::adr::is_adr;
 use crate::gh;
 use crate::input::Input;
 use crate::output::Finding;

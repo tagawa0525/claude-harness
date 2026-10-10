@@ -56,9 +56,7 @@ let
   ];
 
   # PreToolUse hook。10 本あった bash hook を Rust 製 1 バイナリ（./claude-hooks）に統合し、
-  # settings.json には 1 件だけ登録する。ツールの呼び出しごとに 1 プロセスで、そのツールが対象の
-  # ルールを評価する（Bash のほか、ADR の規則のために Write / Edit / MultiEdit）。
-  # PostToolUse には Skill の成功を記録する post-tool-use を登録する（ADR-0006）。
+  # settings.json には 1 件だけ登録する。Bash ツールの呼び出しごとに 1 プロセスで全ルールを評価する。
   # バイナリは store パスではなく固定パス ~/.claude/bin/claude-hooks 経由で参照する
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
@@ -299,38 +297,24 @@ in
     fi
     if [ "''${DRY_RUN:-0}" != "1" ]; then
       ${pkgs.jq}/bin/jq \
-        --arg bin "$HOME/${claudeHooksBinRel}" \
+        --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
         --argjson timeout ${toString claudeHookTimeout} \
         --argjson legacy '${builtins.toJSON legacyHookFiles}' \
         --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
-        '# イベントごとにバイナリの登録を 1 件にする（あれば command / timeout / matcher を更新、
-        # なければ追加）。$sub はサブコマンド、$matcher が null なら matcher を持たないイベント
-        def upsert($sub; $matcher):
-          ($bin + " " + $sub) as $cmd
-          | ("/bin/claude-hooks " + $sub) as $suffix
-          | def mine: any(.hooks[]?; (.command | tostring) | endswith($suffix));
-            def entry: {"type": "command", "command": $cmd, "timeout": $timeout};
-          (. // [])
-          | if any(.[]; mine) then
-              map(if mine then (if $matcher == null then del(.matcher) else .matcher = $matcher end) else . end
-                | .hooks |= map(if ((.command | tostring) | endswith($suffix)) then entry else . end))
-            else
-              . + [{"hooks": [entry]} + (if $matcher == null then {} else {"matcher": $matcher} end)]
-            end;
-        . + $static |
+        '. + $static |
         .skipDangerousModePermissionPrompt = true |
         .hooks.PreToolUse |= (
           (. // [])
           # 旧 bash hook（ファイル名で識別）の登録を外し、空になった matcher を消す
           | map(.hooks |= map(select((.command | tostring) as $c | ($legacy | any(. as $f | $c | endswith("/" + $f))) | not)))
           | map(select((.hooks | length) > 0))
-          | upsert("pre-tool-use"; "Bash|Write|Edit|MultiEdit")
-        ) |
-        # ADR の規則（ADR-0006）: スキルの読み込みの記録（Skill の成功、ユーザーが打った /adr）と、
-        # 会話の要約の前の記録の消去
-        .hooks.PostToolUse |= upsert("post-tool-use"; "Skill") |
-        .hooks.UserPromptSubmit |= upsert("user-prompt-submit"; null) |
-        .hooks.PreCompact |= upsert("pre-compact"; null)' \
+          # バイナリの登録を 1 件にする（あれば command / timeout を更新、なければ追加）
+          | if any(.[]; any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use"))) then
+              map(.hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .command = $cmd | .timeout = $timeout else . end))
+            else
+              . + [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
+            end
+        )' \
         "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
       echo "Claude Code: settings and hooks updated in settings.json"
     else

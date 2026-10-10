@@ -1,19 +1,12 @@
 //! claude-hooks: Claude Code の PreToolUse hook。
 //!
-//! 標準入力の hook JSON（tool_name / session_id / tool_input / cwd）を読み、ツールごとに対象の
-//! ルールを評価して deny / additionalContext を JSON で返す。Bash はコマンドを構文解析して渡す。
+//! 標準入力の hook JSON（tool_name / tool_input.command / tool_input.run_in_background / cwd）を読み、
+//! Bash ツールのコマンドを構文解析して各ルールを評価し、deny / additionalContext を JSON で返す。
 //! 出力なし = 許可。終了コードは常に 0（hook の不具合でツール呼び出しを壊さない）。
 //!
 //! Usage: claude-hooks pre-tool-use [--rule <name>]...
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
-//!        claude-hooks post-tool-use   ツールの成功後の記録（読み込んだスキル）。出力しない
-//!        claude-hooks user-prompt-submit  ユーザーが打ったスラッシュコマンドの記録。出力しない
-//!        claude-hooks pre-compact     会話の要約の前に記録を消す。出力しない
-//!        claude-hooks adr-sections    ステージ済みの ADR の節を検査する（git の pre-commit から呼ぶ）。
-//!                                     必須の節が無ければ標準エラーに出して終了コード 1。
-//!                                     推奨の節が無いだけなら警告を出して 0
 
-mod adr;
 mod gh;
 mod git;
 mod input;
@@ -24,9 +17,7 @@ mod shell;
 use std::io::Read;
 
 fn usage() -> ! {
-    eprintln!(
-        "Usage: claude-hooks pre-tool-use [--rule <name>]... | post-tool-use | user-prompt-submit | pre-compact | adr-sections"
-    );
+    eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]...");
     eprintln!("rules: {}", rules::names().join(", "));
     std::process::exit(2);
 }
@@ -36,40 +27,6 @@ fn main() {
     let mut it = args.iter();
     match it.next().map(String::as_str) {
         Some("pre-tool-use") => {}
-        Some("post-tool-use") => {
-            let mut raw = String::new();
-            if std::io::stdin().read_to_string(&mut raw).is_ok()
-                && let Some(input) = input::Input::parse(&raw)
-            {
-                rules::require_adr_skill::record_skill(&input);
-            }
-            return;
-        }
-        Some(sub @ ("user-prompt-submit" | "pre-compact")) => {
-            let mut raw = String::new();
-            if std::io::stdin().read_to_string(&mut raw).is_ok()
-                && let Some(input) = input::Input::parse(&raw)
-            {
-                if sub == "user-prompt-submit" {
-                    rules::require_adr_skill::record_prompt(&input);
-                } else {
-                    rules::require_adr_skill::forget(&input);
-                }
-            }
-            return;
-        }
-        Some("adr-sections") => {
-            let dir = std::env::current_dir().unwrap_or_default();
-            let report = adr::check_staged(&dir);
-            if let Some(warning) = report.warning {
-                eprintln!("⚠️  {warning}");
-            }
-            if let Some(error) = report.error {
-                eprintln!("❌ {error}");
-                std::process::exit(1);
-            }
-            return;
-        }
         _ => usage(),
     }
     let mut selected: Vec<&str> = Vec::new();
@@ -94,20 +51,15 @@ fn main() {
     let Some(input) = input::Input::parse(&raw) else {
         return;
     };
+    if input.tool_name != "Bash" {
+        return;
+    }
 
     // ルール側の panic は「判定できない」であって「ツールを止める」ではない
     let result = std::panic::catch_unwind(|| {
-        let command = if input.tool_name == "Bash" {
-            input.command.as_str()
-        } else {
-            ""
-        };
-        let shell = shell::Shell::parse(command);
+        let shell = shell::Shell::parse(&input.command);
         let mut findings = Vec::new();
         for rule in rules::all() {
-            if !rule.tools().contains(&input.tool_name.as_str()) {
-                continue;
-            }
             if selected.is_empty() || selected.contains(&rule.name()) {
                 findings.extend(rule.check(&input, &shell));
             }

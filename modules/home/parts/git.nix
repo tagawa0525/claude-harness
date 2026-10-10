@@ -66,9 +66,6 @@
       # 初回 push で上流を自動設定する。スキルの手順から「上流の有無で -u を付け分ける」分岐をなくす
       push.autoSetupRemote = true;
       core.hooksPath = "~/.config/git/hooks"; # グローバルhooksを使用
-      # Claude Code の hook（claude-hooks）が他人のプロジェクトを見分けるための自分の GitHub アカウント。
-      # GitHub のリモートの所有者がこれ以外なら、自分の規約（ADR の形など）を当てない
-      claude-hooks.owner = "tagawa0525";
     };
   };
 
@@ -106,14 +103,6 @@
       # 同じ検査をここで行う
       if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
         "$(dirname "$0")/pre-merge-commit"
-      fi
-
-      # ADR の節を一般的な形に限る（ADR-0006）。index が確定するのはここなので、PreToolUse ではなく
-      # この hook で検査する（git add && git commit、git commit -a も捕まえる）。プロジェクトローカルの
-      # hook より前に置く（そちらは exec で置き換わる）。他人のプロジェクトでは claude-hooks が外す
-      # （git config claude-hooks.own-project）。バイナリの置き場所は claude-code.nix の claudeHooksBinRel
-      if [ -x "$HOME/.claude/bin/claude-hooks" ]; then
-        "$HOME/.claude/bin/claude-hooks" adr-sections
       fi
 
       # プロジェクトローカルの pre-commit があれば優先実行

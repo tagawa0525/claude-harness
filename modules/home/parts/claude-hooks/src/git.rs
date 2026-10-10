@@ -32,53 +32,6 @@ pub fn is_fork(dir: &Path) -> bool {
     git(dir, &["remote", "get-url", "upstream"]).is_some()
 }
 
-/// 自分のプロジェクトか（自分の規約を当てるか）。`git config claude-hooks.own-project` の値に従い、
-/// 未設定なら判定して書き込む（一度だけ判定し、手で書いた値を優先する）。
-/// 他人のプロジェクト = upstream リモートを持つ fork、または GitHub のリモートの所有者に
-/// `git config claude-hooks.owner`（自分のアカウント。組織など複数可）以外がいる。
-/// GitHub のリモートが無ければ自分のもの。自分のアカウントが未設定なら所有者で判定できないので、
-/// 書き込まずにその都度判定する（設定した後で判定し直せるように）
-pub fn own_project(dir: &Path) -> bool {
-    match git(
-        dir,
-        &["config", "--type=bool", "--get", "claude-hooks.own-project"],
-    )
-    .as_deref()
-    {
-        Some("true") => return true,
-        Some("false") => return false,
-        _ => {}
-    }
-    // 真偽値でない値が手で書かれていれば、判定はするが上書きしない
-    let hand_written = git(dir, &["config", "--get", "claude-hooks.own-project"]).is_some();
-    let owners: Vec<String> = git(dir, &["config", "--get-all", "claude-hooks.owner"])
-        .map(|s| s.lines().map(str::to_string).collect())
-        .unwrap_or_default();
-    let own = !is_fork(dir) && !has_foreign_github_remote(dir, &owners);
-    if !owners.is_empty() && !hand_written {
-        let value = if own { "true" } else { "false" };
-        let _ = git(
-            dir,
-            &["config", "--local", "claude-hooks.own-project", value],
-        );
-    }
-    own
-}
-
-/// GitHub のリモートの所有者に、自分のアカウント以外がいるか。アカウントが無ければ判定しない。
-/// SSH の別名（git@github-work:…）のように github.com を含まないリモートは見ない
-fn has_foreign_github_remote(dir: &Path, owners: &[String]) -> bool {
-    if owners.is_empty() {
-        return false;
-    }
-    let remotes = git(dir, &["remote", "-v"]).unwrap_or_default();
-    static OWNER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    OWNER
-        .get_or_init(|| regex::Regex::new(r"github\.com[:/]([^/\s]+)/").expect("固定の正規表現"))
-        .captures_iter(&remotes)
-        .any(|c| !owners.iter().any(|o| o.eq_ignore_ascii_case(&c[1])))
-}
-
 pub fn current_branch(dir: &Path) -> String {
     git(dir, &["branch", "--show-current"]).unwrap_or_default()
 }
