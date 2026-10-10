@@ -1514,7 +1514,8 @@ assert_eq allow "$(decision "$out")"
 # ===========================================================================
 # adr-sections: コミットする ADR に MADR の必須の節があるか（git の pre-commit から呼ぶ）
 # ===========================================================================
-# 必須は Context and Problem Statement / Considered Options / Decision Outcome（MADR 4.0.0）。
+# 必須は MADR 4.0.0 の 3 節。見出しは日本語（背景 / 検討した案 / 決定と理由）でも英語（Context and
+# Problem Statement / Considered Options / Decision Outcome）でもよい。
 # 任意の節や、MADR に無い節は止めない（MADR は節を足すことを禁じていない。中身はレビューの役目）。
 # index が確定するのはコミットの時なので、PreToolUse ではなく git の pre-commit で検査する
 # （git add && git commit、git commit -a も捕まえる）
@@ -1525,7 +1526,8 @@ git -C "$SEC_REPO" remote add origin "https://github.com/me/sections.git"
 git -C "$SEC_REPO" switch -q -c feat/adr
 cd "$SEC_REPO" || exit 1
 
-REQ=("Context and Problem Statement" "Considered Options" "Decision Outcome")
+REQ=("背景" "検討した案" "決定と理由")
+REQ_EN=("Context and Problem Statement" "Considered Options" "Decision Outcome")
 
 # stage_adr <path> <headings...>: 見出しだけの ADR をステージする
 stage_adr() {
@@ -1543,25 +1545,28 @@ assert_contains "$(adr_sections)" "rc=0"
 git commit -q -m "docs: adr"
 
 it "adr-sections: 任意の節や MADR に無い節があっても止めない"
-stage_adr docs/adr/0002-b.md "${REQ[0]}" "Decision Drivers" "${REQ[1]}" "${REQ[2]}" "Pros and Cons of the Options" "More Information" "Notes"
+stage_adr docs/adr/0002-b.md "${REQ[0]}" "決定の要因" "${REQ[1]}" "${REQ[2]}" "各案の長所と短所" "補足" "メモ"
 assert_contains "$(adr_sections)" "rc=0"
 git reset -q
 
-it "adr-sections: 必須の節が無い ADR は止め、足りない節とファイルを示す"
+it "adr-sections: 英語の見出し（MADR の原文）でも通す"
+stage_adr docs/adr/0002-b.md "${REQ_EN[@]}"
+assert_contains "$(adr_sections)" "rc=0"
+git reset -q
+
+it "adr-sections: 日本語と英語の見出しが混ざっていても通す"
+stage_adr docs/adr/0002-b.md "${REQ[0]}" "${REQ_EN[1]}" "${REQ[2]}"
+assert_contains "$(adr_sections)" "rc=0"
+git reset -q
+
+it "adr-sections: 必須の節が無い ADR は止め、足りない節（日本語と英語）とファイルを示す"
 stage_adr docs/adr/0002-b.md "${REQ[0]}" "${REQ[2]}"
 out=$(adr_sections)
 assert_contains "$out" "rc=1"
 assert_contains "$out" "docs/adr/0002-b.md"
-assert_contains "$out" "Considered Options"
-assert_not_contains "$out" "Decision Outcome」"
+assert_contains "$out" "検討した案（Considered Options）"
+assert_not_contains "$out" "決定と理由（Decision Outcome）」"
 assert_contains "$out" "/adr"
-git reset -q
-
-it "adr-sections: 日本語に訳した見出しは必須の節として数えない"
-stage_adr docs/adr/0002-b.md 背景 検討した案 決定と理由
-out=$(adr_sections)
-assert_contains "$out" "rc=1"
-assert_contains "$out" "Context and Problem Statement"
 git reset -q
 
 it "adr-sections: 日本語のファイル名の ADR も検査する"
@@ -1572,7 +1577,7 @@ assert_contains "$out" "0003-日本語.md"
 git reset -q
 
 it "adr-sections: コードブロックの中の ## は節として数えない"
-printf '# ADR\n\n```md\n## Context and Problem Statement\n## Considered Options\n## Decision Outcome\n```\n' > docs/adr/0002-b.md
+printf '# ADR\n\n```md\n## 背景\n## 検討した案\n## 決定と理由\n```\n' > docs/adr/0002-b.md
 git add docs/adr/0002-b.md
 assert_contains "$(adr_sections)" "rc=1"
 git reset -q
