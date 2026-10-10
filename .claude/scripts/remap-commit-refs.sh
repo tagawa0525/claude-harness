@@ -104,8 +104,11 @@ for old in list(mapping) + sorted(pruned):
     index.setdefault(old[:PREFIX], []).append(old)
 
 with open(files_path, "rb") as f:
-    paths = [p.decode() for p in f.read().split(b"\0") if p]
-
+    # git のパス名はバイト列で、UTF-8 とは限らない。OS のファイル名の符号化で戻せる形にする
+    paths = [os.fsdecode(p) for p in f.read().split(b"\0") if p]
+# 出力するパス名も同じバイト列に戻す
+sys.stdout.reconfigure(errors="surrogateescape")
+sys.stderr.reconfigure(errors="surrogateescape")
 
 def remap(path, data):
     """data の中の旧の番号を置き換えた内容と件数を返す。曖昧な語と消えたコミットは errors に積む"""
