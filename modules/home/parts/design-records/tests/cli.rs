@@ -326,6 +326,30 @@ fn check_with_files_shows_warnings_only_for_them_but_errors_for_all() {
 }
 
 #[test]
+fn check_changed_without_files_shows_errors_but_no_warnings() {
+    // pre-commit は、渡すファイルが無いコミット（ADR を消すだけなど）でも ADR どうしの整合を確かめる
+    let t = TempRepo::new("changed");
+    t.run(&["new", "use-a", "a を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a)
+            .replace("### 確認\n", "")
+            .replace("requires: []", "requires: [ADR-0009]"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check", "--changed"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        format!("{a}: error: `requires` names ADR-0009, which does not exist\n")
+    );
+    // --changed はファイルではなくオプション。知らないオプションは使い方の誤り
+    let out = t.run(&["check", "--bogus"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stdout(&out));
+}
+
+#[test]
 fn check_counts_only_tracked_issues() {
     let t = TempRepo::new("issues");
     t.write("docs/issues/0001-bug.md", "---\nstatus: open\n---\n");
