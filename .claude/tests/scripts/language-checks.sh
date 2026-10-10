@@ -272,6 +272,25 @@ out=$("$LANG_SCRIPTS/run-checks.sh" --base nonexistent 2>&1)
 assert_eq 2 $?
 assert_contains "$out" "nonexistent"
 
+it "run-checks -C: 指定した worktree の変更を、今いる場所に関係なく検査する"
+REPO="$TEST_ROOT/checks/dir/app"
+make_repo "$REPO"
+git -C "$REPO" worktree add -q -b feat/w "$TEST_ROOT/checks/dir/app-feat-w"
+printf '#!/usr/bin/env bash\necho w\n' > "$TEST_ROOT/checks/dir/app-feat-w/w.sh"
+git -C "$TEST_ROOT/checks/dir/app-feat-w" add w.sh
+git -C "$TEST_ROOT/checks/dir/app-feat-w" commit -q -m "feat: w"
+cd "$REPO" || exit 1
+make_fake_tool shellcheck '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" -C "$TEST_ROOT/checks/dir/app-feat-w" --base main)
+assert_eq 0 $?
+assert_eq "-S warning -- w.sh" "$(fake_log shellcheck)"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks -C: ディレクトリがなければエラー"
+out=$("$LANG_SCRIPTS/run-checks.sh" -C "$TEST_ROOT/none" 2>&1)
+assert_eq 2 $?
+assert_contains "$out" "$TEST_ROOT/none"
+
 it "run-checks: 知らないオプションはエラーで止まる"
 out=$("$LANG_SCRIPTS/run-checks.sh" --bogus 2>&1)
 assert_eq 2 $?
