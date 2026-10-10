@@ -94,4 +94,13 @@ it "new-adr: 3 桁の番号の ADR も数え、その最大 + 1 から 4 桁で�
 out=$("$NEW_ADR" use-i "i を使う")
 assert_eq "docs/adr/0008-use-i.md" "$out"
 
+it "new-adr: 履歴を読めなければ失敗し、ファイルを作らない"
+REAL_GIT=$(command -v git)
+make_fake_tool git "log*) exit 128 ;;
+  *) exec \"$REAL_GIT\" \"\$@\" ;;"
+"$NEW_ADR" use-j "j を使う" >/dev/null 2>&1
+assert_eq 1 $(($? != 0))
+remove_fake_tool git
+assert_eq "" "$(find "$REPO/docs/adr" -name '*-use-j.md')"
+
 finish
