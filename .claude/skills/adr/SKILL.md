@@ -2,7 +2,6 @@
 name: adr
 description: ADR（docs/adr/）を書く・直すときに使う。MADR を基準にした形、前付け、確定後の運用。
 allowed-tools:
-  - Bash(git ls-files*)
   - Bash(~/.claude/skills/adr/scripts/new-adr.sh*)
 ---
 
@@ -17,7 +16,10 @@ allowed-tools:
 ## ADR にするもの
 
 作り直したときに他へ波及する決定（データの形式、モジュールの境界、外部への依存、検証の方法など）と、範囲、期間、危険、
-費用のどれかが大きい決定。それ以外の決定と、試して捨てた方式のうち ADR に関わらないものは、issue に書く。
+費用のどれかが大きい決定。それ以外の決定は、issue かコミットの本文に書く。
+
+試して捨てた方式は、何を試し、なぜ捨てたか（測った値や反例）を、関係する ADR の検討した案か補足、または issue に書く。
+コミットの本文だけに置くと、後から引けない。
 
 ## 作る
 
@@ -28,19 +30,19 @@ allowed-tools:
 `docs/adr/NNNN-<slug>.md` を、次の番号、前付け、必須と推奨の見出しつきで作る。slug は決めたことを動詞で始めた英語の
 kebab-case にする。
 
-!`git ls-files docs/adr`
-
 ## MADR と違う点
 
 - **見出しは日本語**（英語の原文でもよい）: 背景、決定の要因、検討した案、決定と理由、帰結、確認、各案の長所と短所、
-  補足。必須は背景・検討した案・決定と理由、推奨は帰結・確認。表に無い節を足してもよい
-- **前付け**: `status`、`date` のほかに、置き換えと参照を独立したキーにする。一覧は `[a, b]` の形で 1 行に書く
+  補足。必須は背景・検討した案・決定と理由、推奨は帰結・確認。ほかの節を足してもよい
+- **前付け**のキーは `status`、`date` と次の 4 つ（MADR の `decision-makers` などに代えて、置き換えと参照を grep で
+  引けるようにする）。一覧は `[a, b]` の形で 1 行に書く
   - `requires`: 前提にしている ADR（`[ADR-0002]`）
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く
   - `issues`: きっかけの issue と、解決した issue（`["#12"]`）
-  - MADR の `decision-makers` / `consulted` / `informed` は書かない
 - **status** は `proposed`、`accepted`、`rejected`、`withdrawn`（決める前に取り下げた）、`deferred`（後回しにした）、
   `superseded`、`deprecated`。`date` は最後に status が変わった日
+- **帰結**: 実装が決定に追いついていなければ、その差を書き、issue を立てて `issues` に入れる
+- **前の決定に戻す**とき: その理由と測った値を、新しい ADR の検討した案に書く
 - **測った値や変わりうる値**には、出典のファイルとコミットと日付を添える
 - 一覧のファイルは作らない。採用中の ADR は `grep -l '^status: accepted$' docs/adr/[0-9]*.md` で引く
 
