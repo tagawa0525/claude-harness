@@ -1410,6 +1410,26 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-sbatch "env -u FOO $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
 
+it "guard-sbatch: ALLOW_RAW_SBATCH=1 を付ければ sbatch を直接投げられる"
+out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 sbatch --array=1-4 --wrap 'true'")
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: 止めるときにエスケープの名前を示す"
+out=$(run_hook guard-sbatch "sbatch --wrap 'true'")
+assert_contains "$(reason "$out")" "ALLOW_RAW_SBATCH=1"
+out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_contains "$(reason "$out")" "ALLOW_FOREGROUND_SLURM=1"
+
+it "guard-sbatch: ALLOW_FOREGROUND_SLURM=1 を付ければ slurm-run.sh をフォアグラウンドで走らせられる"
+out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=1 $HOME/.claude/scripts/slurm-run.sh -t 1 xlc-1B 'true'")
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: エスケープはそれぞれの検査だけを外す"
+out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=1 sbatch --wrap 'true'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+
 it "guard-sbatch: squeue、scontrol、引数に現れるだけの sbatch は通す"
 out=$(run_hook guard-sbatch "squeue; scontrol top 42; echo sbatch; grep -n sbatch CLAUDE.md")
 assert_eq allow "$(decision "$out")"
