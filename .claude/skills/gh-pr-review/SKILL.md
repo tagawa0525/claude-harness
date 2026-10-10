@@ -134,16 +134,16 @@ EOF
 周回数の上限は 5 周（再レビューは毎周新しい指摘を生みうるので、指摘ゼロを
 終了条件にすると収束しない）。判定はスクリプトに任せる:
 
+```bash
+~/.claude/skills/gh-pr-review/scripts/decide-next.sh {pr_number}
+```
+
 ユーザーが途中で追加の変更を求め、それを入れたら、周回を 0 から数え直す（指摘への対応とは
 別の仕事なので）。push の後、再レビューを要求する前に、理由を書いた印を PR に付ける。
 自分の判断で足した変更や、指摘への対応では数え直さない:
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh {pr_number} "ユーザーの要望: {要望の要旨}"
-```
-
-```bash
-~/.claude/skills/gh-pr-review/scripts/decide-next.sh {pr_number}
 ```
 
 | VERDICT                | 意味                                         | 次の一手                                                                                                                 |
