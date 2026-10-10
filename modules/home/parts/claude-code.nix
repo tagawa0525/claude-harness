@@ -58,7 +58,7 @@ let
   # PreToolUse hook。10 本あった bash hook を Rust 製 1 バイナリ（./claude-hooks）に統合し、
   # settings.json には 1 件だけ登録する。ツールの呼び出しごとに 1 プロセスで、そのツールが対象の
   # ルールを評価する（Bash のほか、ADR の規則のために Write / Edit / MultiEdit）。
-  # PostToolUse には Skill の成功を記録する post-tool-use を登録する（ADR-0005）。
+  # PostToolUse には Skill の成功を記録する post-tool-use を登録する（ADR-0006）。
   # バイナリは store パスではなく固定パス ~/.claude/bin/claude-hooks 経由で参照する
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
@@ -326,7 +326,7 @@ in
           | map(select((.hooks | length) > 0))
           | upsert("pre-tool-use"; "Bash|Write|Edit|MultiEdit")
         ) |
-        # ADR の規則（ADR-0005）: スキルの読み込みの記録（Skill の成功、ユーザーが打った /adr）と、
+        # ADR の規則（ADR-0006）: スキルの読み込みの記録（Skill の成功、ユーザーが打った /adr）と、
         # 会話の要約の前の記録の消去
         .hooks.PostToolUse |= upsert("post-tool-use"; "Skill") |
         .hooks.UserPromptSubmit |= upsert("user-prompt-submit"; null) |

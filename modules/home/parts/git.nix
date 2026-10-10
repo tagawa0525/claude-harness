@@ -108,7 +108,7 @@
         "$(dirname "$0")/pre-merge-commit"
       fi
 
-      # ADR の節を一般的な形に限る（ADR-0005）。index が確定するのはここなので、PreToolUse ではなく
+      # ADR の節を一般的な形に限る（ADR-0006）。index が確定するのはここなので、PreToolUse ではなく
       # この hook で検査する（git add && git commit、git commit -a も捕まえる）。プロジェクトローカルの
       # hook より前に置く（そちらは exec で置き換わる）。他人のプロジェクトでは claude-hooks が外す
       # （git config claude-hooks.own-project）。バイナリの置き場所は claude-code.nix の claudeHooksBinRel

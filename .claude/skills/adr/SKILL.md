@@ -27,7 +27,7 @@ allowed-tools:
 ## ファイル
 
 - 置き場所は `docs/adr/NNNN-verb-phrase.md`。4 桁の連番と、決めたことを動詞で始めた英語の kebab-case
-  （例: `0005-adopt-madr-for-adrs.md`）
+  （例: `0006-adopt-madr-for-adrs.md`）
 - 番号は既存の最大 + 1。一度使った番号は、ファイルが残っていなくても使い回さない
 - 一覧のファイルは作らない。採用中の ADR は `grep -l '^status: accepted$' docs/adr/[0-9]*.md` で引く
 

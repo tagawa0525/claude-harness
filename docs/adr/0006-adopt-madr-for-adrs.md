@@ -7,7 +7,7 @@ superseded-by:
 issues: ["#266"]
 ---
 
-# ADR-0005: ADR は MADR を基準に書き、スキルで形を示して hook で確かめる
+# ADR-0006: ADR は MADR を基準に書き、スキルで形を示して hook で確かめる
 
 ## 背景
 
