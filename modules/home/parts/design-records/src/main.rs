@@ -16,7 +16,9 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use design_records::check::{Finding, Severity, body_changed, check};
-use design_records::{ADR_DIR, OPEN_STATUSES, adr_path, is_adr_path, is_slug, next_number};
+use design_records::{
+    ADR_DIR, OPEN_STATUSES, adr_path, is_adr_path, is_slug, is_title, next_number,
+};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -105,6 +107,9 @@ fn new(slug: &str, title: &str) -> Result<ExitCode> {
         return Err(format!(
             "the slug must be lowercase kebab-case ([a-z0-9]+(-[a-z0-9]+)*): {slug}"
         ));
+    }
+    if !is_title(title) {
+        return Err(format!("the title must be one non-blank line: {title:?}"));
     }
     let root = repo_root()?;
     // 削除した ADR の番号を使い回すと、古い参照が別の決定を指してしまうので、全ブランチの履歴も数える

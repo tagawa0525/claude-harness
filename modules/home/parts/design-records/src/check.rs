@@ -6,7 +6,7 @@ use std::fmt;
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
     ADR_DIR, KEYS, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section,
-    adr_number,
+    adr_number, is_adr_path,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -126,7 +126,7 @@ impl Adr<'_> {
     }
 }
 
-/// docs/adr の直下の .md（README.md を除く）を読む。名前と前付けが読めないものは違反にして除く。
+/// docs/adr の直下の、番号で始まる .md（[`is_adr_path`]）を読む。名前と前付けが読めないものは違反にして除く。
 fn parse_adrs<'a>(adrs: &'a BTreeMap<String, String>, out: &mut Found) -> Vec<Adr<'a>> {
     let mut docs = Vec::new();
     for (path, text) in adrs {
@@ -136,7 +136,7 @@ fn parse_adrs<'a>(adrs: &'a BTreeMap<String, String>, out: &mut Found) -> Vec<Ad
         else {
             continue;
         };
-        if name.contains('/') || !name.ends_with(".md") || name == "README.md" {
+        if !is_adr_path(path) {
             continue;
         }
         let Some(number) = adr_number(name) else {
@@ -479,12 +479,21 @@ pub fn body_changed(old: &str, new: &str) -> bool {
 }
 
 /// 前付けと補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
-/// 変更ではない）。
+/// 変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で比べる（その違反は
+/// check が示す）。
 fn body(text: &str) -> Vec<&str> {
-    let mut lines = text.lines().peekable();
-    if lines.peek() == Some(&"---") {
+    let Ok(outside) = markdown_lines(text) else {
+        return text.lines().collect();
+    };
+    let headings: BTreeSet<usize> = outside
+        .iter()
+        .filter(|(_, l)| l.starts_with("# ") || l.starts_with("## "))
+        .map(|(n, _)| *n)
+        .collect();
+    let mut lines = text.lines().enumerate().map(|(i, l)| (i + 1, l)).peekable();
+    if lines.peek().map(|(_, l)| *l) == Some("---") {
         lines.next();
-        for line in lines.by_ref() {
+        for (_, line) in lines.by_ref() {
             if line == "---" {
                 break;
             }
@@ -492,14 +501,15 @@ fn body(text: &str) -> Vec<&str> {
     }
     let mut in_notes = false;
     let mut kept: Vec<&str> = lines
-        .filter(|line| {
-            if line.starts_with("# ") || line.starts_with("## ") {
+        .filter(|(n, line)| {
+            if headings.contains(n) {
                 let title = line.trim_start_matches('#').trim();
                 in_notes = line.starts_with("## ")
                     && (title == NOTES_SECTION.ja || title == NOTES_SECTION.en);
             }
             !in_notes
         })
+        .map(|(_, line)| line)
         .collect();
     while kept.last().is_some_and(|l| l.trim().is_empty()) {
         kept.pop();

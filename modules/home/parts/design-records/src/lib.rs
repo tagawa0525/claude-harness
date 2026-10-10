@@ -90,8 +90,8 @@ pub fn is_adr_path(path: &str) -> bool {
 }
 
 /// 表題（`# ADR-NNNN: ` の後ろ）にできるか: 空白だけでない 1 行。
-pub fn is_title(_title: &str) -> bool {
-    todo!()
+pub fn is_title(title: &str) -> bool {
+    !title.trim().is_empty() && !title.contains(['\n', '\r'])
 }
 
 /// `NNNN-kebab-case.md` の形のファイル名から番号を取り出す。形が違えば `None`。
@@ -113,15 +113,15 @@ pub fn is_slug(name: &str) -> bool {
     })
 }
 
-/// 次の ADR の番号。`paths` のうち `docs/adr/<数字>-*.md` の番号の最大 + 1（桁数は問わない。3 桁で振っていた
-/// ADR も数える）。無ければ 1。
+/// 次の ADR の番号。`paths` のうち `docs/adr/<数字>-*.md` の番号の最大 + 1（4 桁まで。3 桁で振っていた ADR も
+/// 数える。5 桁以上は日付などの番号でない数字なので数えない）。無ければ 1。
 pub fn next_number<'a>(paths: impl IntoIterator<Item = &'a str>) -> u32 {
     paths
         .into_iter()
         .filter_map(|path| {
             let name = path.strip_prefix(ADR_DIR)?.strip_prefix('/')?;
             let (number, _) = name.strip_suffix(".md")?.split_once('-')?;
-            if name.contains('/') || number.is_empty() {
+            if name.contains('/') || !(1..=4).contains(&number.len()) {
                 return None;
             }
             number.parse::<u32>().ok()
@@ -161,8 +161,21 @@ pub fn template(number: u32, title: &str, date: &str) -> String {
 
 /// 前付けの最初の `status:` の行の値（後ろの ` # コメント` と引用符は外す）。前付けか値が無ければ `None`。
 /// 前付けのほかの行の形は問わない（形を検査していない文書も読むため。形の検査は [`check`] が行う）。
-pub fn status(_text: &str) -> Option<String> {
-    todo!()
+pub fn status(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    if lines.next() != Some("---") {
+        return None;
+    }
+    let line = lines
+        .take_while(|l| *l != "---")
+        .find_map(|l| l.strip_prefix("status:"))?;
+    let value = line
+        .split(" #")
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"');
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 #[cfg(test)]

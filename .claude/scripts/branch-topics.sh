@@ -9,8 +9,7 @@
 # そのコミットを要約する（チェックアウトしていない PR のブランチを見るとき。例: origin/main origin/feat/x）。
 #
 # ADR と issue は docs/adr/・docs/issues/ の直下にある NNNN-name.md（4 桁の番号とハイフンで始まる）。
-# README などは含めない。status は前付けの `status:` の値（design-records status で読む。前付けの形が
-# 崩れていれば失敗する）。
+# README などは含めない。status は前付けの `status:` の値（design-records status で読む）。
 # ディレクトリが無いリポジトリでは該当の行を出さない。
 #
 # 出力（行がないものは省く）:
