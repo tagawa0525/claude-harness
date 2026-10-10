@@ -6,7 +6,7 @@
 # branch を省くと今のブランチを対象にする。次のときは ERROR を出して exit 1（マージに進まない）:
 #   - 対象がローカルにない、または既定ブランチ（main / master）自身
 #   - GitHub リモートがある（/gh-pr-create と /gh-pr-merge の流れで、ここでは扱わない）
-#   - 対象の worktree に未コミットの変更がある
+#   - 対象または既定ブランチの worktree に未コミットの変更がある
 #
 # 既定ブランチはローカルの main / master（リモートのないリポジトリ向けなので origin は見ない）。
 #
@@ -17,7 +17,8 @@
 #   BEHIND: <n>                   … 対象にまだ入っていない既定ブランチのコミット数（0 でなければ rebase）
 #   ROOT_COMMITS: <hash> ...      … DEFAULT が none のとき、対象のルートコミット
 #   STACKED_ON: <branch>,...|none … 対象の下に積まれている、まだマージしていない別のブランチ
-#   TARGET_WORKTREE: <path>|none
+#   TARGET_WORKTREE: <path>|none  … 対象をチェックアウトしている worktree
+#   DEFAULT_WORKTREE: <path>|none … 既定ブランチをチェックアウトしている worktree
 
 set -euo pipefail
 
@@ -49,13 +50,22 @@ if git remote -v | grep -q 'github\.com'; then
   exit 1
 fi
 
-WT_PATH=$(git worktree list --porcelain | awk -v ref="refs/heads/$TARGET" '
-  /^worktree / { path = substr($0, 10) }
-  /^branch /   { if ($2 == ref) print path }')
-if [[ -n "$WT_PATH" && -n "$(git -C "$WT_PATH" status --porcelain)" ]]; then
-  echo "ERROR: $WT_PATH に未コミットの変更があります。/git-commit でコミットしてください" >&2
-  exit 1
-fi
+# worktree_of <branch>: そのブランチをチェックアウトしている worktree のパス（なければ空）
+worktree_of() {
+  git worktree list --porcelain | awk -v ref="refs/heads/$1" '
+    /^worktree / { path = substr($0, 10) }
+    /^branch /   { if ($2 == ref) print path }'
+}
+
+WT_PATH=$(worktree_of "$TARGET")
+DEFAULT_WT=""
+[[ -n "$DEFAULT" ]] && DEFAULT_WT=$(worktree_of "$DEFAULT")
+for wt in "$WT_PATH" "$DEFAULT_WT"; do
+  if [[ -n "$wt" && -n "$(git -C "$wt" status --porcelain)" ]]; then
+    echo "ERROR: $wt に未コミットの変更があります。/git-commit でコミットしてください" >&2
+    exit 1
+  fi
+done
 
 echo "TARGET: $TARGET"
 if [[ -z "$DEFAULT" ]]; then
@@ -85,3 +95,4 @@ else
 fi
 
 echo "TARGET_WORKTREE: ${WT_PATH:-none}"
+echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
