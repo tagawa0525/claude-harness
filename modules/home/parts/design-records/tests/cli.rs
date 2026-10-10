@@ -205,6 +205,43 @@ fn new_rejects_bad_slugs_and_missing_titles_without_writing() {
 }
 
 #[test]
+fn new_fails_without_writing_when_the_history_cannot_be_read() {
+    let t = TempRepo::new("nohistory");
+    // log だけを失敗させる git を PATH の先頭に置く
+    let bin = t.dir.join(".fake-bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let fake = bin.join("git");
+    fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" log \"*) exit 128 ;; esac\nexec {} \"$@\"\n",
+            real.trim()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
+    command
+        .current_dir(&t.dir)
+        .env("PATH", path)
+        .args(["new", "use-j", "j を使う"]);
+    isolate(&mut command);
+    let out = command.output().unwrap();
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+}
+
+#[test]
 fn new_fails_outside_a_git_repository() {
     let dir = std::env::temp_dir().join(format!("design-records-nogit-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
