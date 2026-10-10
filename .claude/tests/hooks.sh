@@ -905,8 +905,8 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_contains "$(reason "$out")" "周回上限"
 assert_contains "$(reason "$out")" "ユーザーが承認"
 
-# 計画（docs/plans/）だけの PR は、最初の自動レビューで方針の指摘を受ければ足りる。
-# 文章の計画は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない
+# 文書（docs/）だけの PR は、最初の自動レビューで指摘を受ければ足りる。
+# 文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない
 # （nucrawler #145 は 22 コミット・74 コメント、#146 も指摘 0 件の後に毎回新しい論点が出た）
 # make_fake_gh_merge_files <files> [reviewed] [check_run] [succeeded]
 # files は PR の変更ファイル、reviewed は bot レビューの対象コミットを出力するコマンド
@@ -927,25 +927,30 @@ make_fake_gh_merge_files() {
   "api graphql"*) echo "[]" ;;'
 }
 
-it "pre-merge-check: 計画（docs/plans/）だけの PR は、最後の push が未レビューでもマージできる"
+it "pre-merge-check: 文書（docs/）だけの PR は、最後の push が未レビューでもマージできる"
 make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md docs/plans/011_y.md'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: 計画だけの PR は、一度レビューを受けていれば最後の push のレビューが失敗していてもマージできる"
+it "pre-merge-check: ADR（docs/adr/）だけの PR も、最後の push が未レビューでもマージできる"
+make_fake_gh_merge_files 'printf "%s\n" docs/adr/0004-x.md docs/issues/y.md'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: 文書だけの PR は、一度レビューを受けていれば最後の push のレビューが失敗していてもマージできる"
 make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo old' \
   '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: 計画だけの PR でも、レビューが一度も成功していなければ止める"
+it "pre-merge-check: 文書だけの PR でも、レビューが一度も成功していなければ止める"
 make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo ""' \
   '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
 
-it "pre-merge-check: 計画だけの PR でも、bot のレビューが失敗したものだけなら止める"
+it "pre-merge-check: 文書だけの PR でも、bot のレビューが失敗したものだけなら止める"
 # Copilot はレビューできなかったときも本文だけのレビューを提出するので、
 # レビューの有無ではなく、失敗していないレビューがあるかで判定する
 make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo old' '' 'echo 0'
@@ -953,18 +958,18 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
 
-it "pre-merge-check: 計画以外のファイルも含む PR は、これまでどおり再レビューを求める"
+it "pre-merge-check: docs/ 以外のファイルも含む PR は、これまでどおり再レビューを求める"
 make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md src/main.rs'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
 
-it "pre-merge-check: docs/plans/ に似た別の場所は計画として扱わない"
-make_fake_gh_merge_files 'printf "%s\n" docs/plans.md src/docs/plans/x.md'
+it "pre-merge-check: docs/ に似た別の場所は文書として扱わない"
+make_fake_gh_merge_files 'printf "%s\n" docs.md docs-extra/x.md src/docs/adr/x.md'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
-it "pre-merge-check: 変更ファイルを取得できなければ、計画だけとみなさず再レビューを求める"
+it "pre-merge-check: 変更ファイルを取得できなければ、文書だけとみなさず再レビューを求める"
 make_fake_gh_merge_files 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"

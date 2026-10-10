@@ -206,25 +206,35 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "HEAD_REVIEWED: no"
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
-it "decide-next: 計画（docs/plans/）だけの PR は、対応を push しても再レビューを要求せず STOP_PLAN_REVIEWED"
-# 文章の計画は細部をいくらでも掘れるので、最初のレビューで方針の指摘を受けたら周回を止める
+it "decide-next: 文書（docs/）だけの PR は、対応を push しても再レビューを要求せず STOP_DOCS_REVIEWED"
+# 文章は細部をいくらでも掘れるので、最初のレビューで指摘を受けたら周回を止める
 # （hook の pre-merge-check も同じ条件で再レビューを求めない）
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/plans/010_x.md docs/plans/sub/011_y.md'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "HEAD_REVIEWED: no"
-assert_contains "$out" "VERDICT: STOP_PLAN_REVIEWED"
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
 
-it "decide-next: 計画だけの PR でも、未解決スレッドが残っていればまず ACT"
-fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD" 'echo docs/plans/010_x.md'
+it "decide-next: ADR（docs/adr/）だけの PR も STOP_DOCS_REVIEWED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/adr/0004-x.md docs/issues/y.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: 文書だけの PR でも、未解決スレッドが残っていればまず ACT"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD" 'echo docs/adr/0004-x.md'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "VERDICT: ACT"
 
-it "decide-next: 計画以外のファイルも含む PR は、これまでどおり REREVIEW_NEEDED"
-fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/plans/010_x.md src/docs/plans/x.md'
+it "decide-next: docs/ 以外のファイルも含む PR は、これまでどおり REREVIEW_NEEDED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/adr/0004-x.md src/docs/x.md'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
-it "decide-next: 変更ファイルを取得できなければ、計画だけとみなさず REREVIEW_NEEDED"
+it "decide-next: docs/ に似た別の場所（docs.md、docs-extra/）は文書として扱わない"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs.md docs-extra/x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: 変更ファイルを取得できなければ、文書だけとみなさず REREVIEW_NEEDED"
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'exit 1'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
