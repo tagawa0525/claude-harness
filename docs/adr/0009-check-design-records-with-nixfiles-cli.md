@@ -102,6 +102,8 @@ ADR-0008 の決定のうち、次を変える:
   たびに走る（fork でも走らせる。設定はそのプロジェクトの規約）
 - 実装が決定に追いついていない点: xlc、lsp-det、pleasanter-rs のオプトインは、rebuild の後に各リポジトリで行う
   （#280）。lsp-det と pleasanter-rs の既存の ADR は前付けが無く、xlc の ADR は `requires` が無い
+- 実装が決定に追いついていない点: `branch-topics.sh` は、docs/adr と docs/issues のどのファイルを数えるかを、まだ
+  自分の正規表現で決めている。issue の形を CLI に足すとき（#270）に、両方の判定を CLI に移す
 - 見直す条件: 素通りが実際に起きたら CI での検査を足す。自分以外がコミットするプロジェクトができたら、版の固定を
   考え直す
 
@@ -111,7 +113,8 @@ ADR-0008 の決定のうち、次を変える:
   の一致、参照先の有無、置き換えられた ADR への参照、確定した ADR の本文の変更、status の読み出し）
 - グローバルの pre-commit hook が prek を呼び、既定の検査も走る（`modules/home/parts/tests/pre-commit-prek.sh`）
 - nixfiles で `prek run` から検査が走る（`.pre-commit-config.yaml`）。xlc、lsp-det、pleasanter-rs は #280
-- スキル `adr`、`branch-topics.sh`、claude-hooks が CLI（またはそのクレート）を使い、自分で形を解釈していない
+- スキル `adr` と claude-hooks が CLI（またはそのクレート）を使い、自分で形を解釈していない。`branch-topics.sh` は
+  status を CLI で読む
 
 ## 補足
 
@@ -123,5 +126,8 @@ ADR-0008 の決定のうち、次を変える:
 - **pre-commit で、すべての ADR の warning を出す版**: コミットのたびに、触っていない古い ADR の推奨の節の warning
   （nixfiles では 6 件）が並び、今のコミットの warning が埋もれる。hook に渡したファイルの warning だけを出し、error は
   ADR どうしの整合なのですべて出す
+- **pre-commit の設定で `always_run` を付けた版**: テキストのファイルを含まないコミット（画像だけ、メッセージだけの
+  amend）でも、ファイルを渡さずに検査が走り、すべての ADR の warning が並んだ。ADR どうしの違反は ADR を変える
+  コミットでしか生まれないので外した
 - **pre-commit の設定で `require_serial` を付けない版**: prek はファイルを分けて hook を並べて呼ぶので、
   `prek run --all-files` で ADR どうしの検査の指摘が呼んだ回数だけ重なった
