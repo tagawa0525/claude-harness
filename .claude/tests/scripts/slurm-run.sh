@@ -36,6 +36,8 @@ echo "${FAKE_HOST:-r995}"
 EOF
 chmod +x "$FAKE_BIN"/*
 export PATH="$FAKE_BIN:$PATH" TEST_ROOT
+# テストを投げるセッションの ID を持ち込まない
+unset CLAUDE_CODE_SESSION_ID
 
 RUN="$SCRIPTS_DIR/slurm-run.sh"
 mkdir -p "$HOME/github/proj" "$HOME/r995/proj"
@@ -80,6 +82,11 @@ it "slurm-run: git の外では連絡先に場所だけを書く"
 mkdir -p "$HOME/github/plain" && cd "$HOME/github/plain" || exit 1
 "$RUN" -t 1 xlc-2G 'true' >/dev/null
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\n'"$HOME/github/plain"
+
+it "slurm-run: Claude Code から投げたら、連絡先にセッションの ID を足す"
+cd "$HOME/github/proj" || exit 1
+CLAUDE_CODE_SESSION_ID=abc-123 "$RUN" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\nfeat/vera-2g '"$HOME/github/proj claude=abc-123"
 
 it "slurm-run: r995 以外では ~/r995 の下で投げ、ログは NFS の側に作る"
 rm -rf "$HOME/github/slurm-logs" "$HOME/r995/slurm-logs"
