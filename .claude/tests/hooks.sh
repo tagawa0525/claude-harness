@@ -6,7 +6,7 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge
+#       guard-git-merge / guard-sbatch
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -1373,5 +1373,73 @@ it "guard-git-merge: 同じコマンドの前の git switch で移った先の�
 git switch -q feat/rebased
 out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
 assert_eq deny "$(decision "$out")"
+
+it "guard-sbatch: sbatch を直接投げたら slurm-run.sh を示して止める"
+out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "slurm-run.sh"
+
+it "guard-sbatch: パイプやつなぎの中の sbatch も止める"
+out=$(run_hook guard-sbatch "cd ~/github/xlc && sbatch --wrap 'true' | tail -1")
+assert_eq deny "$(decision "$out")"
+
+it "guard-sbatch: slurm-run.sh をフォアグラウンドで走らせたら止める"
+out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "run_in_background"
+
+it "guard-sbatch: slurm-run.sh を background で走らせるのは通す"
+out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'" true)
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: command、env、exec、nohup、time で包んだ sbatch も止める"
+for wrapped in "command sbatch --wrap true" "env FOO=1 sbatch --wrap true" "env -i sbatch --wrap true" \
+  "exec sbatch --wrap true" "nohup sbatch --wrap true" "time sbatch --wrap true" "command -p env sbatch --wrap true" \
+  "env -u FOO sbatch --wrap true" "env -C /tmp sbatch --wrap true" "env --unset=FOO sbatch --wrap true" \
+  "exec -a alias sbatch --wrap true" "time -o t.txt sbatch --wrap true" "time -f %e sbatch --wrap true" \
+  "env -a alias sbatch --wrap true" "env --argv0 alias sbatch --wrap true" "env -S 'sbatch --wrap true'" "env --split-string='sbatch --wrap true'" "env -S'sbatch --wrap true'"; do
+  out=$(run_hook guard-sbatch "$wrapped")
+  assert_eq deny "$(decision "$out")"
+done
+
+it "guard-sbatch: 包んだ slurm-run.sh もフォアグラウンドなら止める"
+out=$(run_hook guard-sbatch "command $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "nohup bash $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "env -u FOO $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+
+it "guard-sbatch: ALLOW_RAW_SBATCH=1 を付ければ sbatch を直接投げられる"
+out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 sbatch --array=1-4 --wrap 'true'")
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: 止めるときにエスケープの名前を示す"
+out=$(run_hook guard-sbatch "sbatch --wrap 'true'")
+assert_contains "$(reason "$out")" "ALLOW_RAW_SBATCH=1"
+out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_contains "$(reason "$out")" "ALLOW_FOREGROUND_SLURM=1"
+
+it "guard-sbatch: ALLOW_FOREGROUND_SLURM=1 を付ければ slurm-run.sh をフォアグラウンドで走らせられる"
+out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=1 $HOME/.claude/scripts/slurm-run.sh -t 1 xlc-1B 'true'")
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: エスケープはそれぞれの検査だけを外す"
+out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=1 sbatch --wrap 'true'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq deny "$(decision "$out")"
+
+it "guard-sbatch: command -v と -V は探すだけなので通す"
+out=$(run_hook guard-sbatch "command -v sbatch && command -V sbatch")
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: squeue、scontrol、引数に現れるだけの sbatch は通す"
+out=$(run_hook guard-sbatch "squeue; scontrol top 42; echo sbatch; grep -n sbatch CLAUDE.md")
+assert_eq allow "$(decision "$out")"
+
+it "heredoc: 本文中の sbatch はコマンドとみなさない（guard-sbatch）"
+out=$(run_hook guard-sbatch "$(write_doc '重い計算は sbatch でなく slurm-run.sh で投げる')")
+assert_eq allow "$(decision "$out")"
 
 finish
