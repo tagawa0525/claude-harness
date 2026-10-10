@@ -9,8 +9,9 @@
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
 #   3. ローカルブランチを削除（-d。未マージなら失敗する）
-#   4. リモートブランチを削除。ただし GitHub リモートでは、そのブランチを head とする
-#      open PR（fork からの upstream PR 等）があると削除で PR が閉じるため、削除せず残す
+#   4. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
+#      GitHub リモートでそのブランチを head とする open PR（fork からの upstream PR 等）があるとき
+#      （削除で PR が閉じる）は、削除せず残す
 #
 # 出力:
 #   WORKTREE_REMOVED: <path>|none
@@ -98,6 +99,12 @@ if git remote get-url "$REMOTE" >/dev/null 2>&1 \
       echo "REMOTE_BRANCH: kept (open PR ${OPEN_PRS} 件の head。削除すると PR が閉じる)"
       exit 0
     fi
+  fi
+  # リモートの既定ブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
+  # （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる
+  if ! git merge-base --is-ancestor "$REMOTE/$BRANCH" "$REMOTE/$DEFAULT" 2>/dev/null; then
+    echo "REMOTE_BRANCH: kept ($REMOTE/$DEFAULT がブランチの先端をまだ含まない。$DEFAULT を push してから消す)"
+    exit 0
   fi
   git push -q "$REMOTE" --delete "$BRANCH"
   echo "REMOTE_BRANCH: deleted"
