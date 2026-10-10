@@ -29,7 +29,7 @@ fn basename(path: &str) -> &str {
 /// （`NAME=value`）を読み飛ばす
 const WRAPPERS: &[(&str, &[&str])] = &[
     ("command", &[]),
-    ("env", &["-u", "--unset", "-C", "--chdir"]),
+    ("env", &["-u", "--unset", "-C", "--chdir", "-a", "--argv0"]),
     ("exec", &["-a"]),
     ("nohup", &[]),
     ("time", &["-f", "--format", "-o", "--output"]),
