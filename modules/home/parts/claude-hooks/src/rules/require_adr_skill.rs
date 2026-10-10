@@ -2,15 +2,18 @@
 //!
 //! 手元の ADR を手本に形を真似ると、欠陥ごと複製される（ADR-0005）。書く時点でスキルの本文
 //! （一般的な形）が読み込まれていることを確かめる。読み込みはモデルが付ける印ではなく、
-//! Skill ツールの呼び出しをこの hook 自身が記録する（セッション単位）。
-//! 他人のプロジェクトでは、そのプロジェクトの流儀に従うので外す（git::own_project）
+//! Skill ツールの成功（PostToolUse、`claude-hooks post-tool-use`）をこの hook 自身が記録する
+//! （セッション単位）。呼び出し前（PreToolUse）に記録しないのは、拒否や展開の失敗で本文が
+//! 読み込まれないことがあるため。Bash での書き込みは見ないので、コミット時の節の検査
+//! （crate::adr）が受け持つ。他人のプロジェクトでは、そのプロジェクトの流儀に従うので外す（git::own_project）
 
 use super::Rule;
+use crate::adr::is_adr;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::Shell;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub struct RequireAdrSkill;
 
@@ -22,7 +25,7 @@ impl Rule for RequireAdrSkill {
     }
 
     fn tools(&self) -> &'static [&'static str] {
-        &["Skill", "Write", "Edit", "MultiEdit"]
+        &["Write", "Edit", "MultiEdit"]
     }
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
@@ -30,17 +33,18 @@ impl Rule for RequireAdrSkill {
         if input.session_id.is_empty() {
             return Vec::new();
         }
-        if input.tool_name == "Skill" {
-            if input.skill == SKILL || input.skill.ends_with(&format!(":{SKILL}")) {
-                record(&input.session_id, SKILL);
-            }
+        let path = normalize(&input.cwd.join(&input.file_path));
+        // ADR 以外の編集で git を呼ばないよう、パスの形を先に見る
+        if !path.parent().is_some_and(|d| d.ends_with("docs/adr")) {
             return Vec::new();
         }
-        let path = input.cwd.join(&input.file_path);
         let Some((root, rel)) = repo_relative(&path) else {
             return Vec::new();
         };
-        if !is_adr(&rel) || !git::own_project(&root) || loaded(&input.session_id, SKILL) {
+        if !is_adr(&rel.to_string_lossy())
+            || loaded(&input.session_id, SKILL)
+            || !git::own_project(&root)
+        {
             return Vec::new();
         }
         vec![Finding::Deny(format!(
@@ -50,9 +54,29 @@ impl Rule for RequireAdrSkill {
     }
 }
 
-/// docs/adr/ 配下の Markdown か（リポジトリのルートからの相対パス）
-fn is_adr(rel: &Path) -> bool {
-    rel.starts_with("docs/adr") && rel.extension().is_some_and(|e| e == "md")
+/// Skill ツールが成功したとき（PostToolUse）に、読み込んだスキルを記録する
+pub fn record_skill(input: &Input) {
+    if input.tool_name == "Skill"
+        && !input.session_id.is_empty()
+        && (input.skill == SKILL || input.skill.ends_with(&format!(":{SKILL}")))
+    {
+        record(&input.session_id, SKILL);
+    }
+}
+
+/// `.` と `..` を字面で畳む。途中のディレクトリがまだ無くても、書き込み先と同じ場所を指す
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// ファイルのリポジトリのルートと、ルートからの相対パス。ファイルや親ディレクトリが

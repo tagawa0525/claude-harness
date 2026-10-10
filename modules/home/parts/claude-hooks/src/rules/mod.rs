@@ -15,7 +15,6 @@ pub trait Rule: Sync {
 
 mod block_main_commit;
 mod block_secret_commit;
-mod check_adr_sections;
 mod guard_branch_base;
 mod guard_gh_api;
 mod guard_gh_run_rerun;
@@ -25,7 +24,7 @@ mod guard_git_push;
 mod pre_git_merge_check;
 mod pre_merge_check;
 mod pre_pr_create_check;
-mod require_adr_skill;
+pub(crate) mod require_adr_skill;
 mod require_background_wait;
 mod warn_large_commit;
 
@@ -45,7 +44,6 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &pre_git_merge_check::PreGitMergeCheck,
         &guard_git_merge::GuardGitMerge,
         &require_adr_skill::RequireAdrSkill,
-        &check_adr_sections::CheckAdrSections,
     ]
 }
 

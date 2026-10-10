@@ -14,6 +14,7 @@
 
 use super::Rule;
 use super::guard_branch_base::branch_at;
+use crate::adr::is_adr;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -21,19 +22,6 @@ use crate::shell::{Arg, Shell, has_flag};
 use std::path::{Path, PathBuf};
 
 pub struct PreGitMergeCheck;
-
-/// ADR のファイルか（docs/adr/ 直下の NNNN-*.md。4 桁の番号とハイフンで始まる）。
-/// README やテンプレートは含めない。.claude/scripts/branch-topics.sh も同じ条件で数える
-pub(super) fn is_adr(path: &str) -> bool {
-    path.strip_prefix("docs/adr/").is_some_and(|name| {
-        let b = name.as_bytes();
-        !name.contains('/')
-            && name.ends_with(".md")
-            && b.len() > 5
-            && b[..4].iter().all(u8::is_ascii_digit)
-            && b[4] == b'-'
-    })
-}
 
 /// 新しい ADR が 2 件以上なら deny の理由
 pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
@@ -188,20 +176,6 @@ mod tests {
         let cs = Shell::parse(src).commands();
         let (_, args) = cs[0].git_subcommand().unwrap();
         merge_targets(args)
-    }
-
-    #[test]
-    fn adr_files() {
-        assert!(is_adr("docs/adr/0002-use-b.md"));
-        assert!(!is_adr("docs/adr/README.md"));
-        assert!(!is_adr("docs/adr/template.md"));
-        assert!(!is_adr("docs/adr/drafts/0003-x.md"));
-        assert!(!is_adr("docs/adrs/0004-x.md"));
-        assert!(!is_adr("sub/docs/adr/0005-x.md"));
-        assert!(!is_adr("docs/adr/0006-x.txt"));
-        assert!(!is_adr("docs/adr/1-notes.md"));
-        assert!(!is_adr("docs/adr/2026notes.md"));
-        assert!(!is_adr("docs/adr/00012-x.md"));
     }
 
     #[test]

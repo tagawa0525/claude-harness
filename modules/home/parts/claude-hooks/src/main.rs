@@ -6,7 +6,11 @@
 //!
 //! Usage: claude-hooks pre-tool-use [--rule <name>]...
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
+//!        claude-hooks post-tool-use   ツールの成功後の記録（読み込んだスキル）。出力しない
+//!        claude-hooks adr-sections    ステージ済みの ADR の節を検査する（git の pre-commit から呼ぶ）。
+//!                                     問題があれば標準エラーに出して終了コード 1
 
+mod adr;
 mod gh;
 mod git;
 mod input;
@@ -17,7 +21,7 @@ mod shell;
 use std::io::Read;
 
 fn usage() -> ! {
-    eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]...");
+    eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]... | post-tool-use | adr-sections");
     eprintln!("rules: {}", rules::names().join(", "));
     std::process::exit(2);
 }
@@ -27,6 +31,23 @@ fn main() {
     let mut it = args.iter();
     match it.next().map(String::as_str) {
         Some("pre-tool-use") => {}
+        Some("post-tool-use") => {
+            let mut raw = String::new();
+            if std::io::stdin().read_to_string(&mut raw).is_ok()
+                && let Some(input) = input::Input::parse(&raw)
+            {
+                rules::require_adr_skill::record_skill(&input);
+            }
+            return;
+        }
+        Some("adr-sections") => {
+            let dir = std::env::current_dir().unwrap_or_default();
+            if let Some(reason) = adr::check_staged(&dir) {
+                eprintln!("❌ {reason}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => usage(),
     }
     let mut selected: Vec<&str> = Vec::new();
