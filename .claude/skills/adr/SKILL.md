@@ -47,6 +47,7 @@ repos:
         entry: design-records check
         language: system
         always_run: true
+        require_serial: true # ADR どうしの検査を 1 回で（分けて呼ぶと同じ指摘が重なる）
         types: [text]
         verbose: true # 通ったときも warning を見せる
 ```
