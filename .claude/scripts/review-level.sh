@@ -3,8 +3,8 @@
 #
 # Usage: review-level.sh [branch] [--base BASE]
 #   branch  省略時は今のブランチ
-#   BASE    省略時は main。origin/main がそれより新しければ origin/main
-#           （他の PR がマージされた直後はローカルの main が古く、比較元にすると
+#   BASE    省略時は既定ブランチ。origin 側がローカルより新しければ origin 側
+#           （他の PR がマージされた直後はローカルが古く、比較元にすると
 #           その PR の変更が差分に混ざる）。積み重なったブランチは土台のブランチを渡す
 #
 # 出力:
@@ -42,11 +42,36 @@ while (($# > 0)); do
   esac
 done
 
+# 既定ブランチ。branch-topics.sh / worktree-add.sh と claude-hooks（git.rs の default_branch）も同じ順で探す
+default_branch() {
+  local ref
+  if ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
+    echo "$ref"
+    return 0
+  fi
+  for ref in refs/remotes/origin/main refs/remotes/origin/master refs/heads/main refs/heads/master; do
+    if git show-ref --verify --quiet "$ref"; then
+      echo "${ref#refs/*/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [[ -z "$BASE" ]]; then
-  BASE=main
-  if git rev-parse --verify -q "origin/main^{commit}" >/dev/null \
-    && git merge-base --is-ancestor main origin/main 2>/dev/null; then
-    BASE=origin/main
+  if ! found=$(default_branch); then
+    echo "ERROR: 既定ブランチが見つかりません。--base で比べる起点を指定してください" >&2
+    exit 1
+  fi
+  name="${found#origin/}"
+  BASE="$name"
+  # origin 側がローカル以上に新しければ origin 側を使う。ローカルが先に進んでいる
+  # （git-merge の流れ）ときや、ローカルが無いときの扱いは下の通り
+  if git rev-parse --verify -q "refs/remotes/origin/${name}" >/dev/null; then
+    if ! git rev-parse --verify -q "refs/heads/${name}" >/dev/null \
+      || git merge-base --is-ancestor "$name" "origin/${name}" 2>/dev/null; then
+      BASE="origin/${name}"
+    fi
   fi
 fi
 
