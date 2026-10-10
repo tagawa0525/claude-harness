@@ -50,9 +50,10 @@ kebab-case にする。
 
 決定を変えるときは新しい ADR で置き換え、ADR は増えていく前提にする。
 
-- **proposed の間**: 自由に直す。実装をマージするブランチで、帰結と確認を実装に合わせ、`status: accepted` にする
-- **確定した後**に直してよいのは、誤字とリンク、前付けの `status` / `superseded-by` / `date`、補足の節への日付つきの
-  追記（`- YYYY-MM-DD: …`）だけ
+- **proposed と deferred の間**: 自由に直す。実装をマージするブランチで、帰結と確認を実装に合わせ、`status: accepted` にする
+- **確定した後**（accepted、rejected、withdrawn、superseded、deprecated）に直してよいのは、誤字、文法、マークアップ、
+  壊れたリンク、前付けの `status` / `superseded-by` / `date`、補足の節への日付つきの追記（`- YYYY-MM-DD: …`）だけ
 - **置き換え**: 新しい ADR は、古い決定のうちまだ有効な部分を書き直して含める（採用中の ADR だけで今の決定が分かる
-  ように）。古い方は `status: superseded` と `superseded-by` を書く
+  ように）。古い方は `status: superseded` と `superseded-by` を書く。古い方を前提にしていた ADR を
+  `grep -l 'requires:.*ADR-NNNN' docs/adr` で引き、見直す
 - main にマージする前は、ブランチの上の ADR を status によらず直してよい
