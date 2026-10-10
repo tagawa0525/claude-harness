@@ -299,7 +299,6 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" 1)
 assert_contains "$out" "RESPONSE: none"
 assert_contains "$out" "VERDICT: WAITING"
 assert_not_contains "$out" "COMMENT_ONLY"
-assert_not_contains "$(fake_log gh)" "issues/1/comments"
 
 # ===========================================================================
 # gh-wait-review.sh: 待つのはレビュー提出だけ
@@ -462,7 +461,8 @@ fake_gh_review_body() {
   \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
   \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
   \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
 }
 
 it "get-latest-review: レビューできなかったレビューは REVIEW_FAILED: yes"
@@ -500,7 +500,8 @@ fake_gh_failed_after_success() {
   \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
   \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
   \"api graphql --paginate\"*) echo '$thread' ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
 }
 
 it "get-latest-review: SUCCESSFUL_REVIEWS は失敗していないレビューの件数"
