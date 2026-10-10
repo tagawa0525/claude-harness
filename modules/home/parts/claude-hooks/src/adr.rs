@@ -1,9 +1,8 @@
 //! ADR（docs/adr/ 直下の NNNN-*.md）の判定と、コミット時の節の検査（`claude-hooks adr-sections`）
 //!
-//! 節は MADR に倣う: 背景（Context）・検討した案（Considered Options）・決定と理由（Decision
-//! Outcome）・帰結（Consequences）・確認（Confirmation）。背景と決定と理由は必須。ホストの状態や
-//! 再開手順のような節を足させない（ADR-0005）。中身が決定か状態かは判定できないのでレビューに任せる。
-//! 節の一覧は .claude/skills/adr/SKILL.md と揃える。
+//! 検査するのは MADR 4.0.0 の必須の節があるかだけ（ADR-0005）。任意の節や MADR に無い節は
+//! 止めない: MADR は節を足すことを禁じておらず、中身（決定か状態か）の判断はレビューの役目。
+//! 節の名前は .claude/skills/adr/SKILL.md のテンプレートと揃える。
 //! index が確定するのはコミットの時なので、PreToolUse ではなく git の pre-commit
 //! （modules/home/parts/git.nix）から呼ぶ。git add && git commit や git commit -a も捕まえる
 
@@ -23,8 +22,12 @@ pub fn is_adr(path: &str) -> bool {
     })
 }
 
-const ALLOWED: &[&str] = &["背景", "検討した案", "決定と理由", "帰結", "確認"];
-const REQUIRED: &[&str] = &["背景", "決定と理由"];
+/// MADR 4.0.0 の必須の節
+const REQUIRED: &[&str] = &[
+    "Context and Problem Statement",
+    "Considered Options",
+    "Decision Outcome",
+];
 
 /// ステージ済みの ADR の節を検査する。問題があれば理由を返す（git の pre-commit が表示して止める）
 pub fn check_staged(dir: &Path) -> Option<String> {
@@ -48,8 +51,7 @@ pub fn check_staged(dir: &Path) -> Option<String> {
         return None;
     }
     Some(format!(
-        "ADR の節は一般的な形に限ります: {}（{} は必須）。/adr スキルを読んで直してください。\n{}",
-        ALLOWED.join("・"),
+        "ADR に MADR の必須の節（{}）がありません。/adr スキルのテンプレートで直してください。\n{}",
         REQUIRED.join("・"),
         problems.join("\n")
     ))
@@ -73,27 +75,15 @@ fn headings(body: &str) -> Vec<String> {
 }
 
 fn problem(path: &str, hs: &[String]) -> Option<String> {
-    let extra: Vec<&str> = hs
-        .iter()
-        .map(String::as_str)
-        .filter(|h| !ALLOWED.contains(h))
-        .collect();
     let missing: Vec<&str> = REQUIRED
         .iter()
         .copied()
         .filter(|r| !hs.iter().any(|h| h == r))
         .collect();
-    if extra.is_empty() && missing.is_empty() {
+    if missing.is_empty() {
         return None;
     }
-    let mut parts = Vec::new();
-    if !extra.is_empty() {
-        parts.push(format!("決まっていない節「{}」", extra.join("」「")));
-    }
-    if !missing.is_empty() {
-        parts.push(format!("足りない節「{}」", missing.join("」「")));
-    }
-    Some(format!("- {path}: {}", parts.join("、")))
+    Some(format!("- {path}: 足りない節「{}」", missing.join("」「")))
 }
 
 #[cfg(test)]
