@@ -2,9 +2,11 @@
 //!
 //! Usage:
 //!   design-records new <slug> <title>  docs/adr/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
-//!   design-records check [FILE]...     docs/adr の ADR を検査する。FILE（リポジトリの直下からのパス。pre-commit が
+//!   design-records check [--changed] [FILE]...
+//!                                      docs/adr の ADR を検査する。FILE（リポジトリの直下からのパス。pre-commit が
 //!                                      渡すステージ済みのファイル）からは置き換えられた ADR への参照を探し、FILE の
-//!                                      ADR は確定した後の本文の変更を見る。FILE を渡すと warning は FILE のものだけ
+//!                                      ADR は確定した後の本文の変更を見る。FILE か --changed を渡すと、warning は
+//!                                      FILE のものだけ（--changed は FILE が 0 件のときも。pre-commit で使う）
 //!   design-records status              標準入力の文書の前付けの status を出す（無ければ -）
 //!
 //! 終了コード: 0 = 成功（注意だけのときも）、1 = 違反か失敗、2 = 使い方の誤り
@@ -22,7 +24,8 @@ use design_records::{
 
 type Result<T> = std::result::Result<T, String>;
 
-const USAGE: &str = "Usage: design-records new <slug> <title> | check [FILE]... | status";
+const USAGE: &str =
+    "Usage: design-records new <slug> <title> | check [--changed] [FILE]... | status";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -33,7 +36,10 @@ fn main() -> ExitCode {
         .as_slice()
     {
         ["new", slug, title] if !title.is_empty() => new(slug, title),
-        ["check", files @ ..] => run_check(files),
+        ["check", "--changed", files @ ..] => run_check(files, true),
+        ["check", files @ ..] if !files.iter().any(|f| f.starts_with('-')) => {
+            run_check(files, !files.is_empty())
+        }
         ["status"] => status(),
         _ => {
             eprintln!("{USAGE}");
@@ -144,7 +150,8 @@ fn today() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn run_check(files: &[&str]) -> Result<ExitCode> {
+/// `changed_only` なら、warning は `files` のものだけを出す。
+fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     let root = repo_root()?;
     let mut adrs = BTreeMap::new();
     for path in tracked(&root, ADR_DIR)? {
@@ -163,9 +170,9 @@ fn run_check(files: &[&str]) -> Result<ExitCode> {
     }
 
     let mut found = check(&adrs, issues.as_ref(), &scanned);
-    // FILE を渡したら（pre-commit）、warning はそのファイルのものだけにする。触っていない ADR の warning が毎回
+    // FILE か --changed を渡したら（pre-commit）、warning はそのファイルのものだけにする。触っていない ADR の warning が毎回
     // 並ぶと、今のコミットの warning が埋もれる。error は ADR どうしの整合なので、すべて出す
-    if !files.is_empty() {
+    if changed_only {
         found.retain(|f| f.severity == Severity::Error || files.contains(&f.path.as_str()));
     }
     found.extend(body_changes(&root, &adrs, files)?);

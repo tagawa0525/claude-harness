@@ -127,7 +127,8 @@ ADR-0008 の決定のうち、次を変える:
   （nixfiles では 6 件）が並び、今のコミットの warning が埋もれる。hook に渡したファイルの warning だけを出し、error は
   ADR どうしの整合なのですべて出す
 - **pre-commit の設定で `always_run` を付けた版**: テキストのファイルを含まないコミット（画像だけ、メッセージだけの
-  amend）でも、ファイルを渡さずに検査が走り、すべての ADR の warning が並んだ。ADR どうしの違反は ADR を変える
-  コミットでしか生まれないので外した
+  amend）でも、ファイルを渡さずに検査が走り、すべての ADR の warning が並んだ
+- **`always_run` を外した版**: ADR を消すだけのコミットでは渡すファイルが無く、検査が走らないので、消した ADR を
+  指す `requires` が残っても通った。`always_run` に戻し、`check --changed` で warning を渡したファイルの分だけにする
 - **pre-commit の設定で `require_serial` を付けない版**: prek はファイルを分けて hook を並べて呼ぶので、
   `prek run --all-files` で ADR どうしの検査の指摘が呼んだ回数だけ重なった

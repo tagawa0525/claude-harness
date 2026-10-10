@@ -5,8 +5,9 @@ repos:
       # 設計の記録（docs/adr）の形と参照（ADR-0009）
       - id: design-records
         name: design-records
-        entry: design-records check
+        entry: design-records check --changed
         language: system
+        always_run: true # ADR を消すだけのコミット（渡すファイルが無い）でも検査する
         require_serial: true # ADR どうしの検査を 1 回で（分けて呼ぶと同じ指摘が重なる）
         types: [text]
         verbose: true # 通ったときも warning を見せる
