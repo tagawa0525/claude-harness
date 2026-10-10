@@ -61,6 +61,7 @@ TOKEN = re.compile(rb"\b[0-9a-f]{7,64}\b")
 PREFIX = 7
 
 errors = []
+targets = {}  # 対応表のすべての旧 → 新
 mapping = {}  # 旧 → 新（変わったものだけ）
 pruned = set()  # 書き換えで消えた旧
 
@@ -77,14 +78,19 @@ with open(map_path, encoding="utf-8") as f:
             errors.append(f"対応表の {lineno} 行目が「旧 新」の完全な番号でない: {line.rstrip()}")
             continue
         old, new = fields[0], fields[1]
-        if set(new) == {"0"}:
-            pruned.add(old)
-            continue
-        if old == new:
-            continue
-        if mapping.get(old, new) != new:
-            errors.append(f"旧 {old} に別々の新が対応する: {mapping[old]} と {new}")
-            continue
+        # 変わらない行と消えた行も含めて、旧ごとの新を先に揃える
+        if targets.setdefault(old, new) != new:
+            errors.append(f"旧 {old} に別々の新が対応する: {targets[old]} と {new}")
+
+if errors:
+    for e in errors:
+        print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+
+for old, new in targets.items():
+    if set(new) == {"0"}:
+        pruned.add(old)
+    elif old != new:
         mapping[old] = new
 
 if errors:
