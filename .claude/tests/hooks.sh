@@ -1517,6 +1517,7 @@ assert_eq allow "$(decision "$out")"
 # 必須は MADR 4.0.0 の 3 節。見出しは日本語（背景 / 検討した案 / 決定と理由）でも英語（Context and
 # Problem Statement / Considered Options / Decision Outcome）でもよい。
 # 任意の節や、MADR に無い節は止めない（MADR は節を足すことを禁じていない。中身はレビューの役目）。
+# 推奨（帰結 / 確認。MADR の minimal テンプレートと、テンプレートの注記に基づく）が無ければ警告だけ出す。
 # index が確定するのはコミットの時なので、PreToolUse ではなく git の pre-commit で検査する
 # （git add && git commit、git commit -a も捕まえる）
 
@@ -1528,6 +1529,7 @@ cd "$SEC_REPO" || exit 1
 
 REQ=("背景" "検討した案" "決定と理由")
 REQ_EN=("Context and Problem Statement" "Considered Options" "Decision Outcome")
+REC=("帰結" "確認")
 
 # stage_adr <path> <headings...>: 見出しだけの ADR をステージする
 stage_adr() {
@@ -1539,10 +1541,37 @@ stage_adr() {
 # adr_sections: 終了コードと出力を "rc=<n>" と本文で返す
 adr_sections() { local o rc; o=$("$CLAUDE_HOOKS_BIN" adr-sections 2>&1); rc=$?; printf 'rc=%s\n%s' "$rc" "$o"; }
 
-it "adr-sections: MADR の必須の節がそろった ADR は通す"
-stage_adr docs/adr/0001-a.md "${REQ[@]}"
-assert_contains "$(adr_sections)" "rc=0"
+it "adr-sections: 必須と推奨の節がそろった ADR は警告も出さずに通す"
+stage_adr docs/adr/0001-a.md "${REQ[@]}" "${REC[@]}"
+out=$(adr_sections)
+assert_contains "$out" "rc=0"
+assert_not_contains "$out" "推奨"
 git commit -q -m "docs: adr"
+
+it "adr-sections: 推奨の節が無い ADR は通すが、足りない推奨の節を警告する"
+stage_adr docs/adr/0002-b.md "${REQ[@]}" "${REC[1]}"
+out=$(adr_sections)
+assert_contains "$out" "rc=0"
+assert_contains "$out" "推奨"
+assert_contains "$out" "帰結（Consequences）"
+assert_not_contains "$out" "確認（Confirmation）"
+git reset -q
+
+it "adr-sections: 推奨の節は ### の見出しでもよい（MADR では決定と理由の下）"
+{ printf '# ADR\n\n## 背景\n\n## 検討した案\n\n## 決定と理由\n\n### Consequences\n\n### 確認\n'; } > docs/adr/0002-b.md
+git add docs/adr/0002-b.md
+out=$(adr_sections)
+assert_contains "$out" "rc=0"
+assert_not_contains "$out" "推奨"
+git reset -q
+
+it "adr-sections: 必須の節も推奨の節も無ければ止め、両方を示す"
+stage_adr docs/adr/0002-b.md "${REQ[0]}"
+out=$(adr_sections)
+assert_contains "$out" "rc=1"
+assert_contains "$out" "検討した案（Considered Options）"
+assert_contains "$out" "帰結（Consequences）"
+git reset -q
 
 it "adr-sections: 任意の節や MADR に無い節があっても止めない"
 stage_adr docs/adr/0002-b.md "${REQ[0]}" "決定の要因" "${REQ[1]}" "${REQ[2]}" "各案の長所と短所" "補足" "メモ"
