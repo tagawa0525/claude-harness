@@ -18,6 +18,7 @@ use std::collections::VecDeque;
 pub struct GuardSbatch;
 
 const SCRIPT: &str = "slurm-run.sh";
+const TEST: &str = ".claude/tests/scripts/slurm-run.sh";
 
 fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
@@ -89,19 +90,17 @@ fn runs(cmd: &Cmd, target: &str) -> bool {
     basename(&program(cmd)) == target
 }
 
-/// slurm-run.sh（Slurm に投げる本物）を実行しているか。`.claude/tests/scripts/slurm-run.sh` のように
-/// 同名のテストは偽物の sbatch で走り、Slurm に触れないので対象にしない。本物は `.claude/scripts/` の
-/// 下に置かれるので、ディレクトリ付きの指定はそこで終わるものだけを認める。ディレクトリ無し
-/// （`slurm-run.sh`、`./slurm-run.sh`）は cwd が分からないので本物とみなす（docs/adr/0020）
+/// slurm-run.sh を実行しているか。同名のテスト（`.claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で
+/// 走り、Slurm に触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、
+/// 除くのはテストの 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
 fn runs_slurm_run(cmd: &Cmd) -> bool {
     let program = program(cmd);
-    let path = program.strip_prefix("./").unwrap_or(&program);
-    if path.contains('/') {
-        path.strip_suffix(SCRIPT)
-            .is_some_and(|dir| dir.ends_with(".claude/scripts/"))
-    } else {
-        path == SCRIPT
-    }
+    basename(&program) == SCRIPT && !is_own_test(&program)
+}
+
+fn is_own_test(path: &str) -> bool {
+    let path = path.strip_prefix("./").unwrap_or(path);
+    path == TEST || path.ends_with(&format!("/{TEST}"))
 }
 
 impl Rule for GuardSbatch {
