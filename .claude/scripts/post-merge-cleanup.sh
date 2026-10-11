@@ -8,13 +8,16 @@
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
-#   3. ローカルブランチを削除（-d。未マージなら失敗する）
-#   4. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
+#   3. 設計の記録（docs/adr か docs/issues）のあるリポジトリでは、既定ブランチの履歴に記録が入った番号の
+#      予約のタグを、ローカルとリモートから消す（design-records prune。ADR-0018）
+#   4. ローカルブランチを削除（-d。未マージなら失敗する）
+#   5. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
 #      GitHub リモートでそのブランチを head とする open PR（fork からの upstream PR 等）があるとき
 #      （削除で PR が閉じる）は、削除せず残す
 #
 # 出力:
 #   WORKTREE_REMOVED: <path>|none
+#   RESERVATIONS_RELEASED: <tag>...|none
 #   LOCAL_BRANCH: deleted|none
 #   REMOTE_BRANCH: deleted|kept (...)|none
 
@@ -75,7 +78,17 @@ if [[ -n "$(git remote)" ]]; then
   git pull -q --ff-only
 fi
 
-# --- 3. ローカルブランチ ---
+# --- 3. 番号の予約のタグ ---
+# 記録の形と番号の規則は design-records が持つ。既定ブランチ（リモートがあればリモートの）の履歴に無い記録の
+# タグは消さない（消すと番号が使い回される）
+if [[ -d docs/adr || -d docs/issues ]]; then
+  RELEASED=$(design-records prune)
+  echo "RESERVATIONS_RELEASED: ${RELEASED:-none}" | paste -sd " "
+else
+  echo "RESERVATIONS_RELEASED: none"
+fi
+
+# --- 4. ローカルブランチ ---
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
   git branch -d -q "$BRANCH"
   echo "LOCAL_BRANCH: deleted"
@@ -83,7 +96,7 @@ else
   echo "LOCAL_BRANCH: none"
 fi
 
-# --- 4. リモートブランチ ---
+# --- 5. リモートブランチ ---
 if git remote get-url "$REMOTE" >/dev/null 2>&1 \
   && [[ -n "$(git ls-remote --heads "$REMOTE" "$BRANCH" 2>/dev/null)" ]]; then
   if git remote -v | grep -q 'github\.com'; then
