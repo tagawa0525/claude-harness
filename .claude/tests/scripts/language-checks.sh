@@ -162,6 +162,15 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "" "$(fake_log design-records)"
 
+it "run-checks: .pre-commit-config.yaml を読めなければ、検査を飛ばさずに失敗する"
+chmod 000 .pre-commit-config.yaml
+make_fake_tool design-records '"check --changed"*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" ".pre-commit-config.yaml"
+assert_not_contains "$out" "ALL_OK"
+chmod 644 .pre-commit-config.yaml
+
 it "run-checks: オプトインしていなければ、docs/adr があっても design-records を呼ばない"
 REPO="$TEST_ROOT/checks/no-adr"
 make_repo "$REPO"
