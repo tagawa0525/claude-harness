@@ -1441,16 +1441,21 @@ it "guard-sbatch: slurm-run.sh を background で走らせるのは通す"
 out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'" true)
 assert_eq allow "$(decision "$out")"
 
-it "guard-sbatch: .claude/scripts の slurm-run.sh は、どの書き方でもフォアグラウンドなら止める"
+it "guard-sbatch: slurm-run.sh は、同名のテスト以外ならどの書き方でもフォアグラウンドなら止める"
 for invoked in ".claude/scripts/slurm-run.sh" "./.claude/scripts/slurm-run.sh" "~/.claude/scripts/slurm-run.sh" \
+  "$HOME/.claude/scripts/slurm-run.sh" "\"$HOME/.claude/scripts/slurm-run.sh\"" \
+  "~/.claude/scripts/./slurm-run.sh" "~/.claude/scripts//slurm-run.sh" "scripts/slurm-run.sh" \
+  "../scripts/slurm-run.sh" "/nix/store/abc-claude-scripts/slurm-run.sh" \
   "/home/tagawa/nix/nixfiles-feat-x/.claude/scripts/slurm-run.sh" "bash .claude/scripts/slurm-run.sh" \
-  "slurm-run.sh" "./slurm-run.sh" "bash slurm-run.sh"; do
+  "env FOO=1 ~/.claude/scripts/slurm-run.sh" "slurm-run.sh" "./slurm-run.sh" "bash slurm-run.sh" \
+  "foo.claude/tests/scripts/slurm-run.sh" "/tmp/x/tests/scripts/slurm-run.sh"; do
   out=$(run_hook guard-sbatch "$invoked -t 5 xlc-1B 'true'")
   assert_eq deny "$(decision "$out")"
 done
 
 it "guard-sbatch: 同名のテスト（.claude/tests/scripts/slurm-run.sh）は Slurm に投げないので通す"
 for invoked in "bash .claude/tests/scripts/slurm-run.sh" "bash ./.claude/tests/scripts/slurm-run.sh" \
+  ".claude/tests/scripts/slurm-run.sh" "bash ~/nix/nixfiles/.claude/tests/scripts/slurm-run.sh" \
   "bash /home/tagawa/nix/nixfiles-feat-x/.claude/tests/scripts/slurm-run.sh"; do
   out=$(run_hook guard-sbatch "$invoked")
   assert_eq allow "$(decision "$out")"
