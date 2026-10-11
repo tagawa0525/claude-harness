@@ -408,7 +408,15 @@ impl Rewrite<'_> {
     /// コミットを読み、依存の順に並べて、番号を置き換えて fast-import に渡す
     fn commits(&mut self, refs: &[Ref]) -> Result<(), Errors> {
         let records = read_commits(self.top, refs)?;
-        let order = self.order(&records)?;
+        // タグの本文の止める理由も、流す前にコミットの理由と一緒に出す
+        let mut errors = Vec::new();
+        let mut seen = HashSet::new();
+        for r in refs {
+            if r.kind == "tag" {
+                self.scan_tag(&r.oid, &mut seen, &mut errors).map_err(one)?;
+            }
+        }
+        let order = self.order(&records, errors)?;
 
         let mut import = Command::new("git")
             .arg("-C")
@@ -435,7 +443,11 @@ impl Rewrite<'_> {
     }
 
     /// 親と、文書が指すコミットを依存として、コミットを並べる。同じ順位なら元の流れの順にする
-    fn order(&mut self, records: &[CommitRecord]) -> Result<Vec<usize>, Errors> {
+    fn order(
+        &mut self,
+        records: &[CommitRecord],
+        mut errors: Errors,
+    ) -> Result<Vec<usize>, Errors> {
         let by_mark: HashMap<&str, usize> = records
             .iter()
             .enumerate()
@@ -447,7 +459,6 @@ impl Rewrite<'_> {
             .map(|(i, r)| (r.original.as_str(), i))
             .collect();
 
-        let mut errors = Vec::new();
         let mut scanned: HashMap<String, Vec<String>> = HashMap::new();
         let mut deps: Vec<HashSet<usize>> = Vec::with_capacity(records.len());
         for record in records {
@@ -641,6 +652,31 @@ impl Rewrite<'_> {
             self.finals.insert(record.original.clone(), last);
         }
         out.write_all(b"done\n").map_err(io_error)?;
+        Ok(())
+    }
+
+    /// タグ `oid`（タグを指すタグは、指す方も）の本文の止める理由を集める
+    fn scan_tag(
+        &mut self,
+        oid: &str,
+        seen: &mut HashSet<String>,
+        errors: &mut Errors,
+    ) -> Result<(), String> {
+        if !seen.insert(oid.to_string()) {
+            return Ok(());
+        }
+        let data = self.cat.object(oid)?;
+        let (headers, message) = split_object(&data);
+        let value = |key: &[u8]| text(&values(&headers, key).concat());
+        let name = value(b"tag");
+        self.references(
+            &format!("タグ {name} の本文"),
+            strip_signature(message),
+            errors,
+        );
+        if value(b"type") == "tag" {
+            self.scan_tag(&value(b"object"), seen, errors)?;
+        }
         Ok(())
     }
 
