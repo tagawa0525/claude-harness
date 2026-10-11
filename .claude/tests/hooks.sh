@@ -4,7 +4,7 @@
 # 実行: bash .claude/tests/hooks.sh
 #   claude-hooks を cargo build してから各ルールを --rule で個別に評価する
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
-#       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
+#       block-no-verify-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
 #       guard-git-merge / guard-sbatch
 
@@ -554,95 +554,38 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
 
 # ===========================================================================
-# block-secret-commit: 機密情報を含む変更のコミットを gitleaks で止める
+# block-no-verify-commit: git の hook を飛ばす git commit --no-verify を止める
 # ===========================================================================
-# 検出そのものは自前で持たず gitleaks に委ねる（既存の定番ツールを使う）。hook が担うのは
-# 「いつ・何を渡して呼ぶか」「結果をどう deny に変換するか」だけなので、偽の gitleaks で
-# 呼び出しと結果の扱いを検証する。値は理由に出さない（gitleaks 側でも --redact する）
+# 機密情報の検査（gitleaks）は git の pre-commit で行う（ADR-0015）。--no-verify はそれを飛ばすので、
+# Claude Code のセッションでは止める
 
-REPO="$TEST_ROOT/secret"
+REPO="$TEST_ROOT/noverify"
 make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
-echo 'plain' > a.txt && git add a.txt
 
-LEAK_JSON='[{"File":"conf.txt","StartLine":3,"RuleID":"aws-access-token","Secret":"REDACTED","Fingerprint":"conf.txt:aws-access-token:3"}]'
-# fake_gitleaks <staged-json|exit-code> <pre-commit-json|exit-code>
-#   JSON を渡すと exit 1（漏えいあり）、"ok" なら [] と exit 0、"fail" なら JSON なしで exit 2
-fake_gitleaks() {
-  local body="" mode
-  for mode in "--staged:$1" "--pre-commit:$2"; do
-    local flag="${mode%%:*}" spec="${mode#*:}"
-    case "$spec" in
-      ok)   body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) pwd >> \"$TEST_ROOT/gitleaks.pwd\"; echo '[]' ;;"$'\n' ;;
-      fail) body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo 'error: not a git repo' >&2; exit 2 ;;"$'\n' ;;
-      *)    body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) pwd >> \"$TEST_ROOT/gitleaks.pwd\"; echo '$spec'; exit 1 ;;"$'\n' ;;
-    esac
-  done
-  : > "$TEST_ROOT/gitleaks.pwd"
-  make_fake_tool gitleaks "$body"
-}
+it "block-no-verify-commit: --no-verify と -n（短縮形のまとまりを含む）の git commit を止める"
+for cmd in 'git commit --no-verify -m "chore: a"' 'git commit -n -m "chore: a"' 'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"'; do
+  out=$(run_hook block-no-verify-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=1"
+done
 
-it "block-secret-commit: gitleaks がステージ済みに漏えいを見つけなければ許可する"
-fake_gitleaks ok ok
-out=$(run_hook block-secret-commit 'git commit -m "feat: a"')
+it "block-no-verify-commit: hook を飛ばさない git commit は許可する"
+for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit'; do
+  out=$(run_hook block-no-verify-commit "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "block-no-verify-commit: ALLOW_NO_VERIFY=1 で迂回できる"
+out=$(run_hook block-no-verify-commit 'ALLOW_NO_VERIFY=1 git commit --no-verify -m "chore: a"')
 assert_eq allow "$(decision "$out")"
-assert_eq "git --staged --no-banner --redact --report-format json --report-path - ." "$(fake_log gitleaks)"
 
-it "block-secret-commit: git commit 以外は対象外で gitleaks を呼ばない"
-fake_gitleaks ok ok
-out=$(run_hook block-secret-commit 'git log --grep commit')
+it "block-no-verify-commit: git commit 以外とヒアドキュメント本文には反応しない"
+out=$(run_hook block-no-verify-commit 'git log --no-verify')
 assert_eq "" "$out"
-assert_eq "" "$(fake_log gitleaks)"
-
-it "block-secret-commit: 漏えいがあれば deny し、場所とルール ID を示す（値は出さない）"
-fake_gitleaks "$LEAK_JSON" ok
-out=$(run_hook block-secret-commit 'git commit -m "chore: conf"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "conf.txt:3"
-assert_contains "$(reason "$out")" "aws-access-token"
-assert_contains "$(reason "$out")" "gitleaks:allow"
-assert_not_contains "$(reason "$out")" "REDACTED"
-
-it "block-secret-commit: -a 指定時は未ステージの変更（--pre-commit）も検査する"
-fake_gitleaks ok "$LEAK_JSON"
-out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(fake_log gitleaks)" "git --pre-commit"
-fake_gitleaks ok "$LEAK_JSON"
-out=$(run_hook block-secret-commit 'git commit -m "chore: staged only"')
-assert_eq allow "$(decision "$out")"
-assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
-
-it "block-secret-commit: gitleaks が実行できなければ deny（検査できない状態でコミットさせない）"
-fake_gitleaks fail ok
-out=$(run_hook block-secret-commit 'git commit -m "chore: x"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "gitleaks"
-remove_fake_tool gitleaks
-out=$(PATH="$(minimal_path)" run_hook block-secret-commit 'git commit -m "chore: x"')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "gitleaks"
-
-it "block-secret-commit: ALLOW_SECRET_COMMIT=1 で迂回できる（gitleaks を呼ばない）"
-fake_gitleaks "$LEAK_JSON" ok
-out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
-assert_eq allow "$(decision "$out")"
-assert_eq "" "$(fake_log gitleaks)"
-
-it "block-secret-commit: -C 指定のリポジトリで gitleaks を実行する"
-fake_gitleaks ok ok
-cd "$TEST_ROOT" || exit 1
-out=$(run_hook block-secret-commit "git -C $REPO commit -m 'chore: c'")
-assert_eq allow "$(decision "$out")"
-assert_eq "$REPO" "$(cat "$TEST_ROOT/gitleaks.pwd")"
-cd "$REPO" || exit 1
-
-it "block-secret-commit: ヒアドキュメント本文の git commit には反応しない"
-fake_gitleaks "$LEAK_JSON" ok
-out=$(run_hook block-secret-commit "$(write_doc '例: git commit -m msg')")
+out=$(run_hook block-no-verify-commit "$(write_doc '例: git commit --no-verify -m msg')")
 assert_eq "" "$out"
-assert_eq "" "$(fake_log gitleaks)"
 
 # ===========================================================================
 # guard-git-add: 対象を絞らない git add（-A / --all / . / :/ / *）を止める
