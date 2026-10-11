@@ -263,21 +263,19 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             }
             words.pop_front();
             // (同じ意味の短縮形, 値)
-            let mut options: Vec<(Option<char>, Option<String>, String)> = Vec::new();
+            let mut options: Vec<(Option<char>, Option<String>)> = Vec::new();
             if let Some(long) = t.strip_prefix("--") {
                 let (name, attached) = match long.split_once('=') {
                     Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
                     None => (t.clone(), None),
                 };
                 match long_option(wrapper, &name) {
-                    Some((canonical, short, true)) => {
+                    Some((_, short, true)) => {
                         let value = attached.or_else(|| words.pop_front().map(|a| a.text));
-                        options.push((*short, value, canonical.to_string()));
+                        options.push((*short, value));
                     }
-                    Some((canonical, short, false)) => {
-                        options.push((*short, None, canonical.to_string()))
-                    }
-                    None => options.push((None, attached, name)),
+                    Some((_, short, false)) => options.push((*short, None)),
+                    None => options.push((None, attached)),
                 }
             } else {
                 let cluster: Vec<char> = t[1..].chars().collect();
@@ -289,13 +287,13 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         } else {
                             Some(rest)
                         };
-                        options.push((Some(*ch), value, String::new()));
+                        options.push((Some(*ch), value));
                         break;
                     }
-                    options.push((Some(*ch), None, String::new()));
+                    options.push((Some(*ch), None));
                 }
             }
-            for (short, value, _) in options {
+            for (short, value) in options {
                 match (wrapper.name, short) {
                     ("env", Some('i')) => step.env_cleared = true,
                     ("env", Some('u')) => {

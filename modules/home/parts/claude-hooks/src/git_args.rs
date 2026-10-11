@@ -4,14 +4,11 @@
 
 use crate::shell::Arg;
 
-/// git のグローバルオプションのうち、次の引数を値として取るもの
+/// git のグローバルオプションのうち、次の引数を値として取るもの（値を読む `-C`、`-c`、`--config-env` を除く）
 const GLOBAL_TAKES_VALUE: &[&str] = &[
-    "-C",
-    "-c",
     "--git-dir",
     "--work-tree",
     "--namespace",
-    "--config-env",
     "--super-prefix",
     "--list-cmds",
 ];
