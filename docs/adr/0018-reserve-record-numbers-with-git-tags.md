@@ -52,8 +52,10 @@ xlc の衝突は、マージのときに `cargo test`（crates/docs の検査）
 
 ### 予約（`new`）
 
-- `origin` があれば、先に origin の既定ブランチ（`ls-remote --symref` で聞く）と `refs/tags/adr-*`、
-  `refs/tags/issue-*` を fetch する。既定ブランチも取ってくるのは、`prune` が予約を解放した後の番号が、origin の
+- `origin` があれば、先に `refs/tags/adr-*`、`refs/tags/issue-*` を、次に origin の既定ブランチ（origin の HEAD が
+  指すブランチ。指す先が無ければ `main`、`master` のうち origin にあるもの）を fetch する。タグを先に取るのは、
+  ほかの clone がマージを push してから予約を解放するため（後に取るブランチには、そのとき消えていたタグの記録が
+  入っている。逆の順では、間にマージと解放が起きると、マージ前のブランチと消えたタグを見て番号を使い回す）。既定ブランチも取ってくるのは、`prune` が予約を解放した後の番号が、origin の
   既定ブランチの履歴にしか残らないため。タグはリモートを正として、同じ名前の手元のタグ（push の前に止まった
   予約）を上書きし、origin で消えたタグ（ほかの clone の `prune` と `renumber` が解放したもの）は手元からも消す。
   `--prune` は同じ fetch の refspec の行き先をすべて刈るので、タグだけの fetch に付ける（ブランチの fetch に
