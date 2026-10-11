@@ -164,6 +164,6 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   展開しない `cd "$VAR"` の行き先と同じく手元に実在しないので、ルールは既存の「ディレクトリに移れない」ときの
   扱いになる: 手元のリポジトリやブランチで決めるルール（block-main-commit、guard-git-push など）は判定せず、
   block-secret-commit は git の hook に任せ、pre-pr-create-check、pre-merge-check、
-  guard-gh-run-rerun は止める（文言は cd 先でなく、ssh や sudo -i の中で走るので手元の場所で検査できないことを示す。
+  guard-gh-run-rerun は手元の場所の検査をせずにその場で止める（文言は cd 先でなく、ssh や sudo -i の中で走るので手元の場所で検査できないことを示す。
   `Shell::runs_under_ssh_or_login`）。帰結の「`ssh <接続先> …` の中の `cd` と git は……ルールは
   手元のディレクトリで判定する」は、この補足より前の挙動を書いたもので、今は当たらない
