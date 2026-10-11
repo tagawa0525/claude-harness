@@ -893,6 +893,14 @@ mod tests {
         assert!(!cs[0].opaque);
         assert!(cmds("~/x/$SCRIPT")[0].opaque);
         assert!(cmds("`which sbatch` x")[0].opaque);
+        // 展開の中の `/` は字面の区切りではない。字面の `/` の後ろに展開が無ければ決まる
+        assert!(cmds("${SB:-/usr/bin/sbatch} --wrap x")[0].opaque);
+        assert!(cmds("$(command -v /usr/bin/sbatch) --wrap x")[0].opaque);
+        assert!(cmds("$(find /usr/bin -name sbatch) x")[0].opaque);
+        assert!(cmds("$X.sh")[0].opaque);
+        assert!(!cmds("\"$HOME\"/x/slurm-run.sh")[0].opaque);
+        assert!(!cmds("${DIR}/slurm-run.sh")[0].opaque);
+        assert!(!cmds("\"$DIR/slurm-run.sh\"")[0].opaque);
     }
 
     #[test]

@@ -794,11 +794,21 @@ mod tests {
             "sh -eu -o pipefail sbatch",
             "bash --rcfile r -- sbatch",
             "sudo flock /tmp/l chrt -f 10 sbatch",
+            "bash - sbatch",
+            "script log.txt -q -- sbatch",
         ] {
             let u = un(src);
             assert_eq!(u.name, "sbatch", "{src}");
             assert!(u.source.is_none() && !u.opaque, "{src}");
         }
+        // env と sudo は、最初の代入でオプションが終わる（getopt の `+`）。後ろの -i は走らせるプログラム
+        let u = un("env FOO=1 -i x");
+        assert_eq!(u.name, "-i");
+        assert_eq!(u.env, [EnvChange::Set("FOO".to_string(), "1".to_string())]);
+        assert_eq!(un("sudo FOO=1 -u root x").name, "-u");
+        // sudo -D はディレクトリを変える
+        assert_eq!(un("sudo -D /tmp git commit").dirs, ["/tmp"]);
+        assert_eq!(un("sudo --chdir=/tmp git commit").dirs, ["/tmp"]);
         assert_eq!(un("sudo -u slurm sbatch --wrap x").args[1].text, "x");
         assert_eq!(
             un("sudo flock /tmp/l chrt -f 10 sbatch").wrappers,
@@ -824,6 +834,11 @@ mod tests {
             ("sh -ec sbatch", "sbatch"),
             ("bash -o pipefail -c sbatch", "sbatch"),
             ("nohup bash -c sbatch", "sbatch"),
+            // ssh は接続先の後ろのオプションも読む。script の getopt は語を並べ替える
+            ("ssh r995 -t sbatch --wrap x", "sbatch --wrap x"),
+            ("ssh r995 -p 22 -- sbatch", "sbatch"),
+            ("script log.txt -c sbatch", "sbatch"),
+            ("script log.txt -q --command sbatch", "sbatch"),
             ("ssh r995 bash -c sbatch", "bash -c sbatch"),
         ] {
             let u = un(src);
@@ -844,6 +859,7 @@ mod tests {
             "taskset -p 1 1234",
             "taskset -ap 1234",
             "ssh -N r995",
+            "ssh r995 -N",
             "ssh -G r995",
             "ssh -Q cipher",
             "flock 9",

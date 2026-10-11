@@ -476,6 +476,11 @@ for cmd in "env -C $TEST_ROOT/lock git commit -m 'feat: x'" "env --chdir=$TEST_R
   out=$(run_hook block-main-commit "$cmd")
   assert_eq deny "$(decision "$out")"
 done
+# sudo -D / --chdir もディレクトリを変える
+out=$(run_hook block-main-commit "sudo -E -D $LOCAL git commit -m 'feat: x'")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-main-commit "sudo -E --chdir=$TEST_ROOT/lock git commit -m 'feat: x'")
+assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
 it "block-main-commit: コマンド置換やサブシェルの中の cd は親の対象ディレクトリを変えない"
@@ -876,7 +881,8 @@ for cmd in 'sudo git commit -m x' 'sudo --preserve-env=HOME git commit -m x' 'ss
   assert_eq deny "$(decision "$out")"
 done
 for cmd in 'sudo -E git commit -m x' 'sudo --preserve-env git commit -m x' \
-  "bash -c 'git commit -m x'" 'eval git commit -m x' 'flock /tmp/l git commit -m x'; do
+  "bash -c 'git commit -m x'" 'eval git commit -m x' 'flock /tmp/l git commit -m x' \
+  'sudo systemctl restart x' 'ssh r995 nvidia-smi' 'env -i ls' 'sudo -D /tmp ls' 'ssh r995 git status'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
 done
@@ -1780,7 +1786,7 @@ assert_eq deny "$(decision "$out")"
 
 it "guard-sbatch: bash / sh のオプションを読み飛ばし、その後ろの語をスクリプトとして見る（#303）"
 for invoked in "bash -x" "bash -e" "sh -eu" "bash -o pipefail" "bash --rcfile ~/.bashrc" "bash --" "bash +O extglob" \
-  "nohup bash -x" "bash -xeu -o errexit --"; do
+  "nohup bash -x" "bash -xeu -o errexit --" "bash -"; do
   out=$(run_hook guard-sbatch "$invoked $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
   assert_eq deny "$(decision "$out")"
   out=$(run_hook guard-sbatch "$invoked .claude/tests/scripts/slurm-run.sh")
@@ -1828,6 +1834,8 @@ for wrapped in "sudo sbatch --wrap true" "sudo -u slurm -g users sbatch --wrap t
   "script -c 'sbatch --wrap true' log.txt" "script -q --command 'sbatch --wrap true'" "script log.txt -- sbatch --wrap true" \
   "ssh r995 sbatch --wrap true" "ssh -p 22 -o StrictHostKeyChecking=no user@r995 'sbatch --wrap true'" \
   "ssh -t r995 'cd ~/x && sbatch --wrap true'" "ssh -i ~/.ssh/id -J bastion r995 sbatch --wrap true" \
+  "ssh r995 -t sbatch --wrap true" "ssh r995 -p 22 -- sbatch --wrap true" "script log.txt -c 'sbatch --wrap true'" \
+  "script log.txt -q --command 'sbatch --wrap true'" \
   "eval 'sbatch --wrap true'" "eval sbatch --wrap true" "eval \"cd /tmp; sbatch --wrap true\"" \
   "sudo flock /tmp/lock chrt -f 10 sbatch --wrap true" "ssh r995 bash -c 'sbatch --wrap true'"; do
   out=$(run_hook guard-sbatch "$wrapped")
@@ -1836,7 +1844,8 @@ done
 
 it "guard-sbatch: 包みが走らせない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
 for cmd in "sudo -l sbatch" "sudo -e sbatch" "sudo -v" "sudo -K" "chrt -p 10 1234" "chrt -m" "taskset -p 1 1234" \
-  "taskset -ap 1234" "ssh -N r995" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" "script log.txt"; do
+  "taskset -ap 1234" "ssh -N r995" "ssh r995 -N" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" "script log.txt" \
+  "env FOO=1 -i sbatch --wrap true"; do
   out=$(run_hook guard-sbatch "$cmd")
   assert_eq allow "$(decision "$out")"
 done
@@ -1845,7 +1854,8 @@ it "guard-sbatch: 走らせるプログラムを決められない形は、コ�
 for cmd in 'CMD=sbatch; $CMD --wrap true' 'CMD="sbatch --wrap true"; eval "$CMD"' '$(which sbatch) --wrap true' \
   '. ./run-sbatch.sh' 'source run-sbatch.sh' 'bash -s < run-sbatch.sh' 'bash < run-sbatch.sh' \
   'echo "sbatch --wrap true" | sh' 'bash -c "$CMD" # sbatch' "bash -c \"\$SBATCH_BIN --wrap true\"; echo sbatch" \
-  'ssh r995 < run-sbatch.sh' 'bash "$SCRIPT" sbatch' 'sudo -s < run-sbatch.sh' 'eval "$CMD" sbatch'; do
+  'ssh r995 < run-sbatch.sh' 'bash "$SCRIPT" sbatch' 'sudo -s < run-sbatch.sh' 'eval "$CMD" sbatch' \
+  '${SB:-/usr/bin/sbatch} --wrap true' '$(command -v /usr/bin/sbatch) --wrap true'; do
   out=$(run_hook guard-sbatch "$cmd")
   assert_eq deny "$(decision "$out")"
 done
