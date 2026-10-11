@@ -27,7 +27,8 @@ pub struct Map {
 impl Map {
     /// 対応表を読む。1 行に「旧 新」の完全な番号（3 列目以降は無視する）。最初の行が `old new` なら見出しとして
     /// 読み飛ばす（git filter-repo の commit-map）。新が 0 だけの行は消えたコミット、旧と新が同じ行は変わらなかった
-    /// コミット。行が読めないとき、旧と新の桁数が違うとき、同じ旧に別々の新が対応するときは、すべての理由を返す。
+    /// コミット。行が読めないとき、旧と新の桁数が違うとき、同じ旧に別々の新が対応するとき、新が別の行の旧として
+    /// 変わる（連鎖する）ときは、すべての理由を返す。
     pub fn parse(text: &str) -> Result<Map, Vec<String>> {
         let mut errors = Vec::new();
         let mut targets: BTreeMap<&str, &str> = BTreeMap::new();
@@ -64,6 +65,18 @@ impl Map {
             let first = *targets.entry(old).or_insert(new);
             if first != new {
                 errors.push(format!("旧 {old} に別々の新が対応する: {first} と {new}"));
+            }
+        }
+        // 新が別の行の（変わる）旧でもある連鎖は、1 回の置き換えでは最後の新にならず、書き込みの途中で失敗した
+        // 後に呼び直すと、書き換え済みの語をもう一度書き換える
+        for (old, new) in &targets {
+            if let Some(next) = targets.get(new)
+                && next != new
+                && old != new
+            {
+                errors.push(format!(
+                    "対応が連鎖している: {old} → {new} → {next}（合成した対応表を渡す）"
+                ));
             }
         }
         if !errors.is_empty() {
