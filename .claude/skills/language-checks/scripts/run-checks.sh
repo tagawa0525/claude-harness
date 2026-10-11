@@ -224,11 +224,22 @@ fi
 # design-records は .pre-commit-config.yaml でオプトインしたリポジトリだけで走らせる（ADR-0009。docs/adr の有無で
 # 決めると、別の形の ADR を持つ他人のプロジェクトでも止まる）。.md の変更が無くても走らせ、ADR を消すだけの変更でも、
 # 消した ADR を指す参照が残っていないかを見る（prek の設定の always_run と同じ）
-design_records_opted_in() {
-  [[ -f .pre-commit-config.yaml ]] &&
-    grep -Eq "^[[:space:]]*-?[[:space:]]*id:[[:space:]]*[\"']?design-records[\"']?[[:space:]]*(#.*)?\$" .pre-commit-config.yaml
-}
-if design_records_opted_in; then
+# grep の 1（一致なし）だけをオプトインしていないと見なし、読めないなどの失敗（2 以上）は止める
+DESIGN_RECORDS=0
+if [[ -f .pre-commit-config.yaml ]]; then
+  rc=0
+  grep -Eq "^[[:space:]]*-?[[:space:]]*id:[[:space:]]*[\"']?design-records[\"']?[[:space:]]*(#.*)?\$" \
+    .pre-commit-config.yaml || rc=$?
+  case "$rc" in
+    0) DESIGN_RECORDS=1 ;;
+    1) ;;
+    *)
+      echo "FAILED: markdown design-records: .pre-commit-config.yaml を読めません（grep の終了コード $rc）"
+      exit 1
+      ;;
+  esac
+fi
+if (( DESIGN_RECORDS )); then
   DETECTED=1
   run_stage markdown design-records design-records "" design_records_check
 fi
