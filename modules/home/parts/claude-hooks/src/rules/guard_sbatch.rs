@@ -92,7 +92,7 @@ fn runs(cmd: &Cmd, target: &str) -> bool {
 /// slurm-run.sh（Slurm に投げる本物）を実行しているか。`.claude/tests/scripts/slurm-run.sh` のように
 /// 同名のテストは偽物の sbatch で走り、Slurm に触れないので対象にしない。本物は `.claude/scripts/` の
 /// 下に置かれるので、ディレクトリ付きの指定はそこで終わるものだけを認める。ディレクトリ無し
-/// （`slurm-run.sh`、`./slurm-run.sh`）は cwd が分からないので本物とみなす
+/// （`slurm-run.sh`、`./slurm-run.sh`）は cwd が分からないので本物とみなす（docs/adr/0020）
 fn runs_slurm_run(cmd: &Cmd) -> bool {
     let program = program(cmd);
     let path = program.strip_prefix("./").unwrap_or(&program);
