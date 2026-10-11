@@ -1,4 +1,4 @@
-//! git を起動できないときに、claude-hooks が理由を systemMessage で利用者に見せること（ADR-0033）
+//! git や gh を起動できないときに、claude-hooks が理由を systemMessage で利用者に見せること（ADR-0033）
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -156,5 +156,17 @@ fn git_failing_outside_a_repository_is_not_reported() {
     let path = std::env::var("PATH").expect("git を探す PATH が要る");
     let out = run(&dir.0, "git commit -m x", None, Some(&path));
     assert_eq!(out.system_message(), "");
+    assert_eq!(out.stderr, "");
+}
+
+#[test]
+fn gh_missing_from_path_is_shown_to_the_user() {
+    let dir = TempDir::new("missing-gh");
+    let out = run(&dir.0, "gh run rerun 1", Some("guard-gh-run-rerun"), None);
+    assert!(
+        out.system_message().contains("gh を起動できません"),
+        "json: {}",
+        out.json
+    );
     assert_eq!(out.stderr, "");
 }
