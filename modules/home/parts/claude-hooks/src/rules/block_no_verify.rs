@@ -13,7 +13,7 @@
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=1` を付ける。
 
 use super::Rule;
-use crate::git_args::git_flag;
+use crate::git_args::{Item, git_flag, items};
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -102,10 +102,9 @@ impl Rule for BlockNoVerify {
                 "config" => sets_hooks_path(args),
                 "commit" | "merge" | "pull" => {
                     cmd.git_config_overrides().iter().any(|c| is_hooks_path(c))
-                        || args
+                        || items(sub, args)
                             .iter()
-                            .take_while(|a| a.text != "--")
-                            .any(|a| is_no_verify(&a.text))
+                            .any(|item| matches!(item, Item::Long(name) if is_no_verify(name)))
                         || (sub == "commit" && git_flag(sub, args, Some('n'), &[]))
                 }
                 _ => false,

@@ -15,9 +15,10 @@
 use super::Rule;
 use super::guard_branch_base::branch_at;
 use crate::git;
+use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, has_flag};
+use crate::shell::{Arg, Shell};
 use design_records::is_adr_path;
 use std::path::{Path, PathBuf};
 
@@ -62,7 +63,8 @@ fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
 /// マージコミットを必ず作る指定か。`--no-ff` があっても、後ろの `--ff` / `--ff-only` / `--squash` が
 /// 勝って fast-forward や squash になることがあるので、順序を読まずに併用ごと認めない
 fn always_merge_commit(args: &[Arg]) -> bool {
-    has_flag(args, &["--no-ff"]) && !has_flag(args, &["--ff", "--ff-only", "--squash"])
+    git_flag("merge", args, None, &["--no-ff"])
+        && !git_flag("merge", args, None, &["--ff", "--ff-only", "--squash"])
 }
 
 /// 既定ブランチの上で行う `git merge` 1 回分
