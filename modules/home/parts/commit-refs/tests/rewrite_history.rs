@@ -476,3 +476,53 @@ fn a_tracked_path_named_like_a_ref_does_not_confuse_the_revisions() {
     h.t.commit_all("chore: path like a ref");
     assert_ok(&h.rewrite());
 }
+
+#[test]
+fn rewrites_an_old_annotated_tag_without_a_tagger() {
+    let h = History::new("no-tagger");
+    let object = h.t.path(".git/tag-object");
+    fs::write(
+        &object,
+        format!(
+            "object {}\ntype commit\ntag old\n\nafter {}\n",
+            h.c2,
+            &X1[..8]
+        ),
+    )
+    .unwrap();
+    let tag = h.t.git(&[
+        "hash-object",
+        "-t",
+        "tag",
+        "-w",
+        "--literally",
+        object.to_str().unwrap(),
+    ]);
+    h.t.git(&["update-ref", "refs/tags/old", tag.trim()]);
+    assert_ok(&h.rewrite());
+    let new_c1 = h.t.rev("main~1");
+    assert_eq!(
+        h.t.git(&["cat-file", "tag", "old"]),
+        format!(
+            "object {}\ntype commit\ntag old\n\nafter {}\n",
+            h.t.rev("main"),
+            &new_c1[..8]
+        )
+    );
+}
+
+#[test]
+fn a_failure_to_write_the_report_still_says_the_refs_were_moved() {
+    let h = History::new("report-full");
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_commit-refs"));
+    command
+        .current_dir(&h.t.dir)
+        .args(["rewrite-history", &h.map])
+        .stdout(fs::File::create("/dev/full").unwrap())
+        .stderr(std::process::Stdio::piped());
+    isolate(&mut command);
+    let out = command.output().unwrap();
+    assert_error(&out);
+    assert!(stderr(&out).contains("移した"), "{}", stderr(&out));
+    assert_eq!(h.t.rev("refs/commit-refs/original/heads/main"), h.c2);
+}

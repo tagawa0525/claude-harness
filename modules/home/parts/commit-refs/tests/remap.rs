@@ -490,3 +490,17 @@ fn a_map_whose_new_hash_is_also_an_old_hash_stops() {
     assert!(stderr(&out).contains("連鎖"), "{}", stderr(&out));
     assert_eq!(t.read("notes.md"), "at abcdef01\n");
 }
+
+#[test]
+fn counts_a_reference_whose_new_hash_shares_the_written_prefix() {
+    // 書いた桁の範囲で新と旧が同じでも、変わったコミットを指す語として数える
+    let t = TempRepo::new("same-prefix");
+    t.record("notes.md", "short abcdef0");
+    let new = format!("abcdef0{}", "9".repeat(33));
+    let map = t.map_file(&format!("{OLD_A} {new}\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    let text = stdout(&out);
+    assert!(text.contains("REPLACED: notes.md 1\n"), "{text}");
+    assert!(text.contains("REFS: 1\n"), "{text}");
+}
