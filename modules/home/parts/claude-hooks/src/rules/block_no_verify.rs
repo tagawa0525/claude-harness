@@ -6,14 +6,16 @@
 //! - `git commit` / `merge` / `pull` の `--no-verify` とその省略形（git は一意な省略形を受け付ける）。commit の `-n`
 //! - hook の置き場所を変える: `git -c core.hooksPath=…`、`--config-env=core.hooksPath=…`、`git config core.hooksPath
 //!   …`、`GIT_CONFIG_*` の環境変数
-//! - hook が Claude Code のセッションと分かる `CLAUDECODE=1` を、別の値にする・外す（`env -u`、`unset`）
+//! - hook が Claude Code のセッションと分かる `CLAUDECODE=1` を、別の値にする・外す（`env -u`、`env -i`、`unset`）
+//!
+//! `env`、`command`、`exec`、`nohup`、`time` で包んだコマンドは、ほどいて中の git コマンドと env の変数で見る。
 //!
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=1` を付ける。
 
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, git_global_takes_value};
+use crate::shell::{Arg, Cmd, Shell, git_global_takes_value};
 
 pub struct BlockNoVerify;
 
@@ -146,24 +148,82 @@ fn sets_hooks_path(args: &[Arg]) -> bool {
         || texts.get(key + 1).is_some_and(|v| !v.starts_with('-'))
 }
 
-/// hook の置き場所を環境変数で変えるか、CLAUDECODE を 1 以外にする・外すか
-fn changes_environment(shell: &Shell) -> bool {
-    let assigned = shell.assignments().into_iter().any(|(name, value)| {
-        name.starts_with("GIT_CONFIG_") || (name == "CLAUDECODE" && value != "1")
-    });
-    assigned
-        || shell.unsets("CLAUDECODE")
-        || shell.commands().iter().any(|c| match c.name.as_str() {
-            "env" => {
-                c.args
-                    .windows(2)
-                    .any(|w| w[0].text == "-u" && w[1].text == "CLAUDECODE")
-                    || c.args
-                        .iter()
-                        .any(|a| a.text == "-uCLAUDECODE" || a.text == "--unset=CLAUDECODE")
+/// 環境変数の変更が、hook の置き場所を変えるか（GIT_CONFIG_*）、hook が Claude Code のセッションと分かる
+/// CLAUDECODE を 1 以外にする・外すか。値が None は外す
+fn disables_hooks(name: &str, value: Option<&str>) -> bool {
+    name.starts_with("GIT_CONFIG_") || (name == "CLAUDECODE" && value != Some("1"))
+}
+
+/// コマンドを包むもの（coreutils の env、bash の command / exec、nohup、time）と、値を取るオプション
+const WRAPPERS: &[(&str, &[&str])] = &[
+    (
+        "env",
+        &[
+            "-u",
+            "--unset",
+            "-C",
+            "--chdir",
+            "-a",
+            "--argv0",
+            "-S",
+            "--split-string",
+        ],
+    ),
+    ("command", &[]),
+    ("exec", &["-a"]),
+    ("nohup", &[]),
+    ("time", &["-f", "--format", "-o", "--output"]),
+];
+
+/// 包むもの（`env FOO=1 git …` など）をほどいた中のコマンドと、env が変える環境変数（名前と値。外すなら None）
+fn unwrap(cmd: &Cmd) -> (Cmd, Vec<(String, Option<String>)>) {
+    let mut inner = cmd.clone();
+    let mut changes = Vec::new();
+    while let Some((wrapper, valued)) = WRAPPERS.iter().find(|(w, _)| *w == inner.name) {
+        let mut args = inner.args.iter();
+        let mut program = None;
+        while let Some(a) = args.next() {
+            let t = a.text.as_str();
+            if *wrapper == "env" && (t == "-i" || t == "--ignore-environment" || t == "-") {
+                // 全ての環境変数を外す
+                changes.push(("CLAUDECODE".to_string(), None));
+            } else if *wrapper == "env" && (t == "-u" || t == "--unset") {
+                if let Some(v) = args.next() {
+                    changes.push((v.text.clone(), None));
+                }
+            } else if let Some(name) = t.strip_prefix("--unset=").or(if *wrapper == "env" {
+                t.strip_prefix("-u").filter(|n| !n.is_empty())
+            } else {
+                None
+            }) {
+                changes.push((name.to_string(), None));
+            } else if valued.contains(&t) {
+                args.next();
+            } else if t.starts_with('-') {
+            } else if *wrapper == "env" && t.contains('=') {
+                let (name, value) = t.split_once('=').unwrap_or((t, ""));
+                changes.push((name.to_string(), Some(value.to_string())));
+            } else {
+                program = Some(a);
+                break;
             }
-            _ => false,
-        })
+        }
+        let Some(program) = program else {
+            break;
+        };
+        inner.name = program.text.clone();
+        inner.args = args.cloned().collect();
+    }
+    (inner, changes)
+}
+
+/// シェルの代入と unset が、hook の置き場所や CLAUDECODE を変えるか
+fn changes_environment(shell: &Shell) -> bool {
+    shell
+        .assignments()
+        .into_iter()
+        .any(|(name, value)| disables_hooks(&name, Some(&value)))
+        || shell.unsets("CLAUDECODE")
 }
 
 impl Rule for BlockNoVerify {
@@ -177,6 +237,10 @@ impl Rule for BlockNoVerify {
         }
         let mut skips = changes_environment(shell);
         for cmd in shell.commands() {
+            let (cmd, changes) = unwrap(&cmd);
+            skips |= changes
+                .iter()
+                .any(|(name, value)| disables_hooks(name, value.as_deref()));
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
             };
