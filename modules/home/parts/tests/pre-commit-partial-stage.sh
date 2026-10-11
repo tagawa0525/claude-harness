@@ -161,6 +161,17 @@ else
   ng "作業ツリーを、改行の変換を保って直す"
 fi
 
+echo "==> - で始まるパスも検査する"
+R=$(repo dash init.txt $'x\n')
+mkdir -p "$R/-docs"
+printf '%s' "${LINES/l1/l1 }" >"$R/-docs/a.md"
+git -C "$R" add -- -docs/a.md
+if commit "$R" && [[ "$(git -C "$R" show :-docs/a.md)" == "${LINES%$'\n'}" ]]; then
+  ok "- で始まるディレクトリの Markdown も直す"
+else
+  ng "- で始まるディレクトリの Markdown も直す"
+fi
+
 echo "==> ステージしていない編集が無ければ、今までどおり"
 R=$(repo plain a.md "$LINES")
 printf '%s' "${LINES/l1/l1 }" >"$R/a.md"
