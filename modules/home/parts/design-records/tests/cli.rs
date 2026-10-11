@@ -1432,3 +1432,32 @@ fn prune_falls_back_when_origin_head_points_nowhere() {
     let out = t.run(&["prune"]);
     assert!(out.status.success(), "{}", stderr(&out));
 }
+
+#[test]
+fn dash_c_runs_in_another_worktree() {
+    let t = duplicated_after_rebase("dash-c");
+    let elsewhere = std::env::temp_dir();
+    let dir = t.dir.to_str().unwrap();
+    let out = run(&elsewhere, &["-C", dir, "check"], None);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+    let out = run(&elsewhere, &["-C", dir, "renumber", "1"], None);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+    let out = run(
+        &elsewhere,
+        &["-C", "/nonexistent-design-records", "check"],
+        None,
+    );
+    assert!(!out.status.success());
+}
