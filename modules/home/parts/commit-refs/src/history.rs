@@ -269,13 +269,19 @@ fn split_refs(top: &Path, all: Vec<Ref>) -> Result<(Vec<Ref>, Vec<String>), Stri
 
 /// 書き換える ref から届く全てのコミット
 fn rev_list(top: &Path, refs: &[Ref]) -> Result<Vec<String>, String> {
-    let mut args = vec!["rev-list"];
-    args.extend(refs.iter().map(|r| r.name.as_str()));
-    let out = git::git(top, &args)?;
+    let out = git::git_stdin(top, &["rev-list", "--stdin"], &revisions(refs))?;
     Ok(String::from_utf8_lossy(&out)
         .lines()
         .map(str::to_string)
         .collect())
+}
+
+/// rev-list と fast-export に標準入力で渡す版の指定。引数で渡すと、ref の数が多いと引数の上限を超え、ref と同じ
+/// 名前のパスがあると版かパスかが曖昧になる
+fn revisions(refs: &[Ref]) -> Vec<u8> {
+    refs.iter()
+        .flat_map(|r| format!("{}\n", r.name).into_bytes())
+        .collect()
 }
 
 enum Head {
@@ -900,10 +906,18 @@ fn read_commits(top: &Path, refs: &[Ref]) -> Result<Vec<CommitRecord>, Errors> {
         .arg("-C")
         .arg(top)
         .args(FAST_EXPORT)
-        .args(refs.iter().map(|r| r.name.as_str()))
+        .arg("--stdin")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|e| one(format!("git fast-export を起動できない: {e}")))?;
+    // fast-export は版の指定を読み終えてから流しはじめる
+    export
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(&revisions(refs))
+        .map_err(io_error)?;
     let mut input = Lines::new(BufReader::new(export.stdout.take().expect("piped stdout")));
     let result = parse_stream(&mut input);
     if result.is_err() {
