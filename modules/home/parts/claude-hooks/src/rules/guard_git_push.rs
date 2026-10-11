@@ -14,7 +14,7 @@ use super::Rule;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, short_cluster_has};
+use crate::shell::{Arg, Shell, git_short_flag};
 
 pub struct GuardGitPush;
 
@@ -33,10 +33,7 @@ fn is_protected_ref(dst: &str) -> bool {
 fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
     // --- force push ---
     // -f / --force（単独でも -fu のようなクラスタでも）。--force-with-lease / --force-if-includes は対象外
-    if args
-        .iter()
-        .any(|a| a.text == "--force" || short_cluster_has(a, 'f'))
-    {
+    if args.iter().any(|a| a.text == "--force") || git_short_flag("push", args, 'f') {
         return Some("force push は禁止です（レビュー履歴を保持するため）。feature branch で履歴を書き換える必要がある場合は --force-with-lease を使ってください".to_string());
     }
     if args

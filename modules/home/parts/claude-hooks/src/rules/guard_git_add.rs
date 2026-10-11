@@ -10,7 +10,7 @@
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, short_cluster_has};
+use crate::shell::{Arg, Shell, git_short_flag};
 
 pub struct GuardGitAdd;
 
@@ -22,22 +22,24 @@ fn deny(why: &str) -> Finding {
 
 /// `git add` の引数を検査し、止める理由があれば返す
 fn check_add(args: &[Arg]) -> Option<String> {
-    let mut all = false;
+    let all = git_short_flag("add", args, 'A')
+        || args
+            .iter()
+            .take_while(|a| a.text != "--")
+            .any(|a| a.text == "--all" || a.text == "--no-ignore-removal");
     let mut pathspecs: Vec<&str> = Vec::new();
     let mut after_dashdash = false;
-    for a in args {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
         let t = a.text.as_str();
         if after_dashdash {
             pathspecs.push(t);
         } else if t == "--" {
             after_dashdash = true;
-        } else if t == "--all" || t == "--no-ignore-removal" {
-            all = true;
-        } else if t.starts_with("--") {
-        } else if short_cluster_has(a, 'A') {
-            all = true;
-        } else if t.starts_with('-') {
-        } else {
+        } else if t == "--pathspec-from-file" || t == "--chmod" {
+            // 次の語は値で、パスではない
+            it.next();
+        } else if !t.starts_with('-') {
             pathspecs.push(t);
         }
     }

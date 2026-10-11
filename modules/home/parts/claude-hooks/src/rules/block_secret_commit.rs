@@ -21,7 +21,7 @@ use super::Rule;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Shell, short_cluster_has};
+use crate::shell::{Shell, git_short_flag};
 
 pub struct BlockSecretCommit;
 
@@ -110,9 +110,7 @@ impl Rule for BlockSecretCommit {
             {
                 continue;
             }
-            let all = args
-                .iter()
-                .any(|a| a.text == "--all" || short_cluster_has(a, 'a'));
+            let all = args.iter().any(|a| a.text == "--all") || git_short_flag("commit", args, 'a');
             let modes: &[&str] = if all {
                 &["--staged", "--pre-commit"]
             } else {

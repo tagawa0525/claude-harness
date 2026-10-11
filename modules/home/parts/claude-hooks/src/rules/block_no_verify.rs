@@ -8,14 +8,15 @@
 //!   …`、`GIT_CONFIG_*` の環境変数
 //! - hook が Claude Code のセッションと分かる `CLAUDECODE=1` を、別の値にする・外す（`env -u`、`env -i`、`unset`）
 //!
-//! `env`、`command`、`exec`、`nohup`、`time` で包んだコマンドは、ほどいて中の git コマンドと env の変数で見る。
+//! `env`、`command`、`exec`、`nohup`、`time` で包んだコマンドは、shell.rs がほどいた中の git コマンドと env の
+//! 変数で見る。
 //!
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=1` を付ける。
 
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Cmd, Shell, git_global_takes_value};
+use crate::shell::{Arg, Shell, git_short_flag};
 
 pub struct BlockNoVerify;
 
@@ -24,97 +25,10 @@ fn is_no_verify(text: &str) -> bool {
     text.len() >= "--no-v".len() && "--no-verify".starts_with(text)
 }
 
-/// commit の短縮形のまとまり（`-anm` など）に `-n` があるか。値を取るオプション（`-m msg` を `-mmsg` と
-/// 続けて書く形を含む）より後は値なので見ない
-fn commit_cluster_has_n(text: &str) -> bool {
-    if !text.starts_with('-') || text.starts_with("--") {
-        return false;
-    }
-    for ch in text[1..].chars() {
-        match ch {
-            'n' => return true,
-            // 値を取る（S と u は値を続けて書くときだけ取る）
-            'm' | 'F' | 'C' | 'c' | 't' | 'S' | 'u' => return false,
-            _ => {}
-        }
-    }
-    false
-}
-
-/// commit のオプションのうち、次の引数を値として取るもの（値が `-n` で始まっても `-n` ではない）
-fn commit_takes_value(text: &str) -> bool {
-    matches!(
-        text,
-        "-m" | "-F"
-            | "-C"
-            | "-c"
-            | "-t"
-            | "--message"
-            | "--file"
-            | "--reuse-message"
-            | "--reedit-message"
-            | "--author"
-            | "--date"
-            | "--template"
-            | "--fixup"
-            | "--squash"
-            | "--cleanup"
-            | "--trailer"
-            | "--pathspec-from-file"
-    ) || (text.starts_with('-')
-        && !text.starts_with("--")
-        && text.len() > 2
-        && matches!(text.chars().last(), Some('m' | 'F' | 'C' | 'c' | 't'))
-        && !text[1..text.len() - 1].contains(['m', 'F', 'C', 'c', 't', 'S', 'u']))
-}
-
-/// commit の引数に `-n`（`--no-verify` の短縮形）があるか。値の引数は見ない
-fn commit_has_n(args: &[Arg]) -> bool {
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a.text == "--" {
-            return false;
-        }
-        if commit_cluster_has_n(&a.text) {
-            return true;
-        }
-        if commit_takes_value(&a.text) {
-            it.next();
-        }
-    }
-    false
-}
-
 /// `-c` / `--config-env` の設定が core.hooksPath か（値の無い `core.hooksPath` は true として読まれる）
 fn is_hooks_path(setting: &str) -> bool {
     let key = setting.split_once('=').map_or(setting, |(key, _)| key);
     key.eq_ignore_ascii_case("core.hookspath")
-}
-
-/// サブコマンドより前の `-c core.hooksPath=…` と `--config-env=core.hooksPath=…`（キーは大文字と小文字を問わない）
-fn overrides_hooks_path(args: &[Arg]) -> bool {
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if !a.text.starts_with('-') {
-            // サブコマンドに着いた
-            return false;
-        }
-        let value = if a.text == "-c" || a.text == "--config-env" {
-            it.next().map(|v| v.text.as_str())
-        } else if git_global_takes_value(&a.text) {
-            // -C dir などの値は読み飛ばす
-            it.next();
-            None
-        } else if let Some(v) = a.text.strip_prefix("--config-env=") {
-            Some(v)
-        } else {
-            a.text.strip_prefix("-c")
-        };
-        if value.is_some_and(is_hooks_path) {
-            return true;
-        }
-    }
-    false
 }
 
 /// `git config` が hook の置き場所（core.hooksPath）を変えるか。書く・消す（`--unset` と、新しい書き方の
@@ -156,69 +70,6 @@ fn disables_hooks(name: &str, value: Option<&str>) -> bool {
     name.starts_with("GIT_CONFIG_") || (name == "CLAUDECODE" && value != Some("1"))
 }
 
-/// コマンドを包むもの（coreutils の env、bash の command / exec、nohup、time）と、値を取るオプション
-const WRAPPERS: &[(&str, &[&str])] = &[
-    (
-        "env",
-        &[
-            "-u",
-            "--unset",
-            "-C",
-            "--chdir",
-            "-a",
-            "--argv0",
-            "-S",
-            "--split-string",
-        ],
-    ),
-    ("command", &[]),
-    ("exec", &["-a"]),
-    ("nohup", &[]),
-    ("time", &["-f", "--format", "-o", "--output"]),
-];
-
-/// 包むもの（`env FOO=1 git …` など）をほどいた中のコマンドと、env が変える環境変数（名前と値。外すなら None）
-fn unwrap(cmd: &Cmd) -> (Cmd, Vec<(String, Option<String>)>) {
-    let mut inner = cmd.clone();
-    let mut changes = Vec::new();
-    while let Some((wrapper, valued)) = WRAPPERS.iter().find(|(w, _)| *w == inner.name) {
-        let mut args = inner.args.iter();
-        let mut program = None;
-        while let Some(a) = args.next() {
-            let t = a.text.as_str();
-            if *wrapper == "env" && (t == "-i" || t == "--ignore-environment" || t == "-") {
-                // 全ての環境変数を外す
-                changes.push(("CLAUDECODE".to_string(), None));
-            } else if *wrapper == "env" && (t == "-u" || t == "--unset") {
-                if let Some(v) = args.next() {
-                    changes.push((v.text.clone(), None));
-                }
-            } else if let Some(name) = t.strip_prefix("--unset=").or(if *wrapper == "env" {
-                t.strip_prefix("-u").filter(|n| !n.is_empty())
-            } else {
-                None
-            }) {
-                changes.push((name.to_string(), None));
-            } else if valued.contains(&t) {
-                args.next();
-            } else if t.starts_with('-') {
-            } else if *wrapper == "env" && t.contains('=') {
-                let (name, value) = t.split_once('=').unwrap_or((t, ""));
-                changes.push((name.to_string(), Some(value.to_string())));
-            } else {
-                program = Some(a);
-                break;
-            }
-        }
-        let Some(program) = program else {
-            break;
-        };
-        inner.name = program.text.clone();
-        inner.args = args.cloned().collect();
-    }
-    (inner, changes)
-}
-
 /// シェルの代入と unset が、hook の置き場所や CLAUDECODE を変えるか
 fn changes_environment(shell: &Shell) -> bool {
     shell
@@ -239,22 +90,23 @@ impl Rule for BlockNoVerify {
         }
         let mut skips = changes_environment(shell);
         for cmd in shell.commands() {
-            let (cmd, changes) = unwrap(&cmd);
-            skips |= changes
-                .iter()
-                .any(|(name, value)| disables_hooks(name, value.as_deref()));
+            skips |= cmd.env_cleared
+                || cmd
+                    .env
+                    .iter()
+                    .any(|(name, value)| disables_hooks(name, value.as_deref()));
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
             };
             skips |= match sub {
                 "config" => sets_hooks_path(args),
                 "commit" | "merge" | "pull" => {
-                    overrides_hooks_path(&cmd.args)
+                    cmd.git_config_overrides().into_iter().any(is_hooks_path)
                         || args
                             .iter()
                             .take_while(|a| a.text != "--")
                             .any(|a| is_no_verify(&a.text))
-                        || (sub == "commit" && commit_has_n(args))
+                        || (sub == "commit" && git_short_flag(sub, args, 'n'))
                 }
                 _ => false,
             };

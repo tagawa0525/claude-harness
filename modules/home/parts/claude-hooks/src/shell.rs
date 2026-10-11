@@ -6,8 +6,14 @@
 //!   `-m "git add -A"` はコマンドではない）
 //! - `git -C <dir>` や先行する `cd <dir>` は AST 上の位置で判定する
 //!
+//! - コマンドを包むもの（`env`・`command`・`exec`・`nohup`・`time`）はほどき、中のコマンドと、前置きの代入や
+//!   `env` が変える環境変数を `Cmd` に持たせる（規則ごとにほどかない）
+//! - git のオプションの値（グローバルの `-C` / `-c` / `--config-env`、サブコマンドごとの値を取るオプション）は
+//!   ここで読み、短縮形のまとまりの中の値をオプションと取り違えない
+//!
 //! 展開（`$VAR`、`$(…)`）は行わず原文のまま扱う。bash 版と同じ
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Tree};
 
@@ -37,6 +43,11 @@ pub struct Cmd {
     /// 属するシェルのスコープ（最も近い `$(…)` / `(…)` / `<(…)` のノード ID）。トップレベルは None。
     /// これらの中で実行した `cd` は親のカレントディレクトリを変えない
     pub scope: Option<usize>,
+    /// このコマンドだけに効く環境変数の変更（前置きの `NAME=value` と、包んだ `env` の `NAME=value` / `-u NAME`）。
+    /// 外すなら None
+    pub env: Vec<(String, Option<String>)>,
+    /// 包んだ `env -i` などで、受け継ぐ環境変数を全て外すか
+    pub env_cleared: bool,
 }
 
 impl Shell {
@@ -107,13 +118,28 @@ impl Shell {
             }
             p = n.parent();
         }
-        Some(Cmd {
+        let mut env = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "variable_assignment"
+                && let Some(var) = child.child_by_field_name("name")
+            {
+                let value = child
+                    .child_by_field_name("value")
+                    .map(|v| self.unquote(v).text)
+                    .unwrap_or_default();
+                env.push((self.text(var).to_string(), Some(value)));
+            }
+        }
+        Some(unwrap(Cmd {
             name,
             args,
             start: node.start_byte(),
             has_error: node.has_error() || trailing_error,
             scope,
-        })
+            env,
+            env_cleared: false,
+        }))
     }
 
     /// ノードを引数として読む。クォートを外し、展開は原文のまま残す
@@ -255,6 +281,100 @@ fn resolve(base: &Path, p: &str) -> PathBuf {
     base.join(p)
 }
 
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// 引数のプログラムをそのまま走らせる前置きと、そのうち値を別の語で取るオプション（env と GNU time は
+/// coreutils と time の man、exec は bash の組み込み）
+const WRAPPERS: &[(&str, &[&str])] = &[
+    ("command", &[]),
+    ("env", &["-u", "--unset", "-C", "--chdir", "-a", "--argv0"]),
+    ("exec", &["-a"]),
+    ("nohup", &[]),
+    ("time", &["-f", "--format", "-o", "--output"]),
+];
+
+/// `env -S <文字列>`（`-S<文字列>`、`--split-string=<文字列>` も）の文字列。env はこれを空白で語に分けて、
+/// 続く語の前に置く
+fn split_string(option: &str, words: &mut VecDeque<Arg>) -> Option<String> {
+    match option {
+        "-S" | "--split-string" => words.pop_front().map(|a| a.text),
+        _ => option
+            .strip_prefix("--split-string=")
+            .or_else(|| option.strip_prefix("-S"))
+            .map(str::to_string),
+    }
+}
+
+/// 前置き（env など）をほどき、中のコマンドと、env が変える環境変数を持たせる。`command -v` / `-V` は
+/// プログラムを探して表示するだけで実行しないので、ほどかない
+fn unwrap(mut cmd: Cmd) -> Cmd {
+    loop {
+        let wrapper = basename(&cmd.name).to_string();
+        let Some((_, valued)) = WRAPPERS.iter().find(|(w, _)| *w == wrapper) else {
+            return cmd;
+        };
+        let mut words: VecDeque<Arg> = cmd.args.iter().cloned().collect();
+        let mut env = Vec::new();
+        let mut cleared = false;
+        while let Some(front) = words.front() {
+            let t = front.text.clone();
+            if !(t.starts_with('-') || (wrapper == "env" && t.contains('='))) {
+                break;
+            }
+            words.pop_front();
+            if wrapper == "command" && (t == "-v" || t == "-V") {
+                return cmd;
+            }
+            if wrapper == "env" {
+                if let Some(split) = split_string(&t, &mut words) {
+                    for part in split.split_whitespace().rev() {
+                        words.push_front(Arg {
+                            text: part.to_string(),
+                            raw: part.to_string(),
+                        });
+                    }
+                    continue;
+                }
+                if t == "-i" || t == "--ignore-environment" || t == "-" {
+                    cleared = true;
+                    continue;
+                }
+                if t == "-u" || t == "--unset" {
+                    if let Some(v) = words.pop_front() {
+                        env.push((v.text, None));
+                    }
+                    continue;
+                }
+                if let Some(name) = t
+                    .strip_prefix("--unset=")
+                    .or_else(|| t.strip_prefix("-u").filter(|n| !n.is_empty()))
+                {
+                    env.push((name.to_string(), None));
+                    continue;
+                }
+                if !t.starts_with('-')
+                    && let Some((name, value)) = t.split_once('=')
+                {
+                    env.push((name.to_string(), Some(value.to_string())));
+                    continue;
+                }
+            }
+            if valued.contains(&t.as_str()) {
+                words.pop_front();
+            }
+        }
+        let Some(program) = words.pop_front() else {
+            return cmd;
+        };
+        cmd.name = program.text;
+        cmd.args = words.into_iter().collect();
+        cmd.env.extend(env);
+        cmd.env_cleared |= cleared;
+    }
+}
+
 /// git のグローバルオプションのうち、次の引数を値として取るもの
 pub fn git_global_takes_value(opt: &str) -> bool {
     matches!(
@@ -286,6 +406,34 @@ impl Cmd {
         None
     }
 
+    /// `git -c <設定>` / `-c<設定>` と `--config-env <設定>` / `--config-env=<設定>` の設定（サブコマンドより前）
+    pub fn git_config_overrides(&self) -> Vec<&str> {
+        let mut found = Vec::new();
+        if self.name != "git" {
+            return found;
+        }
+        let mut it = self.args.iter();
+        while let Some(a) = it.next() {
+            let t = a.text.as_str();
+            if !t.starts_with('-') {
+                break;
+            }
+            if t == "-c" || t == "--config-env" {
+                if let Some(v) = it.next() {
+                    found.push(v.text.as_str());
+                }
+            } else if let Some(v) = t
+                .strip_prefix("--config-env=")
+                .or_else(|| t.strip_prefix("-c"))
+            {
+                found.push(v);
+            } else if git_global_takes_value(t) {
+                it.next();
+            }
+        }
+        found
+    }
+
     /// `gh <words…> args…` の args（例: `gh pr create`）
     pub fn gh_subcommand(&self, words: &[&str]) -> Option<&[Arg]> {
         if self.name != "gh" || self.args.len() < words.len() {
@@ -297,6 +445,91 @@ impl Cmd {
             None
         }
     }
+}
+
+/// git のサブコマンドの、値を取るオプション（git の各サブコマンドの man から、規則が見るものだけ）
+struct ValueOptions {
+    /// 次の語か、続けて書いた残りを値に取る短縮形
+    shorts: &'static str,
+    /// 続けて書いたときだけ値を取る短縮形（`-S<keyid>`、`-u<mode>`）
+    optional_shorts: &'static str,
+    /// 次の語を値に取る長い形（`=` で続けた形は 1 語なので数えない）
+    longs: &'static [&'static str],
+}
+
+fn value_options(sub: &str) -> ValueOptions {
+    match sub {
+        "commit" => ValueOptions {
+            shorts: "mFCct",
+            optional_shorts: "Su",
+            longs: &[
+                "--message",
+                "--file",
+                "--reuse-message",
+                "--reedit-message",
+                "--author",
+                "--date",
+                "--template",
+                "--fixup",
+                "--squash",
+                "--cleanup",
+                "--trailer",
+                "--pathspec-from-file",
+            ],
+        },
+        "push" => ValueOptions {
+            shorts: "o",
+            optional_shorts: "",
+            longs: &["--push-option", "--repo", "--receive-pack", "--exec"],
+        },
+        "add" => ValueOptions {
+            shorts: "",
+            optional_shorts: "",
+            longs: &["--chmod", "--pathspec-from-file"],
+        },
+        _ => ValueOptions {
+            shorts: "",
+            optional_shorts: "",
+            longs: &[],
+        },
+    }
+}
+
+/// git のサブコマンド `sub` の引数に、短縮形のフラグ `flag` があるか。短縮形のまとまり（`-am`）は、値を取る
+/// オプションのところで読むのを止め（`-m"add a"` の a は値）、別の語で渡した値（`-m -n`）と `--` より後は見ない
+pub fn git_short_flag(sub: &str, args: &[Arg], flag: char) -> bool {
+    let options = value_options(sub);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let t = a.text.as_str();
+        if t == "--" {
+            return false;
+        }
+        if options.longs.contains(&t) {
+            it.next();
+            continue;
+        }
+        if !t.starts_with('-') || t.starts_with("--") {
+            continue;
+        }
+        let cluster = &t[1..];
+        for (i, ch) in cluster.char_indices() {
+            if ch == flag {
+                return true;
+            }
+            if options.shorts.contains(ch) {
+                // 残りが無ければ次の語が値
+                if i + ch.len_utf8() == cluster.len() {
+                    it.next();
+                }
+                break;
+            }
+            if options.optional_shorts.contains(ch) {
+                break;
+            }
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -324,12 +557,6 @@ pub fn opt_value<'a>(args: &'a [Arg], names: &[&str]) -> Option<&'a Arg> {
     }
     args.iter()
         .find(|a| names.iter().any(|n| a.text.starts_with(&format!("{n}="))))
-}
-
-/// `-am` のような短縮形クラスタに文字 ch が含まれるか（`--` で始まる長い形は対象外）
-pub fn short_cluster_has(arg: &Arg, ch: char) -> bool {
-    let t = &arg.text;
-    t.starts_with('-') && !t.starts_with("--") && t[1..].contains(ch)
 }
 
 #[cfg(test)]
@@ -463,19 +690,11 @@ mod tests {
             opt_value(args, &["--subject", "-t"]).unwrap().text,
             "--subject=x"
         );
-        assert!(short_cluster_has(
-            &Arg {
-                text: "-am".into(),
-                raw: "-am".into()
-            },
-            'a'
-        ));
-        assert!(!short_cluster_has(
-            &Arg {
-                text: "--all".into(),
-                raw: "--all".into()
-            },
-            'a'
-        ));
+        let am = cmds("git commit -am x");
+        let (sub, args) = am[0].git_subcommand().unwrap();
+        assert!(git_short_flag(sub, args, 'a'));
+        let all = cmds("git commit --all");
+        let (sub, args) = all[0].git_subcommand().unwrap();
+        assert!(!git_short_flag(sub, args, 'a'));
     }
 }
