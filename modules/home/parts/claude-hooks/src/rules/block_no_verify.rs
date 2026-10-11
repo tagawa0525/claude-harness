@@ -13,7 +13,7 @@
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=1` を付ける。
 
 use super::Rule;
-use crate::git_args::{Item, git_flag, items};
+use crate::git_args::{Item, items};
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -65,18 +65,18 @@ fn sets_hooks_path(args: &[Arg]) -> bool {
         || texts.get(key + 1).is_some_and(|v| !v.starts_with('-'))
 }
 
-/// 環境変数の変更が、hook の置き場所を変えるか（GIT_CONFIG_*）、hook が Claude Code のセッションと分かる
-/// CLAUDECODE を 1 以外にする・外すか。値が None は外す
-fn disables_hooks(name: &str, value: Option<&str>) -> bool {
-    name.starts_with("GIT_CONFIG_") || (name == "CLAUDECODE" && value != Some("1"))
+/// 環境変数が hook の置き場所を変えるもの（GIT_CONFIG_*）か
+fn sets_hook_config(name: &str) -> bool {
+    name.starts_with("GIT_CONFIG_")
 }
 
-/// シェルの代入と unset が、hook の置き場所や CLAUDECODE を変えるか
+/// シェルの代入と unset が、hook の置き場所を変えるか、hook が Claude Code のセッションと分かる
+/// CLAUDECODE を 1 以外にする・外すか
 fn changes_environment(shell: &Shell) -> bool {
     shell
         .assignments()
         .into_iter()
-        .any(|(name, value)| disables_hooks(&name, Some(&value)))
+        .any(|(name, value)| sets_hook_config(&name) || (name == "CLAUDECODE" && value != "1"))
         || shell.unsets("CLAUDECODE")
 }
 
@@ -92,7 +92,7 @@ impl Rule for BlockNoVerify {
         let mut skips = changes_environment(shell);
         for cmd in shell.commands() {
             skips |= cmd.env.iter().any(|change| match change {
-                EnvChange::Set(name, _) | EnvChange::Unset(name) => name.starts_with("GIT_CONFIG_"),
+                EnvChange::Set(name, _) | EnvChange::Unset(name) => sets_hook_config(name),
                 EnvChange::Clear => false,
             }) || env_value(&cmd.env, "CLAUDECODE", Some("1")) != Some("1");
             let Some((sub, args)) = cmd.git_subcommand() else {
@@ -102,10 +102,11 @@ impl Rule for BlockNoVerify {
                 "config" => sets_hooks_path(args),
                 "commit" | "merge" | "pull" => {
                     cmd.git_config_overrides().iter().any(|c| is_hooks_path(c))
-                        || items(sub, args)
-                            .iter()
-                            .any(|item| matches!(item, Item::Long(name) if is_no_verify(name)))
-                        || (sub == "commit" && git_flag(sub, args, Some('n'), &[]))
+                        || items(sub, args).iter().any(|item| match item {
+                            Item::Long(name) => is_no_verify(name),
+                            Item::Short(ch) => sub == "commit" && *ch == 'n',
+                            Item::Positional(_) => false,
+                        })
                 }
                 _ => false,
             };
