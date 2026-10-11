@@ -18,6 +18,15 @@ const ATTEMPTS: usize = 20;
 /// `kind` の使った番号: 全ブランチの履歴、作業ツリー、予約のタグ。削除した記録の番号を使い回すと、古い参照が
 /// 別の記録を指してしまうので、履歴も数える。
 fn used_numbers(root: &Path, kind: Kind) -> Result<BTreeSet<u32>> {
+    // 浅い clone の履歴は切った先を返さない。マージした記録の予約は prune で消えるので、切った先で消した記録の
+    // 番号は、履歴にもタグにも残らない
+    if git(root, &["rev-parse", "--is-shallow-repository"])?.trim() == "true" {
+        return Err(
+            "the repository is a shallow clone, whose history may hide the numbers of deleted records; \
+             run `git fetch --unshallow` first"
+                .into(),
+        );
+    }
     let history = git(
         root,
         &["log", "--all", "--format=", "--name-only", "--", kind.dir()],
