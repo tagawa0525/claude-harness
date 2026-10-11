@@ -36,4 +36,19 @@ for skill in "${skills[@]}"; do
   done < <(grep -o '!`[^`]*`' "$skill")
 done
 
+# リモート追跡ブランチ（origin/main など）から作るブランチは、それを上流にすると、引数なしの git push が
+# main への push とみなされ guard-git-push に止められる。--no-track で作り、push.autoSetupRemote に
+# 同名のリモートブランチを作らせる（worktree-add.sh と同じ）
+for skill in "${skills[@]}"; do
+  name=$(basename "$(dirname "$skill")")
+  while IFS= read -r line; do
+    it "skills: $name のリモート追跡ブランチから作るブランチは --no-track: $line"
+    if [[ "$line" == *--no-track* ]]; then
+      _pass
+    else
+      _fail "上流が origin/... になり、git push の先が main になる"
+    fi
+  done < <(grep -E 'git (switch|checkout) [^#]*(-c|-C|-b|-B) [^#]* origin/' "$skill" || true)
+done
+
 finish
