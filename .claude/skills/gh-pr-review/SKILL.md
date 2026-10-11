@@ -2,7 +2,7 @@
 name: gh-pr-review
 description: PRレビューコメントを確認し対応。コード修正、返信を実行。
 # model 未指定: コード修正を伴うためセッションモデルを継承する
-argument-hint: [PR番号 | コメントURL] [--unresolved]
+argument-hint: [PR の URL | PR番号 | コメントURL] [--unresolved]
 allowed-tools:
   - Bash(git *)
   - Bash(gh *)
@@ -33,20 +33,24 @@ PRについたレビューコメントを確認し、対応する。取得・集
 
 ## Step 1: 対象の特定
 
+スクリプトは対象の PR を URL（`https://github.com/{owner}/{repo}/pull/{n}`。以下 `{pr_url}`）で受け、
+cwd のリポジトリに依らずその PR を読み書きする（ADR-0032）。
+
 - コメント URL（`…/pull/{n}#discussion_r{id}`）→ URL を渡す。出力の `number` と `comment_id` の
-  コメントだけに対応する
-- PR 番号 → その PR の全コメント
-- 引数なし → 引数なしで実行し、現在のブランチの PR を得る
+  コメントだけに対応する。`{pr_url}` は出力の `url`
+- PR の URL → その PR の全コメント
+- PR 番号・引数なし → PR のリポジトリの worktree で `cd <worktree> && gh pr view [{番号}] --json url -q .url`
+  で URL を得る。出力の owner/repo が対象のリポジトリかを確かめてから使う
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh [{pr_number} | "{URL}"]
+~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh "{pr_url または コメント URL}"
 ```
 
 ## Step 2: レビューコメントの取得
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh {pr_number} [--unresolved]
-~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh {pr_number}
+~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh "{pr_url}" [--unresolved]
+~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh "{pr_url}"
 ```
 
 `get-latest-review.sh` の **Suppressed comments** は Copilot が低確度と判断した指摘で、
@@ -118,8 +122,8 @@ EOF
 ## Step 5: 返信と resolve
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh {pr_number} {comment_id} "{返信}"
-~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh {pr_number} {comment_id}
+~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh "{pr_url}" {comment_id} "{返信}"
+~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh "{pr_url}" {comment_id}
 ```
 
 - 返信: fix は `Fixed in {hash}.`、decline は `I've decided to keep the current approach
@@ -135,7 +139,7 @@ EOF
 周回の上限を含め、判定はスクリプトに任せる:
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/decide-next.sh {pr_number}
+~/.claude/skills/gh-pr-review/scripts/decide-next.sh "{pr_url}"
 ```
 
 ユーザーが途中で追加の変更を求め、それを入れたら、周回を 0 から数え直す（指摘への対応とは
@@ -143,7 +147,7 @@ EOF
 自分の判断で足した変更や、指摘への対応では数え直さない:
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh {pr_number} "ユーザーの要望: {要望の要旨}"
+~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh "{pr_url}" "ユーザーの要望: {要望の要旨}"
 ```
 
 | VERDICT                | 意味                                         | 次の一手                                                                                                                 |
@@ -156,13 +160,13 @@ EOF
 | `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                         |
 | `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                                                |
 | `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                                              |
-| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh {pr_number}` で待つ（下記と同様 background）                                        |
+| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh "{pr_url}"` で待つ（下記と同様 background）                                         |
 
 **再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分。
 `run_in_background=true` で実行）。
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {pr_number}
+~/.claude/skills/gh-pr-review/scripts/request-rereview.sh "{pr_url}"
 ```
 
 `@copilot` メンションには copilot-swe-agent がコメントを返すだけで、レビューは走らない。
@@ -181,8 +185,10 @@ head SHA の check-run と未解決スレッド数で判断する。
 ## Step 7: CI確認
 
 ```bash
-~/.claude/scripts/gh-actions-diagnose.sh {pr_number}
+cd <worktree> && ~/.claude/scripts/gh-actions-diagnose.sh {pr_number}
 ```
+
+`gh-actions-diagnose.sh` は PR 番号を cwd のリポジトリの PR として読むので、PR のリポジトリの worktree で走らせる。
 
 `CAUSE:` への対応は gh-actions-check スキルの表に従う。`CODE` はレビュー対応と同じく
 修正・コミット・push する。

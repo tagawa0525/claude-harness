@@ -99,8 +99,7 @@ rebase と amend の後に `commit-refs remap`（`modules/home/parts/commit-refs
 `block-main-commit` と `guard-git-push` は何もせず、git の pre-commit は main 直接コミットの拒否**だけ**を
 飛ばす（言語別チェックと Markdown 自動修正はリモートの有無に関係なく走る）。
 PR を作れないリポジトリで feature branch を強制すると、マージする手段がないまま作業が止まるため。
-判定は `gh-wait-review.sh`（`SKIP: GitHubリモートがありません`）と同じで、GitHub 以外のリモートは
-扱わない前提（無い場合と同じ扱い）。
+GitHub 以外のリモートは扱わない前提（無い場合と同じ扱い）。
 
 **2 つの層で同じルールを守るときは例外も揃える**。`block-main-commit` と git の pre-commit は
 どちらも main への直接コミットを拒否するが、`flake.lock` だけの更新（`nix-rebuild update` の正規フロー）と
