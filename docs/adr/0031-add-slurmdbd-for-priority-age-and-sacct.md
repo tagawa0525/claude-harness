@@ -95,3 +95,6 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
   slurmctld は QOS を投入のときに決め、後から付け直さない（管理者は `scontrol update JobId=<番号> QOS=normal` で変えられる）。
   `_set_top`（`src/slurmctld/job_mgr.c`）は QOS の違うジョブを下げる対象から外すので、両方が待ち行列に混ざっている間は
   `scontrol top` が効かなかった（126 を 124、125 の前に出せず、126 と 127 の間では効いた）
+- 2026-10-12: `MaxRSS` は `JobAcctGatherFrequency`（30 秒）ごとに集めるので、それより短いジョブには残らない。slurmdbd の
+  後に同時に投げた 5 秒のジョブ（129）は空で、60 秒のジョブ（130）は `.batch` の行に 8780K が残った。確認の「短いジョブ」は
+  30 秒より長く走らせる。重い計算（ADR-0026）は 30 秒より長いので、決定の要因のメモリを引けることは満たす
