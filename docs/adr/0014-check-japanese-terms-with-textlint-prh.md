@@ -70,9 +70,10 @@ issues: ["#290"]
   エスケープも効かない（2026-10-11 に `[draft].md` で確かめた）ので、ブロブを番号の名前で書き出して検査し、
   出力を元のパスに戻す
 - プロジェクトがローカルの pre-commit（`.git/hooks/pre-commit`）を持つときは、ほかの既定の検査と同じく走らない
-- グローバルの commit-msg が、Claude Code のセッションのコミットの本文（コメントの行と、`commit -v` の scissors の
-  行から後を除く）を検査する。fixup と squash の本文も畳まれて履歴に残るので、Conventional Commits の対象外の判定
-  より前に見る
+- グローバルの commit-msg が、Claude Code のセッションのコミットの本文を検査する。除くのは `commit -v` の scissors の
+  行から後だけ（`#` で始まる行は、`-m` や `-F` ではコミットに残る）。Merge、fixup、squash、Revert は、件名が元の
+  コミットから写したもの（Merge は git が作るもの）なので、件名を除いた本文だけを見る。textlint の起動は重いので、
+  Conventional Commits と件名の長さの検査の後に呼ぶ
 - upstream リモートのある fork では、ほかの検査と同じく飛ばす（上流の文書はこちらの辞書の対象でない）
 - グローバルの CLAUDE.md に、技術文書で定着した語で書くことを肯定の形で 1 行足す（辞書は既知の崩れしか止めない
   ので、新しい崩れを減らす指針は残す）
