@@ -7,6 +7,8 @@
 pub mod check;
 pub mod parse;
 
+use std::path::Path;
+
 /// ADR を置くディレクトリ（リポジトリの直下から）。
 pub const ADR_DIR: &str = "docs/adr";
 
@@ -248,16 +250,19 @@ pub fn template(number: u32, title: &str, date: &str) -> String {
     text
 }
 
-/// `line` のうち、`kind` の記録 `old`（slug は `slug`）を指す参照の番号を `new` に付け替える。参照は、本文での参照
-/// （[`Kind::reference`]。[`parse::numbered_refs`] と同じ読み方）と、ファイル名の `NNNN-<slug>.md`（前が英数字で
-/// ないもの）。
+/// `line` のうち、`kind` の記録 `old`（slug は `slug`）を指す参照の番号を `new` に付け替える。`doc_dir` は `line` の
+/// 文書のディレクトリ（リポジトリの直下から）。参照は、本文での参照（[`Kind::reference`]。[`parse::numbered_refs`] と
+/// 同じ読み方）と、ファイル名の `NNNN-<slug>.md`。ファイル名は、前のディレクトリの部分を文書のディレクトリか
+/// リポジトリの直下から解いて、その種類のディレクトリを指すものだけ（`./`、`../` を含む）。ディレクトリの部分の
+/// 無い名前は、文書がほかの種類のディレクトリにあれば、その種類の記録（同じ番号と slug のことがある）とみなして
+/// 書き換えない。`.md` の後ろに名前が続くもの（`.mdx`、`.md.orig`、`.md-old`）は別のファイル。
 pub fn renumber_refs(
     kind: Kind,
     line: &str,
     old: u32,
     new: u32,
     slug: &str,
-    bare_is_kind: bool,
+    doc_dir: &Path,
 ) -> String {
     let starts: std::collections::BTreeSet<usize> = parse::numbered_refs(line, kind.ref_prefix())
         .into_iter()
@@ -268,9 +273,10 @@ pub fn renumber_refs(
     let mut spans: std::collections::BTreeMap<usize, usize> =
         starts.into_iter().map(|start| (start, start + 4)).collect();
     let file = format!("-{slug}.md");
-    // ほかのディレクトリからの相対のパスは、直前のディレクトリの名前（adr、issues）で種類を見る
-    let dir_name = kind.dir().rsplit('/').next().unwrap_or(kind.dir());
-    let in_dir = format!("{dir_name}/");
+    let kind_dir = Path::new(kind.dir());
+    let bare_is_kind = !Kind::ALL
+        .into_iter()
+        .any(|other| other != kind && doc_dir == Path::new(other.dir()));
     for (dash, _) in line.match_indices(&file) {
         let digits = line[..dash].len()
             - line[..dash]
@@ -278,21 +284,23 @@ pub fn renumber_refs(
                 .len();
         let start = dash - digits;
         let before = &line[..start];
-        let of_kind = match before.chars().next_back() {
-            Some('/') => {
-                before.ends_with(&in_dir)
-                    && !before[..before.len() - in_dir.len()]
-                        .chars()
-                        .next_back()
-                        .is_some_and(parse::is_word)
-            }
-            Some(c) if parse::is_word(c) => false,
-            _ => bare_is_kind,
+        let prefix = &before[before.trim_end_matches(is_path_char).len()..];
+        let of_kind = if prefix.is_empty() {
+            bare_is_kind
+        } else if let Some(dir) = prefix.strip_suffix('/').filter(|d| !d.starts_with('/')) {
+            let dir = Path::new(dir);
+            normalize(&doc_dir.join(dir)) == kind_dir || normalize(dir) == kind_dir
+        } else {
+            // 語の途中（x0001-…）や、/ で終わらない前置き、絶対のパス
+            false
         };
-        let ends = !line[dash + file.len()..]
-            .chars()
-            .next()
-            .is_some_and(parse::is_word);
+        let mut after = line[dash + file.len()..].chars();
+        let ends = match after.next() {
+            Some(c) if parse::is_word(c) => false,
+            // `.md.orig` と `.md-old` は続く名前。文末の `.` や区切りの `-` は名前に含めない
+            Some('.' | '-') => !after.next().is_some_and(parse::is_word),
+            _ => true,
+        };
         if (1..=4).contains(&digits) && line[start..dash].parse() == Ok(old) && of_kind && ends {
             spans.insert(start, dash);
         }
@@ -306,6 +314,27 @@ pub fn renumber_refs(
     }
     out.push_str(&line[at..]);
     out
+}
+
+/// ファイル名の参照の前のディレクトリの部分に使う文字
+fn is_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/')
+}
+
+/// `.` と `..` を畳んだパス（ファイルは見ない。先頭を越える `..` は残す）
+fn normalize(path: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out: Vec<Component> = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir if matches!(out.last(), Some(Component::Normal(_))) => {
+                out.pop();
+            }
+            _ => out.push(c),
+        }
+    }
+    out.iter().collect()
 }
 
 /// 前付けの最初の `status:` の行の値（後ろの ` # コメント` と引用符は外す）。前付けか値が無ければ `None`。
@@ -330,7 +359,6 @@ pub fn status(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn adr_paths_are_numbered_markdown_directly_under_docs_adr() {

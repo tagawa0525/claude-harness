@@ -236,8 +236,7 @@ fn added_lines(root: &Path, base: &str) -> Result<BTreeMap<String, BTreeSet<usiz
 }
 
 /// `text` の `lines`（行番号、1 から。`None` ならすべて）の参照を付け替える。
-/// `path` は書き換える文書のパス（リポジトリの直下から）。裸のファイル名の参照は、文書がほかの種類のディレクトリに
-/// あれば、その種類の記録（同じ番号と slug のことがある）とみなして書き換えない。
+/// `path` は書き換える文書のパス（リポジトリの直下から）。ファイル名の参照は、文書のディレクトリから解く。
 fn rewrite(
     text: &str,
     path: &str,
@@ -247,15 +246,12 @@ fn rewrite(
     new: u32,
     slug: &str,
 ) -> String {
-    let parent = Path::new(path).parent();
-    let bare_is_kind = !Kind::ALL
-        .into_iter()
-        .any(|other| other != kind && parent == Some(Path::new(other.dir())));
+    let doc_dir = Path::new(path).parent().unwrap_or(Path::new(""));
     text.split_inclusive('\n')
         .enumerate()
         .map(|(i, line)| {
             if lines.is_none_or(|l| l.contains(&(i + 1))) {
-                renumber_refs(kind, line, old, new, slug, bare_is_kind)
+                renumber_refs(kind, line, old, new, slug, doc_dir)
             } else {
                 line.to_string()
             }
