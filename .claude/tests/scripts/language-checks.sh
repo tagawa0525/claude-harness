@@ -76,6 +76,77 @@ assert_eq 0 $?
 assert_contains "$out" "SKIP: markdown fixer (python3 not found)"
 assert_contains "$out" "ALL_OK"
 
+# design-records: .pre-commit-config.yaml でオプトインしたリポジトリでは、ADR の形と参照も検査する（ADR-0009）
+
+# opt_in_design_records: 今のリポジトリに design-records の local hook の設定をコミットする
+opt_in_design_records() {
+  printf 'repos:\n  - repo: local\n    hooks:\n      - id: design-records\n        entry: design-records check --changed\n' \
+    > .pre-commit-config.yaml
+  git add .pre-commit-config.yaml && git commit -q -m "chore: opt in design-records"
+}
+
+it "run-checks: オプトインしていれば、変更した .md を渡して design-records check を走らせる"
+REPO="$TEST_ROOT/checks/adr"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+opt_in_design_records
+mkdir -p docs/adr
+echo "# doc" > doc.md && echo "# adr" > docs/adr/0001-decide.md && git add doc.md docs/adr
+make_fake_tool markdownlint '*) exit 0 ;;'
+make_fake_tool design-records '"check --changed"*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "check --changed doc.md docs/adr/0001-decide.md" "$(fake_log design-records)"
+assert_contains "$out" "OK: markdown design-records"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks: design-records check の違反で止まる"
+make_fake_tool design-records '"check --changed"*) echo "docs/adr/0001-decide.md: error: x"; exit 1 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 1 $?
+assert_contains "$out" "FAILED: markdown design-records"
+assert_not_contains "$out" "ALL_OK"
+
+it "run-checks --merge: design-records check の違反で止まる"
+out=$("$LANG_SCRIPTS/run-checks.sh" --merge)
+assert_eq 1 $?
+assert_contains "$out" "FAILED: markdown design-records"
+
+it "run-checks: design-records がなければ SKIP を出して続行する"
+remove_fake_tool design-records
+out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_contains "$out" "SKIP: markdown design-records (design-records not found)"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks: ADR を消すだけの変更でも design-records check を走らせる"
+REPO="$TEST_ROOT/checks/adr-delete"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+opt_in_design_records
+mkdir -p docs/adr
+echo "# a" > docs/adr/0001-a.md && echo "# b" > docs/adr/0002-b.md
+git add docs/adr && git commit -q -m "docs: adr"
+git rm -q docs/adr/0002-b.md
+make_fake_tool design-records '"check --changed"*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "check --changed" "$(fake_log design-records)"
+assert_contains "$out" "OK: markdown design-records"
+
+it "run-checks: オプトインしていなければ、docs/adr があっても design-records を呼ばない"
+REPO="$TEST_ROOT/checks/no-adr"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+mkdir -p docs/adr
+echo "# doc" > doc.md && echo "# adr" > docs/adr/0001-decide.md && git add doc.md docs/adr
+make_fake_tool markdownlint '*) exit 0 ;;'
+make_fake_tool design-records '*) exit 1 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "" "$(fake_log design-records)"
+assert_not_contains "$out" "design-records"
+
 # fake_cargo_pwd: 偽 cargo。どのディレクトリで実行されたかを cargo.pwd に記録する
 fake_cargo_pwd() {
   : > "$TEST_ROOT/cargo.pwd"
