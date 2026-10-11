@@ -222,6 +222,17 @@ out=$("$SCRIPTS_DIR/worktree-add.sh" feat/empty-component 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "要素を含むパスは使えません: a//b"
 
+it "worktree-add: .worktreelink の前後に空白のある行はエラー（空白を落として別の名前を共有しない）"
+printf ' refs\n' > .worktreelink && git commit -q -am "chore: leading space"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/space 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "前後に空白があります"
+
+it "worktree-add: .worktreelink の空白だけの行は空行として読み飛ばす"
+printf '  \n' > .worktreelink && git commit -q -am "chore: blank line"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/blank 2>&1)
+assert_eq 0 $?
+
 REPO="$TEST_ROOT/share6/app"
 setup_share_repo "$REPO" '/references\n' 'references\nreferences/\n'
 mkdir -p "$REPO/references/sub"
