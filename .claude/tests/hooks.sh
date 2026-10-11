@@ -692,7 +692,7 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'git -c core.hooksPath commit -m x' 'git --config-env core.hooksPath commit -m x' \
   'command git commit --no-verify -m x' 'env GIT_CONFIG_COUNT=1 git commit -m x' \
   "env -S 'git commit --no-verify -m x'" 'exec -c git commit -m x' 'exec -cl git commit -m x' \
-  'env -vi git commit -m x' 'env --ignore git commit -m x' 'env -iu X git commit -m x' \
+  'env -vi git commit -m x' 'env --ignore-env git commit -m x' 'env -iu X git commit -m x' \
   'env --uns=CLAUDECODE git commit -m x' 'nice git commit --no-verify -m x' 'nice -n 10 git commit -n -m x' \
   'timeout 60 git commit --no-verify -m x' 'timeout -k 5 60 git commit -n -m x' 'setsid git commit -n -m x' \
   'stdbuf -oL git commit --no-verify -m x' 'ionice -c3 git commit --no-verify -m x' \
