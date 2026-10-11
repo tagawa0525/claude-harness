@@ -12,12 +12,12 @@
 //! gitleaks の仕組み）。漏えいは場所とルール ID だけを理由に出す。gitleaks が無い・失敗した場合は
 //! 「検査できない」として deny する。
 //!
-//! エスケープ: コマンドに `ALLOW_SECRET_COMMIT=1` を付ける。
+//! エスケープ: コマンドに `ALLOW_SECRET_COMMIT=<理由>` を付ける。
 
 use std::path::Path;
 use std::process::Command;
 
-use super::Rule;
+use super::{Rule, escape, escape_hint};
 use crate::git;
 use crate::git_args::git_flag;
 use crate::input::Input;
@@ -96,8 +96,8 @@ impl Rule for BlockSecretCommit {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if shell.has_escape("ALLOW_SECRET_COMMIT") {
-            return Vec::new();
+        if let Some(findings) = escape(shell, "ALLOW_SECRET_COMMIT") {
+            return findings;
         }
         for cmd in shell.commands() {
             let Some(("commit", args)) = cmd.git_subcommand() else {
@@ -124,7 +124,8 @@ impl Rule for BlockSecretCommit {
                     Scan::Leaks(list) => leaks.extend(list),
                     Scan::Unavailable(why) => {
                         return vec![Finding::Deny(format!(
-                            "機密情報の検査ができないためコミットを止めます（{why}）。\nどうしても必要な場合は ALLOW_SECRET_COMMIT=1 をコマンドに付けて実行してください。"
+                            "機密情報の検査ができないためコミットを止めます（{why}）。\n{}",
+                            escape_hint("ALLOW_SECRET_COMMIT")
                         ))];
                     }
                 }
@@ -134,8 +135,9 @@ impl Rule for BlockSecretCommit {
             }
             let list: Vec<String> = leaks.iter().map(|f| format!("- {f}")).collect();
             return vec![Finding::Deny(format!(
-                "機密情報らしき内容がコミット対象に含まれています（gitleaks）:\n{}\n\n対処: 該当ファイルを git restore --staged <file> で外し、必要なら .gitignore に追加してください。\n既に push 済みの値はローテーションしてください。\n誤検出なら、その行に gitleaks:allow を書く（.gitleaksignore / .gitleaks.toml でも可）か、コマンドに ALLOW_SECRET_COMMIT=1 を付けて実行してください。",
-                list.join("\n")
+                "機密情報らしき内容がコミット対象に含まれています（gitleaks）:\n{}\n\n対処: 該当ファイルを git restore --staged <file> で外し、必要なら .gitignore に追加してください。\n既に push 済みの値はローテーションしてください。\n誤検出なら、その行に gitleaks:allow を書いてください（.gitleaksignore / .gitleaks.toml でも可）。\n{}",
+                list.join("\n"),
+                escape_hint("ALLOW_SECRET_COMMIT")
             ))];
         }
         Vec::new()

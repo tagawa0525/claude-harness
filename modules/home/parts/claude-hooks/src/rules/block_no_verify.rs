@@ -10,9 +10,9 @@
 //!
 //! env などで包んだコマンドは、shell.rs がほどいた中の git コマンドと、包みが変える環境変数で見る。
 //!
-//! エスケープ: コマンドに `ALLOW_NO_VERIFY=1` を付ける。
+//! エスケープ: コマンドに `ALLOW_NO_VERIFY=<理由>` を付ける。
 
-use super::Rule;
+use super::{Rule, escape, escape_hint};
 use crate::git_args::{Item, items};
 use crate::input::Input;
 use crate::output::Finding;
@@ -86,8 +86,8 @@ impl Rule for BlockNoVerify {
     }
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        if shell.has_escape("ALLOW_NO_VERIFY") {
-            return Vec::new();
+        if let Some(findings) = escape(shell, "ALLOW_NO_VERIFY") {
+            return findings;
         }
         let mut skips = changes_environment(shell);
         for cmd in shell.commands() {
@@ -112,9 +112,10 @@ impl Rule for BlockNoVerify {
             };
         }
         if skips {
-            return vec![Finding::Deny(
-                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます（ADR-0015）: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え。\nhook が止めた理由を直してから実行してください。どうしても必要な場合は ALLOW_NO_VERIFY=1 をコマンドに付けて実行してください。".to_string(),
-            )];
+            return vec![Finding::Deny(format!(
+                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます（ADR-0015）: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え。\nhook が止めた理由を直してから実行してください。{}",
+                escape_hint("ALLOW_NO_VERIFY")
+            ))];
         }
         Vec::new()
     }

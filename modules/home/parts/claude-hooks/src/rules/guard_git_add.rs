@@ -5,9 +5,9 @@
 //! 1 コミット 1 論理変更のためにも、`git add <file>` / `git add -p` で対象を選ぶ。
 //!
 //! 通すもの: パスを指定した add（範囲を限定した `git add -A src/` も可）、`-u`（追跡済みのみ）、
-//! `-p` / `-i`（対話的に選ぶ）。エスケープはコマンドに `ALLOW_GIT_ADD_ALL=1` を付ける。
+//! `-p` / `-i`（対話的に選ぶ）。エスケープはコマンドに `ALLOW_GIT_ADD_ALL=<理由>` を付ける。
 
-use super::Rule;
+use super::{Rule, escape, escape_hint};
 use crate::git_args::{git_flag, positionals};
 use crate::input::Input;
 use crate::output::Finding;
@@ -17,7 +17,8 @@ pub struct GuardGitAdd;
 
 fn deny(why: &str) -> Finding {
     Finding::Deny(format!(
-        "{why}（未追跡ファイルをまとめてステージし、機密情報の混入と無関係な変更の混在を招くため）。\ngit status で対象を確認し、git add <file> または git add -p で論理単位ごとにステージしてください。\nどうしても必要な場合は ALLOW_GIT_ADD_ALL=1 をコマンドに付けて実行してください。"
+        "{why}（未追跡ファイルをまとめてステージし、機密情報の混入と無関係な変更の混在を招くため）。\ngit status で対象を確認し、git add <file> または git add -p で論理単位ごとにステージしてください。\n{}",
+        escape_hint("ALLOW_GIT_ADD_ALL")
     ))
 }
 
@@ -44,8 +45,8 @@ impl Rule for GuardGitAdd {
     }
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        if shell.has_escape("ALLOW_GIT_ADD_ALL") {
-            return Vec::new();
+        if let Some(findings) = escape(shell, "ALLOW_GIT_ADD_ALL") {
+            return findings;
         }
         for cmd in shell.commands() {
             let Some(("add", args)) = cmd.git_subcommand() else {

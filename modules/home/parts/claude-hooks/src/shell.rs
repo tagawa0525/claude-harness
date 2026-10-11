@@ -20,6 +20,30 @@ use tree_sitter::{Node, Parser, Tree};
 use crate::git_args::{GitInvocation, parse_invocation};
 use crate::unwrap::{EnvChange, basename, unwrap};
 
+/// hook のエスケープ（`ALLOW_…=<理由>`）の読み取り（ADR-0023）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Escape {
+    /// 代入が無い
+    Absent,
+    /// 代入はあるが、値が理由として短い（`1`、`true`、`force` など）
+    Short,
+    /// 理由つき
+    Given,
+}
+
+/// 理由の幅。前後の空白を除き、ASCII は 1、それ以外（日本語など）は 2 と数える。表示幅に近いが、
+/// `unicode-width` のような依存は足さず ASCII か否かだけで決める。`force` / `allow`（5）は弾き、
+/// 日本語 3 文字（6）から通す。中身は検査しない（品質のゲートではなく、boolean 的な値を弾くため。ADR-0023）
+fn reason_width(value: &str) -> usize {
+    value
+        .trim()
+        .chars()
+        .map(|c| if c.is_ascii() { 1 } else { 2 })
+        .sum()
+}
+
+const REASON_MIN_WIDTH: usize = 6;
+
 pub struct Shell {
     src: String,
     tree: Tree,
@@ -223,19 +247,30 @@ impl Shell {
         found
     }
 
-    /// `NAME=1` の代入がプログラム内のどこかにあるか（hook のエスケープ指定）
-    pub fn has_escape(&self, name: &str) -> bool {
-        let mut found = false;
+    /// `NAME=<値>` の代入をプログラム内から探す（hook のエスケープ指定）。値が理由として足りるかで分ける
+    pub fn escape(&self, name: &str) -> Escape {
+        let mut found = Escape::Absent;
         self.walk(self.tree.root_node(), &mut |n| {
-            if n.kind() == "variable_assignment" {
-                let var = n.child_by_field_name("name").map(|v| self.text(v));
-                let val = n.child_by_field_name("value").map(|v| self.unquote(v).text);
-                if var == Some(name) && val.as_deref() == Some("1") {
-                    found = true;
-                }
+            if n.kind() == "variable_assignment"
+                && n.child_by_field_name("name").map(|v| self.text(v)) == Some(name)
+            {
+                let value = n
+                    .child_by_field_name("value")
+                    .map(|v| self.unquote(v).text)
+                    .unwrap_or_default();
+                found = if reason_width(&value) >= REASON_MIN_WIDTH {
+                    Escape::Given
+                } else {
+                    Escape::Short
+                };
             }
         });
         found
+    }
+
+    /// 理由つきのエスケープがあるか
+    pub fn has_escape(&self, name: &str) -> bool {
+        self.escape(name) == Escape::Given
     }
 
     /// コマンドが対象にするディレクトリ。そのコマンドより前にあり、同じシェルのスコープで実行される

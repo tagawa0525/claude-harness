@@ -6,11 +6,11 @@
 //! - --all / --mirror（main を含む全ブランチを押し出す）
 //!
 //! GitHub リモートがなければ PR フロー適用外で何もしない。
-//! エスケープ: コマンドに `ALLOW_PROTECTED_PUSH=1` を付ける（会話ログに意図が残る）
+//! エスケープ: コマンドに `ALLOW_PROTECTED_PUSH=<理由>` を付ける（理由が会話ログに残る）
 
 use std::path::Path;
 
-use super::Rule;
+use super::{Rule, escape, escape_hint};
 use crate::git;
 use crate::git_args::{git_flag, positionals};
 use crate::input::Input;
@@ -21,7 +21,8 @@ pub struct GuardGitPush;
 
 fn deny(reason: &str) -> Finding {
     Finding::Deny(format!(
-        "{reason}\n\nどうしても必要な場合は ALLOW_PROTECTED_PUSH=1 をコマンドに付けて実行してください。"
+        "{reason}\n\n{}",
+        escape_hint("ALLOW_PROTECTED_PUSH")
     ))
 }
 
@@ -108,8 +109,8 @@ impl Rule for GuardGitPush {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if shell.has_escape("ALLOW_PROTECTED_PUSH") {
-            return Vec::new();
+        if let Some(findings) = escape(shell, "ALLOW_PROTECTED_PUSH") {
+            return findings;
         }
         // コマンド中の全ての git push を検査する（2 つ目以降に保護対象が来る形を見逃さない）
         for cmd in shell.commands() {
