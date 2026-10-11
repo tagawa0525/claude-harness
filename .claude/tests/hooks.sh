@@ -288,6 +288,12 @@ out=$(run_hook guard-git-push "bash -c 'ALLOW_PROTECTED_PUSH=1 git push --force'
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
 
+it "guard-git-push: bash / sh のまとめたオプションの中の -o / -O の値は次の語で、-c の文字列の中も見る"
+for cmd in "bash -oc pipefail 'git push --force'" "bash -Oc extglob 'git push --force'" "sh -oec pipefail 'git push --force'"; do
+  out=$(run_hook guard-git-push "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+
 # エスケープの値は理由の文字列（ADR-0023）。`1` や 1 語の英単語は弾き、短い値を拒む文言はしきい値を明かさない
 it "escape: 値が 1 や短い語なら、理由を求めて止める（しきい値は明かさない）"
 for value in 1 true force allow 確認; do
@@ -954,12 +960,6 @@ make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
 mkdir -p src && echo x > src/a.txt
-
-it "guard-git-push: bash / sh のまとめたオプションの中の -o / -O の値は次の語で、-c の文字列の中も見る"
-for cmd in "bash -oc pipefail 'git push --force'" "bash -Oc extglob 'git push --force'" "sh -oec pipefail 'git push --force'"; do
-  out=$(run_hook guard-git-push "$cmd")
-  assert_eq deny "$(decision "$out")"
-done
 
 it "guard-git-add: パスを指定した git add は許可する"
 for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt' \
