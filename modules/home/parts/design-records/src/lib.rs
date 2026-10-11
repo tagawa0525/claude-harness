@@ -7,6 +7,8 @@
 pub mod check;
 pub mod parse;
 
+use std::path::Path;
+
 /// ADR を置くディレクトリ（リポジトリの直下から）。
 pub const ADR_DIR: &str = "docs/adr";
 
@@ -248,10 +250,20 @@ pub fn template(number: u32, title: &str, date: &str) -> String {
     text
 }
 
-/// `line` のうち、`kind` の記録 `old`（slug は `slug`）を指す参照の番号を `new` に付け替える。参照は、本文での参照
-/// （[`Kind::reference`]。[`parse::numbered_refs`] と同じ読み方）と、ファイル名の `NNNN-<slug>.md`（前が英数字で
-/// ないもの）。
-pub fn renumber_refs(kind: Kind, line: &str, old: u32, new: u32, slug: &str) -> String {
+/// `line` のうち、`kind` の記録 `old`（slug は `slug`）を指す参照の番号を `new` に付け替える。`doc_dir` は `line` の
+/// 文書のディレクトリ（リポジトリの直下から）。参照は、本文での参照（[`Kind::reference`]。[`parse::numbered_refs`] と
+/// 同じ読み方）と、ファイル名の `NNNN-<slug>.md`。ファイル名は、前のディレクトリの部分を文書のディレクトリか
+/// リポジトリの直下から解いて、その種類のディレクトリを指すものだけ（`./`、`../` を含む）。ディレクトリの部分の
+/// 無い名前は、文書がほかの種類のディレクトリにあれば、その種類の記録（同じ番号と slug のことがある）とみなして
+/// 書き換えない。`.md` の後ろに名前が続くもの（`.mdx`、`.md.orig`、`.md-old`）は別のファイル。
+pub fn renumber_refs(
+    kind: Kind,
+    line: &str,
+    old: u32,
+    new: u32,
+    slug: &str,
+    doc_dir: &Path,
+) -> String {
     let starts: std::collections::BTreeSet<usize> = parse::numbered_refs(line, kind.ref_prefix())
         .into_iter()
         .filter(|&(_, n)| n == old)
@@ -261,19 +273,35 @@ pub fn renumber_refs(kind: Kind, line: &str, old: u32, new: u32, slug: &str) -> 
     let mut spans: std::collections::BTreeMap<usize, usize> =
         starts.into_iter().map(|start| (start, start + 4)).collect();
     let file = format!("-{slug}.md");
+    let kind_dir = Path::new(kind.dir());
+    let bare_is_kind = !Kind::ALL
+        .into_iter()
+        .any(|other| other != kind && doc_dir == Path::new(other.dir()));
     for (dash, _) in line.match_indices(&file) {
         let digits = line[..dash].len()
             - line[..dash]
                 .trim_end_matches(|c: char| c.is_ascii_digit())
                 .len();
         let start = dash - digits;
-        if (1..=4).contains(&digits)
-            && line[start..dash].parse() == Ok(old)
-            && !line[..start]
-                .chars()
-                .next_back()
-                .is_some_and(parse::is_word)
-        {
+        let before = &line[..start];
+        let prefix = &before[before.trim_end_matches(is_path_char).len()..];
+        let of_kind = if prefix.is_empty() {
+            bare_is_kind
+        } else if let Some(dir) = prefix.strip_suffix('/').filter(|d| !d.starts_with('/')) {
+            let dir = Path::new(dir);
+            normalize(&doc_dir.join(dir)) == kind_dir || normalize(dir) == kind_dir
+        } else {
+            // 語の途中（x0001-…）や、/ で終わらない前置き、絶対のパス
+            false
+        };
+        let mut after = line[dash + file.len()..].chars();
+        let ends = match after.next() {
+            Some(c) if parse::is_word(c) => false,
+            // `.md.orig` と `.md-old` は続く名前。文末の `.` や区切りの `-` は名前に含めない
+            Some('.' | '-') => !after.next().is_some_and(parse::is_word),
+            _ => true,
+        };
+        if (1..=4).contains(&digits) && line[start..dash].parse() == Ok(old) && of_kind && ends {
             spans.insert(start, dash);
         }
     }
@@ -286,6 +314,27 @@ pub fn renumber_refs(kind: Kind, line: &str, old: u32, new: u32, slug: &str) -> 
     }
     out.push_str(&line[at..]);
     out
+}
+
+/// ファイル名の参照の前のディレクトリの部分に使う文字
+fn is_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/')
+}
+
+/// `.` と `..` を畳んだパス（ファイルは見ない。先頭を越える `..` は残す）
+fn normalize(path: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out: Vec<Component> = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir if matches!(out.last(), Some(Component::Normal(_))) => {
+                out.pop();
+            }
+            _ => out.push(c),
+        }
+    }
+    out.iter().collect()
 }
 
 /// 前付けの最初の `status:` の行の値（後ろの ` # コメント` と引用符は外す）。前付けか値が無ければ `None`。
@@ -428,6 +477,69 @@ mod tests {
     }
 
     #[test]
+    fn renumber_refs_rewrites_only_paths_that_resolve_to_the_record() {
+        let adr = Path::new("docs/adr");
+        // 文書のディレクトリかリポジトリの直下から解いて、その種類のディレクトリを指すものだけを書き換える
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "./0001-use-b.md ../issues/0001-use-b.md docs/issues/0001-use-b.md docs/adr/0001-use-b.md",
+                1,
+                2,
+                "use-b",
+                adr
+            ),
+            "./0002-use-b.md ../issues/0001-use-b.md docs/issues/0001-use-b.md docs/adr/0002-use-b.md"
+        );
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "../../adr/0001-use-b.md vendor/x/docs/adr/0001-use-b.md foo-adr/0001-use-b.md",
+                1,
+                2,
+                "use-b",
+                Path::new("docs/plans/sub")
+            ),
+            "../../adr/0002-use-b.md vendor/x/docs/adr/0001-use-b.md foo-adr/0001-use-b.md"
+        );
+        // .md の後ろが続く名前は別のファイル
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "0001-use-b.mdx 0001-use-b.md.orig 0001-use-b.md-old 0001-use-b.md。",
+                1,
+                2,
+                "use-b",
+                adr
+            ),
+            "0001-use-b.mdx 0001-use-b.md.orig 0001-use-b.md-old 0002-use-b.md。"
+        );
+        // 裸のファイル名は、文書がほかの種類のディレクトリにあれば、その種類の記録とみなして書き換えない
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "[b](0001-use-b.md)",
+                1,
+                2,
+                "use-b",
+                Path::new("docs/issues")
+            ),
+            "[b](0001-use-b.md)"
+        );
+        assert_eq!(
+            renumber_refs(
+                Kind::Issue,
+                "（0001-fix-b.md）",
+                1,
+                3,
+                "fix-b",
+                Path::new("")
+            ),
+            "（0003-fix-b.md）"
+        );
+    }
+
+    #[test]
     fn renumber_refs_rewrites_references_and_file_names_of_the_record() {
         assert_eq!(
             renumber_refs(
@@ -435,7 +547,8 @@ mod tests {
                 "ADR-0001 と [b](0001-use-b.md)、docs/adr/0001-use-b.md",
                 1,
                 2,
-                "use-b"
+                "use-b",
+                Path::new("docs/adr")
             ),
             "ADR-0002 と [b](0002-use-b.md)、docs/adr/0002-use-b.md"
         );
@@ -446,7 +559,8 @@ mod tests {
                 "ADR-0011 0001-use-a.md x0001-use-b.md XADR-0001 ADR-00012 ADR-0001x",
                 1,
                 2,
-                "use-b"
+                "use-b",
+                Path::new("docs/adr")
             ),
             "ADR-0011 0001-use-a.md x0001-use-b.md XADR-0001 ADR-00012 ADR-0001x"
         );
@@ -456,7 +570,8 @@ mod tests {
                 "blocked-by: [\"#0001\"] x#0001 #00012 ADR-0001",
                 1,
                 3,
-                "fix-a"
+                "fix-a",
+                Path::new("docs/issues")
             ),
             "blocked-by: [\"#0003\"] x#0001 #00012 ADR-0001"
         );
