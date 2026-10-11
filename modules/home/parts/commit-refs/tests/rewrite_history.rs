@@ -526,3 +526,16 @@ fn a_failure_to_write_the_report_still_says_the_refs_were_moved() {
     assert!(stderr(&out).contains("移した"), "{}", stderr(&out));
     assert_eq!(h.t.rev("refs/commit-refs/original/heads/main"), h.c2);
 }
+
+#[test]
+fn a_new_hash_in_the_map_that_is_not_a_commit_stops_before_rewriting() {
+    let h = History::new("missing-new");
+    let missing = "5555555555555555555555555555555555555555";
+    let map =
+        h.t.map_file(&format!("old new\n{X0} {}\n{X1} {missing}\n", h.c0));
+    let before = h.refs();
+    let out = h.rewrite_with(&map);
+    assert_error(&out);
+    assert!(stderr(&out).contains(missing), "{}", stderr(&out));
+    assert_eq!(h.refs(), before);
+}
