@@ -73,4 +73,25 @@ for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.
   done
 done
 
+# 判定できなかった理由（systemMessage。ADR-0033）や、1 つの JSON の object でない出力を返す版。判定が無く
+# allow に見えるので、テストを失敗や allow と数えずに止まる
+make_fake_tool rule-notice "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
+  *) cat >/dev/null; echo '{\"systemMessage\":\"claude-hooks: git を起動できません\"}'; exit 0 ;;"
+make_fake_tool rule-scalar "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
+  *) cat >/dev/null; echo 42; exit 0 ;;"
+make_fake_tool rule-multi "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
+  *) cat >/dev/null; echo '{}'; echo '{}'; exit 0 ;;"
+for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
+  path="$NO_NIX_PATH"
+  [[ $target == */main-commit-gates.sh ]] && path="$PATH"
+  for bin in rule-notice rule-scalar rule-multi; do
+    it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、出力を出して止まる"
+    out=$(cd "$ROOT" && PATH="$path" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" bash "$target" 2>&1)
+    assert_eq 1 $?
+    assert_contains "$out" "claude-hooks が失敗しました"
+    assert_not_contains "$out" "passed:"
+    assert_not_contains "$out" "✗"
+  done
+done
+
 finish
