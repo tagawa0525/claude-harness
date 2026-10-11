@@ -141,6 +141,16 @@ else
   ok "空白を含むパスの崩れた語で止める"
 fi
 
+# --- 4b. prh の辞書は誤りを並べるので検査しない ------------------------------------------------------
+REPO="$WORK/dictionary"
+new_repo "$REPO"
+mkdir -p "$REPO/ja-terms"
+if commits "$REPO" ja-terms/prh.yml "$(printf 'rules:\n  - expected: 確認\n    pattern: 確かめの\n')"; then
+  ok "prh の辞書のファイルは検査しない"
+else
+  ng "prh の辞書のファイルで止めた"
+fi
+
 # --- 5. fork では飛ばす ------------------------------------------------------------------------------
 REPO="$WORK/fork"
 new_repo "$REPO"
