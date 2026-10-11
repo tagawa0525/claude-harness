@@ -50,12 +50,13 @@ issues: []
 ### 帰結
 
 - 良い点: 依頼文が短くなり、報告の見出しが揃うので親が確かめやすい
-- 悪い点: マージのたびに親の手番が要る。マージを止めるのは SKILL.md の文章と allowed-tools（`git merge` と
-  `gh pr merge` を許可に入れない）だけで、hook のゲートではない
+- 悪い点: マージのたびに親の手番が要る。マージを止めるのは SKILL.md の文章だけで、hook のゲートではない。
+  グローバルの許可（`modules/home/parts/claude-code.nix` の `Bash(git merge:*)`、`Bash(gh pr:*)`）がマージを
+  確認なしで通すので、スキルの allowed-tools を絞っても止まらない
 - 見直す条件: サブエージェントがマージに進む例が出たとき（サブエージェントの呼び出しを hook で見分けられるかは
   確かめていない）
 
 ### 確認
 
-- `.claude/skills/branch-task/SKILL.md` の手順 7 と allowed-tools に、マージと rebase が無いこと
+- `.claude/skills/branch-task/SKILL.md` の手順に、マージと rebase を走らせるところが無いこと
 - 実際に依頼を 1 件この形で出し、報告が見出しどおりに返ること
