@@ -216,6 +216,10 @@ fi
 
 echo "==> staged-checks に言語を渡すと、その言語だけを検査する（run-checks.sh の Markdown の段）"
 STAGED_CHECKS=$(grep -o '/nix/store/[^ ]*/bin/staged-checks' "$WORK/pre-commit" | head -1)
+if [[ ! -x "$STAGED_CHECKS" ]]; then
+  echo "✗ pre-commit の hook から staged-checks の場所を読めない: '$STAGED_CHECKS'"
+  exit 1
+fi
 R=$(repo only nix-and-md.txt $'x\n')
 printf '{a=1;}\n' >"$R/a.nix"
 printf '%s' "${LINES/l1/l1 }" >"$R/a.md"
@@ -230,10 +234,12 @@ if (cd "$R" && "$STAGED_CHECKS" nix) >"$WORK/out" 2>&1; then
 else
   ok "nix を渡すと、崩れた Nix で止める"
 fi
-if (cd "$R" && "$STAGED_CHECKS" fortran) >"$WORK/out" 2>&1; then
-  ng "知らない言語は使い方の誤りとして止める"
+rc=0
+(cd "$R" && "$STAGED_CHECKS" fortran) >"$WORK/out" 2>&1 || rc=$?
+if [[ $rc -eq 2 ]]; then
+  ok "知らない言語は使い方の誤り（終了コード 2）として止める"
 else
-  ok "知らない言語は使い方の誤りとして止める"
+  ng "知らない言語は使い方の誤り（終了コード 2）として止める（終了コード $rc）"
 fi
 
 echo "==> ステージしていない編集が無ければ、今までどおり"

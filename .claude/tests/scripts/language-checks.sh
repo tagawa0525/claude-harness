@@ -9,6 +9,9 @@
 source "$(dirname "$0")/../lib.sh"
 
 LANG_SCRIPTS="$CLAUDE_DIR/skills/language-checks/scripts"
+# 手元の staged-checks（home-manager が PATH に置く）を走らせず、どのホストでも同じ結果にする。Markdown の段を
+# 確かめるテストは、この偽物を差し替える
+make_fake_tool staged-checks '*) exit 0 ;;'
 
 # ===========================================================================
 # language-checks/scripts/run-checks.sh
@@ -90,6 +93,7 @@ remove_fake_tool staged-checks
 out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_contains "$out" "SKIP: markdown staged (staged-checks not found)"
+make_fake_tool staged-checks '*) exit 0 ;;'
 
 # design-records: .pre-commit-config.yaml でオプトインしたリポジトリでは、ADR の形と参照も検査する（ADR-0009）
 
@@ -321,7 +325,6 @@ make_fake_tool staged-checks '*) exit 0 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "markdown" "$(fake_log staged-checks)"
-remove_fake_tool staged-checks
 
 it "run-checks: .rs から .rs への rename でも crate で cargo を実行する"
 REPO="$TEST_ROOT/checks/rename-rs"
