@@ -164,6 +164,8 @@ assert_contains "$out" "NOTE:"
 assert_contains "$out" "data/cache"
 assert_not_contains "$out" "SHARED: data/cache"
 assert_file_missing "$TEST_ROOT/share1/app-feat-share-missing/data/cache"
+# 先の無い symlink は -e では見えない
+assert_eq "no" "$([[ -L "$TEST_ROOT/share1/app-feat-share-missing/data/cache" ]] && echo yes || echo no)"
 assert_contains "$out" "SHARED: references"
 
 REPO="$TEST_ROOT/share2/app"
