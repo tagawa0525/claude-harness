@@ -23,20 +23,45 @@ cd "$TEST_ROOT/elsewhere" || exit 1
 # ===========================================================================
 # 番号だけだと cwd のリポジトリの PR として読まれ、cd の付け忘れで別のリポジトリの PR を読み書きする
 
+# 第 1 引数のほかは、各スクリプトの正しい数の引数を渡す（引数の数の検査で止まらず、URL の検査まで届くように）
+declare -A REST_ARGS=(
+  [get-pr-info.sh]="" [get-review-comments.sh]="--unresolved" [get-latest-review.sh]=""
+  [decide-next.sh]="" [resolve-thread.sh]="11" [reply-to-comment.sh]="11 body"
+  [request-rereview.sh]="" [reset-rounds.sh]="reason" [gh-wait-review.sh]=""
+  [gh-review-requests.sh]=""
+)
 for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comments.sh" \
   "$REVIEW_SCRIPTS/get-latest-review.sh" "$REVIEW_SCRIPTS/decide-next.sh" \
   "$REVIEW_SCRIPTS/resolve-thread.sh" "$REVIEW_SCRIPTS/reply-to-comment.sh" \
   "$REVIEW_SCRIPTS/request-rereview.sh" "$REVIEW_SCRIPTS/reset-rounds.sh" \
   "$SCRIPTS_DIR/gh-wait-review.sh" "$SCRIPTS_DIR/gh-review-requests.sh"; do
-  for arg in 1 "" "https://github.com/octo/repo/issues/1" "https://example.com/octo/repo/pull/1"; do
+  read -ra rest <<<"${REST_ARGS[$(basename "$script")]}"
+  for arg in "" 1 "https://github.com/octo/repo/issues/1" "https://example.com/octo/repo/pull/1"; do
     it "$(basename "$script"): PR の URL でない第 1 引数（'$arg'）は gh を呼ばずにエラー"
     make_fake_gh '"auth status"*) ;;'
-    out=$("$script" "$arg" 11 reason 2>&1)
+    out=$("$script" "$arg" "${rest[@]}" 2>&1)
     assert_ne 0 $?
     assert_contains "$out" "PR の URL"
     assert_not_contains "$(fake_log gh)" "api"
     assert_not_contains "$(fake_log gh)" "pr "
   done
+done
+
+for url in "https://github.com/octo/repo/pull/42/files" "https://github.com/octo/repo/pull/42/commits" \
+  "https://github.com/octo/repo/pull/42?notification_referrer_id=x"; do
+  it "get-pr-info: PR の下のページやクエリの付いた URL（$url）も PR の URL として受ける"
+  make_fake_gh '"pr view 42 --json"*) echo "{\"number\":42}" ;;'
+  out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "$url")
+  assert_eq 0 $?
+  assert_eq octo/repo "$(fake_gh_repos)"
+done
+
+for url in "$PR_URL#discussion_r111" "$PR_URL/files#r111"; do
+  it "reply-to-comment: # の付いた URL（$url）は、comment_id と取り違えないよう gh を呼ばずにエラー"
+  make_fake_gh '"api"*) echo "{}" ;;'
+  out=$("$REVIEW_SCRIPTS/reply-to-comment.sh" "$url" 222 "Fixed" 2>&1)
+  assert_ne 0 $?
+  assert_not_contains "$(fake_log gh)" "api"
 done
 
 # ===========================================================================
@@ -52,6 +77,11 @@ assert_eq 123456 "$(jq -r .comment_id <<<"$out")"
 
 it "get-pr-info: URL のリポジトリを GH_REPO で gh に渡す"
 assert_eq octo/repo "$(fake_gh_repos)"
+
+it "get-pr-info: レビューコメントでない # の URL（#issuecomment-1）は comment_id が null"
+out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42#issuecomment-1")
+assert_eq 0 $?
+assert_eq null "$(jq -r .comment_id <<<"$out")"
 
 it "get-pr-info: PR の URL（コメントなし）は comment_id が null"
 out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42")
@@ -158,6 +188,7 @@ err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 1 $?
 assert_contains "$err" "ERROR"
 assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
+assert_contains "$err" "/gh-actions-check $PR_URL "
 
 it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
 make_fake_gh "\"auth status\"*) ;;
@@ -203,11 +234,11 @@ fake_gh_decide 2026-09-08T03:00:00Z
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_eq 0 $?
 assert_contains "$out" "ROUND: 2"
+assert_contains "$out" "RESPONSE: review"
+assert_contains "$out" "INLINE_COMMENTS: 2"
 
 it "decide-next: 下請けのスクリプトの gh も URL のリポジトリに向く"
 assert_eq octo/repo "$(fake_gh_repos)"
-assert_contains "$out" "RESPONSE: review"
-assert_contains "$out" "INLINE_COMMENTS: 2"
 
 it "decide-next: 未解決スレッドがあれば ACT（対応する）"
 fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD"
@@ -423,6 +454,9 @@ out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL")
 assert_eq 1 $?
 assert_contains "$out" "TIMEOUT"
 
+it "gh-wait-review: タイムアウトの案内の診断にも PR の URL を渡す"
+assert_contains "$out" "/gh-actions-check $PR_URL "
+
 it "gh-wait-review: レビューの実行が失敗していたら待たずに終わる（トークン切れ等）"
 # 要求は登録されているがレビューが走らなかった場合、10分待っても来ない
 fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z 1
@@ -430,6 +464,7 @@ out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL" 
 assert_eq 7 $?
 assert_contains "$out" "レビューの実行が失敗"
 assert_not_contains "$out" "TIMEOUT"
+assert_contains "$out" "/gh-actions-check $PR_URL "
 
 it "gh-wait-review: 待機のたびに head を取り直す（待機中の push で古い head を見ない）"
 # 起動時の 1 回だけで固定すると、待機中に push されても古い head の失敗を見て
