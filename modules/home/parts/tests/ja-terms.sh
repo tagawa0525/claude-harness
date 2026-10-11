@@ -223,6 +223,24 @@ else
   ng "サブモジュール（gitlink）で止めた"
 fi
 
+# --- 3f. 種類の変更（シンボリックリンクから普通のファイル）だけのコミットも見る ----------------------------
+REPO="$WORK/typechange"
+new_repo "$REPO"
+echo target > "$REPO/target.txt"
+ln -s target.txt "$REPO/note.txt"
+git -C "$REPO" add target.txt note.txt
+git -C "$REPO" commit -q --no-verify -m "chore: link"
+rm "$REPO/note.txt"
+printf '確かめの結果。\n' > "$REPO/note.txt"
+git -C "$REPO" add note.txt
+if git -C "$REPO" commit -q -m "docs: note" >"$WORK/out" 2>&1; then
+  ng "種類の変更だけのコミットの崩れた語で止まらない"
+elif grep -q "note.txt" "$WORK/out" && grep -q "確認" "$WORK/out"; then
+  ok "種類の変更だけのコミットの崩れた語でも止める"
+else
+  ng "種類の変更だけのコミットで止めたが、崩れた語の場所を示さない"
+fi
+
 # --- 4. 空白を含むパス -------------------------------------------------------------------------------
 REPO="$WORK/space path"
 new_repo "$REPO"
