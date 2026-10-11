@@ -5,18 +5,19 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// git を起動できない理由を出したか（1 回の判定で git を何度も呼ぶので、同じ理由を並べない）
+/// git を起動できない理由を出したか（1 回の判定で git を何度も呼ぶので、同じ理由を並べない）。プロセスに
+/// 1 つなので、src の下の単体テストで理由の出し方を確かめると、テストの順に左右される（結合テストで確かめる）
 static REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// `git <args>` を dir で実行する（input があれば標準入力に渡す）。dir が無いか git を起動できなければ None。
 /// dir があるのに起動できない（PATH に git が無い、dir に入れない）のは環境の問題なので、理由を標準エラーに
-/// 1 回だけ出す
+/// 1 回だけ出す。起動した後の失敗（入力を書けない、待てない）は、非 0 の終了と同じく呼ぶ側に任せる
 pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
     // まだ無いディレクトリは、判定するコマンドが作る前の場所（mkdir の後の cd や -C）を指すことがある
     if !dir.is_dir() {
         return None;
     }
-    let spawned = Command::new("git")
+    let mut child = match Command::new("git")
         .args(args)
         .current_dir(dir)
         .stdin(if input.is_some() {
@@ -27,14 +28,8 @@ pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .and_then(|mut child| {
-            if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-                stdin.write_all(input)?;
-            }
-            child.wait_with_output()
-        });
-    match spawned {
-        Ok(out) => Some(out),
+    {
+        Ok(child) => child,
         Err(e) => {
             if !REPORTED.swap(true, Ordering::Relaxed) {
                 eprintln!(
@@ -42,9 +37,20 @@ pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
                     dir.display()
                 );
             }
-            None
+            return None;
         }
-    }
+    };
+    // 入力は別のスレッドで書く（書き終える前に git が出力でパイプを満たすと、互いに待って止まる）。
+    // 書けなくても（git が先に終わった）、終了の状態は待って受ける
+    let stdin = child.stdin.take();
+    std::thread::scope(|scope| {
+        if let (Some(input), Some(mut stdin)) = (input, stdin) {
+            scope.spawn(move || {
+                let _ = stdin.write_all(input);
+            });
+        }
+        child.wait_with_output().ok()
+    })
 }
 
 /// `git <args>` を dir で実行し、成功なら標準出力（末尾改行を除く）を返す。非 0 の終了と、[`run`] が
