@@ -47,8 +47,9 @@ impl Map {
                 continue;
             }
             let (old, new) = (fields[0], fields[1]);
-            // 置き換えは文書の語と同じ桁数の新の先頭を使うので、新が旧より短いと足りなくなる
-            if old.len() != new.len() {
+            // 置き換えは文書の語と同じ桁数の新の先頭を使うので、新が旧より短いと足りなくなる。0 だけの印は
+            // 消えたコミットを表すだけで置き換えに使わないので、桁数を問わない
+            if old.len() != new.len() && !is_zero(new) {
                 errors.push(format!(
                     "対応表の {} 行目の旧と新の桁数が違う: {}",
                     lineno + 1,
@@ -68,7 +69,7 @@ impl Map {
 
         let mut map = Map::default();
         for (old, new) in targets {
-            if new.bytes().all(|b| b == b'0') {
+            if is_zero(new) {
                 map.pruned.insert(old.to_string());
             } else if old != new {
                 map.mapping.insert(old.to_string(), new.to_string());
@@ -143,6 +144,11 @@ impl Map {
             }
         }
     }
+}
+
+/// 消えたコミットの印（0 だけの番号）か
+fn is_zero(s: &str) -> bool {
+    s.bytes().all(|b| b == b'0')
 }
 
 /// SHA-1（40 桁）か SHA-256（64 桁）の、小文字の 16 進の番号か
