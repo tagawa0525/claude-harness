@@ -200,6 +200,7 @@ let
         "Bash(design-records new:*)"
         "Bash(design-records check:*)"
         "Bash(design-records status:*)"
+        "Bash(commit-refs remap:*)"
         # 共有スクリプト（PRレビュー待ち、git/gh の決定的な手順）
         "Bash(~/.claude/scripts/gh-wait-review.sh:*)"
         "Bash(~/.claude/scripts/git-info.sh:*)"
@@ -211,7 +212,6 @@ let
         "Bash(~/.claude/scripts/gh-actions-diagnose.sh:*)"
         "Bash(~/.claude/scripts/review-level.sh:*)"
         "Bash(~/.claude/scripts/slurm-run.sh:*)"
-        "Bash(~/.claude/scripts/remap-commit-refs.sh:*)"
         # Web
         "WebFetch(domain:api.github.com)"
         "WebFetch(domain:claude.ai)"
