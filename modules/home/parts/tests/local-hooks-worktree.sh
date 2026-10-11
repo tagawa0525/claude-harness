@@ -23,20 +23,13 @@ trap 'rm -rf "$WORK"' EXIT
 HOOKS="$WORK/hooks"
 mkdir -p "$HOOKS"
 NAMES=(pre-commit pre-merge-commit commit-msg)
-ATTRS=()
+# hook ごとに build する（1 回にまとめると、出力と hook の対応を出力の順に頼ることになる）
 for name in "${NAMES[@]}"; do
-  ATTRS+=("$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$name\".source")
-done
-echo "==> hook をビルドする（nixosConfigurations.${HOST}）"
-# 1 回の nix build で評価を 1 回で済ませる。出力は installable の順に並ぶ
-mapfile -t BUILT < <(nix build --no-link --print-out-paths --option warn-dirty false "${ATTRS[@]}")
-if [[ ${#BUILT[@]} -ne ${#NAMES[@]} ]]; then
-  echo "nix build の出力の数が hook の数と違います: ${BUILT[*]}" >&2
-  exit 1
-fi
-for i in "${!NAMES[@]}"; do
-  cp "${BUILT[$i]}" "$HOOKS/${NAMES[$i]}"
-  chmod +x "$HOOKS/${NAMES[$i]}"
+  echo "==> $name hook をビルドする（nixosConfigurations.${HOST}）"
+  cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
+    "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$name\".source")" \
+    "$HOOKS/$name"
+  chmod +x "$HOOKS/$name"
 done
 
 export HOME="$WORK/home"
@@ -52,7 +45,10 @@ unset CLAUDECODE
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); echo "✓ $1"; }
-ng() { FAIL=$((FAIL + 1)); echo "✗ $1"; }
+ng() {
+  FAIL=$((FAIL + 1))
+  echo "✗ $1（呼ばれたローカルの hook: $(paste -sd ' ' "$LOG")）"
+}
 
 # ローカルの hook は、呼ばれたら共通の .git に名前を書く
 REPO="$WORK/repo"
@@ -61,7 +57,7 @@ echo init >"$REPO/init.txt"
 git -C "$REPO" add init.txt
 git -C "$REPO" commit -q -m "chore: init"
 LOG="$REPO/.git/local-hooks.log"
-for name in pre-commit pre-merge-commit commit-msg; do
+for name in "${NAMES[@]}"; do
   printf '#!/bin/sh\necho %s >>"%s"\n' "$name" "$LOG" >"$REPO/.git/hooks/$name"
   chmod +x "$REPO/.git/hooks/$name"
 done
@@ -83,7 +79,6 @@ for name in pre-commit commit-msg; do
   fi
 done
 
-: >"$LOG"
 git -C "$REPO" switch -q feat/y
 echo b >"$REPO/b.txt"
 git -C "$REPO" add b.txt
