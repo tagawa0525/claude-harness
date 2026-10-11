@@ -752,13 +752,14 @@ mkdir -p src && echo x > src/a.txt
 
 it "guard-git-add: パスを指定した git add は許可する"
 for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt' \
-  'git add -A --pathspec-from-file paths.txt' 'git add -A --pathspec-from-file=paths.txt'; do
+  'git add --pathspec-from-file=paths.txt'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq allow "$(decision "$out")"
 done
 
 it "guard-git-add: -A / --all / . / :/ / * は deny し、代わりの手順を示す"
 for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An' \
+  'git add -A --pathspec-from-file paths.txt' 'git add -A --pathspec-from-file=paths.txt' \
   'env FOO=1 git add -A' 'command git add .'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq deny "$(decision "$out")"
