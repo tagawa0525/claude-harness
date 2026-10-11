@@ -19,8 +19,9 @@
 # （ルートからの相対パス。空行と # で始まる行は読み飛ばす）を、メイン worktree の同じパスへの
 # 絶対パスの symlink として作る。git で追跡しない大きなデータ（キャッシュ・参照データ）を
 # worktree の間でコピーせず共有するため。
-#   - パスはリテラルだけ。絶対パス、. / .. を含むもの、ワイルドカード（* ? [）、! で始まるものはエラー
+#   - パスはリテラルだけ。絶対パス、. / .. を含むもの、ワイルドカード（* ? [）と \、! か : で始まるものはエラー
 #   - 同じパスや入れ子のパス、親が新しい worktree でディレクトリでない（ファイルか symlink）パスはエラー
+#   - メイン worktree で追跡されているパスはエラー（新しい worktree での書き込みがメインの変更になる）
 #   - 新しい worktree で git に無視されていなければエラー（symlink が未追跡ファイルに見える）。
 #     symlink はディレクトリではないので、`dir/` のようにディレクトリだけに一致するパターンでは
 #     無視されない。判定は symlink を作る前の、そのパスが無い状態で行う（git から見て同じ）
@@ -149,6 +150,12 @@ echo "BRANCH: $BRANCH"
 echo "CREATED_BRANCH: $CREATED"
 [[ -z "$BASE" ]] || echo "BASE: $BASE"
 
+# fork 運用（GitHub リモートが複数）では gh の解決先が worktree に引き継がれないことがある
+GH_REMOTES=$(git remote -v | awk '/github\.com/ && /\(fetch\)/ { print $1 }' | sort -u | wc -l)
+if (( GH_REMOTES >= 2 )); then
+  echo "NOTE: GitHub リモートが複数あります。worktree で gh pr 系コマンドを使う前に gh repo set-default --view で解決先を確認してください"
+fi
+
 # --- .worktreelink: メイン worktree のパスを symlink で共有する ---
 # 設定はチェックアウトしたブランチのもの（ブランチごとに .gitignore と揃っている）を読む
 LINK_FILE="$DIR/.worktreelink"
@@ -163,7 +170,9 @@ if [[ -f "$LINK_FILE" ]]; then
     [[ -z "$line" || "$line" == \#* ]] && continue
     # 末尾の / は symlink の名前には要らない（references/ と references は同じ）
     while [[ "$line" == */ ]]; do line="${line%/}"; done
-    if [[ -z "$line" || "$line" == /* || "$line" == !* || "$line" == *[*?[]* ]]; then
+    # git は引数を pathspec として読む（check-ignore は GIT_LITERAL_PATHSPECS を受け付けない）ので、
+    # 魔法（:foo、:(top)foo）、ワイルドカード、エスケープになる文字を止め、symlink の名前そのものを判定させる
+    if [[ -z "$line" || "$line" == /* || "$line" == !* || "$line" == :* || "$line" == *[*?[\\]* ]]; then
       SHARE_ERRORS+=("リテラルの相対パスではありません: $line")
       continue
     fi
@@ -213,6 +222,11 @@ if [[ -f "$LINK_FILE" ]]; then
       SHARE_ERRORS+=("git check-ignore が失敗しました（終了コード $rc: $ignore_err）: $line")
       continue
     fi
+    # メインのブランチが追跡するパスに張ると、新しい worktree での書き込みがメインの変更になる
+    if [[ -n "$(git -C "$MAIN_ROOT" ls-files -- "$line")" ]]; then
+      SHARE_ERRORS+=("メイン worktree で git に追跡されています: $line")
+      continue
+    fi
     SHARE_PATHS+=("$line")
   done < "$LINK_FILE"
 
@@ -236,8 +250,3 @@ if [[ -f "$LINK_FILE" ]]; then
   done
 fi
 
-# fork 運用（GitHub リモートが複数）では gh の解決先が worktree に引き継がれないことがある
-GH_REMOTES=$(git remote -v | awk '/github\.com/ && /\(fetch\)/ { print $1 }' | sort -u | wc -l)
-if (( GH_REMOTES >= 2 )); then
-  echo "NOTE: GitHub リモートが複数あります。worktree で gh pr 系コマンドを使う前に gh repo set-default --view で解決先を確認してください"
-fi

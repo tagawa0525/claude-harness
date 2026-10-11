@@ -266,10 +266,10 @@ setup_share_repo "$REPO" '/foo\n' ':foo\n'
 mkdir -p "$REPO/:foo"
 cd "$REPO" || exit 1
 
-it "worktree-add: .worktreelink のパスは pathspec でなくリテラルとして無視を判定する（:foo は foo と別）"
+it "worktree-add: .worktreelink の : で始まる行（pathspec の魔法で foo と判定される）はエラー"
 out=$("$SCRIPTS_DIR/worktree-add.sh" feat/colon 2>&1)
 assert_eq 1 $?
-assert_contains "$out" "git に無視されていません"
+assert_contains "$out" "リテラルの相対パスではありません: :foo"
 assert_file_missing "$TEST_ROOT/share7/app-feat-colon/:foo"
 
 REPO="$TEST_ROOT/share8/app"
