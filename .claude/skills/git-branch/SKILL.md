@@ -87,8 +87,8 @@ allowed-tools:
 # 通常（ローカルHEADから分岐）
 git switch -c [branch-name]
 
-# origin/mainから分岐する場合
-git switch -c [branch-name] origin/main
+# origin/mainから分岐する場合（上流を origin/main にしない。push 先が main になる）
+git switch --no-track -c [branch-name] origin/main
 ```
 
 ## featureブランチの場合: リネーム
