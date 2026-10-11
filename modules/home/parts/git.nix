@@ -219,6 +219,11 @@ in
         echo "🔍 Checking Japanese terms..."
         JA_DIR=$(mktemp -d)
         git checkout-index --prefix="$JA_DIR/" -z --stdin < "$JA_LIST"
+        # 崩れた語をわざと含むファイル（辞書のテストなど）は、リポジトリの .textlintignore で外す。
+        # textlint は今のディレクトリの .textlintignore を読むので、ステージした版を写す
+        if git cat-file -e :.textlintignore 2>/dev/null; then
+          git show :.textlintignore > "$JA_DIR/.textlintignore"
+        fi
         if ! (cd "$JA_DIR" && xargs -0 ${jaTerms} --no-color < "$JA_LIST"); then
           echo "❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: nixfiles の modules/home/parts/ja-terms/prh.yml）"
           check_failed=1
