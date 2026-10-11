@@ -10,8 +10,10 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -155,10 +157,9 @@ fn map_file(top: &Path) -> Result<PathBuf, String> {
         top,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?;
-    let dir = String::from_utf8_lossy(&dir)
-        .trim_end_matches('\n')
-        .to_string();
-    Ok(Path::new(&dir).join("commit-refs").join("commit-map"))
+    // git が足す改行だけを外し、パスはバイト列のまま扱う（UTF-8 とは限らない）
+    let dir = OsStr::from_bytes(dir.strip_suffix(b"\n").unwrap_or(&dir));
+    Ok(Path::new(dir).join("commit-refs").join("commit-map"))
 }
 
 /// 作業ツリーに変更が無く、ほかの worktree が無く、前の書き換えの ref と対応表が残っていないこと
