@@ -51,6 +51,8 @@ pub struct Cmd {
     /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
     /// `-u NAME` / `-i`、`exec -c`）
     pub env: Vec<EnvChange>,
+    /// ほどいた包みの名前（外側から順に）
+    pub wrappers: Vec<String>,
     /// 包んだ `env -C <dir>` の行き先（順に、前のものからの相対）
     pub dirs: Vec<String>,
     /// git のコマンドなら、グローバルオプションの読み取り
@@ -156,6 +158,7 @@ impl Shell {
             scope,
             env,
             dirs: inner.dirs,
+            wrappers: inner.wrappers,
             git,
         })
     }
@@ -244,7 +247,7 @@ impl Shell {
             if c.start >= cmd.start {
                 break;
             }
-            if c.name == "cd" && c.scope == cmd.scope {
+            if c.changes_dir() && c.scope == cmd.scope {
                 match c.args.iter().find(|a| !a.text.starts_with('-')) {
                     Some(a) => dir = resolve(&dir, &a.text),
                     None => dir = home(),
@@ -288,6 +291,16 @@ fn resolve(base: &Path, p: &str) -> PathBuf {
 }
 
 impl Cmd {
+    /// シェルの cd か。builtin / command はシェルの cd を呼ぶが、env など外部の包みは cd という外部コマンドを
+    /// 探して失敗し、シェルのディレクトリを変えない
+    pub fn changes_dir(&self) -> bool {
+        self.name == "cd"
+            && self
+                .wrappers
+                .iter()
+                .all(|w| w == "builtin" || w == "command")
+    }
+
     /// 走らせるプログラムの、書いたままのパス。`bash <path>` / `sh <path>` は走らせるスクリプトのパス
     pub fn program(&self) -> &str {
         let name = basename(&self.name);
