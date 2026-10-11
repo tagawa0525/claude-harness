@@ -99,8 +99,8 @@ fn runs_slurm_run(cmd: &Cmd) -> bool {
 }
 
 fn is_own_test(path: &str) -> bool {
-    let path = path.strip_prefix("./").unwrap_or(path);
-    path == TEST || path.ends_with(&format!("/{TEST}"))
+    path.strip_suffix(TEST)
+        .is_some_and(|dir| dir.is_empty() || dir.ends_with('/'))
 }
 
 impl Rule for GuardSbatch {
