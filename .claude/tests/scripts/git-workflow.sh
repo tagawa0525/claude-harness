@@ -260,6 +260,35 @@ out=$("$SCRIPTS_DIR/worktree-add.sh" feat/noshare)
 assert_eq 0 $?
 assert_not_contains "$out" "SHARED:"
 assert_file_missing "$TEST_ROOT/share5/app-feat-noshare/references"
+
+REPO="$TEST_ROOT/share7/app"
+setup_share_repo "$REPO" '/foo\n' ':foo\n'
+mkdir -p "$REPO/:foo"
+cd "$REPO" || exit 1
+
+it "worktree-add: .worktreelink のパスは pathspec でなくリテラルとして無視を判定する（:foo は foo と別）"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/colon 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "git に無視されていません"
+assert_file_missing "$TEST_ROOT/share7/app-feat-colon/:foo"
+
+REPO="$TEST_ROOT/share8/app"
+make_repo "$REPO"
+commit_file "$REPO" references/tracked.txt "chore: track references"
+git -C "$REPO" switch -q -c feat/untrack-base
+git -C "$REPO" rm -q -r --cached references
+printf '/references\n' > "$REPO/.gitignore"
+printf 'references\n' > "$REPO/.worktreelink"
+git -C "$REPO" add .gitignore .worktreelink
+git -C "$REPO" commit -q -m "chore: ignore references"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+
+it "worktree-add: メイン worktree で追跡されているパスは共有せずエラー（書き込みがメインの変更になる）"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/untracked --from feat/untrack-base 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "メイン worktree で git に追跡されています: references"
+assert_file_missing "$TEST_ROOT/share8/app-feat-untracked/references"
 cd "$REPO" || exit 1
 
 # ===========================================================================
