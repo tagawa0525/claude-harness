@@ -259,6 +259,14 @@ it "guard-git-push: ALLOW_PROTECTED_PUSH=1 で迂回できる"
 out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push --force')
 assert_eq allow "$(decision "$out")"
 
+it "guard-git-push: env などで包んだ git push も見て、値を取るオプションの値を -f と取り違えない"
+for cmd in 'env FOO=1 git push --force' 'command git push origin main' 'nohup git push --force'; do
+  out=$(run_hook guard-git-push "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+out=$(run_hook guard-git-push 'git push -ofoo origin feat/x')
+assert_eq allow "$(decision "$out")"
+
 it "guard-git-push: GitHub リモートがなければ gh を呼ばず許可"
 LOCAL="$TEST_ROOT/push-local"
 make_repo "$LOCAL"
@@ -297,6 +305,10 @@ echo 'y' > other.txt
 git add other.txt
 out=$(run_hook block-main-commit 'git commit -m "chore: mixed"')
 assert_eq deny "$(decision "$out")"
+for cmd in 'env FOO=1 git commit -m "chore: mixed"' 'command git commit -m "chore: mixed"'; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 git restore --staged other.txt && git checkout -q other.txt
 
 it "block-main-commit: flake.lock の削除・リネームは main では deny"
@@ -612,6 +624,10 @@ fake_gitleaks ok "$LEAK_JSON"
 out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(fake_log gitleaks)" "git --pre-commit"
+fake_gitleaks ok "$LEAK_JSON"
+out=$(run_hook block-secret-commit 'git commit -m"add a"')
+assert_eq allow "$(decision "$out")"
+assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
 
 it "block-secret-commit: 対象のディレクトリを決められないときは、git の hook に任せて通す（#281）"
 fake_gitleaks "$LEAK_JSON" ok
@@ -712,7 +728,8 @@ for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git ad
 done
 
 it "guard-git-add: -A / --all / . / :/ / * は deny し、代わりの手順を示す"
-for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An'; do
+for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An' \
+  'env FOO=1 git add -A' 'command git add .'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq deny "$(decision "$out")"
 done
