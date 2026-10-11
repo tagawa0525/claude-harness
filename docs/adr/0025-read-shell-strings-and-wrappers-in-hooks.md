@@ -73,19 +73,22 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   `--rcfile` / `--init-file` が値を取る。`-c` は次の位置引数を文字列として走らせ、残りは `$0` 以降。`-s` と
   位置引数の無い呼び出しは標準入力を読む（決まらない）。`-n` と `-D` は走らせない。それ以外は次の位置引数が
   スクリプト
-- `sudo`: `[VAR=value]` を代入として読む。`-E` / `--preserve-env` が無ければ環境変数を受け継がない（env_reset。
-  `--preserve-env=list` は list だけなので、受け継がない側）。`-e`、`-l`、`-v`、`-V`、`-K` は走らせない。`-s` /
-  `-i` は、コマンドがあればそれを（sudo が英数字以外をエスケープして渡すので、語は変わらない）、無ければ対話
-  シェル（決まらない）
+- `sudo`: `[VAR=value]` を代入として読む（env と同じく、最初の代入でオプションは終わる。getopt の `+`）。`-E` /
+  `--preserve-env` が無ければ環境変数を受け継がない（env_reset。`--preserve-env=list` は list だけなので、受け継が
+  ない側）。`-D` / `--chdir` はディレクトリを変える。`-e`、`-l`、`-v`、`-V`、`-K` は走らせない。`-s` / `-i` は、
+  コマンドがあればそれを（sudo が英数字以外をエスケープして渡すので、語は変わらない）、無ければ対話シェル
+  （決まらない）
 - `xargs`: `-e[eof]`、`-i[replace]`、`-l[max-lines]` は続けて書いたときだけ値を取る（getopt の optional_argument）。
   標準入力から足す引数は見ない（`xargs git add -A` は、パスが足されるとしても `-A` だけの形として止める）
 - `flock`: 位置引数 1 つ（ファイル）の直後の `-c <文字列>` / `--command` を sh -c で走らせる（flock.c は getopt の
   後に `argv[optind + 1]` を比べる）。`flock <fd>` は何も走らせない
 - `chrt`: 位置引数 1 つ（優先度）。`-p` と `-m` は走らせない。`taskset`: 位置引数 1 つ（マスク）。`-p` は走らせない
 - `watch`: 残りの語を空白でつないで sh -c で走らせる。`-x` は語をそのまま exec する
-- `script`: `-c <文字列>` を sh -c で走らせる。無ければ `--` の後ろの語をコマンドとして走らせ、それも無ければ
-  対話シェル（決まらない）
-- `ssh`: 位置引数 1 つ（接続先）の残りの語を空白でつないで、接続先のシェルが走らせる。環境変数は渡らない。
+- `script`: `-c <文字列>` を sh -c で走らせる（getopt が語を並べ替えるので、ログのファイルの後ろの `-c` も読む。
+  util-linux 2.42.3 で確かめた）。無ければ `--` の後ろの語をコマンドとして走らせ、それも無ければ対話シェル
+  （決まらない）
+- `ssh`: 位置引数 1 つ（接続先）の残りの語を空白でつないで、接続先のシェルが走らせる。接続先の後ろのオプション
+  も読む（ssh.c は接続先を取ると getopt をやり直す。`ssh host -p 3333` で確かめた）。環境変数は渡らない。
   コマンドが無ければ接続先のシェルが標準入力を読む（決まらない）。`-G`、`-N`、`-O`、`-Q`、`-V`、`-Z`、`-s` は
   走らせない
 - `eval`: 残りの語を空白でつないで走らせる。`source` / `.`: ファイルを読んで走らせる（決まらない）
@@ -100,8 +103,11 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   `cd` は外に漏れない。外側の環境変数とディレクトリの変更（`env -u`、`env -C`、`sudo` の env_reset）は中に効く
 - 文字列の中の代入、`unset`、エスケープ（ADR-0023 の `ALLOW_*=<理由>`）も、外側と同じ規則で読む
 - 走らせるプログラムが決まらないコマンド（`Cmd::opaque`）: 名前の basename に展開がある（`$CMD`、`~/x/$SCRIPT`、
-  `$(which sbatch)`。`$HOME/.claude/scripts/slurm-run.sh` は basename が字面なので決まる）、標準入力やファイルから
-  読む（上の表）、深さの上限を超えた
+  `$(which sbatch)`、`${SB:-/usr/bin/sbatch}`。区切りの `/` は展開の外のものだけ数えるので、
+  `$HOME/.claude/scripts/slurm-run.sh` と `${DIR}/slurm-run.sh` は決まる）、標準入力やファイルから読む（上の表）、
+  深さの上限を超えた
+- block-no-verify は、環境変数の変更（CLAUDECODE が渡らない、`GIT_CONFIG_*`）を hook が走る `git commit` /
+  `merge` / `pull` でだけ見る。`sudo ls` や `ssh host nvidia-smi` も環境変数を受け継がないが、hook は走らない
 - `Shell::runs_program(word, is_target)`: `is_target` を満たすプログラムを走らせるコマンドがあるか、または決まらない
   コマンドがあり、コマンド文字列のどこか（ヒアドキュメントの本文や注釈を含む）に `word` が現れる。実行プログラムの
   名前だけで止めるルール（`guard_sbatch`、`require_background_wait`）はこれを使う。git の引数を見るルールは、
