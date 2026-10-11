@@ -442,7 +442,7 @@ git switch -q main
 # GitHub リモートがなければ PR フロー適用外
 # ===========================================================================
 # PR を作れないリポジトリで feature branch を強制しても、マージする手段がなく
-# 作業が進まない。判定は gh-wait-review.sh と同じ「GitHub リモートがあるか」に揃える。
+# 作業が進まない。判定は「GitHub リモートがあるか」。
 # GitHub 以外のリモートは扱わない前提なので、GitHub でなければローカル専用と同じ扱い
 
 LOCAL="$TEST_ROOT/localonly"
@@ -1074,7 +1074,7 @@ assert_eq deny "$(decision "$out")"
 it "guard-gh-api: GraphQL の resolveReviewThread は deny し、resolve-thread.sh を示す"
 out=$(run_hook guard-gh-api "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "resolve-thread.sh"
+assert_contains "$(reason "$out")" "resolve-thread.sh <PR の URL> <comment_id>"
 out=$(run_hook guard-gh-api "gh api graphql -f query='mutation { unresolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
 assert_eq deny "$(decision "$out")"
 
@@ -1112,7 +1112,8 @@ make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビュー"
-assert_contains "$(reason "$out")" "request-rereview.sh"
+# PR のスクリプトは対象を URL で受ける（ADR-0032）
+assert_contains "$(reason "$out")" "request-rereview.sh https://github.com/example/heredoc/pull/1 "
 
 it "pre-merge-check: bot のレビューが head を見ていればマージできる"
 make_fake_gh_merge 'echo 0' 'echo abc'
