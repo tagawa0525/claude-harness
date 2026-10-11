@@ -642,6 +642,18 @@ assert_eq "" "$(fake_log design-records)"
 remove_fake_tool design-records
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: 手元に無くても、origin に予約のタグ（ほかの clone が push したもの）があれば prune を呼ぶ"
+setup_merged_branch "$TEST_ROOT/cleanup11b"
+cd "$TEST_ROOT/cleanup11b/app" || exit 1
+git tag -a adr-0001 -m use-a main && git push -q origin refs/tags/adr-0001 && git tag -d adr-0001 >/dev/null
+make_fake_tool design-records '"prune") echo adr-0001; exit 0 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_eq "prune" "$(fake_log design-records)"
+assert_contains "$out" "RESERVATIONS_RELEASED: adr-0001"
+remove_fake_tool design-records
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: 予約のタグを解放できなければ ERROR を出し、ブランチを消さずに止まる"
 setup_merged_branch "$TEST_ROOT/cleanup12"
 cd "$TEST_ROOT/cleanup12/app" || exit 1
