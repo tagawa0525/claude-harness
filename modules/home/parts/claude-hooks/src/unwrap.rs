@@ -162,7 +162,7 @@ pub struct Unwrapped {
     pub args: Vec<Arg>,
     /// 環境変数の変更（順に効く）
     pub env: Vec<EnvChange>,
-    /// ほどいた包みの名前（外側から順に）
+    /// ほどいた包みの、書いたままの名前（外側から順に。`/usr/bin/time` はパスのまま）
     pub wrappers: Vec<String>,
     /// 中のコマンドを走らせるディレクトリ（`env -C`。前のものからの相対）
     pub dirs: Vec<String>,
@@ -364,7 +364,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let Some(program) = words.pop_front() else {
             return out;
         };
-        out.wrappers.push(wrapper_name);
+        out.wrappers.push(std::mem::take(&mut out.name));
         out.name = program.text;
         out.args = words.into_iter().collect();
         out.env.extend(step.env);

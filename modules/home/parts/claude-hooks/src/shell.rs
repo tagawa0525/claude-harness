@@ -51,7 +51,7 @@ pub struct Cmd {
     /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
     /// `-u NAME` / `-i`、`exec -c`）
     pub env: Vec<EnvChange>,
-    /// ほどいた包みの名前（外側から順に）
+    /// ほどいた包みの、書いたままの名前（外側から順に）
     pub wrappers: Vec<String>,
     /// 包んだ `env -C <dir>` の行き先（順に、前のものからの相対）
     pub dirs: Vec<String>,
@@ -291,14 +291,16 @@ fn resolve(base: &Path, p: &str) -> PathBuf {
 }
 
 impl Cmd {
-    /// シェルの cd か。builtin / command はシェルの cd を呼ぶが、env など外部の包みは cd という外部コマンドを
-    /// 探して失敗し、シェルのディレクトリを変えない
+    /// シェルの cd か。builtin / command と、先頭に修飾せずに書いた time（bash の予約語）はシェルの cd を
+    /// 呼ぶ。env や /usr/bin/time など外部の包みは cd という外部コマンドを探して失敗し、シェルのディレクトリを
+    /// 変えない。予約語は先頭でだけ予約語として読まれるので、command time は外部の time を呼ぶ
     pub fn changes_dir(&self) -> bool {
         self.name == "cd"
             && self
                 .wrappers
                 .iter()
-                .all(|w| w == "builtin" || w == "command")
+                .enumerate()
+                .all(|(i, w)| w == "builtin" || w == "command" || (i == 0 && w == "time"))
     }
 
     /// 走らせるプログラムの、書いたままのパス。`bash <path>` / `sh <path>` は走らせるスクリプトのパス
