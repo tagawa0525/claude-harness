@@ -483,22 +483,81 @@ fn a_line_whose_old_and_new_hashes_differ_in_length_stops() {
 }
 
 #[test]
-fn a_write_failure_names_the_files_already_rewritten() {
+fn a_write_failure_keeps_the_file_intact_and_names_the_files_already_rewritten() {
     use std::os::unix::fs::PermissionsExt;
 
     let t = TempRepo::new("write-failure");
     let old = t.commit_file("src.txt", "feat: measured");
-    t.record("a.md", &format!("at {}", &old[..8]));
-    t.record("b.md", &format!("at {}", &old[..8]));
-    fs::set_permissions(t.path("b.md"), fs::Permissions::from_mode(0o444)).unwrap();
+    let line = format!("at {}", &old[..8]);
+    t.record("a.md", &line);
+    t.record("locked/b.md", &line);
+    // ディレクトリに書けないと、置き換えた内容を置く一時ファイルを作れない
+    fs::set_permissions(t.path("locked"), fs::Permissions::from_mode(0o555)).unwrap();
     let map = t.map_file(&format!("{old} {NEW4}\n"));
     let out = t.remap(&[&map]);
+    fs::set_permissions(t.path("locked"), fs::Permissions::from_mode(0o755)).unwrap();
     assert_error(&out);
     assert_eq!(t.read("a.md"), "at 44444444\n");
+    assert_eq!(t.read("locked/b.md"), format!("{line}\n"));
     let err = stderr(&out);
-    assert!(err.contains("b.md"), "{err}");
+    assert!(err.contains("locked/b.md"), "{err}");
     assert!(err.contains("書き換えたファイル: a.md"), "{err}");
     assert!(!err.contains("何も書き換えていない"), "{err}");
+}
+
+#[test]
+fn keeps_the_permissions_of_rewritten_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let t = TempRepo::new("permissions");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.write("run.sh", &format!("# at {}\n", &old[..8]));
+    fs::set_permissions(t.path("run.sh"), fs::Permissions::from_mode(0o750)).unwrap();
+    t.commit_all("chore: script");
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    assert_ok(&t.remap(&[&map]));
+    assert_eq!(t.read("run.sh"), "# at 44444444\n");
+    let mode = fs::metadata(t.path("run.sh")).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o750);
+}
+
+#[test]
+fn works_in_a_repository_whose_directory_name_ends_with_a_space() {
+    let t = TempRepo::new("outer");
+    let inner = t.path("inner ");
+    fs::create_dir(&inner).unwrap();
+    let git = |args: &[&str]| {
+        let mut command = Command::new("git");
+        command
+            .current_dir(&inner)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args);
+        isolate(&mut command);
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "-q", "-b", "main"]);
+    fs::write(inner.join("src.txt"), "x\n").unwrap();
+    git(&["add", "src.txt"]);
+    git(&["commit", "-q", "-m", "feat: measured"]);
+    let old = git(&["rev-parse", "HEAD"]).trim().to_string();
+    fs::write(inner.join("notes.md"), format!("at {}\n", &old[..8])).unwrap();
+    git(&["add", "notes.md"]);
+    git(&["commit", "-q", "-m", "docs: record"]);
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    let out = run(&inner, &["remap", &map], "");
+    assert_ok(&out);
+    assert_eq!(
+        fs::read_to_string(inner.join("notes.md")).unwrap(),
+        "at 44444444\n"
+    );
 }
 
 #[test]
