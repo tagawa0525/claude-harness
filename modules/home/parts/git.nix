@@ -434,7 +434,7 @@ in
       echo "🔁 文書の中のコミットの番号を付け直します（remap.commitRefs）"
       if ! OUT=$(printf '%s\n' "$INPUT" | ${lib.getExe commit-refs} remap); then
         printf '%s\n' "$INPUT" > "$SAVED"
-        echo "❌ コミットの番号を付け直せませんでした（何も書き換えていません）"
+        echo "❌ コミットの番号を付け直せませんでした（書き換えたかは上の ERROR を見てください）"
         echo "   直し方: 上の ERROR の箇所を文書の中で直してから、commit-refs remap $SAVED"
         exit 1
       fi
