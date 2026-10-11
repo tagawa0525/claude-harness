@@ -32,19 +32,21 @@ rules:
       - from: 2 つを比べ合わせると
         to: 2 つを比べ合わせると
   - expected: 比較
-    pattern: /(?<=[の、])比べ(?=[での」（はが])/
+    pattern: /(?<=[の、])比べ(?=[での」（が])/
     specs:
       - from: 2 つの比べでは
         to: 2 つの比較では
-      - from: 、比べは
-        to: 、比較は
+      - from: 、比べが
+        to: 、比較が
+      - from: 、比べはした
+        to: 、比べはした
       - from: 2 つを比べると
         to: 2 つを比べると
   - expected: 計数
-    pattern: /(?<=の)数え(?=[はのをが）：:]|$)/
+    pattern: /(?<=の)数え(?=[のをが）：:])/
     specs:
-      - from: 件の数えは
-        to: 件の計数は
+      - from: 件の数えが
+        to: 件の計数が
   - expected: エッジケース
     pattern: 端のケース
   - expected: worktree
