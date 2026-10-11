@@ -933,6 +933,7 @@ git init -q -b main "$REBASE_REPO"
 git -C "$REBASE_REPO" config user.email t@example.com
 git -C "$REBASE_REPO" config user.name t
 git -C "$REBASE_REPO" config core.hooksPath /dev/null
+git -C "$REBASE_REPO" config commit.gpgsign false
 echo base >"$REBASE_REPO/f.txt"
 git -C "$REBASE_REPO" add f.txt
 git -C "$REBASE_REPO" commit -q -m base

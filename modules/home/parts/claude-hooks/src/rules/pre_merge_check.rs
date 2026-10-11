@@ -138,7 +138,7 @@ fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number:
 }
 
 /// リベースだけで head の hash が変わったか。レビュー済みの `old` と今の `new` で、base からの PR の差分が
-/// 同一なら true（ADR-0018）。base 側の変更（main に入った他の PR）は、それぞれの merge-base からの
+/// 同一なら true（ADR-0021）。base 側の変更（main に入った他の PR）は、それぞれの merge-base からの
 /// 差分を取ることで含めない。確かめられないとき（コミットが無い、git が失敗）は false
 fn same_pr_diff(dir: &std::path::Path, base_ref: &str, old: &str, new: &str) -> bool {
     let base = format!("origin/{base_ref}");
@@ -169,10 +169,12 @@ fn same_pr_diff(dir: &std::path::Path, base_ref: &str, old: &str, new: &str) -> 
     if files.is_empty() {
         return false;
     }
+    // base 側がそのファイルを変えていないことも要る。変えていると、旧 head が触れなかった
+    // ファイルを新 head が main の変更ごと元に戻した場合も、中身が一致して見える
     let entry = |h: &str, p: &str| git(dir, &["ls-tree", h, "--", p]);
     if files.iter().all(|p| {
         let (o, n) = (entry(old, p), entry(new, p));
-        o.is_some() && o == n
+        o.is_some() && o == n && entry(&old_base, p) == entry(&new_base, p)
     }) {
         return true;
     }
@@ -589,7 +591,7 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && is_docs_only(&dir, &owner, &name, number)
                             && has_successful_review(&dir, &owner, &name, number) => {}
-                    // リベースだけで hash が変わった head は、レビュー済みの差分と同じなので通す（ADR-0018）
+                    // リベースだけで hash が変わった head は、レビュー済みの差分と同じなので通す（ADR-0021）
                     Some(sha)
                         if !sha.is_empty()
                             && sha != head_sha
@@ -600,7 +602,7 @@ impl Rule for PreMergeCheck {
                         short(&head_sha)
                     )),
                     Some(sha) if sha != head_sha => reasons.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、差分が変わっています。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
                         short(&head_sha),
                         short(&sha)
                     )),
@@ -873,5 +875,31 @@ mod tests {
         );
         let bogus = "0123456789012345678901234567890123456789";
         assert!(!same_pr_diff(&r.0, "main", bogus, &new));
+    }
+
+    #[test]
+    fn reverting_main_change_to_untouched_file_is_not_same() {
+        // 旧 head は other.txt に触れない。main が変えた other.txt を、新 head が元に戻す
+        let (r, old, new) = rebase_case(
+            "revert-main",
+            |r| r.write("pr.txt", "pr\n"),
+            |r| r.write("other.txt", "o\nMAIN\n"),
+            |r| {
+                r.write("pr.txt", "pr\n");
+                r.write("other.txt", "o\n");
+            },
+        );
+        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    fn discarding_main_change_in_touched_file_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "discard-main",
+            |r| r.write("other.txt", "o\nPR\n"),
+            |r| r.write("other.txt", "MAIN\no\n"),
+            |r| r.write("other.txt", "o\nPR\n"),
+        );
+        assert!(!same_pr_diff(&r.0, "main", &old, &new));
     }
 }
