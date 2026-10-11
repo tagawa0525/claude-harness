@@ -173,7 +173,7 @@ for interval in "${intervals[@]}"; do
   check_new_review && exit 0
   if copilot_run_failed; then
     echo "ERROR: PR #${pr} の head でレビューの実行が失敗しています。待ってもレビューは来ません"
-    echo "次の一手: /gh-actions-check ${pr} で原因を確認してください（レビュー用トークンの枯渇・内部エラーなど）"
+    echo "次の一手: /gh-actions-check ${pr_url} で原因を確認してください（レビュー用トークンの枯渇・内部エラーなど）"
     exit 7
   fi
   echo "待機中: レビュー未着（経過${elapsed}秒）。${interval}秒後に再確認します"
@@ -184,5 +184,5 @@ done
 check_new_review && exit 0
 
 echo "TIMEOUT: 約10分待ちましたがPR #${pr} に新しいレビューが来ていません"
-echo "次の一手: /gh-actions-check ${pr} でActionsの状況を診断してください"
+echo "次の一手: /gh-actions-check ${pr_url} で Actions の状況を診断してください"
 exit 1

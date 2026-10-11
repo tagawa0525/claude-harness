@@ -609,7 +609,7 @@ impl Rule for PreMergeCheck {
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
-                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認し、直せたら再レビューを依頼してください。{}",
+                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら再レビューを依頼してください。{}",
                         short(&head_sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),

@@ -55,7 +55,7 @@ fi
 after=$(latest_request_at)
 if [[ -z "$after" || "$after" == "$before" ]]; then
   echo "ERROR: レビュー要求が登録されませんでした（review_requested イベントが増えていません）" >&2
-  echo "HINT: 前回の要求が保留のまま（レビューがまだ来ていない）か、リポジトリで Copilot code review が無効です。gh pr view ${PR_URL} --json reviewRequests と /gh-actions-check ${PR_NUMBER} で確認してください" >&2
+  echo "HINT: 前回の要求が保留のまま（レビューがまだ来ていない）か、リポジトリで Copilot code review が無効です。gh pr view ${PR_URL} --json reviewRequests と /gh-actions-check ${PR_URL} で確認してください" >&2
   exit 1
 fi
 
