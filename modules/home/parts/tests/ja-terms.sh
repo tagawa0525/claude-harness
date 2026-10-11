@@ -208,6 +208,17 @@ else
   fi
 fi
 
+# --- 3e. サブモジュール（gitlink）は検査しない -----------------------------------------------------------
+# Markdown の自動修正は作業ツリーに無いファイルをステージから消すので、テキストの拡張子の名前で確かめる
+REPO="$WORK/gitlink"
+new_repo "$REPO"
+git -C "$REPO" update-index --add --cacheinfo "160000,$(git -C "$REPO" rev-parse HEAD),sub.txt"
+if git -C "$REPO" commit -q -m "chore: gitlink" >"$WORK/out" 2>&1; then
+  ok "サブモジュール（gitlink）は検査しない"
+else
+  ng "サブモジュール（gitlink）で止めた"
+fi
+
 # --- 4. 空白を含むパス -------------------------------------------------------------------------------
 REPO="$WORK/space path"
 new_repo "$REPO"
@@ -239,6 +250,11 @@ if commits "$REPO" fixtures/case.md "$(printf '# t\n\n確かめの結果。\n')"
   ok ".textlintignore に挙げたファイルは検査しない"
 else
   ng ".textlintignore に挙げたファイルで止めた"
+fi
+if commits "$REPO" 'fixtures/[ab].md' "$(printf '# t\n\n確かめの結果。\n')"; then
+  ok ".textlintignore に挙げた、[ を含む名前のファイルも検査しない"
+else
+  ng ".textlintignore に挙げた、[ を含む名前のファイルで止めた"
 fi
 if commits "$REPO" 'fixtures/a].md' "$(printf '# t\n\n確かめの結果。\n')"; then
   ok ".textlintignore に挙げた、] を含む名前のファイルも検査しない"
