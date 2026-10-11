@@ -87,8 +87,9 @@ xlc の衝突は、マージのときに `cargo test`（crates/docs の検査）
 - 番号を予約したタグの slug が、その番号のファイルの slug と違えば注意を出す（ほかの記録が予約した番号を使って
   いる）
 - `check` は fetch しない。pre-commit で毎回のコミットに通信が入り、手元に通信が無いとコミットできなくなる。
-  手元のタグは `new` と `renumber` と通常の fetch で更新される。/git-merge は rebase の後、`check` の前に
-  タグを fetch する
+  手元のタグは `new`、`renumber`、`prune` の fetch で更新される。rebase した後の番号の重複は、作業ツリーの
+  ファイルどうしで見つかるので、タグを取ってこなくても `check` が示す。/git-merge は rebase の直後に `check`
+  を走らせ、重複があれば `renumber` で直す
 
 ### 解放（`prune`）
 
