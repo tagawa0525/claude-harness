@@ -23,31 +23,37 @@ pub fn run(rule: &dyn Rule, input: &Input, shell: &Shell) -> Vec<Finding> {
     match shell.escape(name) {
         Escape::Given => Vec::new(),
         Escape::Absent => rule.check(input, shell),
-        Escape::Short => apply_escape(shell, name, rule.check(input, shell)),
+        esc @ Escape::Short => apply_escape(esc, name, rule.check(input, shell)),
     }
 }
 
 /// 止める判定にエスケープを当てる（ADR-0023）。止めないならエスケープは見ない（付けていても咎めない）。
-/// 理由つきなら通し、値が理由として短ければ理由を求めて止める
-pub fn apply_escape(shell: &Shell, name: &str, findings: Vec<Finding>) -> Vec<Finding> {
+/// 理由つきなら通す。値が理由として短ければ、本来の文言（何を止めたか、正規の直し方）に理由を求める行を足す
+pub fn apply_escape(esc: Escape, name: &str, mut findings: Vec<Finding>) -> Vec<Finding> {
     if findings.is_empty() {
         return findings;
     }
-    match shell.escape(name) {
+    match esc {
         Escape::Absent => findings,
-        Escape::Short => vec![Finding::Deny(reason_required(name))],
+        Escape::Short => {
+            findings.push(Finding::Deny(reason_required(name)));
+            findings
+        }
         Escape::Given => Vec::new(),
     }
 }
 
 /// 理由の文字列の列（pre-merge-check の reasons）にエスケープを当てる
-pub fn apply_escape_to_reasons(shell: &Shell, name: &str, reasons: Vec<String>) -> Vec<String> {
+pub fn apply_escape_to_reasons(esc: Escape, name: &str, mut reasons: Vec<String>) -> Vec<String> {
     if reasons.is_empty() {
         return reasons;
     }
-    match shell.escape(name) {
+    match esc {
         Escape::Absent => reasons,
-        Escape::Short => vec![reason_required(name)],
+        Escape::Short => {
+            reasons.push(reason_required(name));
+            reasons
+        }
         Escape::Given => Vec::new(),
     }
 }

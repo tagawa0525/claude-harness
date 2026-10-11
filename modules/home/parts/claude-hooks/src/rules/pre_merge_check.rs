@@ -636,7 +636,7 @@ impl Rule for PreMergeCheck {
                     Some(_) => {}
                 }
                 reasons.extend(apply_escape_to_reasons(
-                    shell,
+                    shell.escape("ALLOW_UNREVIEWED_HEAD"),
                     "ALLOW_UNREVIEWED_HEAD",
                     unreviewed,
                 ));
@@ -671,7 +671,7 @@ impl Rule for PreMergeCheck {
                             .map(|(_, path)| path.to_string())
                             .collect();
                         reasons.extend(apply_escape_to_reasons(
-                            shell,
+                            shell.escape("ALLOW_MULTI_TOPIC"),
                             "ALLOW_MULTI_TOPIC",
                             multi_topic_reason(&adrs).into_iter().collect(),
                         ));

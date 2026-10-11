@@ -31,16 +31,28 @@ pub enum Escape {
     Given,
 }
 
-/// 理由の幅。空白（ASCII）を全部除き、ASCII は 1、それ以外（日本語など）は 2 と数える。表示幅に近いが、
-/// `unicode-width` のような依存は足さず ASCII か否かだけで決める。`force` / `allow`（5）は弾き、
-/// 日本語 3 文字（6）から通す。中身は検査しない（品質のゲートではなく、boolean 的な値を弾くため。ADR-0023）。
-/// 空白の扱いは git 側の pre-commit（scan-staged-secrets.sh の `tr -d '[:space:]'`）と揃える
+/// 理由の幅。空白（Unicode の空白。全角空白、NBSP を含む）を全部除き、ASCII は 1、それ以外（日本語など）は 2 と
+/// 数える。表示幅に近いが、`unicode-width` のような依存は足さず ASCII か否かだけで決める。`force` / `allow`（5）は
+/// 弾き、日本語 3 文字（6）から通す。中身は検査しない（品質のゲートではなく、boolean 的な値を弾くため。ADR-0023）。
+/// git 側の pre-commit（scan-staged-secrets.sh）は ASCII の空白、全角空白、NBSP を除く（bash で扱える範囲）
 fn reason_width(value: &str) -> usize {
     value
         .chars()
-        .filter(|c| !c.is_ascii_whitespace())
+        .filter(|c| !c.is_whitespace())
         .map(|c| if c.is_ascii() { 1 } else { 2 })
         .sum()
+}
+
+/// 値に展開（`$VAR`、`$(…)`、`$((…))`）が含まれるか。展開した結果は記録に残らないので、理由とみなさない
+fn has_expansion(node: Node) -> bool {
+    if matches!(
+        node.kind(),
+        "simple_expansion" | "expansion" | "command_substitution" | "arithmetic_expansion"
+    ) {
+        return true;
+    }
+    let mut cursor = node.walk();
+    node.children(&mut cursor).any(has_expansion)
 }
 
 const REASON_MIN_WIDTH: usize = 6;
@@ -257,17 +269,17 @@ impl Shell {
             if n.kind() == "variable_assignment"
                 && n.child_by_field_name("name").map(|v| self.text(v)) == Some(name)
             {
-                let value = n
-                    .child_by_field_name("value")
-                    .map(|v| self.unquote(v).text)
-                    .unwrap_or_default();
+                let value_node = n.child_by_field_name("value");
+                let value = value_node.map(|v| self.unquote(v).text).unwrap_or_default();
                 let value = value.trim();
                 let this = if value.is_empty() || value == "0" {
                     Escape::Absent
-                } else if reason_width(value) >= REASON_MIN_WIDTH {
-                    Escape::Given
-                } else {
+                } else if value_node.is_some_and(has_expansion)
+                    || reason_width(value) < REASON_MIN_WIDTH
+                {
                     Escape::Short
+                } else {
+                    Escape::Given
                 };
                 found = match (found, this) {
                     (Escape::Short, _) | (_, Escape::Short) => Escape::Short,

@@ -51,7 +51,11 @@ impl Rule for GuardSbatch {
                 "sbatch を直接使わず、~/.claude/scripts/slurm-run.sh -t <見積もり> <名前> '<コマンド>' で投げてください（名前・ログ・見積もり・連絡先を付けます。ADR-0007）。{}",
                 escape_hint("ALLOW_RAW_SBATCH")
             ));
-            let findings = apply_escape(shell, "ALLOW_RAW_SBATCH", vec![deny]);
+            let findings = apply_escape(
+                shell.escape("ALLOW_RAW_SBATCH"),
+                "ALLOW_RAW_SBATCH",
+                vec![deny],
+            );
             if !findings.is_empty() {
                 return findings;
             }
@@ -61,7 +65,11 @@ impl Rule for GuardSbatch {
                 "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
                 escape_hint("ALLOW_FOREGROUND_SLURM")
             ));
-            return apply_escape(shell, "ALLOW_FOREGROUND_SLURM", vec![deny]);
+            return apply_escape(
+                shell.escape("ALLOW_FOREGROUND_SLURM"),
+                "ALLOW_FOREGROUND_SLURM",
+                vec![deny],
+            );
         }
         Vec::new()
     }
