@@ -15,9 +15,10 @@ mapfile -t pathspecs <<<"$JA_TERMS_PATHSPECS"
 # ステージしたファイルの、モードとブロブとパス。シンボリックリンクの行き先とサブモジュール（gitlink）は
 # 文章ではないので外す
 # （--raw -z は「:旧モード 新モード 旧ブロブ 新ブロブ 状態」と「パス」を NUL で区切って並べる。名前の変更は
-# パスを 2 つ並べるので、--no-renames で追加と削除に分けて 1 つにする）
+# パスを 2 つ並べるので、--no-renames で追加と削除に分けて 1 つにする。T はシンボリックリンクなどから普通の
+# ファイルへの種類の変更）
 # git の出力は一度ファイルに受ける（プロセス置換の中の失敗は set -e に見えず、何も検査せずに通るため）
-git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMR -- "${pathspecs[@]}" >"$work/staged"
+git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMRT -- "${pathspecs[@]}" >"$work/staged"
 declare -A blob=()
 paths=()
 while IFS= read -r -d '' meta && IFS= read -r -d '' path; do

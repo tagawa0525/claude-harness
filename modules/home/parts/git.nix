@@ -204,7 +204,7 @@ in
       # ========================================
       # デフォルト: ステージされたファイルをチェック
       # ========================================
-      STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+      STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMRT)
       if [ -z "$STAGED_FILES" ]; then
         ${scanSecrets} || check_failed=1
         exit $check_failed
