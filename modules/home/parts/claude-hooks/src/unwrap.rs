@@ -338,7 +338,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     }
                     ("env", Some('C')) => {
                         if let Some(dir) = value {
-                            step.dirs.push(dir);
+                            // 1 回の env では最後の -C だけが効く（coreutils の env.c は上書きする）
+                            step.dirs = vec![dir];
                         }
                     }
                     ("env", Some('S')) => {
