@@ -246,8 +246,8 @@ else
   else
     ng "曖昧な対応で記録が変わったか、エラーが表示されない"
   fi
-  if grep -q "commit-refs remap $REPO/.git/remap-commit-refs.input" "$WORK/out" \
-    && cmp -s "$WORK/ambiguous-input" "$REPO/.git/remap-commit-refs.input"; then
+  if grep -q "commit-refs remap $REPO/.git/commit-refs-remap.input" "$WORK/out" \
+    && cmp -s "$WORK/ambiguous-input" "$REPO/.git/commit-refs-remap.input"; then
     ok "失敗したときは対応を残し、commit-refs remap で呼び直す方法を表示する"
   else
     ng "失敗したときに対応が残らないか、呼び直す方法が表示されない"
