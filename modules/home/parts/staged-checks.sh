@@ -7,7 +7,28 @@
 # 入れないため（ADR-0028）。Markdown の自動修正はステージした版に当ててステージし直し、作業ツリーの
 # ファイルがステージした版と同じときだけ、作業ツリーにも書く。
 #
-# 終了コード: 0 = 違反が無い、1 = 違反がある
+# 使い方: staged-checks [nix|python|markdown|rust]...（言語を渡せばその言語だけ。run-checks.sh の Markdown の段が使う）
+# 終了コード: 0 = 違反が無い、1 = 違反がある、2 = 使い方の誤り
+
+for lang in "$@"; do
+  case $lang in
+    nix | python | markdown | rust) ;;
+    *)
+      echo "staged-checks: 知らない言語です: $lang（nix、python、markdown、rust）" >&2
+      exit 2
+      ;;
+  esac
+done
+# wants <言語>: その言語を検査するか（言語を渡さなければ全て）
+wants() {
+  [ "$#" -gt 0 ] || return 1
+  local want=$1
+  shift
+  [ "$#" -eq 0 ] && return 0
+  local lang
+  for lang in "$@"; do [ "$lang" = "$want" ] && return 0; done
+  return 1
+}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -33,7 +54,7 @@ collect() {
 
 # --- Nix --------------------------------------------------------------------------------------------
 collect '*.nix'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v nixfmt >/dev/null 2>&1; then
+if wants nix "$@" && [ "${#PATHS[@]}" -gt 0 ] && command -v nixfmt >/dev/null 2>&1; then
   echo "🔍 Checking Nix format..."
   bad=()
   for i in "${!PATHS[@]}"; do
@@ -48,7 +69,7 @@ fi
 # --- Python -----------------------------------------------------------------------------------------
 # --stdin-filename の場所から、ruff はプロジェクトの設定を探す
 collect '*.py'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v ruff >/dev/null 2>&1; then
+if wants python "$@" && [ "${#PATHS[@]}" -gt 0 ] && command -v ruff >/dev/null 2>&1; then
   echo "🔍 Checking Python format..."
   bad=()
   for i in "${!PATHS[@]}"; do
@@ -75,7 +96,7 @@ fi
 # .markdownlintignore も、ステージした版を写し、相対のパスの書き方をそのまま効かせる。設定の extends が指す
 # 別のファイルは写さない。ADR-0028）
 collect '*.md'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
+if wants markdown "$@" && [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
   echo "🔧 Auto-fixing Markdown lint..."
   md="$work/md"
   mkdir -p "$md"
@@ -128,7 +149,7 @@ fi
 # rustfmt.toml は、ファイルのディレクトリから探させる（標準入力では rustfmt.toml の ignore が効かない。ADR-0028）
 # 検証: modules/home/parts/tests/pre-commit-rust-format.sh
 collect '*.rs'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
+if wants rust "$@" && [ "${#PATHS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
   echo "🔍 Checking Rust format..."
   # manifest ごとの edition。cargo metadata が失敗した manifest は failed を入れ、1 回だけ報告する
   declare -A edition=()
