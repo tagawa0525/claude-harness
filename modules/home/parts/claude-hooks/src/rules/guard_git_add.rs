@@ -28,10 +28,7 @@ fn check_add(args: &[Arg]) -> Option<String> {
         .into_iter()
         .map(|a| a.text.as_str())
         .collect();
-    // --pathspec-from-file はファイルに書いたパスに絞る
-    if git_flag("add", args, None, &["--pathspec-from-file"]) && pathspecs.is_empty() {
-        return None;
-    }
+    // --pathspec-from-file のファイルの中身（`.` や `:/` も書ける）は見ないので、パスを指定したことにしない
     if all && pathspecs.is_empty() {
         return Some("git add -A / --all はパスを指定しない限り禁止です".to_string());
     }
