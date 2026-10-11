@@ -80,10 +80,12 @@ let
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
+  # staged-checks: pre-commit の既定の検査。run-checks.sh の Markdown の段も呼ぶ（ADR-0028）
   home.packages = [
     commit-refs
     design-records
     pkgs.prek
+    stagedChecks
   ];
 
   # ===========================================================================
