@@ -119,21 +119,19 @@ impl Drop for TempRepo {
     }
 }
 
-/// git を `dir` で走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
-/// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）。外した後で、テストに要る
-/// 設定だけを GIT_CONFIG_COUNT で渡す
-/// `bin/git` に偽の git を書き、`bin` を返す。`case " $* " in` の腕 `arms` に当たる呼び出しだけを変え、それ以外は
-/// 本物の git を走らせる。腕の中では本物の git を `"$GIT"` で呼ぶ。腕に埋めるパスは [`sh_quote`] で囲む
-fn fake_git(bin: &Path, arms: &str) -> PathBuf {
-    fs::create_dir_all(bin).unwrap();
-    let real = String::from_utf8(
-        Command::new("sh")
-            .args(["-c", "command -v git"])
-            .output()
-            .unwrap()
-            .stdout,
-    )
-    .unwrap();
+/// `bin/git` に偽の git を書く（`bin` は新しく作る）。`case " $* " in` の腕 `arms` に当たる呼び出しだけを変え、
+/// それ以外は本物の git を走らせる。腕の中では本物の git を `"$GIT"` で呼ぶ。腕に埋めるパスは [`sh_quote`] で囲む
+fn fake_git(bin: &Path, arms: &str) {
+    fs::create_dir(bin).unwrap();
+    let found = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(found.stdout).unwrap();
+    assert!(
+        found.status.success() && !real.trim().is_empty(),
+        "本物の git が PATH に無い"
+    );
     let fake = bin.join("git");
     fs::write(
         &fake,
@@ -145,7 +143,6 @@ fn fake_git(bin: &Path, arms: &str) -> PathBuf {
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
-    bin.to_path_buf()
 }
 
 /// sh の単引用符で囲んだ文字列（偽の git のスクリプトに埋める）
@@ -153,6 +150,9 @@ fn sh_quote(s: impl std::fmt::Display) -> String {
     format!("'{}'", s.to_string().replace('\'', "'\\''"))
 }
 
+/// git を `dir` で走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
+/// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）。外した後で、テストに要る
+/// 設定だけを GIT_CONFIG_COUNT で渡す
 fn git_in(dir: &Path, args: &[&str]) -> String {
     let mut command = Command::new("git");
     command
@@ -333,15 +333,9 @@ fn new_rejects_bad_slugs_and_missing_titles_without_writing() {
 fn new_fails_without_writing_when_the_history_cannot_be_read() {
     let t = TempRepo::new("nohistory");
     // log だけを失敗させる git を PATH の先頭に置く
-    let bin = fake_git(&t.dir.join(".fake-bin"), "  *\" log \"*) exit 128 ;;");
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
-    command
-        .current_dir(&t.dir)
-        .env("PATH", path)
-        .args(["new", "use-j", "j を使う"]);
-    isolate(&mut command);
-    let out = command.output().unwrap();
+    let bin = t.root.join("bin");
+    fake_git(&bin, "  *\" log \"*) exit 128 ;;");
+    let out = t.run_with_bin(&bin, &["new", "use-j", "j を使う"]);
     assert!(!out.status.success(), "{}", stdout(&out));
     assert!(!t.dir.join("docs").exists());
 }
@@ -713,8 +707,9 @@ fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
     );
     // 最初の fetch の直後に、ほかの clone が同じ番号を push する git
     let mark = t.root.join("raced");
-    let bin = fake_git(
-        &t.root.join("bin"),
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
         &format!(
             "  *\" fetch \"*)\n\
              \x20   \"$GIT\" \"$@\" || exit $?\n\
@@ -745,8 +740,9 @@ fn new_tags_the_latest_default_branch_when_it_retries() {
     // 最初の既定ブランチの fetch の直後に（タグの fetch は済んでいる）、ほかの clone が同じ番号の予約と、main の
     // 新しいコミットを push する git
     let mark = t.root.join("raced");
-    let bin = fake_git(
-        &t.root.join("bin"),
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
         &format!(
             "  *\" fetch \"*refs/heads/*)\n\
              \x20   \"$GIT\" \"$@\" || exit $?\n\
@@ -1318,8 +1314,9 @@ fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
     let t = TempRepo::with_remote("same-clone");
     // 先のセッションの push を、入ったことをファイルで知らせてから遅らせる git
     let pushing = t.root.join("pushing");
-    let bin = fake_git(
-        &t.root.join("bin"),
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
         &format!(
             "  *\" push \"*) : > {}; sleep 2 ;;",
             sh_quote(pushing.display())
@@ -1401,8 +1398,9 @@ fn prune_treats_tags_already_deleted_on_origin_as_released() {
     t.git(&["push", "-q", "origin", "main"]);
     // タグの一覧の最初の ls-remote の直後に、ほかの clone がタグを消す git
     let mark = t.root.join("listed");
-    let bin = fake_git(
-        &t.root.join("bin"),
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
         &format!(
             "  *\" ls-remote --tags \"*)\n\
              \x20   if [ ! -e {mark} ]; then : > {mark}; \"$GIT\" \"$@\"; \"$GIT\" -C {dir} push -q origin --delete refs/tags/adr-0001; exit 0; fi ;;",
@@ -1552,8 +1550,9 @@ fn new_counts_a_record_merged_and_pruned_between_its_fetches() {
     );
     // この clone がブランチを取ってきた直後に、ほかの clone がマージを push して予約を解放する git
     let mark = t.root.join("merged");
-    let bin = fake_git(
-        &t.root.join("bin"),
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
         &format!(
             "  *\" fetch \"*\"+refs/heads/\"*)\n\
              \x20   \"$GIT\" \"$@\" || exit $?\n\
@@ -1702,8 +1701,9 @@ fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
     // 最初のタグの fetch の直後にほかの clone が予約し、push が拒まれた後の確認の直後に、マージを push して
     // 予約を解放する git
     let (reserved, merged) = (t.root.join("reserved"), t.root.join("merged"));
-    let bin = fake_git(
-        &t.root.join("bin"),
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
         &format!(
             "  *\" fetch \"*\"refs/tags/\"*)\n\
              \x20   \"$GIT\" \"$@\" || exit $?\n\
