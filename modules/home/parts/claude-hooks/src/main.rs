@@ -60,27 +60,41 @@ fn main() {
         return;
     }
 
-    // ルール側の panic は「判定できない」であって「ツールを止める」ではない。panic の文は既定の panic hook が
-    // 標準エラーに出す（テストが panic を見分けるため）
-    let result = std::panic::catch_unwind(|| {
-        let shell = shell::Shell::parse(&input.command);
-        let mut findings = Vec::new();
-        for rule in rules::all() {
-            if selected.is_empty() || selected.contains(&rule.name()) {
-                findings.extend(rules::run(*rule, &input, &shell));
+    // panic は「判定できない」であって「ツールを止める」ではない。ルールごとに拾い、ほかのルールの判定（deny）を
+    // 残す。panic の文は既定の panic hook が標準エラーにも出す（テストが panic を見分けるため）
+    let mut findings = Vec::new();
+    match std::panic::catch_unwind(|| shell::Shell::parse(&input.command)) {
+        Ok(shell) => {
+            for rule in rules::all() {
+                if selected.is_empty() || selected.contains(&rule.name()) {
+                    // ルールは input と shell を読むだけで書き換えないので、panic の後もほかのルールに渡してよい
+                    let run = std::panic::AssertUnwindSafe(|| rules::run(*rule, &input, &shell));
+                    match std::panic::catch_unwind(run) {
+                        Ok(f) => findings.extend(f),
+                        Err(payload) => output::notice(format!(
+                            "claude-hooks: ルール {} が panic で止まり、このコマンドを判定していません: {}",
+                            rule.name(),
+                            panic_message(&*payload)
+                        )),
+                    }
+                }
             }
         }
-        findings
-    });
-    let mut notices = output::take_notices();
-    let findings = result.unwrap_or_else(|_| {
-        notices.push(
-            "claude-hooks: ルールの評価が panic で止まり、このコマンドを判定していません"
-                .to_string(),
-        );
-        Vec::new()
-    });
-    if let Some(json) = output::render(&findings, &notices) {
+        Err(payload) => output::notice(format!(
+            "claude-hooks: コマンドの解析が panic で止まり、このコマンドを判定していません: {}",
+            panic_message(&*payload)
+        )),
+    }
+    if let Some(json) = output::render(&findings, &output::take_notices()) {
         println!("{json}");
     }
+}
+
+/// panic の文（panic! の引数が文字列でなければ、その旨）
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("（文字列でない panic）")
 }
