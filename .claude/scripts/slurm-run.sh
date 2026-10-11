@@ -17,7 +17,8 @@
 # 出力:
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
-#   （ログの末尾 20 行）
+#   （ログの末尾 20 行。終わった直後なら、最後に TIME: elapsed=<実際の時間> estimate=<見積もり> を
+#    ログへ書き足すので、その行も含む。ADR-0017）
 #   EXIT: <ジョブの終了コード>
 # 終了コードはジョブの終了コード。
 
@@ -106,11 +107,16 @@ fi
 status=0
 wait "$pid" || status=$?
 # 終わった直後なら、slurmctld がジョブを覚えている（MinJobAge の間。ADR-0017）。見積もりと実際の時間を
-# ログの末尾に書き足し、tail で一緒に見せる
-if info=$(scontrol show job "$job" 2>/dev/null) && [[ $info =~ RunTime=([^ ]+).*TimeLimit=([^ ]+) ]]; then
-  echo "TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}" >>"$log"
+# ログの末尾に書き足し、tail で一緒に見せる。ここで失敗しても、ジョブの終了コードは返す。
+# RunTime と TimeLimit は scontrol が隣り合わせに出す。後ろの行の Comment や WorkDir は利用者が
+# 決める値なので、.* でまたいで拾わない
+if ! info=$(scontrol show job "$job"); then
+  echo "WARN: ジョブ $job の実際の時間を scontrol から読めなかった" >&2
+elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
+  echo "TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}" >>"$log" ||
+    echo "WARN: ジョブ $job の実際の時間をログに書き足せなかった: $log" >&2
 else
-  echo "WARN: ジョブ $job の実際の時間を読めなかった（終わってから MinJobAge を過ぎたかもしれない）" >&2
+  echo "WARN: ジョブ $job の scontrol の出力に RunTime と TimeLimit が見つからなかった" >&2
 fi
 tail -n 20 "$log" 2>/dev/null || true
 echo "EXIT: $status"
