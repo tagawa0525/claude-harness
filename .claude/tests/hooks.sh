@@ -376,7 +376,11 @@ out=$(run_hook block-main-commit "git -C $LOCAL commit -m 'feat: x'")
 assert_eq allow "$(decision "$out")"
 out=$(run_hook block-main-commit "git -C $TEST_ROOT/lock commit -m 'feat: x'")
 assert_eq deny "$(decision "$out")"
-for cmd in "env -C $TEST_ROOT/lock git commit -m 'feat: x'" "env --chdir=$TEST_ROOT/lock git commit -m 'feat: x'"; do
+# 1 回の env の中では最後の -C だけが効く（前の -C からの相対ではない）
+out=$(run_hook block-main-commit "env -C $TEST_ROOT/lock -C $LOCAL git commit -m 'feat: x'")
+assert_eq allow "$(decision "$out")"
+for cmd in "env -C $TEST_ROOT/lock git commit -m 'feat: x'" "env --chdir=$TEST_ROOT/lock git commit -m 'feat: x'" \
+  "env -C $LOCAL -C lock git commit -m 'feat: x'" "env -C $LOCAL env -C $TEST_ROOT/lock git commit -m 'feat: x'"; do
   out=$(run_hook block-main-commit "$cmd")
   assert_eq deny "$(decision "$out")"
 done
