@@ -196,7 +196,7 @@ fn arg(text: &str) -> Arg {
 
 /// `env -S` の文字列を、env と同じ決まりで語に分ける（coreutils の env の man の「-S/--split-string usage
 /// in scripts」）。空白と `\_` で区切り、単引用符の中はそのまま、二重引用符の中は `\"`・`\\`・`\_`（空白）だけを
-/// 読む。`\c` より後は捨てる
+/// 読む。`\c` より後と、語の先頭の `#` より後は捨てる
 pub fn split_env_string(s: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -235,6 +235,8 @@ pub fn split_env_string(s: &str) -> Vec<String> {
                 }
                 None => {}
             },
+            // 語の先頭の # から後ろは注釈
+            (None, '#') if !in_word => break,
             (None, c) if c.is_whitespace() => {
                 if in_word {
                     words.push(std::mem::take(&mut word));
