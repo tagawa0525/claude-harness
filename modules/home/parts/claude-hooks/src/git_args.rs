@@ -4,14 +4,9 @@
 
 use crate::shell::Arg;
 
-/// git のグローバルオプションのうち、次の引数を値として取るもの（値を読む `-C`、`-c`、`--config-env` を除く）
-const GLOBAL_TAKES_VALUE: &[&str] = &[
-    "--git-dir",
-    "--work-tree",
-    "--namespace",
-    "--super-prefix",
-    "--list-cmds",
-];
+/// git のグローバルオプションのうち、次の引数を値として取るもの（値を読む `-C`、`-c`、`--config-env` を除く。
+/// git 2.55 の `git -h` と、手元で別の語の値を受け付けるかで確かめた。`--list-cmds` は `=` で続けたときだけ）
+const GLOBAL_TAKES_VALUE: &[&str] = &["--git-dir", "--work-tree", "--namespace", "--attr-source"];
 
 /// `git [グローバルオプション] <サブコマンド> …` のグローバルオプションの読み取り
 #[derive(Debug, Clone)]
