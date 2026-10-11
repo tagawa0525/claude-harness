@@ -5,6 +5,7 @@ allowed-tools:
   - Bash(~/.claude/scripts/slurm-run.sh*)
   - Bash(~/.claude/scripts/slurm-history.sh*)
   - Bash(squeue*)
+  - Bash(sacct*)
 ---
 
 # Slurm に流す
@@ -75,7 +76,12 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
 ## ログと時間
 
 ログは r995 の `~/github/slurm-logs/<名前>-<ジョブ番号>.out`（`slurm-run.sh` が `LOG:` に出す）。終わった直後に、末尾へ
-`TIME: elapsed=<実際> estimate=<見積もり>` が足される（ADR-0017）。全ジョブの履歴は `/var/log/slurm/job_completions`。
+`TIME: elapsed=<実際> estimate=<見積もり>` が足される（ADR-0017）。全ジョブの履歴は `sacct` で、名前や期間で絞り、
+メモリの最大値も読める（ADR-0031）:
+
+```bash
+sacct -S <日付> --name=<名前> -o JobID,JobName,Elapsed,TimeLimit,State,MaxRSS
+```
 
 記録に書く時間は、排他のジョブの `elapsed` だけを使う。
 
