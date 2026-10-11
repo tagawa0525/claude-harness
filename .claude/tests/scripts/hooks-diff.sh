@@ -7,6 +7,8 @@
 source "$(dirname "$0")/../lib.sh"
 
 DIFF="$CLAUDE_DIR/tests/hooks-diff.sh"
+# 組み合わせの集まりを全て回すと遅いので、確かめに要るコマンドだけを比べる
+export HOOKS_DIFF_COMMANDS=$'git commit --no-verify -m x\ngit add -A\ngit status'
 
 # make_fake_hooks <path> <rules> <spec>...: 偽の claude-hooks。引数なしで <rules>（", " 区切り）を一覧に出す。
 # pre-tool-use --rule <r>... では、<spec>（<ルール>:<判定>:<文字列>）のうち、渡したルールのどれかに一致し、
@@ -18,7 +20,8 @@ make_fake_hooks() {
   {
     echo '#!/usr/bin/env bash'
     echo "if [[ \$# -eq 0 ]]; then echo 'rules: $rules' >&2; exit 2; fi"
-    echo 'args=" $* "; cmd=$(jq -r .tool_input.command)'
+    # 入力の JSON の文字列のまま照らす（jq を呼ぶと、コマンドの数だけ遅くなる）
+    echo 'args=" $* "; cmd=$(cat)'
     for spec in "$@"; do
       IFS=: read -r r d p <<<"$spec"
       echo "if [[ \$args == *' --rule $r '* && \$cmd == *'$p'* ]]; then"
@@ -35,6 +38,10 @@ make_fake_hooks() {
 
 make_fake_hooks "$TEST_ROOT/strict" "block-no-verify, guard-git-add" "block-no-verify:deny:--no-verify"
 make_fake_hooks "$TEST_ROOT/lax" "block-no-verify, guard-git-add"
+
+it "hooks-diff: HOOKS_DIFF_COMMANDS のコマンドだけを比べる"
+out=$(OLD_BIN="$TEST_ROOT/lax" NEW_BIN="$TEST_ROOT/lax" bash "$DIFF")
+assert_contains "$out" "CHECKED: 3"
 
 it "hooks-diff: 同じ判定の版どうしなら、緩くも厳しくもならない"
 out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF")
