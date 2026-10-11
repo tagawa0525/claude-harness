@@ -214,6 +214,28 @@ else
   ng "- で始まるディレクトリの Markdown も直す"
 fi
 
+echo "==> staged-checks に言語を渡すと、その言語だけを検査する（run-checks.sh の Markdown の段）"
+STAGED_CHECKS=$(grep -o '/nix/store/[^ ]*/bin/staged-checks' "$WORK/pre-commit" | head -1)
+R=$(repo only nix-and-md.txt $'x\n')
+printf '{a=1;}\n' >"$R/a.nix"
+printf '%s' "${LINES/l1/l1 }" >"$R/a.md"
+git -C "$R" add a.nix a.md
+if (cd "$R" && "$STAGED_CHECKS" markdown) >"$WORK/out" 2>&1 && [[ "$(git -C "$R" show :a.md)" == "${LINES%$'\n'}" ]]; then
+  ok "markdown だけを渡すと、崩れた Nix で止めず、Markdown を直す"
+else
+  ng "markdown だけを渡すと、崩れた Nix で止めず、Markdown を直す"
+fi
+if (cd "$R" && "$STAGED_CHECKS" nix) >"$WORK/out" 2>&1; then
+  ng "nix を渡すと、崩れた Nix で止める"
+else
+  ok "nix を渡すと、崩れた Nix で止める"
+fi
+if (cd "$R" && "$STAGED_CHECKS" fortran) >"$WORK/out" 2>&1; then
+  ng "知らない言語は使い方の誤りとして止める"
+else
+  ok "知らない言語は使い方の誤りとして止める"
+fi
+
 echo "==> ステージしていない編集が無ければ、今までどおり"
 R=$(repo plain a.md "$LINES")
 printf '%s' "${LINES/l1/l1 }" >"$R/a.md"
