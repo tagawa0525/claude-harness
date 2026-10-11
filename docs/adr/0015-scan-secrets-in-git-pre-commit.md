@@ -48,28 +48,35 @@ PATH にある。
   にも置いているのと同じ理由。`git.nix`）
 - 案 A は、同じコマンドの add の見落としが残る。コマンドの文字列から実行の後の状態を推すことになる
 - 案 C は、PreToolUse の側が案 A と同じ誤りで正しいコミットを止め続ける
-- git の hook は `--no-verify` で飛ばせるので、Claude Code のセッションでは PreToolUse で `git commit --no-verify`
-  （`-n`）を止める。git の hook を飛ばす理由は、ほかの検査（main への直接コミット、形式の検査など）にも無い
+- git の hook は飛ばせるので、Claude Code のセッションでは PreToolUse で、`git commit` と `git merge` の
+  `--no-verify`（git が受け付ける省略形と、commit の `-n` を含む）と、`git -c core.hooksPath=` を止める。git の hook を
+  飛ばす理由は、ほかの検査（main への直接コミット、形式の検査、ローカルのマージの検査）にも無い
 
 検査の置き方:
 
 - グローバルの pre-commit が、Claude Code のセッション（`CLAUDECODE=1`）のコミットで、`gitleaks git --staged` を
-  走らせる。対象は今までと同じ（Claude Code のセッションのコミット）。プロジェクトのローカルの pre-commit を呼ぶ前
-  に走らせ、fork でも飛ばさない（機密情報はどのリポジトリでも漏らさない）
+  走らせる。対象は今までと同じ（Claude Code のセッションのコミット）。index を変える検査（Markdown の自動修正は
+  作業ツリーをステージし直す。#282）の後の、既定の検査の最後に走らせ、プロジェクトのローカルの pre-commit を呼ぶ
+  前と、fork で抜ける前にも走らせる（機密情報はどのリポジトリでも漏らさない）
 - gitleaks は Nix store のパスで呼ぶ（PATH に頼らない）
-- 漏えいは場所とルール ID だけを出し、値は出さない（`--redact`）。gitleaks が失敗したら、漏えいと分けて出して止める
+- 漏えいは場所とルール ID だけを出し、値は出さない（`--redact`）。gitleaks が失敗したら、漏えいと分けて出して止める。
+  gitleaks は設定を読めないときも終了コード 1 を返すので、一覧が空でないときだけ漏えいとする。中の `git diff` の
+  失敗はエラーの行を出すだけで終了コード 0 を返すので、`--log-level error` でエラーの行が出たら失敗とする
+- マージを締めるコミットでは、相手のブランチから入る中身も見る（前の PreToolUse の検査と同じ範囲。相手の
+  ブランチの中身が検査を通ったとは限らない）
 - 迂回は今までと同じく `ALLOW_SECRET_COMMIT=1`（コマンドに付けた環境変数を hook が見る）。誤検出は、行の
   `gitleaks:allow`、`.gitleaksignore`、`.gitleaks.toml` で除く
-- PreToolUse の規則は block-secret-commit から block-no-verify-commit にする。迂回は `ALLOW_NO_VERIFY=1`
+- PreToolUse の規則は block-secret-commit から block-no-verify にする。迂回は `ALLOW_NO_VERIFY=1`
 
 ### 帰結
 
 - 良い点: 同じコマンドで作るディレクトリ、変数のパス、同じコマンドの `git add` でも、コミットに入る中身を検査する
 - 良い点: `commit -a` を別に扱う必要が無い（pre-commit は -a で足した後の index を見る）
-- 悪い点: Claude Code が `git commit --no-verify` を使えない。git の hook を飛ばしたいときは `ALLOW_NO_VERIFY=1` を付ける
+- 悪い点: Claude Code が `git commit` と `git merge` の `--no-verify` を使えない。git の hook を飛ばしたいときは
+  `ALLOW_NO_VERIFY=1` を付ける
 - 悪い点: 検査はコマンドを実行した後に走るので、止まったときは `git add` まで済んでいる（コミットだけが止まる）
 
 ### 確認
 
 - git の pre-commit の検査のテスト（`modules/home/parts/tests/pre-commit-secrets.sh`）
-- PreToolUse の block-no-verify-commit のテスト（`.claude/tests/hooks.sh`）
+- PreToolUse の block-no-verify のテスト（`.claude/tests/hooks.sh`）
