@@ -55,6 +55,9 @@ assert_eq allow "$(decision "$out")"
 it "pre-pr-create: --web は deny"
 out=$(run_hook pre-pr-create-check "$GOOD_CMD --web")
 assert_eq deny "$(decision "$out")"
+# パスで書いた gh も gh として見る
+out=$(run_hook pre-pr-create-check "/usr/bin/$GOOD_CMD --web")
+assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "--web"
 
 it "pre-pr-create: --title がなければ deny"
@@ -702,6 +705,7 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"' 'git -c core.hooksPath=/dev/null commit -m "chore: a"' \
   'git -c core.hookspath=/x commit -m "chore: a"' 'git -C . -c core.hooksPath=/x commit -m "chore: a"' \
   'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x' 'git pull --no-verify origin feat/x' \
+  'git pull -j --no-verify origin feat/x' 'git pull --jobs --no-verify' 'git --attr-source HEAD commit -n -m x' \
   'git -c core.hooksPath=/x pull' 'git config core.hooksPath /dev/null' 'git config --local core.hookspath x' \
   'git config --global --unset core.hooksPath' 'git config --unset-all core.hooksPath' \
   'git config --global --remove-section core' 'git config --rename-section core disabled' \
@@ -1376,6 +1380,9 @@ assert_eq deny "$(decision "$out")"
 
 it "pre-git-merge-check: 既存の ADR の status の変化と README は数えない"
 out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/one')
+assert_eq allow "$(decision "$out")"
+# 値を取るオプション（--cleanup）の値はマージ対象にしない
+out=$(run_hook pre-git-merge-check 'git merge --no-ff --cleanup strip feat/one')
 assert_eq allow "$(decision "$out")"
 
 it "pre-git-merge-check: ALLOW_MULTI_TOPIC=1 で通す"
