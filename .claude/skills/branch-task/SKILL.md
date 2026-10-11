@@ -112,7 +112,9 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <base>
 ```
 
-出力の `LEVEL` と `TARGET` で `/code-review <LEVEL> <TARGET>` を回す。
+出力の `LEVEL` で `/code-review <LEVEL> <worktree のパス>` を回す。対象は `TARGET` のブランチ名でなく worktree の
+パスで渡す。/code-review は cwd のリポジトリでブランチ名を解くので、cwd が別のリポジトリだと空振りして
+「指摘なし」と返る（2026-10-12 に 2 回起きた）。
 
 **リモートあり**のときは、続けて PR を出して自動レビューを受ける:
 
