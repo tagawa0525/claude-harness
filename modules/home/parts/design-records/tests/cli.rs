@@ -1430,13 +1430,14 @@ fn check_matches_reservations_of_three_digit_issues() {
     );
 }
 
-#[test]
-fn renumber_ignores_the_state_of_submodules() {
-    let t = duplicated_after_rebase("submodule");
-    // 作業ツリーに変更のある submodule（renumber は submodule の中を書き換えない）
-    let sub = TempRepo::new("submodule-inner");
+/// 振り直しの対象の重複と、submodule（sub）を持つリポジトリ
+fn duplicated_with_submodule(name: &str) -> TempRepo {
+    let t = duplicated_after_rebase(name);
+    let sub = TempRepo::new(&format!("{name}-inner"));
     sub.write("x.txt", "x\n");
     sub.commit_all("chore: x");
+    sub.write("x.txt", "y\n");
+    sub.commit_all("chore: y");
     t.git(&[
         "-c",
         "protocol.file.allow=always",
@@ -1447,6 +1448,12 @@ fn renumber_ignores_the_state_of_submodules() {
         "sub",
     ]);
     t.commit_all("chore: sub");
+    t
+}
+
+#[test]
+fn renumber_ignores_uncommitted_changes_inside_submodules() {
+    let t = duplicated_with_submodule("submodule-dirty");
     fs::write(t.dir.join("sub/x.txt"), "changed\n").unwrap();
     let out = t.run(&["renumber", "1"]);
     assert!(
@@ -1456,6 +1463,23 @@ fn renumber_ignores_the_state_of_submodules() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(!t.dir.join("docs/adr/0001-use-b.md").exists());
+    assert!(
+        !t.git(&["show", "--stat", "--format=", "HEAD"])
+            .contains("sub")
+    );
+    assert_eq!(
+        fs::read_to_string(t.dir.join("sub/x.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn renumber_refuses_a_moved_submodule_commit() {
+    let t = duplicated_with_submodule("submodule-moved");
+    git_in(&t.dir.join("sub"), &["checkout", "-q", "HEAD~1"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
 }
 
 #[test]
