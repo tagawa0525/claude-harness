@@ -194,9 +194,21 @@ fn arg(text: &str) -> Arg {
     }
 }
 
+/// `env -S` の `\n`・`\t`・`\r`・`\f`・`\v` が表す制御文字
+fn control(c: char) -> Option<char> {
+    match c {
+        'n' => Some('\n'),
+        't' => Some('\t'),
+        'r' => Some('\r'),
+        'f' => Some('\x0c'),
+        'v' => Some('\x0b'),
+        _ => None,
+    }
+}
+
 /// `env -S` の文字列を、env と同じ決まりで語に分ける（coreutils の env の man の「-S/--split-string usage
-/// in scripts」）。空白と `\_` で区切り、単引用符の中はそのまま、二重引用符の中は `\"`・`\\`・`\_`（空白）だけを
-/// 読む。`\c` より後と、語の先頭の `#` より後は捨てる
+/// in scripts」）。空白と `\_` で区切り、単引用符の中はそのまま、二重引用符の中はエスケープ（`\"`・`\\`・
+/// `\_`（空白）・制御文字）だけを読む。`\c` より後と、語の先頭の `#` より後は捨てる
 pub fn split_env_string(s: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -209,7 +221,7 @@ pub fn split_env_string(s: &str) -> Vec<String> {
             (Some('\''), _) => word.push(c),
             (Some(_), '\\') => match chars.next() {
                 Some('_') => word.push(' '),
-                Some(other) => word.push(other),
+                Some(other) => word.push(control(other).unwrap_or(other)),
                 None => {}
             },
             (Some(_), _) => word.push(c),
@@ -225,12 +237,8 @@ pub fn split_env_string(s: &str) -> Vec<String> {
                     }
                 }
                 Some('c') => break,
-                Some('t') => {
-                    word.push('\t');
-                    in_word = true;
-                }
                 Some(other) => {
-                    word.push(other);
+                    word.push(control(other).unwrap_or(other));
                     in_word = true;
                 }
                 None => {}
