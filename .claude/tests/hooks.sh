@@ -1766,6 +1766,7 @@ out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'tru
 assert_eq allow "$(decision "$out")"
 
 it "guard-sbatch: slurm-run.sh は、同名のテスト以外ならどの書き方でもフォアグラウンドなら止める"
+# shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 for invoked in ".claude/scripts/slurm-run.sh" "./.claude/scripts/slurm-run.sh" "~/.claude/scripts/slurm-run.sh" \
   "$HOME/.claude/scripts/slurm-run.sh" "\"$HOME/.claude/scripts/slurm-run.sh\"" \
   "~/.claude/scripts/./slurm-run.sh" "~/.claude/scripts//slurm-run.sh" "scripts/slurm-run.sh" \
