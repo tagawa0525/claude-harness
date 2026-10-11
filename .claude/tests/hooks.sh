@@ -663,6 +663,7 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'git --config-env=core.hooksPath=H commit -m x' 'CLAUDECODE= git commit -m x' 'CLAUDECODE=0 git commit -m x' \
   'env -u CLAUDECODE git commit -m x' 'unset CLAUDECODE && git commit -m x' \
   'env CLAUDECODE=0 git commit -m x' 'env -i git commit -m x' 'env FOO=1 git commit --no-verify -m x' \
+  'git -c core.hooksPath commit -m x' 'git --config-env core.hooksPath commit -m x' \
   'command git commit --no-verify -m x' 'env GIT_CONFIG_COUNT=1 git commit -m x' \
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
   out=$(run_hook block-no-verify "$cmd")
