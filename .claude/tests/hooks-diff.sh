@@ -5,6 +5,7 @@
 #   BASE（既定 origin/main）の版と、作業ツリーの版（git が追跡するファイル。新しいファイルは git add -N で
 #   見せる）を nix build して比べる。OLD_BIN / NEW_BIN を渡すと build せずにそのバイナリを使う。
 #   HOOKS_DIFF_COMMANDS（改行区切り）を渡すと、組み合わせの集まりの代わりにそのコマンドだけを比べる
+#   HOOKS_DIFF_LIST=1 を渡すと、比べずに、比べる集まり（<background の有無><TAB><コマンド>）を出す
 #
 # 出力（タブ区切りの行と、KEY: value）:
 #   LOOSENED<TAB><ルール><TAB><コマンド>   古い版が止め、新しい版が通す（意図した変更か、後退か）。
@@ -143,21 +144,30 @@ compare() {
   done
 }
 
+# 比べる集まり: <background の有無><TAB><コマンド>
+CASES=()
 if [[ -n "${HOOKS_DIFF_COMMANDS:-}" ]]; then
   while IFS= read -r c; do
-    [[ -n "$c" ]] && compare "$c" false
+    [[ -n "$c" ]] && CASES+=("false"$'\t'"$c")
   done <<<"$HOOKS_DIFF_COMMANDS"
 else
   for c in "${COMMANDS[@]}"; do
     for w in "${WRAPPERS[@]}"; do
-      compare "$w$c" false
+      CASES+=("false"$'\t'"$w$c")
     done
     for d in "${DIRS[@]}"; do
-      compare "$d$c" false
+      CASES+=("false"$'\t'"$d$c")
     done
-    compare "$c" true
+    CASES+=("true"$'\t'"$c")
   done
 fi
+if [[ -n "${HOOKS_DIFF_LIST:-}" ]]; then
+  printf '%s\n' "${CASES[@]}"
+  exit 0
+fi
+for case in "${CASES[@]}"; do
+  compare "${case#*$'\t'}" "${case%%$'\t'*}"
+done
 
 for r in "${RULES[@]}"; do
   [[ -n "${COVERED[$r]:-}" ]] || echo "UNCOVERED: $r"
