@@ -129,7 +129,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                                          | gh-wait-review, gh-pr-review                       |
 | `scripts/slurm-history.sh`              | jobcomp（`/var/log/slurm/job_completions`）から、ジョブの見積もり・実績・比率を表にする（`--by-name` でジョブ名ごと） | slurm-run.sh のジョブの振り返り                    |
 | `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                                                        | gh-pr-review（language-checks 経由）, branch-task  |
-| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                                                   | gh-pr-review                                       |
+| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                                                   | gh-pr-review, branch-task                          |
 
 ### worktree の間で共有するパス（`.worktreelink`）
 
