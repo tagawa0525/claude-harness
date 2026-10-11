@@ -110,8 +110,9 @@ fn value_options(sub: &str) -> ValueOptions {
             ],
         },
         "pull" => ValueOptions {
-            shorts: "sXoj",
-            optional_shorts: "S",
+            // -j / --jobs は値を省略できる（`--jobs[=<n>]`）ので、続けて書いた値だけを取る
+            shorts: "sXo",
+            optional_shorts: "Sj",
             longs: &[
                 "--strategy",
                 "--strategy-option",
@@ -122,7 +123,6 @@ fn value_options(sub: &str) -> ValueOptions {
                 "--shallow-since",
                 "--shallow-exclude",
                 "--refmap",
-                "--jobs",
                 "--negotiation-tip",
             ],
         },
