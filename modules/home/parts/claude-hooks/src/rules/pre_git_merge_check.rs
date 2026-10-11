@@ -89,12 +89,12 @@ pub(super) fn default_branch_merges(input: &Input, shell: &Shell) -> Vec<Default
         else {
             continue;
         };
-        let dir = shell.target_dir(&cmd, &input.cwd);
+        let dir = shell.target_dir(cmd, &input.cwd);
         let Some(default_ref) = git::default_branch(&dir) else {
             continue;
         };
         let default = git::local_name(&default_ref).to_string();
-        if branch_at(shell, &cmd, &input.cwd, &dir).is_some_and(|b| b != default) {
+        if branch_at(shell, cmd, &input.cwd, &dir).is_some_and(|b| b != default) {
             continue;
         }
         out.push(DefaultBranchMerge {
@@ -173,7 +173,7 @@ mod tests {
     use super::*;
 
     fn targets(src: &str) -> Option<Vec<String>> {
-        let cs = Shell::parse(src).commands();
+        let cs = Shell::parse(src).commands().to_vec();
         let (_, args) = cs[0].git_subcommand().unwrap();
         merge_targets(args)
     }

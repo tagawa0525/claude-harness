@@ -103,7 +103,7 @@ impl Rule for BlockSecretCommit {
             let Some(("commit", args)) = cmd.git_subcommand() else {
                 continue;
             };
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             // 変数やコマンド置換は展開しない（shell.rs）ので、含むパスは実物ではない。まだ無いディレクトリも
             // 同じく決められない。どちらも、そのリポジトリの git の hook に任せる
             let text = dir.to_string_lossy();

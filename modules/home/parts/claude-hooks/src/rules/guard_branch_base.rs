@@ -233,7 +233,7 @@ pub(super) fn branch_at(shell: &Shell, cmd: &Cmd, base: &Path, dir: &Path) -> Op
         if c.start >= cmd.start {
             break;
         }
-        if c.scope != cmd.scope || shell.target_dir(&c, base) != dir {
+        if c.scope != cmd.scope || shell.target_dir(c, base) != dir {
             continue;
         }
         if let Some((sub, args)) = c.git_subcommand() {
@@ -260,7 +260,7 @@ impl Rule for GuardBranchBase {
             else {
                 continue;
             };
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             if git::git(&dir, &["rev-parse", "--git-dir"]).is_none() {
                 continue;
             }
@@ -274,7 +274,7 @@ impl Rule for GuardBranchBase {
                 continue;
             };
             let default = git::local_name(&default_ref);
-            let here = match branch_at(shell, &cmd, &input.cwd, &dir) {
+            let here = match branch_at(shell, cmd, &input.cwd, &dir) {
                 Some(current) if current == default => continue,
                 Some(current) if current.is_empty() => "detached HEAD".to_string(),
                 Some(current) => current,
@@ -299,7 +299,7 @@ mod tests {
     use super::*;
 
     fn parse(src: &str) -> Option<NewBranch> {
-        let cs = Shell::parse(src).commands();
+        let cs = Shell::parse(src).commands().to_vec();
         let (sub, args) = cs[0].git_subcommand()?;
         new_branch(sub, args)
     }

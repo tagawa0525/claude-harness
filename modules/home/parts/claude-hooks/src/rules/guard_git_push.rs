@@ -116,7 +116,7 @@ impl Rule for GuardGitPush {
             let Some(("push", args)) = cmd.git_subcommand() else {
                 continue;
             };
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             if !git::has_github_remote(&dir) {
                 continue;
             }

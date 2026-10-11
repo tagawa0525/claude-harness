@@ -75,7 +75,7 @@ mod tests {
     use crate::shell::Shell;
 
     fn args(src: &str) -> Option<String> {
-        let cs = Shell::parse(src).commands();
+        let cs = Shell::parse(src).commands().to_vec();
         let (_, a) = cs[0].git_subcommand().unwrap();
         check_add(a)
     }

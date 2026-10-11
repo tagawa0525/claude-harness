@@ -59,7 +59,7 @@ impl Rule for GuardGhRunRerun {
             let (repo, Some(run_id)) = parse(args) else {
                 continue;
             };
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             let mut argv: Vec<&str> = vec!["run", "view"];
             if let Some(r) = repo.as_deref() {
                 argv.extend(["-R", r]);
@@ -90,7 +90,7 @@ mod tests {
     use crate::shell::Shell;
 
     fn p(src: &str) -> (Option<String>, Option<String>) {
-        let cs = Shell::parse(src).commands();
+        let cs = Shell::parse(src).commands().to_vec();
         parse(cs[0].gh_subcommand(&["run", "rerun"]).unwrap())
     }
 

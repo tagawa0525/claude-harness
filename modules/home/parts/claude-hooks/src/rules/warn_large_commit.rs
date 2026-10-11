@@ -37,7 +37,7 @@ impl Rule for WarnLargeCommit {
             let Some(("commit", args)) = cmd.git_subcommand() else {
                 continue;
             };
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             // -a / --all ならワーキングツリーの変更も含めて数える。
             // --amend / --author は `--` で始まるので短縮形のクラスタには当たらない
             let all = has_flag("commit", args, Some('a'), &["--all"]);

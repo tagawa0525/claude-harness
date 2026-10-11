@@ -94,8 +94,8 @@ impl Shell {
     }
 
     /// 全コマンドを文書順で返す（コマンド置換・サブシェル・ERROR 配下も含む）
-    pub fn commands(&self) -> Vec<Cmd> {
-        self.cmds.clone()
+    pub fn commands(&self) -> &[Cmd] {
+        &self.cmds
     }
 
     fn collect_commands(&self) -> Vec<Cmd> {
@@ -356,7 +356,7 @@ mod tests {
     use super::*;
 
     fn cmds(src: &str) -> Vec<Cmd> {
-        Shell::parse(src).commands()
+        Shell::parse(src).commands().to_vec()
     }
 
     #[test]
