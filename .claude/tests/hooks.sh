@@ -567,7 +567,8 @@ cd "$REPO" || exit 1
 it "block-no-verify: hook を飛ばす git commit と git merge を止める"
 for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "chore: a"' 'git commit -n -m "chore: a"' \
   'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"' 'git -c core.hooksPath=/dev/null commit -m "chore: a"' \
-  'git -c core.hookspath=/x commit -m "chore: a"' 'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x'; do
+  'git -c core.hookspath=/x commit -m "chore: a"' 'git -C . -c core.hooksPath=/x commit -m "chore: a"' \
+  'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=1"
