@@ -52,6 +52,8 @@ git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r git 
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --
 ```
 
-注: home-manager が配布する git の pre-commit フック（`modules/home/parts/git.nix`）が
-1〜3 をこの順で実行し、修正済みファイルを再ステージする。`run-checks.sh` の Markdown
-ステージも同じ手順。手で実行するのは、hook を経由しない場面（`--no-verify` 後の確認など）に限る。
+注: この手順は作業ツリーのファイルを直して `git add` するので、一部だけステージした `.md` では、ステージして
+いない編集までステージする。対象の `.md` にステージしていない編集が無いときだけ手で使う。`run-checks.sh` の
+Markdown ステージも同じ手順（#338）。home-manager が配布する git の pre-commit フック
+（`modules/home/parts/git.nix`）は、この手順ではなく、ステージした版を書き出して直し、作業ツリーに触れない
+（`modules/home/parts/staged-checks.sh`、nixfiles の ADR-0028）。
