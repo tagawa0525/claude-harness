@@ -199,9 +199,14 @@ run_hook() {
   hook_input "$command" "$bg" | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
 }
 
-# decision <hook-output> → permissionDecision（出力が空なら "allow"）
+# decision <hook-output> [no-decision] → permissionDecision（出力が空なら "allow"。出力に判定が無ければ
+# <no-decision>（既定 "allow"）。additionalContext だけの出力を見分けるときに "context" を渡す）
 decision() {
-  if [[ -z "$1" ]]; then echo allow; else jq -r '.hookSpecificOutput.permissionDecision // "allow"' <<<"$1"; fi
+  if [[ -z "$1" ]]; then
+    echo allow
+  else
+    jq -r --arg none "${2:-allow}" '.hookSpecificOutput.permissionDecision // $none' <<<"$1"
+  fi
 }
 
 # reason <hook-output> → permissionDecisionReason
