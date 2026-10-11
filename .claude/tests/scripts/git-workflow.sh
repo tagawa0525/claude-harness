@@ -152,6 +152,7 @@ assert_eq "" "$(git -C "$TEST_ROOT/share1/app-feat-share" status --porcelain)"
 it "worktree-add: linked worktree から実行しても symlink の先はメイン worktree"
 cd "$TEST_ROOT/share1/app-feat-share" || exit 1
 out=$("$SCRIPTS_DIR/worktree-add.sh" feat/share2)
+assert_eq 0 $?
 assert_eq "$REPO/references" "$(readlink "$TEST_ROOT/share1/app-feat-share2/references")"
 cd "$REPO" || exit 1
 
@@ -191,18 +192,61 @@ setup_share_repo "$REPO" '*\n!.gitignore\n!.worktreelink\n!README.md\n' '../outs
 cd "$REPO" || exit 1
 
 it "worktree-add: .worktreelink のリポジトリの外を指すパスはエラー"
-"$SCRIPTS_DIR/worktree-add.sh" feat/outside >/dev/null 2>&1
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/outside 2>&1)
 assert_eq 1 $?
+assert_contains "$out" "要素を含むパスは使えません: ../outside"
 
 it "worktree-add: .worktreelink の絶対パスはエラー"
 printf '/abs\n' > .worktreelink && git commit -q -am "chore: abs"
-"$SCRIPTS_DIR/worktree-add.sh" feat/abs >/dev/null 2>&1
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/abs 2>&1)
 assert_eq 1 $?
+assert_contains "$out" "リテラルの相対パスではありません: /abs"
 
 it "worktree-add: .worktreelink のワイルドカードはエラー（リテラルのパスだけを受け付ける）"
 printf 'refs*\n' > .worktreelink && git commit -q -am "chore: glob"
-"$SCRIPTS_DIR/worktree-add.sh" feat/glob >/dev/null 2>&1
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/glob 2>&1)
 assert_eq 1 $?
+assert_contains "$out" "リテラルの相対パスではありません: refs*"
+
+it "worktree-add: .worktreelink の ! で始まる行（.gitignore の否定）はエラー"
+printf '!refs\n' > .worktreelink && git commit -q -am "chore: negate"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/negate 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "リテラルの相対パスではありません: !refs"
+
+it "worktree-add: .worktreelink の空の要素（a//b）はエラー"
+printf 'a//b\n' > .worktreelink && git commit -q -am "chore: empty component"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/empty-component 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "要素を含むパスは使えません: a//b"
+
+REPO="$TEST_ROOT/share6/app"
+setup_share_repo "$REPO" '/references\n' 'references\nreferences/\n'
+mkdir -p "$REPO/references/sub"
+cd "$REPO" || exit 1
+
+it "worktree-add: .worktreelink に同じパスが 2 度あればエラーで、メイン worktree の中に symlink を作らない"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/dup 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "重なるパスがあります: references"
+assert_file_missing "$TEST_ROOT/share6/app-feat-dup/references"
+assert_eq "" "$(ls -A "$REPO/references/sub")"
+assert_file_missing "$REPO/references/references"
+
+it "worktree-add: .worktreelink に入れ子のパス（references と references/sub）があればエラー"
+printf 'references\nreferences/sub\n' > .worktreelink && git commit -q -am "chore: nested"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/nested 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "重なるパスがあります: references/sub"
+assert_file_missing "$TEST_ROOT/share6/app-feat-nested/references"
+assert_file_missing "$REPO/references/sub/sub"
+
+it "worktree-add: 親が新しい worktree でディレクトリでないパスはエラーで、ほかのパスの symlink も作らない"
+printf 'references\nREADME.md/x\n' > .worktreelink && git commit -q -am "chore: parent is a file"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/parent-file 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ディレクトリではありません: README.md/x"
+assert_file_missing "$TEST_ROOT/share6/app-feat-parent-file/references"
 
 REPO="$TEST_ROOT/share5/app"
 make_repo "$REPO"
