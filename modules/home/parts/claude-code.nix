@@ -247,7 +247,7 @@ in
       # Anthropic 公式の Linux 版 deb（downloads.claude.ai の APT）を展開したもの
       claude-desktop # Claude Desktop（GUI、自動更新）。Cowork 用の VM 依存を追加したもの
       rsync # claude-sync スクリプトの実行時依存
-      gitleaks # block-secret-commit hook が git commit 前に機密情報を検査する
+      gitleaks # 手で検査するため（git の pre-commit は store のパスで呼ぶ。ADR-0015）
       pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
     ]
     ++ lib.optional (lsp-det != null) lsp-det.packages.${pkgs.stdenv.hostPlatform.system}.default;
