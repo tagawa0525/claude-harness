@@ -532,10 +532,20 @@ mod tests {
         assert!(matches!(esc("$'\\t\\t\\t'"), Escape::Expanded));
         assert!(matches!(esc("$'abc'"), Escape::Expanded));
         assert!(matches!(esc("a\\ \\ \\ \\ b"), Escape::Short));
-        // 展開を含む値は、記録に理由が残らないので理由とみなさない（展開後しか見えない層のために区別する）
+        // 展開は記録に残らないので幅に数えない。字面だけで足りなければ Expanded（展開後しか見えない層のために
+        // Short と区別する）、足りれば Given
         assert!(matches!(esc("$REASON"), Escape::Expanded));
         assert!(matches!(esc("\"$(cat r.txt)\""), Escape::Expanded));
-        assert!(matches!(esc("\"rebase のみ $X\""), Escape::Expanded));
+        assert!(matches!(esc("\"ab $X\""), Escape::Expanded));
+        assert!(matches!(esc("ab$X"), Escape::Expanded));
+        assert!(matches!(esc("<(true)"), Escape::Expanded));
+        assert!(matches!(esc("$((1+1))"), Escape::Expanded));
+        assert!(matches!(esc("\"rebase のみ $X\""), Escape::Given));
+        assert!(matches!(
+            esc("\"rebase のみ、PR #$(gh pr view)\""),
+            Escape::Given
+        ));
+        assert!(matches!(esc("abcdef$X"), Escape::Given));
         assert!(matches!(
             Shell::parse("ALLOW_PROTECTED_PUSH=$R git push; ALLOW_PROTECTED_PUSH=1 true")
                 .escape("ALLOW_PROTECTED_PUSH"),

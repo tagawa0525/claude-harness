@@ -274,11 +274,17 @@ for value in 1 true force allow 確認; do
   assert_not_contains "$(reason "$out")" "文字"
 done
 
-it "escape: 展開（\$VAR、\$(…)）を含む値は理由とみなさない（記録に理由が残らない）"
-for value in '$REASON' '"$(cat r.txt)"' '"rebase のみ $X"'; do
+it "escape: 展開（\$VAR、\$(…)）は記録に残らないので幅に数えず、字面だけで 6 に満たなければ理由を求める"
+for value in '$REASON' '"$(cat r.txt)"' '"ab $X"' 'ab$X' '<(true)' '$((1+1))'; do
   out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+done
+
+it "escape: 展開を含んでも、字面の部分だけで 6 以上あれば通す（PR 番号などを展開で足せる）"
+for value in '"rebase のみ $X"' '"rebase のみ、PR #$(gh pr view --json number -q .number)"' 'abcdef$X'; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq allow "$(decision "$out")"
 done
 
 it "escape: ANSI-C 文字列やバックスラッシュで幅を水増しできない"
