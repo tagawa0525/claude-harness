@@ -111,7 +111,7 @@ nice は「何分ぶん後ろに回したか」の意味になる。回したジ
 - 反映の前から待っているジョブの優先度も、multifactor が slurmctld の起動時と `PriorityCalcPeriod`ごとに
   計算し直す（Slurm 26.05.4 の `priority_multifactor.c` の `_decay_apply_new_usage_and_weighted_factors`）ので、
   1 のまま取り残されない
-- 2026-10-12: `scontrol top` が下げるのは、先頭に出すジョブと利用者、assoc、パーティション、QOS が同じで、優先度が 1 より
-  大きい、待っているジョブだけ（Slurm 26.05.4 の `src/slurmctld/job_mgr.c` の `_set_top`）。帰結の「同じ利用者の待っている
+- 2026-10-12: `scontrol top` が下げるのは、先頭に出すジョブと利用者、assoc、パーティション、QOS が同じで、パーティションを
+  1 つだけ持ち（候補の一覧 `part_ptr_list` が無い）、優先度が 1 より大きい、待っているジョブだけ（Slurm 26.05.4 の `src/slurmctld/job_mgr.c` の `_set_top`）。帰結の「同じ利用者の待っている
   ジョブをすべて後ろに回す」は、この条件に合うジョブに限る。QOS の違うジョブとは並べ替えられず、slurm.conf に accounting の
   無い構成で投げたジョブ（QOS が空）と、ある構成で投げたジョブ（QOS が `normal`）が混ざった間に起きた（ADR-0031 の補足）
