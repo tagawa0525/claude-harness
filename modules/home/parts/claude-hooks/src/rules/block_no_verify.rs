@@ -12,7 +12,7 @@
 //!
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=<理由>` を付ける。
 
-use super::{Rule, escape, escape_hint};
+use super::{Rule, escape_hint};
 use crate::git_args::{Item, items};
 use crate::input::Input;
 use crate::output::Finding;
@@ -85,10 +85,11 @@ impl Rule for BlockNoVerify {
         "block-no-verify"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_NO_VERIFY")
+    }
+
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        if let Some(findings) = escape(shell, "ALLOW_NO_VERIFY") {
-            return findings;
-        }
         let mut skips = changes_environment(shell);
         for cmd in shell.commands() {
             skips |= cmd.env.iter().any(|change| match change {

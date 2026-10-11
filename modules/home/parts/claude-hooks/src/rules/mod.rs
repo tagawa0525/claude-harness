@@ -7,23 +7,54 @@ use crate::shell::{Escape, Shell};
 pub trait Rule: Sync {
     fn name(&self) -> &'static str;
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding>;
+    /// ルール全体を外すエスケープの名前。`check` の結果に `apply_escape` で当てる（ADR-0023）。
+    /// 検査ごとに別のエスケープを持つルールは None を返し、`check` の中で当てる
+    fn escape(&self) -> Option<&'static str> {
+        None
+    }
 }
 
-/// エスケープを読む（ADR-0023）。理由つきなら検査を飛ばす（空の findings）、値が理由として短ければ
-/// 理由を求めて止める、無ければ None で検査に進む
-pub fn escape(shell: &Shell, name: &str) -> Option<Vec<Finding>> {
+/// ルールを評価し、エスケープを当てた結果を返す。理由つきなら評価しない（gitleaks や gh の呼び出しを
+/// 伴うルールを、外す指定があるのに走らせない）。値が短ければ評価し、止めるときだけ理由を求める
+pub fn run(rule: &dyn Rule, input: &Input, shell: &Shell) -> Vec<Finding> {
+    let Some(name) = rule.escape() else {
+        return rule.check(input, shell);
+    };
     match shell.escape(name) {
-        Escape::Absent => None,
-        Escape::Short => Some(vec![reason_required(name)]),
-        Escape::Given => Some(Vec::new()),
+        Escape::Given => Vec::new(),
+        Escape::Absent => rule.check(input, shell),
+        Escape::Short => apply_escape(shell, name, rule.check(input, shell)),
+    }
+}
+
+/// 止める判定にエスケープを当てる（ADR-0023）。止めないならエスケープは見ない（付けていても咎めない）。
+/// 理由つきなら通し、値が理由として短ければ理由を求めて止める
+pub fn apply_escape(shell: &Shell, name: &str, findings: Vec<Finding>) -> Vec<Finding> {
+    if findings.is_empty() {
+        return findings;
+    }
+    match shell.escape(name) {
+        Escape::Absent => findings,
+        Escape::Short => vec![Finding::Deny(reason_required(name))],
+        Escape::Given => Vec::new(),
+    }
+}
+
+/// 理由の文字列の列（pre-merge-check の reasons）にエスケープを当てる
+pub fn apply_escape_to_reasons(shell: &Shell, name: &str, reasons: Vec<String>) -> Vec<String> {
+    if reasons.is_empty() {
+        return reasons;
+    }
+    match shell.escape(name) {
+        Escape::Absent => reasons,
+        Escape::Short => vec![reason_required(name)],
+        Escape::Given => Vec::new(),
     }
 }
 
 /// 値が短いエスケープを止める文言。しきい値は書かない（長さに合わせた無意味な値を誘うため）
-pub fn reason_required(name: &str) -> Finding {
-    Finding::Deny(format!(
-        "{name} には理由を記載してください（{name}=<理由> の形で、値はそのまま記録に残ります）"
-    ))
+pub fn reason_required(name: &str) -> String {
+    format!("{name} には理由を記載してください（{name}=<理由> の形で、値はそのまま記録に残ります）")
 }
 
 /// deny 文言の末尾に置く、エスケープの付け方の案内。「〜なら付けてよい」の条件は列挙しない

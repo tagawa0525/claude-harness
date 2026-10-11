@@ -17,7 +17,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use super::{Rule, escape, escape_hint};
+use super::{Rule, escape_hint};
 use crate::git;
 use crate::git_args::git_flag;
 use crate::input::Input;
@@ -95,10 +95,11 @@ impl Rule for BlockSecretCommit {
         "block-secret-commit"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_SECRET_COMMIT")
+    }
+
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if let Some(findings) = escape(shell, "ALLOW_SECRET_COMMIT") {
-            return findings;
-        }
         for cmd in shell.commands() {
             let Some(("commit", args)) = cmd.git_subcommand() else {
                 continue;

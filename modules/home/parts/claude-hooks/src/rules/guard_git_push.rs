@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use super::{Rule, escape, escape_hint};
+use super::{Rule, escape_hint};
 use crate::git;
 use crate::git_args::{git_flag, positionals};
 use crate::input::Input;
@@ -108,10 +108,11 @@ impl Rule for GuardGitPush {
         "guard-git-push"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_PROTECTED_PUSH")
+    }
+
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if let Some(findings) = escape(shell, "ALLOW_PROTECTED_PUSH") {
-            return findings;
-        }
         // コマンド中の全ての git push を検査する（2 つ目以降に保護対象が来る形を見逃さない）
         for cmd in shell.commands() {
             let Some(("push", args)) = cmd.git_subcommand() else {

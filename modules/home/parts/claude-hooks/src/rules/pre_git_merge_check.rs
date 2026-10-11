@@ -13,7 +13,7 @@
 //! 決定前の案（status: proposed）の ADR をまとめて加えるときだけ）
 
 use super::guard_branch_base::branch_at;
-use super::{Rule, escape, escape_hint};
+use super::{Rule, escape_hint};
 use crate::git;
 use crate::git_args::{Item, items};
 use crate::input::Input;
@@ -32,8 +32,7 @@ pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
     let list: Vec<String> = new_adrs.iter().map(|a| format!("  - {a}")).collect();
     Some(format!(
         "このブランチは新しい ADR を {} 件加えています（1 ブランチ 1 トピック、ADR は 1 件 1 決定）:\n{}\n\
-         決定ごとにブランチを分けてください（/topic-triage）。1 つの決定を複数の ADR に分けて書いた場合と、\
-         決定前の案（status: proposed）の ADR をまとめて加える場合は別です。{}",
+         決定ごとにブランチを分けてください（/topic-triage）。{}",
         new_adrs.len(),
         list.join("\n"),
         escape_hint("ALLOW_MULTI_TOPIC")
@@ -126,10 +125,11 @@ impl Rule for PreGitMergeCheck {
         "pre-git-merge-check"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_MULTI_TOPIC")
+    }
+
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if let Some(findings) = escape(shell, "ALLOW_MULTI_TOPIC") {
-            return findings;
-        }
         for merge in default_branch_merges(input, shell) {
             let dir = &merge.dir;
             for t in &merge.targets {

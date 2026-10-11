@@ -5,7 +5,7 @@
 //! attempt は gh run view <id> --json attempt で確認する。確認できなければ deny する
 //! （確認できない状態で再実行させない）。エスケープ: コマンドに `ALLOW_RERUN=<理由>` を付ける
 
-use super::{Rule, escape, escape_hint};
+use super::{Rule, escape_hint};
 use crate::gh;
 use crate::input::Input;
 use crate::output::Finding;
@@ -46,10 +46,11 @@ impl Rule for GuardGhRunRerun {
         "guard-gh-run-rerun"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_RERUN")
+    }
+
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if let Some(findings) = escape(shell, "ALLOW_RERUN") {
-            return findings;
-        }
         for cmd in shell.commands() {
             let Some(args) = cmd.gh_subcommand(&["run", "rerun"]) else {
                 continue;

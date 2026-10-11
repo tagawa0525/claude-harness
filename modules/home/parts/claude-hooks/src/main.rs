@@ -63,7 +63,7 @@ fn main() {
         let mut findings = Vec::new();
         for rule in rules::all() {
             if selected.is_empty() || selected.contains(&rule.name()) {
-                findings.extend(rule.check(&input, &shell));
+                findings.extend(rules::run(*rule, &input, &shell));
             }
         }
         output::render(&findings)

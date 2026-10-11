@@ -9,10 +9,10 @@
 //! `ALLOW_FOREGROUND_SLURM=<理由>`（slurm-run.sh のフォアグラウンド実行）。
 //! `echo sbatch` や `grep sbatch …` のように引数に現れるだけの場合は対象外。
 
-use super::{Rule, escape_hint, reason_required};
+use super::{Rule, apply_escape, escape_hint};
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Cmd, Escape, Shell};
+use crate::shell::{Cmd, Shell};
 use crate::unwrap::basename;
 
 pub struct GuardSbatch;
@@ -44,27 +44,24 @@ impl Rule for GuardSbatch {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        // 2 つのエスケープは別々の検査を外すので、理由の有無だけを先に見る
-        for name in ["ALLOW_RAW_SBATCH", "ALLOW_FOREGROUND_SLURM"] {
-            if shell.escape(name) == Escape::Short {
-                return vec![reason_required(name)];
-            }
-        }
+        // 2 つの検査は別々のエスケープで外す
         let commands = shell.commands();
-        if !shell.has_escape("ALLOW_RAW_SBATCH") && commands.iter().any(|cmd| runs(cmd, "sbatch")) {
-            return vec![Finding::Deny(format!(
+        if commands.iter().any(|cmd| runs(cmd, "sbatch")) {
+            let deny = Finding::Deny(format!(
                 "sbatch を直接使わず、~/.claude/scripts/slurm-run.sh -t <見積もり> <名前> '<コマンド>' で投げてください（名前・ログ・見積もり・連絡先を付けます。ADR-0007）。{}",
                 escape_hint("ALLOW_RAW_SBATCH")
-            ))];
+            ));
+            let findings = apply_escape(shell, "ALLOW_RAW_SBATCH", vec![deny]);
+            if !findings.is_empty() {
+                return findings;
+            }
         }
-        if !input.run_in_background
-            && !shell.has_escape("ALLOW_FOREGROUND_SLURM")
-            && commands.iter().any(runs_slurm_run)
-        {
-            return vec![Finding::Deny(format!(
+        if !input.run_in_background && commands.iter().any(runs_slurm_run) {
+            let deny = Finding::Deny(format!(
                 "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
                 escape_hint("ALLOW_FOREGROUND_SLURM")
-            ))];
+            ));
+            return apply_escape(shell, "ALLOW_FOREGROUND_SLURM", vec![deny]);
         }
         Vec::new()
     }

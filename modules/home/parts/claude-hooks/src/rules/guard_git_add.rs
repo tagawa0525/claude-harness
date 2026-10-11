@@ -7,7 +7,7 @@
 //! 通すもの: パスを指定した add（範囲を限定した `git add -A src/` も可）、`-u`（追跡済みのみ）、
 //! `-p` / `-i`（対話的に選ぶ）。エスケープはコマンドに `ALLOW_GIT_ADD_ALL=<理由>` を付ける。
 
-use super::{Rule, escape, escape_hint};
+use super::{Rule, escape_hint};
 use crate::git_args::{git_flag, positionals};
 use crate::input::Input;
 use crate::output::Finding;
@@ -44,10 +44,11 @@ impl Rule for GuardGitAdd {
         "guard-git-add"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_GIT_ADD_ALL")
+    }
+
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        if let Some(findings) = escape(shell, "ALLOW_GIT_ADD_ALL") {
-            return findings;
-        }
         for cmd in shell.commands() {
             let Some(("add", args)) = cmd.git_subcommand() else {
                 continue;

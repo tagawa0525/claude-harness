@@ -31,13 +31,14 @@ pub enum Escape {
     Given,
 }
 
-/// 理由の幅。前後の空白を除き、ASCII は 1、それ以外（日本語など）は 2 と数える。表示幅に近いが、
+/// 理由の幅。空白（ASCII）を全部除き、ASCII は 1、それ以外（日本語など）は 2 と数える。表示幅に近いが、
 /// `unicode-width` のような依存は足さず ASCII か否かだけで決める。`force` / `allow`（5）は弾き、
-/// 日本語 3 文字（6）から通す。中身は検査しない（品質のゲートではなく、boolean 的な値を弾くため。ADR-0023）
+/// 日本語 3 文字（6）から通す。中身は検査しない（品質のゲートではなく、boolean 的な値を弾くため。ADR-0023）。
+/// 空白の扱いは git 側の pre-commit（scan-staged-secrets.sh の `tr -d '[:space:]'`）と揃える
 fn reason_width(value: &str) -> usize {
     value
-        .trim()
         .chars()
+        .filter(|c| !c.is_ascii_whitespace())
         .map(|c| if c.is_ascii() { 1 } else { 2 })
         .sum()
 }
@@ -247,7 +248,9 @@ impl Shell {
         found
     }
 
-    /// `NAME=<値>` の代入をプログラム内から探す（hook のエスケープ指定）。値が理由として足りるかで分ける
+    /// `NAME=<値>` の代入をプログラム内から探す（hook のエスケープ指定）。値が理由として足りるかで分ける。
+    /// `0` と空は付けていないものとして扱う。代入が複数あれば、短い値が 1 つでもあれば Short
+    /// （後ろの代入で上書きして通せない）
     pub fn escape(&self, name: &str) -> Escape {
         let mut found = Escape::Absent;
         self.walk(self.tree.root_node(), &mut |n| {
@@ -258,19 +261,22 @@ impl Shell {
                     .child_by_field_name("value")
                     .map(|v| self.unquote(v).text)
                     .unwrap_or_default();
-                found = if reason_width(&value) >= REASON_MIN_WIDTH {
+                let value = value.trim();
+                let this = if value.is_empty() || value == "0" {
+                    Escape::Absent
+                } else if reason_width(value) >= REASON_MIN_WIDTH {
                     Escape::Given
                 } else {
                     Escape::Short
                 };
+                found = match (found, this) {
+                    (Escape::Short, _) | (_, Escape::Short) => Escape::Short,
+                    (Escape::Given, _) | (_, Escape::Given) => Escape::Given,
+                    _ => Escape::Absent,
+                };
             }
         });
         found
-    }
-
-    /// 理由つきのエスケープがあるか
-    pub fn has_escape(&self, name: &str) -> bool {
-        self.escape(name) == Escape::Given
     }
 
     /// コマンドが対象にするディレクトリ。そのコマンドより前にあり、同じシェルのスコープで実行される
@@ -454,20 +460,17 @@ mod tests {
 
     #[test]
     fn escape_assignment_anywhere() {
-        assert!(
-            Shell::parse("ALLOW_PROTECTED_PUSH=テスト用 git push --force")
-                .has_escape("ALLOW_PROTECTED_PUSH")
+        let esc = |src: &str| Shell::parse(src).escape("ALLOW_PROTECTED_PUSH");
+        assert_eq!(
+            esc("ALLOW_PROTECTED_PUSH=テスト用 git push --force"),
+            Escape::Given
         );
-        assert!(
-            Shell::parse("ALLOW_PROTECTED_PUSH=テスト用; git push")
-                .has_escape("ALLOW_PROTECTED_PUSH")
+        assert_eq!(
+            esc("ALLOW_PROTECTED_PUSH=テスト用; git push"),
+            Escape::Given
         );
-        assert!(
-            !Shell::parse("ALLOW_PROTECTED_PUSH=0 git push").has_escape("ALLOW_PROTECTED_PUSH")
-        );
-        assert!(
-            !Shell::parse("echo ALLOW_PROTECTED_PUSH=テスト用").has_escape("ALLOW_PROTECTED_PUSH")
-        );
+        assert_eq!(esc("ALLOW_PROTECTED_PUSH=0 git push"), Escape::Absent);
+        assert_eq!(esc("echo ALLOW_PROTECTED_PUSH=テスト用"), Escape::Absent);
     }
 
     // 値は理由の文字列で、空白を除いた幅（ASCII は 1、それ以外は 2）が 6 以上（ADR-0023）
@@ -480,7 +483,6 @@ mod tests {
         assert!(matches!(esc("1"), Escape::Short));
         assert!(matches!(esc("force"), Escape::Short));
         assert!(matches!(esc("確認"), Escape::Short));
-        assert!(matches!(esc("'     '"), Escape::Short));
         assert!(matches!(esc("aaaaaa"), Escape::Given));
         assert!(matches!(esc("差分同一"), Escape::Given));
         assert!(matches!(esc("'  abcdef  '"), Escape::Given));
@@ -490,9 +492,10 @@ mod tests {
         ));
         // 内側の空白で幅を水増しできない
         assert!(matches!(esc("'a    b'"), Escape::Short));
-        // 0 と空は、付けていないものとして扱う
+        // 0 と空（空白だけを含む）は、付けていないものとして扱う
         assert!(matches!(esc("0"), Escape::Absent));
         assert!(matches!(esc("''"), Escape::Absent));
+        assert!(matches!(esc("'     '"), Escape::Absent));
         // 同じ名前の代入が複数あれば、短い値が 1 つでもあれば短い扱い（後ろの代入で上書きできない）
         assert!(matches!(
             Shell::parse(

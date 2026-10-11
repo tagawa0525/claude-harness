@@ -264,7 +264,7 @@ assert_eq allow "$(decision "$out")"
 
 # エスケープの値は理由の文字列（ADR-0023）。`1` や 1 語の英単語は弾き、短い値を拒む文言はしきい値を明かさない
 it "escape: 値が 1 や短い語なら、理由を求めて止める（しきい値は明かさない）"
-for value in 1 true force allow 確認 '"     "'; do
+for value in 1 true force allow 確認; do
   out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
@@ -289,13 +289,13 @@ out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push --force; ALLOW_PR
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
 
-it "escape: 0 と空の値はエスケープを付けていないものとして扱う"
-out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=0 git push --force')
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "force push は禁止"
-assert_not_contains "$(reason "$out")" "理由を記載"
-out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH= git push --force')
-assert_contains "$(reason "$out")" "force push は禁止"
+it "escape: 0 と空（空白だけを含む）の値はエスケープを付けていないものとして扱う"
+for value in 0 '' '"     "'; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "force push は禁止"
+  assert_not_contains "$(reason "$out")" "理由を記載"
+done
 
 it "escape: 幅は空白を全部除いて数える（内側の空白で水増しできない）"
 out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a    b" git push --force')

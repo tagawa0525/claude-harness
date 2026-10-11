@@ -28,7 +28,7 @@
 
 use super::pre_git_merge_check::multi_topic_reason;
 use super::pre_pr_create_check::{body_text, missing_headings};
-use super::{Rule, escape_hint, reason_required};
+use super::{Rule, apply_escape_to_reasons, escape_hint};
 use crate::gh;
 use crate::git::git;
 use crate::input::Input;
@@ -272,12 +272,7 @@ impl Rule for PreMergeCheck {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        // 2 つのエスケープは別々の検証を外すので、理由の有無だけを先に見る
-        for name in ["ALLOW_UNREVIEWED_HEAD", "ALLOW_MULTI_TOPIC"] {
-            if shell.escape(name) == Escape::Short {
-                return vec![reason_required(name)];
-            }
-        }
+        // 2 つの検証（8 と 9）は別々のエスケープで外すので、それぞれの理由に当てる
         for cmd in shell.commands() {
             let Some(args) = cmd.gh_subcommand(&["pr", "merge"]) else {
                 continue;
@@ -582,9 +577,10 @@ impl Rule for PreMergeCheck {
             if !owner.is_empty()
                 && !name.is_empty()
                 && !head_sha.is_empty()
-                && !shell.has_escape("ALLOW_UNREVIEWED_HEAD")
+                && shell.escape("ALLOW_UNREVIEWED_HEAD") != Escape::Given
                 && let Some(number) = pr_number.as_deref()
             {
+                let mut unreviewed: Vec<String> = Vec::new();
                 let reviewed = gh::gh(
                     &dir,
                     &[
@@ -606,7 +602,7 @@ impl Rule for PreMergeCheck {
                         .to_string()
                 });
                 match reviewed {
-                    None => reasons.push(
+                    None => unreviewed.push(
                         "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
                             .to_string(),
                     ),
@@ -626,12 +622,12 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
-                    Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
+                    Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認し、直せたら再レビューを依頼してください。{}",
                         short(&head_sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
-                    Some(sha) if sha != head_sha => reasons.push(format!(
+                    Some(sha) if sha != head_sha => unreviewed.push(format!(
                         "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
                         short(&head_sha),
                         short(&sha),
@@ -639,13 +635,18 @@ impl Rule for PreMergeCheck {
                     )),
                     Some(_) => {}
                 }
+                reasons.extend(apply_escape_to_reasons(
+                    shell,
+                    "ALLOW_UNREVIEWED_HEAD",
+                    unreviewed,
+                ));
             }
 
             // --- 9. トピックが 1 つか（新しい ADR の数）---
             // 変更ファイルの status が added のものだけ数える（既存の ADR の変更・改名は数えない）
             if !owner.is_empty()
                 && !name.is_empty()
-                && !shell.has_escape("ALLOW_MULTI_TOPIC")
+                && shell.escape("ALLOW_MULTI_TOPIC") != Escape::Given
                 && let Some(number) = pr_number.as_deref()
             {
                 match gh::gh(
@@ -669,7 +670,11 @@ impl Rule for PreMergeCheck {
                             .filter(|(status, path)| *status == "added" && is_adr_path(path))
                             .map(|(_, path)| path.to_string())
                             .collect();
-                        reasons.extend(multi_topic_reason(&adrs));
+                        reasons.extend(apply_escape_to_reasons(
+                            shell,
+                            "ALLOW_MULTI_TOPIC",
+                            multi_topic_reason(&adrs).into_iter().collect(),
+                        ));
                     }
                 }
             }
