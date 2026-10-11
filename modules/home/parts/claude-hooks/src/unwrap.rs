@@ -431,8 +431,8 @@ pub struct Unwrapped {
     pub wrappers: Vec<String>,
     /// 中のコマンドを走らせるディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
     pub dirs: Vec<String>,
-    /// `sudo -i` の対象の利用者のホームの書き方（`~root`）。中のコマンドはそこから始まり、`~` もそこを指す。
-    /// 手元のパスには解決しない
+    /// `sudo -i` の対象の利用者のホームの書き方（`~root`）。中のコマンドはそこから始まり、`dirs` はそこから
+    /// 当てる。sudo -i が走らせる文字列の中の `~` もそこを指す。手元のパスには解決しない
     pub login_home: Option<String>,
     /// `ssh` の接続先のホームの書き方（`host:`）。中のコマンドは手元のどのパスでもない場所で走る
     pub remote: Option<String>,
@@ -758,13 +758,14 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.env.push(EnvChange::Clear);
         }
         out.env.extend(env);
-        out.dirs.extend(dir);
         if login {
+            // 対象の利用者のホームへ移るので、外側の包みの -C はその前に効き、後に残らない
+            out.dirs.clear();
             out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
         }
-        if let Some(host) = host
-            && out.remote.is_none()
-        {
+        out.dirs.extend(dir);
+        // ssh は文字列を走らせてほどき終わるので、包みの列に ssh は 1 つまで
+        if let Some(host) = host {
             out.remote = Some(format!("{host}:"));
         }
         // 残りの語から、走らせるものを決める

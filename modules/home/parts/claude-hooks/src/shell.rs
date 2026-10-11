@@ -475,7 +475,8 @@ impl Shell {
     /// `cd <dir>` を順に畳み込み、包んだ `env -C <dir>` と `git -C <dir>` を順に当てる
     /// （`$(cd x && …)` や `(cd x)` の cd は親のディレクトリを変えないので見ない）
     ///
-    /// `sudo -i` の中は、対象の利用者のホームの書き方（`~root`）から始まり、`~` もそれを指す。`ssh` の中の
+    /// `sudo -i` の中は、対象の利用者のホームの書き方（`~root`）から始まり、sudo -i が走らせる文字列の中の `~`
+    /// もそれを指す。`ssh` の中の
     /// コマンドは、接続先の書き方（`host:`）を返し、中の `cd` と `git -C` は当てない（接続先の `/x` や `~` は
     /// 手元のものではない）。どちらの書き方も、展開しない `cd "$VAR"` の行き先と同じく手元に実在しないパスで、
     /// ルールは既存の「ディレクトリに移れない」ときの扱いになる
@@ -499,13 +500,17 @@ impl Shell {
                 if let Some(remote) = &c.remote {
                     return PathBuf::from(remote);
                 }
-                enter(c, &mut home, &mut dir);
+                enter(c, &home, &mut dir);
+                // 文字列の中の `~` は、sudo -i が対象の利用者として走らせるシェルが展開する
+                if let Some(login_home) = &c.login_home {
+                    home = PathBuf::from(login_home);
+                }
             }
         }
         if let Some(remote) = &cmd.remote {
             return PathBuf::from(remote);
         }
-        enter(cmd, &mut home, &mut dir);
+        enter(cmd, &home, &mut dir);
         if let Some(git) = &cmd.git {
             for d in &git.dirs {
                 dir = resolve(&home, &dir, d);
@@ -611,11 +616,11 @@ fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
 }
 
 /// 包み（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを走らせるディレクトリへ移る。`sudo -i` は対象の
-/// 利用者のホームから始め、`~` もそこを指す
-fn enter(wrapped: &Cmd, home: &mut PathBuf, dir: &mut PathBuf) {
+/// 利用者のホームから始める（その前の包みの -C は unwrap.rs が除いてある）。包みの引数の `~` は外側の
+/// シェルが展開してから渡すので、`home` は外側のもの
+fn enter(wrapped: &Cmd, home: &Path, dir: &mut PathBuf) {
     if let Some(login_home) = &wrapped.login_home {
-        *home = PathBuf::from(login_home);
-        *dir = home.clone();
+        *dir = PathBuf::from(login_home);
     }
     for d in &wrapped.dirs {
         *dir = resolve(home, dir, d);
@@ -901,7 +906,7 @@ mod tests {
         assert_eq!(dir_of_git("sudo -E git commit"), PathBuf::from("/base"));
         // sudo -i の前の env -C は、sudo -i が移る前に効く
         let dir = dir_of_git("env -C /a sudo -i git commit");
-        assert!(!dir.starts_with("/a") && dir != PathBuf::from("/base"));
+        assert!(!dir.starts_with("/a") && dir != Path::new("/base"));
         // 包んだコマンドの引数の ~ は外側のシェルが展開するので、手元の利用者のホーム
         assert_eq!(
             dir_of_git("sudo -i git -C ~/repo commit"),
