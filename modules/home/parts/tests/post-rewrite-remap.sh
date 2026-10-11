@@ -4,11 +4,12 @@
 # 文書の中のコミットの番号を付け直すことを検証する
 # =============================================================================
 # ../git.nix の post-rewrite は core.hooksPath でグローバル配布され、`git config remap.commitRefs true`
-# のリポジトリで ~/.claude/scripts/remap-commit-refs.sh に旧と新の対応を渡す。置き換えはコミット
+# のリポジトリで commit-refs remap（../commit-refs）に旧と新の対応を渡す。置き換えはコミット
 # しないので、コミットが要ることを表示する。プロジェクトローカルの .git/hooks/post-rewrite が
 # あれば先に呼ぶ。
 #
-# 実物の remap-commit-refs.sh（このリポジトリの .claude/scripts）を一時 HOME の ~/.claude に置く。
+# hook のファイルを nix build で作る（hook が store のパスで呼ぶ commit-refs も一緒にビルドされる）。
+# 一時 HOME には ~/.claude を置かない（hook は ~/.claude に頼らない）。
 #
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/post-rewrite-remap.sh
@@ -23,15 +24,14 @@ trap 'rm -rf "$WORK"' EXIT
 
 HOOKS="$WORK/hooks"
 mkdir -p "$HOOKS"
-echo "==> post-rewrite hook を取り出す（nixosConfigurations.${HOST}）"
-nix eval --raw --option warn-dirty false \
-  "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/post-rewrite\".text" \
-  > "$HOOKS/post-rewrite"
+echo "==> post-rewrite hook をビルドする（nixosConfigurations.${HOST}）"
+BUILT=$(nix build --no-link --print-out-paths --option warn-dirty false \
+  "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/post-rewrite\".source")
+cp "$BUILT" "$HOOKS/post-rewrite"
 chmod +x "$HOOKS/post-rewrite"
 
 export HOME="$WORK/home"
-mkdir -p "$HOME/.claude"
-cp -r "$ROOT/.claude/scripts" "$HOME/.claude/"
+mkdir -p "$HOME"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
@@ -245,6 +245,12 @@ else
     ok "曖昧な対応では何も変えず、エラーを表示する"
   else
     ng "曖昧な対応で記録が変わったか、エラーが表示されない"
+  fi
+  if grep -q "commit-refs remap $REPO/.git/remap-commit-refs.input" "$WORK/out" \
+    && cmp -s "$WORK/ambiguous-input" "$REPO/.git/remap-commit-refs.input"; then
+    ok "失敗したときは対応を残し、commit-refs remap で呼び直す方法を表示する"
+  else
+    ng "失敗したときに対応が残らないか、呼び直す方法が表示されない"
   fi
 fi
 
