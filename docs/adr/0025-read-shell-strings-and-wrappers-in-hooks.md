@@ -151,3 +151,19 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   `block-no-verify`、`guard-git-add`、`guard-git-push`、`block-main-commit` の節で、同じ土台が効くことを確かめる
 - `modules/home/parts/claude-hooks/src/unwrap.rs` と `shell.rs` の単体テストで、表の読み方、文字列の位置と
   スコープ、エスケープの外し方、深さの上限を確かめる
+
+## 補足
+
+- 2026-10-12: 読み違いを 3 つ直した（#342）。`bash` / `sh` のまとめた 1 文字のオプションの中の `-o` / `-O` は、値を
+  次の語から取り、残りの文字もオプションとして読む（`bash -oc pipefail '…'` の `-c`）。`env` の `-` は coreutils の
+  env.c と同じく getopt の後に一度だけ（`--` の後でも）読み、そこでオプションを終える。その後の `--` は走らせる
+  プログラムになる。`sudo -i` と `ssh` の中のコマンドは手元の cwd で走るとみなさない。`Shell::target_dir` は、
+  `ssh` の中ではその場所の書き方（`host:`）を返して中の `cd` と `git -C` を当てず、`sudo -i` の中では対象の利用者の
+  ホームの書き方（`~root`）から始め、sudo -i が走らせる文字列の中の `~` もそれとし（包んだコマンドの引数の `~` は
+  外側のシェルが展開するので手元のホーム）、絶対パスの `cd` と `git -C` は手元のパスに解く。その書き方は
+  展開しない `cd "$VAR"` の行き先と同じく手元に実在しないので、ルールは既存の「ディレクトリに移れない」ときの
+  扱いになる: 手元のリポジトリやブランチで決めるルール（block-main-commit、guard-git-push など）は判定せず、
+  block-secret-commit は git の hook に任せ、pre-pr-create-check、pre-merge-check、
+  guard-gh-run-rerun は手元の場所の検査をせずにその場で止める（文言は cd 先でなく、ssh や sudo -i の中で走るので手元の場所で検査できないことを示す。
+  `Shell::runs_under_ssh_or_login`）。帰結の「`ssh <接続先> …` の中の `cd` と git は……ルールは
+  手元のディレクトリで判定する」は、この補足より前の挙動を書いたもので、今は当たらない

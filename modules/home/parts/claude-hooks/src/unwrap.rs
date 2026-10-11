@@ -431,6 +431,11 @@ pub struct Unwrapped {
     pub wrappers: Vec<String>,
     /// 中のコマンドを走らせるディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
     pub dirs: Vec<String>,
+    /// `sudo -i` の対象の利用者のホームの書き方（`~root`）。中のコマンドはそこから始まり、`dirs` はそこから
+    /// 当てる。sudo -i が走らせる文字列の中の `~` もそこを指す。手元のパスには解決しない
+    pub login_home: Option<String>,
+    /// `ssh` の接続先のホームの書き方（`host:`）。中のコマンドは手元のどのパスでもない場所で走る
+    pub remote: Option<String>,
     /// `name` が sh -c で走らせる文字列（`bash -c '…'`、`flock <file> -c '…'`、`script -c '…'`、`eval`・`watch`・
     /// `ssh <接続先>` の残りの語を空白でつないだもの）。shell.rs が再帰的に解析する
     pub source: Option<String>,
@@ -569,6 +574,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut dir: Option<String> = None;
         let mut runs = true;
         let mut options_done = false;
+        // env の `-` を読んだか、それを読む位置を過ぎた（代入を読んだ）か
+        let mut env_dash_read = false;
         // bash -c: 次の位置引数を sh -c の文字列として走らせる
         let mut takes_source = false;
         // bash -s、sudo -s / -i: 標準入力からコマンドを読む（sudo はコマンドが無ければ対話シェル）
@@ -581,21 +588,31 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut source: Option<String> = None;
         // コマンドの前の位置引数のうち、まだ読んでいない数
         let mut positionals = wrapper.positionals;
+        // sudo -i / --login: 対象の利用者（-u。無ければ root）のホームで login shell を始める
+        let mut login = false;
+        let mut user: Option<String> = None;
+        // ssh の接続先
+        let mut host: Option<String> = None;
         // script のログのファイルを読んだか（getopt が語を並べ替えるので、ファイルの後ろのオプションも読む）
         let mut log_file_seen = false;
         loop {
             while let Some(front) = words.front() {
                 let t = front.text.clone();
-                // bash は `-` も `--` と同じにオプションの終わりと読む
-                if t == "--" || (is_shell && t == "-") {
+                // bash は `-` も `--` と同じにオプションの終わりと読む。env は getopt を終えた後（`--`、`-`、
+                // 代入の後）の `--` を走らせるプログラムにする
+                if (t == "--" && !(wrapper.name == "env" && options_done)) || (is_shell && t == "-")
+                {
                     words.pop_front();
                     options_done = true;
                     continue;
                 }
-                if wrapper.name == "env" && t == "-" && !options_done {
-                    // `env -` は `env -i`
+                // `env -` は `env -i`。env.c は getopt の後に一度だけ（`--` の後でも）`-` を見るので、オプションは
+                // そこで終わり、後ろの `-` やオプションの形の語は走らせるプログラムになる
+                if wrapper.name == "env" && t == "-" && !env_dash_read {
                     words.pop_front();
                     env.push(EnvChange::Clear);
+                    env_dash_read = true;
+                    options_done = true;
                     continue;
                 }
                 // env と sudo は `--` の後も `NAME=value` を代入として読む。最初の代入でオプションは終わる
@@ -605,6 +622,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         words.pop_front();
                         env.push(EnvChange::Set(var.to_string(), value.to_string()));
                         options_done = true;
+                        // env.c が `-` を見るのは代入より前
+                        env_dash_read = true;
                         continue;
                     }
                     break;
@@ -640,12 +659,18 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     for (i, ch) in cluster.iter().enumerate() {
                         let rest: String = cluster[i + 1..].iter().collect();
                         if wrapper.value_shorts.contains(*ch) {
-                            let value = if rest.is_empty() {
+                            // bash と sh は -o / -O の値を常に次の語から取り、まとまりの残りの文字もオプション
+                            // として読む（`bash -oc pipefail '…'` は -o pipefail と -c）。getopt のように残りを
+                            // 値にしない
+                            let value = if is_shell || rest.is_empty() {
                                 words.pop_front().map(|a| a.text)
                             } else {
                                 Some(rest)
                             };
                             options.push((Some(*ch), value));
+                            if is_shell {
+                                continue;
+                            }
                             break;
                         }
                         if wrapper.optional_shorts.contains(*ch) {
@@ -686,7 +711,12 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         // `--preserve-env=list` は list の変数だけを受け継ぐ（list は見ない）
                         ("sudo", Some('E')) => preserves_env = value.is_none(),
                         ("sudo", Some('e' | 'l' | 'v' | 'V' | 'K')) => runs = false,
-                        ("sudo", Some('s' | 'i')) => reads_stdin = true,
+                        ("sudo", Some('s')) => reads_stdin = true,
+                        ("sudo", Some('i')) => {
+                            reads_stdin = true;
+                            login = true;
+                        }
+                        ("sudo", Some('u')) => user = value,
                         ("sudo", Some('D')) => {
                             if let Some(d) = value {
                                 dir = Some(d);
@@ -704,8 +734,11 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                 return out;
             }
             if positionals > 0 {
-                words.pop_front();
+                let positional = words.pop_front();
                 positionals -= 1;
+                if wrapper.name == "ssh" {
+                    host = positional.map(|a| a.text);
+                }
                 // ssh は接続先を取った後、オプションの読み取りに戻る（ssh.c は host を取ると getopt をやり直す）
                 if wrapper.name == "ssh" && !options_done {
                     continue;
@@ -725,7 +758,16 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.env.push(EnvChange::Clear);
         }
         out.env.extend(env);
+        if login {
+            // 対象の利用者のホームへ移るので、外側の包みの -C はその前に効き、後に残らない
+            out.dirs.clear();
+            out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
+        }
         out.dirs.extend(dir);
+        // ssh は文字列を走らせてほどき終わるので、包みの列に ssh は 1 つまで
+        if let Some(host) = host {
+            out.remote = Some(format!("{host}:"));
+        }
         // 残りの語から、走らせるものを決める
         match wrapper.name {
             "bash" | "sh" => {
@@ -877,6 +919,59 @@ mod tests {
             assert_eq!(u.source.as_deref(), Some(source), "{src}");
             assert!(!u.opaque, "{src}");
         }
+    }
+
+    #[test]
+    fn shell_option_values_in_a_cluster_are_the_next_words() {
+        // bash と sh は、まとめた 1 文字のオプションの中の -o / -O の値を次の語から取り、残りの文字もオプションとして読む
+        for (src, source) in [
+            ("bash -oc pipefail sbatch", "sbatch"),
+            ("bash -Oc extglob sbatch", "sbatch"),
+            ("sh -oec pipefail sbatch", "sbatch"),
+            ("bash -co pipefail sbatch", "sbatch"),
+            ("bash -oOc pipefail extglob sbatch", "sbatch"),
+        ] {
+            let u = un(src);
+            assert_eq!(u.source.as_deref(), Some(source), "{src}");
+            assert!(!u.opaque, "{src}");
+        }
+        let u = un("bash -ox pipefail sbatch");
+        assert_eq!(u.name, "sbatch");
+        assert!(u.source.is_none() && !u.opaque);
+    }
+
+    #[test]
+    fn env_reads_a_single_dash_once_after_the_options() {
+        // `-` は getopt の後に一度だけ（`--` の後でも）見て、`-i` と同じに読み、そこでオプションを終える
+        let u = un("env -- - git push");
+        assert_eq!(u.name, "git");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        let u = un("env - -u FOO git");
+        assert_eq!(u.name, "-u");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        let u = un("env - - cmd");
+        assert_eq!(u.name, "-");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        let u = un("env -u FOO - git");
+        assert_eq!(u.name, "git");
+        assert_eq!(
+            u.env,
+            [EnvChange::Unset("FOO".to_string()), EnvChange::Clear]
+        );
+        // `-` か代入の後の `--` はオプションの終わりでなく、走らせるプログラム
+        let u = un("env - -- git");
+        assert_eq!(u.name, "--");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        assert_eq!(un("env FOO=1 -- git").name, "--");
+        let u = un("env - FOO=1 git");
+        assert_eq!(u.name, "git");
+        assert_eq!(
+            u.env,
+            [
+                EnvChange::Clear,
+                EnvChange::Set("FOO".to_string(), "1".to_string())
+            ]
+        );
     }
 
     #[test]

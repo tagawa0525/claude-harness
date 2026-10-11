@@ -267,6 +267,13 @@ impl Rule for PreMergeCheck {
 
             let mut dir = shell.target_dir(cmd, &input.cwd);
             if !dir.is_dir() {
+                // 手元の cwd に戻して続ける検査は、接続先や対象の利用者の PR に当たらないので混ぜない
+                if shell.runs_under_ssh_or_login(cmd) {
+                    return vec![Finding::Deny(
+                        "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+                            .to_string(),
+                    )];
+                }
                 reasons.push(format!(
                     "コマンド中の cd 先に移動できません: {}",
                     dir.display()

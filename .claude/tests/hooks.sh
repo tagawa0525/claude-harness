@@ -154,6 +154,24 @@ out=$(run_hook pre-pr-create-check "cd $OTHER && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
+it "pre-pr-create: ssh と sudo -i の中の gh は、cd 先でなく、その中で走るので手元で検査できないと示して止める"
+# 手元の場所の検査（本文の見出し、上流ブランチ）は、接続先の PR に当たらないので理由に混ぜない
+out=$(run_hook pre-pr-create-check "ssh host gh pr create --title 'feat: x' --body y")
+assert_eq deny "$(decision "$out")"
+assert_eq "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます" "$(reason "$out")"
+out=$(run_hook pre-pr-create-check "ssh host $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
+out=$(run_hook pre-pr-create-check "sudo -i $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
+# 展開しない cd の行き先は、移れない cd 先として示す
+out=$(run_hook pre-pr-create-check "cd \"\$NOWHERE\" && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
+
 # --- fork（upstream リモートのある clone）: こちらの規約は検査しない ---
 FORK="$TEST_ROOT/prcreate-fork"
 make_repo "$FORK"
@@ -287,6 +305,12 @@ assert_eq allow "$(decision "$out")"
 out=$(run_hook guard-git-push "bash -c 'ALLOW_PROTECTED_PUSH=1 git push --force'")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+
+it "guard-git-push: bash / sh のまとめたオプションの中の -o / -O の値は次の語で、-c の文字列の中も見る"
+for cmd in "bash -oc pipefail 'git push --force'" "bash -Oc extglob 'git push --force'" "sh -oec pipefail 'git push --force'"; do
+  out=$(run_hook guard-git-push "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 
 # エスケープの値は理由の文字列（ADR-0023）。`1` や 1 語の英単語は弾き、短い値を拒む文言はしきい値を明かさない
 it "escape: 値が 1 や短い語なら、理由を求めて止める（しきい値は明かさない）"
@@ -508,6 +532,19 @@ out=$(run_hook block-main-commit "cd $LOCAL; (git commit -m 'feat: x')")
 assert_eq allow "$(decision "$out")"
 out=$(run_hook block-main-commit "cd $LOCAL && echo \$(git commit -m 'feat: x')")
 assert_eq allow "$(decision "$out")"
+
+it "block-main-commit: sudo -i と ssh の中のコマンドは手元の cwd で走らないので、手元のブランチで判定しない"
+for cmd in "sudo -i git commit -m 'feat: x'" "sudo -i bash -c 'cd ~ && git commit -m x'" \
+  "ssh host git commit -m 'feat: x'" "ssh host 'cd $REPO && git commit -m x'" "ssh host git -C $REPO commit -m x"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+# sudo -i は手元で走るので、中の絶対パスは手元のリポジトリを指す
+for cmd in "ssh host true; git commit -m 'feat: x'" "sudo -i bash -c 'cd $REPO && git commit -m x'" \
+  "sudo -i git -C $REPO commit -m x"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 
 it "block-main-commit: bash -c の文字列の中の cd は、同じ文字列の中の後ろのコマンドにだけ効く。前の cd は文字列の中にも効く"
 out=$(run_hook block-main-commit "bash -c 'cd $LOCAL && git commit -m \"feat: x\"'")
@@ -902,6 +939,15 @@ for cmd in 'sudo -E git commit -m x' 'sudo --preserve-env git commit -m x' \
   assert_eq allow "$(decision "$out")"
 done
 
+it "block-no-verify: env の - は getopt の後に一度だけ（-- の後でも）読む"
+# `env -- - git` は空の環境で git を走らせる。`env - -u X git` は -u を、`env - - git` は - を走らせる
+out=$(run_hook block-no-verify 'env -- - git commit -m x')
+assert_eq deny "$(decision "$out")"
+for cmd in 'env - -u CLAUDECODE git commit -m x' 'env - - git commit -m x' 'env - -- git commit -n -m x'; do
+  out=$(run_hook block-no-verify "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "block-no-verify: hook を飛ばさない git のコマンドは許可する"
 for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit' \
   'git commit -m"feat: add notes"' 'git commit -Fnotes.txt' 'git commit -Cnext' 'git commit --no-status -m x' \
@@ -1029,6 +1075,16 @@ make_fake_gh '"run view 100 --json attempt"*) echo "not found" >&2; exit 1 ;;'
 out=$(run_hook guard-gh-run-rerun 'gh run rerun 100')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
+
+it "guard-gh-run-rerun: ssh と sudo -i の中の gh run rerun は、その中で走るので手元で確かめられないと示して止める（gh を呼ばない）"
+make_fake_gh ''
+out=$(run_hook guard-gh-run-rerun 'ssh host gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh run rerun は、手元の場所で試行回数を確かめられないため止めます"
+out=$(run_hook guard-gh-run-rerun 'sudo -i gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh run rerun は、手元の場所で試行回数を確かめられないため止めます"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
 it "guard-gh-run-rerun: gh run rerun 以外は対象外で gh を呼ばない"
 make_fake_gh ''
@@ -1332,6 +1388,20 @@ make_fake_gh_merge_files 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
+
+it "pre-merge-check: ssh と sudo -i の中の gh pr merge は、cd 先でなく、その中で走るので手元で検査できないと示して止める"
+# 手元の場所の検査（マージ方式の指定など）は、接続先の PR に当たらないので理由に混ぜない
+out=$(run_hook pre-merge-check "ssh host gh pr merge 1")
+assert_eq deny "$(decision "$out")"
+assert_eq "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます" "$(reason "$out")"
+out=$(run_hook pre-merge-check "ssh host $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
+out=$(run_hook pre-merge-check "sudo -i -u slurm $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
 
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit 1'
