@@ -139,8 +139,15 @@ pub fn run(map_path: &Path) -> Result<(), Errors> {
     for name in not_rewritten {
         report.push_str(&format!("NOT_REWRITTEN: {name}\n"));
     }
-    print!("{report}");
-    Ok(())
+    std::io::stdout()
+        .lock()
+        .write_all(report.as_bytes())
+        .map_err(|e| {
+            vec![
+                format!("標準出力に書けない: {e}"),
+                "ブランチとタグは移した。対応表も書き、作業ツリーも合わせた".to_string(),
+            ]
+        })
 }
 
 fn one(e: String) -> Errors {
