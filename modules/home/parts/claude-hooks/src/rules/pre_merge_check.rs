@@ -614,7 +614,7 @@ impl Rule for PreMergeCheck {
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
                     Some(sha) if sha != head_sha => unreviewed.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
                         short(&head_sha),
                         short(&sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
