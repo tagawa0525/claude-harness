@@ -13,7 +13,7 @@
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=1` を付ける。
 
 use super::Rule;
-use crate::git_args::has_flag;
+use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -106,7 +106,7 @@ impl Rule for BlockNoVerify {
                             .iter()
                             .take_while(|a| a.text != "--")
                             .any(|a| is_no_verify(&a.text))
-                        || (sub == "commit" && has_flag(sub, args, Some('n'), &[]))
+                        || (sub == "commit" && git_flag(sub, args, Some('n'), &[]))
                 }
                 _ => false,
             };

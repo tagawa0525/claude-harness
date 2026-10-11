@@ -166,7 +166,7 @@ pub fn items<'a>(sub: &str, args: &'a [Arg]) -> Vec<Item<'a>> {
 }
 
 /// サブコマンド `sub` の引数に、短縮形のフラグ `short` か、長い形のどれか（`--x` か `--x=…`）があるか
-pub fn has_flag(sub: &str, args: &[Arg], short: Option<char>, longs: &[&str]) -> bool {
+pub fn git_flag(sub: &str, args: &[Arg], short: Option<char>, longs: &[&str]) -> bool {
     items(sub, args).iter().any(|item| match item {
         Item::Short(ch) => Some(*ch) == short,
         Item::Long(name) => longs.contains(name),

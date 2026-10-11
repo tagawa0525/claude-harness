@@ -484,9 +484,9 @@ mod tests {
         );
         let am = cmds("git commit -am x");
         let (sub, args) = am[0].git_subcommand().unwrap();
-        assert!(crate::git_args::has_flag(sub, args, Some('a'), &[]));
+        assert!(crate::git_args::git_flag(sub, args, Some('a'), &[]));
         let all = cmds("git commit --all");
         let (sub, args) = all[0].git_subcommand().unwrap();
-        assert!(!crate::git_args::has_flag(sub, args, Some('a'), &[]));
+        assert!(!crate::git_args::git_flag(sub, args, Some('a'), &[]));
     }
 }

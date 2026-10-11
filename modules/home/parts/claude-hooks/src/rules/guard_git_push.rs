@@ -12,7 +12,7 @@ use std::path::Path;
 
 use super::Rule;
 use crate::git;
-use crate::git_args::{has_flag, positionals};
+use crate::git_args::{git_flag, positionals};
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -34,10 +34,10 @@ fn is_protected_ref(dst: &str) -> bool {
 fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
     // --- force push ---
     // -f / --force（単独でも -fu のようなクラスタでも）。--force-with-lease / --force-if-includes は対象外
-    if has_flag("push", args, Some('f'), &["--force"]) {
+    if git_flag("push", args, Some('f'), &["--force"]) {
         return Some("force push は禁止です（レビュー履歴を保持するため）。feature branch で履歴を書き換える必要がある場合は --force-with-lease を使ってください".to_string());
     }
-    if has_flag("push", args, None, &["--all", "--mirror"]) {
+    if git_flag("push", args, None, &["--all", "--mirror"]) {
         return Some(
             "--all / --mirror は main を含む全ブランチを push するため禁止です".to_string(),
         );

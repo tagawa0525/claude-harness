@@ -8,7 +8,7 @@
 //! `-p` / `-i`（対話的に選ぶ）。エスケープはコマンドに `ALLOW_GIT_ADD_ALL=1` を付ける。
 
 use super::Rule;
-use crate::git_args::{has_flag, positionals};
+use crate::git_args::{git_flag, positionals};
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -23,13 +23,13 @@ fn deny(why: &str) -> Finding {
 
 /// `git add` の引数を検査し、止める理由があれば返す
 fn check_add(args: &[Arg]) -> Option<String> {
-    let all = has_flag("add", args, Some('A'), &["--all", "--no-ignore-removal"]);
+    let all = git_flag("add", args, Some('A'), &["--all", "--no-ignore-removal"]);
     let pathspecs: Vec<&str> = positionals("add", args)
         .into_iter()
         .map(|a| a.text.as_str())
         .collect();
     // --pathspec-from-file はファイルに書いたパスに絞る
-    if has_flag("add", args, None, &["--pathspec-from-file"]) && pathspecs.is_empty() {
+    if git_flag("add", args, None, &["--pathspec-from-file"]) && pathspecs.is_empty() {
         return None;
     }
     if all && pathspecs.is_empty() {

@@ -6,7 +6,7 @@
 
 use super::Rule;
 use crate::git;
-use crate::git_args::has_flag;
+use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::Shell;
@@ -40,7 +40,7 @@ impl Rule for WarnLargeCommit {
             let dir = shell.target_dir(cmd, &input.cwd);
             // -a / --all ならワーキングツリーの変更も含めて数える。
             // --amend / --author は `--` で始まるので短縮形のクラスタには当たらない
-            let all = has_flag("commit", args, Some('a'), &["--all"]);
+            let all = git_flag("commit", args, Some('a'), &["--all"]);
             let diff_args: &[&str] = if all {
                 &["diff", "HEAD", "--numstat"]
             } else {
