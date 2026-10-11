@@ -134,6 +134,34 @@ assert_eq 0 $?
 assert_eq "check --changed" "$(fake_log design-records)"
 assert_contains "$out" "OK: markdown design-records"
 
+it "run-checks: .md 以外の変更したファイルも design-records に渡す（置き換えられた ADR への参照を探す）"
+REPO="$TEST_ROOT/checks/adr-text"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+opt_in_design_records
+printf '#!/usr/bin/env bash\n# ADR-0001\n' > a.sh && git add a.sh
+make_fake_tool shellcheck '*) exit 0 ;;'
+make_fake_tool design-records '"check --changed"*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "check --changed a.sh" "$(fake_log design-records)"
+
+it "run-checks: 行末のコメントや引用符のある id もオプトインと見なす"
+printf 'repos:\n  - repo: local\n    hooks:\n      - id: "design-records" # ADR\n' > .pre-commit-config.yaml
+git add .pre-commit-config.yaml
+make_fake_tool design-records '"check --changed"*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_contains "$out" "OK: markdown design-records"
+
+it "run-checks: コメントアウトした id はオプトインと見なさない"
+printf 'repos:\n  - repo: local\n    hooks:\n      # - id: design-records\n' > .pre-commit-config.yaml
+git add .pre-commit-config.yaml
+make_fake_tool design-records '*) exit 1 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "" "$(fake_log design-records)"
+
 it "run-checks: オプトインしていなければ、docs/adr があっても design-records を呼ばない"
 REPO="$TEST_ROOT/checks/no-adr"
 make_repo "$REPO"
