@@ -170,6 +170,6 @@ references
   TDD（テストを先にコミットしてから実装）で進める
 - claude-hooks のコマンドの読み方（`shell.rs`、`unwrap.rs`、`git_args.rs`）やルールを書き直したら、PR の前に
   `bash .claude/tests/hooks-diff.sh [BASE]`（既定 origin/main）で、古い版と判定を比べる（2 つの版の nix build と
-  1 分あまりの比較なので、`~/.claude/scripts/slurm-run.sh` で待ち行列に流す）。`LOOSENED` の行（古い版が
+  1 分あまりの比較。1 コアの処理なので、Slurm に流さず手元で走らせる）。`LOOSENED` の行（古い版が
   止め、新しい版が通す）は、意図した変更か後退かを 1 つずつ確かめ、件数と理由を PR の Tests に書く。テストが
   書いた形しか見ないのに対し、包み・ディレクトリの移り方・コマンドを組み合わせた集まりで、ルールごとに比べる（ADR-0024）
