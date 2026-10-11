@@ -1,0 +1,55 @@
+# 崩れた日本語の語の辞書（ADR-0014）。グローバルの pre-commit と commit-msg が textlint-rule-prh で使う。
+#
+# 型は 2 つ。動詞の連用形をそのまま名詞にしたもの（確かめ、比べ、効き、数え）は、前後の文字で名詞の用法だけを
+# 止め、動詞（確かめる、比べると、効きます）は通す。英語の直訳の造語は、その語だけを止める。
+# specs は prh が辞書を読み込むときに確かめる例（from を to に直す）。
+#
+# 出典: xlc の references/history-rewrite/cb_lib.py の RULES（2026-10-11 に xlc の履歴を書き換えたときの規則。
+# xlc に固有の 2 つは除く）、nixfiles と xlc のメモリへのユーザーの指摘
+version: 1
+rules:
+  - expected: 確認
+    pattern: /確かめ(?=[のでをはがにもだ：:）」\s]|$)/
+    specs:
+      - from: 確かめの結果
+        to: 確認の結果
+      - from: 確かめが通る
+        to: 確認が通る
+      - from: 結果を確かめる
+        to: 結果を確かめる
+  - expected: 比較
+    pattern: /比べ合わせ(?=[のでをはがにもだ：:）」\s]|$)/
+    specs:
+      - from: 比べ合わせの結果
+        to: 比較の結果
+      - from: 2 つを比べ合わせると
+        to: 2 つを比べ合わせると
+  - expected: 比較
+    pattern: /(?<=[の、])比べ(?=[での」（はが])/
+    specs:
+      - from: 2 つの比べでは
+        to: 2 つの比較では
+      - from: 、比べは
+        to: 、比較は
+      - from: 2 つを比べると
+        to: 2 つを比べると
+  - expected: 影響
+    pattern: /(?<![一-龥])効き(?=[のをはがも：:）」。]|$)/
+    specs:
+      - from: 吸収体の効きを測る
+        to: 吸収体の影響を測る
+      - from: 目が効きます
+        to: 目が効きます
+  - expected: 計数
+    pattern: /(?<=の)数え(?=[はのをが）：:]|$)/
+    specs:
+      - from: 件の数えは
+        to: 件の計数は
+  - expected: エッジケース
+    pattern: 端のケース
+  - expected: worktree
+    pattern: 作業木
+  - expected: スイープ
+    pattern: 掃引
+  - expected: ポイントワイズの断面積
+    pattern: 点断面積

@@ -22,6 +22,29 @@ let
     text = builtins.readFile ./scan-staged-secrets.sh;
   };
   scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
+  # 崩れた日本語の語の検査（ADR-0014）。pre-commit と commit-msg が store のパスで呼ぶ。
+  # 辞書は ./ja-terms/prh.yml。Markdown は textlint の組み込みのプラグインが、コードとテキストは
+  # @textlint/text が読む（コメントと文字列の日本語を含めて、ファイルの全体を見る）
+  textlint = pkgs.textlint.withPackages [ pkgs.textlint-rule-prh ];
+  jaTermsConfig = pkgs.writeText "ja-terms-textlintrc.json" (
+    builtins.toJSON {
+      plugins."@textlint/text".extensions = jaTermsCodeExtensions;
+      rules.prh.rulePaths = [ "${./ja-terms/prh.yml}" ];
+    }
+  );
+  jaTermsCodeExtensions = [
+    ".txt"
+    ".rs"
+    ".py"
+    ".sh"
+    ".nix"
+    ".toml"
+    ".yaml"
+    ".yml"
+    ".json"
+  ];
+  jaTermsGlobs = lib.concatMapStringsSep " " (ext: "'*${ext}'") ([ ".md" ] ++ jaTermsCodeExtensions);
+  jaTerms = "${textlint}/bin/textlint --config ${jaTermsConfig}";
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
@@ -182,6 +205,24 @@ in
         ${scanSecrets} || check_failed=1
         exit $check_failed
       fi
+
+      # 日本語の崩れた語（ADR-0014）。ステージした中身を一時ディレクトリに書き出し、そこで相対パスの
+      # まま検査する（作業ツリーの、ステージしていない編集を見ない）。Markdown の自動修正は作業ツリーを
+      # ステージし直す（#282）ので、それより前に走らせる
+      # 検証: modules/home/parts/tests/ja-terms.sh
+      JA_LIST=$(mktemp)
+      git diff --cached --name-only --diff-filter=ACMR -z -- ${jaTermsGlobs} > "$JA_LIST"
+      if [ -s "$JA_LIST" ]; then
+        echo "🔍 Checking Japanese terms..."
+        JA_DIR=$(mktemp -d)
+        git checkout-index --prefix="$JA_DIR/" -z --stdin < "$JA_LIST"
+        if ! (cd "$JA_DIR" && xargs -0 ${jaTerms} --no-color < "$JA_LIST"); then
+          echo "❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: nixfiles の modules/home/parts/ja-terms/prh.yml）"
+          check_failed=1
+        fi
+        rm -rf "$JA_DIR"
+      fi
+      rm -f "$JA_LIST"
 
       # Nix ファイルのチェック（NUL区切りでスペースを含むパスにも対応）
       NIX_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- '*.nix' || true)
@@ -405,6 +446,14 @@ in
       if ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
         echo "❌ Conventional Commits 形式ではありません: $SUBJECT"
         echo "   形式: <type>(<scope>)?: <subject>    type: $TYPES"
+        exit 1
+      fi
+
+      # 日本語の崩れた語（ADR-0014）。コメントの行と、commit -v の scissors の行から後（差分）は除く
+      # 検証: modules/home/parts/tests/ja-terms.sh
+      if ! sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$MSG_FILE" \
+        | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt; then
+        echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
         exit 1
       fi
 
