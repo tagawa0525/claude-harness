@@ -224,7 +224,7 @@ fn is_zero(s: &str) -> bool {
 }
 
 /// SHA-1（40 桁）か SHA-256（64 桁）の、小文字の 16 進の番号か
-fn is_full_hash(s: &str) -> bool {
+pub fn is_full_hash(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(is_lower_hex)
 }
 

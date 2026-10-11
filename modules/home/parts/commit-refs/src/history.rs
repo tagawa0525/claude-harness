@@ -1,33 +1,41 @@
 //! rewrite-history: 履歴の中の文書と本文の番号を、書き換えた後の最後の番号に付け直す（ADR-0013）。
 //!
-//! 全てのブランチとタグを `git fast-export` で親から順に読み、テキストのブロブとコミットとタグの本文の番号を
-//! 置き換えて `git fast-import` に渡す。コミットを 1 つ渡すたびに `get-mark` で最後の番号を受け取り、後のコミットの
-//! 置き換えに使う。書き換えた履歴は `refs/commit-refs/new/` に作り、元の履歴と突き合わせてから、ブランチとタグを
-//! 1 つのトランザクションで移す。元の ref は `refs/commit-refs/original/` に残す。
+//! 1. `git fast-export --no-data` で、全てのブランチとタグから届くコミットを読む（ブロブは `git cat-file` で読む）
+//! 2. 全てのコミットの本文とブロブを調べ、文書が指すコミットを求める。止める理由は、ここで全て出す
+//! 3. 親と、文書が指すコミットの両方を依存として並べ（元の順をなるべく保つ）、番号を置き換えて
+//!    `git fast-import` に渡す。コミットを 1 つ渡すたびに `get-mark` で最後の番号を受け取り、後の置き換えに使う
+//! 4. 注釈つきのタグを `git mktag` で作り直す
+//! 5. 元の全てのコミットとタグについて、書き換えた後のものが番号の置き換えだけを当てたものかを確かめる
+//! 6. ブランチとタグを 1 つのトランザクションで移し、元の ref を `refs/commit-refs/original/` に残す
 
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use commit_refs::{Map, Target};
+use commit_refs::{Map, Target, is_full_hash};
 
 use crate::{git, read_map};
 
-const NEW_NS: &str = "refs/commit-refs/new/";
+/// fast-import がコミットを積むブランチ。トランザクションで消す
+const SCRATCH: &str = "refs/commit-refs/new/stream";
 const ORIGINAL_NS: &str = "refs/commit-refs/original/";
 
 /// テキストかどうかを見る先頭のバイト数（git の xdiff-interface.c の FIRST_FEW_BYTES と同じ）
 const FIRST_FEW_BYTES: usize = 8000;
 
-/// filter-repo 2.47.0 の fep_cmd と同じ設定に、署名つきのコミットの扱いと、本文を元の符号化のまま渡す設定を足す
-/// （番号を置き換えると中身が変わり、元の署名は合わない）
+/// filter-repo 2.47.0 の fep_cmd と同じ設定に、ブロブを流さない設定、署名つきのコミットの扱い、本文を元の
+/// 符号化のまま渡す設定を足す（番号を置き換えると中身が変わり、元の署名は合わない）。タグは流れから読まずに
+/// オブジェクトから作り直すが、fast-export はタグを流れに出すので、タグを指すタグでも止まらないよう、タグの設定も
+/// 残す
 const FAST_EXPORT: &[&str] = &[
     "fast-export",
+    "--no-data",
     "--show-original-ids",
-    "--signed-tags=strip",
     "--signed-commits=strip",
+    "--signed-tags=strip",
     "--tag-of-filtered-object=rewrite",
     "--fake-missing-tagger",
     "--reference-excluded-parents",
@@ -36,67 +44,96 @@ const FAST_EXPORT: &[&str] = &[
     "--reencode=no",
 ];
 
-pub fn run(map_path: &Path) -> Result<(), Vec<String>> {
+const MODE_LINK: &str = "120000";
+const MODE_GITLINK: &str = "160000";
+
+type Errors = Vec<String>;
+
+pub fn run(map_path: &Path) -> Result<(), Errors> {
     let text = read_map(Some(map_path))?;
     let mut map = Map::parse(&text)?;
-    let top = git::toplevel().map_err(|e| vec![e])?;
-    let map_file = map_file(&top).map_err(|e| vec![e])?;
-    preflight(&top, &map_file).map_err(|e| vec![e])?;
+    let top = git::toplevel().map_err(one)?;
+    let map_file = map_file(&top).map_err(one)?;
+    preflight(&top, &map_file).map_err(one)?;
 
-    let refs = list_refs(&top).map_err(|e| vec![e])?;
+    let all_refs = for_each_ref(&top).map_err(one)?;
+    let (refs, not_rewritten) = split_refs(&top, all_refs).map_err(one)?;
     if refs.is_empty() {
-        return Err(vec!["書き換えるブランチとタグが無い".to_string()]);
+        return Err(one("書き換えるブランチとタグが無い".to_string()));
     }
-    let commits = rev_list(&top, &refs).map_err(|e| vec![e])?;
+    let commits = rev_list(&top, &refs).map_err(one)?;
     map.add_unchanged(commits.iter().map(String::as_str));
     let current: HashSet<String> = commits.iter().cloned().collect();
-    let head = head_state(&top).map_err(|e| vec![e])?;
+    let head = head_state(&top).map_err(one)?;
+    if let Head::Detached(oid) = &head
+        && !current.contains(oid)
+    {
+        return Err(one(format!(
+            "HEAD が、書き換えるブランチとタグから届かないコミット {oid} にある（ブランチに移ってから）"
+        )));
+    }
 
     let mut rewrite = Rewrite {
         top: &top,
         map: &map,
         current: &current,
+        cat: CatFile::new(&top).map_err(one)?,
+        hash_bytes: hash_bytes(&top).map_err(one)?,
         finals: HashMap::new(),
         tag_finals: HashMap::new(),
         refs_replaced: 0,
-        hash_bytes: hash_bytes(&top).map_err(|e| vec![e])?,
     };
     let result = rewrite
-        .stream()
-        .and_then(|tags| rewrite.verify(&commits, &tags));
+        .commits(&refs)
+        .and_then(|()| rewrite.tags(&refs))
+        .and_then(|()| rewrite.verify(&commits))
+        .and_then(|()| move_refs(&top, &refs, &rewrite, &head));
     if let Err(mut errors) = result {
-        if let Err(e) = delete_new_refs(&top) {
+        if let Err(e) = delete_scratch(&top) {
             errors.push(e);
         }
         errors.push("ブランチとタグは動かしていない".to_string());
         return Err(errors);
     }
 
-    if let Err(mut errors) = move_refs(&top, &refs, &rewrite, &head) {
-        if let Err(e) = delete_new_refs(&top) {
-            errors.push(e);
-        }
-        errors.push("ブランチとタグは動かしていない".to_string());
-        return Err(errors);
-    }
-    // 始める前に作業ツリーに変更が無いことを確かめたので、新しい HEAD に合わせても失うものは無い
+    // ref を移したら、すぐに対応表を書く（後の作業ツリーの更新が失敗しても、対応は残る）
+    write_map(&map_file, &map, &rewrite.finals).map_err(|e| {
+        vec![
+            e,
+            "ブランチとタグは移した。元の ref は refs/commit-refs/original/ にある".to_string(),
+        ]
+    })?;
+    // 始める前に、作業ツリーに追跡しているファイルの変更が無いことを確かめた。書き換えはファイルの中身だけを
+    // 変え、パスを足さないので、追跡していないファイルを上書きすることも無い
     git::git(&top, &["reset", "-q", "--hard"]).map_err(|e| {
         vec![
             e,
-            "ブランチとタグは移した。作業ツリーは git reset --hard で合わせる".to_string(),
+            "ブランチとタグは移し、対応表も書いた。作業ツリーは git reset --hard で合わせる"
+                .to_string(),
         ]
     })?;
-    write_map(&map_file, &map, &rewrite.finals).map_err(|e| vec![e])?;
 
     let changed = rewrite.finals.iter().filter(|(c, f)| c != f).count();
     let shown = map_file.strip_prefix(&top).unwrap_or(&map_file);
-    print!(
+    let mut report = format!(
         "COMMITS: {}\nCHANGED: {changed}\nREFS: {}\nMAP: {}\n",
         rewrite.finals.len(),
         rewrite.refs_replaced,
         shown.display()
     );
+    for name in not_rewritten {
+        report.push_str(&format!("NOT_REWRITTEN: {name}\n"));
+    }
+    print!("{report}");
     Ok(())
+}
+
+fn one(e: String) -> Errors {
+    vec![e]
+}
+
+fn io_error(e: std::io::Error) -> Errors {
+    vec![format!("git とのやりとりに失敗した: {e}")]
 }
 
 /// 書き換えた後の対応表の置き場所（linked worktree でも共通の .git の下）
@@ -111,13 +148,25 @@ fn map_file(top: &Path) -> Result<PathBuf, String> {
     Ok(Path::new(&dir).join("commit-refs").join("commit-map"))
 }
 
-/// 作業ツリーに変更が無く、前の書き換えの ref と対応表が残っていないこと
+/// 作業ツリーに変更が無く、ほかの worktree が無く、前の書き換えの ref と対応表が残っていないこと
 fn preflight(top: &Path, map_file: &Path) -> Result<(), String> {
     let status = git::git(top, &["status", "--porcelain", "--untracked-files=no"])?;
     if !status.is_empty() {
         return Err(format!(
             "作業ツリーに変更がある（コミットするか片付けてから）:\n{}",
             String::from_utf8_lossy(&status).trim_end()
+        ));
+    }
+    let worktrees = git::git(top, &["worktree", "list", "--porcelain"])?;
+    let worktrees: Vec<String> = String::from_utf8_lossy(&worktrees)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(str::to_string)
+        .collect();
+    if worktrees.len() > 1 {
+        return Err(format!(
+            "ほかの worktree がある（ブランチを移すと、その worktree が食い違う。取り除いてから）:\n{}",
+            worktrees.join("\n")
         ));
     }
     let left = git::git(
@@ -139,28 +188,68 @@ fn preflight(top: &Path, map_file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 書き換えるブランチとタグの名前と、指すオブジェクト
-fn list_refs(top: &Path) -> Result<Vec<(String, String)>, String> {
+/// ref の名前と、指すオブジェクトとその種類
+struct Ref {
+    name: String,
+    oid: String,
+    kind: String,
+}
+
+fn for_each_ref(top: &Path) -> Result<Vec<Ref>, String> {
     let out = git::git(
         top,
         &[
             "for-each-ref",
-            "--format=%(refname) %(objectname)",
-            "refs/heads/",
-            "refs/tags/",
+            "--format=%(refname) %(objectname) %(objecttype)",
         ],
     )?;
     Ok(String::from_utf8_lossy(&out)
         .lines()
-        .filter_map(|line| line.split_once(' '))
-        .map(|(name, oid)| (name.to_string(), oid.to_string()))
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, ' ');
+            Some(Ref {
+                name: parts.next()?.to_string(),
+                oid: parts.next()?.to_string(),
+                kind: parts.next()?.to_string(),
+            })
+        })
         .collect())
 }
 
-/// ブランチとタグから届く全てのコミット
-fn rev_list(top: &Path, refs: &[(String, String)]) -> Result<Vec<String>, String> {
+/// 書き換える ref（コミットを指すブランチと、たどるとコミットに着くタグ）と、書き換えない ref の名前に分ける
+fn split_refs(top: &Path, all: Vec<Ref>) -> Result<(Vec<Ref>, Vec<String>), String> {
+    let mut rewritten = Vec::new();
+    let mut others = Vec::new();
+    for r in all {
+        let target = if r.name.starts_with("refs/heads/") {
+            r.kind == "commit"
+        } else if r.name.starts_with("refs/tags/") {
+            match r.kind.as_str() {
+                "commit" => true,
+                "tag" => {
+                    let peeled = format!("{}^{{commit}}", r.oid);
+                    git::run_git(top, &["rev-parse", "--verify", "-q", &peeled])?
+                        .status
+                        .success()
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if target {
+            rewritten.push(r);
+        } else {
+            others.push(r.name);
+        }
+    }
+    Ok((rewritten, others))
+}
+
+/// 書き換える ref から届く全てのコミット
+fn rev_list(top: &Path, refs: &[Ref]) -> Result<Vec<String>, String> {
     let mut args = vec!["rev-list"];
-    args.extend(refs.iter().map(|(name, _)| name.as_str()));
+    args.extend(refs.iter().map(|r| r.name.as_str()));
     let out = git::git(top, &args)?;
     Ok(String::from_utf8_lossy(&out)
         .lines()
@@ -186,84 +275,120 @@ fn head_state(top: &Path) -> Result<Head, String> {
     ))
 }
 
-/// 注釈つきのタグ。fast-import の `tag` は refs/tags/ に ref を作るので、流れからは外し、コミットを入れ終えてから
-/// `git mktag` で作る
-struct TagSpec {
-    name: String,
-    mark: Option<String>,
-    from: String,
+/// fast-export の流れから読んだコミット
+struct CommitRecord {
+    /// fast-export が振った印（`:N`）。fast-import にも同じ印で渡す
+    mark: String,
+    /// 今の番号
     original: String,
-    tagger: Vec<u8>,
+    /// author、committer、encoding の行
+    header: Vec<u8>,
     message: Vec<u8>,
+    /// 親の印
+    parents: Vec<String>,
+    ops: Vec<FileOp>,
+}
+
+enum FileOp {
+    /// `M <mode> <ブロブの番号> <パス>`
+    Modify {
+        mode: String,
+        oid: String,
+        path: Vec<u8>,
+    },
+    /// そのまま渡す行（D、C、R、deleteall）
+    Other(Vec<u8>),
 }
 
 struct Rewrite<'a> {
     top: &'a Path,
     map: &'a Map,
     current: &'a HashSet<String>,
+    cat: CatFile,
+    /// オブジェクトの番号のバイト数（SHA-1 は 20、SHA-256 は 32）
+    hash_bytes: usize,
     /// 今のコミット → 書き換えた後の最後のコミット
     finals: HashMap<String, String>,
     /// 今の注釈つきのタグ → 書き換えた後のタグ
     tag_finals: HashMap<String, String>,
     refs_replaced: usize,
-    /// オブジェクトの番号のバイト数（SHA-1 は 20、SHA-256 は 32）
-    hash_bytes: usize,
 }
 
 impl Rewrite<'_> {
-    /// 文書の語が当たった旧を、書き換えた後の最後の番号にする。`finals` に無い今のコミットは、まだ流していない
-    fn resolve(
-        &self,
+    /// 文書の語が当たった旧が、今のどのコミットか（消えたコミットなら理由を積み、None）
+    fn commit_of<'m>(
         label: &str,
         token: &str,
-        old: &str,
-        target: &Target,
-        errors: &mut Vec<String>,
-    ) -> Option<String> {
-        let commit = match target {
+        old: &'m str,
+        target: &'m Target,
+        errors: &mut Errors,
+    ) -> Option<&'m str> {
+        match target {
             Target::Pruned => {
                 errors.push(format!(
                     "{label}: {token} は書き換えで消えたコミット {old} を指す"
                 ));
-                return None;
-            }
-            Target::Changed(new) => new.as_str(),
-            Target::Unchanged => old,
-        };
-        match self.finals.get(commit) {
-            Some(last) => Some(last.clone()),
-            None if self.current.contains(commit) => {
-                errors.push(format!(
-                    "{label}: {token} が指すコミット {commit} を、まだ書き換えていない（祖先でないコミットを指す）"
-                ));
                 None
             }
-            // 書き換えるブランチとタグから届かないコミットは、この書き換えで変わらない
-            None => Some(commit.to_string()),
+            Target::Changed(new) => Some(new.as_str()),
+            Target::Unchanged => Some(old),
         }
     }
 
-    /// テキストのブロブか本文の番号を置き換えた内容と、置き換えた語の数
-    fn transform(&self, label: &str, data: &[u8], errors: &mut Vec<String>) -> (Vec<u8>, usize) {
-        if is_binary(data) {
-            return (data.to_vec(), 0);
-        }
+    /// 文書が指す、今のコミット（書き換えるもの）を集める
+    fn references(&self, label: &str, data: &[u8], errors: &mut Errors) -> Vec<String> {
+        let mut found = Vec::new();
         self.map
             .replace_by(label, data, errors, |token, old, target, errors| {
-                self.resolve(label, token, old, target, errors)
+                if let Some(commit) = Self::commit_of(label, token, old, target, errors)
+                    && self.current.contains(commit)
+                {
+                    found.push(commit.to_string());
+                }
+                None
+            });
+        found
+    }
+
+    /// テキストの番号を、書き換えた後の最後の番号に置き換えた内容と、置き換えた語の数
+    fn transform(&self, label: &str, data: &[u8], errors: &mut Errors) -> (Vec<u8>, usize) {
+        self.map
+            .replace_by(label, data, errors, |token, old, target, errors| {
+                let commit = Self::commit_of(label, token, old, target, errors)?;
+                match self.finals.get(commit) {
+                    Some(last) => Some(last.clone()),
+                    // 依存の順に流すので、書き換えるコミットは先に流れている
+                    None if self.current.contains(commit) => {
+                        errors.push(format!(
+                            "{label}: {token} が指すコミット {commit} を、まだ書き換えていない"
+                        ));
+                        None
+                    }
+                    // 書き換える ref から届かないコミットは、この書き換えで変わらない
+                    None => Some(commit.to_string()),
+                }
             })
     }
 
-    /// fast-export の流れを書き換えて fast-import に渡し、注釈つきのタグを作る。作ったタグの元の情報を返す
-    fn stream(&mut self) -> Result<Vec<TagSpec>, Vec<String>> {
-        let mut export = Command::new("git")
-            .arg("-C")
-            .arg(self.top)
-            .args(FAST_EXPORT)
-            .args(["--branches", "--tags"])
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| vec![format!("git fast-export を起動できない: {e}")])?;
+    /// ブロブの中身を、モードに応じて置き換える（シンボリックリンクの行き先とバイナリはそのまま）
+    fn transform_blob(
+        &self,
+        label: &str,
+        mode: &str,
+        data: &[u8],
+        errors: &mut Errors,
+    ) -> (Vec<u8>, usize) {
+        if mode == MODE_LINK || is_binary(data) {
+            return (data.to_vec(), 0);
+        }
+        self.transform(label, data, errors)
+    }
+
+    /// コミットを読み、依存の順に並べて、番号を置き換えて fast-import に渡す
+    fn commits(&mut self, refs: &[Ref]) -> Result<(), Errors> {
+        let records = read_commits(self.top, refs)?;
+        let order = self.order(&records)?;
+
         let mut import = Command::new("git")
             .arg("-C")
             .arg(self.top)
@@ -273,313 +398,310 @@ impl Rewrite<'_> {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| vec![format!("git fast-import を起動できない: {e}")])?;
-
-        let result = self.pump(&mut export, &mut import);
-        if let Err(errors) = result {
+            .map_err(|e| one(format!("git fast-import を起動できない: {e}")))?;
+        let result = self.import(&records, &order, &mut import);
+        if result.is_err() {
             // 途中で止めたときは、fast-import が ref を書く前に終わらせる
             let _ = import.kill();
-            let _ = export.kill();
             let _ = import.wait();
-            let _ = export.wait();
-            return Err(errors);
+            return result;
         }
-        let status = import
-            .wait()
-            .map_err(|e| vec![format!("git fast-import: {e}")])?;
+        let status = import.wait().map_err(io_error)?;
         if !status.success() {
-            return Err(vec![format!("git fast-import が失敗した（{status}）")]);
+            return Err(one(format!("git fast-import が失敗した（{status}）")));
         }
-        let status = export
-            .wait()
-            .map_err(|e| vec![format!("git fast-export: {e}")])?;
-        if !status.success() {
-            return Err(vec![format!("git fast-export が失敗した（{status}）")]);
-        }
-        let tags = result?;
-        self.make_tags(&tags)?;
-        Ok(tags)
+        Ok(())
     }
 
-    fn pump(
-        &mut self,
-        export: &mut Child,
-        import: &mut Child,
-    ) -> Result<Vec<TagSpec>, Vec<String>> {
-        let mut input = Lines::new(BufReader::new(export.stdout.take().expect("piped stdout")));
-        let mut out = import.stdin.take().expect("piped stdin");
-        let mut answers = BufReader::new(import.stdout.take().expect("piped stdout"));
-        let io = |e: std::io::Error| {
-            vec![format!(
-                "fast-export と fast-import のやりとりに失敗した: {e}"
-            )]
-        };
-
-        let mut blobs: HashMap<String, (String, Vec<u8>)> = HashMap::new();
-        let mut marks: HashMap<String, String> = HashMap::new();
-        let mut tags = Vec::new();
-        loop {
-            let Some(line) = input.next().map_err(io)? else {
-                return Err(vec!["fast-export の流れが done の前に終わった".to_string()]);
-            };
-            if line.is_empty() || line == b"feature done" {
-                continue;
-            }
-            let (command, rest) = split_command(&line);
-            match command {
-                b"blob" => {
-                    let mut mark = String::new();
-                    let mut original = String::new();
-                    let data = loop {
-                        let line = input.next().map_err(io)?.unwrap_or_default();
-                        let (key, value) = split_command(&line);
-                        match key {
-                            b"mark" => mark = text(value),
-                            b"original-oid" => original = text(value),
-                            b"data" => break input.data(value).map_err(io)?,
-                            _ => return Err(vec![unexpected("blob", &line)]),
-                        }
-                    };
-                    blobs.insert(mark, (original, data));
-                }
-                b"reset" => {
-                    let mut emit = format!("reset {}\n", new_ref(&text(rest))).into_bytes();
-                    if input
-                        .peek()
-                        .map_err(io)?
-                        .is_some_and(|l| l.starts_with(b"from "))
-                    {
-                        let from = input.next().map_err(io)?.unwrap_or_default();
-                        emit.extend_from_slice(&from);
-                        emit.push(b'\n');
-                    }
-                    emit.push(b'\n');
-                    out.write_all(&emit).map_err(io)?;
-                }
-                b"commit" => {
-                    self.commit(
-                        &text(rest),
-                        &mut input,
-                        &mut out,
-                        &mut answers,
-                        &mut blobs,
-                        &mut marks,
-                    )?;
-                }
-                b"tag" => tags.push(read_tag(&text(rest), &mut input).map_err(|e| vec![e])?),
-                b"done" => break,
-                _ => return Err(vec![unexpected("流れ", &line)]),
-            }
-        }
-        out.write_all(b"done\n").map_err(io)?;
-        drop(out);
-        self.resolve_tag_targets(&mut tags, &marks)?;
-        Ok(tags)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn commit(
-        &mut self,
-        name: &str,
-        input: &mut Lines<impl BufRead>,
-        out: &mut ChildStdin,
-        answers: &mut BufReader<ChildStdout>,
-        blobs: &mut HashMap<String, (String, Vec<u8>)>,
-        marks: &mut HashMap<String, String>,
-    ) -> Result<(), Vec<String>> {
-        let io = |e: std::io::Error| {
-            vec![format!(
-                "fast-export と fast-import のやりとりに失敗した: {e}"
-            )]
-        };
-        let mut mark = String::new();
-        let mut original = String::new();
-        let mut header = Vec::new();
-        let message = loop {
-            let line = input.next().map_err(io)?.unwrap_or_default();
-            let (key, value) = split_command(&line);
-            match key {
-                b"mark" => mark = text(value),
-                b"original-oid" => original = text(value),
-                b"author" | b"committer" | b"encoding" => {
-                    header.extend_from_slice(&line);
-                    header.push(b'\n');
-                }
-                b"data" => break input.data(value).map_err(io)?,
-                _ => return Err(vec![unexpected("commit", &line)]),
-            }
-        };
-        let short = &original[..original.len().min(12)];
+    /// 親と、文書が指すコミットを依存として、コミットを並べる。同じ順位なら元の流れの順にする
+    fn order(&mut self, records: &[CommitRecord]) -> Result<Vec<usize>, Errors> {
+        let by_mark: HashMap<&str, usize> = records
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.mark.as_str(), i))
+            .collect();
+        let by_original: HashMap<&str, usize> = records
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.original.as_str(), i))
+            .collect();
 
         let mut errors = Vec::new();
-        let mut emit_blobs = Vec::new();
-        let mut rest = Vec::new();
-        while let Some(line) = input.peek().map_err(io)? {
-            let (key, value) = split_command(line);
-            if line.is_empty() {
-                input.next().map_err(io)?;
-                break;
-            }
-            match key {
-                b"from" | b"merge" | b"D" | b"C" | b"R" | b"deleteall" => {}
-                b"M" => {
-                    // M <mode> <dataref> <path>
-                    let mut parts = value.splitn(3, |b| *b == b' ');
-                    let (_, dataref, path) = (parts.next(), parts.next(), parts.next());
-                    if let (Some(dataref), Some(path)) = (dataref, path)
-                        && let Some((_, data)) = blobs.remove(&text(dataref))
-                    {
-                        let label =
-                            format!("{}（コミット {short}）", String::from_utf8_lossy(path));
-                        let (data, count) = self.transform(&label, &data, &mut errors);
-                        self.refs_replaced += count;
-                        emit_blobs.push((text(dataref), data));
+        let mut scanned: HashMap<String, Vec<String>> = HashMap::new();
+        let mut deps: Vec<HashSet<usize>> = Vec::with_capacity(records.len());
+        for record in records {
+            let short = short(&record.original);
+            let mut mine = HashSet::new();
+            for parent in &record.parents {
+                match by_mark.get(parent.as_str()) {
+                    Some(i) => {
+                        mine.insert(*i);
                     }
+                    None => errors.push(format!(
+                        "コミット {short} の親 {parent} が fast-export の流れに無い"
+                    )),
                 }
-                _ => break,
             }
-            let line = input.next().map_err(io)?.unwrap_or_default();
-            rest.extend_from_slice(&line);
-            rest.push(b'\n');
+            let mut cited = self.references(
+                &format!("コミット {short} の本文"),
+                &record.message,
+                &mut errors,
+            );
+            for op in &record.ops {
+                let FileOp::Modify { mode, oid, path } = op else {
+                    continue;
+                };
+                if mode == MODE_LINK || mode == MODE_GITLINK {
+                    continue;
+                }
+                if !scanned.contains_key(oid) {
+                    let data = self.cat.object(oid).map_err(one)?;
+                    let label = format!("{}（コミット {short}）", String::from_utf8_lossy(path));
+                    let found = if is_binary(&data) {
+                        Vec::new()
+                    } else {
+                        self.references(&label, &data, &mut errors)
+                    };
+                    scanned.insert(oid.clone(), found);
+                }
+                cited.extend(scanned[oid].iter().cloned());
+            }
+            for commit in cited {
+                if commit == record.original {
+                    errors.push(format!(
+                        "コミット {short} の文書か本文が、そのコミット自身を指す"
+                    ));
+                } else if let Some(i) = by_original.get(commit.as_str()) {
+                    mine.insert(*i);
+                }
+            }
+            deps.push(mine);
         }
-        let (message, count) =
-            self.transform(&format!("コミット {short} の本文"), &message, &mut errors);
-        self.refs_replaced += count;
         if !errors.is_empty() {
             return Err(errors);
         }
 
-        let mut emit = Vec::new();
-        for (blob_mark, data) in emit_blobs {
-            emit.extend_from_slice(
-                format!("blob\nmark {blob_mark}\ndata {}\n", data.len()).as_bytes(),
-            );
-            emit.extend_from_slice(&data);
-            emit.push(b'\n');
-        }
-        emit.extend_from_slice(format!("commit {}\nmark {mark}\n", new_ref(name)).as_bytes());
-        emit.extend_from_slice(&header);
-        emit.extend_from_slice(format!("data {}\n", message.len()).as_bytes());
-        emit.extend_from_slice(&message);
-        emit.push(b'\n');
-        emit.extend_from_slice(&rest);
-        emit.extend_from_slice(format!("\nget-mark {mark}\n").as_bytes());
-        out.write_all(&emit)
-            .and_then(|()| out.flush())
-            .map_err(io)?;
-
-        let mut answer = String::new();
-        answers.read_line(&mut answer).map_err(io)?;
-        let last = answer.trim().to_string();
-        if !is_hash(&last) {
-            return Err(vec![format!(
-                "fast-import の get-mark の答えが番号でない: {answer:?}"
-            )]);
-        }
-        marks.insert(mark, last.clone());
-        self.finals.insert(original, last);
-        Ok(())
-    }
-
-    /// 注釈つきのタグが指すものを、書き換えた後の番号にする（`from` の印を引く）
-    fn resolve_tag_targets(
-        &self,
-        tags: &mut [TagSpec],
-        marks: &HashMap<String, String>,
-    ) -> Result<(), Vec<String>> {
-        // タグが指すのは、コミットの印か、先に出たタグの印（タグを指すタグ）。印は make_tags で引く
-        let mut tag_marks = HashSet::new();
-        for tag in tags.iter_mut() {
-            if let Some(last) = marks.get(&tag.from) {
-                tag.from = last.clone();
-            } else if !tag_marks.contains(&tag.from) {
-                return Err(vec![format!(
-                    "タグ {} が指す {} が、流れに出たコミットにもタグにも無い",
-                    tag.name, tag.from
-                )]);
-            }
-            if let Some(mark) = &tag.mark {
-                tag_marks.insert(mark.clone());
+        let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); records.len()];
+        let mut waiting: Vec<usize> = vec![0; records.len()];
+        for (i, mine) in deps.iter().enumerate() {
+            waiting[i] = mine.len();
+            for d in mine {
+                dependents[*d].push(i);
             }
         }
-        Ok(())
+        let mut ready: BinaryHeap<Reverse<usize>> = (0..records.len())
+            .filter(|i| waiting[*i] == 0)
+            .map(Reverse)
+            .collect();
+        let mut order = Vec::with_capacity(records.len());
+        while let Some(Reverse(i)) = ready.pop() {
+            order.push(i);
+            for d in &dependents[i] {
+                waiting[*d] -= 1;
+                if waiting[*d] == 0 {
+                    ready.push(Reverse(*d));
+                }
+            }
+        }
+        if order.len() < records.len() {
+            let stuck: Vec<&str> = (0..records.len())
+                .filter(|i| waiting[*i] > 0)
+                .map(|i| short(&records[i].original))
+                .collect();
+            return Err(one(format!(
+                "文書が指すコミットが循環している: {}",
+                stuck.join(" ")
+            )));
+        }
+        Ok(order)
     }
 
-    /// 注釈つきのタグを `git mktag` で作り、`refs/commit-refs/new/tags/` に置く
-    fn make_tags(&mut self, tags: &[TagSpec]) -> Result<(), Vec<String>> {
-        let mut by_mark: HashMap<String, String> = HashMap::new();
-        for tag in tags {
-            let (object, kind) = match by_mark.get(&tag.from) {
-                Some(oid) => (oid.clone(), "tag"),
-                None => (tag.from.clone(), "commit"),
-            };
+    fn import(
+        &mut self,
+        records: &[CommitRecord],
+        order: &[usize],
+        import: &mut Child,
+    ) -> Result<(), Errors> {
+        let mut out = import.stdin.take().expect("piped stdin");
+        let mut answers = BufReader::new(import.stdout.take().expect("piped stdout"));
+        // ブロブの印は、コミットの印の後から振る
+        let mut next_mark = records
+            .iter()
+            .filter_map(|r| r.mark.trim_start_matches(':').parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let mut blob_marks: HashMap<(String, bool), String> = HashMap::new();
+
+        for &i in order {
+            let record = &records[i];
+            let short = short(&record.original);
             let mut errors = Vec::new();
+            let mut emit = Vec::new();
+            let mut ops = Vec::new();
+            for op in &record.ops {
+                match op {
+                    FileOp::Modify { mode, oid, path } if mode != MODE_GITLINK => {
+                        let key = (oid.clone(), mode == MODE_LINK);
+                        let mark = match blob_marks.get(&key) {
+                            Some(mark) => mark.clone(),
+                            None => {
+                                let data = self.cat.object(oid).map_err(one)?;
+                                let label = format!(
+                                    "{}（コミット {short}）",
+                                    String::from_utf8_lossy(path)
+                                );
+                                let (data, count) =
+                                    self.transform_blob(&label, mode, &data, &mut errors);
+                                self.refs_replaced += count;
+                                let mark = format!(":{next_mark}");
+                                next_mark += 1;
+                                emit.extend_from_slice(
+                                    format!("blob\nmark {mark}\ndata {}\n", data.len()).as_bytes(),
+                                );
+                                emit.extend_from_slice(&data);
+                                emit.push(b'\n');
+                                blob_marks.insert(key, mark.clone());
+                                mark
+                            }
+                        };
+                        ops.extend_from_slice(format!("M {mode} {mark} ").as_bytes());
+                        ops.extend_from_slice(path);
+                        ops.push(b'\n');
+                    }
+                    FileOp::Modify { mode, oid, path } => {
+                        ops.extend_from_slice(format!("M {mode} {oid} ").as_bytes());
+                        ops.extend_from_slice(path);
+                        ops.push(b'\n');
+                    }
+                    FileOp::Other(line) => {
+                        ops.extend_from_slice(line);
+                        ops.push(b'\n');
+                    }
+                }
+            }
             let (message, count) = self.transform(
-                &format!("タグ {} の本文", tag.name),
-                &tag.message,
+                &format!("コミット {short} の本文"),
+                &record.message,
                 &mut errors,
             );
+            self.refs_replaced += count;
             if !errors.is_empty() {
                 return Err(errors);
             }
-            self.refs_replaced += count;
-            let mut body = format!("object {object}\ntype {kind}\ntag {}\n", tag.name).into_bytes();
-            body.extend_from_slice(&tag.tagger);
-            body.extend_from_slice(b"\n\n");
-            body.extend_from_slice(&message);
-            let oid = git_stdin(self.top, &["mktag"], &body).map_err(|e| vec![e])?;
-            git::git(
-                self.top,
-                &["update-ref", &format!("{NEW_NS}tags/{}", tag.name), &oid],
-            )
-            .map_err(|e| vec![e])?;
-            if let Some(mark) = &tag.mark {
-                by_mark.insert(mark.clone(), oid.clone());
+
+            // 親の無いコミットの前でブランチを空にする（fast-import は from の無いコミットを今の先に積む）
+            if record.parents.is_empty() {
+                emit.extend_from_slice(format!("reset {SCRATCH}\n\n").as_bytes());
             }
-            self.tag_finals.insert(tag.original.clone(), oid);
+            emit.extend_from_slice(format!("commit {SCRATCH}\nmark {}\n", record.mark).as_bytes());
+            emit.extend_from_slice(&record.header);
+            emit.extend_from_slice(format!("data {}\n", message.len()).as_bytes());
+            emit.extend_from_slice(&message);
+            emit.push(b'\n');
+            for (n, parent) in record.parents.iter().enumerate() {
+                let key = if n == 0 { "from" } else { "merge" };
+                emit.extend_from_slice(format!("{key} {parent}\n").as_bytes());
+            }
+            emit.extend_from_slice(&ops);
+            emit.extend_from_slice(format!("\nget-mark {}\n", record.mark).as_bytes());
+            out.write_all(&emit)
+                .and_then(|()| out.flush())
+                .map_err(io_error)?;
+
+            let mut answer = String::new();
+            answers.read_line(&mut answer).map_err(io_error)?;
+            let last = answer.trim().to_string();
+            if !is_full_hash(&last) {
+                return Err(one(format!(
+                    "fast-import の get-mark の答えが番号でない: {answer:?}"
+                )));
+            }
+            self.finals.insert(record.original.clone(), last);
+        }
+        out.write_all(b"done\n").map_err(io_error)?;
+        Ok(())
+    }
+
+    /// 注釈つきのタグを、指すものを書き換えた後のものにして作り直す
+    fn tags(&mut self, refs: &[Ref]) -> Result<(), Errors> {
+        for r in refs {
+            if r.kind == "tag" {
+                self.make_tag(&r.oid)?;
+            }
         }
         Ok(())
     }
 
+    /// タグのオブジェクト `oid` を作り直し、新しい番号を返す（タグを指すタグは、指す方を先に作る）
+    fn make_tag(&mut self, oid: &str) -> Result<String, Errors> {
+        if let Some(done) = self.tag_finals.get(oid) {
+            return Ok(done.clone());
+        }
+        let data = self.cat.object(oid).map_err(one)?;
+        let (headers, message) = split_object(&data);
+        let value = |key: &[u8]| text(&values(&headers, key).concat());
+        let (object, kind, name) = (value(b"object"), value(b"type"), value(b"tag"));
+        let object = match kind.as_str() {
+            "commit" => self.finals.get(&object).cloned().unwrap_or(object),
+            "tag" => self.make_tag(&object)?,
+            _ => object,
+        };
+        let mut errors = Vec::new();
+        let (message, count) = self.transform(
+            &format!("タグ {name} の本文"),
+            strip_signature(message),
+            &mut errors,
+        );
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        self.refs_replaced += count;
+        let mut body = format!("object {object}\ntype {kind}\ntag {name}\n").into_bytes();
+        for tagger in values(&headers, b"tagger") {
+            body.extend_from_slice(b"tagger ");
+            body.extend_from_slice(&tagger);
+            body.push(b'\n');
+        }
+        body.push(b'\n');
+        body.extend_from_slice(&message);
+        let new = git::git_stdin(self.top, &["mktag"], &body).map_err(one)?;
+        let new = String::from_utf8_lossy(&new).trim().to_string();
+        self.tag_finals.insert(oid.to_string(), new.clone());
+        Ok(new)
+    }
+
     /// 元の全てのコミットとタグについて、書き換えた後のものが、番号の置き換えだけを当てたものかを確かめる
-    fn verify(&self, commits: &[String], tags: &[TagSpec]) -> Result<(), Vec<String>> {
-        let mut cat = CatFile::new(self.top).map_err(|e| vec![e])?;
+    fn verify(&mut self, commits: &[String]) -> Result<(), Errors> {
         let mut errors = Vec::new();
         let mut seen_trees = HashSet::new();
         let mut seen_blobs = HashSet::new();
         for commit in commits {
-            let Some(last) = self.finals.get(commit) else {
-                errors.push(format!("コミット {commit} が fast-export の流れに無かった"));
+            let Some(last) = self.finals.get(commit).cloned() else {
+                errors.push(format!("コミット {commit} を書き換えていない"));
                 continue;
             };
-            let old = cat.object(commit).map_err(|e| vec![e])?;
-            let new = cat.object(last).map_err(|e| vec![e])?;
+            let old = self.cat.object(commit).map_err(one)?;
+            let new = self.cat.object(&last).map_err(one)?;
             let (old_headers, old_message) = split_object(&old);
             let (new_headers, new_message) = split_object(&new);
-            let short = &commit[..12];
-            let field = |headers: &[Header], key: &[u8]| -> Vec<Vec<u8>> {
-                headers
-                    .iter()
-                    .filter(|(k, _)| k == key)
-                    .map(|(_, v)| v.clone())
-                    .collect()
-            };
+            let short = short(commit);
             for key in [&b"author"[..], b"committer", b"encoding"] {
-                if field(&old_headers, key) != field(&new_headers, key) {
+                if values(&old_headers, key) != values(&new_headers, key) {
                     errors.push(format!(
                         "検証: コミット {short} の {} が変わった",
                         String::from_utf8_lossy(key)
                     ));
                 }
             }
-            let parents: Vec<Vec<u8>> = field(&old_headers, b"parent")
+            let parents: Vec<Vec<u8>> = values(&old_headers, b"parent")
                 .iter()
                 .map(|p| {
-                    let p = String::from_utf8_lossy(p).to_string();
+                    let p = text(p);
                     self.finals.get(&p).cloned().unwrap_or(p).into_bytes()
                 })
                 .collect();
-            if parents != field(&new_headers, b"parent") {
+            if parents != values(&new_headers, b"parent") {
                 errors.push(format!("検証: コミット {short} の親が合わない"));
             }
             let mut ignored = Vec::new();
@@ -591,10 +713,9 @@ impl Rewrite<'_> {
             if expected != new_message {
                 errors.push(format!("検証: コミット {short} の本文が合わない"));
             }
-            let old_tree = text(&field(&old_headers, b"tree").concat());
-            let new_tree = text(&field(&new_headers, b"tree").concat());
+            let old_tree = text(&values(&old_headers, b"tree").concat());
+            let new_tree = text(&values(&new_headers, b"tree").concat());
             self.verify_tree(
-                &mut cat,
                 &old_tree,
                 &new_tree,
                 "",
@@ -603,42 +724,45 @@ impl Rewrite<'_> {
                 &mut seen_blobs,
                 &mut errors,
             )
-            .map_err(|e| vec![e])?;
+            .map_err(one)?;
         }
-        for tag in tags {
-            let Some(new_oid) = self.tag_finals.get(&tag.original) else {
-                errors.push(format!("検証: タグ {} を作っていない", tag.name));
-                continue;
-            };
-            let old = cat.object(&tag.original).map_err(|e| vec![e])?;
-            let new = cat.object(new_oid).map_err(|e| vec![e])?;
+        let tags: Vec<(String, String)> = self
+            .tag_finals
+            .iter()
+            .map(|(o, n)| (o.clone(), n.clone()))
+            .collect();
+        for (old_oid, new_oid) in tags {
+            let old = self.cat.object(&old_oid).map_err(one)?;
+            let new = self.cat.object(&new_oid).map_err(one)?;
             let (old_headers, old_message) = split_object(&old);
             let (new_headers, new_message) = split_object(&new);
-            let get = |headers: &[Header], key: &[u8]| {
-                headers
-                    .iter()
-                    .find(|(k, _)| k == key)
-                    .map(|(_, v)| text(v))
-                    .unwrap_or_default()
-            };
-            let old_object = get(&old_headers, b"object");
+            let name = text(&values(&old_headers, b"tag").concat());
+            let old_object = text(&values(&old_headers, b"object").concat());
             let expected_object = self
                 .finals
                 .get(&old_object)
                 .or_else(|| self.tag_finals.get(&old_object))
                 .cloned()
                 .unwrap_or(old_object);
-            if get(&new_headers, b"object") != expected_object {
-                errors.push(format!("検証: タグ {} が指すものが合わない", tag.name));
+            if text(&values(&new_headers, b"object").concat()) != expected_object {
+                errors.push(format!("検証: タグ {name} が指すものが合わない"));
+            }
+            for key in [&b"type"[..], b"tag", b"tagger"] {
+                if values(&old_headers, key) != values(&new_headers, key) {
+                    errors.push(format!(
+                        "検証: タグ {name} の {} が変わった",
+                        String::from_utf8_lossy(key)
+                    ));
+                }
             }
             let mut ignored = Vec::new();
             let (expected, _) = self.transform(
-                &format!("タグ {} の本文", tag.name),
-                old_message,
+                &format!("タグ {name} の本文"),
+                strip_signature(old_message),
                 &mut ignored,
             );
             if expected != new_message {
-                errors.push(format!("検証: タグ {} の本文が合わない", tag.name));
+                errors.push(format!("検証: タグ {name} の本文が合わない"));
             }
         }
         if errors.is_empty() {
@@ -650,21 +774,20 @@ impl Rewrite<'_> {
 
     #[allow(clippy::too_many_arguments)]
     fn verify_tree(
-        &self,
-        cat: &mut CatFile,
+        &mut self,
         old: &str,
         new: &str,
         prefix: &str,
         commit: &str,
         seen_trees: &mut HashSet<(String, String)>,
-        seen_blobs: &mut HashSet<(String, String)>,
-        errors: &mut Vec<String>,
+        seen_blobs: &mut HashSet<(String, String, String)>,
+        errors: &mut Errors,
     ) -> Result<(), String> {
         if !seen_trees.insert((old.to_string(), new.to_string())) {
             return Ok(());
         }
-        let old_entries = parse_tree(&cat.object(old)?, self.hash_bytes);
-        let new_entries = parse_tree(&cat.object(new)?, self.hash_bytes);
+        let old_entries = parse_tree(&self.cat.object(old)?, self.hash_bytes);
+        let new_entries = parse_tree(&self.cat.object(new)?, self.hash_bytes);
         if old_entries.len() != new_entries.len() {
             errors.push(format!(
                 "検証: コミット {commit} の {prefix} のファイルの数が合わない"
@@ -681,7 +804,6 @@ impl Rewrite<'_> {
             }
             match o.mode.as_str() {
                 "40000" => self.verify_tree(
-                    cat,
                     &o.oid,
                     &n.oid,
                     &format!("{path}/"),
@@ -691,19 +813,19 @@ impl Rewrite<'_> {
                     errors,
                 )?,
                 // サブモジュールのコミットは書き換えない
-                "160000" => {
+                MODE_GITLINK => {
                     if o.oid != n.oid {
                         errors.push(format!("検証: コミット {commit} の {path} が変わった"));
                     }
                 }
-                _ => {
-                    if !seen_blobs.insert((o.oid.clone(), n.oid.clone())) {
+                mode => {
+                    if !seen_blobs.insert((o.oid.clone(), n.oid.clone(), mode.to_string())) {
                         continue;
                     }
-                    let old_data = cat.object(&o.oid)?;
-                    let new_data = cat.object(&n.oid)?;
+                    let old_data = self.cat.object(&o.oid)?;
+                    let new_data = self.cat.object(&n.oid)?;
                     let mut ignored = Vec::new();
-                    let (expected, _) = self.transform(&path, &old_data, &mut ignored);
+                    let (expected, _) = self.transform_blob(&path, mode, &old_data, &mut ignored);
                     if expected != new_data {
                         errors.push(format!("検証: コミット {commit} の {path} が合わない"));
                     }
@@ -714,67 +836,182 @@ impl Rewrite<'_> {
     }
 }
 
+/// 書き換える ref から届くコミットを、fast-export の流れから読む（タグとブランチの命令は読み飛ばし、ref は
+/// トランザクションで移す）
+fn read_commits(top: &Path, refs: &[Ref]) -> Result<Vec<CommitRecord>, Errors> {
+    let mut export = Command::new("git")
+        .arg("-C")
+        .arg(top)
+        .args(FAST_EXPORT)
+        .args(refs.iter().map(|r| r.name.as_str()))
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| one(format!("git fast-export を起動できない: {e}")))?;
+    let mut input = Lines::new(BufReader::new(export.stdout.take().expect("piped stdout")));
+    let result = parse_stream(&mut input);
+    if result.is_err() {
+        let _ = export.kill();
+    }
+    let status = export.wait().map_err(io_error)?;
+    let records = result?;
+    if !status.success() {
+        return Err(one(format!("git fast-export が失敗した（{status}）")));
+    }
+    Ok(records)
+}
+
+fn parse_stream(input: &mut Lines<impl BufRead>) -> Result<Vec<CommitRecord>, Errors> {
+    let mut records = Vec::new();
+    loop {
+        let Some(line) = input.next().map_err(io_error)? else {
+            return Err(one("fast-export の流れが done の前に終わった".to_string()));
+        };
+        if line.is_empty() || line == b"feature done" {
+            continue;
+        }
+        let (command, _) = split_command(&line);
+        match command {
+            b"reset" => {
+                if input
+                    .peek()
+                    .map_err(io_error)?
+                    .is_some_and(|l| l.starts_with(b"from "))
+                {
+                    input.next().map_err(io_error)?;
+                }
+            }
+            b"commit" => records.push(read_commit(input)?),
+            b"tag" => skip_tag(input)?,
+            b"done" => return Ok(records),
+            _ => return Err(one(unexpected("流れ", &line))),
+        }
+    }
+}
+
+fn read_commit(input: &mut Lines<impl BufRead>) -> Result<CommitRecord, Errors> {
+    let mut record = CommitRecord {
+        mark: String::new(),
+        original: String::new(),
+        header: Vec::new(),
+        message: Vec::new(),
+        parents: Vec::new(),
+        ops: Vec::new(),
+    };
+    loop {
+        let line = input.next().map_err(io_error)?.unwrap_or_default();
+        let (key, value) = split_command(&line);
+        match key {
+            b"mark" => record.mark = text(value),
+            b"original-oid" => record.original = text(value),
+            b"author" | b"committer" | b"encoding" => {
+                record.header.extend_from_slice(&line);
+                record.header.push(b'\n');
+            }
+            b"data" => {
+                record.message = input.data(value).map_err(io_error)?;
+                break;
+            }
+            _ => return Err(one(unexpected("commit", &line))),
+        }
+    }
+    while let Some(line) = input.peek().map_err(io_error)? {
+        if line.is_empty() {
+            input.next().map_err(io_error)?;
+            break;
+        }
+        let (key, _) = split_command(line);
+        if !matches!(
+            key,
+            b"from" | b"merge" | b"M" | b"D" | b"C" | b"R" | b"deleteall"
+        ) {
+            break;
+        }
+        let line = input.next().map_err(io_error)?.unwrap_or_default();
+        let (key, value) = split_command(&line);
+        match key {
+            b"from" | b"merge" => {
+                let parent = text(value);
+                if !parent.starts_with(':') {
+                    return Err(one(format!(
+                        "コミット {} の親 {parent} が fast-export の流れの外にある",
+                        short(&record.original)
+                    )));
+                }
+                record.parents.push(parent);
+            }
+            b"M" => {
+                // M <mode> <ブロブの番号> <パス>（パスは引用されていてもそのまま渡す）
+                let mut parts = value.splitn(3, |b| *b == b' ');
+                match (parts.next(), parts.next(), parts.next()) {
+                    (Some(mode), Some(oid), Some(path)) => record.ops.push(FileOp::Modify {
+                        mode: text(mode),
+                        oid: text(oid),
+                        path: path.to_vec(),
+                    }),
+                    _ => return Err(one(unexpected("commit", &line))),
+                }
+            }
+            _ => record.ops.push(FileOp::Other(line)),
+        }
+    }
+    Ok(record)
+}
+
+/// 注釈つきのタグの命令を読み飛ばす（タグはオブジェクトから作り直す）
+fn skip_tag(input: &mut Lines<impl BufRead>) -> Result<(), Errors> {
+    loop {
+        let line = input.next().map_err(io_error)?.unwrap_or_default();
+        let (key, value) = split_command(&line);
+        match key {
+            b"mark" | b"from" | b"original-oid" | b"tagger" => {}
+            b"data" => {
+                input.data(value).map_err(io_error)?;
+                return Ok(());
+            }
+            _ => return Err(one(unexpected("tag", &line))),
+        }
+    }
+}
+
 /// ブランチとタグを、書き換えた後のものに 1 つのトランザクションで移し、元の ref を残す
-fn move_refs(
-    top: &Path,
-    refs: &[(String, String)],
-    rewrite: &Rewrite,
-    head: &Head,
-) -> Result<(), Vec<String>> {
-    let new_refs: HashMap<String, String> = list_new_refs(top).map_err(|e| vec![e])?;
+fn move_refs(top: &Path, refs: &[Ref], rewrite: &Rewrite, head: &Head) -> Result<(), Errors> {
     let mut errors = Vec::new();
     let mut commands = String::new();
-    for (name, old) in refs {
-        let rest = name.strip_prefix("refs/").unwrap_or(name);
-        let new_name = format!("{NEW_NS}{rest}");
-        let expected = rewrite
-            .finals
-            .get(old)
-            .or_else(|| rewrite.tag_finals.get(old));
-        match (expected, new_refs.get(&new_name)) {
-            (Some(expected), Some(new)) if expected == new => {
-                commands.push_str(&format!("update {name} {new} {old}\n"));
-                commands.push_str(&format!("create {ORIGINAL_NS}{rest} {old}\n"));
-                commands.push_str(&format!("delete {new_name} {new}\n"));
-            }
-            _ => errors.push(format!("検証: {name} の書き換えた後のものが合わない")),
-        }
+    for r in refs {
+        let new = match r.kind.as_str() {
+            "tag" => rewrite.tag_finals.get(&r.oid),
+            _ => rewrite.finals.get(&r.oid),
+        };
+        let Some(new) = new else {
+            errors.push(format!("{} が指す {} を書き換えていない", r.name, r.oid));
+            continue;
+        };
+        let rest = r.name.strip_prefix("refs/").unwrap_or(&r.name);
+        commands.push_str(&format!("update {} {new} {}\n", r.name, r.oid));
+        commands.push_str(&format!("create {ORIGINAL_NS}{rest} {}\n", r.oid));
     }
     if let Head::Detached(old) = head {
         match rewrite.finals.get(old) {
-            Some(new) => {
-                commands.push_str(&format!("option no-deref\nupdate HEAD {new} {old}\n"));
-            }
+            Some(new) => commands.push_str(&format!("option no-deref\nupdate HEAD {new} {old}\n")),
             None => errors.push(format!("HEAD が指す {old} を書き換えていない")),
         }
     }
+    commands.push_str(&format!("delete {SCRATCH}\n"));
     if !errors.is_empty() {
         return Err(errors);
     }
-    git_stdin(top, &["update-ref", "--stdin"], commands.as_bytes())
+    git::git_stdin(top, &["update-ref", "--stdin"], commands.as_bytes())
         .map(|_| ())
-        .map_err(|e| vec![e])
+        .map_err(one)
 }
 
-fn list_new_refs(top: &Path) -> Result<HashMap<String, String>, String> {
-    let out = git::git(
-        top,
-        &["for-each-ref", "--format=%(refname) %(objectname)", NEW_NS],
-    )?;
-    Ok(String::from_utf8_lossy(&out)
-        .lines()
-        .filter_map(|line| line.split_once(' '))
-        .map(|(name, oid)| (name.to_string(), oid.to_string()))
-        .collect())
-}
-
-fn delete_new_refs(top: &Path) -> Result<(), String> {
-    let refs = list_new_refs(top)?;
-    let commands: String = refs
-        .iter()
-        .map(|(name, oid)| format!("delete {name} {oid}\n"))
-        .collect();
-    git_stdin(top, &["update-ref", "--stdin"], commands.as_bytes()).map(|_| ())
+/// fast-import がコミットを積んだブランチを消す（無ければ何もしない）
+fn delete_scratch(top: &Path) -> Result<(), String> {
+    let exists = git::run_git(top, &["rev-parse", "--verify", "-q", SCRATCH])?;
+    if exists.status.success() {
+        git::git(top, &["update-ref", "-d", SCRATCH])?;
+    }
+    Ok(())
 }
 
 /// 元の番号から最後の番号への対応表を、filter-repo の commit-map と同じ形で書く
@@ -792,61 +1029,6 @@ fn write_map(path: &Path, map: &Map, finals: &HashMap<String, String>) -> Result
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
-}
-
-/// `git args…` に `input` を渡し、成功なら標準出力（末尾の改行を外す）を返す
-fn git_stdin(top: &Path, args: &[&str], input: &[u8]) -> Result<String, String> {
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(top)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("git を起動できない: {e}"))?;
-    child
-        .stdin
-        .take()
-        .expect("piped stdin")
-        .write_all(input)
-        .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
-    if !output.status.success() {
-        return Err(git::git_failure(args, &output));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string())
-}
-
-fn read_tag(name: &str, input: &mut Lines<impl BufRead>) -> Result<TagSpec, String> {
-    let io = |e: std::io::Error| format!("fast-export の流れを読めない: {e}");
-    let mut tag = TagSpec {
-        name: name.to_string(),
-        mark: None,
-        from: String::new(),
-        original: String::new(),
-        tagger: Vec::new(),
-        message: Vec::new(),
-    };
-    loop {
-        let line = input.next().map_err(io)?.unwrap_or_default();
-        let (key, value) = split_command(&line);
-        match key {
-            b"mark" => tag.mark = Some(text(value)),
-            b"from" => tag.from = text(value),
-            b"original-oid" => tag.original = text(value),
-            b"tagger" => tag.tagger = line.clone(),
-            b"data" => {
-                tag.message = input.data(value).map_err(io)?;
-                return Ok(tag);
-            }
-            _ => return Err(unexpected("tag", &line)),
-        }
-    }
 }
 
 /// 1 行ずつ読み、次の行を覗ける読み手。`data` の中身はバイト数で読む
@@ -907,8 +1089,8 @@ impl<R: BufRead> Lines<R> {
 
 /// `git cat-file --batch` で、オブジェクトを 1 つずつ読む
 struct CatFile {
-    _child: Child,
-    input: ChildStdin,
+    child: Child,
+    input: Option<ChildStdin>,
     output: BufReader<ChildStdout>,
 }
 
@@ -922,10 +1104,10 @@ impl CatFile {
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|e| format!("git cat-file を起動できない: {e}"))?;
-        let input = child.stdin.take().expect("piped stdin");
+        let input = child.stdin.take();
         let output = BufReader::new(child.stdout.take().expect("piped stdout"));
         Ok(CatFile {
-            _child: child,
+            child,
             input,
             output,
         })
@@ -933,8 +1115,9 @@ impl CatFile {
 
     fn object(&mut self, oid: &str) -> Result<Vec<u8>, String> {
         let io = |e: std::io::Error| format!("git cat-file: {e}");
-        writeln!(self.input, "{oid}").map_err(io)?;
-        self.input.flush().map_err(io)?;
+        let input = self.input.as_mut().expect("open until dropped");
+        writeln!(input, "{oid}").map_err(io)?;
+        input.flush().map_err(io)?;
         let mut header = String::new();
         self.output.read_line(&mut header).map_err(io)?;
         let size: usize = header
@@ -950,10 +1133,18 @@ impl CatFile {
     }
 }
 
+impl Drop for CatFile {
+    fn drop(&mut self) {
+        // 入力を閉じると cat-file は終わる。待って片付ける
+        drop(self.input.take());
+        let _ = self.child.wait();
+    }
+}
+
 /// コミットかタグのオブジェクトの見出しの行（キーと値）
 type Header = (Vec<u8>, Vec<u8>);
 
-/// コミットかタグのオブジェクトを、見出しの行（キーと値）と本文に分ける
+/// コミットかタグのオブジェクトを、見出しの行と本文に分ける
 fn split_object(data: &[u8]) -> (Vec<Header>, &[u8]) {
     let mut headers: Vec<Header> = Vec::new();
     let mut i = 0;
@@ -979,6 +1170,35 @@ fn split_object(data: &[u8]) -> (Vec<Header>, &[u8]) {
         headers.push((key.to_vec(), value.to_vec()));
     }
     (headers, &[])
+}
+
+fn values(headers: &[Header], key: &[u8]) -> Vec<Vec<u8>> {
+    headers
+        .iter()
+        .filter(|(k, _)| k == key)
+        .map(|(_, v)| v.clone())
+        .collect()
+}
+
+/// タグの本文の末尾の署名（`-----BEGIN PGP SIGNATURE-----` などで始まる行から後）を外す。中身を変えると署名は
+/// 合わないので、fast-export の --signed-tags=strip と同じく外す
+fn strip_signature(message: &[u8]) -> &[u8] {
+    const MARKERS: [&[u8]; 2] = [
+        b"-----BEGIN PGP SIGNATURE-----",
+        b"-----BEGIN SSH SIGNATURE-----",
+    ];
+    let mut start = 0;
+    while start < message.len() {
+        let line = &message[start..];
+        if MARKERS.iter().any(|m| line.starts_with(m)) {
+            return &message[..start];
+        }
+        match line.iter().position(|b| *b == b'\n') {
+            Some(p) => start += p + 1,
+            None => break,
+        }
+    }
+    message
 }
 
 struct TreeEntry {
@@ -1026,13 +1246,8 @@ fn is_binary(data: &[u8]) -> bool {
     data[..data.len().min(FIRST_FEW_BYTES)].contains(&0)
 }
 
-fn is_hash(s: &str) -> bool {
-    (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// 書き換えた履歴を置く ref の名前
-fn new_ref(name: &str) -> String {
-    format!("{NEW_NS}{}", name.strip_prefix("refs/").unwrap_or(name))
+fn short(oid: &str) -> &str {
+    &oid[..oid.len().min(12)]
 }
 
 /// 行を、最初の空白の前（命令やキー）と後に分ける
