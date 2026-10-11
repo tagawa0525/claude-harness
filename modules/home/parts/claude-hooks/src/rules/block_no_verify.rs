@@ -113,16 +113,16 @@ fn overrides_hooks_path(args: &[Arg]) -> bool {
     false
 }
 
-/// `git config [オプション] core.hooksPath <値>`（値を書く。読むだけと --unset は通す）
+/// `git config [オプション] core.hooksPath <値>` と `--unset`（どちらも hook の置き場所を変える。読むだけは通す）
 fn sets_hooks_path(args: &[Arg]) -> bool {
     let mut it = args
         .iter()
         .skip_while(|a| !a.text.eq_ignore_ascii_case("core.hookspath"));
-    it.next().is_some()
-        && it.next().is_some_and(|v| !v.text.starts_with('-'))
-        && !args
-            .iter()
-            .any(|a| a.text.starts_with("--get") || a.text.starts_with("--unset"))
+    if it.next().is_none() || args.iter().any(|a| a.text.starts_with("--get")) {
+        return false;
+    }
+    args.iter().any(|a| a.text.starts_with("--unset"))
+        || it.next().is_some_and(|v| !v.text.starts_with('-'))
 }
 
 /// hook の置き場所を環境変数で変えるか、CLAUDECODE を 1 以外にする・外すか
