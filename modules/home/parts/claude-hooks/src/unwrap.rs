@@ -431,6 +431,9 @@ pub struct Unwrapped {
     pub wrappers: Vec<String>,
     /// 中のコマンドを走らせるディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
     pub dirs: Vec<String>,
+    /// 中のコマンドが手元のディレクトリでなく走る場所の書き方。`sudo -i` は対象の利用者のホーム（`~root`）、
+    /// `ssh` は接続先のホーム（`host:`）。手元のパスには解決しない
+    pub elsewhere: Option<String>,
     /// `name` が sh -c で走らせる文字列（`bash -c '…'`、`flock <file> -c '…'`、`script -c '…'`、`eval`・`watch`・
     /// `ssh <接続先>` の残りの語を空白でつないだもの）。shell.rs が再帰的に解析する
     pub source: Option<String>,
@@ -583,6 +586,11 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut source: Option<String> = None;
         // コマンドの前の位置引数のうち、まだ読んでいない数
         let mut positionals = wrapper.positionals;
+        // sudo -i / --login: 対象の利用者（-u。無ければ root）のホームで login shell を始める
+        let mut login = false;
+        let mut user: Option<String> = None;
+        // ssh の接続先
+        let mut host: Option<String> = None;
         // script のログのファイルを読んだか（getopt が語を並べ替えるので、ファイルの後ろのオプションも読む）
         let mut log_file_seen = false;
         loop {
@@ -699,7 +707,12 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         // `--preserve-env=list` は list の変数だけを受け継ぐ（list は見ない）
                         ("sudo", Some('E')) => preserves_env = value.is_none(),
                         ("sudo", Some('e' | 'l' | 'v' | 'V' | 'K')) => runs = false,
-                        ("sudo", Some('s' | 'i')) => reads_stdin = true,
+                        ("sudo", Some('s')) => reads_stdin = true,
+                        ("sudo", Some('i')) => {
+                            reads_stdin = true;
+                            login = true;
+                        }
+                        ("sudo", Some('u')) => user = value,
                         ("sudo", Some('D')) => {
                             if let Some(d) = value {
                                 dir = Some(d);
@@ -717,8 +730,11 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                 return out;
             }
             if positionals > 0 {
-                words.pop_front();
+                let positional = words.pop_front();
                 positionals -= 1;
+                if wrapper.name == "ssh" {
+                    host = positional.map(|a| a.text);
+                }
                 // ssh は接続先を取った後、オプションの読み取りに戻る（ssh.c は host を取ると getopt をやり直す）
                 if wrapper.name == "ssh" && !options_done {
                     continue;
@@ -739,6 +755,13 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         }
         out.env.extend(env);
         out.dirs.extend(dir);
+        if out.elsewhere.is_none() {
+            if login {
+                out.elsewhere = Some(format!("~{}", user.as_deref().unwrap_or("root")));
+            } else if let Some(host) = host {
+                out.elsewhere = Some(format!("{host}:"));
+            }
+        }
         // 残りの語から、走らせるものを決める
         match wrapper.name {
             "bash" | "sh" => {

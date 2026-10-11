@@ -140,6 +140,8 @@ pub struct Cmd {
     pub wrappers: Vec<String>,
     /// 包んだ `env -C <dir>` の行き先（順に、前のものからの相対）
     pub dirs: Vec<String>,
+    /// 包みが中のコマンドを手元のディレクトリでなく走らせる場所（`sudo -i`、`ssh`。unwrap.rs）
+    pub elsewhere: Option<String>,
     /// git のコマンドなら、グローバルオプションの読み取り
     pub git: Option<GitInvocation>,
 }
@@ -288,6 +290,7 @@ impl Shell {
             spawns: None,
             env,
             dirs: unwrapped.dirs,
+            elsewhere: unwrapped.elsewhere,
             wrappers: unwrapped.wrappers,
             git,
         };
@@ -468,6 +471,10 @@ impl Shell {
     /// コマンドが対象にするディレクトリ。そのコマンドより前にあり、同じか外側のシェルのスコープで実行される
     /// `cd <dir>` を順に畳み込み、包んだ `env -C <dir>` と `git -C <dir>` を順に当てる
     /// （`$(cd x && …)` や `(cd x)` の cd は親のディレクトリを変えないので見ない）
+    ///
+    /// `sudo -i` と `ssh` の中のコマンドは、その場所の書き方（`~root`、`host:`）をそのままパスとして返す。
+    /// 展開しない `cd "$VAR"` の行き先と同じく手元に実在しないので、ルールはそのディレクトリのリポジトリや
+    /// ブランチで判定しない。中の `cd` と `git -C` は当てない（ssh の接続先の `/x` や `~` は手元のものではない）
     pub fn target_dir(&self, cmd: &Cmd, base: &Path) -> PathBuf {
         let mut dir = base.to_path_buf();
         for c in &self.cmds {
@@ -484,10 +491,16 @@ impl Shell {
             if let Some(id) = c.spawns
                 && cmd.scope.get(c.scope.len()) == Some(&id)
             {
+                if let Some(place) = &c.elsewhere {
+                    return PathBuf::from(place);
+                }
                 for d in &c.dirs {
                     dir = resolve(&dir, d);
                 }
             }
+        }
+        if let Some(place) = &cmd.elsewhere {
+            return PathBuf::from(place);
         }
         for d in &cmd.dirs {
             dir = resolve(&dir, d);
