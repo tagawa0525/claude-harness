@@ -434,13 +434,17 @@ impl Rewrite<'_> {
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|e| one(format!("git fast-import を起動できない: {e}")))?;
-        let result = self.import(&records, &order, &mut import);
+        let mut out = import.stdin.take().expect("piped stdin");
+        let mut answers = BufReader::new(import.stdout.take().expect("piped stdout"));
+        let result = self.import(&records, &order, &mut out, &mut answers);
         if result.is_err() {
-            // 途中で止めたときは、fast-import が ref を書く前に終わらせる
+            // 途中で止めたときは、入力を閉じる前に終わらせる（--done で始めたので、先に閉じると fast-import は
+            // 流れが途中で終わったとして、.git に crash report を残す）
             let _ = import.kill();
             let _ = import.wait();
             return result;
         }
+        drop(out);
         let status = import.wait().map_err(io_error)?;
         if !status.success() {
             return Err(one(format!("git fast-import が失敗した（{status}）")));
@@ -558,10 +562,9 @@ impl Rewrite<'_> {
         &mut self,
         records: &[CommitRecord],
         order: &[usize],
-        import: &mut Child,
+        out: &mut ChildStdin,
+        answers: &mut BufReader<ChildStdout>,
     ) -> Result<(), Errors> {
-        let mut out = import.stdin.take().expect("piped stdin");
-        let mut answers = BufReader::new(import.stdout.take().expect("piped stdout"));
         // ブロブの印は、コミットの印の後から振る
         let mut next_mark = records
             .iter()
