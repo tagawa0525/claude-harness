@@ -113,16 +113,37 @@ fn overrides_hooks_path(args: &[Arg]) -> bool {
     false
 }
 
-/// `git config [オプション] core.hooksPath <値>` と `--unset`（どちらも hook の置き場所を変える。読むだけは通す）
+/// `git config` が hook の置き場所（core.hooksPath）を変えるか。書く・消す（`--unset` と、新しい書き方の
+/// `set` / `unset`）と、core の節の削除と名前の変更（`--remove-section` / `--rename-section` と `remove-section` /
+/// `rename-section`）を止める。読むだけ（`--get` / `get`）は通す
 fn sets_hooks_path(args: &[Arg]) -> bool {
-    let mut it = args
+    let texts: Vec<&str> = args.iter().map(|a| a.text.as_str()).collect();
+    let section_action = texts.iter().position(|t| {
+        matches!(
+            *t,
+            "--remove-section" | "--rename-section" | "remove-section" | "rename-section"
+        )
+    });
+    if let Some(i) = section_action {
+        return texts[i + 1..]
+            .iter()
+            .find(|t| !t.starts_with('-'))
+            .is_some_and(|t| t.eq_ignore_ascii_case("core"));
+    }
+    let Some(key) = texts
         .iter()
-        .skip_while(|a| !a.text.eq_ignore_ascii_case("core.hookspath"));
-    if it.next().is_none() || args.iter().any(|a| a.text.starts_with("--get")) {
+        .position(|t| t.eq_ignore_ascii_case("core.hookspath"))
+    else {
+        return false;
+    };
+    let before = &texts[..key];
+    if before.iter().any(|t| t.starts_with("--get") || *t == "get") {
         return false;
     }
-    args.iter().any(|a| a.text.starts_with("--unset"))
-        || it.next().is_some_and(|v| !v.text.starts_with('-'))
+    before
+        .iter()
+        .any(|t| t.starts_with("--unset") || *t == "unset" || *t == "set")
+        || texts.get(key + 1).is_some_and(|v| !v.starts_with('-'))
 }
 
 /// hook の置き場所を環境変数で変えるか、CLAUDECODE を 1 以外にする・外すか
