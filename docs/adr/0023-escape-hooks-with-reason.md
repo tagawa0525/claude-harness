@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-11
-requires: [ADR-0021]
+requires: [ADR-0015, ADR-0021]
 supersedes: []
 superseded-by:
 issues: ["#311"]
@@ -39,10 +39,16 @@ claude-hooks の各ルールは、`ALLOW_UNREVIEWED_HEAD=1` のようにコマ�
 採用: 「案 A」。理由を言葉にせざるを得ない 1 拍が入り、理由はコマンドとして記録に残る。無意味な文字列で逃れることは
 できるが、そこは信じる（ユーザーの判断）。
 
-- 値の条件: 前後の空白を除き、ASCII を 1、それ以外（日本語など）を 2 として幅を数え、6 以上。`1`、`true`、`force`、
-  `allow`（幅 5 以下）は弾き、日本語は 3 文字から通す。`unicode-width` のような依存は足さず、ASCII か否かだけで決める
+- 値の条件: 空白を全部除き、ASCII を 1、それ以外（日本語など）を 2 として幅を数え、6 以上。`1`、`true`、`force`、
+  `allow`（幅 5 以下）は弾き、日本語は 3 文字から通す。`unicode-width` のような依存は足さず、ASCII か否かだけで決める。
+  `0` と空は付けていないものとして扱う。同じ名前の代入が複数あれば、短い値が 1 つでもあれば短い扱い（後ろの代入で
+  上書きできない）
+- 理由を求めるのは、そのルールが止める命令のときだけ。止めない命令に付いていても咎めない（`ALLOW_PROTECTED_PUSH=1
+  git push origin feat/x` は今までどおり通る）
 - 短い値を拒む文言は「`ALLOW_…` には理由を記載してください」とし、しきい値を明かさない（長さを書くと、その長さに
   合わせた無意味な文字列を誘う）
+- git 側の pre-commit（`modules/home/parts/scan-staged-secrets.sh`。ADR-0015 の `ALLOW_SECRET_COMMIT`）も同じ規則で
+  読む。2 つの層で規則が違うと、どちらかの形が通らなくなる
 - deny 文言は「正規の直し方 / 理由を値にして付ける / 機械で判定できる理由なら issue に書く」の形に縮め、
   「〜なら付けてよい」の条件の列挙をやめる
 - スキル（`gh-pr-merge`、`gh-pr-review`、`gh-pr-create`、`git-push`、`git-merge`）からエスケープ名と周回数の記述を消す。
