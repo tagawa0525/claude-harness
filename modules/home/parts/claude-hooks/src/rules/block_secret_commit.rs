@@ -22,7 +22,7 @@ use crate::git;
 use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::Shell;
+use crate::shell::{Escape, Shell};
 
 pub struct BlockSecretCommit;
 
@@ -110,6 +110,13 @@ impl Rule for BlockSecretCommit {
             let text = dir.to_string_lossy();
             if text.contains('$') || text.contains('`') || !dir.is_dir() || uses_global_hooks(&dir)
             {
+                // git の hook は展開後の値しか見えないので、展開を含むエスケープはここで止める
+                // （rules::run が理由を求める行を足す）
+                if shell.escape("ALLOW_SECRET_COMMIT") == Escape::Expanded {
+                    return vec![Finding::Deny(
+                        "このリポジトリの機密情報の検査は git の pre-commit が行いますが、エスケープの値に展開（$VAR、$(…) など）が含まれ、git 側は展開後の値しか見えません。理由を字面で書いてください".to_string(),
+                    )];
+                }
                 continue;
             }
             let all = git_flag("commit", args, Some('a'), &["--all"]);
