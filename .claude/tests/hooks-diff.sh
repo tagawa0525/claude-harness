@@ -2,36 +2,41 @@
 # claude-hooks の 2 つの版の判定を、同じコマンドの集まりで比べる
 #
 # 実行: bash .claude/tests/hooks-diff.sh [BASE]
-#   BASE（既定 origin/main）の版と、作業ツリーの版を nix build して比べる。OLD_BIN / NEW_BIN を渡すと
-#   build せずにそのバイナリを使う
+#   BASE（既定 origin/main）の版と、作業ツリーの版（git が追跡するファイル。新しいファイルは git add -N で
+#   見せる）を nix build して比べる。OLD_BIN / NEW_BIN を渡すと build せずにそのバイナリを使う。
+#   HOOKS_DIFF_COMMANDS（改行区切り）を渡すと、組み合わせの集まりの代わりにそのコマンドだけを比べる
 #
-# 出力（KEY: value と、タブ区切りの行）:
-#   LOOSENED<TAB><ルール><TAB><コマンド>   古い版が止め、新しい版が通す（意図した変更か、後退か）
+# 出力（タブ区切りの行と、KEY: value）:
+#   LOOSENED<TAB><ルール><TAB><コマンド>   古い版が止め、新しい版が通す（意図した変更か、後退か）。
+#                                          新しい版で無くなったルールは、コマンドの代わりに「(新しい版に無い)」
 #   TIGHTENED<TAB><ルール><TAB><コマンド>  古い版が通し、新しい版が止める
-#   CHECKED: / LOOSENED: / TIGHTENED:     比べたコマンドの数と、それぞれの行の数
+#   CHANGED<TAB><ルール><TAB><古> -> <新><TAB><コマンド>  deny 以外の判定の変化（context は additionalContext）
+#   NEW_RULE: <ルール>                     古い版に無いルール（比べない）
+#   CHECKED: / LOOSENED: / TIGHTENED: / CHANGED:  比べたコマンドの数と、それぞれの行の数
 #
 # 判定がリポジトリの状態で決まるルールのために、GitHub のリモートがある main のリポジトリで走らせ、
-# リモートの無い別のリポジトリへ cd / -C で移る形も比べる。gh は偽物に差し替え、ネットワークに出ない。
+# リモートの無い別のリポジトリへ cd / -C で移る形も比べる。main では block-main-commit が全てのコミットを
+# 止めるので、ルールをまとめて判定すると他のルールの緩みが隠れる。ルールごとに比べる。
 
 set -euo pipefail
 
 BASE="${1:-origin/main}"
 
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
-
+# lib.sh が HOME を差し替える前に build する（nix の設定とキャッシュを使うため）
 build() {
-  local flake="$1"
-  nix build --no-link --print-out-paths "$flake#claude-hooks" | tail -1
+  nix build --no-link --print-out-paths --option warn-dirty false "$1#claude-hooks"
 }
-
 if [[ -z "${OLD_BIN:-}" || -z "${NEW_BIN:-}" ]]; then
   ROOT=$(git rev-parse --show-toplevel)
+  # path: は .gitignore を見ずに target/ なども store に写すので、git が追跡するファイルだけを使う
   OLD_BIN="${OLD_BIN:-$(build "git+file://$ROOT?rev=$(git -C "$ROOT" rev-parse "$BASE")")/bin/claude-hooks}"
-  NEW_BIN="${NEW_BIN:-$(build "path:$ROOT")/bin/claude-hooks}"
+  NEW_BIN="${NEW_BIN:-$(build "git+file://$ROOT")/bin/claude-hooks}"
 fi
 
-# ルールの一覧（引数なしで呼ぶと使い方に出る）。新しい版のルールを、古い版にもあるものだけ比べる
+source "$(dirname "$0")/lib.sh"
+set -e
+
+# ルールの一覧（引数なしで呼ぶと使い方に出る）
 rules_of() {
   { "$1" 2>&1 || true; } | sed -n 's/^rules: //p' | tr -d ' ' | tr ',' '\n'
 }
@@ -41,36 +46,35 @@ if [[ ${#OLD_RULES[@]} -eq 0 || ${#NEW_RULES[@]} -eq 0 ]]; then
   echo "ERROR: ルールの一覧を読めません: $OLD_BIN / $NEW_BIN" >&2
   exit 1
 fi
+has() {
+  local x="$1"
+  shift
+  printf '%s\n' "$@" | grep -qx -- "$x"
+}
 RULES=()
-for r in "${NEW_RULES[@]}"; do
-  if printf '%s\n' "${OLD_RULES[@]}" | grep -qx -- "$r"; then
+loosened=0 tightened=0 changed=0
+for r in "${OLD_RULES[@]}"; do
+  if has "$r" "${NEW_RULES[@]}"; then
     RULES+=("$r")
   else
-    echo "NEW_RULE: $r"
+    printf 'LOOSENED\t%s\t(新しい版に無い)\n' "$r"
+    loosened=$((loosened + 1))
   fi
 done
-
-# 判定の場所: main（GitHub のリモートあり、feat/x あり）と、リモートの無いリポジトリ
-export HOME="$WORK/home" GIT_CONFIG_NOSYSTEM=1 GH_CONFIG_DIR="$WORK/gh"
-mkdir -p "$HOME" "$WORK/bin"
-export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
-git config --global user.name t
-git config --global user.email t@example.com
-git config --global init.defaultBranch main
-# 準備のコミットで、手元の git の hook を走らせない
-git config --global core.hooksPath /dev/null
-printf '#!/bin/sh\necho "gh: offline" >&2\nexit 1\n' >"$WORK/bin/gh"
-chmod +x "$WORK/bin/gh"
-export PATH="$WORK/bin:$PATH" CLAUDECODE=1
-MAIN="$WORK/main" LOCAL="$WORK/local"
-for repo in "$MAIN" "$LOCAL"; do
-  git init -q "$repo"
-  git -C "$repo" commit -q --allow-empty -m "chore: init"
+for r in "${NEW_RULES[@]}"; do
+  has "$r" "${OLD_RULES[@]}" || echo "NEW_RULE: $r"
 done
-git -C "$MAIN" remote add origin https://github.com/example/x.git
+
+# 判定の場所: main（GitHub のリモートあり、feat/x あり）と、リモートの無いリポジトリ。gh は偽物で、
+# 呼ばれたら失敗する（ネットワークに出ない）
+MAIN="$TEST_ROOT/main" LOCAL="$TEST_ROOT/local"
+make_repo "$MAIN"
+make_remote "$MAIN" github >/dev/null
+make_repo "$LOCAL"
 git -C "$MAIN" branch feat/x
 mkdir -p "$MAIN/src"
 echo x >"$MAIN/a.txt"
+make_fake_gh ''
 cd "$MAIN"
 
 COMMANDS=(
@@ -96,53 +100,61 @@ WRAPPERS=(
 DIRS=("cd $LOCAL; " "cd $LOCAL && " "env cd $LOCAL; " "builtin cd $LOCAL && " "time cd $LOCAL; " "(cd $LOCAL); "
   "echo \$(cd $LOCAL); " "cd $LOCAL; cd $MAIN; ")
 
-# 判定（deny / ask / allow など）。$1 バイナリ、$2 コマンド、$3 background、残りは --rule の名前
+# decide <bin> <rule>: $INPUT への判定を DECISION に入れる（deny / ask / context / allow）。
+# バイナリが失敗したら、通したものと数えずに止める
 decide() {
-  local bin="$1" cmd="$2" bg="$3" out
-  shift 3
-  local args=()
-  for r in "$@"; do args+=(--rule "$r"); done
-  out=$(jq -n --arg cmd "$cmd" --argjson bg "$bg" \
-    '{hook_event_name: "PreToolUse", tool_name: "Bash", cwd: env.PWD,
-      tool_input: {command: $cmd, run_in_background: $bg}}' |
-    "$bin" pre-tool-use "${args[@]}")
+  local bin="$1" rule="$2" out
+  if ! out=$(printf '%s' "$INPUT" | "$bin" pre-tool-use --rule "$rule"); then
+    echo "ERROR: $bin が失敗しました（--rule $rule）: $INPUT" >&2
+    exit 1
+  fi
   if [[ -z "$out" ]]; then
-    echo allow
+    DECISION=allow
   else
-    jq -r '.hookSpecificOutput.permissionDecision // "context"' <<<"$out"
+    DECISION=$(jq -r '.hookSpecificOutput.permissionDecision // "context"' <<<"$out")
   fi
 }
 
-checked=0 loosened=0 tightened=0
+checked=0
 compare() {
-  local cmd="$1" bg="$2"
+  local cmd="$1" r old
+  INPUT=$(hook_input "$cmd" "$2")
   checked=$((checked + 1))
-  [[ "$(decide "$OLD_BIN" "$cmd" "$bg" "${RULES[@]}")" == "$(decide "$NEW_BIN" "$cmd" "$bg" "${RULES[@]}")" ]] && return
-  # 全体の判定が変わったコマンドだけ、ルールごとに調べる
-  local r old new
   for r in "${RULES[@]}"; do
-    old=$(decide "$OLD_BIN" "$cmd" "$bg" "$r")
-    new=$(decide "$NEW_BIN" "$cmd" "$bg" "$r")
-    if [[ "$old" == deny && "$new" != deny ]]; then
+    decide "$OLD_BIN" "$r"
+    old="$DECISION"
+    decide "$NEW_BIN" "$r"
+    [[ "$old" == "$DECISION" ]] && continue
+    if [[ "$old" == deny ]]; then
       printf 'LOOSENED\t%s\t%s\n' "$r" "$cmd"
       loosened=$((loosened + 1))
-    elif [[ "$old" != deny && "$new" == deny ]]; then
+    elif [[ "$DECISION" == deny ]]; then
       printf 'TIGHTENED\t%s\t%s\n' "$r" "$cmd"
       tightened=$((tightened + 1))
+    else
+      printf 'CHANGED\t%s\t%s -> %s\t%s\n' "$r" "$old" "$DECISION" "$cmd"
+      changed=$((changed + 1))
     fi
   done
 }
 
-for c in "${COMMANDS[@]}"; do
-  for w in "${WRAPPERS[@]}"; do
-    compare "$w$c" false
+if [[ -n "${HOOKS_DIFF_COMMANDS:-}" ]]; then
+  while IFS= read -r c; do
+    [[ -n "$c" ]] && compare "$c" false
+  done <<<"$HOOKS_DIFF_COMMANDS"
+else
+  for c in "${COMMANDS[@]}"; do
+    for w in "${WRAPPERS[@]}"; do
+      compare "$w$c" false
+    done
+    for d in "${DIRS[@]}"; do
+      compare "$d$c" false
+    done
+    compare "$c" true
   done
-  for d in "${DIRS[@]}"; do
-    compare "$d$c" false
-  done
-  compare "$c" true
-done
+fi
 
 echo "CHECKED: $checked"
 echo "LOOSENED: $loosened"
 echo "TIGHTENED: $tightened"
+echo "CHANGED: $changed"
