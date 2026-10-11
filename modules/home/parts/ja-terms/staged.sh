@@ -16,6 +16,8 @@ mapfile -t pathspecs <<<"$JA_TERMS_PATHSPECS"
 # 文章ではないので外す
 # （--raw -z は「:旧モード 新モード 旧ブロブ 新ブロブ 状態」と「パス」を NUL で区切って並べる。名前の変更は
 # パスを 2 つ並べるので、--no-renames で追加と削除に分けて 1 つにする）
+# git の出力は一度ファイルに受ける（プロセス置換の中の失敗は set -e に見えず、何も検査せずに通るため）
+git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMR -- "${pathspecs[@]}" >"$work/staged"
 declare -A blob=()
 paths=()
 while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
@@ -23,17 +25,18 @@ while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
   case $mode in 120000 | 160000) continue ;; esac
   blob[$path]=$sha
   paths+=("$path")
-done < <(git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMR -- "${pathspecs[@]}")
+done <"$work/staged"
 [ "${#paths[@]}" -gt 0 ] || exit 0
 
 # リポジトリの .textlintignore（ステージした版）に挙げたファイルを外す。書き出す名前は元の名前と違うので
 # textlint には任せず、同じ gitignore の書き方を git 自身に当てさせる
 if git cat-file -e :.textlintignore 2>/dev/null; then
   git show :.textlintignore >"$work/ignore"
+  git ls-files -z --cached --ignored --exclude-from="$work/ignore" -- "${paths[@]}" >"$work/ignored"
   while IFS= read -r -d '' path; do
     # 単引用符で、名前を 2 回展開させない（] や $(...) を含む名前）
     unset -v 'blob[$path]'
-  done < <(git ls-files -z --cached --ignored --exclude-from="$work/ignore" -- "${paths[@]}")
+  done <"$work/ignored"
 fi
 
 # textlint は引数をグロブとして読むので、グロブの文字を含まない番号の名前で書き出す。拡張子はプラグインを
