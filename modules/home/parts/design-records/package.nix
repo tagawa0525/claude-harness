@@ -2,7 +2,14 @@
 # git.nix から callPackage され、PATH に入る（各プロジェクトの pre-commit が呼ぶ）。
 # claude-hooks はこのクレートをライブラリとして使う（../claude-hooks/package.nix）。
 # flake.nix の packages 出力（nix build .#design-records）もここを参照する
-{ rustPlatform, git }:
+{
+  rustPlatform,
+  git,
+  callPackage,
+}:
+let
+  gitCheckConfig = callPackage ../lib/git-check-config.nix { };
+in
 rustPlatform.buildRustPackage {
   pname = "design-records";
   version = "0.1.0";
@@ -10,5 +17,7 @@ rustPlatform.buildRustPackage {
   cargoLock.lockFile = ./Cargo.lock;
   # tests/cli.rs は一時的なリポジトリ（bare のリモートを含む）で git を走らせる
   nativeCheckInputs = [ git ];
+  # sandbox に無い git の全体設定を環境の側から渡す（lib/git-check-config.nix）
+  inherit (gitCheckConfig) preCheck;
   meta.mainProgram = "design-records";
 }

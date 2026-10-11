@@ -1,7 +1,14 @@
 # commit-refs: 履歴の書き換えで変わったコミットの番号を、文書の中で付け直す CLI（ADR-0012）。
 # git.nix から callPackage され、post-rewrite hook が store のパスで呼び、PATH にも入る。
 # flake.nix の packages 出力（nix build .#commit-refs）もここを参照する
-{ rustPlatform, git }:
+{
+  rustPlatform,
+  git,
+  callPackage,
+}:
+let
+  gitCheckConfig = callPackage ../lib/git-check-config.nix { };
+in
 rustPlatform.buildRustPackage {
   pname = "commit-refs";
   version = "0.1.0";
@@ -9,5 +16,7 @@ rustPlatform.buildRustPackage {
   cargoLock.lockFile = ./Cargo.lock;
   # tests/ は一時的なリポジトリで git を走らせる
   nativeCheckInputs = [ git ];
+  # sandbox に無い git の全体設定を環境の側から渡す（lib/git-check-config.nix）
+  inherit (gitCheckConfig) preCheck;
   meta.mainProgram = "commit-refs";
 }

@@ -5,7 +5,11 @@
   lib,
   rustPlatform,
   git,
+  callPackage,
 }:
+let
+  gitCheckConfig = callPackage ../lib/git-check-config.nix { };
+in
 rustPlatform.buildRustPackage {
   pname = "claude-hooks";
   version = "0.1.0";
@@ -24,5 +28,7 @@ rustPlatform.buildRustPackage {
   # リポジトリを作るので、git を渡す（gh と hook の入出力を伴う結合テストは .claude/tests/hooks.sh）
   doCheck = true;
   nativeCheckInputs = [ git ];
+  # sandbox に無い git の全体設定を環境の側から渡す（lib/git-check-config.nix）
+  inherit (gitCheckConfig) preCheck;
   meta.mainProgram = "claude-hooks";
 }
