@@ -185,10 +185,8 @@ head SHA の check-run と未解決スレッド数で判断する。
 ## Step 7: CI確認
 
 ```bash
-cd <worktree> && ~/.claude/scripts/gh-actions-diagnose.sh {pr_number}
+~/.claude/scripts/gh-actions-diagnose.sh "{pr_url}"
 ```
-
-`gh-actions-diagnose.sh` は PR 番号を cwd のリポジトリの PR として読むので、PR のリポジトリの worktree で走らせる。
 
 `CAUSE:` への対応は gh-actions-check スキルの表に従う。`CODE` はレビュー対応と同じく
 修正・コミット・push する。

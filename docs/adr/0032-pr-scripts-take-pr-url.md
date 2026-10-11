@@ -43,6 +43,11 @@ CLAUDE.md に「PR のリポジトリの worktree で走らせる」と書いた
 - スクリプトの間の呼び出し（`decide-next.sh` から `get-latest-review.sh` など）も URL を渡す。番号だけを渡すと、
   受けた側が `GH_REPO` の継承に頼ることになり、単独で呼んだときと挙動が変わる
 - URL の解析は `.claude/scripts/lib/pr-url.sh` の 1 か所に置く。10 本のスクリプトが同じ解析を持つため
+- `/files` や通知のクエリの付いた URL も同じ PR を指すので受ける。`#` の付いた URL は、コメントを取り出す
+  `get-pr-info.sh` だけが受ける。ほかのスクリプトで受けると、別の引数で渡す comment_id と食い違っても気付けない
+- `gh-actions-diagnose.sh` も PR の URL を受け、NEXT に書く gh の手順に `-R` を付ける。URL で動くスクリプトや
+  hook が診断を番号で案内すると、案内の先で cwd の取り違えが戻るため。番号とブランチ名も受け続ける
+  （ユーザーが `/gh-actions-check` を手で走らせる形）
 - push などの worktree を触る処理はスクリプトに無い（push はスキルの手順で、`cd <worktree> &&` を付けた git で行う）。
   issue の「URL の owner/repo と cwd の origin の一致を確かめる」は当てはまる処理が無いので作らない
 
@@ -60,8 +65,7 @@ CLAUDE.md に「PR のリポジトリの worktree で走らせる」と書いた
 - 悪い点: 呼び出しが長くなる。PR の URL を最初に得る手間が要る（`gh pr create` の出力、または
   `cd <worktree> && gh pr view --json url -q .url`）
 - `gh-wait-review.sh` の終了コード 2（`SKIP`）は無くなる。CLAUDE.md の「出力を `tail` につながない」の理由を書き換える
-- `gh-actions-diagnose.sh` は PR 番号かブランチ名を受け、cwd のリポジトリで読む。読むだけで書き込みが無いので、この
-  決定の範囲に入れない
+- `gh-actions-diagnose.sh` に番号かブランチ名を渡したときは、今も cwd のリポジトリで読む
 
 ### 確認
 

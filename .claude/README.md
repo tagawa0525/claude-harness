@@ -126,6 +126,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                                            | gh-actions-check                                   |
 | `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                                                        | gh-pr-create/merge/review, branch-task             |
 | `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                                          | gh-wait-review, gh-pr-review                       |
+| `scripts/lib/pr-url.sh`                 | PR の URL の解析と `GH_REPO` の設定（source して使う。ADR-0032）                                                      | PR のスクリプト、gh-actions-diagnose               |
 | `scripts/slurm-history.sh`              | jobcomp（`/var/log/slurm/job_completions`）から、ジョブの見積もり・実績・比率を表にする（`--by-name` でジョブ名ごと） | slurm-run.sh のジョブの振り返り                    |
 | `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                                                        | gh-pr-review（language-checks 経由）, branch-task  |
 | `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                                                   | gh-pr-review, branch-task                          |
