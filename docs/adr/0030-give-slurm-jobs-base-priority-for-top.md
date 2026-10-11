@@ -111,3 +111,6 @@ nice は「何分ぶん後ろに回したか」の意味になる。回したジ
 - 反映の前から待っているジョブの優先度も、multifactor が slurmctld の起動時と `PriorityCalcPeriod`ごとに
   計算し直す（Slurm 26.05.4 の `priority_multifactor.c` の `_decay_apply_new_usage_and_weighted_factors`）ので、
   1 のまま取り残されない
+- 2026-10-12: `scontrol top` は、先頭に出すジョブと assoc、パーティション、QOS が同じジョブだけを下げる（`_set_top`）。
+  QOS を `normal` のほかに足すと、QOS をまたいで並べ替えられない。slurmdbd の前後に投げたジョブが混ざった間に起きた
+  （ADR-0031 の補足）
