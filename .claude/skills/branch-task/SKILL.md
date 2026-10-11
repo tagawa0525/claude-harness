@@ -30,7 +30,7 @@ allowed-tools:
 
 サブエージェントの cwd は作業する worktree ではない。スキルの `!` 行と引数なしのスクリプトは cwd の
 ブランチを見るので、/gh-pr-create と /gh-pr-review は Skill で呼ばずに Read で読み、
-その中のコマンドを `cd <worktree> &&` を付け、ブランチや PR 番号を明示して走らせる。
+その中のコマンドを `cd <worktree> &&` を付け、ブランチを明示して走らせる。PR のスクリプトには PR の URL を渡す。
 
 ## 進める側（サブエージェント）の手順
 

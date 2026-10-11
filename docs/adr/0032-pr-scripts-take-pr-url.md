@@ -37,6 +37,9 @@ CLAUDE.md に「PR のリポジトリの worktree で走らせる」と書いた
 - `gh` は `GH_REPO` を `gh pr` の対象にも `gh api` の `{owner}` / `{repo}` にも使う（git のリポジトリの外でも効くことを
   2026-10-12 に `GH_REPO=cli/cli gh api 'repos/{owner}/{repo}'` と `gh api graphql -F owner='{owner}'` で確かめた）。
   スクリプトの中の個々の呼び出しを書き換えずに、cwd への依存をまとめて断てる
+- `GH_HOST=github.com` も export する。`gh api` は `GH_REPO` のホストより環境の `GH_HOST` を使う
+  （`GH_HOST=ghe.example.com GH_REPO=github.com/cli/cli gh api …` が ghe.example.com へつなぐことを 2026-10-12 に確かめた）
+- 案内と下請けのスクリプトには、受けた URL からページ・クエリ・`#` 以降を除いた PR の URL を渡す
 - 対象が URL で決まるので、`gh-wait-review.sh` の「cwd に GitHub のリモートが無ければ `SKIP`」の判定は外す。残すと、
   正しい URL を渡しても cwd 次第で待たずに終わる。GitHub のリモートの無いリポジトリでは PR の URL が無いので、
   呼ぶ場面が無い
