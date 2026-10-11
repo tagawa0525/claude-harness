@@ -197,9 +197,9 @@ fn a_map_that_changes_nothing_keeps_every_commit() {
 }
 
 #[test]
-fn a_reference_to_a_commit_not_yet_rewritten_stops_without_moving_refs() {
-    // c1 の文書が、子の c2 を書き換える前の番号（X2）で指す。親から順に流すので、c1 を渡すときに c2 の最後の番号は
-    // まだ無い
+fn a_reference_to_a_descendant_stops_as_a_cycle_without_moving_refs() {
+    // c1 の文書が、子の c2 を書き換える前の番号（X2）で指す。c2 は親の c1 を先に要し、c1 は文書が指す c2 を先に
+    // 要するので、どちらも先に流せない
     let t = TempRepo::new("forward");
     t.write("a.md", &format!("child {}\n", &X2[..8]));
     t.commit_all("docs: c1");
@@ -210,7 +210,7 @@ fn a_reference_to_a_commit_not_yet_rewritten_stops_without_moving_refs() {
     let before = t.git(&["for-each-ref", "--format=%(refname) %(objectname)"]);
     let out = run(&t.dir, &["rewrite-history", &map], "");
     assert_error(&out);
-    assert!(stderr(&out).contains(&X2[..8]), "{}", stderr(&out));
+    assert!(stderr(&out).contains("循環"), "{}", stderr(&out));
     assert_eq!(
         t.git(&["for-each-ref", "--format=%(refname) %(objectname)"]),
         before
