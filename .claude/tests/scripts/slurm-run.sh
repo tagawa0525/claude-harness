@@ -93,6 +93,7 @@ it "slurm-run: ログに書き足せなくても、警告してジョブの終�
 out=$(FAKE_LOG_READONLY=1 FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-ro 'false' 2>&1)
 assert_eq 3 $?
 assert_contains "$out" "WARN:"
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
 assert_contains "$out" "EXIT: 3"
 
 it "slurm-run: 実際の時間と見積もりは、ジョブの欄の先頭の RunTime と TimeLimit から読む"
