@@ -237,26 +237,12 @@ fn fingerprint(dir: &std::path::Path, base: &str, head: &str) -> Option<(String,
 }
 
 fn git_stdout(dir: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
-    let out = std::process::Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()?;
+    let out = crate::git::run(dir, args, None)?;
     out.status.success().then_some(out.stdout)
 }
 
 fn git_with_stdin(dir: &std::path::Path, args: &[&str], input: &[u8]) -> Option<String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
-    child.stdin.take()?.write_all(input).ok()?;
-    let out = child.wait_with_output().ok()?;
+    let out = crate::git::run(dir, args, Some(input))?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).to_string())

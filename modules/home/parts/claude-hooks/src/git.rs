@@ -1,26 +1,56 @@
 //! git の呼び出し。PATH の git を使う（テストは PATH を差し替えて挙動を作る）
 
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// `git <args>` を dir で実行し、成功なら標準出力（末尾改行を除く）を返す。
-/// 失敗（非 0 終了、dir が無い、git を起動できない）は None。dir があるのに git を起動できない
-/// （PATH に無いなど）ときは、環境の問題なので理由を標準エラーに出す
-pub fn git(dir: &Path, args: &[&str]) -> Option<String> {
+/// git を起動できない理由を出したか（1 回の判定で git を何度も呼ぶので、同じ理由を並べない）
+static REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// `git <args>` を dir で実行する（input があれば標準入力に渡す）。dir が無いか git を起動できなければ None。
+/// dir があるのに起動できない（PATH に git が無い、dir に入れない）のは環境の問題なので、理由を標準エラーに
+/// 1 回だけ出す
+pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
     // まだ無いディレクトリは、判定するコマンドが作る前の場所（mkdir の後の cd や -C）を指すことがある
     if !dir.is_dir() {
         return None;
     }
-    let out = match Command::new("git").args(args).current_dir(dir).output() {
-        Ok(out) => out,
+    let spawned = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+                stdin.write_all(input)?;
+            }
+            child.wait_with_output()
+        });
+    match spawned {
+        Ok(out) => Some(out),
         Err(e) => {
-            eprintln!(
-                "claude-hooks: git を起動できません（{}）: {e}",
-                dir.display()
-            );
-            return None;
+            if !REPORTED.swap(true, Ordering::Relaxed) {
+                eprintln!(
+                    "claude-hooks: git を起動できません（PATH に git が無いか、{} に入れません）: {e}",
+                    dir.display()
+                );
+            }
+            None
         }
-    };
+    }
+}
+
+/// `git <args>` を dir で実行し、成功なら標準出力（末尾改行を除く）を返す。非 0 の終了と、[`run`] が
+/// None を返すときは None
+pub fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = run(dir, args, None)?;
     if !out.status.success() {
         return None;
     }
