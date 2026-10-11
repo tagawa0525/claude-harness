@@ -17,8 +17,14 @@ if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
   CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
 fi
 # 渡されたパスが壊れていると（nix build の失敗の文言など）、全てのテストが失敗として数えられ、
-# ビルドの失敗が紛れる
-if [[ ! -x "$CLAUDE_HOOKS_BIN" ]]; then
+# ビルドの失敗が紛れる。テストは一時のリポジトリへ cd してから呼ぶので、相対のパスは解けない
+if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
+  echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
+  exit 1
+fi
+# 引数なしで呼ぶと使い方（rules: …）を出し、終了コード 2 で終わる。-x だけではディレクトリや
+# 起動できないバイナリを通す
+if ! { "$CLAUDE_HOOKS_BIN" 2>&1 || true; } | grep '^rules: ' >/dev/null; then
   echo "claude-hooks を走らせられません: $CLAUDE_HOOKS_BIN" >&2
   exit 1
 fi

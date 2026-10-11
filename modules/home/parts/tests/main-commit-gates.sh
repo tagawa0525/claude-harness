@@ -18,7 +18,14 @@ set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel)
 # PreToolUse hook バイナリ。CLAUDE_HOOKS_BIN で差し替え可（既定は nix build の成果物）
 HOOK_BIN="${CLAUDE_HOOKS_BIN:-$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-hooks")/bin/claude-hooks}"
-if [[ ! -x "$HOOK_BIN" ]]; then
+# check() は一時のリポジトリへ cd してから呼ぶので、相対のパスは解けない
+if [[ "$HOOK_BIN" != /* ]]; then
+  echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $HOOK_BIN" >&2
+  exit 1
+fi
+# 引数なしで呼ぶと使い方（rules: …）を出し、終了コード 2 で終わる。-x だけではディレクトリや
+# 起動できないバイナリを通す
+if ! { "$HOOK_BIN" 2>&1 || true; } | grep '^rules: ' >/dev/null; then
   echo "claude-hooks を走らせられません: $HOOK_BIN" >&2
   exit 1
 fi
