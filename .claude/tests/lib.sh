@@ -192,11 +192,23 @@ hook_input() {
       tool_input: {command: $cmd, run_in_background: $bg}}'
 }
 
+# run_hook の失敗で、テストの全体を止める（run_hook は $(...) の中で呼ばれ、exit では呼び出し元を止められない）
+trap 'exit 1' USR1
+
 # run_hook <rule> <command> [run_in_background]（hooks.sh が CLAUDE_HOOKS_BIN を用意する）
-# そのルールだけを評価した stdout を返す
+# そのルールだけを評価した stdout を返す。claude-hooks が 0 以外で終わるか、標準エラーに何か出したら
+# （知らないルール、拾われた panic）、空の出力を allow と読まずに、テストの全体を止める
 run_hook() {
-  local hook="$1" command="$2" bg="${3:-false}"
-  hook_input "$command" "$bg" | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
+  local hook="$1" command="$2" bg="${3:-false}" out status
+  out=$(hook_input "$command" "$bg" | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook" 2>"$TEST_ROOT/hook-stderr")
+  status=$?
+  if ((status != 0)) || [[ -s "$TEST_ROOT/hook-stderr" ]]; then
+    echo "claude-hooks が失敗しました（--rule $hook、終了コード $status）: $command" >&2
+    cat "$TEST_ROOT/hook-stderr" >&2
+    kill -USR1 "$$"
+    exit 1
+  fi
+  printf '%s\n' "$out"
 }
 
 # decision <hook-output> [no-decision] → permissionDecision（出力が空なら "allow"。出力に判定が無ければ
