@@ -17,28 +17,32 @@
 use std::fs;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 mod git;
+mod history;
 mod remap;
 
-const USAGE: &str = "Usage: commit-refs remap [MAP]";
+const USAGE: &str = "Usage: commit-refs remap [MAP] | rewrite-history MAP";
 
 fn main() -> ExitCode {
     // 対応表のパスは UTF-8 とは限らないので、OsString のまま読む
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    let map_path = match args.as_slice() {
-        [cmd] if cmd == "remap" => None,
+    let result = match args.as_slice() {
+        [cmd] if cmd == "remap" => remap::run(None),
         [cmd, path] if cmd == "remap" && !path.as_bytes().starts_with(b"-") => {
-            Some(PathBuf::from(path))
+            remap::run(Some(Path::new(path)))
+        }
+        [cmd, path] if cmd == "rewrite-history" && !path.as_bytes().starts_with(b"-") => {
+            history::run(Path::new(path))
         }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
     };
-    match remap::run(map_path.as_deref()) {
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(errors) => {
             for e in errors {
