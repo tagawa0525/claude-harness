@@ -1172,3 +1172,90 @@ fn renumber_refuses_untracked_files() {
     assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
     assert_eq!(t.git(&["tag", "--list", "adr-0002"]), "");
 }
+
+#[test]
+fn new_drops_local_tags_that_origin_deleted() {
+    let t = TempRepo::with_remote("pruned-tag");
+    let other = t.clone_remote("other");
+    // origin の main に入った ADR-0001（use-a）と、その番号を一度予約して振り直した別の記録（use-b）のタグ
+    fs::create_dir_all(other.join("docs/adr")).unwrap();
+    fs::write(
+        other.join("docs/adr/0001-use-a.md"),
+        design_records::template(1, "a を使う", "2026-10-01"),
+    )
+    .unwrap();
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): a"]);
+    git_in(&other, &["push", "-q", "origin", "main"]);
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-b", "origin/main"],
+    );
+    git_in(&other, &["push", "-q", "origin", "refs/tags/adr-0001"]);
+    t.git(&[
+        "fetch",
+        "-q",
+        "origin",
+        "refs/tags/adr-0001:refs/tags/adr-0001",
+    ]);
+    git_in(
+        &other,
+        &["push", "-q", "origin", "--delete", "refs/tags/adr-0001"],
+    );
+    let out = t.run(&["new", "use-c", "c を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-c.md\n");
+    assert_eq!(t.git(&["tag", "--list", "adr-0001"]), "");
+}
+
+#[test]
+fn renumber_keeps_front_matter_references_of_the_moved_record() {
+    let t = duplicated_after_rebase("self-ref");
+    let b = "docs/adr/0001-use-b.md";
+    // b は main の ADR-0001（use-a）を前提にする。記録の前付けは自分を指さない
+    t.write(
+        b,
+        &t.read(b).replace("requires: []", "requires: [ADR-0001]"),
+    );
+    t.commit_all("docs(adr): b requires a");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let b = t.read("docs/adr/0002-use-b.md");
+    assert!(b.contains("requires: [ADR-0001]\n"), "{b}");
+    assert!(b.contains("# ADR-0002: b を使う\n"), "{b}");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+}
+
+#[test]
+fn check_does_not_read_date_named_files_as_issues() {
+    let t = TempRepo::new("issue-dates");
+    t.write("docs/issues/0001-fix-a.md", "# a\n");
+    t.write("docs/issues/20261010-notes.md", "# notes\n");
+    t.run(&["new", "use-a", "a を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a).replace("issues: []", "issues: [\"#20261010\"]"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("`issues` names #20261010, which does not exist in docs/issues"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn new_tells_how_to_publish_the_default_branch_when_origin_has_none() {
+    let t = TempRepo::new("empty-origin");
+    let bare = t.root.join("remote.git");
+    git_in(&t.root, &["init", "-q", "--bare", "remote.git"]);
+    t.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(stderr(&out).contains("git push"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("set-head"), "{}", stderr(&out));
+}

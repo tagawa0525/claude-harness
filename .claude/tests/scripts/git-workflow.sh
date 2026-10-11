@@ -635,6 +635,18 @@ assert_eq "" "$(fake_log design-records)"
 remove_fake_tool design-records
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: 予約のタグを解放できなければ ERROR を出し、ブランチを消さずに止まる"
+setup_merged_branch "$TEST_ROOT/cleanup12"
+cd "$TEST_ROOT/cleanup12/app" || exit 1
+mkdir -p docs/adr
+make_fake_tool design-records '"prune") echo "design-records: cannot reach origin" >&2; exit 1 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: 予約のタグを解放できません"
+assert_contains "$(git branch --list feat/x)" "feat/x"
+remove_fake_tool design-records
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: 未マージのブランチは削除せず失敗する"
 REPO="$TEST_ROOT/cleanup5/app"
 make_repo "$REPO"
