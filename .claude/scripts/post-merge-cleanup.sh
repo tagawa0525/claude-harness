@@ -9,8 +9,9 @@
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
 #   3. 予約のタグ（adr-NNNN、issue-NNNN）があれば、既定ブランチの履歴に記録が入った番号のタグを、ローカルと
-#      リモートから消す（design-records prune。ADR-0018）。design-records が無いか origin に届かなければ残して
-#      続け、prune が失敗したら ERROR で止まる
+#      リモートから消す（design-records prune。ADR-0018）。ほかの clone が push したタグも、2 の fetch が既定
+#      ブランチの履歴を指すタグとして取ってくる。design-records が無ければ残して続け、prune が失敗したら
+#      ERROR で止まる（origin に届かなければ、2 の fetch で先に止まる）
 #   4. ローカルブランチを削除（-d。未マージなら失敗する）
 #   5. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
 #      GitHub リモートでそのブランチを head とする open PR（fork からの upstream PR 等）があるとき
@@ -18,7 +19,7 @@
 #
 # 出力:
 #   WORKTREE_REMOVED: <path>|none
-#   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
+#   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)
 #   LOCAL_BRANCH: deleted|none
 #   REMOTE_BRANCH: deleted|kept (...)|none
 
@@ -87,8 +88,6 @@ if [[ -z "$(git tag --list 'adr-*' 'issue-*')" ]]; then
   echo "RESERVATIONS_RELEASED: none"
 elif ! command -v design-records >/dev/null 2>&1; then
   echo "RESERVATIONS_RELEASED: skipped (design-records が PATH に無い。予約のタグは残した)"
-elif git remote get-url origin >/dev/null 2>&1 && ! git ls-remote -q origin >/dev/null 2>&1; then
-  echo "RESERVATIONS_RELEASED: kept (origin に届かない。予約のタグは残した)"
 elif RELEASED=$(design-records prune); then
   RELEASED=${RELEASED:-none}
   echo "RESERVATIONS_RELEASED: ${RELEASED//$'\n'/ }"
