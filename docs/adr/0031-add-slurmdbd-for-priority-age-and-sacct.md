@@ -43,6 +43,12 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
   （`src/slurmdbd/slurmdbd.c` の `become_slurm_user` のあとの `acct_storage_g_get_connection`）
 - `modules/slurm/common.nix` に `AccountingStorageType=accounting_storage/slurmdbd` と `AccountingStorageHost=r995` を
   置く。slurm.conf は全ホストで同じにする
+- クラスタ（r995）の登録は、slurmctld より前に走る oneshot（`slurm-register-cluster`）が、登録されていなければ
+  `sacctmgr add cluster` で行う。登録がないと、slurmctld は記録を送れない（slurmdbd が `trying to register a cluster
+  (r995) with no remote port` を出す。2026-10-12 に r995 で確かめた）
+- MariaDB は、slurmdbd が推奨する値のうち `innodb_lock_wait_timeout=900` と `max_allowed_packet=16M` だけ合わせる。
+  `innodb_buffer_pool_size` の推奨（4 GiB 以上。`accounting_storage_mysql.c` の `_check_database_variables`）は大きな
+  クラスタ向けで、履歴だけの小さな DB には既定（128 MiB）のまま置き、slurmdbd の警告は受け入れる
 - ほかのホストの `sacct` が r995 の slurmdbd（6819）に届くよう、tailscale0 に開ける
 - jobcomp（ADR-0017）は残す。`slurm-history.sh` がそれを読む
 
