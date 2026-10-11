@@ -15,7 +15,7 @@
 # --carry-changes: 未コミットの変更（未追跡ファイル含む）を stash 経由で worktree 側に移す
 #   （git-commit スキルの「main からの退避」）。
 #
-# 共有（.worktreelink）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス
+# 共有（.worktreelink、ADR-0016）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス
 # （ルートからの相対パス。空行と # で始まる行は読み飛ばす）を、メイン worktree の同じパスへの
 # 絶対パスの symlink として作る。git で追跡しない大きなデータ（キャッシュ・参照データ）を
 # worktree の間でコピーせず共有するため。

@@ -111,7 +111,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | script                                  | 元の SKILL.md の手順                                                                        | 呼び出すスキル                        |
 | --------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------- |
 | `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                                        | git-info                              |
-| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み                         | git-worktree, git-commit              |
+| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み、`.worktreelink` の共有 | git-worktree, git-commit              |
 | `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数                              | gh-pr-create, gh-pr-merge             |
 | `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）                              | git-branch                            |
 | `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                                         | git-branch                            |
@@ -123,6 +123,24 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                | gh-wait-review, gh-pr-review          |
 | `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                              | gh-pr-review（language-checks 経由）  |
 | `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                         | gh-pr-review                          |
+
+### worktree の間で共有するパス（`.worktreelink`）
+
+`worktree-add.sh` は、新しい worktree のルートに `.worktreelink` があれば、そこに 1 行 1 パスで書いたパスを
+メイン worktree の同じパスへの絶対パスの symlink にし、`SHARED: <path>` を出す。git で追跡しない大きなデータ
+（キャッシュ・参照データ）をコピーせず共有するため。名前は PostHog Desktop の `.worktreelink`
+（[PostHog Desktop worktrees](https://posthog.com/docs/posthog-desktop/worktrees)）から借りたが、書き方は
+リテラルの相対パスだけに絞った（`.gitignore` のパターンは受け付けない）。決定は ADR-0016。
+
+```text
+# 核データと DVC のキャッシュ
+references
+```
+
+- 共有するパスは git に無視されていること。`dir/` のようにディレクトリだけに一致するパターンでは symlink は
+  無視されないので、`dir` か `/dir` と書く。無視されていなければエラーで止まる（symlink は 1 つも作らず、worktree は残る）
+- メイン worktree に無いパスは作らずに `NOTE:` で知らせる
+- `post-merge-cleanup.sh` は symlink の残る worktree もそのまま消せ、先の実体は残る
 
 ## スクリプトの書き方
 
