@@ -95,6 +95,13 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
             Some(n) => n,
             None => used.last().map_or(1, |n| n + 1),
         };
+        // 5 桁の番号は、タグにも履歴にも番号として数えない（使い回しうる）
+        if number > 9999 {
+            return Err(format!(
+                "{} has more than four digits; the numbers of this kind are used up",
+                kind.reference(number)
+            ));
+        }
         let tag = kind.tag(number);
         let created = run(root, &["tag", "-a", &tag, "-m", slug, &target])?;
         if !created.status.success() {
