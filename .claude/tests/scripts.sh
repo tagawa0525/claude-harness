@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# .claude/scripts と skills/*/scripts のテストをまとめて実行する
+# .claude/scripts と skills/*/scripts、hook のテストの入口（hooks.sh などがバイナリを受け取る部分）のテストをまとめて実行する
 #
 # 実行: bash .claude/tests/scripts.sh
 # テスト本体は対象ごとに scripts/ に分けてあり、個別にも実行できる。

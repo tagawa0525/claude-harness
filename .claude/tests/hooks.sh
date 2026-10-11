@@ -10,11 +10,25 @@
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
-# CLAUDE_HOOKS_BIN で差し替えられる（nix でビルドしたバイナリの検証用）
+# CLAUDE_HOOKS_BIN（絶対パス）で差し替えられる（nix でビルドしたバイナリの検証用）
 if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
   CRATE_DIR=$(cd "$(dirname "$0")/../../modules/home/parts/claude-hooks" && pwd)
   cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
   CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
+fi
+# 渡されたパスが壊れていると（nix build の失敗の文言など）、全てのテストが失敗として数えられ、
+# ビルドの失敗が紛れる。テストは一時のリポジトリへ cd してから呼ぶので、相対のパスは解けない
+if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
+  echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
+  exit 1
+fi
+# 引数なしで呼ぶと使い方（rules: …）を出し、終了コード 2 で終わる。-x だけではディレクトリや
+# 起動できないバイナリを通す
+usage=$("$CLAUDE_HOOKS_BIN" 2>&1 </dev/null) || true
+if ! grep -q '^rules: ' <<<"$usage"; then
+  echo "claude-hooks を走らせられません: $CLAUDE_HOOKS_BIN" >&2
+  echo "$usage" >&2
+  exit 1
 fi
 
 source "$(dirname "$0")/lib.sh"
@@ -1760,6 +1774,7 @@ out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'tru
 assert_eq allow "$(decision "$out")"
 
 it "guard-sbatch: slurm-run.sh は、同名のテスト以外ならどの書き方でもフォアグラウンドなら止める"
+# shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 for invoked in ".claude/scripts/slurm-run.sh" "./.claude/scripts/slurm-run.sh" "~/.claude/scripts/slurm-run.sh" \
   "$HOME/.claude/scripts/slurm-run.sh" "\"$HOME/.claude/scripts/slurm-run.sh\"" \
   "~/.claude/scripts/./slurm-run.sh" "~/.claude/scripts//slurm-run.sh" "scripts/slurm-run.sh" \

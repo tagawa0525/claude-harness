@@ -18,6 +18,8 @@ mod unwrap;
 
 use std::io::Read;
 
+// .claude/tests/hooks.sh と modules/home/parts/tests/main-commit-gates.sh は、引数なしで呼んで `rules: `
+// で始まる行が出ることで、渡されたバイナリが起動できるかを確かめる
 fn usage() -> ! {
     eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]...");
     eprintln!("rules: {}", rules::names().join(", "));
