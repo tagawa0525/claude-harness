@@ -436,3 +436,37 @@ fn more_than_one_map_argument_is_a_usage_error() {
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(stderr(&out).contains("Usage:"), "{}", stderr(&out));
 }
+
+#[test]
+fn words_longer_than_64_hex_digits_and_uppercase_hex_are_not_hashes() {
+    let t = TempRepo::new("not-hashes");
+    let old = t.commit_file("src.txt", "feat: measured");
+    let long = format!("{}{}", &old[..8], "0".repeat(57));
+    let upper = old[..8].to_uppercase();
+    let line = format!("{long} {upper}");
+    t.record("notes.md", &line);
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert_eq!(t.read("notes.md"), format!("{line}\n"));
+}
+
+#[test]
+fn non_ascii_characters_are_word_boundaries() {
+    let t = TempRepo::new("non-ascii");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("測定{}の結果", &old[..8]));
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    assert_ok(&t.remap(&[&map]));
+    assert_eq!(t.read("notes.md"), "測定44444444の結果\n");
+}
+
+#[test]
+fn reports_every_unreadable_line_of_the_map() {
+    let t = TempRepo::new("bad-lines");
+    let map = t.map_file("x y\nabc\n");
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert!(stderr(&out).contains("1 行目"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("2 行目"), "{}", stderr(&out));
+}
