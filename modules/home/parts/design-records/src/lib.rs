@@ -251,7 +251,14 @@ pub fn template(number: u32, title: &str, date: &str) -> String {
 /// `line` のうち、`kind` の記録 `old`（slug は `slug`）を指す参照の番号を `new` に付け替える。参照は、本文での参照
 /// （[`Kind::reference`]。[`parse::numbered_refs`] と同じ読み方）と、ファイル名の `NNNN-<slug>.md`（前が英数字で
 /// ないもの）。
-pub fn renumber_refs(kind: Kind, line: &str, old: u32, new: u32, slug: &str) -> String {
+pub fn renumber_refs(
+    kind: Kind,
+    line: &str,
+    old: u32,
+    new: u32,
+    slug: &str,
+    bare_is_kind: bool,
+) -> String {
     let starts: std::collections::BTreeSet<usize> = parse::numbered_refs(line, kind.ref_prefix())
         .into_iter()
         .filter(|&(_, n)| n == old)
@@ -261,19 +268,32 @@ pub fn renumber_refs(kind: Kind, line: &str, old: u32, new: u32, slug: &str) -> 
     let mut spans: std::collections::BTreeMap<usize, usize> =
         starts.into_iter().map(|start| (start, start + 4)).collect();
     let file = format!("-{slug}.md");
+    // ほかのディレクトリからの相対のパスは、直前のディレクトリの名前（adr、issues）で種類を見る
+    let dir_name = kind.dir().rsplit('/').next().unwrap_or(kind.dir());
+    let in_dir = format!("{dir_name}/");
     for (dash, _) in line.match_indices(&file) {
         let digits = line[..dash].len()
             - line[..dash]
                 .trim_end_matches(|c: char| c.is_ascii_digit())
                 .len();
         let start = dash - digits;
-        if (1..=4).contains(&digits)
-            && line[start..dash].parse() == Ok(old)
-            && !line[..start]
-                .chars()
-                .next_back()
-                .is_some_and(parse::is_word)
-        {
+        let before = &line[..start];
+        let of_kind = match before.chars().next_back() {
+            Some('/') => {
+                before.ends_with(&in_dir)
+                    && !before[..before.len() - in_dir.len()]
+                        .chars()
+                        .next_back()
+                        .is_some_and(parse::is_word)
+            }
+            Some(c) if parse::is_word(c) => false,
+            _ => bare_is_kind,
+        };
+        let ends = !line[dash + file.len()..]
+            .chars()
+            .next()
+            .is_some_and(parse::is_word);
+        if (1..=4).contains(&digits) && line[start..dash].parse() == Ok(old) && of_kind && ends {
             spans.insert(start, dash);
         }
     }
@@ -442,7 +462,7 @@ mod tests {
             ),
             "docs/issues/0001-use-b.md ../issues/0001-use-b.md 0001-use-b.mdx ../adr/0002-use-b.md"
         );
-        // 裸のファイル名は、参照する文書がその種類のディレクトリにあるときだけ、その種類の記録とみなす
+        // 裸のファイル名は、bare_is_kind が偽（参照する文書がほかの種類のディレクトリにある）なら書き換えない
         assert_eq!(
             renumber_refs(
                 Kind::Adr,
