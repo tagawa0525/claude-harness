@@ -1111,3 +1111,30 @@ fn new_fetches_before_choosing_where_to_put_the_tag() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(t.remote_tag("adr-0001").contains("adr-0001"));
 }
+
+#[test]
+fn new_refuses_shallow_clones_whose_history_is_cut() {
+    let t = TempRepo::with_remote("shallow");
+    t.commit_all("chore: second");
+    t.git(&["commit", "-q", "--allow-empty", "-m", "chore: third"]);
+    t.git(&["push", "-q", "origin", "main"]);
+    let bare = t.root.join("remote.git");
+    git_in(
+        &t.root,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            &format!("file://{}", bare.display()),
+            "shallow",
+        ],
+    );
+    let shallow = t.root.join("shallow");
+    configure(&shallow);
+    // 切られた履歴の先の、消した記録の番号を数えられない
+    let out = run(&shallow, &["new", "use-a", "a を使う"], None);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(stderr(&out).contains("shallow"), "{}", stderr(&out));
+    assert!(!shallow.join("docs").exists());
+}
