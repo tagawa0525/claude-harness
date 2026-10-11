@@ -880,6 +880,54 @@ mod tests {
     }
 
     #[test]
+    fn shell_option_values_in_a_cluster_are_the_next_words() {
+        // bash と sh は、まとめた 1 文字のオプションの中の -o / -O の値を次の語から取り、残りの文字もオプションとして読む
+        for (src, source) in [
+            ("bash -oc pipefail sbatch", "sbatch"),
+            ("bash -Oc extglob sbatch", "sbatch"),
+            ("sh -oec pipefail sbatch", "sbatch"),
+            ("bash -co pipefail sbatch", "sbatch"),
+            ("bash -oOc pipefail extglob sbatch", "sbatch"),
+        ] {
+            let u = un(src);
+            assert_eq!(u.source.as_deref(), Some(source), "{src}");
+            assert!(!u.opaque, "{src}");
+        }
+        let u = un("bash -ox pipefail sbatch");
+        assert_eq!(u.name, "sbatch");
+        assert!(u.source.is_none() && !u.opaque);
+    }
+
+    #[test]
+    fn env_reads_a_single_dash_once_after_the_options() {
+        // `-` は getopt の後に一度だけ（`--` の後でも）見て、`-i` と同じに読み、そこでオプションを終える
+        let u = un("env -- - git push");
+        assert_eq!(u.name, "git");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        let u = un("env - -u FOO git");
+        assert_eq!(u.name, "-u");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        let u = un("env - - cmd");
+        assert_eq!(u.name, "-");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        let u = un("env -u FOO - git");
+        assert_eq!(u.name, "git");
+        assert_eq!(
+            u.env,
+            [EnvChange::Unset("FOO".to_string()), EnvChange::Clear]
+        );
+        let u = un("env - FOO=1 git");
+        assert_eq!(u.name, "git");
+        assert_eq!(
+            u.env,
+            [
+                EnvChange::Clear,
+                EnvChange::Set("FOO".to_string(), "1".to_string())
+            ]
+        );
+    }
+
+    #[test]
     fn wrappers_that_do_not_run_the_command_are_left_alone() {
         for src in [
             "sudo -l sbatch",

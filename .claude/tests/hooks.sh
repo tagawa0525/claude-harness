@@ -509,6 +509,15 @@ assert_eq allow "$(decision "$out")"
 out=$(run_hook block-main-commit "cd $LOCAL && echo \$(git commit -m 'feat: x')")
 assert_eq allow "$(decision "$out")"
 
+it "block-main-commit: sudo -i と ssh の中のコマンドは手元の cwd で走らないので、手元のブランチで判定しない"
+for cmd in "sudo -i git commit -m 'feat: x'" "sudo -i bash -c 'cd $REPO && git commit -m x'" \
+  "ssh host git commit -m 'feat: x'" "ssh host 'cd $REPO && git commit -m x'" "ssh host git -C $REPO commit -m x"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+out=$(run_hook block-main-commit "ssh host true; git commit -m 'feat: x'")
+assert_eq deny "$(decision "$out")"
+
 it "block-main-commit: bash -c の文字列の中の cd は、同じ文字列の中の後ろのコマンドにだけ効く。前の cd は文字列の中にも効く"
 out=$(run_hook block-main-commit "bash -c 'cd $LOCAL && git commit -m \"feat: x\"'")
 assert_eq allow "$(decision "$out")"
@@ -902,6 +911,15 @@ for cmd in 'sudo -E git commit -m x' 'sudo --preserve-env git commit -m x' \
   assert_eq allow "$(decision "$out")"
 done
 
+it "block-no-verify: env の - は getopt の後に一度だけ（-- の後でも）読む"
+# `env -- - git` は空の環境で git を走らせる。`env - -u X git` は -u を、`env - - git` は - を走らせる
+out=$(run_hook block-no-verify 'env -- - git commit -m x')
+assert_eq deny "$(decision "$out")"
+for cmd in 'env - -u CLAUDECODE git commit -m x' 'env - - git commit -m x'; do
+  out=$(run_hook block-no-verify "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "block-no-verify: hook を飛ばさない git のコマンドは許可する"
 for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit' \
   'git commit -m"feat: add notes"' 'git commit -Fnotes.txt' 'git commit -Cnext' 'git commit --no-status -m x' \
@@ -936,6 +954,12 @@ make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
 mkdir -p src && echo x > src/a.txt
+
+it "guard-git-push: bash / sh のまとめたオプションの中の -o / -O の値は次の語で、-c の文字列の中も見る"
+for cmd in "bash -oc pipefail 'git push --force'" "bash -Oc extglob 'git push --force'" "sh -oec pipefail 'git push --force'"; do
+  out=$(run_hook guard-git-push "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 
 it "guard-git-add: パスを指定した git add は許可する"
 for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt' \

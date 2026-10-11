@@ -836,6 +836,49 @@ mod tests {
     }
 
     #[test]
+    fn commands_under_sudo_login_or_ssh_do_not_run_in_a_local_directory() {
+        // sudo -i は対象の利用者のホームで、ssh は接続先で走る。どちらも手元に実在しない場所になり、中の cd
+        // （絶対パスや ~ を含む）と git -C も手元のパスに解決しない
+        let base = Path::new("/base");
+        let dir_of_git = |src: &str| {
+            let sh = Shell::parse(src);
+            let git = sh.commands().iter().find(|c| c.name == "git").unwrap();
+            sh.target_dir(git, base)
+        };
+        for src in [
+            "sudo -i git commit",
+            "sudo --login git commit",
+            "sudo -i bash -c 'git commit'",
+            "sudo -i -u slurm bash -c 'cd /a && git commit'",
+            "cd /a && sudo -i git -C /b commit",
+            "ssh host git commit",
+            "ssh host 'cd /a && git commit'",
+            "ssh host 'cd ~/repo && git commit'",
+            "cd /a && ssh host git -C /b commit",
+            "ssh host bash -c 'cd /a && git commit'",
+        ] {
+            let dir = dir_of_git(src);
+            assert!(
+                !dir.starts_with("/a") && !dir.starts_with("/b"),
+                "{src}: {}",
+                dir.display()
+            );
+            assert_ne!(dir, PathBuf::from("/base"), "{src}");
+            assert_ne!(dir, home().join("repo"), "{src}");
+        }
+        // sudo -i / ssh の外のコマンドは手元のディレクトリのまま。-i の無い sudo は手元の cwd で走る
+        assert_eq!(
+            dir_of_git("ssh host true; git commit"),
+            PathBuf::from("/base")
+        );
+        assert_eq!(dir_of_git("sudo -E git commit"), PathBuf::from("/base"));
+        assert_eq!(
+            dir_of_git("sudo -s bash -c 'cd /a && git commit'"),
+            PathBuf::from("/a")
+        );
+    }
+
+    #[test]
     fn command_in_message_is_data() {
         let cs = cmds("git commit -m \"docs: run git add -A\"");
         assert_eq!(cs.len(), 1);
