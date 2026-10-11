@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: proposed
 date: 2026-10-12
 requires: [ADR-0007]
 supersedes: []
@@ -51,12 +51,14 @@ nice を上げて優先度を下げる。そのとき、優先度が 1 以下の
 
 - 良い点: `slurm-run.sh --top` と `scontrol top` が働き、急ぐ短いジョブを長いジョブの前に出せる
 - 悪い点: `scontrol top` を繰り返すと、前にいたジョブの nice が少しずつ積み上がる。基礎の 10000 を使い切るほど繰り返すと、
-  また下げられなくなる
+  また下げられなくなる。`squeue -o '%i %Q %y'` で優先度と nice が読め、`scontrol update JobId=<番号> Nice=0` で戻せる
+- 前提: パーティションが `main` の 1 つだけで、`PriorityJobFactor` が既定の 1 であること。パーティションを足すか
+  `PriorityJobFactor` を変えると、基礎の優先度がジョブごとに変わり、投げた順でなくなる
 - 見直す条件: 利用者が増えて公平さが要るようになったとき（ADR-0007 の見直す条件と同じ）
 
 ### 確認
 
-- 反映後、`squeue -o '%i %Q'` で待っているジョブの優先度が 10000 になること
+- 反映後、`squeue -o '%i %Q'` で待っているジョブ（反映の前に投げたものを含む）の優先度が 10000 になること
 - `-c 1` の 1 分のジョブを 2 本投げ、後ろのジョブに `scontrol top` を当てると、`squeue` の順と走る順が入れ替わること
 
 ## 各案の長所と短所
@@ -79,3 +81,6 @@ nice を上げて優先度を下げる。そのとき、優先度が 1 以下の
 
 - 反映で走っているジョブは止まらない。slurmd は `KillMode=process` と `Delegate=yes` で動く（2026-10-12、
   `systemctl show slurmd`）ので、slurmd を再起動しても slurmstepd とジョブは残る。slurmctld は状態を保存して読み直す
+- 反映の前から待っているジョブの優先度も、multifactor が slurmctld の起動時と `PriorityCalcPeriod`（既定 5 分）ごとに
+  計算し直す（Slurm 26.05.4 の `priority_multifactor.c` の `_decay_apply_new_usage_and_weighted_factors`）ので、
+  1 のまま取り残されない
