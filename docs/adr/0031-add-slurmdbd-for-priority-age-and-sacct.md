@@ -86,3 +86,6 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
   待っているジョブも走っているジョブも残った
 - 2026-10-12: 反映の直後に測った常駐の量（`systemctl show -p MemoryCurrent -p CPUUsageNSec`）は、mysql が 96 MiB と
   起動からの CPU 0.52 秒、slurmdbd が 4.6 MiB と 0.02 秒（r995 の物理メモリは 92 GiB）
+- 2026-10-12: `innodb_buffer_pool_size=4G` を r995 に当てて測り、採らなかった。slurmdbd の警告は消えたが、MariaDB の
+  起動直後のメモリ（`systemctl show -p MemoryCurrent`）が 89 MiB から 167 MiB に増えた（RSS は 194 MiB）。得られるのは
+  警告が消えることだけで、大きな DB の移行や記録の削除の速さは、履歴だけの小さな DB には効かない
