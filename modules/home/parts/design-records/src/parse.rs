@@ -152,7 +152,7 @@ fn unquote(s: &str) -> Option<&str> {
 }
 
 /// 英数字か `_`（ASCII のみ。日本語の文に続けて書いた参照は、参照として数える）。
-fn is_word(c: char) -> bool {
+pub fn is_word(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
@@ -168,12 +168,19 @@ fn four_digits_at(text: &str, start: usize) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// `<prefix>NNNN`（4 桁。前と後ろが英数字でない）の参照の位置（`prefix` の始まり）と番号を、現れた順に返す。
+pub fn numbered_refs(text: &str, prefix: &str) -> Vec<(usize, u32)> {
+    text.match_indices(prefix)
+        .filter(|(i, _)| !text[..*i].chars().next_back().is_some_and(is_word))
+        .filter_map(|(i, _)| Some((i, four_digits_at(text, i + prefix.len())?)))
+        .collect()
+}
+
 /// `ADR-NNNN`（4 桁）の参照の番号を、現れた順に返す。
 pub fn adr_refs(text: &str) -> Vec<u32> {
-    const PREFIX: &str = "ADR-";
-    text.match_indices(PREFIX)
-        .filter(|(i, _)| !text[..*i].chars().next_back().is_some_and(is_word))
-        .filter_map(|(i, _)| four_digits_at(text, i + PREFIX.len()))
+    numbered_refs(text, "ADR-")
+        .into_iter()
+        .map(|(_, n)| n)
         .collect()
 }
 

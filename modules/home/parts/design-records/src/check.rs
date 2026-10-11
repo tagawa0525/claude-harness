@@ -5,8 +5,8 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, KEYS, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
-    STATUSES, Section, adr_number, is_adr_path,
+    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
+    STATUSES, Section, is_adr_path, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -139,7 +139,7 @@ fn parse_adrs<'a>(adrs: &'a BTreeMap<String, String>, out: &mut Found) -> Vec<Ad
         if !is_adr_path(path) {
             continue;
         }
-        let Some(number) = adr_number(name) else {
+        let Some(number) = record_number(name) else {
             out.error(path, None, "file name is not NNNN-kebab-case.md");
             continue;
         };
@@ -169,9 +169,14 @@ fn parse_adrs<'a>(adrs: &'a BTreeMap<String, String>, out: &mut Found) -> Vec<Ad
 
 /// 番号の重複。
 fn check_unique(docs: &[Adr], out: &mut Found) {
+    unique(docs.iter().map(|d| (d.path, d.number)), out);
+}
+
+/// `numbered`（パスと番号）の番号の重複。
+fn unique<'a>(numbered: impl Iterator<Item = (&'a str, u32)>, out: &mut Found) {
     let mut by_number: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
-    for doc in docs {
-        by_number.entry(doc.number).or_default().push(doc.path);
+    for (path, number) in numbered {
+        by_number.entry(number).or_default().push(path);
     }
     for (number, paths) in by_number {
         if let [first, rest @ ..] = paths.as_slice()
@@ -184,6 +189,56 @@ fn check_unique(docs: &[Adr], out: &mut Found) {
             );
         }
     }
+}
+
+/// `path` のファイル名の番号と slug（`NNNN-<slug>.md` でなければ `None`）。
+fn number_and_slug(path: &str) -> Option<(u32, &str)> {
+    let name = path.rsplit('/').next()?;
+    let number = record_number(name)?;
+    Some((number, name.strip_suffix(".md")?.split_once('-')?.1))
+}
+
+/// docs/issues の issue（`paths`）の番号の重複。前付けと節の形は見ない（各リポジトリの検査に任せる。ADR-0018）。
+pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
+    let mut out = Found::default();
+    unique(
+        paths
+            .iter()
+            .filter_map(|p| Some((p.as_str(), number_and_slug(p)?.0))),
+        &mut out,
+    );
+    out.0
+}
+
+/// `kind` の記録（`paths`）のうち、番号を予約したタグ（`reserved` は番号から slug へ）の slug と違う slug のもの
+/// （ほかの記録が予約した番号を使っている）。
+pub fn check_reservations(
+    kind: Kind,
+    paths: &[String],
+    reserved: &BTreeMap<u32, String>,
+) -> Vec<Finding> {
+    let mut out = Found::default();
+    for path in paths {
+        let Some((number, slug)) = number_and_slug(path) else {
+            continue;
+        };
+        if let Some(owner) = reserved.get(&number).filter(|owner| *owner != slug) {
+            let kind_option = match kind {
+                Kind::Adr => String::new(),
+                Kind::Issue => format!("--kind {} ", kind.name()),
+            };
+            out.warning(
+                path,
+                None,
+                format!(
+                    "number {number:04} is reserved for `{owner}` by tag {}; if another record took \
+                     the number, run `design-records renumber {kind_option}{number}`",
+                    kind.tag(number)
+                ),
+            );
+        }
+    }
+    out.0
 }
 
 /// 前付けの値の表示（違反の文に入れる）。

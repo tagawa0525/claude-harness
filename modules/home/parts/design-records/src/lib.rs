@@ -1,4 +1,5 @@
 //! 設計の記録（ADR）の形。前付けのキーと status、必須と推奨の節、ファイル名と番号、雛形を持つ（ADR-0009）。
+//! ADR と docs/issues の issue の番号の予約（タグの名前）と振り直し（参照の付け替え）も持つ（ADR-0018）。
 //!
 //! 形の値を持つのはこのクレートだけにする。スキル `adr` と `.claude/scripts/branch-topics.sh` は CLI を呼び、
 //! claude-hooks はライブラリとしてパスの判定を使う。
@@ -8,6 +9,79 @@ pub mod parse;
 
 /// ADR を置くディレクトリ（リポジトリの直下から）。
 pub const ADR_DIR: &str = "docs/adr";
+
+/// issue を置くディレクトリ（リポジトリの直下から）。
+pub const ISSUE_DIR: &str = "docs/issues";
+
+/// 番号を振る記録の種類。どちらも `<dir>/NNNN-<slug>.md` に置き、番号を使い回さない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Kind {
+    Adr,
+    Issue,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 2] = [Kind::Adr, Kind::Issue];
+
+    /// CLI の `--kind` の値から。
+    pub fn parse(name: &str) -> Option<Kind> {
+        match name {
+            "adr" => Some(Kind::Adr),
+            "issue" => Some(Kind::Issue),
+            _ => None,
+        }
+    }
+
+    /// CLI の `--kind` の値。
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Adr => "adr",
+            Kind::Issue => "issue",
+        }
+    }
+
+    /// 置くディレクトリ。
+    pub fn dir(self) -> &'static str {
+        match self {
+            Kind::Adr => ADR_DIR,
+            Kind::Issue => ISSUE_DIR,
+        }
+    }
+
+    /// 本文での参照の、番号の前の部分（`ADR-0018`、`#0018`）。
+    pub fn ref_prefix(self) -> &'static str {
+        match self {
+            Kind::Adr => "ADR-",
+            Kind::Issue => "#",
+        }
+    }
+
+    /// 本文での参照。
+    pub fn reference(self, number: u32) -> String {
+        format!("{}{number:04}", self.ref_prefix())
+    }
+
+    /// 番号を予約するタグの名前（`adr-0018`、`issue-0018`）。
+    pub fn tag(self, number: u32) -> String {
+        format!("{}-{number:04}", self.name())
+    }
+
+    /// 記録のファイルのパス（`<dir>/NNNN-<slug>.md`）。
+    pub fn path(self, number: u32, slug: &str) -> String {
+        format!("{}/{number:04}-{slug}.md", self.dir())
+    }
+}
+
+/// 予約のタグの名前（`adr-NNNN`、`issue-NNNN`。4 桁）から、種類と番号を読む。
+pub fn parse_tag(name: &str) -> Option<(Kind, u32)> {
+    Kind::ALL.into_iter().find_map(|kind| {
+        let digits = name.strip_prefix(kind.name())?.strip_prefix('-')?;
+        if digits.len() != 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        Some((kind, digits.parse().ok()?))
+    })
+}
 
 /// 前付けのキー（書く順）。
 pub const KEYS: [&str; 6] = [
@@ -98,7 +172,7 @@ pub fn is_title(title: &str) -> bool {
 }
 
 /// `NNNN-kebab-case.md` の形のファイル名から番号を取り出す。形が違えば `None`。
-pub fn adr_number(name: &str) -> Option<u32> {
+pub fn record_number(name: &str) -> Option<u32> {
     let (number, rest) = name.strip_suffix(".md")?.split_once('-')?;
     if number.len() != 4 || !number.bytes().all(|b| b.is_ascii_digit()) || !is_slug(rest) {
         return None;
@@ -116,26 +190,30 @@ pub fn is_slug(name: &str) -> bool {
     })
 }
 
-/// 次の ADR の番号。`paths` のうち `docs/adr/<数字>-*.md` の番号の最大 + 1（4 桁まで。3 桁で振っていた ADR も
-/// 数える。5 桁以上は日付などの番号でない数字なので数えない）。無ければ 1。
-pub fn next_number<'a>(paths: impl IntoIterator<Item = &'a str>) -> u32 {
-    paths
-        .into_iter()
-        .filter_map(|path| {
-            let name = path.strip_prefix(ADR_DIR)?.strip_prefix('/')?;
-            let (number, _) = name.strip_suffix(".md")?.split_once('-')?;
-            if name.contains('/') || !(1..=4).contains(&number.len()) {
-                return None;
-            }
-            number.parse::<u32>().ok()
-        })
-        .max()
-        .map_or(1, |n| n + 1)
+/// `paths` のうち `<kind の dir>/<数字>-*.md` の番号（4 桁まで。3 桁で振っていた記録も数える。5 桁以上は日付などの
+/// 番号でない数字なので数えない）。
+pub fn numbers_in<'a>(
+    kind: Kind,
+    paths: impl IntoIterator<Item = &'a str>,
+) -> impl Iterator<Item = u32> {
+    paths.into_iter().filter_map(move |path| {
+        let name = path.strip_prefix(kind.dir())?.strip_prefix('/')?;
+        let (number, _) = name.strip_suffix(".md")?.split_once('-')?;
+        if name.contains('/') || !(1..=4).contains(&number.len()) {
+            return None;
+        }
+        number.parse::<u32>().ok()
+    })
 }
 
-/// ADR のファイルのパス（`docs/adr/NNNN-<slug>.md`）。
-pub fn adr_path(number: u32, slug: &str) -> String {
-    format!("{ADR_DIR}/{number:04}-{slug}.md")
+/// 次の番号。`paths` の `kind` の記録の番号（[`numbers_in`]）の最大 + 1。無ければ 1。
+pub fn next_number<'a>(kind: Kind, paths: impl IntoIterator<Item = &'a str>) -> u32 {
+    numbers_in(kind, paths).max().map_or(1, |n| n + 1)
+}
+
+/// 新しい issue の雛形。前付けと節の形は各リポジトリが決めるので、表題の行だけを書く（ADR-0018）。
+pub fn issue_template(title: &str) -> String {
+    format!("# {title}\n")
 }
 
 /// 新しい ADR の雛形。status は proposed、前付けのキーは空、必須と推奨の見出しを持つ。
@@ -160,6 +238,33 @@ pub fn template(number: u32, title: &str, date: &str) -> String {
         text.push_str(&format!("\n### {}\n", section.ja));
     }
     text
+}
+
+/// `line` のうち、`kind` の記録 `old`（slug は `slug`）を指す参照の番号を `new` に付け替える。参照は、本文での参照
+/// （[`Kind::reference`]。[`parse::numbered_refs`] と同じ読み方）と、ファイル名の `NNNN-<slug>.md`（前が英数字で
+/// ないもの）。
+pub fn renumber_refs(kind: Kind, line: &str, old: u32, new: u32, slug: &str) -> String {
+    let mut starts: std::collections::BTreeSet<usize> =
+        parse::numbered_refs(line, kind.ref_prefix())
+            .into_iter()
+            .filter(|&(_, n)| n == old)
+            .map(|(i, _)| i + kind.ref_prefix().len())
+            .collect();
+    let file = format!("{old:04}-{slug}.md");
+    starts.extend(
+        line.match_indices(&file)
+            .filter(|(i, _)| !line[..*i].chars().next_back().is_some_and(parse::is_word))
+            .map(|(i, _)| i),
+    );
+    let mut out = String::with_capacity(line.len());
+    let mut at = 0;
+    for start in starts {
+        out.push_str(&line[at..start]);
+        out.push_str(&format!("{new:04}"));
+        at = start + 4;
+    }
+    out.push_str(&line[at..]);
+    out
 }
 
 /// 前付けの最初の `status:` の行の値（後ろの ` # コメント` と引用符は外す）。前付けか値が無ければ `None`。
