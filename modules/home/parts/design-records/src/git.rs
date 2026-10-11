@@ -161,27 +161,61 @@ const TAG_REFSPECS: [&str; 2] = [
 
 /// origin の予約のタグを取ってくる。origin で消えたタグ（ほかの clone の `prune` や `renumber` が解放したもの）は
 /// 手元からも消す（`--prune` は、同じ fetch の refspec の行き先の ref だけを消すので、タグだけで fetch する）。
-/// `branch` なら、origin の既定ブランチ（`ls-remote --symref` で聞く）も取ってきて、`origin/<名前>` を返す
-/// （`prune` が予約を解放した後の番号は、origin の既定ブランチの履歴にしか残らない）。origin が空なら `None`。
+/// `branch` なら、その後で origin の既定ブランチも取ってきて、`origin/<名前>` を返す（`prune` が予約を解放した後の
+/// 番号は、origin の既定ブランチの履歴にしか残らない）。origin に既定ブランチが無ければ `None`。
+///
+/// タグを先に取る: ほかの clone はマージを push してから予約を解放するので、タグを取った後に取るブランチには、
+/// そのとき消えていたタグの記録が必ず入っている。逆の順では、間にマージと解放が起きると、マージ前のブランチと
+/// 消えたタグを見て番号を使い回す。
 pub fn fetch_origin(root: &Path, branch: bool) -> Result<Option<String>> {
-    let mut fetched = None;
-    if branch {
-        let head = git(root, &["ls-remote", "--symref", "origin", "HEAD"])?;
-        let name = head.lines().find_map(|line| {
-            line.strip_prefix("ref: refs/heads/")?
-                .strip_suffix("\tHEAD")
-                .map(str::to_string)
-        });
-        if let Some(name) = name {
-            let refspec = format!("+refs/heads/{name}:refs/remotes/origin/{name}");
-            git(root, &["fetch", "--quiet", "--no-tags", "origin", &refspec])?;
-            fetched = Some(format!("origin/{name}"));
-        }
-    }
     let mut args = vec!["fetch", "--quiet", "--prune", "--no-tags", "origin"];
     args.extend(TAG_REFSPECS);
     git(root, &args)?;
-    Ok(fetched)
+    if !branch {
+        return Ok(None);
+    }
+    let Some(name) = remote_default(root)? else {
+        return Ok(None);
+    };
+    let refspec = format!("+refs/heads/{name}:refs/remotes/origin/{name}");
+    git(root, &["fetch", "--quiet", "--no-tags", "origin", &refspec])?;
+    Ok(Some(format!("origin/{name}")))
+}
+
+/// origin の既定ブランチの名前。origin の HEAD が指すブランチ、それが無ければ（HEAD が空のブランチを指す）`main`、
+/// `master` のうち origin にあるもの。
+fn remote_default(root: &Path) -> Result<Option<String>> {
+    let listed = git(
+        root,
+        &[
+            "ls-remote",
+            "--symref",
+            "origin",
+            "HEAD",
+            "refs/heads/main",
+            "refs/heads/master",
+        ],
+    )?;
+    let heads: BTreeSet<&str> = listed
+        .lines()
+        .filter(|line| !line.starts_with("ref: "))
+        .filter_map(|line| line.split('\t').nth(1)?.strip_prefix("refs/heads/"))
+        .collect();
+    let head = listed.lines().find_map(|line| {
+        line.strip_prefix("ref: refs/heads/")?
+            .strip_suffix("\tHEAD")
+    });
+    // HEAD の指す先があるときは、HEAD のコミットの行も出る
+    let resolved = listed
+        .lines()
+        .any(|line| !line.starts_with("ref: ") && line.ends_with("\tHEAD"));
+    if let Some(head) = head.filter(|_| resolved) {
+        return Ok(Some(head.to_string()));
+    }
+    Ok(["main", "master"]
+        .into_iter()
+        .find(|name| heads.contains(name))
+        .map(str::to_string))
 }
 
 /// origin のタグのうち `patterns`（ls-remote のパターン）に合うものの名前（`refs/tags/` の後ろ）。
