@@ -196,8 +196,10 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh:*)"
         # language-checks スキルスクリプト
         "Bash(~/.claude/skills/language-checks/scripts/run-checks.sh:*)"
-        # 設計の記録の CLI（adr スキル、branch-topics.sh。git.nix が PATH に入れる）
+        # 設計の記録の CLI（adr スキル、git-merge スキル、branch-topics.sh。git.nix が PATH に入れる）
         "Bash(design-records new:*)"
+        "Bash(design-records renumber:*)"
+        "Bash(design-records -C:*)"
         "Bash(design-records check:*)"
         "Bash(design-records status:*)"
         "Bash(commit-refs remap:*)"

@@ -1,15 +1,25 @@
-//! design-records: 設計の記録（ADR）の雛形を作り、検査する（ADR-0009）。
+//! design-records: 設計の記録（ADR と docs/issues の issue）の雛形を作り、番号を予約し、検査する（ADR-0009、ADR-0018）。
 //!
-//! Usage:
-//!   design-records new <slug> <title>  docs/adr/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
+//! Usage（どのコマンドも、前に `-C <dir>` を付けると `<dir>` で走らせる。git の `-C` と同じ）:
+//!   design-records new [--kind adr|issue] <slug> <title>
+//!                                      番号を予約して <dir>/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
+//!                                      （dir は docs/adr か docs/issues。省けば adr）
+//!   design-records renumber [--kind adr|issue] <old> [<new>]
+//!                                      このブランチで足した記録 <old> を <new>（省けば次の番号）に振り直し、
+//!                                      ファイル名と参照を付け替えて 1 コミットにする。新しいパスを出す
+//!   design-records prune               既定ブランチの履歴に記録が入った予約のタグを、ローカルと origin から消す
 //!   design-records check [--changed] [FILE]...
-//!                                      docs/adr の ADR を検査する。FILE（リポジトリの直下からのパス。pre-commit が
-//!                                      渡すステージ済みのファイル）からは置き換えられた ADR への参照を探し、FILE の
-//!                                      ADR は確定した後の本文の変更を見る。FILE か --changed を渡すと、warning は
-//!                                      FILE のものだけ（--changed は FILE が 0 件のときも。pre-commit で使う）
+//!                                      docs/adr の ADR と docs/issues の番号を検査する。FILE（リポジトリの直下からの
+//!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
+//!                                      参照を探し、FILE の ADR は確定した後の本文の変更を見る。FILE か --changed を
+//!                                      渡すと、warning は FILE のものだけ（--changed は FILE が 0 件のときも。
+//!                                      pre-commit で使う）
 //!   design-records status              標準入力の文書の前付けの status を出す（無ければ -）
 //!
 //! 終了コード: 0 = 成功（注意だけのときも）、1 = 違反か失敗、2 = 使い方の誤り
+
+mod git;
+mod numbering;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -17,34 +27,73 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use design_records::check::{Finding, Severity, body_changed, check};
+use design_records::check::{
+    Finding, Severity, body_changed, check, check_issue_numbers, check_reservations,
+};
 use design_records::{
-    ADR_DIR, OPEN_STATUSES, adr_path, is_adr_path, is_slug, is_title, next_number,
+    ADR_DIR, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title, numbers_in,
 };
 
-type Result<T> = std::result::Result<T, String>;
+use git::{Result, default_branch, git, git_ok, repo_root, reservations, tracked};
 
-const USAGE: &str =
-    "Usage: design-records new <slug> <title> | check [--changed] [FILE]... | status";
+const USAGE: &str = "Usage: design-records [-C <dir>] new [--kind adr|issue] <slug> <title> \
+     | renumber [--kind adr|issue] <old> [<new>] | prune | check [--changed] [FILE]... | status";
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let result = match args
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .as_slice()
-    {
-        ["new", slug, title] if !title.is_empty() => new(slug, title),
+/// 使い方の誤り。
+struct UsageError;
+
+/// サブコマンドの後ろの `--kind <adr|issue>`（省けば adr）と、残りの引数。
+fn kind_and_rest<'a>(
+    args: &'a [&'a str],
+) -> std::result::Result<(Kind, &'a [&'a str]), UsageError> {
+    match args {
+        ["--kind", name, rest @ ..] => Ok((Kind::parse(name).ok_or(UsageError)?, rest)),
+        rest => Ok((Kind::Adr, rest)),
+    }
+}
+
+/// 4 桁までの番号（`18`、`0018`）。
+fn number(arg: &str) -> std::result::Result<u32, UsageError> {
+    if !(1..=4).contains(&arg.len()) || !arg.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(UsageError);
+    }
+    arg.parse().ok().filter(|&n| n > 0).ok_or(UsageError)
+}
+
+fn dispatch(args: &[&str]) -> std::result::Result<Result<ExitCode>, UsageError> {
+    Ok(match args {
+        ["new", rest @ ..] => match kind_and_rest(rest)? {
+            (kind, [slug, title]) if !title.is_empty() => new(kind, slug, title),
+            _ => return Err(UsageError),
+        },
+        ["renumber", rest @ ..] => match kind_and_rest(rest)? {
+            (kind, [old]) => numbering::renumber(kind, number(old)?, None),
+            (kind, [old, new]) => numbering::renumber(kind, number(old)?, Some(number(new)?)),
+            _ => return Err(UsageError),
+        },
+        ["prune"] => numbering::prune(),
         ["check", "--changed", files @ ..] => run_check(files, true),
         ["check", files @ ..] if !files.iter().any(|f| f.starts_with('-')) => {
             run_check(files, !files.is_empty())
         }
         ["status"] => status(),
-        _ => {
-            eprintln!("{USAGE}");
-            return ExitCode::from(2);
+        _ => return Err(UsageError),
+    })
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<&str> = args.iter().map(String::as_str).collect();
+    if let ["-C", dir, ..] = args.as_slice() {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("design-records: cannot change to {dir}: {e}");
+            return ExitCode::FAILURE;
         }
+        args.drain(..2);
+    }
+    let Ok(result) = dispatch(&args) else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
     };
     match result {
         Ok(code) => code,
@@ -55,60 +104,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// `git args…` を `dir` で走らせ、成功なら標準出力を返す。
-fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        // 日本語のファイル名を引用符と 8 進数で包ませない（番号を読むため）
-        .args(["-c", "core.quotePath=false"])
-        .args(args)
-        .output()
-        .map_err(|e| format!("cannot run git (is git installed?): {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    String::from_utf8(output.stdout).map_err(|e| format!("git {}: {e}", args.join(" ")))
-}
-
-/// `git args…` が成功するか（失敗は答えの一つとして扱う）。
-fn git_ok(dir: &Path, args: &[&str]) -> Result<bool> {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map(|o| o.status.success())
-        .map_err(|e| format!("cannot run git (is git installed?): {e}"))
-}
-
-/// 今いるリポジトリの直下。
-fn repo_root() -> Result<std::path::PathBuf> {
-    let top = git(Path::new("."), &["rev-parse", "--show-toplevel"])?;
-    Ok(top.trim_end_matches('\n').into())
-}
-
-/// `dir` の直下のファイル名（ディレクトリが無ければ空）。
-fn file_names(dir: &Path) -> Result<Vec<String>> {
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let entries = fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut names = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
-        if entry.path().is_file() {
-            names.push(entry.file_name().to_string_lossy().into_owned());
-        }
-    }
-    Ok(names)
-}
-
-fn new(slug: &str, title: &str) -> Result<ExitCode> {
+fn new(kind: Kind, slug: &str, title: &str) -> Result<ExitCode> {
     if !is_slug(slug) {
         return Err(format!(
             "the slug must be lowercase kebab-case ([a-z0-9]+(-[a-z0-9]+)*): {slug}"
@@ -117,25 +113,7 @@ fn new(slug: &str, title: &str) -> Result<ExitCode> {
     if !is_title(title) {
         return Err(format!("the title must be one non-blank line: {title:?}"));
     }
-    let root = repo_root()?;
-    // 削除した ADR の番号を使い回すと、古い参照が別の決定を指してしまうので、全ブランチの履歴も数える
-    let history = git(
-        &root,
-        &["log", "--all", "--format=", "--name-only", "--", ADR_DIR],
-    )?;
-    let present: Vec<String> = file_names(&root.join(ADR_DIR))?
-        .into_iter()
-        .map(|name| format!("{ADR_DIR}/{name}"))
-        .collect();
-    let number = next_number(history.lines().chain(present.iter().map(String::as_str)));
-    let date = today()?;
-    let path = adr_path(number, slug);
-    let file = root.join(&path);
-    fs::create_dir_all(root.join(ADR_DIR)).map_err(|e| format!("{ADR_DIR}: {e}"))?;
-    fs::write(&file, design_records::template(number, title, &date))
-        .map_err(|e| format!("{path}: {e}"))?;
-    println!("{path}");
-    Ok(ExitCode::SUCCESS)
+    numbering::new(kind, slug, title, &today()?)
 }
 
 /// 手元の暦の今日（`date +%F`。標準ライブラリには時間帯の変換が無い）。
@@ -158,7 +136,18 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
         let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         adrs.insert(path, text);
     }
-    let issues = issue_numbers(&root)?;
+    let issue_paths = tracked(&root, ISSUE_DIR)?;
+    let issues = issue_numbers(&issue_paths);
+    let adr_paths: Vec<String> = adrs.keys().cloned().collect();
+    let mut reserved: BTreeMap<Kind, BTreeMap<u32, String>> = BTreeMap::new();
+    for reservation in reservations(&root)? {
+        if let Some(slug) = reservation.slug {
+            reserved
+                .entry(reservation.kind)
+                .or_default()
+                .insert(reservation.number, slug);
+        }
+    }
     let mut scanned = BTreeMap::new();
     for path in files {
         // 中身の読めないもの（消したファイル、テキストでないファイル）は参照を書けないので見ない
@@ -170,6 +159,12 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     }
 
     let mut found = check(&adrs, issues.as_ref(), &scanned);
+    found.extend(check_issue_numbers(&issue_paths));
+    for (kind, paths) in [(Kind::Adr, &adr_paths), (Kind::Issue, &issue_paths)] {
+        if let Some(reserved) = reserved.get(&kind) {
+            found.extend(check_reservations(kind, paths, reserved));
+        }
+    }
     // FILE か --changed を渡したら（pre-commit）、warning はそのファイルのものだけにする。触っていない ADR の warning が毎回
     // 並ぶと、今のコミットの warning が埋もれる。error は ADR どうしの整合なので、すべて出す
     if changed_only {
@@ -186,64 +181,10 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     })
 }
 
-/// `dir` の直下の、追跡している（ステージ済みを含む）.md のうち、作業ツリーにあるもの。prek は追跡していない
-/// ファイルを退避しないので、作業ツリーをそのまま読むと、コミットに入らない下書きで結果が変わる。
-fn tracked(root: &Path, dir: &str) -> Result<Vec<String>> {
-    let listed = git(root, &["ls-files", "-z", "--", dir])?;
-    Ok(listed
-        .split('\0')
-        .filter(|p| {
-            p.strip_prefix(dir)
-                .and_then(|rest| rest.strip_prefix('/'))
-                .is_some_and(|name| !name.contains('/') && name.ends_with(".md"))
-                && root.join(p).is_file()
-        })
-        .map(str::to_string)
-        .collect())
-}
-
-/// 追跡している docs/issues があれば、その issue の番号（`NNNN-*.md`）。無ければ `None`（GitHub などの issue を
-/// 使う）。
-fn issue_numbers(root: &Path) -> Result<Option<BTreeSet<u32>>> {
-    let paths = tracked(root, "docs/issues")?;
-    if paths.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(
-        paths
-            .iter()
-            .filter_map(|path| {
-                let name = path.rsplit('/').next()?;
-                name.strip_suffix(".md")?.split_once('-')?.0.parse().ok()
-            })
-            .collect(),
-    ))
-}
-
-/// 既定ブランチ。.claude/scripts/branch-topics.sh、worktree-add.sh、claude-hooks（git.rs）と同じ順で探す。
-fn default_branch(root: &Path) -> Result<Option<String>> {
-    if let Ok(head) = git(
-        root,
-        &[
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
-    ) {
-        return Ok(Some(head.trim().to_string()));
-    }
-    for name in ["origin/main", "origin/master", "main", "master"] {
-        let full = if name.contains('/') {
-            format!("refs/remotes/{name}")
-        } else {
-            format!("refs/heads/{name}")
-        };
-        if git_ok(root, &["show-ref", "--verify", "--quiet", &full])? {
-            return Ok(Some(name.to_string()));
-        }
-    }
-    Ok(None)
+/// 追跡している docs/issues の issue（`paths`）があれば、その番号（番号を振るときと同じ [`numbers_in`] の規則）。
+/// 無ければ `None`（GitHub などの issue を使う）。
+fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
+    (!paths.is_empty()).then(|| numbers_in(Kind::Issue, paths.iter().map(String::as_str)).collect())
 }
 
 /// 確定した ADR の本文の変更と削除（注意）。比べるのは既定ブランチとの分岐点（main にマージする前のブランチの上の

@@ -6,53 +6,76 @@ use std::process::{Command, Output, Stdio};
 
 use std::io::Write;
 
-/// テストで作る一時的なリポジトリ。落ちたときも含めて、片付けで消す。
+/// テストで作る一時的なリポジトリ。落ちたときも含めて、片付けで消す。作業ツリーは `root/work` に置き、bare の
+/// リモートとほかの clone は `root` の下に並べる（作業ツリーの中に置くと `git add -A` が拾う）。
 struct TempRepo {
+    root: PathBuf,
     dir: PathBuf,
 }
 
 impl TempRepo {
-    /// プロセスと時刻とテストの名前で一意にした、main ブランチの空のリポジトリ
+    /// プロセスと時刻とテストの名前で一意にした、空のコミットを 1 つ持つ main ブランチのリポジトリ。CLI が作る
+    /// コミットとタグのために、名前とメールをリポジトリの設定に書く
     fn new(name: &str) -> Self {
+        let repo = Self::empty(name);
+        repo.git(&["commit", "-q", "--allow-empty", "-m", "chore: init"]);
+        repo
+    }
+
+    /// コミットの無い main ブランチのリポジトリ
+    fn empty(name: &str) -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
+        let root = std::env::temp_dir().join(format!(
             "design-records-{name}-{}-{nanos}",
             std::process::id()
         ));
-        fs::create_dir(&dir).unwrap();
-        let repo = TempRepo { dir };
+        let dir = root.join("work");
+        fs::create_dir_all(&dir).unwrap();
+        let repo = TempRepo { root, dir };
         repo.git(&["init", "-q", "-b", "main"]);
+        configure(&repo.dir);
         repo
     }
 
-    /// git を走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
-    /// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）
+    /// `root/remote.git` を bare のリモート origin にし、main を送る
+    fn with_remote(name: &str) -> Self {
+        let repo = Self::new(name);
+        let bare = repo.root.join("remote.git");
+        git_in(&repo.root, &["init", "-q", "--bare", "remote.git"]);
+        repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+        repo.git(&["push", "-q", "-u", "origin", "main"]);
+        repo
+    }
+
+    /// origin を `root/<name>` に clone する
+    fn clone_remote(&self, name: &str) -> PathBuf {
+        git_in(&self.root, &["clone", "-q", "remote.git", name]);
+        let dir = self.root.join(name);
+        configure(&dir);
+        dir
+    }
+
+    /// タグ `name` のメッセージの 1 行目（注釈つきでなければ空）
+    fn tag_message(&self, name: &str) -> String {
+        tag_message_in(&self.dir, name)
+    }
+
+    /// origin のタグ `name` の行（無ければ空）
+    fn remote_tag(&self, name: &str) -> String {
+        self.git(&[
+            "ls-remote",
+            "--tags",
+            "origin",
+            &format!("refs/tags/{name}"),
+        ])
+    }
+
+    /// git を走らせ、成功を確かめて標準出力を返す
     fn git(&self, args: &[&str]) -> String {
-        let mut command = Command::new("git");
-        command
-            .current_dir(&self.dir)
-            .args([
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "core.hooksPath=/dev/null",
-            ])
-            .args(args);
-        isolate(&mut command);
-        let output = command.output().unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap()
+        git_in(&self.dir, args)
     }
 
     fn write(&self, path: &str, text: &str) {
@@ -78,13 +101,82 @@ impl TempRepo {
     fn run(&self, args: &[&str]) -> Output {
         self.run_in("", args)
     }
+
+    /// CLI を、`bin` を PATH の先頭に置いて走らせる（git を差し替える）
+    fn run_with_bin(&self, bin: &Path, args: &[&str]) -> Output {
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
+        command.current_dir(&self.dir).env("PATH", path).args(args);
+        isolate(&mut command);
+        command.output().unwrap()
+    }
 }
 
 impl Drop for TempRepo {
     fn drop(&mut self) {
         // 片付けに失敗しても、テストの結果は変えない（一時的なディレクトリが残るだけ）
-        let _ = fs::remove_dir_all(&self.dir);
+        let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// git を `dir` で走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
+/// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）。外した後で、テストに要る
+/// 設定だけを GIT_CONFIG_COUNT で渡す
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let mut command = Command::new("git");
+    command
+        .current_dir(dir)
+        .args(["-c", "core.hooksPath=/dev/null"])
+        .args(args);
+    isolate(&mut command);
+    // 手元の全体の設定（nix の sandbox には無い）に頼らない。init と clone の既定ブランチ（bare のリモートの HEAD）を
+    // main にし、clone や init をする場所（リポジトリの外）でも名前を決める
+    for (i, (key, value)) in [
+        ("init.defaultBranch", "main"),
+        ("user.name", "t"),
+        ("user.email", "t@t"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        command
+            .env(format!("GIT_CONFIG_KEY_{i}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{i}"), value);
+    }
+    command.env("GIT_CONFIG_COUNT", "3");
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// CLI が作るコミットとタグのための、リポジトリの設定（署名と hook は使わない）
+fn configure(dir: &Path) {
+    for (key, value) in [
+        ("user.name", "t"),
+        ("user.email", "t@t"),
+        ("commit.gpgsign", "false"),
+        ("tag.gpgsign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git_in(dir, &["config", key, value]);
+    }
+}
+
+fn tag_message_in(dir: &Path, name: &str) -> String {
+    git_in(
+        dir,
+        &[
+            "for-each-ref",
+            "--format=%(contents:subject)",
+            &format!("refs/tags/{name}"),
+        ],
+    )
+    .trim()
+    .to_string()
 }
 
 fn isolate(command: &mut Command) {
@@ -418,7 +510,7 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     );
 }
 
-/// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ
+/// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ（ADR-0001 の予約は解放済み）
 fn decided_topic(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
     t.run(&["new", "use-a", "a を使う"]);
@@ -428,6 +520,8 @@ fn decided_topic(name: &str) -> TempRepo {
         &t.read(a).replace("status: proposed", "status: accepted"),
     );
     t.commit_all("docs(adr): a");
+    // main に入った記録の予約は解放されている（post-merge-cleanup.sh）
+    t.run(&["prune"]);
     t.git(&["switch", "-q", "-c", "topic"]);
     t
 }
@@ -536,4 +630,1076 @@ fn unknown_commands_show_usage() {
     let out = run(&std::env::temp_dir(), &["frobnicate"], None);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("Usage:"), "{}", stderr(&out));
+}
+
+/// タグ `name` が指すコミット
+fn tag_target(dir: &Path, name: &str) -> String {
+    git_in(dir, &["rev-parse", &format!("{name}^{{commit}}")])
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn new_reserves_the_number_with_an_annotated_tag_on_the_default_branch() {
+    let t = TempRepo::new("reserve");
+    let main = t.git(&["rev-parse", "main"]).trim().to_string();
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.git(&["commit", "-q", "--allow-empty", "-m", "chore: topic"]);
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.git(&["cat-file", "-t", "adr-0001"]).trim(), "tag");
+    assert_eq!(t.tag_message("adr-0001"), "use-foo");
+    // ブランチの先端ではなく、既定ブランチの先端に打つ
+    assert_eq!(tag_target(&t.dir, "adr-0001"), main);
+}
+
+#[test]
+fn new_skips_numbers_reserved_by_tags_of_its_kind() {
+    let t = TempRepo::new("reserved");
+    t.git(&["tag", "-a", "adr-0004", "-m", "use-d", "main"]);
+    t.git(&["tag", "-a", "issue-0009", "-m", "fix-i", "main"]);
+    assert_eq!(
+        stdout(&t.run(&["new", "use-e", "e を使う"])),
+        "docs/adr/0005-use-e.md\n"
+    );
+    assert_eq!(
+        stdout(&t.run(&["new", "--kind", "issue", "fix-j", "j を直す"])),
+        "docs/issues/0010-fix-j.md\n"
+    );
+}
+
+#[test]
+fn new_fails_in_a_repository_without_commits() {
+    let t = TempRepo::empty("nocommit");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+}
+
+#[test]
+fn new_pushes_the_reservation_after_fetching_tags_of_other_clones() {
+    let t = TempRepo::with_remote("push");
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0003", "-m", "use-c", "origin/main"],
+    );
+    git_in(&other, &["push", "-q", "origin", "refs/tags/adr-0003"]);
+    let out = t.run(&["new", "use-d", "d を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0004-use-d.md\n");
+    assert!(t.remote_tag("adr-0004").contains("refs/tags/adr-0004"));
+    assert_eq!(tag_message_in(&other, "adr-0003"), "use-c");
+}
+
+#[test]
+fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
+    let t = TempRepo::with_remote("race");
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-other", "origin/main"],
+    );
+    // 最初の fetch の直後に、ほかの clone が同じ番号を push する git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let mark = t.root.join("raced");
+    let fake = bin.join("git");
+    fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in *\" fetch \"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} -C {other} push -q origin refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            mark = mark.display(),
+            other = other.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "docs/adr/0002-use-foo.md\n");
+    assert!(!t.dir.join("docs/adr/0001-use-foo.md").exists());
+    assert_eq!(t.tag_message("adr-0001"), "use-other");
+    assert_eq!(t.tag_message("adr-0002"), "use-foo");
+    assert!(t.remote_tag("adr-0002").contains("refs/tags/adr-0002"));
+}
+
+#[test]
+fn new_fails_without_writing_or_tagging_when_the_remote_is_unreachable() {
+    let t = TempRepo::with_remote("unreachable");
+    let gone = t.root.join("gone.git");
+    t.git(&["remote", "set-url", "origin", gone.to_str().unwrap()]);
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+    assert_eq!(t.git(&["tag", "--list"]), "");
+}
+
+#[test]
+fn new_issue_reserves_a_number_and_writes_the_title() {
+    let t = TempRepo::new("issue");
+    t.write("docs/issues/0003-fix-c.md", "---\nstatus: open\n---\n");
+    t.write("docs/adr/0007-use-g.md", "");
+    t.commit_all("docs: c and g");
+    let out = t.run(&["new", "--kind", "issue", "fix-bar", "bar を直す"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/issues/0004-fix-bar.md\n");
+    assert_eq!(t.read("docs/issues/0004-fix-bar.md"), "# bar を直す\n");
+    assert_eq!(t.tag_message("issue-0004"), "fix-bar");
+    let out = t.run(&["new", "--kind", "plan", "x", "x"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+}
+
+/// ブランチ topic で ADR-0001（use-b）を足した後、main にも機能より前の ADR-0001（use-a、タグ無し）が入り、
+/// topic を main の上に rebase したリポジトリ
+fn duplicated_after_rebase(name: &str) -> TempRepo {
+    let t = TempRepo::new(name);
+    t.write("notes.md", "前置き\n1\n2\n3\n");
+    t.commit_all("docs: notes");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let b = "docs/adr/0001-use-b.md";
+    t.write(b, &(t.read(b) + "\n[本文](0001-use-b.md) と ADR-0001\n"));
+    t.write("notes.md", "ADR-0001 の続き\n前置き\n1\n2\n3\n");
+    t.commit_all("docs(adr): b");
+    t.git(&["switch", "-q", "main"]);
+    t.write(
+        "docs/adr/0001-use-a.md",
+        &design_records::template(1, "a を使う", "2026-10-01"),
+    );
+    t.write("notes.md", "前置き\n1\n2\n3\nADR-0001 は a\n");
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    t
+}
+
+#[test]
+fn renumber_moves_the_branch_record_and_its_added_references_in_one_commit() {
+    let t = duplicated_after_rebase("renumber");
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+    let head = t.git(&["rev-parse", "HEAD"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+    assert!(!t.dir.join("docs/adr/0001-use-b.md").exists());
+    let b = t.read("docs/adr/0002-use-b.md");
+    assert!(b.contains("# ADR-0002: b を使う\n"), "{b}");
+    assert!(b.contains("[本文](0002-use-b.md) と ADR-0002\n"), "{b}");
+    // main から来た行は main の ADR-0001（use-a）を指すので変えない
+    assert_eq!(
+        t.read("notes.md"),
+        "ADR-0002 の続き\n前置き\n1\n2\n3\nADR-0001 は a\n"
+    );
+    assert!(
+        t.read("docs/adr/0001-use-a.md")
+            .contains("# ADR-0001: a を使う")
+    );
+    assert_eq!(t.git(&["rev-parse", "HEAD~1"]), head);
+    assert_eq!(
+        t.git(&["log", "-1", "--format=%s"]).trim(),
+        "docs: renumber ADR-0001 to ADR-0002"
+    );
+    assert_eq!(t.git(&["status", "--porcelain"]), "");
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+    // 振り直した記録の古い予約は解放する（番号 0001 は main の記録が使う）
+    assert_eq!(t.git(&["tag", "--list", "adr-0001"]), "");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn renumber_takes_an_unused_explicit_number() {
+    let t = duplicated_after_rebase("explicit");
+    t.git(&["tag", "-a", "adr-0005", "-m", "use-e", "main"]);
+    // 使った番号（履歴とタグ）には振らない
+    for used in ["1", "5"] {
+        let out = t.run(&["renumber", "1", used]);
+        assert!(!out.status.success(), "{used}: {}", stdout(&out));
+    }
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
+    let out = t.run(&["renumber", "0001", "0007"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0007-use-b.md\n");
+    assert_eq!(t.tag_message("adr-0007"), "use-b");
+}
+
+#[test]
+fn renumber_refuses_records_on_the_default_branch_and_uncommitted_changes() {
+    let t = duplicated_after_rebase("refuse");
+    t.write("notes.md", "書きかけ\n");
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    t.git(&["checkout", "-q", "--", "notes.md"]);
+    t.git(&["switch", "-q", "main"]);
+    // main の上では、ADR-0001（use-a）は既定ブランチにある
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-a.md").exists());
+    assert_eq!(t.git(&["status", "--porcelain"]), "");
+}
+
+#[test]
+fn renumber_issue_rewrites_hash_references_and_file_names() {
+    let t = TempRepo::new("renumber-issue");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "--kind", "issue", "fix-b", "b を直す"]);
+    t.write(
+        "notes.md",
+        "#0001 を直す（0001-fix-b.md）。#00012 と x#0001 は別\n",
+    );
+    t.commit_all("docs: b");
+    t.git(&["switch", "-q", "main"]);
+    t.write("docs/issues/0001-fix-a.md", "# a を直す\n");
+    t.commit_all("docs: a");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+    let out = t.run(&["renumber", "--kind", "issue", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/issues/0002-fix-b.md\n");
+    assert_eq!(
+        t.read("notes.md"),
+        "#0002 を直す（0002-fix-b.md）。#00012 と x#0001 は別\n"
+    );
+    assert_eq!(t.read("docs/issues/0001-fix-a.md"), "# a を直す\n");
+    assert_eq!(t.tag_message("issue-0002"), "fix-b");
+    assert_eq!(
+        t.git(&["log", "-1", "--format=%s"]).trim(),
+        "docs: renumber issue #0001 to #0002"
+    );
+}
+
+#[test]
+fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
+    let t = TempRepo::new("tag-slug");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.git(&["add", "-A"]);
+    t.git(&["tag", "-a", "adr-0002", "-m", "use-other", "main"]);
+    t.write(
+        "docs/adr/0002-use-b.md",
+        &design_records::template(2, "b を使う", "2026-10-01"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        "docs/adr/0002-use-b.md: warning: number 0002 is reserved for `use-other` by tag adr-0002; \
+         if another record took the number, run `design-records renumber 2`\n"
+    );
+}
+
+#[test]
+fn prune_deletes_tags_of_records_merged_into_the_remote_default_branch() {
+    let t = TempRepo::with_remote("prune");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "-c", "other", "main"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    t.commit_all("docs(adr): b");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    // ローカルでマージしただけで、origin の main にはまだ無い
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.tag_message("adr-0001"), "use-a");
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+    t.git(&["push", "-q", "origin", "main"]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0001\n");
+    assert_eq!(t.git(&["tag", "--list", "adr-0001"]), "");
+    assert_eq!(t.remote_tag("adr-0001"), "");
+    // マージしていない記録のタグは残す
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+    assert!(t.remote_tag("adr-0002").contains("adr-0002"));
+}
+
+#[test]
+fn prune_without_a_remote_reads_the_local_default_branch() {
+    let t = TempRepo::new("prune-local");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "--kind", "issue", "fix-a", "a を直す"]);
+    t.commit_all("docs: a");
+    t.git(&["switch", "-q", "main"]);
+    // 番号は履歴にあっても、slug が違う記録のタグは消さない
+    t.write("docs/issues/0002-fix-b.md", "# b を直す\n");
+    t.commit_all("docs: b");
+    t.git(&["tag", "-a", "issue-0002", "-m", "fix-other", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "issue-0001\n");
+    assert_eq!(t.git(&["tag", "--list"]), "issue-0002\n");
+}
+
+#[test]
+fn new_sees_records_merged_by_other_clones_after_their_tags_are_pruned() {
+    let t = TempRepo::with_remote("merged-elsewhere");
+    let other = t.clone_remote("other");
+    git_in(&other, &["switch", "-q", "-c", "topic"]);
+    let out = run(&other, &["new", "use-a", "a を使う"], None);
+    assert!(out.status.success(), "{}", stderr(&out));
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): a"]);
+    git_in(&other, &["switch", "-q", "main"]);
+    git_in(
+        &other,
+        &["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"],
+    );
+    git_in(&other, &["push", "-q", "origin", "main"]);
+    let out = run(&other, &["prune"], None);
+    assert_eq!(stdout(&out), "adr-0001\n", "{}", stderr(&out));
+    // この clone は origin/main を fetch していない
+    let out = t.run(&["new", "use-b", "b を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+}
+
+#[test]
+fn new_follows_the_remote_when_a_stale_local_tag_has_the_same_name() {
+    let t = TempRepo::with_remote("stale");
+    // push する前に止まった予約が手元に残っている
+    t.git(&["tag", "-a", "adr-0001", "-m", "use-stale", "main"]);
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-other", "origin/main"],
+    );
+    git_in(&other, &["push", "-q", "origin", "refs/tags/adr-0001"]);
+    let out = t.run(&["new", "use-b", "b を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+    assert_eq!(t.tag_message("adr-0001"), "use-other");
+}
+
+#[test]
+fn renumber_reads_paths_with_spaces_and_skips_symlinks() {
+    let t = duplicated_after_rebase("paths");
+    t.write("plans/a plan.md", "ADR-0001 の計画\n");
+    // リポジトリの外のファイルへのリンク
+    let outside = t.root.join("outside.md");
+    fs::write(&outside, "ADR-0001 は a\n").unwrap();
+    std::os::unix::fs::symlink(&outside, t.dir.join("plans/link.md")).unwrap();
+    t.commit_all("docs: plan");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(t.read("plans/a plan.md"), "ADR-0002 の計画\n");
+    // リンクの先は書き換えない（足した行はリンクの blob の行で、先のファイルの行ではない）
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "ADR-0001 は a\n");
+    assert_eq!(t.git(&["status", "--porcelain"]), "");
+}
+
+#[test]
+fn renumber_compares_with_the_local_default_branch_when_it_is_ahead_of_origin() {
+    let t = TempRepo::with_remote("ahead");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    t.commit_all("docs(adr): b");
+    t.git(&["switch", "-q", "main"]);
+    // ローカルの main にだけある、機能より前の ADR-0001
+    t.write(
+        "docs/adr/0001-use-a.md",
+        &design_records::template(1, "a を使う", "2026-10-01"),
+    );
+    t.write("notes.md", "ADR-0001 は a\n");
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+    assert_eq!(t.read("notes.md"), "ADR-0001 は a\n");
+    // 旧番号の記録（use-a）は origin にまだ無いので、ほかの clone からは番号が空いて見える。予約を残す
+    assert_eq!(t.tag_message("adr-0001"), "use-b");
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+}
+
+#[test]
+fn renumber_restores_the_tree_when_the_commit_is_rejected() {
+    let t = duplicated_after_rebase("rejected");
+    let hooks = t.root.join("hooks");
+    fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    t.git(&["config", "core.hooksPath", hooks.to_str().unwrap()]);
+    let head = t.git(&["rev-parse", "HEAD"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert_eq!(t.git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(t.git(&["status", "--porcelain"]), "");
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
+}
+
+#[test]
+fn renumber_reads_added_lines_that_look_like_diff_headers() {
+    let t = duplicated_after_rebase("plusplus");
+    t.git(&["switch", "-q", "main"]);
+    t.write("plans/p.md", "a\nb\nc\nd\ne\nf\ng\nh\n");
+    t.commit_all("docs: plan");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    // 足した行が `+++ b/...` に見える差分の、後ろの hunk
+    t.write(
+        "plans/p.md",
+        "++ b/other.md\na\nb\nc\nd\ne\nf\ng\nh\nADR-0001 の計画\n",
+    );
+    t.commit_all("docs: plan b");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        t.read("plans/p.md"),
+        "++ b/other.md\na\nb\nc\nd\ne\nf\ng\nh\nADR-0002 の計画\n"
+    );
+}
+
+#[test]
+fn renumber_rewrites_links_to_three_digit_file_names() {
+    let t = TempRepo::new("three-renumber");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.write(
+        "docs/adr/005-use-x.md",
+        &design_records::template(5, "x を使う", "2026-10-01"),
+    );
+    t.write("README.md", "[x](docs/adr/005-use-x.md)\n");
+    t.commit_all("docs(adr): x");
+    let out = t.run(&["renumber", "5", "9"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0009-use-x.md\n");
+    assert_eq!(t.read("README.md"), "[x](docs/adr/0009-use-x.md)\n");
+    assert!(
+        t.read("docs/adr/0009-use-x.md")
+            .contains("# ADR-0009: x を使う")
+    );
+}
+
+#[test]
+fn renumber_without_a_collision_keeps_the_old_reservation() {
+    let t = TempRepo::new("voluntary");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    t.commit_all("docs(adr): b");
+    let out = t.run(&["renumber", "1", "7"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    // 番号 0001 はほかの記録が使っていないので、予約を残して使い回させない
+    assert_eq!(t.tag_message("adr-0001"), "use-b");
+}
+
+#[test]
+fn new_fetches_before_choosing_where_to_put_the_tag() {
+    let t = TempRepo::with_remote("unfetched");
+    // origin を足しただけで、まだ何も fetch していない clone
+    let fresh = TempRepo::new("unfetched-fresh");
+    let bare = t.root.join("remote.git");
+    fresh.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    let out = fresh.run(&["new", "use-a", "a を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+}
+
+#[test]
+fn new_refuses_shallow_clones_whose_history_is_cut() {
+    let t = TempRepo::with_remote("shallow");
+    t.git(&["commit", "-q", "--allow-empty", "-m", "chore: second"]);
+    t.git(&["push", "-q", "origin", "main"]);
+    let bare = t.root.join("remote.git");
+    git_in(
+        &t.root,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            &format!("file://{}", bare.display()),
+            "shallow",
+        ],
+    );
+    let shallow = t.root.join("shallow");
+    configure(&shallow);
+    // 切られた履歴の先の、消した記録の番号を数えられない
+    let out = run(&shallow, &["new", "use-a", "a を使う"], None);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(stderr(&out).contains("shallow"), "{}", stderr(&out));
+    assert!(!shallow.join("docs").exists());
+}
+
+#[test]
+fn new_refuses_numbers_beyond_four_digits() {
+    let t = TempRepo::new("exhausted");
+    t.git(&["tag", "-a", "adr-9999", "-m", "use-last", "main"]);
+    // 5 桁の番号は番号として数えないので、振ると使い回しうる
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+}
+
+#[test]
+fn check_counts_three_digit_issue_names_as_duplicates() {
+    let t = TempRepo::new("issue-three");
+    t.write("docs/issues/001-fix-a.md", "# a\n");
+    t.write("docs/issues/0001-fix-b.md", "# b\n");
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn renumber_refuses_untracked_files() {
+    let t = duplicated_after_rebase("untracked");
+    t.write("draft.md", "書きかけ\n");
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
+    assert_eq!(t.git(&["tag", "--list", "adr-0002"]), "");
+}
+
+#[test]
+fn new_drops_local_tags_that_origin_deleted() {
+    let t = TempRepo::with_remote("pruned-tag");
+    let other = t.clone_remote("other");
+    // origin の main に入った ADR-0001（use-a）と、その番号を一度予約して振り直した別の記録（use-b）のタグ
+    fs::create_dir_all(other.join("docs/adr")).unwrap();
+    fs::write(
+        other.join("docs/adr/0001-use-a.md"),
+        design_records::template(1, "a を使う", "2026-10-01"),
+    )
+    .unwrap();
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): a"]);
+    git_in(&other, &["push", "-q", "origin", "main"]);
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-b", "origin/main"],
+    );
+    git_in(&other, &["push", "-q", "origin", "refs/tags/adr-0001"]);
+    t.git(&[
+        "fetch",
+        "-q",
+        "origin",
+        "refs/tags/adr-0001:refs/tags/adr-0001",
+    ]);
+    git_in(
+        &other,
+        &["push", "-q", "origin", "--delete", "refs/tags/adr-0001"],
+    );
+    let out = t.run(&["new", "use-c", "c を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-c.md\n");
+    assert_eq!(t.git(&["tag", "--list", "adr-0001"]), "");
+}
+
+#[test]
+fn renumber_keeps_front_matter_references_of_the_moved_record() {
+    let t = duplicated_after_rebase("self-ref");
+    let b = "docs/adr/0001-use-b.md";
+    // b は main の ADR-0001（use-a）を前提にする。記録の前付けは自分を指さない
+    t.write(
+        b,
+        &t.read(b).replace("requires: []", "requires: [ADR-0001]"),
+    );
+    t.commit_all("docs(adr): b requires a");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let b = t.read("docs/adr/0002-use-b.md");
+    assert!(b.contains("requires: [ADR-0001]\n"), "{b}");
+    assert!(b.contains("# ADR-0002: b を使う\n"), "{b}");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+}
+
+#[test]
+fn check_does_not_read_date_named_files_as_issues() {
+    let t = TempRepo::new("issue-dates");
+    t.write("docs/issues/0001-fix-a.md", "# a\n");
+    t.write("docs/issues/20261010-notes.md", "# notes\n");
+    t.run(&["new", "use-a", "a を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a).replace("issues: []", "issues: [\"#20261010\"]"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("`issues` names #20261010, which does not exist in docs/issues"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn new_tells_how_to_publish_the_default_branch_when_origin_has_none() {
+    let t = TempRepo::new("empty-origin");
+    let bare = t.root.join("remote.git");
+    git_in(&t.root, &["init", "-q", "--bare", "remote.git"]);
+    t.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(stderr(&out).contains("git push"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("set-head"), "{}", stderr(&out));
+}
+
+#[test]
+fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
+    let t = TempRepo::with_remote("same-clone");
+    // 先のセッションの push を、入ったことをファイルで知らせてから遅らせる git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let pushing = t.root.join("pushing");
+    fs::write(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" push \"*) : > {}; sleep 2 ;; esac\nexec {real} \"$@\"\n",
+            pushing.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let mut first = Command::new(env!("CARGO_BIN_EXE_design-records"));
+    first
+        .current_dir(&t.dir)
+        .env("PATH", path)
+        .args(["new", "use-a", "a を使う"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate(&mut first);
+    let first = first.spawn().unwrap();
+    // 先のセッションがタグを打って push に入ってから、次のセッションを走らせる
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !pushing.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the first session never pushed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let second = t.run(&["new", "use-b", "b を使う"]);
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert_ne!(stdout(&first), stdout(&second));
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+    assert!(t.remote_tag("adr-0002").contains("adr-0002"));
+}
+
+#[test]
+fn renumber_ignores_context_lines_inside_merged_hunks() {
+    let t = duplicated_after_rebase("inter-hunk");
+    t.git(&["switch", "-q", "main"]);
+    t.write("plans/p.md", "x\nADR-0001 は a\ny\n");
+    t.commit_all("docs: plan");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    t.write(
+        "plans/p.md",
+        "ADR-0001 の続き\nx\nADR-0001 は a\ny\nADR-0001 の後\n",
+    );
+    t.commit_all("docs: plan b");
+    // 近い hunk を 1 つにまとめる設定では、間の main の行が hunk の範囲に入る
+    t.git(&["config", "diff.interHunkContext", "5"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        t.read("plans/p.md"),
+        "ADR-0002 の続き\nx\nADR-0001 は a\ny\nADR-0002 の後\n"
+    );
+}
+
+#[test]
+fn new_keeps_remote_tracking_branches_that_origin_lacks() {
+    let t = TempRepo::with_remote("keep-branches");
+    let head = t.git(&["rev-parse", "HEAD"]).trim().to_string();
+    // ほかの refspec（PR など）で取った、origin のブランチには無い ref
+    t.git(&["update-ref", "refs/remotes/origin/pr/7", &head]);
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.git(&["rev-parse", "refs/remotes/origin/pr/7"]).trim(),
+        head
+    );
+}
+
+#[test]
+fn prune_treats_tags_already_deleted_on_origin_as_released() {
+    let t = TempRepo::with_remote("prune-gone");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    t.git(&["push", "-q", "origin", "main"]);
+    // タグの一覧の最初の ls-remote の直後に、ほかの clone がタグを消す git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let mark = t.root.join("listed");
+    fs::write(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in *\" ls-remote --tags \"*)\n\
+             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} \"$@\"; {real} -C {dir} push -q origin --delete refs/tags/adr-0001; exit 0; fi ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            mark = mark.display(),
+            dir = t.dir.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "adr-0001\n");
+    assert_eq!(t.git(&["tag", "--list"]), "");
+}
+
+#[test]
+fn check_matches_reservations_of_three_digit_issues() {
+    let t = TempRepo::new("issue-three-tag");
+    t.write("docs/issues/001-fix-a.md", "# a\n");
+    t.git(&["add", "-A"]);
+    t.git(&["tag", "-a", "issue-0001", "-m", "fix-other", "main"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out)
+            .contains("docs/issues/001-fix-a.md: warning: number 0001 is reserved for `fix-other`"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn renumber_sees_untracked_files_even_when_status_hides_them() {
+    let t = duplicated_after_rebase("hidden-untracked");
+    t.git(&["config", "status.showUntrackedFiles", "no"]);
+    t.write("draft.md", "書きかけ\n");
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
+}
+
+#[test]
+fn prune_falls_back_when_origin_head_points_nowhere() {
+    let t = TempRepo::with_remote("dangling-head");
+    t.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/gone",
+    ]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
+fn dash_c_runs_in_another_worktree() {
+    let t = duplicated_after_rebase("dash-c");
+    let elsewhere = std::env::temp_dir();
+    let dir = t.dir.to_str().unwrap();
+    let out = run(&elsewhere, &["-C", dir, "check"], None);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+    let out = run(&elsewhere, &["-C", dir, "renumber", "1"], None);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+    let out = run(
+        &elsewhere,
+        &["-C", "/nonexistent-design-records", "check"],
+        None,
+    );
+    assert!(!out.status.success());
+}
+
+#[test]
+fn new_counts_a_record_merged_and_pruned_between_its_fetches() {
+    let t = TempRepo::with_remote("merge-between");
+    let other = t.clone_remote("other");
+    git_in(&other, &["switch", "-q", "-c", "topic"]);
+    let out = run(&other, &["new", "use-a", "a を使う"], None);
+    assert!(out.status.success(), "{}", stderr(&out));
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): a"]);
+    git_in(&other, &["switch", "-q", "main"]);
+    git_in(
+        &other,
+        &["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"],
+    );
+    // この clone がブランチを取ってきた直後に、ほかの clone がマージを push して予約を解放する git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let mark = t.root.join("merged");
+    fs::write(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in *\" fetch \"*\"+refs/heads/\"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} -C {other} push -q origin main && {real} -C {other} push -q origin --delete refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            mark = mark.display(),
+            other = other.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["new", "use-b", "b を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+}
+
+#[test]
+fn new_falls_back_to_main_when_the_remote_head_dangles() {
+    let t = TempRepo::with_remote("remote-head");
+    git_in(
+        &t.root.join("remote.git"),
+        &["symbolic-ref", "HEAD", "refs/heads/gone"],
+    );
+    // origin を足しただけで、まだ何も fetch していない clone
+    let fresh = TempRepo::new("remote-head-fresh");
+    let bare = t.root.join("remote.git");
+    fresh.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    let out = fresh.run(&["new", "use-a", "a を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let main = t.git(&["rev-parse", "main"]).trim().to_string();
+    assert_eq!(tag_target(&fresh.dir, "adr-0001"), main);
+}
+
+#[test]
+fn renumber_skips_submodule_entries() {
+    let t = duplicated_after_rebase("gitlink");
+    let head = t.git(&["rev-parse", "HEAD"]).trim().to_string();
+    t.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{head},vendor/sub"),
+    ]);
+    fs::create_dir_all(t.dir.join("vendor/sub")).unwrap();
+    t.git(&["commit", "-q", "-m", "chore: submodule"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+}
+
+#[test]
+fn new_stops_when_origin_has_no_default_branch_despite_a_stale_tracking_ref() {
+    let t = TempRepo::with_remote("stale-tracking");
+    t.git(&["push", "-q", "origin", "main:trunk"]);
+    git_in(
+        &t.root.join("remote.git"),
+        &["update-ref", "-d", "refs/heads/main"],
+    );
+    // 手元には、origin で消えた main の古い追跡の ref が残っている
+    assert!(t.git(&["rev-parse", "origin/main"]).trim().len() == 40);
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+}
+
+#[test]
+fn prune_reads_the_branch_that_origin_names_as_its_head() {
+    let t = TempRepo::with_remote("stale-head");
+    let first = t.git(&["rev-parse", "HEAD"]).trim().to_string();
+    // 手元の origin/HEAD は、古い追跡の ref を指している
+    t.git(&["update-ref", "refs/remotes/origin/old", &first]);
+    t.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/old",
+    ]);
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    t.git(&["push", "-q", "origin", "main"]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0001\n");
+}
+
+#[test]
+fn renumber_counts_blank_context_lines_printed_without_a_space() {
+    let t = duplicated_after_rebase("blank-context");
+    t.git(&["switch", "-q", "main"]);
+    t.write("plans/p.md", "x\n\nADR-0001 は a\ny\n");
+    t.commit_all("docs: plan");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    t.write(
+        "plans/p.md",
+        "ADR-0001 の続き\nx\n\nADR-0001 は a\ny\nADR-0001 の後\n",
+    );
+    t.commit_all("docs: plan b");
+    t.git(&["config", "diff.interHunkContext", "5"]);
+    t.git(&["config", "diff.suppressBlankEmpty", "true"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        t.read("plans/p.md"),
+        "ADR-0002 の続き\nx\n\nADR-0001 は a\ny\nADR-0002 の後\n"
+    );
+}
+
+#[test]
+fn renumber_works_on_a_branch_without_a_common_ancestor() {
+    let t = TempRepo::new("no-ancestor");
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write("notes.md", "ADR-0001 を見る\n");
+    t.commit_all("docs(adr): a");
+    let out = t.run(&["renumber", "1", "5"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0005-use-a.md\n");
+    assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
+}
+
+#[test]
+fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
+    let t = TempRepo::with_remote("retry-merge");
+    let other = t.clone_remote("other");
+    // ほかの clone が ADR-0001（use-a）を作ってマージしてあり、予約のタグはまだ push していない
+    git_in(&other, &["switch", "-q", "-c", "topic"]);
+    fs::create_dir_all(other.join("docs/adr")).unwrap();
+    fs::write(
+        other.join("docs/adr/0001-use-a.md"),
+        design_records::template(1, "a を使う", "2026-10-01"),
+    )
+    .unwrap();
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): a"]);
+    git_in(&other, &["switch", "-q", "main"]);
+    git_in(
+        &other,
+        &["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"],
+    );
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-a", "origin/main"],
+    );
+    // 最初のタグの fetch の直後にほかの clone が予約し、push が拒まれた後の確認の直後に、マージを push して
+    // 予約を解放する git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let (reserved, merged) = (t.root.join("reserved"), t.root.join("merged"));
+    fs::write(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in\n\
+             *\" fetch \"*\"refs/tags/\"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {reserved} ]; then : > {reserved}; {real} -C {other} push -q origin refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             *\" ls-remote --tags \"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {merged} ]; then : > {merged}; {real} -C {other} push -q origin main && {real} -C {other} push -q origin --delete refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            reserved = reserved.display(),
+            merged = merged.display(),
+            other = other.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["new", "use-b", "b を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(merged.exists());
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
 }

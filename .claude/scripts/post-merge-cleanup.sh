@@ -8,13 +8,17 @@
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
-#   3. ローカルブランチを削除（-d。未マージなら失敗する）
-#   4. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
+#   3. 予約のタグ（adr-NNNN、issue-NNNN）があれば、既定ブランチの履歴に記録が入った番号のタグを、ローカルと
+#      リモートから消す（design-records prune。ADR-0018）。design-records が無いか origin に届かなければ残して
+#      続け、prune が失敗したら ERROR で止まる
+#   4. ローカルブランチを削除（-d。未マージなら失敗する）
+#   5. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
 #      GitHub リモートでそのブランチを head とする open PR（fork からの upstream PR 等）があるとき
 #      （削除で PR が閉じる）は、削除せず残す
 #
 # 出力:
 #   WORKTREE_REMOVED: <path>|none
+#   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
 #   LOCAL_BRANCH: deleted|none
 #   REMOTE_BRANCH: deleted|kept (...)|none
 
@@ -75,7 +79,25 @@ if [[ -n "$(git remote)" ]]; then
   git pull -q --ff-only
 fi
 
-# --- 3. ローカルブランチ ---
+# --- 3. 番号の予約のタグ ---
+# 記録の形と番号の規則は design-records が持つ。既定ブランチ（リモートがあればリモートの）の履歴に無い記録の
+# タグは消さない（消すと番号が使い回される）。解放できないときは、タグを残して後片付けを続ける（タグが残っても
+# 番号は使い回されず、次の prune で消える）。prune そのものが失敗したら止める（原因を直して走らせ直せる）
+if [[ -z "$(git tag --list 'adr-*' 'issue-*')" ]]; then
+  echo "RESERVATIONS_RELEASED: none"
+elif ! command -v design-records >/dev/null 2>&1; then
+  echo "RESERVATIONS_RELEASED: skipped (design-records が PATH に無い。予約のタグは残した)"
+elif git remote get-url origin >/dev/null 2>&1 && ! git ls-remote -q origin >/dev/null 2>&1; then
+  echo "RESERVATIONS_RELEASED: kept (origin に届かない。予約のタグは残した)"
+elif RELEASED=$(design-records prune); then
+  RELEASED=${RELEASED:-none}
+  echo "RESERVATIONS_RELEASED: ${RELEASED//$'\n'/ }"
+else
+  echo "ERROR: 予約のタグを解放できません（design-records prune が失敗）。原因を直してから、もう一度実行してください" >&2
+  exit 1
+fi
+
+# --- 4. ローカルブランチ ---
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
   git branch -d -q "$BRANCH"
   echo "LOCAL_BRANCH: deleted"
@@ -83,7 +105,7 @@ else
   echo "LOCAL_BRANCH: none"
 fi
 
-# --- 4. リモートブランチ ---
+# --- 5. リモートブランチ ---
 if git remote get-url "$REMOTE" >/dev/null 2>&1 \
   && [[ -n "$(git ls-remote --heads "$REMOTE" "$BRANCH" 2>/dev/null)" ]]; then
   if git remote -v | grep -q 'github\.com'; then
