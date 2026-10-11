@@ -10,7 +10,7 @@ pub trait Rule: Sync {
 }
 
 mod block_main_commit;
-mod block_no_verify_commit;
+mod block_no_verify;
 mod guard_branch_base;
 mod guard_gh_api;
 mod guard_gh_run_rerun;
@@ -33,7 +33,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_git_add::GuardGitAdd,
         &guard_git_push::GuardGitPush,
         &guard_branch_base::GuardBranchBase,
-        &block_no_verify_commit::BlockNoVerifyCommit,
+        &block_no_verify::BlockNoVerify,
         &guard_gh_run_rerun::GuardGhRunRerun,
         &guard_gh_api::GuardGhApi,
         &pre_pr_create_check::PrePrCreateCheck,
