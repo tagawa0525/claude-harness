@@ -168,8 +168,12 @@ if commits "$REPO" "UPPER.MD" "$(printf '# t\n\n確かめの結果。\n')"; then
 else
   ok "大文字の拡張子の崩れた語で止める"
 fi
-ln -s ../README.md "$REPO/link.md"
-git -C "$REPO" add link.md
+# 行き先は崩れた語を含むが、検査を通さずにコミットしておく。リンクだけをコミットして、行き先を読まないことを見る
+printf '確かめの結果。\n' > "$REPO/target.txt"
+git -C "$REPO" add target.txt
+git -C "$REPO" commit -q --no-verify -m "chore: target"
+ln -s target.txt "$REPO/link.txt"
+git -C "$REPO" add link.txt
 if git -C "$REPO" commit -q -m "docs: link" >"$WORK/out" 2>&1; then
   ok "シンボリックリンクは検査しない"
 else
