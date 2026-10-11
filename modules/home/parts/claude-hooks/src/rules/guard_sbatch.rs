@@ -13,36 +13,23 @@ use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Cmd, Shell};
+use crate::unwrap::basename;
 
 pub struct GuardSbatch;
 
 const SCRIPT: &str = "slurm-run.sh";
 const TEST: &str = ".claude/tests/scripts/slurm-run.sh";
 
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
-/// 実際に走るプログラムの、書いたままのパス。前置き（env など）は shell.rs がほどいてある。
-/// `bash <path>` / `sh <path>` は走らせるスクリプトのパス
-fn program(cmd: &Cmd) -> &str {
-    let name = basename(&cmd.name);
-    if name == "bash" || name == "sh" {
-        return cmd.args.first().map_or(&cmd.name, |a| &a.text);
-    }
-    &cmd.name
-}
-
 /// コマンドとして実行されているか（直接、前置き越し、または `bash <path>` / `sh <path>` 経由）
 fn runs(cmd: &Cmd, target: &str) -> bool {
-    basename(program(cmd)) == target
+    basename(cmd.program()) == target
 }
 
 /// slurm-run.sh を実行しているか。同名のテスト（`.claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で
 /// 走り、Slurm に触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、
 /// 除くのはテストの 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
 fn runs_slurm_run(cmd: &Cmd) -> bool {
-    let program = program(cmd);
+    let program = cmd.program();
     basename(program) == SCRIPT && !is_own_test(program)
 }
 

@@ -9,26 +9,15 @@ use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Cmd, Shell};
+use crate::unwrap::basename;
 
 pub struct RequireBackgroundWait;
 
 const SCRIPTS: &[&str] = &["gh-wait-review.sh", "request-rereview.sh"];
 
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
 /// コマンドとして実行されているか（直接、または `bash <path>` / `sh <path>` 経由）
 fn runs_wait_script(cmd: &Cmd) -> bool {
-    if SCRIPTS.contains(&basename(&cmd.name)) {
-        return true;
-    }
-    if (cmd.name == "bash" || cmd.name == "sh")
-        && let Some(first) = cmd.args.first()
-    {
-        return SCRIPTS.contains(&basename(&first.text));
-    }
-    false
+    SCRIPTS.contains(&basename(cmd.program()))
 }
 
 impl Rule for RequireBackgroundWait {

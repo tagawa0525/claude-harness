@@ -8,15 +8,15 @@
 //!   …`、`GIT_CONFIG_*` の環境変数
 //! - hook が Claude Code のセッションと分かる `CLAUDECODE=1` を、別の値にする・外す（`env -u`、`env -i`、`unset`）
 //!
-//! `env`、`command`、`exec`、`nohup`、`time` で包んだコマンドは、shell.rs がほどいた中の git コマンドと env の
-//! 変数で見る。
+//! env などで包んだコマンドは、shell.rs がほどいた中の git コマンドと、包みが変える環境変数で見る。
 //!
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=1` を付ける。
 
 use super::Rule;
+use crate::git_args::has_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, git_short_flag};
+use crate::shell::{Arg, Shell};
 
 pub struct BlockNoVerify;
 
@@ -101,12 +101,12 @@ impl Rule for BlockNoVerify {
             skips |= match sub {
                 "config" => sets_hooks_path(args),
                 "commit" | "merge" | "pull" => {
-                    cmd.git_config_overrides().into_iter().any(is_hooks_path)
+                    cmd.git_config_overrides().iter().any(|c| is_hooks_path(c))
                         || args
                             .iter()
                             .take_while(|a| a.text != "--")
                             .any(|a| is_no_verify(&a.text))
-                        || (sub == "commit" && git_short_flag(sub, args, 'n'))
+                        || (sub == "commit" && has_flag(sub, args, Some('n'), &[]))
                 }
                 _ => false,
             };

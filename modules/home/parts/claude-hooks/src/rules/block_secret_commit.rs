@@ -19,9 +19,10 @@ use std::process::Command;
 
 use super::Rule;
 use crate::git;
+use crate::git_args::has_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Shell, git_short_flag};
+use crate::shell::Shell;
 
 pub struct BlockSecretCommit;
 
@@ -110,7 +111,7 @@ impl Rule for BlockSecretCommit {
             {
                 continue;
             }
-            let all = args.iter().any(|a| a.text == "--all") || git_short_flag("commit", args, 'a');
+            let all = has_flag("commit", args, Some('a'), &["--all"]);
             let modes: &[&str] = if all {
                 &["--staged", "--pre-commit"]
             } else {

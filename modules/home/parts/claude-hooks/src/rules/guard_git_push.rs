@@ -12,9 +12,10 @@ use std::path::Path;
 
 use super::Rule;
 use crate::git;
+use crate::git_args::{has_flag, positionals};
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, git_short_flag};
+use crate::shell::{Arg, Shell};
 
 pub struct GuardGitPush;
 
@@ -33,13 +34,10 @@ fn is_protected_ref(dst: &str) -> bool {
 fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
     // --- force push ---
     // -f / --force（単独でも -fu のようなクラスタでも）。--force-with-lease / --force-if-includes は対象外
-    if args.iter().any(|a| a.text == "--force") || git_short_flag("push", args, 'f') {
+    if has_flag("push", args, Some('f'), &["--force"]) {
         return Some("force push は禁止です（レビュー履歴を保持するため）。feature branch で履歴を書き換える必要がある場合は --force-with-lease を使ってください".to_string());
     }
-    if args
-        .iter()
-        .any(|a| a.text == "--all" || a.text == "--mirror")
-    {
+    if has_flag("push", args, None, &["--all", "--mirror"]) {
         return Some(
             "--all / --mirror は main を含む全ブランチを push するため禁止です".to_string(),
         );
@@ -52,21 +50,11 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
         ));
     }
 
-    // 位置引数を集める（値を取るフラグの値は飛ばす）。1 つ目は remote、2 つ目以降が refspec
-    let mut positional: Vec<&str> = Vec::new();
-    let mut skip = false;
-    for a in args {
-        let t = a.text.as_str();
-        if skip {
-            skip = false;
-            continue;
-        }
-        match t {
-            "-o" | "--push-option" | "--receive-pack" | "--exec" | "--repo" => skip = true,
-            _ if t.starts_with('-') => {}
-            _ => positional.push(t),
-        }
-    }
+    // 位置引数（オプションとその値を除く）。1 つ目は remote、2 つ目以降が refspec
+    let positional: Vec<&str> = positionals("push", args)
+        .into_iter()
+        .map(|a| a.text.as_str())
+        .collect();
     let refspecs: &[&str] = if positional.len() > 1 {
         &positional[1..]
     } else {

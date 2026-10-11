@@ -9,6 +9,7 @@
 
 mod gh;
 mod git;
+mod git_args;
 mod input;
 mod output;
 mod rules;
