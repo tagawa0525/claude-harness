@@ -4,7 +4,7 @@
 # 実行: bash .claude/tests/hooks.sh
 #   claude-hooks を cargo build してから各ルールを --rule で個別に評価する
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
-#       block-no-verify-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
+#       block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
 #       guard-git-merge / guard-sbatch
 
@@ -554,43 +554,47 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
 
 # ===========================================================================
-# block-no-verify-commit: git の hook を飛ばす git commit --no-verify を止める
+# block-no-verify: git の hook を飛ばす git commit / git merge を止める
 # ===========================================================================
-# 機密情報の検査（gitleaks）は git の pre-commit で行う（ADR-0015）。--no-verify はそれを飛ばすので、
-# Claude Code のセッションでは止める
+# 機密情報の検査（gitleaks）は git の pre-commit で、ローカルのマージの検査は pre-merge-commit で行う
+# （ADR-0015）。--no-verify（省略形と -n を含む）と、git -c core.hooksPath= はそれを飛ばすので止める
 
 REPO="$TEST_ROOT/noverify"
 make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
 
-it "block-no-verify-commit: --no-verify と -n（短縮形のまとまりを含む）の git commit を止める"
-for cmd in 'git commit --no-verify -m "chore: a"' 'git commit -n -m "chore: a"' 'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"'; do
-  out=$(run_hook block-no-verify-commit "$cmd")
+it "block-no-verify: hook を飛ばす git commit と git merge を止める"
+for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "chore: a"' 'git commit -n -m "chore: a"' \
+  'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"' 'git -c core.hooksPath=/dev/null commit -m "chore: a"' \
+  'git -c core.hookspath=/x commit -m "chore: a"' 'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x'; do
+  out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=1"
 done
 
-it "block-no-verify-commit: hook を飛ばさない git commit は許可する"
-for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit'; do
-  out=$(run_hook block-no-verify-commit "$cmd")
+it "block-no-verify: hook を飛ばさない git commit と git merge は許可する"
+for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit' \
+  'git commit -m"feat: add notes"' 'git commit -Fnotes.txt' 'git commit -Cnext' 'git commit --no-status -m x' \
+  'git merge --no-ff feat/x' 'git -c user.name=n commit -m x'; do
+  out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
 done
 
-it "block-no-verify-commit: ALLOW_NO_VERIFY=1 で迂回できる"
-out=$(run_hook block-no-verify-commit 'ALLOW_NO_VERIFY=1 git commit --no-verify -m "chore: a"')
+it "block-no-verify: ALLOW_NO_VERIFY=1 で迂回できる"
+out=$(run_hook block-no-verify 'ALLOW_NO_VERIFY=1 git commit --no-verify -m "chore: a"')
 assert_eq allow "$(decision "$out")"
 
-it "block-no-verify-commit: git commit 以外とヒアドキュメント本文には反応しない"
-out=$(run_hook block-no-verify-commit 'git log --no-verify')
+it "block-no-verify: git commit / merge 以外とヒアドキュメント本文には反応しない"
+out=$(run_hook block-no-verify 'git log --no-verify')
 assert_eq "" "$out"
-out=$(run_hook block-no-verify-commit "$(write_doc '例: git commit --no-verify -m msg')")
+out=$(run_hook block-no-verify "$(write_doc '例: git commit --no-verify -m msg')")
 assert_eq "" "$out"
 
 # ===========================================================================
 # guard-git-add: 対象を絞らない git add（-A / --all / . / :/ / *）を止める
 # ===========================================================================
-# 1 コミット 1 論理変更と、機密情報の混入防止（block-secret-commit と対）のため。
+# 1 コミット 1 論理変更と、機密情報の混入防止（git の pre-commit の機密情報の検査と対。ADR-0015）のため。
 # パスで範囲を限定した -A（git add -A src/）と、追跡済みだけを対象にする -u は通す
 
 REPO="$TEST_ROOT/gitadd"

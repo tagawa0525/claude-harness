@@ -85,8 +85,10 @@ fi
 printf 'key = %s\n' "$KEY" > "$REPO/a.txt"
 if CLAUDECODE=1 git -C "$REPO" commit -q -am "chore: a2" >"$WORK/out" 2>&1; then
   ng "commit -a で足した鍵で止まらない"
-else
+elif grep -q "a.txt:1" "$WORK/out" && grep -q "aws-access-token" "$WORK/out"; then
   ok "commit -a で足した鍵で止める"
+else
+  ng "commit -a で止めたが、鍵の場所とルール ID を出さない"
 fi
 git -C "$REPO" checkout -q -- a.txt
 
@@ -118,8 +120,41 @@ printf 'key = %s\n' "$KEY" > "$REPO/d.txt"
 git -C "$REPO" add d.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: d" >"$WORK/out" 2>&1; then
   ng "ローカルの pre-commit がある fork で、鍵で止まらない"
-else
+elif grep -q "d.txt:1" "$WORK/out" && grep -q "aws-access-token" "$WORK/out"; then
   ok "ローカルの pre-commit がある fork でも、鍵で止める"
+else
+  ng "ローカルの pre-commit がある fork で止めたが、鍵の場所とルール ID を出さない"
+fi
+
+# --- 6. Markdown の自動修正がステージし直した中身も見る ----------------------------------------------------
+# 自動修正は作業ツリーをステージし直す（#282）。ステージしていない部分の鍵も、コミットに入るなら止める
+REPO="$WORK/restage"
+new_repo "$REPO"
+printf '# t\n\nplain\n' > "$REPO/notes.md"
+git -C "$REPO" add notes.md
+printf '# t\n\nplain\n\nkey = %s\n' "$KEY" > "$REPO/notes.md"
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: notes" >"$WORK/out" 2>&1; then
+  if git -C "$REPO" show HEAD:notes.md | grep -qF "$KEY"; then
+    ng "Markdown の自動修正がステージし直した鍵を、検査せずにコミットした"
+  else
+    ok "Markdown の自動修正がステージし直さず、鍵はコミットに入らない"
+  fi
+else
+  ok "Markdown の自動修正がステージし直した鍵でも止める"
+fi
+
+# --- 7. gitleaks が失敗したら、漏えいと分けて理由を出して止める ------------------------------------------
+REPO="$WORK/broken"
+new_repo "$REPO"
+printf 'this is not toml [\n' > "$REPO/.gitleaks.toml"
+echo plain > "$REPO/e.txt"
+git -C "$REPO" add e.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: e" >"$WORK/out" 2>&1; then
+  ng "gitleaks が失敗したのにコミットを通した"
+elif grep -q "gitleaks が失敗しました" "$WORK/out" && ! grep -q "機密情報らしき内容" "$WORK/out"; then
+  ok "gitleaks が失敗したら、漏えいと分けて理由を出して止める"
+else
+  ng "gitleaks の失敗を、漏えいとして出した"
 fi
 
 echo
