@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// `git <args>` を dir で実行する（input があれば標準入力に渡す）。dir が無いか git を起動できなければ None。
-/// dir があるのに起動できない（PATH に git が無い、dir に入れない）のは環境の問題なので、理由を標準エラーに
-/// 1 回だけ出す。起動した後の失敗（入力を書けない、待てない）は、非 0 の終了と同じく呼ぶ側に任せる
+/// dir があるのに起動できない（PATH に git が無い、dir に入れない）のは環境の問題なので、理由を利用者に
+/// 1 回だけ見せる（[`crate::output::notice`]）。起動した後の失敗（入力を書けない、待てない）は、非 0 の終了と同じく呼ぶ側に任せる
 pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
     // まだ無いディレクトリは、判定するコマンドが作る前の場所（mkdir の後の cd や -C）を指すことがある。
     // is_dir は読めない（親に入れない）ときも false なので使わず、無いときだけ黙って返す
@@ -35,10 +35,10 @@ pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
         Ok(child) => child,
         Err(e) => {
             if !REPORTED.swap(true, Ordering::Relaxed) {
-                eprintln!(
+                crate::output::notice(format!(
                     "claude-hooks: git を起動できません（PATH に git が無いか、{} に入れません）: {e}",
                     dir.display()
-                );
+                ));
             }
             return None;
         }

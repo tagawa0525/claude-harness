@@ -2,6 +2,7 @@
 //!
 //! 標準入力の hook JSON（tool_name / tool_input.command / tool_input.run_in_background / cwd）を読み、
 //! Bash ツールのコマンドを構文解析して各ルールを評価し、deny / additionalContext を JSON で返す。
+//! 判定できなかった理由（git を起動できない、ルールの panic）は systemMessage で利用者に見せる（ADR-0033）。
 //! 出力なし = 許可。終了コードは常に 0（hook の不具合でツール呼び出しを壊さない）。
 //!
 //! Usage: claude-hooks pre-tool-use [--rule <name>]...
@@ -59,7 +60,8 @@ fn main() {
         return;
     }
 
-    // ルール側の panic は「判定できない」であって「ツールを止める」ではない
+    // ルール側の panic は「判定できない」であって「ツールを止める」ではない。panic の文は既定の panic hook が
+    // 標準エラーに出す（テストが panic を見分けるため）
     let result = std::panic::catch_unwind(|| {
         let shell = shell::Shell::parse(&input.command);
         let mut findings = Vec::new();
@@ -68,9 +70,17 @@ fn main() {
                 findings.extend(rules::run(*rule, &input, &shell));
             }
         }
-        output::render(&findings)
+        findings
     });
-    if let Ok(Some(json)) = result {
+    let mut notices = output::take_notices();
+    let findings = result.unwrap_or_else(|_| {
+        notices.push(
+            "claude-hooks: ルールの評価が panic で止まり、このコマンドを判定していません"
+                .to_string(),
+        );
+        Vec::new()
+    });
+    if let Some(json) = output::render(&findings, &notices) {
         println!("{json}");
     }
 }
