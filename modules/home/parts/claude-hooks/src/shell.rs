@@ -361,6 +361,10 @@ fn unwrap(mut cmd: Cmd) -> Cmd {
                     continue;
                 }
             }
+            // bash の exec -c は環境変数を全て消して走らせる（-cl のまとまりを含む）
+            if wrapper == "exec" && !t.starts_with("--") && t[1..].contains('c') {
+                cleared = true;
+            }
             if valued.contains(&t.as_str()) {
                 words.pop_front();
             }
