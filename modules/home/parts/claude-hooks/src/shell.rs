@@ -144,6 +144,38 @@ impl Shell {
         Arg { text, raw }
     }
 
+    /// プログラム内の全ての代入（`NAME=value`。値の無い `NAME=` は空の値）の名前と値
+    pub fn assignments(&self) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        self.walk(self.tree.root_node(), &mut |n| {
+            if n.kind() == "variable_assignment" {
+                let var = n.child_by_field_name("name").map(|v| self.text(v));
+                let val = n
+                    .child_by_field_name("value")
+                    .map(|v| self.unquote(v).text)
+                    .unwrap_or_default();
+                if let Some(var) = var {
+                    found.push((var.to_string(), val));
+                }
+            }
+        });
+        found
+    }
+
+    /// `unset NAME` がプログラム内のどこかにあるか（unset は組み込みで、commands() には出ない）
+    pub fn unsets(&self, name: &str) -> bool {
+        let mut found = false;
+        self.walk(self.tree.root_node(), &mut |n| {
+            if n.kind() == "unset_command" {
+                let mut cursor = n.walk();
+                if n.named_children(&mut cursor).any(|c| self.text(c) == name) {
+                    found = true;
+                }
+            }
+        });
+        found
+    }
+
     /// `NAME=1` の代入がプログラム内のどこかにあるか（hook のエスケープ指定）
     pub fn has_escape(&self, name: &str) -> bool {
         let mut found = false;
