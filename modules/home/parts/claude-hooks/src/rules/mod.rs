@@ -23,7 +23,9 @@ pub fn run(rule: &dyn Rule, input: &Input, shell: &Shell) -> Vec<Finding> {
     match shell.escape(name) {
         Escape::Given => Vec::new(),
         Escape::Absent => rule.check(input, shell),
-        esc @ Escape::Short => apply_escape(esc, name, rule.check(input, shell)),
+        esc @ (Escape::Short | Escape::Expanded) => {
+            apply_escape(esc, name, rule.check(input, shell))
+        }
     }
 }
 
@@ -35,7 +37,7 @@ pub fn apply_escape(esc: Escape, name: &str, mut findings: Vec<Finding>) -> Vec<
     }
     match esc {
         Escape::Absent => findings,
-        Escape::Short => {
+        Escape::Short | Escape::Expanded => {
             findings.push(Finding::Deny(reason_required(name)));
             findings
         }
@@ -50,7 +52,7 @@ pub fn apply_escape_to_reasons(esc: Escape, name: &str, mut reasons: Vec<String>
     }
     match esc {
         Escape::Absent => reasons,
-        Escape::Short => {
+        Escape::Short | Escape::Expanded => {
             reasons.push(reason_required(name));
             reasons
         }
