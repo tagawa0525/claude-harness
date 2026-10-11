@@ -8,9 +8,10 @@
 //! `-p` / `-i`（対話的に選ぶ）。エスケープはコマンドに `ALLOW_GIT_ADD_ALL=1` を付ける。
 
 use super::Rule;
+use crate::git_args::{git_flag, positionals};
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, short_cluster_has};
+use crate::shell::{Arg, Shell};
 
 pub struct GuardGitAdd;
 
@@ -22,25 +23,12 @@ fn deny(why: &str) -> Finding {
 
 /// `git add` の引数を検査し、止める理由があれば返す
 fn check_add(args: &[Arg]) -> Option<String> {
-    let mut all = false;
-    let mut pathspecs: Vec<&str> = Vec::new();
-    let mut after_dashdash = false;
-    for a in args {
-        let t = a.text.as_str();
-        if after_dashdash {
-            pathspecs.push(t);
-        } else if t == "--" {
-            after_dashdash = true;
-        } else if t == "--all" || t == "--no-ignore-removal" {
-            all = true;
-        } else if t.starts_with("--") {
-        } else if short_cluster_has(a, 'A') {
-            all = true;
-        } else if t.starts_with('-') {
-        } else {
-            pathspecs.push(t);
-        }
-    }
+    let all = git_flag("add", args, Some('A'), &["--all", "--no-ignore-removal"]);
+    let pathspecs: Vec<&str> = positionals("add", args)
+        .into_iter()
+        .map(|a| a.text.as_str())
+        .collect();
+    // --pathspec-from-file のファイルの中身（`.` や `:/` も書ける）は見ないので、パスを指定したことにしない
     if all && pathspecs.is_empty() {
         return Some("git add -A / --all はパスを指定しない限り禁止です".to_string());
     }
@@ -84,7 +72,7 @@ mod tests {
     use crate::shell::Shell;
 
     fn args(src: &str) -> Option<String> {
-        let cs = Shell::parse(src).commands();
+        let cs = Shell::parse(src).commands().to_vec();
         let (_, a) = cs[0].git_subcommand().unwrap();
         check_add(a)
     }

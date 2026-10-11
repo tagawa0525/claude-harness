@@ -6,9 +6,10 @@
 
 use super::Rule;
 use crate::git;
+use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Shell, short_cluster_has};
+use crate::shell::Shell;
 
 pub struct WarnLargeCommit;
 
@@ -36,12 +37,10 @@ impl Rule for WarnLargeCommit {
             let Some(("commit", args)) = cmd.git_subcommand() else {
                 continue;
             };
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             // -a / --all ならワーキングツリーの変更も含めて数える。
             // --amend / --author は `--` で始まるので短縮形のクラスタには当たらない
-            let all = args
-                .iter()
-                .any(|a| a.text == "--all" || short_cluster_has(a, 'a'));
+            let all = git_flag("commit", args, Some('a'), &["--all"]);
             let diff_args: &[&str] = if all {
                 &["diff", "HEAD", "--numstat"]
             } else {

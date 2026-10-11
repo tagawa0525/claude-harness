@@ -279,7 +279,7 @@ impl Rule for PreMergeCheck {
             };
             let mut reasons: Vec<String> = Vec::new();
 
-            let mut dir = shell.target_dir(&cmd, &input.cwd);
+            let mut dir = shell.target_dir(cmd, &input.cwd);
             if !dir.is_dir() {
                 reasons.push(format!(
                     "コマンド中の cd 先に移動できません: {}",
@@ -685,12 +685,16 @@ mod tests {
 
     #[test]
     fn pr_ref_skips_option_values_and_stops_at_body() {
-        let cs = Shell::parse("gh pr merge -R owner/repo 12 --merge --body \"PR 99\"").commands();
+        let cs = Shell::parse("gh pr merge -R owner/repo 12 --merge --body \"PR 99\"")
+            .commands()
+            .to_vec();
         assert_eq!(
             pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()).as_deref(),
             Some("12")
         );
-        let cs = Shell::parse("gh pr merge --merge --subject 'x 7'").commands();
+        let cs = Shell::parse("gh pr merge --merge --subject 'x 7'")
+            .commands()
+            .to_vec();
         assert_eq!(pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()), None);
     }
 

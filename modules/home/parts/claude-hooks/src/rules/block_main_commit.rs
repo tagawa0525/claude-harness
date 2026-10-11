@@ -25,7 +25,7 @@ impl Rule for BlockMainCommit {
             if cmd.git_subcommand().map(|(sub, _)| sub) != Some("commit") {
                 continue;
             }
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             if !git::has_github_remote(&dir) {
                 continue;
             }

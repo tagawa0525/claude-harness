@@ -87,7 +87,7 @@ impl Rule for PrePrCreateCheck {
             let mut reasons: Vec<String> = Vec::new();
 
             // gh / git の実行コンテキストをコマンドに合わせる（`cd <path> && gh pr create`）
-            let mut dir = shell.target_dir(&cmd, &input.cwd);
+            let mut dir = shell.target_dir(cmd, &input.cwd);
             if !dir.is_dir() {
                 reasons.push(format!(
                     "コマンド中の cd 先に移動できません: {}",

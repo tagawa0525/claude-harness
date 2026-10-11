@@ -55,6 +55,9 @@ assert_eq allow "$(decision "$out")"
 it "pre-pr-create: --web は deny"
 out=$(run_hook pre-pr-create-check "$GOOD_CMD --web")
 assert_eq deny "$(decision "$out")"
+# パスで書いた gh も gh として見る
+out=$(run_hook pre-pr-create-check "/usr/bin/$GOOD_CMD --web")
+assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "--web"
 
 it "pre-pr-create: --title がなければ deny"
@@ -259,6 +262,16 @@ it "guard-git-push: ALLOW_PROTECTED_PUSH=1 で迂回できる"
 out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push --force')
 assert_eq allow "$(decision "$out")"
 
+it "guard-git-push: env などで包んだ git push も見て、値を取るオプションの値を -f と取り違えない"
+for cmd in 'env FOO=1 git push --force' 'command git push origin main' 'nohup git push --force'; do
+  out=$(run_hook guard-git-push "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+out=$(run_hook guard-git-push 'git push -ofoo origin feat/x')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-git-push 'git push -o --force origin feat/x')
+assert_eq allow "$(decision "$out")"
+
 it "guard-git-push: GitHub リモートがなければ gh を呼ばず許可"
 LOCAL="$TEST_ROOT/push-local"
 make_repo "$LOCAL"
@@ -297,6 +310,10 @@ echo 'y' > other.txt
 git add other.txt
 out=$(run_hook block-main-commit 'git commit -m "chore: mixed"')
 assert_eq deny "$(decision "$out")"
+for cmd in 'env FOO=1 git commit -m "chore: mixed"' 'command git commit -m "chore: mixed"'; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 git restore --staged other.txt && git checkout -q other.txt
 
 it "block-main-commit: flake.lock の削除・リネームは main では deny"
@@ -362,6 +379,14 @@ out=$(run_hook block-main-commit "git -C $LOCAL commit -m 'feat: x'")
 assert_eq allow "$(decision "$out")"
 out=$(run_hook block-main-commit "git -C $TEST_ROOT/lock commit -m 'feat: x'")
 assert_eq deny "$(decision "$out")"
+# 1 回の env の中では最後の -C だけが効く（前の -C からの相対ではない）
+out=$(run_hook block-main-commit "env -C $TEST_ROOT/lock -C $LOCAL git commit -m 'feat: x'")
+assert_eq allow "$(decision "$out")"
+for cmd in "env -C $TEST_ROOT/lock git commit -m 'feat: x'" "env --chdir=$TEST_ROOT/lock git commit -m 'feat: x'" \
+  "env -C $LOCAL -C lock git commit -m 'feat: x'" "env -C $LOCAL env -C $TEST_ROOT/lock git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 cd "$REPO" || exit 1
 
 it "block-main-commit: コマンド置換やサブシェルの中の cd は親の対象ディレクトリを変えない"
@@ -369,6 +394,23 @@ out=$(run_hook block-main-commit "echo \$(cd $LOCAL && pwd) && git commit -m 'fe
 assert_eq deny "$(decision "$out")"
 out=$(run_hook block-main-commit "(cd $LOCAL); git commit -m 'feat: x'")
 assert_eq deny "$(decision "$out")"
+
+it "block-main-commit: env などで包んだ cd は対象ディレクトリを変えず、builtin / command の cd は変える"
+# env は外部コマンドの cd を探して失敗するので、後ろの git は元のディレクトリ（$REPO、main）で走る
+for cmd in "env cd $LOCAL; git commit -m 'feat: x'" "nohup cd $LOCAL; git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+for cmd in "/usr/bin/time cd $LOCAL; git commit -m 'feat: x'" "command time cd $LOCAL; git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+# 修飾しない time は bash の予約語で、cd は同じシェルで走る
+for cmd in "builtin cd $LOCAL && git commit -m 'feat: x'" "command cd $LOCAL && git commit -m 'feat: x'" \
+  "time cd $LOCAL; git commit -m 'feat: x'" "time -p cd $LOCAL; git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
 
 it "block-main-commit: コマンドより後ろの cd は対象ディレクトリにしない"
 # $REPO（github リモートあり・main）で実行。後ろの cd $LOCAL（リモートなし）を見てしまうと allow になる
@@ -612,6 +654,14 @@ fake_gitleaks ok "$LEAK_JSON"
 out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(fake_log gitleaks)" "git --pre-commit"
+fake_gitleaks ok "$LEAK_JSON"
+out=$(run_hook block-secret-commit 'git commit -m"add a"')
+assert_eq allow "$(decision "$out")"
+assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
+fake_gitleaks ok "$LEAK_JSON"
+out=$(run_hook block-secret-commit 'git commit -m --all')
+assert_eq allow "$(decision "$out")"
+assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
 
 it "block-secret-commit: 対象のディレクトリを決められないときは、git の hook に任せて通す（#281）"
 fake_gitleaks "$LEAK_JSON" ok
@@ -655,6 +705,7 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"' 'git -c core.hooksPath=/dev/null commit -m "chore: a"' \
   'git -c core.hookspath=/x commit -m "chore: a"' 'git -C . -c core.hooksPath=/x commit -m "chore: a"' \
   'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x' 'git pull --no-verify origin feat/x' \
+  'git pull -j --no-verify origin feat/x' 'git pull --jobs --no-verify' 'git --attr-source HEAD commit -n -m x' \
   'git -c core.hooksPath=/x pull' 'git config core.hooksPath /dev/null' 'git config --local core.hookspath x' \
   'git config --global --unset core.hooksPath' 'git config --unset-all core.hooksPath' \
   'git config --global --remove-section core' 'git config --rename-section core disabled' \
@@ -665,6 +716,14 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'env CLAUDECODE=0 git commit -m x' 'env -i git commit -m x' 'env FOO=1 git commit --no-verify -m x' \
   'git -c core.hooksPath commit -m x' 'git --config-env core.hooksPath commit -m x' \
   'command git commit --no-verify -m x' 'env GIT_CONFIG_COUNT=1 git commit -m x' \
+  "env -S 'git commit --no-verify -m x'" 'exec -c git commit -m x' 'exec -cl git commit -m x' \
+  'env -vi git commit -m x' 'env --ignore-env git commit -m x' 'env -iu X git commit -m x' \
+  'env --uns=CLAUDECODE git commit -m x' 'nice git commit --no-verify -m x' 'nice -n 10 git commit -n -m x' \
+  'timeout 60 git commit --no-verify -m x' 'timeout -k 5 60 git commit -n -m x' 'setsid git commit -n -m x' \
+  'stdbuf -oL git commit --no-verify -m x' 'ionice -c3 git commit --no-verify -m x' \
+  'env -S "git\_commit\_--no-verify" -m x' 'env -- FOO=1 git commit --no-verify -m x' \
+  "env -S '# note' git commit --no-verify -m x" \
+  'env -- CLAUDECODE=0 git commit -m x' 'builtin command git commit --no-verify -m x' \
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
@@ -677,7 +736,8 @@ for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --
   'git merge --no-ff feat/x' 'git -c user.name=n commit -m x' 'git commit -m -nightly' \
   'git commit -m "-nightly build fix"' 'git commit --author -n -m x' 'git config --get core.hooksPath' \
   'git config core.autocrlf false' 'git config --remove-section alias' 'git config get core.hooksPath' \
-  'env FOO=1 git commit -m x' 'env CLAUDECODE=1 git commit -m x' \
+  'env FOO=1 git commit -m x' 'env CLAUDECODE=1 git commit -m x' "env -S \"git commit -m 'x -n'\"" \
+  'git commit -m --no-verify' 'git merge -m --no-verify feat/x' 'env -i CLAUDECODE=1 git commit -m x' \
   'git pull origin main'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
@@ -706,13 +766,16 @@ cd "$REPO" || exit 1
 mkdir -p src && echo x > src/a.txt
 
 it "guard-git-add: パスを指定した git add は許可する"
-for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt'; do
+for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt' \
+  'git add --pathspec-from-file=paths.txt'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq allow "$(decision "$out")"
 done
 
 it "guard-git-add: -A / --all / . / :/ / * は deny し、代わりの手順を示す"
-for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An'; do
+for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An' \
+  'git add -A --pathspec-from-file paths.txt' 'git add -A --pathspec-from-file=paths.txt' \
+  'env FOO=1 git add -A' 'command git add .'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq deny "$(decision "$out")"
 done
@@ -1318,6 +1381,9 @@ assert_eq deny "$(decision "$out")"
 it "pre-git-merge-check: 既存の ADR の status の変化と README は数えない"
 out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/one')
 assert_eq allow "$(decision "$out")"
+# 値を取るオプション（--cleanup）の値はマージ対象にしない
+out=$(run_hook pre-git-merge-check 'git merge --no-ff --cleanup strip feat/one')
+assert_eq allow "$(decision "$out")"
 
 it "pre-git-merge-check: ALLOW_MULTI_TOPIC=1 で通す"
 out=$(run_hook pre-git-merge-check 'ALLOW_MULTI_TOPIC=1 git merge --no-ff feat/two')
@@ -1492,6 +1558,12 @@ it "guard-sbatch: sbatch を直接投げたら slurm-run.sh を示して止め�
 out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "slurm-run.sh"
+
+it "guard-sbatch: command -v / -pv / -V はプログラムを探すだけで、走らせない"
+for cmd in 'command -v sbatch' 'command -pv sbatch' 'command -Vp sbatch'; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
 
 it "guard-sbatch: パイプやつなぎの中の sbatch も止める"
 out=$(run_hook guard-sbatch "cd ~/github/xlc && sbatch --wrap 'true' | tail -1")

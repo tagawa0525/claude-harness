@@ -6,14 +6,25 @@
 //!   `-m "git add -A"` はコマンドではない）
 //! - `git -C <dir>` や先行する `cd <dir>` は AST 上の位置で判定する
 //!
+//! コマンドは解析のときに一度だけ読み、規則はそれを共有する:
+//! - コマンドを包むもの（env、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice）はほどき、
+//!   中のコマンドと、前置きの代入や包みが変える環境変数・ディレクトリを `Cmd` に持たせる（unwrap.rs）
+//! - git のグローバルオプション（`-C`、`-c`、`--config-env`）は `Cmd` を作るときに読む。サブコマンドの引数は
+//!   git_args.rs で、値を取るオプションの値をオプションと取り違えずに読む
+//!
 //! 展開（`$VAR`、`$(…)`）は行わず原文のまま扱う。bash 版と同じ
 
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Tree};
 
+use crate::git_args::{GitInvocation, parse_invocation};
+use crate::unwrap::{EnvChange, basename, unwrap};
+
 pub struct Shell {
     src: String,
     tree: Tree,
+    /// 全コマンド（文書順）。parse のときに一度だけ読む
+    cmds: Vec<Cmd>,
 }
 
 /// コマンドの引数 1 つ
@@ -25,7 +36,7 @@ pub struct Arg {
     pub raw: String,
 }
 
-/// 単純コマンド 1 つ（`command` ノード）
+/// 単純コマンド 1 つ（`command` ノード）。包み（env など）はほどいてある
 #[derive(Debug, Clone)]
 pub struct Cmd {
     pub name: String,
@@ -37,6 +48,15 @@ pub struct Cmd {
     /// 属するシェルのスコープ（最も近い `$(…)` / `(…)` / `<(…)` のノード ID）。トップレベルは None。
     /// これらの中で実行した `cd` は親のカレントディレクトリを変えない
     pub scope: Option<usize>,
+    /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
+    /// `-u NAME` / `-i`、`exec -c`）
+    pub env: Vec<EnvChange>,
+    /// ほどいた包みの、書いたままの名前（外側から順に）
+    pub wrappers: Vec<String>,
+    /// 包んだ `env -C <dir>` の行き先（順に、前のものからの相対）
+    pub dirs: Vec<String>,
+    /// git のコマンドなら、グローバルオプションの読み取り
+    pub git: Option<GitInvocation>,
 }
 
 impl Shell {
@@ -48,10 +68,13 @@ impl Shell {
         let tree = parser
             .parse(src, None)
             .expect("tree-sitter parse never fails");
-        Shell {
+        let mut shell = Shell {
             src: src.to_string(),
             tree,
-        }
+            cmds: Vec::new(),
+        };
+        shell.cmds = shell.collect_commands();
+        shell
     }
 
     fn text(&self, node: Node) -> &str {
@@ -71,7 +94,11 @@ impl Shell {
     }
 
     /// 全コマンドを文書順で返す（コマンド置換・サブシェル・ERROR 配下も含む）
-    pub fn commands(&self) -> Vec<Cmd> {
+    pub fn commands(&self) -> &[Cmd] {
+        &self.cmds
+    }
+
+    fn collect_commands(&self) -> Vec<Cmd> {
         let mut out = Vec::new();
         self.walk(self.tree.root_node(), &mut |n| {
             if n.kind() == "command"
@@ -107,12 +134,32 @@ impl Shell {
             }
             p = n.parent();
         }
+        let mut env = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "variable_assignment"
+                && let Some(var) = child.child_by_field_name("name")
+            {
+                let value = child
+                    .child_by_field_name("value")
+                    .map(|v| self.unquote(v).text)
+                    .unwrap_or_default();
+                env.push(EnvChange::Set(self.text(var).to_string(), value));
+            }
+        }
+        let inner = unwrap(&name, &args);
+        env.extend(inner.env);
+        let git = (basename(&inner.name) == "git").then(|| parse_invocation(&inner.args));
         Some(Cmd {
-            name,
-            args,
+            name: inner.name,
+            args: inner.args,
             start: node.start_byte(),
             has_error: node.has_error() || trailing_error,
             scope,
+            env,
+            dirs: inner.dirs,
+            wrappers: inner.wrappers,
+            git,
         })
     }
 
@@ -191,40 +238,28 @@ impl Shell {
         found
     }
 
-    /// コマンドが対象にするディレクトリ。同じコマンドの `git -C <dir>` が最優先、
-    /// なければそのコマンドより前にあり、同じシェルのスコープで実行される `cd <dir>` を順に畳み込む
+    /// コマンドが対象にするディレクトリ。そのコマンドより前にあり、同じシェルのスコープで実行される
+    /// `cd <dir>` を順に畳み込み、包んだ `env -C <dir>` と `git -C <dir>` を順に当てる
     /// （`$(cd x && …)` や `(cd x)` の cd は親のディレクトリを変えないので見ない）
     pub fn target_dir(&self, cmd: &Cmd, base: &Path) -> PathBuf {
-        if cmd.name == "git" {
-            let mut dir: Option<PathBuf> = None;
-            let mut it = cmd.args.iter();
-            while let Some(a) = it.next() {
-                if !a.text.starts_with('-') {
-                    break;
-                }
-                if a.text == "-C" {
-                    if let Some(v) = it.next() {
-                        let cur = dir.clone().unwrap_or_else(|| base.to_path_buf());
-                        dir = Some(resolve(&cur, &v.text));
-                    }
-                } else if git_global_takes_value(&a.text) {
-                    it.next();
-                }
-            }
-            if let Some(d) = dir {
-                return d;
-            }
-        }
         let mut dir = base.to_path_buf();
-        for c in self.commands() {
+        for c in &self.cmds {
             if c.start >= cmd.start {
                 break;
             }
-            if c.name == "cd" && c.scope == cmd.scope {
+            if c.changes_dir() && c.scope == cmd.scope {
                 match c.args.iter().find(|a| !a.text.starts_with('-')) {
                     Some(a) => dir = resolve(&dir, &a.text),
                     None => dir = home(),
                 }
+            }
+        }
+        for d in &cmd.dirs {
+            dir = resolve(&dir, d);
+        }
+        if let Some(git) = &cmd.git {
+            for d in &git.dirs {
+                dir = resolve(&dir, d);
             }
         }
         dir
@@ -255,40 +290,42 @@ fn resolve(base: &Path, p: &str) -> PathBuf {
     base.join(p)
 }
 
-/// git のグローバルオプションのうち、次の引数を値として取るもの
-pub fn git_global_takes_value(opt: &str) -> bool {
-    matches!(
-        opt,
-        "-C" | "-c"
-            | "--git-dir"
-            | "--work-tree"
-            | "--namespace"
-            | "--config-env"
-            | "--super-prefix"
-            | "--list-cmds"
-    )
-}
-
 impl Cmd {
+    /// シェルの cd か。builtin / command と、先頭に修飾せずに書いた time（bash の予約語）はシェルの cd を
+    /// 呼ぶ。env や /usr/bin/time など外部の包みは cd という外部コマンドを探して失敗し、シェルのディレクトリを
+    /// 変えない。予約語は先頭でだけ予約語として読まれるので、command time は外部の time を呼ぶ
+    pub fn changes_dir(&self) -> bool {
+        self.name == "cd"
+            && self
+                .wrappers
+                .iter()
+                .enumerate()
+                .all(|(i, w)| w == "builtin" || w == "command" || (i == 0 && w == "time"))
+    }
+
+    /// 走らせるプログラムの、書いたままのパス。`bash <path>` / `sh <path>` は走らせるスクリプトのパス
+    pub fn program(&self) -> &str {
+        let name = basename(&self.name);
+        if name == "bash" || name == "sh" {
+            return self.args.first().map_or(&self.name, |a| &a.text);
+        }
+        &self.name
+    }
+
     /// `git [global opts] <sub> args…` の sub と args
     pub fn git_subcommand(&self) -> Option<(&str, &[Arg])> {
-        if self.name != "git" {
-            return None;
-        }
-        let mut i = 0;
-        while i < self.args.len() {
-            let t = self.args[i].text.as_str();
-            if !t.starts_with('-') {
-                return Some((t, &self.args[i + 1..]));
-            }
-            i += if git_global_takes_value(t) { 2 } else { 1 };
-        }
-        None
+        let i = self.git.as_ref()?.sub?;
+        Some((self.args[i].text.as_str(), &self.args[i + 1..]))
+    }
+
+    /// `git -c <設定>` / `--config-env <設定>` の設定（サブコマンドより前）
+    pub fn git_config_overrides(&self) -> &[String] {
+        self.git.as_ref().map_or(&[], |g| g.config.as_slice())
     }
 
     /// `gh <words…> args…` の args（例: `gh pr create`）
     pub fn gh_subcommand(&self, words: &[&str]) -> Option<&[Arg]> {
-        if self.name != "gh" || self.args.len() < words.len() {
+        if basename(&self.name) != "gh" || self.args.len() < words.len() {
             return None;
         }
         if self.args.iter().zip(words).all(|(a, w)| a.text == *w) {
@@ -326,18 +363,12 @@ pub fn opt_value<'a>(args: &'a [Arg], names: &[&str]) -> Option<&'a Arg> {
         .find(|a| names.iter().any(|n| a.text.starts_with(&format!("{n}="))))
 }
 
-/// `-am` のような短縮形クラスタに文字 ch が含まれるか（`--` で始まる長い形は対象外）
-pub fn short_cluster_has(arg: &Arg, ch: char) -> bool {
-    let t = &arg.text;
-    t.starts_with('-') && !t.starts_with("--") && t[1..].contains(ch)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn cmds(src: &str) -> Vec<Cmd> {
-        Shell::parse(src).commands()
+        Shell::parse(src).commands().to_vec()
     }
 
     #[test]
@@ -463,19 +494,11 @@ mod tests {
             opt_value(args, &["--subject", "-t"]).unwrap().text,
             "--subject=x"
         );
-        assert!(short_cluster_has(
-            &Arg {
-                text: "-am".into(),
-                raw: "-am".into()
-            },
-            'a'
-        ));
-        assert!(!short_cluster_has(
-            &Arg {
-                text: "--all".into(),
-                raw: "--all".into()
-            },
-            'a'
-        ));
+        let am = cmds("git commit -am x");
+        let (sub, args) = am[0].git_subcommand().unwrap();
+        assert!(crate::git_args::git_flag(sub, args, Some('a'), &[]));
+        let all = cmds("git commit --all");
+        let (sub, args) = all[0].git_subcommand().unwrap();
+        assert!(!crate::git_args::git_flag(sub, args, Some('a'), &[]));
     }
 }

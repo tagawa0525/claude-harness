@@ -19,9 +19,10 @@ use std::process::Command;
 
 use super::Rule;
 use crate::git;
+use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Shell, short_cluster_has};
+use crate::shell::Shell;
 
 pub struct BlockSecretCommit;
 
@@ -102,7 +103,7 @@ impl Rule for BlockSecretCommit {
             let Some(("commit", args)) = cmd.git_subcommand() else {
                 continue;
             };
-            let dir = shell.target_dir(&cmd, &input.cwd);
+            let dir = shell.target_dir(cmd, &input.cwd);
             // 変数やコマンド置換は展開しない（shell.rs）ので、含むパスは実物ではない。まだ無いディレクトリも
             // 同じく決められない。どちらも、そのリポジトリの git の hook に任せる
             let text = dir.to_string_lossy();
@@ -110,9 +111,7 @@ impl Rule for BlockSecretCommit {
             {
                 continue;
             }
-            let all = args
-                .iter()
-                .any(|a| a.text == "--all" || short_cluster_has(a, 'a'));
+            let all = git_flag("commit", args, Some('a'), &["--all"]);
             let modes: &[&str] = if all {
                 &["--staged", "--pre-commit"]
             } else {

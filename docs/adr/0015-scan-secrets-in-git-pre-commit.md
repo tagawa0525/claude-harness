@@ -100,3 +100,7 @@ PreToolUse の規則:
   Markdown の自動修正とローカルの pre-commit がステージし直した中身、種類の変更、fork、競合の無いマージ、迂回、
   Claude Code のセッションでないとき、gitleaks の失敗
 - PreToolUse の block-secret-commit と block-no-verify のテスト（`.claude/tests/hooks.sh`）
+
+## 補足
+
+- 2026-10-11: コマンドの包みのほどき方を `shell.rs` にまとめた（#296）ので、block-no-verify は線引きの外として見送っていた `env -S '…'` と `exec -c` も止めるようになった。ほかの規則も、包んだ git コマンドを見る
