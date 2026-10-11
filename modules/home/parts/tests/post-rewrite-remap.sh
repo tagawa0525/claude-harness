@@ -225,7 +225,8 @@ else
 fi
 
 # --- 5. 曖昧なら置き換えず、エラーを表示する ------------------------------------------------------
-REPO="$WORK/ambiguous"
+# 案内のコマンドを貼って使えるかを見るため、パスに空白を含める
+REPO="$WORK/ambiguous repo"
 new_repo "$REPO" opt-in
 old=$(branch_with_record "$REPO")
 printf 'short %s\n' "${old:0:7}" >> "$REPO/notes.md"
@@ -248,7 +249,7 @@ else
   fi
   # hook は正規化した絶対パスを出す（TMPDIR がシンボリックリンクの下でも比べられるよう、同じ形で求める）
   saved="$(git -C "$REPO" rev-parse --absolute-git-dir)/commit-refs-remap.input"
-  if grep -qF "直し方: 上の ERROR を直してから、commit-refs remap $saved" "$WORK/out" \
+  if grep -qF "直し方: 上の ERROR を直してから、commit-refs remap $(printf '%q' "$saved")" "$WORK/out" \
     && cmp -s "$WORK/ambiguous-input" "$saved"; then
     ok "失敗したときは対応を残し、commit-refs remap で呼び直す方法を表示する"
   else
