@@ -569,6 +569,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut dir: Option<String> = None;
         let mut runs = true;
         let mut options_done = false;
+        // env の `-` を読んだか、それを読む位置を過ぎた（代入を読んだ）か
+        let mut env_dash_read = false;
         // bash -c: 次の位置引数を sh -c の文字列として走らせる
         let mut takes_source = false;
         // bash -s、sudo -s / -i: 標準入力からコマンドを読む（sudo はコマンドが無ければ対話シェル）
@@ -592,10 +594,13 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     options_done = true;
                     continue;
                 }
-                if wrapper.name == "env" && t == "-" && !options_done {
-                    // `env -` は `env -i`
+                // `env -` は `env -i`。env.c は getopt の後に一度だけ（`--` の後でも）`-` を見るので、オプションは
+                // そこで終わり、後ろの `-` やオプションの形の語は走らせるプログラムになる
+                if wrapper.name == "env" && t == "-" && !env_dash_read {
                     words.pop_front();
                     env.push(EnvChange::Clear);
+                    env_dash_read = true;
+                    options_done = true;
                     continue;
                 }
                 // env と sudo は `--` の後も `NAME=value` を代入として読む。最初の代入でオプションは終わる
@@ -605,6 +610,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         words.pop_front();
                         env.push(EnvChange::Set(var.to_string(), value.to_string()));
                         options_done = true;
+                        // env.c が `-` を見るのは代入より前
+                        env_dash_read = true;
                         continue;
                     }
                     break;
