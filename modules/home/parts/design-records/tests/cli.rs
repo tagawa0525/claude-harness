@@ -1360,7 +1360,7 @@ fn prune_treats_tags_already_deleted_on_origin_as_released() {
     t.git(&["switch", "-q", "main"]);
     t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
     t.git(&["push", "-q", "origin", "main"]);
-    // 最初の ls-remote にだけ、ほかの clone がまだ消していないように見せる git
+    // タグの一覧の最初の ls-remote の直後に、ほかの clone がタグを消す git
     let bin = t.root.join("bin");
     fs::create_dir(&bin).unwrap();
     let real = String::from_utf8(
@@ -1377,7 +1377,7 @@ fn prune_treats_tags_already_deleted_on_origin_as_released() {
         bin.join("git"),
         format!(
             "#!/bin/sh\n\
-             case \" $* \" in *\" ls-remote \"*)\n\
+             case \" $* \" in *\" ls-remote --tags \"*)\n\
              \x20 if [ ! -e {mark} ]; then : > {mark}; {real} \"$@\"; {real} -C {dir} push -q origin --delete refs/tags/adr-0001; exit 0; fi ;;\n\
              esac\n\
              exec {real} \"$@\"\n",
