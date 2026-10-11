@@ -1,0 +1,438 @@
+//! `commit-refs remap` を一時的な git リポジトリで走らせ、作業ツリーの文書の中のコミットの番号を、対応表で
+//! 付け直すことを確かめる。
+
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+
+/// テストで作る一時的なリポジトリ。落ちたときも含めて、片付けで消す。
+struct TempRepo {
+    dir: PathBuf,
+}
+
+impl TempRepo {
+    /// プロセスと時刻とテストの名前で一意にした、main ブランチのリポジトリ。README.md の初期コミットを持つ。
+    /// 書き換えのたびに git が post-rewrite に渡す「旧 新」の対応を `.git/rewritten` に残す hook を置く
+    /// （実物の rebase と amend が出す入力の形をそのまま使うため）
+    fn new(name: &str) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("commit-refs-{name}-{}-{nanos}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let repo = TempRepo { dir };
+        repo.git(&["init", "-q", "-b", "main"]);
+        let hooks = repo.dir.join(".git/capture-hooks");
+        fs::create_dir(&hooks).unwrap();
+        let hook = hooks.join("post-rewrite");
+        fs::write(
+            &hook,
+            "#!/bin/sh\ncat > \"$(git rev-parse --git-dir)/rewritten\"\n",
+        )
+        .unwrap();
+        make_executable(&hook);
+        repo.write("README.md", "init\n");
+        repo.commit_all("chore: init");
+        repo
+    }
+
+    /// git を走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
+    /// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）
+    fn git(&self, args: &[&str]) -> String {
+        let hooks = self.dir.join(".git/capture-hooks");
+        let mut command = Command::new("git");
+        command
+            .current_dir(&self.dir)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .arg("-c")
+            .arg(format!("core.hooksPath={}", hooks.display()))
+            .args(args);
+        isolate(&mut command);
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    fn path(&self, path: &str) -> PathBuf {
+        self.dir.join(path)
+    }
+
+    fn write(&self, path: &str, text: &str) {
+        let file = self.path(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, text).unwrap();
+    }
+
+    fn read(&self, path: &str) -> String {
+        fs::read_to_string(self.path(path)).unwrap()
+    }
+
+    fn commit_all(&self, message: &str) {
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-q", "-m", message]);
+    }
+
+    /// ファイルに 1 行足してコミットする
+    fn record(&self, path: &str, line: &str) {
+        let mut text = fs::read_to_string(self.path(path)).unwrap_or_default();
+        text.push_str(line);
+        text.push('\n');
+        self.write(path, &text);
+        self.commit_all(&format!("docs: {line}"));
+    }
+
+    /// ファイルを 1 つ作ってコミットし、そのコミットの番号を返す
+    fn commit_file(&self, path: &str, message: &str) -> String {
+        self.write(path, &format!("{message}\n"));
+        self.commit_all(message);
+        self.head()
+    }
+
+    fn head(&self) -> String {
+        self.rev("HEAD")
+    }
+
+    fn rev(&self, rev: &str) -> String {
+        self.git(&["rev-parse", rev]).trim().to_string()
+    }
+
+    /// git が post-rewrite に渡した対応
+    fn rewritten(&self) -> String {
+        fs::read_to_string(self.path(".git/rewritten")).unwrap()
+    }
+
+    /// 対応表を一時的なリポジトリの外（.git の下）に書き、そのパスを返す
+    fn map_file(&self, text: &str) -> String {
+        let path = self.path(".git/test-map");
+        fs::write(&path, text).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    fn remap_in(&self, sub: &str, args: &[&str], stdin: &str) -> Output {
+        let mut all = vec!["remap"];
+        all.extend_from_slice(args);
+        run(&self.dir.join(sub), &all, stdin)
+    }
+
+    fn remap(&self, args: &[&str]) -> Output {
+        self.remap_in("", args, "")
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        // 片付けに失敗しても、テストの結果は変えない（一時的なディレクトリが残るだけ）
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn isolate(command: &mut Command) {
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+}
+
+fn run(dir: &Path, args: &[&str], stdin: &str) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_commit-refs"));
+    command
+        .current_dir(dir)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate(&mut command);
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn assert_ok(output: &Output) {
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        stdout(output),
+        stderr(output)
+    );
+}
+
+fn assert_error(output: &Output) {
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout: {}\nstderr: {}",
+        stdout(output),
+        stderr(output)
+    );
+    assert!(stderr(output).contains("ERROR:"), "{}", stderr(output));
+}
+
+const NEW4: &str = "4444444444444444444444444444444444444444";
+const NEW5: &str = "5555555555555555555555555555555555555555";
+const OLD_A: &str = "abcdef0123456789abcdef0123456789abcdef01";
+const OLD_B: &str = "abcdef0fedcba9876543210fedcba9876543210f";
+const ZERO: &str = "0000000000000000000000000000000000000000";
+
+#[test]
+fn rebase_replaces_old_hashes_with_new_ones_of_the_same_length() {
+    let t = TempRepo::new("rebase");
+    t.git(&["switch", "-q", "-c", "feat"]);
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record(
+        "notes.md",
+        &format!("measured at {} and {}; full {old}", &old[..8], &old[..12]),
+    );
+    t.git(&["switch", "-q", "main"]);
+    t.commit_file("other.txt", "chore: main moves");
+    t.git(&["switch", "-q", "feat"]);
+    t.git(&["rebase", "-q", "main"]);
+    let new = t.rev("HEAD~1");
+
+    let out = t.remap_in("", &[], &t.rewritten());
+    assert_ok(&out);
+    assert_eq!(
+        t.read("notes.md"),
+        format!("measured at {} and {}; full {new}\n", &new[..8], &new[..12])
+    );
+    let text = stdout(&out);
+    assert!(text.contains("REPLACED: notes.md 3\n"), "{text}");
+    assert!(text.contains("FILES: 1\n"), "{text}");
+    assert!(text.contains("REFS: 3\n"), "{text}");
+}
+
+#[test]
+fn replacements_are_left_uncommitted_in_the_working_tree() {
+    let t = TempRepo::new("uncommitted");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    assert_ok(&t.remap(&[&map]));
+    assert_eq!(t.git(&["status", "--porcelain"]), " M notes.md\n");
+}
+
+#[test]
+fn amend_replaces_the_hash_before_the_fix_with_the_one_after() {
+    let t = TempRepo::new("amend");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.write("README.md", &format!("result from {}\n", &old[..7]));
+    t.write("src.txt", "feat: measured\nfix\n");
+    t.git(&["add", "src.txt"]);
+    t.git(&["commit", "-q", "--amend", "--no-edit"]);
+    let new = t.head();
+
+    let out = t.remap_in("", &[], &t.rewritten());
+    assert_ok(&out);
+    assert_eq!(t.read("README.md"), format!("result from {}\n", &new[..7]));
+}
+
+#[test]
+fn reads_the_map_from_a_file_argument() {
+    let t = TempRepo::new("arg");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    let map = t.map_file(&format!("{old} 1111111111111111111111111111111111111111\n"));
+    assert_ok(&t.remap(&[&map]));
+    assert_eq!(t.read("notes.md"), "at 11111111\n");
+}
+
+#[test]
+fn commit_map_skips_the_header_and_keeps_unchanged_commits() {
+    let t = TempRepo::new("commit-map");
+    let a = t.commit_file("a.txt", "feat: a");
+    let b = t.commit_file("b.txt", "feat: b");
+    t.record("notes.md", &format!("a {}, b {}", &a[..8], &b[..8]));
+    let map = t.map_file(&format!(
+        "old                                      new\n{a} 2222222222222222222222222222222222222222\n{b} {b}\n"
+    ));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert_eq!(t.read("notes.md"), format!("a 22222222, b {}\n", &b[..8]));
+    assert!(stdout(&out).contains("REFS: 1\n"), "{}", stdout(&out));
+}
+
+#[test]
+fn a_reference_to_a_pruned_commit_stops_without_changes() {
+    let t = TempRepo::new("pruned");
+    let a = t.commit_file("a.txt", "feat: a");
+    let b = t.commit_file("b.txt", "feat: b");
+    let line = format!("a {}, b {}", &a[..8], &b[..8]);
+    t.record("notes.md", &line);
+    let map = t.map_file(&format!(
+        "old                                      new\n{a} {ZERO}\n{b} 3333333333333333333333333333333333333333\n"
+    ));
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert!(stderr(&out).contains(&a[..8]), "{}", stderr(&out));
+    assert_eq!(t.read("notes.md"), format!("{line}\n"));
+}
+
+#[test]
+fn an_ambiguous_short_hash_stops_without_changing_any_file() {
+    let t = TempRepo::new("ambiguous");
+    t.record("ok.md", "unique abcdef0123");
+    t.record("notes.md", "short abcdef0");
+    let map = t.map_file(&format!("{OLD_A} {NEW4}\n{OLD_B} {NEW5}\n"));
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert!(stderr(&out).contains("abcdef0"), "{}", stderr(&out));
+    assert_eq!(t.read("notes.md"), "short abcdef0\n");
+    assert_eq!(t.read("ok.md"), "unique abcdef0123\n");
+}
+
+#[test]
+fn an_old_hash_with_two_different_new_hashes_stops() {
+    let t = TempRepo::new("conflict");
+    let map = t.map_file(&format!("{OLD_A} {NEW4}\n{OLD_A} {NEW5}\n"));
+    assert_error(&t.remap(&[&map]));
+}
+
+#[test]
+fn an_old_hash_also_listed_as_unchanged_or_pruned_with_another_new_hash_stops() {
+    let t = TempRepo::new("conflict2");
+    for first in [OLD_A, ZERO] {
+        let map = t.map_file(&format!("{OLD_A} {first}\n{OLD_A} {NEW5}\n"));
+        assert_error(&t.remap(&[&map]));
+    }
+}
+
+#[test]
+fn a_line_without_full_hashes_stops() {
+    let t = TempRepo::new("bad-map");
+    let map = t.map_file("abcdef0 4444444\n");
+    assert_error(&t.remap(&[&map]));
+}
+
+#[test]
+fn leaves_untracked_files_unmapped_hex_word_parts_and_short_hex_alone() {
+    let t = TempRepo::new("untouched");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    let short = &old[..8];
+    let line = format!(
+        "x{short} {short}g {} deadbeef {short}_1 cafebabe12",
+        &old[..6]
+    );
+    t.record("other.md", &line);
+    t.write("untracked.md", &format!("untracked {short}\n"));
+    let map = t.map_file(&format!("{old} 6666666666666666666666666666666666666666\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert_eq!(t.read("notes.md"), "at 66666666\n");
+    assert_eq!(t.read("other.md"), format!("{line}\n"));
+    assert_eq!(t.read("untracked.md"), format!("untracked {short}\n"));
+    assert!(!stdout(&out).contains("other.md"), "{}", stdout(&out));
+}
+
+#[test]
+fn replaces_in_files_whose_names_are_not_utf8() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let t = TempRepo::new("non-utf8");
+    let old = t.commit_file("src.txt", "feat: measured");
+    let name = OsStr::from_bytes(b"n\xff.md");
+    fs::write(t.dir.join(name), format!("at {}\n", &old[..8])).unwrap();
+    t.commit_all("docs: weird name");
+    let map = t.map_file(&format!("{old} 6666666666666666666666666666666666666666\n"));
+    assert_ok(&t.remap(&[&map]));
+    assert_eq!(fs::read(t.dir.join(name)).unwrap(), b"at 66666666\n");
+}
+
+#[test]
+fn leaves_binary_files_alone() {
+    let t = TempRepo::new("binary");
+    let old = t.commit_file("src.txt", "feat: measured");
+    let data = format!("bin\0{}\n", &old[..8]);
+    t.write("blob.bin", &data);
+    t.commit_all("chore: binary");
+    let map = t.map_file(&format!("{old} 6666666666666666666666666666666666666666\n"));
+    assert_ok(&t.remap(&[&map]));
+    assert_eq!(t.read("blob.bin"), data);
+}
+
+#[test]
+fn does_not_write_through_tracked_symlinks() {
+    let t = TempRepo::new("symlink");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("target.md", &format!("at {}", &old[..8]));
+    std::os::unix::fs::symlink("target.md", t.path("link.md")).unwrap();
+    t.commit_all("docs: link");
+    let map = t.map_file(&format!("{old} 6666666666666666666666666666666666666666\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert_eq!(t.read("target.md"), "at 66666666\n");
+    assert!(
+        fs::symlink_metadata(t.path("link.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(stdout(&out).contains("REFS: 1\n"), "{}", stdout(&out));
+}
+
+#[test]
+fn reports_zero_when_there_is_nothing_to_replace() {
+    let t = TempRepo::new("none");
+    let map = t.map_file(&format!("{OLD_A} {NEW4}\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert!(stdout(&out).contains("FILES: 0\n"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("REFS: 0\n"), "{}", stdout(&out));
+}
+
+#[test]
+fn covers_the_whole_working_tree_when_called_from_a_subdirectory() {
+    let t = TempRepo::new("subdir");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("docs/issues/x.md", &format!("at {}", &old[..8]));
+    let map = t.map_file(&format!("{old} 7777777777777777777777777777777777777777\n"));
+    let out = t.remap_in("docs", &[&map], "");
+    assert_ok(&out);
+    assert_eq!(t.read("docs/issues/x.md"), "at 77777777\n");
+    assert!(
+        stdout(&out).contains("REPLACED: docs/issues/x.md 1\n"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn more_than_one_map_argument_is_a_usage_error() {
+    let t = TempRepo::new("usage");
+    let out = t.remap(&["a", "b"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(stderr(&out).contains("Usage:"), "{}", stderr(&out));
+}
