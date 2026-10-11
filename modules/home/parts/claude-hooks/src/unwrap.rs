@@ -892,6 +892,13 @@ mod tests {
             "flock -u 9",
             "bash -n s.sh",
             "xargs --help",
+            "xargs --help sbatch",
+            "bash --help sbatch",
+            "bash --version sbatch",
+            "env --version sbatch",
+            "nice --help sbatch",
+            "watch --help sbatch",
+            "sudo --help sbatch",
             "sudo",
         ] {
             let u = un(src);

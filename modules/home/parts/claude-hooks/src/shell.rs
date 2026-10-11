@@ -1044,14 +1044,22 @@ mod tests {
 
     #[test]
     fn substitutions_inside_shell_strings_are_collected_once() {
+        // 二重引用符の中の置換は外側のシェルが展開するので、外側のスコープで 1 回だけ読む
         let cs = cmds("bash -c \"git commit -m $(date)\"; git push");
         assert_eq!(names(&cs), ["bash", "git", "date", "git"]);
+        let date = cs.iter().find(|c| c.name == "date").unwrap();
+        assert_eq!(date.scope.len(), 1);
+        assert!(!cs[1].scope.starts_with(&date.scope));
         let cs = cmds("ssh host \"cd $(pwd) && git commit\"");
-        assert_eq!(names(&cs), ["ssh", "cd", "pwd", "git"]);
-        // 代入の中の置換は、文字列の外なので読む
-        let cs = cmds("FOO=$(x) bash -c 'y'");
+        assert_eq!(names(&cs), ["ssh", "cd", "git", "pwd"]);
+        // 代入の中と、文字列以外の引数（$0 以降）の中の置換は、文字列の外なので読む
+        let cs = cmds("FOO=$(x) bash -c 'y' \"$(z)\"");
         assert_eq!(cs.iter().filter(|c| c.name == "x").count(), 1);
         assert_eq!(cs.iter().filter(|c| c.name == "y").count(), 1);
+        assert_eq!(cs.iter().filter(|c| c.name == "z").count(), 1);
+        // 単引用符の中の置換は bash が展開するので、文字列の解析で読む
+        let cs = cmds("bash -c 'git commit -m $(date)'");
+        assert_eq!(names(&cs), ["bash", "git", "date"]);
     }
 
     #[test]

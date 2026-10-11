@@ -882,7 +882,8 @@ for cmd in 'sudo git commit -m x' 'sudo --preserve-env=HOME git commit -m x' 'ss
 done
 for cmd in 'sudo -E git commit -m x' 'sudo --preserve-env git commit -m x' \
   "bash -c 'git commit -m x'" 'eval git commit -m x' 'flock /tmp/l git commit -m x' \
-  'sudo systemctl restart x' 'ssh r995 nvidia-smi' 'env -i ls' 'sudo -D /tmp ls' 'ssh r995 git status'; do
+  'sudo systemctl restart x' 'ssh r995 nvidia-smi' 'env -i ls' 'sudo -D /tmp ls' 'ssh r995 git status' \
+  "bash -c 'CLAUDECODE=0 echo ok'" 'CLAUDECODE=0 echo ok' 'unset CLAUDECODE; echo ok'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
 done
@@ -1822,6 +1823,11 @@ out=$(run_hook guard-sbatch "bash -c '$HOME/.claude/scripts/slurm-run.sh -t 5 xl
 assert_eq allow "$(decision "$out")"
 out=$(run_hook guard-sbatch "bash -c 'echo sbatch; squeue'")
 assert_eq allow "$(decision "$out")"
+# 文字列以外の引数（$0 以降）の中の置換は、外側のシェルが bash を起動する前に走らせる
+out=$(run_hook guard-sbatch "bash -c 'true' \"\$(sbatch --wrap true)\"")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "bash -c \"squeue; \$(sbatch --wrap true)\"")
+assert_eq deny "$(decision "$out")"
 # 深さの上限（5）を超える入れ子は、読めない形として、対象語があれば止める側に倒す
 deep="sbatch --wrap true"
 for _ in 1 2 3 4 5 6; do deep="bash -c $(printf '%q' "$deep")"; done
@@ -1857,7 +1863,8 @@ done
 it "guard-sbatch: 包みが走らせない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
 for cmd in "sudo -l sbatch" "sudo -e sbatch" "sudo -v" "sudo -K" "chrt -p 10 1234" "chrt -m" "taskset -p 1 1234" \
   "taskset -ap 1234" "ssh -N r995" "ssh r995 -N" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" "script log.txt" \
-  "env FOO=1 -i sbatch --wrap true"; do
+  "env FOO=1 -i sbatch --wrap true" "bash --help sbatch --wrap true" "bash --version sbatch" "xargs --help sbatch" \
+  "env --version sbatch" "watch --help sbatch" "sudo --help sbatch"; do
   out=$(run_hook guard-sbatch "$cmd")
   assert_eq allow "$(decision "$out")"
 done
