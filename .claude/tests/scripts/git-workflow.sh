@@ -6,6 +6,12 @@
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
 
+# post-merge-cleanup が予約のタグを消すのに使う design-records（設計の記録の CLI）は、リポジトリのクレートを
+# ビルドして PATH の先頭に置く。lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
+DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
+cargo build -q --manifest-path "$DESIGN_RECORDS_DIR/Cargo.toml" || exit 1
+export PATH="$DESIGN_RECORDS_DIR/target/debug:$PATH"
+
 source "$(dirname "$0")/../lib.sh"
 
 # gh を呼ばれたら失敗する状態を既定にする（呼ばれないことの検証にもなる）
@@ -594,6 +600,40 @@ assert_eq 0 $?
 assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
 assert_contains "$out" "REMOTE_BRANCH: kept"
 assert_eq "" "$(git branch --list feat/x)"
+
+it "post-merge-cleanup: マージした記録の予約のタグをローカルとリモートから消し、マージしていない記録のタグは残す"
+REPO="$TEST_ROOT/cleanup10/app"
+make_repo "$REPO"
+make_remote "$REPO"
+cd "$REPO" || exit 1
+git switch -q -c feat/x
+design-records new use-a "a を使う" >/dev/null
+git add docs && git commit -q -m "docs(adr): a"
+git switch -q -c feat/y main
+design-records new use-b "b を使う" >/dev/null
+git add docs && git commit -q -m "docs(adr): b"
+git switch -q main
+git merge -q --no-ff -m "Merge: feat/x" feat/x
+git push -q origin main
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "RESERVATIONS_RELEASED: adr-0001"
+assert_eq "" "$(git tag --list adr-0001)"
+assert_eq "" "$(git ls-remote --tags origin refs/tags/adr-0001)"
+assert_eq "adr-0002" "$(git tag --list adr-0002)"
+assert_contains "$(git ls-remote --tags origin refs/tags/adr-0002)" "refs/tags/adr-0002"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: 設計の記録の無いリポジトリでは予約のタグを見ない"
+setup_merged_branch "$TEST_ROOT/cleanup11"
+cd "$TEST_ROOT/cleanup11/app" || exit 1
+make_fake_tool design-records '"prune") exit 1 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "RESERVATIONS_RELEASED: none"
+assert_eq "" "$(fake_log design-records)"
+remove_fake_tool design-records
+cd "$TEST_ROOT" || exit 1
 
 it "post-merge-cleanup: 未マージのブランチは削除せず失敗する"
 REPO="$TEST_ROOT/cleanup5/app"
