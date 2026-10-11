@@ -330,6 +330,7 @@ pub fn status(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn adr_paths_are_numbered_markdown_directly_under_docs_adr() {
@@ -448,42 +449,65 @@ mod tests {
     }
 
     #[test]
-    fn renumber_refs_rewrites_only_file_names_of_the_same_kind() {
-        // 同じ番号と slug の issue へのパス、.md の後ろが続く名前は変えない。ほかのディレクトリからの相対の
-        // パスは、直前のディレクトリの名前で種類を見る
+    fn renumber_refs_rewrites_only_paths_that_resolve_to_the_record() {
+        let adr = Path::new("docs/adr");
+        // 文書のディレクトリかリポジトリの直下から解いて、その種類のディレクトリを指すものだけを書き換える
         assert_eq!(
             renumber_refs(
                 Kind::Adr,
-                "docs/issues/0001-use-b.md ../issues/0001-use-b.md 0001-use-b.mdx ../adr/0001-use-b.md",
+                "./0001-use-b.md ../issues/0001-use-b.md docs/issues/0001-use-b.md docs/adr/0001-use-b.md",
                 1,
                 2,
                 "use-b",
-                true
+                adr
             ),
-            "docs/issues/0001-use-b.md ../issues/0001-use-b.md 0001-use-b.mdx ../adr/0002-use-b.md"
+            "./0002-use-b.md ../issues/0001-use-b.md docs/issues/0001-use-b.md docs/adr/0002-use-b.md"
         );
-        // 裸のファイル名は、bare_is_kind が偽（参照する文書がほかの種類のディレクトリにある）なら書き換えない
         assert_eq!(
             renumber_refs(
                 Kind::Adr,
-                "[b](0001-use-b.md) docs/adr/0001-use-b.md",
+                "../../adr/0001-use-b.md vendor/x/docs/adr/0001-use-b.md foo-adr/0001-use-b.md",
                 1,
                 2,
                 "use-b",
-                false
+                Path::new("docs/plans/sub")
             ),
-            "[b](0001-use-b.md) docs/adr/0002-use-b.md"
+            "../../adr/0002-use-b.md vendor/x/docs/adr/0001-use-b.md foo-adr/0001-use-b.md"
+        );
+        // .md の後ろが続く名前は別のファイル
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "0001-use-b.mdx 0001-use-b.md.orig 0001-use-b.md-old 0001-use-b.md。",
+                1,
+                2,
+                "use-b",
+                adr
+            ),
+            "0001-use-b.mdx 0001-use-b.md.orig 0001-use-b.md-old 0002-use-b.md。"
+        );
+        // 裸のファイル名は、文書がほかの種類のディレクトリにあれば、その種類の記録とみなして書き換えない
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "[b](0001-use-b.md)",
+                1,
+                2,
+                "use-b",
+                Path::new("docs/issues")
+            ),
+            "[b](0001-use-b.md)"
         );
         assert_eq!(
             renumber_refs(
                 Kind::Issue,
-                "docs/adr/0001-use-b.md docs/issues/0001-use-b.md",
+                "（0001-fix-b.md）",
                 1,
                 3,
-                "use-b",
-                false
+                "fix-b",
+                Path::new("")
             ),
-            "docs/adr/0001-use-b.md docs/issues/0003-use-b.md"
+            "（0003-fix-b.md）"
         );
     }
 
@@ -496,7 +520,7 @@ mod tests {
                 1,
                 2,
                 "use-b",
-                true
+                Path::new("docs/adr")
             ),
             "ADR-0002 と [b](0002-use-b.md)、docs/adr/0002-use-b.md"
         );
@@ -508,7 +532,7 @@ mod tests {
                 1,
                 2,
                 "use-b",
-                true
+                Path::new("docs/adr")
             ),
             "ADR-0011 0001-use-a.md x0001-use-b.md XADR-0001 ADR-00012 ADR-0001x"
         );
@@ -519,7 +543,7 @@ mod tests {
                 1,
                 3,
                 "fix-a",
-                true
+                Path::new("docs/issues")
             ),
             "blocked-by: [\"#0003\"] x#0001 #00012 ADR-0001"
         );
