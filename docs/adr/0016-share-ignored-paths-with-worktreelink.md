@@ -41,7 +41,7 @@ git 本体には、新しい worktree に追跡しないファイルを持ち込
   （[PostHog Desktop worktrees](https://posthog.com/docs/posthog-desktop/worktrees)）。案 1 は意味がコピーで、
   Claude Code 自身が `.worktreeinclude` を読んで worktree にコピーするため、`references` を書くと数 GB をコピーされる。
   案 3 は意味の同じ既存の名前があるのに増やすことになる。案 4 は xlc のためにスクリプトを汎用でなくする
-- 書き方: 1 行 1 パスのリテラルの相対パス。空行と `#` で始まる行は読み飛ばし、末尾の `/` は除く。絶対パス、`.` と `..`
+- 書き方: 1 行 1 パスのリテラルの相対パス。空行（空白だけの行を含む）と `#` で始まる行は読み飛ばし、末尾の `/` は除く。前後に空白のある行、絶対パス、`.` と `..`
   の要素、ワイルドカード（`*` `?` `[`）と `\`、`!` か `:` で始まる行はエラーにする。git は引数を pathspec として
   読み（`:foo` は `foo` として判定される）、`git check-ignore` は `GIT_LITERAL_PATHSPECS` を受け付けないので、
   pathspec として特別な意味を持つ文字を止め、symlink の名前そのものを判定させる。PostHog は `.gitignore` の書き方だが、symlink を

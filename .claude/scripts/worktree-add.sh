@@ -16,7 +16,7 @@
 #   （git-commit スキルの「main からの退避」）。
 #
 # 共有（.worktreelink、ADR-0016）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス
-# （ルートからの相対パス。空行と # で始まる行は読み飛ばす）を、メイン worktree の同じパスへの
+# （ルートからの相対パス。空行と # で始まる行は読み飛ばし、前後に空白のある行はエラー）を、メイン worktree の同じパスへの
 # 絶対パスの symlink として作る。git で追跡しない大きなデータ（キャッシュ・参照データ）を
 # worktree の間でコピーせず共有するため。
 #   - パスはリテラルだけ。絶対パス、. / .. を含むもの、ワイルドカード（* ? [）と \、! か : で始まるものはエラー
@@ -164,10 +164,12 @@ if [[ -f "$LINK_FILE" ]]; then
   SHARE_ERRORS=()
   SEEN_PATHS=()
   while IFS= read -r line || [[ -n "$line" ]]; do
-    # 前後の空白を除く
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ || "$line" == \#* ]] && continue
+    # 空白は名前の一部になりうるので、落とさずに止める
+    if [[ "$line" =~ ^[[:space:]] || "$line" =~ [[:space:]]$ ]]; then
+      SHARE_ERRORS+=("前後に空白があります: '$line'")
+      continue
+    fi
     # 末尾の / は symlink の名前には要らない（references/ と references は同じ）
     while [[ "$line" == */ ]]; do line="${line%/}"; done
     # git は引数を pathspec として読む（check-ignore は GIT_LITERAL_PATHSPECS を受け付けない）ので、
