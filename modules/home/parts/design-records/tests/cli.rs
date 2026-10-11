@@ -1147,3 +1147,28 @@ fn new_refuses_numbers_beyond_four_digits() {
     assert!(!out.status.success(), "{}", stdout(&out));
     assert!(!t.dir.join("docs").exists());
 }
+
+#[test]
+fn check_counts_three_digit_issue_names_as_duplicates() {
+    let t = TempRepo::new("issue-three");
+    t.write("docs/issues/001-fix-a.md", "# a\n");
+    t.write("docs/issues/0001-fix-b.md", "# b\n");
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn renumber_refuses_untracked_files() {
+    let t = duplicated_after_rebase("untracked");
+    t.write("draft.md", "書きかけ\n");
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
+    assert_eq!(t.git(&["tag", "--list", "adr-0002"]), "");
+}
