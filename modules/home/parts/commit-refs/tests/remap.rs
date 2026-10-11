@@ -655,3 +655,36 @@ fn rewrites_files_whose_names_are_near_the_length_limit() {
     assert_ok(&t.remap(&[&map]));
     assert_eq!(t.read(&name), "at 44444444\n");
 }
+
+#[test]
+fn a_short_hash_matching_a_changed_and_an_unchanged_commit_stops_as_ambiguous() {
+    let t = TempRepo::new("ambiguous-unchanged");
+    t.record("notes.md", "short abcdef0");
+    let map = t.map_file(&format!("{OLD_A} {NEW4}\n{OLD_B} {OLD_B}\n"));
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert!(stderr(&out).contains("曖昧"), "{}", stderr(&out));
+    assert_eq!(t.read("notes.md"), "short abcdef0\n");
+}
+
+#[test]
+fn a_reference_to_an_unchanged_commit_is_kept() {
+    let t = TempRepo::new("unchanged");
+    t.record("notes.md", "at abcdef0f and abcdef01");
+    let map = t.map_file(&format!("{OLD_A} {NEW4}\n{OLD_B} {OLD_B}\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert_eq!(t.read("notes.md"), "at abcdef0f and 44444444\n");
+}
+
+#[test]
+fn a_map_whose_new_hash_is_also_an_old_hash_stops() {
+    let t = TempRepo::new("chain");
+    t.record("notes.md", "at abcdef01");
+    // A → B と B → C の連鎖は、1 回の置き換えでは A が C にならず、呼び直すと書き換え済みの B が C になる
+    let map = t.map_file(&format!("{OLD_A} {OLD_B}\n{OLD_B} {NEW5}\n"));
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert!(stderr(&out).contains("連鎖"), "{}", stderr(&out));
+    assert_eq!(t.read("notes.md"), "at abcdef01\n");
+}
