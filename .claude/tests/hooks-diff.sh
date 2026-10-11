@@ -12,6 +12,7 @@
 #   TIGHTENED<TAB><ルール><TAB><コマンド>  古い版が通し、新しい版が止める
 #   CHANGED<TAB><ルール><TAB><古> -> <新><TAB><コマンド>  deny 以外の判定の変化（context は additionalContext）
 #   NEW_RULE: <ルール>                     古い版に無いルール（比べない）
+#   UNCOVERED: <ルール>                    古い版が一度も通す以外を返さなかったルール（緩んでも出ない）
 #   CHECKED: / LOOSENED: / TIGHTENED: / CHANGED:  比べたコマンドの数と、それぞれの行の数
 #
 # 判定がリポジトリの状態で決まるルールのために、GitHub のリモートがある main のリポジトリで走らせ、
@@ -27,14 +28,14 @@ build() {
   nix build --no-link --print-out-paths --option warn-dirty false "$1#claude-hooks"
 }
 if [[ -z "${OLD_BIN:-}" || -z "${NEW_BIN:-}" ]]; then
-  ROOT=$(git rev-parse --show-toplevel)
+  # 呼んだ場所ではなく、このスクリプトのある作業ツリーを比べる
+  ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
   # path: は .gitignore を見ずに target/ なども store に写すので、git が追跡するファイルだけを使う
   OLD_BIN="${OLD_BIN:-$(build "git+file://$ROOT?rev=$(git -C "$ROOT" rev-parse "$BASE")")/bin/claude-hooks}"
   NEW_BIN="${NEW_BIN:-$(build "git+file://$ROOT")/bin/claude-hooks}"
 fi
 
 source "$(dirname "$0")/lib.sh"
-set -e
 
 # ルールの一覧（引数なしで呼ぶと使い方に出る）
 rules_of() {
@@ -75,6 +76,8 @@ git -C "$MAIN" branch feat/x
 mkdir -p "$MAIN/src"
 echo x >"$MAIN/a.txt"
 make_fake_gh ''
+# gitleaks は常に漏えいを返す（本物は漏えいの無い一時のリポジトリで必ず通し、block-secret-commit を比べられない）
+make_fake_tool gitleaks "  *) echo '[{\"File\":\"a.txt\",\"StartLine\":1,\"RuleID\":\"x\"}]'; exit 1 ;;"
 cd "$MAIN"
 
 COMMANDS=(
@@ -92,7 +95,7 @@ COMMANDS=(
   "sbatch x.sh" "bash slurm-run.sh -t 1 n x" "slurm-run.sh -t 1 n x"
 )
 WRAPPERS=(
-  "" "env " "env -- FOO=1 " "env -i " "env -i CLAUDECODE=1 " "env -u CLAUDECODE " "env CLAUDECODE=0 "
+  "" "env " "env -- FOO=1 " "env -- CLAUDECODE=0 " "unset CLAUDECODE && " "env -i " "env -i CLAUDECODE=1 " "env -u CLAUDECODE " "env CLAUDECODE=0 "
   "CLAUDECODE=0 " "GIT_CONFIG_COUNT=1 " "env -S 'FOO=1' " "/usr/bin/env " "env -C $LOCAL " "command " "command -v "
   "builtin " "exec " "exec -c " "nohup " "time " "/usr/bin/time " "nice -n 5 " "timeout 10 " "setsid "
   "stdbuf -o0 " "ionice -c3 "
@@ -101,21 +104,22 @@ DIRS=("cd $LOCAL; " "cd $LOCAL && " "env cd $LOCAL; " "builtin cd $LOCAL && " "t
   "echo \$(cd $LOCAL); " "cd $LOCAL; cd $MAIN; ")
 
 # decide <bin> <rule>: $INPUT への判定を DECISION に入れる（deny / ask / context / allow）。
-# バイナリが失敗したら、通したものと数えずに止める
+# バイナリが失敗したら、通したものと数えずに止める。claude-hooks はルールの panic を拾って何も出さずに
+# 終了コード 0 で終わる（panic の文は標準エラーに出る）ので、標準エラーに何か出たら失敗とみなす
 decide() {
   local bin="$1" rule="$2" out
-  if ! out=$(printf '%s' "$INPUT" | "$bin" pre-tool-use --rule "$rule"); then
+  if ! out=$(printf '%s' "$INPUT" | "$bin" pre-tool-use --rule "$rule" 2>"$TEST_ROOT/stderr") ||
+    [[ -s "$TEST_ROOT/stderr" ]]; then
     echo "ERROR: $bin が失敗しました（--rule $rule）: $INPUT" >&2
+    cat "$TEST_ROOT/stderr" >&2
     exit 1
   fi
-  if [[ -z "$out" ]]; then
-    DECISION=allow
-  else
-    DECISION=$(jq -r '.hookSpecificOutput.permissionDecision // "context"' <<<"$out")
-  fi
+  DECISION=$(decision "$out" context)
 }
 
 checked=0
+# 古い版が通す以外を返したルール。一度も返さないルールは、緩んでも LOOSENED に出ない
+declare -A COVERED=()
 compare() {
   local cmd="$1" r old
   INPUT=$(hook_input "$cmd" "$2")
@@ -123,6 +127,7 @@ compare() {
   for r in "${RULES[@]}"; do
     decide "$OLD_BIN" "$r"
     old="$DECISION"
+    [[ "$old" != allow ]] && COVERED[$r]=1
     decide "$NEW_BIN" "$r"
     [[ "$old" == "$DECISION" ]] && continue
     if [[ "$old" == deny ]]; then
@@ -154,6 +159,9 @@ else
   done
 fi
 
+for r in "${RULES[@]}"; do
+  [[ -n "${COVERED[$r]:-}" ]] || echo "UNCOVERED: $r"
+done
 echo "CHECKED: $checked"
 echo "LOOSENED: $loosened"
 echo "TIGHTENED: $tightened"
