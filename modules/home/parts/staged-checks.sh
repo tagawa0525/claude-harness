@@ -83,7 +83,7 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
     if git cat-file -e ":$f" 2>/dev/null; then git cat-file blob ":$f" >"$md/$f"; fi
   done
   for i in "${!PATHS[@]}"; do
-    mkdir -p "$md/$(dirname "${PATHS[$i]}")"
+    mkdir -p "$md/$(dirname -- "${PATHS[$i]}")"
     git cat-file blob "${BLOBS[$i]}" >"$md/${PATHS[$i]}"
   done
   (cd "$md" && markdownlint --fix -- "${PATHS[@]}" 2>/dev/null) || true
@@ -91,7 +91,8 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
   # language-checks スキルの同期先（~/.claude）。無ければ飛ばし、続く検査で残った違反として出る
   MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"
   if [ -f "$MD_FIXER" ] && command -v python3 >/dev/null 2>&1; then
-    if ! (cd "$md" && python3 "$MD_FIXER" "${PATHS[@]}"); then
+    # fix-markdown-lint.py は -- で始まる引数を飛ばすので、./ を付けて渡す
+    if ! (cd "$md" && python3 "$MD_FIXER" "${PATHS[@]/#/./}"); then
       echo "❌ fix-markdown-lint.py failed. Run: python3 $MD_FIXER <files>"
       failed=1
     fi
@@ -128,7 +129,7 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
   bad=()
   for i in "${!PATHS[@]}"; do
     path=${PATHS[$i]}
-    d=$(dirname "$path")
+    d=$(dirname -- "$path")
     m=""
     while :; do
       if [ -f "$d/Cargo.toml" ]; then
@@ -136,14 +137,14 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
         break
       fi
       [ "$d" = "." ] && break
-      d=$(dirname "$d")
+      d=$(dirname -- "$d")
     done
     ed=""
     if [ -n "$m" ]; then
       command -v cargo >/dev/null 2>&1 || continue
       if [ -z "${edition[$m]+set}" ]; then
         if cargo metadata --no-deps --format-version 1 --manifest-path "$m" >"$work/metadata" 2>"$work/metadata.err"; then
-          edition[$m]=$(jq -r --arg m "$(realpath "$m")" '.packages[] | select(.manifest_path == $m) | .edition' "$work/metadata")
+          edition[$m]=$(jq -r --arg m "$(realpath -- "$m")" '.packages[] | select(.manifest_path == $m) | .edition' "$work/metadata")
         else
           edition[$m]=failed
           echo "❌ cargo metadata が失敗しました（$m）:"
@@ -154,7 +155,7 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
       [ "${edition[$m]}" != failed ] || continue
       ed=${edition[$m]}
     fi
-    dir=$(dirname "$path")
+    dir=$(dirname -- "$path")
     [ -d "$dir" ] || dir=.
     git cat-file blob "${BLOBS[$i]}" >"$work/rs"
     if ! (cd "$dir" && rustfmt --edition "${ed:-2024}") <"$work/rs" >"$work/rs.out" 2>"$work/rs.err"; then
