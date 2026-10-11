@@ -17,7 +17,8 @@
 #             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み
 #   Nix:      flake.nix がある、または .nix がステージ済み
-#   Markdown: .md がステージ済み（自動修正 → 補完 → 再ステージ → 検査）
+#   Markdown: .md がステージ済み（自動修正 → 補完 → 再ステージ → 検査）。.pre-commit-config.yaml で design-records に
+#             オプトインしていれば、.md の変更が無くても design-records check
 #   Shell:    .sh がステージ済み（ステージ済みのファイルだけを shellcheck で検査）
 #
 # 最初に失敗したチェックで止まり、失敗したコマンドと自動修正コマンド（あれば）を出す。
@@ -200,6 +201,13 @@ md_autofix() {
 md_lint() {
   staged_md | xargs -0 -r markdownlint --
 }
+# design_records_check: ADR の形と ADR どうしの参照（ADR-0009）。error はすべて、warning は変更した .md の分だけ出る。
+# xargs で渡さないのは、引数が多いと分けて呼ばれ、ADR どうしの検査の指摘が重なるため
+design_records_check() {
+  local files
+  mapfile -d '' -t files < <(staged_md)
+  design-records check --changed "${files[@]}"
+}
 if staged_has '*.md'; then
   DETECTED=1
   if (( MERGE )); then
@@ -208,6 +216,16 @@ if staged_has '*.md'; then
     run_stage markdown format markdownlint "" md_autofix
   fi
   run_stage markdown lint markdownlint "" md_lint
+fi
+# design-records は .pre-commit-config.yaml でオプトインしたリポジトリだけで走らせる（ADR-0009。docs/adr の有無で
+# 決めると、別の形の ADR を持つ他人のプロジェクトでも止まる）。.md の変更が無くても走らせ、ADR を消すだけの変更でも、
+# 消した ADR を指す参照が残っていないかを見る（prek の設定の always_run と同じ）
+design_records_opted_in() {
+  [[ -f .pre-commit-config.yaml ]] && grep -Eq '^[[:space:]]*-?[[:space:]]*id:[[:space:]]*design-records[[:space:]]*$' .pre-commit-config.yaml
+}
+if design_records_opted_in; then
+  DETECTED=1
+  run_stage markdown design-records design-records "" design_records_check
 fi
 
 # --- Shell（ステージ済みのみ）---
