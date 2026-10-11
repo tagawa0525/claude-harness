@@ -8,8 +8,7 @@ allowed-tools:
   - Bash(~/.claude/scripts/post-merge-cleanup.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
-  - Bash(design-records check*)
-  - Bash(design-records renumber*)
+  - Bash(design-records -C*)
   - Bash(git status*)
   - Bash(git branch*)
   - Bash(git log*)
@@ -79,15 +78,15 @@ git -C [TARGET_WORKTREE] rebase main
 
 ### 番号の重複（rebase の後）
 
-設計の記録（docs/adr か docs/issues）のあるリポジトリでは、rebase の直後に `[TARGET_WORKTREE]` で番号の重複を
-確かめる。main にもこのブランチにも同じ番号の記録が入っていると、`number NNNN is also used by ...` が出る:
+設計の記録（docs/adr か docs/issues）のあるリポジトリでは、rebase の直後に番号の重複を確かめる。main にも
+このブランチにも同じ番号の記録が入っていると、`number NNNN is also used by ...` が出る:
 
 ```bash
-design-records check
+design-records -C [TARGET_WORKTREE] check
 ```
 
-重複があれば、このブランチで足した側を振り直す（ADR は `design-records renumber NNNN`、issue は
-`design-records renumber --kind issue NNNN`）。新しい番号の予約、ファイル名と参照の付け替え、コミットまでを行う
+重複があれば、このブランチで足した側を振り直す（ADR は `design-records -C [TARGET_WORKTREE] renumber NNNN`、
+issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。新しい番号の予約、ファイル名と参照の付け替え、コミットまでを行う
 （ADR-0018）。できたコミットを `git show` で見て、付け替えた参照が振り直した記録を指していることを確かめてから、
 チェックに進む。
 
