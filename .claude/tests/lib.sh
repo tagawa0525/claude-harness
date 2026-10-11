@@ -54,6 +54,11 @@ assert_eq() {
   if [[ "$1" == "$2" ]]; then _pass; else _fail "expected '$1', got '$2'"; fi
 }
 
+# assert_ne <unexpected> <actual>
+assert_ne() {
+  if [[ "$1" != "$2" ]]; then _pass; else _fail "unexpected '$1'"; fi
+}
+
 # assert_contains <haystack> <needle>
 assert_contains() {
   if [[ "$1" == *"$2"* ]]; then _pass; else _fail "missing '$2' in:" "$1"; fi
@@ -174,10 +179,18 @@ minimal_path() {
   echo "$TEST_ROOT/fakebin:$bin"
 }
 
-# make_fake_gh <case-body>: gh 用のショートカット。記録は $FAKE_GH_LOG
+# make_fake_gh <case-body>: gh 用のショートカット。記録は $FAKE_GH_LOG。
+# 呼び出しごとの GH_REPO（gh の対象のリポジトリ）も記録する（fake_gh_repos で読む）
 make_fake_gh() {
-  make_fake_tool gh "$1"
+  : > "$TEST_ROOT/gh-repo.log"
+  make_fake_tool gh "  *) printf '%s\\n' \"\${GH_REPO-(unset)}\" >> \"$TEST_ROOT/gh-repo.log\" ;;&
+$1"
   export FAKE_GH_LOG="$TEST_ROOT/gh.log"
+}
+
+# fake_gh_repos: 偽 gh が受けた GH_REPO の値（重複を除く）
+fake_gh_repos() {
+  sort -u "$TEST_ROOT/gh-repo.log"
 }
 
 # ---------------------------------------------------------------------------
