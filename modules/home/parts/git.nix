@@ -22,6 +22,11 @@ let
     text = builtins.readFile ./scan-staged-secrets.sh;
   };
   scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
+  # プロジェクトローカルの hook のパスを LOCAL_HOOK に入れる。ローカルの hook は linked worktree でも共通の
+  # .git/hooks にある（--git-dir は worktree ごとの場所）。--git-path hooks/... は core.hooksPath（この hook
+  # 自身）を指すので使わない。検証: modules/home/parts/tests/local-hooks-worktree.sh
+  localHook =
+    name: ''LOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
   # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が textlint を
   # store のパスで呼ぶ。辞書は ./ja-terms/prh.yml。Markdown は textlint の組み込みのプラグインが、コードと
   # テキストは @textlint/text が読む（コメントと文字列の日本語を含めて、ファイルの全体を見る）
@@ -177,10 +182,7 @@ in
       fi
 
       # プロジェクトローカルの pre-commit があれば優先実行
-      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
-      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
-      GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$GIT_COMMON_DIR/hooks/pre-commit"
+      ${localHook "pre-commit"}
       if [ -x "$LOCAL_HOOK" ]; then
         # exec しないのは、ローカルの hook が index を変えた後に機密情報を検査するため
         "$LOCAL_HOOK" "$@"
@@ -352,10 +354,7 @@ in
       # プロジェクトローカルの pre-merge-commit があれば先に実行する（失敗すれば set -e で止まる）。
       # pre-commit / commit-msg と違って exec で置き換えない。置き換えると、ローカルの hook が
       # あるだけで --no-verify なしにこのゲートが外れる
-      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
-      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
-      GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$GIT_COMMON_DIR/hooks/pre-merge-commit"
+      ${localHook "pre-merge-commit"}
       if [ -x "$LOCAL_HOOK" ]; then
         "$LOCAL_HOOK" "$@"
       fi
@@ -423,10 +422,7 @@ in
       MSG_FILE="$1"
 
       # プロジェクトローカルの commit-msg があれば優先実行
-      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
-      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
-      GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$GIT_COMMON_DIR/hooks/commit-msg"
+      ${localHook "commit-msg"}
       if [ -x "$LOCAL_HOOK" ]; then
         exec "$LOCAL_HOOK" "$@"
       fi
@@ -511,10 +507,8 @@ in
 
       # プロジェクトローカルの post-rewrite があれば先に呼ぶ。exec で置き換えないのは、ローカルの hook が
       # あるだけで置き換えが外れないようにするため。失敗しても置き換えは行い、終了コードは最後に返す
-      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
-      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
       GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$(git rev-parse --git-common-dir)/hooks/post-rewrite"
+      ${localHook "post-rewrite"}
       local_rc=0
       if [ -x "$LOCAL_HOOK" ]; then
         printf '%s\n' "$INPUT" | "$LOCAL_HOOK" "$@" || local_rc=$?
