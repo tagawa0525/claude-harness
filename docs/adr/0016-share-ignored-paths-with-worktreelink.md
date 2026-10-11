@@ -45,13 +45,19 @@ git 本体には、新しい worktree に追跡しないファイルを持ち込
   の要素、ワイルドカード（`*` `?` `[`）、`!` で始まる行はエラーにする。PostHog は `.gitignore` の書き方だが、symlink を
   作るには名前が 1 つに決まる必要があり、パターンを展開する先（メイン worktree のどこに一致するか）を決める必要が
   今は無い。リテラルのパスは `.gitignore` の書き方の部分集合として読める
+- 同じパスや入れ子のパス（`references` と `references/sub`）はエラー。後の `ln -s` が先の symlink をたどり、
+  メイン worktree の共有するデータの中に symlink を作ってしまう。親が新しい worktree でディレクトリでない
+  （ファイルか symlink の）パスもエラーにし、検査をすべて通ってから symlink を作る
 - 設定は新しい worktree（チェックアウトしたブランチ）の `.worktreelink` を読む。`.gitignore` と同じブランチのものと
   比べるため
 - 新しい worktree で `git check-ignore` に無視されないパスはエラー。symlink はディレクトリではないので、`references/` の
   ようにディレクトリだけに一致するパターンでは無視されない（実体のディレクトリがあるメイン worktree では無視される）。
   そのため判定はメイン worktree でなく、新しい worktree のパスが無い状態で行う。git から見て symlink と同じ扱いになる
 - エラーのときは symlink を 1 つも作らずに止め、worktree は残す。直す先はそのブランチの `.worktreelink` か
-  `.gitignore` で、その worktree で直せるようにする
+  `.gitignore` で、その worktree で直せるようにする。worktree を消して戻す案は採らない。誤りがブランチの上に
+  あると、そのブランチの worktree を作れず、直すには別の場所で直す必要がある。また `--carry-changes` で
+  持ち込んだ変更を、消す前に元へ戻す手順が要る。残す代わりに、`worktree-add.sh` をもう一度呼んでも作成先が
+  あるのでエラーになり、直した後の symlink は手で張る
 - メイン worktree にパスが無ければ、作らずに `NOTE:` で知らせる。データを取ってくる前のリポジトリでも worktree を
   作れるようにする
 - symlink の先は絶対パス（`<メイン worktree>/<path>`）。worktree の置き場所が変わっても指す先が変わらない
@@ -59,7 +65,8 @@ git 本体には、新しい worktree に追跡しないファイルを持ち込
 ### 帰結
 
 - `post-merge-cleanup.sh` は変えない。無視された symlink は `git worktree remove`（`--force` なし）の妨げにならず、
-  消すのは symlink だけで、先の実体は残る
+  消すのは symlink だけで、先の実体は残る。worktree を作った後に `.gitignore` が変わって symlink が無視されなく
+  なると、未追跡ファイルとして `git worktree remove` が止まる。`--force` で黙って消さず、止まって気づける方を採る
 - xlc は `.worktreelink` に `references` を書き、docs/environment.md の手作業の手順を消す（xlc の別の作業）
 - `claude --worktree` など、`worktree-add.sh` を通らずに作った worktree には symlink ができない
 
