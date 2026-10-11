@@ -98,9 +98,12 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 - 文字列（`Unwrapped::source`）は `Shell::parse` を再帰的に当て、中のコマンドを外側の `commands()` の、外側の
   コマンドの直後に含める。深さの上限は `MAX_DEPTH = 5`（トップレベルが 0）。超えた文字列は読まず、そのコマンドを
   「決まらない」にする
-- 文字列の中は 1 つのスコープ。前の `cd` は、同じか外側のスコープ（スコープの列の前置き）にあれば効く。これで
-  `cd x; (git commit)` や `cd x; bash -c 'git commit'` の `cd` も効く（前は同じスコープだけだった）。文字列の中の
-  `cd` は外に漏れない。外側の環境変数とディレクトリの変更（`env -u`、`env -C`、`sudo` の env_reset）は中に効く
+- 文字列の中は 1 つのスコープ。前の `cd` と `git switch` は、同じか外側のスコープ（スコープの列の前置き）に
+  あれば効く。これで `cd x; (git commit)` や `cd x; bash -c 'git commit'` の `cd` も効く（前は同じスコープだけ
+  だった）。文字列の中の `cd` は外に漏れない。外側の環境変数の変更（`env -u`、`sudo` の env_reset）は中に効き、
+  外側の `env -C` / `sudo -D` は文字列の中の `cd` より前に当たる（`Cmd::spawns`）
+- 二重引用符の文字列の中の `$(…)` は外側のシェルが展開するが、どちらで読んでも 1 回にする（文字列の解析で読み、
+  外側の走査はその引数に降りない）
 - 文字列の中の代入、`unset`、エスケープ（ADR-0023 の `ALLOW_*=<理由>`）も、外側と同じ規則で読む
 - 走らせるプログラムが決まらないコマンド（`Cmd::opaque`）: 名前の basename に展開がある（`$CMD`、`~/x/$SCRIPT`、
   `$(which sbatch)`、`${SB:-/usr/bin/sbatch}`。区切りの `/` は展開の外のものだけ数えるので、
@@ -129,11 +132,12 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 - 良い点: `bash -x script`（#303）、`bash -c '…'`、`sudo` などの包み、`$CMD` の形を、実行プログラムを見るすべての
   ルールが同じ読み方で見る。`cd x; (git commit)` の `cd` も効く
 - 悪い点: 決まらないコマンドと対象語が同じ文字列にあると止める（`echo sbatch; $CMD` のような形。その場で分かる
-  ので書き直せる）。`xargs git add -A` は、足されるパスで範囲が限定されていても止める。`env -C x bash -c 'cd y && …'`
-  は中の `cd` を先に当てる（順序は持たない。まれな形）
-- `sudo git commit`（`-E` 無し）と `ssh <接続先> git commit` は、CLAUDECODE が渡らず hook が Claude Code の
-  セッションと分からなくなるので、block-no-verify が止める。これは ADR-0015 の「Claude Code のセッションが検査を
-  飛ばせない」の通り
+  ので書き直せる）。`xargs git add -A` は、足されるパスで範囲が限定されていても止める。`ssh <接続先> …` の中の
+  `cd` と git は接続先で走るが、ルールは手元のディレクトリで判定する（接続先の状態は見えない）
+- `sudo git commit`（`-E` 無し）と `ssh <接続先> git commit` / `pull` は、CLAUDECODE が渡らず hook が Claude Code
+  のセッションと分からなくなるので、block-no-verify が止める（文言で CLAUDECODE が渡らないことを示す）。これは
+  ADR-0015 の「Claude Code のセッションが検査を飛ばせない」の通り。接続先で `git pull` する運用が増えて繰り返し
+  止まるなら、見直す
 - 包みが受け付けるオプションが変わったら（man が変わったら）表を直す。知らないオプションは今までどおり読み飛ばす
 - 見直す条件: 決まらない形の偽陽性が作業を繰り返し止めたとき。深さ 5 を超える正当な入れ子が出たとき
 
