@@ -102,8 +102,11 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   あれば効く。これで `cd x; (git commit)` や `cd x; bash -c 'git commit'` の `cd` も効く（前は同じスコープだけ
   だった）。文字列の中の `cd` は外に漏れない。外側の環境変数の変更（`env -u`、`sudo` の env_reset）は中に効き、
   外側の `env -C` / `sudo -D` は文字列の中の `cd` より前に当たる（`Cmd::spawns`）
-- 二重引用符の文字列の中の `$(…)` は外側のシェルが展開するが、どちらで読んでも 1 回にする（文字列の解析で読み、
-  外側の走査はその引数に降りない）
+- 二重引用符の文字列の中の `$(…)` は外側のシェルが展開してから文字列を渡すので、外側のスコープで 1 回だけ読む
+  （文字列の解析は、外側の引数にある原文が同じ置換に降りない）。`bash -c 'true' "$(sbatch …)"` のように文字列以外の
+  引数の中の置換も、外側で読む
+- どの包みも `--help` / `--version` は表示して終わり、後ろの語を走らせない。block-no-verify のシェル全体の
+  CLAUDECODE の変更（代入、unset）も、hook が走る git commit / merge / pull があるときだけ見る
 - 文字列の中の代入、`unset`、エスケープ（ADR-0023 の `ALLOW_*=<理由>`）も、外側と同じ規則で読む
 - 走らせるプログラムが決まらないコマンド（`Cmd::opaque`）: 名前の basename に展開がある（`$CMD`、`~/x/$SCRIPT`、
   `$(which sbatch)`、`${SB:-/usr/bin/sbatch}`。区切りの `/` は展開の外のものだけ数えるので、

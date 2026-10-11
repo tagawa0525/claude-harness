@@ -65,6 +65,11 @@ fn is_expansion(node: Node) -> bool {
     )
 }
 
+/// コマンドを含みうる置換（`$(…)`、`<(…)`、`` `…` ``）か
+fn is_substitution(node: Node) -> bool {
+    matches!(node.kind(), "command_substitution" | "process_substitution")
+}
+
 fn contains_expansion(node: Node) -> bool {
     if is_expansion(node) {
         return true;
@@ -141,11 +146,12 @@ pub struct Cmd {
 
 impl Shell {
     pub fn parse(src: &str) -> Shell {
-        Shell::parse_at(src, 0)
+        Shell::parse_at(src, 0, &[])
     }
 
-    /// `depth` は文字列の入れ子の深さ（トップレベルは 0）
-    fn parse_at(src: &str, depth: usize) -> Shell {
+    /// `depth` は文字列の入れ子の深さ（トップレベルは 0）。`expanded` は、この文字列を渡す外側のシェルが
+    /// 展開する置換（`bash -c "… $(date)"` の `$(date)`）の原文。外側で読むので、ここでは読まない
+    fn parse_at(src: &str, depth: usize, expanded: &[String]) -> Shell {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_bash::LANGUAGE.into())
@@ -159,7 +165,7 @@ impl Shell {
             cmds: Vec::new(),
             inner: Vec::new(),
         };
-        let (cmds, inner) = shell.collect_commands(depth);
+        let (cmds, inner) = shell.collect_commands(depth, expanded);
         shell.cmds = cmds;
         shell.inner = inner;
         shell
@@ -187,40 +193,44 @@ impl Shell {
     }
 
     /// 全コマンド（文字列の中のものを含む）と、文字列を解析した内側のシェル
-    fn collect_commands(&self, depth: usize) -> (Vec<Cmd>, Vec<Shell>) {
+    fn collect_commands(&self, depth: usize, expanded: &[String]) -> (Vec<Cmd>, Vec<Shell>) {
         let mut cmds = Vec::new();
         let mut inner = Vec::new();
-        self.collect_into(self.tree.root_node(), depth, &mut cmds, &mut inner);
+        self.collect_into(
+            self.tree.root_node(),
+            depth,
+            expanded,
+            &mut cmds,
+            &mut inner,
+        );
         (cmds, inner)
     }
 
-    /// `heredoc_body` を除く全ノードを文書順に走査してコマンドを集める。文字列を再帰的に読んだコマンドの
-    /// 引数の中（`bash -c "… $(date)"` の `$(date)`）は、文字列の解析で読むので、ここでは降りない（二重に数えない）
-    fn collect_into(&self, node: Node, depth: usize, cmds: &mut Vec<Cmd>, inner: &mut Vec<Shell>) {
+    /// `heredoc_body` を除く全ノードを文書順に走査してコマンドを集める。外側のシェルが展開する置換
+    /// （`expanded`。原文が同じもの）は外側で読んでいるので降りない（二重に数えない）
+    fn collect_into(
+        &self,
+        node: Node,
+        depth: usize,
+        expanded: &[String],
+        cmds: &mut Vec<Cmd>,
+        inner: &mut Vec<Shell>,
+    ) {
         if node.kind() == "heredoc_body" {
             return;
         }
-        let mut parsed_source = false;
+        if is_substitution(node) && expanded.iter().any(|e| e == self.text(node)) {
+            return;
+        }
         if node.kind() == "command"
             && let Some((cs, shell)) = self.command(node, depth)
         {
-            parsed_source = shell.is_some();
             cmds.extend(cs);
             inner.extend(shell);
         }
         let mut cursor = node.walk();
-        let arguments: Vec<usize> = if parsed_source {
-            node.children_by_field_name("argument", &mut cursor)
-                .map(|n| n.id())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if !arguments.contains(&child.id()) {
-                self.collect_into(child, depth, cmds, inner);
-            }
+            self.collect_into(child, depth, expanded, cmds, inner);
         }
     }
 
@@ -289,7 +299,18 @@ impl Shell {
             return Some((vec![cmd], None));
         }
         cmd.spawns = Some(node.id());
-        let mut shell = Shell::parse_at(&source, depth + 1);
+        // 引数の中の置換（二重引用符の中の `$(…)`）は、このシェルが展開してから文字列を渡す。この走査で読むので、
+        // 文字列の解析では読まない
+        let mut expanded = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children_by_field_name("argument", &mut cursor) {
+            self.walk(child, &mut |n| {
+                if is_substitution(n) {
+                    expanded.push(self.text(n).to_string());
+                }
+            });
+        }
+        let mut shell = Shell::parse_at(&source, depth + 1, &expanded);
         let mut cmds = Vec::with_capacity(1 + shell.cmds.len());
         for mut c in std::mem::take(&mut shell.cmds) {
             // 文字列は外側のコマンドの原文より短いので、位置は外側のコマンドの後ろ、次の外側のコマンドの前に収まる
