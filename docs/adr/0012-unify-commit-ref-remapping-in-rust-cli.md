@@ -91,3 +91,7 @@ hook からの呼び方:
   含む場合は同じ 9 件の ERROR で止まった）
 - post-rewrite hook のテスト（`modules/home/parts/tests/post-rewrite-remap.sh`）が、ビルドした `commit-refs` を呼ぶ
   hook で通る
+
+## 補足
+
+- 2026-10-11: 帰結の「実装が決定に追いついていない点」の `rewrite-history` を足した（ADR-0013）
