@@ -3,6 +3,7 @@ name: adr
 description: ADR（docs/adr/）を書く・直すときに使う。MADR を基準にした形、前付け、確定後の運用。
 allowed-tools:
   - Bash(design-records new:*)
+  - Bash(design-records renumber:*)
   - Bash(design-records check:*)
 ---
 
@@ -28,14 +29,27 @@ allowed-tools:
 
 ```bash
 design-records new <slug> "<決めたことの 1 文>"
+design-records renumber <旧番号> [<新番号>]
 design-records check [--changed] [FILE]...
 ```
 
-`new` は `docs/adr/NNNN-<slug>.md` を、全ブランチの履歴から振った次の番号、前付け、必須と推奨の見出しつきで作る。
-slug は決めたことを動詞で始めた英語の kebab-case にする。
+`new` は `docs/adr/NNNN-<slug>.md` を、次の番号、前付け、必須と推奨の見出しつきで作る。slug は決めたことを動詞で
+始めた英語の kebab-case にする。番号は、全ブランチの履歴と予約のタグ（`adr-NNNN`）のうち最大の番号 + 1 で、
+注釈つきのタグを打って予約する（ADR-0018）。リモート origin があれば、タグを fetch してから振り、push する。
+push が拒まれたら（ほかの clone が先に予約した）次の番号で振り直す。origin に届かなければ、記録を作らずに止まる。
+予約だけして使わなかった番号は欠番にする（使い回さない）。
 
-`check` は docs/adr の追跡している ADR の形と、ADR どうしの参照（置き換えの双方向の一致、参照先の有無）を確かめ、
-違反（error）があれば失敗する。FILE を渡すと、そこから置き換えられた ADR への参照と、確定した ADR の本文の変更を探し、
+docs/issues の issue も同じ仕組みで番号を振る（`--kind issue`。タグは `issue-NNNN`、表題の行だけを書く。前付けと
+節の形は各リポジトリの README に従う）。
+
+`renumber` は、このブランチで足した記録（既定ブランチとの分岐点に無いもの）の番号を振り直す。rebase の後に
+`check` が番号の重複を示したときに使う。ファイル名と表題、その記録の中の参照と、ほかのファイルのうちこのブランチで
+足した行の参照（`ADR-NNNN`、`NNNN-<slug>.md`）を付け替え、1 つのコミットにする。main から来た行の参照は、main の
+記録を指すので変えない。作業ツリーに変更があれば止まる。マージした後の予約のタグは、`post-merge-cleanup.sh` が
+消す。
+
+`check` は docs/adr の追跡している ADR の形と、ADR どうしの参照（置き換えの双方向の一致、参照先の有無）、ADR と
+docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。予約のタグの slug と違う slug の記録には注意を出す。FILE を渡すと、そこから置き換えられた ADR への参照と、確定した ADR の本文の変更を探し、
 FILE の分だけ注意（warning）を出す（`--changed` なら FILE が無くても warning を出さない）。プロジェクトは
 `.pre-commit-config.yaml` に次を足してオプトインし、コミットのたびに検査する:
 
