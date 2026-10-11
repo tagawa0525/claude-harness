@@ -17,6 +17,7 @@ use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
+use crate::unwrap::{EnvChange, env_value};
 
 pub struct BlockNoVerify;
 
@@ -90,11 +91,10 @@ impl Rule for BlockNoVerify {
         }
         let mut skips = changes_environment(shell);
         for cmd in shell.commands() {
-            skips |= cmd.env_cleared
-                || cmd
-                    .env
-                    .iter()
-                    .any(|(name, value)| disables_hooks(name, value.as_deref()));
+            skips |= cmd.env.iter().any(|change| match change {
+                EnvChange::Set(name, _) | EnvChange::Unset(name) => name.starts_with("GIT_CONFIG_"),
+                EnvChange::Clear => false,
+            }) || env_value(&cmd.env, "CLAUDECODE", Some("1")) != Some("1");
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
             };

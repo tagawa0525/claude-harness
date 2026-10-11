@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Tree};
 
 use crate::git_args::{GitInvocation, parse_invocation};
-use crate::unwrap::{basename, unwrap};
+use crate::unwrap::{EnvChange, basename, unwrap};
 
 pub struct Shell {
     src: String,
@@ -48,11 +48,9 @@ pub struct Cmd {
     /// 属するシェルのスコープ（最も近い `$(…)` / `(…)` / `<(…)` のノード ID）。トップレベルは None。
     /// これらの中で実行した `cd` は親のカレントディレクトリを変えない
     pub scope: Option<usize>,
-    /// このコマンドだけに効く環境変数の変更（前置きの `NAME=value` と、包んだ `env` の `NAME=value` / `-u NAME`）。
-    /// 外すなら None
-    pub env: Vec<(String, Option<String>)>,
-    /// 包んだ `env -i` / `exec -c` で、受け継ぐ環境変数を全て外すか
-    pub env_cleared: bool,
+    /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
+    /// `-u NAME` / `-i`、`exec -c`）
+    pub env: Vec<EnvChange>,
     /// 包んだ `env -C <dir>` の行き先（順に、前のものからの相対）
     pub dirs: Vec<String>,
     /// git のコマンドなら、グローバルオプションの読み取り
@@ -144,7 +142,7 @@ impl Shell {
                     .child_by_field_name("value")
                     .map(|v| self.unquote(v).text)
                     .unwrap_or_default();
-                env.push((self.text(var).to_string(), Some(value)));
+                env.push(EnvChange::Set(self.text(var).to_string(), value));
             }
         }
         let inner = unwrap(&name, &args);
@@ -157,7 +155,6 @@ impl Shell {
             has_error: node.has_error() || trailing_error,
             scope,
             env,
-            env_cleared: inner.env_cleared,
             dirs: inner.dirs,
             git,
         })

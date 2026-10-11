@@ -124,15 +124,38 @@ const WRAPPERS: &[Wrapper] = &[
     },
 ];
 
+/// 環境変数の変更 1 つ。順に効く（`env -i CLAUDECODE=1` は外した後で戻す）
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnvChange {
+    Set(String, String),
+    Unset(String),
+    /// 受け継ぐ環境変数を全て外す（`env -i`、`exec -c`）
+    Clear,
+}
+
+/// 変更を順に当てた後の、環境変数 `name` の値（`inherited` は受け継いだ値）
+pub fn env_value<'a>(
+    changes: &'a [EnvChange],
+    name: &str,
+    inherited: Option<&'a str>,
+) -> Option<&'a str> {
+    changes
+        .iter()
+        .fold(inherited, |value, change| match change {
+            EnvChange::Set(n, v) if n == name => Some(v),
+            EnvChange::Unset(n) if n == name => None,
+            EnvChange::Clear => None,
+            _ => value,
+        })
+}
+
 /// ほどいた中のコマンドと、包みが変えるもの
 #[derive(Debug, Default)]
 pub struct Unwrapped {
     pub name: String,
     pub args: Vec<Arg>,
-    /// 環境変数の変更（外すなら None）
-    pub env: Vec<(String, Option<String>)>,
-    /// 受け継ぐ環境変数を全て外すか（`env -i`、`exec -c`）
-    pub env_cleared: bool,
+    /// 環境変数の変更（順に効く）
+    pub env: Vec<EnvChange>,
     /// 中のコマンドを走らせるディレクトリ（`env -C`。前のものからの相対）
     pub dirs: Vec<String>,
 }
@@ -238,27 +261,31 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut words: VecDeque<Arg> = out.args.iter().cloned().collect();
         let mut step = Unwrapped::default();
         let mut runs = true;
+        let mut options_done = false;
         while let Some(front) = words.front() {
             let t = front.text.clone();
             if t == "--" {
                 words.pop_front();
-                break;
-            }
-            if wrapper.name == "env" && t == "-" {
-                // `env -` は `env -i`
-                words.pop_front();
-                step.env_cleared = true;
+                options_done = true;
                 continue;
             }
-            if wrapper.name == "env" && !t.starts_with('-') {
+            if wrapper.name == "env" && t == "-" && !options_done {
+                // `env -` は `env -i`
+                words.pop_front();
+                step.env.push(EnvChange::Clear);
+                continue;
+            }
+            // env は `--` の後も `NAME=value` を代入として読む
+            if wrapper.name == "env" && (options_done || !t.starts_with('-')) {
                 if let Some((var, value)) = t.split_once('=') {
                     words.pop_front();
-                    step.env.push((var.to_string(), Some(value.to_string())));
+                    step.env
+                        .push(EnvChange::Set(var.to_string(), value.to_string()));
                     continue;
                 }
                 break;
             }
-            if !t.starts_with('-') || t == "-" {
+            if options_done || !t.starts_with('-') || t == "-" {
                 break;
             }
             words.pop_front();
@@ -295,10 +322,10 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             }
             for (short, value) in options {
                 match (wrapper.name, short) {
-                    ("env", Some('i')) => step.env_cleared = true,
+                    ("env", Some('i')) => step.env.push(EnvChange::Clear),
                     ("env", Some('u')) => {
                         if let Some(var) = value {
-                            step.env.push((var, None));
+                            step.env.push(EnvChange::Unset(var));
                         }
                     }
                     ("env", Some('C')) => {
@@ -314,7 +341,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         }
                     }
                     ("command", Some('v' | 'V')) => runs = false,
-                    ("exec", Some('c')) => step.env_cleared = true,
+                    ("exec", Some('c')) => step.env.push(EnvChange::Clear),
                     ("ionice", Some('p' | 'P' | 'u')) => runs = false,
                     _ => {}
                 }
@@ -332,7 +359,6 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         out.name = program.text;
         out.args = words.into_iter().collect();
         out.env.extend(step.env);
-        out.env_cleared |= step.env_cleared;
         out.dirs.extend(step.dirs);
     }
 }
