@@ -129,6 +129,12 @@ if ALLOW_SECRET_COMMIT="a　　　b" CLAUDECODE=1 git -C "$REPO" commit -q -m "c
 else
   ok "全角空白で幅を水増しした値は止める"
 fi
+# EM SPACE（U+2003）。claude-hooks の char::is_whitespace と同じ範囲を除く
+if ALLOW_SECRET_COMMIT="$(printf 'a\342\200\203\342\200\203\342\200\203\342\200\203b')" CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "EM SPACE で幅を水増しした値で迂回できた"
+else
+  ok "EM SPACE で幅を水増しした値は止める"
+fi
 if ALLOW_SECRET_COMMIT=abcdef CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
   ok "ALLOW_SECRET_COMMIT=abcdef で迂回できる（幅 6）"
 else

@@ -281,6 +281,13 @@ for value in '$REASON' '"$(cat r.txt)"' '"rebase のみ $X"'; do
   assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
 done
 
+it "escape: ANSI-C 文字列やバックスラッシュで幅を水増しできない"
+for value in "\$'\\t\\t\\t'" 'a\ \ \ \ b' "\$'abc'"; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+done
+
 it "escape: 全角空白や NBSP でも幅を水増しできず、それだけの値は付けていない扱い"
 out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a　　　b" git push --force')
 assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
@@ -701,6 +708,16 @@ fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit "git -C $REPO commit -m 'chore: a'")
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(fake_log gitleaks)"
+
+it "block-secret-commit: git の pre-commit に任せるリポジトリでも、展開を含むエスケープはここで止める（git 側は展開後の値しか見えない）"
+out=$(run_hook block-secret-commit "REASON=abcdef; ALLOW_SECRET_COMMIT=\$REASON git -C $REPO commit -m 'chore: a'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_SECRET_COMMIT には理由を記載"
+out=$(run_hook block-secret-commit "ALLOW_SECRET_COMMIT=\"\$(cat r.txt)\" git -C $REPO commit -m 'chore: a'")
+assert_eq deny "$(decision "$out")"
+# 字面の短い値は git 側も同じ規則で止めるので、ここでは咎めない
+out=$(run_hook block-secret-commit "ALLOW_SECRET_COMMIT=1 git -C $REPO commit -m 'chore: a'")
+assert_eq allow "$(decision "$out")"
 
 it "block-secret-commit: ローカルの core.hooksPath を持つリポジトリでは、漏えいで止め、場所とルール ID を示す"
 fake_gitleaks "$LEAK_JSON" ok
@@ -1422,6 +1439,12 @@ make_fake_gh_merge 'echo 0' 'echo abc' 'echo "error connecting to api.github.com
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "変更ファイル"
+
+it "pre-merge-check: 変更ファイルを取得できないときも、短いエスケープには理由を求める行を足す"
+out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=1 $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "変更ファイル"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
 
 # --- ローカルの git merge（GitHub を使わないリポジトリは main に git merge --no-ff する）---
 

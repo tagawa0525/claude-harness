@@ -507,6 +507,15 @@ mod tests {
         assert!(matches!(esc("'a　　　b'"), Escape::Short));
         assert!(matches!(esc("'a\u{a0}\u{a0}\u{a0}\u{a0}b'"), Escape::Short));
         assert!(matches!(esc("'　　　'"), Escape::Absent));
+        // EM SPACE（U+2003）のような Unicode の空白も除く
+        assert!(matches!(
+            esc("'a\u{2003}\u{2003}\u{2003}\u{2003}b'"),
+            Escape::Short
+        ));
+        // ANSI-C 文字列とバックスラッシュは、字面の長さと渡る値が違うので数えない
+        assert!(matches!(esc("$'\\t\\t\\t'"), Escape::Short));
+        assert!(matches!(esc("$'abc'"), Escape::Short));
+        assert!(matches!(esc("a\\ \\ \\ \\ b"), Escape::Short));
         // 展開を含む値は、記録に理由が残らないので理由とみなさない
         assert!(matches!(esc("$REASON"), Escape::Short));
         assert!(matches!(esc("\"$(cat r.txt)\""), Escape::Short));
