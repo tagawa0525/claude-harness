@@ -125,15 +125,23 @@ fn prepare(map_path: Option<&Path>) -> Result<Vec<Replacement>, Vec<String>> {
 /// 途中で失敗しても `file` は元のまま残る（fs::write は先に中身を消すので、書き込みの失敗でファイルが壊れる）
 fn replace_file(file: &Path, data: &[u8]) -> std::io::Result<()> {
     let permissions = fs::metadata(file)?.permissions();
-    let name = file.file_name().unwrap_or_default().as_bytes();
-    let mut temp_name = b".".to_vec();
-    temp_name.extend_from_slice(name);
-    temp_name.extend_from_slice(format!(".commit-refs-{}.tmp", std::process::id()).as_bytes());
-    let temp = file.with_file_name(OsStr::from_bytes(&temp_name));
-    let mut out = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)?;
+    // 一時ファイルの名前は元の名前を含めない（名前が NAME_MAX に近いと超える）。ぶつかったら番号を変える
+    let mut attempt = 0u32;
+    let (temp, mut out) = loop {
+        let temp =
+            file.with_file_name(format!(".commit-refs-{}-{attempt}.tmp", std::process::id()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(out) => break (temp, out),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 100 => {
+                attempt += 1
+            }
+            Err(e) => return Err(e),
+        }
+    };
     let result = out
         .write_all(data)
         .and_then(|()| out.sync_all())
