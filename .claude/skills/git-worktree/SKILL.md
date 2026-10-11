@@ -43,7 +43,9 @@ $ARGUMENTS のブランチ名で作成する:
 - リポジトリの `.worktreelink` に書いたパスは、メイン worktree への symlink になる（`SHARED:` 行）。
   メイン worktree に無いパスは `NOTE:` 行で知らせるので、必要ならメイン worktree に用意してから
   `ln -s` で足す。`.worktreelink` の誤りで `ERROR:` になったら、worktree は残っているので、
-  そのブランチで `.worktreelink` か `.gitignore` を直す（書き方は nixfiles の ADR-0016）
+  そのブランチで `.worktreelink` か `.gitignore` を直す（書き方は nixfiles の ADR-0016）。スクリプトは
+  作成先があるので再実行できず、symlink は 1 つも作られていない。直した後、`.worktreelink` の各パスを
+  `ln -s <メイン worktree>/<path> <worktree>/<path>`（先は絶対パス）で張る
 
 ## 削除（--remove 指定時）
 
