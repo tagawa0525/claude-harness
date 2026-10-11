@@ -10,7 +10,7 @@
 #   ジョブ名ごと: NAME RUNS ESTIMATE ELAPSED RATIO MAX_RATIO（ESTIMATE と ELAPSED は平均）
 #   SKIPPED: <表に入れなかった行数>
 #
-# 定義（ADR-0018）:
+# 定義（ADR-0019）:
 #   ELAPSED  EndTime - StartTime（jobcomp に Elapsed の欄は無い）
 #   ESTIMATE TimeLimit の分を秒にしたもの。数値でない値（UNLIMITED など）は見積もりなし
 #   RATIO    ELAPSED / ESTIMATE。1 を超えれば見積もりより長くかかった。見積もりなしは -
