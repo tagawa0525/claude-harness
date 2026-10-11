@@ -564,20 +564,26 @@ make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
 
-it "block-no-verify: hook を飛ばす git commit と git merge を止める"
+it "block-no-verify: hook を飛ばす git commit / merge / pull と、hook の置き場所や CLAUDECODE の書き換えを止める"
 for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "chore: a"' 'git commit -n -m "chore: a"' \
   'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"' 'git -c core.hooksPath=/dev/null commit -m "chore: a"' \
   'git -c core.hookspath=/x commit -m "chore: a"' 'git -C . -c core.hooksPath=/x commit -m "chore: a"' \
-  'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x'; do
+  'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x' 'git pull --no-verify origin feat/x' \
+  'git -c core.hooksPath=/x pull' 'git config core.hooksPath /dev/null' 'git config --local core.hookspath x' \
+  'git --config-env=core.hooksPath=H commit -m x' 'CLAUDECODE= git commit -m x' 'CLAUDECODE=0 git commit -m x' \
+  'env -u CLAUDECODE git commit -m x' 'unset CLAUDECODE && git commit -m x' \
+  'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=1"
 done
 
-it "block-no-verify: hook を飛ばさない git commit と git merge は許可する"
+it "block-no-verify: hook を飛ばさない git のコマンドは許可する"
 for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit' \
   'git commit -m"feat: add notes"' 'git commit -Fnotes.txt' 'git commit -Cnext' 'git commit --no-status -m x' \
-  'git merge --no-ff feat/x' 'git -c user.name=n commit -m x'; do
+  'git merge --no-ff feat/x' 'git -c user.name=n commit -m x' 'git commit -m -nightly' \
+  'git commit -m "-nightly build fix"' 'git commit --author -n -m x' 'git config --get core.hooksPath' \
+  'git config --unset core.hooksPath' 'git config core.autocrlf false' 'git pull origin main'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
 done
