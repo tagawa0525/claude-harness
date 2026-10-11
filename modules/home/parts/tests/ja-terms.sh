@@ -84,6 +84,9 @@ stop|確かめが通らない。
 pass|結果を確かめる。
 pass|結果を確かめた。
 pass|観測者にも確かめにくい。
+pass|結果を確かめもせずに書く。
+pass|結果を確かめはしたが違う。
+pass|結果を確かめ Slurm に投げる。
 pass|結果を確かめに行く。
 stop|比べ合わせの結果。
 pass|2 つを比べ合わせると近い。
@@ -112,11 +115,12 @@ else
 fi
 
 # --- 3. ステージした中身を見る（作業ツリーの、ステージしていない編集は見ない）--------------------------
+# Markdown は自動修正が作業ツリーをステージし直す（#282）ので、テキストのファイルで確かめる
 REPO="$WORK/staged"
 new_repo "$REPO"
-printf '# t\n\n結果を確かめる。\n' > "$REPO/doc.md"
-git -C "$REPO" add doc.md
-printf '# t\n\n確かめの結果。\n' > "$REPO/doc.md"
+printf '結果を確かめる。\n' > "$REPO/doc.txt"
+git -C "$REPO" add doc.txt
+printf '確かめの結果。\n' > "$REPO/doc.txt"
 if git -C "$REPO" commit -q -m "docs: add" >"$WORK/out" 2>&1; then
   ok "ステージしていない編集の崩れた語では止めない"
 else
@@ -124,13 +128,52 @@ else
 fi
 REPO="$WORK/staged2"
 new_repo "$REPO"
-printf '# t\n\n確かめの結果。\n' > "$REPO/doc.md"
-git -C "$REPO" add doc.md
-printf '# t\n\n結果を確かめる。\n' > "$REPO/doc.md"
+printf '確かめの結果。\n' > "$REPO/doc.txt"
+git -C "$REPO" add doc.txt
+printf '結果を確かめる。\n' > "$REPO/doc.txt"
 if git -C "$REPO" commit -q -m "docs: add" >"$WORK/out" 2>&1; then
   ng "ステージした中身の崩れた語で止めない（作業ツリーを見ている）"
 else
   ok "ステージした中身の崩れた語で止める"
+fi
+
+# --- 3b. 行を折り返した動詞は止めない ----------------------------------------------------------------
+REPO="$WORK/wrapped"
+new_repo "$REPO"
+if commits "$REPO" doc.md "$(printf '# t\n\n計算の結果を確かめ\nる。\n')"; then
+  ok "行を折り返した動詞は止めない"
+else
+  ng "行を折り返した動詞で止めた"
+fi
+
+# --- 3c. グロブの文字を含む名前、大文字の拡張子、シンボリックリンク -------------------------------------
+REPO="$WORK/names"
+new_repo "$REPO"
+if commits "$REPO" "[draft].md" "$(printf '# t\n\n結果を確かめる。\n')"; then
+  ok "グロブの文字を含む名前の、崩れていないファイルは通す"
+else
+  ng "グロブの文字を含む名前の、崩れていないファイルで止めた"
+fi
+if commits "$REPO" "[draft2].md" "$(printf '# t\n\n確かめの結果。\n')"; then
+  ng "グロブの文字を含む名前の崩れた語で止まらない"
+else
+  if grep -qF "[draft2].md" "$WORK/out"; then
+    ok "グロブの文字を含む名前の崩れた語で止め、元のパスを示す"
+  else
+    ng "グロブの文字を含む名前で止めたが、元のパスを示さない"
+  fi
+fi
+if commits "$REPO" "UPPER.MD" "$(printf '# t\n\n確かめの結果。\n')"; then
+  ng "大文字の拡張子の崩れた語で止まらない"
+else
+  ok "大文字の拡張子の崩れた語で止める"
+fi
+ln -s ../README.md "$REPO/link.md"
+git -C "$REPO" add link.md
+if git -C "$REPO" commit -q -m "docs: link" >"$WORK/out" 2>&1; then
+  ok "シンボリックリンクは検査しない"
+else
+  ng "シンボリックリンクで止めた"
 fi
 
 # --- 4. 空白を含むパス -------------------------------------------------------------------------------
@@ -189,6 +232,13 @@ else
   else
     ng "コミットの本文で止めたが、直す語を示さない"
   fi
+fi
+echo z > "$REPO/z.txt"
+git -C "$REPO" add z.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "squash! docs: add" -m "確かめの結果を書く" >"$WORK/out" 2>&1; then
+  ng "squash! のコミットの本文の崩れた語で止まらない"
+else
+  ok "squash! のコミットの本文の崩れた語でも止める"
 fi
 echo y > "$REPO/y.txt"
 git -C "$REPO" add y.txt
