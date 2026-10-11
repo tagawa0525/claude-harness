@@ -13,7 +13,9 @@
 #   既定で拒むのは、コメントの URL を渡した呼び出しが、別に渡す comment_id と食い違っても気付けないため。
 #   受けられなければ理由を stderr に出して 1 を返す（gh は呼ばない）
 
-PR_URL_RE='^https://github\.com/([^/?#]+)/([^/?#]+)/pull/([0-9]+)(/[^?#]*)?(\?[^#]*)?(#(.*))?$'
+# owner と repo は GitHub の名前に使える文字だけを受ける。案内のコマンド（gh-actions-diagnose.sh の -R など）に
+# そのまま書くので、; や空白を通さない
+PR_URL_RE='^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)(/[^?#]*)?(\?[^#]*)?(#(.*))?$'
 
 parse_pr_url() {
   local allow_fragment=0
