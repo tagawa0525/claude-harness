@@ -9,8 +9,15 @@
 # post-merge-cleanup が予約のタグを消すのに使う design-records（設計の記録の CLI）は、リポジトリのクレートを
 # ビルドして PATH の先頭に置く。lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
 DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
-cargo build -q --manifest-path "$DESIGN_RECORDS_DIR/Cargo.toml" || exit 1
-export PATH="$DESIGN_RECORDS_DIR/target/debug:$PATH"
+# バイナリの場所は cargo に聞く（~/.cargo/config.toml の target-dir や CARGO_TARGET_DIR で target/ の外に出る）
+BUILT=$(cargo build -q --message-format=json --manifest-path "$DESIGN_RECORDS_DIR/Cargo.toml") || exit 1
+DESIGN_RECORDS_BIN=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "design-records" and .executable != null) | .executable' <<<"$BUILT")
+if [[ ! -x "$DESIGN_RECORDS_BIN" ]]; then
+  echo "ERROR: ビルドした design-records が見つかりません: '$DESIGN_RECORDS_BIN'" >&2
+  exit 1
+fi
+PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"
+export PATH
 
 source "$(dirname "$0")/../lib.sh"
 
