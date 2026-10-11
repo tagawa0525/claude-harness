@@ -13,7 +13,7 @@
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/commit-msg-conventions.sh
 #
-# hook の本体は nix の設定内にインラインで書かれているため、nix eval で取り出す。
+# hook のファイルを nix build で作る（hook が store のパスで呼ぶ textlint と設定も一緒にビルドされる）。
 
 set -euo pipefail
 
