@@ -742,6 +742,53 @@ fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
 }
 
 #[test]
+fn new_tags_the_latest_default_branch_when_it_retries() {
+    let t = TempRepo::with_remote("retarget");
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-other", "origin/main"],
+    );
+    // 最初の既定ブランチの fetch の直後に（タグの fetch は済んでいる）、ほかの clone が同じ番号の予約と、main の
+    // 新しいコミットを push する git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let mark = t.root.join("raced");
+    let fake = bin.join("git");
+    fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in *\" fetch \"*refs/heads/*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} -C {other} commit -q --allow-empty -m 'chore: x' && {real} -C {other} push -q origin HEAD:main refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            mark = mark.display(),
+            other = other.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-foo.md\n");
+    let latest = git_in(&other, &["rev-parse", "HEAD"]);
+    assert_eq!(t.git(&["rev-parse", "adr-0002^{commit}"]), latest);
+}
+
+#[test]
 fn new_fails_without_writing_or_tagging_when_the_remote_is_unreachable() {
     let t = TempRepo::with_remote("unreachable");
     let gone = t.root.join("gone.git");
