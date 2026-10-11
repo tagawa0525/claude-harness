@@ -470,3 +470,33 @@ fn reports_every_unreadable_line_of_the_map() {
     assert!(stderr(&out).contains("1 行目"), "{}", stderr(&out));
     assert!(stderr(&out).contains("2 行目"), "{}", stderr(&out));
 }
+
+#[test]
+fn a_line_whose_old_and_new_hashes_differ_in_length_stops() {
+    let t = TempRepo::new("length");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    let map = t.map_file(&format!("{old} {}\n", "6".repeat(64)));
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert_eq!(t.read("notes.md"), format!("at {}\n", &old[..8]));
+}
+
+#[test]
+fn a_write_failure_names_the_files_already_rewritten() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let t = TempRepo::new("write-failure");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("a.md", &format!("at {}", &old[..8]));
+    t.record("b.md", &format!("at {}", &old[..8]));
+    fs::set_permissions(t.path("b.md"), fs::Permissions::from_mode(0o444)).unwrap();
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert_eq!(t.read("a.md"), "at 44444444\n");
+    let err = stderr(&out);
+    assert!(err.contains("b.md"), "{err}");
+    assert!(err.contains("書き換えたファイル: a.md"), "{err}");
+    assert!(!err.contains("何も書き換えていない"), "{err}");
+}
