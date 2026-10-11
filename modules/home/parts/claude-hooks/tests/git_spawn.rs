@@ -38,7 +38,14 @@ fn stderr_of(cwd: &Path, rule: Option<&str>, path: Option<&str>) -> String {
     if let Some(rule) = rule {
         cmd.args(["--rule", rule]);
     }
+    // 呼んだ側のリポジトリ（git の hook の中の GIT_DIR など）や、上のディレクトリのリポジトリを見せない
+    for (key, _) in std::env::vars() {
+        if key.starts_with("GIT_") {
+            cmd.env_remove(key);
+        }
+    }
     let mut child = cmd
+        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
         .env("PATH", path.unwrap_or(""))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -83,6 +90,6 @@ fn missing_directory_is_not_reported() {
 #[test]
 fn git_failing_outside_a_repository_is_not_reported() {
     let dir = TempDir::new("not-a-repo");
-    let path = std::env::var("PATH").unwrap();
+    let path = std::env::var("PATH").expect("git を探す PATH が要る");
     assert_eq!(stderr_of(&dir.0, None, Some(&path)), "");
 }
