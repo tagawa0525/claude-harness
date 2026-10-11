@@ -6,7 +6,7 @@ use std::fmt;
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
     ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
-    STATUSES, Section, is_adr_path, numbers_in, record_number,
+    STATUSES, Section, is_adr_path, record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -191,13 +191,6 @@ fn unique<'a>(numbered: impl Iterator<Item = (&'a str, u32)>, out: &mut Found) {
     }
 }
 
-/// `path` のファイル名の番号と slug（`NNNN-<slug>.md` でなければ `None`）。
-fn number_and_slug(path: &str) -> Option<(u32, &str)> {
-    let name = path.rsplit('/').next()?;
-    let number = record_number(name)?;
-    Some((number, name.strip_suffix(".md")?.split_once('-')?.1))
-}
-
 /// docs/issues の issue（`paths`）の番号の重複。前付けと節の形は見ない（各リポジトリの検査に任せる。ADR-0018）。
 pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
     let mut out = Found::default();
@@ -205,7 +198,7 @@ pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
         paths
             .iter()
             // 番号を振るときと同じく、3 桁で振った issue も数える
-            .filter_map(|p| Some((p.as_str(), numbers_in(Kind::Issue, [p.as_str()]).next()?))),
+            .filter_map(|p| Some((p.as_str(), record_name(Kind::Issue, p)?.0))),
         &mut out,
     );
     out.0
@@ -220,7 +213,7 @@ pub fn check_reservations(
 ) -> Vec<Finding> {
     let mut out = Found::default();
     for path in paths {
-        let Some((number, slug)) = number_and_slug(path) else {
+        let Some((number, slug)) = record_name(kind, path) else {
             continue;
         };
         if let Some(owner) = reserved.get(&number).filter(|owner| *owner != slug) {

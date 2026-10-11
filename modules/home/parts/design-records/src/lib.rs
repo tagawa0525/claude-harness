@@ -206,6 +206,14 @@ pub fn numbers_in<'a>(
     })
 }
 
+/// `path` が `kind` の記録（`<dir>/<数字>-<slug>.md`。数字は [`numbers_in`] と同じく 4 桁まで）なら、番号と slug。
+pub fn record_name(kind: Kind, path: &str) -> Option<(u32, &str)> {
+    let number = numbers_in(kind, [path]).next()?;
+    let name = path.rsplit('/').next()?;
+    let slug = name.strip_suffix(".md")?.split_once('-')?.1;
+    (!slug.is_empty()).then_some((number, slug))
+}
+
 /// 次の番号。`paths` の `kind` の記録の番号（[`numbers_in`]）の最大 + 1。無ければ 1。
 pub fn next_number<'a>(kind: Kind, paths: impl IntoIterator<Item = &'a str>) -> u32 {
     numbers_in(kind, paths).max().map_or(1, |n| n + 1)

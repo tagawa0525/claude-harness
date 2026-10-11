@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use design_records::{Kind, numbers_in, renumber_refs};
+use design_records::{Kind, numbers_in, record_name, renumber_refs};
 
 use crate::git::{
     Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, origin_default,
@@ -51,14 +51,14 @@ fn used_numbers(root: &Path, kind: Kind) -> Result<BTreeSet<u32>> {
 
 /// 予約のタグを打つコミット。origin があれば origin の既定ブランチの先端（ローカルの既定ブランチに打つと、
 /// まだ push していないコミットがタグと一緒に出てしまう）、無ければ既定ブランチか HEAD の先端。
-fn reservation_target(root: &Path) -> Result<String> {
-    let name = match shared_default(root)? {
+fn reservation_target(root: &Path, fetched: Option<String>) -> Result<String> {
+    let name = match fetched.map_or_else(|| shared_default(root), |name| Ok(Some(name)))? {
         Some(name) => name,
         None if has_origin(root)? => {
             return Err(
                 "origin has no default branch (origin/HEAD, main or master) to put the \
                  reservation tag on; push the default branch with `git push -u origin main`, \
-                 or set origin/HEAD with `git remote set-head origin <branch>`"
+                 or set origin/HEAD with `git remote set-head origin -a`"
                     .into(),
             );
         }
@@ -84,10 +84,12 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
     let _lock = lock(root)?;
     let remote = has_origin(root)?;
     // タグを打つ先は、取ってきた origin の既定ブランチで決める
-    if remote {
-        fetch_origin(root, true)?;
-    }
-    let target = reservation_target(root)?;
+    let fetched = if remote {
+        fetch_origin(root, true)?
+    } else {
+        None
+    };
+    let target = reservation_target(root, fetched)?;
     for attempt in 0..ATTEMPTS {
         // やり直しでは、先に予約したほかの clone のタグだけを取ってくる
         if remote && attempt > 0 {
@@ -195,37 +197,43 @@ fn added_lines(root: &Path, base: &str) -> Result<BTreeMap<String, BTreeSet<usiz
     // ファイルの見出し（`diff --git` から最初の `@@` まで）の中か。hunk の中の、足した行が `++ ` で始まる行も
     // `+++ ` で始まる
     let mut header = false;
+    // hunk の中の、次の行の新しい側の行番号。足した行は hunk の見出しの範囲でなく `+` の行で数える
+    // （diff.interHunkContext で hunk がまとまると、範囲に変えていない行が入る）
+    let mut next = 0;
     for line in diff.lines() {
         if line.starts_with("diff --git ") {
             header = true;
-        } else if let Some(rest) = line.strip_prefix("+++ ").filter(|_| header) {
-            // 空白を含むパスの後ろには TAB が付く。引用符で包んだパス（引用符、制御文字を含むもの）は読まない
-            let rest = rest.strip_suffix('\t').unwrap_or(rest);
-            path = match rest.strip_prefix("b/") {
-                Some(p) => Some(p.to_string()),
-                None if rest == "/dev/null" => None,
-                None => return Err(format!("cannot read the path in the diff: {rest}")),
-            };
-        } else if let Some(hunk) = line.strip_prefix("@@ ") {
-            header = false;
-            let Some(path) = &path else { continue };
+        } else if header {
+            if let Some(rest) = line.strip_prefix("+++ ") {
+                // 空白を含むパスの後ろには TAB が付く。引用符で包んだパス（引用符、制御文字を含むもの）は読まない
+                let rest = rest.strip_suffix('\t').unwrap_or(rest);
+                path = match rest.strip_prefix("b/") {
+                    Some(p) => Some(p.to_string()),
+                    None if rest == "/dev/null" => None,
+                    None => return Err(format!("cannot read the path in the diff: {rest}")),
+                };
+            } else if line.starts_with("@@ ") {
+                header = false;
+            }
+        }
+        if let Some(hunk) = line.strip_prefix("@@ ").filter(|_| !header) {
             let new_range = hunk
                 .split(' ')
                 .find_map(|field| field.strip_prefix('+'))
                 .ok_or_else(|| format!("cannot read the hunk header: {line}"))?;
-            let (start, count) = match new_range.split_once(',') {
-                Some((start, count)) => (start, count),
-                None => (new_range, "1"),
-            };
-            let parse = |s: &str| {
-                s.parse::<usize>()
-                    .map_err(|_| format!("cannot read the hunk header: {line}"))
-            };
-            let (start, count) = (parse(start)?, parse(count)?);
-            added
-                .entry(path.clone())
-                .or_default()
-                .extend(start..start + count);
+            let start = new_range
+                .split_once(',')
+                .map_or(new_range, |(start, _)| start);
+            next = start
+                .parse::<usize>()
+                .map_err(|_| format!("cannot read the hunk header: {line}"))?;
+        } else if !header && let Some(path) = &path {
+            if line.starts_with('+') {
+                added.entry(path.clone()).or_default().insert(next);
+                next += 1;
+            } else if line.starts_with(' ') {
+                next += 1;
+            }
         }
     }
     Ok(added)
@@ -288,13 +296,13 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
         return Err("there is no commit to renumber".into());
     }
     // 追跡していないファイルも見る（移す先にあると、予約の後で git mv が失敗する）
-    if !git(&root, &["status", "--porcelain"])?.is_empty() {
+    if !git(&root, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
         return Err("commit or stash the changes first; renumber makes its own commit".into());
     }
     let based = branch_base(&root)?;
     let records: Vec<String> = tracked(&root, kind.dir())?
         .into_iter()
-        .filter(|p| numbers_in(kind, [p.as_str()]).eq([old]))
+        .filter(|p| record_name(kind, p).is_some_and(|(n, _)| n == old))
         .collect();
     let mut mine = Vec::new();
     for path in &records {
@@ -329,10 +337,7 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
             ));
         }
     };
-    let name = record.rsplit('/').next().unwrap_or(&record);
-    let slug = name
-        .strip_suffix(".md")
-        .and_then(|n| n.split_once('-'))
+    let slug = record_name(kind, &record)
         .map(|(_, slug)| slug.to_string())
         .ok_or_else(|| format!("{record}: the file name is not NNNN-<slug>.md"))?;
     // 予約の前に読めることを確かめる（読めずに止まると、予約した番号が欠番になる）
@@ -403,8 +408,13 @@ fn move_record(
         if fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
             continue;
         }
-        // 中身の読めないもの（消したファイル、テキストでないファイル）は参照を書けない
-        let Ok(Ok(text)) = fs::read(&file).map(String::from_utf8) else {
+        // 消したファイルとテキストでないファイルは参照を書けないので飛ばす。ほかの読み込みの失敗は止める
+        let bytes = match fs::read(&file) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("{path}: {e}")),
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
             continue;
         };
         if path == record {
@@ -518,15 +528,16 @@ pub fn prune() -> Result<ExitCode> {
     }
     if remote {
         let on_remote = remote_tags(&root, &["refs/tags/adr-*", "refs/tags/issue-*"])?;
-        let refs: Vec<String> = merged
-            .iter()
-            .filter(|tag| on_remote.contains(*tag))
-            .map(|tag| format!("refs/tags/{tag}"))
-            .collect();
-        if !refs.is_empty() {
-            let mut args = vec!["push", "--quiet", "origin", "--delete"];
-            args.extend(refs.iter().map(String::as_str));
-            git(&root, &args)?;
+        for tag in merged.iter().filter(|tag| on_remote.contains(*tag)) {
+            let full = format!("refs/tags/{tag}");
+            // タグごとに消す。一覧を取った後にほかの clone が消していれば、解放は済んでいる
+            let deleted = run(&root, &["push", "--quiet", "origin", "--delete", &full])?;
+            if !deleted.status.success() && remote_tags(&root, &[&full])?.contains(tag) {
+                return Err(format!(
+                    "cannot delete the reservation tag {tag} on origin: {}",
+                    String::from_utf8_lossy(&deleted.stderr).trim()
+                ));
+            }
         }
     }
     let mut args = vec!["tag", "-d"];
