@@ -68,7 +68,8 @@ filter-repo を Python のコールバックつきで繰り返し、前の回の
   だけを書き換えた対応表では、文書が残る旧と書き換えた新のどちらを指すのか決まらない）
 - 注釈つきのタグは fast-export の流れから読まず、元のタグのオブジェクトから `git mktag` で作り直す（fast-import の
   `tag` は `refs/tags/` に ref を作り、`reset` はタグを指せない。2026-10-11、git 2.55.0 で `mark :N not a commit`
-  で止まることを確かめた）。タグを指すタグは、指す方を先に作る。署名は、git の `parse_signed_buffer` と同じく、
+  で止まることを確かめた）。tagger の無い古いタグは、mktag の fsck が拒むので、元と同じ形のまま
+  `git hash-object --literally` で書く。タグを指すタグは、指す方を先に作る。署名は、git の `parse_signed_buffer` と同じく、
   署名の始まりの印（`gpg-interface.c` の 4 つ）で始まる最後の行から後を外す
 - シンボリックリンクの行き先は書き換えない（`remap` と同じ）
 - 書き換えるのは `refs/heads/` と、たどるとコミットに着く `refs/tags/`。シンボリック ref は行き先と一緒に動くので
