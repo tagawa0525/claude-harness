@@ -50,10 +50,17 @@ fn main() {
     }
 
     let mut raw = String::new();
-    if std::io::stdin().read_to_string(&mut raw).is_err() {
-        return;
-    }
-    let Some(input) = input::Input::parse(&raw) else {
+    let input = std::io::stdin()
+        .read_to_string(&mut raw)
+        .ok()
+        .and_then(|_| input::Input::parse(&raw));
+    let Some(input) = input else {
+        output::notice(
+            "claude-hooks: hook の入力を読めません。このコマンドを判定していません".to_string(),
+        );
+        if let Some(json) = output::render(&[], &output::take_notices()) {
+            println!("{json}");
+        }
         return;
     };
     if input.tool_name != "Bash" {
@@ -67,7 +74,8 @@ fn main() {
         Ok(shell) => {
             for rule in rules::all() {
                 if selected.is_empty() || selected.contains(&rule.name()) {
-                    // ルールは input と shell を読むだけで書き換えないので、panic の後もほかのルールに渡してよい
+                    // input と shell はルールが書き換えないので、panic の後もほかのルールに渡してよい。panic したルールが
+                    // それまでに足した理由（output::notice）は残る
                     let run = std::panic::AssertUnwindSafe(|| rules::run(*rule, &input, &shell));
                     match std::panic::catch_unwind(run) {
                         Ok(f) => findings.extend(f),
