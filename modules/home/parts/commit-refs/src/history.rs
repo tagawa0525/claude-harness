@@ -742,15 +742,23 @@ impl Rewrite<'_> {
             return Err(errors);
         }
         self.refs_replaced += count;
+        let taggers = values(&headers, b"tagger");
         let mut body = format!("object {object}\ntype {kind}\ntag {name}\n").into_bytes();
-        for tagger in values(&headers, b"tagger") {
+        for tagger in &taggers {
             body.extend_from_slice(b"tagger ");
-            body.extend_from_slice(&tagger);
+            body.extend_from_slice(tagger);
             body.push(b'\n');
         }
         body.push(b'\n');
         body.extend_from_slice(&message);
-        let new = git::git_stdin(self.top, &["mktag"], &body).map_err(one)?;
+        // mktag の fsck は tagger の行を要するので、tagger の無い古いタグは、元と同じ形のまま --literally で書く
+        // （元から変えるのは指すものと本文の番号だけで、形は元のタグのまま）。偽の tagger を足すと、元に無い行が増える
+        let args: &[&str] = if taggers.is_empty() {
+            &["hash-object", "-t", "tag", "-w", "--stdin", "--literally"]
+        } else {
+            &["mktag"]
+        };
+        let new = git::git_stdin(self.top, args, &body).map_err(one)?;
         let new = String::from_utf8_lossy(&new).trim().to_string();
         self.tag_finals.insert(oid.to_string(), new.clone());
         Ok(new)
