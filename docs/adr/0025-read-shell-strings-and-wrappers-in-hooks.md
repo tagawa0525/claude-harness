@@ -151,3 +151,12 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   `block-no-verify`、`guard-git-add`、`guard-git-push`、`block-main-commit` の節で、同じ土台が効くことを確かめる
 - `modules/home/parts/claude-hooks/src/unwrap.rs` と `shell.rs` の単体テストで、表の読み方、文字列の位置と
   スコープ、エスケープの外し方、深さの上限を確かめる
+
+## 補足
+
+- 2026-10-12: 読み違いを 3 つ直した（#342）。`bash` / `sh` のまとめた 1 文字のオプションの中の `-o` / `-O` は、値を
+  次の語から取り、残りの文字もオプションとして読む（`bash -oc pipefail '…'` の `-c`）。`env` の `-` は coreutils の
+  env.c と同じく getopt の後に一度だけ（`--` の後でも）読み、そこでオプションを終える。`sudo -i` と `ssh` の中の
+  コマンドは手元の cwd で走るとみなさず、`Shell::target_dir` はその場所の書き方（`~root`、`host:`）を返す。
+  展開しない `cd "$VAR"` の行き先と同じく手元に実在しないので、手元のリポジトリやブランチで決めるルールは判定
+  しない。帰結の「`ssh <接続先> …` の中の `cd` と git は……ルールは手元のディレクトリで判定する」は、この前の挙動
