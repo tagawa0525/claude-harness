@@ -20,6 +20,7 @@
 # 絶対パスの symlink として作る。git で追跡しない大きなデータ（キャッシュ・参照データ）を
 # worktree の間でコピーせず共有するため。
 #   - パスはリテラルだけ。絶対パス、. / .. を含むもの、ワイルドカード（* ? [）、! で始まるものはエラー
+#   - 同じパスや入れ子のパス、親が新しい worktree でディレクトリでない（ファイルか symlink）パスはエラー
 #   - 新しい worktree で git に無視されていなければエラー（symlink が未追跡ファイルに見える）。
 #     symlink はディレクトリではないので、`dir/` のようにディレクトリだけに一致するパターンでは
 #     無視されない。判定は symlink を作る前の、そのパスが無い状態で行う（git から見て同じ）
@@ -154,6 +155,7 @@ LINK_FILE="$DIR/.worktreelink"
 if [[ -f "$LINK_FILE" ]]; then
   SHARE_PATHS=()
   SHARE_ERRORS=()
+  SEEN_PATHS=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     # 前後の空白を除く
     line="${line#"${line%%[![:space:]]*}"}"
@@ -169,12 +171,46 @@ if [[ -f "$LINK_FILE" ]]; then
       SHARE_ERRORS+=(". / .. や空の要素を含むパスは使えません: $line")
       continue
     fi
+    # 同じパスや入れ子のパスは、後の ln -s が先の symlink をたどってメイン worktree の中に作ってしまう
+    overlap=0
+    for seen in "${SEEN_PATHS[@]}"; do
+      if [[ "$line" == "$seen" || "$line" == "$seen"/* || "$seen" == "$line"/* ]]; then
+        overlap=1
+        break
+      fi
+    done
+    SEEN_PATHS+=("$line")
+    if (( overlap )); then
+      SHARE_ERRORS+=("重なるパスがあります: $line")
+      continue
+    fi
+    # 親は無いか、symlink でないディレクトリであること（mkdir -p と ln -s が途中で落ちたり、
+    # symlink をたどってメイン worktree の中に作ったりしないように）
+    parent_ok=1
+    ancestor="$DIR"
+    IFS=/ read -ra parts <<< "$line"
+    for part in "${parts[@]:0:${#parts[@]}-1}"; do
+      ancestor="$ancestor/$part"
+      if [[ -L "$ancestor" || ( -e "$ancestor" && ! -d "$ancestor" ) ]]; then
+        parent_ok=0
+        break
+      fi
+    done
+    if (( ! parent_ok )); then
+      SHARE_ERRORS+=("親が新しい worktree でディレクトリではありません: $line")
+      continue
+    fi
     if [[ -e "$DIR/$line" || -L "$DIR/$line" ]]; then
       SHARE_ERRORS+=("新しい worktree に既にあります（追跡されているか、--carry-changes で持ち込んだ）: $line")
       continue
     fi
-    if ! git -C "$DIR" check-ignore -q -- "$line"; then
+    rc=0
+    ignore_err=$(git -C "$DIR" check-ignore -q -- "$line" 2>&1) || rc=$?
+    if (( rc == 1 )); then
       SHARE_ERRORS+=("git に無視されていません（symlink が未追跡ファイルに見える。dir/ でなく dir か /dir と書く）: $line")
+      continue
+    elif (( rc != 0 )); then
+      SHARE_ERRORS+=("git check-ignore が失敗しました（終了コード $rc: $ignore_err）: $line")
       continue
     fi
     SHARE_PATHS+=("$line")
