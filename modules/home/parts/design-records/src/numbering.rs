@@ -84,15 +84,11 @@ fn reservation_target(root: &Path, remote: bool, fetched: Option<String>) -> Res
 fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u32> {
     let _lock = lock(root)?;
     let remote = has_origin(root)?;
-    // タグを打つ先は、取ってきた origin の既定ブランチで決める
-    let fetched = if remote { fetch_origin(root)? } else { None };
-    let target = reservation_target(root, remote, fetched)?;
-    for attempt in 0..ATTEMPTS {
+    for _ in 0..ATTEMPTS {
         // やり直しでも、タグの後に既定ブランチを取る（拒まれた後に、相手がマージを push して予約を解放していると、
-        // タグだけではその番号が空いて見える）
-        if remote && attempt > 0 {
-            fetch_origin(root)?;
-        }
+        // タグだけではその番号が空いて見える）。タグを打つ先は、取ってきた origin の既定ブランチで、そのたびに決める
+        let fetched = if remote { fetch_origin(root)? } else { None };
+        let target = reservation_target(root, remote, fetched)?;
         let used = used_numbers(root, kind)?;
         let number = match wanted {
             Some(n) if used.contains(&n) => {
