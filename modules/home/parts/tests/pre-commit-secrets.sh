@@ -4,7 +4,7 @@
 # 止めることを検証する（ADR-0015）
 # =============================================================================
 # コミットの時点の index を見るので、同じコマンドの git add と commit -a で足した変更も検査する。漏えいは場所と
-# ルール ID だけを出し、値は出さない。ALLOW_SECRET_COMMIT=1 で迂回でき、Claude Code のセッションでなければ
+# ルール ID だけを出し、値は出さない。ALLOW_SECRET_COMMIT=<理由> で迂回でき、Claude Code のセッションでなければ
 # 検査しない。プロジェクトのローカルの pre-commit があっても、fork でも検査する。
 #
 # hook のファイルを nix build で作る（hook が store のパスで呼ぶ gitleaks も一緒にビルドされる）。
@@ -124,6 +124,11 @@ if ALLOW_SECRET_COMMIT=force CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2
 else
   ok "ALLOW_SECRET_COMMIT=force は止める（幅 5）"
 fi
+if ALLOW_SECRET_COMMIT="a　　　b" CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "全角空白で幅を水増しした値で迂回できた"
+else
+  ok "全角空白で幅を水増しした値は止める"
+fi
 if ALLOW_SECRET_COMMIT=abcdef CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
   ok "ALLOW_SECRET_COMMIT=abcdef で迂回できる（幅 6）"
 else
@@ -230,6 +235,20 @@ elif grep -q "k.txt:1" "$WORK/out"; then
   ok "競合の無いマージでも、相手のブランチの鍵で止める"
 else
   ng "競合の無いマージで止めたが、鍵の場所を出さない"
+fi
+
+# --- 6b. 短い値のエスケープは、gitleaks が失敗したときも理由を求める行を足す（claude-hooks と同じ）---------
+REPO="$WORK/broken-short"
+new_repo "$REPO"
+printf 'this is not toml [\n' > "$REPO/.gitleaks.toml"
+echo plain > "$REPO/e.txt"
+git -C "$REPO" add e.txt
+if ALLOW_SECRET_COMMIT=1 CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: e" >"$WORK/out" 2>&1; then
+  ng "短い値のエスケープで、gitleaks が失敗したのにコミットを通した"
+elif grep -q "gitleaks が失敗しました" "$WORK/out" && grep -q "ALLOW_SECRET_COMMIT には理由を記載" "$WORK/out"; then
+  ok "短い値のエスケープは、gitleaks が失敗したときも理由を求める行を足す"
+else
+  ng "短い値のエスケープで gitleaks が失敗したが、失敗と理由の両方を出さない"
 fi
 
 # --- 7. gitleaks が失敗したら、漏えいと分けて理由を出して止める ------------------------------------------

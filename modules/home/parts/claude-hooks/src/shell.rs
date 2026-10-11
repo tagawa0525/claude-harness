@@ -490,8 +490,15 @@ mod tests {
             Shell::parse("git push").escape("ALLOW_PROTECTED_PUSH"),
             Escape::Absent
         ));
-        // 内側の空白で幅を水増しできない
+        // 内側の空白（全角空白、NBSP を含む）で幅を水増しできない
         assert!(matches!(esc("'a    b'"), Escape::Short));
+        assert!(matches!(esc("'a　　　b'"), Escape::Short));
+        assert!(matches!(esc("'a\u{a0}\u{a0}\u{a0}\u{a0}b'"), Escape::Short));
+        assert!(matches!(esc("'　　　'"), Escape::Absent));
+        // 展開を含む値は、記録に理由が残らないので理由とみなさない
+        assert!(matches!(esc("$REASON"), Escape::Short));
+        assert!(matches!(esc("\"$(cat r.txt)\""), Escape::Short));
+        assert!(matches!(esc("\"rebase のみ $X\""), Escape::Short));
         // 0 と空（空白だけを含む）は、付けていないものとして扱う
         assert!(matches!(esc("0"), Escape::Absent));
         assert!(matches!(esc("''"), Escape::Absent));

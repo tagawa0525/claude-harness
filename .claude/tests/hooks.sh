@@ -268,9 +268,27 @@ for value in 1 true force allow 確認; do
   out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+  # 本来の文言（何を止めたか、正規の直し方）は残す
+  assert_contains "$(reason "$out")" "force push は禁止"
   assert_not_contains "$(reason "$out")" "6"
   assert_not_contains "$(reason "$out")" "文字"
 done
+
+it "escape: 展開（\$VAR、\$(…)）を含む値は理由とみなさない（記録に理由が残らない）"
+for value in '$REASON' '"$(cat r.txt)"' '"rebase のみ $X"'; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+done
+
+it "escape: 全角空白や NBSP でも幅を水増しできず、それだけの値は付けていない扱い"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a　　　b" git push --force')
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a    b" git push --force')
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="　　　" git push --force')
+assert_contains "$(reason "$out")" "force push は禁止"
+assert_not_contains "$(reason "$out")" "理由を記載"
 
 it "escape: 空白を除いた幅（ASCII は 1、それ以外は 2）が 6 以上の理由なら通す"
 for value in aaaaaa 差分同一 '"  abcdef  "' '"rebase のみ"'; do
@@ -728,6 +746,17 @@ out=$(PATH="$(minimal_path)" run_hook block-secret-commit 'git commit -m "chore:
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "gitleaks が PATH にありません"
 
+it "block-secret-commit: ALLOW_SECRET_COMMIT=1 は検査を走らせ、漏えいがあれば本来の文言に理由を求める行を足す"
+fake_gitleaks "$LEAK_JSON" ok
+out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "conf.txt:3"
+assert_contains "$(reason "$out")" "ALLOW_SECRET_COMMIT には理由を記載"
+assert_contains "$(fake_log gitleaks)" "--staged"
+fake_gitleaks ok ok
+out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: a"')
+assert_eq allow "$(decision "$out")"
+
 it "block-secret-commit: ALLOW_SECRET_COMMIT=<理由> で迂回できる（gitleaks を呼ばない）"
 fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=テスト用 git commit -m "chore: conf"')
@@ -1034,6 +1063,12 @@ assert_contains "$(reason "$out")" "レビューが実行されていません"
 it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=<理由> なら未レビューの head でもマージできる"
 out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=テスト用 $MERGE_CMD")
 assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=1 は、本来の文言に理由を求める行を足して止める"
+out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=1 $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビューが実行されていません"
+assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD には理由を記載"
 
 # リベース（main の追従）で hash だけが変わった head は、レビュー済みの差分と同じなので再レビューを求めない。
 # 差分が変わっていれば今まで通り deny する（変わったのに通す誤りを許さない）
@@ -1375,6 +1410,12 @@ it "pre-merge-check: ALLOW_MULTI_TOPIC=<理由> なら新しい ADR が複数で
 make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS"
 out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=テスト用 $MERGE_CMD")
 assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: ALLOW_MULTI_TOPIC=1 は、本来の文言に理由を求める行を足して止める"
+out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=1 $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
 
 it "pre-merge-check: PR の変更ファイルを取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo abc' 'echo "error connecting to api.github.com" >&2; exit 1'
