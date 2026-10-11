@@ -384,6 +384,8 @@ impl Rewrite<'_> {
             .replace_by(label, data, errors, |token, old, target, errors| {
                 let commit = Self::commit_of(label, token, old, target, errors)?;
                 match self.finals.get(commit) {
+                    // 最後の番号の先頭が語と同じなら、置き換えたことにしない（変わらないコミットを指す語を数えない）
+                    Some(last) if last.starts_with(token) => None,
                     Some(last) => Some(last.clone()),
                     // 依存の順に流すので、書き換えるコミットは先に流れている
                     None if self.current.contains(commit) => {

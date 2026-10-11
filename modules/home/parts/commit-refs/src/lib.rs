@@ -151,8 +151,8 @@ impl Map {
 
     /// `data` の中の、対応表の旧に 1 つだけ当たる語を、`resolve` が返す新の番号の先頭（語と同じ桁数）に置き換える。
     /// `resolve` は文書の語と、それが当たった旧と、旧が書き換えでどうなったかを受け、置き換えない語には None を返す（止める理由は `errors`
-    /// に積む）。曖昧な語は置き換えずに、`label` を添えた理由を `errors` に積む。置き換えた内容と、変わった語の数を
-    /// 返す。
+    /// に積む）。曖昧な語は置き換えずに、`label` を添えた理由を `errors` に積む。置き換えた内容と、置き換えた語の数を
+    /// 返す（新の先頭が語と同じでも、`resolve` が新を返した語は数える）。
     pub fn replace_by(
         &self,
         label: &str,
@@ -180,7 +180,7 @@ impl Map {
                 resolve(token, old, &self.targets[old], errors)
             });
             match new {
-                Some(new) if new.as_bytes()[..word.len()] != *word => {
+                Some(new) => {
                     out.extend_from_slice(&new.as_bytes()[..word.len()]);
                     count += 1;
                 }
