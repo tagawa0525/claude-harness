@@ -6,53 +6,76 @@ use std::process::{Command, Output, Stdio};
 
 use std::io::Write;
 
-/// テストで作る一時的なリポジトリ。落ちたときも含めて、片付けで消す。
+/// テストで作る一時的なリポジトリ。落ちたときも含めて、片付けで消す。作業ツリーは `root/work` に置き、bare の
+/// リモートとほかの clone は `root` の下に並べる（作業ツリーの中に置くと `git add -A` が拾う）。
 struct TempRepo {
+    root: PathBuf,
     dir: PathBuf,
 }
 
 impl TempRepo {
-    /// プロセスと時刻とテストの名前で一意にした、main ブランチの空のリポジトリ
+    /// プロセスと時刻とテストの名前で一意にした、空のコミットを 1 つ持つ main ブランチのリポジトリ。CLI が作る
+    /// コミットとタグのために、名前とメールをリポジトリの設定に書く
     fn new(name: &str) -> Self {
+        let repo = Self::empty(name);
+        repo.git(&["commit", "-q", "--allow-empty", "-m", "chore: init"]);
+        repo
+    }
+
+    /// コミットの無い main ブランチのリポジトリ
+    fn empty(name: &str) -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
+        let root = std::env::temp_dir().join(format!(
             "design-records-{name}-{}-{nanos}",
             std::process::id()
         ));
-        fs::create_dir(&dir).unwrap();
-        let repo = TempRepo { dir };
+        let dir = root.join("work");
+        fs::create_dir_all(&dir).unwrap();
+        let repo = TempRepo { root, dir };
         repo.git(&["init", "-q", "-b", "main"]);
+        configure(&repo.dir);
         repo
     }
 
-    /// git を走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
-    /// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）
+    /// `root/remote.git` を bare のリモート origin にし、main を送る
+    fn with_remote(name: &str) -> Self {
+        let repo = Self::new(name);
+        let bare = repo.root.join("remote.git");
+        git_in(&repo.root, &["init", "-q", "--bare", "remote.git"]);
+        repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+        repo.git(&["push", "-q", "-u", "origin", "main"]);
+        repo
+    }
+
+    /// origin を `root/<name>` に clone する
+    fn clone_remote(&self, name: &str) -> PathBuf {
+        git_in(&self.root, &["clone", "-q", "remote.git", name]);
+        let dir = self.root.join(name);
+        configure(&dir);
+        dir
+    }
+
+    /// タグ `name` のメッセージの 1 行目（注釈つきでなければ空）
+    fn tag_message(&self, name: &str) -> String {
+        tag_message_in(&self.dir, name)
+    }
+
+    /// origin のタグ `name` の行（無ければ空）
+    fn remote_tag(&self, name: &str) -> String {
+        self.git(&[
+            "ls-remote",
+            "--tags",
+            "origin",
+            &format!("refs/tags/{name}"),
+        ])
+    }
+
+    /// git を走らせ、成功を確かめて標準出力を返す
     fn git(&self, args: &[&str]) -> String {
-        let mut command = Command::new("git");
-        command
-            .current_dir(&self.dir)
-            .args([
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "core.hooksPath=/dev/null",
-            ])
-            .args(args);
-        isolate(&mut command);
-        let output = command.output().unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap()
+        git_in(&self.dir, args)
     }
 
     fn write(&self, path: &str, text: &str) {
@@ -78,13 +101,66 @@ impl TempRepo {
     fn run(&self, args: &[&str]) -> Output {
         self.run_in("", args)
     }
+
+    /// CLI を、`bin` を PATH の先頭に置いて走らせる（git を差し替える）
+    fn run_with_bin(&self, bin: &Path, args: &[&str]) -> Output {
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
+        command.current_dir(&self.dir).env("PATH", path).args(args);
+        isolate(&mut command);
+        command.output().unwrap()
+    }
 }
 
 impl Drop for TempRepo {
     fn drop(&mut self) {
         // 片付けに失敗しても、テストの結果は変えない（一時的なディレクトリが残るだけ）
-        let _ = fs::remove_dir_all(&self.dir);
+        let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// git を `dir` で走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
+/// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let mut command = Command::new("git");
+    command
+        .current_dir(dir)
+        .args(["-c", "core.hooksPath=/dev/null"])
+        .args(args);
+    isolate(&mut command);
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// CLI が作るコミットとタグのための、リポジトリの設定（署名と hook は使わない）
+fn configure(dir: &Path) {
+    for (key, value) in [
+        ("user.name", "t"),
+        ("user.email", "t@t"),
+        ("commit.gpgsign", "false"),
+        ("tag.gpgsign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git_in(dir, &["config", key, value]);
+    }
+}
+
+fn tag_message_in(dir: &Path, name: &str) -> String {
+    git_in(
+        dir,
+        &[
+            "for-each-ref",
+            "--format=%(contents:subject)",
+            &format!("refs/tags/{name}"),
+        ],
+    )
+    .trim()
+    .to_string()
 }
 
 fn isolate(command: &mut Command) {
@@ -536,4 +612,334 @@ fn unknown_commands_show_usage() {
     let out = run(&std::env::temp_dir(), &["frobnicate"], None);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("Usage:"), "{}", stderr(&out));
+}
+
+/// タグ `name` が指すコミット
+fn tag_target(dir: &Path, name: &str) -> String {
+    git_in(dir, &["rev-parse", &format!("{name}^{{commit}}")])
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn new_reserves_the_number_with_an_annotated_tag_on_the_default_branch() {
+    let t = TempRepo::new("reserve");
+    let main = t.git(&["rev-parse", "main"]).trim().to_string();
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.git(&["commit", "-q", "--allow-empty", "-m", "chore: topic"]);
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.git(&["cat-file", "-t", "adr-0001"]).trim(), "tag");
+    assert_eq!(t.tag_message("adr-0001"), "use-foo");
+    // ブランチの先端ではなく、既定ブランチの先端に打つ
+    assert_eq!(tag_target(&t.dir, "adr-0001"), main);
+}
+
+#[test]
+fn new_skips_numbers_reserved_by_tags_of_its_kind() {
+    let t = TempRepo::new("reserved");
+    t.git(&["tag", "-a", "adr-0004", "-m", "use-d", "main"]);
+    t.git(&["tag", "-a", "issue-0009", "-m", "fix-i", "main"]);
+    assert_eq!(
+        stdout(&t.run(&["new", "use-e", "e を使う"])),
+        "docs/adr/0005-use-e.md\n"
+    );
+    assert_eq!(
+        stdout(&t.run(&["new", "--kind", "issue", "fix-j", "j を直す"])),
+        "docs/issues/0010-fix-j.md\n"
+    );
+}
+
+#[test]
+fn new_fails_in_a_repository_without_commits() {
+    let t = TempRepo::empty("nocommit");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+}
+
+#[test]
+fn new_pushes_the_reservation_after_fetching_tags_of_other_clones() {
+    let t = TempRepo::with_remote("push");
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0003", "-m", "use-c", "origin/main"],
+    );
+    git_in(&other, &["push", "-q", "origin", "refs/tags/adr-0003"]);
+    let out = t.run(&["new", "use-d", "d を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0004-use-d.md\n");
+    assert!(t.remote_tag("adr-0004").contains("refs/tags/adr-0004"));
+    assert_eq!(tag_message_in(&other, "adr-0003"), "use-c");
+}
+
+#[test]
+fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
+    let t = TempRepo::with_remote("race");
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-other", "origin/main"],
+    );
+    // 最初の fetch の直後に、ほかの clone が同じ番号を push する git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let mark = t.root.join("raced");
+    let fake = bin.join("git");
+    fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in *\" fetch \"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} -C {other} push -q origin refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            mark = mark.display(),
+            other = other.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "docs/adr/0002-use-foo.md\n");
+    assert!(!t.dir.join("docs/adr/0001-use-foo.md").exists());
+    assert_eq!(t.tag_message("adr-0001"), "use-other");
+    assert_eq!(t.tag_message("adr-0002"), "use-foo");
+    assert!(t.remote_tag("adr-0002").contains("refs/tags/adr-0002"));
+}
+
+#[test]
+fn new_fails_without_writing_or_tagging_when_the_remote_is_unreachable() {
+    let t = TempRepo::with_remote("unreachable");
+    let gone = t.root.join("gone.git");
+    t.git(&["remote", "set-url", "origin", gone.to_str().unwrap()]);
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+    assert_eq!(t.git(&["tag", "--list"]), "");
+}
+
+#[test]
+fn new_issue_reserves_a_number_and_writes_the_title() {
+    let t = TempRepo::new("issue");
+    t.write("docs/issues/0003-fix-c.md", "---\nstatus: open\n---\n");
+    t.write("docs/adr/0007-use-g.md", "");
+    t.commit_all("docs: c and g");
+    let out = t.run(&["new", "--kind", "issue", "fix-bar", "bar を直す"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/issues/0004-fix-bar.md\n");
+    assert_eq!(t.read("docs/issues/0004-fix-bar.md"), "# bar を直す\n");
+    assert_eq!(t.tag_message("issue-0004"), "fix-bar");
+    let out = t.run(&["new", "--kind", "plan", "x", "x"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+}
+
+/// ブランチ topic で ADR-0001（use-b）を足した後、main にも機能より前の ADR-0001（use-a、タグ無し）が入り、
+/// topic を main の上に rebase したリポジトリ
+fn duplicated_after_rebase(name: &str) -> TempRepo {
+    let t = TempRepo::new(name);
+    t.write("notes.md", "前置き\n1\n2\n3\n");
+    t.commit_all("docs: notes");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let b = "docs/adr/0001-use-b.md";
+    t.write(b, &(t.read(b) + "\n[本文](0001-use-b.md) と ADR-0001\n"));
+    t.write("notes.md", "ADR-0001 の続き\n前置き\n1\n2\n3\n");
+    t.commit_all("docs(adr): b");
+    t.git(&["switch", "-q", "main"]);
+    t.write(
+        "docs/adr/0001-use-a.md",
+        &design_records::template(1, "a を使う", "2026-10-01"),
+    );
+    t.write("notes.md", "前置き\n1\n2\n3\nADR-0001 は a\n");
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    t
+}
+
+#[test]
+fn renumber_moves_the_branch_record_and_its_added_references_in_one_commit() {
+    let t = duplicated_after_rebase("renumber");
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+    let head = t.git(&["rev-parse", "HEAD"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+    assert!(!t.dir.join("docs/adr/0001-use-b.md").exists());
+    let b = t.read("docs/adr/0002-use-b.md");
+    assert!(b.contains("# ADR-0002: b を使う\n"), "{b}");
+    assert!(b.contains("[本文](0002-use-b.md) と ADR-0002\n"), "{b}");
+    // main から来た行は main の ADR-0001（use-a）を指すので変えない
+    assert_eq!(
+        t.read("notes.md"),
+        "ADR-0002 の続き\n前置き\n1\n2\n3\nADR-0001 は a\n"
+    );
+    assert!(
+        t.read("docs/adr/0001-use-a.md")
+            .contains("# ADR-0001: a を使う")
+    );
+    assert_eq!(t.git(&["rev-parse", "HEAD~1"]), head);
+    assert_eq!(
+        t.git(&["log", "-1", "--format=%s"]).trim(),
+        "docs: renumber ADR-0001 to ADR-0002"
+    );
+    assert_eq!(t.git(&["status", "--porcelain"]), "");
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+}
+
+#[test]
+fn renumber_takes_an_unused_explicit_number() {
+    let t = duplicated_after_rebase("explicit");
+    t.git(&["tag", "-a", "adr-0005", "-m", "use-e", "main"]);
+    // 使った番号（履歴とタグ）には振らない
+    for used in ["1", "5"] {
+        let out = t.run(&["renumber", "1", used]);
+        assert!(!out.status.success(), "{used}: {}", stdout(&out));
+    }
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
+    let out = t.run(&["renumber", "0001", "0007"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0007-use-b.md\n");
+    assert_eq!(t.tag_message("adr-0007"), "use-b");
+}
+
+#[test]
+fn renumber_refuses_records_on_the_default_branch_and_uncommitted_changes() {
+    let t = duplicated_after_rebase("refuse");
+    t.write("notes.md", "書きかけ\n");
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    t.git(&["checkout", "-q", "--", "notes.md"]);
+    t.git(&["switch", "-q", "main"]);
+    // main の上では、ADR-0001（use-a）は既定ブランチにある
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-a.md").exists());
+    assert_eq!(t.git(&["status", "--porcelain"]), "");
+}
+
+#[test]
+fn renumber_issue_rewrites_hash_references_and_file_names() {
+    let t = TempRepo::new("renumber-issue");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "--kind", "issue", "fix-b", "b を直す"]);
+    t.write(
+        "notes.md",
+        "#0001 を直す（0001-fix-b.md）。#00012 と x#0001 は別\n",
+    );
+    t.commit_all("docs: b");
+    t.git(&["switch", "-q", "main"]);
+    t.write("docs/issues/0001-fix-a.md", "# a を直す\n");
+    t.commit_all("docs: a");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stdout(&out).contains("number 0001 is also used by"),
+        "{}",
+        stdout(&out)
+    );
+    let out = t.run(&["renumber", "--kind", "issue", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/issues/0002-fix-b.md\n");
+    assert_eq!(
+        t.read("notes.md"),
+        "#0002 を直す（0002-fix-b.md）。#00012 と x#0001 は別\n"
+    );
+    assert_eq!(t.read("docs/issues/0001-fix-a.md"), "# a を直す\n");
+    assert_eq!(t.tag_message("issue-0002"), "fix-b");
+    assert_eq!(
+        t.git(&["log", "-1", "--format=%s"]).trim(),
+        "docs: renumber issue #0001 to #0002"
+    );
+}
+
+#[test]
+fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
+    let t = TempRepo::new("tag-slug");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.git(&["add", "-A"]);
+    t.git(&["tag", "-a", "adr-0002", "-m", "use-other", "main"]);
+    t.write(
+        "docs/adr/0002-use-b.md",
+        &design_records::template(2, "b を使う", "2026-10-01"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        "docs/adr/0002-use-b.md: warning: number 0002 is reserved for `use-other` by tag adr-0002; \
+         if another record took the number, run `design-records renumber 2`\n"
+    );
+}
+
+#[test]
+fn prune_deletes_tags_of_records_merged_into_the_remote_default_branch() {
+    let t = TempRepo::with_remote("prune");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "-c", "other", "main"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    t.commit_all("docs(adr): b");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    // ローカルでマージしただけで、origin の main にはまだ無い
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.tag_message("adr-0001"), "use-a");
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+    t.git(&["push", "-q", "origin", "main"]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0001\n");
+    assert_eq!(t.git(&["tag", "--list", "adr-0001"]), "");
+    assert_eq!(t.remote_tag("adr-0001"), "");
+    // マージしていない記録のタグは残す
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+    assert!(t.remote_tag("adr-0002").contains("adr-0002"));
+}
+
+#[test]
+fn prune_without_a_remote_reads_the_local_default_branch() {
+    let t = TempRepo::new("prune-local");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "--kind", "issue", "fix-a", "a を直す"]);
+    t.commit_all("docs: a");
+    t.git(&["switch", "-q", "main"]);
+    // 番号は履歴にあっても、slug が違う記録のタグは消さない
+    t.write("docs/issues/0002-fix-b.md", "# b を直す\n");
+    t.commit_all("docs: b");
+    t.git(&["tag", "-a", "issue-0002", "-m", "fix-other", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "issue-0001\n");
+    assert_eq!(t.git(&["tag", "--list"]), "issue-0002\n");
 }
