@@ -43,7 +43,10 @@ let
     ".yml"
     ".json"
   ];
-  jaTermsGlobs = lib.concatMapStringsSep " " (ext: "'*${ext}'") ([ ".md" ] ++ jaTermsCodeExtensions);
+  # prh の辞書（prh.yml）は誤った語を並べるので外す
+  jaTermsGlobs =
+    lib.concatMapStringsSep " " (ext: "'*${ext}'") ([ ".md" ] ++ jaTermsCodeExtensions)
+    + " ':(exclude,glob)**/prh.yml'";
   jaTerms = "${textlint}/bin/textlint --config ${jaTermsConfig}";
 in
 {
