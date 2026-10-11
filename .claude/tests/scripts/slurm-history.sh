@@ -95,6 +95,48 @@ assert_contains "$out" "other"
 assert_not_contains "$out" "gone"
 assert_contains "$out" "SKIPPED: 1"
 
+it "除く行の時刻が壊れていても（開始前の CANCELLED で StartTime=Unknown）表を出し、SKIPPED に数える"
+{
+  job 1 ok COMPLETED 10 2026-10-11T10:00:00 2026-10-11T10:05:00 1
+  job 2 gone CANCELLED 10 Unknown 2026-10-11T10:05:00 0
+} > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "SKIPPED: 1"
+
+it "終了が開始より前の COMPLETED 行は読めない行として exit 1"
+job 3 neg COMPLETED 10 2026-10-11T10:05:00 2026-10-11T10:00:00 1 > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "1 行目"
+
+it "--by-name の ESTIMATE・ELAPSED・RATIO は見積もりのあるジョブだけで求める（RUNS は全部）"
+{
+  job 1 a COMPLETED 10 2026-10-11T10:00:00 2026-10-11T10:05:00 1
+  job 2 a COMPLETED UNLIMITED 2026-10-11T10:00:00 2026-10-11T12:00:00 1
+} > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
+line=$(grep -E '^a ' <<<"$out")
+assert_contains "$line" " 2 "
+assert_contains "$line" "0:10:00"
+assert_contains "$line" "0:05:00"
+assert_contains "$line" "0.50"
+
+it "--by-name の MAX_RATIO は、最初のジョブの比が 0 でも最大を出す"
+{
+  job 1 a COMPLETED 10 2026-10-11T10:00:00 2026-10-11T10:00:00 1
+  job 2 a COMPLETED 10 2026-10-11T10:00:00 2026-10-11T10:05:00 1
+} > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
+line=$(grep -E '^a ' <<<"$out")
+assert_contains "$line" " 0.50"
+assert_contains "$line" "0.25"
+
+it "ファイルを 2 つ渡すと exit 1（黙って後ろだけ読まない）"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR"
+
 it "ファイルが無ければ理由を出して exit 1"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$TEST_ROOT/none" 2>&1)
 assert_eq 1 $?
