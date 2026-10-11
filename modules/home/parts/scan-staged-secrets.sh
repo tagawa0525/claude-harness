@@ -7,10 +7,10 @@
 
 [ "${CLAUDECODE:-}" = "1" ] || exit 0
 
-# エスケープの値は理由の文字列。空白を除き、ASCII を 1、それ以外（UTF-8 の先頭バイトで数える）を 2 として
-# 幅 6 以上なら通す。0 と空は付けていないものとして扱う。短い値は、漏えいを見つけたときに理由を求めて止める
-# （しきい値は文言に出さない。長さに合わせた無意味な値を誘うため）
-reason=$(printf '%s' "${ALLOW_SECRET_COMMIT:-}" | tr -d '[:space:]')
+# エスケープの値は理由の文字列。空白（ASCII の空白、全角空白 U+3000、NBSP U+00A0）を除き、ASCII を 1、それ以外
+# （UTF-8 の先頭バイトで数える）を 2 として幅 6 以上なら通す。0 と空は付けていないものとして扱う。短い値は、
+# 止めるときに本来の文言に理由を求める行を足す（しきい値は文言に出さない。長さに合わせた無意味な値を誘うため）
+reason=$(printf '%s' "${ALLOW_SECRET_COMMIT:-}" | LC_ALL=C sed 's/\xe3\x80\x80//g; s/\xc2\xa0//g' | tr -d '[:space:]')
 escape=absent
 if [ -n "$reason" ] && [ "$reason" != "0" ]; then
   ascii=$(printf '%s' "$reason" | LC_ALL=C tr -d '\200-\377' | wc -c)
@@ -35,20 +35,22 @@ count=0
 if [ -n "$leaks" ]; then
   count=$(printf '%s' "$leaks" | jq 'length' 2>/dev/null) || count=0
 fi
+reason_required() {
+  [ "$escape" = short ] || return 0
+  echo "   ALLOW_SECRET_COMMIT には理由を記載してください（ALLOW_SECRET_COMMIT=<理由> の形で、値はそのまま記録に残ります）"
+}
 if [ "$rc" -eq 1 ] && [ "${count:-0}" -gt 0 ]; then
-  if [ "$escape" = short ]; then
-    echo "❌ ALLOW_SECRET_COMMIT には理由を記載してください（ALLOW_SECRET_COMMIT=<理由> の形で、値はそのまま記録に残ります）"
-    exit 1
-  fi
   echo "❌ 機密情報らしき内容がコミット対象に含まれています（gitleaks）:"
   printf '%s\n' "$leaks" | jq -r '.[] | "- \(.File):\(.StartLine) (\(.RuleID))"'
   echo "   対処: git restore --staged <file> で外し、必要なら .gitignore に足してください。push 済みの値はローテーションしてください"
   echo "   誤検出なら、その行に gitleaks:allow を書いてください（.gitleaksignore / .gitleaks.toml でも可）"
   echo "   どうしても外すときは、理由を値にして ALLOW_SECRET_COMMIT=<理由> を付けてください（理由はそのまま記録に残ります）。機械で判定できる理由なら hook の不足なので、issue に書いてください"
+  reason_required
   exit 1
 fi
 if [ "$rc" -ne 0 ] || [ -s "$err" ]; then
   echo "❌ gitleaks が失敗しました（終了コード $rc）。機密情報を検査できないので、コミットを止めます:"
   sed 's/^/   /' "$err"
+  reason_required
   exit 1
 fi
