@@ -11,6 +11,9 @@ let
   # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook が store のパスで呼び、
   # 手で呼べるよう PATH にも入れる
   commit-refs = pkgs.callPackage ./commit-refs/package.nix { };
+  # 機密情報の検査（ADR-0015）。pre-commit が store のパスで呼ぶ
+  gitleaks = "${pkgs.gitleaks}/bin/gitleaks";
+  jq = "${pkgs.jq}/bin/jq";
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
@@ -111,6 +114,35 @@ in
             exit 1
           fi
         fi
+      fi
+
+      # 機密情報の検査（ADR-0015）。Claude Code のセッションのコミットで、コミットに入る中身（git add と
+      # commit -a の後の index）を gitleaks で見る。PreToolUse と違ってコミットするリポジトリの中で走るので、
+      # 対象のディレクトリを推さずに済み、同じコマンドの git add も見落とさない。ローカルの pre-commit を呼ぶ
+      # 前に走らせ、fork でも飛ばさない。値は出さず、場所とルール ID だけを出す
+      # 検証: modules/home/parts/tests/pre-commit-secrets.sh
+      if [ "''${CLAUDECODE:-}" = "1" ] && [ "''${ALLOW_SECRET_COMMIT:-}" != "1" ]; then
+        LEAKS_ERR=$(mktemp)
+        leaks_rc=0
+        LEAKS=$(${gitleaks} git --staged --no-banner --redact --report-format json --report-path - . 2>"$LEAKS_ERR") \
+          || leaks_rc=$?
+        case $leaks_rc in
+          0) rm -f "$LEAKS_ERR" ;;
+          1)
+            rm -f "$LEAKS_ERR"
+            echo "❌ 機密情報らしき内容がコミット対象に含まれています（gitleaks）:"
+            printf '%s\n' "$LEAKS" | ${jq} -r '.[] | "- \(.File):\(.StartLine) (\(.RuleID))"'
+            echo "   対処: git restore --staged <file> で外し、必要なら .gitignore に足してください。push 済みの値はローテーションしてください"
+            echo "   誤検出なら、その行に gitleaks:allow を書く（.gitleaksignore / .gitleaks.toml でも可）か、コマンドに ALLOW_SECRET_COMMIT=1 を付けてください"
+            exit 1
+            ;;
+          *)
+            echo "❌ gitleaks が失敗しました（終了コード $leaks_rc）。機密情報を検査できないので、コミットを止めます:"
+            sed 's/^/   /' "$LEAKS_ERR"
+            rm -f "$LEAKS_ERR"
+            exit 1
+            ;;
+        esac
       fi
 
       # マージを締めるコミット（競合を解決した後の git commit / git merge --continue、
