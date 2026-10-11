@@ -1461,3 +1461,70 @@ fn dash_c_runs_in_another_worktree() {
     );
     assert!(!out.status.success());
 }
+
+#[test]
+fn new_counts_a_record_merged_and_pruned_between_its_fetches() {
+    let t = TempRepo::with_remote("merge-between");
+    let other = t.clone_remote("other");
+    git_in(&other, &["switch", "-q", "-c", "topic"]);
+    let out = run(&other, &["new", "use-a", "a を使う"], None);
+    assert!(out.status.success(), "{}", stderr(&out));
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): a"]);
+    git_in(&other, &["switch", "-q", "main"]);
+    git_in(
+        &other,
+        &["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"],
+    );
+    // この clone がブランチを取ってきた直後に、ほかの clone がマージを push して予約を解放する git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let mark = t.root.join("merged");
+    fs::write(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in *\" fetch \"*\"+refs/heads/\"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} -C {other} push -q origin main && {real} -C {other} push -q origin --delete refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            mark = mark.display(),
+            other = other.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["new", "use-b", "b を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+}
+
+#[test]
+fn new_falls_back_to_main_when_the_remote_head_dangles() {
+    let t = TempRepo::with_remote("remote-head");
+    git_in(
+        &t.root.join("remote.git"),
+        &["symbolic-ref", "HEAD", "refs/heads/gone"],
+    );
+    // origin を足しただけで、まだ何も fetch していない clone
+    let fresh = TempRepo::new("remote-head-fresh");
+    let bare = t.root.join("remote.git");
+    fresh.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    let out = fresh.run(&["new", "use-a", "a を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let main = t.git(&["rev-parse", "main"]).trim().to_string();
+    assert_eq!(tag_target(&fresh.dir, "adr-0001"), main);
+}
