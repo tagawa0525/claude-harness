@@ -84,10 +84,10 @@ check() {
 
   # 正しく呼べば claude-hooks は 0 で終わり、標準エラーに何も出さない。知らないルール（使い方を出して 2）と
   # 拾われた panic（標準エラーと 0）は、出力が空で allow に見えるので、ここで止める
-  local status=0
-  out=$(cd "$repo" && jq -n '{hook_event_name: "PreToolUse", tool_name: "Bash",
-        tool_input: {command: "git commit -m msg"}}' |
-    "$HOOK_BIN" pre-tool-use --rule block-main-commit 2>"$WORK/hook-stderr") || status=$?
+  local input status=0
+  input=$(jq -n '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "git commit -m msg"}}')
+  out=$(cd "$repo" && "$HOOK_BIN" pre-tool-use --rule block-main-commit <<<"$input" 2>"$WORK/hook-stderr") ||
+    status=$?
   if ((status != 0)) || [[ -s "$WORK/hook-stderr" ]]; then
     echo "claude-hooks が失敗しました（--rule block-main-commit、終了コード $status）: $desc" >&2
     cat "$WORK/hook-stderr" >&2
