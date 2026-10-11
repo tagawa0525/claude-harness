@@ -620,6 +620,10 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
                         None => (t.clone(), None),
                     };
+                    // どの包みも --help / --version は表示して終わり、後ろの語を走らせない
+                    if name == "--help" || name == "--version" {
+                        runs = false;
+                    }
                     match long_option(wrapper, &name) {
                         Some((_, short, true)) => {
                             let value = attached.or_else(|| words.pop_front().map(|a| a.text));
