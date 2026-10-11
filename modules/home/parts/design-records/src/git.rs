@@ -142,10 +142,10 @@ const FETCH_REFSPECS: [&str; 3] = [
     "+refs/tags/issue-*:refs/tags/issue-*",
 ];
 
-/// origin のブランチと予約のタグを取ってくる。
-pub fn fetch_origin(root: &Path) -> Result<()> {
+/// origin の予約のタグを取ってくる。`branches` なら、ブランチも取ってくる。
+pub fn fetch_origin(root: &Path, branches: bool) -> Result<()> {
     let mut args = vec!["fetch", "--quiet", "--no-tags", "origin"];
-    args.extend(FETCH_REFSPECS);
+    args.extend(FETCH_REFSPECS.iter().skip(usize::from(!branches)));
     git(root, &args).map(|_| ())
 }
 

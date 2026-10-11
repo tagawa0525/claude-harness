@@ -244,24 +244,37 @@ pub fn template(number: u32, title: &str, date: &str) -> String {
 /// （[`Kind::reference`]。[`parse::numbered_refs`] と同じ読み方）と、ファイル名の `NNNN-<slug>.md`（前が英数字で
 /// ないもの）。
 pub fn renumber_refs(kind: Kind, line: &str, old: u32, new: u32, slug: &str) -> String {
-    let mut starts: std::collections::BTreeSet<usize> =
-        parse::numbered_refs(line, kind.ref_prefix())
-            .into_iter()
-            .filter(|&(_, n)| n == old)
-            .map(|(i, _)| i + kind.ref_prefix().len())
-            .collect();
-    let file = format!("{old:04}-{slug}.md");
-    starts.extend(
-        line.match_indices(&file)
-            .filter(|(i, _)| !line[..*i].chars().next_back().is_some_and(parse::is_word))
-            .map(|(i, _)| i),
-    );
+    let starts: std::collections::BTreeSet<usize> = parse::numbered_refs(line, kind.ref_prefix())
+        .into_iter()
+        .filter(|&(_, n)| n == old)
+        .map(|(i, _)| i + kind.ref_prefix().len())
+        .collect();
+    // 番号の始まりから終わりまで。本文の参照は 4 桁、ファイル名は 3 桁で振った記録（[`numbers_in`]）も含む
+    let mut spans: std::collections::BTreeMap<usize, usize> =
+        starts.into_iter().map(|start| (start, start + 4)).collect();
+    let file = format!("-{slug}.md");
+    for (dash, _) in line.match_indices(&file) {
+        let digits = line[..dash].len()
+            - line[..dash]
+                .trim_end_matches(|c: char| c.is_ascii_digit())
+                .len();
+        let start = dash - digits;
+        if (1..=4).contains(&digits)
+            && line[start..dash].parse() == Ok(old)
+            && !line[..start]
+                .chars()
+                .next_back()
+                .is_some_and(parse::is_word)
+        {
+            spans.insert(start, dash);
+        }
+    }
     let mut out = String::with_capacity(line.len());
     let mut at = 0;
-    for start in starts {
+    for (start, end) in spans {
         out.push_str(&line[at..start]);
         out.push_str(&format!("{new:04}"));
-        at = start + 4;
+        at = end;
     }
     out.push_str(&line[at..]);
     out

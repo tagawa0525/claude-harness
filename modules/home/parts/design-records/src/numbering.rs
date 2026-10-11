@@ -68,10 +68,15 @@ fn reservation_target(root: &Path) -> Result<String> {
 /// push は、同じ名前が既にあれば拒むので、拒まれたら次の番号でやり直す。
 fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u32> {
     let remote = has_origin(root)?;
+    // タグを打つ先は、取ってきた origin の既定ブランチで決める
+    if remote {
+        fetch_origin(root, true)?;
+    }
     let target = reservation_target(root)?;
-    for _ in 0..ATTEMPTS {
-        if remote {
-            fetch_origin(root)?;
+    for attempt in 0..ATTEMPTS {
+        // やり直しでは、先に予約したほかの clone のタグだけを取ってくる
+        if remote && attempt > 0 {
+            fetch_origin(root, false)?;
         }
         let used = used_numbers(root, kind)?;
         let number = match wanted {
@@ -155,6 +160,7 @@ fn added_lines(root: &Path, base: &str) -> Result<BTreeMap<String, BTreeSet<usiz
             "-U0",
             "--no-color",
             "--no-ext-diff",
+            "--no-textconv",
             "--find-renames",
             "--src-prefix=a/",
             "--dst-prefix=b/",
@@ -164,8 +170,13 @@ fn added_lines(root: &Path, base: &str) -> Result<BTreeMap<String, BTreeSet<usiz
     )?;
     let mut added: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
     let mut path: Option<String> = None;
+    // ファイルの見出し（`diff --git` から最初の `@@` まで）の中か。hunk の中の、足した行が `++ ` で始まる行も
+    // `+++ ` で始まる
+    let mut header = false;
     for line in diff.lines() {
-        if let Some(rest) = line.strip_prefix("+++ ") {
+        if line.starts_with("diff --git ") {
+            header = true;
+        } else if let Some(rest) = line.strip_prefix("+++ ").filter(|_| header) {
             // 空白を含むパスの後ろには TAB が付く。引用符で包んだパス（引用符、制御文字を含むもの）は読まない
             let rest = rest.strip_suffix('\t').unwrap_or(rest);
             path = match rest.strip_prefix("b/") {
@@ -174,6 +185,7 @@ fn added_lines(root: &Path, base: &str) -> Result<BTreeMap<String, BTreeSet<usiz
                 None => return Err(format!("cannot read the path in the diff: {rest}")),
             };
         } else if let Some(hunk) = line.strip_prefix("@@ ") {
+            header = false;
             let Some(path) = &path else { continue };
             let new_range = hunk
                 .split(' ')
@@ -324,8 +336,17 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
             kind.reference(number)
         ));
     }
-    release_old(&root, kind, old, &slug)?;
     println!("{new_path}");
+    // 旧番号をほかの記録（既定ブランチにあるもの）が使っているときだけ、予約を解放する。ほかに使う記録が無い
+    // 番号の予約を消すと、ほかの clone がその番号を振る
+    if records.len() > mine.len() {
+        release_old(&root, kind, old, &slug).map_err(|e| {
+            format!(
+                "renumbered and committed as {new_path}, but the old reservation {} was not released: {e}",
+                kind.tag(old)
+            )
+        })?;
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -421,7 +442,7 @@ pub fn prune() -> Result<ExitCode> {
     let root = repo_root()?;
     let remote = has_origin(&root)?;
     if remote {
-        fetch_origin(&root)?;
+        fetch_origin(&root, true)?;
     }
     let Some(branch) = shared_default(&root)? else {
         return Err("no default branch to read the merged records from".into());
