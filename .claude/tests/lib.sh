@@ -184,14 +184,19 @@ make_fake_gh() {
 # hook 実行
 # ---------------------------------------------------------------------------
 
-# run_hook <rule> <command> [run_in_background]（hooks.sh が CLAUDE_HOOKS_BIN を用意する）
-# PreToolUse の入力 JSON を組み立てて、そのルールだけを評価した stdout を返す
-run_hook() {
-  local hook="$1" command="$2" bg="${3:-false}"
+# hook_input <command> [run_in_background]: Bash ツールの PreToolUse の入力 JSON（cwd は今のディレクトリ）
+hook_input() {
+  local command="$1" bg="${2:-false}"
   jq -n --arg cmd "$command" --argjson bg "$bg" \
     '{hook_event_name: "PreToolUse", tool_name: "Bash", cwd: env.PWD,
-      tool_input: {command: $cmd, run_in_background: $bg}}' \
-    | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
+      tool_input: {command: $cmd, run_in_background: $bg}}'
+}
+
+# run_hook <rule> <command> [run_in_background]（hooks.sh が CLAUDE_HOOKS_BIN を用意する）
+# そのルールだけを評価した stdout を返す
+run_hook() {
+  local hook="$1" command="$2" bg="${3:-false}"
+  hook_input "$command" "$bg" | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
 }
 
 # decision <hook-output> → permissionDecision（出力が空なら "allow"）
