@@ -99,7 +99,8 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
   fi
   for i in "${!PATHS[@]}"; do
     path=${PATHS[$i]}
-    fixed=$(git hash-object -w --path="$path" "$md/$path")
+    # 書き出したのはブロブ（clean の後の形）なので、clean のフィルタを二度掛けない
+    fixed=$(git hash-object -w --no-filters "$md/$path")
     [ "$fixed" != "${BLOBS[$i]}" ] || continue
     git update-index --cacheinfo "${MODES[$i]},$fixed,$path"
     # ステージしていない編集が無いファイルだけ、作業ツリーにも書く（あれば、作業ツリーは触らない）。作業ツリーの
