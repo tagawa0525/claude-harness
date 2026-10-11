@@ -68,9 +68,54 @@ fn remap(map_path: Option<&Path>) -> Result<(), Vec<String>> {
     let top = PathBuf::from(OsStr::from_bytes(top.trim_ascii_end()));
     let paths = candidate_paths(&top).map_err(|e| vec![e])?;
 
+    let results = match collect(&top, &paths, &map) {
+        Ok(results) => results,
+        Err(mut errors) => {
+            errors.push("何も書き換えていない".to_string());
+            return Err(errors);
+        }
+    };
+
+    let mut out = std::io::stdout().lock();
+    let mut refs = 0;
+    let mut written: Vec<String> = Vec::new();
+    for (path, file, new_data, count) in &results {
+        if let Err(e) = fs::write(file, new_data) {
+            let done = if written.is_empty() {
+                "なし".to_string()
+            } else {
+                written.join(", ")
+            };
+            return Err(vec![
+                format!("{}: 書けない: {e}", String::from_utf8_lossy(path)),
+                format!("書き換えたファイル: {done}"),
+            ]);
+        }
+        written.push(String::from_utf8_lossy(path).into_owned());
+        // パスはバイト列のまま出す（UTF-8 とは限らない）
+        out.write_all(b"REPLACED: ")
+            .and_then(|()| out.write_all(path))
+            .and_then(|()| writeln!(out, " {count}"))
+            .map_err(|e| vec![format!("標準出力に書けない: {e}")])?;
+        refs += count;
+    }
+    writeln!(out, "FILES: {}\nREFS: {refs}", results.len())
+        .map_err(|e| vec![format!("標準出力に書けない: {e}")])?;
+    Ok(())
+}
+
+/// 置き換えるファイルごとに、リポジトリの直下からのパス、ファイル、新しい内容、置き換えた語の数
+type Replacement<'a> = (&'a [u8], PathBuf, Vec<u8>, usize);
+
+/// 書き換える前に、すべてのファイルの新しい内容を作る。止める理由が 1 つでもあれば、すべての理由を返す
+fn collect<'a>(
+    top: &Path,
+    paths: &'a [Vec<u8>],
+    map: &Map,
+) -> Result<Vec<Replacement<'a>>, Vec<String>> {
     let mut errors = Vec::new();
     let mut results = Vec::new();
-    for path in &paths {
+    for path in paths {
         let file = top.join(OsStr::from_bytes(path));
         // 追跡しているシンボリックリンクは、書くとリンク先を変えてしまうので飛ばす
         // （リンク先が追跡しているファイルなら、そちらとして置き換わる）
@@ -83,28 +128,14 @@ fn remap(map_path: Option<&Path>) -> Result<(), Vec<String>> {
         let label = String::from_utf8_lossy(path);
         let (new_data, count) = map.replace(&label, &data, &mut errors);
         if count > 0 {
-            results.push((path, file, new_data, count));
+            results.push((path.as_slice(), file, new_data, count));
         }
     }
-    if !errors.is_empty() {
-        errors.push("何も書き換えていない".to_string());
-        return Err(errors);
+    if errors.is_empty() {
+        Ok(results)
+    } else {
+        Err(errors)
     }
-
-    let mut out = std::io::stdout().lock();
-    let mut refs = 0;
-    for (path, file, new_data, count) in &results {
-        fs::write(file, new_data).map_err(|e| vec![format!("{}: {e}", file.display())])?;
-        // パスはバイト列のまま出す（UTF-8 とは限らない）
-        out.write_all(b"REPLACED: ")
-            .and_then(|()| out.write_all(path))
-            .and_then(|()| writeln!(out, " {count}"))
-            .map_err(|e| vec![format!("標準出力に書けない: {e}")])?;
-        refs += count;
-    }
-    writeln!(out, "FILES: {}\nREFS: {refs}", results.len())
-        .map_err(|e| vec![format!("標準出力に書けない: {e}")])?;
-    Ok(())
 }
 
 /// 7 桁の 16 進を含む、追跡しているテキストのファイル（`-I` でバイナリを除く）の、リポジトリの直下からのパス

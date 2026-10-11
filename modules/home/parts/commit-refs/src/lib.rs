@@ -24,7 +24,7 @@ pub struct Map {
 impl Map {
     /// 対応表を読む。1 行に「旧 新」の完全な番号（3 列目以降は無視する）。最初の行が `old new` なら見出しとして
     /// 読み飛ばす（git filter-repo の commit-map）。新が 0 だけの行は消えたコミット、旧と新が同じ行は変わらなかった
-    /// コミット。行が読めないときと、同じ旧に別々の新が対応するときは、すべての理由を返す。
+    /// コミット。行が読めないとき、旧と新の桁数が違うとき、同じ旧に別々の新が対応するときは、すべての理由を返す。
     pub fn parse(text: &str) -> Result<Map, Vec<String>> {
         let mut errors = Vec::new();
         let mut targets: BTreeMap<&str, &str> = BTreeMap::new();
@@ -47,6 +47,15 @@ impl Map {
                 continue;
             }
             let (old, new) = (fields[0], fields[1]);
+            // 置き換えは文書の語と同じ桁数の新の先頭を使うので、新が旧より短いと足りなくなる
+            if old.len() != new.len() {
+                errors.push(format!(
+                    "対応表の {} 行目の旧と新の桁数が違う: {}",
+                    lineno + 1,
+                    line.trim_end()
+                ));
+                continue;
+            }
             // 変わらない行と消えた行も含めて、旧ごとの新を先に揃える
             let first = *targets.entry(old).or_insert(new);
             if first != new {
