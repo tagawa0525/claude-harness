@@ -5,7 +5,8 @@
 #   BASE（既定 origin/main）の版と、作業ツリーの版（git が追跡するファイル。新しいファイルは git add -N で
 #   見せる）を nix build して比べる。OLD_BIN / NEW_BIN を渡すと build せずにそのバイナリを使う。
 #   HOOKS_DIFF_COMMANDS（改行区切り）を渡すと、組み合わせの集まりの代わりにそのコマンドだけを比べる
-#   HOOKS_DIFF_LIST=1 を渡すと、比べずに、比べる集まり（<background の有無><TAB><コマンド>）を出す
+#   HOOKS_DIFF_LIST=1 を渡すと、build もバイナリの呼び出しもせずに、比べる集まり
+#   （<background の有無><TAB><コマンド>）だけを出す
 #
 # 出力（タブ区切りの行と、KEY: value）:
 #   LOOSENED<TAB><ルール><TAB><コマンド>   古い版が止め、新しい版が通す（意図した変更か、後退か）。
@@ -28,7 +29,7 @@ BASE="${1:-origin/main}"
 build() {
   nix build --no-link --print-out-paths --option warn-dirty false "$1#claude-hooks"
 }
-if [[ -z "${OLD_BIN:-}" || -z "${NEW_BIN:-}" ]]; then
+if [[ -z "${HOOKS_DIFF_LIST:-}" ]] && [[ -z "${OLD_BIN:-}" || -z "${NEW_BIN:-}" ]]; then
   # 呼んだ場所ではなく、このスクリプトのある作業ツリーを比べる
   ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
   # path: は .gitignore を見ずに target/ なども store に写すので、git が追跡するファイルだけを使う
@@ -37,35 +38,6 @@ if [[ -z "${OLD_BIN:-}" || -z "${NEW_BIN:-}" ]]; then
 fi
 
 source "$(dirname "$0")/lib.sh"
-
-# ルールの一覧（引数なしで呼ぶと使い方に出る）
-rules_of() {
-  { "$1" 2>&1 || true; } | sed -n 's/^rules: //p' | tr -d ' ' | tr ',' '\n'
-}
-mapfile -t OLD_RULES < <(rules_of "$OLD_BIN")
-mapfile -t NEW_RULES < <(rules_of "$NEW_BIN")
-if [[ ${#OLD_RULES[@]} -eq 0 || ${#NEW_RULES[@]} -eq 0 ]]; then
-  echo "ERROR: ルールの一覧を読めません: $OLD_BIN / $NEW_BIN" >&2
-  exit 1
-fi
-has() {
-  local x="$1"
-  shift
-  printf '%s\n' "$@" | grep -qx -- "$x"
-}
-RULES=()
-loosened=0 tightened=0 changed=0
-for r in "${OLD_RULES[@]}"; do
-  if has "$r" "${NEW_RULES[@]}"; then
-    RULES+=("$r")
-  else
-    printf 'LOOSENED\t%s\t(新しい版に無い)\n' "$r"
-    loosened=$((loosened + 1))
-  fi
-done
-for r in "${NEW_RULES[@]}"; do
-  has "$r" "${OLD_RULES[@]}" || echo "NEW_RULE: $r"
-done
 
 # 判定の場所: main（GitHub のリモートあり、feat/x あり）と、リモートの無いリポジトリ。gh は偽物で、
 # 呼ばれたら失敗する（ネットワークに出ない）
@@ -165,6 +137,36 @@ if [[ -n "${HOOKS_DIFF_LIST:-}" ]]; then
   printf '%s\n' "${CASES[@]}"
   exit 0
 fi
+
+# ルールの一覧（引数なしで呼ぶと使い方に出る）
+rules_of() {
+  { "$1" 2>&1 || true; } | sed -n 's/^rules: //p' | tr -d ' ' | tr ',' '\n'
+}
+mapfile -t OLD_RULES < <(rules_of "$OLD_BIN")
+mapfile -t NEW_RULES < <(rules_of "$NEW_BIN")
+if [[ ${#OLD_RULES[@]} -eq 0 || ${#NEW_RULES[@]} -eq 0 ]]; then
+  echo "ERROR: ルールの一覧を読めません: $OLD_BIN / $NEW_BIN" >&2
+  exit 1
+fi
+has() {
+  local x="$1"
+  shift
+  printf '%s\n' "$@" | grep -qx -- "$x"
+}
+RULES=()
+loosened=0 tightened=0 changed=0
+for r in "${OLD_RULES[@]}"; do
+  if has "$r" "${NEW_RULES[@]}"; then
+    RULES+=("$r")
+  else
+    printf 'LOOSENED\t%s\t(新しい版に無い)\n' "$r"
+    loosened=$((loosened + 1))
+  fi
+done
+for r in "${NEW_RULES[@]}"; do
+  has "$r" "${OLD_RULES[@]}" || echo "NEW_RULE: $r"
+done
+
 for case in "${CASES[@]}"; do
   compare "${case#*$'\t'}" "${case%%$'\t'*}"
 done
