@@ -134,6 +134,12 @@ fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number:
     .is_some_and(|s| s.lines().filter_map(|l| l.trim().parse::<u64>().ok()).sum::<u64>() > 0)
 }
 
+/// リベースだけで head の hash が変わったか。レビュー済みの `old` と今の `new` で、base からの PR の差分が
+/// 同一なら true（ADR-0018）
+fn same_pr_diff(_dir: &std::path::Path, _base_ref: &str, _old: &str, _new: &str) -> bool {
+    false
+}
+
 fn is_ok_conclusion(c: &Value) -> bool {
     matches!(c.as_str(), Some("success" | "neutral" | "skipped"))
 }
@@ -568,5 +574,196 @@ mod tests {
         let v = json_stream("{\"a\":1}\n{\"a\":2}\n").unwrap();
         assert_eq!(v.len(), 2);
         assert!(json_stream("not json").is_none());
+    }
+
+    /// 一時ディレクトリの git リポジトリ。origin/main は refs/remotes/origin/main を直に置いて作る
+    struct Repo(std::path::PathBuf);
+
+    impl Repo {
+        fn new(tag: &str) -> Repo {
+            let dir = std::env::temp_dir().join(format!(
+                "claude-hooks-same-pr-diff-{tag}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let r = Repo(dir);
+            r.git(&["init", "-q", "-b", "main"]);
+            r.git(&["config", "user.email", "t@example.com"]);
+            r.git(&["config", "user.name", "t"]);
+            r.git(&["config", "commit.gpgsign", "false"]);
+            r.git(&["config", "core.hooksPath", "/dev/null"]);
+            r
+        }
+
+        fn git(&self, args: &[&str]) -> String {
+            crate::git::git(&self.0, args).unwrap_or_else(|| panic!("git {args:?} failed"))
+        }
+
+        fn write(&self, path: &str, body: &str) {
+            std::fs::write(self.0.join(path), body).unwrap();
+        }
+
+        fn commit(&self, msg: &str) -> String {
+            self.git(&["add", "-A"]);
+            self.git(&["commit", "-q", "-m", msg]);
+            self.git(&["rev-parse", "HEAD"])
+        }
+
+        /// origin/main を今の HEAD に合わせる
+        fn publish_main(&self) {
+            let head = self.git(&["rev-parse", "HEAD"]);
+            self.git(&["update-ref", "refs/remotes/origin/main", &head]);
+        }
+    }
+
+    impl Drop for Repo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const LONG: &str = "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\na13\na14\na15\n";
+
+    /// 初期状態（main）に PR のコミットを積み、old とする。main を進めてから PR を載せ替えた new を返す
+    /// `pr_edit` は PR の変更、`main_edit` は main が進む内容、`redo` は載せ替えた先で PR を作り直す関数
+    fn rebase_case(
+        tag: &str,
+        pr_edit: impl Fn(&Repo),
+        main_edit: impl Fn(&Repo),
+        redo: impl Fn(&Repo),
+    ) -> (Repo, String, String) {
+        let r = Repo::new(tag);
+        r.write("long.txt", LONG);
+        r.write("other.txt", "o\n");
+        r.commit("base");
+        r.publish_main();
+        r.git(&["checkout", "-q", "-b", "pr"]);
+        pr_edit(&r);
+        let old = r.commit("pr");
+        r.git(&["checkout", "-q", "main"]);
+        main_edit(&r);
+        r.commit("main moves");
+        r.publish_main();
+        r.git(&["checkout", "-q", "-b", "pr2"]);
+        redo(&r);
+        let new = r.commit("pr again");
+        (r, old, new)
+    }
+
+    fn pr_edit_other(r: &Repo) {
+        r.write("other.txt", "o\nPR\n");
+    }
+
+    #[test]
+    #[ignore = "RED: same_pr_diff は未実装"]
+    fn rebase_onto_unrelated_change_is_same() {
+        let (r, old, new) = rebase_case(
+            "unrelated",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            pr_edit_other,
+        );
+        assert!(same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    #[ignore = "RED: same_pr_diff は未実装"]
+    fn rebase_onto_change_in_same_file_elsewhere_is_same() {
+        // main も同じファイルの先頭を変える。PR は末尾（文脈は変わらない）
+        let edit_tail = |r: &Repo| r.write("long.txt", &format!("{LONG}tail\n"));
+        let (r, old, new) = rebase_case(
+            "samefile",
+            edit_tail,
+            |r| r.write("long.txt", &LONG.replacen("a1\n", "A1\n", 1)),
+            |r| {
+                r.write(
+                    "long.txt",
+                    &format!("{}tail\n", LONG.replacen("a1\n", "A1\n", 1)),
+                )
+            },
+        );
+        assert!(same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    fn changed_content_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "changed",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| r.write("other.txt", "o\nPR\nEXTRA\n"),
+        );
+        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    fn dropped_change_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "dropped",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| r.write("third2.txt", "unrelated\n"),
+        );
+        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    fn same_lines_at_another_place_in_a_file_main_also_changed_is_not_same() {
+        // 追加行は同じだが、置き場所が違う（コンフリクト解決で動かした）
+        let (r, old, new) = rebase_case(
+            "moved",
+            |r| r.write("long.txt", &LONG.replacen("a3\n", "a3\nPR\n", 1)),
+            |r| r.write("long.txt", &LONG.replacen("a1\n", "A1\n", 1)),
+            |r| {
+                r.write(
+                    "long.txt",
+                    &LONG
+                        .replacen("a1\n", "A1\n", 1)
+                        .replacen("a12\n", "a12\nPR\n", 1),
+                )
+            },
+        );
+        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    fn extra_file_in_new_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "extrafile",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| {
+                pr_edit_other(r);
+                r.write("sneaky.txt", "x\n");
+            },
+        );
+        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    fn mode_change_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "mode",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| {
+                pr_edit_other(r);
+                r.git(&["update-index", "--chmod=+x", "other.txt"]);
+            },
+        );
+        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+    }
+
+    #[test]
+    fn unknown_old_commit_is_not_same() {
+        let (r, _old, new) = rebase_case(
+            "unknown",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            pr_edit_other,
+        );
+        let bogus = "0123456789012345678901234567890123456789";
+        assert!(!same_pr_diff(&r.0, "main", bogus, &new));
     }
 }
