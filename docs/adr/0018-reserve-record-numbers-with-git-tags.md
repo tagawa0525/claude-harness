@@ -52,10 +52,12 @@ xlc の衝突は、マージのときに `cargo test`（crates/docs の検査）
 
 ### 予約（`new`）
 
-- `origin` があれば、先に origin のブランチと `refs/tags/adr-*`、`refs/tags/issue-*` を fetch する。ブランチも
-  取ってくるのは、`prune` が予約を解放した後の番号が、origin の既定ブランチの履歴にしか残らないため。タグは
-  リモートを正として、同じ名前の手元のタグ（push の前に止まった予約）を上書きし、origin で消えたタグ（ほかの
-  clone の `prune` と `renumber` が解放したもの）は手元からも消す（`--prune`）。タグを打つ先は、この fetch の
+- `origin` があれば、先に origin の既定ブランチ（`ls-remote --symref` で聞く）と `refs/tags/adr-*`、
+  `refs/tags/issue-*` を fetch する。既定ブランチも取ってくるのは、`prune` が予約を解放した後の番号が、origin の
+  既定ブランチの履歴にしか残らないため。タグはリモートを正として、同じ名前の手元のタグ（push の前に止まった
+  予約）を上書きし、origin で消えたタグ（ほかの clone の `prune` と `renumber` が解放したもの）は手元からも消す。
+  `--prune` は同じ fetch の refspec の行き先をすべて刈るので、タグだけの fetch に付ける（ブランチの fetch に
+  付けると、origin に無いリモート追跡ブランチまで消える）。タグを打つ先は、この fetch の
   後の origin の既定ブランチで決める。番号は、全ブランチの履歴、作業ツリー、その種類のタグ（`adr-NNNN` か
   `issue-NNNN`）のうち最大の番号 + 1 にする
 - 番号を決めたら、注釈つきのタグ（メッセージは slug）を既定ブランチの先端に打つ。`origin` があれば
@@ -86,6 +88,8 @@ xlc の衝突は、マージのときに `cargo test`（crates/docs の検査）
   rebase した後の重複では、同じ番号の参照が 2 つの記録を指している。main から来た行の参照は、main の記録を
   指すので変えない。振り直す記録の前付けの参照（`requires`、`blocked-by` など）も変えない。記録の前付けは
   自分を指さないので、同じ番号は既定ブランチの記録を指す
+- 足した行は、hunk の見出しの範囲でなく `+` の行で数える（`diff.interHunkContext` で hunk がまとまると、範囲に
+  変えていない行が入る）
 - 付け替える参照は、ADR なら `ADR-NNNN`、issue なら `#NNNN`（どちらも 4 桁、前後が英数字でない。`check` と
   同じ読み方）と、両方の `NNNN-<slug>.md`（振り直す記録の slug のもの。3 桁で振った記録の `NNN-<slug>.md` も）
 - 作業ツリーと index に変更（追跡していないファイルを含む）があれば止め、変更を 1 つのコミット（`docs: renumber ADR-0018 to ADR-0019` など）に
@@ -116,10 +120,10 @@ xlc の衝突は、マージのときに `cargo test`（crates/docs の検査）
 しなかったブランチのもの）のタグは消さない。消すとその番号が使い回される。
 
 `origin` があれば、既定ブランチの履歴は `origin` の既定ブランチで見る。ローカルでマージして push する前に
-リモートのタグを消すと、ほかの clone がその番号を予約できてしまう。`post-merge-cleanup.sh` は、docs/adr か
-docs/issues のあるリポジトリで、既定ブランチを最新にした後に `prune` を呼ぶ。`prune` が失敗したら、ブランチを
-消す前に `ERROR:` で止まる（ほかの手順は走らせ直せる。先に進むと、残ったタグに気づく手がかりが出力にしか
-残らない）。
+リモートのタグを消すと、ほかの clone がその番号を予約できてしまう。`post-merge-cleanup.sh` は、予約のタグが
+あれば、既定ブランチを最新にした後に `prune` を呼ぶ。design-records が PATH に無いときと origin に届かないときは、
+タグを残して後片付けを続ける（残ったタグは番号を使い回させず、次の `prune` で消える）。`prune` そのものが
+失敗したら、ブランチを消す前に `ERROR:` で止まる（原因を直して走らせ直せる）。
 
 ### CLI の形
 
@@ -128,6 +132,9 @@ docs/issues のあるリポジトリで、既定ブランチを最新にした�
 new` のように種類ごとのサブコマンドの木にすると、`check`、`status`、`prune`（種類を問わない）と形が揃わない。
 issue の `new` は、番号を予約して `docs/issues/NNNN-<slug>.md` に表題の行（`# <title>`）だけを書く。前付けと節の
 形は #270 で決める。
+
+どのコマンドも、前に `-C <dir>` を付けると `<dir>` で走る（git の `-C` と同じ）。/git-merge は対象のブランチの
+worktree を `git -C` で指して操作するので、`check` と `renumber` も同じ形で呼ぶ。
 
 ### 帰結
 
