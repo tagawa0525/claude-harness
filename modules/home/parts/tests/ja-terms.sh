@@ -164,6 +164,9 @@ else
     ng "グロブの文字を含む名前で止めたが、元のパスを示さない"
   fi
 fi
+# 止めた [draft2].md はステージに残るので、外してから確かめる
+git -C "$REPO" reset -q
+rm -f "$REPO/[draft2].md"
 if commits "$REPO" "UPPER.MD" "$(printf '# t\n\n確かめの結果。\n')"; then
   ng "大文字の拡張子の崩れた語で止まらない"
 else
