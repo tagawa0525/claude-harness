@@ -82,15 +82,18 @@ check() {
     pre_result=block
   fi
 
-  # 正しく呼べば claude-hooks は 0 で終わり、標準エラーに何も出さない。知らないルール（使い方を出して 2）と
-  # 拾われた panic（標準エラーと 0）は、出力が空で allow に見えるので、ここで止める
+  # 正しく呼べば claude-hooks は 0 で終わり、標準エラーにも systemMessage にも何も出さない。知らないルール
+  # （使い方を出して 2）、拾われた panic（標準エラーと 0）、判定できなかった理由（systemMessage。ADR-0033）、
+  # 1 つの JSON の object でない出力は、判定が無く allow に見えるので、ここで止める
   local input status=0
   input=$(jq -n '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "git commit -m msg"}}')
   out=$(cd "$repo" && "$HOOK_BIN" pre-tool-use --rule block-main-commit <<<"$input" 2>"$WORK/hook-stderr") ||
     status=$?
-  if ((status != 0)) || [[ -s "$WORK/hook-stderr" ]]; then
+  if ((status != 0)) || [[ -s "$WORK/hook-stderr" ]] ||
+    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null; }; then
     echo "claude-hooks が失敗しました（--rule block-main-commit、終了コード $status）: $desc" >&2
     cat "$WORK/hook-stderr" >&2
+    [[ -z "$out" ]] || printf '%s\n' "$out" >&2
     exit 1
   fi
   if [[ -z "$out" ]] || [[ "$(jq -r '.hookSpecificOutput.permissionDecision // "allow"' <<<"$out")" == "allow" ]]; then

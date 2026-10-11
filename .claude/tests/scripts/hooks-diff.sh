@@ -14,7 +14,8 @@ export HOOKS_DIFF_COMMANDS=$'git commit --no-verify -m x\ngit add -A\ngit status
 # pre-tool-use --rule <r>... では、<spec>（<ルール>:<判定>:<文字列>）のうち、渡したルールのどれかに一致し、
 # コマンドが文字列を含む最初のものの判定（deny / context）を出す（本物と同じく、複数のルールの判定を
 # 1 つにまとめる）。<判定> が fail なら終了コード 3 で落ち、panic なら標準エラーに書いて終了コード 0 で終わる
-# （本物は、ルールの panic を catch_unwind で拾い、何も出さずに 0 で終わる）
+# （本物は、ルールの panic を catch_unwind で拾い、標準エラーと systemMessage に出して 0 で終わる）。
+# notice なら判定できなかった理由（systemMessage）を、scalar と multi なら 1 つの object でない出力を返す
 make_fake_hooks() {
   local path="$1" rules="$2"
   shift 2
@@ -31,6 +32,9 @@ make_fake_hooks() {
         context) echo "  echo '{\"hookSpecificOutput\":{\"additionalContext\":\"x\"}}'; exit 0" ;;
         fail) echo "  exit 3" ;;
         panic) echo "  echo 'thread main panicked' >&2; exit 0" ;;
+        notice) echo "  echo '{\"systemMessage\":\"git を起動できません\"}'; exit 0" ;;
+        scalar) echo "  echo 42; exit 0" ;;
+        multi) echo "  echo '{}'; echo '{}'; exit 0" ;;
       esac
       echo "fi"
     done
@@ -96,6 +100,14 @@ make_fake_hooks "$TEST_ROOT/panic" "block-no-verify, guard-git-add" "block-no-ve
 out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/panic" bash "$DIFF" 2>&1)
 assert_eq 1 $?
 assert_not_contains "$out" "LOOSENED"
+
+for kind in notice scalar multi; do
+  it "hooks-diff: 判定できなかった理由や 1 つの object でない出力（$kind）は、通したものと数えずに失敗する"
+  make_fake_hooks "$TEST_ROOT/$kind" "block-no-verify, guard-git-add" "block-no-verify:$kind:git"
+  out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/$kind" bash "$DIFF" 2>&1)
+  assert_eq 1 $?
+  assert_not_contains "$out" "LOOSENED"
+done
 
 it "hooks-diff: 古い版が一度も通す以外を返さなかったルールを UNCOVERED に出す"
 out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF")
