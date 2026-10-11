@@ -420,16 +420,39 @@ mod tests {
     #[test]
     fn escape_assignment_anywhere() {
         assert!(
-            Shell::parse("ALLOW_PROTECTED_PUSH=1 git push --force")
+            Shell::parse("ALLOW_PROTECTED_PUSH=テスト用 git push --force")
                 .has_escape("ALLOW_PROTECTED_PUSH")
         );
         assert!(
-            Shell::parse("ALLOW_PROTECTED_PUSH=1; git push").has_escape("ALLOW_PROTECTED_PUSH")
+            Shell::parse("ALLOW_PROTECTED_PUSH=テスト用; git push")
+                .has_escape("ALLOW_PROTECTED_PUSH")
         );
         assert!(
             !Shell::parse("ALLOW_PROTECTED_PUSH=0 git push").has_escape("ALLOW_PROTECTED_PUSH")
         );
-        assert!(!Shell::parse("echo ALLOW_PROTECTED_PUSH=1").has_escape("ALLOW_PROTECTED_PUSH"));
+        assert!(
+            !Shell::parse("echo ALLOW_PROTECTED_PUSH=テスト用").has_escape("ALLOW_PROTECTED_PUSH")
+        );
+    }
+
+    // 値は理由の文字列で、空白を除いた幅（ASCII は 1、それ以外は 2）が 6 以上（ADR-0023）
+    #[test]
+    fn escape_needs_a_reason_of_width_six() {
+        let esc = |v: &str| {
+            Shell::parse(&format!("ALLOW_PROTECTED_PUSH={v} git push"))
+                .escape("ALLOW_PROTECTED_PUSH")
+        };
+        assert!(matches!(esc("1"), Escape::Short));
+        assert!(matches!(esc("force"), Escape::Short));
+        assert!(matches!(esc("確認"), Escape::Short));
+        assert!(matches!(esc("'     '"), Escape::Short));
+        assert!(matches!(esc("aaaaaa"), Escape::Given));
+        assert!(matches!(esc("差分同一"), Escape::Given));
+        assert!(matches!(esc("'  abcdef  '"), Escape::Given));
+        assert!(matches!(
+            Shell::parse("git push").escape("ALLOW_PROTECTED_PUSH"),
+            Escape::Absent
+        ));
     }
 
     #[test]

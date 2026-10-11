@@ -191,7 +191,7 @@ mod tests {
             .unwrap();
         assert!(r.contains("docs/adr/0002-a.md") && r.contains("docs/adr/0003-b.md"));
         assert!(r.contains("/topic-triage"));
-        assert!(r.contains("ALLOW_MULTI_TOPIC=1"));
+        assert!(r.contains("ALLOW_MULTI_TOPIC=<理由>"));
     }
 
     #[test]
