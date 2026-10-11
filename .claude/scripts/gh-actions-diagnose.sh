@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # gh-actions-diagnose.sh — CI の最新結果を調べ、失敗の原因を分類する
 #
-# Usage: gh-actions-diagnose.sh [PR番号 | ブランチ名]
-#   省略時は現在のブランチ。PR 番号なら head ブランチと head SHA を解決する
+# Usage: gh-actions-diagnose.sh [PR の URL | PR番号 | ブランチ名]
+#   省略時は現在のブランチ。PR なら head ブランチと head SHA を解決する
+#   PR の URL なら、gh を URL のリポジトリに向け（ADR-0032）、NEXT の gh の手順に -R を付ける。
+#   PR 番号・ブランチ名・省略時は cwd のリポジトリで読む
 #
 # 見るもの:
 #   1. GitHub Actions の run（gh run list）。失敗ならジョブ・ステップ・ログから原因を分類
@@ -34,13 +36,23 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/pr-url.sh"
+
 TARGET="${1:-}"
 PR=""
 HEAD_SHA=""
+# NEXT に書く gh の手順を、診断したのと同じリポジトリに向ける
+REPO_FLAG=""
+# URL らしい引数は、解析できなければブランチ名とみなさず止める（cwd のリポジトリで空の結果を返さない）
+if [[ "$TARGET" == *://* || "$TARGET" == *github.com/* ]]; then
+  parse_pr_url --allow-fragment "$TARGET" || exit 1
+  TARGET="$PR_NUMBER"
+  REPO_FLAG=" -R ${GH_REPO}"
+fi
 if [[ -z "$TARGET" ]]; then
   BRANCH=$(git branch --show-current 2>/dev/null || true)
   if [[ -z "$BRANCH" ]]; then
-    echo "ERROR: ブランチを特定できません。PR 番号かブランチ名を指定してください" >&2
+    echo "ERROR: ブランチを特定できません。PR の URL、PR 番号、ブランチ名のどれかを指定してください" >&2
     exit 1
   fi
 elif [[ "$TARGET" =~ ^[0-9]+$ ]]; then
@@ -101,9 +113,9 @@ else
         rerun_or_report() {
           local what="$1"
           if (( ATTEMPT >= 2 )); then
-            ACTIONS_NEXT="${what}ですが、既に ${ATTEMPT} 回試行して失敗しています。これ以上再実行せず、ログ（gh run view $ID --log-failed）を添えてユーザーに報告し判断を仰いでください"
+            ACTIONS_NEXT="${what}ですが、既に ${ATTEMPT} 回試行して失敗しています。これ以上再実行せず、ログ（gh run view $ID${REPO_FLAG} --log-failed）を添えてユーザーに報告し判断を仰いでください"
           else
-            ACTIONS_NEXT="${what}です。1 回だけ再実行してください: gh run rerun $ID"
+            ACTIONS_NEXT="${what}です。1 回だけ再実行してください: gh run rerun $ID${REPO_FLAG}"
           fi
         }
 
@@ -118,7 +130,7 @@ else
           rerun_or_report "Copilot 側の一時的な問題"
         else
           ACTIONS_CAUSE=CODE
-          ACTIONS_NEXT="エラー行を読んで原因を修正してください（全文: gh run view $ID --log-failed）"
+          ACTIONS_NEXT="エラー行を読んで原因を修正してください（全文: gh run view $ID${REPO_FLAG} --log-failed）"
         fi
         ;;
     esac

@@ -442,7 +442,7 @@ git switch -q main
 # GitHub リモートがなければ PR フロー適用外
 # ===========================================================================
 # PR を作れないリポジトリで feature branch を強制しても、マージする手段がなく
-# 作業が進まない。判定は gh-wait-review.sh と同じ「GitHub リモートがあるか」に揃える。
+# 作業が進まない。判定は「GitHub リモートがあるか」。
 # GitHub 以外のリモートは扱わない前提なので、GitHub でなければローカル専用と同じ扱い
 
 LOCAL="$TEST_ROOT/localonly"
@@ -1074,7 +1074,7 @@ assert_eq deny "$(decision "$out")"
 it "guard-gh-api: GraphQL の resolveReviewThread は deny し、resolve-thread.sh を示す"
 out=$(run_hook guard-gh-api "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "resolve-thread.sh"
+assert_contains "$(reason "$out")" "resolve-thread.sh <PR の URL> <comment_id>"
 out=$(run_hook guard-gh-api "gh api graphql -f query='mutation { unresolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
 assert_eq deny "$(decision "$out")"
 
@@ -1112,7 +1112,9 @@ make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビュー"
-assert_contains "$(reason "$out")" "request-rereview.sh"
+# PR のスクリプトは対象を URL で受ける（ADR-0032）
+assert_contains "$(reason "$out")" "request-rereview.sh https://github.com/example/heredoc/pull/1 "
+assert_contains "$(reason "$out")" "/gh-actions-check https://github.com/example/heredoc/pull/1 で状況を診断"
 
 it "pre-merge-check: bot のレビューが head を見ていればマージできる"
 make_fake_gh_merge 'echo 0' 'echo abc'
@@ -1141,6 +1143,8 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
 assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=<理由>"
 assert_not_contains "$(reason "$out")" "失敗したチェックがあります"
+# 診断のスキルにも対象を URL で渡す（ADR-0032）
+assert_contains "$(reason "$out")" "/gh-actions-check https://github.com/example/heredoc/pull/1 "
 
 it "pre-merge-check: レビューが 1 件も無くてもチェックが失敗していれば止める"
 # 初回レビューがトークン枯渇で落ちた PR。レビュー 0 件なので commit_id の比較では
@@ -1941,10 +1945,11 @@ assert_eq allow "$(decision "$out")"
 # ===========================================================================
 
 it "require-background-wait: bash のオプション付き、bash -c の文字列、包みの中の待機スクリプトも止める"
-for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh 12" "sh -eu ~/.claude/scripts/request-rereview.sh 12" \
-  "bash -c '$HOME/.claude/scripts/gh-wait-review.sh 12'" "sudo ~/.claude/scripts/gh-wait-review.sh 12" \
-  "eval ~/.claude/scripts/gh-wait-review.sh 12" "flock /tmp/l ~/.claude/scripts/gh-wait-review.sh 12" \
-  "ssh r995 ~/.claude/scripts/gh-wait-review.sh 12"; do
+PR12=https://github.com/o/r/pull/12
+for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh $PR12" "sh -eu ~/.claude/scripts/request-rereview.sh $PR12" \
+  "bash -c '$HOME/.claude/scripts/gh-wait-review.sh $PR12'" "sudo ~/.claude/scripts/gh-wait-review.sh $PR12" \
+  "eval ~/.claude/scripts/gh-wait-review.sh $PR12" "flock /tmp/l ~/.claude/scripts/gh-wait-review.sh $PR12" \
+  "ssh r995 ~/.claude/scripts/gh-wait-review.sh $PR12"; do
   out=$(run_hook require-background-wait "$cmd")
   assert_eq deny "$(decision "$out")"
   out=$(run_hook require-background-wait "$cmd" true)
@@ -1952,9 +1957,9 @@ for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh 12" "sh -eu ~/.claud
 done
 
 it "require-background-wait: 走らせるプログラムを決められない形は、文字列に対象のスクリプト名があれば止める"
-out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT 12')
+out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT https://github.com/o/r/pull/12')
 assert_eq deny "$(decision "$out")"
-out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT 12' true)
+out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT https://github.com/o/r/pull/12' true)
 assert_eq allow "$(decision "$out")"
 out=$(run_hook require-background-wait '$WAIT 12')
 assert_eq allow "$(decision "$out")"

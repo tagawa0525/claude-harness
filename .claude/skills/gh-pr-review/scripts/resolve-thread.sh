@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gh-pr-review: レビュースレッドを resolve するスクリプト
 #
-# Usage: resolve-thread.sh <pr_number> <comment_id> [--allow-human]
+# Usage: resolve-thread.sh <PR の URL> <comment_id> [--allow-human]
 #
 #   comment_id: スレッド内の任意のレビューコメントの数値 ID
 #               （get-review-comments.sh の id / URL の #discussion_r{id}）
@@ -17,8 +17,13 @@
 
 set -euo pipefail
 
-PR_NUMBER="${1:-}"
+source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/pr-url.sh"
 COMMENT_ID="${2:-}"
+if ! parse_pr_url "${1:-}" || [[ -z "$COMMENT_ID" ]]; then
+  echo "Usage: $0 <PR の URL> <comment_id> [--allow-human]" >&2
+  exit 1
+fi
+
 ALLOW_HUMAN=0
 if [[ "${3:-}" == "--allow-human" ]]; then
   ALLOW_HUMAN=1
@@ -27,16 +32,7 @@ elif [[ -n "${3:-}" ]]; then
   exit 1
 fi
 
-if [[ -z "$PR_NUMBER" ]] || [[ -z "$COMMENT_ID" ]]; then
-  echo "Usage: $0 <pr_number> <comment_id> [--allow-human]" >&2
-  exit 1
-fi
-
 # 数値以外（URL 断片の discussion_r123 など）は jq --argjson でパースエラーになるため先に弾く
-if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: pr_number は数値で指定してください: '${PR_NUMBER}'" >&2
-  exit 1
-fi
 if ! [[ "$COMMENT_ID" =~ ^[0-9]+$ ]]; then
   echo "ERROR: comment_id は数値で指定してください（URL の #discussion_r の後ろの数字）: '${COMMENT_ID}'" >&2
   exit 1

@@ -141,7 +141,7 @@ gh pr view --json url -q .url
 ✅ PRを作成しました: [URL]
 
 次のステップ:
-- Copilotのレビューを待つ場合 → ~/.claude/scripts/gh-wait-review.sh（約 10 分。`run_in_background=true` で実行）
+- Copilotのレビューを待つ場合 → ~/.claude/scripts/gh-wait-review.sh <作成した PR の URL>（約 10 分。`run_in_background=true` で実行）
 - Copilotレビュー/CIの状況を確認する場合 → /gh-actions-check
 - レビューコメントに対応する場合 → /gh-pr-review
 - レビュー後にマージする場合 → /gh-pr-merge

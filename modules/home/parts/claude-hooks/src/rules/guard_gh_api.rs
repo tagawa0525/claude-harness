@@ -45,7 +45,7 @@ fn check_api(args: &[Arg]) -> Option<String> {
     if args.first().is_some_and(|a| a.text == "graphql")
         && args.iter().any(|a| resolve_re().is_match(&a.raw))
     {
-        return Some("レビュースレッドの resolve / unresolve は生の GraphQL では行いません。~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh <pr_number> <comment_id> を使ってください（人間のレビュアーが起こしたスレッドは既定で resolve しない判定をスクリプトが行います）".to_string());
+        return Some("レビュースレッドの resolve / unresolve は生の GraphQL では行いません。~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh <PR の URL> <comment_id> を使ってください（人間のレビュアーが起こしたスレッドは既定で resolve しない判定をスクリプトが行います）".to_string());
     }
     None
 }

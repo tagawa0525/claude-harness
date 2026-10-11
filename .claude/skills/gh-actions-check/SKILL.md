@@ -4,7 +4,7 @@ description: GitHub Actionsの実行状況を確認。Copilotレビュー待ち�
 model: haiku
 # context: fork は廃止。fork 起動時にスキル本文が実行されず引数が失われる
 # 事象を確認したため、インラインで実行する（診断のみで出力も小さい）
-argument-hint: [PR番号 | ブランチ名]
+argument-hint: [PR の URL | PR番号 | ブランチ名]
 allowed-tools:
   - Bash(~/.claude/scripts/gh-actions-diagnose.sh*)
   - Bash(gh run*)
@@ -21,10 +21,10 @@ run の取得・失敗ジョブの特定・エラー行の抽出・原因の分�
 
 ## Step 1: 診断
 
-$ARGUMENTS（PR番号またはブランチ名。省略時は現在のブランチ）をそのまま渡す:
+$ARGUMENTS（PR の URL、PR番号、ブランチ名。省略時は現在のブランチ）をそのまま渡す。PR の URL なら cwd に依らずその PR を診断する。PR番号・ブランチ名・省略時は cwd のリポジトリで読むので、PR のリポジトリの worktree で走らせる:
 
 ```bash
-~/.claude/scripts/gh-actions-diagnose.sh $ARGUMENTS
+~/.claude/scripts/gh-actions-diagnose.sh "$ARGUMENTS"
 ```
 
 ## Step 2: CAUSE に従って対応する

@@ -609,12 +609,12 @@ impl Rule for PreMergeCheck {
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
-                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認し、直せたら再レビューを依頼してください。{}",
+                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら再レビューを依頼してください。{}",
                         short(&head_sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
                     Some(sha) if sha != head_sha => unreviewed.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
                         short(&head_sha),
                         short(&sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
@@ -670,8 +670,15 @@ impl Rule for PreMergeCheck {
             }
 
             if !reasons.is_empty() {
+                // 診断は cwd のリポジトリで読むので、PR が分かれば URL で渡す（ADR-0032）
+                let target = match pr_number.as_deref() {
+                    Some(number) if !owner.is_empty() && !name.is_empty() => {
+                        format!(" https://github.com/{owner}/{name}/pull/{number}")
+                    }
+                    _ => String::new(),
+                };
                 return vec![Finding::Deny(format!(
-                    "{}\n\n/gh-actions-check で状況を診断してください。",
+                    "{}\n\n/gh-actions-check{target} で状況を診断してください。",
                     reasons.join("\n")
                 ))];
             }

@@ -30,7 +30,7 @@ allowed-tools:
 
 サブエージェントの cwd は作業する worktree ではない。スキルの `!` 行と引数なしのスクリプトは cwd の
 ブランチを見るので、/gh-pr-create と /gh-pr-review は Skill で呼ばずに Read で読み、
-その中のコマンドを `cd <worktree> &&` を付け、ブランチや PR 番号を明示して走らせる。
+その中のコマンドを `cd <worktree> &&` を付け、ブランチを明示して走らせる。PR のスクリプトには PR の URL を渡す。
 
 ## 進める側（サブエージェント）の手順
 
@@ -121,9 +121,9 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 - /gh-pr-create を Read で読み、その形（タイトル 70 文字以内、`## Summary` / `## Changes` / `## Tests`）で
   PR を作る。`cd <worktree> && git push -u origin <ブランチ名>` と `cd <worktree> && gh pr create …` は別々の
   呼び出しにする（push 前の状態で hook が止める）
-- `cd <worktree> && ~/.claude/scripts/gh-wait-review.sh <PR番号>` を `run_in_background=true` で走らせて
-  待つ。待つ間に最後の報告を返さない（待機の終わりの通知で再開する）
-- /gh-pr-review を Read で読み、その手順で対応する。スクリプトには PR 番号を渡す。周の終わりは
+- `~/.claude/scripts/gh-wait-review.sh <PR の URL>`（URL は `gh pr create` の出力）を `run_in_background=true`
+  で走らせて待つ。待つ間に最後の報告を返さない（待機の終わりの通知で再開する）
+- /gh-pr-review を Read で読み、その手順で対応する。スクリプトには PR の URL を渡す。周の終わりは
   `decide-next.sh` の `VERDICT` に従う。最後の分岐は次に置き換える: 要判断（escalate）はユーザーの指示を
   待たず報告の「マージの前後で人の手が要ること」に書いて止まり、/gh-pr-merge には進まない
 
