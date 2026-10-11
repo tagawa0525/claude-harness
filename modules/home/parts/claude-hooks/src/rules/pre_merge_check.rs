@@ -659,10 +659,14 @@ impl Rule for PreMergeCheck {
                         ".[] | [.status, .filename] | @tsv",
                     ],
                 ) {
-                    Err(()) => reasons.push(
-                        "PR の変更ファイルを取得できず、新しい ADR の数を確認できません（pulls/files API が失敗）"
-                            .to_string(),
-                    ),
+                    Err(()) => reasons.extend(apply_escape_to_reasons(
+                        shell.escape("ALLOW_MULTI_TOPIC"),
+                        "ALLOW_MULTI_TOPIC",
+                        vec![
+                            "PR の変更ファイルを取得できず、新しい ADR の数を確認できません（pulls/files API が失敗）"
+                                .to_string(),
+                        ],
+                    )),
                     Ok(s) => {
                         let adrs: Vec<String> = s
                             .lines()
