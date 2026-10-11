@@ -16,6 +16,12 @@ if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
   cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
   CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
 fi
+# 渡されたパスが壊れていると（nix build の失敗の文言など）、全てのテストが失敗として数えられ、
+# ビルドの失敗が紛れる
+if [[ ! -x "$CLAUDE_HOOKS_BIN" ]]; then
+  echo "claude-hooks を走らせられません: $CLAUDE_HOOKS_BIN" >&2
+  exit 1
+fi
 
 source "$(dirname "$0")/lib.sh"
 

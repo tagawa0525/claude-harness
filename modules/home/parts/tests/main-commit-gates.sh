@@ -18,6 +18,10 @@ set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel)
 # PreToolUse hook バイナリ。CLAUDE_HOOKS_BIN で差し替え可（既定は nix build の成果物）
 HOOK_BIN="${CLAUDE_HOOKS_BIN:-$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-hooks")/bin/claude-hooks}"
+if [[ ! -x "$HOOK_BIN" ]]; then
+  echo "claude-hooks を走らせられません: $HOOK_BIN" >&2
+  exit 1
+fi
 
 HOST="${1:-r995}"
 WORK=$(mktemp -d)
