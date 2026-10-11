@@ -27,7 +27,7 @@ pub enum Escape {
     Absent,
     /// 代入はあるが、値が理由として短い（`1`、`true`、`force` など）
     Short,
-    /// 値に展開（`$VAR`、`$(…)`）や ANSI-C 文字列（`$'…'`）が含まれ、字面と渡る値が違う。記録に理由が残らないので
+    /// 値に展開（`$VAR`、`$(…)`）や ANSI-C 文字列（`$'…'`）が含まれ、展開を除いた字面だけでは理由として短い。
     /// Short と同じく理由を求める。git の hook のように展開後の値しか見えない層には、この区別が要る
     Expanded,
     /// 理由つき
@@ -46,20 +46,26 @@ fn reason_width(value: &str) -> usize {
         .sum()
 }
 
-/// 値に展開（`$VAR`、`$(…)`、`$((…))`）や ANSI-C 文字列（`$'…'`）が含まれるか
-fn has_expansion(node: Node) -> bool {
-    if matches!(
+/// 展開（`$VAR`、`$(…)`、`<(…)`、`$((…))`）か ANSI-C 文字列（`$'…'`）か。字面と渡る値が違うので、
+/// 理由の幅には数えない
+fn is_expansion(node: Node) -> bool {
+    matches!(
         node.kind(),
         "simple_expansion"
             | "expansion"
             | "command_substitution"
+            | "process_substitution"
             | "arithmetic_expansion"
             | "ansi_c_string"
-    ) {
+    )
+}
+
+fn contains_expansion(node: Node) -> bool {
+    if is_expansion(node) {
         return true;
     }
     let mut cursor = node.walk();
-    node.children(&mut cursor).any(has_expansion)
+    node.children(&mut cursor).any(contains_expansion)
 }
 
 /// 複数の代入があるときの優先順位。値が記録に残らないもの（Expanded）、短いもの（Short）、理由つき、無し、の順に
@@ -281,6 +287,26 @@ impl Shell {
     /// `NAME=<値>` の代入をプログラム内から探す（hook のエスケープ指定）。値が理由として足りるかで分ける。
     /// `0` と空は付けていないものとして扱う。代入が複数あれば、短い値が 1 つでもあれば Short
     /// （後ろの代入で上書きして通せない）
+    /// 値の字面のうち、展開と ANSI-C 文字列を除いた部分。記録にそのまま残る理由で、幅はこれで数える
+    /// （PR 番号などは展開で足せる）
+    fn literal(&self, node: Node) -> String {
+        if is_expansion(node) {
+            return String::new();
+        }
+        match node.kind() {
+            "raw_string" => strip(self.text(node), "'", "'"),
+            "string" | "translated_string" | "concatenation" => {
+                let mut s = String::new();
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    s.push_str(&self.literal(child));
+                }
+                s
+            }
+            _ => self.text(node).to_string(),
+        }
+    }
+
     pub fn escape(&self, name: &str) -> Escape {
         let mut found = Escape::Absent;
         self.walk(self.tree.root_node(), &mut |n| {
@@ -288,16 +314,17 @@ impl Shell {
                 && n.child_by_field_name("name").map(|v| self.text(v)) == Some(name)
             {
                 let value_node = n.child_by_field_name("value");
-                let value = value_node.map(|v| self.unquote(v).text).unwrap_or_default();
-                let value = value.trim();
-                let this = if value.is_empty() || value == "0" {
+                let literal = value_node.map(|v| self.literal(v)).unwrap_or_default();
+                let literal = literal.trim();
+                let expanded = value_node.is_some_and(contains_expansion);
+                let this = if !expanded && (literal.is_empty() || literal == "0") {
                     Escape::Absent
-                } else if value_node.is_some_and(has_expansion) {
-                    Escape::Expanded
-                } else if reason_width(value) < REASON_MIN_WIDTH {
-                    Escape::Short
-                } else {
+                } else if reason_width(literal) >= REASON_MIN_WIDTH {
                     Escape::Given
+                } else if expanded {
+                    Escape::Expanded
+                } else {
+                    Escape::Short
                 };
                 if rank(this) > rank(found) {
                     found = this;
