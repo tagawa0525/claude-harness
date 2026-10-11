@@ -44,6 +44,11 @@ impl TempRepo {
     /// git を走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
     /// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）
     pub fn git(&self, args: &[&str]) -> String {
+        self.git_env(&[], args)
+    }
+
+    /// 環境変数 `env` を足して git を走らせる（日時を決めてコミットするときなど）
+    pub fn git_env(&self, env: &[(&str, &str)], args: &[&str]) -> String {
         let hooks = self.dir.join(".git/capture-hooks");
         let mut command = Command::new("git");
         command
@@ -60,6 +65,7 @@ impl TempRepo {
             .arg(format!("core.hooksPath={}", hooks.display()))
             .args(args);
         isolate(&mut command);
+        command.envs(env.iter().copied());
         let output = command.output().unwrap();
         assert!(
             output.status.success(),

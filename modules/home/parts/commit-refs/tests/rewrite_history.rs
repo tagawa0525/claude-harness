@@ -278,3 +278,119 @@ fn rewrite_history_without_a_map_is_a_usage_error() {
     let out = run(&t.dir, &["rewrite-history"], "");
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
 }
+
+/// 日時を決めて、作業ツリーの全てをコミットする
+fn commit_at(t: &TempRepo, date: &str, message: &str) -> String {
+    let env = [("GIT_AUTHOR_DATE", date), ("GIT_COMMITTER_DATE", date)];
+    t.git(&["add", "-A"]);
+    t.git_env(&env, &["commit", "-q", "-m", message]);
+    t.head()
+}
+
+#[test]
+fn rewrites_references_to_commits_on_other_branches_whatever_the_export_order() {
+    // main の cm が、別のブランチの cs を（書き換える前の番号 X0 で）指す。cs の日時を後にして、親子の順では
+    // 決まらない 2 つのコミットのどちらが先に流れても、付け直せることを確かめる
+    for (name, side_date, main_date) in [
+        ("side-later", "1700000200 +0000", "1700000100 +0000"),
+        ("side-earlier", "1700000100 +0000", "1700000200 +0000"),
+    ] {
+        let t = TempRepo::new(name);
+        let c0 = t.head();
+        t.git(&["switch", "-q", "-c", "side"]);
+        t.write("side.md", "side\n");
+        let cs = commit_at(&t, side_date, "docs: side");
+        t.git(&["switch", "-q", "main"]);
+        t.write("main.md", &format!("cherry picked from {}\n", &X0[..8]));
+        commit_at(&t, main_date, "docs: main");
+        let map = t.map_file(&format!("old new\n{X0} {cs}\n"));
+        let out = run(&t.dir, &["rewrite-history", &map], "");
+        assert_ok(&out);
+        assert_eq!(t.rev("main~1"), c0);
+        assert_eq!(t.rev("side"), cs);
+        assert_eq!(
+            t.git(&["show", "main:main.md"]),
+            format!("cherry picked from {}\n", &cs[..8])
+        );
+    }
+}
+
+#[test]
+fn creates_a_tag_that_points_at_another_tag() {
+    let h = History::new("tag-of-tag");
+    h.t.git(&[
+        "tag",
+        "-a",
+        "inner",
+        "-m",
+        &format!("inner {}", &X1[..8]),
+        &h.c2,
+    ]);
+    h.t.git(&["tag", "-a", "outer", "-m", "outer", "inner"]);
+    assert_ok(&h.rewrite());
+    let inner = h.t.rev("inner");
+    assert_eq!(h.t.rev("outer^{tag}"), h.t.rev("outer"));
+    let outer = h.t.git(&["cat-file", "-p", "outer"]);
+    assert!(outer.contains(&format!("object {inner}")), "{outer}");
+    assert_eq!(h.t.rev("outer^{commit}"), h.t.rev("main"));
+}
+
+#[test]
+fn leaves_symlink_targets_alone() {
+    let h = History::new("symlink");
+    std::os::unix::fs::symlink(format!("x{}", &X1[..8]), h.t.path("link")).unwrap();
+    std::os::unix::fs::symlink(&X1[..8], h.t.path("link2")).unwrap();
+    h.t.commit_all("chore: links");
+    let before = h.t.rev("main:link2");
+    assert_ok(&h.rewrite());
+    assert_eq!(h.t.rev("main:link2"), before);
+}
+
+#[test]
+fn a_branch_checked_out_in_another_worktree_stops_before_rewriting() {
+    let h = History::new("worktrees");
+    let other = h.t.dir.with_file_name(format!(
+        "{}-other",
+        h.t.dir.file_name().unwrap().to_string_lossy()
+    ));
+    h.t.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "other",
+        other.to_str().unwrap(),
+    ]);
+    let before = h.refs();
+    let out = h.rewrite();
+    let _ = fs::remove_dir_all(&other);
+    assert_error(&out);
+    assert!(stderr(&out).contains("worktree"), "{}", stderr(&out));
+    assert_eq!(h.refs(), before);
+}
+
+#[test]
+fn a_detached_head_outside_the_rewritten_refs_stops_before_rewriting() {
+    let h = History::new("detached");
+    h.t.git(&["switch", "-q", "--detach"]);
+    h.t.write("loose.md", "loose\n");
+    h.t.commit_all("docs: loose");
+    let before = h.refs();
+    let out = h.rewrite();
+    assert_error(&out);
+    assert!(stderr(&out).contains("HEAD"), "{}", stderr(&out));
+    assert_eq!(h.refs(), before);
+}
+
+#[test]
+fn reports_refs_that_are_not_rewritten() {
+    let h = History::new("other-refs");
+    h.t.git(&["update-ref", "refs/remotes/origin/main", &h.c2]);
+    let out = h.rewrite();
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains("NOT_REWRITTEN: refs/remotes/origin/main\n"),
+        "{}",
+        stdout(&out)
+    );
+}
