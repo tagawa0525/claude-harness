@@ -65,3 +65,8 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
   Markdown の作業ツリーを直すこと
 - `modules/home/parts/tests/pre-commit-rust-format.sh`: クレートの edition（workspace からの継承を含む）と、
   クレートの外とパッケージの無い Cargo.toml の下の 2024
+
+## 補足
+
+- 2026-10-12: `run-checks.sh` の Markdown の段（ステージした差分を見る既定の使い方）も、`staged-checks markdown` に
+  任せるようにした（#338）。`staged-checks` は言語を渡すとその言語だけを検査し、`home.packages` で PATH に置く

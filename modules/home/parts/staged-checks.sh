@@ -7,7 +7,28 @@
 # 入れないため（ADR-0028）。Markdown の自動修正はステージした版に当ててステージし直し、作業ツリーの
 # ファイルがステージした版と同じときだけ、作業ツリーにも書く。
 #
-# 終了コード: 0 = 違反が無い、1 = 違反がある
+# 使い方: staged-checks [nix|python|markdown|rust]...（言語を渡せばその言語だけ。run-checks.sh の Markdown の段が使う）
+# 終了コード: 0 = 違反が無い、1 = 違反がある、2 = 使い方の誤り
+
+for lang in "$@"; do
+  case $lang in
+    nix | python | markdown | rust) ;;
+    *)
+      echo "staged-checks: 知らない言語です: $lang（nix、python、markdown、rust）" >&2
+      exit 2
+      ;;
+  esac
+done
+# wants <言語>: その言語を検査するか（言語を渡さなければ全て）
+wants() {
+  [ "$#" -gt 0 ] || return 1
+  local want=$1
+  shift
+  [ "$#" -eq 0 ] && return 0
+  local lang
+  for lang in "$@"; do [ "$lang" = "$want" ] && return 0; done
+  return 1
+}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -32,8 +53,11 @@ collect() {
 }
 
 # --- Nix --------------------------------------------------------------------------------------------
-collect '*.nix'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v nixfmt >/dev/null 2>&1; then
+PATHS=()
+! wants nix "$@" || collect '*.nix'
+if [ "${#PATHS[@]}" -gt 0 ] && ! command -v nixfmt >/dev/null 2>&1; then
+  echo "SKIP: Nix の検査（nixfmt が PATH に無い）"
+elif [ "${#PATHS[@]}" -gt 0 ]; then
   echo "🔍 Checking Nix format..."
   bad=()
   for i in "${!PATHS[@]}"; do
@@ -47,8 +71,11 @@ fi
 
 # --- Python -----------------------------------------------------------------------------------------
 # --stdin-filename の場所から、ruff はプロジェクトの設定を探す
-collect '*.py'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v ruff >/dev/null 2>&1; then
+PATHS=()
+! wants python "$@" || collect '*.py'
+if [ "${#PATHS[@]}" -gt 0 ] && ! command -v ruff >/dev/null 2>&1; then
+  echo "SKIP: Python の検査（ruff が PATH に無い）"
+elif [ "${#PATHS[@]}" -gt 0 ]; then
   echo "🔍 Checking Python format..."
   bad=()
   for i in "${!PATHS[@]}"; do
@@ -74,8 +101,11 @@ fi
 # ステージした版を元のパスのまま $work/md に書き出し、そこで markdownlint を走らせる（直下の設定と
 # .markdownlintignore も、ステージした版を写し、相対のパスの書き方をそのまま効かせる。設定の extends が指す
 # 別のファイルは写さない。ADR-0028）
-collect '*.md'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
+PATHS=()
+! wants markdown "$@" || collect '*.md'
+if [ "${#PATHS[@]}" -gt 0 ] && ! command -v markdownlint >/dev/null 2>&1; then
+  echo "SKIP: Markdown の検査（markdownlint が PATH に無い）"
+elif [ "${#PATHS[@]}" -gt 0 ]; then
   echo "🔧 Auto-fixing Markdown lint..."
   md="$work/md"
   mkdir -p "$md"
@@ -90,7 +120,9 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
   # markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完する。実体は
   # language-checks スキルの同期先（~/.claude）。無ければ飛ばし、続く検査で残った違反として出る
   MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"
-  if [ -f "$MD_FIXER" ] && command -v python3 >/dev/null 2>&1; then
+  if [ ! -f "$MD_FIXER" ] || ! command -v python3 >/dev/null 2>&1; then
+    echo "SKIP: fix-markdown-lint.py（$MD_FIXER か python3 が無い）"
+  else
     # fix-markdown-lint.py は -- で始まる引数を飛ばすので、./ を付けて渡す
     if ! (cd "$md" && python3 "$MD_FIXER" "${PATHS[@]/#/./}"); then
       echo "❌ fix-markdown-lint.py failed. Run: python3 $MD_FIXER <files>"
@@ -127,8 +159,11 @@ fi
 # workspace からの継承も解く）。パッケージの無い Cargo.toml（virtual workspace）の下とクレートの外は 2024。
 # rustfmt.toml は、ファイルのディレクトリから探させる（標準入力では rustfmt.toml の ignore が効かない。ADR-0028）
 # 検証: modules/home/parts/tests/pre-commit-rust-format.sh
-collect '*.rs'
-if [ "${#PATHS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
+PATHS=()
+! wants rust "$@" || collect '*.rs'
+if [ "${#PATHS[@]}" -gt 0 ] && ! command -v rustfmt >/dev/null 2>&1; then
+  echo "SKIP: Rust の検査（rustfmt が PATH に無い）"
+elif [ "${#PATHS[@]}" -gt 0 ]; then
   echo "🔍 Checking Rust format..."
   # manifest ごとの edition。cargo metadata が失敗した manifest は failed を入れ、1 回だけ報告する
   declare -A edition=()

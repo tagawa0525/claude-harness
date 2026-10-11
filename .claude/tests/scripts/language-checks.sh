@@ -9,6 +9,9 @@
 source "$(dirname "$0")/../lib.sh"
 
 LANG_SCRIPTS="$CLAUDE_DIR/skills/language-checks/scripts"
+# 手元の staged-checks（home-manager が PATH に置く）を走らせず、どのホストでも同じ結果にする。Markdown の段を
+# 確かめるテストは、この偽物を差し替える
+make_fake_tool staged-checks '*) exit 0 ;;'
 
 # ===========================================================================
 # language-checks/scripts/run-checks.sh
@@ -65,16 +68,32 @@ assert_contains "$(fake_log nixfmt)" "--check"
 assert_eq "check" "$(fake_log statix)"
 assert_eq "" "$(fake_log nix)"
 
-it "run-checks: Markdown の補完修正は python3 がなければ SKIP して続行する"
+it "run-checks: ステージした .md は staged-checks markdown で直して検査する（作業ツリーの版を見ない）"
 REPO="$TEST_ROOT/checks/md"
 make_repo "$REPO"
 cd "$REPO" || exit 1
 echo "# doc" > doc.md && git add doc.md
-make_fake_tool markdownlint '*) exit 0 ;;'
+make_fake_tool staged-checks '*) exit 0 ;;'
+make_fake_tool markdownlint '*) echo "should not lint the worktree"; exit 1 ;;'
 out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_contains "$out" "SKIP: markdown fixer (python3 not found)"
+assert_eq "markdown" "$(fake_log staged-checks)"
+assert_eq "" "$(fake_log markdownlint)"
+assert_contains "$out" "OK: markdown staged"
 assert_contains "$out" "ALL_OK"
+
+it "run-checks: staged-checks が違反を出せば止める"
+make_fake_tool staged-checks '*) echo "Markdown lint failed"; exit 1 ;;'
+out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
+assert_eq 1 $?
+assert_contains "$out" "FAILED: markdown staged"
+
+it "run-checks: staged-checks が無ければ SKIP して続行する"
+remove_fake_tool staged-checks
+out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_contains "$out" "SKIP: markdown staged (staged-checks not found)"
+make_fake_tool staged-checks '*) exit 0 ;;'
 
 # design-records: .pre-commit-config.yaml でオプトインしたリポジトリでは、ADR の形と参照も検査する（ADR-0009）
 
@@ -296,16 +315,16 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "-S warning -- new.sh" "$(fake_log shellcheck)"
 
-it "run-checks: .md から .md への rename を markdownlint で検査する"
+it "run-checks: .md から .md への rename も Markdown の段で検査する"
 REPO="$TEST_ROOT/checks/rename-md"
 make_repo "$REPO"
 cd "$REPO" || exit 1
 printf '# notes\n\nbody\n' > old.md && git add old.md && git commit -q -m "chore: old"
 git mv old.md new.md
-make_fake_tool markdownlint '*) exit 0 ;;'
+make_fake_tool staged-checks '*) exit 0 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_contains "$(fake_log markdownlint)" "new.md"
+assert_eq "markdown" "$(fake_log staged-checks)"
 
 it "run-checks: .rs から .rs への rename でも crate で cargo を実行する"
 REPO="$TEST_ROOT/checks/rename-rs"

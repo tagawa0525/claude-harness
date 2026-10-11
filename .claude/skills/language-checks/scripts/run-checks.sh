@@ -17,7 +17,7 @@
 #             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み
 #   Nix:      flake.nix がある、または .nix がステージ済み
-#   Markdown: .md がステージ済み（自動修正 → 補完 → 再ステージ → 検査）。.pre-commit-config.yaml で design-records に
+#   Markdown: .md がステージ済み（staged-checks markdown で、ステージした版を直して検査する。--merge では検査だけ）。.pre-commit-config.yaml で design-records に
 #             オプトインしていれば、.md の変更が無くても design-records check
 #   Shell:    .sh がステージ済み（ステージ済みのファイルだけを shellcheck で検査）
 #
@@ -182,21 +182,8 @@ if [[ -f flake.nix ]] || staged_has '*.nix'; then
 fi
 
 # --- Markdown（ステージ済みのみ）---
-MD_FIXER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fix-markdown-lint.py"
 staged_md() {
   changed_files -z -- '*.md'
-}
-md_autofix() {
-  # markdownlint --fix は直せない違反があると非 0 を返すので、ここでは止めない（直後の lint で検出する）
-  staged_md | xargs -0 -r markdownlint --fix -- 2>/dev/null || true
-  # 補完修正（MD040 / MD060）。python3 がなければ飛ばし、残った違反は lint で検出される
-  # （if の条件として呼ばれる関数内では -e が効かないので、失敗は明示的に返す）
-  if command -v python3 >/dev/null 2>&1; then
-    staged_md | xargs -0 -r python3 "$MD_FIXER" || return 1
-  else
-    echo "SKIP: markdown fixer (python3 not found)"
-  fi
-  staged_md | xargs -0 -r git add --
 }
 md_lint() {
   staged_md | xargs -0 -r markdownlint --
@@ -216,10 +203,12 @@ if staged_has '*.md'; then
   DETECTED=1
   if (( MERGE )); then
     echo "SKIP: markdown format (--merge では自動修正しない)"
+    run_stage markdown lint markdownlint "" md_lint
   else
-    run_stage markdown format markdownlint "" md_autofix
+    # ステージした版を直してステージし直し、検査する（グローバルの pre-commit と同じ staged-checks。作業ツリーを
+    # 書き換えないので、一部だけステージした .md のステージしていない編集をステージしない。nixfiles の ADR-0028）
+    run_stage markdown staged staged-checks "" staged-checks markdown
   fi
-  run_stage markdown lint markdownlint "" md_lint
 fi
 # design-records は .pre-commit-config.yaml でオプトインしたリポジトリだけで走らせる（ADR-0009。docs/adr の有無で
 # 決めると、別の形の ADR を持つ他人のプロジェクトでも止まる）。.md の変更が無くても走らせ、ADR を消すだけの変更でも、
