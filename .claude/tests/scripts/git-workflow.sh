@@ -631,7 +631,7 @@ assert_eq "adr-0002" "$(git tag --list adr-0002)"
 assert_contains "$(git ls-remote --tags origin refs/tags/adr-0002)" "refs/tags/adr-0002"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: 設計の記録の無いリポジトリでは予約のタグを見ない"
+it "post-merge-cleanup: 予約のタグが無ければ prune を呼ばない"
 setup_merged_branch "$TEST_ROOT/cleanup11"
 cd "$TEST_ROOT/cleanup11/app" || exit 1
 make_fake_tool design-records '"prune") exit 1 ;;'
@@ -645,13 +645,24 @@ cd "$TEST_ROOT" || exit 1
 it "post-merge-cleanup: 予約のタグを解放できなければ ERROR を出し、ブランチを消さずに止まる"
 setup_merged_branch "$TEST_ROOT/cleanup12"
 cd "$TEST_ROOT/cleanup12/app" || exit 1
-mkdir -p docs/adr
+git tag -a adr-0001 -m use-a main
 make_fake_tool design-records '"prune") echo "design-records: cannot reach origin" >&2; exit 1 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR: 予約のタグを解放できません"
 assert_contains "$(git branch --list feat/x)" "feat/x"
 remove_fake_tool design-records
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: design-records が PATH に無ければ、予約のタグの解放を飛ばして続ける"
+setup_merged_branch "$TEST_ROOT/cleanup13"
+cd "$TEST_ROOT/cleanup13/app" || exit 1
+git tag -a adr-0001 -m use-a main
+out=$(PATH=$(minimal_path) "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "RESERVATIONS_RELEASED: skipped"
+assert_eq "" "$(git branch --list feat/x)"
+assert_eq "adr-0001" "$(git tag --list adr-0001)"
 cd "$TEST_ROOT" || exit 1
 
 it "post-merge-cleanup: 未マージのブランチは削除せず失敗する"

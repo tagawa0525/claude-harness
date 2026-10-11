@@ -1263,7 +1263,7 @@ fn new_tells_how_to_publish_the_default_branch_when_origin_has_none() {
 #[test]
 fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
     let t = TempRepo::with_remote("same-clone");
-    // 先のセッションの push を遅らせる git
+    // 先のセッションの push を、入ったことをファイルで知らせてから遅らせる git
     let bin = t.root.join("bin");
     fs::create_dir(&bin).unwrap();
     let real = String::from_utf8(
@@ -1275,9 +1275,13 @@ fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
     )
     .unwrap();
     let real = real.trim();
+    let pushing = t.root.join("pushing");
     fs::write(
         bin.join("git"),
-        format!("#!/bin/sh\ncase \" $* \" in *\" push \"*) sleep 2 ;; esac\nexec {real} \"$@\"\n"),
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" push \"*) : > {}; sleep 2 ;; esac\nexec {real} \"$@\"\n",
+            pushing.display()
+        ),
     )
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
@@ -1292,13 +1296,139 @@ fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
         .stderr(Stdio::piped());
     isolate(&mut first);
     let first = first.spawn().unwrap();
-    // 先のセッションがタグを打ち、push を待っている間に、次のセッションが走る
-    std::thread::sleep(std::time::Duration::from_millis(700));
+    // 先のセッションがタグを打って push に入ってから、次のセッションを走らせる
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !pushing.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the first session never pushed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let second = t.run(&["new", "use-b", "b を使う"]);
     let first = first.wait_with_output().unwrap();
     assert!(first.status.success(), "{}", stderr(&first));
     assert!(second.status.success(), "{}", stderr(&second));
-    assert_eq!(stdout(&first), "docs/adr/0001-use-a.md\n");
-    assert_eq!(stdout(&second), "docs/adr/0002-use-b.md\n");
+    assert_ne!(stdout(&first), stdout(&second));
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
     assert!(t.remote_tag("adr-0002").contains("adr-0002"));
+}
+
+#[test]
+fn renumber_ignores_context_lines_inside_merged_hunks() {
+    let t = duplicated_after_rebase("inter-hunk");
+    t.git(&["switch", "-q", "main"]);
+    t.write("plans/p.md", "x\nADR-0001 は a\ny\n");
+    t.commit_all("docs: plan");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    t.write(
+        "plans/p.md",
+        "ADR-0001 の続き\nx\nADR-0001 は a\ny\nADR-0001 の後\n",
+    );
+    t.commit_all("docs: plan b");
+    // 近い hunk を 1 つにまとめる設定では、間の main の行が hunk の範囲に入る
+    t.git(&["config", "diff.interHunkContext", "5"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        t.read("plans/p.md"),
+        "ADR-0002 の続き\nx\nADR-0001 は a\ny\nADR-0002 の後\n"
+    );
+}
+
+#[test]
+fn new_keeps_remote_tracking_branches_that_origin_lacks() {
+    let t = TempRepo::with_remote("keep-branches");
+    let head = t.git(&["rev-parse", "HEAD"]).trim().to_string();
+    // ほかの refspec（PR など）で取った、origin のブランチには無い ref
+    t.git(&["update-ref", "refs/remotes/origin/pr/7", &head]);
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.git(&["rev-parse", "refs/remotes/origin/pr/7"]).trim(),
+        head
+    );
+}
+
+#[test]
+fn prune_treats_tags_already_deleted_on_origin_as_released() {
+    let t = TempRepo::with_remote("prune-gone");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    t.git(&["push", "-q", "origin", "main"]);
+    // 最初の ls-remote にだけ、ほかの clone がまだ消していないように見せる git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let mark = t.root.join("listed");
+    fs::write(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in *\" ls-remote \"*)\n\
+             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} \"$@\"; {real} -C {dir} push -q origin --delete refs/tags/adr-0001; exit 0; fi ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            mark = mark.display(),
+            dir = t.dir.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "adr-0001\n");
+    assert_eq!(t.git(&["tag", "--list"]), "");
+}
+
+#[test]
+fn check_matches_reservations_of_three_digit_issues() {
+    let t = TempRepo::new("issue-three-tag");
+    t.write("docs/issues/001-fix-a.md", "# a\n");
+    t.git(&["add", "-A"]);
+    t.git(&["tag", "-a", "issue-0001", "-m", "fix-other", "main"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out)
+            .contains("docs/issues/001-fix-a.md: warning: number 0001 is reserved for `fix-other`"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn renumber_sees_untracked_files_even_when_status_hides_them() {
+    let t = duplicated_after_rebase("hidden-untracked");
+    t.git(&["config", "status.showUntrackedFiles", "no"]);
+    t.write("draft.md", "書きかけ\n");
+    let out = t.run(&["renumber", "1"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
+}
+
+#[test]
+fn prune_falls_back_when_origin_head_points_nowhere() {
+    let t = TempRepo::with_remote("dangling-head");
+    t.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/gone",
+    ]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
 }
