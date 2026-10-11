@@ -180,15 +180,15 @@ minimal_path() {
 }
 
 # make_fake_gh <case-body>: gh 用のショートカット。記録は $FAKE_GH_LOG。
-# 呼び出しごとの GH_REPO（gh の対象のリポジトリ）も記録する（fake_gh_repos で読む）
+# 呼び出しごとの GH_HOST/GH_REPO（gh の対象のリポジトリ）も記録する（fake_gh_repos で読む）
 make_fake_gh() {
   : > "$TEST_ROOT/gh-repo.log"
-  make_fake_tool gh "  *) printf '%s\\n' \"\${GH_REPO-(unset)}\" >> \"$TEST_ROOT/gh-repo.log\" ;;&
+  make_fake_tool gh "  *) printf '%s\\n' \"\${GH_HOST-(unset)}/\${GH_REPO-(unset)}\" >> \"$TEST_ROOT/gh-repo.log\" ;;&
 $1"
   export FAKE_GH_LOG="$TEST_ROOT/gh.log"
 }
 
-# fake_gh_repos: 偽 gh が受けた GH_REPO の値（重複を除く）
+# fake_gh_repos: 偽 gh が受けた GH_HOST/GH_REPO の値（重複を除く）
 fake_gh_repos() {
   sort -u "$TEST_ROOT/gh-repo.log"
 }

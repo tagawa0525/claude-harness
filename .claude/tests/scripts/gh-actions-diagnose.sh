@@ -38,10 +38,22 @@ make_fake_gh '"pr view 7 --json headRefName,headRefOid"*) echo "{\"headRefName\"
 out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh" "https://github.com/octo/repo/pull/7")
 assert_contains "$out" "PR: 7"
 assert_contains "$out" "BRANCH: feat/y"
-assert_eq octo/repo "$(fake_gh_repos)"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 it "gh-actions-diagnose: PR の URL で診断したときの次の一手の gh には -R でリポジトリを付ける"
 assert_contains "$out" "gh run rerun 100 -R octo/repo"
+
+it "gh-actions-diagnose: コメントの URL も、その PR の診断として受ける"
+out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh" "https://github.com/octo/repo/pull/7#discussion_r1")
+assert_contains "$out" "PR: 7"
+
+for url in "http://github.com/octo/repo/pull/7" "github.com/octo/repo/pull/7"; do
+  it "gh-actions-diagnose: 解析できない URL（$url）はブランチ名とみなさずエラー"
+  make_fake_gh '"run list"*) echo "[]" ;;'
+  out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh" "$url" 2>&1)
+  assert_ne 0 $?
+  assert_not_contains "$(fake_log gh)" "run list"
+done
 
 it "gh-actions-diagnose: 実行中なら CAUSE: IN_PROGRESS"
 make_fake_gh '"run list --branch feat/x"*) echo "[{\"databaseId\":1,\"name\":\"CI\",\"status\":\"in_progress\",\"conclusion\":\"\",\"createdAt\":\"2026-09-01T00:00:00Z\",\"url\":\"u\"}]" ;;'

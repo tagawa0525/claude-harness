@@ -53,7 +53,7 @@ for url in "https://github.com/octo/repo/pull/42/files" "https://github.com/octo
   make_fake_gh '"pr view 42 --json"*) echo "{\"number\":42}" ;;'
   out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "$url")
   assert_eq 0 $?
-  assert_eq octo/repo "$(fake_gh_repos)"
+  assert_eq github.com/octo/repo "$(fake_gh_repos)"
 done
 
 for url in "$PR_URL#discussion_r111" "$PR_URL/files#r111"; do
@@ -70,13 +70,13 @@ done
 
 it "get-pr-info: コメント URL から PR 番号とコメント ID を取り出し PR 情報に添える"
 make_fake_gh '"pr view 42 --json"*) echo "{\"number\":42,\"title\":\"t\"}" ;;'
-out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42#discussion_r123456")
+out=$(GH_HOST=ghe.example.com "$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42#discussion_r123456")
 assert_eq 0 $?
 assert_eq 42 "$(jq -r .number <<<"$out")"
 assert_eq 123456 "$(jq -r .comment_id <<<"$out")"
 
-it "get-pr-info: URL のリポジトリを GH_REPO で gh に渡す"
-assert_eq octo/repo "$(fake_gh_repos)"
+it "get-pr-info: URL のリポジトリを GH_REPO で、ホストを GH_HOST で gh に渡す（環境の GH_HOST に向かない）"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 it "get-pr-info: レビューコメントでない # の URL（#issuecomment-1）は comment_id が null"
 out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42#issuecomment-1")
@@ -238,7 +238,7 @@ assert_contains "$out" "RESPONSE: review"
 assert_contains "$out" "INLINE_COMMENTS: 2"
 
 it "decide-next: 下請けのスクリプトの gh も URL のリポジトリに向く"
-assert_eq octo/repo "$(fake_gh_repos)"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 it "decide-next: 未解決スレッドがあれば ACT（対応する）"
 fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD"
@@ -430,7 +430,7 @@ assert_eq 0 $?
 assert_contains "$out" "新しいレビューが到着"
 
 it "gh-wait-review: cwd が GitHub のリポジトリでなくても、URL のリポジトリの PR を待つ"
-assert_eq octo/repo "$(fake_gh_repos)"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 it "gh-wait-review: PR 作成直後で自動要求が未記録でも、記録を待ってから待機に入る"
 fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z 0 2
@@ -447,6 +447,11 @@ assert_contains "$out" "レビュー要求"
 assert_not_contains "$out" "TIMEOUT"
 # 案内はこのスクリプトと同じツリーの request-rereview.sh を指す（デプロイ先の旧版を案内しない）
 assert_contains "$out" "$CLAUDE_DIR/skills/gh-pr-review/scripts/request-rereview.sh $PR_URL"
+
+it "gh-wait-review: 案内には、受けた URL のページやクエリを除いた PR の URL を書く"
+out=$(GH_WAIT_INTERVALS=0 GH_WAIT_REQUEST_INTERVALS="0 0 0" "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL/files?a=1&b=2" 2>&1)
+assert_contains "$out" "request-rereview.sh $PR_URL "
+assert_not_contains "$out" "?a=1"
 
 it "gh-wait-review: 要求後にまだレビューが無ければ待つ"
 fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z

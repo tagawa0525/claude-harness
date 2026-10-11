@@ -1114,6 +1114,7 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビュー"
 # PR のスクリプトは対象を URL で受ける（ADR-0032）
 assert_contains "$(reason "$out")" "request-rereview.sh https://github.com/example/heredoc/pull/1 "
+assert_contains "$(reason "$out")" "/gh-actions-check https://github.com/example/heredoc/pull/1 で状況を診断"
 
 it "pre-merge-check: bot のレビューが head を見ていればマージできる"
 make_fake_gh_merge 'echo 0' 'echo abc'
