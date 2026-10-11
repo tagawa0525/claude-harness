@@ -431,9 +431,11 @@ pub struct Unwrapped {
     pub wrappers: Vec<String>,
     /// 中のコマンドを走らせるディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
     pub dirs: Vec<String>,
-    /// 中のコマンドが手元のディレクトリでなく走る場所の書き方。`sudo -i` は対象の利用者のホーム（`~root`）、
-    /// `ssh` は接続先のホーム（`host:`）。手元のパスには解決しない
-    pub elsewhere: Option<String>,
+    /// `sudo -i` の対象の利用者のホームの書き方（`~root`）。中のコマンドはそこから始まり、`~` もそこを指す。
+    /// 手元のパスには解決しない
+    pub login_home: Option<String>,
+    /// `ssh` の接続先のホームの書き方（`host:`）。中のコマンドは手元のどのパスでもない場所で走る
+    pub remote: Option<String>,
     /// `name` が sh -c で走らせる文字列（`bash -c '…'`、`flock <file> -c '…'`、`script -c '…'`、`eval`・`watch`・
     /// `ssh <接続先>` の残りの語を空白でつないだもの）。shell.rs が再帰的に解析する
     pub source: Option<String>,
@@ -757,12 +759,13 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         }
         out.env.extend(env);
         out.dirs.extend(dir);
-        if out.elsewhere.is_none() {
-            if login {
-                out.elsewhere = Some(format!("~{}", user.as_deref().unwrap_or("root")));
-            } else if let Some(host) = host {
-                out.elsewhere = Some(format!("{host}:"));
-            }
+        if login {
+            out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
+        }
+        if let Some(host) = host
+            && out.remote.is_none()
+        {
+            out.remote = Some(format!("{host}:"));
         }
         // 残りの語から、走らせるものを決める
         match wrapper.name {

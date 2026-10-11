@@ -140,8 +140,10 @@ pub struct Cmd {
     pub wrappers: Vec<String>,
     /// 包んだ `env -C <dir>` の行き先（順に、前のものからの相対）
     pub dirs: Vec<String>,
-    /// 包みが中のコマンドを手元のディレクトリでなく走らせる場所（`sudo -i`、`ssh`。unwrap.rs）
-    pub elsewhere: Option<String>,
+    /// 包んだ `sudo -i` の対象の利用者のホームの書き方（unwrap.rs）
+    pub login_home: Option<String>,
+    /// 包んだ `ssh` の接続先の書き方（unwrap.rs）
+    pub remote: Option<String>,
     /// git のコマンドなら、グローバルオプションの読み取り
     pub git: Option<GitInvocation>,
 }
@@ -290,7 +292,8 @@ impl Shell {
             spawns: None,
             env,
             dirs: unwrapped.dirs,
-            elsewhere: unwrapped.elsewhere,
+            login_home: unwrapped.login_home,
+            remote: unwrapped.remote,
             wrappers: unwrapped.wrappers,
             git,
         };
@@ -472,42 +475,40 @@ impl Shell {
     /// `cd <dir>` を順に畳み込み、包んだ `env -C <dir>` と `git -C <dir>` を順に当てる
     /// （`$(cd x && …)` や `(cd x)` の cd は親のディレクトリを変えないので見ない）
     ///
-    /// `sudo -i` と `ssh` の中のコマンドは、その場所の書き方（`~root`、`host:`）をそのままパスとして返す。
-    /// 展開しない `cd "$VAR"` の行き先と同じく手元に実在しないので、ルールはそのディレクトリのリポジトリや
-    /// ブランチで判定しない。中の `cd` と `git -C` は当てない（ssh の接続先の `/x` や `~` は手元のものではない）
+    /// `sudo -i` の中は、対象の利用者のホームの書き方（`~root`）から始まり、`~` もそれを指す。`ssh` の中の
+    /// コマンドは、接続先の書き方（`host:`）を返し、中の `cd` と `git -C` は当てない（接続先の `/x` や `~` は
+    /// 手元のものではない）。どちらの書き方も、展開しない `cd "$VAR"` の行き先と同じく手元に実在しないパスで、
+    /// ルールは既存の「ディレクトリに移れない」ときの扱いになる
     pub fn target_dir(&self, cmd: &Cmd, base: &Path) -> PathBuf {
         let mut dir = base.to_path_buf();
+        let mut home = home();
         for c in &self.cmds {
             if c.start >= cmd.start {
                 break;
             }
             if c.changes_dir() && cmd.scope.starts_with(&c.scope) {
                 match c.args.iter().find(|a| !a.text.starts_with('-')) {
-                    Some(a) => dir = resolve(&dir, &a.text),
-                    None => dir = home(),
+                    Some(a) => dir = resolve(&home, &dir, &a.text),
+                    None => dir = home.clone(),
                 }
             }
             // cmd を文字列の中に持つ包み（`env -C x bash -c '…'`）のディレクトリは、文字列の中の cd より前に当たる
             if let Some(id) = c.spawns
                 && cmd.scope.get(c.scope.len()) == Some(&id)
             {
-                if let Some(place) = &c.elsewhere {
-                    return PathBuf::from(place);
+                if let Some(remote) = &c.remote {
+                    return PathBuf::from(remote);
                 }
-                for d in &c.dirs {
-                    dir = resolve(&dir, d);
-                }
+                enter(c, &mut home, &mut dir);
             }
         }
-        if let Some(place) = &cmd.elsewhere {
-            return PathBuf::from(place);
+        if let Some(remote) = &cmd.remote {
+            return PathBuf::from(remote);
         }
-        for d in &cmd.dirs {
-            dir = resolve(&dir, d);
-        }
+        enter(cmd, &mut home, &mut dir);
         if let Some(git) = &cmd.git {
             for d in &git.dirs {
-                dir = resolve(&dir, d);
+                dir = resolve(&home, &dir, d);
             }
         }
         dir
@@ -598,15 +599,27 @@ fn home() -> PathBuf {
         .unwrap_or_default()
 }
 
-/// `~` / `~/x` と相対パスを解決する（存在確認はしない）
-fn resolve(base: &Path, p: &str) -> PathBuf {
+/// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）
+fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     if p == "~" {
-        return home();
+        return home.to_path_buf();
     }
     if let Some(rest) = p.strip_prefix("~/") {
-        return home().join(rest);
+        return home.join(rest);
     }
     base.join(p)
+}
+
+/// 包み（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを走らせるディレクトリへ移る。`sudo -i` は対象の
+/// 利用者のホームから始め、`~` もそこを指す
+fn enter(wrapped: &Cmd, home: &mut PathBuf, dir: &mut PathBuf) {
+    if let Some(login_home) = &wrapped.login_home {
+        *home = PathBuf::from(login_home);
+        *dir = home.clone();
+    }
+    for d in &wrapped.dirs {
+        *dir = resolve(home, dir, d);
+    }
 }
 
 impl Cmd {
