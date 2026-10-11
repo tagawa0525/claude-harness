@@ -70,6 +70,9 @@ xlc の衝突は、マージのときに `cargo test`（crates/docs の検査）
 - `origin` が無ければ、ローカルのタグだけで予約する。コミットが 1 つも無いリポジトリは、タグを打つ先が無いので
   止める
 - ファイルは予約が済んでから書く
+- 予約（fetch、タグの作成、push）と解放（`prune`、`renumber` の旧番号の解放）は、clone の中で 1 つずつ行う。共有する
+  git のディレクトリの `design-records.lock` を flock する。fetch の `--prune` は、同じ clone のほかのセッションが
+  打って push する前のタグも消すので、重ねると同じ番号のタグが打ち直され、両方の push が通る
 
 ### 振り直し（`renumber`）
 
@@ -148,3 +151,16 @@ issue の `new` は、番号を予約して `docs/issues/NNNN-<slug>.md` に表�
   タグだけを消すこと
 - `post-merge-cleanup.sh` のテスト（`.claude/tests/scripts/git-workflow.sh`）: マージした記録のタグをローカルと
   リモートから消し、マージしていない記録のタグを残す
+
+## 補足
+
+実装の途中で試して変えた版:
+
+- **予約のタグの fetch に `--prune` を付けない版**: ほかの clone の `renumber` が origin から消したタグが手元に
+  残り、`check` が既定ブランチの記録に、slug の違う予約の注意を出し続けた
+- **`--prune` を付け、排他しない版**: 同じ clone の 2 つのセッションで、先のセッションが push する前のタグを次の
+  セッションの fetch が消し、次のセッションが同じ名前のタグを打ち直して、両方の `new` が同じ番号を振った
+  （`tests/cli.rs` の `sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing` で再現した）
+- **リモートの予約を別の名前空間（`refs/reservations/origin/*`）に取り、そこだけを prune する案**: 試す前に退けた。
+  予約のタグは既定ブランチのコミットを指すので、普通の `git fetch` がタグを自動で `refs/tags` に取ってくる。
+  そのタグは消されずに残るので、`--prune` を付けない版と同じ注意が出る
