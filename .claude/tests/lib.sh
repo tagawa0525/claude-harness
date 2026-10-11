@@ -184,19 +184,29 @@ make_fake_gh() {
 # hook 実行
 # ---------------------------------------------------------------------------
 
-# run_hook <rule> <command> [run_in_background]（hooks.sh が CLAUDE_HOOKS_BIN を用意する）
-# PreToolUse の入力 JSON を組み立てて、そのルールだけを評価した stdout を返す
-run_hook() {
-  local hook="$1" command="$2" bg="${3:-false}"
+# hook_input <command> [run_in_background]: Bash ツールの PreToolUse の入力 JSON（cwd は今のディレクトリ）
+hook_input() {
+  local command="$1" bg="${2:-false}"
   jq -n --arg cmd "$command" --argjson bg "$bg" \
     '{hook_event_name: "PreToolUse", tool_name: "Bash", cwd: env.PWD,
-      tool_input: {command: $cmd, run_in_background: $bg}}' \
-    | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
+      tool_input: {command: $cmd, run_in_background: $bg}}'
 }
 
-# decision <hook-output> → permissionDecision（出力が空なら "allow"）
+# run_hook <rule> <command> [run_in_background]（hooks.sh が CLAUDE_HOOKS_BIN を用意する）
+# そのルールだけを評価した stdout を返す
+run_hook() {
+  local hook="$1" command="$2" bg="${3:-false}"
+  hook_input "$command" "$bg" | "$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook"
+}
+
+# decision <hook-output> [no-decision] → permissionDecision（出力が空なら "allow"。出力に判定が無ければ
+# <no-decision>（既定 "allow"）。additionalContext だけの出力を見分けるときに "context" を渡す）
 decision() {
-  if [[ -z "$1" ]]; then echo allow; else jq -r '.hookSpecificOutput.permissionDecision // "allow"' <<<"$1"; fi
+  if [[ -z "$1" ]]; then
+    echo allow
+  else
+    jq -r --arg none "${2:-allow}" '.hookSpecificOutput.permissionDecision // $none' <<<"$1"
+  fi
 }
 
 # reason <hook-output> → permissionDecisionReason

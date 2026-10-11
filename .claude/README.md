@@ -24,7 +24,7 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 | `scripts/`                            | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                                                       | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh` |
 | `skills/<name>/scripts/`              | そのスキル専用のスクリプト                                                                                                                                     | `gh-pr-review/scripts/decide-next.sh`                                                                    |
 | `skills/language-checks/scripts/`     | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                                               | `run-checks.sh`, `fix-markdown-lint.py`                                                                  |
-| `tests/`                              | hook のルール / scripts / skills のテスト（`claude-sync` の同期対象外）。scripts のテストは対象ごとに `tests/scripts/` に分け、`scripts.sh` がまとめて実行する | `hooks.sh`, `scripts.sh`, `scripts/gh-pr-review.sh`, `skills.sh`                                         |
+| `tests/`                              | hook のルール / scripts / skills のテスト（`claude-sync` の同期対象外）。scripts のテストは対象ごとに `tests/scripts/` に分け、`scripts.sh` がまとめて実行する | `hooks.sh`, `hooks-diff.sh`, `scripts.sh`, `scripts/gh-pr-review.sh`, `skills.sh`                        |
 
 判断基準:
 
@@ -168,3 +168,8 @@ references
   `cargo test --manifest-path modules/home/parts/claude-hooks/Cargo.toml`）。
   テストは一時 HOME と偽の `gh` / `gitleaks` / 言語ツールで隔離実行され、実環境の設定・認証を参照しない。
   TDD（テストを先にコミットしてから実装）で進める
+- claude-hooks のコマンドの読み方（`shell.rs`、`unwrap.rs`、`git_args.rs`）やルールを書き直したら、PR の前に
+  `bash .claude/tests/hooks-diff.sh [BASE]`（既定 origin/main）で、古い版と判定を比べる（2 つの版の nix build と
+  1 分あまりの比較。1 コアの処理なので、Slurm に流さず手元で走らせる）。`LOOSENED` の行（古い版が
+  止め、新しい版が通す）は、意図した変更か後退かを 1 つずつ確かめ、件数と理由を PR の Tests に書く。テストが
+  書いた形しか見ないのに対し、包み・ディレクトリの移り方・コマンドを組み合わせた集まりで、ルールごとに比べる（ADR-0024）
