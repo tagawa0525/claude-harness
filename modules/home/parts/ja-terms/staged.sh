@@ -12,14 +12,15 @@ mkdir "$work/files"
 
 mapfile -t pathspecs <<<"$JA_TERMS_PATHSPECS"
 
-# ステージしたファイルの、モードとブロブとパス。シンボリックリンクの行き先は文章ではないので外す
+# ステージしたファイルの、モードとブロブとパス。シンボリックリンクの行き先とサブモジュール（gitlink）は
+# 文章ではないので外す
 # （--raw -z は「:旧モード 新モード 旧ブロブ 新ブロブ 状態」と「パス」を NUL で区切って並べる。名前の変更は
 # パスを 2 つ並べるので、--no-renames で追加と削除に分けて 1 つにする）
 declare -A blob=()
 paths=()
 while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
   read -r _ mode _ sha _ <<<"$meta"
-  [ "$mode" = "120000" ] && continue
+  case $mode in 120000 | 160000) continue ;; esac
   blob[$path]=$sha
   paths+=("$path")
 done < <(git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMR -- "${pathspecs[@]}")
