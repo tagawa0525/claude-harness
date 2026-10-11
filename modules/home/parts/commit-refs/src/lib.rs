@@ -4,21 +4,28 @@
 //! 一致するものを、同じ桁数の新の番号の先頭に置き換える。対応表に無い語は変えない。単語の境界は ASCII の
 //! 英数字と `_` で決める（ASCII でないバイトは単語の外）。
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// 照合の索引に使う先頭の桁数（語の最短の長さ）
 const PREFIX: usize = 7;
 const MAX_TOKEN: usize = 64;
 
+/// 対応表の旧が、書き換えでどうなったか。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// 新の番号に変わった
+    Changed(String),
+    /// 書き換えで消えた
+    Pruned,
+    /// 変わらなかった
+    Unchanged,
+}
+
 /// 対応表。
 #[derive(Debug, Default)]
 pub struct Map {
-    /// 変わったコミットの旧 → 新
-    mapping: BTreeMap<String, String>,
-    /// 書き換えで消えたコミットの旧
-    pruned: BTreeSet<String>,
-    /// 書き換えで変わらなかったコミット
-    unchanged: BTreeSet<String>,
+    /// 旧 → 書き換えでどうなったか
+    targets: BTreeMap<String, Target>,
     /// 旧の先頭 7 桁 → 旧（対応表のすべての旧。変わらなかったものも入れるのは、短い語がそれと変わったものの
     /// 両方に当たるときに、曖昧として止めるため）
     index: HashMap<String, Vec<String>>,
@@ -85,26 +92,74 @@ impl Map {
 
         let mut map = Map::default();
         for (old, new) in targets {
-            if is_zero(new) {
-                map.pruned.insert(old.to_string());
+            let target = if is_zero(new) {
+                Target::Pruned
             } else if old != new {
-                map.mapping.insert(old.to_string(), new.to_string());
+                Target::Changed(new.to_string())
             } else {
-                map.unchanged.insert(old.to_string());
-            }
-        }
-        for old in map.mapping.keys().chain(&map.pruned).chain(&map.unchanged) {
-            map.index
-                .entry(old[..PREFIX].to_string())
-                .or_default()
-                .push(old.clone());
+                Target::Unchanged
+            };
+            map.insert(old, target);
         }
         Ok(map)
+    }
+
+    /// 対応表に無いコミットを、変わらなかったものとして照合に足す（すでにあるものはそのまま）。
+    pub fn add_unchanged<'a>(&mut self, commits: impl IntoIterator<Item = &'a str>) {
+        for commit in commits {
+            if !self.targets.contains_key(commit) {
+                self.insert(commit, Target::Unchanged);
+            }
+        }
+    }
+
+    /// 旧と、書き換えでどうなったかの組
+    pub fn targets(&self) -> impl Iterator<Item = (&str, &Target)> {
+        self.targets
+            .iter()
+            .map(|(old, target)| (old.as_str(), target))
+    }
+
+    fn insert(&mut self, old: &str, target: Target) {
+        self.index
+            .entry(old[..PREFIX].to_string())
+            .or_default()
+            .push(old.to_string());
+        self.targets.insert(old.to_string(), target);
     }
 
     /// `data` の中の旧の番号を置き換えた内容と、置き換えた語の数を返す。曖昧な語と、消えたコミットを指す語は
     /// 置き換えずに、`label` を添えた理由を `errors` に積む。
     pub fn replace(&self, label: &str, data: &[u8], errors: &mut Vec<String>) -> (Vec<u8>, usize) {
+        self.replace_by(
+            label,
+            data,
+            errors,
+            |token, old, target, errors| match target {
+                Target::Changed(new) => Some(new.clone()),
+                Target::Pruned => {
+                    errors.push(format!(
+                        "{label}: {token} は書き換えで消えたコミット {old} を指す"
+                    ));
+                    None
+                }
+                // 変わらなかったコミットを指す語は、そのまま残す
+                Target::Unchanged => None,
+            },
+        )
+    }
+
+    /// `data` の中の、対応表の旧に 1 つだけ当たる語を、`resolve` が返す新の番号の先頭（語と同じ桁数）に置き換える。
+    /// `resolve` は文書の語と、それが当たった旧と、旧が書き換えでどうなったかを受け、置き換えない語には None を返す（止める理由は `errors`
+    /// に積む）。曖昧な語は置き換えずに、`label` を添えた理由を `errors` に積む。置き換えた内容と、変わった語の数を
+    /// 返す。
+    pub fn replace_by(
+        &self,
+        label: &str,
+        data: &[u8],
+        errors: &mut Vec<String>,
+        mut resolve: impl FnMut(&str, &str, &Target, &mut Vec<String>) -> Option<String>,
+    ) -> (Vec<u8>, usize) {
         let mut out = Vec::with_capacity(data.len());
         let mut count = 0;
         let mut i = 0;
@@ -119,18 +174,23 @@ impl Map {
                 i += 1;
             }
             let word = &data[start..i];
-            match self.lookup(label, word, errors) {
-                Some(new) => {
+            // 当たる旧があるのは小文字の 16 進だけの語なので、UTF-8 として読める
+            let new = self.lookup(label, word, errors).and_then(|old| {
+                let token = std::str::from_utf8(word).unwrap_or_default();
+                resolve(token, old, &self.targets[old], errors)
+            });
+            match new {
+                Some(new) if new.as_bytes()[..word.len()] != *word => {
                     out.extend_from_slice(&new.as_bytes()[..word.len()]);
                     count += 1;
                 }
-                None => out.extend_from_slice(word),
+                _ => out.extend_from_slice(word),
             }
         }
         (out, count)
     }
 
-    /// 単語 `word` が置き換える語なら、その新の番号を返す。
+    /// 単語 `word` が対応表の旧に 1 つだけ当たるなら、その旧を返す。
     fn lookup(&self, label: &str, word: &[u8], errors: &mut Vec<String>) -> Option<&str> {
         if !(PREFIX..=MAX_TOKEN).contains(&word.len()) || !word.iter().all(|b| is_lower_hex(*b)) {
             return None;
@@ -145,14 +205,7 @@ impl Map {
             .collect();
         match olds.as_slice() {
             [] => None,
-            [old] if self.pruned.contains(*old) => {
-                errors.push(format!(
-                    "{label}: {token} は書き換えで消えたコミット {old} を指す"
-                ));
-                None
-            }
-            // 変わらなかったコミットを指す語は、そのまま残す
-            [old] => self.mapping.get(*old).map(String::as_str),
+            [old] => Some(old.as_str()),
             _ => {
                 let names: Vec<&str> = olds.iter().map(|o| o.as_str()).collect();
                 errors.push(format!(
