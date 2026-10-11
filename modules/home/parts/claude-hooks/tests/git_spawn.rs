@@ -81,6 +81,19 @@ fn git_missing_from_path_is_reported_once_across_rules() {
 }
 
 #[test]
+fn unreadable_parent_directory_is_reported() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("locked");
+    let inner = dir.0.join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let path = std::env::var("PATH").expect("git を探す PATH が要る");
+    let stderr = stderr_of(&inner, Some("block-main-commit"), Some(&path));
+    std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(stderr.contains("git を起動できません"), "stderr: {stderr}");
+}
+
+#[test]
 fn missing_directory_is_not_reported() {
     let dir = TempDir::new("gone");
     let gone = dir.0.join("not-yet");
