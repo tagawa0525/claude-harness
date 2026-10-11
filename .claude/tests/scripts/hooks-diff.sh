@@ -117,6 +117,11 @@ assert_eq 1 "$((per > 0))"
 assert_eq "$per" "$(cut -f2 <<<"$out" | grep -c 'git push --mirror$')"
 assert_eq "$per" "$(cut -f2 <<<"$out" | grep -c 'sbatch x.sh$')"
 
+it "hooks-diff: HOOKS_DIFF_LIST=1 なら、バイナリを呼ばずに（ルールの一覧も比べずに）、集まりの行だけを出す"
+out=$(HOOKS_DIFF_COMMANDS='' HOOKS_DIFF_LIST=1 OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/missing" bash "$DIFF" 2>&1)
+assert_eq 0 $?
+assert_eq "" "$(grep -vE $'^(true|false)\t' <<<"$out")"
+
 it "hooks-diff: 呼べないバイナリなら失敗する"
 out=$(OLD_BIN="$TEST_ROOT/missing" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF" 2>&1)
 assert_eq 1 $?
