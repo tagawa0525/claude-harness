@@ -22,12 +22,21 @@ trap 'rm -rf "$WORK"' EXIT
 
 HOOKS="$WORK/hooks"
 mkdir -p "$HOOKS"
-for name in pre-commit pre-merge-commit commit-msg; do
-  echo "==> $name hook をビルドする（nixosConfigurations.${HOST}）"
-  BUILT=$(nix build --no-link --print-out-paths --option warn-dirty false \
-    "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$name\".source")
-  cp "$BUILT" "$HOOKS/$name"
-  chmod +x "$HOOKS/$name"
+NAMES=(pre-commit pre-merge-commit commit-msg)
+ATTRS=()
+for name in "${NAMES[@]}"; do
+  ATTRS+=("$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$name\".source")
+done
+echo "==> hook をビルドする（nixosConfigurations.${HOST}）"
+# 1 回の nix build で評価を 1 回で済ませる。出力は installable の順に並ぶ
+mapfile -t BUILT < <(nix build --no-link --print-out-paths --option warn-dirty false "${ATTRS[@]}")
+if [[ ${#BUILT[@]} -ne ${#NAMES[@]} ]]; then
+  echo "nix build の出力の数が hook の数と違います: ${BUILT[*]}" >&2
+  exit 1
+fi
+for i in "${!NAMES[@]}"; do
+  cp "${BUILT[$i]}" "$HOOKS/${NAMES[$i]}"
+  chmod +x "$HOOKS/${NAMES[$i]}"
 done
 
 export HOME="$WORK/home"
@@ -89,13 +98,26 @@ fi
 
 echo "==> 主の worktree でも呼ぶ"
 : >"$LOG"
+git -C "$REPO" switch -q main
 echo c >"$REPO/c.txt"
 git -C "$REPO" add c.txt
 git -C "$REPO" commit -q -m "feat: c"
-if grep -qx pre-commit "$LOG"; then
-  ok "主の worktree のコミットで、ローカルの pre-commit を呼ぶ"
+for name in pre-commit commit-msg; do
+  if grep -qx "$name" "$LOG"; then
+    ok "主の worktree のコミットで、ローカルの $name を呼ぶ"
+  else
+    ng "主の worktree のコミットで、ローカルの $name を呼ぶ"
+  fi
+done
+
+# main へのマージは run-checks.sh の検査を求めるので、別のブランチでマージする
+git -C "$REPO" switch -q -c feat/z
+: >"$LOG"
+git -C "$REPO" merge -q --no-ff -m "Merge: b" feat/y
+if grep -qx pre-merge-commit "$LOG"; then
+  ok "主の worktree のマージで、ローカルの pre-merge-commit を呼ぶ"
 else
-  ng "主の worktree のコミットで、ローカルの pre-commit を呼ぶ"
+  ng "主の worktree のマージで、ローカルの pre-merge-commit を呼ぶ"
 fi
 
 echo
