@@ -41,9 +41,11 @@ PreToolUse の hook の出力を 2 通り確かめた。
 - 出し方が 1 つで済む。案 B は判定の有無で出し方が分かれ、テストも終了コードと JSON の両方を見ることになる
 - モデルには渡らないが、渡す必要はない。判定できない理由は環境（git の PATH、ディレクトリの権限）や claude-hooks の
   不具合で、モデルが直すものではなく、利用者が見て直すもの
-- 拾った panic も「判定できない」なので、ルールの評価が止まったことを `systemMessage` に出す。panic の文は今までどおり
-  標準エラーにも出る（テストが panic を見分けるため）
-- 同じ理由は 1 回だけ出す（1 回の判定で git を何度も呼ぶため。#320 の扱いのまま）
+- gh を起動できないときも、git と同じく理由を出す（gh を使うルールも判定しないまま通すため）
+- 拾った panic も「判定できない」なので、どのルールが止まったかと panic の文を `systemMessage` に出す。panic は
+  ルールごとに拾い、ほかのルールの判定（deny）を残す。panic の文は今までどおり標準エラーにも出る（テストが
+  panic を見分けるため）
+- 同じ理由は 1 回だけ出す（1 回の判定で git や gh を何度も呼ぶため）
 
 採らなかった案:
 
@@ -60,6 +62,6 @@ PreToolUse の hook の出力を 2 通り確かめた。
 
 ### 確認
 
-- `modules/home/parts/claude-hooks/tests/git_spawn.rs` で、git を起動できない理由が `systemMessage` に 1 回だけ出て、
+- `modules/home/parts/claude-hooks/tests/git_spawn.rs` で、git と gh を起動できない理由が `systemMessage` に 1 回だけ出て、
   標準エラーには出ないこと。deny と同時でも判定が残ること
 - panic を拾う経路は、ルールを panic させる手段がテストに無いので、テストで確かめていない
