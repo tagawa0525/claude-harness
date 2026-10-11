@@ -59,6 +59,11 @@ impl Rule for GuardGhRunRerun {
                 continue;
             };
             let dir = shell.target_dir(cmd, &input.cwd);
+            if !dir.is_dir() && shell.runs_under_ssh_or_login(cmd) {
+                return vec![deny(
+                    "ssh や sudo -i の中で走る gh run rerun は、手元の場所で試行回数を確かめられないため止めます",
+                )];
+            }
             let mut argv: Vec<&str> = vec!["run", "view"];
             if let Some(r) = repo.as_deref() {
                 argv.extend(["-R", r]);

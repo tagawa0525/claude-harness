@@ -267,10 +267,12 @@ impl Rule for PreMergeCheck {
 
             let mut dir = shell.target_dir(cmd, &input.cwd);
             if !dir.is_dir() {
-                reasons.push(format!(
-                    "コマンド中の cd 先に移動できません: {}",
-                    dir.display()
-                ));
+                reasons.push(if shell.runs_under_ssh_or_login(cmd) {
+                    "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+                        .to_string()
+                } else {
+                    format!("コマンド中の cd 先に移動できません: {}", dir.display())
+                });
                 dir = input.cwd.clone();
             }
 

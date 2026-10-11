@@ -518,6 +518,19 @@ impl Shell {
         }
         dir
     }
+
+    /// cmd が `ssh` か `sudo -i` の中で走るか（`target_dir` が手元に実在しない場所の書き方から始める）。
+    /// ルールが止める理由を、移れない cd 先と取り違えずに書くのに使う
+    pub fn runs_under_ssh_or_login(&self, cmd: &Cmd) -> bool {
+        let moves_away = |c: &Cmd| c.remote.is_some() || c.login_home.is_some();
+        moves_away(cmd)
+            || self.cmds.iter().any(|c| {
+                c.start < cmd.start
+                    && c.spawns
+                        .is_some_and(|id| cmd.scope.get(c.scope.len()) == Some(&id))
+                    && moves_away(c)
+            })
+    }
 }
 
 fn strip(s: &str, open: &str, close: &str) -> String {
