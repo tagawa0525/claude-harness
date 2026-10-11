@@ -1722,6 +1722,18 @@ git switch -q feat/rebased
 out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
 assert_eq deny "$(decision "$out")"
 
+it "guard-git-merge: 前の git switch は、サブシェルや bash -c の文字列の中のコマンドにも効く"
+for cmd in "git switch main && bash -c 'git merge feat/rebased'" 'git switch main; (git merge feat/rebased)' \
+  'git switch main && eval git merge feat/rebased'; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+# サブシェルや文字列の中の switch は外に漏れない（feat/rebased のまま、既定ブランチ以外へのマージは対象外）
+for cmd in "bash -c 'git switch main'; git merge feat/behind" '(git switch main); git merge feat/behind'; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "guard-sbatch: sbatch を直接投げたら slurm-run.sh を示して止める"
 out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
 assert_eq deny "$(decision "$out")"

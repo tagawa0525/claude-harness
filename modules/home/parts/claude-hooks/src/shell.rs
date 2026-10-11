@@ -978,6 +978,47 @@ mod tests {
             PathBuf::from("/x")
         );
         assert_eq!(dir_of_git("(cd /a); git commit"), PathBuf::from("/base"));
+        // 外側の env -C / sudo -D は、文字列の中の cd より前に当たる
+        assert_eq!(
+            dir_of_git("env -C /x bash -c 'cd /y && git commit'"),
+            PathBuf::from("/y")
+        );
+        assert_eq!(
+            dir_of_git("env -C x bash -c 'cd y && git commit'"),
+            PathBuf::from("/base/x/y")
+        );
+        assert_eq!(
+            dir_of_git("sudo -E -D /x bash -c 'cd y && git commit'"),
+            PathBuf::from("/x/y")
+        );
+        assert_eq!(
+            dir_of_git("cd /a; env -C x bash -c \"env -C y bash -c 'cd z && git commit'\""),
+            PathBuf::from("/a/x/y/z")
+        );
+        assert_eq!(
+            dir_of_git("env -C /x bash -c 'git commit'; cd /z"),
+            PathBuf::from("/x")
+        );
+    }
+
+    #[test]
+    fn substitutions_inside_shell_strings_are_collected_once() {
+        let cs = cmds("bash -c \"git commit -m $(date)\"; git push");
+        assert_eq!(names(&cs), ["bash", "git", "date", "git"]);
+        let cs = cmds("ssh host \"cd $(pwd) && git commit\"");
+        assert_eq!(names(&cs), ["ssh", "cd", "pwd", "git"]);
+        // 代入の中の置換は、文字列の外なので読む
+        let cs = cmds("FOO=$(x) bash -c 'y'");
+        assert_eq!(cs.iter().filter(|c| c.name == "x").count(), 1);
+        assert_eq!(cs.iter().filter(|c| c.name == "y").count(), 1);
+    }
+
+    #[test]
+    fn runs_program_searches_unescaped_inner_sources() {
+        // 外側の字面は sb\atch で、文字列をほどくと sbatch になる。決まらない $X と一緒なら止める側
+        let sh = Shell::parse("bash -c \\$X\\ sb\\atch");
+        assert!(sh.commands().iter().any(|c| c.opaque));
+        assert!(sh.runs_program("sbatch", |p| p == "sbatch"));
     }
 
     #[test]
