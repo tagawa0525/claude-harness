@@ -79,15 +79,15 @@ DIRS=("cd $LOCAL; " "cd $LOCAL && " "env cd $LOCAL; " "builtin cd $LOCAL && " "t
 # decide <bin> <rule>: $INPUT への判定を DECISION に入れる（deny / ask / context / allow）。
 # バイナリが失敗したら、通したものと数えずに止める。claude-hooks はルールの panic を拾って終了コード 0 で
 # 終わる（panic の文は標準エラーに出る）ので、標準エラーに何か出たら失敗とみなす。判定できなかった理由
-# （systemMessage）を返したときも失敗とみなす（古い版は理由を標準エラーに出す）
+# （systemMessage）を返したときと、出力が 1 つの JSON の object でないときも失敗とみなす
 decide() {
   local bin="$1" rule="$2" out
   if ! out=$(printf '%s' "$INPUT" | "$bin" pre-tool-use --rule "$rule" 2>"$TEST_ROOT/stderr") ||
     [[ -s "$TEST_ROOT/stderr" ]] ||
-    { [[ -n "$out" ]] && jq -e 'has("systemMessage")' <<<"$out" >/dev/null; }; then
+    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null 2>&1; }; then
     echo "ERROR: $bin が失敗しました（--rule $rule）: $INPUT" >&2
     cat "$TEST_ROOT/stderr" >&2
-    [[ -z "$out" ]] || jq -r '.systemMessage // empty' <<<"$out" >&2
+    [[ -z "$out" ]] || printf '%s\n' "$out" >&2
     exit 1
   fi
   DECISION=$(decision "$out" context)

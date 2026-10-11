@@ -210,7 +210,8 @@ trap 'exit 1' USR1
 
 # run_hook <rule> <command> [run_in_background]（hooks.sh が CLAUDE_HOOKS_BIN を用意する）
 # そのルールだけを評価した stdout を返す。claude-hooks が 0 以外で終わるか、標準エラーに何か出すか
-# （知らないルール、拾われた panic）、判定できなかった理由（systemMessage。ADR-0033）を返したら、
+# （知らないルール、拾われた panic）、判定できなかった理由（systemMessage。ADR-0033）を返すか、
+# 出力が 1 つの JSON の object でなければ、
 # 空の出力を allow と読まずに、テストの全体を止める
 run_hook() {
   local hook="$1" command="$2" bg="${3:-false}" input out status=0
@@ -221,10 +222,10 @@ run_hook() {
   }
   out=$("$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook" <<<"$input" 2>"$TEST_ROOT/hook-stderr") || status=$?
   if ((status != 0)) || [[ -s "$TEST_ROOT/hook-stderr" ]] ||
-    { [[ -n "$out" ]] && jq -e 'has("systemMessage")' <<<"$out" >/dev/null; }; then
+    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null 2>&1; }; then
     echo "claude-hooks が失敗しました（--rule $hook、終了コード $status）: $command" >&2
     cat "$TEST_ROOT/hook-stderr" >&2
-    [[ -z "$out" ]] || jq -r '.systemMessage // empty' <<<"$out" >&2
+    [[ -z "$out" ]] || printf '%s\n' "$out" >&2
     kill -USR1 "$$"
     exit 1
   fi
