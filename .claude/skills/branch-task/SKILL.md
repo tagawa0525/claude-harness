@@ -4,8 +4,22 @@ description: 親のセッションから頼まれた 1 トピックのブラン�
 # model 未指定: 実装、決定の記録、レビュー指摘の判断を伴うため、依頼で指定されたモデルかセッションモデルを使う
 argument-hint: <リポジトリ> <ブランチ名> <何をするか>
 allowed-tools:
-  - Bash(git *)
-  - Bash(gh *)
+  # git merge、gh pr merge、rebase は手順で使わないので許可に入れない（7 節）
+  - Bash(git status*)
+  - Bash(git log*)
+  - Bash(git diff*)
+  - Bash(git show*)
+  - Bash(git add*)
+  - Bash(git commit*)
+  - Bash(git branch*)
+  - Bash(git rev-list*)
+  - Bash(git remote*)
+  - Bash(git fetch*)
+  - Bash(git push*)
+  - Bash(git worktree list*)
+  - Bash(gh issue*)
+  - Bash(gh pr create*)
+  - Bash(gh pr view*)
   - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
@@ -35,6 +49,9 @@ allowed-tools:
 
 ### 2. worktree を作る
 
+ブランチがもうどこかの worktree にあれば（`git -C <リポジトリ> worktree list`）、その worktree を使う。
+無ければ作る:
+
 ```bash
 cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 ```
@@ -43,8 +60,9 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
   `cd <worktree> &&` を付ける
 - `SHARED:`（共有した git で追跡しないパス）と `NOTE:`（メイン worktree に無いパス、複数の GitHub リモート）を
   読む。`ERROR:` なら /git-worktree の直し方に従う
-- `CREATED_BRANCH: no`（既存のブランチの続き）なら、`git log` の `Claude-Session:` が今のセッションか確かめる。
-  違えば引き受けず、報告に書いて止まる
+- 既存のブランチの続き（worktree が既にあった、または `CREATED_BRANCH: no`）なら、ブランチ自身のコミット
+  （`git -C <worktree> log --format='%h %(trailers:key=Claude-Session)' <既定ブランチ>..HEAD`）の
+  `Claude-Session:` が今のセッションか確かめる。違えば引き受けず、報告に書いて止まる
 
 ### 3. 作業する
 
@@ -66,41 +84,41 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 
 ### 5. チェックする
 
+比べる元（`<base>`）は `review-level.sh` に決めさせ、チェック、レビュー、報告で同じものを使う。リモートが
+あれば先に fetch する（古い追跡ブランチと比べると、main の遅れを見落とす）:
+
 ```bash
-~/.claude/skills/language-checks/scripts/run-checks.sh -C <worktree> --base <base>
+git -C <worktree> fetch
+cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>
+~/.claude/skills/language-checks/scripts/run-checks.sh -C <worktree> --base <BASE の値>
 ```
 
-`<base>` は GitHub リモートがあれば `origin/main`、なければ `main`（既定ブランチが別の名前ならそれ）。終了コードで
-判定し、出力を `tail` などにつながない。失敗したら原因を直してコミットし、やり直す。CLAUDE.md にチェックの方法が
-書かれていれば、それも走らせる。
+終了コードで判定し、出力を `tail` などにつながない。失敗したら原因を直してコミットし、やり直す。CLAUDE.md に
+チェックの方法が書かれていれば、それも走らせる。
 
 ### 6. レビューを受ける
 
 GitHub リモートの有無で分ける（`git -C <worktree> remote -v | grep -q 'github\.com'`）。
 
-**リモートなし**:
-
-```bash
-cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>
-```
-
-出力の `LEVEL` と `TARGET` で `/code-review <LEVEL> <TARGET>` を回す。
-
-**リモートあり**: /gh-pr-create で PR を作り、`cd <worktree> && ~/.claude/scripts/gh-wait-review.sh` を
-`run_in_background=true` で走らせて自動レビューを待ち、/gh-pr-review で対応する。
+- **リモートなし**: /git-merge の「レビュー（自動レビューの代わり）」の節に従って `/code-review` を回す。
+  /git-merge のほかの節（rebase、マージ、後片付け）には進まない
+- **リモートあり**: /gh-pr-create で PR を作り（PR の前のローカルレビューを含む）、
+  `cd <worktree> && ~/.claude/scripts/gh-wait-review.sh` で自動レビューを待ち、/gh-pr-review で対応する。
+  待つ間に最後の報告を返さない（待機の終わりの通知で再開する）。/gh-pr-review の最後の分岐は次に置き換える:
+  要判断（escalate）はユーザーの指示を待たず報告の「マージの前後で人の手が要ること」に書いて止まり、
+  /gh-pr-merge には進まない。周の終わりは `decide-next.sh` の `VERDICT` に従う
 
 どちらも:
 
-- 最大 2 周。その周に検証できる誤りが無ければ、2 周を待たずに終わる
 - 直すのは検証できる誤り（バグ、コードや事実と食い違う記述、壊れた参照）だけ。言い回しや網羅性の指摘で
-  周を回し続けない。直したらコミットし、チェックからやり直す
+  周を回し続けない
 - 対応しなかった指摘は、理由（検証で得た事実）を報告に書く
-- 最後の周の後に直したコミットはレビューを受けていない。報告に列挙する
+- レビューを受けずに残ったコミット（`STOP_LIMIT` の後に直したものなど）は、報告に列挙する
 
 ### 7. マージの直前で止める
 
-`git merge`、`gh pr merge`、/git-merge、/gh-pr-merge を実行しない。main が先に進んでいれば
-（`git -C <worktree> rev-list --count HEAD..<base>` が 0 でない）、rebase はせず、件数を報告に書く。
+`git merge`、`gh pr merge`、/git-merge のマージ、/gh-pr-merge を実行しない。rebase もしない。main が先に
+進んでいれば（`git -C <worktree> rev-list --count HEAD..<base>` が 0 でない）、件数を報告に書く。
 
 ### 8. 報告する
 
@@ -156,4 +174,5 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>
 - モデルは依頼文ではなく、サブエージェントを起動するときの指定（Agent の `model`）で渡す
 - 決定済みの内容は、どこで決まったか（ADR の番号、ユーザーの言葉）を添える。サブエージェントは会話を見ていない
 - hook のエスケープの付け方や「〜なら付けてよい」は依頼に書かない（nixfiles の ADR-0023）
+- マージの直前で止める理由と採らなかった案は nixfiles の ADR-0027
 - 報告は確かめる前の暫定として扱う。マージの前に、報告のコミットと確認の結果を自分で確かめる
