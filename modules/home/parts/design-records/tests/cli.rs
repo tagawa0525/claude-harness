@@ -1621,3 +1621,69 @@ fn renumber_works_on_a_branch_without_a_common_ancestor() {
     assert_eq!(stdout(&out), "docs/adr/0005-use-a.md\n");
     assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
 }
+
+#[test]
+fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
+    let t = TempRepo::with_remote("retry-merge");
+    let other = t.clone_remote("other");
+    // ほかの clone が ADR-0001（use-a）を作ってマージしてあり、予約のタグはまだ push していない
+    git_in(&other, &["switch", "-q", "-c", "topic"]);
+    fs::create_dir_all(other.join("docs/adr")).unwrap();
+    fs::write(
+        other.join("docs/adr/0001-use-a.md"),
+        design_records::template(1, "a を使う", "2026-10-01"),
+    )
+    .unwrap();
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): a"]);
+    git_in(&other, &["switch", "-q", "main"]);
+    git_in(
+        &other,
+        &["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"],
+    );
+    git_in(
+        &other,
+        &["tag", "-a", "adr-0001", "-m", "use-a", "origin/main"],
+    );
+    // 最初のタグの fetch の直後にほかの clone が予約し、push が拒まれた後の確認の直後に、マージを push して
+    // 予約を解放する git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    let (reserved, merged) = (t.root.join("reserved"), t.root.join("merged"));
+    fs::write(
+        bin.join("git"),
+        format!(
+            "#!/bin/sh\n\
+             case \" $* \" in\n\
+             *\" fetch \"*\"refs/tags/\"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {reserved} ]; then : > {reserved}; {real} -C {other} push -q origin refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             *\" ls-remote --tags \"*)\n\
+             \x20 {real} \"$@\" || exit $?\n\
+             \x20 if [ ! -e {merged} ]; then : > {merged}; {real} -C {other} push -q origin main && {real} -C {other} push -q origin --delete refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 exit 0 ;;\n\
+             esac\n\
+             exec {real} \"$@\"\n",
+            reserved = reserved.display(),
+            merged = merged.display(),
+            other = other.display(),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = t.run_with_bin(&bin, &["new", "use-b", "b を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(merged.exists());
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+}
