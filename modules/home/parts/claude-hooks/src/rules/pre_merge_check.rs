@@ -9,6 +9,8 @@
 //! 6. 未解決のレビュースレッドがない
 //! 7. head が base（origin/main）より遅れていない（リベースしてからマージコミットする）
 //! 8. 最後の push が自動レビューを受けている（bot レビューの commit_id が head と一致）。
+//!    リベースだけで hash が変わった head（base からの PR の差分がレビュー済みと同じ。ADR-0021）は
+//!    レビュー済みとみなす。
 //!    レビュー自体が失敗している（トークン枯渇・内部エラー）ときは、コードの問題では
 //!    ないので 4 の CI 失敗としては数えず、ここでレビュー未実施として報告する。
 //!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる。
@@ -29,6 +31,7 @@ use super::Rule;
 use super::pre_git_merge_check::multi_topic_reason;
 use super::pre_pr_create_check::{body_text, missing_headings};
 use crate::gh;
+use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell, has_flag, opt_value};
@@ -135,9 +138,103 @@ fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number:
 }
 
 /// リベースだけで head の hash が変わったか。レビュー済みの `old` と今の `new` で、base からの PR の差分が
-/// 同一なら true（ADR-0018）
-fn same_pr_diff(_dir: &std::path::Path, _base_ref: &str, _old: &str, _new: &str) -> bool {
-    false
+/// 同一なら true（ADR-0018）。base 側の変更（main に入った他の PR）は、それぞれの merge-base からの
+/// 差分を取ることで含めない。確かめられないとき（コミットが無い、git が失敗）は false
+fn same_pr_diff(dir: &std::path::Path, base_ref: &str, old: &str, new: &str) -> bool {
+    let base = format!("origin/{base_ref}");
+    let have = |sha: &str| git(dir, &["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_some();
+    // force push で置き換わった旧 head は、リベースした worktree 以外には無いことがある
+    if !have(old) && (git(dir, &["fetch", "-q", "origin", old]).is_none() || !have(old)) {
+        return false;
+    }
+    if !have(new) {
+        return false;
+    }
+    let (Some(old_base), Some(new_base)) = (
+        git(dir, &["merge-base", &base, old]),
+        git(dir, &["merge-base", &base, new]),
+    ) else {
+        return false;
+    };
+    // 1. PR が触るファイルの中身（モードを含む）がそっくり同じ
+    let paths = |b: &str, h: &str| {
+        git(dir, &["diff", "--no-renames", "--name-only", "-z", b, h]).unwrap_or_default()
+    };
+    let (old_paths, new_paths) = (paths(&old_base, old), paths(&new_base, new));
+    let files: std::collections::BTreeSet<&str> = old_paths
+        .split('\0')
+        .chain(new_paths.split('\0'))
+        .filter(|p| !p.is_empty())
+        .collect();
+    if files.is_empty() {
+        return false;
+    }
+    let entry = |h: &str, p: &str| git(dir, &["ls-tree", h, "--", p]);
+    if files.iter().all(|p| {
+        let (o, n) = (entry(old, p), entry(new, p));
+        o.is_some() && o == n
+    }) {
+        return true;
+    }
+    // 2. main も同じファイルを変えていて中身は一致しないが、PR の差分（前後の文脈を含む）が同じ
+    fingerprint(dir, &old_base, old).is_some_and(|o| Some(o) == fingerprint(dir, &new_base, new))
+}
+
+/// base から head への差分の指紋。パッチの内容（git patch-id。行番号は見ない）と、
+/// ファイルごとのモード・状態・パス（patch-id が見ない部分）
+fn fingerprint(dir: &std::path::Path, base: &str, head: &str) -> Option<(String, String)> {
+    let patch = git_stdout(dir, &["diff", "--no-renames", "--binary", base, head])?;
+    if patch.is_empty() {
+        return None;
+    }
+    let id = git_with_stdin(dir, &["patch-id", "--verbatim"], &patch)?;
+    let id = id.split_whitespace().next()?.to_string();
+    let raw = git(
+        dir,
+        &["diff", "--no-renames", "--raw", "--no-abbrev", base, head],
+    )?;
+    let modes = raw
+        .lines()
+        .map(|l| {
+            let (meta, path) = l.split_once('\t').unwrap_or((l, ""));
+            let f: Vec<&str> = meta.split_whitespace().collect();
+            // :旧モード 新モード 旧hash 新hash 状態。hash は base で変わるので捨てる
+            format!(
+                "{} {} {} {path}",
+                f[0],
+                f.get(1).unwrap_or(&""),
+                f.get(4).unwrap_or(&"")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some((id, modes))
+}
+
+fn git_stdout(dir: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+fn git_with_stdin(dir: &std::path::Path, args: &[&str], input: &[u8]) -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(input).ok()?;
+    let out = child.wait_with_output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 fn is_ok_conclusion(c: &Value) -> bool {
@@ -411,12 +508,14 @@ impl Rule for PreMergeCheck {
                 }
             }
 
+            let base_ref = pr_meta
+                .as_ref()
+                .and_then(|m| m["baseRefName"].as_str())
+                .unwrap_or("")
+                .to_string();
+
             // --- 7. base からの遅れ ---
-            if !owner.is_empty()
-                && !name.is_empty()
-                && let Some(meta) = pr_meta.as_ref()
-            {
-                let base_ref = meta["baseRefName"].as_str().unwrap_or("").to_string();
+            if !owner.is_empty() && !name.is_empty() && pr_meta.is_some() {
                 let behind = if base_ref.is_empty() || head_sha.is_empty() {
                     None
                 } else {
@@ -490,12 +589,18 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && is_docs_only(&dir, &owner, &name, number)
                             && has_successful_review(&dir, &owner, &name, number) => {}
+                    // リベースだけで hash が変わった head は、レビュー済みの差分と同じなので通す（ADR-0018）
+                    Some(sha)
+                        if !sha.is_empty()
+                            && sha != head_sha
+                            && !base_ref.is_empty()
+                            && same_pr_diff(&dir, &base_ref, &sha, &head_sha) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
                         short(&head_sha)
                     )),
                     Some(sha) if sha != head_sha => reasons.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、差分が変わっています。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
                         short(&head_sha),
                         short(&sha)
                     )),
@@ -656,7 +761,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: same_pr_diff は未実装"]
     fn rebase_onto_unrelated_change_is_same() {
         let (r, old, new) = rebase_case(
             "unrelated",
@@ -668,7 +772,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: same_pr_diff は未実装"]
     fn rebase_onto_change_in_same_file_elsewhere_is_same() {
         // main も同じファイルの先頭を変える。PR は末尾（文脈は変わらない）
         let edit_tail = |r: &Repo| r.write("long.txt", &format!("{LONG}tail\n"));
@@ -749,7 +852,12 @@ mod tests {
             |r| r.write("third.txt", "t\n"),
             |r| {
                 pr_edit_other(r);
-                r.git(&["update-index", "--chmod=+x", "other.txt"]);
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(
+                    r.0.join("other.txt"),
+                    std::fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
             },
         );
         assert!(!same_pr_diff(&r.0, "main", &old, &new));
