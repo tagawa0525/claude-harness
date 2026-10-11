@@ -18,6 +18,7 @@ use std::collections::VecDeque;
 pub struct GuardSbatch;
 
 const SCRIPT: &str = "slurm-run.sh";
+const TEST: &str = ".claude/tests/scripts/slurm-run.sh";
 
 fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
@@ -77,16 +78,29 @@ fn program(cmd: &Cmd) -> String {
             continue;
         }
         if name == "bash" || name == "sh" {
-            return words.pop_front().map_or(name, |w| basename(&w).to_string());
+            return words.pop_front().unwrap_or(word);
         }
-        return name;
+        return word;
     }
     String::new()
 }
 
 /// コマンドとして実行されているか（直接、前置き越し、または `bash <path>` / `sh <path>` 経由）
 fn runs(cmd: &Cmd, target: &str) -> bool {
-    program(cmd) == target
+    basename(&program(cmd)) == target
+}
+
+/// slurm-run.sh を実行しているか。同名のテスト（`.claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で
+/// 走り、Slurm に触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、
+/// 除くのはテストの 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
+fn runs_slurm_run(cmd: &Cmd) -> bool {
+    let program = program(cmd);
+    basename(&program) == SCRIPT && !is_own_test(&program)
+}
+
+fn is_own_test(path: &str) -> bool {
+    path.strip_suffix(TEST)
+        .is_some_and(|dir| dir.is_empty() || dir.ends_with('/'))
 }
 
 impl Rule for GuardSbatch {
@@ -103,7 +117,7 @@ impl Rule for GuardSbatch {
         }
         if !input.run_in_background
             && !shell.has_escape("ALLOW_FOREGROUND_SLURM")
-            && commands.iter().any(|cmd| runs(cmd, SCRIPT))
+            && commands.iter().any(runs_slurm_run)
         {
             return vec![Finding::Deny(
                 "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。待ち行列が空で数分で終わるとわかっていれば ALLOW_FOREGROUND_SLURM=1 を付けます".to_string(),
