@@ -1045,3 +1045,69 @@ fn renumber_restores_the_tree_when_the_commit_is_rejected() {
     assert_eq!(t.git(&["status", "--porcelain"]), "");
     assert!(t.dir.join("docs/adr/0001-use-b.md").exists());
 }
+
+#[test]
+fn renumber_reads_added_lines_that_look_like_diff_headers() {
+    let t = duplicated_after_rebase("plusplus");
+    t.git(&["switch", "-q", "main"]);
+    t.write("plans/p.md", "a\nb\nc\nd\ne\nf\ng\nh\n");
+    t.commit_all("docs: plan");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    // 足した行が `+++ b/...` に見える差分の、後ろの hunk
+    t.write(
+        "plans/p.md",
+        "++ b/other.md\na\nb\nc\nd\ne\nf\ng\nh\nADR-0001 の計画\n",
+    );
+    t.commit_all("docs: plan b");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        t.read("plans/p.md"),
+        "++ b/other.md\na\nb\nc\nd\ne\nf\ng\nh\nADR-0002 の計画\n"
+    );
+}
+
+#[test]
+fn renumber_rewrites_links_to_three_digit_file_names() {
+    let t = TempRepo::new("three-renumber");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.write(
+        "docs/adr/005-use-x.md",
+        &design_records::template(5, "x を使う", "2026-10-01"),
+    );
+    t.write("README.md", "[x](docs/adr/005-use-x.md)\n");
+    t.commit_all("docs(adr): x");
+    let out = t.run(&["renumber", "5", "9"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0009-use-x.md\n");
+    assert_eq!(t.read("README.md"), "[x](docs/adr/0009-use-x.md)\n");
+    assert!(
+        t.read("docs/adr/0009-use-x.md")
+            .contains("# ADR-0009: x を使う")
+    );
+}
+
+#[test]
+fn renumber_without_a_collision_keeps_the_old_reservation() {
+    let t = TempRepo::new("voluntary");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    t.commit_all("docs(adr): b");
+    let out = t.run(&["renumber", "1", "7"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    // 番号 0001 はほかの記録が使っていないので、予約を残して使い回させない
+    assert_eq!(t.tag_message("adr-0001"), "use-b");
+}
+
+#[test]
+fn new_fetches_before_choosing_where_to_put_the_tag() {
+    let t = TempRepo::with_remote("unfetched");
+    // origin を足しただけで、まだ何も fetch していない clone
+    let fresh = TempRepo::new("unfetched-fresh");
+    let bare = t.root.join("remote.git");
+    fresh.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    let out = fresh.run(&["new", "use-a", "a を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+}
