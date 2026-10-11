@@ -85,8 +85,10 @@ fn commit_has_n(args: &[Arg]) -> bool {
     false
 }
 
+/// `-c` / `--config-env` の設定が core.hooksPath か（値の無い `core.hooksPath` は true として読まれる）
 fn is_hooks_path(setting: &str) -> bool {
-    setting.to_ascii_lowercase().starts_with("core.hookspath=")
+    let key = setting.split_once('=').map_or(setting, |(key, _)| key);
+    key.eq_ignore_ascii_case("core.hookspath")
 }
 
 /// サブコマンドより前の `-c core.hooksPath=…` と `--config-env=core.hooksPath=…`（キーは大文字と小文字を問わない）
