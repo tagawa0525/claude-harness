@@ -394,5 +394,10 @@ mod tests {
         assert_eq!(split_env_string("a # b c"), ["a"]);
         assert!(split_env_string("# x").is_empty());
         assert_eq!(split_env_string("a#b '#c'"), ["a#b", "#c"]);
+        // \n \t \r \f \v は引用符の外と二重引用符の中で制御文字になる。単引用符の中はそのまま
+        assert_eq!(
+            split_env_string("\"a\\nb\" c\\nd e\\tf \"g\\rh\\fi\\vj\" 'k\\nl'"),
+            ["a\nb", "c\nd", "e\tf", "g\rh\x0ci\x0bj", "k\\nl"]
+        );
     }
 }
