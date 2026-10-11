@@ -656,6 +656,7 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'git -c core.hookspath=/x commit -m "chore: a"' 'git -C . -c core.hooksPath=/x commit -m "chore: a"' \
   'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x' 'git pull --no-verify origin feat/x' \
   'git -c core.hooksPath=/x pull' 'git config core.hooksPath /dev/null' 'git config --local core.hookspath x' \
+  'git config --global --unset core.hooksPath' 'git config --unset-all core.hooksPath' \
   'git --config-env=core.hooksPath=H commit -m x' 'CLAUDECODE= git commit -m x' 'CLAUDECODE=0 git commit -m x' \
   'env -u CLAUDECODE git commit -m x' 'unset CLAUDECODE && git commit -m x' \
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
@@ -669,7 +670,7 @@ for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --
   'git commit -m"feat: add notes"' 'git commit -Fnotes.txt' 'git commit -Cnext' 'git commit --no-status -m x' \
   'git merge --no-ff feat/x' 'git -c user.name=n commit -m x' 'git commit -m -nightly' \
   'git commit -m "-nightly build fix"' 'git commit --author -n -m x' 'git config --get core.hooksPath' \
-  'git config --unset core.hooksPath' 'git config core.autocrlf false' 'git pull origin main'; do
+  'git config core.autocrlf false' 'git pull origin main'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
 done
