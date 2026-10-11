@@ -705,10 +705,19 @@ impl Rewrite<'_> {
         let (headers, message) = split_object(&data);
         let value = |key: &[u8]| text(&values(&headers, key).concat());
         let (object, kind, name) = (value(b"object"), value(b"type"), value(b"tag"));
+        // 書き換えるタグは、たどるとコミットに着くもの（split_refs）なので、指すのはコミットかタグ
         let object = match kind.as_str() {
-            "commit" => self.finals.get(&object).cloned().unwrap_or(object),
+            "commit" => self.finals.get(&object).cloned().ok_or_else(|| {
+                one(format!(
+                    "タグ {name} が指すコミット {object} を書き換えていない"
+                ))
+            })?,
             "tag" => self.make_tag(&object)?,
-            _ => object,
+            other => {
+                return Err(one(format!(
+                    "タグ {name} が指す {object} が、コミットでもタグでもない（{other}）"
+                )));
+            }
         };
         let mut errors = Vec::new();
         let (message, count) = self.transform(
@@ -804,10 +813,10 @@ impl Rewrite<'_> {
             let expected_object = self
                 .finals
                 .get(&old_object)
-                .or_else(|| self.tag_finals.get(&old_object))
-                .cloned()
-                .unwrap_or(old_object);
-            if text(&values(&new_headers, b"object").concat()) != expected_object {
+                .or_else(|| self.tag_finals.get(&old_object));
+            if expected_object.map(String::as_bytes)
+                != Some(values(&new_headers, b"object").concat().as_slice())
+            {
                 errors.push(format!("検証: タグ {name} が指すものが合わない"));
             }
             for key in [&b"type"[..], b"tag", b"tagger"] {
