@@ -596,8 +596,10 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         loop {
             while let Some(front) = words.front() {
                 let t = front.text.clone();
-                // bash は `-` も `--` と同じにオプションの終わりと読む
-                if t == "--" || (is_shell && t == "-") {
+                // bash は `-` も `--` と同じにオプションの終わりと読む。env は getopt を終えた後（`--`、`-`、
+                // 代入の後）の `--` を走らせるプログラムにする
+                if (t == "--" && !(wrapper.name == "env" && options_done)) || (is_shell && t == "-")
+                {
                     words.pop_front();
                     options_done = true;
                     continue;
