@@ -28,6 +28,11 @@ exit "${FAKE_JOB_EXIT:-0}"
 EOF
 cat >"$FAKE_BIN/scontrol" <<'EOF'
 #!/usr/bin/env bash
+# show job は終わったジョブの RunTime と TimeLimit を返す（FAKE_SHOW_EXIT で失敗させられる）
+if [[ $1 == show ]]; then
+  echo "JobId=42 JobName=x RunTime=${FAKE_RUN_TIME:-00:12:34} TimeLimit=${FAKE_TIME_LIMIT:-00:30:00} Command=(null)"
+  exit "${FAKE_SHOW_EXIT:-0}"
+fi
 echo "$*" >>"$TEST_ROOT/scontrol.calls"
 exit "${FAKE_TOP_EXIT:-0}"
 EOF
@@ -63,6 +68,23 @@ assert_contains "$out" "JOB: 42"
 assert_contains "$out" "LOG: $HOME/github/slurm-logs/xlc-2G-42.out"
 assert_contains "$out" "job output"
 assert_contains "$out" "EXIT: 0"
+
+it "slurm-run: 終わったジョブの実際の時間と見積もりを出し、ログの末尾にも書く"
+cd "$HOME/github/proj" || exit 1
+out=$("$RUN" -t 30 xlc-2G 'true')
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "TIME: elapsed=00:12:34 estimate=00:30:00"
+
+it "slurm-run: ジョブが失敗しても、実際の時間と見積もりを出す"
+out=$(FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-2G 'false')
+assert_eq 3 $?
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+
+it "slurm-run: 時間を読めなくても、警告してジョブの終了コードで終わる"
+out=$(FAKE_SHOW_EXIT=1 FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-2G 'false' 2>&1)
+assert_eq 3 $?
+assert_contains "$out" "WARN:"
+assert_not_contains "$out" "TIME:"
 
 it "slurm-run: ジョブが失敗したら、その終了コードで終わる"
 out=$(FAKE_JOB_EXIT=3 "$RUN" -t 1 xlc-2G 'false')
