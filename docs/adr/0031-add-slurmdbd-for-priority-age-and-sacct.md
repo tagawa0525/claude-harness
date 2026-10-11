@@ -69,3 +69,13 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
 
 常駐を増やさないが、`slurm-run.sh` を通さない `scontrol top` の後始末はされない。並べ替えの後始末をスクリプトに持たせる
 ので、ほかの `--top` と重なったときの扱いも要る。`sacct` は使えないまま。
+
+## 補足
+
+- 2026-10-12: slurmdbd より先に slurmctld を動かしていたホスト（r995）では、slurmctld が自分で作った ClusterID
+  （`/var/spool/slurmctld/clustername`）と、`slurm-register-cluster` の `sacctmgr add cluster` で slurmdbd が振った ID が
+  食い違い、slurmctld が `CLUSTER ID MISMATCH` で止まった。`clustername` を消して slurmctld を起動し直すと、slurmdbd の ID を
+  受け入れて書き直す（`src/slurmctld/controller.c` の `clusteracct_storage_g_register_ctld` のあと）。ジョブの状態は
+  別のファイルにあり、待っているジョブと走っているジョブは残った。新しいホストでは登録が slurmctld より先に走るので起きない
+- 2026-10-12: 反映の直後に測った常駐の量（`systemctl show -p MemoryCurrent -p CPUUsageNSec`）は、mysql が 96 MiB と
+  起動からの CPU 0.52 秒、slurmdbd が 4.6 MiB と 0.02 秒（r995 の物理メモリは 92 GiB）
