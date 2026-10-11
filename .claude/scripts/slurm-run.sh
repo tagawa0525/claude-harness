@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # slurm-run.sh — r995 の Slurm に重い計算を 1 本投げ、終わるまで待つ
 #
-# Usage: slurm-run.sh [--top] -t <見積もり> <name> <command>
+# Usage: slurm-run.sh [--top] [-c <コア数>] -t <見積もり> <name> <command>
 #
-# ほかの計算と重ならないよう排他で走らせる（sbatch --exclusive --wait --export=ALL）。
+# 既定では、ほかの計算と重ならないよう排他で走らせる（sbatch --exclusive --wait --export=ALL）。
 # <name> はジョブの名前（squeue で見分ける）とログのファイル名に使う。例: xlc-2G、openmc-2G
 # -t: かかる時間の見積もり（sbatch --time の形。分か H:MM:SS）。待ち行列の見込み（squeue --start）に
 #     使う。超えても止めない（slurm.conf の OverTimeLimit=UNLIMITED）
+# -c: 排他にせず、<コア数> の CPU（Slurm の CPUs。ハードウェアスレッドで数え、割り当ては物理コア単位に
+#     切り上がる）だけを取って走らせる（--cpus-per-task）。時間を記録しない長い計算のためで、ほかのジョブと
+#     資源を取り合うので、TIME 行に「時間は当てにならない」印を付ける。排他のジョブはノードにジョブが
+#     走っている間は始まらないので、走っている間は待たせる（ADR-0029）
 # --top: 待っているジョブより先に走らせる（scontrol top。走っているジョブは止めない）
 # 連絡先として、git のブランチ、投げた場所、Claude Code のセッションの ID をジョブのコメントに書く
 # （squeue の %k）。サブエージェントは親と同じセッションなので、ブランチで見分ける。
@@ -18,25 +22,33 @@
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
 #   （ログの末尾 20 行。終わった直後なら、最後に TIME: elapsed=<実際の時間> estimate=<見積もり> を
-#    ログへ書き足すので、その行も含む。ADR-0017）
+#    ログへ書き足すので、その行も含む。-c のときは行末に印が付く。ADR-0017、ADR-0029）
 #   EXIT: <ジョブの終了コード>
 # 終了コードはジョブの終了コード。
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--top] -t <見積もり> <name> <command>" >&2
+  echo "Usage: $0 [--top] [-c <コア数>] -t <見積もり> <name> <command>" >&2
   exit 1
 }
 
 top=false
 estimate=""
+cpus=""
+shared=false
 while (($#)); do
   case "$1" in
     --top) top=true ;;
     -t)
       (($# >= 2)) || usage
       estimate=$2
+      shift
+      ;;
+    -c)
+      (($# >= 2)) || usage
+      cpus=$2
+      shared=true
       shift
       ;;
     *) break ;;
@@ -47,6 +59,11 @@ done
 (($# == 2)) || usage
 name=$1
 command=$2
+
+if $shared && [[ ! $cpus =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: -c のコア数は正の整数: '$cpus'" >&2
+  exit 1
+fi
 
 if [[ ! $name =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "ERROR: 名前はファイル名に使える英数字と . _ - だけにする: $name" >&2
@@ -76,11 +93,17 @@ fi
 if [[ -n ${CLAUDE_CODE_SESSION_ID:-} ]]; then
   contact+=" claude=$CLAUDE_CODE_SESSION_ID"
 fi
+# 排他でないジョブが走っていると、排他のジョブが始まらない理由を squeue の %k で読めるようにする
+resources=(--exclusive)
+if $shared; then
+  resources=(--cpus-per-task="$cpus")
+  contact+=" shared-cpus=$cpus"
+fi
 
 # sbatch --wait は終わるまで戻らないので、裏で走らせ、最初の行から番号を読む
 submitted=$(mktemp)
 trap 'rm -f "$submitted"' EXIT
-sbatch --exclusive --wait --export=ALL -J "$name" -o "$remote_logs/%x-%j.out" \
+sbatch "${resources[@]}" --wait --export=ALL -J "$name" -o "$remote_logs/%x-%j.out" \
   --time "$estimate" --comment "$contact" --wrap "$command" >"$submitted" &
 pid=$!
 job=""
@@ -114,6 +137,9 @@ if ! info=$(scontrol show job "$job"); then
   echo "WARN: ジョブ $job の実際の時間を scontrol から読めなかった" >&2
 elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
   time_line="TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}"
+  if $shared; then
+    time_line+=" shared (-c $cpus): 時間は当てにならない"
+  fi
   echo "$time_line" >>"$log" || {
     echo "WARN: ジョブ $job の実際の時間をログに書き足せなかった: $log" >&2
     echo "$time_line"
