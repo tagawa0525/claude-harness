@@ -94,7 +94,8 @@ stop|2 つの比べでは差が無い。
 pass|2 つを比べると差が無い。
 pass|設定の効きを確かめる。
 pass|目が効きます。
-stop|件の数えは 3 件。
+stop|件の数えが 3 件。
+pass|二つを、比べはしたが違う。
 stop|端のケースを足す。
 stop|作業木を作る。
 stop|掃引の範囲。
@@ -180,6 +181,30 @@ else
   ng "シンボリックリンクで止めた"
 fi
 
+# --- 3d. 行を折り返した「数え」、名前を変えたファイル -----------------------------------------------------
+REPO="$WORK/renames"
+new_repo "$REPO"
+if commits "$REPO" doc.md "$(printf '# t\n\n行の数え\nる。\n')"; then
+  ok "行を折り返した動詞の数えは止めない"
+else
+  ng "行を折り返した動詞の数えで止めた"
+fi
+printf '# t\n\nok\n' > "$REPO/a.md"
+git -C "$REPO" add a.md
+git -C "$REPO" commit -q --no-verify -m "chore: a"
+git -C "$REPO" mv a.md b.md
+printf '# t\n\n確かめの結果。\n' > "$REPO/z.md"
+git -C "$REPO" add z.md
+if git -C "$REPO" commit -q -m "docs: rename" >"$WORK/out" 2>&1; then
+  ng "名前を変えたファイルと一緒にステージした崩れた語で止まらない"
+else
+  if grep -q "z.md" "$WORK/out" && grep -q "確認" "$WORK/out"; then
+    ok "名前を変えたファイルと一緒でも、ほかのファイルの崩れた語で止める"
+  else
+    ng "名前を変えたファイルと一緒のときに、崩れた語ではない理由で止めた"
+  fi
+fi
+
 # --- 4. 空白を含むパス -------------------------------------------------------------------------------
 REPO="$WORK/space path"
 new_repo "$REPO"
@@ -211,6 +236,11 @@ if commits "$REPO" fixtures/case.md "$(printf '# t\n\n確かめの結果。\n')"
   ok ".textlintignore に挙げたファイルは検査しない"
 else
   ng ".textlintignore に挙げたファイルで止めた"
+fi
+if commits "$REPO" 'fixtures/a].md' "$(printf '# t\n\n確かめの結果。\n')"; then
+  ok ".textlintignore に挙げた、] を含む名前のファイルも検査しない"
+else
+  ng ".textlintignore に挙げた、] を含む名前のファイルで止めた"
 fi
 
 # --- 5. fork では飛ばす ------------------------------------------------------------------------------
@@ -246,11 +276,25 @@ else
 fi
 echo y > "$REPO/y.txt"
 git -C "$REPO" add y.txt
-printf 'docs: 結果を確かめる\n\n# 確かめの結果（コメントの行）\n# ------------------------ >8 ------------------------\n確かめの差分\n' > "$WORK/msg"
+printf 'docs: 結果を確かめる\n\n本文\n# ------------------------ >8 ------------------------\n確かめの差分\n' > "$WORK/msg"
 if CLAUDECODE=1 git -C "$REPO" commit -q -F "$WORK/msg" --cleanup=scissors >"$WORK/out" 2>&1; then
-  ok "コミットの本文のコメントの行と、scissors の行から後は検査しない"
+  ok "コミットの本文の scissors の行から後は検査しない"
 else
-  ng "コミットの本文のコメントか scissors の後で止めた"
+  ng "コミットの本文の scissors の後で止めた"
+fi
+echo w > "$REPO/w.txt"
+git -C "$REPO" add w.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: add" -m "#290 の確かめの結果" >"$WORK/out" 2>&1; then
+  ng "-m で残る # で始まる行の崩れた語で止まらない"
+else
+  ok "-m で残る # で始まる行の崩れた語でも止める"
+fi
+echo v > "$REPO/v.txt"
+git -C "$REPO" add v.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "fixup! docs: 確かめの結果を書く" >"$WORK/out" 2>&1; then
+  ok "fixup! の件名（元のコミットから写したもの）は検査しない"
+else
+  ng "fixup! の件名で止めた"
 fi
 
 echo
