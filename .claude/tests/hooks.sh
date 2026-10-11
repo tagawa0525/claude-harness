@@ -262,6 +262,18 @@ it "guard-git-push: ALLOW_PROTECTED_PUSH=<理由> で迂回できる"
 out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=テスト用 git push --force')
 assert_eq allow "$(decision "$out")"
 
+it "guard-git-push: bash -c の文字列の中と、sudo などで包んだ git push も見る。エスケープは文字列の中でも読む"
+for cmd in "bash -c 'git push --force'" 'sudo -E git push origin main' 'eval git push --force' \
+  "sh -c 'cd . && git push origin main'" 'xargs git push origin main'; do
+  out=$(run_hook guard-git-push "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+out=$(run_hook guard-git-push "bash -c 'ALLOW_PROTECTED_PUSH=テスト用 git push --force'")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-git-push "bash -c 'ALLOW_PROTECTED_PUSH=1 git push --force'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+
 # エスケープの値は理由の文字列（ADR-0023）。`1` や 1 語の英単語は弾き、短い値を拒む文言はしきい値を明かさない
 it "escape: 値が 1 や短い語なら、理由を求めて止める（しきい値は明かさない）"
 for value in 1 true force allow 確認; do
@@ -464,6 +476,11 @@ for cmd in "env -C $TEST_ROOT/lock git commit -m 'feat: x'" "env --chdir=$TEST_R
   out=$(run_hook block-main-commit "$cmd")
   assert_eq deny "$(decision "$out")"
 done
+# sudo -D / --chdir もディレクトリを変える
+out=$(run_hook block-main-commit "sudo -E -D $LOCAL git commit -m 'feat: x'")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-main-commit "sudo -E --chdir=$TEST_ROOT/lock git commit -m 'feat: x'")
+assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
 it "block-main-commit: コマンド置換やサブシェルの中の cd は親の対象ディレクトリを変えない"
@@ -471,6 +488,24 @@ out=$(run_hook block-main-commit "echo \$(cd $LOCAL && pwd) && git commit -m 'fe
 assert_eq deny "$(decision "$out")"
 out=$(run_hook block-main-commit "(cd $LOCAL); git commit -m 'feat: x'")
 assert_eq deny "$(decision "$out")"
+
+it "block-main-commit: 前の cd はサブシェルの中のコマンドにも効く"
+out=$(run_hook block-main-commit "cd $LOCAL; (git commit -m 'feat: x')")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-main-commit "cd $LOCAL && echo \$(git commit -m 'feat: x')")
+assert_eq allow "$(decision "$out")"
+
+it "block-main-commit: bash -c の文字列の中の cd は、同じ文字列の中の後ろのコマンドにだけ効く。前の cd は文字列の中にも効く"
+out=$(run_hook block-main-commit "bash -c 'cd $LOCAL && git commit -m \"feat: x\"'")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-main-commit "cd $LOCAL; bash -c 'git commit -m \"feat: x\"'")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-main-commit "bash -c 'git commit -m \"feat: x\"'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook block-main-commit "bash -c 'cd $LOCAL'; git commit -m 'feat: x'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook block-main-commit "env -C $LOCAL bash -c 'git commit -m \"feat: x\"'")
+assert_eq allow "$(decision "$out")"
 
 it "block-main-commit: env などで包んだ cd は対象ディレクトリを変えず、builtin / command の cd は変える"
 # env は外部コマンドの cd を探して失敗するので、後ろの git は元のディレクトリ（$REPO、main）で走る
@@ -828,6 +863,31 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=<理由>"
 done
 
+it "block-no-verify: sudo、xargs、flock、ssh、watch、eval で包んだ git と、bash -c の文字列の中の git も見る"
+for cmd in 'sudo -E git commit --no-verify -m x' 'sudo -Eu me git commit -n -m x' 'xargs -0 git commit -n -m x' \
+  'flock /tmp/l git commit --no-verify -m x' 'ssh host git commit --no-verify -m x' 'watch git commit -n -m x' \
+  'eval "git commit --no-verify -m x"' 'eval git commit -n -m x' "bash -c 'git commit --no-verify -m x'" \
+  "bash -x -c 'git commit -n -m x'" "sh -c 'CLAUDECODE=0 git commit -m x'" "bash -c 'CLAUDECODE=0; git commit -m x'" \
+  "bash -c 'unset CLAUDECODE; git commit -m x'" "env -u CLAUDECODE bash -c 'git commit -m x'" \
+  "bash -c 'git -c core.hooksPath=/x commit -m x'" 'sudo -E GIT_CONFIG_COUNT=1 git commit -m x' \
+  'flock /tmp/l -c "git commit -n -m x"' 'script -c "git commit --no-verify -m x" log.txt'; do
+  out=$(run_hook block-no-verify "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+# sudo は -E が無ければ環境変数を受け継がず（env_reset）、ssh 先には環境変数が渡らないので、CLAUDECODE が
+# 消える（hook が Claude Code のセッションと分からない）
+for cmd in 'sudo git commit -m x' 'sudo --preserve-env=HOME git commit -m x' 'ssh host git commit -m x'; do
+  out=$(run_hook block-no-verify "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+for cmd in 'sudo -E git commit -m x' 'sudo --preserve-env git commit -m x' \
+  "bash -c 'git commit -m x'" 'eval git commit -m x' 'flock /tmp/l git commit -m x' \
+  'sudo systemctl restart x' 'ssh r995 nvidia-smi' 'env -i ls' 'sudo -D /tmp ls' 'ssh r995 git status' \
+  "bash -c 'CLAUDECODE=0 echo ok'" 'CLAUDECODE=0 echo ok' 'unset CLAUDECODE; echo ok'; do
+  out=$(run_hook block-no-verify "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "block-no-verify: hook を飛ばさない git のコマンドは許可する"
 for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit' \
   'git commit -m"feat: add notes"' 'git commit -Fnotes.txt' 'git commit -Cnext' 'git commit --no-status -m x' \
@@ -873,7 +933,8 @@ done
 it "guard-git-add: -A / --all / . / :/ / * は deny し、代わりの手順を示す"
 for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An' \
   'git add -A --pathspec-from-file paths.txt' 'git add -A --pathspec-from-file=paths.txt' \
-  'env FOO=1 git add -A' 'command git add .'; do
+  'env FOO=1 git add -A' 'command git add .' 'sudo git add -A' "bash -c 'git add .'" 'eval git add -A' \
+  'ssh host "cd repo && git add -A"'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq deny "$(decision "$out")"
 done
@@ -1662,6 +1723,18 @@ git switch -q feat/rebased
 out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
 assert_eq deny "$(decision "$out")"
 
+it "guard-git-merge: 前の git switch は、サブシェルや bash -c の文字列の中のコマンドにも効く"
+for cmd in "git switch main && bash -c 'git merge feat/rebased'" 'git switch main; (git merge feat/rebased)' \
+  'git switch main && eval git merge feat/rebased'; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+# サブシェルや文字列の中の switch は外に漏れない（feat/rebased のまま、既定ブランチ以外へのマージは対象外）
+for cmd in "bash -c 'git switch main'; git merge feat/behind" '(git switch main); git merge feat/behind'; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "guard-sbatch: sbatch を直接投げたら slurm-run.sh を示して止める"
 out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
 assert_eq deny "$(decision "$out")"
@@ -1724,6 +1797,93 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-sbatch "env -u FOO $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
 
+it "guard-sbatch: bash / sh のオプションを読み飛ばし、その後ろの語をスクリプトとして見る（#303）"
+for invoked in "bash -x" "bash -e" "sh -eu" "bash -o pipefail" "bash --rcfile ~/.bashrc" "bash --" "bash +O extglob" \
+  "nohup bash -x" "bash -xeu -o errexit --" "bash -"; do
+  out=$(run_hook guard-sbatch "$invoked $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+  assert_eq deny "$(decision "$out")"
+  out=$(run_hook guard-sbatch "$invoked .claude/tests/scripts/slurm-run.sh")
+  assert_eq allow "$(decision "$out")"
+done
+# -n は構文を調べるだけで走らせない
+out=$(run_hook guard-sbatch "bash -n $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: bash -c / sh -c の文字列の中も、深さ 5 まで再帰的に読む"
+for cmd in "bash -c 'sbatch --wrap true'" "sh -c \"sbatch --wrap true\"" "bash -ec 'sbatch --wrap true'" \
+  "bash -o pipefail -c 'cd /tmp && sbatch --wrap true' arg0 arg1" "bash -c \"bash -c 'sbatch --wrap true'\"" \
+  "env FOO=1 bash -c 'sbatch --wrap true'" "nohup sh -c 'sleep 1; sbatch --wrap true' &" \
+  "bash -c 'bash -c \"bash -c \\\"sbatch --wrap true\\\"\"'"; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+out=$(run_hook guard-sbatch "bash -c '$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B true'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "bash -c '$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B true'" true)
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-sbatch "bash -c 'echo sbatch; squeue'")
+assert_eq allow "$(decision "$out")"
+# 文字列以外の引数（$0 以降）の中の置換は、外側のシェルが bash を起動する前に走らせる
+out=$(run_hook guard-sbatch "bash -c 'true' \"\$(sbatch --wrap true)\"")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-sbatch "bash -c \"squeue; \$(sbatch --wrap true)\"")
+assert_eq deny "$(decision "$out")"
+# 深さの上限（5）を超える入れ子は、読めない形として、対象語があれば止める側に倒す
+deep="sbatch --wrap true"
+for _ in 1 2 3 4 5 6; do deep="bash -c $(printf '%q' "$deep")"; done
+out=$(run_hook guard-sbatch "$deep")
+assert_eq deny "$(decision "$out")"
+deep="squeue"
+for _ in 1 2 3 4 5 6; do deep="bash -c $(printf '%q' "$deep")"; done
+out=$(run_hook guard-sbatch "$deep")
+assert_eq allow "$(decision "$out")"
+
+it "guard-sbatch: sudo、xargs、flock、chrt、taskset、watch、script -c、ssh、eval で包んだ sbatch も止める"
+for wrapped in "sudo sbatch --wrap true" "sudo -u slurm -g users sbatch --wrap true" "sudo -E FOO=1 sbatch --wrap true" \
+  "sudo --user=slurm -n -- sbatch --wrap true" "sudo -H -D /tmp sbatch --wrap true" \
+  "echo x | xargs sbatch --wrap" "xargs -0 -I{} sbatch --wrap {}" "xargs -n1 -P 4 -d '\n' sbatch --wrap" \
+  "xargs -r --max-args=1 sbatch --wrap" "xargs -I {} -t sbatch --wrap {}" \
+  "flock /tmp/lock sbatch --wrap true" "flock -w 10 -x /tmp/lock sbatch --wrap true" \
+  "flock --timeout=10 /tmp/lock -c 'sbatch --wrap true'" "flock -n /tmp/lock -c 'cd /tmp && sbatch --wrap true'" \
+  "chrt -f 10 sbatch --wrap true" "chrt -i 0 sbatch --wrap true" "chrt --idle 0 sbatch --wrap true" \
+  "chrt -T 1000 -d 0 sbatch --wrap true" "taskset 0x1 sbatch --wrap true" "taskset -c 0-3 sbatch --wrap true" \
+  "taskset --cpu-list 0 sbatch --wrap true" "watch sbatch --wrap true" "watch -n 5 'sbatch --wrap true'" \
+  "watch -x sbatch --wrap true" "watch --interval=5 -d sbatch --wrap true" "watch -dpermanent 'squeue; sbatch --wrap true'" \
+  "script -c 'sbatch --wrap true' log.txt" "script -q --command 'sbatch --wrap true'" "script log.txt -- sbatch --wrap true" \
+  "ssh r995 sbatch --wrap true" "ssh -p 22 -o StrictHostKeyChecking=no user@r995 'sbatch --wrap true'" \
+  "ssh -t r995 'cd ~/x && sbatch --wrap true'" "ssh -i ~/.ssh/id -J bastion r995 sbatch --wrap true" \
+  "ssh r995 -t sbatch --wrap true" "ssh r995 -p 22 -- sbatch --wrap true" "script log.txt -c 'sbatch --wrap true'" \
+  "script log.txt -q --command 'sbatch --wrap true'" \
+  "eval 'sbatch --wrap true'" "eval sbatch --wrap true" "eval \"cd /tmp; sbatch --wrap true\"" \
+  "sudo flock /tmp/lock chrt -f 10 sbatch --wrap true" "ssh r995 bash -c 'sbatch --wrap true'"; do
+  out=$(run_hook guard-sbatch "$wrapped")
+  assert_eq deny "$(decision "$out")"
+done
+
+it "guard-sbatch: 包みが走らせない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
+for cmd in "sudo -l sbatch" "sudo -e sbatch" "sudo -v" "sudo -K" "chrt -p 10 1234" "chrt -m" "taskset -p 1 1234" \
+  "taskset -ap 1234" "ssh -N r995" "ssh r995 -N" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" "script log.txt" \
+  "env FOO=1 -i sbatch --wrap true" "bash --help sbatch --wrap true" "bash --version sbatch" "xargs --help sbatch" \
+  "env --version sbatch" "watch --help sbatch" "sudo --help sbatch"; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "guard-sbatch: 走らせるプログラムを決められない形は、コマンド文字列に対象語があれば止める側に倒す"
+for cmd in 'CMD=sbatch; $CMD --wrap true' 'CMD="sbatch --wrap true"; eval "$CMD"' '$(which sbatch) --wrap true' \
+  '. ./run-sbatch.sh' 'source run-sbatch.sh' 'bash -s < run-sbatch.sh' 'bash < run-sbatch.sh' \
+  'echo "sbatch --wrap true" | sh' 'bash -c "$CMD" # sbatch' "bash -c \"\$SBATCH_BIN --wrap true\"; echo sbatch" \
+  'ssh r995 < run-sbatch.sh' 'bash "$SCRIPT" sbatch' 'sudo -s < run-sbatch.sh' 'eval "$CMD" sbatch' \
+  '${SB:-/usr/bin/sbatch} --wrap true' '$(command -v /usr/bin/sbatch) --wrap true'; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+for cmd in '$CMD --wrap true' 'eval "$CMD"' 'source venv/bin/activate && squeue' '. ~/.bashrc' 'bash -s < run.sh' \
+  'bash "$SCRIPT" -t 5' 'ssh r995' 'eval "$(ssh-agent)"'; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "guard-sbatch: ALLOW_RAW_SBATCH=<理由> を付ければ sbatch を直接投げられる"
 out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=テスト用 sbatch --array=1-4 --wrap 'true'")
 assert_eq allow "$(decision "$out")"
@@ -1759,6 +1919,29 @@ assert_eq allow "$(decision "$out")"
 
 it "heredoc: 本文中の sbatch はコマンドとみなさない（guard-sbatch）"
 out=$(run_hook guard-sbatch "$(write_doc '重い計算は sbatch でなく slurm-run.sh で投げる')")
+assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# require-background-wait: 包みと bash の文字列の中の待機スクリプトも見る
+# ===========================================================================
+
+it "require-background-wait: bash のオプション付き、bash -c の文字列、包みの中の待機スクリプトも止める"
+for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh 12" "sh -eu ~/.claude/scripts/request-rereview.sh 12" \
+  "bash -c '$HOME/.claude/scripts/gh-wait-review.sh 12'" "sudo ~/.claude/scripts/gh-wait-review.sh 12" \
+  "eval ~/.claude/scripts/gh-wait-review.sh 12" "flock /tmp/l ~/.claude/scripts/gh-wait-review.sh 12" \
+  "ssh r995 ~/.claude/scripts/gh-wait-review.sh 12"; do
+  out=$(run_hook require-background-wait "$cmd")
+  assert_eq deny "$(decision "$out")"
+  out=$(run_hook require-background-wait "$cmd" true)
+  assert_eq allow "$(decision "$out")"
+done
+
+it "require-background-wait: 走らせるプログラムを決められない形は、文字列に対象のスクリプト名があれば止める"
+out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT 12')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT 12' true)
+assert_eq allow "$(decision "$out")"
+out=$(run_hook require-background-wait '$WAIT 12')
 assert_eq allow "$(decision "$out")"
 
 finish

@@ -90,19 +90,25 @@ impl Rule for BlockNoVerify {
     }
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        let mut skips = changes_environment(shell);
+        let mut skips = false;
         for cmd in shell.commands() {
-            skips |= cmd.env.iter().any(|change| match change {
-                EnvChange::Set(name, _) | EnvChange::Unset(name) => sets_hook_config(name),
-                EnvChange::Clear => false,
-            }) || env_value(&cmd.env, "CLAUDECODE", Some("1")) != Some("1");
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
             };
             skips |= match sub {
                 "config" => sets_hooks_path(args),
+                // 環境変数（シェルの代入と unset、包みの変更）は、hook が走るコマンドがあるときだけ見る
+                // （`sudo ls` や `ssh host nvidia-smi`、`CLAUDECODE=0 echo ok` では hook は走らない）
                 "commit" | "merge" | "pull" => {
-                    cmd.git_config_overrides().iter().any(|c| is_hooks_path(c))
+                    changes_environment(shell)
+                        || cmd.env.iter().any(|change| match change {
+                            EnvChange::Set(name, _) | EnvChange::Unset(name) => {
+                                sets_hook_config(name)
+                            }
+                            EnvChange::Clear => false,
+                        })
+                        || env_value(&cmd.env, "CLAUDECODE", Some("1")) != Some("1")
+                        || cmd.git_config_overrides().iter().any(|c| is_hooks_path(c))
                         || items(sub, args).iter().any(|item| match item {
                             Item::Long(name) => is_no_verify(name),
                             Item::Short(ch) => sub == "commit" && *ch == 'n',
@@ -114,7 +120,7 @@ impl Rule for BlockNoVerify {
         }
         if skips {
             return vec![Finding::Deny(format!(
-                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます（ADR-0015）: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え。\nhook が止めた理由を直してから実行してください。{}",
+                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます（ADR-0015）: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え（-E の無い sudo と ssh の先には CLAUDECODE が渡りません）。\nhook が止めた理由を直してから実行してください。{}",
                 escape_hint("ALLOW_NO_VERIFY")
             ))];
         }
