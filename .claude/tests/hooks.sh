@@ -10,7 +10,7 @@
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
-# CLAUDE_HOOKS_BIN で差し替えられる（nix でビルドしたバイナリの検証用）
+# CLAUDE_HOOKS_BIN（絶対パス）で差し替えられる（nix でビルドしたバイナリの検証用）
 if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
   CRATE_DIR=$(cd "$(dirname "$0")/../../modules/home/parts/claude-hooks" && pwd)
   cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
@@ -24,8 +24,10 @@ if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
 fi
 # 引数なしで呼ぶと使い方（rules: …）を出し、終了コード 2 で終わる。-x だけではディレクトリや
 # 起動できないバイナリを通す
-if ! { "$CLAUDE_HOOKS_BIN" 2>&1 || true; } | grep '^rules: ' >/dev/null; then
+usage=$("$CLAUDE_HOOKS_BIN" 2>&1 </dev/null) || true
+if ! grep -q '^rules: ' <<<"$usage"; then
   echo "claude-hooks を走らせられません: $CLAUDE_HOOKS_BIN" >&2
+  echo "$usage" >&2
   exit 1
 fi
 
