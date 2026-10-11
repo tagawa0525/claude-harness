@@ -1,8 +1,8 @@
-//! コマンドを包むもの（env、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice）をほどき、
+//! コマンドを包むもの（env、builtin、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice）をほどき、
 //! 中のコマンドと、包みが変える環境変数・ディレクトリを取り出す
 //!
 //! 包みごとのオプションの読み方は、coreutils（env、nice、timeout、stdbuf、nohup）、util-linux（setsid、ionice）、
-//! GNU time の man と、bash の組み込み（command、exec）から、値を取るものと、ほどき方を変えるものだけを持つ。
+//! GNU time の man と、bash の組み込み（builtin、command、exec）から、値を取るものと、ほどき方を変えるものだけを持つ。
 //! 短縮形のまとまり（`-iu X`）、続けて書いた値（`-uX`、`--unset=X`）、長い形の一意な省略形（`--ign`）を読む
 
 use std::collections::VecDeque;
@@ -38,6 +38,12 @@ const WRAPPERS: &[Wrapper] = &[
             ("--ignore-signal", None, false),
             ("--list-signal-handling", None, false),
         ],
+        positionals: 0,
+    },
+    Wrapper {
+        name: "builtin",
+        value_shorts: "",
+        longs: &[],
         positionals: 0,
     },
     Wrapper {
