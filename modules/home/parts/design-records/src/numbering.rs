@@ -8,8 +8,8 @@ use std::process::ExitCode;
 use design_records::{Kind, numbers_in, renumber_refs};
 
 use crate::git::{
-    Result, default_branch, fetch_tags, file_names, git, git_ok, has_origin, remote_has_tag,
-    repo_root, reservations, run, shared_default, tracked,
+    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, origin_default,
+    remote_tags, repo_root, reservations, run, shared_default, tracked,
 };
 
 /// 予約をやり直す回数の上限。ほかの人の予約と続けてぶつかるのは、同時に作る人の数だけ。
@@ -71,7 +71,7 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
     let target = reservation_target(root)?;
     for _ in 0..ATTEMPTS {
         if remote {
-            fetch_tags(root)?;
+            fetch_origin(root)?;
         }
         let used = used_numbers(root, kind)?;
         let number = match wanted {
@@ -113,13 +113,16 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
             return Ok(number);
         }
         git(root, &["tag", "-d", &tag])?;
-        if remote_has_tag(root, &tag)? && wanted.is_none() {
+        let push_error = String::from_utf8_lossy(&pushed.stderr).trim().to_string();
+        let taken = remote_tags(root, &[&format!("refs/tags/{tag}")])
+            .map_err(|e| format!("cannot push the reservation tag {tag}: {push_error} ({e})"))?
+            .contains(&tag);
+        if taken && wanted.is_none() {
             // ほかの clone が先に予約した
             continue;
         }
         return Err(format!(
-            "cannot push the reservation tag {tag}: {}",
-            String::from_utf8_lossy(&pushed.stderr).trim()
+            "cannot push the reservation tag {tag}: {push_error}"
         ));
     }
     Err(format!(
@@ -163,6 +166,8 @@ fn added_lines(root: &Path, base: &str) -> Result<BTreeMap<String, BTreeSet<usiz
     let mut path: Option<String> = None;
     for line in diff.lines() {
         if let Some(rest) = line.strip_prefix("+++ ") {
+            // 空白を含むパスの後ろには TAB が付く。引用符で包んだパス（引用符、制御文字を含むもの）は読まない
+            let rest = rest.strip_suffix('\t').unwrap_or(rest);
             path = match rest.strip_prefix("b/") {
                 Some(p) => Some(p.to_string()),
                 None if rest == "/dev/null" => None,
@@ -213,6 +218,35 @@ fn rewrite(
         .collect()
 }
 
+/// このブランチの分岐点と、比べた既定ブランチ。ローカルの既定ブランチ（/git-merge が rebase する先）と origin の
+/// 既定ブランチ（PR の base）のうち、HEAD との分岐点が新しい方を使う。2 つの分岐点が祖先の関係になければ止める。
+fn branch_base(root: &Path) -> Result<Option<(String, String)>> {
+    let mut bases: Vec<(String, String)> = Vec::new();
+    for branch in [local_default(root)?, origin_default(root)?]
+        .into_iter()
+        .flatten()
+    {
+        let base = git(root, &["merge-base", "HEAD", &branch])?
+            .trim()
+            .to_string();
+        bases.push((base, branch));
+    }
+    let Some(mut newest) = bases.first().cloned() else {
+        return Ok(None);
+    };
+    for (base, branch) in bases.into_iter().skip(1) {
+        if git_ok(root, &["merge-base", "--is-ancestor", &newest.0, &base])? {
+            newest = (base, branch);
+        } else if !git_ok(root, &["merge-base", "--is-ancestor", &base, &newest.0])? {
+            return Err(format!(
+                "{} and {branch} have diverged; update the default branch first",
+                newest.1
+            ));
+        }
+    }
+    Ok(Some(newest))
+}
+
 /// `renumber`: このブランチで足した `kind` の記録 `old` を、`wanted`（省けば次の番号）に振り直して 1 コミットにする。
 pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
     let root = repo_root()?;
@@ -222,25 +256,15 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
     if !git(&root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
         return Err("commit or stash the changes first; renumber makes its own commit".into());
     }
-    let (base, shown) = match default_branch(&root)? {
-        Some(branch) => (
-            Some(
-                git(&root, &["merge-base", "HEAD", &branch])?
-                    .trim()
-                    .to_string(),
-            ),
-            branch,
-        ),
-        None => (None, String::new()),
-    };
+    let based = branch_base(&root)?;
     let records: Vec<String> = tracked(&root, kind.dir())?
         .into_iter()
         .filter(|p| numbers_in(kind, [p.as_str()]).eq([old]))
         .collect();
     let mut mine = Vec::new();
     for path in &records {
-        let on_base = match &base {
-            Some(base) => git_ok(&root, &["cat-file", "-e", &format!("{base}:{path}")])?,
+        let on_base = match &based {
+            Some((base, _)) => git_ok(&root, &["cat-file", "-e", &format!("{base}:{path}")])?,
             None => false,
         };
         if !on_base {
@@ -256,6 +280,7 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
             ));
         }
         [] => {
+            let shown = based.as_ref().map_or("", |(_, branch)| branch.as_str());
             return Err(format!(
                 "every record numbered {} is on {shown}; the numbers of merged records are not changed",
                 kind.reference(old)
@@ -275,18 +300,54 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
         .and_then(|n| n.split_once('-'))
         .map(|(_, slug)| slug.to_string())
         .ok_or_else(|| format!("{record}: the file name is not NNNN-<slug>.md"))?;
-    let number = reserve(&root, kind, &slug, wanted)?;
-
-    let added = match &base {
-        Some(base) => Some(added_lines(&root, base)?),
+    // 予約の前に読めることを確かめる（読めずに止まると、予約した番号が欠番になる）
+    let added = match &based {
+        Some((base, _)) => Some(added_lines(&root, base)?),
         None => None,
     };
-    let listed = git(&root, &["ls-files", "-z"])?;
+    let number = reserve(&root, kind, &slug, wanted)?;
+    let new_path = kind.path(number, &slug);
+    if let Err(e) = move_record(
+        &root,
+        kind,
+        &record,
+        &new_path,
+        &slug,
+        old,
+        number,
+        added.as_ref(),
+    ) {
+        // 書き換えの前は追跡しているファイルに変更が無かったので、HEAD に戻せば元どおりになる
+        git(&root, &["reset", "--quiet", "--hard", "HEAD"])?;
+        return Err(format!(
+            "{e}; the changes were undone and {} stays reserved but unused",
+            kind.reference(number)
+        ));
+    }
+    release_old(&root, kind, old, &slug)?;
+    println!("{new_path}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// 記録 `record` を `new_path` に移し、参照を `old` から `number` に付け替えて、1 つのコミットにする。記録そのものは
+/// 全体を、ほかのファイルは `added` の行（`None` なら全体）を付け替える。
+#[allow(clippy::too_many_arguments)]
+fn move_record(
+    root: &Path,
+    kind: Kind,
+    record: &str,
+    new_path: &str,
+    slug: &str,
+    old: u32,
+    number: u32,
+    added: Option<&BTreeMap<String, BTreeSet<usize>>>,
+) -> Result<()> {
+    let listed = git(root, &["ls-files", "-z"])?;
     let mut changed = Vec::new();
     for path in listed.split('\0').filter(|p| !p.is_empty()) {
         // 記録そのものは、ブランチで足したものなので全体を付け替える。ほかのファイルは、足した行だけ
         // （main から来た行の同じ番号は、main の記録を指す）
-        let lines = match &added {
+        let lines = match added {
             _ if path == record => None,
             Some(added) => match added.get(path) {
                 Some(lines) => Some(lines),
@@ -295,23 +356,25 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
             None => None,
         };
         let file = root.join(path);
-        // 中身の読めないもの（シンボリックリンクの先が無いもの、テキストでないファイル）は参照を書けない
-        let Ok(text) = fs::read(&file).map(String::from_utf8) else {
+        // シンボリックリンクの差分の行はリンクの先の行ではなく、先はリポジトリの外のこともある
+        if fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
+            continue;
+        }
+        // 中身の読めないもの（消したファイル、テキストでないファイル）は参照を書けない
+        let Ok(Ok(text)) = fs::read(&file).map(String::from_utf8) else {
             continue;
         };
-        let Ok(text) = text else { continue };
-        let new_text = rewrite(&text, lines, kind, old, number, &slug);
+        let new_text = rewrite(&text, lines, kind, old, number, slug);
         if new_text != text {
             fs::write(&file, new_text).map_err(|e| format!("{path}: {e}"))?;
             changed.push(path.to_string());
         }
     }
-    let new_path = kind.path(number, &slug);
-    git(&root, &["mv", &record, &new_path])?;
+    git(root, &["mv", record, new_path])?;
     let mut add = vec!["add", "--"];
-    add.extend(changed.iter().filter(|p| **p != record).map(String::as_str));
-    add.push(&new_path);
-    git(&root, &add)?;
+    add.extend(changed.iter().filter(|p| *p != record).map(String::as_str));
+    add.push(new_path);
+    git(root, &add)?;
     let message = match kind {
         Kind::Adr => format!(
             "docs: renumber {} to {}",
@@ -324,9 +387,32 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
             kind.reference(number)
         ),
     };
-    git(&root, &["commit", "--quiet", "-m", &message])?;
-    println!("{new_path}");
-    Ok(ExitCode::SUCCESS)
+    git(root, &["commit", "--quiet", "-m", &message]).map(|_| ())
+}
+
+/// 振り直した記録（slug が `slug`）の、番号 `old` の予約を解放する。`old` はほかの記録（main にあるもの）が使って
+/// いるので、番号は使い回されない。残すと、check がほかの記録に予約の注意を出し続ける。
+fn release_old(root: &Path, kind: Kind, old: u32, slug: &str) -> Result<()> {
+    let tag = kind.tag(old);
+    let mine = reservations(root)?
+        .into_iter()
+        .any(|r| r.name == tag && r.slug.as_deref() == Some(slug));
+    if !mine {
+        return Ok(());
+    }
+    if has_origin(root)? && remote_tags(root, &[&format!("refs/tags/{tag}")])?.contains(&tag) {
+        git(
+            root,
+            &[
+                "push",
+                "--quiet",
+                "origin",
+                "--delete",
+                &format!("refs/tags/{tag}"),
+            ],
+        )?;
+    }
+    git(root, &["tag", "-d", &tag]).map(|_| ())
 }
 
 /// `prune`: 既定ブランチ（origin があれば origin の）の履歴に記録が入った予約のタグを、ローカルと origin から消し、
@@ -335,7 +421,7 @@ pub fn prune() -> Result<ExitCode> {
     let root = repo_root()?;
     let remote = has_origin(&root)?;
     if remote {
-        fetch_tags(&root)?;
+        fetch_origin(&root)?;
     }
     let Some(branch) = shared_default(&root)? else {
         return Err("no default branch to read the merged records from".into());
@@ -343,27 +429,35 @@ pub fn prune() -> Result<ExitCode> {
     let mut args = vec!["log", branch.as_str(), "--format=", "--name-only", "--"];
     args.extend(Kind::ALL.map(Kind::dir));
     let history: BTreeSet<String> = git(&root, &args)?.lines().map(str::to_string).collect();
-    for reservation in reservations(&root)? {
-        let Some(slug) = &reservation.slug else {
-            continue;
-        };
-        if !history.contains(&reservation.kind.path(reservation.number, slug)) {
-            continue;
+    let merged: Vec<String> = reservations(&root)?
+        .into_iter()
+        .filter(|r| {
+            r.slug
+                .as_ref()
+                .is_some_and(|slug| history.contains(&r.kind.path(r.number, slug)))
+        })
+        .map(|r| r.name)
+        .collect();
+    if merged.is_empty() {
+        return Ok(ExitCode::SUCCESS);
+    }
+    if remote {
+        let on_remote = remote_tags(&root, &["refs/tags/adr-*", "refs/tags/issue-*"])?;
+        let refs: Vec<String> = merged
+            .iter()
+            .filter(|tag| on_remote.contains(*tag))
+            .map(|tag| format!("refs/tags/{tag}"))
+            .collect();
+        if !refs.is_empty() {
+            let mut args = vec!["push", "--quiet", "origin", "--delete"];
+            args.extend(refs.iter().map(String::as_str));
+            git(&root, &args)?;
         }
-        let tag = &reservation.name;
-        if remote && remote_has_tag(&root, tag)? {
-            git(
-                &root,
-                &[
-                    "push",
-                    "--quiet",
-                    "origin",
-                    "--delete",
-                    &format!("refs/tags/{tag}"),
-                ],
-            )?;
-        }
-        git(&root, &["tag", "-d", tag])?;
+    }
+    let mut args = vec!["tag", "-d"];
+    args.extend(merged.iter().map(String::as_str));
+    git(&root, &args)?;
+    for tag in &merged {
         println!("{tag}");
     }
     Ok(ExitCode::SUCCESS)

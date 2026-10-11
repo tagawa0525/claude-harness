@@ -1,5 +1,6 @@
 //! CLI が使う git の操作（リポジトリの直下、追跡しているファイル、既定ブランチ、予約のタグ）。
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -77,7 +78,7 @@ pub fn tracked(root: &Path, dir: &str) -> Result<Vec<String>> {
 }
 
 /// `refs/remotes/origin/` の既定ブランチ（`origin/HEAD`、`origin/main`、`origin/master` の順）。
-fn origin_default(root: &Path) -> Result<Option<String>> {
+pub fn origin_default(root: &Path) -> Result<Option<String>> {
     if let Ok(head) = git(
         root,
         &[
@@ -98,11 +99,8 @@ fn origin_default(root: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
-/// 既定ブランチ。.claude/scripts/branch-topics.sh、worktree-add.sh、claude-hooks（git.rs）と同じ順で探す。
-pub fn default_branch(root: &Path) -> Result<Option<String>> {
-    if let Some(name) = origin_default(root)? {
-        return Ok(Some(name));
-    }
+/// ローカルの既定ブランチ（`main`、`master` の順）。
+pub fn local_default(root: &Path) -> Result<Option<String>> {
     for name in ["main", "master"] {
         let full = format!("refs/heads/{name}");
         if git_ok(root, &["show-ref", "--verify", "--quiet", &full])? {
@@ -110,6 +108,14 @@ pub fn default_branch(root: &Path) -> Result<Option<String>> {
         }
     }
     Ok(None)
+}
+
+/// 既定ブランチ。.claude/scripts/branch-topics.sh、worktree-add.sh、claude-hooks（git.rs）と同じ順で探す。
+pub fn default_branch(root: &Path) -> Result<Option<String>> {
+    if let Some(name) = origin_default(root)? {
+        return Ok(Some(name));
+    }
+    local_default(root)
 }
 
 /// 予約と解放で見る既定ブランチ。origin があれば origin の既定ブランチだけを使う（ローカルの既定ブランチの
@@ -127,31 +133,31 @@ pub fn has_origin(root: &Path) -> Result<bool> {
     git_ok(root, &["remote", "get-url", "origin"])
 }
 
-/// 予約のタグの refspec（ローカルとリモートで同じ名前）。
-const TAG_REFSPECS: [&str; 2] = [
-    "refs/tags/adr-*:refs/tags/adr-*",
-    "refs/tags/issue-*:refs/tags/issue-*",
+/// origin から取ってくる ref。予約のタグはリモートを正とし、同じ名前の手元のタグ（push の前に止まった予約）を
+/// 上書きする（`+`）。ブランチも取ってくる: `prune` が予約を解放した後の番号は、origin の既定ブランチの履歴に
+/// しか残らない。
+const FETCH_REFSPECS: [&str; 3] = [
+    "+refs/heads/*:refs/remotes/origin/*",
+    "+refs/tags/adr-*:refs/tags/adr-*",
+    "+refs/tags/issue-*:refs/tags/issue-*",
 ];
 
-/// origin の予約のタグを取ってくる。
-pub fn fetch_tags(root: &Path) -> Result<()> {
+/// origin のブランチと予約のタグを取ってくる。
+pub fn fetch_origin(root: &Path) -> Result<()> {
     let mut args = vec!["fetch", "--quiet", "--no-tags", "origin"];
-    args.extend(TAG_REFSPECS);
+    args.extend(FETCH_REFSPECS);
     git(root, &args).map(|_| ())
 }
 
-/// origin にタグ `name` があるか。
-pub fn remote_has_tag(root: &Path, name: &str) -> Result<bool> {
-    let listed = git(
-        root,
-        &[
-            "ls-remote",
-            "--tags",
-            "origin",
-            &format!("refs/tags/{name}"),
-        ],
-    )?;
-    Ok(!listed.trim().is_empty())
+/// origin のタグのうち `patterns`（ls-remote のパターン）に合うものの名前（`refs/tags/` の後ろ）。
+pub fn remote_tags(root: &Path, patterns: &[&str]) -> Result<BTreeSet<String>> {
+    let mut args = vec!["ls-remote", "--tags", "--refs", "origin"];
+    args.extend(patterns);
+    Ok(git(root, &args)?
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1)?.strip_prefix("refs/tags/"))
+        .map(str::to_string)
+        .collect())
 }
 
 /// 予約のタグ。
