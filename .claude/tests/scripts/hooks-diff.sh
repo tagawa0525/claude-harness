@@ -8,37 +8,40 @@ source "$(dirname "$0")/../lib.sh"
 
 DIFF="$CLAUDE_DIR/tests/hooks-diff.sh"
 
-# 偽の claude-hooks: 引数なしでルールの一覧を出し、pre-tool-use では $1 の文字列を含むコマンドを
-# block-no-verify として止める（$1 が空なら何も止めない）
+# make_fake_hooks <path> <rules> <spec>...: 偽の claude-hooks。引数なしで <rules>（", " 区切り）を一覧に出す。
+# pre-tool-use --rule <r>... では、<spec>（<ルール>:<判定>:<文字列>）のうち、渡したルールのどれかに一致し、
+# コマンドが文字列を含む最初のものの判定（deny / context）を出す（本物と同じく、複数のルールの判定を
+# 1 つにまとめる）。<判定> が fail なら終了コード 3 で落ちる
 make_fake_hooks() {
-  local path="$1" deny_pattern="$2"
-  cat >"$path" <<EOF
-#!/usr/bin/env bash
-if [[ \$# -eq 0 ]]; then
-  echo "Usage: claude-hooks pre-tool-use [--rule <name>]..." >&2
-  echo "rules: block-no-verify, guard-git-add" >&2
-  exit 2
-fi
-shift
-rules=()
-while [[ \$# -gt 0 ]]; do rules+=("\$2"); shift 2; done
-cmd=\$(jq -r .tool_input.command)
-if [[ -n "$deny_pattern" && "\$cmd" == *"$deny_pattern"* ]] &&
-  { [[ \${#rules[@]} -eq 0 ]] || [[ " \${rules[*]} " == *" block-no-verify "* ]]; }; then
-  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"x"}}'
-fi
-EOF
+  local path="$1" rules="$2"
+  shift 2
+  {
+    echo '#!/usr/bin/env bash'
+    echo "if [[ \$# -eq 0 ]]; then echo 'rules: $rules' >&2; exit 2; fi"
+    echo 'args=" $* "; cmd=$(jq -r .tool_input.command)'
+    for spec in "$@"; do
+      IFS=: read -r r d p <<<"$spec"
+      echo "if [[ \$args == *' --rule $r '* && \$cmd == *'$p'* ]]; then"
+      case "$d" in
+        deny) echo "  echo '{\"hookSpecificOutput\":{\"permissionDecision\":\"deny\"}}'; exit 0" ;;
+        context) echo "  echo '{\"hookSpecificOutput\":{\"additionalContext\":\"x\"}}'; exit 0" ;;
+        fail) echo "  exit 3" ;;
+      esac
+      echo "fi"
+    done
+  } >"$path"
   chmod +x "$path"
 }
 
-make_fake_hooks "$TEST_ROOT/strict" "--no-verify"
-make_fake_hooks "$TEST_ROOT/lax" ""
+make_fake_hooks "$TEST_ROOT/strict" "block-no-verify, guard-git-add" "block-no-verify:deny:--no-verify"
+make_fake_hooks "$TEST_ROOT/lax" "block-no-verify, guard-git-add"
 
 it "hooks-diff: 同じ判定の版どうしなら、緩くも厳しくもならない"
 out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF")
 assert_eq 0 $?
 assert_contains "$out" "LOOSENED: 0"
 assert_contains "$out" "TIGHTENED: 0"
+assert_contains "$out" "CHANGED: 0"
 assert_contains "$out" "CHECKED: "
 
 it "hooks-diff: 古い版が止め、新しい版が通すものを、ルールとコマンドの組で LOOSENED に出す"
@@ -54,6 +57,30 @@ out=$(OLD_BIN="$TEST_ROOT/lax" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF")
 assert_eq 0 $?
 assert_contains "$out" "$(printf 'TIGHTENED\tblock-no-verify\tgit commit --no-verify -m x')"
 assert_contains "$out" "LOOSENED: 0"
+
+it "hooks-diff: 別のルールが同じコマンドを止めていても、緩くなったルールを出す"
+make_fake_hooks "$TEST_ROOT/both" "block-no-verify, guard-git-add" "guard-git-add:deny:git" "block-no-verify:deny:--no-verify"
+make_fake_hooks "$TEST_ROOT/add-only" "block-no-verify, guard-git-add" "guard-git-add:deny:git"
+out=$(OLD_BIN="$TEST_ROOT/both" NEW_BIN="$TEST_ROOT/add-only" bash "$DIFF")
+assert_contains "$out" "$(printf 'LOOSENED\tblock-no-verify\tgit commit --no-verify -m x')"
+
+it "hooks-diff: 新しい版で無くなったルールを LOOSENED に出す"
+make_fake_hooks "$TEST_ROOT/one-rule" "block-no-verify" "block-no-verify:deny:--no-verify"
+out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/one-rule" bash "$DIFF")
+assert_contains "$out" "$(printf 'LOOSENED\tguard-git-add\t(新しい版に無い)')"
+assert_contains "$out" "LOOSENED: 1"
+
+it "hooks-diff: deny 以外の判定の変化（additionalContext など）を CHANGED に出す"
+make_fake_hooks "$TEST_ROOT/context" "block-no-verify, guard-git-add" "block-no-verify:deny:--no-verify" "guard-git-add:context:git add -A"
+out=$(OLD_BIN="$TEST_ROOT/context" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF")
+assert_contains "$out" "$(printf 'CHANGED\tguard-git-add\tcontext -> allow\tgit add -A')"
+assert_not_contains "$out" "CHANGED: 0"
+
+it "hooks-diff: バイナリが失敗したら、通したものと数えずに失敗する"
+make_fake_hooks "$TEST_ROOT/crash" "block-no-verify, guard-git-add" "block-no-verify:fail:git"
+out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/crash" bash "$DIFF" 2>&1)
+assert_eq 1 $?
+assert_not_contains "$out" "LOOSENED"
 
 it "hooks-diff: 呼べないバイナリなら失敗する"
 out=$(OLD_BIN="$TEST_ROOT/missing" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF" 2>&1)
