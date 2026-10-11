@@ -17,10 +17,10 @@ HOST="${1:-r995}"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> pre-commit hook を取り出す（nixosConfigurations.${HOST}）"
-nix eval --raw --option warn-dirty false \
-  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/pre-commit\".text" \
-  > "$WORK/pre-commit"
+echo "==> pre-commit hook をビルドする（nixosConfigurations.${HOST}）"
+cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
+  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/pre-commit\".source")" \
+  "$WORK/pre-commit"
 chmod +x "$WORK/pre-commit"
 
 # rustup / cargo は実環境のツールチェインを使う（HOME を退避すると既定のツールチェインが見えなくなる）

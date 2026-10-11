@@ -24,10 +24,10 @@ HOST="${1:-r995}"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> commit-msg hook を取り出す（nixosConfigurations.${HOST}）"
-nix eval --raw --option warn-dirty false \
-  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/commit-msg\".text" \
-  > "$WORK/commit-msg"
+echo "==> commit-msg hook をビルドする（nixosConfigurations.${HOST}）"
+cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
+  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/commit-msg\".source")" \
+  "$WORK/commit-msg"
 chmod +x "$WORK/commit-msg"
 
 # hook は Claude Code セッションのコミットにだけ効く
