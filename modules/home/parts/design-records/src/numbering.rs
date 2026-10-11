@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use design_records::{Kind, numbers_in, renumber_refs};
 
 use crate::git::{
-    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, origin_default,
+    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, origin_default,
     remote_tags, repo_root, reservations, run, shared_default, tracked,
 };
 
@@ -81,6 +81,7 @@ fn reservation_target(root: &Path) -> Result<String> {
 /// 予約は注釈つきのタグ（メッセージは `slug`）で、origin があれば push する。ローカルの `git tag` とリモートへの
 /// push は、同じ名前が既にあれば拒むので、拒まれたら次の番号でやり直す。
 fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u32> {
+    let _lock = lock(root)?;
     let remote = has_origin(root)?;
     // タグを打つ先は、取ってきた origin の既定ブランチで決める
     if remote {
@@ -465,6 +466,7 @@ fn record_lines(text: &str, added: Option<BTreeSet<usize>>) -> BTreeSet<usize> {
 /// 振り直した記録（slug が `slug`）の、番号 `old` の予約を解放する。`old` はほかの記録（main にあるもの）が使って
 /// いるので、番号は使い回されない。残すと、check がほかの記録に予約の注意を出し続ける。
 fn release_old(root: &Path, kind: Kind, old: u32, slug: &str) -> Result<()> {
+    let _lock = lock(root)?;
     let tag = kind.tag(old);
     let mine = reservations(root)?
         .into_iter()
@@ -491,6 +493,7 @@ fn release_old(root: &Path, kind: Kind, old: u32, slug: &str) -> Result<()> {
 /// 消したタグの名前を出す。履歴に無い記録のタグは、消すと番号が使い回されるので残す。
 pub fn prune() -> Result<ExitCode> {
     let root = repo_root()?;
+    let _lock = lock(&root)?;
     let remote = has_origin(&root)?;
     if remote {
         fetch_origin(&root, true)?;

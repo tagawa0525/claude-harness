@@ -128,6 +128,27 @@ pub fn shared_default(root: &Path) -> Result<Option<String>> {
     }
 }
 
+/// 番号の予約と解放の、clone の中での排他。fetch（`--prune` で手元のタグを消す）、タグの作成、push を、同じ clone
+/// のほかのセッションと重ねない（重なると、push する前の予約を fetch が消し、同じ番号のタグが打ち直される）。
+/// 共有する git のディレクトリ（worktree の間で共通）のファイルを flock し、返したファイルを落とすか、プロセスが
+/// 終わると解ける。
+pub fn lock(root: &Path) -> Result<fs::File> {
+    let common = git(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let path = Path::new(common.trim()).join("design-records.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(file)
+}
+
 /// リモート origin があるか。
 pub fn has_origin(root: &Path) -> Result<bool> {
     git_ok(root, &["remote", "get-url", "origin"])
