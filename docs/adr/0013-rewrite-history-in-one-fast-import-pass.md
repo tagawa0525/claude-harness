@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-11
 requires: [ADR-0012]
 supersedes: []
@@ -80,6 +80,12 @@ filter-repo を Python のコールバックつきで繰り返し、前の回の
 
 ### 確認
 
-- `commit-refs rewrite-history` の結合テスト（`modules/home/parts/commit-refs/tests/`）: 文書と本文の番号が最後の番号に
-  なる、祖先でないコミットを指せば止まる、確かめが通らなければ ref を動かさない、元の ref が残る、対応表を書く
-- 履歴を変えない対応表（全ての行が旧と新で同じ）を xlc の clone に渡し、全てのコミットの番号が変わらないことを確かめる
+- `commit-refs rewrite-history` の結合テスト（`modules/home/parts/commit-refs/tests/rewrite_history.rs`）: 文書と本文の
+  番号が最後の番号になる、作者と日時を保つ、全てのブランチと両方の種類のタグを移す、バイナリを変えない、作業ツリーを
+  合わせる、元の ref と対応表を残す、まだ書き換えていないコミット・消えたコミット・作業ツリーの変更・前の書き換えの
+  ref で止まり ref を動かさない
+- xlc の clone（2026-10-11、xlc f828bf78、release ビルド）:
+  - 変えない対応表: 1633 コミットのどれも番号が変わらない（0.59 秒）
+  - filter-repo 2.47.0 で `.gitignore` を履歴から消した後: 1648 コミットのうち 731 が変わり、3855 語を置き換えた
+    （0.79 秒）。HEAD で置き換わった 173 組の番号は、元と新のコミットの件名、作者、日時がどれも一致した
+- 流す側でブロブの置き換えをわざと捨てると、突き合わせが止め、ref を動かさないことを手で確かめた
