@@ -6,7 +6,7 @@ use std::fmt;
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
     ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
-    STATUSES, Section, is_adr_path, record_number,
+    STATUSES, Section, is_adr_path, numbers_in, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -204,7 +204,8 @@ pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
     unique(
         paths
             .iter()
-            .filter_map(|p| Some((p.as_str(), number_and_slug(p)?.0))),
+            // 番号を振るときと同じく、3 桁で振った issue も数える
+            .filter_map(|p| Some((p.as_str(), numbers_in(Kind::Issue, [p.as_str()]).next()?))),
         &mut out,
     );
     out.0

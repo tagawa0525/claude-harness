@@ -281,7 +281,8 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
     if !git_ok(&root, &["rev-parse", "--verify", "--quiet", "HEAD"])? {
         return Err("there is no commit to renumber".into());
     }
-    if !git(&root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
+    // 追跡していないファイルも見る（移す先にあると、予約の後で git mv が失敗する）
+    if !git(&root, &["status", "--porcelain"])?.is_empty() {
         return Err("commit or stash the changes first; renumber makes its own commit".into());
     }
     let based = branch_base(&root)?;
