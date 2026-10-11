@@ -118,6 +118,211 @@ out=$("$SCRIPTS_DIR/worktree-add.sh" feat/x 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "--from"
 assert_file_missing "$TEST_ROOT/wt/nomain-feat-x"
+
+# --- .worktreelink: メイン worktree の git で無視されたパスを共有する ---
+
+# setup_share_repo <dir> <gitignore> <worktreelink>: 2 つのファイルを main にコミットしたリポジトリを作る
+setup_share_repo() {
+  local repo="$1"
+  make_repo "$repo"
+  printf '%b' "$2" > "$repo/.gitignore"
+  printf '%b' "$3" > "$repo/.worktreelink"
+  git -C "$repo" add .gitignore .worktreelink
+  git -C "$repo" commit -q -m "chore: share"
+}
+
+REPO="$TEST_ROOT/share1/app"
+setup_share_repo "$REPO" '/references\n/data/cache\n' '# 共有する\n\nreferences\ndata/cache/\n'
+mkdir -p "$REPO/references" "$REPO/data/cache"
+echo endf > "$REPO/references/n.endf"
+cd "$REPO" || exit 1
+
+it "worktree-add: .worktreelink のパスを、メイン worktree の同じパスへの絶対パスの symlink にする"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/share)
+assert_eq 0 $?
+assert_eq "$REPO/references" "$(readlink "$TEST_ROOT/share1/app-feat-share/references")"
+assert_eq "$REPO/data/cache" "$(readlink "$TEST_ROOT/share1/app-feat-share/data/cache")"
+assert_contains "$out" "SHARED: references"
+assert_contains "$out" "SHARED: data/cache"
+assert_eq "endf" "$(cat "$TEST_ROOT/share1/app-feat-share/references/n.endf")"
+
+it "worktree-add: 共有した symlink は新しい worktree で未追跡ファイルに見えない"
+assert_eq "" "$(git -C "$TEST_ROOT/share1/app-feat-share" status --porcelain)"
+
+it "worktree-add: linked worktree から実行しても symlink の先はメイン worktree"
+cd "$TEST_ROOT/share1/app-feat-share" || exit 1
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/share2)
+assert_eq 0 $?
+assert_eq "$REPO/references" "$(readlink "$TEST_ROOT/share1/app-feat-share2/references")"
+cd "$REPO" || exit 1
+
+it "worktree-add: メイン worktree にないパスは作らずに NOTE で知らせる"
+rm -rf "$REPO/data/cache"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/share-missing)
+assert_eq 0 $?
+assert_contains "$out" "NOTE:"
+assert_contains "$out" "data/cache"
+assert_not_contains "$out" "SHARED: data/cache"
+assert_file_missing "$TEST_ROOT/share1/app-feat-share-missing/data/cache"
+# 先の無い symlink は -e では見えない
+assert_eq "no" "$([[ -L "$TEST_ROOT/share1/app-feat-share-missing/data/cache" ]] && echo yes || echo no)"
+assert_contains "$out" "SHARED: references"
+
+REPO="$TEST_ROOT/share2/app"
+setup_share_repo "$REPO" 'other\n' 'references\n'
+mkdir -p "$REPO/references"
+cd "$REPO" || exit 1
+
+it "worktree-add: git で無視されていないパスはエラーで止め、symlink を作らない"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/unignored 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "references"
+assert_file_missing "$TEST_ROOT/share2/app-feat-unignored/references"
+
+REPO="$TEST_ROOT/share3/app"
+setup_share_repo "$REPO" 'references/\n' 'references\n'
+mkdir -p "$REPO/references"
+cd "$REPO" || exit 1
+
+it "worktree-add: ディレクトリにだけ一致するパターン（references/）は symlink を無視しないのでエラー"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/dir-pattern 2>&1)
+assert_eq 1 $?
+assert_file_missing "$TEST_ROOT/share3/app-feat-dir-pattern/references"
+
+REPO="$TEST_ROOT/share4/app"
+setup_share_repo "$REPO" '*\n!.gitignore\n!.worktreelink\n!README.md\n' '../outside\n'
+cd "$REPO" || exit 1
+
+it "worktree-add: .worktreelink のリポジトリの外を指すパスはエラー"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/outside 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "要素を含むパスは使えません: ../outside"
+
+it "worktree-add: .worktreelink の絶対パスはエラー"
+printf '/abs\n' > .worktreelink && git commit -q -am "chore: abs"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/abs 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "リテラルの相対パスではありません: /abs"
+
+it "worktree-add: .worktreelink のワイルドカードはエラー（リテラルのパスだけを受け付ける）"
+printf 'refs*\n' > .worktreelink && git commit -q -am "chore: glob"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/glob 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "リテラルの相対パスではありません: refs*"
+
+it "worktree-add: .worktreelink の ! で始まる行（.gitignore の否定）はエラー"
+printf '!refs\n' > .worktreelink && git commit -q -am "chore: negate"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/negate 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "リテラルの相対パスではありません: !refs"
+
+it "worktree-add: .worktreelink の空の要素（a//b）はエラー"
+printf 'a//b\n' > .worktreelink && git commit -q -am "chore: empty component"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/empty-component 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "要素を含むパスは使えません: a//b"
+
+it "worktree-add: .worktreelink の前後に空白のある行はエラー（空白を落として別の名前を共有しない）"
+printf ' refs\n' > .worktreelink && git commit -q -am "chore: leading space"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/space 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "前後に空白があります"
+
+it "worktree-add: .worktreelink の空白だけの行は空行として読み飛ばす"
+printf '  \n' > .worktreelink && git commit -q -am "chore: blank line"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/blank 2>&1)
+assert_eq 0 $?
+
+REPO="$TEST_ROOT/share6/app"
+setup_share_repo "$REPO" '/references\n' 'references\nreferences/\n'
+mkdir -p "$REPO/references/sub"
+cd "$REPO" || exit 1
+
+it "worktree-add: .worktreelink に同じパスが 2 度あればエラーで、メイン worktree の中に symlink を作らない"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/dup 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "重なるパスがあります: references"
+assert_file_missing "$TEST_ROOT/share6/app-feat-dup/references"
+assert_eq "" "$(ls -A "$REPO/references/sub")"
+assert_file_missing "$REPO/references/references"
+
+it "worktree-add: .worktreelink に入れ子のパス（references と references/sub）があればエラー"
+printf 'references\nreferences/sub\n' > .worktreelink && git commit -q -am "chore: nested"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/nested 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "重なるパスがあります: references/sub"
+assert_file_missing "$TEST_ROOT/share6/app-feat-nested/references"
+assert_file_missing "$REPO/references/sub/sub"
+
+it "worktree-add: 親が新しい worktree でディレクトリでないパスはエラーで、ほかのパスの symlink も作らない"
+printf 'references\nREADME.md/x\n' > .worktreelink && git commit -q -am "chore: parent is a file"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/parent-file 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ディレクトリではありません: README.md/x"
+assert_file_missing "$TEST_ROOT/share6/app-feat-parent-file/references"
+
+REPO="$TEST_ROOT/share5/app"
+make_repo "$REPO"
+echo '/references' > "$REPO/.gitignore"
+git -C "$REPO" add .gitignore && git -C "$REPO" commit -q -m "chore: ignore"
+mkdir -p "$REPO/references"
+cd "$REPO" || exit 1
+
+it "worktree-add: .worktreelink がなければ何も共有しない"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/noshare)
+assert_eq 0 $?
+assert_not_contains "$out" "SHARED:"
+assert_file_missing "$TEST_ROOT/share5/app-feat-noshare/references"
+
+REPO="$TEST_ROOT/share9/app"
+setup_share_repo "$REPO" '/one\n/two\n' 'one\ntwo\n'
+mkdir -p "$REPO/one" "$REPO/two"
+cd "$REPO" || exit 1
+# two の ln -s だけを失敗させる偽の ln
+REAL_LN=$(type -P ln)
+mkdir -p "$TEST_ROOT/fail-ln"
+cat > "$TEST_ROOT/fail-ln/ln" <<FAKE
+#!/usr/bin/env bash
+[[ "\${*: -1}" == */two ]] && exit 1
+exec "$REAL_LN" "\$@"
+FAKE
+chmod +x "$TEST_ROOT/fail-ln/ln"
+
+it "worktree-add: symlink を作る途中で失敗したら、作った symlink を消してエラーにし、SHARED を出さない"
+out=$(PATH="$TEST_ROOT/fail-ln:$PATH" "$SCRIPTS_DIR/worktree-add.sh" feat/ln-fails 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "two の symlink を作れませんでした"
+assert_not_contains "$out" "SHARED:"
+assert_eq "no" "$([[ -L "$TEST_ROOT/share9/app-feat-ln-fails/one" ]] && echo yes || echo no)"
+
+REPO="$TEST_ROOT/share7/app"
+setup_share_repo "$REPO" '/foo\n' ':foo\n'
+mkdir -p "$REPO/:foo"
+cd "$REPO" || exit 1
+
+it "worktree-add: .worktreelink の : で始まる行（pathspec の魔法で foo と判定される）はエラー"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/colon 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "リテラルの相対パスではありません: :foo"
+assert_file_missing "$TEST_ROOT/share7/app-feat-colon/:foo"
+
+REPO="$TEST_ROOT/share8/app"
+make_repo "$REPO"
+commit_file "$REPO" references/tracked.txt "chore: track references"
+git -C "$REPO" switch -q -c feat/untrack-base
+git -C "$REPO" rm -q -r --cached references
+printf '/references\n' > "$REPO/.gitignore"
+printf 'references\n' > "$REPO/.worktreelink"
+git -C "$REPO" add .gitignore .worktreelink
+git -C "$REPO" commit -q -m "chore: ignore references"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+
+it "worktree-add: メイン worktree で追跡されているパスは共有せずエラー（書き込みがメインの変更になる）"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/untracked --from feat/untrack-base 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "メイン worktree で git に追跡されています: references"
+assert_file_missing "$TEST_ROOT/share8/app-feat-untracked/references"
 cd "$REPO" || exit 1
 
 # ===========================================================================
@@ -359,6 +564,20 @@ assert_eq 0 $?
 assert_file_missing "$TEST_ROOT/cleanup6/app-feat-x"
 assert_eq "" "$(git branch --list feat/x)"
 assert_contains "$out" "REMOTE_BRANCH: none"
+
+it "post-merge-cleanup: .worktreelink で共有した symlink が残る worktree も消し、メイン worktree の実体は残す"
+REPO="$TEST_ROOT/cleanup9/app"
+setup_share_repo "$REPO" '/references\n' 'references\n'
+mkdir -p "$REPO/references"
+echo endf > "$REPO/references/n.endf"
+cd "$REPO" || exit 1
+"$SCRIPTS_DIR/worktree-add.sh" feat/x >/dev/null
+commit_file "$TEST_ROOT/cleanup9/app-feat-x" a.txt "feat: a"
+git merge -q --no-ff -m "Merge: feat/x" feat/x
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_file_missing "$TEST_ROOT/cleanup9/app-feat-x"
+assert_eq "endf" "$(cat "$REPO/references/n.endf")"
 
 it "post-merge-cleanup: リモートの既定ブランチにまだ入っていないブランチはリモートから消さない"
 REPO="$TEST_ROOT/cleanup8/app"

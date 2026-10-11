@@ -47,6 +47,11 @@ cd <出力の WORKTREE の値>
 
 以降のステージング・コミット・プッシュはworktree側で実行する。
 
+`WORKTREE:` を出したうえで `ERROR:` で終わったとき（`.worktreelink` の誤り）も、変更はもう worktree 側に
+移っている（stash にも main にも無い）。やり直さず（作成先があるので再実行もできない）、その worktree に移って
+`.worktreelink` か `.gitignore` を直し、各パスを `mkdir -p "$(dirname <worktree>/<path>)"` の後に
+`ln -s <メイン worktree>/<path> <worktree>/<path>`（先は絶対パス）で張る。symlink は 1 つも作られていない。
+
 **GitHubリモートなし → その場でfeatureブランチ:**
 
 ```bash

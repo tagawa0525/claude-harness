@@ -15,12 +15,27 @@
 # --carry-changes: 未コミットの変更（未追跡ファイル含む）を stash 経由で worktree 側に移す
 #   （git-commit スキルの「main からの退避」）。
 #
+# 共有（.worktreelink、ADR-0016）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス
+# （ルートからの相対パス。空行と # で始まる行は読み飛ばし、前後に空白のある行はエラー）を、メイン worktree の同じパスへの
+# 絶対パスの symlink として作る。git で追跡しない大きなデータ（キャッシュ・参照データ）を
+# worktree の間でコピーせず共有するため。
+#   - パスはリテラルだけ。絶対パス、. / .. を含むもの、ワイルドカード（* ? [）と \、! か : で始まるものはエラー
+#   - 同じパスや入れ子のパス、親が新しい worktree でディレクトリでない（ファイルか symlink）パスはエラー
+#   - メイン worktree で追跡されているパスはエラー（新しい worktree での書き込みがメインの変更になる）
+#   - 新しい worktree で git に無視されていなければエラー（symlink が未追跡ファイルに見える）。
+#     symlink はディレクトリではないので、`dir/` のようにディレクトリだけに一致するパターンでは
+#     無視されない。判定は symlink を作る前の、そのパスが無い状態で行う（git から見て同じ）
+#   - メイン worktree にそのパスが無ければ、作らずに NOTE で知らせる
+#   - エラーのときは symlink を 1 つも作らずに止める（worktree は作ったまま残し、場所を知らせる。
+#     直すのは .worktreelink か .gitignore で、そのブランチの worktree で直せるように）
+#
 # 出力:
 #   WORKTREE: <path>
 #   BRANCH: <branch>
 #   CREATED_BRANCH: yes|no
 #   BASE: <ref>（新規作成したときだけ。起点）
-#   NOTE: ...（GitHub リモートが複数あるとき）
+#   SHARED: <path>（.worktreelink で symlink にしたパスごと）
+#   NOTE: ...（GitHub リモートが複数あるとき、.worktreelink のパスがメイン worktree に無いとき）
 
 set -euo pipefail
 
@@ -140,3 +155,108 @@ GH_REMOTES=$(git remote -v | awk '/github\.com/ && /\(fetch\)/ { print $1 }' | s
 if (( GH_REMOTES >= 2 )); then
   echo "NOTE: GitHub リモートが複数あります。worktree で gh pr 系コマンドを使う前に gh repo set-default --view で解決先を確認してください"
 fi
+
+# --- .worktreelink: メイン worktree のパスを symlink で共有する ---
+# 設定はチェックアウトしたブランチのもの（ブランチごとに .gitignore と揃っている）を読む
+LINK_FILE="$DIR/.worktreelink"
+if [[ -f "$LINK_FILE" ]]; then
+  SHARE_PATHS=()
+  SHARE_ERRORS=()
+  SEEN_PATHS=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*$ || "$line" == \#* ]] && continue
+    # 空白は名前の一部になりうるので、落とさずに止める
+    if [[ "$line" =~ ^[[:space:]] || "$line" =~ [[:space:]]$ ]]; then
+      SHARE_ERRORS+=("前後に空白があります: '$line'")
+      continue
+    fi
+    # 末尾の / は symlink の名前には要らない（references/ と references は同じ）
+    while [[ "$line" == */ ]]; do line="${line%/}"; done
+    # git は引数を pathspec として読む（check-ignore は GIT_LITERAL_PATHSPECS を受け付けない）ので、
+    # 魔法（:foo、:(top)foo）、ワイルドカード、エスケープになる文字を止め、symlink の名前そのものを判定させる
+    if [[ -z "$line" || "$line" == /* || "$line" == !* || "$line" == :* || "$line" == *[*?[\\]* ]]; then
+      SHARE_ERRORS+=("リテラルの相対パスではありません: $line")
+      continue
+    fi
+    if [[ "/$line/" == */./* || "/$line/" == */../* || "/$line/" == *//* ]]; then
+      SHARE_ERRORS+=(". / .. や空の要素を含むパスは使えません: $line")
+      continue
+    fi
+    # 同じパスや入れ子のパスは、後の ln -s が先の symlink をたどってメイン worktree の中に作ってしまう
+    overlap=0
+    for seen in "${SEEN_PATHS[@]}"; do
+      if [[ "$line" == "$seen" || "$line" == "$seen"/* || "$seen" == "$line"/* ]]; then
+        overlap=1
+        break
+      fi
+    done
+    SEEN_PATHS+=("$line")
+    if (( overlap )); then
+      SHARE_ERRORS+=("重なるパスがあります: $line")
+      continue
+    fi
+    # 親は無いか、symlink でないディレクトリであること（mkdir -p と ln -s が途中で落ちたり、
+    # symlink をたどってメイン worktree の中に作ったりしないように）
+    parent_ok=1
+    ancestor="$DIR"
+    IFS=/ read -ra parts <<< "$line"
+    for part in "${parts[@]:0:${#parts[@]}-1}"; do
+      ancestor="$ancestor/$part"
+      if [[ -L "$ancestor" || ( -e "$ancestor" && ! -d "$ancestor" ) ]]; then
+        parent_ok=0
+        break
+      fi
+    done
+    if (( ! parent_ok )); then
+      SHARE_ERRORS+=("親が新しい worktree でディレクトリではありません: $line")
+      continue
+    fi
+    if [[ -e "$DIR/$line" || -L "$DIR/$line" ]]; then
+      SHARE_ERRORS+=("新しい worktree に既にあります（追跡されているか、--carry-changes で持ち込んだ）: $line")
+      continue
+    fi
+    rc=0
+    ignore_err=$(git -C "$DIR" check-ignore -q -- "$line" 2>&1) || rc=$?
+    if (( rc == 1 )); then
+      SHARE_ERRORS+=("git に無視されていません（symlink が未追跡ファイルに見える。dir/ でなく dir か /dir と書く）: $line")
+      continue
+    elif (( rc != 0 )); then
+      SHARE_ERRORS+=("git check-ignore が失敗しました（終了コード $rc: $ignore_err）: $line")
+      continue
+    fi
+    # メインのブランチが追跡するパスに張ると、新しい worktree での書き込みがメインの変更になる
+    if [[ -n "$(git -C "$MAIN_ROOT" ls-files -- "$line")" ]]; then
+      SHARE_ERRORS+=("メイン worktree で git に追跡されています: $line")
+      continue
+    fi
+    SHARE_PATHS+=("$line")
+  done < "$LINK_FILE"
+
+  if (( ${#SHARE_ERRORS[@]} > 0 )); then
+    {
+      echo "ERROR: .worktreelink に使えないパスがあります。symlink は作っていません:"
+      printf '  %s\n' "${SHARE_ERRORS[@]}"
+      echo "worktree は $DIR に作ってあります。そのブランチで .worktreelink か .gitignore を直してください"
+    } >&2
+    exit 1
+  fi
+
+  # 途中で mkdir / ln が失敗したら、作った symlink を消してから止める（1 つも残さない）
+  LINKED=()
+  NOTES=()
+  for path in "${SHARE_PATHS[@]}"; do
+    if [[ ! -e "$MAIN_ROOT/$path" ]]; then
+      NOTES+=("NOTE: メイン worktree に $path がないため共有しません（$MAIN_ROOT/$path）")
+      continue
+    fi
+    if ! mkdir -p "$(dirname "$DIR/$path")" || ! ln -s "$MAIN_ROOT/$path" "$DIR/$path"; then
+      for linked in "${LINKED[@]}"; do rm -f "$DIR/$linked"; done
+      echo "ERROR: $path の symlink を作れませんでした。作った symlink は消しました。worktree は $DIR に作ってあります" >&2
+      exit 1
+    fi
+    LINKED+=("$path")
+  done
+  for note in "${NOTES[@]}"; do echo "$note"; done
+  for linked in "${LINKED[@]}"; do echo "SHARED: $linked"; done
+fi
+
