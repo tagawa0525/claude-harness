@@ -307,8 +307,19 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
     if !git_ok(&root, &["rev-parse", "--verify", "--quiet", "HEAD"])? {
         return Err("there is no commit to renumber".into());
     }
-    // 追跡していないファイルも見る（移す先にあると、予約の後で git mv が失敗する）
-    if !git(&root, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+    // 追跡していないファイルも見る（移す先にあると、予約の後で git mv が失敗する）。submodule の中の変更と
+    // checkout した commit の違いは見ない（renumber は submodule の項目を書き換えない）
+    if !git(
+        &root,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=all",
+        ],
+    )?
+    .is_empty()
+    {
         return Err("commit or stash the changes first; renumber makes its own commit".into());
     }
     // 既定ブランチ（origin があれば取ってきた origin の）。reserve も lock を取るので、ここで持ち続けない
