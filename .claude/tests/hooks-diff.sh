@@ -84,7 +84,7 @@ decide() {
   local bin="$1" rule="$2" out
   if ! out=$(printf '%s' "$INPUT" | "$bin" pre-tool-use --rule "$rule" 2>"$TEST_ROOT/stderr") ||
     [[ -s "$TEST_ROOT/stderr" ]] ||
-    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null 2>&1; }; then
+    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null; }; then
     echo "ERROR: $bin が失敗しました（--rule $rule）: $INPUT" >&2
     cat "$TEST_ROOT/stderr" >&2
     [[ -z "$out" ]] || printf '%s\n' "$out" >&2

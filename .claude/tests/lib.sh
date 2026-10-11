@@ -222,7 +222,7 @@ run_hook() {
   }
   out=$("$CLAUDE_HOOKS_BIN" pre-tool-use --rule "$hook" <<<"$input" 2>"$TEST_ROOT/hook-stderr") || status=$?
   if ((status != 0)) || [[ -s "$TEST_ROOT/hook-stderr" ]] ||
-    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null 2>&1; }; then
+    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null; }; then
     echo "claude-hooks が失敗しました（--rule $hook、終了コード $status）: $command" >&2
     cat "$TEST_ROOT/hook-stderr" >&2
     [[ -z "$out" ]] || printf '%s\n' "$out" >&2

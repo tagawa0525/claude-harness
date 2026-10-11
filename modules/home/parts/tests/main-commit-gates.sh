@@ -90,7 +90,7 @@ check() {
   out=$(cd "$repo" && "$HOOK_BIN" pre-tool-use --rule block-main-commit <<<"$input" 2>"$WORK/hook-stderr") ||
     status=$?
   if ((status != 0)) || [[ -s "$WORK/hook-stderr" ]] ||
-    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null 2>&1; }; then
+    { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null; }; then
     echo "claude-hooks が失敗しました（--rule block-main-commit、終了コード $status）: $desc" >&2
     cat "$WORK/hook-stderr" >&2
     [[ -z "$out" ]] || printf '%s\n' "$out" >&2
