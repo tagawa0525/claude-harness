@@ -22,6 +22,45 @@ let
     text = builtins.readFile ./scan-staged-secrets.sh;
   };
   scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
+  # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が textlint を
+  # store のパスで呼ぶ。辞書は ./ja-terms/prh.yml。Markdown は textlint の組み込みのプラグインが、コードと
+  # テキストは @textlint/text が読む（コメントと文字列の日本語を含めて、ファイルの全体を見る）
+  textlint = pkgs.textlint.withPackages [ pkgs.textlint-rule-prh ];
+  jaTermsCodeExtensions = [
+    "txt"
+    "rs"
+    "py"
+    "sh"
+    "nix"
+    "toml"
+    "yaml"
+    "yml"
+    "json"
+  ];
+  jaTermsConfig = pkgs.writeText "ja-terms-textlintrc.json" (
+    builtins.toJSON {
+      plugins."@textlint/text".extensions = map (ext: ".${ext}") jaTermsCodeExtensions;
+      rules.prh.rulePaths = [ "${./ja-terms/prh.yml}" ];
+    }
+  );
+  # 拡張子は大文字と小文字を問わない。prh の辞書（prh.yml）は誤った語を並べるので外す
+  jaTermsPathspecs = map (ext: ":(icase,glob)**/*.${ext}") ([ "md" ] ++ jaTermsCodeExtensions) ++ [
+    ":(exclude,glob)**/prh.yml"
+  ];
+  jaTermsStaged = pkgs.writeShellApplication {
+    name = "ja-terms-staged";
+    runtimeInputs = [
+      pkgs.git
+      pkgs.gawk
+      textlint
+    ];
+    runtimeEnv = {
+      JA_TERMS_CONFIG = "${jaTermsConfig}";
+      JA_TERMS_PATHSPECS = lib.concatStringsSep "\n" jaTermsPathspecs;
+    };
+    text = builtins.readFile ./ja-terms/staged.sh;
+  };
+  jaTerms = "${textlint}/bin/textlint --config ${jaTermsConfig}";
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
@@ -165,7 +204,7 @@ in
       # ========================================
       # デフォルト: ステージされたファイルをチェック
       # ========================================
-      STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+      STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMRT)
       if [ -z "$STAGED_FILES" ]; then
         ${scanSecrets} || check_failed=1
         exit $check_failed
@@ -178,7 +217,7 @@ in
       # 無関係な差分（``` → ```text 等）を上流向けのコミットに混ぜるので、fork では全部飛ばす。
       # 検証: modules/home/parts/tests/pre-commit-fork.sh
       if git remote get-url upstream >/dev/null 2>&1; then
-        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust）を飛ばします"
+        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust / 日本語の語）を飛ばします"
         ${scanSecrets} || check_failed=1
         exit $check_failed
       fi
@@ -274,6 +313,11 @@ in
           fi
         fi
       fi
+
+      # 日本語の崩れた語（ADR-0014）。Markdown の自動修正は作業ツリーをステージし直す（#282）ので、
+      # 最後に、コミットに入る中身（ステージした版）を見る
+      # 検証: modules/home/parts/tests/ja-terms.sh
+      ${jaTermsStaged}/bin/ja-terms-staged || check_failed=1
 
       ${scanSecrets} || check_failed=1
 
@@ -386,20 +430,42 @@ in
       # 最初の非コメント行（sed のみ。grep を挟むとコメント行だけのとき exit 1 で静かに落ちる）
       SUBJECT=$(sed -n '/^#/!{p;q}' "$MSG_FILE")
 
-      # マージ・fixup/squash・Revert は Conventional Commits の対象外
-      case "$SUBJECT" in
-        Merge*|fixup!*|squash!*|Revert*) exit 0 ;;
-      esac
-
       # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
-      # Conventional Commits も件名の長さもこちらの規約で、上流の慣習（"Fix socket transport
+      # Conventional Commits も件名の長さも日本語の語の辞書もこちらの規約で、上流の慣習（"Fix socket transport
       # when …" のような文。Serena の main には 72 文字を超える件名が普通にある）と衝突して
       # 上流向けのコミットを歪めるので、検査を全部飛ばす。pre-commit と同じ判定。
       # 検証: modules/home/parts/tests/commit-msg-conventions.sh
       if git remote get-url upstream >/dev/null 2>&1; then
-        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Conventional Commits、件名の長さ）を飛ばします"
+        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Conventional Commits、件名の長さ、日本語の語）を飛ばします"
         exit 0
       fi
+
+      # 日本語の崩れた語（ADR-0014）を、標準入力の本文で見る。commit -v の scissors の行から後（差分）は
+      # 除く。# で始まる行は、-m や -F（cleanup=whitespace）では消えずにコミットに残るので、除かない。
+      # textlint（Node.js）は起動が重いので、軽い検査の後に呼ぶ
+      # 検証: modules/home/parts/tests/ja-terms.sh
+      ja_check() {
+        local rc=0
+        sed '/^# -\{24\} >8 -\{24\}$/,$d' \
+          | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt || rc=$?
+        if [ "$rc" -eq 1 ]; then
+          echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
+          exit 1
+        elif [ "$rc" -ne 0 ]; then
+          echo "❌ textlint が失敗しました（終了コード $rc）。上の出力を見てください"
+          exit 1
+        fi
+      }
+
+      # マージ・fixup/squash・Revert は Conventional Commits の対象外。件名は元のコミットから写したもの
+      # （Merge は git が作るもの）なので、日本語の語は件名を除いた本文だけを見る（fixup / squash の本文は
+      # 畳まれて履歴に残る）
+      case "$SUBJECT" in
+        Merge*|fixup!*|squash!*|Revert*)
+          ja_check < <(sed '0,/^[^#]/{//d}' "$MSG_FILE")
+          exit 0
+          ;;
+      esac
 
       TYPES='feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert'
       if ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
@@ -416,6 +482,8 @@ in
       if [ "$LEN" -gt 50 ]; then
         echo "⚠️  件名が 50 文字を超えています ($LEN 文字)。短くできないか検討してください"
       fi
+
+      ja_check < "$MSG_FILE"
       exit 0
     '';
   };

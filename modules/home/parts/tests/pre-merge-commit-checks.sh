@@ -32,10 +32,10 @@ trap 'rm -rf "$WORK"' EXIT
 HOOKS="$WORK/hooks"
 mkdir -p "$HOOKS"
 for hook in pre-commit pre-merge-commit; do
-  echo "==> $hook hook を取り出す（nixosConfigurations.${HOST}）"
-  nix eval --raw --option warn-dirty false \
-    "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$hook\".text" \
-    > "$HOOKS/$hook"
+  echo "==> $hook hook をビルドする（nixosConfigurations.${HOST}）"
+  cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
+    "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$hook\".source")" \
+    "$HOOKS/$hook"
   chmod +x "$HOOKS/$hook"
 done
 
