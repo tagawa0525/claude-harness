@@ -120,7 +120,8 @@ impl Drop for TempRepo {
 }
 
 /// git を `dir` で走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
-/// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）
+/// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）。外した後で、テストに要る
+/// 設定だけを GIT_CONFIG_COUNT で渡す
 fn git_in(dir: &Path, args: &[&str]) -> String {
     let mut command = Command::new("git");
     command
@@ -128,6 +129,21 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
         .args(["-c", "core.hooksPath=/dev/null"])
         .args(args);
     isolate(&mut command);
+    // 手元の全体の設定（nix の sandbox には無い）に頼らない。init と clone の既定ブランチ（bare のリモートの HEAD）を
+    // main にし、clone や init をする場所（リポジトリの外）でも名前を決める
+    for (i, (key, value)) in [
+        ("init.defaultBranch", "main"),
+        ("user.name", "t"),
+        ("user.email", "t@t"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        command
+            .env(format!("GIT_CONFIG_KEY_{i}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{i}"), value);
+    }
+    command.env("GIT_CONFIG_COUNT", "3");
     let output = command.output().unwrap();
     assert!(
         output.status.success(),
