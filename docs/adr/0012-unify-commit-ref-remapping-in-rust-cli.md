@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-11
 requires: []
 supersedes: []
@@ -67,7 +67,10 @@ hook からの呼び方:
 
 ### 確認
 
-- `commit-refs remap` の結合テスト（`modules/home/parts/commit-refs/tests/`）が、`remap-commit-refs.sh` のテストの
-  全ての場合を引き継ぐ
+- `commit-refs remap` の結合テスト（`modules/home/parts/commit-refs/tests/remap.rs`）が、`remap-commit-refs.sh` の
+  テストの全ての場合を引き継ぎ、シンボリックリンク、64 桁を超える語、大文字、ASCII でない文字の境界を足す
+- 移す前に、xlc の clone（2026-10-11、xlc f828bf78）で 400 コミットの対応表を `remap-commit-refs.sh` と
+  `commit-refs remap` に渡し、出力と作業ツリーが一致した（置き換えるだけの場合は 28 ファイル 130 語、消えたコミットを
+  含む場合は同じ 9 件の ERROR で止まった）
 - post-rewrite hook のテスト（`modules/home/parts/tests/post-rewrite-remap.sh`）が、ビルドした `commit-refs` を呼ぶ
   hook で通る
