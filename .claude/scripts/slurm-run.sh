@@ -113,8 +113,11 @@ wait "$pid" || status=$?
 if ! info=$(scontrol show job "$job"); then
   echo "WARN: ジョブ $job の実際の時間を scontrol から読めなかった" >&2
 elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
-  echo "TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}" >>"$log" ||
+  time_line="TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}"
+  echo "$time_line" >>"$log" || {
     echo "WARN: ジョブ $job の実際の時間をログに書き足せなかった: $log" >&2
+    echo "$time_line"
+  }
 else
   echo "WARN: ジョブ $job の scontrol の出力に RunTime と TimeLimit が見つからなかった" >&2
 fi
