@@ -58,7 +58,7 @@ fi
 
 # Copilot 宛てレビュー要求の created_at を発生順に取得。
 # 取得に失敗したら空扱いで続けない。周回数を過少に見積もり、上限判定がずれる
-if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_URL"); then
+if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_URL_CANONICAL"); then
   echo "ERROR: PR #${PR_NUMBER} のレビュー要求を取得できませんでした（周回数が数えられません）" >&2
   exit 1
 fi
@@ -81,7 +81,7 @@ fi
 request_count=$(grep -c . <<<"$requests" || true)
 
 # 最新の Copilot レビュー
-latest=$("${SCRIPT_DIR}/get-latest-review.sh" "$PR_URL")
+latest=$("${SCRIPT_DIR}/get-latest-review.sh" "$PR_URL_CANONICAL")
 review_count=$(sed -n 's/^ROUND: //p' <<<"$latest")
 last_review_at=""
 reviewed_sha=""
@@ -98,7 +98,7 @@ fi
 head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid')
 # get-review-comments.sh はスレッド内のコメントをフラットに返すので、返信を
 # 数えないよう thread_id で畳む
-if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_URL" --unresolved \
+if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_URL_CANONICAL" --unresolved \
   | jq '[.[].thread_id] | unique | length'); then
   echo "ERROR: PR #${PR_NUMBER} の未解決スレッドを取得できませんでした" >&2
   exit 1

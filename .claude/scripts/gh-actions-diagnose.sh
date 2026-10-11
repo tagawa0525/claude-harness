@@ -43,15 +43,16 @@ PR=""
 HEAD_SHA=""
 # NEXT に書く gh の手順を、診断したのと同じリポジトリに向ける
 REPO_FLAG=""
-if [[ "$TARGET" == https://* ]]; then
-  parse_pr_url "$TARGET" || exit 1
+# URL らしい引数は、解析できなければブランチ名とみなさず止める（cwd のリポジトリで空の結果を返さない）
+if [[ "$TARGET" == *://* || "$TARGET" == *github.com/* ]]; then
+  parse_pr_url --allow-fragment "$TARGET" || exit 1
   TARGET="$PR_NUMBER"
   REPO_FLAG=" -R ${GH_REPO}"
 fi
 if [[ -z "$TARGET" ]]; then
   BRANCH=$(git branch --show-current 2>/dev/null || true)
   if [[ -z "$BRANCH" ]]; then
-    echo "ERROR: ブランチを特定できません。PR 番号かブランチ名を指定してください" >&2
+    echo "ERROR: ブランチを特定できません。PR の URL、PR 番号、ブランチ名のどれかを指定してください" >&2
     exit 1
   fi
 elif [[ "$TARGET" =~ ^[0-9]+$ ]]; then

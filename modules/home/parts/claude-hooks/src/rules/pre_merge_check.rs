@@ -670,8 +670,15 @@ impl Rule for PreMergeCheck {
             }
 
             if !reasons.is_empty() {
+                // 診断は cwd のリポジトリで読むので、PR が分かれば URL で渡す（ADR-0032）
+                let target = match pr_number.as_deref() {
+                    Some(number) if !owner.is_empty() && !name.is_empty() => {
+                        format!(" https://github.com/{owner}/{name}/pull/{number}")
+                    }
+                    _ => String::new(),
+                };
                 return vec![Finding::Deny(format!(
-                    "{}\n\n/gh-actions-check で状況を診断してください。",
+                    "{}\n\n/gh-actions-check{target} で状況を診断してください。",
                     reasons.join("\n")
                 ))];
             }
