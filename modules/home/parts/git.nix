@@ -8,10 +8,14 @@
 let
   # 設計の記録（ADR）の雛形と検査（ADR-0009）。各プロジェクトの pre-commit が PATH から呼ぶ
   design-records = pkgs.callPackage ./design-records/package.nix { };
+  # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook が store のパスで呼び、
+  # 手で呼べるよう PATH にも入れる
+  commit-refs = pkgs.callPackage ./commit-refs/package.nix { };
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
   home.packages = [
+    commit-refs
     design-records
     pkgs.prek
   ];
@@ -386,7 +390,7 @@ in
   };
 
   # post-rewrite: rebase と amend で変わったコミットの番号を、作業ツリーの追跡している文書の中で
-  # 付け直す（~/.claude/scripts/remap-commit-refs.sh）。検証の記録などに測ったコミットの番号を書く
+  # 付け直す（commit-refs remap）。検証の記録などに測ったコミットの番号を書く
   # リポジトリだけが要るので、`git config remap.commitRefs true` でオプトインする。置き換えは
   # コミットしない（どのコミットに含めるかは書き換えた人が決める）。
   # git は書き換えの後に呼ぶので、この hook の失敗は書き換えを止めない（表示するだけ）。
@@ -404,7 +408,7 @@ in
       # あるだけで置き換えが外れないようにするため。失敗しても置き換えは行い、終了コードは最後に返す
       # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
       # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
-      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+      GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$(git rev-parse --git-common-dir)/hooks/post-rewrite"
       local_rc=0
       if [ -x "$LOCAL_HOOK" ]; then
@@ -427,19 +431,11 @@ in
       # 失敗したときに対応を残す場所。書き換えは済んでいて、この対応は二度と渡されないので、
       # 直してから手で呼び直せるようにする
       SAVED="$GIT_DIR/remap-commit-refs.input"
-      SCRIPT="$HOME/.claude/scripts/remap-commit-refs.sh"
-      if [ ! -x "$SCRIPT" ]; then
-        printf '%s\n' "$INPUT" > "$SAVED"
-        echo "❌ $SCRIPT がないので、文書の中のコミットの番号を付け直せません"
-        echo "   直し方: claude-sync（または rebuild）で ~/.claude を同期してから、remap-commit-refs.sh $SAVED"
-        exit 1
-      fi
-
       echo "🔁 文書の中のコミットの番号を付け直します（remap.commitRefs）"
-      if ! OUT=$(printf '%s\n' "$INPUT" | "$SCRIPT"); then
+      if ! OUT=$(printf '%s\n' "$INPUT" | ${lib.getExe commit-refs} remap); then
         printf '%s\n' "$INPUT" > "$SAVED"
         echo "❌ コミットの番号を付け直せませんでした（何も書き換えていません）"
-        echo "   直し方: 上の ERROR の箇所を文書の中で直してから、remap-commit-refs.sh $SAVED"
+        echo "   直し方: 上の ERROR の箇所を文書の中で直してから、commit-refs remap $SAVED"
         exit 1
       fi
       printf '%s\n' "$OUT"
