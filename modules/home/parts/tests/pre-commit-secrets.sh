@@ -171,19 +171,22 @@ else
   ng "ローカルの pre-commit がある fork で止めたが、鍵の場所とルール ID を出さない"
 fi
 
-# --- 6. Markdown の自動修正がステージし直した中身も見る ----------------------------------------------------
-# 自動修正は作業ツリーをステージし直す（#282）。ステージしていない部分の鍵も、コミットに入るので止める
+# --- 6. ステージしていない部分の鍵は、Markdown の自動修正でもコミットに入らない ----------------------------
+# 既定の検査はステージした版にだけ自動修正を当てる（ADR-0028）ので、ステージしていない部分の鍵は
+# コミットに入らず、作業ツリーに残る
 REPO="$WORK/restage"
 new_repo "$REPO"
 printf '# t\n\nplain\n' > "$REPO/notes.md"
 git -C "$REPO" add notes.md
 printf '# t\n\nplain\n\nkey = %s\n' "$KEY" > "$REPO/notes.md"
-if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: notes" >"$WORK/out" 2>&1; then
-  ng "Markdown の自動修正がステージし直した鍵を、検査せずにコミットした"
-elif grep -q "notes.md:5" "$WORK/out" && grep -q "aws-access-token" "$WORK/out"; then
-  ok "Markdown の自動修正がステージし直した鍵でも止める"
+if ! CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: notes" >"$WORK/out" 2>&1; then
+  ng "ステージしていない部分の鍵で、コミットを止めた"
+elif git -C "$REPO" show HEAD:notes.md | grep -q "$KEY"; then
+  ng "Markdown の自動修正が、ステージしていない部分の鍵をコミットに入れた"
+elif grep -q "$KEY" "$REPO/notes.md"; then
+  ok "ステージしていない部分の鍵は、自動修正でもコミットに入らず、作業ツリーに残る"
 else
-  ng "Markdown の自動修正の後で止めたが、鍵の場所とルール ID を出さない"
+  ng "ステージしていない部分の鍵が、作業ツリーから消えた"
 fi
 
 # --- 6b. 種類の変更（シンボリックリンクから普通のファイル）だけのコミットも見る --------------------------
