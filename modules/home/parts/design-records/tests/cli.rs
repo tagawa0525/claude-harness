@@ -1259,3 +1259,46 @@ fn new_tells_how_to_publish_the_default_branch_when_origin_has_none() {
     assert!(stderr(&out).contains("git push"), "{}", stderr(&out));
     assert!(stderr(&out).contains("set-head"), "{}", stderr(&out));
 }
+
+#[test]
+fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
+    let t = TempRepo::with_remote("same-clone");
+    // 先のセッションの push を遅らせる git
+    let bin = t.root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let real = real.trim();
+    fs::write(
+        bin.join("git"),
+        format!("#!/bin/sh\ncase \" $* \" in *\" push \"*) sleep 2 ;; esac\nexec {real} \"$@\"\n"),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let mut first = Command::new(env!("CARGO_BIN_EXE_design-records"));
+    first
+        .current_dir(&t.dir)
+        .env("PATH", path)
+        .args(["new", "use-a", "a を使う"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate(&mut first);
+    let first = first.spawn().unwrap();
+    // 先のセッションがタグを打ち、push を待っている間に、次のセッションが走る
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    let second = t.run(&["new", "use-b", "b を使う"]);
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert_eq!(stdout(&first), "docs/adr/0001-use-a.md\n");
+    assert_eq!(stdout(&second), "docs/adr/0002-use-b.md\n");
+    assert!(t.remote_tag("adr-0002").contains("adr-0002"));
+}
