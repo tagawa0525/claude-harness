@@ -435,7 +435,8 @@ in
       if ! OUT=$(printf '%s\n' "$INPUT" | ${lib.getExe commit-refs} remap); then
         printf '%s\n' "$INPUT" > "$SAVED"
         echo "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
-        echo "   直し方: 上の ERROR を直してから、commit-refs remap $SAVED"
+        # 貼って使えるよう、パスをシェルの引数の形にする（空白などを含むリポジトリのため）
+        echo "   直し方: 上の ERROR を直してから、commit-refs remap $(printf '%q' "$SAVED")"
         exit 1
       fi
       printf '%s\n' "$OUT"
