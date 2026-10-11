@@ -83,6 +83,8 @@ stop|確かめの結果を書く。
 stop|確かめが通らない。
 pass|結果を確かめる。
 pass|結果を確かめた。
+pass|観測者にも確かめにくい。
+pass|結果を確かめに行く。
 stop|比べ合わせの結果。
 pass|2 つを比べ合わせると近い。
 stop|2 つの比べでは差が無い。
@@ -149,6 +151,19 @@ if commits "$REPO" ja-terms/prh.yml "$(printf 'rules:\n  - expected: 確認\n   
   ok "prh の辞書のファイルは検査しない"
 else
   ng "prh の辞書のファイルで止めた"
+fi
+
+# --- 4c. リポジトリの .textlintignore に挙げたファイルは検査しない ------------------------------------
+REPO="$WORK/ignore"
+new_repo "$REPO"
+printf 'fixtures/**\n' > "$REPO/.textlintignore"
+git -C "$REPO" add .textlintignore
+git -C "$REPO" commit -q --no-verify -m "chore: ignore fixtures"
+mkdir -p "$REPO/fixtures"
+if commits "$REPO" fixtures/case.md "$(printf '# t\n\n確かめの結果。\n')"; then
+  ok ".textlintignore に挙げたファイルは検査しない"
+else
+  ng ".textlintignore に挙げたファイルで止めた"
 fi
 
 # --- 5. fork では飛ばす ------------------------------------------------------------------------------
