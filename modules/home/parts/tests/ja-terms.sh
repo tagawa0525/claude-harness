@@ -120,7 +120,7 @@ else
 fi
 
 # --- 3. ステージした中身を見る（作業ツリーの、ステージしていない編集は見ない）--------------------------
-# Markdown は自動修正が作業ツリーをステージし直す（#282）ので、テキストのファイルで確かめる
+# Markdown の自動修正（pre-commit-partial-stage.sh が確かめる）と切り分けるため、テキストのファイルで確かめる
 REPO="$WORK/staged"
 new_repo "$REPO"
 printf '結果を確かめる。\n' > "$REPO/doc.txt"
