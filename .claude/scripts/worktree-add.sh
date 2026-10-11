@@ -241,14 +241,22 @@ if [[ -f "$LINK_FILE" ]]; then
     exit 1
   fi
 
+  # 途中で mkdir / ln が失敗したら、作った symlink を消してから止める（1 つも残さない）
+  LINKED=()
+  NOTES=()
   for path in "${SHARE_PATHS[@]}"; do
     if [[ ! -e "$MAIN_ROOT/$path" ]]; then
-      echo "NOTE: メイン worktree に $path がないため共有しません（$MAIN_ROOT/$path）"
+      NOTES+=("NOTE: メイン worktree に $path がないため共有しません（$MAIN_ROOT/$path）")
       continue
     fi
-    mkdir -p "$(dirname "$DIR/$path")"
-    ln -s "$MAIN_ROOT/$path" "$DIR/$path"
-    echo "SHARED: $path"
+    if ! mkdir -p "$(dirname "$DIR/$path")" || ! ln -s "$MAIN_ROOT/$path" "$DIR/$path"; then
+      for linked in "${LINKED[@]}"; do rm -f "$DIR/$linked"; done
+      echo "ERROR: $path の symlink を作れませんでした。作った symlink は消しました。worktree は $DIR に作ってあります" >&2
+      exit 1
+    fi
+    LINKED+=("$path")
   done
+  for note in "${NOTES[@]}"; do echo "$note"; done
+  for linked in "${LINKED[@]}"; do echo "SHARED: $linked"; done
 fi
 
