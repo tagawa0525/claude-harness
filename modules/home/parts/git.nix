@@ -430,7 +430,7 @@ in
 
       # 失敗したときに対応を残す場所。書き換えは済んでいて、この対応は二度と渡されないので、
       # 直してから手で呼び直せるようにする
-      SAVED="$GIT_DIR/remap-commit-refs.input"
+      SAVED="$GIT_DIR/commit-refs-remap.input"
       echo "🔁 文書の中のコミットの番号を付け直します（remap.commitRefs）"
       if ! OUT=$(printf '%s\n' "$INPUT" | ${lib.getExe commit-refs} remap); then
         printf '%s\n' "$INPUT" > "$SAVED"
