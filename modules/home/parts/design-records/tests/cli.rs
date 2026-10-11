@@ -1026,6 +1026,9 @@ fn renumber_compares_with_the_local_default_branch_when_it_is_ahead_of_origin() 
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
     assert_eq!(t.read("notes.md"), "ADR-0001 は a\n");
+    // 旧番号の記録（use-a）は origin にまだ無いので、ほかの clone からは番号が空いて見える。予約を残す
+    assert_eq!(t.tag_message("adr-0001"), "use-b");
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
 }
 
 #[test]
@@ -1527,4 +1530,94 @@ fn new_falls_back_to_main_when_the_remote_head_dangles() {
     assert!(out.status.success(), "{}", stderr(&out));
     let main = t.git(&["rev-parse", "main"]).trim().to_string();
     assert_eq!(tag_target(&fresh.dir, "adr-0001"), main);
+}
+
+#[test]
+fn renumber_skips_submodule_entries() {
+    let t = duplicated_after_rebase("gitlink");
+    let head = t.git(&["rev-parse", "HEAD"]).trim().to_string();
+    t.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{head},vendor/sub"),
+    ]);
+    fs::create_dir_all(t.dir.join("vendor/sub")).unwrap();
+    t.git(&["commit", "-q", "-m", "chore: submodule"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+}
+
+#[test]
+fn new_stops_when_origin_has_no_default_branch_despite_a_stale_tracking_ref() {
+    let t = TempRepo::with_remote("stale-tracking");
+    t.git(&["push", "-q", "origin", "main:trunk"]);
+    git_in(
+        &t.root.join("remote.git"),
+        &["update-ref", "-d", "refs/heads/main"],
+    );
+    // 手元には、origin で消えた main の古い追跡の ref が残っている
+    assert!(t.git(&["rev-parse", "origin/main"]).trim().len() == 40);
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+}
+
+#[test]
+fn prune_reads_the_branch_that_origin_names_as_its_head() {
+    let t = TempRepo::with_remote("stale-head");
+    let first = t.git(&["rev-parse", "HEAD"]).trim().to_string();
+    // 手元の origin/HEAD は、古い追跡の ref を指している
+    t.git(&["update-ref", "refs/remotes/origin/old", &first]);
+    t.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/old",
+    ]);
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge: a", "topic"]);
+    t.git(&["push", "-q", "origin", "main"]);
+    let out = t.run(&["prune"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0001\n");
+}
+
+#[test]
+fn renumber_counts_blank_context_lines_printed_without_a_space() {
+    let t = duplicated_after_rebase("blank-context");
+    t.git(&["switch", "-q", "main"]);
+    t.write("plans/p.md", "x\n\nADR-0001 は a\ny\n");
+    t.commit_all("docs: plan");
+    t.git(&["switch", "-q", "topic"]);
+    t.git(&["rebase", "-q", "main"]);
+    t.write(
+        "plans/p.md",
+        "ADR-0001 の続き\nx\n\nADR-0001 は a\ny\nADR-0001 の後\n",
+    );
+    t.commit_all("docs: plan b");
+    t.git(&["config", "diff.interHunkContext", "5"]);
+    t.git(&["config", "diff.suppressBlankEmpty", "true"]);
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        t.read("plans/p.md"),
+        "ADR-0002 の続き\nx\n\nADR-0001 は a\ny\nADR-0002 の後\n"
+    );
+}
+
+#[test]
+fn renumber_works_on_a_branch_without_a_common_ancestor() {
+    let t = TempRepo::new("no-ancestor");
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write("notes.md", "ADR-0001 を見る\n");
+    t.commit_all("docs(adr): a");
+    let out = t.run(&["renumber", "1", "5"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0005-use-a.md\n");
+    assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
 }
