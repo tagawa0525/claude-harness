@@ -437,7 +437,10 @@ fn move_record(
 ) -> Result<()> {
     let listed = git(root, &["ls-files", "-z"])?;
     // 足した行の無い（基準の無い）ときは、旧番号の参照か記録のファイル名を含むファイルだけを読む（大きな
-    // リポジトリで、追跡しているファイルをすべて読まない）。git grep は見つからないと 1 で終わる
+    // リポジトリで、追跡しているファイルをすべて読まない）。git grep は見つからないと 1 で終わり、読めない
+    // ファイルは標準エラーに出すだけなので、標準エラーに何かあれば止める（参照を見落としたまま進めない）。
+    // 色の設定でファイル名が飾られないようにし、submodule の中は探さない。テキストかは後で読んで決める
+    // （-I は git がバイナリとみなす UTF-8 のファイルも外す）
     let mentions: Option<BTreeSet<String>> = match added {
         Some(_) => None,
         None => {
@@ -446,9 +449,23 @@ fn move_record(
             let found = run(
                 root,
                 &[
-                    "grep", "-lIz", "-F", "-e", &reference, "-e", &file, "--", ".",
+                    "grep",
+                    "--no-color",
+                    "--no-recurse-submodules",
+                    "-lz",
+                    "-F",
+                    "-e",
+                    &reference,
+                    "-e",
+                    &file,
+                    "--",
+                    ".",
                 ],
             )?;
+            let stderr = String::from_utf8_lossy(&found.stderr);
+            if !stderr.trim().is_empty() {
+                return Err(format!("git grep failed: {}", stderr.trim()));
+            }
             match found.status.code() {
                 Some(0) => Some(
                     String::from_utf8_lossy(&found.stdout)
