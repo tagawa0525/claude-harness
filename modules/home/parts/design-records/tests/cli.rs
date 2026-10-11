@@ -769,11 +769,11 @@ fn new_tags_the_latest_default_branch_when_it_retries() {
         format!(
             "#!/bin/sh\n\
              case \" $* \" in *\" fetch \"*refs/heads/*)\n\
-             \x20 {real} \"$@\" || exit $?\n\
-             \x20 if [ ! -e {mark} ]; then : > {mark}; {real} -C {other} commit -q --allow-empty -m 'chore: x' && {real} -C {other} push -q origin HEAD:main refs/tags/adr-0001 || exit 99; fi\n\
+             \x20 '{real}' \"$@\" || exit $?\n\
+             \x20 if [ ! -e '{mark}' ]; then : > '{mark}'; '{real}' -C '{other}' commit -q --allow-empty -m 'chore: x' && '{real}' -C '{other}' push -q origin HEAD:main refs/tags/adr-0001 || exit 99; fi\n\
              \x20 exit 0 ;;\n\
              esac\n\
-             exec {real} \"$@\"\n",
+             exec '{real}' \"$@\"\n",
             mark = mark.display(),
             other = other.display(),
         ),
@@ -783,9 +783,21 @@ fn new_tags_the_latest_default_branch_when_it_retries() {
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
     let out = t.run_with_bin(&bin, &["new", "use-foo", "foo を使う"]);
     assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
     assert_eq!(stdout(&out), "docs/adr/0002-use-foo.md\n");
     let latest = git_in(&other, &["rev-parse", "HEAD"]);
     assert_eq!(t.git(&["rev-parse", "adr-0002^{commit}"]), latest);
+    // origin の予約のタグ（ほかの clone が見るもの）も、同じ先端を指す
+    git_in(
+        &other,
+        &[
+            "fetch",
+            "-q",
+            "origin",
+            "refs/tags/adr-0002:refs/tags/adr-0002",
+        ],
+    );
+    assert_eq!(git_in(&other, &["rev-parse", "adr-0002^{commit}"]), latest);
 }
 
 #[test]
