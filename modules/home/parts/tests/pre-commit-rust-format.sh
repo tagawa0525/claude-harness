@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# git pre-commit hook の Rust フォーマット検査がクレート単位で行われることを検証する
+# git pre-commit hook の Rust の書式の検査が、ステージした .rs を、そのクレートの edition で見ることを検証する
 # =============================================================================
 # ../git.nix の pre-commit は core.hooksPath でグローバル配布され、リポジトリ直下から実行される。
-# 直下に Cargo.toml が無いリポジトリ（このリポジトリもそう）でサブディレクトリのクレートを
-# 変更すると、以前はクレートの edition を無視して rustfmt --edition 2024 に落ちていた。
-# ステージ済み .rs ごとに最寄りの Cargo.toml を探し、そのクレートの edition で検査すること、
-# クレート外の .rs は rustfmt 直接で検査することを確かめる。
+# ステージした .rs ごとに最寄りの Cargo.toml を探し、そのパッケージの edition（workspace からの継承を
+# 含む）で検査すること、クレートの外と、パッケージの無い Cargo.toml（virtual workspace）の下の .rs は
+# edition 2024 で検査することを確かめる。
 #
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/pre-commit-rust-format.sh
@@ -81,6 +80,18 @@ check 1 "クレート外の未整形 .rs は止める"
 printf 'fn main() {\n    println!("x");\n}\n' > "tools/my tool.rs"
 git add "tools/my tool.rs"
 check 0 "空白を含むパスのクレート外 .rs も 1 つのファイルとして検査される"
+
+# workspace から edition を継承するメンバー（2021 で正しい整形）と、メンバーの外の .rs
+mkdir -p ws/a/src ws/scripts
+printf '[workspace]\nmembers = ["a"]\n\n[workspace.package]\nedition = "2021"\n' > ws/Cargo.toml
+printf '[package]\nname = "a"\nversion = "0.1.0"\nedition.workspace = true\n' > ws/a/Cargo.toml
+printf 'use std::io::{stdout, Write};\n\nfn main() {\n    let _ = stdout().flush();\n}\n' > ws/a/src/main.rs
+git add ws
+check 0 "workspace から継承した edition（2021）で検査される"
+
+printf 'fn main() {\n    println!("x");\n}\n' > ws/scripts/x.rs
+git add ws/scripts/x.rs
+check 0 "パッケージの無い Cargo.toml の下の整形済み .rs は通る"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

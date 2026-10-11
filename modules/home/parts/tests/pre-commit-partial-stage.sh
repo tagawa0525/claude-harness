@@ -149,6 +149,18 @@ else
   ng "ステージしていない編集と git add -N のファイルが、そのまま残る"
 fi
 
+echo "==> 改行の変換があっても、全てステージした Markdown の作業ツリーを直す"
+R=$(repo crlf a.md "$LINES")
+git -C "$R" config core.autocrlf true
+printf '%s' "${LINES/l1/l1 }" | sed 's/$/\r/' >"$R/a.md"
+git -C "$R" add a.md 2>/dev/null
+if commit "$R" && [[ "$(git -C "$R" show :a.md)" == "${LINES%$'\n'}" ]] && git -C "$R" diff --quiet &&
+  grep -q $'l1\r$' "$R/a.md"; then
+  ok "作業ツリーを、改行の変換を保って直す"
+else
+  ng "作業ツリーを、改行の変換を保って直す"
+fi
+
 echo "==> ステージしていない編集が無ければ、今までどおり"
 R=$(repo plain a.md "$LINES")
 printf '%s' "${LINES/l1/l1 }" >"$R/a.md"

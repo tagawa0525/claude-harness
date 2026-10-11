@@ -72,7 +72,7 @@ mkdir -p crate/src
 printf '[package]\nname = "crate"\nversion = "0.1.0"\nedition = "2021"\n' > crate/Cargo.toml
 git add crate/Cargo.toml
 printf 'fn main(){println!("x");}\n' > crate/src/old.rs
-check_rename crate/src/old.rs crate/src/main.rs "rename した未整形の .rs を cargo fmt で止める"
+check_rename crate/src/old.rs crate/src/main.rs "rename した未整形の .rs を止める"
 
 echo
 echo "passed: $PASS, failed: $FAIL"
