@@ -266,6 +266,8 @@ for cmd in 'env FOO=1 git push --force' 'command git push origin main' 'nohup gi
 done
 out=$(run_hook guard-git-push 'git push -ofoo origin feat/x')
 assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-git-push 'git push -o --force origin feat/x')
+assert_eq allow "$(decision "$out")"
 
 it "guard-git-push: GitHub リモートがなければ gh を呼ばず許可"
 LOCAL="$TEST_ROOT/push-local"
@@ -374,6 +376,10 @@ out=$(run_hook block-main-commit "git -C $LOCAL commit -m 'feat: x'")
 assert_eq allow "$(decision "$out")"
 out=$(run_hook block-main-commit "git -C $TEST_ROOT/lock commit -m 'feat: x'")
 assert_eq deny "$(decision "$out")"
+for cmd in "env -C $TEST_ROOT/lock git commit -m 'feat: x'" "env --chdir=$TEST_ROOT/lock git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 cd "$REPO" || exit 1
 
 it "block-main-commit: コマンド置換やサブシェルの中の cd は親の対象ディレクトリを変えない"
@@ -628,6 +634,10 @@ fake_gitleaks ok "$LEAK_JSON"
 out=$(run_hook block-secret-commit 'git commit -m"add a"')
 assert_eq allow "$(decision "$out")"
 assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
+fake_gitleaks ok "$LEAK_JSON"
+out=$(run_hook block-secret-commit 'git commit -m --all')
+assert_eq allow "$(decision "$out")"
+assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
 
 it "block-secret-commit: 対象のディレクトリを決められないときは、git の hook に任せて通す（#281）"
 fake_gitleaks "$LEAK_JSON" ok
@@ -682,6 +692,11 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'git -c core.hooksPath commit -m x' 'git --config-env core.hooksPath commit -m x' \
   'command git commit --no-verify -m x' 'env GIT_CONFIG_COUNT=1 git commit -m x' \
   "env -S 'git commit --no-verify -m x'" 'exec -c git commit -m x' 'exec -cl git commit -m x' \
+  'env -vi git commit -m x' 'env --ignore git commit -m x' 'env -iu X git commit -m x' \
+  'env --uns=CLAUDECODE git commit -m x' 'nice git commit --no-verify -m x' 'nice -n 10 git commit -n -m x' \
+  'timeout 60 git commit --no-verify -m x' 'timeout -k 5 60 git commit -n -m x' 'setsid git commit -n -m x' \
+  'stdbuf -oL git commit --no-verify -m x' 'ionice -c3 git commit --no-verify -m x' \
+  'env -S "git\_commit\_--no-verify" -m x' \
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
@@ -694,7 +709,7 @@ for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --
   'git merge --no-ff feat/x' 'git -c user.name=n commit -m x' 'git commit -m -nightly' \
   'git commit -m "-nightly build fix"' 'git commit --author -n -m x' 'git config --get core.hooksPath' \
   'git config core.autocrlf false' 'git config --remove-section alias' 'git config get core.hooksPath' \
-  'env FOO=1 git commit -m x' 'env CLAUDECODE=1 git commit -m x' \
+  'env FOO=1 git commit -m x' 'env CLAUDECODE=1 git commit -m x' "env -S \"git commit -m 'x -n'\"" \
   'git pull origin main'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
@@ -723,7 +738,8 @@ cd "$REPO" || exit 1
 mkdir -p src && echo x > src/a.txt
 
 it "guard-git-add: パスを指定した git add は許可する"
-for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt'; do
+for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git add .claude/' 'git add -- src/a.txt' \
+  'git add -A --pathspec-from-file paths.txt' 'git add -A --pathspec-from-file=paths.txt'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq allow "$(decision "$out")"
 done
@@ -1510,6 +1526,12 @@ it "guard-sbatch: sbatch を直接投げたら slurm-run.sh を示して止め�
 out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "slurm-run.sh"
+
+it "guard-sbatch: command -v / -pv / -V はプログラムを探すだけで、走らせない"
+for cmd in 'command -v sbatch' 'command -pv sbatch' 'command -Vp sbatch'; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
 
 it "guard-sbatch: パイプやつなぎの中の sbatch も止める"
 out=$(run_hook guard-sbatch "cd ~/github/xlc && sbatch --wrap 'true' | tail -1")
