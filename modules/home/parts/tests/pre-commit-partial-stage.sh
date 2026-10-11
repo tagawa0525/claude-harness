@@ -161,6 +161,20 @@ else
   ng "作業ツリーを、改行の変換を保って直す"
 fi
 
+echo "==> 作業ツリーの文字の符号化が違っても、直した版をそのままステージする"
+R=$(repo encoding init.txt $'x\n')
+printf '*.md working-tree-encoding=UTF-16LE eol=lf\n' >"$R/.gitattributes"
+git -C "$R" add .gitattributes
+git -C "$R" commit -q --no-verify -m "chore: attributes"
+printf '%s' "${LINES/l1/l1 }" | iconv -f UTF-8 -t UTF-16LE >"$R/a.md"
+git -C "$R" add a.md
+if commit "$R" && [[ "$(git -C "$R" show :a.md)" == "${LINES%$'\n'}" ]]; then
+  ok "working-tree-encoding のある Markdown も、直した版をステージする"
+else
+  ng "working-tree-encoding のある Markdown も、直した版をステージする"
+  git -C "$R" show :a.md | head -3 | sed 's/^/    index: /'
+fi
+
 echo "==> - で始まるパスも検査する"
 R=$(repo dash init.txt $'x\n')
 mkdir -p "$R/-docs"
