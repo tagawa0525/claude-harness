@@ -387,6 +387,148 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
 mod tests {
     use super::*;
 
+    /// 空白で分けた語をほどく（クォートの要る形は shell.rs のテストで）
+    fn un(src: &str) -> Unwrapped {
+        let words: Vec<&str> = src.split_whitespace().collect();
+        let args: Vec<Arg> = words[1..].iter().map(|w| arg(w)).collect();
+        unwrap(words[0], &args)
+    }
+
+    #[test]
+    fn unwraps_sudo_xargs_flock_chrt_taskset_watch_script_and_bash() {
+        for src in [
+            "sudo sbatch --wrap x",
+            "sudo -u slurm -g users -H sbatch",
+            "sudo -E FOO=1 -- sbatch",
+            "sudo --user=slurm -n -D /tmp sbatch",
+            "sudo -s sbatch",
+            "xargs sbatch",
+            "xargs -0 -I{} -n1 -P 4 sbatch",
+            "xargs -I {} -t sbatch",
+            "xargs -i sbatch",
+            "xargs -l2 -e -r sbatch",
+            "xargs --max-args=1 --process-slot-var=N sbatch",
+            "flock /tmp/l sbatch",
+            "flock -w 10 -x /tmp/l sbatch",
+            "flock --timeout=10 -E 3 /tmp/l sbatch",
+            "chrt -f 10 sbatch",
+            "chrt --idle 0 sbatch",
+            "chrt -T 1000 -d 0 sbatch",
+            "taskset 0x1 sbatch",
+            "taskset -c 0-3 sbatch",
+            "taskset --cpu-list 0 sbatch",
+            "watch -x sbatch",
+            "watch -n 5 -x sbatch",
+            "script log.txt -- sbatch",
+            "bash -x sbatch",
+            "sh -eu -o pipefail sbatch",
+            "bash --rcfile r -- sbatch",
+            "sudo flock /tmp/l chrt -f 10 sbatch",
+        ] {
+            let u = un(src);
+            assert_eq!(u.name, "sbatch", "{src}");
+            assert!(u.source.is_none() && !u.opaque, "{src}");
+        }
+        assert_eq!(un("sudo -u slurm sbatch --wrap x").args[1].text, "x");
+        assert_eq!(
+            un("sudo flock /tmp/l chrt -f 10 sbatch").wrappers,
+            ["sudo", "flock", "chrt"]
+        );
+    }
+
+    #[test]
+    fn wrappers_that_run_a_shell_string_give_the_source() {
+        for (src, source) in [
+            ("watch -n 5 sbatch --wrap x", "sbatch --wrap x"),
+            ("watch -dpermanent sbatch", "sbatch"),
+            ("watch --interval=5 -d sbatch", "sbatch"),
+            ("ssh r995 sbatch --wrap x", "sbatch --wrap x"),
+            ("ssh -p 22 -o X=y -i k -J b user@r995 sbatch", "sbatch"),
+            ("ssh -t r995 sbatch", "sbatch"),
+            ("flock /tmp/l -c sbatch", "sbatch"),
+            ("flock -n /tmp/l --command sbatch", "sbatch"),
+            ("script -c sbatch log.txt", "sbatch"),
+            ("script -q --command sbatch", "sbatch"),
+            ("eval sbatch --wrap x", "sbatch --wrap x"),
+            ("bash -c sbatch arg0", "sbatch"),
+            ("sh -ec sbatch", "sbatch"),
+            ("bash -o pipefail -c sbatch", "sbatch"),
+            ("nohup bash -c sbatch", "sbatch"),
+            ("ssh r995 bash -c sbatch", "bash -c sbatch"),
+        ] {
+            let u = un(src);
+            assert_eq!(u.source.as_deref(), Some(source), "{src}");
+            assert!(!u.opaque, "{src}");
+        }
+    }
+
+    #[test]
+    fn wrappers_that_do_not_run_the_command_are_left_alone() {
+        for src in [
+            "sudo -l sbatch",
+            "sudo -e f",
+            "sudo -v",
+            "sudo -K",
+            "chrt -p 10 1234",
+            "chrt -m",
+            "taskset -p 1 1234",
+            "taskset -ap 1234",
+            "ssh -N r995",
+            "ssh -G r995",
+            "ssh -Q cipher",
+            "flock 9",
+            "flock -u 9",
+            "bash -n s.sh",
+            "xargs --help",
+            "sudo",
+        ] {
+            let u = un(src);
+            assert_eq!(u.name, src.split(' ').next().unwrap(), "{src}");
+            assert!(u.source.is_none() && !u.opaque, "{src}");
+        }
+    }
+
+    #[test]
+    fn shells_reading_stdin_and_sourced_files_are_opaque() {
+        for src in [
+            "bash -s",
+            "bash",
+            "sh -s x",
+            "bash -s -- x",
+            "ssh r995",
+            "sudo -s",
+            "sudo -i",
+            "script log.txt",
+            "script",
+            "source f",
+            ". f",
+            "builtin source f",
+            "command . f",
+        ] {
+            assert!(un(src).opaque, "{src}");
+        }
+    }
+
+    #[test]
+    fn sudo_and_ssh_drop_the_environment_unless_preserved() {
+        let set = |n: &str, v: &str| EnvChange::Set(n.to_string(), v.to_string());
+        assert_eq!(un("sudo git commit").env, [EnvChange::Clear]);
+        assert_eq!(un("sudo -i git commit").env, [EnvChange::Clear]);
+        assert_eq!(un("sudo -E git commit").env, []);
+        assert_eq!(un("sudo --preserve-env git commit").env, []);
+        assert_eq!(
+            un("sudo --preserve-env=HOME git commit").env,
+            [EnvChange::Clear]
+        );
+        assert_eq!(
+            un("sudo FOO=1 git commit").env,
+            [EnvChange::Clear, set("FOO", "1")]
+        );
+        assert_eq!(un("sudo -E FOO=1 git commit").env, [set("FOO", "1")]);
+        assert_eq!(un("ssh host git commit").env, [EnvChange::Clear]);
+        assert_eq!(un("watch git commit").env, []);
+    }
+
     #[test]
     fn splits_env_strings_like_env() {
         assert_eq!(

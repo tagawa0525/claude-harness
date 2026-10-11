@@ -644,6 +644,189 @@ mod tests {
         assert!(!cmds("git add 'x y'")[0].has_error);
     }
 
+    fn names(cs: &[Cmd]) -> Vec<&str> {
+        cs.iter().map(|c| c.name.as_str()).collect()
+    }
+
+    /// bash の二重引用符の文字列として 1 段包む（`"` と `\` をエスケープする）
+    fn wrap(src: &str) -> String {
+        format!(
+            "bash -c \"{}\"",
+            src.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    }
+
+    #[test]
+    fn bash_options_are_skipped_before_the_script() {
+        for src in [
+            "bash -x s.sh a",
+            "bash -e s.sh a",
+            "sh -eu s.sh a",
+            "bash -o pipefail s.sh a",
+            "bash --rcfile r s.sh a",
+            "bash -- s.sh a",
+            "bash +O extglob s.sh a",
+            "bash -xeu -o errexit -- s.sh a",
+            "nohup bash -x s.sh a",
+        ] {
+            let cs = cmds(src);
+            assert_eq!(cs[0].program(), "s.sh", "{src}");
+            assert_eq!(cs[0].args[0].text, "a", "{src}");
+            assert!(!cs[0].opaque, "{src}");
+        }
+        // -n は構文を調べるだけで走らせない
+        assert_eq!(cmds("bash -n s.sh")[0].program(), "bash");
+    }
+
+    #[test]
+    fn shell_strings_are_parsed_recursively() {
+        let cs = cmds("bash -c 'cd /a && git commit --no-verify -m x' arg0");
+        assert_eq!(names(&cs), ["bash", "cd", "git"]);
+        assert_eq!(cs[2].git_subcommand().unwrap().0, "commit");
+        assert!(cs[2].args.iter().any(|a| a.text == "--no-verify"));
+        // 文字列の中のコマンドは、外側の bash より後ろ、次の外側のコマンドより前の位置を持つ
+        let cs = cmds("bash -ec 'sbatch' && squeue");
+        assert_eq!(names(&cs), ["bash", "sbatch", "squeue"]);
+        assert!(cs[0].start < cs[1].start && cs[1].start < cs[2].start);
+        // 入れ子
+        let cs = cmds("sh -c \"bash -c 'sbatch'\"");
+        assert_eq!(names(&cs), ["sh", "bash", "sbatch"]);
+        // 外側の環境変数とディレクトリの変更は、中のコマンドに効く
+        let cs = cmds("env -u CLAUDECODE -C /x FOO=1 bash -c 'git commit'");
+        assert_eq!(
+            cs[1].env,
+            [
+                EnvChange::Unset("CLAUDECODE".to_string()),
+                EnvChange::Set("FOO".to_string(), "1".to_string())
+            ]
+        );
+        assert_eq!(cs[1].dirs, ["/x"]);
+        // watch、ssh、eval は残りの語を空白でつないだ文字列を sh -c で走らせる
+        assert_eq!(
+            names(&cmds("watch -n 5 'squeue; sbatch'")),
+            ["watch", "squeue", "sbatch"]
+        );
+        assert_eq!(names(&cmds("ssh r995 sbatch --wrap x")), ["ssh", "sbatch"]);
+        assert_eq!(names(&cmds("eval git commit -n")), ["eval", "git"]);
+        assert_eq!(
+            names(&cmds("flock /tmp/l -c 'sbatch'")),
+            ["flock", "sbatch"]
+        );
+    }
+
+    #[test]
+    fn backslash_escapes_are_removed_like_bash() {
+        let cs = cmds(r#"x a\ b "c\"d" 'e\f' g\\h "i\$j" "k\l""#);
+        let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(t, ["a b", "c\"d", "e\\f", "g\\h", "i$j", "k\\l"]);
+        // printf %q の形で入れ子にした文字列も、1 段ずつ読める
+        let cs = cmds(r"bash -c bash\ -c\ sbatch\\\ --wrap\\\ true");
+        assert_eq!(names(&cs), ["bash", "bash", "sbatch"]);
+    }
+
+    #[test]
+    fn nesting_beyond_the_depth_limit_is_opaque() {
+        let five = (0..5).fold("sbatch".to_string(), |s, _| wrap(&s));
+        let sh = Shell::parse(&five);
+        assert!(sh.commands().iter().any(|c| c.program() == "sbatch"));
+        assert!(sh.commands().iter().all(|c| !c.opaque));
+        let six = wrap(&five);
+        let sh = Shell::parse(&six);
+        assert!(!sh.commands().iter().any(|c| c.program() == "sbatch"));
+        assert!(sh.commands().iter().any(|c| c.opaque));
+        assert!(sh.runs_program("sbatch", |p| p == "sbatch"));
+        assert!(!sh.runs_program("squeue", |p| p == "squeue"));
+    }
+
+    #[test]
+    fn opaque_forms_run_the_word_when_it_appears_anywhere() {
+        let runs =
+            |src: &str| Shell::parse(src).runs_program("sbatch", |p| basename(p) == "sbatch");
+        for src in [
+            "CMD=sbatch; $CMD --wrap x",
+            "source run-sbatch.sh",
+            ". ./run-sbatch.sh",
+            "bash -s < run-sbatch.sh",
+            "bash < run-sbatch.sh",
+            "echo 'sbatch --wrap x' | sh",
+            "$(which sbatch) --wrap x",
+            "CMD='sbatch --wrap x'; eval \"$CMD\"",
+            "bash \"$SCRIPT\" sbatch",
+            "ssh r995 < run-sbatch.sh",
+            "sudo -s < run-sbatch.sh",
+            "script log.txt < run-sbatch.sh",
+            "sbatch --wrap x",
+        ] {
+            assert!(runs(src), "{src}");
+        }
+        for src in [
+            "$CMD --wrap x",
+            "eval \"$CMD\"",
+            "source venv/bin/activate",
+            "bash -s < run.sh",
+            "ssh r995",
+            "echo sbatch",
+            "grep sbatch f",
+            "bash -c 'echo sbatch'",
+        ] {
+            assert!(!runs(src), "{src}");
+        }
+        // 名前に展開があっても、basename が字面ならプログラムは決まる
+        let cs = cmds("$HOME/.claude/scripts/slurm-run.sh -t 5");
+        assert_eq!(cs[0].program(), "$HOME/.claude/scripts/slurm-run.sh");
+        assert!(!cs[0].opaque);
+        assert!(cmds("~/x/$SCRIPT")[0].opaque);
+        assert!(cmds("`which sbatch` x")[0].opaque);
+    }
+
+    #[test]
+    fn assignments_and_escapes_inside_shell_strings_are_read() {
+        let sh = Shell::parse("bash -c 'CLAUDECODE=0; git commit'");
+        assert!(
+            sh.assignments()
+                .contains(&("CLAUDECODE".to_string(), "0".to_string()))
+        );
+        assert!(Shell::parse("bash -c 'unset CLAUDECODE; git commit'").unsets("CLAUDECODE"));
+        assert_eq!(
+            Shell::parse("bash -c 'ALLOW_PROTECTED_PUSH=テスト用 git push'")
+                .escape("ALLOW_PROTECTED_PUSH"),
+            Escape::Given
+        );
+        assert_eq!(
+            Shell::parse("ALLOW_PROTECTED_PUSH=テスト用 bash -c 'ALLOW_PROTECTED_PUSH=1 git push'")
+                .escape("ALLOW_PROTECTED_PUSH"),
+            Escape::Short
+        );
+    }
+
+    #[test]
+    fn preceding_cd_applies_inside_subshells_and_shell_strings() {
+        let base = Path::new("/base");
+        let dir_of_git = |src: &str| {
+            let sh = Shell::parse(src);
+            let git = sh.commands().iter().find(|c| c.name == "git").unwrap();
+            sh.target_dir(git, base)
+        };
+        assert_eq!(dir_of_git("cd /a; (git commit)"), PathBuf::from("/a"));
+        assert_eq!(
+            dir_of_git("cd /a && echo $(git commit)"),
+            PathBuf::from("/a")
+        );
+        assert_eq!(
+            dir_of_git("cd /a; bash -c 'cd b && git commit'"),
+            PathBuf::from("/a/b")
+        );
+        assert_eq!(
+            dir_of_git("bash -c 'cd /a'; git commit"),
+            PathBuf::from("/base")
+        );
+        assert_eq!(
+            dir_of_git("env -C /x bash -c 'git commit'"),
+            PathBuf::from("/x")
+        );
+        assert_eq!(dir_of_git("(cd /a); git commit"), PathBuf::from("/base"));
+    }
+
     #[test]
     fn helpers() {
         let cs = cmds("gh pr merge 12 --merge -d --subject=\"x\"");
