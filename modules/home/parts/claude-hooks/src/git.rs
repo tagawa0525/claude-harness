@@ -50,7 +50,11 @@ pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
 /// is_dir は読めない（親に入れない）ときも false なので使わない。入れないのは環境の問題なので、起動して理由を出す
 pub fn not_a_directory(dir: &Path) -> bool {
     match std::fs::metadata(dir) {
-        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        // 途中がファイルなら NotADirectory（ディレクトリでない場所）
+        Err(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ),
         Ok(meta) => !meta.is_dir(),
     }
 }
