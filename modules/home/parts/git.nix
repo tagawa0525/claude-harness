@@ -22,31 +22,44 @@ let
     text = builtins.readFile ./scan-staged-secrets.sh;
   };
   scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
-  # 崩れた日本語の語の検査（ADR-0014）。pre-commit と commit-msg が store のパスで呼ぶ。
-  # 辞書は ./ja-terms/prh.yml。Markdown は textlint の組み込みのプラグインが、コードとテキストは
-  # @textlint/text が読む（コメントと文字列の日本語を含めて、ファイルの全体を見る）
+  # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が textlint を
+  # store のパスで呼ぶ。辞書は ./ja-terms/prh.yml。Markdown は textlint の組み込みのプラグインが、コードと
+  # テキストは @textlint/text が読む（コメントと文字列の日本語を含めて、ファイルの全体を見る）
   textlint = pkgs.textlint.withPackages [ pkgs.textlint-rule-prh ];
+  jaTermsCodeExtensions = [
+    "txt"
+    "rs"
+    "py"
+    "sh"
+    "nix"
+    "toml"
+    "yaml"
+    "yml"
+    "json"
+  ];
   jaTermsConfig = pkgs.writeText "ja-terms-textlintrc.json" (
     builtins.toJSON {
-      plugins."@textlint/text".extensions = jaTermsCodeExtensions;
+      plugins."@textlint/text".extensions = map (ext: ".${ext}") jaTermsCodeExtensions;
       rules.prh.rulePaths = [ "${./ja-terms/prh.yml}" ];
     }
   );
-  jaTermsCodeExtensions = [
-    ".txt"
-    ".rs"
-    ".py"
-    ".sh"
-    ".nix"
-    ".toml"
-    ".yaml"
-    ".yml"
-    ".json"
+  # 拡張子は大文字と小文字を問わない。prh の辞書（prh.yml）は誤った語を並べるので外す
+  jaTermsPathspecs = map (ext: ":(icase,glob)**/*.${ext}") ([ "md" ] ++ jaTermsCodeExtensions) ++ [
+    ":(exclude,glob)**/prh.yml"
   ];
-  # prh の辞書（prh.yml）は誤った語を並べるので外す
-  jaTermsGlobs =
-    lib.concatMapStringsSep " " (ext: "'*${ext}'") ([ ".md" ] ++ jaTermsCodeExtensions)
-    + " ':(exclude,glob)**/prh.yml'";
+  jaTermsStaged = pkgs.writeShellApplication {
+    name = "ja-terms-staged";
+    runtimeInputs = [
+      pkgs.git
+      pkgs.gawk
+      textlint
+    ];
+    runtimeEnv = {
+      JA_TERMS_CONFIG = "${jaTermsConfig}";
+      JA_TERMS_PATHSPECS = lib.concatStringsSep "\n" jaTermsPathspecs;
+    };
+    text = builtins.readFile ./ja-terms/staged.sh;
+  };
   jaTerms = "${textlint}/bin/textlint --config ${jaTermsConfig}";
 in
 {
@@ -204,33 +217,10 @@ in
       # 無関係な差分（``` → ```text 等）を上流向けのコミットに混ぜるので、fork では全部飛ばす。
       # 検証: modules/home/parts/tests/pre-commit-fork.sh
       if git remote get-url upstream >/dev/null 2>&1; then
-        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust）を飛ばします"
+        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust / 日本語の語）を飛ばします"
         ${scanSecrets} || check_failed=1
         exit $check_failed
       fi
-
-      # 日本語の崩れた語（ADR-0014）。ステージした中身を一時ディレクトリに書き出し、そこで相対パスの
-      # まま検査する（作業ツリーの、ステージしていない編集を見ない）。Markdown の自動修正は作業ツリーを
-      # ステージし直す（#282）ので、それより前に走らせる
-      # 検証: modules/home/parts/tests/ja-terms.sh
-      JA_LIST=$(mktemp)
-      git diff --cached --name-only --diff-filter=ACMR -z -- ${jaTermsGlobs} > "$JA_LIST"
-      if [ -s "$JA_LIST" ]; then
-        echo "🔍 Checking Japanese terms..."
-        JA_DIR=$(mktemp -d)
-        git checkout-index --prefix="$JA_DIR/" -z --stdin < "$JA_LIST"
-        # 崩れた語をわざと含むファイル（辞書のテストなど）は、リポジトリの .textlintignore で外す。
-        # textlint は今のディレクトリの .textlintignore を読むので、ステージした版を写す
-        if git cat-file -e :.textlintignore 2>/dev/null; then
-          git show :.textlintignore > "$JA_DIR/.textlintignore"
-        fi
-        if ! (cd "$JA_DIR" && xargs -0 ${jaTerms} --no-color < "$JA_LIST"); then
-          echo "❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: nixfiles の modules/home/parts/ja-terms/prh.yml）"
-          check_failed=1
-        fi
-        rm -rf "$JA_DIR"
-      fi
-      rm -f "$JA_LIST"
 
       # Nix ファイルのチェック（NUL区切りでスペースを含むパスにも対応）
       NIX_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- '*.nix' || true)
@@ -323,6 +313,11 @@ in
           fi
         fi
       fi
+
+      # 日本語の崩れた語（ADR-0014）。Markdown の自動修正は作業ツリーをステージし直す（#282）ので、
+      # 最後に、コミットに入る中身（ステージした版）を見る
+      # 検証: modules/home/parts/tests/ja-terms.sh
+      ${jaTermsStaged}/bin/ja-terms-staged || check_failed=1
 
       ${scanSecrets} || check_failed=1
 
@@ -435,33 +430,39 @@ in
       # 最初の非コメント行（sed のみ。grep を挟むとコメント行だけのとき exit 1 で静かに落ちる）
       SUBJECT=$(sed -n '/^#/!{p;q}' "$MSG_FILE")
 
+      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
+      # Conventional Commits も件名の長さも日本語の語の辞書もこちらの規約で、上流の慣習（"Fix socket transport
+      # when …" のような文。Serena の main には 72 文字を超える件名が普通にある）と衝突して
+      # 上流向けのコミットを歪めるので、検査を全部飛ばす。pre-commit と同じ判定。
+      # 検証: modules/home/parts/tests/commit-msg-conventions.sh
+      if git remote get-url upstream >/dev/null 2>&1; then
+        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Conventional Commits、件名の長さ、日本語の語）を飛ばします"
+        exit 0
+      fi
+
+      # 日本語の崩れた語（ADR-0014）。コメントの行と、commit -v の scissors の行から後（差分）は除く。
+      # fixup / squash の本文も自動で畳まれて履歴に残るので、下の対象外より前で見る
+      # 検証: modules/home/parts/tests/ja-terms.sh
+      ja_rc=0
+      sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$MSG_FILE" \
+        | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt || ja_rc=$?
+      if [ "$ja_rc" -eq 1 ]; then
+        echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
+        exit 1
+      elif [ "$ja_rc" -ne 0 ]; then
+        echo "❌ textlint が失敗しました（終了コード $ja_rc）。上の出力を見てください"
+        exit 1
+      fi
+
       # マージ・fixup/squash・Revert は Conventional Commits の対象外
       case "$SUBJECT" in
         Merge*|fixup!*|squash!*|Revert*) exit 0 ;;
       esac
 
-      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
-      # Conventional Commits も件名の長さもこちらの規約で、上流の慣習（"Fix socket transport
-      # when …" のような文。Serena の main には 72 文字を超える件名が普通にある）と衝突して
-      # 上流向けのコミットを歪めるので、検査を全部飛ばす。pre-commit と同じ判定。
-      # 検証: modules/home/parts/tests/commit-msg-conventions.sh
-      if git remote get-url upstream >/dev/null 2>&1; then
-        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Conventional Commits、件名の長さ）を飛ばします"
-        exit 0
-      fi
-
       TYPES='feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert'
       if ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
         echo "❌ Conventional Commits 形式ではありません: $SUBJECT"
         echo "   形式: <type>(<scope>)?: <subject>    type: $TYPES"
-        exit 1
-      fi
-
-      # 日本語の崩れた語（ADR-0014）。コメントの行と、commit -v の scissors の行から後（差分）は除く
-      # 検証: modules/home/parts/tests/ja-terms.sh
-      if ! sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$MSG_FILE" \
-        | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt; then
-        echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
         exit 1
       fi
 
