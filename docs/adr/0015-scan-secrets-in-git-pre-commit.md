@@ -36,47 +36,64 @@ PATH にある。
 ## 検討した案
 
 - 案 A: PreToolUse のまま、対象のディレクトリが無い・変数を含むときは理由を正しく出して止める
-- 案 B: 検査をグローバルの git の pre-commit に移す。PreToolUse は gitleaks をやめ、`git commit --no-verify` を止める
-- 案 C: 両方で検査する
+- 案 B: 検査をグローバルの git の pre-commit に移す。PreToolUse は gitleaks をやめ、hook を飛ばすコマンドを止める
+- 案 C: 両方で全てのコミットを検査する
+- 案 D: 案 B を主にし、グローバルの git の hook を使わないリポジトリ（ローカルの core.hooksPath を持つもの）でだけ、
+  PreToolUse でも検査する
 
 ## 決定と理由
 
-採用: 案 B。
+採用: 案 D。
 
 - git の pre-commit は、コミットするリポジトリの中で、`git add` と `commit -a` を済ませた後の index を見る。対象の
   ディレクトリの解決も、同じコマンドの add の見落としも起きない（main への直接コミットのガードを git の pre-commit
   にも置いているのと同じ理由。`git.nix`）
+- ただし、ローカルの core.hooksPath（husky、lefthook など）を持つリポジトリではグローバルの git の hook が走らない。
+  そこだけは前の PreToolUse の検査を残す（main への直接コミットのガードと同じ 2 つの層）
 - 案 A は、同じコマンドの add の見落としが残る。コマンドの文字列から実行の後の状態を推すことになる
+- 案 B は、ローカルの core.hooksPath を持つリポジトリで検査が無くなる（前より後退する）
 - 案 C は、PreToolUse の側が案 A と同じ誤りで正しいコミットを止め続ける
-- git の hook は飛ばせるので、Claude Code のセッションでは PreToolUse で、`git commit` と `git merge` の
-  `--no-verify`（git が受け付ける省略形と、commit の `-n` を含む）と、`git -c core.hooksPath=` を止める。git の hook を
-  飛ばす理由は、ほかの検査（main への直接コミット、形式の検査、ローカルのマージの検査）にも無い
+- git の hook は飛ばせるので、Claude Code のセッションでは PreToolUse で、hook の検査を飛ばすコマンドを止める。git の
+  hook を飛ばす理由は、ほかの検査（main への直接コミット、形式の検査、ローカルのマージの検査）にも無い
 
-検査の置き方:
+git の hook の検査（`modules/home/parts/scan-staged-secrets.sh`）:
 
-- グローバルの pre-commit が、Claude Code のセッション（`CLAUDECODE=1`）のコミットで、`gitleaks git --staged` を
-  走らせる。対象は今までと同じ（Claude Code のセッションのコミット）。index を変える検査（Markdown の自動修正は
-  作業ツリーをステージし直す。#282）の後の、既定の検査の最後に走らせ、プロジェクトのローカルの pre-commit を呼ぶ
-  前と、fork で抜ける前にも走らせる（機密情報はどのリポジトリでも漏らさない）
+- Claude Code のセッション（`CLAUDECODE=1`）のコミットで、`gitleaks git --staged` を走らせる。pre-commit は、index を
+  変えるもの（Markdown の自動修正は作業ツリーをステージし直す。#282。プロジェクトのローカルの pre-commit）の後、
+  ステージしたファイルが無くて抜ける前（種類の変更だけのコミット）、fork で抜ける前に呼ぶ。pre-merge-commit も
+  呼ぶ（競合の無いマージでは pre-commit が走らない）。マージでは相手のブランチから入る中身も見る（相手の
+  ブランチの中身が検査を通ったとは限らない）
 - gitleaks は Nix store のパスで呼ぶ（PATH に頼らない）
-- 漏えいは場所とルール ID だけを出し、値は出さない（`--redact`）。gitleaks が失敗したら、漏えいと分けて出して止める。
+- 漏えいは場所とルール ID だけを出し、値は出さない（`--redact`）。gitleaks の失敗は、漏えいと分けて出して止める。
   gitleaks は設定を読めないときも終了コード 1 を返すので、一覧が空でないときだけ漏えいとする。中の `git diff` の
   失敗はエラーの行を出すだけで終了コード 0 を返すので、`--log-level error` でエラーの行が出たら失敗とする
-- マージを締めるコミットでは、相手のブランチから入る中身も見る（前の PreToolUse の検査と同じ範囲。相手の
-  ブランチの中身が検査を通ったとは限らない）
 - 迂回は今までと同じく `ALLOW_SECRET_COMMIT=1`（コマンドに付けた環境変数を hook が見る）。誤検出は、行の
   `gitleaks:allow`、`.gitleaksignore`、`.gitleaks.toml` で除く
-- PreToolUse の規則は block-secret-commit から block-no-verify にする。迂回は `ALLOW_NO_VERIFY=1`
+
+PreToolUse の規則:
+
+- block-secret-commit: 対象のリポジトリで実際に効く core.hooksPath がグローバルの値と違うとき（グローバルの hook
+  が走らないとき）だけ、前と同じく `gitleaks git --staged`（`-a` なら `--pre-commit` も）で検査する。対象の
+  ディレクトリを決められないとき（まだ無い、変数を含む。#281）は、git の hook に任せて通す
+- block-no-verify: `git commit` / `merge` / `pull` の `--no-verify`（git が受け付ける省略形と、commit の `-n`）、hook の
+  置き場所を変えるもの（`-c` / `--config-env` / `git config` の core.hooksPath、`GIT_CONFIG_*` の環境変数）、hook が
+  Claude Code のセッションと分かる `CLAUDECODE=1` を別の値にする・外すもの（`env -u`、`unset`）を止める。迂回は
+  `ALLOW_NO_VERIFY=1`
 
 ### 帰結
 
-- 良い点: 同じコマンドで作るディレクトリ、変数のパス、同じコマンドの `git add` でも、コミットに入る中身を検査する
+- 良い点: 同じコマンドで作るディレクトリ、変数のパス、同じコマンドの `git add` でも、グローバルの hook を使う
+  リポジトリでは、コミットに入る中身を検査する
 - 良い点: `commit -a` を別に扱う必要が無い（pre-commit は -a で足した後の index を見る）
-- 悪い点: Claude Code が `git commit` と `git merge` の `--no-verify` を使えない。git の hook を飛ばしたいときは
-  `ALLOW_NO_VERIFY=1` を付ける
-- 悪い点: 検査はコマンドを実行した後に走るので、止まったときは `git add` まで済んでいる（コミットだけが止まる）
+- 悪い点: ローカルの core.hooksPath を持つリポジトリでは、前と同じく、同じコマンドの `git add` を見落とし、対象の
+  ディレクトリを決められないときは検査しない
+- 悪い点: Claude Code が `--no-verify` などで git の hook を飛ばせない。飛ばしたいときは `ALLOW_NO_VERIFY=1` を付ける
+- 悪い点: git の hook の検査はコマンドを実行した後に走るので、止まったときは `git add` まで済んでいる（コミット
+  だけが止まる）
 
 ### 確認
 
-- git の pre-commit の検査のテスト（`modules/home/parts/tests/pre-commit-secrets.sh`）
-- PreToolUse の block-no-verify のテスト（`.claude/tests/hooks.sh`）
+- git の hook の検査のテスト（`modules/home/parts/tests/pre-commit-secrets.sh`）: 同じコマンドの add、`commit -a`、
+  Markdown の自動修正とローカルの pre-commit がステージし直した中身、種類の変更、fork、競合の無いマージ、迂回、
+  Claude Code のセッションでないとき、gitleaks の失敗
+- PreToolUse の block-secret-commit と block-no-verify のテスト（`.claude/tests/hooks.sh`）
