@@ -154,6 +154,20 @@ out=$(run_hook pre-pr-create-check "cd $OTHER && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
+it "pre-pr-create: ssh と sudo -i の中の gh は、cd 先でなく、その中で走るので手元で検査できないと示して止める"
+out=$(run_hook pre-pr-create-check "ssh host $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
+out=$(run_hook pre-pr-create-check "sudo -i $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
+# 展開しない cd の行き先は、移れない cd 先として示す
+out=$(run_hook pre-pr-create-check "cd \"\$NOWHERE\" && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
+
 # --- fork（upstream リモートのある clone）: こちらの規約は検査しない ---
 FORK="$TEST_ROOT/prcreate-fork"
 make_repo "$FORK"
@@ -1058,6 +1072,16 @@ out=$(run_hook guard-gh-run-rerun 'gh run rerun 100')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
 
+it "guard-gh-run-rerun: ssh と sudo -i の中の gh run rerun は、その中で走るので手元で確かめられないと示して止める（gh を呼ばない）"
+make_fake_gh ''
+out=$(run_hook guard-gh-run-rerun 'ssh host gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh run rerun は、手元の場所で試行回数を確かめられないため止めます"
+out=$(run_hook guard-gh-run-rerun 'sudo -i gh run rerun 100')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh run rerun は、手元の場所で試行回数を確かめられないため止めます"
+assert_eq "" "$(cat "$FAKE_GH_LOG")"
+
 it "guard-gh-run-rerun: gh run rerun 以外は対象外で gh を呼ばない"
 make_fake_gh ''
 out=$(run_hook guard-gh-run-rerun 'gh run view 100 --log-failed')
@@ -1360,6 +1384,16 @@ make_fake_gh_merge_files 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
+
+it "pre-merge-check: ssh と sudo -i の中の gh pr merge は、cd 先でなく、その中で走るので手元で検査できないと示して止める"
+out=$(run_hook pre-merge-check "ssh host $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
+out=$(run_hook pre-merge-check "sudo -i -u slurm $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
+assert_not_contains "$(reason "$out")" "cd 先"
 
 it "pre-merge-check: レビュー一覧を取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo "error connecting to api.github.com" >&2; exit 1'
