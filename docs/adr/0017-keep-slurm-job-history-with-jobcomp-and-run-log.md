@@ -67,3 +67,7 @@ Slurm の既定（`accounting_storage/none`）のままで、`sacct` は履歴�
 ### 案 C（slurm-run.sh の出力）だけ
 
 直接の `sbatch` のジョブは残らない。
+
+## 補足
+
+- 2026-10-12: 案 A（slurmdbd）を、待った時間の優先度のために採った（ADR-0031）。この ADR の jobcomp と TIME 行は残す
