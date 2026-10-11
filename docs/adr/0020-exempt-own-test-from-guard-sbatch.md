@@ -4,7 +4,7 @@ date: 2026-10-11
 requires: [ADR-0007]
 supersedes: []
 superseded-by:
-issues: []
+issues: ["#303"]
 ---
 
 # ADR-0020: guard-sbatch は slurm-run.sh のうち、同名のテストだけを止めない
