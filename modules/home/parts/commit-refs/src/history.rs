@@ -193,6 +193,8 @@ struct Ref {
     name: String,
     oid: String,
     kind: String,
+    /// シンボリック ref なら、行き先の ref の名前
+    symref: String,
 }
 
 fn for_each_ref(top: &Path) -> Result<Vec<Ref>, String> {
@@ -200,17 +202,18 @@ fn for_each_ref(top: &Path) -> Result<Vec<Ref>, String> {
         top,
         &[
             "for-each-ref",
-            "--format=%(refname) %(objectname) %(objecttype)",
+            "--format=%(refname) %(objectname) %(objecttype) %(symref)",
         ],
     )?;
     Ok(String::from_utf8_lossy(&out)
         .lines()
         .filter_map(|line| {
-            let mut parts = line.splitn(3, ' ');
+            let mut parts = line.splitn(4, ' ');
             Some(Ref {
                 name: parts.next()?.to_string(),
                 oid: parts.next()?.to_string(),
                 kind: parts.next()?.to_string(),
+                symref: parts.next().unwrap_or_default().to_string(),
             })
         })
         .collect())
@@ -221,6 +224,11 @@ fn split_refs(top: &Path, all: Vec<Ref>) -> Result<(Vec<Ref>, Vec<String>), Stri
     let mut rewritten = Vec::new();
     let mut others = Vec::new();
     for r in all {
+        // シンボリック ref は行き先と一緒に動くので、移さない（行き先と一緒に更新すると、同じ ref を 2 回更新する
+        // トランザクションになる）
+        if !r.symref.is_empty() {
+            continue;
+        }
         let target = if r.name.starts_with("refs/heads/") {
             r.kind == "commit"
         } else if r.name.starts_with("refs/tags/") {
