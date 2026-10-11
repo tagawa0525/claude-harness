@@ -46,4 +46,31 @@ for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.
   assert_not_contains "$out" "絶対パス"
 done
 
+# 起動の確認は通り、ルールの呼び出しで失敗する版（ルールの足りない古い版など）
+make_fake_tool rule-fails "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
+  *) cat >/dev/null; echo 'unknown rule: block-main-commit' >&2; exit 2 ;;"
+# ルールが panic する版（claude-hooks は panic を拾い、標準エラーに出して 0 で終わる）。どちらも本物と同じく
+# 入力を読み切ってから終わる
+make_fake_tool rule-panics "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
+  *) cat >/dev/null; echo \"thread 'main' panicked at src/shell.rs\" >&2; exit 0 ;;"
+# main-commit-gates.sh は、比べる前に pre-commit の hook を nix build する（評価だけで数秒）ので、nix の
+# ある PATH で走らせる。ルールの呼び出しの失敗では、そこで止まり、シナリオを失敗や allow と数えない
+for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
+  path="$NO_NIX_PATH"
+  [[ $target == */main-commit-gates.sh ]] && path="$PATH"
+  for bin in rule-fails rule-panics; do
+    it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、バイナリの標準エラーを出して止まる"
+    out=$(cd "$ROOT" && PATH="$path" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" bash "$target" 2>&1)
+    assert_eq 1 $?
+    assert_contains "$out" "claude-hooks が失敗しました"
+    if [[ $bin == rule-fails ]]; then
+      assert_contains "$out" "unknown rule: block-main-commit"
+    else
+      assert_contains "$out" "thread 'main' panicked"
+    fi
+    assert_not_contains "$out" "passed:"
+    assert_not_contains "$out" "✗"
+  done
+done
+
 finish
