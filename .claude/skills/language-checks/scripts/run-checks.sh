@@ -201,11 +201,15 @@ md_autofix() {
 md_lint() {
   staged_md | xargs -0 -r markdownlint --
 }
-# design_records_check: ADR の形と ADR どうしの参照（ADR-0009）。error はすべて、warning は変更した .md の分だけ出る。
-# xargs で渡さないのは、引数が多いと分けて呼ばれ、ADR どうしの検査の指摘が重なるため
+# design_records_check: ADR の形と ADR どうしの参照（ADR-0009）。変更したファイルを全部渡し、置き換えられた ADR への
+# 参照をそこから探させる（prek の設定の types: [text] と同じ。テキストでないファイルは design-records が読み飛ばす）。
+# --changed で、触っていない ADR の推奨の節の warning を出さない。
+# xargs で渡さないのは、引数が多いと分けて呼ばれ、ADR どうしの検査の指摘が重なるため。
+# プロセス置換は git diff の失敗を返さないので、先に一度走らせて失敗を止める
 design_records_check() {
   local files
-  mapfile -d '' -t files < <(staged_md)
+  changed_files >/dev/null || return 1
+  mapfile -d '' -t files < <(changed_files -z)
   design-records check --changed "${files[@]}"
 }
 if staged_has '*.md'; then
@@ -221,7 +225,8 @@ fi
 # 決めると、別の形の ADR を持つ他人のプロジェクトでも止まる）。.md の変更が無くても走らせ、ADR を消すだけの変更でも、
 # 消した ADR を指す参照が残っていないかを見る（prek の設定の always_run と同じ）
 design_records_opted_in() {
-  [[ -f .pre-commit-config.yaml ]] && grep -Eq '^[[:space:]]*-?[[:space:]]*id:[[:space:]]*design-records[[:space:]]*$' .pre-commit-config.yaml
+  [[ -f .pre-commit-config.yaml ]] &&
+    grep -Eq "^[[:space:]]*-?[[:space:]]*id:[[:space:]]*[\"']?design-records[\"']?[[:space:]]*(#.*)?\$" .pre-commit-config.yaml
 }
 if design_records_opted_in; then
   DETECTED=1
