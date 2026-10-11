@@ -850,8 +850,8 @@ mod tests {
 
     #[test]
     fn commands_under_sudo_login_or_ssh_do_not_run_in_a_local_directory() {
-        // sudo -i は対象の利用者のホームで、ssh は接続先で走る。どちらも手元に実在しない場所になり、中の cd
-        // （絶対パスや ~ を含む）と git -C も手元のパスに解決しない
+        // sudo -i は対象の利用者のホームで、ssh は接続先で走る。どちらも手元に実在しない場所から始まる。ssh の
+        // 中の cd と git -C は手元のパスに解決しない。sudo -i の中の ~ は対象の利用者のホーム
         let base = Path::new("/base");
         let dir_of_git = |src: &str| {
             let sh = Shell::parse(src);
@@ -862,8 +862,9 @@ mod tests {
             "sudo -i git commit",
             "sudo --login git commit",
             "sudo -i bash -c 'git commit'",
-            "sudo -i -u slurm bash -c 'cd /a && git commit'",
-            "cd /a && sudo -i git -C /b commit",
+            "sudo -i bash -c 'cd ~/repo && git commit'",
+            "sudo -i -u slurm bash -c 'cd repo && git commit'",
+            "cd /a && sudo -i git commit",
             "ssh host git commit",
             "ssh host 'cd /a && git commit'",
             "ssh host 'cd ~/repo && git commit'",
@@ -885,6 +886,15 @@ mod tests {
             PathBuf::from("/base")
         );
         assert_eq!(dir_of_git("sudo -E git commit"), PathBuf::from("/base"));
+        // sudo -i は手元で走るので、中の絶対パスは手元のもの
+        assert_eq!(
+            dir_of_git("sudo -i bash -c 'cd /a && git commit'"),
+            PathBuf::from("/a")
+        );
+        assert_eq!(
+            dir_of_git("cd /a && sudo -i git -C /b commit"),
+            PathBuf::from("/b")
+        );
         assert_eq!(
             dir_of_git("sudo -s bash -c 'cd /a && git commit'"),
             PathBuf::from("/a")

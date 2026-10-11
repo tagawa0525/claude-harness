@@ -952,6 +952,11 @@ mod tests {
             u.env,
             [EnvChange::Unset("FOO".to_string()), EnvChange::Clear]
         );
+        // `-` か代入の後の `--` はオプションの終わりでなく、走らせるプログラム
+        let u = un("env - -- git");
+        assert_eq!(u.name, "--");
+        assert_eq!(u.env, [EnvChange::Clear]);
+        assert_eq!(un("env FOO=1 -- git").name, "--");
         let u = un("env - FOO=1 git");
         assert_eq!(u.name, "git");
         assert_eq!(

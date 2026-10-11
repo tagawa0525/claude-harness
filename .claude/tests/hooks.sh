@@ -516,13 +516,17 @@ out=$(run_hook block-main-commit "cd $LOCAL && echo \$(git commit -m 'feat: x')"
 assert_eq allow "$(decision "$out")"
 
 it "block-main-commit: sudo -i と ssh の中のコマンドは手元の cwd で走らないので、手元のブランチで判定しない"
-for cmd in "sudo -i git commit -m 'feat: x'" "sudo -i bash -c 'cd $REPO && git commit -m x'" \
+for cmd in "sudo -i git commit -m 'feat: x'" "sudo -i bash -c 'cd ~ && git commit -m x'" \
   "ssh host git commit -m 'feat: x'" "ssh host 'cd $REPO && git commit -m x'" "ssh host git -C $REPO commit -m x"; do
   out=$(run_hook block-main-commit "$cmd")
   assert_eq allow "$(decision "$out")"
 done
-out=$(run_hook block-main-commit "ssh host true; git commit -m 'feat: x'")
-assert_eq deny "$(decision "$out")"
+# sudo -i は手元で走るので、中の絶対パスは手元のリポジトリを指す
+for cmd in "ssh host true; git commit -m 'feat: x'" "sudo -i bash -c 'cd $REPO && git commit -m x'" \
+  "sudo -i git -C $REPO commit -m x"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 
 it "block-main-commit: bash -c の文字列の中の cd は、同じ文字列の中の後ろのコマンドにだけ効く。前の cd は文字列の中にも効く"
 out=$(run_hook block-main-commit "bash -c 'cd $LOCAL && git commit -m \"feat: x\"'")
@@ -921,7 +925,7 @@ it "block-no-verify: env の - は getopt の後に一度だけ（-- の後で�
 # `env -- - git` は空の環境で git を走らせる。`env - -u X git` は -u を、`env - - git` は - を走らせる
 out=$(run_hook block-no-verify 'env -- - git commit -m x')
 assert_eq deny "$(decision "$out")"
-for cmd in 'env - -u CLAUDECODE git commit -m x' 'env - - git commit -m x'; do
+for cmd in 'env - -u CLAUDECODE git commit -m x' 'env - - git commit -m x' 'env - -- git commit -n -m x'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
 done
