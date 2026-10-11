@@ -89,3 +89,9 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
 - 2026-10-12: `innodb_buffer_pool_size=4G` を r995 に当てて測り、採らなかった。slurmdbd の警告は消えたが、MariaDB の
   起動直後のメモリ（`systemctl show -p MemoryCurrent`）が 89 MiB から 167 MiB に増えた（RSS は 194 MiB）。得られるのは
   警告が消えることだけで、大きな DB の移行や記録の削除の速さは、履歴だけの小さな DB には効かない
+- 2026-10-12: slurmdbd が動いていないときに投げたジョブ（124、125。01:56 に投入、slurmdbd の最初の起動は 02:14）は、
+  QOS が空のまま走り、`sacct` の記録は JobName が `allocation`、User が `root`、QOS が `Unknown` になった。動いているときに
+  投げたジョブ（126、127）は QOS が `normal` で、名前と利用者も残った。assoc は 4 本とも無い（`AssocID` が 0）。
+  slurmctld は QOS を投入のときに決め、後から付け直さない（管理者は `scontrol update JobId=<番号> QOS=normal` で変えられる）。
+  `_set_top`（`src/slurmctld/job_mgr.c`）は QOS の違うジョブを下げる対象から外すので、両方が待ち行列に混ざっている間は
+  `scontrol top` が効かなかった（126 を 124、125 の前に出せず、126 と 127 の間では効いた）
