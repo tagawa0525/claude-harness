@@ -62,8 +62,21 @@ pub fn run(map_path: &Path) -> Result<(), Errors> {
         return Err(one("書き換えるブランチとタグが無い".to_string()));
     }
     let commits = rev_list(&top, &refs).map_err(one)?;
-    map.add_unchanged(commits.iter().map(String::as_str));
     let current: HashSet<String> = commits.iter().cloned().collect();
+    // 対応表で変わった（消えた）とされる旧が今の履歴にも残るのは、一部の ref だけを書き換えた対応表。文書がその旧を
+    // 指すとき、残っている旧か書き換えた後の新のどちらを指すのか決まらない
+    let left: Vec<String> = map
+        .targets()
+        .filter(|(old, target)| **target != Target::Unchanged && current.contains(*old))
+        .map(|(old, _)| old.to_string())
+        .collect();
+    if !left.is_empty() {
+        return Err(vec![format!(
+            "対応表で変わった（消えた）とされる旧が、書き換えるブランチとタグから届く（一部の ref だけを書き換えた対応表は扱わない）:\n{}",
+            left.join("\n")
+        )]);
+    }
+    map.add_unchanged(commits.iter().map(String::as_str));
     let head = head_state(&top).map_err(one)?;
     if let Head::Detached(oid) = &head
         && !current.contains(oid)
