@@ -102,6 +102,21 @@ out=$(OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF")
 assert_contains "$out" "UNCOVERED: guard-git-add"
 assert_not_contains "$out" "UNCOVERED: block-no-verify"
 
+it "hooks-diff: HOOKS_DIFF_LIST=1 なら、比べずに、包み・ディレクトリの移り方・background を組み合わせた集まりを出す"
+out=$(HOOKS_DIFF_COMMANDS='' HOOKS_DIFF_LIST=1 OLD_BIN="$TEST_ROOT/strict" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF")
+assert_eq 0 $?
+assert_contains "$out" "$(printf 'false\tgit commit -m x')"
+assert_contains "$out" "$(printf 'false\tenv -- CLAUDECODE=0 git commit -m x')"
+assert_contains "$out" "$(printf 'false\tunset CLAUDECODE && git push origin main')"
+assert_contains "$out" "$(printf 'false\tbuiltin cd ')"
+assert_contains "$out" "$(printf 'true\tgit add -A')"
+assert_not_contains "$out" "CHECKED:"
+# どのコマンドも、包みの数 + ディレクトリの移り方の数 + background の 1 回だけ出る
+per=$(cut -f2 <<<"$out" | grep -c 'git commit -m x$')
+assert_eq 1 "$((per > 0))"
+assert_eq "$per" "$(cut -f2 <<<"$out" | grep -c 'git push --mirror$')"
+assert_eq "$per" "$(cut -f2 <<<"$out" | grep -c 'sbatch x.sh$')"
+
 it "hooks-diff: 呼べないバイナリなら失敗する"
 out=$(OLD_BIN="$TEST_ROOT/missing" NEW_BIN="$TEST_ROOT/strict" bash "$DIFF" 2>&1)
 assert_eq 1 $?
