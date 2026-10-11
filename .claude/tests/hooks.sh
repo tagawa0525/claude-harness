@@ -696,7 +696,8 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'env --uns=CLAUDECODE git commit -m x' 'nice git commit --no-verify -m x' 'nice -n 10 git commit -n -m x' \
   'timeout 60 git commit --no-verify -m x' 'timeout -k 5 60 git commit -n -m x' 'setsid git commit -n -m x' \
   'stdbuf -oL git commit --no-verify -m x' 'ionice -c3 git commit --no-verify -m x' \
-  'env -S "git\_commit\_--no-verify" -m x' \
+  'env -S "git\_commit\_--no-verify" -m x' 'env -- FOO=1 git commit --no-verify -m x' \
+  'env -- CLAUDECODE=0 git commit -m x' 'builtin command git commit --no-verify -m x' \
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
@@ -710,6 +711,7 @@ for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --
   'git commit -m "-nightly build fix"' 'git commit --author -n -m x' 'git config --get core.hooksPath' \
   'git config core.autocrlf false' 'git config --remove-section alias' 'git config get core.hooksPath' \
   'env FOO=1 git commit -m x' 'env CLAUDECODE=1 git commit -m x' "env -S \"git commit -m 'x -n'\"" \
+  'git commit -m --no-verify' 'git merge -m --no-verify feat/x' 'env -i CLAUDECODE=1 git commit -m x' \
   'git pull origin main'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq allow "$(decision "$out")"
