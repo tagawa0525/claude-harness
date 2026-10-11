@@ -43,7 +43,8 @@ for skill in "${skills[@]}"; do
   name=$(basename "$(dirname "$skill")")
   while IFS= read -r line; do
     it "skills: $name のリモート追跡ブランチから作るブランチは --no-track: $line"
-    if [[ "$line" == *--no-track* ]]; then
+    # 行末のコメントに書いた --no-track で通さないよう、コマンドの部分だけを見る
+    if [[ "${line%%#*}" == *--no-track* ]]; then
       _pass
     else
       _fail "上流が origin/... になり、git push の先が main になる"
