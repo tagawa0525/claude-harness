@@ -494,7 +494,7 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     );
 }
 
-/// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ
+/// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ（ADR-0001 の予約は解放済み）
 fn decided_topic(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
     t.run(&["new", "use-a", "a を使う"]);
@@ -504,6 +504,8 @@ fn decided_topic(name: &str) -> TempRepo {
         &t.read(a).replace("status: proposed", "status: accepted"),
     );
     t.commit_all("docs(adr): a");
+    // main に入った記録の予約は解放されている（post-merge-cleanup.sh）
+    t.run(&["prune"]);
     t.git(&["switch", "-q", "-c", "topic"]);
     t
 }

@@ -202,18 +202,18 @@ mod tests {
 
     #[test]
     fn reads_numbers_from_kebab_case_names() {
-        assert_eq!(adr_number("0013-docs-consistency-check.md"), Some(13));
-        assert_eq!(adr_number("0005-k-offset-2d.md"), Some(5));
-        assert_eq!(adr_number("README.md"), None);
-        assert_eq!(adr_number("013-short.md"), None);
-        assert_eq!(adr_number("00013-long.md"), None);
-        assert_eq!(adr_number("0013-name.txt"), None);
-        assert_eq!(adr_number("0013.md"), None);
-        assert_eq!(adr_number("0013-.md"), None);
-        assert_eq!(adr_number("0013-Docs-check.md"), None);
-        assert_eq!(adr_number("0013-docs_check.md"), None);
-        assert_eq!(adr_number("0013-docs--check.md"), None);
-        assert_eq!(adr_number("0013-文書.md"), None);
+        assert_eq!(record_number("0013-docs-consistency-check.md"), Some(13));
+        assert_eq!(record_number("0005-k-offset-2d.md"), Some(5));
+        assert_eq!(record_number("README.md"), None);
+        assert_eq!(record_number("013-short.md"), None);
+        assert_eq!(record_number("00013-long.md"), None);
+        assert_eq!(record_number("0013-name.txt"), None);
+        assert_eq!(record_number("0013.md"), None);
+        assert_eq!(record_number("0013-.md"), None);
+        assert_eq!(record_number("0013-Docs-check.md"), None);
+        assert_eq!(record_number("0013-docs_check.md"), None);
+        assert_eq!(record_number("0013-docs--check.md"), None);
+        assert_eq!(record_number("0013-文書.md"), None);
     }
 
     #[test]
@@ -229,21 +229,30 @@ mod tests {
 
     #[test]
     fn next_number_follows_the_largest_of_any_width() {
-        assert_eq!(next_number([]), 1);
+        assert_eq!(next_number(Kind::Adr, []), 1);
         assert_eq!(
-            next_number(["docs/adr/0001-a.md", "docs/adr/0003-c.md", "README.md"]),
+            next_number(
+                Kind::Adr,
+                ["docs/adr/0001-a.md", "docs/adr/0003-c.md", "README.md"]
+            ),
             4
         );
         // 3 桁で振っていた ADR も数える
-        assert_eq!(next_number(["docs/adr/001-a.md", "docs/adr/007-g.md"]), 8);
+        assert_eq!(
+            next_number(Kind::Adr, ["docs/adr/001-a.md", "docs/adr/007-g.md"]),
+            8
+        );
         // docs/adr の直下でないもの、番号で始まらないものは数えない
         assert_eq!(
-            next_number([
-                "docs/adr/README.md",
-                "docs/adr/drafts/0009-x.md",
-                "docs/issues/0042-y.md",
-                "docs/adr/0002-b.md",
-            ]),
+            next_number(
+                Kind::Adr,
+                [
+                    "docs/adr/README.md",
+                    "docs/adr/drafts/0009-x.md",
+                    "docs/issues/0042-y.md",
+                    "docs/adr/0002-b.md",
+                ]
+            ),
             3
         );
     }
@@ -251,8 +260,79 @@ mod tests {
     #[test]
     fn next_number_ignores_numbers_longer_than_four_digits() {
         assert_eq!(
-            next_number(["docs/adr/0002-b.md", "docs/adr/20261010-notes.md"]),
+            next_number(
+                Kind::Adr,
+                ["docs/adr/0002-b.md", "docs/adr/20261010-notes.md"]
+            ),
             3
+        );
+    }
+
+    #[test]
+    fn next_issue_number_counts_only_docs_issues() {
+        assert_eq!(
+            next_number(
+                Kind::Issue,
+                [
+                    "docs/adr/0009-a.md",
+                    "docs/issues/0002-b.md",
+                    "docs/issues/README.md"
+                ]
+            ),
+            3
+        );
+    }
+
+    #[test]
+    fn reservation_tags_carry_the_kind_and_four_digits() {
+        assert_eq!(Kind::Adr.tag(18), "adr-0018");
+        assert_eq!(Kind::Issue.tag(7), "issue-0007");
+        assert_eq!(parse_tag("adr-0018"), Some((Kind::Adr, 18)));
+        assert_eq!(parse_tag("issue-0007"), Some((Kind::Issue, 7)));
+        for name in [
+            "adr-18",
+            "adr-00018",
+            "adr-001x",
+            "v1.0",
+            "adrs-0001",
+            "issue0001",
+        ] {
+            assert_eq!(parse_tag(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn renumber_refs_rewrites_references_and_file_names_of_the_record() {
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "ADR-0001 と [b](0001-use-b.md)、docs/adr/0001-use-b.md",
+                1,
+                2,
+                "use-b"
+            ),
+            "ADR-0002 と [b](0002-use-b.md)、docs/adr/0002-use-b.md"
+        );
+        // 別の番号、別の slug、語の途中、桁の違うものは変えない
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "ADR-0011 0001-use-a.md x0001-use-b.md XADR-0001 ADR-00012 ADR-0001x",
+                1,
+                2,
+                "use-b"
+            ),
+            "ADR-0011 0001-use-a.md x0001-use-b.md XADR-0001 ADR-00012 ADR-0001x"
+        );
+        assert_eq!(
+            renumber_refs(
+                Kind::Issue,
+                "blocked-by: [\"#0001\"] x#0001 #00012 ADR-0001",
+                1,
+                3,
+                "fix-a"
+            ),
+            "blocked-by: [\"#0003\"] x#0001 #00012 ADR-0001"
         );
     }
 
@@ -307,7 +387,8 @@ mod tests {
     }
 
     #[test]
-    fn adr_path_pads_to_four_digits() {
-        assert_eq!(adr_path(8, "use-i"), "docs/adr/0008-use-i.md");
+    fn record_paths_pad_to_four_digits() {
+        assert_eq!(Kind::Adr.path(8, "use-i"), "docs/adr/0008-use-i.md");
+        assert_eq!(Kind::Issue.path(8, "fix-i"), "docs/issues/0008-fix-i.md");
     }
 }
