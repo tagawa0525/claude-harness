@@ -388,5 +388,9 @@ mod tests {
             ["git", "commit", "-m", "x -n"]
         );
         assert_eq!(split_env_string("a \"b\\_c\" d\\c e"), ["a", "b c", "d"]);
+        // 語の先頭の # から後ろは注釈。語の途中と引用符の中の # は文字
+        assert_eq!(split_env_string("a # b c"), ["a"]);
+        assert!(split_env_string("# x").is_empty());
+        assert_eq!(split_env_string("a#b '#c'"), ["a#b", "#c"]);
     }
 }

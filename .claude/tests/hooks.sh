@@ -718,6 +718,7 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'timeout 60 git commit --no-verify -m x' 'timeout -k 5 60 git commit -n -m x' 'setsid git commit -n -m x' \
   'stdbuf -oL git commit --no-verify -m x' 'ionice -c3 git commit --no-verify -m x' \
   'env -S "git\_commit\_--no-verify" -m x' 'env -- FOO=1 git commit --no-verify -m x' \
+  "env -S '# note' git commit --no-verify -m x" \
   'env -- CLAUDECODE=0 git commit -m x' 'builtin command git commit --no-verify -m x' \
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
   out=$(run_hook block-no-verify "$cmd")
