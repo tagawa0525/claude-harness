@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-12
 requires: [ADR-0007, ADR-0017]
 supersedes: []
@@ -43,12 +43,18 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
   （`src/slurmdbd/slurmdbd.c` の `become_slurm_user` のあとの `acct_storage_g_get_connection`）
 - `modules/slurm/common.nix` に `AccountingStorageType=accounting_storage/slurmdbd` と `AccountingStorageHost=r995` を
   置く。slurm.conf は全ホストで同じにする
-- クラスタ（r995）の登録は、slurmctld より前に走る oneshot（`slurm-register-cluster`）が、登録されていなければ
-  `sacctmgr add cluster` で行う。登録がないと、slurmctld は記録を送れない（slurmdbd が `trying to register a cluster
-  (r995) with no remote port` を出す。2026-10-12 に r995 で確かめた）
+- slurmctld は起動時に slurmdbd に名乗り、slurmdbd は知らないクラスタを、slurmctld の ClusterID のまま登録する
+  （`src/slurmdbd/proc_req.c` の `_register_ctld`）。slurmdbd が応じる前に名乗ると登録されず、記録が送れない
+  （slurmdbd が `trying to register a cluster (r995) with no remote port` を出す。2026-10-12 に r995 で確かめた）。
+  slurmdbd は `Type=simple` なので、`postStart` で `sacctmgr` が応じるまで待ち、slurmctld をその後に起こす
+- `JobAcctGatherType=jobacct_gather/linux` を置き、ジョブのメモリと CPU の使用量を集める。既定（none）では `sacct` の
+  `MaxRSS` が空になる
 - MariaDB は、slurmdbd が推奨する値のうち `innodb_lock_wait_timeout=900` と `max_allowed_packet=16M` だけ合わせる。
   `innodb_buffer_pool_size` の推奨（4 GiB 以上。`accounting_storage_mysql.c` の `_check_database_variables`）は大きな
   クラスタ向けで、履歴だけの小さな DB には既定（128 MiB）のまま置き、slurmdbd の警告は受け入れる
+- `innodb_snapshot_isolation=OFF` を置く。MariaDB 11.6.2 から既定で有効になり、slurmdbd は書き込みの競合で止まる
+  （同じ `_check_database_variables`）。今の 11.4 では既定で無効だが、nixpkgs の `mariadb` が上がっても変わらないようにする
+- slurmdbd は unix socket で接続するので、MariaDB は TCP を待ち受けない（`skip-networking`）
 - ほかのホストの `sacct` が r995 の slurmdbd（6819）に届くよう、tailscale0 に開ける
 - jobcomp（ADR-0017）は残す。`slurm-history.sh` がそれを読む
 
@@ -60,7 +66,7 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
 
 ### 確認
 
-- 反映後、`sacctmgr show cluster` に r995 が出ること、短いジョブを 1 本流して `sacct` に出ること
+- 反映後、`sacctmgr show cluster` に r995 とポート 6817 が出ること、短いジョブを 1 本流して `sacct` に `MaxRSS` つきで出ること
 - slurmctld のログに `PriorityWeightAge can only be used with SlurmDBD` が出ないこと
 
 ## 各案の長所と短所
@@ -72,10 +78,11 @@ Slurm 26.05.4 の accounting の置き場は `accounting_storage/slurmdbd` だ�
 
 ## 補足
 
-- 2026-10-12: slurmdbd より先に slurmctld を動かしていたホスト（r995）では、slurmctld が自分で作った ClusterID
-  （`/var/spool/slurmctld/clustername`）と、`slurm-register-cluster` の `sacctmgr add cluster` で slurmdbd が振った ID が
-  食い違い、slurmctld が `CLUSTER ID MISMATCH` で止まった。`clustername` を消して slurmctld を起動し直すと、slurmdbd の ID を
-  受け入れて書き直す（`src/slurmctld/controller.c` の `clusteracct_storage_g_register_ctld` のあと）。ジョブの状態は
-  別のファイルにあり、待っているジョブと走っているジョブは残った。新しいホストでは登録が slurmctld より先に走るので起きない
+- 2026-10-12: クラスタの登録を、slurmctld より前に走る oneshot（`sacctmgr add cluster`）で行う方式を試して捨てた。
+  `no remote port` を登録の欠けと取り違えていた（本当の原因は起動の順番）。r995 では slurmctld が slurmdbd なしで作った
+  ClusterID（1236。`/var/spool/slurmctld/clustername`）と、`sacctmgr add cluster` で slurmdbd が振った ID（3295）が食い違い、
+  slurmctld が `CLUSTER ID MISMATCH` で止まった。`clustername` を消して起動し直すと、slurmdbd の ID を受け入れて書き直し
+  （`src/slurmctld/controller.c` の `clusteracct_storage_g_register_ctld` のあと）、ジョブの状態は別のファイルにあるので
+  待っているジョブも走っているジョブも残った
 - 2026-10-12: 反映の直後に測った常駐の量（`systemctl show -p MemoryCurrent -p CPUUsageNSec`）は、mysql が 96 MiB と
   起動からの CPU 0.52 秒、slurmdbd が 4.6 MiB と 0.02 秒（r995 の物理メモリは 92 GiB）
