@@ -101,6 +101,41 @@ it "slurm-run: 実際の時間と見積もりは、ジョブの欄の先頭の R
 out=$(FAKE_EXTRA_LINE="   Comment=feat/x RunTime=99:99:99 TimeLimit=9-99:99:99" "$RUN" -t 30 xlc-2G 'true')
 assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
 
+it "slurm-run: -c <コア数> を付けると、--exclusive を付けず --cpus-per-task を渡し、連絡先に印を付ける"
+cd "$HOME/github/proj" || exit 1
+"$RUN" -c 8 -t 30 openmc-2G 'true' >/dev/null
+args=$(cat "$TEST_ROOT/sbatch.args")
+assert_not_contains "$args" "--exclusive"
+assert_contains "$args" "--cpus-per-task=8"
+assert_contains "$args" "--wait"
+assert_contains "$args" "shared-cpus=8"
+
+it "slurm-run: -c を付けたジョブの TIME 行とログの末尾に、時間は当てにならない印を付ける"
+out=$("$RUN" -c 8 -t 30 openmc-2G 'true')
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 shared (-c 8): 時間は当てにならない"
+assert_contains "$(cat "$HOME/github/slurm-logs/openmc-2G-42.out")" "shared (-c 8): 時間は当てにならない"
+
+it "slurm-run: -c を付けなければ、排他で投げ、TIME 行に印を付けない"
+out=$("$RUN" -t 30 xlc-2G 'true')
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--exclusive"
+assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "--cpus-per-task"
+assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "shared-cpus"
+assert_not_contains "$out" "shared"
+
+it "slurm-run: -c が正の整数でなければ、投げずにエラー"
+for bad in 0 -1 abc 1.5 ""; do
+  rm -f "$TEST_ROOT/sbatch.args"
+  out=$("$RUN" -c "$bad" -t 30 openmc-2G 'true' 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "ERROR:"
+  assert_file_missing "$TEST_ROOT/sbatch.args"
+done
+
+it "slurm-run: -c にコア数がなければ使い方を出してエラー"
+out=$("$RUN" -t 30 openmc-2G 'true' -c 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+
 it "slurm-run: ジョブが失敗したら、その終了コードで終わる"
 out=$(FAKE_JOB_EXIT=3 "$RUN" -t 1 xlc-2G 'false')
 assert_eq 3 $?
