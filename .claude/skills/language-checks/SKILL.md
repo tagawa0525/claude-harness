@@ -26,6 +26,8 @@ user-invocable: false
 - 検出条件: プロジェクトマーカー（`Cargo.toml` / `pyproject.toml` `setup.py` `requirements.txt` /
   `flake.nix`）があるか、その言語のファイルがステージ済み。Markdown はステージ済みの `.md` のみ
 - フォーマット → リント → テストの順に実行し、最初に失敗したチェックで止まる
+- `.pre-commit-config.yaml` で design-records にオプトインしたリポジトリでは、`.md` の変更が無くても
+  `design-records check --changed <変更したファイル>` で ADR の形と参照も検査する
 - 失敗時は `FAILED:` に続けて `FIX:`（自動修正コマンド）を出す。ツールがなければ `SKIP:` で続行
 
 ## プロジェクト設定の優先
