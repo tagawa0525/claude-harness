@@ -1,21 +1,24 @@
-//! block-secret-commit: 機密情報を含む変更の git commit を gitleaks で止める
+//! block-secret-commit: グローバルの git の hook を使わないリポジトリの git commit を、gitleaks で止める
 //!
-//! 検出そのものは自前で持たず、既存の定番ツール gitleaks に委ねる（ルール集とエントロピー判定、
-//! `gitleaks:allow` / .gitleaksignore / .gitleaks.toml による除外は gitleaks の仕組みをそのまま使う）。
-//! この hook が担うのは次の 2 つだけ:
-//! - いつ何を渡して呼ぶか: `git commit` の対象ディレクトリで `gitleaks git --staged`。
-//!   -a / --all なら未ステージの追跡ファイルの変更も対象なので `--pre-commit` でも走らせる
-//!   （gitleaks は両方のフラグを同時に指定すると staged だけを見る）
-//! - 結果の扱い: 漏えい（exit 1 + JSON）は場所とルール ID だけを理由に出す（値は出さない）。
-//!   gitleaks が無い・失敗した場合は「検査できない」として deny する（黙って通さない）
+//! 機密情報の検査はグローバルの git の pre-commit と pre-merge-commit で行う（ADR-0015）。コミットの時点の
+//! index を見るので、同じコマンドの git add も見落とさない。ただ、リポジトリがローカルの core.hooksPath
+//! （husky など）でグローバルの hook を使わないときは、それが走らない。そのリポジトリでだけ、コマンドを
+//! 実行する前のここで検査する（同じコマンドの git add は見えない）。
+//!
+//! 対象のディレクトリをコマンドの文字列から決められないとき（まだ無い、変数を含む）は、git の hook に任せて
+//! 通す（#281。そのリポジトリがグローバルの hook を使うかも分からない）。
+//!
+//! 検出そのものは gitleaks に委ねる（`gitleaks:allow` / .gitleaksignore / .gitleaks.toml による除外も
+//! gitleaks の仕組み）。漏えいは場所とルール ID だけを理由に出す。gitleaks が無い・失敗した場合は
+//! 「検査できない」として deny する。
 //!
 //! エスケープ: コマンドに `ALLOW_SECRET_COMMIT=1` を付ける。
-//! gitleaks は claude-code.nix の home.packages で配布する
 
 use std::path::Path;
 use std::process::Command;
 
 use super::Rule;
+use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Shell, short_cluster_has};
@@ -28,6 +31,12 @@ enum Scan {
     Leaks(Vec<String>),
     /// gitleaks が無い、または実行に失敗した
     Unavailable(String),
+}
+
+/// dir のリポジトリがグローバルの git の hook を使うか（実際に効く core.hooksPath がグローバルの値と同じか）
+fn uses_global_hooks(dir: &Path) -> bool {
+    let global = git::git(dir, &["config", "--global", "--get", "core.hooksPath"]);
+    global.is_some() && git::git(dir, &["config", "--get", "core.hooksPath"]) == global
 }
 
 /// `gitleaks git <mode> …` を dir で実行して結果を分類する
@@ -48,7 +57,12 @@ fn run_gitleaks(dir: &Path, mode: &str) -> Scan {
         .output();
     let out = match out {
         Ok(o) => o,
-        Err(e) => return Scan::Unavailable(format!("gitleaks を起動できません: {e}")),
+        // dir があることは呼ぶ側で確かめたので、起動できないのは gitleaks が無いとき
+        Err(e) => {
+            return Scan::Unavailable(format!(
+                "gitleaks が PATH にありません（{e}）。gitleaks は claude-code.nix の home.packages で配布しています"
+            ));
+        }
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
     let findings: Option<Vec<serde_json::Value>> = serde_json::from_str(stdout.trim()).ok();
@@ -89,6 +103,13 @@ impl Rule for BlockSecretCommit {
                 continue;
             };
             let dir = shell.target_dir(&cmd, &input.cwd);
+            // 変数やコマンド置換は展開しない（shell.rs）ので、含むパスは実物ではない。まだ無いディレクトリも
+            // 同じく決められない。どちらも、そのリポジトリの git の hook に任せる
+            let text = dir.to_string_lossy();
+            if text.contains('$') || text.contains('`') || !dir.is_dir() || uses_global_hooks(&dir)
+            {
+                continue;
+            }
             let all = args
                 .iter()
                 .any(|a| a.text == "--all" || short_cluster_has(a, 'a'));
@@ -104,7 +125,7 @@ impl Rule for BlockSecretCommit {
                     Scan::Leaks(list) => leaks.extend(list),
                     Scan::Unavailable(why) => {
                         return vec![Finding::Deny(format!(
-                            "機密情報の検査ができないためコミットを止めます（{why}）。\ngitleaks は claude-code.nix の home.packages で配布しています。rebuild で反映するか、どうしても必要な場合は ALLOW_SECRET_COMMIT=1 をコマンドに付けて実行してください。"
+                            "機密情報の検査ができないためコミットを止めます（{why}）。\nどうしても必要な場合は ALLOW_SECRET_COMMIT=1 をコマンドに付けて実行してください。"
                         ))];
                     }
                 }

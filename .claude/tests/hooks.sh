@@ -4,7 +4,7 @@
 # 実行: bash .claude/tests/hooks.sh
 #   claude-hooks を cargo build してから各ルールを --rule で個別に評価する
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
-#       block-secret-commit / guard-git-add / guard-gh-run-rerun / guard-gh-api /
+#       block-secret-commit / block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
 #       guard-git-merge / guard-sbatch
 
@@ -554,100 +554,149 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
 
 # ===========================================================================
-# block-secret-commit: 機密情報を含む変更のコミットを gitleaks で止める
+# block-secret-commit: グローバルの git の hook を使わないリポジトリの git commit を gitleaks で止める
 # ===========================================================================
-# 検出そのものは自前で持たず gitleaks に委ねる（既存の定番ツールを使う）。hook が担うのは
-# 「いつ・何を渡して呼ぶか」「結果をどう deny に変換するか」だけなので、偽の gitleaks で
-# 呼び出しと結果の扱いを検証する。値は理由に出さない（gitleaks 側でも --redact する）
+# 機密情報の検査は git の pre-commit で行う（ADR-0015）。ローカルの core.hooksPath（husky など）を持つ
+# リポジトリではグローバルの hook が走らないので、そこでだけ PreToolUse で検査する。対象のディレクトリを
+# 決められない（無い、変数を含む）ときは、git の hook に任せて通す（#281）。検出は gitleaks に委ねるので、
+# 偽の gitleaks で呼び出しと結果の扱いを確かめる
 
-REPO="$TEST_ROOT/secret"
+GLOBAL_HOOKS="$TEST_ROOT/global-hooks"
+mkdir -p "$GLOBAL_HOOKS"
+git config --global core.hooksPath "$GLOBAL_HOOKS"
+REPO="$TEST_ROOT/secret-global"
 make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
-cd "$REPO" || exit 1
+HUSKY="$TEST_ROOT/secret-husky"
+make_repo "$HUSKY"
+git -C "$HUSKY" switch -q -c feat/x
+git -C "$HUSKY" config core.hooksPath .husky
+cd "$HUSKY" || exit 1
 echo 'plain' > a.txt && git add a.txt
 
 LEAK_JSON='[{"File":"conf.txt","StartLine":3,"RuleID":"aws-access-token","Secret":"REDACTED","Fingerprint":"conf.txt:aws-access-token:3"}]'
-# fake_gitleaks <staged-json|exit-code> <pre-commit-json|exit-code>
+# fake_gitleaks <staged-json|ok|fail> <pre-commit-json|ok|fail>
 #   JSON を渡すと exit 1（漏えいあり）、"ok" なら [] と exit 0、"fail" なら JSON なしで exit 2
 fake_gitleaks() {
   local body="" mode
   for mode in "--staged:$1" "--pre-commit:$2"; do
     local flag="${mode%%:*}" spec="${mode#*:}"
     case "$spec" in
-      ok)   body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) pwd >> \"$TEST_ROOT/gitleaks.pwd\"; echo '[]' ;;"$'\n' ;;
-      fail) body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo 'error: not a git repo' >&2; exit 2 ;;"$'\n' ;;
-      *)    body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) pwd >> \"$TEST_ROOT/gitleaks.pwd\"; echo '$spec'; exit 1 ;;"$'\n' ;;
+      ok)   body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo '[]' ;;"$'\n' ;;
+      fail) body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo 'error: x' >&2; exit 2 ;;"$'\n' ;;
+      *)    body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo '$spec'; exit 1 ;;"$'\n' ;;
     esac
   done
-  : > "$TEST_ROOT/gitleaks.pwd"
   make_fake_tool gitleaks "$body"
 }
 
-it "block-secret-commit: gitleaks がステージ済みに漏えいを見つけなければ許可する"
-fake_gitleaks ok ok
-out=$(run_hook block-secret-commit 'git commit -m "feat: a"')
+it "block-secret-commit: グローバルの hook を使うリポジトリでは gitleaks を呼ばない（git の pre-commit が検査する）"
+fake_gitleaks "$LEAK_JSON" ok
+out=$(run_hook block-secret-commit "git -C $REPO commit -m 'chore: a'")
 assert_eq allow "$(decision "$out")"
-assert_eq "git --staged --no-banner --redact --report-format json --report-path - ." "$(fake_log gitleaks)"
-
-it "block-secret-commit: git commit 以外は対象外で gitleaks を呼ばない"
-fake_gitleaks ok ok
-out=$(run_hook block-secret-commit 'git log --grep commit')
-assert_eq "" "$out"
 assert_eq "" "$(fake_log gitleaks)"
 
-it "block-secret-commit: 漏えいがあれば deny し、場所とルール ID を示す（値は出さない）"
+it "block-secret-commit: ローカルの core.hooksPath を持つリポジトリでは、漏えいで止め、場所とルール ID を示す"
 fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit 'git commit -m "chore: conf"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "conf.txt:3"
 assert_contains "$(reason "$out")" "aws-access-token"
-assert_contains "$(reason "$out")" "gitleaks:allow"
 assert_not_contains "$(reason "$out")" "REDACTED"
+fake_gitleaks ok ok
+out=$(run_hook block-secret-commit 'git commit -m "chore: a"')
+assert_eq allow "$(decision "$out")"
 
 it "block-secret-commit: -a 指定時は未ステージの変更（--pre-commit）も検査する"
 fake_gitleaks ok "$LEAK_JSON"
 out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(fake_log gitleaks)" "git --pre-commit"
-fake_gitleaks ok "$LEAK_JSON"
-out=$(run_hook block-secret-commit 'git commit -m "chore: staged only"')
-assert_eq allow "$(decision "$out")"
-assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
 
-it "block-secret-commit: gitleaks が実行できなければ deny（検査できない状態でコミットさせない）"
+it "block-secret-commit: 対象のディレクトリを決められないときは、git の hook に任せて通す（#281）"
+fake_gitleaks "$LEAK_JSON" ok
+for cmd in 'git -C $d commit -m "chore: a"' "git -C $TEST_ROOT/not-yet commit -m 'chore: a'" \
+  "mkdir $TEST_ROOT/new && cd $TEST_ROOT/new && git init -q && git commit -m 'chore: a'"; do
+  out=$(run_hook block-secret-commit "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+assert_eq "" "$(fake_log gitleaks)"
+
+it "block-secret-commit: gitleaks が失敗・無いときは、理由を分けて止める"
 fake_gitleaks fail ok
 out=$(run_hook block-secret-commit 'git commit -m "chore: x"')
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "gitleaks"
+assert_contains "$(reason "$out")" "gitleaks が失敗しました"
 remove_fake_tool gitleaks
 out=$(PATH="$(minimal_path)" run_hook block-secret-commit 'git commit -m "chore: x"')
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "gitleaks"
+assert_contains "$(reason "$out")" "gitleaks が PATH にありません"
 
 it "block-secret-commit: ALLOW_SECRET_COMMIT=1 で迂回できる（gitleaks を呼ばない）"
 fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(fake_log gitleaks)"
+git config --global --unset core.hooksPath
 
-it "block-secret-commit: -C 指定のリポジトリで gitleaks を実行する"
-fake_gitleaks ok ok
-cd "$TEST_ROOT" || exit 1
-out=$(run_hook block-secret-commit "git -C $REPO commit -m 'chore: c'")
-assert_eq allow "$(decision "$out")"
-assert_eq "$REPO" "$(cat "$TEST_ROOT/gitleaks.pwd")"
+# ===========================================================================
+# block-no-verify: git の hook を飛ばす git commit / git merge を止める
+# ===========================================================================
+# 機密情報の検査（gitleaks）は git の pre-commit で、ローカルのマージの検査は pre-merge-commit で行う
+# （ADR-0015）。--no-verify（省略形と -n を含む）と、git -c core.hooksPath= はそれを飛ばすので止める
+
+REPO="$TEST_ROOT/noverify"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
 
-it "block-secret-commit: ヒアドキュメント本文の git commit には反応しない"
-fake_gitleaks "$LEAK_JSON" ok
-out=$(run_hook block-secret-commit "$(write_doc '例: git commit -m msg')")
+it "block-no-verify: hook を飛ばす git commit / merge / pull と、hook の置き場所や CLAUDECODE の書き換えを止める"
+for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "chore: a"' 'git commit -n -m "chore: a"' \
+  'git commit -nm "chore: a"' 'git -C . commit -anm "chore: a"' 'git -c core.hooksPath=/dev/null commit -m "chore: a"' \
+  'git -c core.hookspath=/x commit -m "chore: a"' 'git -C . -c core.hooksPath=/x commit -m "chore: a"' \
+  'git merge --no-ff --no-verify feat/x' 'git merge --no-ve feat/x' 'git pull --no-verify origin feat/x' \
+  'git -c core.hooksPath=/x pull' 'git config core.hooksPath /dev/null' 'git config --local core.hookspath x' \
+  'git config --global --unset core.hooksPath' 'git config --unset-all core.hooksPath' \
+  'git config --global --remove-section core' 'git config --rename-section core disabled' \
+  'git config unset core.hooksPath' 'git config set core.hooksPath /x' 'git config remove-section core' \
+  'git config --global rename-section core x' \
+  'git --config-env=core.hooksPath=H commit -m x' 'CLAUDECODE= git commit -m x' 'CLAUDECODE=0 git commit -m x' \
+  'env -u CLAUDECODE git commit -m x' 'unset CLAUDECODE && git commit -m x' \
+  'env CLAUDECODE=0 git commit -m x' 'env -i git commit -m x' 'env FOO=1 git commit --no-verify -m x' \
+  'git -c core.hooksPath commit -m x' 'git --config-env core.hooksPath commit -m x' \
+  'command git commit --no-verify -m x' 'env GIT_CONFIG_COUNT=1 git commit -m x' \
+  'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
+  out=$(run_hook block-no-verify "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=1"
+done
+
+it "block-no-verify: hook を飛ばさない git のコマンドは許可する"
+for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --amend --no-edit' \
+  'git commit -m"feat: add notes"' 'git commit -Fnotes.txt' 'git commit -Cnext' 'git commit --no-status -m x' \
+  'git merge --no-ff feat/x' 'git -c user.name=n commit -m x' 'git commit -m -nightly' \
+  'git commit -m "-nightly build fix"' 'git commit --author -n -m x' 'git config --get core.hooksPath' \
+  'git config core.autocrlf false' 'git config --remove-section alias' 'git config get core.hooksPath' \
+  'env FOO=1 git commit -m x' 'env CLAUDECODE=1 git commit -m x' \
+  'git pull origin main'; do
+  out=$(run_hook block-no-verify "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "block-no-verify: ALLOW_NO_VERIFY=1 で迂回できる"
+out=$(run_hook block-no-verify 'ALLOW_NO_VERIFY=1 git commit --no-verify -m "chore: a"')
+assert_eq allow "$(decision "$out")"
+
+it "block-no-verify: git commit / merge 以外とヒアドキュメント本文には反応しない"
+out=$(run_hook block-no-verify 'git log --no-verify')
 assert_eq "" "$out"
-assert_eq "" "$(fake_log gitleaks)"
+out=$(run_hook block-no-verify "$(write_doc '例: git commit --no-verify -m msg')")
+assert_eq "" "$out"
 
 # ===========================================================================
 # guard-git-add: 対象を絞らない git add（-A / --all / . / :/ / *）を止める
 # ===========================================================================
-# 1 コミット 1 論理変更と、機密情報の混入防止（block-secret-commit と対）のため。
+# 1 コミット 1 論理変更と、機密情報の混入防止（git の pre-commit の機密情報の検査と対。ADR-0015）のため。
 # パスで範囲を限定した -A（git add -A src/）と、追跡済みだけを対象にする -u は通す
 
 REPO="$TEST_ROOT/gitadd"

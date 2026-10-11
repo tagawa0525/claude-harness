@@ -11,6 +11,17 @@ let
   # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook が store のパスで呼び、
   # 手で呼べるよう PATH にも入れる
   commit-refs = pkgs.callPackage ./commit-refs/package.nix { };
+  # 機密情報の検査（ADR-0015）。pre-commit と pre-merge-commit が store のパスで呼ぶ
+  scanStagedSecrets = pkgs.writeShellApplication {
+    name = "scan-staged-secrets";
+    runtimeInputs = [
+      pkgs.git
+      pkgs.gitleaks
+      pkgs.jq
+    ];
+    text = builtins.readFile ./scan-staged-secrets.sh;
+  };
+  scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
@@ -113,6 +124,12 @@ in
         fi
       fi
 
+      # 機密情報の検査（ADR-0015）は ${scanSecrets} が行う。Claude Code のセッションのコミットで、コミットに
+      # 入る中身（git add と commit -a の後の index）を見る。index を変える検査（Markdown の自動修正。#282。
+      # ローカルの pre-commit）の後、ステージしたファイルが無くて抜ける前（種類の変更だけのコミット）、fork で
+      # 抜ける前に呼ぶ
+      # 検証: modules/home/parts/tests/pre-commit-secrets.sh
+
       # マージを締めるコミット（競合を解決した後の git commit / git merge --continue、
       # git merge --no-commit の後の git commit）では git が pre-merge-commit を呼ばないので、
       # 同じ検査をここで行う
@@ -124,7 +141,10 @@ in
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$GIT_DIR/hooks/pre-commit"
       if [ -x "$LOCAL_HOOK" ]; then
-        exec "$LOCAL_HOOK" "$@"
+        # exec しないのは、ローカルの hook が index を変えた後に機密情報を検査するため
+        "$LOCAL_HOOK" "$@"
+        ${scanSecrets}
+        exit 0
       fi
 
       check_failed=0
@@ -146,7 +166,10 @@ in
       # デフォルト: ステージされたファイルをチェック
       # ========================================
       STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-      [ -z "$STAGED_FILES" ] && exit $check_failed
+      if [ -z "$STAGED_FILES" ]; then
+        ${scanSecrets} || check_failed=1
+        exit $check_failed
+      fi
 
       # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
       # 以下の検査はどれもこちらの道具の版と規約（ruff の新しいルール、markdownlint の設定、
@@ -156,6 +179,7 @@ in
       # 検証: modules/home/parts/tests/pre-commit-fork.sh
       if git remote get-url upstream >/dev/null 2>&1; then
         echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust）を飛ばします"
+        ${scanSecrets} || check_failed=1
         exit $check_failed
       fi
 
@@ -251,6 +275,8 @@ in
         fi
       fi
 
+      ${scanSecrets} || check_failed=1
+
       exit $check_failed
     '';
   };
@@ -285,6 +311,11 @@ in
       if [ -x "$LOCAL_HOOK" ]; then
         "$LOCAL_HOOK" "$@"
       fi
+
+      # 機密情報の検査（ADR-0015）。競合の無いマージでは pre-commit が走らないので、相手のブランチから入る
+      # 中身をここで見る（main 以外へのマージも）
+      # 検証: modules/home/parts/tests/pre-commit-secrets.sh
+      ${scanSecrets}
 
       BRANCH=$(git branch --show-current 2>/dev/null || echo "")
       case "$BRANCH" in
