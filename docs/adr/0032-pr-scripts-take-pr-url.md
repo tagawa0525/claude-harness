@@ -47,7 +47,8 @@ CLAUDE.md に「PR のリポジトリの worktree で走らせる」と書いた
   受けた側が `GH_REPO` の継承に頼ることになり、単独で呼んだときと挙動が変わる
 - URL の解析は `.claude/scripts/lib/pr-url.sh` の 1 か所に置く。10 本のスクリプトが同じ解析を持つため
 - `/files` や通知のクエリの付いた URL も同じ PR を指すので受ける。`#` の付いた URL は、コメントを取り出す
-  `get-pr-info.sh` だけが受ける。ほかのスクリプトで受けると、別の引数で渡す comment_id と食い違っても気付けない
+  `get-pr-info.sh` と、PR だけを使う `gh-actions-diagnose.sh` が受ける。コメントを別の引数で受けるスクリプトで受けると、
+  その comment_id と食い違っても気付けない。owner と repo は GitHub の名前に使える文字だけを受ける（案内のコマンドに書くため）
 - `gh-actions-diagnose.sh` も PR の URL を受け、NEXT に書く gh の手順に `-R` を付ける。URL で動くスクリプトや
   hook が診断を番号で案内すると、案内の先で cwd の取り違えが戻るため。番号とブランチ名も受け続ける
   （ユーザーが `/gh-actions-check` を手で走らせる形）
