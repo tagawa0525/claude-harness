@@ -118,32 +118,37 @@ in
 
       # 機密情報の検査（ADR-0015）。Claude Code のセッションのコミットで、コミットに入る中身（git add と
       # commit -a の後の index）を gitleaks で見る。PreToolUse と違ってコミットするリポジトリの中で走るので、
-      # 対象のディレクトリを推さずに済み、同じコマンドの git add も見落とさない。ローカルの pre-commit を呼ぶ
-      # 前に走らせ、fork でも飛ばさない。値は出さず、場所とルール ID だけを出す
+      # 対象のディレクトリを推さずに済み、同じコマンドの git add も見落とさない。index を変える検査（Markdown の
+      # 自動修正。#282）の後、ローカルの pre-commit を呼ぶ前、fork で抜ける前に呼ぶ。値は出さず、場所と
+      # ルール ID だけを出す。漏えいと、検査できないこと（gitleaks の失敗）を分けて出し、どちらも止める
       # 検証: modules/home/parts/tests/pre-commit-secrets.sh
-      if [ "''${CLAUDECODE:-}" = "1" ] && [ "''${ALLOW_SECRET_COMMIT:-}" != "1" ]; then
-        LEAKS_ERR=$(mktemp)
-        leaks_rc=0
-        LEAKS=$(${gitleaks} git --staged --no-banner --redact --report-format json --report-path - . 2>"$LEAKS_ERR") \
-          || leaks_rc=$?
-        case $leaks_rc in
-          0) rm -f "$LEAKS_ERR" ;;
-          1)
-            rm -f "$LEAKS_ERR"
-            echo "❌ 機密情報らしき内容がコミット対象に含まれています（gitleaks）:"
-            printf '%s\n' "$LEAKS" | ${jq} -r '.[] | "- \(.File):\(.StartLine) (\(.RuleID))"'
-            echo "   対処: git restore --staged <file> で外し、必要なら .gitignore に足してください。push 済みの値はローテーションしてください"
-            echo "   誤検出なら、その行に gitleaks:allow を書く（.gitleaksignore / .gitleaks.toml でも可）か、コマンドに ALLOW_SECRET_COMMIT=1 を付けてください"
-            exit 1
-            ;;
-          *)
-            echo "❌ gitleaks が失敗しました（終了コード $leaks_rc）。機密情報を検査できないので、コミットを止めます:"
-            sed 's/^/   /' "$LEAKS_ERR"
-            rm -f "$LEAKS_ERR"
-            exit 1
-            ;;
-        esac
-      fi
+      scan_secrets() {
+        [ "''${CLAUDECODE:-}" = "1" ] || return 0
+        [ "''${ALLOW_SECRET_COMMIT:-}" != "1" ] || return 0
+        local err rc=0 leaks count
+        err=$(mktemp)
+        # --log-level error: gitleaks は中の git diff の失敗を ERR に出すだけで、終了コード 0（漏えいなし）を
+        # 返すので、エラーの行が出たら検査できなかったとみなす
+        leaks=$(${gitleaks} git --staged --no-banner --redact --log-level error \
+          --report-format json --report-path - . 2>"$err") || rc=$?
+        # gitleaks は漏えいでも、設定を読めないなどの失敗でも 1 を返すので、一覧が空でないときだけ漏えいとする
+        count=$(printf '%s' "$leaks" | ${jq} 'length' 2>/dev/null || echo 0)
+        if [ "$rc" -eq 1 ] && [ "$count" -gt 0 ]; then
+          rm -f "$err"
+          echo "❌ 機密情報らしき内容がコミット対象に含まれています（gitleaks）:"
+          printf '%s\n' "$leaks" | ${jq} -r '.[] | "- \(.File):\(.StartLine) (\(.RuleID))"'
+          echo "   対処: git restore --staged <file> で外し、必要なら .gitignore に足してください。push 済みの値はローテーションしてください"
+          echo "   誤検出なら、その行に gitleaks:allow を書く（.gitleaksignore / .gitleaks.toml でも可）か、コマンドに ALLOW_SECRET_COMMIT=1 を付けてください"
+          return 1
+        fi
+        if [ "$rc" -ne 0 ] || [ -s "$err" ]; then
+          echo "❌ gitleaks が失敗しました（終了コード $rc）。機密情報を検査できないので、コミットを止めます:"
+          sed 's/^/   /' "$err"
+          rm -f "$err"
+          return 1
+        fi
+        rm -f "$err"
+      }
 
       # マージを締めるコミット（競合を解決した後の git commit / git merge --continue、
       # git merge --no-commit の後の git commit）では git が pre-merge-commit を呼ばないので、
@@ -156,6 +161,7 @@ in
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$GIT_DIR/hooks/pre-commit"
       if [ -x "$LOCAL_HOOK" ]; then
+        scan_secrets || exit 1
         exec "$LOCAL_HOOK" "$@"
       fi
 
@@ -188,6 +194,7 @@ in
       # 検証: modules/home/parts/tests/pre-commit-fork.sh
       if git remote get-url upstream >/dev/null 2>&1; then
         echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust）を飛ばします"
+        scan_secrets || check_failed=1
         exit $check_failed
       fi
 
@@ -282,6 +289,8 @@ in
           fi
         fi
       fi
+
+      scan_secrets || check_failed=1
 
       exit $check_failed
     '';
