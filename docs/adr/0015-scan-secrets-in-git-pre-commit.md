@@ -77,8 +77,11 @@ PreToolUse の規則:
   ディレクトリを決められないとき（まだ無い、変数を含む。#281）は、git の hook に任せて通す
 - block-no-verify: `git commit` / `merge` / `pull` の `--no-verify`（git が受け付ける省略形と、commit の `-n`）、hook の
   置き場所を変えるもの（`-c` / `--config-env` / `git config` の core.hooksPath、`GIT_CONFIG_*` の環境変数）、hook が
-  Claude Code のセッションと分かる `CLAUDECODE=1` を別の値にする・外すもの（`env -u`、`unset`）を止める。迂回は
-  `ALLOW_NO_VERIFY=1`
+  Claude Code のセッションと分かる `CLAUDECODE=1` を別の値にする・外すもの（`env -u`、`env -i`、`unset`）を止める。
+  `env`、`command`、`exec`、`nohup`、`time` で包んだコマンドは、ほどいて見る。迂回は `ALLOW_NO_VERIFY=1`
+- block-no-verify が塞ぐのは、Claude Code が誤って、または習慣で書きうる形（git のオプション、`git config`、
+  シェルの代入と `env`）まで。設定ファイルを直接書き換える、別のプログラムから git を起動する、といった意図して
+  回避する形は塞がない（コマンドの文字列からは全てを見分けられず、Claude Code に回避する理由も無い）
 
 ### 帰結
 
