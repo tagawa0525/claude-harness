@@ -1,6 +1,6 @@
 //! design-records: 設計の記録（ADR と docs/issues の issue）の雛形を作り、番号を予約し、検査する（ADR-0009、ADR-0018）。
 //!
-//! Usage:
+//! Usage（どのコマンドも、前に `-C <dir>` を付けると `<dir>` で走らせる。git の `-C` と同じ）:
 //!   design-records new [--kind adr|issue] <slug> <title>
 //!                                      番号を予約して <dir>/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
 //!                                      （dir は docs/adr か docs/issues。省けば adr）
@@ -36,7 +36,7 @@ use design_records::{
 
 use git::{Result, default_branch, git, git_ok, repo_root, reservations, tracked};
 
-const USAGE: &str = "Usage: design-records new [--kind adr|issue] <slug> <title> \
+const USAGE: &str = "Usage: design-records [-C <dir>] new [--kind adr|issue] <slug> <title> \
      | renumber [--kind adr|issue] <old> [<new>] | prune | check [--changed] [FILE]... | status";
 
 /// 使い方の誤り。
@@ -83,7 +83,14 @@ fn dispatch(args: &[&str]) -> std::result::Result<Result<ExitCode>, UsageError> 
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut args: Vec<&str> = args.iter().map(String::as_str).collect();
+    if let ["-C", dir, ..] = args.as_slice() {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("design-records: cannot change to {dir}: {e}");
+            return ExitCode::FAILURE;
+        }
+        args.drain(..2);
+    }
     let Ok(result) = dispatch(&args) else {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
