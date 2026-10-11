@@ -194,7 +194,8 @@ fn same_pr_diff(dir: &std::path::Path, base: &str, old: &str, new: &str) -> bool
     }
     // base 側がそのファイルを変えていないことも要る。変えていると、旧 head が触れなかった
     // ファイルを新 head が main の変更ごと元に戻した場合も、中身が一致して見える
-    let entry = |h: &str, p: &str| git(dir, &["ls-tree", h, "--", p]);
+    // ファイル名は pathspec ではなくリテラルに渡す
+    let entry = |h: &str, p: &str| git(dir, &["--literal-pathspecs", "ls-tree", h, "--", p]);
     if files.iter().all(|p| {
         let (o, n) = (entry(old, p), entry(new, p));
         o.is_some() && o == n && entry(&old_base, p) == entry(&new_base, p)
@@ -993,7 +994,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ls-tree がファイル名を pathspec として読む"]
     fn pathspec_like_file_name_is_compared_literally() {
         let name = ":(exclude,glob)**";
         let (r, old, new) = rebase_case(
