@@ -45,6 +45,8 @@ nice を上げて優先度を下げる。そのとき、優先度が 1 以下の
 
 - `modules/slurm/common.nix` の `extraConfig` に `PriorityWeightPartition=10000` を置く。`PriorityType` は既定の
   `priority/multifactor` のまま書かない
+- `squeue` の既定の表示（`SQUEUE_FORMAT`。ADR-0007）に、CPU 数（`%C`）と優先度（`%Q`）を足す。`-c` のジョブと排他の
+  ジョブの見分けと、並べ替えた結果を `squeue` だけで読めるようにする
 - 10000 は、`scontrol top` が 1 回に下げる量（同じ優先度どうしなら 1）と、`--nice` に書く数より十分大きい値として選んだ
 
 ### 帰結
