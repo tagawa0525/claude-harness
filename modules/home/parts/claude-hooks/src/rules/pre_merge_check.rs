@@ -119,6 +119,25 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
     })
 }
 
+/// PR の base ブランチの今の先頭（GitHub の値）
+fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> Option<String> {
+    if base_ref.is_empty() {
+        return None;
+    }
+    gh::gh(
+        dir,
+        &[
+            "api",
+            &format!("repos/{owner}/{name}/branches/{}", uri_encode(base_ref)),
+            "--jq",
+            ".commit.sha",
+        ],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+}
+
 /// 失敗していない bot レビューがあるか。Copilot はレビューできなかったときも本文だけの
 /// レビューを提出するので、レビューの有無では判定できない（判定は get-latest-review.sh と同じ）
 fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
@@ -138,21 +157,25 @@ fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number:
 }
 
 /// リベースだけで head の hash が変わったか。レビュー済みの `old` と今の `new` で、base からの PR の差分が
-/// 同一なら true（ADR-0021）。base 側の変更（main に入った他の PR）は、それぞれの merge-base からの
+/// 同一なら true（ADR-0021）。`base` は PR の base ブランチの今の先頭の SHA。base 側の変更（main に入った他の PR）は、それぞれの merge-base からの
 /// 差分を取ることで含めない。確かめられないとき（コミットが無い、git が失敗）は false
-fn same_pr_diff(dir: &std::path::Path, base_ref: &str, old: &str, new: &str) -> bool {
-    let base = format!("origin/{base_ref}");
+fn same_pr_diff(dir: &std::path::Path, base: &str, old: &str, new: &str) -> bool {
     let have = |sha: &str| git(dir, &["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_some();
     // force push で置き換わった旧 head は、リベースした worktree 以外には無いことがある
     if !have(old) && (git(dir, &["fetch", "-q", "origin", old]).is_none() || !have(old)) {
+        return false;
+    }
+    // base は GitHub が返した今の先頭。手元の origin/<base> は古いことがあり、古い base では
+    // main の変更を巻き戻した head も、両側の merge-base が同じになって一致して見える
+    if !have(base) && (git(dir, &["fetch", "-q", "origin", base]).is_none() || !have(base)) {
         return false;
     }
     if !have(new) {
         return false;
     }
     let (Some(old_base), Some(new_base)) = (
-        git(dir, &["merge-base", &base, old]),
-        git(dir, &["merge-base", &base, new]),
+        git(dir, &["merge-base", base, old]),
+        git(dir, &["merge-base", base, new]),
     ) else {
         return false;
     };
@@ -595,8 +618,8 @@ impl Rule for PreMergeCheck {
                     Some(sha)
                         if !sha.is_empty()
                             && sha != head_sha
-                            && !base_ref.is_empty()
-                            && same_pr_diff(&dir, &base_ref, &sha, &head_sha) => {}
+                            && base_tip(&dir, &owner, &name, &base_ref)
+                                .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
                         short(&head_sha)
@@ -770,7 +793,12 @@ mod tests {
             |r| r.write("third.txt", "t\n"),
             pr_edit_other,
         );
-        assert!(same_pr_diff(&r.0, "main", &old, &new));
+        assert!(same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -788,7 +816,12 @@ mod tests {
                 )
             },
         );
-        assert!(same_pr_diff(&r.0, "main", &old, &new));
+        assert!(same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -799,7 +832,12 @@ mod tests {
             |r| r.write("third.txt", "t\n"),
             |r| r.write("other.txt", "o\nPR\nEXTRA\n"),
         );
-        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -810,7 +848,12 @@ mod tests {
             |r| r.write("third.txt", "t\n"),
             |r| r.write("third2.txt", "unrelated\n"),
         );
-        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -829,7 +872,12 @@ mod tests {
                 )
             },
         );
-        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -843,7 +891,12 @@ mod tests {
                 r.write("sneaky.txt", "x\n");
             },
         );
-        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -862,7 +915,12 @@ mod tests {
                 .unwrap();
             },
         );
-        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -874,7 +932,8 @@ mod tests {
             pr_edit_other,
         );
         let bogus = "0123456789012345678901234567890123456789";
-        assert!(!same_pr_diff(&r.0, "main", bogus, &new));
+        let tip = r.git(&["rev-parse", "main"]);
+        assert!(!same_pr_diff(&r.0, &tip, bogus, &new));
     }
 
     #[test]
@@ -889,7 +948,12 @@ mod tests {
                 r.write("other.txt", "o\n");
             },
         );
-        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 
     #[test]
@@ -900,6 +964,31 @@ mod tests {
             |r| r.write("other.txt", "MAIN\no\n"),
             |r| r.write("other.txt", "o\nPR\n"),
         );
-        assert!(!same_pr_diff(&r.0, "main", &old, &new));
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn stale_base_does_not_hide_reverting_main_change() {
+        // 旧 head は A→B。main は A→C。新 head は C→B（main の変更を巻き戻す）。
+        // 手元の origin/main が A のままでも、GitHub の今の先頭 C を base にして見分ける
+        let r = Repo::new("stale");
+        r.write("f.txt", "A\n");
+        r.commit("base");
+        r.publish_main();
+        r.git(&["checkout", "-q", "-b", "pr"]);
+        r.write("f.txt", "B\n");
+        let old = r.commit("pr");
+        r.git(&["checkout", "-q", "main"]);
+        r.write("f.txt", "C\n");
+        let tip = r.commit("main moves");
+        r.git(&["checkout", "-q", "-b", "pr2"]);
+        r.write("f.txt", "B\n");
+        let new = r.commit("pr again");
+        assert!(!same_pr_diff(&r.0, &tip, &old, &new));
     }
 }

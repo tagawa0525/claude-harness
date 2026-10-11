@@ -33,7 +33,7 @@ PR が触るファイルの差分は同一（`git diff 200ad13 f4c7347 -- <PR �
 - 案 B: `git range-diff` で PR のコミット列を比べる。コミットの対応づけは強いが、出力が人向けの整形で、
   同一かどうかの機械的な判定に使いにくい。コミット列を整理（squash 等）したリベースも「違う」と出す。
   main が PR の変更の近く（文脈の 3 行以内）を変えただけでも、range-diff は「`!`（違う）」を出す
-- 案 C: それぞれの head と `origin/<base>` の merge-base からの差分を `git patch-id --verbatim` で比べる。
+- 案 C: それぞれの head と base の merge-base からの差分を `git patch-id --verbatim` で比べる。
   base の変更を含めず、行番号のずれは無視する。文脈の行も指紋に入るので、main が PR の変更の 3 行以内を変えると
   「違う」になる（安全側に外れる）
 - 案 D: 案 C の差分を `-U0`（文脈なし）で取って patch-id を比べる。文脈を見ないので上の外れは無くなるが、
@@ -46,7 +46,7 @@ PR が触るファイルの差分は同一（`git diff 200ad13 f4c7347 -- <PR �
 
 ## 決定と理由
 
-案 E を採る。レビュー済みの SHA `old` と今の head `new` について、それぞれ `origin/<base>` との merge-base を取り、
+案 E を採る。レビュー済みの SHA `old` と今の head `new` について、それぞれ PR の base ブランチの今の先頭（GitHub の `branches` API が返す SHA。手元に無ければ `git fetch origin <sha>`）との merge-base を取り、
 次のどちらかなら「リベースだけ」とみなして検証 8 を通す。
 
 1. PR が触るファイル（`old` 側と `new` 側の差分に出るパスの和集合）すべてで、`old` と `new` のツリーの項目
@@ -55,9 +55,13 @@ PR が触るファイルの差分は同一（`git diff 200ad13 f4c7347 -- <PR �
 2. 1 でなくても、merge-base からの差分の `patch-id --verbatim`（内容）と、ファイルごとのモード・状態・パス
    （patch-id が見ない部分）が両方一致する。main が同じファイルの離れた場所を変えたときがこれにあたる
 
-どちらにも当てはまらない、または確かめられない（旧 head が手元になく `git fetch origin <sha>` でも取れない、
-`origin/<base>` が古い、git が失敗した）ときは今まで通り deny する。`origin/<base>` が手元で古いと merge-base が
-手前になり差分に main の変更が混ざるので、「違う」側に倒れる（偽陽性にはならない）。
+どちらにも当てはまらない、または確かめられない（旧 head や base の先頭が手元になく `git fetch origin <sha>` でも取れない、
+base の先頭を API で取れない、git が失敗した）ときは今まで通り deny する。
+
+base に手元の `origin/<base>` を使うと偽陽性になる（自動レビューの指摘で分かった）。手元が A のまま、旧 head が A→B、
+main が A→C、新 head が C→B（main の変更の巻き戻し）のとき、両方の merge-base が A になり、最終の blob B が一致して
+「同じ」になる。そのため base は GitHub が返す今の先頭にする。検証 7 が head は base に追いついていること
+を要求するので、新 head の merge-base はこの先頭そのものになる。
 
 捨てた理由: 案 A は常に不一致、案 B は機械判定に向かない、案 D は偽陽性。案 C は採用した 2 の段で、1 を前に置くのは
 main が PR の近くを触ったときの外れを減らすため（PR が触るファイルを main が触っていなければ 1 で通る）。

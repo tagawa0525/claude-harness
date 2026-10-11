@@ -948,6 +948,7 @@ echo more >"$REBASE_REPO/g.txt"
 git -C "$REBASE_REPO" add g.txt
 git -C "$REBASE_REPO" commit -q -m "main moves"
 git -C "$REBASE_REPO" update-ref refs/remotes/origin/main HEAD
+REBASE_TIP=$(git -C "$REBASE_REPO" rev-parse HEAD)
 git -C "$REBASE_REPO" checkout -q -b pr-rebased
 echo pr >"$REBASE_REPO/pr.txt"
 git -C "$REBASE_REPO" add pr.txt
@@ -966,6 +967,7 @@ make_fake_gh_rebased() {
   "api --paginate repos/example/heredoc/commits/'"$1"'/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
   "api repos/example/heredoc/commits/'"$1"'/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...'"$1"'"*) echo 0 ;;
+  "api repos/example/heredoc/branches/main"*) echo '"$REBASE_TIP"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo '"$2"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api graphql"*) echo "[]" ;;'
