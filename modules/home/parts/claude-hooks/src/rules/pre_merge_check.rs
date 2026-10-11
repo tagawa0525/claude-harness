@@ -9,6 +9,8 @@
 //! 6. 未解決のレビュースレッドがない
 //! 7. head が base（origin/main）より遅れていない（リベースしてからマージコミットする）
 //! 8. 最後の push が自動レビューを受けている（bot レビューの commit_id が head と一致）。
+//!    リベースだけで hash が変わった head（base からの PR の差分がレビュー済みと同じ。ADR-0021）は
+//!    レビュー済みとみなす。
 //!    レビュー自体が失敗している（トークン枯渇・内部エラー）ときは、コードの問題では
 //!    ないので 4 の CI 失敗としては数えず、ここでレビュー未実施として報告する。
 //!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる。
@@ -29,6 +31,7 @@ use super::Rule;
 use super::pre_git_merge_check::multi_topic_reason;
 use super::pre_pr_create_check::{body_text, missing_headings};
 use crate::gh;
+use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell, has_flag, opt_value};
@@ -116,6 +119,25 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
     })
 }
 
+/// PR の base ブランチの今の先頭（GitHub の値）
+fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> Option<String> {
+    if base_ref.is_empty() {
+        return None;
+    }
+    gh::gh(
+        dir,
+        &[
+            "api",
+            &format!("repos/{owner}/{name}/branches/{}", uri_encode(base_ref)),
+            "--jq",
+            ".commit.sha",
+        ],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+}
+
 /// 失敗していない bot レビューがあるか。Copilot はレビューできなかったときも本文だけの
 /// レビューを提出するので、レビューの有無では判定できない（判定は get-latest-review.sh と同じ）
 fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
@@ -132,6 +154,113 @@ fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number:
     .ok()
     // --paginate はページごとに --jq を適用するので、ページごとの件数を足す
     .is_some_and(|s| s.lines().filter_map(|l| l.trim().parse::<u64>().ok()).sum::<u64>() > 0)
+}
+
+/// リベースだけで head の hash が変わったか。レビュー済みの `old` と今の `new` で、base からの PR の差分が
+/// 同一なら true（ADR-0021）。`base` は PR の base ブランチの今の先頭の SHA。base 側の変更（main に入った他の PR）は、それぞれの merge-base からの
+/// 差分を取ることで含めない。確かめられないとき（コミットが無い、git が失敗）は false
+fn same_pr_diff(dir: &std::path::Path, base: &str, old: &str, new: &str) -> bool {
+    let have = |sha: &str| git(dir, &["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_some();
+    // force push で置き換わった旧 head は、リベースした worktree 以外には無いことがある
+    if !have(old) && (git(dir, &["fetch", "-q", "origin", old]).is_none() || !have(old)) {
+        return false;
+    }
+    // base は GitHub が返した今の先頭。手元の origin/<base> は古いことがあり、古い base では
+    // main の変更を巻き戻した head も、両側の merge-base が同じになって一致して見える
+    if !have(base) && (git(dir, &["fetch", "-q", "origin", base]).is_none() || !have(base)) {
+        return false;
+    }
+    if !have(new) {
+        return false;
+    }
+    let (Some(old_base), Some(new_base)) = (
+        git(dir, &["merge-base", base, old]),
+        git(dir, &["merge-base", base, new]),
+    ) else {
+        return false;
+    };
+    // 1. PR が触るファイルの中身（モードを含む）がそっくり同じ
+    let paths = |b: &str, h: &str| {
+        git(dir, &["diff", "--no-renames", "--name-only", "-z", b, h]).unwrap_or_default()
+    };
+    let (old_paths, new_paths) = (paths(&old_base, old), paths(&new_base, new));
+    let files: std::collections::BTreeSet<&str> = old_paths
+        .split('\0')
+        .chain(new_paths.split('\0'))
+        .filter(|p| !p.is_empty())
+        .collect();
+    if files.is_empty() {
+        return false;
+    }
+    // base 側がそのファイルを変えていないことも要る。変えていると、旧 head が触れなかった
+    // ファイルを新 head が main の変更ごと元に戻した場合も、中身が一致して見える
+    // ファイル名は pathspec ではなくリテラルに渡す
+    let entry = |h: &str, p: &str| git(dir, &["--literal-pathspecs", "ls-tree", h, "--", p]);
+    if files.iter().all(|p| {
+        let (o, n) = (entry(old, p), entry(new, p));
+        o.is_some() && o == n && entry(&old_base, p) == entry(&new_base, p)
+    }) {
+        return true;
+    }
+    // 2. main も同じファイルを変えていて中身は一致しないが、PR の差分（前後の文脈を含む）が同じ
+    fingerprint(dir, &old_base, old).is_some_and(|o| Some(o) == fingerprint(dir, &new_base, new))
+}
+
+/// base から head への差分の指紋。パッチの内容（git patch-id。行番号は見ない）と、
+/// ファイルごとのモード・状態・パス（patch-id が見ない部分）
+fn fingerprint(dir: &std::path::Path, base: &str, head: &str) -> Option<(String, String)> {
+    let patch = git_stdout(dir, &["diff", "--no-renames", "--binary", base, head])?;
+    if patch.is_empty() {
+        return None;
+    }
+    let id = git_with_stdin(dir, &["patch-id", "--verbatim"], &patch)?;
+    let id = id.split_whitespace().next()?.to_string();
+    let raw = git(
+        dir,
+        &["diff", "--no-renames", "--raw", "--no-abbrev", base, head],
+    )?;
+    let modes = raw
+        .lines()
+        .map(|l| {
+            let (meta, path) = l.split_once('\t').unwrap_or((l, ""));
+            let f: Vec<&str> = meta.split_whitespace().collect();
+            // :旧モード 新モード 旧hash 新hash 状態。hash は base で変わるので捨てる
+            format!(
+                "{} {} {} {path}",
+                f[0],
+                f.get(1).unwrap_or(&""),
+                f.get(4).unwrap_or(&"")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some((id, modes))
+}
+
+fn git_stdout(dir: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+fn git_with_stdin(dir: &std::path::Path, args: &[&str], input: &[u8]) -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(input).ok()?;
+    let out = child.wait_with_output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 fn is_ok_conclusion(c: &Value) -> bool {
@@ -405,12 +534,14 @@ impl Rule for PreMergeCheck {
                 }
             }
 
+            let base_ref = pr_meta
+                .as_ref()
+                .and_then(|m| m["baseRefName"].as_str())
+                .unwrap_or("")
+                .to_string();
+
             // --- 7. base からの遅れ ---
-            if !owner.is_empty()
-                && !name.is_empty()
-                && let Some(meta) = pr_meta.as_ref()
-            {
-                let base_ref = meta["baseRefName"].as_str().unwrap_or("").to_string();
+            if !owner.is_empty() && !name.is_empty() && pr_meta.is_some() {
                 let behind = if base_ref.is_empty() || head_sha.is_empty() {
                     None
                 } else {
@@ -484,12 +615,18 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && is_docs_only(&dir, &owner, &name, number)
                             && has_successful_review(&dir, &owner, &name, number) => {}
+                    // リベースだけで hash が変わった head は、レビュー済みの差分と同じなので通す（ADR-0021）
+                    Some(sha)
+                        if !sha.is_empty()
+                            && sha != head_sha
+                            && base_tip(&dir, &owner, &name, &base_ref)
+                                .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
                         short(&head_sha)
                     )),
                     Some(sha) if sha != head_sha => reasons.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
                         short(&head_sha),
                         short(&sha)
                     )),
@@ -568,5 +705,308 @@ mod tests {
         let v = json_stream("{\"a\":1}\n{\"a\":2}\n").unwrap();
         assert_eq!(v.len(), 2);
         assert!(json_stream("not json").is_none());
+    }
+
+    /// 一時ディレクトリの git リポジトリ。origin/main は refs/remotes/origin/main を直に置いて作る
+    struct Repo(std::path::PathBuf);
+
+    impl Repo {
+        fn new(tag: &str) -> Repo {
+            let dir = std::env::temp_dir().join(format!(
+                "claude-hooks-same-pr-diff-{tag}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let r = Repo(dir);
+            r.git(&["init", "-q", "-b", "main"]);
+            r.git(&["config", "user.email", "t@example.com"]);
+            r.git(&["config", "user.name", "t"]);
+            r.git(&["config", "commit.gpgsign", "false"]);
+            r.git(&["config", "core.hooksPath", "/dev/null"]);
+            r
+        }
+
+        fn git(&self, args: &[&str]) -> String {
+            crate::git::git(&self.0, args).unwrap_or_else(|| panic!("git {args:?} failed"))
+        }
+
+        fn write(&self, path: &str, body: &str) {
+            std::fs::write(self.0.join(path), body).unwrap();
+        }
+
+        fn commit(&self, msg: &str) -> String {
+            self.git(&["add", "-A"]);
+            self.git(&["commit", "-q", "-m", msg]);
+            self.git(&["rev-parse", "HEAD"])
+        }
+
+        /// origin/main を今の HEAD に合わせる
+        fn publish_main(&self) {
+            let head = self.git(&["rev-parse", "HEAD"]);
+            self.git(&["update-ref", "refs/remotes/origin/main", &head]);
+        }
+    }
+
+    impl Drop for Repo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const LONG: &str = "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\na13\na14\na15\n";
+
+    /// 初期状態（main）に PR のコミットを積み、old とする。main を進めてから PR を載せ替えた new を返す
+    /// `pr_edit` は PR の変更、`main_edit` は main が進む内容、`redo` は載せ替えた先で PR を作り直す関数
+    fn rebase_case(
+        tag: &str,
+        pr_edit: impl Fn(&Repo),
+        main_edit: impl Fn(&Repo),
+        redo: impl Fn(&Repo),
+    ) -> (Repo, String, String) {
+        let r = Repo::new(tag);
+        r.write("long.txt", LONG);
+        r.write("other.txt", "o\n");
+        r.commit("base");
+        r.publish_main();
+        r.git(&["checkout", "-q", "-b", "pr"]);
+        pr_edit(&r);
+        let old = r.commit("pr");
+        r.git(&["checkout", "-q", "main"]);
+        main_edit(&r);
+        r.commit("main moves");
+        r.publish_main();
+        r.git(&["checkout", "-q", "-b", "pr2"]);
+        redo(&r);
+        let new = r.commit("pr again");
+        (r, old, new)
+    }
+
+    fn pr_edit_other(r: &Repo) {
+        r.write("other.txt", "o\nPR\n");
+    }
+
+    #[test]
+    fn rebase_onto_unrelated_change_is_same() {
+        let (r, old, new) = rebase_case(
+            "unrelated",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            pr_edit_other,
+        );
+        assert!(same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn rebase_onto_change_in_same_file_elsewhere_is_same() {
+        // main も同じファイルの先頭を変える。PR は末尾（文脈は変わらない）
+        let edit_tail = |r: &Repo| r.write("long.txt", &format!("{LONG}tail\n"));
+        let (r, old, new) = rebase_case(
+            "samefile",
+            edit_tail,
+            |r| r.write("long.txt", &LONG.replacen("a1\n", "A1\n", 1)),
+            |r| {
+                r.write(
+                    "long.txt",
+                    &format!("{}tail\n", LONG.replacen("a1\n", "A1\n", 1)),
+                )
+            },
+        );
+        assert!(same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn changed_content_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "changed",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| r.write("other.txt", "o\nPR\nEXTRA\n"),
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn dropped_change_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "dropped",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| r.write("third2.txt", "unrelated\n"),
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn same_lines_at_another_place_in_a_file_main_also_changed_is_not_same() {
+        // 追加行は同じだが、置き場所が違う（コンフリクト解決で動かした）
+        let (r, old, new) = rebase_case(
+            "moved",
+            |r| r.write("long.txt", &LONG.replacen("a3\n", "a3\nPR\n", 1)),
+            |r| r.write("long.txt", &LONG.replacen("a1\n", "A1\n", 1)),
+            |r| {
+                r.write(
+                    "long.txt",
+                    &LONG
+                        .replacen("a1\n", "A1\n", 1)
+                        .replacen("a12\n", "a12\nPR\n", 1),
+                )
+            },
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn extra_file_in_new_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "extrafile",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| {
+                pr_edit_other(r);
+                r.write("sneaky.txt", "x\n");
+            },
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn mode_change_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "mode",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            |r| {
+                pr_edit_other(r);
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(
+                    r.0.join("other.txt"),
+                    std::fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+            },
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn unknown_old_commit_is_not_same() {
+        let (r, _old, new) = rebase_case(
+            "unknown",
+            pr_edit_other,
+            |r| r.write("third.txt", "t\n"),
+            pr_edit_other,
+        );
+        let bogus = "0123456789012345678901234567890123456789";
+        let tip = r.git(&["rev-parse", "main"]);
+        assert!(!same_pr_diff(&r.0, &tip, bogus, &new));
+    }
+
+    #[test]
+    fn reverting_main_change_to_untouched_file_is_not_same() {
+        // 旧 head は other.txt に触れない。main が変えた other.txt を、新 head が元に戻す
+        let (r, old, new) = rebase_case(
+            "revert-main",
+            |r| r.write("pr.txt", "pr\n"),
+            |r| r.write("other.txt", "o\nMAIN\n"),
+            |r| {
+                r.write("pr.txt", "pr\n");
+                r.write("other.txt", "o\n");
+            },
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn discarding_main_change_in_touched_file_is_not_same() {
+        let (r, old, new) = rebase_case(
+            "discard-main",
+            |r| r.write("other.txt", "o\nPR\n"),
+            |r| r.write("other.txt", "MAIN\no\n"),
+            |r| r.write("other.txt", "o\nPR\n"),
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
+
+    #[test]
+    fn stale_base_does_not_hide_reverting_main_change() {
+        // 旧 head は A→B。main は A→C。新 head は C→B（main の変更を巻き戻す）。
+        // 手元の origin/main が A のままでも、GitHub の今の先頭 C を base にして見分ける
+        let r = Repo::new("stale");
+        r.write("f.txt", "A\n");
+        r.commit("base");
+        r.publish_main();
+        r.git(&["checkout", "-q", "-b", "pr"]);
+        r.write("f.txt", "B\n");
+        let old = r.commit("pr");
+        r.git(&["checkout", "-q", "main"]);
+        r.write("f.txt", "C\n");
+        let tip = r.commit("main moves");
+        r.git(&["checkout", "-q", "-b", "pr2"]);
+        r.write("f.txt", "B\n");
+        let new = r.commit("pr again");
+        assert!(!same_pr_diff(&r.0, &tip, &old, &new));
+    }
+
+    #[test]
+    fn pathspec_like_file_name_is_compared_literally() {
+        let name = ":(exclude,glob)**";
+        let (r, old, new) = rebase_case(
+            "pathspec",
+            |r| r.write(name, "one\n"),
+            |r| r.write("third.txt", "t\n"),
+            |r| r.write(name, "two\n"),
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
     }
 }

@@ -926,6 +926,71 @@ it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=1 なら未レビューの head で�
 out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=1 $MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
+# リベース（main の追従）で hash だけが変わった head は、レビュー済みの差分と同じなので再レビューを求めない。
+# 差分が変わっていれば今まで通り deny する（変わったのに通す誤りを許さない）
+REBASE_REPO="$TEST_ROOT/rebase-repo"
+git init -q -b main "$REBASE_REPO"
+git -C "$REBASE_REPO" config user.email t@example.com
+git -C "$REBASE_REPO" config user.name t
+git -C "$REBASE_REPO" config core.hooksPath /dev/null
+git -C "$REBASE_REPO" config commit.gpgsign false
+echo base >"$REBASE_REPO/f.txt"
+git -C "$REBASE_REPO" add f.txt
+git -C "$REBASE_REPO" commit -q -m base
+git -C "$REBASE_REPO" update-ref refs/remotes/origin/main HEAD
+git -C "$REBASE_REPO" checkout -q -b pr
+echo pr >"$REBASE_REPO/pr.txt"
+git -C "$REBASE_REPO" add pr.txt
+git -C "$REBASE_REPO" commit -q -m pr
+REBASE_OLD=$(git -C "$REBASE_REPO" rev-parse HEAD)
+git -C "$REBASE_REPO" checkout -q main
+echo more >"$REBASE_REPO/g.txt"
+git -C "$REBASE_REPO" add g.txt
+git -C "$REBASE_REPO" commit -q -m "main moves"
+git -C "$REBASE_REPO" update-ref refs/remotes/origin/main HEAD
+REBASE_TIP=$(git -C "$REBASE_REPO" rev-parse HEAD)
+git -C "$REBASE_REPO" checkout -q -b pr-rebased
+echo pr >"$REBASE_REPO/pr.txt"
+git -C "$REBASE_REPO" add pr.txt
+git -C "$REBASE_REPO" commit -q -m "pr (rebased)"
+REBASE_SAME=$(git -C "$REBASE_REPO" rev-parse HEAD)
+echo changed >"$REBASE_REPO/pr.txt"
+git -C "$REBASE_REPO" add pr.txt
+git -C "$REBASE_REPO" commit -q -m "pr changes content"
+REBASE_CHANGED=$(git -C "$REBASE_REPO" rev-parse HEAD)
+
+make_fake_gh_rebased() {
+  # $1: 今の head、$2: bot がレビューした commit
+  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"'"$1"'\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/'"$1"'/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api repos/example/heredoc/commits/'"$1"'/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/main...'"$1"'"*) echo 0 ;;
+  "api repos/example/heredoc/branches/main"*) echo '"$REBASE_TIP"' ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo '"$2"' ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api graphql"*) echo "[]" ;;'
+}
+
+it "pre-merge-check: リベースだけで head が変わり、PR の差分がレビュー済みと同じなら再レビューを求めない"
+cd "$REBASE_REPO" || exit 1
+make_fake_gh_rebased "$REBASE_SAME" "$REBASE_OLD"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: リベース後に PR の中身が変わっていれば deny する"
+make_fake_gh_rebased "$REBASE_CHANGED" "$REBASE_OLD"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "request-rereview.sh"
+
+it "pre-merge-check: レビュー済みのコミットを取得できなければ deny する"
+make_fake_gh_rebased "$REBASE_SAME" "0123456789012345678901234567890123456789"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+cd "$REPO" || exit 1
+
 it "pre-merge-check: レビューは走っているのに未レビューなら、まず要求を促す"
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
