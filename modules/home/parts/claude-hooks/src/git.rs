@@ -4,13 +4,23 @@ use std::path::Path;
 use std::process::Command;
 
 /// `git <args>` を dir で実行し、成功なら標準出力（末尾改行を除く）を返す。
-/// 失敗（非 0 終了、dir が無い、git が無い）は None
+/// 失敗（非 0 終了、dir が無い、git を起動できない）は None。dir があるのに git を起動できない
+/// （PATH に無いなど）ときは、環境の問題なので理由を標準エラーに出す
 pub fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()?;
+    // まだ無いディレクトリは、判定するコマンドが作る前の場所（mkdir の後の cd や -C）を指すことがある
+    if !dir.is_dir() {
+        return None;
+    }
+    let out = match Command::new("git").args(args).current_dir(dir).output() {
+        Ok(out) => out,
+        Err(e) => {
+            eprintln!(
+                "claude-hooks: git を起動できません（{}）: {e}",
+                dir.display()
+            );
+            return None;
+        }
+    };
     if !out.status.success() {
         return None;
     }
