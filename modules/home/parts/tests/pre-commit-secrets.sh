@@ -104,11 +104,32 @@ REPO="$WORK/escape"
 new_repo "$REPO"
 printf 'key = %s\n' "$KEY" > "$REPO/b.txt"
 git -C "$REPO" add b.txt
-if ALLOW_SECRET_COMMIT=1 CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b" >"$WORK/out" 2>&1; then
-  ok "ALLOW_SECRET_COMMIT=1 で迂回できる"
+# 値は理由の文字列（ADR-0023。claude-hooks と同じ規則: 空白を除き ASCII 1・それ以外 2 で幅 6 以上）
+if ALLOW_SECRET_COMMIT=誤検出のため CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b" >"$WORK/out" 2>&1; then
+  ok "ALLOW_SECRET_COMMIT=<理由> で迂回できる"
 else
-  ng "ALLOW_SECRET_COMMIT=1 でも止めた"
+  ng "ALLOW_SECRET_COMMIT=<理由> でも止めた"
 fi
+printf 'key = %s\n' "$KEY" > "$REPO/b2.txt"
+git -C "$REPO" add b2.txt
+if ALLOW_SECRET_COMMIT=1 CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "ALLOW_SECRET_COMMIT=1 で迂回できた（理由の無い値）"
+elif grep -q "ALLOW_SECRET_COMMIT には理由を記載" "$WORK/out" && ! grep -q "6" "$WORK/out"; then
+  ok "ALLOW_SECRET_COMMIT=1 は理由を求めて止め、しきい値を明かさない"
+else
+  ng "ALLOW_SECRET_COMMIT=1 を止めたが、理由を求める文言でない"
+fi
+if ALLOW_SECRET_COMMIT=force CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "ALLOW_SECRET_COMMIT=force で迂回できた（幅 5）"
+else
+  ok "ALLOW_SECRET_COMMIT=force は止める（幅 5）"
+fi
+if ALLOW_SECRET_COMMIT=abcdef CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ok "ALLOW_SECRET_COMMIT=abcdef で迂回できる（幅 6）"
+else
+  ng "ALLOW_SECRET_COMMIT=abcdef でも止めた（幅 6）"
+fi
+if git -C "$REPO" diff --cached --quiet; then :; else git -C "$REPO" restore --staged b2.txt; rm -f "$REPO/b2.txt"; fi
 printf 'key = %s\n' "$KEY" > "$REPO/c.txt"
 git -C "$REPO" add c.txt
 if git -C "$REPO" commit -q -m "chore: c" >"$WORK/out" 2>&1; then

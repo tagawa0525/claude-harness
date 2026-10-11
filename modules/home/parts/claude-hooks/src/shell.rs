@@ -488,6 +488,19 @@ mod tests {
             Shell::parse("git push").escape("ALLOW_PROTECTED_PUSH"),
             Escape::Absent
         ));
+        // 内側の空白で幅を水増しできない
+        assert!(matches!(esc("'a    b'"), Escape::Short));
+        // 0 と空は、付けていないものとして扱う
+        assert!(matches!(esc("0"), Escape::Absent));
+        assert!(matches!(esc("''"), Escape::Absent));
+        // 同じ名前の代入が複数あれば、短い値が 1 つでもあれば短い扱い（後ろの代入で上書きできない）
+        assert!(matches!(
+            Shell::parse(
+                "ALLOW_PROTECTED_PUSH=1 git push --force; ALLOW_PROTECTED_PUSH=placeholder true"
+            )
+            .escape("ALLOW_PROTECTED_PUSH"),
+            Escape::Short
+        ));
     }
 
     #[test]

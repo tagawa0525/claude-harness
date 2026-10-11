@@ -193,6 +193,8 @@ mod tests {
         assert!(r.contains("docs/adr/0002-a.md") && r.contains("docs/adr/0003-b.md"));
         assert!(r.contains("/topic-triage"));
         assert!(r.contains("ALLOW_MULTI_TOPIC=<理由>"));
+        // 「〜の場合は別」のような条件を列挙しない（ADR-0023）
+        assert!(!r.contains("まとめて加える"));
     }
 
     #[test]

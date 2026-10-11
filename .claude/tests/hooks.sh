@@ -278,6 +278,30 @@ for value in aaaaaa 差分同一 '"  abcdef  "' '"rebase のみ"'; do
   assert_eq allow "$(decision "$out")"
 done
 
+it "escape: 理由を求めるのは、そのルールが止める命令のときだけ"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push origin feat/x')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-no-verify 'ALLOW_NO_VERIFY=1 git status')
+assert_eq allow "$(decision "$out")"
+
+it "escape: 同じ名前の代入が複数あれば、短い値が 1 つでもあれば理由を求める"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push --force; ALLOW_PROTECTED_PUSH=placeholder true')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+
+it "escape: 0 と空の値はエスケープを付けていないものとして扱う"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=0 git push --force')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "force push は禁止"
+assert_not_contains "$(reason "$out")" "理由を記載"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH= git push --force')
+assert_contains "$(reason "$out")" "force push は禁止"
+
+it "escape: 幅は空白を全部除いて数える（内側の空白で水増しできない）"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a    b" git push --force')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+
 it "escape: 止める文言は、理由を値にした付け方と、機械で判定できる理由なら issue に書くことを案内する"
 out=$(run_hook guard-git-push 'git push --force')
 assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH=<理由>"
@@ -1338,6 +1362,8 @@ assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
 assert_contains "$(reason "$out")" "docs/adr/0003-use-c.md"
 assert_contains "$(reason "$out")" "/topic-triage"
 assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=<理由>"
+# 「〜の場合は別」のような条件を文言に列挙しない（ADR-0023）
+assert_not_contains "$(reason "$out")" "まとめて加える"
 assert_not_contains "$(reason "$out")" "src/x.rs"
 
 it "pre-merge-check: 新しい ADR が 1 件で、ほかは既存の ADR の変更・改名・README なら許可する"
