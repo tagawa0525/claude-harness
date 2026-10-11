@@ -137,6 +137,16 @@ out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR"
 
+it "存在しない月・時刻（2026-13-01、25 時）の COMPLETED 行は読めない行として exit 1"
+job 1 badmonth COMPLETED 10 2026-13-01T10:00:00 2026-13-01T10:05:00 1 > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "1 行目"
+job 1 badhour COMPLETED 10 2026-10-11T25:00:00 2026-10-11T26:00:00 1 > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "1 行目"
+
 it "ファイルが無ければ理由を出して exit 1"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$TEST_ROOT/none" 2>&1)
 assert_eq 1 $?
