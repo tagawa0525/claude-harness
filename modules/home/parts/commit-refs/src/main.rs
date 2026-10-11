@@ -61,7 +61,7 @@ fn remap(map_path: Option<&Path>) -> Result<(), Vec<String>> {
     // 書き終えてから出力する。出力の途中で失敗しても、ファイルは揃って書き換わっている
     let mut written: Vec<String> = Vec::new();
     for (path, file, new_data, _) in &results {
-        if let Err(e) = fs::write(file, new_data) {
+        if let Err(e) = replace_file(file, new_data) {
             let done = if written.is_empty() {
                 "なし".to_string()
             } else {
@@ -119,6 +119,31 @@ fn prepare(map_path: Option<&Path>) -> Result<Vec<Replacement>, Vec<String>> {
             Err(problems)
         }
     }
+}
+
+/// `file` の中身を `data` にする。同じディレクトリの一時ファイルに書いて権限を写し、rename で置き換えるので、
+/// 途中で失敗しても `file` は元のまま残る（fs::write は先に中身を消すので、書き込みの失敗でファイルが壊れる）
+fn replace_file(file: &Path, data: &[u8]) -> std::io::Result<()> {
+    let permissions = fs::metadata(file)?.permissions();
+    let name = file.file_name().unwrap_or_default().as_bytes();
+    let mut temp_name = b".".to_vec();
+    temp_name.extend_from_slice(name);
+    temp_name.extend_from_slice(format!(".commit-refs-{}.tmp", std::process::id()).as_bytes());
+    let temp = file.with_file_name(OsStr::from_bytes(&temp_name));
+    let mut out = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let result = out
+        .write_all(data)
+        .and_then(|()| out.sync_all())
+        .and_then(|()| fs::set_permissions(&temp, permissions))
+        .and_then(|()| fs::rename(&temp, file));
+    if result.is_err() {
+        // 作った一時ファイルは残さない（消せなくても、元の失敗の理由を返す）
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 /// 置き換えるファイルごとに、リポジトリの直下からのパス、ファイル、新しい内容、置き換えた語の数
