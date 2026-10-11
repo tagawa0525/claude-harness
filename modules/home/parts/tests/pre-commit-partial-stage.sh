@@ -175,6 +175,20 @@ else
   git -C "$R" show :a.md | head -3 | sed 's/^/    index: /'
 fi
 
+echo "==> 作業ツリーのパスがシンボリックリンクなら、その先を書き換えない"
+R=$(repo symlink a.md "$LINES")
+STAGED=${LINES/l1/l1 }
+printf '%s' "$STAGED" >"$R/a.md"
+git -C "$R" add a.md
+printf '%s' "$STAGED" >"$WORK/outside.md"
+rm "$R/a.md"
+ln -s "$WORK/outside.md" "$R/a.md"
+if commit "$R" && [[ "$(cat "$WORK/outside.md")" == "${STAGED%$'\n'}" ]] && [[ -L "$R/a.md" ]]; then
+  ok "シンボリックリンクの先のファイルを書き換えない"
+else
+  ng "シンボリックリンクの先のファイルを書き換えない"
+fi
+
 echo "==> - で始まるパスも検査する"
 R=$(repo dash init.txt $'x\n')
 mkdir -p "$R/-docs"
