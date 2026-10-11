@@ -212,6 +212,7 @@ let
         "Bash(~/.claude/scripts/gh-actions-diagnose.sh:*)"
         "Bash(~/.claude/scripts/review-level.sh:*)"
         "Bash(~/.claude/scripts/slurm-run.sh:*)"
+        "Bash(~/.claude/scripts/slurm-history.sh:*)"
         # Web
         "WebFetch(domain:api.github.com)"
         "WebFetch(domain:claude.ai)"
