@@ -103,10 +103,12 @@ if [ "${#PATHS[@]}" -gt 0 ] && command -v markdownlint >/dev/null 2>&1; then
     fixed=$(git hash-object -w --no-filters "$md/$path")
     [ "$fixed" != "${BLOBS[$i]}" ] || continue
     git update-index --cacheinfo "${MODES[$i]},$fixed,$path"
-    # ステージしていない編集が無いファイルだけ、作業ツリーにも書く（あれば、作業ツリーは触らない）。作業ツリーの
-    # ファイルは改行などの変換を経た形なので、ブロブにしてから比べる
-    if [ -f "$path" ] && [ "$(git hash-object --path="$path" -- "$path")" = "${BLOBS[$i]}" ]; then
-      git cat-file --filters --path="$path" "$fixed" >"$path"
+    # ステージしていない編集が無い普通のファイルだけ、作業ツリーにも書く（あれば、作業ツリーは触らない）。作業
+    # ツリーのファイルは改行などの変換を経た形なので、ブロブにしてから比べる。シンボリックリンクに置き換わって
+    # いれば、その先（リポジトリの外かもしれない）を書き換えない。変換が済んでから書き、途中で空にしない
+    if [ -f "$path" ] && [ ! -L "$path" ] && [ "$(git hash-object --path="$path" -- "$path")" = "${BLOBS[$i]}" ]; then
+      git cat-file --filters --path="$path" "$fixed" >"$work/smudged"
+      cat "$work/smudged" >"$path"
     fi
   done
   echo "🔍 Checking Markdown lint..."
