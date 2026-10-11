@@ -14,7 +14,6 @@ allowed-tools:
   - Bash(~/.claude/skills/gh-pr-review/scripts/*)
   - Skill(code-review)
   - Skill(adr)
-  - Skill(topic-triage)
   - Read
   - Edit
   - Write
@@ -83,8 +82,9 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
   件名も別にする
 - 決定が要るものは /adr の形で ADR に書く。依頼で決まっていない決定を、依頼の判断の軸から下したときは、
   報告の「決めたことと根拠」に書く
-- 作業中に見つかった別のトピックは /topic-triage で振り分け、issue に書いて今のトピックに戻る。今のトピックを
-  止めるものは、自分で別のブランチを始めず、報告に書いて止まる
+- 作業中に見つかった問題は、/topic-triage の「振り分け」の表と目安だけを Read で読んで振り分ける（そこにある
+  別の worktree での片付けとマージ、rebase は行わない）。同じトピックなら続け、止めない別のトピックは issue に
+  書いて今のトピックに戻り、止める別のトピックは issue に書いて報告に書いて止まる
 - 依頼の範囲を超える変更は入れない。入れざるを得なかったものは、報告で分けて書く
 
 ### 5. コミットする
