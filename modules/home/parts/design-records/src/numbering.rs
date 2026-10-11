@@ -8,8 +8,8 @@ use std::process::ExitCode;
 use design_records::{Kind, numbers_in, record_name, renumber_refs};
 
 use crate::git::{
-    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, origin_default,
-    remote_tags, repo_root, reservations, run, shared_default, tracked,
+    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, remote_tags,
+    repo_root, reservations, run, tracked,
 };
 
 /// 予約をやり直す回数の上限。ほかの人の予約と続けてぶつかるのは、同時に作る人の数だけ。
@@ -49,12 +49,13 @@ fn used_numbers(root: &Path, kind: Kind) -> Result<BTreeSet<u32>> {
     Ok(used)
 }
 
-/// 予約のタグを打つコミット。origin があれば origin の既定ブランチの先端（ローカルの既定ブランチに打つと、
-/// まだ push していないコミットがタグと一緒に出てしまう）、無ければ既定ブランチか HEAD の先端。
-fn reservation_target(root: &Path, fetched: Option<String>) -> Result<String> {
-    let name = match fetched.map_or_else(|| shared_default(root), |name| Ok(Some(name)))? {
+/// 予約のタグを打つコミット。origin があれば、取ってきた origin の既定ブランチ（`fetched`）の先端（ローカルの
+/// 既定ブランチに打つと、まだ push していないコミットがタグと一緒に出てしまう。手元の古い `origin/*` には落ちない）、
+/// 無ければ既定ブランチか HEAD の先端。
+fn reservation_target(root: &Path, remote: bool, fetched: Option<String>) -> Result<String> {
+    let name = match fetched {
         Some(name) => name,
-        None if has_origin(root)? => {
+        None if remote => {
             return Err(
                 "origin has no default branch (origin/HEAD, main or master) to put the \
                  reservation tag on; push the default branch with `git push -u origin main`, \
@@ -62,7 +63,7 @@ fn reservation_target(root: &Path, fetched: Option<String>) -> Result<String> {
                     .into(),
             );
         }
-        None => "HEAD".to_string(),
+        None => local_default(root)?.unwrap_or_else(|| "HEAD".to_string()),
     };
     git(
         root,
@@ -89,7 +90,7 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
     } else {
         None
     };
-    let target = reservation_target(root, fetched)?;
+    let target = reservation_target(root, remote, fetched)?;
     for attempt in 0..ATTEMPTS {
         // やり直しでは、先に予約したほかの clone のタグだけを取ってくる
         if remote && attempt > 0 {
@@ -231,7 +232,8 @@ fn added_lines(root: &Path, base: &str) -> Result<BTreeMap<String, BTreeSet<usiz
             if line.starts_with('+') {
                 added.entry(path.clone()).or_default().insert(next);
                 next += 1;
-            } else if line.starts_with(' ') {
+            } else if line.starts_with(' ') || line.is_empty() {
+                // diff.suppressBlankEmpty では、空の文脈行が空白なしで出る
                 next += 1;
             }
         }
@@ -260,18 +262,31 @@ fn rewrite(
         .collect()
 }
 
+/// 既定ブランチとして読むブランチ。origin があれば、origin の既定ブランチを取ってきて、その `origin/<名前>`
+/// （手元の origin/HEAD の symref には頼らない。origin に既定ブランチが無ければ `None`）。無ければローカルの既定
+/// ブランチ。origin のタグも取ってくるので、呼ぶ側が [`lock`] を持つ。
+fn shared_branch(root: &Path) -> Result<Option<String>> {
+    if has_origin(root)? {
+        fetch_origin(root, true)
+    } else {
+        local_default(root)
+    }
+}
+
 /// このブランチの分岐点と、比べた既定ブランチ。ローカルの既定ブランチ（/git-merge が rebase する先）と origin の
-/// 既定ブランチ（PR の base）のうち、HEAD との分岐点が新しい方を使う。2 つの分岐点が祖先の関係になければ止める。
-fn branch_base(root: &Path) -> Result<Option<(String, String)>> {
+/// 既定ブランチ（`origin_branch`。PR の base）のうち、HEAD との分岐点が新しい方を使う。共通の祖先の無いブランチ
+/// は比べない（どちらとも無ければ基準なし）。2 つの分岐点が祖先の関係になければ止める。
+fn branch_base(root: &Path, origin_branch: Option<&str>) -> Result<Option<(String, String)>> {
     let mut bases: Vec<(String, String)> = Vec::new();
-    for branch in [local_default(root)?, origin_default(root)?]
+    for branch in [local_default(root)?, origin_branch.map(str::to_string)]
         .into_iter()
         .flatten()
     {
-        let base = git(root, &["merge-base", "HEAD", &branch])?
-            .trim()
-            .to_string();
-        bases.push((base, branch));
+        let found = run(root, &["merge-base", "HEAD", &branch])?;
+        if found.status.success() {
+            let base = String::from_utf8_lossy(&found.stdout).trim().to_string();
+            bases.push((base, branch));
+        }
     }
     let Some(mut newest) = bases.first().cloned() else {
         return Ok(None);
@@ -299,7 +314,17 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
     if !git(&root, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
         return Err("commit or stash the changes first; renumber makes its own commit".into());
     }
-    let based = branch_base(&root)?;
+    // 既定ブランチ（origin があれば取ってきた origin の）。reserve も lock を取るので、ここで持ち続けない
+    let shared = {
+        let _lock = lock(&root)?;
+        shared_branch(&root)?
+    };
+    let origin_branch = if has_origin(&root)? {
+        shared.as_deref()
+    } else {
+        None
+    };
+    let based = branch_base(&root, origin_branch)?;
     let records: Vec<String> = tracked(&root, kind.dir())?
         .into_iter()
         .filter(|p| record_name(kind, p).is_some_and(|(n, _)| n == old))
@@ -365,9 +390,9 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
         ));
     }
     println!("{new_path}");
-    // 旧番号をほかの記録（既定ブランチにあるもの）が使っているときだけ、予約を解放する。ほかに使う記録が無い
-    // 番号の予約を消すと、ほかの clone がその番号を振る
-    if records.len() > mine.len() {
+    // 旧番号をほかの記録が既定ブランチ（origin があれば origin の）で使っているときだけ、予約を解放する。ほかの
+    // clone から見て使う記録が無い番号の予約を消すと、その番号を振られる
+    if used_on(&root, shared.as_deref(), kind, old)? {
         release_old(&root, kind, old, &slug).map_err(|e| {
             format!(
                 "renumbered and committed as {new_path}, but the old reservation {} was not released: {e}",
@@ -405,7 +430,8 @@ fn move_record(
         };
         let file = root.join(path);
         // シンボリックリンクの差分の行はリンクの先の行ではなく、先はリポジトリの外のこともある
-        if fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
+        // submodule（gitlink）の項目はディレクトリで、参照を書くファイルではない
+        if fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink() || m.is_dir()) {
             continue;
         }
         // 消したファイルとテキストでないファイルは参照を書けないので飛ばす。ほかの読み込みの失敗は止める
@@ -444,6 +470,27 @@ fn move_record(
         ),
     };
     git(root, &["commit", "--quiet", "-m", &message]).map(|_| ())
+}
+
+/// `branch`（`None` なら無い）の先端に、`kind` の番号 `number` の記録があるか。
+fn used_on(root: &Path, branch: Option<&str>, kind: Kind, number: u32) -> Result<bool> {
+    let Some(branch) = branch else {
+        return Ok(false);
+    };
+    let listed = git(
+        root,
+        &[
+            "ls-tree",
+            "-z",
+            "--name-only",
+            branch,
+            "--",
+            &format!("{}/", kind.dir()),
+        ],
+    )?;
+    Ok(listed
+        .split('\0')
+        .any(|path| record_name(kind, path).is_some_and(|(n, _)| n == number)))
 }
 
 /// 振り直す記録 `text` のうち、付け替える行。`added`（`None` ならすべて）から前付けを除き、最初の `# ` の見出し
@@ -505,10 +552,7 @@ pub fn prune() -> Result<ExitCode> {
     let root = repo_root()?;
     let _lock = lock(&root)?;
     let remote = has_origin(&root)?;
-    if remote {
-        fetch_origin(&root, true)?;
-    }
-    let Some(branch) = shared_default(&root)? else {
+    let Some(branch) = shared_branch(&root)? else {
         return Err("no default branch to read the merged records from".into());
     };
     let mut args = vec!["log", branch.as_str(), "--format=", "--name-only", "--"];
