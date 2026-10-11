@@ -436,8 +436,45 @@ fn move_record(
     added: Option<&BTreeMap<String, BTreeSet<usize>>>,
 ) -> Result<()> {
     let listed = git(root, &["ls-files", "-z"])?;
+    // 足した行の無い（基準の無い）ときは、旧番号の参照か記録のファイル名を含むファイルだけを読む（大きな
+    // リポジトリで、追跡しているファイルをすべて読まない）。git grep は見つからないと 1 で終わる
+    let mentions: Option<BTreeSet<String>> = match added {
+        Some(_) => None,
+        None => {
+            let reference = kind.reference(old);
+            let file = format!("-{slug}.md");
+            let found = run(
+                root,
+                &[
+                    "grep", "-lIz", "-F", "-e", &reference, "-e", &file, "--", ".",
+                ],
+            )?;
+            match found.status.code() {
+                Some(0) => Some(
+                    String::from_utf8_lossy(&found.stdout)
+                        .split('\0')
+                        .filter(|p| !p.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                ),
+                Some(1) => Some(BTreeSet::new()),
+                _ => {
+                    return Err(format!(
+                        "git grep failed: {}",
+                        String::from_utf8_lossy(&found.stderr).trim()
+                    ));
+                }
+            }
+        }
+    };
     let mut changed = Vec::new();
     for path in listed.split('\0').filter(|p| !p.is_empty()) {
+        if mentions
+            .as_ref()
+            .is_some_and(|m| path != record && !m.contains(path))
+        {
+            continue;
+        }
         // 足した行だけを付け替える（main から来た行の同じ番号は、main の記録を指す）
         let mut lines = match added {
             Some(added) => match added.get(path) {
