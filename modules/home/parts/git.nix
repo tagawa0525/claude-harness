@@ -440,23 +440,31 @@ in
         exit 0
       fi
 
-      # 日本語の崩れた語（ADR-0014）。コメントの行と、commit -v の scissors の行から後（差分）は除く。
-      # fixup / squash の本文も自動で畳まれて履歴に残るので、下の対象外より前で見る
+      # 日本語の崩れた語（ADR-0014）を、標準入力の本文で見る。commit -v の scissors の行から後（差分）は
+      # 除く。# で始まる行は、-m や -F（cleanup=whitespace）では消えずにコミットに残るので、除かない。
+      # textlint（Node.js）は起動が重いので、軽い検査の後に呼ぶ
       # 検証: modules/home/parts/tests/ja-terms.sh
-      ja_rc=0
-      sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$MSG_FILE" \
-        | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt || ja_rc=$?
-      if [ "$ja_rc" -eq 1 ]; then
-        echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
-        exit 1
-      elif [ "$ja_rc" -ne 0 ]; then
-        echo "❌ textlint が失敗しました（終了コード $ja_rc）。上の出力を見てください"
-        exit 1
-      fi
+      ja_check() {
+        local rc=0
+        sed '/^# -\{24\} >8 -\{24\}$/,$d' \
+          | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt || rc=$?
+        if [ "$rc" -eq 1 ]; then
+          echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
+          exit 1
+        elif [ "$rc" -ne 0 ]; then
+          echo "❌ textlint が失敗しました（終了コード $rc）。上の出力を見てください"
+          exit 1
+        fi
+      }
 
-      # マージ・fixup/squash・Revert は Conventional Commits の対象外
+      # マージ・fixup/squash・Revert は Conventional Commits の対象外。件名は元のコミットから写したもの
+      # （Merge は git が作るもの）なので、日本語の語は件名を除いた本文だけを見る（fixup / squash の本文は
+      # 畳まれて履歴に残る）
       case "$SUBJECT" in
-        Merge*|fixup!*|squash!*|Revert*) exit 0 ;;
+        Merge*|fixup!*|squash!*|Revert*)
+          ja_check < <(sed '0,/^[^#]/{//d}' "$MSG_FILE")
+          exit 0
+          ;;
       esac
 
       TYPES='feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert'
@@ -474,6 +482,8 @@ in
       if [ "$LEN" -gt 50 ]; then
         echo "⚠️  件名が 50 文字を超えています ($LEN 文字)。短くできないか検討してください"
       fi
+
+      ja_check < "$MSG_FILE"
       exit 0
     '';
   };
