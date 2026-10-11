@@ -1137,3 +1137,13 @@ fn new_refuses_shallow_clones_whose_history_is_cut() {
     assert!(stderr(&out).contains("shallow"), "{}", stderr(&out));
     assert!(!shallow.join("docs").exists());
 }
+
+#[test]
+fn new_refuses_numbers_beyond_four_digits() {
+    let t = TempRepo::new("exhausted");
+    t.git(&["tag", "-a", "adr-9999", "-m", "use-last", "main"]);
+    // 5 桁の番号は番号として数えないので、振ると使い回しうる
+    let out = t.run(&["new", "use-a", "a を使う"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(!t.dir.join("docs").exists());
+}
