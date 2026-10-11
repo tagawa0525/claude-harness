@@ -47,6 +47,9 @@ cd <出力の WORKTREE の値>
 
 以降のステージング・コミット・プッシュはworktree側で実行する。
 
+`WORKTREE:` を出したうえで `ERROR:` で終わったとき（`.worktreelink` の誤り）も、変更はもう worktree 側に
+移っている（stash にも main にも無い）。やり直さず、その worktree に移って `.worktreelink` か `.gitignore` を直す。
+
 **GitHubリモートなし → その場でfeatureブランチ:**
 
 ```bash

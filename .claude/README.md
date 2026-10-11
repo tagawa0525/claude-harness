@@ -139,7 +139,8 @@ references
 
 - 共有するパスは git に無視されていること。`dir/` のようにディレクトリだけに一致するパターンでは symlink は
   無視されないので、`dir` か `/dir` と書く。無視されていなければエラーで止まる（symlink は 1 つも作らず、worktree は残る）
-- メイン worktree に無いパスは作らずに `NOTE:` で知らせる
+- メイン worktree に無いパスは作らずに `NOTE:` で知らせる。メイン worktree で追跡されているパス、同じパスや入れ子の
+  パス、pathspec として特別な意味を持つ書き方（`:` `!` で始まる、`*` `?` `[` `\` を含む）はエラー
 - `post-merge-cleanup.sh` は symlink の残る worktree もそのまま消せ、先の実体は残る
 
 ## スクリプトの書き方

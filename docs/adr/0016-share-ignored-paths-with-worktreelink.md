@@ -42,7 +42,9 @@ git 本体には、新しい worktree に追跡しないファイルを持ち込
   Claude Code 自身が `.worktreeinclude` を読んで worktree にコピーするため、`references` を書くと数 GB をコピーされる。
   案 3 は意味の同じ既存の名前があるのに増やすことになる。案 4 は xlc のためにスクリプトを汎用でなくする
 - 書き方: 1 行 1 パスのリテラルの相対パス。空行と `#` で始まる行は読み飛ばし、末尾の `/` は除く。絶対パス、`.` と `..`
-  の要素、ワイルドカード（`*` `?` `[`）、`!` で始まる行はエラーにする。PostHog は `.gitignore` の書き方だが、symlink を
+  の要素、ワイルドカード（`*` `?` `[`）と `\`、`!` か `:` で始まる行はエラーにする。git は引数を pathspec として
+  読み（`:foo` は `foo` として判定される）、`git check-ignore` は `GIT_LITERAL_PATHSPECS` を受け付けないので、
+  pathspec として特別な意味を持つ文字を止め、symlink の名前そのものを判定させる。PostHog は `.gitignore` の書き方だが、symlink を
   作るには名前が 1 つに決まる必要があり、パターンを展開する先（メイン worktree のどこに一致するか）を決める必要が
   今は無い。リテラルのパスは `.gitignore` の書き方の部分集合として読める
 - 同じパスや入れ子のパス（`references` と `references/sub`）はエラー。後の `ln -s` が先の symlink をたどり、
@@ -53,6 +55,8 @@ git 本体には、新しい worktree に追跡しないファイルを持ち込
 - 新しい worktree で `git check-ignore` に無視されないパスはエラー。symlink はディレクトリではないので、`references/` の
   ようにディレクトリだけに一致するパターンでは無視されない（実体のディレクトリがあるメイン worktree では無視される）。
   そのため判定はメイン worktree でなく、新しい worktree のパスが無い状態で行う。git から見て symlink と同じ扱いになる
+- メイン worktree のブランチが追跡しているパスはエラー。新しい worktree での書き込みが、メインの追跡するファイルの
+  変更になる
 - エラーのときは symlink を 1 つも作らずに止め、worktree は残す。直す先はそのブランチの `.worktreelink` か
   `.gitignore` で、その worktree で直せるようにする。worktree を消して戻す案は採らない。誤りがブランチの上に
   あると、そのブランチの worktree を作れず、直すには別の場所で直す必要がある。また `--carry-changes` で
