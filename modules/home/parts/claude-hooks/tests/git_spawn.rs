@@ -219,3 +219,12 @@ fn unreadable_hook_input_is_shown_to_the_user() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+#[test]
+fn path_under_a_regular_file_is_not_reported() {
+    let dir = TempDir::new("under-file");
+    let file = dir.0.join("file");
+    std::fs::write(&file, "").unwrap();
+    let out = run(&file.join("child"), "git commit -m x", None, None);
+    assert_eq!(out.system_message(), "", "json: {}", out.json);
+}
