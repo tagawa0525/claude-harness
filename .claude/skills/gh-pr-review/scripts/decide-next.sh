@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gh-pr-review: レビュー対応後に「次に取るべき行動」を判定するスクリプト
 #
-# Usage: decide-next.sh <pr_number> [--max-rounds N]   (デフォルト 5)
+# Usage: decide-next.sh <PR の URL> [--max-rounds N]   (デフォルト 5)
 #
 # 出力（テキスト）:
 #   ROUND: <n>          周回数。Copilot へのレビュー要求の件数（PR 作成時の自動要求を
@@ -42,21 +42,23 @@
 
 set -euo pipefail
 
-PR_NUMBER="${1:-}"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/../../../scripts/lib/pr-url.sh"
+
+PR_URL="${1:-}"
 MAX_ROUNDS=5
 if [[ "${2:-}" == "--max-rounds" ]]; then
   MAX_ROUNDS="${3:?--max-rounds には数値が必要です}"
 fi
 
-if [[ -z "$PR_NUMBER" ]]; then
-  echo "Usage: $0 <pr_number> [--max-rounds N]" >&2
+if ! parse_pr_url "$PR_URL"; then
+  echo "Usage: $0 <PR の URL> [--max-rounds N]" >&2
   exit 1
 fi
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Copilot 宛てレビュー要求の created_at を発生順に取得。
 # 取得に失敗したら空扱いで続けない。周回数を過少に見積もり、上限判定がずれる
-if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_NUMBER"); then
+if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_URL"); then
   echo "ERROR: PR #${PR_NUMBER} のレビュー要求を取得できませんでした（周回数が数えられません）" >&2
   exit 1
 fi
@@ -79,7 +81,7 @@ fi
 request_count=$(grep -c . <<<"$requests" || true)
 
 # 最新の Copilot レビュー
-latest=$("${SCRIPT_DIR}/get-latest-review.sh" "$PR_NUMBER")
+latest=$("${SCRIPT_DIR}/get-latest-review.sh" "$PR_URL")
 review_count=$(sed -n 's/^ROUND: //p' <<<"$latest")
 last_review_at=""
 reviewed_sha=""
@@ -96,7 +98,7 @@ fi
 head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid')
 # get-review-comments.sh はスレッド内のコメントをフラットに返すので、返信を
 # 数えないよう thread_id で畳む
-if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_NUMBER" --unresolved \
+if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_URL" --unresolved \
   | jq '[.[].thread_id] | unique | length'); then
   echo "ERROR: PR #${PR_NUMBER} の未解決スレッドを取得できませんでした" >&2
   exit 1

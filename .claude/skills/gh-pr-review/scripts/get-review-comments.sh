@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gh-pr-review: レビューコメント取得スクリプト
 #
-# Usage: get-review-comments.sh <pr_number> [--unresolved]
+# Usage: get-review-comments.sh <PR の URL> [--unresolved]
 #
 # Output: JSON 配列。1 要素 = 1 コメント（スレッド内の返信も含む、作成順）
 #   id, node_id, path, line, body, user, user_type（Bot / User。resolve の可否判断に使う）,
@@ -13,21 +13,12 @@
 
 set -euo pipefail
 
-if (( $# < 1 || $# > 2 )); then
-  echo "Usage: $0 <pr_number> [--unresolved]" >&2
+source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/pr-url.sh"
+if (( $# < 1 || $# > 2 )) || ! parse_pr_url "$1"; then
+  echo "Usage: $0 <PR の URL> [--unresolved]" >&2
   exit 1
 fi
-PR_NUMBER="$1"
 UNRESOLVED_ONLY="${2:-}"
-
-if [[ -z "$PR_NUMBER" ]]; then
-  echo "Usage: $0 <pr_number> [--unresolved]" >&2
-  exit 1
-fi
-if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: pr_number は数値で指定してください: '${PR_NUMBER}'" >&2
-  exit 1
-fi
 if [[ -n "$UNRESOLVED_ONLY" && "$UNRESOLVED_ONLY" != "--unresolved" ]]; then
   echo "ERROR: 不明なオプション: ${UNRESOLVED_ONLY}" >&2
   exit 1

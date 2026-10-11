@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # gh-wait-review.sh — PRの自動レビュー到着を漸増バックオフで待つ
 #
-# 使い方: gh-wait-review.sh [PR番号] [--since <ISO 8601 時刻>]
-#   PR番号省略時は現在のブランチに紐づくPRを対象とする
+# 使い方: gh-wait-review.sh <PR の URL> [--since <ISO 8601 時刻>]
+#   対象は PR の URL で受け、gh を URL のリポジトリに向ける（cwd のリポジトリに依らない。ADR-0032）
 #   --since 省略時は「最後の Copilot へのレビュー要求」を基準にし、それ以降に提出された
 #   レビューを待つ。要求が 1 件も無ければ、PR 作成直後の自動要求の記録を約 10 秒
 #   待ったうえでエラーで終わる（要求していないレビューは来ないため）
@@ -22,36 +22,16 @@
 # 終了コード:
 #   0 = レビュー到着
 #   1 = タイムアウト（約10分）
-#   2 = PRフロー適用外（gitリポジトリでない / GitHubリモートなし）
 #   3 = 対象PRが見つからない
 #   4 = gh が利用できない（未インストール / 未認証）
-#   5 = 引数エラー（不明なオプション / --since の値なし / PR番号の重複指定）
+#   5 = 引数エラー（不明なオプション / --since の値なし / PR の URL でない・無い・重複指定）
 #   6 = レビュー要求がない（待っても来ない）、または要求を取得できない
 #   7 = レビューの実行が失敗している（トークン切れ・内部エラー等。待っても来ない）
 set -u
 
-if ! git rev-parse --git-dir >/dev/null 2>&1; then
-  echo "SKIP: gitリポジトリではありません（PRフロー適用外）"
-  exit 2
-fi
+source "$(dirname "${BASH_SOURCE[0]}")/lib/pr-url.sh"
 
-# いずれかのリモートにGitHubがあればPRフロー対象（originという名前には依存しない）
-if ! git remote -v 2>/dev/null | grep -q 'github\.com'; then
-  echo "SKIP: GitHubリモートがありません（ローカルのみ・PRフロー適用外）"
-  exit 2
-fi
-
-# PR解決やポーリングの失敗を「PRなし」と混同しないよう、ghの利用可否を先に検証する
-if ! command -v gh >/dev/null 2>&1; then
-  echo "ERROR: gh コマンドが見つかりません"
-  exit 4
-fi
-if ! gh auth status >/dev/null 2>&1; then
-  echo "ERROR: gh が未認証です。gh auth login を実行してください"
-  exit 4
-fi
-
-pr=""
+pr_url=""
 since=""
 while (( $# > 0 )); do
   case "$1" in
@@ -68,20 +48,28 @@ while (( $# > 0 )); do
       exit 5
       ;;
     *)
-      if [[ -n "$pr" ]]; then
-        echo "ERROR: PR番号は1つだけ指定してください: '$pr' と '$1'"
+      if [[ -n "$pr_url" ]]; then
+        echo "ERROR: PR の URL は 1 つだけ指定してください: '$pr_url' と '$1'"
         exit 5
       fi
-      pr="$1"
+      pr_url="$1"
       shift
       ;;
   esac
 done
-if [[ -z "$pr" ]]; then
-  if ! pr=$(gh pr view --json number -q .number 2>/dev/null) || [[ -z "$pr" ]]; then
-    echo "ERROR: 現在のブランチに紐づくPRが見つかりません。PR番号を指定してください"
-    exit 3
-  fi
+if ! parse_pr_url "$pr_url"; then
+  exit 5
+fi
+pr="$PR_NUMBER"
+
+# PR解決やポーリングの失敗を「PRなし」と混同しないよう、ghの利用可否を先に検証する
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh コマンドが見つかりません"
+  exit 4
+fi
+if ! gh auth status >/dev/null 2>&1; then
+  echo "ERROR: gh が未認証です。gh auth login を実行してください"
+  exit 4
 fi
 
 # ポーリング中のカウント関数はghの失敗を0件扱いするため、
@@ -148,7 +136,7 @@ if [[ -z "$since" ]]; then
   since=""
   for interval in 0 "${request_intervals[@]}"; do
     sleep "$interval"
-    if ! requests=$("$requests_script" "$pr"); then
+    if ! requests=$("$requests_script" "$pr_url"); then
       echo "ERROR: PR #${pr} のレビュー要求を取得できません（timeline API が失敗）"
       exit 6
     fi
@@ -158,7 +146,7 @@ if [[ -z "$since" ]]; then
   if [[ -z "$since" ]]; then
     echo "ERROR: PR #${pr} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません"
     # デプロイ先（~/.claude）の旧版を案内しないよう、自分と同じツリーのスクリプトを指す
-    echo "次の一手: $(cd "$(dirname "$requests_script")/.." && pwd)/skills/gh-pr-review/scripts/request-rereview.sh ${pr} でレビューを要求してください"
+    echo "次の一手: $(cd "$(dirname "$requests_script")/.." && pwd)/skills/gh-pr-review/scripts/request-rereview.sh ${pr_url} でレビューを要求してください"
     exit 6
   fi
   echo "INFO: 最後のレビュー要求は ${since}。それ以降のレビューの到着を待ちます"

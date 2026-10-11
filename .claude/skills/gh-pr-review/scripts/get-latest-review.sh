@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gh-pr-review: 最新の Copilot レビューの要約を取得するスクリプト
 #
-# Usage: get-latest-review.sh <pr_number>
+# Usage: get-latest-review.sh <PR の URL>
 #
 # 出力（テキスト）:
 #   ROUND: <n>              PR 上の Copilot レビュー件数（周回数そのものではない。
@@ -26,10 +26,9 @@
 
 set -euo pipefail
 
-PR_NUMBER="${1:-}"
-
-if [[ -z "$PR_NUMBER" ]]; then
-  echo "Usage: $0 <pr_number>" >&2
+source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/pr-url.sh"
+if ! parse_pr_url "${1:-}"; then
+  echo "Usage: $0 <PR の URL>" >&2
   exit 1
 fi
 
