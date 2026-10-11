@@ -394,7 +394,13 @@ for cmd in "env cd $LOCAL; git commit -m 'feat: x'" "nohup cd $LOCAL; git commit
   out=$(run_hook block-main-commit "$cmd")
   assert_eq deny "$(decision "$out")"
 done
-for cmd in "builtin cd $LOCAL && git commit -m 'feat: x'" "command cd $LOCAL && git commit -m 'feat: x'"; do
+for cmd in "/usr/bin/time cd $LOCAL; git commit -m 'feat: x'" "command time cd $LOCAL; git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+# 修飾しない time は bash の予約語で、cd は同じシェルで走る
+for cmd in "builtin cd $LOCAL && git commit -m 'feat: x'" "command cd $LOCAL && git commit -m 'feat: x'" \
+  "time cd $LOCAL; git commit -m 'feat: x'" "time -p cd $LOCAL; git commit -m 'feat: x'"; do
   out=$(run_hook block-main-commit "$cmd")
   assert_eq allow "$(decision "$out")"
 done
