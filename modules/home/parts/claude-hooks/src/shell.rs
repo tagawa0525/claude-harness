@@ -899,6 +899,18 @@ mod tests {
             PathBuf::from("/base")
         );
         assert_eq!(dir_of_git("sudo -E git commit"), PathBuf::from("/base"));
+        // sudo -i の前の env -C は、sudo -i が移る前に効く
+        let dir = dir_of_git("env -C /a sudo -i git commit");
+        assert!(!dir.starts_with("/a") && dir != PathBuf::from("/base"));
+        // 包んだコマンドの引数の ~ は外側のシェルが展開するので、手元の利用者のホーム
+        assert_eq!(
+            dir_of_git("sudo -i git -C ~/repo commit"),
+            home().join("repo")
+        );
+        assert_eq!(
+            dir_of_git("sudo -i env -C ~/repo git commit"),
+            home().join("repo")
+        );
         // sudo -i は手元で走るので、中の絶対パスは手元のもの
         assert_eq!(
             dir_of_git("sudo -i bash -c 'cd /a && git commit'"),
