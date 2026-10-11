@@ -224,16 +224,16 @@ fn switched_to(dir: &Path, sub: &str, args: &[Arg]) -> Result<Option<String>, ()
     }
 }
 
-/// cmd を実行する時点の今のブランチ。同じシェルのスコープで cmd より前にあり、同じディレクトリを
-/// 対象にする git switch / checkout の後のブランチ（`git switch main && git merge …` の main）。
-/// 移った先が分からなければ None。detached HEAD は空文字列
+/// cmd を実行する時点の今のブランチ。同じか外側のシェルのスコープで cmd より前にあり、同じディレクトリを
+/// 対象にする git switch / checkout の後のブランチ（`git switch main && git merge …` の main。`target_dir` の
+/// cd と同じ範囲）。移った先が分からなければ None。detached HEAD は空文字列
 pub(super) fn branch_at(shell: &Shell, cmd: &Cmd, base: &Path, dir: &Path) -> Option<String> {
     let mut branch = Some(git::current_branch(dir));
     for c in shell.commands() {
         if c.start >= cmd.start {
             break;
         }
-        if c.scope != cmd.scope || shell.target_dir(c, base) != dir {
+        if !cmd.scope.starts_with(&c.scope) || shell.target_dir(c, base) != dir {
             continue;
         }
         if let Some((sub, args)) = c.git_subcommand() {

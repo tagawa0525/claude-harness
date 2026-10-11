@@ -125,6 +125,9 @@ pub struct Cmd {
     /// 走らせるプログラムを文字列から決められない: 名前の basename が展開（`$CMD`、`$(which x)`）、標準入力や
     /// ファイルからコマンドを読む（`bash -s`、`source`。unwrap.rs）、文字列の入れ子が深さの上限を超えた
     pub opaque: bool,
+    /// sh -c の文字列を走らせるなら、その文字列のスコープの ID（中のコマンドの `scope` に、このコマンドの
+    /// `scope` の次の要素として入る）。`target_dir` が、このコマンドの `dirs` を中のコマンドに当てるのに使う
+    pub spawns: Option<usize>,
     /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
     /// `-u NAME` / `-i`、`exec -c`）
     pub env: Vec<EnvChange>,
@@ -187,15 +190,38 @@ impl Shell {
     fn collect_commands(&self, depth: usize) -> (Vec<Cmd>, Vec<Shell>) {
         let mut cmds = Vec::new();
         let mut inner = Vec::new();
-        self.walk(self.tree.root_node(), &mut |n| {
-            if n.kind() == "command"
-                && let Some((cs, shell)) = self.command(n, depth)
-            {
-                cmds.extend(cs);
-                inner.extend(shell);
-            }
-        });
+        self.collect_into(self.tree.root_node(), depth, &mut cmds, &mut inner);
         (cmds, inner)
+    }
+
+    /// `heredoc_body` を除く全ノードを文書順に走査してコマンドを集める。文字列を再帰的に読んだコマンドの
+    /// 引数の中（`bash -c "… $(date)"` の `$(date)`）は、文字列の解析で読むので、ここでは降りない（二重に数えない）
+    fn collect_into(&self, node: Node, depth: usize, cmds: &mut Vec<Cmd>, inner: &mut Vec<Shell>) {
+        if node.kind() == "heredoc_body" {
+            return;
+        }
+        let mut parsed_source = false;
+        if node.kind() == "command"
+            && let Some((cs, shell)) = self.command(node, depth)
+        {
+            parsed_source = shell.is_some();
+            cmds.extend(cs);
+            inner.extend(shell);
+        }
+        let mut cursor = node.walk();
+        let arguments: Vec<usize> = if parsed_source {
+            node.children_by_field_name("argument", &mut cursor)
+                .map(|n| n.id())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if !arguments.contains(&child.id()) {
+                self.collect_into(child, depth, cmds, inner);
+            }
+        }
     }
 
     /// `command` ノードのコマンドと、それが sh -c で走らせる文字列の中のコマンド（文書順）。文字列を解析した
@@ -249,6 +275,7 @@ impl Shell {
             has_error: node.has_error() || trailing_error,
             scope,
             opaque,
+            spawns: None,
             env,
             dirs: unwrapped.dirs,
             wrappers: unwrapped.wrappers,
@@ -261,6 +288,7 @@ impl Shell {
             cmd.opaque = true;
             return Some((vec![cmd], None));
         }
+        cmd.spawns = Some(node.id());
         let mut shell = Shell::parse_at(&source, depth + 1);
         let mut cmds = Vec::with_capacity(1 + shell.cmds.len());
         for mut c in std::mem::take(&mut shell.cmds) {
@@ -271,10 +299,9 @@ impl Shell {
             scope.push(node.id());
             scope.extend(c.scope);
             c.scope = scope;
-            // 外側の環境変数とディレクトリの変更は、中のコマンドにも効く。外側の `env -C` は中の `cd` より後に
-            // 当たる（`env -C x bash -c 'cd y && …'` は x/y でなく y/x になる。まれな形なので、順序は持たない）
+            // 外側の環境変数の変更は、中のコマンドにも効く（ディレクトリは target_dir が、外側の `env -C` を
+            // 中の `cd` より前に当てる）
             c.env = cmd.env.iter().cloned().chain(c.env).collect();
-            c.dirs = cmd.dirs.iter().cloned().chain(c.dirs).collect();
             cmds.push(c);
         }
         cmds.insert(0, cmd);
@@ -320,7 +347,12 @@ impl Shell {
     /// だけの `echo sbatch` や `grep sbatch` は、決められないコマンドが無ければ対象外
     pub fn runs_program(&self, word: &str, is_target: impl Fn(&str) -> bool) -> bool {
         self.cmds.iter().any(|c| is_target(c.program()))
-            || (self.cmds.iter().any(|c| c.opaque) && self.src.contains(word))
+            || (self.cmds.iter().any(|c| c.opaque) && self.mentions(word))
+    }
+
+    /// コマンド文字列か、ほどいた文字列（エスケープを外した後の字面）のどこかに `word` が現れるか
+    fn mentions(&self, word: &str) -> bool {
+        self.src.contains(word) || self.inner.iter().any(|s| s.mentions(word))
     }
 
     /// プログラム内（文字列の中を含む）の全ての代入（`NAME=value`。値の無い `NAME=` は空の値）の名前と値
@@ -425,6 +457,14 @@ impl Shell {
                 match c.args.iter().find(|a| !a.text.starts_with('-')) {
                     Some(a) => dir = resolve(&dir, &a.text),
                     None => dir = home(),
+                }
+            }
+            // cmd を文字列の中に持つ包み（`env -C x bash -c '…'`）のディレクトリは、文字列の中の cd より前に当たる
+            if let Some(id) = c.spawns
+                && cmd.scope.get(c.scope.len()) == Some(&id)
+            {
+                for d in &c.dirs {
+                    dir = resolve(&dir, d);
                 }
             }
         }
@@ -836,7 +876,7 @@ mod tests {
         // 入れ子
         let cs = cmds("sh -c \"bash -c 'sbatch'\"");
         assert_eq!(names(&cs), ["sh", "bash", "sbatch"]);
-        // 外側の環境変数とディレクトリの変更は、中のコマンドに効く
+        // 外側の環境変数の変更は、中のコマンドに効く。ディレクトリは外側のコマンドに残し、target_dir が当てる
         let cs = cmds("env -u CLAUDECODE -C /x FOO=1 bash -c 'git commit'");
         assert_eq!(
             cs[1].env,
@@ -845,7 +885,8 @@ mod tests {
                 EnvChange::Set("FOO".to_string(), "1".to_string())
             ]
         );
-        assert_eq!(cs[1].dirs, ["/x"]);
+        assert_eq!(cs[0].dirs, ["/x"]);
+        assert!(cs[0].spawns.is_some() && cs[1].dirs.is_empty());
         // watch、ssh、eval は残りの語を空白でつないだ文字列を sh -c で走らせる
         assert_eq!(
             names(&cmds("watch -n 5 'squeue; sbatch'")),
