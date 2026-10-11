@@ -991,4 +991,22 @@ mod tests {
         let new = r.commit("pr again");
         assert!(!same_pr_diff(&r.0, &tip, &old, &new));
     }
+
+    #[test]
+    #[ignore = "RED: ls-tree がファイル名を pathspec として読む"]
+    fn pathspec_like_file_name_is_compared_literally() {
+        let name = ":(exclude,glob)**";
+        let (r, old, new) = rebase_case(
+            "pathspec",
+            |r| r.write(name, "one\n"),
+            |r| r.write("third.txt", "t\n"),
+            |r| r.write(name, "two\n"),
+        );
+        assert!(!same_pr_diff(
+            &r.0,
+            &r.git(&["rev-parse", "main"]),
+            &old,
+            &new
+        ));
+    }
 }
