@@ -1431,6 +1431,34 @@ fn check_matches_reservations_of_three_digit_issues() {
 }
 
 #[test]
+fn renumber_ignores_the_state_of_submodules() {
+    let t = duplicated_after_rebase("submodule");
+    // 作業ツリーに変更のある submodule（renumber は submodule の中を書き換えない）
+    let sub = TempRepo::new("submodule-inner");
+    sub.write("x.txt", "x\n");
+    sub.commit_all("chore: x");
+    t.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        sub.dir.to_str().unwrap(),
+        "sub",
+    ]);
+    t.commit_all("chore: sub");
+    fs::write(t.dir.join("sub/x.txt"), "changed\n").unwrap();
+    let out = t.run(&["renumber", "1"]);
+    assert!(
+        out.status.success(),
+        "{}{}",
+        stdout(&out),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!t.dir.join("docs/adr/0001-use-b.md").exists());
+}
+
+#[test]
 fn renumber_sees_untracked_files_even_when_status_hides_them() {
     let t = duplicated_after_rebase("hidden-untracked");
     t.git(&["config", "status.showUntrackedFiles", "no"]);
