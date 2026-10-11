@@ -132,7 +132,7 @@ for bad in 0 -1 abc 1.5 ""; do
 done
 
 it "slurm-run: -c にコア数がなければ使い方を出してエラー"
-out=$("$RUN" -t 30 openmc-2G 'true' -c 2>&1)
+out=$("$RUN" -t 30 -c 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "Usage:"
 
