@@ -81,8 +81,8 @@ decline は事実に基づく反論があるときだけ。根拠を書けない
   `This will be settled with tests in the implementation PR.` か、不要な理由の事実を添えて返信する
 
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
-受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を一度だけ回す
-（PR を出す前のローカルレビューとは別枠。2 周目はしない）。対象は `~/.claude/scripts/review-level.sh`
+受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す
+（PR を出す前のローカルレビューとは別枠）。対象は `~/.claude/scripts/review-level.sh`
 が出す `TARGET`（積み重なった PR は `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に写さず、コードへの参照（ファイルと関数名）で書く。
 
@@ -131,8 +131,8 @@ EOF
 
 ## Step 6: 再レビューの判定
 
-周回数の上限は 5 周（再レビューは毎周新しい指摘を生みうるので、指摘ゼロを
-終了条件にすると収束しない）。判定はスクリプトに任せる:
+再レビューは毎周新しい指摘を生みうるので、指摘ゼロを終了条件にすると収束しない。
+周回の上限を含め、判定はスクリプトに任せる:
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {pr_number}
@@ -151,7 +151,7 @@ EOF
 | `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                                                                     |
 | `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | `request-rereview.sh` で要求する（挙動を変えない修正だけなら下記の省略条件）                                             |
 | `STOP_DOCS_REVIEWED`   | 文書だけの PR で、対応を push 済み           | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない） |
-| `STOP_LIMIT`           | 要求が必要だが ROUND = 5                     | 要求せず Step 7 へ。最終周の対応・見送りを報告に列挙する                                                                 |
+| `STOP_LIMIT`           | 要求が必要だが周回の上限に達した             | 要求もマージもせず Step 7 へ。最終周に直した変更は未レビューなので、報告に列挙して止まり、ユーザーの判断を待つ           |
 | `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                 |
 | `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                         |
 | `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                                                |
@@ -173,10 +173,6 @@ head SHA の check-run と未解決スレッド数で判断する。
 **Suppressed comments**: 実害（誤動作・データ破損・機能の穴）があれば対応する。理論上の
 可能性・スタイル・些末な表記は対応せず、Step 8 に列挙してユーザーに委ねる。対応には
 再レビュー 1 周のコストがかかるので、それに見合うかで決める。
-
-**再レビューの省略**: 表記・コメント・整形など挙動を変えない修正だけなら要求せず、
-/gh-pr-merge で `ALLOW_UNREVIEWED_HEAD=1` を付けてマージしてよい。ロジック・条件式・API 呼び出し・テストの期待値に触れたら対象外。
-迷ったら再レビューを要求する。省いたら Step 8 に commit hash と要旨を載せる。
 
 レビューが届いたら `decide-next.sh` を再実行する。新しい周に入るときは、
 **台帳（Step 8 の形式）を先に出力してから** Step 2 に戻る（コンテキストが要約されても
@@ -200,7 +196,7 @@ head SHA の check-run と未解決スレッド数で判断する。
 
 PR: {url}
 コミット: {hash}
-レビュー周回: {ROUND}/5
+レビュー周回: {ROUND}/{MAX_ROUNDS}
 終了理由: {指摘なし | 全件 decline | Suppressed comments のみ | 文書の初回レビュー対応済み | 周回上限到達}
 
 台帳:
