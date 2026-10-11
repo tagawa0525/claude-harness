@@ -30,7 +30,9 @@ use std::process::{Command, ExitCode};
 use design_records::check::{
     Finding, Severity, body_changed, check, check_issue_numbers, check_reservations,
 };
-use design_records::{ADR_DIR, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title};
+use design_records::{
+    ADR_DIR, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title, numbers_in,
+};
 
 use git::{Result, default_branch, git, git_ok, repo_root, reservations, tracked};
 
@@ -127,8 +129,8 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
         let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         adrs.insert(path, text);
     }
-    let issues = issue_numbers(&root)?;
     let issue_paths = tracked(&root, ISSUE_DIR)?;
+    let issues = issue_numbers(&issue_paths);
     let adr_paths: Vec<String> = adrs.keys().cloned().collect();
     let mut reserved: BTreeMap<Kind, BTreeMap<u32, String>> = BTreeMap::new();
     for reservation in reservations(&root)? {
@@ -172,22 +174,10 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     })
 }
 
-/// 追跡している docs/issues があれば、その issue の番号（`NNNN-*.md`）。無ければ `None`（GitHub などの issue を
-/// 使う）。
-fn issue_numbers(root: &Path) -> Result<Option<BTreeSet<u32>>> {
-    let paths = tracked(root, ISSUE_DIR)?;
-    if paths.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(
-        paths
-            .iter()
-            .filter_map(|path| {
-                let name = path.rsplit('/').next()?;
-                name.strip_suffix(".md")?.split_once('-')?.0.parse().ok()
-            })
-            .collect(),
-    ))
+/// 追跡している docs/issues の issue（`paths`）があれば、その番号（番号を振るときと同じ [`numbers_in`] の規則）。
+/// 無ければ `None`（GitHub などの issue を使う）。
+fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
+    (!paths.is_empty()).then(|| numbers_in(Kind::Issue, paths.iter().map(String::as_str)).collect())
 }
 
 /// 確定した ADR の本文の変更と削除（注意）。比べるのは既定ブランチとの分岐点（main にマージする前のブランチの上の

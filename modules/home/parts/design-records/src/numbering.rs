@@ -55,7 +55,12 @@ fn reservation_target(root: &Path) -> Result<String> {
     let name = match shared_default(root)? {
         Some(name) => name,
         None if has_origin(root)? => {
-            return Err("origin has no default branch here; run `git fetch origin` first".into());
+            return Err(
+                "origin has no default branch (origin/HEAD, main or master) to put the \
+                 reservation tag on; push the default branch with `git push -u origin main`, \
+                 or set origin/HEAD with `git remote set-head origin <branch>`"
+                    .into(),
+            );
         }
         None => "HEAD".to_string(),
     };
@@ -383,12 +388,11 @@ fn move_record(
     let listed = git(root, &["ls-files", "-z"])?;
     let mut changed = Vec::new();
     for path in listed.split('\0').filter(|p| !p.is_empty()) {
-        // 記録そのものは、ブランチで足したものなので全体を付け替える。ほかのファイルは、足した行だけ
-        // （main から来た行の同じ番号は、main の記録を指す）
-        let lines = match added {
-            _ if path == record => None,
+        // 足した行だけを付け替える（main から来た行の同じ番号は、main の記録を指す）
+        let mut lines = match added {
             Some(added) => match added.get(path) {
-                Some(lines) => Some(lines),
+                Some(lines) => Some(lines.clone()),
+                None if path == record => Some(BTreeSet::new()),
                 None => continue,
             },
             None => None,
@@ -402,7 +406,10 @@ fn move_record(
         let Ok(Ok(text)) = fs::read(&file).map(String::from_utf8) else {
             continue;
         };
-        let new_text = rewrite(&text, lines, kind, old, number, slug);
+        if path == record {
+            lines = Some(record_lines(&text, lines));
+        }
+        let new_text = rewrite(&text, lines.as_ref(), kind, old, number, slug);
         if new_text != text {
             fs::write(&file, new_text).map_err(|e| format!("{path}: {e}"))?;
             changed.push(path.to_string());
@@ -426,6 +433,33 @@ fn move_record(
         ),
     };
     git(root, &["commit", "--quiet", "-m", &message]).map(|_| ())
+}
+
+/// 振り直す記録 `text` のうち、付け替える行。`added`（`None` ならすべて）から前付けを除き、最初の `# ` の見出し
+/// （表題）を足す。記録の前付けの参照（`requires`、`blocked-by` など）は自分を指さないので、同じ番号は既定
+/// ブランチの記録を指す。表題は、改名で足した行に入らなくても自分の番号を書く。
+fn record_lines(text: &str, added: Option<BTreeSet<usize>>) -> BTreeSet<usize> {
+    let numbered: Vec<(usize, &str)> = text.lines().enumerate().map(|(i, l)| (i + 1, l)).collect();
+    let front_end = match numbered.first() {
+        Some((_, "---")) => numbered
+            .iter()
+            .skip(1)
+            .find(|(_, l)| *l == "---")
+            .map_or(0, |(n, _)| *n),
+        _ => 0,
+    };
+    let mut lines: BTreeSet<usize> = match added {
+        Some(added) => added,
+        None => numbered.iter().map(|(n, _)| *n).collect(),
+    };
+    lines.retain(|n| *n > front_end);
+    if let Some((n, _)) = numbered
+        .iter()
+        .find(|(n, l)| *n > front_end && l.starts_with("# "))
+    {
+        lines.insert(*n);
+    }
+    lines
 }
 
 /// 振り直した記録（slug が `slug`）の、番号 `old` の予約を解放する。`old` はほかの記録（main にあるもの）が使って

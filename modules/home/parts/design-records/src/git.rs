@@ -142,9 +142,10 @@ const FETCH_REFSPECS: [&str; 3] = [
     "+refs/tags/issue-*:refs/tags/issue-*",
 ];
 
-/// origin の予約のタグを取ってくる。`branches` なら、ブランチも取ってくる。
+/// origin の予約のタグを取ってくる。`branches` なら、ブランチも取ってくる。origin で消えたタグ（ほかの clone の
+/// `prune` や `renumber` が解放したもの）は手元からも消す（`--prune` は refspec の行き先の ref だけを消す）。
 pub fn fetch_origin(root: &Path, branches: bool) -> Result<()> {
-    let mut args = vec!["fetch", "--quiet", "--no-tags", "origin"];
+    let mut args = vec!["fetch", "--quiet", "--prune", "--no-tags", "origin"];
     args.extend(FETCH_REFSPECS.iter().skip(usize::from(!branches)));
     git(root, &args).map(|_| ())
 }
