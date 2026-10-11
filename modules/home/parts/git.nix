@@ -11,9 +11,17 @@ let
   # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook が store のパスで呼び、
   # 手で呼べるよう PATH にも入れる
   commit-refs = pkgs.callPackage ./commit-refs/package.nix { };
-  # 機密情報の検査（ADR-0015）。pre-commit が store のパスで呼ぶ
-  gitleaks = "${pkgs.gitleaks}/bin/gitleaks";
-  jq = "${pkgs.jq}/bin/jq";
+  # 機密情報の検査（ADR-0015）。pre-commit と pre-merge-commit が store のパスで呼ぶ
+  scanStagedSecrets = pkgs.writeShellApplication {
+    name = "scan-staged-secrets";
+    runtimeInputs = [
+      pkgs.git
+      pkgs.gitleaks
+      pkgs.jq
+    ];
+    text = builtins.readFile ./scan-staged-secrets.sh;
+  };
+  scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
@@ -116,39 +124,11 @@ in
         fi
       fi
 
-      # 機密情報の検査（ADR-0015）。Claude Code のセッションのコミットで、コミットに入る中身（git add と
-      # commit -a の後の index）を gitleaks で見る。PreToolUse と違ってコミットするリポジトリの中で走るので、
-      # 対象のディレクトリを推さずに済み、同じコマンドの git add も見落とさない。index を変える検査（Markdown の
-      # 自動修正。#282）の後、ローカルの pre-commit を呼ぶ前、fork で抜ける前に呼ぶ。値は出さず、場所と
-      # ルール ID だけを出す。漏えいと、検査できないこと（gitleaks の失敗）を分けて出し、どちらも止める
+      # 機密情報の検査（ADR-0015）は ${scanSecrets} が行う。Claude Code のセッションのコミットで、コミットに
+      # 入る中身（git add と commit -a の後の index）を見る。index を変える検査（Markdown の自動修正。#282。
+      # ローカルの pre-commit）の後、ステージしたファイルが無くて抜ける前（種類の変更だけのコミット）、fork で
+      # 抜ける前に呼ぶ
       # 検証: modules/home/parts/tests/pre-commit-secrets.sh
-      scan_secrets() {
-        [ "''${CLAUDECODE:-}" = "1" ] || return 0
-        [ "''${ALLOW_SECRET_COMMIT:-}" != "1" ] || return 0
-        local err rc=0 leaks count
-        err=$(mktemp)
-        # --log-level error: gitleaks は中の git diff の失敗を ERR に出すだけで、終了コード 0（漏えいなし）を
-        # 返すので、エラーの行が出たら検査できなかったとみなす
-        leaks=$(${gitleaks} git --staged --no-banner --redact --log-level error \
-          --report-format json --report-path - . 2>"$err") || rc=$?
-        # gitleaks は漏えいでも、設定を読めないなどの失敗でも 1 を返すので、一覧が空でないときだけ漏えいとする
-        count=$(printf '%s' "$leaks" | ${jq} 'length' 2>/dev/null || echo 0)
-        if [ "$rc" -eq 1 ] && [ "$count" -gt 0 ]; then
-          rm -f "$err"
-          echo "❌ 機密情報らしき内容がコミット対象に含まれています（gitleaks）:"
-          printf '%s\n' "$leaks" | ${jq} -r '.[] | "- \(.File):\(.StartLine) (\(.RuleID))"'
-          echo "   対処: git restore --staged <file> で外し、必要なら .gitignore に足してください。push 済みの値はローテーションしてください"
-          echo "   誤検出なら、その行に gitleaks:allow を書く（.gitleaksignore / .gitleaks.toml でも可）か、コマンドに ALLOW_SECRET_COMMIT=1 を付けてください"
-          return 1
-        fi
-        if [ "$rc" -ne 0 ] || [ -s "$err" ]; then
-          echo "❌ gitleaks が失敗しました（終了コード $rc）。機密情報を検査できないので、コミットを止めます:"
-          sed 's/^/   /' "$err"
-          rm -f "$err"
-          return 1
-        fi
-        rm -f "$err"
-      }
 
       # マージを締めるコミット（競合を解決した後の git commit / git merge --continue、
       # git merge --no-commit の後の git commit）では git が pre-merge-commit を呼ばないので、
@@ -161,8 +141,10 @@ in
       GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
       LOCAL_HOOK="$GIT_DIR/hooks/pre-commit"
       if [ -x "$LOCAL_HOOK" ]; then
-        scan_secrets || exit 1
-        exec "$LOCAL_HOOK" "$@"
+        # exec しないのは、ローカルの hook が index を変えた後に機密情報を検査するため
+        "$LOCAL_HOOK" "$@"
+        ${scanSecrets}
+        exit 0
       fi
 
       check_failed=0
@@ -184,7 +166,10 @@ in
       # デフォルト: ステージされたファイルをチェック
       # ========================================
       STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-      [ -z "$STAGED_FILES" ] && exit $check_failed
+      if [ -z "$STAGED_FILES" ]; then
+        ${scanSecrets} || check_failed=1
+        exit $check_failed
+      fi
 
       # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
       # 以下の検査はどれもこちらの道具の版と規約（ruff の新しいルール、markdownlint の設定、
@@ -194,7 +179,7 @@ in
       # 検証: modules/home/parts/tests/pre-commit-fork.sh
       if git remote get-url upstream >/dev/null 2>&1; then
         echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust）を飛ばします"
-        scan_secrets || check_failed=1
+        ${scanSecrets} || check_failed=1
         exit $check_failed
       fi
 
@@ -290,7 +275,7 @@ in
         fi
       fi
 
-      scan_secrets || check_failed=1
+      ${scanSecrets} || check_failed=1
 
       exit $check_failed
     '';
@@ -326,6 +311,11 @@ in
       if [ -x "$LOCAL_HOOK" ]; then
         "$LOCAL_HOOK" "$@"
       fi
+
+      # 機密情報の検査（ADR-0015）。競合の無いマージでは pre-commit が走らないので、相手のブランチから入る
+      # 中身をここで見る（main 以外へのマージも）
+      # 検証: modules/home/parts/tests/pre-commit-secrets.sh
+      ${scanSecrets}
 
       BRANCH=$(git branch --show-current 2>/dev/null || echo "")
       case "$BRANCH" in
