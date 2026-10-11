@@ -105,6 +105,13 @@ fi
 
 status=0
 wait "$pid" || status=$?
+# 終わった直後なら、slurmctld がジョブを覚えている（MinJobAge の間。ADR-0017）。見積もりと実際の時間を
+# ログの末尾に書き足し、tail で一緒に見せる
+if info=$(scontrol show job "$job" 2>/dev/null) && [[ $info =~ RunTime=([^ ]+).*TimeLimit=([^ ]+) ]]; then
+  echo "TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}" >>"$log"
+else
+  echo "WARN: ジョブ $job の実際の時間を読めなかった（終わってから MinJobAge を過ぎたかもしれない）" >&2
+fi
 tail -n 20 "$log" 2>/dev/null || true
 echo "EXIT: $status"
 exit "$status"
