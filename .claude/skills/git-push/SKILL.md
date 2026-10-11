@@ -22,8 +22,7 @@ allowed-tools:
 ## main / master では push しない
 
 現在のブランチが `main` / `master` なら push せず、/git-cherry-pick で feature ブランチに
-移してから /gh-pr-create へ進むよう案内する。hook に deny されたときの
-`ALLOW_PROTECTED_PUSH=1` は、ユーザーの明示的な指示があるときだけ付ける。
+移してから /gh-pr-create へ進むよう案内する。
 
 ## プッシュ対象の確認
 

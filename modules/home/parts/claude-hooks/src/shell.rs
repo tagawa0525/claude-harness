@@ -20,6 +20,67 @@ use tree_sitter::{Node, Parser, Tree};
 use crate::git_args::{GitInvocation, parse_invocation};
 use crate::unwrap::{EnvChange, basename, unwrap};
 
+/// hook のエスケープ（`ALLOW_…=<理由>`）の読み取り（ADR-0023）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Escape {
+    /// 代入が無い
+    Absent,
+    /// 代入はあるが、値が理由として短い（`1`、`true`、`force` など）
+    Short,
+    /// 値に展開（`$VAR`、`$(…)`）や ANSI-C 文字列（`$'…'`）が含まれ、展開を除いた字面だけでは理由として短い。
+    /// Short と同じく理由を求める。git の hook のように展開後の値しか見えない層には、この区別が要る
+    Expanded,
+    /// 理由つき
+    Given,
+}
+
+/// 理由の幅。空白（Unicode の White_Space。全角空白、NBSP を含む）とバックスラッシュを除き、ASCII は 1、それ以外
+/// （日本語など）は 2 と数える。表示幅に近いが、`unicode-width` のような依存は足さず ASCII か否かだけで決める。
+/// `force` / `allow`（5）は弾き、日本語 3 文字（6）から通す。中身は検査しない（品質のゲートではなく、boolean 的な
+/// 値を弾くため。ADR-0023）。git 側の pre-commit（scan-staged-secrets.sh）は同じ White_Space を UTF-8 のバイト列で除く
+fn reason_width(value: &str) -> usize {
+    value
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '\\')
+        .map(|c| if c.is_ascii() { 1 } else { 2 })
+        .sum()
+}
+
+/// 展開（`$VAR`、`$(…)`、`<(…)`、`$((…))`）か ANSI-C 文字列（`$'…'`）か。字面と渡る値が違うので、
+/// 理由の幅には数えない
+fn is_expansion(node: Node) -> bool {
+    matches!(
+        node.kind(),
+        "simple_expansion"
+            | "expansion"
+            | "command_substitution"
+            | "process_substitution"
+            | "arithmetic_expansion"
+            | "ansi_c_string"
+    )
+}
+
+fn contains_expansion(node: Node) -> bool {
+    if is_expansion(node) {
+        return true;
+    }
+    let mut cursor = node.walk();
+    node.children(&mut cursor).any(contains_expansion)
+}
+
+/// 複数の代入があるときの優先順位。値が記録に残らないもの（Expanded）、短いもの（Short）、理由つき、無し、の順に
+/// 強い（後ろの代入で上書きして通せない）
+fn rank(esc: Escape) -> u8 {
+    match esc {
+        Escape::Absent => 0,
+        Escape::Given => 1,
+        Escape::Short => 2,
+        Escape::Expanded => 3,
+    }
+}
+
+const REASON_MIN_WIDTH: usize = 6;
+
 pub struct Shell {
     src: String,
     tree: Tree,
@@ -223,15 +284,50 @@ impl Shell {
         found
     }
 
-    /// `NAME=1` の代入がプログラム内のどこかにあるか（hook のエスケープ指定）
-    pub fn has_escape(&self, name: &str) -> bool {
-        let mut found = false;
+    /// `NAME=<値>` の代入をプログラム内から探す（hook のエスケープ指定）。値が理由として足りるかで分ける。
+    /// `0` と空は付けていないものとして扱う。代入が複数あれば、短い値が 1 つでもあれば Short
+    /// （後ろの代入で上書きして通せない）
+    /// 値の字面のうち、展開と ANSI-C 文字列を除いた部分。記録にそのまま残る理由で、幅はこれで数える
+    /// （PR 番号などは展開で足せる）
+    fn literal(&self, node: Node) -> String {
+        if is_expansion(node) {
+            return String::new();
+        }
+        match node.kind() {
+            "raw_string" => strip(self.text(node), "'", "'"),
+            "string" | "translated_string" | "concatenation" => {
+                let mut s = String::new();
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    s.push_str(&self.literal(child));
+                }
+                s
+            }
+            _ => self.text(node).to_string(),
+        }
+    }
+
+    pub fn escape(&self, name: &str) -> Escape {
+        let mut found = Escape::Absent;
         self.walk(self.tree.root_node(), &mut |n| {
-            if n.kind() == "variable_assignment" {
-                let var = n.child_by_field_name("name").map(|v| self.text(v));
-                let val = n.child_by_field_name("value").map(|v| self.unquote(v).text);
-                if var == Some(name) && val.as_deref() == Some("1") {
-                    found = true;
+            if n.kind() == "variable_assignment"
+                && n.child_by_field_name("name").map(|v| self.text(v)) == Some(name)
+            {
+                let value_node = n.child_by_field_name("value");
+                let literal = value_node.map(|v| self.literal(v)).unwrap_or_default();
+                let literal = literal.trim();
+                let expanded = value_node.is_some_and(contains_expansion);
+                let this = if !expanded && (literal.is_empty() || literal == "0") {
+                    Escape::Absent
+                } else if reason_width(literal) >= REASON_MIN_WIDTH {
+                    Escape::Given
+                } else if expanded {
+                    Escape::Expanded
+                } else {
+                    Escape::Short
+                };
+                if rank(this) > rank(found) {
+                    found = this;
                 }
             }
         });
@@ -419,17 +515,81 @@ mod tests {
 
     #[test]
     fn escape_assignment_anywhere() {
-        assert!(
-            Shell::parse("ALLOW_PROTECTED_PUSH=1 git push --force")
-                .has_escape("ALLOW_PROTECTED_PUSH")
+        let esc = |src: &str| Shell::parse(src).escape("ALLOW_PROTECTED_PUSH");
+        assert_eq!(
+            esc("ALLOW_PROTECTED_PUSH=テスト用 git push --force"),
+            Escape::Given
         );
-        assert!(
-            Shell::parse("ALLOW_PROTECTED_PUSH=1; git push").has_escape("ALLOW_PROTECTED_PUSH")
+        assert_eq!(
+            esc("ALLOW_PROTECTED_PUSH=テスト用; git push"),
+            Escape::Given
         );
-        assert!(
-            !Shell::parse("ALLOW_PROTECTED_PUSH=0 git push").has_escape("ALLOW_PROTECTED_PUSH")
-        );
-        assert!(!Shell::parse("echo ALLOW_PROTECTED_PUSH=1").has_escape("ALLOW_PROTECTED_PUSH"));
+        assert_eq!(esc("ALLOW_PROTECTED_PUSH=0 git push"), Escape::Absent);
+        assert_eq!(esc("echo ALLOW_PROTECTED_PUSH=テスト用"), Escape::Absent);
+    }
+
+    // 値は理由の文字列で、空白を除いた幅（ASCII は 1、それ以外は 2）が 6 以上（ADR-0023）
+    #[test]
+    fn escape_needs_a_reason_of_width_six() {
+        let esc = |v: &str| {
+            Shell::parse(&format!("ALLOW_PROTECTED_PUSH={v} git push"))
+                .escape("ALLOW_PROTECTED_PUSH")
+        };
+        assert!(matches!(esc("1"), Escape::Short));
+        assert!(matches!(esc("force"), Escape::Short));
+        assert!(matches!(esc("確認"), Escape::Short));
+        assert!(matches!(esc("aaaaaa"), Escape::Given));
+        assert!(matches!(esc("差分同一"), Escape::Given));
+        assert!(matches!(esc("'  abcdef  '"), Escape::Given));
+        assert!(matches!(
+            Shell::parse("git push").escape("ALLOW_PROTECTED_PUSH"),
+            Escape::Absent
+        ));
+        // 内側の空白（全角空白、NBSP を含む）で幅を水増しできない
+        assert!(matches!(esc("'a    b'"), Escape::Short));
+        assert!(matches!(esc("'a　　　b'"), Escape::Short));
+        assert!(matches!(esc("'a\u{a0}\u{a0}\u{a0}\u{a0}b'"), Escape::Short));
+        assert!(matches!(esc("'　　　'"), Escape::Absent));
+        // EM SPACE（U+2003）のような Unicode の空白も除く
+        assert!(matches!(
+            esc("'a\u{2003}\u{2003}\u{2003}\u{2003}b'"),
+            Escape::Short
+        ));
+        // ANSI-C 文字列とバックスラッシュは、字面の長さと渡る値が違うので数えない
+        assert!(matches!(esc("$'\\t\\t\\t'"), Escape::Expanded));
+        assert!(matches!(esc("$'abc'"), Escape::Expanded));
+        assert!(matches!(esc("a\\ \\ \\ \\ b"), Escape::Short));
+        // 展開は記録に残らないので幅に数えない。字面だけで足りなければ Expanded（展開後しか見えない層のために
+        // Short と区別する）、足りれば Given
+        assert!(matches!(esc("$REASON"), Escape::Expanded));
+        assert!(matches!(esc("\"$(cat r.txt)\""), Escape::Expanded));
+        assert!(matches!(esc("\"ab $X\""), Escape::Expanded));
+        assert!(matches!(esc("ab$X"), Escape::Expanded));
+        assert!(matches!(esc("<(true)"), Escape::Expanded));
+        assert!(matches!(esc("$((1+1))"), Escape::Expanded));
+        assert!(matches!(esc("\"rebase のみ $X\""), Escape::Given));
+        assert!(matches!(
+            esc("\"rebase のみ、PR #$(gh pr view)\""),
+            Escape::Given
+        ));
+        assert!(matches!(esc("abcdef$X"), Escape::Given));
+        assert!(matches!(
+            Shell::parse("ALLOW_PROTECTED_PUSH=$R git push; ALLOW_PROTECTED_PUSH=1 true")
+                .escape("ALLOW_PROTECTED_PUSH"),
+            Escape::Expanded
+        ));
+        // 0 と空（空白だけを含む）は、付けていないものとして扱う
+        assert!(matches!(esc("0"), Escape::Absent));
+        assert!(matches!(esc("''"), Escape::Absent));
+        assert!(matches!(esc("'     '"), Escape::Absent));
+        // 同じ名前の代入が複数あれば、短い値が 1 つでもあれば短い扱い（後ろの代入で上書きできない）
+        assert!(matches!(
+            Shell::parse(
+                "ALLOW_PROTECTED_PUSH=1 git push --force; ALLOW_PROTECTED_PUSH=placeholder true"
+            )
+            .escape("ALLOW_PROTECTED_PUSH"),
+            Escape::Short
+        ));
     }
 
     #[test]

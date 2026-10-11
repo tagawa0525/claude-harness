@@ -4,7 +4,7 @@
 # 止めることを検証する（ADR-0015）
 # =============================================================================
 # コミットの時点の index を見るので、同じコマンドの git add と commit -a で足した変更も検査する。漏えいは場所と
-# ルール ID だけを出し、値は出さない。ALLOW_SECRET_COMMIT=1 で迂回でき、Claude Code のセッションでなければ
+# ルール ID だけを出し、値は出さない。ALLOW_SECRET_COMMIT=<理由> で迂回でき、Claude Code のセッションでなければ
 # 検査しない。プロジェクトのローカルの pre-commit があっても、fork でも検査する。
 #
 # hook のファイルを nix build で作る（hook が store のパスで呼ぶ gitleaks も一緒にビルドされる）。
@@ -104,11 +104,49 @@ REPO="$WORK/escape"
 new_repo "$REPO"
 printf 'key = %s\n' "$KEY" > "$REPO/b.txt"
 git -C "$REPO" add b.txt
-if ALLOW_SECRET_COMMIT=1 CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b" >"$WORK/out" 2>&1; then
-  ok "ALLOW_SECRET_COMMIT=1 で迂回できる"
+# 値は理由の文字列（ADR-0023。claude-hooks と同じ規則: 空白を除き ASCII 1・それ以外 2 で幅 6 以上）
+if ALLOW_SECRET_COMMIT=誤検出のため CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b" >"$WORK/out" 2>&1; then
+  ok "ALLOW_SECRET_COMMIT=<理由> で迂回できる"
 else
-  ng "ALLOW_SECRET_COMMIT=1 でも止めた"
+  ng "ALLOW_SECRET_COMMIT=<理由> でも止めた"
 fi
+printf 'key = %s\n' "$KEY" > "$REPO/b2.txt"
+git -C "$REPO" add b2.txt
+if ALLOW_SECRET_COMMIT=1 CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "ALLOW_SECRET_COMMIT=1 で迂回できた（理由の無い値）"
+elif grep -q "ALLOW_SECRET_COMMIT には理由を記載" "$WORK/out" && ! grep -q "6" "$WORK/out"; then
+  ok "ALLOW_SECRET_COMMIT=1 は理由を求めて止め、しきい値を明かさない"
+else
+  ng "ALLOW_SECRET_COMMIT=1 を止めたが、理由を求める文言でない"
+fi
+if ALLOW_SECRET_COMMIT=force CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "ALLOW_SECRET_COMMIT=force で迂回できた（幅 5）"
+else
+  ok "ALLOW_SECRET_COMMIT=force は止める（幅 5）"
+fi
+if ALLOW_SECRET_COMMIT="a　　　b" CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "全角空白で幅を水増しした値で迂回できた"
+else
+  ok "全角空白で幅を水増しした値は止める"
+fi
+# バックスラッシュは幅に数えない（claude-hooks と同じ）
+if ALLOW_SECRET_COMMIT='\\\\\\' CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "バックスラッシュで幅を水増しした値で迂回できた"
+else
+  ok "バックスラッシュで幅を水増しした値は止める"
+fi
+# EM SPACE（U+2003）。claude-hooks の char::is_whitespace と同じ範囲を除く
+if ALLOW_SECRET_COMMIT="$(printf 'a\342\200\203\342\200\203\342\200\203\342\200\203b')" CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ng "EM SPACE で幅を水増しした値で迂回できた"
+else
+  ok "EM SPACE で幅を水増しした値は止める"
+fi
+if ALLOW_SECRET_COMMIT=abcdef CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: b2" >"$WORK/out" 2>&1; then
+  ok "ALLOW_SECRET_COMMIT=abcdef で迂回できる（幅 6）"
+else
+  ng "ALLOW_SECRET_COMMIT=abcdef でも止めた（幅 6）"
+fi
+if git -C "$REPO" diff --cached --quiet; then :; else git -C "$REPO" restore --staged b2.txt; rm -f "$REPO/b2.txt"; fi
 printf 'key = %s\n' "$KEY" > "$REPO/c.txt"
 git -C "$REPO" add c.txt
 if git -C "$REPO" commit -q -m "chore: c" >"$WORK/out" 2>&1; then
@@ -209,6 +247,20 @@ elif grep -q "k.txt:1" "$WORK/out"; then
   ok "競合の無いマージでも、相手のブランチの鍵で止める"
 else
   ng "競合の無いマージで止めたが、鍵の場所を出さない"
+fi
+
+# --- 6b. 短い値のエスケープは、gitleaks が失敗したときも理由を求める行を足す（claude-hooks と同じ）---------
+REPO="$WORK/broken-short"
+new_repo "$REPO"
+printf 'this is not toml [\n' > "$REPO/.gitleaks.toml"
+echo plain > "$REPO/e.txt"
+git -C "$REPO" add e.txt
+if ALLOW_SECRET_COMMIT=1 CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: e" >"$WORK/out" 2>&1; then
+  ng "短い値のエスケープで、gitleaks が失敗したのにコミットを通した"
+elif grep -q "gitleaks が失敗しました" "$WORK/out" && grep -q "ALLOW_SECRET_COMMIT には理由を記載" "$WORK/out"; then
+  ok "短い値のエスケープは、gitleaks が失敗したときも理由を求める行を足す"
+else
+  ng "短い値のエスケープで gitleaks が失敗したが、失敗と理由の両方を出さない"
 fi
 
 # --- 7. gitleaks が失敗したら、漏えいと分けて理由を出して止める ------------------------------------------

@@ -9,11 +9,11 @@
 //! 同じコマンドの前の git switch / checkout を反映し（branch_at）、移り先が分からなければ確かめる。
 //! リモート追跡ブランチの取り込み（`git merge origin/main`）は別々にマージ済みのトピックの
 //! 集まりなので対象外。docs/adr の無いリポジトリでは数える ADR が無いので何もしない。
-//! エスケープ: `ALLOW_MULTI_TOPIC=1`（1 つの決定を複数の ADR に分けて書いたときと、
+//! エスケープ: `ALLOW_MULTI_TOPIC=<理由>`（1 つの決定を複数の ADR に分けて書いたときと、
 //! 決定前の案（status: proposed）の ADR をまとめて加えるときだけ）
 
-use super::Rule;
 use super::guard_branch_base::branch_at;
+use super::{Rule, escape_hint};
 use crate::git;
 use crate::git_args::{Item, items};
 use crate::input::Input;
@@ -32,10 +32,10 @@ pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
     let list: Vec<String> = new_adrs.iter().map(|a| format!("  - {a}")).collect();
     Some(format!(
         "このブランチは新しい ADR を {} 件加えています（1 ブランチ 1 トピック、ADR は 1 件 1 決定）:\n{}\n\
-         決定ごとにブランチを分けてください（/topic-triage）。1 つの決定を複数の ADR に分けて書いた場合と、\
-         決定前の案（status: proposed）の ADR をまとめて加える場合に限り、ALLOW_MULTI_TOPIC=1 を付けてマージし、マージのメッセージにその理由を書いてください。",
+         決定ごとにブランチを分けてください（/topic-triage）。{}",
         new_adrs.len(),
-        list.join("\n")
+        list.join("\n"),
+        escape_hint("ALLOW_MULTI_TOPIC")
     ))
 }
 
@@ -125,10 +125,11 @@ impl Rule for PreGitMergeCheck {
         "pre-git-merge-check"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_MULTI_TOPIC")
+    }
+
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if shell.has_escape("ALLOW_MULTI_TOPIC") {
-            return Vec::new();
-        }
         for merge in default_branch_merges(input, shell) {
             let dir = &merge.dir;
             for t in &merge.targets {
@@ -191,7 +192,9 @@ mod tests {
             .unwrap();
         assert!(r.contains("docs/adr/0002-a.md") && r.contains("docs/adr/0003-b.md"));
         assert!(r.contains("/topic-triage"));
-        assert!(r.contains("ALLOW_MULTI_TOPIC=1"));
+        assert!(r.contains("ALLOW_MULTI_TOPIC=<理由>"));
+        // 「〜の場合は別」のような条件を列挙しない（ADR-0023）
+        assert!(!r.contains("まとめて加える"));
     }
 
     #[test]

@@ -13,28 +13,27 @@
 //!    レビュー済みとみなす。
 //!    レビュー自体が失敗している（トークン枯渇・内部エラー）ときは、コードの問題では
 //!    ないので 4 の CI 失敗としては数えず、ここでレビュー未実施として報告する。
-//!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=1 で外せる。
-//!    表記・コメント・整形など挙動を変えない修正で 1 周回す価値がないときも同じ。
-//!    どちらも完了報告に何をマージしたかを残す前提で外す。
+//!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=<理由> で外せる（ADR-0023）。
+//!    「〜なら外してよい」の条件は文言に列挙しない（どれかに当てはめる読み方を誘う）。
 //!    文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR は、一度でも自動レビューに成功
 //!    していれば検査しない。文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
 //!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
-//!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=1 で外す
+//!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
 //!
 //! 1〜3 はコマンド文字列だけで判定する。4〜9 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
-use super::Rule;
 use super::pre_git_merge_check::multi_topic_reason;
 use super::pre_pr_create_check::{body_text, missing_headings};
+use super::{Rule, apply_escape_to_reasons, escape_hint};
 use crate::gh;
 use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, has_flag, opt_value};
+use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
 use design_records::is_adr_path;
 use serde_json::Value;
 
@@ -273,6 +272,7 @@ impl Rule for PreMergeCheck {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        // 2 つの検証（8 と 9）は別々のエスケープで外すので、それぞれの理由に当てる
         for cmd in shell.commands() {
             let Some(args) = cmd.gh_subcommand(&["pr", "merge"]) else {
                 continue;
@@ -577,9 +577,10 @@ impl Rule for PreMergeCheck {
             if !owner.is_empty()
                 && !name.is_empty()
                 && !head_sha.is_empty()
-                && !shell.has_escape("ALLOW_UNREVIEWED_HEAD")
+                && shell.escape("ALLOW_UNREVIEWED_HEAD") != Escape::Given
                 && let Some(number) = pr_number.as_deref()
             {
+                let mut unreviewed: Vec<String> = Vec::new();
                 let reviewed = gh::gh(
                     &dir,
                     &[
@@ -601,7 +602,7 @@ impl Rule for PreMergeCheck {
                         .to_string()
                 });
                 match reviewed {
-                    None => reasons.push(
+                    None => unreviewed.push(
                         "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
                             .to_string(),
                     ),
@@ -621,24 +622,31 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
-                    Some(sha) if sha != head_sha && copilot_check_failed => reasons.push(format!(
-                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認してください。レビューなしでマージすると判断した場合だけ ALLOW_UNREVIEWED_HEAD=1 を付けて実行してください",
-                        short(&head_sha)
-                    )),
-                    Some(sha) if sha != head_sha => reasons.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。表記・コメント・整形など挙動を変えない修正だけなら、run-checks.sh が ALL_OK になり既存テストも通ることを確かめたうえで ALLOW_UNREVIEWED_HEAD=1 を付け、再レビューを省いても構いません（完了報告に commit hash と要旨を必ず載せてください）。周回上限に達して再レビューを依頼できない場合は、未レビューの変更を一覧にしてユーザーが承認したときだけ ALLOW_UNREVIEWED_HEAD=1 を付けてください",
+                    Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
+                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check {number} で原因を確認し、直せたら再レビューを依頼してください。{}",
                         short(&head_sha),
-                        short(&sha)
+                        escape_hint("ALLOW_UNREVIEWED_HEAD")
+                    )),
+                    Some(sha) if sha != head_sha => unreviewed.push(format!(
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
+                        short(&head_sha),
+                        short(&sha),
+                        escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
                     Some(_) => {}
                 }
+                reasons.extend(apply_escape_to_reasons(
+                    shell.escape("ALLOW_UNREVIEWED_HEAD"),
+                    "ALLOW_UNREVIEWED_HEAD",
+                    unreviewed,
+                ));
             }
 
             // --- 9. トピックが 1 つか（新しい ADR の数）---
             // 変更ファイルの status が added のものだけ数える（既存の ADR の変更・改名は数えない）
             if !owner.is_empty()
                 && !name.is_empty()
-                && !shell.has_escape("ALLOW_MULTI_TOPIC")
+                && shell.escape("ALLOW_MULTI_TOPIC") != Escape::Given
                 && let Some(number) = pr_number.as_deref()
             {
                 match gh::gh(
@@ -651,10 +659,14 @@ impl Rule for PreMergeCheck {
                         ".[] | [.status, .filename] | @tsv",
                     ],
                 ) {
-                    Err(()) => reasons.push(
-                        "PR の変更ファイルを取得できず、新しい ADR の数を確認できません（pulls/files API が失敗）"
-                            .to_string(),
-                    ),
+                    Err(()) => reasons.extend(apply_escape_to_reasons(
+                        shell.escape("ALLOW_MULTI_TOPIC"),
+                        "ALLOW_MULTI_TOPIC",
+                        vec![
+                            "PR の変更ファイルを取得できず、新しい ADR の数を確認できません（pulls/files API が失敗）"
+                                .to_string(),
+                        ],
+                    )),
                     Ok(s) => {
                         let adrs: Vec<String> = s
                             .lines()
@@ -662,7 +674,11 @@ impl Rule for PreMergeCheck {
                             .filter(|(status, path)| *status == "added" && is_adr_path(path))
                             .map(|(_, path)| path.to_string())
                             .collect();
-                        reasons.extend(multi_topic_reason(&adrs));
+                        reasons.extend(apply_escape_to_reasons(
+                            shell.escape("ALLOW_MULTI_TOPIC"),
+                            "ALLOW_MULTI_TOPIC",
+                            multi_topic_reason(&adrs).into_iter().collect(),
+                        ));
                     }
                 }
             }

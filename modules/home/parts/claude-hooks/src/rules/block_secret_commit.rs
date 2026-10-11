@@ -12,17 +12,17 @@
 //! gitleaks の仕組み）。漏えいは場所とルール ID だけを理由に出す。gitleaks が無い・失敗した場合は
 //! 「検査できない」として deny する。
 //!
-//! エスケープ: コマンドに `ALLOW_SECRET_COMMIT=1` を付ける。
+//! エスケープ: コマンドに `ALLOW_SECRET_COMMIT=<理由>` を付ける。
 
 use std::path::Path;
 use std::process::Command;
 
-use super::Rule;
+use super::{Rule, escape_hint};
 use crate::git;
 use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::Shell;
+use crate::shell::{Escape, Shell};
 
 pub struct BlockSecretCommit;
 
@@ -95,10 +95,11 @@ impl Rule for BlockSecretCommit {
         "block-secret-commit"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_SECRET_COMMIT")
+    }
+
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if shell.has_escape("ALLOW_SECRET_COMMIT") {
-            return Vec::new();
-        }
         for cmd in shell.commands() {
             let Some(("commit", args)) = cmd.git_subcommand() else {
                 continue;
@@ -109,6 +110,13 @@ impl Rule for BlockSecretCommit {
             let text = dir.to_string_lossy();
             if text.contains('$') || text.contains('`') || !dir.is_dir() || uses_global_hooks(&dir)
             {
+                // git の hook は展開後の値しか見えないので、展開を含むエスケープはここで止める
+                // （rules::run が理由を求める行を足す）
+                if shell.escape("ALLOW_SECRET_COMMIT") == Escape::Expanded {
+                    return vec![Finding::Deny(
+                        "このリポジトリの機密情報の検査は git の pre-commit が行いますが、エスケープの値に展開（$VAR、$(…) など）が含まれ、git 側は展開後の値しか見えません。理由を字面で書いてください".to_string(),
+                    )];
+                }
                 continue;
             }
             let all = git_flag("commit", args, Some('a'), &["--all"]);
@@ -124,7 +132,8 @@ impl Rule for BlockSecretCommit {
                     Scan::Leaks(list) => leaks.extend(list),
                     Scan::Unavailable(why) => {
                         return vec![Finding::Deny(format!(
-                            "機密情報の検査ができないためコミットを止めます（{why}）。\nどうしても必要な場合は ALLOW_SECRET_COMMIT=1 をコマンドに付けて実行してください。"
+                            "機密情報の検査ができないためコミットを止めます（{why}）。\n{}",
+                            escape_hint("ALLOW_SECRET_COMMIT")
                         ))];
                     }
                 }
@@ -134,8 +143,9 @@ impl Rule for BlockSecretCommit {
             }
             let list: Vec<String> = leaks.iter().map(|f| format!("- {f}")).collect();
             return vec![Finding::Deny(format!(
-                "機密情報らしき内容がコミット対象に含まれています（gitleaks）:\n{}\n\n対処: 該当ファイルを git restore --staged <file> で外し、必要なら .gitignore に追加してください。\n既に push 済みの値はローテーションしてください。\n誤検出なら、その行に gitleaks:allow を書く（.gitleaksignore / .gitleaks.toml でも可）か、コマンドに ALLOW_SECRET_COMMIT=1 を付けて実行してください。",
-                list.join("\n")
+                "機密情報らしき内容がコミット対象に含まれています（gitleaks）:\n{}\n\n対処: 該当ファイルを git restore --staged <file> で外し、必要なら .gitignore に追加してください。\n既に push 済みの値はローテーションしてください。\n誤検出なら、その行に gitleaks:allow を書いてください（.gitleaksignore / .gitleaks.toml でも可）。\n{}",
+                list.join("\n"),
+                escape_hint("ALLOW_SECRET_COMMIT")
             ))];
         }
         Vec::new()

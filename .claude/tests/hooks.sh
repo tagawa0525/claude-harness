@@ -258,9 +258,86 @@ assert_contains "$(reason "$out")" "--force-with-lease"
 out=$(run_hook guard-git-push 'git push origin +feat/x')
 assert_eq deny "$(decision "$out")"
 
-it "guard-git-push: ALLOW_PROTECTED_PUSH=1 で迂回できる"
-out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push --force')
+it "guard-git-push: ALLOW_PROTECTED_PUSH=<理由> で迂回できる"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=テスト用 git push --force')
 assert_eq allow "$(decision "$out")"
+
+# エスケープの値は理由の文字列（ADR-0023）。`1` や 1 語の英単語は弾き、短い値を拒む文言はしきい値を明かさない
+it "escape: 値が 1 や短い語なら、理由を求めて止める（しきい値は明かさない）"
+for value in 1 true force allow 確認; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+  # 本来の文言（何を止めたか、正規の直し方）は残す
+  assert_contains "$(reason "$out")" "force push は禁止"
+  assert_not_contains "$(reason "$out")" "6"
+  assert_not_contains "$(reason "$out")" "文字"
+done
+
+it "escape: 展開（\$VAR、\$(…)）は記録に残らないので幅に数えず、字面だけで 6 に満たなければ理由を求める"
+for value in '$REASON' '"$(cat r.txt)"' '"ab $X"' 'ab$X' '<(true)' '$((1+1))'; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+done
+
+it "escape: 展開を含んでも、字面の部分だけで 6 以上あれば通す（PR 番号などを展開で足せる）"
+for value in '"rebase のみ $X"' '"rebase のみ、PR #$(gh pr view --json number -q .number)"' 'abcdef$X'; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "escape: ANSI-C 文字列やバックスラッシュで幅を水増しできない"
+for value in "\$'\\t\\t\\t'" 'a\ \ \ \ b' "\$'abc'"; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+done
+
+it "escape: 全角空白や NBSP でも幅を水増しできず、それだけの値は付けていない扱い"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a　　　b" git push --force')
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a    b" git push --force')
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="　　　" git push --force')
+assert_contains "$(reason "$out")" "force push は禁止"
+assert_not_contains "$(reason "$out")" "理由を記載"
+
+it "escape: 空白を除いた幅（ASCII は 1、それ以外は 2）が 6 以上の理由なら通す"
+for value in aaaaaa 差分同一 '"  abcdef  "' '"rebase のみ"'; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "escape: 理由を求めるのは、そのルールが止める命令のときだけ"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push origin feat/x')
+assert_eq allow "$(decision "$out")"
+out=$(run_hook block-no-verify 'ALLOW_NO_VERIFY=1 git status')
+assert_eq allow "$(decision "$out")"
+
+it "escape: 同じ名前の代入が複数あれば、短い値が 1 つでもあれば理由を求める"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH=1 git push --force; ALLOW_PROTECTED_PUSH=placeholder true')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+
+it "escape: 0 と空（空白だけを含む）の値はエスケープを付けていないものとして扱う"
+for value in 0 '' '"     "'; do
+  out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "force push は禁止"
+  assert_not_contains "$(reason "$out")" "理由を記載"
+done
+
+it "escape: 幅は空白を全部除いて数える（内側の空白で水増しできない）"
+out=$(run_hook guard-git-push 'ALLOW_PROTECTED_PUSH="a    b" git push --force')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
+
+it "escape: 止める文言は、理由を値にした付け方と、機械で判定できる理由なら issue に書くことを案内する"
+out=$(run_hook guard-git-push 'git push --force')
+assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH=<理由>"
+assert_contains "$(reason "$out")" "issue"
+assert_not_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH=1"
 
 it "guard-git-push: env などで包んだ git push も見て、値を取るオプションの値を -f と取り違えない"
 for cmd in 'env FOO=1 git push --force' 'command git push origin main' 'nohup git push --force'; do
@@ -638,6 +715,16 @@ out=$(run_hook block-secret-commit "git -C $REPO commit -m 'chore: a'")
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(fake_log gitleaks)"
 
+it "block-secret-commit: git の pre-commit に任せるリポジトリでも、展開を含むエスケープはここで止める（git 側は展開後の値しか見えない）"
+out=$(run_hook block-secret-commit "REASON=abcdef; ALLOW_SECRET_COMMIT=\$REASON git -C $REPO commit -m 'chore: a'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_SECRET_COMMIT には理由を記載"
+out=$(run_hook block-secret-commit "ALLOW_SECRET_COMMIT=\"\$(cat r.txt)\" git -C $REPO commit -m 'chore: a'")
+assert_eq deny "$(decision "$out")"
+# 字面の短い値は git 側も同じ規則で止めるので、ここでは咎めない
+out=$(run_hook block-secret-commit "ALLOW_SECRET_COMMIT=1 git -C $REPO commit -m 'chore: a'")
+assert_eq allow "$(decision "$out")"
+
 it "block-secret-commit: ローカルの core.hooksPath を持つリポジトリでは、漏えいで止め、場所とルール ID を示す"
 fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit 'git commit -m "chore: conf"')
@@ -682,9 +769,20 @@ out=$(PATH="$(minimal_path)" run_hook block-secret-commit 'git commit -m "chore:
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "gitleaks が PATH にありません"
 
-it "block-secret-commit: ALLOW_SECRET_COMMIT=1 で迂回できる（gitleaks を呼ばない）"
+it "block-secret-commit: ALLOW_SECRET_COMMIT=1 は検査を走らせ、漏えいがあれば本来の文言に理由を求める行を足す"
 fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "conf.txt:3"
+assert_contains "$(reason "$out")" "ALLOW_SECRET_COMMIT には理由を記載"
+assert_contains "$(fake_log gitleaks)" "--staged"
+fake_gitleaks ok ok
+out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: a"')
+assert_eq allow "$(decision "$out")"
+
+it "block-secret-commit: ALLOW_SECRET_COMMIT=<理由> で迂回できる（gitleaks を呼ばない）"
+fake_gitleaks "$LEAK_JSON" ok
+out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=テスト用 git commit -m "chore: conf"')
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(fake_log gitleaks)"
 git config --global --unset core.hooksPath
@@ -727,7 +825,7 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
-  assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=1"
+  assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=<理由>"
 done
 
 it "block-no-verify: hook を飛ばさない git のコマンドは許可する"
@@ -743,8 +841,8 @@ for cmd in 'git commit -m "chore: a"' 'git commit -am "chore: a"' 'git commit --
   assert_eq allow "$(decision "$out")"
 done
 
-it "block-no-verify: ALLOW_NO_VERIFY=1 で迂回できる"
-out=$(run_hook block-no-verify 'ALLOW_NO_VERIFY=1 git commit --no-verify -m "chore: a"')
+it "block-no-verify: ALLOW_NO_VERIFY=<理由> で迂回できる"
+out=$(run_hook block-no-verify 'ALLOW_NO_VERIFY=テスト用 git commit --no-verify -m "chore: a"')
 assert_eq allow "$(decision "$out")"
 
 it "block-no-verify: git commit / merge 以外とヒアドキュメント本文には反応しない"
@@ -807,8 +905,8 @@ out=$(run_hook guard-git-add "git -C $REPO add -A")
 assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
-it "guard-git-add: ALLOW_GIT_ADD_ALL=1 で迂回できる"
-out=$(run_hook guard-git-add 'ALLOW_GIT_ADD_ALL=1 git add -A')
+it "guard-git-add: ALLOW_GIT_ADD_ALL=<理由> で迂回できる"
+out=$(run_hook guard-git-add 'ALLOW_GIT_ADD_ALL=テスト用 git add -A')
 assert_eq allow "$(decision "$out")"
 
 it "guard-git-add: ヒアドキュメント本文の git add -A には反応しない"
@@ -865,8 +963,8 @@ out=$(run_hook guard-gh-run-rerun 'gh run list')
 assert_eq "" "$out"
 assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
-it "guard-gh-run-rerun: ALLOW_RERUN=1 で迂回できる（gh を呼ばない）"
-out=$(run_hook guard-gh-run-rerun 'ALLOW_RERUN=1 gh run rerun 100')
+it "guard-gh-run-rerun: ALLOW_RERUN=<理由> で迂回できる（gh を呼ばない）"
+out=$(run_hook guard-gh-run-rerun 'ALLOW_RERUN=テスト用 gh run rerun 100')
 assert_eq allow "$(decision "$out")"
 assert_eq "" "$(cat "$FAKE_GH_LOG")"
 
@@ -966,7 +1064,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
-assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=1"
+assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=<理由>"
 assert_not_contains "$(reason "$out")" "失敗したチェックがあります"
 
 it "pre-merge-check: レビューが 1 件も無くてもチェックが失敗していれば止める"
@@ -985,9 +1083,15 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
 
-it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=1 なら未レビューの head でもマージできる"
-out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=1 $MERGE_CMD")
+it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=<理由> なら未レビューの head でもマージできる"
+out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=テスト用 $MERGE_CMD")
 assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=1 は、本来の文言に理由を求める行を足して止める"
+out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=1 $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビューが実行されていません"
+assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD には理由を記載"
 
 # リベース（main の追従）で hash だけが変わった head は、レビュー済みの差分と同じなので再レビューを求めない。
 # 差分が変わっていれば今まで通り deny する（変わったのに通す誤りを許さない）
@@ -1060,27 +1164,17 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
 
-it "pre-merge-check: 挙動を変えない修正に限る条件付きでエスケープを案内する"
-# typo 1 文字の修正にレビュー 1 周（数分＋レビュー用トークン）は見合わない。
-# ただし条件を書かずに案内すると迂回路になるので、対象と記録の要件を明示する
+it "pre-merge-check: 未レビューの案内は、再レビューの依頼と理由つきのエスケープだけで、条件を列挙しない"
+# 「〜なら付けてよい」の条件を並べると、どれかに当てはめる読み方を誘う（ADR-0023）
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "挙動を変えない"
-assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=1"
-assert_contains "$(reason "$out")" "run-checks.sh"
-assert_contains "$(reason "$out")" "ALL_OK"
-# run-checks.sh はツール未導入なら SKIP でも ALL_OK になるので、テストの通過も条件
-assert_contains "$(reason "$out")" "既存テスト"
-assert_contains "$(reason "$out")" "完了報告"
-
-it "pre-merge-check: 周回上限に達したときはユーザーの承認を条件にエスケープを案内する"
-# 上限到達後は再レビューを依頼できないので、案内が「依頼」と「挙動を変えない修正」だけだと
-# ユーザーが承認しても次の一手がない
-make_fake_gh_merge 'echo 0' 'echo old'
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_contains "$(reason "$out")" "周回上限"
-assert_contains "$(reason "$out")" "ユーザーが承認"
+assert_contains "$(reason "$out")" "request-rereview.sh"
+assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=<理由>"
+assert_contains "$(reason "$out")" "issue"
+assert_not_contains "$(reason "$out")" "挙動を変えない"
+assert_not_contains "$(reason "$out")" "ユーザーが承認"
+assert_not_contains "$(reason "$out")" "周回上限"
 
 # 文書（docs/）だけの PR は、最初の自動レビューで指摘を受ければ足りる（ADR-0004）。
 # 文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない
@@ -1325,7 +1419,9 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
 assert_contains "$(reason "$out")" "docs/adr/0003-use-c.md"
 assert_contains "$(reason "$out")" "/topic-triage"
-assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=1"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=<理由>"
+# 「〜の場合は別」のような条件を文言に列挙しない（ADR-0023）
+assert_not_contains "$(reason "$out")" "まとめて加える"
 assert_not_contains "$(reason "$out")" "src/x.rs"
 
 it "pre-merge-check: 新しい ADR が 1 件で、ほかは既存の ADR の変更・改名・README なら許可する"
@@ -1333,16 +1429,28 @@ make_fake_gh_merge 'echo 0' 'echo abc' 'printf "%s\t%s\n" added docs/adr/0002-us
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: ALLOW_MULTI_TOPIC=1 なら新しい ADR が複数でもマージできる"
+it "pre-merge-check: ALLOW_MULTI_TOPIC=<理由> なら新しい ADR が複数でもマージできる"
 make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS"
-out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=1 $MERGE_CMD")
+out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=テスト用 $MERGE_CMD")
 assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: ALLOW_MULTI_TOPIC=1 は、本来の文言に理由を求める行を足して止める"
+out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=1 $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
 
 it "pre-merge-check: PR の変更ファイルを取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo abc' 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "変更ファイル"
+
+it "pre-merge-check: 変更ファイルを取得できないときも、短いエスケープには理由を求める行を足す"
+out=$(run_hook pre-merge-check "ALLOW_MULTI_TOPIC=1 $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "変更ファイル"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
 
 # --- ローカルの git merge（GitHub を使わないリポジトリは main に git merge --no-ff する）---
 
@@ -1374,7 +1482,7 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
 assert_contains "$(reason "$out")" "docs/adr/0003-use-c.md"
 assert_contains "$(reason "$out")" "/topic-triage"
-assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=1"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=<理由>"
 out=$(run_hook pre-git-merge-check 'git merge -m "Merge: two" --no-ff feat/two')
 assert_eq deny "$(decision "$out")"
 
@@ -1385,8 +1493,8 @@ assert_eq allow "$(decision "$out")"
 out=$(run_hook pre-git-merge-check 'git merge --no-ff --cleanup strip feat/one')
 assert_eq allow "$(decision "$out")"
 
-it "pre-git-merge-check: ALLOW_MULTI_TOPIC=1 で通す"
-out=$(run_hook pre-git-merge-check 'ALLOW_MULTI_TOPIC=1 git merge --no-ff feat/two')
+it "pre-git-merge-check: ALLOW_MULTI_TOPIC=<理由> で通す"
+out=$(run_hook pre-git-merge-check 'ALLOW_MULTI_TOPIC=テスト用 git merge --no-ff feat/two')
 assert_eq allow "$(decision "$out")"
 
 it "pre-git-merge-check: git merge - は直前のブランチとして判定する"
@@ -1616,25 +1724,30 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-sbatch "env -u FOO $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
 
-it "guard-sbatch: ALLOW_RAW_SBATCH=1 を付ければ sbatch を直接投げられる"
-out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 sbatch --array=1-4 --wrap 'true'")
+it "guard-sbatch: ALLOW_RAW_SBATCH=<理由> を付ければ sbatch を直接投げられる"
+out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=テスト用 sbatch --array=1-4 --wrap 'true'")
 assert_eq allow "$(decision "$out")"
 
 it "guard-sbatch: 止めるときにエスケープの名前を示す"
 out=$(run_hook guard-sbatch "sbatch --wrap 'true'")
-assert_contains "$(reason "$out")" "ALLOW_RAW_SBATCH=1"
+assert_contains "$(reason "$out")" "ALLOW_RAW_SBATCH=<理由>"
 out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
-assert_contains "$(reason "$out")" "ALLOW_FOREGROUND_SLURM=1"
+assert_contains "$(reason "$out")" "ALLOW_FOREGROUND_SLURM=<理由>"
 
-it "guard-sbatch: ALLOW_FOREGROUND_SLURM=1 を付ければ slurm-run.sh をフォアグラウンドで走らせられる"
-out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=1 $HOME/.claude/scripts/slurm-run.sh -t 1 xlc-1B 'true'")
+it "guard-sbatch: ALLOW_FOREGROUND_SLURM=<理由> を付ければ slurm-run.sh をフォアグラウンドで走らせられる"
+out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=テスト用 $HOME/.claude/scripts/slurm-run.sh -t 1 xlc-1B 'true'")
 assert_eq allow "$(decision "$out")"
 
 it "guard-sbatch: エスケープはそれぞれの検査だけを外す"
-out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=1 sbatch --wrap 'true'")
+out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=テスト用 sbatch --wrap 'true'")
 assert_eq deny "$(decision "$out")"
-out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
+out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=テスト用 $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
+
+it "guard-sbatch: 理由の無いエスケープは、理由を求めて止める"
+out=$(run_hook guard-sbatch "ALLOW_RAW_SBATCH=1 sbatch --wrap 'true'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ALLOW_RAW_SBATCH には理由を記載"
 
 it "guard-sbatch: command -v と -V は探すだけなので通す"
 out=$(run_hook guard-sbatch "command -v sbatch && command -V sbatch")

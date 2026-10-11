@@ -3,9 +3,9 @@
 //! 一時障害（GitHub API の 5xx、Copilot の内部エラー）の再実行は 1 回まで。attempt 2 以上で
 //! 同じ失敗が続くなら一時障害ではないので、無制限に再実行せず原因を報告してユーザーの判断に委ねる。
 //! attempt は gh run view <id> --json attempt で確認する。確認できなければ deny する
-//! （確認できない状態で再実行させない）。エスケープ: コマンドに `ALLOW_RERUN=1` を付ける
+//! （確認できない状態で再実行させない）。エスケープ: コマンドに `ALLOW_RERUN=<理由>` を付ける
 
-use super::Rule;
+use super::{Rule, escape_hint};
 use crate::gh;
 use crate::input::Input;
 use crate::output::Finding;
@@ -14,9 +14,7 @@ use crate::shell::{Arg, Shell};
 pub struct GuardGhRunRerun;
 
 fn deny(reason: &str) -> Finding {
-    Finding::Deny(format!(
-        "{reason}\n\nどうしても必要な場合は ALLOW_RERUN=1 をコマンドに付けて実行してください。"
-    ))
+    Finding::Deny(format!("{reason}\n\n{}", escape_hint("ALLOW_RERUN")))
 }
 
 /// 引数から (-R の値, run ID) を取り出す。--job の値（数値のジョブ ID もある）は run ID ではない
@@ -48,10 +46,11 @@ impl Rule for GuardGhRunRerun {
         "guard-gh-run-rerun"
     }
 
+    fn escape(&self) -> Option<&'static str> {
+        Some("ALLOW_RERUN")
+    }
+
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if shell.has_escape("ALLOW_RERUN") {
-            return Vec::new();
-        }
         for cmd in shell.commands() {
             let Some(args) = cmd.gh_subcommand(&["run", "rerun"]) else {
                 continue;

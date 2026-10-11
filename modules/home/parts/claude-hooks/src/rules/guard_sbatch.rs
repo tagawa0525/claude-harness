@@ -5,11 +5,11 @@
 //! Bash ツールのフォアグラウンドの上限を超えるので、run_in_background=true でのみ許可する。
 //! `env`・`command` などで包んでも、shell.rs がほどいた中のプログラムで判定する。
 //! slurm-run.sh が扱わない投げ方（ジョブの配列、依存、排他でない資源など）や、空いた待ち行列での
-//! 短い計算のために、わかって外すときのエスケープを設ける: `ALLOW_RAW_SBATCH=1`（sbatch の直接の投入）、
-//! `ALLOW_FOREGROUND_SLURM=1`（slurm-run.sh のフォアグラウンド実行）。
+//! 短い計算のために、わかって外すときのエスケープを設ける: `ALLOW_RAW_SBATCH=<理由>`（sbatch の直接の投入）、
+//! `ALLOW_FOREGROUND_SLURM=<理由>`（slurm-run.sh のフォアグラウンド実行）。
 //! `echo sbatch` や `grep sbatch …` のように引数に現れるだけの場合は対象外。
 
-use super::Rule;
+use super::{Rule, apply_escape, escape_hint};
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Cmd, Shell};
@@ -44,19 +44,32 @@ impl Rule for GuardSbatch {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        // 2 つの検査は別々のエスケープで外す
         let commands = shell.commands();
-        if !shell.has_escape("ALLOW_RAW_SBATCH") && commands.iter().any(|cmd| runs(cmd, "sbatch")) {
-            return vec![Finding::Deny(
-                "sbatch を直接使わず、~/.claude/scripts/slurm-run.sh -t <見積もり> <名前> '<コマンド>' で投げてください（名前・ログ・見積もり・連絡先を付けます。ADR-0007）。slurm-run.sh で扱えない投げ方だとわかっていれば ALLOW_RAW_SBATCH=1 を付けます".to_string(),
-            )];
+        if commands.iter().any(|cmd| runs(cmd, "sbatch")) {
+            let deny = Finding::Deny(format!(
+                "sbatch を直接使わず、~/.claude/scripts/slurm-run.sh -t <見積もり> <名前> '<コマンド>' で投げてください（名前・ログ・見積もり・連絡先を付けます。ADR-0007）。{}",
+                escape_hint("ALLOW_RAW_SBATCH")
+            ));
+            let findings = apply_escape(
+                shell.escape("ALLOW_RAW_SBATCH"),
+                "ALLOW_RAW_SBATCH",
+                vec![deny],
+            );
+            if !findings.is_empty() {
+                return findings;
+            }
         }
-        if !input.run_in_background
-            && !shell.has_escape("ALLOW_FOREGROUND_SLURM")
-            && commands.iter().any(runs_slurm_run)
-        {
-            return vec![Finding::Deny(
-                "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。待ち行列が空で数分で終わるとわかっていれば ALLOW_FOREGROUND_SLURM=1 を付けます".to_string(),
-            )];
+        if !input.run_in_background && commands.iter().any(runs_slurm_run) {
+            let deny = Finding::Deny(format!(
+                "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
+                escape_hint("ALLOW_FOREGROUND_SLURM")
+            ));
+            return apply_escape(
+                shell.escape("ALLOW_FOREGROUND_SLURM"),
+                "ALLOW_FOREGROUND_SLURM",
+                vec![deny],
+            );
         }
         Vec::new()
     }
