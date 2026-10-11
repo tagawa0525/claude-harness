@@ -428,6 +428,46 @@ mod tests {
     }
 
     #[test]
+    fn renumber_refs_rewrites_only_file_names_of_the_same_kind() {
+        // 同じ番号と slug の issue へのパス、.md の後ろが続く名前は変えない。ほかのディレクトリからの相対の
+        // パスは、直前のディレクトリの名前で種類を見る
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "docs/issues/0001-use-b.md ../issues/0001-use-b.md 0001-use-b.mdx ../adr/0001-use-b.md",
+                1,
+                2,
+                "use-b",
+                true
+            ),
+            "docs/issues/0001-use-b.md ../issues/0001-use-b.md 0001-use-b.mdx ../adr/0002-use-b.md"
+        );
+        // 裸のファイル名は、参照する文書がその種類のディレクトリにあるときだけ、その種類の記録とみなす
+        assert_eq!(
+            renumber_refs(
+                Kind::Adr,
+                "[b](0001-use-b.md) docs/adr/0001-use-b.md",
+                1,
+                2,
+                "use-b",
+                false
+            ),
+            "[b](0001-use-b.md) docs/adr/0002-use-b.md"
+        );
+        assert_eq!(
+            renumber_refs(
+                Kind::Issue,
+                "docs/adr/0001-use-b.md docs/issues/0001-use-b.md",
+                1,
+                3,
+                "use-b",
+                false
+            ),
+            "docs/adr/0001-use-b.md docs/issues/0003-use-b.md"
+        );
+    }
+
+    #[test]
     fn renumber_refs_rewrites_references_and_file_names_of_the_record() {
         assert_eq!(
             renumber_refs(
@@ -435,7 +475,8 @@ mod tests {
                 "ADR-0001 と [b](0001-use-b.md)、docs/adr/0001-use-b.md",
                 1,
                 2,
-                "use-b"
+                "use-b",
+                true
             ),
             "ADR-0002 と [b](0002-use-b.md)、docs/adr/0002-use-b.md"
         );
@@ -446,7 +487,8 @@ mod tests {
                 "ADR-0011 0001-use-a.md x0001-use-b.md XADR-0001 ADR-00012 ADR-0001x",
                 1,
                 2,
-                "use-b"
+                "use-b",
+                true
             ),
             "ADR-0011 0001-use-a.md x0001-use-b.md XADR-0001 ADR-00012 ADR-0001x"
         );
@@ -456,7 +498,8 @@ mod tests {
                 "blocked-by: [\"#0001\"] x#0001 #00012 ADR-0001",
                 1,
                 3,
-                "fix-a"
+                "fix-a",
+                true
             ),
             "blocked-by: [\"#0003\"] x#0001 #00012 ADR-0001"
         );
