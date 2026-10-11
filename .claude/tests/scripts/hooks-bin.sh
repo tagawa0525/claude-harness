@@ -46,4 +46,21 @@ for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.
   assert_not_contains "$out" "絶対パス"
 done
 
+# 起動の確認は通り、ルールの呼び出しで失敗する版（ルールの足りない古い版など）
+make_fake_tool rule-fails "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
+  *) echo 'unknown rule: guard-sbatch' >&2; exit 2 ;;"
+# ルールが panic する版（claude-hooks は panic を拾い、標準エラーに出して 0 で終わる）
+make_fake_tool rule-panics "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
+  *) echo \"thread 'main' panicked at src/shell.rs\" >&2; exit 0 ;;"
+for bin in rule-fails rule-panics; do
+  it ".claude/tests/hooks.sh: ルールの呼び出しで $bin なら、テストを失敗と数えずにその場で止まる"
+  out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" bash .claude/tests/hooks.sh 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "claude-hooks が失敗しました"
+  assert_not_contains "$out" "passed:"
+done
+it ".claude/tests/hooks.sh: ルールの呼び出しの失敗では、バイナリの標準エラーを出す"
+out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/rule-panics" bash .claude/tests/hooks.sh 2>&1)
+assert_contains "$out" "thread 'main' panicked"
+
 finish
