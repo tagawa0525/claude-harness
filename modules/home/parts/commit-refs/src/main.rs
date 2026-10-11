@@ -18,7 +18,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Output};
 
 use commit_refs::Map;
 
@@ -140,12 +140,8 @@ fn collect<'a>(
 
 /// 7 桁の 16 進を含む、追跡しているテキストのファイル（`-I` でバイナリを除く）の、リポジトリの直下からのパス
 fn candidate_paths(top: &Path) -> Result<Vec<Vec<u8>>, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(top)
-        .args(["grep", "-z", "-l", "-I", "-E", "[0-9a-f]{7}"])
-        .output()
-        .map_err(|e| format!("git を起動できない: {e}"))?;
+    let args = ["grep", "-z", "-l", "-I", "-E", "[0-9a-f]{7}"];
+    let output = run_git(top, &args)?;
     // git grep は一致が無いと 1 を返すので、それだけを 0 件として扱う
     match output.status.code() {
         Some(0) => Ok(output
@@ -155,28 +151,34 @@ fn candidate_paths(top: &Path) -> Result<Vec<Vec<u8>>, String> {
             .map(<[u8]>::to_vec)
             .collect()),
         Some(1) => Ok(Vec::new()),
-        _ => Err(format!(
-            "git grep が失敗した（{}）: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )),
+        _ => Err(git_failure(&args, &output)),
     }
 }
 
 /// `git args…` を `dir` で走らせ、成功なら標準出力を返す。
 fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
+    let output = run_git(dir, args)?;
+    if !output.status.success() {
+        return Err(git_failure(args, &output));
+    }
+    Ok(output.stdout)
+}
+
+/// `git args…` を `dir` で走らせる。終了コードの読み方は呼ぶ側が決める
+fn run_git(dir: &Path, args: &[&str]) -> Result<Output, String> {
+    Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
         .output()
-        .map_err(|e| format!("git を起動できない: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(output.stdout)
+        .map_err(|e| format!("git を起動できない: {e}"))
+}
+
+fn git_failure(args: &[&str], output: &Output) -> String {
+    format!(
+        "git {}（{}）: {}",
+        args.join(" "),
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
 }
