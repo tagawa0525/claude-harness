@@ -4,13 +4,22 @@
 use std::path::Path;
 use std::process::Command;
 
-/// `gh <args>` を dir で実行し、成功なら標準出力を返す。失敗は Err
+/// `gh <args>` を dir で実行し、成功なら標準出力を返す。失敗は Err。
+/// 起動できない（PATH に gh が無い、dir に入れない）のは環境の問題なので、理由を利用者に見せる
+/// （[`crate::output::notice`]）。dir が無いときは、判定するコマンドが作る前の場所を指しうるので黙る
 pub fn gh(dir: &Path, args: &[&str]) -> Result<String, ()> {
     let out = Command::new("gh")
         .args(args)
         .current_dir(dir)
         .output()
-        .map_err(|_| ())?;
+        .map_err(|e| {
+            if std::fs::metadata(dir).is_ok() {
+                crate::output::notice(format!(
+                    "claude-hooks: gh を起動できません（PATH に gh が無いか、{} に入れません）: {e}",
+                    dir.display()
+                ));
+            }
+        })?;
     if !out.status.success() {
         return Err(());
     }

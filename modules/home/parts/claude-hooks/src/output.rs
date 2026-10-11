@@ -7,12 +7,13 @@ use std::sync::Mutex;
 /// プロセスに 1 つ置く
 static NOTICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// 判定できなかった理由を足す。出力の systemMessage に入り、利用者の画面に出る（モデルには渡らない。ADR-0033）
+/// 判定できなかった理由を足す。出力の systemMessage に入り、利用者の画面に出る（モデルには渡らない。ADR-0033）。
+/// 1 回の判定で git や gh を何度も呼ぶので、同じ理由は 1 回だけにする
 pub fn notice(message: String) {
-    NOTICES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(message);
+    let mut notices = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+    if !notices.contains(&message) {
+        notices.push(message);
+    }
 }
 
 /// これまでに足した理由を取り出す
