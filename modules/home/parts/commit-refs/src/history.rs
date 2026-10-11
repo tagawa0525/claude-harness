@@ -78,6 +78,7 @@ pub fn run(map_path: &Path) -> Result<(), Errors> {
             left.join("\n")
         )]);
     }
+    check_new_commits(&top, &map, &current).map_err(one)?;
     map.add_unchanged(commits.iter().map(String::as_str));
     let head = head_state(&top).map_err(one)?;
     if let Head::Detached(oid) = &head
@@ -282,6 +283,44 @@ fn rev_list(top: &Path, refs: &[Ref]) -> Result<Vec<String>, String> {
         .lines()
         .map(str::to_string)
         .collect())
+}
+
+/// 対応表の新（今の履歴に無いもの）が、実在するコミットであること。無い番号を文書に書くと、突き合わせも同じ
+/// 対応表から期待を作るので見落とす
+fn check_new_commits(top: &Path, map: &Map, current: &HashSet<String>) -> Result<(), String> {
+    let news: Vec<&str> = map
+        .targets()
+        .filter_map(|(_, target)| match target {
+            Target::Changed(new) if !current.contains(new) => Some(new.as_str()),
+            _ => None,
+        })
+        .collect();
+    if news.is_empty() {
+        return Ok(());
+    }
+    let input: Vec<u8> = news
+        .iter()
+        .flat_map(|n| format!("{n}\n").into_bytes())
+        .collect();
+    let out = git::git_stdin(
+        top,
+        &["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        &input,
+    )?;
+    // 無いオブジェクトは「<番号> missing」と出る
+    let bad: Vec<String> = String::from_utf8_lossy(&out)
+        .lines()
+        .filter(|line| !line.ends_with(" commit"))
+        .map(str::to_string)
+        .collect();
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "対応表の新が、実在するコミットでない:\n{}",
+            bad.join("\n")
+        ))
+    }
 }
 
 /// rev-list と fast-export に標準入力で渡す版の指定。引数で渡すと、ref の数が多いと引数の上限を超え、ref と同じ
