@@ -429,7 +429,7 @@ pub struct Unwrapped {
     pub env: Vec<EnvChange>,
     /// ほどいた包みの、書いたままの名前（外側から順に。`/usr/bin/time` はパスのまま）
     pub wrappers: Vec<String>,
-    /// 中のコマンドを走らせるディレクトリ（`env -C`。前のものからの相対）
+    /// 中のコマンドを走らせるディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
     pub dirs: Vec<String>,
     /// `name` が sh -c で走らせる文字列（`bash -c '…'`、`flock <file> -c '…'`、`script -c '…'`、`eval`・`watch`・
     /// `ssh <接続先>` の残りの語を空白でつないだもの）。shell.rs が再帰的に解析する
@@ -563,9 +563,10 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         };
         let is_shell = matches!(wrapper.name, "bash" | "sh");
         let mut words: VecDeque<Arg> = out.args.iter().cloned().collect();
-        // この包み 1 段の環境の変更と、移るディレクトリ
+        // この包み 1 段の環境の変更と、移るディレクトリ（最後の -C / -D が効く）。out に直に書かないのは、
+        // 包みが中のコマンドを走らせない（--help など）ときに捨てるため
         let mut env: Vec<EnvChange> = Vec::new();
-        let mut dirs: Vec<String> = Vec::new();
+        let mut dir: Option<String> = None;
         let mut runs = true;
         let mut options_done = false;
         // bash -c: 次の位置引数を sh -c の文字列として走らせる
@@ -663,9 +664,9 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                             }
                         }
                         ("env", Some('C')) => {
-                            if let Some(dir) = value {
+                            if let Some(d) = value {
                                 // 1 回の env では最後の -C だけが効く（coreutils の env.c は上書きする）
-                                dirs = vec![dir];
+                                dir = Some(d);
                             }
                         }
                         ("env", Some('S')) => {
@@ -687,8 +688,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         ("sudo", Some('e' | 'l' | 'v' | 'V' | 'K')) => runs = false,
                         ("sudo", Some('s' | 'i')) => reads_stdin = true,
                         ("sudo", Some('D')) => {
-                            if let Some(dir) = value {
-                                dirs = vec![dir];
+                            if let Some(d) = value {
+                                dir = Some(d);
                             }
                         }
                         ("chrt", Some('p' | 'm')) | ("taskset", Some('p')) => runs = false,
@@ -721,10 +722,10 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             break;
         }
         if !preserves_env {
-            env.insert(0, EnvChange::Clear);
+            out.env.push(EnvChange::Clear);
         }
         out.env.extend(env);
-        out.dirs.extend(dirs);
+        out.dirs.extend(dir);
         // 残りの語から、走らせるものを決める
         match wrapper.name {
             "bash" | "sh" => {
