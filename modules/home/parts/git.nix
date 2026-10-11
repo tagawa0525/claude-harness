@@ -52,6 +52,17 @@ let
   jaTermsPathspecs = map (ext: ":(icase,glob)**/*.${ext}") ([ "md" ] ++ jaTermsCodeExtensions) ++ [
     ":(exclude,glob)**/prh.yml"
   ];
+  # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。道具は利用者の PATH のもの
+  stagedChecks = pkgs.writeShellApplication {
+    name = "staged-checks";
+    runtimeInputs = [
+      pkgs.git
+      pkgs.jq
+      pkgs.coreutils
+      pkgs.diffutils
+    ];
+    text = builtins.readFile ./staged-checks.sh;
+  };
   jaTermsStaged = pkgs.writeShellApplication {
     name = "ja-terms-staged";
     runtimeInputs = [
@@ -226,100 +237,12 @@ in
         exit $check_failed
       fi
 
-      # Nix ファイルのチェック（NUL区切りでスペースを含むパスにも対応）
-      NIX_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- '*.nix' || true)
-      if [ -n "$NIX_FILES" ] && command -v nixfmt >/dev/null 2>&1; then
-        echo "🔍 Checking Nix format..."
-        if ! git diff --cached --name-only --diff-filter=ACMR -z -- '*.nix' | xargs -0 nixfmt --check 2>/dev/null; then
-          echo "❌ Nix format check failed. Run: nixfmt <files>"
-          check_failed=1
-        fi
-      fi
+      # Nix、Python、Markdown、Rust の書式と lint。ステージした版を見て、作業ツリーは書き換えない（ADR-0028）
+      # 検証: modules/home/parts/tests/pre-commit-partial-stage.sh
+      ${stagedChecks}/bin/staged-checks || check_failed=1
 
-      # Python ファイルのチェック
-      PY_FILES=$(echo "$STAGED_FILES" | grep '\.py$' || true)
-      if [ -n "$PY_FILES" ] && command -v ruff >/dev/null 2>&1; then
-        echo "🔍 Checking Python format..."
-        if ! ruff format --check $PY_FILES 2>/dev/null; then
-          echo "❌ Python format check failed. Run: ruff format <files>"
-          check_failed=1
-        fi
-        echo "🔍 Checking Python lint..."
-        if ! ruff check $PY_FILES 2>/dev/null; then
-          echo "❌ Python lint failed. Run: ruff check --fix <files>"
-          check_failed=1
-        fi
-      fi
-
-      # Markdown ファイルのチェック
-      MD_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- '*.md' || true)
-      if [ -n "$MD_FILES" ] && command -v markdownlint >/dev/null 2>&1; then
-        echo "🔧 Auto-fixing Markdown lint..."
-        git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 markdownlint --fix -- 2>/dev/null || true
-        # markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完。
-        # 実体は language-checks スキルの同期先（~/.claude）。無ければこの段は飛ばし、
-        # 直後の markdownlint 検査で残った違反として検出される
-        MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"
-        if [ -f "$MD_FIXER" ] && command -v python3 >/dev/null 2>&1; then
-          if ! git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 python3 "$MD_FIXER"; then
-            echo "❌ fix-markdown-lint.py failed. Run: python3 $MD_FIXER <files>"
-            check_failed=1
-          fi
-        fi
-        git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 git add --
-        echo "🔍 Checking Markdown lint..."
-        if ! git diff --cached --name-only --diff-filter=ACMR -z -- '*.md' | xargs -0 markdownlint -- 2>/dev/null; then
-          echo "❌ Markdown lint failed (unfixable issues remain)"
-          check_failed=1
-        fi
-      fi
-
-      # Rust ファイルのチェック
-      # ステージ済み .rs ごとに最寄りの Cargo.toml を探し、クレート単位で cargo fmt --check する
-      # （edition はそのクレートの Cargo.toml から取れる。hook はリポジトリ直下で実行されるため、
-      #   直下に Cargo.toml が無いとサブディレクトリのクレートを見失っていた）。
-      # クレート外の .rs は rustfmt を直接使う（edition 2024）。
-      # 検証: modules/home/parts/tests/pre-commit-rust-format.sh
-      RS_FILES=$(echo "$STAGED_FILES" | grep '\.rs$' || true)
-      if [ -n "$RS_FILES" ]; then
-        echo "🔍 Checking Rust format..."
-        MANIFESTS=""
-        LOOSE_RS=()
-        while IFS= read -r f; do
-          [ -n "$f" ] || continue
-          d=$(dirname "$f")
-          m=""
-          while :; do
-            if [ -f "$d/Cargo.toml" ]; then m="$d/Cargo.toml"; break; fi
-            [ "$d" = "." ] && break
-            d=$(dirname "$d")
-          done
-          if [ -n "$m" ]; then
-            grep -qxF -- "$m" <<<"$MANIFESTS" || MANIFESTS="$MANIFESTS$m"$'\n'
-          else
-            LOOSE_RS+=("$f")
-          fi
-        done <<<"$RS_FILES"
-        if [ -n "$MANIFESTS" ] && command -v cargo >/dev/null 2>&1; then
-          while IFS= read -r m; do
-            [ -n "$m" ] || continue
-            if ! cargo fmt --check --manifest-path "$m" 2>/dev/null; then
-              echo "❌ Rust format check failed. Run: cargo fmt --manifest-path $m"
-              check_failed=1
-            fi
-          done <<<"$MANIFESTS"
-        fi
-        # パスに空白があっても壊れないよう NUL 区切りで渡す（Nix / Markdown の検査と同じ）
-        if [ "''${#LOOSE_RS[@]}" -gt 0 ] && command -v rustfmt >/dev/null 2>&1; then
-          if ! printf '%s\0' "''${LOOSE_RS[@]}" | xargs -0 rustfmt --edition 2024 --check 2>/dev/null; then
-            echo "❌ Rust format check failed. Run: rustfmt --edition 2024 <files>"
-            check_failed=1
-          fi
-        fi
-      fi
-
-      # 日本語の崩れた語（ADR-0014）。Markdown の自動修正は作業ツリーをステージし直す（#282）ので、
-      # 最後に、コミットに入る中身（ステージした版）を見る
+      # 日本語の崩れた語（ADR-0014）。Markdown の自動修正がステージし直した後の、コミットに入る中身
+      # （ステージした版）を見る
       # 検証: modules/home/parts/tests/ja-terms.sh
       ${jaTermsStaged}/bin/ja-terms-staged || check_failed=1
 
