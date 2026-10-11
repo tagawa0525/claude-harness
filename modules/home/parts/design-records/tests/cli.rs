@@ -1681,8 +1681,11 @@ fn renumber_without_a_common_ancestor_reads_only_files_that_mention_the_record()
     t.git(&["checkout", "-q", "--orphan", "lone"]);
     t.run(&["new", "use-a", "a を使う"]);
     t.write("notes.md", "ADR-0001 を見る\n");
+    t.write("links.md", "[a](docs/adr/0001-use-a.md)\n");
     t.write("big/unrelated.txt", "関係のないファイル\n");
     t.commit_all("docs(adr): a");
+    // 色の設定があっても、ファイル名を読み違えない
+    t.git(&["config", "color.ui", "always"]);
     // 記録に触れないファイルは読まない（読めなくても止めない）。読めなくするだけで、変更とはみなさせない
     t.git(&["config", "core.fileMode", "false"]);
     t.git(&["config", "core.trustctime", "false"]);
@@ -1696,6 +1699,27 @@ fn renumber_without_a_common_ancestor_reads_only_files_that_mention_the_record()
     fs::set_permissions(&unrelated, fs::Permissions::from_mode(0o644)).unwrap();
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
+    assert_eq!(t.read("links.md"), "[a](docs/adr/0005-use-a.md)\n");
+}
+
+#[test]
+fn renumber_without_a_common_ancestor_stops_when_a_mentioning_file_cannot_be_read() {
+    let t = TempRepo::new("no-ancestor-unreadable");
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write("notes.md", "ADR-0001 を見る\n");
+    t.commit_all("docs(adr): a");
+    t.git(&["config", "core.fileMode", "false"]);
+    t.git(&["config", "core.trustctime", "false"]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    t.git(&["update-index", "-q", "--really-refresh"]);
+    use std::os::unix::fs::PermissionsExt;
+    let notes = t.dir.join("notes.md");
+    fs::set_permissions(&notes, fs::Permissions::from_mode(0o000)).unwrap();
+    let out = t.run(&["renumber", "1", "5"]);
+    fs::set_permissions(&notes, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(t.dir.join("docs/adr/0001-use-a.md").exists());
 }
 
 #[test]
