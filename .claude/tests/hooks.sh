@@ -388,6 +388,17 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook block-main-commit "(cd $LOCAL); git commit -m 'feat: x'")
 assert_eq deny "$(decision "$out")"
 
+it "block-main-commit: env などで包んだ cd は対象ディレクトリを変えず、builtin / command の cd は変える"
+# env は外部コマンドの cd を探して失敗するので、後ろの git は元のディレクトリ（$REPO、main）で走る
+for cmd in "env cd $LOCAL; git commit -m 'feat: x'" "nohup cd $LOCAL; git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+for cmd in "builtin cd $LOCAL && git commit -m 'feat: x'" "command cd $LOCAL && git commit -m 'feat: x'"; do
+  out=$(run_hook block-main-commit "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "block-main-commit: コマンドより後ろの cd は対象ディレクトリにしない"
 # $REPO（github リモートあり・main）で実行。後ろの cd $LOCAL（リモートなし）を見てしまうと allow になる
 out=$(run_hook block-main-commit "git commit -m 'feat: x' && cd $LOCAL")
