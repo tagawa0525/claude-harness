@@ -1,7 +1,7 @@
 ---
 status: proposed
 date: 2026-10-12
-requires: [ADR-0007]
+requires: [ADR-0007, ADR-0031]
 supersedes: []
 superseded-by:
 issues: ["#340"]
@@ -45,6 +45,8 @@ nice を上げて優先度を下げる。そのとき、優先度が 1 以下の
 同じ分に投げたジョブは同じ優先度で、ジョブ番号の順に走る。`_set_top` は優先度の差を nice に移すので、後ろに回したジョブの
 nice は「何分ぶん後ろに回したか」の意味になる。その後に投げられたジョブは、待った分が少ないので、回したジョブを抜かない。
 
+- `PriorityWeightAge` は slurmdbd がないと無視される（slurmctld が `PriorityWeightAge can only be used with SlurmDBD,
+  ignoring` を出す）ので、ADR-0031 の slurmdbd を前提にする
 - `modules/slurm/common.nix` の `extraConfig` に `PriorityWeightPartition=10000`、`PriorityWeightAge=10080`、
   `PriorityCalcPeriod=1` を置く。`PriorityType` は既定の `priority/multifactor` のまま書かない
 - 10080 は `PriorityMaxAge` の既定（7 日 = 10080 分）と同じ数で、優先度が 1 分に 1 上がる（`priority_multifactor.c` の
