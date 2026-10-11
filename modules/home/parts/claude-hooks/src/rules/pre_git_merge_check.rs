@@ -15,7 +15,7 @@
 use super::Rule;
 use super::guard_branch_base::branch_at;
 use crate::git;
-use crate::git_args::git_flag;
+use crate::git_args::{Item, items};
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
@@ -43,18 +43,12 @@ pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
 /// 対象を標準入力で受け取る `--stdin` はそのまま対象に入れる（check で確かめられないとして止める）
 fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
     let mut out = Vec::new();
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        let t = a.text.as_str();
-        match t {
-            "--abort" | "--continue" | "--quit" => return None,
-            "-m" | "-F" | "--file" | "-s" | "--strategy" | "-X" | "--strategy-option"
-            | "--into-name" => {
-                it.next();
-            }
-            "-" | "--stdin" => out.push(t.to_string()),
-            _ if t.starts_with('-') => {}
-            _ => out.push(t.to_string()),
+    for item in items("merge", args) {
+        match item {
+            Item::Long("--abort" | "--continue" | "--quit") => return None,
+            Item::Long("--stdin") => out.push("--stdin".to_string()),
+            Item::Positional(a) => out.push(a.text.clone()),
+            _ => {}
         }
     }
     Some(out)
@@ -63,8 +57,17 @@ fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
 /// マージコミットを必ず作る指定か。`--no-ff` があっても、後ろの `--ff` / `--ff-only` / `--squash` が
 /// 勝って fast-forward や squash になることがあるので、順序を読まずに併用ごと認めない
 fn always_merge_commit(args: &[Arg]) -> bool {
-    git_flag("merge", args, None, &["--no-ff"])
-        && !git_flag("merge", args, None, &["--ff", "--ff-only", "--squash"])
+    let longs: Vec<&str> = items("merge", args)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Long(name) => Some(name),
+            _ => None,
+        })
+        .collect();
+    longs.contains(&"--no-ff")
+        && !longs
+            .iter()
+            .any(|name| matches!(*name, "--ff" | "--ff-only" | "--squash"))
 }
 
 /// 既定ブランチの上で行う `git merge` 1 回分
