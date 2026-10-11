@@ -325,7 +325,7 @@ impl Cmd {
 
     /// `gh <words…> args…` の args（例: `gh pr create`）
     pub fn gh_subcommand(&self, words: &[&str]) -> Option<&[Arg]> {
-        if self.name != "gh" || self.args.len() < words.len() {
+        if basename(&self.name) != "gh" || self.args.len() < words.len() {
             return None;
         }
         if self.args.iter().zip(words).all(|(a, w)| a.text == *w) {
