@@ -500,3 +500,87 @@ fn a_write_failure_names_the_files_already_rewritten() {
     assert!(err.contains("書き換えたファイル: a.md"), "{err}");
     assert!(!err.contains("何も書き換えていない"), "{err}");
 }
+
+#[test]
+fn rewrites_every_file_even_when_stdout_cannot_be_written() {
+    let t = TempRepo::new("stdout-full");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("a.md", &format!("at {}", &old[..8]));
+    t.record("b.md", &format!("at {}", &old[..8]));
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_commit-refs"));
+    command
+        .current_dir(&t.dir)
+        .args(["remap", &map])
+        .stdout(fs::File::create("/dev/full").unwrap())
+        .stderr(Stdio::piped());
+    isolate(&mut command);
+    let out = command.output().unwrap();
+    assert_error(&out);
+    assert_eq!(t.read("a.md"), "at 44444444\n");
+    assert_eq!(t.read("b.md"), "at 44444444\n");
+}
+
+#[test]
+fn accepts_a_map_path_that_is_not_utf8() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let t = TempRepo::new("map-non-utf8");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    let map = t.path(".git").join(OsStr::from_bytes(b"m\xff.map"));
+    fs::write(&map, format!("{old} {NEW4}\n")).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_commit-refs"));
+    command
+        .current_dir(&t.dir)
+        .arg("remap")
+        .arg(&map)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate(&mut command);
+    let out = command.output().unwrap();
+    assert_ok(&out);
+    assert_eq!(t.read("notes.md"), "at 44444444\n");
+}
+
+#[test]
+fn a_zero_marker_of_any_length_marks_a_pruned_commit() {
+    let t = TempRepo::new("zero-marker");
+    let old = "abcdef01".repeat(8);
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    let map = t.map_file(&format!("{old} {ZERO}\n"));
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert!(stderr(&out).contains("消えたコミット"), "{}", stderr(&out));
+}
+
+#[test]
+fn an_unreadable_file_does_not_hide_other_reasons_to_stop() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let t = TempRepo::new("unreadable");
+    t.record("a.md", "short abcdef0");
+    t.record("b.md", "short abcdef0");
+    fs::set_permissions(t.path("b.md"), fs::Permissions::from_mode(0o000)).unwrap();
+    let map = t.map_file(&format!("{OLD_A} {NEW4}\n{OLD_B} {NEW5}\n"));
+    let out = t.remap(&[&map]);
+    fs::set_permissions(t.path("b.md"), fs::Permissions::from_mode(0o644)).unwrap();
+    assert_error(&out);
+    let err = stderr(&out);
+    assert!(err.contains("a.md: abcdef0"), "{err}");
+    assert!(err.contains("b.md"), "{err}");
+}
+
+#[test]
+fn every_stop_before_writing_says_nothing_was_rewritten() {
+    let t = TempRepo::new("nothing");
+    let map = t.map_file("abc\n");
+    let out = t.remap(&[&map]);
+    assert_error(&out);
+    assert!(
+        stderr(&out).contains("何も書き換えていない"),
+        "{}",
+        stderr(&out)
+    );
+}

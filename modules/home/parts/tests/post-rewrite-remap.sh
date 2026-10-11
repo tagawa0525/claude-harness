@@ -246,8 +246,10 @@ else
   else
     ng "曖昧な対応で記録が変わったか、エラーが表示されない"
   fi
-  if grep -q "commit-refs remap $REPO/.git/commit-refs-remap.input" "$WORK/out" \
-    && cmp -s "$WORK/ambiguous-input" "$REPO/.git/commit-refs-remap.input"; then
+  # hook は正規化した絶対パスを出す（TMPDIR がシンボリックリンクの下でも比べられるよう、同じ形で求める）
+  saved="$(git -C "$REPO" rev-parse --absolute-git-dir)/commit-refs-remap.input"
+  if grep -qF "直し方: 上の ERROR を直してから、commit-refs remap $saved" "$WORK/out" \
+    && cmp -s "$WORK/ambiguous-input" "$saved"; then
     ok "失敗したときは対応を残し、commit-refs remap で呼び直す方法を表示する"
   else
     ng "失敗したときに対応が残らないか、呼び直す方法が表示されない"
