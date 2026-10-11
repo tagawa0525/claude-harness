@@ -658,19 +658,19 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     let cluster: Vec<char> = t[1..].chars().collect();
                     for (i, ch) in cluster.iter().enumerate() {
                         let rest: String = cluster[i + 1..].iter().collect();
-                        // bash と sh は -o / -O の値を常に次の語から取り、まとまりの残りの文字もオプションとして
-                        // 読む（`bash -oc pipefail '…'` は -o pipefail と -c）。getopt のように残りを値にしない
-                        if is_shell && wrapper.value_shorts.contains(*ch) {
-                            options.push((Some(*ch), words.pop_front().map(|a| a.text)));
-                            continue;
-                        }
                         if wrapper.value_shorts.contains(*ch) {
-                            let value = if rest.is_empty() {
+                            // bash と sh は -o / -O の値を常に次の語から取り、まとまりの残りの文字もオプション
+                            // として読む（`bash -oc pipefail '…'` は -o pipefail と -c）。getopt のように残りを
+                            // 値にしない
+                            let value = if is_shell || rest.is_empty() {
                                 words.pop_front().map(|a| a.text)
                             } else {
                                 Some(rest)
                             };
                             options.push((Some(*ch), value));
+                            if is_shell {
+                                continue;
+                            }
                             break;
                         }
                         if wrapper.optional_shorts.contains(*ch) {
