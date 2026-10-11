@@ -85,16 +85,13 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
     let _lock = lock(root)?;
     let remote = has_origin(root)?;
     // タグを打つ先は、取ってきた origin の既定ブランチで決める
-    let fetched = if remote {
-        fetch_origin(root, true)?
-    } else {
-        None
-    };
+    let fetched = if remote { fetch_origin(root)? } else { None };
     let target = reservation_target(root, remote, fetched)?;
     for attempt in 0..ATTEMPTS {
-        // やり直しでは、先に予約したほかの clone のタグだけを取ってくる
+        // やり直しでも、タグの後に既定ブランチを取る（拒まれた後に、相手がマージを push して予約を解放していると、
+        // タグだけではその番号が空いて見える）
         if remote && attempt > 0 {
-            fetch_origin(root, false)?;
+            fetch_origin(root)?;
         }
         let used = used_numbers(root, kind)?;
         let number = match wanted {
@@ -267,7 +264,7 @@ fn rewrite(
 /// ブランチ。origin のタグも取ってくるので、呼ぶ側が [`lock`] を持つ。
 fn shared_branch(root: &Path) -> Result<Option<String>> {
     if has_origin(root)? {
-        fetch_origin(root, true)
+        fetch_origin(root)
     } else {
         local_default(root)
     }

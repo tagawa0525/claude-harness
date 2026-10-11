@@ -151,19 +151,16 @@ const TAG_REFSPECS: [&str; 2] = [
 
 /// origin の予約のタグを取ってくる。origin で消えたタグ（ほかの clone の `prune` や `renumber` が解放したもの）は
 /// 手元からも消す（`--prune` は、同じ fetch の refspec の行き先の ref だけを消すので、タグだけで fetch する）。
-/// `branch` なら、その後で origin の既定ブランチも取ってきて、`origin/<名前>` を返す（`prune` が予約を解放した後の
+/// その後で origin の既定ブランチも取ってきて、`origin/<名前>` を返す（`prune` が予約を解放した後の
 /// 番号は、origin の既定ブランチの履歴にしか残らない）。origin に既定ブランチが無ければ `None`。
 ///
 /// タグを先に取る: ほかの clone はマージを push してから予約を解放するので、タグを取った後に取るブランチには、
 /// そのとき消えていたタグの記録が必ず入っている。逆の順では、間にマージと解放が起きると、マージ前のブランチと
 /// 消えたタグを見て番号を使い回す。
-pub fn fetch_origin(root: &Path, branch: bool) -> Result<Option<String>> {
+pub fn fetch_origin(root: &Path) -> Result<Option<String>> {
     let mut args = vec!["fetch", "--quiet", "--prune", "--no-tags", "origin"];
     args.extend(TAG_REFSPECS);
     git(root, &args)?;
-    if !branch {
-        return Ok(None);
-    }
     let Some(name) = remote_default(root)? else {
         return Ok(None);
     };
