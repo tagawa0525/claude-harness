@@ -189,6 +189,20 @@ else
   ng "シンボリックリンクの先のファイルを書き換えない"
 fi
 
+echo "==> clean のフィルタが落とす作業ツリーだけの行も、書き戻しで消さない"
+R=$(repo lossy init.txt $'x\n')
+printf '*.md filter=drop\n' >"$R/.gitattributes"
+git -C "$R" config filter.drop.clean "sed '/^LOCAL-ONLY/d'"
+git -C "$R" add .gitattributes
+git -C "$R" commit -q --no-verify -m "chore: attributes"
+printf '%sLOCAL-ONLY note\n' "${LINES/l1/l1 }" >"$R/a.md"
+git -C "$R" add a.md
+if commit "$R" && grep -qx 'LOCAL-ONLY note' "$R/a.md"; then
+  ok "作業ツリーにしかない行を残す"
+else
+  ng "作業ツリーにしかない行を残す"
+fi
+
 echo "==> - で始まるパスも検査する"
 R=$(repo dash init.txt $'x\n')
 mkdir -p "$R/-docs"
