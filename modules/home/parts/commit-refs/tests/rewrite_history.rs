@@ -394,3 +394,85 @@ fn reports_refs_that_are_not_rewritten() {
         stdout(&out)
     );
 }
+
+#[test]
+fn leaves_symbolic_branch_refs_to_follow_their_targets() {
+    let h = History::new("symref");
+    h.t.git(&["symbolic-ref", "refs/heads/alias", "refs/heads/main"]);
+    let out = h.rewrite();
+    assert_ok(&out);
+    assert_eq!(
+        h.t.git(&["symbolic-ref", "refs/heads/alias"]),
+        "refs/heads/main\n"
+    );
+    assert_eq!(h.t.rev("alias"), h.t.rev("main"));
+}
+
+#[test]
+fn an_old_commit_still_reachable_from_the_rewritten_refs_stops_before_rewriting() {
+    // filter-repo を一部の ref だけに当てると、変わったとされる旧のコミットが、ほかのブランチに残る。文書がどちらを
+    // 指すのか決まらない
+    let h = History::new("partial");
+    let map = h.t.map_file(&format!(
+        "old new\n{X0} {}\n{X1} {}\n{} 4444444444444444444444444444444444444444\n",
+        h.c0, h.c1, h.c2
+    ));
+    let before = h.refs();
+    let out = h.rewrite_with(&map);
+    assert_error(&out);
+    assert!(stderr(&out).contains(&h.c2), "{}", stderr(&out));
+    assert_eq!(h.refs(), before);
+}
+
+#[test]
+fn strips_tag_signatures_from_the_last_marker_like_git() {
+    let h = History::new("signature");
+    let message = format!(
+        "release after {}\n-----BEGIN PGP SIGNATURE-----\nquoted\n-----END PGP SIGNATURE-----\nmore\n-----BEGIN SIGNED MESSAGE-----\nsig\n",
+        &X1[..8]
+    );
+    let file = h.t.path(".git/tag-message");
+    fs::write(&file, &message).unwrap();
+    h.t.git(&["tag", "-a", "v1", "-F", file.to_str().unwrap(), &h.c2]);
+    assert_ok(&h.rewrite());
+    let new_c1 = h.t.rev("main~1");
+    let tag = h.t.git(&["cat-file", "-p", "v1"]);
+    let body = tag.split_once("\n\n").unwrap().1;
+    assert_eq!(
+        body,
+        format!(
+            "release after {}\n-----BEGIN PGP SIGNATURE-----\nquoted\n-----END PGP SIGNATURE-----\nmore\n",
+            &new_c1[..8]
+        )
+    );
+}
+
+#[test]
+fn reports_reasons_in_tag_messages_together_with_those_in_commits() {
+    let h = History::new("tag-reasons");
+    h.t.git(&[
+        "tag",
+        "-a",
+        "v1",
+        "-m",
+        &format!("after {}", &X1[..8]),
+        &h.c2,
+    ]);
+    let map = h.t.map_file(&format!(
+        "old new\n{X0} {}\n{X1} 0000000000000000000000000000000000000000\n",
+        h.c0
+    ));
+    let out = h.rewrite_with(&map);
+    assert_error(&out);
+    let err = stderr(&out);
+    assert!(err.contains("タグ v1 の本文"), "{err}");
+    assert!(err.contains("notes.md"), "{err}");
+}
+
+#[test]
+fn a_tracked_path_named_like_a_ref_does_not_confuse_the_revisions() {
+    let h = History::new("path-like-ref");
+    h.t.write("refs/heads/main", "a file\n");
+    h.t.commit_all("chore: path like a ref");
+    assert_ok(&h.rewrite());
+}
