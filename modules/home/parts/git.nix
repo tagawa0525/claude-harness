@@ -177,8 +177,10 @@ in
       fi
 
       # プロジェクトローカルの pre-commit があれば優先実行
-      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$GIT_DIR/hooks/pre-commit"
+      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
+      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
+      GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
+      LOCAL_HOOK="$GIT_COMMON_DIR/hooks/pre-commit"
       if [ -x "$LOCAL_HOOK" ]; then
         # exec しないのは、ローカルの hook が index を変えた後に機密情報を検査するため
         "$LOCAL_HOOK" "$@"
@@ -350,8 +352,10 @@ in
       # プロジェクトローカルの pre-merge-commit があれば先に実行する（失敗すれば set -e で止まる）。
       # pre-commit / commit-msg と違って exec で置き換えない。置き換えると、ローカルの hook が
       # あるだけで --no-verify なしにこのゲートが外れる
-      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$GIT_DIR/hooks/pre-merge-commit"
+      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
+      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
+      GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
+      LOCAL_HOOK="$GIT_COMMON_DIR/hooks/pre-merge-commit"
       if [ -x "$LOCAL_HOOK" ]; then
         "$LOCAL_HOOK" "$@"
       fi
@@ -419,8 +423,10 @@ in
       MSG_FILE="$1"
 
       # プロジェクトローカルの commit-msg があれば優先実行
-      GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
-      LOCAL_HOOK="$GIT_DIR/hooks/commit-msg"
+      # ローカルの hook は linked worktree でも共通の .git/hooks にある（--git-dir は worktree ごとの場所）。
+      # --git-path hooks/... は core.hooksPath（この hook 自身）を指すので使わない
+      GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
+      LOCAL_HOOK="$GIT_COMMON_DIR/hooks/commit-msg"
       if [ -x "$LOCAL_HOOK" ]; then
         exec "$LOCAL_HOOK" "$@"
       fi
