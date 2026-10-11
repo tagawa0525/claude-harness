@@ -7,8 +7,13 @@
 //! - `git -C <dir>` や先行する `cd <dir>` は AST 上の位置で判定する
 //!
 //! コマンドは解析のときに一度だけ読み、規則はそれを共有する:
-//! - コマンドを包むもの（env、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice）はほどき、
-//!   中のコマンドと、前置きの代入や包みが変える環境変数・ディレクトリを `Cmd` に持たせる（unwrap.rs）
+//! - コマンドを包むもの（env、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice、sudo、xargs、flock、
+//!   chrt、taskset、watch、script、ssh、`bash [opts] <script>`）はほどき、中のコマンドと、前置きの代入や包みが
+//!   変える環境変数・ディレクトリを `Cmd` に持たせる（unwrap.rs）
+//! - sh -c で走らせる文字列（`bash -c '…'`、`eval`、`watch`、`ssh <接続先> …`）は、同じ構文解析を再帰的に当て、
+//!   中のコマンドを `commands()` に含める。深さの上限は `MAX_DEPTH`（ADR-0025）
+//! - 走らせるプログラムを決められないコマンド（`$CMD`、`source`、`bash -s`）は `Cmd::opaque` にし、
+//!   `runs_program` が止める側に倒す
 //! - git のグローバルオプション（`-C`、`-c`、`--config-env`）は `Cmd` を作るときに読む。サブコマンドの引数は
 //!   git_args.rs で、値を取るオプションの値をオプションと取り違えずに読む
 //!
@@ -81,11 +86,18 @@ fn rank(esc: Escape) -> u8 {
 
 const REASON_MIN_WIDTH: usize = 6;
 
+/// `bash -c '…'` のような文字列を再帰的に解析する深さの上限（ADR-0025）。超えた文字列は読まず、
+/// そのコマンドを [`Cmd::opaque`] にする（通す側ではなく止める側に倒す）
+const MAX_DEPTH: usize = 5;
+
 pub struct Shell {
     src: String,
     tree: Tree,
-    /// 全コマンド（文書順）。parse のときに一度だけ読む
+    /// 全コマンド（文書順）。parse のときに一度だけ読む。`bash -c` などの文字列の中のコマンドも、その位置に含む
     cmds: Vec<Cmd>,
+    /// `bash -c` などの文字列を解析した内側のシェル。コマンドは `cmds` に移してある。代入・unset・エスケープの
+    /// 走査に使い、スコープにノード ID を使うので木を生かしておく
+    inner: Vec<Shell>,
 }
 
 /// コマンドの引数 1 つ
@@ -106,9 +118,13 @@ pub struct Cmd {
     pub start: usize,
     /// 引数に構文エラーがある、または直後に解析できない断片（閉じていないクォート等）が続く
     pub has_error: bool,
-    /// 属するシェルのスコープ（最も近い `$(…)` / `(…)` / `<(…)` のノード ID）。トップレベルは None。
-    /// これらの中で実行した `cd` は親のカレントディレクトリを変えない
-    pub scope: Option<usize>,
+    /// 属するシェルのスコープ（外側から順に、`$(…)` / `(…)` / `<(…)` と、`bash -c` などの文字列のノード ID）。
+    /// トップレベルは空。これらの中で実行した `cd` は親のカレントディレクトリを変えない。前の `cd` が効くのは、
+    /// その `cd` のスコープがこのスコープの前置きのとき（同じか、外側）
+    pub scope: Vec<usize>,
+    /// 走らせるプログラムを文字列から決められない: 名前の basename が展開（`$CMD`、`$(which x)`）、標準入力や
+    /// ファイルからコマンドを読む（`bash -s`、`source`。unwrap.rs）、文字列の入れ子が深さの上限を超えた
+    pub opaque: bool,
     /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
     /// `-u NAME` / `-i`、`exec -c`）
     pub env: Vec<EnvChange>,
@@ -122,6 +138,11 @@ pub struct Cmd {
 
 impl Shell {
     pub fn parse(src: &str) -> Shell {
+        Shell::parse_at(src, 0)
+    }
+
+    /// `depth` は文字列の入れ子の深さ（トップレベルは 0）
+    fn parse_at(src: &str, depth: usize) -> Shell {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_bash::LANGUAGE.into())
@@ -133,8 +154,11 @@ impl Shell {
             src: src.to_string(),
             tree,
             cmds: Vec::new(),
+            inner: Vec::new(),
         };
-        shell.cmds = shell.collect_commands();
+        let (cmds, inner) = shell.collect_commands(depth);
+        shell.cmds = cmds;
+        shell.inner = inner;
         shell
     }
 
@@ -159,19 +183,24 @@ impl Shell {
         &self.cmds
     }
 
-    fn collect_commands(&self) -> Vec<Cmd> {
-        let mut out = Vec::new();
+    /// 全コマンド（文字列の中のものを含む）と、文字列を解析した内側のシェル
+    fn collect_commands(&self, depth: usize) -> (Vec<Cmd>, Vec<Shell>) {
+        let mut cmds = Vec::new();
+        let mut inner = Vec::new();
         self.walk(self.tree.root_node(), &mut |n| {
             if n.kind() == "command"
-                && let Some(c) = self.command(n)
+                && let Some((cs, shell)) = self.command(n, depth)
             {
-                out.push(c);
+                cmds.extend(cs);
+                inner.extend(shell);
             }
         });
-        out
+        (cmds, inner)
     }
 
-    fn command(&self, node: Node) -> Option<Cmd> {
+    /// `command` ノードのコマンドと、それが sh -c で走らせる文字列の中のコマンド（文書順）。文字列を解析した
+    /// 内側のシェルも返す
+    fn command(&self, node: Node, depth: usize) -> Option<(Vec<Cmd>, Option<Shell>)> {
         let name_node = node.child_by_field_name("name")?;
         let name = match name_node.child(0) {
             Some(inner) => self.unquote(inner).text,
@@ -183,18 +212,18 @@ impl Shell {
             args.push(self.unquote(child));
         }
         let trailing_error = node.next_sibling().is_some_and(|n| n.kind() == "ERROR");
-        let mut scope = None;
+        let mut scope = Vec::new();
         let mut p = node.parent();
         while let Some(n) = p {
             if matches!(
                 n.kind(),
                 "command_substitution" | "subshell" | "process_substitution"
             ) {
-                scope = Some(n.id());
-                break;
+                scope.push(n.id());
             }
             p = n.parent();
         }
+        scope.reverse();
         let mut env = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
@@ -208,34 +237,67 @@ impl Shell {
                 env.push(EnvChange::Set(self.text(var).to_string(), value));
             }
         }
-        let inner = unwrap(&name, &args);
-        env.extend(inner.env);
-        let git = (basename(&inner.name) == "git").then(|| parse_invocation(&inner.args));
-        Some(Cmd {
-            name: inner.name,
-            args: inner.args,
+        let unwrapped = unwrap(&name, &args);
+        env.extend(unwrapped.env);
+        let git = (basename(&unwrapped.name) == "git").then(|| parse_invocation(&unwrapped.args));
+        // `$HOME/x/slurm-run.sh` は basename が字面なので決まる。`$CMD`、`~/x/$SCRIPT`、`$(which x)` は決まらない
+        let opaque = unwrapped.opaque || basename(&unwrapped.name).contains(['$', '`']);
+        let mut cmd = Cmd {
+            name: unwrapped.name,
+            args: unwrapped.args,
             start: node.start_byte(),
             has_error: node.has_error() || trailing_error,
             scope,
+            opaque,
             env,
-            dirs: inner.dirs,
-            wrappers: inner.wrappers,
+            dirs: unwrapped.dirs,
+            wrappers: unwrapped.wrappers,
             git,
-        })
+        };
+        let Some(source) = unwrapped.source else {
+            return Some((vec![cmd], None));
+        };
+        if depth >= MAX_DEPTH {
+            cmd.opaque = true;
+            return Some((vec![cmd], None));
+        }
+        let mut shell = Shell::parse_at(&source, depth + 1);
+        let mut cmds = Vec::with_capacity(1 + shell.cmds.len());
+        for mut c in std::mem::take(&mut shell.cmds) {
+            // 文字列は外側のコマンドの原文より短いので、位置は外側のコマンドの後ろ、次の外側のコマンドの前に収まる
+            c.start += node.start_byte() + 1;
+            // 文字列の中は 1 つのスコープ。外側の cd は効き、中の cd は外に漏れない
+            let mut scope = cmd.scope.clone();
+            scope.push(node.id());
+            scope.extend(c.scope);
+            c.scope = scope;
+            // 外側の環境変数とディレクトリの変更は、中のコマンドにも効く。外側の `env -C` は中の `cd` より後に
+            // 当たる（`env -C x bash -c 'cd y && …'` は x/y でなく y/x になる。まれな形なので、順序は持たない）
+            c.env = cmd.env.iter().cloned().chain(c.env).collect();
+            c.dirs = cmd.dirs.iter().cloned().chain(c.dirs).collect();
+            cmds.push(c);
+        }
+        cmds.insert(0, cmd);
+        Some((cmds, Some(shell)))
     }
 
-    /// ノードを引数として読む。クォートを外し、展開は原文のまま残す
+    /// ノードを引数として読む。クォートとバックスラッシュのエスケープを外し、展開は原文のまま残す
     pub fn unquote(&self, node: Node) -> Arg {
         let raw = self.text(node).to_string();
         let text = match node.kind() {
-            "word" | "number" => raw.clone(),
+            "word" => unescape_word(&raw),
+            "number" => raw.clone(),
             "raw_string" => strip(&raw, "'", "'"),
             "ansi_c_string" => strip(&raw, "$'", "'"),
             "string" | "translated_string" => {
                 let mut s = String::new();
                 let mut cursor = node.walk();
                 for child in node.named_children(&mut cursor) {
-                    s.push_str(self.text(child));
+                    if child.kind() == "string_content" {
+                        s.push_str(&unescape_double(self.text(child)));
+                    } else {
+                        s.push_str(self.text(child));
+                    }
                 }
                 s
             }
@@ -252,7 +314,16 @@ impl Shell {
         Arg { text, raw }
     }
 
-    /// プログラム内の全ての代入（`NAME=value`。値の無い `NAME=` は空の値）の名前と値
+    /// `is_target` を満たすプログラムを走らせるコマンドがあるか。走らせるプログラムを決められないコマンド
+    /// （[`Cmd::opaque`]）があれば、コマンド文字列のどこかに `word` が現れるときに、走らせうるものとして
+    /// 止める側に倒す（`CMD=sbatch; $CMD`、`eval "$CMD"`、`source run-sbatch.sh`。ADR-0025）。引数に現れる
+    /// だけの `echo sbatch` や `grep sbatch` は、決められないコマンドが無ければ対象外
+    pub fn runs_program(&self, word: &str, is_target: impl Fn(&str) -> bool) -> bool {
+        self.cmds.iter().any(|c| is_target(c.program()))
+            || (self.cmds.iter().any(|c| c.opaque) && self.src.contains(word))
+    }
+
+    /// プログラム内（文字列の中を含む）の全ての代入（`NAME=value`。値の無い `NAME=` は空の値）の名前と値
     pub fn assignments(&self) -> Vec<(String, String)> {
         let mut found = Vec::new();
         self.walk(self.tree.root_node(), &mut |n| {
@@ -267,10 +338,11 @@ impl Shell {
                 }
             }
         });
+        found.extend(self.inner.iter().flat_map(Shell::assignments));
         found
     }
 
-    /// `unset NAME` がプログラム内のどこかにあるか（unset は組み込みで、commands() には出ない）
+    /// `unset NAME` がプログラム内（文字列の中を含む）のどこかにあるか（unset は組み込みで、commands() には出ない）
     pub fn unsets(&self, name: &str) -> bool {
         let mut found = false;
         self.walk(self.tree.root_node(), &mut |n| {
@@ -281,7 +353,7 @@ impl Shell {
                 }
             }
         });
-        found
+        found || self.inner.iter().any(|s| s.unsets(name))
     }
 
     /// `NAME=<値>` の代入をプログラム内から探す（hook のエスケープ指定）。値が理由として足りるかで分ける。
@@ -331,10 +403,16 @@ impl Shell {
                 }
             }
         });
+        // 文字列の中（`bash -c 'ALLOW_X=理由 git push'`）の代入も、同じ順位で合わせる
+        for this in self.inner.iter().map(|s| s.escape(name)) {
+            if rank(this) > rank(found) {
+                found = this;
+            }
+        }
         found
     }
 
-    /// コマンドが対象にするディレクトリ。そのコマンドより前にあり、同じシェルのスコープで実行される
+    /// コマンドが対象にするディレクトリ。そのコマンドより前にあり、同じか外側のシェルのスコープで実行される
     /// `cd <dir>` を順に畳み込み、包んだ `env -C <dir>` と `git -C <dir>` を順に当てる
     /// （`$(cd x && …)` や `(cd x)` の cd は親のディレクトリを変えないので見ない）
     pub fn target_dir(&self, cmd: &Cmd, base: &Path) -> PathBuf {
@@ -343,7 +421,7 @@ impl Shell {
             if c.start >= cmd.start {
                 break;
             }
-            if c.changes_dir() && c.scope == cmd.scope {
+            if c.changes_dir() && cmd.scope.starts_with(&c.scope) {
                 match c.args.iter().find(|a| !a.text.starts_with('-')) {
                     Some(a) => dir = resolve(&dir, &a.text),
                     None => dir = home(),
@@ -367,6 +445,48 @@ fn strip(s: &str, open: &str, close: &str) -> String {
         .and_then(|t| t.strip_suffix(close))
         .unwrap_or(s)
         .to_string()
+}
+
+/// クォートの外のバックスラッシュを外す（`\x` は x。`\<改行>` は行の継続で、消える）。tree-sitter-bash は
+/// `a\ b` を 1 つの `word` にし、文字はそのまま持つ
+fn unescape_word(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('\n') => {}
+            Some(n) => out.push(n),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// 二重引用符の中のバックスラッシュを外す。bash が特別に扱うのは `$`、`` ` ``、`"`、`\`、改行の前だけで、
+/// ほかの `\x` はそのまま残る
+fn unescape_double(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(n @ ('$' | '`' | '"' | '\\')) => out.push(n),
+            Some('\n') => {}
+            Some(n) => {
+                out.push('\\');
+                out.push(n);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 fn home() -> PathBuf {
@@ -399,12 +519,8 @@ impl Cmd {
                 .all(|(i, w)| w == "builtin" || w == "command" || (i == 0 && w == "time"))
     }
 
-    /// 走らせるプログラムの、書いたままのパス。`bash <path>` / `sh <path>` は走らせるスクリプトのパス
+    /// 走らせるプログラムの、書いたままのパス。包み（env、`bash [opts] <path>` など）はほどいてある
     pub fn program(&self) -> &str {
-        let name = basename(&self.name);
-        if name == "bash" || name == "sh" {
-            return self.args.first().map_or(&self.name, |a| &a.text);
-        }
         &self.name
     }
 

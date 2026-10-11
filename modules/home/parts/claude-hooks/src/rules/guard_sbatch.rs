@@ -3,7 +3,9 @@
 //! sbatch を直接投げると、名前・ログ・見積もり・連絡先が抜け、待ち行列から誰の何の計算かが
 //! 読めなくなる（docs/adr/0007）。slurm-run.sh はジョブが終わるまで戻らず、待ち行列の長さ次第で
 //! Bash ツールのフォアグラウンドの上限を超えるので、run_in_background=true でのみ許可する。
-//! `env`・`command` などで包んでも、shell.rs がほどいた中のプログラムで判定する。
+//! `env`・`command`・`sudo` などで包んでも、`bash -x <path>` や `bash -c '…'` の形でも、shell.rs がほどいた中の
+//! プログラムで判定する。走らせるプログラムを決められない形（`$CMD`、`source`）は、対象語が文字列にあれば
+//! 止める側に倒す（ADR-0025）。
 //! slurm-run.sh が扱わない投げ方（ジョブの配列、依存、排他でない資源など）や、空いた待ち行列での
 //! 短い計算のために、わかって外すときのエスケープを設ける: `ALLOW_RAW_SBATCH=<理由>`（sbatch の直接の投入）、
 //! `ALLOW_FOREGROUND_SLURM=<理由>`（slurm-run.sh のフォアグラウンド実行）。
@@ -12,7 +14,7 @@
 use super::{Rule, apply_escape, escape_hint};
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Cmd, Shell};
+use crate::shell::Shell;
 use crate::unwrap::basename;
 
 pub struct GuardSbatch;
@@ -20,16 +22,10 @@ pub struct GuardSbatch;
 const SCRIPT: &str = "slurm-run.sh";
 const TEST: &str = ".claude/tests/scripts/slurm-run.sh";
 
-/// コマンドとして実行されているか（直接、前置き越し、または `bash <path>` / `sh <path>` 経由）
-fn runs(cmd: &Cmd, target: &str) -> bool {
-    basename(cmd.program()) == target
-}
-
-/// slurm-run.sh を実行しているか。同名のテスト（`.claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で
-/// 走り、Slurm に触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、
-/// 除くのはテストの 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
-fn runs_slurm_run(cmd: &Cmd) -> bool {
-    let program = cmd.program();
+/// slurm-run.sh か。同名のテスト（`.claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で走り、Slurm に
+/// 触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、除くのはテストの
+/// 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
+fn is_slurm_run(program: &str) -> bool {
     basename(program) == SCRIPT && !is_own_test(program)
 }
 
@@ -45,8 +41,7 @@ impl Rule for GuardSbatch {
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
         // 2 つの検査は別々のエスケープで外す
-        let commands = shell.commands();
-        if commands.iter().any(|cmd| runs(cmd, "sbatch")) {
+        if shell.runs_program("sbatch", |program| basename(program) == "sbatch") {
             let deny = Finding::Deny(format!(
                 "sbatch を直接使わず、~/.claude/scripts/slurm-run.sh -t <見積もり> <名前> '<コマンド>' で投げてください（名前・ログ・見積もり・連絡先を付けます。ADR-0007）。{}",
                 escape_hint("ALLOW_RAW_SBATCH")
@@ -60,7 +55,7 @@ impl Rule for GuardSbatch {
                 return findings;
             }
         }
-        if !input.run_in_background && commands.iter().any(runs_slurm_run) {
+        if !input.run_in_background && shell.runs_program(SCRIPT, is_slurm_run) {
             let deny = Finding::Deny(format!(
                 "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
                 escape_hint("ALLOW_FOREGROUND_SLURM")

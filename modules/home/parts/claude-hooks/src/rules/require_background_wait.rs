@@ -3,22 +3,19 @@
 //! gh-wait-review.sh / request-rereview.sh は漸増バックオフで約 10 分待つため、Bash ツールの
 //! フォアグラウンド上限を必ず超えて失敗する。run_in_background=true でのみ許可する。
 //! 回避する正当な理由がないため、エスケープは設けない。
+//! 包み（`bash <path>`、sudo など）と `bash -c` の文字列の中は shell.rs がほどき、走らせるプログラムを
+//! 決められない形（`$WAIT 12`）はスクリプト名が文字列にあれば止める。
 //! `echo request-rereview.sh` や `cat …` のように引数に現れるだけの場合は対象外。
 
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Cmd, Shell};
+use crate::shell::Shell;
 use crate::unwrap::basename;
 
 pub struct RequireBackgroundWait;
 
 const SCRIPTS: &[&str] = &["gh-wait-review.sh", "request-rereview.sh"];
-
-/// コマンドとして実行されているか（直接、または `bash <path>` / `sh <path>` 経由）
-fn runs_wait_script(cmd: &Cmd) -> bool {
-    SCRIPTS.contains(&basename(cmd.program()))
-}
 
 impl Rule for RequireBackgroundWait {
     fn name(&self) -> &'static str {
@@ -26,7 +23,10 @@ impl Rule for RequireBackgroundWait {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        if input.run_in_background || !shell.commands().iter().any(runs_wait_script) {
+        let runs_wait_script = SCRIPTS
+            .iter()
+            .any(|script| shell.runs_program(script, |program| basename(program) == *script));
+        if input.run_in_background || !runs_wait_script {
             return Vec::new();
         }
         vec![Finding::Deny(
