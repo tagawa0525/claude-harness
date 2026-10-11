@@ -92,17 +92,19 @@ impl Rule for BlockNoVerify {
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
         let mut skips = changes_environment(shell);
         for cmd in shell.commands() {
-            skips |= cmd.env.iter().any(|change| match change {
-                EnvChange::Set(name, _) | EnvChange::Unset(name) => sets_hook_config(name),
-                EnvChange::Clear => false,
-            }) || env_value(&cmd.env, "CLAUDECODE", Some("1")) != Some("1");
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
             };
             skips |= match sub {
                 "config" => sets_hooks_path(args),
+                // 環境変数は、hook が走るコマンドだけで見る（`sudo ls` や `ssh host nvidia-smi` も CLAUDECODE を
+                // 受け継がないが、hook は走らない）
                 "commit" | "merge" | "pull" => {
-                    cmd.git_config_overrides().iter().any(|c| is_hooks_path(c))
+                    cmd.env.iter().any(|change| match change {
+                        EnvChange::Set(name, _) | EnvChange::Unset(name) => sets_hook_config(name),
+                        EnvChange::Clear => false,
+                    }) || env_value(&cmd.env, "CLAUDECODE", Some("1")) != Some("1")
+                        || cmd.git_config_overrides().iter().any(|c| is_hooks_path(c))
                         || items(sub, args).iter().any(|item| match item {
                             Item::Long(name) => is_no_verify(name),
                             Item::Short(ch) => sub == "commit" && *ch == 'n',

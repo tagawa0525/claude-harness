@@ -576,116 +576,144 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut preserves_env = !matches!(wrapper.name, "sudo" | "ssh");
         // flock <file> -c、script -c: 走らせる文字列
         let mut source: Option<String> = None;
-        while let Some(front) = words.front() {
-            let t = front.text.clone();
-            if t == "--" {
-                words.pop_front();
-                options_done = true;
-                continue;
-            }
-            if wrapper.name == "env" && t == "-" && !options_done {
-                // `env -` は `env -i`
-                words.pop_front();
-                step.env.push(EnvChange::Clear);
-                continue;
-            }
-            // env と sudo は `--` の後も `NAME=value` を代入として読む
-            if wrapper.assigns && (options_done || !t.starts_with('-')) {
-                if let Some((var, value)) = t.split_once('=') {
+        // コマンドの前の位置引数のうち、まだ読んでいない数
+        let mut positionals = wrapper.positionals;
+        // script のログのファイルを読んだか（getopt が語を並べ替えるので、ファイルの後ろのオプションも読む）
+        let mut log_file_seen = false;
+        loop {
+            while let Some(front) = words.front() {
+                let t = front.text.clone();
+                // bash は `-` も `--` と同じにオプションの終わりと読む
+                if t == "--" || (is_shell && t == "-") {
                     words.pop_front();
-                    step.env
-                        .push(EnvChange::Set(var.to_string(), value.to_string()));
+                    options_done = true;
                     continue;
                 }
-                break;
-            }
-            // bash の `+o opt` / `+O shopt` は set と同じで、`-o` / `-O` と同じく値を取る
-            let plus = is_shell && t.starts_with('+') && t.len() > 1;
-            if options_done || !(t.starts_with('-') || plus) || t == "-" {
-                break;
-            }
-            words.pop_front();
-            // (同じ意味の短縮形, 値)
-            let mut options: Vec<(Option<char>, Option<String>)> = Vec::new();
-            if let Some(long) = t.strip_prefix("--") {
-                let (name, attached) = match long.split_once('=') {
-                    Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
-                    None => (t.clone(), None),
-                };
-                match long_option(wrapper, &name) {
-                    Some((_, short, true)) => {
-                        let value = attached.or_else(|| words.pop_front().map(|a| a.text));
-                        options.push((*short, value));
-                    }
-                    // 値を取らない長い形でも、`--preserve-env=list` のように `=` で付けた値は残す
-                    Some((_, short, false)) => options.push((*short, attached)),
-                    None => options.push((None, attached)),
+                if wrapper.name == "env" && t == "-" && !options_done {
+                    // `env -` は `env -i`
+                    words.pop_front();
+                    step.env.push(EnvChange::Clear);
+                    continue;
                 }
-            } else {
-                let cluster: Vec<char> = t[1..].chars().collect();
-                for (i, ch) in cluster.iter().enumerate() {
-                    let rest: String = cluster[i + 1..].iter().collect();
-                    if wrapper.value_shorts.contains(*ch) {
-                        let value = if rest.is_empty() {
-                            words.pop_front().map(|a| a.text)
-                        } else {
-                            Some(rest)
-                        };
-                        options.push((Some(*ch), value));
-                        break;
+                // env と sudo は `--` の後も `NAME=value` を代入として読む。最初の代入でオプションは終わる
+                // （getopt の `+`。`env FOO=1 -i x` は -i というプログラムを走らせる）
+                if wrapper.assigns && (options_done || !t.starts_with('-')) {
+                    if let Some((var, value)) = t.split_once('=') {
+                        words.pop_front();
+                        step.env
+                            .push(EnvChange::Set(var.to_string(), value.to_string()));
+                        options_done = true;
+                        continue;
                     }
-                    if wrapper.optional_shorts.contains(*ch) {
-                        options.push((Some(*ch), (!rest.is_empty()).then_some(rest)));
-                        break;
-                    }
-                    options.push((Some(*ch), None));
+                    break;
                 }
-            }
-            for (short, value) in options {
-                match (wrapper.name, short) {
-                    ("env", Some('i')) => step.env.push(EnvChange::Clear),
-                    ("env", Some('u')) => {
-                        if let Some(var) = value {
-                            step.env.push(EnvChange::Unset(var));
+                // bash の `+o opt` / `+O shopt` は set と同じで、`-o` / `-O` と同じく値を取る
+                let plus = is_shell && t.starts_with('+') && t.len() > 1;
+                if options_done || !(t.starts_with('-') || plus) || t == "-" {
+                    break;
+                }
+                words.pop_front();
+                // (同じ意味の短縮形, 値)
+                let mut options: Vec<(Option<char>, Option<String>)> = Vec::new();
+                if let Some(long) = t.strip_prefix("--") {
+                    let (name, attached) = match long.split_once('=') {
+                        Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
+                        None => (t.clone(), None),
+                    };
+                    match long_option(wrapper, &name) {
+                        Some((_, short, true)) => {
+                            let value = attached.or_else(|| words.pop_front().map(|a| a.text));
+                            options.push((*short, value));
                         }
+                        // 値を取らない長い形でも、`--preserve-env=list` のように `=` で付けた値は残す
+                        Some((_, short, false)) => options.push((*short, attached)),
+                        None => options.push((None, attached)),
                     }
-                    ("env", Some('C')) => {
-                        if let Some(dir) = value {
-                            // 1 回の env では最後の -C だけが効く（coreutils の env.c は上書きする）
-                            step.dirs = vec![dir];
+                } else {
+                    let cluster: Vec<char> = t[1..].chars().collect();
+                    for (i, ch) in cluster.iter().enumerate() {
+                        let rest: String = cluster[i + 1..].iter().collect();
+                        if wrapper.value_shorts.contains(*ch) {
+                            let value = if rest.is_empty() {
+                                words.pop_front().map(|a| a.text)
+                            } else {
+                                Some(rest)
+                            };
+                            options.push((Some(*ch), value));
+                            break;
                         }
+                        if wrapper.optional_shorts.contains(*ch) {
+                            options.push((Some(*ch), (!rest.is_empty()).then_some(rest)));
+                            break;
+                        }
+                        options.push((Some(*ch), None));
                     }
-                    ("env", Some('S')) => {
-                        if let Some(split) = value {
-                            for part in split_env_string(&split).iter().rev() {
-                                words.push_front(arg(part));
+                }
+                for (short, value) in options {
+                    match (wrapper.name, short) {
+                        ("env", Some('i')) => step.env.push(EnvChange::Clear),
+                        ("env", Some('u')) => {
+                            if let Some(var) = value {
+                                step.env.push(EnvChange::Unset(var));
                             }
                         }
+                        ("env", Some('C')) => {
+                            if let Some(dir) = value {
+                                // 1 回の env では最後の -C だけが効く（coreutils の env.c は上書きする）
+                                step.dirs = vec![dir];
+                            }
+                        }
+                        ("env", Some('S')) => {
+                            if let Some(split) = value {
+                                for part in split_env_string(&split).iter().rev() {
+                                    words.push_front(arg(part));
+                                }
+                            }
+                        }
+                        ("command", Some('v' | 'V')) => runs = false,
+                        ("exec", Some('c')) => step.env.push(EnvChange::Clear),
+                        ("ionice", Some('p' | 'P' | 'u')) => runs = false,
+                        ("bash" | "sh", Some('c')) => takes_source = true,
+                        ("bash" | "sh", Some('s')) => reads_stdin = true,
+                        // -n は構文を調べるだけ、-D は文字列を列挙するだけで走らせない
+                        ("bash" | "sh", Some('n' | 'D')) => runs = false,
+                        // `--preserve-env=list` は list の変数だけを受け継ぐ（list は見ない）
+                        ("sudo", Some('E')) => preserves_env = value.is_none(),
+                        ("sudo", Some('e' | 'l' | 'v' | 'V' | 'K')) => runs = false,
+                        ("sudo", Some('s' | 'i')) => reads_stdin = true,
+                        ("sudo", Some('D')) => {
+                            if let Some(dir) = value {
+                                step.dirs = vec![dir];
+                            }
+                        }
+                        ("chrt", Some('p' | 'm')) | ("taskset", Some('p')) => runs = false,
+                        ("watch", Some('x')) => execs = true,
+                        ("script", Some('c')) => source = value,
+                        ("ssh", Some('G' | 'N' | 'O' | 'Q' | 'V' | 'Z' | 's')) => runs = false,
+                        _ => {}
                     }
-                    ("command", Some('v' | 'V')) => runs = false,
-                    ("exec", Some('c')) => step.env.push(EnvChange::Clear),
-                    ("ionice", Some('p' | 'P' | 'u')) => runs = false,
-                    ("bash" | "sh", Some('c')) => takes_source = true,
-                    ("bash" | "sh", Some('s')) => reads_stdin = true,
-                    // -n は構文を調べるだけ、-D は文字列を列挙するだけで走らせない
-                    ("bash" | "sh", Some('n' | 'D')) => runs = false,
-                    // `--preserve-env=list` は list の変数だけを受け継ぐ（list は見ない）
-                    ("sudo", Some('E')) => preserves_env = value.is_none(),
-                    ("sudo", Some('e' | 'l' | 'v' | 'V' | 'K')) => runs = false,
-                    ("sudo", Some('s' | 'i')) => reads_stdin = true,
-                    ("chrt", Some('p' | 'm')) | ("taskset", Some('p')) => runs = false,
-                    ("watch", Some('x')) => execs = true,
-                    ("script", Some('c')) => source = value,
-                    ("ssh", Some('G' | 'N' | 'O' | 'Q' | 'V' | 'Z' | 's')) => runs = false,
-                    _ => {}
                 }
             }
-        }
-        if !runs {
-            return out;
-        }
-        for _ in 0..wrapper.positionals {
-            words.pop_front();
+            if !runs {
+                return out;
+            }
+            if positionals > 0 {
+                words.pop_front();
+                positionals -= 1;
+                // ssh は接続先を取った後、オプションの読み取りに戻る（ssh.c は host を取ると getopt をやり直す）
+                if wrapper.name == "ssh" && !options_done {
+                    continue;
+                }
+            } else if wrapper.name == "script"
+                && !options_done
+                && !log_file_seen
+                && !words.is_empty()
+            {
+                words.pop_front();
+                log_file_seen = true;
+                continue;
+            }
+            break;
         }
         if !preserves_env {
             step.env.insert(0, EnvChange::Clear);
@@ -719,11 +747,9 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     source = words.pop_front().map(|w| w.text);
                 }
             }
-            // -c が無ければ、`--` の後ろの語をコマンドとして走らせる。それも無ければ対話シェル（前の語はログのファイル）
+            // -c が無ければ、`--` の後ろの語をコマンドとして走らせる。それも無ければ対話シェル
             "script" if source.is_none() => {
-                if let Some(i) = words.iter().position(|w| w.text == "--") {
-                    words.drain(..=i);
-                } else if !options_done {
+                if !options_done {
                     out.opaque = true;
                     return out;
                 }

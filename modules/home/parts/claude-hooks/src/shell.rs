@@ -241,7 +241,7 @@ impl Shell {
         env.extend(unwrapped.env);
         let git = (basename(&unwrapped.name) == "git").then(|| parse_invocation(&unwrapped.args));
         // `$HOME/x/slurm-run.sh` は basename が字面なので決まる。`$CMD`、`~/x/$SCRIPT`、`$(which x)` は決まらない
-        let opaque = unwrapped.opaque || basename(&unwrapped.name).contains(['$', '`']);
+        let opaque = unwrapped.opaque || name_has_expanded_basename(&unwrapped.name);
         let mut cmd = Cmd {
             name: unwrapped.name,
             args: unwrapped.args,
@@ -445,6 +445,35 @@ fn strip(s: &str, open: &str, close: &str) -> String {
         .and_then(|t| t.strip_suffix(close))
         .unwrap_or(s)
         .to_string()
+}
+
+/// プログラムの名前の basename に展開があるか（走らせるプログラムが決まらない）。区切りの `/` は展開の外
+/// （`${…}`、`$(…)`、`` `…` `` の外）のものだけ数える: `${SB:-/usr/bin/sbatch}` と `$(command -v /usr/bin/sbatch)` は
+/// 決まらず、`$HOME/x/slurm-run.sh` と `${DIR}/slurm-run.sh` は決まる
+fn name_has_expanded_basename(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let mut depth = 0usize;
+    let mut in_backticks = false;
+    let mut last_slash = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'$' if matches!(bytes.get(i + 1), Some(b'{' | b'(')) => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' | b')' if depth > 0 => depth -= 1,
+            b'`' => in_backticks = !in_backticks,
+            b'/' if depth == 0 && !in_backticks => last_slash = Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    let base = match last_slash {
+        Some(i) => &name[i + 1..],
+        None => name,
+    };
+    base.contains(['$', '`'])
 }
 
 /// クォートの外のバックスラッシュを外す（`\x` は x。`\<改行>` は行の継続で、消える）。tree-sitter-bash は
