@@ -1,17 +1,20 @@
 # ステージしたファイルの崩れた日本語の語を検査する（ADR-0014）。グローバルの pre-commit が、リポジトリの
 # 直下で呼ぶ。JA_TERMS_CONFIG（textlint の設定）と JA_TERMS_PATHSPECS（検査するファイルの pathspec。改行
-# 区切り）は、package.nix が与える。
+# 区切り）は、git.nix の writeShellApplication が与える。
 #
 # 終了コード: 0 = 崩れた語が無い、1 = 崩れた語がある、2 = textlint が失敗した
 
-work=$(mktemp -d)
+# 出力のパスを書き出した名前から元に戻すので、textlint が見る実体のパスにする（TMPDIR がシンボリックリンクを
+# 経ると、mktemp の返すパスと textlint が出すパスが違う）
+work=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/files"
 
 mapfile -t pathspecs <<<"$JA_TERMS_PATHSPECS"
 
 # ステージしたファイルの、モードとブロブとパス。シンボリックリンクの行き先は文章ではないので外す
-# （--raw -z は「:旧モード 新モード 旧ブロブ 新ブロブ 状態」と「パス」を NUL で区切って並べる）
+# （--raw -z は「:旧モード 新モード 旧ブロブ 新ブロブ 状態」と「パス」を NUL で区切って並べる。名前の変更は
+# パスを 2 つ並べるので、--no-renames で追加と削除に分けて 1 つにする）
 declare -A blob=()
 paths=()
 while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
@@ -19,7 +22,7 @@ while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
   [ "$mode" = "120000" ] && continue
   blob[$path]=$sha
   paths+=("$path")
-done < <(git diff --cached --raw -z --no-abbrev --diff-filter=ACMR -- "${pathspecs[@]}")
+done < <(git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMR -- "${pathspecs[@]}")
 [ "${#paths[@]}" -gt 0 ] || exit 0
 
 # リポジトリの .textlintignore（ステージした版）に挙げたファイルを外す。書き出す名前は元の名前と違うので
@@ -27,7 +30,8 @@ done < <(git diff --cached --raw -z --no-abbrev --diff-filter=ACMR -- "${pathspe
 if git cat-file -e :.textlintignore 2>/dev/null; then
   git show :.textlintignore >"$work/ignore"
   while IFS= read -r -d '' path; do
-    unset "blob[$path]"
+    # 単引用符で、名前を 2 回展開させない（] や $(...) を含む名前）
+    unset -v 'blob[$path]'
   done < <(git ls-files -z --cached --ignored --exclude-from="$work/ignore" -- "${paths[@]}")
 fi
 
