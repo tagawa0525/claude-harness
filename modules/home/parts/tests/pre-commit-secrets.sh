@@ -17,6 +17,11 @@ set -euo pipefail
 HOST="${1:-r995}"
 ROOT=$(git rev-parse --show-toplevel)
 
+if ! command -v markdownlint >/dev/null 2>&1; then
+  echo "✗ markdownlint が PATH にない。自動修正がステージし直した後の検査を確かめられないので、このテストは成立しない"
+  exit 1
+fi
+
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -127,20 +132,81 @@ else
 fi
 
 # --- 6. Markdown の自動修正がステージし直した中身も見る ----------------------------------------------------
-# 自動修正は作業ツリーをステージし直す（#282）。ステージしていない部分の鍵も、コミットに入るなら止める
+# 自動修正は作業ツリーをステージし直す（#282）。ステージしていない部分の鍵も、コミットに入るので止める
 REPO="$WORK/restage"
 new_repo "$REPO"
 printf '# t\n\nplain\n' > "$REPO/notes.md"
 git -C "$REPO" add notes.md
 printf '# t\n\nplain\n\nkey = %s\n' "$KEY" > "$REPO/notes.md"
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: notes" >"$WORK/out" 2>&1; then
-  if git -C "$REPO" show HEAD:notes.md | grep -qF "$KEY"; then
-    ng "Markdown の自動修正がステージし直した鍵を、検査せずにコミットした"
-  else
-    ok "Markdown の自動修正がステージし直さず、鍵はコミットに入らない"
-  fi
-else
+  ng "Markdown の自動修正がステージし直した鍵を、検査せずにコミットした"
+elif grep -q "notes.md:5" "$WORK/out" && grep -q "aws-access-token" "$WORK/out"; then
   ok "Markdown の自動修正がステージし直した鍵でも止める"
+else
+  ng "Markdown の自動修正の後で止めたが、鍵の場所とルール ID を出さない"
+fi
+
+# --- 6b. 種類の変更（シンボリックリンクから普通のファイル）だけのコミットも見る --------------------------
+REPO="$WORK/typechange"
+new_repo "$REPO"
+ln -s init.txt "$REPO/config"
+git -C "$REPO" add config
+git -C "$REPO" commit -q -m "chore: link"
+rm "$REPO/config"
+printf 'key = %s\n' "$KEY" > "$REPO/config"
+git -C "$REPO" add config
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: config" >"$WORK/out" 2>&1; then
+  ng "種類の変更だけのコミットで、鍵で止まらない"
+elif grep -q "config:1" "$WORK/out"; then
+  ok "種類の変更だけのコミットでも、鍵で止める"
+else
+  ng "種類の変更だけのコミットで止めたが、鍵の場所を出さない"
+fi
+
+# --- 6c. ローカルの pre-commit がステージし直した中身も見る ---------------------------------------------
+REPO="$WORK/localrestage"
+new_repo "$REPO"
+printf '#!/bin/sh\ngit add f.txt\n' > "$REPO/.git/hooks/pre-commit"
+chmod +x "$REPO/.git/hooks/pre-commit"
+echo plain > "$REPO/f.txt"
+git -C "$REPO" add f.txt
+printf 'key = %s\n' "$KEY" > "$REPO/f.txt"
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: f" >"$WORK/out" 2>&1; then
+  ng "ローカルの pre-commit がステージし直した鍵を、検査せずにコミットした"
+elif grep -q "f.txt:1" "$WORK/out"; then
+  ok "ローカルの pre-commit がステージし直した鍵でも止める"
+else
+  ng "ローカルの pre-commit の後で止めたが、鍵の場所を出さない"
+fi
+
+# --- 6d. ローカルの pre-commit の無い fork でも見る ------------------------------------------------------
+REPO="$WORK/fork"
+new_repo "$REPO"
+git -C "$REPO" remote add upstream https://example.com/upstream.git
+printf 'key = %s\n' "$KEY" > "$REPO/g.txt"
+git -C "$REPO" add g.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: g" >"$WORK/out" 2>&1; then
+  ng "fork で、鍵で止まらない"
+elif grep -q "g.txt:1" "$WORK/out"; then
+  ok "fork でも、鍵で止める"
+else
+  ng "fork で止めたが、鍵の場所を出さない"
+fi
+
+# --- 6e. 競合の無いマージ（pre-merge-commit だけが走る）でも、相手のブランチから入る中身を見る -------------
+REPO="$WORK/merge"
+new_repo "$REPO"
+git -C "$REPO" switch -q -c feat/k
+printf 'key = %s\n' "$KEY" > "$REPO/k.txt"
+git -C "$REPO" add k.txt
+git -C "$REPO" commit -q -m "chore: k"
+git -C "$REPO" switch -q feat/x
+if CLAUDECODE=1 git -C "$REPO" merge -q --no-ff -m "Merge feat/k" feat/k >"$WORK/out" 2>&1; then
+  ng "競合の無いマージで、相手のブランチの鍵で止まらない"
+elif grep -q "k.txt:1" "$WORK/out"; then
+  ok "競合の無いマージでも、相手のブランチの鍵で止める"
+else
+  ng "競合の無いマージで止めたが、鍵の場所を出さない"
 fi
 
 # --- 7. gitleaks が失敗したら、漏えいと分けて理由を出して止める ------------------------------------------
@@ -151,7 +217,8 @@ echo plain > "$REPO/e.txt"
 git -C "$REPO" add e.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "chore: e" >"$WORK/out" 2>&1; then
   ng "gitleaks が失敗したのにコミットを通した"
-elif grep -q "gitleaks が失敗しました" "$WORK/out" && ! grep -q "機密情報らしき内容" "$WORK/out"; then
+elif grep -q "gitleaks が失敗しました" "$WORK/out" && ! grep -q "機密情報らしき内容" "$WORK/out" \
+  && ! grep -q "integer expression" "$WORK/out"; then
   ok "gitleaks が失敗したら、漏えいと分けて理由を出して止める"
 else
   ng "gitleaks の失敗を、漏えいとして出した"
