@@ -77,16 +77,31 @@ fn program(cmd: &Cmd) -> String {
             continue;
         }
         if name == "bash" || name == "sh" {
-            return words.pop_front().map_or(name, |w| basename(&w).to_string());
+            return words.pop_front().unwrap_or(word);
         }
-        return name;
+        return word;
     }
     String::new()
 }
 
 /// コマンドとして実行されているか（直接、前置き越し、または `bash <path>` / `sh <path>` 経由）
 fn runs(cmd: &Cmd, target: &str) -> bool {
-    program(cmd) == target
+    basename(&program(cmd)) == target
+}
+
+/// slurm-run.sh（Slurm に投げる本物）を実行しているか。`.claude/tests/scripts/slurm-run.sh` のように
+/// 同名のテストは偽物の sbatch で走り、Slurm に触れないので対象にしない。本物は `.claude/scripts/` の
+/// 下に置かれるので、ディレクトリ付きの指定はそこで終わるものだけを認める。ディレクトリ無し
+/// （`slurm-run.sh`、`./slurm-run.sh`）は cwd が分からないので本物とみなす
+fn runs_slurm_run(cmd: &Cmd) -> bool {
+    let program = program(cmd);
+    let path = program.strip_prefix("./").unwrap_or(&program);
+    if path.contains('/') {
+        path.strip_suffix(SCRIPT)
+            .is_some_and(|dir| dir.ends_with(".claude/scripts/"))
+    } else {
+        path == SCRIPT
+    }
 }
 
 impl Rule for GuardSbatch {
@@ -103,7 +118,7 @@ impl Rule for GuardSbatch {
         }
         if !input.run_in_background
             && !shell.has_escape("ALLOW_FOREGROUND_SLURM")
-            && commands.iter().any(|cmd| runs(cmd, SCRIPT))
+            && commands.iter().any(runs_slurm_run)
         {
             return vec![Finding::Deny(
                 "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。待ち行列が空で数分で終わるとわかっていれば ALLOW_FOREGROUND_SLURM=1 を付けます".to_string(),
