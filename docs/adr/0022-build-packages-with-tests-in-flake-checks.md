@@ -16,6 +16,8 @@ PR #305 のマージ後、rebuild で claude-hooks のビルドが失敗した�
 無いこと。追加したテストは git で一時リポジトリを作るが、`package.nix` に `nativeCheckInputs = [ git ]` が無かった。
 `crate::git::git` は spawn の失敗を `None` にするため、「git が無い」と「git が非ゼロで終わった」の区別が出ない。
 `nativeCheckInputs` に git を足すと、同じ derivation のテスト 44 件が通った。
+測定は 2026-10-11、対象は main の e1e7e73（PR #305 のマージコミット）。失敗は `/nix/store/n5r31rf5kvfbywdnrfb1jrhx3f7rr0lm-claude-hooks-0.1.0.drv` の
+`nix log`、修正後は `nix build .#packages.x86_64-linux.claude-hooks --no-link` のあとの `nix log`（`test result: ok. 44 passed`）で読める。
 
 PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix の段は `nix flake check` だが、claude-hooks は
 `packages` にしか無く、`nix flake check` は packages を評価するだけで build しない（checkPhase が走らない）。
@@ -37,12 +39,13 @@ PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix の�
 
 ## 決定と理由
 
-案 B を採る。ソースが変わっていなければ store にあるので build は走らず、変わったときだけテストが走る。
+案 B を採る。`nix flake check` は `checks` の出力を実現する。store にあるか substituter から取れる出力は build せず、
+ローカルで build が必要なとき（ソースを変えた、GC した、別のマシン）にだけ checkPhase が走る。
 いまは claude-hooks だけを入れる。ほかのパッケージにテストが付いたら同じ形で足す。
 
 ### 帰結
 
-- `run-checks.sh` の nix の段が、claude-hooks のサンドボックスでのテストも走らせる（ソースを変えたときは cargo の build 分だけ長くなる）
+- `run-checks.sh` の nix の段が、claude-hooks のサンドボックスでのテストも走らせる（ローカルで build するときは cargo の build 分だけ長くなる）
 
 ### 確認
 
