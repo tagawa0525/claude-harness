@@ -643,3 +643,15 @@ fn every_stop_before_writing_says_nothing_was_rewritten() {
         stderr(&out)
     );
 }
+
+#[test]
+fn rewrites_files_whose_names_are_near_the_length_limit() {
+    let t = TempRepo::new("long-name");
+    let old = t.commit_file("src.txt", "feat: measured");
+    // Linux のファイル名の上限（NAME_MAX）は 255 バイト
+    let name = format!("{}.md", "n".repeat(240));
+    t.record(&name, &format!("at {}", &old[..8]));
+    let map = t.map_file(&format!("{old} {NEW4}\n"));
+    assert_ok(&t.remap(&[&map]));
+    assert_eq!(t.read(&name), "at 44444444\n");
+}
