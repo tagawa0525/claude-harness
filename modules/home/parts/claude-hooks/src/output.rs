@@ -45,16 +45,26 @@ mod tests {
 
     #[test]
     fn nothing_means_allow() {
-        assert!(render(&[]).is_none());
+        assert!(render(&[], &[]).is_none());
+    }
+
+    #[test]
+    fn notices_alone_become_system_message_without_decision() {
+        let v = render(&[], &["n".into()]).unwrap();
+        assert_eq!(v["systemMessage"], "n");
+        assert!(v.get("hookSpecificOutput").is_none());
     }
 
     #[test]
     fn deny_and_context_share_one_object() {
-        let v = render(&[
-            Finding::Context("c".into()),
-            Finding::Deny("a".into()),
-            Finding::Deny("b".into()),
-        ])
+        let v = render(
+            &[
+                Finding::Context("c".into()),
+                Finding::Deny("a".into()),
+                Finding::Deny("b".into()),
+            ],
+            &[],
+        )
         .unwrap();
         let o = &v["hookSpecificOutput"];
         assert_eq!(o["permissionDecision"], "deny");
