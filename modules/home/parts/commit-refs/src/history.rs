@@ -1201,25 +1201,32 @@ fn values(headers: &[Header], key: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// タグの本文の末尾の署名（`-----BEGIN PGP SIGNATURE-----` などで始まる行から後）を外す。中身を変えると署名は
-/// 合わないので、fast-export の --signed-tags=strip と同じく外す
+/// タグの本文の末尾の署名を外す。git の parse_signed_buffer と同じく、署名の始まりの印で始まる行のうち最後の
+/// 行から後を署名とする。中身を変えると署名は合わないので、fast-export の --signed-tags=strip と同じく外す
 fn strip_signature(message: &[u8]) -> &[u8] {
-    const MARKERS: [&[u8]; 2] = [
+    // git の gpg-interface.c の sigs[] にある印
+    const MARKERS: [&[u8]; 4] = [
         b"-----BEGIN PGP SIGNATURE-----",
+        b"-----BEGIN PGP MESSAGE-----",
+        b"-----BEGIN SIGNED MESSAGE-----",
         b"-----BEGIN SSH SIGNATURE-----",
     ];
+    let mut last = None;
     let mut start = 0;
     while start < message.len() {
         let line = &message[start..];
         if MARKERS.iter().any(|m| line.starts_with(m)) {
-            return &message[..start];
+            last = Some(start);
         }
         match line.iter().position(|b| *b == b'\n') {
             Some(p) => start += p + 1,
             None => break,
         }
     }
-    message
+    match last {
+        Some(at) => &message[..at],
+        None => message,
+    }
 }
 
 struct TreeEntry {
