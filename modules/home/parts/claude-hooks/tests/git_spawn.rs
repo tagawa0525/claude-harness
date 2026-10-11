@@ -170,3 +170,52 @@ fn gh_missing_from_path_is_shown_to_the_user() {
     );
     assert_eq!(out.stderr, "");
 }
+
+#[test]
+fn gh_with_unreadable_parent_directory_is_shown_to_the_user() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("gh-locked");
+    let inner = dir.0.join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let out = run(&inner, "gh run rerun 1", Some("guard-gh-run-rerun"), None);
+    std::fs::set_permissions(&dir.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        out.system_message().contains("gh を起動できません"),
+        "json: {}",
+        out.json
+    );
+}
+
+#[test]
+fn gh_in_a_path_that_is_not_a_directory_is_not_reported() {
+    let dir = TempDir::new("gh-file");
+    let file = dir.0.join("file");
+    std::fs::write(&file, "").unwrap();
+    let out = run(&file, "gh run rerun 1", Some("guard-gh-run-rerun"), None);
+    assert_eq!(out.system_message(), "", "json: {}", out.json);
+}
+
+#[test]
+fn unreadable_hook_input_is_shown_to_the_user() {
+    let out = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
+        .arg("pre-tool-use")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.take().unwrap().write_all(b"{not json")?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    assert!(
+        json["systemMessage"]
+            .as_str()
+            .unwrap_or("")
+            .contains("hook の入力を読めません"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
