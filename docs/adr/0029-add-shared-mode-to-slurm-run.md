@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-12
 requires: [ADR-0007, ADR-0017, ADR-0026]
 supersedes: []
@@ -55,5 +55,7 @@ issues: []
 
 - `.claude/tests/scripts/slurm-run.sh` で、`-c` が `--exclusive` なしで `--cpus-per-task` を渡すこと、TIME 行と連絡先に
   印が付くこと、排他のジョブには付かないこと、コア数が正の整数でなければ投げずにエラーになることを確かめる
-- 未確認: 反映後に、待ち行列が空のときに、`-c 1` のジョブを流している間、排他のジョブが `PENDING` のままであることを
-  `squeue` で確かめる。確かめたら `status: accepted` にする
+- 割り当てる CPU の数: `sbatch --test-only -c 16` は 16 processors、`-c 1` は 2 processors（物理コア単位に切り上がる）と
+  出した（2026-10-12）
+- 反映後に、待ち行列が空のときに、`-c 1` のジョブを流している間、排他のジョブが `PENDING` のままであることを `squeue`
+  で確かめる（ADR-0007、ADR-0017 と同じく反映後の確認）。違えば帰結を直す新しい ADR を書く
