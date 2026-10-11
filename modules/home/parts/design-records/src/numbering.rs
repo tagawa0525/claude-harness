@@ -307,8 +307,20 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
     if !git_ok(&root, &["rev-parse", "--verify", "--quiet", "HEAD"])? {
         return Err("there is no commit to renumber".into());
     }
-    // 追跡していないファイルも見る（移す先にあると、予約の後で git mv が失敗する）
-    if !git(&root, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+    // 追跡していないファイルも見る（移す先にあると、予約の後で git mv が失敗する）。submodule の中の変更だけは
+    // 見ない（renumber は submodule の中に触れない）。submodule の commit の違いは見る（ステージしてあれば
+    // renumber のコミットに入り、失敗して戻すときの reset で失う）
+    if !git(
+        &root,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=dirty",
+        ],
+    )?
+    .is_empty()
+    {
         return Err("commit or stash the changes first; renumber makes its own commit".into());
     }
     // 既定ブランチ（origin があれば取ってきた origin の）。reserve も lock を取るので、ここで持ち続けない
@@ -379,8 +391,18 @@ pub fn renumber(kind: Kind, old: u32, wanted: Option<u32>) -> Result<ExitCode> {
         number,
         added.as_ref(),
     ) {
-        // 書き換えの前は追跡しているファイルに変更が無かったので、HEAD に戻せば元どおりになる
-        git(&root, &["reset", "--quiet", "--hard", "HEAD"])?;
+        // 書き換えの前は追跡しているファイルに変更が無かったので、HEAD に戻せば元どおりになる。submodule の中の
+        // 変更は残す（submodule.recurse の設定でも、submodule には入らない）
+        git(
+            &root,
+            &[
+                "reset",
+                "--quiet",
+                "--hard",
+                "--no-recurse-submodules",
+                "HEAD",
+            ],
+        )?;
         return Err(format!(
             "{e}; the changes were undone and {} stays reserved but unused",
             kind.reference(number)
