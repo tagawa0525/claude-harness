@@ -108,7 +108,8 @@ fn prepare(map_path: Option<&Path>) -> Result<Vec<Replacement>, Vec<String>> {
     let map = Map::parse(&text)?;
 
     let top = git(Path::new("."), &["rev-parse", "--show-toplevel"]).map_err(|e| vec![e])?;
-    let top = PathBuf::from(OsStr::from_bytes(top.trim_ascii_end()));
+    // git が足す改行だけを外す（ディレクトリ名の末尾の空白は名前の一部）
+    let top = PathBuf::from(OsStr::from_bytes(top.strip_suffix(b"\n").unwrap_or(&top)));
     let (paths, mut problems) = candidate_paths(&top).map_err(|e| vec![e])?;
     match collect(&top, &paths, &map) {
         Ok(results) if problems.is_empty() => Ok(results),
