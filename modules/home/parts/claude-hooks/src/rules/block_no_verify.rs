@@ -11,7 +11,7 @@
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell};
+use crate::shell::{Arg, Shell, git_global_takes_value};
 
 pub struct BlockNoVerify;
 
@@ -42,16 +42,21 @@ fn commit_cluster_has_n(arg: &Arg) -> bool {
 fn overrides_hooks_path(args: &[Arg]) -> bool {
     let mut it = args.iter();
     while let Some(a) = it.next() {
+        if !a.text.starts_with('-') {
+            // サブコマンドに着いた
+            return false;
+        }
         let value = if a.text == "-c" {
             it.next().map(|v| v.text.as_str())
+        } else if git_global_takes_value(&a.text) {
+            // -C dir などの値は読み飛ばす
+            it.next();
+            None
         } else {
             a.text.strip_prefix("-c")
         };
         if value.is_some_and(|v| v.to_ascii_lowercase().starts_with("core.hookspath=")) {
             return true;
-        }
-        if !a.text.starts_with('-') {
-            return false;
         }
     }
     false

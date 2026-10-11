@@ -224,7 +224,7 @@ fn resolve(base: &Path, p: &str) -> PathBuf {
 }
 
 /// git のグローバルオプションのうち、次の引数を値として取るもの
-fn git_global_takes_value(opt: &str) -> bool {
+pub fn git_global_takes_value(opt: &str) -> bool {
     matches!(
         opt,
         "-C" | "-c"
