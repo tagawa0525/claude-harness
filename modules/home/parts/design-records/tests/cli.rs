@@ -1115,8 +1115,7 @@ fn new_fetches_before_choosing_where_to_put_the_tag() {
 #[test]
 fn new_refuses_shallow_clones_whose_history_is_cut() {
     let t = TempRepo::with_remote("shallow");
-    t.commit_all("chore: second");
-    t.git(&["commit", "-q", "--allow-empty", "-m", "chore: third"]);
+    t.git(&["commit", "-q", "--allow-empty", "-m", "chore: second"]);
     t.git(&["push", "-q", "origin", "main"]);
     let bare = t.root.join("remote.git");
     git_in(
