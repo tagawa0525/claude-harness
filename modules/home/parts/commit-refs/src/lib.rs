@@ -17,7 +17,10 @@ pub struct Map {
     mapping: BTreeMap<String, String>,
     /// 書き換えで消えたコミットの旧
     pruned: BTreeSet<String>,
-    /// 旧の先頭 7 桁 → 旧（変わったものと消えたもの。曖昧さの判定と消えたコミットの検出に使う）
+    /// 書き換えで変わらなかったコミット
+    unchanged: BTreeSet<String>,
+    /// 旧の先頭 7 桁 → 旧（対応表のすべての旧。変わらなかったものも入れるのは、短い語がそれと変わったものの
+    /// 両方に当たるときに、曖昧として止めるため）
     index: HashMap<String, Vec<String>>,
 }
 
@@ -73,9 +76,11 @@ impl Map {
                 map.pruned.insert(old.to_string());
             } else if old != new {
                 map.mapping.insert(old.to_string(), new.to_string());
+            } else {
+                map.unchanged.insert(old.to_string());
             }
         }
-        for old in map.mapping.keys().chain(&map.pruned) {
+        for old in map.mapping.keys().chain(&map.pruned).chain(&map.unchanged) {
             map.index
                 .entry(old[..PREFIX].to_string())
                 .or_default()
@@ -133,7 +138,8 @@ impl Map {
                 ));
                 None
             }
-            [old] => Some(&self.mapping[*old]),
+            // 変わらなかったコミットを指す語は、そのまま残す
+            [old] => self.mapping.get(*old).map(String::as_str),
             _ => {
                 let names: Vec<&str> = olds.iter().map(|o| o.as_str()).collect();
                 errors.push(format!(
