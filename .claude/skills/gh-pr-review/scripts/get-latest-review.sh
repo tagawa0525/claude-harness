@@ -78,34 +78,33 @@ suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" 
 # 前の周で見落とした、変わっていないコードへの指摘（入れ子の <summary> の行。本文にだけあってスレッドに
 # ならない）。ほかの節（解決した指摘、"What changed in this PR" の変更の一覧など）は数えない。節は外側の
 # </details> で閉じる（Previously missed の中の入れ子の <details> は深さで数える）。知らない見出しの節や、
-# 開いている指摘の節の「- 」で始まらない行があれば、形が変わって High を数え落としうるので、分からないとする。節の切り替えを見出しの行だけで行うのは、指摘の
+# 開いている指摘の節の「- 」で始まらない行、Previously missed の節の <summary> でない行のアイコン、知っている節の
+# 外のアイコン（要約の **Findings:** の行は除く）があれば、形が変わって High を数え落としうるので、分からないとする。節の切り替えを見出しの行だけで行うのは、指摘の
 # 題名に同じ語が入りうるため。アイコンの無い指摘があれば、形が変わって数え落としうるので、重大度は
 # 分からない（unknown）とする。読み方は pre_merge_check.rs の remaining_high と同じ（ADR-0034）
 # mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で、mode=missed は Previously missed の節の行を出す
 SECTIONS_AWK='
-  BEGIN { sec = "other"; depth = 0 }
+  BEGIN { sec = "none"; depth = 0 }
   /<summary><strong>/ {
     title = tolower($0)
     sub(/.*<summary><strong>[0-9 ]*/, "", title)
     if (title ~ /^open/) sec = "open"
     else if (title ~ /^previously missed/) sec = "missed"
-    else if (title ~ /^(resolved since last review|what changed in this pr)/) sec = "other"
-    else { sec = "other"; print "heading none" }
+    else if (title ~ /^(resolved since last review|what changed in this pr)/) sec = "known"
+    else { sec = "known"; print "heading none" }
     depth = 1
     next
   }
-  /<details/ { if (sec != "other") depth++ }
-  /<\/details>/ {
-    if (mode == "missed" && sec == "missed") print
-    if (sec != "other" && --depth == 0) sec = "other"
-    next
-  }
-  mode == "items" && sec == "open" && $0 ~ /[^[:space:]]/ && $0 !~ /^[[:space:]]*- / { print "open none"; next }
-  mode == "missed" { if (sec == "missed") print; next }
-  (sec == "open" && $0 ~ /^[[:space:]]*- /) || (sec == "missed" && $0 ~ /<summary>/) {
+  mode == "items" && sec == "open" && /[^[:space:]]/ && !/^[[:space:]]*- / && !/<\/details>/ { print "open none" }
+  mode == "items" && ((sec == "open" && /^[[:space:]]*- /) || (sec == "missed" && /<summary>/)) {
     if (match($0, /alt="(High|Medium|Low) severity"/)) print sec, substr($0, RSTART + 5, RLENGTH - 15)
     else print sec, "none"
   }
+  mode == "items" && sec == "missed" && !/<summary>/ && /alt="[^"]* severity"/ { print "missed none" }
+  mode == "items" && sec == "none" && /alt="[^"]* severity"/ && !/\*\*Findings:\*\*/ { print "outside none" }
+  mode == "missed" && sec == "missed" { print }
+  /<details/ { if (sec != "none") depth++ }
+  /<\/details>/ { if (sec != "none" && --depth == 0) sec = "none" }
 '
 severity=unknown
 missed_part=""

@@ -41,7 +41,11 @@ if ! head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid) || [[ 
   exit 1
 fi
 # 記録を数えるのは書き込める人のコメントだけなので、push できない（上流の PR）なら付けても効かない
-if [[ "$(gh api "repos/{owner}/{repo}" --jq .permissions.push)" != true ]]; then
+if ! can_push=$(gh api "repos/{owner}/{repo}" --jq .permissions.push); then
+  echo "ERROR: ${GH_REPO} の権限を取得できませんでした（記録を付けていません）" >&2
+  exit 1
+fi
+if [[ "$can_push" != true ]]; then
   echo "ERROR: ${GH_REPO} に push できないので、記録を付けても数えられません（記録を付けていません）" >&2
   exit 1
 fi

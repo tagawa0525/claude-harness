@@ -124,20 +124,23 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
 /// "N open findings"（2026-09 の本文は "Open (N)"）の節の指摘（"- " で始まる行）と、Previously missed の節の指摘（入れ子の `<summary>` の行）を
 /// 数え、ほかの節（解決した指摘、変更の一覧など）は数えない。節は外側の `</details>` で閉じる
 /// （Previously missed の中の入れ子の `<details>` は深さで数える）。知らない見出しの節や、開いている指摘の節の
-/// 「- 」で始まらない行があれば、形が変わって High を数え落としうるので None。節の切り替えを見出しの行だけで行うのは、指摘の題名に同じ語が入りうるため。v2 の形でないとき、
+/// 「- 」で始まらない行、Previously missed の節の `<summary>` でない行のアイコン、知っている節の外のアイコン（要約の
+/// `**Findings:**` の行は除く）があれば、形が変わって High を数え落としうるので None。節の切り替えを見出しの行だけで行うのは、指摘の題名に同じ語が入りうるため。v2 の形でないとき、
 /// 重大度のアイコンの無い指摘があるとき（形が変わって数え落としうる）は、分からないので None。
 /// 読み方は get-latest-review.sh と同じ
 fn remaining_high(body: &str) -> Option<usize> {
     #[derive(Clone, Copy, PartialEq)]
     enum Section {
+        Outside,
         Open,
         Missed,
-        Other,
+        Known,
     }
     if !body.contains("<!-- ccr-overview-v2 -->") {
         return None;
     }
-    let mut section = Section::Other;
+    let has_icon = |line: &str| line.contains("alt=\"") && line.contains(" severity\"");
+    let mut section = Section::Outside;
     let mut depth = 0;
     let mut high = 0;
     for line in body.lines() {
@@ -155,42 +158,41 @@ fn remaining_high(body: &str) -> Option<usize> {
             } else if title.starts_with("resolved since last review")
                 || title.starts_with("what changed in this pr")
             {
-                Section::Other
+                Section::Known
             } else {
                 return None;
             };
             depth = 1;
             continue;
         }
-        if line.contains("<details") && section != Section::Other {
-            depth += 1;
+        let trimmed = line.trim_start();
+        let finding = match section {
+            Section::Open if trimmed.starts_with("- ") => true,
+            Section::Open if !trimmed.is_empty() && !line.contains("</details>") => return None,
+            Section::Missed if line.contains("<summary>") => true,
+            Section::Missed if has_icon(line) => return None,
+            Section::Outside if has_icon(line) && !line.contains("**Findings:**") => return None,
+            _ => false,
+        };
+        if finding {
+            if line.contains("alt=\"High severity\"") {
+                high += 1;
+            } else if !line.contains("alt=\"Medium severity\"")
+                && !line.contains("alt=\"Low severity\"")
+            {
+                return None;
+            }
         }
-        if line.contains("</details>") {
-            if section != Section::Other {
+        if section != Section::Outside {
+            if line.contains("<details") {
+                depth += 1;
+            }
+            if line.contains("</details>") {
                 depth -= 1;
                 if depth == 0 {
-                    section = Section::Other;
+                    section = Section::Outside;
                 }
             }
-            continue;
-        }
-        if section == Section::Open
-            && !line.trim().is_empty()
-            && !line.trim_start().starts_with("- ")
-        {
-            return None;
-        }
-        let finding = (section == Section::Open && line.trim_start().starts_with("- "))
-            || (section == Section::Missed && line.contains("<summary>"));
-        if !finding {
-            continue;
-        }
-        if line.contains("alt=\"High severity\"") {
-            high += 1;
-        } else if !line.contains("alt=\"Medium severity\"")
-            && !line.contains("alt=\"Low severity\"")
-        {
-            return None;
         }
     }
     Some(high)
@@ -765,7 +767,7 @@ impl Rule for PreMergeCheck {
                             && !copilot_check_failed
                             && local_review_covers(&dir, &owner, &name, number, &head_sha) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
-                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら再レビューを依頼してください。{}",
+                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら head のローカルレビューを記録して（record-local-review.sh）再レビューを依頼してください。{}",
                         short(&head_sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
