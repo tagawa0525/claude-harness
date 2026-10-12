@@ -180,7 +180,8 @@ EOF
 ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
 ```
 
-件数はローカルで見つけた数（直した数を含む）。後に Copilot が出した数と比べて、効果を測るのに使う。
+件数は、ローカルで見つけ、検証して正しいと判断した指摘の数（直した数を含む。decline した指摘は数えない）。
+後に Copilot が出した数と比べて、効果を測るのに使う。
 High を直せば head が変わるので、ある head の記録に High があれば、その head には直していない High が残る。
 High のある記録はレビュー済みとして数えない（`decide-next.sh`、`request-rereview.sh`、マージ時の hook）。
 
