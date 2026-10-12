@@ -56,6 +56,10 @@ cwd のリポジトリに依らずその PR を読み書きする（ADR-0032）�
 `get-latest-review.sh` の **Suppressed comments** は Copilot が低確度と判断した指摘で、
 レビュー本文にだけ現れる（スレッドがないので返信できない）。扱いは Step 6 の基準に従う。
 
+**Previously missed**（`--- previously missed ---` 以降）は、前の周で見落とした、変わっていないコードへの
+指摘で、これも本文にだけ現れる。重大度を持つ通常の指摘として Step 3 で処置を決め、台帳に載せる
+（返信と resolve はできない）。`REMAINING_HIGH` は、開いている指摘とこの節の High の数。
+
 ## Step 3: 前提の検証と処置の決定
 
 ### 3.1 前提を一次情報で検証する
@@ -90,8 +94,9 @@ decline は事実に基づく反論があるときだけ。根拠を書けない
 が出す `TARGET`（積み重なった PR は `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に写さず、コードへの参照（ファイルと関数名）で書く。
 
-対応順は 🔴 Critical（バグ・セキュリティ・ビルド失敗）→ 🟡 Warning（品質・性能）→
-🟢 Suggestion（スタイル・nit）→ ℹ️ Question（回答のみ）。
+重大度は Copilot の本文に揃えて High / Medium / Low で数える（ローカルの `/code-review` の指摘も同じ。
+ADR-0034）。対応順は High（誤動作・セキュリティ・データの破損・ゲートの迂回）→ Medium（限られた条件の
+不具合・品質）→ Low（表記・好み）→ 質問（回答のみ）。Copilot の指摘は本文の重大度に従い、付け替えない。
 
 ### 3.3 同一指摘の再提起（2 周目以降）
 
@@ -150,17 +155,36 @@ EOF
 ~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh "{pr_url}" "ユーザーの要望: {要望の要旨}"
 ```
 
-| VERDICT                | 意味                                         | 次の一手                                                                                                                 |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `ACT`                  | 未解決スレッドがある                         | Step 3〜5 で対応する                                                                                                     |
-| `REREVIEW_NEEDED`      | 対応を push したが再レビューを要求していない | `request-rereview.sh` で要求する                                                                                         |
-| `STOP_DOCS_REVIEWED`   | 文書だけの PR で、対応を push 済み           | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない） |
-| `STOP_LIMIT`           | 要求が必要だが周回の上限に達した             | 要求もマージもせず Step 7 へ。最終周に直した変更は未レビューなので、報告に列挙して止まり、ユーザーの判断を待つ           |
-| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み              | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                 |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                     | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                         |
-| `STOP_CLEAN`           | 指摘なし                                     | Step 7 へ                                                                                                                |
-| `REVIEW_FAILED`        | Copilot がレビューできずに終わった           | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                                              |
-| `WAITING`              | 要求後のレビューが未着                       | `~/.claude/scripts/gh-wait-review.sh "{pr_url}"` で待つ（下記と同様 background）                                         |
+| VERDICT                  | 意味                                                                                 | 次の一手                                                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ACT`                    | 未解決スレッドがある                                                                 | Step 3〜5 で対応する                                                                                                                                                     |
+| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head をローカルで確かめていない                                   | 下記の「ローカルレビュー」を回して記録し、`decide-next.sh` を再実行する                                                                                                  |
+| `STOP_LOCAL_REVIEWED`    | High が残らず、head はローカルでレビュー済み                                         | 要求せず Step 7 へ（Medium と Low は直してローカルで確かめれば足りる。マージ時の hook も同じ条件で通す）。`PREVIOUSLY_MISSED` があれば、台帳に処置があるかを先に確かめる |
+| `REREVIEW_NEEDED`        | High が残る（重大度が分からない、数え直した、を含む）。head はローカルでレビュー済み | `request-rereview.sh` で要求する                                                                                                                                         |
+| `STOP_DOCS_REVIEWED`     | 文書だけの PR で、対応を push 済み                                                   | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない）                                                 |
+| `STOP_LIMIT`             | 要求が必要だが周回の上限に達した                                                     | 要求もマージもせず Step 7 へ。最終周に直した変更は未レビューなので、報告に列挙して止まり、ユーザーの判断を待つ                                                           |
+| `STOP_DECLINED`          | 未解決ゼロ・head はレビュー済み                                                      | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                                                                 |
+| `STOP_PREVIOUSLY_MISSED` | head はレビュー済みで、スレッドの無い Previously missed が残る                       | 本文を読んで Step 3 で処置を決める。fix するなら Step 4 → push（次の判定はローカルレビューから）、しないなら台帳に理由を書いて Step 7 へ                                 |
+| `STOP_SUPPRESSED_ONLY`   | Suppressed comments のみ                                                             | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                                                                         |
+| `STOP_CLEAN`             | 指摘なし                                                                             | Step 7 へ                                                                                                                                                                |
+| `REVIEW_FAILED`          | Copilot がレビューできずに終わった                                                   | マージに進まない。Step 7 で診断し、直せたら head のローカルレビューを記録して再レビュー、直せなければ要判断へ                                                            |
+| `WAITING`                | 要求後のレビューが未着                                                               | `~/.claude/scripts/gh-wait-review.sh "{pr_url}"` で待つ（下記と同様 background）                                                                                         |
+
+**ローカルレビュー**（ADR-0034）: 対応を push したら、Copilot に出す前にも、出さずに終える前にも、
+`~/.claude/scripts/review-level.sh` が出す `LEVEL` と `TARGET` で `/code-review <LEVEL> <TARGET>` を回す。
+直した差分と、同じ種類の問題が他に残っていないかを見る。回した head（`git rev-parse HEAD`。push 済みで PR の
+head と同じもの）に、その回で検証して正しいと判断した指摘の数を、High / Medium / Low で記録する
+（decline した指摘は数えない）:
+
+```bash
+~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
+```
+
+記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
+して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`、
+`request-rereview.sh`、マージ時の hook）ので、High は直して回し直す。Medium と Low は、直して回し直すか、
+直さずにその head で終える（見送りは台帳に書く）。同じ head を回し直したら、最後の記録で決まる。
+件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
 
 **再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分。
 `run_in_background=true` で実行）。
@@ -201,15 +225,16 @@ head SHA の check-run と未解決スレッド数で判断する。
 PR: {url}
 コミット: {hash}
 レビュー周回: {ROUND}/{MAX_ROUNDS}
-終了理由: {指摘なし | 全件 decline | Suppressed comments のみ | 文書の初回レビュー対応済み | 周回上限到達}
+終了理由: {指摘なし | 全件 decline | Suppressed comments のみ | 文書の初回レビュー対応済み | High なし・ローカルレビュー済み | 周回上限到達}
 
 台帳:
-| 周 | コメント | 場所 | 優先度 | 処置 | 結果（commit / 理由 / 前回参照） |
+| 周 | コメント | 場所 | 重大度 | 処置 | 結果（commit / 理由 / 前回参照） |
 | -- | -------- | ---- | ------ | ---- | -------------------------------- |
-| 1 | #discussion_r{id} | path:line | 🔴 | fix | {hash} |
-| 1,2 | #discussion_r{id} | path:line | 🟡 | decline | 2 周目は同一指摘。前回返信を参照 |
+| 1 | #discussion_r{id} | path:line | High | fix | {hash} |
+| 1,2 | #discussion_r{id} | path:line | Medium | decline | 2 周目は同一指摘。前回返信を参照 |
+| 2 | Previously missed | path:line | Medium | fix | {hash} |
 
-対応サマリー: fix {n}（🔴{n} / 🟡{n} / 🟢{n}）、decline {n}、回答 {n}、要判断 {n}
+対応サマリー: fix {n}（High {n} / Medium {n} / Low {n}）、decline {n}、回答 {n}、要判断 {n}
 以下は該当があるときだけ:
 - レビュアーの確認待ち: {人間のスレッドで返信済み・未 resolve}
 - 未確認の対応: {周回上限到達時、最終周で対応・見送りした指摘}

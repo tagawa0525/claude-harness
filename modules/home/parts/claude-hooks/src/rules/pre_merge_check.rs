@@ -17,7 +17,9 @@
 //!    「〜なら外してよい」の条件は文言に列挙しない（どれかに当てはめる読み方を誘う）。
 //!    文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR は、一度でも自動レビューに成功
 //!    していれば検査しない。文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
-//!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める
+//!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める。
+//!    直前の Copilot のレビューに High が残らず、その後に周回を数え直しておらず、最後の push で Copilot の
+//!    チェックが失敗しておらず、head にローカルレビューの記録（record-local-review.sh）があれば検査しない（ADR-0034。判定は decide-next.sh と同じ）
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
@@ -116,6 +118,164 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
         let files: Vec<&str> = s.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
         !files.is_empty() && files.iter().all(|f| f.starts_with(DOCS_DIR))
     })
+}
+
+/// Copilot のレビュー本文（v2）に残っている High の数。節は見出しの行（`<summary><strong>`）で分かれ、
+/// "N open findings"（2026-09 の本文は "Open (N)"）の節の指摘（"- " で始まる行）と、Previously missed の節の指摘（入れ子の `<summary>` の行）を
+/// 数え、ほかの節（解決した指摘、変更の一覧など）は数えない。節は外側の `</details>` で閉じる
+/// （Previously missed の中の入れ子の `<details>` は深さで数える）。知らない見出しの節や、開いている指摘の節の
+/// 「- 」で始まらない行、Previously missed の節の `<summary>` でない行のアイコン、知っている節の外のアイコン（要約の
+/// `**Findings:**` の行は除く）があれば、形が変わって High を数え落としうるので None。節の切り替えを見出しの行だけで行うのは、指摘の題名に同じ語が入りうるため。v2 の形でないとき、
+/// 重大度のアイコンの無い指摘があるとき（形が変わって数え落としうる）は、分からないので None。
+/// 読み方は get-latest-review.sh と同じ
+fn remaining_high(body: &str) -> Option<usize> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Section {
+        Outside,
+        Open,
+        Missed,
+        Known,
+    }
+    // 判定の見出しが無い本文（切れた本文、完走しなかったレビュー）は指摘を数え落としうる
+    let verdict = |line: &str| {
+        line.starts_with("### ")
+            && [
+                "Approval recommended",
+                "Changes recommended",
+                "Needs a closer look",
+            ]
+            .iter()
+            .any(|v| line.contains(v))
+    };
+    if !body.contains("<!-- ccr-overview-v2 -->") || !body.lines().any(verdict) {
+        return None;
+    }
+    let has_icon = |line: &str| line.contains("alt=\"") && line.contains(" severity\"");
+    let mut section = Section::Outside;
+    let mut depth = 0;
+    let mut high = 0;
+    for line in body.lines() {
+        if line.contains("<summary><strong>") {
+            let heading = line.to_lowercase();
+            let title = heading
+                .rsplit("<summary><strong>")
+                .next()
+                .unwrap_or("")
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ');
+            section = if title.starts_with("open") {
+                Section::Open
+            } else if title.starts_with("previously missed") {
+                Section::Missed
+            } else if title.starts_with("resolved since last review")
+                || title.starts_with("what changed in this pr")
+            {
+                Section::Known
+            } else {
+                return None;
+            };
+            depth = 1;
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let finding = match section {
+            Section::Open if trimmed.starts_with("- ") => true,
+            Section::Open if !trimmed.is_empty() && !line.contains("</details>") => return None,
+            Section::Missed if line.contains("<summary>") => true,
+            Section::Missed if has_icon(line) => return None,
+            Section::Outside if has_icon(line) && !line.contains("**Findings:**") => return None,
+            _ => false,
+        };
+        if finding {
+            if line.contains("alt=\"High severity\"") {
+                high += 1;
+            } else if !line.contains("alt=\"Medium severity\"")
+                && !line.contains("alt=\"Low severity\"")
+            {
+                return None;
+            }
+        }
+        if section != Section::Outside {
+            if line.contains("<details") {
+                depth += 1;
+            }
+            if line.contains("</details>") {
+                depth -= 1;
+                if depth == 0 {
+                    section = Section::Outside;
+                }
+            }
+        }
+    }
+    // 節が閉じないまま終わる本文（切れた本文）は、残りの指摘を数え落としうる
+    if section != Section::Outside {
+        return None;
+    }
+    Some(high)
+}
+
+/// 最後の push を Copilot に見せずに済むか（ADR-0034）。直前の Copilot のレビューに High が残らず（分かる形で）、
+/// その後に周回を数え直しておらず、head にローカルレビューの記録があれば true。印と記録は、書き込める人の
+/// コメントだけを数える（第三者が記録を偽って再レビューを外せないように）。確かめられないときは false
+fn local_review_covers(
+    dir: &std::path::Path,
+    owner: &str,
+    name: &str,
+    number: &str,
+    head_sha: &str,
+) -> bool {
+    let latest = gh::gh(
+        dir,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
+            "--jq",
+            "[.[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\")] | last // empty | {body, submitted_at} | @json",
+        ],
+    )
+    .ok()
+    // --paginate はページごとに --jq を適用する。レビューは提出順に返るので最後の非空行が最新
+    .and_then(|s| {
+        s.lines()
+            .map(str::trim)
+            .rfind(|l| !l.is_empty())
+            .and_then(|l| serde_json::from_str::<Value>(l).ok())
+    });
+    let Some(latest) = latest else {
+        return false;
+    };
+    let reviewed_at = latest["submitted_at"].as_str().unwrap_or("");
+    if reviewed_at.is_empty() || remaining_high(latest["body"].as_str().unwrap_or("")) != Some(0) {
+        return false;
+    }
+    let Ok(marks) = gh::gh(
+        dir,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{owner}/{name}/issues/{number}/comments?per_page=100"),
+            "--jq",
+            ".[] | select(.author_association | IN(\"OWNER\", \"MEMBER\", \"COLLABORATOR\")) | select(.body | startswith(\"<!-- review-rounds-reset -->\") or startswith(\"<!-- local-review \")) | [.created_at, (.body | split(\"\\n\")[0])] | @tsv",
+        ],
+    ) else {
+        return false;
+    };
+    let mut recorded = false;
+    for line in marks.lines() {
+        let Some((at, first)) = line.split_once('\t') else {
+            continue;
+        };
+        // ISO 8601 は文字列の比較で時系列順
+        if first.starts_with("<!-- review-rounds-reset -->") && at > reviewed_at {
+            return false;
+        }
+        // High のある記録は数えない。High を直せば head が変わるので、その head には直していない High が残る。
+        // 同じ head に記録が複数あれば、最後の記録で決める（回し直して見つけた High を前の記録で隠さない）
+        if let Some(rest) = first.strip_prefix(&format!("<!-- local-review sha={head_sha} ")) {
+            recorded = rest.starts_with("high=0 ");
+        }
+    }
+    recorded
 }
 
 /// PR の base ブランチの今の先頭（GitHub の値）
@@ -615,13 +775,19 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
+                    // High が残らず、head をローカルでレビュー済みなら Copilot に見せなくてよい（ADR-0034）
+                    Some(sha)
+                        if !sha.is_empty()
+                            && sha != head_sha
+                            && !copilot_check_failed
+                            && local_review_covers(&dir, &owner, &name, number, &head_sha) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
-                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら再レビューを依頼してください。{}",
+                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら head のローカルレビューを記録して（record-local-review.sh）再レビューを依頼してください。{}",
                         short(&head_sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
                     Some(sha) if sha != head_sha => unreviewed.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。次の一手（ローカルレビューの記録か、~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} での再レビューの依頼）は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh https://github.com/{owner}/{name}/pull/{number} で決め、指摘に対応してからマージしてください。{}",
                         short(&head_sha),
                         short(&sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")

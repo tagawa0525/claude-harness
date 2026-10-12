@@ -14,7 +14,13 @@
 #                           一度でも成功していれば後のレビューが失敗しても止めない）
 #   INLINE_COMMENTS: <n>    このレビューに紐づくインラインコメント数（通常の指摘）
 #   SUPPRESSED_COMMENTS: <n>
+#   SEVERITY: v2|unknown    本文が重大度を持つ形（v2）か。unknown なら REMAINING_* は出さない
+#   REMAINING_HIGH: <n>     残っている High（開いている指摘と Previously missed。ADR-0034）
+#   REMAINING_MEDIUM: <n>
+#   REMAINING_LOW: <n>
+#   PREVIOUSLY_MISSED: <n>  Previously missed の指摘の数（v2 の本文なら、重大度が分からなくても出す）
 #   --- suppressed ---      以降、Suppressed comments セクションの本文
+#   --- previously missed --- 以降、Previously missed の節の本文
 #
 # Suppressed comments は Copilot が低確度と判断した指摘で、インラインスレッドには
 # ならずレビュー本文の <details> 内にだけ現れる。get-review-comments.sh では
@@ -65,6 +71,66 @@ suppressed=$(awk '
 suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" \
   | head -n 1 | grep -o -E '[0-9]+' || echo 0)
 
+# 重大度。2026-09-19 からの本文（<!-- ccr-overview-v2 -->）は、指摘ごとに重大度のアイコン
+# （alt="High severity" など）を持つ。節は見出しの行（<summary><strong>…）で分かれる。"N open findings"
+# （2026-09 の本文は "Open (N)"）は
+# 開いている指摘（その回の新しい指摘と、前の周から残る指摘。"- " で始まる行）、"Previously missed" は
+# 前の周で見落とした、変わっていないコードへの指摘（入れ子の <summary> の行。本文にだけあってスレッドに
+# ならない）。ほかの節（解決した指摘、"What changed in this PR" の変更の一覧など）は数えない。節は外側の
+# </details> で閉じる（Previously missed の中の入れ子の <details> は深さで数える）。知らない見出しの節や、
+# 開いている指摘の節の「- 」で始まらない行、Previously missed の節の <summary> でない行のアイコン、知っている節の
+# 外のアイコン（要約の **Findings:** の行は除く）があれば、形が変わって High を数え落としうるので、分からないとする。節の切り替えを見出しの行だけで行うのは、指摘の
+# 題名に同じ語が入りうるため。アイコンの無い指摘があれば、形が変わって数え落としうるので、重大度は
+# 分からない（unknown）とする。読み方は pre_merge_check.rs の remaining_high と同じ（ADR-0034）
+# mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で出し、形の変化の印（指摘でない行のアイコンなど）は
+# 「<場所> none」で出す（件数には数えない）。mode=missed は Previously missed の節の行を出す
+SECTIONS_AWK='
+  BEGIN { sec = "none"; depth = 0 }
+  /<summary><strong>/ {
+    title = tolower($0)
+    sub(/.*<summary><strong>[0-9 ]*/, "", title)
+    if (title ~ /^open/) sec = "open"
+    else if (title ~ /^previously missed/) sec = "missed"
+    else if (title ~ /^(resolved since last review|what changed in this pr)/) sec = "known"
+    else { sec = "known"; print "heading none" }
+    depth = 1
+    next
+  }
+  mode == "items" && sec == "open" && /[^[:space:]]/ && !/^[[:space:]]*- / && !/<\/details>/ { print "open none" }
+  mode == "items" && ((sec == "open" && /^[[:space:]]*- /) || (sec == "missed" && /<summary>/)) {
+    # 1 行に複数のアイコンがあれば High を優先する（pre_merge_check.rs と同じ）
+    if (/alt="High severity"/) print sec, "High"
+    else if (/alt="Medium severity"/) print sec, "Medium"
+    else if (/alt="Low severity"/) print sec, "Low"
+    else print sec, "none"
+  }
+  mode == "items" && sec == "missed" && !/<summary>/ && /alt="[^"]* severity"/ { print "missed-line none" }
+  mode == "items" && sec == "none" && /alt="[^"]* severity"/ && !/\*\*Findings:\*\*/ { print "outside none" }
+  mode == "missed" && sec == "missed" { print }
+  /<details/ { if (sec != "none") depth++ }
+  /<\/details>/ { if (sec != "none" && --depth == 0) sec = "none" }
+  # 節が閉じないまま終わる本文（切れた本文）は、残りの指摘を数え落としうる
+  END { if (mode == "items" && sec != "none") print "eof none" }
+'
+VERDICT_RE='^### .*(Approval recommended|Changes recommended|Needs a closer look)'
+severity=unknown
+items=""
+missed_part=""
+if grep -qF '<!-- ccr-overview-v2 -->' <<<"$body"; then
+  items=$(awk -v mode=items "$SECTIONS_AWK" <<<"$body")
+  # Previously missed はスレッドが無く本文にしか無いので、重大度が分からなくても数えて見せる
+  missed_part=$(awk -v mode=missed "$SECTIONS_AWK" <<<"$body")
+  # 判定の見出しが無い本文（切れた本文、完走しなかったレビュー）は指摘を数え落としうる
+  if ! grep -q ' none$' <<<"$items" && grep -qE "$VERDICT_RE" <<<"$body"; then
+    severity=v2
+  fi
+fi
+# count_items <正規表現>: items のうち一致する行の数（見つからないときの grep の 1 で、pipefail と
+# set -e が呼び出し元の代入ごと止めないようにする）
+count_items() {
+  { grep -c -E "$1" <<<"$items" || true; }
+}
+
 # レビュー失敗は本文1行目に出る（インライン指摘もサマリーも無い）
 failed_pattern="(wasn'?t able to review|unable to review|encountered an error)"
 review_failed=no
@@ -84,7 +150,22 @@ echo "REVIEW_FAILED: ${review_failed}"
 echo "SUCCESSFUL_REVIEWS: ${successful_reviews}"
 echo "INLINE_COMMENTS: ${inline_count}"
 echo "SUPPRESSED_COMMENTS: ${suppressed_count}"
+echo "SEVERITY: ${severity}"
+if [[ "$severity" == v2 ]]; then
+  for level in High Medium Low; do
+    echo "REMAINING_${level^^}: $(count_items " ${level}\$")"
+  done
+fi
+missed_count=0
+if grep -qF '<!-- ccr-overview-v2 -->' <<<"$body"; then
+  missed_count=$(count_items '^missed ')
+  echo "PREVIOUSLY_MISSED: ${missed_count}"
+fi
 if (( suppressed_count > 0 )); then
   echo "--- suppressed ---"
   echo "$suppressed"
+fi
+if (( missed_count > 0 )); then
+  echo "--- previously missed ---"
+  echo "$missed_part"
 fi
