@@ -167,7 +167,7 @@ EOF
 | `STOP_PREVIOUSLY_MISSED` | head はレビュー済みで、スレッドの無い Previously missed が残る                       | 本文を読んで Step 3 で処置を決める。fix するなら Step 4 → push（次の判定はローカルレビューから）、しないなら台帳に理由を書いて Step 7 へ |
 | `STOP_SUPPRESSED_ONLY`   | Suppressed comments のみ                                                             | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                                         |
 | `STOP_CLEAN`             | 指摘なし                                                                             | Step 7 へ                                                                                                                                |
-| `REVIEW_FAILED`          | Copilot がレビューできずに終わった                                                   | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                                                              |
+| `REVIEW_FAILED`          | Copilot がレビューできずに終わった                                                   | マージに進まない。Step 7 で診断し、直せたら head のローカルレビューを記録して再レビュー、直せなければ要判断へ                            |
 | `WAITING`                | 要求後のレビューが未着                                                               | `~/.claude/scripts/gh-wait-review.sh "{pr_url}"` で待つ（下記と同様 background）                                                         |
 
 **ローカルレビュー**（ADR-0034）: 対応を push したら、Copilot に出す前にも、出さずに終える前にも、
@@ -181,6 +181,8 @@ EOF
 ```
 
 件数はローカルで見つけた数（直した数を含む）。後に Copilot が出した数と比べて、効果を測るのに使う。
+High を直せば head が変わるので、ある head の記録に High があれば、その head には直していない High が残る。
+High のある記録はレビュー済みとして数えない（`decide-next.sh`、`request-rereview.sh`、マージ時の hook）。
 
 **再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分。
 `run_in_background=true` で実行）。

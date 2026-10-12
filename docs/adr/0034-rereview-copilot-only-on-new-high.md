@@ -75,7 +75,8 @@ Copilot の 1 周を待たずに潰せる。
   歯止めとして残す
 - **ローカルレビューの記録**: Copilot に再依頼する前と、再依頼せずに終える前に、head をローカルの `/code-review` に
   かけ、結果を PR のコメント（`<!-- local-review sha=<head> high=<n> medium=<n> low=<n> -->`）に残す
-  （`record-local-review.sh`。レビューした SHA を受け、PR の head と違えば記録しない）。`request-rereview.sh` は、head の記録が無ければ要求しない。記録はリポジトリに
+  （`record-local-review.sh`。レビューした SHA を受け、PR の head と違えば記録しない）。High のある記録は
+  レビュー済みとして数えない（High を直せば head が変わるので、その head には直していない High が残る）。`request-rereview.sh` は、head の記録が無ければ要求しない。記録はリポジトリに
   書き込める人のものだけ数える（`reset-rounds.sh` の印と同じ）
 - **マージの判定**（`pre-merge-check` の検査 8）: 最後の push が Copilot のレビューを受けていなくても、直前の
   Copilot のレビューに High が残っておらず（分かる形で）、その後に数え直しの印が無く、最後の push で Copilot の
@@ -103,3 +104,17 @@ Copilot の 1 周を待たずに潰せる。
   印を取得できないときは止めること。印は書き込める人のコメントだけを読むこと
 - 本文の読み方は `get-latest-review.sh`（bash）と `pre_merge_check.rs`（`remaining_high`）の 2 か所にあり、
   共有できないため、それぞれのテストで同じ規則を確かめている（ADR-0004 の `docs/` の判定と同じ扱い）
+
+## 補足
+
+- 2026-10-12: 実装の途中で、ローカルの `/code-review` の指摘と、2026-09-19 以降の v2 の本文 694 件（GitHub の API から
+  2026-10-12 に取得）を読んで、次の版を作り直した
+  - 記録が、レビューした SHA を受けず、記録した時点の PR の head を書く版。レビューの後に head が動くと、
+    レビューしていない head を記録する
+  - 最初の節を開いている指摘とみなし、"resolved since last review" か "previously missed" を含む行（大文字と小文字を
+    区別しない）で節を切り替える版。指摘の題名に同じ語が入ると、後ろの High を数え落とす。また 694 件のうち 318 件に
+    ある「What changed in this PR」の節の箇条書きを指摘と取り違え、重大度が分からないに倒れる
+  - 見出しに "open finding" を含む節だけを開いている指摘とみなす版。2026-09 の本文の見出しは「Open (N)」で
+    （240 件）、その High を数え落とす
+  - 節を `</details>` で閉じない版。節の後に付く箇条書きや `<summary>` を、その節の指摘と取り違える
+  - High のある記録もレビュー済みと数える版。直していない High の残る head を、Copilot に出さずにマージできる
