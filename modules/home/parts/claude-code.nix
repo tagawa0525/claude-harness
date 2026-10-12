@@ -195,6 +195,7 @@ let
         "Bash(~/.claude/skills/gh-pr-review/scripts/request-rereview.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
         "Bash(~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh:*)"
+        "Bash(~/.claude/skills/gh-pr-review/scripts/record-local-review.sh:*)"
         # language-checks スキルスクリプト
         "Bash(~/.claude/skills/language-checks/scripts/run-checks.sh:*)"
         # 設計の記録の CLI（adr スキル、git-merge スキル、branch-topics.sh。git.nix が PATH に入れる）

@@ -14,7 +14,13 @@
 #                           一度でも成功していれば後のレビューが失敗しても止めない）
 #   INLINE_COMMENTS: <n>    このレビューに紐づくインラインコメント数（通常の指摘）
 #   SUPPRESSED_COMMENTS: <n>
+#   SEVERITY: v2|unknown    本文が重大度を持つ形（v2）か。unknown なら以下の 4 行は出さない
+#   REMAINING_HIGH: <n>     残っている High（開いている指摘と Previously missed。ADR-0034）
+#   REMAINING_MEDIUM: <n>
+#   REMAINING_LOW: <n>
+#   PREVIOUSLY_MISSED: <n>  Previously missed の指摘の数
 #   --- suppressed ---      以降、Suppressed comments セクションの本文
+#   --- previously missed --- 以降、Previously missed の節の本文
 #
 # Suppressed comments は Copilot が低確度と判断した指摘で、インラインスレッドには
 # ならずレビュー本文の <details> 内にだけ現れる。get-review-comments.sh では
@@ -65,6 +71,27 @@ suppressed=$(awk '
 suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" \
   | head -n 1 | grep -o -E '[0-9]+' || echo 0)
 
+# 重大度。2026-09-19 からの本文（<!-- ccr-overview-v2 -->）は、指摘ごとに重大度のアイコン
+# （alt="High severity" など）を持つ。開いている指摘（その回の新しい指摘と、前の周から残る指摘）は、
+# 解決した指摘の節（"resolved since last review"）と Previously missed の節より前にある。
+# Previously missed は、前の周で見落とした、変わっていないコードへの指摘で、本文にだけあって
+# スレッドにならない。その節は、入れ子の <details> を越えて、次の節の見出し（<summary><strong>）まで
+severity=unknown
+if grep -qF '<!-- ccr-overview-v2 -->' <<<"$body"; then
+  severity=v2
+  open_part=$(awk 'tolower($0) ~ /resolved since last review|previously missed/ { exit } { print }' <<<"$body")
+  missed_part=$(awk '
+    /Previously missed/ { on=1; next }
+    on && /<summary><strong>/ { exit }
+    on { print }
+  ' <<<"$body")
+fi
+# count_severity <High|Medium|Low> <文字列>
+# 見つからないときの grep の 1 で、pipefail と set -e が呼び出し元の代入ごと止めないようにする
+count_severity() {
+  { grep -o -F "alt=\"$1 severity\"" <<<"$2" || true; } | wc -l
+}
+
 # レビュー失敗は本文1行目に出る（インライン指摘もサマリーも無い）
 failed_pattern="(wasn'?t able to review|unable to review|encountered an error)"
 review_failed=no
@@ -84,7 +111,21 @@ echo "REVIEW_FAILED: ${review_failed}"
 echo "SUCCESSFUL_REVIEWS: ${successful_reviews}"
 echo "INLINE_COMMENTS: ${inline_count}"
 echo "SUPPRESSED_COMMENTS: ${suppressed_count}"
+echo "SEVERITY: ${severity}"
+missed_count=0
+if [[ "$severity" == v2 ]]; then
+  for level in High Medium Low; do
+    echo "REMAINING_${level^^}: $(( $(count_severity "$level" "$open_part") + $(count_severity "$level" "$missed_part") ))"
+  done
+  missed_count=$(( $(count_severity High "$missed_part") + $(count_severity Medium "$missed_part") \
+    + $(count_severity Low "$missed_part") ))
+  echo "PREVIOUSLY_MISSED: ${missed_count}"
+fi
 if (( suppressed_count > 0 )); then
   echo "--- suppressed ---"
   echo "$suppressed"
+fi
+if (( missed_count > 0 )); then
+  echo "--- previously missed ---"
+  echo "$missed_part"
 fi

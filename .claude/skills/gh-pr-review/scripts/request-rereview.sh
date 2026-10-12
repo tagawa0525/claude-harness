@@ -3,8 +3,10 @@
 #
 # Usage: request-rereview.sh <PR の URL>
 #
-# 1. requested_reviewers API で copilot-pull-request-reviewer にレビューを要求する
-# 2. 要求が review_requested イベントとして登録されたことを確認し、その created_at
+# 1. head にローカルレビューの記録（record-local-review.sh）があることを確かめる。無ければ要求しない。
+#    Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0034）
+# 2. requested_reviewers API で copilot-pull-request-reviewer にレビューを要求する
+# 3. 要求が review_requested イベントとして登録されたことを確認し、その created_at
 #    （GitHub 側の時刻）を基準に gh-wait-review.sh で待機する
 #
 # @copilot メンションでは再レビューは走らない（応答する copilot-swe-agent はコメントを
@@ -22,6 +24,7 @@ REVIEWER='copilot-pull-request-reviewer[bot]'
 # 共有スクリプトは自身の位置から相対で解決する（<root>/skills/gh-pr-review/scripts → <root>/scripts）
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/../../../scripts/lib/pr-url.sh"
+source "${SCRIPT_DIR}/../../../scripts/lib/local-review.sh"
 
 PR_URL="${1:-}"
 if (($# != 1)) || ! parse_pr_url "$PR_URL"; then
@@ -43,6 +46,20 @@ latest_request_at() {
 }
 
 before=$(latest_request_at)
+
+if ! head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid) || [[ -z "$head_sha" ]]; then
+  echo "ERROR: PR #${PR_NUMBER} の head を取得できませんでした（ローカルレビューの記録を確かめられません）" >&2
+  exit 1
+fi
+if ! local_shas=$(local_review_shas); then
+  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を取得できませんでした" >&2
+  exit 1
+fi
+if ! grep -qxF "$head_sha" <<<"$local_shas"; then
+  echo "ERROR: head（${head_sha:0:7}）にローカルレビューの記録がありません。Copilot に出す前に、直した差分をローカルの /code-review で確かめてください（ADR-0034）" >&2
+  echo "次の一手: 確かめたら ${SCRIPT_DIR}/record-local-review.sh ${PR_URL_CANONICAL} <high> <medium> <low> で記録し、decide-next.sh で次の一手を決め直してください" >&2
+  exit 1
+fi
 
 if ! err=$(gh api -X POST "repos/{owner}/{repo}/pulls/${PR_NUMBER}/requested_reviewers" \
              -f "reviewers[]=${REVIEWER}" 2>&1 >/dev/null); then

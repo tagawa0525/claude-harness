@@ -16,10 +16,21 @@
 #                       head とレビュー対象コミット。対応を push したあと要求を
 #                       忘れていないかはこれで決まる
 #   UNRESOLVED: <n>     未解決のレビュースレッド数（対応が残っているか）
+#   LOCAL_REVIEWED: yes|no
+#                       head にローカルレビューの記録（record-local-review.sh）があるか
 #   INLINE_COMMENTS / SUPPRESSED_COMMENTS （RESPONSE=review のとき）
+#   SEVERITY / REMAINING_HIGH / PREVIOUSLY_MISSED （RESPONSE=review のとき。get-latest-review.sh の値）
+#   COPILOT_NEEDED: yes|no （RESPONSE=review のとき）
+#                       次の push を Copilot に見せるか（ADR-0034）。直前のレビューに High が残る
+#                       （本文の形から重大度が分からないときを含む）か、そのレビューの後にユーザーの
+#                       追加の要望で周回を数え直したときに yes
 #   VERDICT: <判定>
 #     ACT                  未解決スレッドあり → 対応する（fix / decline / escalate）
-#     REREVIEW_NEEDED      対応を push したが再レビューを要求していない → 要求する
+#     LOCAL_REVIEW_NEEDED  対応を push したが head をローカルでレビューしていない → /code-review で
+#                          確かめて record-local-review.sh で記録する（Copilot に出す前にも要る）
+#     STOP_LOCAL_REVIEWED  High が残らず、対応した head はローカルでレビュー済み → 要求せずマージへ
+#     REREVIEW_NEEDED      High が残り、対応した head はローカルでレビュー済みだが、再レビューを
+#                          要求していない → 要求する
 #     STOP_DOCS_REVIEWED   文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR で、対応済み・head 未レビュー
 #                          → 依頼しない。文章は細部をいくらでも掘れるので、
 #                            指摘は最初のレビューで受けて周回を止める。最新のレビューが
@@ -44,6 +55,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/../../../scripts/lib/pr-url.sh"
+source "${SCRIPT_DIR}/../../../scripts/lib/local-review.sh"
 
 PR_URL="${1:-}"
 MAX_ROUNDS=5
@@ -104,6 +116,15 @@ if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_URL_CANONICAL" --u
   exit 1
 fi
 
+# head のローカルレビューの記録。取得できなければ、記録が無いとみなして判定を進めない
+# （Copilot に出すかどうかを誤るより、止めて知らせる）
+if ! local_shas=$(local_review_shas); then
+  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を取得できませんでした" >&2
+  exit 1
+fi
+local_reviewed=no
+grep -qxF "$head_sha" <<<"$local_shas" && local_reviewed=yes
+
 # PR の変更ファイルがすべて文書か。取得できない・1 件も無いときは文書だけとみなさない
 # （再レビューを求める側に倒す）
 docs_only() {
@@ -141,6 +162,7 @@ echo "HEAD: ${head_sha}"
 echo "REVIEWED: ${reviewed_sha}"
 echo "HEAD_REVIEWED: ${head_reviewed}"
 echo "UNRESOLVED: ${unresolved}"
+echo "LOCAL_REVIEWED: ${local_reviewed}"
 
 if [[ "$response" == "none" ]]; then
   echo "VERDICT: WAITING"
@@ -155,6 +177,21 @@ echo "REVIEW_ID: ${review_id}"
 echo "HEADLINE: $(sed -n 's/^HEADLINE: //p' <<<"$latest")"
 echo "INLINE_COMMENTS: ${inline}"
 echo "SUPPRESSED_COMMENTS: ${suppressed}"
+severity=$(sed -n 's/^SEVERITY: //p' <<<"$latest")
+remaining_high=$(sed -n 's/^REMAINING_HIGH: //p' <<<"$latest")
+missed=$(sed -n 's/^PREVIOUSLY_MISSED: //p' <<<"$latest")
+echo "SEVERITY: ${severity}"
+if [[ "$severity" == v2 ]]; then
+  echo "REMAINING_HIGH: ${remaining_high}"
+  echo "PREVIOUSLY_MISSED: ${missed}"
+fi
+# Copilot に見せるか。数え直しの印がレビューより後なら、指摘への対応ではない新しい仕事が入った
+copilot_needed=no
+if [[ "$severity" != v2 ]] || (( remaining_high > 0 )) \
+  || [[ -n "$last_reset_at" && "$last_reset_at" > "$last_review_at" ]]; then
+  copilot_needed=yes
+fi
+echo "COPILOT_NEEDED: ${copilot_needed}"
 # 段階ごとに 1 つの次の一手へ落とす。順序に意味がある:
 # レビュー失敗 → 未対応 → 要求し忘れ → 対応済み。
 # 一部だけ直して push した状態（未解決あり・head 未レビュー）では、要求より先に
@@ -170,6 +207,10 @@ elif [[ "$failed" == "yes" ]]; then
 elif [[ "$head_reviewed" == "no" ]]; then
   if docs_only; then
     echo "VERDICT: STOP_DOCS_REVIEWED"
+  elif [[ "$local_reviewed" == no ]]; then
+    echo "VERDICT: LOCAL_REVIEW_NEEDED"
+  elif [[ "$copilot_needed" == no ]]; then
+    echo "VERDICT: STOP_LOCAL_REVIEWED"
   elif (( round < MAX_ROUNDS )); then
     echo "VERDICT: REREVIEW_NEEDED"
   else
@@ -182,6 +223,6 @@ elif (( suppressed > 0 )); then
 else
   echo "VERDICT: STOP_CLEAN"
 fi
-if (( suppressed > 0 )); then
-  sed -n '/^--- suppressed ---$/,$p' <<<"$latest"
+if (( suppressed > 0 || ${missed:-0} > 0 )); then
+  sed -n '/^--- \(suppressed\|previously missed\) ---$/,$p' <<<"$latest"
 fi

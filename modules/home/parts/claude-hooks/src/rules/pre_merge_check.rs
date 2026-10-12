@@ -17,7 +17,9 @@
 //!    「〜なら外してよい」の条件は文言に列挙しない（どれかに当てはめる読み方を誘う）。
 //!    文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR は、一度でも自動レビューに成功
 //!    していれば検査しない。文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
-//!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める
+//!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める。
+//!    直前の bot レビューに High が残らず、その後に周回を数え直しておらず、head にローカルレビューの
+//!    記録（record-local-review.sh）があれば検査しない（ADR-0034。判定は decide-next.sh と同じ）
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
@@ -116,6 +118,120 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
         let files: Vec<&str> = s.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
         !files.is_empty() && files.iter().all(|f| f.starts_with(DOCS_DIR))
     })
+}
+
+/// Copilot のレビュー本文（v2）に残っている High の数。開いている指摘（解決した指摘と Previously missed の
+/// 節より前）と、Previously missed の節（次の節の見出し `<summary><strong>` まで）を数える。v2 の形でなければ
+/// 重大度が分からないので None。読み方は get-latest-review.sh と同じ
+fn remaining_high(body: &str) -> Option<usize> {
+    const HIGH: &str = "alt=\"High severity\"";
+    enum Section {
+        Open,
+        Between,
+        Missed,
+    }
+    if !body.contains("<!-- ccr-overview-v2 -->") {
+        return None;
+    }
+    let mut section = Section::Open;
+    let mut count = 0;
+    for line in body.lines() {
+        match section {
+            Section::Open => {
+                let lower = line.to_lowercase();
+                if lower.contains("resolved since last review")
+                    || lower.contains("previously missed")
+                {
+                    section = if line.contains("Previously missed") {
+                        Section::Missed
+                    } else {
+                        Section::Between
+                    };
+                    continue;
+                }
+                count += line.matches(HIGH).count();
+            }
+            Section::Between => {
+                if line.contains("Previously missed") {
+                    section = Section::Missed;
+                }
+            }
+            Section::Missed => {
+                if line.contains("<summary><strong>") {
+                    break;
+                }
+                count += line.matches(HIGH).count();
+            }
+        }
+    }
+    Some(count)
+}
+
+/// 最後の push を Copilot に見せずに済むか（ADR-0034）。直前の bot レビューに High が残らず（分かる形で）、
+/// その後に周回を数え直しておらず、head にローカルレビューの記録があれば true。印と記録は、書き込める人の
+/// コメントだけを数える（第三者が記録を偽って再レビューを外せないように）。確かめられないときは false
+fn local_review_covers(
+    dir: &std::path::Path,
+    owner: &str,
+    name: &str,
+    number: &str,
+    head_sha: &str,
+) -> bool {
+    let latest = gh::gh(
+        dir,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
+            "--jq",
+            "[.[] | select(.user.type == \"Bot\")] | last // empty | {body, submitted_at} | @json",
+        ],
+    )
+    .ok()
+    // --paginate はページごとに --jq を適用する。レビューは提出順に返るので最後の非空行が最新
+    .and_then(|s| {
+        s.lines()
+            .map(str::trim)
+            .rfind(|l| !l.is_empty())
+            .and_then(|l| serde_json::from_str::<Value>(l).ok())
+    });
+    let Some(latest) = latest else {
+        return false;
+    };
+    let reviewed_at = latest["submitted_at"].as_str().unwrap_or("");
+    if reviewed_at.is_empty() || remaining_high(latest["body"].as_str().unwrap_or("")) != Some(0) {
+        return false;
+    }
+    let Ok(marks) = gh::gh(
+        dir,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{owner}/{name}/issues/{number}/comments?per_page=100"),
+            "--jq",
+            ".[] | select(.author_association | IN(\"OWNER\", \"MEMBER\", \"COLLABORATOR\")) | select(.body | startswith(\"<!-- review-rounds-reset -->\") or startswith(\"<!-- local-review \")) | [.created_at, (.body | split(\"\\n\")[0])] | @tsv",
+        ],
+    ) else {
+        return false;
+    };
+    let mut recorded = false;
+    for line in marks.lines() {
+        let Some((at, first)) = line.split_once('\t') else {
+            continue;
+        };
+        // ISO 8601 は文字列の比較で時系列順
+        if first.starts_with("<!-- review-rounds-reset -->") && at > reviewed_at {
+            return false;
+        }
+        if first
+            .strip_prefix("<!-- local-review sha=")
+            .and_then(|rest| rest.split(' ').next())
+            .is_some_and(|sha| sha == head_sha)
+        {
+            recorded = true;
+        }
+    }
+    recorded
 }
 
 /// PR の base ブランチの今の先頭（GitHub の値）
@@ -615,13 +731,18 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
+                    // High が残らず、head をローカルでレビュー済みなら Copilot に見せなくてよい（ADR-0034）
+                    Some(sha)
+                        if !sha.is_empty()
+                            && sha != head_sha
+                            && local_review_covers(&dir, &owner, &name, number, &head_sha) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら再レビューを依頼してください。{}",
                         short(&head_sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
                     Some(sha) if sha != head_sha => unreviewed.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} で再レビューを依頼し、指摘に対応してからマージしてください。{}",
+                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。次の一手（ローカルレビューの記録か、~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} での再レビューの依頼）は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh https://github.com/{owner}/{name}/pull/{number} で決め、指摘に対応してからマージしてください。{}",
                         short(&head_sha),
                         short(&sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
