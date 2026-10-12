@@ -9,6 +9,7 @@
 #   Copilot の再レビューを外せないように。reset-rounds.sh の印と同じ）。取得に失敗したら 1 を返す。
 #   形は pre-merge-check（claude-hooks の pre_merge_check.rs）も読む（ADR-0034）
 
+# shellcheck disable=SC2034  # record-local-review.sh が使う
 LOCAL_REVIEW_MARK='<!-- local-review '
 
 local_review_shas() {
