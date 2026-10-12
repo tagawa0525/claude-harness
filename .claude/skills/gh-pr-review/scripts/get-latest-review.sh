@@ -82,7 +82,8 @@ suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" 
 # 外のアイコン（要約の **Findings:** の行は除く）があれば、形が変わって High を数え落としうるので、分からないとする。節の切り替えを見出しの行だけで行うのは、指摘の
 # 題名に同じ語が入りうるため。アイコンの無い指摘があれば、形が変わって数え落としうるので、重大度は
 # 分からない（unknown）とする。読み方は pre_merge_check.rs の remaining_high と同じ（ADR-0034）
-# mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で、mode=missed は Previously missed の節の行を出す
+# mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で出し、形の変化の印（指摘でない行のアイコンなど）は
+# 「<場所> none」で出す（件数には数えない）。mode=missed は Previously missed の節の行を出す
 SECTIONS_AWK='
   BEGIN { sec = "none"; depth = 0 }
   /<summary><strong>/ {
@@ -103,7 +104,7 @@ SECTIONS_AWK='
     else if (/alt="Low severity"/) print sec, "Low"
     else print sec, "none"
   }
-  mode == "items" && sec == "missed" && !/<summary>/ && /alt="[^"]* severity"/ { print "missed none" }
+  mode == "items" && sec == "missed" && !/<summary>/ && /alt="[^"]* severity"/ { print "missed-line none" }
   mode == "items" && sec == "none" && /alt="[^"]* severity"/ && !/\*\*Findings:\*\*/ { print "outside none" }
   mode == "missed" && sec == "missed" { print }
   /<details/ { if (sec != "none") depth++ }
@@ -150,7 +151,7 @@ if [[ "$severity" == v2 ]]; then
   done
 fi
 missed_count=0
-if [[ -n "$items$missed_part" ]]; then
+if grep -qF '<!-- ccr-overview-v2 -->' <<<"$body"; then
   missed_count=$(count_items '^missed ')
   echo "PREVIOUSLY_MISSED: ${missed_count}"
 fi
