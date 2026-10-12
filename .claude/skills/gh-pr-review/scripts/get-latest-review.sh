@@ -112,6 +112,7 @@ SECTIONS_AWK='
   # 節が閉じないまま終わる本文（切れた本文）は、残りの指摘を数え落としうる
   END { if (mode == "items" && sec != "none") print "eof none" }
 '
+VERDICT_RE='^### .*(Approval recommended|Changes recommended|Needs a closer look)'
 severity=unknown
 items=""
 missed_part=""
@@ -119,7 +120,10 @@ if grep -qF '<!-- ccr-overview-v2 -->' <<<"$body"; then
   items=$(awk -v mode=items "$SECTIONS_AWK" <<<"$body")
   # Previously missed はスレッドが無く本文にしか無いので、重大度が分からなくても数えて見せる
   missed_part=$(awk -v mode=missed "$SECTIONS_AWK" <<<"$body")
-  grep -q ' none$' <<<"$items" || severity=v2
+  # 判定の見出しが無い本文（切れた本文、完走しなかったレビュー）は指摘を数え落としうる
+  if ! grep -q ' none$' <<<"$items" && grep -qE "$VERDICT_RE" <<<"$body"; then
+    severity=v2
+  fi
 fi
 # count_items <正規表現>: items のうち一致する行の数（見つからないときの grep の 1 で、pipefail と
 # set -e が呼び出し元の代入ごと止めないようにする）

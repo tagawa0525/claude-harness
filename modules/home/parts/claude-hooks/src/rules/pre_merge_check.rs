@@ -136,7 +136,18 @@ fn remaining_high(body: &str) -> Option<usize> {
         Missed,
         Known,
     }
-    if !body.contains("<!-- ccr-overview-v2 -->") {
+    // 判定の見出しが無い本文（切れた本文、完走しなかったレビュー）は指摘を数え落としうる
+    let verdict = |line: &str| {
+        line.starts_with("### ")
+            && [
+                "Approval recommended",
+                "Changes recommended",
+                "Needs a closer look",
+            ]
+            .iter()
+            .any(|v| line.contains(v))
+    };
+    if !body.contains("<!-- ccr-overview-v2 -->") || !body.lines().any(verdict) {
         return None;
     }
     let has_icon = |line: &str| line.contains("alt=\"") && line.contains(" severity\"");
