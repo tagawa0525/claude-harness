@@ -77,7 +77,8 @@ suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" 
 # 開いている指摘（その回の新しい指摘と、前の周から残る指摘。"- " で始まる行）、"Previously missed" は
 # 前の周で見落とした、変わっていないコードへの指摘（入れ子の <summary> の行。本文にだけあってスレッドに
 # ならない）。ほかの節（解決した指摘、"What changed in this PR" の変更の一覧など）は数えない。節は外側の
-# </details> で閉じる（Previously missed の中の入れ子の <details> は深さで数える）。節の切り替えを見出しの行だけで行うのは、指摘の
+# </details> で閉じる（Previously missed の中の入れ子の <details> は深さで数える）。知らない見出しの節や、
+# 開いている指摘の節の「- 」で始まらない行があれば、形が変わって High を数え落としうるので、分からないとする。節の切り替えを見出しの行だけで行うのは、指摘の
 # 題名に同じ語が入りうるため。アイコンの無い指摘があれば、形が変わって数え落としうるので、重大度は
 # 分からない（unknown）とする。読み方は pre_merge_check.rs の remaining_high と同じ（ADR-0034）
 # mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で、mode=missed は Previously missed の節の行を出す
@@ -87,13 +88,15 @@ SECTIONS_AWK='
     title = tolower($0)
     sub(/.*<summary><strong>[0-9 ]*/, "", title)
     if (title ~ /^open/) sec = "open"
-    else if (title ~ /previously missed/) sec = "missed"
-    else sec = "other"
+    else if (title ~ /^previously missed/) sec = "missed"
+    else if (title ~ /^(resolved since last review|what changed in this pr)/) sec = "other"
+    else { sec = "other"; print "heading none" }
     depth = 1
     next
   }
   /<details/ { if (sec != "other") depth++ }
   /<\/details>/ { if (sec != "other" && --depth == 0) sec = "other"; next }
+  mode == "items" && sec == "open" && $0 ~ /[^[:space:]]/ && $0 !~ /^[[:space:]]*- / { print "open none"; next }
   mode == "missed" { if (sec == "missed") print; next }
   (sec == "open" && $0 ~ /^[[:space:]]*- /) || (sec == "missed" && $0 ~ /<summary>/) {
     if (match($0, /alt="(High|Medium|Low) severity"/)) print sec, substr($0, RSTART + 5, RLENGTH - 15)

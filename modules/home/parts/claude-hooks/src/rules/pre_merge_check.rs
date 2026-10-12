@@ -123,7 +123,8 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
 /// Copilot のレビュー本文（v2）に残っている High の数。節は見出しの行（`<summary><strong>`）で分かれ、
 /// "N open findings"（2026-09 の本文は "Open (N)"）の節の指摘（"- " で始まる行）と、Previously missed の節の指摘（入れ子の `<summary>` の行）を
 /// 数え、ほかの節（解決した指摘、変更の一覧など）は数えない。節は外側の `</details>` で閉じる
-/// （Previously missed の中の入れ子の `<details>` は深さで数える）。節の切り替えを見出しの行だけで行うのは、指摘の題名に同じ語が入りうるため。v2 の形でないとき、
+/// （Previously missed の中の入れ子の `<details>` は深さで数える）。知らない見出しの節や、開いている指摘の節の
+/// 「- 」で始まらない行があれば、形が変わって High を数え落としうるので None。節の切り替えを見出しの行だけで行うのは、指摘の題名に同じ語が入りうるため。v2 の形でないとき、
 /// 重大度のアイコンの無い指摘があるとき（形が変わって数え落としうる）は、分からないので None。
 /// 読み方は get-latest-review.sh と同じ
 fn remaining_high(body: &str) -> Option<usize> {
@@ -149,10 +150,14 @@ fn remaining_high(body: &str) -> Option<usize> {
                 .trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ');
             section = if title.starts_with("open") {
                 Section::Open
-            } else if title.contains("previously missed") {
+            } else if title.starts_with("previously missed") {
                 Section::Missed
-            } else {
+            } else if title.starts_with("resolved since last review")
+                || title.starts_with("what changed in this pr")
+            {
                 Section::Other
+            } else {
+                return None;
             };
             depth = 1;
             continue;
@@ -168,6 +173,12 @@ fn remaining_high(body: &str) -> Option<usize> {
                 }
             }
             continue;
+        }
+        if section == Section::Open
+            && !line.trim().is_empty()
+            && !line.trim_start().starts_with("- ")
+        {
+            return None;
         }
         let finding = (section == Section::Open && line.trim_start().starts_with("- "))
             || (section == Section::Missed && line.contains("<summary>"));

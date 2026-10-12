@@ -29,8 +29,9 @@ if [[ ! "$reviewed" =~ ^[0-9a-f]{7,40}$ ]]; then
 fi
 shift 2
 for n in "$@"; do
-  if [[ ! "$n" =~ ^[0-9]+$ ]]; then
-    echo "${USAGE}（件数は 0 以上の整数: '$n'）" >&2
+  # 読む側は high=0 の字面で比べるので、先頭の 0 を許さない
+  if [[ ! "$n" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    echo "${USAGE}（件数は 0 以上の整数で、先頭に 0 を付けない: '$n'）" >&2
     exit 1
   fi
 done
