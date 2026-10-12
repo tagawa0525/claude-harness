@@ -984,6 +984,27 @@ fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- $(sev Medium) [quot
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "REMAINING_HIGH: 1"
 
+it "get-latest-review: 指摘の無い v2 の本文でも PREVIOUSLY_MISSED: 0 を出す"
+fake_gh_review_body "$(v2_body "🟢 Approval recommended" "")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "PREVIOUSLY_MISSED: 0"
+
+it "get-latest-review: Previously missed の節の指摘でない行のアイコンは、件数に数えない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+<details>
+<summary>$(sev Medium) one</summary>
+
+$(sev Medium) described in the detail
+</details>
+</details>"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
