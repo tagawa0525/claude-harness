@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-12
 requires: [ADR-0004, ADR-0021, ADR-0023]
 supersedes: []
@@ -96,5 +96,8 @@ Copilot の 1 周を待たずに潰せる。
 - `.claude/tests/scripts/gh-pr-review.sh`: `get-latest-review.sh` の重大度の数え方（開いている指摘、解決した指摘、
   Previously missed、旧い形）、`decide-next.sh` の判定（残っている High、数え直し、ローカルレビューの記録の有無）、`request-rereview.sh` が
   記録の無い head で要求しないこと、`record-local-review.sh` のコメントの形
-- `pre_merge_check.rs` のテスト: 検査 8 が、High の残らないレビューの後のローカルレビュー済みの head を通し、
-  残っている High、旧い形、数え直し、記録の無い head、書き込めない人の記録では止めること
+- `.claude/tests/hooks.sh` の pre-merge-check のテスト: 検査 8 が、High の残らないレビューの後のローカルレビュー済みの
+  head を通し、残っている High、Previously missed の High、旧い形、数え直し、記録の無い head、前の head の記録、
+  印を取得できないときは止めること。印は書き込める人のコメントだけを読むこと
+- 本文の読み方は `get-latest-review.sh`（bash）と `pre_merge_check.rs`（`remaining_high`）の 2 か所にあり、
+  共有できないため、それぞれのテストで同じ規則を確かめている（ADR-0004 の `docs/` の判定と同じ扱い）
