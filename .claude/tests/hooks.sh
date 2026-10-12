@@ -1549,6 +1549,28 @@ make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
+it "pre-merge-check: 知っている節の外に重大度のアイコンがあれば（見出しの形が変わった）止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><b>1 open finding</b></summary>
+
+- $(merge_sev High) [h](u#discussion_r1) · New
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: Previously missed の 1 行の <details> の High で止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+<details><summary>$(merge_sev High) one line</summary>detail</details>
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
 it "pre-merge-check: 印のコメントを取得できなければ止める"
 make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" 'exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")

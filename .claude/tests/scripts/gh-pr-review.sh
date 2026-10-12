@@ -282,6 +282,16 @@ assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 assert_not_contains "$(fake_log gh)" "pr comment"
 
+it "record-local-review: 権限を問い合わせられなければ、push できないとは言わずにエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo "gh: HTTP 502" >&2; exit 1 ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "権限を取得できませんでした"
+assert_not_contains "$out" "push できない"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
 it "record-local-review: 件数の先頭に 0 があれば、コメントを付けずに使い方を出してエラー"
 # 読む側は high=0 の字面で比べるので、high=00 は High のある記録に見える
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
@@ -905,6 +915,56 @@ fake_gh_local_records "$TEST_ROOT/c2.json"
 out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
 assert_eq 0 $?
 assert_eq "bbb2222" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
+
+it "get-latest-review: 知っている節の外に重大度のアイコンがあれば分からない（見出しの形が変わった）"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+**Findings:** 1 $(sev High)
+
+<details open>
+<summary><b>1 open finding</b></summary>
+
+- $(sev High) [h](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 要約の行（**Findings:**）のアイコンは、節の外でも分からないにしない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+**Findings:** 1 $(sev Medium)
+
+<details open>
+<summary><strong>Open (1)</strong></summary>
+
+- $(sev Medium) [m](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_MEDIUM: 1"
+
+it "get-latest-review: Previously missed の節の <summary> でない行にアイコンがあれば分からない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+- $(sev High) missed as a bullet
+</details>"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: Previously missed の 1 行の <details> の指摘も数える"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+<details><summary>$(sev High) one line</summary>detail</details>
+</details>"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
 
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
