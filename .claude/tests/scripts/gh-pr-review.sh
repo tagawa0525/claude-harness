@@ -28,12 +28,13 @@ declare -A REST_ARGS=(
   [get-pr-info.sh]="" [get-review-comments.sh]="--unresolved" [get-latest-review.sh]=""
   [decide-next.sh]="" [resolve-thread.sh]="11" [reply-to-comment.sh]="11 body"
   [request-rereview.sh]="" [reset-rounds.sh]="reason" [gh-wait-review.sh]=""
-  [gh-review-requests.sh]=""
+  [gh-review-requests.sh]="" [record-local-review.sh]="0 0 0"
 )
 for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comments.sh" \
   "$REVIEW_SCRIPTS/get-latest-review.sh" "$REVIEW_SCRIPTS/decide-next.sh" \
   "$REVIEW_SCRIPTS/resolve-thread.sh" "$REVIEW_SCRIPTS/reply-to-comment.sh" \
   "$REVIEW_SCRIPTS/request-rereview.sh" "$REVIEW_SCRIPTS/reset-rounds.sh" \
+  "$REVIEW_SCRIPTS/record-local-review.sh" \
   "$SCRIPTS_DIR/gh-wait-review.sh" "$SCRIPTS_DIR/gh-review-requests.sh"; do
   read -ra rest <<<"${REST_ARGS[$(basename "$script")]}"
   # owner と repo は案内のコマンドに書くので、GitHub の名前に使えない文字（; や空白）を含む URL も拒む
@@ -154,16 +155,19 @@ assert_contains "$(fake_log gh)" "-F id=T2"
 # 依頼は requested_reviewers API に一本化し、要求が登録されたことを timeline の
 # review_requested イベントで確かめてから待機する
 
-# fake_gh_rereview: POST 後にだけ review_requested が現れる gh。
-# 引数に "nogrow" を渡すと POST しても timeline が増えない状況を作る
+# fake_gh_rereview [grow|nogrow] [locals]: POST 後にだけ review_requested が現れる gh。
+# 引数に "nogrow" を渡すと POST しても timeline が増えない状況を作る。
+# locals はローカルレビューの記録の SHA を出力するコマンド（既定は head の def5678）
 fake_gh_rereview() {
-  local grow="${1:-grow}"
+  local grow="${1:-grow}" locals="${2:-echo def5678}"
   rm -f "$TEST_ROOT/requested"
   local event="if [ -f \"$TEST_ROOT/requested\" ]; then echo 2026-09-08T00:00:00Z; fi"
   [[ "$grow" == "nogrow" ]] && event=":"
   jq -n '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: "2026-09-08T00:05:00Z"}]}' \
     > "$TEST_ROOT/reviews.json"
   make_fake_gh "\"auth status\"*) ;;
+  \"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $event ;;
   \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
@@ -178,7 +182,7 @@ assert_contains "$(fake_log gh)" "api -X POST repos/{owner}/{repo}/pulls/1/reque
 assert_contains "$(fake_log gh)" "reviewers[]=copilot-pull-request-reviewer[bot]"
 
 it "request-rereview: @copilot メンションコメントは投稿しない（応答するのは swe-agent でレビューは走らない）"
-assert_not_contains "$(fake_log gh)" "issues/1/comments"
+assert_not_contains "$(fake_log gh)" "@copilot"
 
 it "request-rereview: 登録された review_requested の時刻を基準に待機する"
 assert_contains "$out" "SINCE: 2026-09-08T00:00:00Z"
@@ -194,12 +198,62 @@ assert_contains "$err" "/gh-actions-check $PR_URL "
 
 it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
 make_fake_gh "\"auth status\"*) ;;
+  \"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) ;;
   \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 1 $?
-assert_not_contains "$(fake_log gh)" "issues/1/comments"
+assert_contains "$(fake_log gh)" "requested_reviewers"
+assert_not_contains "$(fake_log gh)" "@copilot"
 assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
+
+it "request-rereview: head のローカルレビューの記録が無ければ、要求せずに記録の仕方を示して止まる"
+# Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0034）
+fake_gh_rereview grow true
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_not_contains "$(fake_log gh)" "requested_reviewers"
+assert_contains "$err" "record-local-review.sh $PR_URL "
+
+it "request-rereview: 記録が前の head のものなら要求しない"
+fake_gh_rereview grow 'echo abc1234'
+err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_not_contains "$(fake_log gh)" "requested_reviewers"
+
+it "request-rereview: 記録は書き込みの権限を持つ人のコメントだけを受け付ける"
+fake_gh_rereview
+"$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" >/dev/null 2>&1
+assert_contains "$(grep local-review "$TEST_ROOT/gh.log")" "author_association"
+
+# ===========================================================================
+# gh-pr-review/scripts/record-local-review.sh: ローカルレビューの結果を PR に残す
+# ===========================================================================
+# Copilot に再依頼する前と、再依頼せずに終える前に、head をローカルの /code-review にかけた
+# ことと、重大度ごとの件数を残す。decide-next.sh、request-rereview.sh、pre-merge-check が読む
+
+it "record-local-review: head の SHA と重大度ごとの件数を印にしたコメントを PR に付ける"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "pr comment 1 --body"*) ;;'
+"$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" 1 2 0
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "<!-- local-review sha=def5678 high=1 medium=2 low=0 -->"
+
+it "record-local-review: 件数が数でなければ、コメントを付けずに使い方を出してエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" 1 x 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: head を取得できなければ、コメントを付けずにエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) exit 1 ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" 0 0 0 2>&1)
+assert_eq 1 $?
+assert_not_contains "$(fake_log gh)" "pr comment"
 
 # ===========================================================================
 # gh-pr-review/scripts/decide-next.sh: 周回と応答はレビュー要求とレビュー提出で数える
@@ -212,16 +266,19 @@ OPEN_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","li
 OPEN_THREAD_WITH_REPLY='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null},{"databaseId":12,"id":"C2","body":"Fixed in abc","author":{"__typename":"User","login":"me"},"createdAt":"2026-09-08T02:40:00Z","url":"u2","replyTo":{"databaseId":11}}]}}'
 DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
 
-# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread] [files] [resets]
+# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread] [files] [resets] [locals]
 # レビュー要求2件（00:00 と 02:00）・レビュー1件（インライン指摘2件）の PR を模す。
 # 既定では head とレビュー対象が一致し、スレッドは解決済み。
 # files は PR の変更ファイルを出力するコマンド（既定はコードのファイル 1 件）。
 # gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
 # resets は周回を数え直した印のコメントの時刻を出力するコマンド（既定は無し）
+# locals はローカルレビューの記録の SHA を出力するコマンド（既定は対応を push した head の def5678）。
+# レビューの本文は v2 の形でないので、重大度は分からない（High が残るとみなす）
 fake_gh_decide() {
   local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
-  local files="${5:-echo a.txt}" resets="${6:-true}"
+  local files="${5:-echo a.txt}" resets="${6:-true}" locals="${7:-echo def5678}"
   make_fake_gh "\"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
   \"pr view 1 --json headRefOid\"*) echo $head ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
@@ -609,6 +666,163 @@ it "decide-next: 文書だけの PR でも、最初のレビューが失敗し�
 fake_gh_failed_after_success 'echo docs/adr/0004-x.md' "$DONE_THREAD" "Copilot wasn't able to review any files in this pull request."
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REVIEW_FAILED"
+
+# ===========================================================================
+# 重大度: Copilot の本文（v2）で残っている High を数え、再依頼を決める（ADR-0034）
+# ===========================================================================
+# 2026-09-19 からの本文は <!-- ccr-overview-v2 --> で始まり、指摘ごとに重大度のアイコン（alt="High severity"）を
+# 持つ。開いている指摘（その回の新しい指摘には「· New」）、解決した指摘、Previously missed（前の周で見落とした、
+# 変わっていないコードへの指摘。本文だけにあり、スレッドにならない）の節に分かれる
+
+# sev <High|Medium|Low>: 本文の重大度のアイコン
+sev() {
+  printf '<picture><source media="(prefers-color-scheme: dark)" srcset="https://github.githubassets.com/static/images/icons/copilot-code-review/%s-v2-dark.svg"><img src="x.png" alt="%s severity" width="12" height="12"></picture>' \
+    "${1,,}" "$1"
+}
+
+# v2_body <headline> <open の行> [resolved の行] [previously missed の行]
+v2_body() {
+  printf '%s\n' '<!-- ccr-overview-v2 -->' '' "### $1" '' 'summary' '' '<details open>' \
+    '<summary><strong>open findings</strong></summary>' '' "$2" '</details>'
+  if [[ -n "${3:-}" ]]; then
+    printf '%s\n' '' '<details>' '<summary><strong>1 resolved since last review</strong></summary>' '' "$3" '</details>'
+  fi
+  if [[ -n "${4:-}" ]]; then
+    printf '%s\n' '' '<details>' '<summary><strong>Previously missed (1)</strong></summary>' '' \
+      "In code that hasn't changed since last review" '' '<details>' "<summary>$4</summary>" '' \
+      '`src/a.rs:10`' '' 'The detail of the missed finding.' '</details>' '</details>'
+  fi
+  printf '%s\n' '' '🧠 **Review effort:** Lite'
+}
+
+BODY_MEDIUM=$(v2_body "🟡 Changes recommended" \
+  "- $(sev Medium) [m](u#discussion_r1) · New
+- $(sev Low) [l](u#discussion_r2) · New" \
+  "- $(sev High) [resolved high](u#discussion_r0)")
+BODY_NEW_HIGH=$(v2_body "🟡 Changes recommended" "- $(sev High) [h](u#discussion_r3) · New")
+BODY_CARRIED_HIGH=$(v2_body "🟡 Changes recommended" "- $(sev High) [h](u#discussion_r3)")
+BODY_MISSED_HIGH=$(v2_body "🔵 Needs a closer look" "" "" "$(sev High) Missed high")
+BODY_MISSED_MEDIUM=$(v2_body "🔵 Needs a closer look" "" "" "$(sev Medium) Missed medium")
+
+it "get-latest-review: v2 の本文は、開いている指摘を重大度ごとに数え、解決した指摘は数えない"
+fake_gh_review_body "$BODY_MEDIUM" 101 102
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 0"
+assert_contains "$out" "REMAINING_MEDIUM: 1"
+assert_contains "$out" "REMAINING_LOW: 1"
+
+it "get-latest-review: 前の周から残る（New の付かない）High も数える"
+fake_gh_review_body "$BODY_CARRIED_HIGH" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+
+it "get-latest-review: Previously missed の指摘を数え、本文を見せる（スレッドが無いので）"
+fake_gh_review_body "$BODY_MISSED_HIGH"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+assert_contains "$out" "--- previously missed ---"
+assert_contains "$out" "The detail of the missed finding."
+
+it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
+fake_gh_review_body "### 🟡 Changes recommended" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+assert_not_contains "$out" "REMAINING_HIGH"
+
+# fake_gh_severity <body> [locals] [resets] [files]
+# 要求 2 件（00:00、02:00）、レビュー 1 件（03:00、abc1234 を見た）の PR で、対応を def5678 として push した後。
+# locals はローカルレビューの記録の SHA、resets は数え直しの印の時刻を出力するコマンド（既定はどちらも無し）
+fake_gh_severity() {
+  local locals="${2:-true}" resets="${3:-true}" files="${4:-echo a.txt}"
+  jq -n --arg body "$1" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
+  make_fake_gh "\"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;"
+}
+
+it "decide-next: High が残らず、head のローカルレビューの記録があれば、Copilot に出さず STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "LOCAL_REVIEWED: yes"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: ローカルレビューの記録は書き込みの権限を持つ人のコメントだけを受け付ける"
+assert_contains "$(grep local-review "$TEST_ROOT/gh.log")" "author_association"
+
+it "decide-next: High が残らなくても、head のローカルレビューの記録が無ければ LOCAL_REVIEW_NEEDED"
+fake_gh_severity "$BODY_MEDIUM"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "LOCAL_REVIEWED: no"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: 記録が前の head のものなら LOCAL_REVIEW_NEEDED"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: High が残っていても、Copilot に出す前にまず LOCAL_REVIEW_NEEDED"
+fake_gh_severity "$BODY_NEW_HIGH"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: 新しい High があれば、ローカルレビューの後に REREVIEW_NEEDED"
+fake_gh_severity "$BODY_NEW_HIGH" 'echo def5678'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: 前の周から残る High も REREVIEW_NEEDED"
+fake_gh_severity "$BODY_CARRIED_HIGH" 'echo def5678'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: Previously missed の High も REREVIEW_NEEDED"
+fake_gh_severity "$BODY_MISSED_HIGH" 'echo def5678'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: Previously missed が Medium だけなら STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_MISSED_MEDIUM" 'echo def5678'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: 重大度が分からない本文（v2 でない）は High が残るとみなして REREVIEW_NEEDED"
+fake_gh_severity "### 🟡 Changes recommended" 'echo def5678'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: High が残らなくても、レビューの後に周回を数え直していれば REREVIEW_NEEDED"
+# ユーザーの追加の要望に対応した変更は、指摘への対応ではない新しい仕事なので Copilot に見せる
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678' 'echo 2026-09-08T04:00:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+
+it "decide-next: レビューより前の数え直しは、High が残らなければ STOP_LOCAL_REVIEWED のまま"
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678' 'echo 2026-09-08T01:00:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: 文書だけの PR は、ローカルレビューの記録が無くても STOP_DOCS_REVIEWED（ADR-0004）"
+fake_gh_severity "$BODY_NEW_HIGH" true true 'echo docs/adr/0004-x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: ローカルレビューの記録を取得できなければ、判定せずにエラー"
+fake_gh_severity "$BODY_MEDIUM" 'exit 1'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$out" "VERDICT:"
 
 # ===========================================================================
 # レビュー要求の取得失敗は「要求なし」と区別する
