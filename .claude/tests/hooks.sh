@@ -1365,15 +1365,17 @@ detail
 </details>
 </details>"
 
-# make_fake_gh_merge_local <body> <comments>
+# make_fake_gh_merge_local <body> <comments> [check_run]
 # 最新の bot レビュー（03:00 に old を見た）の本文が body の PR。comments は、書き込める人の
-# 印（数え直しとローカルレビューの記録）を「時刻<TAB>本文の 1 行目」の行で出力するコマンド
+# 印（数え直しとローカルレビューの記録）を「時刻<TAB>本文の 1 行目」の行で出力するコマンド。
+# check_run は head のチェック 1 件の JSON（既定は CI の成功）
 make_fake_gh_merge_local() {
+  local check_run="${3:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
   jq -cn --arg body "$1" '{body: $body, submitted_at: "2026-09-08T03:00:00Z"}' > "$TEST_ROOT/latest-review.json"
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
-  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo '"'$check_run'"' ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*submitted_at*) cat "'"$TEST_ROOT/latest-review.json"'" ;;
@@ -1436,6 +1438,41 @@ make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
   "printf '%s\t%s\n' 2026-09-08T02:00:00Z '<!-- review-rounds-reset -->' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: 最後の push で Copilot のレビューの実行が失敗していれば、記録があっても止める"
+make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" "$LOCAL_ABC" \
+  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビューが実行されていません"
+
+it "pre-merge-check: 指摘の題名に節の見出しと同じ語があっても、後ろの High で止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>2 open findings</strong></summary>
+
+- $(merge_sev Medium) [Handle the Previously missed and resolved since last review text](u#discussion_r1) · New
+- $(merge_sev High) [h](u#discussion_r2) · New
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 重大度のアイコンの無い指摘があれば（重大度が分からない）止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>1 open finding</strong></summary>
+
+- [h](u#discussion_r2) · New
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 最新の bot レビューは Copilot のものだけを読む"
+make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" "$LOCAL_ABC"
+run_hook pre-merge-check "$MERGE_CMD" >/dev/null
+assert_contains "$(grep submitted_at "$TEST_ROOT/gh.log")" "copilot-pull-request-reviewer[bot]"
 
 it "pre-merge-check: 印のコメントを取得できなければ止める"
 make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" 'exit 1'

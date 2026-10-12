@@ -28,7 +28,7 @@ declare -A REST_ARGS=(
   [get-pr-info.sh]="" [get-review-comments.sh]="--unresolved" [get-latest-review.sh]=""
   [decide-next.sh]="" [resolve-thread.sh]="11" [reply-to-comment.sh]="11 body"
   [request-rereview.sh]="" [reset-rounds.sh]="reason" [gh-wait-review.sh]=""
-  [gh-review-requests.sh]="" [record-local-review.sh]="0 0 0"
+  [gh-review-requests.sh]="" [record-local-review.sh]="def5678 0 0 0"
 )
 for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comments.sh" \
   "$REVIEW_SCRIPTS/get-latest-review.sh" "$REVIEW_SCRIPTS/decide-next.sh" \
@@ -233,17 +233,17 @@ assert_contains "$(grep local-review "$TEST_ROOT/gh.log")" "author_association"
 # Copilot に再依頼する前と、再依頼せずに終える前に、head をローカルの /code-review にかけた
 # ことと、重大度ごとの件数を残す。decide-next.sh、request-rereview.sh、pre-merge-check が読む
 
-it "record-local-review: head の SHA と重大度ごとの件数を印にしたコメントを PR に付ける"
+it "record-local-review: レビューした SHA と重大度ごとの件数を印にしたコメントを PR に付ける"
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
   "pr comment 1 --body"*) ;;'
-"$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" 1 2 0
+"$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 2 0
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "<!-- local-review sha=def5678 high=1 medium=2 low=0 -->"
 
 it "record-local-review: 件数が数でなければ、コメントを付けずに使い方を出してエラー"
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
   "pr comment 1 --body"*) ;;'
-out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" 1 x 0 2>&1)
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 x 0 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "Usage:"
 assert_not_contains "$(fake_log gh)" "pr comment"
@@ -251,8 +251,23 @@ assert_not_contains "$(fake_log gh)" "pr comment"
 it "record-local-review: head を取得できなければ、コメントを付けずにエラー"
 make_fake_gh '"pr view 1 --json headRefOid"*) exit 1 ;;
   "pr comment 1 --body"*) ;;'
-out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" 0 0 0 2>&1)
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 0 0 0 2>&1)
 assert_eq 1 $?
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: レビューした SHA が PR の head でなければ、コメントを付けずにエラー"
+# レビューの後に head が動いた（push、自動の修正）なら、その head はレビューしていない
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" abc1234 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: SHA が 16 進の文字列でなければ、コメントを付けずに使い方を出してエラー"
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" HEAD 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
 assert_not_contains "$(fake_log gh)" "pr comment"
 
 # ===========================================================================
@@ -724,6 +739,39 @@ out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "REMAINING_HIGH: 1"
 assert_contains "$out" "PREVIOUSLY_MISSED: 1"
 assert_contains "$out" "--- previously missed ---"
+assert_contains "$out" "The detail of the missed finding."
+
+it "get-latest-review: 指摘の題名に節の見出しと同じ語があっても、後ろの High を数える"
+# 節の切り替えは見出しの行（<summary><strong>）だけで行う
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- $(sev Medium) [Handle the Previously missed and resolved since last review text](u#discussion_r1) · New
+- $(sev High) [h](u#discussion_r2) · New")" 101 102
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+assert_contains "$out" "PREVIOUSLY_MISSED: 0"
+
+it "get-latest-review: v2 でも、重大度のアイコンの無い指摘があれば重大度が分からない（0 と数えない）"
+# アイコンの形が変われば数え落とすので、High が無いと誤らず、分からない側に倒す
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- [h](u#discussion_r2) · New")" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: Previously missed の指摘にアイコンが無ければ重大度が分からない"
+fake_gh_review_body "$(v2_body "🔵 Needs a closer look" "" "" "Missed without icon")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 指摘の無い v2 の本文は、High が 0（分からないではない）"
+fake_gh_review_body "$(v2_body "🟢 Approval recommended" "")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 0"
+
+it "decide-next: head がレビュー済みで、スレッドの無い Previously missed だけが残れば STOP_PREVIOUSLY_MISSED"
+# 指摘なし（STOP_CLEAN）と区別し、本文を読んで処置を決めさせる
+fake_gh_review_body "$BODY_MISSED_MEDIUM"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "HEAD_REVIEWED: yes"
+assert_contains "$out" "VERDICT: STOP_PREVIOUSLY_MISSED"
 assert_contains "$out" "The detail of the missed finding."
 
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
