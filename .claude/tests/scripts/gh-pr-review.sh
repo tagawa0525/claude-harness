@@ -774,6 +774,31 @@ assert_contains "$out" "HEAD_REVIEWED: yes"
 assert_contains "$out" "VERDICT: STOP_PREVIOUSLY_MISSED"
 assert_contains "$out" "The detail of the missed finding."
 
+it "get-latest-review: 見出しが Open (N) の形でも開いている指摘を数え、変更の一覧の節は数えない"
+# 2026-09 の本文は「Open (N)」、後の本文は「N open findings」。「What changed in this PR」の節の
+# 箇条書きは指摘ではない
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+## Copilot review overview
+
+**Findings:** 1 $(sev High)
+
+<details open>
+<summary><strong>Open (1)</strong></summary>
+
+- $(sev High) [h](#discussion_r1) · New
+</details>
+
+<details>
+<summary><strong>What changed in this PR</strong></summary>
+
+**Changes:**
+- a change without severity
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 1"
+
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")

@@ -1458,6 +1458,28 @@ make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
+it "pre-merge-check: 見出しが Open (N) の形でも、開いている High で止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>Open (1)</strong></summary>
+
+- $(merge_sev High) [h](#discussion_r1) · New
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 変更の一覧の節（What changed in this PR）の箇条書きは指摘として数えない"
+make_fake_gh_merge_local "$MERGE_BODY_MEDIUM
+
+<details>
+<summary><strong>What changed in this PR</strong></summary>
+
+- a change without severity
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
 it "pre-merge-check: 重大度のアイコンの無い指摘があれば（重大度が分からない）止める"
 make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
 
