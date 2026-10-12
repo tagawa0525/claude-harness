@@ -1543,6 +1543,12 @@ make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
+it "pre-merge-check: 同じ head の後の記録に High があれば、前の High の無い記録があっても止める"
+make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
+  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=0 low=0 -->' 2026-09-08T05:00:00Z '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
 it "pre-merge-check: 印のコメントを取得できなければ止める"
 make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" 'exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")

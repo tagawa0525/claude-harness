@@ -157,9 +157,9 @@ assert_contains "$(fake_log gh)" "-F id=T2"
 
 # fake_gh_rereview [grow|nogrow] [locals]: POST 後にだけ review_requested が現れる gh。
 # 引数に "nogrow" を渡すと POST しても timeline が増えない状況を作る。
-# locals はローカルレビューの記録の SHA を出力するコマンド（既定は head の def5678）
+# locals はローカルレビューの記録の「SHA High の数」を出力するコマンド（既定は head の def5678）
 fake_gh_rereview() {
-  local grow="${1:-grow}" locals="${2:-echo def5678}"
+  local grow="${1:-grow}" locals="${2:-echo def5678 0}"
   rm -f "$TEST_ROOT/requested"
   local event="if [ -f \"$TEST_ROOT/requested\" ]; then echo 2026-09-08T00:00:00Z; fi"
   [[ "$grow" == "nogrow" ]] && event=":"
@@ -199,7 +199,7 @@ assert_contains "$err" "/gh-actions-check $PR_URL "
 it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
 make_fake_gh "\"auth status\"*) ;;
   \"pr view 1 --json headRefOid\"*) echo def5678 ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 0 ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) ;;
   \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
@@ -222,7 +222,7 @@ assert_contains "$err" "request-rereview.sh $PR_URL"
 assert_not_contains "$err" "decide-next.sh"
 
 it "request-rereview: 記録が前の head のものなら要求しない"
-fake_gh_rereview grow 'echo abc1234'
+fake_gh_rereview grow 'echo abc1234 0'
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 1 $?
 assert_not_contains "$(fake_log gh)" "requested_reviewers"
@@ -240,6 +240,7 @@ assert_contains "$(grep local-review "$TEST_ROOT/gh.log")" "author_association"
 
 it "record-local-review: レビューした SHA と重大度ごとの件数を印にしたコメントを PR に付ける"
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
   "pr comment 1 --body"*) ;;'
 "$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 2 0
 assert_eq 0 $?
@@ -247,6 +248,7 @@ assert_contains "$(fake_log gh)" "<!-- local-review sha=def5678 high=1 medium=2 
 
 it "record-local-review: 件数が数でなければ、コメントを付けずに使い方を出してエラー"
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
   "pr comment 1 --body"*) ;;'
 out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 x 0 2>&1)
 assert_eq 1 $?
@@ -263,8 +265,19 @@ assert_not_contains "$(fake_log gh)" "pr comment"
 it "record-local-review: レビューした SHA が PR の head でなければ、コメントを付けずにエラー"
 # レビューの後に head が動いた（push、自動の修正）なら、その head はレビューしていない
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
   "pr comment 1 --body"*) ;;'
 out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" abc1234 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: リポジトリに push できなければ（上流の PR）、コメントを付けずにエラー"
+# 書き込めない人の記録は読む側が数えないので、付けても効かず、相手の PR を汚すだけ
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo false ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 0 0 0 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 assert_not_contains "$(fake_log gh)" "pr comment"
@@ -272,6 +285,7 @@ assert_not_contains "$(fake_log gh)" "pr comment"
 it "record-local-review: 件数の先頭に 0 があれば、コメントを付けずに使い方を出してエラー"
 # 読む側は high=0 の字面で比べるので、high=00 は High のある記録に見える
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
   "pr comment 1 --body"*) ;;'
 out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 00 1 0 2>&1)
 assert_eq 1 $?
@@ -280,6 +294,7 @@ assert_not_contains "$(fake_log gh)" "pr comment"
 
 it "record-local-review: SHA が 16 進の文字列でなければ、コメントを付けずに使い方を出してエラー"
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
   "pr comment 1 --body"*) ;;'
 out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" HEAD 0 0 0 2>&1)
 assert_eq 1 $?
@@ -303,11 +318,11 @@ DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","lin
 # files は PR の変更ファイルを出力するコマンド（既定はコードのファイル 1 件）。
 # gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
 # resets は周回を数え直した印のコメントの時刻を出力するコマンド（既定は無し）
-# locals はローカルレビューの記録の SHA を出力するコマンド（既定は対応を push した head の def5678）。
+# locals はローカルレビューの記録の「SHA High の数」を出力するコマンド（既定は対応を push した head の def5678）。
 # レビューの本文は v2 の形でないので、重大度は分からない（High が残るとみなす）
 fake_gh_decide() {
   local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
-  local files="${5:-echo a.txt}" resets="${6:-true}" locals="${7:-echo def5678}"
+  local files="${5:-echo a.txt}" resets="${6:-true}" locals="${7:-echo def5678 0}"
   make_fake_gh "\"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
@@ -756,6 +771,7 @@ assert_contains "$out" "REMAINING_HIGH: 1"
 assert_contains "$out" "PREVIOUSLY_MISSED: 1"
 assert_contains "$out" "--- previously missed ---"
 assert_contains "$out" "The detail of the missed finding."
+assert_contains "$out" "</details>"
 
 it "get-latest-review: 指摘の題名に節の見出しと同じ語があっても、後ろの High を数える"
 # 節の切り替えは見出しの行（<summary><strong>）だけで行う
@@ -877,6 +893,19 @@ fake_gh_review_body "$(v2_body "🟡 Changes recommended" "* $(sev High) [h](u#d
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "SEVERITY: unknown"
 
+it "local-review: 同じ SHA に記録が複数あれば、最後の記録で決める"
+# 深く回し直して High を見つけたなら、前の High の無い記録で隠さない
+jq -n '[
+  {author_association: "OWNER", body: "<!-- local-review sha=aaa1111 high=0 medium=0 low=0 -->"},
+  {author_association: "OWNER", body: "<!-- local-review sha=aaa1111 high=1 medium=0 low=0 -->"},
+  {author_association: "OWNER", body: "<!-- local-review sha=bbb2222 high=1 medium=0 low=0 -->"},
+  {author_association: "OWNER", body: "<!-- local-review sha=bbb2222 high=0 medium=1 low=0 -->"}
+]' > "$TEST_ROOT/c2.json"
+fake_gh_local_records "$TEST_ROOT/c2.json"
+out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
+assert_eq 0 $?
+assert_eq "bbb2222" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
+
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
@@ -885,7 +914,7 @@ assert_not_contains "$out" "REMAINING_HIGH"
 
 # fake_gh_severity <body> [locals] [resets] [files]
 # 要求 2 件（00:00、02:00）、レビュー 1 件（03:00、abc1234 を見た）の PR で、対応を def5678 として push した後。
-# locals はローカルレビューの記録の SHA、resets は数え直しの印の時刻を出力するコマンド（既定はどちらも無し）
+# locals はローカルレビューの記録の「SHA High の数」、resets は数え直しの印の時刻を出力するコマンド（既定はどちらも無し）
 fake_gh_severity() {
   local locals="${2:-true}" resets="${3:-true}" files="${4:-echo a.txt}"
   jq -n --arg body "$1" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
@@ -901,7 +930,7 @@ fake_gh_severity() {
 }
 
 it "decide-next: High が残らず、head のローカルレビューの記録があれば、Copilot に出さず STOP_LOCAL_REVIEWED"
-fake_gh_severity "$BODY_MEDIUM" 'echo def5678'
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_eq 0 $?
 assert_contains "$out" "HEAD_REVIEWED: no"
@@ -918,7 +947,7 @@ assert_contains "$out" "LOCAL_REVIEWED: no"
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
 it "decide-next: 記録が前の head のものなら LOCAL_REVIEW_NEEDED"
-fake_gh_severity "$BODY_MEDIUM" 'echo abc1234'
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
@@ -928,38 +957,38 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
 it "decide-next: 新しい High があれば、ローカルレビューの後に REREVIEW_NEEDED"
-fake_gh_severity "$BODY_NEW_HIGH" 'echo def5678'
+fake_gh_severity "$BODY_NEW_HIGH" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
 it "decide-next: 前の周から残る High も REREVIEW_NEEDED"
-fake_gh_severity "$BODY_CARRIED_HIGH" 'echo def5678'
+fake_gh_severity "$BODY_CARRIED_HIGH" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
 it "decide-next: Previously missed の High も REREVIEW_NEEDED"
-fake_gh_severity "$BODY_MISSED_HIGH" 'echo def5678'
+fake_gh_severity "$BODY_MISSED_HIGH" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
 it "decide-next: Previously missed が Medium だけなら STOP_LOCAL_REVIEWED"
-fake_gh_severity "$BODY_MISSED_MEDIUM" 'echo def5678'
+fake_gh_severity "$BODY_MISSED_MEDIUM" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
 it "decide-next: 重大度が分からない本文（v2 でない）は High が残るとみなして REREVIEW_NEEDED"
-fake_gh_severity "### 🟡 Changes recommended" 'echo def5678'
+fake_gh_severity "### 🟡 Changes recommended" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
 it "decide-next: High が残らなくても、レビューの後に周回を数え直していれば REREVIEW_NEEDED"
 # ユーザーの追加の要望に対応した変更は、指摘への対応ではない新しい仕事なので Copilot に見せる
-fake_gh_severity "$BODY_MEDIUM" 'echo def5678' 'echo 2026-09-08T04:00:00Z'
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0' 'echo 2026-09-08T04:00:00Z'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
 it "decide-next: レビューより前の数え直しは、High が残らなければ STOP_LOCAL_REVIEWED のまま"
-fake_gh_severity "$BODY_MEDIUM" 'echo def5678' 'echo 2026-09-08T01:00:00Z'
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0' 'echo 2026-09-08T01:00:00Z'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
