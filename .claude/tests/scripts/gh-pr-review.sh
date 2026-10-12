@@ -1005,6 +1005,15 @@ out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "SEVERITY: unknown"
 assert_contains "$out" "PREVIOUSLY_MISSED: 1"
 
+it "get-latest-review: 節が閉じないまま本文が終われば（切れた本文）重大度が分からない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>1 open finding</strong></summary>
+" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")

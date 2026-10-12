@@ -1571,6 +1571,15 @@ make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
+it "pre-merge-check: 節が閉じないまま本文が終われば（切れた本文）止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>1 open finding</strong></summary>
+" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
 it "pre-merge-check: 印のコメントを取得できなければ止める"
 make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" 'exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
