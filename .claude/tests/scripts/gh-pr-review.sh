@@ -269,7 +269,18 @@ assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 assert_not_contains "$(fake_log gh)" "pr comment"
 
+it "record-local-review: 件数の先頭に 0 があれば、コメントを付けずに使い方を出してエラー"
+# 読む側は high=0 の字面で比べるので、high=00 は High のある記録に見える
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 00 1 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
 it "record-local-review: SHA が 16 進の文字列でなければ、コメントを付けずに使い方を出してエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "pr comment 1 --body"*) ;;'
 out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" HEAD 0 0 0 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "Usage:"
@@ -850,6 +861,22 @@ out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/script
 assert_eq 0 $?
 assert_eq "aaa1111 ddd4444" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
 
+it "get-latest-review: 知らない見出しの節があれば重大度が分からない（形が変われば High を数え落としうる）"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>New findings (1)</strong></summary>
+
+- $(sev High) [h](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 開いている指摘の節に「- 」で始まらない行があれば重大度が分からない"
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "* $(sev High) [h](u#discussion_r1) · New")" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
@@ -940,6 +967,21 @@ it "decide-next: 文書だけの PR は、ローカルレビューの記録が�
 fake_gh_severity "$BODY_NEW_HIGH" true true 'echo docs/adr/0004-x.md'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: head を取得できなければ（空）、記録があるとみなさずにエラー"
+# 空の SHA は、記録の無い出力の空行と一致してしまう
+fake_gh_review_body "$BODY_MEDIUM" 101
+make_fake_gh "\"pr view 1 --json headRefOid\"*) echo ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$out" "VERDICT:"
 
 it "decide-next: ローカルレビューの記録を取得できなければ、判定せずにエラー"
 fake_gh_severity "$BODY_MEDIUM" 'exit 1'

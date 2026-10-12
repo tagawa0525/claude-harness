@@ -1521,6 +1521,28 @@ detail
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
+it "pre-merge-check: 知らない見出しの節があれば（重大度が分からない）止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>New findings (1)</strong></summary>
+
+- $(merge_sev High) [h](u#discussion_r1) · New
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 開いている指摘の節に「- 」で始まらない行があれば止める"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong>1 open finding</strong></summary>
+
+* $(merge_sev High) [h](u#discussion_r1) · New
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
 it "pre-merge-check: 印のコメントを取得できなければ止める"
 make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" 'exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
