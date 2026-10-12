@@ -562,6 +562,7 @@ assert_contains "$out" "レビュー要求"
 assert_not_contains "$out" "TIMEOUT"
 # 案内はこのスクリプトと同じツリーの request-rereview.sh を指す（デプロイ先の旧版を案内しない）
 assert_contains "$out" "$CLAUDE_DIR/skills/gh-pr-review/scripts/request-rereview.sh $PR_URL"
+assert_contains "$out" "$CLAUDE_DIR/skills/gh-pr-review/scripts/record-local-review.sh"
 
 it "gh-wait-review: 案内には、受けた URL のページやクエリを除いた PR の URL を書く"
 out=$(GH_WAIT_INTERVALS=0 GH_WAIT_REQUEST_INTERVALS="0 0 0" "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL/files?a=1&b=2" 2>&1)
@@ -808,6 +809,11 @@ out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "SEVERITY: v2"
 assert_contains "$out" "REMAINING_HIGH: 0"
 
+it "decide-next: 重大度が分からなくても、Previously missed があれば STOP_PREVIOUSLY_MISSED"
+fake_gh_review_body "$(v2_body "🔵 Needs a closer look" "" "" "Missed without icon")"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_PREVIOUSLY_MISSED"
+
 it "decide-next: head がレビュー済みで、スレッドの無い Previously missed だけが残れば STOP_PREVIOUSLY_MISSED"
 # 指摘なし（STOP_CLEAN）と区別し、本文を読んで処置を決めさせる
 fake_gh_review_body "$BODY_MISSED_MEDIUM"
@@ -965,6 +971,18 @@ fake_gh_review_body "<!-- ccr-overview-v2 -->
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "REMAINING_HIGH: 1"
 assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+
+it "get-latest-review: 重大度が分からなくても、Previously missed の数と本文は見せる（スレッドが無いので）"
+fake_gh_review_body "$(v2_body "🔵 Needs a closer look" "" "" "Missed without icon")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+assert_contains "$out" "The detail of the missed finding."
+
+it "get-latest-review: 1 行に複数のアイコンがあれば High を優先する（pre-merge-check と同じ）"
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- $(sev Medium) [quotes $(sev High)](u#discussion_r1) · New")" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
 
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
