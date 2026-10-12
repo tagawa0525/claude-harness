@@ -14,11 +14,11 @@
 #                           一度でも成功していれば後のレビューが失敗しても止めない）
 #   INLINE_COMMENTS: <n>    このレビューに紐づくインラインコメント数（通常の指摘）
 #   SUPPRESSED_COMMENTS: <n>
-#   SEVERITY: v2|unknown    本文が重大度を持つ形（v2）か。unknown なら以下の 4 行は出さない
+#   SEVERITY: v2|unknown    本文が重大度を持つ形（v2）か。unknown なら REMAINING_* は出さない
 #   REMAINING_HIGH: <n>     残っている High（開いている指摘と Previously missed。ADR-0034）
 #   REMAINING_MEDIUM: <n>
 #   REMAINING_LOW: <n>
-#   PREVIOUSLY_MISSED: <n>  Previously missed の指摘の数
+#   PREVIOUSLY_MISSED: <n>  Previously missed の指摘の数（v2 の本文なら、重大度が分からなくても出す）
 #   --- suppressed ---      以降、Suppressed comments セクションの本文
 #   --- previously missed --- 以降、Previously missed の節の本文
 #
@@ -97,7 +97,10 @@ SECTIONS_AWK='
   }
   mode == "items" && sec == "open" && /[^[:space:]]/ && !/^[[:space:]]*- / && !/<\/details>/ { print "open none" }
   mode == "items" && ((sec == "open" && /^[[:space:]]*- /) || (sec == "missed" && /<summary>/)) {
-    if (match($0, /alt="(High|Medium|Low) severity"/)) print sec, substr($0, RSTART + 5, RLENGTH - 15)
+    # 1 行に複数のアイコンがあれば High を優先する（pre_merge_check.rs と同じ）
+    if (/alt="High severity"/) print sec, "High"
+    else if (/alt="Medium severity"/) print sec, "Medium"
+    else if (/alt="Low severity"/) print sec, "Low"
     else print sec, "none"
   }
   mode == "items" && sec == "missed" && !/<summary>/ && /alt="[^"]* severity"/ { print "missed none" }
@@ -107,13 +110,13 @@ SECTIONS_AWK='
   /<\/details>/ { if (sec != "none" && --depth == 0) sec = "none" }
 '
 severity=unknown
+items=""
 missed_part=""
 if grep -qF '<!-- ccr-overview-v2 -->' <<<"$body"; then
   items=$(awk -v mode=items "$SECTIONS_AWK" <<<"$body")
-  if ! grep -q ' none$' <<<"$items"; then
-    severity=v2
-    missed_part=$(awk -v mode=missed "$SECTIONS_AWK" <<<"$body")
-  fi
+  # Previously missed はスレッドが無く本文にしか無いので、重大度が分からなくても数えて見せる
+  missed_part=$(awk -v mode=missed "$SECTIONS_AWK" <<<"$body")
+  grep -q ' none$' <<<"$items" || severity=v2
 fi
 # count_items <正規表現>: items のうち一致する行の数（見つからないときの grep の 1 で、pipefail と
 # set -e が呼び出し元の代入ごと止めないようにする）
@@ -141,11 +144,13 @@ echo "SUCCESSFUL_REVIEWS: ${successful_reviews}"
 echo "INLINE_COMMENTS: ${inline_count}"
 echo "SUPPRESSED_COMMENTS: ${suppressed_count}"
 echo "SEVERITY: ${severity}"
-missed_count=0
 if [[ "$severity" == v2 ]]; then
   for level in High Medium Low; do
     echo "REMAINING_${level^^}: $(count_items " ${level}\$")"
   done
+fi
+missed_count=0
+if [[ -n "$items$missed_part" ]]; then
   missed_count=$(count_items '^missed ')
   echo "PREVIOUSLY_MISSED: ${missed_count}"
 fi
