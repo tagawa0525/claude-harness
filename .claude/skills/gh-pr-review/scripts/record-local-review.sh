@@ -8,7 +8,7 @@
 #
 # Copilot に再レビューを依頼する前と、依頼せずに終える前に、push した head をローカルで確かめた
 # ことを残す。decide-next.sh、request-rereview.sh、pre-merge-check は、head の SHA の記録が
-# あるかを見る。件数は、ローカルで見つけた数と後に Copilot が出した数を比べるために残す。
+# あるかを見る。件数は、その head で検証して正しいと判断した指摘の数で、後に Copilot が出した数と比べるために残す。
 # 記録は先頭の 1 行（<!-- local-review sha=<SHA> high=<n> medium=<n> low=<n> -->）が本体で、
 # 形を変えるときは scripts/lib/local-review.sh と pre_merge_check.rs も合わせる
 
@@ -38,6 +38,11 @@ done
 
 if ! head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid) || [[ -z "$head_sha" ]]; then
   echo "ERROR: PR #${PR_NUMBER} の head を取得できませんでした（記録を付けていません）" >&2
+  exit 1
+fi
+# 記録を数えるのは書き込める人のコメントだけなので、push できない（上流の PR）なら付けても効かない
+if [[ "$(gh api "repos/{owner}/{repo}" --jq .permissions.push)" != true ]]; then
+  echo "ERROR: ${GH_REPO} に push できないので、記録を付けても数えられません（記録を付けていません）" >&2
   exit 1
 fi
 if [[ "$head_sha" != "$reviewed"* ]]; then

@@ -252,13 +252,10 @@ fn local_review_covers(
         if first.starts_with("<!-- review-rounds-reset -->") && at > reviewed_at {
             return false;
         }
-        // High のある記録は数えない。High を直せば head が変わるので、その head には直していない High が残る
-        if first
-            .strip_prefix("<!-- local-review sha=")
-            .map(|rest| rest.split(' ').collect::<Vec<_>>())
-            .is_some_and(|t| t.first() == Some(&head_sha) && t.get(1) == Some(&"high=0"))
-        {
-            recorded = true;
+        // High のある記録は数えない。High を直せば head が変わるので、その head には直していない High が残る。
+        // 同じ head に記録が複数あれば、最後の記録で決める（回し直して見つけた High を前の記録で隠さない）
+        if let Some(rest) = first.strip_prefix(&format!("<!-- local-review sha={head_sha} ")) {
+            recorded = rest.starts_with("high=0 ");
         }
     }
     recorded

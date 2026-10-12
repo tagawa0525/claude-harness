@@ -95,7 +95,11 @@ SECTIONS_AWK='
     next
   }
   /<details/ { if (sec != "other") depth++ }
-  /<\/details>/ { if (sec != "other" && --depth == 0) sec = "other"; next }
+  /<\/details>/ {
+    if (mode == "missed" && sec == "missed") print
+    if (sec != "other" && --depth == 0) sec = "other"
+    next
+  }
   mode == "items" && sec == "open" && $0 ~ /[^[:space:]]/ && $0 !~ /^[[:space:]]*- / { print "open none"; next }
   mode == "missed" { if (sec == "missed") print; next }
   (sec == "open" && $0 ~ /^[[:space:]]*- /) || (sec == "missed" && $0 ~ /<summary>/) {
