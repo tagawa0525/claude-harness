@@ -18,8 +18,8 @@
 //!    文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR は、一度でも自動レビューに成功
 //!    していれば検査しない。文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
 //!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める。
-//!    直前の bot レビューに High が残らず、その後に周回を数え直しておらず、head にローカルレビューの
-//!    記録（record-local-review.sh）があれば検査しない（ADR-0034。判定は decide-next.sh と同じ）
+//!    直前の Copilot のレビューに High が残らず、その後に周回を数え直しておらず、最後の push で Copilot の
+//!    チェックが失敗しておらず、head にローカルレビューの記録（record-local-review.sh）があれば検査しない（ADR-0034。判定は decide-next.sh と同じ）
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
@@ -120,54 +120,57 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
     })
 }
 
-/// Copilot のレビュー本文（v2）に残っている High の数。開いている指摘（解決した指摘と Previously missed の
-/// 節より前）と、Previously missed の節（次の節の見出し `<summary><strong>` まで）を数える。v2 の形でなければ
-/// 重大度が分からないので None。読み方は get-latest-review.sh と同じ
+/// Copilot のレビュー本文（v2）に残っている High の数。節は見出しの行（`<summary><strong>`）で分かれ、
+/// "N open findings"（2026-09 の本文は "Open (N)"）の節の指摘（"- " で始まる行）と、Previously missed の節の指摘（入れ子の `<summary>` の行）を
+/// 数え、ほかの節（解決した指摘、変更の一覧など）は数えない。節の切り替えを見出しの行だけで行うのは、指摘の題名に同じ語が入りうるため。v2 の形でないとき、
+/// 重大度のアイコンの無い指摘があるとき（形が変わって数え落としうる）は、分からないので None。
+/// 読み方は get-latest-review.sh と同じ
 fn remaining_high(body: &str) -> Option<usize> {
-    const HIGH: &str = "alt=\"High severity\"";
+    #[derive(Clone, Copy, PartialEq)]
     enum Section {
         Open,
-        Between,
         Missed,
+        Other,
     }
     if !body.contains("<!-- ccr-overview-v2 -->") {
         return None;
     }
-    let mut section = Section::Open;
-    let mut count = 0;
+    let mut section = Section::Other;
+    let mut high = 0;
     for line in body.lines() {
-        match section {
-            Section::Open => {
-                let lower = line.to_lowercase();
-                if lower.contains("resolved since last review")
-                    || lower.contains("previously missed")
-                {
-                    section = if line.contains("Previously missed") {
-                        Section::Missed
-                    } else {
-                        Section::Between
-                    };
-                    continue;
-                }
-                count += line.matches(HIGH).count();
-            }
-            Section::Between => {
-                if line.contains("Previously missed") {
-                    section = Section::Missed;
-                }
-            }
-            Section::Missed => {
-                if line.contains("<summary><strong>") {
-                    break;
-                }
-                count += line.matches(HIGH).count();
-            }
+        if line.contains("<summary><strong>") {
+            let heading = line.to_lowercase();
+            let title = heading
+                .split("<summary><strong>")
+                .nth(1)
+                .unwrap_or("")
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ');
+            section = if title.starts_with("open") {
+                Section::Open
+            } else if heading.contains("previously missed") {
+                Section::Missed
+            } else {
+                Section::Other
+            };
+            continue;
+        }
+        let finding = (section == Section::Open && line.trim_start().starts_with("- "))
+            || (section == Section::Missed && line.contains("<summary>"));
+        if !finding {
+            continue;
+        }
+        if line.contains("alt=\"High severity\"") {
+            high += 1;
+        } else if !line.contains("alt=\"Medium severity\"")
+            && !line.contains("alt=\"Low severity\"")
+        {
+            return None;
         }
     }
-    Some(count)
+    Some(high)
 }
 
-/// 最後の push を Copilot に見せずに済むか（ADR-0034）。直前の bot レビューに High が残らず（分かる形で）、
+/// 最後の push を Copilot に見せずに済むか（ADR-0034）。直前の Copilot のレビューに High が残らず（分かる形で）、
 /// その後に周回を数え直しておらず、head にローカルレビューの記録があれば true。印と記録は、書き込める人の
 /// コメントだけを数える（第三者が記録を偽って再レビューを外せないように）。確かめられないときは false
 fn local_review_covers(
@@ -184,7 +187,7 @@ fn local_review_covers(
             "--paginate",
             &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
             "--jq",
-            "[.[] | select(.user.type == \"Bot\")] | last // empty | {body, submitted_at} | @json",
+            "[.[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\")] | last // empty | {body, submitted_at} | @json",
         ],
     )
     .ok()
@@ -735,6 +738,7 @@ impl Rule for PreMergeCheck {
                     Some(sha)
                         if !sha.is_empty()
                             && sha != head_sha
+                            && !copilot_check_failed
                             && local_review_covers(&dir, &owner, &name, number, &head_sha) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、直せたら再レビューを依頼してください。{}",

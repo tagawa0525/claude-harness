@@ -40,6 +40,8 @@
 #     STOP_DECLINED        未解決ゼロ・head はレビュー済み → 対応は済んでいる。マージへ
 #                          （全件 decline のように push を伴わない周。再度要求しても
 #                            同じレビューが返るだけなので依頼しない）
+#     STOP_PREVIOUSLY_MISSED head はレビュー済みで、スレッドの無い Previously missed の指摘が残る
+#                          → 本文を読んで処置を決める（指摘なしと区別する）
 #     STOP_SUPPRESSED_ONLY Suppressed comments のみ → 依頼しない（対応の要否はモデルが判断）
 #     STOP_CLEAN           指摘なし → マージへ
 #     REVIEW_FAILED        Copilot がレビューできずに終わった → 原因を調べて依頼し直す
@@ -216,6 +218,8 @@ elif [[ "$head_reviewed" == "no" ]]; then
   else
     echo "VERDICT: STOP_LIMIT"
   fi
+elif (( ${missed:-0} > 0 )); then
+  echo "VERDICT: STOP_PREVIOUSLY_MISSED"
 elif (( inline > 0 )); then
   echo "VERDICT: STOP_DECLINED"
 elif (( suppressed > 0 )); then

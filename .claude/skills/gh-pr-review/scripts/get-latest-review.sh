@@ -72,24 +72,42 @@ suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" 
   | head -n 1 | grep -o -E '[0-9]+' || echo 0)
 
 # 重大度。2026-09-19 からの本文（<!-- ccr-overview-v2 -->）は、指摘ごとに重大度のアイコン
-# （alt="High severity" など）を持つ。開いている指摘（その回の新しい指摘と、前の周から残る指摘）は、
-# 解決した指摘の節（"resolved since last review"）と Previously missed の節より前にある。
-# Previously missed は、前の周で見落とした、変わっていないコードへの指摘で、本文にだけあって
-# スレッドにならない。その節は、入れ子の <details> を越えて、次の節の見出し（<summary><strong>）まで
+# （alt="High severity" など）を持つ。節は見出しの行（<summary><strong>…）で分かれる。"N open findings"
+# （2026-09 の本文は "Open (N)"）は
+# 開いている指摘（その回の新しい指摘と、前の周から残る指摘。"- " で始まる行）、"Previously missed" は
+# 前の周で見落とした、変わっていないコードへの指摘（入れ子の <summary> の行。本文にだけあってスレッドに
+# ならない）。ほかの節（解決した指摘、"What changed in this PR" の変更の一覧など）は数えない。節の切り替えを見出しの行だけで行うのは、指摘の
+# 題名に同じ語が入りうるため。アイコンの無い指摘があれば、形が変わって数え落としうるので、重大度は
+# 分からない（unknown）とする。読み方は pre_merge_check.rs の remaining_high と同じ（ADR-0034）
+# mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で、mode=missed は Previously missed の節の行を出す
+SECTIONS_AWK='
+  BEGIN { sec = "other" }
+  /<summary><strong>/ {
+    l = tolower($0)
+    if (l ~ /<summary><strong>([0-9]+ )?open/) sec = "open"
+    else if (l ~ /previously missed/) sec = "missed"
+    else sec = "other"
+    next
+  }
+  mode == "missed" { if (sec == "missed") print; next }
+  (sec == "open" && $0 ~ /^[[:space:]]*- /) || (sec == "missed" && $0 ~ /<summary>/) {
+    if (match($0, /alt="(High|Medium|Low) severity"/)) print sec, substr($0, RSTART + 5, RLENGTH - 15)
+    else print sec, "none"
+  }
+'
 severity=unknown
+missed_part=""
 if grep -qF '<!-- ccr-overview-v2 -->' <<<"$body"; then
-  severity=v2
-  open_part=$(awk 'tolower($0) ~ /resolved since last review|previously missed/ { exit } { print }' <<<"$body")
-  missed_part=$(awk '
-    /Previously missed/ { on=1; next }
-    on && /<summary><strong>/ { exit }
-    on { print }
-  ' <<<"$body")
+  items=$(awk -v mode=items "$SECTIONS_AWK" <<<"$body")
+  if ! grep -q ' none$' <<<"$items"; then
+    severity=v2
+    missed_part=$(awk -v mode=missed "$SECTIONS_AWK" <<<"$body")
+  fi
 fi
-# count_severity <High|Medium|Low> <文字列>
-# 見つからないときの grep の 1 で、pipefail と set -e が呼び出し元の代入ごと止めないようにする
-count_severity() {
-  { grep -o -F "alt=\"$1 severity\"" <<<"$2" || true; } | wc -l
+# count_items <正規表現>: items のうち一致する行の数（見つからないときの grep の 1 で、pipefail と
+# set -e が呼び出し元の代入ごと止めないようにする）
+count_items() {
+  { grep -c -E "$1" <<<"$items" || true; }
 }
 
 # レビュー失敗は本文1行目に出る（インライン指摘もサマリーも無い）
@@ -115,10 +133,9 @@ echo "SEVERITY: ${severity}"
 missed_count=0
 if [[ "$severity" == v2 ]]; then
   for level in High Medium Low; do
-    echo "REMAINING_${level^^}: $(( $(count_severity "$level" "$open_part") + $(count_severity "$level" "$missed_part") ))"
+    echo "REMAINING_${level^^}: $(count_items " ${level}\$")"
   done
-  missed_count=$(( $(count_severity High "$missed_part") + $(count_severity Medium "$missed_part") \
-    + $(count_severity Low "$missed_part") ))
+  missed_count=$(count_items '^missed ')
   echo "PREVIOUSLY_MISSED: ${missed_count}"
 fi
 if (( suppressed_count > 0 )); then
