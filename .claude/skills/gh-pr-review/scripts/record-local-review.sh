@@ -47,3 +47,6 @@ fi
 gh pr comment "$PR_NUMBER" --body "${LOCAL_REVIEW_MARK}sha=${head_sha} high=$1 medium=$2 low=$3 -->
 ローカルの /code-review で ${head_sha:0:7} を確かめた: High $1 / Medium $2 / Low $3"
 echo "RECORDED: ${head_sha}"
+if (($1 > 0)); then
+  echo "NOTE: High の残る記録は、レビュー済みとして数えない。直して push し、回し直して記録する"
+fi

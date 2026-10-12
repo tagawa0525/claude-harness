@@ -47,7 +47,7 @@
 #     REVIEW_FAILED        Copilot がレビューできずに終わった → 原因を調べて依頼し直す
 #                          （指摘ゼロと同じ見た目になるため別扱いにする）
 #     WAITING              要求後のレビューがまだ無い → gh-wait-review.sh で待つ
-#   --- suppressed --- 以降に本文
+#   --- suppressed --- / --- previously missed --- 以降に本文
 #
 # 「対応する」「push する」「要求する」を 1 つの判定に潰すと、どの段階にいるかが
 # モデルの記憶頼りになり要求を忘れる。段階ごとに VERDICT を分け、次の一手を 1 つに決める。

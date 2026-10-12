@@ -56,8 +56,8 @@ if ! local_shas=$(local_review_shas); then
   exit 1
 fi
 if ! grep -qxF "$head_sha" <<<"$local_shas"; then
-  echo "ERROR: head（${head_sha:0:7}）にローカルレビューの記録がありません。Copilot に出す前に、直した差分をローカルの /code-review で確かめてください（ADR-0034）" >&2
-  echo "次の一手: 確かめたら ${SCRIPT_DIR}/record-local-review.sh ${PR_URL_CANONICAL} <high> <medium> <low> で記録し、decide-next.sh で次の一手を決め直してください" >&2
+  echo "ERROR: head（${head_sha:0:7}）に High の残らないローカルレビューの記録がありません。Copilot に出す前に、直した差分をローカルの /code-review で確かめてください（ADR-0034）" >&2
+  echo "次の一手: 確かめたら ${SCRIPT_DIR}/record-local-review.sh ${PR_URL_CANONICAL} <SHA> <high> <medium> <low> で記録し（High が残れば直して回し直す）、もう一度 ${SCRIPT_DIR}/request-rereview.sh ${PR_URL_CANONICAL} で要求してください" >&2
   exit 1
 fi
 
