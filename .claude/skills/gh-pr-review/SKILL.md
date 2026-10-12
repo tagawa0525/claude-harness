@@ -155,27 +155,29 @@ EOF
 ~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh "{pr_url}" "ユーザーの要望: {要望の要旨}"
 ```
 
-| VERDICT                | 意味                                                                                 | 次の一手                                                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `ACT`                  | 未解決スレッドがある                                                                 | Step 3〜5 で対応する                                                                                                     |
-| `LOCAL_REVIEW_NEEDED`  | 対応を push したが head をローカルで確かめていない                                   | 下記の「ローカルレビュー」を回して記録し、`decide-next.sh` を再実行する                                                  |
-| `STOP_LOCAL_REVIEWED`  | High が残らず、head はローカルでレビュー済み                                         | 要求せず Step 7 へ（Medium と Low は直してローカルで確かめれば足りる。マージ時の hook も同じ条件で通す）                 |
-| `REREVIEW_NEEDED`      | High が残る（重大度が分からない、数え直した、を含む）。head はローカルでレビュー済み | `request-rereview.sh` で要求する                                                                                         |
-| `STOP_DOCS_REVIEWED`   | 文書だけの PR で、対応を push 済み                                                   | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない） |
-| `STOP_LIMIT`           | 要求が必要だが周回の上限に達した                                                     | 要求もマージもせず Step 7 へ。最終周に直した変更は未レビューなので、報告に列挙して止まり、ユーザーの判断を待つ           |
-| `STOP_DECLINED`        | 未解決ゼロ・head はレビュー済み                                                      | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                 |
-| `STOP_SUPPRESSED_ONLY` | Suppressed comments のみ                                                             | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                         |
-| `STOP_CLEAN`           | 指摘なし                                                                             | Step 7 へ                                                                                                                |
-| `REVIEW_FAILED`        | Copilot がレビューできずに終わった                                                   | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                                              |
-| `WAITING`              | 要求後のレビューが未着                                                               | `~/.claude/scripts/gh-wait-review.sh "{pr_url}"` で待つ（下記と同様 background）                                         |
+| VERDICT                  | 意味                                                                                 | 次の一手                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ACT`                    | 未解決スレッドがある                                                                 | Step 3〜5 で対応する                                                                                                                     |
+| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head をローカルで確かめていない                                   | 下記の「ローカルレビュー」を回して記録し、`decide-next.sh` を再実行する                                                                  |
+| `STOP_LOCAL_REVIEWED`    | High が残らず、head はローカルでレビュー済み                                         | 要求せず Step 7 へ（Medium と Low は直してローカルで確かめれば足りる。マージ時の hook も同じ条件で通す）                                 |
+| `REREVIEW_NEEDED`        | High が残る（重大度が分からない、数え直した、を含む）。head はローカルでレビュー済み | `request-rereview.sh` で要求する                                                                                                         |
+| `STOP_DOCS_REVIEWED`     | 文書だけの PR で、対応を push 済み                                                   | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない）                 |
+| `STOP_LIMIT`             | 要求が必要だが周回の上限に達した                                                     | 要求もマージもせず Step 7 へ。最終周に直した変更は未レビューなので、報告に列挙して止まり、ユーザーの判断を待つ                           |
+| `STOP_DECLINED`          | 未解決ゼロ・head はレビュー済み                                                      | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                                 |
+| `STOP_PREVIOUSLY_MISSED` | head はレビュー済みで、スレッドの無い Previously missed が残る                       | 本文を読んで Step 3 で処置を決める。fix するなら Step 4 → push（次の判定はローカルレビューから）、しないなら台帳に理由を書いて Step 7 へ |
+| `STOP_SUPPRESSED_ONLY`   | Suppressed comments のみ                                                             | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                                         |
+| `STOP_CLEAN`             | 指摘なし                                                                             | Step 7 へ                                                                                                                                |
+| `REVIEW_FAILED`          | Copilot がレビューできずに終わった                                                   | マージに進まない。Step 7 で診断し、直せたら再レビュー、直せなければ要判断へ                                                              |
+| `WAITING`                | 要求後のレビューが未着                                                               | `~/.claude/scripts/gh-wait-review.sh "{pr_url}"` で待つ（下記と同様 background）                                                         |
 
 **ローカルレビュー**（ADR-0034）: 対応を push したら、Copilot に出す前にも、出さずに終える前にも、
 `~/.claude/scripts/review-level.sh` が出す `LEVEL` と `TARGET` で `/code-review <LEVEL> <TARGET>` を回す。
 直した差分と、同じ種類の問題が他に残っていないかを見る。見つけた指摘を High / Medium / Low で数え、直して push
-したら、push した head に結果を記録する（High を直したら、もう一度回してから記録する）:
+したら、push した head に結果を記録する（High を直したら、もう一度回してから記録する）。SHA はレビューした
+コミット（`git rev-parse HEAD`）で、PR の head と違えば記録されない:
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {high} {medium} {low}
+~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
 ```
 
 件数はローカルで見つけた数（直した数を含む）。後に Copilot が出した数と比べて、効果を測るのに使う。
