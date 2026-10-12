@@ -109,6 +109,8 @@ SECTIONS_AWK='
   mode == "missed" && sec == "missed" { print }
   /<details/ { if (sec != "none") depth++ }
   /<\/details>/ { if (sec != "none" && --depth == 0) sec = "none" }
+  # 節が閉じないまま終わる本文（切れた本文）は、残りの指摘を数え落としうる
+  END { if (mode == "items" && sec != "none") print "eof none" }
 '
 severity=unknown
 items=""

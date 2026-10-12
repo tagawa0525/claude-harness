@@ -195,6 +195,10 @@ fn remaining_high(body: &str) -> Option<usize> {
             }
         }
     }
+    // 節が閉じないまま終わる本文（切れた本文）は、残りの指摘を数え落としうる
+    if section != Section::Outside {
+        return None;
+    }
     Some(high)
 }
 
