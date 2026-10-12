@@ -827,6 +827,8 @@ it "get-latest-review: 見出しが Open (N) の形でも開いている指摘�
 # 箇条書きは指摘ではない
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
+### 🟡 Changes recommended
+
 ## Copilot review overview
 
 **Findings:** 1 $(sev High)
@@ -865,6 +867,8 @@ assert_contains "$out" "PREVIOUSLY_MISSED: 1"
 it "get-latest-review: 見出しの数の前後の空白が違っても、開いている指摘の節と読む（pre-merge-check と同じ）"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
+### 🟡 Changes recommended
+
 <details open>
 <summary><strong> 2  open findings</strong></summary>
 
@@ -896,6 +900,8 @@ assert_eq "aaa1111 ddd4444" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
 it "get-latest-review: 知らない見出しの節があれば重大度が分からない（形が変われば High を数え落としうる）"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
+### 🟡 Changes recommended
+
 <details open>
 <summary><strong>New findings (1)</strong></summary>
 
@@ -925,6 +931,8 @@ assert_eq "bbb2222" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
 it "get-latest-review: 知っている節の外に重大度のアイコンがあれば分からない（見出しの形が変わった）"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
+### 🟡 Changes recommended
+
 **Findings:** 1 $(sev High)
 
 <details open>
@@ -937,6 +945,8 @@ assert_contains "$out" "SEVERITY: unknown"
 
 it "get-latest-review: 要約の行（**Findings:**）のアイコンは、節の外でも分からないにしない"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
 
 **Findings:** 1 $(sev Medium)
 
@@ -952,6 +962,8 @@ assert_contains "$out" "REMAINING_MEDIUM: 1"
 it "get-latest-review: Previously missed の節の <summary> でない行にアイコンがあれば分からない"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
+### 🟡 Changes recommended
+
 <details>
 <summary><strong>Previously missed (1)</strong></summary>
 
@@ -962,6 +974,8 @@ assert_contains "$out" "SEVERITY: unknown"
 
 it "get-latest-review: Previously missed の 1 行の <details> の指摘も数える"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
 
 <details>
 <summary><strong>Previously missed (1)</strong></summary>
@@ -992,6 +1006,8 @@ assert_contains "$out" "PREVIOUSLY_MISSED: 0"
 it "get-latest-review: Previously missed の節の指摘でない行のアイコンは、件数に数えない"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
+### 🟡 Changes recommended
+
 <details>
 <summary><strong>Previously missed (1)</strong></summary>
 
@@ -1008,11 +1024,29 @@ assert_contains "$out" "PREVIOUSLY_MISSED: 1"
 it "get-latest-review: 節が閉じないまま本文が終われば（切れた本文）重大度が分からない"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
+### 🟡 Changes recommended
+
 <details open>
 <summary><strong>1 open finding</strong></summary>
 " 101
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 判定の見出し（### 🟢/🟡/🔵）が無い v2 の本文は重大度が分からない"
+# 切れた本文や、完走しなかったレビュー（警告の付いた本文）は、指摘を数え落としうる
+fake_gh_review_body "<!-- ccr-overview-v2 -->"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 節の無い v2 の本文でも、判定の見出しがあれば High は 0"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟢 Approval recommended
+
+No issues."
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 0"
 
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
