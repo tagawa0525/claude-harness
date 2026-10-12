@@ -172,18 +172,19 @@ EOF
 
 **ローカルレビュー**（ADR-0034）: 対応を push したら、Copilot に出す前にも、出さずに終える前にも、
 `~/.claude/scripts/review-level.sh` が出す `LEVEL` と `TARGET` で `/code-review <LEVEL> <TARGET>` を回す。
-直した差分と、同じ種類の問題が他に残っていないかを見る。見つけた指摘を High / Medium / Low で数え、直して push
-したら、push した head に結果を記録する（High を直したら、もう一度回してから記録する）。SHA はレビューした
-コミット（`git rev-parse HEAD`）で、PR の head と違えば記録されない:
+直した差分と、同じ種類の問題が他に残っていないかを見る。回した head（`git rev-parse HEAD`。push 済みで PR の
+head と同じもの）に、その回で検証して正しいと判断した指摘の数を、High / Medium / Low で記録する
+（decline した指摘は数えない）:
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
 ```
 
-件数は、ローカルで見つけ、検証して正しいと判断した指摘の数（直した数を含む。decline した指摘は数えない）。
-後に Copilot が出した数と比べて、効果を測るのに使う。
-High を直せば head が変わるので、ある head の記録に High があれば、その head には直していない High が残る。
-High のある記録はレビュー済みとして数えない（`decide-next.sh`、`request-rereview.sh`、マージ時の hook）。
+記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
+して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`、
+`request-rereview.sh`、マージ時の hook）ので、High は直して回し直す。Medium と Low は、直して回し直すか、
+直さずにその head で終える（見送りは台帳に書く）。同じ head を回し直したら、最後の記録で決まる。
+件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
 
 **再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分。
 `run_in_background=true` で実行）。
