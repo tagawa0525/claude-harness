@@ -1496,6 +1496,31 @@ make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" "$LOCAL_ABC"
 run_hook pre-merge-check "$MERGE_CMD" >/dev/null
 assert_contains "$(grep submitted_at "$TEST_ROOT/gh.log")" "copilot-pull-request-reviewer[bot]"
 
+it "pre-merge-check: head の記録に High があれば（直していない High が残る）止める"
+make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
+  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 節が閉じた後の <summary> を Previously missed の指摘と取り違えない"
+make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+<details>
+<summary>$(merge_sev Medium) Missed</summary>
+
+detail
+</details>
+</details>
+
+<details>
+<summary>Tip</summary>
+</details>" "$LOCAL_ABC"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
 it "pre-merge-check: 印のコメントを取得できなければ止める"
 make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" 'exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")

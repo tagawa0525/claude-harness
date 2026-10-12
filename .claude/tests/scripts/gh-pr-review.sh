@@ -216,6 +216,11 @@ assert_eq 1 $?
 assert_not_contains "$(fake_log gh)" "requested_reviewers"
 assert_contains "$err" "record-local-review.sh $PR_URL "
 
+it "request-rereview: 記録が無いときの案内は、記録してからこのスクリプトで要求し直させる"
+# REVIEW_FAILED の立て直しでも同じ道を通る。decide-next.sh に戻すと REVIEW_FAILED が続いて巡る
+assert_contains "$err" "request-rereview.sh $PR_URL"
+assert_not_contains "$err" "decide-next.sh"
+
 it "request-rereview: 記録が前の head のものなら要求しない"
 fake_gh_rereview grow 'echo abc1234'
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
@@ -798,6 +803,52 @@ fake_gh_review_body "<!-- ccr-overview-v2 -->
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "SEVERITY: v2"
 assert_contains "$out" "REMAINING_HIGH: 1"
+
+it "get-latest-review: 節が閉じた後の箇条書きや <summary> は、その節の指摘として数えない"
+# 節は </details> で閉じる。Previously missed の中の入れ子の <details> を越えて、外側が閉じるまでが節
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- $(sev Medium) [m](u#discussion_r1) · New" "" "$(sev Medium) Missed medium")
+- **Files reviewed:** 3/4
+
+<details>
+<summary>Tip</summary>
+
+text
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_MEDIUM: 2"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+
+it "get-latest-review: 見出しの数の前後の空白が違っても、開いている指摘の節と読む（pre-merge-check と同じ）"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+<details open>
+<summary><strong> 2  open findings</strong></summary>
+
+- $(sev High) [h](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+
+# fake_gh_local_records <comments.json>: issues/1/comments の --jq を本物の jq で JSON に当てる gh
+fake_gh_local_records() {
+  cp "$1" "$TEST_ROOT/comments.json"
+  make_fake_gh "\"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) shift 3; jq -r \"\$2\" \"$TEST_ROOT/comments.json\" ;;"
+}
+
+it "local-review: 書き込める人の、High の残らない記録の SHA だけを返す"
+# ある head の記録に High があれば、その head には直していない High が残る（直せば head が変わる）
+jq -n '[
+  {author_association: "OWNER", body: "<!-- local-review sha=aaa1111 high=0 medium=2 low=1 -->\nok"},
+  {author_association: "OWNER", body: "<!-- local-review sha=bbb2222 high=1 medium=0 low=0 -->\nhigh"},
+  {author_association: "NONE", body: "<!-- local-review sha=ccc3333 high=0 medium=0 low=0 -->\nthird party"},
+  {author_association: "OWNER", body: "<!-- review-rounds-reset -->\nreset"},
+  {author_association: "COLLABORATOR", body: "<!-- local-review sha=ddd4444 high=0 medium=0 low=0 -->"}
+]' > "$TEST_ROOT/c.json"
+fake_gh_local_records "$TEST_ROOT/c.json"
+out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
+assert_eq 0 $?
+assert_eq "aaa1111 ddd4444" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
 
 it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
 fake_gh_review_body "### 🟡 Changes recommended" 101
