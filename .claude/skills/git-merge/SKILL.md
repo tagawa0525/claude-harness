@@ -153,7 +153,8 @@ Branch: [branch]
 `DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う。
 main の worktree が feature ブランチのままだと、ブランチを自分自身にマージして何も起きない。
 main の worktree 以外から `git merge` を実行しない（issue #372 の事故）。マージの直前に、
-`git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD` が main であることを確かめ、違えば止まる:
+`git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD`（none なら今の worktree）が main であることを確かめ、
+違えば止まる:
 
 ```bash
 git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'

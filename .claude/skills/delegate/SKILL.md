@@ -10,6 +10,8 @@ allowed-tools:
   - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
+  - Bash(~/.claude/scripts/slurm-run.sh*)
+  - Bash(squeue*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
   - Bash(~/.claude/skills/gh-pr-review/scripts/*)
   - Skill(code-review)
@@ -131,14 +133,14 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 
 - 直すのは検証できる誤り（バグ、コードや事実と食い違う記述、壊れた参照）だけ。言い回しや網羅性の指摘で
   周を回し続けない
-- 直したらコミットし、チェックからやり直す（rebase はしない）。その周に検証できる誤りが無ければ終わり
+- 直したらコミットし、チェックからやり直す（rebase はしない。例外は「作業中の規則」の計算の前）。その周に検証できる誤りが無ければ終わり
   （レビューは周ごとに新しい候補を出すので、指摘ゼロを待たない）
 - 対応しなかった指摘は、理由（検証で得た事実）を報告に書く
 - レビューを受けずに残ったコミット（`STOP_LIMIT` の後に直したものなど）は、報告に列挙する
 
 ### 8. マージの直前で止める
 
-`git merge`、`gh pr merge`、/git-merge、/gh-pr-merge を実行しない。rebase もしない。これを止める hook は無く、
+`git merge`、`gh pr merge`、/git-merge、/gh-pr-merge を実行しない。rebase もしない（計算を投げる直前の rebase だけは「作業中の規則」の例外）。これを止める hook は無く、
 許可も通るので、手順で守る。main が先に進んでいれば（`git -C <worktree> rev-list --count HEAD..<base>` が
 0 でない）、件数を報告に書く。
 
