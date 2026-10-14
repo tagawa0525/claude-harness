@@ -1,6 +1,6 @@
 ---
-name: branch-task
-description: 親のセッションから頼まれた 1 トピックのブランチ作業を、worktree の作成からチェックとレビューまで進め、マージの直前で止めて決まった形で報告する。サブエージェントへの依頼の定型。
+name: delegate
+description: サブエージェントへの委任の定型。依頼に必ず入れる規則と、受けた側の進め方（worktree からチェック・レビューまで進め、報告は最後に 1 度）。
 # model 未指定: モデルは親がサブエージェントを起動するときに決める（Agent の model）
 argument-hint: <リポジトリ> <ブランチ名> <何をするか>
 allowed-tools:
@@ -21,7 +21,7 @@ allowed-tools:
   - Grep
 ---
 
-# Branch Task
+# Delegate
 
 親のセッションから頼まれた 1 トピックのブランチ作業を、マージの直前まで進める。依頼に書かれるのは
 リポジトリ、ブランチ名、何をするか（決定済みの内容と判断の軸）、禁止事項だけで、手順と報告の形はここに従う。
@@ -185,7 +185,7 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 手順と報告の形はこのスキルにあるので、依頼には作業ごとに変わることだけを書く:
 
 ```text
-最初に /branch-task を呼び、その手順に従って進める。
+最初に /delegate を呼び、その手順に従って進める。
 
 リポジトリ: <path>
 ブランチ: <branch>

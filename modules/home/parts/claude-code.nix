@@ -103,7 +103,7 @@ let
         "Skill(gh-pr-create)"
         "Skill(gh-pr-review)"
         "Skill(gh-actions-check)"
-        "Skill(branch-task)"
+        "Skill(delegate)"
         # Git
         "Bash(git add:*)"
         "Bash(git branch:*)"
