@@ -55,6 +55,11 @@ pytest
 
 **失敗時の対応**: テスト失敗の詳細を確認し修正
 
+**テストの置き場と走らせ方**（run-checks.sh）: `scripts/run-python-tests.sh` があればそれを優先して走らせる（終了コードで判定。
+実行権限が無ければ失敗）。無ければ `tests/` かルート直下の `test_*.py` を `pytest` で走らせる。それも無く、git が追跡している
+`test_*.py` / `*_test.py` がサブディレクトリにあれば、そのディレクトリごとに、追跡しているファイルだけを渡して走らせる
+（`python3 -m pytest` が使えれば pytest、無ければ `python3 -m unittest <モジュール>`）。テストが 1 つも無いときだけ SKIP（ADR-0036）。
+
 ### オプション
 
 ```bash

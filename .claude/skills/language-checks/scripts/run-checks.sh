@@ -15,7 +15,9 @@
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
 #   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
 #             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
-#   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み
+#   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み。テストは
+#             scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、
+#             それも無ければ追跡している test_*.py / *_test.py のあるディレクトリごとに（ADR-0036）
 #   Nix:      flake.nix がある、または .nix がステージ済み
 #   Markdown: .md がステージ済み（staged-checks markdown で、ステージした版を直して検査する。--merge では検査だけ）。.pre-commit-config.yaml で design-records に
 #             オプトインしていれば、.md の変更が無くても design-records check
@@ -155,12 +157,58 @@ elif staged_has '*.rs'; then
 fi
 
 # --- Python ---
+# python_test_files: git が追跡している test_*.py / *_test.py（サブディレクトリを含む。無視したディレクトリや
+# references/ は追跡されないので入らない）
+python_test_files() {
+  git ls-files -- ':(glob)**/test_*.py' ':(glob)**/*_test.py'
+}
+# python_subdir_tests <file>...: 追跡しているテストを、ディレクトリごとに走らせる。テストは隣の .py を import するので、
+# そのディレクトリを起点にする。ディレクトリやパターンでなく追跡しているファイルだけを渡すのは、子のディレクトリの
+# テストを親と子で二重に走らせず、追跡していないファイルを拾わないため。pytest が python3 から使えれば pytest、
+# 無ければ標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける。ADR-0036）
+python_subdir_tests() {
+  local f dir name pytest_ok=0
+  local -a dirs files cmd
+  python3 -m pytest --version >/dev/null 2>&1 && pytest_ok=1
+  # スラッシュの無いパス（ルート直下）は . に写す
+  mapfile -t dirs < <(for f in "$@"; do [[ "$f" == */* ]] && echo "${f%/*}" || echo .; done | sort -u)
+  for dir in "${dirs[@]}"; do
+    files=()
+    for f in "$@"; do
+      if [[ "$f" == */* ]]; then
+        [[ "${f%/*}" == "$dir" ]] && files+=("${f##*/}")
+      else
+        [[ "$dir" == . ]] && files+=("$f")
+      fi
+    done
+    if (( pytest_ok )); then
+      cmd=(python3 -m pytest "${files[@]}")
+    else
+      cmd=(python3 -m unittest)
+      for name in "${files[@]}"; do cmd+=("${name%.py}"); done
+    fi
+    echo "RUN: python test: cd $(printf '%q' "$dir") && ${cmd[*]}"
+    (cd -- "$dir" && "${cmd[@]}") || {
+      echo "FAILED: python test: cd $(printf '%q' "$dir") && ${cmd[*]}"
+      return 1
+    }
+  done
+}
 if [[ -f pyproject.toml || -f setup.py || -f requirements.txt ]] || staged_has '*.py'; then
   DETECTED=1
   run_stage python format ruff "ruff format ." ruff format --check .
   run_stage python lint ruff "ruff check --fix ." ruff check .
-  if [[ -d tests ]] || compgen -G 'test_*.py' >/dev/null || compgen -G '*_test.py' >/dev/null; then
+  if [[ -e scripts/run-python-tests.sh && ! -x scripts/run-python-tests.sh ]]; then
+    echo "FAILED: python test: scripts/run-python-tests.sh に実行権限が無い（chmod +x）"
+    exit 1
+  elif [[ -e scripts/run-python-tests.sh ]]; then
+    # リポジトリ固有の走らせ方（devShell を分けるなど）。ADR-0036
+    run_stage python test bash "" bash scripts/run-python-tests.sh
+  elif [[ -d tests ]] || compgen -G 'test_*.py' >/dev/null || compgen -G '*_test.py' >/dev/null; then
     run_stage python test pytest "" pytest
+  elif listing=$(python_test_files) && [[ -n "$listing" ]]; then
+    mapfile -t test_files <<<"$listing"
+    run_stage python test python3 "" python_subdir_tests "${test_files[@]}"
   else
     echo "SKIP: python test (テストが見つからない)"
   fi
