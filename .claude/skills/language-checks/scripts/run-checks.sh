@@ -163,7 +163,7 @@ python_test_files() {
   git ls-files -- ':(glob)**/test_*.py' ':(glob)**/*_test.py'
 }
 # python_subdir_tests <file>...: サブディレクトリのテストを、テストのあるディレクトリごとに走らせる（テストは
-# 隣の .py を import するので、そのディレクトリを起点にする）。pytest が python3 から使えれば pytest、無ければ
+# 隣の .py を import するので、そのディレクトリを起点にする。子のディレクトリのテストは、その子で走らせる）。pytest が python3 から使えれば pytest、無ければ
 # 標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける）
 python_subdir_tests() {
   local f dir has_prefix has_suffix
@@ -171,7 +171,12 @@ python_subdir_tests() {
   mapfile -t dirs < <(printf '%s\n' "${@%/*}" | sort -u)
   for dir in "${dirs[@]}"; do
     if python3 -m pytest --version >/dev/null 2>&1; then
-      (cd -- "$dir" && python3 -m pytest .) || return 1
+      # ディレクトリを渡さず、追跡しているこのディレクトリのファイルだけを渡す（子のディレクトリのテストを重ねて走らせない）
+      local -a in_dir=()
+      for f in "$@"; do
+        [[ "${f%/*}" == "$dir" ]] && in_dir+=("${f##*/}")
+      done
+      (cd -- "$dir" && python3 -m pytest "${in_dir[@]}") || return 1
     else
       # unittest は 1 つの pattern しか取らない。該当するファイルのあるパターンだけ走らせる
       has_prefix=0 has_suffix=0

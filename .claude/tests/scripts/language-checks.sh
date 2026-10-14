@@ -47,6 +47,43 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "" "$(fake_log pytest)"
 
+it "run-checks: サブディレクトリのテストが落ちれば失敗する（unittest）"
+make_fake_tool ruff '*) exit 0 ;;'
+mkdir -p pkg/sub
+printf 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1, 2)\n' > pkg/test_a.py
+git add pkg/test_a.py
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "FAILED: python test"
+assert_not_contains "$out" "ALL_OK"
+
+it "run-checks: サブディレクトリのテストが通れば ALL_OK（unittest）"
+printf 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1, 1)\n' > pkg/test_a.py
+rm -rf pkg/__pycache__
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "OK: python test"
+
+it "run-checks: python3 から pytest が使えれば、そのディレクトリの追跡ファイルだけを渡す（子のディレクトリを重ねない）"
+cp pkg/test_a.py pkg/sub/test_b.py
+git add pkg/sub/test_b.py
+make_fake_tool python3 '"-m pytest --version"*) exit 0 ;; "-m pytest "*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 0 $?
+assert_eq $'-m pytest --version\n-m pytest test_a.py\n-m pytest --version\n-m pytest test_b.py' "$(fake_log python3)"
+remove_fake_tool python3
+
+it "run-checks: scripts/run-python-tests.sh があれば自動検出より優先し、その終了コードで判定する"
+mkdir -p scripts
+printf '#!/bin/sh\necho custom; exit 3\n' > scripts/run-python-tests.sh
+chmod +x scripts/run-python-tests.sh
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "custom"
+assert_contains "$out" "FAILED: python test: bash scripts/run-python-tests.sh"
+rm -r scripts pkg
+git rm -rq --cached pkg
+
 it "run-checks: ツールがなければ SKIP を出して続行する"
 remove_fake_tool ruff
 remove_fake_tool pytest
