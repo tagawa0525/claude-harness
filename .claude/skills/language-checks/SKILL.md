@@ -11,7 +11,7 @@ user-invocable: false
 ## 対応言語
 
 - **Rust**: cargo fmt, clippy, test
-- **Python**: ruff format, ruff check, pytest
+- **Python**: ruff format, ruff check, pytest（サブディレクトリのテストはディレクトリごとに、pytest が無ければ unittest。`scripts/run-python-tests.sh` があれば優先。詳細は references/python-checks.md、ADR-0036）
 - **Nix**: nixfmt, statix, nix flake check
 - **Markdown**: markdownlint, fix-markdown-lint.py
 

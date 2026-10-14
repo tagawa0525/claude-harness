@@ -36,7 +36,10 @@ issues: []
 
 - Python の段は .py の変更があるときだけ走る（既存の検出のまま）。全部を走らせたいときは `scripts/run-python-tests.sh` を
   手で走らせる
-- pytest 形式（関数だけ）のテストは unittest では見つからない。pytest を devShell に足すか、override を置く
+- pytest 形式（関数だけ）のテストは、python3 から pytest が使えない環境では unittest がテストを 1 件も見つけず、
+  exit 5（NO TESTS RAN）でこの段が落ちる。pytest を devShell に足すか、override を置く
+- ルート直下と `tests/` の判定は従来どおり `pytest` コマンドで、サブディレクトリは `python3 -m pytest` で見る。前者は
+  既存の挙動を変えないため、後者は xlc で PATH の pytest が devShell の python3 と別の環境だったため
 - 既存のルート直下の判定（`compgen -G`）は、PATH 先頭の bash に compgen が無い環境で偽になる（#375。この ADR では直さない）
 
 ### 確認

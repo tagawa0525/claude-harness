@@ -162,43 +162,46 @@ fi
 python_test_files() {
   git ls-files -- ':(glob)**/test_*.py' ':(glob)**/*_test.py'
 }
-# python_subdir_tests <file>...: サブディレクトリのテストを、テストのあるディレクトリごとに走らせる（テストは
-# 隣の .py を import するので、そのディレクトリを起点にする。子のディレクトリのテストは、その子で走らせる）。pytest が python3 から使えれば pytest、無ければ
-# 標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける）
+# python_subdir_tests <file>...: 追跡しているテストを、ディレクトリごとに走らせる。テストは隣の .py を import するので、
+# そのディレクトリを起点にする。ディレクトリやパターンでなく追跡しているファイルだけを渡すのは、子のディレクトリの
+# テストを親と子で二重に走らせず、追跡していないファイルを拾わないため。pytest が python3 から使えれば pytest、
+# 無ければ標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける。ADR-0036）
 python_subdir_tests() {
-  local f dir has_prefix has_suffix
-  local -a dirs
-  mapfile -t dirs < <(printf '%s\n' "${@%/*}" | sort -u)
+  local f dir name pytest_ok=0
+  local -a dirs files cmd
+  python3 -m pytest --version >/dev/null 2>&1 && pytest_ok=1
+  # スラッシュの無いパス（ルート直下）は . に写す
+  mapfile -t dirs < <(for f in "$@"; do [[ "$f" == */* ]] && echo "${f%/*}" || echo .; done | sort -u)
   for dir in "${dirs[@]}"; do
-    if python3 -m pytest --version >/dev/null 2>&1; then
-      # ディレクトリを渡さず、追跡しているこのディレクトリのファイルだけを渡す（子のディレクトリのテストを重ねて走らせない）
-      local -a in_dir=()
-      for f in "$@"; do
-        [[ "${f%/*}" == "$dir" ]] && in_dir+=("${f##*/}")
-      done
-      (cd -- "$dir" && python3 -m pytest "${in_dir[@]}") || return 1
+    files=()
+    for f in "$@"; do
+      if [[ "$f" == */* ]]; then
+        [[ "${f%/*}" == "$dir" ]] && files+=("${f##*/}")
+      else
+        [[ "$dir" == . ]] && files+=("$f")
+      fi
+    done
+    if (( pytest_ok )); then
+      cmd=(python3 -m pytest "${files[@]}")
     else
-      # unittest は 1 つの pattern しか取らない。該当するファイルのあるパターンだけ走らせる
-      has_prefix=0 has_suffix=0
-      for f in "$@"; do
-        [[ "${f%/*}" == "$dir" ]] || continue
-        [[ "${f##*/}" == test_*.py ]] && has_prefix=1
-        [[ "${f##*/}" == *_test.py ]] && has_suffix=1
-      done
-      if (( has_prefix )); then
-        (cd -- "$dir" && python3 -m unittest discover -s . -p 'test_*.py') || return 1
-      fi
-      if (( has_suffix )); then
-        (cd -- "$dir" && python3 -m unittest discover -s . -p '*_test.py') || return 1
-      fi
+      cmd=(python3 -m unittest)
+      for name in "${files[@]}"; do cmd+=("${name%.py}"); done
     fi
+    echo "RUN: python test: cd $(printf '%q' "$dir") && ${cmd[*]}"
+    (cd -- "$dir" && "${cmd[@]}") || {
+      echo "FAILED: python test: cd $(printf '%q' "$dir") && ${cmd[*]}"
+      return 1
+    }
   done
 }
 if [[ -f pyproject.toml || -f setup.py || -f requirements.txt ]] || staged_has '*.py'; then
   DETECTED=1
   run_stage python format ruff "ruff format ." ruff format --check .
   run_stage python lint ruff "ruff check --fix ." ruff check .
-  if [[ -x scripts/run-python-tests.sh ]]; then
+  if [[ -e scripts/run-python-tests.sh && ! -x scripts/run-python-tests.sh ]]; then
+    echo "FAILED: python test: scripts/run-python-tests.sh に実行権限が無い（chmod +x）"
+    exit 1
+  elif [[ -e scripts/run-python-tests.sh ]]; then
     # リポジトリ固有の走らせ方（devShell を分けるなど）。ADR-0036
     run_stage python test bash "" bash scripts/run-python-tests.sh
   elif [[ -d tests ]] || compgen -G 'test_*.py' >/dev/null || compgen -G '*_test.py' >/dev/null; then
