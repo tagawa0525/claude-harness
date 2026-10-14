@@ -15,7 +15,9 @@
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
 #   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
 #             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
-#   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み
+#   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み。テストは
+#             scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、
+#             それも無ければ追跡している test_*.py / *_test.py のあるディレクトリごとに（ADR-0036）
 #   Nix:      flake.nix がある、または .nix がステージ済み
 #   Markdown: .md がステージ済み（staged-checks markdown で、ステージした版を直して検査する。--merge では検査だけ）。.pre-commit-config.yaml で design-records に
 #             オプトインしていれば、.md の変更が無くても design-records check
@@ -155,12 +157,50 @@ elif staged_has '*.rs'; then
 fi
 
 # --- Python ---
+# python_test_files: git が追跡している test_*.py / *_test.py（サブディレクトリを含む。無視したディレクトリや
+# references/ は追跡されないので入らない）
+python_test_files() {
+  git ls-files -- ':(glob)**/test_*.py' ':(glob)**/*_test.py'
+}
+# python_subdir_tests <file>...: サブディレクトリのテストを、テストのあるディレクトリごとに走らせる（テストは
+# 隣の .py を import するので、そのディレクトリを起点にする）。pytest が python3 から使えれば pytest、無ければ
+# 標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける）
+python_subdir_tests() {
+  local f dir has_prefix has_suffix
+  local -a dirs
+  mapfile -t dirs < <(printf '%s\n' "${@%/*}" | sort -u)
+  for dir in "${dirs[@]}"; do
+    if python3 -m pytest --version >/dev/null 2>&1; then
+      (cd -- "$dir" && python3 -m pytest .) || return 1
+    else
+      # unittest は 1 つの pattern しか取らない。該当するファイルのあるパターンだけ走らせる
+      has_prefix=0 has_suffix=0
+      for f in "$@"; do
+        [[ "${f%/*}" == "$dir" ]] || continue
+        [[ "${f##*/}" == test_*.py ]] && has_prefix=1
+        [[ "${f##*/}" == *_test.py ]] && has_suffix=1
+      done
+      if (( has_prefix )); then
+        (cd -- "$dir" && python3 -m unittest discover -s . -p 'test_*.py') || return 1
+      fi
+      if (( has_suffix )); then
+        (cd -- "$dir" && python3 -m unittest discover -s . -p '*_test.py') || return 1
+      fi
+    fi
+  done
+}
 if [[ -f pyproject.toml || -f setup.py || -f requirements.txt ]] || staged_has '*.py'; then
   DETECTED=1
   run_stage python format ruff "ruff format ." ruff format --check .
   run_stage python lint ruff "ruff check --fix ." ruff check .
-  if [[ -d tests ]] || compgen -G 'test_*.py' >/dev/null || compgen -G '*_test.py' >/dev/null; then
+  if [[ -x scripts/run-python-tests.sh ]]; then
+    # リポジトリ固有の走らせ方（devShell を分けるなど）。ADR-0036
+    run_stage python test bash "" bash scripts/run-python-tests.sh
+  elif [[ -d tests ]] || compgen -G 'test_*.py' >/dev/null || compgen -G '*_test.py' >/dev/null; then
     run_stage python test pytest "" pytest
+  elif listing=$(python_test_files) && [[ -n "$listing" ]]; then
+    mapfile -t test_files <<<"$listing"
+    run_stage python test python3 "" python_subdir_tests "${test_files[@]}"
   else
     echo "SKIP: python test (テストが見つからない)"
   fi
