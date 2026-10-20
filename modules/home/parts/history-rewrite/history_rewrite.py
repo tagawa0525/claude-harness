@@ -283,6 +283,7 @@ class Verifier:
     transformer: Transformer
     problems: list[str] = field(default_factory=list)
     expected: dict[tuple[bytes, bytes], bytes] = field(default_factory=dict)
+    verified_trees: set[tuple[bytes, bytes]] = field(default_factory=set)
 
     def run(self) -> None:
         env = dict(os.environ)
@@ -331,9 +332,16 @@ class Verifier:
             self.problems.append(
                 f"{old}: 親が対応しない: {old_parents} → {new_parents}"
             )
-        if self.transformer.message(old_body) != new_body:
+        # 宣言した符号化が UTF-8 でない本文は変えない（変わるなら第 1 段が止める）
+        utf8 = is_utf8(dict(old_headers).get(b"encoding"))
+        want = self.transformer.message(old_body) if utf8 else old_body
+        if want != new_body:
             self.problems.append(f"{old}: 本文が変換の結果と違う")
-        self.tree(old, new)
+        trees = (dict(old_headers)[b"tree"], dict(new_headers)[b"tree"])
+        # 同じ tree の組は履歴の中で何度も出る（語を直さないコミット、マージ）ので、1 度だけ比べる
+        if trees not in self.verified_trees:
+            self.tree(old, new)
+            self.verified_trees.add(trees)
 
     def tree(self, old: str, new: str) -> None:
         old_tree, new_tree = self.ls_tree(old), self.ls_tree(new)
@@ -439,6 +447,11 @@ class Verifier:
         return refs
 
 
+def is_utf8(encoding: bytes | None) -> bool:
+    """コミットの encoding の見出しが無いか UTF-8 か（git の is_encoding_utf8 と同じく、大文字と小文字、- を問わない）"""
+    return encoding is None or encoding.lower().replace(b"-", b"") == b"utf8"
+
+
 def stage1(repo: Path, transformer: Transformer) -> dict[str, int]:
     """第 1 段: filter-repo に語の変換だけを流す"""
     import git_filter_repo as fr
@@ -459,11 +472,24 @@ def stage1(repo: Path, transformer: Transformer) -> dict[str, int]:
                 counts["blobs"] += 1
         return (filename, mode, seen[key])
 
-    def message(data):
-        new = transformer.message(data)
-        if new != data:
+    def commit(commit, _metadata):
+        new = transformer.message(commit.message)
+        if new == commit.message:
+            return
+        if not is_utf8(commit.encoding):
+            # 本文は宣言した符号化で読まれる。UTF-8 の語を書き込むと文字化けするので、変えずに止める
+            raise Stop(
+                f"{commit.original_id.decode()}: 符号化 {commit.encoding.decode()} の本文に直す語がある"
+                "（UTF-8 の本文だけを直す）"
+            )
+        counts["messages"] += 1
+        commit.message = new
+
+    def tag(tag, _metadata):
+        new = transformer.message(tag.message)
+        if new != tag.message:
             counts["messages"] += 1
-        return new
+            tag.message = new
 
     # 1 対 1 で照合するため、空になったコミットも消さない（語を手で直しただけのコミットは、変換の後に空になる）。
     # 本文の番号は第 2 段が付け直すので、filter-repo には付け直させない
@@ -485,7 +511,7 @@ def stage1(repo: Path, transformer: Transformer) -> dict[str, int]:
     os.chdir(repo)
     try:
         fr.RepoFilter(
-            args, file_info_callback=file_info, message_callback=message
+            args, file_info_callback=file_info, commit_callback=commit, tag_callback=tag
         ).run()
     finally:
         os.chdir(cwd)
@@ -573,7 +599,8 @@ def run(args: argparse.Namespace) -> None:
 def transform_files(args: argparse.Namespace) -> None:
     transformer = make_transformer(args)
     top = Path(git(Path("."), "rev-parse", "--show-toplevel").decode().strip())
-    replaced = []
+    # すべてのファイルの新しい中身を作ってから書く（途中で止まるときは、どのファイルにも書かない）
+    results: list[tuple[Path, str, bytes]] = []
     for name in args.files:
         # symlink のファイルそのものは見分けたいので、親のディレクトリだけをたどる（top は実体のパス）
         given = Path(name).absolute()
@@ -589,8 +616,11 @@ def transform_files(args: argparse.Namespace) -> None:
             raise Stop(f"{name}: リポジトリ {top} の外") from None
         new = transformer.blob(relative.encode(), path.read_bytes())
         if new is not None:
-            path.write_bytes(new)
-            replaced.append(relative)
+            results.append((path, relative, new))
+    replaced = []
+    for path, relative, new in results:
+        path.write_bytes(new)
+        replaced.append(relative)
     for relative in replaced:
         print(f"REPLACED: {relative}")
     print(f"FILES: {len(replaced)}")

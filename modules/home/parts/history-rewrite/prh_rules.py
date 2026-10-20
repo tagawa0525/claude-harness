@@ -34,11 +34,15 @@ class TextError(Exception):
 # JavaScript の行の終わり（`^`、`$` の m フラグと `.` が見るもの）
 _LINE_TERMINATORS = "\\n\\r\\u2028\\u2029"
 # prh の rule.js の parseRegExpString（utils/regexp.js の regexpRegexp）。JavaScript の `.` は改行に当たらない
-_REGEXP_STRING = re.compile(r"^/([^\n\r  ]*)/([gimy]*)$")
+_REGEXP_STRING = re.compile(r"^/([^\n\r  ]*)/([gimy]*)\Z")
 # prh の escapeSpecialChars が `\` を前に付ける文字（`\` 自身は含まない）
 _PRH_SPECIAL = "¥*+.?{}()[]^$-|/"
 # 構文の文字をそのまま表すエスケープ（u フラグで許されるもの）
-_SYNTAX_ESCAPES = "^$\\.*+?()[]{}|/-"
+_SYNTAX_ESCAPES = "^$\\.*+?()[]{}|/"
+# 文字クラスの中では、u フラグでも \- を許す（ClassEscape）
+_CLASS_ONLY_ESCAPES = "-"
+# 量指定子の {n}、{n,}、{n,m}。u フラグでは、これ以外の { と単独の } ] は構文の誤り
+_BRACE_QUANTIFIER = re.compile(r"\{\d+(?:,\d*)?\}")
 _CONTROL_ESCAPES = {"n": "\\n", "r": "\\r", "t": "\\t", "f": "\\f", "v": "\\v"}
 # prh の engine.js の段落の区切り。prh の `/([^]*?)\n{2,}/g` は、前の区切りの後から次の `\n{2,}` までを段落にする。
 # 同じ書き方を Python の re で当てると、区切りの無い長い末尾で開始の位置ごとに読み直し、長さの 2 乗の時間が
@@ -86,7 +90,7 @@ def translate(source: str) -> str:
         if c == "\\":
             if i + 1 >= n:
                 raise fail("末尾の \\")
-            out.append(_translate_escape(source, i, fail))
+            out.append(_translate_escape(source, i, fail, in_class))
             i += _escape_length(source, i)
             after_quantifier = False
             continue
@@ -128,6 +132,18 @@ def translate(source: str) -> str:
                 i += 1
             after_quantifier = False
             continue
+        if c == "{":
+            m = _BRACE_QUANTIFIER.match(source, i)
+            if m is None:
+                raise fail(
+                    "{ は {n}、{n,}、{n,m} の量指定子だけ（u フラグでは単独の { は構文の誤り）"
+                )
+            out.append(m.group())
+            i = m.end()
+            after_quantifier = True
+            continue
+        if c in "}]":
+            raise fail(f"単独の {c} は u フラグでは構文の誤り")
         if c == "+" and after_quantifier:
             raise fail(
                 "量指定子の後の + は JavaScript では構文の誤り（Python では所有の量指定子）"
@@ -156,9 +172,9 @@ def _escape_length(source: str, i: int) -> int:
     return 2
 
 
-def _translate_escape(source: str, i: int, fail) -> str:
+def _translate_escape(source: str, i: int, fail, in_class: bool) -> str:
     c = source[i + 1]
-    if c in _SYNTAX_ESCAPES:
+    if c in _SYNTAX_ESCAPES or (in_class and c in _CLASS_ONLY_ESCAPES):
         return "\\" + c
     if c in _CONTROL_ESCAPES:
         return _CONTROL_ESCAPES[c]
@@ -208,9 +224,12 @@ def _pattern_source(pattern: object, origin: str) -> str:
         # g と m は prh が必ず付け、y は外すので、意味を変えない
         return m.group(1)
     # 固定の文字列。prh は escapeSpecialChars で特別な文字の前に \ を付けて RegExp にする（\ 自身は付けない）
-    if "¥" in pattern:
+    # prh は ¥ と - も \ 付きにするが、u フラグの RegExp は文字クラスの外の \¥ と \- を読めない（node 24.21.0 で
+    # 確かめた）。prh が辞書を読めないので、ここでも止める
+    bad = sorted(set(pattern) & set("¥-"))
+    if bad:
         raise DictionaryError(
-            f"{origin}: 固定の文字列の ¥ は、prh が \\¥ にして u フラグの RegExp として読めない（/…/ で書く）"
+            f"{origin}: 固定の文字列の {''.join(bad)} は、prh が \\ を付けて u フラグの RegExp として読めない（/…/ で書く）"
         )
     return "".join("\\" + ch if ch in _PRH_SPECIAL else ch for ch in pattern)
 
