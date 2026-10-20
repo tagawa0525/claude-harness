@@ -132,4 +132,57 @@ in_other "$D" bash -c 'git mv src/old.txt src/new.txt && git commit -q -m "refac
 out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh")
 assert_contains "$out" "COMMON: src/old.txt"
 
+# fail_git <サブコマンド> <終了コード>: そのサブコマンドだけ失敗する git を PATH の先頭に置く
+REAL_GIT=$(command -v git)
+fail_git() {
+  mkdir -p "$TEST_ROOT/fakebin"
+  cat >"$TEST_ROOT/fakebin/git" <<SH
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == "$1" ]]; then echo "fatal: injected" >&2; exit $2; fi
+done
+exec "$REAL_GIT" "\$@"
+SH
+  chmod +x "$TEST_ROOT/fakebin/git"
+  PATH="$TEST_ROOT/fakebin:$PATH"
+}
+restore_git() {
+  rm -f "$TEST_ROOT/fakebin/git"
+  PATH="${PATH#"$TEST_ROOT/fakebin:"}"
+}
+
+it "base-moved: origin が無い GitHub clone では何も出さずに終わる（誤った WARN を出し続けない）"
+D="$TEST_ROOT/bm/no_origin"
+make_repo "$D"
+git -C "$D" remote add github "https://github.com/example/no_origin.git"
+git -C "$D" switch -q -c feat/work
+commit_file "$D" src/a.txt "feat: a"
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>&1)
+assert_eq 0 $?
+assert_eq "" "$out"
+
+it "base-moved: 差分の取得に失敗したら、空の出力（進みなし）と区別できる WARN を出して exit 0"
+D=$(fixture diff_fails)
+commit_file "$D" src/a.txt "feat: a"
+in_other "$D" bash -c 'mkdir -p src && seq 3 > src/a.txt && git add src && git commit -q -m "feat: other a"'
+fail_git diff 2
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>&1)
+rc=$?
+restore_git
+assert_eq 0 "$rc"
+assert_contains "$out" "WARN:"
+assert_contains "$out" "比較は未確認"
+
+it "base-moved: merge-base が 1 以外で失敗したら、終了コードと stderr を出す（共通の祖先なしとは区別する）"
+D=$(fixture merge_base_fails)
+commit_file "$D" src/a.txt "feat: a"
+fail_git merge-base 128
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>&1)
+rc=$?
+restore_git
+assert_eq 0 "$rc"
+assert_contains "$out" "終了コード 128"
+assert_contains "$out" "fatal: injected"
+assert_not_contains "$out" "分岐点が見つかりません"
+
 finish
