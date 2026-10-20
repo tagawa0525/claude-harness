@@ -6,7 +6,8 @@
 //! 2. --body / --body-file がある。fork でなければ本文に ## Summary / ## Changes / ## Tests が
 //!    揃っている（見出しは常に英語。本文の言語は問わない。--body を省くと gh がエディタを
 //!    開き、Claude Code セッションでは固まる）
-//! 3. 現在のブランチに上流があり、未プッシュのコミットがない（--head 指定時は見ない）
+//! 3. 現在のブランチに上流があり、未プッシュのコミットがない（--head 指定時は見ない）。
+//!    同じコマンドの前に連ねた git push は反映されない（実行前の状態を見る）
 //! 4. --web を使わない（ブラウザを開かず URL を報告する）
 //!
 //! 本文の見出しは `--body` 引数ノードの原文（ヒアドキュメント本文を含む）だけを見る。
@@ -26,6 +27,10 @@ use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell, has_flag, opt_value};
+
+/// 検査は実行前のブランチの状態を見る。同じコマンドの前に連ねた git push は反映されず、
+/// 連ねるとコマンド全体が止まって前半も実行されないので、分け方を deny の文言で示す。
+const SPLIT_CALLS_HINT: &str = "同じコマンドの前に git push を連ねても検査には反映されません。push と gh pr create は別の呼び出しに分けてください";
 
 pub struct PrePrCreateCheck;
 
@@ -140,13 +145,15 @@ impl Rule for PrePrCreateCheck {
             // --- 3. 未プッシュコミット ---
             if !has_flag(args, &["--head", "-H"]) {
                 match git::git(&dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) {
-                    None => reasons.push("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）".to_string()),
+                    None => reasons.push(format!("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）。{SPLIT_CALLS_HINT}")),
                     Some(upstream) => {
                         let ahead = git::git(&dir, &["rev-list", "--count", "@{u}..HEAD"])
                             .unwrap_or_else(|| "?".to_string());
                         if ahead != "0" {
+                            // 件数が取れなかった（"?"）ときは原因が未プッシュとは限らないので、分け方は示さない
+                            let hint = if ahead == "?" { String::new() } else { format!("。{SPLIT_CALLS_HINT}") };
                             reasons.push(format!(
-                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください"
+                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください{hint}"
                             ));
                         }
                     }

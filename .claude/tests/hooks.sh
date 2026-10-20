@@ -130,6 +130,7 @@ commit_file "$REPO" "b.txt" "feat: b"
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "未プッシュ"
+assert_contains "$(reason "$out")" "別の呼び出し"
 git -C "$REPO" push -q
 
 it "pre-pr-create: 上流ブランチがなければ deny"
@@ -137,6 +138,10 @@ git -C "$REPO" switch -q -c feat/no-upstream
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "git push"
+assert_contains "$(reason "$out")" "別の呼び出し"
+out=$(run_hook pre-pr-create-check "git push -u origin HEAD && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "別の呼び出し"
 git -C "$REPO" switch -q feat/x
 
 it "pre-pr-create: --head 指定時は現在ブランチの push 状態を見ない"
