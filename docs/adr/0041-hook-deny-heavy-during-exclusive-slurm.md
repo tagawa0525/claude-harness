@@ -92,3 +92,8 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
   guard-sbatch で止まることを確かめる。`modules/home/parts/claude-hooks/tests/git_spawn.rs` が、squeue の失敗の
   通知、squeue が無いときの沈黙、UTF-8 でない名前を確かめる
 - `.claude/tests/scripts/language-checks.sh` が、`run-checks.sh` の自己制限を確かめる
+
+## 補足
+
+- 2026-10-21: 決定の要因の「判定できない形は、止める側に倒す（ADR-0025）」は、ADR-0042 で今後は広げないと決めた
+  （hook は普通に書く形で判定し、作為的な抜け道は塞がない）。入っているコードは残す
