@@ -72,11 +72,14 @@ diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads r
 変更の控えのパッチも残す:
 
 ```bash
-git -C "$R" worktree list --porcelain | awk '/^worktree /{print $2}' >"$D/worktrees"
-while read -r w; do
-  printf '%s %s %s\n' "$w" "$(git -C "$w" rev-parse HEAD)" \
-    "$(git -C "$w" status --porcelain --untracked-files=no | wc -l)"
-  git -C "$w" diff HEAD >"$D/$(basename "$w").patch"
+# パスは空白を含みうるので、行の残り全体を取り、列はタブで区切る。控えのパッチは行の番号で名付ける
+git -C "$R" worktree list --porcelain | sed -n 's/^worktree //p' >"$D/worktrees"
+k=0
+while IFS= read -r w; do
+  k=$((k + 1))
+  git -C "$w" diff HEAD >"$D/worktree-$k.patch"
+  printf '%s\t%s\t%s\t%s\n' "$w" "$(git -C "$w" rev-parse HEAD)" \
+    "$(git -C "$w" status --porcelain --untracked-files=no | wc -l)" "$D/worktree-$k.patch"
 done <"$D/worktrees" >"$D/worktree-state"
 ```
 
@@ -98,7 +101,7 @@ git -C "$R" update-ref --stdin <"$D/transaction"
 ## 5. worktree を合わせる
 
 `update-ref` はチェックアウト中のブランチも移すので、各 worktree の index と作業ツリーは元の番号のままになる。
-`worktree-state` の行ごとに合わせる（`w`、`old` は行の 1 列目と 2 列目、3 列目が未コミットの変更の数）。
+`worktree-state` の行ごとに合わせる（`while IFS=$'\t' read -r w old n patch` で読む。`n` は未コミットの変更の数、`patch` は控えのパッチ）。
 
 - detached HEAD の worktree: 先に HEAD を移す（`commit-map` は元の番号から最後の番号への対応表）
 
@@ -127,7 +130,7 @@ git -C "$R" update-ref --stdin <"$D/transaction"
   (cd "$w" && commit-refs remap "$D/commit-map")   # 未コミットの文書の古い番号を付け直す
   ```
 
-  `git -C "$w" diff` が、控えのパッチ（`$D/<worktree>.patch`）と同じ変更に語と番号の変換を当てたものだけに
+  `git -C "$w" diff` が、控えのパッチ（`$patch`）と同じ変更に語と番号の変換を当てたものだけに
   なっていることを確かめる
 
 ## 6. 書き換えの外に残るもの
