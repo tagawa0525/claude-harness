@@ -114,8 +114,11 @@ git -C "$R" update-ref --stdin <"$D/transaction"
 
   ```bash
   git -C "$w" reset -q   # mixed。ステージしていた変更は、作業ツリーに残ったまま外れる
-  for f in $(git -C "$w" diff --name-only "$old" HEAD); do
-    if git -C "$w" diff --quiet "$old" -- "$f"; then
+  # -z で受ける（日本語や空白を含むパスを、引用符つきの 8 進や語の区切りにしない）
+  git -C "$w" diff -z --name-only "$old" HEAD | while IFS= read -r -d '' f; do
+    if [ ! -e "$w/$f" ] && [ ! -L "$w/$f" ]; then
+      continue   # 未コミットで消したファイルは、消したまま残す
+    elif git -C "$w" diff --quiet "$old" -- "$f"; then
       git -C "$w" checkout -- "$f"   # 手を付けていないファイルは、新しい中身にする
     else
       (cd "$w" && history-rewrite transform [語の指定] "$f")   # 変えたファイルは、同じ変換を当てる
