@@ -15,7 +15,7 @@
 # --carry-changes: 未コミットの変更（未追跡ファイル含む）を stash 経由で worktree 側に移す
 #   （git-commit スキルの「main からの退避」）。
 #
-# 共有（.worktreelink、ADR-0016）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス
+# 共有（.worktreelink）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス
 # （ルートからの相対パス。空行と # で始まる行は読み飛ばし、前後に空白のある行はエラー）を、メイン worktree の同じパスへの
 # 絶対パスの symlink として作る。git で追跡しない大きなデータ（キャッシュ・参照データ）を
 # worktree の間でコピーせず共有するため。
@@ -31,7 +31,7 @@
 #
 # GitHub リモートがあり、ローカルにブランチが無く --from も無ければ、ブランチの状態を調べる前に fetch する。古い追跡ブランチから作ると、
 # 他のセッションが既定ブランチに入れた変更を取り違える。fetch に失敗したら古い base で進まず止める
-# （post-merge-cleanup.sh の fetch と同じ扱い。ADR-0038）。
+# （post-merge-cleanup.sh の fetch と同じ扱い）。
 #
 # 出力:
 #   WORKTREE: <path>

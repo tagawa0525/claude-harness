@@ -147,7 +147,7 @@ impl Rule for GuardExclusiveSlurm {
             return Vec::new();
         };
         vec![Finding::Deny(format!(
-            "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください（nixfiles の ADR-0026、ADR-0041）。"
+            "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
         ))]
     }
 }

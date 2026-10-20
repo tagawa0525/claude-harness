@@ -5,7 +5,7 @@
 #   https://github.com/<owner>/<repo>/pull/<番号>[/<ページ>][?<クエリ>][#<フラグメント>] を解析し、
 #   PR_NUMBER を設定して GH_REPO=<owner>/<repo> と GH_HOST=github.com を export する。gh は GH_REPO を
 #   gh pr の対象にも gh api の {owner} / {repo} にも使うので、以降の gh の呼び出しは cwd のリポジトリに
-#   依らない（ADR-0032）。GH_HOST も固定するのは、gh api が GH_REPO のホストより環境の GH_HOST を
+#   依らない。GH_HOST も固定するのは、gh api が GH_REPO のホストより環境の GH_HOST を
 #   使うため（GH_REPO=github.com/<owner>/<repo> でも GH_HOST のホストへつなぐことを 2026-10-12 に確かめた）。
 #   PR_URL_CANONICAL には、ページ・クエリ・# 以降を除いた PR の URL を入れる（案内と下請けへの受け渡し用）。
 #   /files や通知のクエリの付いた URL も、同じ PR を指すので受ける。

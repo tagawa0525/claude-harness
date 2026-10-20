@@ -4,7 +4,7 @@
 # Usage: record-local-review.sh <PR の URL> <SHA> <high> <medium> <low>
 #   SHA はローカルでレビューしたコミット（git rev-parse HEAD）。PR の head と一致しなければ記録しない
 #   （レビューの後に head が動いたなら、その head はレビューしていない）
-#   high / medium / low は、ローカルレビューで見つけた指摘の数（重大度は Copilot に揃える。ADR-0043）
+#   high / medium / low は、ローカルレビューで見つけた指摘の数（重大度は Copilot に揃える）
 #
 # Copilot に再レビューを依頼する前と、依頼せずに終える前に、push した head をローカルで確かめた
 # ことを残す。decide-next.sh、request-rereview.sh、pre-merge-check は、head の SHA の記録が

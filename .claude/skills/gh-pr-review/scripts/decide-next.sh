@@ -24,9 +24,9 @@
 #     LOCAL_REVIEW_NEEDED  対応を push したが head をローカルでレビューしていない → /code-review で
 #                          確かめて record-local-review.sh で記録する
 #     STOP_LOCAL_REVIEWED  head はローカルでレビュー済み（記録に High が無い）で、未解決スレッドが無い
-#                          → Copilot のレビューの有無・到着・内容を問わずマージへ（ADR-0043）。
+#                          → Copilot のレビューの有無・到着・内容を問わずマージへ。
 #                          Copilot の再レビューの要求は任意（request-rereview.sh）
-#     STOP_DOCS_REVIEWED   文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR で、対応済み・head 未レビュー
+#     STOP_DOCS_REVIEWED   文書（変更ファイルがすべて docs/ 配下）だけの PR で、対応済み・head 未レビュー
 #                          → 依頼しない。文章は細部をいくらでも掘れるので、
 #                            指摘は最初のレビューで受けて周回を止める。最新のレビューが
 #                            失敗していても、成功したレビューが一度でもあれば同じ扱い
@@ -162,7 +162,7 @@ echo "UNRESOLVED: ${unresolved}"
 echo "LOCAL_REVIEWED: ${local_reviewed}"
 
 if [[ "$response" == "none" ]]; then
-  # head のローカルレビューの記録があれば、Copilot のレビューを待たない（ADR-0043）
+  # head のローカルレビューの記録があれば、Copilot のレビューを待たない
   if [[ "$local_reviewed" == yes ]]; then
     if (( unresolved > 0 )); then echo "VERDICT: ACT"; else echo "VERDICT: STOP_LOCAL_REVIEWED"; fi
   else
@@ -194,7 +194,7 @@ fi
 # 文書だけの PR は、一度でも成功したレビューがあれば後のレビューの失敗で止めない
 # （pre-merge-check と同じ条件）。最初のレビューが失敗しただけの PR は止める
 if [[ "$failed" == "yes" ]] && ! { (( successful > 0 )) && docs_only; }; then
-  # head のローカルレビューの記録があれば、Copilot のレビューの失敗は止めない（ADR-0043）
+  # head のローカルレビューの記録があれば、Copilot のレビューの失敗は止めない
   if [[ "$local_reviewed" == no ]]; then
     echo "VERDICT: REVIEW_FAILED"
   elif (( unresolved > 0 )); then

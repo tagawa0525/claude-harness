@@ -120,7 +120,7 @@ impl Rule for BlockNoVerify {
         }
         if skips {
             return vec![Finding::Deny(format!(
-                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます（ADR-0015）: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え（-E の無い sudo と ssh の先には CLAUDECODE が渡りません）。\nhook が止めた理由を直してから実行してください。{}",
+                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え（-E の無い sudo と ssh の先には CLAUDECODE が渡りません）。\nhook が止めた理由を直してから実行してください。{}",
                 escape_hint("ALLOW_NO_VERIFY")
             ))];
         }

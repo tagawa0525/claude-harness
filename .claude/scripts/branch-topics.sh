@@ -79,7 +79,7 @@ TYPES=$(git log --format=%s "$BASE..$TIP" \
   | awk '{ printf "%s%s=%s", (NR > 1 ? " " : ""), $2, $1 }')
 [[ -z "$TYPES" ]] || echo "TYPES: $TYPES"
 
-# status <rev> <path>: フロントマターの status の値（無ければ -）。フロントマターの形は design-records（ADR-0009）が持つ
+# status <rev> <path>: フロントマターの status の値（無ければ -）。フロントマターの形は design-records が持つ
 status() {
   local text
   text=$(git show "$1:$2")
