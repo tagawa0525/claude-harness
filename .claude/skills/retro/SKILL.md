@@ -8,6 +8,7 @@ allowed-tools:
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
+  - Bash(cd *)
   - Bash(git *)
   - Bash(gh *)
   - Read
