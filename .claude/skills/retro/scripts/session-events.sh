@@ -12,7 +12,7 @@
 #   TRANSCRIPTS: <読んだ記録の数（本体 + サブエージェント）>
 #   <KIND>: <回数> <本文の要約>   失敗したツールの結果を、種類と要約ごとに回数の多い順に
 #     HOOK        hook の拒否（`<event>:<tool> hook error: ` を除いた 1 行目）。同じ拒否をまとめるため、
-#                 コミットの番号を `<hash>`、英数字と `-` `#` に続かない数を `N` に置き換える（ADR-0015 は残す）
+#                 コミットの番号（数字と a-f の両方を含む 7〜40 文字）を `<hash>`、英数字と `-` `#` に続かない数を `N` に置き換える（ADR-0015 は残す）
 #     PERMISSION  権限の拒否（1 行目が自動モードの分類器などの拒否）
 #     REJECTED    ユーザーが止めたツール（止めたときに書いた言葉があれば `the user said: <言葉>`）
 #     TOOL        そのほか（`Exit code N` は、エラーらしい行の最後、無ければ最後の行とつなぐ。
@@ -51,6 +51,9 @@ else
   transcript=${found[0]}
 fi
 
+# jq は - で始まる引数をオプションに読む（~/.claude/projects の下のディレクトリ名は - で始まる）
+[[ "$transcript" != -* ]] || transcript=./$transcript
+
 if [[ ! -r "$transcript" ]]; then
   echo "ERROR: 記録を読めません: $transcript" >&2
   exit 1
@@ -60,14 +63,15 @@ shopt -s nullglob
 subagents=("${transcript%.jsonl}"/subagents/*.jsonl)
 shopt -u nullglob
 
-# 形の検査: type を持つ行（本体）と、ツールの呼び出しと結果（本体とサブエージェント）を 1 度に数える
+# 形の検査: type を持つ行（本体）と、ツールの呼び出しと結果（本体とサブエージェント）を 1 度に数える。
+# 結果は、失敗を拾う下の処理と同じ type: user の行だけで数える（api-request-blob の行にも tool_result がある）
 # shellcheck disable=SC2016  # jq のプログラム
 read -r typed uses results < <(jq -rRn '
   reduce (inputs | fromjson? | select(type == "object")) as $e ([0, 0, 0];
     ([$e.message?.content? | arrays | .[] | .type?]) as $t
     | .[0] += (if ($e | has("type")) and input_filename == $main then 1 else 0 end)
     | .[1] += ($t | map(select(. == "tool_use")) | length)
-    | .[2] += ($t | map(select(. == "tool_result")) | length))
+    | .[2] += (if $e.type == "user" then ($t | map(select(. == "tool_result")) | length) else 0 end))
   | @tsv
 ' --arg main "$transcript" "$transcript" "${subagents[@]}")
 if ((typed == 0)); then
@@ -89,7 +93,7 @@ jq -rR '
   def first_line: split("\n") | map(select(test("\\S"))) | (.[0] // "(本文なし)");
   def cut: .[0:160];
   def norm:
-    gsub("(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}(?![0-9A-Za-z])"; "<hash>")
+    gsub("(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z])"; "<hash>")
     | gsub("(?<![-#0-9A-Za-z])[0-9]+"; "N");
   # 終了コードのある失敗の出力は標準出力と標準エラーが混ざる。エラーらしい行の最後を選ぶ
   def error_line:
