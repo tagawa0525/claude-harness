@@ -50,9 +50,18 @@ for path in "${files[@]}"; do
   ((found)) || echo "UNINDEXED: $file"
 done
 
+# [[名前]] の参照先は、ファイル名の語幹か前付けの name（実際のメモリは両方を使う）
+declare -A known=()
+for path in "${files[@]}"; do
+  file=$(basename "$path")
+  known[${file%.md}]=1
+  name=$(sed -nE '1,/^---$/{s/^name:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p}' "$path" | head -n 1)
+  [[ -z "$name" ]] || known[$name]=1
+done
+
 for path in "${files[@]}"; do
   file=$(basename "$path")
   while IFS= read -r name; do
-    [[ -e "$dir/$name.md" ]] || echo "BROKEN_LINK: $file -> $name"
+    [[ -n "${known[$name]:-}" ]] || echo "BROKEN_LINK: $file -> $name"
   done < <(grep -oE '\[\[[^]]+\]\]' "$path" | sed -E 's/^\[\[(.*)\]\]$/\1/' | sort -u || true)
 done
