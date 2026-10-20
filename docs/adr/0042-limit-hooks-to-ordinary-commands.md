@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-21
-requires: [ADR-0020, ADR-0025]
+requires: []
 supersedes: []
 superseded-by:
 issues: ["#388", "#405", "#406"]
@@ -66,8 +66,8 @@ ADR-0020 は「実際に Slurm へ投げるスクリプトは、どの書き方�
 ### 判定の対象
 
 モデルが普通に書く形のコマンド。スキル、CLAUDE.md、ツールのヘルプに出る書き方と、それを `&&`、`;`、`|`、
-`cd <dir> &&`、`git -C <dir>`、`VAR=value` の前置き、`env`・`timeout`・`nice`・`nohup`・`time`・`command` の
-前置き、スキルにある `… | xargs -0 -r git add --`、サブシェル、2 段までの `bash -c '…'`（ADR-0025 の案 E の
+`cd <dir> &&`、`git -C <dir>`、`VAR=value` の前置き、`env`・`timeout`・`nice`・`nohup`・`time`・`command`・`builtin`・`exec`・
+`stdbuf`・`setsid`・`ionice` の前置き、`nix develop -c`、スキルにある `… | xargs -0 -r git add --`、サブシェル、2 段までの `bash -c '…'`（ADR-0025 の案 E の
 記録で、Claude Code が書く入れ子は 2 段を超えない）でつないだものを指す。
 
 ### 止めないもの
@@ -118,8 +118,14 @@ hook は境界ではない。これらを止めないことで生じる穴は、
   `cd x; (git commit)` の `cd` を効かせるスコープの読み方、
   `echo sbatch` のような引数に現れるだけの形を止めない（偽陽性を増やさない）こと、偽陽性による見直しの条件
 
-置き換えは部分的なので、両 ADR は `status: accepted` のまま、補足に日付つきでこの ADR を指す。前付けの
-`requires` に両 ADR を入れ、両 ADR を置き換えるときに `grep -l 'requires:.*ADR-NNNN' docs/adr` で引けるようにする。
+ssh と `sudo -i` の中の場所の扱い（ADR-0025 の補足、#342）と、`sudo` / `ssh` で CLAUDECODE が渡らない `git commit`
+を止める扱い（ADR-0015、ADR-0025）は、入っているコードとして残す。これらが普通に書く形を誤って止めるなら、止める
+側の誤判定として直す。
+
+ADR-0041（guard-exclusive-slurm）の決定の要因「判定できない形……は、止める側に倒す（ADR-0025）」も、同じく今後の
+判断の基準にしない。
+
+置き換えは部分的なので、両 ADR は `status: accepted` のまま、補足に日付つきでこの ADR を指す。
 `superseded-by` は付けない。`design-records check` は `superseded-by` を `status: superseded`（全体の置き換え）と
 組で求め、全体を置き換えるなら ADR-0025 の読み方の表（今のコードの説明として有効）をこの ADR に書き直して
 含めることになる（/adr の確定後の運用）。
