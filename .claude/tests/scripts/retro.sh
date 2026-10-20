@@ -43,6 +43,13 @@ error: pathspec 'x' did not match"
   tool_error "PreToolUse:Bash hook error: 最後の push (e7c9939) は自動レビューを受けていません（3 件）"
   tool_error "PreToolUse:Bash hook error: 最後の push (71cfb82) は自動レビューを受けていません（12 件）"
   tool_error "The server-side auto mode classifier gave no verdict for Bash: rm -rf x"
+  tool_error "PreToolUse:Bash hook error: ADR-0015 により止めます。コミットe7c9939dは約10分前"
+  tool_error "Exit code 1
+✗ fixture: missing 'auto mode classifier'"
+  tool_error "Exit code 2
+SKILL.md
+grep: x: No such file or directory
+SKILL.md"
   tool_error "Exit code 127
 passed: 237, failed: 0
 bash: command not found: shellcheck"
@@ -70,11 +77,10 @@ git add <file> でステージしてください"
     content: [{type: "text", text: "The user doesn'"'"'t want to proceed with this tool use. The tool use was rejected."}]}]}}'
 } > "$PROJECT/$SESSION/subagents/agent-a1.jsonl"
 
-it "session-events: 記録のパスと、隣のメモリのディレクトリと、読んだ記録の数を出す"
+it "session-events: 記録のパスと、読んだ記録の数を出す"
 out=$("$EVENTS" "$MAIN")
 assert_eq 0 $?
 assert_contains "$out" "TRANSCRIPT: $MAIN"
-assert_contains "$out" "MEMORY_DIR: $PROJECT/memory"
 assert_contains "$out" "TRANSCRIPTS: 2"
 
 it "session-events: hook の拒否を、サブエージェントの分も合わせて本文の 1 行目ごとに数える"
@@ -83,6 +89,9 @@ assert_not_contains "$out" "hook error:"
 
 it "session-events: hook の拒否の本文のコミットの番号と数は置き換えて、同じ拒否をまとめて数える"
 assert_contains "$out" "HOOK: 2 最後の push (<hash>) は自動レビューを受けていません（N 件）"
+
+it "session-events: ADR などの記号に続く番号は残し、日本語に接したコミットの番号も置き換える"
+assert_contains "$out" "HOOK: 1 ADR-0015 により止めます。コミット<hash>は約N分前"
 
 it "session-events: 権限の拒否と、ユーザーが止めたツールを分けて数える"
 assert_contains "$out" "PERMISSION: 1 Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Git Destructive]."
@@ -95,6 +104,12 @@ assert_contains "$out" "TOOL: 1 File has not been read yet."
 
 it "session-events: 終了コードのある失敗は、出力の最後の行（標準エラーが来る）をつなぐ"
 assert_contains "$out" "TOOL: 1 Exit code 127: bash: command not found: shellcheck"
+
+it "session-events: 終了コードのある失敗は、エラーらしい行があればそれを優先する"
+assert_contains "$out" "TOOL: 1 Exit code 2: grep: x: No such file or directory"
+
+it "session-events: 本文の途中に分類器の語があるだけの失敗は権限の拒否に数えない"
+assert_contains "$out" "TOOL: 1 Exit code 1: ✗ fixture: missing 'auto mode classifier'"
 
 it "session-events: 成功したツールの結果は数えない"
 assert_not_contains "$out" "成功の印"
@@ -159,8 +174,9 @@ cat > "$MEM/MEMORY.md" <<'EOF'
 - [好み A](feedback-a.md) — 説明
 - [事情 B](project-b.md) — 説明
 - [消えた C](project-c.md) — 説明
+- [外部](https://example.com/README.md) — 外部の文書
 EOF
-printf -- '---\nname: a\n---\n\n本文 [[project-b]]\n' > "$MEM/feedback-a.md"
+printf -- '---\nname: a\n---\n\n本文 [[project-b|別名]] と [[project-b#節]]\n\n`[[ -n "$x" ]]`\n\n```bash\n[[ -z "$y" ]]\n```\n' > "$MEM/feedback-a.md"
 printf -- '---\nname: b\n---\n\n本文 [[feedback-gone]] と [[feedback-a]]\n' > "$MEM/project-b.md"
 printf -- '---\nname: d\n---\n\n本文\n' > "$MEM/project-d.md"
 
@@ -172,6 +188,12 @@ assert_contains "$out" "MISSING: project-c.md"
 assert_contains "$out" "UNINDEXED: project-d.md"
 assert_not_contains "$out" "MISSING: feedback-a.md"
 assert_not_contains "$out" "UNINDEXED: MEMORY.md"
+
+it "memory-index: 外部への索引のリンクは突き合わせない"
+assert_not_contains "$out" "example.com"
+
+it "memory-index: [[名前|別名]] と [[名前#節]] は名前で解決し、コードの中の [[ ]] は読まない"
+assert_not_contains "$out" "BROKEN_LINK: feedback-a.md"
 
 it "memory-index: 本文の [[名前]] で、同じ名前のファイルが無いものを出す"
 assert_contains "$out" "BROKEN_LINK: project-b.md -> feedback-gone"
@@ -194,9 +216,15 @@ assert_not_contains "$out" "-> d-quoted"
 assert_contains "$out" "BROKEN_LINK: project-e.md -> bogus"
 rm "$MEM/project-e.md" "$MEM/project-f.md"
 
+it "memory-index: 索引の ./ で始まるリンクもファイル名で突き合わせる"
+sed -i 's|(project-b.md)|(./project-b.md)|' "$MEM/MEMORY.md"
+out=$("$MEMORY_INDEX" "$MEM")
+assert_not_contains "$out" "UNINDEXED: project-b.md"
+assert_not_contains "$out" "MISSING: ./project-b.md"
+
 it "memory-index: 食い違いが無ければ件数の行だけを出す"
 rm "$MEM/project-d.md"
-sed -i '/project-c/d' "$MEM/MEMORY.md"
+sed -i '/project-c/d; /example.com/d' "$MEM/MEMORY.md"
 printf -- '---\nname: b\n---\n\n本文 [[feedback-a]]\n' > "$MEM/project-b.md"
 out=$("$MEMORY_INDEX" "$MEM")
 assert_eq "ENTRIES: 2" "$out"
