@@ -59,6 +59,13 @@ while IFS= read -r hit; do
   _fail "番号を外し、規則と理由をその場で分かるように書く"
 done < <(grep -rnE 'ADR-[0-9]{4}' "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/scripts" | cut -c1-200)
 
+# hook の拒否メッセージ（Rust の文字列）も、どのプロジェクトのセッションにも出る。コメントの番号は読み手が
+# nixfiles の開発者なので対象にしない
+while IFS= read -r hit; do
+  it "skills: hook の拒否メッセージに ADR の番号を書かない: $hit"
+  _fail "番号を外し、規則と理由をメッセージの中で分かるように書く"
+done < <(grep -rnE '^[^/]*"[^"]*ADR-[0-9]{4}' "$CLAUDE_DIR/../modules/home/parts/claude-hooks/src/rules" | cut -c1-200)
+
 it "skills: ADR の番号を書かないことの検査が走った（対象のファイルがある）"
 if [[ -f "$CLAUDE_DIR/CLAUDE.md" && -d "$CLAUDE_DIR/skills" && -d "$CLAUDE_DIR/scripts" ]]; then _pass; else _fail "検査の対象が見つからない"; fi
 
