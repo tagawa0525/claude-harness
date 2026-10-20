@@ -83,4 +83,30 @@ err=$(PATH="$TEST_ROOT/failbin:$PATH" "$SCRIPT" main -- true 2>&1 >/dev/null)
 assert_eq 3 $?
 assert_contains "$err" "git rev-list に失敗"
 
+# RED: 以下は実装前のため skip（GREEN のコミットで外す）
+if [[ -n "${CEC_PENDING-}" ]]; then
+# FAIL_GIT_SUB に指定した git のサブコマンドだけ失敗する git を PATH の先頭に置く
+printf '#!/usr/bin/env bash\nfor a in "$@"; do [[ "$a" == "${FAIL_GIT_SUB-}" ]] && { echo "fatal: injected" >&2; exit 128; }; done\nexec %s "$@"\n' "$real_git" > "$TEST_ROOT/failbin/git"
+
+it "check-each-commit: mktemp が失敗したら exit 3 で、ルート直下に何も作らない"
+TMPDIR=/nonexistent "$SCRIPT" main -- true >/dev/null 2>&1
+assert_eq 3 $?
+assert_file_missing /wt
+
+it "check-each-commit: git checkout が失敗したら exit 3"
+out=$(FAIL_GIT_SUB=checkout PATH="$TEST_ROOT/failbin:$PATH" "$SCRIPT" main -- true 2>/dev/null)
+assert_eq 3 $?
+assert_eq "" "$out"
+assert_eq "" "$(ls -A "$TMPDIR")"
+
+it "check-each-commit: git clean が失敗したらそのコミットの検査をせず exit 3"
+out=$(FAIL_GIT_SUB=clean PATH="$TEST_ROOT/failbin:$PATH" "$SCRIPT" main -- true 2>/dev/null)
+assert_eq 3 $?
+assert_eq "" "$out"
+
+it "check-each-commit: git worktree add が失敗したら exit 3"
+FAIL_GIT_SUB=add PATH="$TEST_ROOT/failbin:$PATH" "$SCRIPT" main -- true >/dev/null 2>&1
+assert_eq 3 $?
+fi
+
 finish
