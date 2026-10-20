@@ -136,9 +136,9 @@ assert_not_contains "$out" "成功の印"
 it "session-events: ユーザーの発言を本セッションの順に出し、改行を空白にする"
 users=$(grep '^USER: ' <<<"$out")
 assert_eq "USER: PR を作ってください
+USER: IDE から送った訂正
 USER: 途中で送った訂正
 USER: /gh-pr-merge 371
-USER: IDE から送った訂正
 USER: [Request interrupted by user]
 USER: squash しないで no-ff でマージしてください" "$users"
 
