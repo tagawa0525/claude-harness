@@ -5,7 +5,7 @@
 #   MEMORY_DIR  MEMORY.md のあるディレクトリ
 #
 # 出力:
-#   ENTRIES: <索引の項目（同じディレクトリの .md へのリンク。外部の URL は除く）の数>
+#   ENTRIES: <索引の項目（同じディレクトリの .md へのリンク）の数>
 #   MISSING: <file>              索引にあり、ファイルが無い
 #   UNINDEXED: <file>            ファイルがあり、索引に無い（MEMORY.md 自身を除く）
 #   BROKEN_LINK: <file> -> <名前>  本文の [[名前]]（[[名前|別名]]、[[名前#節]] を含む）に、語幹か前付けの
@@ -26,11 +26,13 @@ if [[ ! -r "$index" ]]; then
   exit 1
 fi
 
-# 索引のリンク先（`](name.md)`）。外部の URL を除き、先頭の ./ を外す。
+# 索引のリンク先（`](name.md)`）。題（`"..."`）、節（`#...`）、先頭の ./ を外し、同じディレクトリの .md だけを
+# 残す（外部の URL と別のディレクトリへの参照は索引の項目でない）。
 # grep の 0 件は終了コード 1 なので、0 件を空の一覧として扱う
 mapfile -t linked < <(
   { grep -oE '\]\([^)]+\)' "$index" || true; } |
-    sed -E 's/^\]\((.*)\)$/\1/' | grep -v '://' | grep -E '\.md$' | sed -E 's|^\./||' || true
+    sed -E 's/^\]\((.*)\)$/\1/; s/[[:space:]]+".*"$//; s/#.*$//; s|^\./||' |
+    grep -v '/' | grep -E '\.md$' || true
 )
 echo "ENTRIES: ${#linked[@]}"
 
