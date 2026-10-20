@@ -145,6 +145,13 @@ assert_contains "$out" "BROKEN_LINK: project-b.md -> feedback-gone"
 assert_not_contains "$out" "-> feedback-a"
 assert_not_contains "$out" "-> project-b"
 
+it "memory-index: [[名前]] が前付けの name に一致するファイルがあれば、参照先があるとみなす"
+printf -- '---\nname: d-name\n---\n\n本文\n' > "$MEM/project-d.md"
+printf -- '---\nname: e\n---\n\n本文 [[d-name]]\n' > "$MEM/project-e.md"
+out=$("$MEMORY_INDEX" "$MEM")
+assert_not_contains "$out" "-> d-name"
+rm "$MEM/project-e.md"
+
 it "memory-index: 食い違いが無ければ件数の行だけを出す"
 rm "$MEM/project-d.md"
 sed -i '/project-c/d' "$MEM/MEMORY.md"
