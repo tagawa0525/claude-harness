@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-21
-requires: []
+requires: [ADR-0020, ADR-0025]
 supersedes: []
 superseded-by:
 issues: ["#388", "#405"]
@@ -59,19 +59,21 @@ ADR-0020 は「実際に Slurm へ投げるスクリプトは、どの書き方�
 - このリポジトリ独自の手順のルールを守らせる: worktree を分け、ブランチを既定ブランチから作る（`guard-branch-base`、`guard-git-stash`）、rebase したうえで
   no-ff でマージする（`guard-git-merge`、`pre-git-merge-check`）、main に直接コミットしない、PR の形
   （`pre-pr-create-check`、`pre-merge-check`）、重い計算を Slurm に流す（`guard-sbatch`）など
-- うっかりミス: `git add -A`、秘密情報のコミット、大きすぎるコミットなど
+- うっかりミス: `git add -A`、秘密情報のコミットなど（大きすぎるコミットは止めずに知らせる。`warn-large-commit`）
 - lint と fmt を確実にかける: git の hook（pre-commit）を飛ばさせない（`block-no-verify`）など
 
 ### 判定の対象
 
 モデルが普通に書く形のコマンド。スキル、CLAUDE.md、ツールのヘルプに出る書き方と、それを `&&`、`;`、`|`、
-`cd <dir> &&`、`git -C <dir>`、`VAR=value` の前置き、サブシェル、1 段の `bash -c '…'` でつないだものを指す。
+`cd <dir> &&`、`git -C <dir>`、`VAR=value` の前置き、`env`・`timeout`・`nice`・`nohup`・`time`・`command` の
+前置き、スキルにある `… | xargs -0 -r git add --`、サブシェル、2 段までの `bash -c '…'`（ADR-0025 の案 E の
+記録で、Claude Code が書く入れ子は 2 段を超えない）でつないだものを指す。
 
 ### 止めないもの
 
 作為的な書き方での抜け道。例:
 
-- ラッパーで包む（`sudo`、`ssh`、`xargs`、`eval`、`flock -c` など）、入れ子の `bash -c`
+- ラッパーで包む（`sudo`、`ssh`、`eval`、`flock -c`、`watch`、`script -c` など）、3 段以上の `bash -c` の入れ子
 - 文字列にして実行させる（`$CMD`、`eval "$CMD"`、`printf %q` で包んだ文字列、標準入力から読ませる）
 - 珍しい git の設定や全体オプションで行き先や挙動を変える（`push.default=upstream`、`remote.<名前>.push`、
   `url.<base>.insteadOf`、`git -c …`、`--git-dir`）
@@ -93,11 +95,11 @@ hook は境界ではない。これらを止めないことで生じる穴は、
 
 - ADR-0020 の決定の要因「実際に Slurm へ投げるスクリプトは、どの書き方でも止める（ガードは、見落としたら通す側
   ではなく止める側に倒す）」と、決定と理由の「本物の書き方がどれだけあっても……見落としは止める側に倒れる」。
-  案 A を捨てた理由（本物の書き方を数え上げられない）も、普通に書く形に限れば当たらない。決定そのもの
-  （除くのは同名のテスト `.claude/tests/scripts/slurm-run.sh` だけ）は変えない
+  決定そのもの（除くのは同名のテスト `.claude/tests/scripts/slurm-run.sh` だけ）と、案 A を捨てた理由
+  （`scripts/slurm-run.sh` のような相対パスを通す）は変えない
 - ADR-0025 の決定の要因「ガードは、見落としたら通す側ではなく止める側に倒す（ADR-0020）」
-- ADR-0025 の案 A のうち、普通に書く形を超える部分: `bash -c` の文字列を深さ 5 まで読み、超えたら止める側に
-  倒すこと（案 E を捨てた理由「深く包めば抜けられる」を含む）、包みの表に `sudo`、`xargs`、`flock`、`chrt`、
+- ADR-0025 の案 A のうち、普通に書く形を超える部分: `bash -c` の文字列を 3 段以上（深さ 5 まで）読み、超えたら
+  止める側に倒すこと（案 E を捨てた理由「深く包めば抜けられる」を含む）、包みの表に `sudo`、`flock`、`chrt`、
   `taskset`、`watch`、`script -c`、`ssh`、`eval` を足すこと、走らせるものが決まらない形を対象語があれば止める
   こと（`Cmd::opaque`、`Shell::runs_program`）。「足さなかった包み」の「要るときに足す」は、モデルが普通に書く形で
   使うようになったときだけ足す、と読む。帰結の「包みが受け付けるオプションが変わったら表を直す」は、普通に書く
@@ -106,11 +108,13 @@ hook は境界ではない。これらを止めないことで生じる穴は、
 次の部分は、普通に書く形の範囲にあり、そのまま有効:
 
 - ADR-0020 の決定（同名のテストだけを除く）と、その確認のテスト
-- ADR-0025 の、`bash -x <script>` / `sh -eu <script>` のオプション付きの起動（#303）、1 段の `bash -c '…'` を
-  読むこと（案 D を捨てた理由「Claude Code が書く形」）、`cd x; (git commit)` の `cd` を効かせるスコープの読み方、
+- ADR-0025 の、`bash -x <script>` / `sh -eu <script>` のオプション付きの起動（#303）、2 段までの `bash -c '…'` を
+  読むこと（案 D を捨てた理由「Claude Code が書く形」）、`xargs` の包み（スキルの `… | xargs -0 -r git add --`）、
+  `cd x; (git commit)` の `cd` を効かせるスコープの読み方、
   `echo sbatch` のような引数に現れるだけの形を止めない（偽陽性を増やさない）こと、偽陽性による見直しの条件
 
-置き換えは部分的なので、両 ADR は `status: accepted` のまま、補足に日付つきでこの ADR を指す。
+置き換えは部分的なので、両 ADR は `status: accepted` のまま、補足に日付つきでこの ADR を指す。前付けの
+`requires` に両 ADR を入れ、両 ADR を置き換えるときに `grep -l 'requires:.*ADR-NNNN' docs/adr` で引けるようにする。
 `superseded-by` は付けない。`design-records check` は `superseded-by` を `status: superseded`（全体の置き換え）と
 組で求め、全体を置き換えるなら ADR-0025 の読み方の表（今のコードの説明として有効）をこの ADR に書き直して
 含めることになる（/adr の確定後の運用）。
@@ -131,8 +135,8 @@ hook は境界ではない。これらを止めないことで生じる穴は、
   `Shell::runs_program`、ssh / `sudo -i` の中の場所の扱いなど）は、この ADR の範囲を超える読み方を含む。消す
   手間と壊す危険の方が大きいので残し、簡単にしてよい箇所の洗い出しは #405 に書く
 - 背景の 2 つのブランチは、この ADR を元に最小の形で作り直す（作り直しは別の PR）
-- レビューの打ち切りの基準（`.claude/skills/gh-pr-review/SKILL.md`、`.claude/skills/delegate/SKILL.md`、
-  `.claude/skills/git-merge/SKILL.md`）から、この ADR を指す
+- レビューの打ち切りの基準（`.claude/skills/gh-pr-review/SKILL.md`、`.claude/skills/gh-pr-create/SKILL.md`、
+  `.claude/skills/delegate/SKILL.md`、`.claude/skills/git-merge/SKILL.md`）から、この ADR を指す
 
 ### 確認
 
