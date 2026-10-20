@@ -10,8 +10,8 @@ allowed-tools:
 
 # 履歴の語を直す
 
-`history-rewrite`（`modules/home/parts/history-rewrite/`、ADR-0045）で、対象のリポジトリ（$ARGUMENTS）のすべてのブランチと
-タグの語を辞書で直し、番号を `commit-refs rewrite-history`（ADR-0013）で付け直す。ツールは対象のリポジトリに書き込まず、
+`history-rewrite`（`modules/home/parts/history-rewrite/`）で、対象のリポジトリ（$ARGUMENTS）のすべてのブランチと
+タグの語を辞書で直し、番号を `commit-refs rewrite-history` で付け直す。ツールは対象のリポジトリに書き込まず、
 作業ディレクトリで書き換えて照合する。生きているリポジトリに移すのは、この手順の 4 から。
 
 履歴の書き換えは、すべてのコミットの番号を変える。始める前に、ユーザーに書き換えることを確かめる。
@@ -38,7 +38,7 @@ worktree ごとのブランチの `Claude-Session:` を見て、作業中のセ�
   `--extra-rules` で足す（`version: 1` と `rules:` の下に `expected` と `pattern`。prh.yml と同じ書き方）
 - 除くパス（`--exclude`、PurePosixPath.full_match の書き方）: 辞書の語を例として挙げるファイル。対象のリポジトリの
   `.textlintignore` に挙げたファイルと、辞書そのもの（nixfiles なら `**/prh.yml`）を渡す。語を論じる文書でも、
-  その語が直す対象の造語なら除かない（ADR-0045）
+  その語が直す対象の造語なら除かない（除くと、その文書の造語が直らずに残る）
 
 決めた指定は 1 度だけ書き、`run` と 5 の `transform` の両方に同じものを渡す（違うと、作業ツリーのファイルだけ
 別の変換になる）:
