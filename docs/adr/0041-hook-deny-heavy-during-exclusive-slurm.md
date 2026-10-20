@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-20
 requires: [ADR-0007, ADR-0023, ADR-0026]
 supersedes: []
@@ -33,15 +33,19 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
   止まる。`-j 1` と `taskset` で 1 コアに限れば乱れは小さいので、そこを通す形にする
 - 案 C: エスケープ（`ALLOW_…=<理由>`）を設ける。今回の違反は「わかって外す」でなく規則を見落とした例だった。
   外す必要が出たら（ADR-0023）hook の不足として issue に書く
-- 案 D（採用）: 排他のジョブが走行中のときだけ、対象のコマンドを `-j 1` か 1 コアの `taskset` でない限り止める
+- 案 D（採用）: 排他のジョブが走行中のときだけ、対象のコマンドを、1 コアの `taskset`（ビルドは `-j 1` も）でない限り止める
+- 案 E: 当初の案。`cargo test|run|bench` も `-j 1` で通す。レビューで、`-j` はコンパイルの並列度だけでテストの実行や
+  実行するプログラムのスレッド数を限らず、事故の再発を許すと指摘され、採らなかった
 
 ## 決定と理由
 
 案 D を採る。`claude-hooks` の `guard-exclusive-slurm` が、次をすべて満たすときに deny する。
 
-- コマンドが `cargo build|test|clippy|run|bench`、`dvc repro`、`bin/xs|lattice|core|chain`（`../../bin/xs` など
-  相対も）、`nix build` のどれか（`env`・`sudo` などの包みはほどいて判定する）
-- `cargo` に `-j 1`・`-j1`・`--jobs 1`・`--jobs=1` が無く、`taskset` が中のコマンドを 1 つの CPU に限っていない
+- コマンドが `cargo build|check|test|clippy|run|bench`、`dvc repro`、`bin/xs|lattice|core|chain`（`../../bin/xs` など
+  相対も）、`nix build`、`nix flake check` のどれか（`env`・`sudo` などの包みと、`nix develop [<flake>] -c <コマンド>`
+  の中身はほどいて判定する。xlc の DVC の段階は `nix develop ../..#references -c` で包む）
+- `cargo build|check|clippy` に `-j 1`・`-j1`・`--jobs 1`・`--jobs=1` が無く、`taskset` が中のコマンドを 1 つの CPU に
+  限っていない（`cargo test|run|bench` は `-j 1` では限れないので `taskset` だけが通す）
   （`-c 3`、`-c 5-5`、マスク `0x4`。複数の CPU や読めない指定は 1 コアとみなさない）
 - `squeue -h -t R -o '%h|%j|%i'` に OverSubscribe（`%h`）が `NO` の行がある（r995 の実機で、排他のジョブが `NO` と出ることを確認した）
 
@@ -57,10 +61,8 @@ squeue は対象のコマンドがあるときだけ呼ぶ。squeue が無いホ
 - 排他の測定の間、手元の `cargo test`・`cargo build`・`nix build`・格子計算は `-j 1` と `taskset -c <1 コア>` に
   限られる。ビルドを含むチェックは遅くなるが止まらない。ADR-0026 の案 B を、1 コアに限る条件つきで取り入れる
 - `-j 1` はビルドの並列度だけを限る。`cargo test`・`run`・`bench` は、テストの実行や実行するプログラムが複数スレッドで
-  走りうるので、`-j 1` では乱れを防ぎきれない（`taskset` で限るのが確実）。それでも `-j 1` を通すのは、決定の依頼が
-  `-j 1` を許す形だったため。乱れが続けば、`test`・`run`・`bench` は `taskset` だけにする
-- 対象は決め打ちの一覧で、別の重い計算（直接の `openmc`、`cargo check`・`nextest`、`nix flake check`・`nix run`、
-  `nix develop -c <コマンド>` で包んだもの）は止めない。足りないものは見つかったときに足す
+  走るので、`-j 1` を通さず `taskset` だけを通す
+- 対象は決め打ちの一覧で、別の重い計算（直接の `openmc`、`cargo nextest`、`nix run`、`nix-build`）は止めない。足りないものは見つかったときに足す
 - 排他でないジョブ（`-shared`、OverSubscribe が YES）は対象外。#365 の run-checks.sh の直列化とは別の問題である
 
 ### 確認

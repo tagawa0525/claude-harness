@@ -2,8 +2,9 @@
 //!
 //! 排他のジョブ（時間を記録する測定）の間に手元で全コアを使うと、その時間が乱れて測り直しになる
 //! （docs/adr/0041）。squeue で OverSubscribe が NO の走行中のジョブがあるときだけ、対象のコマンドを止める:
-//! `cargo build|test|clippy|run|bench`、`dvc repro`、`bin/xs|lattice|core|chain`、`nix build`。
-//! `-j 1`（`cargo` のみ）か、1 つの CPU に限る `taskset` で包めば通す。
+//! `cargo build|check|test|clippy|run|bench`、`dvc repro`、`bin/xs|lattice|core|chain`、`nix build`、
+//! `nix flake check`（`nix develop -c` で包んでも）。`-j 1`（`cargo build|check|clippy` のみ）か、1 つの CPU に
+//! 限る `taskset` で包めば通す。
 //! squeue が無いホスト、squeue の失敗、走行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
 //! squeue は対象のコマンドがあるときだけ呼ぶ。エスケープはない。
 
@@ -19,20 +20,32 @@ use crate::unwrap::basename;
 
 pub struct GuardExclusiveSlurm;
 
-const CARGO_HEAVY: &[&str] = &["build", "test", "clippy", "run", "bench"];
+/// 全コアを使いうる cargo のサブコマンド。`-j 1` で限れるのはビルドだけ（`CARGO_LIMITED_BY_JOBS`）
+const CARGO_HEAVY: &[&str] = &["build", "check", "test", "clippy", "run", "bench"];
+/// ビルドの並列度だけで使うコアが決まるサブコマンド。`test`・`run`・`bench` はテストの実行や実行する
+/// プログラムが複数スレッドで走るので、`-j 1` では限れない（ADR-0041）
+const CARGO_LIMITED_BY_JOBS: &[&str] = &["build", "check", "clippy"];
 const BIN_PROGRAMS: &[&str] = &["xs", "lattice", "core", "chain"];
 
-/// 全コアを使いうる手元のコマンドか。`-j 1` と 1 コアの taskset で限ったものは含めない
+/// 全コアを使いうる手元のコマンドか。1 コアの taskset で限ったものは含めない
 fn is_heavy(cmd: &Cmd) -> bool {
     if cmd.pinned_to_one_cpu {
         return false;
     }
     let program = cmd.program();
-    let first = first_word(&cmd.args);
+    let sub = subcommand(&cmd.args);
+    let first = sub.map(|i| cmd.args[i].text.as_str());
+    let second = sub
+        .and_then(|i| cmd.args.get(i + 1))
+        .map(|a| a.text.as_str());
     match basename(program) {
-        "cargo" => first.is_some_and(|s| CARGO_HEAVY.contains(&s)) && !cargo_single_job(&cmd.args),
+        "cargo" => {
+            first.is_some_and(|s| CARGO_HEAVY.contains(&s))
+                && !(first.is_some_and(|s| CARGO_LIMITED_BY_JOBS.contains(&s))
+                    && cargo_single_job(&cmd.args))
+        }
         "dvc" => first == Some("repro"),
-        "nix" => first == Some("build"),
+        "nix" => first == Some("build") || (first == Some("flake") && second == Some("check")),
         name => {
             BIN_PROGRAMS.contains(&name)
                 && program
@@ -52,15 +65,18 @@ const VALUE_OPTIONS: &[&str] = &[
     "--option",
 ];
 
-/// サブコマンド（グローバルオプションと、`+nightly` のようなツールチェーンの指定の次の語）
-fn first_word(args: &[Arg]) -> Option<&str> {
-    let mut words = args.iter().map(|a| a.text.as_str());
-    while let Some(w) = words.next() {
+/// サブコマンドの位置（グローバルオプションと、`+nightly` のようなツールチェーンの指定の次の語）
+fn subcommand(args: &[Arg]) -> Option<usize> {
+    let mut i = 0;
+    while i < args.len() {
+        let w = args[i].text.as_str();
         if VALUE_OPTIONS.contains(&w) {
             // `--option` だけは名前と値の 2 語を取る
-            words.nth(usize::from(w == "--option"));
+            i += if w == "--option" { 3 } else { 2 };
         } else if !w.starts_with('-') && !w.starts_with('+') {
-            return Some(w);
+            return Some(i);
+        } else {
+            i += 1;
         }
     }
     None

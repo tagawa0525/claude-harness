@@ -593,6 +593,21 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.opaque = true;
             return out;
         }
+        // `nix develop [<flake>] [opts] -c <コマンド…>` は、残りの語を開発環境の中で走らせる。flake と
+        // オプションの値は -c の前にあるので、-c の後ろだけが走らせるコマンド
+        if wrapper_name == "nix" && out.args.first().is_some_and(|a| a.text == "develop") {
+            if let Some(i) = out
+                .args
+                .iter()
+                .position(|a| matches!(a.text.as_str(), "-c" | "--command"))
+            {
+                let rest: VecDeque<Arg> = out.args[i + 1..].iter().cloned().collect();
+                if !rest.is_empty() {
+                    out.source = Some(joined(&rest));
+                }
+            }
+            return out;
+        }
         let Some(wrapper) = WRAPPERS.iter().find(|w| w.name == wrapper_name) else {
             return out;
         };

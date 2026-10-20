@@ -2389,7 +2389,9 @@ chmod +x "$FAKE_SQUEUE"/*/squeue
 cd "$TEST_ROOT" || exit 1
 
 it "guard-exclusive-slurm: 排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と直し方を示す"
-for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' \
+for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' 'cargo check' 'nix flake check' \
+  'nix develop -c cargo test' 'nix develop ../..#references -c dvc repro' 'nix develop --command bin/xs in.toml' \
+  'cargo test -j 1' 'cargo run --jobs=1 -- x' 'cargo bench -j1' \
   'cargo +nightly build' 'cargo build -j 4' 'dvc repro' 'dvc repro examples/vera/dvc.yaml' \
   'bin/xs in.toml' './bin/lattice in.toml' '../../bin/core in.toml' '../bin/chain in.toml' 'nix build .#x' \
   'cargo --config a=b test' 'nix --extra-experimental-features nix-command build .#x' 'taskset -c 3 taskset -c 0-31 cargo test' 'cd repo && cargo test' 'env FOO=1 cargo test' "bash -c 'cargo test'" 'taskset -c 0-3 cargo test' 'taskset 0x3 cargo build'; do
@@ -2402,7 +2404,7 @@ for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'ca
 done
 
 it "guard-exclusive-slurm: -j 1 か 1 コアの taskset で限れば通す"
-for cmd in 'cargo test -j 1' 'cargo test -j1' 'cargo build --jobs 1' 'cargo build --jobs=1' 'taskset -c 3 cargo test' \
+for cmd in 'cargo build -j 1' 'cargo clippy -j1' 'cargo check --jobs 1' 'cargo build --jobs=1' 'nix develop -c taskset -c 3 cargo test' 'nix develop ../..#references -c bash -c "taskset -c 2 dvc repro"' 'taskset -c 3 cargo test' \
   'taskset -c 3 bin/xs in.toml' 'taskset --cpu-list 2 dvc repro' 'taskset 0x4 cargo build' 'taskset -c 5-5 nix build .#x' \
   'sudo taskset -c 3 cargo test' "taskset -c 3 bash -c 'cargo test'"; do
   out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
@@ -2410,7 +2412,7 @@ for cmd in 'cargo test -j 1' 'cargo test -j1' 'cargo build --jobs 1' 'cargo buil
 done
 
 it "guard-exclusive-slurm: 対象のコマンド以外は通す"
-for cmd in 'cargo fmt --check' 'cargo --version' 'nix flake check' 'nix develop' 'dvc status' 'git status' 'ls bin/' 'echo cargo test' \
+for cmd in 'cargo fmt --check' 'cargo --version' 'nix flake show' 'nix develop' 'nix develop -c cargo fmt' 'dvc status' 'git status' 'ls bin/' 'echo cargo test' \
   'bin/other' 'squeue -t R'; do
   out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq "" "$out"
