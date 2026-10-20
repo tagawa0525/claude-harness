@@ -107,8 +107,13 @@ fi
 
 # TARGET をチェックアウトしている worktree のパス
 worktree=$(git worktree list --porcelain | awk -v ref="refs/heads/${TARGET}" '
+  # 1 件の記録は空行で終わる。ディレクトリが消えた worktree（prunable）は対象にしない
+  function flush() { if (hit && !gone && found == "") found = path; hit = 0; gone = 0 }
   $1 == "worktree" { path = substr($0, 10) }
-  $1 == "branch" && $2 == ref { print path; exit }')
+  $1 == "branch" && $2 == ref { hit = 1 }
+  $1 == "prunable" { gone = 1 }
+  $0 == "" { flush() }
+  END { flush(); if (found != "") print found }')
 
 echo "BASE: ${BASE}"
 echo "TARGET: ${TARGET}"
