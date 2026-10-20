@@ -54,6 +54,44 @@ out=$("$SCRIPTS_DIR/worktree-add.sh" feat/login)
 assert_eq "feat/login" "$(git -C "$TEST_ROOT/wt/app-feat-login" branch --show-current)"
 assert_eq "origin/feat/login" "$(git -C "$TEST_ROOT/wt/app-feat-login" rev-parse --abbrev-ref '@{u}')"
 
+# 別のセッションが origin/main を進めた状態を作る（手元の追跡ブランチは古いまま）
+advance_origin_main() {
+  local repo="$1" other="$1.other"
+  rm -rf "$other"
+  git clone -q "$repo.git" "$other"
+  commit_file "$other" "$2" "feat: advance"
+  git -C "$other" push -q origin main
+  git -C "$other" rev-parse HEAD
+}
+
+GH_REPO_DIR="$TEST_ROOT/wt/ghapp"
+make_repo "$GH_REPO_DIR"
+make_remote "$GH_REPO_DIR" github
+cd "$GH_REPO_DIR" || exit 1
+
+it "worktree-add: GitHub リモートがあれば base を決める前に fetch し、進んだ origin/main から作る"
+NEW=$(advance_origin_main "$GH_REPO_DIR" moved.txt)
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/fresh)
+assert_eq 0 $?
+assert_contains "$out" "BASE: origin/main"
+assert_eq "$NEW" "$(git -C "$TEST_ROOT/wt/ghapp-feat-fresh" rev-parse HEAD)"
+
+it "worktree-add: GitHub リモートがなければ fetch しない"
+cd "$REPO" || exit 1
+NEW=$(advance_origin_main "$REPO" moved2.txt)
+"$SCRIPTS_DIR/worktree-add.sh" feat/nofetch >/dev/null
+assert_ne "$NEW" "$(git -C "$TEST_ROOT/wt/app-feat-nofetch" rev-parse HEAD)"
+
+it "worktree-add: GitHub リモートへの fetch に失敗したら、古い base で進まず worktree を作らずに失敗する"
+cd "$GH_REPO_DIR" || exit 1
+git remote set-url origin "$TEST_ROOT/wt/no-such-remote.git"
+out=$("$SCRIPTS_DIR/worktree-add.sh" feat/offline 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: fetch に失敗"
+assert_file_missing "$TEST_ROOT/wt/ghapp-feat-offline"
+git remote set-url origin "$GH_REPO_DIR.git"
+cd "$REPO" || exit 1
+
 it "worktree-add: 作成先が既にあればエラー"
 "$SCRIPTS_DIR/worktree-add.sh" feat/login >/dev/null 2>&1
 assert_eq 1 $?
