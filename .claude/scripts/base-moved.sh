@@ -11,7 +11,7 @@
 # 知らせるだけで失敗にはしない（同じパスを触っても、衝突するとは限らない）。
 #
 # 出力（BASE が分岐点から進み、進んだ変更とブランチの変更が同じパスを触るときだけ。それ以外は何も出さない）:
-#   BASE_MOVED: <BASE> が分岐点から <N> commits 進んでいる（先頭 <hash>）
+#   BASE_MOVED: <BASE> が分岐点から <N> commits 進んでいる（先頭 <hash>、分岐点 <hash>）
 #   COMMON: <両方が触ったパス>   パスごとに 1 行
 
 set -euo pipefail
@@ -63,14 +63,15 @@ for ref in "$BASE" "$TARGET"; do
 done
 
 fork=$(git merge-base "$BASE" "$TARGET")
-moved=$(git rev-list --count "${fork}..${BASE}")
+# マージコミットで入る PR は 1 件と数える（--first-parent）
+moved=$(git rev-list --first-parent --count "${fork}..${BASE}")
 ((moved > 0)) || exit 0
 
 # 移動（rename）は旧パスも数える（--no-renames）
 common=$(comm -12 \
-  <(git diff --no-renames --name-only "${fork}..${BASE}" | sort) \
-  <(git diff --no-renames --name-only "${fork}..${TARGET}" | sort))
+  <(git -c core.quotePath=false diff --no-renames --name-only "${fork}..${BASE}" | sort) \
+  <(git -c core.quotePath=false diff --no-renames --name-only "${fork}..${TARGET}" | sort))
 [[ -n "$common" ]] || exit 0
 
-echo "BASE_MOVED: ${BASE} が分岐点から ${moved} commits 進んでいる（先頭 $(git rev-parse --short "$BASE")）"
+echo "BASE_MOVED: ${BASE} が分岐点から ${moved} commits 進んでいる（先頭 $(git rev-parse --short "$BASE")、分岐点 $(git rev-parse --short "$fork")）"
 while IFS= read -r path; do echo "COMMON: ${path}"; done <<<"$common"

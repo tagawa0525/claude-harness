@@ -29,7 +29,7 @@
 #   - エラーのときは symlink を 1 つも作らずに止める（worktree は作ったまま残し、場所を知らせる。
 #     直すのは .worktreelink か .gitignore で、そのブランチの worktree で直せるように）
 #
-# GitHub リモートがあれば、ブランチの状態を調べる前に fetch する。古い追跡ブランチから作ると、
+# GitHub リモートがあり、ローカルにブランチが無く --from も無ければ、ブランチの状態を調べる前に fetch する。古い追跡ブランチから作ると、
 # 他のセッションが既定ブランチに入れた変更を取り違える。fetch に失敗したら古い base で進まず止める
 # （post-merge-cleanup.sh の fetch と同じ扱い）。
 #
@@ -101,7 +101,8 @@ default_branch() {
   return 1
 }
 
-if git remote -v | grep -q 'github\.com'; then
+# base を使うとき（新規作成）か、リモートのブランチを探すときだけ要る。ローカルのブランチか --from なら不要
+if [[ -z "$FROM" ]] && ! git show-ref --verify --quiet "refs/heads/$BRANCH" && git remote -v | grep -q 'github\.com'; then
   if ! git fetch -q; then
     echo "ERROR: fetch に失敗しました。古い追跡ブランチから作らないよう止めます。リモートへの接続を確かめてください" >&2
     exit 1
