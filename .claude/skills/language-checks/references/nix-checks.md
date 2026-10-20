@@ -88,3 +88,18 @@ nix flake check --show-trace  # スタックトレース表示
 ```bash
 nix shell nixpkgs#deadnix -c deadnix
 ```
+
+### nix-update (固定出力ハッシュの更新)
+
+`Cargo.lock` や `package-lock.json` などの依存を更新したあと、`cargoHash`、`vendorHash`、
+`npmDepsHash` のような固定出力ハッシュがずれてビルドが失敗するときに使う。
+ハッシュは依存を変えたコミットと同じコミットで更新する（別のコミットにすると、その間のコミットが
+ビルドできない）。
+
+```bash
+nix run nixpkgs#nix-update -- --flake --version=skip <パッケージの属性名>
+```
+
+`--version=skip` はバージョンを変えず、ハッシュだけを更新する。`--flake` は flake の
+`packages.<system>.<属性>` を対象にする。ハッシュを手で `sed` で書き換えると、取り出しが空のまま
+書き込むなどの誤りが起きる。コマンドの成否は終了コードで確かめ、出力を `tail` などにつながない。
