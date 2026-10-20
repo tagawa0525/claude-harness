@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # ステージした版（コミットに入る中身）の Nix、Python、Markdown、Rust の書式と lint を検査する。グローバルの
-# pre-commit が、リポジトリの直下で呼ぶ。道具（nixfmt、ruff、markdownlint、rustfmt と cargo）が PATH に
+# pre-commit が、リポジトリの直下で呼ぶ。ツール（nixfmt、ruff、markdownlint、rustfmt と cargo）が PATH に
 # 無ければ、その検査を飛ばす。
 #
 # 作業ツリーは書き換えない。一部だけステージしたファイルで、ステージしていない編集を検査せず、コミットに
@@ -35,7 +35,7 @@ trap 'rm -rf "$work"' EXIT
 failed=0
 
 # collect <pathspec>...: ステージした普通のファイルのパスとブロブとモードを PATHS、BLOBS、MODES に並べる。シンボリック
-# リンクの行き先とサブモジュール（gitlink）は外す（--raw -z の読み方は ja-terms/staged.sh と同じ）。
+# リンク先とサブモジュール（gitlink）は外す（--raw -z の読み方は ja-terms/staged.sh と同じ）。
 # git の出力は一度ファイルに受ける（プロセス置換の中の失敗は set -e に見えない）
 collect() {
   git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMRT -- "$@" >"$work/raw"
@@ -98,7 +98,7 @@ elif [ "${#PATHS[@]}" -gt 0 ]; then
 fi
 
 # --- Markdown ---------------------------------------------------------------------------------------
-# ステージした版を元のパスのまま $work/md に書き出し、そこで markdownlint を走らせる（直下の設定と
+# ステージした版を元のパスのまま $work/md に書き出し、そこで markdownlint を実行する（直下の設定と
 # .markdownlintignore も、ステージした版をコピーし、相対のパスの書き方をそのまま効かせる。設定の extends が指す
 # 別のファイルはコピーしない。ADR-0028）
 PATHS=()

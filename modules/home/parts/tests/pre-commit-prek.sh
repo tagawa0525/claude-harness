@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# git pre-commit hook が、プロジェクトの .pre-commit-config.yaml を prek で走らせ、
-# そのうえで既定の検査も走らせることを検証する
+# git pre-commit hook が、プロジェクトの .pre-commit-config.yaml を prek で実行し、
+# そのうえで既定の検査も実行することを検証する
 # =============================================================================
 # ../git.nix の pre-commit は core.hooksPath でグローバル配布される。プロジェクトは
 # .pre-commit-config.yaml に hook を足してオプトインする（設計の記録の検査など。ADR-0009）。
@@ -93,7 +93,7 @@ run_hook() {
   return $rc
 }
 
-# --- 1. 設定があれば prek を pre-commit の段で走らせ、そのうえで既定の検査も走る ------------
+# --- 1. 設定があれば prek を pre-commit の段で実行し、そのうえで既定の検査も走る ------------
 R=$(repo opted config)
 printf '%s' "$BAD_PY" >"$R/bad.py"
 git -C "$R" add bad.py
@@ -132,13 +132,13 @@ else
   ng "prek が PATH に無いときに、知らせずに通したか、フックが失敗した"
 fi
 
-# --- 5. fork でも、プロジェクトの設定（上流の規約）は走らせる -------------------------------
+# --- 5. fork でも、プロジェクトの設定（上流の規約）は実行する -------------------------------
 R=$(repo fork config)
 git -C "$R" remote add upstream https://example.invalid/upstream.git
 if PREK_EXIT=1 run_hook "$R" with-prek; then
-  ng "fork で prek が失敗したのにコミットが通った（上流の設定は上流の規約なので走らせる）"
+  ng "fork で prek が失敗したのにコミットが通った（上流の設定は上流の規約なので実行する）"
 else
-  ok "fork でも prek を走らせ、失敗すればコミットを止める"
+  ok "fork でも prek を実行し、失敗すればコミットを止める"
 fi
 if grep -q "飛ばします" "$WORK/out"; then
   ok "fork では、こちらの規約の既定の検査は飛ばす"

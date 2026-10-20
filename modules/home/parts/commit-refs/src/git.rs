@@ -1,4 +1,4 @@
-//! git を呼ぶ道具。
+//! git を呼ぶツール。
 
 use std::ffi::OsStr;
 use std::io::Write;
@@ -15,7 +15,7 @@ pub fn toplevel() -> Result<PathBuf, String> {
     )))
 }
 
-/// `git args…` を `dir` で走らせ、成功なら標準出力を返す。
+/// `git args…` を `dir` で実行し、成功なら標準出力を返す。
 pub fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = run_git(dir, args)?;
     if !output.status.success() {
@@ -24,7 +24,7 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
-/// `git args…` を `dir` で走らせる。終了コードの読み方は呼ぶ側が決める
+/// `git args…` を `dir` で実行する。終了コードの読み方は呼ぶ側が決める
 pub fn run_git(dir: &Path, args: &[&str]) -> Result<Output, String> {
     Command::new("git")
         .arg("-C")
@@ -43,7 +43,7 @@ pub fn git_failure(args: &[&str], output: &Output) -> String {
     )
 }
 
-/// `git args…` を `dir` で走らせて `input` を渡し、成功なら標準出力を返す。入力は別のスレッドで書く（git が先に
+/// `git args…` を `dir` で実行して `input` を渡し、成功なら標準出力を返す。入力は別のスレッドで書く（git が先に
 /// 終わって書き込みが broken pipe になっても、git の標準エラーの理由を返すため）
 pub fn git_stdin(dir: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, String> {
     let mut child = Command::new("git")

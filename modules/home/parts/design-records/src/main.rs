@@ -1,6 +1,6 @@
 //! design-records: 設計の記録（ADR と docs/issues の issue）のテンプレートを作り、番号を予約し、検査する（ADR-0009、ADR-0018）。
 //!
-//! Usage（どのコマンドも、前に `-C <dir>` を付けると `<dir>` で走らせる。git の `-C` と同じ）:
+//! Usage（どのコマンドも、前に `-C <dir>` を付けると `<dir>` で実行する。git の `-C` と同じ）:
 //!   design-records new [--kind adr|issue] <slug> <title>
 //!                                      番号を予約して <dir>/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
 //!                                      （dir は docs/adr か docs/issues。省けば adr）

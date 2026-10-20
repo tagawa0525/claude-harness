@@ -93,7 +93,7 @@ claude-hooks の、普通に書く形でない抜け道の指摘は、重大度�
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
 受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す
 （PR を出す前のローカルレビューとは別枠）。対象は `~/.claude/scripts/review-level.sh`
-が出す `WORKTREE` を対象にする（PR の worktree で走らせる。Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
+が出す `WORKTREE` を対象にする（PR の worktree で実行する。Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
 `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に重複して書かず、コードへの参照（ファイルと関数名）で書く。
 
@@ -171,7 +171,7 @@ EOF
 | `WAITING`                | 要求後のレビューが未着で、head のローカルレビューの記録も無い                                       | 下記の「ローカルレビュー」を回して記録する（Copilot を待つなら `~/.claude/scripts/gh-wait-review.sh "{pr_url}"`。任意。background）                                |
 
 **ローカルレビュー**（ADR-0043）: head のローカルレビューの記録は、Copilot のレビューの代わりになる。
-対応を push したら、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を走らせ、出力の `LEVEL` と
+対応を push したら、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
 `WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。ブランチ名で渡すと /code-review は cwd のリポジトリで
 解くので、cwd が別のリポジトリだと対象を見つけられない。`WORKTREE` が none なら、PR の URL を対象に渡す。
 直した差分と、同じ種類の問題が他に残っていないかを見る。回した head（`git rev-parse HEAD`。push 済みで PR の

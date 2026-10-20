@@ -84,7 +84,7 @@ if [[ -n "$(git remote)" ]]; then
   BEFORE=$(git rev-parse HEAD)
   git pull -q --ff-only
   # hook のバイナリと ~/.claude は rebuild か claude-sync で配置される。pull しただけでは古いまま動くので
-  # 知らせる。自動では走らせない（rebuild は sudo が要り、走っている別のセッションの hook も入れ替わる）。
+  # 知らせる。自動では実行しない（rebuild は sudo が要り、走っている別のセッションの hook も入れ替わる）。
   # 配置の元は claude-sync.sh を持つリポジトリ（nixfiles）だけで、ほかのリポジトリの .claude はその場で読まれる
   if git cat-file -e HEAD:modules/home/scripts/claude-sync.sh 2>/dev/null; then
     # 判定は広く取る。rebuild が配置するものを 1 つずつ挙げると漏れ、多めに知らせても害は無い
@@ -99,8 +99,8 @@ fi
 
 # --- 3. 番号の予約のタグ ---
 # 記録の形と番号の規則は design-records が持つ。既定ブランチ（リモートがあればリモートの）の履歴に無い記録の
-# タグは消さない（消すと番号が使い回される）。解放できないときは、タグを残して後片付けを続ける（タグが残っても
-# 番号は使い回されず、次の prune で消える）。prune そのものが失敗したら止める（原因を直して走らせ直せる）
+# タグは消さない（消すと番号が再利用される）。解放できないときは、タグを残して後片付けを続ける（タグが残っても
+# 番号は再利用されず、次の prune で消える）。prune そのものが失敗したら止める（原因を直して再実行できる）
 # 予約のタグは origin にある。2 の fetch は既定ブランチの追うリモートに行くので、fork のように upstream を
 # 追っていると origin に行かない。ここで origin から取ってくる
 ORIGIN_REACHABLE=1

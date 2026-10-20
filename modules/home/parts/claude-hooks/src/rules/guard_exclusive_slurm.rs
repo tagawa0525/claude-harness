@@ -1,12 +1,12 @@
-//! guard-exclusive-slurm: 排他の Slurm のジョブが走行中は、全コアを使う手元のコマンドを止める
+//! guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、全コアを使う手元のコマンドを止める
 //!
-//! 排他のジョブ（時間を記録する測定）の間に手元で全コアを使うと、その時間が乱れて測り直しになる
-//! （docs/adr/0041）。squeue で OverSubscribe が NO の走行中のジョブがあるときだけ、対象のコマンドを止める:
+//! 排他のジョブ（時間を記録する測定）の間に手元で全コアを使うと、その時間が乱れて再測定になる
+//! （docs/adr/0041）。squeue で OverSubscribe が NO の実行中のジョブがあるときだけ、対象のコマンドを止める:
 //! `cargo build|check|test|clippy|run|bench`（alias `b|c|t|r`）、`dvc repro`、`bin/` と `target/release|debug/` の
 //! `xs|lattice|core|chain`、`nix build`、`nix flake check`（`nix develop|shell -c` で包んでも）。1 つの CPU に限る `taskset` で
-//! 包めば通す（`-j 1` は限りにならない）。何を走らせるか決められないコマンドも、排他のジョブ中は止める。
+//! 包めば通す（`-j 1` は限りにならない）。何を実行するか決められないコマンドも、排他のジョブ中は止める。
 //! `run-checks.sh` と `run-python-tests.sh` は対象にしない（排他のジョブ中は自分で 1 コアに限る）。
-//! squeue が無いホスト、squeue の失敗、走行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
+//! squeue が無いホスト、squeue の失敗、実行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
 //! squeue は対象のコマンドがあるときだけ呼ぶ。エスケープはない。
 
 use std::io::Read;
@@ -38,7 +38,7 @@ fn is_project_binary(program: &str, name: &str) -> bool {
         .is_some_and(|dir| matches!(basename(dir), "bin" | "release" | "debug"))
 }
 
-/// 全コアを使いうる手元のコマンドか。1 コアの taskset で限ったものは含めない。何を走らせるか決められない
+/// 全コアを使いうる手元のコマンドか。1 コアの taskset で限ったものは含めない。何を実行するか決められない
 /// コマンド（`$CMD test`、`bash -s`、`source x.sh`）と、サブコマンドを決められない cargo・nix・dvc は、
 /// 止める側に倒す（ADR-0025）
 fn is_heavy(cmd: &Cmd) -> bool {
@@ -80,7 +80,7 @@ fn squeue_unavailable(reason: &str) -> Option<(String, String)> {
     None
 }
 
-/// 走行中の排他のジョブ（名前, ジョブ番号）。squeue が無い、排他のジョブが無いときは None（理由は見せない）。
+/// 実行中の排他のジョブ（名前, ジョブ番号）。squeue が無い、排他のジョブが無いときは None（理由は見せない）。
 /// squeue が失敗した、時間内に終わらない、出力を読めないときも None だが、理由を見せる。`-O` の固定幅の列は
 /// 長い名前がジョブ番号と続いてしまうので、区切りのある `-o` で読む（OverSubscribe は `%h`。実機の値は
 /// 排他のジョブが `NO`、共有できるジョブが `OK` か `YES`）
@@ -147,7 +147,7 @@ impl Rule for GuardExclusiveSlurm {
             return Vec::new();
         };
         vec![Finding::Deny(format!(
-            "排他の Slurm のジョブ {name}（{jobid}）が走行中で、その時間の記録を乱します。taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください（nixfiles の ADR-0026、ADR-0041）。"
+            "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください（nixfiles の ADR-0026、ADR-0041）。"
         ))]
     }
 }

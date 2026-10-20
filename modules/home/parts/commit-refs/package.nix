@@ -14,7 +14,7 @@ rustPlatform.buildRustPackage {
   version = "0.1.0";
   src = ./.;
   cargoLock.lockFile = ./Cargo.lock;
-  # tests/ は一時的なリポジトリで git を走らせる
+  # tests/ は一時的なリポジトリで git を実行する
   nativeCheckInputs = [ git ];
   # sandbox に無い git の全体設定を環境の側から渡す（lib/git-check-config.nix）
   inherit (gitCheckConfig) preCheck;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# .claude/scripts/check-each-commit.sh（<base>..HEAD の各コミットで検査コマンドを走らせる）のテスト
+# .claude/scripts/check-each-commit.sh（<base>..HEAD の各コミットで検査コマンドを実行する）のテスト
 #
 # 実行: bash .claude/tests/scripts/check-each-commit.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
@@ -22,7 +22,7 @@ echo changed >> "$REPO/README.md"
 export TMPDIR="$TEST_ROOT/tmp"
 mkdir -p "$TMPDIR"
 
-it "check-each-commit: 失敗したコミットだけ exit=1 で出て、全体は非 0 で、全コミットを走らせる"
+it "check-each-commit: 失敗したコミットだけ exit=1 で出て、全体は非 0 で、全コミットを実行する"
 out=$("$SCRIPT" main -- test ! -e BAD 2>/dev/null)
 rc=$?
 assert_eq 1 "$rc"

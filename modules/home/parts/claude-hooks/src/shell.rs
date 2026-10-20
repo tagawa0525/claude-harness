@@ -10,9 +10,9 @@
 //! - コマンドを包むもの（env、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice、sudo、xargs、flock、
 //!   chrt、taskset、watch、script、ssh、`bash [opts] <script>`）はほどき、中のコマンドと、前置きの代入やラッパーが
 //!   変える環境変数・ディレクトリを `Cmd` に持たせる（unwrap.rs）
-//! - sh -c で走らせる文字列（`bash -c '…'`、`eval`、`watch`、`ssh <接続先> …`）は、同じ構文解析を再帰的に当て、
+//! - sh -c で実行する文字列（`bash -c '…'`、`eval`、`watch`、`ssh <接続先> …`）は、同じ構文解析を再帰的に当て、
 //!   中のコマンドを `commands()` に含める。深さの上限は `MAX_DEPTH`（ADR-0025）
-//! - 走らせるプログラムを決められないコマンド（`$CMD`、`source`、`bash -s`）は `Cmd::opaque` にし、
+//! - 実行するプログラムを決められないコマンド（`$CMD`、`source`、`bash -s`）は `Cmd::opaque` にし、
 //!   `runs_program` が止める側に倒す
 //! - git のグローバルオプション（`-C`、`-c`、`--config-env`）は `Cmd` を作るときに読む。サブコマンドの引数は
 //!   git_args.rs で、値を取るオプションの値をオプションと取り違えずに読む
@@ -127,10 +127,10 @@ pub struct Cmd {
     /// トップレベルは空。これらの中で実行した `cd` は親のカレントディレクトリを変えない。前の `cd` が効くのは、
     /// その `cd` のスコープがこのスコープの前置きのとき（同じか、外側）
     pub scope: Vec<usize>,
-    /// 走らせるプログラムを文字列から決められない: 名前の basename が展開（`$CMD`、`$(which x)`）、標準入力や
+    /// 実行するプログラムを文字列から決められない: 名前の basename が展開（`$CMD`、`$(which x)`）、標準入力や
     /// ファイルからコマンドを読む（`bash -s`、`source`。unwrap.rs）、文字列の入れ子が深さの上限を超えた
     pub opaque: bool,
-    /// sh -c の文字列を走らせるなら、その文字列のスコープの ID（中のコマンドの `scope` に、このコマンドの
+    /// sh -c の文字列を実行するなら、その文字列のスコープの ID（中のコマンドの `scope` に、このコマンドの
     /// `scope` の次の要素として入る）。`target_dir` が、このコマンドの `dirs` を中のコマンドに当てるのに使う
     pub spawns: Option<usize>,
     /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
@@ -240,7 +240,7 @@ impl Shell {
         }
     }
 
-    /// `command` ノードのコマンドと、それが sh -c で走らせる文字列の中のコマンド（文書順）。文字列を解析した
+    /// `command` ノードのコマンドと、それが sh -c で実行する文字列の中のコマンド（文書順）。文字列を解析した
     /// 内側のシェルも返す
     fn command(&self, node: Node, depth: usize) -> Option<(Vec<Cmd>, Option<Shell>)> {
         let name_node = node.child_by_field_name("name")?;
@@ -332,7 +332,7 @@ impl Shell {
             // 外側の環境変数の変更は、中のコマンドにも効く（ディレクトリは target_dir が、外側の `env -C` を
             // 中の `cd` より前に当てる）
             c.env = cmd.env.iter().cloned().chain(c.env).collect();
-            // 外側の taskset は、文字列で走らせる中のコマンドにも効く。中に taskset があれば最も内側が効く
+            // 外側の taskset は、文字列で実行する中のコマンドにも効く。中に taskset があれば最も内側が効く
             if !c.wrappers.iter().any(|w| basename(w) == "taskset") {
                 c.pinned_to_one_cpu = cmd.pinned_to_one_cpu;
             }
@@ -375,8 +375,8 @@ impl Shell {
         Arg { text, raw }
     }
 
-    /// `is_target` を満たすプログラムを走らせるコマンドがあるか。走らせるプログラムを決められないコマンド
-    /// （[`Cmd::opaque`]）があれば、コマンド文字列のどこかに `word` が現れるときに、走らせうるものとして
+    /// `is_target` を満たすプログラムを実行するコマンドがあるか。実行するプログラムを決められないコマンド
+    /// （[`Cmd::opaque`]）があれば、コマンド文字列のどこかに `word` が現れるときに、実行しうるものとして
     /// 止める側に倒す（`CMD=sbatch; $CMD`、`eval "$CMD"`、`source run-sbatch.sh`。ADR-0025）。引数に現れる
     /// だけの `echo sbatch` や `grep sbatch` は、決められないコマンドが無ければ対象外
     pub fn runs_program(&self, word: &str, is_target: impl Fn(&str) -> bool) -> bool {
@@ -482,7 +482,7 @@ impl Shell {
     /// `cd <dir>` を順に畳み込み、包んだ `env -C <dir>` と `git -C <dir>` を順に当てる
     /// （`$(cd x && …)` や `(cd x)` の cd は親のディレクトリを変えないので見ない）
     ///
-    /// `sudo -i` の中は、対象の利用者のホームの書き方（`~root`）から始まり、sudo -i が走らせる文字列の中の `~`
+    /// `sudo -i` の中は、対象の利用者のホームの書き方（`~root`）から始まり、sudo -i が実行する文字列の中の `~`
     /// もそれを指す。`ssh` の中の
     /// コマンドは、接続先の書き方（`host:`）を返し、中の `cd` と `git -C` は当てない（接続先の `/x` や `~` は
     /// 手元のものではない）。どちらの書き方も、展開しない `cd "$VAR"` の行き先と同じく手元に実在しないパスで、
@@ -508,7 +508,7 @@ impl Shell {
                     return PathBuf::from(remote);
                 }
                 enter(c, &home, &mut dir);
-                // 文字列の中の `~` は、sudo -i が対象の利用者として走らせるシェルが展開する
+                // 文字列の中の `~` は、sudo -i が対象の利用者として実行するシェルが展開する
                 if let Some(login_home) = &c.login_home {
                     home = PathBuf::from(login_home);
                 }
@@ -547,7 +547,7 @@ fn strip(s: &str, open: &str, close: &str) -> String {
         .to_string()
 }
 
-/// プログラムの名前の basename に展開があるか（走らせるプログラムが決まらない）。区切りの `/` は展開の外
+/// プログラムの名前の basename に展開があるか（実行するプログラムが決まらない）。区切りの `/` は展開の外
 /// （`${…}`、`$(…)`、`` `…` `` の外）のものだけ数える: `${SB:-/usr/bin/sbatch}` と `$(command -v /usr/bin/sbatch)` は
 /// 決まらず、`$HOME/x/slurm-run.sh` と `${DIR}/slurm-run.sh` は決まる
 fn name_has_expanded_basename(name: &str) -> bool {
@@ -635,7 +635,7 @@ fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     base.join(p)
 }
 
-/// ラッパー（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを走らせるディレクトリへ移る。`sudo -i` は対象の
+/// ラッパー（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを実行するディレクトリへ移る。`sudo -i` は対象の
 /// 利用者のホームから始める（その前のラッパーの -C は unwrap.rs が除いてある）。ラッパーの引数の `~` は外側の
 /// シェルが展開してから渡すので、`home` は外側のもの
 fn enter(wrapped: &Cmd, home: &Path, dir: &mut PathBuf) {
@@ -660,7 +660,7 @@ impl Cmd {
                 .all(|(i, w)| w == "builtin" || w == "command" || (i == 0 && w == "time"))
     }
 
-    /// 走らせるプログラムの、書いたままのパス。ラッパー（env、`bash [opts] <path>` など）はほどいてある
+    /// 実行するプログラムの、書いたままのパス。ラッパー（env、`bash [opts] <path>` など）はほどいてある
     pub fn program(&self) -> &str {
         &self.name
     }
@@ -996,7 +996,7 @@ mod tests {
             assert_eq!(cs[0].args[0].text, "a", "{src}");
             assert!(!cs[0].opaque, "{src}");
         }
-        // -n は構文を調べるだけで走らせない
+        // -n は構文を調べるだけで実行しない
         assert_eq!(cmds("bash -n s.sh")[0].program(), "bash");
     }
 
@@ -1024,7 +1024,7 @@ mod tests {
         );
         assert_eq!(cs[0].dirs, ["/x"]);
         assert!(cs[0].spawns.is_some() && cs[1].dirs.is_empty());
-        // watch、ssh、eval は残りの語を空白でつないだ文字列を sh -c で走らせる
+        // watch、ssh、eval は残りの語を空白でつないだ文字列を sh -c で実行する
         assert_eq!(
             names(&cmds("watch -n 5 'squeue; sbatch'")),
             ["watch", "squeue", "sbatch"]

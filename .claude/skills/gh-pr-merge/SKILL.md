@@ -19,7 +19,7 @@ allowed-tools:
 
 GitHub Pull Requestをマージする。マージ方式・本文の見出し・CI・未解決スレッド・
 head の遅れなど機械的に判定できる条件は `pre-merge-check` hook が検査し、満たさなければ
-理由と直し方を示して deny する。手順で扱うのは判断が要るものだけ。
+理由と修正方法を示して deny する。手順で扱うのは判断が要るものだけ。
 
 ## 事前確認
 
@@ -81,7 +81,7 @@ gh pr merge [PR番号] --merge --delete-branch \
 worktree 削除 → main へ切り替えて pull → ローカル・リモートのブランチ削除までを行う。
 そのブランチを head とする open PR（fork からの upstream PR 等）があればリモートは残す
 （`REMOTE_BRANCH: kept`）。未コミットの変更や履歴の分岐で失敗したら原因を確認して対処する。
-出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝える（rebuild や claude-sync は走らせない）。
+出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝える（rebuild や claude-sync は実行しない）。
 
 ## 完了メッセージ
 

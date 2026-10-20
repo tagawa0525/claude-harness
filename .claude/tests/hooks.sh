@@ -26,7 +26,7 @@ fi
 # 起動できないバイナリを通す
 usage=$("$CLAUDE_HOOKS_BIN" 2>&1 </dev/null) || true
 if ! grep -q '^rules: ' <<<"$usage"; then
-  echo "claude-hooks を走らせられません: $CLAUDE_HOOKS_BIN" >&2
+  echo "claude-hooks を実行できません: $CLAUDE_HOOKS_BIN" >&2
   echo "$usage" >&2
   exit 1
 fi
@@ -323,7 +323,7 @@ for value in 1 true force allow 確認; do
   out=$(run_hook guard-git-push "ALLOW_PROTECTED_PUSH=$value git push --force")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "ALLOW_PROTECTED_PUSH には理由を記載"
-  # 本来の文言（何を止めたか、正規の直し方）は残す
+  # 本来の文言（何を止めたか、正規の修正方法）は残す
   assert_contains "$(reason "$out")" "force push は禁止"
   assert_not_contains "$(reason "$out")" "6"
   assert_not_contains "$(reason "$out")" "文字"
@@ -860,7 +860,7 @@ out=$(PATH="$(minimal_path)" run_hook block-secret-commit 'git commit -m "chore:
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "gitleaks が PATH にありません"
 
-it "block-secret-commit: ALLOW_SECRET_COMMIT=1 は検査を走らせ、漏えいがあれば本来の文言に理由を求める行を足す"
+it "block-secret-commit: ALLOW_SECRET_COMMIT=1 は検査を実行し、漏えいがあれば本来の文言に理由を求める行を足す"
 fake_gitleaks "$LEAK_JSON" ok
 out=$(run_hook block-secret-commit 'ALLOW_SECRET_COMMIT=1 git commit -m "chore: conf"')
 assert_eq deny "$(decision "$out")"
@@ -945,7 +945,7 @@ for cmd in 'sudo -E git commit -m x' 'sudo --preserve-env git commit -m x' \
 done
 
 it "block-no-verify: env の - は getopt の後に一度だけ（-- の後でも）読む"
-# `env -- - git` は空の環境で git を走らせる。`env - -u X git` は -u を、`env - - git` は - を走らせる
+# `env -- - git` は空の環境で git を実行する。`env - -u X git` は -u を、`env - - git` は - を実行する
 out=$(run_hook block-no-verify 'env -- - git commit -m x')
 assert_eq deny "$(decision "$out")"
 for cmd in 'env - -u CLAUDECODE git commit -m x' 'env - - git commit -m x' 'env - -- git commit -n -m x'; do
@@ -1510,7 +1510,7 @@ commit_file "$REPO" "wip.txt" "feat: wip"
 git -C "$REPO" branch exist main
 cd "$REPO" || exit 1
 
-it "guard-branch-base: 起点のない git switch -c / -C は deny し、理由と直し方を示す"
+it "guard-branch-base: 起点のない git switch -c / -C は deny し、理由と修正方法を示す"
 out=$(run_hook guard-branch-base 'git switch -c feat/other')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "feat/wip"
@@ -1915,7 +1915,7 @@ out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "slurm-run.sh"
 
-it "guard-sbatch: command -v / -pv / -V はプログラムを探すだけで、走らせない"
+it "guard-sbatch: command -v / -pv / -V はプログラムを探すだけで、実行しない"
 for cmd in 'command -v sbatch' 'command -pv sbatch' 'command -Vp sbatch'; do
   out=$(run_hook guard-sbatch "$cmd")
   assert_eq allow "$(decision "$out")"
@@ -1925,12 +1925,12 @@ it "guard-sbatch: パイプやつなぎの中の sbatch も止める"
 out=$(run_hook guard-sbatch "cd ~/github/xlc && sbatch --wrap 'true' | tail -1")
 assert_eq deny "$(decision "$out")"
 
-it "guard-sbatch: slurm-run.sh をフォアグラウンドで走らせたら止める"
+it "guard-sbatch: slurm-run.sh をフォアグラウンドで実行したら止める"
 out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "run_in_background"
 
-it "guard-sbatch: slurm-run.sh を background で走らせるのは通す"
+it "guard-sbatch: slurm-run.sh を background で実行するのは通す"
 out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'" true)
 assert_eq allow "$(decision "$out")"
 
@@ -1981,7 +1981,7 @@ for invoked in "bash -x" "bash -e" "sh -eu" "bash -o pipefail" "bash --rcfile ~/
   out=$(run_hook guard-sbatch "$invoked .claude/tests/scripts/slurm-run.sh")
   assert_eq allow "$(decision "$out")"
 done
-# -n は構文を調べるだけで走らせない
+# -n は構文を調べるだけで実行しない
 out=$(run_hook guard-sbatch "bash -n $HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_eq allow "$(decision "$out")"
 
@@ -1999,7 +1999,7 @@ out=$(run_hook guard-sbatch "bash -c '$HOME/.claude/scripts/slurm-run.sh -t 5 xl
 assert_eq allow "$(decision "$out")"
 out=$(run_hook guard-sbatch "bash -c 'echo sbatch; squeue'")
 assert_eq allow "$(decision "$out")"
-# 文字列以外の引数（$0 以降）の中の置換は、外側のシェルが bash を起動する前に走らせる
+# 文字列以外の引数（$0 以降）の中の置換は、外側のシェルが bash を起動する前に実行する
 out=$(run_hook guard-sbatch "bash -c 'true' \"\$(sbatch --wrap true)\"")
 assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-sbatch "bash -c \"squeue; \$(sbatch --wrap true)\"")
@@ -2036,7 +2036,7 @@ for wrapped in "sudo sbatch --wrap true" "sudo -u slurm -g users sbatch --wrap t
   assert_eq deny "$(decision "$out")"
 done
 
-it "guard-sbatch: ラッパーが走らせない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
+it "guard-sbatch: ラッパーが実行しない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
 for cmd in "sudo -l sbatch" "sudo -e sbatch" "sudo -v" "sudo -K" "chrt -p 10 1234" "chrt -m" "taskset -p 1 1234" \
   "taskset -ap 1234" "ssh -N r995" "ssh r995 -N" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" "script log.txt" \
   "env FOO=1 -i sbatch --wrap true" "bash --help sbatch --wrap true" "bash --version sbatch" "xargs --help sbatch" \
@@ -2045,7 +2045,7 @@ for cmd in "sudo -l sbatch" "sudo -e sbatch" "sudo -v" "sudo -K" "chrt -p 10 123
   assert_eq allow "$(decision "$out")"
 done
 
-it "guard-sbatch: 走らせるプログラムを決められない形は、コマンド文字列に対象語があれば止める側に倒す"
+it "guard-sbatch: 実行するプログラムを決められない形は、コマンド文字列に対象語があれば止める側に倒す"
 for cmd in 'CMD=sbatch; $CMD --wrap true' 'CMD="sbatch --wrap true"; eval "$CMD"' '$(which sbatch) --wrap true' \
   '. ./run-sbatch.sh' 'source run-sbatch.sh' 'bash -s < run-sbatch.sh' 'bash < run-sbatch.sh' \
   'echo "sbatch --wrap true" | sh' 'bash -c "$CMD" # sbatch' "bash -c \"\$SBATCH_BIN --wrap true\"; echo sbatch" \
@@ -2070,7 +2070,7 @@ assert_contains "$(reason "$out")" "ALLOW_RAW_SBATCH=<理由>"
 out=$(run_hook guard-sbatch "$HOME/.claude/scripts/slurm-run.sh -t 5 xlc-1B 'true'")
 assert_contains "$(reason "$out")" "ALLOW_FOREGROUND_SLURM=<理由>"
 
-it "guard-sbatch: ALLOW_FOREGROUND_SLURM=<理由> を付ければ slurm-run.sh をフォアグラウンドで走らせられる"
+it "guard-sbatch: ALLOW_FOREGROUND_SLURM=<理由> を付ければ slurm-run.sh をフォアグラウンドで実行できる"
 out=$(run_hook guard-sbatch "ALLOW_FOREGROUND_SLURM=テスト用 $HOME/.claude/scripts/slurm-run.sh -t 1 xlc-1B 'true'")
 assert_eq allow "$(decision "$out")"
 
@@ -2113,7 +2113,7 @@ for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh $PR12" "sh -eu ~/.cl
   assert_eq allow "$(decision "$out")"
 done
 
-it "require-background-wait: 走らせるプログラムを決められない形は、文字列に対象のスクリプト名があれば止める"
+it "require-background-wait: 実行するプログラムを決められない形は、文字列に対象のスクリプト名があれば止める"
 out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT https://github.com/o/r/pull/12')
 assert_eq deny "$(decision "$out")"
 out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT https://github.com/o/r/pull/12' true)
@@ -2151,7 +2151,7 @@ for cmd in 'git status' 'git commit -m "docs: do not git stash"' 'git log --grep
 done
 
 # ===========================================================================
-# guard-exclusive-slurm: 排他の Slurm のジョブが走行中は、全コアを使う手元のコマンドを止める
+# guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、全コアを使う手元のコマンドを止める
 # ===========================================================================
 # 排他のジョブの時間の記録を乱すため（ADR-0041）。squeue は偽のコマンドで置き換える
 
@@ -2165,7 +2165,7 @@ printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|shared-$n|$n"; do
 chmod +x "$FAKE_SQUEUE"/*/squeue
 cd "$TEST_ROOT" || exit 1
 
-it "guard-exclusive-slurm: 排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と直し方を示す"
+it "guard-exclusive-slurm: 排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と修正方法を示す"
 for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' 'cargo check' 'nix flake check' \
   'nix develop -c cargo test' 'nix develop ../..#references -c dvc repro' 'nix develop --command bin/xs in.toml' \
   'cargo test -j 1' 'cargo run --jobs=1 -- x' 'cargo bench -j1' 'cargo build -j 1' 'cargo build --jobs=1' 'cargo b -j1' 'cargo check -j 1' 'cargo clippy -j1' 'cargo c --jobs 1' 'cargo -j 1 check' \

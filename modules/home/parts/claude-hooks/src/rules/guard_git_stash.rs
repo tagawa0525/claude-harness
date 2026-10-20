@@ -4,7 +4,7 @@
 //! 混ざり、pop や drop が他の作業の退避を取り込む・消す。退避は WIP のコミットか、対象の部分だけの
 //! ステージで行う。読むだけの `list` / `show` は通す。サブコマンドの直後が `list` / `show` でなければ
 //! （`git stash -u`、`git stash push`、サブコマンド省略の `git stash` を含め）すべて止める。エスケープはない。
-//! 走らせるプログラムを決められない形も、文字列に `stash` があれば止める。
+//! 実行するプログラムを決められない形も、文字列に `stash` があれば止める。
 
 use super::Rule;
 use crate::input::Input;
@@ -25,7 +25,7 @@ impl Rule for GuardGitStash {
             matches!(cmd.git_subcommand(), Some(("stash", args))
                 if !matches!(args.first().map(|a| a.text.as_str()), Some("list" | "show")))
         });
-        // 走らせるプログラムを決められない形（`$CMD`、`source`）は、`stash` が文字列にあれば止める側に倒す（ADR-0025）
+        // 実行するプログラムを決められない形（`$CMD`、`source`）は、`stash` が文字列にあれば止める側に倒す（ADR-0025）
         if writes || shell.runs_program("stash", |_| false) {
             vec![Finding::Deny(DENY.to_string())]
         } else {

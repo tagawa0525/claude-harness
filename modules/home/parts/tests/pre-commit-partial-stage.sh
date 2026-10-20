@@ -60,7 +60,7 @@ stage() {
   printf '%s' "$4" >"$1/$2"
 }
 
-# commit <dir>: hook を走らせて（git commit と同じく作業ツリーの根で）結果を返す
+# commit <dir>: hook を実行して（git commit と同じく作業ツリーの根で）結果を返す
 commit() {
   (cd "$1" && "$WORK/pre-commit") >"$WORK/out" 2>&1
 }

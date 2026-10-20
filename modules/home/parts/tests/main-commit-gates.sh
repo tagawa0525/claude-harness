@@ -27,7 +27,7 @@ fi
 # 起動できないバイナリを通す
 usage=$("$HOOK_BIN" 2>&1 </dev/null) || true
 if ! grep -q '^rules: ' <<<"$usage"; then
-  echo "claude-hooks を走らせられません: $HOOK_BIN" >&2
+  echo "claude-hooks を実行できません: $HOOK_BIN" >&2
   echo "$usage" >&2
   exit 1
 fi
