@@ -21,7 +21,7 @@ ADR-0012 で、コミットの番号の付け直しを `commit-refs` にまと�
 コミットしか指せないので、指す先を先に作れば、その最後の番号は先に決まっている。指す先は祖先とは限らない
 （`cherry-pick -x` の本文は別のブランチのコミットを指す）。
 
-xlc の `references/history-rewrite`（2026-10-11 に xlc の履歴を書き換えたときの道具。git で追跡していない）は、
+xlc の `references/history-rewrite`（2026-10-11 に xlc の履歴を書き換えたときのツール。git で追跡していない）は、
 filter-repo を Python のコールバックつきで繰り返し、前の回の commit-map で番号を置き換え、対応表が変わらなくなるまで
 回した（上限 400 回。収束までの回数は記録が無い）。
 
@@ -33,7 +33,7 @@ filter-repo を Python のコールバックつきで繰り返し、前の回の
 
 ## 検討した案
 
-- 案 A: filter-repo を Python のコールバックつきで、収束するまで繰り返す（xlc の道具）
+- 案 A: filter-repo を Python のコールバックつきで、収束するまで繰り返す（xlc のツール）
 - 案 B: filter-repo のコールバックから、ブロブごとに `commit-refs` を呼ぶ
 - 案 C: `git fast-export --no-data` ですべてのコミットを読み、親と文書が指すコミットの両方を依存として並べ、番号を
   置き換えて `git fast-import` に渡す。コミットを 1 つ渡すたびに `get-mark` で新しい番号を受け取り、後のコミットの

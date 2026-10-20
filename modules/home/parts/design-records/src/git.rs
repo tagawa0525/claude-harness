@@ -9,7 +9,7 @@ use design_records::{Kind, parse_tag};
 
 pub type Result<T> = std::result::Result<T, String>;
 
-/// `git args…` を `dir` で走らせた結果（失敗も含む）。
+/// `git args…` を `dir` で実行した結果（失敗も含む）。
 pub fn run(dir: &Path, args: &[&str]) -> Result<Output> {
     Command::new("git")
         .arg("-C")
@@ -21,7 +21,7 @@ pub fn run(dir: &Path, args: &[&str]) -> Result<Output> {
         .map_err(|e| format!("cannot run git (is git installed?): {e}"))
 }
 
-/// `git args…` を `dir` で走らせ、成功なら標準出力を返す。
+/// `git args…` を `dir` で実行し、成功なら標準出力を返す。
 pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let output = run(dir, args)?;
     if !output.status.success() {
@@ -156,7 +156,7 @@ const TAG_REFSPECS: [&str; 2] = [
 ///
 /// タグを先に取る: ほかの clone はマージを push してから予約を解放するので、タグを取った後に取るブランチには、
 /// そのとき消えていたタグの記録が必ず入っている。逆の順では、間にマージと解放が起きると、マージ前のブランチと
-/// 消えたタグを見て番号を使い回す。
+/// 消えたタグを見て番号を再利用する。
 pub fn fetch_origin(root: &Path) -> Result<Option<String>> {
     let mut args = vec!["fetch", "--quiet", "--prune", "--no-tags", "origin"];
     args.extend(TAG_REFSPECS);

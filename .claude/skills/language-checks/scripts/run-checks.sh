@@ -8,7 +8,7 @@
 #            （直した内容はどちらの親にもない変更としてマージコミットに紛れ込むため、lint で止める）。
 #            commit -a でマージを締めるとき hook に渡る index は一時ファイルなので、index に頼らない
 #   -C <dir>  <dir> の worktree を検査する（git -C と同じ。今いる場所と別の worktree のブランチを検査するとき）
-#   --base <ref>  コミット済みのブランチを検査する（/git-merge がマージの前に走らせる）。<ref> との分岐点から
+#   --base <ref>  コミット済みのブランチを検査する（/git-merge がマージの前に実行する）。<ref> との分岐点から
 #            作業ツリーまでの差分で言語と対象を決め、--merge と同じく自動修正はしない。
 #            ステージ済みの差分は、クリーンなブランチでは空なので使えない
 #
@@ -110,8 +110,8 @@ run_stage() {
 
 DETECTED=0
 
-# 排他の Slurm のジョブが走行中は、cargo と nix flake check を 1 コアに限る。全コアを使うとそのジョブの時間の
-# 記録を乱し、止めるとジョブの間（数時間）マージできないため、止めずに遅く走らせる（ADR-0041）。
+# 排他の Slurm のジョブが実行中は、cargo と nix flake check を 1 コアに限る。全コアを使うとそのジョブの時間の
+# 記録を乱し、止めるとジョブの間（数時間）マージできないため、止めずに遅く実行する（ADR-0041）。
 # claude-hooks の guard-exclusive-slurm は、このスクリプトを対象にしない
 CARGO_PIN=()
 CARGO_JOBS=()
@@ -119,7 +119,7 @@ NIX_LIMIT=()
 # shellcheck source=../../../scripts/lib/slurm-exclusive.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/slurm-exclusive.sh"
 if EXCLUSIVE_JOB=$(exclusive_slurm_job); then
-  echo "排他のジョブ ${EXCLUSIVE_JOB% *}（${EXCLUSIVE_JOB##* }）が走行中なので 1 コアで走らせる（遅い）"
+  echo "排他のジョブ ${EXCLUSIVE_JOB% *}（${EXCLUSIVE_JOB##* }）が実行中なので 1 コアで実行する（遅い）"
   CARGO_PIN=(taskset -c "$(( $(getconf _NPROCESSORS_ONLN) - 1 ))")
   CARGO_JOBS=(-j 1)
   NIX_LIMIT=(--cores 1 -j 1)
@@ -177,9 +177,9 @@ fi
 python_test_files() {
   git ls-files -- ':(glob)**/test_*.py' ':(glob)**/*_test.py'
 }
-# python_subdir_tests <file>...: 追跡しているテストを、ディレクトリごとに走らせる。テストは隣の .py を import するので、
+# python_subdir_tests <file>...: 追跡しているテストを、ディレクトリごとに実行する。テストは隣の .py を import するので、
 # そのディレクトリを起点にする。ディレクトリやパターンでなく追跡しているファイルだけを渡すのは、子のディレクトリの
-# テストを親と子で二重に走らせず、追跡していないファイルを拾わないため。pytest が python3 から使えれば pytest、
+# テストを親と子で二重に実行せず、追跡していないファイルを拾わないため。pytest が python3 から使えれば pytest、
 # 無ければ標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける。ADR-0036）
 python_subdir_tests() {
   local f dir name pytest_ok=0
@@ -217,7 +217,7 @@ if [[ -f pyproject.toml || -f setup.py || -f requirements.txt ]] || staged_has '
     echo "FAILED: python test: scripts/run-python-tests.sh に実行権限が無い（chmod +x）"
     exit 1
   elif [[ -e scripts/run-python-tests.sh ]]; then
-    # リポジトリ固有の走らせ方（devShell を分けるなど）。ADR-0036
+    # リポジトリ固有の実行方法（devShell を分けるなど）。ADR-0036
     run_stage python test bash "" bash scripts/run-python-tests.sh
   elif [[ -d tests ]] || compgen -G 'test_*.py' >/dev/null || compgen -G '*_test.py' >/dev/null; then
     run_stage python test pytest "" pytest
@@ -255,7 +255,7 @@ md_lint() {
 # 参照をそこから探させる（prek の設定の types: [text] と同じ。テキストでないファイルは design-records が読み飛ばす）。
 # --changed で、触っていない ADR の推奨の節の warning を出さない。
 # xargs で渡さないのは、引数が多いと分けて呼ばれ、ADR どうしの検査の指摘が重なるため。
-# プロセス置換は git diff の失敗を返さないので、先に一度走らせて失敗を止める
+# プロセス置換は git diff の失敗を返さないので、先に一度実行して失敗を止める
 design_records_check() {
   local files
   changed_files >/dev/null || return 1
@@ -273,8 +273,8 @@ if staged_has '*.md'; then
     run_stage markdown staged staged-checks "" staged-checks markdown
   fi
 fi
-# design-records は .pre-commit-config.yaml でオプトインしたリポジトリだけで走らせる（ADR-0009。docs/adr の有無で
-# 決めると、別の形の ADR を持つ他人のプロジェクトでも止まる）。.md の変更が無くても走らせ、ADR を消すだけの変更でも、
+# design-records は .pre-commit-config.yaml でオプトインしたリポジトリだけで実行する（ADR-0009。docs/adr の有無で
+# 決めると、別の形の ADR を持つ他人のプロジェクトでも止まる）。.md の変更が無くても実行し、ADR を消すだけの変更でも、
 # 消した ADR を指す参照が残っていないかを見る（prek の設定の always_run と同じ）
 # grep の 1（一致なし）だけをオプトインしていないと見なし、読めないなどの失敗（2 以上）は止める
 DESIGN_RECORDS=0

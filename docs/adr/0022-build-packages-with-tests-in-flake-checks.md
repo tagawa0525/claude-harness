@@ -7,7 +7,7 @@ superseded-by:
 issues: []
 ---
 
-# ADR-0022: テストのあるパッケージを flake の checks に入れ、nix flake check でサンドボックスのテストを走らせる
+# ADR-0022: テストのあるパッケージを flake の checks に入れ、nix flake check でサンドボックスのテストを実行する
 
 ## 背景
 
@@ -32,7 +32,7 @@ PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix の�
 
 ## 検討した案
 
-- 案 A: `run-checks.sh` に、claude-hooks のソースが変わったときだけ `nix build .#claude-hooks` を走らせる段を足す。
+- 案 A: `run-checks.sh` に、claude-hooks のソースが変わったときだけ `nix build .#claude-hooks` を実行する段を足す。
   共有スクリプトに claude-hooks 専用の分岐が入る。他のパッケージ（design-records など）にも同じ段が要る
 - 案 B（採用）: `flake.nix` の `checks.x86_64-linux` にパッケージを入れる。`nix flake check` が build し、checkPhase が走る。
   壊した状態（`nativeCheckInputs` なし）で `nix flake check` が失敗することを確かめた
@@ -46,7 +46,7 @@ PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix の�
 
 ### 帰結
 
-- `run-checks.sh` の nix の段が、claude-hooks のサンドボックスでのテストも走らせる（ローカルで build するときは cargo の build 分だけ長くなる）
+- `run-checks.sh` の nix の段が、claude-hooks のサンドボックスでのテストも実行する（ローカルで build するときは cargo の build 分だけ長くなる）
 
 ### 確認
 

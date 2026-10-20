@@ -44,7 +44,7 @@ issues: ["#303"]
 
 ### 帰結
 
-- 良い点: テストを止められずに走らせられる。本物のスクリプトは、書き方によらず止める
+- 良い点: テストを止められずに実行できる。本物のスクリプトは、書き方によらず止める
 - 悪い点: テストを `cd .claude/tests/scripts && bash slurm-run.sh` のように、ディレクトリ無しで呼ぶと止める
   （cwd を知る手段が無い）。`.claude/tests/./scripts/slurm-run.sh` のような正規でない綴りも止める。
   そのときは `run_in_background=true` で実行する

@@ -15,7 +15,7 @@ pub const ADR_DIR: &str = "docs/adr";
 /// issue を置くディレクトリ（リポジトリの直下から）。
 pub const ISSUE_DIR: &str = "docs/issues";
 
-/// 番号を振る記録の種類。どちらも `<dir>/NNNN-<slug>.md` に置き、番号を使い回さない。
+/// 番号を振る記録の種類。どちらも `<dir>/NNNN-<slug>.md` に置き、番号を再利用しない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
     Adr,

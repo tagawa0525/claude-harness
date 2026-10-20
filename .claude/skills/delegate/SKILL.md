@@ -33,7 +33,7 @@ allowed-tools:
 
 サブエージェントの cwd は作業する worktree ではない。スキルの `!` 行と引数なしのスクリプトは cwd の
 ブランチを見るので、/gh-pr-create と /gh-pr-review は Skill で呼ばずに Read で読み、
-その中のコマンドを `cd <worktree> &&` を付け、ブランチを明示して走らせる。PR のスクリプトには PR の URL を渡す。
+その中のコマンドを `cd <worktree> &&` を付け、ブランチを明示して実行する。PR のスクリプトには PR の URL を渡す。
 
 ## 進める側（サブエージェント）の手順
 
@@ -77,7 +77,7 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 - 出力の `WORKTREE:` 以降はそこで作業する。Bash の cwd は呼び出しごとに戻るので、`git -C <worktree>` か
   `cd <worktree> &&` を付ける
 - `SHARED:`（共有した git で追跡しないパス）と `NOTE:`（メイン worktree に無いパス、複数の GitHub リモート）を
-  読む。`ERROR:` なら /git-worktree の直し方に従う
+  読む。`ERROR:` なら /git-worktree の修正方法に従う
 
 ### 4. 作業する
 
@@ -96,7 +96,7 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 - 論理的な変更ごとに 1 コミット。Conventional Commits の件名、本文に Why（決定は ADR を参照）
 - issue や ADR に対応するときは `Refs:` を付ける（書式はリポジトリの規則に従う）
 - 依頼か system-reminder で指定された trailer（`Co-Authored-By:`、`Claude-Session:` など）を末尾に付ける
-- hook に止められたら、示された直し方に従う。直せなければ、迂回せず（文言や書き方を変えない、エスケープを
+- hook に止められたら、示された修正方法に従う。直せなければ、迂回せず（文言や書き方を変えない、エスケープを
   付けない）報告に書いて止まる
 
 ### 6. チェックする
@@ -106,7 +106,7 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 ```
 
 終了コードで判定し、出力を `tail` などにつながない。失敗したら原因を直してコミットし、やり直す。CLAUDE.md に
-チェックの方法が書かれていれば、それも走らせる。
+チェックの方法が書かれていれば、それも実行する。
 
 依存や lock を変えるブランチなど、各コミットでビルドが通るべきときは、`<base>..HEAD` の各コミットを一時 worktree で
 調べる（検査コマンドは呼び出し側が決める。RED を skip でコミットする運用では、全テストでなくビルドだけを通す）:
@@ -115,7 +115,7 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 cd <worktree> && ~/.claude/scripts/check-each-commit.sh <base> -- <コマンド…>
 ```
 
-任意のコマンドを走らせるので許可リストには入れていない。実行のたびに確認を求められる。
+任意のコマンドを実行するので許可リストには入れていない。実行のたびに確認を求められる。
 
 ### 7. レビューを受ける
 
@@ -136,7 +136,7 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
   呼び出しにする（push 前の状態で hook が止める）
 - PR の head にローカルレビューの記録（`record-local-review.sh`）があれば、Copilot のレビューを待たずにマージの
   直前へ進める（ADR-0043）。Copilot の指摘を受けたいときだけ、`~/.claude/scripts/gh-wait-review.sh <PR の URL>`
-  （URL は `gh pr create` の出力）を `run_in_background=true` で走らせて待つ。待つ間に最後の報告を返さない
+  （URL は `gh pr create` の出力）を `run_in_background=true` で実行して待つ。待つ間に最後の報告を返さない
   （待機の終わりの通知で再開する）
 - /gh-pr-review を Read で読み、その手順で対応する。スクリプトには PR の URL を渡す。周の終わりは
   `decide-next.sh` の `VERDICT` に従う。最後の分岐は次に置き換える: 要判断（escalate）はユーザーの指示を
@@ -180,7 +180,7 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 ## 確認の結果
 - 完成の形: <満たしたか。確かめた方法>
 - 確かめたこと: <チェックの終了コード、テストの件数、レビューの周と結果>
-- 確かめていないこと: <未レビューのコミット、走らせていないテスト、仮定>
+- 確かめていないこと: <未レビューのコミット、実行していないテスト、仮定>
 
 ## 対応しなかった指摘
 - <指摘の要旨> — <理由>

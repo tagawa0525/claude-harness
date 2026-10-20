@@ -6,7 +6,7 @@
 //! 遅れていない」を強制するのと同じ形を、ローカルのマージにも課す。fast-forward や `--squash` では
 //! ブランチの履歴とマージの単位が残らず、遅れたまま merge すると git graph が分かれる。
 //! 対象は pre-git-merge-check と同じ（ローカルのブランチを既定ブランチの上でマージするときだけ。
-//! リモート追跡ブランチの取り込み、中断・再開は対象外）。エスケープはない（直し方は理由に示す）
+//! リモート追跡ブランチの取り込み、中断・再開は対象外）。エスケープはない（修正方法は理由に示す）
 
 use super::Rule;
 use super::pre_git_merge_check::{default_branch_merges, local_branch_ref};

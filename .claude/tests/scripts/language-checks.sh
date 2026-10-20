@@ -9,7 +9,7 @@
 source "$(dirname "$0")/../lib.sh"
 
 LANG_SCRIPTS="$CLAUDE_DIR/skills/language-checks/scripts"
-# 手元の staged-checks（home-manager が PATH に置く）を走らせず、どのホストでも同じ結果にする。Markdown の段を
+# 手元の staged-checks（home-manager が PATH に置く）を実行せず、どのホストでも同じ結果にする。Markdown の段を
 # 確かめるテストは、この偽物を差し替える
 make_fake_tool staged-checks '*) exit 0 ;;'
 # 手元の squeue を呼ばず、排他のジョブが無い状態にする。排他のジョブ中の自己制限を確かめるテストが差し替える
@@ -151,7 +151,7 @@ opt_in_design_records() {
   git add .pre-commit-config.yaml && git commit -q -m "chore: opt in design-records"
 }
 
-it "run-checks: オプトインしていれば、変更した .md を渡して design-records check を走らせる"
+it "run-checks: オプトインしていれば、変更した .md を渡して design-records check を実行する"
 REPO="$TEST_ROOT/checks/adr"
 make_repo "$REPO"
 cd "$REPO" || exit 1
@@ -185,7 +185,7 @@ assert_eq 0 $?
 assert_contains "$out" "SKIP: markdown design-records (design-records not found)"
 assert_contains "$out" "ALL_OK"
 
-it "run-checks: ADR を消すだけの変更でも design-records check を走らせる"
+it "run-checks: ADR を消すだけの変更でも design-records check を実行する"
 REPO="$TEST_ROOT/checks/adr-delete"
 make_repo "$REPO"
 cd "$REPO" || exit 1
@@ -541,11 +541,11 @@ make_fake_tool nix '*) exit 0 ;;'
 make_fake_tool statix '*) exit 0 ;;'
 make_fake_tool nixfmt '*) exit 0 ;;'
 
-it "run-checks: 排他のジョブが走行中なら、cargo を taskset と -j 1 で、nix flake check を --cores 1 -j 1 で走らせ、冒頭に知らせる"
+it "run-checks: 排他のジョブが実行中なら、cargo を taskset と -j 1 で、nix flake check を --cores 1 -j 1 で実行し、冒頭に知らせる"
 make_fake_tool squeue '*) printf "NO|openmc-2K|1234\\nOK|x-shared|1235\\n" ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_contains "$out" "排他のジョブ openmc-2K（1234）が走行中なので 1 コアで走らせる"
+assert_contains "$out" "排他のジョブ openmc-2K（1234）が実行中なので 1 コアで実行する"
 assert_contains "$(fake_log taskset)" "cargo clippy -j 1 --all-targets -- -D warnings"
 assert_contains "$(fake_log taskset)" "cargo test -j 1"
 assert_contains "$(fake_log nix)" "flake check --cores 1 -j 1"
@@ -556,7 +556,7 @@ make_fake_tool taskset '*) shift 2; exec "$@" ;;'
 make_fake_tool nix '*) exit 0 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_not_contains "$out" "1 コアで走らせる"
+assert_not_contains "$out" "1 コアで実行する"
 assert_eq "" "$(fake_log taskset)"
 assert_contains "$(fake_log nix)" "flake check"
 assert_not_contains "$(fake_log nix)" "--cores"

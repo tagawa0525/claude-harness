@@ -15,7 +15,7 @@ use crate::git::{
 /// 予約をやり直す回数の上限。ほかの人の予約と続けてぶつかるのは、同時に作る人の数だけ。
 const ATTEMPTS: usize = 20;
 
-/// `kind` の使った番号: 全ブランチの履歴、作業ツリー、予約のタグ。削除した記録の番号を使い回すと、古い参照が
+/// `kind` の使った番号: 全ブランチの履歴、作業ツリー、予約のタグ。削除した記録の番号を再利用すると、古い参照が
 /// 別の記録を指してしまうので、履歴も数える。
 fn used_numbers(root: &Path, kind: Kind) -> Result<BTreeSet<u32>> {
     // 浅い clone の履歴は切った先を返さない。マージした記録の予約は prune で消えるので、切った先で消した記録の
@@ -98,7 +98,7 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
             Some(n) => n,
             None => used.last().map_or(1, |n| n + 1),
         };
-        // 5 桁の番号は、タグにも履歴にも番号として数えない（使い回しうる）
+        // 5 桁の番号は、タグにも履歴にも番号として数えない（再利用しうる）
         if number > 9999 {
             return Err(format!(
                 "{} has more than four digits; the numbers of this kind are used up",
@@ -594,7 +594,7 @@ fn record_lines(text: &str, added: Option<BTreeSet<usize>>) -> BTreeSet<usize> {
 }
 
 /// 振り直した記録（slug が `slug`）の、番号 `old` の予約を解放する。`old` はほかの記録（main にあるもの）が使って
-/// いるので、番号は使い回されない。残すと、check がほかの記録に予約の注意を出し続ける。
+/// いるので、番号は再利用されない。残すと、check がほかの記録に予約の注意を出し続ける。
 fn release_old(root: &Path, kind: Kind, old: u32, slug: &str) -> Result<()> {
     let _lock = lock(root)?;
     let tag = kind.tag(old);
@@ -620,7 +620,7 @@ fn release_old(root: &Path, kind: Kind, old: u32, slug: &str) -> Result<()> {
 }
 
 /// `prune`: 既定ブランチ（origin があれば origin の）の履歴に記録が入った予約のタグを、ローカルと origin から消し、
-/// 消したタグの名前を出す。履歴に無い記録のタグは、消すと番号が使い回されるので残す。
+/// 消したタグの名前を出す。履歴に無い記録のタグは、消すと番号が再利用されるので残す。
 pub fn prune() -> Result<ExitCode> {
     let root = repo_root()?;
     let _lock = lock(&root)?;

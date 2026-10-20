@@ -1,4 +1,4 @@
-# プロジェクトの pre-commit の設定。グローバルの git hook（modules/home/parts/git.nix）が prek で走らせる
+# プロジェクトの pre-commit の設定。グローバルの git hook（modules/home/parts/git.nix）が prek で実行する
 repos:
   - repo: local
     hooks:

@@ -1,4 +1,4 @@
-//! CLI を一時的な git リポジトリで走らせ、テンプレート、検査、status の読み出しを確かめる。
+//! CLI を一時的な git リポジトリで実行し、テンプレート、検査、status の読み出しを確かめる。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,7 +73,7 @@ impl TempRepo {
         ])
     }
 
-    /// git を走らせ、成功を確かめて標準出力を返す
+    /// git を実行し、成功を確かめて標準出力を返す
     fn git(&self, args: &[&str]) -> String {
         git_in(&self.dir, args)
     }
@@ -93,7 +93,7 @@ impl TempRepo {
         self.git(&["commit", "-q", "-m", message]);
     }
 
-    /// CLI をリポジトリの `sub`（直下なら ""）で走らせる
+    /// CLI をリポジトリの `sub`（直下なら ""）で実行する
     fn run_in(&self, sub: &str, args: &[&str]) -> Output {
         run(&self.dir.join(sub), args, None)
     }
@@ -102,7 +102,7 @@ impl TempRepo {
         self.run_in("", args)
     }
 
-    /// CLI を、`bin` を PATH の先頭に置いて走らせる（git を差し替える）
+    /// CLI を、`bin` を PATH の先頭に置いて実行する（git を差し替える）
     fn run_with_bin(&self, bin: &Path, args: &[&str]) -> Output {
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
         let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
@@ -120,7 +120,7 @@ impl Drop for TempRepo {
 }
 
 /// `bin/git` に偽の git を書く（`bin` は新しく作る）。`case " $* " in` の腕 `arms` に当たる呼び出しだけを変え、
-/// それ以外は本物の git を走らせる。腕の中では本物の git を `"$GIT"` で呼ぶ。腕に埋めるパスは [`sh_quote`] で囲む
+/// それ以外は本物の git を実行する。腕の中では本物の git を `"$GIT"` で呼ぶ。腕に埋めるパスは [`sh_quote`] で囲む
 fn fake_git(bin: &Path, arms: &str) {
     fs::create_dir(bin).unwrap();
     let found = Command::new("sh")
@@ -150,7 +150,7 @@ fn sh_quote(s: impl std::fmt::Display) -> String {
     format!("'{}'", s.to_string().replace('\'', "'\\''"))
 }
 
-/// git を `dir` で走らせ、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
+/// git を `dir` で実行し、成功を確かめて標準出力を返す。親の git（hook）から受け継いだ GIT_ で始まる環境変数は外す
 /// （外さないと、hook の中で走るテストの操作が、hook を呼んだ本物のリポジトリに効く）。外した後で、テストに要る
 /// 設定だけを GIT_CONFIG_COUNT で渡す
 fn git_in(dir: &Path, args: &[&str]) -> String {
@@ -1145,7 +1145,7 @@ fn renumber_without_a_collision_keeps_the_old_reservation() {
     t.commit_all("docs(adr): b");
     let out = t.run(&["renumber", "1", "7"]);
     assert!(out.status.success(), "{}", stderr(&out));
-    // 番号 0001 はほかの記録が使っていないので、予約を残して使い回させない
+    // 番号 0001 はほかの記録が使っていないので、予約を残して再利用させない
     assert_eq!(t.tag_message("adr-0001"), "use-b");
 }
 
@@ -1191,7 +1191,7 @@ fn new_refuses_shallow_clones_whose_history_is_cut() {
 fn new_refuses_numbers_beyond_four_digits() {
     let t = TempRepo::new("exhausted");
     t.git(&["tag", "-a", "adr-9999", "-m", "use-last", "main"]);
-    // 5 桁の番号は番号として数えないので、振ると使い回しうる
+    // 5 桁の番号は番号として数えないので、振ると再利用しうる
     let out = t.run(&["new", "use-a", "a を使う"]);
     assert!(!out.status.success(), "{}", stdout(&out));
     assert!(!t.dir.join("docs").exists());
@@ -1332,7 +1332,7 @@ fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
         .stderr(Stdio::piped());
     isolate(&mut first);
     let first = first.spawn().unwrap();
-    // 先のセッションがタグを打って push に入ってから、次のセッションを走らせる
+    // 先のセッションがタグを打って push に入ってから、次のセッションを実行する
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while !pushing.exists() {
         assert!(

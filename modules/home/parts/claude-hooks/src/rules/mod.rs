@@ -15,7 +15,7 @@ pub trait Rule: Sync {
 }
 
 /// ルールを評価し、エスケープを当てた結果を返す。理由つきなら評価しない（gitleaks や gh の呼び出しを
-/// 伴うルールを、外す指定があるのに走らせない）。値が短ければ評価し、止めるときだけ理由を求める
+/// 伴うルールを、外す指定があるのに実行しない）。値が短ければ評価し、止めるときだけ理由を求める
 pub fn run(rule: &dyn Rule, input: &Input, shell: &Shell) -> Vec<Finding> {
     let Some(name) = rule.escape() else {
         return rule.check(input, shell);
@@ -30,7 +30,7 @@ pub fn run(rule: &dyn Rule, input: &Input, shell: &Shell) -> Vec<Finding> {
 }
 
 /// 止める判定にエスケープを当てる（ADR-0023）。止めないならエスケープは見ない（付けていても咎めない）。
-/// 理由つきなら通す。値が理由として短ければ、本来の文言（何を止めたか、正規の直し方）に理由を求める行を足す
+/// 理由つきなら通す。値が理由として短ければ、本来の文言（何を止めたか、正規の修正方法）に理由を求める行を足す
 pub fn apply_escape(esc: Escape, name: &str, mut findings: Vec<Finding>) -> Vec<Finding> {
     if findings.is_empty() {
         return findings;

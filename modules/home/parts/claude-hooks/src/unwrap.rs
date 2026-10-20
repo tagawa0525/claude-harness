@@ -7,8 +7,8 @@
 //! 組み込み（builtin、command、exec、eval、source）と bash 自身の起動オプションから、値を取るものと、ほどき方を変える
 //! ものだけを持つ。短縮形のまとまり（`-iu X`）、続けて書いた値（`-uX`、`--unset=X`）、長い形の一意な省略形（`--ign`）を読む
 //!
-//! ラッパーの中には、次の語をプログラムとして走らせるものと、文字列を sh -c で走らせるもの（`bash -c`、`flock … -c`、
-//! `script -c`、`eval`、`watch`、`ssh`。[`Unwrapped::source`]）と、何を走らせるか文字列からは分からないもの
+//! ラッパーの中には、次の語をプログラムとして実行するものと、文字列を sh -c で実行するもの（`bash -c`、`flock … -c`、
+//! `script -c`、`eval`、`watch`、`ssh`。[`Unwrapped::source`]）と、何を実行するか文字列からは分からないもの
 //! （`bash -s`、`source`。[`Unwrapped::opaque`]）がある
 
 use std::collections::VecDeque;
@@ -429,18 +429,18 @@ pub struct Unwrapped {
     pub env: Vec<EnvChange>,
     /// ほどいたラッパーの、書いたままの名前（外側から順に。`/usr/bin/time` はパスのまま）
     pub wrappers: Vec<String>,
-    /// 中のコマンドを走らせるディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
+    /// 中のコマンドを実行するディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
     pub dirs: Vec<String>,
     /// `sudo -i` の対象の利用者のホームの書き方（`~root`）。中のコマンドはそこから始まり、`dirs` はそこから
-    /// 当てる。sudo -i が走らせる文字列の中の `~` もそこを指す。手元のパスには解決しない
+    /// 当てる。sudo -i が実行する文字列の中の `~` もそこを指す。手元のパスには解決しない
     pub login_home: Option<String>,
     /// `ssh` の接続先のホームの書き方（`host:`）。中のコマンドは手元のどのパスでもない場所で走る
     pub remote: Option<String>,
-    /// `name` が sh -c で走らせる文字列（`bash -c '…'`、`flock <file> -c '…'`、`script -c '…'`、`eval`・`watch`・
+    /// `name` が sh -c で実行する文字列（`bash -c '…'`、`flock <file> -c '…'`、`script -c '…'`、`eval`・`watch`・
     /// `ssh <接続先>` の残りの語を空白でつないだもの）。shell.rs が再帰的に解析する
     pub source: Option<String>,
-    /// `name` が何を走らせるか、文字列からは分からない: 標準入力からコマンドを読む（`bash -s`、引数の無い `bash`、
-    /// コマンドの無い `ssh <接続先>` / `sudo -s` / `script`）、ファイルを読んで走らせる（`source` / `.`）
+    /// `name` が何を実行するか、文字列からは分からない: 標準入力からコマンドを読む（`bash -s`、引数の無い `bash`、
+    /// コマンドの無い `ssh <接続先>` / `sudo -s` / `script`）、ファイルを読んで実行する（`source` / `.`）
     pub opaque: bool,
     /// 包んだ `taskset` が、中のコマンドを 1 つの CPU に限る（`-c 3`、`-c 5-5`、マスク `0x4`）。
     /// 複数の CPU を指す、または読めない指定は false
@@ -586,7 +586,7 @@ const NIX_ENTER_VALUE_OPTIONS: &[(&str, usize)] = &[
 ];
 
 /// `nix develop|shell` の引数（サブコマンドの後ろ）で、`-c` / `--command` の次の語の位置。
-/// 値を取るオプションの値は飛ばす。`--help` があれば何も走らせないので None
+/// 値を取るオプションの値は飛ばす。`--help` があれば何も実行しないので None
 fn nix_enter_command(rest: &[Arg]) -> Option<usize> {
     let mut i = 0;
     while i < rest.len() {
@@ -699,7 +699,7 @@ pub fn split_env_string(s: &str) -> Vec<String> {
     words
 }
 
-/// 残りの語を空白でつないだ、sh -c で走らせる文字列（eval、watch、ssh は語をつないで渡す）
+/// 残りの語を空白でつないだ、sh -c で実行する文字列（eval、watch、ssh は語をつないで渡す）
 fn joined(words: &VecDeque<Arg>) -> String {
     words
         .iter()
@@ -709,7 +709,7 @@ fn joined(words: &VecDeque<Arg>) -> String {
 }
 
 /// `name args…` がラッパーなら、ほどいた中のコマンドを返す。`command -v` / `-V`（`-pv` などのまとまりを含む）は
-/// プログラムを探して表示するだけで走らせず、`ionice -p` などは既にあるプロセスを対象にするので、ほどかない
+/// プログラムを探して表示するだけで実行せず、`ionice -p` などは既にあるプロセスを対象にするので、ほどかない
 pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
     let mut out = Unwrapped {
         name: name.to_string(),
@@ -718,7 +718,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
     };
     loop {
         let wrapper_name = basename(&out.name).to_string();
-        // source / . はファイルを読んで走らせるので、何を走らせるかは文字列からは分からない
+        // source / . はファイルを読んで実行するので、何を実行するかは文字列からは分からない
         if matches!(wrapper_name.as_str(), "source" | ".") {
             out.opaque = true;
             return out;
@@ -743,14 +743,14 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let is_shell = matches!(wrapper.name, "bash" | "sh");
         let mut words: VecDeque<Arg> = out.args.iter().cloned().collect();
         // このラッパー 1 段の環境の変更と、移るディレクトリ（最後の -C / -D が効く）。out に直に書かないのは、
-        // ラッパーが中のコマンドを走らせない（--help など）ときに捨てるため
+        // ラッパーが中のコマンドを実行しない（--help など）ときに捨てるため
         let mut env: Vec<EnvChange> = Vec::new();
         let mut dir: Option<String> = None;
         let mut runs = true;
         let mut options_done = false;
         // env の `-` を読んだか、それを読む位置を過ぎた（代入を読んだ）か
         let mut env_dash_read = false;
-        // bash -c: 次の位置引数を sh -c の文字列として走らせる
+        // bash -c: 次の位置引数を sh -c の文字列として実行する
         let mut takes_source = false;
         // bash -s、sudo -s / -i: 標準入力からコマンドを読む（sudo はコマンドが無ければ対話シェル）
         let mut reads_stdin = false;
@@ -758,7 +758,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut execs = false;
         // sudo は -E が無ければ環境変数を受け継がない（env_reset）。ssh の接続先には環境変数は渡らない
         let mut preserves_env = !matches!(wrapper.name, "sudo" | "ssh");
-        // flock <file> -c、script -c: 走らせる文字列
+        // flock <file> -c、script -c: 実行する文字列
         let mut source: Option<String> = None;
         // コマンドの前の位置引数のうち、まだ読んでいない数
         let mut positionals = wrapper.positionals;
@@ -776,7 +776,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             while let Some(front) = words.front() {
                 let t = front.text.clone();
                 // bash は `-` も `--` と同じにオプションの終わりと読む。env は getopt を終えた後（`--`、`-`、
-                // 代入の後）の `--` を走らせるプログラムにする
+                // 代入の後）の `--` を実行するプログラムにする
                 if (t == "--" && !(wrapper.name == "env" && options_done)) || (is_shell && t == "-")
                 {
                     words.pop_front();
@@ -784,7 +784,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     continue;
                 }
                 // `env -` は `env -i`。env.c は getopt の後に一度だけ（`--` の後でも）`-` を見るので、オプションは
-                // そこで終わり、後ろの `-` やオプションの形の語は走らせるプログラムになる
+                // そこで終わり、後ろの `-` やオプションの形の語は実行するプログラムになる
                 if wrapper.name == "env" && t == "-" && !env_dash_read {
                     words.pop_front();
                     env.push(EnvChange::Clear);
@@ -793,7 +793,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     continue;
                 }
                 // env と sudo は `--` の後も `NAME=value` を代入として読む。最初の代入でオプションは終わる
-                // （getopt の `+`。`env FOO=1 -i x` は -i というプログラムを走らせる）
+                // （getopt の `+`。`env FOO=1 -i x` は -i というプログラムを実行する）
                 if wrapper.assigns && (options_done || !t.starts_with('-')) {
                     if let Some((var, value)) = t.split_once('=') {
                         words.pop_front();
@@ -818,7 +818,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
                         None => (t.clone(), None),
                     };
-                    // どのラッパーも --help / --version は表示して終わり、後ろの語を走らせない
+                    // どのラッパーも --help / --version は表示して終わり、後ろの語を実行しない
                     if name == "--help" || name == "--version" {
                         runs = false;
                     }
@@ -883,7 +883,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         ("ionice", Some('p' | 'P' | 'u')) => runs = false,
                         ("bash" | "sh", Some('c')) => takes_source = true,
                         ("bash" | "sh", Some('s')) => reads_stdin = true,
-                        // -n は構文を調べるだけ、-D は文字列を列挙するだけで走らせない
+                        // -n は構文を調べるだけ、-D は文字列を列挙するだけで実行しない
                         ("bash" | "sh", Some('n' | 'D')) => runs = false,
                         // `--preserve-env=list` は list の変数だけを受け継ぐ（list は見ない）
                         ("sudo", Some('E')) => preserves_env = value.is_none(),
@@ -948,11 +948,11 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         if wrapper.name == "taskset" {
             out.pinned_to_one_cpu = pinned;
         }
-        // ssh は文字列を走らせてほどき終わるので、ラッパーの列に ssh は 1 つまで
+        // ssh は文字列を実行してほどき終わるので、ラッパーの列に ssh は 1 つまで
         if let Some(host) = host {
             out.remote = Some(format!("{host}:"));
         }
-        // 残りの語から、走らせるものを決める
+        // 残りの語から、実行するものを決める
         match wrapper.name {
             "bash" | "sh" => {
                 if takes_source {
@@ -969,7 +969,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     return out;
                 }
             }
-            // ファイルの直後の `-c <文字列>` を sh -c で走らせる（flock.c は getopt の後に argv[optind + 1] を比べる）
+            // ファイルの直後の `-c <文字列>` を sh -c で実行する（flock.c は getopt の後に argv[optind + 1] を比べる）
             "flock" => {
                 if words
                     .front()
@@ -979,14 +979,14 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     source = words.pop_front().map(|w| w.text);
                 }
             }
-            // -c が無ければ、`--` の後ろの語をコマンドとして走らせる。それも無ければ対話シェル
+            // -c が無ければ、`--` の後ろの語をコマンドとして実行する。それも無ければ対話シェル
             "script" if source.is_none() => {
                 if !options_done {
                     out.opaque = true;
                     return out;
                 }
             }
-            // 残りの語を空白でつないで sh -c で走らせる（ssh は接続先のシェルで。コマンドが無ければ標準入力を読む）
+            // 残りの語を空白でつないで sh -c で実行する（ssh は接続先のシェルで。コマンドが無ければ標準入力を読む）
             "eval" | "watch" | "ssh" if !execs => {
                 if words.is_empty() {
                     if wrapper.name == "ssh" {
@@ -1089,7 +1089,7 @@ mod tests {
             assert_eq!(u.name, "sbatch", "{src}");
             assert!(u.source.is_none() && !u.opaque, "{src}");
         }
-        // env と sudo は、最初の代入でオプションが終わる（getopt の `+`）。後ろの -i は走らせるプログラム
+        // env と sudo は、最初の代入でオプションが終わる（getopt の `+`）。後ろの -i は実行するプログラム
         let u = un("env FOO=1 -i x");
         assert_eq!(u.name, "-i");
         assert_eq!(u.env, [EnvChange::Set("FOO".to_string(), "1".to_string())]);
@@ -1172,7 +1172,7 @@ mod tests {
             u.env,
             [EnvChange::Unset("FOO".to_string()), EnvChange::Clear]
         );
-        // `-` か代入の後の `--` はオプションの終わりでなく、走らせるプログラム
+        // `-` か代入の後の `--` はオプションの終わりでなく、実行するプログラム
         let u = un("env - -- git");
         assert_eq!(u.name, "--");
         assert_eq!(u.env, [EnvChange::Clear]);

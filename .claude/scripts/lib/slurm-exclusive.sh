@@ -1,8 +1,8 @@
 # shellcheck shell=bash
-# slurm-exclusive.sh — 排他の Slurm のジョブが走行中かの判定（source して使う）
+# slurm-exclusive.sh — 排他の Slurm のジョブが実行中かの判定（source して使う）
 #
 # exclusive_slurm_job
-#   排他のジョブ（squeue で OverSubscribe が NO の走行中のジョブ）があれば、最初の 1 つを
+#   排他のジョブ（squeue で OverSubscribe が NO の実行中のジョブ）があれば、最初の 1 つを
 #   "<名前> <ジョブ番号>"（名前に空白があってもそのまま、番号は最後の語）で標準出力に出して 0 を返す。
 #   無ければ、squeue が無い・失敗した・5 秒で終わらないときも、何も出さず 1 を返す。
 #   claude-hooks の guard-exclusive-slurm（modules/home/parts/claude-hooks/src/rules/guard_exclusive_slurm.rs）と

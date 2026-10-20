@@ -11,7 +11,7 @@ issues: []
 
 ## 背景
 
-xlc では、git で追跡しない `references/`（核データ、道具、DVC のキャッシュ `references/dvc-cache`。xlc の ADR-0123）を
+xlc では、git で追跡しない `references/`（核データ、ツール、DVC のキャッシュ `references/dvc-cache`。xlc の ADR-0123）を
 worktree の間で共有する必要がある。worktree に `references` が無いと、DVC が worktree の中に別のキャッシュを黙って作り、
 ENDF を deps にする段階が止まる。今は xlc の docs/environment.md の手順で、人が `references` をメイン worktree への
 symlink にしている。

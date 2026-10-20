@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # claude-hooks のバイナリを受け取るテスト（.claude/tests/hooks.sh、modules/home/parts/tests/main-commit-gates.sh）が、
-# 走らせられないバイナリを渡されたら、各テストを失敗として数えずに、その場で止まることのテスト
+# 実行できないバイナリを渡されたら、各テストを失敗として数えずに、その場で止まることのテスト
 #
 # 実行: bash .claude/tests/scripts/hooks-bin.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
 source "$(dirname "$0")/../lib.sh"
 
 ROOT=$(cd "$CLAUDE_DIR/.." && pwd)
-# 止まらなかったときに、main-commit-gates.sh が NixOS の構成を nix build しないよう、nix の無い PATH で走らせる
+# 止まらなかったときに、main-commit-gates.sh が NixOS の構成を nix build しないよう、nix の無い PATH で実行する
 NO_NIX_PATH=$(minimal_path)
 # 起動しても使い方を出さないバイナリ（壊れたバイナリの代わり）。理由を標準エラーに出す
 make_fake_tool not-hooks "  *) echo 'cannot load libfoo.so' >&2; exit 127 ;;"
@@ -24,9 +24,9 @@ expect_stop() {
   done
 }
 
-expect_stop "無いパスの" "$TEST_ROOT/missing/bin/claude-hooks" "claude-hooks を走らせられません"
-expect_stop "ディレクトリの" "$TEST_ROOT" "claude-hooks を走らせられません"
-expect_stop "使い方を出さないバイナリの" "$TEST_ROOT/fakebin/not-hooks" "claude-hooks を走らせられません"
+expect_stop "無いパスの" "$TEST_ROOT/missing/bin/claude-hooks" "claude-hooks を実行できません"
+expect_stop "ディレクトリの" "$TEST_ROOT" "claude-hooks を実行できません"
+expect_stop "使い方を出さないバイナリの" "$TEST_ROOT/fakebin/not-hooks" "claude-hooks を実行できません"
 expect_stop "使い方を出さないバイナリの、その理由を出して" "$TEST_ROOT/fakebin/not-hooks" "cannot load libfoo.so"
 # テストは一時のリポジトリへ cd してからバイナリを呼ぶので、相対のパスは解けなくなる
 expect_stop "相対のパスの" "./result/bin/claude-hooks" "絶対パスで渡してください"
@@ -42,7 +42,7 @@ make_fake_tool hooks-like "  '') [[ \$(readlink /proc/self/fd/0) == /dev/null ]]
 for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
   it "$target: 使い方を出すバイナリは、標準入力を閉じて呼び、通す"
   out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/hooks-like" bash "$target" 2>&1 </dev/zero)
-  assert_not_contains "$out" "claude-hooks を走らせられません"
+  assert_not_contains "$out" "claude-hooks を実行できません"
   assert_not_contains "$out" "絶対パス"
 done
 
@@ -54,7 +54,7 @@ make_fake_tool rule-fails "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
 make_fake_tool rule-panics "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo \"thread 'main' panicked at src/shell.rs\" >&2; exit 0 ;;"
 # main-commit-gates.sh は、比べる前に pre-commit の hook を nix build する（評価だけで数秒）ので、nix の
-# ある PATH で走らせる。ルールの呼び出しの失敗では、そこで止まり、シナリオを失敗や allow と数えない
+# ある PATH で実行する。ルールの呼び出しの失敗では、そこで止まり、シナリオを失敗や allow と数えない
 for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
   path="$NO_NIX_PATH"
   [[ $target == */main-commit-gates.sh ]] && path="$PATH"

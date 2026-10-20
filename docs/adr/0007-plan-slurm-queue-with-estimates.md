@@ -30,7 +30,7 @@ r995 の Slurm は、重い計算を `--exclusive` で 1 本ずつ流す（`modu
 
 - 案 A（採用）: `SchedulerParameters=enable_user_top` で利用者に `scontrol top` を許し、`--time` を見積もりとして必ず付け、
   `OverTimeLimit=UNLIMITED` で超えても止めない。投げ方は `~/.claude/scripts/slurm-run.sh` に決める
-- 案 B: 先に走らせたいジョブより前のジョブを `scontrol hold` し、走り始めたら `release` する
+- 案 B: 先に実行したいジョブより前のジョブを `scontrol hold` し、走り始めたら `release` する
 - 案 C: 優先度の高いパーティションか QOS を作り、急ぐジョブをそこに投げる
 - 案 D: `--time` を本当の上限として付ける
 

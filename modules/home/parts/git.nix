@@ -52,7 +52,7 @@ let
   jaTermsPathspecs = map (ext: ":(icase,glob)**/*.${ext}") ([ "md" ] ++ jaTermsCodeExtensions) ++ [
     ":(exclude,glob)**/prh.yml"
   ];
-  # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。道具は利用者の PATH のもの
+  # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。ツールは利用者の PATH のもの
   stagedChecks = pkgs.writeShellApplication {
     name = "staged-checks";
     runtimeInputs = [
@@ -79,7 +79,7 @@ let
   jaTerms = "${textlint}/bin/textlint --config ${jaTermsConfig}";
 in
 {
-  # prek: プロジェクトの .pre-commit-config.yaml を走らせる（下の pre-commit hook が呼ぶ）
+  # prek: プロジェクトの .pre-commit-config.yaml を実行する（下の pre-commit hook が呼ぶ）
   # staged-checks: pre-commit の既定の検査。run-checks.sh の Markdown の段も呼ぶ（ADR-0028）
   home.packages = [
     commit-refs
@@ -205,10 +205,10 @@ in
 
       check_failed=0
 
-      # プロジェクトの pre-commit の設定（.pre-commit-config.yaml）があれば prek で走らせる
+      # プロジェクトの pre-commit の設定（.pre-commit-config.yaml）があれば prek で実行する
       # （設計の記録の検査などへのオプトイン。ADR-0009）。core.hooksPath があると prek install は
       # 拒否されるので、ここから呼ぶ。exec しないのは、オプトインしたプロジェクトでも以下の既定の
-      # 検査を走らせるため。設定はそのプロジェクトの規約なので、fork でも走らせる。
+      # 検査を実行するため。設定はそのプロジェクトの規約なので、fork でも実行する。
       # 検証: modules/home/parts/tests/pre-commit-prek.sh
       if [ -f ".pre-commit-config.yaml" ]; then
         if command -v prek >/dev/null 2>&1; then
@@ -228,7 +228,7 @@ in
       fi
 
       # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
-      # 以下の検査はどれもこちらの道具の版と規約（ruff の新しいルール、markdownlint の設定、
+      # 以下の検査はどれもこちらのツールの版と規約（ruff の新しいルール、markdownlint の設定、
       # rustfmt の edition）を当てるもので、fork では上流の固定版と CI が正。新しい ruff は
       # 触っていない上流の行を上流の版にないルール（RUF043 等）で落とし、Markdown の自動修正は
       # 無関係な差分（``` → ```text 等）を上流向けのコミットに混ぜるので、fork では全部飛ばす。
@@ -266,7 +266,7 @@ in
   # （必要なら GitHub の branch protection / merge queue も使える）。
   #
   # 対象は main / master だけ。統合先に入る内容を守るゲートで、ほかのブランチへのマージは
-  # 途中経過（最終的に main へのマージで検査される）なので、テストを毎回走らせる重さに見合わない。
+  # 途中経過（最終的に main へのマージで検査される）なので、テストを毎回実行する重さに見合わない。
   # 手動コミットも対象（品質の基準は誰がマージしても同じ）。外すのは git merge --no-verify
   # （git の標準。pre-commit / commit-msg と同じ）。
   # 検証: modules/home/parts/tests/pre-merge-commit-checks.sh
@@ -295,7 +295,7 @@ in
         *) exit 0 ;;
       esac
 
-      # 他人のプロジェクトの fork では、こちらの道具の版と規約で検査しない（pre-commit と同じ判定）
+      # 他人のプロジェクトの fork では、こちらのツールの版と規約で検査しない（pre-commit と同じ判定）
       if git remote get-url upstream >/dev/null 2>&1; then
         echo "⏭️  upstream リモートのある fork なので、マージ結果の品質チェック（run-checks.sh）を飛ばします"
         exit 0
@@ -304,19 +304,19 @@ in
       # 検査は作業ツリーで走る。コミットされない変更が残っていると、マージコミットとは別の内容を
       # 検査してしまうので止める（比べる index は git が渡す GIT_INDEX_FILE。commit -a なら index.lock）。
       # 追跡していないファイルも、ruff check . や pytest のような木全体の検査が拾うので含める。
-      # .gitignore で除外したもの（ビルド成果物など）は検査の道具も除外するので含めない
+      # .gitignore で除外したもの（ビルド成果物など）は検査のツールも除外するので含めない
       DIRTY=$(git diff --name-only; git ls-files --others --exclude-standard)
       if [ -n "$DIRTY" ]; then
         echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
         printf '%s\n' "$DIRTY" | sed 's/^/     /'
-        echo "   直し方: git merge --abort で取り消し、変更をコミットして（不要なファイルは消して）から、もう一度マージしてください"
+        echo "   修正方法: git merge --abort で取り消し、変更をコミットして（不要なファイルは消して）から、もう一度マージしてください"
         exit 1
       fi
 
       RUN_CHECKS="$HOME/.claude/skills/language-checks/scripts/run-checks.sh"
       if [ ! -f "$RUN_CHECKS" ]; then
         echo "❌ $RUN_CHECKS がないので、マージ結果を検査できません"
-        echo "   直し方: claude-sync（または rebuild）で ~/.claude を同期してから、もう一度マージしてください"
+        echo "   修正方法: claude-sync（または rebuild）で ~/.claude を同期してから、もう一度マージしてください"
         exit 1
       fi
 
@@ -326,7 +326,7 @@ in
       # （--merge は HEAD と作業ツリーの差分で判定し、index に頼らない）
       if ! env -u GIT_INDEX_FILE bash "$RUN_CHECKS" --merge; then
         echo "❌ マージ結果が品質チェックに通らないので、マージコミットを作りません"
-        echo "   直し方: git merge --abort で取り消し、マージするブランチで直してコミットしてから、もう一度マージしてください"
+        echo "   修正方法: git merge --abort で取り消し、マージするブランチで直してコミットしてから、もう一度マージしてください"
         exit 1
       fi
     '';
@@ -463,7 +463,7 @@ in
         printf '%s\n' "$INPUT" > "$SAVED"
         echo "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
         # 貼って使えるよう、パスをシェルの引数の形にする（空白などを含むリポジトリのため）
-        echo "   直し方: 上の ERROR を直してから、commit-refs remap $(printf '%q' "$SAVED")"
+        echo "   修正方法: 上の ERROR を直してから、commit-refs remap $(printf '%q' "$SAVED")"
         exit 1
       fi
       printf '%s\n' "$OUT"

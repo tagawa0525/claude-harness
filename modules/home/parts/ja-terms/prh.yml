@@ -225,3 +225,393 @@ rules:
     specs:
       - from: 作業用の写しにする
         to: 作業用のコピーにする
+  # 文書は文語的に書く（チャットは口語でよい。2026-10-21 のユーザーの決定。ADR-0014 の補足）。口語の動詞と
+  # 和語の名詞を、技術文書の語に直す。活用のある語は、prh が一致した部分だけを置き換えるので、活用の形ごとに
+  # 規則を分ける
+  - expected: ツール
+    # 「小道具」「大道具」は別の語
+    pattern: /(?<![小大])道具(?!立)/
+    specs:
+      - from: 検証の道具を作る
+        to: 検証のツールを作る
+      - from: 小道具を用意する
+        to: 小道具を用意する
+  - expected: チェーン
+    # 「連鎖」「閉鎖」「鎖国」は別の語。燃焼鎖と崩壊鎖だけは、漢字の直後でも止める
+    pattern: /(?<=燃焼|崩壊)鎖|(?<![一-龥])鎖(?![国骨状])/
+    specs:
+      - from: 燃焼鎖を読む
+        to: 燃焼チェーンを読む
+      - from: 崩壊鎖を読む
+        to: 崩壊チェーンを読む
+      - from: 鎖の核種を並べる
+        to: チェーンの核種を並べる
+      - from: 連鎖が起きる
+        to: 連鎖が起きる
+      - from: ポートを閉鎖する
+        to: ポートを閉鎖する
+  - expected: 正味の中性子流
+    pattern: 正味の流れ
+    specs:
+      - from: 正味の流れを求める
+        to: 正味の中性子流を求める
+  # run の名詞と動詞。「再実行」の規則は、「走らせる」の規則に「走らせ直す」を取られないよう、語の形が重ならない
+  # 書き方にしてある
+  - expected: 実行
+    pattern: 走行
+    specs:
+      - from: 走行の記録を残す
+        to: 実行の記録を残す
+  - expected: 再実行する
+    pattern: /(?:走らせ|走り|流し)直す/
+    specs:
+      - from: ジョブを走らせ直す
+        to: ジョブを再実行する
+      - from: 計算を流し直す
+        to: 計算を再実行する
+  - expected: 再実行した
+    pattern: /(?:走らせ|走り|流し)直した/
+    specs:
+      - from: ジョブを走らせ直した
+        to: ジョブを再実行した
+  - expected: 再実行して
+    pattern: /(?:走らせ|走り|流し)直して/
+    specs:
+      - from: ジョブを走らせ直して待つ
+        to: ジョブを再実行して待つ
+  - expected: 再実行しない
+    pattern: /(?:走らせ|走り|流し)直さない/
+    specs:
+      - from: ジョブを走らせ直さない
+        to: ジョブを再実行しない
+  - expected: 再実行
+    # 名詞の用法（走らせ直しの手順）だけを止める。動詞の連用形（走り直し、確認する）は助詞が続かないので通す
+    pattern: /(?:走らせ|走り|流し)直し(?=[のをでが])/
+    specs:
+      - from: 走らせ直しの手順
+        to: 再実行の手順
+      - from: 走り直しを避ける
+        to: 再実行を避ける
+      - from: 流し直しの手順
+        to: 再実行の手順
+  - expected: 実行する
+    pattern: 走らせる
+    specs:
+      - from: ジョブを走らせる
+        to: ジョブを実行する
+  - expected: 実行した
+    pattern: 走らせた
+    specs:
+      - from: ジョブを走らせた
+        to: ジョブを実行した
+  - expected: 実行して
+    pattern: 走らせて
+    specs:
+      - from: ジョブを走らせて待つ
+        to: ジョブを実行して待つ
+  - expected: 実行しない
+    pattern: 走らせない
+    specs:
+      - from: ジョブを走らせない
+        to: ジョブを実行しない
+  - expected: 実行せず
+    pattern: 走らせず
+    specs:
+      - from: ジョブを走らせず待つ
+        to: ジョブを実行せず待つ
+  - expected: 実行すれば
+    pattern: 走らせれば
+    specs:
+      - from: ジョブを走らせれば分かる
+        to: ジョブを実行すれば分かる
+  - expected: 実行できる
+    pattern: 走らせられる
+    specs:
+      - from: ジョブを走らせられる
+        to: ジョブを実行できる
+  - expected: 実行できない
+    pattern: 走らせられない
+    specs:
+      - from: ジョブを走らせられない
+        to: ジョブを実行できない
+  - expected: 実行できません
+    pattern: 走らせられません
+    specs:
+      - from: ジョブを走らせられません
+        to: ジョブを実行できません
+  - expected: 再実行できる
+    pattern: /(?:走らせ|走り|流し)直せる/
+    specs:
+      - from: ジョブを走らせ直せる
+        to: ジョブを再実行できる
+  - expected: 実行し
+    # 連用形は、読点か句点が続くものだけを止める（走らせ、結果を読む）
+    pattern: /走らせ(?=[、。])/
+    specs:
+      - from: ジョブを走らせ、結果を読む
+        to: ジョブを実行し、結果を読む
+  - expected: 実行方法
+    pattern: 走らせ方
+    specs:
+      - from: 走らせ方を決める
+        to: 実行方法を決める
+  # 使い回し
+  - expected: 再利用
+    # 動詞の連用形（使い回し、別の所に）は助詞が続かないので通す
+    pattern: /使い回し(?=[のをでが])/
+    specs:
+      - from: 設定の使い回しを避ける
+        to: 設定の再利用を避ける
+      - from: 設定を使い回し、別に書く
+        to: 設定を使い回し、別に書く
+  - expected: 再利用する
+    pattern: 使い回す
+    specs:
+      - from: 設定を使い回す
+        to: 設定を再利用する
+  - expected: 再利用した
+    pattern: 使い回した
+    specs:
+      - from: 設定を使い回した
+        to: 設定を再利用した
+  - expected: 再利用して
+    pattern: 使い回して
+    specs:
+      - from: 設定を使い回して書く
+        to: 設定を再利用して書く
+  - expected: 再利用しない
+    pattern: 使い回さない
+    specs:
+      - from: 設定を使い回さない
+        to: 設定を再利用しない
+  - expected: 再利用され
+    pattern: 使い回され
+    specs:
+      - from: 設定が使い回される
+        to: 設定が再利用される
+  - expected: 再利用しうる
+    pattern: 使い回しうる
+    specs:
+      - from: 設定を使い回しうる
+        to: 設定を再利用しうる
+  # 英語の直訳や口語の名詞
+  - expected: 乱数のシード
+    # 「花の種」のような別の語は通す
+    pattern: /乱数の種(?!類)/
+    specs:
+      - from: 乱数の種を固定する
+        to: 乱数のシードを固定する
+      - from: 花の種をまく
+        to: 花の種をまく
+      - from: 乱数の種類を選ぶ
+        to: 乱数の種類を選ぶ
+  - expected: クロージャ
+    pattern: 閉包
+    specs:
+      - from: 閉包を取る
+        to: クロージャを取る
+  - expected: 確率テーブル
+    pattern: /確率表(?![現示])/
+    specs:
+      - from: 確率表を読む
+        to: 確率テーブルを読む
+      - from: 確率表現を確認する
+        to: 確率表現を確認する
+  - expected: 再測定
+    # 動詞の連用形（測り直し、確認する）は助詞が続かないので通す
+    pattern: /測り直し(?=[のをでが]|に(?!く))/
+    specs:
+      - from: 測り直しが要る
+        to: 再測定が要る
+      - from: 測り直しになる
+        to: 再測定になる
+      - from: 断面積を測り直し、比べる
+        to: 断面積を測り直し、比べる
+  - expected: 再測定する
+    pattern: 測り直す
+    specs:
+      - from: 断面積を測り直す
+        to: 断面積を再測定する
+  - expected: 再測定した
+    pattern: 測り直した
+    specs:
+      - from: 断面積を測り直した
+        to: 断面積を再測定した
+  - expected: 再測定して
+    pattern: 測り直して
+    specs:
+      - from: 断面積を測り直して比べる
+        to: 断面積を再測定して比べる
+  - expected: 修正方法
+    # 「走らせ直し方」のように、再実行と再測定の語の後ろに付く形は、それぞれの規則に任せる
+    pattern: /(?<!走らせ|走り|流し|測り)直し方/
+    specs:
+      - from: 直し方を書く
+        to: 修正方法を書く
+  - expected: リンク先
+    pattern: リンクの行き先
+    specs:
+      - from: リンクの行き先を示す
+        to: リンク先を示す
+  # 見張る。「見張らない」は「監視さない」にならないよう、否定の形ごとに直す
+  - expected: 監視する
+    pattern: 見張る
+    specs:
+      - from: ジョブを見張る
+        to: ジョブを監視する
+  - expected: 監視して
+    pattern: 見張って
+    specs:
+      - from: ジョブを見張って待つ
+        to: ジョブを監視して待つ
+  - expected: 監視した
+    pattern: 見張った
+    specs:
+      - from: ジョブを見張った
+        to: ジョブを監視した
+  - expected: 監視しない
+    pattern: 見張らない
+    specs:
+      - from: ジョブを見張らない
+        to: ジョブを監視しない
+  - expected: 監視せず
+    pattern: 見張らず
+    specs:
+      - from: ジョブを見張らず待つ
+        to: ジョブを監視せず待つ
+  - expected: 監視され
+    pattern: 見張られ
+    specs:
+      - from: ジョブが見張られる
+        to: ジョブが監視される
+  - expected: 監視
+    # 名詞の用法（見張りの番）だけを止める
+    pattern: /見張り(?=[のをでが])/
+    specs:
+      - from: ジョブの見張りを置く
+        to: ジョブの監視を置く
+  # 燃やす。「燃やせる」は可能の形で、それだけでは崩れていないが、「燃やす」を「燃焼させる」に直すのに揃えて
+  # 「燃焼させられる」にする
+  - expected: 燃焼させる
+    pattern: 燃やす
+    specs:
+      - from: 燃料を燃やす
+        to: 燃料を燃焼させる
+  - expected: 燃焼させた
+    pattern: 燃やした
+    specs:
+      - from: 燃料を燃やした
+        to: 燃料を燃焼させた
+  - expected: 燃焼させて
+    pattern: 燃やして
+    specs:
+      - from: 燃料を燃やして測る
+        to: 燃料を燃焼させて測る
+  - expected: 燃焼させない
+    pattern: 燃やさない
+    specs:
+      - from: 燃料を燃やさない
+        to: 燃料を燃焼させない
+  - expected: 燃焼させられる
+    pattern: 燃やせる
+    specs:
+      - from: 燃料を燃やせる
+        to: 燃料を燃焼させられる
+  - expected: 燃焼させられない
+    pattern: 燃やせない
+    specs:
+      - from: 燃料を燃やせない
+        to: 燃料を燃焼させられない
+  - expected: 燃焼させられ
+    pattern: 燃やされ
+    specs:
+      - from: 燃料が燃やされる
+        to: 燃料が燃焼させられる
+  - expected: 燃焼させ
+    # 連用形（燃やし、測る）。「燃やした」「燃やして」は別の規則、「燃やし尽くす」「燃やしきる」は連用形でない
+    pattern: /燃やし(?!た|て|尽|き)/
+    specs:
+      - from: 燃やし、測る
+        to: 燃焼させ、測る
+      - from: 燃やし尽くす
+        to: 燃やし尽くす
+  # OpenMC の inactive / active batches
+  - expected: 非アクティブバッチ
+    pattern: 捨てる世代
+    specs:
+      - from: 捨てる世代を決める
+        to: 非アクティブバッチを決める
+  - expected: アクティブバッチ
+    pattern: 数える世代
+    specs:
+      - from: 数える世代を決める
+        to: アクティブバッチを決める
+  - expected: 中性子収支
+    pattern: 中性子の釣り合い
+    specs:
+      - from: 中性子の釣り合いを取る
+        to: 中性子収支を取る
+  - expected: バランス
+    # 名詞の用法だけを止める。動詞の「釣り合う」「釣り合わない」と、連用形（釣り合い、かつ）は通す
+    pattern: /(?<!中性子の)釣り合い(?=[のをではも]|に(?!く)|が(?!たい|ち|てら))/
+    specs:
+      - from: 釣り合いが取れる
+        to: バランスが取れる
+      - from: 二つが釣り合う
+        to: 二つが釣り合う
+      - from: 二つが釣り合わない
+        to: 二つが釣り合わない
+  # xlc の ADR-0088 の grid（支持格子）の意味の「枠」だけ。「使用量の枠」「Copilot の枠」のような別の意味は
+  # 通すため、形を限り、別の意味の語の直後を除く
+  - expected: 支持格子あり
+    pattern: /(?<![一-龥])枠あり/
+    specs:
+      - from: 枠ありの配置
+        to: 支持格子ありの配置
+  - expected: 支持格子なし
+    pattern: /(?<![一-龥])枠なし/
+    specs:
+      - from: 格子の枠なしを使う
+        to: 格子の支持格子なしを使う
+  - expected: 支持格子のリング
+    pattern: /(?<![一-龥])枠のリング/
+    specs:
+      - from: 枠のリングを足す
+        to: 支持格子のリングを足す
+  - expected: 支持格子の物質
+    pattern: /(?<![一-龥])枠の物質/
+    specs:
+      - from: 枠の物質を指定する
+        to: 支持格子の物質を指定する
+  - expected: 支持格子を入れ
+    pattern: /(?<![一-龥]|Copilot の|量の|予算の|上限の)枠を入れ/
+    specs:
+      - from: 枠を入れる
+        to: 支持格子を入れる
+  - expected: 支持格子による
+    pattern: /(?<![一-龥]|Copilot の|量の|予算の|上限の)枠による/
+    specs:
+      - from: 枠による差を見る
+        to: 支持格子による差を見る
+      - from: 使用量の枠による制限
+        to: 使用量の枠による制限
+  - expected: 支持格子のある
+    pattern: /(?<![一-龥])枠のある/
+    specs:
+      - from: 枠のある配置
+        to: 支持格子のある配置
+  - expected: 支持格子を足す
+    pattern: /(?<![一-龥]|Copilot の|量の|予算の|上限の)枠を足す/
+    specs:
+      - from: 枠を足す
+        to: 支持格子を足す
+      - from: Copilot の枠を足す
+        to: Copilot の枠を足す
+  - expected: ステージ
+    # 「DVC の」の直後だけ。「2 段階の手法」「段階的」は通す
+    pattern: /(?<=DVC の)段階(?!的)/
+    specs:
+      - from: DVC の段階を流す
+        to: DVC のステージを流す
+      - from: 2 段階の手法を使う
+        to: 2 段階の手法を使う

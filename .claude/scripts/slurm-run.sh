@@ -3,15 +3,15 @@
 #
 # Usage: slurm-run.sh [--top] [-c <コア数>] -t <見積もり> <name> <command>
 #
-# 既定では、ほかの計算と重ならないよう排他で走らせる（sbatch --exclusive --wait --export=ALL）。
+# 既定では、ほかの計算と重ならないよう排他で実行する（sbatch --exclusive --wait --export=ALL）。
 # <name> はジョブの名前（squeue で見分ける）とログのファイル名に使う。例: xlc-2G、openmc-2G
 # -t: かかる時間の見積もり（sbatch --time の形。分か H:MM:SS）。待ち行列の見込み（squeue --start）に
 #     使う。超えても止めない（slurm.conf の OverTimeLimit=UNLIMITED）
 # -c: 排他にせず、<コア数> の CPU（Slurm の CPUs。ハードウェアスレッドで数え、割り当ては物理コア単位に
-#     切り上がる）だけを取って走らせる（--cpus-per-task）。時間を記録しない長い計算のためで、ほかのジョブと
+#     切り上がる）だけを取って実行する（--cpus-per-task）。時間を記録しない長い計算のためで、ほかのジョブと
 #     資源を取り合うので、TIME 行に「時間は当てにならない」印を付ける。排他のジョブはノードにジョブが
 #     走っている間は始まらないので、走っている間は待たせる（ADR-0029）
-# --top: 待っているジョブより先に走らせる（scontrol top。走っているジョブは止めない）
+# --top: 待っているジョブより先に実行する（scontrol top。走っているジョブは止めない）
 # 連絡先として、git のブランチ、投げた場所、Claude Code のセッションの ID をジョブのコメントに書く
 # （squeue の %k）。サブエージェントは親と同じセッションなので、ブランチで見分ける。
 #
@@ -100,7 +100,7 @@ if $shared; then
   contact+=" shared-cpus=$cpus"
 fi
 
-# sbatch --wait は終わるまで戻らないので、裏で走らせ、最初の行から番号を読む
+# sbatch --wait は終わるまで戻らないので、裏で実行し、最初の行から番号を読む
 submitted=$(mktemp)
 trap 'rm -f "$submitted"' EXIT
 sbatch "${resources[@]}" --wait --export=ALL -J "$name" -o "$remote_logs/%x-%j.out" \

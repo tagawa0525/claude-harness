@@ -102,7 +102,7 @@ else
   ng "検査を通るマージ結果なのにマージコミットが作られない（または検査が走っていない）"
 fi
 
-# --- 2. 検査に落ちるマージ結果: マージコミットを作らず、直し方を示す -------------------------
+# --- 2. 検査に落ちるマージ結果: マージコミットを作らず、修正方法を示す -------------------------
 R="$WORK/fail"
 new_repo "$R"
 branch_with "$R" feat bad.py "$BAD_PY"
@@ -112,9 +112,9 @@ if run "$R" git merge --no-ff -m "Merge: bad" feat; then
 elif [ "$(git -C "$R" rev-parse HEAD)" != "$BEFORE" ]; then
   ng "マージは失敗扱いなのに HEAD が動いた"
 elif grep -q "FAILED: python lint" "$WORK/out" && grep -q "git merge --abort" "$WORK/out"; then
-  ok "lint に落ちるマージ結果ではマージコミットを作らず、失敗した検査と直し方を示す"
+  ok "lint に落ちるマージ結果ではマージコミットを作らず、失敗した検査と修正方法を示す"
 else
-  ng "マージは止まったが、失敗した検査か直し方（git merge --abort）が出力にない"
+  ng "マージは止まったが、失敗した検査か修正方法（git merge --abort）が出力にない"
 fi
 # 止まったあと git commit で締めようとしても、同じ検査で止まる
 if run "$R" git commit --no-edit; then
@@ -248,7 +248,7 @@ else
 fi
 git -C "$R" merge --abort 2>/dev/null || true
 
-# .gitignore で除外したファイル（ビルド成果物など）は検査の道具も除外するので止めない
+# .gitignore で除外したファイル（ビルド成果物など）は検査のツールも除外するので止めない
 R="$WORK/ignored"
 new_repo "$R"
 echo "scratch/" > "$R/.gitignore"

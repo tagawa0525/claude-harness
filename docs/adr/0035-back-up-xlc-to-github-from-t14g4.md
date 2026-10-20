@@ -30,7 +30,7 @@ xlc の origin は r995 の作業用リポジトリ（`r995:/home/tagawa/github/
   `refs/stash` などができると公開リポジトリに出る
 - 案 D: force しない（fast-forward だけ送る）。r995 で rebase したブランチ（2026-10-12 の fetch でも
   `feat/p3-xlc` が forced update）が GitHub で古いまま残る
-- 案 E: r995 で timer を走らせる。origin を直接読めるが、バックアップは t14g4 を通す（ユーザーの指示）
+- 案 E: r995 で timer を実行する。origin を直接読めるが、バックアップは t14g4 を通す（ユーザーの指示）
 
 ## 決定と理由
 
@@ -39,7 +39,7 @@ xlc の origin は r995 の作業用リポジトリ（`r995:/home/tagawa/github/
 公開しない。
 
 - スクリプト `xlc-github-backup` は `~/.local/state/xlc-github-backup/xlc.git` を中継に使い、無ければ `git init --bare` で作る
-- 1 時間ごと（`OnCalendar=hourly`）。t14g4 はノート PC なので、`Persistent=true` で止まっていた間の分を起動後に走らせる
+- 1 時間ごと（`OnCalendar=hourly`）。t14g4 はノート PC なので、`Persistent=true` で止まっていた間の分を起動後に実行する
 - Claude Code の hook は `+` の refspec の push を Claude のコマンドとしては止める。この timer はユーザーの自動化として
   動き、hook を通らない。ミラーの先は作業の origin ではなく、force で上書きするものは r995 に残っている
 
