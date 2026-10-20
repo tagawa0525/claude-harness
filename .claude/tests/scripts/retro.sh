@@ -56,6 +56,8 @@ bash: command not found: shellcheck"
   tool_ok "成功の印"
   tool_error "Error: something happened in auto mode classifier test"
   tool_error "Permission to use Bash with command rm -rf x has been denied."
+  tool_error "Permission for this command was denied by a built-in safety check."
+  jq -cn '{type: "attachment", attachment: {type: "queued_command", prompt: "別のエージェントの言葉", commandMode: "prompt", origin: {kind: "agent"}}}'
   tool_error "The user doesn't want to proceed with this tool use. The tool use was rejected. To tell you how to proceed, the user said:
 squash しないで
 no-ff にして"
@@ -104,6 +106,10 @@ assert_contains "$out" "TOOL: 1 Error: something happened in auto mode classifie
 
 it "session-events: 設定の deny による拒否も権限の拒否に数える"
 assert_contains "$out" "PERMISSION: 1 Permission to use Bash with command rm -rf x has been denied."
+assert_contains "$out" "PERMISSION: 1 Permission for this command was denied by a built-in safety check."
+
+it "session-events: 人以外から届いた queued_command はユーザーの発言に入れない"
+assert_not_contains "$out" "別のエージェントの言葉"
 
 it "session-events: ユーザーがツールを止めて書いた言葉を残す"
 assert_contains "$out" "REJECTED: 1 the user said: squash しないで no-ff にして"
@@ -245,6 +251,13 @@ rm "$MEM/project-e.md" "$MEM/project-f.md"
 
 it "memory-index: 別のディレクトリへのリンクは索引の項目に数えない"
 assert_not_contains "$out" "../docs"
+
+it "memory-index: 名前の空の [[...]] で止まらず、~~~ のフェンスの中も読まない"
+printf -- '---\nname: g\n---\n\n本文 [[#節]] [[ ]]\n\n~~~\n[[ -n x ]]\n~~~\n' > "$MEM/project-g.md"
+out=$("$MEMORY_INDEX" "$MEM" 2>&1)
+assert_eq 0 $?
+assert_not_contains "$out" "BROKEN_LINK: project-g.md"
+rm "$MEM/project-g.md"
 
 it "memory-index: 索引の ./ で始まるリンク、節や題のついたリンクもファイル名で突き合わせる"
 sed -i 's|(project-b.md)|(./project-b.md#why)|; s|(feedback-a.md)|(feedback-a.md "題")|' "$MEM/MEMORY.md"
