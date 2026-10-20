@@ -126,7 +126,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/check-each-commit.sh`          | `<base>..HEAD` の各コミットを一時 worktree で検査コマンドにかけ、`hash 件名 exit=N` を出す                            | delegate                                        |
 | `scripts/review-level.sh`               | ローカルの `/code-review` のレベル（docs/ だけなら medium、他は high）と対象ブランチと worktree のパスの決定          | gh-pr-create, gh-pr-review, git-merge, delegate |
 | `scripts/base-moved.sh`                 | 比較元が分岐点から進み、ブランチと同じパスを触っているときの通知（fetch 付き、deny しない）                           | gh-pr-create                                    |
-| `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → 番号の予約のタグの解放 → ローカル/リモートブランチ削除                                  | gh-pr-merge, git-merge                          |
+| `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化と rebuild・claude-sync の要否の通知 → 予約のタグの解放 → ブランチ削除                     | gh-pr-merge, git-merge                          |
 | `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                                            | gh-actions-check                                |
 | `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                                                        | gh-pr-create/merge/review, delegate             |
 | `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                                          | gh-wait-review, gh-pr-review                    |
