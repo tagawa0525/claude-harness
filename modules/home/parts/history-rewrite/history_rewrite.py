@@ -41,6 +41,7 @@ import argparse
 import hashlib
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -59,6 +60,10 @@ SKIPPED_HEADERS = {b"tree", b"parent", b"gpgsig", b"gpgsig-sha256", b"mergetag"}
 
 class Stop(Exception):
     """止める理由。run は REPO に何も書かずに終わる"""
+
+
+# エスケープした |（GFM ではセルの中の文字。コードスパンの中でも、エスケープしていない | は区切り）
+_ESCAPED_PIPE = re.compile(r"\\\|")
 
 
 @dataclass
@@ -93,6 +98,17 @@ class Transformer:
         except UnicodeDecodeError as e:
             raise Stop(f"UTF-8 として読めない本文がある: {e}") from None
         return self._text("（本文）", text, markdown=True).encode("utf-8")
+
+    def message_would_change(self, data: bytes, encoding: bytes) -> bool:
+        """宣言した符号化 encoding（UTF-8 でない）の本文に、直す語があるか"""
+        name = encoding.decode("ascii", "replace")
+        try:
+            text = data.decode(name)
+        except LookupError:
+            raise Stop(f"符号化 {name} を Python が知らない") from None
+        except UnicodeDecodeError as e:
+            raise Stop(f"符号化 {name} として読めない本文がある: {e}") from None
+        return self._text("（本文）", text, markdown=True) != text
 
     def _text(self, name: str, text: str, markdown: bool) -> str:
         try:
@@ -131,6 +147,12 @@ class Transformer:
                 j += 1
             # 直した行を含む表だけを揃え直す（ほかの表の崩れは、この書き換えの範囲の外）
             if changed & set(range(i, j)):
+                for row in lines[i:j]:
+                    if _ESCAPED_PIPE.search(row):
+                        # format_table は \| でも列を切る（nixfiles の issue #428）ので、揃え直さずに止める
+                        raise Stop(
+                            f"{name}: 直す表の行に \\| がある（揃え直せない。--exclude で外す）: {row.strip()}"
+                        )
                 indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
                 # format_table は行の両端の空白とともに CRLF の CR も外すので、元の行の CR を戻す
                 crs = ["\r" if row.endswith("\r") else "" for row in lines[i:j]]
@@ -226,14 +248,19 @@ def read_map(path: Path) -> dict[str, str]:
     """filter-repo の commit-map（`old new` の見出しと、1 行に旧と新）"""
     mapping: dict[str, str] = {}
     lines = path.read_text().splitlines()
-    for line in lines[1:] if lines and lines[0].split() == ["old", "new"] else lines:
-        if not line.strip():
+    rows = lines[1:] if lines and lines[0].split() == ["old", "new"] else lines
+    for number, line in enumerate(rows, start=2 if rows is not lines else 1):
+        fields = line.split()
+        if not fields:
             continue
-        old, new = line.split()
-        mapping[old] = new
+        if len(fields) != 2:
+            raise Stop(f"{path}:{number}: 2 列でない: {line!r}")
+        mapping[fields[0]] = fields[1]
     return mapping
 
 
+# 署名の扱い、cat-file --batch の読み方、対応表の形は commit-refs（modules/home/parts/commit-refs/src/history.rs）と
+# 対にして変える（言語が違うので共有できない）。
 # git の gpg-interface.c の署名の開始マーカー。filter-repo は fast-export に --signed-tags=strip を渡し、タグの本文の
 # 最後のマーカーの行から後を外す（parse_signed_buffer）
 SIGNATURE_MARKERS = (
@@ -291,6 +318,8 @@ class Verifier:
         self.env = env
         self.cat = CatFile(self.rewritten, env)
         fmt = git(self.rewritten, "rev-parse", "--show-object-format").decode().strip()
+        if fmt not in ("sha1", "sha256"):
+            raise Stop(f"オブジェクトの形式 {fmt} を扱わない")
         self.hash = {"sha1": hashlib.sha1, "sha256": hashlib.sha256}[fmt]
         try:
             originals = (
@@ -301,9 +330,11 @@ class Verifier:
                 self.problems.append(
                     f"commit-map に無い元のコミット: {' '.join(missing)}"
                 )
-            pruned = [old for old, new in self.mapping.items() if set(new) == {"0"}]
+            pruned = {old for old, new in self.mapping.items() if set(new) == {"0"}}
             if pruned:
-                self.problems.append(f"第 1 段でコミットが消えた: {' '.join(pruned)}")
+                self.problems.append(
+                    f"第 1 段でコミットが消えた: {' '.join(sorted(pruned))}"
+                )
             # 番号の変わらないコミットも確かめる（変換が中身を変えるはずなのに filter-repo が当てなかったものを見る）
             for old, new in self.mapping.items():
                 if old not in pruned:
@@ -333,11 +364,12 @@ class Verifier:
                 f"{old}: 親が対応しない: {old_parents} → {new_parents}"
             )
         # 宣言した符号化が UTF-8 でない本文は変えない（変わるなら第 1 段が止める）
-        utf8 = is_utf8(dict(old_headers).get(b"encoding"))
+        old_fields = dict(old_headers)
+        utf8 = is_utf8(old_fields.get(b"encoding"))
         want = self.transformer.message(old_body) if utf8 else old_body
         if want != new_body:
             self.problems.append(f"{old}: 本文が変換の結果と違う")
-        trees = (dict(old_headers)[b"tree"], dict(new_headers)[b"tree"])
+        trees = (old_fields[b"tree"], dict(new_headers)[b"tree"])
         # 同じ tree の組は履歴の中で何度も出る（語を直さないコミット、マージ）ので、1 度だけ比べる
         if trees not in self.verified_trees:
             self.tree(old, new)
@@ -420,13 +452,9 @@ class Verifier:
         for key, value in headers:
             if key == b"object":
                 target = value.decode()
-                kind = dict(headers)[b"type"]
-                target = (
-                    self.tag(target)
-                    if kind == b"tag"
-                    else self.mapping.get(target, target)
-                )
-                value = target.encode()
+                if dict(headers)[b"type"] == b"tag":
+                    raise Stop(f"{oid}: タグを指すタグ（run の初めに止めるはずのもの）")
+                value = self.mapping.get(target, target).encode()
             rebuilt.append(b"%s %s" % (key, value))
         message = self.transformer.message(strip_signature(body))
         content = b"\n".join(rebuilt) + b"\n\n" + message
@@ -445,6 +473,26 @@ class Verifier:
             name, oid, kind = line.split(" ")
             refs[name] = (oid, kind)
         return refs
+
+
+def refuse_nested_tags(repo: Path) -> None:
+    """タグを指すタグがあれば止める（fast-export は外のタグの名前で内のタグを作り直すので、照合できる形でない）"""
+    out = git(
+        repo, "for-each-ref", "--format=%(refname) %(objecttype) %(type)", "refs/tags/"
+    )
+    nested = [
+        line.split()[0]
+        for line in out.decode().splitlines()
+        if line.split()[1:] == ["tag", "tag"]
+    ]
+    if nested:
+        hint = "、".join(
+            f"git tag -f {n.removeprefix('refs/tags/')} {n.removeprefix('refs/tags/')}^{{}}"
+            for n in nested
+        )
+        raise Stop(
+            f"タグを指すタグがある: {' '.join(nested)}（コミットを指すタグに直してから: {hint}）"
+        )
 
 
 def is_utf8(encoding: bytes | None) -> bool:
@@ -473,17 +521,18 @@ def stage1(repo: Path, transformer: Transformer) -> dict[str, int]:
         return (filename, mode, seen[key])
 
     def commit(commit, _metadata):
-        new = transformer.message(commit.message)
-        if new == commit.message:
-            return
         if not is_utf8(commit.encoding):
             # 本文は宣言した符号化で読まれる。UTF-8 の語を書き込むと文字化けするので、変えずに止める
-            raise Stop(
-                f"{commit.original_id.decode()}: 符号化 {commit.encoding.decode()} の本文に直す語がある"
-                "（UTF-8 の本文だけを直す）"
-            )
-        counts["messages"] += 1
-        commit.message = new
+            if transformer.message_would_change(commit.message, commit.encoding):
+                raise Stop(
+                    f"{commit.original_id.decode()}: 符号化 {commit.encoding.decode()} の本文に直す語がある"
+                    "（UTF-8 の本文だけを直す）"
+                )
+            return
+        new = transformer.message(commit.message)
+        if new != commit.message:
+            counts["messages"] += 1
+            commit.message = new
 
     def tag(tag, _metadata):
         new = transformer.message(tag.message)
@@ -561,6 +610,7 @@ def run(args: argparse.Namespace) -> None:
     )
     git(rewritten, "symbolic-ref", "HEAD", head)
     git(rewritten, "reset", "-q", "--hard")
+    refuse_nested_tags(rewritten)
 
     counts = stage1(rewritten, transformer)
     # 照合も同じブロブを読み直して数えるので、第 1 段の数をここで取る
