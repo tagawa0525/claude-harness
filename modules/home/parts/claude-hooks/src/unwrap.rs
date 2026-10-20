@@ -474,6 +474,42 @@ fn taskset_selects_one_cpu(cpu_list: bool, spec: &str) -> bool {
     cpus.len() == 1
 }
 
+/// 値を次の語に取る cargo と nix のグローバルオプション（サブコマンドより前に書ける）
+const GLOBAL_VALUE_OPTIONS: &[&str] = &[
+    "--config",
+    "-Z",
+    "-C",
+    "--color",
+    "-j",
+    "--jobs",
+    "--max-jobs",
+    "--cores",
+    "-I",
+    "--store",
+    "--log-format",
+    "--extra-experimental-features",
+    "--experimental-features",
+];
+
+/// cargo と nix のサブコマンドの位置。グローバルオプション（値を取るものは値も）と、`+nightly` のような
+/// ツールチェーンの指定を飛ばした次の語。`--option <名前> <値>` だけは 2 語を取る
+pub fn global_subcommand(args: &[Arg]) -> Option<usize> {
+    let mut i = 0;
+    while i < args.len() {
+        let w = args[i].text.as_str();
+        if w == "--option" {
+            i += 3;
+        } else if GLOBAL_VALUE_OPTIONS.contains(&w) {
+            i += 2;
+        } else if !w.starts_with('-') && !w.starts_with('+') {
+            return Some(i);
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
 pub fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -593,17 +629,22 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.opaque = true;
             return out;
         }
-        // `nix develop [<flake>] [opts] -c <コマンド…>` は、残りの語を開発環境の中で走らせる。flake と
-        // オプションの値は -c の前にあるので、-c の後ろだけが走らせるコマンド
-        if wrapper_name == "nix" && out.args.first().is_some_and(|a| a.text == "develop") {
-            if let Some(i) = out
-                .args
-                .iter()
-                .position(|a| matches!(a.text.as_str(), "-c" | "--command"))
+        // `nix develop|shell [<flake>] [opts] -c <コマンド> [引数…]` は、-c の後ろの語を exec する。語を空白でつないで
+        // sh -c に渡さず、そのままコマンドとして続ける（`bash -c 'cargo test'` の引数を壊さない）
+        if wrapper_name == "nix" {
+            if let Some(i) = global_subcommand(&out.args)
+                && matches!(out.args[i].text.as_str(), "develop" | "shell")
             {
-                let rest: VecDeque<Arg> = out.args[i + 1..].iter().cloned().collect();
-                if !rest.is_empty() {
-                    out.source = Some(joined(&rest));
+                let command = out.args[i + 1..]
+                    .iter()
+                    .position(|a| matches!(a.text.as_str(), "-c" | "--command"))
+                    .map(|j| i + 1 + j + 1)
+                    .filter(|&k| k < out.args.len());
+                if let Some(k) = command {
+                    out.wrappers.push(std::mem::take(&mut out.name));
+                    out.name = out.args[k].text.clone();
+                    out.args = out.args[k + 1..].to_vec();
+                    continue;
                 }
             }
             return out;

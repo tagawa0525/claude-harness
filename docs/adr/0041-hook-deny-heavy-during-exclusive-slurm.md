@@ -33,23 +33,23 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
   止まる。`-j 1` と `taskset` で 1 コアに限れば乱れは小さいので、そこを通す形にする
 - 案 C: エスケープ（`ALLOW_…=<理由>`）を設ける。今回の違反は「わかって外す」でなく規則を見落とした例だった。
   外す必要が出たら（ADR-0023）hook の不足として issue に書く
-- 案 D（採用）: 排他のジョブが走行中のときだけ、対象のコマンドを、1 コアの `taskset`（ビルドは `-j 1` も）でない限り止める
-- 案 E: 当初の案。`cargo test|run|bench` も `-j 1` で通す。レビューで、`-j` はコンパイルの並列度だけでテストの実行や
+- 案 D（採用）: 排他のジョブが走行中のときだけ、対象のコマンドを、1 コアの `taskset`（`cargo check|clippy` は `-j 1` も）でない限り止める
+- 案 E: 当初の案。`cargo build|test|run|bench` も `-j 1` で通す。レビューで、`-j` はコンパイルの並列度だけで、rustc の codegen やテストの実行や
   実行するプログラムのスレッド数を限らず、事故の再発を許すと指摘され、採らなかった
 
 ## 決定と理由
 
 案 D を採る。`claude-hooks` の `guard-exclusive-slurm` が、次をすべて満たすときに deny する。
 
-- コマンドが `cargo build|check|test|clippy|run|bench`、`dvc repro`、`bin/xs|lattice|core|chain`（`../../bin/xs` など
-  相対も）、`nix build`、`nix flake check` のどれか（`env`・`sudo` などの包みと、`nix develop [<flake>] -c <コマンド>`
+- コマンドが `cargo build|check|test|clippy|run|bench`（alias の `b|c|t|r` も）、`dvc repro`、
+  `bin/xs|lattice|core|chain` と `target/release|debug/` の同名のバイナリ（`../../bin/xs` など相対も）、`nix build`、`nix flake check` のどれか（`env`・`sudo` などの包みと、`nix develop|shell [<flake>] -c <コマンド>`
   の中身はほどいて判定する。xlc の DVC の段階は `nix develop ../..#references -c` で包む）
-- `cargo build|check|clippy` に `-j 1`・`-j1`・`--jobs 1`・`--jobs=1` が無く、`taskset` が中のコマンドを 1 つの CPU に
-  限っていない（`cargo test|run|bench` は `-j 1` では限れないので `taskset` だけが通す）
+- `cargo check|clippy` に `-j 1`・`-j1`・`--jobs 1`・`--jobs=1`（サブコマンドの前でもよい）や `CARGO_BUILD_JOBS=1` が無く、`taskset` が中のコマンドを 1 つの CPU に
+  限っていない（`cargo build|test|run|bench` は `-j 1` では限れないので `taskset` だけが通す）
   （`-c 3`、`-c 5-5`、マスク `0x4`。複数の CPU や読めない指定は 1 コアとみなさない）
 - `squeue -h -t R -o '%h|%j|%i'` に OverSubscribe（`%h`）が `NO` の行がある（r995 の実機で、排他のジョブが `NO` と出ることを確認した）
 
-squeue は対象のコマンドがあるときだけ呼ぶ。squeue が無いホスト、squeue の失敗、5 秒で終わらないとき（slurmctld が
+squeue は対象のコマンドがあるときだけ呼び、出力は別のスレッドで並行して読む（パイプを満たして終われないのを避ける）。squeue が無いホスト、squeue の失敗、5 秒で終わらないとき（slurmctld が
 応答しない）、排他のジョブが無いときは何もしない。`-O` の固定幅の列は長い名前がジョブ番号と続くので、区切りのある
 `-o` で読む。`taskset` は、コマンドを直に包む最も内側のものが効き、`bash -c '…'` の中のコマンドにも外側の指定が効く。
 `cargo` と `nix` のサブコマンドは、値を取るグローバルオプション（`--config`、`-Z`、`--extra-experimental-features`、
@@ -58,10 +58,10 @@ squeue は対象のコマンドがあるときだけ呼ぶ。squeue が無いホ
 
 ### 帰結
 
-- 排他の測定の間、手元の `cargo test`・`cargo build`・`nix build`・格子計算は `-j 1` と `taskset -c <1 コア>` に
+- 排他の測定の間、手元の `cargo test`・`cargo build`・`nix build`・格子計算は `taskset -c <1 コア>` に
   限られる。ビルドを含むチェックは遅くなるが止まらない。ADR-0026 の案 B を、1 コアに限る条件つきで取り入れる
-- `-j 1` はビルドの並列度だけを限る。`cargo test`・`run`・`bench` は、テストの実行や実行するプログラムが複数スレッドで
-  走るので、`-j 1` を通さず `taskset` だけを通す
+- `-j 1` はコンパイルの並列度だけを限る。`cargo build` は rustc の codegen が、`test`・`run`・`bench` はテストの実行や
+  実行するプログラムが複数スレッドで走るので、`-j 1` を通さず `taskset` だけを通す
 - 対象は決め打ちの一覧で、別の重い計算（直接の `openmc`、`cargo nextest`、`nix run`、`nix-build`）は止めない。足りないものは見つかったときに足す
 - 排他でないジョブ（`-shared`、OverSubscribe が YES）は対象外。#365 の run-checks.sh の直列化とは別の問題である
 

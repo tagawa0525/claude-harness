@@ -2,9 +2,9 @@
 //!
 //! 排他のジョブ（時間を記録する測定）の間に手元で全コアを使うと、その時間が乱れて測り直しになる
 //! （docs/adr/0041）。squeue で OverSubscribe が NO の走行中のジョブがあるときだけ、対象のコマンドを止める:
-//! `cargo build|check|test|clippy|run|bench`、`dvc repro`、`bin/xs|lattice|core|chain`、`nix build`、
-//! `nix flake check`（`nix develop -c` で包んでも）。`-j 1`（`cargo build|check|clippy` のみ）か、1 つの CPU に
-//! 限る `taskset` で包めば通す。
+//! `cargo build|check|test|clippy|run|bench`（alias `b|c|t|r`）、`dvc repro`、`bin/` と `target/release|debug/` の
+//! `xs|lattice|core|chain`、`nix build`、`nix flake check`（`nix develop|shell -c` で包んでも）。`-j 1`
+//! （`cargo check|clippy` のみ）か、1 つの CPU に限る `taskset` で包めば通す。
 //! squeue が無いホスト、squeue の失敗、走行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
 //! squeue は対象のコマンドがあるときだけ呼ぶ。エスケープはない。
 
@@ -15,17 +15,36 @@ use std::time::{Duration, Instant};
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Cmd, Shell};
-use crate::unwrap::basename;
+use crate::shell::{Cmd, Shell};
+use crate::unwrap::{basename, env_value, global_subcommand};
 
 pub struct GuardExclusiveSlurm;
 
-/// 全コアを使いうる cargo のサブコマンド。`-j 1` で限れるのはビルドだけ（`CARGO_LIMITED_BY_JOBS`）
-const CARGO_HEAVY: &[&str] = &["build", "check", "test", "clippy", "run", "bench"];
-/// ビルドの並列度だけで使うコアが決まるサブコマンド。`test`・`run`・`bench` はテストの実行や実行する
-/// プログラムが複数スレッドで走るので、`-j 1` では限れない（ADR-0041）
-const CARGO_LIMITED_BY_JOBS: &[&str] = &["build", "check", "clippy"];
+/// 全コアを使いうる cargo のサブコマンド（`b`・`c`・`t`・`r` は build・check・test・run の組み込みの alias）
+const CARGO_HEAVY: &[&str] = &[
+    "build", "b", "check", "c", "test", "t", "clippy", "run", "r", "bench",
+];
+/// `-j 1` で使うコアを 1 つに限れるサブコマンド。`build` は rustc の codegen が複数スレッドで走り、`test`・
+/// `run`・`bench` はテストの実行や実行するプログラムが複数スレッドで走るので、`-j 1` では限れない（ADR-0041）
+const CARGO_LIMITED_BY_JOBS: &[&str] = &["check", "c", "clippy"];
 const BIN_PROGRAMS: &[&str] = &["xs", "lattice", "core", "chain"];
+
+/// `bin/<名前>`、または cargo の出力 `target/release|debug/<名前>`（ビルドした直後の実行）か
+fn is_project_binary(program: &str, name: &str) -> bool {
+    let Some(dir) = program
+        .strip_suffix(name)
+        .and_then(|dir| dir.strip_suffix('/'))
+    else {
+        return false;
+    };
+    match basename(dir) {
+        "bin" => true,
+        "release" | "debug" => dir
+            .rsplit_once('/')
+            .is_some_and(|(parent, _)| basename(parent) == "target"),
+        _ => false,
+    }
+}
 
 /// 全コアを使いうる手元のコマンドか。1 コアの taskset で限ったものは含めない
 fn is_heavy(cmd: &Cmd) -> bool {
@@ -33,7 +52,7 @@ fn is_heavy(cmd: &Cmd) -> bool {
         return false;
     }
     let program = cmd.program();
-    let sub = subcommand(&cmd.args);
+    let sub = global_subcommand(&cmd.args);
     let first = sub.map(|i| cmd.args[i].text.as_str());
     let second = sub
         .and_then(|i| cmd.args.get(i + 1))
@@ -42,49 +61,20 @@ fn is_heavy(cmd: &Cmd) -> bool {
         "cargo" => {
             first.is_some_and(|s| CARGO_HEAVY.contains(&s))
                 && !(first.is_some_and(|s| CARGO_LIMITED_BY_JOBS.contains(&s))
-                    && cargo_single_job(&cmd.args))
+                    && cargo_single_job(cmd))
         }
         "dvc" => first == Some("repro"),
         "nix" => first == Some("build") || (first == Some("flake") && second == Some("check")),
-        name => {
-            BIN_PROGRAMS.contains(&name)
-                && program
-                    .strip_suffix(name)
-                    .and_then(|dir| dir.strip_suffix('/'))
-                    .is_some_and(|dir| basename(dir) == "bin")
-        }
+        name => BIN_PROGRAMS.contains(&name) && is_project_binary(program, name),
     }
 }
 
-/// 値を次の語に取る cargo と nix のグローバルオプション（サブコマンドより前に書ける）
-const VALUE_OPTIONS: &[&str] = &[
-    "--config",
-    "-Z",
-    "--extra-experimental-features",
-    "--experimental-features",
-    "--option",
-];
-
-/// サブコマンドの位置（グローバルオプションと、`+nightly` のようなツールチェーンの指定の次の語）
-fn subcommand(args: &[Arg]) -> Option<usize> {
-    let mut i = 0;
-    while i < args.len() {
-        let w = args[i].text.as_str();
-        if VALUE_OPTIONS.contains(&w) {
-            // `--option` だけは名前と値の 2 語を取る
-            i += if w == "--option" { 3 } else { 2 };
-        } else if !w.starts_with('-') && !w.starts_with('+') {
-            return Some(i);
-        } else {
-            i += 1;
-        }
+/// `-j 1`、`-j1`、`--jobs 1`、`--jobs=1`（サブコマンドの前でもよい）、または環境変数 `CARGO_BUILD_JOBS=1`
+fn cargo_single_job(cmd: &Cmd) -> bool {
+    if env_value(&cmd.env, "CARGO_BUILD_JOBS", None) == Some("1") {
+        return true;
     }
-    None
-}
-
-/// `-j 1`、`-j1`、`--jobs 1`、`--jobs=1`
-fn cargo_single_job(args: &[Arg]) -> bool {
-    let words: Vec<&str> = args.iter().map(|a| a.text.as_str()).collect();
+    let words: Vec<&str> = cmd.args.iter().map(|a| a.text.as_str()).collect();
     // `--` より後は cargo のオプションではない
     let words = words.split(|w| *w == "--").next().unwrap_or_default();
     words.iter().enumerate().any(|(i, w)| {
@@ -107,23 +97,29 @@ fn running_exclusive_job() -> Option<(String, String)> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    // 出力が多いと、読まない間に squeue がパイプを満たして終われない。別のスレッドで並行して読む
+    let mut pipe = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = String::new();
+        pipe.read_to_string(&mut out).map(|_| out)
+    });
     let deadline = Instant::now() + SQUEUE_TIMEOUT;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
             _ => {
+                // 殺すとパイプが閉じ、読むスレッドも終わる
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;
             }
         }
     };
+    let stdout = reader.join().ok()?.ok()?;
     if !status.success() {
         return None;
     }
-    let mut stdout = String::new();
-    child.stdout.take()?.read_to_string(&mut stdout).ok()?;
     stdout.lines().find_map(|line| {
         let (shares, rest) = line.split_once('|')?;
         let (name, jobid) = rest.rsplit_once('|')?;
