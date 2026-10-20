@@ -10,7 +10,9 @@
 #
 # 出力（標準出力）: `<短縮hash> <件名> exit=<N>`
 # 終了コード: 全コミットで 0 なら 0、1 つでも失敗すれば 1、使い方の誤りは 2、
-# git rev-list の失敗（shallow clone、壊れたオブジェクトなど）は 3。
+# 実行時の環境の失敗は 3（git rev-list、一時ディレクトリ、worktree の作成、checkout、clean の失敗。
+# shallow clone や壊れたオブジェクトなど）。clean に失敗したコミットは検査しない
+# （前のコミットの副産物が残ったまま通ると、誤って exit=0 と出る）。
 # 失敗しても止まらず全コミットを走らせる。
 #
 # 使いどころ: 依存や lock を変えるブランチなど、各コミットでビルドが通るべきとき
@@ -51,7 +53,10 @@ mapfile -t commits <<<"$list"
   exit 2
 }
 
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/check-each-commit.XXXXXX")
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/check-each-commit.XXXXXX") || {
+  echo "一時ディレクトリを作れません: ${TMPDIR:-/tmp}" >&2
+  exit 3
+}
 wt="$tmp/wt"
 cleanup() {
   # 検査が書き込み不可のディレクトリ（Go のモジュールキャッシュなど）を残すと rm が失敗する
@@ -64,14 +69,17 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
 
-git worktree add -q --detach "$wt" "${commits[0]}" || exit 2
+git worktree add -q --detach "$wt" "${commits[0]}" || exit 3
 
 rc=0
 for sha in "${commits[@]}"; do
-  git -C "$wt" checkout -q --detach "$sha" || exit 2
+  git -C "$wt" checkout -q --detach "$sha" || exit 3
   # 検査の副産物（ビルド結果など）が次のコミットに残らないようにする
   chmod -R u+w "$wt" 2>/dev/null
-  git -C "$wt" clean -qffdx
+  git -C "$wt" clean -qffdx || {
+    echo "git clean に失敗したので $sha を検査しません" >&2
+    exit 3
+  }
   # 標準入力を渡さない（パイプラインやエージェントのシェルの入力を食わない）
   (cd "$wt" && "$@") >&2 </dev/null
   status=$?
