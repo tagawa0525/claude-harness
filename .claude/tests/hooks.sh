@@ -2377,7 +2377,7 @@ done
 # ===========================================================================
 # guard-exclusive-slurm: 排他の Slurm のジョブが走行中は、全コアを使う手元のコマンドを止める
 # ===========================================================================
-# 排他のジョブの時間の記録を乱すため（ADR-0039）。squeue は偽のコマンドで置き換える
+# 排他のジョブの時間の記録を乱すため（ADR-0041）。squeue は偽のコマンドで置き換える
 
 FAKE_SQUEUE="$TEST_ROOT/fake-squeue"
 mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle" "$FAKE_SQUEUE/broken"

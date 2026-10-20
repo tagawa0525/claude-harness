@@ -1,7 +1,7 @@
 //! guard-exclusive-slurm: 排他の Slurm のジョブが走行中は、全コアを使う手元のコマンドを止める
 //!
 //! 排他のジョブ（時間を記録する測定）の間に手元で全コアを使うと、その時間が乱れて測り直しになる
-//! （docs/adr/0039）。squeue で OverSubscribe が NO の走行中のジョブがあるときだけ、対象のコマンドを止める:
+//! （docs/adr/0041）。squeue で OverSubscribe が NO の走行中のジョブがあるときだけ、対象のコマンドを止める:
 //! `cargo build|test|clippy|run|bench`、`dvc repro`、`bin/xs|lattice|core|chain`、`nix build`。
 //! `-j 1`（`cargo` のみ）か、1 つの CPU に限る `taskset` で包めば通す。
 //! squeue が無いホスト、squeue の失敗、走行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
@@ -96,7 +96,7 @@ impl Rule for GuardExclusiveSlurm {
             return Vec::new();
         };
         vec![Finding::Deny(format!(
-            "排他の Slurm のジョブ {name}（{jobid}）が走行中で、その時間の記録を乱します。-j 1 と taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください（nixfiles の ADR-0026、ADR-0039）。"
+            "排他の Slurm のジョブ {name}（{jobid}）が走行中で、その時間の記録を乱します。-j 1 と taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください（nixfiles の ADR-0026、ADR-0041）。"
         ))]
     }
 }
