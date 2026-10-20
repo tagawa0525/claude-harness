@@ -103,8 +103,13 @@ git -C "$R" fetch -q --no-tags "$D/rewritten" \
 git -C "$D/original.git" for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags |
   while read -r ref old; do echo "update $ref $(git -C "$D/rewritten" rev-parse "$ref") $old"; done >"$D/transaction"
 git -C "$R" for-each-ref --format='delete %(refname)' refs/history-rewrite/ >>"$D/transaction"
-git -C "$R" update-ref --stdin <"$D/transaction"
+# 条件つきの行は、トランザクションに無い ref が増えたことを見ない。移す直前にもう 1 度比べる
+diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags) \
+  <(git -C "$D/original.git" for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags) &&
+  git -C "$R" update-ref --stdin <"$D/transaction"
 ```
+
+比べてから移すまでの間に作られた ref は残りうる（1 で作業中のセッションが無いことを確かめるのは、このため）。
 
 `git fetch` で `refs/heads/` に直接取り込まないのは、worktree にチェックアウト中のブランチを fetch が拒むため
 （`--update-head-ok` で外すと、条件つきの更新にならない）。
@@ -112,13 +117,17 @@ git -C "$R" update-ref --stdin <"$D/transaction"
 ## 5. worktree を合わせる
 
 `update-ref` はチェックアウト中のブランチも移すので、各 worktree の index と作業ツリーは元の番号のままになる。
-`worktree-state` の行ごとに合わせる（`while IFS=$'\t' read -r w old n patch` で読む。`n` は未コミットの変更の数、`patch` は控えのパッチ）。
+`worktree-state` の行ごとに合わせる（`while IFS=$'\t' read -r w old n patch` で読む。`n` は未コミットの変更の数、`patch` は控えのパッチ。
+行の番号は `k=${patch##*/worktree-}; k=${k%.patch}` で取る）。
 
 - detached HEAD の worktree: 先に HEAD を移す（`commit-map` は元の番号から最後の番号への対応表）
 
   ```bash
   new=$(awk -v o="$old" '$1 == o {print $2}' "$D/commit-map")
-  [ -n "$new" ] || echo "ERROR: $old は書き換えに入っていない（1 で確かめる）"
+  if [ -z "$new" ]; then
+    echo "ERROR: $w の $old は書き換えに入っていない（1 でブランチを付ける）"
+    continue   # この worktree は元の履歴のまま。ほかを合わせてから、1 からやり直す
+  fi
   git -C "$w" update-ref --no-deref HEAD "$new" "$old"
   ```
 
@@ -143,12 +152,12 @@ git -C "$R" update-ref --stdin <"$D/transaction"
     fi
   done
   (cd "$w" && commit-refs remap "$D/commit-map")   # 未コミットの文書の古い番号を付け直す
-  # ステージしていたパスを、残っているものだけ戻す（ファイルの全体をステージするので、部分のステージは戻らない）
-  xargs -0 -r -I{} sh -c 'test -e "$1/$2" && git -C "$1" add -- "$2"' _ "$w" {} <"$D/staged-$k"
+  # ステージしていたパスを戻す（-A で消したパスも戻す。ファイルの全体をステージするので、部分のステージは戻らない）
+  xargs -0 -r git -C "$w" add -A -- <"$D/staged-$k"
   ```
 
   `git -C "$w" diff HEAD` が、控えのパッチ（`$patch`）と同じ変更に語と番号の変換を当てたものだけに
-  なっていることを確かめる（`k` は `worktree-state` の行の番号）
+  なっていることを確かめる
 
 ## 6. 書き換えの外に残るもの
 
