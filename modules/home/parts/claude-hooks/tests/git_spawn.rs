@@ -228,3 +228,58 @@ fn path_under_a_regular_file_is_not_reported() {
     let out = run(&file.join("child"), "git commit -m x", None, None);
     assert_eq!(out.system_message(), "", "json: {}", out.json);
 }
+
+/// squeue として動く sh スクリプトを置いた一時のディレクトリ（PATH に渡す）
+fn fake_squeue(tag: &str, body: &str) -> TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new(tag);
+    let path = dir.0.join("squeue");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+#[test]
+fn failing_squeue_is_shown_to_the_user_and_does_not_deny() {
+    let bin = fake_squeue("squeue-fails", "echo boom >&2; exit 1");
+    let out = run(
+        &bin.0,
+        "cargo test",
+        Some("guard-exclusive-slurm"),
+        Some(bin.0.to_str().unwrap()),
+    );
+    assert!(
+        out.system_message().contains("squeue"),
+        "json: {}",
+        out.json
+    );
+    assert!(
+        out.json.get("hookSpecificOutput").is_none(),
+        "json: {}",
+        out.json
+    );
+}
+
+#[test]
+fn squeue_missing_from_path_is_silent() {
+    let dir = TempDir::new("no-squeue");
+    let out = run(&dir.0, "cargo test", Some("guard-exclusive-slurm"), None);
+    assert!(out.json.is_null(), "json: {}", out.json);
+    assert_eq!(out.stderr, "");
+}
+
+#[test]
+fn squeue_with_non_utf8_job_name_still_finds_the_exclusive_job() {
+    let bin = fake_squeue("squeue-bytes", "printf 'NO|\\377name|42\\n'");
+    let out = run(
+        &bin.0,
+        "cargo test",
+        Some("guard-exclusive-slurm"),
+        Some(bin.0.to_str().unwrap()),
+    );
+    assert!(
+        out.json.to_string().contains("deny") && out.json.to_string().contains("42"),
+        "json: {}",
+        out.json
+    );
+}

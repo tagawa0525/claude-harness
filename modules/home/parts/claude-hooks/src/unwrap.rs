@@ -474,7 +474,7 @@ fn taskset_selects_one_cpu(cpu_list: bool, spec: &str) -> bool {
     cpus.len() == 1
 }
 
-/// 値を次の語に取る cargo と nix のグローバルオプション（サブコマンドより前に書ける）
+/// 値を次の語に取る cargo・nix・dvc のグローバルオプション（サブコマンドより前に書ける）
 const GLOBAL_VALUE_OPTIONS: &[&str] = &[
     "--config",
     "-Z",
@@ -491,9 +491,51 @@ const GLOBAL_VALUE_OPTIONS: &[&str] = &[
     "--experimental-features",
 ];
 
-/// cargo と nix のサブコマンドの位置。グローバルオプション（値を取るものは値も）と、`+nightly` のような
-/// ツールチェーンの指定を飛ばした次の語。`--option <名前> <値>` だけは 2 語を取る
-pub fn global_subcommand(args: &[Arg]) -> Option<usize> {
+/// 値を取らないことが分かっているグローバルオプション
+const GLOBAL_FLAGS: &[&str] = &[
+    "-q",
+    "-v",
+    "-vv",
+    "-vvv",
+    "-L",
+    "-k",
+    "-h",
+    "-V",
+    "--quiet",
+    "--verbose",
+    "--debug",
+    "--help",
+    "--version",
+    "--list",
+    "--locked",
+    "--frozen",
+    "--offline",
+    "--refresh",
+    "--impure",
+    "--show-trace",
+    "--keep-going",
+    "--no-net",
+    "--print-build-logs",
+    "--accept-flake-config",
+    "--no-write-lock-file",
+];
+
+/// [`global_subcommand`] の結果
+#[derive(Debug, PartialEq)]
+pub enum Subcommand {
+    /// サブコマンドの位置
+    At(usize),
+    /// サブコマンドが無い
+    Missing,
+    /// 知らないオプションの後で、次の語がそのオプションの値かサブコマンドか決められない
+    /// （nix は nix.conf の設定をすべてオプションに取り、`--arg` や `--override-input` は 2 語を取る）
+    Unknown,
+}
+
+/// cargo・nix・dvc のサブコマンドの位置。グローバルオプション（値を取るものは値も）と、`+nightly` のような
+/// ツールチェーンの指定を飛ばした次の語。`--option <名前> <値>` だけは 2 語を取る。値を取るか分からない
+/// オプションに会ったら、その後の語をサブコマンドと断定せず `Unknown` を返す
+pub fn global_subcommand(args: &[Arg]) -> Subcommand {
     let mut i = 0;
     while i < args.len() {
         let w = args[i].text.as_str();
@@ -502,10 +544,62 @@ pub fn global_subcommand(args: &[Arg]) -> Option<usize> {
         } else if GLOBAL_VALUE_OPTIONS.contains(&w) {
             i += 2;
         } else if !w.starts_with('-') && !w.starts_with('+') {
-            return Some(i);
-        } else {
+            return Subcommand::At(i);
+        } else if w.starts_with('+')
+            || GLOBAL_FLAGS.contains(&w)
+            || w.contains('=')
+            || (w.starts_with("-j") && w[2..].chars().all(|c| c.is_ascii_digit()))
+        {
             i += 1;
+        } else {
+            return Subcommand::Unknown;
         }
+    }
+    Subcommand::Missing
+}
+
+/// `nix develop` と `nix shell` が値を取るオプション（値の個数）。`-c` を探すときに値を飛ばす
+const NIX_ENTER_VALUE_OPTIONS: &[(&str, usize)] = &[
+    ("--option", 2),
+    ("--arg", 2),
+    ("--argstr", 2),
+    ("--override-input", 2),
+    ("--override-flake", 2),
+    ("--expr", 1),
+    ("--file", 1),
+    ("-f", 1),
+    ("--include", 1),
+    ("-I", 1),
+    ("--profile", 1),
+    ("--inputs-from", 1),
+    ("--update-input", 1),
+    ("--max-jobs", 1),
+    ("-j", 1),
+    ("--cores", 1),
+    ("--store", 1),
+    ("--log-format", 1),
+    ("--extra-experimental-features", 1),
+    ("--experimental-features", 1),
+    ("--keep", 1),
+    ("--unset", 1),
+    ("--set", 2),
+];
+
+/// `nix develop|shell` の引数（サブコマンドの後ろ）で、`-c` / `--command` の次の語の位置。
+/// 値を取るオプションの値は飛ばす。`--help` があれば何も走らせないので None
+fn nix_enter_command(rest: &[Arg]) -> Option<usize> {
+    let mut i = 0;
+    while i < rest.len() {
+        let w = rest[i].text.as_str();
+        match w {
+            "--help" | "-h" => return None,
+            "-c" | "--command" => return (i + 1 < rest.len()).then_some(i + 1),
+            _ => {}
+        }
+        i += 1 + NIX_ENTER_VALUE_OPTIONS
+            .iter()
+            .find(|(name, _)| *name == w)
+            .map_or(0, |(_, n)| *n);
     }
     None
 }
@@ -632,20 +726,14 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         // `nix develop|shell [<flake>] [opts] -c <コマンド> [引数…]` は、-c の後ろの語を exec する。語を空白でつないで
         // sh -c に渡さず、そのままコマンドとして続ける（`bash -c 'cargo test'` の引数を壊さない）
         if wrapper_name == "nix" {
-            if let Some(i) = global_subcommand(&out.args)
+            if let Subcommand::At(i) = global_subcommand(&out.args)
                 && matches!(out.args[i].text.as_str(), "develop" | "shell")
+                && let Some(k) = nix_enter_command(&out.args[i + 1..]).map(|k| i + 1 + k)
             {
-                let command = out.args[i + 1..]
-                    .iter()
-                    .position(|a| matches!(a.text.as_str(), "-c" | "--command"))
-                    .map(|j| i + 1 + j + 1)
-                    .filter(|&k| k < out.args.len());
-                if let Some(k) = command {
-                    out.wrappers.push(std::mem::take(&mut out.name));
-                    out.name = out.args[k].text.clone();
-                    out.args = out.args[k + 1..].to_vec();
-                    continue;
-                }
+                out.wrappers.push(std::mem::take(&mut out.name));
+                out.name = out.args[k].text.clone();
+                out.args = out.args[k + 1..].to_vec();
+                continue;
             }
             return out;
         }

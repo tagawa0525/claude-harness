@@ -2380,11 +2380,10 @@ done
 # 排他のジョブの時間の記録を乱すため（ADR-0041）。squeue は偽のコマンドで置き換える
 
 FAKE_SQUEUE="$TEST_ROOT/fake-squeue"
-mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle" "$FAKE_SQUEUE/broken"
-printf '#!/bin/sh\nprintf "NO|openmc-2K|1234\\nYES|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
-printf '#!/bin/sh\nprintf "YES|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
+mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle"
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234\\nOK|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
+printf '#!/bin/sh\nprintf "OK|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
 printf '#!/bin/sh\nexit 0\n' >"$FAKE_SQUEUE/idle/squeue"
-printf '#!/bin/sh\necho boom >&2\nexit 1\n' >"$FAKE_SQUEUE/broken/squeue"
 mkdir -p "$FAKE_SQUEUE/many"
 printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|shared-$n|$n"; done\necho "NO|openmc-2K|99999"\n' >"$FAKE_SQUEUE/many/squeue"
 chmod +x "$FAKE_SQUEUE"/*/squeue
@@ -2393,7 +2392,11 @@ cd "$TEST_ROOT" || exit 1
 it "guard-exclusive-slurm: 排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と直し方を示す"
 for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' 'cargo check' 'nix flake check' \
   'nix develop -c cargo test' 'nix develop ../..#references -c dvc repro' 'nix develop --command bin/xs in.toml' \
-  'cargo test -j 1' 'cargo run --jobs=1 -- x' 'cargo bench -j1' 'cargo build -j 1' 'cargo build --jobs=1' 'cargo b -j1' \
+  'cargo test -j 1' 'cargo run --jobs=1 -- x' 'cargo bench -j1' 'cargo build -j 1' 'cargo build --jobs=1' 'cargo b -j1' 'cargo check -j 1' 'cargo clippy -j1' 'cargo c --jobs 1' 'cargo -j 1 check' \
+  'CARGO_BUILD_JOBS=1 cargo check' \
+  'CMD=cargo; $CMD test' 'bash -s <<< "cargo test"' 'source x.sh' 'bash "$SCRIPT"' 'eval "$CMD"' \
+  'nix --arg x 1 build .#x' 'nix --foo bar build .#x' 'cargo --weird test' 'dvc --cd sub repro' 'nix develop --option k v -c cargo test' \
+  'nix develop --expr 1 -c cargo test' 'target/x86_64-unknown-linux-gnu/release/xs in.toml' '/tmp/tgt/debug/lattice in.toml' \
   'cargo b' 'cargo c' 'cargo t' 'cargo r -- x' 'cargo --color never test' 'cargo -C /tmp build' \
   'nix -j 4 build .#x' 'nix --max-jobs 2 build .#x' 'nix --cores 2 build .#x' 'nix -I nixpkgs=. build .#x' 'nix --store /tmp/s build .#x' \
   'nix --log-format bar build .#x' 'nix -L develop -c cargo test' \
@@ -2414,10 +2417,10 @@ for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'ca
 done
 
 it "guard-exclusive-slurm: -j 1 か 1 コアの taskset で限れば通す"
-for cmd in 'cargo clippy -j1' 'cargo check --jobs 1' 'cargo check --jobs=1' 'cargo c -j 1' 'cargo -j 1 check' 'CARGO_BUILD_JOBS=1 cargo check' \
-  'CARGO_BUILD_JOBS=1 cargo clippy --all-targets' 'nix develop -c cargo check -j1' \
+for cmd in 'taskset -c 3 cargo check' 'taskset -c 3 cargo clippy --all-targets' 'taskset -c 3 cargo build -j 1' 'taskset -c 3 $CMD test' \
+  "taskset -c 3 bash -s <<< 'cargo test'" 'nix develop --help' 'nix develop --expr 1 -c cargo fmt' 'cargo -q fmt --check' 'cargo +nightly fmt' \
   'nix develop -c taskset -c 3 cargo test' "nix develop ../..#references -c bash -c 'taskset -c 2 dvc repro'" \
-  "nix develop -c bash -c 'cargo check -j 1'" 'nix shell nixpkgs#x -c taskset -c 1 cargo test' \
+  'nix shell nixpkgs#x -c taskset -c 1 cargo test' \
   'taskset -c 3 target/release/xs in.toml' 'taskset -c 3 nix develop -c cargo test' 'taskset -c 3 cargo test' \
   'taskset -c 3 bin/xs in.toml' 'taskset --cpu-list 2 dvc repro' 'taskset 0x4 cargo build' 'taskset -c 5-5 nix build .#x' \
   'sudo taskset -c 3 cargo test' "taskset -c 3 bash -c 'cargo test'"; do
@@ -2425,9 +2428,17 @@ for cmd in 'cargo clippy -j1' 'cargo check --jobs 1' 'cargo check --jobs=1' 'car
   assert_eq "" "$out"
 done
 
+it "guard-sbatch: nix develop|shell -c の中の sbatch も止める"
+for cmd in 'nix develop -c sbatch job.sh' 'nix shell nixpkgs#x -c sbatch job.sh' 'nix develop --option k v -c sbatch job.sh'; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+out=$(run_hook guard-sbatch 'nix develop --help')
+assert_eq "" "$out"
+
 it "guard-exclusive-slurm: 対象のコマンド以外は通す"
 for cmd in 'cargo fmt --check' 'cargo --version' 'nix flake show' 'nix develop' 'nix develop -c cargo fmt' 'nix shell nixpkgs#x -c ls' 'nix develop -c bash -c "echo hi"' 'dvc status' 'git status' 'ls bin/' 'echo cargo test' \
-  'bin/other' 'target/release/other' 'xs/release/xs' 'squeue -t R'; do
+  'bin/other' 'target/release/other' 'squeue -t R'; do
   out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq "" "$out"
 done
@@ -2437,8 +2448,8 @@ out=$(PATH="$FAKE_SQUEUE/many:$PATH" run_hook guard-exclusive-slurm 'cargo test'
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "99999"
 
-it "guard-exclusive-slurm: 排他のジョブが無い（排他でないジョブだけ、ジョブなし、squeue の失敗）なら通す"
-for dir in shared idle broken; do
+it "guard-exclusive-slurm: 排他のジョブが無い（排他でないジョブだけ、ジョブなし）なら通す"
+for dir in shared idle; do
   out=$(PATH="$FAKE_SQUEUE/$dir:$PATH" run_hook guard-exclusive-slurm 'cargo test')
   assert_eq "" "$out"
 done
