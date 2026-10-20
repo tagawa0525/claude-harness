@@ -56,7 +56,7 @@ done
 # プロジェクトでは参照できないノイズになるので、番号を書かず、その場で規則と理由が分かるように書く。
 # ADR-0123、adr-0123、ADR 0123、docs/adr/0123-... のどれも対象にする（書式の例は NNNN と書く）
 HOOK_SRC="$CLAUDE_DIR/../modules/home/parts/claude-hooks/src"
-ADR_REF='(ADR|adr)[- ]?[0-9]{3,5}|docs/adr/[0-9]{3,5}'
+ADR_REF='\b(ADR|adr)[- ]?[0-9]{3,5}|docs/adr/[0-9]{3,5}'
 
 it "skills: ADR の番号の検査の対象（CLAUDE.md、skills、scripts、hook のルール）が見つかる"
 if [[ -f "$CLAUDE_DIR/CLAUDE.md" && -d "$CLAUDE_DIR/skills" && -d "$CLAUDE_DIR/scripts" && -d "$HOOK_SRC" ]] && command -v perl >/dev/null; then _pass; else _fail "検査の対象か perl が見つからない（移したなら、このテストの対象も直す）"; fi
