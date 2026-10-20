@@ -102,7 +102,6 @@ let
         "Bash(git rev-list:*)"
         "Bash(git rm:*)"
         "Bash(git show:*)"
-        "Bash(git stash:*)"
         "Bash(git status:*)"
         "Bash(git submodule:*)"
         "Bash(git switch:*)"
