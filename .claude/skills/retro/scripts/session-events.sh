@@ -12,16 +12,20 @@
 #   MEMORY_DIR: <記録と同じディレクトリの memory>
 #   TRANSCRIPTS: <読んだ記録の数（本体 + サブエージェント）>
 #   <KIND>: <回数> <本文の要約>   失敗したツールの結果を、種類と要約ごとに回数の多い順に
-#     HOOK        hook の拒否（`<event>:<tool> hook error: ` を除いた 1 行目）
+#     HOOK        hook の拒否（`<event>:<tool> hook error: ` を除いた 1 行目）。同じ拒否をまとめるため、
+#                 コミットの番号を `<hash>`、数を `N` に置き換える
 #     PERMISSION  権限の拒否（自動モードの分類器など）
 #     REJECTED    ユーザーが止めたツール
-#     TOOL        そのほか（`Exit code N` は次の行とつなぐ。`<tool_use_error>` のタグは除く）
-#   USER: <発言>  本体の記録のユーザーの発言を順に（改行は空白に）。通知（`<` で始まる）、
-#                 スキルの本文（isMeta）、サブエージェントへの依頼文は除く
+#     TOOL        そのほか（`Exit code N` は出力の最後の行（標準エラーが来る）とつなぐ。
+#                 `<tool_use_error>` のタグは除く）
+#   USER: <発言>  本体の記録のユーザーの発言を順に（改行は空白に）。ターンの途中で送った発言
+#                 （attachment の queued_command）を含み、スラッシュコマンドは `/<名前> <引数>` にする。
+#                 通知（`<` で始まる）、スキルの本文（isMeta）、要約（isCompactSummary）、
+#                 サブエージェントへの依頼文は除く
 # 要約は 160 文字、発言は 300 文字で切る。
 #
-# 記録の形は Claude Code の公開の仕様ではない（ADR-0037）。type を持つ行が 1 つも無ければ、
-# 形が変わったとみなして exit 1（0 件と出さない）。
+# 記録の形は Claude Code の公開の仕様ではない（ADR-0037）。type を持つ行が 1 つも無いか、
+# ツールを呼んだ行があるのに tool_result が 1 つも無ければ、形が変わったとみなして exit 1（0 件と出さない）。
 
 set -euo pipefail
 
@@ -62,6 +66,16 @@ shopt -s nullglob
 subagents=("${transcript%.jsonl}"/subagents/*.jsonl)
 shopt -u nullglob
 
+# shellcheck disable=SC2016  # jq のプログラム
+read -r uses results < <(jq -rn '
+  [inputs | select(type == "object") | .message.content? | arrays | .[] | .type?]
+  | "\(map(select(. == "tool_use")) | length) \(map(select(. == "tool_result")) | length)"
+' "$transcript" "${subagents[@]}")
+if ((uses > 0 && results == 0)); then
+  echo "ERROR: ツールの呼び出しが $uses 件あるのに tool_result がありません（記録の形が変わったかもしれません）: $transcript" >&2
+  exit 1
+fi
+
 echo "TRANSCRIPT: $transcript"
 echo "MEMORY_DIR: $(dirname "$transcript")/memory"
 echo "TRANSCRIPTS: $((1 + ${#subagents[@]}))"
@@ -72,19 +86,20 @@ jq -r '
   def body: if type == "array" then map(.text? // "") | join("\n") else tostring end;
   def first_line: split("\n") | map(select(test("\\S"))) | (.[0] // "(本文なし)");
   def cut: .[0:160];
+  def norm: gsub("\\b(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\\b"; "<hash>") | gsub("[0-9]+"; "N");
   select(.type == "user" and (.message.content | type) == "array")
   | .message.content[]
   | select(.type == "tool_result" and .is_error == true)
   | (.content | body) as $b
   | if ($b | test("^\\S+ hook error: ")) then
-      "HOOK\t" + ($b | sub("^\\S+ hook error: "; "") | first_line | cut)
-    elif ($b | startswith("Permission for this action was denied")) then
+      "HOOK\t" + ($b | sub("^\\S+ hook error: "; "") | first_line | norm | cut)
+    elif ($b | startswith("Permission for this action was denied") or test("auto mode classifier")) then
       "PERMISSION\t" + ($b | first_line | cut)
     elif ($b | startswith("The user doesn'"'"'t want to proceed")) then
       "REJECTED\t" + ($b | first_line | sub("(?<s>proceed with this tool use\\.).*"; "\(.s)") | cut)
     elif ($b | test("^Exit code [0-9]+\n")) then
       ($b | split("\n")) as $l
-      | "TOOL\t" + ($l[0] + ": " + ($l[1:] | join("\n") | first_line) | cut)
+      | "TOOL\t" + ($l[0] + ": " + ($l[1:] | map(select(test("\\S"))) | (last // "(本文なし)")) | cut)
     else
       "TOOL\t" + ($b | gsub("</?tool_use_error>"; "") | first_line | cut)
     end
@@ -103,10 +118,25 @@ jq -r '
   sort -t $'\t' -k1,1n -k2,2n -k3,3 | cut -f3-
 
 # ユーザーの発言（本体の記録だけ。サブエージェントの記録の発言は親からの依頼文）
+# shellcheck disable=SC2016  # jq のプログラム
 jq -r '
-  select(.type == "user" and (.isMeta // false) == false and (.isSidechain // false) == false)
-  | .message.content
-  | if type == "string" then . else map(select(.type == "text") | .text) | join("\n") end
+  def text_of: if type == "string" then . else map(select(.type == "text") | .text) | join("\n") end;
+  def command:
+    if test("<command-name>") then
+      (capture("<command-name>(?<n>[^<]*)</command-name>").n) as $n
+      | ((capture("<command-args>(?<a>.*?)</command-args>"; "s") | .a) // "") as $a
+      | if $a == "" then $n else $n + " " + $a end
+    else . end;
+  (
+    select(.type == "user" and (.isMeta // false) == false and (.isSidechain // false) == false
+      and (.isCompactSummary // false) == false and (.isVisibleInTranscriptOnly // false) == false)
+    | .message.content | text_of | command
+  ),
+  (
+    select(.type == "attachment" and .attachment.type? == "queued_command"
+      and (.attachment.commandMode // "prompt") == "prompt")
+    | .attachment.prompt | text_of
+  )
   | select(test("\\S") and (startswith("<") | not))
   | "USER: " + (gsub("\\s*\n\\s*"; " ") | .[0:300])
 ' "$transcript"

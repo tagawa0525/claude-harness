@@ -55,7 +55,17 @@ declare -A known=()
 for path in "${files[@]}"; do
   file=$(basename "$path")
   known[${file%.md}]=1
-  name=$(sed -nE '1,/^---$/{s/^name:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p}' "$path" | head -n 1)
+  # 前付けは 1 行目の --- から次の --- まで。値の引用符（YAML の "..." と '...'）は外す
+  name=$(awk '
+    NR == 1 { if ($0 != "---") exit; next }
+    $0 == "---" { exit }
+    sub(/^name:[[:space:]]*/, "") {
+      sub(/[[:space:]]+$/, "")
+      if ($0 ~ /^".*"$/ || $0 ~ /^\047.*\047$/) $0 = substr($0, 2, length($0) - 2)
+      print
+      exit
+    }
+  ' "$path")
   [[ -z "$name" ]] || known[$name]=1
 done
 
