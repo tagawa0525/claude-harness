@@ -40,6 +40,8 @@ done
 # パイプにしない（pipefail 下で grep -q が先に終わると SIGPIPE で失敗して、GitHub リモートがあってもスキップする）
 remotes=$(git remote -v)
 grep -q 'github\.com' <<<"$remotes" || exit 0
+# worktree-add.sh と同じく、origin が無ければ比べる先が決まらないので何もしない
+git remote get-url origin >/dev/null 2>&1 || exit 0
 
 # origin を明示する。引数なしの fetch は今のブランチの上流のリモートへ行き、
 # 上流が別のリモートだと、BASE の origin/* が更新されないまま古い比較になる
@@ -68,18 +70,28 @@ for ref in "$BASE" "$TARGET"; do
   git rev-parse --verify -q "${ref}^{commit}" >/dev/null || { echo "ERROR: ${ref} を解決できません" >&2; exit 1; }
 done
 
-if ! fork=$(git merge-base "$BASE" "$TARGET"); then
+# merge-base は共通の祖先が無いとき 1、それ以外の失敗（壊れた repo など）はほかの終了コードを返す
+rc=0
+fork=$(git merge-base "$BASE" "$TARGET" 2>&1) || rc=$?
+if ((rc == 1)); then
   echo "WARN: ${BASE} と ${TARGET} の分岐点が見つかりません（履歴が共通でない、または shallow clone）。比較は未確認です" >&2
+  exit 0
+elif ((rc != 0)); then
+  echo "WARN: git merge-base が失敗しました（終了コード ${rc}）。比較は未確認です: ${fork}" >&2
   exit 0
 fi
 # マージコミットで入る PR は 1 件と数える（--first-parent）
 moved=$(git rev-list --first-parent --count "${fork}..${BASE}")
 ((moved > 0)) || exit 0
 
-# 移動（rename）は旧パスも数える（--no-renames）
-common=$(comm -12 \
-  <(git -c core.quotePath=false diff --no-renames --name-only "${fork}..${BASE}" | sort) \
-  <(git -c core.quotePath=false diff --no-renames --name-only "${fork}..${TARGET}" | sort))
+# 移動（rename）は旧パスも数える（--no-renames）。diff は変数に受けて終了コードを見る
+# （プロセス置換だと失敗が見えず、空の出力＝進みなしと区別できない）
+if ! base_files=$(git -c core.quotePath=false diff --no-renames --name-only "${fork}..${BASE}") \
+  || ! branch_files=$(git -c core.quotePath=false diff --no-renames --name-only "${fork}..${TARGET}"); then
+  echo "WARN: git diff が失敗しました。比較は未確認です" >&2
+  exit 0
+fi
+common=$(comm -12 <(sort <<<"$base_files") <(sort <<<"$branch_files"))
 [[ -n "$common" ]] || exit 0
 
 echo "BASE_MOVED: ${BASE} が分岐点から ${moved} commits 進んでいる（先頭 $(git rev-parse --short "$BASE")、分岐点 $(git rev-parse --short "$fork")）"
