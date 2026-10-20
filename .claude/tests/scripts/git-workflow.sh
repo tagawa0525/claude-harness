@@ -76,6 +76,16 @@ assert_eq 0 $?
 assert_contains "$out" "BASE: origin/main"
 assert_eq "$NEW" "$(git -C "$TEST_ROOT/wt/ghapp-feat-fresh" rev-parse HEAD)"
 
+it "worktree-add: 今のブランチの上流が別のリモートでも origin を fetch する"
+git init -q --bare "$GH_REPO_DIR.up.git"
+git remote add up "$GH_REPO_DIR.up.git"
+git push -q up main
+git branch -q --set-upstream-to=up/main main
+NEW=$(advance_origin_main "$GH_REPO_DIR" moved3.txt)
+"$SCRIPTS_DIR/worktree-add.sh" feat/upstream-other >/dev/null
+assert_eq "$NEW" "$(git -C "$TEST_ROOT/wt/ghapp-feat-upstream-other" rev-parse HEAD)"
+git branch -q --unset-upstream main
+
 it "worktree-add: GitHub リモートがなければ fetch しない"
 cd "$REPO" || exit 1
 NEW=$(advance_origin_main "$REPO" moved2.txt)

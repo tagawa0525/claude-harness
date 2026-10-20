@@ -67,4 +67,69 @@ out=$("$SCRIPTS_DIR/base-moved.sh" 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "WARN: fetch に失敗"
 
+# --- 履歴の形ごとのフィクスチャ（それぞれ新しいリポジトリ） ---
+# fixture <名前>: GitHub リモート付きのリポジトリ。ブランチ feat/work は main から切る
+fixture() {
+  local dir="$TEST_ROOT/bm/$1"
+  make_repo "$dir"
+  make_remote "$dir" github
+  git -C "$dir" switch -q -c feat/work
+  echo "$dir"
+}
+# in_other <dir> <コマンド...>: 別のクローンで実行して origin/main に push する
+in_other() {
+  local dir="$1" other="$1.other"
+  git clone -q "$dir.git" "$other"
+  shift
+  (cd "$other" && "$@" && git push -q origin main)
+}
+
+it "base-moved: 上流が別のリモートのブランチでも origin を fetch する"
+D=$(fixture upstream_other)
+commit_file "$D" src/a.txt "feat: a"
+git init -q --bare "$D.up.git"
+git -C "$D" remote add up "$D.up.git"
+git -C "$D" push -q up feat/work main
+git -C "$D" branch -q --set-upstream-to=up/main feat/work
+in_other "$D" bash -c 'seq 3 > src/a.txt && git add src/a.txt && git commit -q -m "feat: other a"'
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh")
+assert_contains "$out" "COMMON: src/a.txt"
+
+it "base-moved: 分岐点が見つからないときは WARN を出して exit 0（通知だけで失敗させない）"
+D=$(fixture no_merge_base)
+commit_file "$D" src/a.txt "feat: a"
+git -C "$D" switch -q --orphan feat/orphan
+git -C "$D" commit -q --allow-empty -m "orphan"
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" feat/orphan 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "WARN:"
+assert_contains "$out" "比較は未確認"
+
+it "base-moved: マージコミットで入った PR は 1 件と数える（--first-parent）"
+D=$(fixture merge_count)
+commit_file "$D" src/a.txt "feat: a"
+in_other "$D" bash -c 'mkdir -p src && git switch -q -c side && seq 2 > src/a.txt && git add src && git commit -q -m "side 1" && seq 3 > src/a.txt && git commit -q -am "side 2" && git switch -q main && git merge -q --no-ff -m "Merge: side" side'
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh")
+assert_contains "$out" "1 commits"
+assert_contains "$out" "COMMON: src/a.txt"
+
+it "base-moved: 非 ASCII のパスは引用符も八進表記もなしで出す"
+D=$(fixture non_ascii)
+commit_file "$D" "docs/日本語.md" "feat: doc"
+in_other "$D" bash -c 'mkdir -p docs && seq 2 > "docs/日本語.md" && git add docs && git commit -q -m "feat: other doc"'
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh")
+assert_contains "$out" "COMMON: docs/日本語.md"
+
+it "base-moved: base 側の移動（rename）は旧パスも共通として数える（--no-renames）"
+D=$(fixture rename)
+git -C "$D" switch -q main
+commit_file "$D" src/old.txt "feat: old" 20
+git -C "$D" push -q origin main
+git -C "$D" switch -q feat/work
+git -C "$D" rebase -q main
+commit_file "$D" src/old.txt "feat: edit old" 21
+in_other "$D" bash -c 'git mv src/old.txt src/new.txt && git commit -q -m "refactor: move"'
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh")
+assert_contains "$out" "COMMON: src/old.txt"
+
 finish
