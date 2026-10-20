@@ -4,7 +4,7 @@ date: 2026-10-21
 requires: [ADR-0020, ADR-0025]
 supersedes: []
 superseded-by:
-issues: ["#388", "#405"]
+issues: ["#388", "#405", "#406"]
 ---
 
 # ADR-0042: hook は独自の手順のルール、うっかりミス、lint と fmt を、モデルが普通に書く形で守らせ、作為的な抜け道は塞がない
@@ -56,9 +56,10 @@ ADR-0020 は「実際に Slurm へ投げるスクリプトは、どの書き方�
 
 ### hook が止めるもの
 
-- このリポジトリ独自の手順のルールを守らせる: worktree を分け、ブランチを既定ブランチから作る（`guard-branch-base`、`guard-git-stash`）、rebase したうえで
-  no-ff でマージする（`guard-git-merge`、`pre-git-merge-check`）、main に直接コミットしない、PR の形
-  （`pre-pr-create-check`、`pre-merge-check`）、重い計算を Slurm に流す（`guard-sbatch`）など
+- このリポジトリ独自の手順のルールを守らせる: ブランチを既定ブランチから作る（`guard-branch-base`）、worktree の
+  間で共有の stash を使わない（`guard-git-stash`）、rebase したうえで no-ff でマージする（`guard-git-merge`）、
+  1 ブランチ 1 トピック（`pre-git-merge-check`）、main に直接コミットしない、PR の形（`pre-pr-create-check`、
+  `pre-merge-check`）、重い計算を Slurm に流す（`guard-sbatch`）など
 - うっかりミス: `git add -A`、秘密情報のコミットなど（大きすぎるコミットは止めずに知らせる。`warn-large-commit`）
 - lint と fmt を確実にかける: git の hook（pre-commit）を飛ばさせない（`block-no-verify`）など
 
@@ -76,7 +77,10 @@ ADR-0020 は「実際に Slurm へ投げるスクリプトは、どの書き方�
 - ラッパーで包む（`sudo`、`ssh`、`eval`、`flock -c`、`watch`、`script -c` など）、3 段以上の `bash -c` の入れ子
 - 文字列にして実行させる（`$CMD`、`eval "$CMD"`、`printf %q` で包んだ文字列、標準入力から読ませる）
 - 珍しい git の設定や全体オプションで行き先や挙動を変える（`push.default=upstream`、`remote.<名前>.push`、
-  `url.<base>.insteadOf`、`git -c …`、`--git-dir`）
+  `url.<base>.insteadOf`、`--git-dir`）
+
+ただし、ルールがその形そのものを対象にしているときは、その形がそのルールの判定の対象になる（`block-no-verify` が
+止める `git -c core.hooksPath=…` など、git の hook を飛ばす書き方）。
 
 hook は境界ではない。これらを止めないことで生じる穴は、モデルの判断と人のレビューに任せる。
 
@@ -94,9 +98,10 @@ hook は境界ではない。これらを止めないことで生じる穴は、
 次の部分を、今後の判断の基準にしない（この ADR で置き換える）。それに基づいて入ったコードとテストは残す:
 
 - ADR-0020 の決定の要因「実際に Slurm へ投げるスクリプトは、どの書き方でも止める（ガードは、見落としたら通す側
-  ではなく止める側に倒す）」と、決定と理由の「本物の書き方がどれだけあっても……見落としは止める側に倒れる」。
-  決定そのもの（除くのは同名のテスト `.claude/tests/scripts/slurm-run.sh` だけ）と、案 A を捨てた理由
-  （`scripts/slurm-run.sh` のような相対パスを通す）は変えない
+  ではなく止める側に倒す）」、決定と理由の「本物の書き方がどれだけあっても……見落としは止める側に倒れる」、
+  案 A を捨てた理由のうち「本物の書き方を数え上げることはできない」、帰結の「本物のスクリプトは、書き方によらず
+  止める」。決定そのもの（除くのは同名のテスト `.claude/tests/scripts/slurm-run.sh` だけ）と、案 A を捨てた
+  理由のうち普通に書く形のもの（`scripts/slurm-run.sh` のような相対パスを通す）は変えない
 - ADR-0025 の決定の要因「ガードは、見落としたら通す側ではなく止める側に倒す（ADR-0020）」
 - ADR-0025 の案 A のうち、普通に書く形を超える部分: `bash -c` の文字列を 3 段以上（深さ 5 まで）読み、超えたら
   止める側に倒すこと（案 E を捨てた理由「深く包めば抜けられる」を含む）、包みの表に `sudo`、`flock`、`chrt`、
@@ -134,6 +139,8 @@ hook は境界ではない。これらを止めないことで生じる穴は、
 - 実装との差: 既存のコード（`unwrap.rs` の包みの表、`shell.rs` の `MAX_DEPTH` と `Cmd::opaque`、
   `Shell::runs_program`、ssh / `sudo -i` の中の場所の扱いなど）は、この ADR の範囲を超える読み方を含む。消す
   手間と壊す危険の方が大きいので残し、簡単にしてよい箇所の洗い出しは #405 に書く
+- Copilot が抜け道の指摘を High で出すと、decline しても `decide-next.sh` と `pre-merge-check` は残りの High に
+  数え、再レビューを求め続ける（#406）。直るまでは、`STOP_LIMIT` で止まったときに人が判断する
 - 背景の 2 つのブランチは、この ADR を元に最小の形で作り直す（作り直しは別の PR）
 - レビューの打ち切りの基準（`.claude/skills/gh-pr-review/SKILL.md`、`.claude/skills/gh-pr-create/SKILL.md`、
   `.claude/skills/delegate/SKILL.md`、`.claude/skills/git-merge/SKILL.md`）から、この ADR を指す
