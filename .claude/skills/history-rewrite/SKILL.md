@@ -128,8 +128,9 @@ git -C "$R" update-ref --stdin <"$D/transaction"
   ファイルごとに合わせる
 
   ```bash
-  # ステージしていたパスを控える（mixed reset で外れる。足したばかりのファイルは追跡されなくなる）
-  git -C "$w" diff --cached -z --name-only >"$D/staged-$k"
+  # ステージしていたパスを控える（mixed reset で外れる。足したばかりのファイルは追跡されなくなる）。
+  # HEAD はもう新しい番号なので、元の HEAD（$old）と index を比べる
+  git -C "$w" diff --cached -z --name-only "$old" >"$D/staged-$k"
   git -C "$w" reset -q   # mixed。ステージしていた変更は、作業ツリーに残ったまま外れる
   # -z で受ける（日本語や空白を含むパスを、引用符つきの 8 進や語の区切りにしない）
   git -C "$w" diff -z --name-only "$old" HEAD | while IFS= read -r -d '' f; do
