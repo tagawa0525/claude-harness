@@ -189,6 +189,7 @@ let
         "Bash(~/.claude/scripts/post-merge-cleanup.sh:*)"
         "Bash(~/.claude/scripts/gh-actions-diagnose.sh:*)"
         "Bash(~/.claude/scripts/review-level.sh:*)"
+        "Bash(~/.claude/scripts/base-moved.sh:*)"
         "Bash(~/.claude/scripts/slurm-run.sh:*)"
         "Bash(~/.claude/scripts/slurm-history.sh:*)"
         # Web

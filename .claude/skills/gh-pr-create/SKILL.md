@@ -14,6 +14,7 @@ allowed-tools:
   - Bash(gh auth*)
   - Bash(~/.claude/scripts/branch-topics.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
+  - Bash(~/.claude/scripts/base-moved.sh*)
 ---
 
 # GitHub PR Create Command
@@ -32,6 +33,25 @@ GitHub Pull Requestを作成する（gh CLI使用）。このスキルの本体�
 !`~/.claude/scripts/branch-topics.sh`
 
 PR の Why を1文で書く。2文要る（無関係な決定や話題が混ざっている）なら PR を作らず /topic-triage で分ける。
+
+## 比較元の進みの確認
+
+比較元（既定ブランチ）が分岐点から進み、同じパスを触っていないかを調べる。他のセッションが同じ変更を
+先に入れていると、マージ直前の rebase まで気付けない。ブランチ名を渡して走らせる（引数なしは cwd のブランチを
+見るので、worktree の外から呼ぶと別のブランチを比べる）:
+
+```bash
+~/.claude/scripts/base-moved.sh <ブランチ名>
+```
+
+- 何も出ず、`WARN:` も無ければ進める
+- `WARN:` が出たら比較は未確認（fetch の失敗か、分岐点が見つからない）。出力が空でも「進みなし」とは読まない。
+  原因を直して走らせ直すか、未確認のまま進めると PR 本文に書く
+- `COMMON:` が出たら、出力の分岐点と先頭の hash で `git diff <分岐点>..<先頭> -- <パス>` を読み、同じ変更の二重なら
+  PR を出さずに止め、衝突しうるなら PR 本文の Summary に書いて進める（スクリプトは知らせるだけで、止めはしない）
+
+積み重なったブランチは `--base origin/<土台のブランチ>` を付ける（fetch が更新するのは `origin/*` だけで、
+ローカルの土台は古いまま比べることになる）。
 
 ## ローカルレビュー（PR を出す前）
 

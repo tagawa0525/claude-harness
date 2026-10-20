@@ -122,6 +122,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                                                                   | git-branch                                      |
 | `scripts/git-merge-state.sh`            | 対象の検証（main 自身・GitHub リモート・未コミット）と、BEHIND・STACKED_ON・worktree の収集                           | git-merge                                       |
 | `scripts/review-level.sh`               | ローカルの `/code-review` のレベル（docs/ だけなら medium、他は high）と対象ブランチと worktree のパスの決定          | gh-pr-create, gh-pr-review, git-merge, delegate |
+| `scripts/base-moved.sh`                 | 比較元が分岐点から進み、ブランチと同じパスを触っているときの通知（fetch 付き、deny しない）                           | gh-pr-create                                    |
 | `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化 → 番号の予約のタグの解放 → ローカル/リモートブランチ削除                                  | gh-pr-merge, git-merge                          |
 | `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                                            | gh-actions-check                                |
 | `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                                                        | gh-pr-create/merge/review, delegate             |

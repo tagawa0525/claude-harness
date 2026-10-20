@@ -29,6 +29,10 @@
 #   - エラーのときは symlink を 1 つも作らずに止める（worktree は作ったまま残し、場所を知らせる。
 #     直すのは .worktreelink か .gitignore で、そのブランチの worktree で直せるように）
 #
+# GitHub リモートがあり、ローカルにブランチが無く --from も無ければ、ブランチの状態を調べる前に fetch する。古い追跡ブランチから作ると、
+# 他のセッションが既定ブランチに入れた変更を取り違える。fetch に失敗したら古い base で進まず止める
+# （post-merge-cleanup.sh の fetch と同じ扱い。ADR-0038）。
+#
 # 出力:
 #   WORKTREE: <path>
 #   BRANCH: <branch>
@@ -97,6 +101,17 @@ default_branch() {
   return 1
 }
 
+# base を使うとき（新規作成）か、リモートのブランチを探すときだけ要る。ローカルのブランチか --from なら不要
+# origin を明示する（引数なしの fetch は今のブランチの上流のリモートへ行き、base の origin/* が更新されない）
+REMOTES=$(git remote -v)
+if [[ -z "$FROM" ]] && ! git show-ref --verify --quiet "refs/heads/$BRANCH" \
+  && grep -q 'github\.com' <<<"$REMOTES" && git remote get-url origin >/dev/null 2>&1; then
+  if ! git fetch -q origin; then
+    echo "ERROR: fetch に失敗しました。古い追跡ブランチから作らないよう止めます。リモートへの接続を確かめてください" >&2
+    exit 1
+  fi
+fi
+
 CREATED=no
 BASE=""
 REMOTE_REF=""
@@ -151,7 +166,7 @@ echo "CREATED_BRANCH: $CREATED"
 [[ -z "$BASE" ]] || echo "BASE: $BASE"
 
 # fork 運用（GitHub リモートが複数）では gh の解決先が worktree に引き継がれないことがある
-GH_REMOTES=$(git remote -v | awk '/github\.com/ && /\(fetch\)/ { print $1 }' | sort -u | wc -l)
+GH_REMOTES=$(awk '/github\.com/ && /\(fetch\)/ { print $1 }' <<<"$REMOTES" | sort -u | wc -l)
 if (( GH_REMOTES >= 2 )); then
   echo "NOTE: GitHub リモートが複数あります。worktree で gh pr 系コマンドを使う前に gh repo set-default --view で解決先を確認してください"
 fi
