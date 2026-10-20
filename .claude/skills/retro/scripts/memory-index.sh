@@ -2,13 +2,14 @@
 # memory-index.sh — メモリの索引（MEMORY.md）と実ファイル、本文の [[名前]] の参照先を突き合わせる
 #
 # Usage: memory-index.sh MEMORY_DIR
-#   MEMORY_DIR  MEMORY.md のあるディレクトリ（session-events.sh の MEMORY_DIR:）
+#   MEMORY_DIR  MEMORY.md のあるディレクトリ
 #
 # 出力:
-#   ENTRIES: <索引の項目（.md へのリンク）の数>
+#   ENTRIES: <索引の項目（同じディレクトリの .md へのリンク。外部の URL は除く）の数>
 #   MISSING: <file>              索引にあり、ファイルが無い
 #   UNINDEXED: <file>            ファイルがあり、索引に無い（MEMORY.md 自身を除く）
-#   BROKEN_LINK: <file> -> <名前>  本文の [[名前]] に、<名前>.md が無い
+#   BROKEN_LINK: <file> -> <名前>  本文の [[名前]]（[[名前|別名]]、[[名前#節]] を含む）に、語幹か前付けの
+#                                  name が <名前> のファイルが無い。コードの中（`...` とフェンス）は読まない
 # 食い違いがあっても exit 0（判断はスキルが行う）。MEMORY.md が読めなければ exit 1。
 
 set -euo pipefail
@@ -25,11 +26,17 @@ if [[ ! -r "$index" ]]; then
   exit 1
 fi
 
-# 索引のリンク先（`](name.md)`）。grep の 0 件は終了コード 1 なので、0 件を空の一覧として扱う
-mapfile -t linked < <(grep -oE '\]\([^)]+\.md\)' "$index" | sed -E 's/^\]\((.*)\)$/\1/' || true)
+# 索引のリンク先（`](name.md)`）。外部の URL を除き、先頭の ./ を外す。
+# grep の 0 件は終了コード 1 なので、0 件を空の一覧として扱う
+mapfile -t linked < <(
+  { grep -oE '\]\([^)]+\)' "$index" || true; } |
+    sed -E 's/^\]\((.*)\)$/\1/' | grep -v '://' | grep -E '\.md$' | sed -E 's|^\./||' || true
+)
 echo "ENTRIES: ${#linked[@]}"
 
+declare -A indexed=()
 for target in "${linked[@]}"; do
+  indexed[$target]=1
   [[ -e "$dir/$target" ]] || echo "MISSING: $target"
 done
 
@@ -39,15 +46,7 @@ shopt -u nullglob
 
 for path in "${files[@]}"; do
   file=$(basename "$path")
-  [[ "$file" == MEMORY.md ]] && continue
-  found=0
-  for target in "${linked[@]}"; do
-    if [[ "$target" == "$file" ]]; then
-      found=1
-      break
-    fi
-  done
-  ((found)) || echo "UNINDEXED: $file"
+  [[ "$file" == MEMORY.md || -n "${indexed[$file]:-}" ]] || echo "UNINDEXED: $file"
 done
 
 # [[名前]] の参照先は、ファイル名の語幹か前付けの name（実際のメモリは両方を使う）
@@ -73,5 +72,10 @@ for path in "${files[@]}"; do
   file=$(basename "$path")
   while IFS= read -r name; do
     [[ -n "${known[$name]:-}" ]] || echo "BROKEN_LINK: $file -> $name"
-  done < <(grep -oE '\[\[[^]]+\]\]' "$path" | sed -E 's/^\[\[(.*)\]\]$/\1/' | sort -u || true)
+  done < <(
+    # フェンスの中の行と `...` を除いてから [[...]] を拾い、| と # より後を外す
+    awk '/^[[:space:]]*```/ { fence = !fence; next } !fence { gsub(/`[^`]*`/, ""); print }' "$path" |
+      { grep -oE '\[\[[^]]+\]\]' || true; } |
+      sed -E 's/^\[\[(.*)\]\]$/\1/; s/[|#].*$//; s/^[[:space:]]+//; s/[[:space:]]+$//' | sort -u
+  )
 done
