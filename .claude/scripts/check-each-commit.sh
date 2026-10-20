@@ -35,7 +35,7 @@ git rev-parse --verify -q "$base^{commit}" >/dev/null || {
   exit 2
 }
 
-mapfile -t commits < <(git rev-list --reverse "$base..HEAD")
+mapfile -t commits < <(git rev-list --topo-order --reverse "$base..HEAD")
 ((${#commits[@]} > 0)) || {
   echo "$base..HEAD にコミットがありません" >&2
   exit 2
@@ -57,7 +57,7 @@ rc=0
 for sha in "${commits[@]}"; do
   git -C "$wt" checkout -q --detach "$sha" || exit 2
   # 検査の副産物（ビルド結果など）が次のコミットに残らないようにする
-  git -C "$wt" clean -qfdx
+  git -C "$wt" clean -qffdx
   (cd "$wt" && "$@") >&2
   status=$?
   ((status == 0)) || rc=1

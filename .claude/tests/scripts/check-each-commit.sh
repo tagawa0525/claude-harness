@@ -52,6 +52,11 @@ it "check-each-commit: コマンドが異常終了しても一時ディレクト
 assert_ne 0 $?
 assert_eq "" "$(ls -A "$TMPDIR")"
 
+it "check-each-commit: 検査の副産物は次のコミットに残らない"
+out=$("$SCRIPT" main -- sh -c 'test ! -e artefact && touch artefact' 2>/dev/null)
+assert_eq 0 $?
+assert_not_contains "$out" "exit=1"
+
 it "check-each-commit: 区切りの -- が無ければ exit 2"
 "$SCRIPT" main true >/dev/null 2>&1
 assert_eq 2 $?
