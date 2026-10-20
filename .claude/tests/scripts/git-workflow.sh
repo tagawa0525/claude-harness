@@ -751,6 +751,87 @@ assert_eq "" "$(git branch --list feat/x)"
 assert_eq "adr-0001" "$(git tag --list adr-0001)"
 cd "$TEST_ROOT" || exit 1
 
+# claude-sync の元のリポジトリ（nixfiles）に見立てる。post-merge-cleanup は claude-sync.sh の有無でそれを見分ける
+setup_claude_sync_source() {
+  setup_merged_branch "$1"
+  commit_file "$1/app" modules/home/scripts/claude-sync.sh "chore: claude-sync"
+  git -C "$1/app" push -q origin main
+}
+
+it "post-merge-cleanup: pull で modules の下（claude-hooks）が変われば、rebuild が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup14"
+advance_origin_main "$TEST_ROOT/cleanup14/app" modules/home/parts/claude-hooks/src/main.rs >/dev/null
+cd "$TEST_ROOT/cleanup14/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: rebuild が要る"
+assert_not_contains "$out" "NOTE: claude-sync が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で hosts の下が変われば、rebuild が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup15"
+advance_origin_main "$TEST_ROOT/cleanup15/app" hosts/r995/default.nix >/dev/null
+cd "$TEST_ROOT/cleanup15/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で flake.nix が変われば、rebuild が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup18"
+advance_origin_main "$TEST_ROOT/cleanup18/app" flake.nix >/dev/null
+cd "$TEST_ROOT/cleanup18/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で flake.lock が変われば、rebuild が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup21"
+advance_origin_main "$TEST_ROOT/cleanup21/app" flake.lock >/dev/null
+cd "$TEST_ROOT/cleanup21/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で .claude の下が変われば、claude-sync が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup16"
+advance_origin_main "$TEST_ROOT/cleanup16/app" .claude/skills/x/SKILL.md >/dev/null
+cd "$TEST_ROOT/cleanup16/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: claude-sync が要る"
+assert_not_contains "$out" "NOTE: rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で .claude の下のどこ（tests）が変わっても、claude-sync が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup19"
+advance_origin_main "$TEST_ROOT/cleanup19/app" .claude/tests/x.sh >/dev/null
+cd "$TEST_ROOT/cleanup19/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: claude-sync が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で modules、hosts、flake、.claude のどれも変わらなければ NOTE を出さない"
+setup_claude_sync_source "$TEST_ROOT/cleanup17"
+advance_origin_main "$TEST_ROOT/cleanup17/app" docs/x.md >/dev/null
+cd "$TEST_ROOT/cleanup17/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_not_contains "$out" "NOTE:"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: claude-sync の元でないリポジトリでは、.claude の下が変わっても NOTE を出さない"
+setup_merged_branch "$TEST_ROOT/cleanup20"
+advance_origin_main "$TEST_ROOT/cleanup20/app" .claude/skills/x/SKILL.md >/dev/null
+cd "$TEST_ROOT/cleanup20/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_not_contains "$out" "NOTE:"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: 未マージのブランチは削除せず失敗する"
 REPO="$TEST_ROOT/cleanup5/app"
 make_repo "$REPO"
