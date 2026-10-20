@@ -348,6 +348,48 @@ class HistoryRewrite(unittest.TestCase):
             verifier.run()
         self.assertIn("README.md", str(caught.exception))
 
+    def test_verification_rejects_a_map_that_misses_an_original_commit(self):
+        transformer = history_rewrite.Transformer(
+            history_rewrite.prh_rules.load(
+                [Path(os.environ["HISTORY_REWRITE_DICTIONARY"]), self.extra]
+            ),
+            ["**/terms.yml"],
+            history_rewrite.load_table_format(),
+        )
+        stage1 = history_rewrite.read_map(
+            self.rewritten.path / ".git" / "filter-repo" / "commit-map"
+        )
+        del stage1[self.second]
+        verifier = history_rewrite.Verifier(
+            self.rewritten.path, self.workdir / "original.git", stage1, transformer
+        )
+        with self.assertRaises(history_rewrite.Stop) as caught:
+            verifier.run()
+        self.assertIn(self.second, str(caught.exception))
+
+    def test_a_workdir_inside_the_source_or_a_file_stops(self):
+        afile = Path(self.tmp.name) / "afile"
+        afile.write_text("")
+        for workdir in (self.repo.path / "work", afile):
+            with self.subTest(workdir=workdir):
+                result = subprocess.run(
+                    [
+                        "history-rewrite",
+                        "run",
+                        "--source",
+                        str(self.repo.path),
+                        "--workdir",
+                        str(workdir),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    env=self.env,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("ERROR:", result.stderr)
+        self.assertFalse((self.repo.path / "work").exists())
+
     def write_rules(self, expected: str, pattern: str) -> Path:
         path = Path(self.tmp.name) / f"rules-{expected}.yml"
         path.write_text(
@@ -408,6 +450,14 @@ class HistoryRewrite(unittest.TestCase):
                 env=self.env,
                 check=False,
             )
+
+        # symlink を経たディレクトリの絶対パスでも、リポジトリの中のファイルとして直す
+        alias = Path(self.tmp.name) / "alias"
+        os.symlink(work.path, alias)
+        via = transform(str(alias / "doc.md"))
+        self.assertEqual(via.returncode, 0, via.stderr)
+        self.assertEqual(via.stdout, "REPLACED: doc.md\nFILES: 1\n")
+        (work.path / "doc.md").write_text("確かめの記録\n")
 
         missing = transform("gone.md")
         self.assertEqual(missing.returncode, 1)
