@@ -338,6 +338,26 @@ else
   ng "fixup! の件名で止めた"
 fi
 
+# --- 6b. 検査する本文が空のときは textlint を呼ばない（空の標準入力だと使い方の全文を出す）---------------
+echo u > "$REPO/u.txt"
+git -C "$REPO" add u.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "fixup! docs: add" >"$WORK/out" 2>&1; then
+  if [ -s "$WORK/out" ] && grep -q "textlint \[options\]" "$WORK/out"; then
+    ng "本文が空の fixup! のコミットが textlint の使い方を出す"
+  else
+    ok "本文が空の fixup! のコミットは textlint を呼ばず、何も出さない"
+  fi
+else
+  ng "本文が空の fixup! のコミットが止まった"
+fi
+echo t > "$REPO/t.txt"
+git -C "$REPO" add t.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "fixup! docs: add" -m "確かめの結果を書く" >"$WORK/out" 2>&1; then
+  ng "fixup! の本文の崩れた語で止まらない（空の本文の分岐が本文のある場合を飛ばした）"
+else
+  ok "fixup! の本文のある場合は今までどおり検査する"
+fi
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 (( FAIL == 0 ))
