@@ -176,6 +176,22 @@ class Refusals(unittest.TestCase):
             """)
         self.assertEqual(prh_rules.apply(rules, "foo /foo/\n"), "foo X")
 
+    def test_an_empty_pattern_or_patterns_is_refused_as_empty(self):
+        for key, value, fragment in (
+            ("pattern", '""', "pattern が空"),
+            ("patterns", "[]", "patterns が空"),
+        ):
+            with self.subTest(key=key):
+                self.assert_refused(
+                    f"""\
+                    version: 1
+                    rules:
+                      - expected: X
+                        {key}: {value}
+                    """,
+                    fragment,
+                )
+
     def test_unknown_keys_and_rules_without_pattern_are_refused(self):
         self.assert_refused(
             """\

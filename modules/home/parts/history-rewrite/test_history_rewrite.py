@@ -504,6 +504,112 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("Shift_JIS", result.stderr)
 
+    def test_transform_names_the_files_it_does_not_read(self):
+        work = Repo(Path(self.tmp.name) / "transform-skips", self.env)
+        work.path.mkdir()
+        work.git("init", "-q")
+        work.write("latin1.txt", b"caf\xe9 \n")
+        work.write("data.bin", b"\0\x01")
+        work.write("dict/terms.yml", "pattern: 確かめの\n")
+        work.write("plain.md", "確認の記録\n")
+        result = subprocess.run(
+            [
+                "history-rewrite",
+                "transform",
+                "--exclude",
+                "**/terms.yml",
+                "latin1.txt",
+                "data.bin",
+                "dict/terms.yml",
+                "plain.md",
+            ],
+            cwd=work.path,
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout,
+            "SKIPPED: latin1.txt (not UTF-8)\n"
+            "SKIPPED: data.bin (binary)\n"
+            "SKIPPED: dict/terms.yml (excluded)\n"
+            "FILES: 0\n",
+        )
+
+    def test_an_indented_table_to_realign_stops(self):
+        # fix-markdown-lint の fix_markdown は表の字下げを外す（nixfiles の issue #428）ので、揃え直さずに止める
+        work = Repo(Path(self.tmp.name) / "indented", self.env)
+        work.path.mkdir()
+        work.git("init", "-q")
+        work.write("list.md", "- item\n\n  | a | b |\n  | - | - |\n  | 掃引 | x |\n")
+        result = subprocess.run(
+            ["history-rewrite", "transform", "list.md"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            cwd=work.path,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("list.md", result.stderr)
+        self.assertIn("字下げ", result.stderr)
+        self.assertIn("掃引", (work.path / "list.md").read_text())
+
+    def test_a_message_table_that_cannot_be_realigned_names_the_commit(self):
+        repo = Repo(Path(self.tmp.name) / "message-table", self.env)
+        repo.path.mkdir()
+        repo.git("init", "-q")
+        repo.write("a.md", "a\n")
+        commit = repo.commit("docs: a\n\n| a | b |\n| - | - |\n| x \\| y | 掃引 |\n")
+        result = subprocess.run(
+            [
+                "history-rewrite",
+                "run",
+                "--source",
+                str(repo.path),
+                "--workdir",
+                str(Path(self.tmp.name) / "message-table-work"),
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(commit, result.stderr)
+        self.assertNotIn("--exclude", result.stderr)
+
+    def test_replace_refs_of_the_source_do_not_change_the_original_commits(self):
+        # clone --mirror は refs/replace/ も写すが、filter-repo に渡すのはブランチとタグだけ
+        repo = Repo(Path(self.tmp.name) / "replaced", self.env)
+        repo.path.mkdir()
+        repo.git("init", "-q")
+        repo.write("a.md", "a\n")
+        first = repo.commit("docs: a\n")
+        repo.write("a.md", "b\n")
+        repo.commit("docs: b\n")
+        # 置き換えで足した親は、ブランチからもタグからも届かない
+        tree = repo.git("rev-parse", "HEAD^{tree}").strip()
+        orphan = repo.git("commit-tree", "-m", "docs: x", tree).strip()
+        repo.git("replace", "--graft", first, orphan)
+        result = subprocess.run(
+            [
+                "history-rewrite",
+                "run",
+                "--source",
+                str(repo.path),
+                "--workdir",
+                str(Path(self.tmp.name) / "replaced-work"),
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_a_table_row_with_an_escaped_pipe_stops(self):
         # format_table は \| でも列を切る（nixfiles の issue #428）ので、揃え直さずに止める。コードスパンの中の
         # エスケープしていない | は GFM でも区切りなので、そのまま揃え直す
@@ -589,7 +695,7 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual((work.path / "doc.md").read_text(), "確かめの記録\n")
         linked = transform("link.md")
         self.assertEqual(linked.returncode, 0, linked.stderr)
-        self.assertEqual(linked.stdout, "FILES: 0\n")
+        self.assertEqual(linked.stdout, "SKIPPED: link.md (symlink)\nFILES: 0\n")
         self.assertEqual((work.path / "doc.md").read_text(), "確かめの記録\n")
 
 
