@@ -116,7 +116,7 @@ setup() {
   { cat "$CONF"; echo 'serialization_interval 1'; } > "$XDG_CONFIG_HOME/zellij/config.kdl"
   cp "$LAYOUT" "$XDG_CONFIG_HOME/zellij/layouts/slots.kdl"
   # 隔離した HOME に、レイアウトが指す固定パスで wasm を置く（本番の
-  # home-manager と同じくシンボリックリンク）。展開後の絶対パスが
+  # home-manager と同じくsymlink）。展開後の絶対パスが
   # permissions.kdl のキーになる（シナリオ0で名指しする）
   SLOTS_WASM="$HOME/${SLOTS_LOCATION#\~/}"
   mkdir -p "$(dirname "$SLOTS_WASM")"

@@ -25,7 +25,7 @@ allowed-tools:
 
 ## 作る・検査する
 
-形（前付けのキーと status、必須と推奨の節、番号）を持つのは CLI の `design-records` で、下の説明と食い違えば CLI が正。
+形（フロントマターのキーと status、必須と推奨の節、番号）を持つのは CLI の `design-records` で、下の説明と食い違えば CLI が正。
 
 ```bash
 design-records new <slug> "<決めたことの 1 文>"
@@ -33,19 +33,19 @@ design-records renumber <旧番号> [<新番号>]
 design-records check [--changed] [FILE]...
 ```
 
-`new` は `docs/adr/NNNN-<slug>.md` を、次の番号、前付け、必須と推奨の見出しつきで作る。slug は決めたことを動詞で
+`new` は `docs/adr/NNNN-<slug>.md` を、次の番号、フロントマター、必須と推奨の見出しつきで作る。slug は決めたことを動詞で
 始めた英語の kebab-case にする。番号は、全ブランチの履歴と予約のタグ（`adr-NNNN`）のうち最大の番号 + 1 で、
 注釈つきのタグを打って予約する（ADR-0018）。リモート origin があれば、origin のブランチとタグを fetch してから振り（予約を解放した番号は origin の既定ブランチの
 履歴にしか残らない）、push する。
 push が拒まれたら（ほかの clone が先に予約した）次の番号で振り直す。origin に届かなければ、記録を作らずに止まる。
 予約だけして使わなかった番号は欠番にする（使い回さない）。
 
-docs/issues の issue も同じ仕組みで番号を振る（`--kind issue`。タグは `issue-NNNN`、表題の行だけを書く。前付けと
+docs/issues の issue も同じ仕組みで番号を振る（`--kind issue`。タグは `issue-NNNN`、表題の行だけを書く。フロントマターと
 節の形は各リポジトリの README に従う）。
 
 `renumber` は、このブランチで足した記録（既定ブランチとの分岐点に無いもの）の番号を振り直す。rebase の後に
 `check` が番号の重複を示したときに使う。ファイル名と表題を変え、このブランチで足した行の参照（`ADR-NNNN`、
-`NNNN-<slug>.md`）を付け替えて、1 つのコミットにする。main から来た行の参照と、振り直す記録の前付けの参照は、
+`NNNN-<slug>.md`）を付け替えて、1 つのコミットにする。main から来た行の参照と、振り直す記録のフロントマターの参照は、
 main の記録を指すので変えない。作業ツリーに変更（追跡していないファイルを含む）があれば止まる。マージした後の予約のタグは、`post-merge-cleanup.sh` が
 消す。
 
@@ -72,7 +72,7 @@ repos:
 
 - **見出しは日本語**（英語の原文でもよい）: 背景、決定の要因、検討した案、決定と理由、帰結、確認、各案の長所と短所、
   補足。必須は背景・検討した案・決定と理由、推奨は帰結・確認。ほかの節を足してもよい
-- **前付け**のキーは `status`、`date` と次の 4 つ（MADR の `decision-makers` などに代えて、置き換えと参照を grep で
+- **フロントマター**のキーは `status`、`date` と次の 4 つ（MADR の `decision-makers` などに代えて、置き換えと参照を grep で
   引けるようにする）。一覧は `[a, b]` の形で 1 行に書く
   - `requires`: 前提にしている ADR（`[ADR-0002]`）
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く
@@ -90,7 +90,7 @@ repos:
 
 - **proposed と deferred の間**: 自由に直す。実装をマージするブランチで、帰結と確認を実装に合わせ、`status: accepted` にする
 - **確定した後**（accepted、rejected、withdrawn、superseded、deprecated）に直してよいのは、誤字、文法、マークアップ、
-  壊れたリンク、前付けの `status` / `superseded-by` / `date`、補足の節への日付つきの追記（`- YYYY-MM-DD: …`）だけ
+  壊れたリンク、フロントマターの `status` / `superseded-by` / `date`、補足の節への日付つきの追記（`- YYYY-MM-DD: …`）だけ
 - **置き換え**: 新しい ADR は、古い決定のうちまだ有効な部分を書き直して含める（採用中の ADR だけで今の決定が分かる
   ように）。古い方は `status: superseded` と `superseded-by` を書く。古い方を前提にしていた ADR を
   `grep -l 'requires:.*ADR-NNNN' docs/adr` で引き、見直す

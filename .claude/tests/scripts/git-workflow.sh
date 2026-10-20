@@ -505,7 +505,7 @@ cd "$REPO" || exit 1
 # 呼ばれないことを検証するため記録を空にしておく
 make_fake_gh ''
 
-it "git-info: 各セクションを見出し付きで出力する"
+it "git-info: 各セクションを見出しつきで出力する"
 out=$("$SCRIPTS_DIR/git-info.sh")
 assert_eq 0 $?
 for h in "📍 現在のブランチ" "📝 未コミット変更" "📤 未プッシュコミット" "📦 stash" "🌳 worktree" "🔗 関連PR"; do

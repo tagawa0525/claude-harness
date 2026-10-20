@@ -40,7 +40,7 @@ r995 の Slurm は、重い計算を `--exclusive` で 1 本ずつ流す（`modu
 上限としては効かないので、見積もりが外れても計算は失われない。
 
 - `SchedulerParameters=enable_user_top` と `OverTimeLimit=UNLIMITED` を `modules/slurm/common.nix` に置く
-- `squeue` の既定の表示（`SQUEUE_FORMAT`）に、名前、経過、見積もり（`%l`）、始まりの見込み（`%S`）、連絡先（`%k`）を出す
+- `squeue` の既定の表示（`SQUEUE_FORMAT`）に、名前、経過、見積もり（`%l`）、開始の見込み（`%S`）、連絡先（`%k`）を出す
 - `slurm-run.sh` は `-t <見積もり>` を必須にし、名前（`-J`）、ログ（r995 の `~/github/slurm-logs/<名前>-<番号>.out`）、
   連絡先（`--comment` に git のブランチ、投げた場所、`CLAUDE_CODE_SESSION_ID`）を付ける。`--top` で投げたジョブを先頭に移す
 

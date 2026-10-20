@@ -116,7 +116,7 @@ git branch --unset-upstream [branch-name]
 
 ## 計画書のリネーム
 
-ブランチ作成・リネーム後、連番のない計画書があれば連番付きにリネームする:
+ブランチ作成・リネーム後、連番のない計画書があれば連番つきにリネームする:
 
 ```bash
 ~/.claude/scripts/rename-plan.sh [branch-name]

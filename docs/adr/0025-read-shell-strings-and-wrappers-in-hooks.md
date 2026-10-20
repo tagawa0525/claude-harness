@@ -7,12 +7,12 @@ superseded-by:
 issues: ["#303", "#300"]
 ---
 
-# ADR-0025: hook は bash -c の文字列を深さ 5 まで再帰的に読み、包みの表を広げ、読めない形は対象語を含む文字列なら止める
+# ADR-0025: hook は bash -c の文字列を深さ 5 まで再帰的に読み、ラッパーの表を広げ、読めない形は対象語を含む文字列なら止める
 
 ## 背景
 
 claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を tree-sitter-bash で解析し、各ルールが「実際に走る
-プログラム」を `Cmd::program()` と `shell.commands()` で見る。PR #301 で、`env`、`nice`、`timeout` などの包みを
+プログラム」を `Cmd::program()` と `shell.commands()` で見る。PR #301 で、`env`、`nice`、`timeout` などのラッパーを
 `unwrap.rs` の表でほどく土台ができた。その上で、2026-10-11 に次の見逃しが分かった（#303、#300）。
 
 - `bash -x <script>`、`bash -e <script>`、`sh -eu <script>` は、`bash` / `sh` の次の語をそのままスクリプトと読むので、
@@ -41,11 +41,11 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 ## 検討した案
 
 - 案 A: `bash` / `sh` のオプションを表で持ち、`-c` の文字列は同じ構文解析を再帰的に当てる（深さの上限つき）。
-  包みの表に `sudo`、`xargs`、`flock`、`chrt`、`taskset`、`watch`、`script -c`、`ssh <接続先> …`、`eval` を足す。
+  ラッパーの表に `sudo`、`xargs`、`flock`、`chrt`、`taskset`、`watch`、`script -c`、`ssh <接続先> …`、`eval` を足す。
   走らせるものが決まらない形は、コマンド文字列のどこかに対象語があれば止める側に倒す
 - 案 B: 未知のコマンド（`$CMD` など）は許可する。Claude Code 自身の権限判定と同じ考え方
 - 案 C: 引数のどこかに対象語があれば止める保険を入れる（全部のコマンド、または未知の先頭語に限る）
-- 案 D: `bash -c` の文字列は見ない（Claude Code 自身の権限判定と同じ境界）。包みの表だけ広げる
+- 案 D: `bash -c` の文字列は見ない（Claude Code 自身の権限判定と同じ境界）。ラッパーの表だけ広げる
 - 案 E: 文字列の再帰に深さの上限を置かない、または上限を超えたら通す
 
 ## 決定と理由
@@ -141,12 +141,12 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   のセッションと分からなくなるので、block-no-verify が止める（文言で CLAUDECODE が渡らないことを示す）。これは
   ADR-0015 の「Claude Code のセッションが検査を飛ばせない」の通り。接続先で `git pull` する運用が増えて繰り返し
   止まるなら、見直す
-- 包みが受け付けるオプションが変わったら（man が変わったら）表を直す。知らないオプションは今までどおり読み飛ばす
+- ラッパーが受け付けるオプションが変わったら（man が変わったら）表を直す。知らないオプションは今までどおり読み飛ばす
 - 見直す条件: 決まらない形の偽陽性が作業を繰り返し止めたとき。深さ 5 を超える正当な入れ子が出たとき
 
 ### 確認
 
-- `.claude/tests/hooks.sh`: `guard-sbatch` の節で、`bash` / `sh` のオプション付き、`bash -c` の入れ子（6 段で止める側）、
+- `.claude/tests/hooks.sh`: `guard-sbatch` の節で、`bash` / `sh` のオプションつき、`bash -c` の入れ子（6 段で止める側）、
   各包み、走らせない形、決まらない形（対象語の有無で分かれる）を確かめる。`require-background-wait`、
   `block-no-verify`、`guard-git-add`、`guard-git-push`、`block-main-commit` の節で、同じ土台が効くことを確かめる
 - `modules/home/parts/claude-hooks/src/unwrap.rs` と `shell.rs` の単体テストで、表の読み方、文字列の位置と

@@ -103,7 +103,7 @@ struct Adr<'a> {
     path: &'a str,
     number: u32,
     front: FrontMatter,
-    /// コードブロックの外の行（前付けを含む）。コードブロックが閉じていなければ `None` で、行を見る検査を飛ばす。
+    /// コードブロックの外の行（フロントマターを含む）。コードブロックが閉じていなければ `None` で、行を見る検査を飛ばす。
     lines: Option<Vec<(usize, &'a str)>>,
 }
 
@@ -126,7 +126,7 @@ impl Adr<'_> {
     }
 }
 
-/// docs/adr の直下の、番号で始まる .md（[`is_adr_path`]）を読む。名前と前付けが読めないものは違反にして除く。
+/// docs/adr の直下の、番号で始まる .md（[`is_adr_path`]）を読む。名前とフロントマターが読めないものは違反にして除く。
 fn parse_adrs<'a>(adrs: &'a BTreeMap<String, String>, out: &mut Found) -> Vec<Adr<'a>> {
     let mut docs = Vec::new();
     for (path, text) in adrs {
@@ -191,7 +191,7 @@ fn unique<'a>(numbered: impl Iterator<Item = (&'a str, u32)>, out: &mut Found) {
     }
 }
 
-/// docs/issues の issue（`paths`）の番号の重複。前付けと節の形は見ない（各リポジトリの検査に任せる。ADR-0018）。
+/// docs/issues の issue（`paths`）の番号の重複。フロントマターと節の形は見ない（各リポジトリの検査に任せる。ADR-0018）。
 pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
     let mut out = Found::default();
     unique(
@@ -235,7 +235,7 @@ pub fn check_reservations(
     out.0
 }
 
-/// 前付けの値の表示（違反の文に入れる）。
+/// フロントマターの値の表示（違反の文に入れる）。
 fn show(value: &Value) -> String {
     match value {
         Value::Empty => "empty".to_string(),
@@ -244,7 +244,7 @@ fn show(value: &Value) -> String {
     }
 }
 
-/// 前付けのキー、`status` の値、日付。
+/// フロントマターのキー、`status` の値、日付。
 fn check_front(doc: &Adr, out: &mut Found) {
     for key in KEYS {
         if doc.front.get(key).is_none() {
@@ -532,12 +532,12 @@ fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Fo
     }
 }
 
-/// 前付けと補足の節を除いた本文が変わったか（確定した ADR に許す変更を除いて比べる）。
+/// フロントマターと補足の節を除いた本文が変わったか（確定した ADR に許す変更を除いて比べる）。
 pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
 }
 
-/// 確定した後も直してよい前付けのキー（[`AMENDABLE_KEYS`]）と、補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
+/// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）と、補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
 /// 変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で比べる（その違反は
 /// check が示す）。
 fn body(text: &str) -> Vec<&str> {
@@ -558,7 +558,7 @@ fn body(text: &str) -> Vec<&str> {
                 break;
             }
             let (key, value) = line.split_once(':').unwrap_or((line, ""));
-            // 空のキーはキーが無いのと同じ（前付けの形を揃えるだけの変更を本文の変更にしない）
+            // 空のキーはキーが無いのと同じ（フロントマターの形を揃えるだけの変更を本文の変更にしない）
             let empty = matches!(value.trim(), "" | "[]");
             if !empty && !AMENDABLE_KEYS.contains(&key.trim()) {
                 front.push(line);
@@ -1058,7 +1058,7 @@ mod tests {
 
     #[test]
     fn other_front_matter_changes_change_the_body() {
-        // 確定した後に直してよい前付けは status、superseded-by、date だけ
+        // 確定した後に直してよいフロントマターは status、superseded-by、date だけ
         let old = BODY.replace("date: 2026-10-01\n", "date: 2026-10-01\nsupersedes: []\n");
         assert!(body_changed(
             &old,
@@ -1068,7 +1068,7 @@ mod tests {
 
     #[test]
     fn adding_empty_keys_keeps_the_body() {
-        // 空のキーはキーが無いのと同じ（前付けの形を揃えるだけの変更）
+        // 空のキーはキーが無いのと同じ（フロントマターの形を揃えるだけの変更）
         let new = BODY.replace(
             "date: 2026-10-01\n",
             "date: 2026-10-01\nrequires: []\nsuperseded-by:\nissues: []\n",

@@ -1,4 +1,4 @@
-//! 設計の記録（ADR）の形。前付けのキーと status、必須と推奨の節、ファイル名と番号、雛形を持つ（ADR-0009）。
+//! 設計の記録（ADR）の形。フロントマターのキーと status、必須と推奨の節、ファイル名と番号、テンプレートを持つ（ADR-0009）。
 //! ADR と docs/issues の issue の番号の予約（タグの名前）と振り直し（参照の付け替え）も持つ（ADR-0018）。
 //!
 //! 形の値を持つのはこのクレートだけにする。スキル `adr` と `.claude/scripts/branch-topics.sh` は CLI を呼び、
@@ -85,7 +85,7 @@ pub fn parse_tag(name: &str) -> Option<(Kind, u32)> {
     })
 }
 
-/// 前付けのキー（書く順）。
+/// フロントマターのキー（書く順）。
 pub const KEYS: [&str; 6] = [
     "status",
     "date",
@@ -109,7 +109,7 @@ pub const STATUSES: [&str; 7] = [
 /// 決める前の status。この間は本文を自由に直してよい。
 pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 
-/// 確定した後も直してよい前付けのキー。
+/// 確定した後も直してよいフロントマターのキー。
 pub const AMENDABLE_KEYS: [&str; 3] = ["status", "superseded-by", "date"];
 
 /// 節の見出し（日本語と、MADR の英語の原文）。
@@ -221,12 +221,12 @@ pub fn next_number<'a>(kind: Kind, paths: impl IntoIterator<Item = &'a str>) -> 
     numbers_in(kind, paths).max().map_or(1, |n| n + 1)
 }
 
-/// 新しい issue の雛形。前付けと節の形は各リポジトリが決めるので、表題の行だけを書く（ADR-0018）。
+/// 新しい issue のテンプレート。フロントマターと節の形は各リポジトリが決めるので、表題の行だけを書く（ADR-0018）。
 pub fn issue_template(title: &str) -> String {
     format!("# {title}\n")
 }
 
-/// 新しい ADR の雛形。status は proposed、前付けのキーは空、必須と推奨の見出しを持つ。
+/// 新しい ADR のテンプレート。status は proposed、フロントマターのキーは空、必須と推奨の見出しを持つ。
 pub fn template(number: u32, title: &str, date: &str) -> String {
     let mut text = String::from("---\n");
     for key in KEYS {
@@ -337,8 +337,8 @@ fn normalize(path: &Path) -> std::path::PathBuf {
     out.iter().collect()
 }
 
-/// 前付けの最初の `status:` の行の値（後ろの ` # コメント` と引用符は外す）。前付けか値が無ければ `None`。
-/// 前付けのほかの行の形は問わない（形を検査していない文書も読むため。形の検査は [`check`] が行う）。
+/// フロントマターの最初の `status:` の行の値（後ろの ` # コメント` と引用符は外す）。フロントマターか値が無ければ `None`。
+/// フロントマターのほかの行の形は問わない（形を検査していない文書も読むため。形の検査は [`check`] が行う）。
 pub fn status(text: &str) -> Option<String> {
     let mut lines = text.lines();
     if lines.next() != Some("---") {

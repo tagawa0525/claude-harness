@@ -185,7 +185,7 @@ python_subdir_tests() {
   local f dir name pytest_ok=0
   local -a dirs files cmd
   python3 -m pytest --version >/dev/null 2>&1 && pytest_ok=1
-  # スラッシュの無いパス（ルート直下）は . に写す
+  # スラッシュの無いパス（ルート直下）は . にコピーする
   mapfile -t dirs < <(for f in "$@"; do [[ "$f" == */* ]] && echo "${f%/*}" || echo .; done | sort -u)
   for dir in "${dirs[@]}"; do
     files=()

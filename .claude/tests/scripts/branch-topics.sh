@@ -3,7 +3,7 @@
 #
 # 実行: bash .claude/tests/scripts/branch-topics.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
-# 前付けの status は design-records（設計の記録の CLI）が読む。リポジトリのクレートをビルドして PATH の先頭に置く。
+# フロントマターの status は design-records（設計の記録の CLI）が読む。リポジトリのクレートをビルドして PATH の先頭に置く。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
 DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
 # バイナリの場所は cargo に聞く（~/.cargo/config.toml の target-dir や CARGO_TARGET_DIR で target/ の外に出る）
@@ -18,7 +18,7 @@ export PATH
 
 source "$(dirname "$0")/../lib.sh"
 
-# write_front <path> <status>: 前付けに status を持つ文書を書く
+# write_front <path> <status>: フロントマターに status を持つ文書を書く
 write_front() {
   mkdir -p "$(dirname "$1")"
   printf -- '---\nstatus: %s\ndate: 2026-10-09\n---\n\n# %s\n' "$2" "$(basename "$1")" > "$1"
@@ -54,7 +54,7 @@ assert_contains "$out" "BASE: main"
 assert_contains "$out" "COMMITS: 5"
 assert_contains "$out" "TYPES: feat=2 docs=1 other=1 test=1"
 
-it "branch-topics: 新しい ADR を status 付きで 1 行ずつ出す（README は ADR ではない）"
+it "branch-topics: 新しい ADR を status つきで 1 行ずつ出す（README は ADR ではない）"
 assert_contains "$out" "ADR_NEW: docs/adr/0003-use-c.md (proposed)"
 assert_contains "$out" "ADR_NEW: docs/adr/0004-use-d.md (accepted)"
 assert_not_contains "$out" "README"

@@ -1,4 +1,4 @@
-//! CLI を一時的な git リポジトリで走らせ、雛形、検査、status の読み出しを確かめる。
+//! CLI を一時的な git リポジトリで走らせ、テンプレート、検査、status の読み出しを確かめる。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -576,7 +576,7 @@ fn check_lets_adrs_change_freely_before_they_are_decided_on_main() {
     t.commit_all("docs(adr): accept c");
     // ブランチの上で accepted にしたものも、main にマージする前は直してよい
     t.write(c, &(t.read(c) + "\n本文を足す\n"));
-    // 確定した ADR の前付けと補足は直してよい
+    // 確定した ADR のフロントマターと補足は直してよい
     let a = "docs/adr/0001-use-a.md";
     let old_date = format!("date: {}", today());
     t.write(
@@ -592,7 +592,7 @@ fn check_lets_adrs_change_freely_before_they_are_decided_on_main() {
 fn check_compares_bodies_even_when_the_base_front_matter_is_broken() {
     let t = superseded_repo("broken-base");
     let b = "docs/adr/0002-use-b.md";
-    // main の ADR-0002 の前付けに空行がある（check の違反）
+    // main の ADR-0002 のフロントマターに空行がある（check の違反）
     t.write(b, &t.read(b).replacen("requires:", "\nrequires:", 1));
     t.commit_all("docs(adr): break b");
     t.git(&["switch", "-q", "-c", "topic"]);
@@ -623,7 +623,7 @@ fn status_reads_the_front_matter_from_stdin() {
     assert_eq!(stdout(&out), "-\n");
     let out = run(&dir, &["status"], Some("---\ndate: 2026-10-11\n---\n"));
     assert_eq!(stdout(&out), "-\n");
-    // 前付けのほかの行の形は問わない（docs/issues などの、検査していない文書も読む）。形の検査は check が行う
+    // フロントマターのほかの行の形は問わない（docs/issues などの、検査していない文書も読む）。形の検査は check が行う
     let lenient = "---\ntags:\n  - a\n\nrefs: [1, 2\nstatus: \"accepted\" # note\nstatus: b\n---\n";
     let out = run(&dir, &["status"], Some(lenient));
     assert!(out.status.success(), "{}", stderr(&out));
@@ -1261,7 +1261,7 @@ fn new_drops_local_tags_that_origin_deleted() {
 fn renumber_keeps_front_matter_references_of_the_moved_record() {
     let t = duplicated_after_rebase("self-ref");
     let b = "docs/adr/0001-use-b.md";
-    // b は main の ADR-0001（use-a）を前提にする。記録の前付けは自分を指さない
+    // b は main の ADR-0001（use-a）を前提にする。記録のフロントマターは自分を指さない
     t.write(
         b,
         &t.read(b).replace("requires: []", "requires: [ADR-0001]"),

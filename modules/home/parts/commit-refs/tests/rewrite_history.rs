@@ -279,7 +279,7 @@ fn rewrite_history_without_a_map_is_a_usage_error() {
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
 }
 
-/// 日時を決めて、作業ツリーの全てをコミットする
+/// 日時を決めて、作業ツリーのすべてをコミットする
 fn commit_at(t: &TempRepo, date: &str, message: &str) -> String {
     let env = [("GIT_AUTHOR_DATE", date), ("GIT_COMMITTER_DATE", date)];
     t.git(&["add", "-A"]);

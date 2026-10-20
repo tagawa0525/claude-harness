@@ -40,7 +40,7 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
 
 - Nix は `nixfmt --check -`、Python は `ruff --stdin-filename <パス> -` に標準入力で渡す（ruff はそのパスの場所から
   プロジェクトの設定を探す）
-- Markdown は元のパスのまま一時のディレクトリに書き出し、リポジトリの直下の設定と `.markdownlintignore` を写して、
+- Markdown は元のパスのまま一時のディレクトリに書き出し、リポジトリの直下の設定と `.markdownlintignore` をコピーして、
   そこで直して検査する。直した版をステージし直し、作業ツリーのファイルがステージした版と同じ（ステージしていない
   編集が無い）ときだけ、作業ツリーにも書く
 - Rust は 1 つずつ標準入力で rustfmt に渡して整えた出力と比べる（ファイルで渡すと `mod` の先を読みにいき、標準
@@ -51,7 +51,7 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
 
 - 一部だけステージした Markdown の自動修正は、コミットには入るが、作業ツリーには入らない。作業ツリーのファイルは
   直す前の行のまま残り、次にその行をステージしたときにまた直る
-- markdownlint の設定は、直下の決まった名前のファイル（ステージした版）だけを写す。設定の `extends` が指す別の
+- markdownlint の設定は、直下の決まった名前のファイル（ステージした版）だけをコピーする。設定の `extends` が指す別の
   ファイルは写らない
 - rustfmt は標準入力で読むので、rustfmt.toml の `ignore` が効かない
 - ruff と rustfmt は、ファイルごとに起動する（ファイルの数だけ起動の時間がかかる）
@@ -61,7 +61,7 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
 
 - `modules/home/parts/tests/pre-commit-partial-stage.sh`: 一部だけステージした Markdown、Nix、Python、Rust で、
   ステージした版を検査して直し、作業ツリーを書き換えないこと（中身と mtime）。`diff.noprefix`、textconv、
-  `git add -N` のあるリポジトリでも、編集が残ること。改行の変換（`core.autocrlf`）があっても、全てステージした
+  `git add -N` のあるリポジトリでも、編集が残ること。改行の変換（`core.autocrlf`）があっても、すべてステージした
   Markdown の作業ツリーを直すこと
 - `modules/home/parts/tests/pre-commit-rust-format.sh`: クレートの edition（workspace からの継承を含む）と、
   クレートの外とパッケージの無い Cargo.toml の下の 2024

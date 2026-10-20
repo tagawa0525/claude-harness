@@ -75,7 +75,7 @@ xlc の衝突は、マージのときに `cargo test`（crates/docs の検査）
 
 ### 検査（`check`）
 
-`check` は docs/issues の番号の重複も違反にし、予約のタグの slug と違う記録に注意を出す。issue の前付けと節の
+`check` は docs/issues の番号の重複も違反にし、予約のタグの slug と違う記録に注意を出す。issue のフロントマターと節の
 形は検査しない（#270 で決める。それまで各リポジトリの検査に任せる）。
 
 `check` は fetch しない。pre-commit で毎回のコミットに通信が入り、手元に通信が無いとコミットできなくなる。
@@ -95,7 +95,7 @@ rebase した後の番号の重複は作業ツリーのファイルどうしで�
 種類は `--kind adr|issue`（省けば adr）で選び、サブコマンド（`new`、`renumber`）は ADR と issue で共有する。
 今の CLI は `check --changed` のように、サブコマンドの後ろのオプションで振る舞いを変えている。`design-records issue
 new` のように種類ごとのサブコマンドの木にすると、`check`、`status`、`prune`（種類を問わない）と形が揃わない。
-issue の `new` は、表題の行（`# <title>`）だけを書く（前付けと節の形は #270 で決める）。
+issue の `new` は、表題の行（`# <title>`）だけを書く（フロントマターと節の形は #270 で決める）。
 
 どのコマンドも、前に `-C <dir>` を付けると `<dir>` で走る（git の `-C` と同じ）。/git-merge は対象のブランチの
 worktree を `git -C` で指して操作するので、`check` と `renumber` も同じ形で呼ぶ。

@@ -247,7 +247,7 @@ else
   else
     ng "曖昧な対応で記録が変わったか、エラーが表示されない"
   fi
-  # hook は正規化した絶対パスを出す（TMPDIR がシンボリックリンクの下でも比べられるよう、同じ形で求める）
+  # hook は正規化した絶対パスを出す（TMPDIR がsymlinkの下でも比べられるよう、同じ形で求める）
   saved="$(git -C "$REPO" rev-parse --absolute-git-dir)/commit-refs-remap.input"
   if grep -qF "直し方: 上の ERROR を直してから、commit-refs remap $(printf '%q' "$saved")" "$WORK/out" \
     && cmp -s "$WORK/ambiguous-input" "$saved"; then

@@ -154,7 +154,7 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
     ))
 }
 
-/// `new`: 番号を予約し、雛形を書いて、リポジトリの直下からのパスを出す。
+/// `new`: 番号を予約し、テンプレートを書いて、リポジトリの直下からのパスを出す。
 pub fn new(kind: Kind, slug: &str, title: &str, date: &str) -> Result<ExitCode> {
     let root = repo_root()?;
     let number = reserve(&root, kind, slug, None)?;
@@ -502,7 +502,7 @@ fn move_record(
             None => None,
         };
         let file = root.join(path);
-        // シンボリックリンクの差分の行はリンクの先の行ではなく、先はリポジトリの外のこともある
+        // symlinkの差分の行はリンクの先の行ではなく、先はリポジトリの外のこともある
         // submodule（gitlink）の項目はディレクトリで、参照を書くファイルではない
         if fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink() || m.is_dir()) {
             continue;
@@ -566,8 +566,8 @@ fn used_on(root: &Path, branch: Option<&str>, kind: Kind, number: u32) -> Result
         .any(|path| record_name(kind, path).is_some_and(|(n, _)| n == number)))
 }
 
-/// 振り直す記録 `text` のうち、付け替える行。`added`（`None` ならすべて）から前付けを除き、最初の `# ` の見出し
-/// （表題）を足す。記録の前付けの参照（`requires`、`blocked-by` など）は自分を指さないので、同じ番号は既定
+/// 振り直す記録 `text` のうち、付け替える行。`added`（`None` ならすべて）からフロントマターを除き、最初の `# ` の見出し
+/// （表題）を足す。記録のフロントマターの参照（`requires`、`blocked-by` など）は自分を指さないので、同じ番号は既定
 /// ブランチの記録を指す。表題は、改名で足した行に入らなくても自分の番号を書く。
 fn record_lines(text: &str, added: Option<BTreeSet<usize>>) -> BTreeSet<usize> {
     let numbered: Vec<(usize, &str)> = text.lines().enumerate().map(|(i, l)| (i + 1, l)).collect();

@@ -7,7 +7,7 @@ superseded-by:
 issues: []
 ---
 
-# ADR-0035: xlc を t14g4 の systemd timer で r995 から GitHub に写す
+# ADR-0035: xlc を t14g4 の systemd timer で r995 から GitHub にコピーする
 
 ## 背景
 
@@ -34,18 +34,18 @@ xlc の origin は r995 の作業用リポジトリ（`r995:/home/tagawa/github/
 
 ## 決定と理由
 
-案 A を採る。バックアップは r995 の今のブランチとタグの写しにし、rebase と削除も反映する。作業用の clone の remote と
+案 A を採る。バックアップは r995 の今のブランチとタグのコピーにし、rebase と削除も反映する。作業用の clone の remote と
 `refs/remotes` に触れないので、xlc の手順に影響しない。送る ref を heads と tags に限り、作業用リポジトリのほかの ref を
 公開しない。
 
 - スクリプト `xlc-github-backup` は `~/.local/state/xlc-github-backup/xlc.git` を中継に使い、無ければ `git init --bare` で作る
 - 1 時間ごと（`OnCalendar=hourly`）。t14g4 はノート PC なので、`Persistent=true` で止まっていた間の分を起動後に走らせる
 - Claude Code の hook は `+` の refspec の push を Claude のコマンドとしては止める。この timer はユーザーの自動化として
-  動き、hook を通らない。写しの先は作業の origin ではなく、force で上書きするものは r995 に残っている
+  動き、hook を通らない。コピーの先は作業の origin ではなく、force で上書きするものは r995 に残っている
 
 ### 帰結
 
-- GitHub の xlc は、最大 1 時間遅れの r995 の写しになる。GitHub だけにあるブランチやタグは、次の実行で消える
+- GitHub の xlc は、最大 1 時間遅れの r995 のコピーになる。GitHub だけにあるブランチやタグは、次の実行で消える
 - r995 か t14g4 がオフラインの間は失敗し、journal に残る。次の実行で追いつく
 - 作業用の clone に手で足した remote `github` は、この timer では使わない
 
