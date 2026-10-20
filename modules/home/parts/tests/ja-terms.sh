@@ -160,12 +160,9 @@ pass|参照が紐付きます。
 pass|底抜けの楽観を戒める。
 pass|写真を撮る。
 pass|画面に映す。
-stop|本番への配備を行う。
 stop|終端子を探す。
 stop|汚い電源断で壊れる。
 stop|依存物を入れる。
-stop|モデルの幻覚を減らす。
-stop|性能の退行を防ぐ。
 pass|symlink を作る。
 CASES
 

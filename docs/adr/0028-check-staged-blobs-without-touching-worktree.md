@@ -52,7 +52,7 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
 - 一部だけステージした Markdown の自動修正は、コミットには入るが、作業ツリーには入らない。作業ツリーのファイルは
   直す前の行のまま残り、次にその行をステージしたときにまた直る
 - markdownlint の設定は、直下の決まった名前のファイル（ステージした版）だけをコピーする。設定の `extends` が指す別の
-  ファイルは写らない
+  ファイルはコピーされない
 - rustfmt は標準入力で読むので、rustfmt.toml の `ignore` が効かない
 - ruff と rustfmt は、ファイルごとに起動する（ファイルの数だけ起動の時間がかかる）
 - 実装は `modules/home/parts/staged-checks.sh`（`git.nix` の `stagedChecks`）
