@@ -18,7 +18,7 @@
 #     TOOL        そのほか（`Exit code N` は、エラーらしい行の最後、無ければ最後の行とつなぐ。
 #                 `<tool_use_error>` のタグは除く）
 #   USER: <発言>  本体の記録のユーザーの発言を順に（改行は空白に）。ターンの途中で送った発言
-#                 （attachment の queued_command）を含み、スラッシュコマンドは `/<名前> <引数>` にする。
+#                 （attachment の queued_command のうち人から届いたもの）を含み、スラッシュコマンドは `/<名前> <引数>` にする。
 #                 通知（`<` で始まる）、スキルの本文（isMeta）、要約（isCompactSummary）、
 #                 サブエージェントへの依頼文は除く
 # 要約は 160 文字、発言は 300 文字で切る。JSON として読めない行（走っている最中のセッションの
@@ -103,7 +103,7 @@ jq -rR '
   | (.content | body) as $b
   | if ($b | test("^\\S+ hook error: ")) then
       "HOOK\t" + ($b | sub("^\\S+ hook error: "; "") | first_line | norm | cut)
-    elif ($b | first_line | test("^(Permission for this action was denied|Permission to use .* has been denied|The server-side auto mode classifier)")) then
+    elif ($b | first_line | test("^(Permission (for this \\w+|to use .*) (was|has been) denied|The server-side auto mode classifier)")) then
       "PERMISSION\t" + ($b | first_line | cut)
     elif ($b | startswith("The user doesn'"'"'t want to proceed")) then
       "REJECTED\t" + (
@@ -153,7 +153,8 @@ jq -rR '
   ),
   (
     select(.type == "attachment" and .attachment.type? == "queued_command"
-      and (.attachment.commandMode // "prompt") == "prompt")
+      and (.attachment.commandMode // "prompt") == "prompt"
+      and (.attachment.origin.kind? // "human") == "human")
     | .attachment.prompt | text_of
   )
   | select(test("\\S") and (startswith("<") | not))
