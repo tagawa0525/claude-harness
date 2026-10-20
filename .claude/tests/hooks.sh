@@ -1316,309 +1316,85 @@ assert_not_contains "$(reason "$out")" "挙動を変えない"
 assert_not_contains "$(reason "$out")" "ユーザーが承認"
 assert_not_contains "$(reason "$out")" "周回上限"
 
-it "pre-merge-check: 未レビューの案内は、次の一手を decide-next.sh に委ねる"
-# High が残らなければ再レビューではなくローカルレビューの記録で終える（ADR-0034）。条件は並べない
+# 記録があれば再レビューではなくローカルレビューの記録で終える（ADR-0043）。条件は並べない
+# High が残らなければ再レビューではなくローカルレビューの記録で終える（ADR-0043）。条件は並べない
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_contains "$(reason "$out")" "decide-next.sh https://github.com/example/heredoc/pull/1"
 
-# 直前の Copilot のレビューに High が残らず、head がローカルレビュー済みなら、最後の push が
-# Copilot のレビューを受けていなくても通す（ADR-0034）。本文が v2 の形でない、High が残る、
-# レビューの後に数え直した、head の記録が無いときは止める
+# head にローカルレビューの記録（High なし）があれば、Copilot のレビューの有無・到着・内容を問わず通す
+# （ADR-0043）。Copilot のレビューが来ていればその指摘への対応（未解決スレッド）は検査 6 が要る
 
-# merge_sev <High|Medium|Low>: Copilot の本文（v2）の重大度のアイコン
-merge_sev() {
-  printf '<picture><img src="x.png" alt="%s severity" width="12"></picture>' "$1"
-}
-MERGE_BODY_MEDIUM="<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>1 open finding</strong></summary>
-
-- $(merge_sev Medium) [m](u#discussion_r1) · New
-</details>
-
-<details>
-<summary><strong>1 resolved since last review</strong></summary>
-
-- $(merge_sev High) [h](u#discussion_r0)
-</details>"
-MERGE_BODY_HIGH="<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>1 open finding</strong></summary>
-
-- $(merge_sev High) [h](u#discussion_r1) · New
-</details>"
-MERGE_BODY_MISSED_HIGH="<!-- ccr-overview-v2 -->
-
-### 🔵 Needs a closer look
-
-<details>
-<summary><strong>Previously missed (1)</strong></summary>
-
-In code that hasn't changed since last review
-
-<details>
-<summary>$(merge_sev High) Missed</summary>
-
-detail
-</details>
-</details>"
-
-# make_fake_gh_merge_local <body> <comments> [check_run]
-# 最新の bot レビュー（03:00 に old を見た）の本文が body の PR。comments は、書き込める人の
-# 印（数え直しとローカルレビューの記録）を「時刻<TAB>本文の 1 行目」の行で出力するコマンド。
-# check_run は head のチェック 1 件の JSON（既定は CI の成功）
+# make_fake_gh_merge_local <comments> [check_run] [reviewed]
+# comments は、書き込める人の記録（ローカルレビューの記録）の本文の 1 行目を出力するコマンド。check_run は head のチェック 1 件の JSON（既定は CI の成功）、reviewed は bot レビューの
+# 対象コミットを出力するコマンド（既定は head と違う "old"）
 make_fake_gh_merge_local() {
-  local check_run="${3:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
-  jq -cn --arg body "$1" '{body: $body, submitted_at: "2026-09-08T03:00:00Z"}' > "$TEST_ROOT/latest-review.json"
+  local check_run="${2:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
+  local reviewed="${3:-echo old}"
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo '"'$check_run'"' ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
-  "api --paginate repos/example/heredoc/pulls/1/reviews"*submitted_at*) cat "'"$TEST_ROOT/latest-review.json"'" ;;
-  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviewed"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) echo src/main.rs ;;
-  "api --paginate repos/example/heredoc/issues/1/comments"*) '"$2"' ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) '"$1"' ;;
   "api graphql"*) echo "[]" ;;'
 }
-LOCAL_ABC="printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=1 low=0 -->'"
+LOCAL_ABC="printf '%s\n' '<!-- local-review sha=abc high=0 medium=1 low=0 -->'"
 
-it "pre-merge-check: High が残らず、head のローカルレビューの記録があれば、最後の push が未レビューでもマージできる"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" "$LOCAL_ABC"
+it "pre-merge-check: head のローカルレビューの記録があれば、最後の push が未レビューでもマージできる"
+make_fake_gh_merge_local "$LOCAL_ABC"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: 印は書き込みの権限を持つ人のコメントだけを受け付ける"
+it "pre-merge-check: 記録は書き込みの権限を持つ人のコメントだけを受け付ける"
 assert_contains "$(grep 'issues/1/comments' "$TEST_ROOT/gh.log")" "author_association"
 
-it "pre-merge-check: High が残っていれば、ローカルレビューの記録があっても止める"
-make_fake_gh_merge_local "$MERGE_BODY_HIGH" "$LOCAL_ABC"
+it "pre-merge-check: Copilot のレビューが 1 件も無くても、Copilot のチェックが失敗していても、記録があればマージできる"
+make_fake_gh_merge_local "$LOCAL_ABC" \
+  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}' 'echo'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "request-rereview.sh"
+assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: Previously missed の High が残っていれば止める"
-make_fake_gh_merge_local "$MERGE_BODY_MISSED_HIGH" "$LOCAL_ABC"
+it "pre-merge-check: Copilot のレビューの後に周回を数え直していても、記録があればマージできる"
+make_fake_gh_merge_local \
+  "printf '%s\n' '<!-- review-rounds-reset -->' '<!-- local-review sha=abc high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
+assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: 本文が v2 の形でなければ（重大度が分からない）止める"
-make_fake_gh_merge_local "### 🟡 Changes recommended" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: head のローカルレビューの記録が無ければ止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" true
+it "pre-merge-check: head の記録が無ければ止める"
+make_fake_gh_merge_local true
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
 it "pre-merge-check: 記録が前の head のものなら止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=old high=0 medium=0 low=0 -->'"
+make_fake_gh_merge_local \
+  "printf '%s\n' '<!-- local-review sha=old high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
 it "pre-merge-check: 記録の SHA が head の前方だけ一致しても止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=ab high=0 medium=0 low=0 -->'"
+make_fake_gh_merge_local \
+  "printf '%s\n' '<!-- local-review sha=ab high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: Copilot のレビューの後に周回を数え直していれば、記録があっても止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
-  "printf '%s\t%s\n' 2026-09-08T03:30:00Z '<!-- review-rounds-reset -->' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=0 low=0 -->'"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: レビューより前の数え直しは妨げない"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
-  "printf '%s\t%s\n' 2026-09-08T02:00:00Z '<!-- review-rounds-reset -->' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=0 low=0 -->'"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq allow "$(decision "$out")"
-
-it "pre-merge-check: 最後の push で Copilot のレビューの実行が失敗していれば、記録があっても止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" "$LOCAL_ABC" \
-  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}'
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "レビューが実行されていません"
-
-it "pre-merge-check: 指摘の題名に節の見出しと同じ語があっても、後ろの High で止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>2 open findings</strong></summary>
-
-- $(merge_sev Medium) [Handle the Previously missed and resolved since last review text](u#discussion_r1) · New
-- $(merge_sev High) [h](u#discussion_r2) · New
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 見出しが Open (N) の形でも、開いている High で止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>Open (1)</strong></summary>
-
-- $(merge_sev High) [h](#discussion_r1) · New
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 変更の一覧の節（What changed in this PR）の箇条書きは指摘として数えない"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM
-
-<details>
-<summary><strong>What changed in this PR</strong></summary>
-
-- a change without severity
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq allow "$(decision "$out")"
-
-it "pre-merge-check: 重大度のアイコンの無い指摘があれば（重大度が分からない）止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>1 open finding</strong></summary>
-
-- [h](u#discussion_r2) · New
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 最新の bot レビューは Copilot のものだけを読む"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" "$LOCAL_ABC"
-run_hook pre-merge-check "$MERGE_CMD" >/dev/null
-assert_contains "$(grep submitted_at "$TEST_ROOT/gh.log")" "copilot-pull-request-reviewer[bot]"
 
 it "pre-merge-check: head の記録に High があれば（直していない High が残る）止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 節が閉じた後の <summary> を Previously missed の指摘と取り違えない"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details>
-<summary><strong>Previously missed (1)</strong></summary>
-
-<details>
-<summary>$(merge_sev Medium) Missed</summary>
-
-detail
-</details>
-</details>
-
-<details>
-<summary>Tip</summary>
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq allow "$(decision "$out")"
-
-it "pre-merge-check: 知らない見出しの節があれば（重大度が分からない）止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>New findings (1)</strong></summary>
-
-- $(merge_sev High) [h](u#discussion_r1) · New
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 開いている指摘の節に「- 」で始まらない行があれば止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>1 open finding</strong></summary>
-
-* $(merge_sev High) [h](u#discussion_r1) · New
-</details>" "$LOCAL_ABC"
+make_fake_gh_merge_local \
+  "printf '%s\n' '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
 it "pre-merge-check: 同じ head の後の記録に High があれば、前の High の無い記録があっても止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=0 low=0 -->' 2026-09-08T05:00:00Z '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
+make_fake_gh_merge_local \
+  "printf '%s\n' '<!-- local-review sha=abc high=0 medium=0 low=0 -->' '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
-it "pre-merge-check: 知っている節の外に重大度のアイコンがあれば（見出しの形が変わった）止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><b>1 open finding</b></summary>
-
-- $(merge_sev High) [h](u#discussion_r1) · New
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: Previously missed の 1 行の <details> の High で止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details>
-<summary><strong>Previously missed (1)</strong></summary>
-
-<details><summary>$(merge_sev High) one line</summary>detail</details>
-</details>" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 節が閉じないまま本文が終われば（切れた本文）止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟡 Changes recommended
-
-<details open>
-<summary><strong>1 open finding</strong></summary>
-" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 判定の見出しが無い v2 の本文（切れた本文）は止める"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->" "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 節の無い v2 の本文でも、判定の見出しがあればマージできる"
-make_fake_gh_merge_local "<!-- ccr-overview-v2 -->
-
-### 🟢 Approval recommended
-
-No issues." "$LOCAL_ABC"
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq allow "$(decision "$out")"
-
-it "pre-merge-check: 印のコメントを取得できなければ止める"
-make_fake_gh_merge_local "$MERGE_BODY_MEDIUM" 'exit 1'
+it "pre-merge-check: 記録のコメントを取得できなければ止める"
+make_fake_gh_merge_local 'exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 

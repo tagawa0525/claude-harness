@@ -209,7 +209,7 @@ assert_not_contains "$(fake_log gh)" "@copilot"
 assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 
 it "request-rereview: head のローカルレビューの記録が無ければ、要求せずに記録の仕方を示して止まる"
-# Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0034）
+# Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0043）
 fake_gh_rereview grow true
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 1 $?
@@ -376,11 +376,11 @@ assert_contains "$out" "HEAD_REVIEWED: no"
 assert_contains "$out" "UNRESOLVED: 1"
 assert_contains "$out" "VERDICT: ACT"
 
-it "decide-next: 対応を push したのに要求していなければ REREVIEW_NEEDED（レビューのし忘れ）"
+it "decide-next: 対応を push した head にローカルレビューの記録があれば、Copilot に出さず STOP_LOCAL_REVIEWED"
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "HEAD_REVIEWED: no"
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
 it "decide-next: 文書（docs/）だけの PR は、対応を push しても再レビューを要求せず STOP_DOCS_REVIEWED"
 # 文章は細部をいくらでも掘れるので、最初のレビューで指摘を受けたら周回を止める
@@ -400,38 +400,39 @@ fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD" 'echo docs/ad
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: ACT"
 
-it "decide-next: docs/ 以外のファイルも含む PR は、これまでどおり REREVIEW_NEEDED"
-fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/adr/0004-x.md src/docs/x.md'
+it "decide-next: docs/ 以外のファイルも含む PR は、文書だけとみなさず LOCAL_REVIEW_NEEDED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/adr/0004-x.md src/docs/x.md' true true
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
 it "decide-next: docs/ に似た別の場所（docs.md、docs-extra/）は文書として扱わない"
-fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs.md docs-extra/x.md'
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs.md docs-extra/x.md' true true
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
-it "decide-next: src/ から docs/ への移動は、旧パスも数えて文書だけとみなさず REREVIEW_NEEDED"
+it "decide-next: src/ から docs/ への移動は、旧パスも数えて文書だけとみなさず LOCAL_REVIEW_NEEDED"
 # files API は移動の旧パスを previous_filename で返す。要求していなければ docs/ だけに見える
-fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'case "$*" in *previous_filename*) printf "%s\n" docs/foo.md src/foo.rs ;; *) echo docs/foo.md ;; esac'
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'case "$*" in *previous_filename*) printf "%s\n" docs/foo.md src/foo.rs ;; *) echo docs/foo.md ;; esac' true true
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
-it "decide-next: 変更ファイルを取得できなければ、文書だけとみなさず REREVIEW_NEEDED"
-fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'exit 1'
+it "decide-next: 変更ファイルを取得できなければ、文書だけとみなさず LOCAL_REVIEW_NEEDED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'exit 1' true true
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
-it "decide-next: 周回上限に達していれば要求せず STOP_LIMIT"
+it "decide-next: 周回の上限は無い（MAX_ROUNDS を出さず、--max-rounds を受けない）"
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
-out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" --max-rounds 2)
-assert_contains "$out" "VERDICT: STOP_LIMIT"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_not_contains "$out" "MAX_ROUNDS"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" --max-rounds 2 2>&1)
+assert_eq 1 $?
 
 it "decide-next: 周回を数え直した印があれば、それより後の要求だけを数える"
 # ユーザーの追加の要望に対応した変更は、新しい周回として数える（reset-rounds.sh）
 fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'echo 2026-09-08T01:00:00Z'
-out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" --max-rounds 2)
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "ROUND: 1"
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
 
 it "decide-next: 印は書き込みの権限を持つ人のコメントだけを受け付ける"
 # PR にコメントできる第三者が印を付けて上限を外せないようにする
@@ -479,6 +480,17 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "RESPONSE: none"
 assert_contains "$out" "VERDICT: WAITING"
 assert_not_contains "$out" "COMMENT_ONLY"
+
+it "decide-next: 要求後のレビューが未着でも、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED（待たない）"
+fake_gh_decide 2026-09-08T01:00:00Z def5678 abc1234
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "RESPONSE: none"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: レビューが未着で記録があっても、未解決スレッドがあればまず ACT"
+fake_gh_decide 2026-09-08T01:00:00Z def5678 abc1234 "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: ACT"
 
 # ===========================================================================
 # gh-wait-review.sh: 待つのはレビュー提出だけ
@@ -724,8 +736,22 @@ fake_gh_failed_after_success 'echo docs/adr/0004-x.md' "$DONE_THREAD" "Copilot w
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REVIEW_FAILED"
 
+it "decide-next: Copilot のレビューが失敗しても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
+fake_gh_review_body "Copilot encountered an error and was unable to review this pull request."
+make_fake_gh "\"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) echo a.txt ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 0 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
 # ===========================================================================
-# 重大度: Copilot の本文（v2）で残っている High を数え、再依頼を決める（ADR-0034）
+# 重大度: Copilot の本文（v2）で残っている High を数え、再依頼を決める（ADR-0043）
 # ===========================================================================
 # 2026-09-19 からの本文は <!-- ccr-overview-v2 --> で始まり、指摘ごとに重大度のアイコン（alt="High severity"）を
 # 持つ。開いている指摘（その回の新しい指摘には「· New」）、解決した指摘、Previously missed（前の周で見落とした、
@@ -1098,38 +1124,37 @@ fake_gh_severity "$BODY_NEW_HIGH"
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
-it "decide-next: 新しい High があれば、ローカルレビューの後に REREVIEW_NEEDED"
+it "decide-next: 新しい High が残っていても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
 fake_gh_severity "$BODY_NEW_HIGH" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
-it "decide-next: 前の周から残る High も REREVIEW_NEEDED"
+it "decide-next: 前の周から残る High でも STOP_LOCAL_REVIEWED"
 fake_gh_severity "$BODY_CARRIED_HIGH" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
-it "decide-next: Previously missed の High も REREVIEW_NEEDED"
+it "decide-next: Previously missed の High でも STOP_LOCAL_REVIEWED"
 fake_gh_severity "$BODY_MISSED_HIGH" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
 it "decide-next: Previously missed が Medium だけなら STOP_LOCAL_REVIEWED"
 fake_gh_severity "$BODY_MISSED_MEDIUM" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
-it "decide-next: 重大度が分からない本文（v2 でない）は High が残るとみなして REREVIEW_NEEDED"
+it "decide-next: 重大度が分からない本文（v2 でない）でも STOP_LOCAL_REVIEWED"
 fake_gh_severity "### 🟡 Changes recommended" 'echo def5678 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
-it "decide-next: High が残らなくても、レビューの後に周回を数え直していれば REREVIEW_NEEDED"
-# ユーザーの追加の要望に対応した変更は、指摘への対応ではない新しい仕事なので Copilot に見せる
+it "decide-next: レビューの後に周回を数え直していても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
 fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0' 'echo 2026-09-08T04:00:00Z'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: REREVIEW_NEEDED"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
-it "decide-next: レビューより前の数え直しは、High が残らなければ STOP_LOCAL_REVIEWED のまま"
+it "decide-next: レビューより前の数え直しでも STOP_LOCAL_REVIEWED"
 fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0' 'echo 2026-09-08T01:00:00Z'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
