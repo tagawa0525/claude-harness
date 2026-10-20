@@ -185,4 +185,29 @@ assert_contains "$out" "終了コード 128"
 assert_contains "$out" "fatal: injected"
 assert_not_contains "$out" "分岐点が見つかりません"
 
+# warn_git <サブコマンド>: そのサブコマンドが成功しつつ stderr に警告を出す git を PATH の先頭に置く
+warn_git() {
+  mkdir -p "$TEST_ROOT/fakebin"
+  cat >"$TEST_ROOT/fakebin/git" <<SH
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == "$1" ]]; then echo "warning: injected" >&2; break; fi
+done
+exec "$REAL_GIT" "\$@"
+SH
+  chmod +x "$TEST_ROOT/fakebin/git"
+  PATH="$TEST_ROOT/fakebin:$PATH"
+}
+
+it "base-moved: merge-base が成功しつつ stderr に警告を出しても、分岐点に混ぜず通常どおり動く"
+D=$(fixture merge_base_warns)
+commit_file "$D" src/a.txt "feat: a"
+in_other "$D" bash -c 'mkdir -p src && seq 3 > src/a.txt && git add src && git commit -q -m "feat: other a"'
+warn_git merge-base
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>/dev/null)
+rc=$?
+restore_git
+assert_eq 0 "$rc"
+assert_contains "$out" "COMMON: src/a.txt"
+
 finish
