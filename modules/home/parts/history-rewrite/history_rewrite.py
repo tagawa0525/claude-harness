@@ -69,7 +69,6 @@ class Transformer:
     excludes: list[str]
     table_format: object
     not_utf8: int = 0
-    _cache: dict[tuple[bytes, bytes], bytes | None] = field(default_factory=dict)
 
     def excluded(self, path: str) -> bool:
         return any(PurePosixPath(path).full_match(glob) for glob in self.excludes)
@@ -86,13 +85,6 @@ class Transformer:
             return None
         new = self._text(name, text, markdown=name.lower().endswith(".md"))
         return None if new == text else new.encode("utf-8")
-
-    def cached_blob(self, path: bytes, oid: bytes, read) -> bytes | None:
-        """blob を、パスとブロブの番号で覚えておく（同じブロブは履歴の中で何度も出る）"""
-        key = (path, oid)
-        if key not in self._cache:
-            self._cache[key] = self.blob(path, read(oid))
-        return self._cache[key]
 
     def message(self, data: bytes) -> bytes:
         """コミットかタグの本文。本文は Markdown として表も揃える"""
@@ -290,6 +282,7 @@ class Verifier:
     mapping: dict[str, str]
     transformer: Transformer
     problems: list[str] = field(default_factory=list)
+    expected: dict[tuple[bytes, bytes], bytes] = field(default_factory=dict)
 
     def run(self) -> None:
         env = dict(os.environ)
@@ -299,6 +292,14 @@ class Verifier:
         fmt = git(self.rewritten, "rev-parse", "--show-object-format").decode().strip()
         self.hash = {"sha1": hashlib.sha1, "sha256": hashlib.sha256}[fmt]
         try:
+            originals = (
+                git(self.original, "rev-list", "--branches", "--tags").decode().split()
+            )
+            missing = sorted(set(originals) - self.mapping.keys())
+            if missing:
+                self.problems.append(
+                    f"commit-map に無い元のコミット: {' '.join(missing)}"
+                )
             pruned = [old for old, new in self.mapping.items() if set(new) == {"0"}]
             if pruned:
                 self.problems.append(f"第 1 段でコミットが消えた: {' '.join(pruned)}")
@@ -350,11 +351,17 @@ class Verifier:
                 continue
             want = old_oid
             if old_kind == b"blob" and old_mode not in (MODE_LINK, MODE_GITLINK):
-                content = self.transformer.cached_blob(path, old_oid, self.cat.blob)
-                if content is not None:
-                    want = self.blob_oid(content)
+                want = self.expected_oid(path, old_oid)
             if want != new_oid:
                 self.problems.append(f"{old}: {path!r} が変換の結果と違う")
+
+    def expected_oid(self, path: bytes, oid: bytes) -> bytes:
+        """パス path のブロブ oid に変換を当てた中身の番号。同じブロブは履歴の中で何度も出るので、番号だけを覚える"""
+        key = (path, oid)
+        if key not in self.expected:
+            content = self.transformer.blob(path, self.cat.blob(oid))
+            self.expected[key] = oid if content is None else self.blob_oid(content)
+        return self.expected[key]
 
     def ls_tree(self, commit: str) -> dict[bytes, tuple[bytes, bytes, bytes]]:
         out = git(
@@ -493,6 +500,10 @@ def run(args: argparse.Namespace) -> None:
     transformer = make_transformer(args)
     source = Path(args.source).resolve()
     workdir = Path(args.workdir).resolve()
+    if workdir == source or workdir.is_relative_to(source):
+        raise Stop(f"{workdir} が {source} の中（元のリポジトリの外に置く）")
+    if workdir.exists() and not workdir.is_dir():
+        raise Stop(f"{workdir} がディレクトリでない")
     if workdir.exists() and any(workdir.iterdir()):
         raise Stop(f"{workdir} が空でない（前の書き換えを確かめて片付けてから）")
     workdir.mkdir(parents=True, exist_ok=True)
@@ -564,7 +575,9 @@ def transform_files(args: argparse.Namespace) -> None:
     top = Path(git(Path("."), "rev-parse", "--show-toplevel").decode().strip())
     replaced = []
     for name in args.files:
-        path = Path(name).absolute()
+        # symlink のファイルそのものは見分けたいので、親のディレクトリだけをたどる（top は実体のパス）
+        given = Path(name).absolute()
+        path = given.parent.resolve() / given.name
         if path.is_symlink():
             # 履歴の書き換えと同じく、symlink は変えない（先のファイルは、それ自身のパスで直す）
             continue
