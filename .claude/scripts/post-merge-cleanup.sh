@@ -8,6 +8,7 @@
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
+#      pull で hook（claude-hooks、claude-code.nix の登録）や .claude の下が変われば、NOTE で知らせる
 #   3. origin から予約のタグ（adr-NNNN、issue-NNNN。ほかの clone が push したものを含む）を取ってきて、あれば、
 #      既定ブランチの履歴に記録が入った番号のタグを、ローカルとリモートから消す（design-records prune。
 #      ADR-0018）。design-records が無いか origin に届かなければ残して続け、prune が失敗したら ERROR で止まる。
@@ -21,6 +22,7 @@
 #
 # 出力:
 #   WORKTREE_REMOVED: <path>|none
+#   NOTE: <pull で変わったものと、反映に要る操作>（該当するときだけ。0 行以上）
 #   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
 #   LOCAL_BRANCH: deleted|none
 #   REMOTE_BRANCH: deleted|kept (...)|none
@@ -79,7 +81,16 @@ fi
 # リモートのないリポジトリ（/git-merge でローカルにマージした後）では最新化する先がない
 if [[ -n "$(git remote)" ]]; then
   git fetch -q --prune
+  BEFORE=$(git rev-parse HEAD)
   git pull -q --ff-only
+  # hook のバイナリと ~/.claude は rebuild か claude-sync で配置される。pull しただけでは古いまま動くので
+  # 知らせる。自動では走らせない（rebuild は sudo が要り、走っている別のセッションの hook も入れ替わる）
+  if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules/home/parts/claude-hooks modules/home/parts/claude-code.nix)" ]]; then
+    echo "NOTE: hook が変わった（claude-hooks か claude-code.nix の登録）。rebuild（nixos-rebuild switch）まで古い版のまま動く"
+  fi
+  if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- .claude)" ]]; then
+    echo "NOTE: .claude が変わった。claude-sync か rebuild で ~/.claude に反映する"
+  fi
 fi
 
 # --- 3. 番号の予約のタグ ---
