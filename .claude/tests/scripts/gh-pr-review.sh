@@ -209,7 +209,7 @@ assert_not_contains "$(fake_log gh)" "@copilot"
 assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
 
 it "request-rereview: head のローカルレビューの記録が無ければ、要求せずに記録の仕方を示して止まる"
-# Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0034）
+# Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0043）
 fake_gh_rereview grow true
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 1 $?
@@ -751,7 +751,7 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
 # ===========================================================================
-# 重大度: Copilot の本文（v2）で残っている High を数え、再依頼を決める（ADR-0034）
+# 重大度: Copilot の本文（v2）で残っている High を数え、再依頼を決める（ADR-0043）
 # ===========================================================================
 # 2026-09-19 からの本文は <!-- ccr-overview-v2 --> で始まり、指摘ごとに重大度のアイコン（alt="High severity"）を
 # 持つ。開いている指摘（その回の新しい指摘には「· New」）、解決した指摘、Previously missed（前の周で見落とした、

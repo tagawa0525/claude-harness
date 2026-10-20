@@ -96,7 +96,7 @@ decline は事実に基づく反論があるときだけ。根拠を書けない
 直すときも、コードの挙動を文書に写さず、コードへの参照（ファイルと関数名）で書く。
 
 重大度は Copilot の本文に揃えて High / Medium / Low で数える（ローカルの `/code-review` の指摘も同じ。
-ADR-0034）。対応順は High（誤動作・セキュリティ・データの破損・ゲートの迂回）→ Medium（限られた条件の
+ADR-0043）。対応順は High（誤動作・セキュリティ・データの破損・ゲートの迂回）→ Medium（限られた条件の
 不具合・品質）→ Low（表記・好み）→ 質問（回答のみ）。Copilot の指摘は本文の重大度に従い、付け替えない。
 
 ### 3.3 同一指摘の再提起（2 周目以降）
@@ -169,7 +169,7 @@ EOF
 | `REVIEW_FAILED`          | Copilot がレビューできずに終わり、head のローカルレビューの記録も無い                               | 下記の「ローカルレビュー」を回して記録する（Copilot の失敗の診断は任意）                                                                                           |
 | `WAITING`                | 要求後のレビューが未着で、head のローカルレビューの記録も無い                                       | 下記の「ローカルレビュー」を回して記録する（Copilot を待つなら `~/.claude/scripts/gh-wait-review.sh "{pr_url}"`。任意。background）                                |
 
-**ローカルレビュー**（ADR-0034、ADR-0043）: head のローカルレビューの記録は、Copilot のレビューの代わりになる。
+**ローカルレビュー**（ADR-0043）: head のローカルレビューの記録は、Copilot のレビューの代わりになる。
 対応を push したら、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を走らせ、出力の `LEVEL` と
 `WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。ブランチ名で渡すと /code-review は cwd のリポジトリで
 解くので、cwd が別のリポジトリだと対象を見つけられない。`WORKTREE` が none なら、PR の URL を対象に渡す。

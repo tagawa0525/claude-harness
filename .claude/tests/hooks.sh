@@ -1316,8 +1316,8 @@ assert_not_contains "$(reason "$out")" "挙動を変えない"
 assert_not_contains "$(reason "$out")" "ユーザーが承認"
 assert_not_contains "$(reason "$out")" "周回上限"
 
-it "pre-merge-check: 未レビューの案内は、次の一手を decide-next.sh に委ねる"
-# High が残らなければ再レビューではなくローカルレビューの記録で終える（ADR-0034）。条件は並べない
+# 記録があれば再レビューではなくローカルレビューの記録で終える（ADR-0043）。条件は並べない
+# High が残らなければ再レビューではなくローカルレビューの記録で終える（ADR-0043）。条件は並べない
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_contains "$(reason "$out")" "decide-next.sh https://github.com/example/heredoc/pull/1"
