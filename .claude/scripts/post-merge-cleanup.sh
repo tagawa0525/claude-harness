@@ -8,7 +8,7 @@
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
-#      nixfiles で、pull で rebuild か claude-sync で配置するもの（hook、.claude の下）が変われば、NOTE で知らせる
+#      nixfiles で、pull で modules、hosts、flake か .claude が変われば、rebuild か claude-sync が要ると NOTE で知らせる
 #   3. origin から予約のタグ（adr-NNNN、issue-NNNN。ほかの clone が push したものを含む）を取ってきて、あれば、
 #      既定ブランチの履歴に記録が入った番号のタグを、ローカルとリモートから消す（design-records prune。
 #      ADR-0018）。design-records が無いか origin に届かなければ残して続け、prune が失敗したら ERROR で止まる。
@@ -87,16 +87,12 @@ if [[ -n "$(git remote)" ]]; then
   # 知らせる。自動では走らせない（rebuild は sudo が要り、走っている別のセッションの hook も入れ替わる）。
   # 配置の元は claude-sync.sh を持つリポジトリ（nixfiles）だけで、ほかのリポジトリの .claude はその場で読まれる
   if git cat-file -e HEAD:modules/home/scripts/claude-sync.sh 2>/dev/null; then
-    # design-records（パス依存）と lib/git-check-config.nix も claude-hooks の入力（claude-hooks/package.nix）
-    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules/home/parts/claude-hooks \
-      modules/home/parts/design-records modules/home/parts/lib/git-check-config.nix \
-      modules/home/parts/claude-code.nix)" ]]; then
-      echo "NOTE: rebuild が要る（claude-hooks とその入力か claude-code.nix が変わった）。nix-rebuild rebuild まで hook、design-records の CLI と設定は古い版のまま動く"
+    # 判定は広く取る。rebuild が配置するものを 1 つずつ挙げると漏れ、多めに知らせても害は無い
+    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules hosts flake.nix flake.lock)" ]]; then
+      echo "NOTE: rebuild が要る（modules、hosts か flake が変わった）。nix-rebuild rebuild まで hook や設定は古い版のまま動く"
     fi
-    # claude-sync が上書きで同期するものだけ（claude-sync.sh）。commands は既存のファイルを上書きせず、変更は
-    # claude-sync で反映されないので入れない
-    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- .claude/CLAUDE.md .claude/skills .claude/scripts)" ]]; then
-      echo "NOTE: claude-sync が要る（.claude の CLAUDE.md、skills か scripts が変わった）。claude-sync か rebuild まで ~/.claude は古い版のまま"
+    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- .claude)" ]]; then
+      echo "NOTE: claude-sync が要る（.claude が変わった）。claude-sync か rebuild まで ~/.claude は古い版のまま"
     fi
   fi
 fi
