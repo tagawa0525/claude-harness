@@ -193,6 +193,27 @@ out=$("$EVENTS" "$TEST_ROOT/partial.jsonl" 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "HOOK: 2 git add -A は禁止です"
 
+it "session-events: user 以外の行の tool_result では、形の検査を通さない"
+{
+  jq -cn '{type: "assistant", message: {role: "assistant", content: [{type: "tool_use", id: "t", name: "Bash", input: {}}]}}'
+  jq -cn '{type: "api-request-blob", message: {content: [{type: "tool_result", tool_use_id: "t", content: "x"}]}}'
+} > "$TEST_ROOT/blob.jsonl"
+out=$("$EVENTS" "$TEST_ROOT/blob.jsonl" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "session-events: - で始まる相対パスの記録も読む"
+mkdir -p "$TEST_ROOT/rel"
+cp "$MAIN" "$TEST_ROOT/rel/-home-u.jsonl"
+out=$(cd "$TEST_ROOT/rel" && "$EVENTS" -home-u.jsonl 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "HOOK: 2 git add -A は禁止です"
+
+it "session-events: 英字を含まない 7 桁以上の数はコミットの番号でなく数として置き換える"
+tool_error "PreToolUse:Bash hook error: 大きさ 10485760 を超えています" > "$TEST_ROOT/big.jsonl"
+out=$("$EVENTS" "$TEST_ROOT/big.jsonl")
+assert_contains "$out" "HOOK: 1 大きさ N を超えています"
+
 it "session-events: 長い本文は 160 文字で切る"
 long=$(printf 'あ%.0s' $(seq 300))
 tool_error "$long" > "$TEST_ROOT/long.jsonl"
