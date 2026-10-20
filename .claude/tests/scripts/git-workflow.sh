@@ -751,6 +751,44 @@ assert_eq "" "$(git branch --list feat/x)"
 assert_eq "adr-0001" "$(git tag --list adr-0001)"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: pull で claude-hooks が変われば、rebuild が要ると NOTE で知らせる"
+setup_merged_branch "$TEST_ROOT/cleanup14"
+advance_origin_main "$TEST_ROOT/cleanup14/app" modules/home/parts/claude-hooks/src/main.rs >/dev/null
+cd "$TEST_ROOT/cleanup14/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: hook が変わった"
+assert_not_contains "$out" "NOTE: .claude が変わった"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で hook の登録（claude-code.nix）が変われば、rebuild が要ると NOTE で知らせる"
+setup_merged_branch "$TEST_ROOT/cleanup15"
+advance_origin_main "$TEST_ROOT/cleanup15/app" modules/home/parts/claude-code.nix >/dev/null
+cd "$TEST_ROOT/cleanup15/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: hook が変わった"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で .claude の下が変われば、claude-sync が要ると NOTE で知らせる"
+setup_merged_branch "$TEST_ROOT/cleanup16"
+advance_origin_main "$TEST_ROOT/cleanup16/app" .claude/skills/x/SKILL.md >/dev/null
+cd "$TEST_ROOT/cleanup16/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: .claude が変わった"
+assert_not_contains "$out" "NOTE: hook が変わった"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: pull で hook と .claude のどちらも変わらなければ NOTE を出さない"
+setup_merged_branch "$TEST_ROOT/cleanup17"
+advance_origin_main "$TEST_ROOT/cleanup17/app" modules/home/parts/other.nix >/dev/null
+cd "$TEST_ROOT/cleanup17/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_not_contains "$out" "NOTE:"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: 未マージのブランチは削除せず失敗する"
 REPO="$TEST_ROOT/cleanup5/app"
 make_repo "$REPO"
