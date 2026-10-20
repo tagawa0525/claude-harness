@@ -52,4 +52,14 @@ for skill in "${skills[@]}"; do
   done < <(grep -E 'git (switch|checkout) [^#]*(-c|-C|-b|-B) [^#]* origin/' "$skill" || true)
 done
 
+# スキル、スクリプト、CLAUDE.md は PC 全体のセッションで読み込まれる。nixfiles の ADR の番号は、ほかの
+# プロジェクトでは参照できないノイズになるので、番号を書かず、その場で規則と理由が分かるように書く
+while IFS= read -r hit; do
+  it "skills: ADR の番号を書かない: $hit"
+  _fail "番号を外し、規則と理由をその場で分かるように書く"
+done < <(grep -rnE 'ADR-[0-9]{4}' "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_DIR/skills" "$CLAUDE_DIR/scripts" | cut -c1-200)
+
+it "skills: ADR の番号を書かないことの検査が走った（対象のファイルがある）"
+if [[ -f "$CLAUDE_DIR/CLAUDE.md" && -d "$CLAUDE_DIR/skills" && -d "$CLAUDE_DIR/scripts" ]]; then _pass; else _fail "検査の対象が見つからない"; fi
+
 finish
