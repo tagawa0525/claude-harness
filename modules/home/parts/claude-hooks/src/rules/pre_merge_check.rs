@@ -636,11 +636,6 @@ impl Rule for PreMergeCheck {
                         "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
                             .to_string(),
                     ),
-                    // head のローカルレビューの記録があれば、Copilot のレビューの有無・到着・チェックの失敗を問わず通す
-                    // （ADR-0043）。Copilot の指摘への対応は検証 6（未解決スレッド）が見る
-                    Some(sha)
-                        if sha != head_sha
-                            && local_review_covers(&dir, &owner, &name, number, &head_sha) => {}
                     // レビューが 1 件も無い場合、通常は「自動レビューが無いリポジトリ」なので
                     // 検査しない。ただしチェックが失敗しているなら初回レビューが走らなかった
                     // ということなので、下の分岐でレビュー未実施として報告する
@@ -657,6 +652,11 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
+                    // head のローカルレビューの記録があれば、Copilot のレビューの有無・到着・チェックの失敗を問わず通す。安い判定（文書だけ、リベースだけ）の後に置き、記録のコメントの取得を最後にする
+                    // （ADR-0043）。Copilot の指摘への対応は検証 6（未解決スレッド）が見る
+                    Some(sha)
+                        if sha != head_sha
+                            && local_review_covers(&dir, &owner, &name, number, &head_sha) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、head のローカルレビューを記録して（record-local-review.sh）ください。{}",
                         short(&head_sha),

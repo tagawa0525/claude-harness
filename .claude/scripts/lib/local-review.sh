@@ -7,7 +7,7 @@
 #   いない High が残る。同じ SHA に記録が複数あれば、最後の記録で決める（回し直して見つけた High を、前の
 #   記録で隠さない）。
 #   記録はリポジトリに書き込める人のコメントだけを数える（PR にコメントできる第三者が記録を偽って
-#   Copilot の再レビューを外せないように。reset-rounds.sh の印と同じ）。取得に失敗したら 1 を返す。
+#   記録でマージの検査を通せないように。reset-rounds.sh の印と同じ）。取得に失敗したら 1 を返す。
 #   形は pre-merge-check（claude-hooks の pre_merge_check.rs）も読む（ADR-0043）
 
 # shellcheck disable=SC2034  # record-local-review.sh が使う

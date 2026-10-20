@@ -63,7 +63,7 @@ if (( $# != 1 )) || ! parse_pr_url "$PR_URL"; then
 fi
 
 # Copilot 宛てレビュー要求の created_at を発生順に取得。
-# 取得に失敗したら空扱いで続けない。周回数を過少に見積もり、上限判定がずれる
+# 取得に失敗したら空扱いで続けない（周回数 ROUND を過少に見積もる）
 if ! requests=$("${SCRIPT_DIR}/../../../scripts/gh-review-requests.sh" "$PR_URL_CANONICAL"); then
   echo "ERROR: PR #${PR_NUMBER} のレビュー要求を取得できませんでした（周回数が数えられません）" >&2
   exit 1
@@ -71,8 +71,7 @@ fi
 last_request_at=$(tail -n 1 <<<"$requests")
 
 # 周回を数え直した印（reset-rounds.sh のコメント）。最後の印より後の要求だけを数える。
-# 印はリポジトリに書き込める人のものだけ受け付ける（PR にコメントできる第三者が上限を
-# 外せないように）。取得に失敗したら、印を見落として上限を早く迎えないよう止める
+# 印はリポジトリに書き込める人のものだけ受け付ける。取得に失敗したら、印を見落とさないよう止める
 if ! resets=$(gh api --paginate "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments?per_page=100" \
   --jq '.[] | select((.body | startswith("<!-- review-rounds-reset -->"))
                      and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR")))

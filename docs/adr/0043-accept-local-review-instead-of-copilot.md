@@ -45,7 +45,7 @@ Copilot のレビューが来ない、または来ても本文が読めない PR
   本文だけに出る Previously missed の指摘はスレッドが無く、hook は見ない。`get-latest-review.sh` が本文から取り出して
   見せるので、`decide-next.sh` の出力を読むモデルが台帳に処置を書く
 - **`decide-next.sh`**: head の記録があり未解決スレッドが無ければ `STOP_LOCAL_REVIEWED`（Copilot の未着、失敗、
-  High の残りを問わない）。未解決スレッドがあれば `ACT`。記録が無ければ従来どおり（`LOCAL_REVIEW_NEEDED`、
+  High の残りを問わない。head を Copilot がレビュー済みなら従来どおり本文に応じた `STOP_*` で、どれもマージへ進む）。未解決スレッドがあれば `ACT`。記録が無ければ従来どおり（`LOCAL_REVIEW_NEEDED`、
   `REVIEW_FAILED`、`WAITING`）。再レビューの要求を促す `REREVIEW_NEEDED` と、周回の上限の `STOP_LIMIT`、
   `COPILOT_NEEDED`、`MAX_ROUNDS` は外す（記録があれば終わるので、Copilot の周回を数えて止める必要が無い。
   ADR-0023 の「`MAX_ROUNDS` は残す」は、この決定で置き換わる）。`ROUND` は情報として残す
