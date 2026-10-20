@@ -132,14 +132,17 @@ class HistoryRewrite(unittest.TestCase):
         )
         repo.write("crlf.md", "| a | b |\r\n| - | - |\r\n| 掃引 | x |\r\n")
         repo.git("add", "-A")
+        # 宣言した符号化の本文（直す語が無ければ、UTF-8 として読めなくても通る）
+        message = root / "latin1-message.txt"
+        message.write_bytes(b"docs: caf\xe9\n")
         repo.git(
             "-c",
             "i18n.commitEncoding=ISO-8859-1",
             "commit",
             "-q",
             "--no-verify",
-            "-m",
-            "docs: ascii only",
+            "-F",
+            str(message),
         )
         cls.extra_tip = repo.git("rev-parse", "HEAD").strip()
         repo.git("switch", "-q", "main")
@@ -239,9 +242,22 @@ class HistoryRewrite(unittest.TestCase):
         self.assertIn(f"object {self.map[self.side]}\n", bare)
         self.assertTrue(bare.endswith("\n\n確認の版\n"), bare)
 
-    def test_commit_encoding_is_kept(self):
-        raw = self.rewritten.git("cat-file", "commit", self.map[self.extra_tip])
-        self.assertIn("\nencoding ISO-8859-1\n", raw)
+    def test_a_message_in_a_declared_non_utf8_encoding_is_kept(self):
+        raw = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.rewritten.path),
+                "cat-file",
+                "commit",
+                self.map[self.extra_tip],
+            ],
+            capture_output=True,
+            env=self.env,
+            check=True,
+        ).stdout
+        self.assertIn(b"\nencoding ISO-8859-1\n", raw)
+        self.assertTrue(raw.endswith(b"\n\ndocs: caf\xe9\n"), raw)
 
     def test_text_that_is_not_utf8_is_counted_once_and_kept(self):
         self.assertEqual(self.out["NOT_UTF8"], "1")
@@ -415,20 +431,61 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("空でない", result.stderr)
 
+    def test_a_tag_of_a_tag_stops_before_rewriting(self):
+        # fast-export は入れ子のタグを平らにする（外のタグの名前で内のタグを作り直す）ので、照合できる形でない
+        repo = Repo(Path(self.tmp.name) / "nested", self.env)
+        repo.path.mkdir()
+        repo.git("init", "-q")
+        repo.write("a.md", "a\n")
+        repo.commit("docs: a\n")
+        repo.git("tag", "-a", "inner", "-m", "inner", "HEAD")
+        repo.git(
+            "-c", "advice.nestedTag=false", "tag", "-a", "outer", "-m", "outer", "inner"
+        )
+        result = subprocess.run(
+            [
+                "history-rewrite",
+                "run",
+                "--source",
+                str(repo.path),
+                "--workdir",
+                str(Path(self.tmp.name) / "nested-work"),
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("refs/tags/outer", result.stderr)
+        self.assertIn("git tag -f outer outer^{}", result.stderr)
+        self.assertNotIn("REWRITTEN:", result.stdout)
+
+    def test_a_malformed_commit_map_stops(self):
+        path = Path(self.tmp.name) / "bad-map"
+        path.write_text("old new\naaaa bbbb cccc\n")
+        with self.assertRaises(history_rewrite.Stop) as caught:
+            history_rewrite.read_map(path)
+        self.assertIn("bad-map", str(caught.exception))
+        self.assertIn("2", str(caught.exception))
+
     def test_a_message_in_a_declared_non_utf8_encoding_that_would_change_stops(self):
         repo = Repo(Path(self.tmp.name) / "sjis", self.env)
         repo.path.mkdir()
         repo.git("init", "-q")
         repo.write("a.md", "a\n")
         repo.git("add", "a.md")
+        # 本文は宣言した符号化のバイト列（git は -m の本文を変換せず、encoding の見出しを付けるだけ）
+        message = Path(self.tmp.name) / "sjis-message.txt"
+        message.write_bytes("docs: 確かめの記録\n".encode("shift_jis"))
         repo.git(
             "-c",
             "i18n.commitEncoding=Shift_JIS",
             "commit",
             "-q",
             "--no-verify",
-            "-m",
-            "docs: 確かめの記録",
+            "-F",
+            str(message),
         )
         result = subprocess.run(
             [
@@ -446,6 +503,40 @@ class HistoryRewrite(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("Shift_JIS", result.stderr)
+
+    def test_a_table_row_with_an_escaped_pipe_stops(self):
+        # format_table は \| でも列を切る（nixfiles の issue #428）ので、揃え直さずに止める。コードスパンの中の
+        # エスケープしていない | は GFM でも区切りなので、そのまま揃え直す
+        work = Repo(Path(self.tmp.name) / "pipes", self.env)
+        work.path.mkdir()
+        work.git("init", "-q")
+        work.write("escaped.md", "| a | b |\n| - | - |\n| x \\| y | 掃引 |\n")
+        work.write("code.md", "| a | b | c |\n| - | - | - |\n| `p|q` | 掃引 |\n")
+        result = subprocess.run(
+            ["history-rewrite", "transform", "escaped.md"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            cwd=work.path,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("escaped.md", result.stderr)
+        self.assertIn("\\|", result.stderr)
+        self.assertIn("掃引", (work.path / "escaped.md").read_text())
+        result = subprocess.run(
+            ["history-rewrite", "transform", "code.md"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            cwd=work.path,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (work.path / "code.md").read_text(),
+            "| a  | b  | c        |\n| -- | -- | -------- |\n| `p | q` | スイープ |\n",
+        )
 
     def test_transform_fixes_working_tree_files_in_place(self):
         work = Repo(Path(self.tmp.name) / "transform", self.env)
