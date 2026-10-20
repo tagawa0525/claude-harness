@@ -156,6 +156,26 @@ class Refusals(unittest.TestCase):
             ):
                 rule("X", pattern)
 
+    def test_syntax_prh_itself_cannot_load_under_the_u_flag_is_refused(self):
+        # prh は固定の文字列の - を \- にし、u フラグの RegExp では Invalid escape になる（node 24.21.0 で確かめた）
+        for pattern in ("e-mail", "/a{,3}/", "/x{/", "/x}/", "/x]/", "/a\\-b/"):
+            with (
+                self.subTest(pattern=pattern),
+                self.assertRaises(prh_rules.DictionaryError),
+            ):
+                rule("X", pattern)
+
+    def test_a_pattern_with_a_trailing_newline_is_a_fixed_string(self):
+        # prh の /^\/(.*)\/([gimy]*)$/ は、末尾の改行の前の / を終わりとみなさない
+        rules = load_text("""\
+            version: 1
+            rules:
+              - expected: X
+                pattern: |
+                  /foo/
+            """)
+        self.assertEqual(prh_rules.apply(rules, "foo /foo/\n"), "foo X")
+
     def test_unknown_keys_and_rules_without_pattern_are_refused(self):
         self.assert_refused(
             """\

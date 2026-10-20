@@ -415,6 +415,38 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("空でない", result.stderr)
 
+    def test_a_message_in_a_declared_non_utf8_encoding_that_would_change_stops(self):
+        repo = Repo(Path(self.tmp.name) / "sjis", self.env)
+        repo.path.mkdir()
+        repo.git("init", "-q")
+        repo.write("a.md", "a\n")
+        repo.git("add", "a.md")
+        repo.git(
+            "-c",
+            "i18n.commitEncoding=Shift_JIS",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            "docs: 確かめの記録",
+        )
+        result = subprocess.run(
+            [
+                "history-rewrite",
+                "run",
+                "--source",
+                str(repo.path),
+                "--workdir",
+                str(Path(self.tmp.name) / "sjis-work"),
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Shift_JIS", result.stderr)
+
     def test_transform_fixes_working_tree_files_in_place(self):
         work = Repo(Path(self.tmp.name) / "transform", self.env)
         work.path.mkdir()
@@ -459,9 +491,11 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual(via.stdout, "REPLACED: doc.md\nFILES: 1\n")
         (work.path / "doc.md").write_text("確かめの記録\n")
 
-        missing = transform("gone.md")
+        missing = transform("doc.md", "gone.md")
         self.assertEqual(missing.returncode, 1)
         self.assertIn("ERROR:", missing.stderr)
+        # 止まるときは、どのファイルにも書かない
+        self.assertEqual((work.path / "doc.md").read_text(), "確かめの記録\n")
         linked = transform("link.md")
         self.assertEqual(linked.returncode, 0, linked.stderr)
         self.assertEqual(linked.stdout, "FILES: 0\n")
