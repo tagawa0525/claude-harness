@@ -89,7 +89,19 @@ git switch -c [branch-name]
 
 # origin/mainから分岐する場合（上流を origin/main にしない。push 先が main になる）
 git switch --no-track -c [branch-name] origin/main
+
+# 既存のブランチ名を origin/main から作り直す場合（そのブランチのコミットは外れる）
+git switch -C [branch-name] --no-track origin/main
+git branch --unset-upstream [branch-name]
 ```
+
+`--no-track` は、作り直すブランチに元からある上流の設定（`origin/[branch-name]` など）を消さない。
+引数なしの `git push` や `git pull` が古い上流に向かないよう、`--unset-upstream` で外す。
+一度も push していないブランチは上流が無く、`--unset-upstream` が
+`fatal: branch '[branch-name]' has no upstream information` と終了コード 128 を返す。
+その場合は外すものが無いので、そのまま進めてよい（コマンドを `&&` でつながない）。
+作り直す前に、そのブランチが別の worktree で使われていないことを `git worktree list` で確かめる。
+元の位置は `git rev-parse [branch-name]` で控えておくと戻せる。
 
 ## featureブランチの場合: リネーム
 
