@@ -179,6 +179,12 @@ pass|噛み付きを防ぐ。
 stop|全部書き写す。
 stop|同じ内容を書き写し続ける。
 stop|書き写されている。
+stop|包みごとの意味を読む。
+stop|包み（env、sudo）を読む。
+stop|包みと bash の文字列を見る。
+stop|sudo などの包み、を足す。
+pass|ケーキを包み直す。
+pass|紙で包みます。
 pass|写真を撮る。
 pass|画面に映す。
 stop|終端子を探す。
