@@ -27,6 +27,10 @@
 
 set -uo pipefail
 
+# git の hook や GIT_DIR を export したシェルから呼ばれると、git -C "$wt" の checkout と
+# clean が一時 worktree でなく呼び出し元の作業ツリーに作用して消しうる。検査コマンドにも渡さない
+while IFS= read -r var; do unset "$var"; done < <(git rev-parse --local-env-vars)
+
 usage() {
   echo "Usage: ${0##*/} <base> -- <コマンド…>" >&2
   exit 2
