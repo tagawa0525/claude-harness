@@ -68,6 +68,9 @@ rules:
   - expected: ラッパー
     # 「包み込む」「包み紙」「小包み」「包みがち」は通す
     pattern: /(?<![小お])包み(?=[のをで・]|が(?!ち|たい|てら))/
+    specs:
+      - from: コマンドの包みを解く
+        to: コマンドのラッパーを解く
   # 「音を拾う」のような別の意味は通す。prh は一致した部分だけを直す語に置き換えるので、活用の語尾まで含める
   - expected: panic を捕捉する
     pattern: panic を拾う
@@ -76,8 +79,14 @@ rules:
         to: panic を捕捉する経路
   - expected: panic を捕捉し
     pattern: /panic を拾い(?!物|上|出)/
+    specs:
+      - from: panic を拾い、出す
+        to: panic を捕捉し、出す
   - expected: panic を捕捉して
     pattern: panic を拾って
+    specs:
+      - from: panic を拾って終わる
+        to: panic を捕捉して終わる
   - expected: 捕捉した panic
     pattern: 拾った panic
     specs:
@@ -107,8 +116,14 @@ rules:
         to: 前の台帳と突き合わせ、同じなら
   - expected: 開始の
     pattern: /始まりの(?=見込み)/
+    specs:
+      - from: 始まりの見込み
+        to: 開始の見込み
   - expected: 開始マーカー
     pattern: 始まりの印
+    specs:
+      - from: 署名の始まりの印
+        to: 署名の開始マーカー
   - expected: テンプレート
     pattern: 雛形
     specs:
@@ -158,25 +173,45 @@ rules:
   # 示す（「写真を撮る」「画面に映す」「顔が写らない」は別の語なので通す）。どの意味でもコピーと言い換えて
   # 意味が変わらないので、1 つの語に直せない語を入れない方針には反しない
   - expected: コピーする
-    pattern: /(?<![一-龥])(書き)?写す/
+    pattern: /(?:書き写|(?<![一-龥])写)す/
     specs:
+      - from: 全部書き写す
+        to: 全部コピーする
       - from: ファイルを写す
         to: ファイルをコピーする
   - expected: コピーして
-    pattern: /(?<![一-龥])(書き)?写して/
+    pattern: /(?:書き写|(?<![一-龥])写)して/
+    specs:
+      - from: 設定を写して
+        to: 設定をコピーして
   - expected: コピーした
-    pattern: /(?<![一-龥])(書き)?写した/
+    pattern: /(?:書き写|(?<![一-龥])写)した/
+    specs:
+      - from: 設定を写した
+        to: 設定をコピーした
   - expected: コピーせず
-    pattern: /(?<![一-龥])(書き)?写さず/
+    pattern: /(?:書き写|(?<![一-龥])写)さず/
+    specs:
+      - from: 権限を写さず
+        to: 権限をコピーせず
   - expected: コピーしない
-    pattern: /(?<![一-龥])(書き)?写さない/
+    pattern: /(?:書き写|(?<![一-龥])写)さない/
+    specs:
+      - from: 権限を写さない
+        to: 権限をコピーしない
   - expected: コピーされ
-    pattern: /(?<![一-龥])写され/
+    pattern: /(?:書き写|(?<![一-龥])写)され/
+    specs:
+      - from: 書き写されている
+        to: コピーされている
   - expected: コピーし続ける
-    pattern: /(?<![一-龥])写し続ける/
+    pattern: /(?:書き写|(?<![一-龥])写)し続ける/
+    specs:
+      - from: 全部書き写し続ける
+        to: 全部コピーし続ける
   - expected: コピー
     # 「写しの先」「写しにする」。「写し絵」のような別の語と、動詞の「写し、」は通す
-    pattern: /(?<![一-龥])(書き)?写し(?=[のをでにだ（]|が(?!たい|ち|てら))/
+    pattern: /(?:書き写|(?<![一-龥])写)し(?=[のをでにだ（]|が(?!たい|ち|てら))/
     specs:
       - from: 作業用の写しにする
         to: 作業用のコピーにする
