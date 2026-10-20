@@ -5,10 +5,6 @@
 
 source "$(dirname "$0")/../lib.sh"
 
-# RED: 実装前のため skip（GREEN のコミットで外す）
-echo "skip: check-each-commit.sh は未実装"
-exit 0
-
 SCRIPT="$SCRIPTS_DIR/check-each-commit.sh"
 REPO="$TEST_ROOT/cec/app"
 make_repo "$REPO"
