@@ -164,6 +164,14 @@ stop|書き写しを残す。
 pass|写しがたい構造だ。
 pass|引き抜けが起きた。
 pass|読み抜けを防ぐ。
+stop|同じ内容を写し続ける。
+stop|panic を拾う経路を足す。
+stop|拾った panic も数える。
+stop|ルールが panic を拾った。
+stop|panic を拾わず、止まる。
+pass|近付きがたい雰囲気だ。
+pass|小包みの中身を見る。
+pass|包みがちな荷物を解く。
 pass|写真を撮る。
 pass|画面に映す。
 stop|終端子を探す。
