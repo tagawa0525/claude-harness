@@ -492,20 +492,6 @@ fake_gh_decide 2026-09-08T01:00:00Z def5678 abc1234 "$OPEN_THREAD"
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: ACT"
 
-it "decide-next: Copilot のレビューが失敗しても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
-fake_gh_review_body "Copilot encountered an error and was unable to review this pull request."
-make_fake_gh "\"pr view 1 --json headRefOid\"*) echo def5678 ;;
-  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) echo a.txt ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 0 ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;
-  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
-  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
-  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
-  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
-out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
-assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
-
 # ===========================================================================
 # gh-wait-review.sh: 待つのはレビュー提出だけ
 # ===========================================================================
@@ -749,6 +735,20 @@ it "decide-next: 文書だけの PR でも、最初のレビューが失敗し�
 fake_gh_failed_after_success 'echo docs/adr/0004-x.md' "$DONE_THREAD" "Copilot wasn't able to review any files in this pull request."
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: REVIEW_FAILED"
+
+it "decide-next: Copilot のレビューが失敗しても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
+fake_gh_review_body "Copilot encountered an error and was unable to review this pull request."
+make_fake_gh "\"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) echo a.txt ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 0 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
 # ===========================================================================
 # 重大度: Copilot の本文（v2）で残っている High を数え、再依頼を決める（ADR-0034）

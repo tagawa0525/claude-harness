@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # gh-pr-review: レビュー対応後に「次に取るべき行動」を判定するスクリプト
 #
-# Usage: decide-next.sh <PR の URL> [--max-rounds N]   (デフォルト 5)
+# Usage: decide-next.sh <PR の URL>
 #
 # 出力（テキスト）:
-#   ROUND: <n>          周回数。Copilot へのレビュー要求の件数（PR 作成時の自動要求を
+#   ROUND: <n>          周回数（情報。上限は無い）。Copilot へのレビュー要求の件数（PR 作成時の自動要求を
 #                       含む）と Copilot レビュー件数の多い方。要求イベントを伴わずに
 #                       レビューが付くリポジトリでも周回を見失わないため。
 #                       reset-rounds.sh の印があれば、最後の印より後の要求の件数
-#   MAX_ROUNDS: <n>
 #   RESPONSE: review | none
 #                       直近のレビュー要求より後に提出された Copilot レビューの有無
 #                       （要求イベントが無ければ最初のレビューを対象にする）
@@ -20,23 +19,18 @@
 #                       head にローカルレビューの記録（record-local-review.sh）があるか
 #   INLINE_COMMENTS / SUPPRESSED_COMMENTS （RESPONSE=review のとき）
 #   SEVERITY / REMAINING_HIGH / PREVIOUSLY_MISSED （RESPONSE=review のとき。get-latest-review.sh の値）
-#   COPILOT_NEEDED: yes|no （RESPONSE=review のとき）
-#                       次の push を Copilot に見せるか（ADR-0034）。直前のレビューに High が残る
-#                       （本文の形から重大度が分からないときを含む）か、そのレビューの後にユーザーの
-#                       追加の要望で周回を数え直したときに yes
 #   VERDICT: <判定>
 #     ACT                  未解決スレッドあり → 対応する（fix / decline / escalate）
 #     LOCAL_REVIEW_NEEDED  対応を push したが head をローカルでレビューしていない → /code-review で
-#                          確かめて record-local-review.sh で記録する（Copilot に出す前にも要る）
-#     STOP_LOCAL_REVIEWED  High が残らず、対応した head はローカルでレビュー済み → 要求せずマージへ
-#     REREVIEW_NEEDED      High が残り、対応した head はローカルでレビュー済みだが、再レビューを
-#                          要求していない → 要求する
+#                          確かめて record-local-review.sh で記録する
+#     STOP_LOCAL_REVIEWED  head はローカルでレビュー済み（記録に High が無い）で、未解決スレッドが無い
+#                          → Copilot のレビューの有無・到着・内容を問わずマージへ（ADR-0043）。
+#                          Copilot の再レビューの要求は任意（request-rereview.sh）
 #     STOP_DOCS_REVIEWED   文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR で、対応済み・head 未レビュー
 #                          → 依頼しない。文章は細部をいくらでも掘れるので、
 #                            指摘は最初のレビューで受けて周回を止める。最新のレビューが
 #                            失敗していても、成功したレビューが一度でもあれば同じ扱い
 #                            （pre-merge-check も同じ条件で再レビューを求めない）
-#     STOP_LIMIT           要求が必要だが上限到達 → 依頼せず、残りを報告して委ねる
 #     STOP_DECLINED        未解決ゼロ・head はレビュー済み → 対応は済んでいる。マージへ
 #                          （全件 decline のように push を伴わない周。再度要求しても
 #                            同じレビューが返るだけなので依頼しない）
@@ -44,9 +38,11 @@
 #                          → 本文を読んで処置を決める（指摘なしと区別する）
 #     STOP_SUPPRESSED_ONLY Suppressed comments のみ → 依頼しない（対応の要否はモデルが判断）
 #     STOP_CLEAN           指摘なし → マージへ
-#     REVIEW_FAILED        Copilot がレビューできずに終わった → 原因を調べて依頼し直す
+#     REVIEW_FAILED        Copilot がレビューできずに終わり、head のローカルレビューの記録も無い
+#                          → 原因を調べるか、ローカルレビューを記録する
 #                          （指摘ゼロと同じ見た目になるため別扱いにする）
-#     WAITING              要求後のレビューがまだ無い → gh-wait-review.sh で待つ
+#     WAITING              要求後のレビューがまだ無く、head のローカルレビューの記録も無い
+#                          → ローカルレビューを記録する（待つなら gh-wait-review.sh。任意）
 #   --- suppressed --- / --- previously missed --- 以降に本文
 #
 # 「対応する」「push する」「要求する」を 1 つの判定に潰すと、どの段階にいるかが
@@ -60,13 +56,9 @@ source "${SCRIPT_DIR}/../../../scripts/lib/pr-url.sh"
 source "${SCRIPT_DIR}/../../../scripts/lib/local-review.sh"
 
 PR_URL="${1:-}"
-MAX_ROUNDS=5
-if [[ "${2:-}" == "--max-rounds" ]]; then
-  MAX_ROUNDS="${3:?--max-rounds には数値が必要です}"
-fi
 
-if ! parse_pr_url "$PR_URL"; then
-  echo "Usage: $0 <PR の URL> [--max-rounds N]" >&2
+if (( $# != 1 )) || ! parse_pr_url "$PR_URL"; then
+  echo "Usage: $0 <PR の URL>" >&2
   exit 1
 fi
 
@@ -163,7 +155,6 @@ head_reviewed=no
 [[ -n "$reviewed_sha" && "$reviewed_sha" == "$head_sha" ]] && head_reviewed=yes
 
 echo "ROUND: ${round}"
-echo "MAX_ROUNDS: ${MAX_ROUNDS}"
 echo "RESPONSE: ${response}"
 echo "HEAD: ${head_sha}"
 echo "REVIEWED: ${reviewed_sha}"
@@ -172,7 +163,12 @@ echo "UNRESOLVED: ${unresolved}"
 echo "LOCAL_REVIEWED: ${local_reviewed}"
 
 if [[ "$response" == "none" ]]; then
-  echo "VERDICT: WAITING"
+  # head のローカルレビューの記録があれば、Copilot のレビューを待たない（ADR-0043）
+  if [[ "$local_reviewed" == yes ]]; then
+    if (( unresolved > 0 )); then echo "VERDICT: ACT"; else echo "VERDICT: STOP_LOCAL_REVIEWED"; fi
+  else
+    echo "VERDICT: WAITING"
+  fi
   exit 0
 fi
 
@@ -192,21 +188,21 @@ if [[ "$severity" == v2 ]]; then
   echo "REMAINING_HIGH: ${remaining_high}"
   echo "PREVIOUSLY_MISSED: ${missed}"
 fi
-# Copilot に見せるか。数え直しの印がレビューより後なら、指摘への対応ではない新しい仕事が入った
-copilot_needed=no
-if [[ "$severity" != v2 ]] || (( remaining_high > 0 )) \
-  || [[ -n "$last_reset_at" && "$last_reset_at" > "$last_review_at" ]]; then
-  copilot_needed=yes
-fi
-echo "COPILOT_NEEDED: ${copilot_needed}"
 # 段階ごとに 1 つの次の一手へ落とす。順序に意味がある:
-# レビュー失敗 → 未対応 → 要求し忘れ → 対応済み。
-# 一部だけ直して push した状態（未解決あり・head 未レビュー）では、要求より先に
+# レビュー失敗 → 未対応 → ローカルレビューの記録 → 対応済み。
+# 一部だけ直して push した状態（未解決あり・head 未レビュー）では、記録より先に
 # 残りの対応を促す
 # 文書だけの PR は、一度でも成功したレビューがあれば後のレビューの失敗で止めない
 # （pre-merge-check と同じ条件）。最初のレビューが失敗しただけの PR は止める
 if [[ "$failed" == "yes" ]] && ! { (( successful > 0 )) && docs_only; }; then
-  echo "VERDICT: REVIEW_FAILED"
+  # head のローカルレビューの記録があれば、Copilot のレビューの失敗は止めない（ADR-0043）
+  if [[ "$local_reviewed" == no ]]; then
+    echo "VERDICT: REVIEW_FAILED"
+  elif (( unresolved > 0 )); then
+    echo "VERDICT: ACT"
+  else
+    echo "VERDICT: STOP_LOCAL_REVIEWED"
+  fi
 elif (( unresolved > 0 )); then
   echo "VERDICT: ACT"
 elif [[ "$failed" == "yes" ]]; then
@@ -216,12 +212,8 @@ elif [[ "$head_reviewed" == "no" ]]; then
     echo "VERDICT: STOP_DOCS_REVIEWED"
   elif [[ "$local_reviewed" == no ]]; then
     echo "VERDICT: LOCAL_REVIEW_NEEDED"
-  elif [[ "$copilot_needed" == no ]]; then
-    echo "VERDICT: STOP_LOCAL_REVIEWED"
-  elif (( round < MAX_ROUNDS )); then
-    echo "VERDICT: REREVIEW_NEEDED"
   else
-    echo "VERDICT: STOP_LIMIT"
+    echo "VERDICT: STOP_LOCAL_REVIEWED"
   fi
 elif (( ${missed:-0} > 0 )); then
   echo "VERDICT: STOP_PREVIOUSLY_MISSED"
