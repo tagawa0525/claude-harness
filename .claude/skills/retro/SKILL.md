@@ -30,13 +30,14 @@ allowed-tools:
 
 ```bash
 ~/.claude/skills/retro/scripts/session-events.sh
-~/.claude/skills/retro/scripts/memory-index.sh <session-events.sh の MEMORY_DIR>
+~/.claude/skills/retro/scripts/memory-index.sh <メモリのディレクトリ>
 ```
 
 - `session-events.sh`: `HOOK:` / `PERMISSION:` / `REJECTED:` / `TOOL:` は失敗の種類と回数と本文の 1 行目、
   `USER:` はユーザーの発言（順番どおり）。`ERROR:` で止まったら、文脈だけで進め、報告にそう書く
 - `memory-index.sh`: `MISSING:`（索引にあってファイルが無い）、`UNINDEXED:`（索引から漏れた）、
-  `BROKEN_LINK:`（`[[名前]]` の参照先が無い）
+  `BROKEN_LINK:`（`[[名前]]` の参照先が無い）。メモリのディレクトリは、このセッションの自動メモリの
+  `MEMORY.md` があるディレクトリ（システムプロンプトに示される）。メモリが無いプロジェクトでは飛ばす
 
 これと会話の文脈から、次の手がかりを拾う:
 
@@ -82,7 +83,7 @@ ADR、既存のメモリ、git の履歴。
 - 禁止を足したくなったら、守る中身の置き場所と運用を肯定形で書く
 - 仕組みを新しく作るときは、一般的な道具や作法での解き方を先に調べ、それを基本にする
 - `~/.claude` の CLAUDE.md、skills、scripts、hook は生成物で、生成元のリポジトリ（`claude-sync` の既定は
-  `~/nix/nixfiles`）で直す。メモリ（`MEMORY_DIR`）はその場で直す
+  `~/nix/nixfiles`）で直す。メモリはそのディレクトリで直す
 
 ## 4. 進め方を決める
 
