@@ -14,6 +14,7 @@ allowed-tools:
   - Bash(gh auth*)
   - Bash(~/.claude/scripts/branch-topics.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
+  - Bash(~/.claude/scripts/base-moved.sh*)
 ---
 
 # GitHub PR Create Command
@@ -32,6 +33,19 @@ GitHub Pull Requestを作成する（gh CLI使用）。このスキルの本体�
 !`~/.claude/scripts/branch-topics.sh`
 
 PR の Why を1文で書く。2文要る（無関係な決定や話題が混ざっている）なら PR を作らず /topic-triage で分ける。
+
+## 比較元の進みの確認
+
+比較元（既定ブランチ）が分岐点から進み、同じパスを触っていないかを調べる。他のセッションが同じ変更を
+先に入れていると、マージ直前の rebase まで気付けない。出力があれば、`COMMON:` のパスの差分
+（`git diff <分岐点>..<BASE> -- <パス>`）を読んで、同じ変更の二重か衝突かを確かめ、PR 本文の
+Summary に書く。同じ内容なら PR を出さずに止める。何も出なければ進める（知らせるだけで、止めはしない）:
+
+```bash
+~/.claude/scripts/base-moved.sh
+```
+
+積み重なったブランチは `--base <土台のブランチ>` を付ける。
 
 ## ローカルレビュー（PR を出す前）
 
