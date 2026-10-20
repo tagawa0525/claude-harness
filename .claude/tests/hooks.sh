@@ -2350,20 +2350,17 @@ assert_eq allow "$(decision "$out")"
 # ===========================================================================
 # 読むだけの list / show は通す。退避は WIP のコミットか、テストの部分だけのステージで行う
 
-REPO="$TEST_ROOT/gitstash"
-make_repo "$REPO"
-cd "$REPO" || exit 1
-
 it "guard-git-stash: stash の書き込み系は deny し、代わりの手順を示す"
 for cmd in 'git stash' 'git stash push' 'git stash push -m wip' 'git stash -u' 'git stash save wip' 'git stash pop' \
   'git stash apply' 'git stash drop' 'git stash clear' 'git stash branch feat/x' 'git stash create' 'git stash store abc' \
   'git -C /tmp/repo stash' 'git -c core.editor=true stash pop' 'git stash -- file.txt' \
-  'env FOO=1 git stash' 'sudo git stash' "bash -c 'git stash pop'" 'git add a && git stash'; do
+  'env FOO=1 git stash' 'sudo git stash' "bash -c 'git stash pop'" 'git add a && git stash' \
+  'git --no-pager stash' 'command git stash' 'xargs git stash' 'CMD="git stash pop"; $CMD' 'eval "git stash pop"'; do
   out=$(run_hook guard-git-stash "$cmd")
   assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "コミット"
+  assert_contains "$(reason "$out")" "共有"
 done
-assert_contains "$(reason "$out")" "コミット"
-assert_contains "$(reason "$out")" "共有"
 
 it "guard-git-stash: list と show は通す"
 for cmd in 'git stash list' 'git stash show' 'git stash show -p stash@{0}' 'git -C /tmp/repo stash list'; do
