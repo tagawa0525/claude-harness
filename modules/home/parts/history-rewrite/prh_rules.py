@@ -294,8 +294,14 @@ def _load_rule(raw: object, origin: str) -> Rule:
     for spec in raw.get("specs") or []:
         if not (isinstance(spec, dict) and set(spec) == {"from", "to"}):
             raise DictionaryError(f"{origin}: specs の項目は from と to: {spec!r}")
-        got = apply([rule], str(spec["from"]))
-        if got != str(spec["to"]):
+        if not (isinstance(spec["from"], str) and isinstance(spec["to"], str)):
+            # PyYAML（YAML 1.1）と prh の js-yaml（YAML 1.2）は、引用符の無い値（1:30、0123、yes）を違う型に読む
+            raise DictionaryError(
+                f"{origin}: specs の from と to は文字列（引用符で囲む）: {spec!r}"
+            )
+        # prh の Rule.check は spec を段落に分けずに当てる
+        got = _apply([rule], spec["from"], [(0, spec["from"])])
+        if got != spec["to"]:
             raise DictionaryError(
                 f"{origin}: specs が合わない: {spec['from']!r} は {spec['to']!r} のはずが {got!r}"
             )
@@ -304,8 +310,13 @@ def _load_rule(raw: object, origin: str) -> Rule:
 
 def apply(rules: list[Rule], text: str) -> str:
     """text に規則を prh と同じ意味で当てた結果"""
+    return _apply(rules, text, _paragraphs(text))
+
+
+def _apply(rules: list[Rule], text: str, pieces: list[tuple[int, str]]) -> str:
+    """text の部分 pieces（text の中の位置と中身）ごとに規則を当てる"""
     diffs: list[_Diff] = []
-    for offset, paragraph in _paragraphs(text):
+    for offset, paragraph in pieces:
         for rule in rules:
             for m in rule.pattern.finditer(paragraph):
                 if m.end() == m.start():

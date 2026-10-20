@@ -383,7 +383,11 @@ class Verifier:
             return [(k, v) for k, v in headers if k not in SKIPPED_HEADERS]
 
         if kept(old_headers) != kept(new_headers):
-            self.problems.append(f"{old}: 作者、コミッター、符号化が変わった")
+            differ = sorted(
+                {k.decode() for k, _ in set(kept(old_headers)) ^ set(kept(new_headers))}
+            )
+            # fast-export は知らない見出し（jj の change-id など）を書き出さないので、その名前を示す
+            self.problems.append(f"{old}: 見出しが変わった: {', '.join(differ)}")
         old_parents = [v.decode() for k, v in old_headers if k == b"parent"]
         new_parents = [v.decode() for k, v in new_headers if k == b"parent"]
         if [self.mapping.get(p, p) for p in old_parents] != new_parents:
