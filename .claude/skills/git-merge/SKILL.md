@@ -176,6 +176,8 @@ EOF
 ~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
+出力に `NOTE:` の行（pull で hook や `.claude` が変わった）があれば、完了メッセージでそのままユーザーに伝える（rebuild や claude-sync は走らせない）。
+
 ## 完了確認
 
 ```bash
