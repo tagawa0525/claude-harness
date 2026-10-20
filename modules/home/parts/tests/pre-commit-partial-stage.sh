@@ -175,7 +175,7 @@ else
   git -C "$R" show :a.md | head -3 | sed 's/^/    index: /'
 fi
 
-echo "==> 作業ツリーのパスがsymlinkなら、その先を書き換えない"
+echo "==> 作業ツリーのパスが symlink なら、その先を書き換えない"
 R=$(repo symlink a.md "$LINES")
 STAGED=${LINES/l1/l1 }
 printf '%s' "$STAGED" >"$R/a.md"
@@ -184,9 +184,9 @@ printf '%s' "$STAGED" >"$WORK/outside.md"
 rm "$R/a.md"
 ln -s "$WORK/outside.md" "$R/a.md"
 if commit "$R" && [[ "$(cat "$WORK/outside.md")" == "${STAGED%$'\n'}" ]] && [[ -L "$R/a.md" ]]; then
-  ok "symlinkの先のファイルを書き換えない"
+  ok "symlink の先のファイルを書き換えない"
 else
-  ng "symlinkの先のファイルを書き換えない"
+  ng "symlink の先のファイルを書き換えない"
 fi
 
 echo "==> clean のフィルタが落とす作業ツリーだけの行も、書き戻しで消さない"

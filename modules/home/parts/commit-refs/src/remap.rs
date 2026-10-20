@@ -113,7 +113,7 @@ fn collect(top: &Path, paths: &[Vec<u8>], map: &Map) -> Result<Vec<Replacement>,
     for path in paths {
         let file = top.join(OsStr::from_bytes(path));
         let label = String::from_utf8_lossy(path);
-        // 追跡しているsymlinkは、書くとリンク先を変えてしまうので飛ばす
+        // 追跡している symlink は、書くとリンク先を変えてしまうので飛ばす
         // （リンク先が追跡しているファイルなら、そちらとして置き換わる）
         let data = match fs::symlink_metadata(&file) {
             Ok(meta) if meta.file_type().is_symlink() => continue,

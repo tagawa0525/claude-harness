@@ -72,7 +72,7 @@ filter-repo を Python のコールバックつきで繰り返し、前の回の
   で止まることを確かめた）。tagger の無い古いタグは、mktag の fsck が拒むので、元と同じ形のまま
   `git hash-object --literally` で書く。タグを指すタグは、指す方を先に作る。署名は、git の `parse_signed_buffer` と同じく、
   署名の開始マーカー（`gpg-interface.c` の 4 つ）で始まる最後の行から後を外す
-- symlinkの行き先は書き換えない（`remap` と同じ）
+- symlink の行き先は書き換えない（`remap` と同じ）
 - 書き換えるのは `refs/heads/` と、たどるとコミットに着く `refs/tags/`。シンボリック ref は行き先と一緒に動くので
   移さない。ほかの ref（`refs/remotes/` など）は書き換えず、出力の `NOT_REWRITTEN:` で知らせる
 - `rev-list` と `fast-export` には ref の名前を標準入力で渡す（ref と同じ名前のパスと取り違えず、引数の上限を超えない）
@@ -102,7 +102,7 @@ filter-repo を Python のコールバックつきで繰り返し、前の回の
 
 - `commit-refs rewrite-history` の結合テスト（`modules/home/parts/commit-refs/tests/rewrite_history.rs`）: 文書と本文の
   番号が最後の番号になる、別のブランチを指す文書を流れの順によらず付け直す、作者と日時を保つ、すべてのブランチと
-  両方の種類のタグとタグを指すタグを移す、バイナリとsymlinkを変えない、作業ツリーを合わせる、元の ref と
+  両方の種類のタグとタグを指すタグを移す、バイナリと symlink を変えない、作業ツリーを合わせる、元の ref と
   対応表を残す、書き換えない ref を知らせる、シンボリック ref を行き先と一緒に動かす、タグの署名を最後の印から外す、
   ref と同じ名前のパスで取り違えない、循環・消えたコミット（タグの本文の理由も一緒に出す）・一部だけの対応表・
   作業ツリーの変更・ほかの worktree・届かない detached HEAD・前の書き換えの ref で止まり ref を動かさない

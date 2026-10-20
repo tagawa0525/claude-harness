@@ -446,7 +446,7 @@ impl Rewrite<'_> {
             })
     }
 
-    /// ブロブの中身を、モードに応じて置き換える（symlinkの行き先とバイナリはそのまま）
+    /// ブロブの中身を、モードに応じて置き換える（symlink の行き先とバイナリはそのまま）
     fn transform_blob(
         &self,
         label: &str,

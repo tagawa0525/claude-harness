@@ -502,7 +502,7 @@ fn move_record(
             None => None,
         };
         let file = root.join(path);
-        // symlinkの差分の行はリンクの先の行ではなく、先はリポジトリの外のこともある
+        // symlink の差分の行はリンクの先の行ではなく、先はリポジトリの外のこともある
         // submodule（gitlink）の項目はディレクトリで、参照を書くファイルではない
         if fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink() || m.is_dir()) {
             continue;
