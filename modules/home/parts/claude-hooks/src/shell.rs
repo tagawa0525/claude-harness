@@ -144,6 +144,8 @@ pub struct Cmd {
     pub login_home: Option<String>,
     /// 包んだ `ssh` の接続先の書き方（unwrap.rs）
     pub remote: Option<String>,
+    /// 包んだ `taskset` が 1 つの CPU に限る（unwrap.rs）
+    pub pinned_to_one_cpu: bool,
     /// git のコマンドなら、グローバルオプションの読み取り
     pub git: Option<GitInvocation>,
 }
@@ -295,6 +297,7 @@ impl Shell {
             login_home: unwrapped.login_home,
             remote: unwrapped.remote,
             wrappers: unwrapped.wrappers,
+            pinned_to_one_cpu: unwrapped.pinned_to_one_cpu,
             git,
         };
         let Some(source) = unwrapped.source else {

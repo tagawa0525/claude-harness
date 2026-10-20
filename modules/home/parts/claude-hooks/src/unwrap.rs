@@ -442,6 +442,36 @@ pub struct Unwrapped {
     /// `name` が何を走らせるか、文字列からは分からない: 標準入力からコマンドを読む（`bash -s`、引数の無い `bash`、
     /// コマンドの無い `ssh <接続先>` / `sudo -s` / `script`）、ファイルを読んで走らせる（`source` / `.`）
     pub opaque: bool,
+    /// 包んだ `taskset` が、中のコマンドを 1 つの CPU に限る（`-c 3`、`-c 5-5`、マスク `0x4`）。
+    /// 複数の CPU を指す、または読めない指定は false
+    pub pinned_to_one_cpu: bool,
+}
+
+/// `taskset` の CPU の指定が、ちょうど 1 つの CPU か。`cpu_list` なら `-c` の一覧（`3`、`0,2`、`0-3:2`）、
+/// そうでなければ 16 進のマスク（`0x4`）。読めない指定は false
+fn taskset_selects_one_cpu(cpu_list: bool, spec: &str) -> bool {
+    if !cpu_list {
+        let hex = spec.strip_prefix("0x").unwrap_or(spec);
+        return u128::from_str_radix(hex, 16).is_ok_and(|mask| mask.count_ones() == 1);
+    }
+    let mut cpus = std::collections::BTreeSet::new();
+    for item in spec.split(',') {
+        // 範囲 `a-b` の刻み `:s` は、1 つの CPU に限るかの判定には効かない（a-a は刻みによらず a だけ）
+        let (range, stride) = item.split_once(':').unwrap_or((item, "1"));
+        let (lo, hi) = range.split_once('-').unwrap_or((range, range));
+        let (Ok(lo), Ok(hi), Ok(stride)) = (
+            lo.parse::<usize>(),
+            hi.parse::<usize>(),
+            stride.parse::<usize>(),
+        ) else {
+            return false;
+        };
+        if lo > hi || stride == 0 || hi > 1 << 16 {
+            return false;
+        }
+        cpus.extend((lo..=hi).step_by(stride));
+    }
+    cpus.len() == 1
 }
 
 pub fn basename(path: &str) -> &str {
@@ -595,6 +625,9 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut host: Option<String> = None;
         // script のログのファイルを読んだか（getopt が語を並べ替えるので、ファイルの後ろのオプションも読む）
         let mut log_file_seen = false;
+        // taskset -c: 次の位置引数は CPU の一覧（無ければマスク）
+        let mut cpu_list = false;
+        let mut pinned = false;
         loop {
             while let Some(front) = words.front() {
                 let t = front.text.clone();
@@ -723,6 +756,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                             }
                         }
                         ("chrt", Some('p' | 'm')) | ("taskset", Some('p')) => runs = false,
+                        ("taskset", Some('c')) => cpu_list = true,
                         ("watch", Some('x')) => execs = true,
                         ("script", Some('c')) => source = value,
                         ("ssh", Some('G' | 'N' | 'O' | 'Q' | 'V' | 'Z' | 's')) => runs = false,
@@ -738,6 +772,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                 positionals -= 1;
                 if wrapper.name == "ssh" {
                     host = positional.map(|a| a.text);
+                } else if wrapper.name == "taskset" {
+                    pinned = positional.is_some_and(|a| taskset_selects_one_cpu(cpu_list, &a.text));
                 }
                 // ssh は接続先を取った後、オプションの読み取りに戻る（ssh.c は host を取ると getopt をやり直す）
                 if wrapper.name == "ssh" && !options_done {
@@ -764,6 +800,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
         }
         out.dirs.extend(dir);
+        out.pinned_to_one_cpu |= pinned;
         // ssh は文字列を走らせてほどき終わるので、包みの列に ssh は 1 つまで
         if let Some(host) = host {
             out.remote = Some(format!("{host}:"));
@@ -836,6 +873,33 @@ mod tests {
         let words: Vec<&str> = src.split_whitespace().collect();
         let args: Vec<Arg> = words[1..].iter().map(|w| arg(w)).collect();
         unwrap(words[0], &args)
+    }
+
+    #[test]
+    fn taskset_pins_to_one_cpu_only_for_a_single_cpu() {
+        for src in [
+            "taskset -c 3 x",
+            "taskset --cpu-list 3 x",
+            "taskset -c 5-5 x",
+            "taskset -c 3,3 x",
+            "taskset 0x4 x",
+            "taskset 4 x",
+            "sudo taskset -c 0 x",
+        ] {
+            assert!(un(src).pinned_to_one_cpu, "{src}");
+        }
+        for src in [
+            "taskset -c 0-3 x",
+            "taskset -c 0,2 x",
+            "taskset -c 0-7:2 x",
+            "taskset 0x3 x",
+            "taskset -c a x",
+            "taskset -c 3-1 x",
+            "taskset 0x0 x",
+            "x",
+        ] {
+            assert!(!un(src).pinned_to_one_cpu, "{src}");
+        }
     }
 
     #[test]
