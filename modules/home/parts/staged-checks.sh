@@ -100,7 +100,7 @@ fi
 # --- Markdown ---------------------------------------------------------------------------------------
 # ステージした版を元のパスのまま $work/md に書き出し、そこで markdownlint を走らせる（直下の設定と
 # .markdownlintignore も、ステージした版をコピーし、相対のパスの書き方をそのまま効かせる。設定の extends が指す
-# 別のファイルは写さない。ADR-0028）
+# 別のファイルはコピーしない。ADR-0028）
 PATHS=()
 ! wants markdown "$@" || collect '*.md'
 if [ "${#PATHS[@]}" -gt 0 ] && ! command -v markdownlint >/dev/null 2>&1; then
