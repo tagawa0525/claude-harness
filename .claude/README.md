@@ -132,6 +132,7 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 | `scripts/slurm-history.sh`              | jobcomp（`/var/log/slurm/job_completions`）から、ジョブの見積もり・実績・比率を表にする（`--by-name` でジョブ名ごと） | slurm-run.sh のジョブの振り返り                 |
 | `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                                                        | gh-pr-review（language-checks 経由）, delegate  |
 | `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                                                   | gh-pr-review, delegate                          |
+| `retro/scripts/*.sh`                    | 会話の記録からの拒否・失敗の集計、メモリの索引と実ファイルの突き合わせ                                                | retro                                           |
 
 ### worktree の間で共有するパス（`.worktreelink`）
 
