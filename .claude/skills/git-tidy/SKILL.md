@@ -29,8 +29,8 @@ allowed-tools:
 
 ## 前提
 
-- `main` / `master` では実行しない（/git-cherry-pick で feature ブランチへ移すよう案内する）
-- 未コミットの変更があれば先に WIP をコミットするか、ユーザーに確認する（stash は全 worktree で共有なので使わない）
+- `main` / `master` にいるときは、実行の代わりに /git-cherry-pick で feature ブランチへ移すよう案内する
+- 未コミットの変更があれば先に WIP をコミットするか、ユーザーに確認する
 - 書き換え前に `git branch [backup] HEAD` で元の HEAD を残し、結果を確認してから消す
 - 履歴を分析して操作を提案し、ユーザーの確認を得てから実行する。push 済みなら
   `/git-push --force` が要ることも確認の時点で伝える
