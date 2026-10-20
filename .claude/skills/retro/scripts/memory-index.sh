@@ -9,7 +9,7 @@
 #   MISSING: <file>              索引にあり、ファイルが無い
 #   UNINDEXED: <file>            ファイルがあり、索引に無い（MEMORY.md 自身を除く）
 #   BROKEN_LINK: <file> -> <名前>  本文の [[名前]]（[[名前|別名]]、[[名前#節]] を含む）に、語幹か前付けの
-#                                  name が <名前> のファイルが無い。コードの中（`...` とフェンス）は読まない
+#                                  name が <名前> のファイルが無い。コードの中（`...` と ``` か ~~~ のフェンス）と、名前の空のリンクは読まない
 # 食い違いがあっても exit 0（判断はスキルが行う）。MEMORY.md が読めなければ exit 1。
 
 set -euo pipefail
@@ -73,10 +73,10 @@ done
 for path in "${files[@]}"; do
   file=$(basename "$path")
   while IFS= read -r name; do
-    [[ -n "${known[$name]:-}" ]] || echo "BROKEN_LINK: $file -> $name"
+    [[ -z "$name" || -n "${known[$name]:-}" ]] || echo "BROKEN_LINK: $file -> $name"
   done < <(
     # フェンスの中の行と `...` を除いてから [[...]] を拾い、| と # より後を外す
-    awk '/^[[:space:]]*```/ { fence = !fence; next } !fence { gsub(/`[^`]*`/, ""); print }' "$path" |
+    awk '/^[[:space:]]*(```|~~~)/ { fence = !fence; next } !fence { gsub(/`[^`]*`/, ""); print }' "$path" |
       { grep -oE '\[\[[^]]+\]\]' || true; } |
       sed -E 's/^\[\[(.*)\]\]$/\1/; s/[|#].*$//; s/^[[:space:]]+//; s/[[:space:]]+$//' | sort -u
   )
