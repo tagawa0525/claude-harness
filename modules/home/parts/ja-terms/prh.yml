@@ -88,3 +88,16 @@ rules:
     pattern: /(?<=[ァ-ヶー]|` )付き(?=[のをで、。）]|は)/
   - expected: symlink
     pattern: シンボリックリンク
+  # コミットメッセージの履歴（PR #228「直訳の造語を一般的な技術用語に直す」）で直した造語
+  - expected: デプロイ
+    pattern: 配備
+  - expected: 区切り文字
+    pattern: 終端子
+  - expected: 不正シャットダウン
+    pattern: 汚い電源断
+  - expected: 依存パッケージ
+    pattern: 依存物
+  - expected: ハルシネーション
+    pattern: 幻覚
+  - expected: リグレッション
+    pattern: 退行
