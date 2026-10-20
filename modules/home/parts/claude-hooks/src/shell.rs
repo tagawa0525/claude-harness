@@ -332,6 +332,8 @@ impl Shell {
             // 外側の環境変数の変更は、中のコマンドにも効く（ディレクトリは target_dir が、外側の `env -C` を
             // 中の `cd` より前に当てる）
             c.env = cmd.env.iter().cloned().chain(c.env).collect();
+            // 外側の taskset は、文字列で走らせる中のコマンドにも効く
+            c.pinned_to_one_cpu |= cmd.pinned_to_one_cpu;
             cmds.push(c);
         }
         cmds.insert(0, cmd);

@@ -1,7 +1,7 @@
 ---
 status: proposed
 date: 2026-10-20
-requires: [ADR-0026]
+requires: [ADR-0007, ADR-0023, ADR-0026]
 supersedes: []
 superseded-by:
 issues: ["#365"]
@@ -43,19 +43,24 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
   相対も）、`nix build` のどれか（`env`・`sudo` などの包みはほどいて判定する）
 - `cargo` に `-j 1`・`-j1`・`--jobs 1`・`--jobs=1` が無く、`taskset` が中のコマンドを 1 つの CPU に限っていない
   （`-c 3`、`-c 5-5`、マスク `0x4`。複数の CPU や読めない指定は 1 コアとみなさない）
-- `squeue -h -t R -O oversubscribe:10,name:64,jobid:12` に OverSubscribe が `NO` の行がある
+- `squeue -h -t R -o '%h|%j|%i'` に OverSubscribe（`%h`）が `NO` の行がある（r995 の実機で、排他のジョブが `NO` と出ることを確認した）
 
-squeue は対象のコマンドがあるときだけ呼ぶ。squeue が無いホスト、squeue の失敗、排他のジョブが無いときは何もしない。
-列の幅は、既定の 20 文字で名前が切れないように広げた。拒否の文言にジョブの名前と番号を入れ、直し方（1 コアに
+squeue は対象のコマンドがあるときだけ呼ぶ。squeue が無いホスト、squeue の失敗、5 秒で終わらないとき（slurmctld が
+応答しない）、排他のジョブが無いときは何もしない。`-O` の固定幅の列は長い名前がジョブ番号と続くので、区切りのある
+`-o` で読む。`taskset` は、コマンドを直に包む最も内側のものが効き、`bash -c '…'` の中のコマンドにも外側の指定が効く。
+`cargo` と `nix` のサブコマンドは、値を取るグローバルオプション（`--config`、`-Z`、`--extra-experimental-features`、
+`--option`）を飛ばして読む。拒否の文言にジョブの名前と番号を入れ、直し方（1 コアに
 限る、終わるまで待つ、`slurm-run.sh` で投げる）を示す。エスケープは設けない。
 
 ### 帰結
 
 - 排他の測定の間、手元の `cargo test`・`cargo build`・`nix build`・格子計算は `-j 1` と `taskset -c <1 コア>` に
   限られる。ビルドを含むチェックは遅くなるが止まらない。ADR-0026 の案 B を、1 コアに限る条件つきで取り入れる
-- `cargo test` は `-j 1` でもテストが複数スレッドで走りうる。ここで見るのはビルドの並列度だけで、テストのスレッド数は
-  見ない（`taskset` で限るのが確実）
-- 対象は決め打ちの一覧で、別の重い計算（直接の `openmc` など）は止めない。足りないものは見つかったときに足す
+- `-j 1` はビルドの並列度だけを限る。`cargo test`・`run`・`bench` は、テストの実行や実行するプログラムが複数スレッドで
+  走りうるので、`-j 1` では乱れを防ぎきれない（`taskset` で限るのが確実）。それでも `-j 1` を通すのは、決定の依頼が
+  `-j 1` を許す形だったため。乱れが続けば、`test`・`run`・`bench` は `taskset` だけにする
+- 対象は決め打ちの一覧で、別の重い計算（直接の `openmc`、`cargo check`・`nextest`、`nix flake check`・`nix run`、
+  `nix develop -c <コマンド>` で包んだもの）は止めない。足りないものは見つかったときに足す
 - 排他でないジョブ（`-shared`、OverSubscribe が YES）は対象外。#365 の run-checks.sh の直列化とは別の問題である
 
 ### 確認

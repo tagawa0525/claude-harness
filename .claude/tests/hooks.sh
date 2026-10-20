@@ -2381,8 +2381,8 @@ done
 
 FAKE_SQUEUE="$TEST_ROOT/fake-squeue"
 mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle" "$FAKE_SQUEUE/broken"
-printf '#!/bin/sh\nprintf "NO                  openmc-2K           1234\\nYES                 x-shared            1235\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
-printf '#!/bin/sh\nprintf "YES                 x-shared            1235\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234\\nYES|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
+printf '#!/bin/sh\nprintf "YES|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
 printf '#!/bin/sh\nexit 0\n' >"$FAKE_SQUEUE/idle/squeue"
 printf '#!/bin/sh\necho boom >&2\nexit 1\n' >"$FAKE_SQUEUE/broken/squeue"
 chmod +x "$FAKE_SQUEUE"/*/squeue
@@ -2392,7 +2392,7 @@ it "guard-exclusive-slurm: 排他のジョブ中の全コアのコマンドは d
 for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' \
   'cargo +nightly build' 'cargo build -j 4' 'dvc repro' 'dvc repro examples/vera/dvc.yaml' \
   'bin/xs in.toml' './bin/lattice in.toml' '../../bin/core in.toml' '../bin/chain in.toml' 'nix build .#x' \
-  'cd repo && cargo test' 'env FOO=1 cargo test' "bash -c 'cargo test'" 'taskset -c 0-3 cargo test' 'taskset 0x3 cargo build'; do
+  'cargo --config a=b test' 'nix --extra-experimental-features nix-command build .#x' 'taskset -c 3 taskset -c 0-31 cargo test' 'cd repo && cargo test' 'env FOO=1 cargo test' "bash -c 'cargo test'" 'taskset -c 0-3 cargo test' 'taskset 0x3 cargo build'; do
   out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "openmc-2K"
@@ -2404,7 +2404,7 @@ done
 it "guard-exclusive-slurm: -j 1 か 1 コアの taskset で限れば通す"
 for cmd in 'cargo test -j 1' 'cargo test -j1' 'cargo build --jobs 1' 'cargo build --jobs=1' 'taskset -c 3 cargo test' \
   'taskset -c 3 bin/xs in.toml' 'taskset --cpu-list 2 dvc repro' 'taskset 0x4 cargo build' 'taskset -c 5-5 nix build .#x' \
-  'sudo taskset -c 3 cargo test'; do
+  'sudo taskset -c 3 cargo test' "taskset -c 3 bash -c 'cargo test'"; do
   out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq "" "$out"
 done

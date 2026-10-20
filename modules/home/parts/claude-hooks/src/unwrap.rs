@@ -800,7 +800,10 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
         }
         out.dirs.extend(dir);
-        out.pinned_to_one_cpu |= pinned;
+        // 包みは外側から順にほどく。コマンドを直に包む最も内側の taskset の指定が効く
+        if wrapper.name == "taskset" {
+            out.pinned_to_one_cpu = pinned;
+        }
         // ssh は文字列を走らせてほどき終わるので、包みの列に ssh は 1 つまで
         if let Some(host) = host {
             out.remote = Some(format!("{host}:"));
@@ -885,6 +888,7 @@ mod tests {
             "taskset 0x4 x",
             "taskset 4 x",
             "sudo taskset -c 0 x",
+            "taskset -c 0-3 taskset -c 2 x",
         ] {
             assert!(un(src).pinned_to_one_cpu, "{src}");
         }
@@ -896,6 +900,8 @@ mod tests {
             "taskset -c a x",
             "taskset -c 3-1 x",
             "taskset 0x0 x",
+            "taskset -c 3 taskset -c 0-31 x",
+            "taskset -c 3 sudo taskset 0xffff x",
             "x",
         ] {
             assert!(!un(src).pinned_to_one_cpu, "{src}");
