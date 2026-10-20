@@ -46,7 +46,6 @@ $ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上
 
 次は hook が止める。通らないときは理由に従って直す（文言や書き方を変えて迂回しない）:
 
-- main への `git merge` に `--no-ff` がない、または対象が main の上に rebase されていない
 - 新しい ADR を 2 件以上加えるブランチ。決定ごとにブランチを分ける（/topic-triage）
 - マージ結果が品質チェックを通らない
 
@@ -98,7 +97,7 @@ main との分岐点からの変更を検査する。マージ時にも hook が
 ~/.claude/skills/language-checks/scripts/run-checks.sh -C [TARGET_WORKTREE] --base main
 ```
 
-失敗したら原因を直してコミットし、もう一度チェックする。通らないままマージしない。
+失敗したら原因を直してコミットし、もう一度チェックする。通ってからマージする。
 
 ### レビュー（自動レビューの代わり）
 
@@ -157,7 +156,7 @@ Branch: [branch]
 必ずマージコミットを作る（GitHub での `--merge` と同じ履歴になる）。
 `DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う。
 main の worktree が feature ブランチのままだと、ブランチを自分自身にマージして何も起きない。
-main の worktree 以外から `git merge` を実行しない（issue #372 の事故）。マージの直前に、
+`git merge` は main の worktree から実行する（issue #372 の事故）。マージの直前に、
 `git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD`（none なら今の worktree）が main であることを確かめ、
 違えば止まる:
 
@@ -176,7 +175,7 @@ EOF
 ~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
-出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝える（rebuild や claude-sync は実行しない）。
+出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝え、rebuild や claude-sync の実行はユーザーに任せる。
 
 ## 完了確認
 

@@ -105,7 +105,7 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 ~/.claude/skills/language-checks/scripts/run-checks.sh -C <worktree> --base <base>
 ```
 
-終了コードで判定し、出力を `tail` などにつながない。失敗したら原因を直してコミットし、やり直す。CLAUDE.md に
+終了コードで判定する（出力を `tail` などにつなぐと終了コードが消える）。失敗したら原因を直してコミットし、やり直す。CLAUDE.md に
 チェックの方法が書かれていれば、それも実行する。
 
 依存や lock を変えるブランチなど、各コミットでビルドが通るべきときは、`<base>..HEAD` の各コミットを一時 worktree で
@@ -155,7 +155,7 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 
 ### 8. マージの直前で止める
 
-`git merge`、`gh pr merge`、/git-merge、/gh-pr-merge を実行しない。rebase もしない（計算を投げる直前の rebase だけは「作業中の規則」の例外）。これを止める hook は無く、
+`git merge`、`gh pr merge`、/git-merge、/gh-pr-merge と rebase は親のセッションに残し、ここで止める（計算を投げる直前の rebase だけは「作業中の規則」の例外）。これを止める hook は無く、
 許可も通るので、手順で守る。main が先に進んでいれば（`git -C <worktree> rev-list --count HEAD..<base>` が
 0 でない）、件数を報告に書く。
 
