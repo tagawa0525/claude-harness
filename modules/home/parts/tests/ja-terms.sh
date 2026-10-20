@@ -184,6 +184,7 @@ stop|包みと bash の文字列を見る。
 stop|sudo などの包み、を足す。
 pass|ケーキを包み直す。
 pass|紙で包みます。
+pass|紅葉が色付き始める。
 pass|写真を撮る。
 pass|画面に映す。
 stop|終端子を探す。
@@ -235,6 +236,14 @@ if commits "$REPO" doc.md "$(printf '# t\n\n計算の結果を確かめ\nる。\
   ok "行を折り返した動詞は止めない"
 else
   ng "行を折り返した動詞で止めた"
+fi
+
+REPO="$WORK/wrapped-tsutsumi"
+new_repo "$REPO"
+if commits "$REPO" doc.md "$(printf '# t\n\n荷物を包み\n込む。\n')"; then
+  ok "行を折り返した包み込むは止めない"
+else
+  ng "行を折り返した包み込むで止めた"
 fi
 
 # --- 3c. グロブの文字を含む名前、大文字の拡張子、シンボリックリンク -------------------------------------
