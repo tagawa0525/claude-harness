@@ -9,7 +9,8 @@
 #             コマンドの出力は標準エラーに回し、標準出力は 1 コミット 1 行にする
 #
 # 出力（標準出力）: `<短縮hash> <件名> exit=<N>`
-# 終了コード: 全コミットで 0 なら 0、1 つでも失敗すれば 1、使い方の誤りは 2。
+# 終了コード: 全コミットで 0 なら 0、1 つでも失敗すれば 1、使い方の誤りは 2、
+# git rev-list の失敗（shallow clone、壊れたオブジェクトなど）は 3。
 # 失敗しても止まらず全コミットを走らせる。
 #
 # 使いどころ: 依存や lock を変えるブランチなど、各コミットでビルドが通るべきとき
@@ -18,6 +19,9 @@
 #
 # 現在の worktree と stash には触れず、`git worktree add --detach` の一時 worktree で
 # 調べる。一時 worktree は終了時（失敗、中断を含む）に必ず消す。
+#
+# 許可リスト（modules/home/parts/claude-code.nix）に入れない。`-- <任意のコマンド>` を
+# 実行するので、プレフィックス一致で事前承認すると何でも確認なしで走ってしまう。
 
 set -uo pipefail
 
@@ -35,7 +39,13 @@ git rev-parse --verify -q "$base^{commit}" >/dev/null || {
   exit 2
 }
 
-mapfile -t commits < <(git rev-list --topo-order --reverse "$base..HEAD")
+# プロセス置換では rev-list の失敗が消えるので、いったん変数に受けて終了コードを見る
+list=$(git rev-list --topo-order --reverse "$base..HEAD") || {
+  echo "git rev-list に失敗しました（shallow clone や壊れたオブジェクトの可能性）: $base..HEAD" >&2
+  exit 3
+}
+mapfile -t commits <<<"$list"
+[[ -n "$list" ]] || commits=()
 ((${#commits[@]} > 0)) || {
   echo "$base..HEAD にコミットがありません" >&2
   exit 2
@@ -44,9 +54,12 @@ mapfile -t commits < <(git rev-list --topo-order --reverse "$base..HEAD")
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/check-each-commit.XXXXXX")
 wt="$tmp/wt"
 cleanup() {
+  # 検査が書き込み不可のディレクトリ（Go のモジュールキャッシュなど）を残すと rm が失敗する
+  chmod -R u+w "$tmp" 2>/dev/null
   git worktree remove --force "$wt" 2>/dev/null
   rm -rf "$tmp"
   git worktree prune
+  [[ ! -e "$tmp" ]] || echo "一時ディレクトリを消せませんでした: $tmp" >&2
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM HUP
@@ -57,8 +70,10 @@ rc=0
 for sha in "${commits[@]}"; do
   git -C "$wt" checkout -q --detach "$sha" || exit 2
   # 検査の副産物（ビルド結果など）が次のコミットに残らないようにする
+  chmod -R u+w "$wt" 2>/dev/null
   git -C "$wt" clean -qffdx
-  (cd "$wt" && "$@") >&2
+  # 標準入力を渡さない（パイプラインやエージェントのシェルの入力を食わない）
+  (cd "$wt" && "$@") >&2 </dev/null
   status=$?
   ((status == 0)) || rc=1
   printf '%s %s exit=%d\n' "$(git rev-parse --short "$sha")" "$(git log -1 --format=%s "$sha")" "$status"

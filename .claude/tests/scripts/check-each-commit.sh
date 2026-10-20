@@ -65,8 +65,6 @@ it "check-each-commit: base が解決できなければ exit 2"
 "$SCRIPT" nosuchref -- true >/dev/null 2>&1
 assert_eq 2 $?
 
-# RED: 以下は実装前のため skip（GREEN のコミットで外す）
-if [[ -n "${CEC_PENDING-}" ]]; then
 it "check-each-commit: 書き込み不可のファイルを残す検査でも一時ディレクトリが残らない"
 "$SCRIPT" main -- sh -c 'mkdir d && touch d/f && chmod -R a-w d' >/dev/null 2>&1
 assert_eq 0 $?
@@ -84,6 +82,5 @@ chmod +x "$TEST_ROOT/failbin/git"
 err=$(PATH="$TEST_ROOT/failbin:$PATH" "$SCRIPT" main -- true 2>&1 >/dev/null)
 assert_eq 3 $?
 assert_contains "$err" "git rev-list に失敗"
-fi
 
 finish

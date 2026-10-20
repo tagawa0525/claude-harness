@@ -113,6 +113,8 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 cd <worktree> && ~/.claude/scripts/check-each-commit.sh <base> -- <コマンド…>
 ```
 
+任意のコマンドを走らせるので許可リストには入れていない。実行のたびに確認を求められる。
+
 ### 7. レビューを受ける
 
 ローカルのレビューは、どちらの場合も先に回す:
