@@ -144,6 +144,8 @@ pub struct Cmd {
     pub login_home: Option<String>,
     /// 包んだ `ssh` の接続先の書き方（unwrap.rs）
     pub remote: Option<String>,
+    /// 包んだ `taskset` が 1 つの CPU に限る（unwrap.rs）
+    pub pinned_to_one_cpu: bool,
     /// git のコマンドなら、グローバルオプションの読み取り
     pub git: Option<GitInvocation>,
 }
@@ -295,6 +297,7 @@ impl Shell {
             login_home: unwrapped.login_home,
             remote: unwrapped.remote,
             wrappers: unwrapped.wrappers,
+            pinned_to_one_cpu: unwrapped.pinned_to_one_cpu,
             git,
         };
         let Some(source) = unwrapped.source else {
@@ -329,6 +332,10 @@ impl Shell {
             // 外側の環境変数の変更は、中のコマンドにも効く（ディレクトリは target_dir が、外側の `env -C` を
             // 中の `cd` より前に当てる）
             c.env = cmd.env.iter().cloned().chain(c.env).collect();
+            // 外側の taskset は、文字列で走らせる中のコマンドにも効く。中に taskset があれば最も内側が効く
+            if !c.wrappers.iter().any(|w| basename(w) == "taskset") {
+                c.pinned_to_one_cpu = cmd.pinned_to_one_cpu;
+            }
             cmds.push(c);
         }
         cmds.insert(0, cmd);

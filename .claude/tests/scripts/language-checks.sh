@@ -12,6 +12,8 @@ LANG_SCRIPTS="$CLAUDE_DIR/skills/language-checks/scripts"
 # 手元の staged-checks（home-manager が PATH に置く）を走らせず、どのホストでも同じ結果にする。Markdown の段を
 # 確かめるテストは、この偽物を差し替える
 make_fake_tool staged-checks '*) exit 0 ;;'
+# 手元の squeue を呼ばず、排他のジョブが無い状態にする。排他のジョブ中の自己制限を確かめるテストが差し替える
+make_fake_tool squeue '*) exit 0 ;;'
 
 # ===========================================================================
 # language-checks/scripts/run-checks.sh
@@ -523,3 +525,38 @@ python3 "$MD_FIXER" "$MD_DIR/table.md" >/dev/null
 assert_eq $'| a   | b |\n| --- | - |\n| ccc | d |\n\n```text\n| a | b |\n| --- | --- |\n| ccc | d |\n```' "$(cat "$MD_DIR/table.md")"
 
 finish
+
+# ===========================================================================
+# run-checks.sh: 排他の Slurm のジョブ中は 1 コアに限る（ADR-0041）
+# ===========================================================================
+
+REPO="$TEST_ROOT/checks/exclusive"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo '[package]' > Cargo.toml
+echo '{}' > flake.nix
+make_fake_tool cargo '*) exit 0 ;;'
+make_fake_tool taskset '*) shift 2; exec "$@" ;;'
+make_fake_tool nix '*) exit 0 ;;'
+make_fake_tool statix '*) exit 0 ;;'
+make_fake_tool nixfmt '*) exit 0 ;;'
+
+it "run-checks: 排他のジョブが走行中なら、cargo を taskset と -j 1 で、nix flake check を --cores 1 -j 1 で走らせ、冒頭に知らせる"
+make_fake_tool squeue '*) printf "NO|openmc-2K|1234\\nOK|x-shared|1235\\n" ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_contains "$out" "排他のジョブ openmc-2K（1234）が走行中なので 1 コアで走らせる"
+assert_contains "$(fake_log taskset)" "cargo clippy -j 1 --all-targets -- -D warnings"
+assert_contains "$(fake_log taskset)" "cargo test -j 1"
+assert_contains "$(fake_log nix)" "flake check --cores 1 -j 1"
+
+it "run-checks: 排他のジョブが無ければ（排他でないジョブだけでも）制限しない"
+make_fake_tool squeue '*) printf "OK|x-shared|1235\\n" ;;'
+make_fake_tool taskset '*) shift 2; exec "$@" ;;'
+make_fake_tool nix '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_not_contains "$out" "1 コアで走らせる"
+assert_eq "" "$(fake_log taskset)"
+assert_contains "$(fake_log nix)" "flake check"
+assert_not_contains "$(fake_log nix)" "--cores"

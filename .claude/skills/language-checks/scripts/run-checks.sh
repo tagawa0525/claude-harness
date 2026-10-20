@@ -110,6 +110,21 @@ run_stage() {
 
 DETECTED=0
 
+# 排他の Slurm のジョブが走行中は、cargo と nix flake check を 1 コアに限る。全コアを使うとそのジョブの時間の
+# 記録を乱し、止めるとジョブの間（数時間）マージできないため、止めずに遅く走らせる（ADR-0041）。
+# claude-hooks の guard-exclusive-slurm は、このスクリプトを対象にしない
+CARGO_PIN=()
+CARGO_JOBS=()
+NIX_LIMIT=()
+# shellcheck source=../../../scripts/lib/slurm-exclusive.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/slurm-exclusive.sh"
+if EXCLUSIVE_JOB=$(exclusive_slurm_job); then
+  echo "排他のジョブ ${EXCLUSIVE_JOB% *}（${EXCLUSIVE_JOB##* }）が走行中なので 1 コアで走らせる（遅い）"
+  CARGO_PIN=(taskset -c "$(( $(getconf _NPROCESSORS_ONLN) - 1 ))")
+  CARGO_JOBS=(-j 1)
+  NIX_LIMIT=(--cores 1 -j 1)
+fi
+
 # --- Rust ---
 # rust_targets: ステージ済みの .rs ごとに、上へたどって最も近い Cargo.toml のディレクトリ（crate）を
 # "crate <dir>" で出す。crate に属さない .rs は "stray <file>" で出す
@@ -129,14 +144,14 @@ rust_targets() {
 }
 # cargo_in <dir> <args...>: crate のディレクトリで cargo を実行する
 cargo_in() {
-  (cd -- "$1" && shift && cargo "$@")
+  (cd -- "$1" && shift && "${CARGO_PIN[@]}" cargo "$@")
 }
 run_rust() {
   local dir="$1"
   # 修正コマンドはコピーしてそのまま実行できるよう、空白や - で始まるパスも引用する
   run_stage rust format cargo "(cd -- $(printf '%q' "$dir") && cargo fmt)" cargo_in "$dir" fmt --check
-  run_stage rust lint cargo "" cargo_in "$dir" clippy --all-targets -- -D warnings
-  run_stage rust test cargo "" cargo_in "$dir" test
+  run_stage rust lint cargo "" cargo_in "$dir" clippy "${CARGO_JOBS[@]}" --all-targets -- -D warnings
+  run_stage rust test cargo "" cargo_in "$dir" test "${CARGO_JOBS[@]}"
 }
 if [[ -f Cargo.toml ]]; then
   DETECTED=1
@@ -223,7 +238,7 @@ if [[ -f flake.nix ]] || staged_has '*.nix'; then
   run_stage nix format nixfmt "git ls-files -z '*.nix' | xargs -0 -r nixfmt" nix_fmt_check
   run_stage nix lint statix "statix fix" statix check
   if [[ -f flake.nix ]]; then
-    run_stage nix test nix "" nix flake check
+    run_stage nix test nix "" nix flake check "${NIX_LIMIT[@]}"
   else
     echo "SKIP: nix test (flake.nix がない)"
   fi

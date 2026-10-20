@@ -76,6 +76,7 @@ mod block_main_commit;
 mod block_no_verify;
 mod block_secret_commit;
 mod guard_branch_base;
+mod guard_exclusive_slurm;
 mod guard_gh_api;
 mod guard_gh_run_rerun;
 mod guard_git_add;
@@ -107,6 +108,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &pre_git_merge_check::PreGitMergeCheck,
         &guard_git_merge::GuardGitMerge,
         &guard_git_stash::GuardGitStash,
+        &guard_exclusive_slurm::GuardExclusiveSlurm,
     ]
 }
 

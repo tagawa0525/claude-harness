@@ -442,6 +442,166 @@ pub struct Unwrapped {
     /// `name` が何を走らせるか、文字列からは分からない: 標準入力からコマンドを読む（`bash -s`、引数の無い `bash`、
     /// コマンドの無い `ssh <接続先>` / `sudo -s` / `script`）、ファイルを読んで走らせる（`source` / `.`）
     pub opaque: bool,
+    /// 包んだ `taskset` が、中のコマンドを 1 つの CPU に限る（`-c 3`、`-c 5-5`、マスク `0x4`）。
+    /// 複数の CPU を指す、または読めない指定は false
+    pub pinned_to_one_cpu: bool,
+}
+
+/// `taskset` の CPU の指定が、ちょうど 1 つの CPU か。`cpu_list` なら `-c` の一覧（`3`、`0,2`、`0-3:2`）、
+/// そうでなければ 16 進のマスク（`0x4`）。読めない指定は false
+fn taskset_selects_one_cpu(cpu_list: bool, spec: &str) -> bool {
+    if !cpu_list {
+        let hex = spec.strip_prefix("0x").unwrap_or(spec);
+        return u128::from_str_radix(hex, 16).is_ok_and(|mask| mask.count_ones() == 1);
+    }
+    let mut cpus = std::collections::BTreeSet::new();
+    for item in spec.split(',') {
+        // 範囲 `a-b` の刻み `:s` は、1 つの CPU に限るかの判定には効かない（a-a は刻みによらず a だけ）
+        let (range, stride) = item.split_once(':').unwrap_or((item, "1"));
+        let (lo, hi) = range.split_once('-').unwrap_or((range, range));
+        let (Ok(lo), Ok(hi), Ok(stride)) = (
+            lo.parse::<usize>(),
+            hi.parse::<usize>(),
+            stride.parse::<usize>(),
+        ) else {
+            return false;
+        };
+        if lo > hi || stride == 0 || hi > 1 << 16 {
+            return false;
+        }
+        cpus.extend((lo..=hi).step_by(stride));
+    }
+    cpus.len() == 1
+}
+
+/// 値を次の語に取る cargo・nix・dvc のグローバルオプション（サブコマンドより前に書ける）
+const GLOBAL_VALUE_OPTIONS: &[&str] = &[
+    "--config",
+    "-Z",
+    "-C",
+    "--color",
+    "-j",
+    "--jobs",
+    "--max-jobs",
+    "--cores",
+    "-I",
+    "--store",
+    "--log-format",
+    "--extra-experimental-features",
+    "--experimental-features",
+];
+
+/// 値を取らないことが分かっているグローバルオプション
+const GLOBAL_FLAGS: &[&str] = &[
+    "-q",
+    "-v",
+    "-vv",
+    "-vvv",
+    "-L",
+    "-k",
+    "-h",
+    "-V",
+    "--quiet",
+    "--verbose",
+    "--debug",
+    "--help",
+    "--version",
+    "--list",
+    "--locked",
+    "--frozen",
+    "--offline",
+    "--refresh",
+    "--impure",
+    "--show-trace",
+    "--keep-going",
+    "--no-net",
+    "--print-build-logs",
+    "--accept-flake-config",
+    "--no-write-lock-file",
+];
+
+/// [`global_subcommand`] の結果
+#[derive(Debug, PartialEq)]
+pub enum Subcommand {
+    /// サブコマンドの位置
+    At(usize),
+    /// サブコマンドが無い
+    Missing,
+    /// 知らないオプションの後で、次の語がそのオプションの値かサブコマンドか決められない
+    /// （nix は nix.conf の設定をすべてオプションに取り、`--arg` や `--override-input` は 2 語を取る）
+    Unknown,
+}
+
+/// cargo・nix・dvc のサブコマンドの位置。グローバルオプション（値を取るものは値も）と、`+nightly` のような
+/// ツールチェーンの指定を飛ばした次の語。`--option <名前> <値>` だけは 2 語を取る。値を取るか分からない
+/// オプションに会ったら、その後の語をサブコマンドと断定せず `Unknown` を返す
+pub fn global_subcommand(args: &[Arg]) -> Subcommand {
+    let mut i = 0;
+    while i < args.len() {
+        let w = args[i].text.as_str();
+        if w == "--option" {
+            i += 3;
+        } else if GLOBAL_VALUE_OPTIONS.contains(&w) {
+            i += 2;
+        } else if !w.starts_with('-') && !w.starts_with('+') {
+            return Subcommand::At(i);
+        } else if w.starts_with('+')
+            || GLOBAL_FLAGS.contains(&w)
+            || w.contains('=')
+            || (w.starts_with("-j") && w[2..].chars().all(|c| c.is_ascii_digit()))
+        {
+            i += 1;
+        } else {
+            return Subcommand::Unknown;
+        }
+    }
+    Subcommand::Missing
+}
+
+/// `nix develop` と `nix shell` が値を取るオプション（値の個数）。`-c` を探すときに値を飛ばす
+const NIX_ENTER_VALUE_OPTIONS: &[(&str, usize)] = &[
+    ("--option", 2),
+    ("--arg", 2),
+    ("--argstr", 2),
+    ("--override-input", 2),
+    ("--override-flake", 2),
+    ("--expr", 1),
+    ("--file", 1),
+    ("-f", 1),
+    ("--include", 1),
+    ("-I", 1),
+    ("--profile", 1),
+    ("--inputs-from", 1),
+    ("--update-input", 1),
+    ("--max-jobs", 1),
+    ("-j", 1),
+    ("--cores", 1),
+    ("--store", 1),
+    ("--log-format", 1),
+    ("--extra-experimental-features", 1),
+    ("--experimental-features", 1),
+    ("--keep", 1),
+    ("--unset", 1),
+    ("--set", 2),
+];
+
+/// `nix develop|shell` の引数（サブコマンドの後ろ）で、`-c` / `--command` の次の語の位置。
+/// 値を取るオプションの値は飛ばす。`--help` があれば何も走らせないので None
+fn nix_enter_command(rest: &[Arg]) -> Option<usize> {
+    let mut i = 0;
+    while i < rest.len() {
+        let w = rest[i].text.as_str();
+        match w {
+            "--help" | "-h" => return None,
+            "-c" | "--command" => return (i + 1 < rest.len()).then_some(i + 1),
+            _ => {}
+        }
+        i += 1 + NIX_ENTER_VALUE_OPTIONS
+            .iter()
+            .find(|(name, _)| *name == w)
+            .map_or(0, |(_, n)| *n);
+    }
+    None
 }
 
 pub fn basename(path: &str) -> &str {
@@ -563,6 +723,20 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.opaque = true;
             return out;
         }
+        // `nix develop|shell [<flake>] [opts] -c <コマンド> [引数…]` は、-c の後ろの語を exec する。語を空白でつないで
+        // sh -c に渡さず、そのままコマンドとして続ける（`bash -c 'cargo test'` の引数を壊さない）
+        if wrapper_name == "nix" {
+            if let Subcommand::At(i) = global_subcommand(&out.args)
+                && matches!(out.args[i].text.as_str(), "develop" | "shell")
+                && let Some(k) = nix_enter_command(&out.args[i + 1..]).map(|k| i + 1 + k)
+            {
+                out.wrappers.push(std::mem::take(&mut out.name));
+                out.name = out.args[k].text.clone();
+                out.args = out.args[k + 1..].to_vec();
+                continue;
+            }
+            return out;
+        }
         let Some(wrapper) = WRAPPERS.iter().find(|w| w.name == wrapper_name) else {
             return out;
         };
@@ -595,6 +769,9 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut host: Option<String> = None;
         // script のログのファイルを読んだか（getopt が語を並べ替えるので、ファイルの後ろのオプションも読む）
         let mut log_file_seen = false;
+        // taskset -c: 次の位置引数は CPU の一覧（無ければマスク）
+        let mut cpu_list = false;
+        let mut pinned = false;
         loop {
             while let Some(front) = words.front() {
                 let t = front.text.clone();
@@ -723,6 +900,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                             }
                         }
                         ("chrt", Some('p' | 'm')) | ("taskset", Some('p')) => runs = false,
+                        ("taskset", Some('c')) => cpu_list = true,
                         ("watch", Some('x')) => execs = true,
                         ("script", Some('c')) => source = value,
                         ("ssh", Some('G' | 'N' | 'O' | 'Q' | 'V' | 'Z' | 's')) => runs = false,
@@ -738,6 +916,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                 positionals -= 1;
                 if wrapper.name == "ssh" {
                     host = positional.map(|a| a.text);
+                } else if wrapper.name == "taskset" {
+                    pinned = positional.is_some_and(|a| taskset_selects_one_cpu(cpu_list, &a.text));
                 }
                 // ssh は接続先を取った後、オプションの読み取りに戻る（ssh.c は host を取ると getopt をやり直す）
                 if wrapper.name == "ssh" && !options_done {
@@ -764,6 +944,10 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
         }
         out.dirs.extend(dir);
+        // 包みは外側から順にほどく。コマンドを直に包む最も内側の taskset の指定が効く
+        if wrapper.name == "taskset" {
+            out.pinned_to_one_cpu = pinned;
+        }
         // ssh は文字列を走らせてほどき終わるので、包みの列に ssh は 1 つまで
         if let Some(host) = host {
             out.remote = Some(format!("{host}:"));
@@ -836,6 +1020,36 @@ mod tests {
         let words: Vec<&str> = src.split_whitespace().collect();
         let args: Vec<Arg> = words[1..].iter().map(|w| arg(w)).collect();
         unwrap(words[0], &args)
+    }
+
+    #[test]
+    fn taskset_pins_to_one_cpu_only_for_a_single_cpu() {
+        for src in [
+            "taskset -c 3 x",
+            "taskset --cpu-list 3 x",
+            "taskset -c 5-5 x",
+            "taskset -c 3,3 x",
+            "taskset 0x4 x",
+            "taskset 4 x",
+            "sudo taskset -c 0 x",
+            "taskset -c 0-3 taskset -c 2 x",
+        ] {
+            assert!(un(src).pinned_to_one_cpu, "{src}");
+        }
+        for src in [
+            "taskset -c 0-3 x",
+            "taskset -c 0,2 x",
+            "taskset -c 0-7:2 x",
+            "taskset 0x3 x",
+            "taskset -c a x",
+            "taskset -c 3-1 x",
+            "taskset 0x0 x",
+            "taskset -c 3 taskset -c 0-31 x",
+            "taskset -c 3 sudo taskset 0xffff x",
+            "x",
+        ] {
+            assert!(!un(src).pinned_to_one_cpu, "{src}");
+        }
     }
 
     #[test]
