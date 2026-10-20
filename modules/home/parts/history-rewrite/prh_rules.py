@@ -208,6 +208,10 @@ def _pattern_source(pattern: object, origin: str) -> str:
         # g と m は prh が必ず付け、y は外すので、意味を変えない
         return m.group(1)
     # 固定の文字列。prh は escapeSpecialChars で特別な文字の前に \ を付けて RegExp にする（\ 自身は付けない）
+    if "¥" in pattern:
+        raise DictionaryError(
+            f"{origin}: 固定の文字列の ¥ は、prh が \\¥ にして u フラグの RegExp として読めない（/…/ で書く）"
+        )
     return "".join("\\" + ch if ch in _PRH_SPECIAL else ch for ch in pattern)
 
 

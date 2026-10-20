@@ -120,22 +120,30 @@ class Transformer:
             )
         changed = {k for k, (a, b) in enumerate(zip(old_lines, lines)) if a != b}
         fml = self.table_format
+        # fix-markdown-lint.py の fix_markdown の表の段と同じく、コードフェンスの中を飛ばし、区切りの行が続く
+        # 行から表とみなす
         i = 0
         while i < len(lines):
-            if not fml.is_table_row(lines[i]):
+            if fml.fence_open(lines[i]) is not None:
+                i = fml.fence_end(lines, i) + 1
+                continue
+            if not (
+                fml.is_table_row(lines[i])
+                and i + 1 < len(lines)
+                and fml.is_separator_row(lines[i + 1])
+            ):
                 i += 1
                 continue
             j = i
             while j < len(lines) and fml.is_table_row(lines[j]):
                 j += 1
             # 直した行を含む表だけを揃え直す（ほかの表の崩れは、この書き換えの範囲の外）
-            if (
-                changed & set(range(i, j))
-                and j - i >= 2
-                and fml.is_separator_row(lines[i + 1])
-            ):
+            if changed & set(range(i, j)):
                 indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
-                lines[i:j] = [indent + row for row in fml.format_table(lines[i:j])]
+                # format_table は行の両端の空白とともに CRLF の CR も外すので、元の行の CR を戻す
+                crs = ["\r" if row.endswith("\r") else "" for row in lines[i:j]]
+                rows = fml.format_table(lines[i:j])
+                lines[i:j] = [indent + row + cr for row, cr in zip(rows, crs)]
             i = j
         return "\n".join(lines)
 
@@ -232,6 +240,29 @@ def read_map(path: Path) -> dict[str, str]:
         old, new = line.split()
         mapping[old] = new
     return mapping
+
+
+# git の gpg-interface.c の署名の開始マーカー。filter-repo は fast-export に --signed-tags=strip を渡し、タグの本文の
+# 最後のマーカーの行から後を外す（parse_signed_buffer）
+SIGNATURE_MARKERS = (
+    b"-----BEGIN PGP SIGNATURE-----",
+    b"-----BEGIN PGP MESSAGE-----",
+    b"-----BEGIN SIGNED MESSAGE-----",
+    b"-----BEGIN SSH SIGNATURE-----",
+)
+
+
+def strip_signature(body: bytes) -> bytes:
+    """タグの本文から署名を外す（parse_signed_buffer と同じく、マーカーで始まる最後の行から後）"""
+    start = 0
+    cut = len(body)
+    while start < len(body):
+        end = body.find(b"\n", start)
+        end = len(body) if end < 0 else end + 1
+        if body.startswith(SIGNATURE_MARKERS, start):
+            cut = start
+        start = end
+    return body[:cut]
 
 
 def split_object(data: bytes) -> tuple[list[tuple[bytes, bytes]], bytes]:
@@ -363,6 +394,14 @@ class Verifier:
         _, data = self.cat.read(oid.encode())
         headers, body = split_object(data)
         rebuilt = []
+        if b"tagger" not in dict(headers):
+            # filter-repo は fast-export に --fake-missing-tagger を渡す（仮の tagger の値は fast-export.c のもの。git 2.56.0 で確かめた）
+            at = [k for k, _ in headers].index(b"tag") + 1
+            headers = (
+                headers[:at]
+                + [(b"tagger", b"Unspecified Tagger <unspecified-tagger> 0 +0000")]
+                + headers[at:]
+            )
         for key, value in headers:
             if key == b"object":
                 target = value.decode()
@@ -374,7 +413,8 @@ class Verifier:
                 )
                 value = target.encode()
             rebuilt.append(b"%s %s" % (key, value))
-        content = b"\n".join(rebuilt) + b"\n\n" + self.transformer.message(body)
+        message = self.transformer.message(strip_signature(body))
+        content = b"\n".join(rebuilt) + b"\n\n" + message
         return self.hash(b"tag %d\0" % len(content) + content).hexdigest()
 
     def for_each_ref(self, repo: Path) -> dict[str, tuple[str, str]]:
@@ -428,6 +468,10 @@ def stage1(repo: Path, transformer: Transformer) -> dict[str, int]:
             "--prune-degenerate=never",
             "--preserve-commit-hashes",
             "--replace-refs=delete-no-add",
+            # 本文を元の符号化のまま渡す（UTF-8 に直すと encoding の見出しが消え、照合が合わない）
+            "--preserve-commit-encoding",
+            # 第 2 段がすぐに全体を書き直すので、ここで repack しない
+            "--no-gc",
         ]
     )
     cwd = os.getcwd()
@@ -456,7 +500,16 @@ def run(args: argparse.Namespace) -> None:
     rewritten = workdir / "rewritten"
 
     git(workdir, "clone", "-q", "--mirror", str(source), str(original))
-    head = git(original, "symbolic-ref", "HEAD").decode().strip()
+    head = subprocess.run(
+        ["git", "-C", str(original), "symbolic-ref", "-q", "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    if head.returncode != 0:
+        raise Stop(f"{source} の HEAD がブランチを指していない（ブランチに移ってから）")
+    head = head.stdout.decode().strip()
+    if not git(original, "for-each-ref", head):
+        raise Stop(f"{source} の HEAD のブランチ {head} にコミットが無い")
     git(workdir, "init", "-q", str(rewritten))
     git(
         rewritten,
@@ -473,6 +526,8 @@ def run(args: argparse.Namespace) -> None:
     git(rewritten, "reset", "-q", "--hard")
 
     counts = stage1(rewritten, transformer)
+    # 照合も同じブロブを読み直して数えるので、第 1 段の数をここで取る
+    not_utf8 = transformer.not_utf8
     stage1_map = read_map(rewritten / ".git" / "filter-repo" / "commit-map")
     Verifier(rewritten, original, stage1_map, transformer).run()
 
@@ -481,7 +536,7 @@ def run(args: argparse.Namespace) -> None:
     print(f"COMMITS: {len(stage1_map)}")
     print(f"BLOBS: {counts['blobs']}")
     print(f"MESSAGES: {counts['messages']}")
-    print(f"NOT_UTF8: {transformer.not_utf8}", flush=True)
+    print(f"NOT_UTF8: {not_utf8}", flush=True)
 
     result = subprocess.run(
         [
@@ -509,8 +564,16 @@ def transform_files(args: argparse.Namespace) -> None:
     top = Path(git(Path("."), "rev-parse", "--show-toplevel").decode().strip())
     replaced = []
     for name in args.files:
-        path = Path(name)
-        relative = path.resolve().relative_to(top.resolve()).as_posix()
+        path = Path(name).absolute()
+        if path.is_symlink():
+            # 履歴の書き換えと同じく、symlink は変えない（先のファイルは、それ自身のパスで直す）
+            continue
+        if not path.is_file():
+            raise Stop(f"{name}: ファイルでない（無いか、ディレクトリ）")
+        try:
+            relative = path.relative_to(top).as_posix()
+        except ValueError:
+            raise Stop(f"{name}: リポジトリ {top} の外") from None
         new = transformer.blob(relative.encode(), path.read_bytes())
         if new is not None:
             path.write_bytes(new)
