@@ -119,4 +119,42 @@ out=$("$EVENTS" "$TEST_ROOT/long.jsonl")
 line=$(grep '^TOOL: ' <<<"$out")
 assert_eq "TOOL: 1 $(printf 'あ%.0s' $(seq 160))" "$line"
 
+MEMORY_INDEX="$CLAUDE_DIR/skills/retro/scripts/memory-index.sh"
+MEM="$TEST_ROOT/memory"
+mkdir -p "$MEM"
+cat > "$MEM/MEMORY.md" <<'EOF'
+- [好み A](feedback-a.md) — 説明
+- [事情 B](project-b.md) — 説明
+- [消えた C](project-c.md) — 説明
+EOF
+printf -- '---\nname: a\n---\n\n本文 [[project-b]]\n' > "$MEM/feedback-a.md"
+printf -- '---\nname: b\n---\n\n本文 [[feedback-gone]] と [[feedback-a]]\n' > "$MEM/project-b.md"
+printf -- '---\nname: d\n---\n\n本文\n' > "$MEM/project-d.md"
+
+it "memory-index: 索引の項目数と、索引にあってファイルの無いもの、ファイルがあって索引に無いものを出す"
+out=$("$MEMORY_INDEX" "$MEM")
+assert_eq 0 $?
+assert_contains "$out" "ENTRIES: 3"
+assert_contains "$out" "MISSING: project-c.md"
+assert_contains "$out" "UNINDEXED: project-d.md"
+assert_not_contains "$out" "MISSING: feedback-a.md"
+assert_not_contains "$out" "UNINDEXED: MEMORY.md"
+
+it "memory-index: 本文の [[名前]] で、同じ名前のファイルが無いものを出す"
+assert_contains "$out" "BROKEN_LINK: project-b.md -> feedback-gone"
+assert_not_contains "$out" "-> feedback-a"
+assert_not_contains "$out" "-> project-b"
+
+it "memory-index: 食い違いが無ければ件数の行だけを出す"
+rm "$MEM/project-d.md"
+sed -i '/project-c/d' "$MEM/MEMORY.md"
+printf -- '---\nname: b\n---\n\n本文 [[feedback-a]]\n' > "$MEM/project-b.md"
+out=$("$MEMORY_INDEX" "$MEM")
+assert_eq "ENTRIES: 2" "$out"
+
+it "memory-index: MEMORY.md が無ければ失敗する"
+out=$("$MEMORY_INDEX" "$TEST_ROOT/no-memory" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
 finish
