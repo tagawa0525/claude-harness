@@ -67,7 +67,7 @@ fn main() {
         return;
     }
 
-    // panic は「判定できない」であって「ツールを止める」ではない。ルールごとに拾い、ほかのルールの判定（deny）を
+    // panic は「判定できない」であって「ツールを止める」ではない。ルールごとに捕捉し、ほかのルールの判定（deny）を
     // 残す。panic の文は既定の panic hook が標準エラーにも出す（テストが panic を見分けるため）
     let mut findings = Vec::new();
     match std::panic::catch_unwind(|| shell::Shell::parse(&input.command)) {

@@ -38,7 +38,7 @@ impl HookOutput {
     }
 }
 
-/// command を claude-hooks に渡す。rule が None なら全てのルールを走らせる。
+/// command を claude-hooks に渡す。rule が None ならすべてのルールを走らせる。
 /// path が None なら PATH を空にする（git を起動できない）
 fn run(cwd: &Path, command: &str, rule: Option<&str>, path: Option<&str>) -> HookOutput {
     let input = serde_json::json!({

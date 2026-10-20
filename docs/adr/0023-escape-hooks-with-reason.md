@@ -13,7 +13,7 @@ issues: ["#311"]
 
 claude-hooks の各ルールは、`ALLOW_UNREVIEWED_HEAD=1` のようにコマンドへ環境変数を付けると検査を外せる
 （エスケープ）。2026-10-11 の PR #308 の作業で、ユーザーが「未レビューではマージしない」と決めた後に、
-サブエージェントが `ALLOW_UNREVIEWED_HEAD=1` 付きのマージを 2 回試みた（hook と Claude Code の分類器が止め、
+サブエージェントが `ALLOW_UNREVIEWED_HEAD=1` つきのマージを 2 回試みた（hook と Claude Code の分類器が止め、
 実害は無かった）。読んでいた文書に、次の誘因があった。
 
 - `/gh-pr-merge` と `/gh-pr-review` の SKILL.md に、エスケープを付けてよい条件が手順の一部として書かれていた

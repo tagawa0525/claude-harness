@@ -1,13 +1,13 @@
 //! コマンドを包むもの（env、builtin、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice、sudo、xargs、
-//! flock、chrt、taskset、watch、script、ssh、eval、bash、sh）をほどき、中のコマンドと、包みが変える環境変数・
+//! flock、chrt、taskset、watch、script、ssh、eval、bash、sh）をほどき、中のコマンドと、ラッパーが変える環境変数・
 //! ディレクトリを取り出す（ADR-0025）
 //!
-//! 包みごとのオプションの読み方は、coreutils（env、nice、timeout、stdbuf、nohup）、util-linux（setsid、ionice、flock、
+//! ラッパーごとのオプションの読み方は、coreutils（env、nice、timeout、stdbuf、nohup）、util-linux（setsid、ionice、flock、
 //! chrt、taskset、script）、GNU time、sudo、findutils（xargs）、procps（watch）、OpenSSH（ssh）の man と、bash の
 //! 組み込み（builtin、command、exec、eval、source）と bash 自身の起動オプションから、値を取るものと、ほどき方を変える
 //! ものだけを持つ。短縮形のまとまり（`-iu X`）、続けて書いた値（`-uX`、`--unset=X`）、長い形の一意な省略形（`--ign`）を読む
 //!
-//! 包みの中には、次の語をプログラムとして走らせるものと、文字列を sh -c で走らせるもの（`bash -c`、`flock … -c`、
+//! ラッパーの中には、次の語をプログラムとして走らせるものと、文字列を sh -c で走らせるもの（`bash -c`、`flock … -c`、
 //! `script -c`、`eval`、`watch`、`ssh`。[`Unwrapped::source`]）と、何を走らせるか文字列からは分からないもの
 //! （`bash -s`、`source`。[`Unwrapped::opaque`]）がある
 
@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 
 use crate::shell::Arg;
 
-/// 包みの長い形のオプション: 名前、同じ意味の短縮形（無ければ None）、値を取るか
+/// ラッパーの長い形のオプション: 名前、同じ意味の短縮形（無ければ None）、値を取るか
 type Long = (&'static str, Option<char>, bool);
 
 struct Wrapper {
@@ -400,7 +400,7 @@ const WRAPPERS: &[Wrapper] = &[
 pub enum EnvChange {
     Set(String, String),
     Unset(String),
-    /// 受け継ぐ環境変数を全て外す（`env -i`、`exec -c`、`-E` の無い `sudo`、`ssh` の接続先）
+    /// 受け継ぐ環境変数をすべて外す（`env -i`、`exec -c`、`-E` の無い `sudo`、`ssh` の接続先）
     Clear,
 }
 
@@ -420,14 +420,14 @@ pub fn env_value<'a>(
         })
 }
 
-/// ほどいた中のコマンドと、包みが変えるもの
+/// ほどいた中のコマンドと、ラッパーが変えるもの
 #[derive(Debug, Default)]
 pub struct Unwrapped {
     pub name: String,
     pub args: Vec<Arg>,
     /// 環境変数の変更（順に効く）
     pub env: Vec<EnvChange>,
-    /// ほどいた包みの、書いたままの名前（外側から順に。`/usr/bin/time` はパスのまま）
+    /// ほどいたラッパーの、書いたままの名前（外側から順に。`/usr/bin/time` はパスのまま）
     pub wrappers: Vec<String>,
     /// 中のコマンドを走らせるディレクトリ（`env -C`、`sudo -D`。前のものからの相対）
     pub dirs: Vec<String>,
@@ -708,7 +708,7 @@ fn joined(words: &VecDeque<Arg>) -> String {
         .join(" ")
 }
 
-/// `name args…` が包みなら、ほどいた中のコマンドを返す。`command -v` / `-V`（`-pv` などのまとまりを含む）は
+/// `name args…` がラッパーなら、ほどいた中のコマンドを返す。`command -v` / `-V`（`-pv` などのまとまりを含む）は
 /// プログラムを探して表示するだけで走らせず、`ionice -p` などは既にあるプロセスを対象にするので、ほどかない
 pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
     let mut out = Unwrapped {
@@ -742,8 +742,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         };
         let is_shell = matches!(wrapper.name, "bash" | "sh");
         let mut words: VecDeque<Arg> = out.args.iter().cloned().collect();
-        // この包み 1 段の環境の変更と、移るディレクトリ（最後の -C / -D が効く）。out に直に書かないのは、
-        // 包みが中のコマンドを走らせない（--help など）ときに捨てるため
+        // このラッパー 1 段の環境の変更と、移るディレクトリ（最後の -C / -D が効く）。out に直に書かないのは、
+        // ラッパーが中のコマンドを走らせない（--help など）ときに捨てるため
         let mut env: Vec<EnvChange> = Vec::new();
         let mut dir: Option<String> = None;
         let mut runs = true;
@@ -818,7 +818,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
                         None => (t.clone(), None),
                     };
-                    // どの包みも --help / --version は表示して終わり、後ろの語を走らせない
+                    // どのラッパーも --help / --version は表示して終わり、後ろの語を走らせない
                     if name == "--help" || name == "--version" {
                         runs = false;
                     }
@@ -939,16 +939,16 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         }
         out.env.extend(env);
         if login {
-            // 対象の利用者のホームへ移るので、外側の包みの -C はその前に効き、後に残らない
+            // 対象の利用者のホームへ移るので、外側のラッパーの -C はその前に効き、後に残らない
             out.dirs.clear();
             out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
         }
         out.dirs.extend(dir);
-        // 包みは外側から順にほどく。コマンドを直に包む最も内側の taskset の指定が効く
+        // ラッパーは外側から順にほどく。コマンドを直に包む最も内側の taskset の指定が効く
         if wrapper.name == "taskset" {
             out.pinned_to_one_cpu = pinned;
         }
-        // ssh は文字列を走らせてほどき終わるので、包みの列に ssh は 1 つまで
+        // ssh は文字列を走らせてほどき終わるので、ラッパーの列に ssh は 1 つまで
         if let Some(host) = host {
             out.remote = Some(format!("{host}:"));
         }

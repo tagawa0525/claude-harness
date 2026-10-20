@@ -8,7 +8,7 @@
 //!   …`、`GIT_CONFIG_*` の環境変数
 //! - hook が Claude Code のセッションと分かる `CLAUDECODE=1` を、別の値にする・外す（`env -u`、`env -i`、`unset`）
 //!
-//! env などで包んだコマンドは、shell.rs がほどいた中の git コマンドと、包みが変える環境変数で見る。
+//! env などで包んだコマンドは、shell.rs がほどいた中の git コマンドと、ラッパーが変える環境変数で見る。
 //!
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=<理由>` を付ける。
 
@@ -97,7 +97,7 @@ impl Rule for BlockNoVerify {
             };
             skips |= match sub {
                 "config" => sets_hooks_path(args),
-                // 環境変数（シェルの代入と unset、包みの変更）は、hook が走るコマンドがあるときだけ見る
+                // 環境変数（シェルの代入と unset、ラッパーの変更）は、hook が走るコマンドがあるときだけ見る
                 // （`sudo ls` や `ssh host nvidia-smi`、`CLAUDECODE=0 echo ok` では hook は走らない）
                 "commit" | "merge" | "pull" => {
                     changes_environment(shell)

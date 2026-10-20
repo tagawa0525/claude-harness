@@ -113,7 +113,7 @@ impl Rule for GuardGitPush {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        // コマンド中の全ての git push を検査する（2 つ目以降に保護対象が来る形を見逃さない）
+        // コマンド中のすべての git push を検査する（2 つ目以降に保護対象が来る形を見逃さない）
         for cmd in shell.commands() {
             let Some(("push", args)) = cmd.git_subcommand() else {
                 continue;

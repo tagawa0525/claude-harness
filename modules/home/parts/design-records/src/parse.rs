@@ -1,4 +1,4 @@
-//! Markdown の前付け、コードブロックの外の行、`ADR-NNNN` の参照を読む。
+//! Markdown のフロントマター、コードブロックの外の行、`ADR-NNNN` の参照を読む。
 
 use std::fmt;
 
@@ -7,9 +7,9 @@ use std::fmt;
 pub enum Error {
     /// 先頭の行が `---` でない。
     MissingFrontMatter,
-    /// 前付けを閉じる `---` がない。
+    /// フロントマターを閉じる `---` がない。
     UnclosedFrontMatter,
-    /// `key: value` の形でない行（前付けの中の行番号は 1 から）。
+    /// `key: value` の形でない行（フロントマターの中の行番号は 1 から）。
     MalformedLine { line: usize, text: String },
     /// 同じキーが 2 回ある。
     DuplicateKey(String),
@@ -42,7 +42,7 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// 前付けの値。
+/// フロントマターの値。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     /// `key:` のあとが空。
@@ -64,7 +64,7 @@ impl Value {
     }
 }
 
-/// 前付けのキーと値（書かれた順）。
+/// フロントマターのキーと値（書かれた順）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FrontMatter {
     entries: Vec<(String, Value)>,
@@ -82,7 +82,7 @@ impl FrontMatter {
     }
 }
 
-/// Markdown の先頭の `---` で囲んだ前付けを読む。
+/// Markdown の先頭の `---` で囲んだフロントマターを読む。
 ///
 /// 各行は `key: value` で、値は空、裸の文字列、引用符で囲んだ文字列、`[a, "b"]` の一覧のどれか。`#` は値の
 /// 一部として読む（YAML のコメントとして外すと、`"#12"` を引用符なしで書いたときに値が消える）。空行、重複した
@@ -214,7 +214,7 @@ fn closes_fence(line: &str, c: char, n: usize) -> bool {
 }
 
 /// Markdown の、コードブロック（CommonMark の ```` ``` ```` か `~~~` の囲い）の外の行を、行番号（1 から）とともに
-/// 返す。前付けは読み分けない（ほかの行と同じに返す）。閉じていないコードブロックはエラーにする。
+/// 返す。フロントマターは読み分けない（ほかの行と同じに返す）。閉じていないコードブロックはエラーにする。
 pub fn markdown_lines(text: &str) -> Result<Vec<(usize, &str)>, Error> {
     let mut out = Vec::new();
     // 開いているコードブロックの記号、数、開いた行

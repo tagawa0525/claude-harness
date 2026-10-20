@@ -68,7 +68,7 @@ assert_eq 0 $?
 assert_contains "$out" "WARN: fetch に失敗"
 
 # --- 履歴の形ごとのフィクスチャ（それぞれ新しいリポジトリ） ---
-# fixture <名前>: GitHub リモート付きのリポジトリ。ブランチ feat/work は main から切る
+# fixture <名前>: GitHub リモートつきのリポジトリ。ブランチ feat/work は main から切る
 fixture() {
   local dir="$TEST_ROOT/bm/$1"
   make_repo "$dir"

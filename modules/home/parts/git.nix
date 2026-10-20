@@ -6,7 +6,7 @@
 { lib, pkgs, ... }:
 
 let
-  # 設計の記録（ADR）の雛形と検査（ADR-0009）。各プロジェクトの pre-commit が PATH から呼ぶ
+  # 設計の記録（ADR）のテンプレートと検査（ADR-0009）。各プロジェクトの pre-commit が PATH から呼ぶ
   design-records = pkgs.callPackage ./design-records/package.nix { };
   # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook が store のパスで呼び、
   # 手で呼べるよう PATH にも入れる
@@ -388,7 +388,7 @@ in
         fi
       }
 
-      # マージ・fixup/squash・Revert は Conventional Commits の対象外。件名は元のコミットから写したもの
+      # マージ・fixup/squash・Revert は Conventional Commits の対象外。件名は元のコミットからコピーしたもの
       # （Merge は git が作るもの）なので、日本語の語は件名を除いた本文だけを見る（fixup / squash の本文は
       # 畳まれて履歴に残る）
       case "$SUBJECT" in

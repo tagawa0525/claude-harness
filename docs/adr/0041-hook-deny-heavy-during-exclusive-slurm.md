@@ -46,7 +46,7 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
 
 案 D を採る。`claude-hooks` の `guard-exclusive-slurm` が、次をすべて満たすときに deny する。
 
-- コマンドが次のどれか。`env`・`sudo` などの包みと、`nix develop|shell [<flake>] -c <コマンド>` の中身はほどいて
+- コマンドが次のどれか。`env`・`sudo` などのラッパーと、`nix develop|shell [<flake>] -c <コマンド>` の中身はほどいて
   判定する（xlc の DVC の段階は `nix develop ../..#references -c` で包む）
   - `cargo build|check|test|clippy|run|bench`（alias の `b|c|t|r` も）
   - `dvc repro`

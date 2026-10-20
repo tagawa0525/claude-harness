@@ -49,7 +49,7 @@ done
 # 起動の確認は通り、ルールの呼び出しで失敗する版（ルールの足りない古い版など）
 make_fake_tool rule-fails "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo 'unknown rule: block-main-commit' >&2; exit 2 ;;"
-# ルールが panic する版（claude-hooks は panic を拾い、標準エラーに出して 0 で終わる）。どちらも本物と同じく
+# ルールが panic する版（claude-hooks は panic を捕捉し、標準エラーに出して 0 で終わる）。どちらも本物と同じく
 # 入力を読み切ってから終わる
 make_fake_tool rule-panics "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo \"thread 'main' panicked at src/shell.rs\" >&2; exit 0 ;;"

@@ -1,4 +1,4 @@
-//! design-records: 設計の記録（ADR と docs/issues の issue）の雛形を作り、番号を予約し、検査する（ADR-0009、ADR-0018）。
+//! design-records: 設計の記録（ADR と docs/issues の issue）のテンプレートを作り、番号を予約し、検査する（ADR-0009、ADR-0018）。
 //!
 //! Usage（どのコマンドも、前に `-C <dir>` を付けると `<dir>` で走らせる。git の `-C` と同じ）:
 //!   design-records new [--kind adr|issue] <slug> <title>
@@ -14,7 +14,7 @@
 //!                                      参照を探し、FILE の ADR は確定した後の本文の変更を見る。FILE か --changed を
 //!                                      渡すと、warning は FILE のものだけ（--changed は FILE が 0 件のときも。
 //!                                      pre-commit で使う）
-//!   design-records status              標準入力の文書の前付けの status を出す（無ければ -）
+//!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
 //!
 //! 終了コード: 0 = 成功（注意だけのときも）、1 = 違反か失敗、2 = 使い方の誤り
 

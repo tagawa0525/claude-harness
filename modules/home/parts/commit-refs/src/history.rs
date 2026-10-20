@@ -1,11 +1,11 @@
 //! rewrite-history: 履歴の中の文書と本文の番号を、書き換えた後の最後の番号に付け直す（ADR-0013）。
 //!
-//! 1. `git fast-export --no-data` で、全てのブランチとタグから届くコミットを読む（ブロブは `git cat-file` で読む）
-//! 2. 全てのコミットの本文とブロブを調べ、文書が指すコミットを求める。止める理由は、ここで全て出す
+//! 1. `git fast-export --no-data` で、すべてのブランチとタグから届くコミットを読む（ブロブは `git cat-file` で読む）
+//! 2. すべてのコミットの本文とブロブを調べ、文書が指すコミットを求める。止める理由は、ここですべて出す
 //! 3. 親と、文書が指すコミットの両方を依存として並べ（元の順をなるべく保つ）、番号を置き換えて
 //!    `git fast-import` に渡す。コミットを 1 つ渡すたびに `get-mark` で最後の番号を受け取り、後の置き換えに使う
 //! 4. 注釈つきのタグを `git mktag` で作り直す
-//! 5. 元の全てのコミットとタグについて、書き換えた後のものが番号の置き換えだけを当てたものかを確かめる
+//! 5. 元のすべてのコミットとタグについて、書き換えた後のものが番号の置き換えだけを当てたものかを確かめる
 //! 6. ブランチとタグを 1 つのトランザクションで移し、元の ref を `refs/commit-refs/original/` に残す
 
 use std::cmp::Reverse;
@@ -276,7 +276,7 @@ fn split_refs(top: &Path, all: Vec<Ref>) -> Result<(Vec<Ref>, Vec<String>), Stri
     Ok((rewritten, others))
 }
 
-/// 書き換える ref から届く全てのコミット
+/// 書き換える ref から届くすべてのコミット
 fn rev_list(top: &Path, refs: &[Ref]) -> Result<Vec<String>, String> {
     let out = git::git_stdin(top, &["rev-list", "--stdin"], &revisions(refs))?;
     Ok(String::from_utf8_lossy(&out)
@@ -446,7 +446,7 @@ impl Rewrite<'_> {
             })
     }
 
-    /// ブロブの中身を、モードに応じて置き換える（シンボリックリンクの行き先とバイナリはそのまま）
+    /// ブロブの中身を、モードに応じて置き換える（symlink の行き先とバイナリはそのまま）
     fn transform_blob(
         &self,
         label: &str,
@@ -803,7 +803,7 @@ impl Rewrite<'_> {
         Ok(new)
     }
 
-    /// 元の全てのコミットとタグについて、書き換えた後のものが、番号の置き換えだけを当てたものかを確かめる
+    /// 元のすべてのコミットとタグについて、書き換えた後のものが、番号の置き換えだけを当てたものかを確かめる
     fn verify(&mut self, commits: &[String]) -> Result<(), Errors> {
         let mut errors = Vec::new();
         let mut seen_trees = HashSet::new();
@@ -1320,7 +1320,7 @@ fn values(headers: &[Header], key: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// タグの本文の末尾の署名を外す。git の parse_signed_buffer と同じく、署名の始まりの印で始まる行のうち最後の
+/// タグの本文の末尾の署名を外す。git の parse_signed_buffer と同じく、署名の開始マーカーで始まる行のうち最後の
 /// 行から後を署名とする。中身を変えると署名は合わないので、fast-export の --signed-tags=strip と同じく外す
 fn strip_signature(message: &[u8]) -> &[u8] {
     // git の gpg-interface.c の sigs[] にある印

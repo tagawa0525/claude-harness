@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rename-plan.sh — docs/plans/ のランダム名の計画書を連番付きの名前にする
+# rename-plan.sh — docs/plans/ のランダム名の計画書を連番つきの名前にする
 #
 # Usage: rename-plan.sh --list
 #        rename-plan.sh <branch-name> [--file <path>]

@@ -18,7 +18,7 @@
 #   CHECKED: / LOOSENED: / TIGHTENED: / CHANGED:  比べたコマンドの数と、それぞれの行の数
 #
 # 判定がリポジトリの状態で決まるルールのために、GitHub のリモートがある main のリポジトリで走らせ、
-# リモートの無い別のリポジトリへ cd / -C で移る形も比べる。main では block-main-commit が全てのコミットを
+# リモートの無い別のリポジトリへ cd / -C で移る形も比べる。main では block-main-commit がすべてのコミットを
 # 止めるので、ルールをまとめて判定すると他のルールの緩みが隠れる。ルールごとに比べる。
 
 set -euo pipefail
@@ -32,7 +32,7 @@ build() {
 if [[ -z "${HOOKS_DIFF_LIST:-}" ]] && [[ -z "${OLD_BIN:-}" || -z "${NEW_BIN:-}" ]]; then
   # 呼んだ場所ではなく、このスクリプトのある作業ツリーを比べる
   ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-  # path: は .gitignore を見ずに target/ なども store に写すので、git が追跡するファイルだけを使う
+  # path: は .gitignore を見ずに target/ なども store にコピーするので、git が追跡するファイルだけを使う
   OLD_BIN="${OLD_BIN:-$(build "git+file://$ROOT?rev=$(git -C "$ROOT" rev-parse "$BASE")")/bin/claude-hooks}"
   NEW_BIN="${NEW_BIN:-$(build "git+file://$ROOT")/bin/claude-hooks}"
 fi
@@ -77,7 +77,7 @@ DIRS=("cd $LOCAL; " "cd $LOCAL && " "env cd $LOCAL; " "builtin cd $LOCAL && " "t
   "echo \$(cd $LOCAL); " "cd $LOCAL; cd $MAIN; ")
 
 # decide <bin> <rule>: $INPUT への判定を DECISION に入れる（deny / ask / context / allow）。
-# バイナリが失敗したら、通したものと数えずに止める。claude-hooks はルールの panic を拾って終了コード 0 で
+# バイナリが失敗したら、通したものと数えずに止める。claude-hooks はルールの panic を捕捉して終了コード 0 で
 # 終わる（panic の文は標準エラーに出る）ので、標準エラーに何か出たら失敗とみなす。判定できなかった理由
 # （systemMessage）を返したときと、出力が 1 つの JSON の object でないときも失敗とみなす
 decide() {

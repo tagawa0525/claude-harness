@@ -4,7 +4,7 @@
 //!   commit-refs remap [MAP]            作業ツリーの追跡しているテキストのファイルの中の番号を、対応表 MAP（省略
 //!                                      すると標準入力）で付け直す。コミットはしない。対応表の形は
 //!                                      commit_refs::Map::parse
-//!   commit-refs rewrite-history MAP    git filter-repo などで書き換えた後の履歴の、全てのブランチとタグの文書と
+//!   commit-refs rewrite-history MAP    git filter-repo などで書き換えた後の履歴の、すべてのブランチとタグの文書と
 //!                                      本文の番号を、書き換えた後の最後の番号に付け直す（ADR-0013）。MAP は書き換える
 //!                                      前の番号から今の番号への対応表（.git/filter-repo/commit-map）
 //!

@@ -8,7 +8,7 @@
 //!
 //! コマンドは解析のときに一度だけ読み、規則はそれを共有する:
 //! - コマンドを包むもの（env、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice、sudo、xargs、flock、
-//!   chrt、taskset、watch、script、ssh、`bash [opts] <script>`）はほどき、中のコマンドと、前置きの代入や包みが
+//!   chrt、taskset、watch、script、ssh、`bash [opts] <script>`）はほどき、中のコマンドと、前置きの代入やラッパーが
 //!   変える環境変数・ディレクトリを `Cmd` に持たせる（unwrap.rs）
 //! - sh -c で走らせる文字列（`bash -c '…'`、`eval`、`watch`、`ssh <接続先> …`）は、同じ構文解析を再帰的に当て、
 //!   中のコマンドを `commands()` に含める。深さの上限は `MAX_DEPTH`（ADR-0025）
@@ -114,7 +114,7 @@ pub struct Arg {
     pub raw: String,
 }
 
-/// 単純コマンド 1 つ（`command` ノード）。包み（env など）はほどいてある
+/// 単純コマンド 1 つ（`command` ノード）。ラッパー（env など）はほどいてある
 #[derive(Debug, Clone)]
 pub struct Cmd {
     pub name: String,
@@ -136,7 +136,7 @@ pub struct Cmd {
     /// このコマンドだけに効く環境変数の変更を順に（前置きの `NAME=value` と、包んだ `env` の `NAME=value` /
     /// `-u NAME` / `-i`、`exec -c`）
     pub env: Vec<EnvChange>,
-    /// ほどいた包みの、書いたままの名前（外側から順に）
+    /// ほどいたラッパーの、書いたままの名前（外側から順に）
     pub wrappers: Vec<String>,
     /// 包んだ `env -C <dir>` の行き先（順に、前のものからの相対）
     pub dirs: Vec<String>,
@@ -389,7 +389,7 @@ impl Shell {
         self.src.contains(word) || self.inner.iter().any(|s| s.mentions(word))
     }
 
-    /// プログラム内（文字列の中を含む）の全ての代入（`NAME=value`。値の無い `NAME=` は空の値）の名前と値
+    /// プログラム内（文字列の中を含む）のすべての代入（`NAME=value`。値の無い `NAME=` は空の値）の名前と値
     pub fn assignments(&self) -> Vec<(String, String)> {
         let mut found = Vec::new();
         self.walk(self.tree.root_node(), &mut |n| {
@@ -500,7 +500,7 @@ impl Shell {
                     None => dir = home.clone(),
                 }
             }
-            // cmd を文字列の中に持つ包み（`env -C x bash -c '…'`）のディレクトリは、文字列の中の cd より前に当たる
+            // cmd を文字列の中に持つラッパー（`env -C x bash -c '…'`）のディレクトリは、文字列の中の cd より前に当たる
             if let Some(id) = c.spawns
                 && cmd.scope.get(c.scope.len()) == Some(&id)
             {
@@ -635,8 +635,8 @@ fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     base.join(p)
 }
 
-/// 包み（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを走らせるディレクトリへ移る。`sudo -i` は対象の
-/// 利用者のホームから始める（その前の包みの -C は unwrap.rs が除いてある）。包みの引数の `~` は外側の
+/// ラッパー（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを走らせるディレクトリへ移る。`sudo -i` は対象の
+/// 利用者のホームから始める（その前のラッパーの -C は unwrap.rs が除いてある）。ラッパーの引数の `~` は外側の
 /// シェルが展開してから渡すので、`home` は外側のもの
 fn enter(wrapped: &Cmd, home: &Path, dir: &mut PathBuf) {
     if let Some(login_home) = &wrapped.login_home {
@@ -649,7 +649,7 @@ fn enter(wrapped: &Cmd, home: &Path, dir: &mut PathBuf) {
 
 impl Cmd {
     /// シェルの cd か。builtin / command と、先頭に修飾せずに書いた time（bash の予約語）はシェルの cd を
-    /// 呼ぶ。env や /usr/bin/time など外部の包みは cd という外部コマンドを探して失敗し、シェルのディレクトリを
+    /// 呼ぶ。env や /usr/bin/time など外部のラッパーは cd という外部コマンドを探して失敗し、シェルのディレクトリを
     /// 変えない。予約語は先頭でだけ予約語として読まれるので、command time は外部の time を呼ぶ
     pub fn changes_dir(&self) -> bool {
         self.name == "cd"
@@ -660,7 +660,7 @@ impl Cmd {
                 .all(|(i, w)| w == "builtin" || w == "command" || (i == 0 && w == "time"))
     }
 
-    /// 走らせるプログラムの、書いたままのパス。包み（env、`bash [opts] <path>` など）はほどいてある
+    /// 走らせるプログラムの、書いたままのパス。ラッパー（env、`bash [opts] <path>` など）はほどいてある
     pub fn program(&self) -> &str {
         &self.name
     }

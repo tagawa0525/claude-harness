@@ -4,7 +4,7 @@
 #
 # 終了コード: 0 = 崩れた語が無い、1 = 崩れた語がある、2 = textlint が失敗した
 
-# 出力のパスを書き出した名前から元に戻すので、textlint が見る実体のパスにする（TMPDIR がシンボリックリンクを
+# 出力のパスを書き出した名前から元に戻すので、textlint が見る実体のパスにする（TMPDIR が symlink を
 # 経ると、mktemp の返すパスと textlint が出すパスが違う）
 work=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$work"' EXIT
@@ -12,10 +12,10 @@ mkdir "$work/files"
 
 mapfile -t pathspecs <<<"$JA_TERMS_PATHSPECS"
 
-# ステージしたファイルの、モードとブロブとパス。シンボリックリンクの行き先とサブモジュール（gitlink）は
+# ステージしたファイルの、モードとブロブとパス。symlink の行き先とサブモジュール（gitlink）は
 # 文章ではないので外す
 # （--raw -z は「:旧モード 新モード 旧ブロブ 新ブロブ 状態」と「パス」を NUL で区切って並べる。名前の変更は
-# パスを 2 つ並べるので、--no-renames で追加と削除に分けて 1 つにする。T はシンボリックリンクなどから普通の
+# パスを 2 つ並べるので、--no-renames で追加と削除に分けて 1 つにする。T は symlink などから普通の
 # ファイルへの種類の変更）
 # git の出力は一度ファイルに受ける（プロセス置換の中の失敗は set -e に見えず、何も検査せずに通るため）
 git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMRT -- "${pathspecs[@]}" >"$work/staged"

@@ -9,7 +9,7 @@
 # そのコミットを要約する（チェックアウトしていない PR のブランチを見るとき。例: origin/main origin/feat/x）。
 #
 # ADR と issue は docs/adr/・docs/issues/ の直下にある NNNN-name.md（4 桁の番号とハイフンで始まる）。
-# README などは含めない。status は前付けの `status:` の値（design-records status で読む）。
+# README などは含めない。status はフロントマターの `status:` の値（design-records status で読む）。
 # ディレクトリが無いリポジトリでは該当の行を出さない。
 #
 # 出力（行がないものは省く）:
@@ -79,7 +79,7 @@ TYPES=$(git log --format=%s "$BASE..$TIP" \
   | awk '{ printf "%s%s=%s", (NR > 1 ? " " : ""), $2, $1 }')
 [[ -z "$TYPES" ]] || echo "TYPES: $TYPES"
 
-# status <rev> <path>: 前付けの status の値（無ければ -）。前付けの形は design-records（ADR-0009）が持つ
+# status <rev> <path>: フロントマターの status の値（無ければ -）。フロントマターの形は design-records（ADR-0009）が持つ
 status() {
   local text
   text=$(git show "$1:$2")

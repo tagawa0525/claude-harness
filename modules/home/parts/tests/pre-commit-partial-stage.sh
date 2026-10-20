@@ -149,7 +149,7 @@ else
   ng "ステージしていない編集と git add -N のファイルが、そのまま残る"
 fi
 
-echo "==> 改行の変換があっても、全てステージした Markdown の作業ツリーを直す"
+echo "==> 改行の変換があっても、すべてステージした Markdown の作業ツリーを直す"
 R=$(repo crlf a.md "$LINES")
 git -C "$R" config core.autocrlf true
 printf '%s' "${LINES/l1/l1 }" | sed 's/$/\r/' >"$R/a.md"
@@ -175,7 +175,7 @@ else
   git -C "$R" show :a.md | head -3 | sed 's/^/    index: /'
 fi
 
-echo "==> 作業ツリーのパスがシンボリックリンクなら、その先を書き換えない"
+echo "==> 作業ツリーのパスが symlink なら、その先を書き換えない"
 R=$(repo symlink a.md "$LINES")
 STAGED=${LINES/l1/l1 }
 printf '%s' "$STAGED" >"$R/a.md"
@@ -184,9 +184,9 @@ printf '%s' "$STAGED" >"$WORK/outside.md"
 rm "$R/a.md"
 ln -s "$WORK/outside.md" "$R/a.md"
 if commit "$R" && [[ "$(cat "$WORK/outside.md")" == "${STAGED%$'\n'}" ]] && [[ -L "$R/a.md" ]]; then
-  ok "シンボリックリンクの先のファイルを書き換えない"
+  ok "symlink の先のファイルを書き換えない"
 else
-  ng "シンボリックリンクの先のファイルを書き換えない"
+  ng "symlink の先のファイルを書き換えない"
 fi
 
 echo "==> clean のフィルタが落とす作業ツリーだけの行も、書き戻しで消さない"
@@ -247,9 +247,9 @@ R=$(repo plain a.md "$LINES")
 printf '%s' "${LINES/l1/l1 }" >"$R/a.md"
 git -C "$R" add a.md
 if commit "$R" && [[ "$(git -C "$R" show :a.md)" == "${LINES%$'\n'}" ]] && git -C "$R" diff --quiet; then
-  ok "全てステージした Markdown は直してステージし直す"
+  ok "すべてステージした Markdown は直してステージし直す"
 else
-  ng "全てステージした Markdown は直してステージし直す"
+  ng "すべてステージした Markdown は直してステージし直す"
 fi
 
 echo

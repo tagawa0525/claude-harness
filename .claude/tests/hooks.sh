@@ -16,7 +16,7 @@ if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
   cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
   CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
 fi
-# 渡されたパスが壊れていると（nix build の失敗の文言など）、全てのテストが失敗として数えられ、
+# 渡されたパスが壊れていると（nix build の失敗の文言など）、すべてのテストが失敗として数えられ、
 # ビルドの失敗が紛れる。テストは一時のリポジトリへ cd してから呼ぶので、相対のパスは解けない
 if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
   echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
@@ -2036,7 +2036,7 @@ for wrapped in "sudo sbatch --wrap true" "sudo -u slurm -g users sbatch --wrap t
   assert_eq deny "$(decision "$out")"
 done
 
-it "guard-sbatch: 包みが走らせない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
+it "guard-sbatch: ラッパーが走らせない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
 for cmd in "sudo -l sbatch" "sudo -e sbatch" "sudo -v" "sudo -K" "chrt -p 10 1234" "chrt -m" "taskset -p 1 1234" \
   "taskset -ap 1234" "ssh -N r995" "ssh r995 -N" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" "script log.txt" \
   "env FOO=1 -i sbatch --wrap true" "bash --help sbatch --wrap true" "bash --version sbatch" "xargs --help sbatch" \
@@ -2098,10 +2098,10 @@ out=$(run_hook guard-sbatch "$(write_doc '重い計算は sbatch でなく slurm
 assert_eq allow "$(decision "$out")"
 
 # ===========================================================================
-# require-background-wait: 包みと bash の文字列の中の待機スクリプトも見る
+# require-background-wait: ラッパーと bash の文字列の中の待機スクリプトも見る
 # ===========================================================================
 
-it "require-background-wait: bash のオプション付き、bash -c の文字列、包みの中の待機スクリプトも止める"
+it "require-background-wait: bash のオプションつき、bash -c の文字列、ラッパーの中の待機スクリプトも止める"
 PR12=https://github.com/o/r/pull/12
 for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh $PR12" "sh -eu ~/.claude/scripts/request-rereview.sh $PR12" \
   "bash -c '$HOME/.claude/scripts/gh-wait-review.sh $PR12'" "sudo ~/.claude/scripts/gh-wait-review.sh $PR12" \

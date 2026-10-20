@@ -254,14 +254,14 @@ assert_contains "$out" "BROKEN_LINK: project-b.md -> feedback-gone"
 assert_not_contains "$out" "-> feedback-a"
 assert_not_contains "$out" "-> project-b"
 
-it "memory-index: [[名前]] が前付けの name に一致するファイルがあれば、参照先があるとみなす"
+it "memory-index: [[名前]] がフロントマターの name に一致するファイルがあれば、参照先があるとみなす"
 printf -- '---\nname: d-name\n---\n\n本文\n' > "$MEM/project-d.md"
 printf -- '---\nname: e\n---\n\n本文 [[d-name]]\n' > "$MEM/project-e.md"
 out=$("$MEMORY_INDEX" "$MEM")
 assert_not_contains "$out" "-> d-name"
 rm "$MEM/project-e.md"
 
-it "memory-index: 前付けの name の引用符を外し、前付けの無いファイルの本文の name: は読まない"
+it "memory-index: フロントマターの name の引用符を外し、フロントマターの無いファイルの本文の name: は読まない"
 printf -- '---\nname: "d-quoted"\n---\n\n本文\n' > "$MEM/project-d.md"
 printf -- '本文だけ\nname: bogus\n' > "$MEM/project-f.md"
 printf -- '---\nname: e\n---\n\n本文 [[d-quoted]] [[bogus]]\n' > "$MEM/project-e.md"
