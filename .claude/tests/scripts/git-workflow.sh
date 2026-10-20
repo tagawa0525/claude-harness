@@ -786,6 +786,15 @@ assert_eq 0 $?
 assert_contains "$out" "NOTE: rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: pull で claude-hooks の入力の git-check-config.nix が変われば、rebuild が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup21"
+advance_origin_main "$TEST_ROOT/cleanup21/app" modules/home/parts/lib/git-check-config.nix >/dev/null
+cd "$TEST_ROOT/cleanup21/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: pull で claude-sync が同期する .claude の下が変われば、claude-sync が要ると NOTE で知らせる"
 setup_claude_sync_source "$TEST_ROOT/cleanup16"
 advance_origin_main "$TEST_ROOT/cleanup16/app" .claude/skills/x/SKILL.md >/dev/null
