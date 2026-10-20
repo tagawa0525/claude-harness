@@ -6,7 +6,7 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge / guard-sbatch / guard-git-stash
+#       guard-git-merge / guard-sbatch / guard-git-stash / guard-exclusive-slurm
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -2371,6 +2371,54 @@ done
 it "guard-git-stash: stash 以外と、文字列の中の git stash は対象外"
 for cmd in 'git status' 'git commit -m "docs: do not git stash"' 'git log --grep stash' 'echo git stash'; do
   out=$(run_hook guard-git-stash "$cmd")
+  assert_eq "" "$out"
+done
+
+# ===========================================================================
+# guard-exclusive-slurm: 排他の Slurm のジョブが走行中は、全コアを使う手元のコマンドを止める
+# ===========================================================================
+# 排他のジョブの時間の記録を乱すため（ADR-0039）。squeue は偽のコマンドで置き換える
+
+FAKE_SQUEUE="$TEST_ROOT/fake-squeue"
+mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle" "$FAKE_SQUEUE/broken"
+printf '#!/bin/sh\nprintf "NO                  openmc-2K           1234\\nYES                 x-shared            1235\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
+printf '#!/bin/sh\nprintf "YES                 x-shared            1235\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
+printf '#!/bin/sh\nexit 0\n' >"$FAKE_SQUEUE/idle/squeue"
+printf '#!/bin/sh\necho boom >&2\nexit 1\n' >"$FAKE_SQUEUE/broken/squeue"
+chmod +x "$FAKE_SQUEUE"/*/squeue
+cd "$TEST_ROOT" || exit 1
+
+it "guard-exclusive-slurm: 排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と直し方を示す"
+for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' \
+  'cargo +nightly build' 'cargo build -j 4' 'dvc repro' 'dvc repro examples/vera/dvc.yaml' \
+  'bin/xs in.toml' './bin/lattice in.toml' '../../bin/core in.toml' '../bin/chain in.toml' 'nix build .#x' \
+  'cd repo && cargo test' 'env FOO=1 cargo test' "bash -c 'cargo test'" 'taskset -c 0-3 cargo test' 'taskset 0x3 cargo build'; do
+  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "openmc-2K"
+  assert_contains "$(reason "$out")" "1234"
+  assert_contains "$(reason "$out")" "taskset"
+  assert_contains "$(reason "$out")" "slurm-run.sh"
+done
+
+it "guard-exclusive-slurm: -j 1 か 1 コアの taskset で限れば通す"
+for cmd in 'cargo test -j 1' 'cargo test -j1' 'cargo build --jobs 1' 'cargo build --jobs=1' 'taskset -c 3 cargo test' \
+  'taskset -c 3 bin/xs in.toml' 'taskset --cpu-list 2 dvc repro' 'taskset 0x4 cargo build' 'taskset -c 5-5 nix build .#x' \
+  'sudo taskset -c 3 cargo test'; do
+  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-exclusive-slurm: 対象のコマンド以外は通す"
+for cmd in 'cargo fmt --check' 'cargo --version' 'nix flake check' 'nix develop' 'dvc status' 'git status' 'ls bin/' 'echo cargo test' \
+  'bin/other' 'squeue -t R'; do
+  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-exclusive-slurm: 排他のジョブが無い（排他でないジョブだけ、ジョブなし、squeue の失敗）なら通す"
+for dir in shared idle broken; do
+  out=$(PATH="$FAKE_SQUEUE/$dir:$PATH" run_hook guard-exclusive-slurm 'cargo test')
   assert_eq "" "$out"
 done
 
