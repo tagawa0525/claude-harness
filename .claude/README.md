@@ -96,6 +96,8 @@ post-rewrite はゲートではなく、`git config remap.commitRefs true` で�
 rebase と amend の後に `commit-refs remap`（`modules/home/parts/commit-refs`、ADR-0012）を呼び、
 文書の中の変わったコミットの番号を付け直す（コミットはしない）。git filter-repo の後は
 `commit-refs rewrite-history .git/filter-repo/commit-map` で、履歴の中の文書と本文の番号も付け直す（ADR-0013）。
+履歴の中の崩れた語は `history-rewrite`（`modules/home/parts/history-rewrite`、ADR-0045）が同じ辞書で直し、番号を
+`commit-refs rewrite-history` で付け直す。生きているリポジトリに移す手順は `skills/history-rewrite/` にある。
 
 **PR フローのゲートは GitHub リモートのあるリポジトリだけに効く**。リモートに `github.com` がなければ、
 `block-main-commit` と `guard-git-push` は何もせず、git の pre-commit は main 直接コミットの拒否**だけ**を
