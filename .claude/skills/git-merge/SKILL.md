@@ -85,8 +85,8 @@ design-records -C [TARGET_WORKTREE] check
 ```
 
 重複があれば、このブランチで足した側を振り直す（ADR は `design-records -C [TARGET_WORKTREE] renumber NNNN`、
-issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。新しい番号の予約、ファイル名と参照の付け替え、コミットまでを行う。できたコミットを `git show` で見て、付け替えた参照が振り直した記録を指していることを確かめてから、
-チェックに進む。
+issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。新しい番号の予約、ファイル名と参照の付け替え、コミットまでを行う。
+できたコミットを `git show` で見て、付け替えた参照が振り直した記録を指していることを確かめてから、チェックに進む。
 
 ### チェック（CI の代わり）
 
