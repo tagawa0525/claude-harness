@@ -2,7 +2,7 @@
 //! flock、chrt、taskset、watch、script、ssh、eval、bash、sh）をほどき、中のコマンドと、ラッパーが変える環境変数・
 //! ディレクトリを取り出す（ADR-0025）
 //!
-//! 包みごとのオプションの読み方は、coreutils（env、nice、timeout、stdbuf、nohup）、util-linux（setsid、ionice、flock、
+//! ラッパーごとのオプションの読み方は、coreutils（env、nice、timeout、stdbuf、nohup）、util-linux（setsid、ionice、flock、
 //! chrt、taskset、script）、GNU time、sudo、findutils（xargs）、procps（watch）、OpenSSH（ssh）の man と、bash の
 //! 組み込み（builtin、command、exec、eval、source）と bash 自身の起動オプションから、値を取るものと、ほどき方を変える
 //! ものだけを持つ。短縮形のまとまり（`-iu X`）、続けて書いた値（`-uX`、`--unset=X`）、長い形の一意な省略形（`--ign`）を読む
@@ -708,7 +708,7 @@ fn joined(words: &VecDeque<Arg>) -> String {
         .join(" ")
 }
 
-/// `name args…` が包みなら、ほどいた中のコマンドを返す。`command -v` / `-V`（`-pv` などのまとまりを含む）は
+/// `name args…` がラッパーなら、ほどいた中のコマンドを返す。`command -v` / `-V`（`-pv` などのまとまりを含む）は
 /// プログラムを探して表示するだけで走らせず、`ionice -p` などは既にあるプロセスを対象にするので、ほどかない
 pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
     let mut out = Unwrapped {
@@ -742,7 +742,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         };
         let is_shell = matches!(wrapper.name, "bash" | "sh");
         let mut words: VecDeque<Arg> = out.args.iter().cloned().collect();
-        // この包み 1 段の環境の変更と、移るディレクトリ（最後の -C / -D が効く）。out に直に書かないのは、
+        // このラッパー 1 段の環境の変更と、移るディレクトリ（最後の -C / -D が効く）。out に直に書かないのは、
         // ラッパーが中のコマンドを走らせない（--help など）ときに捨てるため
         let mut env: Vec<EnvChange> = Vec::new();
         let mut dir: Option<String> = None;
@@ -818,7 +818,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         Some((n, v)) => (format!("--{n}"), Some(v.to_string())),
                         None => (t.clone(), None),
                     };
-                    // どの包みも --help / --version は表示して終わり、後ろの語を走らせない
+                    // どのラッパーも --help / --version は表示して終わり、後ろの語を走らせない
                     if name == "--help" || name == "--version" {
                         runs = false;
                     }
@@ -944,7 +944,7 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
             out.login_home = Some(format!("~{}", user.as_deref().unwrap_or("root")));
         }
         out.dirs.extend(dir);
-        // 包みは外側から順にほどく。コマンドを直に包む最も内側の taskset の指定が効く
+        // ラッパーは外側から順にほどく。コマンドを直に包む最も内側の taskset の指定が効く
         if wrapper.name == "taskset" {
             out.pinned_to_one_cpu = pinned;
         }

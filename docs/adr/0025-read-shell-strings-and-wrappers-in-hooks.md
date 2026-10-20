@@ -23,7 +23,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 
 同日に公開ソースを調べた結果:
 
-- Claude Code 自身の権限判定（https://code.claude.com/docs/en/permissions）が剥がす包みは `timeout`、`time`、`nice`、
+- Claude Code 自身の権限判定（https://code.claude.com/docs/en/permissions）が剥がすラッパーは `timeout`、`time`、`nice`、
   `nohup`、`stdbuf`、`command`、`builtin` と素の `xargs` だけで、`bash -c '…'` は再帰せず、「deny に当たらず、境界では
   ない」と限界を明記している
 - 公開の類似ツール（destructive_command_guard、claude-code-safety-net）は `bash -c` / `python -c` の内側も見る方向
@@ -35,7 +35,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 - 共通の土台（`shell.rs` の `Cmd`、`unwrap.rs`）を直し、ルールごとの分岐を増やさない。`guard_sbatch`、
   `require_background_wait`、`guard_git_add`、`guard_git_push`、`block_no_verify` など、実行プログラムを見るルール
   すべてに同じ読み方が効くこと
-- 包みごとの「値を取るオプション」と「コマンドが始まる位置」は man から取る（推測で書かない）
+- ラッパーごとの「値を取るオプション」と「コマンドが始まる位置」は man から取る（推測で書かない）
 - 入れ子の文字列を読む処理は、入力の形によらず有限の時間で終わる
 
 ## 検討した案
@@ -67,7 +67,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 ### 読み方
 
 `unwrap.rs` の表（値を取る短縮形、続けて書いたときだけ値を取る短縮形、長い形、コマンドの前の位置引数の数、
-`NAME=value` を代入として読むか）と、包みごとの意味:
+`NAME=value` を代入として読むか）と、ラッパーごとの意味:
 
 - `bash` / `sh`: 1 文字のオプションは `set` と同じ（`-e`、`-x`、`-o opt`、`+o opt`、`-O shopt`）。長い形は
   `--rcfile` / `--init-file` が値を取る。`-c` は次の位置引数を文字列として走らせ、残りは `$0` 以降。`-s` と
@@ -105,7 +105,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 - 二重引用符の文字列の中の `$(…)` は外側のシェルが展開してから文字列を渡すので、外側のスコープで 1 回だけ読む
   （文字列の解析は、外側の引数にある原文が同じ置換に降りない）。`bash -c 'true' "$(sbatch …)"` のように文字列以外の
   引数の中の置換も、外側で読む
-- どの包みも `--help` / `--version` は表示して終わり、後ろの語を走らせない。block-no-verify のシェル全体の
+- どのラッパーも `--help` / `--version` は表示して終わり、後ろの語を走らせない。block-no-verify のシェル全体の
   CLAUDECODE の変更（代入、unset）も、hook が走る git commit / merge / pull があるときだけ見る
 - 文字列の中の代入、`unset`、エスケープ（ADR-0023 の `ALLOW_*=<理由>`）も、外側と同じ規則で読む
 - 走らせるプログラムが決まらないコマンド（`Cmd::opaque`）: 名前の basename に展開がある（`$CMD`、`~/x/$SCRIPT`、
@@ -122,7 +122,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   読むのに要る
 - `/usr/bin/git` のようなパスは、PR #301 の時点で `basename` に揃えてある
 
-### 足さなかった包み
+### 足さなかったラッパー
 
 - `doas`、`su -c`: この環境に無い。要るときに表へ足す
 - `python -c`、`perl -e`: 別の言語で、bash の構文解析は当てられない
@@ -132,7 +132,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 
 ### 帰結
 
-- 良い点: `bash -x script`（#303）、`bash -c '…'`、`sudo` などの包み、`$CMD` の形を、実行プログラムを見るすべての
+- 良い点: `bash -x script`（#303）、`bash -c '…'`、`sudo` などのラッパー、`$CMD` の形を、実行プログラムを見るすべての
   ルールが同じ読み方で見る。`cd x; (git commit)` の `cd` も効く
 - 悪い点: 決まらないコマンドと対象語が同じ文字列にあると止める（`echo sbatch; $CMD` のような形。その場で分かる
   ので書き直せる）。`xargs git add -A` は、足されるパスで範囲が限定されていても止める。`ssh <接続先> …` の中の
@@ -147,7 +147,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 ### 確認
 
 - `.claude/tests/hooks.sh`: `guard-sbatch` の節で、`bash` / `sh` のオプションつき、`bash -c` の入れ子（6 段で止める側）、
-  各包み、走らせない形、決まらない形（対象語の有無で分かれる）を確かめる。`require-background-wait`、
+  各ラッパー、走らせない形、決まらない形（対象語の有無で分かれる）を確かめる。`require-background-wait`、
   `block-no-verify`、`guard-git-add`、`guard-git-push`、`block-main-commit` の節で、同じ土台が効くことを確かめる
 - `modules/home/parts/claude-hooks/src/unwrap.rs` と `shell.rs` の単体テストで、表の読み方、文字列の位置と
   スコープ、エスケープの外し方、深さの上限を確かめる

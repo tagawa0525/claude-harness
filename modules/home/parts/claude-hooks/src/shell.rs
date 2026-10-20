@@ -114,7 +114,7 @@ pub struct Arg {
     pub raw: String,
 }
 
-/// 単純コマンド 1 つ（`command` ノード）。包み（env など）はほどいてある
+/// 単純コマンド 1 つ（`command` ノード）。ラッパー（env など）はほどいてある
 #[derive(Debug, Clone)]
 pub struct Cmd {
     pub name: String,
@@ -500,7 +500,7 @@ impl Shell {
                     None => dir = home.clone(),
                 }
             }
-            // cmd を文字列の中に持つ包み（`env -C x bash -c '…'`）のディレクトリは、文字列の中の cd より前に当たる
+            // cmd を文字列の中に持つラッパー（`env -C x bash -c '…'`）のディレクトリは、文字列の中の cd より前に当たる
             if let Some(id) = c.spawns
                 && cmd.scope.get(c.scope.len()) == Some(&id)
             {
@@ -635,7 +635,7 @@ fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     base.join(p)
 }
 
-/// 包み（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを走らせるディレクトリへ移る。`sudo -i` は対象の
+/// ラッパー（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを走らせるディレクトリへ移る。`sudo -i` は対象の
 /// 利用者のホームから始める（その前のラッパーの -C は unwrap.rs が除いてある）。ラッパーの引数の `~` は外側の
 /// シェルが展開してから渡すので、`home` は外側のもの
 fn enter(wrapped: &Cmd, home: &Path, dir: &mut PathBuf) {
@@ -649,7 +649,7 @@ fn enter(wrapped: &Cmd, home: &Path, dir: &mut PathBuf) {
 
 impl Cmd {
     /// シェルの cd か。builtin / command と、先頭に修飾せずに書いた time（bash の予約語）はシェルの cd を
-    /// 呼ぶ。env や /usr/bin/time など外部の包みは cd という外部コマンドを探して失敗し、シェルのディレクトリを
+    /// 呼ぶ。env や /usr/bin/time など外部のラッパーは cd という外部コマンドを探して失敗し、シェルのディレクトリを
     /// 変えない。予約語は先頭でだけ予約語として読まれるので、command time は外部の time を呼ぶ
     pub fn changes_dir(&self) -> bool {
         self.name == "cd"
@@ -660,7 +660,7 @@ impl Cmd {
                 .all(|(i, w)| w == "builtin" || w == "command" || (i == 0 && w == "time"))
     }
 
-    /// 走らせるプログラムの、書いたままのパス。包み（env、`bash [opts] <path>` など）はほどいてある
+    /// 走らせるプログラムの、書いたままのパス。ラッパー（env、`bash [opts] <path>` など）はほどいてある
     pub fn program(&self) -> &str {
         &self.name
     }

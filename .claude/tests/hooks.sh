@@ -2098,7 +2098,7 @@ out=$(run_hook guard-sbatch "$(write_doc '重い計算は sbatch でなく slurm
 assert_eq allow "$(decision "$out")"
 
 # ===========================================================================
-# require-background-wait: 包みと bash の文字列の中の待機スクリプトも見る
+# require-background-wait: ラッパーと bash の文字列の中の待機スクリプトも見る
 # ===========================================================================
 
 it "require-background-wait: bash のオプションつき、bash -c の文字列、ラッパーの中の待機スクリプトも止める"
