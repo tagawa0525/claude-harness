@@ -309,7 +309,7 @@ in
       if [ -n "$DIRTY" ]; then
         echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
         printf '%s\n' "$DIRTY" | sed 's/^/     /'
-        echo "   直し方: git merge --abort で取り消し、変更をコミットするか git stash -u で退避して（不要なファイルは消して）から、もう一度マージしてください"
+        echo "   直し方: git merge --abort で取り消し、変更をコミットして（不要なファイルは消して）から、もう一度マージしてください"
         exit 1
       fi
 

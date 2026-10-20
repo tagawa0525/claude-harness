@@ -12,7 +12,6 @@ allowed-tools:
   - Bash(git reset*)
   - Bash(git add*)
   - Bash(git commit*)
-  - Bash(git stash*)
   - Bash(git cherry-pick*)
   - Bash(git merge-base*)
   - Bash(git fetch*)
@@ -31,7 +30,7 @@ allowed-tools:
 ## 前提
 
 - `main` / `master` では実行しない（/git-cherry-pick で feature ブランチへ移すよう案内する）
-- 未コミットの変更があれば `git stash` で退避し、終わったら復元を提案する
+- 未コミットの変更があれば先に WIP をコミットするか、ユーザーに確認する（stash は全 worktree で共有なので使わない）
 - 書き換え前に `git branch [backup] HEAD` で元の HEAD を残し、結果を確認してから消す
 - 履歴を分析して操作を提案し、ユーザーの確認を得てから実行する。push 済みなら
   `/git-push --force` が要ることも確認の時点で伝える

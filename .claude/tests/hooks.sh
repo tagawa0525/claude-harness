@@ -6,7 +6,7 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge / guard-sbatch
+#       guard-git-merge / guard-sbatch / guard-git-stash
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -2344,5 +2344,34 @@ out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh
 assert_eq allow "$(decision "$out")"
 out=$(run_hook require-background-wait '$WAIT 12')
 assert_eq allow "$(decision "$out")"
+
+# ===========================================================================
+# guard-git-stash: git stash はリポジトリの全 worktree と全セッションで共有なので止める
+# ===========================================================================
+# 読むだけの list / show は通す。退避は WIP のコミットか、テストの部分だけのステージで行う
+
+it "guard-git-stash: stash の書き込み系は deny し、代わりの手順を示す"
+for cmd in 'git stash' 'git stash push' 'git stash push -m wip' 'git stash -u' 'git stash save wip' 'git stash pop' \
+  'git stash apply' 'git stash drop' 'git stash clear' 'git stash branch feat/x' 'git stash create' 'git stash store abc' \
+  'git -C /tmp/repo stash' 'git -c core.editor=true stash pop' 'git stash -- file.txt' \
+  'env FOO=1 git stash' 'sudo git stash' "bash -c 'git stash pop'" 'git add a && git stash' \
+  'git --no-pager stash' 'command git stash' 'xargs git stash' 'CMD="git stash pop"; $CMD' 'eval "git stash pop"'; do
+  out=$(run_hook guard-git-stash "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "コミット"
+  assert_contains "$(reason "$out")" "共有"
+done
+
+it "guard-git-stash: list と show は通す"
+for cmd in 'git stash list' 'git stash show' 'git stash show -p stash@{0}' 'git -C /tmp/repo stash list'; do
+  out=$(run_hook guard-git-stash "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-git-stash: stash 以外と、文字列の中の git stash は対象外"
+for cmd in 'git status' 'git commit -m "docs: do not git stash"' 'git log --grep stash' 'echo git stash'; do
+  out=$(run_hook guard-git-stash "$cmd")
+  assert_eq "" "$out"
+done
 
 finish

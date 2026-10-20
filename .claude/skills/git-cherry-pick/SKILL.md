@@ -15,7 +15,6 @@ allowed-tools:
   - Bash(git cherry-pick*)
   - Bash(git rebase*)
   - Bash(git reset*)
-  - Bash(git stash*)
 ---
 
 # Git Cherry-Pick Command
@@ -35,7 +34,7 @@ allowed-tools:
 
 ## main で作業してしまったコミットを移す
 
-`reset --hard` は未コミットの変更も消すので、先に `git status` で確認して必要なら stash する。
+`reset --hard` は未コミットの変更も消すので、先に `git status` で確認して必要なら WIP をコミットする（stash は全 worktree で共有なので使わない）。
 
 **すべて**移すなら cherry-pick は不要（新ブランチが既に含む）:
 

@@ -81,6 +81,7 @@ mod guard_gh_run_rerun;
 mod guard_git_add;
 mod guard_git_merge;
 mod guard_git_push;
+mod guard_git_stash;
 mod guard_sbatch;
 mod pre_git_merge_check;
 mod pre_merge_check;
@@ -105,6 +106,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &pre_merge_check::PreMergeCheck,
         &pre_git_merge_check::PreGitMergeCheck,
         &guard_git_merge::GuardGitMerge,
+        &guard_git_stash::GuardGitStash,
     ]
 }
 
