@@ -176,7 +176,7 @@ EOF
 ~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
-出力に `NOTE:` の行（pull で rebuild か claude-sync が要るものが変わった）があれば、完了メッセージでそのままユーザーに伝える（rebuild や claude-sync は走らせない）。
+出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝える（rebuild や claude-sync は走らせない）。
 
 ## 完了確認
 
