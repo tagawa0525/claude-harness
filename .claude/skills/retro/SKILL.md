@@ -4,6 +4,10 @@ description: 作業の区切りの振り返り。ここまでの会話から、h
 argument-hint: "[見る範囲や観点の補足]"
 allowed-tools:
   - Bash(~/.claude/skills/retro/scripts/*)
+  - Bash(~/.claude/scripts/worktree-add.sh*)
+  - Bash(~/.claude/scripts/review-level.sh*)
+  - Bash(~/.claude/scripts/gh-wait-review.sh*)
+  - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
   - Bash(git *)
   - Bash(gh *)
   - Read
