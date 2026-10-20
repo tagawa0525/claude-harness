@@ -65,4 +65,25 @@ it "check-each-commit: base が解決できなければ exit 2"
 "$SCRIPT" nosuchref -- true >/dev/null 2>&1
 assert_eq 2 $?
 
+# RED: 以下は実装前のため skip（GREEN のコミットで外す）
+if [[ -n "${CEC_PENDING-}" ]]; then
+it "check-each-commit: 書き込み不可のファイルを残す検査でも一時ディレクトリが残らない"
+"$SCRIPT" main -- sh -c 'mkdir d && touch d/f && chmod -R a-w d' >/dev/null 2>&1
+assert_eq 0 $?
+assert_eq "" "$(ls -A "$TMPDIR")"
+
+it "check-each-commit: 検査コマンドは標準入力を継承しない（入力を待たずに終わる）"
+sleep 4 | timeout 2 "$SCRIPT" main -- cat >/dev/null 2>&1
+assert_eq 0 $?
+
+it "check-each-commit: rev-list が失敗したら原因を出して exit 3（使い方の誤りの 2 と区別する）"
+real_git=$(command -v git)
+mkdir -p "$TEST_ROOT/failbin"
+printf '#!/usr/bin/env bash\n[[ "$1" == rev-list ]] && { echo "fatal: bad object" >&2; exit 128; }\nexec %s "$@"\n' "$real_git" > "$TEST_ROOT/failbin/git"
+chmod +x "$TEST_ROOT/failbin/git"
+err=$(PATH="$TEST_ROOT/failbin:$PATH" "$SCRIPT" main -- true 2>&1 >/dev/null)
+assert_eq 3 $?
+assert_contains "$err" "git rev-list に失敗"
+fi
+
 finish
