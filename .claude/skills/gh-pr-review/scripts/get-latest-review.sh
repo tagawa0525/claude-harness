@@ -81,7 +81,7 @@ suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" 
 # 開いている指摘の節の「- 」で始まらない行、Previously missed の節の <summary> でない行のアイコン、知っている節の
 # 外のアイコン（要約の **Findings:** の行は除く）があれば、形が変わって High を数え落としうるので、分からないとする。節の切り替えを見出しの行だけで行うのは、指摘の
 # 題名に同じ語が入りうるため。アイコンの無い指摘があれば、形が変わって数え落としうるので、重大度は
-# 分からない（unknown）とする。読み方は pre_merge_check.rs の remaining_high と同じ（ADR-0034）
+# 分からない（unknown）とする（ADR-0034）
 # mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で出し、形の変化の印（指摘でない行のアイコンなど）は
 # 「<場所> none」で出す（件数には数えない）。mode=missed は Previously missed の節の行を出す
 SECTIONS_AWK='

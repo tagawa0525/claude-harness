@@ -3,6 +3,8 @@
 #
 # Usage: request-rereview.sh <PR の URL>
 #
+# Copilot のレビューを受けたいときだけ使う（任意。head のローカルレビューの記録があればマージできる。ADR-0043）。
+#
 # 1. head にローカルレビューの記録（record-local-review.sh）があることを確かめる。無ければ要求しない。
 #    Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0034）
 # 2. requested_reviewers API で copilot-pull-request-reviewer にレビューを要求する
