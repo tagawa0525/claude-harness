@@ -87,13 +87,14 @@ if [[ -n "$(git remote)" ]]; then
   # 知らせる。自動では走らせない（rebuild は sudo が要り、走っている別のセッションの hook も入れ替わる）。
   # 配置の元は claude-sync.sh を持つリポジトリ（nixfiles）だけで、ほかのリポジトリの .claude はその場で読まれる
   if git cat-file -e HEAD:modules/home/scripts/claude-sync.sh 2>/dev/null; then
-    # design-records は claude-hooks がパス依存でバイナリに組み込む（claude-hooks/package.nix）
+    # design-records（パス依存）と lib/git-check-config.nix も claude-hooks の入力（claude-hooks/package.nix）
     if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules/home/parts/claude-hooks \
-      modules/home/parts/design-records modules/home/parts/claude-code.nix)" ]]; then
-      echo "NOTE: rebuild が要る（claude-hooks、design-records か claude-code.nix が変わった）。nix-rebuild rebuild まで hook、design-records の CLI と設定は古い版のまま動く"
+      modules/home/parts/design-records modules/home/parts/lib/git-check-config.nix \
+      modules/home/parts/claude-code.nix)" ]]; then
+      echo "NOTE: rebuild が要る（claude-hooks とその入力か claude-code.nix が変わった）。nix-rebuild rebuild まで hook、design-records の CLI と設定は古い版のまま動く"
     fi
     # claude-sync が上書きで同期するものだけ（claude-sync.sh）。commands は既存のファイルを上書きせず、変更は
-    # claude-sync で反映されない（リポジトリに .claude/commands もまだ無い）ので入れない
+    # claude-sync で反映されないので入れない
     if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- .claude/CLAUDE.md .claude/skills .claude/scripts)" ]]; then
       echo "NOTE: claude-sync が要る（.claude の CLAUDE.md、skills か scripts が変わった）。claude-sync か rebuild まで ~/.claude は古い版のまま"
     fi
