@@ -106,4 +106,21 @@ it "check-each-commit: git worktree add が失敗したら exit 3"
 FAIL_GIT_SUB=add PATH="$TEST_ROOT/failbin:$PATH" "$SCRIPT" main -- true >/dev/null 2>&1
 assert_eq 3 $?
 
+# RED: 以下は実装前のため skip（GREEN のコミットで外す）
+if [[ -n "${CEC_PENDING-}" ]]; then
+it "check-each-commit: GIT_DIR と GIT_WORK_TREE が別のリポジトリを指していても、そこに触らず対象を検査する"
+OTHER="$TEST_ROOT/cec/other"
+make_repo "$OTHER"
+echo keep > "$OTHER/untracked.txt"
+echo edit >> "$OTHER/README.md"
+other_head=$(git -C "$OTHER" rev-parse HEAD)
+other_status=$(git -C "$OTHER" status --porcelain)
+out=$(GIT_DIR="$OTHER/.git" GIT_WORK_TREE="$OTHER" GIT_INDEX_FILE="$OTHER/.git/index" "$SCRIPT" main -- test -e a.txt 2>/dev/null)
+assert_contains "$out" "feat: first exit=0"
+assert_contains "$out" "fix: third repairs exit=0"
+assert_eq "$other_head" "$(git -C "$OTHER" rev-parse HEAD)"
+assert_eq "$other_status" "$(git -C "$OTHER" status --porcelain)"
+assert_eq "keep" "$(cat "$OTHER/untracked.txt")"
+fi
+
 finish
