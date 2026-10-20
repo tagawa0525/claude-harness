@@ -109,6 +109,39 @@ class HistoryRewrite(unittest.TestCase):
         cls.side = repo.commit("docs: 別のブランチ\n")
         repo.git("tag", "-a", "v1", "-m", f"確かめの版 {cls.side[:7]}", cls.side)
         repo.git("tag", "light", cls.first)
+        # 署名つきのタグ（filter-repo は署名を外す）と、tagger の無いタグ（filter-repo は仮の tagger を付ける）
+        repo.git(
+            "tag",
+            "-a",
+            "signed",
+            "-m",
+            "確かめの版\n-----BEGIN PGP SIGNATURE-----\n\nAAAA\n-----END PGP SIGNATURE-----",
+            cls.side,
+        )
+        raw = f"object {cls.side}\ntype commit\ntag bare\n\n確かめの版\n"
+        bare = repo.git(
+            "hash-object", "-t", "tag", "-w", "--literally", "--stdin", input=raw
+        ).strip()
+        repo.git("update-ref", "refs/tags/bare", bare)
+
+        repo.git("switch", "-q", "-c", "extra", cls.manual)
+        repo.write("latin1.txt", b"caf\xe9 \xe7a\n")
+        repo.write(
+            "fence.md",
+            "```text\n| a | b |\n| - | - |\n| 掃引 | x |\n```\n",
+        )
+        repo.write("crlf.md", "| a | b |\r\n| - | - |\r\n| 掃引 | x |\r\n")
+        repo.git("add", "-A")
+        repo.git(
+            "-c",
+            "i18n.commitEncoding=ISO-8859-1",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            "docs: ascii only",
+        )
+        cls.extra_tip = repo.git("rev-parse", "HEAD").strip()
         repo.git("switch", "-q", "main")
 
         cls.refs_before = repo.git("for-each-ref", "--format=%(refname) %(objectname)")
@@ -198,6 +231,35 @@ class HistoryRewrite(unittest.TestCase):
         )
         message = self.rewritten.git("tag", "-l", "--format=%(contents)", "v1").strip()
         self.assertEqual(message, f"確認の版 {self.map[self.side][:7]}")
+
+    def test_signed_and_taggerless_tags_follow_filter_repo(self):
+        signed = self.rewritten.git("cat-file", "tag", "signed")
+        self.assertTrue(signed.endswith("\n\n確認の版\n"), signed)
+        bare = self.rewritten.git("cat-file", "tag", "bare")
+        self.assertIn(f"object {self.map[self.side]}\n", bare)
+        self.assertTrue(bare.endswith("\n\n確認の版\n"), bare)
+
+    def test_commit_encoding_is_kept(self):
+        raw = self.rewritten.git("cat-file", "commit", self.map[self.extra_tip])
+        self.assertIn("\nencoding ISO-8859-1\n", raw)
+
+    def test_text_that_is_not_utf8_is_counted_once_and_kept(self):
+        self.assertEqual(self.out["NOT_UTF8"], "1")
+        self.assertEqual(
+            self.rewritten.show(self.map[self.extra_tip], "latin1.txt"),
+            self.repo.show(self.extra_tip, "latin1.txt"),
+        )
+
+    def test_tables_in_code_fences_are_not_realigned(self):
+        fence = self.rewritten.show(self.map[self.extra_tip], "fence.md").decode()
+        self.assertEqual(
+            fence, "```text\n| a | b |\n| - | - |\n| スイープ | x |\n```\n"
+        )
+
+    def test_realigned_tables_keep_crlf_line_endings(self):
+        crlf = self.rewritten.show(self.map[self.extra_tip], "crlf.md").decode()
+        self.assertEqual(crlf.count("\r\n"), 3, repr(crlf))
+        self.assertIn("スイープ", crlf)
 
     def test_binary_symlink_and_excluded_files_are_kept(self):
         for path in ("data.bin", "link.md", "dict/terms.yml"):
@@ -329,6 +391,31 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual((work.path / "doc.md").read_text(), "確認の記録\n")
         self.assertEqual((work.path / "keep.md").read_text(), "結果を確かめる\n")
         self.assertEqual(result.stdout, "REPLACED: doc.md\nFILES: 1\n")
+
+    def test_transform_stops_on_a_missing_file_and_skips_symlinks(self):
+        work = Repo(Path(self.tmp.name) / "transform-links", self.env)
+        work.path.mkdir()
+        work.git("init", "-q")
+        work.write("doc.md", "確かめの記録\n")
+        os.symlink("doc.md", work.path / "link.md")
+
+        def transform(*files):
+            return subprocess.run(
+                ["history-rewrite", "transform", *files],
+                cwd=work.path,
+                capture_output=True,
+                text=True,
+                env=self.env,
+                check=False,
+            )
+
+        missing = transform("gone.md")
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("ERROR:", missing.stderr)
+        linked = transform("link.md")
+        self.assertEqual(linked.returncode, 0, linked.stderr)
+        self.assertEqual(linked.stdout, "FILES: 0\n")
+        self.assertEqual((work.path / "doc.md").read_text(), "確かめの記録\n")
 
 
 if __name__ == "__main__":
