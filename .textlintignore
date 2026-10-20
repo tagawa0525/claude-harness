@@ -1,2 +1,4 @@
 # 崩れた日本語の語の検査（ADR-0014）から外すファイル。辞書のテストは崩れた語をわざと含む
 modules/home/parts/tests/ja-terms.sh
+modules/home/parts/history-rewrite/test_prh_rules.py
+modules/home/parts/history-rewrite/test_history_rewrite.py

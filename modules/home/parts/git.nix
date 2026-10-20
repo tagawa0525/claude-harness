@@ -11,6 +11,9 @@ let
   # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook が store のパスで呼び、
   # 手で呼べるよう PATH にも入れる
   commit-refs = pkgs.callPackage ./commit-refs/package.nix { };
+  # 履歴の中の崩れた語を辞書（./ja-terms/prh.yml）で直し、番号を commit-refs で付け直す（ADR-0045）。
+  # 手で呼ぶツールなので PATH に入れる
+  history-rewrite = pkgs.callPackage ./history-rewrite/package.nix { inherit commit-refs; };
   # 機密情報の検査（ADR-0015）。pre-commit と pre-merge-commit が store のパスで呼ぶ
   scanStagedSecrets = pkgs.writeShellApplication {
     name = "scan-staged-secrets";
@@ -84,6 +87,7 @@ in
   home.packages = [
     commit-refs
     design-records
+    history-rewrite
     pkgs.prek
     stagedChecks
   ];
