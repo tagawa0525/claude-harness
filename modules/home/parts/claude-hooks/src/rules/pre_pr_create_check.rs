@@ -30,7 +30,7 @@ use crate::shell::{Arg, Shell, has_flag, opt_value};
 
 /// 検査は実行前のブランチの状態を見る。同じコマンドの前に連ねた git push は反映されず、
 /// 連ねるとコマンド全体が止まって前半も実行されないので、分け方を deny の文言で示す。
-const SPLIT_CALLS_HINT: &str = "。同じコマンドの前に git push を連ねても検査には反映されません。push と gh pr create は別の呼び出しに分けてください";
+const SPLIT_CALLS_HINT: &str = "同じコマンドの前に git push を連ねても検査には反映されません。push と gh pr create は別の呼び出しに分けてください";
 
 pub struct PrePrCreateCheck;
 
@@ -145,13 +145,15 @@ impl Rule for PrePrCreateCheck {
             // --- 3. 未プッシュコミット ---
             if !has_flag(args, &["--head", "-H"]) {
                 match git::git(&dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) {
-                    None => reasons.push(format!("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）{SPLIT_CALLS_HINT}")),
+                    None => reasons.push(format!("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）。{SPLIT_CALLS_HINT}")),
                     Some(upstream) => {
                         let ahead = git::git(&dir, &["rev-list", "--count", "@{u}..HEAD"])
                             .unwrap_or_else(|| "?".to_string());
                         if ahead != "0" {
+                            // 件数が取れなかった（"?"）ときは原因が未プッシュとは限らないので、分け方は示さない
+                            let hint = if ahead == "?" { String::new() } else { format!("。{SPLIT_CALLS_HINT}") };
                             reasons.push(format!(
-                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください{SPLIT_CALLS_HINT}"
+                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください{hint}"
                             ));
                         }
                     }
