@@ -103,14 +103,17 @@ main との分岐点からの変更を検査する。マージ時にも hook が
 ### レビュー（自動レビューの代わり）
 
 レベルと対象はスクリプトが決める。worktree で作業していると、引数なしの `/code-review` は呼び出し元の cwd
-（main の worktree など）の差分を見て「指摘なし」と返すので、対象は必ず渡す:
+（main の worktree など）の差分を見て「指摘なし」と返し、ブランチ名は cwd のリポジトリで解くので、対象は
+ブランチをチェックアウトしている worktree のパス（`WORKTREE`）で渡す:
 
 ```bash
 ~/.claude/scripts/review-level.sh [branch]
 ```
 
-差分が空だとスクリプトが止まる。出力の `LEVEL`（docs/ だけなら medium、他は high）と `TARGET` で
-`/code-review <LEVEL> <TARGET>` を回し、指摘に対応してからマージする:
+差分が空だとスクリプトが止まる。出力の `LEVEL`（docs/ だけなら medium、他は high）と `WORKTREE` で
+`/code-review <LEVEL> <WORKTREE>` を回し、指摘に対応してからマージする（`WORKTREE` は手順 1 の `TARGET_WORKTREE` と同じ）。
+レビューが対象を見つけられなかった・実行できなかったときの返答は、指摘ゼロでなく未実施として扱う（`[]` が指摘ゼロだと
+言えるのは、返答が差分を読んだと示しているときだけ）:
 
 - 直すのは検証できる誤りだけ（バグ、コードや事実と食い違う記述、壊れた参照）。
   修正したら、コミットして rebase の要否とチェックからやり直す

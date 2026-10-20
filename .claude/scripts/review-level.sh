@@ -9,9 +9,12 @@
 #
 # 出力:
 #   BASE: <比較元>
-#   TARGET: <対象のブランチ>   /code-review に渡す。worktree で作業しているとき、引数なしの
-#                              /code-review は呼び出し元の cwd の差分を見る。cwd が main の
-#                              worktree だと差分が空になり、「指摘なし」と誤認する
+#   TARGET: <対象のブランチ>   差分を取るブランチ
+#   WORKTREE: <パス | none>    TARGET をチェックアウトしている worktree。/code-review の対象に渡す。
+#                              ブランチ名で渡すと /code-review は cwd のリポジトリでブランチを解くので、
+#                              cwd が別のリポジトリ（や main の worktree）だと対象を見つけられず、
+#                              「指摘なし」と同じ形の空の結果が返る。none はどこにもチェックアウトされて
+#                              いない（呼び出し側がチェックアウトするか、PR の URL を渡す）
 #   FILES: <変更ファイル数>
 #   LEVEL: medium | high       差分のファイルがすべて docs/ 配下なら medium、それ以外は high
 #
@@ -102,7 +105,18 @@ else
   level=medium
 fi
 
+# TARGET をチェックアウトしている worktree のパス
+worktree=$(git worktree list --porcelain | awk -v ref="refs/heads/${TARGET}" '
+  # 1 件の記録は空行で終わる。ディレクトリが消えた worktree（prunable）は対象にしない
+  function flush() { if (hit && !gone && found == "") found = path; hit = 0; gone = 0 }
+  $1 == "worktree" { path = substr($0, 10) }
+  $1 == "branch" && $2 == ref { hit = 1 }
+  $1 == "prunable" { gone = 1 }
+  $0 == "" { flush() }
+  END { flush(); if (found != "") print found }')
+
 echo "BASE: ${BASE}"
 echo "TARGET: ${TARGET}"
+echo "WORKTREE: ${worktree:-none}"
 echo "FILES: $(grep -c . <<<"$files")"
 echo "LEVEL: ${level}"

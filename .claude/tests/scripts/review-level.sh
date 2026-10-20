@@ -75,6 +75,27 @@ assert_contains "$out" "BASE: feat/docs"
 assert_contains "$out" "FILES: 1"
 assert_contains "$out" "LEVEL: high"
 
+it "review-level: WORKTREE は対象のブランチをチェックアウトしている worktree のパス（/code-review に渡す）"
+git switch -q main
+git worktree add -q "$TEST_ROOT/rl/app-stack" feat/stack
+out=$("$SCRIPTS_DIR/review-level.sh" feat/stack --base feat/docs)
+assert_contains "$out" "WORKTREE: $TEST_ROOT/rl/app-stack"
+
+it "review-level: 引数なしなら WORKTREE は cwd の worktree"
+out=$(cd "$TEST_ROOT/rl/app-stack" && "$SCRIPTS_DIR/review-level.sh" --base feat/docs)
+assert_contains "$out" "WORKTREE: $TEST_ROOT/rl/app-stack"
+
+it "review-level: どの worktree にもチェックアウトされていないブランチは WORKTREE: none"
+out=$("$SCRIPTS_DIR/review-level.sh" feat/docs)
+assert_contains "$out" "WORKTREE: none"
+
+it "review-level: worktree のディレクトリが消えている（prunable）ブランチは WORKTREE: none"
+git worktree add -q "$TEST_ROOT/rl/app-gone" -b feat/gone feat/docs
+commit_file "$TEST_ROOT/rl/app-gone" docs/adr/0009-gone.md "docs: gone"
+rm -rf "$TEST_ROOT/rl/app-gone"
+out=$("$SCRIPTS_DIR/review-level.sh" feat/gone)
+assert_contains "$out" "WORKTREE: none"
+
 # ローカルの main が origin/main より古いとき（他の PR がマージされた直後など）、main を比較元にすると
 # origin/main 側の変更が差分に混ざる。新しい方を比較元にする
 STALE="$TEST_ROOT/rl/stale"
