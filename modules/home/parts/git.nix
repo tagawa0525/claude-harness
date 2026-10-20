@@ -371,9 +371,13 @@ in
       # 除く。# で始まる行は、-m や -F（cleanup=whitespace）では消えずにコミットに残るので、除かない。
       # textlint（Node.js）は起動が重いので、軽い検査の後に呼ぶ
       # 検証: modules/home/parts/tests/ja-terms.sh
+      # 検査する本文が空白だけのときは textlint を呼ばない。標準入力が空だと、textlint は検査せずに
+      # 使い方の全文を出す（件名を除いた fixup!、squash!、Merge の本文が空の場合）
       ja_check() {
-        local rc=0
-        sed '/^# -\{24\} >8 -\{24\}$/,$d' \
+        local rc=0 body
+        body=$(sed '/^# -\{24\} >8 -\{24\}$/,$d')
+        [[ "$body" =~ [^[:space:]] ]] || return 0
+        printf '%s\n' "$body" \
           | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt || rc=$?
         if [ "$rc" -eq 1 ]; then
           echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
