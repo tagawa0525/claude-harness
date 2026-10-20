@@ -60,7 +60,7 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
 
 ## 順番
 
-優先度は「10000 + 待った分 − nice」で、並べ替えのない限り投げた順に走る。
+優先度は「10000 + 待った分 − nice」（重みは r995 の Slurm 設定、nixfiles の `modules/slurm/common.nix` の `PriorityWeight*` にある）で、並べ替えのない限り投げた順に走る。
 
 - 急ぐ短いジョブは `--top` で投げ、待っているジョブの前に出す（`scontrol top`）
 - `--top` は、待っているほかのセッションのジョブも後ろに回す（エージェントはみな同じ利用者で投げるので、`scontrol top` は
