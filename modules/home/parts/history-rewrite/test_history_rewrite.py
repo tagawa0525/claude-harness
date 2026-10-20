@@ -461,6 +461,41 @@ class HistoryRewrite(unittest.TestCase):
         self.assertIn("git tag -f outer outer^{}", result.stderr)
         self.assertNotIn("REWRITTEN:", result.stdout)
 
+    def test_a_commit_header_that_filter_repo_drops_is_named(self):
+        # fast-export は知らない見出し（jj の change-id など）を書き出さない
+        repo = Repo(Path(self.tmp.name) / "headers", self.env)
+        repo.path.mkdir()
+        repo.git("init", "-q")
+        repo.write("a.md", "a\n")
+        plain = repo.commit("docs: a\n")
+        raw = repo.git("cat-file", "commit", plain)
+        head, body = raw.split("\n\n", 1)
+        extra = repo.git(
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--stdin",
+            input=f"{head}\nchange-id zzzz\n\n{body}",
+        ).strip()
+        repo.git("update-ref", "refs/heads/main", extra)
+        result = subprocess.run(
+            [
+                "history-rewrite",
+                "run",
+                "--source",
+                str(repo.path),
+                "--workdir",
+                str(Path(self.tmp.name) / "headers-work"),
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("change-id", result.stderr)
+
     def test_a_malformed_commit_map_stops(self):
         path = Path(self.tmp.name) / "bad-map"
         path.write_text("old new\naaaa bbbb cccc\n")

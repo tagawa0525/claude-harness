@@ -122,6 +122,21 @@ class Replacement(unittest.TestCase):
         self.assertEqual(prh_rules.apply(rules, "の\n\n件の数えが"), "の\n\n件の計数が")
 
 
+class Specs(unittest.TestCase):
+    def test_specs_are_checked_on_the_whole_string_like_rule_check(self):
+        # prh の Rule.check は spec.from を段落に分けずに applyRule に渡す
+        rules = load_text("""\
+            version: 1
+            rules:
+              - expected: C
+                pattern: /A\\n\\nB/
+                specs:
+                  - from: "A\\n\\nB"
+                    to: C
+            """)
+        self.assertEqual(len(rules), 1)
+
+
 class Refusals(unittest.TestCase):
     def assert_refused(self, yaml_text: str, fragment: str):
         with self.assertRaises(prh_rules.DictionaryError) as caught:
@@ -175,6 +190,21 @@ class Refusals(unittest.TestCase):
                   /foo/
             """)
         self.assertEqual(prh_rules.apply(rules, "foo /foo/\n"), "foo X")
+
+    def test_spec_values_that_yaml_1_1_reads_as_other_types_are_refused(self):
+        # PyYAML（YAML 1.1）は 1:30 を 60 進の 90 と読むが、prh の js-yaml（YAML 1.2）は文字列と読む
+        self.assert_refused(
+            """\
+            version: 1
+            rules:
+              - expected: X
+                pattern: "90"
+                specs:
+                  - from: 1:30
+                    to: X
+            """,
+            "specs の from と to は文字列",
+        )
 
     def test_an_empty_pattern_or_patterns_is_refused_as_empty(self):
         for key, value, fragment in (
