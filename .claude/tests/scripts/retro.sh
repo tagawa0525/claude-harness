@@ -40,7 +40,19 @@ git add <file> でステージしてください"
   tool_error "Exit code 1
 error: pathspec 'x' did not match"
   tool_error "<tool_use_error>File has not been read yet.</tool_use_error>"
-  tool_ok "ok"
+  tool_error "PreToolUse:Bash hook error: 最後の push (e7c9939) は自動レビューを受けていません（3 件）"
+  tool_error "PreToolUse:Bash hook error: 最後の push (71cfb82) は自動レビューを受けていません（12 件）"
+  tool_error "The server-side auto mode classifier gave no verdict for Bash: rm -rf x"
+  tool_error "Exit code 127
+passed: 237, failed: 0
+bash: command not found: shellcheck"
+  tool_ok "成功の印"
+  jq -cn '{type: "attachment", attachment: {type: "queued_command", prompt: "途中で送った訂正", commandMode: "prompt", origin: {kind: "human"}}}'
+  jq -cn '{type: "attachment", attachment: {type: "queued_command", prompt: "<task-notification>x</task-notification>", commandMode: "prompt"}}'
+  jq -cn '{type: "user", isCompactSummary: true, isVisibleInTranscriptOnly: true, message: {role: "user", content: "This session is being continued"}}'
+  user_text "<command-message>gh-pr-merge</command-message>
+<command-name>/gh-pr-merge</command-name>
+<command-args>371</command-args>"
   user_text "<task-notification>
 <task-id>b1</task-id>"
   jq -cn '{type: "user", isMeta: true, message: {role: "user", content: "スキルの本文"}}'
@@ -69,27 +81,48 @@ it "session-events: hook の拒否を、サブエージェントの分も合わ�
 assert_contains "$out" "HOOK: 3 git add -A は禁止です"
 assert_not_contains "$out" "hook error:"
 
+it "session-events: hook の拒否の本文のコミットの番号と数は置き換えて、同じ拒否をまとめて数える"
+assert_contains "$out" "HOOK: 2 最後の push (<hash>) は自動レビューを受けていません（N 件）"
+
 it "session-events: 権限の拒否と、ユーザーが止めたツールを分けて数える"
 assert_contains "$out" "PERMISSION: 1 Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Git Destructive]."
+assert_contains "$out" "PERMISSION: 1 The server-side auto mode classifier gave no verdict for Bash: rm -rf x"
 assert_contains "$out" "REJECTED: 1 The user doesn't want to proceed with this tool use."
 
 it "session-events: そのほかの失敗は、終了コードと次の行、またはタグを除いた本文で数える"
 assert_contains "$out" "TOOL: 1 Exit code 1: error: pathspec 'x' did not match"
 assert_contains "$out" "TOOL: 1 File has not been read yet."
 
+it "session-events: 終了コードのある失敗は、出力の最後の行（標準エラーが来る）をつなぐ"
+assert_contains "$out" "TOOL: 1 Exit code 127: bash: command not found: shellcheck"
+
 it "session-events: 成功したツールの結果は数えない"
-assert_not_contains "$out" "ok"
+assert_not_contains "$out" "成功の印"
 
 it "session-events: ユーザーの発言を本セッションの順に出し、改行を空白にする"
 users=$(grep '^USER: ' <<<"$out")
 assert_eq "USER: PR を作ってください
 USER: [Request interrupted by user]
-USER: squash しないで no-ff でマージしてください" "$users"
+USER: squash しないで no-ff でマージしてください
+USER: 途中で送った訂正
+USER: /gh-pr-merge 371" "$users"
 
 it "session-events: 通知、スキルの本文（isMeta）、サブエージェントへの依頼文はユーザーの発言に入れない"
 assert_not_contains "$out" "task-notification"
 assert_not_contains "$out" "スキルの本文"
 assert_not_contains "$out" "親からの依頼文"
+
+it "session-events: 要約（compact）の本文はユーザーの発言に入れない"
+assert_not_contains "$out" "This session is being continued"
+
+it "session-events: ツールを呼んだのに結果の行が 1 つも無い記録は、形が変わったとみなして失敗する"
+{
+  jq -cn '{type: "assistant", message: {role: "assistant", content: [{type: "tool_use", id: "t", name: "Bash", input: {}}]}}'
+  jq -cn '{type: "user", message: {role: "user", content: [{type: "result", tool_use_id: "t", content: "x"}]}}'
+} > "$TEST_ROOT/renamed.jsonl"
+out=$("$EVENTS" "$TEST_ROOT/renamed.jsonl" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
 
 it "session-events: 引数が無ければ CLAUDE_CODE_SESSION_ID の記録を探す"
 out=$(CLAUDE_CODE_SESSION_ID=$SESSION "$EVENTS")
@@ -151,6 +184,15 @@ printf -- '---\nname: e\n---\n\n本文 [[d-name]]\n' > "$MEM/project-e.md"
 out=$("$MEMORY_INDEX" "$MEM")
 assert_not_contains "$out" "-> d-name"
 rm "$MEM/project-e.md"
+
+it "memory-index: 前付けの name の引用符を外し、前付けの無いファイルの本文の name: は読まない"
+printf -- '---\nname: "d-quoted"\n---\n\n本文\n' > "$MEM/project-d.md"
+printf -- '本文だけ\nname: bogus\n' > "$MEM/project-f.md"
+printf -- '---\nname: e\n---\n\n本文 [[d-quoted]] [[bogus]]\n' > "$MEM/project-e.md"
+out=$("$MEMORY_INDEX" "$MEM")
+assert_not_contains "$out" "-> d-quoted"
+assert_contains "$out" "BROKEN_LINK: project-e.md -> bogus"
+rm "$MEM/project-e.md" "$MEM/project-f.md"
 
 it "memory-index: 食い違いが無ければ件数の行だけを出す"
 rm "$MEM/project-d.md"
