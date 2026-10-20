@@ -40,13 +40,20 @@ worktree ごとのブランチの `Claude-Session:` を見て、作業中のセ�
   `.textlintignore` に挙げたファイルと、辞書そのもの（nixfiles なら `**/prh.yml`）を渡す。語を論じる文書でも、
   その語が直す対象の造語なら除かない（ADR-0045）
 
+決めた指定は 1 度だけ書き、`run` と 5 の `transform` の両方に同じものを渡す（違うと、作業ツリーのファイルだけ
+別の変換になる）:
+
+```bash
+WORDS=(--extra-rules <ファイル> --exclude '<パス>' ...)
+```
+
 ## 3. 書き換えて照合する
 
 作業ディレクトリは、対象のリポジトリの外の、空のディレクトリにする。中のミラー（`original.git`）が書き換える前の
 控えになるので、古いオブジェクトを消すと決めるまで残す。
 
 ```bash
-history-rewrite run --source <リポジトリ> --workdir <作業ディレクトリ> [--extra-rules <ファイル>] [--exclude <パス>]...
+history-rewrite run --source <リポジトリ> --workdir <作業ディレクトリ> "${WORDS[@]}"
 ```
 
 `ERROR:` で止まったら、理由を直してから空の作業ディレクトリでやり直す（照合が合わないときはツールの不具合なので、
@@ -131,7 +138,7 @@ git -C "$R" update-ref --stdin <"$D/transaction"
     elif git -C "$w" diff --quiet "$old" -- "$f"; then
       git -C "$w" checkout -- "$f"   # 手を付けていないファイルは、新しい中身にする
     else
-      (cd "$w" && history-rewrite transform [語の指定] "$f")   # 変えたファイルは、同じ変換を当てる
+      (cd "$w" && history-rewrite transform "${WORDS[@]}" "$f")   # 変えたファイルは、同じ変換を当てる
     fi
   done
   (cd "$w" && commit-refs remap "$D/commit-map")   # 未コミットの文書の古い番号を付け直す
