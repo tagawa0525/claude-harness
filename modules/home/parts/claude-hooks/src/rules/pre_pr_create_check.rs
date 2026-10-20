@@ -140,13 +140,13 @@ impl Rule for PrePrCreateCheck {
             // --- 3. 未プッシュコミット ---
             if !has_flag(args, &["--head", "-H"]) {
                 match git::git(&dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) {
-                    None => reasons.push("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）".to_string()),
+                    None => reasons.push("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）。同じコマンドの前に git push を連ねても検査には反映されない。push と gh pr create は別の呼び出しに分ける".to_string()),
                     Some(upstream) => {
                         let ahead = git::git(&dir, &["rev-list", "--count", "@{u}..HEAD"])
                             .unwrap_or_else(|| "?".to_string());
                         if ahead != "0" {
                             reasons.push(format!(
-                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください"
+                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください。同じコマンドの前に git push を連ねても検査には反映されない。push と gh pr create は別の呼び出しに分ける"
                             ));
                         }
                     }
