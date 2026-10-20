@@ -4,9 +4,11 @@
 # Usage: base-moved.sh [branch] [--base BASE]
 #   branch  省略時は今のブランチ
 #   BASE    省略時は origin の既定ブランチ（origin/HEAD → origin/main → origin/master）。
-#           積み重なったブランチは土台のブランチを渡す
+#           積み重なったブランチは土台を origin/<土台のブランチ> で渡す（fetch が更新するのは
+#           origin/* だけで、ローカルのブランチは古いまま比べることになる）
 #
-# GitHub リモートがあれば、比べる前に fetch する（失敗したら WARN を出し、手元の追跡ブランチで比べる）。
+# GitHub リモートがあれば、比べる前に origin を fetch する（失敗したら WARN を出し、手元の追跡ブランチで比べる）。
+# WARN が出たときは比較が済んでいない（出力が空でも「進みなし」ではない）。
 # 他のセッションが同じファイルを main に入れていると、マージ直前の rebase まで気付けない。
 # 知らせるだけで失敗にはしない（同じパスを触っても、衝突するとは限らない）。
 #
@@ -35,10 +37,14 @@ while (($# > 0)); do
   esac
 done
 
-git remote -v | grep -q 'github\.com' || exit 0
+# パイプにしない（pipefail 下で grep -q が先に終わると SIGPIPE で失敗して、GitHub リモートがあってもスキップする）
+remotes=$(git remote -v)
+grep -q 'github\.com' <<<"$remotes" || exit 0
 
-if ! git fetch -q; then
-  echo "WARN: fetch に失敗しました。手元の追跡ブランチで比べます（古い可能性があります）" >&2
+# origin を明示する。引数なしの fetch は今のブランチの上流のリモートへ行き、
+# 上流が別のリモートだと、BASE の origin/* が更新されないまま古い比較になる
+if ! git fetch -q origin; then
+  echo "WARN: fetch に失敗しました。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
 fi
 
 if [[ -z "$BASE" ]]; then
@@ -62,7 +68,10 @@ for ref in "$BASE" "$TARGET"; do
   git rev-parse --verify -q "${ref}^{commit}" >/dev/null || { echo "ERROR: ${ref} を解決できません" >&2; exit 1; }
 done
 
-fork=$(git merge-base "$BASE" "$TARGET")
+if ! fork=$(git merge-base "$BASE" "$TARGET"); then
+  echo "WARN: ${BASE} と ${TARGET} の分岐点が見つかりません（履歴が共通でない、または shallow clone）。比較は未確認です" >&2
+  exit 0
+fi
 # マージコミットで入る PR は 1 件と数える（--first-parent）
 moved=$(git rev-list --first-parent --count "${fork}..${BASE}")
 ((moved > 0)) || exit 0

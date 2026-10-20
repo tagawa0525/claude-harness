@@ -91,7 +91,7 @@ git init -q --bare "$D.up.git"
 git -C "$D" remote add up "$D.up.git"
 git -C "$D" push -q up feat/work main
 git -C "$D" branch -q --set-upstream-to=up/main feat/work
-in_other "$D" bash -c 'seq 3 > src/a.txt && git add src/a.txt && git commit -q -m "feat: other a"'
+in_other "$D" bash -c 'mkdir -p src && seq 3 > src/a.txt && git add src/a.txt && git commit -q -m "feat: other a"'
 out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh")
 assert_contains "$out" "COMMON: src/a.txt"
 
