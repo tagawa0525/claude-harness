@@ -123,3 +123,26 @@ rules:
     pattern: 幻覚
   - expected: リグレッション
     pattern: 退行
+  # コピーの意味の「写す」。文脈でコピー、ミラー、重複して書くのどれにもなるので、直す語は活用の形ごとに
+  # 示す（「写真を撮る」「画面に映す」は別の語なので通す）
+  - expected: コピーする
+    pattern: /(書き)?写す/
+    specs:
+      - from: ファイルを写す
+        to: ファイルをコピーする
+  - expected: コピーして
+    pattern: /(書き)?写して/
+  - expected: コピーした
+    pattern: /(書き)?写した/
+  - expected: コピーせず
+    pattern: /(書き)?写さず/
+  - expected: コピーされ
+    pattern: /写され/
+  - expected: コピーし続ける
+    pattern: 写し続ける
+  - expected: コピー
+    # 「写しの先」「写しにする」。「写し絵」のような別の語は通す
+    pattern: /写し(?=[のをがでにだ、])/
+    specs:
+      - from: 作業用の写しにする
+        to: 作業用のコピーにする
