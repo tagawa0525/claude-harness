@@ -54,6 +54,12 @@ SKILL.md"
 passed: 237, failed: 0
 bash: command not found: shellcheck"
   tool_ok "成功の印"
+  tool_error "Error: something happened in auto mode classifier test"
+  tool_error "Permission to use Bash with command rm -rf x has been denied."
+  tool_error "The user doesn't want to proceed with this tool use. The tool use was rejected. To tell you how to proceed, the user said:
+squash しないで
+no-ff にして"
+  jq -cn '{type: "user", message: {role: "user", content: [{type: "text", text: "<ide_selection>選んだ行</ide_selection>"}, {type: "text", text: "IDE から送った訂正"}]}}'
   jq -cn '{type: "attachment", attachment: {type: "queued_command", prompt: "途中で送った訂正", commandMode: "prompt", origin: {kind: "human"}}}'
   jq -cn '{type: "attachment", attachment: {type: "queued_command", prompt: "<task-notification>x</task-notification>", commandMode: "prompt"}}'
   jq -cn '{type: "user", isCompactSummary: true, isVisibleInTranscriptOnly: true, message: {role: "user", content: "This session is being continued"}}'
@@ -93,6 +99,19 @@ assert_contains "$out" "HOOK: 2 最後の push (<hash>) は自動レビューを
 it "session-events: ADR などの記号に続く番号は残し、日本語に接したコミットの番号も置き換える"
 assert_contains "$out" "HOOK: 1 ADR-0015 により止めます。コミット<hash>は約N分前"
 
+it "session-events: 1 行目の途中に分類器の語があるだけの失敗は権限の拒否に数えない"
+assert_contains "$out" "TOOL: 1 Error: something happened in auto mode classifier test"
+
+it "session-events: 設定の deny による拒否も権限の拒否に数える"
+assert_contains "$out" "PERMISSION: 1 Permission to use Bash with command rm -rf x has been denied."
+
+it "session-events: ユーザーがツールを止めて書いた言葉を残す"
+assert_contains "$out" "REJECTED: 1 the user said: squash しないで no-ff にして"
+
+it "session-events: 発言の中のタグだけのブロックを除き、残りの本文を発言として出す"
+assert_contains "$out" "USER: IDE から送った訂正"
+assert_not_contains "$out" "選んだ行"
+
 it "session-events: 権限の拒否と、ユーザーが止めたツールを分けて数える"
 assert_contains "$out" "PERMISSION: 1 Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Git Destructive]."
 assert_contains "$out" "PERMISSION: 1 The server-side auto mode classifier gave no verdict for Bash: rm -rf x"
@@ -119,6 +138,7 @@ users=$(grep '^USER: ' <<<"$out")
 assert_eq "USER: PR を作ってください
 USER: 途中で送った訂正
 USER: /gh-pr-merge 371
+USER: IDE から送った訂正
 USER: [Request interrupted by user]
 USER: squash しないで no-ff でマージしてください" "$users"
 
@@ -160,6 +180,13 @@ out=$("$EVENTS" "$TEST_ROOT/unknown.jsonl" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 
+it "session-events: 書きかけの行（最後の行が途中で切れている）は飛ばして読む"
+cp "$MAIN" "$TEST_ROOT/partial.jsonl"
+printf '%s' '{"type":"assistant","message":{"content":[{"type":"tool_use"' >> "$TEST_ROOT/partial.jsonl"
+out=$("$EVENTS" "$TEST_ROOT/partial.jsonl" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "HOOK: 2 git add -A は禁止です"
+
 it "session-events: 長い本文は 160 文字で切る"
 long=$(printf 'あ%.0s' $(seq 300))
 tool_error "$long" > "$TEST_ROOT/long.jsonl"
@@ -174,7 +201,7 @@ cat > "$MEM/MEMORY.md" <<'EOF'
 - [好み A](feedback-a.md) — 説明
 - [事情 B](project-b.md) — 説明
 - [消えた C](project-c.md) — 説明
-- [外部](https://example.com/README.md) — 外部の文書
+- [外部](https://example.com/README.md) — 外部の文書、[ADR](../docs/adr/0001.md) を参照
 EOF
 printf -- '---\nname: a\n---\n\n本文 [[project-b|別名]] と [[project-b#節]]\n\n`[[ -n "$x" ]]`\n\n```bash\n[[ -z "$y" ]]\n```\n' > "$MEM/feedback-a.md"
 printf -- '---\nname: b\n---\n\n本文 [[feedback-gone]] と [[feedback-a]]\n' > "$MEM/project-b.md"
@@ -216,11 +243,15 @@ assert_not_contains "$out" "-> d-quoted"
 assert_contains "$out" "BROKEN_LINK: project-e.md -> bogus"
 rm "$MEM/project-e.md" "$MEM/project-f.md"
 
-it "memory-index: 索引の ./ で始まるリンクもファイル名で突き合わせる"
-sed -i 's|(project-b.md)|(./project-b.md)|' "$MEM/MEMORY.md"
+it "memory-index: 別のディレクトリへのリンクは索引の項目に数えない"
+assert_not_contains "$out" "../docs"
+
+it "memory-index: 索引の ./ で始まるリンク、節や題のついたリンクもファイル名で突き合わせる"
+sed -i 's|(project-b.md)|(./project-b.md#why)|; s|(feedback-a.md)|(feedback-a.md "題")|' "$MEM/MEMORY.md"
 out=$("$MEMORY_INDEX" "$MEM")
 assert_not_contains "$out" "UNINDEXED: project-b.md"
 assert_not_contains "$out" "MISSING: ./project-b.md"
+assert_not_contains "$out" "UNINDEXED: feedback-a.md"
 
 it "memory-index: 食い違いが無ければ件数の行だけを出す"
 rm "$MEM/project-d.md"
