@@ -3,7 +3,7 @@
 #
 # Usage: gh-actions-diagnose.sh [PR の URL | PR番号 | ブランチ名]
 #   省略時は現在のブランチ。PR なら head ブランチと head SHA を解決する
-#   PR の URL なら、gh を URL のリポジトリに向け（ADR-0032）、NEXT の gh の手順に -R を付ける。
+#   PR の URL なら、gh を URL のリポジトリに向け、NEXT の gh の手順に -R を付ける。
 #   PR 番号・ブランチ名・省略時は cwd のリポジトリで読む
 #
 # 見るもの:

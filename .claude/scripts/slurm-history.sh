@@ -11,7 +11,7 @@
 #   見積もりのあるジョブだけで求め、RUNS は見積もりのないジョブも数える）
 #   SKIPPED: <表に入れなかった行数>
 #
-# 定義（ADR-0019）:
+# 定義:
 #   ELAPSED  EndTime - StartTime（jobcomp に Elapsed の欄は無い）
 #   ESTIMATE TimeLimit の分を秒にしたもの。数値でない値（UNLIMITED など）は見積もりなし
 #   RATIO    ELAPSED / ESTIMATE。1 を超えれば見積もりより長くかかった。見積もりなしは -

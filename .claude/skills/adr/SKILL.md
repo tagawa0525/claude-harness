@@ -35,7 +35,7 @@ design-records check [--changed] [FILE]...
 
 `new` は `docs/adr/NNNN-<slug>.md` を、次の番号、フロントマター、必須と推奨の見出しつきで作る。slug は決めたことを動詞で
 始めた英語の kebab-case にする。番号は、全ブランチの履歴と予約のタグ（`adr-NNNN`）のうち最大の番号 + 1 で、
-注釈つきのタグを打って予約する（ADR-0018）。リモート origin があれば、origin のブランチとタグを fetch してから振り（予約を解放した番号は origin の既定ブランチの
+注釈つきのタグを打って予約する。リモート origin があれば、origin のブランチとタグを fetch してから振り（予約を解放した番号は origin の既定ブランチの
 履歴にしか残らない）、push する。
 push が拒まれたら（ほかの clone が先に予約した）次の番号で振り直す。origin に届かなければ、記録を作らずに止まる。
 予約だけして使わなかった番号は欠番にする（再利用しない）。
@@ -74,7 +74,7 @@ repos:
   補足。必須は背景・検討した案・決定と理由、推奨は帰結・確認。ほかの節を足してもよい
 - **フロントマター**のキーは `status`、`date` と次の 4 つ（MADR の `decision-makers` などに代えて、置き換えと参照を grep で
   引けるようにする）。一覧は `[a, b]` の形で 1 行に書く
-  - `requires`: 前提にしている ADR（`[ADR-0002]`）
+  - `requires`: 前提にしている ADR（`[ADR-NNNN]`）
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く
   - `issues`: きっかけの issue と、解決した issue（`["#12"]`）
 - **status** は `proposed`、`accepted`、`rejected`、`withdrawn`（決める前に取り下げた）、`deferred`（後回しにした）、

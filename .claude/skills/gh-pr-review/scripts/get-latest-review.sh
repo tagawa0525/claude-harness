@@ -15,7 +15,7 @@
 #   INLINE_COMMENTS: <n>    このレビューに紐づくインラインコメント数（通常の指摘）
 #   SUPPRESSED_COMMENTS: <n>
 #   SEVERITY: v2|unknown    本文が重大度を持つ形（v2）か。unknown なら REMAINING_* は出さない
-#   REMAINING_HIGH: <n>     残っている High（開いている指摘と Previously missed。ADR-0043）
+#   REMAINING_HIGH: <n>     残っている High（開いている指摘と Previously missed）
 #   REMAINING_MEDIUM: <n>
 #   REMAINING_LOW: <n>
 #   PREVIOUSLY_MISSED: <n>  Previously missed の指摘の数（v2 の本文なら、重大度が分からなくても出す）
@@ -81,7 +81,7 @@ suppressed_count=$(grep -o -E 'Suppressed comments \([0-9]+\)' <<<"$suppressed" 
 # 開いている指摘の節の「- 」で始まらない行、Previously missed の節の <summary> でない行のアイコン、知っている節の
 # 外のアイコン（要約の **Findings:** の行は除く）があれば、形が変わって High を数え落としうるので、分からないとする。節の切り替えを見出しの行だけで行うのは、指摘の
 # 題名に同じ語が入りうるため。アイコンの無い指摘があれば、形が変わって数え落としうるので、重大度は
-# 分からない（unknown）とする（ADR-0043）
+# 分からない（unknown）とする
 # mode=items は「節 重大度」（重大度が無ければ none）を 1 行 1 指摘で出し、形の変化の印（指摘でない行のアイコンなど）は
 # 「<場所> none」で出す（件数には数えない）。mode=missed は Previously missed の節の行を出す
 SECTIONS_AWK='

@@ -54,7 +54,7 @@ git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r mark
 
 注: この手順は作業ツリーのファイルを直して `git add` するので、一部だけステージした `.md` では、ステージして
 いない編集までステージする。手で直すときは、代わりに `staged-checks markdown` を使う（ステージした版を書き出して
-直してステージし直し、作業ツリーに触れない。`modules/home/parts/staged-checks.sh`、nixfiles の ADR-0028）。
+直してステージし直し、作業ツリーに触れない。`modules/home/parts/staged-checks.sh`）。
 home-manager が配布する git の pre-commit フック（`modules/home/parts/git.nix`）と `run-checks.sh` の Markdown
 ステージも `staged-checks` を使う。`run-checks.sh` の `--merge` と `--base` は、自動修正せず、作業ツリーの
 `.md` を `markdownlint` で検査だけする。

@@ -2,7 +2,7 @@
 # gh-wait-review.sh — PRの自動レビュー到着を漸増バックオフで待つ
 #
 # 使い方: gh-wait-review.sh <PR の URL> [--since <ISO 8601 時刻>]
-#   対象は PR の URL で受け、gh を URL のリポジトリに向ける（cwd のリポジトリに依らない。ADR-0032）
+#   対象は PR の URL で受け、gh を URL のリポジトリに向ける（cwd のリポジトリに依らない）
 #   --since 省略時は「最後の Copilot へのレビュー要求」を基準にし、それ以降に提出された
 #   レビューを待つ。要求が 1 件も無ければ、PR 作成直後の自動要求の記録を約 10 秒
 #   待ったうえでエラーで終わる（要求していないレビューは来ないため）
@@ -146,7 +146,7 @@ if [[ -z "$since" ]]; then
     echo "ERROR: PR #${PR_NUMBER} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません"
     # デプロイ先（~/.claude）の旧版を案内しないよう、自分と同じツリーのスクリプトを指す
     review_scripts="$(cd "$(dirname "$requests_script")/.." && pwd)/skills/gh-pr-review/scripts"
-    echo "次の一手: ${review_scripts}/request-rereview.sh ${PR_URL_CANONICAL} でレビューを要求できます（任意。head のローカルレビューの記録があればマージできる。要求の前に、head のローカルレビューを ${review_scripts}/record-local-review.sh で記録する。ADR-0043）"
+    echo "次の一手: ${review_scripts}/request-rereview.sh ${PR_URL_CANONICAL} でレビューを要求できます（任意。head のローカルレビューの記録があればマージできる。要求の前に、head のローカルレビューを ${review_scripts}/record-local-review.sh で記録する）"
     exit 6
   fi
   echo "INFO: 最後のレビュー要求は ${since}。それ以降のレビューの到着を待ちます"

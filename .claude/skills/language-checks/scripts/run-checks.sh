@@ -17,7 +17,7 @@
 #             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み。テストは
 #             scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、
-#             それも無ければ追跡している test_*.py / *_test.py のあるディレクトリごとに（ADR-0036）
+#             それも無ければ追跡している test_*.py / *_test.py のあるディレクトリごとに
 #   Nix:      flake.nix がある、または .nix がステージ済み
 #   Markdown: .md がステージ済み（staged-checks markdown で、ステージした版を直して検査する。--merge では検査だけ）。.pre-commit-config.yaml で design-records に
 #             オプトインしていれば、.md の変更が無くても design-records check
@@ -111,7 +111,7 @@ run_stage() {
 DETECTED=0
 
 # 排他の Slurm のジョブが実行中は、cargo と nix flake check を 1 コアに限る。全コアを使うとそのジョブの時間の
-# 記録を乱し、止めるとジョブの間（数時間）マージできないため、止めずに遅く実行する（ADR-0041）。
+# 記録を乱し、止めるとジョブの間（数時間）マージできないため、止めずに遅く実行する。
 # claude-hooks の guard-exclusive-slurm は、このスクリプトを対象にしない
 CARGO_PIN=()
 CARGO_JOBS=()
@@ -180,7 +180,7 @@ python_test_files() {
 # python_subdir_tests <file>...: 追跡しているテストを、ディレクトリごとに実行する。テストは隣の .py を import するので、
 # そのディレクトリを起点にする。ディレクトリやパターンでなく追跡しているファイルだけを渡すのは、子のディレクトリの
 # テストを親と子で二重に実行せず、追跡していないファイルを拾わないため。pytest が python3 から使えれば pytest、
-# 無ければ標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける。ADR-0036）
+# 無ければ標準の unittest（pytest を足さない環境で、テストが走らないまま通るのを避ける）
 python_subdir_tests() {
   local f dir name pytest_ok=0
   local -a dirs files cmd
@@ -217,7 +217,7 @@ if [[ -f pyproject.toml || -f setup.py || -f requirements.txt ]] || staged_has '
     echo "FAILED: python test: scripts/run-python-tests.sh に実行権限が無い（chmod +x）"
     exit 1
   elif [[ -e scripts/run-python-tests.sh ]]; then
-    # リポジトリ固有の実行方法（devShell を分けるなど）。ADR-0036
+    # リポジトリ固有の実行方法（devShell を分けるなど）
     run_stage python test bash "" bash scripts/run-python-tests.sh
   elif [[ -d tests ]] || compgen -G 'test_*.py' >/dev/null || compgen -G '*_test.py' >/dev/null; then
     run_stage python test pytest "" pytest
@@ -251,7 +251,7 @@ staged_md() {
 md_lint() {
   staged_md | xargs -0 -r markdownlint --
 }
-# design_records_check: ADR の形と ADR どうしの参照（ADR-0009）。変更したファイルを全部渡し、置き換えられた ADR への
+# design_records_check: ADR の形と ADR どうしの参照。変更したファイルを全部渡し、置き換えられた ADR への
 # 参照をそこから探させる（prek の設定の types: [text] と同じ。テキストでないファイルは design-records が読み飛ばす）。
 # --changed で、触っていない ADR の推奨の節の warning を出さない。
 # xargs で渡さないのは、引数が多いと分けて呼ばれ、ADR どうしの検査の指摘が重なるため。
@@ -269,11 +269,11 @@ if staged_has '*.md'; then
     run_stage markdown lint markdownlint "" md_lint
   else
     # ステージした版を直してステージし直し、検査する（グローバルの pre-commit と同じ staged-checks。作業ツリーを
-    # 書き換えないので、一部だけステージした .md のステージしていない編集をステージしない。nixfiles の ADR-0028）
+    # 書き換えないので、一部だけステージした .md のステージしていない編集をステージしない）
     run_stage markdown staged staged-checks "" staged-checks markdown
   fi
 fi
-# design-records は .pre-commit-config.yaml でオプトインしたリポジトリだけで実行する（ADR-0009。docs/adr の有無で
+# design-records は .pre-commit-config.yaml でオプトインしたリポジトリだけで実行する（docs/adr の有無で
 # 決めると、別の形の ADR を持つ他人のプロジェクトでも止まる）。.md の変更が無くても実行し、ADR を消すだけの変更でも、
 # 消した ADR を指す参照が残っていないかを見る（prek の設定の always_run と同じ）
 # grep の 1（一致なし）だけをオプトインしていないと見なし、読めないなどの失敗（2 以上）は止める

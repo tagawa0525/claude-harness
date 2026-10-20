@@ -10,8 +10,8 @@
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
 #      nixfiles で、pull で modules、hosts、flake か .claude が変われば、rebuild か claude-sync が要ると NOTE で知らせる
 #   3. origin から予約のタグ（adr-NNNN、issue-NNNN。ほかの clone が push したものを含む）を取ってきて、あれば、
-#      既定ブランチの履歴に記録が入った番号のタグを、ローカルとリモートから消す（design-records prune。
-#      ADR-0018）。design-records が無いか origin に届かなければ残して続け、prune が失敗したら ERROR で止まる。
+#      既定ブランチの履歴に記録が入った番号のタグを、ローカルとリモートから消す（design-records prune）。
+#      design-records が無いか origin に届かなければ残して続け、prune が失敗したら ERROR で止まる。
 #      既定ブランチが origin を追うときは、origin に届かなければ 2 の fetch で止まる（既定ブランチを最新にできず、
 #      5 のリモートブランチの削除もできないので、続けない）。3 で残して続けるのは、既定ブランチがほかのリモート
 #      （fork の upstream）を追うとき
