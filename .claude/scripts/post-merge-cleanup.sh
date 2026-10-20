@@ -22,7 +22,7 @@
 #
 # 出力:
 #   WORKTREE_REMOVED: <path>|none
-#   NOTE: rebuild が要る (...) / NOTE: claude-sync が要る (...)（該当するときだけ。0 行以上）
+#   NOTE: rebuild が要る（...）。... / NOTE: claude-sync が要る（...）。...（該当するときだけ。0 行以上）
 #   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
 #   LOCAL_BRANCH: deleted|none
 #   REMOTE_BRANCH: deleted|kept (...)|none
@@ -90,11 +90,12 @@ if [[ -n "$(git remote)" ]]; then
     # design-records は claude-hooks がパス依存でバイナリに組み込む（claude-hooks/package.nix）
     if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules/home/parts/claude-hooks \
       modules/home/parts/design-records modules/home/parts/claude-code.nix)" ]]; then
-      echo "NOTE: rebuild が要る（claude-hooks、design-records か claude-code.nix が変わった）。nixos-rebuild switch まで hook と設定は古い版のまま動く"
+      echo "NOTE: rebuild が要る（claude-hooks、design-records か claude-code.nix が変わった）。nix-rebuild rebuild まで hook と設定は古い版のまま動く"
     fi
-    # claude-sync が同期するものだけ（claude-sync.sh）
-    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- .claude/CLAUDE.md .claude/commands .claude/skills .claude/scripts)" ]]; then
-      echo "NOTE: claude-sync が要る（.claude の CLAUDE.md、commands、skills か scripts が変わった）。claude-sync か rebuild まで ~/.claude は古い版のまま"
+    # claude-sync が上書きで同期するものだけ（claude-sync.sh）。commands は既存のファイルを上書きしないので、
+    # claude-sync では直らず、勧めない
+    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- .claude/CLAUDE.md .claude/skills .claude/scripts)" ]]; then
+      echo "NOTE: claude-sync が要る（.claude の CLAUDE.md、skills か scripts が変わった）。claude-sync か rebuild まで ~/.claude は古い版のまま"
     fi
   fi
 fi
