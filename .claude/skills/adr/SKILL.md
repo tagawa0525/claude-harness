@@ -90,7 +90,7 @@ repos:
 
 - **proposed と deferred の間**: 自由に直す。実装をマージするブランチで、帰結と確認を実装に合わせ、`status: accepted` にする
 - **確定した後**（accepted、rejected、withdrawn、superseded、deprecated）に直してよいのは、誤字、文法、マークアップ、
-  壊れたリンク、フロントマターの `status` / `superseded-by` / `date`、補足の節への日付つきの追記（`- YYYY-MM-DD: …`）、日本語の辞書に合わせた語の置き換えだけ
+  壊れたリンク、フロントマターの `status` / `superseded-by` / `date`、補足の節への日付つきの追記（`- YYYY-MM-DD: …`）、日本語の辞書に合わせた、意味を変えない語の置き換えだけ
 - **置き換え**: 新しい ADR は、古い決定のうちまだ有効な部分を書き直して含める（採用中の ADR だけで今の決定が分かる
   ように）。古い方は `status: superseded` と `superseded-by` を書く。古い方を前提にしていた ADR を
   `grep -l 'requires:.*ADR-NNNN' docs/adr` で引き、見直す
