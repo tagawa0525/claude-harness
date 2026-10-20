@@ -1326,8 +1326,7 @@ assert_contains "$(reason "$out")" "decide-next.sh https://github.com/example/he
 # （ADR-0043）。Copilot のレビューが来ていればその指摘への対応（未解決スレッド）は検査 6 が要る
 
 # make_fake_gh_merge_local <comments> [check_run] [reviewed]
-# comments は、書き込める人の記録（数え直しの印とローカルレビューの記録）を「時刻<TAB>本文の 1 行目」の行で
-# 出力するコマンド。check_run は head のチェック 1 件の JSON（既定は CI の成功）、reviewed は bot レビューの
+# comments は、書き込める人の記録（ローカルレビューの記録）の本文の 1 行目を出力するコマンド。check_run は head のチェック 1 件の JSON（既定は CI の成功）、reviewed は bot レビューの
 # 対象コミットを出力するコマンド（既定は head と違う "old"）
 make_fake_gh_merge_local() {
   local check_run="${2:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
@@ -1343,7 +1342,7 @@ make_fake_gh_merge_local() {
   "api --paginate repos/example/heredoc/issues/1/comments"*) '"$1"' ;;
   "api graphql"*) echo "[]" ;;'
 }
-LOCAL_ABC="printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=1 low=0 -->'"
+LOCAL_ABC="printf '%s\n' '<!-- local-review sha=abc high=0 medium=1 low=0 -->'"
 
 it "pre-merge-check: head のローカルレビューの記録があれば、最後の push が未レビューでもマージできる"
 make_fake_gh_merge_local "$LOCAL_ABC"
@@ -1361,7 +1360,7 @@ assert_eq allow "$(decision "$out")"
 
 it "pre-merge-check: Copilot のレビューの後に周回を数え直していても、記録があればマージできる"
 make_fake_gh_merge_local \
-  "printf '%s\t%s\n' 2026-09-08T03:30:00Z '<!-- review-rounds-reset -->' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=0 low=0 -->'"
+  "printf '%s\n' '<!-- review-rounds-reset -->' '<!-- local-review sha=abc high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
@@ -1372,25 +1371,25 @@ assert_eq deny "$(decision "$out")"
 
 it "pre-merge-check: 記録が前の head のものなら止める"
 make_fake_gh_merge_local \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=old high=0 medium=0 low=0 -->'"
+  "printf '%s\n' '<!-- local-review sha=old high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
 it "pre-merge-check: 記録の SHA が head の前方だけ一致しても止める"
 make_fake_gh_merge_local \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=ab high=0 medium=0 low=0 -->'"
+  "printf '%s\n' '<!-- local-review sha=ab high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
 it "pre-merge-check: head の記録に High があれば（直していない High が残る）止める"
 make_fake_gh_merge_local \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
+  "printf '%s\n' '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
 it "pre-merge-check: 同じ head の後の記録に High があれば、前の High の無い記録があっても止める"
 make_fake_gh_merge_local \
-  "printf '%s\t%s\n' 2026-09-08T04:00:00Z '<!-- local-review sha=abc high=0 medium=0 low=0 -->' 2026-09-08T05:00:00Z '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
+  "printf '%s\n' '<!-- local-review sha=abc high=0 medium=0 low=0 -->' '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
