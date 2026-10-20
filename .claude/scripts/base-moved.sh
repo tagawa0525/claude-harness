@@ -71,13 +71,16 @@ for ref in "$BASE" "$TARGET"; do
 done
 
 # merge-base は共通の祖先が無いとき 1、それ以外の失敗（壊れた repo など）はほかの終了コードを返す
+# stderr は失敗のときだけ使う（成功時の警告を分岐点の値に混ぜない）
 rc=0
-fork=$(git merge-base "$BASE" "$TARGET" 2>&1) || rc=$?
+mb_err=$(mktemp)
+trap 'rm -f "$mb_err"' EXIT
+fork=$(git merge-base "$BASE" "$TARGET" 2>"$mb_err") || rc=$?
 if ((rc == 1)); then
   echo "WARN: ${BASE} と ${TARGET} の分岐点が見つかりません（履歴が共通でない、または shallow clone）。比較は未確認です" >&2
   exit 0
 elif ((rc != 0)); then
-  echo "WARN: git merge-base が失敗しました（終了コード ${rc}）。比較は未確認です: ${fork}" >&2
+  echo "WARN: git merge-base が失敗しました（終了コード ${rc}）。比較は未確認です: $(<"$mb_err")" >&2
   exit 0
 fi
 # マージコミットで入る PR は 1 件と数える（--first-parent）
