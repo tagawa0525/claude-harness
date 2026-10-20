@@ -91,7 +91,8 @@ decline は事実に基づく反論があるときだけ。根拠を書けない
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
 受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す
 （PR を出す前のローカルレビューとは別枠）。対象は `~/.claude/scripts/review-level.sh`
-が出す `TARGET`（積み重なった PR は `--base <土台のブランチ>` を付ける）。
+が出す `WORKTREE` を対象にする（Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
+`--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に写さず、コードへの参照（ファイルと関数名）で書く。
 
 重大度は Copilot の本文に揃えて High / Medium / Low で数える（ローカルの `/code-review` の指摘も同じ。
@@ -171,7 +172,9 @@ EOF
 | `WAITING`                | 要求後のレビューが未着                                                               | `~/.claude/scripts/gh-wait-review.sh "{pr_url}"` で待つ（下記と同様 background）                                                                                         |
 
 **ローカルレビュー**（ADR-0034）: 対応を push したら、Copilot に出す前にも、出さずに終える前にも、
-`~/.claude/scripts/review-level.sh` が出す `LEVEL` と `TARGET` で `/code-review <LEVEL> <TARGET>` を回す。
+PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を走らせ、出力の `LEVEL` と
+`WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。ブランチ名で渡すと /code-review は cwd のリポジトリで
+解くので、cwd が別のリポジトリだと対象を見つけられない。`WORKTREE` が none なら、PR の URL を対象に渡す。
 直した差分と、同じ種類の問題が他に残っていないかを見る。回した head（`git rev-parse HEAD`。push 済みで PR の
 head と同じもの）に、その回で検証して正しいと判断した指摘の数を、High / Medium / Low で記録する
 （decline した指摘は数えない）:
@@ -185,6 +188,10 @@ head と同じもの）に、その回で検証して正しいと判断した指
 `request-rereview.sh`、マージ時の hook）ので、High は直して回し直す。Medium と Low は、直して回し直すか、
 直さずにその head で終える（見送りは台帳に書く）。同じ head を回し直したら、最後の記録で決まる。
 件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
+
+レビューが対象を見つけられなかった、または実行できなかったとき（「ブランチが存在しない」、エラー、`[]` だけの
+返答）は、指摘ゼロではなく未実施である。`record-local-review.sh` に 0 件で記録せず、対象を直して回し直す。
+`[]` が指摘ゼロだと言えるのは、返答が対象の差分を読んだと示しているとき（見たファイルや確かめた点が書かれている）だけ。
 
 **再レビューの要求**は次のスクリプトだけで行う（要求後そのまま待機する。約 10 分。
 `run_in_background=true` で実行）。
