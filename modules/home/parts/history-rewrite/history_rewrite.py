@@ -29,6 +29,7 @@ run の出力（KEY: value）:
   （ここに commit-refs rewrite-history の出力が続く）
   MAP: <元の番号から最後の番号への対応表のパス>
 transform の出力:
+  SKIPPED: <パス> (<理由>)  読まなかったファイルごと（symlink、excluded、binary、not UTF-8）
   REPLACED: <パス>    直したファイルごと
   FILES: <直したファイルの数>
 
@@ -78,37 +79,50 @@ class Transformer:
     def excluded(self, path: str) -> bool:
         return any(PurePosixPath(path).full_match(glob) for glob in self.excludes)
 
+    def skipped(self, path: bytes, data: bytes) -> str | None:
+        """ブロブを読まない理由（excluded、binary、not UTF-8）。読むなら None"""
+        if self.excluded(path.decode("utf-8", "surrogateescape")):
+            return "excluded"
+        if b"\0" in data[:FIRST_FEW_BYTES]:
+            return "binary"
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return "not UTF-8"
+        return None
+
     def blob(self, path: bytes, data: bytes) -> bytes | None:
         """パス path のブロブの新しい中身。変えないなら None"""
-        name = path.decode("utf-8", "surrogateescape")
-        if self.excluded(name) or b"\0" in data[:FIRST_FEW_BYTES]:
-            return None
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
+        reason = self.skipped(path, data)
+        if reason == "not UTF-8":
             self.not_utf8 += 1
+        if reason is not None:
             return None
+        name = path.decode("utf-8", "surrogateescape")
+        text = data.decode("utf-8")
         new = self._text(name, text, markdown=name.lower().endswith(".md"))
         return None if new == text else new.encode("utf-8")
 
-    def message(self, data: bytes) -> bytes:
-        """コミットかタグの本文。本文は Markdown として表も揃える"""
+    def message(self, data: bytes, name: str) -> bytes:
+        """コミットかタグ name の本文。本文は Markdown として表も揃える"""
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError as e:
-            raise Stop(f"UTF-8 として読めない本文がある: {e}") from None
-        return self._text("（本文）", text, markdown=True).encode("utf-8")
+            raise Stop(f"{name}: UTF-8 として読めない本文がある: {e}") from None
+        return self._text(name, text, markdown=True).encode("utf-8")
 
-    def message_would_change(self, data: bytes, encoding: bytes) -> bool:
-        """宣言した符号化 encoding（UTF-8 でない）の本文に、直す語があるか"""
-        name = encoding.decode("ascii", "replace")
+    def message_would_change(self, data: bytes, encoding: bytes, name: str) -> bool:
+        """宣言した符号化 encoding（UTF-8 でない）の、コミット name の本文に、直す語があるか"""
+        codec = encoding.decode("ascii", "replace")
         try:
-            text = data.decode(name)
+            text = data.decode(codec)
         except LookupError:
-            raise Stop(f"符号化 {name} を Python が知らない") from None
+            raise Stop(f"{name}: 符号化 {codec} を Python が知らない") from None
         except UnicodeDecodeError as e:
-            raise Stop(f"符号化 {name} として読めない本文がある: {e}") from None
-        return self._text("（本文）", text, markdown=True) != text
+            raise Stop(
+                f"{name}: 符号化 {codec} として読めない本文がある: {e}"
+            ) from None
+        return self._text(name, text, markdown=True) != text
 
     def _text(self, name: str, text: str, markdown: bool) -> str:
         try:
@@ -147,17 +161,21 @@ class Transformer:
                 j += 1
             # 直した行を含む表だけを揃え直す（ほかの表の崩れは、この書き換えの範囲の外）
             if changed & set(range(i, j)):
+                # format_table は \| でも列を切り、fix_markdown は表の字下げを外す（nixfiles の issue #428）ので、
+                # hook と同じ形に揃え直せない表は止める
                 for row in lines[i:j]:
                     if _ESCAPED_PIPE.search(row):
-                        # format_table は \| でも列を切る（nixfiles の issue #428）ので、揃え直さずに止める
                         raise Stop(
-                            f"{name}: 直す表の行に \\| がある（揃え直せない。--exclude で外す）: {row.strip()}"
+                            f"{name}: 直す表の行に \\| がある（揃え直せない）: {row.strip()}"
                         )
-                indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+                    if row[:1].isspace():
+                        raise Stop(
+                            f"{name}: 直す表が字下げしてある（揃え直せない）: {row.strip()}"
+                        )
                 # format_table は行の両端の空白とともに CRLF の CR も外すので、元の行の CR を戻す
                 crs = ["\r" if row.endswith("\r") else "" for row in lines[i:j]]
                 rows = fml.format_table(lines[i:j])
-                lines[i:j] = [indent + row + cr for row, cr in zip(rows, crs)]
+                lines[i:j] = [row + cr for row, cr in zip(rows, crs)]
             i = j
         return "\n".join(lines)
 
@@ -323,7 +341,16 @@ class Verifier:
         self.hash = {"sha1": hashlib.sha1, "sha256": hashlib.sha256}[fmt]
         try:
             originals = (
-                git(self.original, "rev-list", "--branches", "--tags").decode().split()
+                # filter-repo に渡すのはブランチとタグだけなので、ミラーに写った refs/replace/ には従わない
+                git(
+                    self.original,
+                    "--no-replace-objects",
+                    "rev-list",
+                    "--branches",
+                    "--tags",
+                )
+                .decode()
+                .split()
             )
             missing = sorted(set(originals) - self.mapping.keys())
             if missing:
@@ -366,7 +393,11 @@ class Verifier:
         # 宣言した符号化が UTF-8 でない本文は変えない（変わるなら第 1 段が止める）
         old_fields = dict(old_headers)
         utf8 = is_utf8(old_fields.get(b"encoding"))
-        want = self.transformer.message(old_body) if utf8 else old_body
+        want = (
+            self.transformer.message(old_body, f"コミット {old} の本文")
+            if utf8
+            else old_body
+        )
         if want != new_body:
             self.problems.append(f"{old}: 本文が変換の結果と違う")
         trees = (old_fields[b"tree"], dict(new_headers)[b"tree"])
@@ -456,7 +487,7 @@ class Verifier:
                     raise Stop(f"{oid}: タグを指すタグ（run の初めに止めるはずのもの）")
                 value = self.mapping.get(target, target).encode()
             rebuilt.append(b"%s %s" % (key, value))
-        message = self.transformer.message(strip_signature(body))
+        message = self.transformer.message(strip_signature(body), f"タグ {oid} の本文")
         content = b"\n".join(rebuilt) + b"\n\n" + message
         return self.hash(b"tag %d\0" % len(content) + content).hexdigest()
 
@@ -521,21 +552,22 @@ def stage1(repo: Path, transformer: Transformer) -> dict[str, int]:
         return (filename, mode, seen[key])
 
     def commit(commit, _metadata):
+        name = f"コミット {commit.original_id.decode()} の本文"
         if not is_utf8(commit.encoding):
             # 本文は宣言した符号化で読まれる。UTF-8 の語を書き込むと文字化けするので、変えずに止める
-            if transformer.message_would_change(commit.message, commit.encoding):
+            if transformer.message_would_change(commit.message, commit.encoding, name):
                 raise Stop(
                     f"{commit.original_id.decode()}: 符号化 {commit.encoding.decode()} の本文に直す語がある"
                     "（UTF-8 の本文だけを直す）"
                 )
             return
-        new = transformer.message(commit.message)
+        new = transformer.message(commit.message, name)
         if new != commit.message:
             counts["messages"] += 1
             commit.message = new
 
     def tag(tag, _metadata):
-        new = transformer.message(tag.message)
+        new = transformer.message(tag.message, f"タグ {tag.ref.decode()} の本文")
         if new != tag.message:
             counts["messages"] += 1
             tag.message = new
@@ -651,26 +683,35 @@ def transform_files(args: argparse.Namespace) -> None:
     top = Path(git(Path("."), "rev-parse", "--show-toplevel").decode().strip())
     # すべてのファイルの新しい中身を作ってから書く（途中で止まるときは、どのファイルにも書かない）
     results: list[tuple[Path, str, bytes]] = []
+    skipped: list[tuple[str, str]] = []
     for name in args.files:
         # symlink のファイルそのものは見分けたいので、親のディレクトリだけをたどる（top は実体のパス）
         given = Path(name).absolute()
         path = given.parent.resolve() / given.name
-        if path.is_symlink():
-            # 履歴の書き換えと同じく、symlink は変えない（先のファイルは、それ自身のパスで直す）
-            continue
-        if not path.is_file():
-            raise Stop(f"{name}: ファイルでない（無いか、ディレクトリ）")
         try:
             relative = path.relative_to(top).as_posix()
         except ValueError:
             raise Stop(f"{name}: リポジトリ {top} の外") from None
-        new = transformer.blob(relative.encode(), path.read_bytes())
+        if path.is_symlink():
+            # 履歴の書き換えと同じく、symlink は変えない（先のファイルは、それ自身のパスで直す）
+            skipped.append((relative, "symlink"))
+            continue
+        if not path.is_file():
+            raise Stop(f"{name}: ファイルでない（無いか、ディレクトリ）")
+        data = path.read_bytes()
+        reason = transformer.skipped(relative.encode(), data)
+        if reason is not None:
+            skipped.append((relative, reason))
+            continue
+        new = transformer.blob(relative.encode(), data)
         if new is not None:
             results.append((path, relative, new))
     replaced = []
     for path, relative, new in results:
         path.write_bytes(new)
         replaced.append(relative)
+    for relative, reason in skipped:
+        print(f"SKIPPED: {relative} ({reason})")
     for relative in replaced:
         print(f"REPLACED: {relative}")
     print(f"FILES: {len(replaced)}")

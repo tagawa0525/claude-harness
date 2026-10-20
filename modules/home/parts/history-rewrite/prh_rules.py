@@ -282,8 +282,12 @@ def _load_rule(raw: object, origin: str) -> Rule:
     expected = raw.get("expected")
     if not isinstance(expected, str):
         raise DictionaryError(f"{origin}: expected が文字列でない")
-    # prh は `rawRule.pattern || rawRule.patterns` を使う（空の文字列は先に止める）
-    pattern = raw.get("pattern") or raw.get("patterns")
+    # prh は `rawRule.pattern || rawRule.patterns` を使う。JavaScript では空の文字列だけが偽で、空の並びは真
+    if raw.get("pattern") == "":
+        raise DictionaryError(f"{origin}: pattern が空")
+    pattern = raw.get("pattern")
+    if pattern is None:
+        pattern = raw.get("patterns")
     if pattern is None:
         raise DictionaryError(f"{origin}: pattern の無い規則は扱わない")
     rule = Rule(expected, _compile(_pattern_source(pattern, origin), origin), origin)
