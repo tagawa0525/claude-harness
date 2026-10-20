@@ -350,6 +350,15 @@ if CLAUDECODE=1 git -C "$REPO" commit -q -m "fixup! docs: add" >"$WORK/out" 2>&1
 else
   ng "本文が空の fixup! のコミットが止まった"
 fi
+echo s > "$REPO/s.txt"
+git -C "$REPO" add s.txt
+printf 'Merge branch x\n\n  \n\n' > "$WORK/msg"
+if CLAUDECODE=1 git -C "$REPO" commit -q -F "$WORK/msg" --cleanup=verbatim >"$WORK/out" 2>&1 \
+  && ! grep -q "textlint \[options\]" "$WORK/out"; then
+  ok "空白だけの本文の Merge のコミットは textlint を呼ばない"
+else
+  ng "空白だけの本文の Merge のコミットが止まる、または textlint の使い方を出す"
+fi
 echo t > "$REPO/t.txt"
 git -C "$REPO" add t.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "fixup! docs: add" -m "確かめの結果を書く" >"$WORK/out" 2>&1; then
