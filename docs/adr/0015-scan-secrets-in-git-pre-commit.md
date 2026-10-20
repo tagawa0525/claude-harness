@@ -58,7 +58,7 @@ PATH にある。
 
 git の hook の検査（`modules/home/parts/scan-staged-secrets.sh`）:
 
-- Claude Code のセッション（`CLAUDECODE=1`）のコミットで、`gitleaks git --staged` を走らせる。pre-commit は、index を
+- Claude Code のセッション（`CLAUDECODE=1`）のコミットで、`gitleaks git --staged` を実行する。pre-commit は、index を
   変えるもの（Markdown の自動修正は作業ツリーをステージし直す。#282。プロジェクトのローカルの pre-commit）の後、
   ステージしたファイルが無くて抜ける前（種類の変更だけのコミット）、fork で抜ける前に呼ぶ。pre-merge-commit も
   呼ぶ（競合の無いマージでは pre-commit が走らない）。マージでは相手のブランチから入る中身も見る（相手の

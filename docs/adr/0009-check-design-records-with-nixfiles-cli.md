@@ -18,14 +18,14 @@ ADR の形を知っているのは、スキルと `new-adr.sh` だけではな�
 （ADR の status の変化）と、claude-hooks の `pre-merge-check`・`pre-git-merge-check` も、ADR の形を前提にしている。
 ADR を持つ自分のプロジェクトは 4 つ（xlc 118 件 6f1d237、lsp-det 23 件 2d57a63、pleasanter-rs 7 件 16fb285、
 nixfiles 8 件 927e800。2026-10-11 に各リポジトリの `docs/adr` で数えた）。GitHub Actions を使う自分のプロジェクトは、どれも言語の
-道具で CI を回し、Nix を使っていない（2026-10-11 に ~/github の各 `.github/workflows` で確かめた）。
+ツールで CI を回し、Nix を使っていない（2026-10-11 に ~/github の各 `.github/workflows` で確かめた）。
 
 ## 決定の要因
 
 - 自分がオーナーのプロジェクトは、標準を変えたら全部一斉に切り替えてよい（ユーザーの意図）
 - 形を知るものを 1 か所にまとめ、スキル、テンプレート、検査、ハーネスがずれない
 - ハーネスの調整を LLM に任せやすい（1 つの PR で直してテストし、すぐ効く）
-- 枠は一般的な道具を使い、自作は中身だけにする
+- 枠は一般的なツールを使い、自作は中身だけにする
 
 ## 検討した案
 
@@ -42,9 +42,9 @@ nixfiles 8 件 927e800。2026-10-11 に各リポジトリの `docs/adr` で数�
 - スキル、テンプレート、検査、ハーネスが 1 つのリポジトリにあり、1 つの PR で一緒に直してテストできる
 - プロジェクトは pre-commit の設定（`.pre-commit-config.yaml`）に local hook を足してオプトインする。全体の hook では
   ないので、他人のプロジェクトかの判定が要らない
-- 設定を走らせるのは prek（pre-commit 互換の実装）で、home-manager で PATH に入れる。グローバルの git hook
+- 設定を実行するのは prek（pre-commit 互換の実装）で、home-manager で PATH に入れる。グローバルの git hook
   （`core.hooksPath`）があると `prek install` は拒否されるので、グローバルの pre-commit hook が `prek run` を呼ぶ。
-  オプトインしたプロジェクトでも、グローバルの hook の既定の検査（Nix、Python、Markdown、Rust）は続けて走らせる
+  オプトインしたプロジェクトでも、グローバルの hook の既定の検査（Nix、Python、Markdown、Rust）は続けて実行する
 
 採らなかった案:
 
@@ -99,7 +99,7 @@ ADR-0008 の決定のうち、次を変える:
   無いとき（PATH の狭い GUI のクライアントなど）は、グローバルの hook が知らせて既定の検査だけで通す。prek はあって
   CLI が無いときは、prek の hook が実行できずにコミットが止まる
 - 悪い点: prek が PATH に入ったので、`.pre-commit-config.yaml` を持つ他人のプロジェクトでも、その設定がコミットの
-  たびに走る（fork でも走らせる。設定はそのプロジェクトの規約）
+  たびに走る（fork でも実行する。設定はそのプロジェクトの規約）
 - 実装が決定に追いついていない点: xlc、lsp-det、pleasanter-rs のオプトインは、rebuild の後に各リポジトリで行う
   （#280）。lsp-det と pleasanter-rs の既存の ADR はフロントマターが無く、xlc の ADR は `requires` が無い
 - 実装が決定に追いついていない点: `branch-topics.sh` は、docs/adr と docs/issues のどのファイルを数えるかを、まだ

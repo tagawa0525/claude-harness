@@ -19,7 +19,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
   オプションをプログラムと取り違える（basename の判定の頃からある穴。ADR-0020 の「既知の穴」）
 - `bash -c '<文字列>'` の文字列の中を見ない
 - `sudo`、`xargs`、`flock` で包んだ形を見ない（#300 で ADR-0015 の線引きの外として見送っていた）
-- `$CMD`、`eval "$CMD"`、`source`、`bash -s` のように、文字列からは走らせるものが決まらない形を通す
+- `$CMD`、`eval "$CMD"`、`source`、`bash -s` のように、文字列からは実行するものが決まらない形を通す
 
 同日に公開ソースを調べた結果:
 
@@ -42,7 +42,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 
 - 案 A: `bash` / `sh` のオプションを表で持ち、`-c` の文字列は同じ構文解析を再帰的に当てる（深さの上限つき）。
   ラッパーの表に `sudo`、`xargs`、`flock`、`chrt`、`taskset`、`watch`、`script -c`、`ssh <接続先> …`、`eval` を足す。
-  走らせるものが決まらない形は、コマンド文字列のどこかに対象語があれば止める側に倒す
+  実行するものが決まらない形は、コマンド文字列のどこかに対象語があれば止める側に倒す
 - 案 B: 未知のコマンド（`$CMD` など）は許可する。Claude Code 自身の権限判定と同じ考え方
 - 案 C: 引数のどこかに対象語があれば止める保険を入れる（全部のコマンド、または未知の先頭語に限る）
 - 案 D: `bash -c` の文字列は見ない（Claude Code 自身の権限判定と同じ境界）。ラッパーの表だけ広げる
@@ -57,7 +57,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 - 案 B: 権限判定は「許可するか」を決めるもので、未知なら人に聞けばよい。ガードは「禁じた形を止める」もので、
   未知を通すと偽陰性がそのまま害になる（sbatch の直接の投入、--no-verify）
 - 案 C: `echo sbatch`、`grep -n sbatch CLAUDE.md`、コミットの本文に書いた `git add -A` を止める偽陽性が多い。
-  未知の先頭語に限る形でも、`$TOOL sbatch.log` のような引数を止める。文字列に対象語があり、かつ走らせるものが
+  未知の先頭語に限る形でも、`$TOOL sbatch.log` のような引数を止める。文字列に対象語があり、かつ実行するものが
   決まらないコマンドがある、という 2 つの条件に絞った（案 A）
 - 案 D: `bash -c 'sbatch …'` は Claude Code が書く形で、読まない理由が無い。tree-sitter の解析は文字列にも
   そのまま当てられる
@@ -70,28 +70,28 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 `NAME=value` を代入として読むか）と、ラッパーごとの意味:
 
 - `bash` / `sh`: 1 文字のオプションは `set` と同じ（`-e`、`-x`、`-o opt`、`+o opt`、`-O shopt`）。長い形は
-  `--rcfile` / `--init-file` が値を取る。`-c` は次の位置引数を文字列として走らせ、残りは `$0` 以降。`-s` と
-  位置引数の無い呼び出しは標準入力を読む（決まらない）。`-n` と `-D` は走らせない。それ以外は次の位置引数が
+  `--rcfile` / `--init-file` が値を取る。`-c` は次の位置引数を文字列として実行し、残りは `$0` 以降。`-s` と
+  位置引数の無い呼び出しは標準入力を読む（決まらない）。`-n` と `-D` は実行しない。それ以外は次の位置引数が
   スクリプト
 - `sudo`: `[VAR=value]` を代入として読む（env と同じく、最初の代入でオプションは終わる。getopt の `+`）。`-E` /
   `--preserve-env` が無ければ環境変数を受け継がない（env_reset。`--preserve-env=list` は list だけなので、受け継が
-  ない側）。`-D` / `--chdir` はディレクトリを変える。`-e`、`-l`、`-v`、`-V`、`-K` は走らせない。`-s` / `-i` は、
+  ない側）。`-D` / `--chdir` はディレクトリを変える。`-e`、`-l`、`-v`、`-V`、`-K` は実行しない。`-s` / `-i` は、
   コマンドがあればそれを（sudo が英数字以外をエスケープして渡すので、語は変わらない）、無ければ対話シェル
   （決まらない）
 - `xargs`: `-e[eof]`、`-i[replace]`、`-l[max-lines]` は続けて書いたときだけ値を取る（getopt の optional_argument）。
   標準入力から足す引数は見ない（`xargs git add -A` は、パスが足されるとしても `-A` だけの形として止める）
-- `flock`: 位置引数 1 つ（ファイル）の直後の `-c <文字列>` / `--command` を sh -c で走らせる（flock.c は getopt の
-  後に `argv[optind + 1]` を比べる）。`flock <fd>` は何も走らせない
-- `chrt`: 位置引数 1 つ（優先度）。`-p` と `-m` は走らせない。`taskset`: 位置引数 1 つ（マスク）。`-p` は走らせない
-- `watch`: 残りの語を空白でつないで sh -c で走らせる。`-x` は語をそのまま exec する
-- `script`: `-c <文字列>` を sh -c で走らせる（getopt が語を並べ替えるので、ログのファイルの後ろの `-c` も読む。
-  util-linux 2.42.3 で確かめた）。無ければ `--` の後ろの語をコマンドとして走らせ、それも無ければ対話シェル
+- `flock`: 位置引数 1 つ（ファイル）の直後の `-c <文字列>` / `--command` を sh -c で実行する（flock.c は getopt の
+  後に `argv[optind + 1]` を比べる）。`flock <fd>` は何も実行しない
+- `chrt`: 位置引数 1 つ（優先度）。`-p` と `-m` は実行しない。`taskset`: 位置引数 1 つ（マスク）。`-p` は実行しない
+- `watch`: 残りの語を空白でつないで sh -c で実行する。`-x` は語をそのまま exec する
+- `script`: `-c <文字列>` を sh -c で実行する（getopt が語を並べ替えるので、ログのファイルの後ろの `-c` も読む。
+  util-linux 2.42.3 で確かめた）。無ければ `--` の後ろの語をコマンドとして実行し、それも無ければ対話シェル
   （決まらない）
-- `ssh`: 位置引数 1 つ（接続先）の残りの語を空白でつないで、接続先のシェルが走らせる。接続先の後ろのオプション
+- `ssh`: 位置引数 1 つ（接続先）の残りの語を空白でつないで、接続先のシェルが実行する。接続先の後ろのオプション
   も読む（ssh.c は接続先を取ると getopt をやり直す。`ssh host -p 3333` で確かめた）。環境変数は渡らない。
   コマンドが無ければ接続先のシェルが標準入力を読む（決まらない）。`-G`、`-N`、`-O`、`-Q`、`-V`、`-Z`、`-s` は
-  走らせない
-- `eval`: 残りの語を空白でつないで走らせる。`source` / `.`: ファイルを読んで走らせる（決まらない）
+  実行しない
+- `eval`: 残りの語を空白でつないで実行する。`source` / `.`: ファイルを読んで実行する（決まらない）
 
 `shell.rs`:
 
@@ -105,16 +105,16 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 - 二重引用符の文字列の中の `$(…)` は外側のシェルが展開してから文字列を渡すので、外側のスコープで 1 回だけ読む
   （文字列の解析は、外側の引数にある原文が同じ置換に降りない）。`bash -c 'true' "$(sbatch …)"` のように文字列以外の
   引数の中の置換も、外側で読む
-- どのラッパーも `--help` / `--version` は表示して終わり、後ろの語を走らせない。block-no-verify のシェル全体の
+- どのラッパーも `--help` / `--version` は表示して終わり、後ろの語を実行しない。block-no-verify のシェル全体の
   CLAUDECODE の変更（代入、unset）も、hook が走る git commit / merge / pull があるときだけ見る
 - 文字列の中の代入、`unset`、エスケープ（ADR-0023 の `ALLOW_*=<理由>`）も、外側と同じ規則で読む
-- 走らせるプログラムが決まらないコマンド（`Cmd::opaque`）: 名前の basename に展開がある（`$CMD`、`~/x/$SCRIPT`、
+- 実行するプログラムが決まらないコマンド（`Cmd::opaque`）: 名前の basename に展開がある（`$CMD`、`~/x/$SCRIPT`、
   `$(which sbatch)`、`${SB:-/usr/bin/sbatch}`。区切りの `/` は展開の外のものだけ数えるので、
   `$HOME/.claude/scripts/slurm-run.sh` と `${DIR}/slurm-run.sh` は決まる）、標準入力やファイルから読む（上の表）、
   深さの上限を超えた
 - block-no-verify は、環境変数の変更（CLAUDECODE が渡らない、`GIT_CONFIG_*`）を hook が走る `git commit` /
   `merge` / `pull` でだけ見る。`sudo ls` や `ssh host nvidia-smi` も環境変数を受け継がないが、hook は走らない
-- `Shell::runs_program(word, is_target)`: `is_target` を満たすプログラムを走らせるコマンドがあるか、または決まらない
+- `Shell::runs_program(word, is_target)`: `is_target` を満たすプログラムを実行するコマンドがあるか、または決まらない
   コマンドがあり、コマンド文字列のどこか（ヒアドキュメントの本文や注釈を含む）に `word` が現れる。実行プログラムの
   名前だけで止めるルール（`guard_sbatch`、`require_background_wait`）はこれを使う。git の引数を見るルールは、
   決まらないコマンドの引数を評価できないので、今までどおり見ない
@@ -128,7 +128,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 - `python -c`、`perl -e`: 別の言語で、bash の構文解析は当てられない
 - `find -exec`、`parallel`、`nix develop -c`、`nix-shell --run`: コマンドを引数の途中や値として取り、形が多い。
   Claude Code が重い計算や git にこれらを使う形は見ていない。要るときに足す
-- `zsh`、`dash`、`ksh`: Bash ツールは bash を走らせ、スクリプトの起動は `bash` / `sh` で書く
+- `zsh`、`dash`、`ksh`: Bash ツールは bash を実行し、スクリプトの起動は `bash` / `sh` で書く
 
 ### 帰結
 
@@ -147,7 +147,7 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 ### 確認
 
 - `.claude/tests/hooks.sh`: `guard-sbatch` の節で、`bash` / `sh` のオプションつき、`bash -c` の入れ子（6 段で止める側）、
-  各ラッパー、走らせない形、決まらない形（対象語の有無で分かれる）を確かめる。`require-background-wait`、
+  各ラッパー、実行しない形、決まらない形（対象語の有無で分かれる）を確かめる。`require-background-wait`、
   `block-no-verify`、`guard-git-add`、`guard-git-push`、`block-main-commit` の節で、同じ土台が効くことを確かめる
 - `modules/home/parts/claude-hooks/src/unwrap.rs` と `shell.rs` の単体テストで、表の読み方、文字列の位置と
   スコープ、エスケープの外し方、深さの上限を確かめる
@@ -156,10 +156,10 @@ claude-hooks の PreToolUse hook は、Bash ツールのコマンド文字列を
 
 - 2026-10-12: 読み違いを 3 つ直した（#342）。`bash` / `sh` のまとめた 1 文字のオプションの中の `-o` / `-O` は、値を
   次の語から取り、残りの文字もオプションとして読む（`bash -oc pipefail '…'` の `-c`）。`env` の `-` は coreutils の
-  env.c と同じく getopt の後に一度だけ（`--` の後でも）読み、そこでオプションを終える。その後の `--` は走らせる
+  env.c と同じく getopt の後に一度だけ（`--` の後でも）読み、そこでオプションを終える。その後の `--` は実行する
   プログラムになる。`sudo -i` と `ssh` の中のコマンドは手元の cwd で走るとみなさない。`Shell::target_dir` は、
   `ssh` の中ではその場所の書き方（`host:`）を返して中の `cd` と `git -C` を当てず、`sudo -i` の中では対象の利用者の
-  ホームの書き方（`~root`）から始め、sudo -i が走らせる文字列の中の `~` もそれとし（包んだコマンドの引数の `~` は
+  ホームの書き方（`~root`）から始め、sudo -i が実行する文字列の中の `~` もそれとし（包んだコマンドの引数の `~` は
   外側のシェルが展開するので手元のホーム）、絶対パスの `cd` と `git -C` は手元のパスに解く。その書き方は
   展開しない `cd "$VAR"` の行き先と同じく手元に実在しないので、ルールは既存の「ディレクトリに移れない」ときの
   扱いになる: 手元のリポジトリやブランチで決めるルール（block-main-commit、guard-git-push など）は判定せず、

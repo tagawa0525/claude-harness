@@ -58,7 +58,7 @@ issues: []
 
 ### 確認
 
-- `.claude/skills/branch-task/SKILL.md` の手順に、マージと rebase を走らせるところが無いこと
+- `.claude/skills/branch-task/SKILL.md` の手順に、マージと rebase を実行するところが無いこと
 - 実際に依頼を 1 件この形で出し、報告が見出しどおりに返ること
 
 ## 補足

@@ -50,11 +50,11 @@ claude-hooks の各ルールは、`ALLOW_UNREVIEWED_HEAD=1` のようにコマ�
   字面が短く展開を含むエスケープは claude-hooks の側で止める
 - 理由を求めるのは、そのルールが止める命令のときだけ。止めない命令に付いていても咎めない（`ALLOW_PROTECTED_PUSH=1
   git push origin feat/x` は今までどおり通る）。理由つきなら評価自体を飛ばす（gitleaks や gh を呼ばない）
-- 短い値を拒むときは、本来の文言（何を止めたか、正規の直し方）に「`ALLOW_…` には理由を記載してください」の行を足す。
+- 短い値を拒むときは、本来の文言（何を止めたか、正規の修正方法）に「`ALLOW_…` には理由を記載してください」の行を足す。
   しきい値は明かさない（長さを書くと、その長さに合わせた無意味な文字列を誘う）
 - git 側の pre-commit（`modules/home/parts/scan-staged-secrets.sh`。ADR-0015 の `ALLOW_SECRET_COMMIT`）も同じ規則で
   読む。2 つの層で規則が違うと、どちらかの形が通らなくなる
-- deny 文言は「正規の直し方 / 理由を値にして付ける / 機械で判定できる理由なら issue に書く」の形に縮め、
+- deny 文言は「正規の修正方法 / 理由を値にして付ける / 機械で判定できる理由なら issue に書く」の形に縮め、
   「〜なら付けてよい」の条件の列挙をやめる
 - スキル（`gh-pr-merge`、`gh-pr-review`、`gh-pr-create`、`git-push`、`git-merge`）からエスケープ名と周回数の記述を消す。
   `.claude/README.md` の hook 一覧（人が引く参照）には残す。ローカルレビューの周回は回数ではなく「その周に検証できる
