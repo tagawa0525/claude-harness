@@ -28,6 +28,10 @@ squeue   # そのリポジトリの計算が走っていないか
 worktree ごとのブランチの `Claude-Session:` を見て、作業中のセッションが無いことをユーザーに確かめる。走っている
 セッションや計算があれば、終わるまで待つ。
 
+書き換えに入るのは、ブランチとタグから届くコミットだけ。detached HEAD の worktree が、どのブランチとタグからも
+届かないコミットにあれば、そのコミットにブランチを付けてから進める（付けなければ、その worktree は元の履歴に
+残り、5 で合わせられない）。
+
 ## 2. 語の指定を決める
 
 - 辞書: 省くと ja-terms の辞書（hook と同じ）。辞書に無い 1 回限りの置き換えは、prh の形のファイルにして
@@ -107,6 +111,7 @@ git -C "$R" update-ref --stdin <"$D/transaction"
 
   ```bash
   new=$(awk -v o="$old" '$1 == o {print $2}' "$D/commit-map")
+  [ -n "$new" ] || echo "ERROR: $old は書き換えに入っていない（1 で確かめる）"
   git -C "$w" update-ref --no-deref HEAD "$new" "$old"
   ```
 
@@ -116,6 +121,8 @@ git -C "$R" update-ref --stdin <"$D/transaction"
   ファイルごとに合わせる
 
   ```bash
+  # ステージしていたパスを控える（mixed reset で外れる。足したばかりのファイルは追跡されなくなる）
+  git -C "$w" diff --cached -z --name-only >"$D/staged-$k"
   git -C "$w" reset -q   # mixed。ステージしていた変更は、作業ツリーに残ったまま外れる
   # -z で受ける（日本語や空白を含むパスを、引用符つきの 8 進や語の区切りにしない）
   git -C "$w" diff -z --name-only "$old" HEAD | while IFS= read -r -d '' f; do
@@ -128,10 +135,12 @@ git -C "$R" update-ref --stdin <"$D/transaction"
     fi
   done
   (cd "$w" && commit-refs remap "$D/commit-map")   # 未コミットの文書の古い番号を付け直す
+  # ステージしていたパスを、残っているものだけ戻す（ファイルの全体をステージするので、部分のステージは戻らない）
+  xargs -0 -r -I{} sh -c 'test -e "$1/$2" && git -C "$1" add -- "$2"' _ "$w" {} <"$D/staged-$k"
   ```
 
-  `git -C "$w" diff` が、控えのパッチ（`$patch`）と同じ変更に語と番号の変換を当てたものだけに
-  なっていることを確かめる
+  `git -C "$w" diff HEAD` が、控えのパッチ（`$patch`）と同じ変更に語と番号の変換を当てたものだけに
+  なっていることを確かめる（`k` は `worktree-state` の行の番号）
 
 ## 6. 書き換えの外に残るもの
 
