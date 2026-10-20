@@ -71,6 +71,6 @@ done < <(grep -rniE "$ADR_REF" "$CLAUDE_DIR/CLAUDE.md" "$CLAUDE_DIR/skills" "$CL
 while IFS= read -r hit; do
   it "skills: hook の拒否メッセージに ADR の番号を書かない: $hit"
   _fail "番号を外し、規則と理由をメッセージの中で分かるように書く"
-done < <(find "$HOOK_SRC" -name '*.rs' -print0 | xargs -0 perl -ne 'close ARGV if /^#\[cfg\(test\)\]/; next if m{^\s*//}; (my $c = $_) =~ s{\s//.*}{}; print "$ARGV:$.:$c" if $c =~ m{'"$ADR_REF"'}i' | cut -c1-200)
+done < <(find "$HOOK_SRC" -name '*.rs' -print0 | xargs -0 -r perl -ne 'close ARGV if /^#\[cfg\(test\)\]/; next if m{^\s*//}; (my $c = $_) =~ s{\s//.*}{}; print "$ARGV:$.:$c" if $c =~ m{'"$ADR_REF"'}i' | cut -c1-200)
 
 finish

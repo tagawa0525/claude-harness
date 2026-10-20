@@ -60,7 +60,7 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
 
 ## 順番
 
-優先度は「10000 + 待った分 − nice」（r995 の Slurm 設定の `PriorityWeightPartition=10000` と `PriorityWeightAge=10080`。待った 1 分が優先度 1）で、並べ替えのない限り投げた順に走る。
+優先度は「10000 + 待った分 − nice」（r995 の Slurm 設定の `PriorityWeightPartition=10000` と `PriorityWeightAge=10080`。待った 1 分が優先度 1。7 日を超えて待つと頭打ちになる）で、並べ替えのない限り投げた順に走る。
 
 - 急ぐ短いジョブは `--top` で投げ、待っているジョブの前に出す（`scontrol top`）
 - `--top` は、待っているほかのセッションのジョブも後ろに回す（エージェントはみな同じ利用者で投げるので、`scontrol top` は
