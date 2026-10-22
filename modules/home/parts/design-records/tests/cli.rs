@@ -948,9 +948,49 @@ fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
         "docs/adr/0002-use-b.md: warning: number 0002 is reserved for `use-other` by tag adr-0002; \
          if another record took the number, run `design-records renumber 2`; \
          if this record is the reserved one and its file name was renamed, \
-         run `git tag -f -a adr-0002 -m use-b 'adr-0002^{}'` \
+         run `git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}'` \
          (and `git push -f origin refs/tags/adr-0002` when origin exists)\n"
     );
+}
+
+#[test]
+fn check_omits_the_retag_fix_when_the_reserved_record_exists_too() {
+    let t = TempRepo::new("tag-slug-both");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.git(&["add", "-A"]);
+    t.git(&["tag", "-a", "adr-0002", "-m", "use-other", "main"]);
+    t.write(
+        "docs/adr/0002-use-other.md",
+        &design_records::template(2, "other を使う", "2026-10-01"),
+    );
+    t.write(
+        "docs/adr/0002-use-b.md",
+        &design_records::template(2, "b を使う", "2026-10-01"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    let warning = stdout(&out)
+        .lines()
+        .find(|l| l.starts_with("docs/adr/0002-use-b.md: warning"))
+        .unwrap_or_default()
+        .to_string();
+    assert!(warning.contains("renumber 2"), "{}", stdout(&out));
+    assert!(!warning.contains("git tag"), "{}", stdout(&out));
+}
+
+#[test]
+fn check_quotes_the_slug_in_the_retag_command() {
+    let t = TempRepo::new("tag-slug-quote");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.git(&["add", "-A"]);
+    t.git(&["tag", "-a", "adr-0002", "-m", "use-other", "main"]);
+    t.write(
+        "docs/adr/0002-use b&c.md",
+        &design_records::template(2, "b を使う", "2026-10-01"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(stdout(&out).contains("-m 'use b&c' "), "{}", stdout(&out));
 }
 
 #[test]
