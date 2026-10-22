@@ -51,18 +51,17 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   忘れた排他でないジョブも混ざる。実績に取るジョブは、コマンドと中身が同じ排他のジョブかを sacct で確かめる:
 
   ```bash
-  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,WorkDir,SubmitLine \
-    | awk -F'|' '$3 == "COMPLETED" && $6 ~ /sbatch --exclusive / && index($0, "<コマンドの一部>")'
+  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,SubmitLine | grep -F -- '<コマンドの一部>'
   ```
 
-  欄は JobID、JobName、State、Elapsed、WorkDir、SubmitLine の順。`<コマンドの一部>` で絞らないと全ジョブの SubmitLine
-  （1 行に数百字）が出る。`slurm-run.sh` は排他のときだけ sbatch の最初の引数に `--exclusive` を置く（`-c` のジョブは
-  `--cpus-per-task`。`AllocCPUS` は `-c 32` でも 32 なので識別に使わない）。コマンドは SubmitLine の `--wrap` の後にある
-  （最後の欄なので、コマンドの `|` で前の欄は崩れない。コマンドの一部は `$0` で探す。改行を含むコマンドは 2 行目から
-  切れる）。排他でないジョブの時間は、同じ仕事なら上限としてだけ使う（`--exclusive` の条件を `--cpus-per-task` に替えて探す）。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が違えば時間は桁で
-  変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。sacct は 2026-10-12 より前の
-  ジョブを持たないので、それより前の実績しか無ければ、実績のない計算として小さい入力で測る。2026-10-22 に、名前の似た、
-  中身の違う排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、2 時間 5 分かかった
+  欄は JobID、JobName、State、Elapsed、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
+  `--exclusive` のジョブ（`slurm-run.sh` は排他のときだけそこに置く。`-c` のジョブは `--cpus-per-task=N` で、その時間は同じ仕事
+  なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
+  ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
+  違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。sacct は 2026-10-12 より前のジョブを
+  持たないので、それより前の実績しか無ければ、実績のない計算として小さい入力で測る。2026-10-22 に、名前の似た、中身の違う
+  排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、2 時間 5 分かかった。sacct を読んで排他と中身を出す仕組みは
+  nixfiles の issue #452
 - 名前は `<ツール>-<題材>`（`openmc-2K`、`xlc-2K-swap-water`、`vera-reference-stages`）。使える文字は英数字と `.` `_` `-`。
   ログのファイル名に使い、`squeue` でも見分けるので、題材が分かる名前にする
 - コマンドは投げたときのディレクトリで、`--export=ALL`（今の環境変数、nix の開発シェルの PATH を含む）で走る。
