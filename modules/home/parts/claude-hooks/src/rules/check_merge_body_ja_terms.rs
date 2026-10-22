@@ -611,4 +611,67 @@ exit 0
                 .check_with(&input, &Shell::parse(command), Some(&check), &|_| None);
         assert!(findings.is_empty());
     }
+
+    #[test]
+    fn checks_merge_whose_last_option_makes_a_commit() {
+        let r = deny_reason(&check(
+            "git merge --ff-only --no-ff feat/a -m 'Merge: a' -m '誤語'",
+        ));
+        assert!(r.contains("誤語 => 正語"), "{r}");
+        let r = deny_reason(&check(
+            "git merge --squash --no-squash feat/a -m 'Merge: a' -m '誤語'",
+        ));
+        assert!(r.contains("誤語 => 正語"), "{r}");
+    }
+
+    #[test]
+    fn stdin_message_file_is_not_read_from_a_file_named_dash() {
+        let dir = TempDir::new("dash");
+        git_init(&dir.0);
+        std::fs::write(dir.0.join("-"), "Merge: a\n\n誤語\n").unwrap();
+        let check = fake_check(&dir);
+        let findings = check_in("git merge --no-ff -F - feat/a", &dir.0, Some(&check));
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn skipped_repository_gets_no_notice() {
+        let dir = TempDir::new("skip-notice");
+        git_init(&dir.0);
+        git(&dir.0, &["config", "core.hooksPath", ".githooks"]);
+        let check = fake_check(&dir);
+        let _ = take_notices();
+        let findings = check_in(
+            "git merge --no-ff -F /nonexistent/skip-notice.txt feat/a",
+            &dir.0,
+            Some(&check),
+        );
+        assert!(findings.is_empty());
+        assert!(
+            !take_notices().iter().any(|n| n.contains("skip-notice.txt")),
+            "検査しないリポジトリでは判定できない理由を出さないはず"
+        );
+    }
+
+    #[test]
+    fn message_drops_leading_blank_lines_like_git() {
+        let dir = TempDir::new("blank");
+        std::fs::write(dir.0.join("msg.txt"), "\n\nMerge: a\n\n本文\n").unwrap();
+        assert_eq!(
+            merge_message(&args("git merge -F msg.txt feat/a"), &dir.0),
+            Ok(Some("Merge: a\n\n本文\n".to_string()))
+        );
+    }
+
+    #[test]
+    fn message_drops_comment_lines_with_cleanup_strip() {
+        assert_eq!(
+            message("git merge --cleanup=strip -m 'Merge: a' -m '# 注\n本文' feat/a"),
+            Ok(Some("Merge: a\n\n本文".to_string()))
+        );
+        assert_eq!(
+            message("git merge --cleanup strip -m 'Merge: a' -m '# 注\n本文' feat/a"),
+            Ok(Some("Merge: a\n\n本文".to_string()))
+        );
+    }
 }
