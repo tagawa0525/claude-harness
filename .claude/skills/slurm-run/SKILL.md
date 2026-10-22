@@ -58,8 +58,9 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   `--exclusive` のジョブ（`slurm-run.sh` は排他のときだけそこに置く。`-c` のジョブは `--cpus-per-task=N` で、その時間は同じ仕事
   なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
   ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
-  違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。sacct は 2026-10-12 より前のジョブを
-  持たない。それより前は `-c` が無く、jobcomp のジョブはすべて排他なので、`slurm-history.sh` の実績とログで中身を比べる。2026-10-22 に、名前の似た、中身の違う
+  違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。sacct はジョブ 126（2026-10-12 03:08）より
+  前を持たない。それより前のジョブは `/var/log/slurm/job_completions`（jobcomp）の行の `ProcCnt` で識別する（排他は 32、
+  `-c N` は N。`-c` は 2026-10-12 からで、その前の 2 本は `-c 2`）。2026-10-22 に、名前の似た、中身の違う
   排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、2 時間 5 分かかった。sacct を読んで排他と中身を出す仕組みは
   nixfiles の issue #452
 - 名前は `<ツール>-<題材>`（`openmc-2K`、`xlc-2K-swap-water`、`vera-reference-stages`）。使える文字は英数字と `.` `_` `-`。
@@ -133,7 +134,7 @@ sacct -S <日付> --name=<名前> -o JobID,JobName,Elapsed,TimeLimit,State,MaxRS
   （sbatch の `--exclusive` は、ほかのジョブとノードを共有しない）
 - メモリは Slurm が数えない（`CR_Core`）。排他でないジョブを複数流すときは、メモリの合計が搭載量（RealMemory 86000 MB）を
   超えないよう自分で数える。超えると OOM killer が長い計算を殺す
-- 名前の末尾に `-shared` を付ける（`openmc-2K-shared`）。jobcomp は排他かどうかを持たないので、付けないと
-  `slurm-history.sh --by-name` の実績に、時間の当てにならないジョブが混ざる
+- 名前の末尾に `-shared` を付ける（`openmc-2K-shared`）。`slurm-history.sh --by-name` は名前で集計し、排他かどうか
+  （jobcomp の `ProcCnt`）を見ないので、付けないと実績に時間の当てにならないジョブが混ざる
 - 連絡先に `shared-cpus=N` が付くので、`squeue` で待たされている理由が読める
 - 時間を記録する測定の予定があるときは使わない
