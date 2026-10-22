@@ -5,8 +5,8 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
-    STATUSES, Section, is_adr_path, record_name, record_number,
+    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, REQUIRED_SECTIONS, STATUSES, Section,
+    is_adr_path, recommended_sections, record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -360,13 +360,10 @@ fn check_sections(doc: &Adr, out: &mut Found) {
             format!("no section `{}` (or `{}`)", section.ja, section.en),
         );
     }
-    // 採らなかった決定には、確かめる実装も帰結も無い（番号だけを残した ADR は確定後に書き足せない）
-    let recommended: &[Section] = if doc.status() == "rejected" {
-        &[]
-    } else {
-        &RECOMMENDED_SECTIONS
-    };
-    for section in recommended.iter().filter(|s| missing(s)) {
+    for section in recommended_sections(doc.status())
+        .iter()
+        .filter(|s| missing(s))
+    {
         out.warning(
             doc.path,
             None,
