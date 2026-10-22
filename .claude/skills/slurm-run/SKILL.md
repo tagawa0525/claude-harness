@@ -6,6 +6,8 @@ allowed-tools:
   - Bash(~/.claude/scripts/slurm-history.sh*)
   - Bash(squeue*)
   - Bash(sacct*)
+  - Bash(dvc status*)
+  - Bash(dvc dag*)
 ---
 
 # Slurm に流す
@@ -47,6 +49,18 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   （`RATIO`、`MAX_RATIO`）を出す。実績の 1.3 倍ほどを書く。実績のない計算は、小さい入力で測って見積もる。
   種類ごとに 1 段階（1 状態）を測ってから本数を掛ける。2026-10-14 に格子 104 状態の見積もり 2 時間が 3 時間超になった
   （反射体つきの格子を、集合体と同じ時間で見積もった）
+- 名前の表は名前でしか結ばず、`-shared` を付け忘れた排他でないジョブも混ざる。同じ仕事をした排他のジョブかは、
+  `sacct -S <日付> -X -o JobID,JobName%40,Elapsed,AllocCPUS,WorkDir%60,SubmitLine%300` で確かめる（sacct は 2026-10-12 より前の
+  ジョブを持たない）。`AllocCPUS` が 32 未満のジョブは排他でなく、時間が当てにならないので比べない（`-c 32` は 32 になるので、
+  SubmitLine に `--exclusive` があるかも見る）。コマンドは SubmitLine の `--wrap` の後にある。DVC の `dvc repro` は、目標が
+  同じでも、上流のどのステージが changed かで時間が桁で変わる。走りうるのは、`dvc status --with-deps <yaml>:<ステージ>` が
+  changed と出すステージと、`dvc dag <yaml>:<ステージ>` でその下流にあるステージ（上流が同じ出力を書けば下流は飛ぶので、
+  これが上限。`dvc status` と `dvc repro --dry` は、上流が出力を書き換えた後に走る下流を出さない）。目標の上流に数時間の
+  ステージ（参照解の OpenMC など）が入っていないかもここで見る。過去のログで同じステージを同じ数だけ実行したものを探す
+  （`grep -o "Running stage '[^'@]*" <ログ> | sort | uniq -c`。ログの場所は下の「ログと時間」）。2026-10-22 に、核種 65 個の
+  多群ライブラリの作り直しを、多群のステージを 1 つも実行しなかった排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、
+  2 時間 5 分かかった。同じ日に、別の担当が `dvc repro` の目標の上流に、文書だけを直して changed になった 5 時間の OpenMC が
+  入っていると気づかずに投げ、12 分で止めた
 - 名前は `<ツール>-<題材>`（`openmc-2K`、`xlc-2K-swap-water`、`vera-reference-stages`）。使える文字は英数字と `.` `_` `-`。
   ログのファイル名に使い、`squeue` でも見分けるので、題材が分かる名前にする
 - コマンドは投げたときのディレクトリで、`--export=ALL`（今の環境変数、nix の開発シェルの PATH を含む）で走る。
