@@ -100,7 +100,7 @@ if git show-ref --verify --quiet "refs/heads/$BRANCH" &&
       HINT="$HINT。やり直すなら、途中のマージを git merge --abort で取り消してから直す"
     fi
     if [[ -n "$FETCH_ERROR" ]]; then
-      HINT="fetch の失敗の原因（ネットワークや認証）を直す"
+      HINT="fetch の失敗の原因（ネットワークや認証）を直す。$HINT"
     fi
     {
       echo "ERROR: $BRANCH は $DEFAULT にまだマージされていません（$DETAIL）。何も消していません"
