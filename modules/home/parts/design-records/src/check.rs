@@ -818,6 +818,48 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: ADR-0049"]
+    fn rejected_adrs_need_no_recommended_sections() {
+        let set = one(1, |t| {
+            t.replace("status: accepted", "status: rejected")
+                .replace("### 帰結\n", "")
+                .replace("### 確認\n", "")
+        });
+        assert_eq!(run(&set), Vec::<String>::new());
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0049"]
+    fn rejected_adrs_still_need_required_sections() {
+        let set = one(1, |t| {
+            t.replace("status: accepted", "status: rejected")
+                .replace("## 決定と理由\n", "")
+                .replace("### 帰結\n", "")
+        });
+        assert_eq!(
+            run(&set),
+            ["docs/adr/0001-decide-1.md: error: no section `決定と理由` (or `Decision Outcome`)"]
+        );
+    }
+
+    #[test]
+    fn other_statuses_still_get_recommended_section_warnings() {
+        for status in ["proposed", "accepted", "withdrawn", "deferred"] {
+            let set = one(1, |t| {
+                t.replace("status: accepted", &format!("status: {status}"))
+                    .replace("### 確認\n", "")
+            });
+            assert_eq!(
+                run(&set),
+                [
+                    "docs/adr/0001-decide-1.md: warning: no section `確認` (or `Confirmation`) (recommended)"
+                ],
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
     fn sections_may_use_madr_english_headings() {
         let set = one(1, |t| {
             t.replace("## 背景", "## Context and Problem Statement")
