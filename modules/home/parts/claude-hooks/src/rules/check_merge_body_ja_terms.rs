@@ -13,7 +13,7 @@
 
 use super::Rule;
 use crate::git;
-use crate::git_args::{Item, option_values};
+use crate::git_args::{Item, git_flag, option_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::{Arg, Shell};
@@ -34,7 +34,8 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
         match opt {
             Item::Short('m') | Item::Long("--message") => parts.push(message_value(value)),
             Item::Short('F') | Item::Long("--file") => {
-                match std::fs::read_to_string(message_path(value, dir, None)) {
+                let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+                match std::fs::read_to_string(message_path(value, dir, home.as_deref())) {
                     Ok(text) => parts.push(text),
                     Err(_) => return Err(value.to_string()),
                 }
@@ -50,8 +51,10 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
 
 /// `-F` のファイルのパス。`~/` は home の下、相対パスは dir の下
 fn message_path(value: &str, dir: &Path, home: Option<&Path>) -> std::path::PathBuf {
-    let _ = home;
-    dir.join(value)
+    match (value.strip_prefix("~/"), home) {
+        (Some(rest), Some(home)) => home.join(rest),
+        _ => dir.join(value),
+    }
 }
 
 /// `-m` の値。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は本文を取り出し、
@@ -125,8 +128,8 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     match out.status.code() {
         Some(0) => Lint::Clean,
         // prh の行（`  2:1  ✓ error  誤り => 正しい語  prh`）から「誤り => 正しい語」を取り出す
-        Some(1) => Lint::Terms(
-            stdout
+        Some(1) => {
+            let terms: Vec<String> = stdout
                 .lines()
                 .filter(|l| l.contains(" => "))
                 .map(|l| {
@@ -136,8 +139,16 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
                         .trim()
                         .to_string()
                 })
-                .collect(),
-        ),
+                .collect();
+            if terms.is_empty() {
+                Lint::Failed(format!(
+                    "{check} が「誤り => 正しい語」を出さずに 1 で終わりました: {}",
+                    stdout.trim()
+                ))
+            } else {
+                Lint::Terms(terms)
+            }
+        }
         _ => Lint::Failed(format!(
             "{check} が失敗しました（{}）: {}{}",
             out.status,
@@ -158,9 +169,15 @@ fn deny_reason(terms: &[String]) -> String {
     )
 }
 
-/// commit-msg が語を検査しないリポジトリか: `upstream` リモートのある fork と、ローカルの commit-msg に
-/// 置き換わるリポジトリ（modules/home/parts/git.nix の commit-msg と同じ判定）
-fn commit_msg_skips(dir: &Path) -> bool {
+/// commit-msg が語を検査しないリポジトリか: グローバルの core.hooksPath（commit-msg の置き場）を使わない
+/// リポジトリと、`upstream` リモートのある fork、ローカルの commit-msg に置き換わるリポジトリ
+/// （modules/home/parts/git.nix の commit-msg と同じ判定）
+fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool {
+    if global_hooks.is_none()
+        || git::git(dir, &["config", "--get", "core.hooksPath"]) != global_hooks
+    {
+        return true;
+    }
     if git::is_fork(dir) {
         return true;
     }
@@ -183,17 +200,26 @@ impl CheckMergeBodyJaTerms {
         check: Option<&str>,
         global_hooks: &dyn Fn(&Path) -> Option<String>,
     ) -> Vec<Finding> {
-        let _ = global_hooks;
         let mut out = Vec::new();
         for cmd in shell.commands() {
             let Some(("merge", args)) = cmd.git_subcommand() else {
                 continue;
             };
+            // マージコミットを作らない形は commit-msg を呼ばない
+            if git_flag("merge", args, None, &["--ff-only", "--squash"]) {
+                continue;
+            }
             let dir = shell.target_dir(cmd, &input.cwd);
             let message = match merge_message(args, &dir) {
                 Ok(Some(m)) => m,
                 Ok(None) => continue,
-                // `-F -`（標準入力）や読めないパスは、git merge 自身が読むか失敗する
+                Err(path) if path == "-" => {
+                    notice(
+                        "check-merge-body-ja-terms: git merge -F - の本文は標準入力から読むので、本文の語を判定していません".to_string(),
+                    );
+                    continue;
+                }
+                // 読めないパスは、git merge 自身が失敗する
                 Err(path) => {
                     notice(format!(
                         "check-merge-body-ja-terms: git merge -F {path} を読めないので、本文の語を判定していません"
@@ -201,7 +227,7 @@ impl CheckMergeBodyJaTerms {
                     continue;
                 }
             };
-            if commit_msg_skips(&dir) {
+            if commit_msg_skips(&dir, global_hooks(&dir)) {
                 continue;
             }
             let Some(check) = check else {

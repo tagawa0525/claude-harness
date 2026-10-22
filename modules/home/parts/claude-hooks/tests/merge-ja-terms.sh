@@ -10,7 +10,10 @@ set -euo pipefail
 
 BIN=$1
 REPO=$(mktemp -d)
-trap 'rm -rf "$REPO"' EXIT
+trap 'rm -rf "$REPO" "$REPO.gitconfig"' EXIT
+# ルールは、グローバルの core.hooksPath（commit-msg の置き場）を使うリポジトリだけを検査する
+export GIT_CONFIG_GLOBAL="$REPO.gitconfig"
+git config --global core.hooksPath /nonexistent/global-hooks
 git -C "$REPO" init -q
 
 run() {
