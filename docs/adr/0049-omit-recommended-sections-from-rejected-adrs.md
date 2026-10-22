@@ -68,8 +68,8 @@ warning だけを出すので、この 2 件を触らないコミットでは出
 ### 確認
 
 - `modules/home/parts/design-records/src/check.rs` のテスト: rejected の ADR は帰結と確認が無くても warning を出さない
-  （`rejected_adrs_need_no_recommended_sections`）。必須の節が無ければ error になる（`rejected_adrs_still_need_required_sections`）。
+  （`rejected_adrs_need_no_recommended_sections`）。必須の節が無ければ error になる（`rejected_adrs_need_required_sections`）。
   proposed、accepted、withdrawn、deferred、superseded、deprecated は、今までどおり warning を出す
-  （`other_statuses_still_get_recommended_section_warnings`）
+  （`non_rejected_adrs_get_recommended_section_warnings`）
 - このブランチで `nix build .#design-records` した CLI を xlc（682dead38）で `design-records check` として実行し、
   出力が空になった。main の CLI では ADR-0091 と ADR-0092 の帰結と確認の 4 つの warning が出る（2026-10-22）
