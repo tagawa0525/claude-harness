@@ -131,7 +131,8 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 
 出力の `LEVEL` と `WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。対象はブランチ名でなく worktree の
 パスで渡す。/code-review は cwd のリポジトリでブランチ名を解くので、cwd が別のリポジトリだと空振りして
-「指摘なし」と返る（2026-10-12 に 2 回起きた）。
+「指摘なし」と返る（2026-10-12 に 2 回起きた）。/code-review は background で走り、終わると通知が届くので、
+Monitor、sleep、until のループで重ねて待たない。
 
 **リモートあり**のときは、続けて PR を出して自動レビューを受ける:
 
@@ -166,6 +167,15 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 0 でない）、件数を報告に書く。
 
 ### 9. 報告する
+
+報告の前に片付ける:
+
+- `git -C <worktree> status --short` を空にする。未追跡のファイルは、コミットする、リポジトリの規則で無視する
+  （`.gitignore`）、消すのどれかにする。残すと、マージの後の後片付け（`git worktree remove`）が止まる（2026-10-22 に、
+  `examples/` へ移した試行の入力の隣に、その出力 34 個が未追跡で残った）
+- 自分で張った待ち（Monitor、background のコマンド）のうち、もう要らないものを TaskStop で止める。報告の後に届いた
+  通知には何もしない（報告を送り直さない）。2026-10-22 に、レビューを待つ sleep の Monitor を残したまま報告を返し、
+  タイマーが切れるたびに同じ報告を送り直して、計 3 度送った
 
 最後の報告は次の見出しで書く。該当が無い節は「なし」と書き、節を省かない。
 
