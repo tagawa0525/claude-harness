@@ -5,8 +5,8 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, REQUIRED_SECTIONS, STATUSES, Section,
-    is_adr_path, recommended_sections, record_name, record_number,
+    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, OPTIONAL_KEYS, REQUIRED_SECTIONS, STATUSES,
+    Section, is_adr_path, recommended_sections, record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -59,6 +59,7 @@ pub fn check(
         check_issues(doc, issues, &mut out);
     }
     check_supersession(&docs, &existing, &mut out);
+    check_amendments(&docs, &mut out);
     check_mentions(&docs, scanned, &mut out);
     let mut found = out.0;
     found.sort();
@@ -252,7 +253,7 @@ fn check_front(doc: &Adr, out: &mut Found) {
         }
     }
     for key in doc.front.keys() {
-        if !KEYS.contains(&key) {
+        if !KEYS.contains(&key) && !OPTIONAL_KEYS.contains(&key) {
             out.error(
                 doc.path,
                 None,
@@ -406,10 +407,16 @@ fn check_issues(doc: &Adr, issues: Option<&BTreeSet<u32>>, out: &mut Found) {
     }
 }
 
-/// `requires`、`supersedes`、`superseded-by` の参照先と、置き換えの状態と両方向の一致。
+/// `requires`、`supersedes`、`superseded-by`、`amends`、`amended-by` の参照先と、置き換えの状態と両方向の一致。
 fn check_supersession(docs: &[Adr], existing: &BTreeSet<u32>, out: &mut Found) {
     for doc in docs {
-        for key in ["requires", "supersedes", "superseded-by"] {
+        for key in [
+            "requires",
+            "supersedes",
+            "superseded-by",
+            "amends",
+            "amended-by",
+        ] {
             for item in doc.items(key) {
                 match single_adr(item) {
                     Some(n) if existing.contains(&n) => {}
@@ -488,6 +495,58 @@ fn check_supersession(docs: &[Adr], existing: &BTreeSet<u32>, out: &mut Found) {
                     format!(
                         "superseded-by ADR-{new:04}, but ADR-{new:04} is {}",
                         successor.status()
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// 一部の置き換え（`amends` と `amended-by`）の両方向の一致。置き換える側が効力を持つまで、古い ADR の決定は全体が
+/// 効いているので、`amended-by` に挙げない。
+fn check_amendments(docs: &[Adr], out: &mut Found) {
+    // 番号が重なっていれば、最初の ADR で比べる（重なりは check_unique が示す）
+    let mut by_number: BTreeMap<u32, &Adr> = BTreeMap::new();
+    for doc in docs {
+        by_number.entry(doc.number).or_insert(doc);
+    }
+    for (&new, doc) in &by_number {
+        if !TOOK_EFFECT.contains(&doc.status()) {
+            continue;
+        }
+        for old in doc.adr_items("amends") {
+            if by_number
+                .get(&old)
+                .is_some_and(|o| !o.adr_items("amended-by").contains(&new))
+            {
+                out.error(
+                    doc.path,
+                    None,
+                    format!("amends ADR-{old:04}, but ADR-{old:04} is not amended-by ADR-{new:04}"),
+                );
+            }
+        }
+    }
+    for (&old, doc) in &by_number {
+        for new in doc.adr_items("amended-by") {
+            let Some(amender) = by_number.get(&new) else {
+                continue;
+            };
+            if !amender.adr_items("amends").contains(&old) {
+                out.error(
+                    doc.path,
+                    None,
+                    format!(
+                        "amended-by ADR-{new:04}, but ADR-{new:04} does not amend ADR-{old:04}"
+                    ),
+                );
+            } else if !TOOK_EFFECT.contains(&amender.status()) {
+                out.error(
+                    doc.path,
+                    None,
+                    format!(
+                        "amended-by ADR-{new:04}, but ADR-{new:04} is {}",
+                        amender.status()
                     ),
                 );
             }
@@ -1041,7 +1100,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn amends_and_amended_by_link_partial_amendments_both_ways() {
         let set = files(&[
             with_front(
@@ -1081,7 +1139,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn amends_and_amended_by_name_existing_adrs() {
         let set = files(&[with_front(
             Adr {
@@ -1100,7 +1157,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn decided_amends_needs_amended_by_on_the_old_adr() {
         let set = files(&[
             with_front(
@@ -1127,7 +1183,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn undecided_amends_leaves_the_old_adr_whole() {
         for status in ["proposed", "deferred", "rejected", "withdrawn"] {
             let set = files(&[
@@ -1152,7 +1207,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn amended_by_needs_amends_on_the_new_adr() {
         let set = files(&[
             with_front(
@@ -1179,7 +1233,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn old_adr_is_amended_only_after_the_new_one_took_effect() {
         for status in ["proposed", "deferred", "rejected", "withdrawn"] {
             let set = files(&[
@@ -1304,7 +1357,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn adding_amends_and_amended_by_keeps_the_body() {
         // 一部の置き換えは、確定した後に両方の ADR に書き足す
         let new = BODY.replace(

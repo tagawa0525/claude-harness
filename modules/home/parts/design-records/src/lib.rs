@@ -95,6 +95,11 @@ pub const KEYS: [&str; 6] = [
     "issues",
 ];
 
+/// 書いてもよいフロントマターのキー（書く順は [`KEYS`] の後）。決定の一部の置き換えを両方向に結ぶ: `amends` は
+/// この ADR が一部を置き換えた ADR、`amended-by` はこの ADR の一部を置き換えた ADR（ADR-0051）。一部の置き換えは
+/// まれなので、すべての ADR には求めない。
+pub const OPTIONAL_KEYS: [&str; 2] = ["amends", "amended-by"];
+
 /// `status` の値。
 pub const STATUSES: [&str; 7] = [
     "proposed",
@@ -110,7 +115,8 @@ pub const STATUSES: [&str; 7] = [
 pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 
 /// 確定した後も直してよいフロントマターのキー。
-pub const AMENDABLE_KEYS: [&str; 3] = ["status", "superseded-by", "date"];
+/// `amends` は、この決まりより前に確定した ADR の本文の置き換えを、フロントマターにも書くために許す（ADR-0051）。
+pub const AMENDABLE_KEYS: [&str; 5] = ["status", "superseded-by", "date", "amends", "amended-by"];
 
 /// 節の見出し（日本語と、MADR の英語の原文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
