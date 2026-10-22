@@ -50,7 +50,7 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
 - 名前は `<ツール>-<題材>`（`openmc-2K`、`xlc-2K-swap-water`、`vera-reference-stages`）。使える文字は英数字と `.` `_` `-`。
   ログのファイル名に使い、`squeue` でも見分けるので、題材が分かる名前にする
 - コマンドは投げたときのディレクトリで、`--export=ALL`（今の環境変数、nix の開発シェルの PATH を含む）で走る。
-  r995 以外のホストでは `~/r995`（r995 の `~/github` の NFS）の下で投げる
+  r995 以外のホストでは `~/mnt/r995`（r995 の `~/github` の NFS）の下で投げる
 - `slurm-run.sh` は必ず `cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh ...` で呼ぶ。ジョブは呼んだときの `$PWD` で
   走り、連絡先にもその `$PWD` が入る。`cd ... &` のように `&` で切ると cd が別のサブシェルになり、ジョブは呼んだ場所
   （main の作業ツリーなど）で走る。2026-10-14 に `dvc repro` が main の作業ツリーで走り、dvc.lock と出力を書き換えた。
