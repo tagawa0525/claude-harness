@@ -845,14 +845,7 @@ mod tests {
 
     #[test]
     fn other_statuses_still_get_recommended_section_warnings() {
-        for status in [
-            "proposed",
-            "accepted",
-            "withdrawn",
-            "deferred",
-            "superseded",
-            "deprecated",
-        ] {
+        for status in STATUSES.into_iter().filter(|s| *s != "rejected") {
             let set = one(1, |t| {
                 t.replace("status: accepted", &format!("status: {status}"))
                     .replace("### 確認\n", "")
