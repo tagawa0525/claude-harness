@@ -223,18 +223,36 @@ pub fn check_reservations(
                 Kind::Adr => String::new(),
                 Kind::Issue => format!("--kind {} ", kind.name()),
             };
+            let tag = kind.tag(number);
+            let renumber = format!("run `design-records renumber {kind_option}{number}`");
+            // タグの slug のファイルも同じ番号で並んでいれば、ほかの記録が番号を取った場合だけ（改名ではない）。
+            // 並んでいなければ、どちらかは履歴を引かないと分からない（check は走査も通信もしない。ADR-0018）ので両方を示す
+            let owner_present = paths
+                .iter()
+                .any(|p| record_name(kind, p) == Some((number, owner.as_str())));
+            let advice = if owner_present {
+                renumber
+            } else {
+                format!(
+                    "if another record took the number, {renumber}; if this record is the reserved \
+                     one and its file name was renamed, run `git tag -f -a {tag} -m {} '{tag}^{{}}'` \
+                     (and `git push -f origin refs/tags/{tag}` when origin exists)",
+                    shell_quote(slug)
+                )
+            };
             out.warning(
                 path,
                 None,
-                format!(
-                    "number {number:04} is reserved for `{owner}` by tag {}; if another record took \
-                     the number, run `design-records renumber {kind_option}{number}`",
-                    kind.tag(number)
-                ),
+                format!("number {number:04} is reserved for `{owner}` by tag {tag}; {advice}"),
             );
         }
     }
     out.0
+}
+
+/// シェルに貼る 1 語（単一引用符で囲む）。
+fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
 }
 
 /// フロントマターの値の表示（違反の文に入れる）。
