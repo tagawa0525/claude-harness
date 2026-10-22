@@ -80,27 +80,31 @@ if git show-ref --verify --quiet "refs/heads/$BRANCH" &&
   ! git merge-base --is-ancestor "refs/heads/$BRANCH" "refs/heads/$DEFAULT"; then
   MERGED=0
   FETCH_ERROR=""
-  UPSTREAM=$(git for-each-ref --format='%(upstream:short)' "refs/heads/$DEFAULT")
-  if [[ -n "$UPSTREAM" ]]; then
+  UPSTREAM=$(git for-each-ref --format='%(upstream)' "refs/heads/$DEFAULT")
+  if [[ "$UPSTREAM" == refs/remotes/* ]]; then
     UP_REMOTE=$(git config "branch.$DEFAULT.remote")
-    if ! FETCH_ERROR=$(git fetch -q "$UP_REMOTE" 2>&1); then
-      FETCH_ERROR="$UP_REMOTE の fetch に失敗した（${FETCH_ERROR//$'\n'/ }）"
-    elif git merge-base --is-ancestor "refs/heads/$BRANCH" "refs/remotes/$UPSTREAM"; then
+    if ! FETCH_OUT=$(git fetch -q "$UP_REMOTE" 2>&1); then
+      FETCH_ERROR="$UP_REMOTE の fetch に失敗した（${FETCH_OUT//$'\n'/ }）"
+    elif git merge-base --is-ancestor "refs/heads/$BRANCH" "$UPSTREAM"; then
       MERGED=1
     fi
   fi
   if ((!MERGED)); then
-    DETAIL="$DEFAULT${UPSTREAM:+、$UPSTREAM}の履歴にブランチの先端が無い"
+    DETAIL="$DEFAULT${UPSTREAM:+、${UPSTREAM#refs/remotes/}}の履歴にブランチの先端が無い"
     if [[ -n "$FETCH_ERROR" ]]; then
-      DETAIL="$DETAIL。$FETCH_ERROR。マージ済みでも、$UPSTREAM を取れないと確かめられない"
+      DETAIL="$DETAIL。$FETCH_ERROR。マージ済みでも、${UPSTREAM#refs/remotes/} を取れないと確かめられない"
     fi
+    HINT="マージを終える（コンフリクトの解消や hook の拒否の原因を直して、もう一度マージする）"
     if [[ -n "$DEFAULT_ROOT" ]] && git rev-parse -q --verify MERGE_HEAD >/dev/null; then
       DETAIL="$DETAIL。$DEFAULT の worktree（$DEFAULT_ROOT）に MERGE_HEAD が残っている（マージが途中で止まっている）"
+      HINT="$HINT。やり直すなら、途中のマージを git merge --abort で取り消してから直す"
+    fi
+    if [[ -n "$FETCH_ERROR" ]]; then
+      HINT="fetch の失敗の原因（ネットワークや認証）を直す"
     fi
     {
       echo "ERROR: $BRANCH は $DEFAULT にまだマージされていません（$DETAIL）。何も消していません"
-      echo "  修正方法: マージを終える（コンフリクトの解消や hook の拒否の原因を直して、もう一度マージする）。"
-      echo "  やり直すなら、途中のマージを git merge --abort で取り消してから直す。そのあと、もう一度実行する"
+      echo "  修正方法: $HINT。そのあと、もう一度実行する"
     } >&2
     exit 1
   fi
