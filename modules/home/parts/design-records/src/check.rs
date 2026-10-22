@@ -848,13 +848,25 @@ mod tests {
 
     #[test]
     fn other_statuses_still_get_recommended_section_warnings() {
-        for status in ["proposed", "accepted", "withdrawn", "deferred"] {
+        for status in [
+            "proposed",
+            "accepted",
+            "withdrawn",
+            "deferred",
+            "superseded",
+            "deprecated",
+        ] {
             let set = one(1, |t| {
                 t.replace("status: accepted", &format!("status: {status}"))
                     .replace("### 確認\n", "")
             });
+            // superseded は superseded-by が無い違反も出すので、推奨の節の warning だけを見る
+            let warnings: Vec<String> = run(&set)
+                .into_iter()
+                .filter(|f| f.contains(": warning: "))
+                .collect();
             assert_eq!(
-                run(&set),
+                warnings,
                 [
                     "docs/adr/0001-decide-1.md: warning: no section `確認` (or `Confirmation`) (recommended)"
                 ],
