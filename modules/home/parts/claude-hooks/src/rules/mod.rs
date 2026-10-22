@@ -75,6 +75,7 @@ pub fn escape_hint(name: &str) -> String {
 mod block_main_commit;
 mod block_no_verify;
 mod block_secret_commit;
+mod check_merge_body_ja_terms;
 mod guard_branch_base;
 mod guard_exclusive_slurm;
 mod guard_gh_api;
@@ -106,6 +107,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &pre_pr_create_check::PrePrCreateCheck,
         &pre_merge_check::PreMergeCheck,
         &pre_git_merge_check::PreGitMergeCheck,
+        &check_merge_body_ja_terms::CheckMergeBodyJaTerms,
         &guard_git_merge::GuardGitMerge,
         &guard_git_stash::GuardGitStash,
         &guard_exclusive_slurm::GuardExclusiveSlurm,
