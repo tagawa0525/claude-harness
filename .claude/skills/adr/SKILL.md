@@ -75,11 +75,13 @@ repos:
   決定には確かめるものも帰結も無く、節の無いまま確定した ADR は後から書き足せないため。採らない理由を書く節は
   プロジェクトの運用に従う）。
   ほかの節を足してもよい
-- **フロントマター**のキーは `status`、`date` と次の 4 つ（MADR の `decision-makers` などに代えて、置き換えと参照を grep で
-  引けるようにする）。一覧は `[a, b]` の形で 1 行に書く
+- **フロントマター**のキーは `status`、`date` と次の 4 つ、それに書いてもよい 2 つ（MADR の `decision-makers` などに
+  代えて、置き換えと参照を grep で引けるようにする）。一覧は `[a, b]` の形で 1 行に書く
   - `requires`: 前提にしている ADR（`[ADR-NNNN]`）
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く
   - `issues`: きっかけの issue と、解決した issue（`["#12"]`）
+  - 書いてもよいキー `amends` / `amended-by`: 決定の一部だけを置き換えた ADR と、一部を置き換えられた ADR
+    （`[ADR-NNNN]`）。両方の ADR に書く。一部の置き換えはまれなので、すべての ADR には求めない
 - **status** は `proposed`、`accepted`、`rejected`、`withdrawn`（決める前に取り下げた）、`deferred`（後回しにした）、
   `superseded`、`deprecated`。`date` は最後に status が変わった日
 - **帰結**: 実装が決定に追いついていなければ、その差を書き、issue を立てて `issues` に入れる
@@ -93,8 +95,11 @@ repos:
 
 - **proposed と deferred の間**: 自由に直す。実装をマージするブランチで、帰結と確認を実装に合わせ、`status: accepted` にする
 - **確定した後**（accepted、rejected、withdrawn、superseded、deprecated）に直してよいのは、誤字、文法、マークアップ、
-  壊れたリンク、フロントマターの `status` / `superseded-by` / `date`、補足の節への日付つきの追記（`- YYYY-MM-DD: …`）、日本語の辞書に合わせた、意味を変えない語の置き換えだけ
+  壊れたリンク、フロントマターの `status` / `superseded-by` / `date` / `amends` / `amended-by`、補足の節への日付つきの追記（`- YYYY-MM-DD: …`）、日本語の辞書に合わせた、意味を変えない語の置き換えだけ
 - **置き換え**: 新しい ADR は、古い決定のうちまだ有効な部分を書き直して含める（採用中の ADR だけで今の決定が分かる
   ように）。古い方は `status: superseded` と `superseded-by` を書く。古い方を前提にしていた ADR を
   `grep -l 'requires:.*ADR-NNNN' docs/adr` で引き、見直す
+- **一部の置き換え**: 古い決定の一部だけを変える ADR は、本文に「これは ADR-NNNN の「…」の部分を置き換える。ほかの
+  部分は変わらない」と古い ADR の語で書き、`amends` に古い ADR を挙げる。古い方は status を変えず、新しい ADR が
+  効力を持ったら（accepted にしたら）`amended-by` に新しい ADR を足す。`check` が両方向の一致を確かめる
 - main にマージする前は、ブランチの上の ADR を status によらず直してよい
