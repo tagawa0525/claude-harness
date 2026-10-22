@@ -402,10 +402,13 @@ exit 0
                 Err(e) if e.raw_os_error() == Some(26) => {
                     std::thread::sleep(std::time::Duration::from_millis(10))
                 }
-                _ => break,
+                _ => return path.to_string_lossy().into_owned(),
             }
         }
-        path.to_string_lossy().into_owned()
+        panic!(
+            "偽の検査が 1 秒たっても Text file busy のまま: {}",
+            path.display()
+        );
     }
 
     /// 判定できない理由（output::notice）はプロセスに 1 つの置き場に集まり、take_notices は全部を取り出す。
