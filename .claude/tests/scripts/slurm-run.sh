@@ -184,6 +184,15 @@ assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
+it "slurm-run: r995 以外で古い入口の ~/r995 の下から投げたら、投げずにエラー"
+rm -f "$TEST_ROOT/sbatch.args"
+mkdir -p "$HOME/r995/proj"
+cd "$HOME/r995/proj" || exit 1
+out=$(FAKE_HOST=t14g4 "$RUN" -t 1 xlc-2G 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_file_missing "$TEST_ROOT/sbatch.args"
+
 it "slurm-run: 名前がファイル名に使えない文字を含んだらエラー"
 cd "$HOME/github/proj" || exit 1
 out=$("$RUN" -t 1 'xlc 2G/a' 'true' 2>&1)
