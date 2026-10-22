@@ -5,10 +5,13 @@
   lib,
   rustPlatform,
   git,
+  jq,
   callPackage,
 }:
 let
   gitCheckConfig = callPackage ../lib/git-check-config.nix { };
+  # git merge の本文の語の検査（check-merge-body-ja-terms）が呼ぶ、commit-msg の hook と同じ textlint と設定
+  jaTermsTextlint = callPackage ../ja-terms/textlint.nix { };
 in
 rustPlatform.buildRustPackage {
   pname = "claude-hooks";
@@ -24,11 +27,29 @@ rustPlatform.buildRustPackage {
   buildAndTestSubdir = "claude-hooks";
   cargoRoot = "claude-hooks";
   cargoLock.lockFile = ./Cargo.lock;
+  # store のパスをバイナリに埋める（ルールが option_env! で読む）。hook は Claude Code が起動するので、
+  # 実行時の環境変数や PATH には頼らない
+  env = {
+    CLAUDE_HOOKS_TEXTLINT = "${jaTermsTextlint.textlint}/bin/textlint";
+    CLAUDE_HOOKS_TEXTLINT_CONFIG = "${jaTermsTextlint.config}";
+  };
   # ユニットテストをビルド時に実行する。pre_merge_check のテストは一時ディレクトリに git の
   # リポジトリを作るので、git を渡す（gh と hook の入出力を伴う結合テストは .claude/tests/hooks.sh）
   doCheck = true;
   nativeCheckInputs = [ git ];
   # sandbox に無い git の全体設定を環境の側から渡す（lib/git-check-config.nix）
   inherit (gitCheckConfig) preCheck;
+  # 埋めた textlint と辞書で、ビルドしたバイナリが git merge の本文の崩れた語を止めることを確かめる
+  # （ユニットテストは偽の textlint を使う）
+  doInstallCheck = true;
+  nativeInstallCheckInputs = [
+    git
+    jq
+  ];
+  installCheckPhase = ''
+    runHook preInstallCheck
+    bash ${./tests/merge-ja-terms.sh} $out/bin/claude-hooks
+    runHook postInstallCheck
+  '';
   meta.mainProgram = "claude-hooks";
 }

@@ -12,10 +12,14 @@
 //! commit-msg が同じ検査で止める）。エスケープは設けない（語を直せば通る）
 
 use super::Rule;
+use crate::git;
+use crate::git_args::{Item, option_values};
 use crate::input::Input;
-use crate::output::Finding;
+use crate::output::{Finding, notice};
 use crate::shell::{Arg, Shell};
+use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 pub struct CheckMergeBodyJaTerms;
 
@@ -27,15 +31,86 @@ const TEXTLINT_CONFIG: Option<&str> = option_env!("CLAUDE_HOOKS_TEXTLINT_CONFIG"
 /// `git merge args…` の本文。`-m` の値（複数なら空行で連ねる）か、`-F` のファイル（dir からの相対）の内容。
 /// 本文の無い形は Ok(None)、`-F` のファイルが読めなければ Err にパス
 fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
-    let _ = (args, dir);
-    Ok(None)
+    let mut parts = Vec::new();
+    for (opt, value) in option_values("merge", args) {
+        match opt {
+            Item::Short('m') | Item::Long("--message") => parts.push(message_value(value)),
+            Item::Short('F') | Item::Long("--file") => {
+                match std::fs::read_to_string(dir.join(value)) {
+                    Ok(text) => parts.push(text),
+                    Err(_) => return Err(value.to_string()),
+                }
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parts.join("\n\n")))
+}
+
+/// `-m` の値。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は本文を取り出し、
+/// ほかは書いたまま（展開しない）
+fn message_value(text: &str) -> String {
+    heredoc_body(text).unwrap_or_else(|| text.to_string())
+}
+
+/// `$(cat <<[-]DELIM\n本文\nDELIM\n)` の本文。区切りのクォート（'EOF'、"EOF"）は外す。`<<-` は行の先頭の
+/// タブを外す
+fn heredoc_body(text: &str) -> Option<String> {
+    let rest = text.strip_prefix("$(cat <<")?.strip_suffix(')')?;
+    let (dash, rest) = match rest.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, rest),
+    };
+    let (head, body) = rest.split_once('\n')?;
+    let delim = head.trim().trim_matches(|c| c == '\'' || c == '"');
+    if delim.is_empty() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    for line in body.lines() {
+        let line = if dash {
+            line.trim_start_matches('\t')
+        } else {
+            line
+        };
+        if line == delim {
+            return Some(lines.join("\n"));
+        }
+        lines.push(line);
+    }
+    None
 }
 
 /// commit-msg が textlint に渡す部分（modules/home/parts/git.nix の ja_check）。件名が Merge / fixup! /
 /// squash! / Revert なら件名を除き、scissors の行から後を除く。空白だけなら None
 fn checked_text(message: &str) -> Option<String> {
-    let _ = message;
-    None
+    let lines: Vec<&str> = message.lines().collect();
+    // 件名は # で始まらない最初の行（commit-msg の `sed -n '/^#/!{p;q}'`）。除くのは、空でも # でもない
+    // 最初の行（`sed '0,/^[^#]/{//d}'`）
+    let subject = lines.iter().find(|l| !l.starts_with('#')).copied();
+    let drop_subject = subject.is_some_and(|s| {
+        ["Merge", "fixup!", "squash!", "Revert"]
+            .iter()
+            .any(|p| s.starts_with(p))
+    });
+    let scissors = format!("# {} >8 {}", "-".repeat(24), "-".repeat(24));
+    let mut dropped = !drop_subject;
+    let mut out: Vec<&str> = Vec::new();
+    for line in lines {
+        if line == scissors {
+            break;
+        }
+        if !dropped && !line.is_empty() && !line.starts_with('#') {
+            dropped = true;
+            continue;
+        }
+        out.push(line);
+    }
+    let text = out.join("\n");
+    (!text.trim().is_empty()).then(|| text + "\n")
 }
 
 /// textlint の結果
@@ -50,8 +125,84 @@ enum Lint {
 
 /// commit-msg と同じ引数で textlint を呼ぶ
 fn lint(textlint: &str, config: &str, text: &str) -> Lint {
-    let _ = (textlint, config, text);
-    Lint::Clean
+    let child = Command::new(textlint)
+        .args([
+            "--config",
+            config,
+            "--no-color",
+            "--stdin",
+            "--stdin-filename",
+            "COMMIT_EDITMSG.txt",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => return Lint::Failed(format!("{textlint} を起動できません（{e}）")),
+    };
+    // 本文は数 KB なので、書き終えてから出力を読んでもパイプは詰まらない
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(text.as_bytes())
+    {
+        let _ = child.kill();
+        return Lint::Failed(format!("textlint に本文を渡せません（{e}）"));
+    }
+    let out = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => return Lint::Failed(format!("textlint の終わりを待てません（{e}）")),
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    match out.status.code() {
+        Some(0) => Lint::Clean,
+        // prh の行（`  2:1  ✓ error  誤り => 正しい語  prh`）から「誤り => 正しい語」を取り出す
+        Some(1) => Lint::Terms(
+            stdout
+                .lines()
+                .filter(|l| l.contains(" => "))
+                .map(|l| {
+                    let l = l.trim_end().trim_end_matches("prh").trim();
+                    l.split_once("error")
+                        .map_or(l, |(_, rest)| rest)
+                        .trim()
+                        .to_string()
+                })
+                .collect(),
+        ),
+        _ => Lint::Failed(format!(
+            "textlint が失敗しました（{}）: {}{}",
+            out.status,
+            stdout.trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+    }
+}
+
+/// 崩れた語を止める文言
+fn deny_reason(terms: &[String]) -> String {
+    let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
+    format!(
+        "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
+         本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
+         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます",
+        list.join("\n")
+    )
+}
+
+/// commit-msg が語を検査しないリポジトリか: `upstream` リモートのある fork と、ローカルの commit-msg に
+/// 置き換わるリポジトリ（modules/home/parts/git.nix の commit-msg と同じ判定）
+fn commit_msg_skips(dir: &Path) -> bool {
+    if git::is_fork(dir) {
+        return true;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    git::git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .and_then(|common| std::fs::metadata(Path::new(&common).join("hooks/commit-msg")).ok())
+    .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 impl CheckMergeBodyJaTerms {
@@ -62,8 +213,44 @@ impl CheckMergeBodyJaTerms {
         shell: &Shell,
         textlint: Option<(&str, &str)>,
     ) -> Vec<Finding> {
-        let _ = (input, shell, textlint);
-        Vec::new()
+        let mut out = Vec::new();
+        for cmd in shell.commands() {
+            let Some(("merge", args)) = cmd.git_subcommand() else {
+                continue;
+            };
+            let dir = shell.target_dir(cmd, &input.cwd);
+            let message = match merge_message(args, &dir) {
+                Ok(Some(m)) => m,
+                Ok(None) => continue,
+                // `-F -`（標準入力）や読めないパスは、git merge 自身が読むか失敗する
+                Err(path) => {
+                    notice(format!(
+                        "check-merge-body-ja-terms: git merge -F {path} を読めないので、本文の語を判定していません"
+                    ));
+                    continue;
+                }
+            };
+            let Some(text) = checked_text(&message) else {
+                continue;
+            };
+            if commit_msg_skips(&dir) {
+                continue;
+            }
+            let Some((textlint, config)) = textlint else {
+                notice(
+                    "check-merge-body-ja-terms: このビルドには textlint が埋め込まれていないので、git merge の本文の語を判定していません（nix でビルドしたものだけが検査する）".to_string(),
+                );
+                continue;
+            };
+            match lint(textlint, config, &text) {
+                Lint::Clean => {}
+                Lint::Terms(terms) => out.push(Finding::Deny(deny_reason(&terms))),
+                Lint::Failed(why) => notice(format!(
+                    "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
+                )),
+            }
+        }
+        out
     }
 }
 
@@ -84,13 +271,16 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
-    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）
+    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）。テストは並行に走るので、同じ tag でも
+    /// 呼ぶたびに別のディレクトリにする
     struct TempDir(PathBuf);
 
     impl TempDir {
         fn new(tag: &str) -> TempDir {
+            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let dir = std::env::temp_dir().join(format!(
-                "claude-hooks-merge-body-{tag}-{}",
+                "claude-hooks-merge-body-{tag}-{}-{seq}",
                 std::process::id()
             ));
             let _ = std::fs::remove_dir_all(&dir);
@@ -107,7 +297,7 @@ mod tests {
 
     /// textlint の代わり。commit-msg と同じ引数で呼ばれたときだけ、本文の「誤語」を prh の形（誤語 => 正語）で
     /// 報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
-    /// （実物の textlint と辞書は modules/home/parts/tests/claude-hooks-merge-ja-terms.sh が確かめる）
+    /// （実物の textlint と辞書は tests/merge-ja-terms.sh が確かめる）
     const FAKE_TEXTLINT: &str = r#"#!/bin/sh
 [ "$1 $2 $3 $4 $5 $6" = "--config CONFIG --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt" ] || exit 3
 body=$(cat)

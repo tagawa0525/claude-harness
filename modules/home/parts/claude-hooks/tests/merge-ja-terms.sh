@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# nix でビルドした claude-hooks の check-merge-body-ja-terms が、埋めた textlint と辞書（ja-terms の prh.yml）で
+# git merge の本文の崩れた語を止め、正しい語を通すことを確かめる（package.nix の installCheckPhase が呼ぶ）。
+# ルールの細かい判定は、偽の textlint を使うユニットテスト（src/rules/check_merge_body_ja_terms.rs）が見る。
+# 崩れた語をわざと含むので、語の検査から外す（.textlintignore）
+#
+# 使い方: merge-ja-terms.sh <claude-hooks の実行ファイル>
+set -euo pipefail
+
+BIN=$1
+REPO=$(mktemp -d)
+trap 'rm -rf "$REPO"' EXIT
+git -C "$REPO" init -q
+
+run() {
+  jq -n --arg c "$1" --arg d "$REPO" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+    "$BIN" pre-tool-use --rule check-merge-body-ja-terms
+}
+
+fail() {
+  echo "FAIL: $1" >&2
+  echo "$2" >&2
+  exit 1
+}
+
+out=$(run "git merge --no-ff feat/a -m \"\$(cat <<'EOF'
+Merge: a
+
+## Why
+掃引して計算を流し直す
+EOF
+)\"")
+decision=$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<<"$out")
+[ "$decision" = deny ] || fail "崩れた語を止めるはず" "$out"
+reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out")
+for term in "掃引 => スイープ" "流し直す => 再実行する"; do
+  grep -qF "$term" <<<"$reason" || fail "「$term」を示すはず" "$out"
+done
+
+out=$(run "git merge --no-ff feat/a -m 'Merge: a' -m '確認の結果を再実行する'")
+[ -z "$out" ] || fail "正しい語は何も出さずに通すはず" "$out"
+
+echo "ok: check-merge-body-ja-terms"
