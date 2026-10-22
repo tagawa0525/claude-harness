@@ -147,21 +147,18 @@ pub enum Item<'a> {
 
 /// サブコマンド `sub` の引数を、短縮形、長い形、位置引数に分けて読む。オプションの値は読み飛ばす
 pub fn items<'a>(sub: &str, args: &'a [Arg]) -> Vec<Item<'a>> {
-    scan(sub, args).into_iter().map(|(item, _)| item).collect()
-}
-
-/// サブコマンド `sub` の、値を取るオプションとその値、値を書いた引数を順に（`-m v` / `-mv` / `--message v` /
-/// `--message=v`）。値の無いまま終わったもの（末尾の `-m`）は含めない
-pub fn option_values<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, &'a str, &'a Arg)> {
-    scan(sub, args)
+    items_with_values(sub, args)
         .into_iter()
-        .filter_map(|(item, value)| value.map(|(v, a)| (item, v, a)))
+        .map(|(item, _)| item)
         .collect()
 }
 
-/// [`items`] の読み方で、値を取るオプションには値と、値を書いた引数を添える
-#[allow(clippy::type_complexity)]
-fn scan<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, Option<(&'a str, &'a Arg)>)> {
+/// [`items_with_values`] の 1 つ: 読んだ引数と、値を取るオプションならその値と値を書いた引数
+pub type ItemValue<'a> = (Item<'a>, Option<(&'a str, &'a Arg)>);
+
+/// [`items`] の読み方で、値を取るオプションには値と、値を書いた引数を添える（`-m v` / `-mv` /
+/// `--message v` / `--message=v`）。値の無いまま終わったもの（末尾の `-m`）は値が None
+pub fn items_with_values<'a>(sub: &str, args: &'a [Arg]) -> Vec<ItemValue<'a>> {
     let options = value_options(sub);
     let mut out = Vec::new();
     let mut it = args.iter();

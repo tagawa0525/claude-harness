@@ -13,7 +13,7 @@
 
 use super::Rule;
 use crate::git;
-use crate::git_args::{Item, items, option_values};
+use crate::git_args::{Item, items, items_with_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::{self, Arg, Shell};
@@ -29,87 +29,118 @@ const JA_TERMS_MESSAGE: Option<&str> = option_env!("CLAUDE_HOOKS_JA_TERMS_MESSAG
 /// 本文を判定できない理由
 #[derive(Debug, PartialEq)]
 enum Undecided {
-    /// `-F -`（標準入力）
-    Stdin,
-    /// シェルが展開する値（`"$MSG"`、`-F "$TMPDIR/m"`）。書いたまま
-    Expanded(String),
+    /// シェルが展開する値（`-m "$MSG"`、`-F "$TMPDIR/m"`）。オプションの名前
+    Expanded(&'static str),
     /// 読めない `-F` のファイル
     Unreadable(String),
 }
 
-/// `git merge args…` の本文。`-m` の値（複数なら空行で連ねる）か、`-F` のファイル（dir からの相対。`~` は
-/// HOME）の内容。git は先頭の空行や --cleanup の整えを commit-msg の後で行うので、書いたままにする。
-/// 本文の無い形は Ok(None)
+/// 本文を決めるオプション
+#[derive(Clone, Copy)]
+enum MessageOption {
+    Message,
+    File,
+    NoMessage,
+}
+
+fn message_option(item: &Item) -> Option<MessageOption> {
+    match item {
+        Item::Short('m') | Item::Long("--message") => Some(MessageOption::Message),
+        Item::Short('F') | Item::Long("--file") => Some(MessageOption::File),
+        Item::Long("--no-message") => Some(MessageOption::NoMessage),
+        _ => None,
+    }
+}
+
+/// `git merge args…` の本文を、git と同じ順で組み立てる（builtin/merge.c の option_parse_message と
+/// option_read_message）: `-m` の前は空行、`-F` の前は改行 1 つ（どちらも先に本文があるときだけ）、
+/// `--no-message` はそれまでを消す。`-F` は `-` も名前のファイルとして、dir からの相対で読む（`~` は HOME）。
+/// git は先頭の空行や --cleanup の整えを commit-msg の後で行うので、書いたままにする。本文の無い形は Ok(None)
 fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, Undecided> {
-    let mut parts = Vec::new();
-    for (opt, value, arg) in option_values("merge", args) {
-        match opt {
-            Item::Short('m') | Item::Long("--message") => parts.push(literal(value, arg)?),
-            // `-F -` は標準入力。`-` という名前のファイルを読まない
-            Item::Short('F') | Item::Long("--file") if value == "-" => {
-                return Err(Undecided::Stdin);
-            }
-            Item::Short('F') | Item::Long("--file") => {
-                let path = literal(value, arg)?;
-                match std::fs::read_to_string(shell::resolve(&shell::home(), dir, &path)) {
-                    Ok(text) => parts.push(text),
-                    Err(_) => return Err(Undecided::Unreadable(path)),
+    let mut buf = String::new();
+    let mut have = false;
+    for (item, value) in items_with_values("merge", args) {
+        match (message_option(&item), value) {
+            (Some(MessageOption::Message), Some((value, arg))) => {
+                if !buf.is_empty() {
+                    buf.push_str("\n\n");
                 }
+                buf.push_str(&literal(value, arg, "-m")?);
+                have = true;
+            }
+            (Some(MessageOption::File), Some((value, arg))) => {
+                let path = literal(value, arg, "-F")?;
+                let text = std::fs::read_to_string(shell::resolve(&shell::home(), dir, &path))
+                    .map_err(|_| Undecided::Unreadable(path))?;
+                if !buf.is_empty() {
+                    buf.push('\n');
+                }
+                buf.push_str(&text);
+                have = true;
+            }
+            (Some(MessageOption::NoMessage), _) => {
+                buf.clear();
+                have = false;
             }
             _ => {}
         }
     }
-    if parts.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(parts.join("\n\n")))
+    Ok(have.then_some(buf))
 }
 
 /// 値を書いたままの文字列にする。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は
-/// 本文を取り出す。単引用符の値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
-/// バッククォートを含むものは、シェルが展開した後の値が分からない
-fn literal(value: &str, arg: &Arg) -> Result<String, Undecided> {
+/// 本文を取り出す。単引用符だけの値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
+/// バッククォートを含むもの（単引用符に `"$X"` が続く値を含む）は、シェルが展開した後の値が分からない
+fn literal(value: &str, arg: &Arg, option: &'static str) -> Result<String, Undecided> {
     let expands = |t: &str| t.contains('$') || t.contains('`');
-    if arg.raw.starts_with('\'') {
+    let raw = arg.raw.as_str();
+    if raw.len() >= 2
+        && raw.starts_with('\'')
+        && raw.ends_with('\'')
+        && raw.matches('\'').count() == 2
+    {
         return Ok(value.to_string());
     }
     if let Some((body, quoted)) = heredoc_body(value) {
         return if quoted || !expands(&body) {
             Ok(body)
         } else {
-            Err(Undecided::Expanded(value.to_string()))
+            Err(Undecided::Expanded(option))
         };
     }
     if expands(value) {
-        return Err(Undecided::Expanded(value.to_string()));
+        return Err(Undecided::Expanded(option));
     }
     Ok(value.to_string())
 }
 
-/// commit-msg を呼ばない指定か（マージコミットを作らない、hook を飛ばす）。`--ff` / `--no-ff` / `--ff-only` と
-/// `--squash` / `--no-squash` は、git と同じく後ろのものが勝つ
+/// commit-msg を呼ばない指定か（マージコミットを作らない、作る前に止まる、hook を飛ばす）。`--ff` / `--no-ff` /
+/// `--ff-only`、`--squash` / `--no-squash`、`--commit` / `--no-commit`、`--verify` / `--no-verify` は、git と同じく
+/// 後ろのものが勝つ
 fn makes_no_commit(args: &[Arg]) -> bool {
-    let (mut ff_only, mut squash, mut no_verify) = (false, false, false);
+    let (mut ff_only, mut squash, mut no_commit, mut no_verify) = (false, false, false, false);
     for item in items("merge", args) {
         match item {
-            Item::Long("--no-verify") => no_verify = true,
-            Item::Long("--verify") => no_verify = false,
             Item::Long("--ff-only") => ff_only = true,
             Item::Long("--ff" | "--no-ff") => ff_only = false,
             Item::Long("--squash") => squash = true,
             Item::Long("--no-squash") => squash = false,
+            Item::Long("--no-commit") => no_commit = true,
+            Item::Long("--commit") => no_commit = false,
+            Item::Long("--no-verify") => no_verify = true,
+            Item::Long("--verify") => no_verify = false,
             _ => {}
         }
     }
-    ff_only || squash || no_verify
+    ff_only || squash || no_commit || no_verify
 }
 
 /// `-m` か `-F` があるか
 fn has_message(args: &[Arg]) -> bool {
-    option_values("merge", args).iter().any(|(opt, _, _)| {
+    items_with_values("merge", args).iter().any(|(item, _)| {
         matches!(
-            opt,
-            Item::Short('m' | 'F') | Item::Long("--message" | "--file")
+            message_option(item),
+            Some(MessageOption::Message | MessageOption::File)
         )
     })
 }
@@ -271,8 +302,7 @@ impl CheckMergeBodyJaTerms {
                 Ok(None) => continue,
                 Err(why) => {
                     let why = match why {
-                        Undecided::Stdin => "-F - は標準入力から読む".to_string(),
-                        Undecided::Expanded(v) => format!("{v} はシェルが展開する"),
+                        Undecided::Expanded(opt) => format!("{opt} の値はシェルが展開する"),
                         Undecided::Unreadable(p) => format!("-F {p} を読めない"),
                     };
                     notice(format!(
