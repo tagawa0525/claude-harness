@@ -16,7 +16,7 @@
 # （squeue の %k）。サブエージェントは親と同じセッションなので、ブランチで見分ける。
 #
 # ログは r995 の ~/github/slurm-logs/<name>-<job>.out。ジョブは投げたときのパスで r995 の上で走るので、
-# r995 以外のホストでは ~/r995（r995 の ~/github の NFS）の下で投げる。
+# r995 以外のホストでは /mnt/r995/github（r995 の ~/github の NFS。テストは SLURM_RUN_NFS_ENTRY で置き換える）の下で投げる。
 #
 # 出力:
 #   JOB: <job id>
@@ -75,14 +75,15 @@ remote_logs="$HOME/github/slurm-logs"
 if [[ $(hostname) == r995 ]]; then
   local_logs=$remote_logs
 else
+  nfs_entry=${SLURM_RUN_NFS_ENTRY:-/mnt/r995/github}
   case "$PWD/" in
-    "$HOME/r995/"*) ;;
+    "$nfs_entry/"*) ;;
     *)
-      echo "ERROR: r995 以外では ~/r995 の下で投げる（ジョブは投げたときのパスで r995 の上で走る）: $PWD" >&2
+      echo "ERROR: r995 以外では $nfs_entry の下で投げる（ジョブは投げたときのパスで r995 の上で走る）: $PWD" >&2
       exit 1
       ;;
   esac
-  local_logs="$HOME/r995/slurm-logs"
+  local_logs="$nfs_entry/slurm-logs"
 fi
 mkdir -p "$local_logs"
 
