@@ -4,7 +4,7 @@ date: 2026-10-22
 requires: [ADR-0009]
 supersedes: []
 superseded-by:
-issues: []
+issues: ["#442"]
 ---
 
 # ADR-0051: 一部を置き換えた ADR と置き換えられた ADR を、フロントマターの amends と amended-by で両方向に結ぶ
@@ -41,6 +41,9 @@ ADR-0095、ADR-0156、ADR-0164、ADR-0173 のどれにも、置き換えた ADR-
   deprecated）求める。効力を持った ADR の `amends` に挙げた ADR は、`amended-by` にその ADR を挙げる。`amended-by` に
   挙げた ADR は、`amends` にこの ADR を挙げ、効力を持っている。proposed の ADR が `amends` に挙げた ADR の決定は、
   まだ全体が効いているので、`amended-by` を書かない
+- 一部を置き換えられるのは、効いている（効いていた）決定だけにする。`amended-by` を書いた ADR と、効力を持った ADR の
+  `amends` に挙げた ADR は、accepted、superseded、deprecated のどれかでなければ error にする。自分自身を挙げるのも
+  error にする
 - 古い ADR の status は変えない（決定の残りは効いている）。置き換えた部分は、新しい ADR が本文に古い ADR の語で書く
   （人が書く。検査はしない）
 - 2 つのキーは、すべての ADR に求めず、書いてもよいキーにする。一部の置き換えはまれで（xlc で 5 件、2026-10-22）、
@@ -73,7 +76,7 @@ ADR-0095、ADR-0156、ADR-0164、ADR-0173 のどれにも、置き換えた ADR-
 - 実装が決定に追いついていない点: xlc の 5 件の古い ADR と、ADR-0129、ADR-0132、ADR-0182、ADR-0183 のフロントマターは、
   この変更の後に xlc で書き足す。nixfiles の一部の置き換え（ADR-0049 と ADR-0051 から ADR-0009、ADR-0042 から ADR-0020、
   ADR-0025、ADR-0041 など、補足から指しているもの）も、まだフロントマターで結んでいない。pre-commit の検査は PATH の
-  `design-records`（rebuild の前は新しいキーを知らない版）で走るので、この変更を rebuild した後に書き足す
+  `design-records`（rebuild の前は新しいキーを知らない版）で走るので、この変更を rebuild した後に書き足す（#442）
 
 ### 確認
 
@@ -84,4 +87,6 @@ ADR-0095、ADR-0156、ADR-0164、ADR-0173 のどれにも、置き換えた ADR-
   （`undecided_amends_leaves_the_old_adr_whole`）。`amended-by` に挙げた ADR が `amends` に挙げていないか、効力を
   持っていなければ error（`amended_by_needs_amends_on_the_new_adr`、`old_adr_is_amended_only_after_the_new_one_took_effect`）。
   確定した後に 2 つのキーを書き足しても、本文の変更にならない（`adding_amends_and_amended_by_keeps_the_body`）
+- 効いていない決定の一部の置き換えと、自分自身を挙げるのは error（`only_decisions_in_effect_are_amended`、
+  `adrs_do_not_amend_themselves`）
 - xlc で両方向に書き足した後、`design-records check` が error を出さないことは、その作業で確かめる
