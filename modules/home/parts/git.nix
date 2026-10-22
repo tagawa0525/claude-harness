@@ -30,27 +30,12 @@ let
   # 使わない。検証: modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、
   # commit-msg）、modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
   localHookPath = name: ''"$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
-  # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が textlint を
-  # store のパスで呼ぶ。辞書は ./ja-terms/prh.yml。Markdown は textlint の組み込みのプラグインが、コードと
-  # テキストは @textlint/text が読む（コメントと文字列の日本語を含めて、ファイルの全体を見る）
-  textlint = pkgs.textlint.withPackages [ pkgs.textlint-rule-prh ];
-  jaTermsCodeExtensions = [
-    "txt"
-    "rs"
-    "py"
-    "sh"
-    "nix"
-    "toml"
-    "yaml"
-    "yml"
-    "json"
-  ];
-  jaTermsConfig = pkgs.writeText "ja-terms-textlintrc.json" (
-    builtins.toJSON {
-      plugins."@textlint/text".extensions = map (ext: ".${ext}") jaTermsCodeExtensions;
-      rules.prh.rulePaths = [ "${./ja-terms/prh.yml}" ];
-    }
-  );
+  # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が ja-terms-message を
+  # store のパスで呼ぶ。textlint、設定、ja-terms-message は claude-hooks の git merge のルールと共有する
+  # （./ja-terms/textlint.nix）
+  jaTermsTextlint = pkgs.callPackage ./ja-terms/textlint.nix { };
+  inherit (jaTermsTextlint) textlint;
+  jaTermsCodeExtensions = jaTermsTextlint.codeExtensions;
   # 拡張子は大文字と小文字を問わない。prh の辞書（prh.yml）は誤った語を並べるので外す
   jaTermsPathspecs = map (ext: ":(icase,glob)**/*.${ext}") ([ "md" ] ++ jaTermsCodeExtensions) ++ [
     ":(exclude,glob)**/prh.yml"
@@ -74,12 +59,11 @@ let
       textlint
     ];
     runtimeEnv = {
-      JA_TERMS_CONFIG = "${jaTermsConfig}";
+      JA_TERMS_CONFIG = "${jaTermsTextlint.config}";
       JA_TERMS_PATHSPECS = lib.concatStringsSep "\n" jaTermsPathspecs;
     };
     text = builtins.readFile ./ja-terms/staged.sh;
   };
-  jaTerms = "${textlint}/bin/textlint --config ${jaTermsConfig}";
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を実行する（下の pre-commit hook が呼ぶ）
@@ -371,18 +355,13 @@ in
         exit 0
       fi
 
-      # 日本語の崩れた語（ADR-0014）を、標準入力の本文で見る。commit -v の scissors の行から後（差分）は
-      # 除く。# で始まる行は、-m や -F（cleanup=whitespace）では消えずにコミットに残るので、除かない。
+      # 日本語の崩れた語を、メッセージのファイルで見る。検査する範囲（件名を除くか、scissors）は
+      # ja-terms-message（./ja-terms/message.sh）が決め、claude-hooks の git merge の本文の検査と共有する。
       # textlint（Node.js）は起動が重いので、軽い検査の後に呼ぶ
       # 検証: modules/home/parts/tests/ja-terms.sh
-      # 検査する本文が空白だけのときは textlint を呼ばない。標準入力が空だと、textlint は検査せずに
-      # 使い方の全文を出す（件名を除いた fixup!、squash!、Merge の本文が空の場合）
       ja_check() {
-        local rc=0 body
-        body=$(sed '/^# -\{24\} >8 -\{24\}$/,$d')
-        [[ "$body" =~ [^[:space:]] ]] || return 0
-        printf '%s\n' "$body" \
-          | ${jaTerms} --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt || rc=$?
+        local rc=0
+        ${jaTermsTextlint.messageCheck}/bin/ja-terms-message < "$MSG_FILE" || rc=$?
         if [ "$rc" -eq 1 ]; then
           echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
           exit 1
@@ -392,12 +371,11 @@ in
         fi
       }
 
-      # マージ・fixup/squash・Revert は Conventional Commits の対象外。件名は元のコミットからコピーしたもの
-      # （Merge は git が作るもの）なので、日本語の語は件名を除いた本文だけを見る（fixup / squash の本文は
-      # 畳まれて履歴に残る）
+      # マージ・fixup/squash・Revert は Conventional Commits の対象外（日本語の語は、ja-terms-message が件名を
+      # 除いた本文だけを見る）
       case "$SUBJECT" in
         Merge*|fixup!*|squash!*|Revert*)
-          ja_check < <(sed '0,/^[^#]/{//d}' "$MSG_FILE")
+          ja_check
           exit 0
           ;;
       esac
@@ -418,7 +396,7 @@ in
         echo "⚠️  件名が 50 文字を超えています ($LEN 文字)。短くできないか検討してください"
       fi
 
-      ja_check < "$MSG_FILE"
+      ja_check
       exit 0
     '';
   };

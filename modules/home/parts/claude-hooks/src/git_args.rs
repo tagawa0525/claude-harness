@@ -147,37 +147,58 @@ pub enum Item<'a> {
 
 /// サブコマンド `sub` の引数を、短縮形、長い形、位置引数に分けて読む。オプションの値は読み飛ばす
 pub fn items<'a>(sub: &str, args: &'a [Arg]) -> Vec<Item<'a>> {
+    items_with_values(sub, args)
+        .into_iter()
+        .map(|(item, _)| item)
+        .collect()
+}
+
+/// [`items_with_values`] の 1 つ: 読んだ引数と、値を取るオプションならその値と値を書いた引数
+pub type ItemValue<'a> = (Item<'a>, Option<(&'a str, &'a Arg)>);
+
+/// [`items`] の読み方で、値を取るオプションには値と、値を書いた引数を添える（`-m v` / `-mv` /
+/// `--message v` / `--message=v`）。値の無いまま終わったもの（末尾の `-m`）は値が None
+pub fn items_with_values<'a>(sub: &str, args: &'a [Arg]) -> Vec<ItemValue<'a>> {
     let options = value_options(sub);
     let mut out = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let t = a.text.as_str();
         if t == "--" {
-            out.extend(it.map(Item::Positional));
+            out.extend(it.map(|a| (Item::Positional(a), None)));
             break;
         }
         if let Some(long) = t.strip_prefix("--") {
-            let name = &t[..2 + long.find('=').unwrap_or(long.len())];
-            out.push(Item::Long(name));
-            if name == t && options.longs.contains(&name) {
-                it.next();
-            }
+            let end = 2 + long.find('=').unwrap_or(long.len());
+            let name = &t[..end];
+            let value = if name != t {
+                options.longs.contains(&name).then(|| (&t[end + 1..], a))
+            } else if options.longs.contains(&name) {
+                it.next().map(|v| (v.text.as_str(), v))
+            } else {
+                None
+            };
+            out.push((Item::Long(name), value));
             continue;
         }
         if !t.starts_with('-') || t == "-" {
-            out.push(Item::Positional(a));
+            out.push((Item::Positional(a), None));
             continue;
         }
         let cluster = &t[1..];
         for (i, ch) in cluster.char_indices() {
-            out.push(Item::Short(ch));
             if options.shorts.contains(ch) {
                 // 残りが無ければ次の語が値
-                if i + ch.len_utf8() == cluster.len() {
-                    it.next();
-                }
+                let rest = &cluster[i + ch.len_utf8()..];
+                let value = if rest.is_empty() {
+                    it.next().map(|v| (v.text.as_str(), v))
+                } else {
+                    Some((rest, a))
+                };
+                out.push((Item::Short(ch), value));
                 break;
             }
+            out.push((Item::Short(ch), None));
             if options.optional_shorts.contains(ch) {
                 break;
             }

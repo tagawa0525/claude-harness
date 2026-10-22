@@ -1,0 +1,95 @@
+---
+status: accepted
+date: 2026-10-22
+requires: [ADR-0014, ADR-0033]
+supersedes: []
+superseded-by:
+issues: ["#445"]
+---
+
+# ADR-0050: git merge の本文の日本語の語を、ツール呼び出しの前に commit-msg と同じ textlint で検査する
+
+## 背景
+
+GitHub を使わないリポジトリ（xlc）は、feature branch を `git merge --no-ff -m "<本文>"` で main に入れる。git は
+マージコミットの hook を pre-merge-commit → commit-msg の順に呼ぶ。pre-merge-commit は品質チェック（run-checks
+--merge）で数分かかり、commit-msg は本文の崩れた日本語の語を textlint と prh の辞書（ADR-0014）で数秒で検査する。
+本文に辞書で崩れた語（辞書が別の語に言い換える語）があると、数分の品質チェックを待ってから
+commit-msg で拒まれ、直してもう一度数分待つ。2026-10-22 の xlc のマージで 2 回起きた。
+
+git の hook の順は変えられない。pre-merge-commit には本文が渡らず（`-m` の値は commit-msg まで読めない）、
+pre-merge-commit の中で先に検査することもできない。
+
+ユーザーは /retro で挙がった案のうち、claude-hooks（Claude のツール呼び出しの前に走る PreToolUse の hook）で
+`git merge` の `-m` / `-F` の本文を先に検査する案を採った（2026-10-22）。
+
+## 検討した案
+
+- 案 A: claude-hooks に、`git merge` の `-m` / `-F` の本文を、commit-msg と同じ検査に渡して、崩れた語が
+  あれば「誤り => 正しい語」と修正方法を示して止めるルールを足す。検査の store のパスは、package.nix で
+  固定して渡す
+- 案 B: 品質チェックを pre-merge-commit から commit-msg に移し、語の検査の後に実行する。commit-msg は
+  本文の検査の場所で、品質チェックをそこに置くと hook の役割が混ざる。`git merge` 以外のコミットでも commit-msg は
+  呼ばれるので、品質チェックを実行する条件（マージのときだけ）を commit-msg で見分け直すことになる
+- 案 C: 検査の CLI（本文を受け取って辞書で検査するコマンド）を公開し、/git-merge のスキルの手順で、マージの前に呼ぶ。
+  手順を飛ばしたマージや、スキルを経ない `git merge` には効かない。hook のように機械で止まらない
+
+## 決定と理由
+
+案 A。
+
+- ツール呼び出しの前に止まるので、品質チェックを待たない。手元（r995、1 コア、2026-10-22 の同じ時刻に各 3 回）で、
+  ja-terms-message は 0.27〜0.32 秒、textlint を直に呼ぶと 0.32 秒。hook の全ルールで、崩れた語のある本文は
+  0.33 秒、正しい本文は 0.28〜0.33 秒、本文の無い `git merge` は 5〜11 ミリ秒。ほかの計算が走る時刻では 0.5 秒ほどに
+  延びた（textlint を直に呼んで 0.52〜0.54 秒）
+- 判定は commit-msg と同じにする。commit-msg の語の検査（件名が Merge / fixup! / squash! / Revert なら件名を除く、
+  scissors の行から後を除く、空白だけなら textlint を呼ばない、textlint の設定と引数）を 1 つのスクリプト
+  （ja-terms-message。`modules/home/parts/ja-terms/message.sh`、`textlint.nix`）にまとめ、commit-msg とこのルールが
+  同じものを呼ぶ。commit-msg が呼ばれない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`。後ろのオプションが勝つ。
+  グローバルの core.hooksPath を使わないリポジトリ）と、commit-msg が検査を飛ばすリポジトリ（`upstream` リモートのある fork、ローカルの commit-msg に
+  置き換わるリポジトリ）では、このルールも検査しない。commit-msg より厳しく止めると、git が通すマージまで止める
+- 最初の版は、検査する範囲（件名を除く、scissors）を Rust で書き直し、textlint と設定だけを共有した。ローカルの
+  レビューで、commit-msg の範囲を変えるとこのルールが黙ってずれる（通したマージが数分後に拒まれるか、通るマージを
+  止める）と指摘され、範囲ごとスクリプトに移した
+- 本文は git merge と同じ順で組み立て、書いたまま渡す（builtin/merge.c の option_parse_message と
+  option_read_message）。`-m` の前は空行、`-F` の前は改行 1 つで連ね、`--no-message` はそれまでを消し、`-F -` は
+  標準入力でなく `-` という名前のファイルを読む。先頭の空行と `--cleanup=strip` の # の行は commit-msg の後で除かれ、
+  commit-msg には書いたままの本文が渡る（いずれも git 2.56 で、ローカルの commit-msg に渡ったファイルと MERGE_MSG を
+  見て確かめた。2026-10-22）。途中の版は、整えを先に行い、`-F -` を標準入力とみなして、commit-msg と違う本文で
+  判定していた
+- `-m` の値は、ヒアドキュメント（`-m "$(cat <<'EOF' … EOF)"`）なら本文を取り出し、複数の `-m` は git と同じく
+  空行で連ねる。`-F` のファイルは、コマンドの行き先（`cd` と `git -C`）からの相対で読む。gh pr create の本文を
+  読む `body_text`（pre-pr-create-check）は、最初の 1 つの値の原文（クォートと `$(cat <<'EOF'` を含む）を返し、
+  `-m<値>` のまとまりも読まないので、git のオプションの読み方（git_args）に値を返す関数を足して使う
+- 既存の pre-git-merge-check（既定ブランチへのマージで ADR の数を見る）には入れず、別のルールにする。対象が違い
+  （commit-msg は既定ブランチ以外へのマージでも検査する）、pre-git-merge-check のエスケープ（ALLOW_MULTI_TOPIC）が
+  語の検査まで外すことになるため
+- 検査を起動できない、検査に失敗した、読めないファイル、シェルが展開する値（`-m "$MSG"`、`-F "$TMPDIR/m"`、
+  単引用符に `"$X"` が続く値。単引用符だけの値と、区切りをクォートしたヒアドキュメントを除く）で本文が分からないときは、判定できなかった
+  理由を利用者に見せて通す（ADR-0033）。commit-msg が同じ検査で止めるので、検査は抜けない
+- エスケープは設けない。語を置き換えれば通る
+
+## 帰結
+
+- 本文の語の誤りは、数分の品質チェックの前に、0.3〜0.5 秒で止まる
+- 検査の store のパスは、package.nix が crate を makeBinaryWrapper で包んで環境変数に固定する。ビルドに埋めると、
+  辞書に語を足すたびに crate の作り直しと全テストが走る（ローカルのレビューの指摘で、途中の版から替えた）。
+  cargo で直接ビルドしたバイナリ（`.claude/tests/hooks.sh` の既定）には無く、このルールは判定できない理由を出して
+  通す。nix で包んだもの（配置するもの）だけが検査する
+- 辞書、textlint の設定、検査する範囲を変えると、commit-msg と claude-hooks の両方が同じものを使う（textlint.nix と
+  message.sh が 1 か所）
+- `--no-ff` の無い `git merge -m` は、fast-forward になれば commit-msg を呼ばないが、このルールは fast-forward に
+  なるかを見ずに検査する（崩れた語を置き換えれば通るので、止めすぎの害は小さい）
+- マージの衝突の後に `git commit` でマージを終える形も、pre-merge-commit（pre-commit から呼ぶ）の後に commit-msg が
+  走るが、このルールは `git merge` だけを見る（#445）
+- git がメッセージに足す行（`--log` や `merge.log` の、マージするコミットの件名の一覧）は、このルールには見えない。
+  その件名に崩れた語があれば、今までどおり commit-msg が数分後に拒む。xlc と全体の設定は `merge.log` を使っていない
+  （2026-10-22）
+
+## 確認
+
+- ルールの判定（本文の取り出し、検査しない形、検査の終了コードの扱い）は、cargo のユニットテストが偽の
+  ja-terms-message で確かめる
+- 包んで渡す ja-terms-message と辞書で、崩れた語を止め、正しい語と Merge の件名を通すことは、package.nix の
+  installCheckPhase がビルドしたバイナリで確かめる（`nix build .#claude-hooks`、flake の checks）
+- commit-msg の判定が変わらないことは、`modules/home/parts/tests/ja-terms.sh` と `commit-msg-conventions.sh` で確かめる

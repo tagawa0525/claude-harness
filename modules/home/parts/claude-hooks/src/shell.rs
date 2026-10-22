@@ -618,14 +618,14 @@ fn unescape_double(s: &str) -> String {
     out
 }
 
-fn home() -> PathBuf {
+pub(crate) fn home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default()
 }
 
 /// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）
-fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
+pub(crate) fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     if p == "~" {
         return home.to_path_buf();
     }
