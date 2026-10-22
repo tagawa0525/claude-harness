@@ -75,6 +75,17 @@ git -C [TARGET_WORKTREE] rebase main
 コンフリクトしたら内容と解決案を示し、解決して `git rebase --continue` するか
 `git rebase --abort` するかを決める。
 
+`remap.commitRefs` が true のリポジトリでは、rebase と `commit --amend` の後に post-rewrite の hook が文書の中の
+コミットの hash を付け替える。付け替えは作業ツリーに残るだけなので、hook の出力に従って片付けてから次の「番号の重複」に進む
+（後の手順で amend したときも同じ。残したままマージすると、ブランチの文書は main の履歴に無い rebase 前の hash を指したまま main に入る）:
+
+- `📝 置き換えはコミットしていません`: `git -C [TARGET_WORKTREE] diff` で旧と新の hash の置き換えだけであることを確かめ、
+  コミットする（件名は `chore: remap the commit refs after the rebase` のように、きっかけを書く）
+- `❌ コミットの番号を付け直せませんでした`: 対応は二度と渡されないので、原因を直してから、出力の修正方法の
+  `commit-refs remap <保存した対応>` を `cd [TARGET_WORKTREE] &&` を付けて実行し（今のディレクトリの文書を書き換える）、
+  上と同じく確かめてコミットする。途中まで書き換えて止まったこともある（ERROR の最後の行に書き換えたファイルが出る）ので、
+  原因を直す前に `git -C [TARGET_WORKTREE] diff` で、書き換え済みの分を見ておく
+
 ### 番号の重複（rebase の後）
 
 設計の記録（docs/adr か docs/issues）のあるリポジトリでは、rebase の直後に番号の重複を確かめる。main にも
@@ -167,6 +178,16 @@ git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'
 EOF
 )"
 ```
+
+マージは hook（品質チェック、本文の語の検査）に止められることがある。成否は終了コードで判定するので、`git merge` の出力を
+`tail` などにつながず（終了コードが消える）、後片付けとは別の呼び出しにする。通ったら、main の先頭がこのマージコミットであること
+（`git -C [DEFAULT_WORKTREE] rev-parse HEAD^2`（none なら今の worktree）がブランチの先端と一致する）を確かめてから後片付けに進む。
+拒まれると、マージはステージされたまま main の worktree に MERGE_HEAD が残る:
+
+- 本文の語で拒まれたら、本文を直して `git -C [DEFAULT_WORKTREE] commit -m "…"` でそのマージを終える（品質チェックは
+  もう一度走る）。`git merge` をやり直すと MERGE_HEAD があるため拒まれる
+- 品質チェックで拒まれたら、`git -C [DEFAULT_WORKTREE] merge --abort` で取り消し、ブランチで直して「レビュー」の節のとおり
+  rebase の要否とチェックからやり直す
 
 ## 後片付け
 
