@@ -844,4 +844,58 @@ cd "$REPO" || exit 1
 assert_eq 1 $?
 assert_contains "$(git branch --list feat/unmerged)" "feat/unmerged"
 
+it "post-merge-cleanup: 未マージのブランチは worktree もブランチも消さずに ERROR で止まる"
+REPO="$TEST_ROOT/cleanup22/app"
+make_repo "$REPO"
+make_remote "$REPO"
+git -C "$REPO" switch -q -c feat/x
+commit_file "$REPO" a.txt "feat: a"
+git -C "$REPO" push -q -u origin feat/x
+git -C "$REPO" switch -q main
+git -C "$REPO" worktree add -q "$TEST_ROOT/cleanup22/app-feat-x" feat/x
+cd "$REPO" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: feat/x は main にまだマージされていません"
+assert_not_contains "$out" "WORKTREE_REMOVED"
+assert_file_exists "$TEST_ROOT/cleanup22/app-feat-x"
+assert_contains "$(git branch --list feat/x)" "feat/x"
+
+it "post-merge-cleanup: マージの途中（MERGE_HEAD あり）でも worktree もブランチも消さずに止まり、途中であることを示す"
+REPO="$TEST_ROOT/cleanup23/app"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
+commit_file "$REPO" a.txt "feat: a"
+git -C "$REPO" switch -q main
+git -C "$REPO" worktree add -q "$TEST_ROOT/cleanup23/app-feat-x" feat/x
+git -C "$REPO" merge -q --no-ff --no-commit feat/x
+cd "$REPO" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: feat/x は main にまだマージされていません"
+assert_contains "$out" "MERGE_HEAD"
+assert_contains "$out" "git merge --abort"
+assert_file_exists "$TEST_ROOT/cleanup23/app-feat-x"
+assert_contains "$(git branch --list feat/x)" "feat/x"
+
+it "post-merge-cleanup: ローカルの main がまだ pull されていなくても、origin/main にマージ済みなら片付ける"
+setup_merged_branch "$TEST_ROOT/cleanup24"
+cd "$TEST_ROOT/cleanup24/app" || exit 1
+git reset -q --hard HEAD~1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_file_missing "$TEST_ROOT/cleanup24/app-feat-x"
+assert_eq "" "$(git branch --list feat/x)"
+
+it "post-merge-cleanup: origin/main を fetch できなければ、fetch の失敗を添えて何も消さずに止まる"
+setup_merged_branch "$TEST_ROOT/cleanup25"
+cd "$TEST_ROOT/cleanup25/app" || exit 1
+git reset -q --hard HEAD~1
+git remote set-url origin "$TEST_ROOT/cleanup25/missing.git"
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "origin の fetch に失敗した"
+assert_file_exists "$TEST_ROOT/cleanup25/app-feat-x"
+assert_contains "$(git branch --list feat/x)" "feat/x"
+
 finish

@@ -4,6 +4,9 @@
 # Usage: post-merge-cleanup.sh <branch>
 #
 # 順に行う（gh-pr-merge スキルの「クリーンアップ」）:
+#   0. （1 の前）ローカルの <branch> の先端が既定ブランチ（なければ、追うリモートの既定ブランチを fetch した
+#      もの）の祖先でなければ、何も消さずに ERROR で止まる（マージが途中で止まったのに続けて呼ぶと、1 で worktree
+#      が、無視されたファイルごと消える。4 の -d で未マージに気づいても遅い）。ローカルのブランチが無ければ見ない
 #   1. <branch> をチェックアウトしている worktree があれば削除（変更が残っていれば失敗する）
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
@@ -15,7 +18,7 @@
 #      既定ブランチが origin を追うときは、origin に届かなければ 2 の fetch で止まる（既定ブランチを最新にできず、
 #      5 のリモートブランチの削除もできないので、続けない）。3 で残して続けるのは、既定ブランチがほかのリモート
 #      （fork の upstream）を追うとき
-#   4. ローカルブランチを削除（-d。未マージなら失敗する）
+#   4. ローカルブランチを削除（-d。0 で確かめたあとの安全網）
 #   5. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
 #      GitHub リモートでそのブランチを head とする open PR（fork からの upstream PR 等）があるとき
 #      （削除で PR が閉じる）は、削除せず残す
@@ -67,6 +70,46 @@ DEFAULT_ROOT=$(git worktree list --porcelain | awk -v ref="refs/heads/$DEFAULT" 
   /^worktree / { path = substr($0, 10) }
   /^branch /   { if ($2 == ref) print path }')
 cd "${DEFAULT_ROOT:-$MAIN_ROOT}"
+
+# --- 0. マージ済みか ---
+# 判定は先端が既定ブランチの祖先かどうか（squash や rebase のマージは、先端が履歴に残らないので未マージ扱い）。
+# gh pr merge の後はローカルの既定ブランチがまだ pull されていないので、追うリモートの既定ブランチも fetch して
+# 見る。fetch できなければ、その理由を添えて止める（マージ済みでもネットワークの失敗で止まりうる）。
+# refs/heads/ を付けるのは、同名のタグが先に解決されて別のコミットで判定されるのを避けるため
+if git show-ref --verify --quiet "refs/heads/$BRANCH" &&
+  ! git merge-base --is-ancestor "refs/heads/$BRANCH" "refs/heads/$DEFAULT"; then
+  MERGED=0
+  FETCH_ERROR=""
+  UPSTREAM=$(git for-each-ref --format='%(upstream)' "refs/heads/$DEFAULT")
+  if [[ "$UPSTREAM" == refs/remotes/* ]]; then
+    UP_REMOTE=$(git config "branch.$DEFAULT.remote")
+    if ! FETCH_OUT=$(git fetch -q "$UP_REMOTE" 2>&1); then
+      FETCH_ERROR="$UP_REMOTE の fetch に失敗した（${FETCH_OUT//$'\n'/ }）"
+    elif git merge-base --is-ancestor "refs/heads/$BRANCH" "$UPSTREAM"; then
+      MERGED=1
+    fi
+  fi
+  if ((!MERGED)); then
+    DETAIL="$DEFAULT${UPSTREAM:+、${UPSTREAM#refs/remotes/}}の履歴にブランチの先端が無い"
+    if [[ -n "$FETCH_ERROR" ]]; then
+      DETAIL="$DETAIL。$FETCH_ERROR。マージ済みでも、${UPSTREAM#refs/remotes/} を取れないと確かめられない"
+    fi
+    HINT="マージを終える（コンフリクトの解消や hook の拒否の原因を直して、もう一度マージする）"
+    if [[ -n "$DEFAULT_ROOT" ]] && git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+      DETAIL="$DETAIL。$DEFAULT の worktree（$DEFAULT_ROOT）に MERGE_HEAD が残っている（マージが途中で止まっている）"
+      HINT="$HINT。やり直すなら、途中のマージを git merge --abort で取り消してから直す"
+    fi
+    if [[ -n "$FETCH_ERROR" ]]; then
+      HINT="fetch の失敗の原因（ネットワークや認証）を直す。$HINT"
+    fi
+    {
+      echo "ERROR: $BRANCH は $DEFAULT にまだマージされていません（$DETAIL）。何も消していません"
+      echo "  修正方法: $HINT。そのあと、もう一度実行する"
+    } >&2
+    exit 1
+  fi
+fi
+
 if [[ -n "$WT_PATH" ]]; then
   git worktree remove "$WT_PATH"
   echo "WORKTREE_REMOVED: $WT_PATH"
