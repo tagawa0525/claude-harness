@@ -132,3 +132,4 @@ ADR-0008 の決定のうち、次を変える:
   指す `requires` が残っても通った。`always_run` に戻し、`check --changed` で warning を渡したファイルの分だけにする
 - **pre-commit の設定で `require_serial` を付けない版**: prek はファイルを分けて hook を並べて呼ぶので、
   `prek run --all-files` で ADR どうしの検査の指摘が呼んだ回数だけ重なった
+- 2026-10-22: 形の基準の「推奨は帰結・確認」は、ADR-0049 で `status: rejected` の ADR には求めないとした
