@@ -83,7 +83,8 @@ git -C [TARGET_WORKTREE] rebase main
   コミットする（件名は `chore: remap the commit refs after the rebase` のように、きっかけを書く）
 - `❌ コミットの番号を付け直せませんでした`: 対応は二度と渡されないので、原因を直してから、出力の修正方法の
   `commit-refs remap <保存した対応>` を `cd [TARGET_WORKTREE] &&` を付けて実行し（今のディレクトリの文書を書き換える）、
-  上と同じく確かめてコミットする
+  上と同じく確かめてコミットする。途中まで書き換えて止まったこともある（ERROR の最後の行に書き換えたファイルが出る）ので、
+  原因を直す前に `git -C [TARGET_WORKTREE] diff` で、書き換え済みの分を見ておく
 
 ### 番号の重複（rebase の後）
 
@@ -178,13 +179,15 @@ EOF
 )"
 ```
 
-マージは hook（品質チェック、本文の語の検査）に止められることがある。`git merge` の出力を `tail` などにつながず、
-後片付けとは別の呼び出しにして、終了コードと、main の先頭がこのマージコミットであること（`git -C [DEFAULT_WORKTREE] rev-parse HEAD^2` が
-ブランチの先端と一致する）を確かめてから後片付けに進む（`git merge … | tail && post-merge-cleanup.sh` は、マージが拒まれても
-`tail` の終了コードで後片付けに進む）。hook に拒まれると main の worktree にマージの途中（MERGE_HEAD）が残るので、
-`git -C [DEFAULT_WORKTREE] rev-parse -q --verify MERGE_HEAD` があれば `git -C [DEFAULT_WORKTREE] merge --abort` で取り消す。
-本文の語で拒まれたらメッセージを直してマージをやり直し、チェックで拒まれたらブランチで直して「レビュー」の節のとおり
-rebase の要否とチェックからやり直す。
+マージは hook（品質チェック、本文の語の検査）に止められることがある。成否は終了コードで判定するので、`git merge` の出力を
+`tail` などにつながず（終了コードが消える）、後片付けとは別の呼び出しにする。通ったら、main の先頭がこのマージコミットであること
+（`git -C [DEFAULT_WORKTREE] rev-parse HEAD^2`（none なら今の worktree）がブランチの先端と一致する）を確かめてから後片付けに進む。
+拒まれると、マージはステージされたまま main の worktree に MERGE_HEAD が残る:
+
+- 本文の語で拒まれたら、本文を直して `git -C [DEFAULT_WORKTREE] commit -m "…"` でそのマージを終える（品質チェックは
+  もう一度走る）。`git merge` をやり直すと MERGE_HEAD があるため拒まれる
+- 品質チェックで拒まれたら、`git -C [DEFAULT_WORKTREE] merge --abort` で取り消し、ブランチで直して「レビュー」の節のとおり
+  rebase の要否とチェックからやり直す
 
 ## 後片付け
 
