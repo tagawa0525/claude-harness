@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# nix でビルドした claude-hooks の check-merge-body-ja-terms が、埋めた ja-terms-message と辞書（ja-terms の
+# nix でビルドした claude-hooks の check-merge-body-ja-terms が、包んで渡す ja-terms-message と辞書（ja-terms の
 # prh.yml）で git merge の本文の崩れた語を止め、正しい語と、commit-msg が見ない Merge の件名を通すことを
 # 確かめる（package.nix の installCheckPhase が呼ぶ）。本文の取り出しは、偽の ja-terms-message を使う
 # ユニットテスト（src/rules/check_merge_body_ja_terms.rs）が見る。

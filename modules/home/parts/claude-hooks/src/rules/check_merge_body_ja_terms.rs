@@ -4,10 +4,11 @@
 //! 本文に辞書（ja-terms の prh.yml）で崩れた語があると、数分の品質チェックを待ってから commit-msg が拒む。
 //! pre-merge-commit からは `-m` の本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの
 //! 前に走るこのルールで、commit-msg が呼ぶのと同じ検査（ja-terms-message。modules/home/parts/ja-terms/
-//! message.sh。検査する範囲と textlint の設定を持つ。ビルド時に store のパスを埋める）に本文を渡す（ADR-0050）。
+//! message.sh。検査する範囲と textlint の設定を持つ。store のパスは package.nix が包んで渡す）に本文を渡す（ADR-0050）。
 //!
 //! 対象は本文を持つ形（`-m` / `--message`、`-F` / `--file`）。本文の無い形（エディタ）は対象外。
-//! commit-msg が検査しない所（fork のリポジトリ、ローカルの commit-msg に置き換わるリポジトリ）も対象外。
+//! commit-msg を呼ばない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`、グローバルの core.hooksPath を
+//! 使わないリポジトリ）と、commit-msg が検査しない所（fork、ローカルの commit-msg に置き換わるリポジトリ）も対象外。
 //! 検査を起動できないか、検査に失敗したときは、判定できなかった理由を利用者に見せて通す（ADR-0033。
 //! commit-msg が同じ検査で止める）。エスケープは設けない（語を直せば通る）
 
@@ -23,8 +24,9 @@ use std::process::{Command, Stdio};
 
 pub struct CheckMergeBodyJaTerms;
 
-/// ビルド時に埋める ja-terms-message の store のパス（package.nix の env）。cargo で直接ビルドしたものには無い
-const JA_TERMS_MESSAGE: Option<&str> = option_env!("CLAUDE_HOOKS_JA_TERMS_MESSAGE");
+/// ja-terms-message の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドした
+/// ものには無い）
+const JA_TERMS_MESSAGE: &str = "CLAUDE_HOOKS_JA_TERMS_MESSAGE";
 
 /// 本文を判定できない理由
 #[derive(Debug, PartialEq)]
@@ -275,7 +277,7 @@ fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool {
 }
 
 impl CheckMergeBodyJaTerms {
-    /// `check` は埋めた ja-terms-message のパス（無ければ判定できない）。`global_hooks` は dir で見た
+    /// `check` は ja-terms-message のパス（無ければ判定できない）。`global_hooks` は dir で見た
     /// グローバルの core.hooksPath
     fn check_with(
         &self,
@@ -313,7 +315,7 @@ impl CheckMergeBodyJaTerms {
             };
             let Some(check) = check else {
                 notice(
-                    "check-merge-body-ja-terms: このビルドには ja-terms-message が埋め込まれていないので、git merge の本文の語を判定していません（nix でビルドしたものだけが検査する）".to_string(),
+                    "check-merge-body-ja-terms: ja-terms-message のパス（環境変数 CLAUDE_HOOKS_JA_TERMS_MESSAGE）が無いので、git merge の本文の語を判定していません（nix で包んだものだけが検査する）".to_string(),
                 );
                 continue;
             };
@@ -335,7 +337,8 @@ impl Rule for CheckMergeBodyJaTerms {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        self.check_with(input, shell, JA_TERMS_MESSAGE, &|dir| {
+        let check = std::env::var(JA_TERMS_MESSAGE).ok();
+        self.check_with(input, shell, check.as_deref(), &|dir| {
             git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
         })
     }
