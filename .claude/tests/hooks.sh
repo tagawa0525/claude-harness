@@ -1910,6 +1910,54 @@ for cmd in "bash -c 'git switch main'; git merge feat/behind" '(git switch main)
   assert_eq allow "$(decision "$out")"
 done
 
+it "guard-git-merge: 対象のブランチの worktree に未追跡のファイルがあれば deny（後片付けの worktree remove が止まる）"
+cd "$REPO" || exit 1
+git switch -q main
+git worktree add -q -b feat/wt "$TEST_ROOT/mergeshape-wt" main
+commit_file "$TEST_ROOT/mergeshape-wt" wt.txt "feat: wt"
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/wt -m "Merge: wt"')
+assert_eq allow "$(decision "$out")"
+echo out >"$TEST_ROOT/mergeshape-wt/trial1.out"
+echo out >"$TEST_ROOT/mergeshape-wt/trial2.out"
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/wt -m "Merge: wt"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "（2 件）"
+assert_contains "$(reason "$out")" "$TEST_ROOT/mergeshape-wt"
+assert_contains "$(reason "$out")" "trial1.out"
+assert_contains "$(reason "$out")" "コミット"
+assert_contains "$(reason "$out")" ".gitignore"
+
+it "guard-git-merge: 未コミットの変更が多いときは先頭の数件と残りの件数を示す"
+for i in 3 4 5 6 7 8 9; do echo out >"$TEST_ROOT/mergeshape-wt/trial$i.out"; done
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/wt -m "Merge: wt"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "（9 件）"
+assert_contains "$(reason "$out")" "ほか 4 件"
+rm "$TEST_ROOT"/mergeshape-wt/trial*.out
+
+it "guard-git-merge: 対象のブランチの worktree に未コミットの変更があれば deny"
+echo changed >"$TEST_ROOT/mergeshape-wt/wt.txt"
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/wt -m "Merge: wt"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "wt.txt"
+git -C "$TEST_ROOT/mergeshape-wt" checkout -q -- wt.txt
+
+it "guard-git-merge: 無視されたファイルだけの worktree は通す"
+echo '*.cache' >"$TEST_ROOT/mergeshape-wt/.gitignore"
+git -C "$TEST_ROOT/mergeshape-wt" add .gitignore
+git -C "$TEST_ROOT/mergeshape-wt" commit -q -m "chore: ignore cache"
+echo x >"$TEST_ROOT/mergeshape-wt/a.cache"
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/wt -m "Merge: wt"')
+assert_eq allow "$(decision "$out")"
+
+it "guard-git-merge: 既定ブランチの worktree の未追跡のファイルは検査しない（git が自分で止める）"
+echo x >"$REPO/untracked-on-main.txt"
+out=$(run_hook guard-git-merge 'git merge --no-ff feat/wt -m "Merge: wt"')
+assert_eq allow "$(decision "$out")"
+rm "$REPO/untracked-on-main.txt"
+git worktree remove --force "$TEST_ROOT/mergeshape-wt"
+git branch -q -D feat/wt
+
 it "guard-sbatch: sbatch を直接投げたら slurm-run.sh を示して止める"
 out=$(run_hook guard-sbatch "sbatch --exclusive --wait --wrap 'true'")
 assert_eq deny "$(decision "$out")"
