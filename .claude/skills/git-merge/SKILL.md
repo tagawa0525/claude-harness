@@ -75,10 +75,14 @@ git -C [TARGET_WORKTREE] rebase main
 コンフリクトしたら内容と解決案を示し、解決して `git rebase --continue` するか
 `git rebase --abort` するかを決める。
 
-`remap.commitRefs` が true のリポジトリでは、rebase の後に post-rewrite の hook が文書の中のコミットの hash を
-付け替え、`📝 置き換えはコミットしていません` を出す。付け替えは作業ツリーに残るだけなので、
-`git -C [TARGET_WORKTREE] diff` で旧と新の hash の置き換えだけであることを確かめてコミットしてから、チェックに進む
-（残したままマージすると、main の文書が main の履歴に無い hash を指す）。
+`remap.commitRefs` が true のリポジトリでは、rebase と `commit --amend` の後に post-rewrite の hook が文書の中の
+コミットの hash を付け替える。付け替えは作業ツリーに残るだけなので、hook の出力に従って片付けてから次の「番号の重複」に進む
+（残したままマージすると、main の文書が main の履歴に無い hash を指す）:
+
+- `📝 置き換えはコミットしていません`: `git -C [TARGET_WORKTREE] diff` で旧と新の hash の置き換えだけであることを確かめ、
+  `chore(docs): remap the commit refs after the rebase onto main` のような件名でコミットする
+- `❌ コミットの番号を付け直せませんでした`: 対応は二度と渡されないので、出力の修正方法の `commit-refs remap <保存した対応>` を
+  原因を直してから実行し、上と同じく確かめてコミットする
 
 ### 番号の重複（rebase の後）
 
@@ -174,9 +178,10 @@ EOF
 ```
 
 マージは hook（品質チェック、本文の語の検査）に止められることがある。`git merge` の出力を `tail` などにつながず、
-後片付けとは別の呼び出しにして、終了コードと `git log -1` でマージコミットができたことを確かめてから後片付けに進む
-（`git merge … | tail && post-merge-cleanup.sh` は、マージが拒まれても `tail` の終了コードで後片付けに進み、
-マージの途中で worktree を消す）。
+後片付けとは別の呼び出しにして、終了コードと `git -C [DEFAULT_WORKTREE] log -1` でマージコミットができたことを確かめてから
+後片付けに進む（`git merge … | tail && post-merge-cleanup.sh` は、マージが拒まれても `tail` の終了コードで後片付けに進む）。
+拒まれたときは main の worktree にマージの途中（MERGE_HEAD）が残るので、`git -C [DEFAULT_WORKTREE] merge --abort` で
+取り消し、理由に従って直して（本文の語ならメッセージを、チェックならブランチを）からマージをやり直す。
 
 ## 後片付け
 
