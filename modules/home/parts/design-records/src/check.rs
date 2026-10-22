@@ -510,15 +510,39 @@ fn check_amendments(docs: &[Adr], out: &mut Found) {
     for doc in docs {
         by_number.entry(doc.number).or_insert(doc);
     }
+    for (&n, doc) in &by_number {
+        for key in ["amends", "amended-by"] {
+            if doc.adr_items(key).contains(&n) {
+                out.error(doc.path, None, format!("`{key}` names the ADR itself"));
+            }
+        }
+        // 一部を置き換えられるのは、効いている（効いていた）決定だけ
+        if !doc.items("amended-by").is_empty() && !TOOK_EFFECT.contains(&doc.status()) {
+            out.error(
+                doc.path,
+                None,
+                format!("`amended-by` is set but status is {}", doc.status()),
+            );
+        }
+    }
     for (&new, doc) in &by_number {
         if !TOOK_EFFECT.contains(&doc.status()) {
             continue;
         }
-        for old in doc.adr_items("amends") {
-            if by_number
-                .get(&old)
-                .is_some_and(|o| !o.adr_items("amended-by").contains(&new))
-            {
+        for old in doc.adr_items("amends").into_iter().filter(|&o| o != new) {
+            let Some(amended) = by_number.get(&old) else {
+                continue;
+            };
+            if !TOOK_EFFECT.contains(&amended.status()) {
+                out.error(
+                    doc.path,
+                    None,
+                    format!(
+                        "amends ADR-{old:04}, but ADR-{old:04} is {}",
+                        amended.status()
+                    ),
+                );
+            } else if !amended.adr_items("amended-by").contains(&new) {
                 out.error(
                     doc.path,
                     None,
@@ -528,7 +552,11 @@ fn check_amendments(docs: &[Adr], out: &mut Found) {
         }
     }
     for (&old, doc) in &by_number {
-        for new in doc.adr_items("amended-by") {
+        for new in doc
+            .adr_items("amended-by")
+            .into_iter()
+            .filter(|&n| n != old)
+        {
             let Some(amender) = by_number.get(&new) else {
                 continue;
             };
@@ -1263,7 +1291,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn only_decisions_in_effect_are_amended() {
         for status in ["proposed", "deferred", "rejected", "withdrawn"] {
             let set = files(&[
@@ -1299,7 +1326,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0051"]
     fn adrs_do_not_amend_themselves() {
         let set = files(&[with_front(
             Adr {
