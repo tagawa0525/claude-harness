@@ -42,17 +42,18 @@ ADR-0095、ADR-0156、ADR-0164、ADR-0173 のどれにも、置き換えた ADR-
   挙げた ADR は、`amends` にこの ADR を挙げ、効力を持っている。proposed の ADR が `amends` に挙げた ADR の決定は、
   まだ全体が効いているので、`amended-by` を書かない
 - 一部を置き換えられるのは、効いている（効いていた）決定だけにする。`amended-by` を書いた ADR と、効力を持った ADR の
-  `amends` に挙げた ADR は、accepted、superseded、deprecated のどれかでなければ error にする。自分自身を挙げるのも
-  error にする
+  `amends` に挙げた ADR は、accepted、superseded、deprecated のどれかでなければ error にする。superseded と deprecated を
+  許すのは、一部を置き換えた後に全体が置き換えられた（廃止された）ADR が `amended-by` を残すため。全体が置き換えられた
+  後に新しく一部を置き換える誤りは、時の前後をフロントマターに持たないので検査しない。自分自身を挙げるのも error にする
 - 古い ADR の status は変えない（決定の残りは効いている）。置き換えた部分は、新しい ADR が本文に古い ADR の語で書く
   （人が書く。検査はしない）
 - 2 つのキーは、すべての ADR に求めず、書いてもよいキーにする。一部の置き換えはまれで（xlc で 5 件、2026-10-22）、
   空のキーを求めると、4 つのプロジェクトのすべての ADR に 2 行を足すことになる。`design-records new` のテンプレートにも
   書かない
-- 確定した後も、`amended-by` と `amends` を書き足してよい。`amended-by` は、`superseded-by` と同じく、新しい ADR が決まった
+- 確定した後も、`amended-by` と `amends` を直してよい（`superseded-by` と同じく、本文の変更として扱わない）。`amended-by` は、`superseded-by` と同じく、新しい ADR が決まった
   ときに古い ADR に書く。`amends` は新しい ADR を書くときに決まるが、この決定の前に確定した ADR（xlc の ADR-0129 など）は、
-  本文に書いた置き換えをフロントマターにも書くために足す。どちらも相手の ADR との一致を検査するので、片方だけの書き足しは
-  error になる
+  本文に書いた置き換えをフロントマターにも書くために足す。どちらも相手の ADR との一致を検査するので、片方だけの変更は
+  error になる。両方を揃えて消すか付け替える変更は検査で捕まらず、レビューで見る
 - `requires` は変えない。新しい ADR は、置き換えなかった部分を前提にするので、古い ADR を `requires` にも挙げてよい（検査は
   求めない）
 
