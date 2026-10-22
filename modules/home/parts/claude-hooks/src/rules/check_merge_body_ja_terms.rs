@@ -710,24 +710,38 @@ exit 0
     }
 
     #[test]
-    fn message_drops_leading_blank_lines_like_git() {
-        let dir = TempDir::new("blank");
-        std::fs::write(dir.0.join("msg.txt"), "\n\nMerge: a\n\n本文\n").unwrap();
+    fn message_is_passed_as_written_like_git_to_commit_msg() {
+        // git は先頭の空行と --cleanup=strip の # の行を、commit-msg の後で除く
+        let dir = TempDir::new("raw");
+        std::fs::write(dir.0.join("msg.txt"), "\n\nMerge: a\n\n# c\n本文\n").unwrap();
         assert_eq!(
-            merge_message(&args("git merge -F msg.txt feat/a"), &dir.0),
-            Ok(Some("Merge: a\n\n本文\n".to_string()))
+            merge_message(&args("git merge --cleanup=strip -F msg.txt feat/a"), &dir.0),
+            Ok(Some("\n\nMerge: a\n\n# c\n本文\n".to_string()))
         );
     }
 
     #[test]
-    fn message_drops_comment_lines_with_cleanup_strip() {
-        assert_eq!(
-            message("git merge --cleanup=strip -m 'Merge: a' -m '# 注\n本文' feat/a"),
-            Ok(Some("Merge: a\n\n本文".to_string()))
+    fn reports_message_with_shell_expansion_as_undecidable() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(check("git merge --no-ff feat/a -m 'Merge: a' -m \"$MSG\"").is_empty());
+        assert!(check("git merge --no-ff feat/a -F \"$TMPDIR/msg.txt\"").is_empty());
+        let notices = take_notices();
+        assert!(
+            notices.iter().filter(|n| n.contains("展開")).count() >= 2,
+            "{notices:?}"
         );
-        assert_eq!(
-            message("git merge --cleanup strip -m 'Merge: a' -m '# 注\n本文' feat/a"),
-            Ok(Some("Merge: a\n\n本文".to_string()))
-        );
+    }
+
+    #[test]
+    fn checks_literal_dollar_in_single_quotes() {
+        let r = deny_reason(&check(
+            "git merge --no-ff feat/a -m 'Merge: a' -m '$x 誤語'",
+        ));
+        assert!(r.contains("誤語 => 正語"), "{r}");
+    }
+
+    #[test]
+    fn ignores_merge_without_hooks() {
+        assert!(check("git merge --no-verify --no-ff feat/a -m 'Merge: a' -m '誤語'").is_empty());
     }
 }
