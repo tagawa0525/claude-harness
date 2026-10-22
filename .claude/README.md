@@ -117,26 +117,26 @@ GitHub リモートなしは両方で例外にする。片方だけが塞ぐと�
 
 ## スクリプトが担う手順
 
-| script                                  | 元の SKILL.md の手順                                                                                                  | 呼び出すスキル                                  |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                                                                  | git-info                                        |
-| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み、`.worktreelink` の共有                           | git-worktree, git-commit, delegate              |
-| `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数                                                        | gh-pr-create, gh-pr-merge                       |
-| `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）                                                        | git-branch                                      |
-| `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                                                                   | git-branch                                      |
-| `scripts/git-merge-state.sh`            | 対象の検証（main 自身・GitHub リモート・未コミット）と、BEHIND・STACKED_ON・worktree の収集                           | git-merge                                       |
-| `scripts/check-each-commit.sh`          | `<base>..HEAD` の各コミットを一時 worktree で検査コマンドにかけ、`hash 件名 exit=N` を出す                            | delegate                                        |
-| `scripts/review-level.sh`               | ローカルの `/code-review` のレベル（docs/ だけなら medium、他は high）と対象ブランチと worktree のパスの決定          | gh-pr-create, gh-pr-review, git-merge, delegate |
-| `scripts/base-moved.sh`                 | 比較元が分岐点から進み、ブランチと同じパスを触っているときの通知（fetch つき、deny しない）                           | gh-pr-create                                    |
-| `scripts/post-merge-cleanup.sh`         | worktree 削除 → main 最新化と rebuild・claude-sync の要否の通知 → 予約のタグの解放 → ブランチ削除                     | gh-pr-merge, git-merge                          |
-| `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                                            | gh-actions-check                                |
-| `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                                                        | gh-pr-create/merge/review, delegate             |
-| `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                                          | gh-wait-review, gh-pr-review                    |
-| `scripts/lib/pr-url.sh`                 | PR の URL の解析と `GH_REPO` の設定（source して使う。ADR-0032）                                                      | PR のスクリプト、gh-actions-diagnose            |
-| `scripts/slurm-history.sh`              | jobcomp（`/var/log/slurm/job_completions`）から、ジョブの見積もり・実績・比率を表にする（`--by-name` でジョブ名ごと） | slurm-run.sh のジョブの振り返り                 |
-| `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                                                        | gh-pr-review（language-checks 経由）, delegate  |
-| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                                                   | gh-pr-review, delegate                          |
-| `retro/scripts/*.sh`                    | 会話の記録からの拒否・失敗の集計、メモリの索引と実ファイルの突き合わせ                                                | retro                                           |
+| script                                  | 元の SKILL.md の手順                                                                                                             | 呼び出すスキル                                  |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `scripts/git-info.sh`                   | 状態の収集・整形、マージ済みブランチの worktree 検出                                                                             | git-info                                        |
+| `scripts/worktree-add.sh`               | `../<repo>-<branch>` 命名で worktree 作成、未コミット変更の持ち込み、`.worktreelink` の共有                                      | git-worktree, git-commit, delegate              |
+| `scripts/branch-topics.sh`              | ブランチの ADR・issue の追加と status の変化、型別のコミット数                                                                   | gh-pr-create, gh-pr-merge                       |
+| `scripts/rename-branch.sh`              | feature ブランチのリネーム（リモート更新は `--remote` で明示）                                                                   | git-branch                                      |
+| `scripts/rename-plan.sh`                | `docs/plans/` のランダム名計画書を `NNN_name.md` に                                                                              | git-branch                                      |
+| `scripts/git-merge-state.sh`            | 対象の検証（main 自身・GitHub リモート・未コミット）と、BEHIND・STACKED_ON・worktree の収集                                      | git-merge                                       |
+| `scripts/check-each-commit.sh`          | `<base>..HEAD` の各コミットを一時 worktree で検査コマンドにかけ、`hash 件名 exit=N` を出す                                       | delegate                                        |
+| `scripts/review-level.sh`               | ローカルの `/code-review` のレベル（docs/ だけなら medium、他は high）と対象ブランチと worktree のパスの決定                     | gh-pr-create, gh-pr-review, git-merge, delegate |
+| `scripts/base-moved.sh`                 | 比較元が分岐点から進み、ブランチと同じパスを触っているときの通知（fetch つき、deny しない）                                      | gh-pr-create                                    |
+| `scripts/post-merge-cleanup.sh`         | 未マージなら何も消さず ERROR → worktree 削除 → main 最新化と rebuild・claude-sync の要否の通知 → 予約のタグの解放 → ブランチ削除 | gh-pr-merge, git-merge                          |
+| `scripts/gh-actions-diagnose.sh`        | run 取得・失敗ジョブ特定・エラー抽出・原因分類（`CAUSE:`）                                                                       | gh-actions-check                                |
+| `scripts/gh-wait-review.sh`             | レビュー到着の待機（基準は最後のレビュー要求）                                                                                   | gh-pr-create/merge/review, delegate             |
+| `scripts/gh-review-requests.sh`         | Copilot 宛てレビュー要求の時刻を発生順に出す                                                                                     | gh-wait-review, gh-pr-review                    |
+| `scripts/lib/pr-url.sh`                 | PR の URL の解析と `GH_REPO` の設定（source して使う。ADR-0032）                                                                 | PR のスクリプト、gh-actions-diagnose            |
+| `scripts/slurm-history.sh`              | jobcomp（`/var/log/slurm/job_completions`）から、ジョブの見積もり・実績・比率を表にする（`--by-name` でジョブ名ごと）            | slurm-run.sh のジョブの振り返り                 |
+| `language-checks/scripts/run-checks.sh` | 言語検出とフォーマット → リント → テストの実行                                                                                   | gh-pr-review（language-checks 経由）, delegate  |
+| `gh-pr-review/scripts/*.sh`             | レビューコメントの取得・返信・resolve・次の行動判定                                                                              | gh-pr-review, delegate                          |
+| `retro/scripts/*.sh`                    | 会話の記録からの拒否・失敗の集計、メモリの索引と実ファイルの突き合わせ                                                           | retro                                           |
 
 ### worktree の間で共有するパス（`.worktreelink`）
 

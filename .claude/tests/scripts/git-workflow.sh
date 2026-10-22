@@ -887,4 +887,15 @@ assert_eq 0 $?
 assert_file_missing "$TEST_ROOT/cleanup24/app-feat-x"
 assert_eq "" "$(git branch --list feat/x)"
 
+it "post-merge-cleanup: origin/main を fetch できなければ、fetch の失敗を添えて何も消さずに止まる"
+setup_merged_branch "$TEST_ROOT/cleanup25"
+cd "$TEST_ROOT/cleanup25/app" || exit 1
+git reset -q --hard HEAD~1
+git remote set-url origin "$TEST_ROOT/cleanup25/missing.git"
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "origin の fetch に失敗した"
+assert_file_exists "$TEST_ROOT/cleanup25/app-feat-x"
+assert_contains "$(git branch --list feat/x)" "feat/x"
+
 finish
