@@ -1032,6 +1032,183 @@ mod tests {
         );
     }
 
+    /// `adr` のフロントマターの末尾に `extra` の行を足した組
+    fn with_front(adr: Adr, extra: &str) -> (String, String) {
+        let text = adr
+            .text()
+            .replacen("---\n\n#", &format!("{extra}---\n\n#"), 1);
+        (adr.path(), text)
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn amends_and_amended_by_link_partial_amendments_both_ways() {
+        let set = files(&[
+            with_front(
+                Adr {
+                    n: 1,
+                    ..Default::default()
+                },
+                "amended-by: [ADR-0002, ADR-0003]\n",
+            ),
+            with_front(
+                Adr {
+                    n: 2,
+                    requires: "[ADR-0001]",
+                    ..Default::default()
+                },
+                "amends: [ADR-0001]\n",
+            ),
+            with_front(
+                Adr {
+                    n: 3,
+                    status: "superseded",
+                    superseded_by: "ADR-0004",
+                    ..Default::default()
+                },
+                "amends: [ADR-0001]\n",
+            ),
+            with_front(
+                Adr {
+                    n: 4,
+                    supersedes: "[ADR-0003]",
+                    ..Default::default()
+                },
+                "",
+            ),
+        ]);
+        assert_eq!(run(&set), Vec::<String>::new());
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn amends_and_amended_by_name_existing_adrs() {
+        let set = files(&[with_front(
+            Adr {
+                n: 1,
+                ..Default::default()
+            },
+            "amends: [ADR-0009]\namended-by: [\"0002\"]\n",
+        )]);
+        assert_eq!(
+            run(&set),
+            [
+                "docs/adr/0001-decide-1.md: error: `amended-by` item \"0002\" is not ADR-NNNN",
+                "docs/adr/0001-decide-1.md: error: `amends` names ADR-0009, which does not exist",
+            ]
+        );
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn decided_amends_needs_amended_by_on_the_old_adr() {
+        let set = files(&[
+            with_front(
+                Adr {
+                    n: 1,
+                    ..Default::default()
+                },
+                "",
+            ),
+            with_front(
+                Adr {
+                    n: 2,
+                    ..Default::default()
+                },
+                "amends: [ADR-0001]\n",
+            ),
+        ]);
+        assert_eq!(
+            run(&set),
+            [
+                "docs/adr/0002-decide-2.md: error: amends ADR-0001, but ADR-0001 is not amended-by ADR-0002"
+            ]
+        );
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn undecided_amends_leaves_the_old_adr_whole() {
+        for status in ["proposed", "deferred", "rejected", "withdrawn"] {
+            let set = files(&[
+                with_front(
+                    Adr {
+                        n: 1,
+                        ..Default::default()
+                    },
+                    "",
+                ),
+                with_front(
+                    Adr {
+                        n: 2,
+                        status,
+                        ..Default::default()
+                    },
+                    "amends: [ADR-0001]\n",
+                ),
+            ]);
+            assert_eq!(run(&set), Vec::<String>::new(), "{status}");
+        }
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn amended_by_needs_amends_on_the_new_adr() {
+        let set = files(&[
+            with_front(
+                Adr {
+                    n: 1,
+                    ..Default::default()
+                },
+                "amended-by: [ADR-0002]\n",
+            ),
+            with_front(
+                Adr {
+                    n: 2,
+                    ..Default::default()
+                },
+                "",
+            ),
+        ]);
+        assert_eq!(
+            run(&set),
+            [
+                "docs/adr/0001-decide-1.md: error: amended-by ADR-0002, but ADR-0002 does not amend ADR-0001"
+            ]
+        );
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn old_adr_is_amended_only_after_the_new_one_took_effect() {
+        for status in ["proposed", "deferred", "rejected", "withdrawn"] {
+            let set = files(&[
+                with_front(
+                    Adr {
+                        n: 1,
+                        ..Default::default()
+                    },
+                    "amended-by: [ADR-0002]\n",
+                ),
+                with_front(
+                    Adr {
+                        n: 2,
+                        status,
+                        ..Default::default()
+                    },
+                    "amends: [ADR-0001]\n",
+                ),
+            ]);
+            assert_eq!(
+                run(&set),
+                [format!(
+                    "docs/adr/0001-decide-1.md: error: amended-by ADR-0002, but ADR-0002 is {status}"
+                )],
+                "{status}"
+            );
+        }
+    }
+
     #[test]
     fn issues_are_hash_numbers() {
         let set = adrs(&[Adr {
@@ -1122,6 +1299,17 @@ mod tests {
         let new = BODY.replace(
             "date: 2026-10-01\n",
             "date: 2026-10-01\nrequires: []\nsuperseded-by:\nissues: []\n",
+        );
+        assert!(!body_changed(BODY, &new));
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn adding_amends_and_amended_by_keeps_the_body() {
+        // 一部の置き換えは、確定した後に両方の ADR に書き足す
+        let new = BODY.replace(
+            "date: 2026-10-01\n",
+            "date: 2026-10-01\namends: [ADR-0002]\namended-by: [ADR-0003, ADR-0004]\n",
         );
         assert!(!body_changed(BODY, &new));
     }
