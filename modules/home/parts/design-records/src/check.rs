@@ -68,6 +68,7 @@ pub fn check(
 
 /// 置き換えの関係が効く status（決定が一度は効力を持った）。決める前（proposed、deferred）と、効力を持たずに
 /// 終わった（rejected、withdrawn）ADR の `supersedes` は、古い ADR をまだ置き換えていない。
+/// 一部の置き換え（`amends` と `amended-by`）でも、置き換える側と置き換えられる側の status をこれで判定する。
 const TOOK_EFFECT: [&str; 3] = ["accepted", "superseded", "deprecated"];
 
 /// 集めている違反と注意。
