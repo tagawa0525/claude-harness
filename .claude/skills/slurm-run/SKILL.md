@@ -48,16 +48,19 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   種類ごとに 1 段階（1 状態）を測ってから本数を掛ける。2026-10-14 に格子 104 状態の見積もり 2 時間が 3 時間超になった
   （反射体つきの格子を、集合体と同じ時間で見積もった）
 - 名前の表は名前でしか結ばず、`-shared` を付け忘れた排他でないジョブも混ざる。実績に取るジョブは、同じ仕事をした
-  排他のジョブかを sacct で確かめる（sacct は 2026-10-12 より前のジョブを持たない）:
+  排他のジョブかを sacct で確かめる:
 
   ```bash
-  sacct -S <日付> -X -P -o JobID,JobName,State,Elapsed,WorkDir,SubmitLine | grep -- --exclusive
+  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,WorkDir,SubmitLine \
+    | awk -F'|' '$3 == "COMPLETED" && $6 ~ /sbatch --exclusive /'
   ```
 
-  比べるのは `State` が COMPLETED で、SubmitLine に `--exclusive` があるものだけ（`-c` のジョブは `--cpus-per-task`）。
-  コマンドは SubmitLine の `--wrap` の後にある（SubmitLine は最後の欄なので、コマンドに `|` があっても前の欄は崩れない）。
+  欄は JobID、JobName、State、Elapsed、WorkDir、SubmitLine の順。`slurm-run.sh` は排他のときだけ sbatch の最初の引数に
+  `--exclusive` を置く（`-c` のジョブは `--cpus-per-task` で、比べない。`AllocCPUS` は `-c 32` でも 32 なので見分けに
+  使わない）。コマンドは SubmitLine の `--wrap` の後にある（最後の欄なので、コマンドの `|` で前の欄は崩れない）。
   コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が違えば時間は桁で変わるので、ログ（下の「ログと時間」）
-  で何を実行したかも比べる。2026-10-22 に、核種 65 個の多群ライブラリの作り直しを、多群の作成を 1 つも実行しなかった
+  で何を実行したかも比べる。sacct は 2026-10-12 より前のジョブを持たないので、それより前の実績しか無ければ、実績のない
+  計算として小さい入力で測る。2026-10-22 に、核種 65 個の多群ライブラリの作り直しを、多群の作成を 1 つも実行しなかった
   排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、2 時間 5 分かかった
 - 名前は `<ツール>-<題材>`（`openmc-2K`、`xlc-2K-swap-water`、`vera-reference-stages`）。使える文字は英数字と `.` `_` `-`。
   ログのファイル名に使い、`squeue` でも見分けるので、題材が分かる名前にする
