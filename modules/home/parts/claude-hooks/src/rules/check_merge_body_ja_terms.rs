@@ -16,7 +16,7 @@ use crate::git;
 use crate::git_args::{Item, git_flag, option_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
-use crate::shell::{Arg, Shell};
+use crate::shell::{self, Arg, Shell};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -26,7 +26,7 @@ pub struct CheckMergeBodyJaTerms;
 /// ビルド時に埋める ja-terms-message の store のパス（package.nix の env）。cargo で直接ビルドしたものには無い
 const JA_TERMS_MESSAGE: Option<&str> = option_env!("CLAUDE_HOOKS_JA_TERMS_MESSAGE");
 
-/// `git merge args…` の本文。`-m` の値（複数なら空行で連ねる）か、`-F` のファイル（dir からの相対）の内容。
+/// `git merge args…` の本文。`-m` の値（複数なら空行で連ねる）か、`-F` のファイル（dir からの相対。`~` は HOME）の内容。
 /// 本文の無い形は Ok(None)、`-F` のファイルが読めなければ Err にパス
 fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
     let mut parts = Vec::new();
@@ -34,8 +34,7 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
         match opt {
             Item::Short('m') | Item::Long("--message") => parts.push(message_value(value)),
             Item::Short('F') | Item::Long("--file") => {
-                let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-                match std::fs::read_to_string(message_path(value, dir, home.as_deref())) {
+                match std::fs::read_to_string(shell::resolve(&shell::home(), dir, value)) {
                     Ok(text) => parts.push(text),
                     Err(_) => return Err(value.to_string()),
                 }
@@ -47,14 +46,6 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
         return Ok(None);
     }
     Ok(Some(parts.join("\n\n")))
-}
-
-/// `-F` のファイルのパス。`~/` は home の下、相対パスは dir の下
-fn message_path(value: &str, dir: &Path, home: Option<&Path>) -> std::path::PathBuf {
-    match (value.strip_prefix("~/"), home) {
-        (Some(rest), Some(home)) => home.join(rest),
-        _ => dir.join(value),
-    }
 }
 
 /// `-m` の値。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は本文を取り出し、
@@ -564,23 +555,6 @@ exit 0
                 .iter()
                 .any(|n| n.contains("ja-terms-message")),
             "判定できなかった理由を出すはず"
-        );
-    }
-
-    #[test]
-    fn message_path_expands_home_and_joins_relative() {
-        let home = Path::new("/home/u");
-        assert_eq!(
-            message_path("~/m.txt", Path::new("/r"), Some(home)),
-            PathBuf::from("/home/u/m.txt")
-        );
-        assert_eq!(
-            message_path("m.txt", Path::new("/r"), Some(home)),
-            PathBuf::from("/r/m.txt")
-        );
-        assert_eq!(
-            message_path("/abs/m.txt", Path::new("/r"), Some(home)),
-            PathBuf::from("/abs/m.txt")
         );
     }
 
