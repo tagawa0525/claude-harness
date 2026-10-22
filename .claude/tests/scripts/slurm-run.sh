@@ -45,8 +45,8 @@ echo "${FAKE_HOST:-r995}"
 EOF
 chmod +x "$FAKE_BIN"/*
 export PATH="$FAKE_BIN:$PATH" TEST_ROOT
-# テストを投げるセッションの ID を持ち込まない
-unset CLAUDE_CODE_SESSION_ID
+# テストを投げるセッションの ID と、入口の置き換えを持ち込まない
+unset CLAUDE_CODE_SESSION_ID SLURM_RUN_NFS_ENTRY
 # r995 の NFS の入口（既定は /mnt/r995/github）を、テストの中に置き換える
 NFS_ENTRY="$TEST_ROOT/mnt/r995/github"
 
