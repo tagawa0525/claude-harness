@@ -841,4 +841,15 @@ exit 0
             "{notices:?}"
         );
     }
+
+    #[test]
+    fn checks_attached_single_quoted_value_with_dollar() {
+        for src in [
+            "git merge --no-ff feat/a -m'Merge: a' -m'費用 $5 の誤語'",
+            "git merge --no-ff feat/a -m 'Merge: a' --message='費用 $5 の誤語'",
+        ] {
+            let r = deny_reason(&check(src));
+            assert!(r.contains("誤語 => 正語"), "{src}: {r}");
+        }
+    }
 }
