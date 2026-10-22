@@ -164,8 +164,23 @@ diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads r
 - `refs/remotes/`、`refs/stash`、notes は移さない。リモートに書き換えた履歴を送るには force push が要るので、
   ユーザーが決める（GitHub のバックアップのリモートも同じ）
 - DVC: `dvc.lock` の出力の md5 は出力の中身で決まるので、語の書き換えでは変わらない。deps に書き換えたファイル
-  （文書、コメントを直したスクリプト）がある段階は `dvc status` で changed になる。そのリポジトリの DVC の規則
-  （xlc なら `/dvc-relock`）に従って lock を直す。過去のコミットの `dvc.lock` は、書き換える前の deps の md5 のまま
+  （文書、コメントを直したスクリプト）がある段階は `dvc status` で changed になる。過去のコミットの `dvc.lock` は、
+  書き換える前の deps の md5 のまま。そのリポジトリの DVC の規則（xlc の `/dvc-relock`）は、走らせなかった段階の
+  changed を「そのままでよい」とするので、規則に任せると何も起きない。2026-10-21 の xlc の書き換えでは、issue も
+  開かれず、下流を流すときに上流が再実行される費用（p2 で 1 時間 44 分）も見積もられなかった。書き換えのあとは次を行う:
+  - (a) 書き換えが原因で changed になった段階を一覧にする。`dvc status` で deps が changed の段階（`always_changed` の
+    段階と、`changed outs` だけの段階は除く）のうち、書き換えの直前の HEAD で changed でなかったものを選ぶ。控えの
+    original.git は bare なので `dvc status` は走らない。`git clone "$D/original.git" <一時のパス>` で作業ツリーを作り、
+    そのリポジトリの DVC の規則に従って出力を戻して（xlc なら `references` の symlink と `dvc checkout`、`build`）
+    そこで `dvc status` を実行する
+  - (b) lock を付け直さないなら、対象のリポジトリに issue を開き、(a) の一覧と、下流の段階を流すときに上流が
+    再実行される費用の見積もり（`dvc.yaml` の段階の依存と、記録された所要時間から）を書く
+  - (c) 付け直すなら、deps の差が出力を変えないことを、書き換えの前後の diff で段階ごとに確かめる（文書の文言と
+    コメントだけの差なら可。文字列リテラル、ログの書式、段階が読む語の差は出力を変えうるので不可で、(b) にする）。
+    `dvc commit -f <段階>` を実行する（`-f` が無いと、deps が変わった段階は確認を求めて止まる。出力は作り直さず、
+    今の deps と outs の md5 を lock に書く）。lock は、そのリポジトリの DVC の規則の検査（xlc なら
+    `scripts/check-dvc-lock.sh`）を通してコミットする。コードの変更に `dvc commit` を使うことは、記録した deps で
+    作っていない出力を lock が指すことになるので、しない
 - ほかのリポジトリやメモリの中の、このリポジトリの番号は、そのリポジトリで `commit-refs remap "$D/commit-map"` で
   付け直す
 
