@@ -343,6 +343,16 @@ exit 0
         let path = dir.0.join("ja-terms-message");
         std::fs::write(&path, FAKE_CHECK).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // 並行するテストが子を fork した直後は、書き込みに開いた fd が exec までその子に残り、実行が
+        // ETXTBSY（Text file busy）で失敗する。引数つき（偽の検査は 3 で終わる）で起動できるまで待つ
+        for _ in 0..100 {
+            match Command::new(&path).arg("probe").output() {
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                _ => break,
+            }
+        }
         path.to_string_lossy().into_owned()
     }
 
