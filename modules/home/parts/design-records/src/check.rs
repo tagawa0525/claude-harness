@@ -360,7 +360,13 @@ fn check_sections(doc: &Adr, out: &mut Found) {
             format!("no section `{}` (or `{}`)", section.ja, section.en),
         );
     }
-    for section in RECOMMENDED_SECTIONS.iter().filter(|s| missing(s)) {
+    // 採らなかった決定には、確かめる実装も帰結も無い（番号だけを残した ADR は確定後に書き足せない）
+    let recommended: &[Section] = if doc.status() == "rejected" {
+        &[]
+    } else {
+        &RECOMMENDED_SECTIONS
+    };
+    for section in recommended.iter().filter(|s| missing(s)) {
         out.warning(
             doc.path,
             None,
@@ -818,7 +824,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0049"]
     fn rejected_adrs_need_no_recommended_sections() {
         let set = one(1, |t| {
             t.replace("status: accepted", "status: rejected")
@@ -829,7 +834,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: ADR-0049"]
     fn rejected_adrs_still_need_required_sections() {
         let set = one(1, |t| {
             t.replace("status: accepted", "status: rejected")
