@@ -634,16 +634,6 @@ exit 0
     }
 
     #[test]
-    fn reports_stdin_message_file_as_undecidable() {
-        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
-        assert!(check("git merge --no-ff -F - feat/a").is_empty());
-        assert!(
-            take_notices().iter().any(|n| n.contains("標準入力")),
-            "判定できなかった理由を出すはず"
-        );
-    }
-
-    #[test]
     fn lint_without_terms_is_failure() {
         let dir = TempDir::new("no-terms");
         let t = fake_check(&dir);
@@ -701,16 +691,6 @@ exit 0
     }
 
     #[test]
-    fn stdin_message_file_is_not_read_from_a_file_named_dash() {
-        let dir = TempDir::new("dash");
-        git_init(&dir.0);
-        std::fs::write(dir.0.join("-"), "Merge: a\n\n誤語\n").unwrap();
-        let check = fake_check(&dir);
-        let findings = check_in("git merge --no-ff -F - feat/a", &dir.0, Some(&check));
-        assert!(findings.is_empty());
-    }
-
-    #[test]
     fn skipped_repository_gets_no_notice() {
         let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
         let dir = TempDir::new("skip-notice");
@@ -763,5 +743,69 @@ exit 0
     #[test]
     fn ignores_merge_without_hooks() {
         assert!(check("git merge --no-verify --no-ff feat/a -m 'Merge: a' -m '誤語'").is_empty());
+    }
+
+    #[test]
+    fn message_file_dash_is_a_file_like_git() {
+        // git merge の -F は `-` を標準入力でなく、その名前のファイルとして読む（git 2.56 で確かめた）
+        let dir = TempDir::new("dash");
+        std::fs::write(dir.0.join("-"), "Merge: a\n\n本文\n").unwrap();
+        assert_eq!(
+            merge_message(&args("git merge --no-ff -F - feat/a"), &dir.0),
+            Ok(Some("Merge: a\n\n本文\n".to_string()))
+        );
+    }
+
+    #[test]
+    fn message_is_built_like_git() {
+        // -m どうしは空行で、-F の前は改行 1 つで連ね、--no-message はそれまでを消す
+        let dir = TempDir::new("build");
+        std::fs::write(dir.0.join("f.txt"), "FILE\n").unwrap();
+        let build = |src: &str| merge_message(&args(src), &dir.0);
+        assert_eq!(
+            build("git merge -m A -F f.txt feat/a"),
+            Ok(Some("A\nFILE\n".to_string()))
+        );
+        assert_eq!(
+            build("git merge -F f.txt -m B feat/a"),
+            Ok(Some("FILE\n\n\nB".to_string()))
+        );
+        assert_eq!(
+            build("git merge -m '誤語' --no-message -m 'Merge: a' feat/a"),
+            Ok(Some("Merge: a".to_string()))
+        );
+    }
+
+    #[test]
+    fn reports_quoted_text_joined_with_expansion_as_undecidable() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(check("git merge --no-ff feat/a -m 'Merge: a' -m '誤語 '\"$X\"").is_empty());
+        assert!(
+            take_notices().iter().any(|n| n.contains("展開")),
+            "判定できなかった理由を出すはず"
+        );
+    }
+
+    #[test]
+    fn ignores_merge_with_no_commit() {
+        assert!(check("git merge --no-ff --no-commit feat/a -m 'Merge: a' -m '誤語'").is_empty());
+        let r = deny_reason(&check(
+            "git merge --no-ff --no-commit --commit feat/a -m 'Merge: a' -m '誤語'",
+        ));
+        assert!(r.contains("誤語 => 正語"), "{r}");
+    }
+
+    #[test]
+    fn expansion_notice_names_the_option_not_the_body() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        let long = "x".repeat(200);
+        assert!(check(&format!("git merge --no-ff feat/a -m \"$X{long}\"")).is_empty());
+        let notices = take_notices();
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("展開") && !n.contains(&long)),
+            "{notices:?}"
+        );
     }
 }
