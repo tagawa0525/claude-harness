@@ -13,7 +13,7 @@
 
 use super::Rule;
 use crate::git;
-use crate::git_args::{Item, git_flag, option_values};
+use crate::git_args::{Item, items, option_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::{self, Arg, Shell};
@@ -30,9 +30,15 @@ const JA_TERMS_MESSAGE: Option<&str> = option_env!("CLAUDE_HOOKS_JA_TERMS_MESSAG
 /// 本文の無い形は Ok(None)、`-F` のファイルが読めなければ Err にパス
 fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
     let mut parts = Vec::new();
+    let mut strip_comments = false;
     for (opt, value) in option_values("merge", args) {
         match opt {
             Item::Short('m') | Item::Long("--message") => parts.push(message_value(value)),
+            // `-F -` は標準入力。`-` という名前のファイルを読まない
+            Item::Short('F') | Item::Long("--file") if value == "-" => {
+                return Err(value.to_string());
+            }
+            Item::Long("--cleanup") => strip_comments = value == "strip",
             Item::Short('F') | Item::Long("--file") => {
                 match std::fs::read_to_string(shell::resolve(&shell::home(), dir, value)) {
                     Ok(text) => parts.push(text),
@@ -45,7 +51,41 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
     if parts.is_empty() {
         return Ok(None);
     }
-    Ok(Some(parts.join("\n\n")))
+    // git が commit-msg の前に行う整えのうち、検査に効くもの: 先頭の空行を除く（件名の行が変わる）、
+    // --cleanup=strip なら # の行を除く
+    let joined = parts.join("\n\n");
+    let lines: Vec<&str> = joined
+        .split('\n')
+        .filter(|l| !(strip_comments && l.starts_with('#')))
+        .skip_while(|l| l.trim().is_empty())
+        .collect();
+    Ok(Some(lines.join("\n")))
+}
+
+/// マージコミットを作らない指定か（commit-msg を呼ばない）。`--ff` / `--no-ff` / `--ff-only` と
+/// `--squash` / `--no-squash` は、git と同じく後ろのものが勝つ
+fn makes_no_commit(args: &[Arg]) -> bool {
+    let (mut ff_only, mut squash) = (false, false);
+    for item in items("merge", args) {
+        match item {
+            Item::Long("--ff-only") => ff_only = true,
+            Item::Long("--ff" | "--no-ff") => ff_only = false,
+            Item::Long("--squash") => squash = true,
+            Item::Long("--no-squash") => squash = false,
+            _ => {}
+        }
+    }
+    ff_only || squash
+}
+
+/// `-m` か `-F` があるか
+fn has_message(args: &[Arg]) -> bool {
+    option_values("merge", args).iter().any(|(opt, _)| {
+        matches!(
+            opt,
+            Item::Short('m' | 'F') | Item::Long("--message" | "--file")
+        )
+    })
 }
 
 /// `-m` の値。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は本文を取り出し、
@@ -196,11 +236,14 @@ impl CheckMergeBodyJaTerms {
             let Some(("merge", args)) = cmd.git_subcommand() else {
                 continue;
             };
-            // マージコミットを作らない形は commit-msg を呼ばない
-            if git_flag("merge", args, None, &["--ff-only", "--squash"]) {
+            // 本文の無い形（エディタ）と、マージコミットを作らない形（commit-msg を呼ばない）は対象外
+            if !has_message(args) || makes_no_commit(args) {
                 continue;
             }
             let dir = shell.target_dir(cmd, &input.cwd);
+            if commit_msg_skips(&dir, global_hooks(&dir)) {
+                continue;
+            }
             let message = match merge_message(args, &dir) {
                 Ok(Some(m)) => m,
                 Ok(None) => continue,
@@ -218,9 +261,6 @@ impl CheckMergeBodyJaTerms {
                     continue;
                 }
             };
-            if commit_msg_skips(&dir, global_hooks(&dir)) {
-                continue;
-            }
             let Some(check) = check else {
                 notice(
                     "check-merge-body-ja-terms: このビルドには ja-terms-message が埋め込まれていないので、git merge の本文の語を判定していません（nix でビルドしたものだけが検査する）".to_string(),
@@ -305,6 +345,10 @@ exit 0
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.to_string_lossy().into_owned()
     }
+
+    /// 判定できない理由（output::notice）はプロセスに 1 つの置き場に集まり、take_notices は全部を取り出す。
+    /// 理由を確かめるテストは、互いの理由を取り合わないように順に実行する
+    static NOTICES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// テストのグローバルの core.hooksPath。git_init のリポジトリはこれをローカルに持つ（手元とサンドボックスで
     /// グローバルの設定が違っても、グローバルの hook を使うリポジトリにする）
@@ -546,6 +590,7 @@ exit 0
 
     #[test]
     fn reports_undecidable_when_check_is_not_embedded() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
         let dir = TempDir::new("none");
         git_init(&dir.0);
         let findings = check_in("git merge -m 'Merge: a' -m '誤語' feat/a", &dir.0, None);
@@ -560,6 +605,7 @@ exit 0
 
     #[test]
     fn reports_stdin_message_file_as_undecidable() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
         assert!(check("git merge --no-ff -F - feat/a").is_empty());
         assert!(
             take_notices().iter().any(|n| n.contains("標準入力")),
@@ -636,11 +682,11 @@ exit 0
 
     #[test]
     fn skipped_repository_gets_no_notice() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
         let dir = TempDir::new("skip-notice");
         git_init(&dir.0);
         git(&dir.0, &["config", "core.hooksPath", ".githooks"]);
         let check = fake_check(&dir);
-        let _ = take_notices();
         let findings = check_in(
             "git merge --no-ff -F /nonexistent/skip-notice.txt feat/a",
             &dir.0,
