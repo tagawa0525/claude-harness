@@ -37,9 +37,12 @@ fn worktree_of(dir: &Path, full_ref: &str) -> Option<PathBuf> {
     None
 }
 
-/// worktree の未コミットの変更と未追跡のファイルを理由にした deny（無ければ None）
+/// worktree の未コミットの変更と未追跡のファイルを理由にした deny（無ければ None）。
+/// 他のエージェントが作業中の worktree の index を更新して `index.lock` を取らないよう、
+/// `--no-optional-locks` で読む
 fn dirty_reason(branch: &str, worktree: &Path) -> Option<String> {
-    let status = git::git(worktree, &["status", "--porcelain"]).filter(|s| !s.is_empty())?;
+    let status = git::git(worktree, &["--no-optional-locks", "status", "--porcelain"])
+        .filter(|s| !s.is_empty())?;
     let lines: Vec<&str> = status.lines().collect();
     let shown: Vec<String> = lines
         .iter()
