@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-22
 requires: [ADR-0009]
 supersedes: []
@@ -71,7 +71,17 @@ ADR-0095、ADR-0156、ADR-0164、ADR-0173 のどれにも、置き換えた ADR-
   `check` が error にする
 - 悪い点: 置き換えた部分の範囲（古い ADR のどの段落か）は、新しい ADR の本文にしか無く、検査しない
 - 実装が決定に追いついていない点: xlc の 5 件の古い ADR と、ADR-0129、ADR-0132、ADR-0182、ADR-0183 のフロントマターは、
-  この変更の後に xlc で書き足す。nixfiles の既存の一部の置き換え（ADR-0042 など、補足から指しているもの）は、まだ
-  フロントマターで結んでいない
+  この変更の後に xlc で書き足す。nixfiles の一部の置き換え（ADR-0049 と ADR-0051 から ADR-0009、ADR-0042 から ADR-0020、
+  ADR-0025、ADR-0041 など、補足から指しているもの）も、まだフロントマターで結んでいない。pre-commit の検査は PATH の
+  `design-records`（rebuild の前は新しいキーを知らない版）で走るので、この変更を rebuild した後に書き足す
 
 ### 確認
+
+- `modules/home/parts/design-records/src/check.rs` のテスト: 両方向に結んだ組は通る（`amends_and_amended_by_link_partial_amendments_both_ways`。
+  `amended-by` の複数の ADR、置き換えられた後の新しい ADR を含む）。挙げた ADR が無いか形が違えば error
+  （`amends_and_amended_by_name_existing_adrs`）。効力を持った ADR の `amends` に対応する `amended-by` が無ければ error
+  （`decided_amends_needs_amended_by_on_the_old_adr`）。効力を持つ前の ADR の `amends` は古い ADR に何も求めない
+  （`undecided_amends_leaves_the_old_adr_whole`）。`amended-by` に挙げた ADR が `amends` に挙げていないか、効力を
+  持っていなければ error（`amended_by_needs_amends_on_the_new_adr`、`old_adr_is_amended_only_after_the_new_one_took_effect`）。
+  確定した後に 2 つのキーを書き足しても、本文の変更にならない（`adding_amends_and_amended_by_keeps_the_body`）
+- xlc で両方向に書き足した後、`design-records check` が error を出さないことは、その作業で確かめる
