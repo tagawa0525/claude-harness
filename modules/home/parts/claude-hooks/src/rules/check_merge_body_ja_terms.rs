@@ -185,7 +185,8 @@ enum Lint {
     Failed(String),
 }
 
-/// commit-msg と同じく、メッセージを標準入力で ja-terms-message に渡す。commit-msg と同じくリポジトリで実行する
+/// commit-msg と同じく、メッセージを標準入力で ja-terms-message に渡す。設定を引数で渡すので、実行する場所
+/// （コマンドの行き先。commit-msg はリポジトリの直下）は判定に効かない
 fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     let child = Command::new(check)
         .current_dir(dir)
