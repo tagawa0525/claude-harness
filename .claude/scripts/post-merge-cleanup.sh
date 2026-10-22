@@ -4,6 +4,9 @@
 # Usage: post-merge-cleanup.sh <branch>
 #
 # 順に行う（gh-pr-merge スキルの「クリーンアップ」）:
+#   0. ローカルの <branch> の先端が既定ブランチ（なければ、追うリモートの既定ブランチを fetch したもの）の祖先で
+#      なければ、何も消さずに ERROR で止まる（マージが途中で止まったのに続けて呼ぶと、1 で worktree
+#      が、無視されたファイルごと消える。4 の -d で未マージに気づいても遅い）。ローカルのブランチが無ければ見ない
 #   1. <branch> をチェックアウトしている worktree があれば削除（変更が残っていれば失敗する）
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
@@ -67,6 +70,35 @@ DEFAULT_ROOT=$(git worktree list --porcelain | awk -v ref="refs/heads/$DEFAULT" 
   /^worktree / { path = substr($0, 10) }
   /^branch /   { if ($2 == ref) print path }')
 cd "${DEFAULT_ROOT:-$MAIN_ROOT}"
+
+# --- 0. マージ済みか ---
+# 判定は先端が既定ブランチの祖先かどうか。gh pr merge の後はローカルの既定ブランチがまだ pull されて
+# いないので、追うリモートの既定ブランチも fetch して見る。fetch できなければ未マージ扱いで止める
+if git show-ref --verify --quiet "refs/heads/$BRANCH" &&
+  ! git merge-base --is-ancestor "$BRANCH" "$DEFAULT"; then
+  MERGED=0
+  UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name "$DEFAULT@{upstream}" 2>/dev/null || true)
+  if [[ -n "$UPSTREAM" ]]; then
+    UP_REMOTE=$(git config "branch.$DEFAULT.remote")
+    if git fetch -q "$UP_REMOTE" 2>/dev/null &&
+      git merge-base --is-ancestor "$BRANCH" "$UPSTREAM"; then
+      MERGED=1
+    fi
+  fi
+  if ((!MERGED)); then
+    DETAIL="$DEFAULT${UPSTREAM:+、$UPSTREAM}の履歴にブランチの先端が無い"
+    if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+      DETAIL="$DETAIL。$DEFAULT の worktree に MERGE_HEAD が残っている（マージが途中で止まっている）"
+    fi
+    {
+      echo "ERROR: $BRANCH は $DEFAULT にまだマージされていません（$DETAIL）。何も消していません"
+      echo "  修正方法: マージを終える（コンフリクトの解消や hook の拒否の原因を直して、もう一度マージする）。"
+      echo "  やり直すなら、途中のマージを git merge --abort で取り消してから直す。そのあと、もう一度実行する"
+    } >&2
+    exit 1
+  fi
+fi
+
 if [[ -n "$WT_PATH" ]]; then
   git worktree remove "$WT_PATH"
   echo "WORKTREE_REMOVED: $WT_PATH"
