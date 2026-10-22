@@ -77,7 +77,7 @@ git -C [TARGET_WORKTREE] rebase main
 
 `remap.commitRefs` が true のリポジトリでは、rebase と `commit --amend` の後に post-rewrite の hook が文書の中の
 コミットの hash を付け替える。付け替えは作業ツリーに残るだけなので、hook の出力に従って片付けてから次の「番号の重複」に進む
-（後の手順で amend したときも同じ。残したままマージすると、main の文書が main の履歴に無い hash を指す）:
+（後の手順で amend したときも同じ。残したままマージすると、ブランチの文書は main の履歴に無い rebase 前の hash を指したまま main に入る）:
 
 - `📝 置き換えはコミットしていません`: `git -C [TARGET_WORKTREE] diff` で旧と新の hash の置き換えだけであることを確かめ、
   コミットする（件名は `chore: remap the commit refs after the rebase` のように、きっかけを書く）
@@ -179,8 +179,8 @@ EOF
 ```
 
 マージは hook（品質チェック、本文の語の検査）に止められることがある。`git merge` の出力を `tail` などにつながず、
-後片付けとは別の呼び出しにして、終了コードと `git -C [DEFAULT_WORKTREE] merge-base --is-ancestor [branch] main` で
-マージされたことを確かめてから後片付けに進む（`git merge … | tail && post-merge-cleanup.sh` は、マージが拒まれても
+後片付けとは別の呼び出しにして、終了コードと、main の先頭がこのマージコミットであること（`git -C [DEFAULT_WORKTREE] rev-parse HEAD^2` が
+ブランチの先端と一致する）を確かめてから後片付けに進む（`git merge … | tail && post-merge-cleanup.sh` は、マージが拒まれても
 `tail` の終了コードで後片付けに進む）。hook に拒まれると main の worktree にマージの途中（MERGE_HEAD）が残るので、
 `git -C [DEFAULT_WORKTREE] rev-parse -q --verify MERGE_HEAD` があれば `git -C [DEFAULT_WORKTREE] merge --abort` で取り消す。
 本文の語で拒まれたらメッセージを直してマージをやり直し、チェックで拒まれたらブランチで直して「レビュー」の節のとおり
