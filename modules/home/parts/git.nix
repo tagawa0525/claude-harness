@@ -355,7 +355,7 @@ in
         exit 0
       fi
 
-      # 日本語の崩れた語（ADR-0014）を、メッセージのファイルで見る。検査する範囲（件名を除くか、scissors）は
+      # 日本語の崩れた語を、メッセージのファイルで見る。検査する範囲（件名を除くか、scissors）は
       # ja-terms-message（./ja-terms/message.sh）が決め、claude-hooks の git merge の本文の検査と共有する。
       # textlint（Node.js）は起動が重いので、軽い検査の後に呼ぶ
       # 検証: modules/home/parts/tests/ja-terms.sh
