@@ -223,13 +223,18 @@ pub fn check_reservations(
                 Kind::Adr => String::new(),
                 Kind::Issue => format!("--kind {} ", kind.name()),
             };
+            let tag = kind.tag(number);
+            // どちらの場合か（ほかの記録が番号を取った、この記録の改名）は、タグの slug のファイルが別のブランチに
+            // あるかを履歴から引かないと分からない。check は通信も履歴の走査もしない（ADR-0018）ので、両方を示す
             out.warning(
                 path,
                 None,
                 format!(
-                    "number {number:04} is reserved for `{owner}` by tag {}; if another record took \
-                     the number, run `design-records renumber {kind_option}{number}`",
-                    kind.tag(number)
+                    "number {number:04} is reserved for `{owner}` by tag {tag}; if another record took \
+                     the number, run `design-records renumber {kind_option}{number}`; \
+                     if this record is the reserved one and its file name was renamed, \
+                     run `git tag -f -a {tag} -m {slug} '{tag}^{{}}'` \
+                     (and `git push -f origin refs/tags/{tag}` when origin exists)"
                 ),
             );
         }

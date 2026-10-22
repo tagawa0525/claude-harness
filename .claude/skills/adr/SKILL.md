@@ -50,7 +50,7 @@ main の記録を指すのでそのまま残す。作業ツリーに変更（追
 消す。
 
 `check` は docs/adr の追跡している ADR の形と、ADR どうしの参照（置き換えの双方向の一致、参照先の有無）、ADR と
-docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。予約のタグの slug と違う slug の記録には注意を出す。FILE を渡すと、そこから置き換えられた ADR への参照と、確定した ADR の本文の変更を探し、
+docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。予約のタグの slug と違う slug の記録には注意を出す。予約した記録のファイル名を後から変えたときは、`prune` が slug の一致する予約しか消さないので、注意に示すとおりタグを新しい slug で打ち直す（`git tag -f -a adr-NNNN -m <新しい slug> adr-NNNN^{}`、`origin` があれば `git push -f origin refs/tags/adr-NNNN`）。FILE を渡すと、そこから置き換えられた ADR への参照と、確定した ADR の本文の変更を探し、
 FILE の分だけ注意（warning）を出す（`--changed` なら FILE が無くても warning を出さない）。プロジェクトは
 `.pre-commit-config.yaml` に次を足してオプトインし、コミットのたびに検査する:
 
