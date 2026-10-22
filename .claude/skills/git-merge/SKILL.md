@@ -75,6 +75,11 @@ git -C [TARGET_WORKTREE] rebase main
 コンフリクトしたら内容と解決案を示し、解決して `git rebase --continue` するか
 `git rebase --abort` するかを決める。
 
+`remap.commitRefs` が true のリポジトリでは、rebase の後に post-rewrite の hook が文書の中のコミットの hash を
+付け替え、`📝 置き換えはコミットしていません` を出す。付け替えは作業ツリーに残るだけなので、
+`git -C [TARGET_WORKTREE] diff` で旧と新の hash の置き換えだけであることを確かめてコミットしてから、チェックに進む
+（残したままマージすると、main の文書が main の履歴に無い hash を指す）。
+
 ### 番号の重複（rebase の後）
 
 設計の記録（docs/adr か docs/issues）のあるリポジトリでは、rebase の直後に番号の重複を確かめる。main にも
@@ -167,6 +172,11 @@ git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'
 EOF
 )"
 ```
+
+マージは hook（品質チェック、本文の語の検査）に止められることがある。`git merge` の出力を `tail` などにつながず、
+後片付けとは別の呼び出しにして、終了コードと `git log -1` でマージコミットができたことを確かめてから後片付けに進む
+（`git merge … | tail && post-merge-cleanup.sh` は、マージが拒まれても `tail` の終了コードで後片付けに進み、
+マージの途中で worktree を消す）。
 
 ## 後片付け
 
