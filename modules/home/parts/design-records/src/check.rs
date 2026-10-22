@@ -5,8 +5,8 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
-    STATUSES, Section, is_adr_path, record_name, record_number,
+    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, REQUIRED_SECTIONS, STATUSES, Section,
+    is_adr_path, recommended_sections, record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -360,7 +360,10 @@ fn check_sections(doc: &Adr, out: &mut Found) {
             format!("no section `{}` (or `{}`)", section.ja, section.en),
         );
     }
-    for section in RECOMMENDED_SECTIONS.iter().filter(|s| missing(s)) {
+    for section in recommended_sections(doc.status())
+        .iter()
+        .filter(|s| missing(s))
+    {
         out.warning(
             doc.path,
             None,
@@ -815,6 +818,53 @@ mod tests {
                 "docs/adr/0001-decide-1.md: warning: no section `確認` (or `Confirmation`) (recommended)",
             ]
         );
+    }
+
+    #[test]
+    fn rejected_adrs_need_no_recommended_sections() {
+        let set = one(1, |t| {
+            t.replace("status: accepted", "status: rejected")
+                .replace("### 帰結\n", "")
+                .replace("### 確認\n", "")
+        });
+        assert_eq!(run(&set), Vec::<String>::new());
+    }
+
+    #[test]
+    fn rejected_adrs_need_required_sections() {
+        let set = one(1, |t| {
+            t.replace("status: accepted", "status: rejected")
+                .replace("## 決定と理由\n", "")
+                .replace("### 帰結\n", "")
+        });
+        assert_eq!(
+            run(&set),
+            ["docs/adr/0001-decide-1.md: error: no section `決定と理由` (or `Decision Outcome`)"]
+        );
+    }
+
+    #[test]
+    fn non_rejected_adrs_get_recommended_section_warnings() {
+        for status in STATUSES.into_iter().filter(|s| *s != "rejected") {
+            let set = one(1, |t| {
+                t.replace("status: accepted", &format!("status: {status}"))
+                    .replace("### 帰結\n", "")
+                    .replace("### 確認\n", "")
+            });
+            // superseded は superseded-by が無い違反も出すので、推奨の節の warning だけを見る
+            let warnings: Vec<String> = run(&set)
+                .into_iter()
+                .filter(|f| f.contains(": warning: "))
+                .collect();
+            assert_eq!(
+                warnings,
+                [
+                    "docs/adr/0001-decide-1.md: warning: no section `帰結` (or `Consequences`) (recommended)",
+                    "docs/adr/0001-decide-1.md: warning: no section `確認` (or `Confirmation`) (recommended)",
+                ],
+                "{status}"
+            );
+        }
     }
 
     #[test]

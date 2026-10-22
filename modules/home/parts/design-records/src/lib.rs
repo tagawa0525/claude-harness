@@ -147,6 +147,16 @@ pub const RECOMMENDED_SECTIONS: [Section; 2] = [
     },
 ];
 
+/// `status` の ADR に求める推奨の節。採らなかった決定（rejected）には、確かめるものも帰結も無く、番号だけを残した
+/// ADR は確定後に書き足せないので、求めない（ADR-0049）。
+pub fn recommended_sections(status: &str) -> &'static [Section] {
+    if status == "rejected" {
+        &[]
+    } else {
+        &RECOMMENDED_SECTIONS
+    }
+}
+
 /// 確定した後も直してよい節（日付つきの追記）。
 pub const NOTES_SECTION: Section = Section {
     ja: "補足",
