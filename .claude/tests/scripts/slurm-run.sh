@@ -47,9 +47,11 @@ chmod +x "$FAKE_BIN"/*
 export PATH="$FAKE_BIN:$PATH" TEST_ROOT
 # テストを投げるセッションの ID を持ち込まない
 unset CLAUDE_CODE_SESSION_ID
+# r995 の NFS の入口（既定は /mnt/r995/github）を、テストの中に置き換える
+NFS_ENTRY="$TEST_ROOT/mnt/r995/github"
 
 RUN="$SCRIPTS_DIR/slurm-run.sh"
-mkdir -p "$HOME/github/proj" "$HOME/mnt/r995/proj"
+mkdir -p "$HOME/github/proj" "$NFS_ENTRY/proj"
 
 it "slurm-run: 排他・待機・環境の引き継ぎ・名前・ログ・見積もり・連絡先を付けてコマンドを投げる"
 cd "$HOME/github/proj" || exit 1
@@ -167,30 +169,22 @@ cd "$HOME/github/proj" || exit 1
 CLAUDE_CODE_SESSION_ID=abc-123 "$RUN" -t 1 xlc-2G 'true' >/dev/null
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\nfeat/vera-2g '"$HOME/github/proj claude=abc-123"
 
-it "slurm-run: r995 以外では ~/mnt/r995 の下で投げ、ログは NFS の側に作る"
-rm -rf "$HOME/github/slurm-logs" "$HOME/mnt/r995/slurm-logs"
-cd "$HOME/mnt/r995/proj" || exit 1
-out=$(FAKE_HOST=t14g4 "$RUN" -t 1 xlc-2G 'true')
+it "slurm-run: r995 以外では NFS の入口の下で投げ、ログは NFS の側に作る"
+rm -rf "$HOME/github/slurm-logs" "$NFS_ENTRY/slurm-logs"
+cd "$NFS_ENTRY/proj" || exit 1
+out=$(SLURM_RUN_NFS_ENTRY=$NFS_ENTRY FAKE_HOST=t14g4 "$RUN" -t 1 xlc-2G 'true')
 assert_eq 0 $?
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'-o\n'"$HOME/github/slurm-logs/%x-%j.out"
-assert_contains "$out" "LOG: $HOME/mnt/r995/slurm-logs/xlc-2G-42.out"
-assert_file_exists "$HOME/mnt/r995/slurm-logs"
+assert_contains "$out" "LOG: $NFS_ENTRY/slurm-logs/xlc-2G-42.out"
+assert_file_exists "$NFS_ENTRY/slurm-logs"
 
-it "slurm-run: r995 以外で ~/mnt/r995 の外から投げたら、投げずにエラー"
+it "slurm-run: r995 以外で NFS の入口の外から投げたら、投げずに既定の入口 /mnt/r995/github を示してエラー"
 rm -f "$TEST_ROOT/sbatch.args"
 cd "$HOME/github/proj" || exit 1
 out=$(FAKE_HOST=t14g4 "$RUN" -t 1 xlc-2G 'true' 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
-assert_file_missing "$TEST_ROOT/sbatch.args"
-
-it "slurm-run: r995 以外で古い入口の ~/r995 の下から投げたら、投げずにエラー"
-rm -f "$TEST_ROOT/sbatch.args"
-mkdir -p "$HOME/r995/proj"
-cd "$HOME/r995/proj" || exit 1
-out=$(FAKE_HOST=t14g4 "$RUN" -t 1 xlc-2G 'true' 2>&1)
-assert_eq 1 $?
-assert_contains "$out" "ERROR:"
+assert_contains "$out" "/mnt/r995/github"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
 it "slurm-run: 名前がファイル名に使えない文字を含んだらエラー"
