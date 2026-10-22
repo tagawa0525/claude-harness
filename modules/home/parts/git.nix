@@ -31,26 +31,10 @@ let
   # commit-msg）、modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
   localHookPath = name: ''"$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
   # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が textlint を
-  # store のパスで呼ぶ。辞書は ./ja-terms/prh.yml。Markdown は textlint の組み込みのプラグインが、コードと
-  # テキストは @textlint/text が読む（コメントと文字列の日本語を含めて、ファイルの全体を見る）
-  textlint = pkgs.textlint.withPackages [ pkgs.textlint-rule-prh ];
-  jaTermsCodeExtensions = [
-    "txt"
-    "rs"
-    "py"
-    "sh"
-    "nix"
-    "toml"
-    "yaml"
-    "yml"
-    "json"
-  ];
-  jaTermsConfig = pkgs.writeText "ja-terms-textlintrc.json" (
-    builtins.toJSON {
-      plugins."@textlint/text".extensions = map (ext: ".${ext}") jaTermsCodeExtensions;
-      rules.prh.rulePaths = [ "${./ja-terms/prh.yml}" ];
-    }
-  );
+  # store のパスで呼ぶ。textlint と設定は claude-hooks の git merge のルールと共有する（./ja-terms/textlint.nix）
+  jaTermsTextlint = pkgs.callPackage ./ja-terms/textlint.nix { };
+  inherit (jaTermsTextlint) textlint;
+  jaTermsCodeExtensions = jaTermsTextlint.codeExtensions;
   # 拡張子は大文字と小文字を問わない。prh の辞書（prh.yml）は誤った語を並べるので外す
   jaTermsPathspecs = map (ext: ":(icase,glob)**/*.${ext}") ([ "md" ] ++ jaTermsCodeExtensions) ++ [
     ":(exclude,glob)**/prh.yml"
@@ -74,12 +58,12 @@ let
       textlint
     ];
     runtimeEnv = {
-      JA_TERMS_CONFIG = "${jaTermsConfig}";
+      JA_TERMS_CONFIG = "${jaTermsTextlint.config}";
       JA_TERMS_PATHSPECS = lib.concatStringsSep "\n" jaTermsPathspecs;
     };
     text = builtins.readFile ./ja-terms/staged.sh;
   };
-  jaTerms = "${textlint}/bin/textlint --config ${jaTermsConfig}";
+  jaTerms = jaTermsTextlint.command;
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を実行する（下の pre-commit hook が呼ぶ）
