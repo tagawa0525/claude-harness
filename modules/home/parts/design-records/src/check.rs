@@ -1263,6 +1263,61 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn only_decisions_in_effect_are_amended() {
+        for status in ["proposed", "deferred", "rejected", "withdrawn"] {
+            let set = files(&[
+                with_front(
+                    Adr {
+                        n: 1,
+                        status,
+                        ..Default::default()
+                    },
+                    "amended-by: [ADR-0002]\n",
+                ),
+                with_front(
+                    Adr {
+                        n: 2,
+                        ..Default::default()
+                    },
+                    "amends: [ADR-0001]\n",
+                ),
+            ]);
+            assert_eq!(
+                run(&set),
+                [
+                    format!(
+                        "docs/adr/0001-decide-1.md: error: `amended-by` is set but status is {status}"
+                    ),
+                    format!(
+                        "docs/adr/0002-decide-2.md: error: amends ADR-0001, but ADR-0001 is {status}"
+                    ),
+                ],
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "RED: ADR-0051"]
+    fn adrs_do_not_amend_themselves() {
+        let set = files(&[with_front(
+            Adr {
+                n: 1,
+                ..Default::default()
+            },
+            "amends: [ADR-0001]\namended-by: [ADR-0001]\n",
+        )]);
+        assert_eq!(
+            run(&set),
+            [
+                "docs/adr/0001-decide-1.md: error: `amended-by` names the ADR itself",
+                "docs/adr/0001-decide-1.md: error: `amends` names the ADR itself",
+            ]
+        );
+    }
+
+    #[test]
     fn issues_are_hash_numbers() {
         let set = adrs(&[Adr {
             issues: "[\"#12\", \"12\", \"#x\"]",
