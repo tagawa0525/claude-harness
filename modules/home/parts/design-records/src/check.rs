@@ -407,7 +407,8 @@ fn check_issues(doc: &Adr, issues: Option<&BTreeSet<u32>>, out: &mut Found) {
     }
 }
 
-/// `requires`、`supersedes`、`superseded-by`、`amends`、`amended-by` の参照先と、置き換えの状態と両方向の一致。
+/// `requires`、`supersedes`、`superseded-by`、`amends`、`amended-by` の参照先と、全体の置き換えの状態と両方向の一致
+/// （一部の置き換えの一致は [`check_amendments`]）。
 fn check_supersession(docs: &[Adr], existing: &BTreeSet<u32>, out: &mut Found) {
     for doc in docs {
         for key in [
