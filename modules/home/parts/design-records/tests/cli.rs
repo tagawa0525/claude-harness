@@ -946,7 +946,10 @@ fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
     assert_eq!(
         stdout(&out),
         "docs/adr/0002-use-b.md: warning: number 0002 is reserved for `use-other` by tag adr-0002; \
-         if another record took the number, run `design-records renumber 2`\n"
+         if another record took the number, run `design-records renumber 2`; \
+         if this record is the reserved one and its file name was renamed, \
+         run `git tag -f -a adr-0002 -m use-b 'adr-0002^{}'` \
+         (and `git push -f origin refs/tags/adr-0002` when origin exists)\n"
     );
 }
 
