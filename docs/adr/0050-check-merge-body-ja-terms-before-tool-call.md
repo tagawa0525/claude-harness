@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-22
 requires: [ADR-0014, ADR-0033]
 supersedes: []
@@ -68,6 +68,9 @@ pre-merge-commit の中で先に検査することもできない。
   無く、このルールは判定できない理由を出して通す。nix でビルドしたもの（配置するもの）だけが検査する
 - 辞書、textlint の設定、検査する範囲を変えると、commit-msg と claude-hooks の両方が同じものを使う（textlint.nix と
   message.sh が 1 か所）
+- `--no-ff` の無い `git merge -m` は、fast-forward になれば commit-msg を呼ばないが、このルールは fast-forward に
+  なるかを見ずに検査する（崩れた語を置き換えれば通るので、止めすぎの害は小さい）。git の整え方のうち、先頭の空行と
+  `--cleanup=strip` の # の行は合わせ、設定の `commit.cleanup` は見ない
 - git がメッセージに足す行（`--log` や `merge.log` の、マージするコミットの件名の一覧）は、このルールには見えない。
   その件名に崩れた語があれば、今までどおり commit-msg が数分後に拒む。xlc と全体の設定は `merge.log` を使っていない
   （2026-10-22）

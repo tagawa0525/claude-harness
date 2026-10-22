@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# コミットのメッセージの崩れた日本語の語を検査する（ADR-0014）。git の commit-msg の hook と、claude-hooks の
-# git merge の本文を先に検査するルール（ADR-0050）が、同じ判定にするために共有する。メッセージは標準入力で受け、
+# コミットのメッセージの崩れた日本語の語を検査する。git の commit-msg の hook と、claude-hooks の
+# git merge の本文を先に検査するルールが、同じ判定にするために共有する。メッセージは標準入力で受け、
 # JA_TERMS_CONFIG（textlint の設定）は textlint.nix の writeShellApplication が与える。
 #
 # 件名が Merge / fixup! / squash! / Revert なら件名を除く（元のコミットからコピーしたもの、Merge は git が作るもの。
