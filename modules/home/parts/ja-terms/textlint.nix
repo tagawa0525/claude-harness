@@ -8,6 +8,7 @@
   textlint-rule-prh,
   writeText,
   writeShellApplication,
+  coreutils,
   gnused,
 }:
 let
@@ -33,6 +34,7 @@ let
   messageCheck = writeShellApplication {
     name = "ja-terms-message";
     runtimeInputs = [
+      coreutils
       gnused
       textlintWithRules
     ];
