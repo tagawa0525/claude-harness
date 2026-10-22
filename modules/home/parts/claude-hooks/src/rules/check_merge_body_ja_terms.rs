@@ -26,23 +26,34 @@ pub struct CheckMergeBodyJaTerms;
 /// ビルド時に埋める ja-terms-message の store のパス（package.nix の env）。cargo で直接ビルドしたものには無い
 const JA_TERMS_MESSAGE: Option<&str> = option_env!("CLAUDE_HOOKS_JA_TERMS_MESSAGE");
 
-/// `git merge args…` の本文。`-m` の値（複数なら空行で連ねる）か、`-F` のファイル（dir からの相対。`~` は HOME）の内容。
-/// 本文の無い形は Ok(None)、`-F` のファイルが読めなければ Err にパス
-fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
+/// 本文を判定できない理由
+#[derive(Debug, PartialEq)]
+enum Undecided {
+    /// `-F -`（標準入力）
+    Stdin,
+    /// シェルが展開する値（`"$MSG"`、`-F "$TMPDIR/m"`）。書いたまま
+    Expanded(String),
+    /// 読めない `-F` のファイル
+    Unreadable(String),
+}
+
+/// `git merge args…` の本文。`-m` の値（複数なら空行で連ねる）か、`-F` のファイル（dir からの相対。`~` は
+/// HOME）の内容。git は先頭の空行や --cleanup の整えを commit-msg の後で行うので、書いたままにする。
+/// 本文の無い形は Ok(None)
+fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, Undecided> {
     let mut parts = Vec::new();
-    let mut strip_comments = false;
-    for (opt, value) in option_values("merge", args) {
+    for (opt, value, arg) in option_values("merge", args) {
         match opt {
-            Item::Short('m') | Item::Long("--message") => parts.push(message_value(value)),
+            Item::Short('m') | Item::Long("--message") => parts.push(literal(value, arg)?),
             // `-F -` は標準入力。`-` という名前のファイルを読まない
             Item::Short('F') | Item::Long("--file") if value == "-" => {
-                return Err(value.to_string());
+                return Err(Undecided::Stdin);
             }
-            Item::Long("--cleanup") => strip_comments = value == "strip",
             Item::Short('F') | Item::Long("--file") => {
-                match std::fs::read_to_string(shell::resolve(&shell::home(), dir, value)) {
+                let path = literal(value, arg)?;
+                match std::fs::read_to_string(shell::resolve(&shell::home(), dir, &path)) {
                     Ok(text) => parts.push(text),
-                    Err(_) => return Err(value.to_string()),
+                    Err(_) => return Err(Undecided::Unreadable(path)),
                 }
             }
             _ => {}
@@ -51,23 +62,38 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
     if parts.is_empty() {
         return Ok(None);
     }
-    // git が commit-msg の前に行う整えのうち、検査に効くもの: 先頭の空行を除く（件名の行が変わる）、
-    // --cleanup=strip なら # の行を除く
-    let joined = parts.join("\n\n");
-    let lines: Vec<&str> = joined
-        .split('\n')
-        .filter(|l| !(strip_comments && l.starts_with('#')))
-        .skip_while(|l| l.trim().is_empty())
-        .collect();
-    Ok(Some(lines.join("\n")))
+    Ok(Some(parts.join("\n\n")))
 }
 
-/// マージコミットを作らない指定か（commit-msg を呼ばない）。`--ff` / `--no-ff` / `--ff-only` と
+/// 値を書いたままの文字列にする。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は
+/// 本文を取り出す。単引用符の値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
+/// バッククォートを含むものは、シェルが展開した後の値が分からない
+fn literal(value: &str, arg: &Arg) -> Result<String, Undecided> {
+    let expands = |t: &str| t.contains('$') || t.contains('`');
+    if arg.raw.starts_with('\'') {
+        return Ok(value.to_string());
+    }
+    if let Some((body, quoted)) = heredoc_body(value) {
+        return if quoted || !expands(&body) {
+            Ok(body)
+        } else {
+            Err(Undecided::Expanded(value.to_string()))
+        };
+    }
+    if expands(value) {
+        return Err(Undecided::Expanded(value.to_string()));
+    }
+    Ok(value.to_string())
+}
+
+/// commit-msg を呼ばない指定か（マージコミットを作らない、hook を飛ばす）。`--ff` / `--no-ff` / `--ff-only` と
 /// `--squash` / `--no-squash` は、git と同じく後ろのものが勝つ
 fn makes_no_commit(args: &[Arg]) -> bool {
-    let (mut ff_only, mut squash) = (false, false);
+    let (mut ff_only, mut squash, mut no_verify) = (false, false, false);
     for item in items("merge", args) {
         match item {
+            Item::Long("--no-verify") => no_verify = true,
+            Item::Long("--verify") => no_verify = false,
             Item::Long("--ff-only") => ff_only = true,
             Item::Long("--ff" | "--no-ff") => ff_only = false,
             Item::Long("--squash") => squash = true,
@@ -75,12 +101,12 @@ fn makes_no_commit(args: &[Arg]) -> bool {
             _ => {}
         }
     }
-    ff_only || squash
+    ff_only || squash || no_verify
 }
 
 /// `-m` か `-F` があるか
 fn has_message(args: &[Arg]) -> bool {
-    option_values("merge", args).iter().any(|(opt, _)| {
+    option_values("merge", args).iter().any(|(opt, _, _)| {
         matches!(
             opt,
             Item::Short('m' | 'F') | Item::Long("--message" | "--file")
@@ -88,22 +114,18 @@ fn has_message(args: &[Arg]) -> bool {
     })
 }
 
-/// `-m` の値。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は本文を取り出し、
-/// ほかは書いたまま（展開しない）
-fn message_value(text: &str) -> String {
-    heredoc_body(text).unwrap_or_else(|| text.to_string())
-}
-
-/// `$(cat <<[-]DELIM\n本文\nDELIM\n)` の本文。区切りのクォート（'EOF'、"EOF"）は外す。`<<-` は行の先頭の
-/// タブを外す
-fn heredoc_body(text: &str) -> Option<String> {
+/// `$(cat <<[-]DELIM\n本文\nDELIM\n)` の本文と、区切りをクォートしたか（'EOF'、"EOF"。本文を展開しない）。
+/// `<<-` は行の先頭のタブを外す
+fn heredoc_body(text: &str) -> Option<(String, bool)> {
     let rest = text.strip_prefix("$(cat <<")?.strip_suffix(')')?;
     let (dash, rest) = match rest.strip_prefix('-') {
         Some(r) => (true, r),
         None => (false, rest),
     };
     let (head, body) = rest.split_once('\n')?;
-    let delim = head.trim().trim_matches(|c| c == '\'' || c == '"');
+    let head = head.trim();
+    let delim = head.trim_matches(|c| c == '\'' || c == '"');
+    let quoted = delim.len() != head.len();
     if delim.is_empty() {
         return None;
     }
@@ -115,7 +137,7 @@ fn heredoc_body(text: &str) -> Option<String> {
             line
         };
         if line == delim {
-            return Some(lines.join("\n"));
+            return Some((lines.join("\n"), quoted));
         }
         lines.push(line);
     }
@@ -236,7 +258,7 @@ impl CheckMergeBodyJaTerms {
             let Some(("merge", args)) = cmd.git_subcommand() else {
                 continue;
             };
-            // 本文の無い形（エディタ）と、マージコミットを作らない形（commit-msg を呼ばない）は対象外
+            // 本文の無い形（エディタ）と、commit-msg を呼ばない形は対象外
             if !has_message(args) || makes_no_commit(args) {
                 continue;
             }
@@ -247,16 +269,14 @@ impl CheckMergeBodyJaTerms {
             let message = match merge_message(args, &dir) {
                 Ok(Some(m)) => m,
                 Ok(None) => continue,
-                Err(path) if path == "-" => {
-                    notice(
-                        "check-merge-body-ja-terms: git merge -F - の本文は標準入力から読むので、本文の語を判定していません".to_string(),
-                    );
-                    continue;
-                }
-                // 読めないパスは、git merge 自身が失敗する
-                Err(path) => {
+                Err(why) => {
+                    let why = match why {
+                        Undecided::Stdin => "-F - は標準入力から読む".to_string(),
+                        Undecided::Expanded(v) => format!("{v} はシェルが展開する"),
+                        Undecided::Unreadable(p) => format!("-F {p} を読めない"),
+                    };
                     notice(format!(
-                        "check-merge-body-ja-terms: git merge -F {path} を読めないので、本文の語を判定していません"
+                        "check-merge-body-ja-terms: git merge の本文の語を判定していません（{why}）"
                     ));
                     continue;
                 }
@@ -389,7 +409,7 @@ exit 0
         args.to_vec()
     }
 
-    fn message(src: &str) -> Result<Option<String>, String> {
+    fn message(src: &str) -> Result<Option<String>, Undecided> {
         merge_message(&args(src), Path::new("."))
     }
 
@@ -490,7 +510,7 @@ exit 0
     fn message_reports_unreadable_file() {
         assert_eq!(
             message("git merge -F /nonexistent/msg.txt feat/a"),
-            Err("/nonexistent/msg.txt".to_string())
+            Err(Undecided::Unreadable("/nonexistent/msg.txt".to_string()))
         );
     }
 

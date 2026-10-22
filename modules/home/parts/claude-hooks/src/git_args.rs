@@ -150,17 +150,18 @@ pub fn items<'a>(sub: &str, args: &'a [Arg]) -> Vec<Item<'a>> {
     scan(sub, args).into_iter().map(|(item, _)| item).collect()
 }
 
-/// サブコマンド `sub` の、値を取るオプションとその値を順に（`-m v` / `-mv` / `--message v` / `--message=v`）。
-/// 値の無いまま終わったもの（末尾の `-m`）は含めない
-pub fn option_values<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, &'a str)> {
+/// サブコマンド `sub` の、値を取るオプションとその値、値を書いた引数を順に（`-m v` / `-mv` / `--message v` /
+/// `--message=v`）。値の無いまま終わったもの（末尾の `-m`）は含めない
+pub fn option_values<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, &'a str, &'a Arg)> {
     scan(sub, args)
         .into_iter()
-        .filter_map(|(item, value)| value.map(|v| (item, v)))
+        .filter_map(|(item, value)| value.map(|(v, a)| (item, v, a)))
         .collect()
 }
 
-/// [`items`] の読み方で、値を取るオプションには値を添える
-fn scan<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, Option<&'a str>)> {
+/// [`items`] の読み方で、値を取るオプションには値と、値を書いた引数を添える
+#[allow(clippy::type_complexity)]
+fn scan<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, Option<(&'a str, &'a Arg)>)> {
     let options = value_options(sub);
     let mut out = Vec::new();
     let mut it = args.iter();
@@ -174,9 +175,9 @@ fn scan<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, Option<&'a str>)> {
             let end = 2 + long.find('=').unwrap_or(long.len());
             let name = &t[..end];
             let value = if name != t {
-                options.longs.contains(&name).then(|| &t[end + 1..])
+                options.longs.contains(&name).then(|| (&t[end + 1..], a))
             } else if options.longs.contains(&name) {
-                it.next().map(|v| v.text.as_str())
+                it.next().map(|v| (v.text.as_str(), v))
             } else {
                 None
             };
@@ -193,9 +194,9 @@ fn scan<'a>(sub: &str, args: &'a [Arg]) -> Vec<(Item<'a>, Option<&'a str>)> {
                 // 残りが無ければ次の語が値
                 let rest = &cluster[i + ch.len_utf8()..];
                 let value = if rest.is_empty() {
-                    it.next().map(|v| v.text.as_str())
+                    it.next().map(|v| (v.text.as_str(), v))
                 } else {
-                    Some(rest)
+                    Some((rest, a))
                 };
                 out.push((Item::Short(ch), value));
                 break;
