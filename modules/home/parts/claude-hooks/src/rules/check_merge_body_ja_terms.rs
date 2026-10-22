@@ -91,16 +91,14 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, Undecided> 
 }
 
 /// 値を書いたままの文字列にする。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は
-/// 本文を取り出す。単引用符だけの値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
+/// 本文を取り出す。単引用符で書いた値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
 /// バッククォートを含むもの（単引用符に `"$X"` が続く値を含む）は、シェルが展開した後の値が分からない
 fn literal(value: &str, arg: &Arg, option: &'static str) -> Result<String, Undecided> {
     let expands = |t: &str| t.contains('$') || t.contains('`');
+    // 値の全体を単引用符で書いた形（`'v'`、`-m'v'`、`--message='v'`）。語の中の単引用符がその 2 つだけなら、
+    // 値の前（オプションの名前）にも後ろにも展開は無い
     let raw = arg.raw.as_str();
-    if raw.len() >= 2
-        && raw.starts_with('\'')
-        && raw.ends_with('\'')
-        && raw.matches('\'').count() == 2
-    {
+    if raw.ends_with(&format!("'{value}'")) && raw.matches('\'').count() == 2 {
         return Ok(value.to_string());
     }
     if let Some((body, quoted)) = heredoc_body(value) {
