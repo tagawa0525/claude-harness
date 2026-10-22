@@ -34,7 +34,7 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
         match opt {
             Item::Short('m') | Item::Long("--message") => parts.push(message_value(value)),
             Item::Short('F') | Item::Long("--file") => {
-                match std::fs::read_to_string(dir.join(value)) {
+                match std::fs::read_to_string(message_path(value, dir, None)) {
                     Ok(text) => parts.push(text),
                     Err(_) => return Err(value.to_string()),
                 }
@@ -46,6 +46,12 @@ fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, String> {
         return Ok(None);
     }
     Ok(Some(parts.join("\n\n")))
+}
+
+/// `-F` のファイルのパス。`~/` は home の下、相対パスは dir の下
+fn message_path(value: &str, dir: &Path, home: Option<&Path>) -> std::path::PathBuf {
+    let _ = home;
+    dir.join(value)
 }
 
 /// `-m` の値。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は本文を取り出し、
@@ -168,8 +174,16 @@ fn commit_msg_skips(dir: &Path) -> bool {
 }
 
 impl CheckMergeBodyJaTerms {
-    /// `check` は埋めた ja-terms-message のパス（無ければ判定できない）
-    fn check_with(&self, input: &Input, shell: &Shell, check: Option<&str>) -> Vec<Finding> {
+    /// `check` は埋めた ja-terms-message のパス（無ければ判定できない）。`global_hooks` は dir で見た
+    /// グローバルの core.hooksPath
+    fn check_with(
+        &self,
+        input: &Input,
+        shell: &Shell,
+        check: Option<&str>,
+        global_hooks: &dyn Fn(&Path) -> Option<String>,
+    ) -> Vec<Finding> {
+        let _ = global_hooks;
         let mut out = Vec::new();
         for cmd in shell.commands() {
             let Some(("merge", args)) = cmd.git_subcommand() else {
@@ -214,7 +228,9 @@ impl Rule for CheckMergeBodyJaTerms {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        self.check_with(input, shell, JA_TERMS_MESSAGE)
+        self.check_with(input, shell, JA_TERMS_MESSAGE, &|dir| {
+            git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
+        })
     }
 }
 
@@ -257,6 +273,7 @@ mod tests {
 body=$(cat)
 case "$body" in
   *失敗*) echo "boom" >&2; exit 2 ;;
+  *無語*) exit 1 ;;
   *誤語*)
     printf '%s\n' "COMMIT_EDITMSG.txt" "  2:1  ✓ error  誤語 => 正語  prh" "" "✖ 1 problem (1 error, 0 warnings, 0 infos)"
     exit 1 ;;
@@ -272,14 +289,27 @@ exit 0
         path.to_string_lossy().into_owned()
     }
 
-    fn git_init(dir: &Path) {
+    /// テストのグローバルの core.hooksPath。git_init のリポジトリはこれをローカルに持つ（手元とサンドボックスで
+    /// グローバルの設定が違っても、グローバルの hook を使うリポジトリにする）
+    const GLOBAL_HOOKS: &str = "/nonexistent/global-hooks";
+
+    fn global_hooks(_: &Path) -> Option<String> {
+        Some(GLOBAL_HOOKS.to_string())
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
         let ok = Command::new("git")
-            .args(["init", "-q"])
+            .args(args)
             .current_dir(dir)
             .status()
             .unwrap()
             .success();
-        assert!(ok);
+        assert!(ok, "git {args:?}");
+    }
+
+    fn git_init(dir: &Path) {
+        git(dir, &["init", "-q"]);
+        git(dir, &["config", "core.hooksPath", GLOBAL_HOOKS]);
     }
 
     fn args(src: &str) -> Vec<Arg> {
@@ -299,7 +329,7 @@ exit 0
             "cwd": cwd,
         });
         let input = Input::parse(&json.to_string()).unwrap();
-        CheckMergeBodyJaTerms.check_with(&input, &Shell::parse(command), check)
+        CheckMergeBodyJaTerms.check_with(&input, &Shell::parse(command), check, &global_hooks)
     }
 
     /// git のリポジトリの中で、偽の ja-terms-message で検査する
@@ -509,5 +539,76 @@ exit 0
                 .any(|n| n.contains("ja-terms-message")),
             "判定できなかった理由を出すはず"
         );
+    }
+
+    #[test]
+    fn message_path_expands_home_and_joins_relative() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            message_path("~/m.txt", Path::new("/r"), Some(home)),
+            PathBuf::from("/home/u/m.txt")
+        );
+        assert_eq!(
+            message_path("m.txt", Path::new("/r"), Some(home)),
+            PathBuf::from("/r/m.txt")
+        );
+        assert_eq!(
+            message_path("/abs/m.txt", Path::new("/r"), Some(home)),
+            PathBuf::from("/abs/m.txt")
+        );
+    }
+
+    #[test]
+    fn reports_stdin_message_file_as_undecidable() {
+        assert!(check("git merge --no-ff -F - feat/a").is_empty());
+        assert!(
+            take_notices().iter().any(|n| n.contains("標準入力")),
+            "判定できなかった理由を出すはず"
+        );
+    }
+
+    #[test]
+    fn lint_without_terms_is_failure() {
+        let dir = TempDir::new("no-terms");
+        let t = fake_check(&dir);
+        assert!(matches!(lint(&t, &dir.0, "無語\n"), Lint::Failed(_)));
+    }
+
+    #[test]
+    fn ignores_merge_that_makes_no_commit() {
+        assert!(check("git merge --ff-only feat/a -m 'Merge: a' -m '誤語'").is_empty());
+        assert!(check("git merge --squash feat/a -m 'Merge: a' -m '誤語'").is_empty());
+    }
+
+    #[test]
+    fn ignores_repository_with_its_own_hooks_path() {
+        let dir = TempDir::new("own-hooks");
+        git_init(&dir.0);
+        git(&dir.0, &["config", "core.hooksPath", ".githooks"]);
+        let check = fake_check(&dir);
+        let findings = check_in(
+            "git merge -m 'Merge: a' -m '誤語' feat/a",
+            &dir.0,
+            Some(&check),
+        );
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn ignores_when_no_global_hooks_path() {
+        let dir = TempDir::new("no-global");
+        git_init(&dir.0);
+        let check = fake_check(&dir);
+        let json = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "git merge -m 'Merge: a' -m '誤語' feat/a"},
+            "cwd": dir.0,
+        });
+        let input = Input::parse(&json.to_string()).unwrap();
+        let command = "git merge -m 'Merge: a' -m '誤語' feat/a";
+        let findings =
+            CheckMergeBodyJaTerms
+                .check_with(&input, &Shell::parse(command), Some(&check), &|_| None);
+        assert!(findings.is_empty());
     }
 }
