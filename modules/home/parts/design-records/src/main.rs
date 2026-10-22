@@ -257,7 +257,8 @@ fn body_changes(
                 "the body changed although the ADR is {status} on {shown}; \
                  after a decision, fix only typos, grammar, markup and broken links \
                  (append dated notes to the notes section), or supersede it with a new ADR \
-                 (to change only part of it, write a new ADR whose `amends` names it)"
+                 (to change only part of it, write a new ADR whose `amends` names it, \
+                 and add the new ADR to this ADR's `amended-by` once it is accepted)"
             )
         } else {
             continue;
