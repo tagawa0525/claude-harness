@@ -7,10 +7,10 @@
 #           積み重なったブランチは土台を origin/<土台のブランチ> で渡す（fetch が更新するのは
 #           origin/* だけで、ローカルのブランチは古いまま比べることになる）
 #
-# GitHub リモートがあれば、比べる前に origin を fetch する（失敗したら WARN を出し、手元の追跡ブランチで比べる）。
-# GitHub リモートと origin が揃わないときは、--base を渡されたときだけ比べ、渡されなければ何もしない（比べる先の既定は
-# origin の既定ブランチで決めるため。リモートの無いリポジトリでは --base main を渡す）。そのとき --base が追跡ブランチ
-# （<リモート>/<ブランチ>）なら、そのリモートを fetch してから比べる（失敗したら WARN）。
+# --base が無く GitHub リモートがあれば、比べる前に origin を fetch する（失敗したら WARN を出し、手元の追跡ブランチで比べる）。
+# --base を渡されたときは、どの clone でも比べ、--base が追跡ブランチならそのリモートを fetch してから比べる（失敗したら
+# WARN）。渡されないときは、GitHub リモートと origin が揃うときだけ origin の既定ブランチと比べ、揃わなければ何もしない
+# （リモートの無いリポジトリでは --base main を渡す）。
 # WARN が出たときは比較が済んでいない（出力が空でも「進みなし」ではない）。
 # 他のセッションが同じファイルを main に入れていると、マージ直前の rebase まで気付けない。
 # 知らせるだけで失敗にはしない（同じパスを触っても、衝突するとは限らない）。
@@ -47,17 +47,29 @@ fetch_or_warn() {
     echo "WARN: fetch に失敗しました。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
   fi
 }
-if grep -q 'github\.com' <<<"$remotes" && git remote get-url origin >/dev/null 2>&1; then
+# BASE が追跡ブランチ（refs/remotes/<リモート>/...）なら、そのリモートの名前。リモート名に / を含みうるので、
+# 先頭の語でなく、登録されたリモートのうち前方一致する最長の名前を取る
+remote_of() {
+  local full name best=""
+  full=$(git rev-parse --symbolic-full-name "$1" 2>/dev/null) || return 0
+  [[ "$full" == refs/remotes/* ]] || return 0
+  while IFS= read -r name; do
+    [[ "${full#refs/remotes/}" == "$name"/* && ${#name} -gt ${#best} ]] && best="$name"
+  done < <(git remote)
+  if [[ -z "$best" ]]; then
+    echo "WARN: ${1} のリモートが見つかりません。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
+  fi
+  echo "$best"
+}
+if [[ -n "$BASE" ]]; then
+  base_remote=$(remote_of "$BASE")
+  [[ -z "$base_remote" ]] || fetch_or_warn "$base_remote"
+elif grep -q 'github\.com' <<<"$remotes" && git remote get-url origin >/dev/null 2>&1; then
   # origin を明示する。引数なしの fetch は今のブランチの上流のリモートへ行き、
   # 上流が別のリモートだと、BASE の origin/* が更新されないまま古い比較になる
   fetch_or_warn origin
-elif [[ -n "$BASE" ]]; then
-  base_remote="${BASE%%/*}"
-  if [[ "$BASE" == */* ]] && git remote get-url "$base_remote" >/dev/null 2>&1; then
-    fetch_or_warn "$base_remote"
-  fi
 else
-  # worktree-add.sh と同じく、origin が無ければ比べる先が決まらないので何もしない
+  # 比べる先の既定は GitHub の origin の既定ブランチなので、GitHub リモートか origin が無ければ決まらない
   exit 0
 fi
 
