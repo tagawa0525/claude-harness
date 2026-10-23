@@ -77,14 +77,18 @@ if [[ -n "$BASE_REF" ]] && ! DIFF_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/
   exit 2
 fi
 
-# changed_files [git diff の追加引数...]: 検査対象の変更ファイル。通常はステージ済み、
+# diff_names [git diff の追加引数...]: 検査対象の差分のファイル名。通常はステージ済み、
 # --merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分
-changed_files() {
+diff_names() {
   if (( MERGE )); then
-    git diff "$DIFF_BASE" --name-only --diff-filter=ACMR "$@"
+    git diff "$DIFF_BASE" --name-only "$@"
   else
-    git diff --cached --name-only --diff-filter=ACMR "$@"
+    git diff --cached --name-only "$@"
   fi
+}
+# changed_files [git diff の追加引数...]: 検査対象の変更ファイル（追加、変更、rename の後の名前）
+changed_files() {
+  diff_names --diff-filter=ACMR "$@"
 }
 
 staged_has() {
@@ -160,11 +164,13 @@ run_rust() {
 # clippy.toml やテストが読むデータも Rust の結果を変えうるので、すべて全体を実行する側に数える
 docs_only_diff() {
   local f
-  local -a diff=(git diff --cached) files
-  (( MERGE )) && diff=(git diff "$DIFF_BASE")
+  local -a files
   # プロセス置換は git diff の失敗を返さないので、先に一度実行して失敗を止める
-  "${diff[@]}" --name-only --no-renames -z >/dev/null || exit 1
-  mapfile -d '' -t files < <("${diff[@]}" --name-only --no-renames -z)
+  if ! diff_names --no-renames -z >/dev/null; then
+    echo "FAILED: rust docs-test: 差分（git diff）を読めません"
+    exit 1
+  fi
+  mapfile -d '' -t files < <(diff_names --no-renames -z)
   (( ${#files[@]} > 0 )) || return 1
   for f in "${files[@]}"; do
     [[ "$f" == *.md ]] || return 1
@@ -172,13 +178,14 @@ docs_only_diff() {
 }
 # 文書の差分で実行するテストの宣言。文書を読む Rust のテスト（文書どうしの整合など）を持つリポジトリが置き、
 # 差分が .md だけのときは fmt、clippy、全体の cargo test の代わりにこれを実行する（scripts/run-python-tests.sh と同じ形）
+# 実行権限は差分によらず確かめる（.rs を含む差分で黙って通すと、次の文書だけの差分で初めて落ちる）
 RUST_DOCS_TESTS=scripts/run-rust-docs-tests.sh
+if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" && ! -x "$RUST_DOCS_TESTS" ]]; then
+  echo "FAILED: rust docs-test: $RUST_DOCS_TESTS に実行権限が無い（chmod +x）"
+  exit 1
+fi
 if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" ]] && docs_only_diff; then
   DETECTED=1
-  if [[ ! -x "$RUST_DOCS_TESTS" ]]; then
-    echo "FAILED: rust docs-test: $RUST_DOCS_TESTS に実行権限が無い（chmod +x）"
-    exit 1
-  fi
   echo "SKIP: rust format, lint, test (差分が .md だけなので $RUST_DOCS_TESTS だけを実行する)"
   run_stage rust docs-test bash "" "${CARGO_PIN[@]}" bash "$RUST_DOCS_TESTS"
 elif [[ -f Cargo.toml ]]; then

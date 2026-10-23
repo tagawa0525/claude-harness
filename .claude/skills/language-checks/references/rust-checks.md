@@ -58,8 +58,9 @@ cargo test
 
 **文書だけの差分**（run-checks.sh）: ルートに `Cargo.toml` と `scripts/run-rust-docs-tests.sh` があり、差分が空でなく
 すべて `.md`（削除と rename の前後を含む）なら、fmt、clippy、全体の `cargo test` の代わりにそのスクリプトだけを実行する
-（終了コードで判定。実行権限が無ければ失敗）。文書を読むテストを持つリポジトリが、文書の差分で実行するテスト
-（例: `exec cargo test -p <文書のテストの crate>`）を書く。スクリプトが無いリポジトリと、`.md` 以外（`clippy.toml` や
+（終了コードで判定。実行権限が無ければ差分によらず失敗）。文書を読むテストを持つリポジトリが、文書の差分で実行する
+テスト（例: `exec cargo test -p <文書のテストの crate>`）を書く。`.md` を `include_str!` で取り込むクレート（doctest や
+clippy の doc の lint が `.md` で変わる）は、それも宣言に含めるか、宣言を置かない。スクリプトが無いリポジトリと、`.md` 以外（`clippy.toml` や
 テストが読むデータを含む）を含む差分は、全体を実行する。
 
 ### テストの種類
