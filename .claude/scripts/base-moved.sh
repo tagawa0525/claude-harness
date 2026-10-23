@@ -5,12 +5,12 @@
 #   branch  省略時は今のブランチ
 #   BASE    省略時は origin の既定ブランチ（origin/HEAD → origin/main → origin/master）。
 #           積み重なったブランチは土台を origin/<土台のブランチ> で渡す（fetch が更新するのは
-#           origin/* だけで、ローカルのブランチは古いまま比べることになる）
+#           追跡ブランチだけで、ローカルのブランチは古いまま比べることになる）
 #
-# --base が無く GitHub リモートがあれば、比べる前に origin を fetch する（失敗したら WARN を出し、手元の追跡ブランチで比べる）。
-# --base を渡されたときは、どの clone でも比べ、--base が追跡ブランチならそのリモートを fetch してから比べる（失敗したら
-# WARN）。渡されないときは、GitHub リモートと origin が揃うときだけ origin の既定ブランチと比べ、揃わなければ何もしない
-# （リモートの無いリポジトリでは --base main を渡す）。
+# --base を渡されたときは、どの clone でも比べ、--base が追跡ブランチならそのリモートを fetch してから比べる。
+# 渡されないときは、GitHub リモートと origin が揃うときだけ、origin を fetch して origin の既定ブランチと比べ、
+# 揃わなければ何もしない（リモートの無いリポジトリでは --base main を渡す）。fetch に失敗したら WARN を出し、
+# 手元の追跡ブランチで比べる。
 # WARN が出たときは比較が済んでいない（出力が空でも「進みなし」ではない）。
 # 他のセッションが同じファイルを main に入れていると、マージ直前の rebase まで気付けない。
 # 知らせるだけで失敗にはしない（同じパスを触っても、衝突するとは限らない）。
@@ -47,16 +47,17 @@ fetch_or_warn() {
     echo "WARN: fetch に失敗しました。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
   fi
 }
-# BASE が追跡ブランチ（refs/remotes/<リモート>/...）なら、そのリモートの名前。リモート名に / を含みうるので、
-# 先頭の語でなく、登録されたリモートのうち前方一致する最長の名前を取る
+# BASE が追跡ブランチ（<リモート>/...、remotes/<リモート>/...、refs/remotes/<リモート>/...）なら、そのリモートの名前。
+# まだ fetch していない追跡ブランチも fetch してから比べるので、参照を解かずに文字列で、登録されたリモートのうち
+# 前方一致する最長の名前を取る（リモート名に / を含みうる）
 remote_of() {
-  local full name best=""
-  full=$(git rev-parse --symbolic-full-name "$1" 2>/dev/null) || return 0
-  [[ "$full" == refs/remotes/* ]] || return 0
+  local b="$1" name best=""
+  b="${b#refs/}"
+  b="${b#remotes/}"
   while IFS= read -r name; do
-    [[ "${full#refs/remotes/}" == "$name"/* && ${#name} -gt ${#best} ]] && best="$name"
+    if [[ "$b" == "$name"/* && ${#name} -gt ${#best} ]]; then best="$name"; fi
   done < <(git remote)
-  if [[ -z "$best" ]]; then
+  if [[ -z "$best" && "$1" == *remotes/* ]]; then
     echo "WARN: ${1} のリモートが見つかりません。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
   fi
   echo "$best"
