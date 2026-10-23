@@ -202,6 +202,12 @@ assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=<理由>"
 # 「〜の場合は別」のような条件を文言に列挙しない（ADR-0023）
 assert_not_contains "$(reason "$out")" "まとめて加える"
 
+it "pre-pr-create: リポジトリのサブディレクトリから実行しても docs/adr を数える"
+mkdir -p "$REPO/docs/adr"
+out=$(run_hook pre-pr-create-check "cd '$REPO/docs/adr' && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+
 it "pre-pr-create: 新しい ADR が 1 件以下（README は数えない）なら許可する"
 git -C "$REPO" switch -q feat/one-adr
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
@@ -1835,6 +1841,8 @@ cd "$TEST_ROOT" || exit 1
 out=$(run_hook pre-git-merge-check "git -C $REPO merge --no-ff feat/two")
 assert_eq deny "$(decision "$out")"
 out=$(run_hook pre-git-merge-check "cd $REPO && git merge --no-ff feat/two")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook pre-git-merge-check "cd '$REPO/docs/adr' && git merge --no-ff feat/two")
 assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 
