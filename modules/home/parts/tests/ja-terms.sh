@@ -556,6 +556,21 @@ else
     ng "コミットの本文で止めたが、直す語を示さない"
   fi
 fi
+# 文書（.md）の検査と同じく、バッククォートで囲んだコードスパンの中は検査しない（識別子やファイル名の語）
+echo c > "$REPO/c.txt"
+git -C "$REPO" add c.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: add" -m '`確かめの結果` を書く' >"$WORK/out" 2>&1; then
+  ok "コミットの本文のコードスパンの中の崩れた語は止めない"
+else
+  ng "コミットの本文のコードスパンの中の崩れた語で止めた"
+fi
+echo d > "$REPO/d.txt"
+git -C "$REPO" add d.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: add" -m '`foo` と確かめの結果を書く' >"$WORK/out" 2>&1; then
+  ng "コミットの本文のコードスパンの外の崩れた語で止まらない"
+else
+  ok "コミットの本文のコードスパンの外の崩れた語は止める"
+fi
 echo z > "$REPO/z.txt"
 git -C "$REPO" add z.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "squash! docs: add" -m "確かめの結果を書く" >"$WORK/out" 2>&1; then
