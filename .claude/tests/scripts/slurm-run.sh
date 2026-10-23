@@ -151,9 +151,13 @@ assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
-it "slurm-run: --timed を付けなければ、パーティションを指定しない（既定の main）"
-"$RUN" -t 5 xlc-2G 'true' >/dev/null
-assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition"
+it "slurm-run: --timed を付けなければ、Slurm の設定の既定のパーティションを明示して投げる（SBATCH_PARTITION に左右されない）"
+default_part=$(grep -o '"[a-z]* Nodes=[^"]*Default=YES' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
+assert_ne "" "$default_part"
+SBATCH_PARTITION=timed "$RUN" -t 5 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$default_part"
+SBATCH_PARTITION=timed "$RUN" -c 4 -t 5 xlc-2G-shared 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$default_part"
 
 it "slurm-run: --timed でないジョブの TIME 行とログの末尾には、止められていなくても割り込まれうる印を付ける"
 out=$("$RUN" -t 30 xlc-2G 'true')
