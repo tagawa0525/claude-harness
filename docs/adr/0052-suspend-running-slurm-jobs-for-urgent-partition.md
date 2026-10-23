@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-23
 requires: [ADR-0007, ADR-0026, ADR-0029, ADR-0030, ADR-0031, ADR-0041]
 supersedes: []
@@ -149,7 +149,10 @@ QOS は使わず、`sacctmgr` の操作は要らない。設定はすべて slur
 
 - `slurm-run.sh` の `--urgent` と TIME 行の印、`slurm-history.sh` の `SUSPENDED` を、`.claude/tests/scripts/` の
   `slurm-run.sh` と `slurm-history.sh` で確かめる
-- 設定の構文: `nix build` で r995、t14g4、x1ng1 の toplevel を作る
+- 設定の構文: `nix build` で r995、t14g4、x1ng1 の toplevel を作る。2026-10-23 に、このブランチの 7f8b5601 で 3 つとも作れた。
+  生成した slurm.conf を `SLURM_CONF=<それ> scontrol show hostnames r995` が読めた（`PreemptMode=SUSPEND` だけにすると
+  `PreemptMode=SUSPEND requires GANG too` で止まるので、全体の行は読まれている）。パーティションの行（`PreemptMode=OFF` など）は
+  slurmctld だけが解するので、反映後の確認で確かめる
 - 反映後に r995 で確かめる（ユーザーと親のセッション）:
   - `scontrol show config | grep -i preempt` が `PreemptMode = GANG,SUSPEND` と `PreemptType = preempt/partition_prio` を、
     `scontrol show partition` が 2 つのパーティションの `OverSubscribe=FORCE:1` と `PriorityTier` を出す
