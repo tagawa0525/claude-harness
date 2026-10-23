@@ -203,7 +203,6 @@ assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=<理由>"
 assert_not_contains "$(reason "$out")" "まとめて加える"
 
 it "pre-pr-create: リポジトリのサブディレクトリから実行しても docs/adr を数える"
-mkdir -p "$REPO/docs/adr"
 out=$(run_hook pre-pr-create-check "cd '$REPO/docs/adr' && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
@@ -219,6 +218,11 @@ out=$(run_hook pre-pr-create-check "$GOOD_CMD --base feat/two-adrs")
 assert_eq allow "$(decision "$out")"
 out=$(run_hook pre-pr-create-check "$GOOD_CMD -B feat/two-adrs")
 assert_eq allow "$(decision "$out")"
+# --base=x の形も読む（読めないと数えられずに通るので、数えて止まる組で確かめる）
+git -C "$REPO" switch -q feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --base=main")
+assert_eq deny "$(decision "$out")"
+git -C "$REPO" switch -q feat/stacked
 # --base が無ければ既定ブランチから数える（積んだ下のブランチの ADR も入る）
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq deny "$(decision "$out")"
@@ -227,6 +231,9 @@ assert_contains "$(reason "$out")" "docs/adr/0004-use-d.md"
 it "pre-pr-create: --head で指定したブランチで数える"
 git -C "$REPO" switch -q feat/one-adr
 out=$(run_hook pre-pr-create-check "$GOOD_CMD --head feat/two-adrs")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --head=feat/two-adrs")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
 
