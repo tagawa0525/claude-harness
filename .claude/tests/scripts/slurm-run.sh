@@ -36,6 +36,10 @@ if [[ $1 == show ]]; then
   # 本物は RunTime の行より後、Comment や WorkDir の行より前に、最後に止めたか再開した時刻を出す（一度も無ければ None）
   [[ -n ${FAKE_NO_SUSPEND_FIELD:-} ]] ||
     echo "   SuspendTime=${FAKE_SUSPEND_TIME:-None} SecsPreSuspend=0 LastSchedEval=2026-10-23T22:00:00"
+  # 本物は SuspendTime の次の行に、ジョブが走ったパーティションを出す。既定は投げたときの --partition（無ければ main）
+  part=main
+  grep -qx -- '--partition=timed' "$TEST_ROOT/sbatch.args" && part=timed
+  [[ -n ${FAKE_NO_PARTITION_FIELD:-} ]] || echo "   Partition=${FAKE_PARTITION:-$part} AllocNode:Sid=localhost:1"
   [[ -z ${FAKE_EXTRA_LINE:-} ]] || echo "$FAKE_EXTRA_LINE"
   exit "${FAKE_SHOW_EXIT:-0}"
 fi
@@ -153,7 +157,7 @@ assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition"
 
 it "slurm-run: --timed でないジョブの TIME 行とログの末尾には、止められていなくても割り込まれうる印を付ける"
 out=$("$RUN" -t 30 xlc-2G 'true')
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 preemptible: 割り込まれうるので時間は記録に使わない（記録するなら --timed）"
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
 assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "preemptible: 割り込まれうるので時間は記録に使わない"
 
 it "slurm-run: --timed のジョブの TIME 行には印を付けない"
@@ -161,6 +165,23 @@ out=$("$RUN" --timed -t 30 xlc-bench 'true')
 assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
 assert_not_contains "$out" "preemptible"
 assert_not_contains "$out" "当てにならない"
+
+it "slurm-run: 割り込まれうる印は、flag でなく、ジョブが実際に走ったパーティション（scontrol の Partition）で決める"
+out=$(FAKE_PARTITION=main "$RUN" --timed -t 30 xlc-bench 'true')
+assert_contains "$out" "preemptible: 割り込まれうるので時間は記録に使わない"
+out=$(FAKE_PARTITION=timed "$RUN" -t 30 xlc-2G 'true')
+assert_not_contains "$out" "preemptible"
+
+it "slurm-run: パーティションは、利用者が決める値（Comment など）でなく、本物の Partition の欄から読む"
+out=$(FAKE_EXTRA_LINE="   Comment=feat/x Partition=timed" "$RUN" -t 30 xlc-2G 'true')
+assert_contains "$out" "preemptible:"
+
+it "slurm-run: scontrol の出力に Partition の欄が無ければ、割り込まれうるかを確かめられないと警告し、印を付ける"
+out=$(FAKE_NO_PARTITION_FIELD=1 FAKE_JOB_EXIT=3 "$RUN" --timed -t 30 xlc-bench 'true' 2>&1)
+assert_eq 3 $?
+assert_contains "$out" "WARN:"
+assert_contains "$out" "Partition"
+assert_contains "$out" "partition=unknown: 割り込まれうるかを確かめられないので時間は記録に使わない"
 
 it "slurm-run: ジョブが止められていたら（SuspendTime がある）、TIME 行とログの末尾に、時間は当てにならない印を付ける"
 out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" --timed -t 30 xlc-bench 'true')
