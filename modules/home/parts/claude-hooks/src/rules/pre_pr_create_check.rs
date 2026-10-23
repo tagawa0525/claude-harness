@@ -9,24 +9,32 @@
 //! 3. 現在のブランチに上流があり、未プッシュのコミットがない（--head 指定時は見ない）。
 //!    同じコマンドの前に連ねた git push は反映されない（実行前の状態を見る）
 //! 4. --web を使わない（ブラウザを開かず URL を報告する）
+//! 5. ブランチが新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はマージの時点の
+//!    pre-git-merge-check と共有する。レビューの周を回した後にマージで止まると、その周が無駄になる）。
+//!    base は --base（`origin/<base>`）、無ければ既定ブランチ。head は --head（`origin/<head>`）、
+//!    無ければ HEAD。`owner:branch` の head は別のリポジトリのブランチで手元に無いので数えない。
+//!    数えられなければ止める
 //!
 //! 本文の見出しは `--body` 引数ノードの原文（ヒアドキュメント本文を含む）だけを見る。
 //! 別のヒアドキュメントに書かれた見出しの例でゲートを通すことはできない。
-//! エスケープは設けない（いずれも満たしてから実行し直せばよい）
+//! 1〜4 のエスケープは設けない（いずれも満たしてから実行し直せばよい）。5 は、1 つの決定を複数の
+//! ADR に分けたときと、決定前の案（status: proposed）の ADR をまとめて加えるときだけ
+//! ALLOW_MULTI_TOPIC=<理由> で外す
 //!
 //! `upstream` リモートのある clone（他人のプロジェクトの fork。上流に PR を出す worktree）では、
-//! 件名の長さと本文の見出しはこちらの規約なので検査しない。上流の PR template と
+//! 件名の長さ、本文の見出し、新しい ADR の数はこちらの規約なので検査しない。上流の PR template と
 //! CONTRIBUTING が正で、それに合わせた本文（Serena の Checklist 等）を通す。
 //! --title と本文の存在、--web、未プッシュの検査は fork でも要る（gh が固まる・失敗する条件）。
 //! git の pre-commit / commit-msg hook と同じ判定（modules/home/parts/git.nix）
 
 use std::path::Path;
 
-use super::Rule;
+use super::pre_git_merge_check::{added_adrs, multi_topic_reason};
+use super::{Rule, apply_escape_to_reasons};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Shell, has_flag, opt_value};
+use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
 
 /// 検査は実行前のブランチの状態を見る。同じコマンドの前に連ねた git push は反映されず、
 /// 連ねるとコマンド全体が止まって前半も実行されないので、分け方を deny の文言で示す。
@@ -77,6 +85,25 @@ pub(super) fn body_text(
         };
     }
     Ok(opt_value(args, body_flags).map(|a| a.raw.clone()))
+}
+
+/// PR が加える ADR を数える範囲（`<base>...<head>`）。数えないときは Ok(None)、base が分からなければ Err
+fn adr_range(dir: &Path, args: &[Arg]) -> Result<Option<String>, String> {
+    let head = match opt_value(args, &["--head", "-H"]) {
+        Some(h) => {
+            let h = strip_opt_prefix(h, &["--head", "-H"]);
+            if h.contains(':') {
+                return Ok(None);
+            }
+            format!("origin/{h}")
+        }
+        None => "HEAD".to_string(),
+    };
+    let base = match opt_value(args, &["--base", "-B"]) {
+        Some(b) => format!("origin/{}", strip_opt_prefix(b, &["--base", "-B"])),
+        None => git::default_branch(dir).ok_or_else(|| "既定ブランチ".to_string())?,
+    };
+    Ok(Some(format!("{base}...{head}")))
 }
 
 impl Rule for PrePrCreateCheck {
@@ -158,6 +185,24 @@ impl Rule for PrePrCreateCheck {
                         }
                     }
                 }
+            }
+
+            // --- 5. トピックが 1 つか（新しい ADR の数）---
+            let escape = shell.escape("ALLOW_MULTI_TOPIC");
+            if !fork && escape != Escape::Given {
+                let topic = match adr_range(&dir, args) {
+                    Ok(None) => Vec::new(),
+                    Ok(Some(range)) => match added_adrs(&dir, &range) {
+                        Some(adrs) => multi_topic_reason(&adrs).into_iter().collect(),
+                        None => vec![format!(
+                            "新しい ADR の数を確認できません（git diff {range} が失敗）。base が手元に無ければ git fetch してください"
+                        )],
+                    },
+                    Err(what) => vec![format!(
+                        "新しい ADR の数を確認できません（比べる{what}が見つからない）"
+                    )],
+                };
+                reasons.extend(apply_escape_to_reasons(escape, "ALLOW_MULTI_TOPIC", topic));
             }
 
             if !reasons.is_empty() {
