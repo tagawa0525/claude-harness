@@ -61,6 +61,19 @@ out=$(cd "$NOGH" && "$SCRIPTS_DIR/base-moved.sh")
 assert_eq 0 $?
 assert_eq "" "$out"
 
+it "base-moved: GitHub リモートが無くても --base を渡せば、fetch せずに手元のブランチで比べる"
+git -C "$NOGH" switch -q main
+commit_file "$NOGH" a.txt "feat: a on main"
+commit_file "$NOGH" other.txt "feat: other"
+git -C "$NOGH" switch -q feat/x
+out=$(cd "$NOGH" && "$SCRIPTS_DIR/base-moved.sh" --base main 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "BASE_MOVED: main"
+assert_contains "$out" "2 commits"
+assert_contains "$out" "COMMON: a.txt"
+assert_not_contains "$out" "other.txt"
+assert_not_contains "$out" "WARN"
+
 it "base-moved: fetch に失敗したら警告して、手元の追跡ブランチで比べる"
 git remote set-url origin "$TEST_ROOT/bm/no-such.git"
 out=$("$SCRIPTS_DIR/base-moved.sh" 2>&1)
