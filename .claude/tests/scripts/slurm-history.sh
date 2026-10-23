@@ -163,97 +163,120 @@ out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "1 行目"
 
+# 止められうるのは、割り込みを入れた日（2026-10-23）より後に終わったジョブ。ここからのジョブはその後の日付で書く
 it "止められていたジョブ（sacct の Suspended が 0 でない）は表に入れず、件数と番号を SUSPENDED で出す"
 {
-  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
-  job 74 openmc-2A COMPLETED 45 2026-10-11T14:24:05 2026-10-11T15:14:32 1
+  job 73 openmc-2A COMPLETED 45 2026-11-01T13:45:32 2026-11-01T14:24:05 1
+  job 74 openmc-2A COMPLETED 45 2026-11-01T14:24:05 2026-11-01T15:14:32 1
 } > "$LOG"
-rows=$'73|2026-10-11T13:45:32|00:00:00\n74|2026-10-11T14:24:05|00:05:00'
-out=$(FAKE_SACCT_ROWS=$rows "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+clean=$'73|2026-11-01T13:45:32|00:00:00\n74|2026-11-01T14:24:05|00:00:00'
+out=$(FAKE_SACCT_ROWS=$'73|2026-11-01T13:45:32|00:00:00\n74|2026-11-01T14:24:05|00:05:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_eq 0 $?
 assert_contains "$out" "SUSPENDED: 1 (74)"
 assert_eq "" "$(grep -E '^ *74 ' <<<"$out")"
 assert_contains "$(grep -E '^ *73 ' <<<"$out")" "0.86"
 
 it "--by-name の集計に、止められていたジョブの時間を混ぜない"
-out=$(FAKE_SACCT_ROWS='74|2026-10-11T14:24:05|1-00:00:00' "$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
+out=$(FAKE_SACCT_ROWS=$'73|2026-11-01T13:45:32|00:00:00\n74|2026-11-01T14:24:05|1-00:00:00' "$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
 line=$(grep -E '^ *openmc-2A ' <<<"$out")
 assert_contains "$line" " 1 "
 assert_contains "$line" "0:38:33"
 assert_contains "$out" "SUSPENDED: 1 (74)"
 
 it "止められていたジョブが無ければ SUSPENDED: 0 を出す"
-out=$(FAKE_SACCT_ROWS=$'73|2026-10-11T13:45:32|00:00:00\n74|2026-10-11T14:24:05|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+out=$(FAKE_SACCT_ROWS=$clean "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "SUSPENDED: 0"
 
-it "表に入れうるジョブ（COMPLETED で NodeCnt が 1 以上）の番号だけをまとめて sacct に渡し、番号の重なる記録も含めて全利用者の開始と Suspended を読む"
+it "割り込みの後に終わり、表に入れうるジョブ（COMPLETED で NodeCnt が 1 以上）の番号だけをまとめて sacct に渡し、番号の重なる記録も含めて全利用者の開始と Suspended を読む"
 {
-  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
-  job 77 xlc-cancelled CANCELLED 20 2026-10-11T15:09:25 2026-10-11T15:09:25 0
-  job 74 openmc-2A COMPLETED 45 2026-10-11T14:24:05 2026-10-11T15:14:32 1
+  job 60 before COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+  job 73 openmc-2A COMPLETED 45 2026-11-01T13:45:32 2026-11-01T14:24:05 1
+  job 77 xlc-cancelled CANCELLED 20 2026-11-01T15:09:25 2026-11-01T15:09:25 0
+  job 74 openmc-2A COMPLETED 45 2026-11-01T14:24:05 2026-11-01T15:14:32 1
 } > "$LOG"
 rm -f "$TEST_ROOT/sacct.args"
-"$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
+FAKE_SACCT_ROWS=$clean "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
 args=$(cat "$TEST_ROOT/sacct.args")
 assert_contains "$args" $'-j\n73,74\n'
 assert_contains "$args" "--allusers"
 assert_contains "$args" "--duplicates"
 assert_contains "$args" "JobIDRaw,Start,Suspended"
 
-it "番号が再利用されていても、開始の時刻の合う記録で、止められていたかを決める"
+it "割り込みの前に終わったジョブだけなら sacct を呼ばない"
+job 60 before COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1 > "$LOG"
+rm -f "$TEST_ROOT/sacct.args"
+out=$(FAKE_SACCT_EXIT=1 "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_eq 0 $?
+assert_file_missing "$TEST_ROOT/sacct.args"
+assert_contains "$out" "SUSPENDED: 0"
+
+it "割り込みの前に終わったジョブは、番号が新しいジョブに再利用されていても表に入れる"
 {
   job 150 old COMPLETED 10 2026-10-11T10:00:00 2026-10-11T10:05:00 1
-  job 150 new COMPLETED 10 2026-10-20T10:00:00 2026-10-20T10:30:00 1
+  job 151 new COMPLETED 10 2026-11-01T10:00:00 2026-11-01T10:05:00 1
 } > "$LOG"
-rows=$'150|2026-10-11T10:00:00|00:00:00\n150|2026-10-20T10:00:00|00:20:00'
-out=$(FAKE_SACCT_ROWS=$rows "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+out=$(FAKE_SACCT_ROWS=$'150|2026-11-02T10:00:00|00:00:00\n151|2026-11-01T10:00:00|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_eq 0 $?
 assert_contains "$out" "old"
-assert_not_contains "$out" "new"
+
+it "番号が再利用されていても、開始の時刻の合う記録で、止められていたかを決める"
+{
+  job 150 first COMPLETED 10 2026-11-01T10:00:00 2026-11-01T10:05:00 1
+  job 150 second COMPLETED 10 2026-11-20T10:00:00 2026-11-20T10:30:00 1
+} > "$LOG"
+rows=$'150|2026-11-01T10:00:00|00:00:00\n150|2026-11-20T10:00:00|00:20:00'
+out=$(FAKE_SACCT_ROWS=$rows "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_contains "$out" "first"
+assert_not_contains "$out" "second"
 assert_contains "$out" "SUSPENDED: 1 (150)"
 
-it "sacct の開始の時刻は、呼ぶ側の SLURM_TIME_FORMAT によらず jobcomp と同じ書式（standard）で読む"
 {
-  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+  job 73 openmc-2A COMPLETED 45 2026-11-01T13:45:32 2026-11-01T14:24:05 1
 } > "$LOG"
-SLURM_TIME_FORMAT=relative "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
+
+it "sacct の開始の時刻は、呼ぶ側の SLURM_TIME_FORMAT によらず jobcomp と同じ書式（standard）で読む"
+FAKE_SACCT_ROWS=$clean SLURM_TIME_FORMAT=relative "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
 assert_eq "standard" "$(cat "$TEST_ROOT/sacct.timefmt")"
 
 it "sacct の開始の時刻は、呼ぶ側の TZ によらず、slurmctld が jobcomp に書くのと同じシステムの時刻帯で読む"
-TZ=UTC "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
+FAKE_SACCT_ROWS=$clean TZ=UTC "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
 assert_eq "unset" "$(cat "$TEST_ROOT/sacct.tz")"
 
 it "開始の時刻の欠けた行は、sacct との照合より先に、開始が無いと示して exit 1"
-job 73 broken COMPLETED 45 Unknown 2026-10-11T14:24:05 1 > "$LOG"
-out=$(FAKE_SACCT_ROWS='73|2026-10-11T13:45:32|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+job 73 broken COMPLETED 45 Unknown 2026-11-01T14:24:05 1 > "$LOG"
+out=$(FAKE_SACCT_ROWS=$clean "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "StartTime がありません"
 
-it "割り込みを入れた日（2026-10-23）以降に始まったジョブが sacct に無ければ、記録の遅れかもしれないので exit 1"
+it "割り込みの後に終わったジョブが sacct に無ければ、記録の遅れかもしれないので exit 1"
 job 500 late COMPLETED 10 2026-10-23T10:00:00 2026-10-23T10:05:00 1 > "$LOG"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR"
 assert_contains "$out" "500"
 
+it "割り込みの前に始まり、後に終わったジョブも、sacct に無ければ exit 1（走っている間に止められうる）"
+job 501 long COMPLETED 600 2026-10-22T20:00:00 2026-10-23T06:00:00 1 > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "501"
+
 {
-  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+  job 73 openmc-2A COMPLETED 45 2026-11-01T13:45:32 2026-11-01T14:24:05 1
 } > "$LOG"
 
 it "sacct にその番号の記録があるのに開始の時刻が合わなければ、止められていたかを決められないので exit 1"
-out=$(FAKE_SACCT_ROWS='73|2026-10-11T04:45:32|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+out=$(FAKE_SACCT_ROWS='73|2026-11-01T04:45:32|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR"
 assert_contains "$out" "73"
 assert_not_contains "$out" "JOBID"
 
-it "sacct に無いジョブ（accounting の前）は、止められていないものとして表に入れる"
-{
-  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
-} > "$LOG"
-out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
-assert_eq 0 $?
-assert_contains "$(grep -E '^ *73 ' <<<"$out")" "0.86"
-assert_contains "$out" "SUSPENDED: 0"
+it "sacct の Suspended が時間の形でなければ、止められていたかを決められないので exit 1"
+out=$(FAKE_SACCT_ROWS='73|2026-11-01T13:45:32|' "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR"
+assert_not_contains "$out" "JOBID"
 
 it "sacct が失敗したら、止められていたかを確かめられないので exit 1"
 out=$(FAKE_SACCT_EXIT=1 "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
