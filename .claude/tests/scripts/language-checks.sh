@@ -356,27 +356,27 @@ assert_contains "$out" "RUN: rust docs-test: bash scripts/run-rust-docs-tests.sh
 assert_contains "$out" "ALL_OK"
 
 it "run-checks --base: 宣言があり、ブランチの差分が .md だけなら宣言したテストだけを実行する"
-git commit -q -m "docs: body"
-: > "$TEST_ROOT/docs-tests.log"
-make_fake_tool cargo '*) exit 0 ;;'
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-base"
+git switch -q -c feat/doc
+echo 'body' >> doc.md && git add doc.md && git commit -q -m "docs: body"
 make_fake_tool markdownlint '*) exit 0 ;;'
-out=$("$LANG_SCRIPTS/run-checks.sh" --base main~1)
+out=$("$LANG_SCRIPTS/run-checks.sh" --base main)
 assert_eq 0 $?
 assert_eq "" "$(fake_log cargo)"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
 it "run-checks: 宣言があり差分がサブディレクトリの .md だけでも、宣言したテストだけを実行する"
-: > "$TEST_ROOT/docs-tests.log"
-make_fake_tool cargo '*) exit 0 ;;'
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-subdir"
 mkdir -p docs/adr && echo '# adr' > docs/adr/0001-x.md && git add docs/adr/0001-x.md
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "" "$(fake_log cargo)"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
-git commit -q -m "docs: adr"
 
 it "run-checks: 宣言したテストが失敗したら止まる"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-fail"
 printf '#!/bin/sh\necho docs broken; exit 3\n' > scripts/run-rust-docs-tests.sh
+git commit -q -am "chore: broken declaration"
 echo 'more' >> doc.md && git add doc.md
 out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
 assert_eq 1 $?
@@ -384,7 +384,9 @@ assert_contains "$out" "docs broken"
 assert_contains "$out" "FAILED: rust docs-test: bash scripts/run-rust-docs-tests.sh"
 
 it "run-checks: 宣言に実行権限が無ければ止まる"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-noexec-md"
 chmod -x scripts/run-rust-docs-tests.sh
+echo 'more' >> doc.md && git add doc.md
 out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "実行権限が無い"
