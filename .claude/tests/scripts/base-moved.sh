@@ -137,7 +137,17 @@ git clone -q "$D.up.git" "$D.up.other"
 commit_file "$D.up.other" src/a.txt "feat: up a" 3
 git -C "$D.up.other" push -q origin main
 out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" --base up/main 2>&1)
+assert_eq 0 $?
 assert_contains "$out" "BASE_MOVED: up/main"
+assert_contains "$out" "COMMON: src/a.txt"
+
+it "base-moved: まだ fetch していない追跡ブランチを --base に渡しても、そのリモートを fetch してから比べる"
+D=$(fixture base_not_fetched)
+commit_file "$D" src/a.txt "feat: a"
+in_other "$D" bash -c 'git switch -q -c parent && mkdir -p src && seq 4 > src/a.txt && git add src/a.txt && git commit -q -m "feat: parent a" && git push -q origin parent && git switch -q main'
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" --base origin/parent 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "BASE_MOVED: origin/parent"
 assert_contains "$out" "COMMON: src/a.txt"
 
 it "base-moved: 上流が別のリモートのブランチでも origin を fetch する"
