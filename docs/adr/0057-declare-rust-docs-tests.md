@@ -25,7 +25,8 @@ issues: ["#461"]
 - 案 A（採用）: リポジトリが `scripts/run-rust-docs-tests.sh` を置いて宣言する。ルートに `Cargo.toml` とこのスクリプトが
   あり、差分が空でなくすべて `.md` なら、fmt、clippy、全体の `cargo test` の代わりにこのスクリプトだけを実行し、終了コードで
   判定する。宣言に実行権限が無ければ、差分によらず失敗する（`.rs` を含む差分で黙って通すと、次の文書だけの差分で
-  初めて落ちる）。Python のテストの実行方法をリポジトリが `scripts/run-python-tests.sh` で宣言する形
+  初めて落ちる）。差分が宣言そのものを含めば、全体の検査の後に宣言も実行する（宣言を足す・直す差分は文書だけでないので、
+  実行しないと一度も走らないままマージされる）。Python のテストの実行方法をリポジトリが `scripts/run-python-tests.sh` で宣言する形
   （ADR-0036）と揃える
 - 案 B: `.pre-commit-config.yaml` に `files: \.md$` の hook を書き、run-checks.sh がそれを読む。run-checks.sh は今、
   design-records の `id` の行を grep するだけで、hook の `entry` と `files` を読むには YAML の解釈が要る。prek に任せて
@@ -62,7 +63,7 @@ issues: ["#461"]
 - `.claude/tests/scripts/language-checks.sh` に、宣言があり差分が `.md` だけならスクリプトだけを実行すること（ステージ済みと
   `--base`）、スクリプトの失敗と実行権限の欠けで止まること、宣言が無いとき、`.rs` の変更と削除、`clippy.toml` を含むとき、
   差分が空のとき、`.rs` から `.md` への rename では全体を実行すること、`.rs` を含む差分でも実行権限の欠けで止まること、
-  差分を読めなければ `FAILED:` を出して止まること、排他のジョブ中は宣言を `taskset` で実行することのテストを足した
+  差分を読めなければ `FAILED:` を出して止まること、差分が宣言を含めば全体の後に宣言も実行すること、排他のジョブ中は宣言を `taskset` で実行することのテストを足した
 
 ## 補足
 

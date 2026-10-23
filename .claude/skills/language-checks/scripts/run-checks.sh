@@ -185,6 +185,11 @@ if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" ]] && docs_only_diff; then
 elif [[ -f Cargo.toml ]]; then
   DETECTED=1
   run_rust .
+  # 宣言を足す・直す差分は文書だけでないので、ここで一度実行する（実行しないと、誤った宣言が次の文書だけの差分で
+  # 初めて落ちる）
+  if [[ -e "$RUST_DOCS_TESTS" ]] && staged_has "$RUST_DOCS_TESTS"; then
+    run_stage rust docs-test bash "" "${CARGO_PIN[@]}" bash "$RUST_DOCS_TESTS"
+  fi
 elif staged_has '*.rs'; then
   DETECTED=1
   mapfile -t targets < <(rust_targets | sort -u)
