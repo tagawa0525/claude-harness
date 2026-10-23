@@ -159,7 +159,7 @@ sacct -S <日付> --name=<名前> -o JobID,JobName,Elapsed,TimeLimit,State,MaxRS
 （`elapsed` も、プログラムが自分で測った時間も）は記録に使わない。実際に止められていれば、さらに
 `suspended: 止められていたので時間は当てにならない` が付く（止められていた時間は `sacct` の `Suspended` で読める）。
 
-`slurm-history.sh` の表は、`timed` のジョブと、割り込みを入れる前（2026-10-23 より前）に終わったジョブだけから作り、
+`slurm-history.sh` の表は、`timed` のジョブと、割り込みを反映する前（2026-10-23 21:40 より前）に終わったジョブだけから作り、
 ほかの件数を `UNTIMED:` の行に出す。`main` のジョブの見積もりの実績は、上の「投げ方」の `sacct` で読む（`Elapsed` は
 止められていた時間を除く）。
 
