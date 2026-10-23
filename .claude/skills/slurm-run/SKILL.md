@@ -154,8 +154,8 @@ background の `slurm-run.sh` は終わると通知が届くので、Monitor や
 sacct -S <日付> --name=<名前> -o JobID,JobName,Elapsed,TimeLimit,State,MaxRSS,Suspended
 ```
 
-記録に書く時間は、`--timed` のジョブの `elapsed` だけを使う（TIME 行に印が無い）。`--timed` でないジョブの TIME 行には、
-止められなかったときも `preemptible: 割り込まれうるので時間は記録に使わない（記録するなら --timed）` が付く。その時間
+記録に書く時間は、`--timed` のジョブの `elapsed` だけを使う（TIME 行に印が無い）。`timed` で走らなかったジョブの TIME 行には、
+止められなかったときも `preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）` が付く。その時間
 （`elapsed` も、プログラムが自分で測った時間も）は記録に使わない。実際に止められていれば、さらに
 `suspended: 止められていたので時間は当てにならない` が付く（止められていた時間は `sacct` の `Suspended` で読める）。
 
