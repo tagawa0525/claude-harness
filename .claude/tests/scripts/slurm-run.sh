@@ -36,6 +36,10 @@ if [[ $1 == show ]]; then
   # 本物は RunTime の行より後、Comment や WorkDir の行より前に、最後に止めたか再開した時刻を出す（一度も無ければ None）
   [[ -n ${FAKE_NO_SUSPEND_FIELD:-} ]] ||
     echo "   SuspendTime=${FAKE_SUSPEND_TIME:-None} SecsPreSuspend=0 LastSchedEval=2026-10-23T22:00:00"
+  # 本物は SuspendTime の次の行に、ジョブが走ったパーティションを出す。既定は投げたときの --partition（無ければ main）
+  part=main
+  grep -qx -- '--partition=timed' "$TEST_ROOT/sbatch.args" && part=timed
+  [[ -n ${FAKE_NO_PARTITION_FIELD:-} ]] || echo "   Partition=${FAKE_PARTITION:-$part} AllocNode:Sid=localhost:1"
   [[ -z ${FAKE_EXTRA_LINE:-} ]] || echo "$FAKE_EXTRA_LINE"
   exit "${FAKE_SHOW_EXIT:-0}"
 fi
@@ -127,48 +131,92 @@ assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "--cpus-per-task"
 assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "shared-cpus"
 assert_not_contains "$out" "shared"
 
-it "slurm-run: --urgent を付けると、パーティション urgent に投げる"
+it "slurm-run: --timed を付けると、排他でパーティション timed に投げる"
 cd "$HOME/github/proj" || exit 1
-"$RUN" --urgent -t 5 xlc-quick 'true' >/dev/null
+"$RUN" --timed -t 5 xlc-bench 'true' >/dev/null
 args=$(cat "$TEST_ROOT/sbatch.args")
-assert_contains "$args" "--partition=urgent"
+assert_contains "$args" "--partition=timed"
 assert_contains "$args" "--exclusive"
 
-it "slurm-run: --urgent は -c と組み合わせられる"
-"$RUN" --urgent -c 4 -t 5 xlc-quick-shared 'true' >/dev/null
-args=$(cat "$TEST_ROOT/sbatch.args")
-assert_contains "$args" "--partition=urgent"
-assert_contains "$args" "--cpus-per-task=4"
-assert_not_contains "$args" "--exclusive"
+it "slurm-run: --timed のパーティションは、Slurm の設定（modules/slurm/common.nix）の割り込まれないパーティションと同じ"
+part=$(grep -o '"[a-z]* Nodes=[^"]*PreemptMode=OFF' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
+assert_ne "" "$part"
+"$RUN" --timed -t 5 xlc-bench 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$part"
 
-it "slurm-run: --urgent を付けなければ、パーティションを指定しない（既定の main）"
-"$RUN" -t 5 xlc-2G 'true' >/dev/null
-assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition"
+it "slurm-run: --timed は -c と組み合わせられず、投げずにエラー"
+rm -f "$TEST_ROOT/sbatch.args"
+out=$("$RUN" --timed -c 4 -t 5 xlc-bench 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_file_missing "$TEST_ROOT/sbatch.args"
+
+it "slurm-run: --timed を付けなければ、Slurm の設定の既定のパーティションを明示して投げる（SBATCH_PARTITION に左右されない）"
+default_part=$(grep -o '"[a-z]* Nodes=[^"]*Default=YES' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
+assert_ne "" "$default_part"
+SBATCH_PARTITION=timed "$RUN" -t 5 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$default_part"
+SBATCH_PARTITION=timed "$RUN" -c 4 -t 5 xlc-2G-shared 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$default_part"
+
+it "slurm-run: --timed でないジョブの TIME 行とログの末尾には、止められていなくても割り込まれうる印を付ける"
+out=$("$RUN" -t 30 xlc-2G 'true')
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
+assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "preemptible: 割り込まれうるので時間は記録に使わない"
+
+it "slurm-run: --timed のジョブの TIME 行には印を付けない"
+out=$("$RUN" --timed -t 30 xlc-bench 'true')
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_not_contains "$out" "preemptible"
+assert_not_contains "$out" "当てにならない"
+
+it "slurm-run: 割り込まれうる印は、flag でなく、ジョブが実際に走ったパーティション（scontrol の Partition）で決める"
+out=$(FAKE_PARTITION=main "$RUN" --timed -t 30 xlc-bench 'true')
+assert_contains "$out" "preemptible: 割り込まれうるので時間は記録に使わない"
+out=$(FAKE_PARTITION=timed "$RUN" -t 30 xlc-2G 'true')
+assert_not_contains "$out" "preemptible"
+
+it "slurm-run: パーティションは、利用者が決める値（Comment など）でなく、本物の Partition の欄から読む"
+out=$(FAKE_EXTRA_LINE="   Comment=feat/x Partition=timed" "$RUN" -t 30 xlc-2G 'true')
+assert_contains "$out" "preemptible:"
+
+it "slurm-run: scontrol の出力に Partition の欄が無ければ、割り込まれうるかを確かめられないと警告し、印を付ける"
+out=$(FAKE_NO_PARTITION_FIELD=1 FAKE_JOB_EXIT=3 "$RUN" --timed -t 30 xlc-bench 'true' 2>&1)
+assert_eq 3 $?
+assert_contains "$out" "WARN:"
+assert_contains "$out" "Partition"
+assert_contains "$out" "partition=unknown: 割り込まれうるかを確かめられないので時間は記録に使わない"
 
 it "slurm-run: ジョブが止められていたら（SuspendTime がある）、TIME 行とログの末尾に、時間は当てにならない印を付ける"
-out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" -t 30 xlc-2G 'true')
+out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" --timed -t 30 xlc-bench 'true')
 assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 suspended: 止められていたので時間は当てにならない"
-assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "suspended: 止められていたので時間は当てにならない"
+assert_contains "$(cat "$HOME/github/slurm-logs/xlc-bench-42.out")" "suspended: 止められていたので時間は当てにならない"
 
-it "slurm-run: 止められていない（SuspendTime=None）ジョブの TIME 行には印を付けない"
-out=$("$RUN" -t 30 xlc-2G 'true')
+it "slurm-run: 止められていない（SuspendTime=None）ジョブの TIME 行には、止められた印を付けない"
+out=$("$RUN" --timed -t 30 xlc-bench 'true')
 assert_not_contains "$out" "suspended"
 
 it "slurm-run: 止められたかは、利用者が決める値（Comment など）でなく、本物の SuspendTime の欄から読む"
-out=$(FAKE_EXTRA_LINE="   Comment=feat/x SuspendTime=2026-10-23T22:10:00" "$RUN" -t 30 xlc-2G 'true')
+out=$(FAKE_EXTRA_LINE="   Comment=feat/x SuspendTime=2026-10-23T22:10:00" "$RUN" --timed -t 30 xlc-bench 'true')
 assert_not_contains "$out" "suspended"
 
 it "slurm-run: scontrol の出力に SuspendTime の欄が無ければ、止められたかを確かめられないと警告する"
-out=$(FAKE_NO_SUSPEND_FIELD=1 FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-2G 'true' 2>&1)
+out=$(FAKE_NO_SUSPEND_FIELD=1 FAKE_JOB_EXIT=3 "$RUN" --timed -t 30 xlc-bench 'true' 2>&1)
 assert_eq 3 $?
 assert_contains "$out" "WARN:"
 assert_contains "$out" "SuspendTime"
 assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
-assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "suspended=unknown"
+assert_contains "$(cat "$HOME/github/slurm-logs/xlc-bench-42.out")" "suspended=unknown"
 
-it "slurm-run: 排他でなく、止められてもいたら、両方の印を付ける"
+it "slurm-run: 割り込まれうるジョブが止められていたら、両方の印を付ける"
+out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" -t 30 xlc-2G 'true')
+assert_contains "$out" "preemptible: 割り込まれうるので時間は記録に使わない"
+assert_contains "$out" "suspended: 止められていたので時間は当てにならない"
+
+it "slurm-run: 排他でなく、止められてもいたら、すべての印を付ける"
 out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" -c 8 -t 30 openmc-2G 'true')
 assert_contains "$out" "shared (-c 8): 時間は当てにならない"
+assert_contains "$out" "preemptible: 割り込まれうるので時間は記録に使わない"
 assert_contains "$out" "suspended: 止められていたので時間は当てにならない"
 
 it "slurm-run: -c が正の整数でなければ、投げずにエラー"
@@ -238,6 +286,17 @@ it "slurm-run: 既定の NFS の入口は、Nix のマウント点（modules/slu
 nix_entry=$(grep -o '^"[^"]*"$' "$CLAUDE_DIR/../modules/slurm/nfs-entry.nix" | tr -d '"')
 assert_ne "" "$nix_entry"
 assert_eq "$nix_entry" "$(grep -o 'SLURM_RUN_NFS_ENTRY:-[^}]*' "$RUN" | cut -d- -f2-)"
+
+it "slurm-run: 知らないオプション（消した --urgent など）は、名前と読まずに投げずにエラー"
+cd "$HOME/github/proj" || exit 1
+for opt in --urgent -x; do
+  rm -f "$TEST_ROOT/sbatch.args"
+  out=$("$RUN" -t 5 "$opt" xlc-quick 'true' 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "ERROR:"
+  assert_contains "$out" "$opt"
+  assert_file_missing "$TEST_ROOT/sbatch.args"
+done
 
 it "slurm-run: 名前がファイル名に使えない文字を含んだらエラー"
 cd "$HOME/github/proj" || exit 1

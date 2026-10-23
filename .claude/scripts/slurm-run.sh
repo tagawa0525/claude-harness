@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 # slurm-run.sh — r995 の Slurm に重い計算を 1 本投げ、終わるまで待つ
 #
-# Usage: slurm-run.sh [--top] [--urgent] [-c <コア数>] -t <見積もり> <name> <command>
+# Usage: slurm-run.sh [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>
 #
-# 既定では、ほかの計算と重ならないよう排他で実行する（sbatch --exclusive --wait --export=ALL）。
+# 既定では、ほかの計算と重ならないよう排他で、既定のパーティション main に投げる（sbatch --exclusive --wait --export=ALL）。
+# main のジョブは --timed のジョブに止められ（SUSPEND）、その終わりに続きから再開する。いつ止められてもよい条件で
+# 走るので、時間は記録に使わず、TIME 行に「割り込まれうる」印を常に付ける（止められなかったときも）。
 # <name> はジョブの名前（squeue で見分ける）とログのファイル名に使う。例: xlc-2G、openmc-2G
 # -t: かかる時間の見積もり（sbatch --time の形。分か H:MM:SS）。待ち行列の見込み（squeue --start）に
 #     使う。超えても止めない（slurm.conf の OverTimeLimit=UNLIMITED）
 # -c: 排他にせず、<コア数> の CPU（Slurm の CPUs。ハードウェアスレッドで数え、割り当ては物理コア単位に
 #     切り上がる）だけを取って実行する（--cpus-per-task）。時間を記録しない長い計算のためで、ほかのジョブと
 #     資源を取り合うので、TIME 行に「時間は当てにならない」印を付ける。排他の main のジョブはノードにジョブが
-#     走っている間は始まらないので、走っている間は待たせる（--urgent のジョブは待たず、走っているジョブを止める）
-# --top: 待っているジョブより先に実行する（scontrol top。走っているジョブは止めない）
-# --urgent: パーティション urgent に投げる。待っている main のジョブより先に走り、走っている main のジョブのうち
-#     コアの重なるものを止めて（SUSPEND）実行する。排他（-c なし）ならノード全体を取るので、走っている main のジョブを
-#     すべて止める。止められたジョブは、urgent のジョブが終わると続きから再開する。
-#     止めたジョブはメモリに残る（Slurm はメモリを数えない）ので、走っているジョブとの合計が搭載量に収まる計算に限る
+#     走っている間は始まらないので、走っている間は待たせる（--timed のジョブは待たず、走っているジョブを止める）
+# --top: 同じパーティションの待っているジョブより先に実行する（scontrol top。走っているジョブは止めない）
+# --timed: 時間を記録するジョブ（と数分の急ぐ計算）。排他で、割り込まれないパーティション timed に投げる。待っている
+#     main のジョブより先に走り、走っている main のジョブをすべて止めて実行し、自分は止められない。timed のジョブどうしは
+#     止め合わず、投げた順に走る。止めたジョブはメモリに残る（Slurm はメモリを数えない）ので、走っているジョブとの合計が
+#     搭載量に収まる計算に限る。-c と組めない（排他でない時間は記録に使えない）
 # 連絡先として、git のブランチ、投げた場所、Claude Code のセッションの ID をジョブのコメントに書く
 # （squeue の %k）。サブエージェントは親と同じセッションなので、ブランチで見分ける。
 #
@@ -26,26 +28,26 @@
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
 #   （ログの末尾 20 行。終わった直後なら、最後に TIME: elapsed=<実際の時間> estimate=<見積もり> を
-#    ログへ書き足すので、その行も含む。-c のとき、urgent のジョブに止められていたときは、行末に印が付く）
+#    ログへ書き足すので、その行も含む。-c のとき、timed で走らなかったとき、止められていたときは、行末に印が付く）
 #   EXIT: <ジョブの終了コード>
 # 終了コードはジョブの終了コード。
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--top] [--urgent] [-c <コア数>] -t <見積もり> <name> <command>" >&2
+  echo "Usage: $0 [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>" >&2
   exit 1
 }
 
 top=false
-urgent=false
+timed=false
 estimate=""
 cpus=""
 shared=false
 while (($#)); do
   case "$1" in
     --top) top=true ;;
-    --urgent) urgent=true ;;
+    --timed) timed=true ;;
     -t)
       (($# >= 2)) || usage
       estimate=$2
@@ -57,6 +59,10 @@ while (($#)); do
       shared=true
       shift
       ;;
+    -*)
+      echo "ERROR: 知らないオプション: $1（時間を記録するジョブと急ぐ計算は --timed）" >&2
+      exit 1
+      ;;
     *) break ;;
   esac
   shift
@@ -65,6 +71,11 @@ done
 (($# == 2)) || usage
 name=$1
 command=$2
+
+if $timed && $shared; then
+  echo "ERROR: --timed は -c と組めない（排他でないジョブの時間は記録に使えない）" >&2
+  exit 1
+fi
 
 if $shared && [[ ! $cpus =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: -c のコア数は正の整数: '$cpus'" >&2
@@ -106,8 +117,12 @@ if $shared; then
   resources=(--cpus-per-task="$cpus")
   contact+=" shared-cpus=$cpus"
 fi
-if $urgent; then
-  resources+=(--partition=urgent)
+# 既定の main も明示する。コマンド行の --partition は SBATCH_PARTITION より強く、環境から timed に入った -c のジョブが
+# 時間を記録するジョブとして数えられることを防ぐ
+if $timed; then
+  resources+=(--partition=timed)
+else
+  resources+=(--partition=main)
 fi
 
 # sbatch --wait は終わるまで戻らないので、裏で実行し、最初の行から番号を読む
@@ -150,6 +165,16 @@ elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
   if $shared; then
     time_line+=" shared (-c $cpus): 時間は当てにならない"
   fi
+  # 止められたかによらず付ける。止められなかったジョブも、割り込まれうる条件で走った値で、付け忘れた --timed を見分けるため。
+  # flag でなく実際に走ったパーティションで決める（SBATCH_PARTITION などで変わりうる。slurm-history.sh も jobcomp の
+  # Partition で決める）。前に出る欄は固定の欄と JobName だけなので、最初の「空白 + Partition=」が本物の欄
+  if [[ ! $info =~ [[:space:]]Partition=([^[:space:]]+) ]]; then
+    echo "WARN: ジョブ $job の scontrol の出力に Partition が見つからず、割り込まれうるかを確かめられなかった" >&2
+    time_line+=" partition=unknown: 割り込まれうるかを確かめられないので時間は記録に使わない"
+  elif [[ ${BASH_REMATCH[1]} != timed ]]; then
+    time_line+=" preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
+  fi
+  # timed のジョブは割り込まれないので、この印が付けば設定か運用（scontrol suspend）の誤り。
   # RunTime は止められていた時間を除くが、再開後のキャッシュの冷えや、プログラムが自分で測る経過時間は残る。
   # SuspendTime は一度も止められていなければ None。前に出る欄は固定の欄と JobName（slurm-run.sh は空白を
   # 許さない）だけなので、最初の「空白 + SuspendTime=」が本物の欄で、後ろの Comment などの値は拾わない
