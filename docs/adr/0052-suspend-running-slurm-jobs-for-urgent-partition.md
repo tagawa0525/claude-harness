@@ -121,14 +121,14 @@ QOS は使わず、`sacctmgr` の操作は要らない。設定はすべて slur
 - TIME 行: `scontrol show job` の `SuspendTime` が `None` でなければ、行末に `suspended: 止められていたので時間は当てにならない`
   を足す。`SuspendTime` の欄が見つからなければ、`suspended=unknown` の印を足して警告する。`elapsed`（`RunTime`）は止めていた時間を除くが、止める前後のキャッシュの冷え、`suspend_grace_time` の重なり、
   プログラムが自分で測る経過時間（止めていた時間を含む）が混ざるので、記録に使わない
-- `slurm-history.sh`: jobcomp の行は止めた時間を持たないので、表に入れうるジョブの番号を
+- `slurm-history.sh`: jobcomp の行は止めた時間を持たないので、この ADR の日（2026-10-23）より後に終わった、表に入れうる
+  ジョブの番号を
   `sacct --allusers --duplicates -X -j <番号,…>` に渡し、番号と開始の時刻の組で結んで（番号は再利用されうる）、
   `Suspended` が 0 でないジョブを表と集計から除き、`SUSPENDED: <件数> (<番号>…)` で示す。`sacct` は
-  `SLURM_TIME_FORMAT=standard` で、TZ を外して（slurmctld が jobcomp を書くシステムの時刻帯で）読む。`sacct` に無いジョブは、
-  この ADR の日（2026-10-23）より前に始まったもの（accounting を置いた ADR-0031 より前を含む）だけを止められていないものとして
-  扱う（割り込みはこの ADR からで、それより前に止まったジョブは無い）。それより後のジョブが無ければ slurmdbd の記録の遅れか
-  欠けで、番号はあるのに開始が合わなければ書式の違いか番号の再利用で、どちらも止められたかを決められないので失敗する。
-  `sacct` が失敗したときも、表を出さずに失敗する
+  `SLURM_TIME_FORMAT=standard` で、TZ を外して（slurmctld が jobcomp を書くシステムの時刻帯で）読む。その日より前に
+  終わったジョブ（accounting を置いた ADR-0031 より前を含む）は、割り込みがこの ADR からなので止められえず、照合しない。
+  それより後に終わったジョブが `sacct` に無ければ slurmdbd の記録の遅れか欠けで、番号はあるのに開始が合わなければ書式の違いか番号の再利用で、どちらも止められたかを決められないので失敗する。
+  `sacct` が失敗したとき、`Suspended` が時間の形でないときも、表を出さずに失敗する
 - TIME 行の判定に `sacct` でなく `scontrol` を使うのは、終わった直後のジョブを slurmctld が覚えていて（`RunTime` と同じ出どころ）、
   slurmdbd への記録の遅れを待たずに済むため
 
