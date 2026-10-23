@@ -138,7 +138,7 @@ impl Rule for PrePrCreateCheck {
                 dir = input.cwd.clone();
             }
 
-            // fork ではこちらの規約（件名の長さ、本文の見出し）を検査しない
+            // fork ではこちらの規約（件名の長さ、本文の見出し、新しい ADR の数）を検査しない
             let fork = git::is_fork(&dir);
 
             // --- 4. --web ---

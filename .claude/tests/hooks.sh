@@ -178,7 +178,7 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
 
 # --- トピックが 1 つか（新しい ADR の数）: マージの時点と同じ判定を PR を作る時点で当てる ---
-# レビューの周を回した後にマージで止まると、その周が無駄になる
+# base から head までに加わった docs/adr 直下の NNNN-*.md を数え、2 件以上なら止める
 git -C "$REPO" switch -q -c feat/two-adrs main
 commit_file "$REPO" "docs/adr/0002-use-b.md" "docs(adr): b"
 commit_file "$REPO" "docs/adr/0003-use-c.md" "docs(adr): c"
