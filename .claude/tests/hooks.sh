@@ -224,11 +224,20 @@ out=$(run_hook pre-pr-create-check "$GOOD_CMD --head feat/two-adrs")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
 
-it "pre-pr-create: 比べる base が見つからなければ、数えられないとして deny"
+it "pre-pr-create: 比べる base が見つからなければ数えずに通す（マージの時点の検査が GitHub の変更ファイルで数える）"
 git -C "$REPO" switch -q feat/two-adrs
 out=$(run_hook pre-pr-create-check "$GOOD_CMD --base no-such-branch")
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "新しい ADR の数を確認できません"
+assert_eq allow "$(decision "$out")"
+# 既定ブランチが main / master でなく origin/HEAD も無い clone（ADR の無い他のプロジェクトに多い）
+TRUNK="$TEST_ROOT/prcreate-trunk"
+git init -q -b trunk "$TRUNK"
+commit_file "$TRUNK" "a.txt" "feat: a"
+git -C "$TRUNK" init -q --bare "$TRUNK.git"
+git -C "$TRUNK" remote add origin "$TRUNK.git"
+git -C "$TRUNK" push -q -u origin trunk
+out=$(run_hook pre-pr-create-check "cd $TRUNK && $GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+git -C "$REPO" switch -q feat/two-adrs
 
 it "pre-pr-create: ALLOW_MULTI_TOPIC=<理由> なら新しい ADR が複数でも PR を作れる"
 out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=テスト用 $GOOD_CMD")
