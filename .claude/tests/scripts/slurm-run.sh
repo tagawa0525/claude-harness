@@ -33,6 +33,8 @@ cat >"$FAKE_BIN/scontrol" <<'EOF'
 # show job は終わったジョブの RunTime と TimeLimit を返す（FAKE_SHOW_EXIT で失敗させられる）
 if [[ $1 == show ]]; then
   echo "JobId=42 JobName=x RunTime=${FAKE_RUN_TIME:-00:12:34} TimeLimit=${FAKE_TIME_LIMIT:-00:30:00} TimeMin=N/A"
+  # 本物は RunTime の行より後、Comment や WorkDir の行より前に、最後に止めたか再開した時刻を出す（一度も無ければ None）
+  echo "   SuspendTime=${FAKE_SUSPEND_TIME:-None} SecsPreSuspend=0 LastSchedEval=2026-10-23T22:00:00"
   [[ -z ${FAKE_EXTRA_LINE:-} ]] || echo "$FAKE_EXTRA_LINE"
   exit "${FAKE_SHOW_EXIT:-0}"
 fi
@@ -123,6 +125,42 @@ assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--exclusive"
 assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "--cpus-per-task"
 assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "shared-cpus"
 assert_not_contains "$out" "shared"
+
+it "slurm-run: --urgent を付けると、パーティション urgent に投げる"
+cd "$HOME/github/proj" || exit 1
+"$RUN" --urgent -t 5 xlc-quick 'true' >/dev/null
+args=$(cat "$TEST_ROOT/sbatch.args")
+assert_contains "$args" "--partition=urgent"
+assert_contains "$args" "--exclusive"
+
+it "slurm-run: --urgent は -c と組み合わせられる"
+"$RUN" --urgent -c 4 -t 5 xlc-quick-shared 'true' >/dev/null
+args=$(cat "$TEST_ROOT/sbatch.args")
+assert_contains "$args" "--partition=urgent"
+assert_contains "$args" "--cpus-per-task=4"
+assert_not_contains "$args" "--exclusive"
+
+it "slurm-run: --urgent を付けなければ、パーティションを指定しない（既定の main）"
+"$RUN" -t 5 xlc-2G 'true' >/dev/null
+assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition"
+
+it "slurm-run: ジョブが止められていたら（SuspendTime がある）、TIME 行とログの末尾に、時間は当てにならない印を付ける"
+out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" -t 30 xlc-2G 'true')
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 suspended: 止められていたので時間は当てにならない"
+assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "suspended: 止められていたので時間は当てにならない"
+
+it "slurm-run: 止められていない（SuspendTime=None）ジョブの TIME 行には印を付けない"
+out=$("$RUN" -t 30 xlc-2G 'true')
+assert_not_contains "$out" "suspended"
+
+it "slurm-run: 止められたかは、利用者が決める値（Comment など）でなく、本物の SuspendTime の欄から読む"
+out=$(FAKE_EXTRA_LINE="   Comment=feat/x SuspendTime=2026-10-23T22:10:00" "$RUN" -t 30 xlc-2G 'true')
+assert_not_contains "$out" "suspended"
+
+it "slurm-run: 排他でなく、止められてもいたら、両方の印を付ける"
+out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" -c 8 -t 30 openmc-2G 'true')
+assert_contains "$out" "shared (-c 8): 時間は当てにならない"
+assert_contains "$out" "suspended: 止められていたので時間は当てにならない"
 
 it "slurm-run: -c が正の整数でなければ、投げずにエラー"
 for bad in 0 -1 abc 1.5 ""; do
