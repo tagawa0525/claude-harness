@@ -365,6 +365,16 @@ assert_eq 0 $?
 assert_eq "" "$(fake_log cargo)"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
+it "run-checks: 宣言があり差分がサブディレクトリの .md だけでも、宣言したテストだけを実行する"
+: > "$TEST_ROOT/docs-tests.log"
+make_fake_tool cargo '*) exit 0 ;;'
+mkdir -p docs/adr && echo '# adr' > docs/adr/0001-x.md && git add docs/adr/0001-x.md
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "" "$(fake_log cargo)"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
+git commit -q -m "docs: adr"
+
 it "run-checks: 宣言したテストが失敗したら止まる"
 printf '#!/bin/sh\necho docs broken; exit 3\n' > scripts/run-rust-docs-tests.sh
 echo 'more' >> doc.md && git add doc.md
