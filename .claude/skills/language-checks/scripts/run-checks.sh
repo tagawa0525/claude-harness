@@ -14,7 +14,9 @@
 #
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
 #   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
-#             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
+#             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する。
+#             ルートに Cargo.toml と scripts/run-rust-docs-tests.sh（実行権限が要る）があれば、差分が .md だけなら
+#             fmt、clippy、cargo test の代わりにそのスクリプトだけを、ほかの差分では全体の後にそのスクリプトも実行する
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み。テストは
 #             scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、
 #             それも無ければ追跡している test_*.py / *_test.py のあるディレクトリごとに
@@ -75,14 +77,18 @@ if [[ -n "$BASE_REF" ]] && ! DIFF_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/
   exit 2
 fi
 
-# changed_files [git diff の追加引数...]: 検査対象の変更ファイル。通常はステージ済み、
+# diff_names [git diff の追加引数...]: 検査対象の差分のファイル名。通常はステージ済み、
 # --merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分
-changed_files() {
+diff_names() {
   if (( MERGE )); then
-    git diff "$DIFF_BASE" --name-only --diff-filter=ACMR "$@"
+    git diff "$DIFF_BASE" --name-only "$@"
   else
-    git diff --cached --name-only --diff-filter=ACMR "$@"
+    git diff --cached --name-only "$@"
   fi
+}
+# changed_files [git diff の追加引数...]: 検査対象の変更ファイル（追加、変更、rename の後の名前）
+changed_files() {
+  diff_names --diff-filter=ACMR "$@"
 }
 
 staged_has() {
@@ -153,7 +159,40 @@ run_rust() {
   run_stage rust lint cargo "" cargo_in "$dir" clippy "${CARGO_JOBS[@]}" --all-targets -- -D warnings
   run_stage rust test cargo "" cargo_in "$dir" test "${CARGO_JOBS[@]}"
 }
-if [[ -f Cargo.toml ]]; then
+# docs_only_diff: 差分が空でなく、すべて .md か。削除と rename の前後も数える（--diff-filter=ACMR の
+# changed_files では、.rs の削除や .rs から .md への rename が見えない）。.md 以外は、.rs と Cargo.toml に限らず
+# clippy.toml やテストが読むデータも Rust の結果を変えうるので、すべて全体を実行する側に数える
+docs_only_diff() {
+  local all rest
+  if ! all=$(diff_names --no-renames) || ! rest=$(diff_names --no-renames -- ':(exclude)*.md'); then
+    echo "FAILED: rust docs-test: 差分（git diff）を読めません"
+    exit 1
+  fi
+  [[ -n "$all" && -z "$rest" ]]
+}
+# 文書の差分で実行するテストの宣言。文書を読む Rust のテスト（文書どうしの整合など）を持つリポジトリが置き、
+# 差分が .md だけのときは fmt、clippy、全体の cargo test の代わりにこれを実行する（scripts/run-python-tests.sh と同じ形）。
+# ほかの差分では全体の後にも実行する。宣言の外の変更（Cargo.toml のパッケージ名など）で壊れた宣言が、次の文書だけの
+# 差分で初めて落ちないようにするため。同じ理由で、実行権限も差分によらず確かめる
+RUST_DOCS_TESTS=scripts/run-rust-docs-tests.sh
+run_rust_docs_tests() {
+  run_stage rust docs-test bash "" "${CARGO_PIN[@]}" bash "$RUST_DOCS_TESTS"
+}
+if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" ]]; then
+  DETECTED=1
+  if [[ ! -x "$RUST_DOCS_TESTS" ]]; then
+    echo "FAILED: rust docs-test: $RUST_DOCS_TESTS に実行権限が無い（chmod +x）"
+    exit 1
+  fi
+  if docs_only_diff; then
+    for stage in format lint test; do
+      echo "SKIP: rust $stage (差分が .md だけなので $RUST_DOCS_TESTS だけを実行する)"
+    done
+  else
+    run_rust .
+  fi
+  run_rust_docs_tests
+elif [[ -f Cargo.toml ]]; then
   DETECTED=1
   run_rust .
 elif staged_has '*.rs'; then
