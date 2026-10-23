@@ -32,6 +32,8 @@ if ! grep -q '^rules: ' <<<"$usage"; then
 fi
 
 source "$(dirname "$0")/lib.sh"
+# pre-pr-create-check は GH_REPO を PR の対象のリポジトリとして読むので、実行する人の環境に左右させない
+unset GH_REPO
 
 # ===========================================================================
 # pre-pr-create-check
