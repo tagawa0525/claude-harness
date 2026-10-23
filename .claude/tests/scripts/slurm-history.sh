@@ -14,6 +14,7 @@ mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/sacct" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$TEST_ROOT/sacct.args"
+echo "${SLURM_TIME_FORMAT-unset}" >"$TEST_ROOT/sacct.timefmt"
 [[ ${FAKE_SACCT_EXIT:-0} == 0 ]] || { echo "sacct: error: slurmdbd: Connection refused" >&2; exit "$FAKE_SACCT_EXIT"; }
 [[ -z ${FAKE_SACCT_ROWS:-} ]] || printf '%s\n' "$FAKE_SACCT_ROWS"
 EOS
@@ -208,6 +209,20 @@ out=$(FAKE_SACCT_ROWS=$rows "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "old"
 assert_not_contains "$out" "new"
 assert_contains "$out" "SUSPENDED: 1 (150)"
+
+it "sacct の開始の時刻は、呼ぶ側の SLURM_TIME_FORMAT によらず jobcomp と同じ書式（standard）で読む"
+{
+  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+} > "$LOG"
+SLURM_TIME_FORMAT=relative "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
+assert_eq "standard" "$(cat "$TEST_ROOT/sacct.timefmt")"
+
+it "sacct にその番号の記録があるのに開始の時刻が合わなければ、止められていたかを決められないので exit 1"
+out=$(FAKE_SACCT_ROWS='73|2026-10-11T04:45:32|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR"
+assert_contains "$out" "73"
+assert_not_contains "$out" "JOBID"
 
 it "sacct に無いジョブ（accounting の前）は、止められていないものとして表に入れる"
 {

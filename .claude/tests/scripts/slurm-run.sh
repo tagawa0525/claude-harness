@@ -34,7 +34,8 @@ cat >"$FAKE_BIN/scontrol" <<'EOF'
 if [[ $1 == show ]]; then
   echo "JobId=42 JobName=x RunTime=${FAKE_RUN_TIME:-00:12:34} TimeLimit=${FAKE_TIME_LIMIT:-00:30:00} TimeMin=N/A"
   # 本物は RunTime の行より後、Comment や WorkDir の行より前に、最後に止めたか再開した時刻を出す（一度も無ければ None）
-  echo "   SuspendTime=${FAKE_SUSPEND_TIME:-None} SecsPreSuspend=0 LastSchedEval=2026-10-23T22:00:00"
+  [[ -n ${FAKE_NO_SUSPEND_FIELD:-} ]] ||
+    echo "   SuspendTime=${FAKE_SUSPEND_TIME:-None} SecsPreSuspend=0 LastSchedEval=2026-10-23T22:00:00"
   [[ -z ${FAKE_EXTRA_LINE:-} ]] || echo "$FAKE_EXTRA_LINE"
   exit "${FAKE_SHOW_EXIT:-0}"
 fi
@@ -156,6 +157,13 @@ assert_not_contains "$out" "suspended"
 it "slurm-run: 止められたかは、利用者が決める値（Comment など）でなく、本物の SuspendTime の欄から読む"
 out=$(FAKE_EXTRA_LINE="   Comment=feat/x SuspendTime=2026-10-23T22:10:00" "$RUN" -t 30 xlc-2G 'true')
 assert_not_contains "$out" "suspended"
+
+it "slurm-run: scontrol の出力に SuspendTime の欄が無ければ、止められたかを確かめられないと警告する"
+out=$(FAKE_NO_SUSPEND_FIELD=1 FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-2G 'true' 2>&1)
+assert_eq 3 $?
+assert_contains "$out" "WARN:"
+assert_contains "$out" "SuspendTime"
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
 
 it "slurm-run: 排他でなく、止められてもいたら、両方の印を付ける"
 out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" -c 8 -t 30 openmc-2G 'true')
