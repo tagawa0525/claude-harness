@@ -183,7 +183,13 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 
 `git merge`、`gh pr merge`、/git-merge、/gh-pr-merge と rebase は親のセッションに残し、ここで止める（計算を投げる直前の rebase だけは「作業中の規則」の例外）。これを止める hook は無く、
 許可も通るので、手順で守る。main が先に進んでいれば（`git -C <worktree> rev-list --count HEAD..<base>` が
-0 でない）、件数を報告に書く。
+0 でない）、件数と、ブランチが変えたファイルのうち main でも変わったもの（次の出力）を報告に書く。「main で変わっていない」
+のような重なりの有無は、この出力で書き、記憶や推測で書かない（2026-10-24 に「lattice の crate は main で変わっていない」と
+報告したが、main は同じ crate の 4 ファイルを変えていた）:
+
+```bash
+comm -12 <(git -C <worktree> diff --name-only <base>...HEAD | sort) <(git -C <worktree> diff --name-only HEAD...<base> | sort)
+```
 
 ### 9. 報告する
 
