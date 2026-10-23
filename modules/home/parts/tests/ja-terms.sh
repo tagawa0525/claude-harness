@@ -568,8 +568,10 @@ echo d > "$REPO/d.txt"
 git -C "$REPO" add d.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: add" -m '`foo` と確かめの結果を書く' >"$WORK/out" 2>&1; then
   ng "コミットの本文のコードスパンの外の崩れた語で止まらない"
+elif grep -q "確認" "$WORK/out"; then
+  ok "コミットの本文のコードスパンの外の崩れた語は止め、直す語を示す"
 else
-  ok "コミットの本文のコードスパンの外の崩れた語は止める"
+  ng "コードスパンの外の崩れた語で止めたが、直す語を示さない"
 fi
 echo z > "$REPO/z.txt"
 git -C "$REPO" add z.txt
