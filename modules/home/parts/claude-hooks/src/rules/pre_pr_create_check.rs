@@ -13,7 +13,9 @@
 //!    pre-git-merge-check と共有する。レビューの周を回した後にマージで止まると、その周が無駄になる）。
 //!    base は --base（`origin/<base>`）、無ければ既定ブランチ。head は --head（`origin/<head>`）、
 //!    無ければ HEAD。`owner:branch` の head は別のリポジトリのブランチで手元に無いので数えない。
-//!    数えられなければ止める
+//!    base が手元に無いなど数えられなければ通す（ここは早めの知らせで、ゲートはマージの時点の
+//!    pre-merge-check が GitHub の変更ファイルから数える。止めると docs/adr の無いリポジトリでも
+//!    既定ブランチが見つからないだけで PR を作れなくなる）
 //!
 //! 本文の見出しは `--body` 引数ノードの原文（ヒアドキュメント本文を含む）だけを見る。
 //! 別のヒアドキュメントに書かれた見出しの例でゲートを通すことはできない。
@@ -87,13 +89,13 @@ pub(super) fn body_text(
     Ok(opt_value(args, body_flags).map(|a| a.raw.clone()))
 }
 
-/// PR が加える ADR を数える範囲（`<base>...<head>`）。数えないときは Ok(None)、base が分からなければ Err
-fn adr_range(dir: &Path, args: &[Arg]) -> Result<Option<String>, String> {
+/// PR が加える ADR を数える範囲（`<base>...<head>`）。数えないとき、base が分からないときは None
+fn adr_range(dir: &Path, args: &[Arg]) -> Option<String> {
     let head = match opt_value(args, &["--head", "-H"]) {
         Some(h) => {
             let h = strip_opt_prefix(h, &["--head", "-H"]);
             if h.contains(':') {
-                return Ok(None);
+                return None;
             }
             format!("origin/{h}")
         }
@@ -101,9 +103,9 @@ fn adr_range(dir: &Path, args: &[Arg]) -> Result<Option<String>, String> {
     };
     let base = match opt_value(args, &["--base", "-B"]) {
         Some(b) => format!("origin/{}", strip_opt_prefix(b, &["--base", "-B"])),
-        None => git::default_branch(dir).ok_or_else(|| "既定ブランチ".to_string())?,
+        None => git::default_branch(dir)?,
     };
-    Ok(Some(format!("{base}...{head}")))
+    Some(format!("{base}...{head}"))
 }
 
 impl Rule for PrePrCreateCheck {
@@ -190,18 +192,11 @@ impl Rule for PrePrCreateCheck {
             // --- 5. トピックが 1 つか（新しい ADR の数）---
             let escape = shell.escape("ALLOW_MULTI_TOPIC");
             if !fork && escape != Escape::Given {
-                let topic = match adr_range(&dir, args) {
-                    Ok(None) => Vec::new(),
-                    Ok(Some(range)) => match added_adrs(&dir, &range) {
-                        Some(adrs) => multi_topic_reason(&adrs).into_iter().collect(),
-                        None => vec![format!(
-                            "新しい ADR の数を確認できません（git diff {range} が失敗）。base が手元に無ければ git fetch してください"
-                        )],
-                    },
-                    Err(what) => vec![format!(
-                        "新しい ADR の数を確認できません（比べる{what}が見つからない）"
-                    )],
-                };
+                let topic: Vec<String> = adr_range(&dir, args)
+                    .and_then(|range| added_adrs(&dir, &range))
+                    .and_then(|adrs| multi_topic_reason(&adrs))
+                    .into_iter()
+                    .collect();
                 reasons.extend(apply_escape_to_reasons(escape, "ALLOW_MULTI_TOPIC", topic));
             }
 
