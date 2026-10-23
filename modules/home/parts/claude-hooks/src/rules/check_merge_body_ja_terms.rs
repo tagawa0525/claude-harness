@@ -384,7 +384,7 @@ case "$body" in
   *失敗*) echo "boom" >&2; exit 2 ;;
   *無語*) exit 1 ;;
   *誤語*)
-    printf '%s\n' "COMMIT_EDITMSG.txt" "  2:1  ✓ error  誤語 => 正語  prh" "" "✖ 1 problem (1 error, 0 warnings, 0 infos)"
+    printf '%s\n' "COMMIT_EDITMSG.md" "  2:1  ✓ error  誤語 => 正語  prh" "" "✖ 1 problem (1 error, 0 warnings, 0 infos)"
     exit 1 ;;
 esac
 exit 0
