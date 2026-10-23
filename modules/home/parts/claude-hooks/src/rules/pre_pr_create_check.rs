@@ -122,7 +122,8 @@ impl Rule for PrePrCreateCheck {
 
             // gh / git の実行コンテキストをコマンドに合わせる（`cd <path> && gh pr create`）
             let mut dir = shell.target_dir(cmd, &input.cwd);
-            if !dir.is_dir() {
+            let in_target = dir.is_dir();
+            if !in_target {
                 // 手元の cwd に戻して続ける検査は、接続先や対象の利用者の PR に当たらないので混ぜない
                 if shell.runs_under_ssh_or_login(cmd) {
                     return vec![Finding::Deny(
@@ -190,8 +191,9 @@ impl Rule for PrePrCreateCheck {
             }
 
             // --- 5. トピックが 1 つか（新しい ADR の数）---
+            // cwd に戻したときは、cwd のブランチの ADR が目的の PR に当たらないので数えない
             let escape = shell.escape("ALLOW_MULTI_TOPIC");
-            if !fork && escape != Escape::Given {
+            if in_target && !fork && escape != Escape::Given {
                 let topic: Vec<String> = adr_range(&dir, args)
                     .and_then(|range| added_adrs(&dir, &range))
                     .and_then(|adrs| multi_topic_reason(&adrs))
