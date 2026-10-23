@@ -11,7 +11,8 @@
 //! 4. --web を使わない（ブラウザを開かず URL を報告する）
 //! 5. ブランチが新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はマージの時点の
 //!    pre-git-merge-check と共有する。レビューの周を回した後にマージで止まると、その周が無駄になる）。
-//!    base は --base（`origin/<base>`）、無ければ既定ブランチ。head は --head（`origin/<head>`）、
+//!    base は --base（`origin/<base>`）、無ければ gh と同じく head のブランチの gh-merge-base の設定、
+//!    それも無ければ既定ブランチ。head は --head（`origin/<head>`）、
 //!    無ければ HEAD。`owner:branch` の head と、-R / --repo / GH_REPO で origin と別のリポジトリに出す
 //!    PR は、手元の origin のブランチと比べても数が合わないので数えない。
 //!    base が手元に無いなど数えられなければ通す（ここは早めの知らせで、ゲートはマージの時点の
@@ -38,6 +39,7 @@ use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
+use crate::unwrap::env_value;
 
 /// 検査は実行前のブランチの状態を見る。同じコマンドの前に連ねた git push は反映されず、
 /// 連ねるとコマンド全体が止まって前半も実行されないので、分け方を deny の文言で示す。
@@ -111,19 +113,25 @@ fn adr_range(dir: &Path, args: &[Arg], target_repo: Option<&str>) -> Option<Stri
             return None;
         }
     }
-    let head = match opt_value(args, &["--head", "-H"]) {
-        Some(h) => {
-            let h = strip_opt_prefix(h, &["--head", "-H"]);
-            if h.contains(':') {
-                return None;
-            }
-            format!("origin/{h}")
-        }
-        None => "HEAD".to_string(),
+    let head_branch =
+        opt_value(args, &["--head", "-H"]).map(|h| strip_opt_prefix(h, &["--head", "-H"]));
+    if head_branch.is_some_and(|h| h.contains(':')) {
+        return None;
+    }
+    let head = head_branch.map_or_else(|| "HEAD".to_string(), |h| format!("origin/{h}"));
+    // --base が無ければ、gh と同じく head のブランチの gh-merge-base、無ければ既定ブランチ
+    let merge_base = || {
+        let branch = head_branch.map_or_else(|| git::current_branch(dir), str::to_string);
+        git::git(
+            dir,
+            &["config", "--get", &format!("branch.{branch}.gh-merge-base")],
+        )
+        .filter(|_| !branch.is_empty())
+        .map(|b| format!("origin/{b}"))
     };
     let base = match opt_value(args, &["--base", "-B"]) {
         Some(b) => format!("origin/{}", strip_opt_prefix(b, &["--base", "-B"])),
-        None => git::default_branch(dir)?,
+        None => merge_base().or_else(|| git::default_branch(dir))?,
     };
     Some(format!("{base}...{head}"))
 }
@@ -214,19 +222,13 @@ impl Rule for PrePrCreateCheck {
             // cwd に戻したときは、cwd のブランチの ADR が目的の PR に当たらないので数えない
             let escape = shell.escape("ALLOW_MULTI_TOPIC");
             if in_target && !fork && escape != Escape::Given {
+                // GH_REPO は gh に渡る値（前置きの代入、env -u を当てた環境）だけを見る
+                let inherited = std::env::var("GH_REPO").ok();
                 let target_repo = opt_value(args, &["-R", "--repo"])
-                    .map(|a| strip_opt_prefix(a, &["-R", "--repo"]).to_string())
-                    .or_else(|| {
-                        shell
-                            .assignments()
-                            .into_iter()
-                            .rev()
-                            .find(|(name, _)| name == "GH_REPO")
-                            .map(|(_, value)| value)
-                    })
-                    .or_else(|| std::env::var("GH_REPO").ok())
+                    .map(|a| strip_opt_prefix(a, &["-R", "--repo"]))
+                    .or_else(|| env_value(&cmd.env, "GH_REPO", inherited.as_deref()))
                     .filter(|r| !r.is_empty());
-                let topic: Vec<String> = adr_range(&dir, args, target_repo.as_deref())
+                let topic: Vec<String> = adr_range(&dir, args, target_repo)
                     .and_then(|range| added_adrs(&dir, &range))
                     .and_then(|adrs| multi_topic_reason(&adrs))
                     .into_iter()
