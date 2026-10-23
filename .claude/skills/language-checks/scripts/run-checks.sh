@@ -14,7 +14,9 @@
 #
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
 #   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
-#             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する
+#             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する。
+#             ルートに Cargo.toml と scripts/run-rust-docs-tests.sh があり、差分が .md だけなら、
+#             fmt、clippy、cargo test の代わりにそのスクリプトだけを実行する
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み。テストは
 #             scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、
 #             それも無ければ追跡している test_*.py / *_test.py のあるディレクトリごとに
@@ -153,7 +155,33 @@ run_rust() {
   run_stage rust lint cargo "" cargo_in "$dir" clippy "${CARGO_JOBS[@]}" --all-targets -- -D warnings
   run_stage rust test cargo "" cargo_in "$dir" test "${CARGO_JOBS[@]}"
 }
-if [[ -f Cargo.toml ]]; then
+# docs_only_diff: 差分が空でなく、すべて .md か。削除と rename の前後も数える（--diff-filter=ACMR の
+# changed_files では、.rs の削除や .rs から .md への rename が見えない）。.md 以外は、.rs と Cargo.toml に限らず
+# clippy.toml やテストが読むデータも Rust の結果を変えうるので、すべて全体を実行する側に数える
+docs_only_diff() {
+  local f
+  local -a diff=(git diff --cached) files
+  (( MERGE )) && diff=(git diff "$DIFF_BASE")
+  # プロセス置換は git diff の失敗を返さないので、先に一度実行して失敗を止める
+  "${diff[@]}" --name-only --no-renames -z >/dev/null || exit 1
+  mapfile -d '' -t files < <("${diff[@]}" --name-only --no-renames -z)
+  (( ${#files[@]} > 0 )) || return 1
+  for f in "${files[@]}"; do
+    [[ "$f" == *.md ]] || return 1
+  done
+}
+# 文書の差分で実行するテストの宣言。文書を読む Rust のテスト（文書どうしの整合など）を持つリポジトリが置き、
+# 差分が .md だけのときは fmt、clippy、全体の cargo test の代わりにこれを実行する（scripts/run-python-tests.sh と同じ形）
+RUST_DOCS_TESTS=scripts/run-rust-docs-tests.sh
+if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" ]] && docs_only_diff; then
+  DETECTED=1
+  if [[ ! -x "$RUST_DOCS_TESTS" ]]; then
+    echo "FAILED: rust docs-test: $RUST_DOCS_TESTS に実行権限が無い（chmod +x）"
+    exit 1
+  fi
+  echo "SKIP: rust format, lint, test (差分が .md だけなので $RUST_DOCS_TESTS だけを実行する)"
+  run_stage rust docs-test bash "" "${CARGO_PIN[@]}" bash "$RUST_DOCS_TESTS"
+elif [[ -f Cargo.toml ]]; then
   DETECTED=1
   run_rust .
 elif staged_has '*.rs'; then
