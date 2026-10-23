@@ -6,6 +6,7 @@ allowed-tools:
   - Bash(~/.claude/scripts/slurm-history.sh*)
   - Bash(squeue*)
   - Bash(sacct*)
+  - Bash(sstat*)
 ---
 
 # Slurm に流す
