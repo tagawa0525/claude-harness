@@ -177,6 +177,74 @@ out=$(run_hook pre-pr-create-check "cd \"\$NOWHERE\" && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
 
+# --- トピックが 1 つか（新しい ADR の数）: マージの時点と同じ判定を PR を作る時点で当てる ---
+# レビューの周を回した後にマージで止まると、その周が無駄になる
+git -C "$REPO" switch -q -c feat/two-adrs main
+commit_file "$REPO" "docs/adr/0002-use-b.md" "docs(adr): b"
+commit_file "$REPO" "docs/adr/0003-use-c.md" "docs(adr): c"
+git -C "$REPO" push -q -u origin feat/two-adrs
+git -C "$REPO" switch -q -c feat/stacked
+commit_file "$REPO" "docs/adr/0004-use-d.md" "docs(adr): d"
+git -C "$REPO" push -q -u origin feat/stacked
+git -C "$REPO" switch -q -c feat/one-adr main
+commit_file "$REPO" "docs/adr/0005-use-e.md" "docs(adr): e"
+commit_file "$REPO" "docs/adr/README.md" "docs(adr): readme"
+git -C "$REPO" push -q -u origin feat/one-adr
+
+it "pre-pr-create: 新しい ADR を 2 件以上加えるブランチは deny し、ADR を挙げて /topic-triage を示す"
+git -C "$REPO" switch -q feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+assert_contains "$(reason "$out")" "docs/adr/0003-use-c.md"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=<理由>"
+# 「〜の場合は別」のような条件を文言に列挙しない（ADR-0023）
+assert_not_contains "$(reason "$out")" "まとめて加える"
+
+it "pre-pr-create: 新しい ADR が 1 件以下（README は数えない）なら許可する"
+git -C "$REPO" switch -q feat/one-adr
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-pr-create: --base で指定したブランチから数える"
+git -C "$REPO" switch -q feat/stacked
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --base feat/two-adrs")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook pre-pr-create-check "$GOOD_CMD -B feat/two-adrs")
+assert_eq allow "$(decision "$out")"
+# --base が無ければ既定ブランチから数える（積んだ下のブランチの ADR も入る）
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0004-use-d.md"
+
+it "pre-pr-create: --head で指定したブランチで数える"
+git -C "$REPO" switch -q feat/one-adr
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --head feat/two-adrs")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+
+it "pre-pr-create: 比べる base が見つからなければ、数えられないとして deny"
+git -C "$REPO" switch -q feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --base no-such-branch")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "新しい ADR の数を確認できません"
+
+it "pre-pr-create: ALLOW_MULTI_TOPIC=<理由> なら新しい ADR が複数でも PR を作れる"
+out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=テスト用 $GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-pr-create: ALLOW_MULTI_TOPIC=1 は、本来の文言に理由を求める行を足して止める"
+out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=1 $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
+# エスケープは新しい ADR の検査だけを外す（ほかの検査は残る）
+out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=テスト用 $GOOD_CMD --web")
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "/topic-triage"
+git -C "$REPO" switch -q feat/x
+
 # --- fork（upstream リモートのある clone）: こちらの規約は検査しない ---
 FORK="$TEST_ROOT/prcreate-fork"
 make_repo "$FORK"
@@ -196,6 +264,15 @@ it "pre-pr-create: fork では 70 文字超の件名と上流の template の本
 long_title="fix(typescript): surface a tsserver crash on every cross-file query, not only the first"
 out=$(run_hook pre-pr-create-check "gh pr create --repo example/theirs --head me:fix/theirs --title \"$long_title\" --body \"$THEIR_BODY\"")
 assert_eq allow "$(decision "$out")"
+
+it "pre-pr-create: fork では新しい ADR が 2 件以上でも許可する（上流の流儀が正）"
+git -C "$FORK" switch -q -c fix/two-adrs main
+commit_file "$FORK" "docs/adr/0002-use-b.md" "Add ADR b"
+commit_file "$FORK" "docs/adr/0003-use-c.md" "Add ADR c"
+git -C "$FORK" push -q -u origin fix/two-adrs
+out=$(run_hook pre-pr-create-check "gh pr create --title \"Add ADRs\" --body \"$THEIR_BODY\"")
+assert_eq allow "$(decision "$out")"
+git -C "$FORK" switch -q fix/theirs
 
 it "pre-pr-create: fork でも --body / --body-file がなければ deny（見出しは求めない）"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"$long_title\" --fill")
