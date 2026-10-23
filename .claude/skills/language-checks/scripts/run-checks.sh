@@ -163,18 +163,12 @@ run_rust() {
 # changed_files では、.rs の削除や .rs から .md への rename が見えない）。.md 以外は、.rs と Cargo.toml に限らず
 # clippy.toml やテストが読むデータも Rust の結果を変えうるので、すべて全体を実行する側に数える
 docs_only_diff() {
-  local f
-  local -a files
-  # プロセス置換は git diff の失敗を返さないので、先に一度実行して失敗を止める
-  if ! diff_names --no-renames -z >/dev/null; then
+  local all rest
+  if ! all=$(diff_names --no-renames) || ! rest=$(diff_names --no-renames -- ':(exclude)*.md'); then
     echo "FAILED: rust docs-test: 差分（git diff）を読めません"
     exit 1
   fi
-  mapfile -d '' -t files < <(diff_names --no-renames -z)
-  (( ${#files[@]} > 0 )) || return 1
-  for f in "${files[@]}"; do
-    [[ "$f" == *.md ]] || return 1
-  done
+  [[ -n "$all" && -z "$rest" ]]
 }
 # 文書の差分で実行するテストの宣言。文書を読む Rust のテスト（文書どうしの整合など）を持つリポジトリが置き、
 # 差分が .md だけのときは fmt、clippy、全体の cargo test の代わりにこれを実行する（scripts/run-python-tests.sh と同じ形）
