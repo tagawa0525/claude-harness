@@ -134,6 +134,12 @@ args=$(cat "$TEST_ROOT/sbatch.args")
 assert_contains "$args" "--partition=timed"
 assert_contains "$args" "--exclusive"
 
+it "slurm-run: --timed のパーティションは、Slurm の設定（modules/slurm/common.nix）の割り込まれないパーティションと同じ"
+part=$(grep -o '"[a-z]* Nodes=[^"]*PreemptMode=OFF' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
+assert_ne "" "$part"
+"$RUN" --timed -t 5 xlc-bench 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$part"
+
 it "slurm-run: --timed は -c と組み合わせられず、投げずにエラー"
 rm -f "$TEST_ROOT/sbatch.args"
 out=$("$RUN" --timed -c 4 -t 5 xlc-bench 'true' 2>&1)

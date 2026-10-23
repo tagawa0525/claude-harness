@@ -158,7 +158,7 @@ out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "1 行目"
 
-# 割り込まれうるのは、割り込みを入れた日（2026-10-23）より後に終わったジョブ。ここからのジョブはその後の日付で書く
+# 割り込まれうるのは、割り込みを r995 に反映した時刻（2026-10-23T21:40）より後に終わったジョブ。ここからのジョブはその後の日付で書く
 it "割り込みの後に終わったジョブは、timed のものだけを表に入れ、ほかの件数を UNTIMED で出す"
 {
   job 73 bench COMPLETED 45 2026-11-01T13:45:32 2026-11-01T14:24:05 1 timed
@@ -182,8 +182,14 @@ assert_contains "$out" "before"
 assert_contains "$out" "bench"
 assert_contains "$out" "UNTIMED: 0"
 
+it "割り込みを反映する前に終わったジョブは、同じ日のものも表に入れる"
+job 500 sameday COMPLETED 600 2026-10-23T10:00:00 2026-10-23T21:39:59 1 main > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_contains "$out" "sameday"
+assert_contains "$out" "UNTIMED: 0"
+
 it "割り込みの前に始まり、後に終わった main のジョブは、走っている間に止められうるので表に入れない"
-job 501 long COMPLETED 600 2026-10-22T20:00:00 2026-10-23T06:00:00 1 main > "$LOG"
+job 501 long COMPLETED 600 2026-10-23T20:00:00 2026-10-23T22:00:00 1 main > "$LOG"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_not_contains "$out" "long"
 assert_contains "$out" "UNTIMED: 1"
@@ -207,6 +213,11 @@ it "表に入れなかった COMPLETED 以外の行は、UNTIMED でなく SKIPP
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "SKIPPED: 1"
 assert_contains "$out" "UNTIMED: 0"
+
+it "表に入れるパーティションの名前は、Slurm の設定（modules/slurm/common.nix）の割り込まれないパーティションと同じ"
+part=$(grep -o '"[a-z]* Nodes=[^"]*PreemptMode=OFF' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
+assert_ne "" "$part"
+assert_contains "$(cat "$SCRIPTS_DIR/slurm-history.sh")" "kv[\"Partition\"] != \"$part\""
 
 it "sacct を呼ばない"
 rm -f "$TEST_ROOT/sacct.args"
