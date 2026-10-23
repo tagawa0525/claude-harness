@@ -573,6 +573,32 @@ elif grep -q "確認" "$WORK/out"; then
 else
   ng "コードスパンの外の崩れた語で止めたが、直す語を示さない"
 fi
+# 検査する範囲は textlint の Markdown と prh の既定（checkLink / checkBlockQuote / checkEmphasis が false）で決まる
+# （ADR-0058）。既定が変わったときに気づくよう、範囲の内と外を 1 件ずつ確かめる
+while IFS='|' read -r expect text; do
+  [ -n "$expect" ] || continue
+  n=$((PASS + FAIL))
+  printf 'x\n' > "$REPO/range$n.txt"
+  git -C "$REPO" add "range$n.txt"
+  if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: add" -m "$(printf '本文\n\n%b' "$text")" >"$WORK/out" 2>&1; then
+    result=pass
+  else
+    result=stop
+  fi
+  if [ "$result" = "$expect" ]; then
+    ok "コミットの本文: 「$text」を $expect"
+  else
+    ng "コミットの本文: 「$text」を $expect のはずが $result"
+  fi
+done <<'RANGE'
+pass|> 確かめの結果を書く
+pass|[確かめの結果を書く](http://example.com)
+pass|*確かめの結果*を書く
+pass|_確かめの結果_ を書く
+pass|```\n確かめの結果\n```
+stop|## 確かめの結果
+stop|- 確かめの結果を書く
+RANGE
 echo z > "$REPO/z.txt"
 git -C "$REPO" add z.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "squash! docs: add" -m "確かめの結果を書く" >"$WORK/out" 2>&1; then
