@@ -8,7 +8,7 @@
 # 出力（表のあとに 2 行）:
 #   ジョブごと: JOBID NAME ESTIMATE ELAPSED RATIO
 #   ジョブ名ごと: NAME RUNS ESTIMATE ELAPSED RATIO MAX_RATIO（ESTIMATE と ELAPSED は平均。
-#   見積もりのあるジョブだけで求め、RUNS は見積もりのないジョブも数える）
+#   見積もりのあるジョブだけで求め、RUNS は見積もりのないジョブも数える。止められていたジョブは数えない）
 #   SKIPPED: <表に入れなかった行数>
 #   SUSPENDED: <止められていたジョブの数> (<ジョブ番号> …)（無ければ SUSPENDED: 0）
 #
@@ -21,8 +21,8 @@
 #       FAILED、TIMEOUT など、最後まで走っていない実績）は SKIPPED に数えて表に入れない。
 #       urgent のジョブに止められていた（sacct の Suspended が 0 でない）ジョブは、経過に止められていた時間が混ざるので、
 #       SUSPENDED に数えて表に入れない。jobcomp の行は止められていた時間を持たないので、表に入れうるジョブの番号を
-#       sacct に渡して読む。sacct に無いジョブは、止める仕組みを入れた日（PREEMPT_SINCE）より前に始まったもの
-#       （accounting を置く前を含む）だけを止められていないものとして扱い、それより後なら exit 1。
+#       sacct に渡して読む。止める仕組みを入れた日（PREEMPT_SINCE）より前に終わったジョブ（accounting を置く前を含む）は
+#       止められえないので照合しない。それより後に終わったジョブが sacct に無ければ exit 1。
 #
 # 行は `キー=値` の空白区切り。値に `=` や `,` を含む欄（Tres）があるので最初の `=` で分ける。
 # `=` を含まない語は直前の値の続き（空白のあるジョブ名）として読む。
@@ -60,18 +60,22 @@ if [[ ! -r "$FILE" ]]; then
   exit 1
 fi
 
-# 止められていたジョブの「番号|開始」（空白区切り）。sacct に渡すのは表に入れうる行（COMPLETED で NodeCnt が 1 以上）の
-# 番号だけ。-j は --starttime の既定をエポックにするので期間で落とさない。番号は再利用されうるので、--duplicates で
+# 割り込み（urgent のパーティション）を r995 に入れた日。これより前に終わったジョブは止められていない
+PREEMPT_SINCE=2026-10-23T00:00:00
+
+# 止められていたジョブの「番号|開始」（空白区切り）。sacct に渡すのは、表に入れうる行（COMPLETED で NodeCnt が 1 以上）で、
+# PREEMPT_SINCE より後に終わったジョブの番号だけ（時刻は同じ書式なので文字列で比べる）。-j は --starttime の既定をエポックにするので期間で落とさない。番号は再利用されうるので、--duplicates で
 # 同じ番号の記録をすべて受け、jobcomp の行とは番号と開始の時刻（どちらも YYYY-MM-DDTHH:MM:SS）の組で結ぶ
 ids=$(awk '{
-  id = ""; done = 0; nodes = 0
+  id = ""; done = 0; nodes = 0; end = ""
   for (i = 1; i <= NF; i++) {
     if ($i ~ /^JobId=[0-9]+$/) id = substr($i, 7)
     else if ($i == "JobState=COMPLETED") done = 1
     else if ($i ~ /^NodeCnt=[0-9]+$/) nodes = substr($i, 9) + 0
+    else if ($i ~ /^EndTime=/) end = substr($i, 9)
   }
-  if (id != "" && done && nodes >= 1) print id
-}' "$FILE" | sort -un | paste -sd, -)
+  if (id != "" && done && nodes >= 1 && end >= since) print id
+}' since="$PREEMPT_SINCE" "$FILE" | sort -un | paste -sd, -)
 suspended=""
 recorded=""
 if [[ -n "$ids" ]]; then
@@ -81,16 +85,19 @@ if [[ -n "$ids" ]]; then
     echo "ERROR: sacct で、止められていたジョブを確かめられません（r995 の slurmdbd に届くか確かめてください）" >&2
     exit 1
   fi
-  # Suspended は 00:00:00 か [日-]時:分:秒。0 でない数字があれば止められていた
+  # Suspended は 00:00:00 か [日-]時:分:秒。0 でない数字があれば止められていた。それ以外の形は 0 とみなさず止まる
+  if bad_row=$(awk -F'|' 'NF == 0 { next } NF != 3 || $3 !~ /^([0-9]+-)?[0-9]+:[0-9][0-9]:[0-9][0-9]$/ { print; exit 1 }' <<<"$acct"); then
+    :
+  else
+    echo "ERROR: sacct の行を読めません（番号|開始|Suspended の形でない）: $bad_row" >&2
+    exit 1
+  fi
   suspended=$(awk -F'|' '$3 ~ /[1-9]/ { print $1 "|" $2 }' <<<"$acct" | tr '\n' ' ')
-  recorded=$(awk -F'|' 'NF >= 3 { print $1 "|" $2 }' <<<"$acct" | tr '\n' ' ')
+  recorded=$(awk -F'|' 'NF { print $1 "|" $2 }' <<<"$acct" | tr '\n' ' ')
 fi
 
 # POSIX awk の機能だけで書く（mktime は gawk 拡張、正規表現の {n} は mawk の古い版が解さない）。時刻はどちらも同じ時刻帯
 # なので、暦日から数えた通し秒の差で実績（経過時間）を求める
-# 割り込み（urgent のパーティション）を r995 に入れた日。これより前に始まったジョブは止められていない
-PREEMPT_SINCE=2026-10-23T00:00:00
-
 awk -v by_name="$BY_NAME" -v suspended="$suspended" -v recorded="$recorded" -v preempt_since="$PREEMPT_SINCE" '
 BEGIN {
   ns = split(suspended, list, " ")
@@ -157,11 +164,11 @@ NF == 0 { next }
   # 番号の記録が sacct にあるのに開始が合わなければ、書式が違うか、番号が accounting の前の行と再利用された。
   # 止められていたかを決められないので止まる
   key = kv["JobId"] "|" kv["StartTime"]
-  if ((kv["JobId"] in rec_id) && !(key in rec))
+  if (kv["EndTime"] >= preempt_since && (kv["JobId"] in rec_id) && !(key in rec))
     bad(NR, "sacct にジョブ " kv["JobId"] " の記録はあるが、開始 " kv["StartTime"] " の合う記録がありません。書式の違いか、番号の再利用")
-  # 割り込みを入れた日より後に始まったジョブは accounting に必ずある。無ければ slurmdbd の記録が遅れているか欠けていて、
-  # 止められていたかを決められない。それより前のジョブ（accounting を置く前のものを含む）は止められえない
-  if (!(kv["JobId"] in rec_id) && kv["StartTime"] >= preempt_since)
+  # 割り込みを入れた日より後に終わったジョブは accounting に必ずある。無ければ slurmdbd の記録が遅れているか欠けていて、
+  # 止められていたかを決められない。それより前に終わったジョブ（accounting を置く前のものを含む）は止められえないので照合しない
+  if (kv["EndTime"] >= preempt_since && !(kv["JobId"] in rec_id))
     bad(NR, "ジョブ " kv["JobId"] " が sacct にありません。slurmdbd の記録の遅れか欠け")
   if (key in susp) {
     sus_ids = sus_ids (sus_count++ ? " " : "") kv["JobId"]
