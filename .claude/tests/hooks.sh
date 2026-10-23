@@ -206,6 +206,12 @@ it "pre-pr-create: リポジトリのサブディレクトリから実行して�
 out=$(run_hook pre-pr-create-check "cd '$REPO/docs/adr' && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+# diff.relative の設定に左右されない
+git -C "$REPO" config diff.relative true
+out=$(run_hook pre-pr-create-check "cd '$REPO/docs/adr' && $GOOD_CMD")
+git -C "$REPO" config --unset diff.relative
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
 
 it "pre-pr-create: 新しい ADR が 1 件以下（README は数えない）なら許可する"
 git -C "$REPO" switch -q feat/one-adr
