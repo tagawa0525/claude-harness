@@ -9,6 +9,7 @@ allowed-tools:
   - Bash(cd *)
   - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
+  - Bash(~/.claude/scripts/base-moved.sh*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
   - Bash(~/.claude/scripts/slurm-run.sh*)
   - Bash(squeue*)
@@ -183,12 +184,13 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 
 `git merge`、`gh pr merge`、/git-merge、/gh-pr-merge と rebase は親のセッションに残し、ここで止める（計算を投げる直前の rebase だけは「作業中の規則」の例外）。これを止める hook は無く、
 許可も通るので、手順で守る。main が先に進んでいれば（`git -C <worktree> rev-list --count HEAD..<base>` が
-0 でない）、件数と、ブランチが変えたファイルのうち main でも変わったもの（次の出力）を報告に書く。「main で変わっていない」
-のような重なりの有無は、この出力で書き、記憶や推測で書かない（2026-10-24 に「lattice の crate は main で変わっていない」と
-報告したが、main は同じ crate の 4 ファイルを変えていた）:
+0 でない）、件数と、ブランチと main の両方が変えたファイルを、次の出力から報告に書く。重なりの有無はこの出力で書き、
+記憶や推測で書かない（2026-10-24 に「lattice の crate は main で変わっていない」と報告したが、main は同じ crate の
+4 ファイルを変えていた）。`COMMON:` の行が両方が変えたファイルで、出力が空なら重なりは無い。`WARN:` が出たら比較は
+済んでいないので、そう書く（GitHub リモートがあれば、比べる前に fetch する）:
 
 ```bash
-comm -12 <(git -C <worktree> diff --name-only <base>...HEAD | sort) <(git -C <worktree> diff --name-only HEAD...<base> | sort)
+cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
 ```
 
 ### 9. 報告する
@@ -215,6 +217,7 @@ comm -12 <(git -C <worktree> diff --name-only <base>...HEAD | sort) <(git -C <wo
 ## ブランチと worktree
 - リポジトリ: <path>
 - ブランチ: <branch>（<base> から N コミット遅れ）
+- main と両方が変えたファイル: <`base-moved.sh` の `COMMON:` のパス | なし | 未確認（`WARN:` の内容）>
 - worktree: <path>
 - PR: <URL | なし>
 
