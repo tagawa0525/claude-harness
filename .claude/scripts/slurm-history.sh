@@ -86,9 +86,7 @@ if [[ -n "$ids" ]]; then
     exit 1
   fi
   # Suspended は 00:00:00 か [日-]時:分:秒。0 でない数字があれば止められていた。それ以外の形は 0 とみなさず止まる
-  if bad_row=$(awk -F'|' 'NF == 0 { next } NF != 3 || $3 !~ /^([0-9]+-)?[0-9]+:[0-9][0-9]:[0-9][0-9]$/ { print; exit 1 }' <<<"$acct"); then
-    :
-  else
+  if ! bad_row=$(awk -F'|' 'NF == 0 { next } NF != 3 || $3 !~ /^([0-9]+-)?[0-9]+:[0-9][0-9]:[0-9][0-9]$/ { print; exit 1 }' <<<"$acct"); then
     echo "ERROR: sacct の行を読めません（番号|開始|Suspended の形でない）: $bad_row" >&2
     exit 1
   fi
