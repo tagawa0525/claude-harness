@@ -15,6 +15,7 @@ cat >"$FAKE_BIN/sacct" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$TEST_ROOT/sacct.args"
 echo "${SLURM_TIME_FORMAT-unset}" >"$TEST_ROOT/sacct.timefmt"
+echo "${TZ-unset}" >"$TEST_ROOT/sacct.tz"
 [[ ${FAKE_SACCT_EXIT:-0} == 0 ]] || { echo "sacct: error: slurmdbd: Connection refused" >&2; exit "$FAKE_SACCT_EXIT"; }
 [[ -z ${FAKE_SACCT_ROWS:-} ]] || printf '%s\n' "$FAKE_SACCT_ROWS"
 EOS
@@ -216,6 +217,27 @@ it "sacct の開始の時刻は、呼ぶ側の SLURM_TIME_FORMAT によらず jo
 } > "$LOG"
 SLURM_TIME_FORMAT=relative "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
 assert_eq "standard" "$(cat "$TEST_ROOT/sacct.timefmt")"
+
+it "sacct の開始の時刻は、呼ぶ側の TZ によらず、slurmctld が jobcomp に書くのと同じシステムの時刻帯で読む"
+TZ=UTC "$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
+assert_eq "unset" "$(cat "$TEST_ROOT/sacct.tz")"
+
+it "開始の時刻の欠けた行は、sacct との照合より先に、開始が無いと示して exit 1"
+job 73 broken COMPLETED 45 Unknown 2026-10-11T14:24:05 1 > "$LOG"
+out=$(FAKE_SACCT_ROWS='73|2026-10-11T13:45:32|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "StartTime がありません"
+
+it "割り込みを入れた日（2026-10-23）以降に始まったジョブが sacct に無ければ、記録の遅れかもしれないので exit 1"
+job 500 late COMPLETED 10 2026-10-23T10:00:00 2026-10-23T10:05:00 1 > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR"
+assert_contains "$out" "500"
+
+{
+  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+} > "$LOG"
 
 it "sacct にその番号の記録があるのに開始の時刻が合わなければ、止められていたかを決められないので exit 1"
 out=$(FAKE_SACCT_ROWS='73|2026-10-11T04:45:32|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)

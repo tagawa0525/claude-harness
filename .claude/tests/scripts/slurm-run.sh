@@ -163,7 +163,8 @@ out=$(FAKE_NO_SUSPEND_FIELD=1 FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-2G 'true' 2>&1)
 assert_eq 3 $?
 assert_contains "$out" "WARN:"
 assert_contains "$out" "SuspendTime"
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
+assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "suspended=unknown"
 
 it "slurm-run: 排他でなく、止められてもいたら、両方の印を付ける"
 out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" -c 8 -t 30 openmc-2G 'true')
