@@ -53,7 +53,8 @@ pub(super) fn added_adrs(dir: &Path, range: &str) -> Option<Vec<String>> {
             "-z",
             range,
             "--",
-            "docs/adr",
+            // 実行するディレクトリでなくリポジトリの直下から解く（サブディレクトリから呼ばれても数える）
+            ":(top)docs/adr",
         ],
     )?;
     Some(
