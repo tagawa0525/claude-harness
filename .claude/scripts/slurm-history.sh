@@ -145,9 +145,10 @@ NF == 0 { next }
     skipped++
     next
   }
-  # 番号の記録が sacct にあるのに開始が合わなければ、時刻帯か書式が違う。止められていたかを決められないので止まる
+  # 番号の記録が sacct にあるのに開始が合わなければ、時刻帯か書式が違うか、番号が accounting の前の行と再利用された。
+  # 止められていたかを決められないので止まる
   if ((kv["JobId"] in rec_id) && !((kv["JobId"] "|" kv["StartTime"]) in rec))
-    bad(NR, "sacct にジョブ " kv["JobId"] " の記録はあるが、開始 " kv["StartTime"] " の合う記録がありません")
+    bad(NR, "sacct にジョブ " kv["JobId"] " の記録はあるが、開始 " kv["StartTime"] " の合う記録がありません。時刻帯・書式の違いか、番号の再利用")
   if ((kv["JobId"] "|" kv["StartTime"]) in susp) {
     sus_ids = sus_ids (sus_count++ ? " " : "") kv["JobId"]
     next

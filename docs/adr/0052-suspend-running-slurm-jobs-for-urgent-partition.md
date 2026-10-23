@@ -106,7 +106,8 @@ PartitionName=urgent Nodes=r995 Default=NO  MaxTime=INFINITE State=UP OverSubscr
 - `urgent` は `PreemptMode=OFF` で、ほかのジョブに割り込まれない。`urgent` どうしも同じ `PriorityTier` なので割り込まない
 - 割り込む側と割り込まれる側が別のパーティションなので、止めたジョブは `urgent` のジョブが終わるまで止まったままになる
   （時間を分け合わない）。`urgent` のジョブが必要とするコアに重なる `main` のジョブだけが止まり、空いているコアで足りれば
-  何も止めない
+  何も止めない。排他（`slurm-run.sh` の既定）の `urgent` のジョブはノード全体を取るので、走っている `main` のジョブを
+  すべて止める。少ないコアで足りる計算は `-c` と組んで投げる
 - 2 つのパーティションの `PriorityJobFactor` は既定の 1 のままにする。ADR-0030 の基礎の優先度（`PriorityWeightPartition`）は
   全パーティションの `PriorityJobFactor` の最大で割った値に掛かるので、どちらのジョブも 10000 で変わらない
 - `squeue` の既定の表示（`SQUEUE_FORMAT`）にパーティション（`%P`）を足し、`urgent` のジョブと、止められたジョブ
