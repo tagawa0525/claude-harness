@@ -326,7 +326,6 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "$(printf '%s\n' "$REPO" "$REPO" "$REPO")" "$(cat "$TEST_ROOT/cargo.pwd")"
 
-
 # 文書の差分で実行するテストの宣言（scripts/run-rust-docs-tests.sh）。差分が .md だけのときは、ルートに Cargo.toml が
 # あっても fmt、clippy、全体の cargo test を回さず、宣言したテストだけを実行する
 
@@ -426,6 +425,43 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
 assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+
+it "run-checks: 宣言があっても、.rs から .md への rename は全体を実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-mv"
+git mv src/main.rs notes.md
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+
+it "run-checks: 宣言に実行権限が無ければ、差分に .rs があっても止まる"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-noexec"
+chmod -x scripts/run-rust-docs-tests.sh
+echo 'fn main() { }' > src/main.rs && git add src/main.rs
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "実行権限が無い"
+
+it "run-checks: 差分を読めなければ、FAILED を出して止まる"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-baddiff"
+echo 'broken' > .git/index
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "FAILED: rust docs-test"
+assert_eq "" "$(fake_log cargo)"
+
+it "run-checks: 排他のジョブが実行中なら、宣言したテストを taskset の 1 コアで実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-exclusive"
+echo 'body' >> doc.md && git add doc.md
+make_fake_tool squeue '*) printf "NO|openmc-2K|1234\\n" ;;'
+make_fake_tool taskset '*) shift 2; exec "$@" ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_contains "$(fake_log taskset)" "bash scripts/run-rust-docs-tests.sh"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
+make_fake_tool squeue '*) exit 0 ;;'
+remove_fake_tool taskset
+
 it "run-checks: ステージ済みの .sh だけを shellcheck で検査する"
 # 既存の .sh 全体を見ると、shellcheck を通していない既存ファイルでコミットが止まる
 REPO="$TEST_ROOT/checks/shell"
