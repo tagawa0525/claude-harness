@@ -434,6 +434,15 @@ assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
+it "run-checks: 全体の cargo test が落ちれば、宣言したテストを実行せずに止まる"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-order"
+make_fake_tool cargo '"test"*) exit 1 ;; *) exit 0 ;;'
+echo 'fn main() { }' > src/main.rs && git add src/main.rs
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 1 $?
+assert_contains "$out" "FAILED: rust test"
+assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+
 it "run-checks: 宣言があっても、差分に .rs の削除があれば全体と宣言を実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-rm"
 echo 'body' >> doc.md && git add doc.md
