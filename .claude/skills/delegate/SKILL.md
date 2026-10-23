@@ -183,15 +183,17 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 ### 8. マージの直前で止める
 
 `git merge`、`gh pr merge`、/git-merge、/gh-pr-merge と rebase は親のセッションに残し、ここで止める（計算を投げる直前の rebase だけは「作業中の規則」の例外）。これを止める hook は無く、
-許可も通るので、手順で守る。main が先に進んでいれば（`git -C <worktree> rev-list --count HEAD..<base>` が
-0 でない）、件数と、ブランチと main の両方が変えたファイルを、次の出力から報告に書く。重なりの有無はこの出力で書き、
-記憶や推測で書かない（2026-10-24 に「lattice の crate は main で変わっていない」と報告したが、main は同じ crate の
-4 ファイルを変えていた）。`COMMON:` の行が両方が変えたファイルで、出力が空なら重なりは無い。`WARN:` が出たら比較は
-済んでいないので、そう書く（GitHub リモートがあれば、比べる前に fetch する）:
+許可も通るので、手順で守る。止める前に、ブランチと main の両方が変えたファイルを次で出し、続けて main の進みの件数を
+`git -C <worktree> rev-list --count HEAD..<base>` で数えて、両方を報告に書く（`base-moved.sh` が比べる前に fetch するので、
+件数はその後に数える。件数は rev-list の値を書き、`BASE_MOVED:` の件数（マージを 1 件と数える）は使わない）:
 
 ```bash
 cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
 ```
+
+`COMMON:` の行が両方が変えたファイルで、終了コード 0 で出力が空なら重なりは無い。`WARN:`、`ERROR:`、0 でない終了コードの
+ときは比較が済んでいないので、未確認と書く。重なりの有無はこの出力で書き、記憶や推測で書かない（2026-10-24 に「lattice の
+crate は main で変わっていない」と報告したが、main は同じ crate の 4 ファイルを変えていた）。
 
 ### 9. 報告する
 
@@ -217,7 +219,7 @@ cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
 ## ブランチと worktree
 - リポジトリ: <path>
 - ブランチ: <branch>（<base> から N コミット遅れ）
-- main と両方が変えたファイル: <`base-moved.sh` の `COMMON:` のパス | なし | 未確認（`WARN:` の内容）>
+- main と両方が変えたファイル: <`base-moved.sh` の `COMMON:` のパス | なし | 未確認（`WARN:` か `ERROR:` の内容）>
 - worktree: <path>
 - PR: <URL | なし>
 
