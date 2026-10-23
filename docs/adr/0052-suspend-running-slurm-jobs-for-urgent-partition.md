@@ -5,7 +5,7 @@ requires: [ADR-0007, ADR-0026, ADR-0029, ADR-0030, ADR-0031, ADR-0041]
 supersedes: []
 superseded-by:
 amends: [ADR-0007]
-issues: []
+issues: ["#456"]
 ---
 
 # ADR-0052: 急ぐジョブを、優先の高いパーティション urgent から、走っているジョブを SUSPEND で止めて実行する
@@ -119,13 +119,16 @@ QOS は使わず、`sacctmgr` の操作は要らない。設定はすべて slur
 
 - `--urgent` を足す。`--partition=urgent` を渡す。排他（既定）とも `-c` とも組み合わせられる
 - TIME 行: `scontrol show job` の `SuspendTime` が `None` でなければ、行末に `suspended: 止められていたので時間は当てにならない`
-  を足す。`elapsed`（`RunTime`）は止めていた時間を除くが、止める前後のキャッシュの冷え、`suspend_grace_time` の重なり、
+  を足す。`SuspendTime` の欄が見つからなければ、`suspended=unknown` の印を足して警告する。`elapsed`（`RunTime`）は止めていた時間を除くが、止める前後のキャッシュの冷え、`suspend_grace_time` の重なり、
   プログラムが自分で測る経過時間（止めていた時間を含む）が混ざるので、記録に使わない
 - `slurm-history.sh`: jobcomp の行は止めた時間を持たないので、表に入れうるジョブの番号を
   `sacct --allusers --duplicates -X -j <番号,…>` に渡し、番号と開始の時刻の組で結んで（番号は再利用されうる）、
-  `Suspended` が 0 でないジョブを表と集計から除き、`SUSPENDED: <件数> (<番号>…)` で示す。`sacct` に無いジョブ
-  （accounting を置いた ADR-0031 より前）は止められていないものとして扱う（割り込みはこの ADR からで、それより前に止まった
-  ジョブは無い）。`sacct` が失敗したら、止められたかを確かめられないので表を出さずに失敗する
+  `Suspended` が 0 でないジョブを表と集計から除き、`SUSPENDED: <件数> (<番号>…)` で示す。`sacct` は
+  `SLURM_TIME_FORMAT=standard` で、TZ を外して（slurmctld が jobcomp を書くシステムの時刻帯で）読む。`sacct` に無いジョブは、
+  この ADR の日（2026-10-23）より前に始まったもの（accounting を置いた ADR-0031 より前を含む）だけを止められていないものとして
+  扱う（割り込みはこの ADR からで、それより前に止まったジョブは無い）。それより後のジョブが無ければ slurmdbd の記録の遅れか
+  欠けで、番号はあるのに開始が合わなければ書式の違いか番号の再利用で、どちらも止められたかを決められないので失敗する。
+  `sacct` が失敗したときも、表を出さずに失敗する
 - TIME 行の判定に `sacct` でなく `scontrol` を使うのは、終わった直後のジョブを slurmctld が覚えていて（`RunTime` と同じ出どころ）、
   slurmdbd への記録の遅れを待たずに済むため
 
@@ -140,6 +143,9 @@ QOS は使わず、`sacctmgr` の操作は要らない。設定はすべて slur
 - 悪い点: メモリは Slurm が数えない（`CR_Core`）。止めたジョブはメモリに残るので、`urgent` のジョブとの合計が搭載量を
   超えると、OOM killer がどちらかを殺す。投げる側が、走っているジョブのメモリ（`sstat -j <番号>.batch` の `MaxRSS`。ステップを書かないと batch のステップを出さない）を見て数える
 - 悪い点: SIGSTOP はジョブのプロセスだけを止める。ジョブが外のデーモンに頼んだ仕事（nix-daemon のビルドなど）は止まらない
+- 悪い点: r995 は nixpkgs の既定の `ProctrackType=proctrack/linuxproc` で、ジョブのプロセスを親をたどって見つける
+  （2026-10-23、`scontrol show config`）。親から外れたプロセス（デーモン化、二重 fork）には SIGSTOP が届かず、止められた
+  はずのジョブの一部が走り続けうる。`proctrack/cgroup` に移すかは #456 で扱う
 - 悪い点: 止められたジョブは、ファイルのロック（cargo のビルドディレクトリ、DVC の `.dvc/tmp/lock`）を持ったまま止まる。
   同じロックを待つ `urgent` のジョブは進まず、止められたジョブはその終わりまで再開しないので、互いに待ち続ける。
   `urgent` のジョブは、止めるジョブと同じ worktree、target ディレクトリ、DVC のリポジトリで実行しない（スキル slurm-run）
