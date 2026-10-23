@@ -9,7 +9,7 @@
 #
 # GitHub リモートと origin が揃う clone では、比べる前に origin を fetch する（失敗したら WARN を出し、手元の追跡
 # ブランチで比べる）。揃わない clone では、--base を渡されたときだけ fetch せずに比べ（リモートの無いリポジトリでは
-# --base main を渡す）、--base が追跡ブランチなら WARN を出す。渡されなければ何もしない。
+# --base main を渡す）、--base がローカルのブランチでなければ WARN を出す。渡されなければ何もしない。
 # WARN が出たときは比較が済んでいない（出力が空でも「進みなし」ではない）。
 # 他のセッションが同じファイルを main に入れていると、マージ直前の rebase まで気付けない。
 # 知らせるだけで失敗にはしない（同じパスを触っても、衝突するとは限らない）。
@@ -48,10 +48,10 @@ if grep -q 'github\.com' <<<"$remotes" && git remote get-url origin >/dev/null 2
     echo "WARN: fetch に失敗しました。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
   fi
 elif [[ -n "$BASE" ]]; then
-  # GitHub 以外のリモートは fetch しない。追跡ブランチ（@{u} のような書き方を含め、解いた参照で見る）と比べるなら、
-  # 古いかもしれないので未確認と知らせる
-  if [[ "$(git rev-parse --symbolic-full-name "$BASE" 2>/dev/null)" == refs/remotes/* ]]; then
-    echo "WARN: ${BASE} は fetch していない追跡ブランチです。比較は未確認です（GitHub の origin だけを fetch します）" >&2
+  # GitHub 以外のリモートは fetch しない。ローカルのブランチ以外（追跡ブランチ、@{u} や origin/main~1 のような
+  # 書き方）は、fetch していない追跡ブランチを指しうるので未確認と知らせる（書き方から追跡ブランチかを確実には決められない）
+  if ! git show-ref --verify --quiet "refs/heads/$BASE"; then
+    echo "WARN: ${BASE} はローカルのブランチでなく、fetch していません。比較は未確認です（GitHub の origin だけを fetch します）" >&2
   fi
 else
   # 比べる先の既定は GitHub の origin の既定ブランチなので、GitHub リモートか origin が無ければ決まらない
