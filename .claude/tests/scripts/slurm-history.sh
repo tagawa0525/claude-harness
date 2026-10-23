@@ -66,7 +66,7 @@ assert_not_contains "$out" "slow"
 assert_contains "$out" "SKIPPED: 2"
 
 it "日付をまたぐ実績も求める（月末から翌月）"
-job 5 night COMPLETED 120 2026-10-31T23:30:00 2026-11-01T00:30:00 1 > "$LOG"
+job 5 night COMPLETED 120 2026-09-30T23:30:00 2026-10-01T00:30:00 1 > "$LOG"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "1:00:00"
 assert_contains "$out" "0.50"

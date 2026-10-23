@@ -155,6 +155,7 @@ elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
   # 許さない）だけなので、最初の「空白 + SuspendTime=」が本物の欄で、後ろの Comment などの値は拾わない
   if [[ ! $info =~ [[:space:]]SuspendTime=([^[:space:]]+) ]]; then
     echo "WARN: ジョブ $job の scontrol の出力に SuspendTime が見つからず、止められていたかを確かめられなかった（sacct の Suspended で確かめる）" >&2
+    time_line+=" suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
   elif [[ ${BASH_REMATCH[1]} != None ]]; then
     time_line+=" suspended: 止められていたので時間は当てにならない"
   fi

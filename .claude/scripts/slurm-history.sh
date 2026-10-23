@@ -5,7 +5,7 @@
 #   FILE       jobcomp/filetxt のファイル。省略時は /var/log/slurm/job_completions
 #   --by-name  ジョブ名ごとに集計する（省略時はジョブごと）
 #
-# 出力（表のあとに 1 行）:
+# 出力（表のあとに 2 行）:
 #   ジョブごと: JOBID NAME ESTIMATE ELAPSED RATIO
 #   ジョブ名ごと: NAME RUNS ESTIMATE ELAPSED RATIO MAX_RATIO（ESTIMATE と ELAPSED は平均。
 #   見積もりのあるジョブだけで求め、RUNS は見積もりのないジョブも数える）
@@ -21,8 +21,8 @@
 #       FAILED、TIMEOUT など、最後まで走っていない実績）は SKIPPED に数えて表に入れない。
 #       urgent のジョブに止められていた（sacct の Suspended が 0 でない）ジョブは、経過に止められていた時間が混ざるので、
 #       SUSPENDED に数えて表に入れない。jobcomp の行は止められていた時間を持たないので、表に入れうるジョブの番号を
-#       sacct に渡して読む。sacct に無いジョブ（accounting を置く前）は止められていないものとして扱う
-#       （止める仕組みは accounting より後に入ったので、それより前に止められたジョブは無い）。
+#       sacct に渡して読む。sacct に無いジョブは、止める仕組みを入れた日（PREEMPT_SINCE）より前に始まったもの
+#       （accounting を置く前を含む）だけを止められていないものとして扱い、それより後なら exit 1。
 #
 # 行は `キー=値` の空白区切り。値に `=` や `,` を含む欄（Tres）があるので最初の `=` で分ける。
 # `=` を含まない語は直前の値の続き（空白のあるジョブ名）として読む。
@@ -75,8 +75,9 @@ ids=$(awk '{
 suspended=""
 recorded=""
 if [[ -n "$ids" ]]; then
-  # jobcomp は開始を YYYY-MM-DDTHH:MM:SS で書く。sacct の書式は呼ぶ側の SLURM_TIME_FORMAT に従うので、standard に固定する
-  if ! acct=$(SLURM_TIME_FORMAT=standard sacct --allusers --duplicates -X -n -P -j "$ids" -o JobIDRaw,Start,Suspended); then
+  # jobcomp は開始を slurmctld のシステムの時刻帯で YYYY-MM-DDTHH:MM:SS と書く。sacct は呼ぶ側の SLURM_TIME_FORMAT と
+  # TZ に従うので、standard とシステムの時刻帯（TZ を外す）に固定する。投げるホストは r995 と同じ時刻帯にそろえてある
+  if ! acct=$(env -u TZ SLURM_TIME_FORMAT=standard sacct --allusers --duplicates -X -n -P -j "$ids" -o JobIDRaw,Start,Suspended); then
     echo "ERROR: sacct で、止められていたジョブを確かめられません（r995 の slurmdbd に届くか確かめてください）" >&2
     exit 1
   fi
@@ -87,7 +88,10 @@ fi
 
 # POSIX awk の機能だけで書く（mktime は gawk 拡張、正規表現の {n} は mawk の古い版が解さない）。時刻はどちらも同じ時刻帯
 # なので、暦日から数えた通し秒の差で実績（経過時間）を求める
-awk -v by_name="$BY_NAME" -v suspended="$suspended" -v recorded="$recorded" '
+# 割り込み（urgent のパーティション）を r995 に入れた日。これより前に始まったジョブは止められていない
+PREEMPT_SINCE=2026-10-23T00:00:00
+
+awk -v by_name="$BY_NAME" -v suspended="$suspended" -v recorded="$recorded" -v preempt_since="$PREEMPT_SINCE" '
 BEGIN {
   ns = split(suspended, list, " ")
   for (i = 1; i <= ns; i++) susp[list[i]] = 1
@@ -145,19 +149,24 @@ NF == 0 { next }
     skipped++
     next
   }
-  # 番号の記録が sacct にあるのに開始が合わなければ、時刻帯か書式が違うか、番号が accounting の前の行と再利用された。
-  # 止められていたかを決められないので止まる
-  if ((kv["JobId"] in rec_id) && !((kv["JobId"] "|" kv["StartTime"]) in rec))
-    bad(NR, "sacct にジョブ " kv["JobId"] " の記録はあるが、開始 " kv["StartTime"] " の合う記録がありません。時刻帯・書式の違いか、番号の再利用")
-  if ((kv["JobId"] "|" kv["StartTime"]) in susp) {
-    sus_ids = sus_ids (sus_count++ ? " " : "") kv["JobId"]
-    next
-  }
   start = epoch(kv["StartTime"])
   end = epoch(kv["EndTime"])
   if (start < 0) bad(NR, "StartTime がありません")
   if (end < 0) bad(NR, "EndTime がありません")
   if (end < start) bad(NR, "EndTime が StartTime より前です")
+  # 番号の記録が sacct にあるのに開始が合わなければ、書式が違うか、番号が accounting の前の行と再利用された。
+  # 止められていたかを決められないので止まる
+  key = kv["JobId"] "|" kv["StartTime"]
+  if ((kv["JobId"] in rec_id) && !(key in rec))
+    bad(NR, "sacct にジョブ " kv["JobId"] " の記録はあるが、開始 " kv["StartTime"] " の合う記録がありません。書式の違いか、番号の再利用")
+  # 割り込みを入れた日より後に始まったジョブは accounting に必ずある。無ければ slurmdbd の記録が遅れているか欠けていて、
+  # 止められていたかを決められない。それより前のジョブ（accounting を置く前のものを含む）は止められえない
+  if (!(kv["JobId"] in rec_id) && kv["StartTime"] >= preempt_since)
+    bad(NR, "ジョブ " kv["JobId"] " が sacct にありません。slurmdbd の記録の遅れか欠け")
+  if (key in susp) {
+    sus_ids = sus_ids (sus_count++ ? " " : "") kv["JobId"]
+    next
+  }
   elapsed = end - start
   has_est = (kv["TimeLimit"] ~ /^[0-9]+$/ && kv["TimeLimit"] + 0 > 0)
   est = has_est ? kv["TimeLimit"] * 60 : 0
