@@ -52,6 +52,8 @@ fetch_or_warn() {
 # 前方一致する最長の名前を取る（リモート名に / を含みうる）
 remote_of() {
   local b="$1" name best=""
+  # ローカルのブランチなら fetch しない（feat/x のような名前が、同名のリモートの追跡ブランチに見える）
+  git show-ref --verify --quiet "refs/heads/$b" && return 0
   b="${b#refs/}"
   b="${b#remotes/}"
   while IFS= read -r name; do
