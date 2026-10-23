@@ -326,6 +326,106 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "$(printf '%s\n' "$REPO" "$REPO" "$REPO")" "$(cat "$TEST_ROOT/cargo.pwd")"
 
+
+# 文書の差分で実行するテストの宣言（scripts/run-rust-docs-tests.sh）。差分が .md だけのときは、ルートに Cargo.toml が
+# あっても fmt、clippy、全体の cargo test を回さず、宣言したテストだけを実行する
+
+# docs_tests_repo <dir>: ルートに Cargo.toml と宣言（実行されたら docs-tests.log に記録する）を持ち、それをコミットした
+# リポジトリを作り、そこに移る
+docs_tests_repo() {
+  make_repo "$1"
+  cd "$1" || exit 1
+  echo '[package]' > Cargo.toml
+  mkdir -p scripts src
+  echo 'fn main() {}' > src/main.rs
+  printf '#!/bin/sh\necho ran >> "%s/docs-tests.log"\n' "$TEST_ROOT" > scripts/run-rust-docs-tests.sh
+  chmod +x scripts/run-rust-docs-tests.sh
+  echo '# doc' > doc.md
+  git add -A && git commit -q -m "chore: init"
+  : > "$TEST_ROOT/docs-tests.log"
+  make_fake_tool cargo '*) exit 0 ;;'
+}
+
+it "run-checks: 宣言があり差分が .md だけなら、cargo を実行せず宣言したテストだけを実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests"
+echo 'body' >> doc.md && git add doc.md
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "" "$(fake_log cargo)"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
+assert_contains "$out" "RUN: rust docs-test: bash scripts/run-rust-docs-tests.sh"
+assert_contains "$out" "ALL_OK"
+
+it "run-checks --base: 宣言があり、ブランチの差分が .md だけなら宣言したテストだけを実行する"
+git commit -q -m "docs: body"
+: > "$TEST_ROOT/docs-tests.log"
+make_fake_tool cargo '*) exit 0 ;;'
+make_fake_tool markdownlint '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" --base main~1)
+assert_eq 0 $?
+assert_eq "" "$(fake_log cargo)"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
+
+it "run-checks: 宣言したテストが失敗したら止まる"
+printf '#!/bin/sh\necho docs broken; exit 3\n' > scripts/run-rust-docs-tests.sh
+echo 'more' >> doc.md && git add doc.md
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "docs broken"
+assert_contains "$out" "FAILED: rust docs-test: bash scripts/run-rust-docs-tests.sh"
+
+it "run-checks: 宣言に実行権限が無ければ止まる"
+chmod -x scripts/run-rust-docs-tests.sh
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "実行権限が無い"
+
+it "run-checks: 宣言が無ければ、差分が .md だけでも fmt、clippy、全体の cargo test を実行する"
+REPO="$TEST_ROOT/checks/docs-no-decl"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo '[package]' > Cargo.toml && git add Cargo.toml && git commit -q -m "chore: init"
+echo '# doc' > doc.md && git add doc.md
+make_fake_tool cargo '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+
+it "run-checks: 宣言があっても、差分に .rs があれば fmt、clippy、全体の cargo test を実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-rs"
+echo 'body' >> doc.md
+echo 'fn main() { }' > src/main.rs
+git add doc.md src/main.rs
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+
+it "run-checks: 宣言があっても、差分に .rs の削除があれば全体を実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-rm"
+echo 'body' >> doc.md && git add doc.md
+git rm -q src/main.rs
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+
+it "run-checks: 宣言があっても、差分に .md 以外（clippy.toml など）があれば全体を実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-toml"
+echo 'body' >> doc.md
+echo 'msrv = "1.80"' > clippy.toml
+git add doc.md clippy.toml
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+
+it "run-checks: 差分が空なら、宣言があっても全体を実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-empty"
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
 it "run-checks: ステージ済みの .sh だけを shellcheck で検査する"
 # 既存の .sh 全体を見ると、shellcheck を通していない既存ファイルでコミットが止まる
 REPO="$TEST_ROOT/checks/shell"
