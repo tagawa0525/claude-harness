@@ -55,8 +55,8 @@ if [[ ! -r "$FILE" ]]; then
   exit 1
 fi
 
-# POSIX awk の機能だけで書く（mktime は gawk 拡張、正規表現の {n} は mawk の古い版が解さない）。時刻はどちらも同じ時刻帯の
-# 壁時計なので、暦日から数えた通し秒の差で実績を求める
+# POSIX awk の機能だけで書く（mktime は gawk 拡張、正規表現の {n} は mawk の古い版が解さない）。時刻はどちらも同じ時刻帯
+# なので、暦日から数えた通し秒の差で実績（経過時間）を求める
 awk -v by_name="$BY_NAME" '
 function days(y, m, d,    a) {
   # 暦日から通し日数への変換（Howard Hinnant の days_from_civil）
