@@ -74,6 +74,26 @@ assert_contains "$out" "COMMON: a.txt"
 assert_not_contains "$out" "other.txt"
 assert_not_contains "$out" "WARN"
 
+it "base-moved: GitHub でない origin で --base origin/main を渡せば、origin を fetch してから比べる"
+LOC="$TEST_ROOT/bm/local_origin"
+make_repo "$LOC"
+make_remote "$LOC"
+git -C "$LOC" switch -q -c feat/x
+commit_file "$LOC" a.txt "feat: a"
+git clone -q "$LOC.git" "$LOC.other"
+commit_file "$LOC.other" a.txt "feat: a on main"
+git -C "$LOC.other" push -q origin main
+out=$(cd "$LOC" && "$SCRIPTS_DIR/base-moved.sh" --base origin/main 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "BASE_MOVED: origin/main"
+assert_contains "$out" "COMMON: a.txt"
+
+it "base-moved: GitHub でない origin の fetch に失敗したら、WARN を出して手元の追跡ブランチで比べる"
+git -C "$LOC" remote set-url origin "$TEST_ROOT/bm/missing.git"
+out=$(cd "$LOC" && "$SCRIPTS_DIR/base-moved.sh" --base origin/main 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "WARN: fetch に失敗しました"
+
 it "base-moved: fetch に失敗したら警告して、手元の追跡ブランチで比べる"
 git remote set-url origin "$TEST_ROOT/bm/no-such.git"
 out=$("$SCRIPTS_DIR/base-moved.sh" 2>&1)
@@ -173,6 +193,15 @@ commit_file "$D" src/a.txt "feat: a"
 out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>&1)
 assert_eq 0 $?
 assert_eq "" "$out"
+
+it "base-moved: origin が無い GitHub clone でも、--base を渡せば手元のブランチで比べる"
+git -C "$D" switch -q main
+commit_file "$D" src/a.txt "feat: a on main"
+git -C "$D" switch -q feat/work
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" --base main 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "COMMON: src/a.txt"
+
 
 it "base-moved: 差分の取得に失敗したら、空の出力（進みなし）と区別できる WARN を出して exit 0"
 D=$(fixture diff_fails)
