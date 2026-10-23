@@ -20,7 +20,7 @@
 # 対象: JobState=COMPLETED かつ NodeCnt が 1 以上の行。それ以外（開始前に CANCELLED、
 #       FAILED、TIMEOUT など、最後まで走っていない実績）は SKIPPED に数えて表に入れない。
 #       urgent のジョブに止められていた（sacct の Suspended が 0 でない）ジョブは、経過に止められていた時間が混ざるので、
-#       SUSPENDED に数えて表に入れない。jobcomp の行は止められていた時間を持たないので、記録のジョブの番号を
+#       SUSPENDED に数えて表に入れない。jobcomp の行は止められていた時間を持たないので、表に入れうるジョブの番号を
 #       sacct に渡して読む。sacct に無いジョブ（accounting を置く前）は止められていないものとして扱う
 #       （止める仕組みは accounting より後に入ったので、それより前に止められたジョブは無い）。
 #
@@ -60,16 +60,26 @@ if [[ ! -r "$FILE" ]]; then
   exit 1
 fi
 
-# 止められていたジョブの番号（空白区切り）。sacct の -j は、--starttime の既定をエポックにするので期間で落とさない
-ids=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^JobId=[0-9]+$/) { print substr($i, 7); next } }' "$FILE" | paste -sd, -)
+# 止められていたジョブの「番号|開始」（空白区切り）。sacct に渡すのは表に入れうる行（COMPLETED で NodeCnt が 1 以上）の
+# 番号だけ。-j は --starttime の既定をエポックにするので期間で落とさない。番号は再利用されうるので、--duplicates で
+# 同じ番号の記録をすべて受け、jobcomp の行とは番号と開始の時刻（どちらも YYYY-MM-DDTHH:MM:SS）の組で結ぶ
+ids=$(awk '{
+  id = ""; done = 0; nodes = 0
+  for (i = 1; i <= NF; i++) {
+    if ($i ~ /^JobId=[0-9]+$/) id = substr($i, 7)
+    else if ($i == "JobState=COMPLETED") done = 1
+    else if ($i ~ /^NodeCnt=[0-9]+$/) nodes = substr($i, 9) + 0
+  }
+  if (id != "" && done && nodes >= 1) print id
+}' "$FILE" | sort -un | paste -sd, -)
 suspended=""
 if [[ -n "$ids" ]]; then
-  if ! acct=$(sacct --allusers -X -n -P -j "$ids" -o JobIDRaw,Suspended); then
+  if ! acct=$(sacct --allusers --duplicates -X -n -P -j "$ids" -o JobIDRaw,Start,Suspended); then
     echo "ERROR: sacct で、止められていたジョブを確かめられません（r995 の slurmdbd に届くか確かめてください）" >&2
     exit 1
   fi
   # Suspended は 00:00:00 か [日-]時:分:秒。0 でない数字があれば止められていた
-  suspended=$(awk -F'|' '$2 ~ /[1-9]/ { print $1 }' <<<"$acct" | tr '\n' ' ')
+  suspended=$(awk -F'|' '$3 ~ /[1-9]/ { print $1 "|" $2 }' <<<"$acct" | tr '\n' ' ')
 fi
 
 # POSIX awk の機能だけで書く（mktime は gawk 拡張、正規表現の {n} は mawk の古い版が解さない）。時刻はどちらも同じ時刻帯
@@ -126,7 +136,7 @@ NF == 0 { next }
     skipped++
     next
   }
-  if (kv["JobId"] in susp) {
+  if ((kv["JobId"] "|" kv["StartTime"]) in susp) {
     sus_ids = sus_ids (sus_count++ ? " " : "") kv["JobId"]
     next
   }

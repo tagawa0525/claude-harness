@@ -120,7 +120,8 @@ QOS は使わず、`sacctmgr` の操作は要らない。設定はすべて slur
 - TIME 行: `scontrol show job` の `SuspendTime` が `None` でなければ、行末に `suspended: 止められていたので時間は当てにならない`
   を足す。`elapsed`（`RunTime`）は止めていた時間を除くが、止める前後のキャッシュの冷え、`suspend_grace_time` の重なり、
   プログラムが自分で測る経過時間（止めていた時間を含む）が混ざるので、記録に使わない
-- `slurm-history.sh`: jobcomp の行は止めた時間を持たないので、記録のジョブの番号を `sacct --allusers -X -j <番号,…>` に渡し、
+- `slurm-history.sh`: jobcomp の行は止めた時間を持たないので、表に入れうるジョブの番号を
+  `sacct --allusers --duplicates -X -j <番号,…>` に渡し、番号と開始の時刻の組で結んで（番号は再利用されうる）、
   `Suspended` が 0 でないジョブを表と集計から除き、`SUSPENDED: <件数> (<番号>…)` で示す。`sacct` に無いジョブ
   （accounting を置いた ADR-0031 より前）は止められていないものとして扱う（割り込みはこの ADR からで、それより前に止まった
   ジョブは無い）。`sacct` が失敗したら、止められたかを確かめられないので表を出さずに失敗する
