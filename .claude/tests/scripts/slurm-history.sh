@@ -7,6 +7,33 @@ source "$(dirname "$0")/../lib.sh"
 
 LOG="$TEST_ROOT/job_completions"
 
+# sacct の偽物。-j のジョブ番号ごとに `<番号>|<止められていた時間>` を出す。FAKE_SUSPENDED（`<番号>=<時間>` の空白区切り）に
+# 無い番号は 00:00:00、FAKE_SACCT_MISSING（空白区切り）の番号は出さない（accounting の前のジョブ）。FAKE_SACCT_EXIT で失敗させる
+FAKE_BIN="$TEST_ROOT/bin"
+mkdir -p "$FAKE_BIN"
+cat >"$FAKE_BIN/sacct" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$TEST_ROOT/sacct.args"
+[[ ${FAKE_SACCT_EXIT:-0} == 0 ]] || { echo "sacct: error: slurmdbd: Connection refused" >&2; exit "$FAKE_SACCT_EXIT"; }
+ids=""
+while (($#)); do
+  [[ $1 == -j ]] && ids=$2
+  shift
+done
+IFS=, read -ra list <<<"$ids"
+for id in "${list[@]}"; do
+  [[ " ${FAKE_SACCT_MISSING:-} " == *" $id "* ]] && continue
+  sus=00:00:00
+  for kv in ${FAKE_SUSPENDED:-}; do
+    [[ ${kv%%=*} == "$id" ]] && sus=${kv#*=}
+  done
+  echo "$id|$sus"
+done
+EOS
+chmod +x "$FAKE_BIN/sacct"
+export PATH="$FAKE_BIN:$PATH" TEST_ROOT
+unset FAKE_SUSPENDED FAKE_SACCT_MISSING FAKE_SACCT_EXIT
+
 # job <id> <name> <state> <limit> <start> <end> <nodes>: jobcomp/filetxt の 1 行
 job() {
   printf 'JobId=%s UserId=tagawa(1000) GroupId=users(100) Name=%s JobState=%s Partition=main TimeLimit=%s StartTime=%s EndTime=%s NodeList=r995 NodeCnt=%s ProcCnt=32 WorkDir=/w ReservationName= Tres=cpu=1,mem=86000M,node=1,billing=1 Account= QOS= WcKey= Cluster=unknown SubmitTime=2026-10-11T12:00:00 EligibleTime=2026-10-11T12:00:00 DerivedExitCode=0:0 ExitCode=0:0 \n' "$@"
@@ -146,6 +173,45 @@ job 1 badhour COMPLETED 10 2026-10-11T25:00:00 2026-10-11T26:00:00 1 > "$LOG"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "1 行目"
+
+it "止められていたジョブ（sacct の Suspended が 0 でない）は表に入れず、件数と番号を SUSPENDED で出す"
+{
+  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+  job 74 openmc-2A COMPLETED 45 2026-10-11T14:24:05 2026-10-11T15:14:32 1
+} > "$LOG"
+out=$(FAKE_SUSPENDED="74=00:05:00" "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_eq 0 $?
+assert_contains "$out" "SUSPENDED: 1 (74)"
+assert_eq "" "$(grep -E '^ *74 ' <<<"$out")"
+assert_contains "$(grep -E '^ *73 ' <<<"$out")" "0.86"
+
+it "--by-name の集計に、止められていたジョブの時間を混ぜない"
+out=$(FAKE_SUSPENDED="74=1-00:00:00" "$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
+line=$(grep -E '^ *openmc-2A ' <<<"$out")
+assert_contains "$line" " 1 "
+assert_contains "$line" "0:38:33"
+assert_contains "$out" "SUSPENDED: 1 (74)"
+
+it "止められていたジョブが無ければ SUSPENDED: 0 を出す"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_contains "$out" "SUSPENDED: 0"
+
+it "記録のジョブの番号をまとめて sacct に渡し、全利用者の Suspended を読む"
+assert_contains "$(cat "$TEST_ROOT/sacct.args")" $'-j\n73,74'
+assert_contains "$(cat "$TEST_ROOT/sacct.args")" "--allusers"
+assert_contains "$(cat "$TEST_ROOT/sacct.args")" "JobIDRaw,Suspended"
+
+it "sacct に無いジョブ（accounting の前）は、止められていないものとして表に入れる"
+out=$(FAKE_SACCT_MISSING="73" "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_eq 0 $?
+assert_contains "$(grep -E '^ *73 ' <<<"$out")" "0.86"
+assert_contains "$out" "SUSPENDED: 0"
+
+it "sacct が失敗したら、止められていたかを確かめられないので exit 1"
+out=$(FAKE_SACCT_EXIT=1 "$SCRIPTS_DIR/slurm-history.sh" "$LOG" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR"
+assert_not_contains "$out" "JOBID"
 
 it "ファイルが無ければ理由を出して exit 1"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$TEST_ROOT/none" 2>&1)
