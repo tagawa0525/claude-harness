@@ -582,8 +582,10 @@ while IFS='|' read -r expect text; do
   git -C "$REPO" add "range$n.txt"
   if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: add" -m "$(printf '本文\n\n%b' "$text")" >"$WORK/out" 2>&1; then
     result=pass
-  else
+  elif grep -q "確認" "$WORK/out"; then
     result=stop
+  else
+    result=error
   fi
   if [ "$result" = "$expect" ]; then
     ok "コミットの本文: 「$text」を $expect"
