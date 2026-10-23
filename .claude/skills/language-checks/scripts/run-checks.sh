@@ -180,7 +180,9 @@ if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" && ! -x "$RUST_DOCS_TESTS" ]]; then
 fi
 if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" ]] && docs_only_diff; then
   DETECTED=1
-  echo "SKIP: rust format, lint, test (差分が .md だけなので $RUST_DOCS_TESTS だけを実行する)"
+  for stage in format lint test; do
+    echo "SKIP: rust $stage (差分が .md だけなので $RUST_DOCS_TESTS だけを実行する)"
+  done
   run_stage rust docs-test bash "" "${CARGO_PIN[@]}" bash "$RUST_DOCS_TESTS"
 elif [[ -f Cargo.toml ]]; then
   DETECTED=1
