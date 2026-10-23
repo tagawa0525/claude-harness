@@ -7,32 +7,19 @@ source "$(dirname "$0")/../lib.sh"
 
 LOG="$TEST_ROOT/job_completions"
 
-# sacct の偽物。-j のジョブ番号ごとに `<番号>|<止められていた時間>` を出す。FAKE_SUSPENDED（`<番号>=<時間>` の空白区切り）に
-# 無い番号は 00:00:00、FAKE_SACCT_MISSING（空白区切り）の番号は出さない（accounting の前のジョブ）。FAKE_SACCT_EXIT で失敗させる
+# sacct の偽物。引数を記録し、FAKE_SACCT_ROWS（`<番号>|<開始>|<止められていた時間>` の改行区切り）をそのまま出す。
+# 無ければ何も出さない（どのジョブも accounting に無い）。FAKE_SACCT_EXIT で失敗させる
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/sacct" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$TEST_ROOT/sacct.args"
 [[ ${FAKE_SACCT_EXIT:-0} == 0 ]] || { echo "sacct: error: slurmdbd: Connection refused" >&2; exit "$FAKE_SACCT_EXIT"; }
-ids=""
-while (($#)); do
-  [[ $1 == -j ]] && ids=$2
-  shift
-done
-IFS=, read -ra list <<<"$ids"
-for id in "${list[@]}"; do
-  [[ " ${FAKE_SACCT_MISSING:-} " == *" $id "* ]] && continue
-  sus=00:00:00
-  for kv in ${FAKE_SUSPENDED:-}; do
-    [[ ${kv%%=*} == "$id" ]] && sus=${kv#*=}
-  done
-  echo "$id|$sus"
-done
+[[ -z ${FAKE_SACCT_ROWS:-} ]] || printf '%s\n' "$FAKE_SACCT_ROWS"
 EOS
 chmod +x "$FAKE_BIN/sacct"
 export PATH="$FAKE_BIN:$PATH" TEST_ROOT
-unset FAKE_SUSPENDED FAKE_SACCT_MISSING FAKE_SACCT_EXIT
+unset FAKE_SACCT_ROWS FAKE_SACCT_EXIT
 
 # job <id> <name> <state> <limit> <start> <end> <nodes>: jobcomp/filetxt の 1 行
 job() {
@@ -179,30 +166,54 @@ it "止められていたジョブ（sacct の Suspended が 0 でない）は�
   job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
   job 74 openmc-2A COMPLETED 45 2026-10-11T14:24:05 2026-10-11T15:14:32 1
 } > "$LOG"
-out=$(FAKE_SUSPENDED="74=00:05:00" "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+rows=$'73|2026-10-11T13:45:32|00:00:00\n74|2026-10-11T14:24:05|00:05:00'
+out=$(FAKE_SACCT_ROWS=$rows "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_eq 0 $?
 assert_contains "$out" "SUSPENDED: 1 (74)"
 assert_eq "" "$(grep -E '^ *74 ' <<<"$out")"
 assert_contains "$(grep -E '^ *73 ' <<<"$out")" "0.86"
 
 it "--by-name の集計に、止められていたジョブの時間を混ぜない"
-out=$(FAKE_SUSPENDED="74=1-00:00:00" "$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
+out=$(FAKE_SACCT_ROWS='74|2026-10-11T14:24:05|1-00:00:00' "$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
 line=$(grep -E '^ *openmc-2A ' <<<"$out")
 assert_contains "$line" " 1 "
 assert_contains "$line" "0:38:33"
 assert_contains "$out" "SUSPENDED: 1 (74)"
 
 it "止められていたジョブが無ければ SUSPENDED: 0 を出す"
-out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+out=$(FAKE_SACCT_ROWS=$'73|2026-10-11T13:45:32|00:00:00\n74|2026-10-11T14:24:05|00:00:00' "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "SUSPENDED: 0"
 
-it "記録のジョブの番号をまとめて sacct に渡し、全利用者の Suspended を読む"
-assert_contains "$(cat "$TEST_ROOT/sacct.args")" $'-j\n73,74'
-assert_contains "$(cat "$TEST_ROOT/sacct.args")" "--allusers"
-assert_contains "$(cat "$TEST_ROOT/sacct.args")" "JobIDRaw,Suspended"
+it "表に入れうるジョブ（COMPLETED で NodeCnt が 1 以上）の番号だけをまとめて sacct に渡し、番号の重なる記録も含めて全利用者の開始と Suspended を読む"
+{
+  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+  job 77 xlc-cancelled CANCELLED 20 2026-10-11T15:09:25 2026-10-11T15:09:25 0
+  job 74 openmc-2A COMPLETED 45 2026-10-11T14:24:05 2026-10-11T15:14:32 1
+} > "$LOG"
+rm -f "$TEST_ROOT/sacct.args"
+"$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
+args=$(cat "$TEST_ROOT/sacct.args")
+assert_contains "$args" $'-j\n73,74\n'
+assert_contains "$args" "--allusers"
+assert_contains "$args" "--duplicates"
+assert_contains "$args" "JobIDRaw,Start,Suspended"
+
+it "番号が再利用されていても、開始の時刻の合う記録で、止められていたかを決める"
+{
+  job 150 old COMPLETED 10 2026-10-11T10:00:00 2026-10-11T10:05:00 1
+  job 150 new COMPLETED 10 2026-10-20T10:00:00 2026-10-20T10:30:00 1
+} > "$LOG"
+rows=$'150|2026-10-11T10:00:00|00:00:00\n150|2026-10-20T10:00:00|00:20:00'
+out=$(FAKE_SACCT_ROWS=$rows "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_contains "$out" "old"
+assert_not_contains "$out" "new"
+assert_contains "$out" "SUSPENDED: 1 (150)"
 
 it "sacct に無いジョブ（accounting の前）は、止められていないものとして表に入れる"
-out=$(FAKE_SACCT_MISSING="73" "$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+{
+  job 73 openmc-2A COMPLETED 45 2026-10-11T13:45:32 2026-10-11T14:24:05 1
+} > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_eq 0 $?
 assert_contains "$(grep -E '^ *73 ' <<<"$out")" "0.86"
 assert_contains "$out" "SUSPENDED: 0"
