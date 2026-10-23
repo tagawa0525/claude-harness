@@ -243,6 +243,22 @@ out=$(run_hook pre-pr-create-check "$GOOD_CMD --head=feat/two-adrs")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
 
+it "pre-pr-create: -R / --repo / GH_REPO で origin と別のリポジトリに出す PR は数えない"
+git -C "$REPO" switch -q feat/two-adrs
+for cmd in "$GOOD_CMD -R other/proj" "$GOOD_CMD --repo=other/proj" "GH_REPO=other/proj $GOOD_CMD"; do
+  out=$(run_hook pre-pr-create-check "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+# origin と同じリポジトリなら数える（HOST/ の有無、URL の形、大文字と小文字を問わない）
+origin_url=$(git -C "$REPO" remote get-url origin)
+git -C "$REPO" remote set-url origin git@github.com:example/prcreate.git
+for repo in example/prcreate github.com/Example/prcreate https://github.com/example/prcreate; do
+  out=$(run_hook pre-pr-create-check "$GOOD_CMD -R $repo")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+done
+git -C "$REPO" remote set-url origin "$origin_url"
+
 it "pre-pr-create: 比べる base が見つからなければ数えずに通す（マージの時点の検査が GitHub の変更ファイルで数える）"
 git -C "$REPO" switch -q feat/two-adrs
 out=$(run_hook pre-pr-create-check "$GOOD_CMD --base no-such-branch")
