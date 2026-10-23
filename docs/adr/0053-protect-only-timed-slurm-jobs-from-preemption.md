@@ -158,7 +158,9 @@ slurmd が再起動する（背景）。反映の時点で `urgent` に待って
   付かないこと、知らないオプション（`--urgent`）が投げずにエラーになること
 - `.claude/tests/scripts/slurm-history.sh`: 割り込みの後に終わった `timed` のジョブと、その前に終わったジョブだけが表に入り、
   それ以外が `UNTIMED:` に数えられること、`sacct` を呼ばないこと
-- 設定の構文: `nix build` で r995、t14g4、x1ng1 の toplevel を作る
+- 設定の構文: `nix build` で r995、t14g4、x1ng1 の toplevel を作る。2026-10-23 に、このブランチの e59ab2eb で 3 つとも作れた。
+  生成した slurm.conf は `PartitionName=timed … PriorityTier=2 PreemptMode=OFF` の行を持ち、`SLURM_CONF=<それ> scontrol show hostnames r995`
+  が読めた。パーティションの行は slurmctld だけが解するので、反映後の確認で確かめる
 - 反映後に r995 で確かめる（ユーザーと親のセッション）:
   - `scontrol show partition` が `main`（`PriorityTier=1`）と `timed`（`PriorityTier=2`）を出し、`urgent` が無い
   - 排他の `main` のジョブ（flag なし）を実行し、`--timed` のジョブを投げると、`main` のジョブが `SUSPENDED` になり、
