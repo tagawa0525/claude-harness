@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # slurm-run.sh — r995 の Slurm に重い計算を 1 本投げ、終わるまで待つ
 #
-# Usage: slurm-run.sh [--top] [-c <コア数>] -t <見積もり> <name> <command>
+# Usage: slurm-run.sh [--top] [--urgent] [-c <コア数>] -t <見積もり> <name> <command>
 #
 # 既定では、ほかの計算と重ならないよう排他で実行する（sbatch --exclusive --wait --export=ALL）。
 # <name> はジョブの名前（squeue で見分ける）とログのファイル名に使う。例: xlc-2G、openmc-2G
@@ -9,9 +9,13 @@
 #     使う。超えても止めない（slurm.conf の OverTimeLimit=UNLIMITED）
 # -c: 排他にせず、<コア数> の CPU（Slurm の CPUs。ハードウェアスレッドで数え、割り当ては物理コア単位に
 #     切り上がる）だけを取って実行する（--cpus-per-task）。時間を記録しない長い計算のためで、ほかのジョブと
-#     資源を取り合うので、TIME 行に「時間は当てにならない」印を付ける。排他のジョブはノードにジョブが
-#     走っている間は始まらないので、走っている間は待たせる
+#     資源を取り合うので、TIME 行に「時間は当てにならない」印を付ける。排他の main のジョブはノードにジョブが
+#     走っている間は始まらないので、走っている間は待たせる（--urgent のジョブは待たず、走っているジョブを止める）
 # --top: 待っているジョブより先に実行する（scontrol top。走っているジョブは止めない）
+# --urgent: パーティション urgent に投げる。待っている main のジョブより先に走り、走っている main のジョブのうち
+#     コアの重なるものを止めて（SUSPEND）実行する。排他（-c なし）ならノード全体を取るので、走っている main のジョブを
+#     すべて止める。止められたジョブは、urgent のジョブが終わると続きから再開する。
+#     止めたジョブはメモリに残る（Slurm はメモリを数えない）ので、走っているジョブとの合計が搭載量に収まる計算に限る
 # 連絡先として、git のブランチ、投げた場所、Claude Code のセッションの ID をジョブのコメントに書く
 # （squeue の %k）。サブエージェントは親と同じセッションなので、ブランチで見分ける。
 #
@@ -22,24 +26,26 @@
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
 #   （ログの末尾 20 行。終わった直後なら、最後に TIME: elapsed=<実際の時間> estimate=<見積もり> を
-#    ログへ書き足すので、その行も含む。-c のときは行末に印が付く）
+#    ログへ書き足すので、その行も含む。-c のとき、urgent のジョブに止められていたときは、行末に印が付く）
 #   EXIT: <ジョブの終了コード>
 # 終了コードはジョブの終了コード。
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--top] [-c <コア数>] -t <見積もり> <name> <command>" >&2
+  echo "Usage: $0 [--top] [--urgent] [-c <コア数>] -t <見積もり> <name> <command>" >&2
   exit 1
 }
 
 top=false
+urgent=false
 estimate=""
 cpus=""
 shared=false
 while (($#)); do
   case "$1" in
     --top) top=true ;;
+    --urgent) urgent=true ;;
     -t)
       (($# >= 2)) || usage
       estimate=$2
@@ -100,6 +106,9 @@ if $shared; then
   resources=(--cpus-per-task="$cpus")
   contact+=" shared-cpus=$cpus"
 fi
+if $urgent; then
+  resources+=(--partition=urgent)
+fi
 
 # sbatch --wait は終わるまで戻らないので、裏で実行し、最初の行から番号を読む
 submitted=$(mktemp)
@@ -140,6 +149,15 @@ elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
   time_line="TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}"
   if $shared; then
     time_line+=" shared (-c $cpus): 時間は当てにならない"
+  fi
+  # RunTime は止められていた時間を除くが、再開後のキャッシュの冷えや、プログラムが自分で測る経過時間は残る。
+  # SuspendTime は一度も止められていなければ None。前に出る欄は固定の欄と JobName（slurm-run.sh は空白を
+  # 許さない）だけなので、最初の「空白 + SuspendTime=」が本物の欄で、後ろの Comment などの値は拾わない
+  if [[ ! $info =~ [[:space:]]SuspendTime=([^[:space:]]+) ]]; then
+    echo "WARN: ジョブ $job の scontrol の出力に SuspendTime が見つからず、止められていたかを確かめられなかった（sacct の Suspended で確かめる）" >&2
+    time_line+=" suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
+  elif [[ ${BASH_REMATCH[1]} != None ]]; then
+    time_line+=" suspended: 止められていたので時間は当てにならない"
   fi
   echo "$time_line" >>"$log" || {
     echo "WARN: ジョブ $job の実際の時間をログに書き足せなかった: $log" >&2
