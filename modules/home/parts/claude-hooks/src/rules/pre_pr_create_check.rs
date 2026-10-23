@@ -12,7 +12,8 @@
 //! 5. ブランチが新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はマージの時点の
 //!    pre-git-merge-check と共有する。レビューの周を回した後にマージで止まると、その周が無駄になる）。
 //!    base は --base（`origin/<base>`）、無ければ既定ブランチ。head は --head（`origin/<head>`）、
-//!    無ければ HEAD。`owner:branch` の head は別のリポジトリのブランチで手元に無いので数えない。
+//!    無ければ HEAD。`owner:branch` の head と、-R / --repo / GH_REPO で origin と別のリポジトリに出す
+//!    PR は、手元の origin のブランチと比べても数が合わないので数えない。
 //!    base が手元に無いなど数えられなければ通す（ここは早めの知らせで、ゲートはマージの時点の
 //!    pre-merge-check が GitHub の変更ファイルから数える。止めると docs/adr の無いリポジトリでも
 //!    既定ブランチが見つからないだけで PR を作れなくなる。ADR-0056）
@@ -89,8 +90,26 @@ pub(super) fn body_text(
     Ok(opt_value(args, body_flags).map(|a| a.raw.clone()))
 }
 
-/// PR が加える ADR を数える範囲（`<base>...<head>`）。数えないとき、base が分からないときは None
-fn adr_range(dir: &Path, args: &[Arg]) -> Option<String> {
+/// リポジトリの指定（`OWNER/REPO`、`HOST/OWNER/REPO`、URL、git のリモートの URL）を `owner/repo` にそろえる
+fn repo_slug(spec: &str) -> Option<String> {
+    let s = spec.trim().trim_end_matches('/');
+    let s = s.strip_suffix(".git").unwrap_or(s);
+    let mut parts = s.rsplit(['/', ':']);
+    let repo = parts.next().filter(|p| !p.is_empty())?;
+    let owner = parts.next().filter(|p| !p.is_empty())?;
+    Some(format!("{owner}/{repo}").to_lowercase())
+}
+
+/// PR が加える ADR を数える範囲（`<base>...<head>`）。数えないとき、base が分からないときは None。
+/// `target_repo` は -R / --repo / GH_REPO の指定
+fn adr_range(dir: &Path, args: &[Arg], target_repo: Option<&str>) -> Option<String> {
+    // origin と別のリポジトリへの PR は、手元の origin のブランチと比べても数が合わない
+    if let Some(target) = target_repo {
+        let origin = git::git(dir, &["remote", "get-url", "origin"])?;
+        if repo_slug(target).is_none() || repo_slug(target) != repo_slug(&origin) {
+            return None;
+        }
+    }
     let head = match opt_value(args, &["--head", "-H"]) {
         Some(h) => {
             let h = strip_opt_prefix(h, &["--head", "-H"]);
@@ -194,7 +213,19 @@ impl Rule for PrePrCreateCheck {
             // cwd に戻したときは、cwd のブランチの ADR が目的の PR に当たらないので数えない
             let escape = shell.escape("ALLOW_MULTI_TOPIC");
             if in_target && !fork && escape != Escape::Given {
-                let topic: Vec<String> = adr_range(&dir, args)
+                let target_repo = opt_value(args, &["-R", "--repo"])
+                    .map(|a| strip_opt_prefix(a, &["-R", "--repo"]).to_string())
+                    .or_else(|| {
+                        shell
+                            .assignments()
+                            .into_iter()
+                            .rev()
+                            .find(|(name, _)| name == "GH_REPO")
+                            .map(|(_, value)| value)
+                    })
+                    .or_else(|| std::env::var("GH_REPO").ok())
+                    .filter(|r| !r.is_empty());
+                let topic: Vec<String> = adr_range(&dir, args, target_repo.as_deref())
                     .and_then(|range| added_adrs(&dir, &range))
                     .and_then(|adrs| multi_topic_reason(&adrs))
                     .into_iter()
