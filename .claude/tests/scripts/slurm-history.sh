@@ -7,16 +7,6 @@ source "$(dirname "$0")/../lib.sh"
 
 LOG="$TEST_ROOT/job_completions"
 
-# sacct の偽物。呼ばれたことを記録する（slurm-history.sh は sacct を使わない）
-FAKE_BIN="$TEST_ROOT/bin"
-mkdir -p "$FAKE_BIN"
-cat >"$FAKE_BIN/sacct" <<'EOS'
-#!/usr/bin/env bash
-printf '%s\n' "$@" >"$TEST_ROOT/sacct.args"
-EOS
-chmod +x "$FAKE_BIN/sacct"
-export PATH="$FAKE_BIN:$PATH" TEST_ROOT
-
 # job <id> <name> <state> <limit> <start> <end> <nodes> [<partition>]: jobcomp/filetxt の 1 行（パーティションの既定は main）
 job() {
   printf 'JobId=%s UserId=tagawa(1000) GroupId=users(100) Name=%s JobState=%s Partition=%s TimeLimit=%s StartTime=%s EndTime=%s NodeList=r995 NodeCnt=%s ProcCnt=32 WorkDir=/w ReservationName= Tres=cpu=1,mem=86000M,node=1,billing=1 Account= QOS= WcKey= Cluster=unknown SubmitTime=2026-10-11T12:00:00 EligibleTime=2026-10-11T12:00:00 DerivedExitCode=0:0 ExitCode=0:0 \n' \
@@ -214,15 +204,13 @@ out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "SKIPPED: 1"
 assert_contains "$out" "UNTIMED: 0"
 
-it "表に入れるパーティションの名前は、Slurm の設定（modules/slurm/common.nix）の割り込まれないパーティションと同じ"
+it "表に入れるのは、Slurm の設定（modules/slurm/common.nix）の割り込まれないパーティションのジョブ"
 part=$(grep -o '"[a-z]* Nodes=[^"]*PreemptMode=OFF' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
 assert_ne "" "$part"
-assert_contains "$(cat "$SCRIPTS_DIR/slurm-history.sh")" "kv[\"Partition\"] != \"$part\""
-
-it "sacct を呼ばない"
-rm -f "$TEST_ROOT/sacct.args"
-"$SCRIPTS_DIR/slurm-history.sh" "$LOG" >/dev/null
-assert_file_missing "$TEST_ROOT/sacct.args"
+job 90 protected COMPLETED 10 2026-11-01T10:00:00 2026-11-01T10:05:00 1 "$part" > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
+assert_contains "$out" "protected"
+assert_contains "$out" "UNTIMED: 0"
 
 it "割り込みの後に終わった COMPLETED の行にパーティションが無ければ、どちらに入れるか決められないので行番号つきで exit 1"
 echo "JobId=80 Name=nopart JobState=COMPLETED TimeLimit=10 StartTime=2026-11-01T10:00:00 EndTime=2026-11-01T10:05:00 NodeCnt=1" > "$LOG"
