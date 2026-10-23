@@ -28,7 +28,7 @@
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
 #   （ログの末尾 20 行。終わった直後なら、最後に TIME: elapsed=<実際の時間> estimate=<見積もり> を
-#    ログへ書き足すので、その行も含む。-c のとき、--timed でないとき、止められていたときは、行末に印が付く）
+#    ログへ書き足すので、その行も含む。-c のとき、timed で走らなかったとき、止められていたときは、行末に印が付く）
 #   EXIT: <ジョブの終了コード>
 # 終了コードはジョブの終了コード。
 
@@ -161,9 +161,14 @@ elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
   if $shared; then
     time_line+=" shared (-c $cpus): 時間は当てにならない"
   fi
-  # 止められたかによらず付ける。止められなかったジョブも、割り込まれうる条件で走った値で、付け忘れた --timed を見分けるため
-  if ! $timed; then
-    time_line+=" preemptible: 割り込まれうるので時間は記録に使わない（記録するなら --timed）"
+  # 止められたかによらず付ける。止められなかったジョブも、割り込まれうる条件で走った値で、付け忘れた --timed を見分けるため。
+  # flag でなく実際に走ったパーティションで決める（SBATCH_PARTITION などで変わりうる。slurm-history.sh も jobcomp の
+  # Partition で決める）。前に出る欄は固定の欄と JobName だけなので、最初の「空白 + Partition=」が本物の欄
+  if [[ ! $info =~ [[:space:]]Partition=([^[:space:]]+) ]]; then
+    echo "WARN: ジョブ $job の scontrol の出力に Partition が見つからず、割り込まれうるかを確かめられなかった" >&2
+    time_line+=" partition=unknown: 割り込まれうるかを確かめられないので時間は記録に使わない"
+  elif [[ ${BASH_REMATCH[1]} != timed ]]; then
+    time_line+=" preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
   fi
   # timed のジョブは割り込まれないので、この印が付けば設定か運用（scontrol suspend）の誤り。
   # RunTime は止められていた時間を除くが、再開後のキャッシュの冷えや、プログラムが自分で測る経過時間は残る。
