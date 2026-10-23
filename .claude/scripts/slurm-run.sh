@@ -152,7 +152,9 @@ elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
   # RunTime は止められていた時間を除くが、再開後のキャッシュの冷えや、プログラムが自分で測る経過時間は残る。
   # SuspendTime は一度も止められていなければ None。前に出る欄は固定の欄と JobName（slurm-run.sh は空白を
   # 許さない）だけなので、最初の「空白 + SuspendTime=」が本物の欄で、後ろの Comment などの値は拾わない
-  if [[ $info =~ [[:space:]]SuspendTime=([^[:space:]]+) ]] && [[ ${BASH_REMATCH[1]} != None ]]; then
+  if [[ ! $info =~ [[:space:]]SuspendTime=([^[:space:]]+) ]]; then
+    echo "WARN: ジョブ $job の scontrol の出力に SuspendTime が見つからず、止められていたかを確かめられなかった（sacct の Suspended で確かめる）" >&2
+  elif [[ ${BASH_REMATCH[1]} != None ]]; then
     time_line+=" suspended: 止められていたので時間は当てにならない"
   fi
   echo "$time_line" >>"$log" || {

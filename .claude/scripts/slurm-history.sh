@@ -73,21 +73,30 @@ ids=$(awk '{
   if (id != "" && done && nodes >= 1) print id
 }' "$FILE" | sort -un | paste -sd, -)
 suspended=""
+recorded=""
 if [[ -n "$ids" ]]; then
-  if ! acct=$(sacct --allusers --duplicates -X -n -P -j "$ids" -o JobIDRaw,Start,Suspended); then
+  # jobcomp は開始を YYYY-MM-DDTHH:MM:SS で書く。sacct の書式は呼ぶ側の SLURM_TIME_FORMAT に従うので、standard に固定する
+  if ! acct=$(SLURM_TIME_FORMAT=standard sacct --allusers --duplicates -X -n -P -j "$ids" -o JobIDRaw,Start,Suspended); then
     echo "ERROR: sacct で、止められていたジョブを確かめられません（r995 の slurmdbd に届くか確かめてください）" >&2
     exit 1
   fi
   # Suspended は 00:00:00 か [日-]時:分:秒。0 でない数字があれば止められていた
   suspended=$(awk -F'|' '$3 ~ /[1-9]/ { print $1 "|" $2 }' <<<"$acct" | tr '\n' ' ')
+  recorded=$(awk -F'|' 'NF >= 3 { print $1 "|" $2 }' <<<"$acct" | tr '\n' ' ')
 fi
 
 # POSIX awk の機能だけで書く（mktime は gawk 拡張、正規表現の {n} は mawk の古い版が解さない）。時刻はどちらも同じ時刻帯
 # なので、暦日から数えた通し秒の差で実績（経過時間）を求める
-awk -v by_name="$BY_NAME" -v suspended="$suspended" '
+awk -v by_name="$BY_NAME" -v suspended="$suspended" -v recorded="$recorded" '
 BEGIN {
   ns = split(suspended, list, " ")
   for (i = 1; i <= ns; i++) susp[list[i]] = 1
+  nr = split(recorded, list, " ")
+  for (i = 1; i <= nr; i++) {
+    rec[list[i]] = 1
+    split(list[i], idstart, "|")
+    rec_id[idstart[1]] = 1
+  }
 }
 function days(y, m, d,    a) {
   # 暦日から通し日数への変換（Howard Hinnant の days_from_civil）
@@ -136,6 +145,9 @@ NF == 0 { next }
     skipped++
     next
   }
+  # 番号の記録が sacct にあるのに開始が合わなければ、時刻帯か書式が違う。止められていたかを決められないので止まる
+  if ((kv["JobId"] in rec_id) && !((kv["JobId"] "|" kv["StartTime"]) in rec))
+    bad(NR, "sacct にジョブ " kv["JobId"] " の記録はあるが、開始 " kv["StartTime"] " の合う記録がありません")
   if ((kv["JobId"] "|" kv["StartTime"]) in susp) {
     sus_ids = sus_ids (sus_count++ ? " " : "") kv["JobId"]
     next
