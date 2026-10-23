@@ -32,6 +32,8 @@ if ! grep -q '^rules: ' <<<"$usage"; then
 fi
 
 source "$(dirname "$0")/lib.sh"
+# pre-pr-create-check は GH_REPO を PR の対象のリポジトリとして読むので、実行する人の環境に左右させない
+unset GH_REPO
 
 # ===========================================================================
 # pre-pr-create-check
@@ -177,6 +179,136 @@ out=$(run_hook pre-pr-create-check "cd \"\$NOWHERE\" && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
 
+# --- トピックが 1 つか（新しい ADR の数）: マージの時点と同じ判定を PR を作る時点で当てる ---
+# base から head までに加わった docs/adr 直下の NNNN-*.md を数え、2 件以上なら止める
+git -C "$REPO" switch -q -c feat/two-adrs main
+commit_file "$REPO" "docs/adr/0002-use-b.md" "docs(adr): b"
+commit_file "$REPO" "docs/adr/0003-use-c.md" "docs(adr): c"
+git -C "$REPO" push -q -u origin feat/two-adrs
+git -C "$REPO" switch -q -c feat/stacked
+commit_file "$REPO" "docs/adr/0004-use-d.md" "docs(adr): d"
+git -C "$REPO" push -q -u origin feat/stacked
+git -C "$REPO" switch -q -c feat/one-adr main
+commit_file "$REPO" "docs/adr/0005-use-e.md" "docs(adr): e"
+commit_file "$REPO" "docs/adr/README.md" "docs(adr): readme"
+git -C "$REPO" push -q -u origin feat/one-adr
+
+it "pre-pr-create: 新しい ADR を 2 件以上加えるブランチは deny し、ADR を挙げて /topic-triage を示す"
+git -C "$REPO" switch -q feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+assert_contains "$(reason "$out")" "docs/adr/0003-use-c.md"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC=<理由>"
+# 「〜の場合は別」のような条件を文言に列挙しない（ADR-0023）
+assert_not_contains "$(reason "$out")" "まとめて加える"
+
+it "pre-pr-create: リポジトリのサブディレクトリから実行しても docs/adr を数える"
+out=$(run_hook pre-pr-create-check "cd '$REPO/docs/adr' && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+# diff.relative の設定に左右されない
+git -C "$REPO" config diff.relative true
+out=$(run_hook pre-pr-create-check "cd '$REPO/docs/adr' && $GOOD_CMD")
+git -C "$REPO" config --unset diff.relative
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+
+it "pre-pr-create: 新しい ADR が 1 件以下（README は数えない）なら許可する"
+git -C "$REPO" switch -q feat/one-adr
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-pr-create: --base で指定したブランチから数える"
+git -C "$REPO" switch -q feat/stacked
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --base feat/two-adrs")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook pre-pr-create-check "$GOOD_CMD -B feat/two-adrs")
+assert_eq allow "$(decision "$out")"
+# --base=x の形も読む（読めないと数えられずに通るので、数えて止まる組で確かめる）
+git -C "$REPO" switch -q feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --base=main")
+assert_eq deny "$(decision "$out")"
+git -C "$REPO" switch -q feat/stacked
+# --base が無ければ既定ブランチから数える（積んだ下のブランチの ADR も入る）
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0004-use-d.md"
+# --base が無ければ、gh と同じく branch.<head>.gh-merge-base を先に使う
+git -C "$REPO" config branch.feat/stacked.gh-merge-base feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+git -C "$REPO" config --unset branch.feat/stacked.gh-merge-base
+assert_eq allow "$(decision "$out")"
+
+it "pre-pr-create: --head で指定したブランチで数える"
+git -C "$REPO" switch -q feat/one-adr
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --head feat/two-adrs")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --head=feat/two-adrs")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+
+it "pre-pr-create: -R / --repo / GH_REPO で origin と別のリポジトリに出す PR は数えない"
+git -C "$REPO" switch -q feat/two-adrs
+for cmd in "$GOOD_CMD -R other/proj" "$GOOD_CMD --repo=other/proj" "GH_REPO=other/proj $GOOD_CMD"; do
+  out=$(run_hook pre-pr-create-check "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+# GH_REPO は gh pr create に渡るものだけを見る（環境の値、別のコマンドの前置き、env -u）
+out=$(GH_REPO=other/proj run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook pre-pr-create-check "GH_REPO=other/proj gh repo view && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+out=$(GH_REPO=other/proj run_hook pre-pr-create-check "env -u GH_REPO $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+# origin と同じリポジトリなら数える（HOST/ の有無、URL の形、大文字と小文字を問わない）
+origin_url=$(git -C "$REPO" remote get-url origin)
+git -C "$REPO" remote set-url origin git@github.com:example/prcreate.git
+for repo in example/prcreate github.com/Example/prcreate https://github.com/example/prcreate; do
+  out=$(run_hook pre-pr-create-check "$GOOD_CMD -R $repo")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+done
+git -C "$REPO" remote set-url origin "$origin_url"
+
+it "pre-pr-create: 比べる base が見つからなければ数えずに通す（マージの時点の検査が GitHub の変更ファイルで数える）"
+git -C "$REPO" switch -q feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --base no-such-branch")
+assert_eq allow "$(decision "$out")"
+# 既定ブランチが main / master でなく origin/HEAD も無い clone（ADR の無い他のプロジェクトに多い）
+TRUNK="$TEST_ROOT/prcreate-trunk"
+git init -q -b trunk "$TRUNK"
+commit_file "$TRUNK" "a.txt" "feat: a"
+git -C "$TRUNK" init -q --bare "$TRUNK.git"
+git -C "$TRUNK" remote add origin "$TRUNK.git"
+git -C "$TRUNK" push -q -u origin trunk
+out=$(run_hook pre-pr-create-check "cd '$TRUNK' && $GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+git -C "$REPO" switch -q feat/two-adrs
+
+it "pre-pr-create: cd 先に移れなければ、手元の cwd のブランチの ADR は数えない"
+out=$(run_hook pre-pr-create-check "cd '$TEST_ROOT/no-such-dir' && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
+assert_not_contains "$(reason "$out")" "/topic-triage"
+
+it "pre-pr-create: ALLOW_MULTI_TOPIC=<理由> なら新しい ADR が複数でも PR を作れる"
+out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=テスト用 $GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-pr-create: ALLOW_MULTI_TOPIC=1 は、本来の文言に理由を求める行を足して止める"
+out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=1 $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "/topic-triage"
+assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
+# エスケープは新しい ADR の検査だけを外す（ほかの検査は残る）
+out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=テスト用 $GOOD_CMD --web")
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "/topic-triage"
+git -C "$REPO" switch -q feat/x
+
 # --- fork（upstream リモートのある clone）: こちらの規約は検査しない ---
 FORK="$TEST_ROOT/prcreate-fork"
 make_repo "$FORK"
@@ -196,6 +328,15 @@ it "pre-pr-create: fork では 70 文字超の件名と上流の template の本
 long_title="fix(typescript): surface a tsserver crash on every cross-file query, not only the first"
 out=$(run_hook pre-pr-create-check "gh pr create --repo example/theirs --head me:fix/theirs --title \"$long_title\" --body \"$THEIR_BODY\"")
 assert_eq allow "$(decision "$out")"
+
+it "pre-pr-create: fork では新しい ADR が 2 件以上でも許可する（上流の流儀が正）"
+git -C "$FORK" switch -q -c fix/two-adrs main
+commit_file "$FORK" "docs/adr/0002-use-b.md" "Add ADR b"
+commit_file "$FORK" "docs/adr/0003-use-c.md" "Add ADR c"
+git -C "$FORK" push -q -u origin fix/two-adrs
+out=$(run_hook pre-pr-create-check "gh pr create --title \"Add ADRs\" --body \"$THEIR_BODY\"")
+assert_eq allow "$(decision "$out")"
+git -C "$FORK" switch -q fix/theirs
 
 it "pre-pr-create: fork でも --body / --body-file がなければ deny（見出しは求めない）"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"$long_title\" --fill")
@@ -1743,6 +1884,8 @@ cd "$TEST_ROOT" || exit 1
 out=$(run_hook pre-git-merge-check "git -C $REPO merge --no-ff feat/two")
 assert_eq deny "$(decision "$out")"
 out=$(run_hook pre-git-merge-check "cd $REPO && git merge --no-ff feat/two")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook pre-git-merge-check "cd '$REPO/docs/adr' && git merge --no-ff feat/two")
 assert_eq deny "$(decision "$out")"
 cd "$REPO" || exit 1
 

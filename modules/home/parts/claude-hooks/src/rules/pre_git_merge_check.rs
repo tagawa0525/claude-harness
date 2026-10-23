@@ -39,6 +39,35 @@ pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
     ))
 }
 
+/// `range`（`A...B`）で加わった ADR のパス。git diff が失敗したら None
+pub(super) fn added_adrs(dir: &Path, range: &str) -> Option<Vec<String>> {
+    let added = git::git(
+        dir,
+        &[
+            "diff",
+            // 改名は新しい ADR ではない。検出を diff.renames の設定に左右させない
+            "--find-renames",
+            // 出力のパスをリポジトリの直下からにする。diff.relative の設定に左右させない
+            "--no-relative",
+            "--diff-filter=A",
+            "--name-only",
+            // パスをクォートせずに NUL 区切りで受け取る（非 ASCII のファイル名）
+            "-z",
+            range,
+            "--",
+            // 実行するディレクトリでなくリポジトリの直下から解く（サブディレクトリから呼ばれても数える）
+            ":(top)docs/adr",
+        ],
+    )?;
+    Some(
+        added
+            .split('\0')
+            .filter(|p| is_adr_path(p))
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
 /// `git merge args…` のマージ対象。中断・再開（--abort / --continue / --quit）なら None。
 /// 対象を標準入力で受け取る `--stdin` はそのまま対象に入れる（check で確かめられないとして止める）
 fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
@@ -141,30 +170,11 @@ impl Rule for PreGitMergeCheck {
                 let Some(full) = local_branch_ref(dir, t) else {
                     continue;
                 };
-                let Some(added) = git::git(
-                    dir,
-                    &[
-                        "diff",
-                        // 改名は新しい ADR ではない。検出を diff.renames の設定に左右させない
-                        "--find-renames",
-                        "--diff-filter=A",
-                        "--name-only",
-                        // パスをクォートせずに NUL 区切りで受け取る（非 ASCII のファイル名）
-                        "-z",
-                        &format!("HEAD...{full}"),
-                        "--",
-                        "docs/adr",
-                    ],
-                ) else {
+                let Some(adrs) = added_adrs(dir, &format!("HEAD...{full}")) else {
                     return vec![Finding::Deny(format!(
                         "{t} が加える ADR を確認できません（git diff HEAD...{full} が失敗）"
                     ))];
                 };
-                let adrs: Vec<String> = added
-                    .split('\0')
-                    .filter(|p| is_adr_path(p))
-                    .map(str::to_string)
-                    .collect();
                 if let Some(reason) = multi_topic_reason(&adrs) {
                     return vec![Finding::Deny(reason)];
                 }
