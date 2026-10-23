@@ -10,6 +10,7 @@
 #   ジョブ名ごと: NAME RUNS ESTIMATE ELAPSED RATIO MAX_RATIO（ESTIMATE と ELAPSED は平均。
 #   見積もりのあるジョブだけで求め、RUNS は見積もりのないジョブも数える）
 #   SKIPPED: <表に入れなかった行数>
+#   SUSPENDED: <止められていたジョブの数> (<ジョブ番号> …)（無ければ SUSPENDED: 0）
 #
 # 定義:
 #   ELAPSED  EndTime - StartTime（jobcomp に Elapsed の欄は無い）
@@ -18,11 +19,15 @@
 #            ジョブ名ごとの RATIO は ELAPSED の合計 / ESTIMATE の合計、MAX_RATIO は個々の比率の最大
 # 対象: JobState=COMPLETED かつ NodeCnt が 1 以上の行。それ以外（開始前に CANCELLED、
 #       FAILED、TIMEOUT など、最後まで走っていない実績）は SKIPPED に数えて表に入れない。
+#       urgent のジョブに止められていた（sacct の Suspended が 0 でない）ジョブは、経過に止められていた時間が混ざるので、
+#       SUSPENDED に数えて表に入れない。jobcomp の行は止められていた時間を持たないので、記録のジョブの番号を
+#       sacct に渡して読む。sacct に無いジョブ（accounting を置く前）は止められていないものとして扱う
+#       （止める仕組みは accounting より後に入ったので、それより前に止められたジョブは無い）。
 #
 # 行は `キー=値` の空白区切り。値に `=` や `,` を含む欄（Tres）があるので最初の `=` で分ける。
 # `=` を含まない語は直前の値の続き（空白のあるジョブ名）として読む。
 # 読めない行（JobId、JobState、TimeLimit、NodeCnt、時刻のどれかが無いか壊れている）は、
-# 行番号を出して exit 1。ファイルが読めないときも exit 1。
+# 行番号を出して exit 1。ファイルが読めないとき、sacct が失敗したときも exit 1。
 
 set -euo pipefail
 
@@ -55,9 +60,25 @@ if [[ ! -r "$FILE" ]]; then
   exit 1
 fi
 
+# 止められていたジョブの番号（空白区切り）。sacct の -j は、--starttime の既定をエポックにするので期間で落とさない
+ids=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^JobId=[0-9]+$/) { print substr($i, 7); next } }' "$FILE" | paste -sd, -)
+suspended=""
+if [[ -n "$ids" ]]; then
+  if ! acct=$(sacct --allusers -X -n -P -j "$ids" -o JobIDRaw,Suspended); then
+    echo "ERROR: sacct で、止められていたジョブを確かめられません（r995 の slurmdbd に届くか確かめてください）" >&2
+    exit 1
+  fi
+  # Suspended は 00:00:00 か [日-]時:分:秒。0 でない数字があれば止められていた
+  suspended=$(awk -F'|' '$2 ~ /[1-9]/ { print $1 }' <<<"$acct" | tr '\n' ' ')
+fi
+
 # POSIX awk の機能だけで書く（mktime は gawk 拡張、正規表現の {n} は mawk の古い版が解さない）。時刻はどちらも同じ時刻帯
 # なので、暦日から数えた通し秒の差で実績（経過時間）を求める
-awk -v by_name="$BY_NAME" '
+awk -v by_name="$BY_NAME" -v suspended="$suspended" '
+BEGIN {
+  ns = split(suspended, list, " ")
+  for (i = 1; i <= ns; i++) susp[list[i]] = 1
+}
 function days(y, m, d,    a) {
   # 暦日から通し日数への変換（Howard Hinnant の days_from_civil）
   if (m <= 2) y--
@@ -105,6 +126,10 @@ NF == 0 { next }
     skipped++
     next
   }
+  if (kv["JobId"] in susp) {
+    sus_ids = sus_ids (sus_count++ ? " " : "") kv["JobId"]
+    next
+  }
   start = epoch(kv["StartTime"])
   end = epoch(kv["EndTime"])
   if (start < 0) bad(NR, "StartTime がありません")
@@ -150,5 +175,7 @@ END {
     for (i = 1; i <= n; i++) print rows[i]
   }
   printf "SKIPPED: %d\n", skipped + 0
+  if (sus_count) printf "SUSPENDED: %d (%s)\n", sus_count, sus_ids
+  else print "SUSPENDED: 0"
 }
 ' "$FILE"
