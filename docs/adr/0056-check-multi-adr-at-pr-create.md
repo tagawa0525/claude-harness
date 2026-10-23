@@ -19,7 +19,8 @@ issues: []
 ## 検討した案
 
 - 案 A: `pre-pr-create-check` に同じ判定（`multi_topic_reason`、`ALLOW_MULTI_TOPIC=<理由>`）を足す。base は `--base`
-  （`origin/<base>`）、無ければ既定ブランチ（`git::default_branch`）、head は `--head`（`origin/<head>`）、無ければ HEAD。
+  （`origin/<base>`）、無ければ gh と同じく head のブランチの `gh-merge-base` の設定、それも無ければ既定ブランチ
+  （`git::default_branch`）、head は `--head`（`origin/<head>`）、無ければ HEAD。
   base が手元に無いなど数えられなければ通す。fork（`upstream` リモートのある clone）では数えない
 - 案 B: 案 A で、数えられなければ止める（マージの時点の 2 つの検査と同じく、確かめられない状態で進めない）
 - 案 C: /gh-pr-create のスキルの手順に、PR を出す前に新しい ADR の数を確かめる手順を書く。hook を経由しない
