@@ -235,6 +235,11 @@ git -C "$REPO" switch -q feat/stacked
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "docs/adr/0004-use-d.md"
+# --base が無ければ、gh と同じく branch.<head>.gh-merge-base を先に使う
+git -C "$REPO" config branch.feat/stacked.gh-merge-base feat/two-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+git -C "$REPO" config --unset branch.feat/stacked.gh-merge-base
+assert_eq allow "$(decision "$out")"
 
 it "pre-pr-create: --head で指定したブランチで数える"
 git -C "$REPO" switch -q feat/one-adr
@@ -251,6 +256,13 @@ for cmd in "$GOOD_CMD -R other/proj" "$GOOD_CMD --repo=other/proj" "GH_REPO=othe
   out=$(run_hook pre-pr-create-check "$cmd")
   assert_eq allow "$(decision "$out")"
 done
+# GH_REPO は gh pr create に渡るものだけを見る（環境の値、別のコマンドの前置き、env -u）
+out=$(GH_REPO=other/proj run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook pre-pr-create-check "GH_REPO=other/proj gh repo view && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+out=$(GH_REPO=other/proj run_hook pre-pr-create-check "env -u GH_REPO $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
 # origin と同じリポジトリなら数える（HOST/ の有無、URL の形、大文字と小文字を問わない）
 origin_url=$(git -C "$REPO" remote get-url origin)
 git -C "$REPO" remote set-url origin git@github.com:example/prcreate.git
