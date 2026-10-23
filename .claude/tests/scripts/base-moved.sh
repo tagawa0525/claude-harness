@@ -74,7 +74,7 @@ assert_contains "$out" "COMMON: a.txt"
 assert_not_contains "$out" "other.txt"
 assert_not_contains "$out" "WARN"
 
-it "base-moved: GitHub でない origin で --base origin/main を渡せば、origin を fetch してから比べる"
+it "base-moved: GitHub でない origin の追跡ブランチを --base に渡すと、fetch せずに比べて WARN で未確認と知らせる"
 LOC="$TEST_ROOT/bm/local_origin"
 make_repo "$LOC"
 make_remote "$LOC"
@@ -85,23 +85,9 @@ commit_file "$LOC.other" a.txt "feat: a on main"
 git -C "$LOC.other" push -q origin main
 out=$(cd "$LOC" && "$SCRIPTS_DIR/base-moved.sh" --base origin/main 2>&1)
 assert_eq 0 $?
-assert_contains "$out" "BASE_MOVED: origin/main"
-assert_contains "$out" "COMMON: a.txt"
-
-it "base-moved: --base を refs/remotes/<リモート>/<ブランチ> の形で渡しても、そのリモートを fetch する"
-commit_file "$LOC.other" a.txt "feat: a again" 2
-git -C "$LOC.other" push -q origin main
-NEW_TIP=$(git -C "$LOC.other" rev-parse --short HEAD)
-out=$(cd "$LOC" && "$SCRIPTS_DIR/base-moved.sh" --base refs/remotes/origin/main 2>&1)
-assert_eq 0 $?
-assert_contains "$out" "$NEW_TIP"
-
-it "base-moved: GitHub でない origin の fetch に失敗したら、WARN を出して手元の追跡ブランチで比べる"
-git -C "$LOC" remote set-url origin "$TEST_ROOT/bm/missing.git"
-out=$(cd "$LOC" && "$SCRIPTS_DIR/base-moved.sh" --base origin/main 2>&1)
-assert_eq 0 $?
-assert_contains "$out" "WARN: fetch に失敗しました"
-assert_contains "$out" "COMMON: a.txt"
+assert_contains "$out" "WARN:"
+assert_contains "$out" "未確認"
+assert_not_contains "$out" "COMMON: a.txt"
 
 it "base-moved: --base がローカルのブランチなら、名前の先頭がリモート名と同じでも fetch しない"
 git -C "$NOGH" remote add feat "$TEST_ROOT/bm/missing-feat.git"
@@ -135,7 +121,7 @@ in_other() {
   (cd "$other" && "$@" && git push -q origin main)
 }
 
-it "base-moved: GitHub の clone でも、--base が別のリモートの追跡ブランチなら、そのリモートを fetch する"
+it "base-moved: --base が origin 以外のリモートの追跡ブランチなら、fetch せずに比べて WARN で未確認と知らせる"
 D=$(fixture base_other_remote)
 commit_file "$D" src/a.txt "feat: a"
 git init -q --bare "$D.up.git"
@@ -147,8 +133,25 @@ commit_file "$D.up.other" src/a.txt "feat: up a" 3
 git -C "$D.up.other" push -q origin main
 out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" --base up/main 2>&1)
 assert_eq 0 $?
-assert_contains "$out" "BASE_MOVED: up/main"
+assert_contains "$out" "WARN:"
+assert_contains "$out" "未確認"
+assert_not_contains "$out" "COMMON: src/a.txt"
+
+it "base-moved: --base を refs/remotes/origin/<ブランチ> や裸の origin の形で渡しても、origin を fetch する"
+D=$(fixture base_full_ref)
+commit_file "$D" src/a.txt "feat: a"
+in_other "$D" bash -c 'mkdir -p src && seq 5 > src/a.txt && git add src/a.txt && git commit -q -m "feat: other a"'
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" --base refs/remotes/origin/main 2>&1)
+assert_eq 0 $?
 assert_contains "$out" "COMMON: src/a.txt"
+git -C "$D.other" pull -q
+commit_file "$D.other" src/a.txt "feat: other a again" 6
+git -C "$D.other" push -q origin main
+NEW_TIP=$(git -C "$D.other" rev-parse --short HEAD)
+git -C "$D" remote set-head origin main
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" --base origin 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "$NEW_TIP"
 
 it "base-moved: まだ fetch していない追跡ブランチを --base に渡しても、そのリモートを fetch してから比べる"
 D=$(fixture base_not_fetched)
