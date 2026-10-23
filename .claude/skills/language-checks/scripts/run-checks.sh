@@ -15,8 +15,8 @@
 # 言語の検出（language-checks スキルの規約。いずれかを満たせば対象）:
 #   Rust:     Cargo.toml がある、または .rs がステージ済み。ルートに Cargo.toml が無ければ、
 #             ステージ済みの .rs から最も近い Cargo.toml のディレクトリ（crate）ごとに実行する。
-#             ルートに Cargo.toml と scripts/run-rust-docs-tests.sh があり、差分が .md だけなら、
-#             fmt、clippy、cargo test の代わりにそのスクリプトだけを実行する
+#             ルートに Cargo.toml と scripts/run-rust-docs-tests.sh（実行権限が要る）があれば、差分が .md だけなら
+#             fmt、clippy、cargo test の代わりにそのスクリプトだけを、ほかの差分では全体の後にそのスクリプトも実行する
 #   Python:   pyproject.toml / setup.py / requirements.txt がある、または .py がステージ済み。テストは
 #             scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、
 #             それも無ければ追跡している test_*.py / *_test.py のあるディレクトリごとに
@@ -171,27 +171,30 @@ docs_only_diff() {
   [[ -n "$all" && -z "$rest" ]]
 }
 # 文書の差分で実行するテストの宣言。文書を読む Rust のテスト（文書どうしの整合など）を持つリポジトリが置き、
-# 差分が .md だけのときは fmt、clippy、全体の cargo test の代わりにこれを実行する（scripts/run-python-tests.sh と同じ形）
-# 実行権限は差分によらず確かめる（.rs を含む差分で黙って通すと、次の文書だけの差分で初めて落ちる）
+# 差分が .md だけのときは fmt、clippy、全体の cargo test の代わりにこれを実行する（scripts/run-python-tests.sh と同じ形）。
+# ほかの差分では全体の後にも実行する。宣言の外の変更（Cargo.toml のパッケージ名など）で壊れた宣言が、次の文書だけの
+# 差分で初めて落ちないようにするため。同じ理由で、実行権限も差分によらず確かめる
 RUST_DOCS_TESTS=scripts/run-rust-docs-tests.sh
-if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" && ! -x "$RUST_DOCS_TESTS" ]]; then
-  echo "FAILED: rust docs-test: $RUST_DOCS_TESTS に実行権限が無い（chmod +x）"
-  exit 1
-fi
-if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" ]] && docs_only_diff; then
-  DETECTED=1
-  for stage in format lint test; do
-    echo "SKIP: rust $stage (差分が .md だけなので $RUST_DOCS_TESTS だけを実行する)"
-  done
+run_rust_docs_tests() {
   run_stage rust docs-test bash "" "${CARGO_PIN[@]}" bash "$RUST_DOCS_TESTS"
+}
+if [[ -f Cargo.toml && -e "$RUST_DOCS_TESTS" ]]; then
+  DETECTED=1
+  if [[ ! -x "$RUST_DOCS_TESTS" ]]; then
+    echo "FAILED: rust docs-test: $RUST_DOCS_TESTS に実行権限が無い（chmod +x）"
+    exit 1
+  fi
+  if docs_only_diff; then
+    for stage in format lint test; do
+      echo "SKIP: rust $stage (差分が .md だけなので $RUST_DOCS_TESTS だけを実行する)"
+    done
+  else
+    run_rust .
+  fi
+  run_rust_docs_tests
 elif [[ -f Cargo.toml ]]; then
   DETECTED=1
   run_rust .
-  # 宣言を足す・直す差分は文書だけでないので、ここで一度実行する（実行しないと、誤った宣言が次の文書だけの差分で
-  # 初めて落ちる）
-  if [[ -e "$RUST_DOCS_TESTS" ]] && staged_has "$RUST_DOCS_TESTS"; then
-    run_stage rust docs-test bash "" "${CARGO_PIN[@]}" bash "$RUST_DOCS_TESTS"
-  fi
 elif staged_has '*.rs'; then
   DETECTED=1
   mapfile -t targets < <(rust_targets | sort -u)
