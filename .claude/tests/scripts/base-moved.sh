@@ -89,21 +89,17 @@ assert_contains "$out" "WARN:"
 assert_contains "$out" "未確認"
 assert_not_contains "$out" "COMMON: a.txt"
 
-it "base-moved: --base がローカルのブランチなら、名前の先頭がリモート名と同じでも fetch しない"
-git -C "$NOGH" remote add feat "$TEST_ROOT/bm/missing-feat.git"
-git -C "$NOGH" branch -q feat/parent main
-out=$(cd "$NOGH" && "$SCRIPTS_DIR/base-moved.sh" --base feat/parent 2>&1)
-assert_eq 0 $?
-assert_contains "$out" "COMMON: a.txt"
-assert_not_contains "$out" "WARN"
-git -C "$NOGH" remote remove feat
-
 it "base-moved: 名前に remotes/ を含むローカルのブランチを --base に渡しても、WARN を出さずに比べる"
 git -C "$NOGH" branch -q fix/remotes/parent main
 out=$(cd "$NOGH" && "$SCRIPTS_DIR/base-moved.sh" --base fix/remotes/parent 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "COMMON: a.txt"
 assert_not_contains "$out" "WARN"
+
+it "base-moved: GitHub でない clone で、--base がローカルのブランチでない（origin/main~1 のような書き方）なら WARN を出す"
+out=$(cd "$LOC" && "$SCRIPTS_DIR/base-moved.sh" --base origin/main~0 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "未確認"
 
 it "base-moved: fetch に失敗したら警告して、手元の追跡ブランチで比べる"
 git remote set-url origin "$TEST_ROOT/bm/no-such.git"
@@ -128,7 +124,7 @@ in_other() {
   (cd "$other" && "$@" && git push -q origin main)
 }
 
-it "base-moved: --base を refs/remotes/origin/<ブランチ> や裸の origin の形で渡しても、origin を fetch する"
+it "base-moved: GitHub の clone では、--base が refs/remotes/origin/<ブランチ> や裸の origin の形でも、fetch した origin と比べる"
 D=$(fixture base_full_ref)
 commit_file "$D" src/a.txt "feat: a"
 in_other "$D" bash -c 'mkdir -p src && seq 5 > src/a.txt && git add src/a.txt && git commit -q -m "feat: other a"'
@@ -144,7 +140,7 @@ out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" --base origin 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "$NEW_TIP"
 
-it "base-moved: まだ fetch していない追跡ブランチを --base に渡しても、そのリモートを fetch してから比べる"
+it "base-moved: GitHub の clone では、まだ fetch していない origin の追跡ブランチを --base に渡しても、fetch してから比べる"
 D=$(fixture base_not_fetched)
 commit_file "$D" src/a.txt "feat: a"
 in_other "$D" bash -c 'git switch -q -c parent && mkdir -p src && seq 4 > src/a.txt && git add src/a.txt && git commit -q -m "feat: parent a" && git push -q origin parent && git switch -q main'
