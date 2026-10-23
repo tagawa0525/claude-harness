@@ -10,6 +10,9 @@
 # 検査する本文が空白だけのときは textlint を呼ばない。標準入力が空だと、textlint は検査せずに使い方の全文を出す
 # （件名を除いた fixup!、squash!、Merge の本文が空の場合）
 #
+# 本文は Markdown として読む（--stdin-filename の拡張子でパーサーが決まる）。文書の検査と同じく、コードスパン
+# （バッククォートで囲んだ識別子やファイル名）の中は検査しない。txt はコードスパンを見分けず全文を検査する。
+#
 # 終了コード: textlint のもの（0 = 崩れた語が無い、1 = 崩れた語がある、ほか = textlint が失敗した）
 
 msg=$(cat)
@@ -22,4 +25,4 @@ esac
 body=$(sed '/^# -\{24\} >8 -\{24\}$/,$d' <<<"$msg")
 [[ "$body" =~ [^[:space:]] ]] || exit 0
 printf '%s\n' "$body" |
-  textlint --config "$JA_TERMS_CONFIG" --no-color --stdin --stdin-filename COMMIT_EDITMSG.txt
+  textlint --config "$JA_TERMS_CONFIG" --no-color --stdin --stdin-filename COMMIT_EDITMSG.md
