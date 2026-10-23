@@ -391,6 +391,16 @@ out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "実行権限が無い"
 
+it "run-checks: 差分が宣言そのものを含めば、全体の後に宣言したテストも実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-edit-decl"
+printf '#!/bin/sh\necho edited >> "%s/docs-tests.log"\n' "$TEST_ROOT" > scripts/run-rust-docs-tests.sh
+git add scripts/run-rust-docs-tests.sh
+make_fake_tool shellcheck '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
+assert_eq "edited" "$(cat "$TEST_ROOT/docs-tests.log")"
+
 it "run-checks: 宣言が無ければ、差分が .md だけでも fmt、clippy、全体の cargo test を実行する"
 REPO="$TEST_ROOT/checks/docs-no-decl"
 make_repo "$REPO"
