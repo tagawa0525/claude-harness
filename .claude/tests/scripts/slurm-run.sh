@@ -227,8 +227,7 @@ assert_file_missing "$TEST_ROOT/sbatch.args"
 
 it "slurm-run: 既定の NFS の入口は、Nix のマウント点（modules/slurm/nfs-entry.nix）と同じ"
 nix_entry=$(grep -o '^"[^"]*"$' "$CLAUDE_DIR/../modules/slurm/nfs-entry.nix" | tr -d '"')
-[[ -n $nix_entry ]]
-assert_eq 0 $?
+assert_ne "" "$nix_entry"
 assert_eq "$nix_entry" "$(grep -o 'SLURM_RUN_NFS_ENTRY:-[^}]*' "$RUN" | cut -d- -f2-)"
 
 it "slurm-run: 名前がファイル名に使えない文字を含んだらエラー"
