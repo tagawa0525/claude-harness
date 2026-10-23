@@ -4,6 +4,7 @@ date: 2026-10-23
 requires: [ADR-0007, ADR-0026, ADR-0029, ADR-0030, ADR-0031, ADR-0041]
 supersedes: []
 superseded-by:
+amended-by: [ADR-0053]
 amends: [ADR-0007]
 issues: ["#456"]
 ---
