@@ -117,8 +117,12 @@ if $shared; then
   resources=(--cpus-per-task="$cpus")
   contact+=" shared-cpus=$cpus"
 fi
+# 既定の main も明示する。コマンド行の --partition は SBATCH_PARTITION より強く、環境から timed に入った -c のジョブが
+# 時間を記録するジョブとして数えられることを防ぐ
 if $timed; then
   resources+=(--partition=timed)
+else
+  resources+=(--partition=main)
 fi
 
 # sbatch --wait は終わるまで戻らないので、裏で実行し、最初の行から番号を読む
