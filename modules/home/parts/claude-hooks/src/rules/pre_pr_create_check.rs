@@ -105,8 +105,9 @@ fn repo_slug(spec: &str) -> Option<String> {
 fn adr_range(dir: &Path, args: &[Arg], target_repo: Option<&str>) -> Option<String> {
     // origin と別のリポジトリへの PR は、手元の origin のブランチと比べても数が合わない
     if let Some(target) = target_repo {
+        let target = repo_slug(target)?;
         let origin = git::git(dir, &["remote", "get-url", "origin"])?;
-        if repo_slug(target).is_none() || repo_slug(target) != repo_slug(&origin) {
+        if Some(target) != repo_slug(&origin) {
             return None;
         }
     }
