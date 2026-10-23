@@ -103,6 +103,15 @@ assert_eq 0 $?
 assert_contains "$out" "WARN: fetch に失敗しました"
 assert_contains "$out" "COMMON: a.txt"
 
+it "base-moved: --base がローカルのブランチなら、名前の先頭がリモート名と同じでも fetch しない"
+git -C "$NOGH" remote add feat "$TEST_ROOT/bm/missing-feat.git"
+git -C "$NOGH" branch -q feat/parent main
+out=$(cd "$NOGH" && "$SCRIPTS_DIR/base-moved.sh" --base feat/parent 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "COMMON: a.txt"
+assert_not_contains "$out" "WARN"
+git -C "$NOGH" remote remove feat
+
 it "base-moved: fetch に失敗したら警告して、手元の追跡ブランチで比べる"
 git remote set-url origin "$TEST_ROOT/bm/no-such.git"
 out=$("$SCRIPTS_DIR/base-moved.sh" 2>&1)
