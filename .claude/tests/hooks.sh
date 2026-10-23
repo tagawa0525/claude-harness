@@ -235,9 +235,15 @@ commit_file "$TRUNK" "a.txt" "feat: a"
 git -C "$TRUNK" init -q --bare "$TRUNK.git"
 git -C "$TRUNK" remote add origin "$TRUNK.git"
 git -C "$TRUNK" push -q -u origin trunk
-out=$(run_hook pre-pr-create-check "cd $TRUNK && $GOOD_CMD")
+out=$(run_hook pre-pr-create-check "cd '$TRUNK' && $GOOD_CMD")
 assert_eq allow "$(decision "$out")"
 git -C "$REPO" switch -q feat/two-adrs
+
+it "pre-pr-create: cd 先に移れなければ、手元の cwd のブランチの ADR は数えない"
+out=$(run_hook pre-pr-create-check "cd '$TEST_ROOT/no-such-dir' && $GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
+assert_not_contains "$(reason "$out")" "/topic-triage"
 
 it "pre-pr-create: ALLOW_MULTI_TOPIC=<理由> なら新しい ADR が複数でも PR を作れる"
 out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=テスト用 $GOOD_CMD")
