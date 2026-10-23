@@ -353,6 +353,9 @@ assert_eq 0 $?
 assert_eq "" "$(fake_log cargo)"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 assert_contains "$out" "RUN: rust docs-test: bash scripts/run-rust-docs-tests.sh"
+assert_contains "$out" "SKIP: rust format ("
+assert_contains "$out" "SKIP: rust lint ("
+assert_contains "$out" "SKIP: rust test ("
 assert_contains "$out" "ALL_OK"
 
 it "run-checks --base: 宣言があり、ブランチの差分が .md だけなら宣言したテストだけを実行する"
@@ -369,6 +372,15 @@ it "run-checks: 宣言があり差分がサブディレクトリの .md だけ�
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-subdir"
 mkdir -p docs/adr && echo '# adr' > docs/adr/0001-x.md && git add docs/adr/0001-x.md
 out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_eq 0 $?
+assert_eq "" "$(fake_log cargo)"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
+
+it "run-checks --merge: 宣言があり、HEAD との差分が .md だけなら宣言したテストだけを実行する"
+docs_tests_repo "$TEST_ROOT/checks/docs-tests-merge"
+echo 'body' >> doc.md
+make_fake_tool markdownlint '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh" --merge)
 assert_eq 0 $?
 assert_eq "" "$(fake_log cargo)"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
@@ -391,7 +403,7 @@ out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "実行権限が無い"
 
-it "run-checks: 差分が宣言そのものを含めば、全体の後に宣言したテストも実行する"
+it "run-checks: 差分が宣言そのものを含めば、全体の後に変えた宣言を実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-edit-decl"
 printf '#!/bin/sh\necho edited >> "%s/docs-tests.log"\n' "$TEST_ROOT" > scripts/run-rust-docs-tests.sh
 git add scripts/run-rust-docs-tests.sh
@@ -412,7 +424,7 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
 
-it "run-checks: 宣言があっても、差分に .rs があれば fmt、clippy、全体の cargo test を実行する"
+it "run-checks: 宣言があっても、差分に .rs があれば全体を実行し、その後に宣言したテストも実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-rs"
 echo 'body' >> doc.md
 echo 'fn main() { }' > src/main.rs
@@ -420,18 +432,18 @@ git add doc.md src/main.rs
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
-assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
-it "run-checks: 宣言があっても、差分に .rs の削除があれば全体を実行する"
+it "run-checks: 宣言があっても、差分に .rs の削除があれば全体と宣言を実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-rm"
 echo 'body' >> doc.md && git add doc.md
 git rm -q src/main.rs
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
-assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
-it "run-checks: 宣言があっても、差分に .md 以外（clippy.toml など）があれば全体を実行する"
+it "run-checks: 宣言があっても、差分に .md 以外（clippy.toml など）があれば全体と宣言を実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-toml"
 echo 'body' >> doc.md
 echo 'msrv = "1.80"' > clippy.toml
@@ -439,22 +451,22 @@ git add doc.md clippy.toml
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
-assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
-it "run-checks: 差分が空なら、宣言があっても全体を実行する"
+it "run-checks: 差分が空なら、宣言があっても全体と宣言を実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-empty"
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
-assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
-it "run-checks: 宣言があっても、.rs から .md への rename は全体を実行する"
+it "run-checks: 宣言があっても、.rs から .md への rename は全体と宣言を実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-mv"
 git mv src/main.rs notes.md
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq $'fmt --check\nclippy --all-targets -- -D warnings\ntest' "$(fake_log cargo)"
-assert_eq "" "$(cat "$TEST_ROOT/docs-tests.log")"
+assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 
 it "run-checks: 宣言に実行権限が無ければ、差分に .rs があっても止まる"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-noexec"
