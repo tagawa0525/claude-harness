@@ -99,6 +99,8 @@ slurmd が再起動する（背景）。反映の時点で `urgent` に待って
 ### `slurm-run.sh`
 
 - `--timed` は `--partition=timed` を渡す。`--urgent` は消す（使っていたのは ADR-0052 からの 1 日で、利用者は 1 人）
+- `--timed` でないジョブにも `--partition=main` を明示する。環境の `SBATCH_PARTITION` で `-c` のジョブが `timed` に入ると、
+  排他でない時間が `slurm-history.sh` の表に入る。コマンド行の値は環境変数より強い（sbatch(1) の INPUT ENVIRONMENT VARIABLES）
 - 知らないオプション（`-` で始まる語）は、ジョブの名前と読まずにエラーにする（消した `--urgent` を渡したときに、使い方の
   エラーより先に原因を示すため）
 - `--timed` と `-c` は一緒に使えない（案 G）。`--timed` のジョブは排他で、ノード全体を取り、走っている `main` のジョブを
