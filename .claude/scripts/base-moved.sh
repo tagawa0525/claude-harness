@@ -7,10 +7,9 @@
 #           積み重なったブランチは土台を origin/<土台のブランチ> で渡す（fetch が更新するのは
 #           origin/* だけで、ローカルのブランチは古いまま比べることになる）
 #
-# fetch するのは、GitHub リモートと origin が揃う clone の origin だけ（失敗したら WARN を出し、手元の追跡ブランチで
-# 比べる）。--base を渡されたときは、どの clone でも比べる。--base が origin 以外のリモート（GitHub でない origin を
-# 含む）の追跡ブランチなら、fetch せずに比べて WARN を出す。渡されないときは、GitHub の origin の既定ブランチと比べ、
-# GitHub リモートか origin が無ければ何もしない（リモートの無いリポジトリでは --base main を渡す）。
+# GitHub リモートと origin が揃う clone では、比べる前に origin を fetch する（失敗したら WARN を出し、手元の追跡
+# ブランチで比べる）。揃わない clone では、--base を渡されたときだけ fetch せずに比べ（リモートの無いリポジトリでは
+# --base main を渡す）、--base が追跡ブランチなら WARN を出す。渡されなければ何もしない。
 # WARN が出たときは比較が済んでいない（出力が空でも「進みなし」ではない）。
 # 他のセッションが同じファイルを main に入れていると、マージ直前の rebase まで気付けない。
 # 知らせるだけで失敗にはしない（同じパスを触っても、衝突するとは限らない）。
@@ -42,41 +41,18 @@ done
 
 # パイプにしない（pipefail 下で grep -q が先に終わると SIGPIPE で失敗して、GitHub リモートがあってもスキップする）
 remotes=$(git remote -v)
-github_origin=false
 if grep -q 'github\.com' <<<"$remotes" && git remote get-url origin >/dev/null 2>&1; then
-  github_origin=true
-fi
-# origin を明示する。引数なしの fetch は今のブランチの上流のリモートへ行き、
-# 上流が別のリモートだと、BASE の origin/* が更新されないまま古い比較になる
-fetch_origin() {
+  # origin を明示する。引数なしの fetch は今のブランチの上流のリモートへ行き、
+  # 上流が別のリモートだと、BASE の origin/* が更新されないまま古い比較になる
   if ! git fetch -q origin; then
     echo "WARN: fetch に失敗しました。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
   fi
-}
-# BASE を追跡ブランチとして読んだときのリモートの名前（<リモート>、<リモート>/...、remotes/<リモート>/...、
-# refs/remotes/<リモート>/...）。まだ fetch していない追跡ブランチもあるので、参照を解かずに文字列で、登録された
-# リモートのうち前方一致する最長の名前を取る（リモート名に / を含みうる）。ローカルのブランチなら空
-remote_of() {
-  local b="$1" name best=""
-  # ローカルのブランチ（feat/x のような名前が、同名のリモートの追跡ブランチに見える）
-  git show-ref --verify --quiet "refs/heads/$b" && return 0
-  b="${b#refs/}"
-  b="${b#remotes/}"
-  while IFS= read -r name; do
-    if [[ ("$b" == "$name" || "$b" == "$name"/*) && ${#name} -gt ${#best} ]]; then best="$name"; fi
-  done < <(git remote)
-  echo "$best"
-}
-if [[ -n "$BASE" ]]; then
-  base_remote=$(remote_of "$BASE")
-  if [[ "$base_remote" == origin && "$github_origin" == true ]]; then
-    fetch_origin
-  elif [[ -n "$base_remote" || "$BASE" == *remotes/* ]]; then
-    # fetch するのは GitHub の origin だけ（ADR-0038 の範囲。README の「GitHub 以外のリモートは扱わない前提」）
-    echo "WARN: ${BASE} は GitHub の origin の追跡ブランチでないので fetch していません。比較は未確認です（手元の追跡ブランチは古い可能性があります）" >&2
+elif [[ -n "$BASE" ]]; then
+  # GitHub 以外のリモートは fetch しない。追跡ブランチ（@{u} のような書き方を含め、解いた参照で見る）と比べるなら、
+  # 古いかもしれないので未確認と知らせる
+  if [[ "$(git rev-parse --symbolic-full-name "$BASE" 2>/dev/null)" == refs/remotes/* ]]; then
+    echo "WARN: ${BASE} は fetch していない追跡ブランチです。比較は未確認です（GitHub の origin だけを fetch します）" >&2
   fi
-elif [[ "$github_origin" == true ]]; then
-  fetch_origin
 else
   # 比べる先の既定は GitHub の origin の既定ブランチなので、GitHub リモートか origin が無ければ決まらない
   exit 0
