@@ -47,6 +47,8 @@ pub(super) fn added_adrs(dir: &Path, range: &str) -> Option<Vec<String>> {
             "diff",
             // 改名は新しい ADR ではない。検出を diff.renames の設定に左右させない
             "--find-renames",
+            // 出力のパスをリポジトリの直下からにする。diff.relative の設定に左右させない
+            "--no-relative",
             "--diff-filter=A",
             "--name-only",
             // パスをクォートせずに NUL 区切りで受け取る（非 ASCII のファイル名）
