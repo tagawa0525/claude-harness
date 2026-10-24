@@ -1493,16 +1493,9 @@ assert_eq 1 "$(covers "$COVERS_REPO" "$REBASE_CHANGED" "$(local_record "$REBASE_
 it "local-review-covers: 最後の記録に High があれば比べずに終了コード 1"
 assert_eq 1 "$(covers "$COVERS_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)")"
 
-it "local-review-covers: cwd の origin が PR のリポジトリでなければ比べずに終了コード 1"
-# REBASE_REPO には rebase の前後のコミットがあるが、origin が無い
-assert_eq 1 "$(covers "$REBASE_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
-assert_not_contains "$(cat "$TEST_ROOT/gh.log")" "pulls/1 "
-
-it "local-review-covers: origin が違って比べなかったときは、その理由を標準エラーに出す"
-make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)"
-err=$(cd "$REBASE_REPO" && "$CLAUDE_HOOKS_BIN" local-review-covers example/heredoc 1 "$REBASE_SAME" 2>&1 >/dev/null)
-assert_contains "$err" "origin"
-assert_contains "$err" "example/heredoc"
+it "local-review-covers: cwd の origin の URL を問わず、手元のコミットで hook と同じく比べる"
+# REBASE_REPO には rebase の前後のコミットがあるが origin が無い。fork や ssh の別名の origin でも hook と同じ判定にする
+assert_eq 0 "$(covers "$REBASE_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
 
 it "local-review-covers: 記録を取得できなければ終了コード 3"
 assert_eq 3 "$(covers "$COVERS_REPO" "$REBASE_SAME" 'exit 1')"
