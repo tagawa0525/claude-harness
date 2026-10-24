@@ -18,6 +18,10 @@ PR_URL="https://github.com/octo/repo/pull/1"
 # 既定は「同じとは確かめられない」（終了コード 1）。確かめた場合の振る舞いは、テストごとに偽物を置き直す
 make_fake_tool claude-hooks '"same-pr-diff "*) exit 1 ;;'
 export CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/claude-hooks"
+# その判定は cwd の clone のコミットで行うので、確かめるテストは origin が PR のリポジトリの clone で実行する
+PR_CLONE="$TEST_ROOT/octo-repo"
+git init -q "$PR_CLONE"
+git -C "$PR_CLONE" remote add origin git@github.com:octo/repo.git
 PR7_URL="https://github.com/octo/repo/pull/7"
 mkdir -p "$TEST_ROOT/elsewhere"
 cd "$TEST_ROOT/elsewhere" || exit 1
@@ -175,6 +179,7 @@ fake_gh_rereview() {
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $event ;;
   \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
   \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
+  \"pr view 1 --json baseRefName\"*) echo main ;;
   \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;"
 }
 
@@ -230,6 +235,16 @@ fake_gh_rereview grow 'echo abc1234 0'
 err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 1 $?
 assert_not_contains "$(fake_log gh)" "requested_reviewers"
+
+it "request-rereview: 記録の SHA から rebase だけした head なら要求する（decide-next.sh と同じ判定）"
+cd "$PR_CLONE" || exit 1
+fake_gh_rereview grow 'echo abc1234 0'
+make_fake_tool claude-hooks '"same-pr-diff octo/repo main abc1234 def5678") exit 0 ;;'
+out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "requested_reviewers"
+make_fake_tool claude-hooks '"same-pr-diff "*) exit 1 ;;'
+cd "$TEST_ROOT/elsewhere" || exit 1
 
 it "request-rereview: 記録は書き込みの権限を持つ人のコメントだけを受け付ける"
 fake_gh_rereview
@@ -924,7 +939,7 @@ jq -n '[
   {author_association: "COLLABORATOR", body: "<!-- local-review sha=ddd4444 high=0 medium=0 low=0 -->"}
 ]' > "$TEST_ROOT/c.json"
 fake_gh_local_records "$TEST_ROOT/c.json"
-out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
+out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_records | local_review_clean_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
 assert_eq 0 $?
 assert_eq "aaa1111 ddd4444" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
 
@@ -946,6 +961,17 @@ fake_gh_review_body "$(v2_body "🟡 Changes recommended" "* $(sev High) [h](u#d
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "SEVERITY: unknown"
 
+it "local-review: 記録は 1 行目だけを読み、形の崩れた記録も最後の記録に数える（pre-merge-check と同じ読み方）"
+jq -n '[
+  {author_association: "OWNER", body: "<!-- local-review sha=aaa1111 high=0 medium=0 low=0 -->"},
+  {author_association: "OWNER", body: "note\n<!-- local-review sha=bbb2222 high=0 medium=0 low=0 -->"},
+  {author_association: "OWNER", body: "<!-- local-review sha=CCC high=0 medium=0 low=0 -->"}
+]' > "$TEST_ROOT/c3.json"
+fake_gh_local_records "$TEST_ROOT/c3.json"
+out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_records' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
+assert_eq 0 $?
+assert_eq "aaa1111 0|- -" "$(tr '\n' '|' <<<"$out" | sed 's/|$//')"
+
 it "local-review: 同じ SHA に記録が複数あれば、最後の記録で決める"
 # 深く回し直して High を見つけたなら、前の High の無い記録で隠さない
 jq -n '[
@@ -955,7 +981,7 @@ jq -n '[
   {author_association: "OWNER", body: "<!-- local-review sha=bbb2222 high=0 medium=1 low=0 -->"}
 ]' > "$TEST_ROOT/c2.json"
 fake_gh_local_records "$TEST_ROOT/c2.json"
-out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
+out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_records | local_review_clean_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
 assert_eq 0 $?
 assert_eq "bbb2222" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
 
@@ -1125,7 +1151,18 @@ fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
-# 記録の後に rebase だけした head は、記録の SHA を比較元にして hook と同じ判定で記録済みとみなす（ADR-0059）
+# 記録の後に rebase だけした head は、記録の SHA を比較元にして hook と同じ判定で記録済みとみなす（ADR-0059）。
+# 比べるコミットは cwd の clone から取るので、origin が PR のリポジトリの clone（PR_CLONE）で実行する
+
+it "decide-next: cwd が PR のリポジトリの clone でなければ、記録の SHA と比べずに LOCAL_REVIEWED: no"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
+make_fake_tool claude-hooks '*) exit 0 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_REVIEWED: no"
+assert_eq "" "$(fake_log claude-hooks)"
+
+cd "$PR_CLONE" || exit 1
 it "decide-next: 記録の SHA から rebase だけした head なら LOCAL_REVIEWED: yes"
 fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
 make_fake_tool claude-hooks '"same-pr-diff octo/repo main abc1234 def5678") exit 0 ;;'
@@ -1156,6 +1193,7 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
 assert_ne 0 $?
 assert_not_contains "$out" "VERDICT"
 make_fake_tool claude-hooks '"same-pr-diff "*) exit 1 ;;'
+cd "$TEST_ROOT/elsewhere" || exit 1
 
 it "decide-next: High が残っていても、Copilot に出す前にまず LOCAL_REVIEW_NEEDED"
 fake_gh_severity "$BODY_NEW_HIGH"

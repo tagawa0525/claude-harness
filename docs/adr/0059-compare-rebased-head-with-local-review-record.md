@@ -40,30 +40,35 @@ issues: ["#478"]
 ## 決定と理由
 
 案 A を採る（ユーザーの決定、2026-10-24。issue #478）。これは ADR-0043 の「記録が無い head の扱い（…リベースだけの
-ADR-0021 …）は変えない」と、マージの判定と `decide-next.sh` の「head に記録があれば」の部分を置き換える。ほかの部分は
-変わらない。
+ADR-0021 …）は変えない」と、マージの判定、`decide-next.sh`、`request-rereview.sh` の「head に記録があれば」の部分を
+置き換える。ほかの部分は変わらない。
 
 - **比較元**: 書き込める人（OWNER / MEMBER / COLLABORATOR）のローカルレビューの記録のうち、最後の記録（sha を問わない）。
-  それが High 0 のときだけ、その sha を比較元にする。High のある記録が最後なら、ローカルの記録からは比較元を取らない
+  それが High 0 のときだけ、その sha を比較元にする。High のある記録が最後なら、ローカルの記録からは比較元を取らない。
+  記録として読むのはコメントの 1 行目で、`<!-- local-review` で始まるのに形の崩れた行（sha が 16 進の小文字でないなど）も
+  最後の記録に数え、比較元にしない
 - **マージの判定**（検査 8）: head に High 0 の記録がある（ADR-0043 のまま）か、上の比較元と head が ADR-0021 の判定で
   同じなら通す。bot レビューの `commit_id` を比較元にする判定（ADR-0021）も残す
 - **判定の方法は ADR-0021 のまま**: base は GitHub が返す base ブランチの今の先頭、比べるのはそれぞれの merge-base からの
   PR の差分で、確かめられないときは同じとみなさない。比較元を増やしても、偽陽性の側の性質（中身が変わったのに通す
   ことはない）は同じである
-- **`decide-next.sh`**: `LOCAL_REVIEWED` を、head の記録があるか、上の比較元と head が同じなら `yes` にする。判定は
+- **`decide-next.sh` と `request-rereview.sh`**: `LOCAL_REVIEWED` と、再レビューを要求する前の記録の確認を、head の記録が
+  あるか、上の比較元と head が同じなら記録済みとする（`scripts/lib/local-review.sh` の `local_review_covers` に 1 つ置く）。判定は
   hook と同じ Rust の実装（`claude-hooks same-pr-diff <owner>/<repo> <base ブランチ> <旧 head> <新 head>`）を呼び、
   bash で書き直さない。比較元の選び方は `scripts/lib/local-review.sh` と `pre_merge_check.rs` の両方に書く
   （記録の読み取りが既に両方にあり、形を合わせる注記がある）
-- **`decide-next.sh` の git**: 比べるには旧 head と新 head のコミットが要るので、cwd の clone で比べる（無ければ
-  ADR-0021 と同じく origin から取る）。対象の PR は今も URL で決まる（ADR-0032）。cwd が PR のリポジトリの clone で
-  なければ、確かめられないので `LOCAL_REVIEWED: no` になる（止める側）
+- **スクリプトの git**: 比べるには旧 head と新 head のコミットが要るので、cwd の clone で比べる（無ければ
+  ADR-0021 と同じく origin から取る）。対象の PR は今も URL で決まる（ADR-0032）。cwd の origin が PR のリポジトリで
+  なければ、比べずに記録が無いとみなす（止める側。無関係なリポジトリで `git fetch` しない）
+- **確かめられないとき**: `same-pr-diff` は、違うときと確かめられないとき（API や fetch の失敗）を同じ終了コード 1 で返す。
+  hook と同じく止める側に倒し、分けない。gh や git を起動できなかった理由は標準エラーに出す
 
 ### 帰結
 
 - ローカルの記録の後に rebase しただけの PR は、記録を付け直さずにマージできる
-- `decide-next.sh` が `claude-hooks` のバイナリ（`~/.claude/bin/claude-hooks`）に依存する。スキルのスクリプトから hook の
+- `decide-next.sh` と `request-rereview.sh` が `claude-hooks` のバイナリ（`~/.claude/bin/claude-hooks`）に依存する。スキルのスクリプトから hook の
   バイナリを呼ぶのは初めてである
-- `decide-next.sh` を PR の worktree の外で実行すると、rebase だけの head でも `LOCAL_REVIEW_NEEDED` になる。マージの
+- `decide-next.sh` を PR のリポジトリの clone の外で実行すると、rebase だけの head でも `LOCAL_REVIEW_NEEDED` になる。マージの
   hook は worktree で走るので通る。食い違いは止める側だけに出る
 - main が PR と同じファイルの 3 行以内を変えたときに止まる外れ（ADR-0021 の帰結）は、記録を比較元にしても同じ
 
@@ -74,4 +79,5 @@ ADR-0021 …）は変えない」と、マージの判定と `decide-next.sh` �
 - `.claude/tests/hooks.sh` の pre-merge-check: 記録の sha から rebase だけした head は通す。記録の後に差分を変えた head、
   最後の記録が High ありの head は止める。`same-pr-diff` の入口が同じ判定を返すこと
 - `.claude/tests/scripts/gh-pr-review.sh`: `decide-next.sh` が、記録の sha と head が同じ差分なら `LOCAL_REVIEWED: yes`、
-  違えば `no` にし、最後の記録が High ありなら比べないこと
+  違えば `no` にし、最後の記録が High ありのときと cwd が PR のリポジトリの clone でないときは比べないこと。
+  `request-rereview.sh` が同じ判定で要求すること。記録の読み取りが 1 行目だけを読み、形の崩れた記録を数えること

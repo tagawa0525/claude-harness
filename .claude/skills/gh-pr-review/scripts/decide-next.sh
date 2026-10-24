@@ -116,34 +116,11 @@ if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_URL_CANONICAL" --u
   exit 1
 fi
 
-# head のローカルレビューの記録。取得できなければ、記録が無いとみなして判定を進めない
-# （Copilot に出すかどうかを誤るより、止めて知らせる）
-if ! local_records=$(local_review_records); then
-  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を取得できませんでした" >&2
+# head のローカルレビューの記録（記録の後に rebase だけした head を含む。pre-merge-check と同じ判定）。
+# 確かめられなければ、記録が無いとみなして判定を進めない（Copilot に出すかどうかを誤るより、止めて知らせる）
+if ! local_reviewed=$(local_review_covers "$head_sha"); then
+  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を確かめられませんでした" >&2
   exit 1
-fi
-local_reviewed=no
-grep -qxF "$head_sha" < <(local_review_clean_shas <<<"$local_records") && local_reviewed=yes
-# 最後の記録の SHA から rebase だけした head も記録済みとみなす。判定は pre-merge-check と同じ実装
-# （claude-hooks same-pr-diff）を呼び、bash で書き直さない。比べるコミットは cwd の clone から取るので、
-# PR のリポジトリの clone の外では確かめられず no になる（止める側）
-rebase_source=$(local_review_rebase_source <<<"$local_records")
-if [[ "$local_reviewed" == no && -n "$rebase_source" && "$rebase_source" != "$head_sha" ]]; then
-  if ! base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName) || [[ -z "$base_ref" ]]; then
-    echo "ERROR: PR #${PR_NUMBER} の base ブランチを取得できませんでした" >&2
-    exit 1
-  fi
-  hooks_bin="${CLAUDE_HOOKS_BIN:-${SCRIPT_DIR}/../../../bin/claude-hooks}"
-  rc=0
-  "$hooks_bin" same-pr-diff "$GH_REPO" "$base_ref" "$rebase_source" "$head_sha" || rc=$?
-  case "$rc" in
-    0) local_reviewed=yes ;;
-    1) ;;
-    *)
-      echo "ERROR: 記録 ${rebase_source:0:7} と head ${head_sha:0:7} の差分を比べられませんでした（${hooks_bin} の終了コード ${rc}）" >&2
-      exit 1
-      ;;
-  esac
 fi
 
 # PR の変更ファイルがすべて文書か。取得できない・1 件も無いときは文書だけとみなさない
