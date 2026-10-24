@@ -127,16 +127,18 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
 /// 有無・到着・内容は見ない。High のある記録は数えない（High を直せば head が変わるので、その head には直して
 /// いない High が残る）。同じ head に記録が複数あれば、最後の記録で決める（回し直して見つけた High を前の記録で
 /// 隠さない）。記録は、書き込める人のコメントだけを数える（第三者が記録を偽ってレビューを外せないように）。
-/// 確かめられないときは false。記録の形と比較元の選び方は scripts/lib/local-review.sh（decide-next.sh）と揃える
+/// `rebase_base` は rebase だけかを比べるときの base（base ブランチの GitHub 上の今の先頭）で、要るときだけ呼ぶ。
+/// None なら比べない。記録を取得できなければ Err、比べられないときは false。decide-next.sh と request-rereview.sh も
+/// `claude-hooks local-review-covers` からこれを使う（記録の読み方を 1 か所に置く）
 fn local_review_covers(
     dir: &std::path::Path,
     owner: &str,
     name: &str,
     number: &str,
     head_sha: &str,
-    base_ref: &str,
-) -> bool {
-    let Ok(marks) = gh::gh(
+    rebase_base: impl FnOnce() -> Option<String>,
+) -> Result<bool, ()> {
+    let marks = gh::gh(
         dir,
         &[
             "api",
@@ -145,9 +147,7 @@ fn local_review_covers(
             "--jq",
             ".[] | select(.author_association | IN(\"OWNER\", \"MEMBER\", \"COLLABORATOR\")) | select(.body | startswith(\"<!-- local-review \")) | (.body | split(\"\\n\")[0])",
         ],
-    ) else {
-        return false;
-    };
+    )?;
     let prefix = format!("<!-- local-review sha={head_sha} ");
     let mut recorded = false;
     for line in marks.lines() {
@@ -155,12 +155,10 @@ fn local_review_covers(
             recorded = rest.starts_with("high=0 ");
         }
     }
-    recorded
+    Ok(recorded
         || local_review_rebase_source(&marks).is_some_and(|old| {
-            old != head_sha
-                && base_tip(dir, owner, name, base_ref)
-                    .is_some_and(|b| same_pr_diff(dir, &b, old, head_sha))
-        })
+            old != head_sha && rebase_base().is_some_and(|b| same_pr_diff(dir, &b, old, head_sha))
+        }))
 }
 
 /// リベースだけの判定（[`same_pr_diff`]）の比較元にするローカルレビューの記録の SHA（ADR-0059）。`marks` は記録の
@@ -173,24 +171,57 @@ fn local_review_rebase_source(marks: &str) -> Option<&str> {
         .strip_prefix("<!-- local-review sha=")?;
     let (sha, rest) = rest.split_once(' ')?;
     // 形は record-local-review.sh が書く 16 進の小文字。崩れた記録は High ありと同じく比較元にしない
-    // （scripts/lib/local-review.sh も同じ読み方をする）
-    let hex = !sha.is_empty() && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-    (hex && rest.starts_with("high=0 ")).then_some(sha)
+    // （git の引数に渡すので、- で始まる値も通さない）
+    (is_hex_sha(sha) && rest.starts_with("high=0 ")).then_some(sha)
 }
 
-/// `claude-hooks same-pr-diff <owner>/<repo> <base ブランチ> <旧 head> <新 head>` の本体。dir の clone で、base ブランチの
-/// GitHub 上の今の先頭を base にして [`same_pr_diff`] を判定する（decide-next.sh が hook と同じ判定を使うため）
-pub fn same_pr_diff_for_repo(
-    dir: &std::path::Path,
-    repo: &str,
-    base_ref: &str,
-    old: &str,
-    new: &str,
-) -> bool {
-    let Some((owner, name)) = repo.split_once('/') else {
+fn is_hex_sha(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// cwd の clone の origin が owner/name の GitHub のリポジトリか。違えば、そこで旧 head を git fetch しない
+fn origin_is(dir: &std::path::Path, owner: &str, name: &str) -> bool {
+    // get-url は url.*.insteadOf を展開するので、書かれた URL を config から読む
+    let Some(url) = git(dir, &["config", "--get", "remote.origin.url"]) else {
         return false;
     };
-    base_tip(dir, owner, name, base_ref).is_some_and(|b| same_pr_diff(dir, &b, old, new))
+    let url = url.trim().trim_end_matches('/').to_ascii_lowercase();
+    let url = url.strip_suffix(".git").unwrap_or(&url);
+    let repo = format!("{owner}/{name}").to_ascii_lowercase();
+    [':', '/']
+        .iter()
+        .any(|sep| url.ends_with(&format!("github.com{sep}{repo}")))
+}
+
+/// `claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>` の本体（decide-next.sh と request-rereview.sh が
+/// hook と同じ判定を使うため）。rebase だけかは dir の clone で比べ、origin が PR のリポジトリでなければ比べない
+/// （false の側）。記録を取得できなければ Err
+pub fn local_review_covers_for_pr(
+    dir: &std::path::Path,
+    repo: &str,
+    number: &str,
+    head_sha: &str,
+) -> Result<bool, ()> {
+    let (owner, name) = repo.split_once('/').ok_or(())?;
+    if !is_hex_sha(head_sha) || number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(());
+    }
+    local_review_covers(dir, owner, name, number, head_sha, || {
+        if !origin_is(dir, owner, name) {
+            return None;
+        }
+        let base_ref = gh::gh(
+            dir,
+            &[
+                "api",
+                &format!("repos/{owner}/{name}/pulls/{number}"),
+                "--jq",
+                ".base.ref",
+            ],
+        )
+        .ok()?;
+        base_tip(dir, owner, name, base_ref.trim())
+    })
 }
 
 /// PR の base ブランチの今の先頭（GitHub の値）
@@ -649,6 +680,13 @@ impl Rule for PreMergeCheck {
                 && let Some(number) = pr_number.as_deref()
             {
                 let mut unreviewed: Vec<String> = Vec::new();
+                // base の先頭（API）は、bot のレビューと記録のどちらの比較元にも使うので 1 回だけ取る
+                let base_tip_cell = std::cell::OnceCell::new();
+                let tip = || {
+                    base_tip_cell
+                        .get_or_init(|| base_tip(&dir, &owner, &name, &base_ref))
+                        .clone()
+                };
                 let reviewed = gh::gh(
                     &dir,
                     &[
@@ -688,13 +726,14 @@ impl Rule for PreMergeCheck {
                     Some(sha)
                         if !sha.is_empty()
                             && sha != head_sha
-                            && base_tip(&dir, &owner, &name, &base_ref)
+                            && tip()
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
                     // head のローカルレビューの記録があれば（記録の SHA から rebase だけした head も。ADR-0059）、Copilot のレビューの有無・到着・チェックの失敗を問わず通す。安い判定（文書だけ、リベースだけ）の後に置き、記録のコメントの取得を最後にする
                     // （ADR-0043）。Copilot の指摘への対応は検証 6（未解決スレッド）が見る
                     Some(sha)
                         if sha != head_sha
-                            && local_review_covers(&dir, &owner, &name, number, &head_sha, &base_ref) => {}
+                            && local_review_covers(&dir, &owner, &name, number, &head_sha, tip)
+                                .unwrap_or(false) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、head のローカルレビューを記録して（record-local-review.sh）ください。{}",
                         short(&head_sha),
@@ -825,6 +864,35 @@ mod tests {
         let marks = "<!-- local-review sha=aaa high=0 medium=0 low=0 -->\n\
                      <!-- local-review sha=CCC high=0 medium=0 low=0 -->";
         assert_eq!(local_review_rebase_source(marks), None);
+    }
+
+    #[test]
+    fn origin_is_matches_github_url_forms_of_the_repository() {
+        let r = Repo::new("origin-is");
+        assert!(!origin_is(&r.0, "octo", "repo"));
+        r.git(&["remote", "add", "origin", "https://github.com/octo/repo"]);
+        for url in [
+            "git@github.com:Octo/Repo.git",
+            "https://github.com/octo/repo",
+            "https://github.com/octo/repo.git/",
+        ] {
+            r.git(&["remote", "set-url", "origin", url]);
+            assert!(origin_is(&r.0, "octo", "repo"), "{url}");
+        }
+        r.git(&[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/octo/repo-other",
+        ]);
+        assert!(!origin_is(&r.0, "octo", "repo"));
+        r.git(&[
+            "remote",
+            "set-url",
+            "origin",
+            "https://example.com/octo/repo",
+        ]);
+        assert!(!origin_is(&r.0, "octo", "repo"));
     }
 
     #[test]

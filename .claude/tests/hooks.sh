@@ -1419,6 +1419,7 @@ make_fake_gh_rebased() {
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo '"$2"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) '"${3:-true}"' ;;
+  "api repos/example/heredoc/pulls/1 "*) echo main ;;
   "api graphql"*) echo "[]" ;;'
 }
 
@@ -1466,22 +1467,45 @@ make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" \
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
-# same-pr-diff: decide-next.sh が hook と同じ判定を使う入口。同じなら 0、違うか確かめられなければ 1
-it "same-pr-diff: base からの PR の差分が同じなら終了コード 0"
-make_fake_gh_rebased "$REBASE_SAME" "$REBASE_OLD"
-"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$REBASE_OLD" "$REBASE_SAME"
-assert_eq 0 $?
+# local-review-covers: decide-next.sh と request-rereview.sh が hook と同じ判定を使う入口。覆われていれば 0、いなければ 1、
+# 引数の誤りは 2、記録を取得できなければ 3。rebase だけかは cwd の clone で比べ、origin が PR のリポジトリの clone でだけ比べる。
+# origin は GitHub の URL にし、insteadOf で手元の REBASE_REPO から取らせる（ネットワークに出ない）
+COVERS_REPO="$TEST_ROOT/covers-repo"
+git clone -q "$REBASE_REPO" "$COVERS_REPO"
+git -C "$COVERS_REPO" remote set-url origin git@github.com:example/heredoc.git
+git -C "$COVERS_REPO" config "url.$REBASE_REPO.insteadOf" git@github.com:example/heredoc.git
+# covers <cwd> <head> <記録のコマンド>: 終了コード
+covers() {
+  make_fake_gh_rebased "$2" "$BOGUS_SHA" "$3"
+  (cd "$1" && "$CLAUDE_HOOKS_BIN" local-review-covers example/heredoc 1 "$2" 2>/dev/null)
+  echo $?
+}
 
-it "same-pr-diff: 差分が変わっていれば終了コード 1"
-"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$REBASE_OLD" "$REBASE_CHANGED"
-assert_eq 1 $?
+it "local-review-covers: 記録の SHA から rebase だけした head は終了コード 0"
+assert_eq 0 "$(covers "$COVERS_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
 
-it "same-pr-diff: 旧 head が無ければ終了コード 1"
-"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$BOGUS_SHA" "$REBASE_SAME"
-assert_eq 1 $?
+it "local-review-covers: head の記録があれば終了コード 0"
+assert_eq 0 "$(covers "$TEST_ROOT" "$REBASE_SAME" "$(local_record "$REBASE_SAME" 0)")"
 
-it "same-pr-diff: 引数の数が違えば終了コード 2"
-"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$REBASE_OLD" 2>/dev/null
+it "local-review-covers: 記録の後に差分を変えた head は終了コード 1"
+assert_eq 1 "$(covers "$COVERS_REPO" "$REBASE_CHANGED" "$(local_record "$REBASE_OLD" 0)")"
+
+it "local-review-covers: 最後の記録に High があれば比べずに終了コード 1"
+assert_eq 1 "$(covers "$COVERS_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)")"
+
+it "local-review-covers: cwd の origin が PR のリポジトリでなければ比べずに終了コード 1"
+# REBASE_REPO には rebase の前後のコミットがあるが、origin が無い
+assert_eq 1 "$(covers "$REBASE_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
+assert_not_contains "$(cat "$TEST_ROOT/gh.log")" "pulls/1 "
+
+it "local-review-covers: 記録を取得できなければ終了コード 3"
+assert_eq 3 "$(covers "$COVERS_REPO" "$REBASE_SAME" 'exit 1')"
+
+it "local-review-covers: head が 16 進の SHA でなければ（git の引数に渡さない）終了コード 3"
+assert_eq 3 "$(covers "$COVERS_REPO" "--upload-pack=touch" "$(local_record "$REBASE_OLD" 0)")"
+
+it "local-review-covers: 引数の数が違えば終了コード 2"
+"$CLAUDE_HOOKS_BIN" local-review-covers example/heredoc 1 2>/dev/null
 assert_eq 2 $?
 cd "$REPO" || exit 1
 
