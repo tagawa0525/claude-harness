@@ -5,7 +5,8 @@
 #
 # Copilot のレビューを受けたいときだけ使う（任意。head のローカルレビューの記録があればマージできる）。
 #
-# 1. head にローカルレビューの記録（record-local-review.sh）があることを確かめる。無ければ要求しない。
+# 1. head にローカルレビューの記録（record-local-review.sh。最後の記録から rebase だけした head を含む）があることを
+#    確かめる。無ければ要求しない。
 #    Copilot に出す前に、直した差分をローカルの /code-review で確かめる
 # 2. requested_reviewers API で copilot-pull-request-reviewer にレビューを要求する
 # 3. 要求が review_requested イベントとして登録されたことを確認し、その created_at

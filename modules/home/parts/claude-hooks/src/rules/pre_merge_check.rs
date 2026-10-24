@@ -175,8 +175,9 @@ fn local_review_rebase_source(marks: &str) -> Option<&str> {
     (is_hex_sha(sha) && rest.starts_with("high=0 ")).then_some(sha)
 }
 
+/// 完全な SHA（SHA-1 の 40 桁か SHA-256 の 64 桁の 16 進の小文字）か。短い SHA は別のコミットに解けうるので受けない
 fn is_hex_sha(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    matches!(s.len(), 40 | 64) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// cwd の clone の origin が owner/name の GitHub のリポジトリか。違えば、そこで旧 head を git fetch しない
@@ -188,9 +189,10 @@ fn origin_is(dir: &std::path::Path, owner: &str, name: &str) -> bool {
     let url = url.trim().trim_end_matches('/').to_ascii_lowercase();
     let url = url.strip_suffix(".git").unwrap_or(&url);
     let repo = format!("{owner}/{name}").to_ascii_lowercase();
-    [':', '/']
+    // ホスト名の境（@ か //）まで含めて比べる。含めないと evilgithub.com も末尾で一致する
+    ["@github.com:", "//github.com/", "@github.com/"]
         .iter()
-        .any(|sep| url.ends_with(&format!("github.com{sep}{repo}")))
+        .any(|host| url.ends_with(&format!("{host}{repo}")))
 }
 
 /// `claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>` の本体（decide-next.sh と request-rereview.sh が
@@ -208,6 +210,9 @@ pub fn local_review_covers_for_pr(
     }
     local_review_covers(dir, owner, name, number, head_sha, || {
         if !origin_is(dir, owner, name) {
+            crate::output::notice(format!(
+                "claude-hooks: cwd の origin が {owner}/{name} の clone でないので、最後のローカルレビューの記録から rebase だけかを比べていません（PR の worktree で実行してください）"
+            ));
             return None;
         }
         let base_ref = gh::gh(

@@ -21,6 +21,11 @@ local_review_covers() {
   case "$rc" in
     0) echo yes ;;
     1) echo no ;;
+    2)
+      # claude-sync はスクリプトだけを入れ替え、~/.claude/bin のバイナリは home-manager の rebuild まで古いまま
+      echo "ERROR: ${hooks_bin} が local-review-covers を知りません。古いバイナリなら home-manager の rebuild で入れ直してください" >&2
+      return 1
+      ;;
     *)
       echo "ERROR: ローカルレビューの記録を確かめられませんでした（${hooks_bin} local-review-covers の終了コード ${rc}）" >&2
       return 1

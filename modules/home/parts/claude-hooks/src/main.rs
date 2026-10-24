@@ -9,8 +9,8 @@
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
 //!        claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>
 //!   head がローカルレビューの記録で覆われているか（記録の後に rebase だけした head を含む）を pre-merge-check と同じ
-//!   判定で確かめる。rebase だけかは cwd の clone で比べる。覆われていれば終了コード 0、いなければ 1、引数の誤りは 2、
-//!   記録を取得できなければ 3（decide-next.sh と request-rereview.sh が使う）
+//!   判定で確かめる。rebase だけかは cwd の clone で比べる。覆われていれば終了コード 0、いなければ 1、引数の数の誤りは 2、
+//!   記録を取得できないか、引数の形（完全な 16 進の SHA、数の PR 番号）が違えば 3（decide-next.sh と request-rereview.sh が使う）
 
 mod gh;
 mod git;
