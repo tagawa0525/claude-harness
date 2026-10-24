@@ -1497,6 +1497,33 @@ it "local-review-covers: cwd の origin の URL を問わず、手元のコミ�
 # REBASE_REPO には rebase の前後のコミットがあるが origin が無い。fork や ssh の別名の origin でも hook と同じ判定にする
 assert_eq 0 "$(covers "$REBASE_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
 
+it "local-review-covers: 新しい head が手元に無ければ、旧 head と同じく origin から取って比べる"
+# 別の clone から push した head を、まだ fetch していない clone で判定する場合
+PARTIAL_REPO="$TEST_ROOT/partial-repo"
+git clone -q --no-local --single-branch -b pr "$REBASE_REPO" "$PARTIAL_REPO"
+assert_eq 0 "$(covers "$PARTIAL_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
+
+# 記録の読み取りの jq を、偽 gh で本物の jq にかけて確かめる（書き込める人の、1 行目の記録だけを数える）
+# covers_json <JSON>: コメントの配列を fixture にして local-review-covers の終了コードを出す
+covers_json() {
+  printf '%s' "$1" >"$TEST_ROOT/covers-comments.json"
+  covers "$COVERS_REPO" "$REBASE_SAME" "shift 3; jq -r \"\$2\" $TEST_ROOT/covers-comments.json"
+}
+REC_OLD="<!-- local-review sha=$REBASE_OLD high=0 medium=0 low=0 -->"
+REC_HIGH="<!-- local-review sha=$BOGUS_SHA high=1 medium=0 low=0 -->"
+
+it "local-review-covers: 書き込める人の記録は数える"
+assert_eq 0 "$(covers_json "[{\"author_association\":\"OWNER\",\"body\":\"$REC_OLD\"}]")"
+
+it "local-review-covers: 書き込めない人の記録は数えない"
+assert_eq 1 "$(covers_json "[{\"author_association\":\"NONE\",\"body\":\"$REC_OLD\"}]")"
+
+it "local-review-covers: 書き込めない人の High の記録は、最後の記録に数えない"
+assert_eq 0 "$(covers_json "[{\"author_association\":\"OWNER\",\"body\":\"$REC_OLD\"},{\"author_association\":\"NONE\",\"body\":\"$REC_HIGH\"}]")"
+
+it "local-review-covers: コメントの 2 行目以降の記録は数えない"
+assert_eq 1 "$(covers_json "[{\"author_association\":\"OWNER\",\"body\":\"note\\n$REC_OLD\"}]")"
+
 it "local-review-covers: 記録を取得できなければ終了コード 3"
 assert_eq 3 "$(covers "$COVERS_REPO" "$REBASE_SAME" 'exit 1')"
 

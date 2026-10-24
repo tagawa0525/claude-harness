@@ -1132,6 +1132,11 @@ out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
 assert_ne 0 $?
 assert_contains "$out" "rebuild"
 
+it "decide-next: claude-hooks が無ければ、入れ直しを案内して止める"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_contains "$out" "rebuild"
+
 it "decide-next: 記録を確かめられなければ（local-review-covers の失敗）、記録済みとみなさずに止める"
 make_fake_tool claude-hooks '*) exit 3 ;;'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
