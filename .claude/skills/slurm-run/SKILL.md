@@ -129,11 +129,11 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
 関係するジョブは、まとめて 1 つの background のコマンドで投げて待ち、すべて終わってから報告する:
 
 ```bash
-~/.claude/scripts/slurm-run.sh -t 30 a '…' && ~/.claude/scripts/slurm-run.sh -t 30 b '…'   # 順に。a が失敗したら b は投げない
-~/.claude/scripts/slurm-run.sh -t 30 a '…' & ~/.claude/scripts/slurm-run.sh -t 30 b '…' & wait   # 同時に投げ、待ち行列に任せる
+cd <作業ディレクトリ> && { ~/.claude/scripts/slurm-run.sh -t 30 a '…' & ~/.claude/scripts/slurm-run.sh -t 30 b '…' & wait; }   # 依存が無いとき。同時に投げ、待ち行列に任せる
+cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh -t 30 a '…' && ~/.claude/scripts/slurm-run.sh -t 30 b '…'   # b が a の出力を使うときだけ。a が失敗したら b は投げない
 ```
 
-後ろのジョブが前のジョブの出力を使うなら `&&`。独立なら `&` と `wait`（待ち行列が 1 本ずつ実行する）。
+後ろのジョブが前のジョブの出力を使うときだけ `&&`。独立なら `&` と `wait`（排他のジョブは待ち行列が 1 本ずつ実行する）。`cd` は `{ }` の前に置く（`cd d && a & b` は a だけが d で走る）。`wait` だけの終了コードは常に 0 なので、成否は `JOB:` の番号ごとに `sacct -j <番号> -o State,ExitCode` で見る（出力が混ざり、`EXIT:` の行にはジョブの名前が無い）。`&&` でつなぐと後のジョブは前の終わりまで squeue に出ず、親が取り消せない。打ち切りの指示が届く前に投げられる（2026-10-24 に 7 本を `&&` でつなぎ、最後の 2 時間のジョブが投げられて scancel した）。
 
 background の `slurm-run.sh` は終わると通知が届くので、Monitor や until のループで重ねて待たない（2026-10-22 に担当が Monitor を 9 回張り、30 分で切れるたびに張り直してトークンを無駄にした。通知は届く）。
 
