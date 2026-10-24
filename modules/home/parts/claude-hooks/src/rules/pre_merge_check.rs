@@ -19,7 +19,8 @@
 //!    していれば検査しない。文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
 //!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める。
 //!    head にローカルレビューの記録（record-local-review.sh。High なし）があれば、Copilot のレビューの
-//!    有無・到着・チェックの失敗を問わず検査しない（ADR-0043。判定は decide-next.sh と同じ）。
+//!    有無・到着・チェックの失敗を問わず検査しない（ADR-0043。判定は decide-next.sh と同じ）。最後の記録（High なし）の
+//!    SHA から rebase だけした head も同じに扱う（ADR-0059。判定は上のリベースだけと同じ）。
 //!    Copilot のレビューが来ていれば、その指摘への対応は 6（未解決スレッド）が見る。
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
@@ -121,17 +122,19 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
     })
 }
 
-/// head にローカルレビューの記録（record-local-review.sh。High なし）があるか（ADR-0043）。Copilot のレビューの
+/// head がローカルレビューの記録（record-local-review.sh。High なし）で覆われているか。head の記録がある（ADR-0043）か、
+/// 最後の記録の SHA から rebase だけした head（ADR-0059）なら true。Copilot のレビューの
 /// 有無・到着・内容は見ない。High のある記録は数えない（High を直せば head が変わるので、その head には直して
 /// いない High が残る）。同じ head に記録が複数あれば、最後の記録で決める（回し直して見つけた High を前の記録で
 /// 隠さない）。記録は、書き込める人のコメントだけを数える（第三者が記録を偽ってレビューを外せないように）。
-/// 確かめられないときは false
+/// 確かめられないときは false。記録の形と比較元の選び方は scripts/lib/local-review.sh（decide-next.sh）と揃える
 fn local_review_covers(
     dir: &std::path::Path,
     owner: &str,
     name: &str,
     number: &str,
     head_sha: &str,
+    base_ref: &str,
 ) -> bool {
     let Ok(marks) = gh::gh(
         dir,
@@ -153,12 +156,38 @@ fn local_review_covers(
         }
     }
     recorded
+        || local_review_rebase_source(&marks).is_some_and(|old| {
+            old != head_sha
+                && base_tip(dir, owner, name, base_ref)
+                    .is_some_and(|b| same_pr_diff(dir, &b, old, head_sha))
+        })
 }
 
 /// リベースだけの判定（[`same_pr_diff`]）の比較元にするローカルレビューの記録の SHA（ADR-0059）。`marks` は記録の
-/// 1 行目を古い順に並べたもの
-fn local_review_rebase_source(_marks: &str) -> Option<&str> {
-    None
+/// 1 行目を古い順に並べたもの。SHA を問わず最後の記録を使い、それに High があれば比較元を返さない。High の無い
+/// 記録のうち最後のものを選ばないのは、同じ差分を回し直して見つけた High を前の記録で隠さないため
+fn local_review_rebase_source(marks: &str) -> Option<&str> {
+    let rest = marks
+        .lines()
+        .last()?
+        .strip_prefix("<!-- local-review sha=")?;
+    let (sha, rest) = rest.split_once(' ')?;
+    (!sha.is_empty() && rest.starts_with("high=0 ")).then_some(sha)
+}
+
+/// `claude-hooks same-pr-diff <owner>/<repo> <base ブランチ> <旧 head> <新 head>` の本体。dir の clone で、base ブランチの
+/// GitHub 上の今の先頭を base にして [`same_pr_diff`] を判定する（decide-next.sh が hook と同じ判定を使うため）
+pub fn same_pr_diff_for_repo(
+    dir: &std::path::Path,
+    repo: &str,
+    base_ref: &str,
+    old: &str,
+    new: &str,
+) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else {
+        return false;
+    };
+    base_tip(dir, owner, name, base_ref).is_some_and(|b| same_pr_diff(dir, &b, old, new))
 }
 
 /// PR の base ブランチの今の先頭（GitHub の値）
@@ -658,18 +687,18 @@ impl Rule for PreMergeCheck {
                             && sha != head_sha
                             && base_tip(&dir, &owner, &name, &base_ref)
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
-                    // head のローカルレビューの記録があれば、Copilot のレビューの有無・到着・チェックの失敗を問わず通す。安い判定（文書だけ、リベースだけ）の後に置き、記録のコメントの取得を最後にする
+                    // head のローカルレビューの記録があれば（記録の SHA から rebase だけした head も。ADR-0059）、Copilot のレビューの有無・到着・チェックの失敗を問わず通す。安い判定（文書だけ、リベースだけ）の後に置き、記録のコメントの取得を最後にする
                     // （ADR-0043）。Copilot の指摘への対応は検証 6（未解決スレッド）が見る
                     Some(sha)
                         if sha != head_sha
-                            && local_review_covers(&dir, &owner, &name, number, &head_sha) => {}
+                            && local_review_covers(&dir, &owner, &name, number, &head_sha, &base_ref) => {}
                     Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
                         "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、head のローカルレビューを記録して（record-local-review.sh）ください。{}",
                         short(&head_sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")
                     )),
                     Some(sha) if sha != head_sha => unreviewed.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（レビュー済み: {}）。リベースだけ（base からの PR の差分がレビュー済みと同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。次の一手（ローカルレビューの記録か、~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} での再レビューの依頼）は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh https://github.com/{owner}/{name}/pull/{number} で決め、指摘に対応してからマージしてください。{}",
+                        "最後の push ({}) は自動レビューを受けていません（自動レビュー済み: {}）。リベースだけ（base からの PR の差分が、自動レビューか最後のローカルレビューの記録と同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。次の一手（ローカルレビューの記録か、~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} での再レビューの依頼）は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh https://github.com/{owner}/{name}/pull/{number} で決め、指摘に対応してからマージしてください。{}",
                         short(&head_sha),
                         short(&sha),
                         escape_hint("ALLOW_UNREVIEWED_HEAD")

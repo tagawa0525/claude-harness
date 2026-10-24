@@ -7,6 +7,9 @@
 //!
 //! Usage: claude-hooks pre-tool-use [--rule <name>]...
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
+//!        claude-hooks same-pr-diff <owner>/<repo> <base ブランチ> <旧 head> <新 head>
+//!   cwd の clone で、旧 head から新 head への変化がリベースだけ（base からの PR の差分が同じ）かを pre-merge-check と
+//!   同じ判定で確かめる。同じなら終了コード 0、違うか確かめられなければ 1、引数の誤りは 2（decide-next.sh が使う）
 
 mod gh;
 mod git;
@@ -23,8 +26,20 @@ use std::io::Read;
 // で始まる行が出ることで、渡されたバイナリが起動できるかを確かめる
 fn usage() -> ! {
     eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]...");
+    eprintln!(
+        "       claude-hooks same-pr-diff <owner>/<repo> <base ブランチ> <旧 head> <新 head>"
+    );
     eprintln!("rules: {}", rules::names().join(", "));
     std::process::exit(2);
+}
+
+fn same_pr_diff(args: &[String]) -> ! {
+    let [repo, base_ref, old, new] = args else {
+        usage();
+    };
+    let same = std::env::current_dir()
+        .is_ok_and(|dir| rules::same_pr_diff_for_repo(&dir, repo, base_ref, old, new));
+    std::process::exit(if same { 0 } else { 1 });
 }
 
 fn main() {
@@ -32,6 +47,7 @@ fn main() {
     let mut it = args.iter();
     match it.next().map(String::as_str) {
         Some("pre-tool-use") => {}
+        Some("same-pr-diff") => same_pr_diff(&args[1..]),
         _ => usage(),
     }
     let mut selected: Vec<&str> = Vec::new();
