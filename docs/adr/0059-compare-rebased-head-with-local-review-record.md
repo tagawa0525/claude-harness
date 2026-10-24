@@ -59,7 +59,8 @@ ADR-0021 …）は変えない」と、マージの判定、`decide-next.sh`、`
 - **マージの判定**（検査 8）: head に High 0 の記録がある（ADR-0043 のまま）か、上の比較元と head が ADR-0021 の判定で
   同じなら通す。bot レビューの `commit_id` を比較元にする判定（ADR-0021）も残す
 - **判定の方法は ADR-0021 のまま**: base は GitHub が返す base ブランチの今の先頭、比べるのはそれぞれの merge-base からの
-  PR の差分で、確かめられないときは同じとみなさない。比較元を増やしても、偽陽性の側の性質（中身が変わったのに通す
+  PR の差分で、確かめられないときは同じとみなさない。旧 head と同じく、新 head も手元に無ければ origin から取る
+  （スクリプトは、新 head を fetch していない clone でも走る）。比較元を増やしても、偽陽性の側の性質（中身が変わったのに通す
   ことはない）は同じである
 - **`decide-next.sh` と `request-rereview.sh`**: `LOCAL_REVIEWED` と、再レビューを要求する前の記録の確認を、hook と同じ判定に
   する。記録の読み取りから比較までを Rust の 1 か所（`pre_merge_check.rs` の `local_review_covers`）に置き、スクリプトは

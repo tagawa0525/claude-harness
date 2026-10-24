@@ -10,7 +10,8 @@
 # ことを残す。decide-next.sh、request-rereview.sh、pre-merge-check は、head の SHA の記録が
 # あるか（最後の記録の SHA から rebase だけした head も含む）を見る。件数は、その head で検証して正しいと判断した指摘の数で、後に Copilot が出した数と比べるために残す。
 # 記録は先頭の 1 行（<!-- local-review sha=<SHA> high=<n> medium=<n> low=<n> -->）が本体で、
-# 形を変えるときは scripts/lib/local-review.sh と pre_merge_check.rs も合わせる
+# 形を変えるときは、記録を読む pre_merge_check.rs（claude-hooks）と、テストの偽物（.claude/tests/scripts/gh-pr-review.sh の
+# fake_hooks_exact）も合わせる
 
 set -euo pipefail
 

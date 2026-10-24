@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# local-review.sh — ローカルレビューの記録（record-local-review.sh が PR に付けるコメント）を読む（source して使う）
+# local-review.sh — ローカルレビューの記録（record-local-review.sh が PR に付けるコメント）で head が覆われているかを確かめる（source して使う）
 #
 # local_review_covers <head の SHA>
 #   PR_NUMBER の PR の head がローカルレビューの記録で覆われていれば yes、そうでなければ no を出力する（parse_pr_url の
@@ -21,6 +21,10 @@ local_review_covers() {
   case "$rc" in
     0) echo yes ;;
     1) echo no ;;
+    127)
+      echo "ERROR: ${hooks_bin} がありません。home-manager の rebuild で入れてください（claude-sync はバイナリを入れない）" >&2
+      return 1
+      ;;
     2)
       # claude-sync はスクリプトだけを入れ替え、~/.claude/bin のバイナリは home-manager の rebuild まで古いまま
       echo "ERROR: ${hooks_bin} が使い方の誤り（終了コード 2）で止まりました。local-review-covers を知らない古いバイナリなら home-manager の rebuild で入れ直してください" >&2

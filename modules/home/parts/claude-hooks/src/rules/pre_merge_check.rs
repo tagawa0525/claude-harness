@@ -259,7 +259,8 @@ fn same_pr_diff(dir: &std::path::Path, base: &str, old: &str, new: &str) -> bool
     if !have(base) && (git(dir, &["fetch", "-q", "origin", base]).is_none() || !have(base)) {
         return false;
     }
-    if !have(new) {
+    // 新 head も、別の clone から push して手元に無いことがある（local-review-covers は PR の worktree 以外でも走る）
+    if !have(new) && (git(dir, &["fetch", "-q", "origin", new]).is_none() || !have(new)) {
         return false;
     }
     let (Some(old_base), Some(new_base)) = (
