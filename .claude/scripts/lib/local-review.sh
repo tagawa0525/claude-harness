@@ -5,8 +5,8 @@
 #   PR_NUMBER の PR の head がローカルレビューの記録で覆われていれば yes、そうでなければ no を出力する（parse_pr_url の
 #   後に呼ぶ）。判定は pre-merge-check と同じ実装（claude-hooks local-review-covers）を呼び、記録を bash で読み直さない
 #   （読み方が 2 か所にあると食い違い、decide-next.sh が通すと言った head を hook が止める）。head の記録（High なし）が
-#   あるか、最後の記録の SHA から rebase だけした head なら yes。rebase だけかは cwd の clone で比べ、cwd の origin が
-#   PR のリポジトリでなければ比べずに no（止める側）。比べられないとき（API や fetch の失敗）も no。
+#   あるか、最後の記録の SHA から rebase だけした head なら yes。rebase だけかは hook と同じく cwd の clone のコミットで比べ
+#   （無ければ origin から取る）、PR のリポジトリの clone の外や API や fetch の失敗で比べられなければ no（止める側）。
 #   記録を取得できなければ 1 を返す
 
 # shellcheck disable=SC2034  # record-local-review.sh が使う
@@ -23,7 +23,7 @@ local_review_covers() {
     1) echo no ;;
     2)
       # claude-sync はスクリプトだけを入れ替え、~/.claude/bin のバイナリは home-manager の rebuild まで古いまま
-      echo "ERROR: ${hooks_bin} が local-review-covers を知りません。古いバイナリなら home-manager の rebuild で入れ直してください" >&2
+      echo "ERROR: ${hooks_bin} が使い方の誤り（終了コード 2）で止まりました。local-review-covers を知らない古いバイナリなら home-manager の rebuild で入れ直してください" >&2
       return 1
       ;;
     *)

@@ -180,24 +180,9 @@ fn is_hex_sha(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// cwd の clone の origin が owner/name の GitHub のリポジトリか。違えば、そこで旧 head を git fetch しない
-fn origin_is(dir: &std::path::Path, owner: &str, name: &str) -> bool {
-    // get-url は url.*.insteadOf を展開するので、書かれた URL を config から読む
-    let Some(url) = git(dir, &["config", "--get", "remote.origin.url"]) else {
-        return false;
-    };
-    let url = url.trim().trim_end_matches('/').to_ascii_lowercase();
-    let url = url.strip_suffix(".git").unwrap_or(&url);
-    let repo = format!("{owner}/{name}").to_ascii_lowercase();
-    // ホスト名の境（@ か //）まで含めて比べる。含めないと evilgithub.com も末尾で一致する
-    ["@github.com:", "//github.com/", "@github.com/"]
-        .iter()
-        .any(|host| url.ends_with(&format!("{host}{repo}")))
-}
-
 /// `claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>` の本体（decide-next.sh と request-rereview.sh が
-/// hook と同じ判定を使うため）。rebase だけかは dir の clone で比べ、origin が PR のリポジトリでなければ比べない
-/// （false の側）。記録を取得できなければ Err
+/// hook と同じ判定を使うため）。rebase だけかは hook と同じく dir の clone のコミットで比べ（無ければ origin から取る）、
+/// 比べられなければ false。記録を取得できなければ Err
 pub fn local_review_covers_for_pr(
     dir: &std::path::Path,
     repo: &str,
@@ -209,12 +194,6 @@ pub fn local_review_covers_for_pr(
         return Err(());
     }
     local_review_covers(dir, owner, name, number, head_sha, || {
-        if !origin_is(dir, owner, name) {
-            crate::output::notice(format!(
-                "claude-hooks: cwd の origin が {owner}/{name} の clone でないので、最後のローカルレビューの記録から rebase だけかを比べていません（PR の worktree で実行してください）"
-            ));
-            return None;
-        }
         let base_ref = gh::gh(
             dir,
             &[
@@ -886,42 +865,6 @@ mod tests {
             );
             assert_eq!(local_review_rebase_source(&marks), None, "{sha}");
         }
-    }
-
-    #[test]
-    fn origin_is_matches_github_url_forms_of_the_repository() {
-        let r = Repo::new("origin-is");
-        assert!(!origin_is(&r.0, "octo", "repo"));
-        r.git(&["remote", "add", "origin", "https://github.com/octo/repo"]);
-        for url in [
-            "git@github.com:Octo/Repo.git",
-            "https://github.com/octo/repo",
-            "https://github.com/octo/repo.git/",
-        ] {
-            r.git(&["remote", "set-url", "origin", url]);
-            assert!(origin_is(&r.0, "octo", "repo"), "{url}");
-        }
-        r.git(&[
-            "remote",
-            "set-url",
-            "origin",
-            "https://github.com/octo/repo-other",
-        ]);
-        assert!(!origin_is(&r.0, "octo", "repo"));
-        r.git(&[
-            "remote",
-            "set-url",
-            "origin",
-            "https://example.com/octo/repo",
-        ]);
-        assert!(!origin_is(&r.0, "octo", "repo"));
-        r.git(&[
-            "remote",
-            "set-url",
-            "origin",
-            "https://evilgithub.com/octo/repo",
-        ]);
-        assert!(!origin_is(&r.0, "octo", "repo"));
     }
 
     #[test]

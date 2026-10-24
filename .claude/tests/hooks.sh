@@ -1468,8 +1468,8 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
 # local-review-covers: decide-next.sh と request-rereview.sh が hook と同じ判定を使う入口。覆われていれば 0、いなければ 1、
-# 引数の誤りは 2、記録を取得できなければ 3。rebase だけかは cwd の clone で比べ、origin が PR のリポジトリの clone でだけ比べる。
-# origin は GitHub の URL にし、insteadOf で手元の REBASE_REPO から取らせる（ネットワークに出ない）
+# 引数の数の誤りは 2、記録を取得できなければ 3。rebase だけかは hook と同じく cwd の clone で比べる。
+# PR の worktree に近い形として、origin は GitHub の URL にし、insteadOf で手元の REBASE_REPO から取らせる（ネットワークに出ない）
 COVERS_REPO="$TEST_ROOT/covers-repo"
 git clone -q "$REBASE_REPO" "$COVERS_REPO"
 git -C "$COVERS_REPO" remote set-url origin git@github.com:example/heredoc.git

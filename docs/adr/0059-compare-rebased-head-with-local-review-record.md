@@ -32,6 +32,11 @@ issues: ["#478"]
   記録の読み取りと比較元の選び方は bash（jq と awk）と Rust の両方に書いた。ローカルレビューで、形の崩れた記録や
   コメントの 2 行目の記録の扱いが両者で食い違い、`decide-next.sh` が通すと言った head を hook が止める例が 2 周続けて
   見つかったので、判定の全体を `local-review-covers` に移した
+- スクリプトの cwd の確認: 一時、`local-review-covers` は cwd の `remote.origin.url` が PR の GitHub のリポジトリのときだけ
+  比べた（無関係なリポジトリで `git fetch` しないため）。ローカルレビューで、fork の clone（origin が fork）、ssh の別名、
+  `insteadOf` の短縮形では hook と違う答えになり、URL を確かめても `insteadOf` で fetch の行き先は変わりうると
+  指摘された。hook は確認せずに比べ、コミットは SHA で決まるので誤って同じとすることは無い。hook と同じ判定にする
+  ために外した
 - 比較元にする記録の選び方:
   - 「High 0 の記録のうち最後のもの」: sha A に High 0 の記録があり、その後に A を rebase しただけの A' に High 1 の
     記録が付いた場合、A' を rebase した head は A と同じ差分なので通ってしまう。同じ差分で見つかった High を前の記録で
@@ -60,14 +65,12 @@ ADR-0021 …）は変えない」と、マージの判定、`decide-next.sh`、`
   する。記録の読み取りから比較までを Rust の 1 か所（`pre_merge_check.rs` の `local_review_covers`）に置き、スクリプトは
   `claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>` を呼ぶ（`scripts/lib/local-review.sh`）。記録を
   bash で読み直さない
-- **スクリプトの git**: 比べるには旧 head と新 head のコミットが要るので、cwd の clone で比べる（無ければ
-  ADR-0021 と同じく origin から取る）。対象の PR は今も URL で決まる（ADR-0032）。cwd の origin（`remote.origin.url`）が
-  PR の GitHub のリポジトリでなければ、比べずに覆っていないとする（止める側。無関係なリポジトリで `git fetch` しない）。
-  ホスト名は境（`@` か `//`）まで含めて比べる。比べなかったときは、その理由を標準エラーに出す。hook はこの確認を
-  しない（ADR-0021 のまま）
-- **終了コード**: 覆っていれば 0、いなければ 1、引数の誤りは 2、記録を取得できないか引数の形（16 進の SHA、数の PR 番号）が
-  違えば 3。スクリプトは 2 を、バイナリが古い（`claude-sync` はスクリプトだけを入れ替え、バイナリは rebuild まで
-  古いまま）として、入れ直しを案内して止まる。比べられないとき（base の API や fetch の失敗）は hook と同じく 1（止める側）で、分けない。gh や git を
+- **スクリプトの git**: 比べるには旧 head と新 head のコミットが要るので、hook と同じく cwd の clone で比べる（無ければ
+  ADR-0021 と同じく origin から取る）。対象の PR は今も URL で決まる（ADR-0032）。PR のリポジトリの clone の外では
+  コミットが無く比べられないので、覆っていないとする（止める側）
+- **終了コード**: 覆っていれば 0、いなければ 1、引数の数の誤り（使い方）は 2、記録を取得できないか引数の形（完全な 16 進の
+  SHA、数の PR 番号）が違えば 3。スクリプトは 2 で、バイナリが古い（`claude-sync` はスクリプトだけを入れ替え、バイナリは
+  rebuild まで古いまま）場合の入れ直しを案内して止まる。比べられないとき（base の API や fetch の失敗）は hook と同じく 1（止める側）で、分けない。gh や git を
   起動できなかった理由は標準エラーに出す
 
 ### 帰結
@@ -82,9 +85,9 @@ ADR-0021 …）は変えない」と、マージの判定、`decide-next.sh`、`
 ### 確認
 
 - Rust のユニットテスト（`pre_merge_check.rs`）: 比較元の選び方が、最後の記録が High 0 ならその sha を、High ありか形が
-  崩れていれば何も返さないこと。origin の URL の形を見分けること。`same_pr_diff` の既存のケースが通ったままであること
+  崩れていれば何も返さないこと。`same_pr_diff` の既存のケースが通ったままであること
 - `.claude/tests/hooks.sh` の pre-merge-check: 記録の sha から rebase だけした head は通す。記録の後に差分を変えた head、
-  最後の記録が High ありの head は止める。`local-review-covers` の入口が同じ判定と終了コードを返し、cwd の origin が PR の
-  リポジトリでなければ比べないこと
+  最後の記録が High ありの head は止める。`local-review-covers` の入口が同じ判定と終了コードを返し、origin の URL を
+  問わず手元のコミットで比べること
 - `.claude/tests/scripts/gh-pr-review.sh`: `decide-next.sh` と `request-rereview.sh` が `local-review-covers` の終了コードに
   従い、記録を確かめられなければ止まること
