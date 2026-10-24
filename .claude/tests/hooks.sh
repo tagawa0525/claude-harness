@@ -1408,7 +1408,7 @@ git -C "$REBASE_REPO" commit -q -m "pr changes content"
 REBASE_CHANGED=$(git -C "$REBASE_REPO" rev-parse HEAD)
 
 make_fake_gh_rebased() {
-  # $1: 今の head、$2: bot がレビューした commit
+  # $1: 今の head、$2: bot がレビューした commit、$3: ローカルレビューの記録の 1 行目を出力するコマンド（既定は記録なし）
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"'"$1"'\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
@@ -1418,6 +1418,7 @@ make_fake_gh_rebased() {
   "api repos/example/heredoc/branches/main"*) echo '"$REBASE_TIP"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo '"$2"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) '"${3:-true}"' ;;
   "api graphql"*) echo "[]" ;;'
 }
 
@@ -1437,6 +1438,51 @@ it "pre-merge-check: レビュー済みのコミットを取得できなけれ�
 make_fake_gh_rebased "$REBASE_SAME" "0123456789012345678901234567890123456789"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
+
+# ローカルレビューの記録の後に rebase だけした head も、記録の SHA を比較元にして同じ判定で通す（ADR-0059）。
+# bot のレビューは手元に無いコミットを指し、bot の側からは確かめられないようにする
+BOGUS_SHA=0123456789012345678901234567890123456789
+local_record() { printf "printf '%%s\\n' '<!-- local-review sha=%s high=%s medium=0 low=0 -->'" "$1" "$2"; }
+
+it "pre-merge-check: ローカルレビューの記録の SHA から rebase だけした head は通す"
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: ローカルレビューの記録の後に差分を変えた head は止める"
+make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: High のあるローカルレビューの記録は比較元にしない"
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 1)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 最後の記録に High があれば、前の High の無い記録も比較元にしない"
+# 同じ差分を回し直して見つけた High を、前の記録で隠さない
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" \
+  "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+# same-pr-diff: decide-next.sh が hook と同じ判定を使う入口。同じなら 0、違うか確かめられなければ 1
+it "same-pr-diff: base からの PR の差分が同じなら終了コード 0"
+make_fake_gh_rebased "$REBASE_SAME" "$REBASE_OLD"
+"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$REBASE_OLD" "$REBASE_SAME"
+assert_eq 0 $?
+
+it "same-pr-diff: 差分が変わっていれば終了コード 1"
+"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$REBASE_OLD" "$REBASE_CHANGED"
+assert_eq 1 $?
+
+it "same-pr-diff: 旧 head が無ければ終了コード 1"
+"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$BOGUS_SHA" "$REBASE_SAME"
+assert_eq 1 $?
+
+it "same-pr-diff: 引数の数が違えば終了コード 2"
+"$CLAUDE_HOOKS_BIN" same-pr-diff example/heredoc main "$REBASE_OLD" 2>/dev/null
+assert_eq 2 $?
 cd "$REPO" || exit 1
 
 it "pre-merge-check: レビューは走っているのに未レビューなら、まず要求を促す"

@@ -14,6 +14,10 @@ REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
 # それで解決される。cwd は git のリポジトリでない場所にして、cwd に頼らないことを確かめる。
 # 偽 gh に repo view の分岐は置かないので、呼べば unexpected で失敗する
 PR_URL="https://github.com/octo/repo/pull/1"
+# decide-next.sh は、記録の SHA から rebase だけした head かを claude-hooks の same-pr-diff で確かめる。
+# 既定は「同じとは確かめられない」（終了コード 1）。確かめた場合の振る舞いは、テストごとに偽物を置き直す
+make_fake_tool claude-hooks '"same-pr-diff "*) exit 1 ;;'
+export CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/claude-hooks"
 PR7_URL="https://github.com/octo/repo/pull/7"
 mkdir -p "$TEST_ROOT/elsewhere"
 cd "$TEST_ROOT/elsewhere" || exit 1
@@ -337,6 +341,7 @@ fake_gh_decide() {
   \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
   \"pr view 1 --json headRefOid\"*) echo $head ;;
+  \"pr view 1 --json baseRefName\"*) echo main ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
   \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
   \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
@@ -1087,6 +1092,7 @@ fake_gh_severity() {
   local locals="${2:-true}" resets="${3:-true}" files="${4:-echo a.txt}"
   jq -n --arg body "$1" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
   make_fake_gh "\"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"pr view 1 --json baseRefName\"*) echo main ;;
   \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
@@ -1118,6 +1124,38 @@ it "decide-next: 記録が前の head のものなら LOCAL_REVIEW_NEEDED"
 fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+# 記録の後に rebase だけした head は、記録の SHA を比較元にして hook と同じ判定で記録済みとみなす（ADR-0059）
+it "decide-next: 記録の SHA から rebase だけした head なら LOCAL_REVIEWED: yes"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
+make_fake_tool claude-hooks '"same-pr-diff octo/repo main abc1234 def5678") exit 0 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_REVIEWED: yes"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: 記録の後に差分が変わった head なら LOCAL_REVIEWED: no"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
+make_fake_tool claude-hooks '"same-pr-diff octo/repo main abc1234 def5678") exit 1 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_REVIEWED: no"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: 最後の記録に High があれば、前の High の無い記録とは比べない"
+fake_gh_severity "$BODY_MEDIUM" 'printf "%s\n" "abc1234 0" "fff0000 1"'
+make_fake_tool claude-hooks '*) exit 0 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "LOCAL_REVIEWED: no"
+assert_eq "" "$(fake_log claude-hooks)"
+
+it "decide-next: 差分を比べられなければ（claude-hooks の失敗）、記録済みとみなさずに止める"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
+make_fake_tool claude-hooks '*) exit 2 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_not_contains "$out" "VERDICT"
+make_fake_tool claude-hooks '"same-pr-diff "*) exit 1 ;;'
 
 it "decide-next: High が残っていても、Copilot に出す前にまず LOCAL_REVIEW_NEEDED"
 fake_gh_severity "$BODY_NEW_HIGH"

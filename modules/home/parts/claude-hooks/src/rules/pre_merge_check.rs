@@ -155,6 +155,12 @@ fn local_review_covers(
     recorded
 }
 
+/// リベースだけの判定（[`same_pr_diff`]）の比較元にするローカルレビューの記録の SHA（ADR-0059）。`marks` は記録の
+/// 1 行目を古い順に並べたもの
+fn local_review_rebase_source(_marks: &str) -> Option<&str> {
+    None
+}
+
 /// PR の base ブランチの今の先頭（GitHub の値）
 fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> Option<String> {
     if base_ref.is_empty() {
@@ -767,6 +773,28 @@ mod tests {
         let v = json_stream("{\"a\":1}\n{\"a\":2}\n").unwrap();
         assert_eq!(v.len(), 2);
         assert!(json_stream("not json").is_none());
+    }
+
+    #[test]
+    fn rebase_source_is_the_last_record_when_it_has_no_high() {
+        let marks = "<!-- local-review sha=aaa high=1 medium=0 low=0 -->\n\
+                     <!-- local-review sha=bbb high=0 medium=2 low=1 -->";
+        assert_eq!(local_review_rebase_source(marks), Some("bbb"));
+    }
+
+    #[test]
+    fn rebase_source_is_none_when_the_last_record_has_high() {
+        // 同じ差分を回し直して見つけた High を、前の High の無い記録で隠さない
+        let marks = "<!-- local-review sha=aaa high=0 medium=0 low=0 -->\n\
+                     <!-- local-review sha=bbb high=1 medium=0 low=0 -->";
+        assert_eq!(local_review_rebase_source(marks), None);
+        let marks = "<!-- local-review sha=aaa high=10 medium=0 low=0 -->";
+        assert_eq!(local_review_rebase_source(marks), None);
+    }
+
+    #[test]
+    fn rebase_source_is_none_without_records() {
+        assert_eq!(local_review_rebase_source(""), None);
     }
 
     /// 一時ディレクトリの git リポジトリ。origin/main は refs/remotes/origin/main を直に置いて作る
