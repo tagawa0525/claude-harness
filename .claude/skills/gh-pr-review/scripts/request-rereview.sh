@@ -5,7 +5,8 @@
 #
 # Copilot のレビューを受けたいときだけ使う（任意。head のローカルレビューの記録があればマージできる）。
 #
-# 1. head にローカルレビューの記録（record-local-review.sh）があることを確かめる。無ければ要求しない。
+# 1. head にローカルレビューの記録（record-local-review.sh。最後の記録から rebase だけした head を含む）があることを
+#    確かめる。無ければ要求しない。
 #    Copilot に出す前に、直した差分をローカルの /code-review で確かめる
 # 2. requested_reviewers API で copilot-pull-request-reviewer にレビューを要求する
 # 3. 要求が review_requested イベントとして登録されたことを確認し、その created_at
@@ -53,11 +54,11 @@ if ! head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid) || [[ 
   echo "ERROR: PR #${PR_NUMBER} の head を取得できませんでした（ローカルレビューの記録を確かめられません）" >&2
   exit 1
 fi
-if ! local_shas=$(local_review_shas); then
-  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を取得できませんでした" >&2
+if ! local_reviewed=$(local_review_covers "$head_sha"); then
+  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を確かめられませんでした" >&2
   exit 1
 fi
-if ! grep -qxF "$head_sha" <<<"$local_shas"; then
+if [[ "$local_reviewed" != yes ]]; then
   echo "ERROR: head（${head_sha:0:7}）に High の残らないローカルレビューの記録がありません。Copilot に出す前に、直した差分をローカルの /code-review で確かめてください" >&2
   echo "次の一手: 確かめたら ${SCRIPT_DIR}/record-local-review.sh ${PR_URL_CANONICAL} <SHA> <high> <medium> <low> で記録し（High が残れば直して回し直す）、もう一度 ${SCRIPT_DIR}/request-rereview.sh ${PR_URL_CANONICAL} で要求してください" >&2
   exit 1

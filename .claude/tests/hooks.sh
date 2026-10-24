@@ -1408,7 +1408,7 @@ git -C "$REBASE_REPO" commit -q -m "pr changes content"
 REBASE_CHANGED=$(git -C "$REBASE_REPO" rev-parse HEAD)
 
 make_fake_gh_rebased() {
-  # $1: 今の head、$2: bot がレビューした commit
+  # $1: 今の head、$2: bot がレビューした commit、$3: ローカルレビューの記録の 1 行目を出力するコマンド（既定は記録なし）
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"'"$1"'\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
@@ -1418,6 +1418,8 @@ make_fake_gh_rebased() {
   "api repos/example/heredoc/branches/main"*) echo '"$REBASE_TIP"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo '"$2"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) '"${3:-true}"' ;;
+  "api repos/example/heredoc/pulls/1 "*) echo main ;;
   "api graphql"*) echo "[]" ;;'
 }
 
@@ -1437,6 +1439,100 @@ it "pre-merge-check: レビュー済みのコミットを取得できなけれ�
 make_fake_gh_rebased "$REBASE_SAME" "0123456789012345678901234567890123456789"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
+
+# ローカルレビューの記録の後に rebase だけした head も、記録の SHA を比較元にして同じ判定で通す（ADR-0059）。
+# bot のレビューは手元に無いコミットを指し、bot の側からは確かめられないようにする
+BOGUS_SHA=0123456789012345678901234567890123456789
+local_record() { printf "printf '%%s\\n' '<!-- local-review sha=%s high=%s medium=0 low=0 -->'" "$1" "$2"; }
+
+it "pre-merge-check: ローカルレビューの記録の SHA から rebase だけした head は通す"
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: ローカルレビューの記録の後に差分を変えた head は止める"
+make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: High のあるローカルレビューの記録は比較元にしない"
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 1)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-merge-check: 最後の記録に High があれば、前の High の無い記録も比較元にしない"
+# 同じ差分を回し直して見つけた High を、前の記録で隠さない
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" \
+  "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+
+# local-review-covers: decide-next.sh と request-rereview.sh が hook と同じ判定を使う入口。覆われていれば 0、いなければ 1、
+# 引数の数の誤りは 2、記録を取得できなければ 3。rebase だけかは hook と同じく cwd の clone で比べる。
+# PR の worktree に近い形として、origin は GitHub の URL にし、insteadOf で手元の REBASE_REPO から取らせる（ネットワークに出ない）
+COVERS_REPO="$TEST_ROOT/covers-repo"
+git clone -q "$REBASE_REPO" "$COVERS_REPO"
+git -C "$COVERS_REPO" remote set-url origin git@github.com:example/heredoc.git
+git -C "$COVERS_REPO" config "url.$REBASE_REPO.insteadOf" git@github.com:example/heredoc.git
+# covers <cwd> <head> <記録のコマンド>: 終了コード
+covers() {
+  make_fake_gh_rebased "$2" "$BOGUS_SHA" "$3"
+  (cd "$1" && "$CLAUDE_HOOKS_BIN" local-review-covers example/heredoc 1 "$2" 2>/dev/null)
+  echo $?
+}
+
+it "local-review-covers: 記録の SHA から rebase だけした head は終了コード 0"
+assert_eq 0 "$(covers "$COVERS_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
+
+it "local-review-covers: head の記録があれば終了コード 0"
+assert_eq 0 "$(covers "$TEST_ROOT" "$REBASE_SAME" "$(local_record "$REBASE_SAME" 0)")"
+
+it "local-review-covers: 記録の後に差分を変えた head は終了コード 1"
+assert_eq 1 "$(covers "$COVERS_REPO" "$REBASE_CHANGED" "$(local_record "$REBASE_OLD" 0)")"
+
+it "local-review-covers: 最後の記録に High があれば比べずに終了コード 1"
+assert_eq 1 "$(covers "$COVERS_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)")"
+
+it "local-review-covers: cwd の origin の URL を問わず、手元のコミットで hook と同じく比べる"
+# REBASE_REPO には rebase の前後のコミットがあるが origin が無い。fork や ssh の別名の origin でも hook と同じ判定にする
+assert_eq 0 "$(covers "$REBASE_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
+
+it "local-review-covers: 新しい head が手元に無ければ、旧 head と同じく origin から取って比べる"
+# 別の clone から push した head を、まだ fetch していない clone で判定する場合
+PARTIAL_REPO="$TEST_ROOT/partial-repo"
+git clone -q --no-local --single-branch -b pr "$REBASE_REPO" "$PARTIAL_REPO"
+assert_eq 0 "$(covers "$PARTIAL_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
+
+# 記録の読み取りの jq を、偽 gh で本物の jq にかけて確かめる（書き込める人の、1 行目の記録だけを数える）
+# covers_json <JSON>: コメントの配列を fixture にして local-review-covers の終了コードを出す
+covers_json() {
+  printf '%s' "$1" >"$TEST_ROOT/covers-comments.json"
+  covers "$COVERS_REPO" "$REBASE_SAME" "shift 3; jq -r \"\$2\" $TEST_ROOT/covers-comments.json"
+}
+REC_OLD="<!-- local-review sha=$REBASE_OLD high=0 medium=0 low=0 -->"
+REC_HIGH="<!-- local-review sha=$BOGUS_SHA high=1 medium=0 low=0 -->"
+
+it "local-review-covers: 書き込める人の記録は数える"
+assert_eq 0 "$(covers_json "[{\"author_association\":\"OWNER\",\"body\":\"$REC_OLD\"}]")"
+
+it "local-review-covers: 書き込めない人の記録は数えない"
+assert_eq 1 "$(covers_json "[{\"author_association\":\"NONE\",\"body\":\"$REC_OLD\"}]")"
+
+it "local-review-covers: 書き込めない人の High の記録は、最後の記録に数えない"
+assert_eq 0 "$(covers_json "[{\"author_association\":\"OWNER\",\"body\":\"$REC_OLD\"},{\"author_association\":\"NONE\",\"body\":\"$REC_HIGH\"}]")"
+
+it "local-review-covers: コメントの 2 行目以降の記録は数えない"
+assert_eq 1 "$(covers_json "[{\"author_association\":\"OWNER\",\"body\":\"note\\n$REC_OLD\"}]")"
+
+it "local-review-covers: 記録を取得できなければ終了コード 3"
+assert_eq 3 "$(covers "$COVERS_REPO" "$REBASE_SAME" 'exit 1')"
+
+it "local-review-covers: head が 16 進の SHA でなければ（git の引数に渡さない）終了コード 3"
+assert_eq 3 "$(covers "$COVERS_REPO" "--upload-pack=touch" "$(local_record "$REBASE_OLD" 0)")"
+
+it "local-review-covers: 引数の数が違えば終了コード 2"
+"$CLAUDE_HOOKS_BIN" local-review-covers example/heredoc 1 2>/dev/null
+assert_eq 2 $?
 cd "$REPO" || exit 1
 
 it "pre-merge-check: レビューは走っているのに未レビューなら、まず要求を促す"

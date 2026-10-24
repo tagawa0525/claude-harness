@@ -14,6 +14,23 @@ REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
 # それで解決される。cwd は git のリポジトリでない場所にして、cwd に頼らないことを確かめる。
 # 偽 gh に repo view の分岐は置かないので、呼べば unexpected で失敗する
 PR_URL="https://github.com/octo/repo/pull/1"
+# decide-next.sh と request-rereview.sh は、記録の判定を claude-hooks local-review-covers に任せる（判定そのものは
+# hooks.sh が本物のバイナリで確かめる）。ここでは偽物を置き、既定では偽 gh の記録（「SHA High の数」の行）から head の
+# 最後の記録が High 0 かだけを見る。記録を取得できなければ 3。rebase だけの判定は、テストごとに偽物を置き直す
+fake_hooks_exact() {
+  mkdir -p "$TEST_ROOT/fakebin"
+  : >"$TEST_ROOT/claude-hooks.log"
+  cat >"$TEST_ROOT/fakebin/claude-hooks" <<FAKE
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$TEST_ROOT/claude-hooks.log"
+[[ "\$1" == local-review-covers ]] || exit 2
+records=\$(gh api --paginate "repos/{owner}/{repo}/issues/\$3/comments?per_page=100" --jq local-review) || exit 3
+awk -v h="\$4" '\$1 == h { c = (\$2 == "0") } END { exit !c }' <<<"\$records"
+FAKE
+  chmod +x "$TEST_ROOT/fakebin/claude-hooks"
+}
+fake_hooks_exact
+export CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/claude-hooks"
 PR7_URL="https://github.com/octo/repo/pull/7"
 mkdir -p "$TEST_ROOT/elsewhere"
 cd "$TEST_ROOT/elsewhere" || exit 1
@@ -227,10 +244,19 @@ err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 1 $?
 assert_not_contains "$(fake_log gh)" "requested_reviewers"
 
-it "request-rereview: 記録は書き込みの権限を持つ人のコメントだけを受け付ける"
-fake_gh_rereview
-"$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" >/dev/null 2>&1
-assert_contains "$(grep local-review "$TEST_ROOT/gh.log")" "author_association"
+it "request-rereview: 記録の後に rebase だけした head なら要求する（判定は local-review-covers）"
+fake_gh_rereview grow 'echo abc1234 0'
+make_fake_tool claude-hooks '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
+out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "requested_reviewers"
+fake_hooks_exact
+
+it "request-rereview: 記録を確かめられなければ要求しない"
+fake_gh_rereview grow 'exit 1'
+out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_not_contains "$(fake_log gh)" "requested_reviewers"
 
 # ===========================================================================
 # gh-pr-review/scripts/record-local-review.sh: ローカルレビューの結果を PR に残す
@@ -903,26 +929,6 @@ fake_gh_review_body "<!-- ccr-overview-v2 -->
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "REMAINING_HIGH: 1"
 
-# fake_gh_local_records <comments.json>: issues/1/comments の --jq を本物の jq で JSON に当てる gh
-fake_gh_local_records() {
-  cp "$1" "$TEST_ROOT/comments.json"
-  make_fake_gh "\"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) shift 3; jq -r \"\$2\" \"$TEST_ROOT/comments.json\" ;;"
-}
-
-it "local-review: 書き込める人の、High の残らない記録の SHA だけを返す"
-# ある head の記録に High があれば、その head には直していない High が残る（直せば head が変わる）
-jq -n '[
-  {author_association: "OWNER", body: "<!-- local-review sha=aaa1111 high=0 medium=2 low=1 -->\nok"},
-  {author_association: "OWNER", body: "<!-- local-review sha=bbb2222 high=1 medium=0 low=0 -->\nhigh"},
-  {author_association: "NONE", body: "<!-- local-review sha=ccc3333 high=0 medium=0 low=0 -->\nthird party"},
-  {author_association: "OWNER", body: "<!-- review-rounds-reset -->\nreset"},
-  {author_association: "COLLABORATOR", body: "<!-- local-review sha=ddd4444 high=0 medium=0 low=0 -->"}
-]' > "$TEST_ROOT/c.json"
-fake_gh_local_records "$TEST_ROOT/c.json"
-out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
-assert_eq 0 $?
-assert_eq "aaa1111 ddd4444" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
-
 it "get-latest-review: 知らない見出しの節があれば重大度が分からない（形が変われば High を数え落としうる）"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
 
@@ -940,19 +946,6 @@ it "get-latest-review: 開いている指摘の節に「- 」で始まらない�
 fake_gh_review_body "$(v2_body "🟡 Changes recommended" "* $(sev High) [h](u#discussion_r1) · New")" 101
 out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
 assert_contains "$out" "SEVERITY: unknown"
-
-it "local-review: 同じ SHA に記録が複数あれば、最後の記録で決める"
-# 深く回し直して High を見つけたなら、前の High の無い記録で隠さない
-jq -n '[
-  {author_association: "OWNER", body: "<!-- local-review sha=aaa1111 high=0 medium=0 low=0 -->"},
-  {author_association: "OWNER", body: "<!-- local-review sha=aaa1111 high=1 medium=0 low=0 -->"},
-  {author_association: "OWNER", body: "<!-- local-review sha=bbb2222 high=1 medium=0 low=0 -->"},
-  {author_association: "OWNER", body: "<!-- local-review sha=bbb2222 high=0 medium=1 low=0 -->"}
-]' > "$TEST_ROOT/c2.json"
-fake_gh_local_records "$TEST_ROOT/c2.json"
-out=$(PR_NUMBER=1 bash -c 'source "$1"; local_review_shas' _ "$CLAUDE_DIR/scripts/lib/local-review.sh")
-assert_eq 0 $?
-assert_eq "bbb2222" "$(tr '\n' ' ' <<<"$out" | sed 's/ $//')"
 
 it "get-latest-review: 知っている節の外に重大度のアイコンがあれば分からない（見出しの形が変わった）"
 fake_gh_review_body "<!-- ccr-overview-v2 -->
@@ -1105,9 +1098,6 @@ assert_contains "$out" "HEAD_REVIEWED: no"
 assert_contains "$out" "LOCAL_REVIEWED: yes"
 assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
-it "decide-next: ローカルレビューの記録は書き込みの権限を持つ人のコメントだけを受け付ける"
-assert_contains "$(grep local-review "$TEST_ROOT/gh.log")" "author_association"
-
 it "decide-next: High が残らなくても、head のローカルレビューの記録が無ければ LOCAL_REVIEW_NEEDED"
 fake_gh_severity "$BODY_MEDIUM"
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
@@ -1118,6 +1108,41 @@ it "decide-next: 記録が前の head のものなら LOCAL_REVIEW_NEEDED"
 fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+# 記録の後に rebase だけした head も記録済みとみなす（ADR-0059）。判定は local-review-covers の終了コードに従う
+it "decide-next: local-review-covers が覆っていると言えば（記録の後に rebase だけ）LOCAL_REVIEWED: yes"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
+make_fake_tool claude-hooks '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_REVIEWED: yes"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: local-review-covers が覆っていないと言えば LOCAL_REVIEWED: no"
+make_fake_tool claude-hooks '"local-review-covers octo/repo 1 def5678") exit 1 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_REVIEWED: no"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: claude-hooks が local-review-covers を知らなければ（使い方で終了コード 2）、入れ直しを案内して止める"
+# claude-sync はスクリプトだけを入れ替え、バイナリは rebuild まで古いまま
+make_fake_tool claude-hooks '*) exit 2 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_contains "$out" "rebuild"
+
+it "decide-next: claude-hooks が無ければ、入れ直しを案内して止める"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_contains "$out" "rebuild"
+
+it "decide-next: 記録を確かめられなければ（local-review-covers の失敗）、記録済みとみなさずに止める"
+make_fake_tool claude-hooks '*) exit 3 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_not_contains "$out" "VERDICT"
+fake_hooks_exact
 
 it "decide-next: High が残っていても、Copilot に出す前にまず LOCAL_REVIEW_NEEDED"
 fake_gh_severity "$BODY_NEW_HIGH"

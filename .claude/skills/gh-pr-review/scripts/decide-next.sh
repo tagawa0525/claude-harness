@@ -16,7 +16,9 @@
 #                       忘れていないかはこれで決まる
 #   UNRESOLVED: <n>     未解決のレビュースレッド数（対応が残っているか）
 #   LOCAL_REVIEWED: yes|no
-#                       head にローカルレビューの記録（record-local-review.sh）があるか
+#                       head にローカルレビューの記録（record-local-review.sh）があるか。最後の記録（High なし）の
+#                       SHA から rebase だけした head（base からの PR の差分が同じ。pre-merge-check と同じ判定）も yes。
+#                       その判定は cwd の clone のコミットで行い、PR のリポジトリの clone の外では no になる
 #   INLINE_COMMENTS / SUPPRESSED_COMMENTS （RESPONSE=review のとき）
 #   SEVERITY / REMAINING_HIGH / PREVIOUSLY_MISSED （RESPONSE=review のとき。get-latest-review.sh の値）
 #   VERDICT: <判定>
@@ -114,14 +116,12 @@ if ! unresolved=$("${SCRIPT_DIR}/get-review-comments.sh" "$PR_URL_CANONICAL" --u
   exit 1
 fi
 
-# head のローカルレビューの記録。取得できなければ、記録が無いとみなして判定を進めない
-# （Copilot に出すかどうかを誤るより、止めて知らせる）
-if ! local_shas=$(local_review_shas); then
-  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を取得できませんでした" >&2
+# head のローカルレビューの記録（記録の後に rebase だけした head を含む。pre-merge-check と同じ判定）。
+# 確かめられなければ、記録が無いとみなして判定を進めない（Copilot に出すかどうかを誤るより、止めて知らせる）
+if ! local_reviewed=$(local_review_covers "$head_sha"); then
+  echo "ERROR: PR #${PR_NUMBER} のローカルレビューの記録を確かめられませんでした" >&2
   exit 1
 fi
-local_reviewed=no
-grep -qxF "$head_sha" <<<"$local_shas" && local_reviewed=yes
 
 # PR の変更ファイルがすべて文書か。取得できない・1 件も無いときは文書だけとみなさない
 # （再レビューを求める側に倒す）
