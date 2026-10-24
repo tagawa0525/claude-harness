@@ -848,22 +848,39 @@ mod tests {
 
     #[test]
     fn rebase_source_is_the_last_record_when_it_has_no_high() {
-        let marks = "<!-- local-review sha=aaa high=1 medium=0 low=0 -->\n\
-                     <!-- local-review sha=bbb high=0 medium=2 low=1 -->";
-        assert_eq!(local_review_rebase_source(marks), Some("bbb"));
+        let marks = "<!-- local-review sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa high=1 medium=0 low=0 -->\n\
+                     <!-- local-review sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb high=0 medium=2 low=1 -->";
+        assert_eq!(
+            local_review_rebase_source(marks),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
     }
 
     #[test]
     fn rebase_source_is_none_when_the_last_record_has_high() {
         // 同じ差分を回し直して見つけた High を、前の High の無い記録で隠さない
-        let marks = "<!-- local-review sha=aaa high=0 medium=0 low=0 -->\n\
-                     <!-- local-review sha=bbb high=1 medium=0 low=0 -->";
+        let marks = "<!-- local-review sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa high=0 medium=0 low=0 -->\n\
+                     <!-- local-review sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb high=1 medium=0 low=0 -->";
         assert_eq!(local_review_rebase_source(marks), None);
-        let marks = "<!-- local-review sha=aaa high=10 medium=0 low=0 -->";
+        let marks = "<!-- local-review sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa high=10 medium=0 low=0 -->";
         assert_eq!(local_review_rebase_source(marks), None);
-        let marks = "<!-- local-review sha=aaa high=0 medium=0 low=0 -->\n\
-                     <!-- local-review sha=CCC high=0 medium=0 low=0 -->";
-        assert_eq!(local_review_rebase_source(marks), None);
+    }
+
+    #[test]
+    fn rebase_source_is_none_when_the_last_record_is_malformed() {
+        // 形は record-local-review.sh が書く完全な 16 進の小文字の SHA。短い SHA は別のコミットに解けうる
+        for sha in [
+            "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            "abc1234",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0",
+            "",
+        ] {
+            let marks = format!(
+                "<!-- local-review sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa high=0 medium=0 low=0 -->\n\
+                 <!-- local-review sha={sha} high=0 medium=0 low=0 -->"
+            );
+            assert_eq!(local_review_rebase_source(&marks), None, "{sha}");
+        }
     }
 
     #[test]
@@ -891,6 +908,13 @@ mod tests {
             "set-url",
             "origin",
             "https://example.com/octo/repo",
+        ]);
+        assert!(!origin_is(&r.0, "octo", "repo"));
+        r.git(&[
+            "remote",
+            "set-url",
+            "origin",
+            "https://evilgithub.com/octo/repo",
         ]);
         assert!(!origin_is(&r.0, "octo", "repo"));
     }

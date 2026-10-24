@@ -1498,6 +1498,12 @@ it "local-review-covers: cwd の origin が PR のリポジトリでなければ
 assert_eq 1 "$(covers "$REBASE_REPO" "$REBASE_SAME" "$(local_record "$REBASE_OLD" 0)")"
 assert_not_contains "$(cat "$TEST_ROOT/gh.log")" "pulls/1 "
 
+it "local-review-covers: origin が違って比べなかったときは、その理由を標準エラーに出す"
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)"
+err=$(cd "$REBASE_REPO" && "$CLAUDE_HOOKS_BIN" local-review-covers example/heredoc 1 "$REBASE_SAME" 2>&1 >/dev/null)
+assert_contains "$err" "origin"
+assert_contains "$err" "example/heredoc"
+
 it "local-review-covers: 記録を取得できなければ終了コード 3"
 assert_eq 3 "$(covers "$COVERS_REPO" "$REBASE_SAME" 'exit 1')"
 

@@ -1125,6 +1125,13 @@ assert_eq 0 $?
 assert_contains "$out" "LOCAL_REVIEWED: no"
 assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
+it "decide-next: claude-hooks が local-review-covers を知らなければ（使い方で終了コード 2）、入れ直しを案内して止める"
+# claude-sync はスクリプトだけを入れ替え、バイナリは rebuild まで古いまま
+make_fake_tool claude-hooks '*) exit 2 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_contains "$out" "rebuild"
+
 it "decide-next: 記録を確かめられなければ（local-review-covers の失敗）、記録済みとみなさずに止める"
 make_fake_tool claude-hooks '*) exit 3 ;;'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
