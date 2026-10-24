@@ -48,6 +48,12 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 - デプロイ先は上流の完全なコピー（`rsync --delete`）。ローカルで編集しても rebuild で戻る
 - `claude-sync` コマンドは flake input を知らないため、外部スキルは rebuild でのみ同期される
 
+## 文脈を足す hook
+
+禁止ではなく文脈を足す hook は、`claude-code.nix` が settings.json に登録する（`claude-hooks` のルールではない）。
+
+- `UserPromptSubmit`: ターンごとに `date '+現在時刻: %F %H:%M %Z'` の 1 行を文脈に入れる。報告とメモリに書く時刻を推測しないため（推定で数時間先の時刻を書いた）
+
 ## hook が強制するルール
 
 決定的に判定できるルールは SKILL.md の文章ではなく hook で強制する（迂回できないゲート）。

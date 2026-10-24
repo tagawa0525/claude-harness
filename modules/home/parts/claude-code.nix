@@ -1,8 +1,8 @@
 # =============================================================================
 # Claude Code の設定
 # =============================================================================
-# Claude Code CLI、グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook
-# （./claude-hooks、Rust 製 1 バイナリ）の配置、settings.json 管理
+# Claude Code CLI、グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook、
+# （./claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻）の登録、settings.json 管理
 # （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
 {
@@ -36,6 +36,9 @@ let
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
   claudeHookTimeout = 30000; # pre-merge-check が gh に数回問い合わせる
+  # UserPromptSubmit hook。報告とメモリに書く時刻を推測しないため、ターンごとに現在時刻を 1 行、文脈に入れる
+  # （標準出力が文脈に足される）。コマンドを変えても古い登録を消せるよう、jq は先頭の date '+現在時刻 で識別する
+  promptSubmitDateCmd = "date '+現在時刻: %F %H:%M %Z'";
   # 旧 bash hook のファイル名。settings.json の登録と ~/.claude/hooks の残骸を掃除するために残す
   legacyHookFiles = [
     "block-main-commit.sh"
@@ -293,6 +296,8 @@ in
       ${pkgs.jq}/bin/jq \
         --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
         --argjson timeout ${toString claudeHookTimeout} \
+        --arg dateCmd ${lib.escapeShellArg promptSubmitDateCmd} \
+        --arg dateCmdPrefix "date '+現在時刻" \
         --argjson legacy '${builtins.toJSON legacyHookFiles}' \
         --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
         '. + $static |
@@ -308,6 +313,13 @@ in
             else
               . + [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
             end
+        ) |
+        # 現在時刻の hook の登録を 1 件にする（他の UserPromptSubmit hook は残す）
+        .hooks.UserPromptSubmit |= (
+          (. // [])
+          | map(.hooks |= map(select((.command | tostring | startswith($dateCmdPrefix)) | not)))
+          | map(select((.hooks | length) > 0))
+          + [{"hooks": [{"type": "command", "command": $dateCmd}]}]
         )' \
         "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
       echo "Claude Code: settings and hooks updated in settings.json"
