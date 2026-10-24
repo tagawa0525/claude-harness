@@ -172,7 +172,10 @@ fn local_review_rebase_source(marks: &str) -> Option<&str> {
         .last()?
         .strip_prefix("<!-- local-review sha=")?;
     let (sha, rest) = rest.split_once(' ')?;
-    (!sha.is_empty() && rest.starts_with("high=0 ")).then_some(sha)
+    // 形は record-local-review.sh が書く 16 進の小文字。崩れた記録は High ありと同じく比較元にしない
+    // （scripts/lib/local-review.sh も同じ読み方をする）
+    let hex = !sha.is_empty() && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    (hex && rest.starts_with("high=0 ")).then_some(sha)
 }
 
 /// `claude-hooks same-pr-diff <owner>/<repo> <base ブランチ> <旧 head> <新 head>` の本体。dir の clone で、base ブランチの
@@ -818,6 +821,9 @@ mod tests {
                      <!-- local-review sha=bbb high=1 medium=0 low=0 -->";
         assert_eq!(local_review_rebase_source(marks), None);
         let marks = "<!-- local-review sha=aaa high=10 medium=0 low=0 -->";
+        assert_eq!(local_review_rebase_source(marks), None);
+        let marks = "<!-- local-review sha=aaa high=0 medium=0 low=0 -->\n\
+                     <!-- local-review sha=CCC high=0 medium=0 low=0 -->";
         assert_eq!(local_review_rebase_source(marks), None);
     }
 

@@ -39,6 +39,10 @@ fn same_pr_diff(args: &[String]) -> ! {
     };
     let same = std::env::current_dir()
         .is_ok_and(|dir| rules::same_pr_diff_for_repo(&dir, repo, base_ref, old, new));
+    // gh や git を起動できなかった理由（output::notice）は、違うときの終了コード 1 と見分けられるよう標準エラーに出す
+    for notice in output::take_notices() {
+        eprintln!("{notice}");
+    }
     std::process::exit(if same { 0 } else { 1 });
 }
 
