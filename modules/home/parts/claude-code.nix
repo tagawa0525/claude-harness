@@ -36,6 +36,9 @@ let
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
   claudeHookTimeout = 30000; # pre-merge-check が gh に数回問い合わせる
+  # UserPromptSubmit hook。報告とメモリに書く時刻を推測しないため、ターンごとに現在時刻を 1 行、文脈に入れる
+  # （メモリに「date で取る」と書いても推定で 1〜3 時間先の時刻を書いた）。標準出力が文脈に足される
+  promptSubmitDateCmd = "date '+現在時刻: %F %H:%M %Z'";
   # 旧 bash hook のファイル名。settings.json の登録と ~/.claude/hooks の残骸を掃除するために残す
   legacyHookFiles = [
     "block-main-commit.sh"
@@ -293,6 +296,7 @@ in
       ${pkgs.jq}/bin/jq \
         --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
         --argjson timeout ${toString claudeHookTimeout} \
+        --arg dateCmd ${lib.escapeShellArg promptSubmitDateCmd} \
         --argjson legacy '${builtins.toJSON legacyHookFiles}' \
         --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
         '. + $static |
@@ -308,6 +312,11 @@ in
             else
               . + [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
             end
+        ) |
+        # 現在時刻の hook の登録を 1 件にする（他の UserPromptSubmit hook は残す）
+        .hooks.UserPromptSubmit |= (
+          ((. // []) | map(select(any(.hooks[]?; .command == $dateCmd) | not)))
+          + [{"hooks": [{"type": "command", "command": $dateCmd}]}]
         )' \
         "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
       echo "Claude Code: settings and hooks updated in settings.json"
