@@ -1,4 +1,4 @@
-//! ルール = 旧 bash hook 1 本。名前は旧ファイル名から .sh を除いたもの
+//! ルール = 1 つのツールの呼び出しへの 1 つの検査。Bash のルールの名前は、移す前の bash hook のファイル名から .sh を除いたもの
 
 use crate::input::Input;
 use crate::output::Finding;

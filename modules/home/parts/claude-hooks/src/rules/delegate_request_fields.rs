@@ -1,11 +1,12 @@
 //! delegate-request-fields: /delegate を呼ぶ Agent の依頼に、定型の 6 つの欄がそろっているかを確かめる
 //!
 //! 依頼の定型（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）は、事実を「前提」の欄に
-//! 1 行ずつ分けて書かせる。欄が抜けると、書く側は出典を開いたかを見返せず、受ける側は本文から事実を拾い出す。
-//! 規則の文では漏れが止まらなかったので、欄の有無をここで機械で判定する。
+//! 1 行ずつ分けて書かせる。欄が欠けると、書く側は出典を開いたかを見返せず、受ける側は本文から事実を拾い出す。
+//! 欄の有無は依頼の文字列だけで決まるので、送る前にここで判定する。
 //!
-//! - 対象: prompt に `/delegate` の語がある Agent の呼び出し。`/code-review` や Explore などへの依頼は見ない
-//! - 依頼の置き場: prompt に「依頼文は <絶対パス> にある」があれば、そのファイルを読んで判定する。無ければ prompt を判定する
+//! - 依頼の置き場: prompt に「依頼文は <絶対パス> にある」があれば、そのファイル。無ければ prompt
+//! - 対象: prompt か依頼のファイルの、空でない最初の行に「/delegate を呼び」（呼ぶ、呼んで）がある呼び出し。定型の
+//!   1 行目がこの句なので、/delegate に触れるだけの prompt（/delegate を調べる依頼、差分の引用）は見ない
 //! - 見出し: 行頭が欄の名前で始まり、直後に `:` か `（…）:` が続く行（`前提:`、`前提（確かめていない）:`）
 //!
 //! 欄の中身（出典の有無、本文の事実）は判定しない。エスケープはない（欄を足す以外に直す方法が無いため）。
@@ -29,10 +30,9 @@ const FIELDS: [&str; 6] = [
     "変える範囲",
 ];
 
-/// `/delegate` の語。前後が英数字やパスの文字なら別の語（`/delegated`、`skills/delegate/SKILL.md`）とする。
-/// 日本語の文字は前後に来てよいので `\w`（Unicode）でなく ASCII の文字で区切る
-static DELEGATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|[^A-Za-z0-9_./-])/delegate(?:$|[^A-Za-z0-9_-])").unwrap());
+/// /delegate を呼ぶ句。「/delegate を呼ばずに」は呼ばない文なので、活用の形を限る
+static CALL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/delegate\s*を呼(?:び|ぶ|んで)").unwrap());
 
 static POINTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"依頼文は\s*`?(/[^\s`]+)`?\s*にある").unwrap());
@@ -44,6 +44,13 @@ static HEADINGS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         .collect()
 });
 
+/// 空でない最初の行が /delegate を呼ぶ句を持つか
+fn calls_delegate(text: &str) -> bool {
+    text.lines()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|l| CALL.is_match(l))
+}
+
 impl Rule for DelegateRequestFields {
     fn name(&self) -> &'static str {
         "delegate-request-fields"
@@ -54,32 +61,31 @@ impl Rule for DelegateRequestFields {
     }
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
-        if !DELEGATE.is_match(&input.prompt) {
-            return Vec::new();
-        }
+        let prompt_calls = calls_delegate(&input.prompt);
         // place は欠けた欄を書いた場所、target は欄を足す先（拒否の文言に使う）
         let (request, place, target) = match POINTER.captures(&input.prompt) {
             Some(c) => {
-                let path = input.cwd.join(&c[1]);
-                match std::fs::read_to_string(&path) {
-                    Ok(text) => (
-                        text,
-                        format!("依頼文のファイル {}", path.display()),
-                        "ファイル",
-                    ),
-                    Err(e) => {
+                let path = &c[1];
+                match std::fs::read_to_string(path) {
+                    Ok(text) if prompt_calls || calls_delegate(&text) => {
+                        (text, format!("依頼文のファイル {path}"), "ファイル")
+                    }
+                    Ok(_) => return Vec::new(),
+                    Err(e) if prompt_calls => {
                         return vec![Finding::Deny(format!(
-                            "/delegate の依頼文のファイル {} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の「依頼文は <絶対パス> にある」のパスを直してください。",
-                            path.display()
+                            "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の「依頼文は <絶対パス> にある」のパスを直してください。"
                         ))];
                     }
+                    // /delegate を呼ぶかは読めないファイルの側にあるかもしれないが、prompt が呼ばないなら対象と決められない
+                    Err(_) => return Vec::new(),
                 }
             }
-            None => (
+            None if prompt_calls => (
                 input.prompt.clone(),
                 "Agent の prompt".to_string(),
                 "prompt",
             ),
+            None => return Vec::new(),
         };
         let missing: Vec<&str> = FIELDS
             .iter()

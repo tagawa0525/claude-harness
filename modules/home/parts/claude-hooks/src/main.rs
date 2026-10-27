@@ -86,7 +86,8 @@ fn main() {
         .and_then(|_| input::Input::parse(&raw));
     let Some(input) = input else {
         output::notice(
-            "claude-hooks: hook の入力を読めません。このコマンドを判定していません".to_string(),
+            "claude-hooks: hook の入力を読めません。このツールの呼び出しを判定していません"
+                .to_string(),
         );
         if let Some(json) = output::render(&[], &output::take_notices()) {
             println!("{json}");
@@ -111,7 +112,7 @@ fn main() {
                     match std::panic::catch_unwind(run) {
                         Ok(f) => findings.extend(f),
                         Err(payload) => output::notice(format!(
-                            "claude-hooks: ルール {} が panic で止まり、このコマンドを判定していません: {}",
+                            "claude-hooks: ルール {} が panic で止まり、このツールの呼び出しを判定していません: {}",
                             rule.name(),
                             panic_message(&*payload)
                         )),
