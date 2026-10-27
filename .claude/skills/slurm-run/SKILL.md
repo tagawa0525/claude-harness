@@ -73,12 +73,14 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   ログのファイル名に使い、`squeue` でも見分けるので、題材が分かる名前にする
 - コマンドは投げたときのディレクトリで、`--export=ALL`（今の環境変数、nix の開発シェルの PATH を含む）で走る。
   r995 以外のホストでは `/mnt/r995/github`（r995 の `~/github` の NFS）の下で投げる
-- ジョブの中のプログラムの時間とメモリは、`slurm-run.sh` の `TIME:` 行と `sacct -j <番号> -o Elapsed,MaxRSS` で取り、
-  コマンドを `/usr/bin/time` で包まない。r995 は NixOS で `/usr/bin/time` が無く、ジョブは即座に失敗する（終了コード 127。
-  標準エラーを自分のファイルに向けていると、Slurm のログには `EXIT: 127` しか残らない。2026-10-24 に担当の 3 本が 0 秒で
+- ジョブの中のプログラムの時間とメモリは、`slurm-run.sh` の `TIME:` 行と `sacct -j <番号>.batch -o Elapsed,MaxRSS`
+  （MaxRSS は `.batch` の行にだけ入る）で取り、コマンドを `/usr/bin/time` で包まない。r995 は NixOS で `/usr/bin/time` が
+  無く、ジョブは 0 秒で失敗する（shell の「command not found」は 127 だが、`... || exit 1` でつないでいると 1 になる。
+  標準エラーを自分のファイルに向けていると、Slurm のログには `TIME:` 行しか残らない。2026-10-24 に担当の 3 本が 0 秒で
   FAILED になり、投げ直した）。どうしてもプログラムだけの時間が要るときは、ジョブの PATH に GNU time があることを
-  `command -v time` で確かめてから `command time -o <ファイル> -f "%e s %M KB" <コマンド>` と書く（bash の予約語 `time` は
-  `-o` と `-f` を受けないので `command` が要る）
+  `type -P time`（`command -v time` は予約語の `time` を返すので使えない）で確かめてから
+  `command time -o <ファイル> -f "%e s %M KB" <コマンド>` と書く（bash の予約語 `time` は `-o` と `-f` を受けないので
+  `command` が要る）
 - `slurm-run.sh` は必ず `cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh ...` で呼ぶ。ジョブは呼んだときの `$PWD` で
   走り、連絡先にもその `$PWD` が入る。`cd ... &` のように `&` で切ると cd が別のサブシェルになり、ジョブは呼んだ場所
   （main の作業ツリーなど）で走る。2026-10-14 に `dvc repro` が main の作業ツリーで走り、dvc.lock と出力を書き換えた。
