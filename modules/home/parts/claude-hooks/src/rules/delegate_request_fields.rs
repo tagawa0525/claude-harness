@@ -218,6 +218,8 @@ mod tests {
         for prompt in [
             "/delegate の手順がどこで前提の欄を確かめるか調べて",
             "/delegate を呼ばずに、この worktree で直接直す",
+            "/delegate を呼ぶ必要はない。この worktree で直接直す",
+            "/delegate を呼びません。",
             "次の差分をレビューする\n+最初に /delegate を呼び、その手順に従って進める。",
         ] {
             assert!(check(prompt).is_empty(), "{prompt}");
@@ -291,5 +293,47 @@ mod tests {
         let reason = deny_reason(&findings);
         assert!(reason.contains(&path.display().to_string()), "{reason}");
         assert!(reason.contains("読めません"), "{reason}");
+    }
+
+    #[test]
+    fn inline_request_citing_another_brief_is_judged_by_the_prompt() {
+        // 依頼のファイルを指すのは 1 行目の句だけ。前提の欄で別の依頼文に触れても、prompt を判定する
+        let prompt = COMPLETE.replace(
+            "- y は z（docs/a.md）\n",
+            "- 前の依頼文は /nonexistent/brief-old.md にある（読んだ）\n",
+        );
+        assert!(check(&prompt).is_empty());
+    }
+
+    #[test]
+    fn request_file_in_corner_brackets_is_read() {
+        let tmp = TempDir::new("brackets");
+        let path = tmp.0.join("brief.md");
+        std::fs::write(&path, COMPLETE).unwrap();
+        let prompt = format!(
+            "依頼文は「{}」にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            path.display()
+        );
+        assert!(check(&prompt).is_empty());
+    }
+
+    #[test]
+    fn request_file_given_by_a_relative_path_is_denied_with_the_fix() {
+        let prompt = "依頼文は ~/brief.md にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。";
+        let findings = check(prompt);
+        let reason = deny_reason(&findings);
+        assert!(reason.contains("~/brief.md"), "{reason}");
+        assert!(reason.contains("絶対パス"), "{reason}");
+    }
+
+    #[test]
+    fn request_file_that_is_not_a_regular_file_is_denied_without_reading() {
+        let tmp = TempDir::new("dir");
+        let prompt = format!(
+            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            tmp.0.display()
+        );
+        let findings = check(&prompt);
+        assert!(deny_reason(&findings).contains("読めません"));
     }
 }
