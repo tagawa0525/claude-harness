@@ -13,6 +13,10 @@ allowed-tools:
   - Bash(git branch*)
   - Bash(git log*)
   - Bash(git diff*)
+  - Bash(git range-diff*)
+  - Bash(git merge-base*)
+  - Bash(git rev-parse*)
+  - Bash(git symbolic-ref*)
   - Bash(git show*)
   - Bash(git switch*)
   - Bash(git rebase*)
@@ -68,6 +72,10 @@ git branch main [root-commit]
 
 ### rebase（`BEHIND` が 0 でない）
 
+rebase の前に、古い土台（`git merge-base main [branch]`）と旧先端（`git rev-parse [branch]`）を控える（「レビュー」の rebase 後の判断で
+`git range-diff <古い土台>..<旧先端> main..[branch]` と `git log <古い土台>..main` に使う。rebase の後では取れない）。同じ範囲を触る
+ブランチは並行に進めず、マージしてから次を始める（並行の数が多いほど main が進み、rebase とレビューのやり直しが増える。ユーザー 2026-10-21）。
+
 ```bash
 git -C [TARGET_WORKTREE] rebase main
 ```
@@ -109,6 +117,9 @@ main との分岐点からの変更を検査する。マージ時にも hook が
 
 失敗したら原因を直してコミットし、もう一度チェックする。通ってからマージする。
 
+全体の `cargo test` などで前景の上限（600 秒）を超えうるので、チェックは `run_in_background` で回し、終わりの通知を待つ。
+`git commit … && run-checks.sh` のように commit とチェックを 1 つの前景のコマンドにつながない。
+
 ### レビュー（自動レビューの代わり）
 
 レベルと対象はスクリプトが決める。worktree で作業していると、引数なしの `/code-review` は呼び出し元の cwd
@@ -143,6 +154,12 @@ main との分岐点からの変更を検査する。マージ時にも hook が
   - 2026-10-14 に 13〜15 周回ったレビューが、文言の指摘で止まらず使用量を圧迫した
 - 積み重なったブランチ（`STACKED_ON` が none でない）は、`review-level.sh` に `--base <土台のブランチ>` を付ける
 - 対応しない指摘は、その理由をユーザーに伝える
+- レビューを済ませたブランチを rebase した後は、変更の中身で回すかを決める（無駄なレビューは使用量を消す。初めてのレビューは
+  省かない）。次の 2 つがそろえば回さない（チェックが通ることは「チェック」の段で済んでいる）: `git range-diff <古い土台>..<旧先端> main..[branch]` で
+  自分のコミットが同一であること、rebase で入った main のコミット（`git log <古い土台>..main`）がブランチの変更と同じファイルにも
+  関わる挙動にも触れないこと（ファイルは `git diff --name-only <古い土台> main` とブランチの変更ファイルの共通部分で、挙動はブランチが
+  呼ぶ関数や型の名前を main の差分で検索して確かめる）。衝突を解いた、同じファイルや関わる挙動に触れた、のどちらかなら回す。回さないときは、マージの本文に range-diff と main の変更を比べた根拠を書く
+  （ユーザーに判断を任されても、ユーザーが認めたとは書かず、「担当が range-diff と main の変更から判断した」と書く）
 
 ### マージコミットメッセージ
 
@@ -187,6 +204,9 @@ EOF
 マージは hook（品質チェック、本文の語の検査）に止められることがある。成否は終了コードで判定するので、`git merge` の出力を
 `tail` などにつながず（終了コードが消える）、後片付けとは別の呼び出しにする。通ったら、main の先頭がこのマージコミットであること
 （`git -C [DEFAULT_WORKTREE] rev-parse HEAD^2`（none なら今の worktree）がブランチの先端と一致する）を確かめてから後片付けに進む。
+マージは 1 本ずつ前景で行い（hook のチェックが数分かかるので、Bash の `timeout` を上限の 600000 ms にする）、git の書き込み（rebase、merge、commit）をバックグラウンドに重ねない。前景の上限（600 秒）を超えて
+バックグラウンドに移ったコマンドがあるうちは、その終わりの通知まで同じリポジトリに git で書き込まない（2026-10-22 に、移った
+マージの上に同じブランチの rebase とマージを重ねて競合し、main にインデックスの残骸が残った）。チェックの回し方は「チェック」の節。
 拒まれると、マージはステージされたまま main の worktree に MERGE_HEAD が残る:
 
 - 本文の語で拒まれたら、本文を直して `git -C [DEFAULT_WORKTREE] commit -m "…"` でそのマージを終える（品質チェックは
