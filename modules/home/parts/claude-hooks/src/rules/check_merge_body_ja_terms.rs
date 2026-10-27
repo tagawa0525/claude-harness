@@ -661,6 +661,19 @@ exit 0
     }
 
     #[test]
+    fn denies_unrelated_chained_command_without_split_calls_hint() {
+        let r = deny_for("git switch main && ");
+        assert!(r.contains("誤語 => 正語"), "{r}");
+        assert!(!r.contains("分けてください"), "{r}");
+    }
+
+    #[test]
+    fn denies_wrapped_merge_without_split_calls_hint() {
+        let r = deny_for("true && bash -c 'git status' && ");
+        assert!(!r.contains("分けてください"), "{r}");
+    }
+
+    #[test]
     fn denies_inline_message_without_split_calls_hint() {
         let r = only_deny(&check(
             "true && git merge --no-ff feat/a -m 'Merge: a' -m '誤語する'",
