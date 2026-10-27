@@ -145,17 +145,17 @@ fn has_message(args: &[Arg]) -> bool {
     })
 }
 
-/// 本文に -F のファイルが残るか（`--no-message` はそれまでの -F を本文から外す。merge_message と同じ順）
-fn body_has_file(args: &[Arg]) -> bool {
-    let mut file = false;
-    for (item, _) in items_with_values("merge", args) {
-        match message_option(&item) {
-            Some(MessageOption::File) => file = true,
-            Some(MessageOption::NoMessage) => file = false,
+/// 本文に残る -F のファイルの名前（書いたまま。`--no-message` はそれまでの -F を本文から外す）
+fn body_files(args: &[Arg]) -> Vec<&str> {
+    let mut files = Vec::new();
+    for (item, value) in items_with_values("merge", args) {
+        match (message_option(&item), value) {
+            (Some(MessageOption::File), Some((value, _))) => files.push(value),
+            (Some(MessageOption::NoMessage), _) => files.clear(),
             _ => {}
         }
     }
-    file
+    files
 }
 
 /// `$(cat <<[-]DELIM\n本文\nDELIM\n)` の本文と、区切りをクォートしたか（'EOF'、"EOF"。本文を展開しない）。
@@ -261,7 +261,7 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
 const SPLIT_CALLS_HINT: &str = "同じコマンドの前段で -F のファイルを直しても、拒んだときはコマンド全体が止まり、\
      前段も実行されていません（ファイルは直る前のままです）。ファイルを直す呼び出しと git merge を分けてください";
 
-/// 崩れた語を止める文言。`chained_file` は、-F のファイルが本文に残り、merge の前に cd 以外のコマンドがあるとき
+/// 崩れた語を止める文言。`chained_file` は、merge の前のコマンドが本文に残る -F のファイルを引数に取るとき
 fn deny_reason(terms: &[String], chained_file: bool) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
     let hint = if chained_file {
@@ -344,14 +344,15 @@ impl CheckMergeBodyJaTerms {
             match lint(check, &dir, &message) {
                 Lint::Clean => {}
                 Lint::Terms(terms) => {
-                    let chained = shell
-                        .commands()
-                        .iter()
-                        .any(|c| c.start < cmd.start && c.name != "cd");
-                    out.push(Finding::Deny(deny_reason(
-                        &terms,
-                        chained && body_has_file(args),
-                    )))
+                    // 前段が -F のファイルを引数に取るとき（sed -i msg.txt など）だけ分け方を示す。
+                    // リダイレクト（cat > msg.txt）は引数に出ないので数えない
+                    let files = body_files(args);
+                    let chained = !files.is_empty()
+                        && shell.commands().iter().any(|c| {
+                            c.start < cmd.start
+                                && c.args.iter().any(|a| files.contains(&a.text.as_str()))
+                        });
+                    out.push(Finding::Deny(deny_reason(&terms, chained)))
                 }
                 Lint::Failed(why) => notice(format!(
                     "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
@@ -682,11 +683,17 @@ exit 0
     }
 
     #[test]
-    fn body_has_file_drops_file_before_no_message() {
-        assert!(body_has_file(&args("git merge -F msg.txt feat/a")));
-        assert!(!body_has_file(&args(
-            "git merge -F msg.txt --no-message -m 'Merge: a' feat/a"
-        )));
+    fn body_files_drops_files_before_no_message() {
+        assert_eq!(
+            body_files(&args("git merge -F msg.txt feat/a")),
+            ["msg.txt"]
+        );
+        assert!(
+            body_files(&args(
+                "git merge -F msg.txt --no-message -m 'Merge: a' feat/a"
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
