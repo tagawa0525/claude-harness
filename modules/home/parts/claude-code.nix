@@ -307,11 +307,15 @@ in
           # 旧 bash hook（ファイル名で識別）の登録を外し、空になった matcher を消す
           | map(.hooks |= map(select((.command | tostring) as $c | ($legacy | any(. as $f | $c | endswith("/" + $f))) | not)))
           | map(select((.hooks | length) > 0))
-          # バイナリの登録を 1 件にする（あれば command / timeout を更新、なければ追加）
+          # バイナリの登録を 1 件にする（あれば matcher / command / timeout を更新、なければ追加）。
+          # バイナリは Bash のコマンドと Agent の依頼（/delegate の欄）を検査する
           | if any(.[]; any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use"))) then
-              map(.hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .command = $cmd | .timeout = $timeout else . end))
+              map(if any(.hooks[]?; (.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then
+                .matcher = "Bash|Agent"
+                | .hooks |= map(if ((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use")) then .command = $cmd | .timeout = $timeout else . end)
+              else . end)
             else
-              . + [{"matcher": "Bash", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
+              . + [{"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
             end
         ) |
         # 現在時刻の hook の登録を 1 件にする（他の UserPromptSubmit hook は残す）
