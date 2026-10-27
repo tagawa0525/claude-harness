@@ -1,7 +1,8 @@
 //! claude-hooks: Claude Code の PreToolUse hook。
 //!
-//! 標準入力の hook JSON（tool_name / tool_input.command / tool_input.run_in_background / cwd）を読み、
-//! Bash ツールのコマンドを構文解析して各ルールを評価し、deny / additionalContext を JSON で返す。
+//! 標準入力の hook JSON（tool_name / tool_input.command / tool_input.run_in_background / tool_input.prompt / cwd）を
+//! 読み、tool_name のツールを検査するルールを評価して、deny / additionalContext を JSON で返す。Bash のルールは
+//! コマンドを構文解析して判定し、Agent のルールは prompt を判定する。
 //! 判定できなかった理由（git を起動できない、ルールの panic）は systemMessage で利用者に見せる（ADR-0033）。
 //! 出力なし = 許可。終了コードは常に 0（hook の不具合でツール呼び出しを壊さない）。
 //!
@@ -92,7 +93,8 @@ fn main() {
         }
         return;
     };
-    if input.tool_name != "Bash" {
+    let rules = rules::for_tool(&input.tool_name);
+    if rules.is_empty() {
         return;
     }
 
@@ -101,7 +103,7 @@ fn main() {
     let mut findings = Vec::new();
     match std::panic::catch_unwind(|| shell::Shell::parse(&input.command)) {
         Ok(shell) => {
-            for rule in rules::all() {
+            for rule in &rules {
                 if selected.is_empty() || selected.contains(&rule.name()) {
                     // input と shell はルールが書き換えないので、panic の後もほかのルールに渡してよい。panic したルールが
                     // それまでに足した理由（output::notice）は残る

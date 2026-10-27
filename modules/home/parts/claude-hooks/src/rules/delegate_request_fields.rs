@@ -1,11 +1,48 @@
 //! delegate-request-fields: /delegate を呼ぶ Agent の依頼に、定型の 6 つの欄がそろっているかを確かめる
+//!
+//! 依頼の定型（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）は、事実を「前提」の欄に
+//! 1 行ずつ分けて書かせる。欄が抜けると、書く側は出典を開いたかを見返せず、受ける側は本文から事実を拾い出す。
+//! 規則の文では漏れが止まらなかったので、欄の有無をここで機械で判定する。
+//!
+//! - 対象: prompt に `/delegate` の語がある Agent の呼び出し。`/code-review` や Explore などへの依頼は見ない
+//! - 依頼の置き場: prompt に「依頼文は <絶対パス> にある」があれば、そのファイルを読んで判定する。無ければ prompt を判定する
+//! - 見出し: 行頭が欄の名前で始まり、直後に `:` か `（…）:` が続く行（`前提:`、`前提（確かめていない）:`）
+//!
+//! 欄の中身（出典の有無、本文の事実）は判定しない。エスケープはない（欄を足す以外に直す方法が無いため）。
 
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::Shell;
+use regex::Regex;
+use std::sync::LazyLock;
 
 pub struct DelegateRequestFields;
+
+/// 定型の欄の名前（SKILL.md の定型の見出しと同じ順）
+const FIELDS: [&str; 6] = [
+    "リポジトリ",
+    "ブランチ",
+    "何をするか",
+    "前提",
+    "完成の形",
+    "変える範囲",
+];
+
+/// `/delegate` の語。前後が英数字やパスの文字なら別の語（`/delegated`、`skills/delegate/SKILL.md`）とする。
+/// 日本語の文字は前後に来てよいので `\w`（Unicode）でなく ASCII の文字で区切る
+static DELEGATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|[^A-Za-z0-9_./-])/delegate(?:$|[^A-Za-z0-9_-])").unwrap());
+
+static POINTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"依頼文は\s*`?(/[^\s`]+)`?\s*にある").unwrap());
+
+static HEADINGS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    FIELDS
+        .iter()
+        .map(|f| Regex::new(&format!(r"(?m)^{f}(?:（[^）\n]*）)?:")).unwrap())
+        .collect()
+});
 
 impl Rule for DelegateRequestFields {
     fn name(&self) -> &'static str {
@@ -16,8 +53,52 @@ impl Rule for DelegateRequestFields {
         "Agent"
     }
 
-    fn check(&self, _input: &Input, _shell: &Shell) -> Vec<Finding> {
-        Vec::new()
+    fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
+        if !DELEGATE.is_match(&input.prompt) {
+            return Vec::new();
+        }
+        // place は欠けた欄を書いた場所、target は欄を足す先（拒否の文言に使う）
+        let (request, place, target) = match POINTER.captures(&input.prompt) {
+            Some(c) => {
+                let path = input.cwd.join(&c[1]);
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => (
+                        text,
+                        format!("依頼文のファイル {}", path.display()),
+                        "ファイル",
+                    ),
+                    Err(e) => {
+                        return vec![Finding::Deny(format!(
+                            "/delegate の依頼文のファイル {} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の「依頼文は <絶対パス> にある」のパスを直してください。",
+                            path.display()
+                        ))];
+                    }
+                }
+            }
+            None => (
+                input.prompt.clone(),
+                "Agent の prompt".to_string(),
+                "prompt",
+            ),
+        };
+        let missing: Vec<&str> = FIELDS
+            .iter()
+            .zip(HEADINGS.iter())
+            .filter(|(_, heading)| !heading.is_match(&request))
+            .map(|(f, _)| *f)
+            .collect();
+        if missing.is_empty() {
+            return Vec::new();
+        }
+        vec![Finding::Deny(format!(
+            "/delegate を呼ぶ依頼に定型の欄がそろっていません（{place}）。欠けた欄: {}\n\
+             依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）。\n\
+             判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
+             修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
+            missing.join("、"),
+            FIELDS.join("、"),
+            target,
+        ))]
     }
 }
 

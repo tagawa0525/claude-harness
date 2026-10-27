@@ -131,11 +131,11 @@ pub fn by_name(name: &str) -> Option<&'static dyn Rule> {
 
 /// tool_name のツールを検査するルール
 pub fn for_tool(tool_name: &str) -> Vec<&'static dyn Rule> {
-    if tool_name == "Bash" {
-        all().to_vec()
-    } else {
-        Vec::new()
-    }
+    all()
+        .iter()
+        .copied()
+        .filter(|r| r.tool() == tool_name)
+        .collect()
 }
 
 #[cfg(test)]
