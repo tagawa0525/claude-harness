@@ -359,4 +359,11 @@ mod tests {
         let findings = check(&prompt);
         assert!(deny_reason(&findings).contains("読めません"));
     }
+
+    #[test]
+    fn inline_request_saying_it_is_below_is_judged_by_the_prompt() {
+        // 「依頼文は下にある」はパスでないので、ファイルを指す句と見なさない
+        let prompt = format!("依頼文は下にある。{COMPLETE}");
+        assert!(check(&prompt).is_empty());
+    }
 }
