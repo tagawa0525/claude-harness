@@ -107,7 +107,7 @@ mod tests {
         for prompt in [
             "/code-review high /home/u/repo-feat-x",
             "Explore the hooks crate and report where tool_name is read",
-            "依頼に /delegated のような語があっても、/delegate を呼ぶ依頼ではない",
+            "/delegated の語や ~/.claude/skills/delegate/SKILL.md のパスを読む依頼は対象外",
         ] {
             assert!(check(prompt, &temp_dir("other")).is_empty(), "{prompt}");
         }
