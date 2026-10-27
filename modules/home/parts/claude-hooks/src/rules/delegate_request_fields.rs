@@ -4,8 +4,9 @@
 //! 1 行ずつ分けて書かせる。欄が欠けると、書く側は出典を開いたかを見返せず、受ける側は本文から事実を拾い出す。
 //! 欄の有無は依頼の文字列だけで決まるので、送る前にここで判定する。
 //!
-//! - 依頼の置き場: prompt に「依頼文は <絶対パス> にある」があれば、そのファイル。無ければ prompt
-//! - 対象: prompt か依頼のファイルの、空でない最初の行に「/delegate を呼び」（呼ぶ、呼んで）がある呼び出し。定型の
+//! - 依頼の置き場: prompt の空でない最初の行に「依頼文は <絶対パス> にある」（パスは `` ` `` か「」で囲んでもよい）が
+//!   あれば、そのファイル。無ければ prompt。2 行目以降の同じ句は、ほかの依頼文への言及として扱う
+//! - 対象: prompt か依頼のファイルの、空でない最初の行に「/delegate を呼び、」（呼ぶ。、呼んで、）がある呼び出し。定型の
 //!   1 行目がこの句なので、/delegate に触れるだけの prompt（/delegate を調べる依頼、差分の引用）は見ない
 //! - 見出し: 行頭が欄の名前で始まり、直後に `:` か `（…）:` が続く行（`前提:`、`前提（確かめていない）:`）
 //!
@@ -30,12 +31,17 @@ const FIELDS: [&str; 6] = [
     "変える範囲",
 ];
 
-/// /delegate を呼ぶ句。「/delegate を呼ばずに」は呼ばない文なので、活用の形を限る
+/// /delegate を呼ぶ句。活用の形と、その後の句読点か行末までを見る。「呼ばずに」「呼びません」「呼ぶ必要はない」は
+/// 呼ばない文なので、語の途中で切れる形を数えない
 static CALL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"/delegate\s*を呼(?:び|ぶ|んで)").unwrap());
+    LazyLock::new(|| Regex::new(r"/delegate\s*を呼(?:び|ぶ|んで)(?:[、。,.\s]|$)").unwrap());
 
+/// 依頼のファイルを指す句。パスの形（絶対パスか）は句を見つけた後に確かめ、拒否の文言で修正方法を示す
 static POINTER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"依頼文は\s*`?(/[^\s`]+)`?\s*にある").unwrap());
+    LazyLock::new(|| Regex::new(r"依頼文は\s*[`「]?([^\s`「」]+?)[`」]?\s*にある").unwrap());
+
+/// 依頼のファイルの大きさの上限。hook は Agent の呼び出しを待たせるので、依頼文より大きいものを読まない
+const MAX_REQUEST_BYTES: u64 = 1 << 20;
 
 static HEADINGS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     FIELDS
@@ -44,11 +50,28 @@ static HEADINGS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         .collect()
 });
 
+fn first_line(text: &str) -> &str {
+    text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")
+}
+
 /// 空でない最初の行が /delegate を呼ぶ句を持つか
 fn calls_delegate(text: &str) -> bool {
-    text.lines()
-        .find(|l| !l.trim().is_empty())
-        .is_some_and(|l| CALL.is_match(l))
+    CALL.is_match(first_line(text))
+}
+
+/// 依頼のファイルを読む。通常のファイルでないもの（FIFO やデバイス）は、読むと hook が止まるので読まない
+fn read_request(path: &str) -> Result<String, String> {
+    if !path.starts_with('/') {
+        return Err("絶対パスではありません".to_string());
+    }
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("通常のファイルではありません".to_string());
+    }
+    if meta.len() > MAX_REQUEST_BYTES {
+        return Err(format!("{MAX_REQUEST_BYTES} バイトを超えます"));
+    }
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
 impl Rule for DelegateRequestFields {
@@ -63,17 +86,17 @@ impl Rule for DelegateRequestFields {
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
         let prompt_calls = calls_delegate(&input.prompt);
         // place は欠けた欄を書いた場所、target は欄を足す先（拒否の文言に使う）
-        let (request, place, target) = match POINTER.captures(&input.prompt) {
+        let (request, place, target) = match POINTER.captures(first_line(&input.prompt)) {
             Some(c) => {
                 let path = &c[1];
-                match std::fs::read_to_string(path) {
+                match read_request(path) {
                     Ok(text) if prompt_calls || calls_delegate(&text) => {
                         (text, format!("依頼文のファイル {path}"), "ファイル")
                     }
                     Ok(_) => return Vec::new(),
                     Err(e) if prompt_calls => {
                         return vec![Finding::Deny(format!(
-                            "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の「依頼文は <絶対パス> にある」のパスを直してください。"
+                            "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の 1 行目の「依頼文は <絶対パス> にある」のパスを直してください（`~` や相対のパスは使えません）。"
                         ))];
                     }
                     // /delegate を呼ぶかは読めないファイルの側にあるかもしれないが、prompt が呼ばないなら対象と決められない
@@ -100,7 +123,7 @@ impl Rule for DelegateRequestFields {
             "/delegate を呼ぶ依頼に定型の欄がそろっていません（{place}）。欠けた欄: {}\n\
              依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）。\n\
              判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
-             修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
+             修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt の 1 行目に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
             missing.join("、"),
             FIELDS.join("、"),
             target,
