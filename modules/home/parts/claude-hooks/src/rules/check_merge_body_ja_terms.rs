@@ -145,11 +145,17 @@ fn has_message(args: &[Arg]) -> bool {
     })
 }
 
-/// 本文に -F のファイルを含むか
-fn has_message_file(args: &[Arg]) -> bool {
-    items_with_values("merge", args)
-        .iter()
-        .any(|(item, _)| matches!(message_option(item), Some(MessageOption::File)))
+/// 本文に -F のファイルが残るか（`--no-message` はそれまでの -F を本文から外す。merge_message と同じ順）
+fn body_has_file(args: &[Arg]) -> bool {
+    let mut file = false;
+    for (item, _) in items_with_values("merge", args) {
+        match message_option(&item) {
+            Some(MessageOption::File) => file = true,
+            Some(MessageOption::NoMessage) => file = false,
+            _ => {}
+        }
+    }
+    file
 }
 
 /// `$(cat <<[-]DELIM\n本文\nDELIM\n)` の本文と、区切りをクォートしたか（'EOF'、"EOF"。本文を展開しない）。
@@ -250,21 +256,23 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     }
 }
 
-/// 崩れた語を止める文言。`from_file` は本文に -F のファイルを含むとき
-fn deny_reason(terms: &[String], from_file: bool) -> String {
+/// 拒むとコマンド全体が止まるので、同じコマンドの前段で -F のファイルを直す処理（sed -i など）も実行されず、
+/// ファイルは直る前のまま残る。前段だけを外して再実行すると同じ拒否を受けるので、分け方を文言で示す
+const SPLIT_CALLS_HINT: &str = "同じコマンドの前段で -F のファイルを直しても、拒んだときはコマンド全体が止まり、\
+     前段も実行されていません（ファイルは直る前のままです）。ファイルを直す呼び出しと git merge を分けてください";
+
+/// 崩れた語を止める文言。`chained_file` は、-F のファイルが本文に残り、merge の前に cd 以外のコマンドがあるとき
+fn deny_reason(terms: &[String], chained_file: bool) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
-    // この hook はコマンドを実行する前に -F のファイルを読むので、同じコマンドの前段（sed -i など）で
-    // 直しても、直す前の本文で判定して同じ拒否を返す
-    let file_note = if from_file {
-        "\n-F のファイルは、git merge とは別の呼び出しで直してください（この hook はコマンドを実行する前に\
-         ファイルを読むので、同じコマンドの前段で直しても、直す前の本文で判定します）"
+    let hint = if chained_file {
+        format!("\n{SPLIT_CALLS_HINT}")
     } else {
-        ""
+        String::new()
     };
     format!(
         "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
          本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
-         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます{file_note}",
+         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます{hint}",
         list.join("\n")
     )
 }
@@ -336,7 +344,14 @@ impl CheckMergeBodyJaTerms {
             match lint(check, &dir, &message) {
                 Lint::Clean => {}
                 Lint::Terms(terms) => {
-                    out.push(Finding::Deny(deny_reason(&terms, has_message_file(args))))
+                    let chained = shell
+                        .commands()
+                        .iter()
+                        .any(|c| c.start < cmd.start && c.name != "cd");
+                    out.push(Finding::Deny(deny_reason(
+                        &terms,
+                        chained && body_has_file(args),
+                    )))
                 }
                 Lint::Failed(why) => notice(format!(
                     "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
@@ -483,7 +498,7 @@ exit 0
         check_in(command, &dir.0, Some(&check))
     }
 
-    fn deny_reason(findings: &[Finding]) -> String {
+    fn only_deny(findings: &[Finding]) -> String {
         match findings {
             [Finding::Deny(r)] => r.clone(),
             _ => panic!("deny が 1 件のはず"),
@@ -587,7 +602,7 @@ exit 0
 
     #[test]
     fn denies_broken_term_with_correction_and_reason() {
-        let r = deny_reason(&check(
+        let r = only_deny(&check(
             "git merge --no-ff feat/a -m 'Merge: a' -m '誤語する'",
         ));
         assert!(r.contains("誤語 => 正語"), "{r}");
@@ -598,7 +613,7 @@ exit 0
 
     #[test]
     fn denies_broken_term_in_heredoc_message() {
-        let r = deny_reason(&check(
+        let r = only_deny(&check(
             "git merge --no-ff feat/a -m \"$(cat <<'EOF'\nMerge: a\n\n## Why\n誤語\nEOF\n)\"",
         ));
         assert!(r.contains("誤語 => 正語"), "{r}");
@@ -615,31 +630,50 @@ exit 0
             dir.0.display()
         );
         let findings = check_in(&cmd, Path::new("/"), Some(&check));
-        assert!(deny_reason(&findings).contains("誤語 => 正語"));
+        assert!(only_deny(&findings).contains("誤語 => 正語"));
     }
 
-    #[test]
-    fn denies_message_file_with_separate_call_advice() {
-        // hook はコマンドを実行する前に -F のファイルを読むので、同じコマンドの前段（sed -i など）で
-        // 直しても直す前の本文で判定する。文言は、ファイルを直す呼び出しを分けることを示す
+    /// 同じコマンドで -F のファイルを書き換えてから merge する形と、merge だけの形
+    fn deny_for(prefix: &str) -> String {
         let dir = TempDir::new("sep");
         git_init(&dir.0);
         let check = fake_check(&dir);
         std::fs::write(dir.0.join("msg.txt"), "Merge: a\n\n誤語\n").unwrap();
         let cmd = format!(
-            "cd {} && sed -i 's/誤語/正語/' msg.txt && git merge --no-ff -F msg.txt feat/a",
+            "cd {} && {prefix}git merge --no-ff -F msg.txt feat/a",
             dir.0.display()
         );
-        let r = deny_reason(&check_in(&cmd, Path::new("/"), Some(&check)));
-        assert!(r.contains("別の呼び出し"), "{r}");
+        only_deny(&check_in(&cmd, Path::new("/"), Some(&check)))
     }
 
     #[test]
-    fn denies_inline_message_without_file_advice() {
-        let r = deny_reason(&check(
-            "git merge --no-ff feat/a -m 'Merge: a' -m '誤語する'",
+    fn denies_chained_file_edit_with_split_calls_hint() {
+        let r = deny_for("sed -i 's/誤語/正語/' msg.txt && ");
+        assert!(r.contains("前段も実行されていません"), "{r}");
+        assert!(r.contains("分けてください"), "{r}");
+    }
+
+    #[test]
+    fn denies_lone_file_merge_without_split_calls_hint() {
+        let r = deny_for("");
+        assert!(r.contains("誤語 => 正語"), "{r}");
+        assert!(!r.contains("分けてください"), "{r}");
+    }
+
+    #[test]
+    fn denies_inline_message_without_split_calls_hint() {
+        let r = only_deny(&check(
+            "true && git merge --no-ff feat/a -m 'Merge: a' -m '誤語する'",
         ));
-        assert!(!r.contains("別の呼び出し"), "{r}");
+        assert!(!r.contains("分けてください"), "{r}");
+    }
+
+    #[test]
+    fn body_has_file_drops_file_before_no_message() {
+        assert!(body_has_file(&args("git merge -F msg.txt feat/a")));
+        assert!(!body_has_file(&args(
+            "git merge -F msg.txt --no-message -m 'Merge: a' feat/a"
+        )));
     }
 
     #[test]
@@ -756,11 +790,11 @@ exit 0
 
     #[test]
     fn checks_merge_whose_last_option_makes_a_commit() {
-        let r = deny_reason(&check(
+        let r = only_deny(&check(
             "git merge --ff-only --no-ff feat/a -m 'Merge: a' -m '誤語'",
         ));
         assert!(r.contains("誤語 => 正語"), "{r}");
-        let r = deny_reason(&check(
+        let r = only_deny(&check(
             "git merge --squash --no-squash feat/a -m 'Merge: a' -m '誤語'",
         ));
         assert!(r.contains("誤語 => 正語"), "{r}");
@@ -810,7 +844,7 @@ exit 0
 
     #[test]
     fn checks_literal_dollar_in_single_quotes() {
-        let r = deny_reason(&check(
+        let r = only_deny(&check(
             "git merge --no-ff feat/a -m 'Merge: a' -m '$x 誤語'",
         ));
         assert!(r.contains("誤語 => 正語"), "{r}");
@@ -865,7 +899,7 @@ exit 0
     #[test]
     fn ignores_merge_with_no_commit() {
         assert!(check("git merge --no-ff --no-commit feat/a -m 'Merge: a' -m '誤語'").is_empty());
-        let r = deny_reason(&check(
+        let r = only_deny(&check(
             "git merge --no-ff --no-commit --commit feat/a -m 'Merge: a' -m '誤語'",
         ));
         assert!(r.contains("誤語 => 正語"), "{r}");
@@ -891,7 +925,7 @@ exit 0
             "git merge --no-ff feat/a -m'Merge: a' -m'費用 $5 の誤語'",
             "git merge --no-ff feat/a -m 'Merge: a' --message='費用 $5 の誤語'",
         ] {
-            let r = deny_reason(&check(src));
+            let r = only_deny(&check(src));
             assert!(r.contains("誤語 => 正語"), "{src}: {r}");
         }
     }
