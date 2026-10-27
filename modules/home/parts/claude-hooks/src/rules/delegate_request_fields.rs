@@ -36,9 +36,10 @@ const FIELDS: [&str; 6] = [
 static CALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/delegate\s*を呼(?:び|ぶ|んで)(?:[、。,.\s]|$)").unwrap());
 
-/// 依頼のファイルを指す句。パスの形（絶対パスか）は句を見つけた後に確かめ、拒否の文言で修正方法を示す
+/// 依頼のファイルを指す句。パスは `/`、`~`、`.` で始まるものだけを見る（「依頼文は下にある」は指していない）。
+/// 絶対パスかは句を見つけた後に確かめ、拒否の文言で修正方法を示す
 static POINTER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"依頼文は\s*[`「]?([^\s`「」]+?)[`」]?\s*にある").unwrap());
+    LazyLock::new(|| Regex::new(r"依頼文は\s*[`「]?([/~.][^\s`「」]*?)[`」]?\s*にある").unwrap());
 
 /// 依頼のファイルの大きさの上限。hook は Agent の呼び出しを待たせるので、依頼文より大きいものを読まない
 const MAX_REQUEST_BYTES: u64 = 1 << 20;
