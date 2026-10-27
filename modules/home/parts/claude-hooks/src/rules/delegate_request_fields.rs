@@ -117,10 +117,10 @@ mod tests {
 変える範囲: src/
 ";
 
-    fn check(prompt: &str, cwd: &std::path::Path) -> Vec<Finding> {
+    fn check(prompt: &str) -> Vec<Finding> {
         let raw = serde_json::json!({
             "tool_name": "Agent",
-            "cwd": cwd,
+            "cwd": "/",
             "tool_input": { "prompt": prompt, "description": "d" },
         })
         .to_string();
@@ -135,13 +135,25 @@ mod tests {
         }
     }
 
-    fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "claude-hooks-delegate-{}-{name}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> TempDir {
+            let dir = std::env::temp_dir().join(format!(
+                "claude-hooks-delegate-{tag}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            TempDir(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn pointer(path: &std::path::Path) -> String {
@@ -153,7 +165,7 @@ mod tests {
 
     #[test]
     fn request_with_all_fields_passes() {
-        assert!(check(COMPLETE, &temp_dir("all")).is_empty());
+        assert!(check(COMPLETE).is_empty());
     }
 
     #[test]
@@ -162,7 +174,7 @@ mod tests {
             "前提:\n",
             "前提（出典で確かめたもの）:\n- a（b）\n前提（確かめていない。確かめることが作業の一部）:\n",
         );
-        assert!(check(&prompt, &temp_dir("qualifier")).is_empty());
+        assert!(check(&prompt).is_empty());
     }
 
     #[test]
@@ -170,7 +182,7 @@ mod tests {
         let prompt = COMPLETE
             .replace("前提:\n- y は z（docs/a.md）\n", "")
             .replace("完成の形: テストが通る\n", "");
-        let findings = check(&prompt, &temp_dir("missing"));
+        let findings = check(&prompt);
         let reason = deny_reason(&findings);
         assert!(reason.contains("欠けた欄: 前提、完成の形"), "{reason}");
     }
@@ -179,7 +191,7 @@ mod tests {
     fn heading_must_start_the_line_and_be_followed_by_a_colon() {
         // 箇条書きの中の語や、コロンの無い語は見出しとして数えない
         let prompt = COMPLETE.replace("前提:\n", "- 前提: なし\n前提は下のとおり\n");
-        let findings = check(&prompt, &temp_dir("line-start"));
+        let findings = check(&prompt);
         assert!(deny_reason(&findings).contains("欠けた欄: 前提"));
     }
 
@@ -190,13 +202,43 @@ mod tests {
             "Explore the hooks crate and report where tool_name is read",
             "/delegated の語や ~/.claude/skills/delegate/SKILL.md のパスを読む依頼は対象外",
         ] {
-            assert!(check(prompt, &temp_dir("other")).is_empty(), "{prompt}");
+            assert!(check(prompt).is_empty(), "{prompt}");
         }
     }
 
     #[test]
+    fn prompt_that_only_mentions_delegate_is_not_checked() {
+        // /delegate を呼ぶ依頼は 1 行目に「/delegate を呼び」を書く。2 行目以降の引用や、呼ばない文は対象外
+        for prompt in [
+            "/delegate の手順がどこで前提の欄を確かめるか調べて",
+            "/delegate を呼ばずに、この worktree で直接直す",
+            "次の差分をレビューする\n+最初に /delegate を呼び、その手順に従って進める。",
+        ] {
+            assert!(check(prompt).is_empty(), "{prompt}");
+        }
+    }
+
+    #[test]
+    fn request_file_whose_first_line_calls_delegate_is_checked() {
+        let tmp = TempDir::new("file-first-line");
+        let path = tmp.0.join("brief.md");
+        std::fs::write(&path, COMPLETE.replace("完成の形: テストが通る\n", "")).unwrap();
+        let prompt = format!("依頼文は {} にある。Read で読んで従う。", path.display());
+        assert!(deny_reason(&check(&prompt)).contains("欠けた欄: 完成の形"));
+    }
+
+    #[test]
+    fn request_file_that_does_not_call_delegate_is_not_checked() {
+        let tmp = TempDir::new("file-other");
+        let path = tmp.0.join("brief.md");
+        std::fs::write(&path, "/retro を回す。\n").unwrap();
+        let prompt = format!("依頼文は {} にある。Read で読んで従う。", path.display());
+        assert!(check(&prompt).is_empty());
+    }
+
+    #[test]
     fn delegate_request_without_any_field_lists_all_six() {
-        let findings = check("最初に /delegate を呼ぶ。x を直す。", &temp_dir("none"));
+        let findings = check("最初に /delegate を呼ぶ。x を直す。");
         let reason = deny_reason(&findings);
         assert!(
             reason
@@ -207,14 +249,15 @@ mod tests {
 
     #[test]
     fn request_file_named_by_the_prompt_is_checked() {
-        let dir = temp_dir("file");
+        let tmp = TempDir::new("file");
+        let dir = &tmp.0;
         let complete = dir.join("brief-complete.md");
         std::fs::write(&complete, COMPLETE).unwrap();
-        assert!(check(&pointer(&complete), &dir).is_empty());
+        assert!(check(&pointer(&complete)).is_empty());
 
         let partial = dir.join("brief-partial.md");
         std::fs::write(&partial, COMPLETE.replace("変える範囲: src/\n", "")).unwrap();
-        let findings = check(&pointer(&partial), &dir);
+        let findings = check(&pointer(&partial));
         let reason = deny_reason(&findings);
         assert!(reason.contains("欠けた欄: 変える範囲"), "{reason}");
         assert!(reason.contains(&partial.display().to_string()), "{reason}");
@@ -222,21 +265,23 @@ mod tests {
 
     #[test]
     fn request_file_in_backquotes_is_read() {
-        let dir = temp_dir("backquote");
+        let tmp = TempDir::new("backquote");
+        let dir = &tmp.0;
         let path = dir.join("brief.md");
         std::fs::write(&path, COMPLETE).unwrap();
         let prompt = format!(
             "依頼文は `{}` にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
             path.display()
         );
-        assert!(check(&prompt, &dir).is_empty());
+        assert!(check(&prompt).is_empty());
     }
 
     #[test]
     fn missing_request_file_is_denied_with_its_path() {
-        let dir = temp_dir("absent");
+        let tmp = TempDir::new("absent");
+        let dir = &tmp.0;
         let path = dir.join("no-such-brief.md");
-        let findings = check(&pointer(&path), &dir);
+        let findings = check(&pointer(&path));
         let reason = deny_reason(&findings);
         assert!(reason.contains(&path.display().to_string()), "{reason}");
         assert!(reason.contains("読めません"), "{reason}");
