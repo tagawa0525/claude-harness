@@ -35,7 +35,10 @@ let
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
-  claudeHookTimeout = 30000; # pre-merge-check が gh に数回問い合わせる
+  # hook の timeout は秒（https://code.claude.com/docs/en/hooks の "Seconds before canceling."。command の既定は 600）。
+  # pre-merge-check の gh は最大 14 か所の呼び出しで、1 回 0.4〜0.7 秒（2026-10-28 に gh pr view、repo view、api を
+  # 手元で測定）なので順に呼んでも約 10 秒。その数倍の 60 秒にする。hook が止まったとき、Agent の起動もこの時間待つ
+  claudeHookTimeout = 60;
   # UserPromptSubmit hook。報告とメモリに書く時刻を推測しないため、ターンごとに現在時刻を 1 行、文脈に入れる
   # （標準出力が文脈に足される）。コマンドを変えても古い登録を消せるよう、jq は先頭の date '+現在時刻 で識別する
   promptSubmitDateCmd = "date '+現在時刻: %F %H:%M %Z'";
