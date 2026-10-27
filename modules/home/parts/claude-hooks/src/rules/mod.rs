@@ -7,6 +7,10 @@ use crate::shell::{Escape, Shell};
 pub trait Rule: Sync {
     fn name(&self) -> &'static str;
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding>;
+    /// 検査する Claude Code のツールの名前（hook の入力の tool_name）
+    fn tool(&self) -> &'static str {
+        "Bash"
+    }
     /// ルール全体を外すエスケープの名前。`check` の結果に `apply_escape` で当てる（ADR-0023）。
     /// 検査ごとに別のエスケープを持つルールは None を返し、`check` の中で当てる
     fn escape(&self) -> Option<&'static str> {
@@ -76,6 +80,7 @@ mod block_main_commit;
 mod block_no_verify;
 mod block_secret_commit;
 mod check_merge_body_ja_terms;
+mod delegate_request_fields;
 mod guard_branch_base;
 mod guard_exclusive_slurm;
 mod guard_gh_api;
@@ -112,6 +117,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_git_merge::GuardGitMerge,
         &guard_git_stash::GuardGitStash,
         &guard_exclusive_slurm::GuardExclusiveSlurm,
+        &delegate_request_fields::DelegateRequestFields,
     ]
 }
 
@@ -121,4 +127,39 @@ pub fn names() -> Vec<&'static str> {
 
 pub fn by_name(name: &str) -> Option<&'static dyn Rule> {
     all().iter().copied().find(|r| r.name() == name)
+}
+
+/// tool_name のツールを検査するルール
+pub fn for_tool(tool_name: &str) -> Vec<&'static dyn Rule> {
+    if tool_name == "Bash" {
+        all().to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names_for(tool_name: &str) -> Vec<&'static str> {
+        for_tool(tool_name).iter().map(|r| r.name()).collect()
+    }
+
+    #[test]
+    fn agent_tool_runs_only_the_delegate_request_check() {
+        assert_eq!(names_for("Agent"), ["delegate-request-fields"]);
+    }
+
+    #[test]
+    fn bash_tool_does_not_run_the_delegate_request_check() {
+        let bash = names_for("Bash");
+        assert!(bash.contains(&"guard-git-stash"));
+        assert!(!bash.contains(&"delegate-request-fields"));
+    }
+
+    #[test]
+    fn other_tools_run_no_rule() {
+        assert!(names_for("Read").is_empty());
+    }
 }
