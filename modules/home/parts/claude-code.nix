@@ -304,13 +304,13 @@ in
         .skipDangerousModePermissionPrompt = true |
         .hooks.PreToolUse |= (
           (. // [])
-          # 旧 bash hook（ファイル名で識別）の登録を外し、空になった matcher を消す
+          # 旧 bash hook（ファイル名で識別）の登録を外す
           | map(.hooks |= map(select((.command | tostring) as $c | ($legacy | any(. as $f | $c | endswith("/" + $f))) | not)))
-          | map(select((.hooks | length) > 0))
           # バイナリの登録を、バイナリだけを持つ 1 つの組にする。バイナリは Bash のコマンドと Agent の依頼
           # （/delegate の欄）を検査する。ほかの hook と同じ組に置くと、その組の matcher を変えたときにほかの hook も
           # Agent で走るので、既にある登録は外してから足し直す
           | map(.hooks |= map(select((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use") | not)))
+          # 空になった matcher を消す
           | map(select((.hooks | length) > 0))
           + [{"matcher": "Bash|Agent", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
         ) |
