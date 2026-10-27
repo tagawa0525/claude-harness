@@ -602,6 +602,30 @@ exit 0
     }
 
     #[test]
+    fn denies_message_file_with_separate_call_advice() {
+        // hook はコマンドを実行する前に -F のファイルを読むので、同じコマンドの前段（sed -i など）で
+        // 直しても直す前の本文で判定する。文言は、ファイルを直す呼び出しを分けることを示す
+        let dir = TempDir::new("sep");
+        git_init(&dir.0);
+        let check = fake_check(&dir);
+        std::fs::write(dir.0.join("msg.txt"), "Merge: a\n\n誤語\n").unwrap();
+        let cmd = format!(
+            "cd {} && sed -i 's/誤語/正語/' msg.txt && git merge --no-ff -F msg.txt feat/a",
+            dir.0.display()
+        );
+        let r = deny_reason(&check_in(&cmd, Path::new("/"), Some(&check)));
+        assert!(r.contains("別の呼び出し"), "{r}");
+    }
+
+    #[test]
+    fn denies_inline_message_without_file_advice() {
+        let r = deny_reason(&check(
+            "git merge --no-ff feat/a -m 'Merge: a' -m '誤語する'",
+        ));
+        assert!(!r.contains("別の呼び出し"), "{r}");
+    }
+
+    #[test]
     fn allows_clean_message() {
         assert!(check("git merge --no-ff feat/a -m 'Merge: a' -m '確認'").is_empty());
     }
