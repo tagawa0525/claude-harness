@@ -13,6 +13,7 @@ allowed-tools:
   - Bash(git branch*)
   - Bash(git log*)
   - Bash(git diff*)
+  - Bash(git range-diff*)
   - Bash(git show*)
   - Bash(git switch*)
   - Bash(git rebase*)
@@ -71,6 +72,10 @@ git branch main [root-commit]
 ```bash
 git -C [TARGET_WORKTREE] rebase main
 ```
+
+rebase の前に古い土台（`git merge-base main [branch]`）と旧先端（`git rev-parse [branch]`）を控える（「レビュー」の rebase 後の判断で
+`git range-diff <古い土台>..<旧先端> main..HEAD` と `git log <古い土台>..main` に使う）。同じ範囲を触るブランチは並行に進めず、
+マージしてから次を始める（並行の数が多いほど main が進み、rebase とレビューのやり直しが増える。ユーザー 2026-10-21）。
 
 コンフリクトしたら内容と解決案を示し、解決して `git rebase --continue` するか
 `git rebase --abort` するかを決める。
@@ -197,9 +202,9 @@ EOF
 マージは hook（品質チェック、本文の語の検査）に止められることがある。成否は終了コードで判定するので、`git merge` の出力を
 `tail` などにつながず（終了コードが消える）、後片付けとは別の呼び出しにする。通ったら、main の先頭がこのマージコミットであること
 （`git -C [DEFAULT_WORKTREE] rev-parse HEAD^2`（none なら今の worktree）がブランチの先端と一致する）を確かめてから後片付けに進む。
-マージは 1 本ずつ前景で行い、バックグラウンドの git の操作を重ねない（終わりが見えないまま重ねると、同じブランチを
-rebase・マージして競合し、main に残骸が残る）。バックグラウンドに回すのはチェック（`run-checks.sh`）だけで、
-終わりの通知を待ってからマージする。
+マージは 1 本ずつ前景で行い、git の書き込み（rebase、merge、commit）をバックグラウンドに重ねない。前景の上限（600 秒）を超えて
+バックグラウンドに移ったコマンドがあるうちは、その終わりの通知まで同じリポジトリに git で書き込まない（2026-10-22 に、移った
+マージの上に同じブランチの rebase とマージを重ねて競合し、main にインデックスの残骸が残った）。チェックの回し方は「チェック」の節。
 拒まれると、マージはステージされたまま main の worktree に MERGE_HEAD が残る:
 
 - 本文の語で拒まれたら、本文を直して `git -C [DEFAULT_WORKTREE] commit -m "…"` でそのマージを終える（品質チェックは
