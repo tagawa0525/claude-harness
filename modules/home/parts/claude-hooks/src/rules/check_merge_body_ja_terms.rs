@@ -145,6 +145,13 @@ fn has_message(args: &[Arg]) -> bool {
     })
 }
 
+/// 本文に -F のファイルを含むか
+fn has_message_file(args: &[Arg]) -> bool {
+    items_with_values("merge", args)
+        .iter()
+        .any(|(item, _)| matches!(message_option(item), Some(MessageOption::File)))
+}
+
 /// `$(cat <<[-]DELIM\n本文\nDELIM\n)` の本文と、区切りをクォートしたか（'EOF'、"EOF"。本文を展開しない）。
 /// `<<-` は行の先頭のタブを外す
 fn heredoc_body(text: &str) -> Option<(String, bool)> {
@@ -243,13 +250,21 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     }
 }
 
-/// 崩れた語を止める文言
-fn deny_reason(terms: &[String]) -> String {
+/// 崩れた語を止める文言。`from_file` は本文に -F のファイルを含むとき
+fn deny_reason(terms: &[String], from_file: bool) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
+    // この hook はコマンドを実行する前に -F のファイルを読むので、同じコマンドの前段（sed -i など）で
+    // 直しても、直す前の本文で判定して同じ拒否を返す
+    let file_note = if from_file {
+        "\n-F のファイルは、git merge とは別の呼び出しで直してください（この hook はコマンドを実行する前に\
+         ファイルを読むので、同じコマンドの前段で直しても、直す前の本文で判定します）"
+    } else {
+        ""
+    };
     format!(
         "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
          本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
-         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます",
+         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます{file_note}",
         list.join("\n")
     )
 }
@@ -320,7 +335,9 @@ impl CheckMergeBodyJaTerms {
             };
             match lint(check, &dir, &message) {
                 Lint::Clean => {}
-                Lint::Terms(terms) => out.push(Finding::Deny(deny_reason(&terms))),
+                Lint::Terms(terms) => {
+                    out.push(Finding::Deny(deny_reason(&terms, has_message_file(args))))
+                }
                 Lint::Failed(why) => notice(format!(
                     "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
                 )),
