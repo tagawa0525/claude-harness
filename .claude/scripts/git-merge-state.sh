@@ -127,7 +127,7 @@ if [[ "$ADR_DIR_ENTRY" =~ ^[0-9]+\ tree\  ]]; then
         printf '%s\n' "$msg"
       done \
       | sed -nE 's/^Refs:[[:space:]]*//p' | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
-      | { grep -xE 'ADR-[0-9]{4}' || true; } \
+      | { grep -xE 'ADR-[0-9]{4}' || [[ $? -eq 1 ]]; } \
       | sort -u
   )
   ADRS=$(git -c core.quotePath=false ls-tree --full-tree --name-only "$TIP:docs/adr")
