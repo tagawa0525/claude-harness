@@ -368,16 +368,19 @@ rm "$REPO/.git/objects/${docs_tree:0:2}/${docs_tree:2}"
 out=$(cd "$REPO" && "$SCRIPT" feat/x 2>&1)
 assert_ne 0 $?
 assert_not_contains "$out" "PROPOSED_ADRS:"
+assert_contains "$out" "ERROR:"
 
 it "git-merge-state: Refs: の値を絞る grep が失敗（2）したら、none にせず失敗する"
 FAKEGREP="$TEST_ROOT/fake-grep"
 mkdir -p "$FAKEGREP"
 REAL_GREP=$(command -v grep)
-printf '#!/usr/bin/env bash\nif [[ "$1" == -xE ]]; then exit 2; fi\nexec %q "$@"\n' "$REAL_GREP" > "$FAKEGREP/grep"
+# 入力を読み切ってから失敗する（読まずに終わると、前段が SIGPIPE で落ち、grep の失敗を見ないまま pipefail が止める）
+printf '#!/usr/bin/env bash\nif [[ "$1" == -xE ]]; then cat >/dev/null; exit 2; fi\nexec %q "$@"\n' "$REAL_GREP" > "$FAKEGREP/grep"
 chmod +x "$FAKEGREP/grep"
 out=$(cd "$TEST_ROOT/p1" && PATH="$FAKEGREP:$PATH" "$SCRIPT" feat/x 2>&1)
 assert_ne 0 $?
 assert_not_contains "$out" "PROPOSED_ADRS:"
+assert_contains "$out" "ERROR:"
 
 it "git-merge-state: docs/adr の無いリポジトリでは、design-records が PATH に無くても続行する"
 out=$(cd "$TEST_ROOT/p5" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
