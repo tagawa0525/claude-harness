@@ -107,12 +107,10 @@ echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
 # ブランチは refs/heads/ で指す（同じ名前のタグがあると、短い名前はタグを指す）。
 # <rev>:<path> はトップレベルからのパス。ls-tree は cwd で絞るので --full-tree を付ける（サブディレクトリから実行しても同じ木を見る）
 TIP="refs/heads/$TARGET"
-# 無いことだけを -q で黙らせ、それ以外の git の失敗は set -e で止める（ADR の無いリポジトリと取り違えない）
-ADR_DIR_TYPE=""
-if git rev-parse --verify -q "$TIP:docs/adr" >/dev/null; then
-  ADR_DIR_TYPE=$(git cat-file -t "$TIP:docs/adr")
-fi
-if [[ "$ADR_DIR_TYPE" == "tree" ]]; then
+# ls-tree はパスが無ければ空を出して 0 で終わり、木を読めなければ 0 以外で終わる（代入で受けて set -e で止める。
+# ADR の無いリポジトリと取り違えない）。出力の 2 列目が種類（tree か blob など）
+ADR_DIR_ENTRY=$(git ls-tree --full-tree "$TIP" docs/adr)
+if [[ "$ADR_DIR_ENTRY" =~ ^[0-9]+\ tree\  ]]; then
   RANGE="$TIP"
   [[ -n "$DEFAULT" ]] && RANGE="refs/heads/$DEFAULT..$TIP"
   # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。
