@@ -121,7 +121,7 @@ if git cat-file -e "$TARGET:docs/adr" 2>/dev/null; then
   # git log の失敗を pipefail で拾うため、プロセス置換でなくパイプでつなぐ
   FEAT_FIX='^(feat|fix)(\([^)]*\))?!?: '
   REFS=$(
-    git -c log.showSignature=false log -z --format='%s%n%b' "$RANGE" -- \
+    git -c log.showSignature=false log -z --format=%B "$RANGE" -- \
       | while IFS= read -r -d '' msg; do
         [[ "${msg%%$'\n'*}" =~ $FEAT_FIX ]] || continue
         printf '%s\n' "$msg"
