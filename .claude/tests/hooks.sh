@@ -127,6 +127,15 @@ echo "## Summary" > "$TEST_ROOT/bad-body.md"
 out=$(run_hook pre-pr-create-check "gh pr create --title \"feat: x\" -F $TEST_ROOT/bad-body.md")
 assert_eq deny "$(decision "$out")"
 
+it "pre-pr-create: 読めない --body-file は、先に別の呼び出しで書き、絶対パスで渡すよう示す"
+for cmd in "gh pr create --title \"feat: x\" --body-file $TEST_ROOT/no-such-body.md" \
+  "S=$TEST_ROOT; gh pr create --title \"feat: x\" --body-file \$S/body.md"; do
+  out=$(run_hook pre-pr-create-check "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "別の呼び出し"
+  assert_contains "$(reason "$out")" "絶対パス"
+done
+
 it "pre-pr-create: 未プッシュコミットがあれば deny"
 commit_file "$REPO" "b.txt" "feat: b"
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
