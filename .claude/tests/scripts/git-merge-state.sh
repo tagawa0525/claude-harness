@@ -261,7 +261,7 @@ it "git-merge-state: docs/adr があって design-records が PATH に無けれ�
 NODR="$TEST_ROOT/no-design-records"
 mkdir -p "$NODR"
 for tool in bash git sed tr grep sort awk mktemp; do ln -s "$(command -v "$tool")" "$NODR/$tool"; done
-out=$(PATH="$NODR" "$SCRIPT" feat/x 2>&1)
+out=$(cd "$TEST_ROOT/p7" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR: design-records"
 assert_not_contains "$out" "PROPOSED_ADRS:"
@@ -311,6 +311,32 @@ cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x 2>/dev/null)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: ADR-0001" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: feat / fix の Refs: に ADR が無ければ、design-records が PATH に無くても none を出す"
+REPO="$TEST_ROOT/p11"
+adr_repo "$REPO"
+commit_refs "$REPO" "docs: a" "ADR-0001"
+git -C "$REPO" switch -q main
+out=$(cd "$REPO" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: 既定ブランチと同じ名前のタグがあっても、マージ済みのブランチを STACKED_ON に出さない"
+REPO="$TEST_ROOT/s8"
+make_repo "$REPO"
+git -C "$REPO" tag main
+git -C "$REPO" switch -q -c feat/a
+commit_file "$REPO" a.txt "feat: a"
+git -C "$REPO" switch -q main
+git -C "$REPO" merge -q --ff-only feat/a
+git -C "$REPO" switch -q -c feat/b
+commit_file "$REPO" b.txt "feat: b"
+git -C "$REPO" switch -q main
+out=$(cd "$REPO" && "$SCRIPT" feat/b 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "STACKED_ON: none"
+assert_contains "$out" "COMMITS: 1"
+assert_not_contains "$out" "ambiguous"
 
 it "git-merge-state: docs/adr がディレクトリでなくファイルなら、ADR の無いリポジトリとして扱う"
 REPO="$TEST_ROOT/p10"
