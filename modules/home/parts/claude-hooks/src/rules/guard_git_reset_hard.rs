@@ -4,8 +4,8 @@
 //! 共有しうるので（メインの worktree など）、変更がそのセッションのものとは限らない。
 //!
 //! reset が走りうるディレクトリをすべて検査する。前に `cd` が無いか、絶対パスの `git -C` / `env -C` で指していれば、
-//! 決まるディレクトリだけ。そうでなければ、hook の cwd と、前の各 `cd` の直前のディレクトリと、すべての `cd` が通った
-//! ときのディレクトリ。`cd` が失敗すると、`;` の後の reset は最後に通った `cd` の先で走るため（`cd <一時のリポジトリ>
+//! 決まるディレクトリだけ。そうでなければ、hook の cwd（絶対パスの `env -C` で包んだ `bash -c` の中なら、その先）と、
+//! 前の各 `cd` の直前のディレクトリと、すべての `cd` が通ったときのディレクトリ。`cd` が失敗すると、`;` の後の reset は最後に通った `cd` の先で走るため（`cd <一時のリポジトリ>
 //! && …; git reset --hard` が、移れなかったときにメインの worktree を戻した）。書き方からディレクトリを決められない形
 //! （変数のパス、pushd / popd、`--git-dir` / `--work-tree`、`GIT_DIR` / `GIT_WORK_TREE`、`--hard` を含む文字列を
 //! 実行するプログラムを決められないコマンド）は止める側に倒す（ADR-0025 と同じ）。追跡していないファイルは数えない。
@@ -132,15 +132,22 @@ impl Rule for GuardGitResetHard {
                 undetermined.push(why.join("、"));
                 continue;
             }
-            // 前に cd が無ければ、走るディレクトリは包んだ -C と git -C だけで決まる
+            // 前に cd が無ければ、走るディレクトリは包んだ -C と git -C だけで決まる。包んだ絶対パスの `env -C x bash -c
+            // '…'` の中の cd が失敗すると、reset は hook の cwd でなく x（か、中で前に通った cd の先）で走る
+            let outer_pin = outer_dirs
+                .filter(|c| c.dirs.iter().any(|d| absolute(d)))
+                .map(|c| c.start)
+                .max();
+            let fallback_cds: Vec<&&Cmd> = preceding_cds
+                .iter()
+                .filter(|c| outer_pin.is_none_or(|start| c.start > start))
+                .collect();
             let mut dirs = vec![shell.target_dir(cmd, &input.cwd)];
-            if !pinned && !preceding_cds.is_empty() {
-                dirs.push(input.cwd.clone());
-                dirs.extend(
-                    preceding_cds
-                        .iter()
-                        .map(|c| shell.target_dir(c, &input.cwd)),
-                );
+            if !pinned && !fallback_cds.is_empty() {
+                if outer_pin.is_none() {
+                    dirs.push(input.cwd.clone());
+                }
+                dirs.extend(fallback_cds.iter().map(|c| shell.target_dir(c, &input.cwd)));
             }
             for dir in dirs {
                 if seen.contains(&dir) || git::not_a_directory(&dir) {
