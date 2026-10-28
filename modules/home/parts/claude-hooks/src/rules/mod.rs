@@ -88,6 +88,7 @@ mod guard_gh_run_rerun;
 mod guard_git_add;
 mod guard_git_merge;
 mod guard_git_push;
+mod guard_git_reset_hard;
 mod guard_git_stash;
 mod guard_sbatch;
 mod pre_git_merge_check;
@@ -116,6 +117,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &check_merge_body_ja_terms::CheckMergeBodyJaTerms,
         &guard_git_merge::GuardGitMerge,
         &guard_git_stash::GuardGitStash,
+        &guard_git_reset_hard::GuardGitResetHard,
         &guard_exclusive_slurm::GuardExclusiveSlurm,
         &delegate_request_fields::DelegateRequestFields,
     ]
@@ -155,6 +157,7 @@ mod tests {
     fn bash_tool_does_not_run_the_delegate_request_check() {
         let bash = names_for("Bash");
         assert!(bash.contains(&"guard-git-stash"));
+        assert!(bash.contains(&"guard-git-reset-hard"));
         assert!(!bash.contains(&"delegate-request-fields"));
     }
 
