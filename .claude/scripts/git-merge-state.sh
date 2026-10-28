@@ -19,6 +19,13 @@
 #   STACKED_ON: <branch>,...|none … 対象の下に積まれている、まだマージしていない別のブランチ
 #   TARGET_WORKTREE: <path>|none  … 対象をチェックアウトしている worktree
 #   DEFAULT_WORKTREE: <path>|none … 既定ブランチをチェックアウトしている worktree
+#   PROPOSED_ADRS: ADR-NNNN ...|none … 対象のコミット（既定ブランチがなければ全部）のうち、件名の型が feat か fix の
+#                                    ものが本文の `Refs:` の行で挙げた ADR で、対象の先端で docs/adr/NNNN-*.md の status が
+#                                    proposed のもの（番号の順）。対象の先端に docs/adr が無ければ行を出さない
+#
+# 実装をマージするブランチは、実装した proposed の ADR を同じブランチで accepted にする。マージの後には
+# 確定した ADR を直せないので、マージの前に見落としを一覧にする（止めはしない。一部だけを実装したブランチや
+# 方法を試すブランチは proposed のまま残してよく、機械では決められない）。
 
 set -euo pipefail
 
@@ -96,3 +103,26 @@ fi
 
 echo "TARGET_WORKTREE: ${WT_PATH:-none}"
 echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
+
+if [[ -n "$(git ls-tree -d "$TARGET" docs/adr)" ]]; then
+  RANGE="$TARGET"
+  [[ -n "$DEFAULT" ]] && RANGE="$DEFAULT..$TARGET"
+  # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。%x00 でコミットを区切る
+  REFS=$(git log --format='%s%n%b%x00' "$RANGE" \
+    | awk 'BEGIN { RS = "\0" } $0 ~ /^\n?(feat|fix)(\([^)]*\))?!?: / { print }' \
+    | { grep -E '^Refs:' || true; } \
+    | { grep -oE 'ADR-[0-9]{4}' || true; } \
+    | sort -u)
+  PROPOSED=()
+  ADRS=$(git -c core.quotePath=false ls-tree --name-only "$TARGET" docs/adr/)
+  for ref in $REFS; do
+    while IFS= read -r path; do
+      [[ "$path" == "docs/adr/${ref#ADR-}-"*.md ]] || continue
+      # コマンド置換の失敗は、代入で受けると set -e が止める
+      text=$(git show "$TARGET:$path")
+      st=$(design-records status <<<"$text")
+      if [[ "$st" == "proposed" ]]; then PROPOSED+=("$ref"); fi
+    done <<<"$ADRS"
+  done
+  echo "PROPOSED_ADRS: ${PROPOSED[*]:-none}"
+fi
