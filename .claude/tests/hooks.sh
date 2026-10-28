@@ -2527,6 +2527,16 @@ for cmd in 'source ~/.bashrc; git reset --soft HEAD~1' '$EDITOR notes.txt; echo 
   assert_eq "" "$out"
 done
 
+it "guard-git-reset-hard: 包んだ絶対パスの env -C の中の cd は、失敗しても hook の cwd に落ちないので cwd を見ない"
+cd "$RESET_DIRTY" || exit 1
+mkdir -p "$RESET_CLEAN/sub"
+out=$(run_hook guard-git-reset-hard "env -C $RESET_CLEAN bash -c 'cd sub; git reset --hard'")
+assert_eq "" "$out"
+cd "$RESET_CLEAN" || exit 1
+out=$(run_hook guard-git-reset-hard "env -C $RESET_DIRTY bash -c 'cd $TEST_ROOT/no-such-dir; git reset --hard'")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "$RESET_DIRTY"
+
 it "guard-git-reset-hard: export した GIT_DIR、pushd の後は、ディレクトリを決められないとして deny"
 cd "$RESET_CLEAN" || exit 1
 for cmd in "export GIT_DIR=$RESET_DIRTY/.git GIT_WORK_TREE=$RESET_DIRTY; git reset --hard" \
