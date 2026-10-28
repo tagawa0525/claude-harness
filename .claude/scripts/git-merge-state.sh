@@ -107,10 +107,11 @@ echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
 # ブランチは refs/heads/ で指す（同じ名前のタグがあると、短い名前はタグを指す）。
 # <rev>:<path> はトップレベルからのパス。ls-tree は cwd で絞るので --full-tree を付ける（サブディレクトリから実行しても同じ木を見る）
 TIP="refs/heads/$TARGET"
-if git cat-file -e "$TIP:docs/adr" 2>/dev/null; then
+if [[ "$(git cat-file -t "$TIP:docs/adr" 2>/dev/null)" == "tree" ]]; then
   # 一覧が出ないことを docs/adr の無いリポジトリと取り違えないよう、読めないときは行を出さずに止める
   if ! command -v design-records >/dev/null; then
-    echo "ERROR: design-records が PATH にありません。ADR の status を読めないので PROPOSED_ADRS を出せません" >&2
+    echo "ERROR: design-records が PATH にありません。ADR の status を読めないので PROPOSED_ADRS を出せません。" \
+      "nixfiles の home-manager の設定（design-records のパッケージ）を適用して PATH に入れてから、もう一度実行してください" >&2
     exit 1
   fi
   RANGE="$TIP"
@@ -128,8 +129,7 @@ if git cat-file -e "$TIP:docs/adr" 2>/dev/null; then
         [[ "${msg%%$'\n'*}" =~ $FEAT_FIX ]] || continue
         printf '%s\n' "$msg"
       done \
-      | { grep -E '^Refs:' || true; } \
-      | sed -E 's/^Refs:[[:space:]]*//' | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+      | sed -nE 's/^Refs:[[:space:]]*//p' | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
       | { grep -xE 'ADR-[0-9]{4}' || true; } \
       | sort -u
   )
