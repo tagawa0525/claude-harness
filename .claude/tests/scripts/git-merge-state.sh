@@ -164,12 +164,32 @@ REPO="$TEST_ROOT/p1"
 adr_repo "$REPO"
 commit_refs "$REPO" "fix(parser): b" "#0004, ADR-0002"
 commit_refs "$REPO" "feat: a" "ADR-0001"
-commit_refs "$REPO" "feat(cli)!: c" "ADR-0002"
+commit_refs "$REPO" "feat(cli)!: c" "ADR-0004"
+commit_refs "$REPO" "feat: d" "ADR-0002"
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
-assert_eq "PROPOSED_ADRS: ADR-0001 ADR-0002" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+assert_eq "PROPOSED_ADRS: ADR-0001 ADR-0002 ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: リポジトリのサブディレクトリから実行しても PROPOSED_ADRS を出す"
+out=$(cd "$REPO/docs" && "$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: ADR-0001 ADR-0002 ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: log.showSignature が true で、署名したコミットでも feat / fix の件名を読む"
+REPO="$TEST_ROOT/p1s"
+adr_repo "$REPO"
+ssh-keygen -q -t ed25519 -N '' -f "$TEST_ROOT/p1s-key"
+git -C "$REPO" config gpg.format ssh
+git -C "$REPO" config user.signingkey "$TEST_ROOT/p1s-key"
+git -C "$REPO" config commit.gpgSign true
+git -C "$REPO" config log.showSignature true
+commit_refs "$REPO" "feat: a" "ADR-0001"
+git -C "$REPO" switch -q main
+out=$(cd "$REPO" && "$SCRIPT" feat/x 2>/dev/null)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: ADR-0001" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
 it "git-merge-state: Refs: で挙げた ADR がブランチの先端で accepted なら出さない"
 REPO="$TEST_ROOT/p2"
@@ -184,12 +204,15 @@ out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
-it "git-merge-state: feat / fix 以外のコミット（docs など）だけが挙げた proposed の ADR は出さない"
+it "git-merge-state: feat / fix 以外のコミット、Refs: の行の外、別のリポジトリの ADR だけが挙げた proposed の ADR は出さない"
 REPO="$TEST_ROOT/p3"
 adr_repo "$REPO"
 commit_refs "$REPO" "docs(adr): a" "ADR-0001"
 commit_refs "$REPO" "test: b" "ADR-0004"
 commit_refs "$REPO" "refactor: feat: c" "ADR-0002"
+echo e >> "$REPO/log.txt"
+git -C "$REPO" commit -q -am "feat: e" -m "ADR-0001 の案は採らない。" -m "Refs: #0004"
+commit_refs "$REPO" "feat: f" "#0004, nixfiles の ADR-0002"
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
@@ -207,7 +230,20 @@ commit_refs "$REPO" "feat: a" "ADR-0004"
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: main がまだなければ、対象の全コミットの Refs: を見る"
+REPO="$TEST_ROOT/p6"
+mkdir -p "$REPO"
+git -C "$REPO" init -q -b feat/first
+write_adr "$REPO" 0001 proposed
+git -C "$REPO" add docs
+commit_refs "$REPO" "feat: a" "ADR-0001"
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/first)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: ADR-0001" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
 it "git-merge-state: docs/adr の無いリポジトリでは PROPOSED_ADRS を出さない"
 REPO="$TEST_ROOT/p5"
