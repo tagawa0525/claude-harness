@@ -188,7 +188,7 @@ impl Rule for PrePrCreateCheck {
 
             // --- 2. 本文 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
-                Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}")),
+                Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}\nhook はコマンドを実行する前に、変数を展開せずにパスを読みます。同じコマンドの中で書くファイルと、$S/… のような変数のパスは読めません。本文は別の呼び出しで先にファイルに書き、--body-file には絶対パスを書いてください")),
                 Ok(None) if fork => reasons.push("--body または --body-file で PR 本文を指定してください（上流の PR template に合わせる。省くと gh がエディタを開いて固まる）".to_string()),
                 Ok(None) => reasons.push("--body または --body-file で PR 本文を指定してください（## Summary / ## Changes / ## Tests）".to_string()),
                 Ok(Some(body)) if !fork => {
