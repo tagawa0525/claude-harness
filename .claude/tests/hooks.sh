@@ -6,7 +6,7 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge / guard-sbatch / guard-git-stash / guard-exclusive-slurm
+#       guard-git-merge / guard-sbatch / guard-git-stash / guard-git-reset-hard / guard-exclusive-slurm
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -2436,6 +2436,63 @@ for cmd in 'git status' 'git commit -m "docs: do not git stash"' 'git log --grep
   out=$(run_hook guard-git-stash "$cmd")
   assert_eq "" "$out"
 done
+
+# ===========================================================================
+# guard-git-reset-hard: 未コミットの変更がある worktree での git reset --hard を止める
+# ===========================================================================
+# 対象のディレクトリと、-C が無ければ hook の cwd（前の cd が失敗すると ; の後の reset はそこで走る）を見る
+
+RESET_DIRTY="$TEST_ROOT/reset-dirty"
+RESET_CLEAN="$TEST_ROOT/reset-clean"
+make_repo "$RESET_DIRTY"
+make_repo "$RESET_CLEAN"
+echo edited >"$RESET_DIRTY/README.md"
+
+it "guard-git-reset-hard: 対象の worktree に未コミットの変更があれば deny し、変更を挙げる"
+cd "$RESET_CLEAN" || exit 1
+for cmd in "cd $RESET_DIRTY && git reset --hard" "git -C $RESET_DIRTY reset --hard HEAD" \
+  "cd $RESET_DIRTY; git reset -q --hard origin/main"; do
+  out=$(run_hook guard-git-reset-hard "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "$RESET_DIRTY"
+  assert_contains "$(reason "$out")" "README.md"
+done
+
+it "guard-git-reset-hard: cd が失敗したときに走る hook の cwd に変更があれば deny し、-C を示す"
+cd "$RESET_DIRTY" || exit 1
+out=$(run_hook guard-git-reset-hard "cd $TEST_ROOT/no-such-dir && git rm -q x; git reset -q --hard")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "$RESET_DIRTY"
+assert_contains "$(reason "$out")" "git -C <dir> reset --hard"
+out=$(run_hook guard-git-reset-hard "cd $RESET_CLEAN && git reset --hard")
+assert_eq deny "$(decision "$out")"
+
+it "guard-git-reset-hard: -C で変更の無い worktree を指せば、hook の cwd の変更に依らず通す"
+cd "$RESET_DIRTY" || exit 1
+out=$(run_hook guard-git-reset-hard "git -C $RESET_CLEAN reset --hard")
+assert_eq "" "$out"
+
+it "guard-git-reset-hard: 変更が無い、追跡していないファイルだけ、--hard でない reset は通す"
+cd "$RESET_CLEAN" || exit 1
+echo new >"$RESET_CLEAN/untracked.txt"
+out=$(run_hook guard-git-reset-hard "git reset --hard")
+assert_eq "" "$out"
+rm "$RESET_CLEAN/untracked.txt"
+cd "$RESET_DIRTY" || exit 1
+for cmd in 'git reset' 'git reset --soft HEAD~1' 'git reset --keep HEAD' 'git status' 'echo git reset --hard'; do
+  out=$(run_hook guard-git-reset-hard "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-git-reset-hard: まだ無いディレクトリへの cd の後の reset は、そのディレクトリを検査しない"
+cd "$RESET_CLEAN" || exit 1
+out=$(run_hook guard-git-reset-hard "mkdir -p $TEST_ROOT/later && cd $TEST_ROOT/later && git init -q && git reset --hard")
+assert_eq "" "$out"
+
+it "guard-git-reset-hard: ALLOW_GIT_RESET_HARD=<理由> で迂回できる"
+cd "$RESET_DIRTY" || exit 1
+out=$(run_hook guard-git-reset-hard 'ALLOW_GIT_RESET_HARD=テスト用 git reset --hard')
+assert_eq "" "$out"
 
 # ===========================================================================
 # guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、全コアを使う手元のコマンドを止める
