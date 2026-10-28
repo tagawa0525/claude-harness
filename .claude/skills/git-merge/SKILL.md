@@ -37,7 +37,8 @@ GitHub での PR の流れ（CI → 自動レビュー → `gh pr merge --merge`
 
 $ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上が `ERROR:` で終わっていれば、その指示に従う
 （main 自身、GitHub リモートあり、未コミットの変更、ADR の status を読む design-records が無いときは、ここで止まる。
-design-records の ERROR は、ほかの行を出した後に出るので、その前の行を使って先に進まない）。
+design-records の ERROR は、ほかの行を出した後に出るので、その前の行を使って先に進まない）。`ERROR:` の行が無くても、
+git などのエラー（`error:`、`fatal:`）が出て行が欠けたときは、欠けた行を「無い」と読まずに原因を直して取り直す。
 
 対象の `TARGET_WORKTREE` と main の `DEFAULT_WORKTREE` は、そのブランチをチェックアウトしている場所。
 別の worktree にあるブランチへは switch できないので、ブランチの操作は `git -C [TARGET_WORKTREE]`、
@@ -55,6 +56,8 @@ design-records の ERROR は、ほかの行を出した後に出るので、そ�
 - マージ結果が品質チェックを通らない
 
 ## 判断が要る手順
+
+下の節は、当てはまるものを上から順に通る。「proposed の ADR」の節は、rebase が要らないブランチでも、チェックの前に必ず通る。
 
 ### main がまだない（`DEFAULT: none`）
 
@@ -108,15 +111,15 @@ design-records -C [TARGET_WORKTREE] check
 issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。新しい番号の予約、ファイル名と参照の付け替え、コミットまでを行う。
 できたコミットを `git show` で見て、付け替えた参照が振り直した記録を指していることを確かめてから、次の「proposed の ADR」に進む。
 
-### proposed の ADR（rebase の後に状態を取り直して決める）
+### proposed の ADR（どのブランチでも、チェックの前に）
 
 `PROPOSED_ADRS` は、このブランチの feat と fix のコミットが本文の `Refs:` で挙げた ADR のうち、ブランチの先端でまだ
 `status: proposed` のもの（docs/adr の無いリポジトリでは行が出ない）。上の「現在の状態」はスキルを読み込んだときの
-ブランチの先端のものなので、rebase か番号の振り直しをした後と、feat か fix のコミットを足した後（レビューの指摘の
+ブランチの先端のものなので、rebase も振り直しもしていなければその行で決め、rebase か番号の振り直しをした後と、feat か fix のコミットを足した後（レビューの指摘の
 修正など）は `~/.claude/scripts/git-merge-state.sh [branch]` を
 再実行して、この行を取り直してから決める（rebase で、main で accepted になった ADR は一覧から外れ、main で入った
 proposed の ADR は一覧に入りうる。rebase で docs/adr が入れば行も現れる。読み込んだときの none や行の無さで、この段を
-飛ばさない）。取り直した結果に行が無いか none で、番号も振り直していなければ、ここで決めることは無い。
+飛ばさない）。使う行（取り直したときは取り直した行）が無いか none で、番号も振り直していなければ、ここで決めることは無い。
 番号を振り直した ADR は、前のコミットの `Refs:` に古い番号のまま残る。振り直した ADR は一覧から漏れるので、一覧が
 none でも自分で見て下の選択肢から決める。古い番号は main の別の ADR を指しうるので、一覧の ADR がこのブランチの実装した
 ものかを本文で確かめてから直す。
@@ -173,7 +176,7 @@ main との分岐点からの変更を検査する。マージ時にも hook が
 - 直すのは検証できる誤りだけ（バグ、コードや事実と食い違う記述、壊れた参照）。直した結果、ADR の決定・帰結・確認に
   書いた内容が変わるなら、同じコミットで ADR も合わせる（確定した ADR はマージの後に直せない。/adr の「確定後の運用」の、
   マージ前の項）。
-  修正したら、コミットして rebase の要否とチェックからやり直す
+  修正したら、コミットして rebase の要否、「proposed の ADR」の一覧の取り直し、チェックからやり直す
 - claude-hooks の、普通に書く形（`cd <worktree> &&`、`env` や `timeout` の前置き、`bash -c '…'`、`nix develop -c` など、普通の手順で書くコマンド。
   珍しい git の設定や全体オプションで行き先を変える、pipefail を途中で外す、のような作為的な書き方は含まない）でない抜け道の指摘は直さず、無いものとして打ち切りを決める
   （hook は境界ではなく、抜け道を 1 つ塞ぐと次の反例が出て周が終わらない。抜け道はモデルの判断と人のレビューに任せる）。
@@ -259,7 +262,7 @@ EOF
 - 本文の語で拒まれたら、本文を直して `git -C [DEFAULT_WORKTREE] commit -m "…"` でそのマージを終える（品質チェックは
   もう一度走る）。`git merge` をやり直すと MERGE_HEAD があるため拒まれる
 - 品質チェックで拒まれたら、`git -C [DEFAULT_WORKTREE] merge --abort` で取り消し、ブランチで直して「レビュー」の節のとおり
-  rebase の要否とチェックからやり直す
+  rebase の要否、「proposed の ADR」の一覧の取り直し、チェックからやり直す
 
 ## 後片付け
 
