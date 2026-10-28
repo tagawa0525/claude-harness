@@ -172,6 +172,17 @@ out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: ADR-0001 ADR-0002 ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
+it "git-merge-state: 1 つのコミットの複数の Refs: の行と、scope の無い fix! を読む"
+MULTI="$TEST_ROOT/p1m"
+adr_repo "$MULTI"
+echo m >> "$MULTI/log.txt"
+git -C "$MULTI" add log.txt
+git -C "$MULTI" commit -q -m "fix!: m" -m "Why." -m "Refs: ADR-0001" -m "Refs: #0004, ADR-0004"
+git -C "$MULTI" switch -q main
+out=$(cd "$MULTI" && "$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: ADR-0001 ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
 it "git-merge-state: リポジトリのサブディレクトリから実行しても PROPOSED_ADRS を出す"
 out=$(cd "$REPO/docs" && "$SCRIPT" feat/x)
 assert_eq 0 $?
@@ -191,10 +202,13 @@ out=$(cd "$REPO" && "$SCRIPT" feat/x 2>/dev/null)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: ADR-0001" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
-it "git-merge-state: Refs: で挙げた ADR がブランチの先端で accepted なら出さない"
+it "git-merge-state: Refs: で挙げた ADR がブランチの先端で accepted か superseded なら出さない"
 REPO="$TEST_ROOT/p2"
 adr_repo "$REPO"
 commit_refs "$REPO" "feat: a" "ADR-0003"
+write_adr "$REPO" 0004 superseded
+git -C "$REPO" add docs
+commit_refs "$REPO" "fix: c" "ADR-0004"
 write_adr "$REPO" 0001 accepted
 git -C "$REPO" add docs
 commit_refs "$REPO" "feat: b" "ADR-0001"
