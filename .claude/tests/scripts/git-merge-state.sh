@@ -165,7 +165,7 @@ adr_repo "$REPO"
 commit_refs "$REPO" "fix(parser): b" "#0004, ADR-0002"
 commit_refs "$REPO" "feat: a" "ADR-0001"
 commit_refs "$REPO" "feat(cli)!: c" "ADR-0004"
-commit_refs "$REPO" "feat: d" "ADR-0002"
+commit_refs "$REPO" "feat: d" "ADR-0001"
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
@@ -286,6 +286,23 @@ commit_refs "$REPO" "feat: a" "ADR-0001"
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_not_contains "$out" "PROPOSED_ADRS:"
+
+it "git-merge-state: 件名と Refs: の間に空行の無い fix のコミットも読む"
+REPO="$TEST_ROOT/p8"
+adr_repo "$REPO"
+echo e >> "$REPO/log.txt"
+git -C "$REPO" add log.txt
+git -C "$REPO" commit -q -m $'fix: e\nRefs: ADR-0004'
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: docs/adr の無いリポジトリでは、design-records が PATH に無くても続行する"
+out=$(cd "$TEST_ROOT/p5" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 0 $?
 assert_not_contains "$out" "PROPOSED_ADRS:"
 
