@@ -157,6 +157,10 @@ cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <bas
 「指摘なし」と返る（2026-10-12 に 2 回起きた）。/code-review は、結果をその場で返すか、background で走って終わりに
 通知を届ける。background のときは終わりの通知だけで待ち（Monitor、sleep、until のループは足さない）、通知で再開して指摘に対応してから先に進む。
 
+2 周目からも、周ごとに上の `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <base>` を実行し、出力の `LEVEL` で回す。
+LEVEL はスクリプトが決める（`docs/` の外のファイルが 1 つでもあれば high）。前の周の直しが小さくても、自分で medium に下げない
+（2026-10-29 に xlc の担当が、Python の修正を含む 3 周目を、スクリプトを通さずに medium で回した）。
+
 **リモートあり**のときは、続けて PR を出して自動レビューを受ける:
 
 - /gh-pr-create を Read で読み、その形（タイトル 70 文字以内、`## Summary` / `## Changes` / `## Tests`）で
