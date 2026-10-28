@@ -81,16 +81,16 @@ assert_contains "$out" "LOG: $HOME/github/slurm-logs/xlc-2G-42.out"
 assert_contains "$out" "job output"
 assert_contains "$out" "EXIT: 0"
 
-it "slurm-run: 終わったジョブの実際の時間と見積もりを出し、ログの末尾にも書く"
+it "slurm-run: 終わったジョブの番号、実際の時間、見積もりを 1 行に出し、ログの末尾にも書く"
 cd "$HOME/github/proj" || exit 1
 out=$("$RUN" -t 30 xlc-2G 'true')
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
-assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00"
 
 it "slurm-run: ジョブが失敗しても、実際の時間と見積もりを出す"
 out=$(FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-2G 'false')
 assert_eq 3 $?
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00"
 
 it "slurm-run: 時間を読めなくても、警告してジョブの終了コードで終わる"
 out=$(FAKE_SHOW_EXIT=1 FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-2G 'false' 2>&1)
@@ -102,13 +102,13 @@ it "slurm-run: ログに書き足せなくても、警告してジョブの終�
 out=$(FAKE_LOG_READONLY=1 FAKE_JOB_EXIT=3 "$RUN" -t 30 xlc-ro 'false' 2>&1)
 assert_eq 3 $?
 assert_contains "$out" "WARN:"
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00"
 assert_contains "$out" "EXIT: 3"
 
 it "slurm-run: 実際の時間と見積もりは、ジョブの欄の先頭の RunTime と TimeLimit から読む"
 # 本物の scontrol show job は複数行で、後ろの行に利用者が決める値（Comment、WorkDir など）が続く
 out=$(FAKE_EXTRA_LINE="   Comment=feat/x RunTime=99:99:99 TimeLimit=9-99:99:99" "$RUN" -t 30 xlc-2G 'true')
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00"
 
 it "slurm-run: -c <コア数> を付けると、--exclusive を付けず --cpus-per-task を渡し、連絡先に印を付ける"
 cd "$HOME/github/proj" || exit 1
@@ -121,7 +121,7 @@ assert_contains "$args" "shared-cpus=8"
 
 it "slurm-run: -c を付けたジョブの TIME 行とログの末尾に、時間は当てにならない印を付ける"
 out=$("$RUN" -c 8 -t 30 openmc-2G 'true')
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 shared (-c 8): 時間は当てにならない"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00 shared (-c 8): 時間は当てにならない"
 assert_contains "$(cat "$HOME/github/slurm-logs/openmc-2G-42.out")" "shared (-c 8): 時間は当てにならない"
 
 it "slurm-run: -c を付けなければ、排他で投げ、TIME 行に印を付けない"
@@ -161,12 +161,12 @@ assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$default_part"
 
 it "slurm-run: --timed でないジョブの TIME 行とログの末尾には、止められていなくても割り込まれうる印を付ける"
 out=$("$RUN" -t 30 xlc-2G 'true')
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00 preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
 assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "preemptible: 割り込まれうるので時間は記録に使わない"
 
 it "slurm-run: --timed のジョブの TIME 行には印を付けない"
 out=$("$RUN" --timed -t 30 xlc-bench 'true')
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00"
 assert_not_contains "$out" "preemptible"
 assert_not_contains "$out" "当てにならない"
 
@@ -189,7 +189,7 @@ assert_contains "$out" "partition=unknown: 割り込まれうるかを確かめ�
 
 it "slurm-run: ジョブが止められていたら（SuspendTime がある）、TIME 行とログの末尾に、時間は当てにならない印を付ける"
 out=$(FAKE_SUSPEND_TIME=2026-10-23T22:10:00 "$RUN" --timed -t 30 xlc-bench 'true')
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 suspended: 止められていたので時間は当てにならない"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00 suspended: 止められていたので時間は当てにならない"
 assert_contains "$(cat "$HOME/github/slurm-logs/xlc-bench-42.out")" "suspended: 止められていたので時間は当てにならない"
 
 it "slurm-run: 止められていない（SuspendTime=None）ジョブの TIME 行には、止められた印を付けない"
@@ -205,7 +205,7 @@ out=$(FAKE_NO_SUSPEND_FIELD=1 FAKE_JOB_EXIT=3 "$RUN" --timed -t 30 xlc-bench 'tr
 assert_eq 3 $?
 assert_contains "$out" "WARN:"
 assert_contains "$out" "SuspendTime"
-assert_contains "$out" "TIME: elapsed=00:12:34 estimate=00:30:00 suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
+assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00 suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
 assert_contains "$(cat "$HOME/github/slurm-logs/xlc-bench-42.out")" "suspended=unknown"
 
 it "slurm-run: 割り込まれうるジョブが止められていたら、両方の印を付ける"
