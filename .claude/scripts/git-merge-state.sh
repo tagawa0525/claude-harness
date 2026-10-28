@@ -77,11 +77,11 @@ done
 echo "TARGET: $TARGET"
 if [[ -z "$DEFAULT" ]]; then
   echo "DEFAULT: none"
-  echo "ROOT_COMMITS: $(git rev-list --max-parents=0 --abbrev-commit "$TARGET" | tr '\n' ' ' | sed 's/ $//')"
+  echo "ROOT_COMMITS: $(git rev-list --max-parents=0 --abbrev-commit "refs/heads/$TARGET" | tr '\n' ' ' | sed 's/ $//')"
 else
   echo "DEFAULT: $DEFAULT"
-  echo "COMMITS: $(git rev-list --count "$DEFAULT..$TARGET")"
-  echo "BEHIND: $(git rev-list --count "$TARGET..$DEFAULT")"
+  echo "COMMITS: $(git rev-list --count "refs/heads/$DEFAULT..refs/heads/$TARGET")"
+  echo "BEHIND: $(git rev-list --count "refs/heads/$TARGET..refs/heads/$DEFAULT")"
 fi
 
 # 対象の履歴に先端が含まれ、既定ブランチには入っていない別のブランチ（先端が同じものは積みと見なさない）
@@ -94,7 +94,7 @@ while IFS= read -r b; do
   git merge-base --is-ancestor "$tip" "$target_tip" || continue
   if [[ -n "$DEFAULT" ]] && git merge-base --is-ancestor "$tip" "$DEFAULT"; then continue; fi
   STACKED+=("$b")
-done < <(git for-each-ref --format='%(refname:short)' refs/heads)
+done < <(git for-each-ref --format='%(refname:lstrip=2)' refs/heads)
 if ((${#STACKED[@]} > 0)); then
   echo "STACKED_ON: $(IFS=,; echo "${STACKED[*]}")"
 else
@@ -104,15 +104,17 @@ fi
 echo "TARGET_WORKTREE: ${WT_PATH:-none}"
 echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
 
+# ブランチは refs/heads/ で指す（同じ名前のタグがあると、短い名前はタグを指す）。
 # <rev>:<path> はトップレベルからのパス。ls-tree は cwd で絞るので --full-tree を付ける（サブディレクトリから実行しても同じ木を見る）
-if git cat-file -e "$TARGET:docs/adr" 2>/dev/null; then
+TIP="refs/heads/$TARGET"
+if git cat-file -e "$TIP:docs/adr" 2>/dev/null; then
   # 一覧が出ないことを docs/adr の無いリポジトリと取り違えないよう、読めないときは行を出さずに止める
   if ! command -v design-records >/dev/null; then
     echo "ERROR: design-records が PATH にありません。ADR の status を読めないので PROPOSED_ADRS を出せません" >&2
     exit 1
   fi
-  RANGE="$TARGET"
-  [[ -n "$DEFAULT" ]] && RANGE="$DEFAULT..$TARGET"
+  RANGE="$TIP"
+  [[ -n "$DEFAULT" ]] && RANGE="refs/heads/$DEFAULT..$TIP"
   # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。
   # log.showSignature は署名の検証の行を件名の前に出すので切る。-z の NUL でコミットを区切り、bash の read で読む
   # （awk の RS に NUL を渡す書き方は awk の実装で動きが違い、BWK awk では段落ごとに分かれて黙って一致しない）。
@@ -131,13 +133,13 @@ if git cat-file -e "$TARGET:docs/adr" 2>/dev/null; then
       | { grep -xE 'ADR-[0-9]{4}' || true; } \
       | sort -u
   )
-  ADRS=$(git -c core.quotePath=false ls-tree --full-tree --name-only "$TARGET:docs/adr")
+  ADRS=$(git -c core.quotePath=false ls-tree --full-tree --name-only "$TIP:docs/adr")
   PROPOSED=()
   for ref in $REFS; do
     while IFS= read -r name; do
       [[ "$name" == "${ref#ADR-}-"*.md ]] || continue
       # コマンド置換の失敗は、代入で受けると set -e が止める
-      text=$(git show "$TARGET:docs/adr/$name")
+      text=$(git show "$TIP:docs/adr/$name")
       st=$(design-records status <<<"$text")
       if [[ "$st" == "proposed" ]]; then
         PROPOSED+=("$ref")
