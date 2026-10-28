@@ -48,6 +48,8 @@ ADR を一覧に出す 1 段。hook で止めない」をユーザーが選ん�
 - ブランチを短い名前で指した版は、同じ名前のタグがあるとタグのコミットを読んだ。refs/heads/ で指す
 - design-records を docs/adr があるだけで求めた版、ADR の参照があるだけで求めた版は、読む status が無いのに
   止まった。番号の一致するファイルを読む直前で求める
+- Refs: の値を `{ grep … || true; }` で絞った版は、grep の失敗（終了コード 2）も空の一覧にして none を出した。
+  一致なし（1）だけを通す
 - `%s%n%b` で読んだ版は、件名の直後に空行なしで書いた `Refs:` を件名に繋げて落とした。`%B` で読む
 - `Refs:` の行の `ADR-[0-9]{4}` をすべて拾った版は、「nixfiles の ADR-0036」のような別のリポジトリの参照を数えた。
   カンマで区切った値が `ADR-NNNN` そのものであるものだけを数える
@@ -105,6 +107,6 @@ proposed のまま残す、と決めさせる（accepted にするときは「�
 - `.claude/tests/scripts/git-merge-state.sh` の `PROPOSED_ADRS` のテスト（feat、fix、feat!、fix! が挙げた proposed、1 つのコミットの複数の `Refs:` の行、件名の直後の空行の無い `Refs:` の行、
   サブディレクトリからの実行、log.showSignature と署名したコミット、accepted と superseded、docs と test と件名の途中の `feat:`、
   `Refs:` の行の外と別のリポジトリの ADR、main に入ったコミット、main の無いリポジトリ、ファイルの無い番号、design-records が PATH に無いとき（ADR の参照が無ければ続行する）、
-  ブランチや main と同じ名前のタグ、docs/adr がファイルのとき、docs/adr の無いリポジトリ）が通る
+  ブランチや main と同じ名前のタグ、docs/adr がファイルのとき、docs/adr の木を読めないとき、grep が失敗したとき、docs/adr の無いリポジトリ）が通る
 - xlc の #0188 の ADR-0169、0202、0206 の実装をマージしたコミット（316e30b6a、cc26dc53c、b9d38a653）の第 1 親から
   第 2 親までに同じ判定を当てると、それぞれの ADR が一覧に出る（2026-10-29 に確かめた）
