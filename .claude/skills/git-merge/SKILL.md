@@ -37,7 +37,9 @@ GitHub での PR の流れ（CI → 自動レビュー → `gh pr merge --merge`
 
 $ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上に `ERROR:` の行があれば（標準エラーに出るので、表示の最後とは限らない）、その指示に従う
 （main 自身、GitHub リモートあり、未コミットの変更、ADR の status を読む design-records が無いときは、ここで止まる。
-design-records の ERROR と、途中で失敗したときの ERROR は、ほかの行を出した後に出るので、その前の行を使って先に進まない）。
+design-records の ERROR と、途中で失敗したときの ERROR は、ほかの行の後に出ることがあるので、その前の行を使って先に進まない）。
+`ERROR:` の行が無くても、`fatal:` か `error:` が出たか、行の値が欠けたときは、その出力を使わずに原因を直して取り直す
+（途中の失敗のうち、行の値を作るコマンドの失敗などは `ERROR:` を出さずに続く）。
 
 対象の `TARGET_WORKTREE` と main の `DEFAULT_WORKTREE` は、そのブランチをチェックアウトしている場所。
 別の worktree にあるブランチへは switch できないので、ブランチの操作は `git -C [TARGET_WORKTREE]`、
@@ -119,8 +121,8 @@ issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。
 再実行して、この行を取り直してから決める（rebase で、main で accepted になった ADR は一覧から外れ、main で入った
 proposed の ADR は一覧に入りうる。rebase で docs/adr が入れば行も現れる。読み込んだときの none や行の無さで、この段を
 飛ばさない）。一覧は feat と fix の `Refs:` に頼るので、このブランチが足すか直した proposed の ADR
-（`git diff --name-status main...[branch] -- docs/adr`）も一覧と合わせて見る（`Refs:` を書き忘れたコミットや、perf などの型の
-コミットが実装した ADR は一覧に出ない）。使う行（取り直したときは取り直した行）が無いか none で、このブランチが proposed の
+（`git diff --name-status main...[branch] -- docs/adr`）も一覧と合わせて見る。`Refs:` を書き忘れたコミットや perf などの型の
+コミットだけが実装した、main にある ADR は、一覧にもこの diff にも出ないので、ブランチの実装から自分で見る。使う行（取り直したときは取り直した行）が無いか none で、このブランチが proposed の
 ADR を足しも直しもせず、番号も振り直していなければ、ここで決めることは無い。
 番号を振り直した ADR は、前のコミットの `Refs:` に古い番号のまま残る。振り直した ADR は一覧から漏れるので、一覧が
 none でも自分で見て下の選択肢から決める。古い番号は main の別の ADR を指しうるので、一覧の ADR がこのブランチの実装した
@@ -137,12 +139,13 @@ ADR はマージの後に本文を直せないので、マージの前に、ADR 
 - 試して、採らないと決めた: `status: rejected` と `date:` をその日にし、採らない理由（試した結果）を「帰結」に書く。
   採らなかった決定の実装はこのブランチから外す（残すと、rejected の ADR と main のコードが食い違ったまま確定する）
 - 試しただけ、まだ決めない: proposed のまま残す
+- 決定だけを足し、実装は後のブランチで行う: proposed のまま残す
 
 proposed のまま残した ADR は、マージの本文の Impact に番号と理由を書く（次に誰が accepted にするかを読めるように）。
 チェックとレビューの前に決めておくと、直した ADR も 1 回のチェックとレビューで見られる。この段で直した ADR は、
 docs/ だけの変更でもレビューを受けさせる（/delegate の担当の最後の周の後に直したときも、「レビュー」の節の「挙動を変えない
 文書だけなら回さない」に当てず回す。確定した ADR はマージの後に直せない）。レビューの指摘で後から ADR を直したときや
-feat か fix のコミットを足したときは、「レビュー」の節のとおり rebase の要否とチェックからやり直し、この段の一覧も取り直す。
+ブランチのコミットを変えたとき（追加、amend）は、「レビュー」の節のとおり rebase の要否とチェックからやり直し、この段の一覧も取り直す。
 
 ### チェック（CI の代わり）
 

@@ -8,6 +8,7 @@
 #   - GitHub リモートがある（/gh-pr-create と /gh-pr-merge の流れで、ここでは扱わない）
 #   - 対象または既定ブランチの worktree に未コミットの変更がある
 #   - feat / fix のコミットが挙げた ADR のファイルがあるのに、design-records が PATH に無い（ほかの行を出した後に止まる）
+# set -e で途中で止まったときも ERROR を出し、失敗したコマンドの終了コードで終わる。
 #
 # 既定ブランチはローカルの main / master（リモートのないリポジトリ向けなので origin は見ない）。
 #
@@ -31,7 +32,7 @@
 set -euo pipefail
 # set -e で途中で止まったときも ERROR: の行を出す（ツール自身のメッセージは形がまちまちで、欠けた行を「無い」と
 # 読まれないように）
-trap 'echo "ERROR: git-merge-state.sh が $LINENO 行目で失敗しました。上のメッセージの原因を直してから、もう一度実行してください" >&2' ERR
+trap 'echo "ERROR: git-merge-state.sh が $LINENO 行目で失敗しました。上にメッセージがあればその原因を直してから、もう一度実行してください" >&2' ERR
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo "ERROR: git リポジトリではありません" >&2
