@@ -35,10 +35,9 @@ GitHub での PR の流れ（CI → 自動レビュー → `gh pr merge --merge`
 !`~/.claude/scripts/git-merge-state.sh $ARGUMENTS`
 !`git log --oneline --graph --all -20`
 
-$ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上が `ERROR:` で終わっていれば、その指示に従う
+$ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上に `ERROR:` の行があれば（標準エラーに出るので、表示の最後とは限らない）、その指示に従う
 （main 自身、GitHub リモートあり、未コミットの変更、ADR の status を読む design-records が無いときは、ここで止まる。
-design-records の ERROR は、ほかの行を出した後に出るので、その前の行を使って先に進まない）。`ERROR:` の行が無くても、
-git などのエラー（`error:`、`fatal:`）が出て行が欠けたときは、欠けた行を「無い」と読まずに原因を直して取り直す。
+design-records の ERROR と、途中で失敗したときの ERROR は、ほかの行を出した後に出るので、その前の行を使って先に進まない）。
 
 対象の `TARGET_WORKTREE` と main の `DEFAULT_WORKTREE` は、そのブランチをチェックアウトしている場所。
 別の worktree にあるブランチへは switch できないので、ブランチの操作は `git -C [TARGET_WORKTREE]`、
@@ -115,11 +114,14 @@ issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。
 
 `PROPOSED_ADRS` は、このブランチの feat と fix のコミットが本文の `Refs:` で挙げた ADR のうち、ブランチの先端でまだ
 `status: proposed` のもの（docs/adr の無いリポジトリでは行が出ない）。上の「現在の状態」はスキルを読み込んだときの
-ブランチの先端のものなので、rebase も振り直しもしていなければその行で決め、rebase か番号の振り直しをした後と、feat か fix のコミットを足した後（レビューの指摘の
-修正など）は `~/.claude/scripts/git-merge-state.sh [branch]` を
+ブランチの先端のものなので、ブランチのコミットを変えていなければその行で決め、変えた後（rebase、番号の振り直し、
+コミットの追加や amend。レビューやチェックの指摘の修正を含む）は `~/.claude/scripts/git-merge-state.sh [branch]` を
 再実行して、この行を取り直してから決める（rebase で、main で accepted になった ADR は一覧から外れ、main で入った
 proposed の ADR は一覧に入りうる。rebase で docs/adr が入れば行も現れる。読み込んだときの none や行の無さで、この段を
-飛ばさない）。使う行（取り直したときは取り直した行）が無いか none で、番号も振り直していなければ、ここで決めることは無い。
+飛ばさない）。一覧は feat と fix の `Refs:` に頼るので、このブランチが足すか直した proposed の ADR
+（`git diff --name-status main...[branch] -- docs/adr`）も一覧と合わせて見る（`Refs:` を書き忘れたコミットや、perf などの型の
+コミットが実装した ADR は一覧に出ない）。使う行（取り直したときは取り直した行）が無いか none で、このブランチが proposed の
+ADR を足しも直しもせず、番号も振り直していなければ、ここで決めることは無い。
 番号を振り直した ADR は、前のコミットの `Refs:` に古い番号のまま残る。振り直した ADR は一覧から漏れるので、一覧が
 none でも自分で見て下の選択肢から決める。古い番号は main の別の ADR を指しうるので、一覧の ADR がこのブランチの実装した
 ものかを本文で確かめてから直す。
@@ -150,7 +152,7 @@ main との分岐点からの変更を検査する。マージ時にも hook が
 ~/.claude/skills/language-checks/scripts/run-checks.sh -C [TARGET_WORKTREE] --base main
 ```
 
-失敗したら原因を直してコミットし、もう一度チェックする。通ってからマージする。
+失敗したら原因を直してコミットし、「proposed の ADR」の一覧を取り直してから、もう一度チェックする。通ってからマージする。
 
 全体の `cargo test` などで前景の上限（600 秒）を超えうるので、チェックは `run_in_background` で回し、終わりの通知を待つ。
 `git commit … && run-checks.sh` のように commit とチェックを 1 つの前景のコマンドにつながない。
@@ -230,7 +232,7 @@ Merge: [ブランチの変更を簡潔に要約]
 - [主要な変更点を3-5項目]
 
 ## Impact
-[影響するモジュール/機能]
+[影響するモジュール/機能。proposed のまま残した ADR があれば、番号と理由]
 
 Branch: [branch]
 ```
