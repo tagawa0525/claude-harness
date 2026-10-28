@@ -127,17 +127,17 @@ if [[ "$(git cat-file -t "$TIP:docs/adr" 2>/dev/null)" == "tree" ]]; then
       | { grep -xE 'ADR-[0-9]{4}' || true; } \
       | sort -u
   )
-  # 一覧が出ないことを docs/adr の無いリポジトリと取り違えないよう、読めないときは行を出さずに止める
-  if [[ -n "$REFS" ]] && ! command -v design-records >/dev/null; then
-    echo "ERROR: design-records が PATH にありません。ADR の status を読めないので PROPOSED_ADRS を出せません。" \
-      "nixfiles の home-manager の設定（design-records のパッケージ）を適用して PATH に入れてから、もう一度実行してください" >&2
-    exit 1
-  fi
   ADRS=$(git -c core.quotePath=false ls-tree --full-tree --name-only "$TIP:docs/adr")
   PROPOSED=()
   for ref in $REFS; do
     while IFS= read -r name; do
       [[ "$name" == "${ref#ADR-}-"*.md ]] || continue
+      # 一覧が出ないことを docs/adr の無いリポジトリと取り違えないよう、読めないときは行を出さずに止める
+      if ! command -v design-records >/dev/null; then
+        echo "ERROR: design-records が PATH にありません。ADR の status を読めないので PROPOSED_ADRS を出せません。" \
+          "nixfiles の home-manager の設定（design-records のパッケージ）を適用して PATH に入れてから、もう一度実行してください" >&2
+        exit 1
+      fi
       # コマンド置換の失敗は、代入で受けると set -e が止める
       text=$(git show "$TIP:docs/adr/$name")
       st=$(design-records status <<<"$text")
