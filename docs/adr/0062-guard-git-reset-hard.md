@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-28
-requires: []
+requires: [ADR-0025]
 supersedes: []
 superseded-by:
 issues: []
@@ -62,6 +62,10 @@ issues: []
   しない。起きたら同じ形で足す
 - 利用者の gitconfig の alias（`rh = reset --hard`）は見ない。読むには hook が設定を解釈する必要があり、今は使っていない
 - 実行するプログラムを決められないコマンドがあり、文字列に `--hard` があれば止まる（`$CMD` で別のことをするコマンドでも）
+- 見逃す形: 前の `cd` が失敗しうるときの相対の `-C ../x`（`cd` が失敗したときのディレクトリに相対の `-C` を当てていない）、
+  大文字で書いた alias の名前（`-c alias.RH=…`）、`!sh -c '…'` の alias の中の `--hard`。どれも作為的な形なので、起きたら足す
+- 包んだ絶対パスの `env -C x bash -c '…'` の中の reset は、中の `cd` が失敗しても x で走るので、hook の cwd と包む前の `cd` は見ない
+- 同じ worktree の別のディレクトリ（`/repo/sub` と `/repo`）を別々に検査し、拒否の文言に同じ理由が重なることがある。判定は変わらない
 - `git reset --hard <commit>` は、<commit> が追跡するパスにある追跡していないファイルも上書きする。追跡していないファイルを
   数えないので、これは見逃す（2 周目のレビューが示した。起きたら、対象のコミットの木と `ls-files --others` を比べる形で足す）
 
