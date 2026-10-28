@@ -105,16 +105,17 @@ design-records -C [TARGET_WORKTREE] check
 
 重複があれば、このブランチで足した側を振り直す（ADR は `design-records -C [TARGET_WORKTREE] renumber NNNN`、
 issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。新しい番号の予約、ファイル名と参照の付け替え、コミットまでを行う。
-できたコミットを `git show` で見て、付け替えた参照が振り直した記録を指していることを確かめてから、チェックに進む。
+できたコミットを `git show` で見て、付け替えた参照が振り直した記録を指していることを確かめてから、次の「proposed の ADR」に進む。
 
-### proposed の ADR（`PROPOSED_ADRS` が none でない）
+### proposed の ADR（`PROPOSED_ADRS` が none でない、または ADR の番号を振り直した）
 
 `PROPOSED_ADRS` は、このブランチの feat と fix のコミットが本文の `Refs:` で挙げた ADR のうち、ブランチの先端でまだ
 `status: proposed` のもの（docs/adr の無いリポジトリでは行が出ない）。上の「現在の状態」はスキルを読み込んだときの
 ブランチの先端のものなので、rebase か番号の振り直しをした後は `~/.claude/scripts/git-merge-state.sh [branch]` を
 再実行して、この行を取り直してから決める（main で accepted になった ADR は rebase の後の先端では一覧から外れる）。
-番号を振り直した ADR は、前のコミットの `Refs:` に古い番号のまま残る。振り直した ADR は一覧から漏れるので自分で見て、
-古い番号は main の別の ADR を指しうるので、一覧の ADR がこのブランチの実装したものかを本文で確かめてから直す。
+番号を振り直した ADR は、前のコミットの `Refs:` に古い番号のまま残る。振り直した ADR は一覧から漏れるので、一覧が
+none でも自分で見て下の 3 つから決める。古い番号は main の別の ADR を指しうるので、一覧の ADR がこのブランチの実装した
+ものかを本文で確かめてから直す。
 
 実装をマージするブランチは、実装した ADR を同じブランチで実装に合わせて直し、accepted にする。accepted になった
 ADR はマージの後に本文を直せないので、マージの前に、ADR ごとに次のどれかを決めてコミットする（hook は止めない。一部だけを実装したブランチや方法を試す
