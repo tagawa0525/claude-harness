@@ -107,12 +107,14 @@ design-records -C [TARGET_WORKTREE] check
 issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。新しい番号の予約、ファイル名と参照の付け替え、コミットまでを行う。
 できたコミットを `git show` で見て、付け替えた参照が振り直した記録を指していることを確かめてから、次の「proposed の ADR」に進む。
 
-### proposed の ADR（`PROPOSED_ADRS` が none でない、または ADR の番号を振り直した）
+### proposed の ADR（`PROPOSED_ADRS` の行がある）
 
 `PROPOSED_ADRS` は、このブランチの feat と fix のコミットが本文の `Refs:` で挙げた ADR のうち、ブランチの先端でまだ
 `status: proposed` のもの（docs/adr の無いリポジトリでは行が出ない）。上の「現在の状態」はスキルを読み込んだときの
 ブランチの先端のものなので、rebase か番号の振り直しをした後は `~/.claude/scripts/git-merge-state.sh [branch]` を
-再実行して、この行を取り直してから決める（main で accepted になった ADR は rebase の後の先端では一覧から外れる）。
+再実行して、この行を取り直してから決める（rebase で、main で accepted になった ADR は一覧から外れ、main で入った
+proposed の ADR は一覧に入りうる。読み込んだときの none で、この段を飛ばさない）。取り直した行が none で、番号も
+振り直していなければ、ここで決めることは無い。
 番号を振り直した ADR は、前のコミットの `Refs:` に古い番号のまま残る。振り直した ADR は一覧から漏れるので、一覧が
 none でも自分で見て下の 3 つから決める。古い番号は main の別の ADR を指しうるので、一覧の ADR がこのブランチの実装した
 ものかを本文で確かめてから直す。
@@ -121,9 +123,11 @@ none でも自分で見て下の 3 つから決める。古い番号は main の
 ADR はマージの後に本文を直せないので、マージの前に、ADR ごとに次のどれかを決めてコミットする（hook は止めない。一部だけを実装したブランチや方法を試す
 ブランチは proposed のまま残してよく、機械では決められないため）:
 
-- 決定の全部を実装した: 決定と帰結を実装に合わせて直し、`status: accepted` と `date:` をその日にする
-- 一部を実装した: 残りを「帰結」に書き、issue に残してから accepted にする。または、残りを決めてから accepted に
-  するために proposed のまま残す
+- 決定の全部を実装した: 決定と帰結を実装に合わせて直し、「確認」に実際のテストと結果を書いて、`status: accepted` と
+  `date:` をその日にする
+- 一部を実装した: 残りを「帰結」に書き、issue に残し、「確認」を書いてから accepted にする。または、残りを決めてから
+  accepted にするために proposed のまま残す
+- 試して、採らないと決めた: `status: rejected` と `date:` をその日にし、採らない理由（試した結果）を「帰結」に書く
 - 試しただけ、まだ決めない: proposed のまま残す
 
 proposed のまま残した ADR は、マージの本文の Impact に番号と理由を書く（次に誰が accepted にするかを読めるように）。

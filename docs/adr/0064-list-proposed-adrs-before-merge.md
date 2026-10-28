@@ -66,8 +66,9 @@ feat と fix に絞るのは、docs のコミット（ADR を書く、直す）�
 限らないため。status をブランチの先端で読むのは、同じブランチで accepted にしたものを一覧から外すため。
 
 /git-merge の「proposed の ADR」の段は、ADR ごとに、全部を実装したなら直して accepted にし、一部なら残りを帰結と
-issue に書いて accepted にするか proposed のまま残し、試しただけなら proposed のまま残す、と決めさせる。
-proposed のまま残したものは、マージの本文に番号と理由を書く。
+issue に書いて accepted にするか proposed のまま残し、試して採らないと決めたなら rejected にし、試しただけなら
+proposed のまま残す、と決めさせる（accepted にするときは「確認」に実際のテストと結果を書く）。proposed のまま残したものは、
+マージの本文に番号と理由を書く。段は、rebase の後に状態を取り直してから決めさせる（rebase で一覧が増えも減りもする）。
 
 ### 帰結
 
