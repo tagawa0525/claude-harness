@@ -86,8 +86,9 @@ issue に書いて accepted にするか proposed のまま残し、試して採
 proposed のまま残す、と決めさせる（accepted にするときは「確認」に実際のテストと結果を書く）。proposed のまま残したものは、
 マージの本文に番号と理由を書く。段は、どのブランチでもチェックの前に通り、ブランチのコミットを変えた後（rebase、番号の振り直し、コミットの追加や
 amend）は状態を取り直してから決めさせる（rebase で一覧が増えも減りもする）。一覧に出ない、このブランチが足すか直した
-proposed の ADR も `git diff --name-status` で合わせて見させる。状態のスクリプトは、途中で失敗したときも `ERROR:` の行を出す
-（行が欠けたことを ADR の無いリポジトリと取り違えさせない）。
+proposed の ADR も `git diff --name-status` で合わせて見させる。状態のスクリプトは、set -e で途中で止まったときも `ERROR:` の行を出す
+（行が欠けたことを ADR の無いリポジトリと取り違えさせない）。echo の引数のコマンド置換などの失敗は止まらずに
+値の欠けた行になるので、スキルは `fatal:` と `error:` と欠けた値でも止めさせる。
 
 ### 帰結
 
@@ -96,7 +97,7 @@ proposed の ADR も `git diff --name-status` で合わせて見させる。状�
   まだ書いていない ADR）は一覧に出ない
 - perf、refactor、build などの型のコミットだけが実装した ADR は一覧に出ない（xlc の main には、`Refs:` で ADR を
   挙げた perf、refactor、build のコミットもある）。そうした漏れが起きたら、型を広げるかを決め直す
-- 一覧は、読んだときのブランチの先端のもの。rebase の後は再実行する。rebase の後に `design-records renumber` で番号を
+- 一覧は、読んだときのブランチの先端のもの。ブランチのコミットを変えた後（rebase、振り直し、追加、amend）は再実行する。rebase の後に `design-records renumber` で番号を
   振り直した ADR は、前のコミットの `Refs:` が古い番号を指したまま残る（コミットのメッセージは振り直しで書き換わらない）。
   振り直した ADR は一覧から漏れ、古い番号の main の別の ADR が proposed なら一覧に出る。スキルの段は、一覧の ADR が
   このブランチの実装したものかを本文で確かめさせる
