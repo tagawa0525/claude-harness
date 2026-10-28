@@ -29,6 +29,9 @@
 # 方法を試すブランチは proposed のまま残してよく、機械では決められない）。
 
 set -euo pipefail
+# set -e で途中で止まったときも ERROR: の行を出す（ツール自身のメッセージは形がまちまちで、欠けた行を「無い」と
+# 読まれないように）
+trap 'echo "ERROR: git-merge-state.sh が $LINENO 行目で失敗しました。上のメッセージの原因を直してから、もう一度実行してください" >&2' ERR
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo "ERROR: git リポジトリではありません" >&2
