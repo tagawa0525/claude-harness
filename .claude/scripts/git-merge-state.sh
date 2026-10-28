@@ -108,16 +108,24 @@ echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
 if git cat-file -e "$TARGET:docs/adr" 2>/dev/null; then
   RANGE="$TARGET"
   [[ -n "$DEFAULT" ]] && RANGE="$DEFAULT..$TARGET"
-  # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。%x00 でコミットを区切る。
-  # log.showSignature は署名の検証の行を件名の前に出すので切る。
+  # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。
+  # log.showSignature は署名の検証の行を件名の前に出すので切る。-z の NUL でコミットを区切り、bash の read で読む
+  # （awk の RS に NUL を渡す書き方は awk の実装で動きが違い、BWK awk では段落ごとに分かれて黙って一致しない）。
   # Refs: の値はカンマで区切った #NNNN と ADR-NNNN の並びで、ほかの書き方（「nixfiles の ADR-0036」）は別の
   # リポジトリの記録なので数えない
-  REFS=$(git -c log.showSignature=false log --format='%s%n%b%x00' "$RANGE" \
-    | awk 'BEGIN { RS = "\0" } $0 ~ /^\n?(feat|fix)(\([^)]*\))?!?: / { print }' \
-    | { grep -E '^Refs:' || true; } \
-    | sed -E 's/^Refs:[[:space:]]*//' | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
-    | { grep -xE 'ADR-[0-9]{4}' || true; } \
-    | sort -u)
+  # git log の失敗を pipefail で拾うため、プロセス置換でなくパイプでつなぐ
+  FEAT_FIX='^(feat|fix)(\([^)]*\))?!?: '
+  REFS=$(
+    git -c log.showSignature=false log -z --format='%s%n%b' "$RANGE" -- \
+      | while IFS= read -r -d '' msg; do
+        [[ "${msg%%$'\n'*}" =~ $FEAT_FIX ]] || continue
+        printf '%s\n' "$msg"
+      done \
+      | { grep -E '^Refs:' || true; } \
+      | sed -E 's/^Refs:[[:space:]]*//' | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+      | { grep -xE 'ADR-[0-9]{4}' || true; } \
+      | sort -u
+  )
   ADRS=$(git -c core.quotePath=false ls-tree --full-tree --name-only "$TARGET:docs/adr")
   PROPOSED=()
   for ref in $REFS; do
