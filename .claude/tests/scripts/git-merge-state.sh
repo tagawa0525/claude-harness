@@ -369,6 +369,16 @@ out=$(cd "$REPO" && "$SCRIPT" feat/x 2>&1)
 assert_ne 0 $?
 assert_not_contains "$out" "PROPOSED_ADRS:"
 
+it "git-merge-state: Refs: の値を絞る grep が失敗（2）したら、none にせず失敗する"
+FAKEGREP="$TEST_ROOT/fake-grep"
+mkdir -p "$FAKEGREP"
+REAL_GREP=$(command -v grep)
+printf '#!/usr/bin/env bash\nif [[ "$1" == -xE ]]; then exit 2; fi\nexec %q "$@"\n' "$REAL_GREP" > "$FAKEGREP/grep"
+chmod +x "$FAKEGREP/grep"
+out=$(cd "$TEST_ROOT/p1" && PATH="$FAKEGREP:$PATH" "$SCRIPT" feat/x 2>&1)
+assert_ne 0 $?
+assert_not_contains "$out" "PROPOSED_ADRS:"
+
 it "git-merge-state: docs/adr の無いリポジトリでは、design-records が PATH に無くても続行する"
 out=$(cd "$TEST_ROOT/p5" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 0 $?
