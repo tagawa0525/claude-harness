@@ -28,8 +28,12 @@ issues: []
 - 案 2: 対象の worktree に追跡しているファイルの未コミットの変更があるときだけ止める。対象は前の `cd` と `-C` を当てた
   ディレクトリ（`Shell::target_dir`）。今回の形は `cd` が失敗して hook の cwd で走るので、対象だけを見ると、一時のリポジトリ
   （まだ無いか、変更の無い）を見て通してしまう
-- 案 3: 案 2 に加え、`-C` を書いていなければ hook の cwd も見る。`cd x && git reset --hard` のように `&&` で正しくつないだ
-  形でも、cwd に変更があれば止まる（誤検出）。`git -C <dir> reset --hard` に書き直せば通り、こちらは `cd` の成否に依らない
+- 案 3: 案 2 に加え、絶対パスの `git -C` / `env -C` で指していなければ、reset が走りうるほかのディレクトリも見る。`cd` が
+  失敗すると、reset は最後に通った `cd` の先（無ければ hook の cwd）で走るので、hook の cwd と、前の各 `cd` の直前の
+  ディレクトリ（`bash -c` の中の `cd` なら外側の `cd` の先も）を見る。`cd x && git reset --hard` のように `&&` で正しく
+  つないだ形でも、cwd に変更があれば止まる（誤検出）。`git -C <絶対パス> reset --hard` に書き直せば通り、こちらは `cd` の
+  成否に依らない。書き方からディレクトリを決められない形（変数のパス、`--git-dir` / `--work-tree`、`GIT_DIR` /
+  `GIT_WORK_TREE`、変数に入れたコマンド）は止める側に倒す（ADR-0025）
 - 案 4: `cd` の後に `;` でつないだ `reset --hard` を形で止める。シェルの木から `cd` の失敗で走る位置を割り出す必要があり、
   `cd a; cd b`、`||`、`if` などの形を数えきれない。消える変更が無い場合も止める
 
@@ -37,17 +41,26 @@ issues: []
 
 案 3 を採る。守るものは未コミットの変更なので、変更の有無で判定する（案 1 と案 4 は変更が無くても止める）。hook の cwd を
 見ない案 2 は、今回の形を通す。案 3 の誤検出は、`-C` で書き直す 1 手で抜けられ、書き直した形は `cd` の失敗に依らないので、
-拒否の文言の修正方法にそれを書く。追跡していないファイルは `reset --hard` が消さないので数えない
-（`git status --porcelain --untracked-files=no`）。まだ無いディレクトリは見ない（`git::not_a_directory`。作ってから入る形が
-ある）。消してよい変更なら `ALLOW_GIT_RESET_HARD=<理由>` で外す。
+拒否の文言の修正方法にそれを書く。追跡していないファイルと、`--recurse-submodules` の無い reset でのサブモジュールの中は
+`reset --hard` が消さないので数えない（`git status --porcelain --untracked-files=no --ignore-submodules`）。worktree の中で
+`git status` が失敗するときは、消えるものを確かめられないので止める。まだ無いディレクトリは見ない（`git::not_a_directory`。
+作ってから入る形がある）。ssh と `sudo -i` の中の reset は手元の worktree ではないので見ない。`--ha` などの省略形と、
+`git -c alias.<名前>=` で書いた alias も reset --hard として見る。消してよい変更なら `ALLOW_GIT_RESET_HARD=<理由>` で外す。
+
+最初の実装は対象と hook の cwd だけを見ていた。ローカルのレビュー（2026-10-28）が、一時のリポジトリで hook を実行して、
+前の `cd` が通った後の `cd` の失敗、`bash -c` の中の `cd` の失敗、`--har`、`-c` の alias、変数のパス、`--git-dir`、
+`GIT_DIR`、変数に入れたコマンドが変更を消すのに通ることと、絶対パスの `env -C` と ssh の先が cwd の変更で止まることを
+示したので、今の形にした。
 
 ### 帰結
 
 - `git checkout -- <path>`、`git restore`、`git clean -f` も未コミットの変更や追跡していないファイルを消すが、今回は対象に
   しない。起きたら同じ形で足す
-- 文字列から実行するプログラムを決められない形（`$CMD`）は見ない
+- 利用者の gitconfig の alias（`rh = reset --hard`）は見ない。読むには hook が設定を解釈する必要があり、今は使っていない
+- 実行するプログラムを決められないコマンドがあり、文字列に `reset` があれば止まる（`$CMD` で別のことをするコマンドでも）
 
 ### 確認
 
-- `.claude/tests/hooks.sh` の guard-git-reset-hard の節（対象の変更、`cd` の失敗の形、`-C` で通る、追跡していないファイルと
+- `.claude/tests/hooks.sh` の guard-git-reset-hard の節（対象の変更、`cd` の失敗の形、前の `cd` が通った後の失敗と
+  `bash -c` の中、省略形と alias、決められない書き方、絶対パスの `-C` / `env -C` と ssh で通る、追跡していないファイルと
   `--hard` でない reset は通す、エスケープ）
