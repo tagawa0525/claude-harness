@@ -3,6 +3,19 @@
 #
 # 実行: bash .claude/tests/scripts/git-merge-state.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
+# ADR のフロントマターの status は design-records（設計の記録の CLI）が読む。リポジトリのクレートをビルドして PATH の先頭に置く。
+# lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
+DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
+# バイナリの場所は cargo に聞く（~/.cargo/config.toml の target-dir や CARGO_TARGET_DIR で target/ の外に出る）
+BUILT=$(cargo build -q --message-format=json --manifest-path "$DESIGN_RECORDS_DIR/Cargo.toml") || exit 1
+DESIGN_RECORDS_BIN=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "design-records" and .executable != null) | .executable' <<<"$BUILT")
+if [[ ! -x "$DESIGN_RECORDS_BIN" ]]; then
+  echo "ERROR: ビルドした design-records が見つかりません: '$DESIGN_RECORDS_BIN'" >&2
+  exit 1
+fi
+PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"
+export PATH
+
 source "$(dirname "$0")/../lib.sh"
 
 SCRIPT="$SCRIPTS_DIR/git-merge-state.sh"
@@ -116,6 +129,96 @@ assert_eq 0 $?
 assert_contains "$out" "DEFAULT: none"
 assert_contains "$out" "DEFAULT_WORKTREE: none"
 assert_contains "$out" "ROOT_COMMITS: $(git rev-parse --short HEAD)"
+
+# ---------------------------------------------------------------------------
+# PROPOSED_ADRS: ブランチの feat / fix のコミットが Refs: で挙げ、先端で proposed の ADR
+# ---------------------------------------------------------------------------
+
+# write_adr <repo> <number> <status>: docs/adr/<number>-adr.md をフロントマターの status 付きで書く
+write_adr() {
+  mkdir -p "$1/docs/adr"
+  printf -- '---\nstatus: %s\ndate: 2026-10-29\n---\n\n# ADR-%s\n' "$3" "$2" > "$1/docs/adr/$2-adr.md"
+}
+
+# commit_refs <repo> <subject> <refs>: 本文に Refs: の行を持つコミット（変更は log.txt への追記）
+commit_refs() {
+  echo "$2" >> "$1/log.txt"
+  git -C "$1" add log.txt
+  git -C "$1" commit -q -m "$2" -m "Why." -m "Refs: $3"
+}
+
+# adr_repo <dir>: main に proposed の ADR-0001、0002、0004 と accepted の ADR-0003 を持ち、feat/x を切って main に戻したリポジトリ
+adr_repo() {
+  make_repo "$1"
+  write_adr "$1" 0001 proposed
+  write_adr "$1" 0002 proposed
+  write_adr "$1" 0003 accepted
+  write_adr "$1" 0004 proposed
+  git -C "$1" add docs
+  git -C "$1" commit -q -m "docs: seed the ADRs"
+  git -C "$1" switch -q -c feat/x
+}
+
+it "git-merge-state: feat と fix のコミットが Refs: で挙げた proposed の ADR を、番号の順に PROPOSED_ADRS に出す"
+REPO="$TEST_ROOT/p1"
+adr_repo "$REPO"
+commit_refs "$REPO" "fix(parser): b" "#0004, ADR-0002"
+commit_refs "$REPO" "feat: a" "ADR-0001"
+commit_refs "$REPO" "feat(cli)!: c" "ADR-0002"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "PROPOSED_ADRS: ADR-0001 ADR-0002"$'\n'
+
+it "git-merge-state: Refs: で挙げた ADR がブランチの先端で accepted なら出さない"
+REPO="$TEST_ROOT/p2"
+adr_repo "$REPO"
+commit_refs "$REPO" "feat: a" "ADR-0003"
+write_adr "$REPO" 0001 accepted
+git -C "$REPO" add docs
+commit_refs "$REPO" "feat: b" "ADR-0001"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "PROPOSED_ADRS: none"
+
+it "git-merge-state: feat / fix 以外のコミット（docs など）だけが挙げた proposed の ADR は出さない"
+REPO="$TEST_ROOT/p3"
+adr_repo "$REPO"
+commit_refs "$REPO" "docs(adr): a" "ADR-0001"
+commit_refs "$REPO" "test: b" "ADR-0004"
+commit_refs "$REPO" "refactor: feat: c" "ADR-0002"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "PROPOSED_ADRS: none"
+
+it "git-merge-state: main に入ったコミットの Refs: は見ない"
+REPO="$TEST_ROOT/p4"
+adr_repo "$REPO"
+git -C "$REPO" switch -q main
+commit_refs "$REPO" "feat: on main" "ADR-0001"
+git -C "$REPO" switch -q feat/x
+git -C "$REPO" rebase -q main
+commit_refs "$REPO" "feat: a" "ADR-0004"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x)
+assert_contains "$out" "PROPOSED_ADRS: ADR-0004"$'\n'
+
+it "git-merge-state: docs/adr の無いリポジトリでは PROPOSED_ADRS を出さない"
+REPO="$TEST_ROOT/p5"
+make_repo "$REPO"
+git -C "$REPO" switch -q -c feat/x
+commit_refs "$REPO" "feat: a" "ADR-0001"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_not_contains "$out" "PROPOSED_ADRS"
 
 # ---------------------------------------------------------------------------
 # SKILL.md の手順を、リンクされた worktree をまたいで通す
