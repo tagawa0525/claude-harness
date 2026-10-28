@@ -161,18 +161,18 @@ nixfiles #460 を対応せずに閉じた（2026-10-24）。測定の時間を�
 ## ログと時間
 
 ログは r995 の `~/github/slurm-logs/<名前>-<ジョブ番号>.out`（`slurm-run.sh` が `LOG:` に出す）。終わった直後に、末尾へ
-`TIME: elapsed=<実際> estimate=<見積もり>` が足される。全ジョブの履歴は `sacct` で、名前や期間で絞り、
+`TIME: job=<番号> elapsed=<実際> estimate=<見積もり>` が足される。全ジョブの履歴は `sacct` で、名前や期間で絞り、
 メモリの最大値も読める:
 
 ```bash
 sacct -S <日付> --name=<名前> -o JobID,JobName,Elapsed,TimeLimit,State,MaxRSS,Suspended
 ```
 
-番号の分かったジョブの時間（見積もりや依頼の前提に使う値）は、`sacct -j <番号>[,<番号>…] -X -o JobID,JobName,Elapsed,State`
-で、番号と名前を同じ行に出して読む。複数のログの `TIME:` 行を 1 回の `grep` で読むときは、`-h` を付けずにファイル名を
-行に残す。Claude Code の Bash の `grep` は ugrep を呼ぶ関数で、出力の順が引数の順にならない（`grep -h '^TIME' *-536.out *-534.out`
-は 534 の行を先に出す。GNU grep は引数の順）。2026-10-28 に、この出力の 1 行目（534 の 17 分 15 秒）を 536（実際は 7 分 20 秒）
-と読み、担当への依頼の見積もりに書いた。
+番号の分かったジョブの時間（見積もりや依頼の前提に使う値）は、番号と時間が同じ行にある形で読む。`sacct -j <番号>[,<番号>…] -X
+-o JobID,JobName,Partition,Elapsed,Suspended,State`（Partition が timed でない、または Suspended が 0 でない時間は記録に使わない）か、
+`TIME:` 行の `job=`。何本かの出力を混ぜて読むとき、行の順をファイルや引数の順と仮定しない。Claude Code の Bash の `grep` は
+ugrep を呼ぶ関数で、出力の順は引数の順と限らない。2026-10-28 に、`grep -h '^TIME' *-536.out *-534.out`（`job=` を足す前）の
+1 行目（534 の 17 分 15 秒）を 536（sacct で 7 分 20 秒）と読み、担当への依頼の見積もりに書いた。
 
 記録に書く時間は、`--timed` のジョブの `elapsed` だけを使う（TIME 行に印が無い）。`timed` で走らなかったジョブの TIME 行には、
 止められなかったときも `preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）` が付く。その時間
