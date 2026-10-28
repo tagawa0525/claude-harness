@@ -7,7 +7,7 @@
 #   （レビューの後に head が動いたなら、その head はレビューしていない）
 #   high / medium / low は、ローカルレビューで見つけた指摘の数（重大度は Copilot に揃える）
 #
-# Copilot に再レビューを依頼する前と、依頼せずに終える前に、push した head をローカルで確かめた
+# Copilot に再レビューを依頼する前と、依頼せずに終える前に、push した head にローカルの /code-review を回した
 # ことを残す。decide-next.sh、request-rereview.sh、pre-merge-check は、head の SHA の記録が
 # あるか（最後の記録の SHA から rebase だけした head も含む）を見る。件数は、その head で検証して正しいと判断した指摘の数で、後に Copilot が出した数と比べるために残す。
 # 記録は先頭の 1 行（<!-- local-review sha=<SHA> high=<n> medium=<n> low=<n> -->）が本体で、

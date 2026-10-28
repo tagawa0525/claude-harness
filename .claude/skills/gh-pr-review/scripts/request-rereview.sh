@@ -60,7 +60,7 @@ if ! local_reviewed=$(local_review_covers "$head_sha"); then
 fi
 if [[ "$local_reviewed" != yes ]]; then
   echo "ERROR: head（${head_sha:0:7}）に High の残らないローカルレビューの記録がありません。Copilot に出す前に、直した差分をローカルの /code-review で確かめてください" >&2
-  echo "次の一手: 確かめたら ${SCRIPT_DIR}/record-local-review.sh ${PR_URL_CANONICAL} <SHA> <high> <medium> <low> で記録し（High が残れば直して回し直す）、もう一度 ${SCRIPT_DIR}/request-rereview.sh ${PR_URL_CANONICAL} で要求してください" >&2
+  echo "次の一手: /code-review を回したら ${SCRIPT_DIR}/record-local-review.sh ${PR_URL_CANONICAL} <SHA> <high> <medium> <low> で記録し（High が残れば直して回し直す）、もう一度 ${SCRIPT_DIR}/request-rereview.sh ${PR_URL_CANONICAL} で要求してください" >&2
   exit 1
 fi
 
