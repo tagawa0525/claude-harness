@@ -169,7 +169,7 @@ git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
-assert_contains "$out" "PROPOSED_ADRS: ADR-0001 ADR-0002"$'\n'
+assert_eq "PROPOSED_ADRS: ADR-0001 ADR-0002" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
 it "git-merge-state: Refs: で挙げた ADR がブランチの先端で accepted なら出さない"
 REPO="$TEST_ROOT/p2"
@@ -182,7 +182,7 @@ git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
-assert_contains "$out" "PROPOSED_ADRS: none"
+assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
 it "git-merge-state: feat / fix 以外のコミット（docs など）だけが挙げた proposed の ADR は出さない"
 REPO="$TEST_ROOT/p3"
@@ -194,7 +194,7 @@ git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
-assert_contains "$out" "PROPOSED_ADRS: none"
+assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
 it "git-merge-state: main に入ったコミットの Refs: は見ない"
 REPO="$TEST_ROOT/p4"
@@ -207,7 +207,7 @@ commit_refs "$REPO" "feat: a" "ADR-0004"
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
-assert_contains "$out" "PROPOSED_ADRS: ADR-0004"$'\n'
+assert_eq "PROPOSED_ADRS: ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
 it "git-merge-state: docs/adr の無いリポジトリでは PROPOSED_ADRS を出さない"
 REPO="$TEST_ROOT/p5"
