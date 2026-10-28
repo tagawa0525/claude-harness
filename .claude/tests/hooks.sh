@@ -2463,7 +2463,7 @@ cd "$RESET_DIRTY" || exit 1
 out=$(run_hook guard-git-reset-hard "cd $TEST_ROOT/no-such-dir && git rm -q x; git reset -q --hard")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "$RESET_DIRTY"
-assert_contains "$(reason "$out")" "git -C <dir> reset --hard"
+assert_contains "$(reason "$out")" "git -C <絶対パス> reset --hard"
 out=$(run_hook guard-git-reset-hard "cd $RESET_CLEAN && git reset --hard")
 assert_eq deny "$(decision "$out")"
 
