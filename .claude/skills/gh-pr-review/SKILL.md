@@ -175,11 +175,14 @@ EOF
 | `REVIEW_FAILED`          | Copilot がレビューできずに終わり、head のローカルレビューの記録も無い                               | 下記の「ローカルレビュー」を回して記録する（Copilot の失敗の診断は任意）                                                                                           |
 | `WAITING`                | 要求後のレビューが未着で、head のローカルレビューの記録も無い                                       | 下記の「ローカルレビュー」を回して記録する（Copilot を待つなら `~/.claude/scripts/gh-wait-review.sh "{pr_url}"`。任意。background）                                |
 
-**ローカルレビュー**: head のローカルレビューの記録は、Copilot のレビューの代わりになる。
-対応を push したら、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
+**ローカルレビュー**: head のローカルレビューの記録は、Copilot のレビューの代わりになる。記録は、その head に `/code-review` を
+回した後（PR を作る前の /gh-pr-create の周を含む）にだけ書き、自分で差分を読んだだけの head は記録しない（マージの hook は記録を Copilot のレビューの代わりに
+数えるので、読んだだけの記録は誰もレビューしていない head をレビュー済みにする。2026-10-28 に、Copilot がレビューできなかった 2 つの
+PR で、親が差分を読んで 0 件を記録してマージした。片方の head は担当が最後のレビューの後に積んだ未レビューの修正だった）。
+記録の無い head（最初の head も、対応を push した head も）について、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
 `WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。ブランチ名で渡すと /code-review は cwd のリポジトリで
 解くので、cwd が別のリポジトリだと対象を見つけられない。`WORKTREE` が none なら、PR の URL を対象に渡す。
-直した差分と、同じ種類の問題が他に残っていないかを見る。回した head（`git rev-parse HEAD`。push 済みで PR の
+PR の差分（対応の後なら、直した差分と、同じ種類の問題が他に残っていないか）を見る。回した head（`git rev-parse HEAD`。push 済みで PR の
 head と同じもの）に、その回で検証して正しいと判断した指摘の数を、High / Medium / Low で記録する
 （decline した指摘は数えない）:
 
