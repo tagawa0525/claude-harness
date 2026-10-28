@@ -121,7 +121,7 @@ if [[ "$ADR_DIR_ENTRY" =~ ^[0-9]+\ tree\  ]]; then
   # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。
   # log.showSignature は署名の検証の行を件名の前に出すので切る。-z の NUL でコミットを区切り、bash の read で読む
   # （awk の RS に NUL を渡す書き方は awk の実装で動きが違い、BWK awk では段落ごとに分かれて黙って一致しない）。
-  # Refs: の値はカンマで区切った #NNNN と ADR-NNNN の並びで、ほかの書き方（「nixfiles の ADR-0036」）は別の
+  # Refs: の値はカンマで区切った #NNNN と ADR-NNNN の並びで、ほかの書き方（「nixfiles の ADR-NNNN」）は別の
   # リポジトリの記録なので数えない
   # git log の失敗を pipefail で拾うため、プロセス置換でなくパイプでつなぐ
   FEAT_FIX='^(feat|fix)(\([^)]*\))?!?: '
