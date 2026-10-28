@@ -79,8 +79,8 @@ proposed のまま残したものは、マージの本文に番号と理由を�
 
 ### 確認
 
-- `.claude/tests/scripts/git-merge-state.sh` の `PROPOSED_ADRS` のテスト（feat、fix、feat! が挙げた proposed、
-  サブディレクトリからの実行、log.showSignature と署名したコミット、accepted、docs と test と件名の途中の `feat:`、
+- `.claude/tests/scripts/git-merge-state.sh` の `PROPOSED_ADRS` のテスト（feat、fix、feat!、fix! が挙げた proposed、1 つのコミットの複数の `Refs:` の行、
+  サブディレクトリからの実行、log.showSignature と署名したコミット、accepted と superseded、docs と test と件名の途中の `feat:`、
   `Refs:` の行の外と別のリポジトリの ADR、main に入ったコミット、main の無いリポジトリ、docs/adr の無いリポジトリ）が通る
 - xlc の #0188 の ADR-0169、0202、0206 の実装をマージしたコミット（316e30b6a、cc26dc53c、b9d38a653）の第 1 親から
   第 2 親までに同じ判定を当てると、それぞれの ADR が一覧に出る（2026-10-29 に確かめた）
