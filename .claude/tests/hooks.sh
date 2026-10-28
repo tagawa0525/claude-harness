@@ -2489,6 +2489,35 @@ cd "$RESET_CLEAN" || exit 1
 out=$(run_hook guard-git-reset-hard "mkdir -p $TEST_ROOT/later && cd $TEST_ROOT/later && git init -q && git reset --hard")
 assert_eq "" "$out"
 
+it "guard-git-reset-hard: 前の cd が通った後の cd の失敗、bash -c の中、--hard の省略形、alias も見る"
+cd "$RESET_CLEAN" || exit 1
+for cmd in "cd $RESET_DIRTY && cd $TEST_ROOT/no-such-dir; git reset --hard" \
+  "cd $RESET_DIRTY && bash -c 'cd $TEST_ROOT/no-such-dir; git reset --hard'" \
+  "git -C $RESET_DIRTY reset --har" "git -C $RESET_DIRTY reset --ha HEAD" \
+  "git -C $RESET_DIRTY -c alias.rh='reset --hard' rh"; do
+  out=$(run_hook guard-git-reset-hard "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "$RESET_DIRTY"
+done
+
+it "guard-git-reset-hard: 対象のディレクトリを書き方から決められなければ deny し、絶対パスの -C を示す"
+cd "$RESET_CLEAN" || exit 1
+for cmd in "d=$RESET_DIRTY; git -C \$d reset --hard" "d=$RESET_DIRTY; cd \$d && git reset --hard" \
+  "git --git-dir=$RESET_DIRTY/.git --work-tree=$RESET_DIRTY reset --hard" \
+  "GIT_DIR=$RESET_DIRTY/.git GIT_WORK_TREE=$RESET_DIRTY git reset --hard" \
+  "x='git reset --hard'; cd $RESET_DIRTY && \$x"; do
+  out=$(run_hook guard-git-reset-hard "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "決められません"
+done
+
+it "guard-git-reset-hard: 絶対パスの env -C で指したもの、ssh の先は、hook の cwd の変更に依らず通す"
+cd "$RESET_DIRTY" || exit 1
+for cmd in "env -C $RESET_CLEAN git reset --hard" "ssh host 'cd repo && git reset --hard'"; do
+  out=$(run_hook guard-git-reset-hard "$cmd")
+  assert_eq "" "$out"
+done
+
 it "guard-git-reset-hard: ALLOW_GIT_RESET_HARD=<理由> で迂回できる"
 cd "$RESET_DIRTY" || exit 1
 out=$(run_hook guard-git-reset-hard 'ALLOW_GIT_RESET_HARD=テスト用 git reset --hard')
