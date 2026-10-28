@@ -41,8 +41,10 @@ issues: []
 
 案 3 を採る。守るものは未コミットの変更なので、変更の有無で判定する（案 1 と案 4 は変更が無くても止める）。hook の cwd を
 見ない案 2 は、今回の形を通す。案 3 の誤検出は、`-C` で書き直す 1 手で抜けられ、書き直した形は `cd` の失敗に依らないので、
-拒否の文言の修正方法にそれを書く。追跡していないファイルと、`--recurse-submodules` の無い reset でのサブモジュールの中は
-`reset --hard` が消さないので数えない（`git status --porcelain --untracked-files=no --ignore-submodules`）。worktree の中で
+拒否の文言の修正方法にそれを書く。前に `cd` が無い reset は、包んだ `env -C` と `git -C` だけでディレクトリが決まるので、
+そのディレクトリだけを見る。追跡していないファイルは数えない（`git --no-optional-locks status --porcelain
+--untracked-files=no`。ほかのセッションの worktree の index.lock を取らない）。サブモジュールの中の変更は、
+`submodule.recurse` の設定があれば reset --hard が消すので数える（設定を読み分けず、止める側に倒す）。worktree の中で
 `git status` が失敗するときは、消えるものを確かめられないので止める。まだ無いディレクトリは見ない（`git::not_a_directory`。
 作ってから入る形がある）。ssh と `sudo -i` の中の reset は手元の worktree ではないので見ない。`--ha` などの省略形と、
 `git -c alias.<名前>=` で書いた alias も reset --hard として見る。消してよい変更なら `ALLOW_GIT_RESET_HARD=<理由>` で外す。
@@ -50,14 +52,18 @@ issues: []
 最初の実装は対象と hook の cwd だけを見ていた。ローカルのレビュー（2026-10-28）が、一時のリポジトリで hook を実行して、
 前の `cd` が通った後の `cd` の失敗、`bash -c` の中の `cd` の失敗、`--har`、`-c` の alias、変数のパス、`--git-dir`、
 `GIT_DIR`、変数に入れたコマンドが変更を消すのに通ることと、絶対パスの `env -C` と ssh の先が cwd の変更で止まることを
-示したので、今の形にした。
+示したので、今の形にした。2 周目のレビューは、`reset` の語で決められないコマンドを止める判定が `preset` などで誤検出すること
+（`--hard` の語に替えた）、前に `cd` の無い相対の `-C` と包んだ `env -C` を cwd の変更で止めること、`export GIT_DIR`、
+`pushd`、`submodule.recurse` の見逃しを示したので、直した。
 
 ### 帰結
 
 - `git checkout -- <path>`、`git restore`、`git clean -f` も未コミットの変更や追跡していないファイルを消すが、今回は対象に
   しない。起きたら同じ形で足す
 - 利用者の gitconfig の alias（`rh = reset --hard`）は見ない。読むには hook が設定を解釈する必要があり、今は使っていない
-- 実行するプログラムを決められないコマンドがあり、文字列に `reset` があれば止まる（`$CMD` で別のことをするコマンドでも）
+- 実行するプログラムを決められないコマンドがあり、文字列に `--hard` があれば止まる（`$CMD` で別のことをするコマンドでも）
+- `git reset --hard <commit>` は、<commit> が追跡するパスにある追跡していないファイルも上書きする。追跡していないファイルを
+  数えないので、これは見逃す（2 周目のレビューが示した。起きたら、対象のコミットの木と `ls-files --others` を比べる形で足す）
 
 ### 確認
 
