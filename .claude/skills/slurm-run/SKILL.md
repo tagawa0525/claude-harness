@@ -165,12 +165,12 @@ nixfiles #460 を対応せずに閉じた（2026-10-24）。測定の時間を�
 メモリの最大値も読める:
 
 ```bash
-sacct -S <日付> --name=<名前> -o JobID,JobName,Elapsed,TimeLimit,State,MaxRSS,Suspended
+sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,State,MaxRSS,Suspended
 ```
 
 番号の分かったジョブの時間（見積もりや依頼の前提に使う値）は、番号と時間が同じ行にある形で読む。`sacct -j <番号>[,<番号>…] -X
--o JobID,JobName,Partition,Elapsed,Suspended,State` か、`TIME:` 行の `job=`（この欄を足す前のログには無い）。記録に書く
-時間は、さらに下の段落の条件（timed で走った、Suspended が `00:00:00`）を満たすものだけにする。何本かのログを 1 回の `grep` で
+-o JobID,JobName,Partition,Elapsed,Suspended,State` か、`TIME:` 行の `job=`（この欄を足す前のログには無い）。記録に書けるかは
+次の段落で決める。何本かのログを 1 回の `grep` で
 読むときは `-H`（または `-h` を付けない）でファイル名を行に残し、行の順をファイルや引数の順と仮定しない。Claude Code の Bash の
 `grep` は ugrep を呼ぶ関数で、出力の順は引数の順と限らず、実行ごとに変わりうる。2026-10-28 に、`grep -h '^TIME' *-536.out *-534.out`
 の 1 行目（534 の 17 分 15 秒）を 536（sacct で 7 分 20 秒）と読み、担当への依頼の見積もりに書いた。
