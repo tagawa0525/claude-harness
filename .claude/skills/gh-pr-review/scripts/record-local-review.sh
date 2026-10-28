@@ -2,7 +2,8 @@
 # gh-pr-review: ローカルの /code-review の結果を、PR の head の記録としてコメントに残すスクリプト
 #
 # Usage: record-local-review.sh <PR の URL> <SHA> <high> <medium> <low>
-#   SHA はローカルでレビューしたコミット（git rev-parse HEAD）。PR の head と一致しなければ記録しない
+#   SHA は /code-review を回したコミット（git rev-parse HEAD）。差分を読んだだけのコミットは記録しない
+#   （記録はマージの hook が Copilot のレビューの代わりに数える）。PR の head と一致しなければ記録しない
 #   （レビューの後に head が動いたなら、その head はレビューしていない）
 #   high / medium / low は、ローカルレビューで見つけた指摘の数（重大度は Copilot に揃える）
 #

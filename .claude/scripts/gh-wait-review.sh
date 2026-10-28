@@ -146,7 +146,7 @@ if [[ -z "$since" ]]; then
     echo "ERROR: PR #${PR_NUMBER} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません"
     # デプロイ先（~/.claude）の旧版を案内しないよう、自分と同じツリーのスクリプトを指す
     review_scripts="$(cd "$(dirname "$requests_script")/.." && pwd)/skills/gh-pr-review/scripts"
-    echo "次の一手: ${review_scripts}/request-rereview.sh ${PR_URL_CANONICAL} でレビューを要求できます（任意。head のローカルレビューの記録があればマージできる。要求の前に、head のローカルレビューを ${review_scripts}/record-local-review.sh で記録する）"
+    echo "次の一手: ${review_scripts}/request-rereview.sh ${PR_URL_CANONICAL} でレビューを要求できます（任意。head のローカルレビューの記録があればマージできる。要求の前に、head に /code-review を回し、その結果を ${review_scripts}/record-local-review.sh で記録する）"
     exit 6
   fi
   echo "INFO: 最後のレビュー要求は ${since}。それ以降のレビューの到着を待ちます"
