@@ -358,6 +358,17 @@ out=$("$SCRIPT" feat/x 2>&1)
 assert_eq 0 $?
 assert_not_contains "$out" "PROPOSED_ADRS:"
 
+it "git-merge-state: docs/adr の木を読めなければ、ADR の無いリポジトリとして扱わずに失敗する"
+REPO="$TEST_ROOT/p12"
+adr_repo "$REPO"
+commit_refs "$REPO" "feat: a" "ADR-0001"
+git -C "$REPO" switch -q main
+docs_tree=$(git -C "$REPO" rev-parse feat/x:docs)
+rm "$REPO/.git/objects/${docs_tree:0:2}/${docs_tree:2}"
+out=$(cd "$REPO" && "$SCRIPT" feat/x 2>&1)
+assert_ne 0 $?
+assert_not_contains "$out" "PROPOSED_ADRS:"
+
 it "git-merge-state: docs/adr の無いリポジトリでは、design-records が PATH に無くても続行する"
 out=$(cd "$TEST_ROOT/p5" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 0 $?
