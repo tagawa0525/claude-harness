@@ -257,14 +257,19 @@ out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
-it "git-merge-state: docs/adr があって design-records が PATH に無ければ ERROR で止まる"
+it "git-merge-state: 挙げた ADR のファイルがあって design-records が PATH に無ければ ERROR で止まる"
 NODR="$TEST_ROOT/no-design-records"
 mkdir -p "$NODR"
 for tool in bash git sed tr grep sort awk mktemp; do ln -s "$(command -v "$tool")" "$NODR/$tool"; done
-out=$(cd "$TEST_ROOT/p7" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
+out=$(cd "$TEST_ROOT/p1" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR: design-records"
 assert_not_contains "$out" "PROPOSED_ADRS:"
+
+it "git-merge-state: 挙げた番号の ADR のファイルが無ければ、design-records が PATH に無くても none を出す"
+out=$(cd "$TEST_ROOT/p7" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
 it "git-merge-state: main がまだなければ、対象の全コミットの Refs: を見る"
 REPO="$TEST_ROOT/p6"
