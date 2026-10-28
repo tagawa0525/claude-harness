@@ -36,7 +36,8 @@ GitHub での PR の流れ（CI → 自動レビュー → `gh pr merge --merge`
 !`git log --oneline --graph --all -20`
 
 $ARGUMENTS のブランチ（省略時は現在のブランチ）が対象。上が `ERROR:` で終わっていれば、その指示に従う
-（main 自身、GitHub リモートあり、未コミットの変更は、ここで止まる）。
+（main 自身、GitHub リモートあり、未コミットの変更、ADR の status を読む design-records が無いときは、ここで止まる。
+design-records の ERROR は、ほかの行を出した後に出るので、その前の行を使って先に進まない）。
 
 対象の `TARGET_WORKTREE` と main の `DEFAULT_WORKTREE` は、そのブランチをチェックアウトしている場所。
 別の worktree にあるブランチへは switch できないので、ブランチの操作は `git -C [TARGET_WORKTREE]`、
@@ -111,7 +112,8 @@ issue は `design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）。
 
 `PROPOSED_ADRS` は、このブランチの feat と fix のコミットが本文の `Refs:` で挙げた ADR のうち、ブランチの先端でまだ
 `status: proposed` のもの（docs/adr の無いリポジトリでは行が出ない）。上の「現在の状態」はスキルを読み込んだときの
-ブランチの先端のものなので、rebase か番号の振り直しをした後は `~/.claude/scripts/git-merge-state.sh [branch]` を
+ブランチの先端のものなので、rebase か番号の振り直しをした後と、feat か fix のコミットを足した後（レビューの指摘の
+修正など）は `~/.claude/scripts/git-merge-state.sh [branch]` を
 再実行して、この行を取り直してから決める（rebase で、main で accepted になった ADR は一覧から外れ、main で入った
 proposed の ADR は一覧に入りうる。rebase で docs/adr が入れば行も現れる。読み込んだときの none や行の無さで、この段を
 飛ばさない）。取り直した結果に行が無いか none で、番号も振り直していなければ、ここで決めることは無い。
@@ -132,8 +134,10 @@ ADR はマージの後に本文を直せないので、マージの前に、ADR 
 - 試しただけ、まだ決めない: proposed のまま残す
 
 proposed のまま残した ADR は、マージの本文の Impact に番号と理由を書く（次に誰が accepted にするかを読めるように）。
-チェックとレビューの前に決めておくと、直した ADR も 1 回のチェックとレビューで見られる。レビューの指摘で後から
-ADR を直したときは、「レビュー」の節のとおり rebase の要否とチェックからやり直す。
+チェックとレビューの前に決めておくと、直した ADR も 1 回のチェックとレビューで見られる。この段で直した ADR は、
+docs/ だけの変更でもレビューを受けさせる（/delegate の担当の最後の周の後に直したときも、「レビュー」の節の「挙動を変えない
+文書だけなら回さない」に当てず回す。確定した ADR はマージの後に直せない）。レビューの指摘で後から ADR を直したときや
+feat か fix のコミットを足したときは、「レビュー」の節のとおり rebase の要否とチェックからやり直し、この段の一覧も取り直す。
 
 ### チェック（CI の代わり）
 

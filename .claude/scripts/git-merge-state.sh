@@ -7,6 +7,7 @@
 #   - 対象がローカルにない、または既定ブランチ（main / master）自身
 #   - GitHub リモートがある（/gh-pr-create と /gh-pr-merge の流れで、ここでは扱わない）
 #   - 対象または既定ブランチの worktree に未コミットの変更がある
+#   - feat / fix のコミットが挙げた ADR のファイルがあるのに、design-records が PATH に無い（ほかの行を出した後に止まる）
 #
 # 既定ブランチはローカルの main / master（リモートのないリポジトリ向けなので origin は見ない）。
 #
