@@ -35,6 +35,7 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
 - 上の出力を見て、マージのメッセージの Why を1文で書けるか確かめる。2文要るならマージせず /topic-triage で分ける。
   PR の head が今のブランチでなければ、`git fetch` のあと `~/.claude/scripts/branch-topics.sh origin/<base> origin/<head>` で見る
 - head にローカルレビューの記録（`record-local-review.sh`、High なし）があれば、Copilot のレビューを待たずにマージできる。
+  記録は head に回した `/code-review` の結果だけ（差分を読んだだけでは記録しない。/gh-pr-review の「ローカルレビュー」）。
   記録が無く自動レビューも未着なら `~/.claude/scripts/gh-wait-review.sh <PR の URL>` で待つ（URL は PR のリポジトリの worktree で
   `cd <worktree> && gh pr view [PR番号] --json url -q .url` で得る）（約 10 分。
   `run_in_background=true` で実行）。タイムアウト（exit 1）は /gh-actions-check で診断
