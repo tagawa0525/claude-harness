@@ -247,6 +247,25 @@ out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
+it "git-merge-state: Refs: で挙げた番号の ADR のファイルが先端に無ければ出さない"
+REPO="$TEST_ROOT/p7"
+adr_repo "$REPO"
+commit_refs "$REPO" "feat: a" "ADR-0009"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: docs/adr があって design-records が PATH に無ければ ERROR で止まる"
+NODR="$TEST_ROOT/no-design-records"
+mkdir -p "$NODR"
+for tool in bash git sed tr grep sort awk mktemp; do ln -s "$(command -v "$tool")" "$NODR/$tool"; done
+out=$(PATH="$NODR" "$SCRIPT" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: design-records"
+assert_not_contains "$out" "PROPOSED_ADRS:"
+
 it "git-merge-state: main がまだなければ、対象の全コミットの Refs: を見る"
 REPO="$TEST_ROOT/p6"
 mkdir -p "$REPO"
@@ -268,7 +287,7 @@ git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
-assert_not_contains "$out" "PROPOSED_ADRS"
+assert_not_contains "$out" "PROPOSED_ADRS:"
 
 # ---------------------------------------------------------------------------
 # SKILL.md の手順を、リンクされた worktree をまたいで通す
