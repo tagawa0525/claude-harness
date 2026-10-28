@@ -36,8 +36,8 @@ ADR を一覧に出す 1 段。hook で止めない」をユーザーが選ん�
 
 コミットの区切り方: 最初は `git log --format='%s%n%b%x00'` を awk の `RS = "\0"` で読んだ。RS に NUL を渡す
 書き方は awk の実装で動きが違い、BWK awk（macOS の /usr/bin/awk）は RS を空として段落モードで読むので、
-`Refs:` の段落が件名から切り離されて黙って一致しない（レビューの指摘）。`git log -z` を bash の `read -d ''` で
-読む形に替えた。
+`Refs:` の段落が件名から切り離されて黙って一致しない（レビューの指摘）。`git log -z --format=%B` を bash の
+`read -d ''` で読む形に替えた。
 
 一覧を出す場所:
 
@@ -88,7 +88,7 @@ proposed のまま残したものは、マージの本文に番号と理由を�
 
 ### 確認
 
-- `.claude/tests/scripts/git-merge-state.sh` の `PROPOSED_ADRS` のテスト（feat、fix、feat!、fix! が挙げた proposed、1 つのコミットの複数の `Refs:` の行、
+- `.claude/tests/scripts/git-merge-state.sh` の `PROPOSED_ADRS` のテスト（feat、fix、feat!、fix! が挙げた proposed、1 つのコミットの複数の `Refs:` の行、件名の直後の空行の無い `Refs:` の行、
   サブディレクトリからの実行、log.showSignature と署名したコミット、accepted と superseded、docs と test と件名の途中の `feat:`、
   `Refs:` の行の外と別のリポジトリの ADR、main に入ったコミット、main の無いリポジトリ、ファイルの無い番号、design-records が PATH に無いとき、docs/adr の無いリポジトリ）が通る
 - xlc の #0188 の ADR-0169、0202、0206 の実装をマージしたコミット（316e30b6a、cc26dc53c、b9d38a653）の第 1 親から
