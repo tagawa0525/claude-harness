@@ -20,7 +20,7 @@
 #   TARGET_WORKTREE: <path>|none  … 対象をチェックアウトしている worktree
 #   DEFAULT_WORKTREE: <path>|none … 既定ブランチをチェックアウトしている worktree
 #   PROPOSED_ADRS: ADR-NNNN ...|none … 対象のコミット（既定ブランチがなければ全部）のうち、件名の型が feat か fix の
-#                                    ものが本文の `Refs:` の行で挙げた ADR で、対象の先端で docs/adr/NNNN-*.md の status が
+#                                    ものが本文の `Refs:` の行で挙げた ADR（カンマで区切った値のうち ADR-NNNN そのもの）で、対象の先端で docs/adr/NNNN-*.md の status が
 #                                    proposed のもの（番号の順）。対象の先端に docs/adr が無ければ行を出さない
 #
 # 実装をマージするブランチは、実装した proposed の ADR を同じブランチで accepted にする。マージの後には
@@ -104,24 +104,32 @@ fi
 echo "TARGET_WORKTREE: ${WT_PATH:-none}"
 echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
 
-if [[ -n "$(git ls-tree -d "$TARGET" docs/adr)" ]]; then
+# <rev>:<path> はトップレベルからのパス。ls-tree は cwd で絞るので --full-tree を付ける（サブディレクトリから実行しても同じ木を見る）
+if git cat-file -e "$TARGET:docs/adr" 2>/dev/null; then
   RANGE="$TARGET"
   [[ -n "$DEFAULT" ]] && RANGE="$DEFAULT..$TARGET"
-  # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。%x00 でコミットを区切る
-  REFS=$(git log --format='%s%n%b%x00' "$RANGE" \
+  # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。%x00 でコミットを区切る。
+  # log.showSignature は署名の検証の行を件名の前に出すので切る。
+  # Refs: の値はカンマで区切った #NNNN と ADR-NNNN の並びで、ほかの書き方（「nixfiles の ADR-0036」）は別の
+  # リポジトリの記録なので数えない
+  REFS=$(git -c log.showSignature=false log --format='%s%n%b%x00' "$RANGE" \
     | awk 'BEGIN { RS = "\0" } $0 ~ /^\n?(feat|fix)(\([^)]*\))?!?: / { print }' \
     | { grep -E '^Refs:' || true; } \
-    | { grep -oE 'ADR-[0-9]{4}' || true; } \
+    | sed -E 's/^Refs:[[:space:]]*//' | tr ',' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+    | { grep -xE 'ADR-[0-9]{4}' || true; } \
     | sort -u)
+  ADRS=$(git -c core.quotePath=false ls-tree --full-tree --name-only "$TARGET:docs/adr")
   PROPOSED=()
-  ADRS=$(git -c core.quotePath=false ls-tree --name-only "$TARGET" docs/adr/)
   for ref in $REFS; do
-    while IFS= read -r path; do
-      [[ "$path" == "docs/adr/${ref#ADR-}-"*.md ]] || continue
+    while IFS= read -r name; do
+      [[ "$name" == "${ref#ADR-}-"*.md ]] || continue
       # コマンド置換の失敗は、代入で受けると set -e が止める
-      text=$(git show "$TARGET:$path")
+      text=$(git show "$TARGET:docs/adr/$name")
       st=$(design-records status <<<"$text")
-      if [[ "$st" == "proposed" ]]; then PROPOSED+=("$ref"); fi
+      if [[ "$st" == "proposed" ]]; then
+        PROPOSED+=("$ref")
+        break # 番号の重複は design-records check が止める。ここでは 1 度だけ出す
+      fi
     done <<<"$ADRS"
   done
   echo "PROPOSED_ADRS: ${PROPOSED[*]:-none}"

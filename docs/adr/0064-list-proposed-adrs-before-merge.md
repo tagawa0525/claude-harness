@@ -53,7 +53,8 @@ PROPOSED_ADRS: ADR-NNNN ...|none
 ```
 
 対象は、`<既定>..<対象>`（既定ブランチが無ければ対象の全コミット）のうち、件名の型が feat か fix（scope と `!` を
-含む）のコミットの本文の `Refs:` の行に挙がる `ADR-NNNN` で、対象の先端で `docs/adr/NNNN-*.md` の status が
+含む）のコミットの本文の `Refs:` の行にカンマで区切って挙がる値のうち `ADR-NNNN` そのもの（「nixfiles の ADR-0036」の
+ような別のリポジトリの参照は数えない）で、対象の先端で `docs/adr/NNNN-*.md` の status が
 proposed のもの。番号の順に重複なく出す。対象の先端に docs/adr が無いリポジトリでは行を出さない。
 
 feat と fix に絞るのは、docs のコミット（ADR を書く、直す）や test のコミットが ADR を挙げても、実装を含むとは
@@ -74,7 +75,8 @@ proposed のまま残したものは、マージの本文に番号と理由を�
 
 ### 確認
 
-- `.claude/tests/scripts/git-merge-state.sh` の `PROPOSED_ADRS` のテスト（feat と fix が挙げた proposed、
-  accepted、docs と test と件名の途中の `feat:` だけ、main に入ったコミット、docs/adr の無いリポジトリ）が通る
+- `.claude/tests/scripts/git-merge-state.sh` の `PROPOSED_ADRS` のテスト（feat、fix、feat! が挙げた proposed、
+  サブディレクトリからの実行、log.showSignature と署名したコミット、accepted、docs と test と件名の途中の `feat:`、
+  `Refs:` の行の外と別のリポジトリの ADR、main に入ったコミット、main の無いリポジトリ、docs/adr の無いリポジトリ）が通る
 - xlc の #0188 の ADR-0169、0202、0206 の実装をマージしたコミット（316e30b6a、cc26dc53c、b9d38a653）の第 1 親から
   第 2 親までに同じ判定を当てると、それぞれの ADR が一覧に出る（2026-10-29 に確かめた）
