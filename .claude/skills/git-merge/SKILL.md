@@ -179,7 +179,10 @@ main との分岐点からの変更を検査する。マージ時にも hook が
 ### proposed の ADR（`PROPOSED_ADRS` が none でない）
 
 `PROPOSED_ADRS` は、このブランチの feat と fix のコミットが本文の `Refs:` で挙げた ADR のうち、ブランチの先端でまだ
-`status: proposed` のもの（docs/adr の無いリポジトリでは行が出ない）。実装をマージするブランチは、実装した ADR を
+`status: proposed` のもの（docs/adr の無いリポジトリでは行が出ない）。上の「現在の状態」はスキルを読み込んだときの
+ブランチの先端のものなので、rebase か番号の振り直しをした後は `~/.claude/scripts/git-merge-state.sh [branch]` を
+再実行して、この行を取り直してから決める（main で accepted になった ADR は rebase の後の先端では一覧から外れる）。
+振り直した番号は、前のコミットの `Refs:` に古い番号のまま残るので、振り直した ADR は一覧に頼らず自分で見る。実装をマージするブランチは、実装した ADR を
 同じブランチで実装に合わせて直し、accepted にする。accepted になった ADR はマージの後に本文を直せないので、
 マージの前に、ADR ごとに次のどれかを決めてコミットする（hook は止めない。一部だけを実装したブランチや方法を試す
 ブランチは proposed のまま残してよく、機械では決められないため）:
