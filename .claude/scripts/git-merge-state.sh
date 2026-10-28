@@ -106,6 +106,11 @@ echo "DEFAULT_WORKTREE: ${DEFAULT_WT:-none}"
 
 # <rev>:<path> はトップレベルからのパス。ls-tree は cwd で絞るので --full-tree を付ける（サブディレクトリから実行しても同じ木を見る）
 if git cat-file -e "$TARGET:docs/adr" 2>/dev/null; then
+  # 一覧が出ないことを docs/adr の無いリポジトリと取り違えないよう、読めないときは行を出さずに止める
+  if ! command -v design-records >/dev/null; then
+    echo "ERROR: design-records が PATH にありません。ADR の status を読めないので PROPOSED_ADRS を出せません" >&2
+    exit 1
+  fi
   RANGE="$TARGET"
   [[ -n "$DEFAULT" ]] && RANGE="$DEFAULT..$TARGET"
   # 件名の型は Conventional Commits の feat / fix（scope と破壊的変更の ! を含む）。
