@@ -5,7 +5,7 @@
 //! 対象のディレクトリ（前の `cd` と `-C` を当てたもの）と、`-C` を書いていなければ hook の cwd も。前の `cd` が
 //! 失敗すると、`;` の後の reset は hook の cwd で走るため（`cd <一時のリポジトリ> && …; git reset --hard` が、
 //! 移れなかったときにメインの worktree を戻した）。`-C` で指せば `cd` の成否に依らないので、それを修正方法に示す。
-//! 追跡していないファイルは reset --hard が消さないので数えない。
+//! 追跡していないファイルは reset --hard が消さないので数えない。比べた案は ADR-0062。
 
 use super::{Rule, escape_hint};
 use crate::git;
