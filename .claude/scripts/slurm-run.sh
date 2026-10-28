@@ -27,7 +27,7 @@
 # 出力:
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
-#   （ログの末尾 20 行。終わった直後なら、最後に TIME: elapsed=<実際の時間> estimate=<見積もり> を
+#   （ログの末尾 20 行。終わった直後なら、最後に TIME: job=<番号> elapsed=<実際の時間> estimate=<見積もり> を
 #    ログへ書き足すので、その行も含む。-c のとき、timed で走らなかったとき、止められていたときは、行末に印が付く）
 #   EXIT: <ジョブの終了コード>
 # 終了コードはジョブの終了コード。
@@ -161,7 +161,7 @@ wait "$pid" || status=$?
 if ! info=$(scontrol show job "$job"); then
   echo "WARN: ジョブ $job の実際の時間を scontrol から読めなかった" >&2
 elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
-  time_line="TIME: elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}"
+  time_line="TIME: job=$job elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}"
   if $shared; then
     time_line+=" shared (-c $cpus): 時間は当てにならない"
   fi
