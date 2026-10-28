@@ -92,7 +92,7 @@ while IFS= read -r b; do
   tip=$(git rev-parse "refs/heads/$b")
   [[ "$tip" == "$target_tip" ]] && continue
   git merge-base --is-ancestor "$tip" "$target_tip" || continue
-  if [[ -n "$DEFAULT" ]] && git merge-base --is-ancestor "$tip" "$DEFAULT"; then continue; fi
+  if [[ -n "$DEFAULT" ]] && git merge-base --is-ancestor "$tip" "refs/heads/$DEFAULT"; then continue; fi
   STACKED+=("$b")
 done < <(git for-each-ref --format='%(refname:lstrip=2)' refs/heads)
 if ((${#STACKED[@]} > 0)); then
