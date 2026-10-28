@@ -165,7 +165,7 @@ EOF
 | VERDICT                  | 意味                                                                                                | 次の一手                                                                                                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ACT`                    | 未解決スレッドがある                                                                                | Step 3〜5 で対応する                                                                                                                                               |
-| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head をローカルで確かめていない                                                  | 下記の「ローカルレビュー」を回して記録し、`decide-next.sh` を再実行する                                                                                            |
+| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head に /code-review を回していない                                              | 下記の「ローカルレビュー」を回して記録し、`decide-next.sh` を再実行する                                                                                            |
 | `STOP_LOCAL_REVIEWED`    | head はローカルでレビュー済み（記録に High が無い）。Copilot のレビューの有無・到着・内容は問わない | 要求せず、Copilot を待たずに Step 7 へ（マージ時の hook も同じ条件で通す）。Copilot の指摘が既にあれば、`PREVIOUSLY_MISSED` を含め台帳に処置があるかを先に確かめる |
 | `STOP_DOCS_REVIEWED`     | 文書だけの PR で、対応を push 済み                                                                  | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない）                                           |
 | `STOP_DECLINED`          | 未解決ゼロ・head はレビュー済み                                                                     | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                                                           |
@@ -179,7 +179,7 @@ EOF
 `/code-review` を回した後にだけ書き、自分で差分を読んだだけの head は記録しない（マージの hook は記録を Copilot のレビューの代わりに
 数えるので、読んだだけの記録は誰もレビューしていない head をレビュー済みにする。2026-10-28 に、Copilot がレビューできなかった 2 つの
 PR で、親が差分を読んで 0 件を記録してマージした。片方の head は担当が最後のレビューの後に積んだ未レビューの修正だった）。
-対応を push したら、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
+head（Copilot がレビューできなかった最初の head か、対応を push した head）について、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
 `WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。ブランチ名で渡すと /code-review は cwd のリポジトリで
 解くので、cwd が別のリポジトリだと対象を見つけられない。`WORKTREE` が none なら、PR の URL を対象に渡す。
 直した差分と、同じ種類の問題が他に残っていないかを見る。回した head（`git rev-parse HEAD`。push 済みで PR の
