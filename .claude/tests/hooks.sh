@@ -2518,6 +2518,48 @@ for cmd in "env -C $RESET_CLEAN git reset --hard" "ssh host 'cd repo && git rese
   assert_eq "" "$out"
 done
 
+it "guard-git-reset-hard: 決められない形でも、--hard の無いコマンドと、絶対パスで指した reset は止めない"
+cd "$RESET_DIRTY" || exit 1
+for cmd in 'source ~/.bashrc; git reset --soft HEAD~1' '$EDITOR notes.txt; echo preset' \
+  "cd \$HOME && ls; git -C $RESET_CLEAN reset --hard" "git -C ../reset-clean reset --hard" \
+  "env -C ../reset-clean git reset --hard" "env -C $RESET_CLEAN bash -c 'git reset --hard'"; do
+  out=$(run_hook guard-git-reset-hard "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-git-reset-hard: export した GIT_DIR、pushd の後は、ディレクトリを決められないとして deny"
+cd "$RESET_CLEAN" || exit 1
+for cmd in "export GIT_DIR=$RESET_DIRTY/.git GIT_WORK_TREE=$RESET_DIRTY; git reset --hard" \
+  "pushd $RESET_DIRTY && git reset --hard"; do
+  out=$(run_hook guard-git-reset-hard "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "決められません"
+done
+
+it "guard-git-reset-hard: サブモジュールの変更も挙げ、変更の一覧は 5 件までにする"
+RESET_SUPER="$TEST_ROOT/reset-super"
+make_repo "$RESET_SUPER"
+git -C "$RESET_SUPER" -c protocol.file.allow=always submodule -q add "$RESET_CLEAN" sub
+git -C "$RESET_SUPER" commit -q -m "chore: add sub"
+echo edited >"$RESET_SUPER/sub/README.md"
+out=$(run_hook guard-git-reset-hard "git -C $RESET_SUPER -c submodule.recurse=true reset --hard")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "sub"
+RESET_MANY="$TEST_ROOT/reset-many"
+make_repo "$RESET_MANY"
+for i in 1 2 3 4 5 6 7; do commit_file "$RESET_MANY" "f$i.txt" "chore: f$i"; echo x >>"$RESET_MANY/f$i.txt"; done
+out=$(run_hook guard-git-reset-hard "git -C $RESET_MANY reset --hard")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "ほか 2 件"
+
+it "guard-git-reset-hard: worktree の中で git status が失敗すれば deny"
+RESET_BROKEN="$TEST_ROOT/reset-broken"
+make_repo "$RESET_BROKEN"
+echo garbage >"$RESET_BROKEN/.git/index"
+out=$(run_hook guard-git-reset-hard "git -C $RESET_BROKEN reset --hard")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "git status が失敗"
+
 it "guard-git-reset-hard: ALLOW_GIT_RESET_HARD=<理由> で迂回できる"
 cd "$RESET_DIRTY" || exit 1
 out=$(run_hook guard-git-reset-hard 'ALLOW_GIT_RESET_HARD=テスト用 git reset --hard')
