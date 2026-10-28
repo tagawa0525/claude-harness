@@ -301,6 +301,32 @@ out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
+it "git-merge-state: ブランチと同じ名前のタグがあっても、ブランチの先端を読む"
+REPO="$TEST_ROOT/p9"
+adr_repo "$REPO"
+git -C "$REPO" tag feat/x
+commit_refs "$REPO" "feat: a" "ADR-0001"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x 2>/dev/null)
+assert_eq 0 $?
+assert_eq "PROPOSED_ADRS: ADR-0001" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+
+it "git-merge-state: docs/adr がディレクトリでなくファイルなら、ADR の無いリポジトリとして扱う"
+REPO="$TEST_ROOT/p10"
+make_repo "$REPO"
+mkdir -p "$REPO/docs"
+echo x > "$REPO/docs/adr"
+git -C "$REPO" add docs
+git -C "$REPO" commit -q -m "docs: a file"
+git -C "$REPO" switch -q -c feat/x
+commit_refs "$REPO" "feat: a" "ADR-0001"
+git -C "$REPO" switch -q main
+cd "$REPO" || exit 1
+out=$("$SCRIPT" feat/x 2>&1)
+assert_eq 0 $?
+assert_not_contains "$out" "PROPOSED_ADRS:"
+
 it "git-merge-state: docs/adr の無いリポジトリでは、design-records が PATH に無くても続行する"
 out=$(cd "$TEST_ROOT/p5" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 0 $?
