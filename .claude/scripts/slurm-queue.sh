@@ -7,7 +7,7 @@
 #   <番号> <状態> <パーティション> <優先度> <区分> <見積もり> <開始の見込み> <名前> <参照>
 #     目的: <結果が何を決めるか>
 #     連絡先: <ブランチ、投げた場所、claude= セッション、shared-cpus=>
-#   ORDER: <パーティション>: <番号>（<区分>）が <番号>（<区分>）の後ろ、…で待っている。scontrol top <番号>,<番号>,…
+#   ORDER: <パーティション>: <番号>（<区分>）が <番号>（<区分>）の後ろ、…で待っている。scontrol top <番号>,<番号>,…[（区分の無い …）]
 #
 # 走る順は、パーティション timed（PriorityTier が高い）、main の順で、その中は走っているもの（走り始めた CONFIGURING
 # なども）、止められたもの、待っているもの（優先度の高い順、同じなら番号の順）。区分の順は timed、record、decision、
@@ -17,7 +17,8 @@
 # する。scontrol top は渡したジョブをその順に先頭へ出すので、ジョブごとに分けて実行すると最後に出したジョブが先頭に
 # なり、1 つだけを出すと、その前にいた上の区分のジョブも追い越す。
 # 走っているジョブは止めないので比べない。区分の無いジョブ（slurm-run.sh の外から投げたもの）は区分を - にし、
-# 順を比べず、並べるコマンドにも入れない（何を決めるかが分からない。区分のあるジョブの後ろに回る）。
+# 順を比べず、並べるコマンドにも入れない（何を決めるかが分からない）。並べるコマンドで区分のあるジョブの後ろに回るので、
+# 待っている区分の無いジョブを ORDER: の行の末尾に「（区分の無い <番号>,… は後ろに回る）」で挙げる。
 #
 # コメントの形は slurm-run.sh が書く「<区分> | <参照> | <目的> | <連絡先>」。参照と目的は | を含まないので、
 # 最初の 3 つの区切りまでを分け、残りを連絡先にする。
@@ -67,8 +68,15 @@ BEGIN {
   printf "%s %s %s %s %s %s %s %s %s\n", job, state, part, prio, class, limit, start, name, ref
   printf "  目的: %s\n", purpose
   printf "  連絡先: %s\n", contact
-  if (state != "PENDING" || class == "-") next
-  if (!(part in count)) parts[++nparts] = part
+  if (state != "PENDING") next
+  if (!(part in seen)) {
+    seen[part] = 1
+    parts[++nparts] = part
+  }
+  if (class == "-") {
+    unclassed[part] = unclassed[part] (unclassed[part] == "" ? "" : ",") job
+    next
+  }
   # 同じパーティションで先に並ぶ、より下の区分のジョブのうち最も近いもの
   for (k = count[part]; k >= 1; k--) {
     if (rank[pend_class[part, k]] > rank[class]) {
@@ -94,6 +102,7 @@ END {
     }
     list = ""
     for (i = 1; i <= m; i++) list = list (i == 1 ? "" : ",") pend_job[part, idx[i]]
-    printf "ORDER: %s: %sで待っている。scontrol top %s\n", part, behind[part], list
+    note = (unclassed[part] == "") ? "" : sprintf("（区分の無い %s は後ろに回る）", unclassed[part])
+    printf "ORDER: %s: %sで待っている。scontrol top %s%s\n", part, behind[part], list, note
   }
 }'
