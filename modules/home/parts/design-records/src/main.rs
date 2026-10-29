@@ -13,7 +13,7 @@
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
 //!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、決定
 //!                                      の要因、検討した案、決定と理由、各案の長所と短所、直せないフロントマターの
-//!                                      キー）の変更を見る。FILE か
+//!                                      キー）の変更と、分岐点から足した amends を見る。FILE か
 //!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
 //!                                      ときも。pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
@@ -30,7 +30,7 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use design_records::check::{
-    Finding, Severity, body_changed, check, check_issue_numbers, check_reservations,
+    Finding, Severity, added_amends, body_changed, check, check_issue_numbers, check_reservations,
 };
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
@@ -174,7 +174,7 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     if changed_only {
         found.retain(|f| f.severity == Severity::Error || files.contains(&f.path.as_str()));
     }
-    found.extend(body_changes(&root, &adrs, files)?);
+    found.extend(branch_changes(&root, &adrs, files)?);
     for finding in &found {
         println!("{finding}");
     }
@@ -191,11 +191,16 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
     (!paths.is_empty()).then(|| numbers_in(Kind::Issue, paths.iter().map(String::as_str)).collect())
 }
 
-/// 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）。比べるのは既定ブランチとの分岐点（main にマージする前のブランチの上の
-/// 変更は status によらず自由）。分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない。本文は `files`
-/// の ADR だけを比べ（改名は改名前の版と比べる）、削除は渡されたかによらず示す（pre-commit は消したファイルを
-/// 渡さない）。
-fn body_changes(
+/// 既定ブランチとの分岐点からの ADR の変更のうち、示すもの。
+///
+/// - 一部の置き換えの結び（`amends`）に足した ADR（違反。[`added_amends`]）。一部の変更は、変える ADR の「## 変更」に
+///   書き、結びは分岐点に既にあるものだけを残す（ADR-0067）。status によらず、分岐点に無い ADR も見る
+/// - 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）。main にマージする前のブランチの上の
+///   変更は status によらず自由なので、分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない
+///
+/// 中身は `files` の ADR だけを比べ（改名は改名前の版と比べる）、削除は渡されたかによらず示す（pre-commit は消した
+/// ファイルを渡さない）。
+fn branch_changes(
     root: &Path,
     adrs: &BTreeMap<String, String>,
     files: &[&str],
@@ -239,10 +244,30 @@ fn body_changes(
             continue;
         }
         let spec = format!("{base}:{old_path}");
-        if !git_ok(root, &["cat-file", "-e", &spec])? {
-            continue;
+        let old = if git_ok(root, &["cat-file", "-e", &spec])? {
+            Some(git(root, &["show", &spec])?)
+        } else {
+            None
+        };
+        if let Some(new) = adrs.get(new_path).filter(|_| !deleted) {
+            for n in added_amends(old.as_deref(), new) {
+                found.push(Finding {
+                    path: new_path.to_string(),
+                    line: None,
+                    severity: Severity::Error,
+                    message: format!(
+                        "`amends` gains ADR-{n:04} since {shown}, but partial changes are no longer \
+                         linked with amends and amended-by; drop the item and record the change in \
+                         the ADR whose decision changes: edit its decision outcome and add a dated \
+                         item to its `## 変更` section that quotes the replaced text and gives the \
+                         reason"
+                    ),
+                });
+            }
         }
-        let old = git(root, &["show", &spec])?;
+        let Some(old) = old else {
+            continue;
+        };
         let Some(status) =
             design_records::status(&old).filter(|s| !OPEN_STATUSES.contains(&s.as_str()))
         else {

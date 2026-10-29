@@ -121,6 +121,10 @@ amends と amended-by で両方向に結ぶ」決定は、これからの一部�
 - 悪い点: 決定と理由を直しても、「## 変更」を書き忘れたことは検査で捕まらない（注意は出るが、項の有無と形は見ない。#523）。
   それまではレビューで見る
 - 悪い点: 既存の ADR には、`amends` のチェーンと「## 変更」の 2 つの形が混ざる
+- `design-records check` は、分岐点から `amends` に足した ADR を違反にし、`amended-by` は見ない。PR #532 の最初の版は
+  `amended-by` に足した項目も違反にしたが、分岐点で proposed の ADR が `amends` を持つと、確定したときに check が相手に
+  `amended-by` を求め、それを足すと違反になって確定できなかった（レビューの反例）。`amends` の無い `amended-by` は、前から
+  check の違反になる
 - 実装が決定に追いついていない点: git-merge、delegate、gh-pr-review のスキルと `git-merge-state.sh` のコメントに残る
   「確定した ADR はマージの後に直せない」は、PR #517 が同じファイルを直しているので、この PR では変えない（#524）。
   xlc の docs/adr/README.md の「運用」は、xlc の側で直す
@@ -139,4 +143,8 @@ amends と amended-by で両方向に結ぶ」決定は、これからの一部�
 - `modules/home/parts/design-records/tests/cli.rs`: 確定した ADR の背景を変えると注意が出る
   （`check_warns_when_the_body_of_a_decided_adr_on_main_changes`、`check_follows_renames_when_comparing_the_body`）
 - スキル `adr` の「確定後の運用」が、凍結する部分、直す節、「## 変更」の形を示す
+- `modules/home/parts/design-records/tests/cli.rs`: 既定ブランチとの分岐点から `amends` に足した ADR は違反になる
+  （`check_rejects_amendment_links_added_since_main`）。分岐点に既にある結びは通り（`check_keeps_amendment_links_already_on_main`）、
+  分岐点にある ADR に足した `amends` も違反になる（`check_rejects_amends_added_to_an_adr_on_main`）。
+  分岐点で決める前の ADR の `amends` を確定して相手に `amended-by` を足すのも通る（`check_lets_a_proposed_amends_on_main_be_accepted`）
 - ADR-0009 と ADR-0051 の末尾の「## 変更」が、この ADR の形で書いてある
