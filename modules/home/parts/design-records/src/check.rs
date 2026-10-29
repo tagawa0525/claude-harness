@@ -659,6 +659,31 @@ pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
 }
 
+/// 一部の置き換えの結び（[`OPTIONAL_KEYS`]。`amends` と `amended-by`）のうち、`new` にあって `old`（分岐点の版。
+/// 分岐点に無い ADR は `None`）に無い ADR の、キーと番号。読めないフロントマターは結びが無いものとして読む（形の違反は
+/// [`check`] が示す）。
+pub fn added_amendment_links(old: Option<&str>, new: &str) -> Vec<(&'static str, u32)> {
+    let links = |text: &str, key: &str| -> BTreeSet<u32> {
+        parse_front_matter(text)
+            .ok()
+            .and_then(|f| {
+                f.get(key)
+                    .map(|v| v.items().into_iter().filter_map(single_adr).collect())
+            })
+            .unwrap_or_default()
+    };
+    OPTIONAL_KEYS
+        .iter()
+        .flat_map(|&key| {
+            let before = old.map(|o| links(o, key)).unwrap_or_default();
+            links(new, key)
+                .into_iter()
+                .filter(move |n| !before.contains(n))
+                .map(move |n| (key, n))
+        })
+        .collect()
+}
+
 /// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）を除いたフロントマターと、表題、必須の節
 /// （[`REQUIRED_SECTIONS`]）と決めた時点の文脈の節（[`DECIDED_CONTEXT_SECTIONS`]）の行。推奨の節（[`RECOMMENDED_SECTIONS`]。帰結と確認）は、決定と理由の下の 3 段目に
 /// あっても今の事実を書く節なので除く。補足、決定の変更を書き留める節、ほかの 2 段目の節も除く。末尾の空行は除く
