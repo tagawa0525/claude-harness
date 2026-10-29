@@ -2810,6 +2810,37 @@ git -C "$AMEND_LOCAL" switch -q -c fresh
 cd "$AMEND_LOCAL" || exit 1
 out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
 assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "origin/main"
+cd "$TEST_ROOT" || exit 1
+
+it "guard-git-amend: マージ済みのブランチの amend も deny し、文言はほかのリポジトリでも成り立つ"
+AMEND_MERGED="$TEST_ROOT/amend-merged"
+make_repo "$AMEND_MERGED"
+git -C "$AMEND_MERGED" switch -q -c done
+commit_file "$AMEND_MERGED" done.txt "feat: done"
+git -C "$AMEND_MERGED" switch -q main
+git -C "$AMEND_MERGED" merge -q --no-ff -m "Merge: done" done
+git -C "$AMEND_MERGED" switch -q done
+cd "$AMEND_MERGED" || exit 1
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "最初のコミット"
+assert_not_contains "$(reason "$out")" "#0"
+assert_contains "$(reason "$out")" "remap.commitRefs"
+cd "$TEST_ROOT" || exit 1
+
+it "guard-git-amend: GitHub リモートがあっても、既定ブランチが main / master でなければ、その上で amend する道を示す"
+AMEND_DEV="$TEST_ROOT/amend-dev"
+make_repo "$AMEND_DEV"
+make_remote "$AMEND_DEV" github
+git -C "$AMEND_DEV" switch -q -c develop
+git -C "$AMEND_DEV" push -q -u origin develop
+git -C "$AMEND_DEV" remote set-head origin develop
+git -C "$AMEND_DEV" switch -q -c feat/dev
+cd "$AMEND_DEV" || exit 1
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "develop の上で amend"
 cd "$TEST_ROOT" || exit 1
 
 finish
