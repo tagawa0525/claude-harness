@@ -1,33 +1,49 @@
 #!/usr/bin/env bash
 # slurm-queue.sh — Slurm の待ち行列を、slurm-run.sh がコメントに入れた区分と目的つきで、走る順に並べる
 #
-# Usage: slurm-queue.sh
+# Usage: slurm-queue.sh                           # 一覧
+#        slurm-queue.sh --order [--first <番号>]  # main を区分の順に並べる番号の列（slurm-run.sh が投げた後に使う）
 #
-# 出力（ジョブごとに 3 行。走る順）:
-#   <番号> <状態> <パーティション> <優先度> <区分> <見積もり> <開始の見込み> <名前> <参照>
+# 一覧（ジョブごとに 3 行。走る順）:
+#   <番号> <状態>[（動かせない）] <パーティション> <優先度> <区分> <見積もり> <開始の見込み> <名前> <参照>
 #     目的: <結果が何を決めるか>
 #     連絡先: <ブランチ、投げた場所、claude= セッション、shared-cpus=>
-#   ORDER: <パーティション>: <番号>（<区分>）が <番号>（<区分>）の後ろ、…で待っている。scontrol top <番号>,<番号>,…[（区分の無い …）]
+#   ORDER: main: <番号>（<区分>）が <番号>（<区分>）の後ろ、…で待っている。scontrol top <番号>,<番号>,…[（区分の無い …）]
 #
 # 走る順は、パーティション timed（PriorityTier が高い）、main の順で、その中は走っているもの（走り始めた CONFIGURING
-# なども）、止められたもの、待っているもの（優先度の高い順、同じなら番号の順）。区分の順は timed、record、decision、
-# trial で、同じパーティションで待っているジョブのうち、上の区分のジョブが下の区分のジョブより後ろにあれば、パーティション
-# ごとに ORDER: の行を 1 つ出す。後ろにある上の区分のジョブごとに、前にある下の区分のジョブのうち最も近いものを挙げる。
-# 並べるコマンドは、区分のある待っているジョブをすべて、区分の順（同じ区分は今の順）に並べた 1 つの scontrol top に
-# する。scontrol top は渡したジョブをその順に先頭へ出すので、ジョブごとに分けて実行すると最後に出したジョブが先頭に
-# なり、1 つだけを出すと、その前にいた上の区分のジョブも追い越す。
-# 走っているジョブは止めないので比べない。区分の無いジョブ（slurm-run.sh の外から投げたもの）は区分を - にし、
-# 順を比べず、並べるコマンドにも入れない（何を決めるかが分からない）。並べるコマンドで区分のあるジョブの後ろに回るので、
-# 待っている区分の無いジョブを ORDER: の行の末尾に「（区分の無い <番号>,… は後ろに回る）」で挙げる。
+# なども）、止められたもの、待っているもの（優先度の高い順、同じなら番号の順）。
+#
+# 区分の順（timed、record、decision、trial）で並べ直すのはパーティション main の待っているジョブだけ。timed のジョブは、
+# 時間の記録と、走っているジョブの終わりを待てない数分の計算で、投げた順に実行する（区分の順で並べると、急ぐ数分の計算が
+# 長い測定の後ろに回る）。動かせないジョブ（優先度が 1 以下の保留のものと、配列の親ジョブ。scontrol top が受け付けない）と
+# 区分の無いジョブ（slurm-run.sh の外から投げたもの。何を決めるかが分からない）は、比べず、列にも入れない。
+#
+# 並べる列は、区分のある動かせる待っているジョブをすべて、区分の順、同じ区分は今の順に並べたもの（--first のジョブは
+# 自分の区分の先頭）。scontrol top は渡したジョブをその順に先頭へ出すので、1 つの列で渡す（ジョブごとに分けると最後に
+# 出したジョブが先頭になり、1 本だけ出すと、その前にいた上の区分のジョブも追い越す）。列が今の順と同じなら、一覧は
+# ORDER: を出さず、--order は何も出さない。列に入れないジョブは列のジョブの後ろに回るので、区分の無い待っているジョブを
+# ORDER: の行の末尾に挙げる。
 #
 # コメントの形は slurm-run.sh が書く「<区分> | <参照> | <目的> | <連絡先>」。参照と目的は | を含まないので、
 # 最初の 3 つの区切りまでを分け、残りを連絡先にする。
 
 set -euo pipefail
 
-if (($#)); then
-  echo "Usage: $0" >&2
+usage() {
+  echo "Usage: $0 [--order [--first <番号>]]" >&2
   exit 1
+}
+
+order=0
+first=""
+if (($#)); then
+  [[ $1 == --order ]] || usage
+  order=1
+  shift
+  if (($#)); then
+    if [[ $1 != --first ]] || (($# != 2)); then usage; fi
+    first=$2
+  fi
 fi
 
 # 名前は slurm-run.sh が英数字と . _ - に限り、ほかの固定の欄も | を含まないので、最後の欄（コメント）の前までを | で分けられる
@@ -38,7 +54,7 @@ if ((status != 0)); then
   exit "$status"
 fi
 if [[ -z $lines ]]; then
-  echo "待ち行列にジョブが無い"
+  ((order)) || echo "待ち行列にジョブが無い"
   exit 0
 fi
 
@@ -47,7 +63,7 @@ awk -F'|' '{
   part_key = ($2 == "timed") ? 0 : 1
   state_key = ($4 == "PENDING") ? 2 : ($4 == "SUSPENDED") ? 1 : 0
   printf "%d\t%d\t%d\t%d\t%s\n", part_key, state_key, -$5, $1, $0
-}' <<<"$lines" | sort -t$'\t' -k1,1n -k2,2n -k3,3n -k4,4n | cut -f5- | awk -F'|' '
+}' <<<"$lines" | sort -t$'\t' -k1,1n -k2,2n -k3,3n -k4,4n | cut -f5- | awk -F'|' -v order="$order" -v first="$first" '
 BEGIN {
   rank["timed"] = 1
   rank["record"] = 2
@@ -65,44 +81,50 @@ BEGIN {
     class = f[1]; ref = f[2]; purpose = f[3]
     for (i = 1; i <= 3; i++) sub(/^[^|]* \| /, "", contact)
   }
-  printf "%s %s %s %s %s %s %s %s %s\n", job, state, part, prio, class, limit, start, name, ref
-  printf "  目的: %s\n", purpose
-  printf "  連絡先: %s\n", contact
-  if (state != "PENDING") next
-  if (!(part in seen)) {
-    seen[part] = 1
-    parts[++nparts] = part
+  # 優先度 1 以下は保留（scontrol top が下げられない。ADR-0030）、[ のある番号は配列の親ジョブ
+  unmovable = (state == "PENDING" && (prio + 0 <= 1 || index(job, "[") > 0))
+  if (!order) {
+    printf "%s %s%s %s %s %s %s %s %s %s\n", job, state, unmovable ? "（動かせない）" : "", part, prio, class, limit, start, name, ref
+    printf "  目的: %s\n", purpose
+    printf "  連絡先: %s\n", contact
   }
+  if (state != "PENDING" || part != "main" || unmovable) next
   if (class == "-") {
-    unclassed[part] = unclassed[part] (unclassed[part] == "" ? "" : ",") job
+    unclassed = unclassed (unclassed == "" ? "" : ",") job
     next
   }
-  # 同じパーティションで先に並ぶ、より下の区分のジョブのうち最も近いもの
-  for (k = count[part]; k >= 1; k--) {
-    if (rank[pend_class[part, k]] > rank[class]) {
-      behind[part] = behind[part] (behind[part] == "" ? "" : "、") sprintf("%s（%s）が %s（%s）の後ろ", job, class, pend_job[part, k], pend_class[part, k])
+  # 先に並ぶ、より下の区分のジョブのうち最も近いもの
+  for (k = count; k >= 1; k--) {
+    if (rank[pend_class[k]] > rank[class]) {
+      behind = behind (behind == "" ? "" : "、") sprintf("%s（%s）が %s（%s）の後ろ", job, class, pend_job[k], pend_class[k])
       break
     }
   }
-  count[part]++
-  pend_job[part, count[part]] = job
-  pend_class[part, count[part]] = class
+  count++
+  pend_job[count] = job
+  pend_class[count] = class
 }
 END {
-  for (p = 1; p <= nparts; p++) {
-    part = parts[p]
-    if (behind[part] == "") continue
-    # 区分の順、同じ区分は今の順に並べる（挿入ソート。待っているジョブは数本）
-    m = count[part]
-    for (i = 1; i <= m; i++) idx[i] = i
-    for (i = 2; i <= m; i++) {
-      v = idx[i]
-      for (j = i - 1; j >= 1 && rank[pend_class[part, idx[j]]] > rank[pend_class[part, v]]; j--) idx[j + 1] = idx[j]
-      idx[j + 1] = v
-    }
-    list = ""
-    for (i = 1; i <= m; i++) list = list (i == 1 ? "" : ",") pend_job[part, idx[i]]
-    note = (unclassed[part] == "") ? "" : sprintf("（区分の無い %s は後ろに回る）", unclassed[part])
-    printf "ORDER: %s: %sで待っている。scontrol top %s%s\n", part, behind[part], list, note
+  # 区分の順、同じ区分は今の順（--first のジョブは区分の先頭）に並べる（挿入ソート。待っているジョブは数本）
+  for (i = 1; i <= count; i++) {
+    idx[i] = i
+    pos[i] = (pend_job[i] == first) ? 0 : i
   }
+  for (i = 2; i <= count; i++) {
+    v = idx[i]
+    for (j = i - 1; j >= 1 && (rank[pend_class[idx[j]]] > rank[pend_class[v]] || (rank[pend_class[idx[j]]] == rank[pend_class[v]] && pos[idx[j]] > pos[v])); j--) idx[j + 1] = idx[j]
+    idx[j + 1] = v
+  }
+  list = ""; now = ""
+  for (i = 1; i <= count; i++) {
+    list = list (i == 1 ? "" : ",") pend_job[idx[i]]
+    now = now (i == 1 ? "" : ",") pend_job[i]
+  }
+  if (list == now) exit
+  if (order) {
+    print list
+    exit
+  }
+  note = (unclassed == "") ? "" : sprintf("（区分の無い %s は後ろに回る）", unclassed)
+  printf "ORDER: main: %sで待っている。scontrol top %s%s\n", behind, list, note
 }'

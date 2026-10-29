@@ -19,7 +19,9 @@
 #     切り上がる）だけを取って実行する（--cpus-per-task）。時間を記録しない長い計算のためで、ほかのジョブと
 #     資源を取り合うので、TIME 行に「時間は当てにならない」印を付ける。排他の main のジョブはノードにジョブが
 #     走っている間は始まらないので、走っている間は待たせる（--timed のジョブは待たず、走っているジョブを止める）
-# --top: 同じパーティションの待っているジョブより先に実行する（scontrol top。走っているジョブは止めない）
+# --top: 同じ区分の待っているジョブより先に実行する（main。上の区分のジョブは追い越さない）。timed では待っている
+#     ジョブすべてより先に実行する。走っているジョブは止めない
+# main に投げたときは、待っているジョブを区分の順に並べ直す（slurm-queue.sh --order と scontrol top）
 # --timed: 時間を記録するジョブ（と数分の急ぐ計算）。排他で、割り込まれないパーティション timed に投げる。待っている
 #     main のジョブより先に走り、走っている main のジョブをすべて止めて実行し、自分は止められない。timed のジョブどうしは
 #     止め合わず、投げた順に走る。止めたジョブはメモリに残る（Slurm はメモリを数えない）ので、走っているジョブとの合計が
@@ -204,9 +206,21 @@ done
 echo "JOB: $job"
 log="$local_logs/$name-$job.out"
 echo "LOG: $log"
-# 並べ替えに失敗しても、投げたジョブは待ち行列にあるので、終わりまで待つ
-if $top && ! scontrol top "$job"; then
-  echo "WARN: ジョブ $job を待ち行列の先頭に移せなかった。投げた順に走る" >&2
+# main は投げるたびに区分の順に並べ直す（並べ方は slurm-queue.sh --order の 1 か所。--top のジョブは自分の区分の先頭、
+# 無ければ末尾）。投げたセッションが並べ直すので、区分の順は誰かが一覧の ORDER: を実行するのを待たない。timed は投げた順に
+# 実行し、--top のときだけ投げたジョブを先頭に出す。並べ替えに失敗しても、投げたジョブは待ち行列にあるので、終わりまで待つ
+if $timed; then
+  if $top && ! scontrol top "$job"; then
+    echo "WARN: ジョブ $job を待ち行列の先頭に移せなかった。投げた順に走る" >&2
+  fi
+else
+  first=()
+  $top && first=(--first "$job")
+  if ! reorder=$("$(dirname "$0")/slurm-queue.sh" --order "${first[@]}"); then
+    echo "WARN: 待ち行列を読めず、区分の順に並べ直せなかった。投げた順に走る" >&2
+  elif [[ -n $reorder ]] && ! scontrol top "$reorder"; then
+    echo "WARN: 待ち行列を区分の順（$reorder）に並べ直せなかった。投げた順に走る" >&2
+  fi
 fi
 
 status=0
