@@ -95,9 +95,9 @@ pub const KEYS: [&str; 6] = [
     "issues",
 ];
 
-/// 書いてもよいフロントマターのキー。決定の一部の置き換えを両方向に結ぶ: `amends` は
-/// この ADR が一部を置き換えた ADR、`amended-by` はこの ADR の一部を置き換えた ADR（ADR-0051）。一部の置き換えは
-/// まれなので、すべての ADR には求めない。
+/// 既存の ADR に残るフロントマターのキー。決定の一部の置き換えを別の ADR で両方向に結んでいたころの結びで、`amends` は
+/// この ADR が一部を置き換えた ADR、`amended-by` はこの ADR の一部を置き換えた ADR（ADR-0051）。新しくは書かない
+/// （一部の変更は同じ ADR の「## 変更」に書く。ADR-0067）ので、すべての ADR には求めない。
 pub const OPTIONAL_KEYS: [&str; 2] = ["amends", "amended-by"];
 
 /// `status` の値。
