@@ -1551,6 +1551,30 @@ mod tests {
     }
 
     #[test]
+    fn consequences_under_other_decided_sections_change_the_body() {
+        // 帰結と確認の見出しを今の事実の節として扱うのは、決定と理由の下に置いたときだけ
+        let old = SECTIONS.replace("- 案\n", "- 案\n\n### 確認\n\n案の確認\n");
+        assert!(body_changed(&old, &old.replace("案の確認", "別")));
+    }
+
+    #[test]
+    fn later_top_level_headings_do_not_reopen_the_decided_sections() {
+        // 表題は最初の 1 段目の見出しだけ。補足の中の 1 段目の見出しの後も補足のまま
+        let old = SECTIONS.to_string() + "\n# 引用\n\nx\n";
+        assert!(!body_changed(&old, &old.replace("\nx\n", "\ny\n")));
+    }
+
+    #[test]
+    fn adding_issues_keeps_the_body() {
+        // 帰結に書いた残りの issue は、確定した後もフロントマターの issues に足す
+        let old = SECTIONS.replace("date: 2026-10-01\n", "date: 2026-10-01\nissues: [\"#1\"]\n");
+        assert!(!body_changed(
+            &old,
+            &old.replace("[\"#1\"]", "[\"#1\", \"#2\"]")
+        ));
+    }
+
+    #[test]
     fn changes_section_and_other_sections_keep_the_body() {
         // 決定の変更を書き留める節と、3 つの節のほかの節
         let new = SECTIONS.to_string() + "\n## 変更\n\n- 2026-10-29: 「決」を改めた。理由\n";
