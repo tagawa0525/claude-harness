@@ -43,7 +43,7 @@ impl Rule for GuardSbatch {
         // 2 つの検査は別々のエスケープで外す
         if shell.runs_program("sbatch", |program| basename(program) == "sbatch") {
             let deny = Finding::Deny(format!(
-                "sbatch を直接使わず、~/.claude/scripts/slurm-run.sh -t <見積もり> <名前> '<コマンド>' で投げてください（名前・ログ・見積もり・連絡先を付けます）。{}",
+                "sbatch を直接使わず、~/.claude/scripts/slurm-run.sh --class <区分> --ref '<参照>' --purpose '<目的>' -t <見積もり> <名前> '<コマンド>' で投げてください（名前・ログ・見積もり・区分と目的・連絡先を付けます。区分と目的は /slurm-run）。{}",
                 escape_hint("ALLOW_RAW_SBATCH")
             ));
             let findings = apply_escape(
