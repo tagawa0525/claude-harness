@@ -37,11 +37,34 @@ use crate::gh;
 use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
+use crate::shell::{Arg, Cmd, Escape, Shell, has_flag, opt_value};
+use crate::unwrap::basename;
 use design_records::is_adr_path;
 use serde_json::Value;
 
 pub struct PreMergeCheck;
+
+/// 同じコマンドで gh pr merge より前に走るはずだったコマンド（cd を除く）を挙げ、分けて投げ直す方法を示す。
+/// 判定はコマンドを実行する前の状態で行うので、前のコマンド（ローカルレビューの記録、push、コメント）が
+/// 変える状態は反映されず、拒むとそれらも実行されない
+fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    for c in shell.commands() {
+        let name = basename(c.program());
+        if c.start < merge.start && name != "cd" && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    if names.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n同じコマンドで gh pr merge より前にあるコマンド（{}）は、この判定の後に走るので判定に反映されず、\
+         拒んだのでどれも実行されていません。それらで状態を変える（ローカルレビューの記録、push など）なら、\
+         先に別の呼び出しで実行してから、gh pr merge を単独の呼び出しで投げ直してください",
+        names.join(", ")
+    )
+}
 
 /// 引数から PR 番号を探す。本文（--body / --subject）より前のトークンから、値を取るフラグの
 /// 値を飛ばして最初の数値を採る（`gh pr merge -R owner/repo 12 …` の形にも対応）
@@ -789,8 +812,9 @@ impl Rule for PreMergeCheck {
                     _ => String::new(),
                 };
                 return vec![Finding::Deny(format!(
-                    "{}\n\n/gh-actions-check{target} で状況を診断してください。",
-                    reasons.join("\n")
+                    "{}{}\n\n/gh-actions-check{target} で状況を診断してください。",
+                    reasons.join("\n"),
+                    earlier_commands_hint(shell, cmd)
                 ))];
             }
         }
