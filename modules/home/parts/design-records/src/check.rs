@@ -1499,8 +1499,50 @@ mod tests {
     #[test]
     fn other_changes_change_the_body() {
         assert!(body_changed(BODY, &BODY.replace("文", "別の文")));
-        // 補足の後に別の節があれば、その節は本文
-        let old = BODY.to_string() + "\n## 付録\n\nx\n";
+    }
+
+    const SECTIONS: &str = "---\nstatus: accepted\ndate: 2026-10-01\n---\n\n# ADR-0001: a\n\n\
+        ## 背景\n\n背\n\n## 検討した案\n\n- 案\n\n## 決定と理由\n\n決\n\n\
+        ### 帰結\n\n帰\n\n### 確認\n\n確\n\n## 補足\n\n- 前\n";
+
+    #[test]
+    fn decided_sections_change_the_body() {
+        // 背景、検討した案、決定と理由は、決めた時点の記録
+        for (from, to) in [("背\n", "別\n"), ("- 案\n", "- 別\n"), ("決\n", "別\n")] {
+            assert!(
+                body_changed(SECTIONS, &SECTIONS.replace(from, to)),
+                "{from}"
+            );
+        }
+    }
+
+    #[test]
+    fn consequences_and_confirmation_keep_the_body() {
+        // 帰結と確認は今の事実を書く節（決定と理由の下の 3 段目でも、2 段目でも）
+        let new = SECTIONS
+            .replace("帰\n", "帰\n- 追記\n")
+            .replace("確\n", "別\n");
+        assert!(!body_changed(SECTIONS, &new));
+        let old = SECTIONS
+            .replace("### 帰結", "## 帰結")
+            .replace("### 確認", "## Confirmation");
+        let new = old.replace("帰\n", "別\n").replace("確\n", "別\n");
+        assert!(!body_changed(&old, &new));
+    }
+
+    #[test]
+    fn other_subsections_of_the_decision_change_the_body() {
+        // 決定と理由の下の、帰結と確認でない 3 段目の節は決定の一部
+        let old = SECTIONS.replace("## 補足", "### 採らなかった案\n\nx\n\n## 補足");
         assert!(body_changed(&old, &old.replace("\nx\n", "\ny\n")));
+    }
+
+    #[test]
+    fn changes_section_and_other_sections_keep_the_body() {
+        // 決定の変更を書き留める節と、3 つの節のほかの節
+        let new = SECTIONS.to_string() + "\n## 変更\n\n- 2026-10-29: 「決」を改めた。理由\n";
+        assert!(!body_changed(SECTIONS, &new));
+        let old = SECTIONS.to_string() + "\n## 付録\n\nx\n";
+        assert!(!body_changed(&old, &old.replace("\nx\n", "\ny\n")));
     }
 }
