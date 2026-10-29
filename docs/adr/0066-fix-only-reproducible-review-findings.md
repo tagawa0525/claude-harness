@@ -117,8 +117,9 @@ Copilot の周には以前、上限（5 周）があった。ADR-0034 は上限�
 まとめて終わった。PR #517 は、親の見立てでは、この基準なら担当の 1 周目で終わっていた（周ごとの指摘を記録で数え直していない）。
 
 これは ADR-0023 の「ローカルレビューの周回は回数ではなく「その周に検証できる誤りが無ければ終わり」を終了条件にする」の
-部分と、同じ項の「スキルから周回数の記述を消す」のうちローカルの `/code-review` の周（歯止めの 3 周を /git-merge、
-/gh-pr-create、/gh-pr-review、/delegate に書く。Copilot の周の回数は書かないまま）と、ADR-0027 の「branch-task で独自の周回数を決めない」の部分を置き換える。「検証できる誤り」を上の blocking に絞り、
+部分と、同じ項の「スキル（`gh-pr-merge`、`gh-pr-review`、`gh-pr-create`、`git-push`、`git-merge`）からエスケープ名と
+周回数の記述を消す」のうち、ローカルの `/code-review` の周回数の部分（この ADR は歯止めの 3 周を /git-merge、
+/gh-pr-create、/gh-pr-review に書く。エスケープ名と Copilot の周の回数は書かないまま）と、ADR-0027 の「branch-task で独自の周回数を決めない」の部分を置き換える。「検証できる誤り」を上の blocking に絞り、
 歯止めの 3 周が加わる。どちらの ADR も、ほかの部分は変わらない。ADR-0027 が避けたスキルどうしの食い違いは、規則の本文を
 /git-merge の「レビュー」の節の 1 か所に置き、/delegate、/gh-pr-create、/gh-pr-review からはそこを参照して避ける。
 

@@ -194,8 +194,8 @@ head と同じもの）に、その回で検証して正しいと判断した指
 
 記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
 して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`、
-マージ時の hook）ので、High（blocking）は直して回し直す。Medium と Low（non-blocking）は直さず、1 件の issue に
-まとめてその head で終える（台帳と PR 本文に issue の番号を書く）。同じ head を回し直したら、最後の記録で決まる。
+マージ時の hook）ので、High（blocking）は直して回し直す。Medium と Low（non-blocking）は直さず、/git-merge の
+「直す指摘の基準」のとおり扱ってその head で終える。同じ head を回し直したら、最後の記録で決まる。
 直す指摘、周の終わり、歯止めの 3 周と 3 周目で直した head の扱いは、担当も親も /git-merge の「レビュー」の節の
 「直す指摘の基準」に従う。
 件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
