@@ -1331,14 +1331,36 @@ it "pre-merge-check: 拒んだとき、同じコマンドで先に走るはず�
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "gh issue comment 1 --body x && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh https://github.com/example/heredoc/pull/1 abc 0 0 0 && $MERGE_CMD")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "gh, record-local-review.sh"
-assert_contains "$(reason "$out")" "gh pr merge を単独の呼び出し"
+assert_contains "$(reason "$out")" "gh issue, record-local-review.sh"
+assert_contains "$(reason "$out")" "前に cd だけを付けた呼び出し"
+
+it "pre-merge-check: git はサブコマンドまで挙げる"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "git push && $MERGE_CMD")
+assert_contains "$(reason "$out")" "（git push）"
+
+it "pre-merge-check: マージを文字列で実行する bash -c は、前のコマンドとして挙げない"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "bash -c 'gh pr merge 1 --merge --delete-branch --subject x --body \"## Why
+x
+## What
+x
+## Impact
+x\"'")
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "前にあるコマンド"
+
+it "pre-merge-check: コマンドの文字列だけで拒んだときは、投げ直しの案内を出さない"
+make_fake_gh_merge 'echo 0' 'echo abc'
+out=$(run_hook pre-merge-check "git push && gh pr merge 1 --squash --delete-branch --subject x --body x")
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "前にあるコマンド"
 
 it "pre-merge-check: 先に走るのが cd だけなら、投げ直しの案内を出さない"
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "cd . && $MERGE_CMD")
 assert_eq deny "$(decision "$out")"
-assert_not_contains "$(reason "$out")" "単独の呼び出し"
+assert_not_contains "$(reason "$out")" "前にあるコマンド"
 
 it "pre-merge-check: bot のレビューが head を見ていればマージできる"
 make_fake_gh_merge 'echo 0' 'echo abc'
