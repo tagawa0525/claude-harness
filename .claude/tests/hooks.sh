@@ -6,7 +6,8 @@
 # 対象: pre-pr-create-check / warn-large-commit / guard-git-push / pre-merge-check /
 #       block-secret-commit / block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
-#       guard-git-merge / guard-sbatch / guard-git-stash / guard-git-reset-hard / guard-exclusive-slurm
+#       guard-git-merge / guard-sbatch / guard-git-stash / guard-git-reset-hard / guard-exclusive-slurm /
+#       guard-git-amend
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -2709,5 +2710,137 @@ for dir in shared idle; do
   out=$(PATH="$FAKE_SQUEUE/$dir:$PATH" run_hook guard-exclusive-slurm 'cargo test')
   assert_eq "" "$out"
 done
+
+# ===========================================================================
+# guard-git-amend: 既定ブランチに含まれるコミットを先端に持つ feature ブランチでの git commit --amend を止める
+# ===========================================================================
+# 作ったばかりのブランチの最初の git commit が hook に拒まれたのに気づかず amend すると、既定ブランチの
+# コミット（多くはマージコミット）を書き換えた、親 2 つのコミットがブランチにできる。既定ブランチの上の amend
+# （マージの直後にマージコミットの本文を直す）と、ブランチに固有のコミットがあるときの amend は通す
+
+AMEND="$TEST_ROOT/amend"
+make_repo "$AMEND"
+git -C "$AMEND" switch -q -c side
+commit_file "$AMEND" side.txt "feat: side"
+git -C "$AMEND" switch -q main
+git -C "$AMEND" merge -q --no-ff -m "Merge: side" side
+git -C "$AMEND" branch fresh main
+git -C "$AMEND" branch own main
+git -C "$AMEND" switch -q own
+commit_file "$AMEND" own.txt "feat: own"
+git -C "$AMEND" switch -q fresh
+cd "$AMEND" || exit 1
+
+it "guard-git-amend: 先端が既定ブランチに含まれる feature ブランチでの amend は deny し、git commit を示す"
+for cmd in 'git commit --amend -m "docs: x"' 'git commit -q --amend -m "docs: x"' 'git commit -m "docs: x" --amend' \
+  'git commit --amend --no-edit' 'git commit --am --no-edit' 'git add -A docs && git commit -q --amend --no-edit' \
+  'git commit -q -m "docs: x"; git commit -q --amend -m "docs: y"' "bash -c 'git commit --amend --no-edit'" \
+  'env FOO=1 git commit --amend --no-edit'; do
+  out=$(run_hook guard-git-amend "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "git log -1"
+  assert_contains "$(reason "$out")" "fresh"
+  assert_contains "$(reason "$out")" "2026-10-30"
+  assert_contains "$(reason "$out")" "main の上で amend"
+done
+
+it "guard-git-amend: -C と cd で指した先のブランチで判定する"
+cd "$TEST_ROOT" || exit 1
+for cmd in "git -C $AMEND commit --amend --no-edit" "cd $AMEND && git commit --amend --no-edit" \
+  "env -C $AMEND git commit --amend --no-edit"; do
+  out=$(run_hook guard-git-amend "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+cd "$AMEND" || exit 1
+
+it "guard-git-amend: ブランチに固有のコミットがあれば amend を通す"
+git switch -q own
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq "" "$out"
+git switch -q fresh
+
+it "guard-git-amend: 既定ブランチの上と detached HEAD の amend は通す"
+git switch -q main
+out=$(run_hook guard-git-amend 'git commit --amend -m "Merge: side (fixed)"')
+assert_eq "" "$out"
+git switch -q --detach main
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq "" "$out"
+git switch -q fresh
+
+it "guard-git-amend: --amend の無い commit と、--amend が値や pathspec の commit は通す"
+for cmd in 'git commit -m "docs: x"' 'git commit -m --amend' 'git commit -m"--amend"' 'git commit -F --amend' \
+  'git commit -m x -- --amend' 'git commit --amend --no-amend -m x' 'git commit --amend --no-am -m x' 'git log --amend' 'echo git commit --amend'; do
+  out=$(run_hook guard-git-amend "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-git-amend: 同じコマンドの前の git switch の先のブランチで判定する"
+git switch -q main
+out=$(run_hook guard-git-amend 'git switch own && git commit --amend --no-edit')
+assert_eq "" "$out"
+out=$(run_hook guard-git-amend 'git switch fresh && git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-amend 'git switch -c brand-new && git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+git switch -q fresh
+
+it "guard-git-amend: GitHub リモートのあるリポジトリでは origin の既定ブランチと比べる"
+AMEND_GH="$TEST_ROOT/amend-gh"
+make_repo "$AMEND_GH"
+make_remote "$AMEND_GH" github
+git -C "$AMEND_GH" fetch -q origin
+git -C "$AMEND_GH" switch -q -c feat/gh origin/main
+cd "$AMEND_GH" || exit 1
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "origin/main"
+assert_not_contains "$(reason "$out")" "の上で amend"
+commit_file "$AMEND_GH" gh.txt "feat: gh"
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq "" "$out"
+cd "$TEST_ROOT" || exit 1
+
+it "guard-git-amend: ローカルの既定ブランチにだけある（push していない）コミットも既定ブランチのものとして扱う"
+AMEND_LOCAL="$TEST_ROOT/amend-local"
+make_repo "$AMEND_LOCAL"
+make_remote "$AMEND_LOCAL"
+commit_file "$AMEND_LOCAL" unpushed.txt "feat: unpushed"
+git -C "$AMEND_LOCAL" switch -q -c fresh
+cd "$AMEND_LOCAL" || exit 1
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "origin/main"
+cd "$TEST_ROOT" || exit 1
+
+it "guard-git-amend: マージ済みのブランチの amend も deny し、文言はほかのリポジトリでも成り立つ"
+AMEND_MERGED="$TEST_ROOT/amend-merged"
+make_repo "$AMEND_MERGED"
+git -C "$AMEND_MERGED" switch -q -c done
+commit_file "$AMEND_MERGED" done.txt "feat: done"
+git -C "$AMEND_MERGED" switch -q main
+git -C "$AMEND_MERGED" merge -q --no-ff -m "Merge: done" done
+git -C "$AMEND_MERGED" switch -q done
+cd "$AMEND_MERGED" || exit 1
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "最初のコミット"
+assert_not_contains "$(reason "$out")" "#0"
+assert_contains "$(reason "$out")" "remap.commitRefs"
+cd "$TEST_ROOT" || exit 1
+
+it "guard-git-amend: GitHub リモートがあっても、既定ブランチが main / master でなければ、その上で amend する道を示す"
+AMEND_DEV="$TEST_ROOT/amend-dev"
+make_repo "$AMEND_DEV"
+make_remote "$AMEND_DEV" github
+git -C "$AMEND_DEV" switch -q -c develop
+git -C "$AMEND_DEV" push -q -u origin develop
+git -C "$AMEND_DEV" remote set-head origin develop
+git -C "$AMEND_DEV" switch -q -c feat/dev
+cd "$AMEND_DEV" || exit 1
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "develop の上で amend"
+cd "$TEST_ROOT" || exit 1
 
 finish

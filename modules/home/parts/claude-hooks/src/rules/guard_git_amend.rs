@@ -1,0 +1,107 @@
+//! guard-git-amend: 先端が既定ブランチに含まれる feature ブランチでの `git commit --amend` を止める
+//!
+//! 既定ブランチから作ったばかりのブランチの先端は、既定ブランチのコミット（多くはマージコミット）である。
+//! 最初の `git commit` が hook（commit-msg など）に拒まれたのに気づかずに amend すると、そのコミットを
+//! 書き換えたもの（マージコミットなら親 2 つ）がブランチに入る。amend は新しいコミットを
+//! 作るので既定ブランチは変わらず、remap.commitRefs を有効にしたリポジトリでは post-rewrite の hook が
+//! 書き換えた番号を文書に付け替える。マージ済みのブランチの先端も既定ブランチに含まれるので、同じく止める。
+//!
+//! 止めるのは、今のブランチが名前のあるブランチで既定ブランチでなく、その先端が既定ブランチ
+//! （[`git::default_branch`]。push していないマージのため、そのローカルのブランチとも比べる）に含まれる
+//! （`git merge-base --is-ancestor`）ときだけ。既定ブランチの上の amend
+//! （マージの直後にマージコミットの本文を直す）、detached HEAD（rebase の途中の edit）、ブランチに固有の
+//! コミットがあるときは通す。同じコマンドの前の `git switch` / `checkout` は、その先のブランチで判定する
+//! （[`branch_at`]。まだ無いブランチを作って移るなら、起点の今の HEAD を見る）。ほかの前のコマンド
+//! （`git commit` を含む）は見ず、実行前の HEAD で判定する。前の commit が拒まれれば、amend は実行前の
+//! HEAD を書き換えるため。エスケープは無い。既定ブランチのコミットを feature ブランチで書き換えて残す
+//! 正当な手順が無いため（直すのは既定ブランチの上の amend か、新しい commit）。比べた案は ADR-0069。
+
+use super::Rule;
+use super::guard_branch_base::branch_at;
+use crate::git;
+use crate::git_args::{Item, items};
+use crate::input::Input;
+use crate::output::Finding;
+use crate::shell::{Cmd, Shell};
+
+pub struct GuardGitAmend;
+
+/// `git commit` の引数が amend を指すか。git は一意な略（`--am`、`--no-am` など）を受け付け、後に書いた
+/// `--no-amend` が前の `--amend` を打ち消す。値（`-m --amend`）と `--` の後の pathspec は数えない
+fn is_amend(cmd: &Cmd) -> bool {
+    let Some(("commit", args)) = cmd.git_subcommand() else {
+        return false;
+    };
+    let mut amend = false;
+    for item in items("commit", args) {
+        match item {
+            Item::Long(name) if name.len() >= 4 && "--amend".starts_with(name) => amend = true,
+            Item::Long(name) if name.len() >= 6 && "--no-amend".starts_with(name) => amend = false,
+            _ => {}
+        }
+    }
+    amend
+}
+
+impl Rule for GuardGitAmend {
+    fn name(&self) -> &'static str {
+        "guard-git-amend"
+    }
+
+    fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        for cmd in shell.commands() {
+            if !is_amend(cmd) || shell.runs_under_ssh_or_login(cmd) {
+                continue;
+            }
+            let dir = shell.target_dir(cmd, &input.cwd);
+            if git::git(&dir, &["rev-parse", "--git-dir"]).is_none() {
+                continue;
+            }
+            let Some(default_ref) = git::default_branch(&dir) else {
+                continue;
+            };
+            let default = git::local_name(&default_ref);
+            // 移った先が分からない前の git switch（`-`、`--detach`）は、どのコミットを書き換えるかが分からない。
+            // 書き換える先が既定ブランチのコミットとは確かめられないので通す
+            let Some(branch) = branch_at(shell, cmd, &input.cwd, &dir) else {
+                continue;
+            };
+            if branch.is_empty() || branch == default {
+                continue;
+            }
+            let local = format!("refs/heads/{branch}");
+            let tip = git::git(&dir, &["rev-parse", "--verify", "--quiet", &local])
+                .unwrap_or_else(|| "HEAD".to_string());
+            // push していないマージはローカルの既定ブランチにだけあるので、追跡ブランチと両方で比べる
+            let local_default = format!("refs/heads/{default}");
+            // 文言には含んでいた方の ref を出す（ローカルにだけあるのに追跡ブランチの名前を出すと、原因を探し違える）
+            let Some(contained_in) = [default_ref.as_str(), local_default.as_str()]
+                .into_iter()
+                .find(|r| git::git(&dir, &["merge-base", "--is-ancestor", &tip, r]).is_some())
+            else {
+                continue;
+            };
+            // block-main-commit は GitHub リモートのあるリポジトリで main / master の上の commit を止めるので、
+            // そのときだけ既定ブランチの上で amend する道を示さない（ほかの名前の既定ブランチは止めない）
+            let on_default = if git::has_github_remote(&dir)
+                && (default == "main" || default == "master")
+            {
+                String::new()
+            } else {
+                format!(
+                    "\n- 既定ブランチのコミット（マージコミットの本文など）を直すのが意図なら、push する前に {default} の上で amend する"
+                )
+            };
+            return vec![Finding::Deny(format!(
+                "ブランチ {branch} の先端は既定ブランチ（{contained_in}）に含まれるコミットです。ここで amend すると、\
+                 既定ブランチのコミット（多くはマージコミット）を書き換えたものがブランチに入ります\
+                 （マージコミットなら親 2 つ。remap.commitRefs を有効にしたリポジトリでは、post-rewrite の hook が文書の番号も\
+                 書き換えた番号に付け替えます。2026-10-30 に、main から\
+                 作ったばかりのブランチで、hook に拒まれた最初の commit の後の amend が main のマージコミットを書き換えた）。\n\
+                 - amend せず git commit で新しいコミットを作る\n\
+                 - 拒まれた commit の後なら、先に git log -1 で先端を確かめる（-q や ; のつなぎでは失敗が見えません）{on_default}"
+            ))];
+        }
+        Vec::new()
+    }
+}

@@ -86,6 +86,7 @@ mod guard_exclusive_slurm;
 mod guard_gh_api;
 mod guard_gh_run_rerun;
 mod guard_git_add;
+mod guard_git_amend;
 mod guard_git_merge;
 mod guard_git_push;
 mod guard_git_reset_hard;
@@ -118,6 +119,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_git_merge::GuardGitMerge,
         &guard_git_stash::GuardGitStash,
         &guard_git_reset_hard::GuardGitResetHard,
+        &guard_git_amend::GuardGitAmend,
         &guard_exclusive_slurm::GuardExclusiveSlurm,
         &delegate_request_fields::DelegateRequestFields,
     ]
