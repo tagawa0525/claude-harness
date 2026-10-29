@@ -81,7 +81,8 @@ BEGIN {
     class = f[1]; ref = f[2]; purpose = f[3]
     for (i = 1; i <= 3; i++) sub(/^[^|]* \| /, "", contact)
   }
-  # 優先度 1 以下は保留（scontrol top が下げられない。ADR-0030）、[ のある番号は配列の親ジョブ
+  # 優先度 1 以下は保留（保留のジョブの優先度は 0 か 1 で、scontrol top は優先度 1 以下のジョブを動かせない）、
+  # [ のある番号は配列の親ジョブ
   unmovable = (state == "PENDING" && (prio + 0 <= 1 || index(job, "[") > 0))
   if (!order) {
     printf "%s %s%s %s %s %s %s %s %s %s\n", job, state, unmovable ? "（動かせない）" : "", part, prio, class, limit, start, name, ref
