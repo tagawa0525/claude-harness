@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-30
 requires: [ADR-0007, ADR-0030, ADR-0053, ADR-0055]
 supersedes: []
@@ -89,13 +89,15 @@ issues: ["#534"]
   と書けば上に並ぶ（区分の誤りは連絡先のブランチと報告で親が読む）
 - 悪い点: `scontrol top` は同じ利用者の待っているジョブをすべて後ろに回す（ADR-0030）ので、`ORDER:` の行の後に `--top` で
   投げたジョブは、次に誰かが `ORDER:` の行を実行するまで、区分によらず先頭に出る
+- 急ぐ計算: `--top` は同じ区分の中で前に出す。走っているジョブの終わりを待てない数分の計算は、区分を変えずに `--timed` で
+  投げる（ADR-0053 のまま）。区分の順を越えて 1 本を先に出す仕組みは作らない（親のセッションの判断。2026-10-30）
 - 悪い点: 区分の順は同じパーティションの中の順だけを決める。`--timed` を付けた下の区分の急ぐ計算は、走っている上の区分の
   `main` のジョブを止めて走る（ADR-0053 のまま。`--timed` を数分の計算に限る規則は文書にあり、スクリプトは確かめない）
 - 悪い点: r995 の Slurm は `AccountingStoreFlags` を設定しておらず（2026-10-30 の `scontrol show config` で `(null)`）、
   `sacct` はコメントを持たない。終わったジョブの目的は `TIME:` 行とログでしか読めない
-- 古い形の呼び出しは、このブランチでは直さず残る（依頼の範囲の外）: nixfiles のグローバルの CLAUDE.md（`.claude/CLAUDE.md`）、
-  guard-sbatch の拒否の文言（`modules/home/parts/claude-hooks/src/rules/guard_sbatch.rs`）、`modules/slurm/common.nix` の
-  コメント、xlc の CLAUDE.md とスキル（openmc-reference、verification-record）と docs/environment.md（#534）
+- 古い形の呼び出しのうち、nixfiles の分（`.claude/CLAUDE.md`、guard-sbatch の拒否の文言、`modules/slurm/common.nix` の
+  コメント）はこのブランチで直した。xlc の CLAUDE.md とスキル（openmc-reference、verification-record）、docs/environment.md、
+  ADR-0196 は xlc の別のブランチで合わせる（#534）
 
 ### 確認
 
