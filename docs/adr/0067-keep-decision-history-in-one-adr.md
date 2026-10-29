@@ -82,7 +82,8 @@ ADR を確定した後の扱いは、次の 3 つの決定が定めている。
   日本語の辞書に合わせた意味を変えない語の置き換えだけ。決めた時点に何を知っていて、何と比べ、なぜそう決めたかの記録で、
   後から書き換えると経緯が失われる
 - 確定した後も直す節: 「帰結」と「確認」。今の事実を書く節なので、マージの後の実装の進み、測った値、issue への結びを
-  その場で書き直す。「## 補足」も今までどおり書き足してよい
+  その場で書き直す。帰結に書いた残りの issue は、フロントマターの `issues` にも足してよい（`issues` は直してよいキーに
+  加える）。「## 補足」も今までどおり書き足してよい
 - 決定の一部を変えるとき: 新しい ADR を作らず、同じ ADR の「決定と理由」を今の決定に直し、末尾の「## 変更」に 1 項を足す。
   項の形は `- YYYY-MM-DD: <変えた部分>。前は「<前の文の引用>」。<理由>`。前の文を引用するので、前の決定はファイルの中に残り、
   git の履歴を探さずに読める。比べた案があるなら、その項に書くか issue に書いて項から指す
@@ -115,7 +116,7 @@ amends と amended-by で両方向に結ぶ」決定は、これからの一部�
 
 - 良い点: 今の決定は、その ADR の「決定と理由」を読めば分かる。前の決定と変えた理由は、同じファイルの「## 変更」にある
 - 良い点: マージの後に分かった実装の進みや測った値を、「帰結」と「確認」にその場で書ける。マージの前に直し切る必要が
-  あるのは、凍結する 3 節だけになる
+  あるのは、凍結する部分（3 節、表題、直せないフロントマターのキー）だけになる
 - 悪い点: 決定と理由を直しても、「## 変更」を書き忘れたことは検査で捕まらない（注意は出るが、項の有無と形は見ない。#523）。
   それまではレビューで見る
 - 悪い点: 既存の ADR には、`amends` のチェーンと「## 変更」の 2 つの形が混ざる
@@ -129,7 +130,10 @@ amends と amended-by で両方向に結ぶ」決定は、これからの一部�
   （`decided_sections_change_the_body`）。決定と理由の下の 3 段目と 2 段目の、帰結と確認の変更はならない
   （`consequences_and_confirmation_keep_the_body`）。決定と理由の下の、帰結と確認でない 3 段目の節は本文
   （`other_subsections_of_the_decision_change_the_body`）。「## 変更」とほかの 2 段目の節の変更はならない
-  （`changes_section_and_other_sections_keep_the_body`）
+  （`changes_section_and_other_sections_keep_the_body`）。背景や検討した案の下の帰結と確認の見出しは本文
+  （`consequences_under_other_decided_sections_change_the_body`）。表題の後の 1 段目の見出しは凍結する部分に戻さない
+  （`later_top_level_headings_do_not_reopen_the_decided_sections`）。`issues` の追加は本文の変更にならない
+  （`adding_issues_keeps_the_body`）
 - `modules/home/parts/design-records/tests/cli.rs`: 確定した ADR の背景を変えると注意が出る
   （`check_warns_when_the_body_of_a_decided_adr_on_main_changes`、`check_follows_renames_when_comparing_the_body`）
 - スキル `adr` の「確定後の運用」が、凍結する部分、直す節、「## 変更」の形を示す
