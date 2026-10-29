@@ -4,7 +4,7 @@ date: 2026-10-30
 requires: [ADR-0007, ADR-0030, ADR-0053, ADR-0055]
 supersedes: []
 superseded-by:
-issues: []
+issues: ["#534"]
 ---
 
 # ADR-0068: Slurm のジョブに区分と目的を必須にし、待ち行列の順を区分で決めて、依頼の計算の本数の上限をやめる
@@ -95,7 +95,7 @@ issues: []
   `sacct` はコメントを持たない。終わったジョブの目的は `TIME:` 行とログでしか読めない
 - 古い形の呼び出しは、このブランチでは直さず残る（依頼の範囲の外）: nixfiles のグローバルの CLAUDE.md（`.claude/CLAUDE.md`）、
   guard-sbatch の拒否の文言（`modules/home/parts/claude-hooks/src/rules/guard_sbatch.rs`）、`modules/slurm/common.nix` の
-  コメント、xlc の CLAUDE.md とスキル（openmc-reference、verification-record）と docs/environment.md
+  コメント、xlc の CLAUDE.md とスキル（openmc-reference、verification-record）と docs/environment.md（#534）
 
 ### 確認
 
