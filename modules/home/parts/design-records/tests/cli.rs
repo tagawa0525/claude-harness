@@ -578,6 +578,77 @@ fn check_warns_when_a_decided_adr_is_deleted() {
     );
 }
 
+/// 一部の置き換えの結びを足したときの違反の文（`path` の ADR の `key` に ADR-`n` を足した）
+fn new_link_error(path: &str, key: &str, n: u32) -> String {
+    format!(
+        "{path}: error: `{key}` gains ADR-{n:04} since main, but partial changes are no longer \
+         linked with amends and amended-by; drop the item and record the change in the ADR whose \
+         decision changes: edit its decision outcome and add a dated item to its `## 変更` \
+         section that quotes the replaced text and gives the reason\n"
+    )
+}
+
+#[test]
+fn check_rejects_amendment_links_added_since_main() {
+    let t = decided_topic("new-links");
+    t.run(&["new", "use-b", "b を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    let b = "docs/adr/0002-use-b.md";
+    t.write(
+        a,
+        &t.read(a).replace(
+            "superseded-by:\n",
+            "superseded-by:\namended-by: [ADR-0002]\n",
+        ),
+    );
+    t.write(
+        b,
+        &t.read(b)
+            .replace("status: proposed", "status: accepted")
+            .replace("superseded-by:\n", "superseded-by:\namends: [ADR-0001]\n"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check", a, b]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        new_link_error(a, "amended-by", 2) + &new_link_error(b, "amends", 1)
+    );
+}
+
+#[test]
+fn check_keeps_amendment_links_already_on_main() {
+    let t = TempRepo::new("old-links");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    let b = "docs/adr/0002-use-b.md";
+    t.write(
+        a,
+        &t.read(a)
+            .replace("status: proposed", "status: accepted")
+            .replace(
+                "superseded-by:\n",
+                "superseded-by:\namended-by: [ADR-0002]\n",
+            ),
+    );
+    t.write(
+        b,
+        &t.read(b)
+            .replace("status: proposed", "status: accepted")
+            .replace("superseded-by:\n", "superseded-by:\namends: [ADR-0001]\n"),
+    );
+    t.commit_all("docs(adr): a and b");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.write(
+        b,
+        &t.read(b).replace("### 帰結\n", "### 帰結\n\n- 残りは #9\n"),
+    );
+    let out = t.run(&["check", a, b]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
 #[test]
 fn check_follows_renames_when_comparing_the_body() {
     let t = decided_topic("renamed");
