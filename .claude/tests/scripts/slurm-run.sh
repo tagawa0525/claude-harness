@@ -46,6 +46,12 @@ fi
 echo "$*" >>"$TEST_ROOT/scontrol.calls"
 exit "${FAKE_TOP_EXIT:-0}"
 EOF
+# squeue は slurm-queue.sh が読む待ち行列。FAKE_SQUEUE_OUT を出して FAKE_SQUEUE_EXIT で終わる（既定は空）
+cat >"$FAKE_BIN/squeue" <<'EOF'
+#!/usr/bin/env bash
+[[ -z ${FAKE_SQUEUE_OUT:-} ]] || printf '%s\n' "$FAKE_SQUEUE_OUT"
+exit "${FAKE_SQUEUE_EXIT:-0}"
+EOF
 cat >"$FAKE_BIN/hostname" <<'EOF'
 #!/usr/bin/env bash
 echo "${FAKE_HOST:-r995}"
@@ -240,20 +246,66 @@ out=$(FAKE_JOB_EXIT=3 "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'false')
 assert_eq 3 $?
 assert_contains "$out" "EXIT: 3"
 
-it "slurm-run: --top を付けると、投げたジョブを待ち行列の先頭に移す"
+Q="feat/x /p"
+it "slurm-run: main に投げたら、待っているジョブを区分の順に並べ直す（投げたジョブは自分の区分の末尾）"
 rm -f "$TEST_ROOT/scontrol.calls"
-"$RUN" "${PURPOSE[@]}" --top -t 5 xlc-0005-1B 'true' >/dev/null
+FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|main|t|PENDING|10010|10:00|N/A|trial | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|record | #1 | p | $Q")" \
+  "$RUN" --class record --ref '#1' --purpose '本番' -t 5 xlc-rec 'true' >/dev/null
+assert_eq "top 42,20" "$(cat "$TEST_ROOT/scontrol.calls")"
+
+it "slurm-run: --top を付けると、投げたジョブを自分の区分の先頭に置き、上の区分のジョブは追い越さない"
+rm -f "$TEST_ROOT/scontrol.calls"
+FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|main|r|PENDING|10030|10:00|N/A|record | #1 | p | $Q" \
+  "20|main|t|PENDING|10020|10:00|N/A|trial | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | $Q")" \
+  "$RUN" "${PURPOSE[@]}" --top -t 5 xlc-0005-1B 'true' >/dev/null
+assert_eq "top 21,42,20" "$(cat "$TEST_ROOT/scontrol.calls")"
+rm -f "$TEST_ROOT/scontrol.calls"
+FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|main|r|PENDING|10030|10:00|N/A|record | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | $Q")" \
+  "$RUN" "${PURPOSE[@]}" --top -t 5 xlc-0005-1B 'true' >/dev/null
+assert_file_missing "$TEST_ROOT/scontrol.calls"
+
+it "slurm-run: 待っているジョブが区分の順に並んでいれば、順番に触らない"
+rm -f "$TEST_ROOT/scontrol.calls"
+FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|main|r|PENDING|10030|10:00|N/A|record | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | $Q")" \
+  "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_file_missing "$TEST_ROOT/scontrol.calls"
+
+it "slurm-run: パーティション timed では区分で並べ直さず、--top のときだけ投げたジョブを先頭に移す"
+rm -f "$TEST_ROOT/scontrol.calls"
+FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|timed|bench|PENDING|10030|60:00|N/A|timed | #1 | p | $Q" \
+  "42|timed|quick|PENDING|10000|5:00|N/A|decision | #1 | p | $Q")" \
+  "$RUN" --class decision --ref '#1' --purpose '急ぐ確認' --timed -t 5 xlc-quick 'true' >/dev/null
+assert_file_missing "$TEST_ROOT/scontrol.calls"
+FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|timed|bench|PENDING|10030|60:00|N/A|timed | #1 | p | $Q" \
+  "42|timed|quick|PENDING|10000|5:00|N/A|decision | #1 | p | $Q")" \
+  "$RUN" --class decision --ref '#1' --purpose '急ぐ確認' --timed --top -t 5 xlc-quick 'true' >/dev/null
 assert_eq "top 42" "$(cat "$TEST_ROOT/scontrol.calls")"
 
 it "slurm-run: 並べ替えに失敗しても、警告してジョブの終わりまで待つ"
-out=$(FAKE_TOP_EXIT=1 FAKE_JOB_EXIT=3 "$RUN" "${PURPOSE[@]}" --top -t 5 xlc-0005-1B 'true' 2>&1)
+out=$(FAKE_TOP_EXIT=1 FAKE_JOB_EXIT=3 FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|main|t|PENDING|10010|10:00|N/A|trial | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | $Q")" \
+  "$RUN" "${PURPOSE[@]}" --top -t 5 xlc-0005-1B 'true' 2>&1)
 assert_eq 3 $?
 assert_contains "$out" "WARN:"
 assert_contains "$out" "EXIT: 3"
 
-it "slurm-run: --top を付けなければ順番に触らない"
+it "slurm-run: 待ち行列を読めなくても、警告して並べ直さずにジョブの終わりまで待つ"
 rm -f "$TEST_ROOT/scontrol.calls"
-"$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+out=$(FAKE_SQUEUE_EXIT=2 FAKE_JOB_EXIT=3 "$RUN" "${PURPOSE[@]}" --top -t 5 xlc-0005-1B 'true' 2>&1)
+assert_eq 3 $?
+assert_contains "$out" "WARN:"
+assert_contains "$out" "EXIT: 3"
 assert_file_missing "$TEST_ROOT/scontrol.calls"
 
 it "slurm-run: git の外では連絡先に場所だけを書く"

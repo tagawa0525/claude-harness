@@ -126,9 +126,71 @@ out=$(FAKE_SQUEUE_EXIT=3 "$QUEUE" 2>&1)
 assert_eq 3 $?
 assert_contains "$out" "ERROR:"
 
-it "slurm-queue: 引数を受け付けない"
-out=$("$QUEUE" --all 2>&1)
-assert_eq 1 $?
-assert_contains "$out" "Usage:"
+it "slurm-queue: パーティション timed のジョブは区分で並べ直さず、投げた順のまま ORDER: を出さない"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|timed|quick|PENDING|10010|5:00|N/A|decision | #1 | p | $C" \
+  "21|timed|bench|PENDING|10005|60:00|N/A|timed | #1 | p | $C")" "$QUEUE")
+assert_not_contains "$out" "ORDER:"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|timed|quick|PENDING|10010|5:00|N/A|decision | #1 | p | $C" \
+  "21|timed|bench|PENDING|10005|60:00|N/A|timed | #1 | p | $C")" "$QUEUE" --order)
+assert_eq "" "$out"
+
+it "slurm-queue: 優先度 1 以下の待っているジョブ（保留）と配列の親ジョブは、動かせないと出し、並べ直しの列に入れない"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "10|main|t|PENDING|10050|10:00|N/A|trial | #1 | p | $C" \
+  "11|main|r|PENDING|10040|10:00|N/A|record | #1 | p | $C" \
+  "12_[1-3]|main|arr|PENDING|10030|10:00|N/A|record | #1 | p | $C" \
+  "13|main|held|PENDING|0|10:00|N/A|record | #1 | p | $C" \
+  "14|main|low|PENDING|1|10:00|N/A|timed | #1 | p | $C")" "$QUEUE")
+assert_contains "$out" "12_[1-3] PENDING（動かせない） main"
+assert_contains "$out" "13 PENDING（動かせない） main"
+assert_contains "$out" "14 PENDING（動かせない） main"
+assert_contains "$out" "scontrol top 11,10"
+assert_not_contains "$out" "12_[1-3],"
+assert_not_contains "$out" ",13"
+assert_not_contains "$out" ",14"
+
+it "slurm-queue: 動かせないジョブだけが区分の順でなくても、ORDER: を出さない"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "10|main|t|PENDING|10050|10:00|N/A|trial | #1 | p | $C" \
+  "13|main|held|PENDING|0|10:00|N/A|record | #1 | p | $C")" "$QUEUE")
+assert_not_contains "$out" "ORDER:"
+
+it "slurm-queue: --order は、main の並べ直しが要るときだけ、区分の順に並べた番号の列を 1 行で出す"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|main|t|PENDING|10010|10:00|N/A|trial | #1 | p | $C" \
+  "21|main|r|PENDING|10005|10:00|N/A|record | #1 | p | $C")" "$QUEUE" --order)
+assert_eq 0 $?
+assert_eq "21,20" "$out"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|main|r|PENDING|10010|10:00|N/A|record | #1 | p | $C" \
+  "20|main|t|PENDING|10005|10:00|N/A|trial | #1 | p | $C")" "$QUEUE" --order)
+assert_eq "" "$out"
+
+it "slurm-queue: --order --first <番号> は、そのジョブを自分の区分の先頭に置き、上の区分のジョブは追い越さない"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|main|r|PENDING|10030|10:00|N/A|record | #1 | p | $C" \
+  "20|main|t1|PENDING|10020|10:00|N/A|trial | #1 | p | $C" \
+  "22|main|t2|PENDING|10010|10:00|N/A|trial | #1 | p | $C" \
+  "42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | $C")" "$QUEUE" --order --first 42)
+assert_eq "21,42,20,22" "$out"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "21|main|r|PENDING|10030|10:00|N/A|record | #1 | p | $C" \
+  "42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | $C")" "$QUEUE" --order --first 42)
+assert_eq "" "$out"
+
+it "slurm-queue: --order は、待ち行列が空なら何も出さずに 0 で終わる"
+out=$("$QUEUE" --order)
+assert_eq 0 $?
+assert_eq "" "$out"
+
+it "slurm-queue: --order と --first <番号> のほかの引数は、使い方を出してエラー"
+for bad in "--all" "--first 42" "--order --first" "--order extra"; do
+  # shellcheck disable=SC2086 # 引数を分けて渡す
+  out=$("$QUEUE" $bad 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "Usage:"
+done
 
 finish
