@@ -523,6 +523,23 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     );
 }
 
+#[test]
+fn check_lets_consequences_and_changes_follow_a_decided_adr_on_main() {
+    let t = superseded_repo("living");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    let b = "docs/adr/0002-use-b.md";
+    t.write(
+        b,
+        &(t.read(b)
+            .replace("### 帰結\n", "### 帰結\n\n- 残りは #9\n")
+            .replace("issues: []", "issues: [\"#9\"]")
+            + "\n## 変更\n\n- 2026-10-29: 変えた。前は「a」。理由\n"),
+    );
+    let out = t.run(&["check", b]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
 /// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ（ADR-0001 の予約は解放済み）
 fn decided_topic(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
