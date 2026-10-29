@@ -40,7 +40,7 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
   `run_in_background=true` で実行）。タイムアウト（exit 1）は /gh-actions-check で診断
 - 指摘への対応が残っていれば /gh-pr-review に戻る
 - 未レビューの head で `pre-merge-check` に止められたら、/gh-pr-review の Step 6 に戻ってローカルレビューを記録する。
-  歯止めの 3 周を使い切っていれば回さず、直したコミットを示してユーザーに聞く（/git-merge の「直す指摘の基準」）
+  3 周目で blocking を直した head なら、/git-merge の「直す指摘の基準」の「3 周目で blocking を直したら」に従う。歯止めの 3 周を使い切った後の追加の変更なら回さず、直したコミットを示してユーザーに聞く
 
 ## マージコミットメッセージ
 
