@@ -510,14 +510,42 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     let t = superseded_repo("body");
     t.git(&["switch", "-q", "-c", "topic"]);
     let b = "docs/adr/0002-use-b.md";
-    t.write(b, &(t.read(b) + "\n本文を足す\n"));
+    t.write(
+        b,
+        &t.read(b).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     let out = t.run(&["check", b]);
     assert!(out.status.success(), "{}", stdout(&out));
-    assert!(
-        stdout(&out).starts_with("docs/adr/0002-use-b.md: warning: the body changed"),
-        "{}",
-        stdout(&out)
+    assert_eq!(
+        stdout(&out),
+        "docs/adr/0002-use-b.md: warning: the decided sections changed although the ADR is \
+         accepted on main; the title, the front matter other than status, superseded-by, date, \
+         amends, amended-by, issues, and the context, decision drivers, considered options, \
+         decision outcome and pros and cons of the options record the decision as made, so \
+         change them only to fix typos, grammar, markup and broken links or to replace words \
+         with meaning-preserving ones from the Japanese dictionary (consequences, confirmation, \
+         notes and the `## 変更` section may follow the current facts). To change part of the \
+         decision, edit the decision outcome and add a dated item to the `## 変更` section that \
+         quotes the replaced text and gives the reason; to change all of it, supersede the ADR \
+         with a new one\n"
     );
+}
+
+#[test]
+fn check_lets_consequences_and_changes_follow_a_decided_adr_on_main() {
+    let t = superseded_repo("living");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    let b = "docs/adr/0002-use-b.md";
+    t.write(
+        b,
+        &(t.read(b)
+            .replace("### 帰結\n", "### 帰結\n\n- 残りは #9\n")
+            .replace("issues: []", "issues: [\"#9\"]")
+            + "\n## 変更\n\n- 2026-10-29: 変えた。前は「a」。理由\n"),
+    );
+    let out = t.run(&["check", b]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
 }
 
 /// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ（ADR-0001 の予約は解放済み）
@@ -555,12 +583,15 @@ fn check_follows_renames_when_comparing_the_body() {
     let t = decided_topic("renamed");
     let new = "docs/adr/0001-use-aa.md";
     t.git(&["mv", "docs/adr/0001-use-a.md", new]);
-    t.write(new, &(t.read(new) + "\n本文を足す\n"));
+    t.write(
+        new,
+        &t.read(new).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     t.git(&["add", "-A"]);
     let out = t.run(&["check", "--changed", new]);
     assert!(out.status.success(), "{}", stdout(&out));
     assert!(
-        stdout(&out).starts_with(&format!("{new}: warning: the body changed")),
+        stdout(&out).starts_with(&format!("{new}: warning: the decided sections changed")),
         "{}",
         stdout(&out)
     );
@@ -580,7 +611,10 @@ fn check_lets_adrs_change_freely_before_they_are_decided_on_main() {
     );
     t.commit_all("docs(adr): accept c");
     // ブランチの上で accepted にしたものも、main にマージする前は直してよい
-    t.write(c, &(t.read(c) + "\n本文を足す\n"));
+    t.write(
+        c,
+        &t.read(c).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     // 確定した ADR のフロントマターと補足は直してよい
     let a = "docs/adr/0001-use-a.md";
     let old_date = format!("date: {}", today());
@@ -614,7 +648,10 @@ fn check_skips_body_comparison_without_a_merge_base() {
     t.git(&["checkout", "-q", "--orphan", "lone"]);
     t.git(&["commit", "-q", "-m", "docs(adr): lone"]);
     let b = "docs/adr/0002-use-b.md";
-    t.write(b, &(t.read(b) + "\n本文を足す\n"));
+    t.write(
+        b,
+        &t.read(b).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     let out = t.run(&["check", b]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }

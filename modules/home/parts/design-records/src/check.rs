@@ -5,8 +5,9 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, OPTIONAL_KEYS, REQUIRED_SECTIONS, STATUSES,
-    Section, is_adr_path, recommended_sections, record_name, record_number,
+    ADR_DIR, AMENDABLE_KEYS, DECIDED_CONTEXT_SECTIONS, DECISION_SECTION, KEYS, Kind, OPTIONAL_KEYS,
+    RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, recommended_sections,
+    record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -653,21 +654,23 @@ fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Fo
     }
 }
 
-/// フロントマターと補足の節を除いた本文が変わったか（確定した ADR に許す変更を除いて比べる）。
+/// 決めた時点の記録（フロントマターの直せないキー、表題、必須の 3 節、決定の要因、各案の長所と短所）が変わったか（確定した ADR に許す変更を除いて比べる）。
 pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
 }
 
-/// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）と、補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
-/// 変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で比べる（その違反は
-/// check が示す）。
+/// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）を除いたフロントマターと、表題、必須の節
+/// （[`REQUIRED_SECTIONS`]）と決めた時点の文脈の節（[`DECIDED_CONTEXT_SECTIONS`]）の行。推奨の節（[`RECOMMENDED_SECTIONS`]。帰結と確認）は、決定と理由の下の 3 段目に
+/// あっても今の事実を書く節なので除く。補足、決定の変更を書き留める節、ほかの 2 段目の節も除く。末尾の空行は除く
+/// （節を足す前の空行は本文の変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で
+/// 比べる（その違反は check が示す）。
 fn body(text: &str) -> Vec<&str> {
     let Ok(outside) = markdown_lines(text) else {
         return text.lines().collect();
     };
     let headings: BTreeSet<usize> = outside
         .iter()
-        .filter(|(_, l)| l.starts_with("# ") || l.starts_with("## "))
+        .filter(|(_, l)| l.starts_with("# ") || l.starts_with("## ") || l.starts_with("### "))
         .map(|(n, _)| *n)
         .collect();
     let mut lines = text.lines().enumerate().map(|(i, l)| (i + 1, l)).peekable();
@@ -686,15 +689,34 @@ fn body(text: &str) -> Vec<&str> {
             }
         }
     }
-    let mut in_notes = false;
+    let named =
+        |sections: &[Section], title: &str| sections.iter().any(|s| title == s.ja || title == s.en);
+    // 表題の前の行（フロントマターの後の空行）と表題の行は比べる。表題は最初の 1 段目の見出しだけで、後の 1 段目の
+    // 見出しは必須でない 2 段目の節と同じに扱う
+    let mut seen_title = false;
+    let mut in_required = true;
+    let mut in_decision = false;
+    let mut in_decided = true;
     let mut kept: Vec<&str> = lines
         .filter(|(n, line)| {
             if headings.contains(n) {
                 let title = line.trim_start_matches('#').trim();
-                in_notes = line.starts_with("## ")
-                    && (title == NOTES_SECTION.ja || title == NOTES_SECTION.en);
+                if line.starts_with("# ") && !seen_title {
+                    seen_title = true;
+                    in_required = true;
+                    in_decision = false;
+                } else if line.starts_with("# ") || line.starts_with("## ") {
+                    in_required =
+                        named(&REQUIRED_SECTIONS, title) || named(&DECIDED_CONTEXT_SECTIONS, title);
+                    in_decision = named(&[DECISION_SECTION], title);
+                }
+                // 決定と理由の下の帰結と確認だけが今の事実の節（MADR のテンプレートの置き方）
+                in_decided = in_required
+                    && !(line.starts_with("### ")
+                        && in_decision
+                        && named(&RECOMMENDED_SECTIONS, title));
             }
-            !in_notes
+            in_decided
         })
         .map(|(_, line)| line)
         .collect();
@@ -1499,8 +1521,91 @@ mod tests {
     #[test]
     fn other_changes_change_the_body() {
         assert!(body_changed(BODY, &BODY.replace("文", "別の文")));
-        // 補足の後に別の節があれば、その節は本文
-        let old = BODY.to_string() + "\n## 付録\n\nx\n";
+    }
+
+    const SECTIONS: &str = "---\nstatus: accepted\ndate: 2026-10-01\n---\n\n# ADR-0001: a\n\n\
+        ## 背景\n\n背\n\n## 検討した案\n\n- 案\n\n## 決定と理由\n\n決\n\n\
+        ### 帰結\n\n帰\n\n### 確認\n\n確\n\n## 補足\n\n- 前\n";
+
+    #[test]
+    fn decided_sections_change_the_body() {
+        // 背景、検討した案、決定と理由は、決めた時点の記録
+        for (from, to) in [("背\n", "別\n"), ("- 案\n", "- 別\n"), ("決\n", "別\n")] {
+            assert!(
+                body_changed(SECTIONS, &SECTIONS.replace(from, to)),
+                "{from}"
+            );
+        }
+    }
+
+    #[test]
+    fn drivers_and_pros_and_cons_change_the_body() {
+        // 決定の要因と各案の長所と短所も、決めた時点の文脈（英語の原文の見出しでも）
+        for heading in [
+            "決定の要因",
+            "Decision Drivers",
+            "各案の長所と短所",
+            "Pros and Cons of the Options",
+        ] {
+            let old = SECTIONS.replace("## 補足", &format!("## {heading}\n\nx\n\n## 補足"));
+            assert!(
+                body_changed(&old, &old.replace("\nx\n", "\ny\n")),
+                "{heading}"
+            );
+        }
+    }
+
+    #[test]
+    fn consequences_and_confirmation_keep_the_body() {
+        // 帰結と確認は今の事実を書く節（決定と理由の下の 3 段目でも、2 段目でも）
+        let new = SECTIONS
+            .replace("帰\n", "帰\n- 追記\n")
+            .replace("確\n", "別\n");
+        assert!(!body_changed(SECTIONS, &new));
+        let old = SECTIONS
+            .replace("### 帰結", "## 帰結")
+            .replace("### 確認", "## Confirmation");
+        let new = old.replace("帰\n", "別\n").replace("確\n", "別\n");
+        assert!(!body_changed(&old, &new));
+    }
+
+    #[test]
+    fn other_subsections_of_the_decision_change_the_body() {
+        // 決定と理由の下の、帰結と確認でない 3 段目の節は決定の一部
+        let old = SECTIONS.replace("## 補足", "### 採らなかった案\n\nx\n\n## 補足");
         assert!(body_changed(&old, &old.replace("\nx\n", "\ny\n")));
+    }
+
+    #[test]
+    fn consequences_under_other_decided_sections_change_the_body() {
+        // 帰結と確認の見出しを今の事実の節として扱うのは、決定と理由の下に置いたときだけ
+        let old = SECTIONS.replace("- 案\n", "- 案\n\n### 確認\n\n案の確認\n");
+        assert!(body_changed(&old, &old.replace("案の確認", "別")));
+    }
+
+    #[test]
+    fn later_top_level_headings_do_not_reopen_the_decided_sections() {
+        // 表題は最初の 1 段目の見出しだけ。補足の中の 1 段目の見出しの後も補足のまま
+        let old = SECTIONS.to_string() + "\n# 引用\n\nx\n";
+        assert!(!body_changed(&old, &old.replace("\nx\n", "\ny\n")));
+    }
+
+    #[test]
+    fn adding_issues_keeps_the_body() {
+        // 帰結に書いた残りの issue は、確定した後もフロントマターの issues に足す
+        let old = SECTIONS.replace("date: 2026-10-01\n", "date: 2026-10-01\nissues: [\"#1\"]\n");
+        assert!(!body_changed(
+            &old,
+            &old.replace("[\"#1\"]", "[\"#1\", \"#2\"]")
+        ));
+    }
+
+    #[test]
+    fn changes_section_and_other_sections_keep_the_body() {
+        // 決定の変更を書き留める節と、3 つの節のほかの節
+        let new = SECTIONS.to_string() + "\n## 変更\n\n- 2026-10-29: 「決」を改めた。理由\n";
+        assert!(!body_changed(SECTIONS, &new));
+        let old = SECTIONS.to_string() + "\n## 付録\n\nx\n";
+        assert!(!body_changed(&old, &old.replace("\nx\n", "\ny\n")));
     }
 }

@@ -11,9 +11,11 @@
 //!   design-records check [--changed] [FILE]...
 //!                                      docs/adr の ADR と docs/issues の番号を検査する。FILE（リポジトリの直下からの
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
-//!                                      参照を探し、FILE の ADR は確定した後の本文の変更を見る。FILE か --changed を
-//!                                      渡すと、warning は FILE のものだけ（--changed は FILE が 0 件のときも。
-//!                                      pre-commit で使う）
+//!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、決定
+//!                                      の要因、検討した案、決定と理由、各案の長所と短所、直せないフロントマターの
+//!                                      キー）の変更を見る。FILE か
+//!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
+//!                                      ときも。pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
 //!
 //! 終了コード: 0 = 成功（注意だけのときも）、1 = 違反か失敗、2 = 使い方の誤り
@@ -31,7 +33,8 @@ use design_records::check::{
     Finding, Severity, body_changed, check, check_issue_numbers, check_reservations,
 };
 use design_records::{
-    ADR_DIR, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title, numbers_in,
+    ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
+    numbers_in,
 };
 
 use git::{Result, default_branch, git, git_ok, has_origin, repo_root, reservations, tracked};
@@ -188,7 +191,7 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
     (!paths.is_empty()).then(|| numbers_in(Kind::Issue, paths.iter().map(String::as_str)).collect())
 }
 
-/// 確定した ADR の本文の変更と削除（注意）。比べるのは既定ブランチとの分岐点（main にマージする前のブランチの上の
+/// 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）。比べるのは既定ブランチとの分岐点（main にマージする前のブランチの上の
 /// 変更は status によらず自由）。分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない。本文は `files`
 /// の ADR だけを比べ（改名は改名前の版と比べる）、削除は渡されたかによらず示す（pre-commit は消したファイルを
 /// 渡さない）。
@@ -255,11 +258,17 @@ fn body_changes(
             .is_some_and(|new| body_changed(&old, new))
         {
             format!(
-                "the body changed although the ADR is {status} on {shown}; \
-                 after a decision, fix only typos, grammar, markup and broken links \
-                 (append dated notes to the notes section), or supersede it with a new ADR \
-                 (to change only part of it, write a new ADR whose `amends` names it, \
-                 and add the new ADR to this ADR's `amended-by` once it is accepted)"
+                "the decided sections changed although the ADR is {status} on {shown}; \
+                 the title, the front matter other than {}, and the context, decision drivers, \
+                 considered options, decision outcome and pros and cons of the options \
+                 record the decision as made, so change them only to fix typos, grammar, markup and \
+                 broken links or to replace words with meaning-preserving ones from the Japanese \
+                 dictionary (consequences, confirmation, notes and the `## 変更` section may follow \
+                 the current facts). \
+                 To change part of the decision, edit the decision outcome and add a dated \
+                 item to the `## 変更` section that quotes the replaced text and gives the reason; \
+                 to change all of it, supersede the ADR with a new one",
+                AMENDABLE_KEYS.join(", ")
             )
         } else {
             continue;

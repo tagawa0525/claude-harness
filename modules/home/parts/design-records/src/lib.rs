@@ -95,9 +95,10 @@ pub const KEYS: [&str; 6] = [
     "issues",
 ];
 
-/// 書いてもよいフロントマターのキー。決定の一部の置き換えを両方向に結ぶ: `amends` は
-/// この ADR が一部を置き換えた ADR、`amended-by` はこの ADR の一部を置き換えた ADR（ADR-0051）。一部の置き換えは
-/// まれなので、すべての ADR には求めない。
+/// 書いてもよいフロントマターのキー。`amends` はこの ADR が一部を置き換えた ADR、`amended-by` はこの ADR の一部を
+/// 置き換えた ADR で、check は両方向の一致を確かめる（ADR-0051）。既存の ADR に残る結びを読むために受け付け、新しく
+/// 書いても error にはしない（一部の変更は同じ ADR の「## 変更」に書く運用で、使わないのは規則とレビューで守る。
+/// ADR-0067）。結びの無い ADR が大半なので、すべての ADR には求めない。
 pub const OPTIONAL_KEYS: [&str; 2] = ["amends", "amended-by"];
 
 /// `status` の値。
@@ -115,9 +116,16 @@ pub const STATUSES: [&str; 7] = [
 pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 
 /// 確定した後も直してよいフロントマターのキー。
-/// `amended-by` は新しい ADR が決まったときに古い ADR に書く。`amends` は、確定した ADR の本文に書いた一部の置き換えを
-/// フロントマターにも書くために許す。どちらも相手の ADR との一致は check が確かめる（ADR-0051）。
-pub const AMENDABLE_KEYS: [&str; 5] = ["status", "superseded-by", "date", "amends", "amended-by"];
+/// `amends` と `amended-by` は、一部の置き換えを別の ADR で結んでいたころの既存の結びで、相手の ADR との一致は check が
+/// 確かめる（ADR-0051。新しくは書かない。ADR-0067）。`issues` は、確定した後も直す帰結に書いた残りの issue を足す（ADR-0067）。
+pub const AMENDABLE_KEYS: [&str; 6] = [
+    "status",
+    "superseded-by",
+    "date",
+    "amends",
+    "amended-by",
+    "issues",
+];
 
 /// 節の見出し（日本語と、MADR の英語の原文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +133,12 @@ pub struct Section {
     pub ja: &'static str,
     pub en: &'static str,
 }
+
+/// 決定の節。下に置いた推奨の節（帰結と確認）は、確定した後も直す（ADR-0067）。
+pub const DECISION_SECTION: Section = Section {
+    ja: "決定と理由",
+    en: "Decision Outcome",
+};
 
 /// 必須の節。
 pub const REQUIRED_SECTIONS: [Section; 3] = [
@@ -136,9 +150,19 @@ pub const REQUIRED_SECTIONS: [Section; 3] = [
         ja: "検討した案",
         en: "Considered Options",
     },
+    DECISION_SECTION,
+];
+
+/// 必須でないが、決めた時点の文脈を書く節（MADR の Decision Drivers と Pros and Cons of the Options）。確定した後は
+/// 必須の節と同じく凍結する（ADR-0067）。
+pub const DECIDED_CONTEXT_SECTIONS: [Section; 2] = [
     Section {
-        ja: "決定と理由",
-        en: "Decision Outcome",
+        ja: "決定の要因",
+        en: "Decision Drivers",
+    },
+    Section {
+        ja: "各案の長所と短所",
+        en: "Pros and Cons of the Options",
     },
 ];
 
@@ -154,8 +178,7 @@ pub const RECOMMENDED_SECTIONS: [Section; 2] = [
     },
 ];
 
-/// `status` の ADR に求める推奨の節。採らなかった決定（rejected）には、確かめるものも帰結も無く、番号だけを残した
-/// ADR は確定後に書き足せないので、求めない（ADR-0049）。
+/// `status` の ADR に求める推奨の節。採らなかった決定（rejected）には、確かめるものも帰結も無いので、求めない（ADR-0049）。
 pub fn recommended_sections(status: &str) -> &'static [Section] {
     if status == "rejected" {
         &[]
@@ -163,12 +186,6 @@ pub fn recommended_sections(status: &str) -> &'static [Section] {
         &RECOMMENDED_SECTIONS
     }
 }
-
-/// 確定した後も直してよい節（日付つきの追記）。
-pub const NOTES_SECTION: Section = Section {
-    ja: "補足",
-    en: "More Information",
-};
 
 /// ADR のファイルか（docs/adr/ 直下の、4 桁の番号とハイフンで始まる .md）。README やテンプレートは含めない。
 /// 名前の残りの形（kebab-case）は問わない。形の崩れは検査（[`check`]）が示す。

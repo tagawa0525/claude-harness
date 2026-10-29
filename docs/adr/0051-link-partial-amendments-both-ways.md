@@ -5,6 +5,7 @@ requires: [ADR-0009]
 supersedes: []
 superseded-by:
 amends: [ADR-0009]
+amended-by: [ADR-0067]
 issues: ["#442"]
 ---
 
@@ -34,7 +35,8 @@ ADR-0095、ADR-0156、ADR-0164、ADR-0173 のどれにも、置き換えた ADR-
 
 ## 決定と理由
 
-採用: 「案 A」。
+採用: 「案 A」。ただし、2026-10-29 より後の一部の変更には使わず、既に書いた結びとその検査だけを残す。一部の変更は、
+同じ ADR の「決定と理由」を直して「## 変更」に書く（ADR-0067）。
 
 - `amends` は、この ADR が一部を置き換えた ADR の一覧。`amended-by` は、この ADR の一部を置き換えた ADR の一覧。どちらも
   `[ADR-NNNN, …]` の形で、挙げた ADR は存在しなければならない
@@ -92,3 +94,9 @@ ADR-0095、ADR-0156、ADR-0164、ADR-0173 のどれにも、置き換えた ADR-
 - 効いていない決定の一部の置き換えと、自分自身を挙げるのは error（`only_decisions_in_effect_are_amended`、
   `adrs_do_not_amend_themselves`）
 - xlc で両方向に書き足した後、`design-records check` が error を出さないことは、その作業で確かめる
+
+## 変更
+
+- 2026-10-29: 決定と理由の採用の文に、これからの一部の変更には `amends` と `amended-by` を使わないことを足した。前は
+  「採用: 「案 A」。」だけで、一部の変更のたびに新しい ADR を書いて結んでいた。今の決定が ADR のチェーンに分かれるため、
+  一部の変更は同じ ADR の「## 変更」に書くことにした（ADR-0067）
