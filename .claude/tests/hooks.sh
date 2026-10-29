@@ -2740,6 +2740,8 @@ for cmd in 'git commit --amend -m "docs: x"' 'git commit -q --amend -m "docs: x"
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "git log -1"
   assert_contains "$(reason "$out")" "fresh"
+  assert_contains "$(reason "$out")" "#0203"
+  assert_contains "$(reason "$out")" "main の上で amend"
 done
 
 it "guard-git-amend: -C と cd で指した先のブランチで判定する"
@@ -2768,7 +2770,7 @@ git switch -q fresh
 
 it "guard-git-amend: --amend の無い commit と、--amend が値や pathspec の commit は通す"
 for cmd in 'git commit -m "docs: x"' 'git commit -m --amend' 'git commit -m"--amend"' 'git commit -F --amend' \
-  'git commit -m x -- --amend' 'git commit --amend --no-amend -m x' 'git log --amend' 'echo git commit --amend'; do
+  'git commit -m x -- --amend' 'git commit --amend --no-amend -m x' 'git commit --amend --no-am -m x' 'git log --amend' 'echo git commit --amend'; do
   out=$(run_hook guard-git-amend "$cmd")
   assert_eq "" "$out"
 done
@@ -2793,9 +2795,21 @@ cd "$AMEND_GH" || exit 1
 out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "origin/main"
+assert_not_contains "$(reason "$out")" "の上で amend"
 commit_file "$AMEND_GH" gh.txt "feat: gh"
 out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
 assert_eq "" "$out"
+cd "$TEST_ROOT" || exit 1
+
+it "guard-git-amend: ローカルの既定ブランチにだけある（push していない）コミットも既定ブランチのものとして扱う"
+AMEND_LOCAL="$TEST_ROOT/amend-local"
+make_repo "$AMEND_LOCAL"
+make_remote "$AMEND_LOCAL"
+commit_file "$AMEND_LOCAL" unpushed.txt "feat: unpushed"
+git -C "$AMEND_LOCAL" switch -q -c fresh
+cd "$AMEND_LOCAL" || exit 1
+out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
+assert_eq deny "$(decision "$out")"
 cd "$TEST_ROOT" || exit 1
 
 finish
