@@ -510,7 +510,10 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     let t = superseded_repo("body");
     t.git(&["switch", "-q", "-c", "topic"]);
     let b = "docs/adr/0002-use-b.md";
-    t.write(b, &(t.read(b) + "\n本文を足す\n"));
+    t.write(
+        b,
+        &t.read(b).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     let out = t.run(&["check", b]);
     assert!(out.status.success(), "{}", stdout(&out));
     assert!(
@@ -555,7 +558,10 @@ fn check_follows_renames_when_comparing_the_body() {
     let t = decided_topic("renamed");
     let new = "docs/adr/0001-use-aa.md";
     t.git(&["mv", "docs/adr/0001-use-a.md", new]);
-    t.write(new, &(t.read(new) + "\n本文を足す\n"));
+    t.write(
+        new,
+        &t.read(new).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     t.git(&["add", "-A"]);
     let out = t.run(&["check", "--changed", new]);
     assert!(out.status.success(), "{}", stdout(&out));
@@ -580,7 +586,10 @@ fn check_lets_adrs_change_freely_before_they_are_decided_on_main() {
     );
     t.commit_all("docs(adr): accept c");
     // ブランチの上で accepted にしたものも、main にマージする前は直してよい
-    t.write(c, &(t.read(c) + "\n本文を足す\n"));
+    t.write(
+        c,
+        &t.read(c).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     // 確定した ADR のフロントマターと補足は直してよい
     let a = "docs/adr/0001-use-a.md";
     let old_date = format!("date: {}", today());
@@ -614,7 +623,10 @@ fn check_skips_body_comparison_without_a_merge_base() {
     t.git(&["checkout", "-q", "--orphan", "lone"]);
     t.git(&["commit", "-q", "-m", "docs(adr): lone"]);
     let b = "docs/adr/0002-use-b.md";
-    t.write(b, &(t.read(b) + "\n本文を足す\n"));
+    t.write(
+        b,
+        &t.read(b).replace("## 背景\n", "## 背景\n\n本文を足す\n"),
+    );
     let out = t.run(&["check", b]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
