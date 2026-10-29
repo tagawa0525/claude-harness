@@ -931,6 +931,7 @@ fn renumber_issue_rewrites_hash_references_and_file_names() {
 }
 
 #[test]
+#[ignore = "RED: lease the retag push"]
 fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
     let t = TempRepo::new("tag-slug");
     t.run(&["new", "use-a", "a を使う"]);
@@ -949,8 +950,75 @@ fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
          if another record took the number, run `design-records renumber 2`; \
          if this record is the reserved one and its file name was renamed, \
          run `git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}'` \
-         (and `git push -f origin refs/tags/adr-0002` when origin exists)\n"
+         (when origin exists, run instead `old=$(git rev-parse refs/tags/adr-0002) && \
+         git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}' && \
+         git push --force-with-lease=refs/tags/adr-0002:\"$old\" origin refs/tags/adr-0002`)\n"
     );
+}
+
+/// check が示す、origin のある場合の打ち直しのコマンド（警告の `run instead `…`` の中）
+fn retag_command_for_origin(t: &TempRepo) -> String {
+    let out = t.run(&["check"]);
+    let text = stdout(&out);
+    let start = text
+        .find("run instead `")
+        .unwrap_or_else(|| panic!("no retag command for origin: {text}"))
+        + "run instead `".len();
+    let len = text[start..].find('`').unwrap();
+    text[start..start + len].to_string()
+}
+
+/// `command` をリポジトリで sh に渡し、終了コードの成否を返す
+fn sh_in(t: &TempRepo, command: &str) -> bool {
+    let mut sh = Command::new("sh");
+    sh.current_dir(&t.dir).args(["-c", command]);
+    isolate(&mut sh);
+    sh.output().unwrap().status.success()
+}
+
+/// origin に `adr-0002` を `use-other` で予約し、改名した記録 `0002-use-b` を置いたリポジトリ
+fn renamed_reserved_record_with_remote(name: &str) -> TempRepo {
+    let t = TempRepo::with_remote(name);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.git(&["add", "-A"]);
+    t.git(&["tag", "-a", "adr-0002", "-m", "use-other", "main"]);
+    t.git(&["push", "-q", "origin", "refs/tags/adr-0002"]);
+    t.write(
+        "docs/adr/0002-use-b.md",
+        &design_records::template(2, "b を使う", "2026-10-01"),
+    );
+    t.git(&["add", "-A"]);
+    t
+}
+
+#[test]
+#[ignore = "RED: lease the retag push"]
+fn retag_command_for_origin_moves_the_reservation_on_origin() {
+    let t = renamed_reserved_record_with_remote("retag-origin");
+    let command = retag_command_for_origin(&t);
+    assert!(sh_in(&t, &command), "{command}");
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+    let local = t.git(&["rev-parse", "refs/tags/adr-0002"]);
+    assert!(t.remote_tag("adr-0002").starts_with(local.trim()));
+}
+
+#[test]
+#[ignore = "RED: lease the retag push"]
+fn retag_command_for_origin_keeps_a_reservation_another_clone_moved() {
+    let t = renamed_reserved_record_with_remote("retag-origin-moved");
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-f", "-a", "adr-0002", "-m", "use-c", "adr-0002^{}"],
+    );
+    git_in(
+        &other,
+        &["push", "-q", "--force", "origin", "refs/tags/adr-0002"],
+    );
+    let moved = git_in(&other, &["rev-parse", "refs/tags/adr-0002"]);
+    let command = retag_command_for_origin(&t);
+    assert!(!sh_in(&t, &command), "{command}");
+    assert!(t.remote_tag("adr-0002").starts_with(moved.trim()));
 }
 
 #[test]
