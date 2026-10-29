@@ -44,14 +44,23 @@ use serde_json::Value;
 
 pub struct PreMergeCheck;
 
-/// 同じコマンドで gh pr merge より前に走るはずだったコマンド（cd を除く）を挙げ、分けて投げ直す方法を示す。
-/// 判定はコマンドを実行する前の状態で行うので、前のコマンド（ローカルレビューの記録、push、コメント）が
-/// 変える状態は反映されず、拒むとそれらも実行されない
+/// 同じコマンドで gh pr merge より前に走るはずだったコマンドを挙げ、分けて投げ直す方法を示す。
+/// 4〜9 は実行する前の GitHub とブランチの状態で判定するので、前のコマンド（ローカルレビューの記録、push）が
+/// 変える状態は反映されず、拒むとそれらも実行されない。git と gh はサブコマンドまで挙げる（`gh issue` と
+/// `gh pr` を区別する）
 fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
-    let mut names: Vec<&str> = Vec::new();
-    for c in shell.commands() {
-        let name = basename(c.program());
-        if c.start < merge.start && name != "cd" && !names.contains(&name) {
+    let mut names: Vec<String> = Vec::new();
+    for c in shell.commands_before(merge) {
+        let program = basename(c.program());
+        let name = match (program, c.args.first()) {
+            ("git", _) => match c.git_subcommand() {
+                Some((sub, _)) => format!("git {sub}"),
+                None => program.to_string(),
+            },
+            ("gh", Some(sub)) => format!("gh {}", sub.text),
+            _ => program.to_string(),
+        };
+        if !names.contains(&name) {
             names.push(name);
         }
     }
@@ -61,7 +70,7 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
     format!(
         "\n同じコマンドで gh pr merge より前にあるコマンド（{}）は、この判定の後に走るので判定に反映されず、\
          拒んだのでどれも実行されていません。それらで状態を変える（ローカルレビューの記録、push など）なら、\
-         先に別の呼び出しで実行してから、gh pr merge を単独の呼び出しで投げ直してください",
+         先に別の呼び出しで実行してから、gh pr merge を前に cd だけを付けた呼び出しで投げ直してください",
         names.join(", ")
     )
 }
@@ -463,6 +472,9 @@ impl Rule for PreMergeCheck {
                 ),
             };
 
+            // ここまで（1〜3 と cd 先）はコマンドの文字列だけの判定で、前のコマンドの実行に左右されない
+            let static_reasons = reasons.len();
+
             // --- 4. CI チェック ---
             let mut view_args: Vec<&str> = vec!["pr", "view"];
             view_args.extend(repo_args.iter().copied());
@@ -814,7 +826,11 @@ impl Rule for PreMergeCheck {
                 return vec![Finding::Deny(format!(
                     "{}{}\n\n/gh-actions-check{target} で状況を診断してください。",
                     reasons.join("\n"),
-                    earlier_commands_hint(shell, cmd)
+                    if reasons.len() > static_reasons {
+                        earlier_commands_hint(shell, cmd)
+                    } else {
+                        String::new()
+                    }
                 ))];
             }
         }
