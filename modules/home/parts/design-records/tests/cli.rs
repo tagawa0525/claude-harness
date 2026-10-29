@@ -951,7 +951,8 @@ fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
          run `git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}'` \
          (when origin exists, run instead `old=$(git rev-parse refs/tags/adr-0002) && \
          git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}' && \
-         git push --force-with-lease=refs/tags/adr-0002:\"$old\" origin refs/tags/adr-0002`)\n"
+         { git push --force-with-lease=refs/tags/adr-0002:\"$old\" origin refs/tags/adr-0002 || \
+         { git update-ref refs/tags/adr-0002 \"$old\"; false; }; }`)\n"
     );
 }
 
@@ -972,6 +973,9 @@ fn sh_in(t: &TempRepo, command: &str) -> bool {
     let mut sh = Command::new("sh");
     sh.current_dir(&t.dir).args(["-c", command]);
     isolate(&mut sh);
+    // 手元の全体の設定（署名など。nix の sandbox には無い）に頼らない
+    sh.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
     sh.output().unwrap().status.success()
 }
 
@@ -1013,9 +1017,32 @@ fn retag_command_for_origin_keeps_a_reservation_another_clone_moved() {
         &["push", "-q", "--force", "origin", "refs/tags/adr-0002"],
     );
     let moved = git_in(&other, &["rev-parse", "refs/tags/adr-0002"]);
+    let before = t.git(&["rev-parse", "refs/tags/adr-0002"]);
     let command = retag_command_for_origin(&t);
     assert!(!sh_in(&t, &command), "{command}");
     assert!(t.remote_tag("adr-0002").starts_with(moved.trim()));
+    // 手元のタグは打つ前に戻り、check は予約の食い違いを示し続ける
+    assert_eq!(t.git(&["rev-parse", "refs/tags/adr-0002"]), before);
+    assert_eq!(retag_command_for_origin(&t), command);
+}
+
+#[test]
+fn retag_command_for_origin_is_rejected_by_the_lease_not_an_earlier_step() {
+    let t = renamed_reserved_record_with_remote("retag-origin-lease");
+    let other = t.clone_remote("other");
+    git_in(
+        &other,
+        &["tag", "-f", "-a", "adr-0002", "-m", "use-c", "adr-0002^{}"],
+    );
+    git_in(
+        &other,
+        &["push", "-q", "--force", "origin", "refs/tags/adr-0002"],
+    );
+    // push の前までを実行すると手元のタグが打ち直される（失敗が前の段で起きていない）
+    let command = retag_command_for_origin(&t);
+    let before_push = &command[..command.find(" && {").unwrap()];
+    assert!(sh_in(&t, before_push), "{before_push}");
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
 }
 
 #[test]

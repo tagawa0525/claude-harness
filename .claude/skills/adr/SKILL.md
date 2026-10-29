@@ -51,7 +51,7 @@ main の記録を指すのでそのまま残す。作業ツリーに変更（追
 
 `check` は docs/adr の追跡している ADR の形と、ADR どうしの参照（置き換えの双方向の一致、参照先の有無）、ADR と
 docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。予約のタグの slug と違う slug の記録には注意を出す。
-タグの slug のファイルが無いときは改名かもしれない。改名なら、`prune` が slug の一致する予約しか消さないので、タグを新しい slug で打ち直す（`git tag -f -a adr-NNNN -m <新しい slug> adr-NNNN^{}`。`origin` があれば、打つ前のタグを `old=$(git rev-parse refs/tags/adr-NNNN)` で控え、打った後に `git push --force-with-lease=refs/tags/adr-NNNN:"$old" origin refs/tags/adr-NNNN` で送る。`-f` の push は hook が止め、ほかの clone が先に動かした予約も奪う。期待値の無い `--force-with-lease` はタグでは stale info で拒まれる。`check` の注意が同じコマンドを示す）。ほかの記録が番号を取ったなら打ち直さず `renumber` する（打ち直すと本来の持ち主の予約を奪う）。
+タグの slug のファイルが無いときは改名かもしれない。改名なら、`prune` が slug の一致する予約しか消さないので、タグを新しい slug で打ち直す（`check` の注意が示すコマンドを実行する。`origin` があれば、打つ前のタグを期待値にした `--force-with-lease` で送り、拒まれたら手元のタグを戻す。`-f` の push は hook が止める）。ほかの記録が番号を取ったなら打ち直さず `renumber` する（打ち直すと本来の持ち主の予約を奪う）。
 FILE を渡すと、そこから置き換えられた ADR への参照と、確定した ADR の本文の変更を探し、
 FILE の分だけ注意（warning）を出す（`--changed` なら FILE が無くても warning を出さない）。プロジェクトは
 `.pre-commit-config.yaml` に次を足してオプトインし、コミットのたびに検査する:
