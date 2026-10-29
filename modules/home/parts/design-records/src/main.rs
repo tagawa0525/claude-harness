@@ -261,9 +261,10 @@ fn body_changes(
                 "the decided sections changed although the ADR is {status} on {shown}; \
                  the title, the front matter other than {}, and the context, decision drivers, \
                  considered options, decision outcome and pros and cons of the options \
-                 record the decision as made, so fix only typos, grammar, markup, broken links and \
-                 meaning-preserving word replacements from the Japanese dictionary there \
-                 (consequences, confirmation and notes may follow the current facts). \
+                 record the decision as made, so change them only to fix typos, grammar, markup and \
+                 broken links or to replace words with meaning-preserving ones from the Japanese \
+                 dictionary (consequences, confirmation, notes and the `## 変更` section may follow \
+                 the current facts). \
                  To change part of the decision, edit the decision outcome and add a dated \
                  item to the `## 変更` section that quotes the replaced text and gives the reason; \
                  to change all of it, supersede the ADR with a new one",
