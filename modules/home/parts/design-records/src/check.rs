@@ -659,28 +659,24 @@ pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
 }
 
-/// 一部の置き換えの結び（[`OPTIONAL_KEYS`]。`amends` と `amended-by`）のうち、`new` にあって `old`（分岐点の版。
-/// 分岐点に無い ADR は `None`）に無い ADR の、キーと番号。読めないフロントマターは結びが無いものとして読む（形の違反は
-/// [`check`] が示す）。
-pub fn added_amendment_links(old: Option<&str>, new: &str) -> Vec<(&'static str, u32)> {
-    let links = |text: &str, key: &str| -> BTreeSet<u32> {
+/// `new` の `amends` にあって `old`（分岐点の版。分岐点に無い ADR は `None`）に無い ADR の番号。読めないフロントマターは
+/// 結びが無いものとして読む（形の違反は [`check`] が示す）。`amended-by` は見ない: 結びを始めるのは `amends` の側で、
+/// `amends` の無い `amended-by` は [`check`] が違反にする。分岐点で決める前の status だった ADR の `amends` を確定した
+/// ときは、相手に `amended-by` を足す必要があり、それを止めると確定できなくなる。
+pub fn added_amends(old: Option<&str>, new: &str) -> Vec<u32> {
+    let amends = |text: &str| -> BTreeSet<u32> {
         parse_front_matter(text)
             .ok()
             .and_then(|f| {
-                f.get(key)
+                f.get("amends")
                     .map(|v| v.items().into_iter().filter_map(single_adr).collect())
             })
             .unwrap_or_default()
     };
-    OPTIONAL_KEYS
-        .iter()
-        .flat_map(|&key| {
-            let before = old.map(|o| links(o, key)).unwrap_or_default();
-            links(new, key)
-                .into_iter()
-                .filter(move |n| !before.contains(n))
-                .map(move |n| (key, n))
-        })
+    let before = old.map(amends).unwrap_or_default();
+    amends(new)
+        .into_iter()
+        .filter(|n| !before.contains(n))
         .collect()
 }
 

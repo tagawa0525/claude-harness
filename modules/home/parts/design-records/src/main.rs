@@ -30,8 +30,7 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use design_records::check::{
-    Finding, Severity, added_amendment_links, body_changed, check, check_issue_numbers,
-    check_reservations,
+    Finding, Severity, added_amends, body_changed, check, check_issue_numbers, check_reservations,
 };
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
@@ -194,7 +193,7 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
 
 /// 既定ブランチとの分岐点からの ADR の変更のうち、示すもの。
 ///
-/// - 一部の置き換えの結び（`amends` と `amended-by`）に足した ADR（違反）。一部の変更は、変える ADR の「## 変更」に
+/// - 一部の置き換えの結び（`amends`）に足した ADR（違反。[`added_amends`]）。一部の変更は、変える ADR の「## 変更」に
 ///   書き、結びは分岐点に既にあるものだけを残す（ADR-0067）。status によらず、分岐点に無い ADR も見る
 /// - 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）。main にマージする前のブランチの上の
 ///   変更は status によらず自由なので、分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない
@@ -251,13 +250,13 @@ fn branch_changes(
             None
         };
         if let Some(new) = adrs.get(new_path).filter(|_| !deleted) {
-            for (key, n) in added_amendment_links(old.as_deref(), new) {
+            for n in added_amends(old.as_deref(), new) {
                 found.push(Finding {
                     path: new_path.to_string(),
                     line: None,
                     severity: Severity::Error,
                     message: format!(
-                        "`{key}` gains ADR-{n:04} since {shown}, but partial changes are no longer \
+                        "`amends` gains ADR-{n:04} since {shown}, but partial changes are no longer \
                          linked with amends and amended-by; drop the item and record the change in \
                          the ADR whose decision changes: edit its decision outcome and add a dated \
                          item to its `## 変更` section that quotes the replaced text and gives the \
