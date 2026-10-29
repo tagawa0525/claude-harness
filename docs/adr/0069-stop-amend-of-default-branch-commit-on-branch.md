@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-30
 requires: [ADR-0023]
 supersedes: []
 superseded-by:
-issues: []
+issues: ["#538"]
 ---
 
 # ADR-0069: 先端が既定ブランチに含まれる feature ブランチでの git commit --amend を hook で止める
@@ -34,15 +34,22 @@ main の上でマージコミットの本文を amend で直した正当な例�
 - 案 4: git の prepare-commit-msg の hook（第 2 引数 `commit` と第 3 引数のコミット）で amend を見分ける。githooks(5) は、
   `-m` / `-F` のときの第 2 引数を `message` と書き、`--amend -m`（今回の形）で `commit` になるかは確かめていない。
   リポジトリごとの hook の置き場（prek など）との重なりもある
+- 案 5: 案 1 に加えて、同じコマンドの中で amend の前に先端か HEAD を動かしうる git のコマンド（commit、reset、checkout、
+  rebase など）があれば止める（`git reset --soft main && git commit --amend` のような同じ行の形を拾う）。PR #539 で実装したが、
+  reset と checkout の引数の解釈（パスか、コミットか、作業ツリーに無い名前か）が育ち、3 周のレビューの後の記録の周でも
+  `git reset HEAD && git commit --amend` と、消した追跡ファイルを戻す `git checkout <file> && git commit --amend` を誤って止めた
+  （#538）。同じ行の形は今回の事故（別の呼び出しの amend）と違い、hook の境界の外に置き、モデルの判断とレビューに任せる
 
 ## 決定と理由
 
 案 1 を採る。守るものは既定ブランチのコミットがブランチで書き換えられないことで、それは先端が既定ブランチに含まれるかで
 決まる。この状態で amend が正しい手順になる場面は無い（ブランチの最初のコミットは `git commit` で作り、既定ブランチの
 コミットを直すなら既定ブランチの上で amend する）ので、block-main-commit や guard-git-stash と同じくエスケープは置かない
-（ADR-0023 の形のエスケープは、外す理由がありうる検査のためのもの）。拒否の文言には、直前の `git commit` が拒まれていないかを
-`git log -1` で確かめること、`git commit` で新しいコミットを作ること、既定ブランチのコミットを直すなら既定ブランチの上で
-amend することを書く。
+（ADR-0023 の形のエスケープは、外す理由がありうる検査のためのもの）。拒否の文言には、理由（2026-10-30 の xlc の #0203 の事故）と、
+`git commit` で新しいコミットを作ること、拒まれた commit の後なら先に `git log -1` で先端を確かめること、既定ブランチの
+コミットを直すなら既定ブランチの上で amend すること（GitHub リモートのあるリポジトリでは block-main-commit が止めるので
+示さない）を書く。既定ブランチに含まれるかは、追跡ブランチとローカルの既定ブランチの両方で見る（push していないマージは
+ローカルにだけある）。
 
 判定は実行前の状態で行う。同じコマンドの前の `git switch` / `checkout` は、guard-branch-base の `branch_at` でその先の
 ブランチを見る（移る先のブランチの ref を見て、まだ無いブランチを作って移るなら起点の今の HEAD を見る）。前の `git commit`
@@ -60,4 +67,5 @@ amend することを書く。
 ### 確認
 
 - `.claude/tests/hooks.sh` の guard-git-amend の節（止める形と `-C` / `cd` / `env -C`、固有のコミット、既定ブランチの上と
-  detached HEAD、`--amend` が値や pathspec の commit、前の `git switch`、GitHub リモートのある origin/main との比較）
+  detached HEAD、`--amend` が値や pathspec の commit と `--no-am`、前の `git switch`、GitHub リモートのある origin/main との
+  比較と文言、ローカルの既定ブランチにだけあるコミット）
