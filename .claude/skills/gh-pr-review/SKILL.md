@@ -95,12 +95,13 @@ claude-hooks の、普通に書く形（`cd <worktree> &&`、`env` や `timeout`
 
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
 受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す
-（PR を出す前のローカルレビューとは別枠）。対象は `~/.claude/scripts/review-level.sh`
+（この周も /git-merge の「直す指摘の基準」の歯止めの 3 周に数える）。対象は `~/.claude/scripts/review-level.sh`
 が出す `WORKTREE` を対象にする（PR の worktree で実行する。Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
 `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に重複して書かず、コードへの参照（ファイルと関数名）で書く。
 
-重大度は Copilot の本文に揃えて High / Medium / Low で数える（ローカルの `/code-review` の指摘も同じ）。
+重大度は Copilot の本文に揃えて High / Medium / Low で数える（ローカルの `/code-review` の指摘は、/git-merge の「レビュー」の節の
+「直す指摘の基準」の blocking を High、non-blocking を Medium か Low（表記・好み）として数える）。
 対応順は High（誤動作・セキュリティ・データの破損・ゲートの迂回）→ Medium（限られた条件の
 不具合・品質）→ Low（表記・好み）→ 質問（回答のみ）。Copilot の指摘は本文の重大度のまま扱う。
 
@@ -149,7 +150,8 @@ EOF
 ## Step 6: 再レビューの判定
 
 再レビューは毎周新しい指摘を生みうるので、指摘ゼロを終了条件にすると収束しない。
-判定はスクリプトに任せる（周回の上限は無い。head にローカルレビューの記録があれば終わる）:
+判定はスクリプトに任せる（スクリプトに周回の上限は無い。head にローカルレビューの記録があれば終わる。ローカルの
+`/code-review` の直す指摘と周の終わりは下の「ローカルレビュー」）:
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/decide-next.sh "{pr_url}"
@@ -192,8 +194,10 @@ head と同じもの）に、その回で検証して正しいと判断した指
 
 記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
 して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`、
-マージ時の hook）ので、High は直して回し直す。Medium と Low は、直して回し直すか、
-直さずにその head で終える（見送りは台帳に書く）。同じ head を回し直したら、最後の記録で決まる。
+マージ時の hook）ので、High（blocking）は直して回し直す。Medium と Low（non-blocking）は直さず、/git-merge の
+「直す指摘の基準」のとおり扱ってその head で終える。同じ head を回し直したら、最後の記録で決まる。
+直す指摘、周の終わり、歯止めの 3 周と 3 周目で直した head の扱いは、担当も親も /git-merge の「レビュー」の節の
+「直す指摘の基準」に従う。
 件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
 
 レビューが対象を見つけられなかった、または実行できなかったとき（「ブランチが存在しない」、エラー、`[]` だけの
