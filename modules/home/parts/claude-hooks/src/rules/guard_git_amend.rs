@@ -89,9 +89,9 @@ impl Rule for GuardGitAmend {
             };
             return vec![Finding::Deny(format!(
                 "ブランチ {branch} の先端は既定ブランチ（{default_ref}）に含まれるコミットです。ここで amend すると、\
-                 既定ブランチのコミット（多くはマージコミット）を書き換えたものがブランチの最初のコミットになります\
-                 （マージコミットなら親 2 つ。post-rewrite の hook が文書の番号も付け替えます。2026-10-30 に xlc の #0203 の\
-                 ブランチで、hook に拒まれた最初の commit の後の amend が main のマージコミットを書き換えた）。\n\
+                 既定ブランチのコミット（多くはマージコミット）を書き換えたものがブランチに入ります\
+                 （マージコミットなら親 2 つ。post-rewrite の hook が文書の番号も付け替えます。2026-10-30 に、main から\
+                 作ったばかりのブランチで、hook に拒まれた最初の commit の後の amend が main のマージコミットを書き換えた）。\n\
                  - amend せず git commit で新しいコミットを作る\n\
                  - 拒まれた commit の後なら、先に git log -1 で先端を確かめる（-q や ; のつなぎでは失敗が見えません）{on_default}"
             ))];

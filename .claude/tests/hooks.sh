@@ -2740,7 +2740,7 @@ for cmd in 'git commit --amend -m "docs: x"' 'git commit -q --amend -m "docs: x"
   assert_eq deny "$(decision "$out")"
   assert_contains "$(reason "$out")" "git log -1"
   assert_contains "$(reason "$out")" "fresh"
-  assert_contains "$(reason "$out")" "#0203"
+  assert_contains "$(reason "$out")" "2026-10-30"
   assert_contains "$(reason "$out")" "main の上で amend"
 done
 
