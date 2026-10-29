@@ -216,11 +216,20 @@ if $timed; then
 else
   first=()
   $top && first=(--first "$job")
-  if ! reorder=$("$(dirname "$0")/slurm-queue.sh" --order "${first[@]}"); then
-    echo "WARN: 待ち行列を読めず、区分の順に並べ直せなかった。投げた順に走る" >&2
-  elif [[ -n $reorder ]] && ! scontrol top "$reorder"; then
-    echo "WARN: 待ち行列を区分の順（$reorder）に並べ直せなかった。投げた順に走る" >&2
-  fi
+  # 待ち行列を読んでから scontrol top を呼ぶまでに列の 1 本が走り始めるか取り消されると、列の全体が拒まれる。読み直して
+  # 1 度だけやり直す（続けて拒まれるなら、待ち行列が動き続けているので投げた順に任せる）
+  for attempt in 1 2; do
+    if ! reorder=$("$(dirname "$0")/slurm-queue.sh" --order "${first[@]}"); then
+      echo "WARN: 待ち行列を読めず、区分の順に並べ直せなかった。投げた順に走る" >&2
+      break
+    fi
+    if [[ -z $reorder ]] || scontrol top "$reorder"; then
+      break
+    fi
+    if ((attempt == 2)); then
+      echo "WARN: 待ち行列を区分の順（$reorder）に並べ直せなかった。投げた順に走る" >&2
+    fi
+  done
 fi
 
 status=0
