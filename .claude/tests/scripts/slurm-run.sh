@@ -329,12 +329,12 @@ assert_contains "$(cat "$HOME/github/slurm-logs/xlc-2G-42.out")" "class=record r
 
 it "slurm-run: 区分、参照、目的のどれかが無ければ、投げずに使い方を出してエラー"
 for missing in class ref purpose; do
-  args=()
-  [[ $missing == class ]] || args+=(--class trial)
-  [[ $missing == ref ]] || args+=(--ref '#1')
-  [[ $missing == purpose ]] || args+=(--purpose '試験の目的')
+  given=()
+  [[ $missing == class ]] || given+=(--class trial)
+  [[ $missing == ref ]] || given+=(--ref '#1')
+  [[ $missing == purpose ]] || given+=(--purpose '試験の目的')
   rm -f "$TEST_ROOT/sbatch.args"
-  out=$("$RUN" "${args[@]}" -t 5 xlc-2G 'true' 2>&1)
+  out=$("$RUN" "${given[@]}" -t 5 xlc-2G 'true' 2>&1)
   assert_eq 1 $?
   assert_contains "$out" "--$missing"
   assert_file_missing "$TEST_ROOT/sbatch.args"
