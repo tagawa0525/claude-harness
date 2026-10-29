@@ -6,7 +6,8 @@
 //! 作るので既定ブランチは変わらず、post-rewrite の hook は書き換えた番号を文書に付け替える。
 //!
 //! 止めるのは、今のブランチが名前のあるブランチで既定ブランチでなく、その先端が既定ブランチ
-//! （[`git::default_branch`]）に含まれる（`git merge-base --is-ancestor`）ときだけ。既定ブランチの上の amend
+//! （[`git::default_branch`]。push していないマージのため、そのローカルのブランチとも比べる）に含まれる
+//! （`git merge-base --is-ancestor`）ときだけ。既定ブランチの上の amend
 //! （マージの直後にマージコミットの本文を直す）、detached HEAD（rebase の途中の edit）、ブランチに固有の
 //! コミットがあるときは通す。同じコマンドの前の `git switch` / `checkout` は、その先のブランチで判定する
 //! （[`branch_at`]。まだ無いブランチを作って移るなら、起点の今の HEAD を見る）。ほかの前のコマンド
@@ -24,7 +25,7 @@ use crate::shell::{Cmd, Shell};
 
 pub struct GuardGitAmend;
 
-/// `git commit` の引数が amend を指すか。git は一意な略（`--am` など）を受け付け、後に書いた
+/// `git commit` の引数が amend を指すか。git は一意な略（`--am`、`--no-am` など）を受け付け、後に書いた
 /// `--no-amend` が前の `--amend` を打ち消す。値（`-m --amend`）と `--` の後の pathspec は数えない
 fn is_amend(cmd: &Cmd) -> bool {
     let Some(("commit", args)) = cmd.git_subcommand() else {
@@ -34,7 +35,7 @@ fn is_amend(cmd: &Cmd) -> bool {
     for item in items("commit", args) {
         match item {
             Item::Long(name) if name.len() >= 4 && "--amend".starts_with(name) => amend = true,
-            Item::Long("--no-amend") => amend = false,
+            Item::Long(name) if name.len() >= 6 && "--no-amend".starts_with(name) => amend = false,
             _ => {}
         }
     }
@@ -70,16 +71,29 @@ impl Rule for GuardGitAmend {
             let local = format!("refs/heads/{branch}");
             let tip = git::git(&dir, &["rev-parse", "--verify", "--quiet", &local])
                 .unwrap_or_else(|| "HEAD".to_string());
-            if git::git(&dir, &["merge-base", "--is-ancestor", &tip, &default_ref]).is_none() {
+            // push していないマージはローカルの既定ブランチにだけあるので、追跡ブランチと両方で比べる
+            let local_default = format!("refs/heads/{default}");
+            let contained = [default_ref.as_str(), local_default.as_str()]
+                .iter()
+                .any(|r| git::git(&dir, &["merge-base", "--is-ancestor", &tip, r]).is_some());
+            if !contained {
                 continue;
             }
+            // GitHub リモートがあれば block-main-commit が既定ブランチの上の commit を止めるので、その道は示さない
+            let on_default = if git::has_github_remote(&dir) {
+                String::new()
+            } else {
+                format!(
+                    "\n- 既定ブランチのコミット（マージコミットの本文など）を直すのが意図なら、{default} の上で amend する"
+                )
+            };
             return vec![Finding::Deny(format!(
                 "ブランチ {branch} の先端は既定ブランチ（{default_ref}）に含まれるコミットです。ここで amend すると、\
                  既定ブランチのコミット（多くはマージコミット）を書き換えたものがブランチの最初のコミットになります\
-                 （マージコミットなら親 2 つ。post-rewrite の hook が文書の番号も付け替えます）。\n\
-                 - 直前の git commit が hook に拒まれていないかを git log -1 で確かめる（-q や ; のつなぎでは失敗が見えません）\n\
-                 - ブランチの最初のコミットを作るなら、amend せず git commit で新しいコミットを作る\n\
-                 - 既定ブランチのコミット（マージコミットの本文など）を直すのが意図なら、{default} の上で amend する"
+                 （マージコミットなら親 2 つ。post-rewrite の hook が文書の番号も付け替えます。2026-10-30 に xlc の #0203 の\
+                 ブランチで、hook に拒まれた最初の commit の後の amend が main のマージコミットを書き換えた）。\n\
+                 - amend せず git commit で新しいコミットを作る\n\
+                 - 拒まれた commit の後なら、先に git log -1 で先端を確かめる（-q や ; のつなぎでは失敗が見えません）{on_default}"
             ))];
         }
         Vec::new()
