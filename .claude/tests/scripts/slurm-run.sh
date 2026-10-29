@@ -44,11 +44,21 @@ if [[ $1 == show ]]; then
   exit "${FAKE_SHOW_EXIT:-0}"
 fi
 echo "$*" >>"$TEST_ROOT/scontrol.calls"
+# FAKE_TOP_FAILS: 最初のその回数だけ失敗する（列の 1 本が走り始めて scontrol top が拒む状態）
+if [[ -n ${FAKE_TOP_FAILS:-} ]] && (($(wc -l <"$TEST_ROOT/scontrol.calls") <= FAKE_TOP_FAILS)); then
+  exit 1
+fi
 exit "${FAKE_TOP_EXIT:-0}"
 EOF
 # squeue は slurm-queue.sh が読む待ち行列。FAKE_SQUEUE_OUT を出して FAKE_SQUEUE_EXIT で終わる（既定は空）
 cat >"$FAKE_BIN/squeue" <<'EOF'
 #!/usr/bin/env bash
+# FAKE_SQUEUE_OUT2: 2 回目からの待ち行列（読み直したときに、列の 1 本が走り始めている状態）
+if [[ -n ${FAKE_SQUEUE_OUT2:-} && -e $TEST_ROOT/squeue.read ]]; then
+  printf '%s\n' "$FAKE_SQUEUE_OUT2"
+  exit 0
+fi
+touch "$TEST_ROOT/squeue.read"
 [[ -z ${FAKE_SQUEUE_OUT:-} ]] || printf '%s\n' "$FAKE_SQUEUE_OUT"
 exit "${FAKE_SQUEUE_EXIT:-0}"
 EOF
@@ -299,6 +309,38 @@ out=$(FAKE_TOP_EXIT=1 FAKE_JOB_EXIT=3 FAKE_SQUEUE_OUT="$(printf '%s\n' \
 assert_eq 3 $?
 assert_contains "$out" "WARN:"
 assert_contains "$out" "EXIT: 3"
+
+it "slurm-run: 並べ替えが拒まれたら（列の 1 本が走り始めた）、待ち行列を読み直して 1 度だけやり直す"
+rm -f "$TEST_ROOT/scontrol.calls" "$TEST_ROOT/squeue.read"
+out=$(FAKE_TOP_FAILS=1 FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|main|t|PENDING|10020|10:00|N/A|trial | #1 | p | $Q" \
+  "21|main|r|PENDING|10010|10:00|N/A|record | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|record | #1 | p | $Q")" FAKE_SQUEUE_OUT2="$(printf '%s\n' \
+  "20|main|t|RUNNING|10020|10:00|N/A|trial | #1 | p | $Q" \
+  "23|main|t2|PENDING|10015|10:00|N/A|trial | #1 | p | $Q" \
+  "21|main|r|PENDING|10010|10:00|N/A|record | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|record | #1 | p | $Q")" \
+  "$RUN" --class record --ref '#1' --purpose '本番' -t 5 xlc-rec 'true' 2>&1)
+assert_eq $'top 21,42,20\ntop 21,42,23' "$(cat "$TEST_ROOT/scontrol.calls")"
+assert_not_contains "$out" "WARN:"
+
+it "slurm-run: やり直しも拒まれたら、警告してジョブの終わりまで待つ"
+rm -f "$TEST_ROOT/scontrol.calls" "$TEST_ROOT/squeue.read"
+out=$(FAKE_TOP_FAILS=2 FAKE_JOB_EXIT=3 FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|main|t|PENDING|10020|10:00|N/A|trial | #1 | p | $Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|record | #1 | p | $Q")" \
+  "$RUN" --class record --ref '#1' --purpose '本番' -t 5 xlc-rec 'true' 2>&1)
+assert_eq 3 $?
+assert_eq 2 "$(wc -l <"$TEST_ROOT/scontrol.calls")"
+assert_contains "$out" "WARN:"
+
+it "slurm-run: 区分の無いジョブだけが前で待っていても、--top のジョブをその前に出す"
+rm -f "$TEST_ROOT/scontrol.calls" "$TEST_ROOT/squeue.read"
+FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "90|main|old|PENDING|10060|10:00|N/A|$Q" \
+  "42|main|new|PENDING|10000|10:00|N/A|record | #1 | p | $Q")" \
+  "$RUN" --class record --ref '#1' --purpose '本番' --top -t 5 xlc-rec 'true' >/dev/null
+assert_eq "top 42" "$(cat "$TEST_ROOT/scontrol.calls")"
 
 it "slurm-run: 待ち行列を読めなくても、警告して並べ直さずにジョブの終わりまで待つ"
 rm -f "$TEST_ROOT/scontrol.calls"

@@ -180,6 +180,20 @@ out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | $C")" "$QUEUE" --order --first 42)
 assert_eq "" "$out"
 
+it "slurm-queue: 区分の無い待っているジョブが区分のあるジョブより前にあれば、列を出す（列のジョブが前に出る）"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "90|main|old|PENDING|10060|10:00|N/A|$C" \
+  "42|main|new|PENDING|10000|10:00|N/A|record | #1 | p | $C")" "$QUEUE" --order --first 42)
+assert_eq "42" "$out"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "90|main|old|PENDING|10060|10:00|N/A|$C" \
+  "42|main|new|PENDING|10000|10:00|N/A|record | #1 | p | $C")" "$QUEUE")
+assert_contains "$out" "ORDER: main: 42（record）が区分の無い 90 の後ろで待っている。scontrol top 42（区分の無い 90 は後ろに回る）"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "42|main|new|PENDING|10060|10:00|N/A|record | #1 | p | $C" \
+  "90|main|old|PENDING|10000|10:00|N/A|$C")" "$QUEUE" --order)
+assert_eq "" "$out"
+
 it "slurm-queue: --order は、待ち行列が空なら何も出さずに 0 で終わる"
 out=$("$QUEUE" --order)
 assert_eq 0 $?
