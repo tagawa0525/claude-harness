@@ -198,6 +198,17 @@ impl Shell {
         &self.cmds
     }
 
+    /// `cmd` より前に走る、`cmd` と同じか外側のスコープのコマンド（文書順）。前のコマンドの `$(…)` の中のもの、
+    /// `cmd` を文字列で実行するラッパー（`bash -c` や `ssh`）、カレントディレクトリを変えるだけの `cd` は除く
+    pub fn commands_before<'a>(&'a self, cmd: &'a Cmd) -> impl Iterator<Item = &'a Cmd> {
+        self.cmds.iter().filter(move |c| {
+            c.start < cmd.start
+                && cmd.scope.starts_with(&c.scope)
+                && !c.changes_dir()
+                && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
+        })
+    }
+
     /// 全コマンド（文字列の中のものを含む）と、文字列を解析した内側のシェル
     fn collect_commands(&self, depth: usize, expanded: &[String]) -> (Vec<Cmd>, Vec<Shell>) {
         let mut cmds = Vec::new();

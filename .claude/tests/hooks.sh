@@ -1327,6 +1327,52 @@ assert_contains "$(reason "$out")" "レビュー"
 assert_contains "$(reason "$out")" "request-rereview.sh https://github.com/example/heredoc/pull/1 "
 assert_contains "$(reason "$out")" "/gh-actions-check https://github.com/example/heredoc/pull/1 で状況を診断"
 
+it "pre-merge-check: 拒んだとき、同じコマンドで先に走るはずだったコマンドを挙げ、マージを単独で投げ直すよう示す"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "gh issue comment 1 --body x && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh https://github.com/example/heredoc/pull/1 abc 0 0 0 && $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "gh issue comment, record-local-review.sh"
+assert_contains "$(reason "$out")" "前に cd だけを付けた呼び出し"
+
+it "pre-merge-check: git はサブコマンドまで挙げる"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "git push && $MERGE_CMD")
+assert_contains "$(reason "$out")" "（git push）"
+
+it "pre-merge-check: マージを文字列で実行する bash -c は、前のコマンドとして挙げない"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "bash -c 'gh pr merge 1 --merge --delete-branch --subject x --body \"## Why
+x
+## What
+x
+## Impact
+x\"'")
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "前にあるコマンド"
+
+it "pre-merge-check: gh はサブコマンドを 2 語まで挙げ、前のコマンドの \$(…) の中は挙げない"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "gh pr checks 1 && gh issue comment 1 --body \"\$(cat note.md)\" && $MERGE_CMD")
+assert_contains "$(reason "$out")" "（gh pr checks, gh issue comment）"
+
+it "pre-merge-check: 前のコマンドが作るはずだった --body-file が読めずに拒んだときも、案内を出す"
+make_fake_gh_merge 'echo 0' 'echo abc'
+out=$(run_hook pre-merge-check "touch /nonexistent-dir/body.md && gh pr merge 1 --merge --delete-branch --subject x --body-file /nonexistent-dir/body.md")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "（touch）"
+
+it "pre-merge-check: コマンドの文字列だけで拒んだときは、投げ直しの案内を出さない"
+make_fake_gh_merge 'echo 0' 'echo abc'
+out=$(run_hook pre-merge-check "git push && gh pr merge 1 --squash --delete-branch --subject x --body x")
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "前にあるコマンド"
+
+it "pre-merge-check: 先に走るのが cd だけなら、投げ直しの案内を出さない"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "cd . && $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "前にあるコマンド"
+
 it "pre-merge-check: bot のレビューが head を見ていればマージできる"
 make_fake_gh_merge 'echo 0' 'echo abc'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
