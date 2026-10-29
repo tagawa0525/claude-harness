@@ -117,7 +117,8 @@ pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 
 /// 確定した後も直してよいフロントマターのキー。
 /// `amends` と `amended-by` は、一部の置き換えを別の ADR で結んでいたころの既存の結びで、相手の ADR との一致は check が
-/// 確かめる（ADR-0051。新しくは書かない。ADR-0067。分岐点から `amends` に足すと check が違反にする）。`issues` は、確定した後も直す帰結に書いた残りの issue を足す（ADR-0067）。
+/// 確かめる（ADR-0051。新しくは書かない。ADR-0067。分岐点から `amends` に足すと check が違反にする）。`issues` は、
+/// 確定した後も直す帰結に書いた残りの issue を足す（ADR-0067）。
 pub const AMENDABLE_KEYS: [&str; 6] = [
     "status",
     "superseded-by",
