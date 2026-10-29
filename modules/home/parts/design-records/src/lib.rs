@@ -116,8 +116,16 @@ pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 
 /// 確定した後も直してよいフロントマターのキー。
 /// `amended-by` は新しい ADR が決まったときに古い ADR に書く。`amends` は、確定した ADR の本文に書いた一部の置き換えを
-/// フロントマターにも書くために許す。どちらも相手の ADR との一致は check が確かめる（ADR-0051）。
-pub const AMENDABLE_KEYS: [&str; 5] = ["status", "superseded-by", "date", "amends", "amended-by"];
+/// フロントマターにも書くために許す。どちらも相手の ADR との一致は check が確かめる（ADR-0051）。`issues` は、確定した
+/// 後も直す帰結に書いた残りの issue を足す（ADR-0067）。
+pub const AMENDABLE_KEYS: [&str; 6] = [
+    "status",
+    "superseded-by",
+    "date",
+    "amends",
+    "amended-by",
+    "issues",
+];
 
 /// 節の見出し（日本語と、MADR の英語の原文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,8 +162,7 @@ pub const RECOMMENDED_SECTIONS: [Section; 2] = [
     },
 ];
 
-/// `status` の ADR に求める推奨の節。採らなかった決定（rejected）には、確かめるものも帰結も無く、番号だけを残した
-/// ADR は確定後に書き足せないので、求めない（ADR-0049）。
+/// `status` の ADR に求める推奨の節。採らなかった決定（rejected）には、確かめるものも帰結も無いので、求めない（ADR-0049）。
 pub fn recommended_sections(status: &str) -> &'static [Section] {
     if status == "rejected" {
         &[]

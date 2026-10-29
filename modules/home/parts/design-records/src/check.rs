@@ -690,22 +690,30 @@ fn body(text: &str) -> Vec<&str> {
     }
     let named =
         |sections: &[Section], title: &str| sections.iter().any(|s| title == s.ja || title == s.en);
-    // 表題の前の行（フロントマターの後の空行）と表題の行は比べる
-    let mut in_decided_section = true;
+    // 表題の前の行（フロントマターの後の空行）と表題の行は比べる。表題は最初の 1 段目の見出しだけで、後の 1 段目の
+    // 見出しは必須でない 2 段目の節と同じに扱う
+    let decision = REQUIRED_SECTIONS[2];
+    let mut seen_title = false;
+    let mut in_required = true;
+    let mut in_decision = false;
     let mut in_decided = true;
     let mut kept: Vec<&str> = lines
         .filter(|(n, line)| {
             if headings.contains(n) {
                 let title = line.trim_start_matches('#').trim();
-                if line.starts_with("# ") {
-                    in_decided_section = true;
-                    in_decided = true;
-                } else if line.starts_with("## ") {
-                    in_decided_section = named(&REQUIRED_SECTIONS, title);
-                    in_decided = in_decided_section;
-                } else {
-                    in_decided = in_decided_section && !named(&RECOMMENDED_SECTIONS, title);
+                if line.starts_with("# ") && !seen_title {
+                    seen_title = true;
+                    in_required = true;
+                    in_decision = false;
+                } else if line.starts_with("# ") || line.starts_with("## ") {
+                    in_required = named(&REQUIRED_SECTIONS, title);
+                    in_decision = named(&[decision], title);
                 }
+                // 決定と理由の下の帰結と確認だけが今の事実の節（MADR のテンプレートの置き方）
+                in_decided = in_required
+                    && !(line.starts_with("### ")
+                        && in_decision
+                        && named(&RECOMMENDED_SECTIONS, title));
             }
             in_decided
         })

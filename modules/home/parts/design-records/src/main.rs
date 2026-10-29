@@ -11,8 +11,8 @@
 //!   design-records check [--changed] [FILE]...
 //!                                      docs/adr の ADR と docs/issues の番号を検査する。FILE（リポジトリの直下からの
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
-//!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（背景、検討した案、
-//!                                      決定と理由）の変更を見る。FILE か --changed を渡すと、warning は FILE のもの
+//!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、検討
+//!                                      した案、決定と理由、直せないフロントマターのキー）の変更を見る。FILE か --changed を渡すと、warning は FILE のもの
 //!                                      だけ（--changed は FILE が 0 件のときも。
 //!                                      pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
