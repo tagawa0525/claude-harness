@@ -931,7 +931,6 @@ fn renumber_issue_rewrites_hash_references_and_file_names() {
 }
 
 #[test]
-#[ignore = "RED: lease the retag push"]
 fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
     let t = TempRepo::new("tag-slug");
     t.run(&["new", "use-a", "a を使う"]);
@@ -992,7 +991,6 @@ fn renamed_reserved_record_with_remote(name: &str) -> TempRepo {
 }
 
 #[test]
-#[ignore = "RED: lease the retag push"]
 fn retag_command_for_origin_moves_the_reservation_on_origin() {
     let t = renamed_reserved_record_with_remote("retag-origin");
     let command = retag_command_for_origin(&t);
@@ -1003,7 +1001,6 @@ fn retag_command_for_origin_moves_the_reservation_on_origin() {
 }
 
 #[test]
-#[ignore = "RED: lease the retag push"]
 fn retag_command_for_origin_keeps_a_reservation_another_clone_moved() {
     let t = renamed_reserved_record_with_remote("retag-origin-moved");
     let other = t.clone_remote("other");

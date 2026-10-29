@@ -230,14 +230,18 @@ pub fn check_reservations(
             let owner_present = paths
                 .iter()
                 .any(|p| record_name(kind, p) == Some((number, owner.as_str())));
+            // origin への打ち直しは、打つ前のタグを期待値にした --force-with-lease で送る。-f は claude-hooks の
+            // guard-git-push が止め、ほかの clone が先に動かした予約も奪う。期待値の無い --force-with-lease は、
+            // タグに追跡の参照が無いので stale info で拒まれる
+            let retag = format!("git tag -f -a {tag} -m {} '{tag}^{{}}'", shell_quote(slug));
             let advice = if owner_present {
                 renumber
             } else {
                 format!(
                     "if another record took the number, {renumber}; if this record is the reserved \
-                     one and its file name was renamed, run `git tag -f -a {tag} -m {} '{tag}^{{}}'` \
-                     (and `git push -f origin refs/tags/{tag}` when origin exists)",
-                    shell_quote(slug)
+                     one and its file name was renamed, run `{retag}` (when origin exists, run instead \
+                     `old=$(git rev-parse refs/tags/{tag}) && {retag} && \
+                     git push --force-with-lease=refs/tags/{tag}:\"$old\" origin refs/tags/{tag}`)"
                 )
             };
             out.warning(
