@@ -12,9 +12,9 @@
 //!                                      docs/adr の ADR と docs/issues の番号を検査する。FILE（リポジトリの直下からの
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
 //!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、検討
-//!                                      した案、決定と理由、直せないフロントマターのキー）の変更を見る。FILE か --changed を渡すと、warning は FILE のもの
-//!                                      だけ（--changed は FILE が 0 件のときも。
-//!                                      pre-commit で使う）
+//!                                      した案、決定と理由、直せないフロントマターのキー）の変更を見る。FILE か
+//!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
+//!                                      ときも。pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
 //!
 //! 終了コード: 0 = 成功（注意だけのときも）、1 = 違反か失敗、2 = 使い方の誤り
@@ -257,8 +257,9 @@ fn body_changes(
         {
             format!(
                 "the decided sections changed although the ADR is {status} on {shown}; \
-                 the context, considered options and decision outcome record the decision \
-                 as made, so fix only typos, grammar, markup and broken links there \
+                 the title, the front matter other than status, superseded-by, date, issues, \
+                 amends and amended-by, and the context, considered options and decision outcome \
+                 record the decision as made, so fix only typos, grammar, markup and broken links there \
                  (consequences, confirmation and notes may follow the current facts). \
                  To change part of the decision, edit the decision outcome and add a dated \
                  item to the `## 変更` section that quotes the replaced text and gives the reason; \
