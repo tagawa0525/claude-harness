@@ -13,7 +13,7 @@
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
 //!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、決定
 //!                                      の要因、検討した案、決定と理由、各案の長所と短所、直せないフロントマターの
-//!                                      キー）の変更と、分岐点から足した amends と amended-by を見る。FILE か
+//!                                      キー）の変更と、分岐点から足した amends を見る。FILE か
 //!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
 //!                                      ときも。pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
