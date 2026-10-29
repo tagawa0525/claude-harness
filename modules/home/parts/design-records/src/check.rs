@@ -1538,6 +1538,23 @@ mod tests {
     }
 
     #[test]
+    fn drivers_and_pros_and_cons_change_the_body() {
+        // 決定の要因と各案の長所と短所も、決めた時点の文脈（英語の原文の見出しでも）
+        for heading in [
+            "決定の要因",
+            "Decision Drivers",
+            "各案の長所と短所",
+            "Pros and Cons of the Options",
+        ] {
+            let old = SECTIONS.replace("## 補足", &format!("## {heading}\n\nx\n\n## 補足"));
+            assert!(
+                body_changed(&old, &old.replace("\nx\n", "\ny\n")),
+                "{heading}"
+            );
+        }
+    }
+
+    #[test]
     fn consequences_and_confirmation_keep_the_body() {
         // 帰結と確認は今の事実を書く節（決定と理由の下の 3 段目でも、2 段目でも）
         let new = SECTIONS
