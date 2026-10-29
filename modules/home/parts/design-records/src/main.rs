@@ -34,7 +34,7 @@ use design_records::{
     ADR_DIR, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title, numbers_in,
 };
 
-use git::{Result, default_branch, git, git_ok, repo_root, reservations, tracked};
+use git::{Result, default_branch, git, git_ok, has_origin, repo_root, reservations, tracked};
 
 const USAGE: &str = "Usage: design-records [-C <dir>] new [--kind adr|issue] <slug> <title> \
      | renumber [--kind adr|issue] <old> [<new>] | prune | check [--changed] [FILE]... | status";
@@ -160,9 +160,10 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
 
     let mut found = check(&adrs, issues.as_ref(), &scanned);
     found.extend(check_issue_numbers(&issue_paths));
+    let origin = has_origin(&root)?;
     for (kind, paths) in [(Kind::Adr, &adr_paths), (Kind::Issue, &issue_paths)] {
         if let Some(reserved) = reserved.get(&kind) {
-            found.extend(check_reservations(kind, paths, reserved));
+            found.extend(check_reservations(kind, paths, reserved, origin));
         }
     }
     // FILE か --changed を渡したら（pre-commit）、warning はそのファイルのものだけにする。触っていない ADR の warning が毎回

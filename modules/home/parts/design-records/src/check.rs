@@ -207,11 +207,12 @@ pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
 }
 
 /// `kind` の記録（`paths`）のうち、番号を予約したタグ（`reserved` は番号から slug へ）の slug と違う slug のもの
-/// （ほかの記録が予約した番号を使っている）。
+/// （ほかの記録が予約した番号を使っている）。`origin` は、リモート origin があるか（打ち直しのコマンドを選ぶ）。
 pub fn check_reservations(
     kind: Kind,
     paths: &[String],
     reserved: &BTreeMap<u32, String>,
+    origin: bool,
 ) -> Vec<Finding> {
     let mut out = Found::default();
     for path in paths {
@@ -233,15 +234,21 @@ pub fn check_reservations(
             // origin へは打つ前のタグを期待値にした lease で送り、拒まれたら手元のタグを戻す（手元だけが打ち直されると
             // slug がファイルと合い、check が注意を出さなくなる）。採らなかった手順とサブコマンドにする案は #519
             let retag = format!("git tag -f -a {tag} -m {} '{tag}^{{}}'", shell_quote(slug));
+            let retag = if origin {
+                format!(
+                    "old=$(git rev-parse refs/tags/{tag}) && {retag} && \
+                     {{ git push --force-with-lease=refs/tags/{tag}:\"$old\" origin refs/tags/{tag} || \
+                     {{ git update-ref refs/tags/{tag} \"$old\"; false; }}; }}"
+                )
+            } else {
+                retag
+            };
             let advice = if owner_present {
                 renumber
             } else {
                 format!(
                     "if another record took the number, {renumber}; if this record is the reserved \
-                     one and its file name was renamed, run `{retag}` (when origin exists, run instead \
-                     `old=$(git rev-parse refs/tags/{tag}) && {retag} && \
-                     {{ git push --force-with-lease=refs/tags/{tag}:\"$old\" origin refs/tags/{tag} || \
-                     {{ git update-ref refs/tags/{tag} \"$old\"; false; }}; }}`)"
+                     one and its file name was renamed, run `{retag}`"
                 )
             };
             out.warning(
