@@ -95,7 +95,7 @@ claude-hooks の、普通に書く形（`cd <worktree> &&`、`env` や `timeout`
 
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
 受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す
-（PR を出す前のローカルレビューとは別枠）。対象は `~/.claude/scripts/review-level.sh`
+（この周も /git-merge の「直す指摘の基準」の歯止めの 3 周に数える）。対象は `~/.claude/scripts/review-level.sh`
 が出す `WORKTREE` を対象にする（PR の worktree で実行する。Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
 `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に重複して書かず、コードへの参照（ファイルと関数名）で書く。
