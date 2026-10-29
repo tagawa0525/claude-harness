@@ -115,9 +115,8 @@ pub const STATUSES: [&str; 7] = [
 pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 
 /// 確定した後も直してよいフロントマターのキー。
-/// `amended-by` は新しい ADR が決まったときに古い ADR に書く。`amends` は、確定した ADR の本文に書いた一部の置き換えを
-/// フロントマターにも書くために許す。どちらも相手の ADR との一致は check が確かめる（ADR-0051）。`issues` は、確定した
-/// 後も直す帰結に書いた残りの issue を足す（ADR-0067）。
+/// `amends` と `amended-by` は、一部の置き換えを別の ADR で結んでいたころの既存の結びで、相手の ADR との一致は check が
+/// 確かめる（ADR-0051。新しくは書かない。ADR-0067）。`issues` は、確定した後も直す帰結に書いた残りの issue を足す（ADR-0067）。
 pub const AMENDABLE_KEYS: [&str; 6] = [
     "status",
     "superseded-by",
@@ -134,6 +133,12 @@ pub struct Section {
     pub en: &'static str,
 }
 
+/// 決定の節。下に置いた推奨の節（帰結と確認）は、確定した後も直す（ADR-0067）。
+pub const DECISION_SECTION: Section = Section {
+    ja: "決定と理由",
+    en: "Decision Outcome",
+};
+
 /// 必須の節。
 pub const REQUIRED_SECTIONS: [Section; 3] = [
     Section {
@@ -144,10 +149,7 @@ pub const REQUIRED_SECTIONS: [Section; 3] = [
         ja: "検討した案",
         en: "Considered Options",
     },
-    Section {
-        ja: "決定と理由",
-        en: "Decision Outcome",
-    },
+    DECISION_SECTION,
 ];
 
 /// 推奨の節。

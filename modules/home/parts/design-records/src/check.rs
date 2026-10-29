@@ -5,8 +5,9 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, OPTIONAL_KEYS, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
-    STATUSES, Section, is_adr_path, recommended_sections, record_name, record_number,
+    ADR_DIR, AMENDABLE_KEYS, DECISION_SECTION, KEYS, Kind, OPTIONAL_KEYS, RECOMMENDED_SECTIONS,
+    REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, recommended_sections, record_name,
+    record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -692,7 +693,6 @@ fn body(text: &str) -> Vec<&str> {
         |sections: &[Section], title: &str| sections.iter().any(|s| title == s.ja || title == s.en);
     // 表題の前の行（フロントマターの後の空行）と表題の行は比べる。表題は最初の 1 段目の見出しだけで、後の 1 段目の
     // 見出しは必須でない 2 段目の節と同じに扱う
-    let decision = REQUIRED_SECTIONS[2];
     let mut seen_title = false;
     let mut in_required = true;
     let mut in_decision = false;
@@ -707,7 +707,7 @@ fn body(text: &str) -> Vec<&str> {
                     in_decision = false;
                 } else if line.starts_with("# ") || line.starts_with("## ") {
                     in_required = named(&REQUIRED_SECTIONS, title);
-                    in_decision = named(&[decision], title);
+                    in_decision = named(&[DECISION_SECTION], title);
                 }
                 // 決定と理由の下の帰結と確認だけが今の事実の節（MADR のテンプレートの置き方）
                 in_decided = in_required

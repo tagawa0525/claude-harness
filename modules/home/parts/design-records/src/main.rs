@@ -32,7 +32,8 @@ use design_records::check::{
     Finding, Severity, body_changed, check, check_issue_numbers, check_reservations,
 };
 use design_records::{
-    ADR_DIR, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title, numbers_in,
+    ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
+    numbers_in,
 };
 
 use git::{Result, default_branch, git, git_ok, has_origin, repo_root, reservations, tracked};
@@ -257,13 +258,14 @@ fn body_changes(
         {
             format!(
                 "the decided sections changed although the ADR is {status} on {shown}; \
-                 the title, the front matter other than status, superseded-by, date, issues, \
-                 amends and amended-by, and the context, considered options and decision outcome \
+                 the title, the front matter other than {}, and the context, considered options \
+                 and decision outcome \
                  record the decision as made, so fix only typos, grammar, markup and broken links there \
                  (consequences, confirmation and notes may follow the current facts). \
                  To change part of the decision, edit the decision outcome and add a dated \
                  item to the `## 変更` section that quotes the replaced text and gives the reason; \
-                 to change all of it, supersede the ADR with a new one"
+                 to change all of it, supersede the ADR with a new one",
+                AMENDABLE_KEYS.join(", ")
             )
         } else {
             continue;
