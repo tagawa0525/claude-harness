@@ -649,6 +649,24 @@ fn check_lets_a_proposed_amends_on_main_be_accepted() {
 }
 
 #[test]
+fn check_rejects_amends_added_to_an_adr_on_main() {
+    let t = TempRepo::new("added-link");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let b = "docs/adr/0002-use-b.md";
+    t.commit_all("docs(adr): a and b");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.write(
+        b,
+        &t.read(b)
+            .replace("superseded-by:\n", "superseded-by:\namends: [ADR-0001]\n"),
+    );
+    let out = t.run(&["check", b]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), new_link_error(b, 1));
+}
+
+#[test]
 fn check_keeps_amendment_links_already_on_main() {
     let t = TempRepo::new("old-links");
     t.run(&["new", "use-a", "a を使う"]);
