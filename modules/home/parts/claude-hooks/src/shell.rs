@@ -198,11 +198,12 @@ impl Shell {
         &self.cmds
     }
 
-    /// `cmd` より前に走るコマンド（文書順）。`cmd` を包むコマンド（`bash -c` や `ssh` の文字列で `cmd` を
-    /// 実行するもの）と、カレントディレクトリを変えるだけの `cd` は除く
+    /// `cmd` より前に走る、`cmd` と同じか外側のスコープのコマンド（文書順）。前のコマンドの `$(…)` の中のもの、
+    /// `cmd` を文字列で実行するラッパー（`bash -c` や `ssh`）、カレントディレクトリを変えるだけの `cd` は除く
     pub fn commands_before<'a>(&'a self, cmd: &'a Cmd) -> impl Iterator<Item = &'a Cmd> {
         self.cmds.iter().filter(move |c| {
             c.start < cmd.start
+                && cmd.scope.starts_with(&c.scope)
                 && !c.changes_dir()
                 && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
         })

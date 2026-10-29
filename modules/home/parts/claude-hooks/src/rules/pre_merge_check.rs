@@ -52,12 +52,16 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
     let mut names: Vec<String> = Vec::new();
     for c in shell.commands_before(merge) {
         let program = basename(c.program());
-        let name = match (program, c.args.first()) {
-            ("git", _) => match c.git_subcommand() {
+        let name = match program {
+            "git" => match c.git_subcommand() {
                 Some((sub, _)) => format!("git {sub}"),
                 None => program.to_string(),
             },
-            ("gh", Some(sub)) => format!("gh {}", sub.text),
+            // gh は `gh pr checks` と `gh pr merge` を分けるために 2 語まで
+            "gh" => std::iter::once("gh")
+                .chain(c.args.iter().take(2).map(|a| a.text.as_str()))
+                .collect::<Vec<_>>()
+                .join(" "),
             _ => program.to_string(),
         };
         if !names.contains(&name) {
@@ -71,6 +75,7 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
         "\n同じコマンドで gh pr merge より前にあるコマンド（{}）は、この判定の後に走るので判定に反映されず、\
          拒んだのでどれも実行されていません。それらで状態を変える（ローカルレビューの記録、push など）なら、\
          先に別の呼び出しで実行してから、gh pr merge を前に cd だけを付けた呼び出しで投げ直してください",
+        // cd を外させない: 担当のスレッドは呼び出しごとに cwd が戻り、cd の無い gh は別のリポジトリの PR を解く
         names.join(", ")
     )
 }
@@ -417,16 +422,22 @@ impl Rule for PreMergeCheck {
             }
             let pr_ref = pr_ref(args);
 
+            // コマンドの文字列だけで決まる理由の数。前のコマンドの実行で変わりえない（ファイルや GitHub の状態を読まない）
+            // ので、これだけで拒むときは投げ直しの案内を付けない
+            let mut text_reasons = 0;
+
             // --- 1. マージ方式 ---
             if has_flag(args, &["--squash", "-s", "--rebase", "-r"]) {
                 reasons.push(
                     "--squash / --rebase は禁止です。--merge（マージコミット方式）を使ってください"
                         .to_string(),
                 );
+                text_reasons += 1;
             } else if !has_flag(args, &["--merge", "-m"]) {
                 reasons.push(
                     "--merge を明示してください（マージ方式の既定値に依存しない）".to_string(),
                 );
+                text_reasons += 1;
             }
 
             // --- 2. ブランチ削除 ---
@@ -435,15 +446,19 @@ impl Rule for PreMergeCheck {
                     "--delete-branch を付けてください（マージ後のブランチは速やかに削除する）"
                         .to_string(),
                 );
+                text_reasons += 1;
             }
 
             // --- 3. 本文形式 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
                 Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}")),
-                Ok(None) => reasons.push(
-                    "--body でマージコミット本文を指定してください（## Why / ## What / ## Impact）"
-                        .to_string(),
-                ),
+                Ok(None) => {
+                    reasons.push(
+                        "--body でマージコミット本文を指定してください（## Why / ## What / ## Impact）"
+                            .to_string(),
+                    );
+                    text_reasons += 1;
+                }
                 Ok(Some(body)) => {
                     let missing = missing_headings(&body, &["## Why", "## What", "## Impact"]);
                     if !missing.is_empty() {
@@ -451,6 +466,7 @@ impl Rule for PreMergeCheck {
                             "マージコミット本文に見出しがありません: {}",
                             missing.join(" ")
                         ));
+                        text_reasons += 1;
                     }
                 }
             }
@@ -471,9 +487,6 @@ impl Rule for PreMergeCheck {
                         .unwrap_or_default(),
                 ),
             };
-
-            // ここまで（1〜3 と cd 先）はコマンドの文字列だけの判定で、前のコマンドの実行に左右されない
-            let static_reasons = reasons.len();
 
             // --- 4. CI チェック ---
             let mut view_args: Vec<&str> = vec!["pr", "view"];
@@ -826,7 +839,7 @@ impl Rule for PreMergeCheck {
                 return vec![Finding::Deny(format!(
                     "{}{}\n\n/gh-actions-check{target} で状況を診断してください。",
                     reasons.join("\n"),
-                    if reasons.len() > static_reasons {
+                    if reasons.len() > text_reasons {
                         earlier_commands_hint(shell, cmd)
                     } else {
                         String::new()

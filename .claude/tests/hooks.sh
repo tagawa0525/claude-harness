@@ -1331,7 +1331,7 @@ it "pre-merge-check: 拒んだとき、同じコマンドで先に走るはず�
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "gh issue comment 1 --body x && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh https://github.com/example/heredoc/pull/1 abc 0 0 0 && $MERGE_CMD")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "gh issue, record-local-review.sh"
+assert_contains "$(reason "$out")" "gh issue comment, record-local-review.sh"
 assert_contains "$(reason "$out")" "前に cd だけを付けた呼び出し"
 
 it "pre-merge-check: git はサブコマンドまで挙げる"
