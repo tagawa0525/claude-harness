@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # slurm-run.sh — r995 の Slurm に重い計算を 1 本投げ、終わるまで待つ
 #
-# Usage: slurm-run.sh [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>
+# Usage: slurm-run.sh --class <区分> --ref <参照> --purpose <目的> [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>
 #
+# --class、--ref、--purpose は必須で、待ち行列でジョブの順を目的から確かめるために、ジョブのコメントの先頭に
+# 「<区分> | <参照> | <目的> | <連絡先>」の形で入れ（slurm-queue.sh が読む）、TIME 行にも出す。
+#   --class: timed（時間を記録する測定。--timed を付けなくてもパーティション timed に投げる）、record（記録に載せる本番）、
+#            decision（決定に要る確認）、trial（検討）。この順に優先する
+#   --ref: きっかけの issue か ADR の番号（#NNNN、ADR-NNNN。複数はカンマで区切る）。無いときは「- <理由>」
+#   --purpose: 結果が何を決めるかの 1 文。改行と | を含めない（コメントの区切りに使う）
 # 既定では、ほかの計算と重ならないよう排他で、既定のパーティション main に投げる（sbatch --exclusive --wait --export=ALL）。
 # main のジョブは --timed のジョブに止められ（SUSPEND）、その終わりに続きから再開する。いつ止められてもよい条件で
 # 走るので、時間は記録に使わず、TIME 行に「割り込まれうる」印を常に付ける（止められなかったときも）。
@@ -27,16 +33,22 @@
 # 出力:
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
-#   （ログの末尾 20 行。終わった直後なら、最後に TIME: job=<番号> elapsed=<実際の時間> estimate=<見積もり> を
-#    ログへ書き足すので、その行も含む。-c のとき、timed で走らなかったとき、止められていたときは、行末に印が付く）
+#   （ログの末尾 20 行。終わった直後なら、最後に TIME: job=<番号> elapsed=<実際の時間> estimate=<見積もり> <印>
+#    class=<区分> ref=<参照> purpose=<目的> をログへ書き足すので、その行も含む。印は、-c のとき、timed で走らなかったとき、
+#    止められていたときに付く）
 #   EXIT: <ジョブの終了コード>
 # 終了コードはジョブの終了コード。
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>" >&2
+  echo "Usage: $0 --class <timed|record|decision|trial> --ref <#NNNN|ADR-NNNN|- 理由> --purpose <結果が何を決めるか> [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>" >&2
   exit 1
+}
+
+missing() {
+  echo "ERROR: $1 が無い（待ち行列で順を確かめるため、区分、参照、目的は必須）" >&2
+  usage
 }
 
 top=false
@@ -44,8 +56,30 @@ timed=false
 estimate=""
 cpus=""
 shared=false
+class=""
+ref=""
+purpose=""
+have_ref=false
+have_purpose=false
 while (($#)); do
   case "$1" in
+    --class)
+      (($# >= 2)) || usage
+      class=$2
+      shift
+      ;;
+    --ref)
+      (($# >= 2)) || usage
+      ref=$2
+      have_ref=true
+      shift
+      ;;
+    --purpose)
+      (($# >= 2)) || usage
+      purpose=$2
+      have_purpose=true
+      shift
+      ;;
     --top) top=true ;;
     --timed) timed=true ;;
     -t)
@@ -67,13 +101,36 @@ while (($#)); do
   esac
   shift
 done
+[[ -n $class ]] || missing --class
+$have_ref || missing --ref
+$have_purpose || missing --purpose
 [[ -n $estimate ]] || usage
 (($# == 2)) || usage
 name=$1
 command=$2
 
+case "$class" in
+  timed) timed=true ;;
+  record | decision | trial) ;;
+  *)
+    echo "ERROR: 知らない区分: '$class'（timed record decision trial のどれか）" >&2
+    exit 1
+    ;;
+esac
+
+# 改行を含む値は [[ =~ ]] の ^ と $ が行ごとに合わないが、改行と | はコメントの区切りを壊すので先に除く
+ref_number='(#[0-9]+|ADR-[0-9]+)'
+if [[ $ref == *[$'\n'\|]* ]] || [[ ! $ref =~ ^$ref_number(,$ref_number)*$ && ! $ref =~ ^-\ +[^[:space:]] ]]; then
+  echo "ERROR: 参照は #NNNN か ADR-NNNN（複数はカンマで区切る）、無いときは「- <理由>」: '$ref'" >&2
+  exit 1
+fi
+if [[ $purpose == *[$'\n'\|]* ]] || [[ ! $purpose =~ [^[:space:]] ]]; then
+  echo "ERROR: 目的は結果が何を決めるかの 1 文で、空にせず、改行と | を含めない: '$purpose'" >&2
+  exit 1
+fi
+
 if $timed && $shared; then
-  echo "ERROR: --timed は -c と組めない（排他でないジョブの時間は記録に使えない）" >&2
+  echo "ERROR: --timed と区分 timed は -c と組めない（排他でないジョブの時間は記録に使えない）" >&2
   exit 1
 fi
 
@@ -129,7 +186,7 @@ fi
 submitted=$(mktemp)
 trap 'rm -f "$submitted"' EXIT
 sbatch "${resources[@]}" --wait --export=ALL -J "$name" -o "$remote_logs/%x-%j.out" \
-  --time "$estimate" --comment "$contact" --wrap "$command" >"$submitted" &
+  --time "$estimate" --comment "$class | $ref | $purpose | $contact" --wrap "$command" >"$submitted" &
 pid=$!
 job=""
 while [[ -z $job ]]; do
@@ -184,6 +241,8 @@ elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
   elif [[ ${BASH_REMATCH[1]} != None ]]; then
     time_line+=" suspended: 止められていたので時間は当てにならない"
   fi
+  # 目的は利用者の書く文なので、印のあとの末尾に置く
+  time_line+=" class=$class ref=$ref purpose=$purpose"
   echo "$time_line" >>"$log" || {
     echo "WARN: ジョブ $job の実際の時間をログに書き足せなかった: $log" >&2
     echo "$time_line"
