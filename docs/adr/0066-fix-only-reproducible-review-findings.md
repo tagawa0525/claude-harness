@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-29
-requires: [ADR-0043]
+requires: [ADR-0043, ADR-0067]
 supersedes: []
 superseded-by:
 amends: [ADR-0023, ADR-0027]
