@@ -517,7 +517,7 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     let out = t.run(&["check", b]);
     assert!(out.status.success(), "{}", stdout(&out));
     assert!(
-        stdout(&out).starts_with("docs/adr/0002-use-b.md: warning: the body changed"),
+        stdout(&out).starts_with("docs/adr/0002-use-b.md: warning: the decided sections changed"),
         "{}",
         stdout(&out)
     );
@@ -566,7 +566,7 @@ fn check_follows_renames_when_comparing_the_body() {
     let out = t.run(&["check", "--changed", new]);
     assert!(out.status.success(), "{}", stdout(&out));
     assert!(
-        stdout(&out).starts_with(&format!("{new}: warning: the body changed")),
+        stdout(&out).starts_with(&format!("{new}: warning: the decided sections changed")),
         "{}",
         stdout(&out)
     );

@@ -164,12 +164,6 @@ pub fn recommended_sections(status: &str) -> &'static [Section] {
     }
 }
 
-/// 確定した後も直してよい節（日付つきの追記）。
-pub const NOTES_SECTION: Section = Section {
-    ja: "補足",
-    en: "More Information",
-};
-
 /// ADR のファイルか（docs/adr/ 直下の、4 桁の番号とハイフンで始まる .md）。README やテンプレートは含めない。
 /// 名前の残りの形（kebab-case）は問わない。形の崩れは検査（[`check`]）が示す。
 pub fn is_adr_path(path: &str) -> bool {

@@ -5,8 +5,8 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, NOTES_SECTION, OPTIONAL_KEYS, REQUIRED_SECTIONS, STATUSES,
-    Section, is_adr_path, recommended_sections, record_name, record_number,
+    ADR_DIR, AMENDABLE_KEYS, KEYS, Kind, OPTIONAL_KEYS, RECOMMENDED_SECTIONS, REQUIRED_SECTIONS,
+    STATUSES, Section, is_adr_path, recommended_sections, record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -653,21 +653,23 @@ fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Fo
     }
 }
 
-/// フロントマターと補足の節を除いた本文が変わったか（確定した ADR に許す変更を除いて比べる）。
+/// 決めた時点の記録（フロントマターの直せないキー、表題、必須の 3 節）が変わったか（確定した ADR に許す変更を除いて比べる）。
 pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
 }
 
-/// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）と、補足の節（次の 1〜2 段目の見出しまで）を除いた行。末尾の空行は除く（補足の節を足す前の空行は本文の
-/// 変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で比べる（その違反は
-/// check が示す）。
+/// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）を除いたフロントマターと、表題、必須の節
+/// （[`REQUIRED_SECTIONS`]）の行。推奨の節（[`RECOMMENDED_SECTIONS`]。帰結と確認）は、決定と理由の下の 3 段目に
+/// あっても今の事実を書く節なので除く。補足、決定の変更を書き留める節、ほかの 2 段目の節も除く。末尾の空行は除く
+/// （節を足す前の空行は本文の変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で
+/// 比べる（その違反は check が示す）。
 fn body(text: &str) -> Vec<&str> {
     let Ok(outside) = markdown_lines(text) else {
         return text.lines().collect();
     };
     let headings: BTreeSet<usize> = outside
         .iter()
-        .filter(|(_, l)| l.starts_with("# ") || l.starts_with("## "))
+        .filter(|(_, l)| l.starts_with("# ") || l.starts_with("## ") || l.starts_with("### "))
         .map(|(n, _)| *n)
         .collect();
     let mut lines = text.lines().enumerate().map(|(i, l)| (i + 1, l)).peekable();
@@ -686,15 +688,26 @@ fn body(text: &str) -> Vec<&str> {
             }
         }
     }
-    let mut in_notes = false;
+    let named =
+        |sections: &[Section], title: &str| sections.iter().any(|s| title == s.ja || title == s.en);
+    // 表題の前の行（フロントマターの後の空行）と表題の行は比べる
+    let mut in_decided_section = true;
+    let mut in_decided = true;
     let mut kept: Vec<&str> = lines
         .filter(|(n, line)| {
             if headings.contains(n) {
                 let title = line.trim_start_matches('#').trim();
-                in_notes = line.starts_with("## ")
-                    && (title == NOTES_SECTION.ja || title == NOTES_SECTION.en);
+                if line.starts_with("# ") {
+                    in_decided_section = true;
+                    in_decided = true;
+                } else if line.starts_with("## ") {
+                    in_decided_section = named(&REQUIRED_SECTIONS, title);
+                    in_decided = in_decided_section;
+                } else {
+                    in_decided = in_decided_section && !named(&RECOMMENDED_SECTIONS, title);
+                }
             }
-            !in_notes
+            in_decided
         })
         .map(|(_, line)| line)
         .collect();
