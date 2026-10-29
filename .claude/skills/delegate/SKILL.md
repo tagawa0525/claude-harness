@@ -268,18 +268,20 @@ crate は main で変わっていない」と報告したが、main は同じ cr
   `origin.kind` が `human` の行の `message.content` と、ターンの途中に送った発言の `type` が `attachment` で
   `attachment.type` が `queued_command` の行の `attachment.prompt` にある（どちらも文字列か、`type` が `text` の要素の配列）。
   ほかの行には、ツールの結果、ほかの担当の報告、会話の圧縮の要約（言い換えた引用を含む）も入り、`human` の行にもコマンドの
-  出力や IDE の通知（`<` で始まる要素）が入るので、`grep` で文字列を探すだけでは確かめにならない。引用の文を「…」の印を
+  出力や IDE の通知（`<` で始まる要素）、ユーザーが貼り付けた文（`<pasted_content …>` の中。エージェントの言い換えを含みうる）
+  が入るので、`grep` で文字列を探すだけでは確かめにならない。引用の文を「…」の印を
   含めてそのまま 1 つのファイルに書き（シェルの引用符と食い違わないため）、次で探す:
 
   ```bash
   jq -rR --rawfile q <引用の文のファイル> '
     ($q | rtrimstr("\n")) as $q
-    | ($q | split("…") | map(select(test("\\S")))) as $parts
+    | ($q | split("…") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $parts
     | if $parts == [] then "引用の文が空\n" | halt_error(1) else . end
     | def text_of:
         (if type == "string" then [.] else map(select(.type == "text") | .text) end)
-        | map(if test("<command-args>") then capture("<command-args>(?<a>.*?)</command-args>"; "s").a
-              elif startswith("<") then empty else . end)
+        | map(gsub("<pasted_content[^>]*>.*?</pasted_content[^>]*>"; ""; "m")
+              | if test("<command-args>") then capture("<command-args>(?<a>.*?)</command-args>"; "m").a
+                elif test("^\\s*<") then empty else . end)
         | join("\n");
       def in_order($s): reduce $parts[] as $p ($s; if . == null then null
         else split($p) as $x | if ($x | length) < 2 then null else ($x[1:] | join($p)) end end) != null;
@@ -298,7 +300,8 @@ crate は main で変わっていない」と報告したが、main は同じ cr
   発言の全文を出す（`-R` と `fromjson?` は、書きかけの行で後のファイルを読まずに止まらないため）。添えられた `timestamp`
   の発言が出て、引用の両端が全文の文の区切り（「。」「？」「！」、改行、発言の端）か「…」の印に当たれば、引用として書く
   （文の途中で切って印の無い引用は、後半の条件や否定を落としうる）。これを満たさないとき、記録が添えられていないとき、
-  記録が読めないときは、「」で括らず要約として書き、食い違いを報告の「確認の結果」の「前提」に書く
+  記録が読めない、消えている（Claude Code は古い記録を消す）ときは、「」で括らず要約として書き、食い違いを報告の
+  「確認の結果」の「前提」に書く
 - ADR や issue に書くユーザーの言葉は、引用は `「<引用>」（ユーザー <日付>）`、要約は括らずに `<要約>（ユーザー <日付>）` と書く。
   日付は JST で書く（上のコマンドが出す。記録の `timestamp` は UTC で、JST の 9 時より前の発言は UTC では前の日になる）。
   分からなければ「日付不明」と書く
@@ -407,5 +410,6 @@ crate は main で変わっていない」と報告したが、main は同じ cr
   別の依頼で頼み、マージしてから本作業を頼む
 - 受けた側の手順 1 の「食い違えば報告に書いて止まる」は、ADR とコードの事実の食い違いに対する安全網である。
   重複する PR や未追跡のツールは拾えないので、上の確認は頼む前に行う
-- 報告は確かめる前の暫定として扱う。マージの前に、報告のコミットと確認の結果を自分で確かめる。担当が書いた ADR と記録の
-  「」で括ったユーザーの言葉は、受ける側と同じ `jq` のコマンドで記録に同じ文があるかを見て、無ければマージの前に要約の形に直す
+- 報告は確かめる前の暫定として扱う。マージの前に、報告のコミットと確認の結果を自分で確かめる。担当が ADR と issue に書いた
+  「」で括ったユーザーの言葉は、受ける側と同じ `jq` のコマンドで会話の記録に同じ文があるかを見て、無ければマージの前に要約の
+  形に直す
