@@ -76,7 +76,7 @@ repos:
   補足。必須は背景・検討した案・決定と理由、推奨は帰結・確認（`rejected` の ADR には推奨の節を求めない。採らなかった
   決定には確かめるものも帰結も無いため。採らない理由を書く節はプロジェクトの運用に従う）。
   ほかの節を足してもよい
-- **フロントマター**のキーは `status`、`date` と次の 4 つ、それに書いてもよい 2 つ（MADR の `decision-makers` などに
+- **フロントマター**のキーは `status`、`date` と次の 4 つ、それに既存の ADR に残る 2 つ（MADR の `decision-makers` などに
   代えて、置き換えと参照を grep で引けるようにする）。一覧は `[a, b]` の形で 1 行に書く
   - `requires`: 前提にしている ADR（`[ADR-NNNN]`）
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く
