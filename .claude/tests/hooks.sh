@@ -1350,6 +1350,17 @@ x\"'")
 assert_eq deny "$(decision "$out")"
 assert_not_contains "$(reason "$out")" "前にあるコマンド"
 
+it "pre-merge-check: gh はサブコマンドを 2 語まで挙げ、前のコマンドの \$(…) の中は挙げない"
+make_fake_gh_merge 'echo 0' 'echo old'
+out=$(run_hook pre-merge-check "gh pr checks 1 && gh issue comment 1 --body \"\$(cat note.md)\" && $MERGE_CMD")
+assert_contains "$(reason "$out")" "（gh pr checks, gh issue comment）"
+
+it "pre-merge-check: 前のコマンドが作るはずだった --body-file が読めずに拒んだときも、案内を出す"
+make_fake_gh_merge 'echo 0' 'echo abc'
+out=$(run_hook pre-merge-check "touch /nonexistent-dir/body.md && gh pr merge 1 --merge --delete-branch --subject x --body-file /nonexistent-dir/body.md")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "（touch）"
+
 it "pre-merge-check: コマンドの文字列だけで拒んだときは、投げ直しの案内を出さない"
 make_fake_gh_merge 'echo 0' 'echo abc'
 out=$(run_hook pre-merge-check "git push && gh pr merge 1 --squash --delete-branch --subject x --body x")
