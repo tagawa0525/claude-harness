@@ -336,7 +336,7 @@ for missing in class ref purpose; do
   rm -f "$TEST_ROOT/sbatch.args"
   out=$("$RUN" "${given[@]}" -t 5 xlc-2G 'true' 2>&1)
   assert_eq 1 $?
-  assert_contains "$out" "--$missing"
+  assert_contains "$out" "ERROR: --$missing が無い"
   assert_file_missing "$TEST_ROOT/sbatch.args"
 done
 

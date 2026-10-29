@@ -56,11 +56,11 @@ out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
 order=$(awk '/^[0-9]/ { printf "%s ", $1 }' <<<"$out")
 assert_eq "15 14 9 10 11 13 12 " "$order"
 
-it "slurm-queue: 待っている上の区分のジョブが、同じパーティションの下の区分のジョブの後ろにあれば、ORDER: の行で前に出すコマンドを示す"
+it "slurm-queue: 待っている上の区分のジョブが、同じパーティションの下の区分のジョブの後ろにあれば、ORDER: の行で区分の順に並べるコマンドを示す"
 out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "20|main|trial-job|PENDING|10010|10:00|N/A|trial | #1 | p | $C" \
   "21|main|record-job|PENDING|10005|10:00|N/A|record | #2 | p | $C")" "$QUEUE")
-assert_contains "$out" "ORDER: 21（record）が 20（trial）の後ろで待っている。scontrol top 21"
+assert_contains "$out" "ORDER: main: 21（record）が 20（trial）の後ろで待っている。scontrol top 21,20"
 
 it "slurm-queue: 区分の順は timed、record、decision、trial"
 out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
@@ -68,15 +68,25 @@ out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "31|main|b|PENDING|10030|10:00|N/A|decision | #1 | p | $C" \
   "32|main|c|PENDING|10020|10:00|N/A|record | #1 | p | $C" \
   "33|main|d|PENDING|10010|10:00|N/A|timed | #1 | p | $C")" "$QUEUE")
-assert_contains "$out" "ORDER: 31（decision）が 30（trial）の後ろで待っている"
-assert_contains "$out" "ORDER: 32（record）が 31（decision）の後ろで待っている"
-assert_contains "$out" "ORDER: 33（timed）が 32（record）の後ろで待っている"
+assert_contains "$out" "31（decision）が 30（trial）の後ろ"
+assert_contains "$out" "32（record）が 31（decision）の後ろ"
+assert_contains "$out" "33（timed）が 32（record）の後ろ"
+assert_contains "$out" "scontrol top 33,32,31,30"
+assert_eq 1 "$(grep -c '^ORDER:' <<<"$out")"
+
+it "slurm-queue: 並べるコマンドは、上の区分のジョブより前に出してはならないジョブを追い越させない（scontrol top は並べた順に前に出す）"
+# record が先頭で、その後ろの decision が trial の後ろにある。decision だけを前に出すと record を追い越す
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "70|main|r1|PENDING|10030|10:00|N/A|record | #1 | p | $C" \
+  "71|main|t|PENDING|10020|10:00|N/A|trial | #1 | p | $C" \
+  "72|main|d|PENDING|10010|10:00|N/A|decision | #1 | p | $C")" "$QUEUE")
+assert_contains "$out" "ORDER: main: 72（decision）が 71（trial）の後ろで待っている。scontrol top 70,72,71"
 
 it "slurm-queue: 同じ優先度なら番号の順で後ろにあるかを決める"
 out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "41|main|record-job|PENDING|10005|10:00|N/A|record | #2 | p | $C" \
   "40|main|trial-job|PENDING|10005|10:00|N/A|trial | #1 | p | $C")" "$QUEUE")
-assert_contains "$out" "ORDER: 41（record）が 40（trial）の後ろで待っている"
+assert_contains "$out" "ORDER: main: 41（record）が 40（trial）の後ろで待っている。scontrol top 41,40"
 
 it "slurm-queue: 区分の順に並んでいれば、ORDER: の行を出さない"
 out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
@@ -91,6 +101,13 @@ out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "62|timed|trial-timed|PENDING|10050|10:00|N/A|trial | #1 | p | $C" \
   "63|main|old|PENDING|10050|10:00|N/A|$C")" "$QUEUE")
 assert_not_contains "$out" "ORDER:"
+
+it "slurm-queue: 走り始めたジョブ（CONFIGURING、COMPLETING）は、走っているジョブと同じく待っているジョブより前に並べる"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "80|main|pend|PENDING|10050|10:00|N/A|trial | #1 | p | $C" \
+  "81|main|conf|CONFIGURING|10000|10:00|N/A|trial | #1 | p | $C")" "$QUEUE")
+order=$(awk '/^[0-9]/ { printf "%s ", $1 }' <<<"$out")
+assert_eq "81 80 " "$order"
 
 it "slurm-queue: 待ち行列が空なら、空と出して 0 で終わる"
 out=$("$QUEUE")
