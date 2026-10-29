@@ -139,4 +139,8 @@ amends と amended-by で両方向に結ぶ」決定は、これからの一部�
 - `modules/home/parts/design-records/tests/cli.rs`: 確定した ADR の背景を変えると注意が出る
   （`check_warns_when_the_body_of_a_decided_adr_on_main_changes`、`check_follows_renames_when_comparing_the_body`）
 - スキル `adr` の「確定後の運用」が、凍結する部分、直す節、「## 変更」の形を示す
+- `modules/home/parts/design-records/tests/cli.rs`: 既定ブランチとの分岐点から `amends` か `amended-by` に足した ADR は
+  違反になる（`check_rejects_amendment_links_added_since_main`）。分岐点に既にある結びは通る
+  （`check_keeps_amendment_links_already_on_main`）。規則とレビューだけでは、xlc で規則の後の 2 日に 2 件（ADR-0218、
+  ADR-0219）が新しい結びを書き、1 件はレビューを抜けてマージされた
 - ADR-0009 と ADR-0051 の末尾の「## 変更」が、この ADR の形で書いてある
