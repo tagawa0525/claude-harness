@@ -268,28 +268,37 @@ crate は main で変わっていない」と報告したが、main は同じ cr
   `origin.kind` が `human` の行の `message.content` と、ターンの途中に送った発言の `type` が `attachment` で
   `attachment.type` が `queued_command` の行の `attachment.prompt` にある（どちらも文字列か、`type` が `text` の要素の配列）。
   ほかの行には、ツールの結果、ほかの担当の報告、会話の圧縮の要約（言い換えた引用を含む）も入り、`human` の行にもコマンドの
-  出力（`<` で始まる）が入るので、`grep` で文字列を探すだけでは確かめにならない。引用の文を 1 つのファイルに書き（シェルの
-  引用符と食い違わないため）、次で探す:
+  出力や IDE の通知（`<` で始まる要素）が入るので、`grep` で文字列を探すだけでは確かめにならない。引用の文を「…」の印を
+  含めてそのまま 1 つのファイルに書き（シェルの引用符と食い違わないため）、次で探す:
 
   ```bash
-  jq -r --rawfile q <引用の文のファイル> '
-    def text_of:
-      if type == "string" then . else map(select(.type == "text") | .text) | join("\n") end;
-    (if .type == "user" and .origin.kind? == "human" then .message.content
-     elif .type == "attachment" and .attachment.type? == "queued_command"
-       and (.attachment.commandMode // "prompt") == "prompt"
-       and (.attachment.origin.kind? // "human") == "human" then .attachment.prompt
-     else empty end | text_of) as $t
-    | select(($t | startswith("<") | not) and ($t | contains($q | rtrimstr("\n"))))
-    | "\(input_filename) \(.timestamp) \(.timestamp[0:19] + "Z" | fromdate + 32400 | strftime("%Y-%m-%d %H:%M JST"))\n\($t)\n---"
+  jq -rR --rawfile q <引用の文のファイル> '
+    ($q | rtrimstr("\n")) as $q
+    | ($q | split("…") | map(select(test("\\S")))) as $parts
+    | if $parts == [] then "引用の文が空\n" | halt_error(1) else . end
+    | def text_of:
+        (if type == "string" then [.] else map(select(.type == "text") | .text) end)
+        | map(if test("<command-args>") then capture("<command-args>(?<a>.*?)</command-args>"; "s").a
+              elif startswith("<") then empty else . end)
+        | join("\n");
+      def in_order($s): reduce $parts[] as $p ($s; if . == null then null
+        else split($p) as $x | if ($x | length) < 2 then null else ($x[1:] | join($p)) end end) != null;
+      fromjson? | select(type == "object")
+      | (if .type == "user" and .origin.kind? == "human" then .message.content
+         elif .type == "attachment" and .attachment.type? == "queued_command"
+           and (.attachment.commandMode // "prompt") == "prompt"
+           and (.attachment.origin.kind? // "human") == "human" then .attachment.prompt
+         else empty end | text_of) as $t
+      | select($t | in_order(.))
+      | "\(input_filename) \(.timestamp) \(.timestamp[0:19] + "Z" | fromdate + 32400 | strftime("%Y-%m-%d %H:%M JST"))\n\($t)\n---"
   ' <記録の .jsonl>
   ```
 
-  出力は、見つかった発言ごとに、記録のパス、`timestamp`、JST の日時と、発言の全文を出す。添えられた `timestamp` の発言が
-  出て、引用の両端が全文の文の区切り（句点、改行、発言の端）か「…」の印に当たれば、引用として書く（文の途中で切って印の
-  無い引用は、後半の条件や否定を落としうる）。「…」のある引用は、印で切った部分ごとに探し、どの部分も同じ発言（同じ
-  `timestamp`）に、引用と同じ順で出ることを見る。これを満たさないとき、記録が添えられていないとき、記録が読めないときは、
-  「」で括らず要約として書き、食い違いを報告の「確認の結果」の「前提」に書く
+  コマンドは、引用を「…」で切った部分がどれも同じ発言に同じ順で出る発言ごとに、記録のパス、`timestamp`、JST の日時と、
+  発言の全文を出す（`-R` と `fromjson?` は、書きかけの行で後のファイルを読まずに止まらないため）。添えられた `timestamp`
+  の発言が出て、引用の両端が全文の文の区切り（「。」「？」「！」、改行、発言の端）か「…」の印に当たれば、引用として書く
+  （文の途中で切って印の無い引用は、後半の条件や否定を落としうる）。これを満たさないとき、記録が添えられていないとき、
+  記録が読めないときは、「」で括らず要約として書き、食い違いを報告の「確認の結果」の「前提」に書く
 - ADR や issue に書くユーザーの言葉は、引用は `「<引用>」（ユーザー <日付>）`、要約は括らずに `<要約>（ユーザー <日付>）` と書く。
   日付は JST で書く（上のコマンドが出す。記録の `timestamp` は UTC で、JST の 9 時より前の発言は UTC では前の日になる）。
   分からなければ「日付不明」と書く
@@ -348,11 +357,12 @@ crate は main で変わっていない」と報告したが、main は同じ cr
   ユーザーの言葉は依頼に書いたものしか届かない（会話の記録のファイルは読める）
 - 依頼と追加の指示でユーザーの言葉（判断、承認、案）を「」で括って引用するときは、会話の記録の `.jsonl` のパスと、その発言の
   `timestamp` を添え、記録からそのままコピーする（語尾や後半を変えない。長ければ要る部分だけを引用し、省いたところに「…」を
-  付ける）。記録は `~/.claude/projects/<cwd の / を - にした名前>/` の下に会話ごとにあり（ファイル名の ID は `Claude-Session:`
-  の ID とは別）、前の会話の発言も入る。パスと `timestamp` は、受ける側の「どの依頼でも守ること」の `jq` のコマンドの
-  `<記録の .jsonl>` にそのディレクトリの `*.jsonl` を渡して引く。記録からコピーしない言葉は「」で括らず、
-  `<要約>（ユーザー <日付> の判断の要約）` と書く（日付は JST）。言い換えを「」で括ると、受ける側がユーザーの発言として ADR に
-  コピーする（2026-10-29 に xlc の依頼が、ユーザーの発言の語尾を変え後半を落として括った）
+  付ける）。記録は `~/.claude/projects/` の下に、会話を始めたディレクトリ（worktree を含む）ごとのディレクトリに会話ごとの
+  ファイルで置かれ（ファイル名の ID は `Claude-Session:` の ID とは別）、前の会話の発言も入る。パスと `timestamp` は、
+  受ける側の「どの依頼でも守ること」の `jq` のコマンドの `<記録の .jsonl>` に `~/.claude/projects/*/*.jsonl` を渡して引く。
+  記録からコピーしない言葉は「」で括らず、`<要約>（ユーザー <日付> の判断の要約）` と書く（日付は JST）。言い換えを「」で
+  括ると、受ける側がユーザーの発言として ADR にコピーする（2026-10-29 に xlc の依頼が、ユーザーの発言の語尾を変え後半を
+  落として括った）
 - 「変える範囲」には、issue の作成と追記を含めると書く。担当が作業中に見つけた別のトピックを、範囲の外だとして報告にだけ
   残さないため
 - 前提: 依頼が事実として使う値と前提は、「前提」の欄に 1 行に 1 つ書き、「何をするか」の本文には書かない（両方に
