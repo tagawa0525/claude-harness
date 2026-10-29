@@ -152,6 +152,19 @@ pub const REQUIRED_SECTIONS: [Section; 3] = [
     DECISION_SECTION,
 ];
 
+/// 必須でないが、決めた時点の文脈を書く節（MADR の Decision Drivers と Pros and Cons of the Options）。確定した後は
+/// 必須の節と同じく凍結する（ADR-0067）。
+pub const DECIDED_CONTEXT_SECTIONS: [Section; 2] = [
+    Section {
+        ja: "決定の要因",
+        en: "Decision Drivers",
+    },
+    Section {
+        ja: "各案の長所と短所",
+        en: "Pros and Cons of the Options",
+    },
+];
+
 /// 推奨の節。
 pub const RECOMMENDED_SECTIONS: [Section; 2] = [
     Section {

@@ -5,9 +5,9 @@ use std::fmt;
 
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
-    ADR_DIR, AMENDABLE_KEYS, DECISION_SECTION, KEYS, Kind, OPTIONAL_KEYS, RECOMMENDED_SECTIONS,
-    REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, recommended_sections, record_name,
-    record_number,
+    ADR_DIR, AMENDABLE_KEYS, DECIDED_CONTEXT_SECTIONS, DECISION_SECTION, KEYS, Kind, OPTIONAL_KEYS,
+    RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, recommended_sections,
+    record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -654,13 +654,13 @@ fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Fo
     }
 }
 
-/// 決めた時点の記録（フロントマターの直せないキー、表題、必須の 3 節）が変わったか（確定した ADR に許す変更を除いて比べる）。
+/// 決めた時点の記録（フロントマターの直せないキー、表題、必須の 3 節、決定の要因、各案の長所と短所）が変わったか（確定した ADR に許す変更を除いて比べる）。
 pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
 }
 
 /// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）を除いたフロントマターと、表題、必須の節
-/// （[`REQUIRED_SECTIONS`]）の行。推奨の節（[`RECOMMENDED_SECTIONS`]。帰結と確認）は、決定と理由の下の 3 段目に
+/// （[`REQUIRED_SECTIONS`]）と決めた時点の文脈の節（[`DECIDED_CONTEXT_SECTIONS`]）の行。推奨の節（[`RECOMMENDED_SECTIONS`]。帰結と確認）は、決定と理由の下の 3 段目に
 /// あっても今の事実を書く節なので除く。補足、決定の変更を書き留める節、ほかの 2 段目の節も除く。末尾の空行は除く
 /// （節を足す前の空行は本文の変更ではない）。見出しはコードブロックの外で探す。コードブロックが閉じていなければ、全文で
 /// 比べる（その違反は check が示す）。
@@ -706,7 +706,8 @@ fn body(text: &str) -> Vec<&str> {
                     in_required = true;
                     in_decision = false;
                 } else if line.starts_with("# ") || line.starts_with("## ") {
-                    in_required = named(&REQUIRED_SECTIONS, title);
+                    in_required =
+                        named(&REQUIRED_SECTIONS, title) || named(&DECIDED_CONTEXT_SECTIONS, title);
                     in_decision = named(&[DECISION_SECTION], title);
                 }
                 // 決定と理由の下の帰結と確認だけが今の事実の節（MADR のテンプレートの置き方）

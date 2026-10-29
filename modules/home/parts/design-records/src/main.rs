@@ -11,8 +11,9 @@
 //!   design-records check [--changed] [FILE]...
 //!                                      docs/adr の ADR と docs/issues の番号を検査する。FILE（リポジトリの直下からの
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
-//!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、検討
-//!                                      した案、決定と理由、直せないフロントマターのキー）の変更を見る。FILE か
+//!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、決定
+//!                                      の要因、検討した案、決定と理由、各案の長所と短所、直せないフロントマターの
+//!                                      キー）の変更を見る。FILE か
 //!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
 //!                                      ときも。pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
@@ -258,8 +259,8 @@ fn body_changes(
         {
             format!(
                 "the decided sections changed although the ADR is {status} on {shown}; \
-                 the title, the front matter other than {}, and the context, considered options \
-                 and decision outcome \
+                 the title, the front matter other than {}, and the context, decision drivers, \
+                 considered options, decision outcome and pros and cons of the options \
                  record the decision as made, so fix only typos, grammar, markup and broken links there \
                  (consequences, confirmation and notes may follow the current facts). \
                  To change part of the decision, edit the decision outcome and add a dated \
