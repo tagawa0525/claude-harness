@@ -94,12 +94,12 @@ out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "51|main|trial-job|PENDING|10005|10:00|N/A|trial | #1 | p | $C")" "$QUEUE")
 assert_not_contains "$out" "ORDER:"
 
-it "slurm-queue: 走っているジョブ、別のパーティションのジョブ、区分の無いジョブとは順を比べない"
+it "slurm-queue: 走っているジョブ、別のパーティションのジョブ、後ろで待つ区分の無いジョブとは順を比べない"
 out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "60|main|trial-run|RUNNING|10000|10:00|N/A|trial | #1 | p | $C" \
   "61|main|record-pend|PENDING|10000|10:00|N/A|record | #2 | p | $C" \
   "62|timed|trial-timed|PENDING|10050|10:00|N/A|trial | #1 | p | $C" \
-  "63|main|old|PENDING|10050|10:00|N/A|$C")" "$QUEUE")
+  "63|main|old|PENDING|9990|10:00|N/A|$C")" "$QUEUE")
 assert_not_contains "$out" "ORDER:"
 
 it "slurm-queue: 並べるコマンドで後ろに回る、区分の無い待っているジョブを ORDER: の行に挙げる"
@@ -107,7 +107,7 @@ out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
   "90|main|old|PENDING|10060|10:00|N/A|$C" \
   "91|main|t|PENDING|10050|10:00|N/A|trial | #1 | p | $C" \
   "92|main|r|PENDING|10040|10:00|N/A|record | #1 | p | $C")" "$QUEUE")
-assert_contains "$out" "ORDER: main: 92（record）が 91（trial）の後ろで待っている。scontrol top 92,91（区分の無い 90 は後ろに回る）"
+assert_contains "$out" "ORDER: main: 91（trial）が区分の無い 90 の後ろ、92（record）が 91（trial）の後ろで待っている。scontrol top 92,91（区分の無い 90 は後ろに回る）"
 
 it "slurm-queue: 走り始めたジョブ（CONFIGURING、COMPLETING）は、走っているジョブと同じく待っているジョブより前に並べる"
 out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \

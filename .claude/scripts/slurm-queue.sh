@@ -20,8 +20,8 @@
 #
 # 並べる列は、区分のある動かせる待っているジョブをすべて、区分の順、同じ区分は今の順に並べたもの（--first のジョブは
 # 自分の区分の先頭）。scontrol top は渡したジョブをその順に先頭へ出すので、1 つの列で渡す（ジョブごとに分けると最後に
-# 出したジョブが先頭になり、1 本だけ出すと、その前にいた上の区分のジョブも追い越す）。列が今の順と同じなら、一覧は
-# ORDER: を出さず、--order は何も出さない。列に入れないジョブは列のジョブの後ろに回るので、区分の無い待っているジョブを
+# 出したジョブが先頭になり、1 本だけ出すと、その前にいた上の区分のジョブも追い越す）。列が今の順と同じで、区分の無い
+# 待っているジョブが列のジョブより前にいなければ、一覧は ORDER: を出さず、--order は何も出さない。列に入れないジョブは列のジョブの後ろに回るので、区分の無い待っているジョブを
 # ORDER: の行の末尾に挙げる。
 #
 # コメントの形は slurm-run.sh が書く「<区分> | <参照> | <目的> | <連絡先>」。参照と目的は | を含まないので、
@@ -91,15 +91,21 @@ BEGIN {
   if (state != "PENDING" || part != "main" || unmovable) next
   if (class == "-") {
     unclassed = unclassed (unclassed == "" ? "" : ",") job
+    last_unclassed = job
     next
   }
-  # 先に並ぶ、より下の区分のジョブのうち最も近いもの
+  # 区分の無いジョブが前にいれば、列を渡すと列のジョブが前に出るので、並べ直しが要る
+  if (last_unclassed != "") unclassed_ahead = 1
+  # 先に並ぶ、より下の区分のジョブのうち最も近いもの（無ければ、先に並ぶ区分の無いジョブ）
+  found = 0
   for (k = count; k >= 1; k--) {
     if (rank[pend_class[k]] > rank[class]) {
       behind = behind (behind == "" ? "" : "、") sprintf("%s（%s）が %s（%s）の後ろ", job, class, pend_job[k], pend_class[k])
+      found = 1
       break
     }
   }
+  if (!found && last_unclassed != "") behind = behind (behind == "" ? "" : "、") sprintf("%s（%s）が区分の無い %s の後ろ", job, class, last_unclassed)
   count++
   pend_job[count] = job
   pend_class[count] = class
@@ -120,7 +126,7 @@ END {
     list = list (i == 1 ? "" : ",") pend_job[idx[i]]
     now = now (i == 1 ? "" : ",") pend_job[i]
   }
-  if (list == now) exit
+  if (list == now && !unclassed_ahead) exit
   if (order) {
     print list
     exit
