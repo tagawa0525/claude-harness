@@ -159,9 +159,21 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
         .current_dir(dir)
         .args(["-c", "core.hooksPath=/dev/null"])
         .args(args);
-    isolate(&mut command);
-    // 手元の全体の設定（nix の sandbox には無い）に頼らない。init と clone の既定ブランチ（bare のリモートの HEAD）を
-    // main にし、clone や init をする場所（リポジトリの外）でも名前を決める
+    isolate_git(&mut command);
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// `command` の中で走る git を、手元の環境の GIT_* から切り離し、全体の設定（nix の sandbox には無い）に頼らない
+/// 設定を渡す。init と clone の既定ブランチ（bare のリモートの HEAD）を main にし、clone や init をする場所
+/// （リポジトリの外）でも名前を決める
+fn isolate_git(command: &mut Command) {
+    isolate(command);
     for (i, (key, value)) in [
         ("init.defaultBranch", "main"),
         ("user.name", "t"),
@@ -175,13 +187,6 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
             .env(format!("GIT_CONFIG_VALUE_{i}"), value);
     }
     command.env("GIT_CONFIG_COUNT", "3");
-    let output = command.output().unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap()
 }
 
 /// CLI が作るコミットとタグのための、リポジトリの設定（署名と hook は使わない）
@@ -948,22 +953,19 @@ fn check_warns_when_a_tag_reserves_the_number_for_another_record() {
         "docs/adr/0002-use-b.md: warning: number 0002 is reserved for `use-other` by tag adr-0002; \
          if another record took the number, run `design-records renumber 2`; \
          if this record is the reserved one and its file name was renamed, \
-         run `git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}'` \
-         (when origin exists, run instead `old=$(git rev-parse refs/tags/adr-0002) && \
-         git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}' && \
-         { git push --force-with-lease=refs/tags/adr-0002:\"$old\" origin refs/tags/adr-0002 || \
-         { git update-ref refs/tags/adr-0002 \"$old\"; false; }; }`)\n"
+         run `git tag -f -a adr-0002 -m 'use-b' 'adr-0002^{}'`\n"
     );
 }
 
-/// check が示す、origin のある場合の打ち直しのコマンド（警告の `run instead `…`` の中）
+/// check が示す打ち直しのコマンド（警告の `renamed, run `…`` の中）
 fn retag_command_for_origin(t: &TempRepo) -> String {
     let out = t.run(&["check"]);
     let text = stdout(&out);
+    let marker = "renamed, run `";
     let start = text
-        .find("run instead `")
-        .unwrap_or_else(|| panic!("no retag command for origin: {text}"))
-        + "run instead `".len();
+        .find(marker)
+        .unwrap_or_else(|| panic!("no retag command: {text}"))
+        + marker.len();
     let len = text[start..].find('`').unwrap();
     text[start..start + len].to_string()
 }
@@ -972,10 +974,7 @@ fn retag_command_for_origin(t: &TempRepo) -> String {
 fn sh_in(t: &TempRepo, command: &str) -> bool {
     let mut sh = Command::new("sh");
     sh.current_dir(&t.dir).args(["-c", command]);
-    isolate(&mut sh);
-    // 手元の全体の設定（署名など。nix の sandbox には無い）に頼らない
-    sh.env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1");
+    isolate_git(&mut sh);
     sh.output().unwrap().status.success()
 }
 
@@ -1024,25 +1023,6 @@ fn retag_command_for_origin_keeps_a_reservation_another_clone_moved() {
     // 手元のタグは打つ前に戻り、check は予約の食い違いを示し続ける
     assert_eq!(t.git(&["rev-parse", "refs/tags/adr-0002"]), before);
     assert_eq!(retag_command_for_origin(&t), command);
-}
-
-#[test]
-fn retag_command_for_origin_is_rejected_by_the_lease_not_an_earlier_step() {
-    let t = renamed_reserved_record_with_remote("retag-origin-lease");
-    let other = t.clone_remote("other");
-    git_in(
-        &other,
-        &["tag", "-f", "-a", "adr-0002", "-m", "use-c", "adr-0002^{}"],
-    );
-    git_in(
-        &other,
-        &["push", "-q", "--force", "origin", "refs/tags/adr-0002"],
-    );
-    // push の前までを実行すると手元のタグが打ち直される（失敗が前の段で起きていない）
-    let command = retag_command_for_origin(&t);
-    let before_push = &command[..command.find(" && {").unwrap()];
-    assert!(sh_in(&t, before_push), "{before_push}");
-    assert_eq!(t.tag_message("adr-0002"), "use-b");
 }
 
 #[test]
