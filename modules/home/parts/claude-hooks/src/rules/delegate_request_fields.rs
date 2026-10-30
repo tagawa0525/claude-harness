@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn premise_qualifier_may_contain_any_parentheses() {
-        // 限定の中の括弧は、入れ子でも、対応の取れない文字としての括弧でも、行末の `）:` までを限定とする
+        // 限定の中の 1 段の入れ子の括弧と、文字として挙げた括弧と、閉じ忘れの括弧は、見出しを妨げない
         for heading in [
             "前提（コードの行は main abc1234。親が主な行（`HistoryFile` 688 行目）を確かめた）:\n",
             "前提（a（b）c）:\n",
@@ -222,6 +222,20 @@ mod tests {
         ] {
             let prompt = COMPLETE.replace("前提:\n", heading);
             assert!(check(&prompt).is_empty(), "{heading}");
+        }
+    }
+
+    #[test]
+    fn line_whose_qualifier_closes_before_more_text_is_not_a_heading() {
+        // 限定が閉じた後に本文が続く行は、後ろに `）:` があっても見出しにしない
+        for line in [
+            "前提（親が確かめた範囲）は下のとおり（出典は ADR-0061）:\n",
+            "前提（a（b）c）d）:\n",
+            "前提（a）は b\n",
+        ] {
+            let prompt = COMPLETE.replace("前提:\n", line);
+            let findings = check(&prompt);
+            assert!(deny_reason(&findings).contains("欠けた欄: 前提"), "{line}");
         }
     }
 
