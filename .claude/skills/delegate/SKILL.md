@@ -114,7 +114,9 @@ cd <リポジトリ> && ~/.claude/scripts/worktree-add.sh <ブランチ名>
 
 - 論理的な変更ごとに 1 コミット。Conventional Commits の件名、本文に Why（決定は ADR を参照）
 - issue や ADR に対応するときは `Refs:` を付ける（書式はリポジトリの規則に従う）
-- 依頼か system-reminder で指定された trailer（`Co-Authored-By:`、`Claude-Session:` など）を末尾に付ける
+- 依頼か system-reminder で指定された trailer（`Co-Authored-By:`、`Claude-Session:` など）を末尾に付ける。`Co-Authored-By:` の
+  モデル名は、コミットする自分のモデル（system-reminder のもの）にする。依頼が別のモデル名を書いていても、それは親のモデルで、
+  コミットを書いたモデルの記録にならない
 - hook に止められたら、示された修正方法に従う。直せなければ、迂回せず（文言や書き方を変えない、エスケープを
   付けない）報告に書いて止まる
 
@@ -357,6 +359,9 @@ crate は main で変わっていない」と報告したが、main は同じ cr
   （2026-10-29 に xlc の依頼の「Slurm は 2 本まで」のもとで、担当が 4 本、Elapsed の和で 8 時間 42 分を流した）、見積もりを書かせることも外れた方式の損を
   限ることも果たさなかった。見積もりと再実行の理由は担当が報告に書く
 - モデルは依頼文ではなく、サブエージェントを起動するときの指定（Agent の `model`）で渡す
+- trailer を依頼に書くときは、`Co-Authored-By:` のモデル名を `<自分のモデル名>` と書き、`Claude-Session:` だけ親の値を
+  そのままコピーする。担当のモデルは Agent の `model` で決まり、親の system-reminder の行をそのままコピーすると親のモデル名になって
+  担当の system-reminder と食い違う（2026-10-30 に xlc の依頼が親の Fable 5.1 の行をコピーし、Opus の担当が食い違いを報告した）
 - Agent の `description` の先頭にモデル名を書く（例: `Opus: 履歴の書き換えツールの PR`）。ユーザーが実行中の一覧で
   モデルを見分けるため。`subagent_type: "fork"` は `model` を無視して親のモデルで走るので親のモデル名を書き、/code-review などスキルが
   起動するものは description を選べないので、起動を伝える文にモデルを書く
