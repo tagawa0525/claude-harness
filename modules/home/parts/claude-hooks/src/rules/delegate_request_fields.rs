@@ -9,7 +9,7 @@
 //! - 対象: prompt か依頼のファイルの、空でない最初の行に「/delegate を呼び、」（呼ぶ。、呼んで、）がある呼び出し。定型の
 //!   1 行目がこの句なので、/delegate に触れるだけの prompt（/delegate を調べる依頼、差分の引用）は見ない
 //! - 見出し: 行頭が欄の名前で始まり、直後に `:` か `（…）:` が続く行（`前提:`、`前提（確かめていない）:`）。`（…）` の
-//!   中には括弧を入れてよく（出典を括弧で添える）、対応の取れた最初の `）` の直後に `:` が要る
+//!   中には括弧を入れてよく（出典を括弧で添える）、限定は行の最後の `）:` までとする
 //!
 //! 欄の中身（出典の有無、本文の事実）は判定しない。エスケープはない（欄を足す以外に直す方法が無いため）。
 
@@ -45,30 +45,15 @@ static POINTER: LazyLock<Regex> =
 /// 依頼のファイルの大きさの上限。hook は Agent の呼び出しを待たせるので、依頼文より大きいものを読まない
 const MAX_REQUEST_BYTES: u64 = 1 << 20;
 
-/// 行が欄 `field` の見出しか。限定の `（…）` の中の括弧は入れ子を数えて閉じ、閉じた直後の `:` を見る。
-/// 正規表現で `（[^）]*）` とすると、限定の中の出典の括弧で見出しを見落とす
-fn is_heading(line: &str, field: &str) -> bool {
-    let Some(rest) = line.strip_prefix(field) else {
-        return false;
-    };
-    let Some(inner) = rest.strip_prefix('（') else {
-        return rest.starts_with(':');
-    };
-    let mut depth = 1;
-    for (i, c) in inner.char_indices() {
-        match c {
-            '（' => depth += 1,
-            '）' => {
-                depth -= 1;
-                if depth == 0 {
-                    return inner[i + c.len_utf8()..].starts_with(':');
-                }
-            }
-            _ => {}
-        }
-    }
-    false
-}
+/// 限定の `（…）` は行末の最後の `）:` までとする。`（[^）]*）` にしないのは、限定の中で出典を括弧で添えた
+/// 見出し（`前提（… 688 行目（main）…）:`）を数えないため。括弧の対応も数えない（括弧を文字として挙げた限定や
+/// 閉じ忘れを止めないため）
+static HEADINGS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    FIELDS
+        .iter()
+        .map(|f| Regex::new(&format!(r"(?m)^{f}(?:（.*）)?:")).unwrap())
+        .collect()
+});
 
 fn first_line(text: &str) -> &str {
     text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")
@@ -132,8 +117,9 @@ impl Rule for DelegateRequestFields {
         };
         let missing: Vec<&str> = FIELDS
             .iter()
-            .filter(|f| !request.lines().any(|line| is_heading(line, f)))
-            .copied()
+            .zip(HEADINGS.iter())
+            .filter(|(_, heading)| !heading.is_match(&request))
+            .map(|(f, _)| *f)
             .collect();
         if missing.is_empty() {
             return Vec::new();
@@ -141,7 +127,7 @@ impl Rule for DelegateRequestFields {
         vec![Finding::Deny(format!(
             "/delegate を呼ぶ依頼に定型の欄がそろっていません（{place}）。欠けた欄: {}\n\
              依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）。\n\
-             判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`。括弧の中に出典の括弧を入れてもよく、対応の取れた閉じ括弧の直後にコロンを置きます）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
+             判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`。括弧の中に出典の括弧を入れてもよく、限定は行の最後の「）:」までです）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
              修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt の 1 行目に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
             missing.join("、"),
             FIELDS.join("、"),
