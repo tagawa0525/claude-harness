@@ -208,6 +208,29 @@ mod tests {
     }
 
     #[test]
+    fn premise_qualifier_may_nest_parentheses() {
+        // 限定の中に出典の括弧を入れた見出し（2026-10-30 の xlc の依頼文の形）
+        let prompt = COMPLETE.replace(
+            "前提:\n",
+            "前提（コードの行は main abc1234。親が主な行（`HistoryFile` 688 行目）を確かめた）:\n",
+        );
+        assert!(check(&prompt).is_empty());
+    }
+
+    #[test]
+    fn unbalanced_qualifier_is_not_a_heading() {
+        // 括弧が閉じきらない、または閉じた直後にコロンが無い行は見出しにしない
+        for heading in ["前提（a（b）:\n", "前提（a）は b（c）:\n"] {
+            let prompt = COMPLETE.replace("前提:\n", heading);
+            let findings = check(&prompt);
+            assert!(
+                deny_reason(&findings).contains("欠けた欄: 前提"),
+                "{heading}"
+            );
+        }
+    }
+
+    #[test]
     fn missing_fields_are_denied_by_name() {
         let prompt = COMPLETE
             .replace("前提:\n- y は z（docs/a.md）\n", "")
