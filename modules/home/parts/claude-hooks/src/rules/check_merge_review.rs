@@ -151,8 +151,8 @@ fn mask_hashes(line: &str) -> (String, Vec<String>) {
     (out, words)
 }
 
-/// hunk の消した行と足した行が同じ数で、対の行が 16 進の語を除いて同じなら、足した行の側で変わった語
-fn paired_hash_change(minus: &[&str], plus: &[&str]) -> Option<Vec<String>> {
+/// hunk の消した行と足した行が同じ数で、対の行が 16 進の語を除いて同じなら、変わった語の対（消した側、足した側）
+fn paired_hash_change(minus: &[&str], plus: &[&str]) -> Option<Vec<(String, String)>> {
     if minus.is_empty() || minus.len() != plus.len() {
         return None;
     }
@@ -162,20 +162,14 @@ fn paired_hash_change(minus: &[&str], plus: &[&str]) -> Option<Vec<String>> {
         if m_text != p_text {
             return None;
         }
-        changed.extend(
-            m_words
-                .into_iter()
-                .zip(p_words)
-                .filter(|(a, b)| a != b)
-                .map(|(_, b)| b),
-        );
+        changed.extend(m_words.into_iter().zip(p_words).filter(|(a, b)| a != b));
     }
     Some(changed)
 }
 
-/// `git diff -U0` の出力（1 ファイル分）が、hunk の対の行で 16 進の語だけを変えたものなら、新しい側の語。
+/// `git diff -U0` の出力（1 ファイル分）が、hunk の対の行で 16 進の語だけを変えたものなら、変わった語の対。
 /// hunk の無い変更（モードだけ、バイナリ）は None
-fn replaced_hashes(diff: &str) -> Option<Vec<String>> {
+fn replaced_hashes(diff: &str) -> Option<Vec<(String, String)>> {
     let (mut minus, mut plus) = (Vec::new(), Vec::new());
     let mut words = Vec::new();
     let mut hunks = 0;
@@ -218,8 +212,20 @@ fn is_dvc_record(path: &str) -> bool {
     path.rsplit('/').next() == Some("dvc.lock") || path.ends_with(".dvc")
 }
 
-/// from から to までに変わったファイルのうち、挙動を変えうるもの。git diff が失敗したら None
-fn behavior_changes(dir: &Path, from: &str, to: &str) -> Option<Vec<String>> {
+/// 16 進の語の対が rebase の付け替えか。`commit-refs remap` は、rebase で書き換わって消えたコミット（先端の祖先でない）の
+/// hash を、それに当たるブランチのコミット（先端の祖先で、既定ブランチの祖先でない）の hash にする。依存の rev、既定ブランチの
+/// コミットや別のブランチのコミットへの差し替えは挙動を変えうるので含めない
+fn is_rebase_remap(dir: &Path, default: &str, tip: &str, old: &str, new: &str) -> bool {
+    let on_branch = resolve_commit(dir, new)
+        .is_some_and(|c| is_ancestor(dir, &c, tip) && !is_ancestor(dir, &c, default));
+    let gone = resolve_commit(dir, old).is_none_or(|c| !is_ancestor(dir, &c, tip));
+    on_branch && gone
+}
+
+/// from から to（ブランチの先端）までに変わったファイルのうち、挙動を変えうるもの。git diff が失敗したら None
+fn behavior_changes(dir: &Path, default: &str, from: &str, to: &str) -> Option<Vec<String>> {
+    // 同じ hash の対は記録の中で何度も現れるので、git を起こす判定は対ごとに 1 回にする
+    let mut judged: std::collections::HashMap<(String, String), bool> = Default::default();
     let names = git::git(
         dir,
         &[
@@ -254,12 +260,12 @@ fn behavior_changes(dir: &Path, from: &str, to: &str) -> Option<Vec<String>> {
                 &format!(":(top,literal){path}"),
             ],
         )?;
-        // `commit-refs remap` の付け替えは、rebase で書き換わったコミットの hash をブランチのコミットの hash にする。
-        // 新しい語がブランチの先端の祖先のコミットでなければ、依存の rev や定数の差し替えなので挙動に数える
-        let remap = replaced_hashes(&diff).is_some_and(|words| {
-            words
-                .iter()
-                .all(|w| resolve_commit(dir, w).is_some_and(|commit| is_ancestor(dir, &commit, to)))
+        let remap = replaced_hashes(&diff).is_some_and(|pairs| {
+            pairs.into_iter().all(|pair| {
+                *judged
+                    .entry(pair)
+                    .or_insert_with_key(|(old, new)| is_rebase_remap(dir, default, to, old, new))
+            })
         });
         if !remap {
             out.push(path.to_string());
@@ -343,7 +349,7 @@ fn check_branch(
     if reviewed == tip {
         return (None, None);
     }
-    let Some(changed) = behavior_changes(dir, &reviewed, &tip) else {
+    let Some(changed) = behavior_changes(dir, default, &reviewed, &tip) else {
         return (
             Some(format!(
                 "{hash} から {branch} の先端までの変更を読めません（git diff が失敗）"
@@ -598,7 +604,7 @@ mod tests {
         let repo = Repo::new("after-ok");
         let gone = repo.gone_commit();
         let reviewed = repo.commit_on_branch(&[("src/b.rs", &format!("// see {}\n", &gone[..9]))]);
-        // remap は、rebase で書き換わったコミットの hash をブランチのコミットの hash に付け替える
+        // remap は、rebase で書き換わって消えたコミットの hash をブランチのコミットの hash に付け替える
         let remapped = format!("// see {}\n", &reviewed[..9]);
         repo.commit_on_branch(&[
             ("docs/notes.md", "notes\n"),
@@ -837,7 +843,14 @@ mod tests {
     #[test]
     fn replaced_hashes_needs_paired_hunks() {
         let remap = "diff --git a/r.md b/r.md\n--- a/r.md\n+++ b/r.md\n@@ -3 +3 @@\n-at b7e01d512 and fe00aa111\n+at 0123abcd4 and fe00aa111\n";
-        assert_eq!(replaced_hashes(remap), Some(vec!["0123abcd4".to_string()]));
+        assert_eq!(
+            replaced_hashes(remap),
+            Some(vec![("b7e01d512".to_string(), "0123abcd4".to_string())])
+        );
+        // 複数の hunk の対を集める
+        let two =
+            "@@ -1 +1 @@\n-a b7e01d512\n+a 0123abcd4\n@@ -5 +5 @@\n-b fe00aa111\n+b fe00aa222\n";
+        assert_eq!(replaced_hashes(two).map(|p| p.len()), Some(2));
         let text = "--- a/r.md\n+++ b/r.md\n@@ -3 +3 @@\n-at b7e01d512\n+on 0123abcd4\n";
         assert_eq!(replaced_hashes(text), None);
         let added = "--- a/r.md\n+++ b/r.md\n@@ -3,0 +4 @@\n+at 0123abcd4\n";
