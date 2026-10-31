@@ -120,11 +120,12 @@ fn is_lower_hex(c: char) -> bool {
     c.is_ascii_digit() || ('a'..='f').contains(&c)
 }
 
-/// 16 進の語（コミットの hash）を印に置き換えた行。語は、前後が英数字と `_` でなく、a〜f を 1 字以上含む 7〜64 桁の
-/// 小文字の 16 進。数字だけの語は数と見分けられないので置き換えない（数の変更を hash の付け替えに数えない）
-fn mask_hashes(line: &str) -> String {
+/// 16 進の語（コミットの hash）を印に置き換えた行と、置き換えた語。語は、前後が英数字と `_` でなく、a〜f を 1 字以上
+/// 含む 7〜64 桁の小文字の 16 進。数字だけの語は数と見分けられないので置き換えない（数の変更を hash の付け替えに数えない）
+fn mask_hashes(line: &str) -> (String, Vec<String>) {
     let chars: Vec<char> = line.chars().collect();
     let mut out = String::new();
+    let mut words = Vec::new();
     let mut i = 0;
     while i < chars.len() {
         if is_lower_hex(chars[i]) && (i == 0 || !is_word(chars[i - 1])) {
@@ -137,6 +138,7 @@ fn mask_hashes(line: &str) -> String {
             if whole && (7..=64).contains(&run.len()) && run.iter().any(|c| c.is_ascii_alphabetic())
             {
                 out.push('\0');
+                words.push(run.iter().collect());
             } else {
                 out.extend(run);
             }
@@ -146,28 +148,41 @@ fn mask_hashes(line: &str) -> String {
         out.push(chars[i]);
         i += 1;
     }
-    out
+    (out, words)
 }
 
-/// hunk の消した行と足した行が同じ数で、対の行が 16 進の語を除いて同じか
-fn paired_hash_change(minus: &[&str], plus: &[&str]) -> bool {
-    !minus.is_empty()
-        && minus.len() == plus.len()
-        && minus
-            .iter()
-            .zip(plus)
-            .all(|(m, p)| mask_hashes(m) == mask_hashes(p))
+/// hunk の消した行と足した行が同じ数で、対の行が 16 進の語を除いて同じなら、足した行の側で変わった語
+fn paired_hash_change(minus: &[&str], plus: &[&str]) -> Option<Vec<String>> {
+    if minus.is_empty() || minus.len() != plus.len() {
+        return None;
+    }
+    let mut changed = Vec::new();
+    for (m, p) in minus.iter().zip(plus) {
+        let ((m_text, m_words), (p_text, p_words)) = (mask_hashes(m), mask_hashes(p));
+        if m_text != p_text {
+            return None;
+        }
+        changed.extend(
+            m_words
+                .into_iter()
+                .zip(p_words)
+                .filter(|(a, b)| a != b)
+                .map(|(_, b)| b),
+        );
+    }
+    Some(changed)
 }
 
-/// `git diff -U0` の出力（1 ファイル分）が、hunk の対の行で 16 進の語だけを変えたものか（`commit-refs remap` の
-/// 付け替え）。hunk の無い変更（モードだけ、バイナリ）は含めない
-fn only_hash_changes(diff: &str) -> bool {
+/// `git diff -U0` の出力（1 ファイル分）が、hunk の対の行で 16 進の語だけを変えたものなら、新しい側の語。
+/// hunk の無い変更（モードだけ、バイナリ）は None
+fn replaced_hashes(diff: &str) -> Option<Vec<String>> {
     let (mut minus, mut plus) = (Vec::new(), Vec::new());
+    let mut words = Vec::new();
     let mut hunks = 0;
     for line in diff.lines() {
         if line.starts_with("@@") {
-            if hunks > 0 && !paired_hash_change(&minus, &plus) {
-                return false;
+            if hunks > 0 {
+                words.extend(paired_hash_change(&minus, &plus)?);
             }
             minus.clear();
             plus.clear();
@@ -176,13 +191,15 @@ fn only_hash_changes(diff: &str) -> bool {
             // 最初の hunk の前はファイルの見出し（`--- a/x` も含む）。`\ No newline at end of file` は行でない
         } else if let Some(r) = line.strip_prefix('-') {
             minus.push(r);
-        } else if let Some(r) = line.strip_prefix('+') {
-            plus.push(r);
         } else {
-            return false;
+            plus.push(line.strip_prefix('+')?);
         }
     }
-    hunks > 0 && paired_hash_change(&minus, &plus)
+    if hunks == 0 {
+        return None;
+    }
+    words.extend(paired_hash_change(&minus, &plus)?);
+    Some(words)
 }
 
 /// レビューの後に変えても挙動を変えない文書か。スキルと hook の文書（`.claude` の下、`CLAUDE.md`、`SKILL.md`）と
@@ -237,7 +254,14 @@ fn behavior_changes(dir: &Path, from: &str, to: &str) -> Option<Vec<String>> {
                 &format!(":(top,literal){path}"),
             ],
         )?;
-        if !only_hash_changes(&diff) {
+        // `commit-refs remap` の付け替えは、rebase で書き換わったコミットの hash をブランチのコミットの hash にする。
+        // 新しい語がブランチの先端の祖先のコミットでなければ、依存の rev や定数の差し替えなので挙動に数える
+        let remap = replaced_hashes(&diff).is_some_and(|words| {
+            words
+                .iter()
+                .all(|w| resolve_commit(dir, w).is_some_and(|commit| is_ancestor(dir, &commit, to)))
+        });
+        if !remap {
             out.push(path.to_string());
         }
     }
@@ -265,7 +289,9 @@ fn undecided_reason(why: Option<Undecided>) -> String {
     let what = match why {
         None => "本文が -m / -F で渡されていない".to_string(),
         Some(Undecided::Expanded(opt)) => format!("{opt} の値をシェルが展開する"),
-        Some(Undecided::Unreadable(p)) => format!("-F {p} を読めない"),
+        Some(Undecided::Unreadable(p)) => format!(
+            "-F {p} を読めない。同じコマンドの前段でファイルを書いても、hook はその前に本文を読むので、ファイルを書く呼び出しと git merge の呼び出しを分けてください"
+        ),
     };
     format!(
         "git merge の本文を読めないので、レビューの記録を確かめられません（{what}）。本文を書いたまま -m '…'、\
@@ -765,29 +791,32 @@ mod tests {
 
     #[test]
     fn masks_only_whole_hex_words_with_a_letter() {
+        let masked = |l: &str| mask_hashes(l).0;
+        assert_eq!(masked("see b7e01d512。"), masked("see 0123abcd4。"));
         assert_eq!(
-            mask_hashes("see b7e01d512。"),
-            mask_hashes("see 0123abcd4。")
+            mask_hashes("see b7e01d512。").1,
+            vec!["b7e01d512".to_string()]
         );
         // 数字だけの語は数の変更と見分けられない
-        assert_ne!(mask_hashes("k = 1234567"), mask_hashes("k = 1234568"));
+        assert_ne!(masked("k = 1234567"), masked("k = 1234568"));
         // 語の一部は置き換えない
-        assert_ne!(mask_hashes("xabcdef12"), mask_hashes("xabcdef13"));
-        assert_ne!(mask_hashes("abc12"), mask_hashes("abc13"));
+        assert_ne!(masked("xabcdef12"), masked("xabcdef13"));
+        assert_ne!(masked("abc12"), masked("abc13"));
     }
 
     #[test]
-    fn hash_only_diff_needs_paired_hunks() {
-        let remap = "diff --git a/r.md b/r.md\n--- a/r.md\n+++ b/r.md\n@@ -3 +3 @@\n-at b7e01d512\n+at 0123abcd4\n";
-        assert!(only_hash_changes(remap));
+    fn replaced_hashes_needs_paired_hunks() {
+        let remap = "diff --git a/r.md b/r.md\n--- a/r.md\n+++ b/r.md\n@@ -3 +3 @@\n-at b7e01d512 and fe00aa111\n+at 0123abcd4 and fe00aa111\n";
+        assert_eq!(replaced_hashes(remap), Some(vec!["0123abcd4".to_string()]));
         let text = "--- a/r.md\n+++ b/r.md\n@@ -3 +3 @@\n-at b7e01d512\n+on 0123abcd4\n";
-        assert!(!only_hash_changes(text));
+        assert_eq!(replaced_hashes(text), None);
         let added = "--- a/r.md\n+++ b/r.md\n@@ -3,0 +4 @@\n+at 0123abcd4\n";
-        assert!(!only_hash_changes(added));
+        assert_eq!(replaced_hashes(added), None);
         // hunk の無い変更（モードだけ、バイナリ）
-        assert!(!only_hash_changes(
-            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\n"
-        ));
-        assert!(!only_hash_changes(""));
+        assert_eq!(
+            replaced_hashes("diff --git a/x b/x\nold mode 100644\nnew mode 100755\n"),
+            None
+        );
+        assert_eq!(replaced_hashes(""), None);
     }
 }
