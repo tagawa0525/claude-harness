@@ -80,6 +80,7 @@ mod block_main_commit;
 mod block_no_verify;
 mod block_secret_commit;
 mod check_merge_body_ja_terms;
+mod check_merge_review;
 mod delegate_request_fields;
 mod guard_branch_base;
 mod guard_exclusive_slurm;
@@ -116,6 +117,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &pre_merge_check::PreMergeCheck,
         &pre_git_merge_check::PreGitMergeCheck,
         &check_merge_body_ja_terms::CheckMergeBodyJaTerms,
+        &check_merge_review::CheckMergeReview,
         &guard_git_merge::GuardGitMerge,
         &guard_git_stash::GuardGitStash,
         &guard_git_reset_hard::GuardGitResetHard,
