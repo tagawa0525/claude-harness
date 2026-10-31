@@ -30,7 +30,7 @@ const JA_TERMS_MESSAGE: &str = "CLAUDE_HOOKS_JA_TERMS_MESSAGE";
 
 /// 本文を判定できない理由
 #[derive(Debug, PartialEq)]
-enum Undecided {
+pub(super) enum Undecided {
     /// シェルが展開する値（`-m "$MSG"`、`-F "$TMPDIR/m"`）。オプションの名前
     Expanded(&'static str),
     /// 読めない `-F` のファイル
@@ -58,7 +58,7 @@ fn message_option(item: &Item) -> Option<MessageOption> {
 /// option_read_message）: `-m` の前は空行、`-F` の前は改行 1 つ（どちらも先に本文があるときだけ）、
 /// `--no-message` はそれまでを消す。`-F` は `-` も名前のファイルとして、dir からの相対で読む（`~` は HOME）。
 /// git は先頭の空行や --cleanup の整えを commit-msg の後で行うので、書いたままにする。本文の無い形は Ok(None)
-fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, Undecided> {
+pub(super) fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, Undecided> {
     let mut buf = String::new();
     let mut have = false;
     for (item, value) in items_with_values("merge", args) {

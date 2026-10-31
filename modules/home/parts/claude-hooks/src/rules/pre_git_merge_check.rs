@@ -108,6 +108,8 @@ pub(super) struct DefaultBranchMerge {
     pub targets: Vec<String>,
     /// `--no-ff` で、fast-forward や squash になる指定がない
     pub no_ff: bool,
+    /// `merge` の後の引数（本文の `-m` / `-F` を読む）
+    pub args: Vec<Arg>,
 }
 
 /// コマンドに含まれる、既定ブランチの上で行う `git merge`。
@@ -116,10 +118,12 @@ pub(super) struct DefaultBranchMerge {
 pub(super) fn default_branch_merges(input: &Input, shell: &Shell) -> Vec<DefaultBranchMerge> {
     let mut out = Vec::new();
     for cmd in shell.commands() {
-        let Some((targets, no_ff)) = cmd
+        let Some((targets, no_ff, args)) = cmd
             .git_subcommand()
             .filter(|(sub, _)| *sub == "merge")
-            .and_then(|(_, args)| merge_targets(args).map(|t| (t, always_merge_commit(args))))
+            .and_then(|(_, args)| {
+                merge_targets(args).map(|t| (t, always_merge_commit(args), args.to_vec()))
+            })
         else {
             continue;
         };
@@ -136,6 +140,7 @@ pub(super) fn default_branch_merges(input: &Input, shell: &Shell) -> Vec<Default
             default,
             targets,
             no_ff,
+            args,
         });
     }
     out
