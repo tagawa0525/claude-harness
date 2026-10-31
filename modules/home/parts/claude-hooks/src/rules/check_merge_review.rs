@@ -560,13 +560,16 @@ mod tests {
     #[test]
     fn passes_documents_dvc_records_and_remap_after_the_reviewed_head() {
         let repo = Repo::new("after-ok");
-        let reviewed = repo.commit_on_branch(&[("src/b.rs", "// see 0123abcd4\n")]);
+        let main = git_out(&repo.dir(), &["rev-parse", "main"]);
+        let reviewed = repo.commit_on_branch(&[("src/b.rs", &format!("// see {}\n", &main[..9]))]);
+        // remap は、rebase で書き換わったコミットの hash をブランチのコミットの hash に付け替える
+        let remapped = format!("// see {}\n", &reviewed[..9]);
         repo.commit_on_branch(&[
             ("docs/notes.md", "notes\n"),
             ("docs/issues/0001-x.md", "issue\n"),
             ("examples/a/dvc.lock", "outs: 1\n"),
             ("examples/a/out.dvc", "md5: 1\n"),
-            ("src/b.rs", "// see 9876fedc1\n"),
+            ("src/b.rs", &remapped),
         ]);
         let r = repo.check_body(&body(&reviewed, FINDINGS));
         assert!(denies(&r).is_empty(), "{:?}", denies(&r));
@@ -582,6 +585,16 @@ mod tests {
         assert!(!r.contains("docs/n.md"), "{r}");
         assert!(r.contains("/code-review"), "{r}");
         assert!(r.contains("ALLOW_UNREVIEWED_HEAD=<理由>"), "{r}");
+    }
+
+    #[test]
+    fn denies_hex_swaps_that_do_not_point_at_branch_commits() {
+        let repo = Repo::new("hex-swap");
+        let reviewed = repo.commit_on_branch(&[("Cargo.toml", "rev = \"0123abcd4\"\n")]);
+        // 依存の rev や期待値の 16 進の定数は、このリポジトリのブランチのコミットを指さない
+        repo.commit_on_branch(&[("Cargo.toml", "rev = \"9876fedc1\"\n")]);
+        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(r.contains("Cargo.toml"), "{r}");
     }
 
     #[test]
@@ -706,6 +719,11 @@ mod tests {
             let r = only_deny(&repo.check(cmd));
             assert!(r.contains("本文"), "{cmd}: {r}");
         }
+        // 同じコマンドの前段で書くファイルは、hook の時点ではまだ無いか古い
+        let r = only_deny(&repo.check(
+            "cat > /nonexistent/msg.txt <<'EOF'\nx\nEOF\ngit merge --no-ff feat/x -F /nonexistent/msg.txt",
+        ));
+        assert!(r.contains("呼び出しを分けて"), "{r}");
     }
 
     #[test]
