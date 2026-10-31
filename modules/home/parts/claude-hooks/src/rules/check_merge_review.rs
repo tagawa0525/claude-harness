@@ -524,6 +524,16 @@ mod tests {
             h
         }
 
+        /// どのブランチにも無いコミット（rebase で書き換わる前のコミットの代わり）
+        fn gone_commit(&self) -> String {
+            git(&self.dir(), &["switch", "-q", "-c", "gone", "main"]);
+            self.write("src/gone.rs", "g\n");
+            let h = self.commit("gone");
+            git(&self.dir(), &["switch", "-q", "main"]);
+            git(&self.dir(), &["branch", "-q", "-D", "gone"]);
+            h
+        }
+
         fn tip(&self) -> String {
             git_out(&self.dir(), &["rev-parse", "feat/x"])
         }
@@ -586,8 +596,8 @@ mod tests {
     #[test]
     fn passes_documents_dvc_records_and_remap_after_the_reviewed_head() {
         let repo = Repo::new("after-ok");
-        let main = git_out(&repo.dir(), &["rev-parse", "main"]);
-        let reviewed = repo.commit_on_branch(&[("src/b.rs", &format!("// see {}\n", &main[..9]))]);
+        let gone = repo.gone_commit();
+        let reviewed = repo.commit_on_branch(&[("src/b.rs", &format!("// see {}\n", &gone[..9]))]);
         // remap は、rebase で書き換わったコミットの hash をブランチのコミットの hash に付け替える
         let remapped = format!("// see {}\n", &reviewed[..9]);
         repo.commit_on_branch(&[
@@ -621,6 +631,26 @@ mod tests {
         repo.commit_on_branch(&[("Cargo.toml", "rev = \"9876fedc1\"\n")]);
         let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
         assert!(r.contains("Cargo.toml"), "{r}");
+    }
+
+    #[test]
+    fn denies_hash_swaps_that_are_not_a_rebase_remap() {
+        // remap は rebase で消えたコミット（先端の祖先でない）の hash を、ブランチのコミット（既定ブランチに無い）の hash にする
+        let repo = Repo::new("swap-kinds");
+        let main = git_out(&repo.dir(), &["rev-parse", "main"]);
+        let gone = repo.gone_commit();
+        let line = |h: &str| format!("base = \"{}\"\n", &h[..9]);
+        // 既定ブランチのコミットへの差し替え
+        let reviewed = repo.commit_on_branch(&[("src/c.rs", &line(&gone))]);
+        repo.commit_on_branch(&[("src/c.rs", &line(&main))]);
+        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(r.contains("src/c.rs"), "{r}");
+        // ブランチのコミットどうしの差し替え（消した側が先端の祖先）
+        let first = repo.tip();
+        let reviewed = repo.commit_on_branch(&[("src/d.rs", &line(&first))]);
+        repo.commit_on_branch(&[("src/d.rs", &line(&reviewed))]);
+        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(r.contains("src/d.rs"), "{r}");
     }
 
     #[test]
