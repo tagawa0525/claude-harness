@@ -81,8 +81,8 @@ gh pr merge [PR番号] --merge --delete-branch \
 
 worktree 削除 → main へ切り替えて pull → ローカル・リモートのブランチ削除までを行う。
 そのブランチを head とする open PR（fork からの upstream PR 等）があればリモートは残す
-（`REMOTE_BRANCH: kept`）。ブランチが main にまだマージされていなければ、何も消さずに ERROR で止まる。未コミットの変更や履歴の分岐で失敗したら原因を確認して対処する。
-出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝え、rebuild や claude-sync の実行はユーザーに任せる。
+（`REMOTE_BRANCH: kept`）。ブランチが main にまだマージされていなければ、何も消さずに ERROR で止まる。cwd のリポジトリにブランチの痕跡（ローカルのブランチ、worktree、リモート追跡の ref、リモートのブランチ、そのブランチを head とするマージ済みの PR）が無ければ、何も変えずに ERROR で止まる。PR のリポジトリと cwd が違えば、`cd <PR のリポジトリ> && ~/.claude/scripts/post-merge-cleanup.sh [headRefName]` で呼ぶ。未コミットの変更や履歴の分岐で失敗したら原因を確認して対処する。
+出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝え、rebuild や claude-sync の実行はユーザーに任せる。マージ済みの PR を痕跡にした `NOTE:` の行は、その URL がマージした PR かを確かめ、違えば別のリポジトリのブランチを渡している（ブランチ名の重なり）ので、PR のリポジトリでやり直す。
 
 ## 完了メッセージ
 

@@ -317,13 +317,13 @@ EOF
 
 ## 後片付け
 
-対象の worktree とブランチを削除する（未マージなら、何も消さずに止まる。変更が残っていれば失敗する。確認して対処する）:
+対象の worktree とブランチを削除する（未マージなら、何も消さずに止まる。cwd のリポジトリにブランチの痕跡（ローカルのブランチ、worktree、リモート追跡の ref、リモートのブランチ）が無ければ、何も変えずに止まるので、別のリポジトリのブランチなら `cd <そのリポジトリ> &&` を付けて呼ぶ。変更が残っていれば失敗する。確認して対処する）:
 
 ```bash
 ~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
-出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝え、rebuild や claude-sync の実行はユーザーに任せる。
+出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝え、rebuild や claude-sync の実行はユーザーに任せる。マージ済みの PR を痕跡にした `NOTE:` の行（cwd が GitHub のリポジトリのときに出る）は、/git-merge でマージしたブランチには PR が無いので、別のリポジトリのブランチを渡している（ブランチ名の重なり）。マージしたリポジトリで `cd <そのリポジトリ> &&` を付けてやり直す。
 
 ## 完了確認
 
