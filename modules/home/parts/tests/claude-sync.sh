@@ -35,7 +35,8 @@ write() {
 # check <説明> <path> <期待する中身>
 check() {
   local desc="$1" path="$2" want="$3" got
-  got=$(cat "$path")
+  # ファイルが無いときも set -e で止めず、✗ に数えて残りの検査を続ける
+  got=$(cat "$path" 2>/dev/null) || got="(ファイルが無い)"
   if [[ "$got" == "$want" ]]; then
     PASS=$((PASS + 1)); echo "✓ $desc"
   else
