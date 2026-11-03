@@ -323,7 +323,7 @@ EOF
 ~/.claude/scripts/post-merge-cleanup.sh [branch]
 ```
 
-出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝え、rebuild や claude-sync の実行はユーザーに任せる。
+出力に `NOTE:` の行（rebuild か claude-sync が要る。判定は post-merge-cleanup.sh）があれば、完了メッセージでそのままユーザーに伝え、rebuild や claude-sync の実行はユーザーに任せる。マージ済みの PR を痕跡にした `NOTE:` の行（cwd が GitHub のリポジトリのときに出る）は、/git-merge でマージしたブランチには PR が無いので、別のリポジトリのブランチを渡している（ブランチ名の重なり）。マージしたリポジトリで `cd <そのリポジトリ> &&` を付けてやり直す。
 
 ## 完了確認
 
