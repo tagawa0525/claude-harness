@@ -283,10 +283,12 @@ in
     ''}
 
     # 外部スキルのデプロイ（externalSkills）。上流のコピーなので --delete で完全一致させる。
-    # claude-sync コマンドは flake input を知らないため、ここ（rebuild）でのみ同期される
+    # claude-sync コマンドは flake input を知らないため、ここ（rebuild）でのみ同期される。
+    # --checksum は、store のソースと -a でコピーした先がどちらも mtime 1 になり、既定の判定
+    # （サイズと mtime）では同じサイズの上流の変更を飛ばすため（理由の詳細は scripts/claude-sync.sh）
     ${lib.concatMapStringsSep "\n" (s: ''
       $DRY_RUN_CMD mkdir -p "$CLAUDE_DIR/skills/${s.name}"
-      $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
+      $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --checksum --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
     '') externalSkills}
 
     # 静的設定と hook を settings.json に反映
