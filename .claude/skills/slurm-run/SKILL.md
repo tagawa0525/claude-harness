@@ -98,11 +98,17 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
   違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。
   コマンドが読む入力のファイル（TOML など。`dvc repro` ならステージの `cmd` と deps）は、比べる 2 本それぞれで、そのジョブが走った
-  worktree（`WorkDir`。SubmitLine の `--comment` の末尾にもブランチと `$PWD` がある）とコミットの版を開き、中身が同じかを確かめる。
-  名前やコマンドが同じでも、入力のファイルの中身は別でありうる。コミットは sacct とログに残らないので（nixfiles の issue #556）、
-  `git -C <リポジトリ> log -1 --format=%H --before=<Start> <ブランチ>` で取り、`git show <コミット>:<パス>` で開く（worktree は後片付けで
-  消え、残っていても後のコミットで変わっている）。ログの先頭に dvc の `Git tree '…' is dirty` があるなど、コミットされていない
-  変更で走った入力は、その版を開けないので「確かめていない」と書く。2026-11-03 に xlc の依頼が、Slurm 644 の `MaxRSS` 88276164K と
+  worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
+  コミットは sacct とログに残らないので（nixfiles の issue #556）、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
+  切り離されていると無い）の reflog で `git -C <リポジトリ> rev-parse '<ブランチ>@{<Start>}'` と取り、`git show <コミット>:<パス>` で開く
+  （`git log --before=<Start>` はコミットの日付で選ぶので、rebase や amend の後は走った版でないコミットを返す。worktree は後片付けで
+  消え、残っていても後のコミットで変わっている）。git で追跡しない deps（`bin/` の実行ファイル、ライブラリなど DVC の出力）は、
+  そのコミットの `dvc.lock` の md5 で比べる。次のときは、その版を開けないので「確かめていない」と書く: ブランチか reflog が消えて
+  いる、入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（ログの先頭の nix の
+  `Git tree '…' is dirty` はその印だが、nix を通らないジョブには出ず、出なくても変更が無いとは言えない）。
+  メモリを比べるときは、`MaxRSS` を `sacct -j <番号>.batch -o MaxRSS` で読む（上の `-X` の行には出ない）。止められたジョブ
+  （State が COMPLETED でない）の `MaxRSS` は止まるまでの標本の値で、要る量の下限としてだけ使う。
+  2026-11-03 に xlc の依頼が、Slurm 644 の `MaxRSS` 88276164K と
   前の 582、617、621、629、630、638 の 20519904K〜25878580K を、MaxRSS だけを sacct で見て「同じ入力」と書いた。644 は `dvc repro
   examples/depletion/dvc.yaml` の `lattice-2A.toml`（`ufg-tolerance` なし）、前の 6 本は p2 と history の入力（`ufg-tolerance = 1e-4`
   の間引いた格子）で、別の入力だった。sacct はジョブ 126 より前を持たない
@@ -242,12 +248,13 @@ RealMemory の 86000M）は要求の値で、超えても Slurm は止めない�
   （`dvc repro` の中で `lattice` が SIGKILL で止まっても、ジョブは `FAILED` の `255:0`）。Slurm がメモリで止めた形（`OUT_OF_MEMORY`）は
   上の設定では出ない
 - ログの末尾: 中のプログラムの終わり方（`強制終了`、dvc の `exited with 137`。137 は SIGKILL で、OOM killer に限らない）
-- `journalctl -k --since '<Start>' --until '<End>' | grep -E 'oom-kill:|Out of memory'`（r995 で読む。時刻はジョブの `Start` と
-  `End`）: カーネルの OOM killer なら、`global_oom` と `task=<プログラム名>,pid=<番号>` の行と、`Killed process <番号> (<名前>)` の
-  `anon-rss`（殺したときの使用量）が出る。カーネルのログが残っている期間（`journalctl -k --list-boots`）で行が無ければ、OOM killer でない
+- `journalctl _TRANSPORT=kernel --since '<Start>' --until '<End>' | grep -E 'oom-kill:|Out of memory'`（r995 で読む。時刻はジョブの
+  `Start` と `End`。`-k` は今の起動だけを読むので、ジョブの後に再起動していると何も出ない）: カーネルの OOM killer なら、`global_oom` と
+  `task=<プログラム名>,pid=<番号>` の行と、`Killed process <番号> (<名前>)` の `anon-rss`（殺したときの使用量）が出る。ジャーナルが
+  残っている期間（`journalctl --list-boots` の最初の起動から）で行が無ければ、OOM killer でない
 
 2026-11-03 の xlc の依頼は、Slurm 644 を `MaxRSS` 88276164K と `ReqMem` 86000M から「上限を超えて exit 137 で止まる」と書いた。実際は
-sacct で `FAILED` の `255:0`、ログで `lattice` が `exited with 137`、`journalctl -k` で 2026-10-31 20:15:04 の `global_oom` の
+sacct で `FAILED` の `255:0`、ログで `lattice` が `exited with 137`、カーネルのログで 2026-10-31 20:15:04 の `global_oom` の
 `Killed process 711567 (lattice) … anon-rss:88861200kB` で、カーネルの OOM killer だった。
 
 番号の分かったジョブの時間（見積もりや依頼の前提に使う値）は、番号と時間が同じ行にある形で読む。`sacct -j <番号>[,<番号>…] -X
