@@ -164,14 +164,17 @@ remove_fake_tool() {
 }
 
 # minimal_path: 偽コマンドと基本ツール（git / jq / coreutils 等）だけを含む PATH を返す。
-# ホストに実在する ruff 等を見せずに「ツールがない」状況を作るために使う
+# ホストに実在する ruff 等を見せずに「ツールがない」状況を作るために使う。
+# この PATH の下で lib.sh を source するテストもあるので、lib.sh が使うコマンド（make_fake_tool の
+# chmod、minimal_path の ln）と、git のシェルスクリプトのサブコマンド（git submodule など）が
+# git-sh-setup で呼ぶ uname も含める
 minimal_path() {
   local bin="$TEST_ROOT/minbin" tool src
   if [[ ! -d "$bin" ]]; then
     mkdir -p "$bin"
     for tool in bash sh env git jq awk sed grep xargs head tail sort uniq cut tr wc cat ls \
                 mktemp rm mv cp mkdir dirname basename readlink realpath printf echo test \
-                date seq; do
+                date seq chmod ln uname; do
       src=$(command -v "$tool" 2>/dev/null) || continue
       ln -s "$src" "$bin/$tool"
     done
