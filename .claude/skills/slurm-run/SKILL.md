@@ -258,7 +258,7 @@ sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,S
 （`scontrol show config` で `SelectTypeParameters = CR_CORE`、`TaskPlugin = (null)`、`SLURM_CONF` の隣の cgroup.conf は空で `ConstrainRAMSpace` なし）。`ReqMem`（排他のジョブでは
 RealMemory の 86000M）は要求の値で、超えても Slurm は止めない。メモリで止まるのは、機械の全体を使い切ったときのカーネルの OOM killer である。
 
-- `sacct -j <番号> -o JobID,State,ExitCode,Start,End`: `ExitCode` は `--wrap` の一番外のコマンドの値で、中のプログラムの値でない
+- `sacct -j <番号> -X -o JobID,State,ExitCode,Start,End`（`-X` が無いと `.batch` と `.extern` の行も出る）: `ExitCode` は `--wrap` の一番外のコマンドの値で、中のプログラムの値でない
   （`dvc repro` の中で `lattice` が SIGKILL で止まっても、ジョブは `FAILED` の `255:0`）。Slurm がメモリで止めた形（`OUT_OF_MEMORY`）は
   上の設定では出ない
 - ログの末尾: 中のプログラムの終わり方（`強制終了`、dvc の `exited with 137`。137 は SIGKILL で、OOM killer に限らない）
