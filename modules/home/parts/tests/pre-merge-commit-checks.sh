@@ -277,29 +277,45 @@ echo out > "$R/sub/out.bin"
 echo out > "$R/sub/出力.bin"
 echo log > "$R/run.log"
 echo note > "$R/new.txt"
-# 印の付いた一覧（「無視されていた」の見出しから、次の字下げの浅い行まで）
-marked() { awk '/無視されていた/ {on=1; next} on && /^     / {print; next} {on=0}' "$WORK/out"; }
+# listed <見出しの語>: その語を含む見出しの行から、次の字下げの浅い行までの一覧（1 行に 1 つ、字下げを除く）
+listed() { awk -v h="$1" 'index($0, h) {on=1; next} on && /^     / {print; next} {on=0}' "$WORK/out" | sed 's/^ *//'; }
+# 印の付いた一覧（HEAD の .gitignore では無視されていたファイル）と、マージで変わる .gitignore の一覧
+marked() { listed "無視されていた"; }
+changed_ignores() { listed "マージで変わる .gitignore"; }
 if run "$R" git merge --no-ff -m "Merge: unignored" feat; then
   ng ".gitignore から外れた生成物が未追跡で残るのにマージコミットが作られた"
 elif ! grep -q "マージ結果以外" "$WORK/out"; then
   ng ".gitignore から外れた生成物で止まったが、作業ツリーの変更として止まっていない"
-elif [ "$(sed -n 's/^ *マージで .gitignore が変わる: //p' "$WORK/out")" != ".gitignore, sub/.gitignore" ]; then
-  ng ".gitignore から外れた生成物で止まったが、マージで変わる .gitignore（ルートと sub/）を示していない"
-elif [ "$(marked | sed 's/^ *//' | LC_ALL=C sort | tr '\n' ' ')" != "gen/x.bin sub/out.bin sub/出力.bin " ]; then
+elif [ "$(changed_ignores | tr '\n' ' ')" != ".gitignore sub/.gitignore " ]; then
+  ng ".gitignore から外れた生成物で止まったが、マージで変わる .gitignore（ルートと sub/）を 1 行ずつ示していない"
+elif [ "$(marked | LC_ALL=C sort | tr '\n' ' ')" != "gen/x.bin sub/out.bin sub/出力.bin " ]; then
   ng "HEAD の .gitignore で無視されていたファイルだけに印が付いていない（印: $(marked | tr '\n' ' ')）"
 elif grep -q '\\[0-7][0-7][0-7]' "$WORK/out"; then
   ng "非 ASCII のパスを 8 進で引用して出した（印の一覧と書き方が食い違う）"
 elif ! grep -q "new.txt" "$WORK/out"; then
   ng "HEAD でも無視されていない未追跡のファイル（new.txt）を示していない"
-elif ! { [ -f "$R/gen/x.bin" ] && [ -f "$R/sub/out.bin" ]; }; then
+elif [ "$(grep -c -F -e gen/x.bin -e sub/out.bin -e sub/出力.bin "$WORK/out")" -ne 3 ]; then
+  ng "印の付いたファイルを、作業ツリーの変更の一覧と印の一覧に 2 度並べた"
+elif ! { [ -f "$R/gen/x.bin" ] && [ -f "$R/sub/out.bin" ] && [ -f "$R/sub/出力.bin" ]; }; then
   ng ".gitignore から外れた生成物を hook が消した"
 else
   ok ".gitignore から外れた生成物で止め、変わる .gitignore と HEAD で無視されていたファイルを示す（ファイルは残す）"
 fi
+# 理由（マージするブランチが .gitignore から外した生成物）と、修正方法（キャッシュから戻せる版と同じなら消し、
+# 記録された版と違えば消す前に原因を調べる）を示す
+FIX=$(grep "修正方法:" "$WORK/out" || true)
+if ! grep -q "マージするブランチが .gitignore から外した" "$WORK/out"; then
+  ng ".gitignore から外れた生成物で止まったが、マージするブランチが .gitignore から外したことを理由として示していない"
+elif ! { [[ "$FIX" == *"キャッシュ"* ]] && [[ "$FIX" == *"原因を調べ"* ]]; }; then
+  ng ".gitignore から外れた生成物の修正方法が、キャッシュから戻せるなら消すことと、版が違えば原因を調べることを示していない"
+else
+  ok ".gitignore から外れた生成物の理由と、消す条件と原因を調べる条件を修正方法に示す"
+fi
 git -C "$R" merge --abort 2>/dev/null || true
 
 # ブランチがディレクトリを移すと、無視の行を持っていた .gitignore は元の場所から消える。
-# 生成物を現した元の .gitignore も、変わる .gitignore として示す（改名として新しい名前だけにしない）
+# 生成物を現した元の .gitignore も、変わる .gitignore として示す（改名として新しい名前だけにしない）。
+# パスの中のコンマは区切りに書き換えない
 R="$WORK/moved-ignore"
 new_repo "$R"
 mkdir -p "$R/old"
@@ -308,15 +324,15 @@ printf 'keep\n' > "$R/old/input.txt"
 git -C "$R" add old/.gitignore old/input.txt
 git -C "$R" commit -q --no-verify -m "chore: ignore the old output"
 git -C "$R" switch -q -c feat main
-git -C "$R" mv old new
-git -C "$R" commit -q --no-verify -m "refactor: move old to new"
+git -C "$R" mv old "new,dir"
+git -C "$R" commit -q --no-verify -m "refactor: move old to new,dir"
 git -C "$R" switch -q main
 echo gen > "$R/old/gen.bin"
 if run "$R" git merge --no-ff -m "Merge: moved" feat; then
   ng "移したディレクトリの生成物が未追跡で残るのにマージコミットが作られた"
-elif [ "$(sed -n 's/^ *マージで .gitignore が変わる: //p' "$WORK/out")" != "new/.gitignore, old/.gitignore" ]; then
-  ng "移した .gitignore の元の場所（old/.gitignore）を、変わる .gitignore として示していない"
-elif [ "$(marked | sed 's/^ *//')" != "old/gen.bin" ]; then
+elif [ "$(changed_ignores | tr '\n' ' ')" != "new,dir/.gitignore old/.gitignore " ]; then
+  ng "移した .gitignore の元の場所（old/.gitignore）と、コンマを含む移した先のパスを、変わる .gitignore としてそのまま示していない"
+elif [ "$(marked)" != "old/gen.bin" ]; then
   ng "移したディレクトリに残った生成物に印が付いていない（印: $(marked | tr '\n' ' ')）"
 else
   ok "ブランチがディレクトリを移したとき、元の .gitignore も示し、残った生成物に印を付ける"
