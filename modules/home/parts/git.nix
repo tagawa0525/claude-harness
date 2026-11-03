@@ -295,14 +295,12 @@ in
       # .gitignore で除外したもの（ビルド成果物など）は検査のツールも除外するので含めない
       # core.quotePath=false: 下の .gitignore から外れた生成物の一覧と同じく、非 ASCII のパスを 8 進で
       # 引用せずに出す（書き方が違うと、同じファイルが別のものに見える）
-      DIRTY=$(git -c core.quotePath=false diff --name-only; git -c core.quotePath=false ls-files --others --exclude-standard)
-      if [ -n "$DIRTY" ]; then
-        echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
-        printf '%s\n' "$DIRTY" | sed 's/^/     /'
-
+      MODIFIED=$(git -c core.quotePath=false diff --name-only)
+      UNTRACKED=$(git -c core.quotePath=false ls-files --others --exclude-standard)
+      if [ -n "$MODIFIED$UNTRACKED" ]; then
         # マージするブランチが .gitignore から行を外すと、HEAD の作業ツリーに残っていた生成物が
         # 未追跡として現れる。コミットするものではないので、HEAD の .gitignore で無視されていた
-        # ファイルを見分けて示す。git check-ignore は作業ツリー（マージ結果）の .gitignore しか
+        # ファイルを見分けて分けて示す。git check-ignore は作業ツリー（マージ結果）の .gitignore しか
         # 読まないので、HEAD の .gitignore だけを置いた一時リポジトリで判定する（ファイルの実体は
         # 要らない。パスとパターンで決まる）。git archive は export-ignore の属性で .gitignore を
         # 落としうるので、git show で 1 本ずつ取り出す
@@ -310,7 +308,7 @@ in
         # 無視の行を持っていた元の .gitignore が落ちる
         IGNORE_CHANGED=$(git -c core.quotePath=false diff --cached --no-renames --name-only HEAD -- ':(glob)**/.gitignore')
         UNIGNORED=""
-        if [ -n "$IGNORE_CHANGED" ]; then
+        if [ -n "$IGNORE_CHANGED" ] && [ -n "$UNTRACKED" ]; then
           HEAD_IGNORES=$(mktemp -d)
           trap 'rm -rf "$HEAD_IGNORES"' EXIT
           while IFS= read -r -d "" f; do
@@ -319,16 +317,29 @@ in
           done < <(git ls-tree -r -z --name-only HEAD | grep -z -E '(^|/)\.gitignore$' || true)
           # hook に渡る GIT_INDEX_FILE などが一時リポジトリの git にも効かないように外す
           env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$HEAD_IGNORES" init -q
-          UNIGNORED=$(git ls-files -z --others --exclude-standard \
+          # 上の UNTRACKED をそのまま渡す（未追跡の走査を 2 度しない）。-z でなく行で渡すのは、
+          # ls-files と check-ignore が同じ C の引用（タブ、改行、"、\）で書き、読み戻すため
+          UNIGNORED=$(printf '%s\n' "$UNTRACKED" \
             | { env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE \
-                  git -C "$HEAD_IGNORES" check-ignore -z --stdin || [ $? -eq 1 ]; } \
-            | tr '\0' '\n')
+                  git -C "$HEAD_IGNORES" -c core.quotePath=false check-ignore --stdin || [ $? -eq 1 ]; })
+        fi
+        # 印の付いたファイルは下の一覧にだけ出す（同じファイルを 2 度並べると、大きな出力のディレクトリで
+        # 修正方法が埋もれる）
+        if [ -n "$UNIGNORED" ]; then
+          OTHERS=$(printf '%s\n' "$MODIFIED" "$UNTRACKED" | grep -v -x -F -e "" -f <(printf '%s\n' "$UNIGNORED") || true)
+        else
+          OTHERS=$(printf '%s\n' "$MODIFIED" "$UNTRACKED" | grep -v -x -e "" || true)
+        fi
+        echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
+        if [ -n "$OTHERS" ]; then
+          printf '%s\n' "$OTHERS" | sed 's/^/     /'
         fi
         if [ -n "$UNIGNORED" ]; then
-          echo "   マージで .gitignore が変わる: $(printf '%s\n' "$IGNORE_CHANGED" | paste -sd, - | sed 's/,/, /g')"
-          echo "   うち次のファイルは HEAD の .gitignore では無視されていた（マージするブランチが消したか置き換えた処理の生成物など。マージで無視の行が外れて現れた）:"
+          echo "   次のファイルは、マージするブランチが .gitignore から外した生成物（HEAD の .gitignore では無視されていた。ブランチが生成する処理を消したか置き換えたなど）:"
           printf '%s\n' "$UNIGNORED" | sed 's/^/     /'
-          echo "   修正方法: git merge --abort で取り消し、上の生成物は作り直せる（または要らない）ことを確かめて作業ツリーから消し（残して無視し続けるなら、マージするブランチの .gitignore に行を戻し）、ほかの変更はコミットして（不要なファイルは消して）から、もう一度マージしてください"
+          echo "   マージで変わる .gitignore:"
+          printf '%s\n' "$IGNORE_CHANGED" | sed 's/^/     /'
+          echo "   修正方法: git merge --abort で取り消す。上の生成物は、DVC のキャッシュなどに記録された版と中身が同じで戻せるなら作業ツリーから消す。記録された版と中身が違うか、記録が無ければ、消すと戻せないので、何の出力でなぜ違うかの原因を調べてから消すか移すかを決める（残して無視し続けるなら、マージするブランチの .gitignore に行を戻す）。ほかの変更はコミットして（不要なファイルは消して）から、もう一度マージしてください"
         else
           echo "   修正方法: git merge --abort で取り消し、変更をコミットして（不要なファイルは消して）から、もう一度マージしてください"
         fi
