@@ -296,6 +296,31 @@ else
 fi
 git -C "$R" merge --abort 2>/dev/null || true
 
+# ブランチがディレクトリを移すと、無視の行を持っていた .gitignore は元の場所から消える。
+# 生成物を現した元の .gitignore も、変わる .gitignore として示す（改名として新しい名前だけにしない）
+R="$WORK/moved-ignore"
+new_repo "$R"
+mkdir -p "$R/old"
+printf '/gen.bin\n' > "$R/old/.gitignore"
+printf 'keep\n' > "$R/old/input.txt"
+git -C "$R" add old/.gitignore old/input.txt
+git -C "$R" commit -q --no-verify -m "chore: ignore the old output"
+git -C "$R" switch -q -c feat main
+git -C "$R" mv old new
+git -C "$R" commit -q --no-verify -m "refactor: move old to new"
+git -C "$R" switch -q main
+echo gen > "$R/old/gen.bin"
+if run "$R" git merge --no-ff -m "Merge: moved" feat; then
+  ng "移したディレクトリの生成物が未追跡で残るのにマージコミットが作られた"
+elif [ "$(sed -n 's/^ *マージで .gitignore が変わる: //p' "$WORK/out")" != "new/.gitignore, old/.gitignore" ]; then
+  ng "移した .gitignore の元の場所（old/.gitignore）を、変わる .gitignore として示していない"
+elif [ "$(marked | sed 's/^ *//')" != "old/gen.bin" ]; then
+  ng "移したディレクトリに残った生成物に印が付いていない（印: $(marked | tr '\n' ' ')）"
+else
+  ok "ブランチがディレクトリを移したとき、元の .gitignore も示し、残った生成物に印を付ける"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
 # .gitignore で除外したファイル（ビルド成果物など）は検査のツールも除外するので止めない
 R="$WORK/ignored"
 new_repo "$R"
