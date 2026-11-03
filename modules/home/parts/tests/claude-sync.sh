@@ -53,12 +53,11 @@ bash "$SYNC" "$SRC" >/dev/null
 # 利用者が手で直した commands は残す（--ignore-existing）
 write "$DEST/commands/c.md" "user"
 
-# 同じサイズで中身だけ変え、両側の mtime を 1 に揃える（chmod で書き込み権限の付いた ~/.claude 側も含む）
+# 同じサイズで中身だけ変える。~/.claude 側は 1 回目の rsync -a で mtime 1 になっている（chmod は mtime を変えない）
 write "$SRC/.claude/CLAUDE.md" "ADR-NNNN"
 write "$SRC/.claude/skills/s/SKILL.md" "ADR-NNNN"
 write "$SRC/.claude/scripts/a.sh" "ADR-NNNN"
 write "$SRC/.claude/commands/c.md" "change"
-touch -d @1 "$DEST/CLAUDE.md" "$DEST/skills/s/SKILL.md" "$DEST/scripts/a.sh"
 bash "$SYNC" "$SRC" >/dev/null
 
 check "同じサイズと mtime の CLAUDE.md を上書きする" "$DEST/CLAUDE.md" "ADR-NNNN"
