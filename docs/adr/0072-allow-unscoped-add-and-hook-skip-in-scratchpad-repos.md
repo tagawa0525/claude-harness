@@ -56,23 +56,22 @@ claude-hooks の 2 つのルールは、どのリポジトリでも同じに止�
 例外の条件（`modules/home/parts/claude-hooks/src/rules/scratchpad_repo.rs`）。すべてを満たすときだけ通す:
 
 - 対象のディレクトリ: コマンドの前の `cd`、`git -C`、`env -C` を hook の cwd に順に当てたもの（ほかのルールと同じ
-  `Shell::target_dir`）。symlink と `..` を解いた実際のパスで判定する。まだ無いディレクトリ（同じコマンドの
-  `mkdir` と `git init` が作る前）は、ある祖先を解いて残りを足し、残りに `..` か展開（`$`、`` ` ``）があれば
-  場所を決められないので通さない
+  `Shell::target_dir`）。symlink と `..` を解いた実際のパスで判定する。判定の時点に無いディレクトリ（同じコマンドの
+  `mkdir` が作る前、展開や `~user` を含む書き方）は通さない
 - scratchpad の見分け方: 祖先に `<セッションの ID>/scratchpad` の名前の並びがあること。セッションの ID は
   hook の入力の `session_id`。scratchpad の根の一時ディレクトリは環境変数（`CLAUDE_CODE_TMPDIR` など）で
   変わるので、根のパスでなく、この 2 つの名前で見分ける。`session_id` が無ければ通さない
 - リポジトリ: 対象のディレクトリで `git rev-parse --show-toplevel --git-common-dir` が返す作業ツリーの根と
   git のディレクトリが、どちらも同じ scratchpad の下にあること。本番のリポジトリの worktree を scratchpad の
   下に作っても、git のディレクトリは本番の側にあるので通さない。リポジトリが無い（同じコマンドの `git init` の
-  前）ときは通す（そこで走る git add と commit は、作ったリポジトリか、リポジトリが無くて失敗するかのどちらか）
-- リモートが無いこと（`git remote` が空）
+  前）か、git が読めないときも通さない
+- リモートが無いこと（`git remote` が成功して空）
 - `GIT_DIR`、`GIT_WORK_TREE`、`GIT_COMMON_DIR` の代入と、`--git-dir`、`--work-tree` で、リポジトリを指し替えて
   いないこと
 
 例外を当てる範囲:
 
-- `guard-git-add`: 止める形のすべて
+- `guard-git-add`: 止める形のすべて（クォートが不整合で引数を読めないものは、対象のディレクトリも決められないので除く）
 - `block-no-verify`: `git commit` / `merge` / `pull` に掛かる判定（`--no-verify`、`-c` / `--config-env` の
   core.hooksPath、`GIT_CONFIG_*`、`CLAUDECODE` の書き換え）。`git config core.hooksPath …` は、同じ形で
   `--global` も書けるので、scratchpad の下でも止める
@@ -80,7 +79,9 @@ claude-hooks の 2 つのルールは、どのリポジトリでも同じに止�
   `--no-verify` があれば止める）
 
 拒否の文言には、例外の 1 行（「セッションの scratchpad の下に git init で作った、リモートの無い一時のリポジトリは
-対象外です」）と、そのコマンドが当たらない理由（scratchpad の外、リモートがある、など）を足す。
+対象外です」）と、そのコマンドが当たらない理由（scratchpad の外、リモートがある、まだ無いので mkdir と git init を
+先に別の呼び出しで実行する、など）を足す。`block-no-verify` では、commit / merge / pull のうち最初に当たらなかった
+ものの理由を出す（`git config` だけなら例外の行を出さない）。
 
 理由:
 
@@ -92,10 +93,19 @@ claude-hooks の 2 つのルールは、どのリポジトリでも同じに止�
 - 案 D は、複製の origin が本番のリポジトリを指し、hook を通らずに作ったコミット（機密情報の検査を飛ばしたもの）を
   `git push` でそのまま本番へ送れる。本番の側に受け取る検査は無く、`guard-git-push` は GitHub のリモートが無い
   リポジトリを見ない。複製でも `git add <file>` と hook を通すコミットは使えるので、止めても再現の作業は続けられる
+- 判定の時点に無いディレクトリとリポジトリを通さないのは、このブランチの最初の版（41133484）が通していたものを、
+  ローカルのレビューの反例で改めたもの。最初の版は、同じコマンドの `mkdir -p X && cd X && git init && git add -A` を
+  1 回で通すために、無いディレクトリはある祖先を解いて scratchpad の下なら通し、rev-parse が失敗すれば「リポジトリが
+  無い」として通した。反例は、(1) `cd <scratchpad>/X; git add -A` で cd が失敗すると git は hook の cwd（本番の
+  リポジトリ）で走る、(2) scratchpad の下の worktree や複製の中の、まだ無いサブディレクトリでは git が祖先の
+  リポジトリを使う、(3) `cd ~user/…` を hook は cwd からの相対のパスとして読み、まだ無いパスとして scratchpad の下に
+  見える、(4) rev-parse と `git remote` の失敗（壊れた設定など）を「無い」と読む。どれも本番のリポジトリに掛かる側に
+  誤る。mkdir と git init を先の呼び出しに分ける手間は 1 回で、その後のコマンドは通る
 
 ### 帰結
 
-- 良い点: レビューの再現のような一時のリポジトリでの作業が、書き直しとエスケープなしに通る。拒否の文言が
+- 良い点: レビューの再現のような一時のリポジトリでの作業が、mkdir と git init を先の呼び出しに分ければ、
+  書き直しとエスケープなしに通る。拒否の文言が
   例外の条件と当たらない理由を示すので、本番のリポジトリで止まったときに、一時のリポジトリへ移すかを判断できる
 - 悪い点: 判定のために、止める形のコマンドでだけ git を 2 回（`rev-parse` と `remote`）起動する
 - 残る抜け道: リモートの無い一時のリポジトリから、パスを指定した `git push /home/…/repo …` で本番へ送る形は
@@ -104,9 +114,9 @@ claude-hooks の 2 つのルールは、どのリポジトリでも同じに止�
 
 ### 確認
 
-- `scratchpad_repo.rs` の単体テストが、`cd` / `-C` / cwd / 同じコマンドで作るディレクトリで通すこと、本番の
-  リポジトリ、scratchpad の下の worktree と複製、`..` と symlink と展開、別のセッション、`GIT_DIR` の指し替えで
-  通さないことを示す
+- `scratchpad_repo.rs` の単体テストが、`cd` / `-C` / cwd で通すこと、本番のリポジトリ、scratchpad の下の
+  worktree と複製（その中のまだ無いディレクトリを含む）、同じコマンドで作るディレクトリとリポジトリ、`..` と
+  symlink と展開と `~user` と glob、git が読めないリポジトリ、別のセッション、`GIT_DIR` の指し替えで通さないことを示す
 - `guard_git_add.rs` と `block_no_verify.rs` の単体テストが、ルールとして通す形と、止めたときの文言の理由を示す
 - サブエージェントの呼び出しの hook の入力の `session_id` が、scratchpad のパスの ID（親のセッションの ID）と
   同じかは確かめていない（サブエージェントの環境変数 `CLAUDE_CODE_SESSION_ID` は親のものと同じだった）。違えば

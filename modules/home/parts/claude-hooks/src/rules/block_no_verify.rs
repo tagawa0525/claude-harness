@@ -93,8 +93,10 @@ impl Rule for BlockNoVerify {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        // 止める理由と、scratchpad の一時のリポジトリの例外に当たらない理由（commit / merge / pull のときだけ）
-        let mut skips: Option<Option<String>> = None;
+        // hook を飛ばす git のコマンドがあるか（skips）と、commit / merge / pull が scratchpad の一時のリポジトリの
+        // 例外に当たらない理由（not_temp。git config だけなら無い）
+        let mut skips = false;
+        let mut not_temp: Option<String> = None;
         for cmd in shell.commands() {
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
@@ -125,17 +127,17 @@ impl Rule for BlockNoVerify {
                 continue;
             }
             // `git config` は `--global` でも同じ形で書けるので、scratchpad の下でも例外にしない
-            let not_temp = if sub == "config" {
-                None
-            } else {
+            if sub != "config" {
                 match scratchpad_repo::check(input, shell, cmd) {
                     Ok(()) => continue,
-                    Err(why) => Some(why),
+                    Err(why) => {
+                        not_temp.get_or_insert(why);
+                    }
                 }
-            };
-            skips.get_or_insert(not_temp);
+            }
+            skips = true;
         }
-        if let Some(not_temp) = skips {
+        if skips {
             let exception = match not_temp {
                 Some(why) => format!(
                     "\n{}（このコマンドは当たりません: {why}）。",

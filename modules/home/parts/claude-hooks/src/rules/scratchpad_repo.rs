@@ -5,7 +5,7 @@
 //! 名前で見分ける。
 
 use std::ffi::OsStr;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::git;
 use crate::input::Input;
@@ -32,18 +32,21 @@ pub fn check(input: &Input, shell: &Shell, cmd: &Cmd) -> Result<(), String> {
                 .to_string(),
         );
     }
-    let (dir, exists) = real_path(&shell.target_dir(cmd, &input.cwd))?;
+    let target = shell.target_dir(cmd, &input.cwd);
+    // 判定の時点に無いディレクトリ（同じコマンドの mkdir の前、展開や `~user` を含む書き方）は、前の cd が
+    // 失敗すれば git が hook の cwd で走り、作られても祖先の worktree や複製の中かもしれず、場所を決められない
+    let Ok(dir) = std::fs::canonicalize(&target) else {
+        return Err(format!(
+            "対象の {} はまだ無いか、場所を決められません。mkdir と git init は先に別の呼び出しで実行してください",
+            target.display()
+        ));
+    };
     let Some(root) = scratchpad_root(&dir, &input.session_id) else {
         return Err(format!(
             "対象の {} はセッションの scratchpad の外です",
             dir.display()
         ));
     };
-    // 同じコマンドの mkdir と git init が作る前のディレクトリ。そこで走る git は、scratchpad の下に
-    // 作ったリポジトリか、リポジトリが無くて失敗するかのどちらか
-    if !exists {
-        return Ok(());
-    }
     let Some(out) = git::git(
         &dir,
         &[
@@ -53,8 +56,10 @@ pub fn check(input: &Input, shell: &Shell, cmd: &Cmd) -> Result<(), String> {
             "--git-common-dir",
         ],
     ) else {
-        // リポジトリの外（同じコマンドの git init が作る前）。git add と commit はリポジトリが無ければ失敗する
-        return Ok(());
+        return Err(format!(
+            "対象の {} は git が読めるリポジトリの中でありません。git init は先に別の呼び出しで実行してください",
+            dir.display()
+        ));
     };
     // worktree は、作業ツリーが scratchpad の下でも、コミットとブランチを本番のリポジトリの git のディレクトリに書く
     for p in out.lines() {
@@ -67,7 +72,9 @@ pub fn check(input: &Input, shell: &Shell, cmd: &Cmd) -> Result<(), String> {
         }
     }
     // 複製は origin が本番のリポジトリを指し、hook を通らないコミットをそこへ push できる
-    let remotes = git::git(&dir, &["remote"]).unwrap_or_default();
+    let Some(remotes) = git::git(&dir, &["remote"]) else {
+        return Err(format!("{} のリモートを読めません", dir.display()));
+    };
     if !remotes.is_empty() {
         return Err(format!(
             "リモート（{}）があります（hook を通らないコミットを本番のリポジトリへ push できるため）",
@@ -95,39 +102,6 @@ fn redirects_git_dir(shell: &Shell, cmd: &Cmd) -> bool {
                 .iter()
                 .any(|o| a.text == *o || a.text.starts_with(&format!("{o}=")))
         })
-}
-
-/// symlink と `..` を解いたパスと、それが今あるか。まだ無いパスは、ある祖先を解いて残りを足す。残りに `..`
-/// （解く前の symlink の先が決まらない）か展開（`$D`、`` ` ``。hook は展開しない）があれば、場所を決められない
-fn real_path(p: &Path) -> Result<(PathBuf, bool), String> {
-    if let Ok(real) = std::fs::canonicalize(p) {
-        return Ok((real, true));
-    }
-    for ancestor in p.ancestors().skip(1) {
-        let Ok(real) = std::fs::canonicalize(ancestor) else {
-            continue;
-        };
-        let rest = p.strip_prefix(ancestor).unwrap_or(p);
-        for c in rest.components() {
-            match c {
-                Component::ParentDir => {
-                    return Err(format!(
-                        "対象の {} は、まだ無いディレクトリの後に .. があり、場所を決められません",
-                        p.display()
-                    ));
-                }
-                Component::Normal(name) if name.to_string_lossy().contains(['$', '`']) => {
-                    return Err(format!(
-                        "対象の {} は展開を含み、場所を決められません",
-                        p.display()
-                    ));
-                }
-                _ => {}
-            }
-        }
-        return Ok((real.join(rest), false));
-    }
-    Err(format!("対象の {} の場所を決められません", p.display()))
 }
 
 /// path の祖先のうち `<session_id>/scratchpad` の名前で終わるもの
