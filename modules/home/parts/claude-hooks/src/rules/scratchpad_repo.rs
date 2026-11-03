@@ -32,6 +32,13 @@ pub fn check(input: &Input, shell: &Shell, cmd: &Cmd) -> Result<(), String> {
                 .to_string(),
         );
     }
+    // target_dir は cd だけをたどり、pushd / popd の行き先は読まない
+    if shell
+        .commands_before(cmd)
+        .any(|c| c.name == "pushd" || c.name == "popd")
+    {
+        return Err("前に pushd / popd があり、git が走るディレクトリを決められません".to_string());
+    }
     let target = shell.target_dir(cmd, &input.cwd);
     // 判定の時点に無いディレクトリ（同じコマンドの mkdir の前、展開や `~user` を含む書き方）は、前の cd が
     // 失敗すれば git が hook の cwd で走り、作られても祖先の worktree や複製の中かもしれず、場所を決められない
