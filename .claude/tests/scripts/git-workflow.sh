@@ -965,9 +965,12 @@ gh_merged_and_deleted "$TEST_ROOT/cleanup30"
 cd "$TEST_ROOT/cleanup30/app" || exit 1
 # ほかのセッションの fetch --prune がリモート追跡の ref を先に消した
 git fetch -q --prune origin
-make_fake_gh '"pr list --head feat/x --state merged"*) echo 1 ;;'
+make_fake_gh '"pr list --head feat/x --state merged"*) echo https://github.com/example/app/pull/7 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
+# 同じ名前の古い PR（別のリポジトリのブランチ名と重なったもの）でも通るので、どの PR を痕跡にしたかを呼ぶ側に見せる
+assert_contains "$out" "NOTE: feat/x"
+assert_contains "$out" "https://github.com/example/app/pull/7"
 assert_contains "$out" "RESERVATIONS_RELEASED: none"
 assert_contains "$out" "LOCAL_BRANCH: none"
 assert_contains "$out" "REMOTE_BRANCH: none"
@@ -976,7 +979,7 @@ cd "$TEST_ROOT" || exit 1
 it "post-merge-cleanup: GitHub リモートで、痕跡もマージ済みの PR も無ければ ERROR で止まる"
 setup_merged_branch "$TEST_ROOT/cleanup31" github
 cd "$TEST_ROOT/cleanup31/app" || exit 1
-make_fake_gh '"pr list --head docs/other-repo --state merged"*) echo 0 ;;'
+make_fake_gh '"pr list --head docs/other-repo --state merged"*) ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR: docs/other-repo の痕跡"
