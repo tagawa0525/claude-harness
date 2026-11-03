@@ -898,4 +898,111 @@ assert_contains "$out" "origin の fetch に失敗した"
 assert_file_exists "$TEST_ROOT/cleanup25/app-feat-x"
 assert_contains "$(git branch --list feat/x)" "feat/x"
 
+# gh pr merge --delete-branch の後を作る: worktree とローカルのブランチを消し（gh は git branch -D）、リモートのブランチを
+# API で消した（手元のリモート追跡の ref は残る）状態
+gh_merged_and_deleted() {
+  local root="$1"
+  git -C "$root/app" worktree remove "$root/app-feat-x"
+  git -C "$root/app" branch -D -q feat/x
+  git -C "$root/app.git" update-ref -d refs/heads/feat/x
+}
+
+it "post-merge-cleanup: ブランチの痕跡がどこにも無ければ（別のリポジトリのブランチ名）、何もせずに ERROR で止まり、調べたリポジトリと修正方法を示す"
+make_fake_gh ''
+setup_merged_branch "$TEST_ROOT/cleanup26"
+advance_origin_main "$TEST_ROOT/cleanup26/app" moved.txt >/dev/null
+cd "$TEST_ROOT/cleanup26/app" || exit 1
+git tag -a adr-0001 -m use-a main
+BEFORE=$(git rev-parse main)
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: docs/other-repo の痕跡"
+assert_contains "$out" "$TEST_ROOT/cleanup26/app"
+assert_contains "$out" "cd <そのリポジトリ> &&"
+assert_not_contains "$out" "WORKTREE_REMOVED"
+assert_not_contains "$out" "RESERVATIONS_RELEASED"
+assert_eq "$BEFORE" "$(git rev-parse main)"
+assert_file_exists "$TEST_ROOT/cleanup26/app-feat-x"
+assert_eq "adr-0001" "$(git tag --list adr-0001)"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: リモートの無いリポジトリでも、ブランチの痕跡が無ければ ERROR で止まる"
+REPO="$TEST_ROOT/cleanup27/app"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/nowhere 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: feat/nowhere の痕跡"
+assert_contains "$out" "$REPO"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: gh pr merge --delete-branch の後（リモート追跡の ref だけ残る）は片付けを続け、ref を prune する"
+setup_merged_branch "$TEST_ROOT/cleanup28"
+gh_merged_and_deleted "$TEST_ROOT/cleanup28"
+cd "$TEST_ROOT/cleanup28/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_BRANCH: none"
+assert_contains "$out" "REMOTE_BRANCH: none"
+assert_eq "" "$(git for-each-ref refs/remotes/origin/feat/x)"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: リモートのブランチだけ残っていれば、それを消す"
+setup_merged_branch "$TEST_ROOT/cleanup29"
+cd "$TEST_ROOT/cleanup29/app" || exit 1
+git worktree remove "$TEST_ROOT/cleanup29/app-feat-x"
+git branch -D -q feat/x
+git update-ref -d refs/remotes/origin/feat/x
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "REMOTE_BRANCH: deleted"
+assert_eq "" "$(git ls-remote --heads origin feat/x)"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: GitHub リモートで、手元にもリモートにも無くても、そのブランチを head とするマージ済みの PR があれば片付けを続ける"
+setup_merged_branch "$TEST_ROOT/cleanup30" github
+gh_merged_and_deleted "$TEST_ROOT/cleanup30"
+cd "$TEST_ROOT/cleanup30/app" || exit 1
+# ほかのセッションの fetch --prune がリモート追跡の ref を先に消した
+git fetch -q --prune origin
+make_fake_gh '"pr list --head feat/x --state merged"*) echo 1 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "RESERVATIONS_RELEASED: none"
+assert_contains "$out" "LOCAL_BRANCH: none"
+assert_contains "$out" "REMOTE_BRANCH: none"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: GitHub リモートで、痕跡もマージ済みの PR も無ければ ERROR で止まる"
+setup_merged_branch "$TEST_ROOT/cleanup31" github
+cd "$TEST_ROOT/cleanup31/app" || exit 1
+make_fake_gh '"pr list --head docs/other-repo --state merged"*) echo 0 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: docs/other-repo の痕跡"
+assert_contains "$out" "マージ済みの PR"
+assert_file_exists "$TEST_ROOT/cleanup31/app-feat-x"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: GitHub リモートで、痕跡が無く gh でマージ済みの PR を確かめられなければ、理由を添えて ERROR で止まる"
+setup_merged_branch "$TEST_ROOT/cleanup32" github
+cd "$TEST_ROOT/cleanup32/app" || exit 1
+make_fake_gh '"pr list --head docs/other-repo --state merged"*) echo "HTTP 401" >&2; exit 1 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "gh pr list が失敗"
+assert_contains "$out" "HTTP 401"
+assert_file_exists "$TEST_ROOT/cleanup32/app-feat-x"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: 手元に痕跡が無くリモートに届かなければ、確かめられないとして ERROR で止まる"
+setup_merged_branch "$TEST_ROOT/cleanup33"
+cd "$TEST_ROOT/cleanup33/app" || exit 1
+git remote set-url origin "$TEST_ROOT/cleanup33/missing.git"
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "git ls-remote が失敗"
+assert_file_exists "$TEST_ROOT/cleanup33/app-feat-x"
+cd "$TEST_ROOT" || exit 1
+
 finish
