@@ -246,6 +246,54 @@ elif grep -q "マージ結果以外" "$WORK/out" && grep -q "scratch.py" "$WORK/
 else
   ng "追跡していないファイルで止まったが、ファイルを示していないかファイルが消えた"
 fi
+# .gitignore がマージで変わらなければ、無視の行が外れた旨は出さない
+if grep -q "無視されていた" "$WORK/out"; then
+  ng ".gitignore が変わらないマージで、無視の行が外れた旨を出した"
+else
+  ok ".gitignore が変わらないマージでは、無視の行が外れた旨を出さない"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+# マージするブランチが .gitignore から行を外すと、マージ先の作業ツリーに残っていた生成物
+# （HEAD の .gitignore では無視されていたもの）が未追跡として現れて止まる。止めたまま、
+# どの .gitignore が変わり、どのファイルが HEAD で無視されていたかを示す
+R="$WORK/unignored"
+new_repo "$R"
+mkdir -p "$R/sub"
+printf 'gen/\n*.log\n' > "$R/.gitignore"
+printf '/out.bin\n/出力.bin\n' > "$R/sub/.gitignore"
+git -C "$R" add .gitignore sub/.gitignore
+git -C "$R" commit -q --no-verify -m "chore: ignore outputs"
+git -C "$R" switch -q -c feat main
+printf '*.log\n' > "$R/.gitignore"
+: > "$R/sub/.gitignore"
+printf '%s' "$GOOD_PY" > "$R/good.py"
+git -C "$R" add .gitignore sub/.gitignore good.py
+git -C "$R" commit -q --no-verify -m "feat: drop the old outputs"
+git -C "$R" switch -q main
+mkdir -p "$R/gen"
+echo gen > "$R/gen/x.bin"
+echo out > "$R/sub/out.bin"
+echo out > "$R/sub/出力.bin"
+echo log > "$R/run.log"
+echo note > "$R/new.txt"
+# 印の付いた一覧（「無視されていた」の見出しから、次の字下げの浅い行まで）
+marked() { awk '/無視されていた/ {on=1; next} on && /^     / {print; next} {on=0}' "$WORK/out"; }
+if run "$R" git merge --no-ff -m "Merge: unignored" feat; then
+  ng ".gitignore から外れた生成物が未追跡で残るのにマージコミットが作られた"
+elif ! grep -q "マージ結果以外" "$WORK/out"; then
+  ng ".gitignore から外れた生成物で止まったが、作業ツリーの変更として止まっていない"
+elif [ "$(sed -n 's/^ *マージで .gitignore が変わる: //p' "$WORK/out")" != ".gitignore, sub/.gitignore" ]; then
+  ng ".gitignore から外れた生成物で止まったが、マージで変わる .gitignore（ルートと sub/）を示していない"
+elif [ "$(marked | sed 's/^ *//' | LC_ALL=C sort | tr '\n' ' ')" != "gen/x.bin sub/out.bin sub/出力.bin " ]; then
+  ng "HEAD の .gitignore で無視されていたファイルだけに印が付いていない（印: $(marked | tr '\n' ' ')）"
+elif ! grep -q "new.txt" "$WORK/out"; then
+  ng "HEAD でも無視されていない未追跡のファイル（new.txt）を示していない"
+elif ! { [ -f "$R/gen/x.bin" ] && [ -f "$R/sub/out.bin" ]; }; then
+  ng ".gitignore から外れた生成物を hook が消した"
+else
+  ok ".gitignore から外れた生成物で止め、変わる .gitignore と HEAD で無視されていたファイルを示す（ファイルは残す）"
+fi
 git -C "$R" merge --abort 2>/dev/null || true
 
 # .gitignore で除外したファイル（ビルド成果物など）は検査のツールも除外するので止めない
