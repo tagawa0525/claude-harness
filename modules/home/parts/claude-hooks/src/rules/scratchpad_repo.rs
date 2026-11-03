@@ -4,13 +4,140 @@
 //! 根は環境変数（`CLAUDE_CODE_TMPDIR` など）で変わるので、根でなく `<セッションの ID>/scratchpad` の 2 つの
 //! 名前で見分ける。
 
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
+
+use crate::git;
 use crate::input::Input;
 use crate::shell::{Cmd, Shell};
+use crate::unwrap::EnvChange;
+
+/// 例外の条件を 1 文で示す、拒否の文言に足す行
+pub const EXCEPTION: &str =
+    "セッションの scratchpad の下に git init で作った、リモートの無い一時のリポジトリは対象外です";
+
+/// リポジトリの場所を指し替える環境変数と git の全体オプション。対象のディレクトリからリポジトリを決められない
+const GIT_DIR_VARS: &[&str] = &["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"];
+const GIT_DIR_OPTIONS: &[&str] = &["--git-dir", "--work-tree"];
 
 /// cmd の対象のリポジトリが、セッションの scratchpad の下に作った、リモートの無い一時のリポジトリなら Ok。
 /// 当たらなければ、当たらない理由
-pub fn check(_input: &Input, _shell: &Shell, _cmd: &Cmd) -> Result<(), String> {
-    Err("未実装".to_string())
+pub fn check(input: &Input, shell: &Shell, cmd: &Cmd) -> Result<(), String> {
+    if input.session_id.is_empty() {
+        return Err("hook の入力にセッションの ID が無く、scratchpad を決められません".to_string());
+    }
+    if redirects_git_dir(shell, cmd) {
+        return Err(
+            "GIT_DIR / GIT_WORK_TREE / --git-dir / --work-tree でリポジトリを指し替えています"
+                .to_string(),
+        );
+    }
+    let (dir, exists) = real_path(&shell.target_dir(cmd, &input.cwd))?;
+    let Some(root) = scratchpad_root(&dir, &input.session_id) else {
+        return Err(format!(
+            "対象の {} はセッションの scratchpad の外です",
+            dir.display()
+        ));
+    };
+    // 同じコマンドの mkdir と git init が作る前のディレクトリ。そこで走る git は、scratchpad の下に
+    // 作ったリポジトリか、リポジトリが無くて失敗するかのどちらか
+    if !exists {
+        return Ok(());
+    }
+    let Some(out) = git::git(
+        &dir,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--git-common-dir",
+        ],
+    ) else {
+        // リポジトリの外（同じコマンドの git init が作る前）。git add と commit はリポジトリが無ければ失敗する
+        return Ok(());
+    };
+    // worktree は、作業ツリーが scratchpad の下でも、コミットとブランチを本番のリポジトリの git のディレクトリに書く
+    for p in out.lines() {
+        let real = std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+        if !real.starts_with(&root) {
+            return Err(format!(
+                "リポジトリ（{}）が scratchpad の外にあります（本番のリポジトリの worktree など）",
+                real.display()
+            ));
+        }
+    }
+    // 複製は origin が本番のリポジトリを指し、hook を通らないコミットをそこへ push できる
+    let remotes = git::git(&dir, &["remote"]).unwrap_or_default();
+    if !remotes.is_empty() {
+        return Err(format!(
+            "リモート（{}）があります（hook を通らないコミットを本番のリポジトリへ push できるため）",
+            remotes.lines().collect::<Vec<_>>().join("、")
+        ));
+    }
+    Ok(())
+}
+
+fn redirects_git_dir(shell: &Shell, cmd: &Cmd) -> bool {
+    let global_args = cmd
+        .git
+        .as_ref()
+        .and_then(|g| g.sub)
+        .map_or(&cmd.args[..], |i| &cmd.args[..i]);
+    shell
+        .assignments()
+        .iter()
+        .any(|(name, _)| GIT_DIR_VARS.contains(&name.as_str()))
+        || cmd.env.iter().any(|change| {
+            matches!(change, EnvChange::Set(name, _) if GIT_DIR_VARS.contains(&name.as_str()))
+        })
+        || global_args.iter().any(|a| {
+            GIT_DIR_OPTIONS
+                .iter()
+                .any(|o| a.text == *o || a.text.starts_with(&format!("{o}=")))
+        })
+}
+
+/// symlink と `..` を解いたパスと、それが今あるか。まだ無いパスは、ある祖先を解いて残りを足す。残りに `..`
+/// （解く前の symlink の先が決まらない）か展開（`$D`、`` ` ``。hook は展開しない）があれば、場所を決められない
+fn real_path(p: &Path) -> Result<(PathBuf, bool), String> {
+    if let Ok(real) = std::fs::canonicalize(p) {
+        return Ok((real, true));
+    }
+    for ancestor in p.ancestors().skip(1) {
+        let Ok(real) = std::fs::canonicalize(ancestor) else {
+            continue;
+        };
+        let rest = p.strip_prefix(ancestor).unwrap_or(p);
+        for c in rest.components() {
+            match c {
+                Component::ParentDir => {
+                    return Err(format!(
+                        "対象の {} は、まだ無いディレクトリの後に .. があり、場所を決められません",
+                        p.display()
+                    ));
+                }
+                Component::Normal(name) if name.to_string_lossy().contains(['$', '`']) => {
+                    return Err(format!(
+                        "対象の {} は展開を含み、場所を決められません",
+                        p.display()
+                    ));
+                }
+                _ => {}
+            }
+        }
+        return Ok((real.join(rest), false));
+    }
+    Err(format!("対象の {} の場所を決められません", p.display()))
+}
+
+/// path の祖先のうち `<session_id>/scratchpad` の名前で終わるもの
+fn scratchpad_root(path: &Path, session_id: &str) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|a| {
+            a.file_name() == Some(OsStr::new("scratchpad"))
+                && a.parent().and_then(Path::file_name) == Some(OsStr::new(session_id))
+        })
+        .map(Path::to_path_buf)
 }
 
 /// ルールのテストが共有する、scratchpad と本番のリポジトリの代わりを持つ一時のディレクトリ

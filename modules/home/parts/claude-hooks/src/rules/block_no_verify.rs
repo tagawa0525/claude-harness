@@ -10,9 +10,12 @@
 //!
 //! env などで包んだコマンドは、shell.rs がほどいた中の git コマンドと、ラッパーが変える環境変数で見る。
 //!
+//! セッションの scratchpad の下に git init で作った一時のリポジトリ（scratchpad_repo.rs）への commit / merge / pull は
+//! 止めない。`git config` は `--global` でも同じ形で書けるので、そこでも止める。
+//!
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=<理由>` を付ける。
 
-use super::{Rule, escape_hint};
+use super::{Rule, escape_hint, scratchpad_repo};
 use crate::git_args::{Item, items};
 use crate::input::Input;
 use crate::output::Finding;
@@ -89,13 +92,14 @@ impl Rule for BlockNoVerify {
         Some("ALLOW_NO_VERIFY")
     }
 
-    fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        let mut skips = false;
+    fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        // 止める理由と、scratchpad の一時のリポジトリの例外に当たらない理由（commit / merge / pull のときだけ）
+        let mut skips: Option<Option<String>> = None;
         for cmd in shell.commands() {
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
             };
-            skips |= match sub {
+            let skipping = match sub {
                 "config" => sets_hooks_path(args),
                 // 環境変数（シェルの代入と unset、ラッパーの変更）は、hook が走るコマンドがあるときだけ見る
                 // （`sudo ls` や `ssh host nvidia-smi`、`CLAUDECODE=0 echo ok` では hook は走らない）
@@ -117,10 +121,30 @@ impl Rule for BlockNoVerify {
                 }
                 _ => false,
             };
+            if !skipping {
+                continue;
+            }
+            // `git config` は `--global` でも同じ形で書けるので、scratchpad の下でも例外にしない
+            let not_temp = if sub == "config" {
+                None
+            } else {
+                match scratchpad_repo::check(input, shell, cmd) {
+                    Ok(()) => continue,
+                    Err(why) => Some(why),
+                }
+            };
+            skips.get_or_insert(not_temp);
         }
-        if skips {
+        if let Some(not_temp) = skips {
+            let exception = match not_temp {
+                Some(why) => format!(
+                    "\n{}（このコマンドは当たりません: {why}）。",
+                    scratchpad_repo::EXCEPTION
+                ),
+                None => String::new(),
+            };
             return vec![Finding::Deny(format!(
-                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え（-E の無い sudo と ssh の先には CLAUDECODE が渡りません）。\nhook が止めた理由を直してから実行してください。{}",
+                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え（-E の無い sudo と ssh の先には CLAUDECODE が渡りません）。{exception}\nhook が止めた理由を直してから実行してください。{}",
                 escape_hint("ALLOW_NO_VERIFY")
             ))];
         }
