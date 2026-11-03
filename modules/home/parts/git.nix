@@ -297,7 +297,37 @@ in
       if [ -n "$DIRTY" ]; then
         echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
         printf '%s\n' "$DIRTY" | sed 's/^/     /'
-        echo "   修正方法: git merge --abort で取り消し、変更をコミットして（不要なファイルは消して）から、もう一度マージしてください"
+
+        # マージするブランチが .gitignore から行を外すと、HEAD の作業ツリーに残っていた生成物が
+        # 未追跡として現れる。コミットするものではないので、HEAD の .gitignore で無視されていた
+        # ファイルを見分けて示す。git check-ignore は作業ツリー（マージ結果）の .gitignore しか
+        # 読まないので、HEAD の .gitignore だけを置いた一時リポジトリで判定する（ファイルの実体は
+        # 要らない。パスとパターンで決まる）。git archive は export-ignore の属性で .gitignore を
+        # 落としうるので、git show で 1 本ずつ取り出す
+        IGNORE_CHANGED=$(git -c core.quotePath=false diff --cached --name-only HEAD -- ':(glob)**/.gitignore')
+        UNIGNORED=""
+        if [ -n "$IGNORE_CHANGED" ]; then
+          HEAD_IGNORES=$(mktemp -d)
+          trap 'rm -rf "$HEAD_IGNORES"' EXIT
+          while IFS= read -r -d "" f; do
+            mkdir -p "$HEAD_IGNORES/$(dirname "$f")"
+            git show "HEAD:$f" > "$HEAD_IGNORES/$f"
+          done < <(git ls-tree -r -z --name-only HEAD | grep -z -E '(^|/)\.gitignore$' || true)
+          # hook に渡る GIT_INDEX_FILE などが一時リポジトリの git にも効かないように外す
+          env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$HEAD_IGNORES" init -q
+          UNIGNORED=$(git ls-files -z --others --exclude-standard \
+            | { env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE \
+                  git -C "$HEAD_IGNORES" check-ignore -z --stdin || [ $? -eq 1 ]; } \
+            | tr '\0' '\n')
+        fi
+        if [ -n "$UNIGNORED" ]; then
+          echo "   マージで .gitignore が変わる: $(printf '%s\n' "$IGNORE_CHANGED" | paste -sd, - | sed 's/,/, /g')"
+          echo "   うち次のファイルは HEAD の .gitignore では無視されていた（マージするブランチが消したか置き換えた処理の生成物など。マージで無視の行が外れて現れた）:"
+          printf '%s\n' "$UNIGNORED" | sed 's/^/     /'
+          echo "   修正方法: git merge --abort で取り消し、上の生成物は作り直せる（または要らない）ことを確かめて作業ツリーから消し（残して無視し続けるなら、マージするブランチの .gitignore に行を戻し）、ほかの変更はコミットして（不要なファイルは消して）から、もう一度マージしてください"
+        else
+          echo "   修正方法: git merge --abort で取り消し、変更をコミットして（不要なファイルは消して）から、もう一度マージしてください"
+        fi
         exit 1
       fi
 
