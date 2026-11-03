@@ -97,8 +97,7 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
   ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
   違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。
-  コマンドが読む入力のファイル（TOML など。`dvc repro` なら、`dvc.yaml` のステージの定義の全体（`vars`、`foreach`、`wdir` を含む）と、
-  `cmd` が読むファイルの全部）は、比べる 2 本それぞれで、そのジョブが走った
+  コマンドが読む入力のファイル（TOML など）は、比べる 2 本それぞれで、そのジョブが走った
   worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
   コミットは sacct とログに残らないので（nixfiles の issue #556）、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
   切り離されていると無い）の reflog を、本体のリポジトリ（worktree は後片付けで消えるが、reflog は共通の git dir にある）で
@@ -107,9 +106,9 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   最後の項のコミットを取る（`git log --before=<Start>` はコミットの日付で選ぶので、rebase や amend の後は走った版でないコミットを返す。
   `rev-parse '<ブランチ>@{<Start>}'` は reflog が `Start` まで届かなくても警告だけで別のコミットを返す。worktree は後片付けで消え、
   残っていても後のコミットで変わっている）。入力は `git show <コミット>:<worktree の直下からのパス>` で開く（コマンドの中のパスは
-  `WorkDir` からの相対で、`WorkDir` が worktree の下のディレクトリのこともある。dvc の deps、outs、params のパスはステージの
-  `wdir`（無ければ `dvc.yaml` のディレクトリ）からの相対、トップレベルの `vars` のファイルは `dvc.yaml` のディレクトリからの相対で、
-  `dvc.yaml` の隣の `params.yaml` は書かなくても `vars` として読まれる。DVC の文書の dvc.yaml の節）。次のときは、走った版を決められないので
+  `WorkDir` からの相対で、`WorkDir` が worktree の下のディレクトリのこともある）。`dvc repro` のジョブは、ステージが読むものが `dvc.yaml` の
+  定義、`vars`、params、上流のステージなどに広がり、どこまで比べれば足りるかを決めていない。開いて比べたファイルを書き、
+  「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の issue #556）。次のときは、走った版を決められないので
   「確かめていない」と書く:
 
   - ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
