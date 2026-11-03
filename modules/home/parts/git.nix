@@ -293,7 +293,9 @@ in
       # 検査してしまうので止める（比べる index は git が渡す GIT_INDEX_FILE。commit -a なら index.lock）。
       # 追跡していないファイルも、ruff check . や pytest のような木全体の検査が拾うので含める。
       # .gitignore で除外したもの（ビルド成果物など）は検査のツールも除外するので含めない
-      DIRTY=$(git diff --name-only; git ls-files --others --exclude-standard)
+      # core.quotePath=false: 下の .gitignore から外れた生成物の一覧と同じく、非 ASCII のパスを 8 進で
+      # 引用せずに出す（書き方が違うと、同じファイルが別のものに見える）
+      DIRTY=$(git -c core.quotePath=false diff --name-only; git -c core.quotePath=false ls-files --others --exclude-standard)
       if [ -n "$DIRTY" ]; then
         echo "❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:"
         printf '%s\n' "$DIRTY" | sed 's/^/     /'
