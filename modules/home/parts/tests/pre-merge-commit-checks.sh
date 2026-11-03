@@ -287,6 +287,8 @@ elif [ "$(sed -n 's/^ *マージで .gitignore が変わる: //p' "$WORK/out")" 
   ng ".gitignore から外れた生成物で止まったが、マージで変わる .gitignore（ルートと sub/）を示していない"
 elif [ "$(marked | sed 's/^ *//' | LC_ALL=C sort | tr '\n' ' ')" != "gen/x.bin sub/out.bin sub/出力.bin " ]; then
   ng "HEAD の .gitignore で無視されていたファイルだけに印が付いていない（印: $(marked | tr '\n' ' ')）"
+elif grep -q '\\[0-7][0-7][0-7]' "$WORK/out"; then
+  ng "非 ASCII のパスを 8 進で引用して出した（印の一覧と書き方が食い違う）"
 elif ! grep -q "new.txt" "$WORK/out"; then
   ng "HEAD でも無視されていない未追跡のファイル（new.txt）を示していない"
 elif ! { [ -f "$R/gen/x.bin" ] && [ -f "$R/sub/out.bin" ]; }; then
