@@ -377,6 +377,21 @@ mod tests {
     }
 
     #[test]
+    fn pushd_and_popd_before_git_are_not_excepted() {
+        // target_dir は cd だけをたどるので、pushd の先は hook の cwd（scratchpad のリポジトリ）と読まれる
+        let f = Fixture::new("pushd");
+        let repo = f.temp_repo("r");
+        let prod = f.prod().display().to_string();
+        for src in [
+            format!("pushd {prod} && git add -A && popd"),
+            format!("pushd {prod} && popd && git add -A"),
+        ] {
+            let err = judge(&src, &repo).unwrap_err();
+            assert!(err.contains("pushd"), "{src}: {err}");
+        }
+    }
+
+    #[test]
     fn git_dir_redirection_is_not_excepted() {
         let f = Fixture::new("gitdir");
         let repo = f.temp_repo("r");
