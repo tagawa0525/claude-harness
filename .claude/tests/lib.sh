@@ -28,6 +28,9 @@ git config --global init.defaultBranch main
 git config --global advice.detachedHead false
 # hook は Claude Code セッションからの実行を前提にする
 export CLAUDECODE=1
+# テストは out=$(…) にコマンドの出力を入れる。nix の devShell は out を export するので、そのままだと
+# 出力が子の環境に入り、128 KB を超えると次の exec が E2BIG で失敗する
+export -n out
 
 PASS=0
 FAIL=0
