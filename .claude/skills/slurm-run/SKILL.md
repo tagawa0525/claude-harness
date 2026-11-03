@@ -85,17 +85,49 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   種類ごとに 1 段階（1 状態）を測ってから本数を掛ける。2026-10-14 に格子 104 状態の見積もり 2 時間が 3 時間超になった
   （反射体つきの格子を、集合体と同じ時間で見積もった）
 - `slurm-history.sh --by-name` の表は名前でしか結ばない。名前の似たジョブが同じ仕事をしたとは限らず、割り込みの前の
-  ジョブには、`-shared` を付け忘れた排他でないジョブも混ざる。実績に取るジョブは、コマンドと中身が同じ排他のジョブかを sacct で確かめる:
+  ジョブには、`-shared` を付け忘れた排他でないジョブも混ざる。過去のジョブの測定（時間、`MaxRSS` などのメモリ）を、見積もりに
+  使う、「前は同じ入力で X だった」と比べる、依頼の前提に書くときは、取るジョブが、コマンドと中身が同じ排他のジョブかを sacct で確かめる:
 
   ```bash
-  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,SubmitLine | grep -F -- '<コマンドの一部>'
+  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Start,End,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
   ```
 
-  欄は JobID、JobName、State、Elapsed、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
+  欄は JobID、JobName、State、Elapsed、Start、End、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
   `--exclusive` のジョブ（`slurm-run.sh` は排他のときだけそこに置く。`-c` のジョブは `--cpus-per-task=N` で、その時間は同じ仕事
   なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
   ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
-  違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。sacct はジョブ 126 より前を持たない
+  違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。
+  コマンドが読む入力のファイル（TOML など）は、比べる 2 本それぞれで、そのジョブが走った
+  worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
+  コミットは sacct とログに残らないので（nixfiles の issue #556）、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
+  切り離されていると無い）の reflog を、本体のリポジトリ（worktree は後片付けで消えるが、reflog は共通の git dir にある）で
+  `git -C <本体のリポジトリ> log -g --date=iso-local --format='%H %gd %gs' <ブランチ>` と読み（`--date=iso-local` は sacct の時刻と同じ
+  ローカル時刻に揃える）、`Start` の前の
+  最後の項のコミットを取る（`git log --before=<Start>` はコミットの日付で選ぶので、rebase や amend の後は走った版でないコミットを返す。
+  `rev-parse '<ブランチ>@{<Start>}'` は reflog が `Start` まで届かなくても警告だけで別のコミットを返す。worktree は後片付けで消え、
+  残っていても後のコミットで変わっている）。入力は `git show <コミット>:<worktree の直下からのパス>` で開く（コマンドの中のパスは
+  `WorkDir` からの相対で、`WorkDir` が worktree の下のディレクトリのこともある）。`dvc repro` のジョブは、ステージが読むものが `dvc.yaml` の
+  定義、`vars`、params、上流のステージなどに広がり、どこまで比べれば足りるかを決めていない。開いて比べたファイルを書き、
+  「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の issue #556）。次のときは、走った版を決められないので
+  「確かめていない」と書く:
+
+  - ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
+    （rebase で外れたコミットの項は黙って消える）
+  - `Start` から `End` の間に reflog の項がある（`dvc repro` のステージは `Start` より後に入力を読むので、間のコミットで変わりうる）。
+    worktree が残っていれば、`git -C <worktree> log -g --date=iso-local HEAD` の間の項（ブランチの切り替え、rebase）も見る
+  - 入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（ログの先頭の nix の
+    `Git tree '…' is dirty` はその印）。印が出ないことは変更が無いことを示さない（nix を通らないジョブには出ない）ので、印の無い
+    ジョブは、比べた版のコミットを書き、コミットされていない変更の有無は「確かめていない」と添える
+  - git で追跡しない deps（`bin/` の実行ファイル、ライブラリなど DVC の出力）で、ジョブが書いてコミットした `dvc.lock` が無い
+    （そのコミットの `dvc.lock` は前の実行の md5 で、changed で走ったステージの deps と違う。`dvc repro` はステージごとに書き、失敗したステージは書かない）
+
+  メモリを比べるときの `MaxRSS` の読み方は下の「ジョブの中のプログラムの時間とメモリ」の項。r995 は 30 秒ごとの標本
+  （`JobAcctGatherFrequency = 30`）で、COMPLETED のジョブでも間の山は入らない。途中で殺されたジョブ（State が
+  COMPLETED でない）の値は殺されるまでの標本で、要る量の下限としてだけ使う。
+  2026-11-03 に xlc の依頼が、Slurm 644 の `MaxRSS` 88276164K と
+  前の 582、617、621、629、630、638 の 20519904K〜25878580K を、MaxRSS だけを sacct で見て「同じ入力」と書いた。644 は `dvc repro
+  examples/depletion/dvc.yaml` の `lattice-2A.toml`（`ufg-tolerance` なし）、前の 6 本は p2 と history の入力（`ufg-tolerance = 1e-4`
+  の間引いた格子）で、別の入力だった。sacct はジョブ 126 より前を持たない
   （その前の排他かどうかの扱いは nixfiles の issue #452）。2026-10-22 に、名前の似た、中身の違う
   排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、2 時間 5 分かかった。sacct を読んで排他と中身を出す仕組みは
   nixfiles の issue #452
@@ -224,6 +256,26 @@ nixfiles #460 を対応せずに閉じた（2026-10-24）。測定の時間を�
 sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,State,MaxRSS,Suspended
 ```
 
+ジョブが止まった理由は、`MaxRSS` と `ReqMem` を比べて推さず、次の 3 つで読む。r995 の Slurm はジョブのメモリを数えず、制限もしない
+（`scontrol show config` で `SelectTypeParameters = CR_CORE`、`TaskPlugin = (null)`、`SLURM_CONF` の隣の cgroup.conf は空で `ConstrainRAMSpace` なし）。`ReqMem`（排他のジョブでは
+RealMemory の 86000M）は要求の値で、超えても Slurm は止めない。メモリで止まるのは、機械の全体を使い切ったときのカーネルの OOM killer である。
+
+- `sacct -j <番号> -X -o JobID,State,ExitCode,Start,End`（`-X` が無いと `.batch` と `.extern` の行も出る）: `ExitCode` は `--wrap` の一番外のコマンドの値で、中のプログラムの値でない
+  （`dvc repro` の中で `lattice` が SIGKILL で止まっても、ジョブは `FAILED` の `255:0`）。Slurm がメモリで止めた形（`OUT_OF_MEMORY`）は
+  上の設定では出ない
+- ログの末尾: 中のプログラムの終わり方（`強制終了`、dvc の `exited with 137`。137 は SIGKILL で、OOM killer に限らない）
+- `journalctl _TRANSPORT=kernel --since '<Start>' --until '<End>' | grep -E 'oom-kill:|Out of memory'`（r995 で読む。時刻はジョブの
+  `Start` と `End`。`-k` は今の起動だけを読むので、ジョブの後に再起動していると何も出ない）: カーネルの OOM killer なら、`global_oom` と
+  `task=<プログラム名>,pid=<番号>` の行と、`Killed process <番号> (<名前>)` の `anon-rss`（殺したときの使用量）が出る。global の OOM は
+  機械の全体から殺すプロセスを選ぶので、`task=` の名前がジョブのプログラムで、時刻がログの止まった所と合うかを見る（止められた
+  ジョブや `-c` のジョブと重なっていれば、別のジョブのプロセスでありうる）。ジャーナルが残っている期間（`journalctl --list-boots` の
+  最初の起動から）で行が無ければ、カーネルの OOM killer でない（r995 で動く systemd-oomd が殺したときは、カーネルでなく
+  `journalctl -u systemd-oomd` に出る）
+
+2026-11-03 の xlc の依頼は、Slurm 644 を `MaxRSS` 88276164K と `ReqMem` 86000M から「上限を超えて exit 137 で止まる」と書いた。実際は
+sacct で `FAILED` の `255:0`、ログで `lattice` が `exited with 137`、カーネルのログで 2026-10-31 20:15:04 の `global_oom` の
+`Killed process 711567 (lattice) … anon-rss:88861200kB` で、カーネルの OOM killer だった。
+
 番号の分かったジョブの時間（見積もりや依頼の前提に使う値）は、番号と時間が同じ行にある形で読む。`sacct -j <番号>[,<番号>…] -X
 -o JobID,JobName,Partition,Elapsed,Suspended,State` か、`TIME:` 行の `job=`（この欄を足す前のログには無い）。記録に書けるかは
 次の段落で決める。何本かのログを 1 回の `grep` で
@@ -259,7 +311,7 @@ sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,S
   `main` の排他のジョブが待つ。排他でないジョブどうしは重なる。`main` の排他の短いジョブとは重ならない
   （sbatch の `--exclusive` は、ほかのジョブとノードを共有しない）。`--timed` のジョブは待たず、走っている排他でないジョブも
   止めて始まり、止めたジョブとメモリを分け合う
-- メモリは Slurm が数えない（`CR_Core`）。排他でないジョブを複数流すときは、メモリの合計が搭載量（RealMemory 86000 MB）を
-  超えないよう自分で数える。超えると OOM killer が長い計算を殺す
+- メモリは Slurm が数えず、ジョブごとにも制限しない（`CR_Core`、TaskPlugin なし）。排他でないジョブを複数流すときは、メモリの合計が
+  搭載量（RealMemory 86000 MB）を超えないよう自分で数える。超えるとカーネルの OOM killer が長い計算を殺す（確かめ方は「ログと時間」）
 - 名前の末尾に `-shared` を付ける（`openmc-2K-shared`）。`sacct` で実績を読むとき、排他のジョブと見分けるため
 - 連絡先に `shared-cpus=N` が付くので、`squeue` で待たされている理由が読める
