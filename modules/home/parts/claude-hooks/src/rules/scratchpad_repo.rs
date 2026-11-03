@@ -274,14 +274,58 @@ mod tests {
     }
 
     #[test]
-    fn directory_made_in_the_same_command_under_scratchpad_is_excepted() {
+    fn directory_or_repository_not_made_yet_is_not_excepted_and_asks_for_git_init_first() {
+        // 判定する時点に無いディレクトリは、前の cd が失敗すれば git が hook の cwd（本番のリポジトリ）で走り、
+        // 作られても祖先の worktree や複製の中かもしれないので、場所を決められない
         let f = Fixture::new("mkdir");
         let r = f.scratchpad().join("new");
         let src = format!(
             "mkdir -p {r} && cd {r} && git init -q && git add -A",
             r = r.display()
         );
-        assert_eq!(judge(&src, &f.prod()), Ok(()));
+        let err = judge(&src, &f.prod()).unwrap_err();
+        assert!(err.contains("git init"), "{err}");
+        let err = judge(&format!("cd {}; git add -A", r.display()), &f.prod()).unwrap_err();
+        assert!(err.contains("git init"), "{err}");
+        // ディレクトリはあるが、まだ git init していない
+        let plain = f.scratchpad().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let err = judge("git add -A", &plain).unwrap_err();
+        assert!(err.contains("git init"), "{err}");
+    }
+
+    #[test]
+    fn directory_not_made_yet_inside_a_worktree_or_clone_under_scratchpad_is_not_excepted() {
+        let f = Fixture::new("missing-in-wt");
+        let wt = f.scratchpad().join("wt");
+        git(&f.prod(), &["worktree", "add", "-q", wt.to_str().unwrap()]);
+        let sub = wt.join("sub");
+        let src = format!(
+            "mkdir -p {s} && cd {s} && git -c core.hooksPath=/dev/null commit -m x",
+            s = sub.display()
+        );
+        assert!(judge(&src, &f.prod()).is_err());
+    }
+
+    #[test]
+    fn home_of_another_user_and_globs_are_not_read_as_paths_under_scratchpad() {
+        let f = Fixture::new("tilde");
+        let repo = f.temp_repo("r");
+        for src in [
+            "cd ~root && git add -A",
+            "cd ../../../../*/prod && git add -A",
+        ] {
+            assert!(judge(src, &repo).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn repository_git_cannot_read_is_not_taken_as_absent_or_without_remotes() {
+        let f = Fixture::new("bad-config");
+        let repo = f.temp_repo("r");
+        // 壊れた設定では rev-parse も remote も失敗する
+        std::fs::write(repo.join(".git/config"), "[core\n").unwrap();
+        assert!(judge("git add -A", &repo).is_err());
     }
 
     #[test]
@@ -332,7 +376,7 @@ mod tests {
         // まだ無いディレクトリの後の `..`
         let missing_up = f.scratchpad().join("missing/../../../../prod");
         let err = judge(&format!("cd {} && git add .", missing_up.display()), &repo).unwrap_err();
-        assert!(err.contains(".."), "{err}");
+        assert!(err.contains("git init"), "{err}");
         // scratchpad の中の symlink が本番のリポジトリを指す
         let link = f.scratchpad().join("link");
         std::os::unix::fs::symlink(f.prod(), &link).unwrap();
@@ -345,7 +389,7 @@ mod tests {
         let f = Fixture::new("expansion");
         let repo = f.temp_repo("r");
         let err = judge("cd \"$D\" && git add -A", &repo).unwrap_err();
-        assert!(err.contains("展開"), "{err}");
+        assert!(err.contains("git init"), "{err}");
     }
 
     #[test]

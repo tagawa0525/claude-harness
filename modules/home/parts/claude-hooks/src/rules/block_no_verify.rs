@@ -204,6 +204,20 @@ mod tests {
     }
 
     #[test]
+    fn the_reason_outside_scratchpad_is_shown_whatever_the_order_of_the_commands() {
+        let f = Fixture::new("nv-order");
+        let repo = f.temp_repo("r");
+        let prod = f.prod().display().to_string();
+        for src in [
+            format!("git config core.hooksPath /dev/null; git -C {prod} commit --no-verify -m x"),
+            format!("git -C {prod} commit --no-verify -m x; git config core.hooksPath /dev/null"),
+        ] {
+            let why = deny_reason(&src, &repo).expect("deny");
+            assert!(why.contains("scratchpad の外"), "{src}: {why}");
+        }
+    }
+
+    #[test]
     fn git_config_of_hooks_path_is_denied_even_under_scratchpad() {
         // `git config --global` も同じ形で書けるので、scratchpad の下でも hook の置き場所の書き換えは例外にしない
         let f = Fixture::new("nv-config");
