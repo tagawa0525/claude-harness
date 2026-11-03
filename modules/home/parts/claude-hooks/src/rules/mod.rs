@@ -98,6 +98,7 @@ mod pre_merge_check;
 pub use pre_merge_check::local_review_covers_for_pr;
 mod pre_pr_create_check;
 mod require_background_wait;
+mod scratchpad_repo;
 mod warn_large_commit;
 
 pub fn all() -> &'static [&'static dyn Rule] {

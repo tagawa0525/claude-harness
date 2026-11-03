@@ -101,4 +101,43 @@ mod tests {
             assert!(args(c).is_some(), "{c}");
         }
     }
+
+    mod scratchpad {
+        use super::super::GuardGitAdd;
+        use crate::output::Finding;
+        use crate::rules::Rule;
+        use crate::rules::scratchpad_repo::fixture::{Fixture, SID, input};
+        use crate::shell::Shell;
+        use std::path::Path;
+
+        fn deny_reason(src: &str, cwd: &Path) -> Option<String> {
+            let findings = GuardGitAdd.check(&input(cwd, SID), &Shell::parse(src));
+            findings.into_iter().find_map(|f| match f {
+                Finding::Deny(r) => Some(r),
+                _ => None,
+            })
+        }
+
+        #[test]
+        fn unscoped_add_in_a_temp_repo_under_scratchpad_is_allowed() {
+            let f = Fixture::new("add-allow");
+            let repo = f.temp_repo("r");
+            for src in [
+                "git add -A".to_string(),
+                "git add .".to_string(),
+                format!("cd {} && git add -A", repo.display()),
+                format!("git -C {} add .", repo.display()),
+            ] {
+                assert_eq!(deny_reason(&src, &repo), None, "{src}");
+            }
+        }
+
+        #[test]
+        fn unscoped_add_outside_scratchpad_is_denied_with_why_the_exception_does_not_apply() {
+            let f = Fixture::new("add-deny");
+            let why = deny_reason("git add -A", &f.prod()).expect("deny");
+            assert!(why.contains("git add -p"), "{why}");
+            assert!(why.contains("scratchpad の外"), "{why}");
+        }
+    }
 }
