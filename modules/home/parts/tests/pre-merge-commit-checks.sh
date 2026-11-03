@@ -339,6 +339,19 @@ else
 fi
 git -C "$R" merge --abort 2>/dev/null || true
 
+# 印を付ける判定（一時リポジトリ）に失敗しても、マージは止め、変更の一覧と修正方法は出す。
+# 判定に失敗したことも示す（印が無いのを「外れた生成物は無い」と読まれないように）
+if run "$R" env TMPDIR="$WORK/no-such-dir" git merge --no-ff -m "Merge: moved" feat; then
+  ng "印の判定に失敗したのにマージコミットが作られた"
+elif ! { grep -q "old/gen.bin" "$WORK/out" && grep -q "修正方法: git merge --abort" "$WORK/out"; }; then
+  ng "印の判定に失敗したとき、変更の一覧か修正方法を出していない"
+elif ! grep -q "判定に失敗" "$WORK/out"; then
+  ng "印の判定に失敗したことを示していない"
+else
+  ok "印の判定に失敗しても止め、変更の一覧と修正方法と判定の失敗を示す"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
 # .gitignore で除外したファイル（ビルド成果物など）は検査のツールも除外するので止めない
 R="$WORK/ignored"
 new_repo "$R"
