@@ -10,9 +10,12 @@
 //!
 //! env などで包んだコマンドは、shell.rs がほどいた中の git コマンドと、ラッパーが変える環境変数で見る。
 //!
+//! セッションの scratchpad の下に git init で作った一時のリポジトリ（scratchpad_repo.rs）への commit / merge / pull は
+//! 止めない。`git config` は `--global` でも同じ形で書けるので、そこでも止める。
+//!
 //! エスケープ: コマンドに `ALLOW_NO_VERIFY=<理由>` を付ける。
 
-use super::{Rule, escape_hint};
+use super::{Rule, escape_hint, scratchpad_repo};
 use crate::git_args::{Item, items};
 use crate::input::Input;
 use crate::output::Finding;
@@ -89,13 +92,16 @@ impl Rule for BlockNoVerify {
         Some("ALLOW_NO_VERIFY")
     }
 
-    fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
+    fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        // hook を飛ばす git のコマンドがあるか（skips）と、commit / merge / pull が scratchpad の一時のリポジトリの
+        // 例外に当たらない理由（not_temp。git config だけなら無い）
         let mut skips = false;
+        let mut not_temp: Option<String> = None;
         for cmd in shell.commands() {
             let Some((sub, args)) = cmd.git_subcommand() else {
                 continue;
             };
-            skips |= match sub {
+            let skipping = match sub {
                 "config" => sets_hooks_path(args),
                 // 環境変数（シェルの代入と unset、ラッパーの変更）は、hook が走るコマンドがあるときだけ見る
                 // （`sudo ls` や `ssh host nvidia-smi`、`CLAUDECODE=0 echo ok` では hook は走らない）
@@ -117,13 +123,107 @@ impl Rule for BlockNoVerify {
                 }
                 _ => false,
             };
+            if !skipping {
+                continue;
+            }
+            // `git config` は `--global` でも同じ形で書けるので、scratchpad の下でも例外にしない
+            if sub != "config" {
+                match scratchpad_repo::check(input, shell, cmd) {
+                    Ok(()) => continue,
+                    Err(why) => {
+                        not_temp.get_or_insert(why);
+                    }
+                }
+            }
+            skips = true;
         }
         if skips {
+            let exception = match not_temp {
+                Some(why) => format!(
+                    "\n{}（このコマンドは当たりません: {why}）。",
+                    scratchpad_repo::EXCEPTION
+                ),
+                None => String::new(),
+            };
             return vec![Finding::Deny(format!(
-                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え（-E の無い sudo と ssh の先には CLAUDECODE が渡りません）。\nhook が止めた理由を直してから実行してください。{}",
+                "git の hook の検査（機密情報、main への直接コミット、形式、ローカルのマージ）を飛ばすので止めます: --no-verify（commit の -n、省略形を含む）、hook の置き場所の変更（-c / --config-env / git config の core.hooksPath、GIT_CONFIG_*）、CLAUDECODE の書き換え（-E の無い sudo と ssh の先には CLAUDECODE が渡りません）。{exception}\nhook が止めた理由を直してから実行してください。{}",
                 escape_hint("ALLOW_NO_VERIFY")
             ))];
         }
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BlockNoVerify;
+    use crate::output::Finding;
+    use crate::rules::Rule;
+    use crate::rules::scratchpad_repo::fixture::{Fixture, SID, input};
+    use crate::shell::Shell;
+    use std::path::Path;
+
+    fn deny_reason(src: &str, cwd: &Path) -> Option<String> {
+        let findings = BlockNoVerify.check(&input(cwd, SID), &Shell::parse(src));
+        findings.into_iter().find_map(|f| match f {
+            Finding::Deny(r) => Some(r),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn skipping_hooks_in_a_temp_repo_under_scratchpad_is_allowed() {
+        let f = Fixture::new("nv-allow");
+        let repo = f.temp_repo("r");
+        let r = repo.display();
+        for src in [
+            "git -c core.hooksPath=/dev/null commit -qm x".to_string(),
+            "git commit --no-verify -m x".to_string(),
+            format!("cd {r} && git -c core.hooksPath=/dev/null commit -m x"),
+            format!("git -C {r} -c core.hooksPath=/dev/null commit -m x"),
+        ] {
+            assert_eq!(deny_reason(&src, &repo), None, "{src}");
+        }
+    }
+
+    #[test]
+    fn skipping_hooks_outside_scratchpad_is_denied_with_why_the_exception_does_not_apply() {
+        let f = Fixture::new("nv-deny");
+        let why =
+            deny_reason("git -c core.hooksPath=/dev/null commit -m x", &f.prod()).expect("deny");
+        assert!(why.contains("scratchpad の外"), "{why}");
+    }
+
+    #[test]
+    fn a_hook_skip_aimed_outside_is_denied_even_when_another_command_targets_scratchpad() {
+        let f = Fixture::new("nv-mixed");
+        let repo = f.temp_repo("r");
+        let src = format!(
+            "git -c core.hooksPath=/dev/null commit -m x && git -C {} commit --no-verify -m y",
+            f.prod().display()
+        );
+        assert!(deny_reason(&src, &repo).is_some());
+    }
+
+    #[test]
+    fn the_reason_outside_scratchpad_is_shown_whatever_the_order_of_the_commands() {
+        let f = Fixture::new("nv-order");
+        let repo = f.temp_repo("r");
+        let prod = f.prod().display().to_string();
+        for src in [
+            format!("git config core.hooksPath /dev/null; git -C {prod} commit --no-verify -m x"),
+            format!("git -C {prod} commit --no-verify -m x; git config core.hooksPath /dev/null"),
+        ] {
+            let why = deny_reason(&src, &repo).expect("deny");
+            assert!(why.contains("scratchpad の外"), "{src}: {why}");
+        }
+    }
+
+    #[test]
+    fn git_config_of_hooks_path_is_denied_even_under_scratchpad() {
+        // `git config --global` も同じ形で書けるので、scratchpad の下でも hook の置き場所の書き換えは例外にしない
+        let f = Fixture::new("nv-config");
+        let repo = f.temp_repo("r");
+        assert!(deny_reason("git config core.hooksPath /dev/null", &repo).is_some());
     }
 }

@@ -1,6 +1,6 @@
 //! claude-hooks: Claude Code の PreToolUse hook。
 //!
-//! 標準入力の hook JSON（tool_name / tool_input.command / tool_input.run_in_background / tool_input.prompt / cwd）を
+//! 標準入力の hook JSON（tool_name / tool_input.command / tool_input.run_in_background / tool_input.prompt / cwd / session_id）を
 //! 読み、tool_name のツールを検査するルールを評価して、deny / additionalContext を JSON で返す。Bash のルールは
 //! コマンドを構文解析して判定し、Agent のルールは prompt を判定する。
 //! 判定できなかった理由（git を起動できない、ルールの panic）は systemMessage で利用者に見せる（ADR-0033）。
