@@ -36,6 +36,7 @@ mkdir -p "$CLAUDE_DIR"
 # 語の置き換えのような同じサイズの変更が飛ばされる。-t を外して時刻を保たない形（--no-times）は、
 # mtime が毎回食い違うので全ファイルを毎回書き直す。--checksum は中身の違うファイルだけを書き、
 # 両側を読む量は skills と scripts の合わせて 1 MB に満たない。
+# 比べた案の記録: https://github.com/tagawa0525/nixfiles/issues/566
 
 # CLAUDE.md: ソースが正として常に上書き（グローバル指針）
 if [ -f "$SOURCE_DIR/CLAUDE.md" ]; then
