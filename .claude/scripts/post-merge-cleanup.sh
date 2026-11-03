@@ -4,6 +4,13 @@
 # Usage: post-merge-cleanup.sh <branch>
 #
 # 順に行う（gh-pr-merge スキルの「クリーンアップ」）:
+#   -. （0 の前）cwd のリポジトリに <branch> の痕跡が無ければ、何も変えずに ERROR で止まる（別のリポジトリの
+#      ブランチ名を渡すと、none を並べて 0 で終わり、そのリポジトリの pull と予約のタグの prune だけが走る）。
+#      痕跡は、ローカルのブランチ（チェックアウトした worktree を含む）、リモート追跡の ref、リモートのブランチ、
+#      GitHub リモートではそのブランチを head とするマージ済みの PR。gh pr merge --delete-branch はローカルと
+#      リモートのブランチを消し、リモート追跡の ref もほかのセッションの fetch --prune で消えうるので、
+#      マージ済みの PR まで見ないと、gh の後の正当な呼び出しを止める。確かめられない（リモートに届かない、
+#      gh が失敗する）ときも止める
 #   0. （1 の前）ローカルの <branch> の先端が既定ブランチ（なければ、追うリモートの既定ブランチを fetch した
 #      もの）の祖先でなければ、何も消さずに ERROR で止まる（マージが途中で止まったのに続けて呼ぶと、1 で worktree
 #      が、無視されたファイルごと消える。4 の -d で未マージに気づいても遅い）。ローカルのブランチが無ければ見ない
@@ -70,6 +77,57 @@ DEFAULT_ROOT=$(git worktree list --porcelain | awk -v ref="refs/heads/$DEFAULT" 
   /^worktree / { path = substr($0, 10) }
   /^branch /   { if ($2 == ref) print path }')
 cd "${DEFAULT_ROOT:-$MAIN_ROOT}"
+
+# --- 痕跡 ---
+# 手元（ローカルのブランチ、リモート追跡の ref）を先に見て、無いときだけネットワークに行く
+no_trace() {
+  {
+    echo "ERROR: $BRANCH の痕跡（ローカルのブランチ、worktree、リモート追跡の ref、リモートのブランチ$1）が $MAIN_ROOT にありません。何も変えていません"
+    echo "  修正方法: そのブランチのリポジトリの中で実行する（別のリポジトリのブランチなら cd <そのリポジトリ> && post-merge-cleanup.sh $BRANCH）。ブランチ名を確かめる。このリポジトリで片付けを終えた後のやり直しなら、もう何もしなくてよい"
+  } >&2
+  exit 1
+}
+cannot_check() {
+  {
+    echo "ERROR: $BRANCH の痕跡が $MAIN_ROOT の手元に無く、$1。何も変えていません"
+    echo "  修正方法: $2。そのあと、もう一度実行する。別のリポジトリのブランチなら cd <そのリポジトリ> && post-merge-cleanup.sh $BRANCH"
+  } >&2
+  exit 1
+}
+ERR_FILE=$(mktemp)
+trap 'rm -f "$ERR_FILE"' EXIT
+TRACE=0
+# チェックアウトした worktree はローカルのブランチを持つので、ブランチの有無で数える
+if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  TRACE=1
+else
+  # refs/remotes/*/<branch> の glob は、ブランチ名の / を跨がない一方でリモート名の決め打ちになるので、リモートごとに見る
+  for r in $(git remote); do
+    if git show-ref --verify --quiet "refs/remotes/$r/$BRANCH"; then TRACE=1; break; fi
+  done
+fi
+if ((!TRACE)) && git remote get-url "$REMOTE" >/dev/null 2>&1; then
+  # 標準エラーは分けて受ける（成功しても警告を出すことがあり、混ぜると痕跡があると読み違える）
+  if ! LS_OUT=$(git ls-remote --heads "$REMOTE" "refs/heads/$BRANCH" 2>"$ERR_FILE"); then
+    cannot_check "$REMOTE のブランチを確かめられない（git ls-remote が失敗: $(tr '\n' ' ' <"$ERR_FILE")）" \
+      "$REMOTE に届かない原因（ネットワークや認証）を直す"
+  fi
+  if [[ -n "$LS_OUT" ]]; then TRACE=1; fi
+fi
+if ((!TRACE)); then
+  if git remote -v | grep -q 'github\.com'; then
+    if ! command -v gh >/dev/null 2>&1; then
+      cannot_check "マージ済みの PR を確かめられない（gh が無い）" "gh を PATH に置く"
+    fi
+    if ! MERGED_PRS=$(gh pr list --head "$BRANCH" --state merged --json number --jq length 2>"$ERR_FILE"); then
+      cannot_check "マージ済みの PR を確かめられない（gh pr list が失敗: $(tr '\n' ' ' <"$ERR_FILE")）" \
+        "gh の失敗の原因（ネットワークや認証）を直す"
+    fi
+    ((MERGED_PRS > 0)) || no_trace "、マージ済みの PR"
+  else
+    no_trace ""
+  fi
+fi
 
 # --- 0. マージ済みか ---
 # 判定は先端が既定ブランチの祖先かどうか（squash や rebase のマージは、先端が履歴に残らないので未マージ扱い）。
