@@ -31,6 +31,7 @@
 #      （削除で PR が閉じる）は、削除せず残す
 #
 # 出力:
+#   NOTE: <branch> は手元にもリモートにも無く、マージ済みの PR <url> を痕跡として...（マージ済みの PR だけが痕跡のとき）
 #   WORKTREE_REMOVED: <path>|none
 #   NOTE: rebuild が要る（...）。... / NOTE: claude-sync が要る（...）。...（該当するときだけ。0 行以上）
 #   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
@@ -119,11 +120,14 @@ if ((!TRACE)); then
     if ! command -v gh >/dev/null 2>&1; then
       cannot_check "マージ済みの PR を確かめられない（gh が無い）" "gh を PATH に置く"
     fi
-    if ! MERGED_PRS=$(gh pr list --head "$BRANCH" --state merged --json number --jq length 2>"$ERR_FILE"); then
+    # gh pr list は新しい順に返す。名前だけで照らすので、別のリポジトリのブランチと同じ名前の古い PR でも通る。
+    # どの PR を痕跡にしたかを NOTE で見せ、呼ぶ側が自分の PR かを読めるようにする
+    if ! MERGED_PR=$(gh pr list --head "$BRANCH" --state merged --json url --jq '.[0].url // empty' 2>"$ERR_FILE"); then
       cannot_check "マージ済みの PR を確かめられない（gh pr list が失敗: $(tr '\n' ' ' <"$ERR_FILE")）" \
         "gh の失敗の原因（ネットワークや認証）を直す"
     fi
-    ((MERGED_PRS > 0)) || no_trace "、マージ済みの PR"
+    [[ -n "$MERGED_PR" ]] || no_trace "、マージ済みの PR"
+    echo "NOTE: $BRANCH は手元にもリモートにも無く、マージ済みの PR $MERGED_PR を痕跡として片付けを続ける。自分の PR でなければ、別のリポジトリのブランチを渡している（cd <そのリポジトリ> && post-merge-cleanup.sh $BRANCH）"
   else
     no_trace ""
   fi
