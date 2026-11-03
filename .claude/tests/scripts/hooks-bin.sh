@@ -43,7 +43,9 @@ for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.
   it "$target: 使い方を出すバイナリは、標準入力を閉じて呼び、通す"
   out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/hooks-like" bash "$target" 2>&1 </dev/zero)
   assert_not_contains "$out" "claude-hooks を実行できません"
-  assert_not_contains "$out" "絶対パス"
+  # 止まる文言を全文で探す。hooks.sh は偽のバイナリでもテストを走らせ切り、その名前（「…絶対パスで渡すよう
+  # 示す」など）を出すので、語だけでは止まらなかった場合にも当たる
+  assert_not_contains "$out" "CLAUDE_HOOKS_BIN は絶対パスで渡してください"
 done
 
 # 起動の確認は通り、ルールの呼び出しで失敗する版（ルールの足りない古い版など）
