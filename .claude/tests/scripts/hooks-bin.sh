@@ -44,6 +44,13 @@ for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.
   # LC_ALL=C: 下の command not found を、翻訳を持つ bash でも英語の文言で探すため
   out=$(cd "$ROOT" && LC_ALL=C PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/hooks-like" bash "$target" 2>&1 </dev/zero)
   assert_not_contains "$out" "claude-hooks を実行できません"
+  # 起動の確認の後まで進んだ印。hooks.sh はテストを走らせ切って件数を出し、main-commit-gates.sh は
+  # nix build に進む（NO_NIX_PATH なのでそこで止まる）
+  if [[ $target == */main-commit-gates.sh ]]; then
+    assert_contains "$out" "pre-commit hook をビルドする"
+  else
+    assert_contains "$out" "passed:"
+  fi
   # 止まる文言を全文で探す。hooks.sh は偽のバイナリでもテストを走らせ切り、その名前（「…絶対パスで渡すよう
   # 示す」など）を出すので、語だけでは止まらなかった場合にも当たる
   assert_not_contains "$out" "CLAUDE_HOOKS_BIN は絶対パスで渡してください"
