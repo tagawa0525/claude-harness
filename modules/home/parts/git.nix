@@ -304,7 +304,9 @@ in
         # 読まないので、HEAD の .gitignore だけを置いた一時リポジトリで判定する（ファイルの実体は
         # 要らない。パスとパターンで決まる）。git archive は export-ignore の属性で .gitignore を
         # 落としうるので、git show で 1 本ずつ取り出す
-        IGNORE_CHANGED=$(git -c core.quotePath=false diff --cached --name-only HEAD -- ':(glob)**/.gitignore')
+        # --no-renames: ディレクトリを移したブランチで、改名として新しい .gitignore だけを出すと、
+        # 無視の行を持っていた元の .gitignore が落ちる
+        IGNORE_CHANGED=$(git -c core.quotePath=false diff --cached --no-renames --name-only HEAD -- ':(glob)**/.gitignore')
         UNIGNORED=""
         if [ -n "$IGNORE_CHANGED" ]; then
           HEAD_IGNORES=$(mktemp -d)
