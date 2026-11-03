@@ -89,10 +89,10 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   使う、「前は同じ入力で X だった」と比べる、依頼の前提に書くときは、取るジョブが、コマンドと中身が同じ排他のジョブかを sacct で確かめる:
 
   ```bash
-  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Start,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
+  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Start,End,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
   ```
 
-  欄は JobID、JobName、State、Elapsed、Start、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
+  欄は JobID、JobName、State、Elapsed、Start、End、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
   `--exclusive` のジョブ（`slurm-run.sh` は排他のときだけそこに置く。`-c` のジョブは `--cpus-per-task=N` で、その時間は同じ仕事
   なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
   ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
@@ -100,24 +100,28 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   コマンドが読む入力のファイル（TOML など。`dvc repro` ならステージの `cmd` と deps）は、比べる 2 本それぞれで、そのジョブが走った
   worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
   コミットは sacct とログに残らないので（nixfiles の issue #556）、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
-  切り離されていると無い）の reflog を `git -C <リポジトリ> log -g --date=iso --format='%H %gd %gs' <ブランチ>` で読み、`Start` の前の
+  切り離されていると無い）の reflog を、本体のリポジトリ（worktree は後片付けで消えるが、reflog は共通の git dir にある）で
+  `git -C <本体のリポジトリ> log -g --date=iso-local --format='%H %gd %gs' <ブランチ>` と読み（`--date=iso-local` は sacct の時刻と同じ
+  ローカル時刻に揃える）、`Start` の前の
   最後の項のコミットを取る（`git log --before=<Start>` はコミットの日付で選ぶので、rebase や amend の後は走った版でないコミットを返す。
   `rev-parse '<ブランチ>@{<Start>}'` は reflog が `Start` まで届かなくても警告だけで別のコミットを返す。worktree は後片付けで消え、
   残っていても後のコミットで変わっている）。入力は `git show <コミット>:<worktree の直下からのパス>` で開く（コマンドの中のパスは
   `WorkDir` からの相対で、`WorkDir` が worktree の下のディレクトリのこともある）。次のときは、走った版を決められないので
   「確かめていない」と書く:
 
-  - ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
+  - ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
     （rebase で外れたコミットの項は黙って消える）
-  - `Start` から `End` の間に reflog の項がある（`dvc repro` のステージは `Start` より後に入力を読むので、間のコミットで変わりうる）
+  - `Start` から `End` の間に reflog の項がある（`dvc repro` のステージは `Start` より後に入力を読むので、間のコミットで変わりうる）。
+    worktree が残っていれば、`git -C <worktree> log -g --date=iso-local HEAD` の間の項（ブランチの切り替え、rebase）も見る
   - 入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（ログの先頭の nix の
-    `Git tree '…' is dirty` はその印だが、nix を通らないジョブには出ず、出なくても変更が無いとは言えない）
+    `Git tree '…' is dirty` はその印）。印が出ないことは変更が無いことを示さない（nix を通らないジョブには出ない）ので、印の無い
+    ジョブは、比べた版のコミットを書き、コミットされていない変更の有無は「確かめていない」と添える
   - git で追跡しない deps（`bin/` の実行ファイル、ライブラリなど DVC の出力）で、ジョブが書いてコミットした `dvc.lock` が無い
-    （そのコミットの `dvc.lock` は前の実行の md5 で、changed で走ったステージの deps と違う。失敗したジョブは書かない）
+    （そのコミットの `dvc.lock` は前の実行の md5 で、changed で走ったステージの deps と違う。`dvc repro` はステージごとに書き、失敗したステージは書かない）
 
   メモリを比べるときの `MaxRSS` の読み方は下の「ジョブの中のプログラムの時間とメモリ」の項。r995 は 30 秒ごとの標本
-  （`JobAcctGatherFrequency = 30`）で、COMPLETED のジョブでも間の山は入らない。止められたジョブの値は止まるまでの標本で、
-  要る量の下限としてだけ使う。
+  （`JobAcctGatherFrequency = 30`）で、COMPLETED のジョブでも間の山は入らない。途中で殺されたジョブ（State が
+  COMPLETED でない）の値は殺されるまでの標本で、要る量の下限としてだけ使う。
   2026-11-03 に xlc の依頼が、Slurm 644 の `MaxRSS` 88276164K と
   前の 582、617、621、629、630、638 の 20519904K〜25878580K を、MaxRSS だけを sacct で見て「同じ入力」と書いた。644 は `dvc repro
   examples/depletion/dvc.yaml` の `lattice-2A.toml`（`ufg-tolerance` なし）、前の 6 本は p2 と history の入力（`ufg-tolerance = 1e-4`
