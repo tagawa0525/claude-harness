@@ -468,6 +468,7 @@ mod tests {
             "変える範囲: src/、GitHub の Issue\n",
             "変える範囲:\n- src/\n- issue の作成と追記\n",
             "変える範囲（ファイル）: src/\n- ISSUE も\n",
+            "変える範囲（issue の作成と追記を含む）: src/\n",
         ] {
             assert!(check(&with_scope(scope)).is_empty(), "{scope}");
         }
