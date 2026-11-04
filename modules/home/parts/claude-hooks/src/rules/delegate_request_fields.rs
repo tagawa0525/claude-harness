@@ -10,8 +10,12 @@
 //!   1 行目がこの句なので、/delegate に触れるだけの prompt（/delegate を調べる依頼、差分の引用）は見ない
 //! - 見出し: 行頭が欄の名前で始まり、直後に `:` か `（…）:` が続く行（`前提:`、`前提（確かめていない）:`）。`（…）` の
 //!   中には 1 段の入れ子の括弧を入れてよい（出典を括弧で添える）
+//! - 「変える範囲」の欄の中身: 見出し（`（…）` の限定を含む）から次の欄の見出し（無ければ依頼の終わり）までに
+//!   `issue` の語（大文字と小文字を区別しない。`docs/issues` も当たる）があること。担当が作業中に見つけた別の
+//!   トピックを、範囲の外だとして報告にだけ残さないため。語があるかだけを見て、否定の文（「issue は作らない」）は
+//!   見分けない
 //!
-//! 欄の中身（出典の有無、本文の事実）は判定しない。エスケープはない（欄を足す以外に直す方法が無いため）。
+//! ほかの欄の中身（出典の有無、本文の事実）は判定しない。エスケープはない（欄を直す以外に直す方法が無いため）。
 
 use super::Rule;
 use crate::input::Input;
@@ -42,6 +46,10 @@ static CALL: LazyLock<Regex> =
 static POINTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"依頼文は\s*[`「]?([/~.][^\s`「」]*?)[`」]?\s*にある").unwrap());
 
+/// 中身を判定する欄（`FIELDS` の添字）と、その欄に要る語
+const SCOPE: usize = 5;
+const SCOPE_WORD: &str = "issue";
+
 /// 依頼のファイルの大きさの上限。hook は Agent の呼び出しを待たせるので、依頼文より大きいものを読まない
 const MAX_REQUEST_BYTES: u64 = 1 << 20;
 
@@ -54,6 +62,27 @@ static HEADINGS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         .map(|f| Regex::new(&format!(r"(?m)^{f}(?:（(?:（[^（）\n]*）|[^）\n])*）)?:")).unwrap())
         .collect()
 });
+
+/// 「変える範囲」の欄（見出しの行頭から、次の欄の見出しの行頭か依頼の終わりまで。見出しの `（…）` の限定も含む）の並び。
+/// 欄が無ければ空
+fn scope_bodies(request: &str) -> Vec<&str> {
+    let starts: Vec<usize> = HEADINGS
+        .iter()
+        .flat_map(|h| h.find_iter(request).map(|m| m.start()))
+        .collect();
+    HEADINGS[SCOPE]
+        .find_iter(request)
+        .map(|m| {
+            let end = starts
+                .iter()
+                .copied()
+                .filter(|&s| s > m.start())
+                .min()
+                .unwrap_or(request.len());
+            &request[m.start()..end]
+        })
+        .collect()
+}
 
 fn first_line(text: &str) -> &str {
     text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")
@@ -121,18 +150,33 @@ impl Rule for DelegateRequestFields {
             .filter(|(_, heading)| !heading.is_match(&request))
             .map(|(f, _)| *f)
             .collect();
-        if missing.is_empty() {
-            return Vec::new();
+        let mut findings = Vec::new();
+        if !missing.is_empty() {
+            findings.push(Finding::Deny(format!(
+                "/delegate を呼ぶ依頼に定型の欄がそろっていません（{place}）。欠けた欄: {}\n\
+                 依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）。\n\
+                 判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`。括弧の中に出典の括弧を 1 段まで入れられます）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
+                 修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt の 1 行目に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
+                missing.join("、"),
+                FIELDS.join("、"),
+                target,
+            )));
         }
-        vec![Finding::Deny(format!(
-            "/delegate を呼ぶ依頼に定型の欄がそろっていません（{place}）。欠けた欄: {}\n\
-             依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）。\n\
-             判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`。括弧の中に出典の括弧を 1 段まで入れられます）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
-             修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt の 1 行目に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
-            missing.join("、"),
-            FIELDS.join("、"),
-            target,
-        ))]
+        let bodies = scope_bodies(&request);
+        if !bodies.is_empty()
+            && !bodies
+                .iter()
+                .any(|b| b.to_ascii_lowercase().contains(SCOPE_WORD))
+        {
+            findings.push(Finding::Deny(format!(
+                "/delegate を呼ぶ依頼の「{scope}」の欄に issue の置き場がありません（{place}）。\n\
+                 担当は作業中に見つけた別のトピック（既存の不具合、残った作業）を issue に書きますが、欄に issue が無いと範囲の外だとして報告にだけ書き、親が気づかなければ残りが失われます（頼む側の文の規則だけでは守られませんでした）。\n\
+                 判定: 「{scope}」の見出しから次の欄の見出しまで（無ければ依頼の終わりまで）に `issue` の語（大文字と小文字は区別しない。`docs/issues/` も当たる）があることを見ます。\n\
+                 修正方法: 「{scope}」の欄に、リポジトリの issue の置き場（`docs/issues/`、または「GitHub の issue（新しい issue の作成と、#N への追記）」）を足して、Agent を呼び直してください。",
+                scope = FIELDS[SCOPE],
+            )));
+        }
+        findings
     }
 }
 
@@ -148,7 +192,7 @@ mod tests {
 前提:
 - y は z（docs/a.md）
 完成の形: テストが通る
-変える範囲: src/
+変える範囲: src/、GitHub の issue（作成と追記）
 ";
 
     fn check(prompt: &str) -> Vec<Finding> {
@@ -320,7 +364,11 @@ mod tests {
         assert!(check(&pointer(&complete)).is_empty());
 
         let partial = dir.join("brief-partial.md");
-        std::fs::write(&partial, COMPLETE.replace("変える範囲: src/\n", "")).unwrap();
+        std::fs::write(
+            &partial,
+            COMPLETE.replace("変える範囲: src/、GitHub の issue（作成と追記）\n", ""),
+        )
+        .unwrap();
         let findings = check(&pointer(&partial));
         let reason = deny_reason(&findings);
         assert!(reason.contains("欠けた欄: 変える範囲"), "{reason}");
@@ -398,5 +446,56 @@ mod tests {
         // 「依頼文は下にある」はパスでないので、ファイルを指す句と見なさない
         let prompt = format!("依頼文は下にある。{COMPLETE}");
         assert!(check(&prompt).is_empty());
+    }
+
+    /// COMPLETE の「変える範囲」の欄を scope に替える
+    fn with_scope(scope: &str) -> String {
+        COMPLETE.replace("変える範囲: src/、GitHub の issue（作成と追記）\n", scope)
+    }
+
+    #[test]
+    fn scope_without_issue_is_denied_with_the_fix() {
+        let findings = check(&with_scope("変える範囲: src/\n"));
+        let reason = deny_reason(&findings);
+        assert!(reason.contains("「変える範囲」の欄"), "{reason}");
+        assert!(reason.contains("issue"), "{reason}");
+        assert!(reason.contains("修正方法"), "{reason}");
+    }
+
+    #[test]
+    fn scope_naming_where_issues_go_passes() {
+        for scope in [
+            "変える範囲: src/、docs/issues/\n",
+            "変える範囲: src/、GitHub の Issue\n",
+            "変える範囲:\n- src/\n- issue の作成と追記\n",
+            "変える範囲（ファイル）: src/\n- ISSUE も\n",
+            "変える範囲（issue の作成と追記を含む）: src/\n",
+        ] {
+            assert!(check(&with_scope(scope)).is_empty(), "{scope}");
+        }
+    }
+
+    #[test]
+    fn issue_outside_the_scope_field_does_not_count() {
+        // 「変える範囲」の欄は、その見出しから次の欄の見出しまで。ほかの欄の issue の語は数えない
+        let prompt = COMPLETE
+            .replace(
+                "何をするか: x を直す\n",
+                "何をするか: issue #12 の x を直す\n",
+            )
+            .replace("変える範囲: src/、GitHub の issue（作成と追記）\n", "")
+            .replace(
+                "完成の形: テストが通る\n",
+                "変える範囲: src/\n完成の形: issue #12 が閉じる\n",
+            );
+        let findings = check(&prompt);
+        assert!(deny_reason(&findings).contains("「変える範囲」の欄"));
+    }
+
+    #[test]
+    fn missing_fields_and_scope_without_issue_are_both_reported() {
+        let prompt = with_scope("変える範囲: src/\n").replace("完成の形: テストが通る\n", "");
+        let findings = check(&prompt);
+        assert_eq!(findings.len(), 2);
     }
 }
