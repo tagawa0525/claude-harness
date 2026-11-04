@@ -148,7 +148,7 @@ mod tests {
 前提:
 - y は z（docs/a.md）
 完成の形: テストが通る
-変える範囲: src/
+変える範囲: src/、GitHub の issue（作成と追記）
 ";
 
     fn check(prompt: &str) -> Vec<Finding> {
@@ -320,7 +320,11 @@ mod tests {
         assert!(check(&pointer(&complete)).is_empty());
 
         let partial = dir.join("brief-partial.md");
-        std::fs::write(&partial, COMPLETE.replace("変える範囲: src/\n", "")).unwrap();
+        std::fs::write(
+            &partial,
+            COMPLETE.replace("変える範囲: src/、GitHub の issue（作成と追記）\n", ""),
+        )
+        .unwrap();
         let findings = check(&pointer(&partial));
         let reason = deny_reason(&findings);
         assert!(reason.contains("欠けた欄: 変える範囲"), "{reason}");
@@ -398,5 +402,55 @@ mod tests {
         // 「依頼文は下にある」はパスでないので、ファイルを指す句と見なさない
         let prompt = format!("依頼文は下にある。{COMPLETE}");
         assert!(check(&prompt).is_empty());
+    }
+
+    /// COMPLETE の「変える範囲」の欄を scope に替える
+    fn with_scope(scope: &str) -> String {
+        COMPLETE.replace("変える範囲: src/、GitHub の issue（作成と追記）\n", scope)
+    }
+
+    #[test]
+    fn scope_without_issue_is_denied_with_the_fix() {
+        let findings = check(&with_scope("変える範囲: src/\n"));
+        let reason = deny_reason(&findings);
+        assert!(reason.contains("「変える範囲」の欄"), "{reason}");
+        assert!(reason.contains("issue"), "{reason}");
+        assert!(reason.contains("修正方法"), "{reason}");
+    }
+
+    #[test]
+    fn scope_naming_where_issues_go_passes() {
+        for scope in [
+            "変える範囲: src/、docs/issues/\n",
+            "変える範囲: src/、GitHub の Issue\n",
+            "変える範囲:\n- src/\n- issue の作成と追記\n",
+            "変える範囲（ファイル）: src/\n- ISSUE も\n",
+        ] {
+            assert!(check(&with_scope(scope)).is_empty(), "{scope}");
+        }
+    }
+
+    #[test]
+    fn issue_outside_the_scope_field_does_not_count() {
+        // 「変える範囲」の欄は、その見出しから次の欄の見出しまで。ほかの欄の issue の語は数えない
+        let prompt = COMPLETE
+            .replace(
+                "何をするか: x を直す\n",
+                "何をするか: issue #12 の x を直す\n",
+            )
+            .replace("変える範囲: src/、GitHub の issue（作成と追記）\n", "")
+            .replace(
+                "完成の形: テストが通る\n",
+                "変える範囲: src/\n完成の形: issue #12 が閉じる\n",
+            );
+        let findings = check(&prompt);
+        assert!(deny_reason(&findings).contains("「変える範囲」の欄"));
+    }
+
+    #[test]
+    fn missing_fields_and_scope_without_issue_are_both_reported() {
+        let prompt = with_scope("変える範囲: src/\n").replace("完成の形: テストが通る\n", "");
+        let findings = check(&prompt);
+        assert_eq!(findings.len(), 2);
     }
 }
