@@ -47,7 +47,7 @@ main の上でマージコミットの本文を amend で直した正当な例�
 コミットを直すなら既定ブランチの上で amend する）ので、block-main-commit や guard-git-stash と同じくエスケープは置かない
 （ADR-0023 の形のエスケープは、外す理由がありうる検査のためのもの）。拒否の文言には、理由（2026-10-30 の事故。PC 全体で読む文言なので、ほかのリポジトリで引けない xlc の issue の番号は書かない）と、
 `git commit` で新しいコミットを作ること、拒まれた commit の後なら先に `git log -1` で先端を確かめること、既定ブランチの
-コミットを直すならpush する前に既定ブランチの上で amend すること（GitHub リモートのあるリポジトリの main / master では
+コミットを直すならpush する前に既定ブランチの上で amend すること（main / master では、リモートによらず
 block-main-commit が止めるので示さない。ほかの名前の既定ブランチは block-main-commit が止めないので示す）を書く。既定ブランチに含まれるかは、追跡ブランチとローカルの既定ブランチの両方で見る（push していないマージは
 ローカルにだけある）。
 
@@ -69,3 +69,9 @@ block-main-commit が止めるので示さない。ほかの名前の既定ブ�
 - `.claude/tests/hooks.sh` の guard-git-amend の節（止める形と `-C` / `cd` / `env -C`、固有のコミット、既定ブランチの上と
   detached HEAD、`--amend` が値や pathspec の commit と `--no-am`、前の `git switch`、GitHub リモートのある origin/main との
   比較と文言、ローカルの既定ブランチにだけあるコミット）
+
+## 変更
+
+- 2026-11-06: 既定ブランチの上で amend する道を示さない範囲を、リモートによらず main / master にした。前は「GitHub
+  リモートのあるリポジトリの main / master では block-main-commit が止めるので示さない」。ADR-0075 で block-main-commit が
+  GitHub のリモートの無いリポジトリの main / master も止めるようになり、示すと 2 つ目の拒否に送るため
