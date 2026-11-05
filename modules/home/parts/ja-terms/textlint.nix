@@ -1,6 +1,7 @@
-# 崩れた日本語の語の検査（ADR-0014）に使う textlint と設定、コミットのメッセージの検査（ja-terms-message）。
-# git.nix（pre-commit と commit-msg）と claude-hooks（git merge の本文を先に検査するルール。ADR-0050）が
-# 同じものを store のパスで呼ぶ。
+# 崩れた日本語の語の検査（ADR-0014）に使う textlint と設定、コミットのメッセージの検査（ja-terms-message）と、
+# それを含むコミットの規約の検査（commit-msg-check）。git.nix（pre-commit と commit-msg）と claude-hooks（git merge の
+# 本文の語を先に検査するルール。ADR-0050。git commit の本文を先に検査するルール。ADR-0073）が同じものを store の
+# パスで呼ぶ。
 # 辞書は ./prh.yml。Markdown は textlint の組み込みのプラグインが、コードとテキストは @textlint/text が読む
 # （コメントと文字列の日本語を含めて、ファイルの全体を見る）
 {
@@ -10,6 +11,7 @@
   writeShellApplication,
   coreutils,
   gnused,
+  gnugrep,
 }:
 let
   textlintWithRules = textlint.withPackages [ textlint-rule-prh ];
@@ -41,8 +43,24 @@ let
     runtimeEnv.JA_TERMS_CONFIG = "${config}";
     text = builtins.readFile ./message.sh;
   };
+  # コミットのメッセージ（ファイル）の規約の検査（件名と語）。commit-msg と claude-hooks が同じ判定にするために共有する
+  commitMsgCheck = writeShellApplication {
+    name = "commit-msg-check";
+    runtimeInputs = [
+      coreutils
+      gnused
+      gnugrep
+      messageCheck
+    ];
+    text = builtins.readFile ./commit-msg-check.sh;
+  };
 in
 {
-  inherit config codeExtensions messageCheck;
+  inherit
+    config
+    codeExtensions
+    messageCheck
+    commitMsgCheck
+    ;
   textlint = textlintWithRules;
 }
