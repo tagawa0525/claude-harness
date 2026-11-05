@@ -84,6 +84,20 @@ check ok "sanity" "feat(scope): 追加する"
 check ng "sanity" "flake: update (testhost)"
 check ng "sanity" "何の型もない件名"
 
+echo "==> 件名の長さ（UTF-8 の文字数で 72 まで）と、形式の対象外の件名"
+# claude-hooks の check-commit-message は、この hook と同じ検査（commit-msg-check）を先に呼ぶ。検査を hook から
+# 切り出しても判定が変わらないことを、境界と対象外の形で見る
+# 文字数で数える（LANG=C だと ${#out} がバイト数になる）
+export LC_ALL=C.UTF-8
+pad() { local n=$1 c=$2 out=""; while (( ${#out} < n )); do out+=$c; done; printf '%s' "$out"; }
+check ok "length" "feat: $(pad 66 a)"
+check ng "length" "feat: $(pad 67 a)"
+check ok "length" "docs: $(pad 66 あ)"
+check ng "length" "docs: $(pad 67 あ)"
+for subject in "Merge: $(pad 80 a)" "fixup! $(pad 80 a)" "squash! $(pad 80 a)" "Revert \"$(pad 80 a)\""; do
+  check ok "exempt" "$subject"
+done
+
 echo "==> fork（upstream リモートのある clone）ではこちらの規約の検査を全部飛ばす"
 # 他人のプロジェクトの fork では上流の慣習（"Fix socket transport when …" のような文。Serena の
 # main には 72 文字を超える件名が普通にある）が正で、こちらの形式や長さを強いると上流向けの
