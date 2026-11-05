@@ -506,15 +506,19 @@ impl Shell {
             "ansi_c_string" => strip(&raw, "$'", "'"),
             "string" | "translated_string" => {
                 // 名前のある子だけをつながない: tree-sitter-bash は引用符の中の改行（と続く空白）を extras として
-                // 読み飛ばし、どの子にも含めないので、子どうしの間の字面も `string_content` と同じに読む
+                // 読み飛ばし、どの子にも含めない。最後の改行の後の空白は閉じる引用符のトークンに入る。子どうしの
+                // 間と、閉じる引用符のトークンの `"` の前の字面も `string_content` と同じに読む
                 let mut s = String::new();
                 let mut cursor = node.walk();
                 let mut at = node
                     .child(0)
                     .map_or(node.start_byte(), |open| open.end_byte());
-                let end = node
-                    .child(node.child_count().saturating_sub(1))
-                    .map_or(node.end_byte(), |close| close.start_byte());
+                let end = match node.child(node.child_count().saturating_sub(1)) {
+                    Some(close) if close.kind() == "\"" && !close.is_missing() => {
+                        close.end_byte() - 1
+                    }
+                    _ => node.end_byte(),
+                };
                 for child in node.named_children(&mut cursor) {
                     s.push_str(&unescape_double(&self.src[at..child.start_byte()]));
                     if child.kind() == "string_content" {
