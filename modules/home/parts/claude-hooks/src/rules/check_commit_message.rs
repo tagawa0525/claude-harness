@@ -477,9 +477,10 @@ exit 0
             message("git commit --cleanup=verbatim -m '\nfeat: v  '"),
             some("\nfeat: v  \n")
         );
+        // # の行は --cleanup=strip でも commit-msg の後で除かれる（commit-msg には残る）
         assert_eq!(
-            message("git commit --cleanup=strip -m 'feat: a\n# c\nb'"),
-            some("feat: a\nb\n")
+            message("git commit --cleanup=strip -m 'feat: a' -m '# c' -m 'b'"),
+            some("feat: a\n\n# c\n\nb\n")
         );
     }
 
@@ -501,6 +502,14 @@ exit 0
             message("git commit --file=- <<EOF\nfeat: a\nEOF\n"),
             some("feat: a\n")
         );
+        // hook の標準入力は hook の入力の JSON で、git の標準入力ではない
+        for path in ["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"] {
+            assert_eq!(
+                message(&format!("git commit -F {path} <<'EOF'\nfeat: a\nEOF\n")),
+                some("feat: a\n"),
+                "{path}"
+            );
+        }
     }
 
     #[test]
@@ -682,6 +691,7 @@ exit 0
             "cat > msg.txt <<'EOF'\nfeat: a\nEOF\n",
             "sed -i 's/a/b/' ./msg.txt && ",
             "printf 'feat: a\\n' >> msg.txt; ",
+            "cat <<'EOF' > msg.txt\nfeat: a\nEOF\n",
         ] {
             let cmd = format!("{prefix}git commit -F msg.txt");
             let r = only_deny(&fake.check(&cmd));

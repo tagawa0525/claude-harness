@@ -938,6 +938,10 @@ mod tests {
         let cs = cmds("cat - <<EOF\nx\nEOF");
         let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
         assert_eq!(t, ["-"]);
+        let cs = cmds("git commit -F - 2>&1 <<'EOF'\nfeat: a\nEOF\n");
+        let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(t, ["commit", "-F", "-"]);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\n", true));
     }
 
     #[test]
@@ -946,6 +950,9 @@ mod tests {
         assert_eq!(cs[0].writes, ["m.txt"]);
         assert_eq!(cs[0].stdin_heredoc, heredoc("x\n", true));
         assert!(cs[1].writes.is_empty());
+        // ヒアドキュメントの演算子の後ろに書いたリダイレクトを、tree-sitter-bash はヒアドキュメントの中に置く
+        let cs = cmds("cat <<'EOF' > msg.txt\nfeat: a\nEOF\ngit commit -F msg.txt");
+        assert_eq!(cs[0].writes, ["msg.txt"]);
         let cs = cmds("echo x >> 'a b' 2>&1 && sort < in &> out");
         assert_eq!(cs[0].writes, ["a b"]);
         assert_eq!(cs[1].writes, ["out"]);
