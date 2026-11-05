@@ -224,6 +224,10 @@ assert_eq "TOOL: 1 $(printf 'あ%.0s' $(seq 160))" "$line"
 MEMORY_INDEX="$CLAUDE_DIR/skills/retro/scripts/memory-index.sh"
 MEM="$TEST_ROOT/memory"
 mkdir -p "$MEM"
+# 辞書の検査（ja-terms-files）は偽物にする。辞書の規則（コードスパンを数えないなど）は本物で
+# modules/home/parts/tests/ja-terms.sh が確かめる。既定は崩れた語が無い
+make_fake_tool ja-terms-files '  *) exit 0 ;;'
+export JA_TERMS_FILES="$TEST_ROOT/fakebin/ja-terms-files"
 cat > "$MEM/MEMORY.md" <<'EOF'
 - [好み A](feedback-a.md) — 説明
 - [事情 B](project-b.md) — 説明
@@ -293,6 +297,40 @@ sed -i '/project-c/d; /example.com/d' "$MEM/MEMORY.md"
 printf -- '---\nname: b\n---\n\n本文 [[feedback-a]]\n' > "$MEM/project-b.md"
 out=$("$MEMORY_INDEX" "$MEM")
 assert_eq "ENTRIES: 2" "$out"
+
+it "memory-index: 索引の MEMORY.md を含む、すべての .md を 1 回の辞書の検査に渡す"
+assert_eq "$MEM/MEMORY.md $MEM/feedback-a.md $MEM/project-b.md" "$(tail -1 "$TEST_ROOT/ja-terms-files.log")"
+
+it "memory-index: 辞書の検査の指摘を、ファイル名と行の TERMS: の行にする"
+make_fake_tool ja-terms-files "  *) printf '%s\n' '$MEM/project-b.md:6:3: 旧語 => 新語 [Error/prh]' '$MEM/feedback-a.md:12:1: 古い言い方 => 新しい言い方 [Error/prh]' '' '2 problems'; exit 1 ;;"
+out=$("$MEMORY_INDEX" "$MEM")
+assert_eq 0 $?
+assert_contains "$out" "TERMS: project-b.md:6 旧語 => 新語"
+assert_contains "$out" "TERMS: feedback-a.md:12 古い言い方 => 新しい言い方"
+assert_not_contains "$out" "problems"
+assert_not_contains "$out" "[Error/prh]"
+
+it "memory-index: 辞書の検査が崩れた語があると言い、指摘の行を読めなければ失敗する"
+make_fake_tool ja-terms-files "  *) echo 'something else'; exit 1 ;;"
+out=$("$MEMORY_INDEX" "$MEM" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_contains "$out" "something else"
+
+it "memory-index: 辞書の検査が失敗すれば、ほかの行を出した後に失敗する"
+make_fake_tool ja-terms-files "  *) echo 'textlint crashed' >&2; exit 2 ;;"
+out=$("$MEMORY_INDEX" "$MEM" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ENTRIES: 2"
+assert_contains "$out" "textlint crashed"
+assert_contains "$out" "ERROR:"
+
+it "memory-index: 辞書の検査が無ければ、rebuild を求めて失敗する"
+out=$(JA_TERMS_FILES="$TEST_ROOT/missing/ja-terms-files" "$MEMORY_INDEX" "$MEM" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ENTRIES: 2"
+assert_contains "$out" "rebuild"
+make_fake_tool ja-terms-files '  *) exit 0 ;;'
 
 it "memory-index: MEMORY.md が無ければ失敗する"
 out=$("$MEMORY_INDEX" "$TEST_ROOT/no-memory" 2>&1)
