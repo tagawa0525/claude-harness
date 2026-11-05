@@ -486,6 +486,19 @@ exit 0
     }
 
     #[test]
+    fn message_keeps_lines_of_double_quoted_m_option() {
+        // 本文の長い二重引用符のメッセージ（件名は 13 文字）。改行を落とすと全体が件名になる
+        assert_eq!(
+            message(
+                "git commit -m \"chore: relock\n\nRelock the stages after the rebase onto main so that dvc status is clean.\n\nClaude-Session: https://example\""
+            ),
+            some(
+                "chore: relock\n\nRelock the stages after the rebase onto main so that dvc status is clean.\n\nClaude-Session: https://example\n"
+            )
+        );
+    }
+
+    #[test]
     fn message_reads_heredoc_in_m_option() {
         assert_eq!(
             message("git commit -m \"$(cat <<'EOF'\nfeat: a\n\nbody $X\nEOF\n)\""),
@@ -586,6 +599,17 @@ exit 0
         let cmd =
             format!("git commit -q -m \"$(cat <<'EOF'\n{LONG}\n\n本文\nEOF\n)\" && git log -1");
         assert!(only_deny(&fake.check(&cmd)).contains("❌"));
+    }
+
+    #[test]
+    fn denies_long_subject_in_double_quoted_multiline_message() {
+        let fake = Fake::new("mdouble");
+        let cmd = format!("git commit -q -m \"{LONG}\n\n本文\n\nRefs: #0190\" && git log -1");
+        assert!(only_deny(&fake.check(&cmd)).contains("❌"));
+        assert_eq!(
+            fake.seen().unwrap(),
+            format!("{LONG}\n\n本文\n\nRefs: #0190\n")
+        );
     }
 
     #[test]

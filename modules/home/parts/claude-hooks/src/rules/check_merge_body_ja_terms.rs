@@ -560,6 +560,14 @@ exit 0
     }
 
     #[test]
+    fn message_keeps_lines_of_double_quoted_m_option() {
+        assert_eq!(
+            message("git merge --no-ff feat/a -m \"Merge: a\n\n## Why\n本文の語\n\""),
+            Ok(Some("Merge: a\n\n## Why\n本文の語\n".to_string()))
+        );
+    }
+
+    #[test]
     fn message_joins_multiple_m_options_as_paragraphs() {
         assert_eq!(
             message("git merge -m 'Merge: a' -m '本文の語' feat/a"),

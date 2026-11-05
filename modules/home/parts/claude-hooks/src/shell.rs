@@ -505,15 +505,30 @@ impl Shell {
             "raw_string" => strip(&raw, "'", "'"),
             "ansi_c_string" => strip(&raw, "$'", "'"),
             "string" | "translated_string" => {
+                // 名前のある子だけをつながない: tree-sitter-bash は引用符の中の改行（と続く空白）を extras として
+                // 読み飛ばし、どの子にも含めない。最後の改行の後の空白は閉じる引用符のトークンに入る。子どうしの
+                // 間と、閉じる引用符のトークンの `"` の前の字面も `string_content` と同じに読む
                 let mut s = String::new();
                 let mut cursor = node.walk();
+                let mut at = node
+                    .child(0)
+                    .map_or(node.start_byte(), |open| open.end_byte());
+                let end = match node.child(node.child_count().saturating_sub(1)) {
+                    Some(close) if close.kind() == "\"" && !close.is_missing() => {
+                        close.end_byte() - 1
+                    }
+                    _ => node.end_byte(),
+                };
                 for child in node.named_children(&mut cursor) {
+                    s.push_str(&unescape_double(&self.src[at..child.start_byte()]));
                     if child.kind() == "string_content" {
                         s.push_str(&unescape_double(self.text(child)));
                     } else {
                         s.push_str(self.text(child));
                     }
+                    at = child.end_byte();
                 }
+                s.push_str(&unescape_double(&self.src[at..end.max(at)]));
                 s
             }
             "concatenation" => {
@@ -1006,6 +1021,24 @@ mod tests {
     }
 
     #[test]
+    fn double_quoted_string_keeps_newlines_and_spaces_between_parts() {
+        // 改行と、改行に続く空白（閉じる引用符の前のものも）は字面のまま残る。展開は字面のまま、行の継続
+        // （`\` と改行）は除く
+        let cs = cmds("x \"\na b\n\nc $X d \n\n e\\\n f\n\"");
+        assert_eq!(cs[0].args[0].text, "\na b\n\nc $X d \n\n e f\n");
+        let cs = cmds("x \"$Y\n\n${Z}\"");
+        assert_eq!(cs[0].args[0].text, "$Y\n\n${Z}");
+        for (src, text) in [
+            ("x \"a\n  \"", "a\n  "),
+            ("x \"a\n\t\"", "a\n\t"),
+            ("x \"$X\n  \"", "$X\n  "),
+            ("x \"  \n  \"", "  \n  "),
+        ] {
+            assert_eq!(cmds(src)[0].args[0].text, text, "{src:?}");
+        }
+    }
+
+    #[test]
     fn expansions_stay_literal() {
         let cs = cmds("git add \"$FILE\" ${DIR}/x $(basename y)");
         let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
@@ -1249,6 +1282,13 @@ mod tests {
         }
         // -n は構文を調べるだけで実行しない
         assert_eq!(cmds("bash -n s.sh")[0].program(), "bash");
+    }
+
+    #[test]
+    fn commands_on_separate_lines_of_a_double_quoted_shell_string_stay_apart() {
+        let cs = cmds("bash -c \"echo x\ngit push --force origin main\"");
+        assert_eq!(names(&cs), ["bash", "echo", "git"]);
+        assert_eq!(cs[2].git_subcommand().unwrap().0, "push");
     }
 
     #[test]
