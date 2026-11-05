@@ -600,6 +600,15 @@ mod tests {
     }
 
     #[test]
+    fn passes_a_double_quoted_multiline_body() {
+        let repo = Repo::new("double");
+        let tip = repo.tip();
+        let body = body(&tip, "- 再現: a_test — 境界の誤り\n- 再現なし → #12: 効率");
+        let r = repo.check(&format!("git merge --no-ff feat/x -m \"{body}\""));
+        assert!(denies(&r).is_empty(), "{:?}", denies(&r));
+    }
+
+    #[test]
     fn passes_documents_dvc_records_and_remap_after_the_reviewed_head() {
         let repo = Repo::new("after-ok");
         let gone = repo.gone_commit();

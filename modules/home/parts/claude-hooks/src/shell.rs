@@ -1006,6 +1006,15 @@ mod tests {
     }
 
     #[test]
+    fn double_quoted_string_keeps_newlines_and_spaces_between_parts() {
+        // 改行と、改行に続く空白も字面のまま残る（展開と行の継続の扱いは変わらない）
+        let cs = cmds("x \"\na b\n\nc $X d \n\n e\\\n f\n\"");
+        assert_eq!(cs[0].args[0].text, "\na b\n\nc $X d \n\n e f\n");
+        let cs = cmds("x \"$Y\n\n${Z}\"");
+        assert_eq!(cs[0].args[0].text, "$Y\n\n${Z}");
+    }
+
+    #[test]
     fn expansions_stay_literal() {
         let cs = cmds("git add \"$FILE\" ${DIR}/x $(basename y)");
         let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
