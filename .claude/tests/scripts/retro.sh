@@ -299,7 +299,9 @@ out=$("$MEMORY_INDEX" "$MEM")
 assert_eq "ENTRIES: 2" "$out"
 
 it "memory-index: 索引の MEMORY.md を含む、すべての .md を 1 回の辞書の検査に渡す"
-assert_eq "$MEM/MEMORY.md $MEM/feedback-a.md $MEM/project-b.md" "$(tail -1 "$TEST_ROOT/ja-terms-files.log")"
+# 渡す順はグロブの並び（ロケールの照合順）で決まるので、集合で比べる
+assert_eq "$(printf '%s\n' "$MEM/MEMORY.md" "$MEM/feedback-a.md" "$MEM/project-b.md" | LC_ALL=C sort)" \
+  "$(tail -1 "$TEST_ROOT/ja-terms-files.log" | tr ' ' '\n' | LC_ALL=C sort)"
 
 it "memory-index: 辞書の検査の指摘を、ファイル名と行の TERMS: の行にする"
 make_fake_tool ja-terms-files "  *) printf '%s\n' '$MEM/project-b.md:6:3: 旧語 => 新語 [Error/prh]' '$MEM/feedback-a.md:12:1: 古い言い方 => 新しい言い方 [Error/prh]' '' '2 problems'; exit 1 ;;"
