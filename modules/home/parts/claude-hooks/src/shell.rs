@@ -194,6 +194,61 @@ impl Shell {
         &self.src[node.byte_range()]
     }
 
+    /// `heredoc_redirect` の本文。本文は演算子のある行の次の行から、区切りだけの行の前まで（bash と同じ）。
+    /// 木の `heredoc_body` は使わない: tree-sitter-bash は `<<-` の最初の行のタブや、区切りの後に続けた
+    /// `; echo` の扱いを誤り、本文の範囲がずれる。同じ行のもっと前にヒアドキュメント（らしい `<<`）があると、
+    /// 本文はその後に続くので決めない。区切りの行が無いものも決めない
+    fn heredoc(&self, redirect: Node) -> Option<Heredoc> {
+        let dash = redirect.child(0)?.kind() == "<<-";
+        let mut cursor = redirect.walk();
+        let start = redirect
+            .children(&mut cursor)
+            .find(|c| c.kind() == "heredoc_start")?;
+        let head = self.text(start);
+        let quoted = head.contains(['\'', '"', '\\']);
+        let delim: String = head
+            .chars()
+            .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+            .collect();
+        if delim.is_empty() {
+            return None;
+        }
+        let line_start = self.src[..redirect.start_byte()]
+            .rfind('\n')
+            .map_or(0, |i| i + 1);
+        if self.src[line_start..redirect.start_byte()].contains("<<") {
+            return None;
+        }
+        let (_, rest) = self.src[start.end_byte()..].split_once('\n')?;
+        let mut body = String::new();
+        for line in rest.split('\n') {
+            let line = if dash {
+                line.trim_start_matches('\t')
+            } else {
+                line
+            };
+            if line == delim {
+                return Some(Heredoc { body, quoted });
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+        None
+    }
+
+    /// 出力のリダイレクト（`>`、`>>`、`>|`、`&>`、`&>>`、`>& file`）の書き先。入力（`<`）と fd の複製（`2>&1`）は None
+    fn write_target(&self, redirect: Node) -> Option<String> {
+        let dest = redirect.child_by_field_name("destination")?;
+        let mut cursor = redirect.walk();
+        let op = redirect
+            .children(&mut cursor)
+            .find(|c| !c.is_named())?
+            .kind();
+        let writes = matches!(op, ">" | ">>" | ">|" | "&>" | "&>>")
+            || (op == ">&" && dest.kind() != "number");
+        writes.then(|| self.unquote(dest).text)
+    }
+
     /// `heredoc_body` を除く全ノードを文書順（先行順）で走査する
     fn walk(&self, node: Node, visit: &mut dyn FnMut(Node)) {
         if node.kind() == "heredoc_body" {
@@ -277,6 +332,32 @@ impl Shell {
         for child in node.children_by_field_name("argument", &mut cursor) {
             args.push(self.unquote(child));
         }
+        let redirects = statement_redirects(node);
+        let heredocs: Vec<Node> = redirects
+            .iter()
+            .copied()
+            .filter(|r| r.kind() == "heredoc_redirect")
+            .collect();
+        // tree-sitter-bash は `<<` の直前の 1 語の `-`（`cat - <<EOF`、`git commit -F - <<EOF`）を木に入れない。
+        // コマンドの終わりからヒアドキュメントの演算子までの原文が `-` だけなら、引数に戻す
+        if let Some(first) = heredocs.iter().min_by_key(|r| r.start_byte())
+            && first.start_byte() >= node.end_byte()
+            && self.src[node.end_byte()..first.start_byte()].trim() == "-"
+        {
+            args.push(Arg {
+                text: "-".to_string(),
+                raw: "-".to_string(),
+            });
+        }
+        let stdin_heredoc = match heredocs.as_slice() {
+            [one] => self.heredoc(*one),
+            _ => None,
+        };
+        let writes = redirects
+            .iter()
+            .filter(|r| r.kind() == "file_redirect")
+            .filter_map(|r| self.write_target(*r))
+            .collect();
         let trailing_error = node.next_sibling().is_some_and(|n| n.kind() == "ERROR");
         let mut scope = Vec::new();
         let mut p = node.parent();
@@ -323,8 +404,8 @@ impl Shell {
             wrappers: unwrapped.wrappers,
             pinned_to_one_cpu: unwrapped.pinned_to_one_cpu,
             git,
-            stdin_heredoc: None,
-            writes: Vec::new(),
+            stdin_heredoc,
+            writes,
         };
         let Some(source) = unwrapped.source else {
             return Some((vec![cmd], None));
@@ -564,6 +645,25 @@ impl Shell {
                     && moves_away(c)
             })
     }
+}
+
+/// コマンドに掛かるリダイレクト。`a && b <<EOF` のように並びの後ろに書いたリダイレクトを、tree-sitter-bash は
+/// 並び（`list`）に付けるが、bash では最後のコマンドに掛かるので、並びの最後のコマンドからはたどる
+fn statement_redirects(node: Node) -> Vec<Node> {
+    let mut out = Vec::new();
+    let mut cur = node;
+    while let Some(p) = cur.parent() {
+        match p.kind() {
+            "redirected_statement" if p.child_by_field_name("body") == Some(cur) => {
+                let mut cursor = p.walk();
+                out.extend(p.children_by_field_name("redirect", &mut cursor));
+            }
+            "list" if p.named_child(p.named_child_count().saturating_sub(1)) == Some(cur) => {}
+            _ => break,
+        }
+        cur = p;
+    }
+    out
 }
 
 fn strip(s: &str, open: &str, close: &str) -> String {
@@ -813,8 +913,9 @@ mod tests {
             cmds("git commit -F - <<EOF\nfeat: a\n")[0].stdin_heredoc,
             None
         );
-        let cs = cmds("cat <<A; git commit -F - <<B\na\nA\nfeat: b\nB\n");
-        assert_eq!(cs[1].stdin_heredoc, None);
+        let cs = cmds("cat <<A && git commit -F - <<B\na\nA\nfeat: b\nB\n");
+        let commit = cs.iter().find(|c| c.git_subcommand().is_some()).unwrap();
+        assert_eq!(commit.stdin_heredoc, None);
     }
 
     #[test]
