@@ -1261,6 +1261,13 @@ mod tests {
     }
 
     #[test]
+    fn commands_on_separate_lines_of_a_double_quoted_shell_string_stay_apart() {
+        let cs = cmds("bash -c \"echo x\ngit push --force origin main\"");
+        assert_eq!(names(&cs), ["bash", "echo", "git"]);
+        assert_eq!(cs[2].git_subcommand().unwrap().0, "push");
+    }
+
+    #[test]
     fn shell_strings_are_parsed_recursively() {
         let cs = cmds("bash -c 'cd /a && git commit --no-verify -m x' arg0");
         assert_eq!(names(&cs), ["bash", "cd", "git"]);
