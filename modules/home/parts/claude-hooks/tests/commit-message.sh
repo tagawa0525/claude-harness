@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # nix でビルドした claude-hooks の check-commit-message が、包んで渡す commit-msg-check（commit-msg の hook と同じ
 # 検査）で、git commit の件名が 72 文字を超えるメッセージと Conventional Commits でないメッセージを止め、通る件名と、
-# 形式と長さを問わない Merge / fixup! / Revert の件名を通すことを確かめる（package.nix の installCheckPhase が呼ぶ）。
+# 形式と長さを問わない Merge / fixup! / squash! / Revert の件名を通すことを確かめる（package.nix の installCheckPhase が呼ぶ）。
 # メッセージの取り出しは、偽の検査を使うユニットテスト（src/rules/check_commit_message.rs）が見る。
 #
 # 使い方: commit-message.sh <claude-hooks の実行ファイル>
@@ -68,7 +68,7 @@ docs(plans): say the bank D insertion's effect in Problem 9 is unmeasure
 本文
 EOF"
 
-for subject in "Merge: $LONG" "fixup! $LONG" "Revert \"$LONG\""; do
+for subject in "Merge: $LONG" "fixup! $LONG" "squash! $LONG" "Revert \"$LONG\""; do
   expect_pass "形式と長さを問わない件名（$subject）" "git commit -F - <<'EOF'
 $subject
 EOF"
