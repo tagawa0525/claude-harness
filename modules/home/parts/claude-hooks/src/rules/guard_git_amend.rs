@@ -81,11 +81,9 @@ impl Rule for GuardGitAmend {
             else {
                 continue;
             };
-            // block-main-commit は GitHub リモートのあるリポジトリで main / master の上の commit を止めるので、
-            // そのときだけ既定ブランチの上で amend する道を示さない（ほかの名前の既定ブランチは止めない）
-            let on_default = if git::has_github_remote(&dir)
-                && (default == "main" || default == "master")
-            {
+            // block-main-commit はリモートによらず main / master の上の commit を止めるので、そのときは既定
+            // ブランチの上で amend する道を示さない（ほかの名前の既定ブランチは止めない）
+            let on_default = if default == "main" || default == "master" {
                 String::new()
             } else {
                 format!(
