@@ -148,6 +148,19 @@ pub struct Cmd {
     pub pinned_to_one_cpu: bool,
     /// git のコマンドなら、グローバルオプションの読み取り
     pub git: Option<GitInvocation>,
+    /// 標準入力に渡すヒアドキュメント（`<<EOF` / `<<-EOF`）。本文を決められないものは None
+    pub stdin_heredoc: Option<Heredoc>,
+    /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`。クォートを外した値）
+    pub writes: Vec<String>,
+}
+
+/// ヒアドキュメント 1 つ
+#[derive(Debug, Clone, PartialEq)]
+pub struct Heredoc {
+    /// 本文（各行の末尾の改行を含む。`<<-` は行の先頭のタブを外す）
+    pub body: String,
+    /// 区切りをクォートしたか（`'EOF'`、`"EOF"`、`\EOF`。本文を展開しない）
+    pub quoted: bool,
 }
 
 impl Shell {
@@ -310,6 +323,8 @@ impl Shell {
             wrappers: unwrapped.wrappers,
             pinned_to_one_cpu: unwrapped.pinned_to_one_cpu,
             git,
+            stdin_heredoc: None,
+            writes: Vec::new(),
         };
         let Some(source) = unwrapped.source else {
             return Some((vec![cmd], None));
@@ -748,6 +763,76 @@ mod tests {
         .unwrap();
         assert!(body.raw.contains("## Summary"));
         assert!(!cs[0].has_error);
+    }
+
+    fn heredoc(body: &str, quoted: bool) -> Option<Heredoc> {
+        Some(Heredoc {
+            body: body.to_string(),
+            quoted,
+        })
+    }
+
+    #[test]
+    fn stdin_heredoc_belongs_to_its_command() {
+        let cs = cmds("git commit -F - <<'EOF'\nfeat: a\n\nbody $X\nEOF\n");
+        let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(t, ["commit", "-F", "-"]);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\n\nbody $X\n", true));
+    }
+
+    #[test]
+    fn stdin_heredoc_after_a_list_belongs_to_the_last_command() {
+        let cs = cmds("cd /x && git add a && git commit -q -F - <<EOF\nfeat: a\nEOF\ngit log -1");
+        let names: Vec<&str> = cs.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["cd", "git", "git", "git"]);
+        assert_eq!(cs[0].stdin_heredoc, None);
+        assert_eq!(cs[1].stdin_heredoc, None);
+        assert_eq!(cs[2].args.last().unwrap().text, "-");
+        assert_eq!(cs[2].stdin_heredoc, heredoc("feat: a\n", false));
+        assert_eq!(cs[3].stdin_heredoc, None);
+    }
+
+    #[test]
+    fn stdin_heredoc_with_a_command_after_its_operator() {
+        let cs = cmds("git commit -F - <<'EOF' && git log -1\nfeat: a\nEOF\n");
+        assert_eq!(cs.len(), 2);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\n", true));
+        assert_eq!(cs[1].git_subcommand().unwrap().0, "log");
+        assert_eq!(cs[1].stdin_heredoc, None);
+    }
+
+    #[test]
+    fn stdin_heredoc_dash_strips_leading_tabs() {
+        let cs = cmds("git commit -F - <<-EOF\n\tfeat: a\n\t\tb\n\tEOF\n");
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\nb\n", false));
+    }
+
+    #[test]
+    fn stdin_heredoc_is_unknown_without_its_delimiter_or_after_another_on_the_line() {
+        assert_eq!(
+            cmds("git commit -F - <<EOF\nfeat: a\n")[0].stdin_heredoc,
+            None
+        );
+        let cs = cmds("cat <<A; git commit -F - <<B\na\nA\nfeat: b\nB\n");
+        assert_eq!(cs[1].stdin_heredoc, None);
+    }
+
+    #[test]
+    fn dash_before_a_heredoc_is_an_argument() {
+        let cs = cmds("cat - <<EOF\nx\nEOF");
+        let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(t, ["-"]);
+    }
+
+    #[test]
+    fn writes_lists_output_redirect_targets() {
+        let cs = cmds("cat > m.txt <<'EOF'\nx\nEOF\ngit commit -F m.txt");
+        assert_eq!(cs[0].writes, ["m.txt"]);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("x\n", true));
+        assert!(cs[1].writes.is_empty());
+        let cs = cmds("echo x >> 'a b' 2>&1 && sort < in &> out");
+        assert_eq!(cs[0].writes, ["a b"]);
+        assert_eq!(cs[1].writes, ["out"]);
     }
 
     #[test]
