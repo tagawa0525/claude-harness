@@ -1018,11 +1018,20 @@ mod tests {
 
     #[test]
     fn double_quoted_string_keeps_newlines_and_spaces_between_parts() {
-        // 改行と、改行に続く空白も字面のまま残る（展開と行の継続の扱いは変わらない）
+        // 改行と、改行に続く空白（閉じる引用符の前のものも）は字面のまま残る。展開は字面のまま、行の継続
+        // （`\` と改行）は除く
         let cs = cmds("x \"\na b\n\nc $X d \n\n e\\\n f\n\"");
         assert_eq!(cs[0].args[0].text, "\na b\n\nc $X d \n\n e f\n");
         let cs = cmds("x \"$Y\n\n${Z}\"");
         assert_eq!(cs[0].args[0].text, "$Y\n\n${Z}");
+        for (src, text) in [
+            ("x \"a\n  \"", "a\n  "),
+            ("x \"a\n\t\"", "a\n\t"),
+            ("x \"$X\n  \"", "$X\n  "),
+            ("x \"  \n  \"", "  \n  "),
+        ] {
+            assert_eq!(cmds(src)[0].args[0].text, text, "{src:?}");
+        }
     }
 
     #[test]
