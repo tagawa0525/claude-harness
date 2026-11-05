@@ -152,18 +152,25 @@ in
 
       # Claude Code セッションからの main/master 直接コミットをブロック
       # （PreToolUse hook と異なり必ず対象リポジトリ内で実行されるため、
-      #   worktree でも誤判定しない構造的なゲート。
-      #   flake.lock のみのコミットは nix-rebuild update の正規フローなので除外。
-      #   GitHub リモートがなければ PR を作れないので PR フロー適用外。
+      #   worktree や cd の失敗でも誤判定しない構造的なゲート。リモートの有無によらず止める
+      #   （GitHub のリモートが無いリポジトリも、ブランチは /git-merge でローカルの main にマージする）。
+      #   通すのは、flake.lock のみのコミット（nix-rebuild update の正規フロー）、マージを締めるコミット
+      #   （MERGE_HEAD がある。/git-merge で本文の語に拒まれた後や競合の解決の後の git commit）、HEAD の無い
+      #   リポジトリの最初のコミット。
       #   例外は modules/home/parts/claude-hooks/src/rules/block_main_commit.rs と必ず揃える
       #   → modules/home/parts/tests/main-commit-gates.sh が一致を検証する）
-      if [ "''${CLAUDECODE:-}" = "1" ] && git remote -v 2>/dev/null | grep -q 'github\.com'; then
+      if [ "''${CLAUDECODE:-}" = "1" ]; then
         BRANCH=$(git branch --show-current 2>/dev/null || echo "")
-        if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+        if { [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; } &&
+          git rev-parse -q --verify HEAD >/dev/null &&
+          ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
           # 変更(M)の flake.lock 1件のみ許可（削除・リネーム等は通さない）
           if [ "$(git diff --cached --name-status)" != "$(printf 'M\tflake.lock')" ]; then
-            echo "❌ mainブランチへの直接コミットは禁止されています"
+            echo "❌ main / master ブランチへの直接コミットは禁止されています"
             echo "   featureブランチを作成してください: /git-branch"
+            echo "   - GitHub のリモートが無いリポジトリでも、ブランチは /git-merge で main にマージするので、main に直接コミットする理由はありません（2026-11-06 に、cd が失敗した後の git commit が別のリポジトリの main に空のコミットを作りました）"
+            echo "   - 試すための一時のリポジトリなら、main / master 以外のブランチで作る（git init -b <名前>、git switch -c <名前>）"
+            echo "   - 通すのは、flake.lock だけの変更、マージを締めるコミット（MERGE_HEAD がある）、HEAD の無いリポジトリの最初のコミットです"
             exit 1
           fi
         fi
