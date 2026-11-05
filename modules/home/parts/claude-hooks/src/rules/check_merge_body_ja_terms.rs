@@ -17,7 +17,7 @@ use crate::git;
 use crate::git_args::{Item, items, items_with_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
-use crate::shell::{self, Arg, Shell};
+use crate::shell::{self, Arg, Cmd, Shell};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -256,37 +256,72 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     }
 }
 
-/// 拒むとコマンド全体が止まるので、同じコマンドの前段で -F のファイルを直す処理（sed -i など）も実行されず、
-/// ファイルは直る前のまま残る。前段だけを外して再実行すると同じ拒否を受けるので、分け方を文言で示す
-const SPLIT_CALLS_HINT: &str = "同じコマンドの前段で -F のファイルを直しても、拒んだときはコマンド全体が止まり、\
-     前段も実行されていません（ファイルは直る前のままです）。ファイルを直す呼び出しと git merge を分けてください";
-
 /// 同じコマンドの前段（`writer`）が `-F <path>` のファイルを書きうるときに止める文言。`sub` は git のサブコマンド
+/// （commit か merge）。拒むとコマンド全体が止まり、前段も実行されない
 pub(super) fn split_calls_reason(sub: &str, path: &str, writer: &str) -> String {
-    let _ = (sub, path, writer);
-    String::new()
+    let (inline, late) = if sub == "commit" {
+        (
+            "`-F -` のヒアドキュメント（`git commit -F - <<'EOF'` … `EOF`）か `-m \"$(cat <<'EOF' … EOF)\"`",
+            "commit-msg の hook が後で拒んでも、同じコマンドの後段は古い HEAD のまま走ります",
+        )
+    } else {
+        (
+            "`-m \"$(cat <<'EOF' … EOF)\"`",
+            "数分の pre-merge-commit の品質チェックの後で、commit-msg の hook が拒みます",
+        )
+    };
+    format!(
+        "git {sub} -F {path} のファイルを同じコマンドの前段（{writer}）が書きうるので、実行の前に本文を検査できません。\
+         ファイルを書く呼び出しと git {sub} を別の呼び出しに分けてください（本文を {inline} で git {sub} に直接渡してもかまいません）。\
+         拒んだときはコマンド全体が止まるので、前段も実行されていません（ファイルは書く前のままです）。書く前の中身で\
+         判定して通すと、書いた後の本文に誤りがあれば、{late}"
+    )
 }
 
-/// 崩れた語を止める文言。`chained_file` は、merge の前のコマンドが本文に残る -F のファイルを引数に取るとき
-fn deny_reason(terms: &[String], chained_file: bool) -> String {
+/// 本文に使う -F のファイル（書いたままの値。シェルが展開する値を除く）のどれかを、同じコマンドの前段が引数に
+/// 取るかリダイレクトで書くなら、止める文言。前段の後の中身は実行の前に読めない（#489）
+pub(super) fn earlier_writer_reason(
+    shell: &Shell,
+    cmd: &Cmd,
+    base: &Path,
+    dir: &Path,
+    sub: &str,
+    files: &[&str],
+) -> Option<String> {
+    let home = shell::home();
+    files
+        .iter()
+        .filter(|f| !f.contains(['$', '`']))
+        .find_map(|f| {
+            let target = shell::resolve(&home, dir, f);
+            shell
+                .writer_before(cmd, base, &target)
+                .map(|w| split_calls_reason(sub, f, &w.name))
+        })
+}
+
+/// 崩れた語を止める文言
+fn deny_reason(terms: &[String]) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
-    let hint = if chained_file {
-        format!("\n{SPLIT_CALLS_HINT}")
-    } else {
-        String::new()
-    };
     format!(
         "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
          本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
-         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます{hint}",
+         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます",
         list.join("\n")
     )
 }
 
-/// commit-msg が語を検査しないリポジトリか: グローバルの core.hooksPath（commit-msg の置き場）を使わない
-/// リポジトリと、`upstream` リモートのある fork、ローカルの commit-msg に置き換わるリポジトリ
-/// （modules/home/parts/git.nix の commit-msg と同じ判定）
+/// commit-msg が検査しない所か: git のリポジトリの外（コミットできない）、グローバルの core.hooksPath
+/// （commit-msg の置き場）を使わないリポジトリ、`upstream` リモートのある fork、ローカルの commit-msg に置き換わる
+/// リポジトリ（modules/home/parts/git.nix の commit-msg と同じ判定）
 pub(super) fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool {
+    // リポジトリの外の `git config --get` はグローバルの値を返すので、置き場の比較より先に見る
+    let Some(common) = git::git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ) else {
+        return true;
+    };
     if global_hooks.is_none()
         || git::git(dir, &["config", "--get", "core.hooksPath"]) != global_hooks
     {
@@ -296,12 +331,8 @@ pub(super) fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool
         return true;
     }
     use std::os::unix::fs::PermissionsExt;
-    git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .and_then(|common| std::fs::metadata(Path::new(&common).join("hooks/commit-msg")).ok())
-    .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    std::fs::metadata(Path::new(&common).join("hooks/commit-msg"))
+        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 impl CheckMergeBodyJaTerms {
@@ -327,6 +358,12 @@ impl CheckMergeBodyJaTerms {
             if commit_msg_skips(&dir, global_hooks(&dir)) {
                 continue;
             }
+            if let Some(reason) =
+                earlier_writer_reason(shell, cmd, &input.cwd, &dir, "merge", &body_files(args))
+            {
+                out.push(Finding::Deny(reason));
+                continue;
+            }
             let message = match merge_message(args, &dir) {
                 Ok(Some(m)) => m,
                 Ok(None) => continue,
@@ -349,17 +386,7 @@ impl CheckMergeBodyJaTerms {
             };
             match lint(check, &dir, &message) {
                 Lint::Clean => {}
-                Lint::Terms(terms) => {
-                    // 前段が -F のファイルを引数に取るとき（sed -i msg.txt など）だけ分け方を示す。
-                    // リダイレクト（cat > msg.txt）は引数に出ないので数えない
-                    let files = body_files(args);
-                    let chained = !files.is_empty()
-                        && shell.commands().iter().any(|c| {
-                            c.start < cmd.start
-                                && c.args.iter().any(|a| files.contains(&a.text.as_str()))
-                        });
-                    out.push(Finding::Deny(deny_reason(&terms, chained)))
-                }
+                Lint::Terms(terms) => out.push(Finding::Deny(deny_reason(&terms))),
                 Lint::Failed(why) => notice(format!(
                     "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
                 )),
@@ -385,7 +412,7 @@ impl Rule for CheckMergeBodyJaTerms {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::take_notices;
+    use crate::output::{NOTICES_LOCK as NOTICES, take_notices};
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -449,10 +476,6 @@ exit 0
             path.display()
         );
     }
-
-    /// 判定できない理由（output::notice）はプロセスに 1 つの置き場に集まり、take_notices は全部を取り出す。
-    /// 理由を確かめるテストは、互いの理由を取り合わないように順に実行する
-    static NOTICES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// テストのグローバルの core.hooksPath。git_init のリポジトリはこれをローカルに持つ（手元とサンドボックスで
     /// グローバルの設定が違っても、グローバルの hook を使うリポジトリにする）

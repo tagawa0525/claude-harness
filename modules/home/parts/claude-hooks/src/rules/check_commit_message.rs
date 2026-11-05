@@ -15,13 +15,17 @@
 //! エスケープは設けない（メッセージを直せば通る）
 
 use super::Rule;
-use super::check_merge_body_ja_terms::{Undecided, commit_msg_skips, literal, split_calls_reason};
+use super::check_merge_body_ja_terms::{
+    Undecided, commit_msg_skips, earlier_writer_reason, literal,
+};
 use crate::git;
 use crate::git_args::{Item, items_with_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::{self, Arg, Cmd, Shell};
+use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 pub struct CheckCommitMessage;
 
@@ -38,15 +42,177 @@ pub(super) enum Unknown {
     Stdin,
 }
 
-/// `git commit args…` のメッセージを、commit-msg に渡る形で組み立てる。本文の無い形と、git が止める形
-/// （`-m` と `-F` の両方）は Ok(None)
-pub(super) fn commit_message(
-    cmd: &Cmd,
-    args: &[Arg],
-    dir: &Path,
-) -> Result<Option<String>, Unknown> {
-    let _ = (cmd, args, dir);
-    Ok(None)
+/// メッセージを決めるオプション（commit-msg を呼び、メッセージを `-m` か `-F` で渡す形だけ）
+struct Form<'a> {
+    /// `-m` の値と、値を書いた引数（順に。`--no-message` はそれまでを消す）
+    messages: Vec<(&'a str, &'a Arg)>,
+    /// `-F` の値と、値を書いた引数（git と同じく最後のもの）
+    file: Option<(&'a str, &'a Arg)>,
+    /// `--cleanup` の値（最後のもの）
+    cleanup: Option<&'a str>,
+}
+
+/// 本文を `-m` か `-F` で渡し、commit-msg が呼ばれる形か。commit-msg を呼ばない形（`-n` / `--no-verify`。後ろの
+/// `--verify` が打ち消す。`--dry-run`）、ほかのコミットからメッセージを作る形（`-c` / `-C`、`--fixup`、`--squash`）、
+/// git が止める形（`-m` と `-F` の両方）、本文の無い形（エディタ）は None
+fn form(args: &[Arg]) -> Option<Form<'_>> {
+    let mut form = Form {
+        messages: Vec::new(),
+        file: None,
+        cleanup: None,
+    };
+    let (mut no_verify, mut no_commit, mut elsewhere) = (false, false, false);
+    for (item, value) in items_with_values("commit", args) {
+        match (item, value) {
+            (Item::Short('m') | Item::Long("--message"), Some(v)) => form.messages.push(v),
+            (Item::Long("--no-message"), _) => form.messages.clear(),
+            (Item::Short('F') | Item::Long("--file"), Some(v)) => form.file = Some(v),
+            (Item::Long("--cleanup"), Some((v, _))) => form.cleanup = Some(v),
+            (Item::Short('n') | Item::Long("--no-verify"), _) => no_verify = true,
+            (Item::Long("--verify"), _) => no_verify = false,
+            (Item::Long("--dry-run"), _) => no_commit = true,
+            (
+                Item::Short('c' | 'C')
+                | Item::Long("--reuse-message" | "--reedit-message" | "--fixup" | "--squash"),
+                _,
+            ) => elsewhere = true,
+            _ => {}
+        }
+    }
+    let one_source = form.messages.is_empty() != form.file.is_none();
+    (one_source && !no_verify && !no_commit && !elsewhere).then_some(form)
+}
+
+/// commit-msg に渡るメッセージを組み立てる（builtin/commit.c）: `-m` は値の後に改行を足し、2 つ目からは前に空行を
+/// 挟む（opt_parse_m）。`-F -` は標準入力、ほかの `-F` は dir からの相対のファイル（`~` は HOME）。git は
+/// commit-msg の前に、`--cleanup=verbatim` でなければ行末の空白と先頭と末尾の空行を除いて続く空行を 1 つにし
+/// （strbuf_stripspace）、`--cleanup=strip` ならさらに # の行を除く
+fn build(form: &Form, cmd: &Cmd, dir: &Path) -> Result<String, Unknown> {
+    let raw = match form.file {
+        Some((value, arg)) => {
+            let path = literal(value, arg, "-F").map_err(Unknown::Value)?;
+            if path == "-" {
+                let heredoc = cmd.stdin_heredoc.as_ref().ok_or(Unknown::Stdin)?;
+                if !heredoc.quoted && heredoc.body.contains(['$', '`']) {
+                    return Err(Unknown::Value(Undecided::Expanded("-F -")));
+                }
+                heredoc.body.clone()
+            } else {
+                std::fs::read_to_string(shell::resolve(&shell::home(), dir, &path))
+                    .map_err(|_| Unknown::Value(Undecided::Unreadable(path)))?
+            }
+        }
+        None => {
+            let mut buf = String::new();
+            for (value, arg) in &form.messages {
+                if !buf.is_empty() {
+                    buf.push('\n');
+                }
+                buf.push_str(&literal(value, arg, "-m").map_err(Unknown::Value)?);
+                if !buf.ends_with('\n') {
+                    buf.push('\n');
+                }
+            }
+            buf
+        }
+    };
+    Ok(match form.cleanup {
+        Some("verbatim") => raw,
+        Some("strip") => stripspace(&raw, true),
+        _ => stripspace(&raw, false),
+    })
+}
+
+/// git の strbuf_stripspace: 行末の空白（ASCII）を除き、空の行の続きは 1 つにし、先頭と末尾の空の行を除く。
+/// `strip_comments` なら # で始まる行も除く
+fn stripspace(text: &str, strip_comments: bool) -> String {
+    let mut out = String::new();
+    let mut blank = false;
+    for line in text.split('\n') {
+        if strip_comments && line.starts_with('#') {
+            continue;
+        }
+        let line = line.trim_end_matches(|c: char| c.is_ascii_whitespace());
+        if line.is_empty() {
+            blank = true;
+            continue;
+        }
+        if blank && !out.is_empty() {
+            out.push('\n');
+        }
+        blank = false;
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// commit-msg-check の結果
+#[derive(Debug, PartialEq)]
+enum Verdict {
+    Pass,
+    /// 規約に反する。検査の出力
+    Reject(String),
+    /// 検査を起動できない、または検査が失敗した。理由
+    Failed(String),
+}
+
+/// commit-msg と同じく、メッセージをファイルで commit-msg-check に渡す。実行する場所はコマンドの行き先
+fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "claude-hooks-commit-msg-{}-{seq}",
+        std::process::id()
+    ));
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(message.as_bytes()));
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&path);
+        return Verdict::Failed(format!(
+            "メッセージを {} に書けません（{e}）",
+            path.display()
+        ));
+    }
+    let out = Command::new(check)
+        .arg(&path)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .output();
+    let _ = std::fs::remove_file(&path);
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => return Verdict::Failed(format!("{check} を起動できません（{e}）")),
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    match out.status.code() {
+        Some(0) => Verdict::Pass,
+        Some(1) => Verdict::Reject(text.trim().to_string()),
+        _ => Verdict::Failed(format!(
+            "{check} が失敗しました（{}）: {}",
+            out.status,
+            text.trim()
+        )),
+    }
+}
+
+/// 規約に反するメッセージを止める文言
+fn deny_reason(output: &str) -> String {
+    format!(
+        "git commit のメッセージが、commit-msg の hook と同じ検査に通りません:\n{output}\n\
+         上の ❌ の行のとおりにメッセージを直してから、もう一度実行してください。このまま実行すると、pre-commit の検査\
+         （マージを終える commit では数分の品質チェック）の後で commit-msg の hook が同じ検査で拒み、同じコマンドで\
+         commit の後に `;` や改行でつないだコマンドは、コミットされていない古い HEAD のまま走ります（拒まれた commit の\
+         後の品質チェックが古い HEAD で通ったと出たことと、続けた git commit --amend が既定ブランチのマージコミットを\
+         書き換えたことがあります）"
+    )
 }
 
 impl CheckCommitMessage {
@@ -59,8 +225,64 @@ impl CheckCommitMessage {
         check: Option<&str>,
         global_hooks: &dyn Fn(&Path) -> Option<String>,
     ) -> Vec<Finding> {
-        let _ = (input, shell, check, global_hooks);
-        Vec::new()
+        let mut out = Vec::new();
+        for cmd in shell.commands() {
+            let Some(("commit", args)) = cmd.git_subcommand() else {
+                continue;
+            };
+            let Some(form) = form(args) else {
+                continue;
+            };
+            let dir = shell.target_dir(cmd, &input.cwd);
+            if commit_msg_skips(&dir, global_hooks(&dir)) {
+                continue;
+            }
+            let files: Vec<&str> = form
+                .file
+                .iter()
+                .map(|(v, _)| *v)
+                .filter(|v| *v != "-")
+                .collect();
+            if let Some(reason) =
+                earlier_writer_reason(shell, cmd, &input.cwd, &dir, "commit", &files)
+            {
+                out.push(Finding::Deny(reason));
+                continue;
+            }
+            let Some(check) = check else {
+                notice(format!(
+                    "check-commit-message: commit-msg-check のパス（環境変数 {COMMIT_MSG_CHECK}）が無いので、git commit のメッセージを判定していません（nix で包んだものだけが検査する）"
+                ));
+                continue;
+            };
+            let message = match build(&form, cmd, &dir) {
+                Ok(m) => m,
+                Err(why) => {
+                    let why = match why {
+                        Unknown::Value(Undecided::Expanded(opt)) => {
+                            format!("{opt} の値はシェルが展開する")
+                        }
+                        Unknown::Value(Undecided::Unreadable(p)) => format!("-F {p} を読めない"),
+                        Unknown::Stdin => {
+                            "-F - の標準入力を、同じコマンドのヒアドキュメントから取れない"
+                                .to_string()
+                        }
+                    };
+                    notice(format!(
+                        "check-commit-message: git commit のメッセージを判定していません（{why}）"
+                    ));
+                    continue;
+                }
+            };
+            match run_check(check, &dir, &message) {
+                Verdict::Pass => {}
+                Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(&output))),
+                Verdict::Failed(why) => notice(format!(
+                    "check-commit-message: git commit のメッセージを判定していません: {why}"
+                )),
+            }
+        }
+        out
     }
 }
 
@@ -80,7 +302,7 @@ impl Rule for CheckCommitMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::take_notices;
+    use crate::output::{NOTICES_LOCK as NOTICES, take_notices};
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -166,10 +388,6 @@ exit 0
         }
     }
 
-    /// 判定できない理由（output::notice）はプロセスに 1 つの置き場に集まり、take_notices は全部を取り出す。
-    /// 理由を確かめるテストは、互いの理由を取り合わないように順に実行する
-    static NOTICES: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// テストのグローバルの core.hooksPath。git_init のリポジトリはこれをローカルに持つ
     const GLOBAL_HOOKS: &str = "/nonexistent/global-hooks";
 
@@ -211,7 +429,7 @@ exit 0
             .find(|c| matches!(c.git_subcommand(), Some(("commit", _))))
             .unwrap();
         let (_, args) = cmd.git_subcommand().unwrap();
-        commit_message(cmd, args, dir)
+        form(args).map(|f| build(&f, cmd, dir)).transpose()
     }
 
     fn message(src: &str) -> Result<Option<String>, Unknown> {

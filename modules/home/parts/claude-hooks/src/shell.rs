@@ -277,6 +277,21 @@ impl Shell {
         })
     }
 
+    /// `cmd` より前に走るコマンド（[`Shell::commands_before`]）のうち、`path` を引数に取るか、出力のリダイレクトで
+    /// 書くもの（最初のもの）。引数とリダイレクトの先は、そのコマンドの行き先（`base` から [`Shell::target_dir`]）
+    /// からの相対で比べる。引数に取るだけで読むだけのもの（`cat`、`test -f`）も数える
+    pub fn writer_before<'a>(&'a self, cmd: &'a Cmd, base: &Path, path: &Path) -> Option<&'a Cmd> {
+        let home = home();
+        self.commands_before(cmd).find(|c| {
+            let dir = self.target_dir(c, base);
+            c.args
+                .iter()
+                .map(|a| a.text.as_str())
+                .chain(c.writes.iter().map(String::as_str))
+                .any(|t| resolve(&home, &dir, t) == path)
+        })
+    }
+
     /// 全コマンド（文字列の中のものを含む）と、文字列を解析した内側のシェル
     fn collect_commands(&self, depth: usize, expanded: &[String]) -> (Vec<Cmd>, Vec<Shell>) {
         let mut cmds = Vec::new();
