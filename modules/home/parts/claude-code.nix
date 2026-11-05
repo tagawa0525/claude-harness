@@ -35,6 +35,10 @@ let
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
+  # ファイルの全体の崩れた日本語の語の検査（ADR-0074）。/retro の memory-index.sh が自動メモリに使う。
+  # スキルのスクリプトは claude-sync が store を経ずにコピーするので store のパスを埋められず、PATH に頼らない
+  # よう claude-hooks と同じ固定パスに置く
+  jaTermsFiles = (pkgs.callPackage ./ja-terms/textlint.nix { }).filesCheck;
   # hook の timeout は秒（https://code.claude.com/docs/en/hooks の "Seconds before canceling."。command の既定は 600）。
   # pre-merge-check の gh は最大 14 か所の呼び出しで、1 回 0.4〜0.7 秒（2026-10-28 に gh pr view、repo view、api を
   # 手元で測定）なので順に呼んでも約 10 秒。その数倍の 60 秒にする。hook が止まったとき、Agent の起動もこの時間待つ
@@ -254,6 +258,7 @@ in
 
   # PreToolUse hook バイナリ（settings.json はこの固定パスを参照する）
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
+  home.file.".claude/bin/ja-terms-files".source = "${jaTermsFiles}/bin/ja-terms-files";
 
   # .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド
   # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）
