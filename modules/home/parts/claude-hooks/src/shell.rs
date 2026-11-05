@@ -505,15 +505,26 @@ impl Shell {
             "raw_string" => strip(&raw, "'", "'"),
             "ansi_c_string" => strip(&raw, "$'", "'"),
             "string" | "translated_string" => {
+                // 名前のある子だけをつながない: tree-sitter-bash は引用符の中の改行（と続く空白）を extras として
+                // 読み飛ばし、どの子にも含めないので、子どうしの間の字面も `string_content` と同じに読む
                 let mut s = String::new();
                 let mut cursor = node.walk();
+                let mut at = node
+                    .child(0)
+                    .map_or(node.start_byte(), |open| open.end_byte());
+                let end = node
+                    .child(node.child_count().saturating_sub(1))
+                    .map_or(node.end_byte(), |close| close.start_byte());
                 for child in node.named_children(&mut cursor) {
+                    s.push_str(&unescape_double(&self.src[at..child.start_byte()]));
                     if child.kind() == "string_content" {
                         s.push_str(&unescape_double(self.text(child)));
                     } else {
                         s.push_str(self.text(child));
                     }
+                    at = child.end_byte();
                 }
+                s.push_str(&unescape_double(&self.src[at..end.max(at)]));
                 s
             }
             "concatenation" => {
