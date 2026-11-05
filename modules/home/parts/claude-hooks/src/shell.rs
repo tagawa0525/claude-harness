@@ -236,6 +236,23 @@ impl Shell {
         None
     }
 
+    /// 原文の `from..to` から、その中にあるリダイレクトのノードの原文を除き、前後の空白を外したもの
+    fn gap_without(&self, from: usize, to: usize, redirects: &[Node]) -> String {
+        let mut out = String::new();
+        let mut at = from;
+        let mut inside: Vec<&Node> = redirects
+            .iter()
+            .filter(|r| r.start_byte() >= from && r.end_byte() <= to)
+            .collect();
+        inside.sort_by_key(|r| r.start_byte());
+        for r in inside {
+            out.push_str(&self.src[at..r.start_byte()]);
+            at = r.end_byte();
+        }
+        out.push_str(&self.src[at..to]);
+        out.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
     /// 出力のリダイレクト（`>`、`>>`、`>|`、`&>`、`&>>`、`>& file`）の書き先。入力（`<`）と fd の複製（`2>&1`）は None
     fn write_target(&self, redirect: Node) -> Option<String> {
         let dest = redirect.child_by_field_name("destination")?;
@@ -353,11 +370,12 @@ impl Shell {
             .copied()
             .filter(|r| r.kind() == "heredoc_redirect")
             .collect();
-        // tree-sitter-bash は `<<` の直前の 1 語の `-`（`cat - <<EOF`、`git commit -F - <<EOF`）を木に入れない。
-        // コマンドの終わりからヒアドキュメントの演算子までの原文が `-` だけなら、引数に戻す
+        // tree-sitter-bash は `<<` か、その前のリダイレクトの直前の 1 語の `-`（`cat - <<EOF`、
+        // `git commit -F - 2>&1 <<EOF`）を木に入れない。コマンドの終わりからヒアドキュメントの演算子までの原文が、
+        // 間のリダイレクトを除いて `-` だけなら、引数に戻す
         if let Some(first) = heredocs.iter().min_by_key(|r| r.start_byte())
             && first.start_byte() >= node.end_byte()
-            && self.src[node.end_byte()..first.start_byte()].trim() == "-"
+            && self.gap_without(node.end_byte(), first.start_byte(), &redirects) == "-"
         {
             args.push(Arg {
                 text: "-".to_string(),
@@ -368,9 +386,23 @@ impl Shell {
             [one] => self.heredoc(*one),
             _ => None,
         };
-        let writes = redirects
+        // ヒアドキュメントの演算子の後ろに書いたリダイレクト（`cat <<'EOF' > msg.txt`）は、heredoc_redirect の中にある
+        let mut file_redirects: Vec<Node> = Vec::new();
+        for r in &redirects {
+            match r.kind() {
+                "file_redirect" => file_redirects.push(*r),
+                "heredoc_redirect" => {
+                    let mut cursor = r.walk();
+                    file_redirects.extend(
+                        r.children_by_field_name("redirect", &mut cursor)
+                            .filter(|c| c.kind() == "file_redirect"),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let writes = file_redirects
             .iter()
-            .filter(|r| r.kind() == "file_redirect")
             .filter_map(|r| self.write_target(*r))
             .collect();
         let trailing_error = node.next_sibling().is_some_and(|n| n.kind() == "ERROR");

@@ -85,13 +85,13 @@ fn form(args: &[Arg]) -> Option<Form<'_>> {
 
 /// commit-msg に渡るメッセージを組み立てる（builtin/commit.c）: `-m` は値の後に改行を足し、2 つ目からは前に空行を
 /// 挟む（opt_parse_m）。`-F -` は標準入力、ほかの `-F` は dir からの相対のファイル（`~` は HOME）。git は
-/// commit-msg の前に、`--cleanup=verbatim` でなければ行末の空白と先頭と末尾の空行を除いて続く空行を 1 つにし
-/// （strbuf_stripspace）、`--cleanup=strip` ならさらに # の行を除く
+/// commit-msg の前に、`--cleanup=verbatim` でなければ行末の空白と先頭と末尾の空行を除いて続く空行を 1 つにする
+/// （strbuf_stripspace）。# の行は `--cleanup=strip` でも commit-msg の後で除くので、ここでは残す
 fn build(form: &Form, cmd: &Cmd, dir: &Path) -> Result<String, Unknown> {
     let raw = match form.file {
         Some((value, arg)) => {
             let path = literal(value, arg, "-F").map_err(Unknown::Value)?;
-            if path == "-" {
+            if is_stdin(&path) {
                 let heredoc = cmd.stdin_heredoc.as_ref().ok_or(Unknown::Stdin)?;
                 if !heredoc.quoted && heredoc.body.contains(['$', '`']) {
                     return Err(Unknown::Value(Undecided::Expanded("-F -")));
@@ -118,20 +118,21 @@ fn build(form: &Form, cmd: &Cmd, dir: &Path) -> Result<String, Unknown> {
     };
     Ok(match form.cleanup {
         Some("verbatim") => raw,
-        Some("strip") => stripspace(&raw, true),
-        _ => stripspace(&raw, false),
+        _ => stripspace(&raw),
     })
 }
 
-/// git の strbuf_stripspace: 行末の空白（ASCII）を除き、空の行の続きは 1 つにし、先頭と末尾の空の行を除く。
-/// `strip_comments` なら # で始まる行も除く
-fn stripspace(text: &str, strip_comments: bool) -> String {
+/// git の標準入力を指す `-F` の値。hook のプロセスの標準入力は hook の入力（JSON）なので、ファイルとして読まず、
+/// 同じコマンドのヒアドキュメントから取る
+fn is_stdin(path: &str) -> bool {
+    matches!(path, "-" | "/dev/stdin" | "/dev/fd/0" | "/proc/self/fd/0")
+}
+
+/// git の strbuf_stripspace: 行末の空白（ASCII）を除き、空の行の続きは 1 つにし、先頭と末尾の空の行を除く
+fn stripspace(text: &str) -> String {
     let mut out = String::new();
     let mut blank = false;
     for line in text.split('\n') {
-        if strip_comments && line.starts_with('#') {
-            continue;
-        }
         let line = line.trim_end_matches(|c: char| c.is_ascii_whitespace());
         if line.is_empty() {
             blank = true;
@@ -241,7 +242,7 @@ impl CheckCommitMessage {
                 .file
                 .iter()
                 .map(|(v, _)| *v)
-                .filter(|v| *v != "-")
+                .filter(|v| !is_stdin(v))
                 .collect();
             if let Some(reason) =
                 earlier_writer_reason(shell, cmd, &input.cwd, &dir, "commit", &files)
