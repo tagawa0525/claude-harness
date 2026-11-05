@@ -30,9 +30,9 @@ let
   # 使わない。検証: modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、
   # commit-msg）、modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
   localHookPath = name: ''"$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
-  # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が ja-terms-message を
-  # store のパスで呼ぶ。textlint、設定、ja-terms-message は claude-hooks の git merge のルールと共有する
-  # （./ja-terms/textlint.nix）
+  # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が commit-msg-check（中で
+  # ja-terms-message）を store のパスで呼ぶ。textlint、設定、ja-terms-message、commit-msg-check は claude-hooks の
+  # git merge と git commit のルールと共有する（./ja-terms/textlint.nix）
   jaTermsTextlint = pkgs.callPackage ./ja-terms/textlint.nix { };
   inherit (jaTermsTextlint) textlint;
   jaTermsCodeExtensions = jaTermsTextlint.codeExtensions;
@@ -388,15 +388,13 @@ in
 
   # commit-msg: Claude Code セッションのコミットに Conventional Commits を強制する。
   # 形式は決定的に判定できるため SKILL.md の文章ではなく hook で守る。
-  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多）。
+  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多。判定は commit-msg-check）。
   # 手動コミットの自由度を残すため、pre-commit の main ガードと同じく CLAUDECODE=1 のときのみ
   xdg.configFile."git/hooks/commit-msg" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
       set -euo pipefail
-      # 文字数を UTF-8 の文字単位で数える（LANG=C だとバイト数になり日本語件名が誤って超過する）
-      export LC_ALL=C.UTF-8
 
       MSG_FILE="$1"
 
@@ -408,9 +406,6 @@ in
 
       [ "''${CLAUDECODE:-}" = "1" ] || exit 0
 
-      # 最初の非コメント行（sed のみ。grep を挟むとコメント行だけのとき exit 1 で静かに落ちる）
-      SUBJECT=$(sed -n '/^#/!{p;q}' "$MSG_FILE")
-
       # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
       # Conventional Commits も件名の長さも日本語の語の辞書もこちらの規約で、上流の慣習（"Fix socket transport
       # when …" のような文。Serena の main には 72 文字を超える件名が普通にある）と衝突して
@@ -421,49 +416,10 @@ in
         exit 0
       fi
 
-      # 日本語の崩れた語を、メッセージのファイルで見る。検査する範囲（件名を除くか、scissors）は
-      # ja-terms-message（./ja-terms/message.sh）が決め、claude-hooks の git merge の本文の検査と共有する。
-      # textlint（Node.js）は起動が重いので、軽い検査の後に呼ぶ
-      # 検証: modules/home/parts/tests/ja-terms.sh
-      ja_check() {
-        local rc=0
-        ${jaTermsTextlint.messageCheck}/bin/ja-terms-message < "$MSG_FILE" || rc=$?
-        if [ "$rc" -eq 1 ]; then
-          echo "❌ コミットの本文に崩れた日本語の語があります。上の「誤り => 正しい語」に直してください"
-          exit 1
-        elif [ "$rc" -ne 0 ]; then
-          echo "❌ textlint が失敗しました（終了コード $rc）。上の出力を見てください"
-          exit 1
-        fi
-      }
-
-      # マージ・fixup/squash・Revert は Conventional Commits の対象外（日本語の語は、ja-terms-message が件名を
-      # 除いた本文だけを見る）
-      case "$SUBJECT" in
-        Merge*|fixup!*|squash!*|Revert*)
-          ja_check
-          exit 0
-          ;;
-      esac
-
-      TYPES='feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert'
-      if ! printf '%s\n' "$SUBJECT" | grep -qE "^($TYPES)(\([^)]+\))?!?: [^ ]"; then
-        echo "❌ Conventional Commits 形式ではありません: $SUBJECT"
-        echo "   形式: <type>(<scope>)?: <subject>    type: $TYPES"
-        exit 1
-      fi
-
-      LEN=''${#SUBJECT}
-      if [ "$LEN" -gt 72 ]; then
-        echo "❌ 件名が 72 文字を超えています ($LEN 文字): $SUBJECT"
-        exit 1
-      fi
-      if [ "$LEN" -gt 50 ]; then
-        echo "⚠️  件名が 50 文字を超えています ($LEN 文字)。短くできないか検討してください"
-      fi
-
-      ja_check
-      exit 0
+      # 件名の形式と長さ、日本語の語は commit-msg-check（./ja-terms/commit-msg-check.sh）が判定する。
+      # claude-hooks の git commit の本文を先に検査するルールが同じものを呼ぶ（ADR-0073）。
+      # 検証: modules/home/parts/tests/commit-msg-conventions.sh、modules/home/parts/tests/ja-terms.sh
+      exec ${jaTermsTextlint.commitMsgCheck}/bin/commit-msg-check "$MSG_FILE"
     '';
   };
 

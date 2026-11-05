@@ -81,7 +81,10 @@ pre-merge-commit の中で先に検査することもできない。
 - `--no-ff` の無い `git merge -m` は、fast-forward になれば commit-msg を呼ばないが、このルールは fast-forward に
   なるかを見ずに検査する（崩れた語を置き換えれば通るので、止めすぎの害は小さい）
 - マージの衝突の後に `git commit` でマージを終える形も、pre-merge-commit（pre-commit から呼ぶ）の後に commit-msg が
-  走るが、このルールは `git merge` だけを見る（#445）
+  走る。このルールは `git merge` だけを見て、`git commit` のメッセージは ADR-0073 の check-commit-message が commit-msg と
+  同じ検査で先に見る（#445）
+- 同じコマンドの前段が `-F` のファイルを引数に取るかリダイレクトで書く形は、書いた後の本文を実行の前に読めないので、
+  判定できないとして止める（ADR-0073、#489）
 - git がメッセージに足す行（`--log` や `merge.log` の、マージするコミットの件名の一覧）は、このルールには見えない。
   その件名に崩れた語があれば、今までどおり commit-msg が数分後に拒む。xlc と全体の設定は `merge.log` を使っていない
   （2026-10-22）

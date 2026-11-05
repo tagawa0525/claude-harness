@@ -16,6 +16,11 @@ pub fn notice(message: String) {
     }
 }
 
+/// 判定できない理由を確かめるテストが持つロック。理由はプロセスに 1 つの置き場に集まり、take_notices は全部を
+/// 取り出すので、理由を出すテストは（ルールのモジュールをまたいで）これを持って順に実行する
+#[cfg(test)]
+pub static NOTICES_LOCK: Mutex<()> = Mutex::new(());
+
 /// これまでに足した理由を取り出す
 pub fn take_notices() -> Vec<String> {
     std::mem::take(&mut *NOTICES.lock().unwrap_or_else(|e| e.into_inner()))

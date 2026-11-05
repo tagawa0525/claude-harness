@@ -148,6 +148,19 @@ pub struct Cmd {
     pub pinned_to_one_cpu: bool,
     /// git のコマンドなら、グローバルオプションの読み取り
     pub git: Option<GitInvocation>,
+    /// 標準入力に渡すヒアドキュメント（`<<EOF` / `<<-EOF`）。本文を決められないものは None
+    pub stdin_heredoc: Option<Heredoc>,
+    /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`。クォートを外した値）
+    pub writes: Vec<String>,
+}
+
+/// ヒアドキュメント 1 つ
+#[derive(Debug, Clone, PartialEq)]
+pub struct Heredoc {
+    /// 本文（各行の末尾の改行を含む。`<<-` は行の先頭のタブを外す）
+    pub body: String,
+    /// 区切りをクォートしたか（`'EOF'`、`"EOF"`、`\EOF`。本文を展開しない）
+    pub quoted: bool,
 }
 
 impl Shell {
@@ -181,6 +194,78 @@ impl Shell {
         &self.src[node.byte_range()]
     }
 
+    /// `heredoc_redirect` の本文。本文は演算子のある行の次の行から、区切りだけの行の前まで（bash と同じ）。
+    /// 木の `heredoc_body` は使わない: tree-sitter-bash は `<<-` の最初の行のタブや、区切りの後に続けた
+    /// `; echo` の扱いを誤り、本文の範囲がずれる。同じ行のもっと前にヒアドキュメント（らしい `<<`）があると、
+    /// 本文はその後に続くので決めない。区切りの行が無いものも決めない
+    fn heredoc(&self, redirect: Node) -> Option<Heredoc> {
+        let dash = redirect.child(0)?.kind() == "<<-";
+        let mut cursor = redirect.walk();
+        let start = redirect
+            .children(&mut cursor)
+            .find(|c| c.kind() == "heredoc_start")?;
+        let head = self.text(start);
+        let quoted = head.contains(['\'', '"', '\\']);
+        let delim: String = head
+            .chars()
+            .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+            .collect();
+        if delim.is_empty() {
+            return None;
+        }
+        let line_start = self.src[..redirect.start_byte()]
+            .rfind('\n')
+            .map_or(0, |i| i + 1);
+        if self.src[line_start..redirect.start_byte()].contains("<<") {
+            return None;
+        }
+        let (_, rest) = self.src[start.end_byte()..].split_once('\n')?;
+        let mut body = String::new();
+        for line in rest.split('\n') {
+            let line = if dash {
+                line.trim_start_matches('\t')
+            } else {
+                line
+            };
+            if line == delim {
+                return Some(Heredoc { body, quoted });
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+        None
+    }
+
+    /// 原文の `from..to` から、その中にあるリダイレクトのノードの原文を除き、前後の空白を外したもの
+    fn gap_without(&self, from: usize, to: usize, redirects: &[Node]) -> String {
+        let mut out = String::new();
+        let mut at = from;
+        let mut inside: Vec<&Node> = redirects
+            .iter()
+            .filter(|r| r.start_byte() >= from && r.end_byte() <= to)
+            .collect();
+        inside.sort_by_key(|r| r.start_byte());
+        for r in inside {
+            out.push_str(&self.src[at..r.start_byte()]);
+            at = r.end_byte();
+        }
+        out.push_str(&self.src[at..to]);
+        out.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// 出力のリダイレクト（`>`、`>>`、`>|`、`&>`、`&>>`、`>& file`）の書き先。入力（`<`）と fd の複製（`2>&1`）は None
+    fn write_target(&self, redirect: Node) -> Option<String> {
+        let dest = redirect.child_by_field_name("destination")?;
+        let mut cursor = redirect.walk();
+        let op = redirect
+            .children(&mut cursor)
+            .find(|c| !c.is_named())?
+            .kind();
+        let writes = matches!(op, ">" | ">>" | ">|" | "&>" | "&>>")
+            || (op == ">&" && dest.kind() != "number");
+        writes.then(|| self.unquote(dest).text)
+    }
+
     /// `heredoc_body` を除く全ノードを文書順（先行順）で走査する
     fn walk(&self, node: Node, visit: &mut dyn FnMut(Node)) {
         if node.kind() == "heredoc_body" {
@@ -206,6 +291,21 @@ impl Shell {
                 && cmd.scope.starts_with(&c.scope)
                 && !c.changes_dir()
                 && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
+        })
+    }
+
+    /// `cmd` より前に走るコマンド（[`Shell::commands_before`]）のうち、`path` を引数に取るか、出力のリダイレクトで
+    /// 書くもの（最初のもの）。引数とリダイレクトの先は、そのコマンドの行き先（`base` から [`Shell::target_dir`]）
+    /// からの相対で比べる。引数に取るだけで読むだけのもの（`cat`、`test -f`）も数える
+    pub fn writer_before<'a>(&'a self, cmd: &'a Cmd, base: &Path, path: &Path) -> Option<&'a Cmd> {
+        let home = home();
+        self.commands_before(cmd).find(|c| {
+            let dir = self.target_dir(c, base);
+            c.args
+                .iter()
+                .map(|a| a.text.as_str())
+                .chain(c.writes.iter().map(String::as_str))
+                .any(|t| resolve(&home, &dir, t) == path)
         })
     }
 
@@ -264,6 +364,47 @@ impl Shell {
         for child in node.children_by_field_name("argument", &mut cursor) {
             args.push(self.unquote(child));
         }
+        let redirects = statement_redirects(node);
+        let heredocs: Vec<Node> = redirects
+            .iter()
+            .copied()
+            .filter(|r| r.kind() == "heredoc_redirect")
+            .collect();
+        // tree-sitter-bash は `<<` か、その前のリダイレクトの直前の 1 語の `-`（`cat - <<EOF`、
+        // `git commit -F - 2>&1 <<EOF`）を木に入れない。コマンドの終わりからヒアドキュメントの演算子までの原文が、
+        // 間のリダイレクトを除いて `-` だけなら、引数に戻す
+        if let Some(first) = heredocs.iter().min_by_key(|r| r.start_byte())
+            && first.start_byte() >= node.end_byte()
+            && self.gap_without(node.end_byte(), first.start_byte(), &redirects) == "-"
+        {
+            args.push(Arg {
+                text: "-".to_string(),
+                raw: "-".to_string(),
+            });
+        }
+        let stdin_heredoc = match heredocs.as_slice() {
+            [one] => self.heredoc(*one),
+            _ => None,
+        };
+        // ヒアドキュメントの演算子の後ろに書いたリダイレクト（`cat <<'EOF' > msg.txt`）は、heredoc_redirect の中にある
+        let mut file_redirects: Vec<Node> = Vec::new();
+        for r in &redirects {
+            match r.kind() {
+                "file_redirect" => file_redirects.push(*r),
+                "heredoc_redirect" => {
+                    let mut cursor = r.walk();
+                    file_redirects.extend(
+                        r.children_by_field_name("redirect", &mut cursor)
+                            .filter(|c| c.kind() == "file_redirect"),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let writes = file_redirects
+            .iter()
+            .filter_map(|r| self.write_target(*r))
+            .collect();
         let trailing_error = node.next_sibling().is_some_and(|n| n.kind() == "ERROR");
         let mut scope = Vec::new();
         let mut p = node.parent();
@@ -310,6 +451,8 @@ impl Shell {
             wrappers: unwrapped.wrappers,
             pinned_to_one_cpu: unwrapped.pinned_to_one_cpu,
             git,
+            stdin_heredoc,
+            writes,
         };
         let Some(source) = unwrapped.source else {
             return Some((vec![cmd], None));
@@ -551,6 +694,25 @@ impl Shell {
     }
 }
 
+/// コマンドに掛かるリダイレクト。`a && b <<EOF` のように並びの後ろに書いたリダイレクトを、tree-sitter-bash は
+/// 並び（`list`）に付けるが、bash では最後のコマンドに掛かるので、並びの最後のコマンドからはたどる
+fn statement_redirects(node: Node) -> Vec<Node> {
+    let mut out = Vec::new();
+    let mut cur = node;
+    while let Some(p) = cur.parent() {
+        match p.kind() {
+            "redirected_statement" if p.child_by_field_name("body") == Some(cur) => {
+                let mut cursor = p.walk();
+                out.extend(p.children_by_field_name("redirect", &mut cursor));
+            }
+            "list" if p.named_child(p.named_child_count().saturating_sub(1)) == Some(cur) => {}
+            _ => break,
+        }
+        cur = p;
+    }
+    out
+}
+
 fn strip(s: &str, open: &str, close: &str) -> String {
     s.strip_prefix(open)
         .and_then(|t| t.strip_suffix(close))
@@ -748,6 +910,84 @@ mod tests {
         .unwrap();
         assert!(body.raw.contains("## Summary"));
         assert!(!cs[0].has_error);
+    }
+
+    fn heredoc(body: &str, quoted: bool) -> Option<Heredoc> {
+        Some(Heredoc {
+            body: body.to_string(),
+            quoted,
+        })
+    }
+
+    #[test]
+    fn stdin_heredoc_belongs_to_its_command() {
+        let cs = cmds("git commit -F - <<'EOF'\nfeat: a\n\nbody $X\nEOF\n");
+        let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(t, ["commit", "-F", "-"]);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\n\nbody $X\n", true));
+    }
+
+    #[test]
+    fn stdin_heredoc_after_a_list_belongs_to_the_last_command() {
+        let cs = cmds("cd /x && git add a && git commit -q -F - <<EOF\nfeat: a\nEOF\ngit log -1");
+        let names: Vec<&str> = cs.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["cd", "git", "git", "git"]);
+        assert_eq!(cs[0].stdin_heredoc, None);
+        assert_eq!(cs[1].stdin_heredoc, None);
+        assert_eq!(cs[2].args.last().unwrap().text, "-");
+        assert_eq!(cs[2].stdin_heredoc, heredoc("feat: a\n", false));
+        assert_eq!(cs[3].stdin_heredoc, None);
+    }
+
+    #[test]
+    fn stdin_heredoc_with_a_command_after_its_operator() {
+        let cs = cmds("git commit -F - <<'EOF' && git log -1\nfeat: a\nEOF\n");
+        assert_eq!(cs.len(), 2);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\n", true));
+        assert_eq!(cs[1].git_subcommand().unwrap().0, "log");
+        assert_eq!(cs[1].stdin_heredoc, None);
+    }
+
+    #[test]
+    fn stdin_heredoc_dash_strips_leading_tabs() {
+        let cs = cmds("git commit -F - <<-EOF\n\tfeat: a\n\t\tb\n\tEOF\n");
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\nb\n", false));
+    }
+
+    #[test]
+    fn stdin_heredoc_is_unknown_without_its_delimiter_or_after_another_on_the_line() {
+        assert_eq!(
+            cmds("git commit -F - <<EOF\nfeat: a\n")[0].stdin_heredoc,
+            None
+        );
+        let cs = cmds("cat <<A && git commit -F - <<B\na\nA\nfeat: b\nB\n");
+        let commit = cs.iter().find(|c| c.git_subcommand().is_some()).unwrap();
+        assert_eq!(commit.stdin_heredoc, None);
+    }
+
+    #[test]
+    fn dash_before_a_heredoc_is_an_argument() {
+        let cs = cmds("cat - <<EOF\nx\nEOF");
+        let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(t, ["-"]);
+        let cs = cmds("git commit -F - 2>&1 <<'EOF'\nfeat: a\nEOF\n");
+        let t: Vec<&str> = cs[0].args.iter().map(|a| a.text.as_str()).collect();
+        assert_eq!(t, ["commit", "-F", "-"]);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\n", true));
+    }
+
+    #[test]
+    fn writes_lists_output_redirect_targets() {
+        let cs = cmds("cat > m.txt <<'EOF'\nx\nEOF\ngit commit -F m.txt");
+        assert_eq!(cs[0].writes, ["m.txt"]);
+        assert_eq!(cs[0].stdin_heredoc, heredoc("x\n", true));
+        assert!(cs[1].writes.is_empty());
+        // ヒアドキュメントの演算子の後ろに書いたリダイレクトを、tree-sitter-bash はヒアドキュメントの中に置く
+        let cs = cmds("cat <<'EOF' > msg.txt\nfeat: a\nEOF\ngit commit -F msg.txt");
+        assert_eq!(cs[0].writes, ["msg.txt"]);
+        let cs = cmds("echo x >> 'a b' 2>&1 && sort < in &> out");
+        assert_eq!(cs[0].writes, ["a b"]);
+        assert_eq!(cs[1].writes, ["out"]);
     }
 
     #[test]

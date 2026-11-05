@@ -79,6 +79,7 @@ pub fn escape_hint(name: &str) -> String {
 mod block_main_commit;
 mod block_no_verify;
 mod block_secret_commit;
+mod check_commit_message;
 mod check_merge_body_ja_terms;
 mod check_merge_review;
 mod delegate_request_fields;
@@ -118,6 +119,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &pre_merge_check::PreMergeCheck,
         &pre_git_merge_check::PreGitMergeCheck,
         &check_merge_body_ja_terms::CheckMergeBodyJaTerms,
+        &check_commit_message::CheckCommitMessage,
         &check_merge_review::CheckMergeReview,
         &guard_git_merge::GuardGitMerge,
         &guard_git_stash::GuardGitStash,
