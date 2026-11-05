@@ -93,7 +93,7 @@ pub(super) fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, 
 /// 値を書いたままの文字列にする。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は
 /// 本文を取り出す。単引用符で書いた値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
 /// バッククォートを含むもの（単引用符に `"$X"` が続く値を含む）は、シェルが展開した後の値が分からない
-fn literal(value: &str, arg: &Arg, option: &'static str) -> Result<String, Undecided> {
+pub(super) fn literal(value: &str, arg: &Arg, option: &'static str) -> Result<String, Undecided> {
     let expands = |t: &str| t.contains('$') || t.contains('`');
     // 値の全体を単引用符で書いた形（`'v'`、`-m'v'`、`--message='v'`）。語の中の単引用符がその 2 つだけなら、
     // 値の前（オプションの名前）にも後ろにも展開は無い
@@ -261,6 +261,12 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
 const SPLIT_CALLS_HINT: &str = "同じコマンドの前段で -F のファイルを直しても、拒んだときはコマンド全体が止まり、\
      前段も実行されていません（ファイルは直る前のままです）。ファイルを直す呼び出しと git merge を分けてください";
 
+/// 同じコマンドの前段（`writer`）が `-F <path>` のファイルを書きうるときに止める文言。`sub` は git のサブコマンド
+pub(super) fn split_calls_reason(sub: &str, path: &str, writer: &str) -> String {
+    let _ = (sub, path, writer);
+    String::new()
+}
+
 /// 崩れた語を止める文言。`chained_file` は、merge の前のコマンドが本文に残る -F のファイルを引数に取るとき
 fn deny_reason(terms: &[String], chained_file: bool) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
@@ -280,7 +286,7 @@ fn deny_reason(terms: &[String], chained_file: bool) -> String {
 /// commit-msg が語を検査しないリポジトリか: グローバルの core.hooksPath（commit-msg の置き場）を使わない
 /// リポジトリと、`upstream` リモートのある fork、ローカルの commit-msg に置き換わるリポジトリ
 /// （modules/home/parts/git.nix の commit-msg と同じ判定）
-fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool {
+pub(super) fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool {
     if global_hooks.is_none()
         || git::git(dir, &["config", "--get", "core.hooksPath"]) != global_hooks
     {
@@ -648,10 +654,18 @@ exit 0
     }
 
     #[test]
-    fn denies_chained_file_edit_with_split_calls_hint() {
-        let r = deny_for("sed -i 's/誤語/正語/' msg.txt && ");
-        assert!(r.contains("前段も実行されていません"), "{r}");
-        assert!(r.contains("分けてください"), "{r}");
+    fn denies_message_file_written_earlier_without_reading_it() {
+        // 前段が書いた後の中身は実行の前に読めないので、書く前の中身（ここでは崩れた語）では判定しない
+        for prefix in [
+            "sed -i 's/誤語/正語/' msg.txt && ",
+            "cat > ./msg.txt <<'EOF'\nMerge: a\n\n正語\nEOF\n",
+        ] {
+            let r = deny_for(prefix);
+            assert!(r.contains("前段も実行されていません"), "{prefix}: {r}");
+            assert!(r.contains("分けて"), "{prefix}: {r}");
+            assert!(r.contains("-m \"$(cat <<'EOF'"), "{prefix}: {r}");
+            assert!(!r.contains("誤語 => 正語"), "{prefix}: {r}");
+        }
     }
 
     #[test]
