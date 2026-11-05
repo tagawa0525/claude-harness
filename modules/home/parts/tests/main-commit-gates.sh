@@ -171,6 +171,26 @@ git -C "$L" switch -q -c feat/x
 echo change > "$L/other.txt"; git -C "$L" add other.txt
 check allow "リモートなし・feature ブランチ" "$L"
 
+# 拒否の文言: どちらの層も、cd の失敗で別のリポジトリにいる場合に気づけるよう、対象のディレクトリを確かめる
+# 修正方法を示す（cd が失敗した形では、PreToolUse の層は対象を誤り、git の層だけが止めることがある）
+git -C "$L" switch -q main
+echo change2 > "$L/other.txt"; git -C "$L" add other.txt
+pre_out=$(cd "$L" && "$WORK/pre-commit" 2>&1) || true
+hook_out=$(cd "$L" && "$HOOK_BIN" pre-tool-use --rule block-main-commit \
+  <<<"$(jq -n '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "git commit -m msg"}}')" |
+  jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
+for layer in pre-commit PreToolUse; do
+  if [[ $layer == pre-commit ]]; then text=$pre_out; else text=$hook_out; fi
+  if [[ "$text" == *"対象のディレクトリを確かめる"* && "$text" == *"/git-branch"* ]]; then
+    PASS=$((PASS + 1))
+    echo "✓ 拒否の文言が対象のディレクトリの確認とブランチの作成を示す（$layer）"
+  else
+    FAIL=$((FAIL + 1))
+    echo "✗ 拒否の文言が対象のディレクトリの確認とブランチの作成を示さない（$layer）: $text" >&2
+  fi
+done
+git -C "$L" restore -q --staged --worktree -- other.txt
+
 O="$WORK/gitlab"; setup_repo "$O" gitlab
 echo change > "$O/other.txt"; git -C "$O" add other.txt
 check block "GitHub 以外のリモートだけ・main・通常の変更" "$O"
