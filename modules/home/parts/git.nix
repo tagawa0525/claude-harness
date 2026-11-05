@@ -169,6 +169,7 @@ in
             echo "❌ main / master ブランチへの直接コミットは禁止されています"
             echo "   featureブランチを作成してください: /git-branch"
             echo "   - GitHub のリモートが無いリポジトリでも、ブランチは /git-merge で main にマージするので、main に直接コミットする理由はありません（2026-11-06 に、cd が失敗した後の git commit が別のリポジトリの main に空のコミットを作りました）"
+            echo "   - 対象のディレクトリを確かめる（前の cd が失敗すると、git は元のディレクトリのリポジトリで走ります）"
             echo "   - 試すための一時のリポジトリなら、main / master 以外のブランチで作る（git init -b <名前>、git switch -c <名前>）"
             echo "   - 通すのは、flake.lock だけの変更、マージを締めるコミット（MERGE_HEAD がある）、HEAD の無いリポジトリの最初のコミットです"
             exit 1
