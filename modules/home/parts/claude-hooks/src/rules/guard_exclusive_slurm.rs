@@ -104,7 +104,7 @@ fn is_rebuild(cmd: &Cmd) -> bool {
         "nixos-rebuild" => {
             has_arg(NIXOS_REBUILD_BUILDS) && !has_arg(&["--rollback", "--help", "-h"])
         }
-        "home-manager" => has_arg(&["switch", "build"]),
+        "home-manager" => has_arg(&["switch", "build"]) && !has_arg(&["--help", "-h"]),
         _ => false,
     }
 }
