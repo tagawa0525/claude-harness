@@ -3051,4 +3051,13 @@ out=$(run_hook block-nested-heredoc-same-delimiter $'python3 - <<EOF\n# use cat 
 assert_contains "$(reason "$out")" "本文の中: cat > f <<EOF"
 assert_not_contains "$(reason "$out")" "use cat"
 
+it "block-nested-heredoc-same-delimiter: 閉じの後のヒアドキュメントは、区切りの語の全体（<<123、<<END-TEXT）で読む"
+for cmd in $'cat > a <<EOF\nsee <<EOF\nEOF\ncat > b <<123\nEOF\n123' \
+  $'cat > a <<EOF\nsee <<EOF\nEOF\ngit commit -F - <<END-TEXT\nEOF\nEND-TEXT'; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq "" "$out"
+done
+out=$(run_hook block-nested-heredoc-same-delimiter $'python3 - <<\'EOF\'\ns = """\ncat > f <<EOF\nx\nEOF\necho "$W/"\ngit commit -F - <<END-MSG\nmsg\nEND-MSG\n"""\nEOF')
+assert_eq deny "$(decision "$out")"
+
 finish
