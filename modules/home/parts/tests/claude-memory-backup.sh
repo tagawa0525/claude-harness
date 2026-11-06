@@ -100,13 +100,17 @@ if CLAUDECODE=1 run "$CD"; then ok "失敗する hook と CLAUDECODE=1 のもと
 check "hook のもとでも中身が入る" "index a3" "$(git -C "$CD" show "$REF:projects/-a/memory/MEMORY.md" 2>&1)"
 git -C "$CD" config --unset core.hooksPath
 
-# 同時に呼ぶ: 各プロセスの前に別のファイルを足し、最後のツリーに全部が残るかを見る
+# 同時に呼ぶ: 各プロセスの前に別のファイルを足す。最後にロックを取ったプロセスは全部のファイルを読むので、
+# どのプロセスも失敗せずに、最後のツリーに全部が残るかを見る
+pids=()
 for i in 1 2 3 4 5 6; do
   printf 'p%s\n' "$i" >"$CD/projects/-a/memory/p$i.md"
   run "$CD" &
+  pids+=("$!")
 done
-wait
-run "$CD" || true
+failed=0
+for p in "${pids[@]}"; do wait "$p" || failed=$((failed + 1)); done
+check "同時に呼んでもどれも失敗しない" "0" "$failed"
 check "同時に呼んでも全部のファイルが残る" "6" \
   "$(git -C "$CD" ls-tree -r --name-only "$REF" 2>/dev/null | grep -c '/p[0-9]\.md$')"
 check "履歴は 1 本（マージを作らない）" "0" "$(git -C "$CD" rev-list --merges --count "$REF" 2>&1)"
