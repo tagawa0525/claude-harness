@@ -102,8 +102,8 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
   コミットは、SubmitLine の `--comment` の連絡先の `commit=<短い hash>` で読む（`sacct` の Comment の欄は空。r995 の Slurm は
   コメントを記録に残さない）。`-dirty` が付いていれば、コミットしていない変更がある版で走ったので、下の
-  「コミットされていない変更で走った」に当たる。`commit=` の無いジョブ（`slurm-run.sh` がコミットを書く前に投げたもの、git の外から
-  投げたもの）は、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
+  「コミットされていない変更で走った」に当たる。`commit=` の無いジョブ（`slurm-run.sh` がコミットを書く前に投げたもの、git の外かコミットの無い
+  リポジトリから投げたもの）は、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
   切り離されていると無い）の reflog を、本体のリポジトリ（worktree は後片付けで消えるが、reflog は共通の git dir にある）で
   `git -C <本体のリポジトリ> log -g --date=iso-local --format='%H %gd %gs' <ブランチ>` と読み（`--date=iso-local` は sacct の時刻と同じ
   ローカル時刻に揃える）、`Start` の前の
