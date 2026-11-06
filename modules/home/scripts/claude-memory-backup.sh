@@ -47,7 +47,10 @@ backup() {
   # 同時に終わった応答の hook どうしで、同じ親から 2 つのコミットを作って片方の変更を失わないよう、
   # 親を読んでから ref を進めるまでを 1 つずつにする
   exec 9>"$gitdir/memory-backup.lock"
-  flock -w 30 9
+  if ! flock -w 30 9; then
+    echo "ロック $gitdir/memory-backup.lock を 30 秒で取れませんでした（ほかの退避が終わっていません）" >&2
+    return 1
+  fi
   # 以下の git にロックの fd を継がせない。git が起動して残る子（fsmonitor の daemon、detach する保守）が fd を
   # 持つと、この退避の後もロックが解けず、次の応答の退避が待ちきれずに失敗する
   git() { command git "$@" 9>&-; }
