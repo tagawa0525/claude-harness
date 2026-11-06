@@ -10,7 +10,8 @@
 #               日時は ISO 8601 で、時差（Z か +09:00 の形）を必ず付ける（例 2026-11-06T00:00+09:00、
 #               2026-11-05T15:00:00.000Z）。時差の無い日時はシェルの TZ で意味が変わるので失敗にする。
 #               区間を指定したときは、timestamp の無い行（api-request-blob など）を数えず、区間に行の無い
-#               サブエージェントの記録は読まない（TRANSCRIPTS にも数えない）
+#               サブエージェントの記録は読まない（TRANSCRIPTS にも数えない）。区間に入る行が本体にも
+#               サブエージェントにも無ければ、区間の書き誤りとみなして exit 1
 #
 # 記録の隣の <セッション>/subagents/*.jsonl（サブエージェントの記録）も読む。
 #
@@ -154,6 +155,12 @@ if [[ -n "$since$until" ]]; then
     echo "ERROR: 区間で絞れませんでした（上の jq のエラーを参照）: $transcript" >&2
     exit 1
   }
+  # 年や時差を書き誤った区間は、失敗も発言も無い区間と同じ出力になるので止める。本体だけで見ないのは、
+  # background のサブエージェントが走る間、本体の記録に行が無いことがあるため
+  if [[ -z "$in_range_files" ]]; then
+    echo "ERROR: 区間 [${since:--}, ${until:--}) に timestamp の入る行が、本体にもサブエージェントにもありません（区間の書き誤り？）: $transcript" >&2
+    exit 1
+  fi
   declare -A has_lines=()
   while IFS= read -r f; do
     [[ -z "$f" ]] || has_lines[$f]=1
