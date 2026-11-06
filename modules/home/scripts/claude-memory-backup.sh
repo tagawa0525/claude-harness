@@ -58,6 +58,15 @@ backup() {
   shopt -s nullglob
   local mems=(projects/*/memory)
   shopt -u nullglob
+  # symlink のメモリのディレクトリは、git add がリンク（mode 120000）だけを入れて中身を退避しないので、成功と
+  # 見せずに止める。リンクを追うと、リポジトリの外のファイルまで取り込める
+  local m
+  for m in "${mems[@]}"; do
+    if [ -L "$m" ]; then
+      echo "$CLAUDE_DIR/$m は symlink で、中身を退避できません" >&2
+      return 1
+    fi
+  done
   if [ "${#mems[@]}" -gt 0 ]; then
     # -f: ~/.claude の .gitignore（手で管理していて、ホストごとに無いこともある）に頼らず、メモリだけを入れる
     git add -f -- "${mems[@]}"
