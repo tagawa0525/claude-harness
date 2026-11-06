@@ -4,7 +4,7 @@ date: 2026-11-06
 requires: []
 supersedes: []
 superseded-by:
-issues: ["#603"]
+issues: ["#603", "#604"]
 ---
 
 # ADR-0076: Claude Code の自動メモリを、応答のたびに ~/.claude の git の別のブランチ memory-backup にコミットする
@@ -99,7 +99,10 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 - 機密情報の検査（ADR-0015）は退避のコミットに掛からない。`~/.claude` にリモートは無く、`memory-backup` を push する
   手順も無い
 - `~/.claude` の main と、手で管理する `.gitignore` は今のまま。main へのコミットは利用者が行う
-- コミットはメモリが変わった応答ごとに増える。オブジェクトは小さく、git の自動の gc がまとめる
+- コミットはメモリが変わった応答ごとに増え、オブジェクトは pack されない loose のまま残る。git の自動の gc
+  （`gc --auto`）はオブジェクトを作る porcelain のコマンド（commit など）だけが呼び（git-gc(1) の DESCRIPTION）、退避が
+  使う `add`、`write-tree`、`commit-tree`、`update-ref` からは走らず、`~/.claude` の main へのコミットもまれ（2026-11-06 に
+  `git count-objects -v` で loose 383、pack 0）。まとめ方は #604 に残す
 
 ### 確認
 
