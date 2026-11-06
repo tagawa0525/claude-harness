@@ -1237,9 +1237,11 @@ mod tests {
         ] {
             assert!(writer_of(src, "/s/m.txt").is_some(), "{src}");
         }
-        // 字面の末尾が合わないか、展開の後ろに字面が無い
+        // 字面の末尾が合わないか、展開の後ろに字面が無いか、字面がパスの要素の途中から始まる
         for src in [
             "cat > $T/other.txt; git commit -F /s/m.txt",
+            "cp notes $VERSION.txt; git commit -F /s/m.txt",
+            "cat > ${T}m.txt; git commit -F /s/m.txt",
             "git add $FILES; git commit -F /s/m.txt",
             "echo \"$T\"; git commit -F /s/m.txt",
         ] {
