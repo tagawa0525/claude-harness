@@ -5,11 +5,16 @@ Markdown ファイル（`.md`）で実行する品質チェック。
 ## 1. 自動修正 (markdownlint --fix)
 
 ```bash
-markdownlint --fix <files>
+markdownlint --fix --disable MD038 -- <files>
 ```
 
 **目的**: markdownlint が機械的に直せる違反（末尾空白、見出し前後の空行、
 リスト記号の統一など）を修正する
+
+MD038（code span の内側の空白）は自動修正から外し、3 の検査で違反として出す。
+markdownlint 0.50.0 の `--fix` は code span の先頭の空白を落とし、空白に意味の
+ある書き方（シェルの `<<' X'` など）を書き手が気づかないまま変えるため。
+設定で MD038 を無効にしないのは、検査まで止めて違反に気づけなくなるため。
 
 ## 2. 自動修正の補完 (fix-markdown-lint.py)
 
@@ -45,7 +50,7 @@ markdownlint <files>
 コミット前にステージされた `.md` だけを対象にする場合:
 
 ```bash
-git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --fix --
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --fix --disable MD038 --
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | \
   xargs -0 -r python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r git add --
