@@ -31,7 +31,7 @@
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
 use super::pre_git_merge_check::multi_topic_reason;
-use super::pre_pr_create_check::{body_text, missing_headings};
+use super::pre_pr_create_check::{body_text, missing_headings, unreadable_body_file};
 use super::{Rule, apply_escape_to_reasons, escape_hint};
 use crate::gh;
 use crate::git::git;
@@ -451,7 +451,7 @@ impl Rule for PreMergeCheck {
 
             // --- 3. 本文形式 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
-                Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}")),
+                Err(path) => reasons.push(unreadable_body_file(&path)),
                 Ok(None) => {
                     reasons.push(
                         "--body でマージコミット本文を指定してください（## Why / ## What / ## Impact）"
