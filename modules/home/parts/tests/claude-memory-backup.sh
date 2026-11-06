@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# claude-memory-backup が、自動メモリだけをブランチ memory-backup にコミットすることを検証する
+# claude-memory-backup が、自動メモリだけを ref refs/memory-backup にコミットすることを検証する
 # =============================================================================
 # ../../scripts/claude-memory-backup.sh が対象（Claude Code の Stop の hook。ADR-0076）。
 # 一時のディレクトリに ~/.claude に見立てたリポジトリ（ブランチ main）を作り、次を確かめる:
-#   - projects/*/memory/ の下のファイルだけが memory-backup のツリーに入る
+#   - projects/*/memory/ の下のファイルだけが refs/memory-backup のツリーに入る
+#   - checkout できるブランチ（refs/heads の下）は作らない
 #   - 中身が変わらなければコミットを足さず、変われば前のコミットを親にして足す
 #   - 消したメモリは次のツリーから消え、前のコミットから戻せる
 #   - main の HEAD、index（ステージした変更）、作業ツリーは変わらない
@@ -27,7 +28,7 @@ export GIT_CONFIG_GLOBAL="$WORK/gitconfig"
 git config --global user.name test
 git config --global user.email test@example.com
 git config --global init.defaultBranch main
-REF=refs/heads/memory-backup
+REF=refs/memory-backup
 
 PASS=0
 FAIL=0
@@ -69,6 +70,7 @@ check "最初のコミットは親を持たない" "1" "$(git -C "$CD" rev-list 
 check "本文に session_id が入る" "1" "$(git -C "$CD" log -1 --format=%B "$REF" 2>/dev/null | grep -c 's1')"
 check "HEAD は変わらない" "$HEAD0" "$(git -C "$CD" rev-parse HEAD)"
 check "ブランチは main のまま" "main" "$(git -C "$CD" branch --show-current)"
+check "ブランチは main だけ" "main" "$(git -C "$CD" for-each-ref --format='%(refname:short)' refs/heads)"
 check "ステージした変更は残る" "$INDEX0" "$(git -C "$CD" diff --cached --name-status)"
 
 C1=$(git -C "$CD" rev-parse -q --verify "$REF" || true)
@@ -119,12 +121,12 @@ check "一時の index とロックのファイルを残さない" "" \
 check "HEAD は最後まで変わらない" "$HEAD0" "$(git -C "$CD" rev-parse HEAD)"
 check "ステージした変更は最後まで残る" "$INDEX0" "$(git -C "$CD" diff --cached --name-status)"
 
-# メモリの無いリポジトリでは、ブランチを作らずに成功する
+# メモリの無いリポジトリでは、ref を作らずに成功する
 EMPTY="$WORK/empty"
 mkdir -p "$EMPTY"
 git -C "$EMPTY" init -q
 if run "$EMPTY"; then ok "メモリが無ければ成功する"; else ng "メモリが無いと失敗した"; fi
-check "メモリが無ければブランチを作らない" "" "$(git -C "$EMPTY" rev-parse -q --verify "$REF" || true)"
+check "メモリが無ければ ref を作らない" "" "$(git -C "$EMPTY" rev-parse -q --verify "$REF" || true)"
 
 # リポジトリでないディレクトリは、理由を 1 行目に書いて失敗する（Claude Code は 1 行目を通知に出す）
 NOREPO="$WORK/norepo"
