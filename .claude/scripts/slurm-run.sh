@@ -175,7 +175,8 @@ fi
 # ビルドの出力）は --porcelain に出ない。
 # --no-optional-locks: 同じ worktree で走っている git の操作と index のロックを取り合わない
 if commit=$(git rev-parse -q --verify --short HEAD 2>/dev/null); then
-  changes=$(git --no-optional-locks status --porcelain)
+  # --untracked-files=normal: 利用者の status.showUntrackedFiles の設定によらず、追加していないファイルを数える
+  changes=$(git --no-optional-locks status --porcelain --untracked-files=normal)
   [[ -z $changes ]] || commit+=-dirty
   contact+=" commit=$commit"
 fi
