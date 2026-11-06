@@ -5,7 +5,7 @@ requires: []
 supersedes: []
 superseded-by:
 amended-by: [ADR-0052]
-issues: []
+issues: ["#556"]
 ---
 
 # ADR-0007: r995 の Slurm の待ち行列を、見積もりの時間と利用者の並べ替えで組み替えられるようにする
@@ -43,7 +43,9 @@ r995 の Slurm は、重い計算を `--exclusive` で 1 本ずつ流す（`modu
 - `SchedulerParameters=enable_user_top` と `OverTimeLimit=UNLIMITED` を `modules/slurm/common.nix` に置く
 - `squeue` の既定の表示（`SQUEUE_FORMAT`）に、名前、経過、見積もり（`%l`）、開始の見込み（`%S`）、連絡先（`%k`）を出す
 - `slurm-run.sh` は `-t <見積もり>` を必須にし、名前（`-J`）、ログ（r995 の `~/github/slurm-logs/<名前>-<番号>.out`）、
-  連絡先（`--comment` に git のブランチ、投げた場所、`CLAUDE_CODE_SESSION_ID`）を付ける。`--top` で投げたジョブを先頭に移す
+  連絡先（`--comment` に git のブランチ、投げた場所、投げた時点の HEAD のコミット、`CLAUDE_CODE_SESSION_ID`）を付ける。
+  コミットは `commit=<短い hash>` で、追跡しているファイルに未コミットの変更があれば `commit=<短い hash>-dirty` にする
+  （git の外とコミットの無いリポジトリでは付けない）。`--top` で投げたジョブを先頭に移す
 
 ### 帰結
 
@@ -78,3 +80,16 @@ QOS は accounting のデータベース（slurmdbd）が要る。
 
 - 2026-10-12: 確認の「nice の調整で順番が変わるか」は、変わらなかった。重みがすべて 0 で全ジョブの優先度が 1 になり、
   `scontrol top` は優先度 1 のジョブを下げる対象から外す（#340）。基礎の優先度を与える決定は ADR-0030
+
+## 変更
+
+- 2026-11-06: 連絡先に、投げた時点の HEAD のコミットと未コミットの変更の印を足した。前は「連絡先（`--comment` に git の
+  ブランチ、投げた場所、`CLAUDE_CODE_SESSION_ID`）を付ける」。記録や ADR に書くジョブの結果を出した版を、ジョブから引けなかった。
+  ブランチの reflog から探す手順（スキル slurm-run の「実績に取るジョブ」の項）は、ブランチが消えたとき、reflog の項が消えたとき、
+  作業中の版で流したときに決められない（#556。xlc の Slurm 709 は作業中の版で流され、連絡先はブランチ、投げた場所、
+  セッションだけだった）。#556 の案のうち、ログの先頭だけに書く案は採らず、コメントに書いた。コメントは投げた直後から
+  `squeue` と `slurm-queue.sh` に出て、作業中の版のジョブをその場で見分けられる。`sacct` の Comment の欄は空だが
+  （`AccountingStoreFlags` を設定していない。ADR-0068 の帰結）、`SubmitLine` の `--comment` に残る。欄を `|` で足さず
+  連絡先の中の空白で区切った語にしたので、`slurm-queue.sh` の欄の分け方は変えない（連絡先をそのまま出す）。
+  `slurm-history.sh` の読む jobcomp の行には Comment の欄が無い。未コミットの変更は止めずに印だけ付ける（検討の
+  計算は作業中の版で流してよい）。追跡していないファイルは数えない（試行の出力やログがいつもあり、数えると印がいつも付く）
