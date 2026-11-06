@@ -3060,4 +3060,15 @@ done
 out=$(run_hook block-nested-heredoc-same-delimiter $'python3 - <<\'EOF\'\ns = """\ncat > f <<EOF\nx\nEOF\necho "$W/"\ngit commit -F - <<END-MSG\nmsg\nEND-MSG\n"""\nEOF')
 assert_eq deny "$(decision "$out")"
 
+it "block-nested-heredoc-same-delimiter: 引用符の区切りは、空白や区切りの文字を含めて 1 つの語として読む"
+# 閉じの後の `<<' X'` の本文の区切りだけの行は、余った閉じではない
+out=$(run_hook block-nested-heredoc-same-delimiter $'cat > a <<\'EOF\'\nsee cat <<EOF here\nEOF\ncat > b <<\' X\'\nEOF\n X\n')
+assert_eq "" "$out"
+# 外側と後ろの区切りが `END MSG` でも、外側を途中で終わらせたものを止める
+for cmd in $'python3 - <<\'END MSG\'\ncat > f <<\'END MSG\'\nx\nEND MSG\necho "$W"\nEND MSG' \
+  $'python3 - <<\'EOF\'\ncat > f <<\'EOF\'\nx\nEOF\ngit commit -F - <<\'END MSG\'\nm\nEND MSG\nEOF'; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+
 finish
