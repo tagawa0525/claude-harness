@@ -115,13 +115,16 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の issue #556）。次のときは、走った版を決められないので
   「確かめていない」と書く:
 
+  - `commit=` のコミットが本体のリポジトリに無い（`git -C <本体のリポジトリ> cat-file -e '<hash>^{commit}'` が失敗する。rebase で
+    外れたコミットは、ブランチと reflog が消えた後に gc で消える）
   - `commit=` が無く、ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
     （rebase で外れたコミットの項は黙って消える）
-  - `Start` から `End` の間に reflog の項がある（`dvc repro` のステージは `Start` より後に入力を読むので、間のコミットで変わりうる）。
-    worktree が残っていれば、`git -C <worktree> log -g --date=iso-local HEAD` の間の項（ブランチの切り替え、rebase）も見る
+  - 版を取った時点から `End` の間に reflog の項がある。版を取った時点は、`commit=` のジョブでは投げた時点（sacct の `Submit`）、
+    無いジョブでは `Start`（ジョブは走り始めてから作業ツリーの入力を読み、`dvc repro` のステージは `Start` より後にも読むので、
+    待つ間と走る間のコミットで変わりうる）。ブランチか reflog が消えて、この間を確かめられないときも同じ。worktree が残っていれば、`git -C <worktree> log -g --date=iso-local HEAD` の間の項（ブランチの切り替え、rebase）も見る
   - 入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（`commit=` の `-dirty` と、
     ログの先頭の nix の `Git tree '…' is dirty` はその印）。`-dirty` の無い `commit=` は、投げた時点に追跡しているファイルの
-    変更が無かったことを示す（投げた後に作業ツリーが変わったかは、上の `Start` から `End` の間の項で見る）。`commit=` の無いジョブで
+    変更が無かったことを示す（投げた後に作業ツリーが変わったかは、上の `Submit` から `End` の間の項で見る）。`commit=` の無いジョブで
     nix の印が出ないことは変更が無いことを示さない（nix を通らないジョブには出ない）ので、比べた版のコミットを書き、コミットされて
     いない変更の有無は「確かめていない」と添える
   - git で追跡しない deps（`bin/` の実行ファイル、ライブラリなど DVC の出力）で、ジョブが書いてコミットした `dvc.lock` が無い
