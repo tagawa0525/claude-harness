@@ -4,10 +4,15 @@
 //! bash は外側の本文を、最初の区切りだけの行で終える。本文の中で同じ区切りのヒアドキュメントを開き、その閉じの行を
 //! 書くと、外側はその行で終わり、外側の閉じのつもりで書いた行までの残りがシェルのコマンドとして走る。
 //! 止めるのは、本文に同じ区切りの開き（`<<D`、`<<'D'`、`<<"D"`、`<<\D`、`<<-D`。行のどこでも）があり、
-//! 閉じの行より後に、区切りだけの行が同じ区切りの開きより多いとき（外側の閉じのつもりの行が余る）。
+//! 閉じの行より後のシェルの行（後ろのヒアドキュメントの本文と閉じを除く）に、前後の空白を除くと区切りだけの行が
+//! あるとき（外側の閉じのつもりの行が、コマンドとして残る）。後ろのヒアドキュメントは、木でなく原文の行から bash と
+//! 同じ順に読む: 外側が途中で終わると、tree-sitter-bash は残りの行を外側と違う所で切り、後ろのヒアドキュメントの
+//! 開きを本文の中に入れることがある。
 //! 本文の中の開きだけでは止めない: 依頼文や issue の本文の文中の言及（`` `cat <<'EOF' > f` ``）と、内側の閉じを
 //! 字下げした入れ子は、外側を途中で終わらせない。エスケープは置かない（止めるときは、行がシェルで走ることが
 //! 決まっていて、外側の区切りを変えれば必ず直る）
+
+use std::sync::LazyLock;
 
 use regex::Regex;
 
@@ -26,22 +31,59 @@ impl Rule for BlockNestedHeredocSameDelimiter {
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
         for span in shell.heredocs() {
             let delim = &span.heredoc.delim;
+            // 開きの無い本文（ほとんど）で、区切りごとの正規表現を作らない
+            if !span.heredoc.body.contains("<<") {
+                continue;
+            }
             let opener = opener(delim);
-            let Some(inner) = span.heredoc.body.lines().find(|l| opener.is_match(l)) else {
+            // 外側を終わらせた閉じに対応するのは、本文の中の最後の開き
+            let Some(inner) = span.heredoc.body.split('\n').rfind(|l| opener.is_match(l)) else {
                 continue;
             };
-            let opens: usize = span.rest.lines().map(|l| opener.find_iter(l).count()).sum();
-            let closes = span
-                .rest
-                .lines()
-                .filter(|l| l.trim_start_matches('\t') == delim)
-                .count();
-            if closes > opens {
+            if stray_close(span.rest, delim) {
                 return vec![Finding::Deny(deny(delim, span.line.trim(), inner.trim()))];
             }
         }
         Vec::new()
     }
+}
+
+/// どの区切りでもヒアドキュメントを開く演算子（1 が `<<-` の `-`、区切りは 2〜4 のどれか）。here string（`<<<`）は除く
+static ANY_OPENER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?:^|[^<])<<(-?)[ \t]*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))"#)
+        .expect("valid regex")
+});
+
+/// `rest` のシェルの行に、前後の空白を除くと `delim` だけの行があるか。開きのある行の後ろは、その区切りの閉じの行
+/// までを本文として飛ばす（同じ行に複数あれば順に）
+fn stray_close(rest: &str, delim: &str) -> bool {
+    let mut lines = rest.split('\n');
+    while let Some(line) = lines.next() {
+        let mut opened = false;
+        for caps in ANY_OPENER.captures_iter(line) {
+            opened = true;
+            let dash = &caps[1] == "-";
+            let close = caps
+                .get(2)
+                .or(caps.get(3))
+                .or(caps.get(4))
+                .map_or("", |m| m.as_str());
+            for body in lines.by_ref() {
+                let body = if dash {
+                    body.trim_start_matches('\t')
+                } else {
+                    body
+                };
+                if body == close {
+                    break;
+                }
+            }
+        }
+        if !opened && line.trim() == delim {
+            return true;
+        }
+    }
+    false
 }
 
 /// 区切り `delim` でヒアドキュメントを開く演算子。here string（`<<<`）と、区切りが続く語の頭であるもの（`<<EOFX`）は除く
@@ -81,6 +123,16 @@ mod tests {
         ] {
             assert!(re.is_match(line), "{line}");
         }
+    }
+
+    #[test]
+    fn stray_close_skips_the_bodies_of_later_heredocs() {
+        assert!(stray_close("echo x\nEOF\n", "EOF"));
+        assert!(stray_close("\tEOF \n", "EOF"));
+        assert!(!stray_close("cat <<'EOF'\nx\nEOF\n", "EOF"));
+        assert!(!stray_close("make -f - <<-MK\n\tEOF\n\tMK\n", "EOF"));
+        assert!(!stray_close("cat <<A <<\"B\"\nEOF\nA\nEOF\nB\n", "EOF"));
+        assert!(stray_close("cat <<<EOF\nEOF\n", "EOF"));
     }
 
     #[test]

@@ -168,7 +168,7 @@ pub struct Heredoc {
 /// ヒアドキュメント 1 つと、原文の中のその位置
 pub struct HeredocSpan<'a> {
     pub heredoc: Heredoc,
-    /// 演算子のある行
+    /// 演算子のある行（改行を除く）
     pub line: &'a str,
     /// 閉じの行（区切りだけの行）より後の原文
     pub rest: &'a str,
@@ -208,7 +208,7 @@ impl Shell {
     /// `heredoc_redirect` の本文。本文は演算子のある行の次の行から、区切りだけの行の前まで（bash と同じ）。
     /// 木の `heredoc_body` は使わない: tree-sitter-bash は `<<-` の最初の行のタブや、区切りの後に続けた
     /// `; echo` の扱いを誤り、本文の範囲がずれる。同じ行のもっと前にヒアドキュメント（らしい `<<`）があると、
-    /// 本文はその後に続くので決めない。区切りの行が無いものも決めない
+    /// 本文はその後に続くので決めない（here string の `<<<` は行を読まないので数えない）。区切りの行が無いものも決めない
     fn heredoc(&self, redirect: Node) -> Option<Heredoc> {
         self.heredoc_span(redirect).map(|span| span.heredoc)
     }
@@ -231,7 +231,10 @@ impl Shell {
         let line_start = self.src[..redirect.start_byte()]
             .rfind('\n')
             .map_or(0, |i| i + 1);
-        if self.src[line_start..redirect.start_byte()].contains("<<") {
+        if self.src[line_start..redirect.start_byte()]
+            .replace("<<<", "")
+            .contains("<<")
+        {
             return None;
         }
         let line_end = self.src[start.end_byte()..].find('\n')? + start.end_byte();
@@ -261,7 +264,8 @@ impl Shell {
         None
     }
 
-    /// プログラム内（文字列の中を含む）の、本文を決められるヒアドキュメント（文書順。[`Shell::heredoc`] と同じ範囲）
+    /// 本文を決められるヒアドキュメント（本文の範囲は [`Shell::heredoc`] と同じ）。コマンド文字列のものを文書順に、
+    /// 続けて `bash -c` などの文字列の中のもの（`line` と `rest` はその文字列の中）
     pub fn heredocs(&self) -> Vec<HeredocSpan<'_>> {
         let mut found = Vec::new();
         self.walk(self.tree.root_node(), &mut |n| {
