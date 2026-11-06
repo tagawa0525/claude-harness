@@ -31,13 +31,13 @@ impl Rule for BlockNestedHeredocSameDelimiter {
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
         for span in shell.heredocs() {
             let delim = &span.heredoc.delim;
-            // 開きの無い本文（ほとんど）で、区切りごとの正規表現を作らない
-            if !span.heredoc.body.contains("<<") {
-                continue;
-            }
-            let opener = opener(delim);
             // 外側を終わらせた閉じに対応するのは、本文の中の最後の開き
-            let Some(inner) = span.heredoc.body.split('\n').rfind(|l| opener.is_match(l)) else {
+            let Some(inner) = span
+                .heredoc
+                .body
+                .split('\n')
+                .rfind(|l| openers(l).iter().any(|(_, d)| d == delim))
+            else {
                 continue;
             };
             if stray_close(span.rest, delim) {
@@ -48,28 +48,36 @@ impl Rule for BlockNestedHeredocSameDelimiter {
     }
 }
 
-/// どの区切りでもヒアドキュメントを開く演算子（1 が `<<-` の `-`、区切りは 2〜4 のどれか）。here string（`<<<`）は除く
-static ANY_OPENER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:^|[^<])<<(-?)[ \t]*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))"#)
-        .expect("valid regex")
-});
+/// ヒアドキュメントを開く演算子と、区切りの語（1 が `<<-` の `-`、2 が語）。語はシェルの区切りの文字の前まで
+static OPENER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<<(-?)[ \t]*([^\s<>;&|()`]+)").expect("valid regex"));
+
+/// 行の中のヒアドキュメントの開き（`<<-` か、引用符と `\` を外した区切り）を順に。区切りの読み方は `Shell::heredoc` と
+/// 同じ（語の中の引用符を外す。`<<E'OF'` は `EOF`）。here string（`<<<`）は除く
+fn openers(line: &str) -> Vec<(bool, String)> {
+    OPENER
+        .captures_iter(line)
+        .filter(|c| !line[..c.get(0).map_or(0, |m| m.start())].ends_with('<'))
+        .map(|c| {
+            let delim: String = c[2]
+                .chars()
+                .filter(|ch| !matches!(ch, '\'' | '"' | '\\'))
+                .collect();
+            (&c[1] == "-", delim)
+        })
+        .filter(|(_, d)| !d.is_empty())
+        .collect()
+}
 
 /// `rest` のシェルの行に、前後の空白を除くと `delim` だけの行があるか。開きのある行の後ろは、その区切りの閉じの行
 /// までを本文として飛ばす（同じ行に複数あれば順に）
 fn stray_close(rest: &str, delim: &str) -> bool {
     let mut lines = rest.split('\n');
     while let Some(line) = lines.next() {
-        let mut opened = false;
-        for caps in ANY_OPENER.captures_iter(line) {
-            opened = true;
-            let dash = &caps[1] == "-";
-            let close = caps
-                .get(2)
-                .or(caps.get(3))
-                .or(caps.get(4))
-                .map_or("", |m| m.as_str());
+        let opened = openers(line);
+        for (dash, close) in &opened {
             for body in lines.by_ref() {
-                let body = if dash {
+                let body = if *dash {
                     body.trim_start_matches('\t')
                 } else {
                     body
@@ -79,20 +87,11 @@ fn stray_close(rest: &str, delim: &str) -> bool {
                 }
             }
         }
-        if !opened && line.trim() == delim {
+        if opened.is_empty() && line.trim() == delim {
             return true;
         }
     }
     false
-}
-
-/// 区切り `delim` でヒアドキュメントを開く演算子。here string（`<<<`）と、区切りが続く語の頭であるもの（`<<EOFX`）は除く
-fn opener(delim: &str) -> Regex {
-    let d = regex::escape(delim);
-    Regex::new(&format!(
-        r#"(?:^|[^<])<<-?[ \t]*(?:'{d}'|"{d}"|\\?{d})(?:$|[^A-Za-z0-9_])"#
-    ))
-    .expect("valid regex")
 }
 
 fn deny(delim: &str, outer: &str, inner: &str) -> String {
@@ -111,18 +110,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opener_matches_each_quoting_and_the_dash_form() {
-        let re = opener("EOF");
+    fn openers_read_each_quoting_and_the_dash_form() {
+        let eof = |dash| vec![(dash, "EOF".to_string())];
         for line in [
             "cat <<EOF",
             "cat <<'EOF' > f",
             "cat << \"EOF\"",
             "cat <<\\EOF",
-            "cat <<-EOF",
+            "cat <<E'OF'",
             "-m \"$(cat <<'EOF'",
+            "x=$(cat <<EOF)",
         ] {
-            assert!(re.is_match(line), "{line}");
+            assert_eq!(openers(line), eof(false), "{line}");
         }
+        assert_eq!(openers("cat <<-EOF"), eof(true));
+    }
+
+    #[test]
+    fn openers_read_the_whole_delimiter_word_and_each_operator_on_the_line() {
+        assert_eq!(openers("cat <<123"), vec![(false, "123".to_string())]);
+        assert_eq!(
+            openers("git commit -F - <<END-MSG"),
+            vec![(false, "END-MSG".to_string())]
+        );
+        assert_eq!(
+            openers("cat <<A<<'B'"),
+            vec![(false, "A".to_string()), (false, "B".to_string())]
+        );
     }
 
     #[test]
@@ -136,10 +150,11 @@ mod tests {
     }
 
     #[test]
-    fn opener_skips_here_strings_and_longer_words() {
-        let re = opener("EOF");
-        for line in ["cat <<<EOF", "cat <<EOFX", "cat <<'EOFX'", "x << EOF_2"] {
-            assert!(!re.is_match(line), "{line}");
+    fn openers_skip_here_strings_and_keep_longer_words_apart() {
+        assert!(openers("cat <<<EOF").is_empty());
+        assert!(openers("cat <<< \"$x\"").is_empty());
+        for line in ["cat <<EOFX", "cat <<'EOFX'", "x << EOF_2"] {
+            assert!(openers(line).iter().all(|(_, d)| d != "EOF"), "{line}");
         }
     }
 }
