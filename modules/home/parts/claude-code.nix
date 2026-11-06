@@ -313,12 +313,6 @@ in
       $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --checksum --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
     '') externalSkills}
 
-    # 自動メモリの退避先（ADR-0076）。~/.claude が git のリポジトリでないホストでは作る。
-    # Stop の hook は、リポジトリでなければ応答のたびに失敗を通知する
-    if [ ! -e "$CLAUDE_DIR/.git" ]; then
-      $DRY_RUN_CMD ${pkgs.git}/bin/git init -q "$CLAUDE_DIR"
-    fi
-
     # 静的設定と hook を settings.json に反映
     # claudeCodeSource の有無に関わらず常に実行（宣言的管理を保証）
     SETTINGS="$CLAUDE_DIR/settings.json"

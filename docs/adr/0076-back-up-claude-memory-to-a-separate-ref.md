@@ -89,8 +89,11 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
   `flock` で取り、親を読んでから ref を進めるまでを 1 つずつにする。`update-ref` にも古い値として親を渡す
 - 依存: git、jq（hook の入力の `session_id` と `cwd` をコミットの本文に入れる）、flock（util-linux）、coreutils。どれも
   既に使っている
-- `~/.claude` が git のリポジトリでないホストでは、home-manager の activation が `git init` する（退避の hook が
-  応答のたびに失敗を出し続けないため）
+- `~/.claude` が git のリポジトリでないホストでは、退避の hook が応答のたびに失敗を通知し、利用者がリポジトリを
+  作る。activation で `git init` しないのは、`.gitignore` の無いまま作ると、後の `git add -A` で `.credentials.json` や
+  会話の記録が main に入りうるのと、上の階層のリポジトリの下では入れ子のリポジトリを作り、スクリプトの「直下では
+  ありません」の守りを外すため（PR #605 の Copilot の指摘で外した）。2026-11-06 に r995 と t14g4 の `~/.claude` は
+  リポジトリ（x1ng1 は ssh が届かず確かめていない）
 - `~/.claude/.gitignore` は nixfiles で管理しない。退避は `git add -f` でメモリのディレクトリだけを入れるので
   `.gitignore` に依らず、`.gitignore` は利用者が main で何を追跡するかの設定のまま残す
 
