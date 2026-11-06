@@ -12,7 +12,8 @@
 #   - git の hook（グローバルに配る pre-commit、commit-msg など）がどれも失敗する設定でも、CLAUDECODE=1 でもコミットできる
 #   - 親の環境の GIT_DIR などに引かれず、claude-dir のリポジトリにコミットする
 #   - 同時に呼んでも、どちらの変更も失わずに 1 本の履歴になる
-#   - リポジトリでないディレクトリでは、1 行目に理由を書いて 0 でない終了コードで終わる
+#   - リポジトリでないディレクトリと、メモリのディレクトリが symlink のときは、1 行目に理由を書いて
+#     0 でない終了コードで終わる
 #
 # 使い方（リポジトリルートで実行。git、flock が PATH に必要）:
 #   ./modules/home/parts/tests/claude-memory-backup.sh
@@ -153,6 +154,22 @@ if run "$NOREPO" 2>"$WORK/err"; then
 else
   check "失敗の 1 行目はこのスクリプトの名前で始まる" "claude-memory-backup:" "$(head -1 "$WORK/err" | cut -d' ' -f1)"
 fi
+
+# メモリのディレクトリが symlink だと、git add はリンクだけを入れて中身を退避しない。成功と見せずに失敗する
+LINKED="$WORK/linked"
+mkdir -p "$LINKED/projects" "$WORK/real-memory"
+git -C "$LINKED" init -q
+printf 'real\n' >"$WORK/real-memory/MEMORY.md"
+mkdir -p "$LINKED/projects/-b"
+ln -s "$WORK/real-memory" "$LINKED/projects/-b/memory"
+if run "$LINKED" 2>"$WORK/err"; then
+  ng "メモリのディレクトリが symlink なのに成功した"
+else
+  check "symlink の失敗の 1 行目はこのスクリプトの名前で始まる" "claude-memory-backup:" \
+    "$(head -1 "$WORK/err" | cut -d' ' -f1)"
+  check "symlink の失敗はリンクのパスを示す" "1" "$(grep -c 'projects/-b/memory' "$WORK/err")"
+fi
+check "symlink のときは ref を作らない" "" "$(git -C "$LINKED" rev-parse -q --verify "$REF" || true)"
 
 # ~/.claude を省いたときは HOME の下を使う
 DEF="$HOME/.claude"
