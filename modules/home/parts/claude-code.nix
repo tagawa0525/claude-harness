@@ -2,7 +2,7 @@
 # Claude Code の設定
 # =============================================================================
 # Claude Code CLI、グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook、
-# （./claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻）の登録、settings.json 管理
+# （./claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻）と Stop hook（自動メモリの退避）の登録、settings.json 管理
 # （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
 {
@@ -39,6 +39,22 @@ let
   # スキルのスクリプトは claude-sync が store を経ずにコピーするので store のパスを埋められず、PATH に頼らない
   # よう claude-hooks と同じ固定パスに置く
   jaTermsFiles = (pkgs.callPackage ./ja-terms/textlint.nix { }).filesCheck;
+  # Stop の hook（応答の終わりごと）。自動メモリを ~/.claude の git のブランチ memory-backup にコミットする（ADR-0076）。
+  # claude-hooks と同じく、settings.json には store のパスでなく固定パスを書く
+  claudeMemoryBackup = pkgs.writeShellApplication {
+    name = "claude-memory-backup";
+    runtimeInputs = with pkgs; [
+      coreutils
+      git
+      jq
+      util-linux # flock
+    ];
+    text = builtins.readFile ../scripts/claude-memory-backup.sh;
+  };
+  claudeMemoryBackupBinRel = ".claude/bin/claude-memory-backup";
+  # git の操作は実際のメモリ（2026-11-06 に 17 プロジェクト、130 ファイル、624 KB）のコピーで 1 回 0.02 秒以下。
+  # 待つのはほかの応答の hook が持つロック（最大 30 秒）なので、それより長くする
+  claudeMemoryBackupTimeout = 60;
   # hook の timeout は秒（https://code.claude.com/docs/en/hooks の "Seconds before canceling."。command の既定は 600）。
   # pre-merge-check の gh は最大 14 か所の呼び出しで、1 回 0.4〜0.7 秒（2026-10-28 に gh pr view、repo view、api を
   # 手元で測定）なので順に呼んでも約 10 秒。その数倍の 60 秒にする。hook が止まったとき、Agent の起動もこの時間待つ
@@ -259,6 +275,7 @@ in
   # PreToolUse hook バイナリ（settings.json はこの固定パスを参照する）
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
   home.file.".claude/bin/ja-terms-files".source = "${jaTermsFiles}/bin/ja-terms-files";
+  home.file.${claudeMemoryBackupBinRel}.source = "${claudeMemoryBackup}/bin/claude-memory-backup";
 
   # .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド
   # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）
@@ -296,6 +313,12 @@ in
       $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --checksum --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
     '') externalSkills}
 
+    # 自動メモリの退避先（ADR-0076）。~/.claude が git のリポジトリでないホストでは作る。
+    # Stop の hook は、リポジトリでなければ応答のたびに失敗を通知する
+    if [ ! -e "$CLAUDE_DIR/.git" ]; then
+      $DRY_RUN_CMD ${pkgs.git}/bin/git init -q "$CLAUDE_DIR"
+    fi
+
     # 静的設定と hook を settings.json に反映
     # claudeCodeSource の有無に関わらず常に実行（宣言的管理を保証）
     SETTINGS="$CLAUDE_DIR/settings.json"
@@ -307,6 +330,8 @@ in
         --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
         --argjson timeout ${toString claudeHookTimeout} \
         --arg dateCmd ${lib.escapeShellArg promptSubmitDateCmd} \
+        --arg memCmd "$HOME/${claudeMemoryBackupBinRel}" \
+        --argjson memTimeout ${toString claudeMemoryBackupTimeout} \
         --arg dateCmdPrefix "date '+現在時刻" \
         --argjson legacy '${builtins.toJSON legacyHookFiles}' \
         --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
@@ -330,6 +355,14 @@ in
           | map(.hooks |= map(select((.command | tostring | startswith($dateCmdPrefix)) | not)))
           | map(select((.hooks | length) > 0))
           + [{"hooks": [{"type": "command", "command": $dateCmd}]}]
+        ) |
+        # 自動メモリの退避の登録を 1 件にする（他の Stop hook は残す）。async にしないのは、async の hook の
+        # 失敗の文が利用者に見えず（Claude にだけ次のターンで渡る）、退避の失敗に気づけないため
+        .hooks.Stop |= (
+          (. // [])
+          | map(.hooks |= map(select((.command | tostring) | endswith("/bin/claude-memory-backup") | not)))
+          | map(select((.hooks | length) > 0))
+          + [{"hooks": [{"type": "command", "command": $memCmd, "timeout": $memTimeout}]}]
         )' \
         "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
       echo "Claude Code: settings and hooks updated in settings.json"
