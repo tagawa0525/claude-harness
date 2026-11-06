@@ -21,8 +21,9 @@ r995 の Slurm の待ち行列に重い計算を流す。排他のジョブは�
 
 ジョブは走る順（パーティション `timed`、`main` の順。その中は走っているもの、止められたもの、待っているものの優先度の順）に
 並び、1 行目はジョブ番号、状態、パーティション（既定の `main` か、時間を記録する `timed`）、優先度、区分、見積もり、開始の見込み、
-名前、参照、2 行目は目的（結果が何を決めるか）、3 行目は連絡先（git のブランチ、投げた場所、`claude=` セッション、排他で
-なければ `shared-cpus=`）。区分が `-` のジョブは、`slurm-run.sh` の外から投げたもので、区分と目的が無い。状態の
+名前、参照、2 行目は目的（結果が何を決めるか）、3 行目は連絡先（git のブランチ、投げた場所、`commit=` 投げた時点の HEAD の
+短い hash（コミットしていない変更があれば末尾に `-dirty`。git が無視しない、まだ追加していないファイルも数える）、`claude=` セッション、排他でなければ `shared-cpus=`）。
+`-dirty` のジョブは作業中の版で走っていて、その結果は hash のコミットからは再現できない（投げるのは止めない）。区分が `-` のジョブは、`slurm-run.sh` の外から投げたもので、区分と目的が無い。状態の
 `（動かせない）` は、保留（優先度が 1 以下）か配列の親ジョブで、`scontrol top` で並べ直せない。経過と CPU 数は `squeue` で読む。
 状態が `SUSPENDED` のジョブは、`timed` のジョブに止められた `main` のもので、それが終わると続きから再開する。
 連絡先が自分のブランチでないジョブは、ほかのエージェントのもの。取り消さない（自分のジョブの取り消しは下の「順番」）。順番を変えるのは下の「順番」の `slurm-run.sh` の
@@ -89,17 +90,20 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   使う、「前は同じ入力で X だった」と比べる、依頼の前提に書くときは、取るジョブが、コマンドと中身が同じ排他のジョブかを sacct で確かめる:
 
   ```bash
-  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Start,End,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
+  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Submit,Start,End,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
   ```
 
-  欄は JobID、JobName、State、Elapsed、Start、End、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
+  欄は JobID、JobName、State、Elapsed、Submit、Start、End、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
   `--exclusive` のジョブ（`slurm-run.sh` は排他のときだけそこに置く。`-c` のジョブは `--cpus-per-task=N` で、その時間は同じ仕事
   なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
   ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
   違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。
   コマンドが読む入力のファイル（TOML など）は、比べる 2 本それぞれで、そのジョブが走った
   worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
-  コミットは sacct とログに残らないので（nixfiles の issue #556）、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
+  コミットは、SubmitLine の `--comment` の連絡先の `commit=<短い hash>` で読む（`sacct` の Comment の欄は空。r995 の Slurm は
+  コメントを記録に残さない）。`-dirty` が付いていれば、コミットしていない変更がある版で走ったので、下の
+  「コミットされていない変更で走った」に当たる。`commit=` の無いジョブ（`slurm-run.sh` がコミットを書く前に投げたもの、git の外かコミットの無い
+  リポジトリから投げたもの）は、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
   切り離されていると無い）の reflog を、本体のリポジトリ（worktree は後片付けで消えるが、reflog は共通の git dir にある）で
   `git -C <本体のリポジトリ> log -g --date=iso-local --format='%H %gd %gs' <ブランチ>` と読み（`--date=iso-local` は sacct の時刻と同じ
   ローカル時刻に揃える）、`Start` の前の
@@ -111,15 +115,27 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の issue #556）。次のときは、走った版を決められないので
   「確かめていない」と書く:
 
-  - ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
+  - `commit=` のコミットが本体のリポジトリに無い（`git -C <本体のリポジトリ> cat-file -e '<hash>^{commit}'` が失敗する。rebase で
+    外れたコミットは、ブランチと reflog が消えた後に gc で消える）
+  - `commit=` が無く、ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
     （rebase で外れたコミットの項は黙って消える）
-  - `Start` から `End` の間に reflog の項がある（`dvc repro` のステージは `Start` より後に入力を読むので、間のコミットで変わりうる）。
-    worktree が残っていれば、`git -C <worktree> log -g --date=iso-local HEAD` の間の項（ブランチの切り替え、rebase）も見る
-  - 入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（ログの先頭の nix の
-    `Git tree '…' is dirty` はその印）。印が出ないことは変更が無いことを示さない（nix を通らないジョブには出ない）ので、印の無い
-    ジョブは、比べた版のコミットを書き、コミットされていない変更の有無は「確かめていない」と添える
+  - 版を取った時点から `End` の間に reflog の項がある。版を取った時点は、`commit=` のジョブでは投げた時点（sacct の `Submit`。
+    ジョブは走り始めてから作業ツリーの入力を読むので、待つ間のコミットも効く）、無いジョブでは `Start`（`dvc repro` のステージは
+    `Start` より後にも入力を読むので、走る間のコミットで変わりうる）。見る reflog はブランチのものと、worktree が残っていれば
+    `git -C <worktree> log -g --date=iso-local HEAD` の項（ブランチの切り替え、rebase）。`commit=` の無いジョブで、この間の reflog を
+    読めない（ブランチか reflog が消えた）ときも同じ
+  - 入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（`commit=` の `-dirty` と、
+    ログの先頭の nix の `Git tree '…' is dirty` はその印）。`-dirty` の無い `commit=` は、投げた時点にコミットしていない
+    変更（git が無視するファイルを除く）が無かったことを示す（投げた後の変化は、上の版を取った時点から `End` の間の項で見る）。`commit=` の無いジョブで
+    nix の印が出ないことは変更が無いことを示さない（nix を通らないジョブには出ない）ので、比べた版のコミットを書き、コミットされて
+    いない変更の有無は「確かめていない」と添える
   - git で追跡しない deps（`bin/` の実行ファイル、ライブラリなど DVC の出力）で、ジョブが書いてコミットした `dvc.lock` が無い
     （そのコミットの `dvc.lock` は前の実行の md5 で、changed で走ったステージの deps と違う。`dvc repro` はステージごとに書き、失敗したステージは書かない）
+
+  `commit=` のジョブで上のどれにも当たらないときは、`commit=` のコミットを走った版として書き、「投げた後のコミットしない編集は
+  確かめていない」と添える（reflog はコミットしない編集を記録せず、`-dirty` は投げた時点の状態しか示さない）。版を取った時点から
+  `End` の間の reflog を読めない（ブランチと worktree が消えた）ときは、代わりに「投げた後の変化は確かめていない」と添える（版は
+  決められないとしない。ブランチが消えた後も `commit=` で版を引くのが、この語を連絡先に書く目的）
 
   メモリを比べるときの `MaxRSS` の読み方は下の「ジョブの中のプログラムの時間とメモリ」の項。r995 は 30 秒ごとの標本
   （`JobAcctGatherFrequency = 30`）で、COMPLETED のジョブでも間の山は入らない。途中で殺されたジョブ（State が
