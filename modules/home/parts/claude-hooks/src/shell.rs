@@ -161,6 +161,17 @@ pub struct Heredoc {
     pub body: String,
     /// 区切りをクォートしたか（`'EOF'`、`"EOF"`、`\EOF`。本文を展開しない）
     pub quoted: bool,
+    /// 区切り（クォートを外したもの）
+    pub delim: String,
+}
+
+/// ヒアドキュメント 1 つと、原文の中のその位置
+pub struct HeredocSpan<'a> {
+    pub heredoc: Heredoc,
+    /// 演算子のある行
+    pub line: &'a str,
+    /// 閉じの行（区切りだけの行）より後の原文
+    pub rest: &'a str,
 }
 
 impl Shell {
@@ -199,6 +210,10 @@ impl Shell {
     /// `; echo` の扱いを誤り、本文の範囲がずれる。同じ行のもっと前にヒアドキュメント（らしい `<<`）があると、
     /// 本文はその後に続くので決めない。区切りの行が無いものも決めない
     fn heredoc(&self, redirect: Node) -> Option<Heredoc> {
+        self.heredoc_span(redirect).map(|span| span.heredoc)
+    }
+
+    fn heredoc_span(&self, redirect: Node) -> Option<HeredocSpan<'_>> {
         let dash = redirect.child(0)?.kind() == "<<-";
         let mut cursor = redirect.walk();
         let start = redirect
@@ -219,21 +234,45 @@ impl Shell {
         if self.src[line_start..redirect.start_byte()].contains("<<") {
             return None;
         }
-        let (_, rest) = self.src[start.end_byte()..].split_once('\n')?;
+        let line_end = self.src[start.end_byte()..].find('\n')? + start.end_byte();
+        let mut at = line_end + 1;
         let mut body = String::new();
-        for line in rest.split('\n') {
+        for raw in self.src[at..].split('\n') {
+            at += raw.len() + 1;
             let line = if dash {
-                line.trim_start_matches('\t')
+                raw.trim_start_matches('\t')
             } else {
-                line
+                raw
             };
             if line == delim {
-                return Some(Heredoc { body, quoted });
+                return Some(HeredocSpan {
+                    heredoc: Heredoc {
+                        body,
+                        quoted,
+                        delim,
+                    },
+                    line: &self.src[line_start..line_end],
+                    rest: self.src.get(at..).unwrap_or(""),
+                });
             }
             body.push_str(line);
             body.push('\n');
         }
         None
+    }
+
+    /// プログラム内（文字列の中を含む）の、本文を決められるヒアドキュメント（文書順。[`Shell::heredoc`] と同じ範囲）
+    pub fn heredocs(&self) -> Vec<HeredocSpan<'_>> {
+        let mut found = Vec::new();
+        self.walk(self.tree.root_node(), &mut |n| {
+            if n.kind() == "heredoc_redirect"
+                && let Some(span) = self.heredoc_span(n)
+            {
+                found.push(span);
+            }
+        });
+        found.extend(self.inner.iter().flat_map(Shell::heredocs));
+        found
     }
 
     /// 原文の `from..to` から、その中にあるリダイレクトのノードの原文を除き、前後の空白を外したもの
@@ -931,6 +970,7 @@ mod tests {
         Some(Heredoc {
             body: body.to_string(),
             quoted,
+            delim: "EOF".to_string(),
         })
     }
 

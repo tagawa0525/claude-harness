@@ -77,6 +77,7 @@ pub fn escape_hint(name: &str) -> String {
 }
 
 mod block_main_commit;
+mod block_nested_heredoc_same_delimiter;
 mod block_no_verify;
 mod block_secret_commit;
 mod check_commit_message;
@@ -126,6 +127,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_git_reset_hard::GuardGitResetHard,
         &guard_git_amend::GuardGitAmend,
         &guard_exclusive_slurm::GuardExclusiveSlurm,
+        &block_nested_heredoc_same_delimiter::BlockNestedHeredocSameDelimiter,
         &delegate_request_fields::DelegateRequestFields,
     ]
 }
