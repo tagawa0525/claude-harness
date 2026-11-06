@@ -91,7 +91,8 @@ QOS は accounting のデータベース（slurmdbd）が要る。
   ブランチの reflog から探す手順（スキル slurm-run の「実績に取るジョブ」の項）は、ブランチが消えたとき、reflog の項が消えたとき、
   作業中の版で流したときに決められない（#556。xlc の Slurm 709 は作業中の版で流され、連絡先はブランチ、投げた場所、
   セッションだけだった）。#556 の案のうち、ログの先頭だけに書く案は採らず、コメントに書いた。コメントは投げた直後から
-  `squeue` と `slurm-queue.sh` に出て、作業中の版のジョブをその場で見分けられる。`sacct` の Comment の欄は空だが
+  `squeue` と `slurm-queue.sh` に出て、作業中の版のジョブをその場で見分けられる。まだ追加していないファイルは、利用者の `status.showUntrackedFiles` の設定に
+  よらず数える（`--untracked-files=normal`）。設定を尊重する形は、印の意味が利用者ごとに変わるので採らない。`sacct` の Comment の欄は空だが
   （`AccountingStoreFlags` を設定していない。ADR-0068 の帰結）、`SubmitLine` の `--comment` に残る。欄を `|` で足さず
   連絡先の中の空白で区切った語にしたので、`slurm-queue.sh` の欄の分け方は変えない（連絡先をそのまま出す）。
   `slurm-history.sh` の読む jobcomp の行には Comment の欄が無い。未コミットの変更は止めずに印だけ付ける（検討の
