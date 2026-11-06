@@ -5,6 +5,8 @@
 //! `cargo build|check|test|clippy|run|bench`（alias `b|c|t|r`）、`dvc repro`、`bin/` と `target/release|debug/` の
 //! `xs|lattice|core|chain`、`nix build`、`nix flake check`（`nix develop|shell -c` で包んでも）。1 つの CPU に限る `taskset` で
 //! 包めば通す（`-j 1` は限りにならない）。何を実行するか決められないコマンドも、排他のジョブ中は止める。
+//! rebuild（`nix-rebuild rebuild|update`、shell の関数 `rebuild`・`update`、ビルドする `nixos-rebuild`、
+//! `home-manager switch|build`）は taskset で包んでも止める。
 //! `run-checks.sh` と `run-python-tests.sh` は対象にしない（排他のジョブ中は自分で 1 コアに限る）。
 //! squeue が無いホスト、squeue の失敗、実行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
 //! squeue は対象のコマンドがあるときだけ呼ぶ。エスケープはない。
@@ -66,6 +68,44 @@ fn is_heavy(cmd: &Cmd) -> bool {
         "dvc" => first == Some("repro"),
         "nix" => first == Some("build") || (first == Some("flake") && second == Some("check")),
         _ => BIN_PROGRAMS.contains(&name) && is_project_binary(program, name),
+    }
+}
+
+/// ビルドする nixos-rebuild のサブコマンド（dry-build は評価だけ、list-generations・edit・repl はビルドしない）
+const NIXOS_REBUILD_BUILDS: &[&str] = &[
+    "switch",
+    "boot",
+    "test",
+    "build",
+    "dry-activate",
+    "build-vm",
+    "build-vm-with-bootloader",
+    "build-image",
+];
+
+/// rebuild（NixOS か home-manager の構成を作り直す）か。ビルドは nix-daemon の中で走り、クライアントの
+/// taskset を引き継がないので、1 コアに限っても全コアを使う（ADR-0041 の「## 変更」）
+fn is_rebuild(cmd: &Cmd) -> bool {
+    let has_arg = |names: &[&str]| cmd.args.iter().any(|a| names.contains(&a.text.as_str()));
+    let program = cmd.program();
+    // modules/home/parts/shell.nix の関数は引数を捨てて nix-rebuild を呼ぶ。関数はパスで呼べないので、
+    // パスで呼ぶ同じ名前のスクリプトは別のもの
+    if matches!(program, "rebuild" | "update") {
+        return true;
+    }
+    match basename(program) {
+        // nix-rebuild.sh は最初の引数だけでサブコマンドを選ぶ
+        "nix-rebuild" | "nix-rebuild.sh" => cmd
+            .args
+            .first()
+            .is_some_and(|a| matches!(a.text.as_str(), "rebuild" | "update")),
+        // 値を取るオプション（`--flake`）の後でもサブコマンドを拾う。値と同じ語は普通は書かない。
+        // `--rollback` は前の世代に切り替えるだけ、`--help` は使い方を出すだけでビルドしない
+        "nixos-rebuild" => {
+            has_arg(NIXOS_REBUILD_BUILDS) && !has_arg(&["--rollback", "--help", "-h"])
+        }
+        "home-manager" => has_arg(&["switch", "build"]) && !has_arg(&["--help", "-h"]),
+        _ => false,
     }
 }
 
@@ -140,14 +180,21 @@ impl Rule for GuardExclusiveSlurm {
     }
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        if !shell.commands().iter().any(is_heavy) {
+        let commands = shell.commands();
+        let rebuild = commands.iter().any(is_rebuild);
+        if !rebuild && !commands.iter().any(is_heavy) {
             return Vec::new();
         }
         let Some((name, jobid)) = running_exclusive_job() else {
             return Vec::new();
         };
+        let fix = if rebuild {
+            "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
+        } else {
+            "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
+        };
         vec![Finding::Deny(format!(
-            "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
+            "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。{fix}"
         ))]
     }
 }

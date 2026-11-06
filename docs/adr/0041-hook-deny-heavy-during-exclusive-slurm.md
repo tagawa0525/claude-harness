@@ -5,7 +5,7 @@ requires: [ADR-0007, ADR-0023, ADR-0026]
 supersedes: []
 superseded-by:
 amended-by: [ADR-0042]
-issues: ["#365"]
+issues: ["#365", "#616", "#618"]
 ---
 
 # ADR-0041: 排他の Slurm のジョブ中の全コアの手元の計算を hook で止める
@@ -52,11 +52,16 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
   - `cargo build|check|test|clippy|run|bench`（alias の `b|c|t|r` も）
   - `dvc repro`
   - `nix build`、`nix flake check`
+  - rebuild: `nix-rebuild rebuild|update`（`nix-rebuild.sh` を直に実行する形も）、modules/home/parts/shell.nix の
+    関数 `rebuild`・`update`（引数を捨てるので引数によらない。パスで呼ぶ同じ名前のスクリプトは除く）、ビルドする
+    サブコマンド（`switch`、`boot`、`test`、`build`、`dry-activate`、`build-vm`、`build-vm-with-bootloader`、
+    `build-image`）の `nixos-rebuild`（`--rollback`、`--help`、`-h` を除く）、
+    `home-manager switch|build`。`sudo` とフルパス（`/run/current-system/sw/bin/nixos-rebuild`）もほどいて判定する
   - `bin/` か、`release`・`debug` ディレクトリ（`target/`、`target/<triple>/`、`CARGO_TARGET_DIR` の下）にある
     `xs|lattice|core|chain`（`../../bin/xs` など相対も）
   - 何を実行するか決められないコマンド（`$CMD test`、`bash -s`、`source x.sh`）。サブコマンドを決められない
     `cargo`・`nix`・`dvc`（知らないオプションの後の語が、その値かサブコマンドか分からない）も同じ扱い
-- `taskset` が中のコマンドを 1 つの CPU に限っていない（`-c 3`、`-c 5-5`、マスク `0x4`。複数の CPU や読めない
+- rebuild でなく、`taskset` が中のコマンドを 1 つの CPU に限っていない（`-c 3`、`-c 5-5`、マスク `0x4`。複数の CPU や読めない
   指定は 1 コアとみなさない）。コマンドを直に包む最も内側の `taskset` が効き、`bash -c '…'` の中のコマンドにも
   外側の指定が効く。`-j 1` と `CARGO_BUILD_JOBS=1` は限りとみなさない
 - `squeue -h -t R -o '%h|%j|%i'` に OverSubscribe（`%h`）が `NO` の行がある。r995 の実機で、排他のジョブが `NO`、
@@ -70,7 +75,7 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 最初のものを取る（`--help` があれば何も実行しない）。
 
 拒否の文言にジョブの名前と番号を入れ、修正方法（`taskset` で 1 コアに限る、終わるまで待つ、`slurm-run.sh` で
-投げる）を示す。エスケープは設けない。
+投げる）を示す。rebuild を含むコマンドには、taskset が効かないことと終わるまで待つことだけを示す。エスケープは設けない。
 
 `run-checks.sh` は、同じ squeue の判定（`.claude/scripts/lib/slurm-exclusive.sh`）で排他のジョブを見つけたら、
 冒頭に知らせて 1 コアで実行する（`cargo` を `taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を
@@ -79,17 +84,21 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 ### 帰結
 
 - ADR-0026 の「数分のビルドも手元でよい」を、排他のジョブ中に限って覆す。排他の測定の間、手元の全コアを使う
-  `cargo`・`nix build`・格子計算は `taskset -c <1 コア>` に限られる。ビルドを含むチェックは遅くなるが止まらない。
+  `cargo` と格子計算は `taskset -c <1 コア>` に限られる（`nix build` と `nix flake check` は nix-daemon の中でビルドするので
+  `taskset` で限れない。下の項と #618）。ビルドを含むチェックは遅くなるが止まらない。
   ADR-0026 自体は書き換えない（案 B を、1 コアに限る条件つきで取り入れる）
 - 対象は決め打ちの一覧で、別の重い計算（直接の `openmc`、`cargo nextest`、`nix run`、`nix-build`）は止めない。
-  足りないものは見つかったときに足す
+  足りないものは見つかったときに足す（rebuild は 2026-11-06 に足した。「## 変更」）
+- `nix build` と `nix flake check` も nix-daemon の中でビルドするので、1 コアの `taskset` で包んでも通す今の判定は
+  ビルドを 1 コアに限らない（#618）
 - 何を実行するか決められないコマンドは、排他のジョブ中は `taskset` で包まない限り止まる。誤って止めるのは、
   排他のジョブの間だけである
 - 排他でないジョブ（`-shared`、OverSubscribe が `OK`・`YES`）は対象外。#365 の run-checks.sh の直列化とは別の問題である
 
 ### 確認
 
-- `.claude/tests/hooks.sh` が、偽の `squeue` で deny・許可・対象外・排他のジョブ無しと、`nix develop -c sbatch` が
+- `.claude/tests/hooks.sh` が、偽の `squeue` で deny・許可・対象外・排他のジョブ無し、rebuild を 1 コアの `taskset` で
+  包んでも止めることと、`nix develop -c sbatch` が
   guard-sbatch で止まることを確かめる。`modules/home/parts/claude-hooks/tests/git_spawn.rs` が、squeue の失敗の
   通知、squeue が無いときの沈黙、UTF-8 でない名前を確かめる
 - `.claude/tests/scripts/language-checks.sh` が、`run-checks.sh` の自己制限を確かめる
@@ -98,3 +107,16 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 
 - 2026-10-21: 決定の要因の「判定できない形は、止める側に倒す（ADR-0025）」は、ADR-0042 で今後は広げないと決めた
   （hook は普通に書く形で判定し、作為的な抜け道は塞がない）。入っているコードは残す
+
+## 変更
+
+- 2026-11-06: 対象に rebuild（`nix-rebuild rebuild|update`、shell の関数 `rebuild`・`update`、ビルドする
+  `nixos-rebuild`、`home-manager switch|build`）を足し、1 コアの `taskset` で包んでも止める。前は対象の一覧の nix は
+  「`nix build`、`nix flake check`」だけで、taskset の条件は「`taskset` が中のコマンドを 1 つの CPU に限っていない」と
+  どの対象にも掛かり、拒否の文言はどの対象にも「修正方法（`taskset` で 1 コアに限る、終わるまで待つ、`slurm-run.sh` で
+  投げる）を示す」だった。
+  rebuild は全コアでビルドするのに止めていなかった（#616 の 1）。r995 で `taskset -c 3 nix build --impure --expr …` の
+  ビルダーの `/proc/self/status` の `Cpus_allowed_list` が `0-31`（クライアントは `3`）で、利用者が実行するビルドは
+  nix-daemon の中で走り、クライアントの taskset を引き継がないと確かめたので、rebuild に taskset の例外を当てない。
+  `sudo nixos-rebuild`（root は daemon を通さずにビルドしうる）で taskset が効くかは確かめていないが、`nix-rebuild update` と
+  `home-manager` は利用者の権限で daemon を通すので、形で分けず rebuild はすべて待たせる
