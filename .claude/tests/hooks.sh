@@ -2951,7 +2951,7 @@ for cmd in "$NESTED_PY" "$NESTED_REPLACE" "$NESTED_DOC"; do
   assert_contains "$(reason "$out")" "PYEOF"
 done
 
-it "block-nested-heredoc-same-delimiter: 外側と内側の開き方の書き方（<<-、二重引用符、\\、$(…) の中）によらず deny"
+it 'block-nested-heredoc-same-delimiter: 外側と内側の開き方の書き方（<<-、二重引用符、\、$(…) の中）によらず deny'
 for cmd in $'python3 - <<-EOF\n\tcat > f <<"EOF"\n\tx\n\tEOF\n\tprint(1)\n\tEOF' \
   $'git commit -m "$(cat <<\\EOF\nfeat: a\n\ncat <<EOF\nEOF\nb\nEOF\n)"' \
   $'cat > a.sh <<"END"\ncat > b <<- END\nx\nEND\necho "$X"\nEND'; do
