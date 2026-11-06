@@ -4,7 +4,7 @@ date: 2026-11-06
 requires: [ADR-0033, ADR-0050]
 supersedes: []
 superseded-by:
-issues: ["#591", "#445", "#489"]
+issues: ["#591", "#445", "#489", "#619", "#620"]
 ---
 
 # ADR-0073: git commit の本文を、ツール呼び出しの前に commit-msg と同じスクリプトで検査する
@@ -82,6 +82,14 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
   呼び出しを分けるか、本文をヒアドキュメントで直接渡す方法を文言に示す。案 E は目的（後段が古い HEAD で走る前に止める）を
   果たさず、案 F は書いた後の中身を判定できない。読むだけの前段（`cat msg.txt`、`test -f msg.txt`）も止めるが、本文を
   直接渡せば通る
+- 前段の引数とリダイレクトの先の `$NAME` と `${NAME}` は、同じ呼び出しの代入で値が字面のまま 1 つに決まれば、展開してから
+  比べる（`S=<dir>; cat > $S/msg.txt <<'EOF' … EOF` の後の `git commit -F <dir>/msg.txt`）。単引用符の中の `$` は字面のまま。
+  値が決まらない展開（同じ呼び出しに代入が無い、値が展開を含むか同じ名前に 2 つの値がある、`$(…)`、`${NAME:-x}`、`$1`）を
+  含むものは、最後の決まらない展開より後ろの字面が空でなく、`-F` のパスがその字面で終われば、書きうるものとして止める
+  （`cat > $TMP/msg.txt` と `git commit -F /tmp/x/msg.txt`）。後ろに字面の無いもの（`git add $FILES`、`echo "$T"`）は
+  数えない。値が決まらないときに止める側へ倒すのは案 D と同じ向きで、決まらないものを全部止めずに後ろの字面で絞るのは、
+  ADR-0025 が実行するものの決まらないコマンドを、文字列に対象の語があるときだけ止めるのと同じ理由（`git add $FILES` の
+  ような、-F のファイルと関係の無い前段で止める偽陽性を増やさない）
 - 拒否の文言には、commit-msg-check の出力（❌ の行）と、先に止める理由（このまま実行すると pre-commit の後で commit-msg が
   拒み、同じコマンドの後段が古い HEAD のまま走る。その例）と、修正方法（❌ の行のとおりに直す）を書く。PC 全体で読む文言
   なので、ADR と xlc の番号は書かない
@@ -105,14 +113,28 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
   PR #488 の案内の文言（前段の引数に同じ文字列があるときだけ「呼び出しを分ける」を足す）はこれに置き換わる
 - `commit_msg_skips` は、リポジトリの外で `git config --get core.hooksPath` がグローバルの値を返すため、リポジトリの外を
   先に除く。`git merge` のルールも、リポジトリの外では検査しない
+- 前段のパスの展開は、代入の位置とスコープを見ない（後ろの代入、サブシェルや `bash -c` の文字列の中の代入、
+  `S=x cmd` の前置きの代入も数える）。実際の値と食い違えば、止める側にも止めない側にも誤りうる（例:
+  `(S=/a); cat > $S/msg.txt; git commit -F /msg.txt` は、実際には `$S` が空で `/msg.txt` を書くが、`/a/msg.txt` と読んで
+  止めない）。
+  引用符の外の値の単語分割とグロブも見ない。`-F` の値そのものに `$` があるもの（`git commit -F $S/msg.txt`）は、今も
+  展開せず判定できない理由を出して通す（#620）
 
 ### 確認
 
 - メッセージの組み立て、対象外の形、判定できない理由、前段が書くファイルの扱いは、cargo のユニットテスト
   （`src/rules/check_commit_message.rs`、`check_merge_body_ja_terms.rs`）が偽の検査で確かめる。ヒアドキュメントと
-  リダイレクトの読み取りは `src/shell.rs` のテストが確かめる
+  リダイレクトの読み取りは `src/shell.rs` のテストが確かめる。前段のパスの変数の展開と、決まらない展開の後ろの字面での
+  比較は `src/shell.rs` の `writer_before_*` のテストと、両ルールの前段が書くファイルのテストが確かめる
 - 包んだ commit-msg-check で、xlc の記録にある 73 文字の件名（`-F -` のヒアドキュメントの形と `-m "$(cat <<'EOF' … EOF)"`
   の形）と Conventional Commits でない件名を止め、72 文字の件名と、Merge / fixup! / squash! / Revert の長い件名を通すことは、
   package.nix の installCheckPhase（`tests/commit-message.sh`）が確かめる（`nix build .#claude-hooks`、flake の checks）
 - commit-msg の判定が切り出しの前後で変わらないことは、`modules/home/parts/tests/commit-msg-conventions.sh`（72 文字の境界、
   対象外の件名を含む）、`ja-terms.sh`、`local-hooks-worktree.sh` で確かめる
+
+## 変更
+
+- 2026-11-06: 決定と理由に、前段の引数とリダイレクトの先の変数を展開してから比べる項を足した。前は「前段が `-F` の
+  ファイルを書きうる（そのコマンドの行き先からの相対で同じパスを、引数に取るか出力のリダイレクトの先にする）とき」の
+  「同じパス」を、書いたままの字面で比べていた。xlc のセッションの `S=<dir>; cat > $S/msg.txt <<'EOF' … ; git commit -F
+  <dir>/msg.txt` と `sed -i … $S/msg.txt; git commit -F <dir>/msg.txt` を止めず、commit-msg が後で拒んだ（#619）
