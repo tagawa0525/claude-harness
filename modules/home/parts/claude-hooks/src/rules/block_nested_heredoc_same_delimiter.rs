@@ -3,7 +3,7 @@
 //!
 //! bash は外側の本文を、最初の区切りだけの行で終える。本文の中で同じ区切りのヒアドキュメントを開き、その閉じの行を
 //! 書くと、外側はその行で終わり、外側の閉じのつもりで書いた行までの残りがシェルのコマンドとして走る。
-//! 止めるのは、本文に同じ区切りの開き（`<<D`、`<<'D'`、`<<"D"`、`<<\D`、`<<-D`。行のどこでも）があり、
+//! 止めるのは、本文に同じ区切りの開き（`<<D`、`<<'D'`、`<<"D"`、`<<\D`、`<<E'OF'`、`<<-D`。行のどこでも）があり、
 //! 閉じの行より後のシェルの行（後ろのヒアドキュメントの本文と閉じを除く）に、前後の空白を除くと区切りだけの行が
 //! あるとき（外側の閉じのつもりの行が、コマンドとして残る）。後ろのヒアドキュメントは、木でなく原文の行から bash と
 //! 同じ順に読む: 外側が途中で終わると、tree-sitter-bash は残りの行を外側と違う所で切り、後ろのヒアドキュメントの
@@ -48,13 +48,15 @@ impl Rule for BlockNestedHeredocSameDelimiter {
     }
 }
 
-/// ヒアドキュメントを開く演算子と、区切りの語（1 が `<<-` の `-`、2 が語）。語はシェルの区切りの文字の前まで
-static OPENER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<<(-?)[ \t]*([^\s<>;&|()`]+)").expect("valid regex"));
+/// ヒアドキュメントを開く演算子と、区切りの語（1 が `<<-` の `-`、2 が語）。語は、単引用符の部分、二重引用符の部分、
+/// `\` と次の 1 文字、引用符の外のシェルの区切りの文字（空白、`<>;&|()` とバッククォート）でない文字の並び
+static OPENER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<<(-?)[ \t]*((?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s<>;&|()`'"\\])+)"#)
+        .expect("valid regex")
+});
 
-/// 行の中のヒアドキュメントの開き（`<<-` か、引用符と `\` を外した区切り）を順に。引用符と `\` の外し方は
-/// `Shell::heredoc` と同じ（`<<E'OF'` は `EOF`）。語は引用符の中でも空白とシェルの区切りの文字で切るので、それを含む
-/// 引用符の区切り（`<<'END MSG'`）は `Shell::heredoc`（`END MSG`）と違って頭だけを読む。here string（`<<<`）は除く
+/// 行の中のヒアドキュメントの開き（`<<-` か、引用符と `\` を外した区切り）を順に。区切りは `Shell::heredoc` と同じに
+/// 読む（`<<E'OF'` は `EOF`、`<<'END MSG'` は `END MSG`）。here string（`<<<`）は除く
 fn openers(line: &str) -> Vec<(bool, String)> {
     OPENER
         .captures_iter(line)
@@ -138,6 +140,25 @@ mod tests {
             openers("cat <<A<<'B'"),
             vec![(false, "A".to_string()), (false, "B".to_string())]
         );
+    }
+
+    #[test]
+    fn openers_read_delimiters_like_shell_heredoc() {
+        for (op, delim) in [
+            ("<<'END MSG'", "END MSG"),
+            ("<<' X'", " X"),
+            ("<<\"a;b\"", "a;b"),
+            ("<<E'OF'", "EOF"),
+            ("<<\\EOF", "EOF"),
+            ("<<END-MSG", "END-MSG"),
+        ] {
+            let line = format!("cat {op} > f");
+            assert_eq!(openers(&line), vec![(false, delim.to_string())], "{op}");
+            let shell = Shell::parse(&format!("{line}\nx\n{delim}\n"));
+            let spans = shell.heredocs();
+            assert_eq!(spans.len(), 1, "{op}");
+            assert_eq!(spans[0].heredoc.delim, delim, "{op}");
+        }
     }
 
     #[test]
