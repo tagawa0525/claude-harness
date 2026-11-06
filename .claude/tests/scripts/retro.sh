@@ -303,6 +303,17 @@ out=$("$EVENTS" --since 2026-11-06T02:05Z --until 2026-11-06T11:05+09:00 "$RANGE
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 
+it "session-events: 区間に行が 1 つも無ければ（年や時差の書き誤り）、0 件と出さずに失敗する"
+out=$("$EVENTS" --since 2025-11-06T00:00+09:00 --until 2025-11-06T11:05+09:00 "$RANGE_MAIN" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "session-events: 本体に区間の行が無くても、サブエージェントにあれば数える"
+out=$("$EVENTS" --since 2026-11-05T15:30Z --until 2026-11-05T16:30Z "$RANGE_MAIN" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "HOOK: 1 区間の拒否"
+assert_contains "$out" "TRANSCRIPTS: 2"
+
 it "session-events: オプションの値が無いか、知らないオプションなら失敗する"
 out=$("$EVENTS" "$RANGE_MAIN" --since 2>&1)
 assert_eq 1 $?
