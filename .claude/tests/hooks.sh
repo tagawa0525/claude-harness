@@ -2747,6 +2747,30 @@ for cmd in 'cargo fmt --check' 'cargo --version' 'nix flake show' 'nix develop' 
   assert_eq "" "$out"
 done
 
+it "guard-exclusive-slurm: 排他のジョブ中の rebuild は 1 コアの taskset で包んでも deny し、終わるまで待つことを示す"
+# rebuild のビルドは nix-daemon の中で走り、クライアントの taskset を引き継がない（ADR-0041 の「## 変更」）
+for cmd in 'nix-rebuild rebuild' 'nix-rebuild update' '/home/u/.local/bin/nix-rebuild rebuild' '~/.local/bin/nix-rebuild update' \
+  'nix-rebuild rebuild > log 2>&1; echo rc=$?' "bash -c 'nix-rebuild rebuild'" 'taskset -c 3 nix-rebuild rebuild' \
+  'nixos-rebuild switch --flake .' 'nixos-rebuild build' 'sudo nixos-rebuild switch --flake ~/nix/nixfiles' \
+  'sudo /run/current-system/sw/bin/nixos-rebuild switch --flake /home/u/nix/nixfiles' 'taskset -c 3 sudo nixos-rebuild switch' \
+  'home-manager switch' 'home-manager build --flake .' 'home-manager --flake . switch' 'taskset -c 3 home-manager switch' \
+  'nix develop -c home-manager switch' 'cargo test && nix-rebuild rebuild' 'taskset -c 3 cargo test && taskset -c 3 nix-rebuild rebuild'; do
+  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "openmc-2K"
+  assert_contains "$(reason "$out")" "1234"
+  assert_contains "$(reason "$out")" "終わるまで待"
+  assert_contains "$(reason "$out")" "nix-daemon"
+  assert_not_contains "$(reason "$out")" "slurm-run.sh"
+done
+
+it "guard-exclusive-slurm: rebuild でない nix-rebuild と home-manager は通す"
+for cmd in 'nix-rebuild' 'nix-rebuild --help' 'home-manager generations' 'home-manager news' 'home-manager --version' \
+  'echo nix-rebuild rebuild' 'grep -n nixos-rebuild modules/home/scripts/nix-rebuild.sh' 'cat modules/home/scripts/nix-rebuild.sh'; do
+  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
 it "guard-exclusive-slurm: squeue の出力が大きくても（パイプを満たしても）排他のジョブを見つける"
 out=$(PATH="$FAKE_SQUEUE/many:$PATH" run_hook guard-exclusive-slurm 'cargo test')
 assert_eq deny "$(decision "$out")"
@@ -2754,8 +2778,10 @@ assert_contains "$(reason "$out")" "99999"
 
 it "guard-exclusive-slurm: 排他のジョブが無い（排他でないジョブだけ、ジョブなし）なら通す"
 for dir in shared idle; do
-  out=$(PATH="$FAKE_SQUEUE/$dir:$PATH" run_hook guard-exclusive-slurm 'cargo test')
-  assert_eq "" "$out"
+  for cmd in 'cargo test' 'nix-rebuild rebuild' 'sudo nixos-rebuild switch' 'home-manager switch'; do
+    out=$(PATH="$FAKE_SQUEUE/$dir:$PATH" run_hook guard-exclusive-slurm "$cmd")
+    assert_eq "" "$out"
+  done
 done
 
 # ===========================================================================
