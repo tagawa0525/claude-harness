@@ -13,7 +13,7 @@
 
 use std::collections::VecDeque;
 
-use crate::shell::Arg;
+use crate::shell::{Arg, Piece};
 
 /// ラッパーの長い形のオプション: 名前、同じ意味の短縮形（無ければ None）、値を取るか
 type Long = (&'static str, Option<char>, bool);
@@ -623,10 +623,17 @@ fn long_option(wrapper: &Wrapper, name: &str) -> Option<&'static Long> {
     }
 }
 
+/// 文字列から切り出した語。展開（`$`、バッククォート）を含めば、値は決まらないとする
 fn arg(text: &str) -> Arg {
+    let piece = if text.contains(['$', '`']) {
+        Piece::Other
+    } else {
+        Piece::Lit(text.to_string())
+    };
     Arg {
         text: text.to_string(),
         raw: text.to_string(),
+        pieces: vec![piece],
     }
 }
 

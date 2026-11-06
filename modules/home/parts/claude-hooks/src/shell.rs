@@ -112,6 +112,51 @@ pub struct Arg {
     pub text: String,
     /// ノードの原文。`"$(cat <<EOF …)"` のように入れ子のヒアドキュメント本文も含む
     pub raw: String,
+    /// 値を、字面の部分とシェルが展開する部分に分けたもの（つなぐと `text` の字面と展開の並び）
+    pub pieces: Vec<Piece>,
+}
+
+/// 引数の値の一部
+#[derive(Debug, Clone, PartialEq)]
+pub enum Piece {
+    /// 字面（クォートとエスケープを外したもの）
+    Lit(String),
+    /// `$NAME` か `${NAME}`（演算子の無い名前の展開）
+    Var(String),
+    /// ほかの展開（`$(…)`、`${NAME:-x}`、`$1`、`$'…'` など）。値は字面からは決まらない
+    Other,
+}
+
+/// 引数の値を、同じ呼び出しで字面のまま決まる変数で展開した結果
+#[derive(Debug, PartialEq)]
+pub enum Expanded {
+    /// 値が決まる
+    Known(String),
+    /// 値が決まらない展開を含む。値は、最後の決まらない展開より後ろの字面で終わる
+    Tail(String),
+}
+
+impl Arg {
+    /// `vars` の値で `$NAME` / `${NAME}` を展開する。`vars` に無い名前とほかの展開は決まらない
+    pub fn expand(&self, vars: &std::collections::HashMap<String, String>) -> Expanded {
+        let mut value = String::new();
+        let mut known = true;
+        for piece in &self.pieces {
+            match piece {
+                Piece::Lit(s) => value.push_str(s),
+                Piece::Var(name) if vars.contains_key(name) => value.push_str(&vars[name]),
+                Piece::Var(_) | Piece::Other => {
+                    known = false;
+                    value.clear();
+                }
+            }
+        }
+        if known {
+            Expanded::Known(value)
+        } else {
+            Expanded::Tail(value)
+        }
+    }
 }
 
 /// 単純コマンド 1 つ（`command` ノード）。ラッパー（env など）はほどいてある
@@ -150,8 +195,8 @@ pub struct Cmd {
     pub git: Option<GitInvocation>,
     /// 標準入力に渡すヒアドキュメント（`<<EOF` / `<<-EOF`）。本文を決められないものは None
     pub stdin_heredoc: Option<Heredoc>,
-    /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`。クォートを外した値）
-    pub writes: Vec<String>,
+    /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`）
+    pub writes: Vec<Arg>,
 }
 
 /// ヒアドキュメント 1 つ
@@ -297,7 +342,7 @@ impl Shell {
     }
 
     /// 出力のリダイレクト（`>`、`>>`、`>|`、`&>`、`&>>`、`>& file`）の書き先。入力（`<`）と fd の複製（`2>&1`）は None
-    fn write_target(&self, redirect: Node) -> Option<String> {
+    fn write_target(&self, redirect: Node) -> Option<Arg> {
         let dest = redirect.child_by_field_name("destination")?;
         let mut cursor = redirect.walk();
         let op = redirect
@@ -306,7 +351,7 @@ impl Shell {
             .kind();
         let writes = matches!(op, ">" | ">>" | ">|" | "&>" | "&>>")
             || (op == ">&" && dest.kind() != "number");
-        writes.then(|| self.unquote(dest).text)
+        writes.then(|| self.unquote(dest))
     }
 
     /// `heredoc_body` を除く全ノードを文書順（先行順）で走査する
@@ -338,18 +383,47 @@ impl Shell {
     }
 
     /// `cmd` より前に走るコマンド（[`Shell::commands_before`]）のうち、`path` を引数に取るか、出力のリダイレクトで
-    /// 書くもの（最初のもの）。引数とリダイレクトの先は、そのコマンドの行き先（`base` から [`Shell::target_dir`]）
-    /// からの相対で比べる。引数に取るだけで読むだけのもの（`cat`、`test -f`）も数える
+    /// 書くもの（最初のもの）。引数とリダイレクトの先は、[`Shell::literal_vars`] の変数を展開し、そのコマンドの
+    /// 行き先（`base` から [`Shell::target_dir`]）からの相対で比べる。値の決まらない展開を含むものは、最後の
+    /// 決まらない展開の後ろの字面が `/` で始まり、その後ろのパスの要素で `path` が終われば数える（`$TMP/msg.txt`。
+    /// `$VERSION.txt` は `msg.txt` と比べない）。引数に取るだけで読むだけのもの（`cat`、`test -f`）も数える
     pub fn writer_before<'a>(&'a self, cmd: &'a Cmd, base: &Path, path: &Path) -> Option<&'a Cmd> {
         let home = home();
+        let vars = self.literal_vars();
         self.commands_before(cmd).find(|c| {
             let dir = self.target_dir(c, base);
             c.args
                 .iter()
-                .map(|a| a.text.as_str())
-                .chain(c.writes.iter().map(String::as_str))
-                .any(|t| resolve(&home, &dir, t) == path)
+                .chain(&c.writes)
+                .any(|a| match a.expand(&vars) {
+                    Expanded::Known(t) => resolve(&home, &dir, &t) == path,
+                    Expanded::Tail(t) => t
+                        .strip_prefix('/')
+                        .is_some_and(|rest| !rest.is_empty() && path.ends_with(rest)),
+                })
         })
+    }
+
+    /// 値が字面だけで 1 つに決まる変数（[`Shell::assignments`] の値が展開を含まず、同じ名前の代入がどれも同じ値）。
+    /// 代入の位置とスコープは見ない（後の代入やサブシェルの中の代入も数える）。値が 2 つある名前は決まらないとする
+    pub fn literal_vars(&self) -> std::collections::HashMap<String, String> {
+        let mut values: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        for (name, value) in self.assignments() {
+            let literal = (!value.contains(['$', '`'])).then_some(value);
+            values
+                .entry(name)
+                .and_modify(|v| {
+                    if *v != literal {
+                        *v = None;
+                    }
+                })
+                .or_insert(literal);
+        }
+        values
+            .into_iter()
+            .filter_map(|(name, value)| Some((name, value?)))
+            .collect()
     }
 
     /// 全コマンド（文字列の中のものを含む）と、文字列を解析した内側のシェル
@@ -423,6 +497,7 @@ impl Shell {
             args.push(Arg {
                 text: "-".to_string(),
                 raw: "-".to_string(),
+                pieces: vec![Piece::Lit("-".to_string())],
             });
         }
         let stdin_heredoc = match heredocs.as_slice() {
@@ -541,17 +616,31 @@ impl Shell {
 
     /// ノードを引数として読む。クォートとバックスラッシュのエスケープを外し、展開は原文のまま残す
     pub fn unquote(&self, node: Node) -> Arg {
-        let raw = self.text(node).to_string();
-        let text = match node.kind() {
-            "word" => unescape_word(&raw),
-            "number" => raw.clone(),
-            "raw_string" => strip(&raw, "'", "'"),
-            "ansi_c_string" => strip(&raw, "$'", "'"),
+        let mut text = String::new();
+        let mut pieces = Vec::new();
+        self.read_value(node, &mut text, &mut pieces);
+        Arg {
+            text,
+            raw: self.text(node).to_string(),
+            pieces,
+        }
+    }
+
+    /// [`Shell::unquote`] の本体。値の字面を `text` に、字面と展開の並びを `pieces` に足す
+    fn read_value(&self, node: Node, text: &mut String, pieces: &mut Vec<Piece>) {
+        let raw = self.text(node);
+        match node.kind() {
+            "word" => literal(text, pieces, unescape_word(raw)),
+            "number" => literal(text, pieces, raw.to_string()),
+            "raw_string" => literal(text, pieces, strip(raw, "'", "'")),
+            "ansi_c_string" => {
+                text.push_str(&strip(raw, "$'", "'"));
+                pieces.push(Piece::Other);
+            }
             "string" | "translated_string" => {
                 // 名前のある子だけをつながない: tree-sitter-bash は引用符の中の改行（と続く空白）を extras として
                 // 読み飛ばし、どの子にも含めない。最後の改行の後の空白は閉じる引用符のトークンに入る。子どうしの
                 // 間と、閉じる引用符のトークンの `"` の前の字面も `string_content` と同じに読む
-                let mut s = String::new();
                 let mut cursor = node.walk();
                 let mut at = node
                     .child(0)
@@ -563,28 +652,50 @@ impl Shell {
                     _ => node.end_byte(),
                 };
                 for child in node.named_children(&mut cursor) {
-                    s.push_str(&unescape_double(&self.src[at..child.start_byte()]));
+                    literal(
+                        text,
+                        pieces,
+                        unescape_double(&self.src[at..child.start_byte()]),
+                    );
                     if child.kind() == "string_content" {
-                        s.push_str(&unescape_double(self.text(child)));
+                        literal(text, pieces, unescape_double(self.text(child)));
                     } else {
-                        s.push_str(self.text(child));
+                        text.push_str(self.text(child));
+                        pieces.push(self.expansion_piece(child));
                     }
                     at = child.end_byte();
                 }
-                s.push_str(&unescape_double(&self.src[at..end.max(at)]));
-                s
+                literal(text, pieces, unescape_double(&self.src[at..end.max(at)]));
             }
             "concatenation" => {
-                let mut s = String::new();
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    s.push_str(&self.unquote(child).text);
+                    self.read_value(child, text, pieces);
                 }
-                s
             }
-            _ => raw.clone(),
+            _ => {
+                text.push_str(raw);
+                pieces.push(self.expansion_piece(node));
+            }
+        }
+    }
+
+    /// 引用符の外か二重引用符の中の、`string_content` 以外のノード（展開か、展開を含まない字面）の値
+    fn expansion_piece(&self, node: Node) -> Piece {
+        let mut cursor = node.walk();
+        let named: Vec<Node> = node.named_children(&mut cursor).collect();
+        let name = match (node.kind(), named.as_slice()) {
+            // `$NAME`。`$1`、`$@` などは special_variable_name
+            ("simple_expansion", [var]) => Some(*var),
+            // `${NAME}`。演算子（`${NAME:-x}`、`${#NAME}`）があれば子が増える
+            ("expansion", [var]) if node.child_count() == 3 => Some(*var),
+            _ => None,
         };
-        Arg { text, raw }
+        match name {
+            Some(var) if var.kind() == "variable_name" => Piece::Var(self.text(var).to_string()),
+            _ if contains_expansion(node) => Piece::Other,
+            _ => Piece::Lit(self.text(node).to_string()),
+        }
     }
 
     /// `is_target` を満たすプログラムを実行するコマンドがあるか。実行するプログラムを決められないコマンド
@@ -866,6 +977,12 @@ pub(crate) fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     base.join(p)
 }
 
+/// 字面を値と並びに足す（[`Shell::unquote`]）
+fn literal(text: &mut String, pieces: &mut Vec<Piece>, s: String) {
+    text.push_str(&s);
+    pieces.push(Piece::Lit(s));
+}
+
 /// ラッパー（`sudo -i`、`env -C`、`sudo -D`）が中のコマンドを実行するディレクトリへ移る。`sudo -i` は対象の
 /// 利用者のホームから始める（その前のラッパーの -C は unwrap.rs が除いてある）。ラッパーの引数の `~` は外側の
 /// シェルが展開してから渡すので、`home` は外側のもの
@@ -1035,18 +1152,102 @@ mod tests {
         assert_eq!(cs[0].stdin_heredoc, heredoc("feat: a\n", true));
     }
 
+    fn texts(args: &[Arg]) -> Vec<&str> {
+        args.iter().map(|a| a.text.as_str()).collect()
+    }
+
     #[test]
     fn writes_lists_output_redirect_targets() {
         let cs = cmds("cat > m.txt <<'EOF'\nx\nEOF\ngit commit -F m.txt");
-        assert_eq!(cs[0].writes, ["m.txt"]);
+        assert_eq!(texts(&cs[0].writes), ["m.txt"]);
         assert_eq!(cs[0].stdin_heredoc, heredoc("x\n", true));
         assert!(cs[1].writes.is_empty());
         // ヒアドキュメントの演算子の後ろに書いたリダイレクトを、tree-sitter-bash はヒアドキュメントの中に置く
         let cs = cmds("cat <<'EOF' > msg.txt\nfeat: a\nEOF\ngit commit -F msg.txt");
-        assert_eq!(cs[0].writes, ["msg.txt"]);
+        assert_eq!(texts(&cs[0].writes), ["msg.txt"]);
         let cs = cmds("echo x >> 'a b' 2>&1 && sort < in &> out");
-        assert_eq!(cs[0].writes, ["a b"]);
-        assert_eq!(cs[1].writes, ["out"]);
+        assert_eq!(texts(&cs[0].writes), ["a b"]);
+        assert_eq!(texts(&cs[1].writes), ["out"]);
+    }
+
+    /// 最初の `git commit` より前に `path` を引数に取るか書くコマンドの名前。行き先は `/w`
+    fn writer_of(src: &str, path: &str) -> Option<String> {
+        let sh = Shell::parse(src);
+        let commit = sh
+            .commands()
+            .iter()
+            .find(|c| c.git_subcommand().is_some_and(|(sub, _)| sub == "commit"))
+            .unwrap();
+        sh.writer_before(commit, Path::new("/w"), Path::new(path))
+            .map(|c| c.name.clone())
+    }
+
+    #[test]
+    fn writer_before_expands_variables_assigned_literally() {
+        for (src, path, writer) in [
+            (
+                "S=/s; cat > $S/m.txt <<'EOF2'\nx\nEOF2\ngit commit -F /s/m.txt",
+                "/s/m.txt",
+                "cat",
+            ),
+            (
+                "S=/s; sed -i '1s/.*/y/' $S/m.txt; git commit -F /s/m.txt",
+                "/s/m.txt",
+                "sed",
+            ),
+            (
+                "S=\"/s\"; cat > \"${S}/m.txt\" && git commit -F /s/m.txt",
+                "/s/m.txt",
+                "cat",
+            ),
+            // 相対の値は、書くコマンドの行き先からの相対
+            (
+                "S=sub; printf x >> $S/m.txt; git commit -F sub/m.txt",
+                "/w/sub/m.txt",
+                "printf",
+            ),
+        ] {
+            assert_eq!(writer_of(src, path).as_deref(), Some(writer), "{src}");
+        }
+        // 値が決まり、別のパスを指す
+        assert_eq!(
+            writer_of("S=/a; cat > $S/m.txt; git commit -F /s/m.txt", "/s/m.txt"),
+            None
+        );
+        // 単引用符の中の `$S` は字面
+        assert_eq!(
+            writer_of("S=/s; cat > '$S/m.txt'; git commit -F /s/m.txt", "/s/m.txt"),
+            None
+        );
+        assert_eq!(
+            writer_of("cat > '$S/m.txt'; git commit -F x", "/w/$S/m.txt").as_deref(),
+            Some("cat")
+        );
+    }
+
+    #[test]
+    fn writer_before_counts_undecided_expansions_whose_literal_tail_matches() {
+        // 値が決まらない（代入が無い、値が展開を含む、値が 2 つある、ほかの展開）とき、最後の展開の後ろの字面が
+        // パスの末尾に合えば、書きうるものとして数える
+        for src in [
+            "cat > $T/m.txt; git commit -F /s/m.txt",
+            "T=$(mktemp -d); cat > $T/m.txt; git commit -F /s/m.txt",
+            "T=/a; T=/s; cat > $T/m.txt; git commit -F /s/m.txt",
+            "cat > \"$(pwd)/m.txt\"; git commit -F /s/m.txt",
+            "sed -i x ${T:-/s}/m.txt; git commit -F /s/m.txt",
+        ] {
+            assert!(writer_of(src, "/s/m.txt").is_some(), "{src}");
+        }
+        // 字面の末尾が合わないか、展開の後ろに字面が無いか、字面がパスの要素の途中から始まる
+        for src in [
+            "cat > $T/other.txt; git commit -F /s/m.txt",
+            "cp notes $VERSION.txt; git commit -F /s/m.txt",
+            "cat > ${T}m.txt; git commit -F /s/m.txt",
+            "git add $FILES; git commit -F /s/m.txt",
+            "echo \"$T\"; git commit -F /s/m.txt",
+        ] {
+            assert_eq!(writer_of(src, "/s/m.txt"), None, "{src}");
+        }
     }
 
     #[test]

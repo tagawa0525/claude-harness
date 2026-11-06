@@ -690,6 +690,9 @@ exit 0
         for prefix in [
             "sed -i 's/誤語/正語/' msg.txt && ",
             "cat > ./msg.txt <<'EOF'\nMerge: a\n\n正語\nEOF\n",
+            // 書き先のパスを、同じ呼び出しで字面のまま決まる変数で書く
+            "M=msg; cat > $M.txt <<'EOF'\nMerge: a\n\n正語\nEOF\n",
+            "M=msg.txt; sed -i 's/誤語/正語/' \"${M}\" && ",
         ] {
             let r = deny_for(prefix);
             assert!(r.contains("前段も実行されていません"), "{prefix}: {r}");
