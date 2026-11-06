@@ -7,7 +7,7 @@ superseded-by:
 issues: ["#603", "#604"]
 ---
 
-# ADR-0076: Claude Code の自動メモリを、応答のたびに ~/.claude の git の別のブランチ memory-backup にコミットする
+# ADR-0076: Claude Code の自動メモリを、応答のたびに ~/.claude の git の別の ref refs/memory-backup にコミットする
 
 ## 背景
 
@@ -60,16 +60,20 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
   `CLAUDECODE=1` を置くかは確かめていない。置いていれば git の層に `~/.claude` の例外が要り、PreToolUse の層との一致
   （`main-commit-gates.sh`）を崩す。ほかに、commit-msg の検査、機密情報の検査、ステージしたファイルの日本語の語の検査
   （ADR-0014）がメモリの本文に掛かり、崩れた語のあるメモリの退避が止まる。利用者が main でステージした変更とも混ざる
-- 案 2: 一時の index にメモリだけを入れ、`git write-tree`、`git commit-tree`、`git update-ref` で別のブランチ
-  `memory-backup` を進める。HEAD、作業ツリーの index、main に触らず、git の hook は走らない
+- 案 2: 一時の index にメモリだけを入れ、`git write-tree`、`git commit-tree`、`git update-ref` で別の ref を進める。
+  HEAD、作業ツリーの index、main に触らず、git の hook は走らない。ref の置き場は 2 つ:
+  - 案 2a: ブランチ `refs/heads/memory-backup`。`git switch memory-backup` で checkout でき、そうすると main で
+    追跡しているファイル（settings.json、CLAUDE.md など）が作業ツリーから消え、Claude Code の設定が壊れる
+  - 案 2b: `refs/heads` の外の `refs/memory-backup`。`git log` と `git show` で同じく読め、ブランチの一覧に出ず、
+    名前だけで checkout されない
 - 案 3: `~/.claude` と別のリポジトリ（`~/.claude/memory-backup.git` など）にコミットする。ゲートとは関係なくなるが、
   ユーザーが答えた推奨は「このリポジトリで」で、`~/.claude/.gitignore` もメモリを追跡する形にしてある
 
 ## 決定と理由
 
-案 D と案 2 を採る。Stop の hook（`~/.claude/bin/claude-memory-backup`、`modules/home/scripts/claude-memory-backup.sh`）が、
-応答のたびに `~/.claude/projects/*/memory/` の下の全部を一時の index に入れ、ツリーが `memory-backup` の先端と違うときだけ、
-先端を親にしたコミットを作ってブランチを進める。
+案 D と案 2b を採る。Stop の hook（`~/.claude/bin/claude-memory-backup`、`modules/home/scripts/claude-memory-backup.sh`）が、
+応答のたびに `~/.claude/projects/*/memory/` の下の全部を一時の index に入れ、ツリーが `refs/memory-backup` の先端と違うときだけ、
+先端を親にしたコミットを作って ref を進める。
 
 - 粒度: 応答ごとの版が残るので、ある応答がメモリを壊しても、その前の応答の終わりの版が残る。今回の形（索引を壊した
   応答の後に気づく）はこれで戻せる。案 A と案 B は数日、案 C は間隔の粒度になる
@@ -79,10 +83,10 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
   エラーを出して終了コード 1 で終わる。Claude Code は通知に 1 行目を出す。async の hook にしないのは、async の hook の
   `systemMessage` は利用者に見えず、次のターンで Claude にだけ渡る（hooks の文書の「How async hooks execute」）ため
 - ゲートとの両立: main にも HEAD の指すブランチにもコミットしないので、#595 の 2 つの層のどちらにも掛からず、例外は
-  要らない。git の層はコミットの先のブランチが main / master のときに止めるもので、`memory-backup` は対象でない。
+  要らない。git の層はコミットの先のブランチが main / master のときに止めるもので、`refs/memory-backup` はブランチでもない。
   PreToolUse の層は Bash ツールの呼び出しを見るもので、hook のプロセスは通らない
 - 同時に終わった応答: 複数のセッションの Stop の hook が同時に走っても変更を失わないよう、`.git/memory-backup.lock` を
-  `flock` で取り、親を読んでからブランチを進めるまでを 1 つずつにする。`update-ref` にも古い値として親を渡す
+  `flock` で取り、親を読んでから ref を進めるまでを 1 つずつにする。`update-ref` にも古い値として親を渡す
 - 依存: git、jq（hook の入力の `session_id` と `cwd` をコミットの本文に入れる）、flock（util-linux）、coreutils。どれも
   既に使っている
 - `~/.claude` が git のリポジトリでないホストでは、home-manager の activation が `git init` する（退避の hook が
@@ -92,11 +96,11 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 
 ### 帰結
 
-- 戻し方: `git -C ~/.claude log --stat memory-backup -- projects/<プロジェクト>/memory/<ファイル>` で版を探し、
+- 戻し方: `git -C ~/.claude log --stat refs/memory-backup -- projects/<プロジェクト>/memory/<ファイル>` で版を探し、
   `git -C ~/.claude show <コミット>:projects/<プロジェクト>/memory/<ファイル>` で中身を出す
 - 同じ応答の中で書いて壊したものは、その応答の前の版しか残らない。利用者が中断した応答の変更は、次の応答の終わりに
   まとめて入る。サブエージェントが書いたメモリは、親の次の応答の終わりに入る
-- 機密情報の検査（ADR-0015）は退避のコミットに掛からない。`~/.claude` にリモートは無く、`memory-backup` を push する
+- 機密情報の検査（ADR-0015）は退避のコミットに掛からない。`~/.claude` にリモートは無く、`refs/memory-backup` を push する
   手順も無い
 - `~/.claude` の main と、手で管理する `.gitignore` は今のまま。main へのコミットは利用者が行う
 - コミットはメモリが変わった応答ごとに増え、オブジェクトは loose で書かれる。退避が使う `add`、`write-tree`、
@@ -108,7 +112,7 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 
 ### 確認
 
-- `modules/home/parts/tests/claude-memory-backup.sh`: メモリだけがツリーに入る、同じ中身では足さない、消したファイルが
+- `modules/home/parts/tests/claude-memory-backup.sh`: メモリだけがツリーに入る、ブランチ（`refs/heads` の下）を作らない、同じ中身では足さない、消したファイルが
   前のコミットから戻せる、main の HEAD とステージした変更が変わらない、どれも失敗する git の hook と `CLAUDECODE=1` の
   もとでも成功する、同時の 6 本がどれも失敗しない（ロックを外すと 5 本が `update-ref` の古い値の不一致で落ちる）、
   リポジトリでないディレクトリでは 1 行目に理由を出して失敗する

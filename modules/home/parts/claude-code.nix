@@ -39,7 +39,7 @@ let
   # スキルのスクリプトは claude-sync が store を経ずにコピーするので store のパスを埋められず、PATH に頼らない
   # よう claude-hooks と同じ固定パスに置く
   jaTermsFiles = (pkgs.callPackage ./ja-terms/textlint.nix { }).filesCheck;
-  # Stop の hook（応答の終わりごと）。自動メモリを ~/.claude の git のブランチ memory-backup にコミットする（ADR-0076）。
+  # Stop の hook（応答の終わりごと）。自動メモリを ~/.claude の git の ref refs/memory-backup にコミットする（ADR-0076）。
   # claude-hooks と同じく、settings.json には store のパスでなく固定パスを書く
   claudeMemoryBackup = pkgs.writeShellApplication {
     name = "claude-memory-backup";
