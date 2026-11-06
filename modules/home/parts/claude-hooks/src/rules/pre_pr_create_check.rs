@@ -92,6 +92,13 @@ pub(super) fn body_text(
     Ok(opt_value(args, body_flags).map(|a| a.raw.clone()))
 }
 
+/// `--body-file` が読めないときの拒否の理由。hook は展開の前の字面のパスを読むので、修正方法まで示す
+pub(super) fn unreadable_body_file(path: &str) -> String {
+    format!(
+        "--body-file のファイルが読めません: {path}\nhook はコマンドを実行する前に、変数を展開せずにパスを読みます。同じコマンドの中で書くファイルと、$S/… のような変数のパスは読めません。本文は別の呼び出しで先にファイルに書き、--body-file には絶対パスを書いてください"
+    )
+}
+
 /// リポジトリの指定（`OWNER/REPO`、`HOST/OWNER/REPO`、URL、git のリモートの URL）を `owner/repo` にそろえる
 fn repo_slug(spec: &str) -> Option<String> {
     let s = spec.trim().trim_end_matches('/');
@@ -188,7 +195,7 @@ impl Rule for PrePrCreateCheck {
 
             // --- 2. 本文 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
-                Err(path) => reasons.push(format!("--body-file のファイルが読めません: {path}\nhook はコマンドを実行する前に、変数を展開せずにパスを読みます。同じコマンドの中で書くファイルと、$S/… のような変数のパスは読めません。本文は別の呼び出しで先にファイルに書き、--body-file には絶対パスを書いてください")),
+                Err(path) => reasons.push(unreadable_body_file(&path)),
                 Ok(None) if fork => reasons.push("--body または --body-file で PR 本文を指定してください（上流の PR template に合わせる。省くと gh がエディタを開いて固まる）".to_string()),
                 Ok(None) => reasons.push("--body または --body-file で PR 本文を指定してください（## Summary / ## Changes / ## Tests）".to_string()),
                 Ok(Some(body)) if !fork => {
