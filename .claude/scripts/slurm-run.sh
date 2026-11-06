@@ -26,8 +26,11 @@
 #     main のジョブより先に走り、走っている main のジョブをすべて止めて実行し、自分は止められない。timed のジョブどうしは
 #     止め合わず、投げた順に走る。止めたジョブはメモリに残る（Slurm はメモリを数えない）ので、走っているジョブとの合計が
 #     搭載量に収まる計算に限る。-c と組めない（排他でない時間は記録に使えない）
-# 連絡先として、git のブランチ、投げた場所、Claude Code のセッションの ID をジョブのコメントに書く
-# （squeue の %k）。サブエージェントは親と同じセッションなので、ブランチで見分ける。
+# 連絡先として、git のブランチ、投げた場所、投げた時点の HEAD のコミット、Claude Code のセッションの ID をジョブの
+# コメントに書く（squeue の %k。sacct では SubmitLine の --comment）。サブエージェントは親と同じセッションなので、
+# ブランチで見分ける。コミットは「commit=<短い hash>」で、追跡しているファイルに未コミットの変更があれば
+# 「commit=<短い hash>-dirty」（作業中の版で、そのコミットの中身とは違う）。git の外とコミットの無いリポジトリでは付けない。
+# 記録に書く結果の出した版を、ブランチが消えた後もジョブから引くため。
 #
 # ログは r995 の ~/github/slurm-logs/<name>-<job>.out。ジョブは投げたときのパスで r995 の上で走るので、
 # r995 以外のホストでは /mnt/r995/github（r995 の ~/github の NFS。テストは SLURM_RUN_NFS_ENTRY で置き換える）の下で投げる。
@@ -166,6 +169,14 @@ mkdir -p "$local_logs"
 contact=$PWD
 if branch=$(git symbolic-ref --short -q HEAD 2>/dev/null); then
   contact="$branch $PWD"
+fi
+# 未コミットの変更はどのコミットにも無い版なので、hash だけでは結果を出した版を名指せない。印を付けて見分ける。
+# 追跡していないファイル（試行の出力、ログ）は数えない。ジョブの入力でないことが多く、数えると印がいつも付く。
+# --no-optional-locks: 同じ worktree で走っている git の操作と index のロックを取り合わない
+if commit=$(git rev-parse -q --verify --short HEAD 2>/dev/null); then
+  changes=$(git --no-optional-locks status --porcelain --untracked-files=no)
+  [[ -z $changes ]] || commit+=-dirty
+  contact+=" commit=$commit"
 fi
 if [[ -n ${CLAUDE_CODE_SESSION_ID:-} ]]; then
   contact+=" claude=$CLAUDE_CODE_SESSION_ID"
