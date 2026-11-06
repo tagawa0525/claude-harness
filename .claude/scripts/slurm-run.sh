@@ -28,8 +28,8 @@
 #     搭載量に収まる計算に限る。-c と組めない（排他でない時間は記録に使えない）
 # 連絡先として、git のブランチ、投げた場所、投げた時点の HEAD のコミット、Claude Code のセッションの ID をジョブの
 # コメントに書く（squeue の %k。sacct では SubmitLine の --comment）。サブエージェントは親と同じセッションなので、
-# ブランチで見分ける。コミットは「commit=<短い hash>」で、追跡しているファイルに未コミットの変更があれば
-# 「commit=<短い hash>-dirty」（作業中の版で、そのコミットの中身とは違う）。git の外とコミットの無いリポジトリでは付けない。
+# ブランチで見分ける。コミットは「commit=<短い hash>」で、コミットしていない変更（git が無視しない、まだ追加して
+# いないファイルを含む）があれば「commit=<短い hash>-dirty」（作業中の版で、そのコミットの中身とは違う）。git の外とコミットの無いリポジトリでは付けない。
 # 記録に書く結果の出した版を、ブランチが消えた後もジョブから引くため。
 #
 # ログは r995 の ~/github/slurm-logs/<name>-<job>.out。ジョブは投げたときのパスで r995 の上で走るので、
@@ -171,10 +171,11 @@ if branch=$(git symbolic-ref --short -q HEAD 2>/dev/null); then
   contact="$branch $PWD"
 fi
 # 未コミットの変更はどのコミットにも無い版なので、hash だけでは結果を出した版を名指せない。印を付けて見分ける。
-# 追跡していないファイル（試行の出力、ログ）は数えない。ジョブの入力でないことが多く、数えると印がいつも付く。
+# まだ追加していない新しいファイル（ソース、入力）もコミットに無いので数える。git が無視するもの（試行の置き場、
+# ビルドの出力）は --porcelain に出ない。
 # --no-optional-locks: 同じ worktree で走っている git の操作と index のロックを取り合わない
 if commit=$(git rev-parse -q --verify --short HEAD 2>/dev/null); then
-  changes=$(git --no-optional-locks status --porcelain --untracked-files=no)
+  changes=$(git --no-optional-locks status --porcelain)
   [[ -z $changes ]] || commit+=-dirty
   contact+=" commit=$commit"
 fi
