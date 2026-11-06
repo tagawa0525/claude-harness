@@ -134,7 +134,7 @@ check "同時に呼んでもどれも失敗しない" "0" "$failed"
 check "同時に呼んでも全部のファイルが残る" "6" \
   "$(git -C "$CD" ls-tree -r --name-only "$REF" 2>/dev/null | grep -c '/p[0-9]\.md$')"
 check "履歴は 1 本（マージを作らない）" "0" "$(git -C "$CD" rev-list --merges --count "$REF" 2>&1)"
-check "一時の index とロックのファイルを残さない" "" \
+check "一時の index を残さない（ロックのファイルは残す）" "" \
   "$(find "$(git -C "$CD" rev-parse --absolute-git-dir)" -maxdepth 1 -name 'memory-backup*' ! -name '*.lock' 2>&1)"
 check "HEAD は最後まで変わらない" "$HEAD0" "$(git -C "$CD" rev-parse HEAD)"
 check "ステージした変更は最後まで残る" "$INDEX0" "$(git -C "$CD" diff --cached --name-status)"
