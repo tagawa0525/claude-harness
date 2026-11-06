@@ -7,7 +7,7 @@
 #       block-secret-commit / block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
 #       guard-git-merge / guard-sbatch / guard-git-stash / guard-git-reset-hard / guard-exclusive-slurm /
-#       guard-git-amend
+#       guard-git-amend / block-nested-heredoc-same-delimiter
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -2889,5 +2889,143 @@ out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "develop の上で amend"
 cd "$TEST_ROOT" || exit 1
+
+# ===========================================================================
+# block-nested-heredoc-same-delimiter: 外側と同じ区切りのヒアドキュメントを本文に書いて、外側を途中で終わらせるもの
+# ===========================================================================
+# bash は外側の本文を、内側の閉じ（区切りだけの行）で終える。残りの行はシェルのコマンドとして走る
+
+# 外側の Python の本文に、同じ区切りでシェルのヒアドキュメントを書いた（2026-11-06 の xlc の担当の形）
+NESTED_PY=$(cat <<'X'
+cd /tmp/w && python3 - <<'EOF'
+import subprocess
+script = """
+cat >"$WORK/fsmonitor.sh" <<EOF
+#!/bin/sh
+EOF
+git -C "$FSM" config core.fsmonitor "$WORK/fsmonitor.sh"
+"""
+EOF
+X
+)
+# 外側の Python の置き換えの文字列に、クォートした同じ区切りを書いた（2026-10-05 の形）
+NESTED_REPLACE=$(cat <<'X'
+python3 - <<'EOF'
+s=open(p).read()
+old='''git merge --no-ff [branch] -F - <<'EOF'
+[マージコミットメッセージ]
+EOF
+```'''
+new='''git merge --no-ff [branch] -m "$(cat <<'EOF'
+[マージコミットメッセージ]
+EOF
+)"
+```'''
+open(p,'w').write(s.replace(old,new))
+EOF
+git add .claude && git commit -q -m "$(cat <<'EOF'
+fix: x
+EOF
+)"
+X
+)
+# 外側の cat の本文（スキルの文書）に、コマンドの置換の中の同じ区切りを書いた（2026-10-10 の形）
+NESTED_DOC=$(cat <<'X'
+cat > SKILL.md <<'EOF'
+# Git Merge
+```bash
+git merge --no-ff [branch] -m "$(cat <<'EOF'
+[マージコミットメッセージ]
+EOF
+)"
+```
+EOF
+X
+)
+
+it "block-nested-heredoc-same-delimiter: 外側を内側の閉じで終わらせるものは deny し、理由と修正方法を示す"
+for cmd in "$NESTED_PY" "$NESTED_REPLACE" "$NESTED_DOC"; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "シェルのコマンドとして"
+  assert_contains "$(reason "$out")" "PYEOF"
+done
+
+it "block-nested-heredoc-same-delimiter: 外側と内側の開き方の書き方（<<-、二重引用符、\\、$(…) の中）によらず deny"
+for cmd in $'python3 - <<-EOF\n\tcat > f <<"EOF"\n\tx\n\tEOF\n\tprint(1)\n\tEOF' \
+  $'git commit -m "$(cat <<\\EOF\nfeat: a\n\ncat <<EOF\nEOF\nb\nEOF\n)"' \
+  $'cat > a.sh <<"END"\ncat > b <<- END\nx\nEND\necho "$X"\nEND'; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+
+it "block-nested-heredoc-same-delimiter: 拒否の文言に、外側を終わらせた行と内側を開いた行を示す"
+out=$(run_hook block-nested-heredoc-same-delimiter "$NESTED_PY")
+assert_contains "$(reason "$out")" "python3 - <<'EOF'"
+assert_contains "$(reason "$out")" 'cat >"$WORK/fsmonitor.sh" <<EOF'
+
+# 文中の言及（依頼文や issue の本文に書いた `cat <<'EOF' > msg.txt` など）は、内側の閉じの行が無く、外側は書いた所で終わる
+MENTION_BRIEF=$(cat <<'X'
+cat > /tmp/s/brief.md <<'EOF'
+check-merge-body-ja-terms は、`git merge -F <file>` のファイルを読む。前段がそのファイルを書く（`cat > msg.txt <<'EOF' … && git merge -F msg.txt`）
+- 拒否の文言が `git commit -m "$(cat <<'EOF' … EOF)"` の本文をコピーする
+EOF
+git add brief.md && git commit -q -m "$(cat <<'EOF'
+docs: x
+EOF
+)"
+X
+)
+# Python の文字列の `\n` で書いたテストの入力（改行ではない）
+MENTION_TEST=$(cat <<'X'
+cat > test.py <<'EOF'
+CASES = [
+    "cat <<'EOF' > msg.txt\nfeat: a\nEOF\ngit commit -F msg.txt",
+    "git commit -F - <<'EOF' 2>&1\nfeat: a\nEOF\n",
+]
+EOF
+X
+)
+# 内側の閉じが区切りだけの行でない（字下げした、後ろに文字が続く）ので、外側は書いた所で終わる
+INDENTED_CLOSE=$(cat <<'X'
+python3 - <<'EOF'
+new='''      dvc = pkgs.runCommand "dvc" { } \'\'
+        cat > $out/bin/dvc <<EOF
+        exec dvc "\\$@"
+        EOF
+      \'\';'''
+EOF
+nix develop -c dvc version
+X
+)
+QUOTED_CLOSE=$(cat <<'X'
+python3 - <<'EOF'
+s=s.replace('''cat >"$FAKE_BIN/scontrol" <<'EOF'
+echo "$*"
+EOF''','''cat >"$FAKE_BIN/scontrol" <<'EOF'
+exit 0
+EOF''')
+EOF
+git commit -q -m "$(cat <<'EOF'
+test: x
+EOF
+)"
+X
+)
+
+it "block-nested-heredoc-same-delimiter: 文中の言及と、外側を途中で終わらせない入れ子は通す"
+for cmd in "$MENTION_BRIEF" "$MENTION_TEST" "$INDENTED_CLOSE" "$QUOTED_CLOSE" \
+  $'python3 - <<\'PYEOF\'\ncat > f <<EOF\nx\nEOF\nPYEOF' \
+  $'cat > a <<\'EOF\'\nx\nEOF\ncat > b <<\'EOF\'\ny\nEOF'; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq "" "$out"
+done
+
+it "block-nested-heredoc-same-delimiter: 区切りの続く語（<<EOFX）と here string（<<<EOF）は同じ区切りの開きに数えない"
+# 後ろの区切りだけの行は余分な閉じで、このルールの対象（本文の中の開き）ではない
+for cmd in $'cat <<EOF\nuse <<EOFX here\nEOF\nEOF' $'cat <<EOF\na <<<EOF b\nEOF\nEOF'; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq "" "$out"
+done
 
 finish
