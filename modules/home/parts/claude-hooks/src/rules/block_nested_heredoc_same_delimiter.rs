@@ -52,8 +52,9 @@ impl Rule for BlockNestedHeredocSameDelimiter {
 static OPENER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<<(-?)[ \t]*([^\s<>;&|()`]+)").expect("valid regex"));
 
-/// 行の中のヒアドキュメントの開き（`<<-` か、引用符と `\` を外した区切り）を順に。区切りの読み方は `Shell::heredoc` と
-/// 同じ（語の中の引用符を外す。`<<E'OF'` は `EOF`）。here string（`<<<`）は除く
+/// 行の中のヒアドキュメントの開き（`<<-` か、引用符と `\` を外した区切り）を順に。引用符と `\` の外し方は
+/// `Shell::heredoc` と同じ（`<<E'OF'` は `EOF`）。語は引用符の中でも空白とシェルの区切りの文字で切るので、それを含む
+/// 引用符の区切り（`<<'END MSG'`）は `Shell::heredoc`（`END MSG`）と違って頭だけを読む。here string（`<<<`）は除く
 fn openers(line: &str) -> Vec<(bool, String)> {
     OPENER
         .captures_iter(line)
