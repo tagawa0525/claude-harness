@@ -116,7 +116,10 @@ elif [ "${#PATHS[@]}" -gt 0 ]; then
     mkdir -p "$md/$(dirname -- "${PATHS[$i]}")"
     git cat-file blob "${BLOBS[$i]}" >"$md/${PATHS[$i]}"
   done
-  (cd "$md" && markdownlint --fix -- "${PATHS[@]}" 2>/dev/null) || true
+  # MD038（code span の内側の空白）だけは自動修正から外し、続く検査で違反として出す。markdownlint 0.50.0 の
+  # --fix は code span の先頭の空白を落とし（` X` が `X` になる）、空白に意味のある書き方（シェルの <<' X' など）を
+  # 書き手が気づかないまま変えるため。設定で MD038 を無効にしないのは、検査まで止めて違反に気づけなくなるため
+  (cd "$md" && markdownlint --fix --disable MD038 -- "${PATHS[@]}" 2>/dev/null) || true
   # markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完する。実体は
   # language-checks スキルの同期先（~/.claude）。無ければ飛ばし、続く検査で残った違反として出る
   MD_FIXER="$HOME/.claude/skills/language-checks/scripts/fix-markdown-lint.py"

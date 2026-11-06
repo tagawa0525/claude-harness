@@ -244,6 +244,28 @@ else
   ng "知らない言語は使い方の誤り（終了コード 2）として止める（終了コード $rc）"
 fi
 
+echo "==> 先頭が空白の code span は自動修正で書き換えず、検査で MD038 として止める"
+R=$(repo md038 init.txt $'x\n')
+SPAN=$'# T\n\nA ` X` span.\n'
+printf '%s' "$SPAN" >"$R/a.md"
+git -C "$R" add a.md
+if commit "$R"; then
+  ng "先頭が空白の code span のコミットを止める"
+else
+  ok "先頭が空白の code span のコミットを止める"
+fi
+if grep -q 'MD038' "$WORK/out"; then
+  ok "検査の段が MD038 の違反を出す"
+else
+  ng "検査の段が MD038 の違反を出す"
+fi
+if [[ "$(git -C "$R" show :a.md)" == "${SPAN%$'\n'}" && "$(cat "$R/a.md")" == "${SPAN%$'\n'}" ]]; then
+  ok "ステージした版と作業ツリーの code span の空白を残す"
+else
+  ng "ステージした版と作業ツリーの code span の空白を残す"
+  git -C "$R" show :a.md | sed 's/^/    index: /'
+fi
+
 echo "==> ステージしていない編集が無ければ、今までどおり"
 R=$(repo plain a.md "$LINES")
 printf '%s' "${LINES/l1/l1 }" >"$R/a.md"
