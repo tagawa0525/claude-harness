@@ -386,12 +386,18 @@ head=$(git rev-parse --short HEAD)
 CLAUDE_CODE_SESSION_ID=abc-123 "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\ntrial | #1 | 試験の目的 | feat/commit '"$HOME/github/committed commit=$head claude=abc-123"
 
-it "slurm-run: 追跡していないファイルだけがあるときは、未コミットの印を付けない"
-echo scratch >untracked.txt
+it "slurm-run: git が無視するファイルだけがあるときは、未コミットの印を付けない"
+echo 'trials/' >.git/info/exclude
+mkdir -p trials && echo out >trials/run.log
 "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head"
 assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
-rm untracked.txt
+
+it "slurm-run: まだ追加していない、無視されない新しいファイルがあれば、hash に -dirty を付ける"
+echo 'fn main() {}' >new_source.rs
+"$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
+rm new_source.rs
 
 it "slurm-run: 追跡しているファイルに未コミットの変更があれば、hash に -dirty を付ける"
 echo b >input.toml
