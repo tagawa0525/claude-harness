@@ -52,8 +52,10 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
   - `cargo build|check|test|clippy|run|bench`（alias の `b|c|t|r` も）
   - `dvc repro`
   - `nix build`、`nix flake check`
-  - rebuild: `nix-rebuild rebuild|update`、`nixos-rebuild`（サブコマンドによらない）、`home-manager switch|build`。
-    `sudo` とフルパス（`/run/current-system/sw/bin/nixos-rebuild`）もほどいて判定する
+  - rebuild: `nix-rebuild rebuild|update`（`nix-rebuild.sh` を直に実行する形も）、modules/home/parts/shell.nix の
+    関数 `rebuild`・`update`（引数なし）、ビルドするサブコマンド（`switch`、`boot`、`test`、`build`、`dry-activate`、
+    `build-vm`、`build-vm-with-bootloader`、`build-image`）の `nixos-rebuild`（`--rollback` を除く）、
+    `home-manager switch|build`。`sudo` とフルパス（`/run/current-system/sw/bin/nixos-rebuild`）もほどいて判定する
   - `bin/` か、`release`・`debug` ディレクトリ（`target/`、`target/<triple>/`、`CARGO_TARGET_DIR` の下）にある
     `xs|lattice|core|chain`（`../../bin/xs` など相対も）
   - 何を実行するか決められないコマンド（`$CMD test`、`bash -s`、`source x.sh`）。サブコマンドを決められない
@@ -106,9 +108,11 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 
 ## 変更
 
-- 2026-11-06: 対象に rebuild（`nix-rebuild rebuild|update`、`nixos-rebuild`、`home-manager switch|build`）を足し、
-  1 コアの `taskset` で包んでも止める。前は対象の一覧の nix は「`nix build`、`nix flake check`」だけで、拒否の文言は
-  どの対象にも「修正方法（`taskset` で 1 コアに限る、終わるまで待つ、`slurm-run.sh` で投げる）を示す」だった。
+- 2026-11-06: 対象に rebuild（`nix-rebuild rebuild|update`、shell の関数 `rebuild`・`update`、ビルドする
+  `nixos-rebuild`、`home-manager switch|build`）を足し、1 コアの `taskset` で包んでも止める。前は対象の一覧の nix は
+  「`nix build`、`nix flake check`」だけで、taskset の条件は「`taskset` が中のコマンドを 1 つの CPU に限っていない」と
+  どの対象にも掛かり、拒否の文言はどの対象にも「修正方法（`taskset` で 1 コアに限る、終わるまで待つ、`slurm-run.sh` で
+  投げる）を示す」だった。
   rebuild は全コアでビルドするのに止めていなかった（#616 の 1）。r995 で `taskset -c 3 nix build --impure --expr …` の
   ビルダーの `/proc/self/status` の `Cpus_allowed_list` が `0-31`（クライアントは `3`）で、利用者が実行するビルドは
   nix-daemon の中で走り、クライアントの taskset を引き継がないと確かめたので、rebuild に taskset の例外を当てない。
