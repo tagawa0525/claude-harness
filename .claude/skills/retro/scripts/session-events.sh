@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # session-events.sh — Claude Code の会話の記録から、振り返りの手がかり（拒否、失敗、ユーザーの発言）を集める
 #
-# Usage: session-events.sh [TRANSCRIPT]
+# Usage: session-events.sh [--since <日時>] [--until <日時>] [TRANSCRIPT]
 #   TRANSCRIPT  セッションの記録（~/.claude/projects/<プロジェクト>/<セッション>.jsonl）。
 #               省略時は CLAUDE_CODE_SESSION_ID の記録を ~/.claude/projects/*/ から探す
+#   --since, --until
+#               各行の timestamp（UTC）が区間 [since, until) に入る行だけを数える（本体とサブエージェントの両方）。
+#               片方だけなら、もう片方の端は開いたまま。隣り合う区間で同じ行を 2 度数えないよう、until は含まない。
+#               日時は ISO 8601 で、時差（Z か +09:00 の形）を必ず付ける（例 2026-11-06T00:00+09:00、
+#               2026-11-05T15:00:00.000Z）。時差の無い日時はシェルの TZ で意味が変わるので失敗にする。
+#               区間を指定したときは、timestamp の無い行（api-request-blob など）を数えず、区間に行の無い
+#               サブエージェントの記録は読まない（TRANSCRIPTS にも数えない）。区間に入る行が本体にも
+#               サブエージェントにも無ければ、区間の書き誤りとみなして exit 1
 #
 # 記録の隣の <セッション>/subagents/*.jsonl（サブエージェントの記録）も読む。
 #
 # 出力:
 #   TRANSCRIPT: <path>
+#   SINCE: <UTC の日時>  UNTIL: <UTC の日時>   指定した区間の端を UTC に直したもの（指定した端だけ）
 #   TRANSCRIPTS: <読んだ記録の数（本体 + サブエージェント）>
 #   <KIND>: <回数> <本文の要約>   失敗したツールの結果を、種類と要約ごとに回数の多い順に
 #     HOOK        hook の拒否（`<event>:<tool> hook error: ` を除いた 1 行目）。同じ拒否をまとめるため、
@@ -26,11 +35,53 @@
 #
 # 記録の形は Claude Code の公開の仕様ではない。type を持つ行が 1 つも無いか、
 # ツールを呼んだ行があるのに tool_result が 1 つも無ければ、形が変わったとみなして exit 1（0 件と出さない）。
+# 区間を指定したときは、timestamp が YYYY-MM-DDTHH:MM:SS.mmmZ の形でない行があっても exit 1
+# （区間の端と文字列で比べるので、形が違うと黙って区間の外に落ちる）。
 
 set -euo pipefail
 
+usage() {
+  echo "Usage: session-events.sh [--since <日時>] [--until <日時>] [TRANSCRIPT]" >&2
+  exit 1
+}
+
+# to_utc <オプション名> <日時>: 時差つきの ISO 8601 を、記録の timestamp と同じ形の UTC にする
+to_utc() {
+  local re='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2})$'
+  if [[ ! "$2" =~ $re ]]; then
+    echo "ERROR: $1 は時差つきの ISO 8601 で書いてください（例 2026-11-06T00:00+09:00、2026-11-05T15:00Z）: $2" >&2
+    exit 1
+  fi
+  date -u -d "$2" +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || {
+    echo "ERROR: $1 の日時を読めません: $2" >&2
+    exit 1
+  }
+}
+
+since=""
+until=""
+args=()
+while (($# > 0)); do
+  case "$1" in
+    --since | --until)
+      (($# >= 2)) || usage
+      value=$(to_utc "$1" "$2")
+      if [[ "$1" == --since ]]; then since=$value; else until=$value; fi
+      shift 2
+      ;;
+    --*) usage ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${args[@]}"
 if (($# > 1)); then
-  echo "Usage: session-events.sh [TRANSCRIPT]" >&2
+  usage
+fi
+if [[ -n "$since" && -n "$until" && ! "$since" < "$until" ]]; then
+  echo "ERROR: --since（$since）は --until（$until）より前にしてください" >&2
   exit 1
 fi
 
@@ -83,12 +134,52 @@ if ((uses > 0 && results == 0)); then
   exit 1
 fi
 
+# 区間の判定。下の 3 つの jq で同じものを使う
+# shellcheck disable=SC2016  # jq のプログラム
+in_range='
+  def in_range:
+    ($since == "" and $until == "")
+    or (.timestamp | type == "string" and ($since == "" or . >= $since) and ($until == "" or . < $until));
+'
+
+if [[ -n "$since$until" ]]; then
+  # 区間に行のあるサブエージェントの記録だけを残す。timestamp の形もここで確かめる
+  # shellcheck disable=SC2016  # jq のプログラム
+  in_range_files=$(jq -rRn "$in_range"'
+    [inputs | fromjson? | select(type == "object" and has("timestamp"))
+      | if (.timestamp | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$")) then .
+        else error("timestamp の形が違います（記録の形が変わったかもしれません）: \(input_filename): \(.timestamp | tojson)") end
+      | select(in_range) | input_filename]
+    | unique[]
+  ' --arg since "$since" --arg until "$until" "$transcript" "${subagents[@]}") || {
+    echo "ERROR: 区間で絞れませんでした（上の jq のエラーを参照）: $transcript" >&2
+    exit 1
+  }
+  # 年や時差を書き誤った区間は、失敗も発言も無い区間と同じ出力になるので止める。本体だけで見ないのは、
+  # background のサブエージェントが走る間、本体の記録に行が無いことがあるため
+  if [[ -z "$in_range_files" ]]; then
+    echo "ERROR: 区間 [${since:--}, ${until:--}) に timestamp の入る行が、本体にもサブエージェントにもありません（区間の書き誤り？）: $transcript" >&2
+    exit 1
+  fi
+  declare -A has_lines=()
+  while IFS= read -r f; do
+    [[ -z "$f" ]] || has_lines[$f]=1
+  done <<<"$in_range_files"
+  kept=()
+  for f in "${subagents[@]}"; do
+    [[ -z "${has_lines[$f]:-}" ]] || kept+=("$f")
+  done
+  subagents=("${kept[@]}")
+fi
+
 echo "TRANSCRIPT: $transcript"
+[[ -z "$since" ]] || echo "SINCE: $since"
+[[ -z "$until" ]] || echo "UNTIL: $until"
 echo "TRANSCRIPTS: $((1 + ${#subagents[@]}))"
 
 # 失敗したツールの結果を、種類と要約に分ける
 # shellcheck disable=SC2016  # jq のプログラム
-jq -rR '
+jq -rR "$in_range"'
   def body: if type == "array" then map(.text? // "") | join("\n") else tostring end;
   def first_line: split("\n") | map(select(test("\\S"))) | (.[0] // "(本文なし)");
   def cut: .[0:160];
@@ -100,7 +191,7 @@ jq -rR '
     map(select(test("\\S")))
     | (map(select(test("error|fatal|denied|cannot|not found|no such|failed(?!: 0)|できません|ありません|失敗"; "i")))
        | last) // last // "(本文なし)";
-  fromjson? | select(type == "object")
+  fromjson? | select(type == "object" and in_range)
   | select(.type == "user" and (.message.content | type) == "array")
   | .message.content[]
   | select(.type == "tool_result" and .is_error == true)
@@ -122,7 +213,7 @@ jq -rR '
     else
       "TOOL\t" + ($b | gsub("</?tool_use_error>"; "") | first_line | cut)
     end
-' "$transcript" "${subagents[@]}" |
+' --arg since "$since" --arg until "$until" "$transcript" "${subagents[@]}" |
   sort | uniq -c |
   awk '
     {
@@ -138,7 +229,7 @@ jq -rR '
 
 # ユーザーの発言（本体の記録だけ。サブエージェントの記録の発言は親からの依頼文）
 # shellcheck disable=SC2016  # jq のプログラム
-jq -rR '
+jq -rR "$in_range"'
   # タグだけのブロック（IDE の選択、通知など）はブロックごとに除く
   def text_of:
     if type == "string" then .
@@ -149,7 +240,7 @@ jq -rR '
       | ((capture("<command-args>(?<a>.*?)</command-args>"; "s") | .a) // "") as $a
       | if $a == "" then $n else $n + " " + $a end
     else . end;
-  fromjson? | select(type == "object")
+  fromjson? | select(type == "object" and in_range)
   | (
     select(.type == "user" and (.isMeta // false) == false and (.isSidechain // false) == false
       and (.isCompactSummary // false) == false and (.isVisibleInTranscriptOnly // false) == false)
@@ -163,4 +254,4 @@ jq -rR '
   )
   | select(test("\\S") and (startswith("<") | not))
   | "USER: " + (gsub("\\s*\n\\s*"; " ") | .[0:300])
-' "$transcript"
+' --arg since "$since" --arg until "$until" "$transcript"
