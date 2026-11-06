@@ -30,6 +30,9 @@ if [ ! -t 0 ]; then
 fi
 
 backup() {
+  # hook は親の環境を継ぐ。GIT_DIR などを export したシェル（git の hook の中、dotfiles の別名）から起動した
+  # Claude Code では、以下の git が claude-dir でなくそのリポジトリと index を相手にする
+  while IFS= read -r var; do unset "$var"; done < <(git rev-parse --local-env-vars)
   cd "$CLAUDE_DIR"
   local top
   top=$(git rev-parse --show-toplevel)
