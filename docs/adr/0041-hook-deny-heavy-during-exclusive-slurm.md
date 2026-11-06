@@ -53,8 +53,9 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
   - `dvc repro`
   - `nix build`、`nix flake check`
   - rebuild: `nix-rebuild rebuild|update`（`nix-rebuild.sh` を直に実行する形も）、modules/home/parts/shell.nix の
-    関数 `rebuild`・`update`（引数なし）、ビルドするサブコマンド（`switch`、`boot`、`test`、`build`、`dry-activate`、
-    `build-vm`、`build-vm-with-bootloader`、`build-image`）の `nixos-rebuild`（`--rollback` を除く）、
+    関数 `rebuild`・`update`（引数を捨てるので引数によらない。パスで呼ぶ同じ名前のスクリプトは除く）、ビルドする
+    サブコマンド（`switch`、`boot`、`test`、`build`、`dry-activate`、`build-vm`、`build-vm-with-bootloader`、
+    `build-image`）の `nixos-rebuild`（`--rollback` と `--help` を除く）、
     `home-manager switch|build`。`sudo` とフルパス（`/run/current-system/sw/bin/nixos-rebuild`）もほどいて判定する
   - `bin/` か、`release`・`debug` ディレクトリ（`target/`、`target/<triple>/`、`CARGO_TARGET_DIR` の下）にある
     `xs|lattice|core|chain`（`../../bin/xs` など相対も）

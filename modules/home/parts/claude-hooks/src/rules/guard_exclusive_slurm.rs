@@ -87,17 +87,23 @@ const NIXOS_REBUILD_BUILDS: &[&str] = &[
 /// taskset を引き継がないので、1 コアに限っても全コアを使う（ADR-0041 の「## 変更」）
 fn is_rebuild(cmd: &Cmd) -> bool {
     let has_arg = |names: &[&str]| cmd.args.iter().any(|a| names.contains(&a.text.as_str()));
-    match basename(cmd.program()) {
+    let program = cmd.program();
+    // modules/home/parts/shell.nix の関数は引数を捨てて nix-rebuild を呼ぶ。関数はパスで呼べないので、
+    // パスで呼ぶ同じ名前のスクリプトは別のもの
+    if matches!(program, "rebuild" | "update") {
+        return true;
+    }
+    match basename(program) {
         // nix-rebuild.sh は最初の引数だけでサブコマンドを選ぶ
         "nix-rebuild" | "nix-rebuild.sh" => cmd
             .args
             .first()
             .is_some_and(|a| matches!(a.text.as_str(), "rebuild" | "update")),
-        // modules/home/parts/shell.nix の関数（引数を取らず nix-rebuild を呼ぶ）
-        "rebuild" | "update" => cmd.args.is_empty(),
         // 値を取るオプション（`--flake`）の後でもサブコマンドを拾う。値と同じ語は普通は書かない。
-        // `--rollback` は前の世代に切り替えるだけでビルドしない
-        "nixos-rebuild" => has_arg(NIXOS_REBUILD_BUILDS) && !has_arg(&["--rollback"]),
+        // `--rollback` は前の世代に切り替えるだけ、`--help` は使い方を出すだけでビルドしない
+        "nixos-rebuild" => {
+            has_arg(NIXOS_REBUILD_BUILDS) && !has_arg(&["--rollback", "--help", "-h"])
+        }
         "home-manager" => has_arg(&["switch", "build"]),
         _ => false,
     }
