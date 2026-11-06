@@ -399,6 +399,14 @@ echo 'fn main() {}' >new_source.rs
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
 rm new_source.rs
 
+it "slurm-run: status.showUntrackedFiles が no でも、追加していないファイルで -dirty を付ける"
+git config status.showUntrackedFiles no
+echo 'fn main() {}' >new_source.rs
+"$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
+rm new_source.rs
+git config --unset status.showUntrackedFiles
+
 it "slurm-run: 追跡しているファイルに未コミットの変更があれば、hash に -dirty を付ける"
 echo b >input.toml
 "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
