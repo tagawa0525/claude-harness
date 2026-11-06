@@ -16,7 +16,7 @@
 #   - リポジトリでないディレクトリと、メモリのディレクトリが symlink のときは、1 行目に理由を書いて
 #     0 でない終了コードで終わる
 #
-# 使い方（リポジトリルートで実行。git、flock が PATH に必要）:
+# 使い方（リポジトリルートで実行。git、flock、jq が PATH に必要）:
 #   ./modules/home/parts/tests/claude-memory-backup.sh
 
 set -euo pipefail
