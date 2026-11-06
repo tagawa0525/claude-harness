@@ -619,24 +619,60 @@ assert_eq allow "$(decision "$out")"
 git switch -q main
 
 # ===========================================================================
-# GitHub リモートがなければ PR フロー適用外
+# block-main-commit: GitHub のリモートが無いリポジトリの main / master も止める
 # ===========================================================================
-# PR を作れないリポジトリで feature branch を強制しても、マージする手段がなく
-# 作業が進まない。判定は「GitHub リモートがあるか」。
-# GitHub 以外のリモートは扱わない前提なので、GitHub でなければローカル専用と同じ扱い
+# GitHub のリモートが無くても、ブランチは /git-merge でローカルの main にマージする。cd の失敗で別の
+# リポジトリの main にコミットが入る形（2026-11-06）を止める。通すのは flake.lock だけの変更、マージを
+# 締めるコミット（MERGE_HEAD がある）、HEAD の無いリポジトリの最初のコミット
 
 LOCAL="$TEST_ROOT/localonly"
 make_repo "$LOCAL"
 cd "$LOCAL" || exit 1
 
-it "block-main-commit: リモートのないリポジトリなら main でもコミットできる"
+it "block-main-commit: リモートの無いリポジトリでも main では deny し、ブランチを作る修正方法と理由を示す"
 echo 'x' > a.txt && git add a.txt
 out=$(run_hook block-main-commit 'git commit -m "feat: x"')
-assert_eq allow "$(decision "$out")"
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "/git-branch"
+assert_contains "$(reason "$out")" "/git-merge"
+assert_contains "$(reason "$out")" "2026-11-06"
+assert_contains "$(reason "$out")" "git init -b"
+assert_not_contains "$(reason "$out")" "ADR-"
 
-it "block-main-commit: GitHub 以外のリモートだけならローカル専用と同じ扱い"
+it "block-main-commit: GitHub 以外のリモートだけでも main では deny"
 make_remote "$LOCAL"
 out=$(run_hook block-main-commit 'git commit -m "feat: x"')
+assert_eq deny "$(decision "$out")"
+
+it "block-main-commit: リモートの無いリポジトリの master でも deny"
+git branch -m main master
+out=$(run_hook block-main-commit 'git commit -m "feat: x"')
+assert_eq deny "$(decision "$out")"
+git branch -m master main
+
+it "block-main-commit: リモートの無いリポジトリでも main の flake.lock だけの変更は通す"
+git restore --staged a.txt && rm -f a.txt
+echo '{"nodes":{}}' > flake.lock && git add flake.lock && git commit -q -m "chore: add lock"
+echo '{"nodes":{"a":1}}' > flake.lock && git add flake.lock
+out=$(run_hook block-main-commit 'git commit -m "chore(flake): update"')
+assert_eq allow "$(decision "$out")"
+git restore --staged flake.lock && git checkout -q flake.lock
+
+it "block-main-commit: マージを締めるコミット（MERGE_HEAD がある）は main でも通す"
+git switch -q -c side
+echo side > side.txt && git add side.txt && git commit -q -m "feat: side"
+git switch -q main
+git merge -q --no-ff --no-commit side >/dev/null 2>&1
+out=$(run_hook block-main-commit 'git commit -m "Merge: side"')
+assert_eq allow "$(decision "$out")"
+git merge --abort
+git branch -q -D side
+
+it "block-main-commit: HEAD の無いリポジトリの最初のコミットは main でも通す"
+UNBORN="$TEST_ROOT/unborn"
+git init -q -b main "$UNBORN"
+echo x > "$UNBORN/a.txt" && git -C "$UNBORN" add a.txt
+out=$(run_hook block-main-commit "git -C $UNBORN commit -m 'chore: init'")
 assert_eq allow "$(decision "$out")"
 
 it "guard-git-push: GitHub リモートがなければ main への push も force push も止めない"
@@ -648,15 +684,16 @@ out=$(run_hook guard-git-push "git push --force origin main")
 assert_eq allow "$(decision "$out")"
 assert_file_exists "$BARE"
 
-it "block-main-commit / guard-git-push: GitHub リモートがあれば従来どおり止める"
+it "guard-git-push: GitHub リモートがあれば従来どおり止める"
 git remote add gh https://github.com/example/localonly.git
-out=$(run_hook block-main-commit 'git commit -m "feat: x"')
-assert_eq deny "$(decision "$out")"
 out=$(run_hook guard-git-push "git push origin main")
 assert_eq deny "$(decision "$out")"
 git remote remove gh
 
-it "block-main-commit: -C で指定した別リポジトリのリモートで判定する"
+# 以下は、hook の cwd（$REPO、main）と別のリポジトリ（$LOCAL、feature ブランチ）のどちらで判定するかを見る
+git switch -q -c feat/local
+
+it "block-main-commit: -C で指定した別リポジトリのブランチで判定する"
 cd "$TEST_ROOT" || exit 1
 out=$(run_hook block-main-commit "git -C $LOCAL commit -m 'feat: x'")
 assert_eq allow "$(decision "$out")"
@@ -732,7 +769,7 @@ for cmd in "builtin cd $LOCAL && git commit -m 'feat: x'" "command cd $LOCAL && 
 done
 
 it "block-main-commit: コマンドより後ろの cd は対象ディレクトリにしない"
-# $REPO（github リモートあり・main）で実行。後ろの cd $LOCAL（リモートなし）を見てしまうと allow になる
+# $REPO（main）で実行。後ろの cd $LOCAL（feature ブランチ）を見てしまうと allow になる
 out=$(run_hook block-main-commit "git commit -m 'feat: x' && cd $LOCAL")
 assert_eq deny "$(decision "$out")"
 
@@ -2741,7 +2778,7 @@ for cmd in 'git commit --amend -m "docs: x"' 'git commit -q --amend -m "docs: x"
   assert_contains "$(reason "$out")" "git log -1"
   assert_contains "$(reason "$out")" "fresh"
   assert_contains "$(reason "$out")" "2026-10-30"
-  assert_contains "$(reason "$out")" "main の上で amend"
+  assert_not_contains "$(reason "$out")" "の上で amend"
 done
 
 it "guard-git-amend: -C と cd で指した先のブランチで判定する"
@@ -2816,11 +2853,11 @@ cd "$TEST_ROOT" || exit 1
 it "guard-git-amend: マージ済みのブランチの amend も deny し、文言はほかのリポジトリでも成り立つ"
 AMEND_MERGED="$TEST_ROOT/amend-merged"
 make_repo "$AMEND_MERGED"
-git -C "$AMEND_MERGED" switch -q -c done
+git -C "$AMEND_MERGED" switch -q -c "done"
 commit_file "$AMEND_MERGED" done.txt "feat: done"
 git -C "$AMEND_MERGED" switch -q main
-git -C "$AMEND_MERGED" merge -q --no-ff -m "Merge: done" done
-git -C "$AMEND_MERGED" switch -q done
+git -C "$AMEND_MERGED" merge -q --no-ff -m "Merge: done" "done"
+git -C "$AMEND_MERGED" switch -q "done"
 cd "$AMEND_MERGED" || exit 1
 out=$(run_hook guard-git-amend 'git commit --amend --no-edit')
 assert_eq deny "$(decision "$out")"

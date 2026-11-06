@@ -45,7 +45,7 @@ git config --global user.name test
 git config --global user.email test@example.com
 git config --global init.defaultBranch main
 git config --global core.hooksPath "$HOOKS"
-# GitHub リモートが無いので main ガードは効かない。commit-msg の検査は Claude Code のセッションだけ
+# commit-msg の検査は Claude Code のセッションだけ（検査するコミットには CLAUDECODE=1 を付ける）
 unset CLAUDECODE
 
 PASS=0
@@ -54,12 +54,14 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); echo "✓ $1"; }
 ng() { FAIL=$((FAIL + 1)); echo "✗ $1"; sed 's/^/    /' "$WORK/out"; }
 
-# new_repo <dir>: main に初期コミットを持つ repo を作る
+# new_repo <dir>: main に初期コミットを持ち、feature ブランチに移った repo を作る（Claude Code のセッションの
+# main への直接コミットは pre-commit の main ガードが止め、commit-msg まで届かない）
 new_repo() {
   git init -q -b main "$1"
   echo init > "$1/README.md"
   git -C "$1" add README.md
   git -C "$1" commit -q --no-verify -m "chore: init"
+  git -C "$1" switch -q -c feat/x
 }
 
 # commits <repo> <path> <text>: ファイルに text を書いてステージし、コミットできれば 0

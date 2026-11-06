@@ -33,10 +33,11 @@ export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
 git config --global user.email test@example.com
 git config --global init.defaultBranch main
-# GitHub リモートなし・CLAUDECODE 未設定: main ガードは対象外にして各言語の検査だけを見る
+# feature ブランチで作る: Claude Code のセッションから実行すると CLAUDECODE=1 を受け継ぎ、main の上では
+# main ガードが各言語の検査より先に止める（止まることを確かめるテストが、検査によらず通ってしまう）
 
 REPO="$WORK/repo"
-git init -q -b main "$REPO"
+git init -q -b feat/x "$REPO"
 cd "$REPO"
 
 PASS=0

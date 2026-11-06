@@ -41,6 +41,10 @@ cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
   ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/pre-commit\".source")" \
   "$WORK/pre-commit"
 chmod +x "$WORK/pre-commit"
+# MERGE_HEAD があると pre-commit は隣の pre-merge-commit（マージ結果のチェック）を呼ぶ。ここで比べるのは main の
+# ガードの判定だけなので、何もせず通す代わりを置く
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/pre-merge-commit"
+chmod +x "$WORK/pre-merge-commit"
 
 export HOME="$WORK/home"
 mkdir -p "$HOME"
@@ -54,7 +58,7 @@ export CLAUDECODE=1
 PASS=0
 FAIL=0
 
-# setup_repo <dir> <github|local>
+# setup_repo <dir> <github|local|gitlab>
 setup_repo() {
   local dir="$1" kind="$2"
   git init -q -b main "$dir"
@@ -67,7 +71,21 @@ setup_repo() {
   git -C "$dir" -c core.hooksPath=/dev/null commit -q -m "chore: files"
   if [[ "$kind" == "github" ]]; then
     git -C "$dir" remote add origin "https://github.com/example/$(basename "$dir").git"
+  elif [[ "$kind" == "gitlab" ]]; then
+    git -C "$dir" remote add origin "https://gitlab.example.com/example/$(basename "$dir").git"
   fi
+}
+
+# stage_merge <repo>: main の上で別のブランチを --no-commit でマージし、MERGE_HEAD のある状態にする
+# （/git-merge で本文の語に拒まれた後や、競合を解決した後の、マージを締める git commit の前の状態）
+stage_merge() {
+  local dir="$1"
+  git -C "$dir" switch -q -c side
+  echo side > "$dir/side.txt"
+  git -C "$dir" add side.txt
+  git -C "$dir" -c core.hooksPath=/dev/null commit -q -m "feat: side"
+  git -C "$dir" switch -q main
+  git -C "$dir" -c core.hooksPath=/dev/null merge -q --no-ff --no-commit side >/dev/null 2>&1
 }
 
 # check <期待 allow|block> <説明> <repo>
@@ -128,9 +146,64 @@ check block "GitHubリモートあり・main・flake.lock と他ファイル" "$
 git -C "$R" switch -q -c feat/x
 check allow "GitHubリモートあり・feature ブランチ" "$R"
 
+git -C "$R" restore -q --staged --worktree -- .
+git -C "$R" switch -q main
+stage_merge "$R"
+check allow "GitHubリモートあり・main・マージを締めるコミット（MERGE_HEAD あり）" "$R"
+git -C "$R" merge --abort
+
 L="$WORK/local"; setup_repo "$L" local
 echo change > "$L/other.txt"; git -C "$L" add other.txt
-check allow "リモートなし・main・通常の変更（PRフロー適用外）" "$L"
+check block "リモートなし・main・通常の変更" "$L"
+
+git -C "$L" restore --staged other.txt; git -C "$L" checkout -q other.txt
+echo '{"nodes":{"a":1}}' > "$L/flake.lock"; git -C "$L" add flake.lock
+check allow "リモートなし・main・flake.lock のみ" "$L"
+git -C "$L" restore --staged flake.lock; git -C "$L" checkout -q flake.lock
+
+check block "リモートなし・main・何もステージしていない" "$L"
+
+stage_merge "$L"
+check allow "リモートなし・main・マージを締めるコミット（MERGE_HEAD あり）" "$L"
+git -C "$L" merge --abort
+
+git -C "$L" switch -q -c feat/x
+echo change > "$L/other.txt"; git -C "$L" add other.txt
+check allow "リモートなし・feature ブランチ" "$L"
+
+# 拒否の文言: どちらの層も、cd の失敗で別のリポジトリにいる場合に気づけるよう、対象のディレクトリを確かめる
+# 修正方法を示す（cd が失敗した形では、PreToolUse の層は対象を誤り、git の層だけが止めることがある）
+git -C "$L" switch -q main
+echo change2 > "$L/other.txt"; git -C "$L" add other.txt
+pre_out=$(cd "$L" && "$WORK/pre-commit" 2>&1) || true
+hook_out=$(cd "$L" && "$HOOK_BIN" pre-tool-use --rule block-main-commit \
+  <<<"$(jq -n '{hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "git commit -m msg"}}')" |
+  jq -r '.hookSpecificOutput.permissionDecisionReason // ""')
+for layer in pre-commit PreToolUse; do
+  if [[ $layer == pre-commit ]]; then text=$pre_out; else text=$hook_out; fi
+  if [[ "$text" == *"対象のディレクトリを確かめる"* && "$text" == *"/git-branch"* ]]; then
+    PASS=$((PASS + 1))
+    echo "✓ 拒否の文言が対象のディレクトリの確認とブランチの作成を示す（$layer）"
+  else
+    FAIL=$((FAIL + 1))
+    echo "✗ 拒否の文言が対象のディレクトリの確認とブランチの作成を示さない（$layer）: $text" >&2
+  fi
+done
+git -C "$L" restore -q --staged --worktree -- other.txt
+
+O="$WORK/gitlab"; setup_repo "$O" gitlab
+echo change > "$O/other.txt"; git -C "$O" add other.txt
+check block "GitHub 以外のリモートだけ・main・通常の変更" "$O"
+
+M="$WORK/master"; setup_repo "$M" local
+git -C "$M" branch -q -m main master
+echo change > "$M/other.txt"; git -C "$M" add other.txt
+check block "リモートなし・master・通常の変更" "$M"
+
+U="$WORK/unborn"
+git init -q -b main "$U"
+echo first > "$U/first.txt"; git -C "$U" add first.txt
+check allow "リモートなし・main・HEAD の無いリポジトリの最初のコミット" "$U"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

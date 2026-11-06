@@ -43,13 +43,15 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); echo "✓ $1"; }
 ng() { FAIL=$((FAIL + 1)); echo "✗ $1"; sed 's/^/    /' "$WORK/out"; }
 
-# repo <name> <file> <初めの中身>: <file> を 1 つコミットした repo を作り、そのパスを出す
+# repo <name> <file> <初めの中身>: <file> を 1 つコミットして feature ブランチに移った repo を作り、そのパスを出す
+# （Claude Code のセッションから実行すると CLAUDECODE=1 を受け継ぎ、main の上では main ガードが先に止める）
 repo() {
   local dir="$WORK/$1"
   git init -q -b main "$dir"
   printf '%s' "$3" >"$dir/$2"
   git -C "$dir" add "$2"
   git -C "$dir" commit -q --no-verify -m "chore: init"
+  git -C "$dir" switch -q -c feat/x
   echo "$dir"
 }
 
