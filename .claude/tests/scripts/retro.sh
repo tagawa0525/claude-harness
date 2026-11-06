@@ -221,6 +221,105 @@ out=$("$EVENTS" "$TEST_ROOT/long.jsonl")
 line=$(grep '^TOOL: ' <<<"$out")
 assert_eq "TOOL: 1 $(printf 'あ%.0s' $(seq 160))" "$line"
 
+# at <timestamp>: 標準入力の行に timestamp を付ける
+at() {
+  jq -c --arg t "$1" '. + {timestamp: $t}'
+}
+
+RANGE_MAIN="$TEST_ROOT/range/s.jsonl"
+mkdir -p "$TEST_ROOT/range/s/subagents"
+{
+  user_text "区間の前の発言" | at 2026-11-05T14:59:59.999Z
+  tool_error "PreToolUse:Bash hook error: 区間の前の拒否" | at 2026-11-05T14:59:59.999Z
+  user_text "区間の始めの発言" | at 2026-11-05T15:00:00.000Z
+  tool_error "PreToolUse:Bash hook error: 区間の拒否" | at 2026-11-05T15:00:00.000Z
+  tool_error "PreToolUse:Bash hook error: 区間の拒否" | at 2026-11-06T02:04:59.999Z
+  user_text "時刻の無い発言"
+  user_text "区間の終わりの発言" | at 2026-11-06T02:05:00.000Z
+} > "$RANGE_MAIN"
+tool_error "PreToolUse:Bash hook error: 区間の拒否" | at 2026-11-05T16:00:00.000Z \
+  > "$TEST_ROOT/range/s/subagents/agent-in.jsonl"
+tool_error "PreToolUse:Bash hook error: サブエージェントの区間の前の拒否" | at 2026-11-05T14:00:00.000Z \
+  > "$TEST_ROOT/range/s/subagents/agent-out.jsonl"
+
+it "session-events: --since と --until で、timestamp が区間 [since, until) に入る行だけを本体とサブエージェントで数える"
+out=$("$EVENTS" --since 2026-11-06T00:00+09:00 --until 2026-11-06T11:05+09:00 "$RANGE_MAIN" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "HOOK: 3 区間の拒否"
+assert_not_contains "$out" "区間の前の拒否"
+assert_eq "USER: 区間の始めの発言" "$(grep '^USER: ' <<<"$out")"
+
+it "session-events: 区間を UTC に直して SINCE: と UNTIL: の行に出す"
+assert_contains "$out" "SINCE: 2026-11-05T15:00:00.000Z"
+assert_contains "$out" "UNTIL: 2026-11-06T02:05:00.000Z"
+
+it "session-events: 区間に行の無いサブエージェントの記録は読まず、TRANSCRIPTS に数えない"
+assert_contains "$out" "TRANSCRIPTS: 2"
+
+it "session-events: Z で書いた区間も、時差つきで書いた区間と同じ行を数える"
+out_z=$("$EVENTS" --since 2026-11-05T15:00Z --until 2026-11-06T02:05:00.000Z "$RANGE_MAIN" 2>&1)
+assert_eq 0 $?
+assert_eq "$out" "$out_z"
+
+it "session-events: --since だけなら、それより後の行をすべて数える"
+out=$("$EVENTS" --since 2026-11-05T15:00Z "$RANGE_MAIN" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "USER: 区間の終わりの発言"
+assert_not_contains "$out" "区間の前の発言"
+assert_not_contains "$out" "UNTIL:"
+
+it "session-events: --until だけなら、それより前の行をすべて数える"
+out=$("$EVENTS" --until 2026-11-06T02:05Z "$RANGE_MAIN" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "USER: 区間の前の発言"
+assert_contains "$out" "HOOK: 1 サブエージェントの区間の前の拒否"
+assert_not_contains "$out" "区間の終わりの発言"
+assert_contains "$out" "TRANSCRIPTS: 3"
+
+it "session-events: 区間を指定したら、timestamp の無い行は数えない"
+assert_not_contains "$out" "時刻の無い発言"
+
+it "session-events: 区間を指定しなければ、timestamp の無い行も含めてすべて数える"
+out=$("$EVENTS" "$RANGE_MAIN" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "USER: 時刻の無い発言"
+assert_contains "$out" "TRANSCRIPTS: 3"
+assert_not_contains "$out" "SINCE:"
+
+it "session-events: 時差の無い区間の端は、どの時間帯か決まらないので失敗する"
+for v in 2026-11-06T00:00 2026-11-06 "2026-11-06 00:00+09:00" yesterday; do
+  out=$("$EVENTS" --since "$v" "$RANGE_MAIN" 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "ERROR:"
+done
+
+it "session-events: 読めない日時の区間の端は失敗する"
+out=$("$EVENTS" --until 2026-13-40T00:00Z "$RANGE_MAIN" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "session-events: since が until より後か同じなら失敗する"
+out=$("$EVENTS" --since 2026-11-06T02:05Z --until 2026-11-06T11:05+09:00 "$RANGE_MAIN" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "session-events: オプションの値が無いか、知らないオプションなら失敗する"
+out=$("$EVENTS" "$RANGE_MAIN" --since 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+out=$("$EVENTS" --from 2026-11-06T00:00Z "$RANGE_MAIN" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+
+it "session-events: 区間を指定したとき、timestamp の形が違う行があれば、形が変わったとみなして失敗する"
+{
+  user_text "発言" | at 2026-11-05T15:00:00.000Z
+  user_text "秒の無い発言" | at 2026-11-05T15:00Z
+} > "$TEST_ROOT/range-format.jsonl"
+out=$("$EVENTS" --since 2026-11-05T14:00Z "$TEST_ROOT/range-format.jsonl" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
 MEMORY_INDEX="$CLAUDE_DIR/skills/retro/scripts/memory-index.sh"
 MEM="$TEST_ROOT/memory"
 mkdir -p "$MEM"
