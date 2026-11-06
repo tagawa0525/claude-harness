@@ -2749,7 +2749,7 @@ done
 
 it "guard-exclusive-slurm: 排他のジョブ中の rebuild は 1 コアの taskset で包んでも deny し、終わるまで待つことを示す"
 # rebuild のビルドは nix-daemon の中で走り、クライアントの taskset を引き継がない（ADR-0041 の「## 変更」）
-for cmd in 'nix-rebuild rebuild' 'nix-rebuild update' '/home/u/.local/bin/nix-rebuild rebuild' '~/.local/bin/nix-rebuild update' \
+for cmd in 'nix-rebuild rebuild' 'nix-rebuild update' '/home/u/.local/bin/nix-rebuild rebuild' './nix-rebuild update' \
   'nix-rebuild rebuild > log 2>&1; echo rc=$?' "bash -c 'nix-rebuild rebuild'" 'taskset -c 3 nix-rebuild rebuild' \
   'nixos-rebuild switch --flake .' 'nixos-rebuild build' 'sudo nixos-rebuild switch --flake ~/nix/nixfiles' \
   'sudo /run/current-system/sw/bin/nixos-rebuild switch --flake /home/u/nix/nixfiles' 'taskset -c 3 sudo nixos-rebuild switch' \
