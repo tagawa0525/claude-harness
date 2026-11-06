@@ -727,6 +727,36 @@ exit 0
     }
 
     #[test]
+    fn denies_message_file_written_through_a_variable_earlier() {
+        // 前段がシェルの変数で書いたパス（値は同じ呼び出しの代入で字面のまま決まる）も、-F の値と同じファイルとして比べる
+        let fake = Fake::new("var-written");
+        std::fs::write(fake.dir.0.join("msg.txt"), "feat: 前の中身\n").unwrap();
+        let d = fake.dir.0.display();
+        for prefix in [
+            format!("S={d}; cat > $S/msg.txt <<'EOF2'\nfeat: a\nEOF2\n"),
+            format!("S={d}; sed -i '1s/.*/feat: b/' $S/msg.txt; "),
+        ] {
+            let cmd = format!("{prefix}git commit -q -F {d}/msg.txt");
+            let r = only_deny(&fake.check(&cmd));
+            assert!(r.contains("分けて"), "{cmd}: {r}");
+        }
+        assert_eq!(fake.seen(), None);
+    }
+
+    #[test]
+    fn denies_message_file_that_an_earlier_command_only_reads() {
+        // 読むだけの前段も、書きうるものと区別しない（本文を直接渡せば通る）
+        let fake = Fake::new("read-earlier");
+        std::fs::write(fake.dir.0.join("msg.txt"), "feat: a\n").unwrap();
+        for prefix in ["test -f msg.txt && ", "cat msg.txt; "] {
+            let cmd = format!("{prefix}git commit -F msg.txt");
+            let r = only_deny(&fake.check(&cmd));
+            assert!(r.contains("分けて"), "{cmd}: {r}");
+        }
+        assert_eq!(fake.seen(), None);
+    }
+
+    #[test]
     fn reads_message_file_that_no_earlier_command_writes() {
         let fake = Fake::new("unwritten");
         std::fs::write(fake.dir.0.join("msg.txt"), "feat: a\n").unwrap();

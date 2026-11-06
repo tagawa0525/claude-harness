@@ -1049,6 +1049,84 @@ mod tests {
         assert_eq!(cs[1].writes, ["out"]);
     }
 
+    /// 最初の `git commit` より前に `path` を引数に取るか書くコマンドの名前。行き先は `/w`
+    fn writer_of(src: &str, path: &str) -> Option<String> {
+        let sh = Shell::parse(src);
+        let commit = sh
+            .commands()
+            .iter()
+            .find(|c| c.git_subcommand().is_some_and(|(sub, _)| sub == "commit"))
+            .unwrap();
+        sh.writer_before(commit, Path::new("/w"), Path::new(path))
+            .map(|c| c.name.clone())
+    }
+
+    #[test]
+    fn writer_before_expands_variables_assigned_literally() {
+        for (src, path, writer) in [
+            (
+                "S=/s; cat > $S/m.txt <<'EOF2'\nx\nEOF2\ngit commit -F /s/m.txt",
+                "/s/m.txt",
+                "cat",
+            ),
+            (
+                "S=/s; sed -i '1s/.*/y/' $S/m.txt; git commit -F /s/m.txt",
+                "/s/m.txt",
+                "sed",
+            ),
+            (
+                "S=\"/s\"; cat > \"${S}/m.txt\" && git commit -F /s/m.txt",
+                "/s/m.txt",
+                "cat",
+            ),
+            // 相対の値は、書くコマンドの行き先からの相対
+            (
+                "S=sub; printf x >> $S/m.txt; git commit -F sub/m.txt",
+                "/w/sub/m.txt",
+                "printf",
+            ),
+        ] {
+            assert_eq!(writer_of(src, path).as_deref(), Some(writer), "{src}");
+        }
+        // 値が決まり、別のパスを指す
+        assert_eq!(
+            writer_of("S=/a; cat > $S/m.txt; git commit -F /s/m.txt", "/s/m.txt"),
+            None
+        );
+        // 単引用符の中の `$S` は字面
+        assert_eq!(
+            writer_of("S=/s; cat > '$S/m.txt'; git commit -F /s/m.txt", "/s/m.txt"),
+            None
+        );
+        assert_eq!(
+            writer_of("cat > '$S/m.txt'; git commit -F x", "/w/$S/m.txt").as_deref(),
+            Some("cat")
+        );
+    }
+
+    #[test]
+    fn writer_before_counts_undecided_expansions_whose_literal_tail_matches() {
+        // 値が決まらない（代入が無い、値が展開を含む、値が 2 つある、ほかの展開）とき、最後の展開の後ろの字面が
+        // パスの末尾に合えば、書きうるものとして数える
+        for src in [
+            "cat > $T/m.txt; git commit -F /s/m.txt",
+            "T=$(mktemp -d); cat > $T/m.txt; git commit -F /s/m.txt",
+            "T=/a; T=/s; cat > $T/m.txt; git commit -F /s/m.txt",
+            "cat > \"$(pwd)/m.txt\"; git commit -F /s/m.txt",
+            "sed -i x ${T:-/s}/m.txt; git commit -F /s/m.txt",
+        ] {
+            assert!(writer_of(src, "/s/m.txt").is_some(), "{src}");
+        }
+        // 字面の末尾が合わないか、展開の後ろに字面が無い
+        for src in [
+            "cat > $T/other.txt; git commit -F /s/m.txt",
+            "git add $FILES; git commit -F /s/m.txt",
+            "echo \"$T\"; git commit -F /s/m.txt",
+        ] {
+            assert_eq!(writer_of(src, "/s/m.txt"), None, "{src}");
+        }
+    }
+
     #[test]
     fn quoted_heredoc_operator_is_a_string() {
         let cs = cmds("echo \"a << b\"; git push origin main");
