@@ -2768,7 +2768,7 @@ done
 
 it "guard-exclusive-slurm: ビルドしない nix-rebuild、nixos-rebuild、home-manager は通す"
 for cmd in 'nix-rebuild' 'nix-rebuild --help' 'home-manager generations' 'home-manager news' 'home-manager --version' \
-  'nixos-rebuild --help' 'nixos-rebuild list-generations' 'nixos-rebuild edit' 'nixos-rebuild dry-build' \
+  'nixos-rebuild --help' 'home-manager switch --help' 'home-manager -h' 'nixos-rebuild list-generations' 'nixos-rebuild edit' 'nixos-rebuild dry-build' \
   'sudo nixos-rebuild switch --rollback' 'nixos-rebuild switch --help' 'nixos-rebuild -h' './scripts/update' 'tools/rebuild' \
   'echo nix-rebuild rebuild' 'grep -n nixos-rebuild modules/home/scripts/nix-rebuild.sh' 'cat modules/home/scripts/nix-rebuild.sh'; do
   out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
