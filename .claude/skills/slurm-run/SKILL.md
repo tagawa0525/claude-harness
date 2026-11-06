@@ -90,10 +90,10 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   使う、「前は同じ入力で X だった」と比べる、依頼の前提に書くときは、取るジョブが、コマンドと中身が同じ排他のジョブかを sacct で確かめる:
 
   ```bash
-  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Start,End,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
+  sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Submit,Start,End,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
   ```
 
-  欄は JobID、JobName、State、Elapsed、Start、End、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
+  欄は JobID、JobName、State、Elapsed、Submit、Start、End、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
   `--exclusive` のジョブ（`slurm-run.sh` は排他のときだけそこに置く。`-c` のジョブは `--cpus-per-task=N` で、その時間は同じ仕事
   なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
   ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
@@ -119,12 +119,16 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
     外れたコミットは、ブランチと reflog が消えた後に gc で消える）
   - `commit=` が無く、ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
     （rebase で外れたコミットの項は黙って消える）
-  - 版を取った時点から `End` の間に reflog の項がある。版を取った時点は、`commit=` のジョブでは投げた時点（sacct の `Submit`）、
-    無いジョブでは `Start`（ジョブは走り始めてから作業ツリーの入力を読み、`dvc repro` のステージは `Start` より後にも読むので、
-    待つ間と走る間のコミットで変わりうる）。ブランチか reflog が消えて、この間を確かめられないときも同じ。worktree が残っていれば、`git -C <worktree> log -g --date=iso-local HEAD` の間の項（ブランチの切り替え、rebase）も見る
+  - 版を取った時点から `End` の間に reflog の項がある。版を取った時点は、`commit=` のジョブでは投げた時点（sacct の `Submit`。
+    ジョブは走り始めてから作業ツリーの入力を読むので、待つ間のコミットも効く）、無いジョブでは `Start`（`dvc repro` のステージは
+    `Start` より後にも入力を読むので、走る間のコミットで変わりうる）。見る reflog はブランチのものと、worktree が残っていれば
+    `git -C <worktree> log -g --date=iso-local HEAD` の項（ブランチの切り替え、rebase）。reflog はコミットしない編集を記録しないので、
+    項が無いことは間に作業ツリーを編集しなかったことを示さない。`commit=` のジョブで、この間の reflog を読めない（ブランチか
+    worktree が消えた、HEAD を切り離して投げた）ときは、版を決められないとはせず、`commit=` のコミットを書いて「投げた後の変化は
+    確かめていない」と添える
   - 入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（`commit=` の `-dirty` と、
     ログの先頭の nix の `Git tree '…' is dirty` はその印）。`-dirty` の無い `commit=` は、投げた時点に追跡しているファイルの
-    変更が無かったことを示す（投げた後に作業ツリーが変わったかは、上の `Submit` から `End` の間の項で見る）。`commit=` の無いジョブで
+    変更が無かったことを示す（投げた後の変化は、上の版を取った時点から `End` の間の項で見る）。`commit=` の無いジョブで
     nix の印が出ないことは変更が無いことを示さない（nix を通らないジョブには出ない）ので、比べた版のコミットを書き、コミットされて
     いない変更の有無は「確かめていない」と添える
   - git で追跡しない deps（`bin/` の実行ファイル、ライブラリなど DVC の出力）で、ジョブが書いてコミットした `dvc.lock` が無い
