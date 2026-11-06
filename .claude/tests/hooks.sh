@@ -1399,6 +1399,16 @@ out=$(run_hook pre-merge-check "touch /nonexistent-dir/body.md && gh pr merge 1 
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "（touch）"
 
+it "pre-merge-check: 読めない --body-file は、先に別の呼び出しで書き、絶対パスで渡すよう示す"
+make_fake_gh_merge 'echo 0' 'echo abc'
+for cmd in "gh pr merge 1 --merge --delete-branch --subject x --body-file $TEST_ROOT/no-such-body.md" \
+  "P=$TEST_ROOT/body.md; gh pr merge 1 --merge --delete-branch --subject x --body-file \"\$P\""; do
+  out=$(run_hook pre-merge-check "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "別の呼び出し"
+  assert_contains "$(reason "$out")" "絶対パス"
+done
+
 it "pre-merge-check: コマンドの文字列だけで拒んだときは、投げ直しの案内を出さない"
 make_fake_gh_merge 'echo 0' 'echo abc'
 out=$(run_hook pre-merge-check "git push && gh pr merge 1 --squash --delete-branch --subject x --body x")
