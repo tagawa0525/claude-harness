@@ -377,6 +377,46 @@ cd "$HOME/github/proj" || exit 1
 CLAUDE_CODE_SESSION_ID=abc-123 "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\ntrial | #1 | 試験の目的 | feat/vera-2g '"$HOME/github/proj claude=abc-123"
 
+it "slurm-run: git の中では、連絡先の場所の後に投げた時点の HEAD の短い hash を commit= で足す"
+mkdir -p "$HOME/github/committed" && cd "$HOME/github/committed" || exit 1
+git init -q -b feat/commit .
+echo a >input.toml
+git add input.toml && git commit -q -m "feat: seed"
+head=$(git rev-parse --short HEAD)
+CLAUDE_CODE_SESSION_ID=abc-123 "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\ntrial | #1 | 試験の目的 | feat/commit '"$HOME/github/committed commit=$head claude=abc-123"
+
+it "slurm-run: 追跡していないファイルだけがあるときは、未コミットの印を付けない"
+echo scratch >untracked.txt
+"$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head"
+assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
+rm untracked.txt
+
+it "slurm-run: 追跡しているファイルに未コミットの変更があれば、hash に -dirty を付ける"
+echo b >input.toml
+"$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
+
+it "slurm-run: ステージしただけの変更も未コミットの変更として -dirty を付ける"
+git add input.toml
+"$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
+git checkout -q HEAD -- input.toml
+
+it "slurm-run: HEAD が切り離されていても、投げた版のコミットを足す"
+git checkout -q --detach
+"$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" $'--comment\ntrial | #1 | 試験の目的 | '"$HOME/github/committed commit=$head"
+git checkout -q feat/commit
+
+it "slurm-run: git の外とコミットの無いリポジトリでは commit= を足さない"
+for dir in "$HOME/github/plain" "$HOME/github/proj"; do
+  cd "$dir" || exit 1
+  "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
+  assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit="
+done
+
 it "slurm-run: r995 以外では NFS の入口の下で投げ、ログは NFS の側に作る"
 rm -rf "$HOME/github/slurm-logs" "$NFS_ENTRY/slurm-logs"
 cd "$NFS_ENTRY/proj" || exit 1
