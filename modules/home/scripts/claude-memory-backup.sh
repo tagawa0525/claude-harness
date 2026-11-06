@@ -48,6 +48,9 @@ backup() {
   # 親を読んでから ref を進めるまでを 1 つずつにする
   exec 9>"$gitdir/memory-backup.lock"
   flock -w 30 9
+  # 以下の git にロックの fd を継がせない。git が起動して残る子（fsmonitor の daemon、detach する保守）が fd を
+  # 持つと、この退避の後もロックが解けず、次の応答の退避が待ちきれずに失敗する
+  git() { command git "$@" 9>&-; }
 
   # 作業ツリーの index でなく一時の index に足す。利用者がステージした変更と、main の HEAD に触らない
   # local にしない: EXIT の trap は関数を抜けた後のサブシェルの終わりに走る
