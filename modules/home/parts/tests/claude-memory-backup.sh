@@ -10,6 +10,7 @@
 #   - 消したメモリは次のツリーから消え、前のコミットから戻せる
 #   - main の HEAD、index（ステージした変更）、作業ツリーは変わらない
 #   - git の hook（グローバルに配る pre-commit、commit-msg など）がどれも失敗する設定でも、CLAUDECODE=1 でもコミットできる
+#   - 親の環境の GIT_DIR などに引かれず、claude-dir のリポジトリにコミットする
 #   - 同時に呼んでも、どちらの変更も失わずに 1 本の履歴になる
 #   - リポジトリでないディレクトリでは、1 行目に理由を書いて 0 でない終了コードで終わる
 #
@@ -101,6 +102,21 @@ printf 'index a3\n' >"$CD/projects/-a/memory/MEMORY.md"
 if CLAUDECODE=1 run "$CD"; then ok "失敗する hook と CLAUDECODE=1 のもとでも成功する"; else ng "失敗する hook のもとで失敗した"; fi
 check "hook のもとでも中身が入る" "index a3" "$(git -C "$CD" show "$REF:projects/-a/memory/MEMORY.md" 2>&1)"
 git -C "$CD" config --unset core.hooksPath
+
+# 親の環境の GIT_DIR、GIT_WORK_TREE、GIT_INDEX_FILE（git の hook や dotfiles の別名から起動したとき）に引かれず、
+# claude-dir のリポジトリにコミットする
+OTHER="$WORK/other"
+mkdir -p "$OTHER"
+git -C "$OTHER" init -q
+printf 'index a4\n' >"$CD/projects/-a/memory/MEMORY.md"
+if GIT_DIR="$OTHER/.git" GIT_WORK_TREE="$OTHER" GIT_INDEX_FILE="$OTHER/.git/index" run "$CD"; then
+  ok "継いだ GIT_DIR などのもとでも成功する"
+else
+  ng "継いだ GIT_DIR などのもとで失敗した"
+fi
+check "継いだ GIT_DIR のもとでも claude-dir に入る" "index a4" \
+  "$(git -C "$CD" show "$REF:projects/-a/memory/MEMORY.md" 2>&1)"
+check "継いだ GIT_DIR の先には ref を作らない" "" "$(git -C "$OTHER" rev-parse -q --verify "$REF" || true)"
 
 # 同時に呼ぶ: 各プロセスの前に別のファイルを足す。最後にロックを取ったプロセスは全部のファイルを読むので、
 # どのプロセスも失敗せずに、最後のツリーに全部が残るかを見る
