@@ -385,12 +385,11 @@ impl Shell {
     /// `cmd` より前に走るコマンド（[`Shell::commands_before`]）のうち、`path` を引数に取るか、出力のリダイレクトで
     /// 書くもの（最初のもの）。引数とリダイレクトの先は、[`Shell::literal_vars`] の変数を展開し、そのコマンドの
     /// 行き先（`base` から [`Shell::target_dir`]）からの相対で比べる。値の決まらない展開を含むものは、最後の
-    /// 決まらない展開の後ろの字面（空でないもの）で `path` が終われば数える（`$TMP/msg.txt`）。引数に取るだけで
-    /// 読むだけのもの（`cat`、`test -f`）も数える
+    /// 決まらない展開の後ろの字面が `/` で始まり、その後ろのパスの要素で `path` が終われば数える（`$TMP/msg.txt`。
+    /// `$VERSION.txt` は `msg.txt` と比べない）。引数に取るだけで読むだけのもの（`cat`、`test -f`）も数える
     pub fn writer_before<'a>(&'a self, cmd: &'a Cmd, base: &Path, path: &Path) -> Option<&'a Cmd> {
         let home = home();
         let vars = self.literal_vars();
-        let path_text = path.to_string_lossy();
         self.commands_before(cmd).find(|c| {
             let dir = self.target_dir(c, base);
             c.args
@@ -398,7 +397,9 @@ impl Shell {
                 .chain(&c.writes)
                 .any(|a| match a.expand(&vars) {
                     Expanded::Known(t) => resolve(&home, &dir, &t) == path,
-                    Expanded::Tail(t) => !t.is_empty() && path_text.ends_with(&t),
+                    Expanded::Tail(t) => t
+                        .strip_prefix('/')
+                        .is_some_and(|rest| !rest.is_empty() && path.ends_with(rest)),
                 })
         })
     }
