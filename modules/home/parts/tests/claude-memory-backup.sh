@@ -12,6 +12,7 @@
 #   - git の hook（グローバルに配る pre-commit、commit-msg など）がどれも失敗する設定でも、CLAUDECODE=1 でもコミットできる
 #   - 親の環境の GIT_DIR などに引かれず、claude-dir のリポジトリにコミットする
 #   - 同時に呼んでも、どちらの変更も失わずに 1 本の履歴になる
+#   - git が起動して残る子にロックを継がせない
 #   - リポジトリでないディレクトリと、メモリのディレクトリが symlink のときは、1 行目に理由を書いて
 #     0 でない終了コードで終わる
 #
@@ -137,6 +138,26 @@ check "一時の index とロックのファイルを残さない" "" \
   "$(find "$(git -C "$CD" rev-parse --absolute-git-dir)" -maxdepth 1 -name 'memory-backup*' ! -name '*.lock' 2>&1)"
 check "HEAD は最後まで変わらない" "$HEAD0" "$(git -C "$CD" rev-parse HEAD)"
 check "ステージした変更は最後まで残る" "$INDEX0" "$(git -C "$CD" diff --cached --name-status)"
+
+# git が起動して残る子（fsmonitor の daemon、detach する保守）にロックの fd を継がせない。継ぐと、退避の後も
+# ロックが解けず、次の応答の退避が 30 秒待って失敗する。fsmonitor の hook からバックグラウンドの sleep を残して確かめる
+FSM="$WORK/fsm"
+mkdir -p "$FSM/projects/-a/memory"
+git -C "$FSM" init -q
+printf '#!/bin/sh\nsleep 60 </dev/null >/dev/null 2>&1 &\necho $! >>"%s"\nexit 1\n' "$WORK/fsmonitor.pids" \
+  >"$WORK/fsmonitor.sh"
+chmod +x "$WORK/fsmonitor.sh"
+git -C "$FSM" config core.fsmonitor "$WORK/fsmonitor.sh"
+printf 'f1\n' >"$FSM/projects/-a/memory/MEMORY.md"
+run "$FSM" || true
+printf 'f2\n' >"$FSM/projects/-a/memory/MEMORY.md"
+if run "$FSM" 2>"$WORK/err"; then
+  ok "残った git の子がロックを持たない"
+else
+  ng "残った git の子がロックを持った: $(head -2 "$WORK/err" | tr '\n' ' ')"
+fi
+check "残った git の子があっても中身が入る" "f2" "$(git -C "$FSM" show "$REF:projects/-a/memory/MEMORY.md" 2>&1)"
+xargs kill <"$WORK/fsmonitor.pids" 2>/dev/null || true
 
 # メモリの無いリポジトリでは、ref を作らずに成功する
 EMPTY="$WORK/empty"
