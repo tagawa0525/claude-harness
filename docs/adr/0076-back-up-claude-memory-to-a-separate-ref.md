@@ -99,10 +99,12 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 - 機密情報の検査（ADR-0015）は退避のコミットに掛からない。`~/.claude` にリモートは無く、`memory-backup` を push する
   手順も無い
 - `~/.claude` の main と、手で管理する `.gitignore` は今のまま。main へのコミットは利用者が行う
-- コミットはメモリが変わった応答ごとに増え、オブジェクトは pack されない loose のまま残る。git の自動の gc
-  （`gc --auto`）はオブジェクトを作る porcelain のコマンド（commit など）だけが呼び（git-gc(1) の DESCRIPTION）、退避が
-  使う `add`、`write-tree`、`commit-tree`、`update-ref` からは走らず、`~/.claude` の main へのコミットもまれ（2026-11-06 に
-  `git count-objects -v` で loose 383、pack 0）。まとめ方は #604 に残す
+- コミットはメモリが変わった応答ごとに増え、オブジェクトは loose で書かれる。退避が使う `add`、`write-tree`、
+  `commit-tree`、`update-ref` は自動の保守を起動しない（git 2.56.0 で `GIT_TRACE=1` に子のコマンドの `run_command` が
+  出ない。2026-11-06）。自動の保守（`git maintenance run --auto`）は一部のコマンドが通常の処理の後に呼ぶもの
+  （git-maintenance(1) の `maintenance.auto`）で、まれな main へのコミットのときに閾値を超えていれば退避のオブジェクトも
+  まとめられうるが、退避からの契機は無い（2026-11-06 の `~/.claude` は `git count-objects -v` で loose 383、pack 0）。
+  まとめ方は #604 に残す
 
 ### 確認
 
