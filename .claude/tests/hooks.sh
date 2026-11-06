@@ -3028,4 +3028,27 @@ for cmd in $'cat <<EOF\nuse <<EOFX here\nEOF\nEOF' $'cat <<EOF\na <<<EOF b\nEOF\
   assert_eq "" "$out"
 done
 
+it "block-nested-heredoc-same-delimiter: 閉じの後のヒアドキュメントの本文の行は、余った閉じにも開きにも数えない"
+# 後ろのコミットの本文の言及は、外側を終わらせた閉じの余りを打ち消さない
+out=$(run_hook block-nested-heredoc-same-delimiter $'python3 - <<\'EOF\'\nscript = """\ncat > f <<EOF\nx\nEOF\necho "$WORK"\n"""\nEOF\ngit commit -m "$(cat <<\'EOF\'\ndocs: mention `cat <<EOF`\nEOF\n)"')
+assert_eq deny "$(decision "$out")"
+# 後ろの Python や Makefile の本文の区切りだけの行（タブで字下げしたものを含む）は、余った閉じではない
+for cmd in $'cat > brief.md <<\'EOF\'\nuse `cat <<\'EOF\' > f`\nEOF\npython3 - <<\'PYEOF\'\ns = s.replace(\'\'\'echo x\nEOF\n\'\'\', \'\')\nPYEOF' \
+  $'cat > a <<EOF\nsee <<EOF\nEOF\nmake -f - <<MK\nall:\n\tEOF\nMK'; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq "" "$out"
+done
+
+it "block-nested-heredoc-same-delimiter: 外側の閉じのつもりの行の後ろの空白と、同じ行の前の here string によらず deny"
+for cmd in $'python3 - <<EOF\ncat > f <<EOF\nx\nEOF\necho "$W/"\nEOF ' \
+  $'cat <<<"$x" >/dev/null; python3 - <<\'EOF\'\ns = """\ncat > f <<EOF\nx\nEOF\necho "$WORK/"\n"""\nEOF'; do
+  out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+
+it "block-nested-heredoc-same-delimiter: 拒否の文言には、本文の中の最後の開きの行を示す"
+out=$(run_hook block-nested-heredoc-same-delimiter $'python3 - <<EOF\n# use cat <<EOF here\ncat > f <<EOF\nx\nEOF\necho "$W/"\nEOF')
+assert_contains "$(reason "$out")" "本文の中: cat > f <<EOF"
+assert_not_contains "$(reason "$out")" "use cat"
+
 finish
