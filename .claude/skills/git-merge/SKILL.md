@@ -104,7 +104,8 @@ git -C [TARGET_WORKTREE] rebase main
 
 - このブランチが足すか直した proposed の ADR（`git diff --name-status main...[branch] -- docs/adr`）
 - `Refs:` の無いコミットや perf などの型のコミットだけが実装した main の ADR（一覧にも diff にも出ないので、実装から見る）
-- 番号を振り直した ADR（一覧から漏れ、前のコミットの `Refs:` の古い番号は main の別の ADR を指しうるので、本文で確かめる）
+- 番号を振り直した ADR（一覧から漏れる。前のコミットの `Refs:` に残る古い番号は main の別の ADR を指しうるので、一覧の ADR が
+  このブランチの実装したものかを本文で確かめてから直す）
 
 どれも無ければ、ここで決めることは無い。あれば ADR ごとに次のどれかを決めてコミットする（確定した ADR の凍結する部分は
 マージの後に「## 変更」でしか直せないため。機械では決められないので hook は止めない）:
@@ -136,7 +137,7 @@ proposed のまま残した ADR は、マージの本文の Impact に番号と�
 
 出力の `LEVEL`（docs/ だけなら medium、他は high）と `WORKTREE`（`TARGET_WORKTREE` と同じ）で `/code-review <LEVEL> <WORKTREE>` を
 回し、指摘に対応してからマージする（引数なしやブランチ名では cwd のリポジトリを見て「指摘なし」と返る。差分が空ならスクリプトが
-止まる）。積み重なったブランチ（`STACKED_ON` が none でない）は `--base <土台のブランチ>` を付ける。
+止まる）。積み重なったブランチ（`STACKED_ON` が none でない）は、`review-level.sh` に `--base <土台のブランチ>` を付ける。
 
 親が回す周は Opus で回す（Opus でない親の周は 1 周の費用が数倍になる）。/code-review は呼んだ側のモデルの fork で走るので、
 親が Opus でなければ Skill で呼ばず、Agent（`model: "opus"`。fork は `model` を無視するので fork でない型にし、description は
@@ -154,6 +155,7 @@ proposed のまま残した ADR は、マージの本文の Impact に番号と�
   抜け道（珍しい git の設定や全体オプションで行き先を変える、pipefail を途中で外す、など作為的な書き方）の指摘は直さず、無いものと
   して打ち切りを決める（hook は境界でなく、塞ぐたびに次の反例が出て周が終わらない。抜け道はモデルの判断と人のレビューに任せる）。
   普通の形を誤って止める指摘は直す
+- 対応しない指摘は、その理由をユーザーに伝える
 
 #### 直す指摘の基準
 
@@ -249,8 +251,6 @@ proposed のまま残した ADR は、マージの本文の Impact に番号と�
 本文に range-diff と main の変更を比べた根拠を書き（ユーザーに判断を任されても「担当が range-diff と main の変更から判断した」と
 書く）、`Reviewed:` に最後の周の HEAD に range-diff で対応する rebase 後の hash を書く（hook は本文の hash と先端だけを照らす）。
 
-対応しない指摘は、その理由をユーザーに伝える。
-
 ### マージコミットメッセージ
 
 `git log --format='%h %s%n%b' main..[branch]` と `git diff --stat main...[branch]` でブランチの内容を把握してから書く:
@@ -288,8 +288,8 @@ Branch: [branch]
 
 ### マージ
 
-必ずマージコミットを作る（GitHub の `--merge` と同じ履歴）。`git merge` は main の worktree から実行する（feature ブランチの
-worktree からでは、ブランチを自分自身にマージして何も起きない）。`DEFAULT_WORKTREE` が none なら、今の worktree で
+必ずマージコミットを作る（GitHub の `--merge` と同じ履歴）。`git merge` は main の worktree から実行する（main の worktree が
+feature ブランチのままだと、ブランチを自分自身にマージして何も起きない）。`DEFAULT_WORKTREE` が none なら、今の worktree で
 `git switch main` してから行う。直前に `git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD`（none なら今の worktree）が main で
 あることを確かめ、違えば止まる:
 
