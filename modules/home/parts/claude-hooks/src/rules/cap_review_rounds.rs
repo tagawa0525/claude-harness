@@ -465,6 +465,26 @@ mod tests {
     }
 
     #[test]
+    fn agent_asking_in_each_written_form_is_denied_at_the_limit() {
+        let r = repo("docs/y", 1);
+        run(&r, &review(&r));
+        run(&r, &review(&r));
+        let wt = r.dir.display();
+        for prompt in [
+            format!("/code-review high {wt} を Skill で呼ぶ。"),
+            format!(
+                "`/code-review high {wt} 焦点: 直した箇所` を Skill ツールで呼んで、結果を返す。"
+            ),
+            format!("\n\n/code-review を Skill で呼び、次の引数で回す: `high {wt}`。"),
+        ] {
+            assert!(
+                denied(&run(&r, &agent(&prompt, Path::new("/")))).is_some(),
+                "{prompt}"
+            );
+        }
+    }
+
+    #[test]
     fn agent_mentioning_code_review_without_asking_for_one_is_ignored() {
         let r = repo("docs/y", 1);
         run(&r, &review(&r));
@@ -480,6 +500,14 @@ mod tests {
             ),
             format!(
                 "/code-review high の 2 周目の指摘を直す: {}",
+                r.dir.display()
+            ),
+            format!(
+                "/code-review high の指摘を直す。先に /gh-pr-review を Skill で呼び、{} で進める",
+                r.dir.display()
+            ),
+            format!(
+                "/code-review の指摘を直す（/code-review は Skill で呼ばず、親が回す）: {}",
                 r.dir.display()
             ),
         ] {
