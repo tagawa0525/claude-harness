@@ -7,10 +7,12 @@ Usage: kept-sentences.py --old <元の版>... --new <今の版>...
 
 規則の文書を縮めるときは、文を消すか、ほかの置き場を指す形に替えるだけにし、残す文の字句を変えない
 （言い換えると、どの項や量に掛かるか（主語、否定、条件）がずれ、レビューの周ごとに食い違いが出る）。
-今の版の文ごとに、元の版の同じ塊（段落、箇条書きの項、見出し、表の行、コードブロックの行）の中の
-部分文字列かを見る。比べる前に空白（行の折り返しと字下げを含む）を除き、箇条書きの印、見出しの #、
-引用の > を除く。文は「。」「？」「！」で切る（括弧の中の「。」でも切る。切った部分はどれも元の
-部分文字列なので、文の数え方で結果は変わらない）。
+文書を塊（段落、箇条書きの項、見出し、表の行、コードブロックの行）に分け、塊を文に切って、今の版の
+文ごとに、元の版に同じ文があるかを見る。部分文字列でなく文の全体で比べるのは、文の頭の条件や、「。」で
+終わらない項目の後ろの限定を落とした文も、元の文の部分文字列になるため。文は括弧と鉤括弧の外の「。」
+「？」「！」と塊の終わりで切る（括弧の中で切ると、切った部分がどれも元の版にあれば、その間を消しても
+見つからない）。比べる前に空白（行の折り返しと字下げを含む）、箇条書きの印、見出しの #、引用の >、
+文の終わりの「。」「？」「！」を除く（地の文の 1 文を箇条書きの項目にしたときの「。」の有無は数えない）。
 
 出力（元に無い文ごと）:
   CHANGED: <今の版のファイル>:<文の始まる行>: <文>
@@ -28,6 +30,8 @@ HEADING = re.compile(r"^\s*#{1,6}\s+")
 QUOTE_MARK = re.compile(r"^\s*>\s?")
 FENCE = re.compile(r"^\s*(```|~~~)")
 SENTENCE_END = "。？！"
+OPEN = "（(「『"
+CLOSE = "）)」』"
 
 
 def blocks(text):
@@ -75,17 +79,23 @@ def squeeze(s):
 
 
 def sentences(block):
-    """塊を文に切り、(文の始まる行番号, 文) を返す"""
+    """塊を括弧の外の文の終わりで切り、(文の始まる行番号, 文) を返す"""
     out = []
     start = None
     buf = ""
+    depth = 0
     for no, line in block:
         part = line.strip()
         for ch in part:
             if start is None:
                 start = no
             buf += ch
-            if ch in SENTENCE_END:
+            if ch in OPEN:
+                depth += 1
+            elif ch in CLOSE:
+                # 対になっていない閉じ括弧（「1)」など）で深さを負にしない
+                depth = max(depth - 1, 0)
+            elif ch in SENTENCE_END and depth == 0:
                 out.append((start, buf))
                 start, buf = None, ""
         if buf and buf[-1].isascii():
@@ -93,6 +103,10 @@ def sentences(block):
     if buf.strip():
         out.append((start, buf))
     return [(no, s.strip()) for no, s in out]
+
+
+def key(sentence):
+    return squeeze(sentence).rstrip(SENTENCE_END)
 
 
 def read(path):
@@ -113,18 +127,16 @@ def main():
     except SystemExit:
         sys.exit(2)
 
-    # 塊の境目を越えて一致させない（別の段落の文をつないだ文を見つけるため）
-    corpus = "\0".join(
-        squeeze("".join(line for _, line in b))
-        for path in args.old
-        for b in blocks(read(path))
-    )
+    # 塊ごとに切るので、別の段落の文をつないだ文は元の版のどの文とも一致しない
+    old = {
+        key(s) for path in args.old for b in blocks(read(path)) for _, s in sentences(b)
+    }
     changed = 0
     for path in args.new:
         for b in blocks(read(path)):
             for no, sentence in sentences(b):
-                key = squeeze(sentence)
-                if key and key not in corpus:
+                k = key(sentence)
+                if k and k not in old:
                     print(f"CHANGED: {path}:{no}: {sentence}")
                     changed += 1
     sys.exit(1 if changed else 0)
