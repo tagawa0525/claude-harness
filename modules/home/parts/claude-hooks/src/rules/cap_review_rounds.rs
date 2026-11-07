@@ -5,15 +5,17 @@
 //!
 //! - 数える呼び出し: Skill の `code-review`。対象は引数の中で最初にある、ディレクトリとして在る絶対パス（無ければ
 //!   hook の cwd）で、その worktree がチェックアウトしているブランチを数える
-//! - 止めるだけの呼び出し: Agent の prompt の、空でない最初の行に `/code-review` があり、その後に在るディレクトリの
-//!   絶対パスがあるもの（親が別のモデルの担当にレビューを頼む形）。数えない（その担当が呼ぶ Skill を数えるので、
+//! - 止めるだけの呼び出し: Agent の prompt の、空でない最初の行が `/code-review` を頼む形（`/code-review <レベル>` か
+//!   `/code-review を Skill で呼`）で、その後に在るディレクトリの絶対パスがあるもの（親が別のモデルの担当にレビューを
+//!   頼む形）。`/code-review` に触れるだけの行（直す依頼、スキルのパス）は見ない。数えない（その担当が呼ぶ Skill を数えるので、
 //!   数えると 1 周が 2 回になる）が、上限に達していれば、担当を起こす前に止める
 //! - 上限: `review-level.sh` の `ROUNDS:`（1 か 3）に記録の周 1 を足し、3 のときはさらに記録の周の後の例外の周 3 を
 //!   足した数（1 なら 2、3 なら 7）。ブランチで担当と親が回した周の合計で数える
 //! - 置き場: リポジトリの共通の git ディレクトリの `claude-review-rounds/<ブランチ名>`（`/` は `%2F`）。1 行が 1 周で、
 //!   回したときの HEAD を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る（rebase の後の周も
-//!   数える規則のため）。既定ブランチの祖先になった HEAD の行は、マージ済みの前のブランチのものとして数えない
-//!   （同じ名前のブランチを作り直したとき）
+//!   数える規則のため）。ブランチの reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして
+//!   数えない（ブランチを消すと reflog も消え、作り直すと新しく始まる。rebase では続く。マージの前に rebase した
+//!   HEAD は既定ブランチの祖先にならないので、祖先かでは見分けられない）
 //! - 呼び出しの結果は見ないので、対象を見つけられなかった回とエラーの回も数える（上限は記録の周と例外の周の分だけ
 //!   余裕がある）
 //!
@@ -26,8 +28,10 @@ use crate::git;
 use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::Shell;
+use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
 
 pub struct CapReviewRounds;
 
@@ -50,15 +54,25 @@ enum Call {
     Ask,
 }
 
+/// /code-review を頼む句（引数のレベルが続くか、「を Skill で呼」が続く）
+static ASK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"/code-review(?:\s+(?:low|medium|high|xhigh|max|ultra)\b|\s*を\s*Skill\s*で呼)")
+        .unwrap()
+});
+
 /// 呼び出しの種類と、対象を探す文字列（/code-review の後ろ）
 fn classify(input: &Input) -> Option<(Call, &str)> {
     match input.tool_name.as_str() {
         "Skill" if input.skill == "code-review" => Some((Call::Review, input.args.as_str())),
         "Agent" => {
             let first = input.prompt.lines().find(|l| !l.trim().is_empty())?;
-            first.find("/code-review")?;
-            let at = input.prompt.find("/code-review")?;
-            Some((Call::Ask, &input.prompt[at + "/code-review".len()..]))
+            let m = ASK.find(first)?;
+            // first は prompt の部分文字列なので、prompt の中の位置に直す
+            let offset = first.as_ptr() as usize - input.prompt.as_ptr() as usize;
+            Some((
+                Call::Ask,
+                &input.prompt[offset + m.start() + "/code-review".len()..],
+            ))
         }
         _ => None,
     }
@@ -121,18 +135,31 @@ fn rounds_of(script: &str, dir: &Path, branch: &str) -> Option<u32> {
     rounds
 }
 
-/// 数の置き場の行のうち、今のブランチのもの（既定ブランチの祖先になった HEAD の行は、マージ済みの同じ名前の
-/// ブランチのものとして除く）
-fn live_rounds(dir: &Path, path: &Path) -> Vec<String> {
+/// ブランチの reflog の最も古い記録の時刻（UNIX 秒）。reflog が無ければ None
+fn branch_created(dir: &Path, branch: &str) -> Option<u64> {
+    let refname = format!("refs/heads/{branch}");
+    let out = git::git(
+        dir,
+        &["reflog", "show", "--date=unix", "--format=%gd", &refname],
+    )?;
+    // 行は `refs/heads/<branch>@{<UNIX 秒>}`。最後の行が最も古い
+    let last = out.lines().last()?;
+    last.rsplit_once("@{")?.1.strip_suffix('}')?.parse().ok()
+}
+
+/// 数の置き場の行のうち、今のブランチのもの（ブランチの reflog の最も古い時刻より前の行は、消した前の同じ名前の
+/// ブランチのものとして除く。reflog が無ければ全部を数える）
+fn live_rounds(dir: &Path, branch: &str, path: &Path) -> Vec<String> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
-    let default = git::default_branch(dir);
+    let created = branch_created(dir, branch);
     text.lines()
         .filter(|l| !l.trim().is_empty())
         .filter(|l| {
-            let head = l.split_whitespace().next().unwrap_or("");
-            !default
-                .as_deref()
-                .is_some_and(|d| git::git(dir, &["merge-base", "--is-ancestor", head, d]).is_some())
+            let at: Option<u64> = l.split_whitespace().nth(1).and_then(|t| t.parse().ok());
+            match (created, at) {
+                (Some(c), Some(t)) => t >= c,
+                _ => true,
+            }
         })
         .map(str::to_string)
         .collect()
@@ -183,7 +210,7 @@ impl CapReviewRounds {
         };
         let state_dir = Path::new(&common).join(STATE_DIR);
         let path = state_dir.join(state_file_name(&branch));
-        let mut lines = live_rounds(&dir, &path);
+        let mut lines = live_rounds(&dir, &branch, &path);
         let limit = limit(rounds);
         if lines.len() >= limit as usize {
             return vec![Finding::Deny(deny_reason(
