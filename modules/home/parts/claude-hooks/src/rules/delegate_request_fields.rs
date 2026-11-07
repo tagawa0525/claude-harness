@@ -1,6 +1,6 @@
 //! delegate-request-fields: /delegate を呼ぶ Agent の依頼に、定型の 6 つの欄がそろっているかを確かめる
 //!
-//! 依頼の定型（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）は、事実を「前提」の欄に
+//! 依頼の定型（~/.claude/skills/delegate/references/requesting.md）は、事実を「前提」の欄に
 //! 1 行ずつ分けて書かせる。欄が欠けると、書く側は出典を開いたかを見返せず、受ける側は本文から事実を拾い出す。
 //! 欄の有無は依頼の文字列だけで決まるので、送る前にここで判定する。
 //!
@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 
 pub struct DelegateRequestFields;
 
-/// 定型の欄の名前（SKILL.md の定型の見出しと同じ順）
+/// 定型の欄の名前（references/requesting.md の定型の見出しと同じ順）
 const FIELDS: [&str; 6] = [
     "リポジトリ",
     "ブランチ",
@@ -154,7 +154,7 @@ impl Rule for DelegateRequestFields {
         if !missing.is_empty() {
             findings.push(Finding::Deny(format!(
                 "/delegate を呼ぶ依頼に定型の欄がそろっていません（{place}）。欠けた欄: {}\n\
-                 依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/SKILL.md の「頼む側（親のセッション）の書き方」）。\n\
+                 依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/references/requesting.md）。\n\
                  判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`。括弧の中に出典の括弧を 1 段まで入れられます）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
                  修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt の 1 行目に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
                 missing.join("、"),
