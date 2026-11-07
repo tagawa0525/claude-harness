@@ -23,7 +23,7 @@
 #                              指摘の数が収束の目安にならない
 #
 # 「文書」は、凍結せずマージの後も直せるので周を重ねて取り切るより後で直す方が安いもの:
-#   - docs/ の下の、ADR（docs/adr/NNNN-*.md）でないファイル（issue、計画、説明の文書）
+#   - docs/ の下の、ADR（docs/adr/NNNN-*.md）でない .md（issue、計画、説明の文書。docs/ の下のパッチなどは入らない）
 #   - 規則の文書: どこかの .claude/ の下の .md（スキルの文書、hook の一覧）と、どこにある CLAUDE.md と SKILL.md も
 #     （claude-hooks の check-merge-review の is_plain_document が挙動に数える文書と同じ）
 #   - 既存の ADR の「## 変更」の節より後だけを変えるもの（決定と理由などの凍結する節や、フロントマターを
@@ -139,7 +139,7 @@ is_document() {
   local path=$1
   case "$path" in
     docs/adr/[0-9][0-9][0-9][0-9]-*.md) adr_change_section_only "$path" ;;
-    docs/*) return 0 ;;
+    docs/*.md) return 0 ;;
     .claude/*.md | */.claude/*.md | CLAUDE.md | */CLAUDE.md | SKILL.md | */SKILL.md) return 0 ;;
     *) return 1 ;;
   esac
