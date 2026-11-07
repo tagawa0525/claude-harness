@@ -571,7 +571,7 @@ mod tests {
         )
     }
 
-    const FINDINGS: &str = "- 再現: `a_test` — 境界の誤り\n- 再現なし → #12: 効率";
+    const FINDINGS: &str = "- 再現: `a_test` — 境界の誤り\n- 再現なし: 効率";
 
     fn denies(findings: &[Finding]) -> Vec<String> {
         findings
@@ -735,10 +735,12 @@ mod tests {
             "レビューは 3 周（再現: `a_test`）",
             "- 再現:",
             "- 再現なし → 効率",
+            "- 再現なし:",
+            "- 再現なし: ",
             "- 前提が誤り:",
         ] {
             let r = only_deny(&repo.check_body(&body(&tip, findings)));
-            assert!(r.contains("再現なし → #"), "{findings}: {r}");
+            assert!(r.contains("再現なし: <指摘の要旨>"), "{findings}: {r}");
             assert!(r.contains("指摘なし"), "{findings}: {r}");
         }
     }
@@ -750,6 +752,7 @@ mod tests {
         for findings in [
             "再現: `a_test`",
             "- 再現なし → #0190: 効率",
+            "- 再現なし: 効率（呼び出しごとに読み直す）",
             "* 前提が誤り: 関数は既に検査している",
             "  - 抜け道: 作為的な書き方",
             "指摘なし",
