@@ -10,6 +10,7 @@ allowed-tools:
   - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/base-moved.sh*)
+  - Bash(~/.claude/scripts/quote-in-transcript.sh*)
   - Bash(~/.claude/scripts/slurm-run.sh*)
   - Bash(squeue*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
@@ -240,36 +241,14 @@ cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
   ADR、issue、報告に引用として書く前に、記録に同じ文があるかを下のコマンドで確かめる（親の言い換えを括った引用をコピーすると、
   ユーザーの発言として確定した ADR に残る）。パスと `timestamp` の無い「」は、ユーザーの言葉と書いてあっても引用として扱わず、
   要約として書く。記録にはツールの結果、ほかの担当の報告、圧縮の要約、コマンドの出力、IDE の通知、貼り付けた文も入るので、
-  `grep` では確かめにならない。コマンドはユーザーが打った発言（`type` が `user` で `origin.kind` が `human` の行と、ターンの途中に
-  送った `queued_command` の行）だけを読む（`origin` の無い `user` の行の発言は拾わないので、その引用は要約に落ちる）。引用の文を
+  `grep` では確かめにならない（コマンドが読む発言の種類は script の先頭のコメント）。引用の文を
   「…」の印を含めて（括る「」は入れずに）1 つのファイルに書いて渡す（シェルの引用符と食い違わないため）:
 
   ```bash
-  jq -rR --rawfile q <引用の文のファイル> '
-    ($q | rtrimstr("\n")) as $q
-    | ($q | split("…") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $parts
-    | if $parts == [] then "引用の文が空\n" | halt_error(1) else . end
-    | def text_of:
-        (if type == "string" then [.] elif type == "array" then map(select(.type? == "text") | .text) else [] end)
-        | map(gsub("<pasted_content[^>]*>.*?</pasted_content[^>]*>"; ""; "m")
-              | if test("<command-args>") then capture("<command-args>(?<a>.*?)</command-args>"; "m").a
-                elif test("^\\s*<") then empty else . end)
-        | join("\n");
-      def in_order($s): reduce $parts[] as $p ($s; if . == null then null
-        else split($p) as $x | if ($x | length) < 2 then null else ($x[1:] | join($p)) end end) != null;
-      fromjson? | select(type == "object")
-      | (if .type == "user" and .origin.kind? == "human" then .message.content
-         elif .type == "attachment" and .attachment.type? == "queued_command"
-           and (.attachment.commandMode // "prompt") == "prompt"
-           and (.attachment.origin.kind? // "human") == "human" then .attachment.prompt
-         else empty end | text_of) as $t
-      | select($t | in_order(.))
-      | "\(input_filename) \(.timestamp) \(.timestamp[0:19] + "Z" | fromdate + 32400 | strftime("%Y-%m-%d %H:%M JST"))\n\($t)\n---"
-  ' <記録の .jsonl>
+  ~/.claude/scripts/quote-in-transcript.sh <引用の文のファイル> <記録の .jsonl>
   ```
 
-  出力は、引用を「…」で切った部分がどれも同じ順に出る発言ごとの、記録のパス、`timestamp`、JST の日時と全文（`-R` と
-  `fromjson?` は、書きかけの行で止まらないため）。添えられた `timestamp` の発言が出て、引用の両端が全文の文の区切り（「。」「？」
+  出力は、引用を「…」で切った部分がどれも同じ順に出る発言ごとの、記録のパス、`timestamp`、JST の日時と全文。添えられた `timestamp` の発言が出て、引用の両端が全文の文の区切り（「。」「？」
   「！」、改行、発言の端）か「…」の印に当たれば、引用として書く（文の途中で切って印の無い引用は、後半の条件や否定を落としうる）。
   満たさないとき、記録が添えられていない、読めない、消えている（Claude Code は古い記録を消す）ときは、括らず要約として書き、
   食い違いを報告の「確認の結果」の「前提」に書く
