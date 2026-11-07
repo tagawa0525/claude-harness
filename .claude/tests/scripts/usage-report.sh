@@ -113,8 +113,13 @@ it "usage-report: 文脈の書き直し（25 万トークンを超える書き�
 assert_contains "$out" "REWRITES: 2 回 \$8.00"
 
 it "usage-report: 区間の中のマージを --first-parent で数え、マージ 1 本あたりの費用を出す"
-assert_contains "$out" "MERGES: 2 $REPO HEAD"
+assert_contains "$out" "MERGES: 2 $REPO main"
 assert_contains "$out" "PER_MERGE: \$5.09（マージ 2 本）"
+
+it "usage-report: リモートの無いリポジトリは、worktree を渡しても主の worktree のブランチのマージを数える"
+git -C "$REPO" worktree add -q -b feature "$TEST_ROOT/repo-feature" a
+out=$("$REPORT" "${RANGE[@]}" --repo "$TEST_ROOT/repo-feature" "$MAIN" 2>&1)
+assert_contains "$out" "MERGES: 2 $TEST_ROOT/repo-feature main"
 
 it "usage-report: origin/HEAD のあるリポジトリは origin/HEAD のマージを数える"
 make_remote "$REPO"
@@ -140,6 +145,48 @@ it "usage-report: 記録を省くと CLAUDE_CODE_SESSION_ID の記録を探す"
 out=$(CLAUDE_CODE_SESSION_ID=$SESSION "$REPORT" "${RANGE[@]}" 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "TRANSCRIPT: $MAIN"
+
+# 依頼文の書き方によらず、呼んだスキルと /code-review の印で区分を決める（別のセッション）
+SESSION2=22222222-3333-4444-5555-666666666666
+SUB2="$PROJECT/$SESSION2/subagents"
+mkdir -p "$SUB2"
+{
+  user_text "始める"
+  reply q1 2026-11-07T01:00:00.000Z claude-fable-5-1 0 0 0 0 0
+} >"$PROJECT/$SESSION2.jsonl"
+# skill_call <id> <timestamp> <skill>: Skill ツールでスキルを呼ぶ応答（使用量は出力 1000 トークン）
+skill_call() {
+  jq -cn --arg id "$1" --arg ts "$2" --arg s "$3" '
+    {type: "assistant", timestamp: $ts,
+     message: {id: $id, model: "claude-opus-5-5", role: "assistant",
+       content: [{type: "tool_use", id: "u", name: "Skill", input: {skill: $s}}],
+       usage: {input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1000,
+         cache_creation: {ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0},
+         service_tier: "standard", inference_geo: "global", speed: "standard"}}}'
+}
+{
+  user_text '最初に Skill ツールで `retro` を呼び、その手順に従って進める。'
+  skill_call k1 2026-11-07T02:00:00.000Z retro
+} >"$SUB2/agent-retro-skill.jsonl"
+{
+  # /delegate を呼ぶ依頼文の後ろに /retro の語があっても担当
+  user_text "最初に /delegate を呼び、その手順に従って進める。/retro の手順を直す。"
+  skill_call k2 2026-11-07T02:00:00.000Z delegate
+} >"$SUB2/agent-delegate-skill.jsonl"
+{
+  # 依頼文が Review target: で始まらない /code-review（meta の description で見分ける）
+  user_text '`high effort → 8 inline angles`'
+  reply k3 2026-11-07T02:00:00.000Z claude-opus-5-5 0 0 0 0 1000
+} >"$SUB2/agent-old-review.jsonl"
+echo '{"agentType":"general-purpose","description":"/code-review high /w/repo","name":"code-review"}' \
+  >"$SUB2/agent-old-review.meta.json"
+
+it "usage-report: 区分は、最初に呼んだスキル（retro か delegate）と /code-review の meta で決める"
+out=$("$REPORT" "${RANGE[@]}" "$PROJECT/$SESSION2.jsonl" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "COST: 振り返り 1 本 \$0.02"
+assert_contains "$out" "COST: 担当 1 本 \$0.02"
+assert_contains "$out" "COST: レビュー 1 本 \$0.02"
 
 it "usage-report: 時差の無い日時は失敗にする"
 out=$("$REPORT" --since 2026-11-07T00:00 "$MAIN" 2>&1)
