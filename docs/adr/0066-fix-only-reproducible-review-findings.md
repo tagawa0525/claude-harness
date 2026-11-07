@@ -324,9 +324,11 @@ Copilot の周の回数は書かないまま）が加わる。どちらの ADR �
     消え、rebase では続く。最初の版は既定ブランチの祖先になった HEAD の行を除いたが、マージの前に rebase した HEAD は祖先に
     ならず、前の行が新しいブランチに残るとレビューで指摘された）
   - `review-level.sh` の文書は docs/ の下の .md に限る（docs/ の下のパッチなど挙動を変えるファイルを 1 周にしない）。
-    /code-review を頼む Agent は、最初の行で `/code-review` の後に `Skill で呼` が続くものだけを見る（`/code-review` に触れる
-    だけの直す依頼を上限で止めない。`/code-review <レベル>` の形も見た版は、「/code-review high の指摘を直す」に当たると
-    レビューで指摘された）
+    /code-review を頼む Agent は、空でない最初の行で `/code-review`（と ASCII の引数、または `` ` `` で囲んだ呼び出し）の後に
+    「を Skill で呼び」などが続くものだけを見る（`/code-review` に触れるだけの直す依頼を上限で止めない）。レビューで作り直した
+    前の版: 最初の行に `/code-review` があれば当てる版は、直す依頼とスキルのパスに当たった。`/code-review <レベル>` の形も
+    当てる版は「/code-review high の指摘を直す」に、`/code-review` の後のどこかに「Skill で呼」があれば当てる版は、同じ行で
+    別のスキルを Skill で呼ぶ依頼と「Skill で呼ばず」に当たった
   - hook は `ROUNDS` を、スキルが呼ぶのと同じ `review-level.sh`（package.nix が store に置く）から読む。分け方を Rust に
     書き直すと、判定が 2 か所になってずれる
   - `ROUNDS` が 1 のブランチで、記録の周の (c) の直しをマージの hook が通さないとき（リモートなしの ADR の直し、リモートありの
