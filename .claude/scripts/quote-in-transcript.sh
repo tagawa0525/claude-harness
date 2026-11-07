@@ -23,7 +23,7 @@
 set -euo pipefail
 
 if (($# < 2)); then
-  sed -n '3,7p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '3,8p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 fi
 quote=$1
@@ -39,7 +39,14 @@ for log in "$@"; do
   fi
 done
 
-# -R と fromjson? は、書きかけの行（記録は書き足されている途中のことがある）で止まらないため
+# 空の引用は、記録の行が無くても止める（下の jq は記録の行ごとに確かめるので、空の記録では止まらない）
+if ! jq -ne --rawfile q "$quote" '$q | rtrimstr("\n") | split("…") | map(gsub("^\\s+|\\s+$"; "")) | any(. != "")' >/dev/null; then
+  echo "引用の文が空" >&2
+  exit 2
+fi
+
+# -R と fromjson? は、書きかけの行（記録は書き足されている途中のことがある）で止まらないため。-- は、
+# ~/.claude/projects の下の - で始まる相対パスを jq がオプションと読まないため
 out=$(jq -rR --rawfile q "$quote" '
   ($q | rtrimstr("\n")) as $q
   | ($q | split("…") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $parts
@@ -60,7 +67,7 @@ out=$(jq -rR --rawfile q "$quote" '
        else empty end | text_of) as $t
     | select($t | in_order(.))
     | "\(input_filename) \(.timestamp) \(.timestamp[0:19] + "Z" | fromdate + 32400 | strftime("%Y-%m-%d %H:%M JST"))\n\($t)\n---"
-' "$@")
+' -- "$@")
 if [[ -z "$out" ]]; then
   exit 1
 fi
