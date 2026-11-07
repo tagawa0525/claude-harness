@@ -179,8 +179,8 @@ Copilot の周の回数は書かないまま）が加わる。どちらの ADR �
 
 - /git-merge の「レビュー」の節に、直す主体（親か新しい担当）、文書だけのブランチの 1 周、例外の周の 3 周、親の周を Opus で
   回すという規則があること（2026-11-08 の変更）
-- `review-level.sh` が `ROUNDS:` を出し、claude-hooks の cap-review-rounds がその上限で /code-review の Skill の呼び出しと、
-  /code-review を頼む Agent の呼び出しを止めること。/git-merge の「レビュー」の節と /delegate の手順 7 は周の数を書かず、
+- `review-level.sh` が `ROUNDS:` を出し、claude-hooks の cap-review-rounds がその上限で /code-review の Skill の呼び出しを
+  止め、Agent の呼び出しは見ないこと。/git-merge の「レビュー」の節と /delegate の手順 7 は周の数を書かず、
   スクリプトと hook を指すこと（2026-11-08 の歯止めの置き場の変更）
 - /git-merge の「レビュー」の節に、直す指摘の基準、終わり、歯止め、non-blocking の扱いが 1 か所にあること
 - /delegate（手順 7 と「作業中の規則」）、/gh-pr-create（「ローカルレビュー（PR を出す前）」）と /gh-pr-review
@@ -316,21 +316,26 @@ Copilot の周の回数は書かないまま）が加わる。どちらの ADR �
   この変更の担当が決めたこと（親の依頼が判定の方法を任せた）:
   - 担当と親の周を合計で数える。前は担当と親がそれぞれ 3 周だったが、hook は呼び出しの主を見分けない（親の周も Agent が起動した
     担当の Skill の呼び出しで、担当の周と同じ形）。合計の上限は 3 + 記録の周 + 例外の周 3 で 7
-  - 数えるのは Skill の `code-review` だけで、/code-review を頼む Agent は数えずに上限で止める。両方を数えると、親の 1 周
-    （Agent が起動した担当の Skill）が 2 回になる
+  - 数えるのは Skill の `code-review` だけ。/code-review を頼む Agent も数えると、親の 1 周（Agent が起動した担当の Skill）が
+    2 回になる
   - 数の置き場は共通の git ディレクトリ（`claude-review-rounds/<ブランチ名>`）。worktree の git ディレクトリの下に置くと、
     worktree を消して作り直した続きで数が消える。rebase で HEAD が変わっても数は残し（rebase の後の周も数える規則のため）、
     ブランチの reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして数えない（ブランチを消すと reflog も
     消え、rebase では続く。最初の版は既定ブランチの祖先になった HEAD の行を除いたが、マージの前に rebase した HEAD は祖先に
     ならず、前の行が新しいブランチに残るとレビューで指摘された）
-  - `review-level.sh` の文書は docs/ の下の .md に限る（docs/ の下のパッチなど挙動を変えるファイルを 1 周にしない）。
-    /code-review を頼む Agent は、空でない最初の行で `/code-review`（と ASCII の引数、または `` ` `` で囲んだ呼び出し）の後に
-    「を Skill で呼び」などが続くものだけを見る（`/code-review` に触れるだけの直す依頼を上限で止めない）。レビューで作り直した
-    前の版: 最初の行に `/code-review` があれば当てる版は、直す依頼とスキルのパスに当たった。`/code-review <レベル>` の形も
-    当てる版は「/code-review high の指摘を直す」に、`/code-review` の後のどこかに「Skill で呼」があれば当てる版は、同じ行で
-    別のスキルを Skill で呼ぶ依頼と「Skill で呼ばず」に当たった
+  - `review-level.sh` の文書は docs/ の下の .md に限る（docs/ の下のパッチなど挙動を変えるファイルを 1 周にしない）
   - hook は `ROUNDS` を、スキルが呼ぶのと同じ `review-level.sh`（package.nix が store に置く）から読む。分け方を Rust に
     書き直すと、判定が 2 か所になってずれる
   - `ROUNDS` が 1 のブランチで、記録の周の (c) の直しをマージの hook が通さないとき（リモートなしの ADR の直し、リモートありの
     docs/ の外を含む PR の直し）は、ユーザーに判断を求める。前の文書だけのブランチ（docs/ の下の issue と計画）では起きなかったが、
     規則の文書を足すと、直した head に記録の周も例外の周も回せない（hook の上限）のにマージの hook が止める
+
+  親が決めたこと: hook は Agent の prompt を見ない。試して捨てた形: /code-review を頼む Agent を、数えずに上限で止める判定
+  （担当を起こす前に止めるため）。空でない最初の行を正規表現で見て、`/code-review`（と ASCII の引数、または `` ` `` で囲んだ
+  呼び出し）の後に「を Skill で呼び」「を Skill ツールで呼ぶ」などが続き、その後にディレクトリの絶対パスがあるものを当てた。
+  レビューの周ごとに作り直し、毎回、新しい誤検出か見落としが出た: 最初の行に `/code-review` があれば当てる版は直す依頼と
+  スキルのパスに、`/code-review <レベル>` の形も当てる版は「/code-review high の指摘を直す」に、`/code-review` の後のどこかに
+  「Skill で呼」があれば当てる版は同じ行で別のスキルを Skill で呼ぶ依頼と「Skill で呼ばず」に当たり、最後の版（「を Skill で
+  呼(び|ぶ|んで)」まで見る）も記録の周で「`/code-review high /wt` を Skill で呼びません」「…を Skill で呼ぶ必要はない」に当たった
+  （否定を語尾の後で書く文は、語尾の手前までの照合では見分けられない）。上限は担当が呼ぶ Skill の呼び出しで守れ、Agent を見て
+  省けるのは上限に達した後の担当 1 本の起動だけなので、自然文の判定の誤検出（レビューを頼まない依頼を止める）に見合わない
