@@ -14,9 +14,9 @@ Usage: usage-report.py [--since <日時>] [--until <日時>] [--repo <リポジ�
 
 記録の隣の <セッション>/subagents/*.jsonl（サブエージェントの記録）も読む。サブエージェントの区分は
 次で決める: 最初の依頼文が `Review target:` で始まるか（/code-review が渡す依頼文）、隣の .meta.json の
-description が `/code-review` で始まれば レビュー。最初に呼んだ retro か delegate のスキル（Skill ツールか、
-その SKILL.md の Read）が retro なら 振り返り。どちらも呼んでいなければ依頼文の最初の `/<スキル> を` が retro なら
-振り返り。ほかは 担当。区間に応答の無い記録は数えない。
+name が `code-review` で始まれば（/code-review が付ける名前。`code-review-2` など） レビュー。最初に読み込んだ
+スキル（Skill ツールで呼ぶか、skills/<名前>/SKILL.md を Read か Bash で読む）が retro なら 振り返り。スキルを
+読み込んでいなければ依頼文の最初の `/<スキル> を` が retro なら 振り返り。ほかは 担当。区間に応答の無い記録は数えない。
 
 出力:
   TRANSCRIPT: <path>
@@ -119,7 +119,7 @@ def text_of(content):
 
 
 def read_transcript(path, since, until):
-    """(最初の依頼文, 最初に呼んだ retro か delegate のスキル, [(時刻, 費用, トークンの dict, 書き込み)]) を返す"""
+    """(最初の依頼文, 最初に読み込んだスキル, [(時刻, 費用, トークンの dict, 書き込み)]) を返す"""
     prompt = None
     skill = None
     seen = set()
@@ -155,19 +155,20 @@ def read_transcript(path, since, until):
 
 
 def invoked_skill(content):
-    """応答が retro か delegate のスキルを Skill ツールで呼ぶか、その SKILL.md を Read で読めば、その名前"""
+    """応答がスキルを Skill ツールで呼ぶか、skills/<名前>/SKILL.md を Read か Bash で読めば、その名前"""
     for block in content if isinstance(content, list) else []:
         if not isinstance(block, dict) or block.get("type") != "tool_use":
             continue
         args = block.get("input") or {}
-        if block.get("name") == "Skill" and args.get("skill") in ("retro", "delegate"):
+        if block.get("name") == "Skill" and args.get("skill"):
             return args["skill"]
-        if block.get("name") == "Read":
-            read = re.search(
-                r"skills/(retro|delegate)/SKILL\.md$", args.get("file_path") or ""
-            )
-            if read:
-                return read.group(1)
+        # 自動モードの担当は、ファイルを Read でなく Bash の cat や sed で読む
+        text = {"Read": args.get("file_path"), "Bash": args.get("command")}.get(
+            block.get("name")
+        )
+        read = re.search(r"skills/([\w:-]+)/SKILL\.md", text or "")
+        if read:
+            return read.group(1)
     return None
 
 
@@ -207,10 +208,10 @@ def price_reply(path, model, u):
     return cost, tokens, (write, rewrite_cost)
 
 
-def kind_of(prompt, skill, description):
+def kind_of(prompt, skill, name):
     # 依頼文は親が書くので形がそろわない（「/retro を」「`retro` を Skill で」「（/retro）を行って」）。依頼文の語でなく、
-    # 担当が実際に呼んだスキルで分け、スキルを呼ばずに進めた記録だけ依頼文の「/<スキル> を」で分ける
-    if prompt.startswith("Review target:") or description.startswith("/code-review"):
+    # 担当が最初に読み込んだスキルで分け、スキルを読み込まずに進めた記録だけ依頼文の「/<スキル> を」で分ける
+    if prompt.startswith("Review target:") or name.startswith("code-review"):
         return "レビュー"
     if skill is None:
         named = re.search(r"/([\w:-]+) を", prompt)
@@ -218,14 +219,15 @@ def kind_of(prompt, skill, description):
     return "振り返り" if skill == "retro" else "担当"
 
 
-def meta_description(path):
-    """サブエージェントの記録の隣の .meta.json の description（Agent に渡した description。/code-review は
-    `/code-review <レベル> <対象>`）。meta の無い記録は空"""
+def meta_name(path):
+    """サブエージェントの記録の隣の .meta.json の name（/code-review が起動したものは `code-review`、
+    `code-review-2` など）。親が自由に書く description は「/code-review の指摘を直す」のような担当にも付くので見ない。
+    meta や name の無い記録は空"""
     meta = path.removesuffix(".jsonl") + ".meta.json"
     if not os.path.exists(meta):
         return ""
     with open(meta, encoding="utf-8") as f:
-        return json.load(f).get("description") or ""
+        return json.load(f).get("name") or ""
 
 
 def main_branch(repo):
@@ -314,7 +316,7 @@ def report(args):
         prompt, skill, replies = read_transcript(path, since, until)
         if not replies:
             continue
-        kind = kind_of(prompt, skill, meta_description(path))
+        kind = kind_of(prompt, skill, meta_name(path))
         add(kind, replies)
         ctx = max(
             t["input"] + t["write_5m"] + t["write_1h"] + t["read"]
