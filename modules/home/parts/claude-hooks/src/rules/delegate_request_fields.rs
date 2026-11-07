@@ -294,6 +294,18 @@ mod tests {
     }
 
     #[test]
+    fn missing_fields_reason_points_to_the_requester_guide() {
+        // 依頼の定型は親だけが読む references/requesting.md にあり、担当の読む SKILL.md には無い
+        let prompt = COMPLETE.replace("完成の形: テストが通る\n", "");
+        let reason = deny_reason(&check(&prompt)).to_string();
+        assert!(
+            reason.contains("~/.claude/skills/delegate/references/requesting.md"),
+            "{reason}"
+        );
+        assert!(!reason.contains("SKILL.md"), "{reason}");
+    }
+
+    #[test]
     fn heading_must_start_the_line_and_be_followed_by_a_colon() {
         // 箇条書きの中の語や、コロンの無い語は見出しとして数えない
         let prompt = COMPLETE.replace("前提:\n", "- 前提: なし\n前提は下のとおり\n");
