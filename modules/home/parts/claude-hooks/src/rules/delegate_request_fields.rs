@@ -113,8 +113,8 @@ impl Rule for DelegateRequestFields {
         "delegate-request-fields"
     }
 
-    fn tool(&self) -> &'static str {
-        "Agent"
+    fn tools(&self) -> &'static [&'static str] {
+        &["Agent"]
     }
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {

@@ -7,9 +7,9 @@ use crate::shell::{Escape, Shell};
 pub trait Rule: Sync {
     fn name(&self) -> &'static str;
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding>;
-    /// 検査する Claude Code のツールの名前（hook の入力の tool_name）
-    fn tool(&self) -> &'static str {
-        "Bash"
+    /// 検査する Claude Code のツールの名前（hook の入力の tool_name）の並び
+    fn tools(&self) -> &'static [&'static str] {
+        &["Bash"]
     }
     /// ルール全体を外すエスケープの名前。`check` の結果に `apply_escape` で当てる（ADR-0023）。
     /// 検査ごとに別のエスケープを持つルールは None を返し、`check` の中で当てる
@@ -80,6 +80,7 @@ mod block_main_commit;
 mod block_nested_heredoc_same_delimiter;
 mod block_no_verify;
 mod block_secret_commit;
+mod cap_review_rounds;
 mod check_commit_message;
 mod check_merge_body_ja_terms;
 mod check_merge_review;
@@ -129,6 +130,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_exclusive_slurm::GuardExclusiveSlurm,
         &block_nested_heredoc_same_delimiter::BlockNestedHeredocSameDelimiter,
         &delegate_request_fields::DelegateRequestFields,
+        &cap_review_rounds::CapReviewRounds,
     ]
 }
 
@@ -145,7 +147,7 @@ pub fn for_tool(tool_name: &str) -> Vec<&'static dyn Rule> {
     all()
         .iter()
         .copied()
-        .filter(|r| r.tool() == tool_name)
+        .filter(|r| r.tools().contains(&tool_name))
         .collect()
 }
 
@@ -160,6 +162,11 @@ mod tests {
     #[test]
     fn agent_tool_runs_only_the_delegate_request_check() {
         assert_eq!(names_for("Agent"), ["delegate-request-fields"]);
+    }
+
+    #[test]
+    fn skill_tool_runs_only_the_review_round_check() {
+        assert_eq!(names_for("Skill"), ["cap-review-rounds"]);
     }
 
     #[test]
