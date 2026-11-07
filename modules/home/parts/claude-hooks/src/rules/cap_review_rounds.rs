@@ -482,6 +482,10 @@ mod tests {
                 "Read ~/.claude/skills/code-review/SKILL.md and check {}",
                 r.dir.display()
             ),
+            format!(
+                "/code-review high の 2 周目の指摘を直す: {}",
+                r.dir.display()
+            ),
         ] {
             assert!(
                 denied(&run(&r, &agent(&prompt, Path::new("/")))).is_none(),
