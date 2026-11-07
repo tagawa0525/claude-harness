@@ -209,6 +209,13 @@ out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "ROUNDS: 1"
 assert_contains "$out" "LEVEL: medium"
 
+it "review-level: 規則の文書の判定は check-merge-review と同じ（どこかの .claude の下、SKILL.md）"
+git switch -q -c feat/rule-docs-elsewhere main
+commit_file "$ROUNDS_REPO" skills/b/SKILL.md "docs(skills): b"
+commit_file "$ROUNDS_REPO" sub/.claude/c.md "docs: c"
+out=$("$SCRIPTS_DIR/review-level.sh")
+assert_contains "$out" "ROUNDS: 1"
+
 it "review-level: スキルの中のスクリプトを含む変更は high で 3 周"
 git switch -q -c feat/skill-script main
 commit_file "$ROUNDS_REPO" .claude/skills/x/SKILL.md "docs(skills): x"
