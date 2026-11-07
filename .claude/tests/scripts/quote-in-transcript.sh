@@ -68,7 +68,7 @@ done
 
 it "quote-in-transcript: 空の引用は止める"
 out=$("$QUOTE" "$(quote_file '…')" "$LOG" 2>&1)
-assert_ne 0 $?
+assert_eq 2 $?
 assert_contains "$out" "引用の文が空"
 
 it "quote-in-transcript: 引数が足りなければ使い方を出して 2 で終わる"
@@ -79,5 +79,24 @@ assert_contains "$out" "Usage"
 it "quote-in-transcript: 読めない記録は 2 で終わる"
 out=$("$QUOTE" "$(quote_file 'x')" "$TEST_ROOT/none.jsonl" 2>&1)
 assert_eq 2 $?
+
+it "quote-in-transcript: 使い方は記録の探し方の文の終わりまで出す"
+out=$("$QUOTE" 2>&1)
+assert_contains "$out" "~/.claude/projects/*/*.jsonl を渡す"
+
+it "quote-in-transcript: - で始まる相対パスの記録も、jq のオプションでなく記録として読む"
+mkdir -p "$TEST_ROOT/projects/-home-u-repo"
+cp "$LOG" "$TEST_ROOT/projects/-home-u-repo/s.jsonl"
+out=$(cd "$TEST_ROOT/projects" && "$QUOTE" "$(quote_file '記録に無い文。')" -home-u-repo/s.jsonl 2>&1)
+assert_eq 1 $?
+out=$(cd "$TEST_ROOT/projects" && "$QUOTE" "$(quote_file '途中で送った文。')" -home-u-repo/s.jsonl 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "-home-u-repo/s.jsonl 2026-11-07T20:00:00.000Z"
+
+it "quote-in-transcript: 空の引用は、空の記録に掛けても 2 で終わる"
+: >"$TEST_ROOT/empty.jsonl"
+out=$("$QUOTE" "$(quote_file '')" "$TEST_ROOT/empty.jsonl" 2>&1)
+assert_eq 2 $?
+assert_contains "$out" "引用の文が空"
 
 finish

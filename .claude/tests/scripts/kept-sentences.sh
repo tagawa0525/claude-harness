@@ -142,4 +142,29 @@ assert_eq 2 $?
 "$KEPT" --old "$D/none.md" --new "$D/a.md" >/dev/null 2>&1
 assert_eq 2 $?
 
+it "kept-sentences: 文の頭の条件を落とした文は、元の文の部分文字列でも見つける"
+printf '%s\n' 'Aのときを除き、Bする。' >"$D/h.md"
+printf '%s\n' 'Bする。' >"$D/h2.md"
+out=$("$KEPT" --old "$D/h.md" --new "$D/h2.md" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "CHANGED: $D/h2.md:1: Bする。"
+
+it "kept-sentences: 「。」で終わらない項目の後ろの限定を落としても見つける"
+printf '%s\n' '- Xする（Yのときだけ）' >"$D/i.md"
+printf '%s\n' '- Xする' >"$D/i2.md"
+out=$("$KEPT" --old "$D/i.md" --new "$D/i2.md" 2>&1)
+assert_eq 1 $?
+
+it "kept-sentences: 括弧の中の「。」の後ろを落としても見つける"
+printf '%s\n' 'Xする（理由。ただしYのときを除く）。' >"$D/j.md"
+printf '%s\n' 'Xする（理由。）。' >"$D/j2.md"
+out=$("$KEPT" --old "$D/j.md" --new "$D/j2.md" 2>&1)
+assert_eq 1 $?
+
+it "kept-sentences: 文の終わりの「。」の有無だけの違い（地の文を箇条書きの項目にした）は数えない"
+printf '%s\n' '前の文。(b) 項目の文（理由）。' >"$D/k.md"
+printf '%s\n' '- (b) 項目の文（理由）' >"$D/k2.md"
+out=$("$KEPT" --old "$D/k.md" --new "$D/k2.md" 2>&1)
+assert_eq 0 $?
+
 finish
