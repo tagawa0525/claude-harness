@@ -8,13 +8,15 @@ Usage: usage-report.py [--since <日時>] [--until <日時>] [--repo <リポジ�
               応答の timestamp が区間 [since, until) に入るものだけを数える。日時は ISO 8601 で、時差
               （Z か +09:00 の形）を必ず付ける（シェルの TZ で意味が変わらないため）。両方を省くと JST の今日、
               片方だけなら、もう片方の端は開いたまま
-  --repo      マージの数を数えるリポジトリ（複数可）。origin/HEAD があればそれ、無ければ HEAD の
+  --repo      マージの数を数えるリポジトリ（複数可）。origin/HEAD があればそれ、無ければ主の worktree のブランチの
               first-parent のマージコミットのうち、コミットの日時が区間に入るものを数える。origin/HEAD は
               fetch しないと古いので、呼ぶ前に fetch する
 
 記録の隣の <セッション>/subagents/*.jsonl（サブエージェントの記録）も読む。サブエージェントの区分は
-最初の依頼文で決める: `Review target:` で始まれば レビュー（/code-review が渡す依頼文）、最初に
-`/<スキル> を` の形で呼ぶスキルが retro なら 振り返り、ほかは 担当。区間に応答の無い記録は数えない。
+次で決める: 最初の依頼文が `Review target:` で始まるか（/code-review が渡す依頼文）、隣の .meta.json の
+description が `/code-review` で始まれば レビュー。最初に呼んだ retro か delegate のスキル（Skill ツールか、
+その SKILL.md の Read）が retro なら 振り返り。どちらも呼んでいなければ依頼文の最初の `/<スキル> を` が retro なら
+振り返り。ほかは 担当。区間に応答の無い記録は数えない。
 
 出力:
   TRANSCRIPT: <path>
@@ -117,8 +119,9 @@ def text_of(content):
 
 
 def read_transcript(path, since, until):
-    """(最初の依頼文, [(時刻, 費用, トークンの dict, 書き込み)]) を返す"""
+    """(最初の依頼文, 最初に呼んだ retro か delegate のスキル, [(時刻, 費用, トークンの dict, 書き込み)]) を返す"""
     prompt = None
+    skill = None
     seen = set()
     replies = []
     with open(path, encoding="utf-8") as f:
@@ -134,6 +137,8 @@ def read_transcript(path, since, until):
             if d.get("type") != "assistant":
                 continue
             m = d.get("message")
+            if skill is None and isinstance(m, dict):
+                skill = invoked_skill(m.get("content"))
             u = m.get("usage") if isinstance(m, dict) else None
             if not isinstance(u, dict) or m.get("id") in seen:
                 continue
@@ -146,7 +151,24 @@ def read_transcript(path, since, until):
             if (since and t < since) or (until and t >= until):
                 continue
             replies.append((t, *price_reply(path, m.get("model"), u)))
-    return prompt or "", replies
+    return prompt or "", skill, replies
+
+
+def invoked_skill(content):
+    """応答が retro か delegate のスキルを Skill ツールで呼ぶか、その SKILL.md を Read で読めば、その名前"""
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        args = block.get("input") or {}
+        if block.get("name") == "Skill" and args.get("skill") in ("retro", "delegate"):
+            return args["skill"]
+        if block.get("name") == "Read":
+            read = re.search(
+                r"skills/(retro|delegate)/SKILL\.md$", args.get("file_path") or ""
+            )
+            if read:
+                return read.group(1)
+    return None
 
 
 def price_reply(path, model, u):
@@ -185,13 +207,44 @@ def price_reply(path, model, u):
     return cost, tokens, (write, rewrite_cost)
 
 
-def kind_of(prompt):
-    if prompt.startswith("Review target:"):
+def kind_of(prompt, skill, description):
+    # 依頼文は親が書くので形がそろわない（「/retro を」「`retro` を Skill で」「（/retro）を行って」）。依頼文の語でなく、
+    # 担当が実際に呼んだスキルで分け、スキルを呼ばずに進めた記録だけ依頼文の「/<スキル> を」で分ける
+    if prompt.startswith("Review target:") or description.startswith("/code-review"):
         return "レビュー"
-    skill = re.search(r"/([\w:-]+) を", prompt)
-    if skill and skill.group(1) == "retro":
-        return "振り返り"
-    return "担当"
+    if skill is None:
+        named = re.search(r"/([\w:-]+) を", prompt)
+        skill = named.group(1) if named else None
+    return "振り返り" if skill == "retro" else "担当"
+
+
+def meta_description(path):
+    """サブエージェントの記録の隣の .meta.json の description（Agent に渡した description。/code-review は
+    `/code-review <レベル> <対象>`）。meta の無い記録は空"""
+    meta = path.removesuffix(".jsonl") + ".meta.json"
+    if not os.path.exists(meta):
+        return ""
+    with open(meta, encoding="utf-8") as f:
+        return json.load(f).get("description") or ""
+
+
+def main_branch(repo):
+    """主の worktree（worktree list の先頭）のブランチ。渡されたパスが別の worktree でも、既定のブランチを数えるため"""
+    r = subprocess.run(
+        ["git", "-C", repo, "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        raise ReportError(f"{repo} の worktree を読めません: {r.stderr.strip()}")
+    first = r.stdout.split("\n\n")[0]
+    branch = re.search(r"^branch refs/heads/(.+)$", first, re.MULTILINE)
+    if not branch:
+        raise ReportError(
+            f"{repo} の主の worktree がブランチをチェックアウトしていません"
+        )
+    return branch.group(1)
 
 
 def count_merges(repo, since, until):
@@ -203,7 +256,7 @@ def count_merges(repo, since, until):
         ).returncode
         == 0
     )
-    ref = "origin/HEAD" if has_origin else "HEAD"
+    ref = "origin/HEAD" if has_origin else main_branch(repo)
     cmd = ["git", "-C", repo, "log", "--merges", "--first-parent", "--format=%cI", ref]
     r = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if r.returncode != 0:
@@ -250,7 +303,7 @@ def report(args):
                 rewrites[kind] += 1
                 rewrite_cost[kind] += wc
 
-    _, replies = read_transcript(transcript, since, until)
+    _, _, replies = read_transcript(transcript, since, until)
     add("親", replies)
     subagents = sorted(
         glob.glob(
@@ -258,10 +311,10 @@ def report(args):
         )
     )
     for path in subagents:
-        prompt, replies = read_transcript(path, since, until)
+        prompt, skill, replies = read_transcript(path, since, until)
         if not replies:
             continue
-        kind = kind_of(prompt)
+        kind = kind_of(prompt, skill, meta_description(path))
         add(kind, replies)
         ctx = max(
             t["input"] + t["write_5m"] + t["write_1h"] + t["read"]
