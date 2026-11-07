@@ -167,4 +167,18 @@ printf '%s\n' '- (b) 項目の文（理由）' >"$D/k2.md"
 out=$("$KEPT" --old "$D/k.md" --new "$D/k2.md" 2>&1)
 assert_eq 0 $?
 
+it "kept-sentences: コマンドの中の空白を消した文と、文の終わりの「？」を「。」にした文は見つける"
+printf '%s\n' '`git log a..b` で見る。' 'Xするか？' >"$D/m.md"
+printf '%s\n' '`gitlog a..b` で見る。' 'Xするか。' >"$D/m2.md"
+out=$("$KEPT" --old "$D/m.md" --new "$D/m2.md" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "gitlog a..b"
+assert_contains "$out" "Xするか。"
+
+it "kept-sentences: 日本語とコードの間の行の折り返しは数えない"
+printf '%s\n' '記録は' '`git log a..b` で見る。' >"$D/n.md"
+printf '%s\n' '記録は `git log' 'a..b` で見る。' >"$D/n2.md"
+out=$("$KEPT" --old "$D/n.md" --new "$D/n2.md" 2>&1)
+assert_eq 0 $?
+
 finish
