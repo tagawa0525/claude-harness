@@ -82,7 +82,7 @@ assert_eq 2 $?
 
 it "quote-in-transcript: 使い方は記録の探し方の文の終わりまで出す"
 out=$("$QUOTE" 2>&1)
-assert_contains "$out" "~/.claude/projects/*/*.jsonl を渡す"
+assert_contains "$out" ".claude/projects/*/*.jsonl を渡す"
 
 it "quote-in-transcript: - で始まる相対パスの記録も、jq のオプションでなく記録として読む"
 mkdir -p "$TEST_ROOT/projects/-home-u-repo"
