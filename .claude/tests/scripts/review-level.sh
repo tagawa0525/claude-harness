@@ -277,6 +277,13 @@ git commit -q -m "docs(adr): remove"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "ROUNDS: 3"
 
+it "review-level: docs/ の下でも .md でないファイル（パッチ、ハッシュの一覧）は 3 周"
+git switch -q -c feat/docs-patch main
+commit_file "$ROUNDS_REPO" docs/patches/x.patch "fix: patch"
+out=$("$SCRIPTS_DIR/review-level.sh")
+assert_contains "$out" "ROUNDS: 3"
+assert_contains "$out" "LEVEL: high"
+
 it "review-level: docs/adr の ADR でない文書（README.md）は 1 周"
 git switch -q -c feat/adr-readme main
 commit_file "$ROUNDS_REPO" docs/adr/README.md "docs: adr readme"

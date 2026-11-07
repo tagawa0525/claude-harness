@@ -430,6 +430,40 @@ mod tests {
     }
 
     #[test]
+    fn agent_asking_with_the_arguments_first_is_denied_at_the_limit() {
+        let r = repo("docs/y", 1);
+        run(&r, &review(&r));
+        run(&r, &review(&r));
+        let ask = agent(
+            &format!("`/code-review high {}` を Skill で呼ぶ。", r.dir.display()),
+            Path::new("/"),
+        );
+        assert!(denied(&run(&r, &ask)).is_some());
+    }
+
+    #[test]
+    fn agent_mentioning_code_review_without_asking_for_one_is_ignored() {
+        let r = repo("docs/y", 1);
+        run(&r, &review(&r));
+        run(&r, &review(&r));
+        for prompt in [
+            format!(
+                "記録の周の /code-review の (c) の指摘を直す: {}",
+                r.dir.display()
+            ),
+            format!(
+                "Read ~/.claude/skills/code-review/SKILL.md and check {}",
+                r.dir.display()
+            ),
+        ] {
+            assert!(
+                denied(&run(&r, &agent(&prompt, Path::new("/")))).is_none(),
+                "{prompt}"
+            );
+        }
+    }
+
+    #[test]
     fn other_skills_are_not_counted() {
         let r = repo("docs/y", 1);
         let simplify = skill("simplify", &r.dir.display().to_string(), Path::new("/"));
@@ -508,6 +542,25 @@ mod tests {
         git(&r.dir, &["switch", "-q", "main"]);
         git(&r.dir, &["merge", "-q", "--no-ff", "-m", "merge", "docs/y"]);
         git(&r.dir, &["branch", "-q", "-D", "docs/y"]);
+        git(&r.dir, &["switch", "-q", "-c", "docs/y"]);
+        commit(&r.dir, "again");
+        assert!(denied(&run(&r, &review(&r))).is_none());
+    }
+
+    #[test]
+    fn rounds_before_a_rebase_of_a_merged_branch_do_not_count_for_a_new_branch_of_the_same_name() {
+        let r = repo("docs/y", 1);
+        run(&r, &review(&r));
+        run(&r, &review(&r));
+        git(&r.dir, &["switch", "-q", "main"]);
+        commit(&r.dir, "on-main");
+        git(&r.dir, &["switch", "-q", "docs/y"]);
+        git(&r.dir, &["rebase", "-q", "main"]);
+        git(&r.dir, &["switch", "-q", "main"]);
+        git(&r.dir, &["merge", "-q", "--no-ff", "-m", "merge", "docs/y"]);
+        git(&r.dir, &["branch", "-q", "-D", "docs/y"]);
+        // 同じ秒の中で作り直すと、ブランチの作成の時刻と前の行の時刻を見分けられない
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         git(&r.dir, &["switch", "-q", "-c", "docs/y"]);
         commit(&r.dir, "again");
         assert!(denied(&run(&r, &review(&r))).is_none());
