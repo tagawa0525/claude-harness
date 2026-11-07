@@ -7,9 +7,9 @@ use crate::shell::{Escape, Shell};
 pub trait Rule: Sync {
     fn name(&self) -> &'static str;
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding>;
-    /// 検査する Claude Code のツールの名前（hook の入力の tool_name）
-    fn tool(&self) -> &'static str {
-        "Bash"
+    /// 検査する Claude Code のツールの名前（hook の入力の tool_name）の並び
+    fn tools(&self) -> &'static [&'static str] {
+        &["Bash"]
     }
     /// ルール全体を外すエスケープの名前。`check` の結果に `apply_escape` で当てる（ADR-0023）。
     /// 検査ごとに別のエスケープを持つルールは None を返し、`check` の中で当てる
@@ -145,7 +145,7 @@ pub fn for_tool(tool_name: &str) -> Vec<&'static dyn Rule> {
     all()
         .iter()
         .copied()
-        .filter(|r| r.tool() == tool_name)
+        .filter(|r| r.tools().contains(&tool_name))
         .collect()
 }
 
