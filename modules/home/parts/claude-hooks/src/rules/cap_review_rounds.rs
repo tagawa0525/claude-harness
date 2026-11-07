@@ -22,15 +22,200 @@
 //! ユーザーの判断で変えるもので、モデルが外す理由が無い）。
 
 use super::Rule;
+use crate::git;
 use crate::input::Input;
-use crate::output::Finding;
+use crate::output::{Finding, notice};
 use crate::shell::Shell;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub struct CapReviewRounds;
 
+/// review-level.sh の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドしたものには無い）
+const REVIEW_LEVEL: &str = "CLAUDE_HOOKS_REVIEW_LEVEL";
+
+/// 数を置く、共通の git ディレクトリの下のディレクトリ
+const STATE_DIR: &str = "claude-review-rounds";
+
+/// 記録の周（3 周目か、文書だけのブランチの 1 周目で blocking を直した head に回す 1 周）
+const RECORD_ROUNDS: u32 = 1;
+/// 記録の周の後の例外の周（blocking が (c) だけのとき。文書だけのブランチには無い）
+const EXCEPTION_ROUNDS: u32 = 3;
+
+/// どの呼び出しか
+enum Call {
+    /// Skill の code-review（数える）
+    Review,
+    /// /code-review を頼む Agent（数えず、上限なら止める）
+    Ask,
+}
+
+/// 呼び出しの種類と、対象を探す文字列（/code-review の後ろ）
+fn classify(input: &Input) -> Option<(Call, &str)> {
+    match input.tool_name.as_str() {
+        "Skill" if input.skill == "code-review" => Some((Call::Review, input.args.as_str())),
+        "Agent" => {
+            let first = input.prompt.lines().find(|l| !l.trim().is_empty())?;
+            first.find("/code-review")?;
+            let at = input.prompt.find("/code-review")?;
+            Some((Call::Ask, &input.prompt[at + "/code-review".len()..]))
+        }
+        _ => None,
+    }
+}
+
+/// 文字列の中で最初の、ディレクトリとして在る絶対パス。囲みの `` ` ``、引用符、括弧、和文の句読点で切る
+fn first_directory(text: &str) -> Option<PathBuf> {
+    let stop = |c: char| c.is_whitespace() || "`'\"「」（）()。、,;".contains(c);
+    text.split(stop)
+        .filter(|w| w.starts_with('/'))
+        .map(PathBuf::from)
+        .find(|p| p.is_dir())
+}
+
+/// ブランチ名をファイル名にする（`%` と `/` を符号にする）
+fn state_file_name(branch: &str) -> String {
+    branch.replace('%', "%25").replace('/', "%2F")
+}
+
+/// 周の上限（記録の周と例外の周を足した数）
+fn limit(rounds: u32) -> u32 {
+    if rounds <= 1 {
+        rounds + RECORD_ROUNDS
+    } else {
+        rounds + RECORD_ROUNDS + EXCEPTION_ROUNDS
+    }
+}
+
+/// review-level.sh を dir で実行し、`ROUNDS:` の値を返す。失敗は理由を利用者に見せて None
+fn rounds_of(script: &str, dir: &Path, branch: &str) -> Option<u32> {
+    // bash で起動する（store のファイルの shebang の /usr/bin/env に頼らず、書いたばかりのファイルを exec して
+    // ETXTBSY になることも避ける）
+    let out = match Command::new("bash")
+        .arg(script)
+        .arg(branch)
+        .current_dir(dir)
+        .output()
+    {
+        Ok(out) => out,
+        Err(e) => {
+            notice(format!(
+                "cap-review-rounds: review-level.sh を起動できないので、/code-review の周を数えていません: {e}"
+            ));
+            return None;
+        }
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let rounds = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("ROUNDS: "))
+        .and_then(|v| v.trim().parse().ok());
+    if !out.status.success() || rounds.is_none() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        notice(format!(
+            "cap-review-rounds: review-level.sh が {branch} の ROUNDS を出さないので、/code-review の周を数えていません: {}",
+            stderr.trim()
+        ));
+        return None;
+    }
+    rounds
+}
+
+/// 数の置き場の行のうち、今のブランチのもの（既定ブランチの祖先になった HEAD の行は、マージ済みの同じ名前の
+/// ブランチのものとして除く）
+fn live_rounds(dir: &Path, path: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let default = git::default_branch(dir);
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter(|l| {
+            let head = l.split_whitespace().next().unwrap_or("");
+            !default
+                .as_deref()
+                .is_some_and(|d| git::git(dir, &["merge-base", "--is-ancestor", head, d]).is_some())
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+fn deny_reason(branch: &str, count: usize, limit: u32, rounds: u32) -> String {
+    let breakdown = if rounds <= 1 {
+        format!("ROUNDS {rounds} + 記録の周 {RECORD_ROUNDS}")
+    } else {
+        format!("ROUNDS {rounds} + 記録の周 {RECORD_ROUNDS} + 例外の周 {EXCEPTION_ROUNDS}")
+    };
+    format!(
+        "ブランチ {branch} のローカルの /code-review は {count} 周を回し、上限 {limit}（review-level.sh の {breakdown}）に達しました。\n\
+         理由: レビューは周ごとに新しい指摘を出し続けるので、直す指摘の基準だけでは周が終わりません。数で止めて、続けるかをユーザーが決めます（担当と親の周の合計で、rebase の後の周も数えます）。\n\
+         修正方法: 残った blocking を issue に書き、ユーザーに判断を求めてください。/delegate の担当は、報告の「マージの前後で人の手が要ること」に blocking と issue を書いて止まります。"
+    )
+}
+
 impl CapReviewRounds {
-    fn check_with(&self, _input: &Input, _review_level: Option<&str>) -> Vec<Finding> {
-        Vec::new()
+    fn check_with(&self, input: &Input, review_level: Option<&str>) -> Vec<Finding> {
+        let Some((call, text)) = classify(input) else {
+            return Vec::new();
+        };
+        let dir = match (first_directory(text), &call) {
+            (Some(d), _) => d,
+            // 対象を書かない /code-review は cwd の差分を見る
+            (None, Call::Review) => input.cwd.clone(),
+            (None, Call::Ask) => return Vec::new(),
+        };
+        let branch = git::current_branch(&dir);
+        if branch.is_empty() {
+            return Vec::new();
+        }
+        let Some(script) = review_level else {
+            notice(format!(
+                "cap-review-rounds: review-level.sh のパス（環境変数 {REVIEW_LEVEL}）が無いので、/code-review の周を数えていません（nix で包んだものだけが数える）"
+            ));
+            return Vec::new();
+        };
+        let Some(rounds) = rounds_of(script, &dir, &branch) else {
+            return Vec::new();
+        };
+        let Some(common) = git::git(
+            &dir,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        ) else {
+            return Vec::new();
+        };
+        let state_dir = Path::new(&common).join(STATE_DIR);
+        let path = state_dir.join(state_file_name(&branch));
+        let mut lines = live_rounds(&dir, &path);
+        let limit = limit(rounds);
+        if lines.len() >= limit as usize {
+            return vec![Finding::Deny(deny_reason(
+                &branch,
+                lines.len(),
+                limit,
+                rounds,
+            ))];
+        }
+        let Call::Review = call else {
+            return Vec::new();
+        };
+        let head = git::git(&dir, &["rev-parse", "HEAD"]).unwrap_or_default();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        lines.push(format!("{head} {now}"));
+        let written = std::fs::create_dir_all(&state_dir)
+            .and_then(|()| std::fs::write(&path, lines.join("\n") + "\n"));
+        if let Err(e) = written {
+            notice(format!(
+                "cap-review-rounds: {} に周の数を書けません: {e}",
+                path.display()
+            ));
+            return Vec::new();
+        }
+        vec![Finding::Context(format!(
+            "ブランチ {branch} のローカルの /code-review の {} 周目です（上限 {limit}。review-level.sh の ROUNDS {rounds} に記録の周{}を足した数で、担当と親の周の合計）。",
+            lines.len(),
+            if rounds <= 1 { "" } else { "と例外の周" },
+        ))]
     }
 }
 
@@ -44,7 +229,8 @@ impl Rule for CapReviewRounds {
     }
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
-        self.check_with(input, None)
+        let script = std::env::var(REVIEW_LEVEL).ok();
+        self.check_with(input, script.as_deref())
     }
 }
 
