@@ -154,39 +154,62 @@ mkdir -p "$SUB2"
   user_text "始める"
   reply q1 2026-11-07T01:00:00.000Z claude-fable-5-1 0 0 0 0 0
 } >"$PROJECT/$SESSION2.jsonl"
-# skill_call <id> <timestamp> <skill>: Skill ツールでスキルを呼ぶ応答（使用量は出力 1000 トークン）
-skill_call() {
-  jq -cn --arg id "$1" --arg ts "$2" --arg s "$3" '
+# tool_call <id> <timestamp> <tool> <input の JSON>: ツールを呼ぶ応答（使用量は出力 1000 トークン、0.02 ドル）
+tool_call() {
+  jq -cn --arg id "$1" --arg ts "$2" --arg tool "$3" --argjson in "$4" '
     {type: "assistant", timestamp: $ts,
      message: {id: $id, model: "claude-opus-5-5", role: "assistant",
-       content: [{type: "tool_use", id: "u", name: "Skill", input: {skill: $s}}],
+       content: [{type: "tool_use", id: "u", name: $tool, input: $in}],
        usage: {input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1000,
          cache_creation: {ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0},
          service_tier: "standard", inference_geo: "global", speed: "standard"}}}'
 }
+TS=2026-11-07T02:00:00.000Z
 {
   user_text '最初に Skill ツールで `retro` を呼び、その手順に従って進める。'
-  skill_call k1 2026-11-07T02:00:00.000Z retro
+  tool_call k1 $TS Skill '{"skill": "retro"}'
 } >"$SUB2/agent-retro-skill.jsonl"
+{
+  # 依頼文が「/<スキル> を」の形でなく、SKILL.md を Bash で読む振り返り
+  user_text "~/.claude/skills/retro/SKILL.md の手順に従って、振り返り（/retro）を行ってください。"
+  tool_call k2 $TS Bash '{"command": "cat ~/.claude/skills/retro/SKILL.md"}'
+} >"$SUB2/agent-retro-cat.jsonl"
 {
   # /delegate を呼ぶ依頼文の後ろに /retro の語があっても担当
   user_text "最初に /delegate を呼び、その手順に従って進める。/retro の手順を直す。"
-  skill_call k2 2026-11-07T02:00:00.000Z delegate
+  tool_call k3 $TS Skill '{"skill": "delegate"}'
 } >"$SUB2/agent-delegate-skill.jsonl"
 {
-  # 依頼文が Review target: で始まらない /code-review（meta の description で見分ける）
+  # 最初に別のスキルを呼び、後で retro の SKILL.md を読む担当
+  user_text "retro のスキルを直す"
+  tool_call k4 $TS Skill '{"skill": "topic-start"}'
+  tool_call k5 2026-11-07T02:01:00.000Z Read '{"file_path": "/home/u/.claude/skills/retro/SKILL.md"}'
+} >"$SUB2/agent-topic-first.jsonl"
+{
+  # description が /code-review で始まるだけの担当
+  user_text "最初に /delegate を呼び、その手順に従って進める。"
+  tool_call k6 $TS Skill '{"skill": "delegate"}'
+} >"$SUB2/agent-fix-review.jsonl"
+echo '{"agentType":"general-purpose","description":"/code-review の指摘を直す"}' >"$SUB2/agent-fix-review.meta.json"
+{
+  # 依頼文が Review target: で始まらない /code-review（meta の name で見分ける）
   user_text '`high effort → 8 inline angles`'
-  reply k3 2026-11-07T02:00:00.000Z claude-opus-5-5 0 0 0 0 1000
+  reply k7 $TS claude-opus-5-5 0 0 0 0 1000
 } >"$SUB2/agent-old-review.jsonl"
 echo '{"agentType":"general-purpose","description":"/code-review high /w/repo","name":"code-review"}' \
   >"$SUB2/agent-old-review.meta.json"
+{
+  user_text '`high effort → 8 inline angles`'
+  reply k8 $TS claude-opus-5-5 0 0 0 0 1000
+} >"$SUB2/agent-old-review-2.jsonl"
+echo '{"agentType":"general-purpose","description":"review","name":"code-review-2"}' >"$SUB2/agent-old-review-2.meta.json"
 
-it "usage-report: 区分は、最初に呼んだスキル（retro か delegate）と /code-review の meta で決める"
+it "usage-report: 区分は、最初に読み込んだスキル（Skill、Read、Bash）と meta の name で決める"
 out=$("$REPORT" "${RANGE[@]}" "$PROJECT/$SESSION2.jsonl" 2>&1)
 assert_eq 0 $?
-assert_contains "$out" "COST: 振り返り 1 本 \$0.02"
-assert_contains "$out" "COST: 担当 1 本 \$0.02"
-assert_contains "$out" "COST: レビュー 1 本 \$0.02"
+assert_contains "$out" "COST: 振り返り 2 本 \$0.04"
+assert_contains "$out" "COST: 担当 3 本 \$0.08"
+assert_contains "$out" "COST: レビュー 2 本 \$0.04"
 
 it "usage-report: 時差の無い日時は失敗にする"
 out=$("$REPORT" --since 2026-11-07T00:00 "$MAIN" 2>&1)
