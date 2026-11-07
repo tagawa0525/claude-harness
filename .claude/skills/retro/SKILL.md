@@ -4,6 +4,7 @@ description: 作業の区切りの振り返り。ここまでの会話から、h
 argument-hint: "[見る範囲や観点の補足]"
 allowed-tools:
   - Bash(~/.claude/skills/retro/scripts/*)
+  - Bash(~/.claude/scripts/usage-report.py*)
   - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
@@ -32,6 +33,7 @@ allowed-tools:
 ```bash
 ~/.claude/skills/retro/scripts/session-events.sh
 ~/.claude/skills/retro/scripts/memory-index.sh <メモリのディレクトリ>
+~/.claude/scripts/usage-report.py --repo <リポジトリ>...
 ```
 
 - `session-events.sh`: `HOOK:` / `PERMISSION:` / `REJECTED:` / `TOOL:` は失敗の種類と回数と本文の 1 行目、
@@ -49,6 +51,14 @@ allowed-tools:
   セッションに読み込まれ、依頼やコミットにコピーされるので、ここで拾う。メモリのディレクトリは、このセッションの自動メモリの
   `MEMORY.md` があるディレクトリ（システムプロンプトに示される）。メモリが無いプロジェクトでは飛ばす。`ERROR:` で
   止まったら（辞書の検査が rebuild の前で無いなど）、出たほかの行で進め、`TERMS:` を見ていないことを報告の「未確認」に書く
+- `usage-report.py`: 区間の費用をドルで、親・担当・レビュー・振り返りに分けて出す（`COST:`、`TOKENS:`）。トークン効率の
+  方針の効きを振り返りごとに比べるため、`PER_MERGE:`（マージ 1 本あたりの費用）と `REWRITES:`（文脈の書き直し。
+  1 回の応答で 25 万トークンを超える書き込み）を報告の「費用」に書く。区間は
+  `session-events.sh` と同じ `--since` / `--until` を付け、区間の指定が無ければ省く（JST の今日になる）。`--repo` には
+  区間にマージしたリポジトリをすべて渡す（このセッションの作業ディレクトリのリポジトリと、`~/.claude` の生成元など）。
+  GitHub のリモートがあるリポジトリは `origin/HEAD` のマージを数えるので、先に `git -C <リポジトリ> fetch` する。
+  `ERROR:` が価格表に無いモデルを指せば、スクリプトの `PRICES` に価格のページの値を足す PR を出し、報告の
+  「費用」は「未確認」にする。ほかの `ERROR:` も同じく「費用」を「未確認」にして進める
 
 これと会話の文脈から、次の手がかりを拾う:
 
@@ -129,6 +139,12 @@ ADR、既存のメモリ、git の履歴。
 | # | 種類 | 変更 | 根拠（確かめた事実） | 置き場所 | 状態 |
 | - | ---- | ---- | -------------------- | -------- | ---- |
 | 1 | hook / script / skill / prompt / memory | 削除 / 修正 / 追加 | <ファイルと行、回数、ユーザーの発言> | <パス> | 実行済み / PR <URL> / issue <URL> / 提案のみ |
+
+## 費用
+
+| 区間 | 合計 | 親 | 担当 | レビュー | 振り返り | マージ 1 本あたりの費用 | 文脈の書き直しの回数 |
+| ---- | ---- | -- | ---- | -------- | -------- | ----------------------- | -------------------- |
+| <`SINCE:`〜`UNTIL:`> | <`TOTAL:`> | <`COST:` の費用と割合> | 〃 | 〃 | 〃 | <`PER_MERGE:`> | <`REWRITES:` の回数と費用> |
 
 ## 指示が欲しいもの
 <4. の確認するものを、優先度の順に。各項目に推す案を 1 つ>
