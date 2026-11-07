@@ -106,6 +106,6 @@ issues: ["#636", "#637", "#639"]
   変える続きの依頼を出さない項がある
 - 担当が投げる形の手順（`&` と `&&` の `JOB:`、`LOG:`、`ERROR:` の読み方、投げた後に worktree を変えないこと、ジョブの終わりの
   通知での再開、`squeue` と `-t` の和による判定、Slurm の background を TaskStop しないこと）が /delegate に無い
-  （前の版の 7e9f942d で 3 行に当たる `grep -c 'sbatch --wait\|2 度目の終わりの通知\|の行がすべて出たら'` が 0 を出すことで確かめた）
+  （前の版の 5c7365cc で 3 行に当たる `grep -c 'sbatch --wait\|2 度目の終わりの通知\|の行がすべて出たら'` が 0 を出すことで確かめた）
 - グローバルの CLAUDE.md の「ツール」の待ち方の行と「Git」の自動レビューの待ちの行が、担当には /delegate の 5 分より長い待ちの項を指す
 - `run-checks.sh` と `design-records check` が通った
