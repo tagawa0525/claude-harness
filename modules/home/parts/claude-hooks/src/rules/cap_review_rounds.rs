@@ -5,9 +5,9 @@
 //!
 //! - 数える呼び出し: Skill の `code-review`。対象は引数の中で最初にある、ディレクトリとして在る絶対パス（無ければ
 //!   hook の cwd）で、その worktree がチェックアウトしているブランチを数える
-//! - 止めるだけの呼び出し: Agent の prompt の、空でない最初の行が `/code-review` を頼む形（`/code-review` の後に同じ行で
-//!   `Skill で呼` が続く）で、その後に在るディレクトリの絶対パスがあるもの（親が別のモデルの担当にレビューを
-//!   頼む形）。`/code-review` に触れるだけの行（直す依頼、スキルのパス）は見ない。数えない（その担当が呼ぶ Skill を数えるので、
+//! - 止めるだけの呼び出し: Agent の prompt の、空でない最初の行が `/code-review` を頼む形（`/code-review` と ASCII の
+//!   引数か、`` ` `` で囲んだ呼び出しの後に「を Skill で呼び」「を Skill ツールで呼ぶ」などが続く。下の ASK）で、
+//!   その後に在るディレクトリの絶対パスがあるもの（親が別のモデルの担当にレビューを頼む形）。`/code-review` に触れるだけの行（直す依頼、スキルのパス）は見ない。数えない（その担当が呼ぶ Skill を数えるので、
 //!   数えると 1 周が 2 回になる）が、上限に達していれば、担当を起こす前に止める
 //! - 上限: `review-level.sh` の `ROUNDS:`（1 か 3）に記録の周 1 を足し、3 のときはさらに記録の周の後の例外の周 3 を
 //!   足した数（1 なら 2、3 なら 7）。ブランチで担当と親が回した周の合計で数える
@@ -54,11 +54,17 @@ enum Call {
     Ask,
 }
 
-/// /code-review を頼む句。/git-merge が親に書かせる頼み方（「`/code-review <LEVEL> <WORKTREE>` を Skill で呼び」）と
-/// 「/code-review を Skill で呼び」の形で、Skill で呼ぶことまで書いた行だけを見る（レベルだけを見ると、
-/// 「/code-review high の指摘を直す」のような直す依頼も当たる）
-static ASK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"/code-review[^\n]*Skill\s*(?:ツール)?\s*で呼").unwrap());
+/// /code-review を頼む句: /code-review を目的語にして「を Skill で呼ぶ」と続ける形。/code-review と「を」の間には、
+/// 空白で区切った ASCII の引数（レベル、worktree のパス）か、`` ` `` で囲んだ呼び出し全体（/git-merge の
+/// 「`/code-review <LEVEL> <WORKTREE> [焦点]` を Skill で呼び」）だけを許す。「Skill で呼」がどこかにあれば当てると、
+/// 同じ行で別のスキルを呼ぶ依頼（「/code-review の指摘を直す。先に /gh-pr-review を Skill で呼び」）や、呼ばない
+/// 依頼（「Skill で呼ばず」）にも当たる
+static ASK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?:`/code-review[^`]*`|/code-review(?:[ \t]+[!-~&&[^`]]+)*)\s*を\s*Skill\s*(?:ツール)?\s*で呼(?:び|ぶ|んで)",
+    )
+    .unwrap()
+});
 
 /// 呼び出しの種類と、対象を探す文字列（/code-review の後ろ）
 fn classify(input: &Input) -> Option<(Call, &str)> {
@@ -68,7 +74,8 @@ fn classify(input: &Input) -> Option<(Call, &str)> {
             let prompt = input.prompt.trim_start();
             let first = prompt.lines().next()?;
             let m = ASK.find(first)?;
-            Some((Call::Ask, &prompt[m.start() + "/code-review".len()..]))
+            let at = m.start() + m.as_str().find("/code-review")? + "/code-review".len();
+            Some((Call::Ask, &prompt[at..]))
         }
         _ => None,
     }
