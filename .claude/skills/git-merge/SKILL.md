@@ -145,7 +145,7 @@ proposed のまま残した ADR は、マージの本文の Impact に番号と�
 
 親が回す周は Opus で回す（周の費用を Opus の担当の周にそろえるため）。/code-review は呼んだ側のモデルの fork で走るので、
 親が Skill で呼ばず、Agent（`model: "opus"`。fork は `model` を無視するので fork でない型にし、description は
-/delegate の頼む側の「Agent の `description`」の項のとおり）で起動した担当に「`/code-review <LEVEL> <WORKTREE> [焦点]` を Skill で
+`~/.claude/skills/delegate/references/requesting.md` の「Agent の `description`」の項のとおり）で起動した担当に「`/code-review <LEVEL> <WORKTREE> [焦点]` を Skill で
 呼び、background で走ったら終わりの通知を待ってから、結果をそのまま返す」と頼む。対象を見つけられなかった、実行できなかった
 返答は、指摘ゼロでなく未実施として扱う（`[]` は差分を読んだと示しているときだけ指摘ゼロ）。
 
