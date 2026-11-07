@@ -95,7 +95,7 @@ claude-hooks の、普通に書く形（`cd <worktree> &&`、`env` や `timeout`
 
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
 受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す
-（この周も /git-merge の「直す指摘の基準」の歯止めの 3 周に数える）。対象は `~/.claude/scripts/review-level.sh`
+（この周も /git-merge の「直す指摘の基準」の歯止めに数える）。対象は `~/.claude/scripts/review-level.sh`
 が出す `WORKTREE` を対象にする（PR の worktree で実行する。Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
 `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に重複して書かず、コードへの参照（ファイルと関数名）で書く。
@@ -196,7 +196,7 @@ head と同じもの）に、その回で検証して正しいと判断した指
 して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`、
 マージ時の hook）ので、High（blocking）は直して回し直す。Medium と Low（non-blocking）は直さず、/git-merge の
 「直す指摘の基準」のとおり扱ってその head で終える。同じ head を回し直したら、最後の記録で決まる。
-直す指摘、周の終わり、歯止めの 3 周と 3 周目で直した head の扱いは、担当も親も /git-merge の「レビュー」の節の
+直す指摘、周の終わり、歯止めと「3 周目で blocking を直したら」の head の扱いは、担当も親も /git-merge の「レビュー」の節の
 「直す指摘の基準」に従う。
 件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
 
