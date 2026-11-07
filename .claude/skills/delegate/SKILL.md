@@ -11,6 +11,7 @@ allowed-tools:
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/base-moved.sh*)
   - Bash(~/.claude/scripts/quote-in-transcript.sh*)
+  - Bash(~/.claude/scripts/kept-sentences.py*)
   - Bash(~/.claude/scripts/slurm-run.sh*)
   - Bash(squeue*)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
@@ -123,6 +124,9 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 方法があれば、それも実行する。各コミットでビルドが通るべきブランチ（依存や lock を変えるなど）は、
 `cd <worktree> && ~/.claude/scripts/check-each-commit.sh <base> -- <コマンド…>` で `<base>..HEAD` の各コミットを一時 worktree で
 調べる（RED を skip でコミットする運用ではビルドだけを通す。任意のコマンドを実行するので許可リストに無く、毎回確認を求められる）。
+規則の文書（スキル、CLAUDE.md、hook の文書）を縮めるブランチは、`~/.claude/scripts/kept-sentences.py` の先頭の Usage のとおり
+`<base>` の版と今の版を比べ、出た文ごとに、指す形に替えたものは報告の「決めたことと根拠」に書き、ほかは元の文に戻す（縮める
+ときは文を消すか指す形に替えるだけにし、残す文の語が落ちると、どの項や条件に掛かるかがずれる）。
 
 ### 7. レビューを受ける
 
