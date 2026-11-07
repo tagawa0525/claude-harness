@@ -171,7 +171,7 @@ TS=2026-11-07T02:00:00.000Z
 } >"$SUB2/agent-retro-skill.jsonl"
 {
   # 依頼文が「/<スキル> を」の形でなく、SKILL.md を Bash で読む振り返り
-  user_text "~/.claude/skills/retro/SKILL.md の手順に従って、振り返り（/retro）を行ってください。"
+  user_text "/home/u/.claude/skills/retro/SKILL.md の手順に従って、振り返り（/retro）を行ってください。"
   tool_call k2 $TS Bash '{"command": "cat ~/.claude/skills/retro/SKILL.md"}'
 } >"$SUB2/agent-retro-cat.jsonl"
 {
