@@ -427,100 +427,30 @@ mod tests {
     }
 
     #[test]
-    fn agent_asking_for_a_review_is_not_counted_but_is_denied_at_the_limit() {
+    fn agent_is_neither_counted_nor_denied_even_at_the_limit() {
         let r = repo("docs/y", 1);
-        let ask = agent(
-            &format!(
-                "/code-review を Skill で呼び、次の引数で回す: `high {}`。",
-                r.dir.display()
-            ),
-            Path::new("/"),
-        );
-        for _ in 0..3 {
-            assert!(denied(&run(&r, &ask)).is_none(), "数えないので通すはず");
-        }
-        run(&r, &review(&r));
-        run(&r, &review(&r));
-        assert!(denied(&run(&r, &ask)).is_some(), "上限に達したら止めるはず");
-    }
-
-    #[test]
-    fn agent_without_code_review_on_its_first_line_is_ignored() {
-        let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
-        let other = agent(
-            &format!(
-                "最初に /delegate を呼び、進める。\n周ごとに /code-review を回す: {}",
-                r.dir.display()
-            ),
-            Path::new("/"),
-        );
-        assert!(denied(&run(&r, &other)).is_none());
-    }
-
-    #[test]
-    fn agent_asking_with_the_arguments_first_is_denied_at_the_limit() {
-        let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
-        let ask = agent(
-            &format!("`/code-review high {}` を Skill で呼ぶ。", r.dir.display()),
-            Path::new("/"),
-        );
-        assert!(denied(&run(&r, &ask)).is_some());
-    }
-
-    #[test]
-    fn agent_asking_in_each_written_form_is_denied_at_the_limit() {
-        let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
         let wt = r.dir.display();
-        for prompt in [
-            format!("/code-review high {wt} を Skill で呼ぶ。"),
-            format!(
-                "`/code-review high {wt} 焦点: 直した箇所` を Skill ツールで呼んで、結果を返す。"
-            ),
-            format!("\n\n/code-review を Skill で呼び、次の引数で回す: `high {wt}`。"),
-        ] {
+        let prompts = [
+            format!("/code-review を Skill で呼び、次の引数で回す: `high {wt}`。"),
+            format!("`/code-review high {wt}` を Skill で呼ぶ。"),
+            format!("`/code-review high {wt}` を Skill で呼びません。"),
+            format!("/code-review の指摘を直す: {wt}"),
+        ];
+        for prompt in &prompts {
             assert!(
-                denied(&run(&r, &agent(&prompt, Path::new("/")))).is_some(),
-                "{prompt}"
+                run(&r, &agent(prompt, Path::new("/"))).is_empty(),
+                "数えないはず: {prompt}"
             );
         }
-    }
-
-    #[test]
-    fn agent_mentioning_code_review_without_asking_for_one_is_ignored() {
-        let r = repo("docs/y", 1);
         run(&r, &review(&r));
-        run(&r, &review(&r));
-        for prompt in [
-            format!(
-                "記録の周の /code-review の (c) の指摘を直す: {}",
-                r.dir.display()
-            ),
-            format!(
-                "Read ~/.claude/skills/code-review/SKILL.md and check {}",
-                r.dir.display()
-            ),
-            format!(
-                "/code-review high の 2 周目の指摘を直す: {}",
-                r.dir.display()
-            ),
-            format!(
-                "/code-review high の指摘を直す。先に /gh-pr-review を Skill で呼び、{} で進める",
-                r.dir.display()
-            ),
-            format!(
-                "/code-review の指摘を直す（/code-review は Skill で呼ばず、親が回す）: {}",
-                r.dir.display()
-            ),
-        ] {
+        assert!(
+            denied(&run(&r, &review(&r))).is_none(),
+            "Agent を数えていなければ 2 周目は通すはず"
+        );
+        for prompt in &prompts {
             assert!(
-                denied(&run(&r, &agent(&prompt, Path::new("/")))).is_none(),
-                "{prompt}"
+                run(&r, &agent(prompt, Path::new("/"))).is_empty(),
+                "上限でも止めないはず: {prompt}"
             );
         }
     }

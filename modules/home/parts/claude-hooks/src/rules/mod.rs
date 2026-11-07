@@ -160,11 +160,8 @@ mod tests {
     }
 
     #[test]
-    fn agent_tool_runs_the_delegate_request_and_review_round_checks() {
-        assert_eq!(
-            names_for("Agent"),
-            ["delegate-request-fields", "cap-review-rounds"]
-        );
+    fn agent_tool_runs_only_the_delegate_request_check() {
+        assert_eq!(names_for("Agent"), ["delegate-request-fields"]);
     }
 
     #[test]
