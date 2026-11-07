@@ -3,12 +3,10 @@
 //! レビューは周ごとに新しい候補を出すので、直す指摘の基準だけでは周が終わらない（2026-11-07〜08 の 36 周は、ほぼ
 //! 毎回 8〜10 件を返した）。上限を数で決め、超えたら止めてユーザーに聞かせる。
 //!
-//! - 数える呼び出し: Skill の `code-review`。対象は引数の中で最初にある、ディレクトリとして在る絶対パス（無ければ
-//!   hook の cwd）で、その worktree がチェックアウトしているブランチを数える
-//! - 止めるだけの呼び出し: Agent の prompt の、空でない最初の行が `/code-review` を頼む形（`/code-review` と ASCII の
-//!   引数か、`` ` `` で囲んだ呼び出しの後に「を Skill で呼び」「を Skill ツールで呼ぶ」などが続く。下の ASK）で、
-//!   その後に在るディレクトリの絶対パスがあるもの（親が別のモデルの担当にレビューを頼む形）。`/code-review` に触れるだけの行（直す依頼、スキルのパス）は見ない。数えない（その担当が呼ぶ Skill を数えるので、
-//!   数えると 1 周が 2 回になる）が、上限に達していれば、担当を起こす前に止める
+//! - 数える呼び出し: Skill の `code-review` だけ。対象は引数の中で最初にある、ディレクトリとして在る絶対パス（無ければ
+//!   hook の cwd）で、その worktree がチェックアウトしているブランチを数える。親が Agent で担当にレビューを頼む周も、
+//!   担当が呼ぶ Skill で数えて止める。Agent の prompt は見ない（自然文から「/code-review を頼む」を見分ける判定は、
+//!   否定や別のスキルを呼ぶ文に当たるか、頼む文を落とした）
 //! - 上限: `review-level.sh` の `ROUNDS:`（1 か 3）に記録の周 1 を足し、3 のときはさらに記録の周の後の例外の周 3 を
 //!   足した数（1 なら 2、3 なら 7）。ブランチで担当と親が回した周の合計で数える
 //! - 置き場: リポジトリの共通の git ディレクトリの `claude-review-rounds/<ブランチ名>`（`/` は `%2F`）。1 行が 1 周で、
@@ -28,10 +26,8 @@ use crate::git;
 use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::Shell;
-use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::LazyLock;
 
 pub struct CapReviewRounds;
 
@@ -45,41 +41,6 @@ const STATE_DIR: &str = "claude-review-rounds";
 const RECORD_ROUNDS: u32 = 1;
 /// 記録の周の後の例外の周（blocking が (c) だけのとき。文書だけのブランチには無い）
 const EXCEPTION_ROUNDS: u32 = 3;
-
-/// どの呼び出しか
-enum Call {
-    /// Skill の code-review（数える）
-    Review,
-    /// /code-review を頼む Agent（数えず、上限なら止める）
-    Ask,
-}
-
-/// /code-review を頼む句: /code-review を目的語にして「を Skill で呼ぶ」と続ける形。/code-review と「を」の間には、
-/// 空白で区切った ASCII の引数（レベル、worktree のパス）か、`` ` `` で囲んだ呼び出し全体（/git-merge の
-/// 「`/code-review <LEVEL> <WORKTREE> [焦点]` を Skill で呼び」）だけを許す。「Skill で呼」がどこかにあれば当てると、
-/// 同じ行で別のスキルを呼ぶ依頼（「/code-review の指摘を直す。先に /gh-pr-review を Skill で呼び」）や、呼ばない
-/// 依頼（「Skill で呼ばず」）にも当たる
-static ASK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?:`/code-review[^`]*`|/code-review(?:[ \t]+[!-~&&[^`]]+)*)\s*を\s*Skill\s*(?:ツール)?\s*で呼(?:び|ぶ|んで)",
-    )
-    .unwrap()
-});
-
-/// 呼び出しの種類と、対象を探す文字列（/code-review の後ろ）
-fn classify(input: &Input) -> Option<(Call, &str)> {
-    match input.tool_name.as_str() {
-        "Skill" if input.skill == "code-review" => Some((Call::Review, input.args.as_str())),
-        "Agent" => {
-            let prompt = input.prompt.trim_start();
-            let first = prompt.lines().next()?;
-            let m = ASK.find(first)?;
-            let at = m.start() + m.as_str().find("/code-review")? + "/code-review".len();
-            Some((Call::Ask, &prompt[at..]))
-        }
-        _ => None,
-    }
-}
 
 /// 文字列の中で最初の、ディレクトリとして在る絶対パス。囲みの `` ` ``、引用符、括弧、和文の句読点で切る
 fn first_directory(text: &str) -> Option<PathBuf> {
@@ -183,15 +144,11 @@ fn deny_reason(branch: &str, count: usize, limit: u32, rounds: u32) -> String {
 
 impl CapReviewRounds {
     fn check_with(&self, input: &Input, review_level: Option<&str>) -> Vec<Finding> {
-        let Some((call, text)) = classify(input) else {
+        if input.tool_name != "Skill" || input.skill != "code-review" {
             return Vec::new();
-        };
-        let dir = match (first_directory(text), &call) {
-            (Some(d), _) => d,
-            // 対象を書かない /code-review は cwd の差分を見る
-            (None, Call::Review) => input.cwd.clone(),
-            (None, Call::Ask) => return Vec::new(),
-        };
+        }
+        // 対象を書かない /code-review は cwd の差分を見る
+        let dir = first_directory(&input.args).unwrap_or_else(|| input.cwd.clone());
         let branch = git::current_branch(&dir);
         if branch.is_empty() {
             return Vec::new();
@@ -223,9 +180,6 @@ impl CapReviewRounds {
                 rounds,
             ))];
         }
-        let Call::Review = call else {
-            return Vec::new();
-        };
         let head = git::git(&dir, &["rev-parse", "HEAD"]).unwrap_or_default();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -255,7 +209,7 @@ impl Rule for CapReviewRounds {
     }
 
     fn tools(&self) -> &'static [&'static str] {
-        &["Skill", "Agent"]
+        &["Skill"]
     }
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
