@@ -55,7 +55,8 @@ issues: []
 
 ### 確認
 
-- `.claude/skills/delegate/SKILL.md` の受ける側の手順 1 と、頼む側の書き方とテンプレートに、「案（決定ではない）」の扱いがある
+- `.claude/skills/delegate/SKILL.md` の受ける側の手順 1 と、`.claude/skills/delegate/references/requesting.md` の頼む側の書き方と
+  テンプレートに、「案（決定ではない）」の扱いがある
 
 ## 変更
 
