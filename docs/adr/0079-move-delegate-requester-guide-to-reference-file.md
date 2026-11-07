@@ -38,7 +38,7 @@ issues: ["#645"]
 
 ### 帰結
 
-- /delegate の SKILL.md は 22,079 文字から 14,138 文字になる（このブランチで戻した #645 の 5 件のうち /delegate の 2 件と、
+- /delegate の SKILL.md は 22,079 文字から 14,236 文字になる（このブランチで戻した #645 の 5 件のうち /delegate の 2 件と、
   kept-sentences.py を指す手順 6 の文を含む）。`references/requesting.md` は 7,215 文字
 - 担当は、前提の出典の種類を確かめるときだけ、受ける側の手順 1 が絶対パスで指す `references/requesting.md` の「前提」の項を
   読む（出典の規則は 1 か所に置く。ADR-0060）
