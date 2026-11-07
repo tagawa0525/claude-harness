@@ -569,6 +569,8 @@ mod tests {
         git(&r.dir, &["switch", "-q", "main"]);
         git(&r.dir, &["merge", "-q", "--no-ff", "-m", "merge", "docs/y"]);
         git(&r.dir, &["branch", "-q", "-D", "docs/y"]);
+        // 同じ秒の中で作り直すと、ブランチの作成の時刻と前の行の時刻を見分けられない
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         git(&r.dir, &["switch", "-q", "-c", "docs/y"]);
         commit(&r.dir, "again");
         assert!(denied(&run(&r, &review(&r))).is_none());
