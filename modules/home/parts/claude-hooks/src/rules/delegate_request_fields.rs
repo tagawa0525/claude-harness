@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn missing_fields_reason_points_to_the_requester_guide() {
-        // 依頼の定型は親だけが読む references/requesting.md にあり、担当の読む SKILL.md には無い
+        // 依頼の定型は親だけが読む references/requesting.md にあり、担当の読む references/working.md には無い
         let prompt = COMPLETE.replace("完成の形: テストが通る\n", "");
         let reason = deny_reason(&check(&prompt)).to_string();
         assert!(
