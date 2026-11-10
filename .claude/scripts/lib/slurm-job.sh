@@ -72,7 +72,9 @@ slurm_job_main() {
 }
 
 # _slurm_job_reflog <git の引数…> -- <ref>: reflog を新しい順に「<時刻>\t<hash>\t<件名>」で出す（時刻は sacct と同じ
-# ローカル時刻の書式）
+# ローカル時刻の書式）。版は項を時刻で比べて選ぶ。`git log --before=<時刻>` はコミットの日付で選ぶので rebase や amend の
+# 後は走った版でないコミットを返し、`rev-parse '<ブランチ>@{<時刻>}'` は reflog がその時刻まで届かなくても警告だけで
+# 別のコミットを返す
 _slurm_job_reflog() {
   local args=()
   while [[ $1 != -- ]]; do
@@ -82,6 +84,14 @@ _slurm_job_reflog() {
   shift
   git "${args[@]}" log -g --date=format-local:%Y-%m-%dT%H:%M:%S --format='%gd%x09%H%x09%gs' "$1" 2>/dev/null |
     sed -E 's/^[^\t]*@\{([^}]*)\}\t/\1\t/'
+}
+
+# _slurm_job_reaches <reflog> <時刻>: reflog の最も古い項がその時刻以前なら 0
+_slurm_job_reaches() {
+  local oldest
+  [[ -n $1 ]] || return 1
+  oldest=$(tail -n 1 <<<"$1")
+  [[ ! ${oldest%%$'\t'*} > $2 ]]
 }
 
 # _slurm_job_moves <reflog> <から> <まで> <版>: その間の、版と違うコミットへ移る項を「<時刻> <件名>」で出す
@@ -130,15 +140,21 @@ _slurm_job_one() {
     *) exclusive="unknown ($first_arg)" ;;
   esac
 
-  local command=- head=$submitline
-  if [[ $submitline == *" --wrap "* ]]; then
+  # 連絡先は SubmitLine の --comment から読む（sacct の Comment の欄は空。r995 の Slurm はコメントを記録に残さない）。
+  # slurm-run.sh のコメントは「<区分> | <参照> | <目的> | <連絡先>」で、参照と目的は | を含まないが「 --wrap 」を
+  # 含みうるので、3 つの「 | 」の後から次の「 --wrap 」までを連絡先とする。区分の無い古いコメントは連絡先だけ
+  local command=- comment="" contact="" branch="" commit="" word words=()
+  if [[ $submitline == *" --comment "* ]]; then
+    comment=${submitline#* --comment }
+    if [[ $comment =~ ^(timed|record|decision|trial)\ \|\  ]]; then
+      for i in 1 2 3; do comment=${comment#* | }; done
+    fi
+    contact=${comment%%" --wrap "*}
+    [[ $comment != *" --wrap "* ]] || command=${comment#* --wrap }
+  elif [[ $submitline == *" --wrap "* ]]; then
     command=${submitline#* --wrap }
-    head=${submitline%%" --wrap "*}
   fi
-  # 連絡先は --comment の最後の「 | 」の後（区分と目的の前の古いコメントは連絡先だけ）。<ブランチ> <$PWD> <キー=値>…
-  local contact="" branch="" commit="" word
-  [[ $head != *" --comment "* ]] || contact=${head#* --comment }
-  contact=${contact##* | }
+  # <ブランチ> <$PWD> <キー=値>…
   read -r -a words <<<"$contact"
   if ((${#words[@]} > 0)) && [[ ${words[0]} != /* && ${words[0]} != *=* ]]; then
     branch=${words[0]}
@@ -178,6 +194,8 @@ _slurm_job_one() {
 
   local reasons=() notes=() version="" version_at="" since="" until=$end branch_log="" head_log="" moves line
   [[ $until =~ $SLURM_JOB_TIME_RE ]] || until=$(date +%Y-%m-%dT%H:%M:%S)
+  local cutoff oldest
+  cutoff=$(date -d "$SLURM_JOB_REFLOG_DAYS days ago" +%Y-%m-%dT%H:%M:%S)
   if [[ -n $git_dir && -n $branch ]] && git --git-dir="$git_dir" reflog exists "refs/heads/$branch"; then
     branch_log=$(_slurm_job_reflog --git-dir="$git_dir" -- "refs/heads/$branch")
   fi
@@ -194,6 +212,10 @@ _slurm_job_one() {
     fi
     if [[ -z $branch_log && -z $head_log ]]; then
       notes+=("投げた後の変化は確かめていない（ブランチと worktree の reflog が無い）")
+    elif [[ $since < $cutoff ]]; then
+      notes+=("投げた後の変化は確かめていない（版を取った時点が $SLURM_JOB_REFLOG_DAYS 日より前で、rebase で外れたコミットの reflog の項は黙って消えうる）")
+    elif ! _slurm_job_reaches "$branch_log" "$since" && ! _slurm_job_reaches "$head_log" "$since"; then
+      notes+=("投げた後の変化は確かめていない（reflog が版を取った時点まで届かない）")
     else
       notes+=("投げた後のコミットしない編集は確かめていない（reflog はコミットしない編集を記録せず、-dirty は投げた時点しか示さない）")
     fi
@@ -207,10 +229,10 @@ _slurm_job_one() {
     reasons+=("Start が無い（走り始めていない）")
   else
     since=$start
-    if [[ $start < $(date -d "$SLURM_JOB_REFLOG_DAYS days ago" +%Y-%m-%dT%H:%M:%S) ]]; then
+    if [[ $start < $cutoff ]]; then
       reasons+=("Start が $SLURM_JOB_REFLOG_DAYS 日より前（rebase で外れたコミットの reflog の項は黙って消えうる）")
     fi
-    local oldest t h _
+    local t h subject
     oldest=$(tail -n 1 <<<"$branch_log")
     oldest=${oldest%%$'\t'*}
     if [[ $oldest > $start ]]; then
@@ -223,6 +245,13 @@ _slurm_job_one() {
           break
         fi
       done <<<"$branch_log"
+      # ブランチの版でも、投げてから Start までに worktree が別のコミットへ移っていれば、ジョブはそちらを読む
+      while IFS=$'\t' read -r t h subject; do
+        if [[ -n $t && ! $t > $start ]]; then
+          [[ $h == "$version" ]] || reasons+=("Start の時点の worktree の HEAD がブランチの版と違う（$t $subject）")
+          break
+        fi
+      done <<<"$head_log"
     fi
     notes+=("コミットしていない変更の有無は確かめていない（nix を通らないジョブには dirty の印が出ない）")
   fi
