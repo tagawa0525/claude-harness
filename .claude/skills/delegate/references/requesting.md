@@ -40,8 +40,8 @@
     残るため）。通知が来るまで、そのジョブの worktree を変える続きの依頼は出さない（ジョブは走りながら worktree の入力を読み、出力を
     書くので、途中で変えると記録と違う版で走る）
   - PR の自動レビュー: 担当が待ちを打ち切って報告したときは、止まった担当には通知が来ないので、親が /gh-pr-review の手順のとおり
-    background で待つ（`gh-wait-review.sh <PR の URL>`。再レビューの依頼は担当が
-    済ませている。終了コードの扱いは /gh-pr-review に従う）。計算と両方を待つ報告は、自動レビューの続きを計算の
+    background で待つ（担当が再レビューの依頼を済ませていなければ
+    `request-rereview.sh <PR の URL>`、ほかは `gh-wait-review.sh <PR の URL>`。終了コードの扱いは /gh-pr-review に従う）。計算と両方を待つ報告は、自動レビューの続きを計算の
     続きと同じ担当に、計算の後で頼む
 - ADR を書かせるか実装させる依頼と、そうする追加の指示には、その ADR をマージでどの status にするかを、/git-merge の「proposed の
   ADR」の節の分け方（全部を実装、一部を実装、試して採らない、試しただけ、決定だけ）ごとに、accepted、proposed、rejected（実装を
