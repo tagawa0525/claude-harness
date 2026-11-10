@@ -876,10 +876,14 @@ it "heredoc: マージ本文がヒアドキュメントでも見出しを読め�
 # make_fake_gh_merge <behind_by> [reviews] [files] [succeeded]: マージ可能な PR #1 の gh 応答。
 # compare は base...head の遅れを、reviews は最新の bot レビューが見た commit を返す
 # （既定は head と同じ abc = 最後の push がレビュー済み）。files は PR の変更ファイルを
-# "status<TAB>path" の行で返す（既定は無し）。succeeded は失敗していない最後の bot レビューが見た commit（既定は
-# 無しで、head と違う reviews はレビューを 1 度も受けていない PR になる）。ローカルレビューの記録は無い
+# "status<TAB>path" の行で返す（既定は無し）。succeeded は失敗していない最後の bot レビューが見た commit を出力する
+# コマンド（既定は、reviews が head なら head、ほかは無しで、head と違う reviews はレビューを 1 度も受けていない PR に
+# なる）。ローカルレビューの記録は無い
 make_fake_gh_merge() {
-  local reviews="${2:-echo abc}" files="${3:-true}" succeeded="${4:-echo}"
+  local reviews="${2:-echo abc}" files="${3:-true}" succeeded="${4:-}"
+  if [[ -z "$succeeded" ]]; then
+    if [[ "$reviews" == "echo abc" ]]; then succeeded="echo abc"; else succeeded="echo"; fi
+  fi
   make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
@@ -1479,6 +1483,16 @@ out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=テスト用 $MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
 
+it "pre-merge-check: head を見た bot のレビューが失敗したものだけなら、Copilot のチェックが通っていても止める"
+# 対象のファイルが無いときも、Copilot はチェックを成功で終え、失敗の本文のレビューを head に提出する
+make_fake_gh_merge 'echo 0' 'echo abc' true 'echo'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "1 度も受けていません"
+
+it "pre-merge-check: 失敗かは bot のレビューの本文の 1 行目で見る（get-latest-review.sh と同じ）"
+assert_contains "$(grep 'able to review' "$TEST_ROOT/gh.log" | tail -n 1)" 'split("\n")[0]'
+
 it "pre-merge-check: head を見た bot のレビューが失敗したものだけなら、1 度もレビューを受けていないとして止める"
 # Copilot はレビューできなかったときも、head を commit_id にした本文だけのレビューを提出する
 make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
@@ -1563,6 +1577,17 @@ assert_not_contains "$(additional_context "$out")" "g.txt"
 assert_contains "$(additional_context "$out")" "${REBASE_OLD:0:7}"
 # 回さないなら、その理由を本文に書く
 assert_contains "$(additional_context "$out")" "理由"
+
+it "pre-merge-check: 失敗した bot のレビューから rebase だけした head も、1 度もレビューを受けていないとして止める"
+make_fake_gh_rebased "$REBASE_SAME" "$REBASE_OLD" true 'echo'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "1 度も受けていません"
+
+it "pre-merge-check: 最後の bot のレビューが失敗していても、成功したレビューから rebase だけした head は伝えずに通す"
+make_fake_gh_rebased "$REBASE_SAME" 0123456789012345678901234567890123456789 true "echo $REBASE_OLD"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq "" "$out"
 
 it "pre-merge-check: 最後の bot のレビューが失敗していれば、その前の成功したレビューから変わったファイルを伝える"
 # 失敗したレビューの commit を比較元にすると、成功したレビューの後の変更を見落とす
