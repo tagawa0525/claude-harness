@@ -22,7 +22,7 @@ xlc のコミットは、本文の `Refs:` の行で ADR を挙げる（`Refs: A
 xlc の #0188 の 6 件は `git log --grep="Refs:.*ADR-NNNN" main | grep -E ' (feat|fix)\('` で数えた。
 
 2026-10-29 の 14 回目の /retro で、提案 2「/git-merge に、ブランチの feat/fix のコミットが `Refs:` で挙げた proposed の
-ADR を一覧に出す 1 段。hook で止めない」を、ユーザーが推しに従うと答えて選んだ（ユーザー 2026-10-29）。
+ADR を一覧に出す 1 段。hook で止めない」を、ユーザーが推奨に従うと答えて選んだ（ユーザー 2026-10-29）。
 
 ## 検討した案
 
