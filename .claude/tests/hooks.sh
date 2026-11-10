@@ -1490,8 +1490,23 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "1 度も受けていません"
 
+# reviews_json <JSON>: bot のレビューの配列を fixture にし、失敗していない最後のレビューの問い合わせだけを本物の jq にかける
+# （head は abc、Copilot のチェックは通る、ローカルレビューの記録は無い）
+reviews_json() {
+  printf '%s' "$1" >"$TEST_ROOT/reviews.json"
+  make_fake_gh_merge 'echo 0' 'echo abc' true "shift 3; jq -r \"\$2\" $TEST_ROOT/reviews.json"
+  run_hook pre-merge-check "$MERGE_CMD"
+}
+
 it "pre-merge-check: 失敗かは bot のレビューの本文の 1 行目で見る（get-latest-review.sh と同じ）"
-assert_contains "$(grep 'able to review' "$TEST_ROOT/gh.log" | tail -n 1)" 'split("\n")[0]'
+out=$(reviews_json '[{"user":{"type":"Bot"},"commit_id":"abc","body":"Copilot wasn'"'"'t able to review any files in this pull request."}]')
+assert_eq deny "$(decision "$out")"
+out=$(reviews_json '[{"user":{"type":"Bot"},"commit_id":"abc","body":"Overview\nhandles reviews where Copilot encountered an error"}]')
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: 本文の無い bot のレビューがあっても、失敗していないレビューを読める"
+out=$(reviews_json '[{"user":{"type":"Bot"},"commit_id":"abc","body":""},{"user":{"type":"Bot"},"commit_id":"abc","body":null}]')
+assert_eq allow "$(decision "$out")"
 
 it "pre-merge-check: head を見た bot のレビューが失敗したものだけなら、1 度もレビューを受けていないとして止める"
 # Copilot はレビューできなかったときも、head を commit_id にした本文だけのレビューを提出する
