@@ -43,12 +43,12 @@ nixfiles とその worktree で始めたセッションは、同じ中身を毎�
   直下の `.claude/CLAUDE.md` だけで、ホームの下にある clone の `.claude/CLAUDE.md` には当たらない
 - nixfiles のセッションは、作業中のブランチの `.claude/CLAUDE.md` を読む。指示を直すブランチでは、`claude-sync` を実行
   しなくても、その worktree のセッションに直した指示が効く
-- 案 A は先に実装して捨てた（ユーザーの案。レビューを 3 周受けたブランチ fix/claude-md-single-load、マージしていない）。
+- 案 A は先に実装して捨てた（ユーザーの案。マージしていない）。
   `~/.claude/CLAUDE.md` の無い環境で nixfiles を開くと指示が 1 つも読まれず、worktree で直した指示は `claude-sync` を実行する
   まで効かない。`claude-sync`、そのテスト、ADR の番号の検査、採用中の ADR が書くパスにも変更が及んだ。案 C はどれも
   起こさない
 - 案 B は、パターンがディレクトリの名前（`nixfiles`、`nixfiles-<ブランチから作った名前>`）に頼り、別の名前の clone では黙って
-  2 回読みに戻る。クラウドのセッションには効かない
+  2 回読みに戻る
 - 案 D は、`.claude/` の下のパスを書いているファイル（確定した ADR の凍結する部分を含む）のすべてに変更が及び、指示の
   重複 1 つに見合わない。スキルは同じ名前のものが `~/.claude/skills` と `.claude/skills` にあるが、一覧に出るのは 1 回で、
   2 回は読まれていない（2026-11-11 のセッションで、/adr の読み込み元は `~/.claude/skills/adr`）
@@ -56,8 +56,14 @@ nixfiles とその worktree で始めたセッションは、同じ中身を毎�
 ### 帰結
 
 - 良い点: nixfiles のセッションが読む指示が 1 回になり、作業中のブランチの版になる
+- 悪い点: main より古いブランチの worktree のセッションは、そのブランチの古い `.claude/CLAUDE.md` だけを読み、後から main に
+  入った指示が効かない（前は、配られた `~/.claude/CLAUDE.md` の新しい版も読んでいた）。指示を使うセッションは、main に
+  rebase した worktree で始める
 - 悪い点: ホームが `/home/<ユーザー>` でない環境（macOS など）では、パターンが当たらず 2 回読みに戻る。今の対象のホストは
-  どれも NixOS で `/home/<ユーザー>`
+  どれも NixOS で `/home/<ユーザー>`。clone を `/home` の直下（`/home/nixfiles`）に置くと、プロジェクトの側にも当たり、指示が
+  1 つも読まれない
+- 悪い点: `.claude/settings.json` は、`.claude` の下でこれだけが `~/.claude` に配らないプロジェクトの設定になる。配ると、
+  どのリポジトリでもグローバルの指示が読まれなくなる（`claude-sync` は配る対象を名前で挙げていて、このファイルは入っていない）
 - 悪い点: nixfiles のセッションは、`~/.claude/CLAUDE.md` にだけある内容（同期の後に手で足したもの）を読まない。
   `~/.claude/CLAUDE.md` は生成物で、手では直さない運用
 
