@@ -319,7 +319,7 @@ fn last_successful_review(
             "--paginate",
             &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
             "--jq",
-            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not) | .commit_id] | last // \"\"",
+            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | split(\"\\n\")[0] | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not) | .commit_id] | last // \"\"",
         ],
     )?;
     // --paginate はページごとに --jq を適用するので、最後の空でない行が最後のレビュー
@@ -915,52 +915,53 @@ impl Rule for PreMergeCheck {
                         "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
                             .to_string(),
                     ),
-                    // head を見た最後の bot のレビューが失敗したもの（チェックが失敗）なら、下で成功したレビューを探す
-                    Some(sha) if sha == head_sha && !copilot_check_failed => {}
                     // レビューが 1 件も無い場合、通常は「自動レビューが無いリポジトリ」なので
                     // 検査しない。ただしチェックが失敗しているなら初回レビューが走らなかった
                     // ということなので、下の分岐でレビュー未実施として報告する
                     Some(sha) if sha.is_empty() && !copilot_check_failed => {}
-                    // 文書だけの PR は一度レビューを受けていれば足りる。後のレビューが失敗していても伝えない
-                    Some(sha)
-                        if !sha.is_empty()
-                            && is_docs_only(files())
-                            && successful().is_ok_and(|s| s.is_some()) => {}
-                    // リベースだけで hash が変わった head は、レビュー済みの差分と同じなので伝えない（ADR-0021）
-                    Some(sha)
-                        if !sha.is_empty()
-                            && sha != head_sha
-                            && tip()
-                                .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
-                    Some(_) => match (local_review_marks(&dir, &owner, &name, number), successful()) {
-                        (Err(()), _) => reasons.push(
-                            "ローカルレビューの記録を確認できませんでした（issues/comments API が失敗）"
-                                .to_string(),
-                        ),
-                        (_, Err(())) => reasons.push(
-                            "失敗していない自動レビューを確認できませんでした（reviews API が失敗）"
-                                .to_string(),
-                        ),
-                        // head のローカルレビューの記録があれば（記録の SHA から rebase だけした head も。ADR-0059）、
-                        // Copilot のレビューの有無・到着・チェックの失敗を問わず通す（ADR-0043）
-                        (Ok(marks), Ok(bot))
-                            if bot.as_deref() == Some(head_sha.as_str())
-                                || marks_cover(&dir, &marks, &head_sha, tip) => {}
-                        (Ok(marks), Ok(bot)) => {
-                            let local = last_local_record(&marks, &head_sha);
-                            if bot.is_none() && local.is_none() {
-                                reasons.push(never_reviewed_reason(
-                                    &head_sha,
-                                    copilot_check_failed,
-                                    &url,
-                                ));
-                            } else if let Some(c) =
-                                stale_review_context(&dir, &head_sha, bot, local, files())
-                            {
-                                contexts.push(Finding::Context(c));
+                    // どの判定も失敗していない bot のレビューで行う。失敗したレビューも commit_id を持つので、
+                    // 最後の bot のレビュー（reviewed）で判定すると、レビューを受けていない head を通す
+                    Some(_) => {
+                        let succ = successful();
+                        // bot のレビューが head を見ている、文書だけの PR で 1 度レビューが成功している（ADR-0004）、
+                        // リベースだけで hash が変わった head（ADR-0021）は、何も伝えずに通す
+                        let covered = succ.as_ref().ok().cloned().flatten().is_some_and(|s| {
+                            s == head_sha
+                                || is_docs_only(files())
+                                || tip().is_some_and(|b| same_pr_diff(&dir, &b, &s, &head_sha))
+                        });
+                        if !covered {
+                            match local_review_marks(&dir, &owner, &name, number) {
+                                Err(()) => reasons.push(
+                                    "ローカルレビューの記録を確認できませんでした（issues/comments API が失敗）"
+                                        .to_string(),
+                                ),
+                                // head のローカルレビューの記録があれば（記録の SHA から rebase だけした head も。ADR-0059）、
+                                // Copilot のレビューの有無・到着・チェックの失敗を問わず通す（ADR-0043）
+                                Ok(marks) if marks_cover(&dir, &marks, &head_sha, tip) => {}
+                                Ok(marks) => match succ {
+                                    Err(()) => reasons.push(
+                                        "失敗していない自動レビューを確認できませんでした（reviews API が失敗）"
+                                            .to_string(),
+                                    ),
+                                    Ok(bot) => {
+                                        let local = last_local_record(&marks, &head_sha);
+                                        if bot.is_none() && local.is_none() {
+                                            reasons.push(never_reviewed_reason(
+                                                &head_sha,
+                                                copilot_check_failed,
+                                                &url,
+                                            ));
+                                        } else if let Some(c) = stale_review_context(
+                                            &dir, &head_sha, bot, local, files(),
+                                        ) {
+                                            contexts.push(Finding::Context(c));
+                                        }
+                                    }
+                                },
                             }
                         }
-                    },
+                    }
                 }
             }
 
