@@ -319,7 +319,7 @@ fn last_successful_review(
             "--paginate",
             &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
             "--jq",
-            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | split(\"\\n\")[0] | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not) | .commit_id] | last // \"\"",
+            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | (split(\"\\n\")[0] // \"\") | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not) | .commit_id] | last // \"\"",
         ],
     )?;
     // --paginate はページごとに --jq を適用するので、最後の空でない行が最後のレビュー
