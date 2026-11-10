@@ -1,27 +1,19 @@
-//! cap-review-rounds: ローカルの /code-review の周を、ブランチごとに上限で止める
+//! cap-review-rounds: ローカルの /code-review の周をブランチごとに数え、何周目かをモデルに伝える（止めない）
 //!
-//! レビューは周ごとに新しい候補を出すので、直す指摘の基準だけでは周が終わらない（2026-11-07〜08 の 36 周は、ほぼ
-//! 毎回 8〜10 件を返した）。上限を数で決め、超えたら止めてユーザーに聞かせる。
+//! 1 周目の後にもう 1 周回すかは、直しの大きさと危険からモデルが決める（/git-merge の「直す指摘の基準」）。数えるのは
+//! 決定的なので hook が行い、判断の材料として周の数を渡す。周の数で止めないのは、確かめた誤りの直しまで数で止めると、
+//! 直しが誰にも読まれずに残るか、別の名前のブランチに移す回り道を誘うため。
 //!
 //! - 数える呼び出し: Skill の `code-review` だけ。対象は引数の中で最初にある、ディレクトリとして在る絶対パス（無ければ
 //!   hook の cwd）で、その worktree がチェックアウトしているブランチを数える。親が Agent で担当にレビューを頼む周も、
-//!   担当が呼ぶ Skill で数えて止める。Agent の prompt は見ない（自然文から「/code-review を頼む」を見分ける判定は、
+//!   担当が呼ぶ Skill で数える。Agent の prompt は見ない（自然文から「/code-review を頼む」を見分ける判定は、
 //!   否定や別のスキルを呼ぶ文に当たるか、頼む文を落とした）
-//! - 上限: `review-level.sh` の `ROUNDS:`（1 か 3）に記録の周 1 と、記録の周の後の例外の周 3 を足した数（1 なら 5、
-//!   3 なら 7）。ブランチで担当と親が回した周の合計で数える。例外の周は、記録の周の確かめた誤り（再現を書ける blocking）を
-//!   直した head に回す周で、どちらの ROUNDS にも要る（文書だけのブランチでも、マージの hook が通さない直しには周が
-//!   要る）
 //! - 置き場: リポジトリの共通の git ディレクトリの `claude-review-rounds/<ブランチ名>`（`/` は `%2F`）。1 行が 1 周で、
-//!   回したときの HEAD を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る（rebase の後の周も
-//!   数える規則のため）。ブランチの reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして
-//!   数えない（ブランチを消すと reflog も消え、作り直すと新しく始まる。rebase では続く。マージの前に rebase した
-//!   HEAD は既定ブランチの祖先にならないので、祖先かでは見分けられない）
-//! - 呼び出しの結果は見ないので、対象を見つけられなかった回とエラーの回も数える（上限は記録の周と例外の周の分だけ
-//!   余裕がある）
-//!
-//! `review-level.sh` の store のパスは package.nix が環境変数で渡す。無いとき（cargo で直接ビルドしたもの）と、
-//! スクリプトが失敗したときは、判定できなかった理由を利用者に見せて通す（ADR-0033）。エスケープは無い（周の数は
-//! ユーザーの判断で変えるもので、モデルが外す理由が無い）。
+//!   回したときの HEAD と時刻を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る。ブランチの
+//!   reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして数えない（ブランチを消すと reflog も
+//!   消え、作り直すと新しく始まる。rebase では続く。マージの前に rebase した HEAD は既定ブランチの祖先にならないので、
+//!   祖先かでは見分けられない）
+//! - 呼び出しの結果は見ないので、対象を見つけられなかった回とエラーの回も数える
 
 use super::Rule;
 use crate::git;
@@ -29,20 +21,11 @@ use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::Shell;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub struct CapReviewRounds;
 
-/// review-level.sh の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドしたものには無い）
-const REVIEW_LEVEL: &str = "CLAUDE_HOOKS_REVIEW_LEVEL";
-
 /// 数を置く、共通の git ディレクトリの下のディレクトリ
 const STATE_DIR: &str = "claude-review-rounds";
-
-/// 記録の周（3 周目か、文書だけのブランチの 1 周目で blocking を直した head に回す 1 周）
-const RECORD_ROUNDS: u32 = 1;
-/// 記録の周の後の例外の周（記録の周の確かめた誤りを直した head に回す）
-const EXCEPTION_ROUNDS: u32 = 3;
 
 /// 文字列の中で最初の、ディレクトリとして在る絶対パス。囲みの `` ` ``、引用符、括弧、和文の句読点で切る
 fn first_directory(text: &str) -> Option<PathBuf> {
@@ -56,45 +39,6 @@ fn first_directory(text: &str) -> Option<PathBuf> {
 /// ブランチ名をファイル名にする（`%` と `/` を符号にする）
 fn state_file_name(branch: &str) -> String {
     branch.replace('%', "%25").replace('/', "%2F")
-}
-
-/// 周の上限（記録の周と例外の周を足した数）
-fn limit(rounds: u32) -> u32 {
-    rounds + RECORD_ROUNDS + EXCEPTION_ROUNDS
-}
-
-/// review-level.sh を dir で実行し、`ROUNDS:` の値を返す。失敗は理由を利用者に見せて None
-fn rounds_of(script: &str, dir: &Path, branch: &str) -> Option<u32> {
-    // bash で起動する（store のファイルの shebang の /usr/bin/env に頼らず、書いたばかりのファイルを exec して
-    // ETXTBSY になることも避ける）
-    let out = match Command::new("bash")
-        .arg(script)
-        .arg(branch)
-        .current_dir(dir)
-        .output()
-    {
-        Ok(out) => out,
-        Err(e) => {
-            notice(format!(
-                "cap-review-rounds: review-level.sh を起動できないので、/code-review の周を数えていません: {e}"
-            ));
-            return None;
-        }
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let rounds = stdout
-        .lines()
-        .find_map(|l| l.strip_prefix("ROUNDS: "))
-        .and_then(|v| v.trim().parse().ok());
-    if !out.status.success() || rounds.is_none() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        notice(format!(
-            "cap-review-rounds: review-level.sh が {branch} の ROUNDS を出さないので、/code-review の周を数えていません: {}",
-            stderr.trim()
-        ));
-        return None;
-    }
-    rounds
 }
 
 /// ブランチの reflog の最も古い記録の時刻（UNIX 秒）。reflog が無ければ None
@@ -127,18 +71,23 @@ fn live_rounds(dir: &Path, branch: &str, path: &Path) -> Vec<String> {
         .collect()
 }
 
-fn deny_reason(branch: &str, count: usize, limit: u32, rounds: u32) -> String {
-    let breakdown =
-        format!("ROUNDS {rounds} + 記録の周 {RECORD_ROUNDS} + 例外の周 {EXCEPTION_ROUNDS}");
+fn context(branch: &str, round: usize) -> String {
     format!(
-        "ブランチ {branch} のローカルの /code-review は {count} 周を回し、上限 {limit}（review-level.sh の {breakdown}）に達しました。\n\
-         理由: レビューは周ごとに新しい指摘を出し続けるので、直す指摘の基準だけでは周が終わりません。数で止めて、続けるかをユーザーが決めます（担当と親の周の合計で、rebase の後の周も数えます）。\n\
-         修正方法: 残った blocking を issue に書き、ユーザーに判断を求めてください。/delegate の担当は、報告の「マージの前後で人の手が要ること」に blocking と issue を書いて止まります。周を数え直すために、別の名前のブランチに移して回さないでください（周の数はブランチ名ごとなので、移すと hook を迂回します）。"
+        "ブランチ {branch} のローカルの /code-review の {round} 周目です（担当と親の周の合計。rebase の後の周も数えます）。\
+         周の数では止めません。直した後にもう 1 周回すかは、直しの大きさと危険で決めます（/git-merge の「直す指摘の基準」の「終わり」の項）。"
     )
 }
 
-impl CapReviewRounds {
-    fn check_with(&self, input: &Input, review_level: Option<&str>) -> Vec<Finding> {
+impl Rule for CapReviewRounds {
+    fn name(&self) -> &'static str {
+        "cap-review-rounds"
+    }
+
+    fn tools(&self) -> &'static [&'static str] {
+        &["Skill"]
+    }
+
+    fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
         if input.tool_name != "Skill" || input.skill != "code-review" {
             return Vec::new();
         }
@@ -148,15 +97,6 @@ impl CapReviewRounds {
         if branch.is_empty() {
             return Vec::new();
         }
-        let Some(script) = review_level else {
-            notice(format!(
-                "cap-review-rounds: review-level.sh のパス（環境変数 {REVIEW_LEVEL}）が無いので、/code-review の周を数えていません（nix で包んだものだけが数える）"
-            ));
-            return Vec::new();
-        };
-        let Some(rounds) = rounds_of(script, &dir, &branch) else {
-            return Vec::new();
-        };
         let Some(common) = git::git(
             &dir,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -166,15 +106,6 @@ impl CapReviewRounds {
         let state_dir = Path::new(&common).join(STATE_DIR);
         let path = state_dir.join(state_file_name(&branch));
         let mut lines = live_rounds(&dir, &branch, &path);
-        let limit = limit(rounds);
-        if lines.len() >= limit as usize {
-            return vec![Finding::Deny(deny_reason(
-                &branch,
-                lines.len(),
-                limit,
-                rounds,
-            ))];
-        }
         let head = git::git(&dir, &["rev-parse", "HEAD"]).unwrap_or_default();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -190,25 +121,7 @@ impl CapReviewRounds {
             ));
             return Vec::new();
         }
-        vec![Finding::Context(format!(
-            "ブランチ {branch} のローカルの /code-review の {} 周目です（上限 {limit}。review-level.sh の ROUNDS {rounds} に記録の周と例外の周を足した数で、担当と親の周の合計）。",
-            lines.len(),
-        ))]
-    }
-}
-
-impl Rule for CapReviewRounds {
-    fn name(&self) -> &'static str {
-        "cap-review-rounds"
-    }
-
-    fn tools(&self) -> &'static [&'static str] {
-        &["Skill"]
-    }
-
-    fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
-        let script = std::env::var(REVIEW_LEVEL).ok();
-        self.check_with(input, script.as_deref())
+        vec![Finding::Context(context(&branch, lines.len()))]
     }
 }
 
