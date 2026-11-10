@@ -31,7 +31,7 @@
 
 - 作業は feature branch → PR → マージ。機械的に判定できる禁止事項（mainへの直接commit/push、マージ方式、PR・マージコミットの本文形式など）はhookがdenyし、理由と修正方法をその場で示す
 - 手順とhookは必須ゲート。通らないときは原因を調査して直す。文言を変える・別の書き方にするなどして迂回しない
-- マージの前にレビューを受け、指摘に対応する。手順は /gh-pr-review と /gh-pr-merge（GitHub リモートがなければ /git-merge）に従う。自動レビューを待つときは `~/.claude/scripts/gh-wait-review.sh <PR の URL>`（/delegate の担当は、/delegate の「作業中の規則」の 5 分より長い待ちの項に従う）
+- マージの前にレビューを受け、指摘に対応する。手順は /gh-pr-review と /gh-pr-merge（GitHub リモートがなければ /git-merge）に従う。自動レビューを待つときは `~/.claude/scripts/gh-wait-review.sh <PR の URL>`（/delegate の担当は、/delegate の「作業中の規則」の待ちの項に従う）
 - PR のスクリプト（`gh-wait-review.sh`、`gh-pr-review/scripts/`）には PR の URL を渡す（cwd のリポジトリに依らずその PR を読み書きする）。URL は `gh pr create` の出力か、`cd <worktree> && gh pr view --json url -q .url` で得る。ビルドやチェックなど成否を判断するコマンドは、出力をそのまま受けて終了コードで判定する（`tail` などにつなぐと終了コードが消える）
 - 同一worktree内では、1つのPRがマージされてから次のPRの実装を始める。worktreeを分ければ並行着手可（マージ前にrebaseしてgit graphを整える）
 - 複数エージェントで並行作業しているとき、指示されたPRのみに集中する。別エージェントが対応中のPRの確認・修正をしない（競合するため）
@@ -74,7 +74,7 @@
 
 ### ツール
 
-- 重い計算（目安で、コアの半分以上を 5 分以上使うもの、メモリの半分以上を使うもの。時間を記録する測定。モンテカルロ、核データの処理、大きなベンチマーク）は、r995 の Slurm の待ち行列に `~/.claude/scripts/slurm-run.sh` で投げる（r995 以外のホストでは `/mnt/r995/github` の下で投げる）。投げる前に /slurm-run を読み、投げ方と待ち方はそこに従う（/delegate の担当は、待ちについて /delegate の「作業中の規則」の 5 分より長い待ちの項に従う）。待ち行列は `~/.claude/scripts/slurm-queue.sh` で見る。1 コアの処理（テスト、lint、比べるツール）と数分のビルドは、時間がかかっても手元で実行する
+- 重い計算（目安で、コアの半分以上を 5 分以上使うもの、メモリの半分以上を使うもの。時間を記録する測定。モンテカルロ、核データの処理、大きなベンチマーク）は、r995 の Slurm の待ち行列に `~/.claude/scripts/slurm-run.sh` で投げる（r995 以外のホストでは `/mnt/r995/github` の下で投げる）。投げる前に /slurm-run を読み、投げ方と待ち方はそこに従う（/delegate の担当は、投げ方と待ち方について /delegate の「作業中の規則」の待ちの項に従う）。待ち行列は `~/.claude/scripts/slurm-queue.sh` で見る。1 コアの処理（テスト、lint、比べるツール）と数分のビルドは、時間がかかっても手元で実行する
 - コンテナランタイムは Podman を優先する（Docker より好み）
 - 大きなソースファイルの構造把握は全文 Read より先に `zat <file>`。ただし Rust は pub シンボル限定で、private 関数・`#[test]`・trait impl メソッドはエラーなく静かに省かれる点に注意
 
