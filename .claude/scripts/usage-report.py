@@ -78,7 +78,7 @@ def parse_bound(name, value):
         raise ReportError(
             f"{name} は時差つきの ISO 8601 で書いてください（例 2026-11-06T00:00+09:00、2026-11-05T15:00Z）: {value}"
         )
-    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.datetime.fromisoformat(value)
 
 
 def find_transcript(path):
@@ -148,7 +148,7 @@ def read_transcript(path, since, until):
                 raise ReportError(
                     f"timestamp の無い応答があります（記録の形が変わったかもしれません）: {path}"
                 )
-            t = datetime.datetime.fromisoformat(d["timestamp"].replace("Z", "+00:00"))
+            t = datetime.datetime.fromisoformat(d["timestamp"])
             if (since and t < since) or (until and t >= until):
                 continue
             replies.append((t, *price_reply(path, m.get("model"), u)))
