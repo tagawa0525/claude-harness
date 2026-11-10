@@ -349,6 +349,7 @@ mod tests {
         assert!(reason.contains("上限 7"), "{reason}");
         assert!(reason.contains("issue"), "{reason}");
         assert!(reason.contains("ユーザー"), "{reason}");
+        assert!(reason.contains("別の名前のブランチ"), "{reason}");
     }
 
     #[test]
