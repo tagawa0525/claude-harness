@@ -113,7 +113,12 @@ repo_bytes() {
     tree_bytes "$repo" "$new" "$cond"
     return
   fi
-  echo $(($(tree_bytes "$repo" "$tip" "$cond") + $(tree_bytes "$repo" "$head" "$cond") - $(tree_bytes "$repo" "$fork" "$cond")))
+  # 算術展開の中のコマンド置換は失敗しても set -e で止まらないので、先に変数に入れる
+  local t h f
+  t=$(tree_bytes "$repo" "$tip" "$cond")
+  h=$(tree_bytes "$repo" "$head" "$cond")
+  f=$(tree_bytes "$repo" "$fork" "$cond")
+  echo $((t + h - f))
 }
 
 delta() {
@@ -142,7 +147,11 @@ for repo in "${repos[@]}"; do
   else
     tip=$(git -C "$repo" rev-parse "$base")
     head=$(git -C "$repo" rev-parse HEAD)
-    fork=$(git -C "$repo" merge-base "$tip" "$head")
+    if ! fork=$(git -C "$repo" merge-base "$tip" "$head"); then
+      echo "ERROR: $repo の HEAD と既定ブランチ（$base）に共通の祖先が無いので、HEAD の変えた分が分かりません" >&2
+      failed=1
+      continue
+    fi
   fi
   skills='path ~ /^\.claude\/skills\/.*\.md$/'
   claude_md='path == "CLAUDE.md" || path ~ /\/CLAUDE\.md$/'
@@ -168,7 +177,7 @@ if [[ -n "$memory" ]]; then
   fi
   # 退避の中身にこのディレクトリがあるか（退避を始める前の区間を、メモリの無いプロジェクトと見分ける）
   in_backup=0
-  if ((has_ref)) && [[ -n "$(git -C "$home" ls-tree -r --name-only "$ref" -- ":(literal)$rel/")" ]]; then
+  if ((has_ref)) && [[ -n "$(git -C "$home" ls-tree -r --name-only "$ref" -- "$rel/")" ]]; then
     in_backup=1
   fi
   old_commit=""
