@@ -524,6 +524,16 @@ out=$("$PROSE" --since 2026-11-10T00:00+09:00 --repo "$TEST_ROOT/prose-clone" 2>
 assert_eq 0 $?
 assert_contains "$out" "PROSE: claude-md 50 80 +30 $TEST_ROOT/prose-clone"
 
+it "prose-size: 既定ブランチと共通の祖先が無い HEAD は、ほかのリポジトリの行を出した後に失敗する"
+git -C "$PREPO" worktree add -q --orphan -b orphan "$TEST_ROOT/prose-orphan"
+write_bytes "$TEST_ROOT/prose-orphan/.claude/skills/e/SKILL.md" 9
+commit_at "$TEST_ROOT/prose-orphan" 2026-11-11T15:00:00+09:00
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --repo "$TEST_ROOT/prose-orphan" --repo "$PREPO" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_contains "$out" "PROSE: skills 100 70 -30 $PREPO"
+assert_not_contains "$out" "PROSE: skills 100 79"
+
 it "prose-size: 区間の始まりより前にコミットが無いリポジトリは、前を 0 と数える"
 out=$("$PROSE" --since 2026-11-01T00:00+09:00 --until 2026-11-11T00:00+09:00 --repo "$PREPO" 2>&1)
 assert_eq 0 $?
