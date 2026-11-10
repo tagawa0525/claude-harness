@@ -67,6 +67,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -781,6 +782,11 @@ def _rewritten_paths(w: Path, old: str, new: str) -> list[bytes]:
     return paths
 
 
+def _names(raw: bytes) -> set[bytes]:
+    """`-z --name-only` の出力の、パスの集まり"""
+    return {p for p in raw.split(b"\0") if p}
+
+
 def _paths_input(paths) -> bytes:
     return b"".join(p + b"\0" for p in paths)
 
@@ -834,6 +840,10 @@ def _plan(w: Path, old: str, mapping: dict[str, str]) -> _Plan:
             raise Leave(f"操作の途中（{name}）")
     rewritten = _rewritten_paths(w, old, new)
 
+    # 衝突の項は先に見る（refresh は衝突の項があると needs merge で失敗し、理由を取り違える）
+    index = _entries(git(w, "ls-files", "-s", "-z"))
+    tree = _entries(git(w, "ls-tree", "-r", "-z", "--full-tree", old))
+
     # 未コミットの変更は、ref を移す前の HEAD（old）と比べる。index の stat を更新してから作業ツリーと比べる。
     # 更新できない（index.lock を持たれている）なら、後の index の書き込みも失敗するので、何も変えずに残す
     refresh = subprocess.run(
@@ -858,25 +868,32 @@ def _plan(w: Path, old: str, mapping: dict[str, str]) -> _Plan:
         raise Leave(
             f"assume-unchanged か skip-worktree の印のあるパス: {', '.join(flagged)}"
         )
-    index = _entries(git(w, "ls-files", "-s", "-z"))
-    tree = _entries(git(w, "ls-tree", "-r", "-z", "--full-tree", old))
-    unstaged = {p for p in git(w, "diff-files", "-z", "--name-only").split(b"\0") if p}
-    # git add -N のパスは、index に空の項があるだけで中身はステージしていない（diff-files が A に出す）
-    intent = {
-        p
-        for p in git(w, "diff-files", "-z", "--name-only", "--diff-filter=A").split(
-            b"\0"
+    unstaged = _names(git(w, "diff-files", "-z", "--name-only"))
+    # git add -N のパスは、index に空の項があるだけで中身はステージしていない。--ita-invisible-in-index は
+    # その項を無いものとして比べる（diff-files の状態は、ファイルを消すと A から D に変わるので、見分けに使えない）
+    staged = _names(
+        git(
+            w,
+            "diff-index",
+            "--cached",
+            "--no-renames",
+            "--ita-invisible-in-index",
+            "-z",
+            "--name-only",
+            old,
         )
-        if p
-    }
+    )
+    intent = (
+        _names(
+            git(w, "diff-index", "--cached", "--no-renames", "-z", "--name-only", old)
+        )
+        - staged
+    )
     if intent & tree.keys():
         names = ", ".join(
             sorted(p.decode(errors="replace") for p in intent & tree.keys())
         )
         raise Leave(f"追跡していたパスを git add -N で足し直した: {names}")
-    staged = {
-        p for p in index.keys() | tree.keys() if index.get(p) != tree.get(p)
-    } - intent
     partly = sorted(staged & unstaged)
     if partly:
         # ステージし直すと、ステージしていなかった部分も入る
@@ -927,14 +944,14 @@ def sync_one(
             stderr = remap.stderr.decode("utf-8", "replace").strip()
             if remap.returncode != 0 and stderr.endswith("何も書き換えていない"):
                 raise Leave(f"commit-refs remap が止まった: {stderr}")
-    except Stop as e:
+    except (Stop, OSError) as e:
         raise Leave(str(e)) from None
 
     try:
         if not clean and remap.returncode != 0:
             raise Stop(f"commit-refs remap が書き込みの途中で止まった: {stderr}")
         return _apply(w, plan, clean, t, b"" if clean else remap.stdout)
-    except (Stop, Leave) as e:
+    except (Stop, Leave, OSError) as e:
         raise Stop(
             f"{w}: 途中まで合わせて止まった（未コミットの変更は作業ツリーに残る。HEAD、index、"
             f"作業ツリーの一部が新しい履歴になっている）: {e}"
@@ -980,7 +997,7 @@ def _apply(w: Path, plan: _Plan, clean: bool, t: Transformer, remapped: bytes):
             input=_paths_input(index_only),
         )
     for f, data in contents:
-        f.write_bytes(data)
+        _replace_file(f, data)
     # ステージしていたパスを、直した中身でステージし直す（部分のステージは _plan で除いた）。index に無いパス
     # （git rm --cached、git rm）は足さない
     restage = sorted(p for p in plan.staged if p in plan.index)
@@ -995,6 +1012,21 @@ def _apply(w: Path, plan: _Plan, clean: bool, t: Transformer, remapped: bytes):
             input=_paths_input(restage),
         )
     return remapped.decode("utf-8", "replace")
+
+
+def _replace_file(f: Path, data: bytes) -> None:
+    """f の中身を data にする。同じディレクトリの一時ファイルに書き、f の権限をコピーして rename で置き換える
+    （write_bytes は先に中身を消すので、書き込みの失敗で未コミットの編集が壊れる。読み出し専用のファイルも書ける）"""
+    mode = f.stat().st_mode & 0o7777
+    fd, tmp = tempfile.mkstemp(dir=f.parent, prefix=f".{f.name}.")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, f)
+    except BaseException:
+        os.unlink(tmp)
+        raise
 
 
 def _one_line(e: Exception) -> str:
@@ -1027,7 +1059,7 @@ def sync_worktrees(args: argparse.Namespace) -> bool:
                 raise Leave("ディレクトリが無い")
             try:
                 bare = git(w, "rev-parse", "--is-bare-repository").strip() == b"true"
-            except Stop as e:
+            except (Stop, OSError) as e:
                 raise Leave(str(e)) from None
             if bare:
                 print(f"SKIPPED: {w} (bare)")
