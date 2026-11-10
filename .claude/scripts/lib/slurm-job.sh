@@ -27,6 +27,7 @@ SLURM_JOB_FIELDS=JobID,JobName,State,Elapsed,Submit,Start,End,WorkDir,SubmitLine
 SLURM_JOB_SEP=$'\x1f'
 # gc.reflogExpireUnreachable の既定。rebase で外れたコミットの reflog の項はこれを過ぎると黙って消える
 SLURM_JOB_REFLOG_DAYS=30
+SLURM_JOB_HEAD_NOTE="worktree の HEAD の動き（ブランチの切り替え）は確かめていない（worktree の reflog が無いか、版を取った時点まで届かない）"
 SLURM_JOB_TIME_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$'
 
 slurm_job_main() {
@@ -144,7 +145,8 @@ _slurm_job_one() {
   # slurm-run.sh のコメントは「<区分> | <参照> | <目的> | <連絡先>」で、参照と目的は | を含まないが「 --wrap 」を
   # 含みうるので、3 つの「 | 」の後から次の「 --wrap 」までを連絡先とする。区分の無い古いコメントは連絡先だけ
   local command=- comment="" contact="" branch="" commit="" word words=()
-  if [[ $submitline == *" --comment "* ]]; then
+  # 自分の --comment の無い SubmitLine では、--wrap のコマンドの中の「 --comment 」を読まない
+  if [[ $submitline == *" --comment "* && ${submitline%%" --comment "*} != *" --wrap "* ]]; then
     comment=${submitline#* --comment }
     if [[ $comment =~ ^(timed|record|decision|trial)\ \|\  ]]; then
       for i in 1 2 3; do comment=${comment#* | }; done
@@ -218,6 +220,7 @@ _slurm_job_one() {
       notes+=("投げた後の変化は確かめていない（reflog が版を取った時点まで届かない）")
     else
       notes+=("投げた後のコミットしない編集は確かめていない（reflog はコミットしない編集を記録せず、-dirty は投げた時点しか示さない）")
+      _slurm_job_reaches "$head_log" "$since" || notes+=("$SLURM_JOB_HEAD_NOTE")
     fi
   elif [[ -z $branch ]]; then
     reasons+=("commit= もブランチも無い（HEAD を切り離して投げたか、git の外から投げた）")
@@ -254,6 +257,7 @@ _slurm_job_one() {
       done <<<"$head_log"
     fi
     notes+=("コミットしていない変更の有無は確かめていない（nix を通らないジョブには dirty の印が出ない）")
+    _slurm_job_reaches "$head_log" "$start" || notes+=("$SLURM_JOB_HEAD_NOTE")
   fi
 
   if [[ -n $version && -n $since ]]; then
