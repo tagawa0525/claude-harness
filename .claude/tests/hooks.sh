@@ -876,10 +876,10 @@ it "heredoc: マージ本文がヒアドキュメントでも見出しを読め�
 # make_fake_gh_merge <behind_by> [reviews] [files] [succeeded]: マージ可能な PR #1 の gh 応答。
 # compare は base...head の遅れを、reviews は最新の bot レビューが見た commit を返す
 # （既定は head と同じ abc = 最後の push がレビュー済み）。files は PR の変更ファイルを
-# "status<TAB>path" の行で返す（既定は無し）。succeeded は失敗していない bot レビューの件数（既定は 0 件で、
-# head と違う reviews はレビューを 1 度も受けていない PR になる）。ローカルレビューの記録は無い
+# "status<TAB>path" の行で返す（既定は無し）。succeeded は失敗していない最後の bot レビューが見た commit（既定は
+# 無しで、head と違う reviews はレビューを 1 度も受けていない PR になる）。ローカルレビューの記録は無い
 make_fake_gh_merge() {
-  local reviews="${2:-echo abc}" files="${3:-true}" succeeded="${4:-echo 0}"
+  local reviews="${2:-echo abc}" files="${3:-true}" succeeded="${4:-echo}"
   make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
@@ -1442,6 +1442,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) echo ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
@@ -1463,6 +1464,7 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) echo ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo "" ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
@@ -1474,6 +1476,23 @@ assert_contains "$(reason "$out")" "レビューが実行されていません"
 it "pre-merge-check: レビューを 1 度も受けていない PR は、ALLOW_UNREVIEWED_HEAD を付けても止める"
 # 1 周目の正規の手順（ローカルレビューの記録）がいつでもあるので、外す口を置かない
 out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=テスト用 $MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "レビューが実行されていません"
+
+it "pre-merge-check: head を見た bot のレビューが失敗したものだけなら、1 度もレビューを受けていないとして止める"
+# Copilot はレビューできなかったときも、head を commit_id にした本文だけのレビューを提出する
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) echo ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo abc ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
+  "api graphql"*) echo "[]" ;;'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
 
@@ -1512,7 +1531,7 @@ REBASE_CHANGED=$(git -C "$REBASE_REPO" rev-parse HEAD)
 
 make_fake_gh_rebased() {
   # $1: 今の head、$2: bot がレビューした commit、$3: ローカルレビューの記録の 1 行目を出力するコマンド（既定は記録なし）、
-  # $4: 失敗していない bot のレビューの件数を出力するコマンド（既定は 1 件）。PR の変更ファイルは pr.txt
+  # $4: 失敗していない最後の bot のレビューが見た commit を出力するコマンド（既定は $2）。PR の変更ファイルは pr.txt
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"'"$1"'\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
@@ -1520,7 +1539,7 @@ make_fake_gh_rebased() {
   "api repos/example/heredoc/commits/'"$1"'/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...'"$1"'"*) echo 0 ;;
   "api repos/example/heredoc/branches/main"*) echo '"$REBASE_TIP"' ;;
-  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) '"${4:-echo 1}"' ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) '"${4:-echo $2}"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo '"$2"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) echo pr.txt ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) '"${3:-true}"' ;;
@@ -1545,6 +1564,14 @@ assert_contains "$(additional_context "$out")" "${REBASE_OLD:0:7}"
 # 回さないなら、その理由を本文に書く
 assert_contains "$(additional_context "$out")" "理由"
 
+it "pre-merge-check: 最後の bot のレビューが失敗していれば、その前の成功したレビューから変わったファイルを伝える"
+# 失敗したレビューの commit を比較元にすると、成功したレビューの後の変更を見落とす
+make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" true "echo $REBASE_OLD"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "pr.txt"
+assert_contains "$(additional_context "$out")" "${REBASE_OLD:0:7}"
+
 it "pre-merge-check: レビュー済みのコミットを取得できなくても止めず、変わったファイルを確かめられないと伝える"
 make_fake_gh_rebased "$REBASE_SAME" "0123456789012345678901234567890123456789"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
@@ -1562,19 +1589,19 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
 it "pre-merge-check: ローカルレビューの記録の後に差分を変えた head は止めず、変わったファイルを伝える"
-make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)" 'echo 0'
+make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)" 'echo'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 assert_contains "$(additional_context "$out")" "pr.txt"
 
 it "pre-merge-check: 最後のローカルレビューの記録に High があれば、止めずに High が残ると伝える"
-make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 1)" 'echo 0'
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 1)" 'echo'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 assert_contains "$(additional_context "$out")" "High"
 # 同じ差分を回し直して見つけた High を、前の記録で隠さない
 make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" \
-  "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)" 'echo 0'
+  "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)" 'echo'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 assert_contains "$(additional_context "$out")" "High"
@@ -1690,6 +1717,7 @@ make_fake_gh_merge_local() {
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo '"'$check_run'"' ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) echo ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviewed"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) echo src/main.rs ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) '"$1"' ;;
@@ -1766,9 +1794,9 @@ assert_eq deny "$(decision "$out")"
 # make_fake_gh_merge_files <files> [reviewed] [check_run] [succeeded]
 # files は PR の変更ファイル、reviewed は bot レビューの対象コミットを出力するコマンド
 # （既定は head と違う "old"）、check_run は head のチェック 1 件の JSON（既定は CI の成功）、
-# succeeded は失敗していない bot レビューの件数を出力するコマンド（既定は 1 件）
+# succeeded は失敗していない最後の bot レビューが見た commit を出力するコマンド（既定は old）
 make_fake_gh_merge_files() {
-  local files="$1" reviewed="${2:-echo old}" succeeded="${4:-echo 1}"
+  local files="$1" reviewed="${2:-echo old}" succeeded="${4:-echo old}"
   local check_run="${3:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
@@ -1801,7 +1829,7 @@ assert_eq allow "$(decision "$out")"
 
 it "pre-merge-check: 文書だけの PR でも、レビューが一度も成功していなければ止める"
 make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo ""' \
-  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}' 'echo 0'
+  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}' 'echo'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
@@ -1809,7 +1837,7 @@ assert_contains "$(reason "$out")" "レビューが実行されていません"
 it "pre-merge-check: 文書だけの PR でも、bot のレビューが失敗したものだけなら止める"
 # Copilot はレビューできなかったときも本文だけのレビューを提出するので、
 # レビューの有無ではなく、失敗していないレビューがあるかで判定する
-make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo old' '' 'echo 0'
+make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo old' '' 'echo'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
