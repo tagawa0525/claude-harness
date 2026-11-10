@@ -147,8 +147,8 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
   せず、「続きの作業」にその段であることを書く
 - /gh-pr-review を Read で読み、その手順で対応する。周の終わりは `decide-next.sh` の `VERDICT` に従うが、要判断（escalate）は
   ユーザーの指示を待たず「マージの前後で人の手が要ること」に書いて止まり、/gh-pr-merge には進まない。歯止めを使い切った後は、
-  `VERDICT` がローカルレビューを求めても回さず、/git-merge の「直す指摘の基準」の歯止めのとおり報告する（歯止めの最後の周で
-  blocking を直したときは、同じ節の「3 周目で blocking を直したら」に従う）
+  `VERDICT` がローカルレビューを求めても、/git-merge の「直す指摘の基準」の歯止めの項が例外の周に通すもののほかは回さず、その
+  項のとおり報告する（歯止めの最後の周で blocking を直したときは、同じ節の「3 周目で blocking を直したら」に従う）
 
 どちらも:
 
