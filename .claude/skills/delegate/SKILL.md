@@ -134,8 +134,13 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 周ごとに `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <base>` を実行し、出力の `LEVEL` と `WORKTREE` で
 `/code-review <LEVEL> <WORKTREE>` を回す。対象は worktree のパスで渡す（ブランチ名は cwd のリポジトリで解かれ、空振りして「指摘
 なし」と返る）。1 周目の LEVEL はスクリプトが決め、自分で下げない（直した後の周のレベルは、/git-merge の「直す指摘の基準」の
-「終わり」の項に従う）。/code-review が background で走ったら終わりの
-通知だけで待ち（Monitor、sleep、until のループは足さない）、通知で再開して指摘に対応してから先に進む。
+「終わり」の項に従う）。/code-review が background で走ったら、終わりの
+通知で再開して指摘に対応してから先に進む。
+
+待つ間は、キャッシュを保つタイマーを 1 本だけ張る。Bash の `run_in_background=true` で `sleep 270` を実行し、その通知には
+「レビュー待ち」とだけ答えて、同じタイマーを張り直す（担当のキャッシュは 5 分で切れ、切れた後の応答は文脈の全体を書き直す。
+4 分 30 秒ごとの応答は読み出しだけで済み、費用は書き直しの約 25 分の 1）。レビューの通知が届いたら、残ったタイマーを手順 9 の
+とおり止める。待つ手段はこのタイマーとレビューの通知だけにする（Monitor と until のループは、切れるたびに張り直して応答を増やす）。
 
 **リモートあり**のときは、続けて PR を出して自動レビューを受ける:
 
