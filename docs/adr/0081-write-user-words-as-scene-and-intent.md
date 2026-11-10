@@ -24,7 +24,7 @@ ADR-0065 は、依頼でユーザーの言葉を「」で括って引用する�
 妥当と判断して進め方を尋ね、ユーザーは、既にある引用は履歴を書き換えず、今のファイルを直すブランチでよいと答えた
 （ユーザー 2026-11-11）。
 
-2026-11-11 の main（c26289b1）では、docs/adr に `「…」（ユーザー 20…` の形の括った引用が 30 か所（行をまたぐものを含む）、
+2026-11-11 の main（c26289b1）では、docs/adr に `「<引用>」（ユーザー <日付>）` の形の括った引用が 30 か所（行をまたぐものを含む）、
 `ユーザーの言葉（<日付>）: 「…」` や `ユーザーが「…」と決めた` の形の引用がほかに約 17 か所あった。
 `quote-in-transcript.sh` を呼ぶのは delegate の受ける側と頼む側の文、そのテスト、`.claude/README.md` の表、/delegate の
 allowed-tools と modules/home/parts/claude-code.nix の許可リストだった（hook からは呼ばれない）。
@@ -76,6 +76,6 @@ allowed-tools と modules/home/parts/claude-code.nix の許可リストだった
 ### 確認
 
 - delegate の `references/working.md` と `references/requesting.md` に、括った原文の引用を求める文と、引用を記録と照らす文が無い
-- docs/adr に `「…」（ユーザー 20…` の形の括った引用が残っていない（ほかの形の引用は 2026-11-11 に手で直し、この検査は拾わない）:
+- docs/adr に `「<引用>」（ユーザー <日付>）` の形の括った引用が残っていない（ほかの形の引用は 2026-11-11 に手で直し、この検査は拾わない）:
   `perl -Mutf8 -CSD -0ne 'print "$ARGV\n" if /「[^」]*」\s*（ユーザー\s*20/' docs/adr/*.md` の出力が空
 - `.claude` と `modules` に `quote-in-transcript` を指す行が無い（`grep -rn quote-in-transcript .claude modules` の出力が空）
