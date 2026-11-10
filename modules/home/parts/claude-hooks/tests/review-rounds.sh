@@ -46,7 +46,7 @@ mkdir -p "$REPO/docs"
 echo plan >"$REPO/docs/plan.md"
 git -C "$REPO" add docs
 git -C "$REPO" commit -q -m plan
-expect_limit 2
+expect_limit 5
 
 git -C "$REPO" switch -q -c feat/b main
 echo code >"$REPO/x.sh"

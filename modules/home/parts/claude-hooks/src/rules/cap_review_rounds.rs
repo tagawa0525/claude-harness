@@ -7,8 +7,10 @@
 //!   hook の cwd）で、その worktree がチェックアウトしているブランチを数える。親が Agent で担当にレビューを頼む周も、
 //!   担当が呼ぶ Skill で数えて止める。Agent の prompt は見ない（自然文から「/code-review を頼む」を見分ける判定は、
 //!   否定や別のスキルを呼ぶ文に当たるか、頼む文を落とした）
-//! - 上限: `review-level.sh` の `ROUNDS:`（1 か 3）に記録の周 1 を足し、3 のときはさらに記録の周の後の例外の周 3 を
-//!   足した数（1 なら 2、3 なら 7）。ブランチで担当と親が回した周の合計で数える
+//! - 上限: `review-level.sh` の `ROUNDS:`（1 か 3）に記録の周 1 と、記録の周の後の例外の周 3 を足した数（1 なら 5、
+//!   3 なら 7）。ブランチで担当と親が回した周の合計で数える。例外の周は、記録の周の確かめた誤り（再現を書ける blocking）を
+//!   直した head に回す周で、どちらの ROUNDS にも要る（文書だけのブランチでも、マージの hook が通さない直しには周が
+//!   要る）
 //! - 置き場: リポジトリの共通の git ディレクトリの `claude-review-rounds/<ブランチ名>`（`/` は `%2F`）。1 行が 1 周で、
 //!   回したときの HEAD を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る（rebase の後の周も
 //!   数える規則のため）。ブランチの reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして
@@ -39,7 +41,7 @@ const STATE_DIR: &str = "claude-review-rounds";
 
 /// 記録の周（3 周目か、文書だけのブランチの 1 周目で blocking を直した head に回す 1 周）
 const RECORD_ROUNDS: u32 = 1;
-/// 記録の周の後の例外の周（blocking が (c) だけのとき。文書だけのブランチには無い）
+/// 記録の周の後の例外の周（記録の周の確かめた誤りを直した head に回す）
 const EXCEPTION_ROUNDS: u32 = 3;
 
 /// 文字列の中で最初の、ディレクトリとして在る絶対パス。囲みの `` ` ``、引用符、括弧、和文の句読点で切る
@@ -58,11 +60,7 @@ fn state_file_name(branch: &str) -> String {
 
 /// 周の上限（記録の周と例外の周を足した数）
 fn limit(rounds: u32) -> u32 {
-    if rounds <= 1 {
-        rounds + RECORD_ROUNDS
-    } else {
-        rounds + RECORD_ROUNDS + EXCEPTION_ROUNDS
-    }
+    rounds + RECORD_ROUNDS + EXCEPTION_ROUNDS
 }
 
 /// review-level.sh を dir で実行し、`ROUNDS:` の値を返す。失敗は理由を利用者に見せて None
@@ -130,15 +128,12 @@ fn live_rounds(dir: &Path, branch: &str, path: &Path) -> Vec<String> {
 }
 
 fn deny_reason(branch: &str, count: usize, limit: u32, rounds: u32) -> String {
-    let breakdown = if rounds <= 1 {
-        format!("ROUNDS {rounds} + 記録の周 {RECORD_ROUNDS}")
-    } else {
-        format!("ROUNDS {rounds} + 記録の周 {RECORD_ROUNDS} + 例外の周 {EXCEPTION_ROUNDS}")
-    };
+    let breakdown =
+        format!("ROUNDS {rounds} + 記録の周 {RECORD_ROUNDS} + 例外の周 {EXCEPTION_ROUNDS}");
     format!(
         "ブランチ {branch} のローカルの /code-review は {count} 周を回し、上限 {limit}（review-level.sh の {breakdown}）に達しました。\n\
          理由: レビューは周ごとに新しい指摘を出し続けるので、直す指摘の基準だけでは周が終わりません。数で止めて、続けるかをユーザーが決めます（担当と親の周の合計で、rebase の後の周も数えます）。\n\
-         修正方法: 残った blocking を issue に書き、ユーザーに判断を求めてください。/delegate の担当は、報告の「マージの前後で人の手が要ること」に blocking と issue を書いて止まります。"
+         修正方法: 残った blocking を issue に書き、ユーザーに判断を求めてください。/delegate の担当は、報告の「マージの前後で人の手が要ること」に blocking と issue を書いて止まります。周を数え直すために、別の名前のブランチに移して回さないでください（周の数はブランチ名ごとなので、移すと hook を迂回します）。"
     )
 }
 
@@ -196,9 +191,8 @@ impl CapReviewRounds {
             return Vec::new();
         }
         vec![Finding::Context(format!(
-            "ブランチ {branch} のローカルの /code-review の {} 周目です（上限 {limit}。review-level.sh の ROUNDS {rounds} に記録の周{}を足した数で、担当と親の周の合計）。",
+            "ブランチ {branch} のローカルの /code-review の {} 周目です（上限 {limit}。review-level.sh の ROUNDS {rounds} に記録の周と例外の周を足した数で、担当と親の周の合計）。",
             lines.len(),
-            if rounds <= 1 { "" } else { "と例外の周" },
         ))]
     }
 }
@@ -324,6 +318,16 @@ mod tests {
         CapReviewRounds.check_with(input, Some(&r.script))
     }
 
+    /// 文書だけのブランチ（`ROUNDS: 1`）の上限: 1 周、記録の周 1、例外の周 3
+    const DOCS_LIMIT: usize = 5;
+
+    /// 文書だけのブランチの上限まで周を回す
+    fn use_up(r: &Repo, input: &Input) {
+        for _ in 0..DOCS_LIMIT {
+            run(r, input);
+        }
+    }
+
     fn denied(findings: &[Finding]) -> Option<String> {
         findings.iter().find_map(|f| match f {
             Finding::Deny(s) => Some(s.clone()),
@@ -345,15 +349,21 @@ mod tests {
         assert!(reason.contains("上限 7"), "{reason}");
         assert!(reason.contains("issue"), "{reason}");
         assert!(reason.contains("ユーザー"), "{reason}");
+        assert!(reason.contains("別の名前のブランチ"), "{reason}");
     }
 
     #[test]
-    fn one_round_branch_allows_the_round_and_the_record_round_only() {
+    fn one_round_branch_allows_the_round_the_record_round_and_three_exception_rounds() {
         let r = repo("docs/y", 1);
-        assert!(denied(&run(&r, &review(&r))).is_none());
-        assert!(denied(&run(&r, &review(&r))).is_none());
-        let reason = denied(&run(&r, &review(&r))).expect("3 周目は止めるはず");
-        assert!(reason.contains("上限 2"), "{reason}");
+        for n in 1..=5 {
+            assert!(
+                denied(&run(&r, &review(&r))).is_none(),
+                "{n} 周目は通すはず"
+            );
+        }
+        let reason = denied(&run(&r, &review(&r))).expect("6 周目は止めるはず");
+        assert!(reason.contains("上限 5"), "{reason}");
+        assert!(reason.contains("例外の周 3"), "{reason}");
     }
 
     #[test]
@@ -368,7 +378,8 @@ mod tests {
             })
             .expect("周の数を伝えるはず");
         assert!(context.contains("1 周目"), "{context}");
-        assert!(context.contains("上限 2"), "{context}");
+        assert!(context.contains("上限 5"), "{context}");
+        assert!(context.contains("例外の周"), "{context}");
     }
 
     #[test]
@@ -401,6 +412,13 @@ mod tests {
             denied(&run(&r, &review(&r))).is_none(),
             "Agent を数えていなければ 2 周目は通すはず"
         );
+        for _ in 2..DOCS_LIMIT {
+            run(&r, &review(&r));
+        }
+        assert!(
+            denied(&run(&r, &review(&r))).is_some(),
+            "ここで上限に達しているはず"
+        );
         for prompt in &prompts {
             assert!(
                 run(&r, &agent(prompt, Path::new("/"))).is_empty(),
@@ -413,7 +431,7 @@ mod tests {
     fn other_skills_are_not_counted() {
         let r = repo("docs/y", 1);
         let simplify = skill("simplify", &r.dir.display().to_string(), Path::new("/"));
-        for _ in 0..3 {
+        for _ in 0..DOCS_LIMIT {
             assert!(run(&r, &simplify).is_empty());
         }
         assert!(denied(&run(&r, &review(&r))).is_none());
@@ -423,8 +441,7 @@ mod tests {
     fn review_without_a_path_counts_the_branch_of_cwd() {
         let r = repo("docs/y", 1);
         let here = skill("code-review", "high", &r.dir);
-        run(&r, &here);
-        run(&r, &here);
+        use_up(&r, &here);
         assert!(denied(&run(&r, &review(&r))).is_some());
     }
 
@@ -436,16 +453,14 @@ mod tests {
             &format!("high `{}`。焦点: a", r.dir.display()),
             Path::new("/"),
         );
-        run(&r, &quoted);
-        run(&r, &quoted);
+        use_up(&r, &quoted);
         assert!(denied(&run(&r, &review(&r))).is_some());
     }
 
     #[test]
     fn branches_are_counted_separately() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         let other = r.dir.with_file_name("other");
         git(
             &r.dir,
@@ -471,8 +486,7 @@ mod tests {
     #[test]
     fn count_survives_a_rebase_of_the_branch() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         commit(&r.dir, "on-main");
         git(&r.dir, &["switch", "-q", "docs/y"]);
@@ -483,8 +497,7 @@ mod tests {
     #[test]
     fn rounds_of_a_merged_branch_do_not_count_for_a_new_branch_of_the_same_name() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         git(&r.dir, &["merge", "-q", "--no-ff", "-m", "merge", "docs/y"]);
         git(&r.dir, &["branch", "-q", "-D", "docs/y"]);
@@ -498,8 +511,7 @@ mod tests {
     #[test]
     fn rounds_before_a_rebase_of_a_merged_branch_do_not_count_for_a_new_branch_of_the_same_name() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         commit(&r.dir, "on-main");
         git(&r.dir, &["switch", "-q", "docs/y"]);
