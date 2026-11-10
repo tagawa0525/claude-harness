@@ -133,7 +133,7 @@ fn deny_reason(branch: &str, count: usize, limit: u32, rounds: u32) -> String {
     format!(
         "ブランチ {branch} のローカルの /code-review は {count} 周を回し、上限 {limit}（review-level.sh の {breakdown}）に達しました。\n\
          理由: レビューは周ごとに新しい指摘を出し続けるので、直す指摘の基準だけでは周が終わりません。数で止めて、続けるかをユーザーが決めます（担当と親の周の合計で、rebase の後の周も数えます）。\n\
-         修正方法: 残った blocking を issue に書き、ユーザーに判断を求めてください。/delegate の担当は、報告の「マージの前後で人の手が要ること」に blocking と issue を書いて止まります。"
+         修正方法: 残った blocking を issue に書き、ユーザーに判断を求めてください。/delegate の担当は、報告の「マージの前後で人の手が要ること」に blocking と issue を書いて止まります。周を数え直すために、別の名前のブランチに移して回さないでください（周の数はブランチ名ごとなので、移すと hook を迂回します）。"
     )
 }
 
