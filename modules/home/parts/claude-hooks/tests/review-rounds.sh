@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# nix でビルドした claude-hooks の cap-review-rounds が、包んで渡す review-level.sh の ROUNDS で /code-review の周を
-# 止めることを確かめる（package.nix の installCheckPhase が呼ぶ）。数え方の細部は、偽の review-level.sh を使う
-# ユニットテスト（src/rules/cap_review_rounds.rs）が見る。
+# nix でビルドした claude-hooks の count-review-rounds が、/code-review の周を止めずに数え、何周目かを伝えることを
+# 確かめる（package.nix の installCheckPhase が呼ぶ）。数え方の細部はユニットテスト（src/rules/count_review_rounds.rs）が見る。
 #
 # 使い方: review-rounds.sh <claude-hooks の実行ファイル>
 set -euo pipefail
@@ -18,7 +17,7 @@ git -C "$REPO" commit -q -m init
 
 review() {
   jq -n --arg a "high $REPO" '{tool_name: "Skill", tool_input: {skill: "code-review", args: $a}, cwd: "/"}' |
-    "$BIN" pre-tool-use --rule cap-review-rounds
+    "$BIN" pre-tool-use --rule count-review-rounds
 }
 
 fail() {
@@ -27,18 +26,17 @@ fail() {
   exit 1
 }
 
-# 周を n 回通し、次の回が止まることを確かめる
-expect_limit() {
-  local limit=$1 out decision
-  for ((i = 1; i <= limit; i++)); do
+# 周を n 回回し、どの回も止めずに周の数を伝えることを確かめる
+expect_counted() {
+  local rounds=$1 out decision
+  for ((i = 1; i <= rounds; i++)); do
     out=$(review)
     decision=$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<<"$out")
-    [ -z "$decision" ] || fail "$i 周目は通すはず（上限 $limit）" "$out"
-    jq -e '.systemMessage == null' <<<"$out" >/dev/null || fail "review-level.sh を読めるはず" "$out"
+    [ -z "$decision" ] || fail "$i 周目も止めないはず" "$out"
+    jq -e --arg n "$i 周目" '.hookSpecificOutput.additionalContext | contains($n)' <<<"$out" >/dev/null ||
+      fail "$i 周目と伝えるはず" "$out"
+    jq -e '.systemMessage == null' <<<"$out" >/dev/null || fail "判定できない理由は無いはず" "$out"
   done
-  out=$(review)
-  decision=$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<<"$out")
-  [ "$decision" = deny ] || fail "$((limit + 1)) 周目は止めるはず" "$out"
 }
 
 git -C "$REPO" switch -q -c docs/a
@@ -46,12 +44,6 @@ mkdir -p "$REPO/docs"
 echo plan >"$REPO/docs/plan.md"
 git -C "$REPO" add docs
 git -C "$REPO" commit -q -m plan
-expect_limit 5
+expect_counted 9
 
-git -C "$REPO" switch -q -c feat/b main
-echo code >"$REPO/x.sh"
-git -C "$REPO" add x.sh
-git -C "$REPO" commit -q -m code
-expect_limit 7
-
-echo "ok: cap-review-rounds"
+echo "ok: count-review-rounds"

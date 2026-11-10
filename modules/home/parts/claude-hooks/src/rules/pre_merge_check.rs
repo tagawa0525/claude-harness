@@ -8,20 +8,18 @@
 //! 5. reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
 //! 6. 未解決のレビュースレッドがない
 //! 7. head が base（origin/main）より遅れていない（リベースしてからマージコミットする）
-//! 8. 最後の push が自動レビューを受けている（bot レビューの commit_id が head と一致）。
-//!    リベースだけで hash が変わった head（base からの PR の差分がレビュー済みと同じ。ADR-0021）は
-//!    レビュー済みとみなす。
-//!    レビュー自体が失敗している（トークン枯渇・内部エラー）ときは、コードの問題では
-//!    ないので 4 の CI 失敗としては数えず、ここでレビュー未実施として報告する。
-//!    レビューが回らない状況で完全に詰まないよう ALLOW_UNREVIEWED_HEAD=<理由> で外せる（ADR-0023）。
-//!    「〜なら外してよい」の条件は文言に列挙しない（どれかに当てはめる読み方を誘う）。
-//!    文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの PR は、一度でも自動レビューに成功
-//!    していれば検査しない。文章は細部をいくらでも掘れるので、push ごとに再レビューを求めると収束しない。
-//!    方針の指摘は最初のレビューで受け、競合状態やエッジケースは実装の PR でテストとともに詰める。
-//!    head にローカルレビューの記録（record-local-review.sh。High なし）があれば、Copilot のレビューの
-//!    有無・到着・チェックの失敗を問わず検査しない（ADR-0043。判定は decide-next.sh と同じ）。最後の記録（High なし）の
-//!    SHA から rebase だけした head も同じに扱う（ADR-0059。判定は上のリベースだけと同じ）。
-//!    Copilot のレビューが来ていれば、その指摘への対応は 6（未解決スレッド）が見る。
+//! 8. PR がレビュー（失敗していない bot のレビューか、書き込める人のローカルレビューの記録 record-local-review.sh）を
+//!    1 度は受けている。止めるのは 1 度も受けていない PR だけで、安く確かめられ判断が要らない。直した後の head に
+//!    もう 1 周回すかは、直しの大きさと危険からモデルが決める（ADR-0066）ので、head がレビューに覆われていなければ
+//!    止めずに、最も近いレビュー済みの head から変わった PR のファイルを additionalContext で伝える。
+//!    覆われているとみなして伝えないのは、失敗していない最後の bot のレビューが head を見ている、リベースだけで hash が変わった head
+//!    （base からの PR の差分がレビュー済みと同じ。ADR-0021）、文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの
+//!    PR で自動レビューに 1 度成功している、head の記録か、最後の記録（High なし）の SHA から rebase だけした head
+//!    （ADR-0043、ADR-0059。判定は decide-next.sh と同じ）のとき。
+//!    レビューが失敗した（トークン枯渇・内部エラー）PR は、コードの問題ではないので 4 の CI 失敗としては数えず、
+//!    ほかにレビューが無ければここでレビュー未実施として報告する。1 周目はローカルレビューの記録でいつでも済ませられる
+//!    ので、外すエスケープは置かない。bot のレビューが 1 件も無くチェックも失敗していないリポジトリ（自動レビューが
+//!    未設定）は検査しない。Copilot のレビューが来ていれば、その指摘への対応は 6（未解決スレッド）が見る。
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
@@ -30,9 +28,10 @@
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
+use super::check_merge_review::{is_dvc_record, is_plain_document};
 use super::pre_git_merge_check::multi_topic_reason;
 use super::pre_pr_create_check::{body_text, missing_headings, unreadable_body_file};
-use super::{Rule, apply_escape_to_reasons, escape_hint};
+use super::{Rule, apply_escape_to_reasons};
 use crate::gh;
 use crate::git::git;
 use crate::input::Input;
@@ -138,8 +137,8 @@ fn json_stream(s: &str) -> Option<Vec<Value>> {
 /// 文書の置き場所。ここだけを変える PR は最初の自動レビューで足りる（検証 8、ADR-0004）
 const DOCS_DIR: &str = "docs/";
 
-/// PR の変更ファイルがすべて文書か。取得できない・1 件も無いときは文書だけとみなさない
-fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
+/// PR の変更ファイル（移動は旧パスも）。取得できなければ None
+fn pr_files(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> Option<Vec<String>> {
     gh::gh(
         dir,
         &[
@@ -153,10 +152,18 @@ fn is_docs_only(dir: &std::path::Path, owner: &str, name: &str, number: &str) ->
         ],
     )
     .ok()
-    .is_some_and(|s| {
-        let files: Vec<&str> = s.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-        !files.is_empty() && files.iter().all(|f| f.starts_with(DOCS_DIR))
+    .map(|s| {
+        s.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()
     })
+}
+
+/// PR の変更ファイルがすべて文書か。取得できない・1 件も無いときは文書だけとみなさない
+fn is_docs_only(files: Option<&[String]>) -> bool {
+    files.is_some_and(|f| !f.is_empty() && f.iter().all(|p| p.starts_with(DOCS_DIR)))
 }
 
 /// head がローカルレビューの記録（record-local-review.sh。High なし）で覆われているか。head の記録がある（ADR-0043）か、
@@ -175,7 +182,18 @@ fn local_review_covers(
     head_sha: &str,
     rebase_base: impl FnOnce() -> Option<String>,
 ) -> Result<bool, ()> {
-    let marks = gh::gh(
+    let marks = local_review_marks(dir, owner, name, number)?;
+    Ok(marks_cover(dir, &marks, head_sha, rebase_base))
+}
+
+/// 書き込める人のローカルレビューの記録の 1 行目を、古い順に改行でつないだもの。取得できなければ Err
+fn local_review_marks(
+    dir: &std::path::Path,
+    owner: &str,
+    name: &str,
+    number: &str,
+) -> Result<String, ()> {
+    gh::gh(
         dir,
         &[
             "api",
@@ -184,7 +202,16 @@ fn local_review_covers(
             "--jq",
             ".[] | select(.author_association | IN(\"OWNER\", \"MEMBER\", \"COLLABORATOR\")) | select(.body | startswith(\"<!-- local-review \")) | (.body | split(\"\\n\")[0])",
         ],
-    )?;
+    )
+}
+
+/// 記録（[`local_review_marks`]）が head を覆うか（[`local_review_covers`] の判定）
+fn marks_cover(
+    dir: &std::path::Path,
+    marks: &str,
+    head_sha: &str,
+    rebase_base: impl FnOnce() -> Option<String>,
+) -> bool {
     let prefix = format!("<!-- local-review sha={head_sha} ");
     let mut recorded = false;
     for line in marks.lines() {
@@ -192,10 +219,21 @@ fn local_review_covers(
             recorded = rest.starts_with("high=0 ");
         }
     }
-    Ok(recorded
-        || local_review_rebase_source(&marks).is_some_and(|old| {
+    recorded
+        || local_review_rebase_source(marks).is_some_and(|old| {
             old != head_sha && rebase_base().is_some_and(|b| same_pr_diff(dir, &b, old, head_sha))
-        }))
+        })
+}
+
+/// 最後の記録の SHA と、それに High があるか。SHA が head か完全な 16 進の SHA の記録だけを数え、形の崩れた記録は
+/// レビューに数えない
+fn last_local_record<'a>(marks: &'a str, head_sha: &str) -> Option<(&'a str, bool)> {
+    marks.lines().rev().find_map(|line| {
+        let (sha, rest) = line
+            .strip_prefix("<!-- local-review sha=")?
+            .split_once(' ')?;
+        (sha == head_sha || is_hex_sha(sha)).then(|| (sha, !rest.starts_with("high=0 ")))
+    })
 }
 
 /// リベースだけの判定（[`same_pr_diff`]）の比較元にするローカルレビューの記録の SHA（ADR-0059）。`marks` は記録の
@@ -264,40 +302,42 @@ fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> O
     .filter(|s| !s.is_empty())
 }
 
-/// 失敗していない bot レビューがあるか。Copilot はレビューできなかったときも本文だけの
-/// レビューを提出するので、レビューの有無では判定できない（判定は get-latest-review.sh と同じ）
-fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
-    gh::gh(
+/// 失敗していない最後の bot レビューが見た commit（無ければ None）。Copilot はレビューできなかったときも、commit_id の
+/// ある本文だけのレビューを提出するので、レビューの有無では判定できない（失敗の文言と、本文の 1 行目で見ることは get-latest-review.sh と同じ。bot は Copilot に限らない）。
+/// 取得できなければ Err
+fn last_successful_review(
+    dir: &std::path::Path,
+    owner: &str,
+    name: &str,
+    number: &str,
+) -> Result<Option<String>, ()> {
+    let out = gh::gh(
         dir,
         &[
             "api",
             "--paginate",
             &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
             "--jq",
-            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not)] | length",
+            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | (split(\"\\n\")[0] // \"\") | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not) | .commit_id] | last // \"\"",
         ],
-    )
-    .ok()
-    // --paginate はページごとに --jq を適用するので、ページごとの件数を足す
-    .is_some_and(|s| s.lines().filter_map(|l| l.trim().parse::<u64>().ok()).sum::<u64>() > 0)
+    )?;
+    // --paginate はページごとに --jq を適用するので、最後の空でない行が最後のレビュー
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .map(str::to_string))
 }
 
 /// リベースだけで head の hash が変わったか。レビュー済みの `old` と今の `new` で、base からの PR の差分が
 /// 同一なら true（ADR-0021）。`base` は PR の base ブランチの今の先頭の SHA。base 側の変更（main に入った他の PR）は、それぞれの merge-base からの
 /// 差分を取ることで含めない。確かめられないとき（コミットが無い、git が失敗）は false
 fn same_pr_diff(dir: &std::path::Path, base: &str, old: &str, new: &str) -> bool {
-    let have = |sha: &str| git(dir, &["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_some();
-    // force push で置き換わった旧 head は、リベースした worktree 以外には無いことがある
-    if !have(old) && (git(dir, &["fetch", "-q", "origin", old]).is_none() || !have(old)) {
-        return false;
-    }
+    // force push で置き換わった旧 head は、リベースした worktree 以外には無いことがある。
     // base は GitHub が返した今の先頭。手元の origin/<base> は古いことがあり、古い base では
-    // main の変更を巻き戻した head も、両側の merge-base が同じになって一致して見える
-    if !have(base) && (git(dir, &["fetch", "-q", "origin", base]).is_none() || !have(base)) {
-        return false;
-    }
+    // main の変更を巻き戻した head も、両側の merge-base が同じになって一致して見える。
     // 新 head も、別の clone から push して手元に無いことがある（local-review-covers は PR の worktree 以外でも走る）
-    if !have(new) && (git(dir, &["fetch", "-q", "origin", new]).is_none() || !have(new)) {
+    if ![old, base, new].iter().all(|sha| have_commit(dir, sha)) {
         return false;
     }
     let (Some(old_base), Some(new_base)) = (
@@ -331,6 +371,39 @@ fn same_pr_diff(dir: &std::path::Path, base: &str, old: &str, new: &str) -> bool
     }
     // 2. main も同じファイルを変えていて中身は一致しないが、PR の差分（前後の文脈を含む）が同じ
     fingerprint(dir, &old_base, old).is_some_and(|o| Some(o) == fingerprint(dir, &new_base, new))
+}
+
+/// コミットが手元にあるか。無ければ origin から取る
+fn have_commit(dir: &std::path::Path, sha: &str) -> bool {
+    let have = || git(dir, &["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_some();
+    have() || (git(dir, &["fetch", "-q", "origin", sha]).is_some() && have())
+}
+
+/// レビュー済みの `reviewed` から `head` までに変わったファイルのうち、PR の変更ファイルで挙動を変えうるもの
+/// （スキルと hook の文書と ADR を除く `.md`、`dvc.lock` と `.dvc` を除く。ローカルのマージの check-merge-review と
+/// 同じ線）。PR の変更ファイルに限るのは、rebase で入った base の変更を挙げないため。確かめられなければ None
+fn changed_since(
+    dir: &std::path::Path,
+    reviewed: &str,
+    head: &str,
+    files: Option<&[String]>,
+) -> Option<Vec<String>> {
+    let files = files?;
+    if !is_hex_sha(reviewed) || !have_commit(dir, reviewed) || !have_commit(dir, head) {
+        return None;
+    }
+    let changed = git(
+        dir,
+        &["diff", "--no-renames", "--name-only", "-z", reviewed, head],
+    )?;
+    Some(
+        changed
+            .split('\0')
+            .filter(|p| !p.is_empty() && files.iter().any(|f| f == p))
+            .filter(|p| !is_plain_document(p) && !is_dvc_record(p))
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 /// base から head への差分の指紋。パッチの内容（git patch-id。行番号は見ない）と、
@@ -376,6 +449,90 @@ fn git_with_stdin(dir: &std::path::Path, args: &[&str], input: &[u8]) -> Option<
         .then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// レビューを 1 度も受けていない PR の deny の理由
+fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) -> String {
+    let why = if copilot_check_failed {
+        format!(
+            "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます。/gh-actions-check {url} で原因を確かめられます）。",
+            short(head_sha)
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "{why}この PR はレビュー（失敗していない自動レビューか、ローカルレビューの記録）を 1 度も受けていません。1 周目のレビューは省けません。\
+         ローカルの /code-review を回して ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh {url} で記録するか、\
+         ~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {url} で再レビューを依頼してください（次の一手は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {url} で決めます）。\
+         指摘に対応してからマージしてください"
+    )
+}
+
+/// head がレビューに覆われていない PR に伝える文。`bot` は失敗していない bot のレビューの対象、`local` は最後の
+/// ローカルレビューの記録の SHA と High の有無。伝えることが無ければ None（変わったのが挙動を変えないファイルだけ）
+fn stale_review_context(
+    dir: &std::path::Path,
+    head_sha: &str,
+    bot: Option<String>,
+    local: Option<(&str, bool)>,
+    files: Option<&[String]>,
+) -> Option<String> {
+    let high = local.is_some_and(|(_, h)| h);
+    // レビュー済みの head のうち、そこから変わったファイルが最も少ないもの（head に最も近いレビュー）
+    let mut best: Option<(String, Option<Vec<String>>)> = None;
+    let candidates = bot
+        .into_iter()
+        .chain(local.map(|(s, _)| s.to_string()))
+        .filter(|s| s != head_sha);
+    for sha in candidates {
+        let changed = changed_since(dir, &sha, head_sha, files);
+        let better = match (&best, &changed) {
+            (None, _) => true,
+            (Some((_, None)), Some(_)) => true,
+            (Some((_, Some(b))), Some(c)) => c.len() < b.len(),
+            _ => false,
+        };
+        if better {
+            best = Some((sha, changed));
+        }
+    }
+    let mut parts = Vec::new();
+    if high {
+        parts.push("最後のローカルレビューの記録に High が残っています。".to_string());
+    }
+    match &best {
+        Some((sha, Some(changed))) if !changed.is_empty() => {
+            let shown: Vec<String> = changed.iter().take(10).map(|p| format!("  {p}")).collect();
+            let more = match changed.len().saturating_sub(10) {
+                0 => String::new(),
+                n => format!("\n  …ほか {n} 件"),
+            };
+            parts.push(format!(
+                "最後の push ({}) を覆うレビューがありません。レビュー済み: {}。その後に変わった、挙動を変えうる PR のファイル（{} 件）:\n{}{more}\n",
+                short(head_sha),
+                short(sha),
+                changed.len(),
+                shown.join("\n")
+            ));
+        }
+        Some((_, Some(_))) => {}
+        Some((sha, None)) => parts.push(format!(
+            "最後の push ({}) を覆うレビューがありません。レビュー済み: {}。その後に変わったファイルは確かめられません（コミットか PR の変更ファイルを取得できない）。",
+            short(head_sha),
+            short(sha)
+        )),
+        None => {}
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    parts.push(
+        "マージは止めません。この変更にもう 1 周回すかは、直しの大きさと危険で決めます（/git-merge の「直す指摘の基準」の「終わり」の項）。\
+         回さなかったなら、その理由がマージの本文の Impact にあるかを確かめ、無ければユーザーに伝えてください。"
+            .to_string(),
+    );
+    Some(parts.concat())
+}
+
 fn is_ok_conclusion(c: &Value) -> bool {
     matches!(c.as_str(), Some("success" | "neutral" | "skipped"))
 }
@@ -386,7 +543,7 @@ impl Rule for PreMergeCheck {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        // 2 つの検証（8 と 9）は別々のエスケープで外すので、それぞれの理由に当てる
+        let mut contexts: Vec<Finding> = Vec::new();
         for cmd in shell.commands() {
             let Some(args) = cmd.gh_subcommand(&["pr", "merge"]) else {
                 continue;
@@ -701,24 +858,29 @@ impl Rule for PreMergeCheck {
                 }
             }
 
-            // --- 8. 最後の push がレビュー済みか ---
+            // --- 8. PR がレビューを 1 度は受けているか ---
             // push だけでは再レビューは走らない（requested_reviewers での依頼が要る）。
-            // 依頼を忘れるとレビューされていない版をマージできてしまうため、bot が
-            // レビューした commit と head SHA の一致で機械的に確かめる。
+            // 1 度もレビューを受けていない PR だけを止め、head がレビューに覆われていなければ、
+            // その後に変わったファイルを伝える（もう 1 周回すかはモデルが決める）。
             // bot レビューが 1 件も無いリポジトリ（自動レビュー未設定）では検査しない
             if !owner.is_empty()
                 && !name.is_empty()
                 && !head_sha.is_empty()
-                && shell.escape("ALLOW_UNREVIEWED_HEAD") != Escape::Given
                 && let Some(number) = pr_number.as_deref()
             {
-                let mut unreviewed: Vec<String> = Vec::new();
                 // base の先頭（API）は、bot のレビューと記録のどちらの比較元にも使うので 1 回だけ取る
                 let base_tip_cell = std::cell::OnceCell::new();
                 let tip = || {
                     base_tip_cell
                         .get_or_init(|| base_tip(&dir, &owner, &name, &base_ref))
                         .clone()
+                };
+                // PR の変更ファイルは、文書だけかと、伝えるファイルの絞り込みのどちらにも使うので 1 回だけ取る
+                let files_cell = std::cell::OnceCell::new();
+                let files = || {
+                    files_cell
+                        .get_or_init(|| pr_files(&dir, &owner, &name, number))
+                        .as_deref()
                 };
                 let reviewed = gh::gh(
                     &dir,
@@ -740,8 +902,15 @@ impl Rule for PreMergeCheck {
                         .unwrap_or("")
                         .to_string()
                 });
+                let url = format!("https://github.com/{owner}/{name}/pull/{number}");
+                let successful_cell = std::cell::OnceCell::new();
+                let successful = || {
+                    successful_cell
+                        .get_or_init(|| last_successful_review(&dir, &owner, &name, number))
+                        .clone()
+                };
                 match reviewed {
-                    None => unreviewed.push(
+                    None => reasons.push(
                         "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
                             .to_string(),
                     ),
@@ -749,42 +918,50 @@ impl Rule for PreMergeCheck {
                     // 検査しない。ただしチェックが失敗しているなら初回レビューが走らなかった
                     // ということなので、下の分岐でレビュー未実施として報告する
                     Some(sha) if sha.is_empty() && !copilot_check_failed => {}
-                    // 文書だけの PR は一度レビューを受けていれば足りる。後のレビューが失敗していても止めない
-                    Some(sha)
-                        if !sha.is_empty()
-                            && sha != head_sha
-                            && is_docs_only(&dir, &owner, &name, number)
-                            && has_successful_review(&dir, &owner, &name, number) => {}
-                    // リベースだけで hash が変わった head は、レビュー済みの差分と同じなので通す（ADR-0021）
-                    Some(sha)
-                        if !sha.is_empty()
-                            && sha != head_sha
-                            && tip()
-                                .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
-                    // head のローカルレビューの記録があれば（記録の SHA から rebase だけした head も。ADR-0059）、Copilot のレビューの有無・到着・チェックの失敗を問わず通す。安い判定（文書だけ、リベースだけ）の後に置き、記録のコメントの取得を最後にする
-                    // （ADR-0043）。Copilot の指摘への対応は検証 6（未解決スレッド）が見る
-                    Some(sha)
-                        if sha != head_sha
-                            && local_review_covers(&dir, &owner, &name, number, &head_sha, tip)
-                                .unwrap_or(false) => {}
-                    Some(sha) if sha != head_sha && copilot_check_failed => unreviewed.push(format!(
-                        "最後の push ({}) でレビューが実行されていません（チェックが失敗。レビュー用トークンの枯渇や内部エラーが考えられます）。/gh-actions-check https://github.com/{owner}/{name}/pull/{number} で原因を確認し、head のローカルレビューを記録して（record-local-review.sh）ください。{}",
-                        short(&head_sha),
-                        escape_hint("ALLOW_UNREVIEWED_HEAD")
-                    )),
-                    Some(sha) if sha != head_sha => unreviewed.push(format!(
-                        "最後の push ({}) は自動レビューを受けていません（自動レビュー済み: {}）。リベースだけ（base からの PR の差分が、自動レビューか最後のローカルレビューの記録と同じ）なら通りますが、同じとは確かめられませんでした（差分が変わった、旧 head や origin/{base_ref} が手元にない等）。push だけでは再レビューは走りません。次の一手（ローカルレビューの記録か、~/.claude/skills/gh-pr-review/scripts/request-rereview.sh https://github.com/{owner}/{name}/pull/{number} での再レビューの依頼）は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh https://github.com/{owner}/{name}/pull/{number} で決め、指摘に対応してからマージしてください。{}",
-                        short(&head_sha),
-                        short(&sha),
-                        escape_hint("ALLOW_UNREVIEWED_HEAD")
-                    )),
-                    Some(_) => {}
+                    // どの判定も失敗していない bot のレビューで行う。失敗したレビューも commit_id を持つので、
+                    // 最後の bot のレビュー（reviewed）で判定すると、レビューを受けていない head を通す
+                    Some(_) => {
+                        let succ = successful();
+                        // bot のレビューが head を見ている、文書だけの PR で 1 度レビューが成功している（ADR-0004）、
+                        // リベースだけで hash が変わった head（ADR-0021）は、何も伝えずに通す
+                        let covered = succ.as_ref().ok().cloned().flatten().is_some_and(|s| {
+                            s == head_sha
+                                || is_docs_only(files())
+                                || tip().is_some_and(|b| same_pr_diff(&dir, &b, &s, &head_sha))
+                        });
+                        if !covered {
+                            match local_review_marks(&dir, &owner, &name, number) {
+                                Err(()) => reasons.push(
+                                    "ローカルレビューの記録を確認できませんでした（issues/comments API が失敗）"
+                                        .to_string(),
+                                ),
+                                // head のローカルレビューの記録があれば（記録の SHA から rebase だけした head も。ADR-0059）、
+                                // Copilot のレビューの有無・到着・チェックの失敗を問わず通す（ADR-0043）
+                                Ok(marks) if marks_cover(&dir, &marks, &head_sha, tip) => {}
+                                Ok(marks) => match succ {
+                                    Err(()) => reasons.push(
+                                        "失敗していない自動レビューを確認できませんでした（reviews API が失敗）"
+                                            .to_string(),
+                                    ),
+                                    Ok(bot) => {
+                                        let local = last_local_record(&marks, &head_sha);
+                                        if bot.is_none() && local.is_none() {
+                                            reasons.push(never_reviewed_reason(
+                                                &head_sha,
+                                                copilot_check_failed,
+                                                &url,
+                                            ));
+                                        } else if let Some(c) = stale_review_context(
+                                            &dir, &head_sha, bot, local, files(),
+                                        ) {
+                                            contexts.push(Finding::Context(c));
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
                 }
-                reasons.extend(apply_escape_to_reasons(
-                    shell.escape("ALLOW_UNREVIEWED_HEAD"),
-                    "ALLOW_UNREVIEWED_HEAD",
-                    unreviewed,
-                ));
             }
 
             // --- 9. トピックが 1 つか（新しい ADR の数）---
@@ -847,7 +1024,7 @@ impl Rule for PreMergeCheck {
                 ))];
             }
         }
-        Vec::new()
+        contexts
     }
 }
 

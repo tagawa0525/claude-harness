@@ -57,7 +57,8 @@ ADR-0021 …）は変えない」と、マージの判定、`decide-next.sh`、`
   記録として読むのはコメントの 1 行目で、`<!-- local-review` で始まるのに形の崩れた行（sha が完全な 16 進の小文字の SHA で
   ないなど）も最後の記録に数え、比較元にしない。短い SHA は別のコミットに解けうるので受けない
 - **マージの判定**（検査 8）: head に High 0 の記録がある（ADR-0043 のまま）か、上の比較元と head が ADR-0021 の判定で
-  同じなら通す。bot レビューの `commit_id` を比較元にする判定（ADR-0021）も残す
+  同じなら、head はレビューに覆われているとして何も伝えずに通す。bot レビューの `commit_id` を比較元にする判定（ADR-0021）も
+  残す。覆われていないときの扱いは ADR-0043 の検査 8（1 度もレビューを受けていなければ止め、ほかは止めずに伝える）
 - **判定の方法は ADR-0021 のまま**: base は GitHub が返す base ブランチの今の先頭、比べるのはそれぞれの merge-base からの
   PR の差分で、確かめられないときは同じとみなさない。旧 head と同じく、新 head も手元に無ければ origin から取る
   （スクリプトは、新 head を fetch していない clone でも走る）。比較元を増やしても、偽陽性の側の性質（中身が変わったのに通す
@@ -88,7 +89,13 @@ ADR-0021 …）は変えない」と、マージの判定、`decide-next.sh`、`
 - Rust のユニットテスト（`pre_merge_check.rs`）: 比較元の選び方が、最後の記録が High 0 ならその sha を、High ありか形が
   崩れていれば何も返さないこと。`same_pr_diff` の既存のケースが通ったままであること
 - `.claude/tests/hooks.sh` の pre-merge-check: 記録の sha から rebase だけした head は通す。記録の後に差分を変えた head、
-  最後の記録が High ありの head は止める。`local-review-covers` の入口が同じ判定と終了コードを返し、origin の URL を
+  最後の記録が High ありの head は、止めずに変わったファイルか High を伝える（2026-11-11 の変更）。`local-review-covers` の入口が同じ判定と終了コードを返し、origin の URL を
   問わず手元のコミットで比べること
 - `.claude/tests/scripts/gh-pr-review.sh`: `decide-next.sh` と `request-rereview.sh` が `local-review-covers` の終了コードに
   従い、記録を確かめられなければ止まること
+
+## 変更
+
+- 2026-11-11: マージの判定の、覆われていない head。前は「head に High 0 の記録がある（ADR-0043 のまま）か、上の比較元と head が
+  ADR-0021 の判定で同じなら通す。」で、ほかは止めていた。ADR-0043 の 2026-11-11 の変更で、覆われていない head は、PR がレビューを
+  1 度でも受けていれば止めずに伝えることにしたため。`local-review-covers` の判定と終了コードは変えない

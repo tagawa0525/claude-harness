@@ -39,8 +39,9 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
   `cd <worktree> && gh pr view [PR番号] --json url -q .url` で得る）（約 10 分。
   `run_in_background=true` で実行）。タイムアウト（exit 1）は /gh-actions-check で診断
 - 指摘への対応が残っていれば /gh-pr-review に戻る
-- 未レビューの head で `pre-merge-check` に止められたら、/gh-pr-review の Step 6 に戻ってローカルレビューを記録する。
-  歯止めの最後の周で blocking を直した head なら、/git-merge の「直す指摘の基準」の「3 周目で blocking を直したら」に従う。歯止めを使い切った後の追加の変更なら回さず、直したコミットを示してユーザーに聞く
+- レビューを 1 度も受けていない PR で `pre-merge-check` に止められたら、/gh-pr-review の Step 6 に戻ってローカルレビューを記録する。
+  head がレビューに覆われていないとき、hook は止めずに変わったファイルを知らせる。知らせはマージの後に届くので、もう 1 周回すかは
+  マージの前に /git-merge の「直す指摘の基準」の「終わり」の項で決め、回さないなら、その理由をマージの本文の Impact に書く
 
 ## マージコミットメッセージ
 

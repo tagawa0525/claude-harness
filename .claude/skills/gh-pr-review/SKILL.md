@@ -95,8 +95,7 @@ claude-hooks の、普通に書く形（`cd <worktree> &&`、`env` や `timeout`
   `This will be settled with tests in the implementation PR.` か、不要な理由の事実を添えて返信する
 
 レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
-受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す
-（この周も /git-merge の「直す指摘の基準」の歯止めに数える）。対象は `~/.claude/scripts/review-level.sh`
+受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す。対象は `~/.claude/scripts/review-level.sh`
 が出す `WORKTREE` を対象にする（PR の worktree で実行する。Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
 `--base <土台のブランチ>` を付ける）。
 直すときも、コードの挙動を文書に重複して書かず、コードへの参照（ファイルと関数名）で書く。
@@ -168,7 +167,7 @@ EOF
 | VERDICT                  | 意味                                                                                                | 次の一手                                                                                                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ACT`                    | 未解決スレッドがある                                                                                | Step 3〜5 で対応する                                                                                                                                               |
-| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head をローカルで確かめていない                                                  | 下記の「ローカルレビュー」を回して記録し、`decide-next.sh` を再実行する                                                                                            |
+| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head をローカルで確かめていない                                                  | 回すかを下記の「ローカルレビュー」のとおり決め、回したら記録して `decide-next.sh` を再実行し、回さないなら Step 7 へ                                               |
 | `STOP_LOCAL_REVIEWED`    | head はローカルでレビュー済み（記録に High が無い）。Copilot のレビューの有無・到着・内容は問わない | 要求せず、Copilot を待たずに Step 7 へ（マージ時の hook も同じ条件で通す）。Copilot の指摘が既にあれば、`PREVIOUSLY_MISSED` を含め台帳に処置があるかを先に確かめる |
 | `STOP_DOCS_REVIEWED`     | 文書だけの PR で、対応を push 済み                                                                  | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない）                                           |
 | `STOP_DECLINED`          | 未解決ゼロ・head はレビュー済み                                                                     | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                                                           |
@@ -182,7 +181,9 @@ EOF
 回した後（PR を作る前の /gh-pr-create の周を含む）にだけ書き、自分で差分を読んだだけの head は記録しない（マージの hook は記録を Copilot のレビューの代わりに
 数えるので、読んだだけの記録は誰もレビューしていない head をレビュー済みにする。2026-10-28 に、Copilot がレビューできなかった 2 つの
 PR で、親が差分を読んで 0 件を記録してマージした。片方の head は担当が最後のレビューの後に積んだ未レビューの修正だった）。
-記録の無い head（最初の head も、対応を push した head も）について、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
+最初の head は必ず回す（1 度もレビューを受けていない PR はマージの hook が止める）。対応を push した head に回すかは、/git-merge の
+「直す指摘の基準」の「終わり」の項で決める（回さないなら、その理由をマージの本文に書く。マージの hook は止めずに、変わった
+ファイルを知らせる）。回すときは、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
 `WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。ブランチ名で渡すと /code-review は cwd のリポジトリで
 解くので、cwd が別のリポジトリだと対象を見つけられない。`WORKTREE` が none なら、PR の URL を対象に渡す。
 PR の差分（対応の後なら、直した差分と、同じ種類の問題が他に残っていないか）を見る。回した head（`git rev-parse HEAD`。push 済みで PR の
@@ -194,11 +195,10 @@ head と同じもの）に、その回で検証して正しいと判断した指
 ```
 
 記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
-して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`、
-マージ時の hook）ので、High（blocking）は直して回し直す。Medium と Low（non-blocking）は直さず、/git-merge の
+して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`。
+マージ時の hook は止めずに High が残ると知らせる）ので、High（blocking）は直し、回し直すかは「終わり」の項で決める。Medium と Low（non-blocking）は直さず、/git-merge の
 「直す指摘の基準」のとおり扱ってその head で終える。同じ head を回し直したら、最後の記録で決まる。
-直す指摘、周の終わり、歯止めと「3 周目で blocking を直したら」の head の扱いは、担当も親も /git-merge の「レビュー」の節の
-「直す指摘の基準」に従う。
+直す指摘と周の終わりは、担当も親も /git-merge の「レビュー」の節の「直す指摘の基準」に従う。
 件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
 
 レビューが対象を見つけられなかった、または実行できなかったとき（「ブランチが存在しない」、エラー、`[]` だけの
@@ -256,7 +256,7 @@ PR: {url}
 対応サマリー: fix {n}（High {n} / Medium {n} / Low {n}）、decline {n}、回答 {n}、要判断 {n}
 以下は該当があるときだけ:
 - レビュアーの確認待ち: {人間のスレッドで返信済み・未 resolve}
-- 未確認の対応: {周回上限到達時、最終周で対応・見送りした指摘}
+- 未確認の対応: {最終周で対応・見送りした指摘}
 - 対応しなかった Suppressed comments: {本文の要旨}
 - レビューを受けていない変更: {commit hash と要旨}
 

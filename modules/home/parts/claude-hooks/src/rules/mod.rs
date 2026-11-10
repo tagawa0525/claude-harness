@@ -80,10 +80,10 @@ mod block_main_commit;
 mod block_nested_heredoc_same_delimiter;
 mod block_no_verify;
 mod block_secret_commit;
-mod cap_review_rounds;
 mod check_commit_message;
 mod check_merge_body_ja_terms;
 mod check_merge_review;
+mod count_review_rounds;
 mod delegate_request_fields;
 mod guard_branch_base;
 mod guard_exclusive_slurm;
@@ -130,7 +130,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_exclusive_slurm::GuardExclusiveSlurm,
         &block_nested_heredoc_same_delimiter::BlockNestedHeredocSameDelimiter,
         &delegate_request_fields::DelegateRequestFields,
-        &cap_review_rounds::CapReviewRounds,
+        &count_review_rounds::CountReviewRounds,
     ]
 }
 
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn skill_tool_runs_only_the_review_round_check() {
-        assert_eq!(names_for("Skill"), ["cap-review-rounds"]);
+        assert_eq!(names_for("Skill"), ["count-review-rounds"]);
     }
 
     #[test]

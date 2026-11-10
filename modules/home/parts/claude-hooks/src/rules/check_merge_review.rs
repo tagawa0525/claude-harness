@@ -11,14 +11,15 @@
 //! 行の先頭の空白と箇条の印（`- `、`* `）は除いて読む。本文の決まらない形（エディタ、シェルが展開する値、読めない
 //! `-F`）は止める（check-merge-body-ja-terms と違い、後ろに同じ検査をする git の hook が無い）。
 //!
-//! その hash がブランチの先端の祖先で、既定ブランチの祖先でないことを求め、hash から先端までに変わったファイルが
-//! どれも挙動を変えないもの（スキルと hook の文書と ADR を除く `.md`、`dvc.lock` と `.dvc`、hash の付け替えだけの
-//! 変更）でなければ止める。後者だけ `ALLOW_UNREVIEWED_HEAD=<理由>` で外せる（形の誤りは外さない）。
-//! 対象と中断・再開の扱いは guard-git-merge と同じ
+//! その hash がブランチの先端の祖先で、既定ブランチの祖先でないことを求める。止めるのはここまで（レビューを 1 度も
+//! 受けていないマージと、記録の形の誤り）で、どれも安く確かめられ判断が要らない。hash から先端までに、挙動を変えない
+//! もの（スキルと hook の文書と ADR を除く `.md`、`dvc.lock` と `.dvc`、hash の付け替えだけの変更）でないファイルが
+//! あれば、止めずにそのファイルを additionalContext で伝える（その変更にもう 1 周回すかは、直しの大きさと危険から
+//! モデルが決める）。対象と中断・再開の扱いは guard-git-merge と同じ
 
+use super::Rule;
 use super::check_merge_body_ja_terms::{Undecided, merge_message};
 use super::pre_git_merge_check::{default_branch_merges, local_branch_ref};
-use super::{Rule, apply_escape, escape_hint};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -27,10 +28,7 @@ use std::path::Path;
 
 pub struct CheckMergeReview;
 
-/// 最後の周より後の未レビューの変更を通すエスケープ。GitHub の pre-merge-check と同じ名前
-const ESCAPE: &str = "ALLOW_UNREVIEWED_HEAD";
-
-/// deny の理由に示す、挙動を変えるファイルの先頭の件数
+/// 伝える文に示す、挙動を変えるファイルの先頭の件数
 const SHOWN_FILES: usize = 10;
 
 /// 本文に書く形。拒否の文言が示す
@@ -204,7 +202,7 @@ fn replaced_hashes(diff: &str) -> Option<Vec<(String, String)>> {
 
 /// レビューの後に変えても挙動を変えない文書か。スキルと hook の文書（`.claude` の下、`CLAUDE.md`、`SKILL.md`）と
 /// ADR（マージの前の accepted への変更もレビューを受ける）は挙動に数える
-fn is_plain_document(path: &str) -> bool {
+pub(super) fn is_plain_document(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     path.ends_with(".md")
         && !path.split('/').any(|c| c == ".claude")
@@ -214,7 +212,7 @@ fn is_plain_document(path: &str) -> bool {
 }
 
 /// rebase の後に書き直す DVC の記録か（計算の入力の dvc.yaml は含めない）
-fn is_dvc_record(path: &str) -> bool {
+pub(super) fn is_dvc_record(path: &str) -> bool {
     path.rsplit('/').next() == Some("dvc.lock") || path.ends_with(".dvc")
 }
 
@@ -311,7 +309,7 @@ fn undecided_reason(why: Option<Undecided>) -> String {
     )
 }
 
-/// 1 本のブランチのマージを確かめる。(止める理由, エスケープで外せる止める理由)
+/// 1 本のブランチのマージを確かめる。(止める理由, 止めずに伝える文)
 fn check_branch(
     dir: &Path,
     default: &str,
@@ -379,11 +377,10 @@ fn check_branch(
         None,
         Some(format!(
             "Reviewed: の {hash} より後に、{branch} が挙動を変えうるファイルを変えています（{} 件）:\n{}{more}\n\
-             レビューの後に通せるのは、スキルと hook の文書と ADR を除く .md、dvc.lock と .dvc、コミットの hash の付け替えだけです。\
-             /code-review をブランチ全体に回し直して Reviewed: にその HEAD を書くか、挙動を変えるコミットをブランチから外してください。{}",
+             マージは止めません。この変更にもう 1 周回すかは、直しの大きさと危険で決めます（/git-merge の「直す指摘の基準」の「終わり」の項）。\
+             回さなかったなら、その理由がマージの本文の Impact にあるかを確かめ、無ければユーザーに伝えてください。",
             changed.len(),
             shown.join("\n"),
-            escape_hint(ESCAPE)
         )),
     )
 }
@@ -395,7 +392,6 @@ impl Rule for CheckMergeReview {
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
         let mut out = Vec::new();
-        let mut unreviewed = Vec::new();
         for merge in default_branch_merges(input, shell) {
             let branches: Vec<(&str, String)> = merge
                 .targets
@@ -423,11 +419,10 @@ impl Rule for CheckMergeReview {
                 }
             };
             let branch = full.strip_prefix("refs/heads/").unwrap_or(name);
-            let (deny, escapable) = check_branch(&merge.dir, &merge.default, branch, full, &body);
+            let (deny, context) = check_branch(&merge.dir, &merge.default, branch, full, &body);
             out.extend(deny.map(Finding::Deny));
-            unreviewed.extend(escapable.map(Finding::Deny));
+            out.extend(context.map(Finding::Context));
         }
-        out.extend(apply_escape(shell.escape(ESCAPE), ESCAPE, unreviewed));
         out
     }
 }
@@ -589,6 +584,26 @@ mod tests {
             .collect()
     }
 
+    /// 止めずに伝えた文。止めていれば panic
+    fn only_context(findings: &[Finding]) -> String {
+        assert!(
+            denies(findings).is_empty(),
+            "止めないはず: {:?}",
+            denies(findings)
+        );
+        let contexts: Vec<String> = findings
+            .iter()
+            .filter_map(|f| match f {
+                Finding::Context(c) => Some(c.clone()),
+                _ => None,
+            })
+            .collect();
+        match contexts.as_slice() {
+            [c] => c.clone(),
+            other => panic!("伝える文が 1 件のはず: {other:?}"),
+        }
+    }
+
     fn only_deny(findings: &[Finding]) -> String {
         match denies(findings).as_slice() {
             [r] => r.clone(),
@@ -600,9 +615,9 @@ mod tests {
     fn passes_when_the_reviewed_head_is_the_tip() {
         let repo = Repo::new("tip");
         let tip = repo.tip();
-        assert!(denies(&repo.check_body(&body(&tip, FINDINGS))).is_empty());
+        assert!(repo.check_body(&body(&tip, FINDINGS)).is_empty());
         // 短い hash も解く
-        assert!(denies(&repo.check_body(&body(&tip[..9], FINDINGS))).is_empty());
+        assert!(repo.check_body(&body(&tip[..9], FINDINGS)).is_empty());
     }
 
     #[test]
@@ -629,33 +644,34 @@ mod tests {
             ("src/b.rs", &remapped),
         ]);
         let r = repo.check_body(&body(&reviewed, FINDINGS));
-        assert!(denies(&r).is_empty(), "{:?}", denies(&r));
+        assert!(r.is_empty(), "伝えることも無いはず: {}", r.len());
     }
 
     #[test]
-    fn denies_code_and_test_changes_after_the_reviewed_head() {
+    fn tells_code_and_test_changes_after_the_reviewed_head_without_denying() {
         let repo = Repo::new("after-code");
         let reviewed = repo.tip();
         repo.commit_on_branch(&[("src/a.rs", "fn a() { b() }\n"), ("docs/n.md", "n\n")]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
-        assert!(r.contains("src/a.rs"), "{r}");
-        assert!(!r.contains("docs/n.md"), "{r}");
-        assert!(r.contains("/code-review"), "{r}");
-        assert!(r.contains("ALLOW_UNREVIEWED_HEAD=<理由>"), "{r}");
+        let c = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(c.contains("src/a.rs"), "{c}");
+        assert!(!c.contains("docs/n.md"), "{c}");
+        // 回さないなら、その理由を本文に書く
+        assert!(c.contains("理由"), "{c}");
+        assert!(c.contains("本文"), "{c}");
     }
 
     #[test]
-    fn denies_hex_swaps_that_do_not_point_at_branch_commits() {
+    fn tells_hex_swaps_that_do_not_point_at_branch_commits() {
         let repo = Repo::new("hex-swap");
         let reviewed = repo.commit_on_branch(&[("Cargo.toml", "rev = \"0123abcd4\"\n")]);
         // 依存の rev や期待値の 16 進の定数は、このリポジトリのブランチのコミットを指さない
         repo.commit_on_branch(&[("Cargo.toml", "rev = \"9876fedc1\"\n")]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
         assert!(r.contains("Cargo.toml"), "{r}");
     }
 
     #[test]
-    fn denies_hash_swaps_that_are_not_a_rebase_remap() {
+    fn tells_hash_swaps_that_are_not_a_rebase_remap() {
         // remap は rebase で消えたコミット（先端の祖先でない）の hash を、ブランチのコミット（既定ブランチに無い）の hash にする
         let repo = Repo::new("swap-kinds");
         let main = git_out(&repo.dir(), &["rev-parse", "main"]);
@@ -664,13 +680,13 @@ mod tests {
         // 既定ブランチのコミットへの差し替え
         let reviewed = repo.commit_on_branch(&[("src/c.rs", &line(&gone))]);
         repo.commit_on_branch(&[("src/c.rs", &line(&main))]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
         assert!(r.contains("src/c.rs"), "{r}");
         // ブランチのコミットどうしの差し替え（消した側が先端の祖先）
         let first = repo.tip();
         let reviewed = repo.commit_on_branch(&[("src/d.rs", &line(&first))]);
         repo.commit_on_branch(&[("src/d.rs", &line(&reviewed))]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
         assert!(r.contains("src/d.rs"), "{r}");
     }
 
@@ -688,33 +704,9 @@ mod tests {
             let repo = Repo::new("after-docs");
             let reviewed = repo.tip();
             repo.commit_on_branch(&[(path, "text\n")]);
-            let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+            let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
             assert!(r.contains(path), "{path}: {r}");
         }
-    }
-
-    #[test]
-    fn escape_passes_unreviewed_changes_but_not_a_missing_form() {
-        let repo = Repo::new("escape");
-        let reviewed = repo.tip();
-        repo.commit_on_branch(&[("src/a.rs", "fn a() { b() }\n")]);
-        let msg = repo.root.0.join("msg.txt");
-        std::fs::write(&msg, body(&reviewed, FINDINGS)).unwrap();
-        let cmd = format!(
-            "ALLOW_UNREVIEWED_HEAD='歯止めの 3 周を使い切った後の変更で、Impact に未レビューと書いた' git merge --no-ff feat/x -F {}",
-            msg.to_string_lossy()
-        );
-        assert!(denies(&repo.check(&cmd)).is_empty());
-        // 値が短ければ理由を求める
-        let short = format!(
-            "ALLOW_UNREVIEWED_HEAD=1 git merge --no-ff feat/x -F {}",
-            msg.to_string_lossy()
-        );
-        let d = denies(&repo.check(&short));
-        assert!(d.iter().any(|r| r.contains("理由を記載")), "{d:?}");
-        // 形の誤りはエスケープで外れない
-        std::fs::write(&msg, body(&reviewed, "")).unwrap();
-        assert_eq!(denies(&repo.check(&cmd)).len(), 1);
     }
 
     #[test]

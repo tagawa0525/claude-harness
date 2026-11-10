@@ -12,9 +12,6 @@
 }:
 let
   gitCheckConfig = callPackage ../lib/git-check-config.nix { };
-  # cap-review-rounds が周の上限（ROUNDS）を読むスクリプト。スキルが呼ぶものと同じファイルを store に置く
-  # （hook が ~/.claude/scripts の同期の版を読むと、rebuild と claude-sync の間で判定がずれる）
-  reviewLevel = ../../../../.claude/scripts/review-level.sh;
   # git merge の本文の語の検査（check-merge-body-ja-terms）が呼ぶ、commit-msg の hook と同じ語の検査
   # （ja-terms-message）と、git commit のメッセージの検査（check-commit-message）が呼ぶ、commit-msg の hook と
   # 同じ検査（commit-msg-check）
@@ -65,12 +62,11 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     makeWrapper ${unwrapped}/bin/claude-hooks $out/bin/claude-hooks \
       --set CLAUDE_HOOKS_JA_TERMS_MESSAGE ${jaTermsTextlint.messageCheck}/bin/ja-terms-message \
-      --set CLAUDE_HOOKS_COMMIT_MSG_CHECK ${jaTermsTextlint.commitMsgCheck}/bin/commit-msg-check \
-      --set CLAUDE_HOOKS_REVIEW_LEVEL ${reviewLevel}
+      --set CLAUDE_HOOKS_COMMIT_MSG_CHECK ${jaTermsTextlint.commitMsgCheck}/bin/commit-msg-check
     runHook postInstall
   '';
   # 包んだ ja-terms-message と辞書で git merge の本文の崩れた語を、包んだ commit-msg-check で git commit の
-  # 件名を、包んだ review-level.sh の ROUNDS で /code-review の周を止めることを確かめる（ユニットテストは偽の検査を使う）
+  # 件名を止めることと、/code-review の周を数えることを確かめる（ユニットテストは偽の検査を使う）
   doInstallCheck = true;
   nativeInstallCheckInputs = [
     git

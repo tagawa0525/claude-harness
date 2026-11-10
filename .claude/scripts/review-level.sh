@@ -16,11 +16,8 @@
 #                              「指摘なし」と同じ形の空の結果が返る。none はどこにもチェックアウトされて
 #                              いない（呼び出し側がチェックアウトするか、PR の URL を渡す）
 #   FILES: <変更ファイル数>
-#   ROUNDS: 1 | 3              ローカルの /code-review の周の上限（記録の周と例外の周を除く）。差分のどのファイルも
-#                              下の「文書」なら 1、ほかは 3。claude-hooks の cap-review-rounds が読み、上限に記録の周 1
-#                              と例外の周 3 を足した数で止める
-#   LEVEL: medium | high       ROUNDS が 1 なら medium、3 なら high。指摘の上限が高いと文書の周ごとに 8〜10 件が出て、
-#                              指摘の数が収束の目安にならない
+#   LEVEL: medium | high       差分のどのファイルも下の「文書」なら medium、ほかは high。指摘の上限が高いと文書の
+#                              周ごとに 8〜10 件が出て、指摘の数が収束の目安にならない
 #
 # 「文書」は、凍結せずマージの後も直せるので周を重ねて取り切るより後で直す方が安いもの:
 #   - docs/ の下の、ADR（docs/adr/NNNN-*.md）でない .md（issue、計画、説明の文書。docs/ の下のパッチなどは入らない）
@@ -35,7 +32,7 @@
 # 移動（rename）は旧パスも数える（--no-renames）。src/ から docs/ への移動は、
 # コードを消す変更なので文書だけの変更として扱わない。
 # docs/ の判定は pre-merge-check（is_docs_only）と decide-next.sh（docs_only）の docs/ の前方一致と違い、
-# ADR を除く（それらは Copilot の PR の自動レビューの扱いで、ローカルの周の上限とは別の判定）。
+# ADR を除く（それらは Copilot の PR の自動レビューの扱いで、ローカルのレベルとは別の判定）。
 
 set -euo pipefail
 
@@ -146,19 +143,13 @@ is_document() {
 }
 
 MERGE_BASE=$(git merge-base "$BASE" "$TARGET")
-rounds=1
+level=medium
 while IFS= read -r path; do
   if ! is_document "$path"; then
-    rounds=3
+    level=high
     break
   fi
 done <<<"$files"
-
-if ((rounds == 1)); then
-  level=medium
-else
-  level=high
-fi
 
 # TARGET をチェックアウトしている worktree のパス
 worktree=$(git worktree list --porcelain | awk -v ref="refs/heads/${TARGET}" '
@@ -174,5 +165,4 @@ echo "BASE: ${BASE}"
 echo "TARGET: ${TARGET}"
 echo "WORKTREE: ${worktree:-none}"
 echo "FILES: $(grep -c . <<<"$files")"
-echo "ROUNDS: ${rounds}"
 echo "LEVEL: ${level}"
