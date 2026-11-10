@@ -589,6 +589,26 @@ mod tests {
             .collect()
     }
 
+    /// 止めずに伝えた文。止めていれば panic
+    fn only_context(findings: &[Finding]) -> String {
+        assert!(
+            denies(findings).is_empty(),
+            "止めないはず: {:?}",
+            denies(findings)
+        );
+        let contexts: Vec<String> = findings
+            .iter()
+            .filter_map(|f| match f {
+                Finding::Context(c) => Some(c.clone()),
+                _ => None,
+            })
+            .collect();
+        match contexts.as_slice() {
+            [c] => c.clone(),
+            other => panic!("伝える文が 1 件のはず: {other:?}"),
+        }
+    }
+
     fn only_deny(findings: &[Finding]) -> String {
         match denies(findings).as_slice() {
             [r] => r.clone(),
@@ -600,9 +620,9 @@ mod tests {
     fn passes_when_the_reviewed_head_is_the_tip() {
         let repo = Repo::new("tip");
         let tip = repo.tip();
-        assert!(denies(&repo.check_body(&body(&tip, FINDINGS))).is_empty());
+        assert!(repo.check_body(&body(&tip, FINDINGS)).is_empty());
         // 短い hash も解く
-        assert!(denies(&repo.check_body(&body(&tip[..9], FINDINGS))).is_empty());
+        assert!(repo.check_body(&body(&tip[..9], FINDINGS)).is_empty());
     }
 
     #[test]
@@ -629,33 +649,34 @@ mod tests {
             ("src/b.rs", &remapped),
         ]);
         let r = repo.check_body(&body(&reviewed, FINDINGS));
-        assert!(denies(&r).is_empty(), "{:?}", denies(&r));
+        assert!(r.is_empty(), "伝えることも無いはず: {}", r.len());
     }
 
     #[test]
-    fn denies_code_and_test_changes_after_the_reviewed_head() {
+    fn tells_code_and_test_changes_after_the_reviewed_head_without_denying() {
         let repo = Repo::new("after-code");
         let reviewed = repo.tip();
         repo.commit_on_branch(&[("src/a.rs", "fn a() { b() }\n"), ("docs/n.md", "n\n")]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
-        assert!(r.contains("src/a.rs"), "{r}");
-        assert!(!r.contains("docs/n.md"), "{r}");
-        assert!(r.contains("/code-review"), "{r}");
-        assert!(r.contains("ALLOW_UNREVIEWED_HEAD=<理由>"), "{r}");
+        let c = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(c.contains("src/a.rs"), "{c}");
+        assert!(!c.contains("docs/n.md"), "{c}");
+        // 回さないなら、その理由を本文に書く
+        assert!(c.contains("理由"), "{c}");
+        assert!(c.contains("本文"), "{c}");
     }
 
     #[test]
-    fn denies_hex_swaps_that_do_not_point_at_branch_commits() {
+    fn tells_hex_swaps_that_do_not_point_at_branch_commits() {
         let repo = Repo::new("hex-swap");
         let reviewed = repo.commit_on_branch(&[("Cargo.toml", "rev = \"0123abcd4\"\n")]);
         // 依存の rev や期待値の 16 進の定数は、このリポジトリのブランチのコミットを指さない
         repo.commit_on_branch(&[("Cargo.toml", "rev = \"9876fedc1\"\n")]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
         assert!(r.contains("Cargo.toml"), "{r}");
     }
 
     #[test]
-    fn denies_hash_swaps_that_are_not_a_rebase_remap() {
+    fn tells_hash_swaps_that_are_not_a_rebase_remap() {
         // remap は rebase で消えたコミット（先端の祖先でない）の hash を、ブランチのコミット（既定ブランチに無い）の hash にする
         let repo = Repo::new("swap-kinds");
         let main = git_out(&repo.dir(), &["rev-parse", "main"]);
@@ -664,13 +685,13 @@ mod tests {
         // 既定ブランチのコミットへの差し替え
         let reviewed = repo.commit_on_branch(&[("src/c.rs", &line(&gone))]);
         repo.commit_on_branch(&[("src/c.rs", &line(&main))]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
         assert!(r.contains("src/c.rs"), "{r}");
         // ブランチのコミットどうしの差し替え（消した側が先端の祖先）
         let first = repo.tip();
         let reviewed = repo.commit_on_branch(&[("src/d.rs", &line(&first))]);
         repo.commit_on_branch(&[("src/d.rs", &line(&reviewed))]);
-        let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
         assert!(r.contains("src/d.rs"), "{r}");
     }
 
@@ -688,33 +709,9 @@ mod tests {
             let repo = Repo::new("after-docs");
             let reviewed = repo.tip();
             repo.commit_on_branch(&[(path, "text\n")]);
-            let r = only_deny(&repo.check_body(&body(&reviewed, FINDINGS)));
+            let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
             assert!(r.contains(path), "{path}: {r}");
         }
-    }
-
-    #[test]
-    fn escape_passes_unreviewed_changes_but_not_a_missing_form() {
-        let repo = Repo::new("escape");
-        let reviewed = repo.tip();
-        repo.commit_on_branch(&[("src/a.rs", "fn a() { b() }\n")]);
-        let msg = repo.root.0.join("msg.txt");
-        std::fs::write(&msg, body(&reviewed, FINDINGS)).unwrap();
-        let cmd = format!(
-            "ALLOW_UNREVIEWED_HEAD='歯止めの 3 周を使い切った後の変更で、Impact に未レビューと書いた' git merge --no-ff feat/x -F {}",
-            msg.to_string_lossy()
-        );
-        assert!(denies(&repo.check(&cmd)).is_empty());
-        // 値が短ければ理由を求める
-        let short = format!(
-            "ALLOW_UNREVIEWED_HEAD=1 git merge --no-ff feat/x -F {}",
-            msg.to_string_lossy()
-        );
-        let d = denies(&repo.check(&short));
-        assert!(d.iter().any(|r| r.contains("理由を記載")), "{d:?}");
-        // 形の誤りはエスケープで外れない
-        std::fs::write(&msg, body(&reviewed, "")).unwrap();
-        assert_eq!(denies(&repo.check(&cmd)).len(), 1);
     }
 
     #[test]
