@@ -5,6 +5,7 @@ argument-hint: <リポジトリのパス>
 allowed-tools:
   - Bash(history-rewrite run:*)
   - Bash(history-rewrite transform:*)
+  - Bash(history-rewrite sync-worktrees:*)
   - Bash(commit-refs remap:*)
 ---
 
