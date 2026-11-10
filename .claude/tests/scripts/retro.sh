@@ -508,6 +508,22 @@ out=$("$PROSE" --since 2026-11-10T00:00+09:00 --repo "$TEST_ROOT/prose-wt" 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "PROSE: skills 100 75 -25 $TEST_ROOT/prose-wt"
 
+it "prose-size: 古い既定ブランチから分かれた worktree は、既定ブランチの後の変更とブランチの変更を合わせて数える"
+git -C "$PREPO" worktree add -q -b old-topic "$TEST_ROOT/prose-old-wt" HEAD~1
+write_bytes "$TEST_ROOT/prose-old-wt/.claude/skills/d/SKILL.md" 7
+commit_at "$TEST_ROOT/prose-old-wt" 2026-11-11T14:00:00+09:00
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --repo "$TEST_ROOT/prose-old-wt" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: skills 100 77 -23 $TEST_ROOT/prose-old-wt"
+assert_contains "$out" "PROSE: claude-md 50 80 +30 $TEST_ROOT/prose-old-wt"
+
+it "prose-size: 既定ブランチより遅れた checkout を渡しても、後の大きさは既定ブランチの今の分を含む"
+git clone -q "$PREPO" "$TEST_ROOT/prose-clone"
+git -C "$TEST_ROOT/prose-clone" reset -q --hard HEAD~1
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --repo "$TEST_ROOT/prose-clone" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: claude-md 50 80 +30 $TEST_ROOT/prose-clone"
+
 it "prose-size: 区間の始まりより前にコミットが無いリポジトリは、前を 0 と数える"
 out=$("$PROSE" --since 2026-11-01T00:00+09:00 --until 2026-11-11T00:00+09:00 --repo "$PREPO" 2>&1)
 assert_eq 0 $?
@@ -533,6 +549,15 @@ it "prose-size: --until を付ければ、メモリの後の大きさも区間�
 out=$("$PROSE" --since 2026-11-10T00:00+09:00 --until 2026-11-11T00:00+09:00 --memory "$PMEM" 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "PROSE: memory 100 210 +110 $PMEM"
+
+it "prose-size: 引用符と逆斜線を含むメモリのディレクトリも、その下の退避だけを数える"
+QMEM="$CHOME/projects/-q\"\\x/memory"
+write_bytes "$QMEM/a.md" 3
+commit_at "$CHOME" 2026-11-11T12:00:00+09:00
+git -C "$CHOME" update-ref refs/memory-backup HEAD
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --until 2026-11-12T00:00+09:00 --memory "$QMEM" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: memory 0 3 +3 $QMEM"
 
 it "prose-size: メモリの無いプロジェクトは 0 と数えて止まらない"
 out=$("$PROSE" --since 2026-11-10T00:00+09:00 --memory "$CHOME/projects/-none/memory" --repo "$PREPO" 2>&1)
