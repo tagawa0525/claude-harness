@@ -10,8 +10,10 @@
 #               前の最後の退避、無ければ今のディスクのファイルで数える（区間の終わりの退避より後に書いたメモリも入れる）
 #   --repo      リポジトリか、その worktree。前の大きさは既定ブランチ（origin/HEAD、無ければ main か master）の
 #               first-parent で since より前の最後のコミットで数える。後の大きさは、--until があれば同じ既定
-#               ブランチの until より前の最後のコミット、無ければ渡したパスの HEAD のコミット（worktree を渡せば
-#               まだマージしていないブランチの分も入る）。作業ツリーの未コミットの変更は数えない
+#               ブランチの until より前の最後のコミット、無ければ既定ブランチの今の大きさに、渡したパスの HEAD が
+#               既定ブランチとの分岐点から変えた分を足す（worktree を渡せばまだマージしていないブランチの分も入り、
+#               遅れた checkout を渡しても既定ブランチにマージした分は落ちない。両方が同じファイルを変えていれば、
+#               HEAD の側の変更を既定ブランチの変更に重ねて数える）。作業ツリーの未コミットの変更は数えない
 #
 # 数える範囲（機械の hook と script は数えない）:
 #   memory     メモリのディレクトリの下のすべてのファイル（退避と同じ範囲）
@@ -91,7 +93,8 @@ before_arg() {
 }
 
 # tree_bytes <git -C の引数> <コミット> <awk のパスの条件>: コミットの中で条件に合うファイルの大きさの和。
-# コミットが空なら 0
+# コミットが空なら 0。条件の中のパスの接頭辞は ENVIRON["PREFIX"] で渡す（awk のプログラムに埋めると、引用符や
+# 逆斜線を含むパスでプログラムが変わる）
 tree_bytes() {
   local dir=$1 commit=$2 cond=$3
   [[ -n "$commit" ]] || {
@@ -100,6 +103,17 @@ tree_bytes() {
   }
   git -C "$dir" ls-tree -r -l -z "$commit" |
     awk -v RS='\0' "{ split(\$0, a, \"\\t\"); split(a[1], m, \" \"); path = a[2] } m[2] == \"blob\" && ($cond) { s += m[4] } END { print s + 0 }"
+}
+
+# repo_bytes <repo> <awk のパスの条件>: 後の大きさ。--until が無ければ、既定ブランチの今に、HEAD が分岐点から
+# 変えた分を足す（base + HEAD - 分岐点）
+repo_bytes() {
+  local repo=$1 cond=$2
+  if [[ -n "$until" ]]; then
+    tree_bytes "$repo" "$new" "$cond"
+    return
+  fi
+  echo $(($(tree_bytes "$repo" "$tip" "$cond") + $(tree_bytes "$repo" "$head" "$cond") - $(tree_bytes "$repo" "$fork" "$cond")))
 }
 
 delta() {
@@ -126,15 +140,17 @@ for repo in "${repos[@]}"; do
   if [[ -n "$until" ]]; then
     new=$(git -C "$repo" rev-list -1 --first-parent --before="$(before_arg "$until")" "$base")
   else
-    new=$(git -C "$repo" rev-parse HEAD)
+    tip=$(git -C "$repo" rev-parse "$base")
+    head=$(git -C "$repo" rev-parse HEAD)
+    fork=$(git -C "$repo" merge-base "$tip" "$head")
   fi
   skills='path ~ /^\.claude\/skills\/.*\.md$/'
   claude_md='path == "CLAUDE.md" || path ~ /\/CLAUDE\.md$/'
   a=$(tree_bytes "$repo" "$old" "$skills")
-  b=$(tree_bytes "$repo" "$new" "$skills")
+  b=$(repo_bytes "$repo" "$skills")
   echo "PROSE: skills $a $b $(delta "$a" "$b") $repo"
   a=$(tree_bytes "$repo" "$old" "$claude_md")
-  b=$(tree_bytes "$repo" "$new" "$claude_md")
+  b=$(repo_bytes "$repo" "$claude_md")
   echo "PROSE: claude-md $a $b $(delta "$a" "$b") $repo"
 done
 
@@ -152,7 +168,7 @@ if [[ -n "$memory" ]]; then
   fi
   # 退避の中身にこのディレクトリがあるか（退避を始める前の区間を、メモリの無いプロジェクトと見分ける）
   in_backup=0
-  if ((has_ref)) && [[ -n "$(git -C "$home" ls-tree -r --name-only "$ref" -- "$rel/")" ]]; then
+  if ((has_ref)) && [[ -n "$(git -C "$home" ls-tree -r --name-only "$ref" -- ":(literal)$rel/")" ]]; then
     in_backup=1
   fi
   old_commit=""
@@ -161,7 +177,8 @@ if [[ -n "$memory" ]]; then
     echo "ERROR: $(jst "$since") より前のメモリの退避（$home の $ref）が無いので、前の大きさが分かりません: $memory" >&2
     exit 1
   fi
-  cond="index(path, \"$rel/\") == 1"
+  export PREFIX="$rel/"
+  cond='index(path, ENVIRON["PREFIX"]) == 1'
   a=$(tree_bytes "$home" "$old_commit" "$cond")
   if [[ -n "$until" ]]; then
     new_commit=""
