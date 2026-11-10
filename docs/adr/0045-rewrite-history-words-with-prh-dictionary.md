@@ -129,7 +129,10 @@ ref を移す前の各 worktree の HEAD を控えれば、worktree の合わせ
 行う。未コミットの変更は、ref を移す前の HEAD と比べて見つける（移した後は、書き換えたファイルがステージした変更に
 見える）。変更の無い worktree は新しい HEAD に reset --hard し、変更のある worktree は変更を残したまま、書き換えた
 ファイルに同じ変換を当てて番号を付け直す。機械で合わせられない worktree（対応表に無いコミット、部分のステージ、
-衝突の途中、変換が止まるファイル）は、何も変えずに出力に挙げ、人が合わせる。古いオブジェクトの掃除（`reflog expire` と `gc`）は
+衝突やマージなどの操作の途中、assume-unchanged か skip-worktree の印、持たれた index.lock、変換か番号の付け直しが
+止まるファイル）は、何も変えずに出力に挙げ、人が合わせる。そのために、書く前にすべてを確かめ、止まるときは何も
+書かない `commit-refs remap` を最初の書き込みにする。書き始めた後に止まった worktree は、パスを添えて出力に挙げる。
+古いオブジェクトの掃除（`reflog expire` と `gc`）は
 取り消せないので、issue にしてユーザーが決める。
 
 履歴からパスを消す処理（2026-10-11 の xlc の `examples/*openmc-*.msgpack`）は入れない。その回だけのもので、
@@ -146,7 +149,8 @@ ref を移す前の各 worktree の HEAD を控えれば、worktree の合わせ
 - 悪い点: UTF-8 として読めないテキストのブロブは直さない（数を `NOT_UTF8:` に出す）。宣言した符号化（`encoding` の
   見出し）が UTF-8 でない本文は変えず、直す語があれば止める（UTF-8 の語を書くと文字化けする）。UTF-8 として読めない
   本文があると止まる
-- 悪い点: 部分のステージのある worktree、衝突の途中の worktree は、`sync-worktrees` が合わせずに残すので、人が合わせる
+- 悪い点: 部分のステージのある worktree、操作の途中の worktree、assume-unchanged か skip-worktree の印のある
+  worktree（sparse checkout を含む）は、`sync-worktrees` が合わせずに残すので、人が合わせる
 - 悪い点: fast-export が書き出さない見出し（jj の `change-id` など）のあるコミットは、照合が合わずに止まる（見出しの
   名前を示す）。そうしたリポジトリは、このツールで書き換えない
 
@@ -162,9 +166,11 @@ ref を移す前の各 worktree の HEAD を控えれば、worktree の合わせ
   中の表、CRLF の表）を書き換え、語が直る、表が揃う、番号が最後の番号になる、すべての元のコミットが対応する、元のリポジトリが
   変わらない、同じ辞書の textlint が書き換える前は語を見つけ書き換えた後は見つけない、変換と違う履歴を照合が止める。transform は
   無いファイルで止まり、symlink を変えない。sync-worktrees は、ref を移した後の一時的なリポジトリ（メイン、detached HEAD、
-  変更のある worktree、部分のステージのある worktree）で、変更の無い worktree が新しい履歴に合い、追跡していない
-  ファイルが残り、変更のある worktree は変更とステージが残って語と番号が直り、部分のステージのある worktree と
-  対応表に無いコミットの worktree は変わらない
+  変更のある worktree、部分のステージ、assume-unchanged の印の下の編集、`git rm --cached`、衝突を解いてステージした
+  マージの途中、`git add -N`、持たれた index.lock、remap が止まる番号、HEAD を移す git の失敗）で、変更の無い worktree が
+  新しい履歴に合い、追跡していないファイルが残り、変更のある worktree は変更とステージ（外したパスと add -N を含む）が
+  残って語と番号が直り、部分のステージ、印の下の編集、マージの途中、index.lock、remap が止まる worktree と対応表に
+  無いコミットの worktree は変わらず、書き始めた後の失敗は worktree のパスを示して変更を残す
 - テストは nixfiles の今の prh.yml（main の 8d6261ea、100 の規則）を読み、どの規則の specs も通る。PR #413 の時点の
   prh.yml（35 の規則）も、specs を通って読めることを手で確かめた（2026-10-21）
 - nixfiles の clone（2026-10-21、main の 8d6261ea の 2634 コミット、同じ時点の辞書。辞書と辞書のテストを除くパスに
@@ -194,4 +200,5 @@ xlc の `references/history-rewrite/`（`callback2.py`、`cb_lib.py`、`iterate3
   パスは書き方からディレクトリを決められず、止める側に倒す方針を崩す）、(c) `run` に入れる（`run` は ref を移す前に
   走り、元のリポジトリに書き込まない）。ツールの中の git は Bash の hook を通らないので、hook が見る「未コミットの
   変更が無いこと」を、ツールが ref を移す前の HEAD と比べて確かめる。部分のステージは、前の手順ではファイルの全体を
-  ステージし直して失っていたが、何も変えずに人に返す
+  ステージし直して失っていたが、何も変えずに人に返す。diff-files が見ない変更（assume-unchanged の印）と、HEAD を
+  移すと古い履歴を持ち込む操作の途中も、同じく人に返す（#673）

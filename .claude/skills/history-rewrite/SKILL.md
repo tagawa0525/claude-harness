@@ -131,8 +131,10 @@ history-rewrite sync-worktrees --workdir "$D" "${WORDS[@]}"
   なっていることを確かめる。書き換えで変わらなかったファイルへの変更は、番号だけを付け直し、語は直さない
 - `LEFT:` の worktree: ツールは何も変えていない。理由を見て、合わせ方をユーザーと決める（対応表に無いコミットなら、
   1 でブランチを付けて 1 からやり直す）
-- `ERROR:` の worktree（`commit-refs remap` が止まった）: 語は直したが番号は付け直していない。理由を直し、その
-  worktree で `commit-refs remap "$D/commit-map"` を実行する
+- `ERROR: <パス>:` の行（標準エラー）: 書き始めた後に止まった worktree。未コミットの変更は作業ツリーに残るが、HEAD、
+  index、作業ツリーの一部だけが新しい履歴になっている。ツールを同じ worktree にもう一度当てない（ref を移す前の
+  HEAD と比べるので、合わせた分も変更に見える）。`worktree-state` のその行の HEAD と控えのパッチ、`git -C <パス>
+  status` を見て、合わせ方をユーザーと決める
 
 ## 6. 書き換えの外に残るもの
 
