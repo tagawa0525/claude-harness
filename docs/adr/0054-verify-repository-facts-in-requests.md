@@ -50,5 +50,5 @@ ADR-0027 の補足（2026-10-22 の 2 件のうち、外部の値の項）は、
 
 ### 確認
 
-- `.claude/skills/delegate/references/requesting.md` の出典の規則がリポジトリの事実を含み、`.claude/skills/delegate/SKILL.md` の受ける側の
+- `.claude/skills/delegate/references/requesting.md` の出典の規則がリポジトリの事実を含み、`.claude/skills/delegate/references/working.md` の受ける側の
   手順 1 がそれを参照する
