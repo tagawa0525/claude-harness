@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# slurm-history.sh — jobcomp の記録から、ジョブの見積もり（--time）と実績を比べる
+# slurm-history.sh — jobcomp の記録から、ジョブの見積もり（--time）と実績を比べる。--job は sacct から 1 本ずつ読む
 #
 # Usage: slurm-history.sh [--by-name] [FILE]
+#        slurm-history.sh --job [--repo <本体のリポジトリ>] <ジョブ番号>...
 #   FILE       jobcomp/filetxt のファイル。省略時は /var/log/slurm/job_completions
 #   --by-name  ジョブ名ごとに集計する（省略時はジョブごと）
+#   --job      ジョブごとに、状態、時間、排他か、コマンド、作業ディレクトリ、走った版（決められなければ理由）を
+#              sacct の記録と git の reflog から出す。出力の形と版の決め方は lib/slurm-job.sh の先頭
 #
 # 出力（表のあとに 2 行）:
 #   ジョブごと: JOBID NAME ESTIMATE ELAPSED RATIO
@@ -31,6 +34,13 @@
 # どれかが無いか壊れている）は、行番号を出して exit 1。ファイルが読めないときも exit 1。
 
 set -euo pipefail
+
+if [[ ${1:-} == --job ]]; then
+  shift
+  source "$(dirname "${BASH_SOURCE[0]}")/lib/slurm-job.sh"
+  slurm_job_main "$@"
+  exit
+fi
 
 BY_NAME=0
 FILE=""
