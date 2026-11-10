@@ -412,6 +412,13 @@ mod tests {
             denied(&run(&r, &review(&r))).is_none(),
             "Agent を数えていなければ 2 周目は通すはず"
         );
+        for _ in 2..DOCS_LIMIT {
+            run(&r, &review(&r));
+        }
+        assert!(
+            denied(&run(&r, &review(&r))).is_some(),
+            "ここで上限に達しているはず"
+        );
         for prompt in &prompts {
             assert!(
                 run(&r, &agent(prompt, Path::new("/"))).is_empty(),
@@ -424,7 +431,7 @@ mod tests {
     fn other_skills_are_not_counted() {
         let r = repo("docs/y", 1);
         let simplify = skill("simplify", &r.dir.display().to_string(), Path::new("/"));
-        for _ in 0..3 {
+        for _ in 0..DOCS_LIMIT {
             assert!(run(&r, &simplify).is_empty());
         }
         assert!(denied(&run(&r, &review(&r))).is_none());
