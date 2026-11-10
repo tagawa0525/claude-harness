@@ -275,4 +275,29 @@ out=$("$HISTORY" --job 117)
 assert_contains "$out" "VERSION: $C1"
 assert_contains "$out" "NOTE: 投げた後の変化は確かめていない（版を取った時点が 30 日より前"
 
+it "--job: commit= の無いジョブで、worktree が消えて HEAD の reflog が無ければ、worktree の HEAD の動きは確かめていないと添える"
+setup_repo
+git -C "$REPO" worktree remove --force "$WT"
+out=$("$HISTORY" --job 110)
+assert_contains "$out" "VERSION: $C1"
+assert_contains "$out" "NOTE: worktree の HEAD の動き（ブランチの切り替え）は確かめていない"
+
+it "--job: commit= のジョブで、ブランチの reflog が届いても worktree が消えていれば、worktree の HEAD の動きは確かめていないと添える"
+out=$("$HISTORY" --job 101)
+assert_contains "$out" "VERSION: $C1"
+assert_contains "$out" "NOTE: worktree の HEAD の動き（ブランチの切り替え）は確かめていない"
+
+it "--job: worktree が残り、HEAD の reflog が届けば、worktree の HEAD の動きの NOTE を出さない"
+setup_repo
+out=$("$HISTORY" --job 101)
+assert_not_contains "$out" "worktree の HEAD の動き"
+
+it "--job: 自分の --comment の無い SubmitLine で、コマンドの中の「 --comment 」を連絡先と読まない"
+record 118 COMPLETED "$DAY"T10:00:00 "$DAY"T10:00:00 "$DAY"T11:00:00 "$WT" \
+  "/nix/store/x-slurm/bin/sbatch --exclusive --wrap tool --comment feat/y /x commit=$C1_SHORT"
+out=$("$HISTORY" --job 118)
+assert_contains "$out" "BRANCH: -"
+assert_contains "$out" "COMMIT: -"
+assert_contains "$out" "COMMAND: tool --comment feat/y /x commit=$C1_SHORT"
+
 finish
