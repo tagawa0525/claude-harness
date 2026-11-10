@@ -9,7 +9,7 @@ REPO="$TEST_ROOT/rl/app"
 make_repo "$REPO"
 cd "$REPO" || exit 1
 
-it "review-level: docs/ の ADR でない文書だけの変更は medium で 1 周"
+it "review-level: docs/ の ADR でない文書だけの変更は medium"
 git switch -q -c feat/docs
 commit_file "$REPO" docs/plans/x.md "docs: plan"
 commit_file "$REPO" docs/issues/y.md "docs: issue"
@@ -19,16 +19,16 @@ assert_contains "$out" "LEVEL: medium"
 assert_contains "$out" "TARGET: feat/docs"
 assert_contains "$out" "BASE: main"
 assert_contains "$out" "FILES: 2"
-assert_contains "$out" "ROUNDS: 1"
+# 周の数はモデルが決めるので、上限を出さない
+assert_not_contains "$out" "ROUNDS"
 
-it "review-level: 文書でないファイルを含む変更は high で 3 周"
+it "review-level: 文書でないファイルを含む変更は high"
 git switch -q main
 git switch -q -c feat/mixed
 commit_file "$REPO" docs/plans/x.md "docs: plan"
 commit_file "$REPO" .claude/scripts/x.sh "feat: x"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "LEVEL: high"
-assert_contains "$out" "ROUNDS: 3"
 
 it "review-level: docs/ に似た別の場所（docs.md、docs-extra/、src/docs/）は文書として扱わず high"
 git switch -q main
@@ -166,10 +166,10 @@ git remote set-head origin master
 out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
 assert_contains "$out" "BASE: origin/master"
 
-# 周の上限（ROUNDS）は、挙動を変えない文書と規則の文書だけのブランチで 1、ほかは 3。LEVEL も同じ分け方
-ROUNDS_REPO="$TEST_ROOT/rl/rounds"
-make_repo "$ROUNDS_REPO"
-cd "$ROUNDS_REPO" || exit 1
+# LEVEL は、挙動を変えない文書と規則の文書だけのブランチで medium、ほかは high
+LEVEL_REPO="$TEST_ROOT/rl/level"
+make_repo "$LEVEL_REPO"
+cd "$LEVEL_REPO" || exit 1
 mkdir -p docs/adr
 cat >docs/adr/0001-x.md <<'ADR'
 ---
@@ -200,94 +200,87 @@ ADR
 git add docs/adr
 git commit -q -m "docs: adr"
 
-it "review-level: スキルの文書と CLAUDE.md だけの変更は medium で 1 周"
+it "review-level: スキルの文書と CLAUDE.md だけの変更は medium"
 git switch -q -c feat/rule-docs main
-commit_file "$ROUNDS_REPO" .claude/skills/x/SKILL.md "docs(skills): x"
-commit_file "$ROUNDS_REPO" CLAUDE.md "docs: claude"
-commit_file "$ROUNDS_REPO" .claude/README.md "docs: readme"
+commit_file "$LEVEL_REPO" .claude/skills/x/SKILL.md "docs(skills): x"
+commit_file "$LEVEL_REPO" CLAUDE.md "docs: claude"
+commit_file "$LEVEL_REPO" .claude/README.md "docs: readme"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 1"
 assert_contains "$out" "LEVEL: medium"
 
 it "review-level: 規則の文書の判定は check-merge-review と同じ（どこかの .claude の下、SKILL.md）"
 git switch -q -c feat/rule-docs-elsewhere main
-commit_file "$ROUNDS_REPO" skills/b/SKILL.md "docs(skills): b"
-commit_file "$ROUNDS_REPO" sub/.claude/c.md "docs: c"
+commit_file "$LEVEL_REPO" skills/b/SKILL.md "docs(skills): b"
+commit_file "$LEVEL_REPO" sub/.claude/c.md "docs: c"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 1"
+assert_contains "$out" "LEVEL: medium"
 
-it "review-level: スキルの中のスクリプトを含む変更は high で 3 周"
+it "review-level: スキルの中のスクリプトを含む変更は high"
 git switch -q -c feat/skill-script main
-commit_file "$ROUNDS_REPO" .claude/skills/x/SKILL.md "docs(skills): x"
-commit_file "$ROUNDS_REPO" .claude/skills/x/scripts/a.sh "feat: a"
+commit_file "$LEVEL_REPO" .claude/skills/x/SKILL.md "docs(skills): x"
+commit_file "$LEVEL_REPO" .claude/skills/x/scripts/a.sh "feat: a"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 3"
 assert_contains "$out" "LEVEL: high"
 
-it "review-level: docs/ の外の .md（検証の記録など）は 3 周"
+it "review-level: docs/ の外の .md（検証の記録など）は high"
 git switch -q -c feat/record main
-commit_file "$ROUNDS_REPO" examples/p/verification.md "docs: record"
+commit_file "$LEVEL_REPO" examples/p/verification.md "docs: record"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 3"
 assert_contains "$out" "LEVEL: high"
 
-it "review-level: 新しい ADR は 3 周"
+it "review-level: 新しい ADR は high"
 git switch -q -c feat/new-adr main
-commit_file "$ROUNDS_REPO" docs/adr/0003-z.md "docs: adr"
+commit_file "$LEVEL_REPO" docs/adr/0003-z.md "docs: adr"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 3"
 assert_contains "$out" "LEVEL: high"
 
-it "review-level: 既存の ADR の「## 変更」の節への追記だけなら 1 周"
+it "review-level: 既存の ADR の「## 変更」の節への追記だけなら medium"
 git switch -q -c feat/adr-change main
 echo "- 2026-02-01: 次の変更" >>docs/adr/0001-x.md
 git commit -q -am "docs(adr): change"
-commit_file "$ROUNDS_REPO" docs/issues/i.md "docs: issue"
+commit_file "$LEVEL_REPO" docs/issues/i.md "docs: issue"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 1"
 assert_contains "$out" "LEVEL: medium"
 
-it "review-level: 「## 変更」の節の中の行を書き換えるだけなら 1 周"
+it "review-level: 「## 変更」の節の中の行を書き換えるだけなら medium"
 git switch -q -c feat/adr-change-edit main
 sed -i 's/最初の変更/最初の変更（直した）/' docs/adr/0001-x.md
 git commit -q -am "docs(adr): fix change"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 1"
+assert_contains "$out" "LEVEL: medium"
 
-it "review-level: ADR の決定の節も変えるなら 3 周"
+it "review-level: ADR の決定の節も変えるなら high"
 git switch -q -c feat/adr-decision main
 sed -i 's/x にする。/x と w にする。/' docs/adr/0001-x.md
 echo "- 2026-02-01: w を足した" >>docs/adr/0001-x.md
 git commit -q -am "docs(adr): decision"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 3"
 assert_contains "$out" "LEVEL: high"
 
-it "review-level: 「## 変更」の節の無い ADR に節を足すなら 3 周"
+it "review-level: 「## 変更」の節の無い ADR に節を足すなら high"
 git switch -q -c feat/adr-new-change main
 printf '\n## 変更\n\n- 2026-02-01: 変えた\n' >>docs/adr/0002-y.md
 git commit -q -am "docs(adr): add change"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 3"
+assert_contains "$out" "LEVEL: high"
 
-it "review-level: ADR を消すなら 3 周"
+it "review-level: ADR を消すなら high"
 git switch -q -c feat/adr-delete main
 git rm -q docs/adr/0002-y.md
 git commit -q -m "docs(adr): remove"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 3"
-
-it "review-level: docs/ の下でも .md でないファイル（パッチ、ハッシュの一覧）は 3 周"
-git switch -q -c feat/docs-patch main
-commit_file "$ROUNDS_REPO" docs/patches/x.patch "fix: patch"
-out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 3"
 assert_contains "$out" "LEVEL: high"
 
-it "review-level: docs/adr の ADR でない文書（README.md）は 1 周"
-git switch -q -c feat/adr-readme main
-commit_file "$ROUNDS_REPO" docs/adr/README.md "docs: adr readme"
+it "review-level: docs/ の下でも .md でないファイル（パッチ、ハッシュの一覧）は high"
+git switch -q -c feat/docs-patch main
+commit_file "$LEVEL_REPO" docs/patches/x.patch "fix: patch"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "ROUNDS: 1"
+assert_contains "$out" "LEVEL: high"
+
+it "review-level: docs/adr の ADR でない文書（README.md）は medium"
+git switch -q -c feat/adr-readme main
+commit_file "$LEVEL_REPO" docs/adr/README.md "docs: adr readme"
+out=$("$SCRIPTS_DIR/review-level.sh")
+assert_contains "$out" "LEVEL: medium"
 
 finish
