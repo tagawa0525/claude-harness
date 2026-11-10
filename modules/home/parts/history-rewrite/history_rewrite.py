@@ -12,6 +12,20 @@ Usage:
       6. 元の番号から最後の番号への対応表を DIR/commit-map に書く
   history-rewrite transform [語の指定] FILE...
       作業ツリーのファイルの語を、run の第 1 段と同じ変換で直す（コミットはしない）
+  history-rewrite sync-worktrees --workdir DIR [語の指定]
+      run の結果の ref を元のリポジトリに移した後、DIR/worktree-state の行（worktree のパス、ref を移す前の
+      HEAD、控えのパッチのパスをタブで区切る）ごとに、worktree の HEAD、index、作業ツリーを新しい履歴に合わせる。
+      未コミットの変更は、ref を移す前の HEAD と比べて見つける（移した後の HEAD と比べると、書き換えたファイルが
+      すべて変更に見える）
+      - detached HEAD は DIR/commit-map の対応で移す
+      - 変更の無い worktree は、新しい HEAD に reset --hard する（追跡していないファイルは残る）
+      - 変更のある worktree は、commit-refs remap で番号を付け直し、書き換えたファイルのうち手を付けていないものを
+        新しい中身にし、変えたものに同じ変換を当てる。ステージしていたパスは、ステージし直す（git rm --cached で
+        外したパスは外したまま、git add -N のパスは add -N のまま）
+      - 機械で合わせられない worktree（対応表に無いコミット、部分のステージ、衝突やマージ、cherry-pick、revert、
+        rebase、bisect の途中、assume-unchanged か skip-worktree の印のあるパス、index.lock を持たれた index、
+        パスの増減を含む書き換え、変換か remap が止まるファイル）は、何も変えずに LEFT に出す。書く前にすべてを
+        確かめ、remap を最初の書き込みにする（remap は止まるとき何も書かない）
 
 語の指定:
   --dictionary FILE   辞書（prh の形）。省くと nixfiles の ja-terms の辞書（ADR-0014）。重ねて渡せる
@@ -32,8 +46,16 @@ transform の出力:
   SKIPPED: <パス> (<理由>)  読まなかったファイルごと（symlink、excluded、binary、not UTF-8）
   REPLACED: <パス>    直したファイルごと
   FILES: <直したファイルの数>
+sync-worktrees の出力（worktree ごと）:
+  RESET: <パス>              変更が無く、新しい HEAD に合わせた
+  KEPT: <パス> <パッチ>      変更を残して合わせた。`git -C <パス> diff HEAD` を控えのパッチと比べる
+  （ここに commit-refs remap の出力が続く。手を付けていないファイルも挙がるが、その後に新しい中身にする）
+  LEFT: <パス> (<理由>)      何も変えなかった。人が見て合わせる
+  SKIPPED: <パス> (bare)     作業ツリーが無い
+  ERROR: <パス>: <理由>      書き始めた後に止まった（標準エラー）。未コミットの変更は作業ツリーに残るが、HEAD、
+                             index、作業ツリーの一部だけが新しい履歴になっている
 
-終了コード: 0 = 成功、1 = 止めたか失敗、2 = 使い方の誤り
+終了コード: 0 = 成功、1 = 止めたか失敗（sync-worktrees は LEFT か ERROR が 1 つでもあれば）、2 = 使い方の誤り
 """
 
 from __future__ import annotations
@@ -45,6 +67,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -721,6 +744,343 @@ def transform_files(args: argparse.Namespace) -> None:
     print(f"FILES: {len(replaced)}")
 
 
+class Leave(Exception):
+    """この worktree は何も変えずに残す理由（人が見て合わせる）"""
+
+
+def _entries(raw: bytes) -> dict[bytes, bytes]:
+    """`ls-files -s -z` と `ls-tree -r -z` の行を、パスから「モードと番号」への表にする"""
+    entries = {}
+    for line in raw.split(b"\0"):
+        if not line:
+            continue
+        head, path = line.split(b"\t", 1)
+        fields = head.split()
+        # ls-files -s は「モード 番号 段」、ls-tree は「モード 種類 番号」
+        if len(fields) == 3 and fields[1] in (b"blob", b"commit", b"tree"):
+            mode, oid = fields[0], fields[2]
+        else:
+            if fields[2] != b"0":
+                raise Leave(f"衝突の途中（{path.decode(errors='replace')}）")
+            mode, oid = fields[0], fields[1]
+        entries[path] = mode + b" " + oid
+    return entries
+
+
+def _rewritten_paths(w: Path, old: str, new: str) -> list[bytes]:
+    """old から new で中身の変わったパス。パスの増減と種類の変わったものがあれば残す"""
+    raw = git(w, "diff-tree", "-r", "-z", "--no-renames", old, new)
+    fields = raw.split(b"\0")
+    paths = []
+    for status_line, path in zip(fields[0::2], fields[1::2]):
+        mode_old, mode_new, _, _, status = status_line.lstrip(b":").split()
+        if status != b"M" or mode_old != mode_new:
+            raise Leave(
+                f"書き換えが {path.decode(errors='replace')} を {status.decode()} にした"
+            )
+        paths.append(path)
+    return paths
+
+
+def _names(raw: bytes) -> set[bytes]:
+    """`-z --name-only` の出力の、パスの集まり"""
+    return {p for p in raw.split(b"\0") if p}
+
+
+def _paths_input(paths) -> bytes:
+    return b"".join(p + b"\0" for p in paths)
+
+
+# 進行中の操作の印（rev-parse --git-path で worktree ごとの場所を引く）。残したまま HEAD を移すと、印が古い履歴の
+# コミットを指したまま、次のコミットやマージが古い履歴を親に持ち込む
+_OPERATIONS = (
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "REBASE_HEAD",
+    "rebase-merge",
+    "rebase-apply",
+    "sequencer",
+    "BISECT_LOG",
+)
+
+
+@dataclass
+class _Plan:
+    """ref を移す前の HEAD と比べた、1 つの worktree の未コミットの変更（読むだけで作る）"""
+
+    old: str
+    new: str
+    move_head: bool  # detached HEAD を old から new に移す
+    rewritten: list[bytes]
+    index: dict[bytes, bytes]
+    staged: set[bytes]
+    unstaged: set[bytes]
+
+
+def _plan(w: Path, old: str, mapping: dict[str, str]) -> _Plan:
+    """合わせ方を決める。合わせられなければ Leave を投げる。worktree には index の stat の更新だけを書く"""
+    new = mapping.get(old)
+    if new is None:
+        raise Leave(f"{old} が書き換えに入っていない（1 でブランチを付けてやり直す）")
+    head = git(w, "rev-parse", "HEAD").decode().strip()
+    detached = (
+        subprocess.run(
+            ["git", "-C", str(w), "symbolic-ref", "-q", "HEAD"],
+            capture_output=True,
+            check=False,
+        ).returncode
+        != 0
+    )
+    if head != new and not (detached and head == old):
+        raise Leave(f"HEAD が {new} でない（ref を移してから）")
+    marks = git(w, "rev-parse", *(a for n in _OPERATIONS for a in ("--git-path", n)))
+    for name, mark in zip(_OPERATIONS, marks.decode().splitlines()):
+        if os.path.lexists(w / mark):
+            raise Leave(f"操作の途中（{name}）")
+    rewritten = _rewritten_paths(w, old, new)
+
+    # 衝突の項は先に見る（refresh は衝突の項があると needs merge で失敗し、理由を取り違える）
+    index = _entries(git(w, "ls-files", "-s", "-z"))
+    tree = _entries(git(w, "ls-tree", "-r", "-z", "--full-tree", old))
+
+    # 未コミットの変更は、ref を移す前の HEAD（old）と比べる。index の stat を更新してから作業ツリーと比べる。
+    # 更新できない（index.lock を持たれている）なら、後の index の書き込みも失敗するので、何も変えずに残す
+    refresh = subprocess.run(
+        ["git", "-C", str(w), "update-index", "-q", "--refresh"],
+        capture_output=True,
+        check=False,
+    )
+    if refresh.returncode != 0:
+        reason = refresh.stderr.decode("utf-8", "replace").strip()
+        raise Leave(
+            f"index を更新できない（終了コード {refresh.returncode}。index.lock を持つプロセスが"
+            f"無いか確かめる）{reason}"
+        )
+    # assume-unchanged と skip-worktree の印のあるパスは、diff-files が作業ツリーを見ないので、手元の編集を見落とす
+    # （ls-files -v の小文字の印と S）
+    flagged = [
+        line[2:].decode(errors="replace")
+        for line in git(w, "ls-files", "-v", "-z").split(b"\0")
+        if line and (line[:1].islower() or line[:1] == b"S")
+    ]
+    if flagged:
+        raise Leave(
+            f"assume-unchanged か skip-worktree の印のあるパス: {', '.join(flagged)}"
+        )
+    unstaged = _names(git(w, "diff-files", "-z", "--name-only"))
+    # git add -N のパスは、index に空の項があるだけで中身はステージしていない。--ita-invisible-in-index は
+    # その項を無いものとして比べる（diff-files の状態は、ファイルを消すと A から D に変わるので、見分けに使えない）
+    staged = _names(
+        git(
+            w,
+            "diff-index",
+            "--cached",
+            "--no-renames",
+            "--ita-invisible-in-index",
+            "-z",
+            "--name-only",
+            old,
+        )
+    )
+    intent = (
+        _names(
+            git(w, "diff-index", "--cached", "--no-renames", "-z", "--name-only", old)
+        )
+        - staged
+    )
+    if intent & tree.keys():
+        names = ", ".join(
+            sorted(p.decode(errors="replace") for p in intent & tree.keys())
+        )
+        raise Leave(f"追跡していたパスを git add -N で足し直した: {names}")
+    partly = sorted(staged & unstaged)
+    if partly:
+        # ステージし直すと、ステージしていなかった部分も入る
+        names = ", ".join(p.decode(errors="replace") for p in partly)
+        raise Leave(f"ステージした後に変えたパス（部分のステージ）: {names}")
+    return _Plan(old, new, detached and head == old, rewritten, index, staged, unstaged)
+
+
+def _converted(w: Path, plan: _Plan, t: Transformer) -> list[tuple[Path, bytes]]:
+    """手を付けた、追跡している書き換えたファイルの、変換を当てた中身。変換が止まれば Stop を投げる"""
+    contents = []
+    for p in plan.rewritten:
+        if p not in plan.staged and p not in plan.unstaged:
+            continue
+        # index に無いパス（git rm --cached、git rm）と、未コミットで消したファイルは、そのまま残す
+        f = w / os.fsdecode(p)
+        if p not in plan.index or (not f.exists() and not f.is_symlink()):
+            continue
+        if f.is_symlink() or not f.is_file():
+            raise Leave(f"{p.decode(errors='replace')} がファイルでなくなった")
+        try:
+            changed = t.blob(p, f.read_bytes())
+        except Stop as e:
+            raise Stop(f"{p.decode(errors='replace')} の変換が止まった: {e}") from None
+        if changed is not None:
+            contents.append((f, changed))
+    return contents
+
+
+def sync_one(
+    w: Path, old: str, mapping: dict[str, str], map_path: Path, t: Transformer
+) -> str | None:
+    """1 つの worktree を合わせる。変更が無ければ None、あれば commit-refs remap の出力を返す。
+    書く前に止まれば、何も変えずに Leave を投げる。書き始めた後に止まれば、worktree のパスを添えて Stop を投げる"""
+    try:
+        plan = _plan(w, old, mapping)
+        clean = not plan.staged and not plan.unstaged
+        if not clean:
+            _converted(w, plan, t)  # 書く前に、変換が止まらないことを確かめる
+            # 未コミットの文書の古い番号を付け直す。これを最初の書き込みにするのは、remap が止まる理由（曖昧な番号、
+            # 消えたコミットを指す番号）は文書の中身によって起き、止まるときは何も書かないので、worktree を変えずに残せるため
+            remap = subprocess.run(
+                ["commit-refs", "remap", str(map_path)],
+                cwd=w,
+                capture_output=True,
+                check=False,
+            )
+            stderr = remap.stderr.decode("utf-8", "replace").strip()
+            if remap.returncode != 0 and stderr.endswith("何も書き換えていない"):
+                raise Leave(f"commit-refs remap が止まった: {stderr}")
+    except (Stop, OSError) as e:
+        raise Leave(str(e)) from None
+
+    try:
+        if not clean and remap.returncode != 0:
+            raise Stop(f"commit-refs remap が書き込みの途中で止まった: {stderr}")
+        return _apply(w, plan, clean, t, b"" if clean else remap.stdout)
+    except (Stop, Leave, OSError) as e:
+        raise Stop(
+            f"{w}: 途中まで合わせて止まった（未コミットの変更は作業ツリーに残る。HEAD、index、"
+            f"作業ツリーの一部が新しい履歴になっている）: {e}"
+        ) from None
+
+
+def _apply(w: Path, plan: _Plan, clean: bool, t: Transformer, remapped: bytes):
+    # GIT_LITERAL_PATHSPECS を足すのは、パスの *、? を pathspec の型として読ませないため
+    env = dict(os.environ, GIT_LITERAL_PATHSPECS="1")
+    # 変換は、remap が番号を付け直した後の中身に当てる
+    contents = [] if clean else _converted(w, plan, t)
+    if plan.move_head:
+        git(w, "update-ref", "--no-deref", "HEAD", plan.new, plan.old)
+    if clean:
+        # 書き換えはパスを増やさないので（_rewritten_paths）、追跡していないファイルを上書きしない
+        git(w, "reset", "-q", "--hard", "HEAD", env=env)
+        return None
+    untouched = [
+        p for p in plan.rewritten if p not in plan.staged and p not in plan.unstaged
+    ]
+    if untouched:
+        # 手を付けていないファイルは、index と作業ツリーを新しい中身にする
+        git(
+            w,
+            "checkout",
+            "HEAD",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+            env=env,
+            input=_paths_input(untouched),
+        )
+    index_only = [p for p in plan.rewritten if p in plan.unstaged]
+    if index_only:
+        # 変えたがステージしていないファイルの index を、新しい HEAD の中身にする（作業ツリーは変えない）
+        git(
+            w,
+            "reset",
+            "-q",
+            "HEAD",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+            env=env,
+            input=_paths_input(index_only),
+        )
+    for f, data in contents:
+        _replace_file(f, data)
+    # ステージしていたパスを、直した中身でステージし直す（部分のステージは _plan で除いた）。index に無いパス
+    # （git rm --cached、git rm）は足さない
+    restage = sorted(p for p in plan.staged if p in plan.index)
+    if restage:
+        git(
+            w,
+            "add",
+            "-f",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+            env=env,
+            input=_paths_input(restage),
+        )
+    return remapped.decode("utf-8", "replace")
+
+
+def _replace_file(f: Path, data: bytes) -> None:
+    """f の中身を data にする。同じディレクトリの一時ファイルに書き、f の権限をコピーして rename で置き換える
+    （write_bytes は先に中身を消すので、書き込みの失敗で未コミットの編集が壊れる。読み出し専用のファイルも書ける）"""
+    mode = f.stat().st_mode & 0o7777
+    fd, tmp = tempfile.mkstemp(dir=f.parent, prefix=f".{f.name}.")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, f)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+def _one_line(e: Exception) -> str:
+    """git と remap の複数行の理由を、worktree ごとの 1 行の出力に収める"""
+    return " / ".join(line.strip() for line in str(e).splitlines() if line.strip())
+
+
+def read_state(path: Path) -> list[tuple[Path, str, str]]:
+    rows = []
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        if not line:
+            continue
+        fields = line.split("\t")
+        if len(fields) != 3:
+            raise Stop(f"{path}:{number}: タブで区切った 3 列でない: {line!r}")
+        rows.append((Path(fields[0]), fields[1], fields[2]))
+    return rows
+
+
+def sync_worktrees(args: argparse.Namespace) -> bool:
+    transformer = make_transformer(args)
+    workdir = Path(args.workdir).resolve()
+    map_path = workdir / "commit-map"
+    mapping = read_map(map_path)
+    rows = read_state(workdir / "worktree-state")
+    ok = True
+    for w, old, patch in rows:
+        try:
+            if not w.is_dir():
+                raise Leave("ディレクトリが無い")
+            try:
+                bare = git(w, "rev-parse", "--is-bare-repository").strip() == b"true"
+            except (Stop, OSError) as e:
+                raise Leave(str(e)) from None
+            if bare:
+                print(f"SKIPPED: {w} (bare)")
+                continue
+            remapped = sync_one(w, old, mapping, map_path, transformer)
+        except Leave as e:
+            print(f"LEFT: {w} ({_one_line(e)})", flush=True)
+            ok = False
+            continue
+        except Stop as e:
+            print(f"ERROR: {_one_line(e)}", file=sys.stderr, flush=True)
+            ok = False
+            continue
+        if remapped is None:
+            print(f"RESET: {w}", flush=True)
+        else:
+            print(f"KEPT: {w} {patch}")
+            print(remapped, end="", flush=True)
+    return ok
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="history-rewrite")
     words = argparse.ArgumentParser(add_help=False)
@@ -733,6 +1093,8 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--workdir", required=True)
     t = sub.add_parser("transform", parents=[words])
     t.add_argument("files", nargs="+")
+    s = sub.add_parser("sync-worktrees", parents=[words])
+    s.add_argument("--workdir", required=True)
     return p
 
 
@@ -741,6 +1103,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             run(args)
+        elif args.command == "sync-worktrees":
+            if not sync_worktrees(args):
+                return 1
         else:
             transform_files(args)
     except Stop as e:

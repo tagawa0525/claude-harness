@@ -5,6 +5,7 @@ argument-hint: <リポジトリのパス>
 allowed-tools:
   - Bash(history-rewrite run:*)
   - Bash(history-rewrite transform:*)
+  - Bash(history-rewrite sync-worktrees:*)
   - Bash(commit-refs remap:*)
 ---
 
@@ -40,7 +41,7 @@ worktree ごとのブランチの `Claude-Session:` を見て、作業中のセ�
   `.textlintignore` に挙げたファイルと、辞書そのもの（nixfiles なら `**/prh.yml`）を渡す。語を論じる文書でも、
   その語が直す対象の造語なら除かない（除くと、その文書の造語が直らずに残る）
 
-決めた指定は 1 度だけ書き、`run` と 5 の `transform` の両方に同じものを渡す（違うと、作業ツリーのファイルだけ
+決めた指定は 1 度だけ書き、`run` と 5 の `sync-worktrees` の両方に同じものを渡す（違うと、作業ツリーのファイルだけ
 別の変換になる）:
 
 ```bash
@@ -79,8 +80,8 @@ diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads r
   <(git -C "$D/original.git" for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags)
 ```
 
-各 worktree の HEAD と、未コミットの変更の有無を、ref を移す前に控える（移した後は、新しい HEAD との差になる）。
-変更の控えのパッチも残す:
+各 worktree の HEAD と、変更の控えのパッチを、ref を移す前に残す（5 のツールは、この HEAD と比べて未コミットの
+変更を見つける。移した後の HEAD と比べると、書き換えたファイルが変更に見える）:
 
 ```bash
 # パスは空白を含みうるので、行の残り全体を取り、列はタブで区切る。控えのパッチは行の番号で名付ける
@@ -89,8 +90,7 @@ k=0
 while IFS= read -r w; do
   k=$((k + 1))
   git -C "$w" diff HEAD >"$D/worktree-$k.patch"
-  printf '%s\t%s\t%s\t%s\n' "$w" "$(git -C "$w" rev-parse HEAD)" \
-    "$(git -C "$w" status --porcelain --untracked-files=no | wc -l)" "$D/worktree-$k.patch"
+  printf '%s\t%s\t%s\n' "$w" "$(git -C "$w" rev-parse HEAD)" "$D/worktree-$k.patch"
 done <"$D/worktrees" >"$D/worktree-state"
 ```
 
@@ -117,47 +117,24 @@ diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads r
 ## 5. worktree を合わせる
 
 `update-ref` はチェックアウト中のブランチも移すので、各 worktree の index と作業ツリーは元の番号のままになる。
-`worktree-state` の行ごとに合わせる（`while IFS=$'\t' read -r w old n patch` で読む。`n` は未コミットの変更の数、`patch` は控えのパッチ。
-行の番号は `k=${patch##*/worktree-}; k=${k%.patch}` で取る）。
+2 と同じ語の指定で合わせる:
 
-- detached HEAD の worktree: 先に HEAD を移す（`commit-map` は元の番号から最後の番号への対応表）
+```bash
+history-rewrite sync-worktrees --workdir "$D" "${WORDS[@]}"
+```
 
-  ```bash
-  new=$(awk -v o="$old" '$1 == o {print $2}' "$D/commit-map")
-  if [ -z "$new" ]; then
-    echo "ERROR: $w の $old は書き換えに入っていない（1 でブランチを付ける）"
-    continue   # この worktree は元の履歴のまま。ほかを合わせてから、1 からやり直す
-  fi
-  git -C "$w" update-ref --no-deref HEAD "$new" "$old"
-  ```
+ツールは `worktree-state` の行ごとに、変更の無い worktree を新しい HEAD に合わせ（detached HEAD は `commit-map` で
+移す。追跡していないファイルは残る）、変更のある worktree は変更を残したまま、書き換えたファイルに同じ変換を当てて
+番号を付け直す（何をどの順に行うかと出力の形は、ツールの先頭の説明）。
 
-- 変更の無かった worktree: `git -C "$w" reset -q --hard`。書き換えはパスを足さないので、追跡していないファイル
-  （`references` の symlink など）は残る
-- 変更のあった worktree: 作業ツリーを壊さない。index だけを新しい HEAD に合わせ、書き換えで変わったファイルを
-  ファイルごとに合わせる
-
-  ```bash
-  # ステージしていたパスを控える（mixed reset で外れる。足したばかりのファイルは追跡されなくなる）。
-  # HEAD はもう新しい番号なので、元の HEAD（$old）と index を比べる
-  git -C "$w" diff --cached -z --name-only "$old" >"$D/staged-$k"
-  git -C "$w" reset -q   # mixed。ステージしていた変更は、作業ツリーに残ったまま外れる
-  # -z で受ける（日本語や空白を含むパスを、引用符つきの 8 進や語の区切りにしない）
-  git -C "$w" diff -z --name-only "$old" HEAD | while IFS= read -r -d '' f; do
-    if [ ! -e "$w/$f" ] && [ ! -L "$w/$f" ]; then
-      continue   # 未コミットで消したファイルは、消したまま残す
-    elif git -C "$w" diff --quiet "$old" -- "$f"; then
-      git -C "$w" checkout -- "$f"   # 手を付けていないファイルは、新しい中身にする
-    else
-      (cd "$w" && history-rewrite transform "${WORDS[@]}" "$f")   # 変えたファイルは、同じ変換を当てる
-    fi
-  done
-  (cd "$w" && commit-refs remap "$D/commit-map")   # 未コミットの文書の古い番号を付け直す
-  # ステージしていたパスを戻す（-A で消したパスも戻す。ファイルの全体をステージするので、部分のステージは戻らない）
-  xargs -0 -r git -C "$w" add -A -- <"$D/staged-$k"
-  ```
-
-  `git -C "$w" diff HEAD` が、控えのパッチ（`$patch`）と同じ変更に語と番号の変換を当てたものだけに
-  なっていることを確かめる
+- `KEPT:` の worktree: `git -C <パス> diff HEAD` が、控えのパッチと同じ変更に語と番号の変換を当てたものだけに
+  なっていることを確かめる。書き換えで変わらなかったファイルへの変更は、番号だけを付け直し、語は直さない
+- `LEFT:` の worktree: ツールは何も変えていない。理由を見て、合わせ方をユーザーと決める（対応表に無いコミットなら、
+  1 でブランチを付けて 1 からやり直す）
+- `ERROR: <パス>:` の行（標準エラー）: 書き始めた後に止まった worktree。未コミットの変更は作業ツリーに残るが、HEAD、
+  index、作業ツリーの一部だけが新しい履歴になっている。ツールを同じ worktree にもう一度当てない（ref を移す前の
+  HEAD と比べるので、合わせた分も変更に見える）。`worktree-state` のその行の HEAD と控えのパッチ、`git -C <パス>
+  status` を見て、合わせ方をユーザーと決める
 
 ## 6. 書き換えの外に残るもの
 
@@ -182,7 +159,9 @@ diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads r
     `scripts/check-dvc-lock.sh`）を通してコミットする。コードの変更に `dvc commit` を使うことは、記録した deps で
     作っていない出力を lock が指すことになるので、しない
 - ほかのリポジトリやメモリの中の、このリポジトリの番号は、そのリポジトリで `commit-refs remap "$D/commit-map"` で
-  付け直す
+  付け直す。remap は追跡しているファイルだけを読む（`git grep`）ので、先に `git -C <ディレクトリ> ls-files` で
+  ファイルが追跡されていることを確かめ、されていなければ `git add` してから実行する（Claude Code のメモリは
+  `~/.claude` の git の下にあり、追跡されていないプロジェクトのメモリでは `FILES: 0` になる）
 
 ## 7. 古いオブジェクトの掃除を issue にする
 
