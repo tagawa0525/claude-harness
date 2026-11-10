@@ -39,7 +39,8 @@ issues: []
   確かめ、許可の後の rebase はマージの本文に根拠を書く
 - 許可を待つ間、サブエージェントは終わらずに SendMessage で報告を親に送り、/delegate の待ちの項のタイマーでキャッシュを保って
   返事を待ち、約 1 時間（通知 13 回）で打ち切って終わる。待つ間に main が進んだら、もう一度 rebase して push してからマージし、
-  `git range-diff` で自分のコミットが同一なら許可を取り直さない（親が確かめた中身は変わらない）
+  `git range-diff` で自分のコミットが同一で、チェックが通り、/git-merge の「rebase の後」で周を回さないときは許可を取り直さない
+  （親が確かめた中身は変わらない）。許可の後にコミットを足したときは取り直す
 - 許可の無いマージを止める hook は足さない。許可は自然文で、機械では判定できない。マージの hook（pre-merge-check、
   check-merge-review）は今のまま通す
 - 周の終わりは、既存のスキルの条件（ローカルは /git-merge の「直す指摘の基準」の、blocking の無い周で終わりと、直した後の
@@ -71,7 +72,7 @@ issues: []
 ### 確認
 
 - /delegate の受ける側の手順（`.claude/skills/delegate/references/working.md`）に、手順 8 の rebase と push、手順 9 の
-  SendMessage で許可を求めてタイマーで待つこと、手順 10 の親の許可だけで進めること、許可の後の rebase と range-diff、
+  SendMessage で許可を求めてタイマーで待つこと、手順 10 の親の許可だけで進めること、許可の後の rebase、チェック、range-diff、
   /gh-pr-merge か /git-merge でのマージ、`post-merge-cleanup.sh` の後片付け、13 回での打ち切りがある。頼む側
   （`requesting.md`）に、親が確かめて許可か直しの指示を送り、rebase とマージを行わないことがある
 - 担当が動いたまま SendMessage（`to: "main"`）で親に 1 行を送り、送れた（`Message queued for the main conversation's next turn.`。
