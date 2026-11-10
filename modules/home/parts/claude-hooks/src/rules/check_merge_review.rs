@@ -202,7 +202,7 @@ fn replaced_hashes(diff: &str) -> Option<Vec<(String, String)>> {
 
 /// レビューの後に変えても挙動を変えない文書か。スキルと hook の文書（`.claude` の下、`CLAUDE.md`、`SKILL.md`）と
 /// ADR（マージの前の accepted への変更もレビューを受ける）は挙動に数える
-fn is_plain_document(path: &str) -> bool {
+pub(super) fn is_plain_document(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     path.ends_with(".md")
         && !path.split('/').any(|c| c == ".claude")
@@ -212,7 +212,7 @@ fn is_plain_document(path: &str) -> bool {
 }
 
 /// rebase の後に書き直す DVC の記録か（計算の入力の dvc.yaml は含めない）
-fn is_dvc_record(path: &str) -> bool {
+pub(super) fn is_dvc_record(path: &str) -> bool {
     path.rsplit('/').next() == Some("dvc.lock") || path.ends_with(".dvc")
 }
 
