@@ -27,30 +27,47 @@ issues: ["#645"]
 
 ## 決定と理由
 
-案 C。担当が毎回読む SKILL.md から頼む側の分が減り、親は SKILL.md の 1 行から同じ文を読める。案 B と違い、スキルの一覧を増やさず、
+案 C に加えて、受ける側（担当）の手順も同じディレクトリの `references/working.md` に移し、SKILL.md はフロントマターと、
+受ける側は `references/working.md` を、頼む側は `references/requesting.md` を Read で読む案内だけにする。担当が読む手順から
+頼む側の分が減り、親が Skill で /delegate を呼んでも、担当の手順の全体は親の文脈に入らない。親の文脈はセッションが続く限り
+毎回読み直されるので、担当の文脈より高くつき、担当は Read が 1 回増えるだけで済む。案 B と違い、スキルの一覧を増やさず、
 受ける側と頼む側は同じディレクトリの中で互いを指せる。
 
-- 文は移すだけで字句を変えない（見出しの段だけ、ファイルの先頭なので `#` にする）。移した節を指す文（受ける側の手順 1 の
-  「前提」の項、/git-merge の Agent の `description` の項、hook delegate-request-fields の拒否の文言、ADR の確認）は新しい
-  置き場を指す形にする
+- 文は移すだけで字句を変えない（見出しの段だけ、ファイルの先頭なので `#` にする。受ける側の手順の先頭の見出しは、置き場に
+  合わせて替える）。移した節を指す文（受ける側の手順 1 の「前提」の項、/git-merge の Agent の `description` の項、hook
+  delegate-request-fields の拒否の文言、ADR の確認）は新しい置き場を指す形にする。ほかのスキル、CLAUDE.md、hook が
+  「/delegate の手順 7」のようにスキルの名前と項で指す文は、SKILL.md の案内からたどれるので変えない
 - 受ける側の引用の確かめ方の `jq` のプログラムは `.claude/scripts/quote-in-transcript.sh` に移し、受ける側と頼む側はそれを
   指す（ADR-0065 の「## 変更」）
 
 ### 帰結
 
-- /delegate の SKILL.md は 22,079 文字から 14,236 文字になる（このブランチで戻した #645 の 5 件のうち /delegate の 2 件と、
-  kept-sentences.py を指す手順 6 の文を含む）。`references/requesting.md` は 7,215 文字
-- 担当は、前提の出典の種類を確かめるときだけ、受ける側の手順 1 が絶対パスで指す `references/requesting.md` の「前提」の項を
-  読む（出典の規則は 1 か所に置く。ADR-0060）
-- 親は委任のたびに `references/requesting.md` を Read で読む 1 回の呼び出しが増える。SKILL.md の 1 行と、hook
-  delegate-request-fields の拒否の文言がそこを指す
+- main 52b80a9d の /delegate の SKILL.md（14,576 文字）は、フロントマターと案内の 1,222 文字の SKILL.md と、13,678 文字の
+  `references/working.md` に分かれる。`references/requesting.md` は 7,278 文字
+- 担当は、作業の前に `references/working.md` を Read で読む 1 回の呼び出しが増える。前提の出典の種類を確かめるときだけ、
+  受ける側の手順 1 が絶対パスで指す `references/requesting.md` の「前提」の項を読む（出典の規則は 1 か所に置く。ADR-0060）
+- 親は委任のたびに `references/requesting.md` を Read で読む 1 回の呼び出しが増える。SKILL.md の案内と、hook
+  delegate-request-fields の拒否の文言がそこを指す。親が Skill で /delegate を呼んでも、文脈に入るのは案内だけになる
 - 頼む側の節を指していた文が残ると、親は無い節を探す。指す文は `grep -rn 頼む側` で探せる
 
 ### 確認
 
-- `.claude/skills/delegate/SKILL.md` に頼む側の節が無く、冒頭に `references/requesting.md` を Read で読む 1 行がある
-- `.claude/scripts/kept-sentences.py --old <(git show 12c1d104:.claude/skills/delegate/SKILL.md) --new
-  .claude/skills/delegate/SKILL.md .claude/skills/delegate/references/requesting.md` が、指す先を替えた文と、このブランチで
-  足した文と戻した文だけを出す
+- `.claude/skills/delegate/SKILL.md` に頼む側の節も受ける側の手順も無く、受ける側が `references/working.md` を、頼む側が
+  `references/requesting.md` を Read で読む案内がある
+- `.claude/scripts/kept-sentences.py --old <(git show 52b80a9d:.claude/skills/delegate/SKILL.md) --new
+  .claude/skills/delegate/SKILL.md .claude/skills/delegate/references/working.md` が、SKILL.md の description と案内として足した文と、
+  `references/working.md` の先頭の見出しだけを出す
 - claude-hooks の `missing_fields_reason_points_to_the_requester_guide` が、拒否の文言が `references/requesting.md` を指すことを
   確かめる
+
+## 変更
+
+- 2026-11-11: 受ける側の手順も `references/working.md` に移し、SKILL.md を案内だけにした（決定と理由の初めの段落と
+  1 つ目の項）。前は「案 C。担当が毎回読む SKILL.md から頼む側の分が減り、親は SKILL.md の 1 行から同じ文を読める。」と
+  「文は移すだけで字句を変えない（見出しの段だけ、ファイルの先頭なので `#` にする）。」。親のセッションは初め、担当の側に
+  得るものが無いとして受ける側の手順を移さない案を採っていたが、「一つのスキルにまとめる合理性は理解しましたが、referencesを
+  使うなら受ける側のプロンプトもそちらに移したらいいのでは？」（ユーザー 2026-11-11）と「親のコンテキストウィ煙雨のほうがこの
+  コンテキストウィンドウより貴重ですよね？」（ユーザー 2026-11-11。「ウィンドウ」の打ち間違いと読める）を受けて、移した。
+  2026-11-11 に `~/.claude/projects/*/*.jsonl` の親の tool_use を数えると、11 月 1 日以降に /delegate の依頼を出した親の
+  セッションは 2 件、依頼は 209 回で、親が Skill で delegate を呼んだのは 1 回、`references/requesting.md` を Read したのは 5 回。
+  別のスキルにする案 B を採らない理由は変わらない
