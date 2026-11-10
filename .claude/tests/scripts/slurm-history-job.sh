@@ -240,4 +240,39 @@ assert_eq 0 $?
 assert_eq 2 "$(grep -c '^JOB:' <<<"$out")"
 assert_eq 1 "$(grep -c '^$' <<<"$out")"
 
+it "--job: 目的に「 --wrap 」を含んでも、連絡先とコマンドを区分・参照・目的の後から読む"
+setup_repo
+record 115 COMPLETED "$DAY"T10:00:00 "$DAY"T10:00:00 "$DAY"T11:00:00 "$WT" \
+  "/nix/store/x-slurm/bin/sbatch --exclusive --partition=main --wait -J j --time 10 --comment decision | #1 | --wrap の扱いで方式を決める | feat/x $WT commit=$C1_SHORT --wrap lattice input.toml"
+out=$("$HISTORY" --job 115)
+assert_contains "$out" "BRANCH: feat/x"
+assert_contains "$out" "COMMAND: lattice input.toml"
+assert_contains "$out" "VERSION: $C1"
+
+it "--job: commit= の無いジョブで、投げてから Start までに worktree が別のコミットへ移っていれば、版を決められないと出す"
+setup_repo
+at 10:30:00 git -C "$WT" checkout -q --detach main
+record 116 COMPLETED "$DAY"T10:00:00 "$DAY"T11:00:00 "$DAY"T11:30:00 "$WT" \
+  "$(submit_line --exclusive "feat/x $WT claude=s" 'lattice input.toml')"
+out=$("$HISTORY" --job 116)
+assert_contains "$out" "VERSION: -"
+assert_contains "$out" "REASON: Start の時点の worktree の HEAD がブランチの版と違う"
+
+it "--job: commit= のジョブで、reflog が投げた時点まで届かなければ（ブランチを作り直した）、投げた後の変化は確かめていないと添える"
+setup_repo
+git -C "$REPO" worktree remove --force "$WT"
+git -C "$REPO" branch -q -D feat/x
+at 12:00:00 git -C "$REPO" branch feat/x "$C1"
+out=$("$HISTORY" --job 101)
+assert_contains "$out" "VERSION: $C1"
+assert_contains "$out" "NOTE: 投げた後の変化は確かめていない（reflog が版を取った時点まで届かない）"
+
+it "--job: commit= のジョブで、投げた時点が 30 日より前なら、投げた後の変化は確かめていないと添える"
+setup_repo
+record 117 COMPLETED "$OLD_DAY"T10:00:00 "$OLD_DAY"T10:00:00 "$OLD_DAY"T11:00:00 "$WT" \
+  "$(submit_line --exclusive "feat/x $WT commit=$C1_SHORT" 'lattice input.toml')"
+out=$("$HISTORY" --job 117)
+assert_contains "$out" "VERSION: $C1"
+assert_contains "$out" "NOTE: 投げた後の変化は確かめていない（版を取った時点が 30 日より前"
+
 finish
