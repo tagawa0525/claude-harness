@@ -14,6 +14,7 @@ allowed-tools:
   - Bash(~/.claude/scripts/kept-sentences.py*)
   - Bash(~/.claude/scripts/slurm-run.sh*)
   - Bash(squeue*)
+  - Bash(sleep *)
   - Bash(~/.claude/skills/language-checks/scripts/run-checks.sh*)
   - Bash(~/.claude/skills/gh-pr-review/scripts/*)
   - Skill(code-review)
