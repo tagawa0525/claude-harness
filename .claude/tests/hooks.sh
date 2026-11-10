@@ -873,12 +873,13 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "## Changes"
 
 it "heredoc: マージ本文がヒアドキュメントでも見出しを読める（pre-merge-check）"
-# make_fake_gh_merge <behind_by> [reviews] [files]: マージ可能な PR #1 の gh 応答。
+# make_fake_gh_merge <behind_by> [reviews] [files] [succeeded]: マージ可能な PR #1 の gh 応答。
 # compare は base...head の遅れを、reviews は最新の bot レビューが見た commit を返す
 # （既定は head と同じ abc = 最後の push がレビュー済み）。files は PR の変更ファイルを
-# "status<TAB>path" の行で返す（既定は無し）
+# "status<TAB>path" の行で返す（既定は無し）。succeeded は失敗していない bot レビューの件数（既定は 0 件で、
+# head と違う reviews はレビューを 1 度も受けていない PR になる）。ローカルレビューの記録は無い
 make_fake_gh_merge() {
-  local reviews="${2:-echo abc}" files="${3:-true}"
+  local reviews="${2:-echo abc}" files="${3:-true}" succeeded="${4:-echo 0}"
   make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
@@ -886,8 +887,10 @@ make_fake_gh_merge() {
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
   "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...abc"*) '"$1"' ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) '"$succeeded"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviews"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
   "api graphql"*) echo "[]" ;;'
 }
 make_fake_gh_merge 'echo 0'
@@ -1350,13 +1353,12 @@ out=$(run_hook guard-gh-api "$(write_doc 'resolveReviewThread は gh api で叩�
 assert_eq allow "$(decision "$out")"
 
 # ===========================================================================
-# pre-merge-check: 最後の push が自動レビューを受けているか
+# pre-merge-check: PR がレビューを受けているか
 # ===========================================================================
-# push しても再レビューは走らない（依頼して初めて走る）。依頼を忘れると
-# 「レビューされていない版」をマージできてしまうため、bot レビューが見た
-# commit と head SHA の一致を機械的に確かめる
+# 止めるのは、レビュー（失敗していない bot のレビューか、ローカルレビューの記録）を 1 度も受けていない PR だけ。
+# 古い head にだけレビューがある PR は止めず、その後に変わったファイルを伝える（もう 1 周回すかはモデルが決める）
 
-it "pre-merge-check: 最後の push がレビューされていなければ deny し、再レビュー依頼を促す"
+it "pre-merge-check: レビューを 1 度も受けていない PR は deny し、次の一手を促す"
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
@@ -1442,11 +1444,12 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
   "api graphql"*) echo "[]" ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
-assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=<理由>"
+assert_not_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD"
 assert_not_contains "$(reason "$out")" "失敗したチェックがあります"
 # 診断のスキルにも対象を URL で渡す（ADR-0032）
 assert_contains "$(reason "$out")" "/gh-actions-check https://github.com/example/heredoc/pull/1 "
@@ -1462,20 +1465,17 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo "" ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
   "api graphql"*) echo "[]" ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
 
-it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=<理由> なら未レビューの head でもマージできる"
+it "pre-merge-check: レビューを 1 度も受けていない PR は、ALLOW_UNREVIEWED_HEAD を付けても止める"
+# 1 周目の正規の手順（ローカルレビューの記録）がいつでもあるので、外す口を置かない
 out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=テスト用 $MERGE_CMD")
-assert_eq allow "$(decision "$out")"
-
-it "pre-merge-check: ALLOW_UNREVIEWED_HEAD=1 は、本来の文言に理由を求める行を足して止める"
-out=$(run_hook pre-merge-check "ALLOW_UNREVIEWED_HEAD=1 $MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
-assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD には理由を記載"
 
 # リベース（main の追従）で hash だけが変わった head は、レビュー済みの差分と同じなので再レビューを求めない。
 # 差分が変わっていれば今まで通り deny する（変わったのに通す誤りを許さない）
@@ -1511,7 +1511,8 @@ git -C "$REBASE_REPO" commit -q -m "pr changes content"
 REBASE_CHANGED=$(git -C "$REBASE_REPO" rev-parse HEAD)
 
 make_fake_gh_rebased() {
-  # $1: 今の head、$2: bot がレビューした commit、$3: ローカルレビューの記録の 1 行目を出力するコマンド（既定は記録なし）
+  # $1: 今の head、$2: bot がレビューした commit、$3: ローカルレビューの記録の 1 行目を出力するコマンド（既定は記録なし）、
+  # $4: 失敗していない bot のレビューの件数を出力するコマンド（既定は 1 件）。PR の変更ファイルは pr.txt
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"'"$1"'\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
@@ -1519,8 +1520,9 @@ make_fake_gh_rebased() {
   "api repos/example/heredoc/commits/'"$1"'/status"*) echo "[]" ;;
   "api repos/example/heredoc/compare/main...'"$1"'"*) echo 0 ;;
   "api repos/example/heredoc/branches/main"*) echo '"$REBASE_TIP"' ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) '"${4:-echo 1}"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo '"$2"' ;;
-  "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) echo pr.txt ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) '"${3:-true}"' ;;
   "api repos/example/heredoc/pulls/1 "*) echo main ;;
   "api graphql"*) echo "[]" ;;'
@@ -1532,16 +1534,22 @@ make_fake_gh_rebased "$REBASE_SAME" "$REBASE_OLD"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: リベース後に PR の中身が変わっていれば deny する"
+it "pre-merge-check: 古い head にだけ bot のレビューがあれば止めず、その後に変わった PR のファイルを伝える"
+# REBASE_OLD から REBASE_CHANGED までには main の g.txt も入るが、PR の変更ファイルでないので挙げない
 make_fake_gh_rebased "$REBASE_CHANGED" "$REBASE_OLD"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "request-rereview.sh"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "pr.txt"
+assert_not_contains "$(additional_context "$out")" "g.txt"
+assert_contains "$(additional_context "$out")" "${REBASE_OLD:0:7}"
+# 回さないなら、その理由を本文に書く
+assert_contains "$(additional_context "$out")" "理由"
 
-it "pre-merge-check: レビュー済みのコミットを取得できなければ deny する"
+it "pre-merge-check: レビュー済みのコミットを取得できなくても止めず、変わったファイルを確かめられないと伝える"
 make_fake_gh_rebased "$REBASE_SAME" "0123456789012345678901234567890123456789"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "確かめられません"
 
 # ローカルレビューの記録の後に rebase だけした head も、記録の SHA を比較元にして同じ判定で通す（ADR-0059）。
 # bot のレビューは手元に無いコミットを指し、bot の側からは確かめられないようにする
@@ -1553,22 +1561,28 @@ make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
-it "pre-merge-check: ローカルレビューの記録の後に差分を変えた head は止める"
-make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)"
+it "pre-merge-check: ローカルレビューの記録の後に差分を変えた head は止めず、変わったファイルを伝える"
+make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 0)" 'echo 0'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "pr.txt"
 
-it "pre-merge-check: High のあるローカルレビューの記録は比較元にしない"
-make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 1)"
+it "pre-merge-check: 最後のローカルレビューの記録に High があれば、止めずに High が残ると伝える"
+make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" "$(local_record "$REBASE_OLD" 1)" 'echo 0'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-
-it "pre-merge-check: 最後の記録に High があれば、前の High の無い記録も比較元にしない"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "High"
 # 同じ差分を回し直して見つけた High を、前の記録で隠さない
 make_fake_gh_rebased "$REBASE_SAME" "$BOGUS_SHA" \
-  "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)"
+  "$(local_record "$REBASE_OLD" 0); $(local_record "$BOGUS_SHA" 1)" 'echo 0'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "High"
+
+it "pre-merge-check: rebase だけの head は、伝えることも無く通す"
+make_fake_gh_rebased "$REBASE_SAME" "$REBASE_OLD"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq "" "$out"
 
 # local-review-covers: decide-next.sh と request-rereview.sh が hook と同じ判定を使う入口。覆われていれば 0、いなければ 1、
 # 引数の数の誤りは 2、記録を取得できなければ 3。rebase だけかは hook と同じく cwd の clone で比べる。
@@ -1638,20 +1652,19 @@ it "local-review-covers: 引数の数が違えば終了コード 2"
 assert_eq 2 $?
 cd "$REPO" || exit 1
 
-it "pre-merge-check: レビューは走っているのに未レビューなら、まず要求を促す"
+it "pre-merge-check: 失敗したレビューだけの PR は、1 度もレビューを受けていないとして止める"
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
 
-it "pre-merge-check: 未レビューの案内は、再レビューの依頼と理由つきのエスケープだけで、条件を列挙しない"
+it "pre-merge-check: 1 度もレビューを受けていない PR の案内は、次の一手だけで、エスケープも条件も示さない"
 # 「〜なら付けてよい」の条件を並べると、どれかに当てはめる読み方を誘う（ADR-0023）
 make_fake_gh_merge 'echo 0' 'echo old'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
-assert_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD=<理由>"
-assert_contains "$(reason "$out")" "issue"
+assert_not_contains "$(reason "$out")" "ALLOW_UNREVIEWED_HEAD"
 assert_not_contains "$(reason "$out")" "挙動を変えない"
 assert_not_contains "$(reason "$out")" "ユーザーが承認"
 assert_not_contains "$(reason "$out")" "周回上限"
@@ -1709,7 +1722,14 @@ make_fake_gh_merge_local true
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
-it "pre-merge-check: 記録が前の head のものなら止める"
+it "pre-merge-check: 記録が前の head のものなら止めずに伝える"
+make_fake_gh_merge_local \
+  "printf '%s\n' '<!-- local-review sha=$BOGUS_SHA high=0 medium=0 low=0 -->'"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "${BOGUS_SHA:0:7}"
+
+it "pre-merge-check: 形の崩れた記録はレビューに数えない"
 make_fake_gh_merge_local \
   "printf '%s\n' '<!-- local-review sha=old high=0 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
@@ -1721,17 +1741,19 @@ make_fake_gh_merge_local \
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 
-it "pre-merge-check: head の記録に High があれば（直していない High が残る）止める"
+it "pre-merge-check: head の記録に High があれば（直していない High が残る）止めずに伝える"
 make_fake_gh_merge_local \
   "printf '%s\n' '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "High"
 
-it "pre-merge-check: 同じ head の後の記録に High があれば、前の High の無い記録があっても止める"
+it "pre-merge-check: 同じ head の後の記録に High があれば、前の High の無い記録があっても伝える"
 make_fake_gh_merge_local \
   "printf '%s\n' '<!-- local-review sha=abc high=0 medium=0 low=0 -->' '<!-- local-review sha=abc high=1 medium=0 low=0 -->'"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "High"
 
 it "pre-merge-check: 記録のコメントを取得できなければ止める"
 make_fake_gh_merge_local 'exit 1'
@@ -1757,13 +1779,14 @@ make_fake_gh_merge_files() {
   "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) '"$succeeded"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviewed"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
   "api graphql"*) echo "[]" ;;'
 }
 
-it "pre-merge-check: 文書（docs/）だけの PR は、最後の push が未レビューでもマージできる"
+it "pre-merge-check: 文書（docs/）だけの PR は、最後の push が未レビューでも、伝えることも無くマージできる"
 make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md docs/plans/011_y.md'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq allow "$(decision "$out")"
+assert_eq "" "$out"
 
 it "pre-merge-check: ADR（docs/adr/）だけの PR も、最後の push が未レビューでもマージできる"
 make_fake_gh_merge_files 'printf "%s\n" docs/adr/0004-x.md docs/issues/y.md'
@@ -1778,7 +1801,7 @@ assert_eq allow "$(decision "$out")"
 
 it "pre-merge-check: 文書だけの PR でも、レビューが一度も成功していなければ止める"
 make_fake_gh_merge_files 'echo docs/plans/010_x.md' 'echo ""' \
-  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}'
+  '{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}' 'echo 0'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
@@ -1791,30 +1814,32 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "request-rereview.sh"
 
-it "pre-merge-check: docs/ 以外のファイルも含む PR は、これまでどおり再レビューを求める"
+it "pre-merge-check: docs/ 以外のファイルも含む PR は、古い head にだけレビューがあれば止めずに伝える"
 make_fake_gh_merge_files 'printf "%s\n" docs/plans/010_x.md src/main.rs'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "request-rereview.sh"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "レビュー済み"
 
 it "pre-merge-check: docs/ に似た別の場所は文書として扱わない"
 make_fake_gh_merge_files 'printf "%s\n" docs.md docs-extra/x.md src/docs/adr/x.md'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "レビュー済み"
 
 it "pre-merge-check: src/ から docs/ への移動は、旧パスも数えて文書だけとみなさない"
 # files API は移動の新しいパスを filename、旧パスを previous_filename で返す。
 # 旧パスを要求していれば src/foo.rs が見え、要求していなければ docs/ だけに見える
 make_fake_gh_merge_files 'case "$*" in *previous_filename*) printf "%s\n" docs/foo.md src/foo.rs ;; *) echo docs/foo.md ;; esac'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "request-rereview.sh"
+assert_eq allow "$(decision "$out")"
+assert_contains "$(additional_context "$out")" "レビュー済み"
 
-it "pre-merge-check: 変更ファイルを取得できなければ、文書だけとみなさず再レビューを求める"
+it "pre-merge-check: 変更ファイルを取得できなければ、文書だけとみなさず、変わったファイルを確かめられないと伝える"
 make_fake_gh_merge_files 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
+# 新しい ADR の数（検査 9）を確かめられないので止める
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "request-rereview.sh"
+assert_contains "$(reason "$out")" "PR の変更ファイルを取得できず"
 
 it "pre-merge-check: ssh と sudo -i の中の gh pr merge は、cd 先でなく、その中で走るので手元で検査できないと示して止める"
 # 手元の場所の検査（マージ方式の指定など）は、接続先の PR に当たらないので理由に混ぜない
