@@ -47,10 +47,11 @@ import sys
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
 # ドル / 100 万トークン: (入力, 5 分の書き込み, 1 時間の書き込み, 読み出し, 出力)。
-# 出典: https://platform.claude.com/docs/en/about-claude/pricing の「Model pricing」の表（2026-11-07 に閲覧。
-# ページに版と更新日の表示は無い）。読み出しの倍率はモデルで違う（同じページの注: Fable 5.1 は入力の 0.025 倍、
-# Opus 5.5 と Sonnet 5.5 は 0.05 倍、ほかは 0.1 倍）ので、倍率でなく表の値を持つ
+# 出典: https://platform.claude.com/docs/en/about-claude/pricing の「Model pricing」の表（2026-11-07 に閲覧、
+# Fable 5.2 の行は 2026-11-10。ページに版と更新日の表示は無い）。読み出しの倍率はモデルで違う（同じページの注:
+# Fable 5.2 と 5.1 は入力の 0.025 倍、Opus 5.5 と Sonnet 5.5 は 0.05 倍、ほかは 0.1 倍）ので、倍率でなく表の値を持つ
 PRICES = {
+    "claude-fable-5-2": (8, 10, 16, 0.20, 40),
     "claude-fable-5-1": (10, 12.50, 20, 0.25, 50),
     "claude-opus-5-5": (4, 5, 8, 0.20, 20),
     "claude-sonnet-5-5": (2, 2.50, 4, 0.10, 10),
