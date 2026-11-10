@@ -1566,7 +1566,7 @@ assert_contains "$(additional_context "$out")" "理由"
 
 it "pre-merge-check: 最後の bot のレビューが失敗していれば、その前の成功したレビューから変わったファイルを伝える"
 # 失敗したレビューの commit を比較元にすると、成功したレビューの後の変更を見落とす
-make_fake_gh_rebased "$REBASE_CHANGED" "$BOGUS_SHA" true "echo $REBASE_OLD"
+make_fake_gh_rebased "$REBASE_CHANGED" 0123456789012345678901234567890123456789 true "echo $REBASE_OLD"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 assert_contains "$(additional_context "$out")" "pr.txt"
