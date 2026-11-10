@@ -12,8 +12,7 @@
 //!    1 度は受けている。止めるのは 1 度も受けていない PR だけで、安く確かめられ判断が要らない。直した後の head に
 //!    もう 1 周回すかは、直しの大きさと危険からモデルが決める（ADR-0066）ので、head がレビューに覆われていなければ
 //!    止めずに、最も近いレビュー済みの head から変わった PR のファイルを additionalContext で伝える。
-//!    覆われているとみなして伝えないのは、bot のレビューが head を見ている（Copilot のチェックが失敗していれば、
-//!    失敗していない最後のレビューが head を見ている）、リベースだけで hash が変わった head
+//!    覆われているとみなして伝えないのは、失敗していない最後の bot のレビューが head を見ている、リベースだけで hash が変わった head
 //!    （base からの PR の差分がレビュー済みと同じ。ADR-0021）、文書（変更ファイルがすべて docs/ 配下。ADR-0004）だけの
 //!    PR で自動レビューに 1 度成功している、head の記録か、最後の記録（High なし）の SHA から rebase だけした head
 //!    （ADR-0043、ADR-0059。判定は decide-next.sh と同じ）のとき。
@@ -304,7 +303,7 @@ fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> O
 }
 
 /// 失敗していない最後の bot レビューが見た commit（無ければ None）。Copilot はレビューできなかったときも、commit_id の
-/// ある本文だけのレビューを提出するので、レビューの有無では判定できない（判定は get-latest-review.sh と同じ）。
+/// ある本文だけのレビューを提出するので、レビューの有無では判定できない（失敗の文言と、本文の 1 行目で見ることは get-latest-review.sh と同じ。bot は Copilot に限らない）。
 /// 取得できなければ Err
 fn last_successful_review(
     dir: &std::path::Path,
