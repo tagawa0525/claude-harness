@@ -156,7 +156,9 @@ history-rewrite sync-worktrees --workdir "$D" "${WORDS[@]}"
     `scripts/check-dvc-lock.sh`）を通してコミットする。コードの変更に `dvc commit` を使うことは、記録した deps で
     作っていない出力を lock が指すことになるので、しない
 - ほかのリポジトリやメモリの中の、このリポジトリの番号は、そのリポジトリで `commit-refs remap "$D/commit-map"` で
-  付け直す
+  付け直す。remap は追跡しているファイルだけを読む（`git grep`）ので、先に `git -C <ディレクトリ> ls-files` で
+  ファイルが追跡されていることを確かめ、されていなければ `git add` してから実行する（Claude Code のメモリは
+  `~/.claude` の git の下にあり、追跡されていないプロジェクトのメモリでは `FILES: 0` になる）
 
 ## 7. 古いオブジェクトの掃除を issue にする
 
