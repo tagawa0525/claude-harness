@@ -449,4 +449,134 @@ out=$("$MEMORY_INDEX" "$TEST_ROOT/no-memory" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 
+PROSE="$CLAUDE_DIR/skills/retro/scripts/prose-size.sh"
+
+# write_bytes <path> <n>: n バイトのファイルを書く
+write_bytes() {
+  mkdir -p "$(dirname "$1")"
+  head -c "$2" /dev/zero | tr '\0' x > "$1"
+}
+
+# commit_at <repo> <日時>: 作業ツリーの全体を、committer の日時を指定してコミットする
+commit_at() {
+  git -C "$1" add -A
+  GIT_AUTHOR_DATE="$2" GIT_COMMITTER_DATE="$2" git -C "$1" commit -q -m "chore: at $2"
+}
+
+PREPO="$TEST_ROOT/prose-repo"
+git init -q "$PREPO"
+write_bytes "$PREPO/.claude/skills/a/SKILL.md" 100
+write_bytes "$PREPO/.claude/skills/a/scripts/x.sh" 50
+write_bytes "$PREPO/.claude/CLAUDE.md" 30
+write_bytes "$PREPO/CLAUDE.md" 20
+write_bytes "$PREPO/docs/x.md" 40
+commit_at "$PREPO" 2026-11-09T12:00:00+09:00
+write_bytes "$PREPO/.claude/skills/a/SKILL.md" 60
+write_bytes "$PREPO/.claude/skills/b/references/r.md" 10
+write_bytes "$PREPO/.claude/skills/a/scripts/x.sh" 500
+rm "$PREPO/CLAUDE.md"
+commit_at "$PREPO" 2026-11-10T12:00:00+09:00
+write_bytes "$PREPO/.claude/CLAUDE.md" 80
+commit_at "$PREPO" 2026-11-11T12:00:00+09:00
+
+it "prose-size: 区間の前後のスキルの .md と CLAUDE.md の大きさを、リポジトリの既定ブランチのコミットで出す"
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --until 2026-11-11T00:00+09:00 --repo "$PREPO" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: skills 100 70 -30 $PREPO"
+assert_contains "$out" "PROSE: claude-md 50 30 -20 $PREPO"
+
+it "prose-size: 区間の端を JST に直して SINCE: と UNTIL: の行に出す"
+assert_contains "$out" "SINCE: 2026-11-10T00:00:00+09:00"
+assert_contains "$out" "UNTIL: 2026-11-11T00:00:00+09:00"
+
+it "prose-size: 区間の始まりちょうどのコミットは、区間の後に数える"
+out=$("$PROSE" --since 2026-11-10T12:00+09:00 --until 2026-11-11T00:00+09:00 --repo "$PREPO" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: skills 100 70 -30 $PREPO"
+
+it "prose-size: --until を省けば、後の大きさは渡したパスの HEAD のコミットで数える"
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --repo "$PREPO" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: claude-md 50 80 +30 $PREPO"
+assert_contains "$out" "UNTIL: now"
+
+it "prose-size: worktree を渡せば、前は既定ブランチ、後はそのブランチのコミットで数える"
+git -C "$PREPO" worktree add -q -b topic "$TEST_ROOT/prose-wt"
+write_bytes "$TEST_ROOT/prose-wt/.claude/skills/c/SKILL.md" 5
+commit_at "$TEST_ROOT/prose-wt" 2026-11-11T13:00:00+09:00
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --repo "$TEST_ROOT/prose-wt" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: skills 100 75 -25 $TEST_ROOT/prose-wt"
+
+it "prose-size: 区間の始まりより前にコミットが無いリポジトリは、前を 0 と数える"
+out=$("$PROSE" --since 2026-11-01T00:00+09:00 --until 2026-11-11T00:00+09:00 --repo "$PREPO" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: skills 0 70 +70 $PREPO"
+
+CHOME="$HOME/.claude"
+PMEM="$CHOME/projects/-p/memory"
+git init -q "$CHOME"
+write_bytes "$PMEM/MEMORY.md" 10
+write_bytes "$PMEM/a.md" 90
+commit_at "$CHOME" 2026-11-09T12:00:00+09:00
+write_bytes "$PMEM/a.md" 200
+commit_at "$CHOME" 2026-11-10T12:00:00+09:00
+git -C "$CHOME" update-ref refs/memory-backup HEAD
+write_bytes "$PMEM/a.md" 40
+
+it "prose-size: メモリは、区間の始まりの前の退避（refs/memory-backup）と、今のディスクの大きさを比べる"
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --memory "$PMEM" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: memory 100 50 -50 $PMEM"
+
+it "prose-size: --until を付ければ、メモリの後の大きさも区間の終わりの前の退避で数える"
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --until 2026-11-11T00:00+09:00 --memory "$PMEM" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: memory 100 210 +110 $PMEM"
+
+it "prose-size: メモリの無いプロジェクトは 0 と数えて止まらない"
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --memory "$CHOME/projects/-none/memory" --repo "$PREPO" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: memory 0 0 0 $CHOME/projects/-none/memory"
+assert_contains "$out" "PROSE: skills"
+
+it "prose-size: 退避の ref が無く、メモリのディレクトリも無ければ 0 と数えて止まらない"
+out=$(HOME="$TEST_ROOT/home-no-backup" "$PROSE" --since 2026-11-10T00:00+09:00 \
+  --memory "$TEST_ROOT/home-no-backup/.claude/projects/-p/memory" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "PROSE: memory 0 0 0"
+
+it "prose-size: メモリがあるのに区間の始まりより前の退避が無ければ、ほかの行を出した後に失敗する"
+out=$("$PROSE" --since 2026-11-01T00:00+09:00 --memory "$PMEM" --repo "$PREPO" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "PROSE: skills"
+assert_contains "$out" "ERROR:"
+assert_not_contains "$out" "PROSE: memory"
+
+it "prose-size: ~/.claude の外のメモリのディレクトリは失敗する"
+out=$("$PROSE" --since 2026-11-10T00:00+09:00 --memory "$TEST_ROOT/elsewhere/memory" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "prose-size: --since を省けば、JST の今日の 0 時から数える"
+out=$("$PROSE" --repo "$PREPO" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "SINCE: $(date -u -d "@$(($(date +%s) + 9 * 3600))" +%Y-%m-%d)T00:00:00+09:00"
+
+it "prose-size: 時差の無い区間の端と、until より後の since は失敗する"
+out=$("$PROSE" --since 2026-11-10T00:00 --repo "$PREPO" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+out=$("$PROSE" --since 2026-11-11T00:00Z --until 2026-11-10T00:00Z --repo "$PREPO" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "prose-size: --repo も --memory も無いか、知らないオプションなら失敗する"
+out=$("$PROSE" --since 2026-11-10T00:00Z 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+out=$("$PROSE" --from 2026-11-10T00:00Z --repo "$PREPO" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+
 finish
