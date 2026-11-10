@@ -257,15 +257,13 @@ mod tests {
         git(dir, &["commit", "-q", "-m", file]);
     }
 
-    /// main に 1 コミット、`branch` に 1 コミットのリポジトリ（`branch` をチェックアウトしたまま）と、
-    /// `ROUNDS: <rounds>` を出す偽の review-level.sh。偽のスクリプトは渡されたブランチ名も書き残す
+    /// main に 1 コミット、`branch` に 1 コミットのリポジトリ（`branch` をチェックアウトしたまま）
     struct Repo {
         _tmp: TempDir,
         dir: PathBuf,
-        script: String,
     }
 
-    fn repo(branch: &str, rounds: u32) -> Repo {
+    fn repo(branch: &str) -> Repo {
         let tmp = TempDir::new("repo");
         let dir = tmp.0.join("app");
         std::fs::create_dir_all(&dir).unwrap();
@@ -275,17 +273,7 @@ mod tests {
         commit(&dir, "init");
         git(&dir, &["switch", "-q", "-c", branch]);
         commit(&dir, "x");
-        let script = tmp.0.join("review-level.sh");
-        std::fs::write(
-            &script,
-            format!("echo \"$1\" >>\"$(dirname \"$0\")/called\"\necho 'LEVEL: high'\necho 'ROUNDS: {rounds}'\n"),
-        )
-        .unwrap();
-        Repo {
-            dir,
-            script: script.to_string_lossy().into_owned(),
-            _tmp: tmp,
-        }
+        Repo { dir, _tmp: tmp }
     }
 
     fn skill(name: &str, args: &str, cwd: &Path) -> Input {
@@ -314,153 +302,82 @@ mod tests {
         )
     }
 
-    fn run(r: &Repo, input: &Input) -> Vec<Finding> {
-        CapReviewRounds.check_with(input, Some(&r.script))
+    fn run(input: &Input) -> Vec<Finding> {
+        CapReviewRounds.check(input, &Shell::parse(""))
     }
 
-    /// 文書だけのブランチ（`ROUNDS: 1`）の上限: 1 周、記録の周 1、例外の周 3
-    const DOCS_LIMIT: usize = 5;
+    /// 周を回し、hook が伝えた文（止めたら panic）
+    fn round(input: &Input) -> String {
+        let mut context = None;
+        for f in run(input) {
+            match f {
+                Finding::Deny(s) => panic!("周の数では止めないはず: {s}"),
+                Finding::Context(s) => context = Some(s),
+            }
+        }
+        context.expect("周の数を伝えるはず")
+    }
 
-    /// 文書だけのブランチの上限まで周を回す
-    fn use_up(r: &Repo, input: &Input) {
-        for _ in 0..DOCS_LIMIT {
-            run(r, input);
+    #[test]
+    fn rounds_are_never_denied_and_each_tells_its_number() {
+        let r = repo("feat/x");
+        for n in 1..=9 {
+            let context = round(&review(&r));
+            assert!(context.contains(&format!("{n} 周目")), "{context}");
+            assert!(context.contains("feat/x"), "{context}");
         }
     }
 
-    fn denied(findings: &[Finding]) -> Option<String> {
-        findings.iter().find_map(|f| match f {
-            Finding::Deny(s) => Some(s.clone()),
-            Finding::Context(_) => None,
-        })
-    }
-
     #[test]
-    fn three_round_branch_allows_seven_rounds_and_denies_the_eighth() {
-        let r = repo("feat/x", 3);
-        for n in 1..=7 {
-            assert!(
-                denied(&run(&r, &review(&r))).is_none(),
-                "{n} 周目は通すはず"
-            );
-        }
-        let reason = denied(&run(&r, &review(&r))).expect("8 周目は止めるはず");
-        assert!(reason.contains("feat/x"), "{reason}");
-        assert!(reason.contains("上限 7"), "{reason}");
-        assert!(reason.contains("issue"), "{reason}");
-        assert!(reason.contains("ユーザー"), "{reason}");
-        assert!(reason.contains("別の名前のブランチ"), "{reason}");
-    }
-
-    #[test]
-    fn one_round_branch_allows_the_round_the_record_round_and_three_exception_rounds() {
-        let r = repo("docs/y", 1);
-        for n in 1..=5 {
-            assert!(
-                denied(&run(&r, &review(&r))).is_none(),
-                "{n} 周目は通すはず"
-            );
-        }
-        let reason = denied(&run(&r, &review(&r))).expect("6 周目は止めるはず");
-        assert!(reason.contains("上限 5"), "{reason}");
-        assert!(reason.contains("例外の周 3"), "{reason}");
-    }
-
-    #[test]
-    fn allowed_round_tells_its_number_and_the_limit() {
-        let r = repo("feat/x", 1);
-        let findings = run(&r, &review(&r));
-        let context = findings
-            .iter()
-            .find_map(|f| match f {
-                Finding::Context(s) => Some(s.clone()),
-                Finding::Deny(_) => None,
-            })
-            .expect("周の数を伝えるはず");
-        assert!(context.contains("1 周目"), "{context}");
-        assert!(context.contains("上限 5"), "{context}");
-        assert!(context.contains("例外の周"), "{context}");
-    }
-
-    #[test]
-    fn passes_the_checked_out_branch_to_review_level() {
-        let r = repo("feat/x", 3);
-        run(&r, &review(&r));
-        let called = std::fs::read_to_string(Path::new(&r.script).with_file_name("called"))
-            .expect("review-level.sh を呼ぶはず");
-        assert_eq!(called.trim(), "feat/x");
-    }
-
-    #[test]
-    fn agent_is_neither_counted_nor_denied_even_at_the_limit() {
-        let r = repo("docs/y", 1);
+    fn agent_is_not_counted() {
+        let r = repo("docs/y");
         let wt = r.dir.display();
         let prompts = [
             format!("/code-review を Skill で呼び、次の引数で回す: `high {wt}`。"),
             format!("`/code-review high {wt}` を Skill で呼ぶ。"),
-            format!("`/code-review high {wt}` を Skill で呼びません。"),
-            format!("/code-review の指摘を直す: {wt}"),
         ];
         for prompt in &prompts {
             assert!(
-                run(&r, &agent(prompt, Path::new("/"))).is_empty(),
+                run(&agent(prompt, Path::new("/"))).is_empty(),
                 "数えないはず: {prompt}"
             );
         }
-        run(&r, &review(&r));
-        assert!(
-            denied(&run(&r, &review(&r))).is_none(),
-            "Agent を数えていなければ 2 周目は通すはず"
-        );
-        for _ in 2..DOCS_LIMIT {
-            run(&r, &review(&r));
-        }
-        assert!(
-            denied(&run(&r, &review(&r))).is_some(),
-            "ここで上限に達しているはず"
-        );
-        for prompt in &prompts {
-            assert!(
-                run(&r, &agent(prompt, Path::new("/"))).is_empty(),
-                "上限でも止めないはず: {prompt}"
-            );
-        }
+        assert!(round(&review(&r)).contains("1 周目"));
     }
 
     #[test]
     fn other_skills_are_not_counted() {
-        let r = repo("docs/y", 1);
+        let r = repo("docs/y");
         let simplify = skill("simplify", &r.dir.display().to_string(), Path::new("/"));
-        for _ in 0..DOCS_LIMIT {
-            assert!(run(&r, &simplify).is_empty());
+        for _ in 0..3 {
+            assert!(run(&simplify).is_empty());
         }
-        assert!(denied(&run(&r, &review(&r))).is_none());
+        assert!(round(&review(&r)).contains("1 周目"));
     }
 
     #[test]
     fn review_without_a_path_counts_the_branch_of_cwd() {
-        let r = repo("docs/y", 1);
-        let here = skill("code-review", "high", &r.dir);
-        use_up(&r, &here);
-        assert!(denied(&run(&r, &review(&r))).is_some());
+        let r = repo("docs/y");
+        round(&skill("code-review", "high", &r.dir));
+        assert!(round(&review(&r)).contains("2 周目"));
     }
 
     #[test]
     fn path_in_backquotes_and_followed_by_punctuation_is_found() {
-        let r = repo("docs/y", 1);
-        let quoted = skill(
+        let r = repo("docs/y");
+        round(&skill(
             "code-review",
             &format!("high `{}`。焦点: a", r.dir.display()),
             Path::new("/"),
-        );
-        use_up(&r, &quoted);
-        assert!(denied(&run(&r, &review(&r))).is_some());
+        ));
+        assert!(round(&review(&r)).contains("2 周目"));
     }
 
     #[test]
     fn branches_are_counted_separately() {
-        let r = repo("docs/y", 1);
-        use_up(&r, &review(&r));
+        let r = repo("docs/y");
+        round(&review(&r));
+        round(&review(&r));
         let other = r.dir.with_file_name("other");
         git(
             &r.dir,
@@ -480,24 +397,26 @@ mod tests {
             &format!("high {}", other.display()),
             Path::new("/"),
         );
-        assert!(denied(&run(&r, &input)).is_none());
+        let context = round(&input);
+        assert!(context.contains("1 周目"), "{context}");
+        assert!(context.contains("docs/z"), "{context}");
     }
 
     #[test]
     fn count_survives_a_rebase_of_the_branch() {
-        let r = repo("docs/y", 1);
-        use_up(&r, &review(&r));
+        let r = repo("docs/y");
+        round(&review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         commit(&r.dir, "on-main");
         git(&r.dir, &["switch", "-q", "docs/y"]);
         git(&r.dir, &["rebase", "-q", "main"]);
-        assert!(denied(&run(&r, &review(&r))).is_some());
+        assert!(round(&review(&r)).contains("2 周目"));
     }
 
     #[test]
     fn rounds_of_a_merged_branch_do_not_count_for_a_new_branch_of_the_same_name() {
-        let r = repo("docs/y", 1);
-        use_up(&r, &review(&r));
+        let r = repo("docs/y");
+        round(&review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         git(&r.dir, &["merge", "-q", "--no-ff", "-m", "merge", "docs/y"]);
         git(&r.dir, &["branch", "-q", "-D", "docs/y"]);
@@ -505,13 +424,13 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100));
         git(&r.dir, &["switch", "-q", "-c", "docs/y"]);
         commit(&r.dir, "again");
-        assert!(denied(&run(&r, &review(&r))).is_none());
+        assert!(round(&review(&r)).contains("1 周目"));
     }
 
     #[test]
     fn rounds_before_a_rebase_of_a_merged_branch_do_not_count_for_a_new_branch_of_the_same_name() {
-        let r = repo("docs/y", 1);
-        use_up(&r, &review(&r));
+        let r = repo("docs/y");
+        round(&review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         commit(&r.dir, "on-main");
         git(&r.dir, &["switch", "-q", "docs/y"]);
@@ -523,34 +442,15 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100));
         git(&r.dir, &["switch", "-q", "-c", "docs/y"]);
         commit(&r.dir, "again");
-        assert!(denied(&run(&r, &review(&r))).is_none());
+        assert!(round(&review(&r)).contains("1 周目"));
     }
 
     #[test]
     fn detached_head_is_not_counted() {
-        let r = repo("docs/y", 1);
+        let r = repo("docs/y");
         git(&r.dir, &["switch", "-q", "--detach"]);
         for _ in 0..3 {
-            assert!(run(&r, &review(&r)).is_empty());
+            assert!(run(&review(&r)).is_empty());
         }
-    }
-
-    #[test]
-    fn missing_script_is_reported_and_passes() {
-        let _lock = crate::output::NOTICES_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        crate::output::take_notices();
-        let r = repo("docs/y", 1);
-        for _ in 0..3 {
-            assert!(CapReviewRounds.check_with(&review(&r), None).is_empty());
-        }
-        let notices = crate::output::take_notices();
-        assert!(
-            notices
-                .iter()
-                .any(|n| n.contains("CLAUDE_HOOKS_REVIEW_LEVEL")),
-            "{notices:?}"
-        );
     }
 }
