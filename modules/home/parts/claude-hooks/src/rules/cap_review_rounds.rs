@@ -324,6 +324,16 @@ mod tests {
         CapReviewRounds.check_with(input, Some(&r.script))
     }
 
+    /// 文書だけのブランチ（`ROUNDS: 1`）の上限: 1 周、記録の周 1、例外の周 3
+    const DOCS_LIMIT: usize = 5;
+
+    /// 文書だけのブランチの上限まで周を回す
+    fn use_up(r: &Repo, input: &Input) {
+        for _ in 0..DOCS_LIMIT {
+            run(r, input);
+        }
+    }
+
     fn denied(findings: &[Finding]) -> Option<String> {
         findings.iter().find_map(|f| match f {
             Finding::Deny(s) => Some(s.clone()),
@@ -348,12 +358,17 @@ mod tests {
     }
 
     #[test]
-    fn one_round_branch_allows_the_round_and_the_record_round_only() {
+    fn one_round_branch_allows_the_round_the_record_round_and_three_exception_rounds() {
         let r = repo("docs/y", 1);
-        assert!(denied(&run(&r, &review(&r))).is_none());
-        assert!(denied(&run(&r, &review(&r))).is_none());
-        let reason = denied(&run(&r, &review(&r))).expect("3 周目は止めるはず");
-        assert!(reason.contains("上限 2"), "{reason}");
+        for n in 1..=5 {
+            assert!(
+                denied(&run(&r, &review(&r))).is_none(),
+                "{n} 周目は通すはず"
+            );
+        }
+        let reason = denied(&run(&r, &review(&r))).expect("6 周目は止めるはず");
+        assert!(reason.contains("上限 5"), "{reason}");
+        assert!(reason.contains("例外の周 3"), "{reason}");
     }
 
     #[test]
@@ -368,7 +383,8 @@ mod tests {
             })
             .expect("周の数を伝えるはず");
         assert!(context.contains("1 周目"), "{context}");
-        assert!(context.contains("上限 2"), "{context}");
+        assert!(context.contains("上限 5"), "{context}");
+        assert!(context.contains("例外の周"), "{context}");
     }
 
     #[test]
@@ -423,8 +439,7 @@ mod tests {
     fn review_without_a_path_counts_the_branch_of_cwd() {
         let r = repo("docs/y", 1);
         let here = skill("code-review", "high", &r.dir);
-        run(&r, &here);
-        run(&r, &here);
+        use_up(&r, &here);
         assert!(denied(&run(&r, &review(&r))).is_some());
     }
 
@@ -436,16 +451,14 @@ mod tests {
             &format!("high `{}`。焦点: a", r.dir.display()),
             Path::new("/"),
         );
-        run(&r, &quoted);
-        run(&r, &quoted);
+        use_up(&r, &quoted);
         assert!(denied(&run(&r, &review(&r))).is_some());
     }
 
     #[test]
     fn branches_are_counted_separately() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         let other = r.dir.with_file_name("other");
         git(
             &r.dir,
@@ -471,8 +484,7 @@ mod tests {
     #[test]
     fn count_survives_a_rebase_of_the_branch() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         commit(&r.dir, "on-main");
         git(&r.dir, &["switch", "-q", "docs/y"]);
@@ -483,8 +495,7 @@ mod tests {
     #[test]
     fn rounds_of_a_merged_branch_do_not_count_for_a_new_branch_of_the_same_name() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         git(&r.dir, &["merge", "-q", "--no-ff", "-m", "merge", "docs/y"]);
         git(&r.dir, &["branch", "-q", "-D", "docs/y"]);
@@ -498,8 +509,7 @@ mod tests {
     #[test]
     fn rounds_before_a_rebase_of_a_merged_branch_do_not_count_for_a_new_branch_of_the_same_name() {
         let r = repo("docs/y", 1);
-        run(&r, &review(&r));
-        run(&r, &review(&r));
+        use_up(&r, &review(&r));
         git(&r.dir, &["switch", "-q", "main"]);
         commit(&r.dir, "on-main");
         git(&r.dir, &["switch", "-q", "docs/y"]);
