@@ -39,8 +39,8 @@ nixfiles とその worktree で始めたセッションは、同じ中身を毎�
 - `claudeMdExcludes` は glob のパターンを絶対パスに当て、ユーザー、プロジェクト、ローカルのどの設定にも書ける（同じ文書の
   「Exclude specific CLAUDE.md files」）。プロジェクトの設定からユーザーの CLAUDE.md を除けることは、文書に明記が無いので
   試して確かめた（下の「確認」）
-- 設定はリポジトリにあるので、どの clone と worktree でも効く。パターンの `*` は `/` をまたがないので、当たるのはホームの
-  直下の `.claude/CLAUDE.md` だけで、ホームの下にある clone の `.claude/CLAUDE.md` には当たらない
+- 設定はリポジトリにあるので、どの clone と worktree でも効く。パターンの `*` は `/` をまたがないので、当たるのは `/home` の
+  1 段下のディレクトリにある `.claude/CLAUDE.md` だけで、ホームの下にある clone の `.claude/CLAUDE.md` には当たらない
 - nixfiles のセッションは、作業中のブランチの `.claude/CLAUDE.md` を読む。指示を直すブランチでは、`claude-sync` を実行
   しなくても、その worktree のセッションに直した指示が効く
 - 案 A は先に実装して捨てた（ユーザーの案。マージしていない）。
@@ -62,7 +62,7 @@ nixfiles とその worktree で始めたセッションは、同じ中身を毎�
 - 悪い点: ホームが `/home/<ユーザー>` でない環境（macOS など）では、パターンが当たらず 2 回読みに戻る。今の対象のホストは
   どれも NixOS で `/home/<ユーザー>`。clone を `/home` の直下（`/home/nixfiles`）に置くと、プロジェクトの側にも当たり、指示が
   1 つも読まれない
-- 悪い点: `.claude/settings.json` は、`.claude` の下でこれだけが `~/.claude` に配らないプロジェクトの設定になる。配ると、
+- 悪い点: `.claude/settings.json` は、`~/.claude` に配らないプロジェクトの設定である。`~/.claude/settings.json` に入ると、
   どのリポジトリでもグローバルの指示が読まれなくなる（`claude-sync` は配る対象を名前で挙げていて、このファイルは入っていない）
 - 悪い点: nixfiles のセッションは、`~/.claude/CLAUDE.md` にだけある内容（同期の後に手で足したもの）を読まない。
   `~/.claude/CLAUDE.md` は生成物で、手では直さない運用

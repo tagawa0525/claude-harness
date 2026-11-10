@@ -3,8 +3,8 @@
 Claude Code のグローバル設定。`claude-sync`（または home-manager の activation）で
 `~/.claude` に同期される（同期ポリシーは `modules/home/scripts/claude-sync.sh`）。
 
-`settings.json` だけは nixfiles のセッションのためのプロジェクトの設定で、同期しない（`~/.claude` に配ると、どのリポジトリでも
-グローバルの指示が読まれなくなる）。
+`.claude/settings.json` は nixfiles のセッションのためのプロジェクトの設定で、同期の対象ではない（`~/.claude/settings.json` に
+入ると、どのリポジトリでもグローバルの指示が読まれなくなる）。
 
 ## 役割の分担
 
