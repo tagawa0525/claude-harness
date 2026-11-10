@@ -823,6 +823,24 @@ class SyncWorktrees(unittest.TestCase):
         # 書き込みの途中で git が失敗する（reference-transaction の hook が HEAD の移動を拒む）
         cls.broken = worktree("broken", "--detach", commit=cls.second)
         cls.broken.write("a.md", "確かめの記録\n確かめの追記\n")
+        # 書き換えたファイルを編集して、読み出し専用にした
+        cls.readonly = worktree("readonly", "--detach", commit=cls.second)
+        cls.readonly.write("a.md", "確かめの記録\n確かめの追記\n")
+        (cls.readonly.path / "a.md").chmod(0o444)
+        # 操作の印の無い衝突の項（stash pop や apply --3way の衝突と同じ index）
+        cls.unmerged = worktree("unmerged", "--detach", commit=cls.second)
+        blob = cls.unmerged.git("rev-parse", "HEAD:b.md").strip()
+        cls.unmerged.git(
+            "update-index",
+            "--index-info",
+            input=f"0 {'0' * 40}\tb.md\n"
+            + "".join(f"100644 {blob} {stage}\tb.md\n" for stage in (1, 2, 3)),
+        )
+        # git add -N で足した後に、ファイルを消した
+        cls.intent_gone = worktree("intent-gone", "--detach", commit=cls.second)
+        cls.intent_gone.write("gone.md", "消す\n")
+        cls.intent_gone.git("add", "-N", "gone.md")
+        (cls.intent_gone.path / "gone.md").unlink()
 
         cls.workdir = root / "work"
         words = ["--exclude", "**/never.md"]
@@ -841,6 +859,7 @@ class SyncWorktrees(unittest.TestCase):
         rows = []
         synced = [repo, cls.detached, cls.changed, cls.partial]
         synced += [cls.assumed, cls.removed, cls.merging, cls.intent, cls.locked]
+        synced += [cls.unmerged, cls.intent_gone]
         for k, w in enumerate(synced, 1):
             patch = cls.workdir / f"worktree-{k}.patch"
             patch.write_text(w.git("diff", "HEAD"))
@@ -1023,6 +1042,21 @@ class SyncWorktrees(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn(f"LEFT: {self.remapfail.path}", result.stdout)
         self.assertEqual(self.state(self.remapfail), self.before[self.remapfail.path])
+
+    def test_a_read_only_changed_file_is_converted(self):
+        result = self.run_sync("readonly", self.readonly)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"KEPT: {self.readonly.path}", result.stdout)
+        a = self.readonly.path / "a.md"
+        self.assertEqual(a.read_text(), "確認の記録\n確認の追記\n")
+        self.assertEqual(a.stat().st_mode & 0o777, 0o444)
+
+    def test_conflict_entries_without_an_operation_are_left_as_a_conflict(self):
+        self.assertIn(f"LEFT: {self.unmerged.path} (衝突の途中", self.result.stdout)
+
+    def test_a_deleted_intent_to_add_file_is_not_a_partial_stage(self):
+        self.assertIn(f"KEPT: {self.intent_gone.path}", self.result.stdout)
+        self.assertEqual(self.intent_gone.git("ls-files", "gone.md"), "gone.md\n")
 
     def test_a_git_failure_while_writing_names_the_worktree_and_keeps_the_changes(self):
         hooks = Path(self.tmp.name) / "hooks"
