@@ -167,10 +167,11 @@ ref を移す前の各 worktree の HEAD を控えれば、worktree の合わせ
   変わらない、同じ辞書の textlint が書き換える前は語を見つけ書き換えた後は見つけない、変換と違う履歴を照合が止める。transform は
   無いファイルで止まり、symlink を変えない。sync-worktrees は、ref を移した後の一時的なリポジトリ（メイン、detached HEAD、
   変更のある worktree、部分のステージ、assume-unchanged の印の下の編集、`git rm --cached`、衝突を解いてステージした
-  マージの途中、`git add -N`、持たれた index.lock、remap が止まる番号、HEAD を移す git の失敗）で、変更の無い worktree が
-  新しい履歴に合い、追跡していないファイルが残り、変更のある worktree は変更とステージ（外したパスと add -N を含む）が
-  残って語と番号が直り、部分のステージ、印の下の編集、マージの途中、index.lock、remap が止まる worktree と対応表に
-  無いコミットの worktree は変わらず、書き始めた後の失敗は worktree のパスを示して変更を残す
+  マージの途中、`git add -N`（ファイルを消したものを含む）、操作の印の無い衝突の項、読み出し専用にした編集、持たれた
+  index.lock、remap が止まる番号、HEAD を移す git の失敗）で、変更の無い worktree が新しい履歴に合い、追跡していない
+  ファイルが残り、変更のある worktree は変更とステージ（外したパスと add -N を含む）が残って語と番号が直り（読み出し
+  専用のファイルは権限を残して）、部分のステージ、印の下の編集、マージの途中、衝突の項、index.lock、remap が止まる
+  worktree と対応表に無いコミットの worktree は変わらず、書き始めた後の失敗は worktree のパスを示して変更を残す
 - テストは nixfiles の今の prh.yml（main の 8d6261ea、100 の規則）を読み、どの規則の specs も通る。PR #413 の時点の
   prh.yml（35 の規則）も、specs を通って読めることを手で確かめた（2026-10-21）
 - nixfiles の clone（2026-10-21、main の 8d6261ea の 2634 コミット、同じ時点の辞書。辞書と辞書のテストを除くパスに
