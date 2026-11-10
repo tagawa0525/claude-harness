@@ -31,6 +31,8 @@
 # 区間の増分と読む）。
 
 set -euo pipefail
+# コマンド置換の中でも set -e を効かせる（repo_bytes の中の失敗を 0 と数えない）
+shopt -s inherit_errexit
 
 usage() {
   echo "Usage: prose-size.sh [--since <日時>] [--until <日時>] [--memory <メモリのディレクトリ>] [--repo <パス>]..." >&2
