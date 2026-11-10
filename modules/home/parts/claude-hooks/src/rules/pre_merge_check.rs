@@ -302,22 +302,31 @@ fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> O
     .filter(|s| !s.is_empty())
 }
 
-/// 失敗していない bot レビューがあるか。Copilot はレビューできなかったときも本文だけの
-/// レビューを提出するので、レビューの有無では判定できない（判定は get-latest-review.sh と同じ）
-fn has_successful_review(dir: &std::path::Path, owner: &str, name: &str, number: &str) -> bool {
-    gh::gh(
+/// 失敗していない最後の bot レビューが見た commit（無ければ None）。Copilot はレビューできなかったときも、commit_id の
+/// ある本文だけのレビューを提出するので、レビューの有無では判定できない（判定は get-latest-review.sh と同じ）。
+/// 取得できなければ Err
+fn last_successful_review(
+    dir: &std::path::Path,
+    owner: &str,
+    name: &str,
+    number: &str,
+) -> Result<Option<String>, ()> {
+    let out = gh::gh(
         dir,
         &[
             "api",
             "--paginate",
             &format!("repos/{owner}/{name}/pulls/{number}/reviews"),
             "--jq",
-            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not)] | length",
+            "[.[] | select(.user.type == \"Bot\") | select((.body // \"\") | test(\"wasn'?t able to review|unable to review|encountered an error\"; \"i\") | not) | .commit_id] | last // \"\"",
         ],
-    )
-    .ok()
-    // --paginate はページごとに --jq を適用するので、ページごとの件数を足す
-    .is_some_and(|s| s.lines().filter_map(|l| l.trim().parse::<u64>().ok()).sum::<u64>() > 0)
+    )?;
+    // --paginate はページごとに --jq を適用するので、最後の空でない行が最後のレビュー
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .map(str::to_string))
 }
 
 /// リベースだけで head の hash が変わったか。レビュー済みの `old` と今の `new` で、base からの PR の差分が
@@ -894,12 +903,19 @@ impl Rule for PreMergeCheck {
                         .to_string()
                 });
                 let url = format!("https://github.com/{owner}/{name}/pull/{number}");
+                let successful_cell = std::cell::OnceCell::new();
+                let successful = || {
+                    successful_cell
+                        .get_or_init(|| last_successful_review(&dir, &owner, &name, number))
+                        .clone()
+                };
                 match reviewed {
                     None => reasons.push(
                         "自動レビューの対象コミットを確認できませんでした（reviews API が失敗）"
                             .to_string(),
                     ),
-                    Some(sha) if sha == head_sha => {}
+                    // head を見た最後の bot のレビューが失敗したもの（チェックが失敗）なら、下で成功したレビューを探す
+                    Some(sha) if sha == head_sha && !copilot_check_failed => {}
                     // レビューが 1 件も無い場合、通常は「自動レビューが無いリポジトリ」なので
                     // 検査しない。ただしチェックが失敗しているなら初回レビューが走らなかった
                     // ということなので、下の分岐でレビュー未実施として報告する
@@ -908,24 +924,28 @@ impl Rule for PreMergeCheck {
                     Some(sha)
                         if !sha.is_empty()
                             && is_docs_only(files())
-                            && has_successful_review(&dir, &owner, &name, number) => {}
+                            && successful().is_ok_and(|s| s.is_some()) => {}
                     // リベースだけで hash が変わった head は、レビュー済みの差分と同じなので伝えない（ADR-0021）
                     Some(sha)
                         if !sha.is_empty()
+                            && sha != head_sha
                             && tip()
                                 .is_some_and(|b| same_pr_diff(&dir, &b, &sha, &head_sha)) => {}
-                    Some(sha) => match local_review_marks(&dir, &owner, &name, number) {
-                        Err(()) => reasons.push(
+                    Some(_) => match (local_review_marks(&dir, &owner, &name, number), successful()) {
+                        (Err(()), _) => reasons.push(
                             "ローカルレビューの記録を確認できませんでした（issues/comments API が失敗）"
+                                .to_string(),
+                        ),
+                        (_, Err(())) => reasons.push(
+                            "失敗していない自動レビューを確認できませんでした（reviews API が失敗）"
                                 .to_string(),
                         ),
                         // head のローカルレビューの記録があれば（記録の SHA から rebase だけした head も。ADR-0059）、
                         // Copilot のレビューの有無・到着・チェックの失敗を問わず通す（ADR-0043）
-                        Ok(marks) if marks_cover(&dir, &marks, &head_sha, tip) => {}
-                        Ok(marks) => {
-                            let bot = (!sha.is_empty()
-                                && has_successful_review(&dir, &owner, &name, number))
-                            .then_some(sha);
+                        (Ok(marks), Ok(bot))
+                            if bot.as_deref() == Some(head_sha.as_str())
+                                || marks_cover(&dir, &marks, &head_sha, tip) => {}
+                        (Ok(marks), Ok(bot)) => {
                             let local = last_local_record(&marks, &head_sha);
                             if bot.is_none() && local.is_none() {
                                 reasons.push(never_reviewed_reason(
