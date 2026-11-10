@@ -734,5 +734,172 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual((work.path / "doc.md").read_text(), "確かめの記録\n")
 
 
+class SyncWorktrees(unittest.TestCase):
+    """書き換えた ref を生きているリポジトリに移した後、sync-worktrees が各 worktree を新しい履歴に合わせること"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = Path(cls.tmp.name)
+        home = root / "home"
+        home.mkdir()
+        (home / ".gitconfig").write_text(
+            "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n"
+            "[commit]\n\tgpgsign = false\n"
+        )
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["HOME"] = str(home)
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        cls.env = env
+        repo = Repo(root / "source", env)
+        repo.path.mkdir()
+        repo.git("init", "-q")
+        cls.repo = repo
+        repo.write("a.md", "確かめの記録\n")
+        repo.write("b.md", "そのまま\n")
+        cls.first = repo.commit("docs: a\n")
+        repo.write("notes.md", f"{cls.first[:8]} の記録\n")
+        cls.second = repo.commit("docs: notes\n")
+
+        def worktree(name: str, option: str, commit: str = "HEAD") -> Repo:
+            repo.git("worktree", "add", "-q", option, str(root / name), commit)
+            return Repo(root / name, env)
+
+        # 変更の無い worktree（メインと、detached HEAD）。追跡していないファイルは残る
+        cls.main = repo
+        (repo.path / "scratch.log").write_text("確かめの控え\n")
+        cls.detached = worktree("detached", "--detach", commit=cls.first)
+        # 変更のある worktree: 書き換えたファイルの変更、書き換えないファイルの変更、ステージした新しいファイル、
+        # 消したファイル
+        cls.changed = worktree("changed", "-bchanged")
+        cls.changed.write("a.md", "確かめの記録\n確かめの追記\n")
+        cls.changed.write("b.md", f"そのまま\n{cls.first[:8]} を見る\n")
+        cls.changed.write("new.md", f"{cls.second[:8]} の確かめの記録\n")
+        cls.changed.git("add", "new.md")
+        (cls.changed.path / "notes.md").unlink()
+        # 部分のステージがある worktree（機械では合わせられない）
+        cls.partial = worktree("partial", "-bpartial")
+        cls.partial.write("a.md", "確かめの記録\nステージした\n")
+        cls.partial.git("add", "a.md")
+        cls.partial.write("a.md", "確かめの記録\nステージした\nしていない\n")
+
+        cls.workdir = root / "work"
+        words = ["--exclude", "**/never.md"]
+        run = subprocess.run(
+            ["history-rewrite", "run", "--source", str(repo.path)]
+            + ["--workdir", str(cls.workdir), *words],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr
+        cls.map = history_rewrite.read_map(cls.workdir / "commit-map")
+
+        # スキルの手順 4: ref を移す前に、各 worktree の HEAD と控えのパッチを残し、ref を 1 つのトランザクションで移す
+        rows = []
+        for k, w in enumerate([repo, cls.detached, cls.changed, cls.partial], 1):
+            patch = cls.workdir / f"worktree-{k}.patch"
+            patch.write_text(w.git("diff", "HEAD"))
+            rows.append(f"{w.path}\t{w.git('rev-parse', 'HEAD').strip()}\t{patch}\n")
+        (cls.workdir / "worktree-state").write_text("".join(rows))
+        rewritten = Repo(cls.workdir / "rewritten", env)
+        transaction = "".join(
+            f"update refs/heads/{b} {rewritten.git('rev-parse', b).strip()}"
+            f" {repo.git('rev-parse', b).strip()}\n"
+            for b in ("main", "changed", "partial")
+        )
+        repo.git("fetch", "-q", str(rewritten.path), "+refs/heads/*:refs/rewritten/*")
+        repo.git("update-ref", "--stdin", input=transaction)
+
+        cls.partial_before = cls.snapshot(cls.partial)
+        cls.result = subprocess.run(
+            [
+                "history-rewrite",
+                "sync-worktrees",
+                "--workdir",
+                str(cls.workdir),
+                *words,
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    @staticmethod
+    def snapshot(w: Repo) -> tuple[str, bytes]:
+        return w.git("ls-files", "-s"), (w.path / "a.md").read_bytes()
+
+    def tracked_changes(self, w: Repo) -> str:
+        return w.git("status", "--porcelain", "--untracked-files=no")
+
+    def test_a_worktree_without_changes_matches_the_new_history(self):
+        self.assertIn(f"RESET: {self.main.path}\n", self.result.stdout)
+        self.assertEqual(self.tracked_changes(self.main), "")
+        self.assertEqual((self.main.path / "a.md").read_text(), "確認の記録\n")
+
+    def test_untracked_files_are_kept(self):
+        self.assertEqual((self.main.path / "scratch.log").read_text(), "確かめの控え\n")
+
+    def test_a_detached_head_moves_to_the_mapped_commit(self):
+        self.assertIn(f"RESET: {self.detached.path}\n", self.result.stdout)
+        self.assertEqual(
+            self.detached.git("rev-parse", "HEAD").strip(), self.map[self.first]
+        )
+        self.assertEqual(self.tracked_changes(self.detached), "")
+
+    def test_uncommitted_changes_are_kept_with_the_same_transform(self):
+        self.assertIn(f"KEPT: {self.changed.path}", self.result.stdout)
+        w = self.changed
+        # 書き換えたファイルの変更には語の変換を当て、書き換えないファイルの変更は番号だけを付け直す
+        self.assertEqual((w.path / "a.md").read_text(), "確認の記録\n確認の追記\n")
+        self.assertEqual(
+            (w.path / "b.md").read_text(),
+            f"そのまま\n{self.map[self.first][:8]} を見る\n",
+        )
+        self.assertFalse((w.path / "notes.md").exists())
+        self.assertEqual(
+            (w.path / "new.md").read_text(),
+            f"{self.map[self.second][:8]} の確かめの記録\n",
+        )
+
+    def test_staged_and_unstaged_changes_keep_their_state(self):
+        status = self.tracked_changes(self.changed)
+        self.assertEqual(
+            sorted(status.splitlines()),
+            [" D notes.md", " M a.md", " M b.md", "A  new.md"],
+        )
+        self.assertIn(self.map[self.second][:8], self.changed.git("show", ":new.md"))
+
+    def test_a_worktree_with_partly_staged_changes_is_left_as_it_was(self):
+        self.assertIn(f"LEFT: {self.partial.path}", self.result.stdout)
+        self.assertEqual(self.snapshot(self.partial), self.partial_before)
+        self.assertEqual(self.result.returncode, 1, self.result.stderr)
+
+    def test_a_worktree_whose_commit_is_not_in_the_map_is_left(self):
+        workdir = Path(self.tmp.name) / "unmapped"
+        workdir.mkdir()
+        (workdir / "commit-map").write_bytes((self.workdir / "commit-map").read_bytes())
+        orphan = "0" * 40
+        (workdir / "worktree-state").write_text(
+            f"{self.detached.path}\t{orphan}\t{workdir}/worktree-1.patch\n"
+        )
+        result = subprocess.run(
+            ["history-rewrite", "sync-worktrees", "--workdir", str(workdir)],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(f"LEFT: {self.detached.path}", result.stdout)
+        self.assertIn(orphan, result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
