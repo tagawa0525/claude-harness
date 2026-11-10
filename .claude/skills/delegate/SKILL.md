@@ -10,7 +10,6 @@ allowed-tools:
   - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/base-moved.sh*)
-  - Bash(~/.claude/scripts/quote-in-transcript.sh*)
   - Bash(~/.claude/scripts/kept-sentences.py*)
   - Bash(~/.claude/scripts/slurm-run.sh*)
   - Bash(squeue*)

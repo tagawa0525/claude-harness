@@ -22,7 +22,7 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 - xlc のメモリには「memory を書いたら同じ辞書で検査する」とあるが、検査のコマンドが PATH に無く（`ja-terms-message` は
   commit-msg の hook と claude-hooks が store のパスで呼ぶだけ）、守られていなかった
 
-ユーザーは、#592 の案のうち /retro の memory-index.sh に辞書の検査の行を足す案を問われ、「メモリに対する辞書検査はぜひやってください」（ユーザー 2026-11-06）と答えた。
+ユーザーは、#592 の案のうち /retro の memory-index.sh に辞書の検査の行を足す案を問われ、メモリへの辞書の検査はぜひ行うよう答えた（ユーザー 2026-11-06）。
 
 ## 検討した案
 

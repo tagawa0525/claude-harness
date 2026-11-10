@@ -38,8 +38,6 @@ issues: ["#645"]
   合わせて替える）。移した節を指す文（受ける側の手順 1 の「前提」の項、/git-merge の Agent の `description` の項、hook
   delegate-request-fields の拒否の文言、ADR の確認）は新しい置き場を指す形にする。ほかのスキル、CLAUDE.md、hook が
   「/delegate の手順 7」のようにスキルの名前と項で指す文は、SKILL.md の案内からたどれるので変えない
-- 受ける側の引用の確かめ方の `jq` のプログラムは `.claude/scripts/quote-in-transcript.sh` に移し、受ける側と頼む側はそれを
-  指す（ADR-0065 の「## 変更」）
 
 ### 帰結
 
@@ -73,3 +71,6 @@ issues: ["#645"]
   2026-11-11 に `~/.claude/projects/*/*.jsonl` の親の tool_use を数えると、11 月 1 日以降に /delegate の依頼を出した親の
   セッションは 2 件、依頼は 209 回で、親が Skill で delegate を呼んだのは 1 回、`references/requesting.md` を Read したのは 5 回。
   別のスキルにする案 B を採らない理由は変わらない
+- 2026-11-11: 決定と理由の、引用の確かめ方の項を消した。前は「受ける側の引用の確かめ方の `jq` のプログラムは
+  `.claude/scripts/quote-in-transcript.sh` に移し、受ける側と頼む側はそれを指す（ADR-0065 の「## 変更」）」。ユーザーの言葉を
+  括らずに要約で書く形にして（ADR-0081）、引用を確かめる手順とその script が無くなった
