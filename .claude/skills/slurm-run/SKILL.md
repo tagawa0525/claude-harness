@@ -87,66 +87,38 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   （反射体つきの格子を、集合体と同じ時間で見積もった）
 - `slurm-history.sh --by-name` の表は名前でしか結ばない。名前の似たジョブが同じ仕事をしたとは限らず、割り込みの前の
   ジョブには、`-shared` を付け忘れた排他でないジョブも混ざる。過去のジョブの測定（時間、`MaxRSS` などのメモリ）を、見積もりに
-  使う、「前は同じ入力で X だった」と比べる、依頼の前提に書くときは、取るジョブが、コマンドと中身が同じ排他のジョブかを sacct で確かめる:
+  使う、「前は同じ入力で X だった」と比べる、依頼の前提に書くときは、取るジョブが、コマンドと中身が同じ排他のジョブかを `slurm-history.sh --job` で確かめる:
 
   ```bash
   sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Submit,Start,End,WorkDir,SubmitLine | grep -F -- '<コマンドの一部>'
+  ~/.claude/scripts/slurm-history.sh --job [--repo <本体のリポジトリ>] <番号>…
   ```
 
-  欄は JobID、JobName、State、Elapsed、Submit、Start、End、WorkDir、SubmitLine の順。比べるのは、State が COMPLETED で、SubmitLine の sbatch の直後が
-  `--exclusive` のジョブ（`slurm-run.sh` は排他のときだけそこに置く。`-c` のジョブは `--cpus-per-task=N` で、その時間は同じ仕事
-  なら上限としてだけ使う。`AllocCPUS` は `-c 32` でも 32 なので排他の識別に使わない）。コマンドは SubmitLine の `--wrap` の後に
-  ある。改行を含むコマンドは 2 行目以降が別の行に出る。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
+  sacct で番号を探し、`--job` に渡す。`--job` はジョブごとに `STATE:`、`ELAPSED:`、`TIMES:`、`EXCLUSIVE:`、`WORKDIR:`、`BRANCH:`、
+  `COMMIT:`、`REPO:`、`VERSION:`、`COMMAND:`（2 行目からは `COMMAND+`）の行を出す（行の意味と版の決め方は
+  `~/.claude/scripts/lib/slurm-job.sh` の先頭）。比べるのは、`STATE: COMPLETED` で `EXCLUSIVE: yes` のジョブ（`-c` のジョブは
+  `no (--cpus-per-task=N)` で、その時間は同じ仕事なら上限としてだけ使う）。`VERSION:` が hash なら走った版で、`NOTE:` の行を
+  確かめていないこととして添える。`-` なら走った版を決められないので「確かめていない」と書き、`REASON:` の行を理由に添える。
+  本体のリポジトリが見つからなければ（`REASON:` に出る）、`--repo` で渡す。コマンドが同じでも、中で走る仕事（ビルドの有無、作り直す出力の数）が
   違えば時間は数倍変わるので、ログ（下の「ログと時間」）の進みの行を数えて比べる。
   コマンドが読む入力のファイル（TOML など）は、比べる 2 本それぞれで、そのジョブが走った
   worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
-  コミットは、SubmitLine の `--comment` の連絡先の `commit=<短い hash>` で読む（`sacct` の Comment の欄は空。r995 の Slurm は
-  コメントを記録に残さない）。`-dirty` が付いていれば、コミットしていない変更がある版で走ったので、下の
-  「コミットされていない変更で走った」に当たる。`commit=` の無いジョブ（`slurm-run.sh` がコミットを書く前に投げたもの、git の外かコミットの無い
-  リポジトリから投げたもの）は、ブランチ（SubmitLine の `--comment` の `$PWD` の前の語。HEAD が
-  切り離されていると無い）の reflog を、本体のリポジトリ（worktree は後片付けで消えるが、reflog は共通の git dir にある）で
-  `git -C <本体のリポジトリ> log -g --date=iso-local --format='%H %gd %gs' <ブランチ>` と読み（`--date=iso-local` は sacct の時刻と同じ
-  ローカル時刻に揃える）、`Start` の前の
-  最後の項のコミットを取る（`git log --before=<Start>` はコミットの日付で選ぶので、rebase や amend の後は走った版でないコミットを返す。
-  `rev-parse '<ブランチ>@{<Start>}'` は reflog が `Start` まで届かなくても警告だけで別のコミットを返す。worktree は後片付けで消え、
-  残っていても後のコミットで変わっている）。入力は `git show <コミット>:<worktree の直下からのパス>` で開く（コマンドの中のパスは
+  入力は `git show <コミット>:<worktree の直下からのパス>` で開く（コマンドの中のパスは
   `WorkDir` からの相対で、`WorkDir` が worktree の下のディレクトリのこともある）。`dvc repro` のジョブは、ステージが読むものが `dvc.yaml` の
   定義、`vars`、params、上流のステージなどに広がり、どこまで比べれば足りるかを決めていない。開いて比べたファイルを書き、
-  「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の issue #556）。次のときは、走った版を決められないので
-  「確かめていない」と書く:
+  「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の issue #556）。`VERSION:` が hash でも、次のときは
+  走った版を決められないので「確かめていない」と書く（`--job` は判定しない）:
 
-  - `commit=` のコミットが本体のリポジトリに無い（`git -C <本体のリポジトリ> cat-file -e '<hash>^{commit}'` が失敗する。rebase で
-    外れたコミットは、ブランチと reflog が消えた後に gc で消える）
-  - `commit=` が無く、ブランチが無い（HEAD が切り離されて投げた）、ブランチか reflog が消えた、reflog の最も古い項が `Start` より後、`Start` が 30 日（`gc.reflogExpireUnreachable` の既定）より前
-    （rebase で外れたコミットの項は黙って消える）
-  - 版を取った時点から `End` の間に reflog の項がある。版を取った時点は、`commit=` のジョブでは投げた時点（sacct の `Submit`。
-    ジョブは走り始めてから作業ツリーの入力を読むので、待つ間のコミットも効く）、無いジョブでは `Start`（`dvc repro` のステージは
-    `Start` より後にも入力を読むので、走る間のコミットで変わりうる）。見る reflog はブランチのものと、worktree が残っていれば
-    `git -C <worktree> log -g --date=iso-local HEAD` の項（ブランチの切り替え、rebase）。`commit=` の無いジョブで、この間の reflog を
-    読めない（ブランチか reflog が消えた）ときも同じ
-  - 入力がそのコミットに無い（git で無視される試行の置き場など）、コミットされていない変更で走った（`commit=` の `-dirty` と、
-    ログの先頭の nix の `Git tree '…' is dirty` はその印）。`-dirty` の無い `commit=` は、投げた時点にコミットしていない
-    変更（git が無視するファイルを除く）が無かったことを示す（投げた後の変化は、上の版を取った時点から `End` の間の項で見る）。`commit=` の無いジョブで
-    nix の印が出ないことは変更が無いことを示さない（nix を通らないジョブには出ない）ので、比べた版のコミットを書き、コミットされて
-    いない変更の有無は「確かめていない」と添える
+  - 入力がそのコミットに無い（git で無視される試行の置き場など）、ログの先頭に nix の `Git tree '…' is dirty` が出ている
   - git で追跡しない deps（`bin/` の実行ファイル、ライブラリなど DVC の出力）で、ジョブが書いてコミットした `dvc.lock` が無い
     （そのコミットの `dvc.lock` は前の実行の md5 で、changed で走ったステージの deps と違う。`dvc repro` はステージごとに書き、失敗したステージは書かない）
-
-  `commit=` のジョブで上のどれにも当たらないときは、`commit=` のコミットを走った版として書き、「投げた後のコミットしない編集は
-  確かめていない」と添える（reflog はコミットしない編集を記録せず、`-dirty` は投げた時点の状態しか示さない）。版を取った時点から
-  `End` の間の reflog を読めない（ブランチと worktree が消えた）ときは、代わりに「投げた後の変化は確かめていない」と添える（版は
-  決められないとしない。ブランチが消えた後も `commit=` で版を引くのが、この語を連絡先に書く目的）
 
   メモリを比べるときの `MaxRSS` の読み方は下の「ジョブの中のプログラムの時間とメモリ」の項。r995 は 30 秒ごとの標本
   （`JobAcctGatherFrequency = 30`）で、COMPLETED のジョブでも間の山は入らない。途中で殺されたジョブ（State が
   COMPLETED でない）の値は殺されるまでの標本で、要る量の下限としてだけ使う。
-  2026-11-03 に xlc の依頼が、Slurm 644 の `MaxRSS` 88276164K と
-  前の 582、617、621、629、630、638 の 20519904K〜25878580K を、MaxRSS だけを sacct で見て「同じ入力」と書いた。644 は `dvc repro
-  examples/depletion/dvc.yaml` の `lattice-2A.toml`（`ufg-tolerance` なし）、前の 6 本は p2 と history の入力（`ufg-tolerance = 1e-4`
-  の間引いた格子）で、別の入力だった。sacct はジョブ 126 より前を持たない
+  sacct はジョブ 126 より前を持たない
   （その前の排他かどうかの扱いは nixfiles の issue #452）。2026-10-22 に、名前の似た、中身の違う
-  排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、2 時間 5 分かかった。sacct を読んで排他と中身を出す仕組みは
-  nixfiles の issue #452
+  排他でないジョブ（`-c 8`、27 分）から 45 分と見積もり、2 時間 5 分かかった。
 - 名前は `<ツール>-<題材>`（`openmc-2K`、`xlc-2K-swap-water`、`vera-reference-stages`）。使える文字は英数字と `.` `_` `-`。
   ログのファイル名に使い、`squeue` でも見分けるので、題材が分かる名前にする
 - コマンドは投げたときのディレクトリで、`--export=ALL`（今の環境変数、nix の開発シェルの PATH を含む）で走る。
