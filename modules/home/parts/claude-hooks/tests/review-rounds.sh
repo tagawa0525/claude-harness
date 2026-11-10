@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# nix でビルドした claude-hooks の cap-review-rounds が、/code-review の周を止めずに数え、何周目かを伝えることを
-# 確かめる（package.nix の installCheckPhase が呼ぶ）。数え方の細部はユニットテスト（src/rules/cap_review_rounds.rs）が見る。
+# nix でビルドした claude-hooks の count-review-rounds が、/code-review の周を止めずに数え、何周目かを伝えることを
+# 確かめる（package.nix の installCheckPhase が呼ぶ）。数え方の細部はユニットテスト（src/rules/count_review_rounds.rs）が見る。
 #
 # 使い方: review-rounds.sh <claude-hooks の実行ファイル>
 set -euo pipefail
@@ -17,7 +17,7 @@ git -C "$REPO" commit -q -m init
 
 review() {
   jq -n --arg a "high $REPO" '{tool_name: "Skill", tool_input: {skill: "code-review", args: $a}, cwd: "/"}' |
-    "$BIN" pre-tool-use --rule cap-review-rounds
+    "$BIN" pre-tool-use --rule count-review-rounds
 }
 
 fail() {
@@ -46,4 +46,4 @@ git -C "$REPO" add docs
 git -C "$REPO" commit -q -m plan
 expect_counted 9
 
-echo "ok: cap-review-rounds"
+echo "ok: count-review-rounds"

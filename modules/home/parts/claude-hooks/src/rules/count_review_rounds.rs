@@ -1,4 +1,4 @@
-//! cap-review-rounds: ローカルの /code-review の周をブランチごとに数え、何周目かをモデルに伝える（止めない）
+//! count-review-rounds: ローカルの /code-review の周をブランチごとに数え、何周目かをモデルに伝える（止めない）
 //!
 //! 1 周目の後にもう 1 周回すかは、直しの大きさと危険からモデルが決める（/git-merge の「直す指摘の基準」）。数えるのは
 //! 決定的なので hook が行い、判断の材料として周の数を渡す。周の数で止めないのは、確かめた誤りの直しまで数で止めると、
@@ -22,7 +22,7 @@ use crate::output::{Finding, notice};
 use crate::shell::Shell;
 use std::path::{Path, PathBuf};
 
-pub struct CapReviewRounds;
+pub struct CountReviewRounds;
 
 /// 数を置く、共通の git ディレクトリの下のディレクトリ
 const STATE_DIR: &str = "claude-review-rounds";
@@ -78,9 +78,9 @@ fn context(branch: &str, round: usize) -> String {
     )
 }
 
-impl Rule for CapReviewRounds {
+impl Rule for CountReviewRounds {
     fn name(&self) -> &'static str {
-        "cap-review-rounds"
+        "count-review-rounds"
     }
 
     fn tools(&self) -> &'static [&'static str] {
@@ -116,7 +116,7 @@ impl Rule for CapReviewRounds {
             .and_then(|()| std::fs::write(&path, lines.join("\n") + "\n"));
         if let Err(e) = written {
             notice(format!(
-                "cap-review-rounds: {} に周の数を書けません: {e}",
+                "count-review-rounds: {} に周の数を書けません: {e}",
                 path.display()
             ));
             return Vec::new();
@@ -216,7 +216,7 @@ mod tests {
     }
 
     fn run(input: &Input) -> Vec<Finding> {
-        CapReviewRounds.check(input, &Shell::parse(""))
+        CountReviewRounds.check(input, &Shell::parse(""))
     }
 
     /// 周を回し、hook が伝えた文（止めたら panic）
