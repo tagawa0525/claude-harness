@@ -11,14 +11,15 @@
 //! 行の先頭の空白と箇条の印（`- `、`* `）は除いて読む。本文の決まらない形（エディタ、シェルが展開する値、読めない
 //! `-F`）は止める（check-merge-body-ja-terms と違い、後ろに同じ検査をする git の hook が無い）。
 //!
-//! その hash がブランチの先端の祖先で、既定ブランチの祖先でないことを求め、hash から先端までに変わったファイルが
-//! どれも挙動を変えないもの（スキルと hook の文書と ADR を除く `.md`、`dvc.lock` と `.dvc`、hash の付け替えだけの
-//! 変更）でなければ止める。後者だけ `ALLOW_UNREVIEWED_HEAD=<理由>` で外せる（形の誤りは外さない）。
-//! 対象と中断・再開の扱いは guard-git-merge と同じ
+//! その hash がブランチの先端の祖先で、既定ブランチの祖先でないことを求める。止めるのはここまで（レビューを 1 度も
+//! 受けていないマージと、記録の形の誤り）で、どれも安く確かめられ判断が要らない。hash から先端までに、挙動を変えない
+//! もの（スキルと hook の文書と ADR を除く `.md`、`dvc.lock` と `.dvc`、hash の付け替えだけの変更）でないファイルが
+//! あれば、止めずにそのファイルを additionalContext で伝える（その変更にもう 1 周回すかは、直しの大きさと危険から
+//! モデルが決める）。対象と中断・再開の扱いは guard-git-merge と同じ
 
+use super::Rule;
 use super::check_merge_body_ja_terms::{Undecided, merge_message};
 use super::pre_git_merge_check::{default_branch_merges, local_branch_ref};
-use super::{Rule, apply_escape, escape_hint};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -27,10 +28,7 @@ use std::path::Path;
 
 pub struct CheckMergeReview;
 
-/// 最後の周より後の未レビューの変更を通すエスケープ。GitHub の pre-merge-check と同じ名前
-const ESCAPE: &str = "ALLOW_UNREVIEWED_HEAD";
-
-/// deny の理由に示す、挙動を変えるファイルの先頭の件数
+/// 伝える文に示す、挙動を変えるファイルの先頭の件数
 const SHOWN_FILES: usize = 10;
 
 /// 本文に書く形。拒否の文言が示す
@@ -311,7 +309,7 @@ fn undecided_reason(why: Option<Undecided>) -> String {
     )
 }
 
-/// 1 本のブランチのマージを確かめる。(止める理由, エスケープで外せる止める理由)
+/// 1 本のブランチのマージを確かめる。(止める理由, 止めずに伝える文)
 fn check_branch(
     dir: &Path,
     default: &str,
@@ -379,11 +377,10 @@ fn check_branch(
         None,
         Some(format!(
             "Reviewed: の {hash} より後に、{branch} が挙動を変えうるファイルを変えています（{} 件）:\n{}{more}\n\
-             レビューの後に通せるのは、スキルと hook の文書と ADR を除く .md、dvc.lock と .dvc、コミットの hash の付け替えだけです。\
-             /code-review をブランチ全体に回し直して Reviewed: にその HEAD を書くか、挙動を変えるコミットをブランチから外してください。{}",
+             マージは止めません。この変更にもう 1 周回すかは、直しの大きさと危険で決めます（/git-merge の「直す指摘の基準」の「終わり」の項）。\
+             回さなかったなら、その理由がマージの本文の Impact にあるかを確かめ、無ければユーザーに伝えてください。",
             changed.len(),
             shown.join("\n"),
-            escape_hint(ESCAPE)
         )),
     )
 }
@@ -395,7 +392,6 @@ impl Rule for CheckMergeReview {
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
         let mut out = Vec::new();
-        let mut unreviewed = Vec::new();
         for merge in default_branch_merges(input, shell) {
             let branches: Vec<(&str, String)> = merge
                 .targets
@@ -423,11 +419,10 @@ impl Rule for CheckMergeReview {
                 }
             };
             let branch = full.strip_prefix("refs/heads/").unwrap_or(name);
-            let (deny, escapable) = check_branch(&merge.dir, &merge.default, branch, full, &body);
+            let (deny, context) = check_branch(&merge.dir, &merge.default, branch, full, &body);
             out.extend(deny.map(Finding::Deny));
-            unreviewed.extend(escapable.map(Finding::Deny));
+            out.extend(context.map(Finding::Context));
         }
-        out.extend(apply_escape(shell.escape(ESCAPE), ESCAPE, unreviewed));
         out
     }
 }
