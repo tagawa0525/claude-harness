@@ -20,7 +20,7 @@
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
 #      pull で配置するものが変われば NOTE で知らせる。ハーネス（claude-sync.sh を持つ）では、modules か flake なら取り込む側の
 #      lock の更新と rebuild、.claude なら claude-sync。rebuild する構成のリポジトリ（nix-rebuild.sh を持つ）では、
-#      modules、hosts、flake なら rebuild
+#      modules、hosts、secrets、flake なら rebuild
 #   3. origin から予約のタグ（adr-NNNN、issue-NNNN。ほかの clone が push したものを含む）を取ってきて、あれば、
 #      既定ブランチの履歴に記録が入った番号のタグを、ローカルとリモートから消す（design-records prune）。
 #      design-records が無いか origin に届かなければ残して続け、prune が失敗したら ERROR で止まる。
@@ -35,7 +35,8 @@
 # 出力:
 #   NOTE: <branch> は手元にもリモートにも無く、マージ済みの PR <url> を痕跡として...（マージ済みの PR だけが痕跡のとき）
 #   WORKTREE_REMOVED: <path>|none
-#   NOTE: rebuild が要る（...）。... / NOTE: claude-sync が要る（...）。...（該当するときだけ。0 行以上）
+#   NOTE: rebuild が要る（...）。... / NOTE: lock の更新と rebuild が要る（...）。... / NOTE: claude-sync が要る（...）。...
+#     （該当するときだけ。0 行以上）
 #   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
 #   LOCAL_BRANCH: deleted|none
 #   REMOTE_BRANCH: deleted|kept (...)|none
@@ -193,19 +194,27 @@ if [[ -n "$(git remote)" ]]; then
   # hook のバイナリと ~/.claude は rebuild か claude-sync で配置される。pull しただけでは古いまま動くので
   # 知らせる。自動では実行しない（rebuild は sudo が要り、走っている別のセッションの hook も入れ替わる）。
   # 判定は広く取る。配置するものを 1 つずつ挙げると漏れ、多めに知らせても害は無い
-  if git cat-file -e HEAD:modules/home/scripts/claude-sync.sh 2>/dev/null; then
-    # ハーネス（~/.claude の配置の元。claude-sync.sh を持つ）。hook とモジュールは、取り込む側（nixfiles）の lock が
-    # 固定した版で配置されるので、lock を進めてから rebuild する。テストは配置されない
-    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules flake.nix flake.lock ':!modules/home/parts/tests')" ]]; then
+  HAS_SYNC=no
+  HAS_REBUILD=no
+  # ~/.claude の配置の元（ハーネス）は claude-sync.sh を持ち、rebuild する構成のリポジトリ（nixfiles）は nix-rebuild.sh を持つ
+  git cat-file -e HEAD:modules/home/scripts/claude-sync.sh 2>/dev/null && HAS_SYNC=yes
+  git cat-file -e HEAD:modules/home/scripts/nix-rebuild.sh 2>/dev/null && HAS_REBUILD=yes
+  if [[ $HAS_REBUILD == yes ]]; then
+    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules hosts secrets flake.nix flake.lock)" ]]; then
+      echo "NOTE: rebuild が要る（modules、hosts、secrets か flake が変わった）。nix-rebuild rebuild まで hook や設定は古い版のまま動く"
+    fi
+  elif [[ $HAS_SYNC == yes ]]; then
+    # ハーネスの hook とモジュールは、取り込む側（nixfiles）の lock が固定した版で配置されるので、lock を進めてから rebuild する
+    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules flake.nix flake.lock)" ]]; then
       echo "NOTE: lock の更新と rebuild が要る（modules か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
     fi
-    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- .claude)" ]]; then
-      echo "NOTE: claude-sync が要る（.claude が変わった）。claude-sync か、lock の更新の後の rebuild まで ~/.claude は古い版のまま"
-    fi
-  elif git cat-file -e HEAD:modules/home/scripts/nix-rebuild.sh 2>/dev/null; then
-    # rebuild する構成のリポジトリ（nixfiles。nix-rebuild.sh を持つ）。その .claude はプロジェクトの指示で、その場で読まれる
-    if [[ -n "$(git diff --name-only "$BEFORE" HEAD -- modules hosts flake.nix flake.lock)" ]]; then
-      echo "NOTE: rebuild が要る（modules、hosts か flake が変わった）。nix-rebuild rebuild まで hook や設定は古い版のまま動く"
+  fi
+  # rebuild する構成のリポジトリだけの .claude はプロジェクトの指示で、その場で読まれる
+  if [[ $HAS_SYNC == yes && -n "$(git diff --name-only "$BEFORE" HEAD -- .claude)" ]]; then
+    if [[ $HAS_REBUILD == yes ]]; then
+      echo "NOTE: claude-sync が要る（.claude が変わった）。claude-sync か rebuild まで ~/.claude は古い版のまま"
+    else
+      echo "NOTE: claude-sync が要る（.claude が変わった）。claude-sync まで ~/.claude は古い版のまま。取り込む側（nixfiles）の lock を進める前に rebuild すると、lock が固定した古い版に戻る"
     fi
   fi
 fi
