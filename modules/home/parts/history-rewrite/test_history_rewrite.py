@@ -577,7 +577,7 @@ class HistoryRewrite(unittest.TestCase):
         )
 
     def test_an_indented_table_to_realign_stops(self):
-        # fix-markdown-lint の fix_markdown は表の字下げを外す（nixfiles の issue #428）ので、揃え直さずに止める
+        # 字下げした表を揃え直す場面は確かめていないので、揃え直さずに止める（history_rewrite.py の同じ箇所のコメント）
         work = Repo(Path(self.tmp.name) / "indented", self.env)
         work.path.mkdir()
         work.git("init", "-q")
@@ -649,7 +649,7 @@ class HistoryRewrite(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_table_row_with_an_escaped_pipe_stops(self):
-        # format_table は \| でも列を切る（nixfiles の issue #428）ので、揃え直さずに止める。コードスパンの中の
+        # format_table は \| でも列を切る（issue #46）ので、揃え直さずに止める。コードスパンの中の
         # エスケープしていない | は GFM でも区切りなので、そのまま揃え直す
         work = Repo(Path(self.tmp.name) / "pipes", self.env)
         work.path.mkdir()

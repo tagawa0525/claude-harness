@@ -184,8 +184,9 @@ class Transformer:
                 j += 1
             # 直した行を含む表だけを揃え直す（ほかの表の崩れは、この書き換えの範囲の外）
             if changed & set(range(i, j)):
-                # format_table は \| でも列を切り、fix_markdown は表の字下げを外す（nixfiles の issue #428）ので、
-                # hook と同じ形に揃え直せない表は止める
+                # format_table は \| でも列を切る（issue #46）ので、hook と同じ形に揃え直せない表は止める。
+                # 字下げした表は、format_table が字下げを保つようになった後も止めたままにしている。履歴の書き換えで
+                # 字下げした表を揃え直す場面を確かめるテストがまだ無い
                 for row in lines[i:j]:
                     if _ESCAPED_PIPE.search(row):
                         raise Stop(
