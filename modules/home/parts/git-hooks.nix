@@ -77,6 +77,8 @@ in
     stagedChecks
   ];
 
+  # core.hooksPath は programs.git が有効なときだけ gitconfig に書かれる。利用者の設定（git.nix）に頼らず、ここでも有効にする
+  programs.git.enable = true;
   programs.git.settings.core.hooksPath = "~/.config/git/hooks"; # グローバルhooksを使用
 
   # ===========================================================================

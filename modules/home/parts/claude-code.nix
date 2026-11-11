@@ -1,7 +1,7 @@
 # =============================================================================
 # Claude Code の設定
 # =============================================================================
-# Claude Code CLI、グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook、
+# グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook、
 # （./claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻）と Stop hook（自動メモリの退避）の登録、settings.json 管理
 # （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
@@ -249,17 +249,11 @@ let
 in
 {
   # ===========================================================================
-  # Claude Code パッケージ
+  # パッケージ（Claude Code と Claude Desktop の本体は claude-apps.nix）
   # ===========================================================================
   home.packages =
     with pkgs;
     [
-      llm-agents.claude-code # Claude Code CLI（自動更新）
-      # Anthropic 公式の Linux 版 deb（downloads.claude.ai の APT）を展開したもの
-      llm-agents.claude-desktop # Claude Desktop（GUI、自動更新）
-      # Cowork の VM が PATH から探す。同梱せず利用側で用意する設計
-      # （同梱すると closure が約 0.8 GiB 増える。上流 llm-agents.nix の claude-desktop）
-      qemu
       rsync # claude-sync スクリプトの実行時依存
       gitleaks # 手で検査するため（git の pre-commit は store のパスで呼ぶ。ADR-0015）
       pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
