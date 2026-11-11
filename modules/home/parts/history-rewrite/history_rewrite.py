@@ -28,7 +28,7 @@ Usage:
         確かめ、remap を最初の書き込みにする（remap は止まるとき何も書かない）
 
 語の指定:
-  --dictionary FILE   辞書（prh の形）。省くと nixfiles の ja-terms の辞書（ADR-0014）。重ねて渡せる
+  --dictionary FILE   辞書（prh の形）。省くと claude-harness の ja-terms の辞書（ADR-0014）。重ねて渡せる
   --extra-rules FILE  辞書に足す規則（prh の形。辞書に無い 1 回限りの置き換え）。重ねて渡せる
   --exclude GLOB      直さないパス（リポジトリの直下から。PurePosixPath.full_match の書き方で、** が
                       ディレクトリをまたぐ）。重ねて渡せる。コミットとタグの本文には当てない
@@ -204,7 +204,7 @@ class Transformer:
 
 
 def load_table_format():
-    """nixfiles の fix-markdown-lint.py（package.nix が store のパスを渡す）を読み込む"""
+    """このリポジトリの fix-markdown-lint.py（package.nix が store のパスを渡す）を読み込む"""
     path = os.environ.get("HISTORY_REWRITE_FIX_MARKDOWN_LINT")
     if not path:
         raise Stop(

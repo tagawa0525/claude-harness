@@ -8,7 +8,7 @@
 # home-manager アクティベーション（claude-code.nix）からも同じ実装が呼ばれる。
 #
 # Usage: claude-sync [source-repo]
-#   source-repo 省略時: ~/nix/nixfiles
+#   source-repo 省略時: ~/nix/claude-harness（このスクリプトと .claude を持つリポジトリの clone）
 #
 # 同期ポリシー（アクティベーションと同一）:
 #   - commands: --ignore-existing でユーザーカスタマイズを保護
@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-SOURCE_REPO="${1:-$HOME/nix/nixfiles}"
+SOURCE_REPO="${1:-$HOME/nix/claude-harness}"
 SOURCE_DIR="$SOURCE_REPO/.claude"
 CLAUDE_DIR="$HOME/.claude"
 

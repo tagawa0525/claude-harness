@@ -3,7 +3,7 @@
 Claude Code のグローバル設定。`claude-sync`（または home-manager の activation）で
 `~/.claude` に同期される（同期ポリシーは `modules/home/scripts/claude-sync.sh`）。
 
-`.claude/settings.json` は nixfiles のセッションのためのプロジェクトの設定で、同期の対象ではない（`~/.claude/settings.json` に
+`.claude/settings.json` はこのリポジトリのセッションのためのプロジェクトの設定で、同期の対象ではない（`~/.claude/settings.json` に
 入ると、どのリポジトリでもグローバルの指示が読まれなくなる）。
 
 ## 役割の分担
@@ -47,7 +47,7 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 | ---------------------- | -------------------------------------------------------------------------------- |
 | `grilling`, `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills) `skills/productivity/` |
 
-- 更新追従: `nix flake update mattpocock-skills` → rebuild
+- 更新追従: このリポジトリで `nix flake update mattpocock-skills` → 取り込む側（nixfiles）の lock の更新 → rebuild
 - デプロイ先は上流の完全なコピー（`rsync --delete`）。ローカルで編集しても rebuild で戻る
 - `claude-sync` コマンドは flake input を知らないため、外部スキルは rebuild でのみ同期される
 
@@ -183,7 +183,7 @@ references
   （`$HOME/.claude` 固定はリポジトリから実行したとき未同期の旧版を呼ぶ）
 - **SKILL.md の手順からスクリプトを呼ぶ**ときはデプロイ先の `~/.claude/...` を使う。
   スキルは任意のプロジェクトのカレントディレクトリで実行されるため、
-  `./.claude/...` は nixfiles 以外では存在しない
+  `./.claude/...` はこのリポジトリ以外では存在しない
 - Bash ツールから呼ぶスクリプトは `claude-code.nix` の許可リストに追加する
   （反映は activation なので rebuild が必要。`claude-sync` では反映されない）
 - 結果は `KEY: value` 形式の行で出す（`WORKTREE:` / `CAUSE:` / `VERDICT:` 等）。

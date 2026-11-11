@@ -38,7 +38,7 @@ worktree ごとのブランチの `Claude-Session:` を見て、作業中のセ�
 - 辞書: 省くと ja-terms の辞書（hook と同じ）。辞書に無い 1 回限りの置き換えは、prh の形のファイルにして
   `--extra-rules` で足す（`version: 1` と `rules:` の下に `expected` と `pattern`。prh.yml と同じ書き方）
 - 除くパス（`--exclude`、PurePosixPath.full_match の書き方）: 辞書の語を例として挙げるファイル。対象のリポジトリの
-  `.textlintignore` に挙げたファイルと、辞書そのもの（nixfiles なら `**/prh.yml`）を渡す。語を論じる文書でも、
+  `.textlintignore` に挙げたファイルと、辞書そのもの（claude-harness なら `**/prh.yml`）を渡す。語を論じる文書でも、
   その語が直す対象の造語なら除かない（除くと、その文書の造語が直らずに残る）
 
 決めた指定は 1 度だけ書き、`run` と 5 の `sync-worktrees` の両方に同じものを渡す（違うと、作業ツリーのファイルだけ

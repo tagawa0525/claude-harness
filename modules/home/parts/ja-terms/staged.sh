@@ -74,7 +74,7 @@ awk -F'\t' -v dir="$work/files/" '
 case $rc in
   0) exit 0 ;;
   1)
-    echo "❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: nixfiles の modules/home/parts/ja-terms/prh.yml）"
+    echo "❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: claude-harness の modules/home/parts/ja-terms/prh.yml）"
     exit 1
     ;;
   *)
