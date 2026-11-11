@@ -65,6 +65,13 @@ check "同じサイズと mtime の skills のファイルを上書きする" "$
 check "同じサイズと mtime の scripts のファイルを上書きする" "$DEST/scripts/a.sh" "ADR-NNNN"
 check "既存の commands のファイルは上書きしない" "$DEST/commands/c.md" "user"
 
+# 引数なしでは、ハーネスの clone から同期する。nixfiles の .claude/CLAUDE.md は nixfiles のプロジェクトの指示で、
+# グローバルの指示（~/.claude/CLAUDE.md）に入れると、どのリポジトリのセッションもそれを読む
+write "$HOME/nix/claude-harness/.claude/CLAUDE.md" "harness"
+write "$HOME/nix/nixfiles/.claude/CLAUDE.md" "nixfiles project"
+bash "$SYNC" >/dev/null || true
+check "引数なしでは ~/nix/claude-harness から同期する（nixfiles のプロジェクトの指示は入れない）" "$DEST/CLAUDE.md" "harness"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 (( FAIL == 0 ))
