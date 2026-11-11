@@ -157,12 +157,6 @@ args=$(cat "$TEST_ROOT/sbatch.args")
 assert_contains "$args" "--partition=timed"
 assert_contains "$args" "--exclusive"
 
-it "slurm-run: --timed のパーティションは、Slurm の設定（modules/slurm/common.nix）の割り込まれないパーティションと同じ"
-part=$(grep -o '"[a-z]* Nodes=[^"]*PreemptMode=OFF' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
-assert_ne "" "$part"
-"$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' >/dev/null
-assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$part"
-
 it "slurm-run: --timed は -c と組み合わせられず、投げずにエラー"
 rm -f "$TEST_ROOT/sbatch.args"
 out=$("$RUN" "${PURPOSE[@]}" --timed -c 4 -t 5 xlc-bench 'true' 2>&1)
@@ -170,9 +164,10 @@ assert_eq 1 $?
 assert_contains "$out" "ERROR:"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
-it "slurm-run: --timed を付けなければ、Slurm の設定の既定のパーティションを明示して投げる（SBATCH_PARTITION に左右されない）"
-default_part=$(grep -o '"[a-z]* Nodes=[^"]*Default=YES' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
-assert_ne "" "$default_part"
+# パーティションの名前（main、timed）と NFS の入口は、クラスタの構成（nixfiles の modules/slurm/）との約束。構成と同じことは、
+# 構成を持つ nixfiles の側のテストが確かめる
+it "slurm-run: --timed を付けなければ、既定のパーティション（main）を明示して投げる（SBATCH_PARTITION に左右されない）"
+default_part=main
 SBATCH_PARTITION=timed "$RUN" "${PURPOSE[@]}" -t 5 xlc-2G 'true' >/dev/null
 assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "--partition=$default_part"
 SBATCH_PARTITION=timed "$RUN" "${PURPOSE[@]}" -c 4 -t 5 xlc-2G-shared 'true' >/dev/null
@@ -449,10 +444,8 @@ assert_contains "$out" "ERROR:"
 assert_contains "$out" "/mnt/r995/github"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
-it "slurm-run: 既定の NFS の入口は、Nix のマウント点（modules/slurm/nfs-entry.nix）と同じ"
-nix_entry=$(grep -o '^"[^"]*"$' "$CLAUDE_DIR/../modules/slurm/nfs-entry.nix" | tr -d '"')
-assert_ne "" "$nix_entry"
-assert_eq "$nix_entry" "$(grep -o 'SLURM_RUN_NFS_ENTRY:-[^}]*' "$RUN" | cut -d- -f2-)"
+it "slurm-run: 既定の NFS の入口は /mnt/r995/github"
+assert_eq "/mnt/r995/github" "$(grep -o 'SLURM_RUN_NFS_ENTRY:-[^}]*' "$RUN" | cut -d- -f2-)"
 
 it "slurm-run: 知らないオプション（消した --urgent など）は、名前と読まずに投げずにエラー"
 cd "$HOME/github/proj" || exit 1

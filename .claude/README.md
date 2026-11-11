@@ -126,9 +126,9 @@ rebase と amend の後に `commit-refs remap`（`modules/home/parts/commit-refs
 マージを締めるコミット（MERGE_HEAD がある）、HEAD の無いリポジトリの最初のコミットは両方で例外にする。
 片方だけが塞ぐと作業が止まる（PR #165）。
 `modules/home/parts/tests/main-commit-gates.sh` が両層の判定の一致を検証する。
-また、リポジトリ内で自動コミットするスクリプトの件名は commit-msg hook を通る形式にする必要があり、
-`modules/home/parts/tests/commit-msg-conventions.sh` がその整合を検証する
-（スクリプトの `git commit -m` を集めて hook 自身に通す）。
+commit-msg hook の判定は `modules/home/parts/tests/commit-msg-conventions.sh` が検証する。自動コミットするスクリプトの
+件名との整合は、スクリプトを持つリポジトリ（nixfiles）の側のテストが、スクリプトの `git commit -m` を集めて hook に通して
+確かめる。
 
 判定できないルール（1 コミット 1 論理変更、TDD の分離、指摘の要否判断）は SKILL.md に残す。
 
