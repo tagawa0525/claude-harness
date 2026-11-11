@@ -180,19 +180,19 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
 /// （リポジトリの外）でも名前を決める
 fn isolate_git(command: &mut Command) {
     isolate(command);
-    for (i, (key, value)) in [
+    let config = [
         ("init.defaultBranch", "main"),
         ("user.name", "t"),
         ("user.email", "t@t"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+        // clone の checkout は configure より先に走るので、ここでも改行の変換を止める（configure の注記）
+        ("core.autocrlf", "false"),
+    ];
+    for (i, (key, value)) in config.iter().enumerate() {
         command
             .env(format!("GIT_CONFIG_KEY_{i}"), key)
             .env(format!("GIT_CONFIG_VALUE_{i}"), value);
     }
-    command.env("GIT_CONFIG_COUNT", "3");
+    command.env("GIT_CONFIG_COUNT", config.len().to_string());
 }
 
 /// CLI が作るコミットとタグのための、リポジトリの設定（署名と hook は使わない）。改行の変換は止め、期待値の
