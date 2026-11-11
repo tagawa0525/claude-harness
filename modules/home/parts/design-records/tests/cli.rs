@@ -103,6 +103,7 @@ impl TempRepo {
     }
 
     /// CLI を、`bin` を PATH の先頭に置いて実行する（git を差し替える）
+    #[cfg(unix)]
     fn run_with_bin(&self, bin: &Path, args: &[&str]) -> Output {
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
         let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
@@ -121,6 +122,7 @@ impl Drop for TempRepo {
 
 /// `bin/git` に偽の git を書く（`bin` は新しく作る）。`case " $* " in` の腕 `arms` に当たる呼び出しだけを変え、
 /// それ以外は本物の git を実行する。腕の中では本物の git を `"$GIT"` で呼ぶ。腕に埋めるパスは [`sh_quote`] で囲む
+#[cfg(unix)]
 fn fake_git(bin: &Path, arms: &str) {
     fs::create_dir(bin).unwrap();
     let found = Command::new("sh")
@@ -146,6 +148,7 @@ fn fake_git(bin: &Path, arms: &str) {
 }
 
 /// sh の単引用符で囲んだ文字列（偽の git のスクリプトに埋める）
+#[cfg(unix)]
 fn sh_quote(s: impl std::fmt::Display) -> String {
     format!("'{}'", s.to_string().replace('\'', "'\\''"))
 }
@@ -334,6 +337,9 @@ fn new_rejects_bad_slugs_and_missing_titles_without_writing() {
     assert!(!t.dir.join("docs").exists());
 }
 
+// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
+// 分岐は OS によらないので Linux で確かめる（ADR-0083）
+#[cfg(unix)]
 #[test]
 fn new_fails_without_writing_when_the_history_cannot_be_read() {
     let t = TempRepo::new("nohistory");
@@ -860,6 +866,9 @@ fn new_pushes_the_reservation_after_fetching_tags_of_other_clones() {
     assert_eq!(tag_message_in(&other, "adr-0003"), "use-c");
 }
 
+// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
+// 分岐は OS によらないので Linux で確かめる（ADR-0083）
+#[cfg(unix)]
 #[test]
 fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
     let t = TempRepo::with_remote("race");
@@ -892,6 +901,9 @@ fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
     assert!(t.remote_tag("adr-0002").contains("refs/tags/adr-0002"));
 }
 
+// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
+// 分岐は OS によらないので Linux で確かめる（ADR-0083）
+#[cfg(unix)]
 #[test]
 fn new_tags_the_latest_default_branch_when_it_retries() {
     let t = TempRepo::with_remote("retarget");
@@ -1312,9 +1324,10 @@ fn new_follows_the_remote_when_a_stale_local_tag_has_the_same_name() {
 fn renumber_reads_paths_with_spaces_and_skips_symlinks() {
     let t = duplicated_after_rebase("paths");
     t.write("plans/a plan.md", "ADR-0001 の計画\n");
-    // リポジトリの外のファイルへのリンク
+    // リポジトリの外のファイルへのリンク。Windows の symlink は管理者の権限か開発者モードが要るので、Unix だけで作る
     let outside = t.root.join("outside.md");
     fs::write(&outside, "ADR-0001 は a\n").unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, t.dir.join("plans/link.md")).unwrap();
     t.commit_all("docs: plan");
     let out = t.run(&["renumber", "1"]);
@@ -1357,8 +1370,12 @@ fn renumber_restores_the_tree_when_the_commit_is_rejected() {
     fs::create_dir(&hooks).unwrap();
     let hook = hooks.join("pre-commit");
     fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    // Git for Windows は実行ビットを見ずに hook を同梱の sh で実行する
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     t.git(&["config", "core.hooksPath", hooks.to_str().unwrap()]);
     let head = t.git(&["rev-parse", "HEAD"]);
     let out = t.run(&["renumber", "1"]);
@@ -1582,6 +1599,9 @@ fn new_tells_how_to_publish_the_default_branch_when_origin_has_none() {
     assert!(stderr(&out).contains("set-head"), "{}", stderr(&out));
 }
 
+// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
+// 分岐は OS によらないので Linux で確かめる（ADR-0083）
+#[cfg(unix)]
 #[test]
 fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
     let t = TempRepo::with_remote("same-clone");
@@ -1660,6 +1680,9 @@ fn new_keeps_remote_tracking_branches_that_origin_lacks() {
     );
 }
 
+// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
+// 分岐は OS によらないので Linux で確かめる（ADR-0083）
+#[cfg(unix)]
 #[test]
 fn prune_treats_tags_already_deleted_on_origin_as_released() {
     let t = TempRepo::with_remote("prune-gone");
@@ -1807,6 +1830,9 @@ fn dash_c_runs_in_another_worktree() {
     assert!(!out.status.success());
 }
 
+// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
+// 分岐は OS によらないので Linux で確かめる（ADR-0083）
+#[cfg(unix)]
 #[test]
 fn new_counts_a_record_merged_and_pruned_between_its_fetches() {
     let t = TempRepo::with_remote("merge-between");
@@ -1964,6 +1990,8 @@ fn renumber_without_a_common_ancestor_finds_references_and_file_links() {
     assert_eq!(t.read("links.md"), "[a](docs/adr/0005-use-a.md)\n");
 }
 
+// 読めないファイルを mode 000 で作る。Windows の権限は mode で表せない
+#[cfg(unix)]
 #[test]
 fn renumber_without_a_common_ancestor_stops_when_a_mentioning_file_cannot_be_read() {
     let t = TempRepo::new("no-ancestor-unreadable");
@@ -1984,6 +2012,9 @@ fn renumber_without_a_common_ancestor_stops_when_a_mentioning_file_cannot_be_rea
     assert!(t.dir.join("docs/adr/0001-use-a.md").exists());
 }
 
+// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
+// 分岐は OS によらないので Linux で確かめる（ADR-0083）
+#[cfg(unix)]
 #[test]
 fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
     let t = TempRepo::with_remote("retry-merge");
