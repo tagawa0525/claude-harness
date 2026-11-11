@@ -204,10 +204,10 @@ out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "SKIPPED: 1"
 assert_contains "$out" "UNTIMED: 0"
 
-it "表に入れるのは、Slurm の設定（modules/slurm/common.nix）の割り込まれないパーティションのジョブ"
-part=$(grep -o '"[a-z]* Nodes=[^"]*PreemptMode=OFF' "$CLAUDE_DIR/../modules/slurm/common.nix" | cut -d' ' -f1 | tr -d '"')
-assert_ne "" "$part"
-job 90 protected COMPLETED 10 2026-11-01T10:00:00 2026-11-01T10:05:00 1 "$part" > "$LOG"
+# パーティションの名前は、クラスタの構成（nixfiles の modules/slurm/common.nix）との約束。名前が構成と同じことは、
+# 構成を持つ nixfiles の側のテストが確かめる
+it "表に入れるのは、割り込まれないパーティション（timed）のジョブ"
+job 90 protected COMPLETED 10 2026-11-01T10:00:00 2026-11-01T10:05:00 1 timed > "$LOG"
 out=$("$SCRIPTS_DIR/slurm-history.sh" "$LOG")
 assert_contains "$out" "protected"
 assert_contains "$out" "UNTIMED: 0"

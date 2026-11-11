@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# スクリプトが生成するコミットメッセージが commit-msg hook を通ることを検証する
+# commit-msg hook の判定（Conventional Commits、件名の長さ、fork の対象外）を検証する
 # =============================================================================
-# ../git-hooks.nix の commit-msg hook（Conventional Commits を強制）と、リポジトリ内で
-# 自動コミットするスクリプトの整合を見る。
-#
-# 実際に起きた不整合: nix-rebuild.sh が `flake: update (host)` を生成していたが、
-# hook の型リストに `flake` がないため Claude Code セッション（CLAUDECODE=1）からの
-# update が最後のコミットで必ず失敗していた。片方だけ変えると再発するため、
-# 「スクリプトが書くメッセージ」を hook 自身に通して確かめる。
+# ../git-hooks.nix の commit-msg hook に件名を通して、通すものと止めるものを見る。
+# 自動コミットするスクリプトが書くメッセージとの整合（nix-rebuild.sh の `chore(flake): update`）は、
+# スクリプトを持つ nixfiles の側のテストが確かめる。
 #
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/commit-msg-conventions.sh
@@ -20,13 +16,12 @@ set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 
-HOST="${1:-r995}"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> commit-msg hook をビルドする（nixosConfigurations.${HOST}）"
+echo "==> commit-msg hook をビルドする（homeConfigurations.test）"
 cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
-  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/commit-msg\".source")" \
+  ".#homeConfigurations.test.config.xdg.configFile.\"git/hooks/commit-msg\".source")" \
   "$WORK/commit-msg"
 chmod +x "$WORK/commit-msg"
 
@@ -60,27 +55,10 @@ check() {
   fi
 }
 
-echo "==> スクリプトが生成するメッセージを収集して検証する"
-# `git commit -m "..."` の形で書かれたリテラルのメッセージを集める。
-# 変数展開（$HOSTNAME 等）はダミー値に置き換えてから検証する
-found=0
-while IFS= read -r line; do
-  msg=$(sed -E 's/.*git commit[^"]*"([^"]*)".*/\1/' <<<"$line")
-  [[ -n "$msg" ]] || continue
-  msg="${msg//\$HOSTNAME/testhost}"
-  msg="${msg//\$\{HOSTNAME\}/testhost}"
-  found=$((found + 1))
-  check ok "modules/home/scripts" "$msg"
-done < <(grep -rhE 'git commit +-m +"[^"]+"' "$ROOT/modules/home/scripts" || true)
-
-if (( found == 0 )); then
-  echo "✗ スクリプトから git commit -m のメッセージを 1 件も抽出できませんでした" >&2
-  echo "   （書き方が変わった可能性がある。抽出パターンを見直すこと）" >&2
-  FAIL=$((FAIL + 1))
-fi
-
 echo "==> hook 自体の判定（回帰確認）"
 check ok "sanity" "feat(scope): 追加する"
+# nixfiles の nix-rebuild.sh が自動で書く件名。この形を止めると、毎日の自動更新が最後のコミットで失敗する
+check ok "sanity" "chore(flake): update (testhost)"
 check ng "sanity" "flake: update (testhost)"
 check ng "sanity" "何の型もない件名"
 

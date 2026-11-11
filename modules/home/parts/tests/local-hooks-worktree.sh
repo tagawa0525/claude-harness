@@ -14,7 +14,6 @@
 
 set -euo pipefail
 
-HOST="${1:-r995}"
 ROOT=$(git rev-parse --show-toplevel)
 
 WORK=$(mktemp -d)
@@ -25,9 +24,9 @@ mkdir -p "$HOOKS"
 NAMES=(pre-commit pre-merge-commit commit-msg)
 # hook ごとに build する（1 回にまとめると、出力と hook の対応を出力の順に頼ることになる）
 for name in "${NAMES[@]}"; do
-  echo "==> $name hook をビルドする（nixosConfigurations.${HOST}）"
+  echo "==> $name hook をビルドする（homeConfigurations.test）"
   cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
-    "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$name\".source")" \
+    "$ROOT#homeConfigurations.test.config.xdg.configFile.\"git/hooks/$name\".source")" \
     "$HOOKS/$name"
   chmod +x "$HOOKS/$name"
 done

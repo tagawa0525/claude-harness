@@ -13,13 +13,12 @@
 
 set -euo pipefail
 
-HOST="${1:-r995}"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> pre-commit hook をビルドする（nixosConfigurations.${HOST}）"
+echo "==> pre-commit hook をビルドする（homeConfigurations.test）"
 cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
-  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/pre-commit\".source")" \
+  ".#homeConfigurations.test.config.xdg.configFile.\"git/hooks/pre-commit\".source")" \
   "$WORK/pre-commit"
 chmod +x "$WORK/pre-commit"
 

@@ -14,7 +14,6 @@
 
 set -euo pipefail
 
-HOST="${1:-r995}"
 
 if ! command -v ruff >/dev/null 2>&1; then
   echo "✗ ruff が PATH にない。既定の検査が走ったかを確かめられないので、このテストは成立しない"
@@ -24,9 +23,9 @@ fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> pre-commit hook をビルドする（nixosConfigurations.${HOST}）"
+echo "==> pre-commit hook をビルドする（homeConfigurations.test）"
 cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
-  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/pre-commit\".source")" \
+  ".#homeConfigurations.test.config.xdg.configFile.\"git/hooks/pre-commit\".source")" \
   "$WORK/pre-commit"
 chmod +x "$WORK/pre-commit"
 

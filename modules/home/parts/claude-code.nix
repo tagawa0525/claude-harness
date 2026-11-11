@@ -5,12 +5,16 @@
 # （./claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻）と Stop hook（自動メモリの退避）の登録、settings.json 管理
 # （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
+# flake.nix が lib.modules.importApply で 1 つ目の引数を束ねる。モジュールの引数（_module.args、specialArgs）で
+# 受けないのは、利用する側が同じ名前を specialArgs で渡すと、黙ってそちらが勝つため
+{
+  claudeCodeSource, # .claude/ を ~/.claude に同期する元（この flake の self）
+  mattpocock-skills,
+  lsp-det,
+}:
 {
   pkgs,
   lib,
-  claudeCodeSource ? null,
-  mattpocock-skills ? null,
-  lsp-det ? null,
   ...
 }:
 
@@ -18,7 +22,7 @@ let
   # 外部リポジトリ由来のスキル。出所は flake input（rev は flake.lock）で記録し、
   # 更新は `nix flake update <input>` → rebuild で追従する。
   # デプロイ先ディレクトリは丸ごと上流のコピーとして扱う（ローカル編集は上書きされる）
-  externalSkills = lib.optionals (mattpocock-skills != null) [
+  externalSkills = [
     {
       name = "grilling";
       src = "${mattpocock-skills}/skills/productivity/grilling";
@@ -258,14 +262,12 @@ in
       gitleaks # 手で検査するため（git の pre-commit は store のパスで呼ぶ。ADR-0015）
       pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
     ]
-    ++ lib.optional (lsp-det != null) lsp-det.packages.${pkgs.stdenv.hostPlatform.system}.default;
+    ++ [ lsp-det.packages.${pkgs.stdenv.hostPlatform.system}.default ];
 
   # lsp-det のドッグフーディングのプラグイン（flake input の固定 rev の dogfood/claude-plugin）。
   # skills 直下のプラグインは Claude Code が毎回読む（lsp-det-dogfood@skills-dir）。
   # 上流は .lsp.json が PATH に求める（rust-analyzer は各リポジトリの devShell、nixd はシステム、pyright は上）
-  home.file.".claude/skills/lsp-det-dogfood" = lib.mkIf (lsp-det != null) {
-    source = "${lsp-det}/dogfood/claude-plugin";
-  };
+  home.file.".claude/skills/lsp-det-dogfood".source = "${lsp-det}/dogfood/claude-plugin";
 
   # PreToolUse hook バイナリ（settings.json はこの固定パスを参照する）
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
@@ -285,19 +287,17 @@ in
 
   # Claude Code グローバル設定の同期
   # flakeソースの .claude を ~/.claude に同期（ポリシーは scripts/claude-sync.sh を参照）
-  # claudeCodeSourceがnullの場合は何もしない（オプトイン）
   home.activation.claudeCodeSetup = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     CLAUDE_DIR="$HOME/.claude"
 
     # .claude ディレクトリを作成
     mkdir -p "$CLAUDE_DIR"
 
-    ${lib.optionalString (claudeCodeSource != null) ''
-      # CLAUDE.md/commands/skills/scripts の同期（claude-sync コマンドと共通実装）
-      # 同期ポリシーは modules/home/scripts/claude-sync.sh を参照
-      PATH="${pkgs.rsync}/bin:$PATH" $DRY_RUN_CMD ${pkgs.bash}/bin/bash \
-        ${../scripts/claude-sync.sh} "${claudeCodeSource}"
-    ''}
+    # CLAUDE.md/commands/skills/scripts の同期（claude-sync コマンドと共通実装）
+    # 同期ポリシーは modules/home/scripts/claude-sync.sh を参照
+    PATH="${pkgs.rsync}/bin:$PATH" $DRY_RUN_CMD ${pkgs.bash}/bin/bash \
+      ${../scripts/claude-sync.sh} "${claudeCodeSource}"
+
 
     # 外部スキルのデプロイ（externalSkills）。上流のコピーなので --delete で完全一致させる。
     # claude-sync コマンドは flake input を知らないため、ここ（rebuild）でのみ同期される。
@@ -309,7 +309,6 @@ in
     '') externalSkills}
 
     # 静的設定と hook を settings.json に反映
-    # claudeCodeSource の有無に関わらず常に実行（宣言的管理を保証）
     SETTINGS="$CLAUDE_DIR/settings.json"
     if [ ! -f "$SETTINGS" ]; then
       echo '{}' > "$SETTINGS"

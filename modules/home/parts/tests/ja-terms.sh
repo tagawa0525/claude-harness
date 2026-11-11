@@ -16,7 +16,6 @@
 
 set -euo pipefail
 
-HOST="${1:-r995}"
 ROOT=$(git rev-parse --show-toplevel)
 
 WORK=$(mktemp -d)
@@ -25,15 +24,15 @@ trap 'rm -rf "$WORK"' EXIT
 HOOKS="$WORK/hooks"
 mkdir -p "$HOOKS"
 for hook in pre-commit commit-msg; do
-  echo "==> $hook hook をビルドする（nixosConfigurations.${HOST}）"
+  echo "==> $hook hook をビルドする（homeConfigurations.test）"
   built=$(nix build --no-link --print-out-paths --option warn-dirty false \
-    "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$hook\".source")
+    "$ROOT#homeConfigurations.test.config.xdg.configFile.\"git/hooks/$hook\".source")
   cp "$built" "$HOOKS/$hook"
   chmod +x "$HOOKS/$hook"
 done
-echo "==> ~/.claude/bin/ja-terms-files をビルドする（nixosConfigurations.${HOST}）"
+echo "==> ~/.claude/bin/ja-terms-files をビルドする（homeConfigurations.test）"
 home_files=$(nix build --no-link --print-out-paths --option warn-dirty false \
-  "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.home-files")
+  "$ROOT#homeConfigurations.test.config.home-files")
 JA_TERMS_FILES="$home_files/.claude/bin/ja-terms-files"
 MEMORY_INDEX="$ROOT/.claude/skills/retro/scripts/memory-index.sh"
 

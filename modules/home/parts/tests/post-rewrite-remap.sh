@@ -16,7 +16,6 @@
 
 set -euo pipefail
 
-HOST="${1:-r995}"
 ROOT=$(git rev-parse --show-toplevel)
 
 WORK=$(mktemp -d)
@@ -24,9 +23,9 @@ trap 'rm -rf "$WORK"' EXIT
 
 HOOKS="$WORK/hooks"
 mkdir -p "$HOOKS"
-echo "==> post-rewrite hook をビルドする（nixosConfigurations.${HOST}）"
+echo "==> post-rewrite hook をビルドする（homeConfigurations.test）"
 BUILT=$(nix build --no-link --print-out-paths --option warn-dirty false \
-  "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/post-rewrite\".source")
+  "$ROOT#homeConfigurations.test.config.xdg.configFile.\"git/hooks/post-rewrite\".source")
 cp "$BUILT" "$HOOKS/post-rewrite"
 chmod +x "$HOOKS/post-rewrite"
 
