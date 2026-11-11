@@ -20,7 +20,8 @@
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
 #      pull で配置するものが変われば NOTE で知らせる。ハーネス（claude-sync.sh を持つ）では、modules か flake なら取り込む側の
 #      lock の更新と rebuild、.claude なら claude-sync。rebuild する構成のリポジトリ（nix-rebuild.sh を持つ）では、
-#      modules、hosts、secrets、flake なら rebuild
+#      modules、hosts、secrets、flake なら rebuild。両方を持つリポジトリ（自分の .claude を配り、自分で rebuild する）では、
+#      rebuild と claude-sync
 #   3. origin から予約のタグ（adr-NNNN、issue-NNNN。ほかの clone が push したものを含む）を取ってきて、あれば、
 #      既定ブランチの履歴に記録が入った番号のタグを、ローカルとリモートから消す（design-records prune）。
 #      design-records が無いか origin に届かなければ残して続け、prune が失敗したら ERROR で止まる。
@@ -211,10 +212,12 @@ if [[ -n "$(git remote)" ]]; then
   fi
   # rebuild する構成のリポジトリだけの .claude はプロジェクトの指示で、その場で読まれる
   if [[ $HAS_SYNC == yes && -n "$(git diff --name-only "$BEFORE" HEAD -- .claude)" ]]; then
+    # 引数なしの claude-sync は既定の clone を読む。pull したのがそこと限らないので、このリポジトリを元に渡す形で示す
+    SYNC_CMD="claude-sync $(git rev-parse --show-toplevel)"
     if [[ $HAS_REBUILD == yes ]]; then
-      echo "NOTE: claude-sync が要る（.claude が変わった）。claude-sync か rebuild まで ~/.claude は古い版のまま"
+      echo "NOTE: claude-sync が要る（.claude が変わった）。$SYNC_CMD か rebuild まで ~/.claude は古い版のまま"
     else
-      echo "NOTE: claude-sync が要る（.claude が変わった）。claude-sync まで ~/.claude は古い版のまま。取り込む側（nixfiles）の lock を進める前に rebuild すると、lock が固定した古い版に戻る"
+      echo "NOTE: claude-sync が要る（.claude が変わった）。$SYNC_CMD まで ~/.claude は古い版のまま。取り込む側（nixfiles）の lock を進める前に rebuild すると、lock が固定した古い版に戻る"
     fi
   fi
 fi
