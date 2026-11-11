@@ -3,7 +3,7 @@
 # git post-rewrite hook が、オプトインしたリポジトリでだけ、rebase と amend の後に
 # 文書の中のコミットの番号を付け直すことを検証する
 # =============================================================================
-# ../git.nix の post-rewrite は core.hooksPath でグローバル配布され、`git config remap.commitRefs true`
+# ../git-hooks.nix の post-rewrite は core.hooksPath でグローバル配布され、`git config remap.commitRefs true`
 # のリポジトリで commit-refs remap（../commit-refs）に旧と新の対応を渡す。置き換えはコミット
 # しないので、コミットが要ることを表示する。プロジェクトローカルの .git/hooks/post-rewrite が
 # あれば先に呼ぶ。

@@ -3,7 +3,7 @@
 # git pre-commit hook が、プロジェクトの .pre-commit-config.yaml を prek で実行し、
 # そのうえで既定の検査も実行することを検証する
 # =============================================================================
-# ../git.nix の pre-commit は core.hooksPath でグローバル配布される。プロジェクトは
+# ../git-hooks.nix の pre-commit は core.hooksPath でグローバル配布される。プロジェクトは
 # .pre-commit-config.yaml に hook を足してオプトインする（設計の記録の検査など。ADR-0009）。
 # core.hooksPath があると prek install は拒否されるので、グローバルの hook が prek を呼ぶ。
 # prek は偽物（呼ばれた引数を記録し、決めた終了コードで終わる）を PATH の先頭に置き、

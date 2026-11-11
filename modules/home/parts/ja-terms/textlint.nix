@@ -1,5 +1,5 @@
 # 崩れた日本語の語の検査（ADR-0014）に使う textlint と設定、コミットのメッセージの検査（ja-terms-message）と、
-# それを含むコミットの規約の検査（commit-msg-check）。git.nix（pre-commit と commit-msg）と claude-hooks（git merge の
+# それを含むコミットの規約の検査（commit-msg-check）。git-hooks.nix（pre-commit と commit-msg）と claude-hooks（git merge の
 # 本文の語を先に検査するルール。ADR-0050。git commit の本文を先に検査するルール。ADR-0073）が同じものを store の
 # パスで呼ぶ。ファイルの全体の検査（ja-terms-files）は、claude-code.nix が ~/.claude/bin に置き、/retro の
 # memory-index.sh が自動メモリに使う（ADR-0074）。

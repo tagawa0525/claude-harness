@@ -4,7 +4,7 @@
 # =============================================================================
 # 同じルールを次の 2 か所で守っている:
 #   1. ../claude-hooks の block-main-commit   Claude Code の PreToolUse hook（Rust 製バイナリ）
-#   2. ../git.nix の pre-commit hook        git 側（core.hooksPath でグローバル配布）
+#   2. ../git-hooks.nix の pre-commit hook        git 側（core.hooksPath でグローバル配布）
 #
 # 片方だけが塞ぐと作業が止まる。実際に PR #165 で、flake.lock の例外が git 側にだけ
 # あって PreToolUse hook になく、nix-rebuild update がコミットできなくなった。

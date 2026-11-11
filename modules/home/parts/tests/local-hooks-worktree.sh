@@ -3,7 +3,7 @@
 # グローバルの git hook（pre-commit、pre-merge-commit、commit-msg）が、linked worktree でも
 # プロジェクトローカルの .git/hooks/<name> を呼ぶことを検証する
 # =============================================================================
-# ../git.nix の hook は core.hooksPath でグローバル配布され、プロジェクトローカルの hook があれば呼ぶ。
+# ../git-hooks.nix の hook は core.hooksPath でグローバル配布され、プロジェクトローカルの hook があれば呼ぶ。
 # ローカルの hook は共通の .git/hooks/ にあり、linked worktree の --git-dir（.git/worktrees/<name>）
 # の下には無い。
 #

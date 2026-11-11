@@ -101,7 +101,7 @@ GraphQL の mutation）は、その引数ノードの原文（入れ子のヒア
 そのコマンドより前にある `cd <dir>` で決める。新しいルールは `src/rules/` に 1 ファイルで追加し、
 `rules/mod.rs` の一覧に載せる（テストは `tests/hooks.sh` に `--rule <name>` で 1 ルールずつ書く）。
 
-git 側の hook（`modules/home/parts/git.nix`、`core.hooksPath` でグローバル配布）も同じ考え方で、
+git 側の hook（`modules/home/parts/git-hooks.nix`、`core.hooksPath` でグローバル配布）も同じ考え方で、
 Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-commit が main 直接コミットの
 拒否、機密情報の検査（gitleaks。ステージした中身を見る。行の `gitleaks:allow`、`.gitleaksignore`、
 `.gitleaks.toml` で除き、`ALLOW_SECRET_COMMIT=<理由>` で迂回する。ADR-0015）と言語別チェック・Markdown 自動修正を、

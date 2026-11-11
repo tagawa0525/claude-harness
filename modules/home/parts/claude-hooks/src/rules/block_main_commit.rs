@@ -2,7 +2,7 @@
 //!
 //! CLAUDE.md の「main ブランチに直接コミットしない」をツールレベルで強制する。リモートの有無によらず止める
 //! （GitHub のリモートが無いリポジトリも、ブランチは /git-merge でローカルの main にマージする）。
-//! 例外は git 側の pre-commit hook（modules/home/parts/git.nix）と必ず揃える
+//! 例外は git 側の pre-commit hook（modules/home/parts/git-hooks.nix）と必ず揃える
 //! （modules/home/parts/tests/main-commit-gates.sh が一致を検証する）:
 //! - flake.lock だけの変更（M 1 件）は nix-rebuild update の正規フローなので通す
 //! - マージを締めるコミット（MERGE_HEAD がある）は、/git-merge で本文の語に拒まれた後や競合を解決した後に
@@ -17,7 +17,7 @@ use crate::shell::Shell;
 
 pub struct BlockMainCommit;
 
-/// 拒否の文言。git の pre-commit（modules/home/parts/git.nix）も同じ趣旨の文言を出す
+/// 拒否の文言。git の pre-commit（modules/home/parts/git-hooks.nix）も同じ趣旨の文言を出す
 const DENY_MESSAGE: &str = "main / master ブランチへの直接コミットは禁止されています。featureブランチを作成してください: /git-branch\n\
 - GitHub のリモートが無いリポジトリでも、ブランチは /git-merge で main にマージするので、main に直接コミットする理由はありません\
 （2026-11-06 に、cd が失敗した後の git commit が別のリポジトリの main に空のコミットを作りました）\n\
