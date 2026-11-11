@@ -864,6 +864,20 @@ assert_contains "$out" "NOTE: rebuild が要る"
 assert_not_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: claude-sync.sh と nix-rebuild.sh の両方を持つリポジトリでは、.claude の変更に、そのリポジトリを元にした claude-sync を知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup46"
+commit_file "$TEST_ROOT/cleanup46/app" modules/home/scripts/nix-rebuild.sh "chore: nix-rebuild"
+git -C "$TEST_ROOT/cleanup46/app" push -q origin main
+advance_origin_main "$TEST_ROOT/cleanup46/app" .claude/skills/x/SKILL.md >/dev/null
+cd "$TEST_ROOT/cleanup46/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: claude-sync が要る"
+# 引数なしの claude-sync は既定の clone を読むので、pull したこのリポジトリを元に渡す形で示す
+assert_contains "$out" "claude-sync $TEST_ROOT/cleanup46/app"
+assert_not_contains "$out" "lock を進める前に rebuild"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: ハーネスで pull で .claude の下が変われば、claude-sync が要ると NOTE で知らせる"
 setup_claude_sync_source "$TEST_ROOT/cleanup16"
 advance_origin_main "$TEST_ROOT/cleanup16/app" .claude/skills/x/SKILL.md >/dev/null
@@ -871,8 +885,10 @@ cd "$TEST_ROOT/cleanup16/app" || exit 1
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_contains "$out" "NOTE: claude-sync が要る"
+# 引数なしの claude-sync は既定の clone を読むので、pull したこのリポジトリを元に渡す形で示す
+assert_contains "$out" "claude-sync $TEST_ROOT/cleanup16/app"
 # claude-sync で入れても、lock を進める前の rebuild は lock が固定した古い版を配り直す
-assert_contains "$out" "lock"
+assert_contains "$out" "lock を進める前に rebuild"
 assert_not_contains "$out" "NOTE: rebuild が要る"
 assert_not_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
