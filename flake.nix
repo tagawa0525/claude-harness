@@ -49,12 +49,13 @@
       # ~/.claude の中身と settings.json、PreToolUse hook、git のグローバルの hook。
       # Claude Code の本体は入れない（版は利用する側の構成が決める）
       homeManagerModules.default = {
-        _module.args = {
-          claudeCodeSource = self; # .claude/ を ~/.claude に同期する元
-          inherit mattpocock-skills lsp-det;
-        };
+        _file = ./flake.nix;
+        key = "claude-harness#homeManagerModules.default"; # 2 か所から import されても 1 つにまとまる
         imports = [
-          ./modules/home/parts/claude-code.nix
+          (nixpkgs.lib.modules.importApply ./modules/home/parts/claude-code.nix {
+            claudeCodeSource = self;
+            inherit mattpocock-skills lsp-det;
+          })
           ./modules/home/parts/git-hooks.nix
         ];
       };
@@ -88,6 +89,7 @@
 
       # nix flake check は packages を評価するだけで checkPhase（cargo test）を実行しない。
       # サンドボックスでだけ落ちるテスト（PATH に git が無い等）を見つけるため、テストのあるパッケージを checks に入れる
+      # モジュール（claude-code.nix、git-hooks.nix）の評価の誤りも止めるため、テスト用の構成の activation もビルドする
       checks.${system} = {
         inherit (self.packages.${system})
           claude-hooks
@@ -95,6 +97,7 @@
           design-records
           history-rewrite
           ;
+        home-test = self.homeConfigurations.test.activationPackage;
       };
     };
 }
