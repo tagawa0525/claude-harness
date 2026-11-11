@@ -17,12 +17,17 @@ Linux のテストは `nix flake check` が流す（ADR-0022）が、Windows で
 （2026-11-12、`gh repo view --json visibility` が `PUBLIC`）。
 
 `windows-latest` で 3 つの crate の `cargo test --locked` を流すと、どれもコンパイルの段階で落ちた（2026-11-12、
-試しの run 43071331951）。原因は `std::os::unix` の使用で、内訳は次のとおり。
+試しの run 43071331951）。原因は `std::os::unix` の使用で、コンパイルのエラーの数の内訳は次のとおり（1 つの関数に
+2 つのエラーが出るところもあるので、直す関数の数とは一致しない）。
 
 - `claude-hooks`: 本体の 1 か所（`check_merge_body_ja_terms.rs` の、hook の実行ビットを `mode()` で見る判定）と、
   テストの約 20 か所（偽の検査を sh のスクリプトで作り `from_mode(0o755)` を付ける、symlink）
 - `commit-refs`: 本体の 4 ファイル（`OsStrExt` で git の出力のバイト列をパスにする）と、テストの約 16 か所
 - `design-records`: テストの 8 か所だけ（偽の git、symlink、mode 000）
+
+テストは、`git` のほかに `date` と `sh` を呼ぶ（`design-records` の `tests/cli.rs` の `today`、`sh_in`）。Windows では
+これらは Git for Windows の `usr\bin` にあり、GitHub Actions の Windows のランナーと Git Bash の中（Claude Code の
+Bash ツール）では PATH に入っているが、Git for Windows の既定の設定のコマンドプロンプトでは入っていない。
 
 テストの多くは、外のコマンド（`git`、`commit-msg-check` など）の偽物を sh のスクリプトで作って PATH の先頭に置き、
 失敗の分岐を起こす。Windows の Rust の `Command` は PATH から `.exe` しか探さないので、sh の偽物を呼べない。
@@ -65,6 +70,8 @@ Linux のテストは `nix flake check` が流す（ADR-0022）が、Windows で
 - 案 3 は、本体にテストのためだけの入口が増え、偽物を Windows で動かす問題も残る
 
 ### 帰結
+
+- 手元の Windows でテストを流すときは、Git Bash の中（Bash ツール）で `cargo test` を実行する
 
 - 良い点: PR ごとに Windows で確かめられ、Windows を壊す変更が PR の段階で見つかる
 - 悪い点: エラーの分岐は Windows では確かめない。OS で変わる処理がエラーの分岐の中にあれば見落とす
