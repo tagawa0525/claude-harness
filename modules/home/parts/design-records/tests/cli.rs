@@ -122,6 +122,9 @@ impl Drop for TempRepo {
 
 /// `bin/git` に偽の git を書く（`bin` は新しく作る）。`case " $* " in` の腕 `arms` に当たる呼び出しだけを変え、
 /// それ以外は本物の git を実行する。腕の中では本物の git を `"$GIT"` で呼ぶ。腕に埋めるパスは [`sh_quote`] で囲む
+///
+/// Unix だけ: 偽の git は sh のスクリプトで、Windows の `Command` は PATH から `.exe` しか探さず、偽物を呼べない。
+/// これを使うテストが起こす git の失敗の分岐は OS によらないので、Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 fn fake_git(bin: &Path, arms: &str) {
     fs::create_dir(bin).unwrap();
@@ -339,8 +342,6 @@ fn new_rejects_bad_slugs_and_missing_titles_without_writing() {
     assert!(!t.dir.join("docs").exists());
 }
 
-// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
-// 分岐は OS によらないので Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 #[test]
 fn new_fails_without_writing_when_the_history_cannot_be_read() {
@@ -868,8 +869,6 @@ fn new_pushes_the_reservation_after_fetching_tags_of_other_clones() {
     assert_eq!(tag_message_in(&other, "adr-0003"), "use-c");
 }
 
-// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
-// 分岐は OS によらないので Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 #[test]
 fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
@@ -903,8 +902,6 @@ fn new_takes_the_next_number_when_another_clone_pushes_the_same_tag_first() {
     assert!(t.remote_tag("adr-0002").contains("refs/tags/adr-0002"));
 }
 
-// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
-// 分岐は OS によらないので Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 #[test]
 fn new_tags_the_latest_default_branch_when_it_retries() {
@@ -1323,18 +1320,28 @@ fn new_follows_the_remote_when_a_stale_local_tag_has_the_same_name() {
 }
 
 #[test]
-fn renumber_reads_paths_with_spaces_and_skips_symlinks() {
+fn renumber_reads_paths_with_spaces() {
     let t = duplicated_after_rebase("paths");
     t.write("plans/a plan.md", "ADR-0001 の計画\n");
-    // リポジトリの外のファイルへのリンク。Windows の symlink は管理者の権限か開発者モードが要るので、Unix だけで作る
-    let outside = t.root.join("outside.md");
-    fs::write(&outside, "ADR-0001 は a\n").unwrap();
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&outside, t.dir.join("plans/link.md")).unwrap();
     t.commit_all("docs: plan");
     let out = t.run(&["renumber", "1"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(t.read("plans/a plan.md"), "ADR-0002 の計画\n");
+    assert_eq!(t.git(&["status", "--porcelain"]), "");
+}
+
+// Windows の symlink は管理者の権限か開発者モードが要るので、Unix だけで作る
+#[cfg(unix)]
+#[test]
+fn renumber_skips_symlinks() {
+    let t = duplicated_after_rebase("symlinks");
+    // リポジトリの外のファイルへのリンク
+    let outside = t.root.join("outside.md");
+    fs::write(&outside, "ADR-0001 は a\n").unwrap();
+    std::os::unix::fs::symlink(&outside, t.dir.join("link.md")).unwrap();
+    t.commit_all("docs: link");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     // リンクの先は書き換えない（足した行はリンクの blob の行で、先のファイルの行ではない）
     assert_eq!(fs::read_to_string(&outside).unwrap(), "ADR-0001 は a\n");
     assert_eq!(t.git(&["status", "--porcelain"]), "");
@@ -1601,8 +1608,6 @@ fn new_tells_how_to_publish_the_default_branch_when_origin_has_none() {
     assert!(stderr(&out).contains("set-head"), "{}", stderr(&out));
 }
 
-// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
-// 分岐は OS によらないので Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 #[test]
 fn sessions_in_one_clone_do_not_share_a_number_while_one_is_pushing() {
@@ -1682,8 +1687,6 @@ fn new_keeps_remote_tracking_branches_that_origin_lacks() {
     );
 }
 
-// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
-// 分岐は OS によらないので Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 #[test]
 fn prune_treats_tags_already_deleted_on_origin_as_released() {
@@ -1832,8 +1835,6 @@ fn dash_c_runs_in_another_worktree() {
     assert!(!out.status.success());
 }
 
-// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
-// 分岐は OS によらないので Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 #[test]
 fn new_counts_a_record_merged_and_pruned_between_its_fetches() {
@@ -2014,8 +2015,6 @@ fn renumber_without_a_common_ancestor_stops_when_a_mentioning_file_cannot_be_rea
     assert!(t.dir.join("docs/adr/0001-use-a.md").exists());
 }
 
-// 偽の git は sh のスクリプトで、Windows の Command は PATH から .exe しか探さず、偽物を呼べない。git の失敗を起こす
-// 分岐は OS によらないので Linux で確かめる（ADR-0083）
 #[cfg(unix)]
 #[test]
 fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
