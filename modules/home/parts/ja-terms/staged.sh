@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # ステージしたファイルの崩れた日本語の語を検査する（ADR-0014）。グローバルの pre-commit が、リポジトリの
 # 直下で呼ぶ。JA_TERMS_CONFIG（textlint の設定）と JA_TERMS_PATHSPECS（検査するファイルの pathspec。改行
 # 区切り）は、git.nix の writeShellApplication が与える。
