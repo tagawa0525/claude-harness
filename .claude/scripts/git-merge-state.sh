@@ -143,7 +143,7 @@ if [[ "$ADR_DIR_ENTRY" =~ ^[0-9]+\ tree\  ]]; then
       # 一覧が出ないことを docs/adr の無いリポジトリと取り違えないよう、読めないときは行を出さずに止める
       if ! command -v design-records >/dev/null; then
         echo "ERROR: design-records が PATH にありません。ADR の status を読めないので PROPOSED_ADRS を出せません。" \
-          "nixfiles の home-manager の設定（design-records のパッケージ）を適用して PATH に入れてから、もう一度実行してください" >&2
+          "claude-harness の home-manager のモジュール（design-records のパッケージ）を適用して PATH に入れてから、もう一度実行してください" >&2
         exit 1
       fi
       # コマンド置換の失敗は、代入で受けると set -e が止める
