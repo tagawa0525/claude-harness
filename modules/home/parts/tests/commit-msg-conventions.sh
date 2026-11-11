@@ -20,13 +20,12 @@ set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 
-HOST="${1:-r995}"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> commit-msg hook をビルドする（nixosConfigurations.${HOST}）"
+echo "==> commit-msg hook をビルドする（homeConfigurations.test）"
 cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
-  ".#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/commit-msg\".source")" \
+  ".#homeConfigurations.test.config.xdg.configFile.\"git/hooks/commit-msg\".source")" \
   "$WORK/commit-msg"
 chmod +x "$WORK/commit-msg"
 

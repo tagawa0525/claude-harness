@@ -16,7 +16,6 @@
 
 set -euo pipefail
 
-HOST="${1:-r995}"
 ROOT=$(git rev-parse --show-toplevel)
 
 for tool in ruff markdownlint; do
@@ -32,9 +31,9 @@ trap 'rm -rf "$WORK"' EXIT
 HOOKS="$WORK/hooks"
 mkdir -p "$HOOKS"
 for hook in pre-commit pre-merge-commit; do
-  echo "==> $hook hook をビルドする（nixosConfigurations.${HOST}）"
+  echo "==> $hook hook をビルドする（homeConfigurations.test）"
   cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
-    "$ROOT#nixosConfigurations.${HOST}.config.home-manager.users.tagawa.xdg.configFile.\"git/hooks/$hook\".source")" \
+    "$ROOT#homeConfigurations.test.config.xdg.configFile.\"git/hooks/$hook\".source")" \
     "$HOOKS/$hook"
   chmod +x "$HOOKS/$hook"
 done
