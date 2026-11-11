@@ -57,6 +57,8 @@ check() {
 
 echo "==> hook 自体の判定（回帰確認）"
 check ok "sanity" "feat(scope): 追加する"
+# nixfiles の nix-rebuild.sh が自動で書く件名。この形を止めると、毎日の自動更新が最後のコミットで失敗する
+check ok "sanity" "chore(flake): update (testhost)"
 check ng "sanity" "flake: update (testhost)"
 check ng "sanity" "何の型もない件名"
 
