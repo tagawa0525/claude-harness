@@ -2,8 +2,9 @@
 
 Claude Code のグローバル設定。`claude-sync`（または home-manager の activation）で
 `~/.claude` に同期される（同期ポリシーは `modules/home/scripts/claude-sync.sh`）。
-引数なしの `claude-sync` は、既定の clone（`~/nix/claude-harness`）を `git pull --ff-only` してから同期する。worktree の直しを
-試すときは `claude-sync <worktree>`（pull しない）。
+引数なしの `claude-sync` は、既定の clone（`~/nix/claude-harness`）を `git pull --ff-only` してから同期する。入れるのは既定の
+ブランチのコミットされた最新だけで、別のブランチや書きかけの編集がある clone では止まる。worktree の直しや作業中の中身を
+入れるときは、パスを渡す（`claude-sync <worktree>`。pull しない）。
 
 `.claude/settings.json` はこのリポジトリのセッションのためのプロジェクトの設定で、同期の対象ではない（`~/.claude/settings.json` に
 入ると、どのリポジトリでもグローバルの指示が読まれなくなる）。

@@ -9,7 +9,8 @@
 #
 # Usage: claude-sync [source-repo]
 #   source-repo 省略時: ~/nix/claude-harness（このスクリプトと .claude を持つリポジトリの clone）。同期の前に
-#     git pull --ff-only で最新にする。pull できなければ、古い中身を同期せずに止まる
+#     git pull --ff-only で最新にする。既定のブランチでない、.claude に未コミットの変更がある、pull できない、の
+#     どれかなら、同期せずに止まる
 #   source-repo を渡したとき: pull せず、その場所の中身をそのまま同期する（worktree で直しを試す、rebuild の
 #     activation、pull できないときに今の中身を入れる）
 #
@@ -27,14 +28,35 @@ SOURCE_REPO="${1:-$DEFAULT_REPO}"
 SOURCE_DIR="$SOURCE_REPO/.claude"
 CLAUDE_DIR="$HOME/.claude"
 
-# 引数なしは「ハーネスの最新を入れる」ための呼び出しなので、既定の clone を先に最新にする。clone が古いまま同期すると、
-# rebuild で配られた新しい版を、黙って古い版で上書きする。git の作業ツリーでなければ（pull するものが無い）そのまま進む
-if [ $# -eq 0 ] && git -C "$SOURCE_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  if ! git -C "$SOURCE_REPO" pull -q --ff-only; then
-    echo "❌ $SOURCE_REPO を git pull --ff-only で最新にできません（オフライン、履歴の分岐、上流の無いブランチなど）" >&2
-    echo "   古い中身を同期しないよう、ここで止めます。今の中身をそのまま同期するなら: claude-sync $SOURCE_REPO" >&2
+# 引数なしは「ハーネスの最新を入れる」ための呼び出しなので、入れるのは既定の clone の、既定のブランチの、コミットされた
+# 最新だけにする。clone が古いまま、別のブランチのまま、書きかけの編集を持ったまま同期すると、rebuild で配られた新しい版を、
+# 黙ってそれで上書きする。作業中の中身を入れたいときは、パスを渡す（下の案内）。
+# 既定の場所が clone でなければ（.git が無い。親のリポジトリの中のコピーなど）、pull するものが無いのでそのまま進む
+if [ -z "${1:-}" ] && [ -e "$SOURCE_REPO/.git" ]; then
+  # GIT_DIR などを export したシェル（git の hook の中など）から呼ばれても、既定の clone を相手にする
+  while IFS= read -r var; do unset "$var"; done < <(git rev-parse --local-env-vars)
+  as_is="今の中身をそのまま同期するなら: claude-sync $SOURCE_REPO"
+  default=$(git -C "$SOURCE_REPO" symbolic-ref --short -q refs/remotes/origin/HEAD || true)
+  default=${default#origin/}
+  default=${default:-main}
+  branch=$(git -C "$SOURCE_REPO" symbolic-ref --short -q HEAD || echo "detached HEAD")
+  if [ "$branch" != "$default" ]; then
+    echo "❌ $SOURCE_REPO は $default でなく $branch にあります。古い中身を同期しないよう、ここで止めます" >&2
+    echo "   最新を入れるなら: git -C $SOURCE_REPO switch $default のあと、もう一度 claude-sync" >&2
+    echo "   $as_is" >&2
     exit 1
   fi
+  if [ -n "$(git -C "$SOURCE_REPO" status --porcelain -- .claude)" ]; then
+    echo "❌ $SOURCE_REPO の .claude に未コミットの変更があります。書きかけの中身を同期しないよう、ここで止めます" >&2
+    echo "   $as_is" >&2
+    exit 1
+  fi
+  if ! git -C "$SOURCE_REPO" pull -q --ff-only; then
+    echo "❌ $SOURCE_REPO を git pull --ff-only で最新にできません（上の git の出力を参照）。古い中身を同期しないよう、ここで止めます" >&2
+    echo "   $as_is" >&2
+    exit 1
+  fi
+  echo "📥 $SOURCE_REPO: $default $(git -C "$SOURCE_REPO" rev-parse --short HEAD)"
 fi
 
 if [ ! -d "$SOURCE_DIR" ]; then
