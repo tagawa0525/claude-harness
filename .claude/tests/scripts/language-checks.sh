@@ -709,6 +709,17 @@ printf '1. step\n\n   | a | b |\n   | --- | --- |\n   | ccc | d |\n\n2. next\n' 
 python3 "$MD_FIXER" "$MD_DIR/indented.md" >/dev/null
 assert_eq $'1. step\n\n   | a   | b |\n   | --- | - |\n   | ccc | d |\n\n2. next' "$(cat "$MD_DIR/indented.md")"
 
+it "fix-markdown-lint: 字下げとして保つのは空白とタブだけで、行頭の全角の空白は外す"
+# Markdown の字下げは空白とタブだけ。全角の空白を残すと、区切りの行が表の行でなくなり、表として描かれない
+printf '\xe3\x80\x80| a | b |\n| --- | --- |\n| ccc | d |\n' > "$MD_DIR/zenkaku.md"
+python3 "$MD_FIXER" "$MD_DIR/zenkaku.md" >/dev/null
+assert_eq $'| a   | b |\n| --- | - |\n| ccc | d |' "$(cat "$MD_DIR/zenkaku.md")"
+
+it "fix-markdown-lint: タブで字下げした表は、タブを保ったまま整形する"
+printf -- '- item\n\n\t| a | b |\n\t| --- | --- |\n\t| ccc | d |\n' > "$MD_DIR/tab.md"
+python3 "$MD_FIXER" "$MD_DIR/tab.md" >/dev/null
+assert_eq $'- item\n\n\t| a   | b |\n\t| --- | - |\n\t| ccc | d |' "$(cat "$MD_DIR/tab.md")"
+
 it "fix-markdown-lint: 整っている字下げした表は 1 バイトも変えない"
 printf '1. step\n\n   | a   | b |\n   | --- | - |\n   | ccc | d |\n' > "$MD_DIR/indented-ok.md"
 before=$(sha256sum < "$MD_DIR/indented-ok.md")
