@@ -29,11 +29,9 @@ cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
   "$WORK/pre-commit"
 chmod +x "$WORK/pre-commit"
 
-# rustup / cargo は実環境のツールチェインを使う（HOME を退避すると既定のツールチェインが見えなくなる）
-export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
-export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
-export HOME="$WORK/home"
-mkdir -p "$HOME"
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+swap_home "$WORK/home"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
@@ -126,7 +124,13 @@ mkdir -p "$R/src"
 GOOD_RS=$'fn main() {}\n'
 BAD_RS=$'fn main(){}\n'
 stage "$R" src/main.rs "$BAD_RS" "$GOOD_RS"
-if commit "$R"; then ng "ステージした Rust が崩れていれば止める"; else ok "ステージした Rust が崩れていれば止める"; fi
+if commit "$R"; then
+  ng "ステージした Rust が崩れていれば止める"
+elif grep -q "Rust format check failed" "$WORK/out"; then
+  ok "ステージした Rust が崩れていれば止める"
+else
+  ng "止まったが、Rust の書式の検査の失敗として止まっていない（ツールチェインを実行できていない）"
+fi
 git -C "$R" rm -q --cached -f src/main.rs
 stage "$R" src/main.rs "$GOOD_RS" "$BAD_RS"
 if commit "$R"; then ok "ステージした Rust が整っていれば、作業ツリーが崩れていても通す"; else ng "ステージした Rust が整っていれば、作業ツリーが崩れていても通す"; fi
