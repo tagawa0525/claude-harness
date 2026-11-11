@@ -192,9 +192,11 @@ fn isolate_git(command: &mut Command) {
     command.env("GIT_CONFIG_COUNT", "3");
 }
 
-/// CLI が作るコミットとタグのための、リポジトリの設定（署名と hook は使わない）
+/// CLI が作るコミットとタグのための、リポジトリの設定（署名と hook は使わない）。改行の変換は止め、期待値の
+/// LF をそのまま比べる（Git for Windows の既定はシステムの設定の core.autocrlf=true で、checkout が CRLF にする）
 fn configure(dir: &Path) {
     for (key, value) in [
+        ("core.autocrlf", "false"),
         ("user.name", "t"),
         ("user.email", "t@t"),
         ("commit.gpgsign", "false"),
