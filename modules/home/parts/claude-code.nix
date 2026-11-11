@@ -202,7 +202,7 @@ let
         # retro スキルスクリプト
         "Bash(~/.claude/skills/retro/scripts/session-events.sh:*)"
         "Bash(~/.claude/skills/retro/scripts/memory-index.sh:*)"
-        # 設計の記録の CLI（adr スキル、git-merge スキル、branch-topics.sh。git.nix が PATH に入れる）
+        # 設計の記録の CLI（adr スキル、git-merge スキル、branch-topics.sh。git-hooks.nix が PATH に入れる）
         "Bash(design-records new:*)"
         "Bash(design-records renumber:*)"
         "Bash(design-records -C:*)"

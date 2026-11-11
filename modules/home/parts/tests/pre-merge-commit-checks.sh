@@ -3,7 +3,7 @@
 # main / master へのマージコミットが、マージ結果に対する品質チェックを通ったときだけ
 # 作られることを検証する
 # =============================================================================
-# ../git.nix の pre-merge-commit は core.hooksPath でグローバル配布され、マージコミットを
+# ../git-hooks.nix の pre-merge-commit は core.hooksPath でグローバル配布され、マージコミットを
 # 作る直前（作業ツリーと index がマージ結果になった状態）に run-checks.sh --merge を実行する。
 # 競合を解決して git commit（git merge --continue）で締めるときは pre-merge-commit が
 # 呼ばれず pre-commit だけが呼ばれるので、pre-commit が MERGE_HEAD を見て同じ検査に回す。

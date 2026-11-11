@@ -3,7 +3,7 @@
 # git pre-commit hook のこちらの規約の検査が fork（upstream リモートのある clone）では
 # 飛ばされることを検証する
 # =============================================================================
-# ../git.nix の pre-commit は core.hooksPath でグローバル配布され、ステージ済みのファイルに
+# ../git-hooks.nix の pre-commit は core.hooksPath でグローバル配布され、ステージ済みのファイルに
 # こちらのツールの版と規約（ruff、markdownlint --fix と fix-markdown-lint.py、rustfmt）を当てる。
 # 他人のプロジェクトの fork（上流に PR を出す worktree。`upstream` リモートを持つ）でこれが走ると、
 # 新しい ruff が触っていない上流の行を上流の版にないルール（RUF043 等）で落とし、Markdown の

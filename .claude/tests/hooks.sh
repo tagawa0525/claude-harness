@@ -570,7 +570,7 @@ assert_eq "" "$(cat "$FAKE_GH_LOG")"
 # block-main-commit: flake.lock だけの更新は main でも通す
 # ===========================================================================
 # nix-rebuild update は検証済みの flake.lock を main に直接コミットする正規フロー。
-# git 側の pre-commit hook（modules/home/parts/git.nix）は既にこれを例外として
+# git 側の pre-commit hook（modules/home/parts/git-hooks.nix）は既にこれを例外として
 # 許可しているので、PreToolUse hook 側も同じ判定にする（片方だけ塞ぐと update が止まる）
 
 REPO="$TEST_ROOT/lock"

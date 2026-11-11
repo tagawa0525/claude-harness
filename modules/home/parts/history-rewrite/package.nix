@@ -1,5 +1,5 @@
 # history-rewrite: 履歴の中の崩れた語を辞書で直し、番号を commit-refs で付け直す CLI（ADR-0045）。
-# git.nix から callPackage され、PATH に入る。flake.nix の packages 出力（nix build .#history-rewrite）と
+# git-hooks.nix から callPackage され、PATH に入る。flake.nix の packages 出力（nix build .#history-rewrite）と
 # checks もここを参照する
 {
   lib,

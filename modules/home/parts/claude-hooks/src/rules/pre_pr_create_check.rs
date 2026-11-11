@@ -29,7 +29,7 @@
 //! 件名の長さ、本文の見出し、新しい ADR の数はこちらの規約なので検査しない。上流の PR template と
 //! CONTRIBUTING が正で、それに合わせた本文（Serena の Checklist 等）を通す。
 //! --title と本文の存在、--web、未プッシュの検査は fork でも要る（gh が固まる・失敗する条件）。
-//! git の pre-commit / commit-msg hook と同じ判定（modules/home/parts/git.nix）
+//! git の pre-commit / commit-msg hook と同じ判定（modules/home/parts/git-hooks.nix）
 
 use std::path::Path;
 

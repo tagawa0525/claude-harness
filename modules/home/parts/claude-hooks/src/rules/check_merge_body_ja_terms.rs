@@ -313,7 +313,7 @@ fn deny_reason(terms: &[String]) -> String {
 
 /// commit-msg が検査しない所か: git のリポジトリの外（コミットできない）、グローバルの core.hooksPath
 /// （commit-msg の置き場）を使わないリポジトリ、`upstream` リモートのある fork、ローカルの commit-msg に置き換わる
-/// リポジトリ（modules/home/parts/git.nix の commit-msg と同じ判定）
+/// リポジトリ（modules/home/parts/git-hooks.nix の commit-msg と同じ判定）
 pub(super) fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool {
     // リポジトリの外の `git config --get` はグローバルの値を返すので、置き場の比較より先に見る
     let Some(common) = git::git(

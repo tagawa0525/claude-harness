@@ -1,6 +1,6 @@
 //! check-commit-message: `git commit -m/-F` のメッセージを、実行の前に commit-msg の hook と同じ検査で判定する
 //!
-//! commit-msg（modules/home/parts/git.nix）は、件名が Conventional Commits でないか 72 文字を超えるか、本文に
+//! commit-msg（modules/home/parts/git-hooks.nix）は、件名が Conventional Commits でないか 72 文字を超えるか、本文に
 //! 崩れた日本語の語があるコミットを拒む。git の順で pre-commit（マージを終える commit では数分の品質チェック）の
 //! 後に走り、拒まれても同じコマンドの `;` や改行の後のコマンドは古い HEAD のまま走る。pre-commit からは `-m` の
 //! 本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg が
