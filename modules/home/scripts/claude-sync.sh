@@ -9,7 +9,7 @@
 #
 # Usage: claude-sync [source-repo]
 #   source-repo 省略時: ~/nix/claude-harness（このスクリプトと .claude を持つリポジトリの clone）。同期の前に
-#     git pull --ff-only で最新にする。既定のブランチでない、.claude に未コミットの変更がある、pull できない、の
+#     git pull --ff-only で最新にする。既定のブランチでない、同期する場所に未コミットの変更がある、pull できない、の
 #     どれかなら、同期せずに止まる
 #   source-repo を渡したとき: pull せず、その場所の中身をそのまま同期する（worktree で直しを試す、rebuild の
 #     activation、pull できないときに今の中身を入れる）
@@ -31,11 +31,19 @@ CLAUDE_DIR="$HOME/.claude"
 # 引数なしは「ハーネスの最新を入れる」ための呼び出しなので、入れるのは既定の clone の、既定のブランチの、コミットされた
 # 最新だけにする。clone が古いまま、別のブランチのまま、書きかけの編集を持ったまま同期すると、rebuild で配られた新しい版を、
 # 黙ってそれで上書きする。作業中の中身を入れたいときは、パスを渡す（下の案内）。
+# 手元の既定のブランチが origin より先（まだ push していないコミット）のときは、その中身を入れる（古くはない）。
 # 既定の場所が clone でなければ（.git が無い。親のリポジトリの中のコピーなど）、pull するものが無いのでそのまま進む
 if [ -z "${1:-}" ] && [ -e "$SOURCE_REPO/.git" ]; then
   # GIT_DIR などを export したシェル（git の hook の中など）から呼ばれても、既定の clone を相手にする
   while IFS= read -r var; do unset "$var"; done < <(git rev-parse --local-env-vars)
   as_is="今の中身をそのまま同期するなら: claude-sync $SOURCE_REPO"
+  # git を実行できない、clone として読めない（safe.directory の拒否、壊れた .git）ときは、下の判定が既定値に落ちて
+  # 誤った理由を示すので、先に止める
+  if ! git -C "$SOURCE_REPO" rev-parse --git-dir >/dev/null; then
+    echo "❌ $SOURCE_REPO を git のリポジトリとして読めません（上の出力を参照）。古い中身を同期しないよう、ここで止めます" >&2
+    echo "   $as_is" >&2
+    exit 1
+  fi
   default=$(git -C "$SOURCE_REPO" symbolic-ref --short -q refs/remotes/origin/HEAD || true)
   default=${default#origin/}
   default=${default:-main}
@@ -46,8 +54,15 @@ if [ -z "${1:-}" ] && [ -e "$SOURCE_REPO/.git" ]; then
     echo "   $as_is" >&2
     exit 1
   fi
-  if [ -n "$(git -C "$SOURCE_REPO" status --porcelain -- .claude)" ]; then
-    echo "❌ $SOURCE_REPO の .claude に未コミットの変更があります。書きかけの中身を同期しないよう、ここで止めます" >&2
+  # 見るのは同期する場所だけ（下の rsync の 4 つ）。追跡していない新しいファイルも、同期されるので数える
+  if ! dirty=$(git -C "$SOURCE_REPO" status --porcelain --untracked-files=all -- \
+    .claude/CLAUDE.md .claude/commands .claude/skills .claude/scripts); then
+    echo "❌ $SOURCE_REPO の未コミットの変更を調べられません（上の出力を参照）。ここで止めます" >&2
+    echo "   $as_is" >&2
+    exit 1
+  fi
+  if [ -n "$dirty" ]; then
+    echo "❌ $SOURCE_REPO の同期する場所に未コミットの変更があります。書きかけの中身を同期しないよう、ここで止めます" >&2
     echo "   $as_is" >&2
     exit 1
   fi
