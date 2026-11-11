@@ -41,6 +41,9 @@ done
 export HOME="$WORK/home"
 mkdir -p "$HOME/.claude/skills/language-checks"
 cp -r "$ROOT/.claude/skills/language-checks/scripts" "$HOME/.claude/skills/language-checks/"
+# run-checks.sh は ~/.claude/scripts/lib/slurm-exclusive.sh を読む（排他の Slurm のジョブの間は 1 コアに限る）
+mkdir -p "$HOME/.claude/scripts"
+cp -r "$ROOT/.claude/scripts/lib" "$HOME/.claude/scripts/"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
