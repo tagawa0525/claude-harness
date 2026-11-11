@@ -703,6 +703,18 @@ printf '| a | b |\n| --- | --- |\n| ccc | d |\n\n```text\n| a | b |\n| --- | ---
 python3 "$MD_FIXER" "$MD_DIR/table.md" >/dev/null
 assert_eq $'| a   | b |\n| --- | - |\n| ccc | d |\n\n```text\n| a | b |\n| --- | --- |\n| ccc | d |\n```' "$(cat "$MD_DIR/table.md")"
 
+it "fix-markdown-lint: 番号つきの項の中に字下げして置いた表は、字下げを保ったまま整形する"
+# 字下げを外すと表が項の外に出て、その後の項が別のリストになる
+printf '1. step\n\n   | a | b |\n   | --- | --- |\n   | ccc | d |\n\n2. next\n' > "$MD_DIR/indented.md"
+python3 "$MD_FIXER" "$MD_DIR/indented.md" >/dev/null
+assert_eq $'1. step\n\n   | a   | b |\n   | --- | - |\n   | ccc | d |\n\n2. next' "$(cat "$MD_DIR/indented.md")"
+
+it "fix-markdown-lint: 整っている字下げした表は 1 バイトも変えない"
+printf '1. step\n\n   | a   | b |\n   | --- | - |\n   | ccc | d |\n' > "$MD_DIR/indented-ok.md"
+before=$(sha256sum < "$MD_DIR/indented-ok.md")
+python3 "$MD_FIXER" "$MD_DIR/indented-ok.md" >/dev/null
+assert_eq "$before" "$(sha256sum < "$MD_DIR/indented-ok.md")"
+
 finish
 
 # ===========================================================================
