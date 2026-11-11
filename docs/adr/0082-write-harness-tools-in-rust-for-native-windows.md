@@ -19,7 +19,7 @@ issues: ["#101"]
 
 - Rust: PreToolUse hook の `claude-hooks`、ADR の `design-records`、コミットの番号の `commit-refs`
 - sh: `.claude/scripts/` と各スキルの `scripts/`、git hook（`git-hooks.nix` の中の sh と `staged-checks.sh`、
-  `ja-terms/*.sh`、`scan-staged-secrets.sh`）、`claude-memory-backup.sh`、`claude-sync.sh`。合わせて約 5,400 行
+  `ja-terms/*.sh`、`scan-staged-secrets.sh`）、`claude-memory-backup.sh`、`claude-sync.sh`。合わせて約 5,400 行（うち Slurm のスクリプトが約 940 行）
 - Python: `history_rewrite.py`、`prh_rules.py`、`usage-report.py`、`kept-sentences.py`、`fix-markdown-lint.py`。
   約 2,400 行
 - テストの多くも sh（`.claude/tests/hooks.sh` は 3,197 行）
@@ -32,8 +32,8 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
 
 - `jq`、`flock`（util-linux）、GNU coreutils と sed の挙動。Git for Windows には `jq` が入っていない
 - Python。Windows には標準で入っていない
-- Nix の store のパス。git hook と `claude-hooks` は、`ja-terms-message`、`commit-msg-check`、`scan-staged-secrets` を
-  store のパスで呼ぶ
+- Nix の store のパス。`claude-hooks` は `ja-terms-message` と `commit-msg-check` を、git hook はそれらと
+  `scan-staged-secrets` を store のパスで呼ぶ
 - git hook の中身も同じ依存を持つ。`staged-checks.sh` は `jq` と `python3`（`fix-markdown-lint.py`）を、
   `scan-staged-secrets.sh` は `jq` を使う。Git for Windows は git hook を同梱の sh で実行するので、sh そのものは動く
 
@@ -68,7 +68,8 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
 - hook が呼ぶ外の検査（`ja-terms-message` などの store のパス）は、Windows ではパスが無いので、hook のバイナリが
   自分で持つか、PATH で見つける形に変える。どちらにするかは、移すときに検査ごとに決める。崩れた日本語の語の検査
   （ADR-0014、textlint と prh、Node.js）は、Node.js を Windows の依存として残すか、prh の辞書を Rust で読むかを、
-  この ADR では決めず、PreToolUse hook を移す段階（#101 の段階 3）で決める
+  この ADR では決めず、PreToolUse hook を移す段階（#101 の段階 3）で、同じ検査を使う git hook（段階 4）と
+  `prh_rules.py`（段階 7）も含めて決める
 - この ADR が決めないこと: Windows への配備（バイナリのビルドと置き場、settings.json への exec form の登録、
   `claude-sync` が担うスキルと CLAUDE.md の同期、git hook の設置）と、Windows での確かめ方。どちらも移す先の言語に
   よらず要る決定で、それぞれ別の ADR にする（#101 の段階 1 と 2）。`claude-sync.sh` を Rust に移すかも、配備の
@@ -77,7 +78,7 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
 理由:
 
 - hook は Bash ツールの呼び出しごとに走るので、起動の速い 1 つの実行ファイルがよい。Rust のバイナリは exec form で
-  シェルを通さずに起動でき、Git Bash の有無に左右されない
+  シェルを通さずに起動できる
 - 規則がすでに `claude-hooks` の Rust にあり、git hook と PreToolUse hook の判定を揃える（`block_main_commit.rs` の
   冒頭の注記）のも、同じ言語なら同じ関数を呼べる。git hook は sh のまま `jq` と Python を外す道もあるが、今は
   同じ判定を sh と Rust に書き分け、揃っているかを `modules/home/parts/tests/main-commit-gates.sh` で確かめている。
@@ -106,5 +107,7 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
 - 移したスクリプトごとに、Linux の `nix flake check` と、Windows の `cargo test` が通る。Windows で `cargo test` を流す
   場所（手元か CI か）は、確かめ方の ADR で決める
 - ネイティブの Windows で、PreToolUse hook が Linux と同じ入力に同じ判定を返す。判定は `claude-hooks` の Rust の
-  テストが持つ入力と期待値で確かめるので、両方の OS で同じテストが通れば揃う。sh のテスト（`.claude/tests/hooks.sh`）
+  テストが持つ入力と期待値で確かめ、両方の OS で同じテストが通れば揃う。今は Unix でしか動かないテスト（`std::os::unix`
+  を使うもの、偽の検査を sh のスクリプトで作るもの）があり、それらを Windows でも動く形にするまでは、揃ったとは
+  言えない（#101 の段階 1）。sh のテスト（`.claude/tests/hooks.sh`）
   の入力は、移すときに Rust のテストに移す
