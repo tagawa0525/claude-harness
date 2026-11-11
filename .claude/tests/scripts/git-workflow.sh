@@ -832,13 +832,36 @@ assert_eq 0 $?
 assert_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: ハーネスで pull で modules の下のテストだけが変わっても、配るものは変わらないので NOTE を出さない"
+it "post-merge-cleanup: ハーネスで pull で flake.nix が変われば、取り込む側の lock の更新と rebuild が要ると NOTE で知らせる"
 setup_claude_sync_source "$TEST_ROOT/cleanup43"
-advance_origin_main "$TEST_ROOT/cleanup43/app" modules/home/parts/tests/x.sh >/dev/null
+advance_origin_main "$TEST_ROOT/cleanup43/app" flake.nix >/dev/null
 cd "$TEST_ROOT/cleanup43/app" || exit 1
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
-assert_not_contains "$out" "NOTE:"
+assert_contains "$out" "NOTE: lock の更新と rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: rebuild する構成のリポジトリで pull で secrets の下が変われば、rebuild が要ると NOTE で知らせる"
+setup_rebuild_source "$TEST_ROOT/cleanup44"
+advance_origin_main "$TEST_ROOT/cleanup44/app" secrets/slurm/munge.key >/dev/null
+cd "$TEST_ROOT/cleanup44/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
+# ハーネスを分ける前の nixfiles は、claude-sync.sh と nix-rebuild.sh の両方を持つ。自分で rebuild するので、取り込む側の
+# lock の更新でなく rebuild を知らせ、.claude は claude-sync を知らせる
+it "post-merge-cleanup: claude-sync.sh と nix-rebuild.sh の両方を持つリポジトリでは、hosts の変更に rebuild、.claude の変更に claude-sync を知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup45"
+commit_file "$TEST_ROOT/cleanup45/app" modules/home/scripts/nix-rebuild.sh "chore: nix-rebuild"
+git -C "$TEST_ROOT/cleanup45/app" push -q origin main
+advance_origin_main "$TEST_ROOT/cleanup45/app" hosts/r995/default.nix >/dev/null
+cd "$TEST_ROOT/cleanup45/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: rebuild が要る"
+assert_not_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
 it "post-merge-cleanup: ハーネスで pull で .claude の下が変われば、claude-sync が要ると NOTE で知らせる"
@@ -848,7 +871,10 @@ cd "$TEST_ROOT/cleanup16/app" || exit 1
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_contains "$out" "NOTE: claude-sync が要る"
-assert_not_contains "$out" "rebuild が要る"
+# claude-sync で入れても、lock を進める前の rebuild は lock が固定した古い版を配り直す
+assert_contains "$out" "lock"
+assert_not_contains "$out" "NOTE: rebuild が要る"
+assert_not_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
 it "post-merge-cleanup: pull で .claude の下のどこ（tests）が変わっても、claude-sync が要ると NOTE で知らせる"
@@ -860,7 +886,7 @@ assert_eq 0 $?
 assert_contains "$out" "NOTE: claude-sync が要る"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: pull で modules、hosts、flake、.claude のどれも変わらなければ NOTE を出さない"
+it "post-merge-cleanup: ハーネスで pull で modules、flake、.claude のどれも変わらなければ NOTE を出さない"
 setup_claude_sync_source "$TEST_ROOT/cleanup17"
 advance_origin_main "$TEST_ROOT/cleanup17/app" docs/x.md >/dev/null
 cd "$TEST_ROOT/cleanup17/app" || exit 1

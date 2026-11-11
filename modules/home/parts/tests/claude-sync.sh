@@ -69,7 +69,9 @@ check "既存の commands のファイルは上書きしない" "$DEST/commands/
 # グローバルの指示（~/.claude/CLAUDE.md）に入れると、どのリポジトリのセッションもそれを読む
 write "$HOME/nix/claude-harness/.claude/CLAUDE.md" "harness"
 write "$HOME/nix/nixfiles/.claude/CLAUDE.md" "nixfiles project"
-bash "$SYNC" >/dev/null || true
+rc=0
+bash "$SYNC" >/dev/null || rc=$?
+if (( rc == 0 )); then PASS=$((PASS + 1)); echo "✓ 引数なしの同期が成功する"; else FAIL=$((FAIL + 1)); echo "✗ 引数なしの同期が失敗した（終了コード $rc）"; fi
 check "引数なしでは ~/nix/claude-harness から同期する（nixfiles のプロジェクトの指示は入れない）" "$DEST/CLAUDE.md" "harness"
 
 echo
