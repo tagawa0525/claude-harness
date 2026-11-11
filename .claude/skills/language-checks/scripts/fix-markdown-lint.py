@@ -51,7 +51,12 @@ def is_separator_row(line: str) -> bool:
 
 
 def format_table(table_lines: list[str]) -> list[str]:
-    """Format a markdown table with aligned columns (CJK-aware)."""
+    """Format a markdown table with aligned columns (CJK-aware).
+
+    最初の行の字下げ（空白とタブ）は、整形した行に付け直す。リストの項の中の表の字下げを外すと、表が項の外に出て、
+    その後の項が別のリストになる。行頭の全角の空白などは Markdown の字下げでないので外す。
+    """
+    indent = re.match(r"[ \t]*", table_lines[0]).group() if table_lines else ""
     rows = []
     for line in table_lines:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -113,7 +118,7 @@ def format_table(table_lines: list[str]) -> list[str]:
             else:
                 parts.append(" " + cell + " " * (padding + 1))
 
-        result.append("|" + "|".join(parts) + "|")
+        result.append(indent + "|" + "|".join(parts) + "|")
 
     return result
 
@@ -279,9 +284,7 @@ def fix_markdown(content: str) -> str:
             while j < len(lines) and is_table_row(lines[j]):
                 table.append(lines[j])
                 j += 1
-            # 表の字下げ（リストの項の中の表）は保つ。外すと表が項の外に出て、その後の項が別のリストになる
-            indent = line[: len(line) - len(line.lstrip())]
-            output.extend(indent + row for row in format_table(table))
+            output.extend(format_table(table))
             i = j
             continue
 
