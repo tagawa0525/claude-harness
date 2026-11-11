@@ -1,0 +1,25 @@
+# ネイティブの Windows で Rust の crate のテストを流す（ADR-0083）。Linux のテストは nix flake check が受け持つ。
+# matrix には Windows で通る crate だけを入れ、ほかの crate は Windows に移す PR で通してから足す（#101）
+name: windows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [design-records]
+    defaults:
+      run:
+        working-directory: modules/home/parts/${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: cargo test --locked
