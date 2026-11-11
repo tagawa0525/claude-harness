@@ -29,6 +29,9 @@ cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
   "$WORK/pre-commit"
 chmod +x "$WORK/pre-commit"
 
+# rustup / cargo は実環境のツールチェインを使う（HOME を退避すると既定のツールチェインが見えなくなる）
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 export HOME="$WORK/home"
 mkdir -p "$HOME"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
