@@ -577,7 +577,7 @@ class HistoryRewrite(unittest.TestCase):
         )
 
     def test_an_indented_table_to_realign_stops(self):
-        # fix-markdown-lint の fix_markdown は表の字下げを外す（nixfiles の issue #428）ので、揃え直さずに止める
+        # 字下げした表は揃え直しの対象にしていないので、揃え直さずに止める
         work = Repo(Path(self.tmp.name) / "indented", self.env)
         work.path.mkdir()
         work.git("init", "-q")

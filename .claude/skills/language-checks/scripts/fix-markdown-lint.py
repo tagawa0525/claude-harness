@@ -279,7 +279,9 @@ def fix_markdown(content: str) -> str:
             while j < len(lines) and is_table_row(lines[j]):
                 table.append(lines[j])
                 j += 1
-            output.extend(format_table(table))
+            # 表の字下げ（リストの項の中の表）は保つ。外すと表が項の外に出て、その後の項が別のリストになる
+            indent = line[: len(line) - len(line.lstrip())]
+            output.extend(indent + row for row in format_table(table))
             i = j
             continue
 
