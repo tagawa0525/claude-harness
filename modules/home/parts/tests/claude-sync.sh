@@ -75,7 +75,7 @@ if (( rc == 0 )); then PASS=$((PASS + 1)); echo "✓ 引数なしの同期が成
 check "引数なしでは ~/nix/claude-harness から同期する（nixfiles のプロジェクトの指示は入れない）" "$DEST/CLAUDE.md" "harness"
 
 # 引数なしでは、同期の前に既定の clone を git pull --ff-only で最新にする。clone が古いまま同期すると、rebuild で配られた
-# 新しい版を、黙って古い版で上書きする（2026-11-12 に、2 台の clone が 1 コミット遅れていた）
+# 新しい版を、黙って古い版で上書きする
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
@@ -102,22 +102,57 @@ bash "$SYNC" >"$WORK/out" 2>&1 || rc=$?
 if (( rc == 0 )); then PASS=$((PASS + 1)); echo "✓ 引数なしの同期（pull つき）が成功する"; else FAIL=$((FAIL + 1)); echo "✗ 引数なしの同期（pull つき）が失敗した（終了コード $rc）"; sed 's/^/    /' "$WORK/out"; fi
 check "引数なしでは、既定の clone を pull してから同期する" "$DEST/CLAUDE.md" "v2"
 
-# パスを渡したときは pull しない（worktree で直しを試す、rebuild の activation、pull できないときに今の中身を入れる）
+# stops <説明> <出力に要る文字列>: 引数なしの同期が、終了コード 1 で、stderr に理由を出して止まり、~/.claude を変えない
+stops() {
+  local desc="$1" want="$2" rc=0 before
+  before=$(cat "$DEST/CLAUDE.md")
+  bash "$SYNC" >"$WORK/stdout" 2>"$WORK/stderr" || rc=$?
+  if (( rc == 1 )) && grep -qF -- "$want" "$WORK/stderr" && [[ "$(cat "$DEST/CLAUDE.md")" == "$before" ]]; then
+    PASS=$((PASS + 1)); echo "✓ $desc"
+  else
+    FAIL=$((FAIL + 1)); echo "✗ $desc（終了コード $rc、~/.claude の CLAUDE.md は $(cat "$DEST/CLAUDE.md")）"; sed 's/^/    /' "$WORK/stderr"
+  fi
+}
+
+# 引数なしの同期が入れるのは、既定のブランチの、コミットされた最新だけ。作業中の clone の中身（別のブランチ、書きかけの
+# 編集）を黙って入れない。入れたいときは、パスを渡す
+git -C "$CLONE" switch -qc feat/x
+git -C "$CLONE" push -q -u origin feat/x 2>/dev/null
+stops "既定のブランチでない clone（上流つきの feature ブランチ）では止まり、ブランチの切り替えを示す" "git -C $CLONE switch main"
+git -C "$CLONE" switch -q --detach main
+stops "detached HEAD の clone では止まる" "git -C $CLONE switch main"
+git -C "$CLONE" switch -q main
+printf 'draft\n' > "$CLONE/.claude/CLAUDE.md"
+stops "書きかけの編集（.claude の未コミットの変更）がある clone では止まり、そのまま同期する方法を示す" "claude-sync $CLONE"
+
+# パスを渡したときは pull しない（worktree で直しを試す、rebuild の activation、作業中の clone の中身を入れる）。
+# origin は v3 に進め、clone には書きかけの draft がある
 advance "$WORK/other" "v3"
 bash "$SYNC" "$CLONE" >/dev/null
-check "パスを渡したときは pull せず、その場所の中身を同期する" "$DEST/CLAUDE.md" "v2"
+check "パスを渡したときは pull せず、その場所の今の中身（未コミットの編集を含む）を同期する" "$DEST/CLAUDE.md" "draft"
+git -C "$CLONE" restore .claude/CLAUDE.md
 
 # pull できないとき（手元と origin の履歴が分かれた）は、古い中身を同期せずに止める
 printf 'local\n' > "$CLONE/.claude/CLAUDE.md"
 git -C "$CLONE" commit -qam "docs: local"
+stops "pull できないとき（履歴の分岐）は止まり、pull せずに同期する方法を示す" "claude-sync $CLONE"
+
+# GIT_DIR を継いだシェル（git の hook の中など）から呼ばれても、既定の clone を相手にする
+git -C "$CLONE" reset -q --hard origin/main
+git init -q "$WORK/elsewhere"
+git -C "$WORK/elsewhere" commit -q --allow-empty -m "chore: init"
+advance "$WORK/other" "v4"
+GIT_DIR="$WORK/elsewhere/.git" bash "$SYNC" >/dev/null 2>&1 || true
+check "GIT_DIR を継いでも、既定の clone を pull して同期する" "$DEST/CLAUDE.md" "v4"
+
+# 既定の場所が、親のリポジトリの中の git でないディレクトリなら、親を pull せずにそのまま同期する
+rm -rf "$CLONE"
+git init -q "$HOME/nix"
+write "$CLONE/.claude/CLAUDE.md" "plain copy"
 rc=0
-bash "$SYNC" >"$WORK/out" 2>&1 || rc=$?
-if (( rc != 0 )) && grep -q "pull" "$WORK/out" && grep -qF "claude-sync $CLONE" "$WORK/out"; then
-  PASS=$((PASS + 1)); echo "✓ pull できないときは失敗終了し、pull せずに同期する方法を示す"
-else
-  FAIL=$((FAIL + 1)); echo "✗ pull できないときは失敗終了し、pull せずに同期する方法を示す（終了コード $rc）"; sed 's/^/    /' "$WORK/out"
-fi
-check "pull できないときは同期しない" "$DEST/CLAUDE.md" "v2"
+bash "$SYNC" >/dev/null 2>&1 || rc=$?
+if (( rc == 0 )); then PASS=$((PASS + 1)); echo "✓ git でない既定の場所の同期が成功する"; else FAIL=$((FAIL + 1)); echo "✗ git でない既定の場所の同期が失敗した（終了コード $rc）"; fi
+check "git でない既定の場所は、親のリポジトリを pull せずにそのまま同期する" "$DEST/CLAUDE.md" "plain copy"
 
 echo
 echo "passed: $PASS, failed: $FAIL"
