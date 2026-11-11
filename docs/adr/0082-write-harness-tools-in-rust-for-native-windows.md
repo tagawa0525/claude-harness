@@ -60,6 +60,9 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
   `claude-memory-backup`。テストは、移すときに Rust の結合テスト（`tests/`）に置き換える
 - 残す範囲: Slurm のスクリプト（`slurm-run.sh`、`lib/slurm-job.sh`、`slurm-queue.sh`、`slurm-history.sh`、
   `lib/slurm-exclusive.sh`）と Nix のモジュール。Slurm は r995（Linux）でしか使わない
+- 対象にする Claude Code のツール: Bash ツール（Windows では Git Bash）だけ。PowerShell ツール
+  （`CLAUDE_CODE_USE_POWERSHELL_TOOL`）は使わない（2026-11-12 のユーザーの決定）。PreToolUse hook のルールは bash の
+  構文を読むので、PowerShell のコマンドは判定できない
 - 外のコマンド: `git`、`gh`、`gitleaks`、`squeue` は今のとおり子プロセスで呼ぶ。`jq` は serde_json、`flock` は
   ファイルのロック、coreutils・sed・awk・Python の処理は Rust の標準ライブラリか事実上の標準の crate に置き換える
 - hook が呼ぶ外の検査（`ja-terms-message` などの store のパス）は、Windows ではパスが無いので、hook のバイナリが
