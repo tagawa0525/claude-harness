@@ -38,9 +38,17 @@ for hook in pre-commit pre-merge-commit; do
   chmod +x "$HOOKS/$hook"
 done
 
-export HOME="$WORK/home"
-mkdir -p "$HOME/.claude/skills/language-checks"
-cp -r "$ROOT/.claude/skills/language-checks/scripts" "$HOME/.claude/skills/language-checks/"
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+swap_home "$WORK/home"
+# 一時の ~/.claude は、配るときと同じ claude-sync.sh で作る。必要なファイルを選んでコピーすると、run-checks.sh が
+# 読むファイルが増えたときに欠ける（scripts/lib/slurm-exclusive.sh が欠けて、検査を通るマージが止まった）
+bash "$ROOT/modules/home/scripts/claude-sync.sh" "$ROOT" >/dev/null
+# 手元の squeue を呼ばず、排他のジョブが無い状態にする（run-checks.sh は排他のジョブの間、1 コアに限る）
+mkdir -p "$WORK/bin"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/squeue"
+chmod +x "$WORK/bin/squeue"
+export PATH="$WORK/bin:$PATH"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
@@ -118,8 +126,10 @@ fi
 # 止まったあと git commit で締めようとしても、同じ検査で止まる
 if run "$R" git commit --no-edit; then
   ng "pre-merge-commit で止まったマージが git commit で検査なしに締められた"
-else
+elif grep -q "FAILED: python lint" "$WORK/out"; then
   ok "pre-merge-commit で止まったマージは git commit でも同じ検査で止まる"
+else
+  ng "git commit は止まったが、失敗した検査（python lint）が出力にない"
 fi
 git -C "$R" merge --abort
 
@@ -129,6 +139,8 @@ new_repo "$R"
 branch_with "$R" feat README.md "$BAD_MD"
 if run "$R" git merge --no-ff -m "Merge: md" feat; then
   ng "lint に落ちる Markdown のマージ結果なのにマージコミットが作られた"
+elif ! grep -q "FAILED: markdown" "$WORK/out"; then
+  ng "Markdown のマージは止まったが、失敗した検査（markdown）が出力にない"
 else
   staged=$(git -C "$R" show :README.md; printf x); staged=${staged%x}
   if [[ "$staged" == "$BAD_MD" ]]; then
@@ -161,6 +173,8 @@ git -C "$R" commit -q --no-verify -m "feat: bad.py"
 git -C "$R" switch -q master
 if run "$R" git merge --no-ff -m "Merge: bad" feat; then
   ng "lint に落ちるマージ結果なのに master にマージコミットが作られた"
+elif ! grep -q "FAILED: python lint" "$WORK/out"; then
+  ng "master へのマージは止まったが、失敗した検査（python lint）が出力にない"
 else
   ok "master へのマージも検査する"
   git -C "$R" merge --abort

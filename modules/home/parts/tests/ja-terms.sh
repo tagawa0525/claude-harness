@@ -36,8 +36,9 @@ home_files=$(nix build --no-link --print-out-paths --option warn-dirty false \
 JA_TERMS_FILES="$home_files/.claude/bin/ja-terms-files"
 MEMORY_INDEX="$ROOT/.claude/skills/retro/scripts/memory-index.sh"
 
-export HOME="$WORK/home"
-mkdir -p "$HOME"
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+swap_home "$WORK/home"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
