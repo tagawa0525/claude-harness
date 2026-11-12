@@ -443,6 +443,7 @@ mod tests {
     /// ja-terms-message の代わり。引数なしで呼ばれたときだけ、標準入力の「誤語」を prh の形（誤語 => 正語）で
     /// 報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
     /// （実物の ja-terms-message と辞書は tests/merge-ja-terms.sh が確かめる）
+    #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
 [ $# -eq 0 ] || exit 3
 body=$(cat)
@@ -456,6 +457,8 @@ esac
 exit 0
 "#;
 
+    /// 偽の ja-terms-message を置き、そのパスを返す。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
+    #[cfg(unix)]
     fn fake_check(dir: &TempDir) -> String {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.0.join("ja-terms-message");
@@ -521,6 +524,7 @@ exit 0
     }
 
     /// git のリポジトリの中で、偽の ja-terms-message で検査する
+    #[cfg(unix)]
     fn check(command: &str) -> Vec<Finding> {
         let dir = TempDir::new("check");
         git_init(&dir.0);
@@ -619,6 +623,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn lint_classifies_check_results() {
         let dir = TempDir::new("lint");
@@ -638,6 +643,7 @@ exit 0
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_broken_term_with_correction_and_reason() {
         let r = only_deny(&check(
@@ -649,6 +655,7 @@ exit 0
         assert!(r.contains("置き換え"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_broken_term_in_heredoc_message() {
         let r = only_deny(&check(
@@ -657,6 +664,7 @@ exit 0
         assert!(r.contains("誤語 => 正語"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_broken_term_in_message_file_under_cd() {
         let dir = TempDir::new("cd");
@@ -672,6 +680,7 @@ exit 0
     }
 
     /// 同じコマンドで -F のファイルを書き換えてから merge する形と、merge だけの形
+    #[cfg(unix)]
     fn deny_for(prefix: &str) -> String {
         let dir = TempDir::new("sep");
         git_init(&dir.0);
@@ -684,6 +693,7 @@ exit 0
         only_deny(&check_in(&cmd, Path::new("/"), Some(&check)))
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_message_file_written_earlier_without_reading_it() {
         // 前段が書いた後の中身は実行の前に読めないので、書く前の中身（ここでは崩れた語）では判定しない
@@ -702,6 +712,7 @@ exit 0
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_lone_file_merge_without_split_calls_hint() {
         let r = deny_for("");
@@ -709,6 +720,7 @@ exit 0
         assert!(!r.contains("分けてください"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_unrelated_chained_command_without_split_calls_hint() {
         let r = deny_for("git switch main && ");
@@ -716,12 +728,14 @@ exit 0
         assert!(!r.contains("分けてください"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_wrapped_merge_without_split_calls_hint() {
         let r = deny_for("true && bash -c 'git status' && ");
         assert!(!r.contains("分けてください"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_inline_message_without_split_calls_hint() {
         let r = only_deny(&check(
@@ -744,21 +758,25 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn allows_clean_message() {
         assert!(check("git merge --no-ff feat/a -m 'Merge: a' -m '確認'").is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_merge_without_message() {
         assert!(check("git merge --no-ff feat/a").is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_other_commands_with_broken_terms() {
         assert!(check("echo 誤語 && git commit -m 'feat: 誤語'").is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_fork_like_commit_msg() {
         let dir = TempDir::new("fork");
@@ -779,6 +797,7 @@ exit 0
         assert!(findings.is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_repository_with_local_commit_msg_hook() {
         use std::os::unix::fs::PermissionsExt;
@@ -811,6 +830,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn lint_without_terms_is_failure() {
         let dir = TempDir::new("no-terms");
@@ -818,12 +838,14 @@ exit 0
         assert!(matches!(lint(&t, &dir.0, "無語\n"), Lint::Failed(_)));
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_merge_that_makes_no_commit() {
         assert!(check("git merge --ff-only feat/a -m 'Merge: a' -m '誤語'").is_empty());
         assert!(check("git merge --squash feat/a -m 'Merge: a' -m '誤語'").is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_repository_with_its_own_hooks_path() {
         let dir = TempDir::new("own-hooks");
@@ -838,6 +860,7 @@ exit 0
         assert!(findings.is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_when_no_global_hooks_path() {
         let dir = TempDir::new("no-global");
@@ -856,6 +879,7 @@ exit 0
         assert!(findings.is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn checks_merge_whose_last_option_makes_a_commit() {
         let r = only_deny(&check(
@@ -868,6 +892,7 @@ exit 0
         assert!(r.contains("誤語 => 正語"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn skipped_repository_gets_no_notice() {
         let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
@@ -898,6 +923,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn reports_message_with_shell_expansion_as_undecidable() {
         let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
@@ -910,6 +936,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn checks_literal_dollar_in_single_quotes() {
         let r = only_deny(&check(
@@ -918,6 +945,7 @@ exit 0
         assert!(r.contains("誤語 => 正語"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_merge_without_hooks() {
         assert!(check("git merge --no-verify --no-ff feat/a -m 'Merge: a' -m '誤語'").is_empty());
@@ -954,6 +982,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn reports_quoted_text_joined_with_expansion_as_undecidable() {
         let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
@@ -964,6 +993,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_merge_with_no_commit() {
         assert!(check("git merge --no-ff --no-commit feat/a -m 'Merge: a' -m '誤語'").is_empty());
@@ -973,6 +1003,7 @@ exit 0
         assert!(r.contains("誤語 => 正語"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn expansion_notice_names_the_option_not_the_body() {
         let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
@@ -987,6 +1018,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn checks_attached_single_quoted_value_with_dollar() {
         for src in [

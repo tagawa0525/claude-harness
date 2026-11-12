@@ -1296,6 +1296,8 @@ mod tests {
         ));
     }
 
+    // Windows には実行の bit が無い
+    #[cfg(unix)]
     #[test]
     fn mode_change_is_not_same() {
         let (r, old, new) = rebase_case(

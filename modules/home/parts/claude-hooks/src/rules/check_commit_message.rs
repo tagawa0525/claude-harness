@@ -334,6 +334,7 @@ mod tests {
     /// commit-msg-check の代わり。メッセージのファイルを 1 つ受け、隣の `seen` にコピーする。件名（最初の行）に
     /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「失敗」があれば 2 で終わる（規則の実物は
     /// tests/commit-message.sh と modules/home/parts/tests/commit-msg-conventions.sh が確かめる）
+    #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
 [ $# -eq 1 ] || exit 3
 cp "$1" "$(dirname "$0")/seen"
@@ -344,11 +345,14 @@ esac
 exit 0
 "#;
 
+    /// 偽の commit-msg-check。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
+    #[cfg(unix)]
     struct Fake {
         dir: TempDir,
         path: String,
     }
 
+    #[cfg(unix)]
     impl Fake {
         fn new(tag: &str) -> Fake {
             use std::os::unix::fs::PermissionsExt;
@@ -576,6 +580,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_long_subject_in_stdin_heredoc_with_reason() {
         let fake = Fake::new("stdin");
@@ -593,6 +598,7 @@ exit 0
         assert!(r.contains("直してから"), "{r}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_long_subject_in_m_heredoc() {
         let fake = Fake::new("mheredoc");
@@ -601,6 +607,7 @@ exit 0
         assert!(only_deny(&fake.check(&cmd)).contains("❌"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_long_subject_in_double_quoted_multiline_message() {
         let fake = Fake::new("mdouble");
@@ -612,6 +619,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn checks_commit_under_cd_and_git_c() {
         let fake = Fake::new("dirs");
@@ -625,6 +633,7 @@ exit 0
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn checks_commit_that_concludes_a_merge() {
         // マージの衝突の後に git commit で終える形（MERGE_HEAD がある）も、同じ commit-msg が走る
@@ -633,6 +642,7 @@ exit 0
         assert!(only_deny(&fake.check(&format!("git commit -m '{LONG}'"))).contains("❌"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn allows_message_the_check_passes() {
         let _guard = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
@@ -646,6 +656,7 @@ exit 0
         assert!(take_notices().is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_commit_without_message_and_other_commands() {
         let fake = Fake::new("none");
@@ -661,6 +672,7 @@ exit 0
         assert_eq!(fake.seen(), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_repositories_where_commit_msg_does_not_check() {
         let fake = Fake::new("fork");
@@ -676,6 +688,7 @@ exit 0
         assert_eq!(other.seen(), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn reports_undecidable_message_and_check() {
         let _guard = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
@@ -708,6 +721,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_message_file_written_earlier_in_the_same_command() {
         let fake = Fake::new("written");
@@ -726,6 +740,7 @@ exit 0
         assert_eq!(fake.seen(), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_message_file_written_through_a_variable_earlier() {
         // 前段がシェルの変数で書いたパス（値は同じ呼び出しの代入で字面のまま決まる）も、-F の値と同じファイルとして比べる
@@ -743,6 +758,7 @@ exit 0
         assert_eq!(fake.seen(), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn denies_message_file_that_an_earlier_command_only_reads() {
         // 読むだけの前段も、書きうるものと区別しない（本文を直接渡せば通る）
@@ -756,6 +772,7 @@ exit 0
         assert_eq!(fake.seen(), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn reads_message_file_that_no_earlier_command_writes() {
         let fake = Fake::new("unwritten");

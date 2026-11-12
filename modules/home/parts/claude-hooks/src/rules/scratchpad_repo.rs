@@ -358,11 +358,14 @@ mod tests {
         let missing_up = f.scratchpad().join("missing/../../../../prod");
         let err = judge(&format!("cd {} && git add .", missing_up.display()), &repo).unwrap_err();
         assert!(err.contains("git init"), "{err}");
-        // scratchpad の中の symlink が本番のリポジトリを指す
-        let link = f.scratchpad().join("link");
-        std::os::unix::fs::symlink(f.prod(), &link).unwrap();
-        let err = judge(&format!("cd {} && git add -A", link.display()), &repo).unwrap_err();
-        assert!(err.contains("scratchpad の外"), "{err}");
+        // scratchpad の中の symlink が本番のリポジトリを指す（Windows の symlink は特権が要る）
+        #[cfg(unix)]
+        {
+            let link = f.scratchpad().join("link");
+            std::os::unix::fs::symlink(f.prod(), &link).unwrap();
+            let err = judge(&format!("cd {} && git add -A", link.display()), &repo).unwrap_err();
+            assert!(err.contains("scratchpad の外"), "{err}");
+        }
     }
 
     #[test]
