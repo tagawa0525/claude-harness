@@ -155,7 +155,9 @@ mod tests {
     }
 
     fn git(dir: &Path, args: &[&str]) {
+        // CI の runner のように、グローバルの設定に名前とメールが無い所でもコミットできるようにする
         let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
             .args(args)
             .current_dir(dir)
             .status()
