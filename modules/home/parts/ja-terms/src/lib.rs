@@ -94,14 +94,16 @@ impl Dictionary {
         self.rules.is_empty()
     }
 
-    /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる
+    /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる（prh の makeChangeSet の diffs。
+    /// textlint-rule-prh が報告するもの）
     pub fn diffs(&self, text: &str) -> Result<Vec<Diff>, TextError> {
         diffs(&self.rules, &paragraphs(text))
     }
 
     /// text に規則を当てた結果
     pub fn apply(&self, text: &str) -> Result<String, TextError> {
-        Ok(splice(text, &self.diffs(text)?))
+        // prh の applyChangeSets は、当てる前にもう 1 度重なりを外す
+        Ok(splice(text, &prepare(self.diffs(text)?)))
     }
 }
 
@@ -292,9 +294,9 @@ fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError>
                 "specs の from と to は文字列（引用符で囲む）: {spec:?}"
             )));
         };
-        // prh の Rule.check は spec を段落に分けずに当てる
+        // prh の Rule.check は spec を段落に分けずに ChangeSet にし、applyChangeSets で当てる
         let got = diffs(std::slice::from_ref(rule), &[(0, from)])
-            .map(|d| splice(from, &d))
+            .map(|d| splice(from, &prepare(d)))
             .map_err(|e| DictionaryError(e.0))?;
         if &got != to {
             return Err(fail(format!(
@@ -305,7 +307,7 @@ fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError>
     Ok(())
 }
 
-/// 文の部分 pieces（文の中の位置と中身）ごとに規則を当て、重なりを外す
+/// 文の部分 pieces（文の中の位置と中身）ごとに規則を当て、重なりを外す（prh の ChangeSet を作るとき）
 fn diffs(rules: &[Rule], pieces: &[(usize, &str)]) -> Result<Vec<Diff>, TextError> {
     let mut found = Vec::new();
     for &(offset, piece) in pieces {
@@ -331,8 +333,7 @@ fn diffs(rules: &[Rule], pieces: &[(usize, &str)]) -> Result<Vec<Diff>, TextErro
             }
         }
     }
-    // prh は ChangeSet を作るときと当てるときの 2 度、重なりを外す
-    Ok(prepare(prepare(found)))
+    Ok(prepare(found))
 }
 
 /// prh の engine.js の段落。前の区切りの後から次の `\n{2,}` までを段落にする
@@ -378,7 +379,8 @@ fn expand(expected: &str, groups: &[Option<&str>]) -> String {
     out
 }
 
-/// changeset.js の _prepare。並べ、同じ開始なら長い方を、違う開始なら先の方を残す
+/// changeset.js の _prepare。並べ、同じ開始なら長い方を、違う開始なら先の方を残す。前の要素を外す前の並びで
+/// 比べるので、2 度当てると外れるものが増えうる
 fn prepare(mut diffs: Vec<Diff>) -> Vec<Diff> {
     diffs.sort_by_key(|d| (d.start, d.end));
     let kept: Vec<&Diff> = diffs
