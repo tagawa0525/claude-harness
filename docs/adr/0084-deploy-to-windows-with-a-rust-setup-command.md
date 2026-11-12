@@ -35,12 +35,12 @@ Windows で関わる事実:
   （<https://code.claude.com/docs/en/hooks> の "Exec form and shell form"、2026-11-12 に閲覧）
 - Git for Windows は git hook を同梱の sh で実行する。rsync と jq は同梱されていない
 - Windows の機械には rustup と MSVC Build Tools を入れてよい（2026-11-12 のユーザーの決定）。`windows.yml`（ADR-0083）の
-  `cargo test --locked` は、GitHub Actions の `windows-latest` で同じ toolchain を使ってビルドしている
+  `cargo test --locked` は、GitHub Actions の `windows-latest` の runner に入っている Rust の stable（MSVC の target）でビルドしている
 
 ## 決定の要因
 
 - Windows と Linux で、hook の登録と同期の規則を 2 つの言語に書き分けないこと（ADR-0082 の要因と同じ）
-- Linux の今の配備（rebuild で入れる、`claude-sync` で入れる）の振る舞いを変えないこと
+- Linux の今の配備（rebuild で入れる、`claude-sync` で入れる）が作る `~/.claude` の中身と hook の判定を変えないこと
 - Windows で足す仕組み（リリースの workflow、版の付け方）を、今の要件に要る分だけにすること
 - 依存を増やさないこと（ADR-0047 の数え方）
 
@@ -71,22 +71,31 @@ hook の登録の形:
   （`%USERPROFILE%\.cargo\bin`）。Linux は今のとおり Nix でビルドする
 - 設置のコマンド: 新しい crate に Rust で書き、サブコマンドで次を持つ。名前とサブコマンドの形は実装の PR で決める
   - 同期: `claude-sync.sh` を置き換える。規則（CLAUDE.md、skills、scripts はソースが正として中身で比べて上書き、
-    commands は既存を残す、消さない、引数なしは既定の clone を `pull --ff-only` してからコピーする）は今のまま。Linux の
-    `claude-sync` と activation もこれを呼ぶ
+    commands は既存を残す、消さない、引数なしは既定の clone を `pull --ff-only` してからコピーする）は今のまま。既定の
+    clone は、どちらの OS でもホームの下の `nix/claude-harness`（Windows では `%USERPROFILE%\nix\claude-harness`）。
+    Linux の `claude-sync` と activation もこれを呼ぶ
   - settings.json の更新: 静的な設定を Nix の attrset から JSON のファイルに移し、Nix は `builtins.fromJSON` で読む。
-    コマンドはそれを重ね、hook の登録を揃える（今の jq の filter と同じ規則）。登録するバイナリのパスは引数で受け、
-    Linux の activation は今の `~/.claude/bin/` を、Windows は `cargo install` の置き場を渡す
+    コマンドはそれを重ね、hook の登録を 1 件ずつに揃える（旧 bash hook の登録を外し、ほかの hook の登録を残す規則は
+    今の jq の filter のまま）。既にある登録は、今の shell form（`command` の末尾がバイナリと引数）と exec form
+    （`command` がバイナリで、`args` が引数）の両方で見分け、Windows の `\` 区切りのパスも見分ける。登録する hook と
+    バイナリのパスは引数で受け、渡されたものだけを登録する。Linux の activation は今の `~/.claude/bin/` の 3 つ
+    （PreToolUse、UserPromptSubmit、Stop）を渡す。Windows は `cargo install` の置き場の、入れたバイナリだけを渡す
+    （Stop の `claude-memory-backup` は jq と flock に頼る sh で、#101 の段階 8 で移すまで Windows には無い）
   - git hook の設置（Windows だけ）: hook のファイルを、Rust のバイナリを呼ぶだけの sh にして置き、`core.hooksPath`
     を向ける。中身の Rust は #101 の段階 4 で書くので、設置もその段階で足す。Linux は `git-hooks.nix` のまま
 - Windows の手順: clone を `git pull` し、`cargo install --locked --path` で設置のコマンドとほかの crate を入れ、
-  設置のコマンドを実行する。外部のスキル（flake input）は Windows では置かない
+  設置のコマンドを実行する。外部のスキル（flake input）は Windows では置かない。Nix が包んで渡すもの（`claude-hooks` の
+  `CLAUDE_HOOKS_JA_TERMS_MESSAGE` と `CLAUDE_HOOKS_COMMIT_MSG_CHECK`、`package.nix` の `makeWrapper`）と PATH に頼る
+  `gitleaks` を、Windows でどう用意するかは、ADR-0082 のとおり #101 の段階 3 で決める
 - hook の登録: exec form にし、Linux も同じ形に揃える（`command` に `~/.claude/bin/claude-hooks` の絶対パス、`args` に
   `["pre-tool-use"]`）
 
 理由:
 
-- 案 1 は、CI（ADR-0083）と同じ toolchain と `Cargo.lock` でビルドするので、CI で通ったものが手元でも同じにビルド
-  できる。案 2 は、リリースの workflow、版の付け方、最初の 1 本（設置のコマンド自身）を入れる手順が要り、使うのが
+- 案 1 は、CI（ADR-0083）と同じ `Cargo.lock` と同じ target（MSVC）でビルドする。toolchain の版は固定していない
+  （`rust-toolchain.toml` が無い）ので、CI の runner と手元の stable の版がずれることはある。CI が確かめるのは
+  `windows.yml` の matrix に入れた crate だけで、2026-11-12 は `design-records` だけ。ほかの crate は、Windows で
+  使う段階で matrix に足す。案 2 は、リリースの workflow、版の付け方、最初の 1 本（設置のコマンド自身）を入れる手順が要り、使うのが
   ユーザーの手元の機械だけの今は、その費用に見合わない。配る相手が増えたら見直す
 - 案 A は、hook の登録と同期の規則が 1 つの実装になる。案 B は、今の jq の filter（旧 hook の除去、matcher の組の
   入れ替え）と rsync の規則を Rust に書き写し、2 つの実装が揃っているかを確かめ続ける費用がかかる。静的な設定の
@@ -105,14 +114,18 @@ hook の登録の形:
 - 悪い点: Windows の機械に rustup と MSVC Build Tools（数 GB）が要り、更新のたびに手元でビルドする
 - 悪い点: 外部のスキル（`grilling`、`grill-me`）と lsp-det のプラグインは Windows に置かれない。要るようになったら、
   設置のコマンドが取る形を決める
-- 悪い点: Linux の activation が、設置のコマンドのビルドを待つようになる
-- git hook は、#101 の段階 4 までは Windows に置かれない
+- 悪い点: Linux の rebuild が、設置のコマンドの crate のビルドとテスト（`package.nix` の check）を含むようになる
+- 悪い点: 同期の規則は、今は `claude-sync.sh` を直せばその場で試せるが、Rust に移すとビルドが要る（ADR-0082 の帰結と
+  同じ）。settings.json の PreToolUse の登録の形も、shell form から exec form に変わる
+- git hook は #101 の段階 4 まで、Stop の hook（自動メモリの退避）は段階 8 まで、Windows に置かれない。PreToolUse
+  hook の外の検査（崩れた日本語の語、機密情報）は、段階 3 で決めるまで Windows では走らない
 - 実装はまだ決定に追いついていない。進みは #101 に書く
 
 ### 確認
 
 - 設置のコマンドの crate を `windows.yml` の matrix に足し、同期と settings.json の更新の結合テストが Linux と
-  Windows の両方で通る。テストは、今の jq の filter と `claude-sync.sh` が同じ入力から作る結果を期待値に使う
+  Windows の両方で通る。テストの期待値は、今の jq の filter と `claude-sync.sh` が同じ入力から作る結果を、PreToolUse の
+  登録だけ exec form に置き換えたものにする。shell form と exec form の既にある登録が、どちらも 1 件に揃うことも確かめる
 - Linux で rebuild の前と後の `~/.claude/settings.json` を比べ、違いが hook の登録の形（exec form）だけである
 - #101 の段階 3 の後、Windows の機械で設置のコマンドを実行してから、Claude Code の Bash ツールで main への `git commit` が PreToolUse hook に
   止められる
