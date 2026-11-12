@@ -273,3 +273,60 @@ fn unknown_keys_and_rules_without_pattern_are_refused() {
     let e = refused("rules:\n  - just a string\n");
     assert!(e.contains("1 番目の規則"), "{e}");
 }
+
+#[test]
+fn a_dictionary_with_a_byte_order_mark_reads_as_without_it() {
+    // js-yaml は先頭の BOM を外す。Windows のメモ帳などは UTF-8 に BOM を付けて保存する
+    let d = load("\u{feff}version: 1\nrules:\n  - expected: X\n    pattern: a\n");
+    assert_eq!(apply(&d, "a"), "X");
+}
+
+#[test]
+fn a_dictionary_with_several_yaml_documents_is_refused() {
+    // prh の js-yaml の load は、2 つ目の文書があれば例外にする
+    let e = refused(
+        "version: 1\nrules:\n  - expected: X\n    pattern: a\n---\nversion: 1\nrules:\n  - expected: Y\n    pattern: b\n",
+    );
+    assert!(e.contains("文書"), "{e}");
+}
+
+#[test]
+fn diffs_drop_overlaps_once_as_textlint_reports_them_and_apply_drops_them_twice() {
+    // prh の ChangeSet は作るときに重なりを外し、textlint-rule-prh はその diffs を報告する。applyChangeSets はもう 1 度
+    // 外す。外し方は前の要素を外す前の並びで比べるので、2 度目に外れるものがある
+    let d = load(
+        "version: 1\nrules:\n  - expected: X\n    pattern: \"0123456789\"\n  - expected: Y\n    pattern: \"56\"\n  - expected: Z\n    pattern: \"89AB\"\n",
+    );
+    assert_eq!(
+        d.diffs("0123456789AB").unwrap(),
+        vec![
+            Diff {
+                start: 0,
+                end: 10,
+                replacement: "X".into()
+            },
+            Diff {
+                start: 8,
+                end: 12,
+                replacement: "Z".into()
+            },
+        ]
+    );
+    assert_eq!(apply(&d, "0123456789AB"), "XAB");
+}
+
+#[test]
+fn an_empty_patterns_beside_a_pattern_is_refused() {
+    // prh の Rule は pattern と patterns の両方の空を確かめてから、pattern を使う
+    let e = refused("version: 1\nrules:\n  - expected: X\n    pattern: a\n    patterns: ['']\n");
+    assert!(e.contains("patterns が空"), "{e}");
+    let e = refused("version: 1\nrules:\n  - expected: X\n    pattern: a\n    patterns: ''\n");
+    assert!(e.contains("patterns が空"), "{e}");
+}
+
+#[test]
+fn a_repeated_flag_is_refused() {
+    // prh は new RegExp(source, flags) で読み、同じフラグが 2 度あれば SyntaxError になる
+    let e = refused_rule("/a/gg");
+    assert!(e.contains("フラグ"), "{e}");
+}
