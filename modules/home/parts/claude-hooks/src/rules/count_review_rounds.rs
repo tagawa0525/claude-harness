@@ -31,7 +31,7 @@ const STATE_DIR: &str = "claude-review-rounds";
 fn first_directory(text: &str) -> Option<PathBuf> {
     let stop = |c: char| c.is_whitespace() || "`'\"「」（）()。、,;".contains(c);
     text.split(stop)
-        .map(PathBuf::from)
+        .map(|w| PathBuf::from(crate::shell::native(w).as_ref()))
         .filter(|p| p.is_absolute())
         .find(|p| p.is_dir())
 }
@@ -241,6 +241,15 @@ mod tests {
             assert!(context.contains(&format!("{n} 周目")), "{context}");
             assert!(context.contains("feat/x"), "{context}");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_drive_path_names_the_review_target() {
+        let r = repo("feat/msys");
+        let args = format!("high {}", crate::shell::to_msys(&r.dir));
+        let context = round(&skill("code-review", &args, Path::new(r"C:\")));
+        assert!(context.contains("feat/msys"), "{context}");
     }
 
     #[test]

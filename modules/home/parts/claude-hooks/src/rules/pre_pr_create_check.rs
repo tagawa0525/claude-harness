@@ -57,13 +57,14 @@ pub(super) fn strip_opt_prefix<'a>(arg: &'a Arg, names: &[&str]) -> &'a str {
     &arg.text
 }
 
-/// `~` を展開してファイルを読む
+/// `~` と Git Bash のドライブのパスを解いてファイルを読む。相対のパスは hook の cwd から読む
 pub(super) fn read_body_file(path: &str) -> Option<String> {
-    let path = if let Some(rest) = path.strip_prefix("~/") {
-        std::env::var_os("HOME").map(|h| Path::new(&h).join(rest))
-    } else {
-        Some(Path::new(path).to_path_buf())
-    }?;
+    let home = crate::shell::home();
+    // ホームが分からなければ、`~/x` を hook の cwd の `x` と読まずに、読めないものとして扱う
+    if (path == "~" || path.starts_with("~/")) && home.as_os_str().is_empty() {
+        return None;
+    }
+    let path = crate::shell::resolve(&home, Path::new(""), path);
     std::fs::read_to_string(path).ok()
 }
 
@@ -248,5 +249,18 @@ impl Rule for PrePrCreateCheck {
             }
         }
         Vec::new()
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn body_file_is_read_by_a_git_bash_drive_path() {
+        let path =
+            std::env::temp_dir().join(format!("claude-hooks-body-{}.md", std::process::id()));
+        std::fs::write(&path, "## Summary\n").unwrap();
+        let body = super::read_body_file(&crate::shell::to_msys(&path));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(body.as_deref(), Some("## Summary\n"));
     }
 }

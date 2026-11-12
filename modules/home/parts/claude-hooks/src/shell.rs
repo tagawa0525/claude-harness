@@ -960,13 +960,61 @@ fn unescape_double(s: &str) -> String {
     out
 }
 
+/// bash の `~` のホーム。`HOME` を先に見るのは、bash が `~` を `HOME` で展開するため
 pub(crate) fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
+    home_from(std::env::var_os("HOME"), std::env::home_dir)
+}
+
+/// `HOME` が無いか空なら OS のホーム（Windows では `USERPROFILE`）。Git Bash の外から起動した Claude Code の hook には
+/// `HOME` が無いことがあり、Git Bash は `HOME` が無ければ `USERPROFILE` をホームにする
+fn home_from(
+    home: Option<std::ffi::OsString>,
+    os_home: impl FnOnce() -> Option<PathBuf>,
+) -> PathBuf {
+    home.filter(|h| !h.is_empty())
+        // UTF-8 でない HOME（変換できるドライブのパスではない）は、そのまま使う
+        .map(|h| match h.to_str() {
+            Some(s) => PathBuf::from(native(s).as_ref()),
+            None => PathBuf::from(h),
+        })
+        .or_else(os_home)
         .unwrap_or_default()
 }
 
-/// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）
+/// Git Bash（MSYS）のドライブのパス `/c/x` を `C:/x` にする。ドライブの 1 文字の後が `/` か終わりのものだけを
+/// 変える。`/tmp` などの mount の下は Git for Windows の置き場で決まるので扱わない
+fn msys_drive(p: &str) -> Option<String> {
+    let rest = p.strip_prefix('/')?;
+    let mut chars = rest.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    let after = chars.as_str();
+    if !(after.is_empty() || after.starts_with('/')) {
+        return None;
+    }
+    let after = after.strip_prefix('/').unwrap_or(after);
+    Some(format!("{}:/{after}", drive.to_ascii_uppercase()))
+}
+
+/// パスを、この OS で開ける形にする。Windows では Git Bash のドライブのパスを変え、ほかの OS ではそのまま
+pub(crate) fn native(p: &str) -> std::borrow::Cow<'_, str> {
+    if cfg!(windows)
+        && let Some(converted) = msys_drive(p)
+    {
+        return converted.into();
+    }
+    p.into()
+}
+
+/// テストが書く Git Bash のパス（`C:\\x` → `/c/x`）
+#[cfg(all(test, windows))]
+pub(crate) fn to_msys(p: &Path) -> String {
+    let s = p.display().to_string().replace('\\', "/");
+    let (drive, rest) = s.split_once(':').expect("ドライブのあるパス");
+    format!("/{}{rest}", drive.to_ascii_lowercase())
+}
+
+/// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）。Windows では Git Bash のドライブのパス（`/c/x`）を
+/// `C:/x` にする（[`native`]）
 pub(crate) fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     if p == "~" {
         return home.to_path_buf();
@@ -974,7 +1022,7 @@ pub(crate) fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     if let Some(rest) = p.strip_prefix("~/") {
         return home.join(rest);
     }
-    base.join(p)
+    base.join(native(p).as_ref())
 }
 
 /// 字面を値と並びに足す（[`Shell::unquote`]）
@@ -1067,6 +1115,54 @@ pub fn opt_value<'a>(args: &'a [Arg], names: &[&str]) -> Option<&'a Arg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn msys_drive_paths_become_windows_drive_paths() {
+        assert_eq!(
+            msys_drive("/c/Users/u/repo").as_deref(),
+            Some("C:/Users/u/repo")
+        );
+        assert_eq!(msys_drive("/d").as_deref(), Some("D:/"));
+        assert_eq!(msys_drive("/c/").as_deref(), Some("C:/"));
+        // ドライブの 1 文字でないもの、Git Bash の mount の下（/tmp、/usr）、すでに Windows の形のものは変えない
+        for p in ["/cc/x", "/tmp/x", "/usr", "/", "C:/x", "c/x", "~/x"] {
+            assert_eq!(msys_drive(p), None, "{p}");
+        }
+    }
+
+    #[test]
+    fn home_falls_back_to_the_os_home_when_home_is_unset() {
+        let os = Some(PathBuf::from("/os/home"));
+        assert_eq!(
+            home_from(Some("/hh".into()), || os.clone()),
+            PathBuf::from("/hh")
+        );
+        assert_eq!(home_from(None, || os.clone()), PathBuf::from("/os/home"));
+        // 空の HOME は無いのと同じ
+        assert_eq!(home_from(Some("".into()), || os), PathBuf::from("/os/home"));
+        assert_eq!(home_from(None, || None), PathBuf::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn home_keeps_a_home_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = std::ffi::OsStr::from_bytes(b"/home/\xe9t\xe9");
+        assert_eq!(home_from(Some(raw.to_owned()), || None), PathBuf::from(raw));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn msys_drive_paths_resolve_on_windows() {
+        let base = Path::new(r"C:\base");
+        assert_eq!(
+            resolve(Path::new(r"C:\h"), base, "/c/Users/u"),
+            PathBuf::from("C:/Users/u")
+        );
+        let sh = Shell::parse("cd /d/work && git commit");
+        let git = sh.commands().iter().find(|c| c.name == "git").unwrap();
+        assert_eq!(sh.target_dir(git, base), PathBuf::from("D:/work"));
+    }
 
     fn cmds(src: &str) -> Vec<Cmd> {
         Shell::parse(src).commands().to_vec()
@@ -1178,7 +1274,7 @@ mod tests {
             .iter()
             .find(|c| c.git_subcommand().is_some_and(|(sub, _)| sub == "commit"))
             .unwrap();
-        sh.writer_before(commit, Path::new("/w"), Path::new(path))
+        sh.writer_before(commit, Path::new("/ww"), Path::new(path))
             .map(|c| c.name.clone())
     }
 
@@ -1186,24 +1282,24 @@ mod tests {
     fn writer_before_expands_variables_assigned_literally() {
         for (src, path, writer) in [
             (
-                "S=/s; cat > $S/m.txt <<'EOF2'\nx\nEOF2\ngit commit -F /s/m.txt",
-                "/s/m.txt",
+                "S=/ss; cat > $S/m.txt <<'EOF2'\nx\nEOF2\ngit commit -F /ss/m.txt",
+                "/ss/m.txt",
                 "cat",
             ),
             (
-                "S=/s; sed -i '1s/.*/y/' $S/m.txt; git commit -F /s/m.txt",
-                "/s/m.txt",
+                "S=/ss; sed -i '1s/.*/yy/' $S/m.txt; git commit -F /ss/m.txt",
+                "/ss/m.txt",
                 "sed",
             ),
             (
-                "S=\"/s\"; cat > \"${S}/m.txt\" && git commit -F /s/m.txt",
-                "/s/m.txt",
+                "S=\"/ss\"; cat > \"${S}/m.txt\" && git commit -F /ss/m.txt",
+                "/ss/m.txt",
                 "cat",
             ),
             // 相対の値は、書くコマンドの行き先からの相対
             (
                 "S=sub; printf x >> $S/m.txt; git commit -F sub/m.txt",
-                "/w/sub/m.txt",
+                "/ww/sub/m.txt",
                 "printf",
             ),
         ] {
@@ -1211,16 +1307,22 @@ mod tests {
         }
         // 値が決まり、別のパスを指す
         assert_eq!(
-            writer_of("S=/a; cat > $S/m.txt; git commit -F /s/m.txt", "/s/m.txt"),
+            writer_of(
+                "S=/aa; cat > $S/m.txt; git commit -F /ss/m.txt",
+                "/ss/m.txt"
+            ),
             None
         );
         // 単引用符の中の `$S` は字面
         assert_eq!(
-            writer_of("S=/s; cat > '$S/m.txt'; git commit -F /s/m.txt", "/s/m.txt"),
+            writer_of(
+                "S=/ss; cat > '$S/m.txt'; git commit -F /ss/m.txt",
+                "/ss/m.txt"
+            ),
             None
         );
         assert_eq!(
-            writer_of("cat > '$S/m.txt'; git commit -F x", "/w/$S/m.txt").as_deref(),
+            writer_of("cat > '$S/m.txt'; git commit -F x", "/ww/$S/m.txt").as_deref(),
             Some("cat")
         );
     }
@@ -1381,16 +1483,16 @@ mod tests {
     #[test]
     fn target_dir_prefers_git_c_then_preceding_cd() {
         let base = Path::new("/base");
-        let sh = Shell::parse("cd /a && git -C /b commit");
+        let sh = Shell::parse("cd /aa && git -C /bb commit");
         let cs = sh.commands();
-        assert_eq!(sh.target_dir(&cs[1], base), PathBuf::from("/b"));
+        assert_eq!(sh.target_dir(&cs[1], base), PathBuf::from("/bb"));
 
-        let sh = Shell::parse("cd /a; cd sub && git commit && cd /z");
+        let sh = Shell::parse("cd /aa; cd sub && git commit && cd /zz");
         let cs = sh.commands();
         let git = cs.iter().find(|c| c.name == "git").unwrap();
-        assert_eq!(sh.target_dir(git, base), PathBuf::from("/a/sub"));
+        assert_eq!(sh.target_dir(git, base), PathBuf::from("/aa/sub"));
 
-        let sh = Shell::parse("git commit && cd /z");
+        let sh = Shell::parse("git commit && cd /zz");
         let cs = sh.commands();
         assert_eq!(sh.target_dir(&cs[0], base), PathBuf::from("/base"));
     }
@@ -1398,21 +1500,21 @@ mod tests {
     #[test]
     fn cd_inside_substitution_or_subshell_does_not_change_parent_dir() {
         let base = Path::new("/base");
-        let sh = Shell::parse("echo $(cd /a && pwd) && git commit");
+        let sh = Shell::parse("echo $(cd /aa && pwd) && git commit");
         let cs = sh.commands();
         let git = cs.iter().find(|c| c.name == "git").unwrap();
         assert_eq!(sh.target_dir(git, base), PathBuf::from("/base"));
 
-        let sh = Shell::parse("(cd /a) ; git commit");
+        let sh = Shell::parse("(cd /aa) ; git commit");
         let cs = sh.commands();
         let git = cs.iter().find(|c| c.name == "git").unwrap();
         assert_eq!(sh.target_dir(git, base), PathBuf::from("/base"));
 
         // 同じサブシェルの中なら効く
-        let sh = Shell::parse("(cd /a && git commit)");
+        let sh = Shell::parse("(cd /aa && git commit)");
         let cs = sh.commands();
         let git = cs.iter().find(|c| c.name == "git").unwrap();
-        assert_eq!(sh.target_dir(git, base), PathBuf::from("/a"));
+        assert_eq!(sh.target_dir(git, base), PathBuf::from("/aa"));
     }
 
     #[test]
@@ -1431,16 +1533,16 @@ mod tests {
             "sudo -i bash -c 'git commit'",
             "sudo -i bash -c 'cd ~/repo && git commit'",
             "sudo -i -u slurm bash -c 'cd repo && git commit'",
-            "cd /a && sudo -i git commit",
+            "cd /aa && sudo -i git commit",
             "ssh host git commit",
-            "ssh host 'cd /a && git commit'",
+            "ssh host 'cd /aa && git commit'",
             "ssh host 'cd ~/repo && git commit'",
-            "cd /a && ssh host git -C /b commit",
-            "ssh host bash -c 'cd /a && git commit'",
+            "cd /aa && ssh host git -C /bb commit",
+            "ssh host bash -c 'cd /aa && git commit'",
         ] {
             let dir = dir_of_git(src);
             assert!(
-                !dir.starts_with("/a") && !dir.starts_with("/b"),
+                !dir.starts_with("/aa") && !dir.starts_with("/bb"),
                 "{src}: {}",
                 dir.display()
             );
@@ -1454,8 +1556,8 @@ mod tests {
         );
         assert_eq!(dir_of_git("sudo -E git commit"), PathBuf::from("/base"));
         // sudo -i の前の env -C は、sudo -i が移る前に効く
-        let dir = dir_of_git("env -C /a sudo -i git commit");
-        assert!(!dir.starts_with("/a") && dir != Path::new("/base"));
+        let dir = dir_of_git("env -C /aa sudo -i git commit");
+        assert!(!dir.starts_with("/aa") && dir != Path::new("/base"));
         // 包んだコマンドの引数の ~ は外側のシェルが展開するので、手元の利用者のホーム
         assert_eq!(
             dir_of_git("sudo -i git -C ~/repo commit"),
@@ -1467,16 +1569,16 @@ mod tests {
         );
         // sudo -i は手元で走るので、中の絶対パスは手元のもの
         assert_eq!(
-            dir_of_git("sudo -i bash -c 'cd /a && git commit'"),
-            PathBuf::from("/a")
+            dir_of_git("sudo -i bash -c 'cd /aa && git commit'"),
+            PathBuf::from("/aa")
         );
         assert_eq!(
-            dir_of_git("cd /a && sudo -i git -C /b commit"),
-            PathBuf::from("/b")
+            dir_of_git("cd /aa && sudo -i git -C /bb commit"),
+            PathBuf::from("/bb")
         );
         assert_eq!(
-            dir_of_git("sudo -s bash -c 'cd /a && git commit'"),
-            PathBuf::from("/a")
+            dir_of_git("sudo -s bash -c 'cd /aa && git commit'"),
+            PathBuf::from("/aa")
         );
     }
 
@@ -1674,44 +1776,44 @@ mod tests {
             let git = sh.commands().iter().find(|c| c.name == "git").unwrap();
             sh.target_dir(git, base)
         };
-        assert_eq!(dir_of_git("cd /a; (git commit)"), PathBuf::from("/a"));
+        assert_eq!(dir_of_git("cd /aa; (git commit)"), PathBuf::from("/aa"));
         assert_eq!(
-            dir_of_git("cd /a && echo $(git commit)"),
-            PathBuf::from("/a")
+            dir_of_git("cd /aa && echo $(git commit)"),
+            PathBuf::from("/aa")
         );
         assert_eq!(
-            dir_of_git("cd /a; bash -c 'cd b && git commit'"),
-            PathBuf::from("/a/b")
+            dir_of_git("cd /aa; bash -c 'cd b && git commit'"),
+            PathBuf::from("/aa/b")
         );
         assert_eq!(
-            dir_of_git("bash -c 'cd /a'; git commit"),
+            dir_of_git("bash -c 'cd /aa'; git commit"),
             PathBuf::from("/base")
         );
         assert_eq!(
-            dir_of_git("env -C /x bash -c 'git commit'"),
-            PathBuf::from("/x")
+            dir_of_git("env -C /xx bash -c 'git commit'"),
+            PathBuf::from("/xx")
         );
-        assert_eq!(dir_of_git("(cd /a); git commit"), PathBuf::from("/base"));
+        assert_eq!(dir_of_git("(cd /aa); git commit"), PathBuf::from("/base"));
         // 外側の env -C / sudo -D は、文字列の中の cd より前に当たる
         assert_eq!(
-            dir_of_git("env -C /x bash -c 'cd /y && git commit'"),
-            PathBuf::from("/y")
+            dir_of_git("env -C /xx bash -c 'cd /yy && git commit'"),
+            PathBuf::from("/yy")
         );
         assert_eq!(
             dir_of_git("env -C x bash -c 'cd y && git commit'"),
             PathBuf::from("/base/x/y")
         );
         assert_eq!(
-            dir_of_git("sudo -E -D /x bash -c 'cd y && git commit'"),
-            PathBuf::from("/x/y")
+            dir_of_git("sudo -E -D /xx bash -c 'cd y && git commit'"),
+            PathBuf::from("/xx/y")
         );
         assert_eq!(
-            dir_of_git("cd /a; env -C x bash -c \"env -C y bash -c 'cd z && git commit'\""),
-            PathBuf::from("/a/x/y/z")
+            dir_of_git("cd /aa; env -C x bash -c \"env -C y bash -c 'cd z && git commit'\""),
+            PathBuf::from("/aa/x/y/z")
         );
         assert_eq!(
-            dir_of_git("env -C /x bash -c 'git commit'; cd /z"),
-            PathBuf::from("/x")
+            dir_of_git("env -C /xx bash -c 'git commit'; cd /zz"),
+            PathBuf::from("/xx")
         );
     }
 

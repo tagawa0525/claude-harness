@@ -96,6 +96,7 @@ fn calls_delegate(text: &str) -> bool {
 
 /// 依頼のファイルを読む。通常のファイルでないもの（FIFO やデバイス）は、読むと hook が止まるので読まない
 fn read_request(path: &str) -> Result<String, String> {
+    let path = &*crate::shell::native(path);
     if !std::path::Path::new(path).is_absolute() {
         return Err("絶対パスではありません".to_string());
     }
@@ -470,6 +471,19 @@ mod tests {
                 "{path}: {reason}"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_drive_path_is_read_as_the_request_file() {
+        let tmp = TempDir::new("msys");
+        let complete = tmp.0.join("brief.md");
+        std::fs::write(&complete, COMPLETE).unwrap();
+        let prompt = format!(
+            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            crate::shell::to_msys(&complete)
+        );
+        assert!(check(&prompt).is_empty());
     }
 
     #[test]
