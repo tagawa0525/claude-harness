@@ -229,6 +229,9 @@ fn pattern_source(pattern: &Yaml, origin: &str) -> Result<String, DictionaryErro
         }
     };
     if let Some((source, flags)) = regexp_string(pattern) {
+        if let Some(flag) = repeated_flag(flags) {
+            return Err(fail(format!("{flag} フラグが 2 度ある")));
+        }
         // g と m は prh が必ず付け、y は外すので、意味を変えない。i は辞書に無く、prh が並びの pattern を 1 つに
         // つなぐときにフラグをどう扱うかを確かめていないので止める
         if flags.contains('i') {
@@ -259,6 +262,14 @@ fn regexp_string(pattern: &str) -> Option<(&str, &str)> {
         .chars()
         .all(|c| "gimy".contains(c))
         .then_some((source, flags))
+}
+
+/// prh が `new RegExp(source, flags)` で読むときに、同じフラグが 2 度あれば SyntaxError になる
+fn repeated_flag(flags: &str) -> Option<char> {
+    flags
+        .char_indices()
+        .find(|&(i, c)| flags[..i].contains(c))
+        .map(|(_, c)| c)
 }
 
 fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError> {
