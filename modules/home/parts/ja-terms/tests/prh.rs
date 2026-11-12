@@ -1,4 +1,4 @@
-//! 辞書を prh 6.0.0 と同じ意味で読み、文に当てること（ADR-0085）。
+//! 辞書を prh 5.4.4 と同じ意味で読み、文に当てること（ADR-0085）。
 //!
 //! 辞書の語（崩れた語）をわざと含むので、.textlintignore で ja-terms の検査から外す。
 
@@ -221,14 +221,11 @@ fn a_failing_spec_stops_loading() {
 
 #[test]
 fn spec_values_that_are_not_strings_are_refused() {
-    // js-yaml（YAML 1.2）は 1:30 を文字列と、90 を数と読む。prh は数を文字列として当てないので、引用符で囲む
+    // js-yaml は引用符の無い 90 を数と読み、prh の Rule.check は数の spec を合わないとして辞書を読まない
     let e = refused(
         "version: 1\nrules:\n  - expected: X\n    pattern: \"90\"\n    specs:\n      - from: 90\n        to: X\n",
     );
     assert!(e.contains("specs の from と to は文字列"), "{e}");
-    load(
-        "version: 1\nrules:\n  - expected: X\n    pattern: \"1:30\"\n    specs:\n      - from: 1:30\n        to: X\n",
-    );
 }
 
 // prh が読めない書き方

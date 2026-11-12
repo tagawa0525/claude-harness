@@ -1,4 +1,4 @@
-//! 崩れた日本語の語の辞書（prh.yml）を読み、prh 6.0.0 と同じ意味で文に当てる（ADR-0085）。
+//! 崩れた日本語の語の辞書（prh.yml）を読み、prh 5.4.4（textlint-rule-prh 6.0.0 が使う版）と同じ意味で文に当てる（ADR-0085）。
 //!
 //! 一致の意味は prh の lib/engine.js、rule.js、changeset/changeset.js、changeset/diff.js に揃える:
 //!

@@ -19,7 +19,7 @@ textlint-rule-prh 6.0.0（Node.js）で当てている（2026-11-13、flake.lock
 - PreToolUse hook: `claude-hooks` の git merge と git commit の本文のルール（ADR-0050、ADR-0073）が、Nix の
   `makeWrapper` で渡した store のパスの `ja-terms-message` と `commit-msg-check` を子プロセスで呼ぶ
 - /retro: `memory-index.sh` が `~/.claude/bin/ja-terms-files`（`files.sh`）を呼ぶ（ADR-0074）
-- 履歴の書き換え: `history-rewrite` の `prh_rules.py`（378 行）が、辞書を Python で読み、prh 6.0.0 と同じ意味で当てる
+- 履歴の書き換え: `history-rewrite` の `prh_rules.py`（378 行）が、辞書を Python で読み、prh と同じ意味で当てる
   （ADR-0045）。JavaScript の正規表現を Python の `regex` の書き方に直し、直せない書き方は止める
 
 ADR-0082 は、この検査を Windows で Node.js のまま動かすか、辞書を Rust で読むかを #101 の段階 3 で決めるとした。
@@ -49,7 +49,7 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
 ## 決定の要因
 
 - Windows と Linux で、同じ文に同じ判定をすること（ADR-0082）
-- 辞書の意味（prh 6.0.0）と、Markdown のどこを見るか（ADR-0058）を変えないこと
+- 辞書の意味（textlint-rule-prh 6.0.0 が使う prh 5.4.4）と、Markdown のどこを見るか（ADR-0058）を変えないこと
 - 同じ辞書を当てる実装の数を減らすこと（今は textlint と `prh_rules.py` の 2 つ）
 - 依存を増やさないこと（ADR-0047 の数え方）
 
@@ -67,7 +67,7 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   - 辞書: `prh.yml` を読む。`/…/フラグ` の pattern は、ECMAScript の正規表現のエンジンの `regress` で、prh と同じ u と
     m のフラグで読む（書き直さない）。固定の文字列は、prh と同じく特殊な文字を逃がしてから読む（`prh_rules.py` と同じ）。
     specs を読み込むときに確かめる
-  - 当て方: prh 6.0.0 の意味（段落ごとの一致、expected の `$1`、重なった一致の選び方。`prh_rules.py` の冒頭の注記）
+  - 当て方: prh 5.4.4 の意味（段落ごとの一致、expected の `$1`、重なった一致の選び方。`prh_rules.py` の冒頭の注記）
   - 当てる範囲は 2 つの mode に分ける。検査の mode は textlint と同じ: Markdown は `pulldown-cmark` で、textlint の Str の
     ノードに当たる原文の範囲を当て（見ない範囲は上の背景の、ノードの種類と ADR-0058 の一覧）、コードとテキストの
     ファイルは 1 行ずつ当てる。履歴の書き換えの mode は `prh_rules.py` と同じ: 全文に段落ごとに当てる（ADR-0045 の
