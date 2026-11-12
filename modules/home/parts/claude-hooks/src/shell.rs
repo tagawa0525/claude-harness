@@ -1013,7 +1013,8 @@ pub(crate) fn to_msys(p: &Path) -> String {
     format!("/{}{rest}", drive.to_ascii_lowercase())
 }
 
-/// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）
+/// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）。Windows では Git Bash のドライブのパス（`/c/x`）を
+/// `C:/x` にする（[`native`]）
 pub(crate) fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     if p == "~" {
         return home.to_path_buf();
