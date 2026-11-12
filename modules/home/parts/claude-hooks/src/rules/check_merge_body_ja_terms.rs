@@ -827,6 +827,18 @@ exit 0
     }
 
     #[test]
+    fn local_commit_msg_hook_counts_by_the_exec_bit_on_unix_and_by_the_file_on_windows() {
+        // 実行の bit を付けない hook のファイル。Git for Windows は実行し、Unix の git は実行しない
+        let dir = TempDir::new("plain-hook");
+        git_init(&dir.0);
+        std::fs::write(dir.0.join(".git/hooks/commit-msg"), "#!/bin/sh\nexit 0\n").unwrap();
+        assert_eq!(
+            super::commit_msg_skips(&dir.0, global_hooks(&dir.0)),
+            !cfg!(unix)
+        );
+    }
+
+    #[test]
     fn reports_undecidable_when_check_is_not_embedded() {
         let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
         let dir = TempDir::new("none");
