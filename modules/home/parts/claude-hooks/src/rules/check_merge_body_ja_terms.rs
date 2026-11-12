@@ -330,9 +330,20 @@ pub(super) fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool
     if git::is_fork(dir) {
         return true;
     }
-    use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(Path::new(&common).join("hooks/commit-msg"))
-        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .is_ok_and(|m| m.is_file() && is_executable(&m))
+}
+
+#[cfg(unix)]
+fn is_executable(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o111 != 0
+}
+
+/// Windows のファイルには実行の bit が無く、Git for Windows は hook のファイルがあれば実行する
+#[cfg(not(unix))]
+fn is_executable(_: &std::fs::Metadata) -> bool {
+    true
 }
 
 impl CheckMergeBodyJaTerms {
