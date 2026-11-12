@@ -174,9 +174,19 @@ fn load_rule(raw: &Yaml, origin: &str) -> Result<Rule, DictionaryError> {
     let Some(Yaml::String(expected)) = raw.get(&key("expected")) else {
         return Err(fail("expected が文字列でない"));
     };
+    // prh の Rule は、使わない方も含めて pattern と patterns の両方の空（空の文字列か、空の文字列を含む並び）を
+    // 確かめる
+    for name in ["pattern", "patterns"] {
+        let empty = |v: &Yaml| v.as_str() == Some("");
+        match raw.get(&key(name)) {
+            Some(Yaml::Array(items)) if items.iter().any(empty) => {}
+            Some(v) if empty(v) => {}
+            _ => continue,
+        }
+        return Err(fail(&format!("{name} が空")));
+    }
     // prh は `rawRule.pattern || rawRule.patterns` を使う。JavaScript では空の文字列だけが偽で、空の並びは真
     let pattern = match raw.get(&key("pattern")) {
-        Some(Yaml::String(s)) if s.is_empty() => return Err(fail("pattern が空")),
         None | Some(Yaml::Null) => raw.get(&key("patterns")),
         some => some,
     };
@@ -210,7 +220,6 @@ fn pattern_source(pattern: &Yaml, origin: &str) -> Result<String, DictionaryErro
                 .collect::<Result<Vec<_>, _>>()?;
             return Ok(format!("(?:{})", sources.join("|")));
         }
-        Yaml::String(s) if s.is_empty() => return Err(fail("pattern が空".into())),
         Yaml::String(s) => s,
         other => {
             return Err(fail(format!(
