@@ -359,10 +359,16 @@ mod tests {
         let up = repo.join("../../../../prod");
         let err = judge(&format!("git -C {} add .", sh(&up)), &repo).unwrap_err();
         assert!(err.contains("scratchpad の外"), "{err}");
-        // まだ無いディレクトリの後の `..`
+        // まだ無いディレクトリの後の `..`。Unix は無いディレクトリを通れないので場所を決められず、Windows は `..` を
+        // 字面で畳んで本番のリポジトリ（scratchpad の外）に着く。どちらも止める
         let missing_up = f.scratchpad().join("missing/../../../../prod");
         let err = judge(&format!("cd {} && git add .", sh(&missing_up)), &repo).unwrap_err();
-        assert!(err.contains("git init"), "{err}");
+        let expected = if cfg!(unix) {
+            "git init"
+        } else {
+            "scratchpad の外"
+        };
+        assert!(err.contains(expected), "{err}");
         // scratchpad の中の symlink が本番のリポジトリを指す（Windows の symlink は特権が要る）
         #[cfg(unix)]
         {
