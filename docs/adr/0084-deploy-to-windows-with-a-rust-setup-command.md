@@ -67,28 +67,37 @@ hook の登録の形:
 
 採用: 案 1、案 A、案 X。
 
-- バイナリ: Windows では clone の各 crate を `cargo install --locked --path` で入れる。置き場は cargo の既定
-  （`%USERPROFILE%\.cargo\bin`）。Linux は今のとおり Nix でビルドする
+- バイナリ: Windows では clone の各 crate を `cargo install --locked --force --path modules/home/parts/<crate>` で入れる
+  （clone のルートに `Cargo.toml` は無い。crate の版は `0.1.0` のまま変えないので、`--force` で毎回入れ直す）。置き場は
+  cargo の既定（`%USERPROFILE%\.cargo\bin`）。Linux は今のとおり Nix でビルドする
+- 同期と settings.json の更新の先: Claude Code と同じく、`CLAUDE_CONFIG_DIR` があればそこ、無ければホームの下の
+  `.claude`
 - 設置のコマンド: 新しい crate に Rust で書き、サブコマンドで次を持つ。名前とサブコマンドの形は実装の PR で決める
   - 同期: `claude-sync.sh` を置き換える。規則（CLAUDE.md、skills、scripts はソースが正として中身で比べて上書き、
     commands は既存を残す、消さない、引数なしは既定の clone を `pull --ff-only` してからコピーする）は今のまま。既定の
     clone は、どちらの OS でもホームの下の `nix/claude-harness`（Windows では `%USERPROFILE%\nix\claude-harness`）。
-    Linux の `claude-sync` と activation もこれを呼ぶ
-  - settings.json の更新: 静的な設定を Nix の attrset から JSON のファイルに移し、Nix は `builtins.fromJSON` で読む。
+    Linux の `claude-sync` もこれを呼ぶ。activation は今のとおり source（flake の `claudeCodeSource`）を引数で渡して
+    呼び、clone を読まない
+  - settings.json の更新: 静的な設定を Nix の attrset から、`.claude/` の外の JSON のファイルに移し、Nix は
+    `builtins.fromJSON` で読む（`.claude/settings.json` はこのリポジトリのセッションのプロジェクトの設定で、
+    `.claude/README.md` のとおり同期しない）。
     コマンドはそれを重ね、hook の登録を 1 件ずつに揃える（旧 bash hook の登録を外し、ほかの hook の登録を残す規則は
     今の jq の filter のまま）。既にある登録は、今の shell form（`command` の末尾がバイナリと引数）と exec form
     （`command` がバイナリで、`args` が引数）の両方で見分け、Windows の `\` 区切りのパスも見分ける。登録する hook と
-    バイナリのパスは引数で受け、渡されたものだけを登録する。Linux の activation は今の `~/.claude/bin/` の 3 つ
-    （PreToolUse、UserPromptSubmit、Stop）を渡す。Windows は `cargo install` の置き場の、入れたバイナリだけを渡す
-    （Stop の `claude-memory-backup` は jq と flock に頼る sh で、#101 の段階 8 で移すまで Windows には無い）
+    バイナリのパスは引数で受け、渡されたものだけを登録する。パスは、設置の時点でホームを展開した絶対パスで書く（exec
+    form は `~` も `$HOME` も展開しない）。Linux の activation は `~/.claude/bin/` の `claude-hooks`（PreToolUse）と
+    `claude-memory-backup`（Stop）を渡す。Windows は `cargo install` の置き場の、入れたバイナリだけを渡す（Stop の
+    `claude-memory-backup` は jq と flock に頼る sh で、#101 の段階 8 で移すまで Windows には無い）。UserPromptSubmit
+    の現在時刻（`date` の shell form）は、どちらの OS でも今の文字列のまま登録する（Windows では Git Bash の `date` が
+    走る）
   - git hook の設置（Windows だけ）: hook のファイルを、Rust のバイナリを呼ぶだけの sh にして置き、`core.hooksPath`
     を向ける。中身の Rust は #101 の段階 4 で書くので、設置もその段階で足す。Linux は `git-hooks.nix` のまま
-- Windows の手順: clone を `git pull` し、`cargo install --locked --path` で設置のコマンドとほかの crate を入れ、
+- Windows の手順: clone を `git pull` し、`cargo install` で設置のコマンドとほかの crate を入れ、
   設置のコマンドを実行する。外部のスキル（flake input）は Windows では置かない。Nix が包んで渡すもの（`claude-hooks` の
   `CLAUDE_HOOKS_JA_TERMS_MESSAGE` と `CLAUDE_HOOKS_COMMIT_MSG_CHECK`、`package.nix` の `makeWrapper`）と PATH に頼る
   `gitleaks` を、Windows でどう用意するかは、ADR-0082 のとおり #101 の段階 3 で決める
-- hook の登録: exec form にし、Linux も同じ形に揃える（`command` に `~/.claude/bin/claude-hooks` の絶対パス、`args` に
-  `["pre-tool-use"]`）
+- hook の登録: バイナリの hook は exec form にし、Linux も同じ形に揃える（例: `command` に
+  `/home/<user>/.claude/bin/claude-hooks`、`args` に `["pre-tool-use"]`）
 
 理由:
 
@@ -109,8 +118,8 @@ hook の登録の形:
 
 ### 帰結
 
-- 良い点: Windows でも Linux でも、settings.json と `~/.claude` の中身が同じ規則で作られる。jq と rsync が配備の依存から
-  外れる
+- 良い点: Windows でも Linux でも、settings.json と `~/.claude` の中身が同じ規則で作られる。Windows の配備は jq と rsync
+  に頼らない。Linux では、外部のスキルの配備（rsync）と Stop の hook（jq と flock）が、#101 の段階 8 まで残る
 - 悪い点: Windows の機械に rustup と MSVC Build Tools（数 GB）が要り、更新のたびに手元でビルドする
 - 悪い点: 外部のスキル（`grilling`、`grill-me`）と lsp-det のプラグインは Windows に置かれない。要るようになったら、
   設置のコマンドが取る形を決める
