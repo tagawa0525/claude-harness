@@ -429,6 +429,7 @@ impl Rule for CheckMergeReview {
 
 #[cfg(test)]
 mod tests {
+    use super::super::scratchpad_repo::fixture::sh;
     use super::*;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -549,10 +550,7 @@ mod tests {
         fn check_body(&self, body: &str) -> Vec<Finding> {
             let msg = self.root.0.join("msg.txt");
             std::fs::write(&msg, body).unwrap();
-            self.check(&format!(
-                "git merge --no-ff feat/x -F {}",
-                msg.to_string_lossy()
-            ))
+            self.check(&format!("git merge --no-ff feat/x -F {}", sh(&msg)))
         }
 
         fn check(&self, command: &str) -> Vec<Finding> {
@@ -816,10 +814,7 @@ mod tests {
         let tip = repo.tip();
         let msg = repo.root.0.join("msg.txt");
         std::fs::write(&msg, body(&tip, FINDINGS)).unwrap();
-        let r = only_deny(&repo.check(&format!(
-            "git merge --no-ff feat/x feat/y -F {}",
-            msg.to_string_lossy()
-        )));
+        let r = only_deny(&repo.check(&format!("git merge --no-ff feat/x feat/y -F {}", sh(&msg))));
         assert!(r.contains("1 本ずつ"), "{r}");
     }
 

@@ -159,7 +159,7 @@ mod tests {
     use super::BlockNoVerify;
     use crate::output::Finding;
     use crate::rules::Rule;
-    use crate::rules::scratchpad_repo::fixture::{Fixture, SID, input};
+    use crate::rules::scratchpad_repo::fixture::{Fixture, SID, input, sh};
     use crate::shell::Shell;
     use std::path::Path;
 
@@ -175,7 +175,7 @@ mod tests {
     fn skipping_hooks_in_a_temp_repo_under_scratchpad_is_allowed() {
         let f = Fixture::new("nv-allow");
         let repo = f.temp_repo("r");
-        let r = repo.display();
+        let r = sh(&repo);
         for src in [
             "git -c core.hooksPath=/dev/null commit -qm x".to_string(),
             "git commit --no-verify -m x".to_string(),
@@ -200,7 +200,7 @@ mod tests {
         let repo = f.temp_repo("r");
         let src = format!(
             "git -c core.hooksPath=/dev/null commit -m x && git -C {} commit --no-verify -m y",
-            f.prod().display()
+            sh(&f.prod())
         );
         assert!(deny_reason(&src, &repo).is_some());
     }
@@ -209,7 +209,7 @@ mod tests {
     fn the_reason_outside_scratchpad_is_shown_whatever_the_order_of_the_commands() {
         let f = Fixture::new("nv-order");
         let repo = f.temp_repo("r");
-        let prod = f.prod().display().to_string();
+        let prod = sh(&f.prod());
         for src in [
             format!("git config core.hooksPath /dev/null; git -C {prod} commit --no-verify -m x"),
             format!("git -C {prod} commit --no-verify -m x; git config core.hooksPath /dev/null"),

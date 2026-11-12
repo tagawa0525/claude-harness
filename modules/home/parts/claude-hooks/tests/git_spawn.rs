@@ -119,6 +119,8 @@ fn deny_survives_alongside_the_message() {
     assert_eq!(out.json["hookSpecificOutput"]["permissionDecision"], "deny");
 }
 
+// 読めないディレクトリを mode 000 で作る（Windows の権限は mode で表せない）
+#[cfg(unix)]
 #[test]
 fn unreadable_parent_directory_is_shown_to_the_user() {
     use std::os::unix::fs::PermissionsExt;
@@ -171,6 +173,8 @@ fn gh_missing_from_path_is_shown_to_the_user() {
     assert_eq!(out.stderr, "");
 }
 
+// 上と同じく mode 000 を使う
+#[cfg(unix)]
 #[test]
 fn gh_with_unreadable_parent_directory_is_shown_to_the_user() {
     use std::os::unix::fs::PermissionsExt;
@@ -229,7 +233,9 @@ fn path_under_a_regular_file_is_not_reported() {
     assert_eq!(out.system_message(), "", "json: {}", out.json);
 }
 
-/// squeue として動く sh スクリプトを置いた一時のディレクトリ（PATH に渡す）
+/// squeue として動く sh スクリプトを置いた一時のディレクトリ（PATH に渡す）。Windows はシバンの sh のスクリプトを
+/// 実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
+#[cfg(unix)]
 fn fake_squeue(tag: &str, body: &str) -> TempDir {
     use std::os::unix::fs::PermissionsExt;
     let dir = TempDir::new(tag);
@@ -239,6 +245,7 @@ fn fake_squeue(tag: &str, body: &str) -> TempDir {
     dir
 }
 
+#[cfg(unix)]
 #[test]
 fn failing_squeue_is_shown_to_the_user_and_does_not_deny() {
     let bin = fake_squeue("squeue-fails", "echo boom >&2; exit 1");
@@ -268,6 +275,7 @@ fn squeue_missing_from_path_is_silent() {
     assert_eq!(out.stderr, "");
 }
 
+#[cfg(unix)]
 #[test]
 fn squeue_with_non_utf8_job_name_still_finds_the_exclusive_job() {
     let bin = fake_squeue("squeue-bytes", "printf 'NO|\\377name|42\\n'");

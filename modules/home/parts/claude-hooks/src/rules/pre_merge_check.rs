@@ -1296,6 +1296,8 @@ mod tests {
         ));
     }
 
+    // Windows には実行の bit が無い
+    #[cfg(unix)]
     #[test]
     fn mode_change_is_not_same() {
         let (r, old, new) = rebase_case(
@@ -1389,6 +1391,8 @@ mod tests {
         assert!(!same_pr_diff(&r.0, &tip, &old, &new));
     }
 
+    // Windows のファイル名には `:` と `*` を使えない
+    #[cfg(unix)]
     #[test]
     fn pathspec_like_file_name_is_compared_literally() {
         let name = ":(exclude,glob)**";

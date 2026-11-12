@@ -31,8 +31,8 @@ const STATE_DIR: &str = "claude-review-rounds";
 fn first_directory(text: &str) -> Option<PathBuf> {
     let stop = |c: char| c.is_whitespace() || "`'\"「」（）()。、,;".contains(c);
     text.split(stop)
-        .filter(|w| w.starts_with('/'))
         .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
         .find(|p| p.is_dir())
 }
 
@@ -155,7 +155,9 @@ mod tests {
     }
 
     fn git(dir: &Path, args: &[&str]) {
+        // CI の runner のように、グローバルの設定に名前とメールが無い所でもコミットできるようにする
         let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
             .args(args)
             .current_dir(dir)
             .status()
