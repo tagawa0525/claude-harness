@@ -31,7 +31,7 @@ const STATE_DIR: &str = "claude-review-rounds";
 fn first_directory(text: &str) -> Option<PathBuf> {
     let stop = |c: char| c.is_whitespace() || "`'\"「」（）()。、,;".contains(c);
     text.split(stop)
-        .map(PathBuf::from)
+        .map(|w| PathBuf::from(crate::shell::native(w).as_ref()))
         .filter(|p| p.is_absolute())
         .find(|p| p.is_dir())
 }

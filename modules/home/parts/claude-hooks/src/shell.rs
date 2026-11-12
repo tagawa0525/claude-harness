@@ -960,10 +960,42 @@ fn unescape_double(s: &str) -> String {
     out
 }
 
+/// bash の `~` のホーム。`HOME` を先に見るのは、bash が `~` を `HOME` で展開するため
 pub(crate) fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
+    home_from(std::env::var_os("HOME"), std::env::home_dir())
+}
+
+/// `HOME` が無いか空なら OS のホーム（Windows では `USERPROFILE`）。Git Bash の外から起動した Claude Code の hook には
+/// `HOME` が無いことがあり、Git Bash は `HOME` が無ければ `USERPROFILE` をホームにする
+fn home_from(home: Option<std::ffi::OsString>, os_home: Option<PathBuf>) -> PathBuf {
+    home.filter(|h| !h.is_empty())
+        .map(|h| PathBuf::from(native(&h.to_string_lossy()).as_ref()))
+        .or(os_home)
         .unwrap_or_default()
+}
+
+/// Git Bash（MSYS）のドライブのパス `/c/x` を `C:/x` にする。ドライブの 1 文字の後が `/` か終わりのものだけを
+/// 変える。`/tmp` などの mount の下は Git for Windows の置き場で決まるので扱わない
+fn msys_drive(p: &str) -> Option<String> {
+    let rest = p.strip_prefix('/')?;
+    let mut chars = rest.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    let after = chars.as_str();
+    if !(after.is_empty() || after.starts_with('/')) {
+        return None;
+    }
+    let after = after.strip_prefix('/').unwrap_or(after);
+    Some(format!("{}:/{after}", drive.to_ascii_uppercase()))
+}
+
+/// パスを、この OS で開ける形にする。Windows では Git Bash のドライブのパスを変え、ほかの OS ではそのまま
+pub(crate) fn native(p: &str) -> std::borrow::Cow<'_, str> {
+    if cfg!(windows)
+        && let Some(converted) = msys_drive(p)
+    {
+        return converted.into();
+    }
+    p.into()
 }
 
 /// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）
@@ -974,7 +1006,7 @@ pub(crate) fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     if let Some(rest) = p.strip_prefix("~/") {
         return home.join(rest);
     }
-    base.join(p)
+    base.join(native(p).as_ref())
 }
 
 /// 字面を値と並びに足す（[`Shell::unquote`]）

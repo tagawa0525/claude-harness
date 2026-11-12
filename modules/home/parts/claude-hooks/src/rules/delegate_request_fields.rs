@@ -96,6 +96,7 @@ fn calls_delegate(text: &str) -> bool {
 
 /// 依頼のファイルを読む。通常のファイルでないもの（FIFO やデバイス）は、読むと hook が止まるので読まない
 fn read_request(path: &str) -> Result<String, String> {
+    let path = &*crate::shell::native(path);
     if !std::path::Path::new(path).is_absolute() {
         return Err("絶対パスではありません".to_string());
     }

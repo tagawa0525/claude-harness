@@ -60,7 +60,7 @@ pub(super) fn strip_opt_prefix<'a>(arg: &'a Arg, names: &[&str]) -> &'a str {
 /// `~` を展開してファイルを読む
 pub(super) fn read_body_file(path: &str) -> Option<String> {
     let path = if let Some(rest) = path.strip_prefix("~/") {
-        std::env::var_os("HOME").map(|h| Path::new(&h).join(rest))
+        Some(crate::shell::home().join(rest))
     } else {
         Some(Path::new(path).to_path_buf())
     }?;
