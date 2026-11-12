@@ -454,6 +454,19 @@ mod tests {
     }
 
     #[test]
+    fn windows_drive_path_is_read_as_the_request_file() {
+        // Windows の Claude Code が書く依頼のパス。Linux では絶対パスでないと示し、Windows では読みに行く
+        for path in [r"C:\nonexistent\brief.md", "C:/nonexistent/brief.md"] {
+            let prompt = format!(
+                "依頼文は {path} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
+            );
+            let findings = check(&prompt);
+            let reason = deny_reason(&findings);
+            assert!(reason.contains(path), "{path}: {reason}");
+        }
+    }
+
+    #[test]
     fn inline_request_saying_it_is_below_is_judged_by_the_prompt() {
         // 「依頼文は下にある」はパスでないので、ファイルを指す句と見なさない
         let prompt = format!("依頼文は下にある。{COMPLETE}");
