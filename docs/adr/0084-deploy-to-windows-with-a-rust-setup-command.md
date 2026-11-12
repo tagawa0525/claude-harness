@@ -4,7 +4,7 @@ date: 2026-11-12
 requires: [ADR-0082, ADR-0083]
 supersedes: []
 superseded-by:
-issues: ["#101"]
+issues: ["#101", "#104"]
 ---
 
 # ADR-0084: Windows では、手元でビルドした Rust のバイナリと、Linux と共用する Rust の設置コマンドでハーネスを配備する
@@ -70,8 +70,9 @@ hook の登録の形:
 - バイナリ: Windows では clone の各 crate を `cargo install --locked --force --path modules/home/parts/<crate>` で入れる
   （clone のルートに `Cargo.toml` は無い。crate の版は `0.1.0` のまま変えないので、`--force` で毎回入れ直す）。置き場は
   cargo の既定（`%USERPROFILE%\.cargo\bin`）。Linux は今のとおり Nix でビルドする
-- 同期と settings.json の更新の先: Claude Code と同じく、`CLAUDE_CONFIG_DIR` があればそこ、無ければホームの下の
-  `.claude`
+- 同期と settings.json の更新の先: ホームの下の `.claude`（今の `claude-sync.sh` と同じ）。`CLAUDE_CONFIG_DIR` には
+  対応しない。hook のバイナリの置き場と Stop の hook の退避の先も `~/.claude` に固定していて、同期の先だけを変えると
+  配備が 2 か所に分かれるため
 - 設置のコマンド: 新しい crate に Rust で書き、サブコマンドで次を持つ。名前とサブコマンドの形は実装の PR で決める
   - 同期: `claude-sync.sh` を置き換える。規則（CLAUDE.md、skills、scripts はソースが正として中身で比べて上書き、
     commands は既存を残す、消さない、引数なしは既定の clone を `pull --ff-only` してからコピーする）は今のまま。既定の
@@ -80,7 +81,8 @@ hook の登録の形:
     呼び、clone を読まない
   - settings.json の更新: 静的な設定を Nix の attrset から、`.claude/` の外の JSON のファイルに移し、Nix は
     `builtins.fromJSON` で読む（`.claude/settings.json` はこのリポジトリのセッションのプロジェクトの設定で、
-    `.claude/README.md` のとおり同期しない）。
+    `.claude/README.md` のとおり同期しない）。attrset の外で activation が足す `skipDangerousModePermissionPrompt` も
+    その JSON に入れる。旧 bash hook のファイル（`~/.claude/hooks/`）の掃除は、Linux にしか無いので activation に残す。
     コマンドはそれを重ね、hook の登録を 1 件ずつに揃える（旧 bash hook の登録を外し、ほかの hook の登録を残す規則は
     今の jq の filter のまま）。既にある登録は、今の shell form（`command` の末尾がバイナリと引数）と exec form
     （`command` がバイナリで、`args` が引数）の両方で見分け、Windows の `\` 区切りのパスも見分ける。登録する hook と
@@ -92,10 +94,14 @@ hook の登録の形:
     走る）
   - git hook の設置（Windows だけ）: hook のファイルを、Rust のバイナリを呼ぶだけの sh にして置き、`core.hooksPath`
     を向ける。中身の Rust は #101 の段階 4 で書くので、設置もその段階で足す。Linux は `git-hooks.nix` のまま
-- Windows の手順: clone を `git pull` し、`cargo install` で設置のコマンドとほかの crate を入れ、
-  設置のコマンドを実行する。外部のスキル（flake input）は Windows では置かない。Nix が包んで渡すもの（`claude-hooks` の
-  `CLAUDE_HOOKS_JA_TERMS_MESSAGE` と `CLAUDE_HOOKS_COMMIT_MSG_CHECK`、`package.nix` の `makeWrapper`）と PATH に頼る
-  `gitleaks` を、Windows でどう用意するかは、ADR-0082 のとおり #101 の段階 3 で決める
+- Windows の手順: clone を `git pull` し、`cargo install` で設置のコマンドとほかの crate を入れ、clone のパスを渡して
+  設置のコマンドを実行する（パスを渡すと pull しないので、ビルドした commit と同期する中身が揃う）。外部のスキル
+  （flake input）は Windows では置かない
+- Windows で使い始めるのは #101 の段階 3 から: Nix が包んで渡すもの（`claude-hooks` の `CLAUDE_HOOKS_JA_TERMS_MESSAGE`
+  と `CLAUDE_HOOKS_COMMIT_MSG_CHECK`、`package.nix` の `makeWrapper`）と PATH に頼る `gitleaks`、`~/.claude/bin/` に
+  固定のパスで置く `ja-terms-files`（textlint）を、Windows でどう用意するかは、ADR-0082 のとおり段階 3 で決める。
+  それまでに PreToolUse hook を登録すると、`gitleaks` の無い Windows では機密情報の検査ができず、`block_secret_commit.rs`
+  がすべての `git commit` を止める
 - hook の登録: バイナリの hook は exec form にし、Linux も同じ形に揃える（例: `command` に
   `/home/<user>/.claude/bin/claude-hooks`、`args` に `["pre-tool-use"]`）
 
@@ -126,8 +132,9 @@ hook の登録の形:
 - 悪い点: Linux の rebuild が、設置のコマンドの crate のビルドとテスト（`package.nix` の check）を含むようになる
 - 悪い点: 同期の規則は、今は `claude-sync.sh` を直せばその場で試せるが、Rust に移すとビルドが要る（ADR-0082 の帰結と
   同じ）。settings.json の PreToolUse の登録の形も、shell form から exec form に変わる
-- git hook は #101 の段階 4 まで、Stop の hook（自動メモリの退避）は段階 8 まで、Windows に置かれない。PreToolUse
-  hook の外の検査（崩れた日本語の語、機密情報）は、段階 3 で決めるまで Windows では走らない
+- git hook は #101 の段階 4 まで、Stop の hook（自動メモリの退避）は段階 8 まで、Windows に置かれない
+- Git for Windows の既定（`core.autocrlf=true`）の clone では、同期する sh のスクリプトが CRLF になり、Git Bash で
+  動かない。clone の改行の扱いは #104 で決める
 - 実装はまだ決定に追いついていない。進みは #101 に書く
 
 ### 確認
