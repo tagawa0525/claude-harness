@@ -107,6 +107,8 @@ impl Dictionary {
 
 fn parse_rules(yaml: &str, name: &str) -> Result<Vec<Rule>, DictionaryError> {
     let fail = |reason: String| DictionaryError(format!("{name}: {reason}"));
+    // js-yaml と同じく、先頭の BOM を外す
+    let yaml = yaml.strip_prefix('\u{feff}').unwrap_or(yaml);
     let docs = YamlLoader::load_from_str(yaml).map_err(|e| fail(format!("読めない: {e}")))?;
     let Some(Yaml::Hash(data)) = docs.into_iter().next() else {
         return Err(fail("辞書の形（version と rules）でない".into()));
