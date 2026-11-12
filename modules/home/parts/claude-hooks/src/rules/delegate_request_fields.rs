@@ -464,6 +464,11 @@ mod tests {
             let findings = check(&prompt);
             let reason = deny_reason(&findings);
             assert!(reason.contains(path), "{path}: {reason}");
+            assert_eq!(
+                reason.contains("絶対パスではありません"),
+                cfg!(unix),
+                "{path}: {reason}"
+            );
         }
     }
 
