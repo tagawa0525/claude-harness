@@ -41,10 +41,11 @@ const FIELDS: [&str; 6] = [
 static CALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/delegate\s*を呼(?:び|ぶ|んで)(?:[、。,.\s]|$)").unwrap());
 
-/// 依頼のファイルを指す句。パスは `/`、`~`、`.` で始まるものだけを見る（「依頼文は下にある」は指していない）。
-/// 絶対パスかは句を見つけた後に確かめ、拒否の文言で修正方法を示す
-static POINTER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"依頼文は\s*[`「]?([/~.][^\s`「」]*?)[`」]?\s*にある").unwrap());
+/// 依頼のファイルを指す句。パスは `/`、`~`、`.` か、Windows のドライブ（`C:\`、`C:/`）で始まるものだけを見る
+/// （「依頼文は下にある」は指していない）。絶対パスかは句を見つけた後に確かめ、拒否の文言で修正方法を示す
+static POINTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"依頼文は\s*[`「]?((?:[/~.]|[A-Za-z]:[\\/])[^\s`「」]*?)[`」]?\s*にある").unwrap()
+});
 
 /// 中身を判定する欄（`FIELDS` の添字）と、その欄に要る語
 const SCOPE: usize = 5;
@@ -95,7 +96,7 @@ fn calls_delegate(text: &str) -> bool {
 
 /// 依頼のファイルを読む。通常のファイルでないもの（FIFO やデバイス）は、読むと hook が止まるので読まない
 fn read_request(path: &str) -> Result<String, String> {
-    if !path.starts_with('/') {
+    if !std::path::Path::new(path).is_absolute() {
         return Err("絶対パスではありません".to_string());
     }
     let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
