@@ -1,0 +1,4 @@
+# 固定の入力と期待値は、改行（LF と CRLF）と行末の空白をそのまま比べる。Git for Windows の core.autocrlf=true で
+# CRLF に変えて取り出されると、textlint で作った期待値と位置がずれる
+* -text
+update.sh text eol=lf

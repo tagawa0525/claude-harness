@@ -1,0 +1,6 @@
+# Str のノードの原文の全体に一致する規則。textlint にこの辞書を当てると、Str ごとに開始の位置と原文を報告する
+# （update.sh が期待値を作るのに使う）
+version: 1
+rules:
+  - expected: "\0"
+    pattern: /[^]+/
