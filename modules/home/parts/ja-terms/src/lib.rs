@@ -95,7 +95,7 @@ impl Dictionary {
     }
 
     /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる（prh の makeChangeSet の diffs。
-    /// textlint-rule-prh が報告するもの）
+    /// textlint-rule-prh は、このうち直しが一致した文字列と同じものを除いて報告する）
     pub fn diffs(&self, text: &str) -> Result<Vec<Diff>, TextError> {
         diffs(&self.rules, &paragraphs(text))
     }
