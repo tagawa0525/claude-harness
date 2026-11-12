@@ -473,6 +473,19 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_drive_path_is_read_as_the_request_file() {
+        let tmp = TempDir::new("msys");
+        let complete = tmp.0.join("brief.md");
+        std::fs::write(&complete, COMPLETE).unwrap();
+        let prompt = format!(
+            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            crate::shell::to_msys(&complete)
+        );
+        assert!(check(&prompt).is_empty());
+    }
+
     #[test]
     fn inline_request_saying_it_is_below_is_judged_by_the_prompt() {
         // 「依頼文は下にある」はパスでないので、ファイルを指す句と見なさない

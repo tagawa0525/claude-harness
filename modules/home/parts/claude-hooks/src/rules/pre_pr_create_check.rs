@@ -250,3 +250,16 @@ impl Rule for PrePrCreateCheck {
         Vec::new()
     }
 }
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn body_file_is_read_by_a_git_bash_drive_path() {
+        let path =
+            std::env::temp_dir().join(format!("claude-hooks-body-{}.md", std::process::id()));
+        std::fs::write(&path, "## Summary\n").unwrap();
+        let body = super::read_body_file(&crate::shell::to_msys(&path));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(body.as_deref(), Some("## Summary\n"));
+    }
+}

@@ -998,6 +998,14 @@ pub(crate) fn native(p: &str) -> std::borrow::Cow<'_, str> {
     p.into()
 }
 
+/// テストが書く Git Bash のパス（`C:\\x` → `/c/x`）
+#[cfg(all(test, windows))]
+pub(crate) fn to_msys(p: &Path) -> String {
+    let s = p.display().to_string().replace('\\', "/");
+    let (drive, rest) = s.split_once(':').expect("ドライブのあるパス");
+    format!("/{}{rest}", drive.to_ascii_lowercase())
+}
+
 /// `~` / `~/x`（`home` の下）と相対パスを解決する（存在確認はしない）
 pub(crate) fn resolve(home: &Path, base: &Path, p: &str) -> PathBuf {
     if p == "~" {
@@ -1118,13 +1126,21 @@ mod tests {
     fn home_falls_back_to_the_os_home_when_home_is_unset() {
         let os = Some(PathBuf::from("/os/home"));
         assert_eq!(
-            home_from(Some("/h".into()), os.clone()),
+            home_from(Some("/h".into()), || os.clone()),
             PathBuf::from("/h")
         );
-        assert_eq!(home_from(None, os.clone()), PathBuf::from("/os/home"));
+        assert_eq!(home_from(None, || os.clone()), PathBuf::from("/os/home"));
         // 空の HOME は無いのと同じ
-        assert_eq!(home_from(Some("".into()), os), PathBuf::from("/os/home"));
-        assert_eq!(home_from(None, None), PathBuf::new());
+        assert_eq!(home_from(Some("".into()), || os), PathBuf::from("/os/home"));
+        assert_eq!(home_from(None, || None), PathBuf::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn home_keeps_a_home_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = std::ffi::OsStr::from_bytes(b"/home/\xe9t\xe9");
+        assert_eq!(home_from(Some(raw.to_owned()), || None), PathBuf::from(raw));
     }
 
     #[cfg(windows)]

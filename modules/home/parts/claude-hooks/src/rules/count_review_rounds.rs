@@ -243,6 +243,15 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_drive_path_names_the_review_target() {
+        let r = repo("feat/msys");
+        let args = format!("high {}", crate::shell::to_msys(&r.dir));
+        let context = round(&skill("code-review", &args, Path::new(r"C:\")));
+        assert!(context.contains("feat/msys"), "{context}");
+    }
+
     #[test]
     fn agent_is_not_counted() {
         let r = repo("docs/y");
