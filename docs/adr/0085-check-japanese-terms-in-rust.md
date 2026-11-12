@@ -124,3 +124,18 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   あれば、その記録がある）
 - 辞書の specs が、Rust の実装で通る
 - Windows の CI（`windows.yml`）で、新しい crate と `claude-hooks` のテストが通る
+
+## 補足
+
+- 2026-11-13: 辞書を読み文に当てるライブラリ（`modules/home/parts/ja-terms/src/lib.rs`）を作る途中で、レビューで
+  次の版を捨てた。
+  - 複数の辞書の規則をただ並べた。textlint-rule-prh は複数の辞書を prh の `Engine.merge` でつなぎ、前の辞書と同じ
+    expected の規則を外す。辞書は 1 つなので、1 つのファイルだけを読む
+  - `diffs` で重なりを 2 度外した。textlint-rule-prh が報告するのは、prh の `ChangeSet` を作るときに 1 度外したもの。
+    外し方は前の要素を外す前の並びで比べるので、0〜10、5〜7、8〜12 の一致では、8〜12 が 2 度目にだけ外れる
+  - 引用符の無い `1:30` を、prh と同じく文字列と読むとした。prh 5.4.4 の js-yaml 3.14.1 は 60 進の数と読む
+- 2026-11-13: prh が読まずに止める辞書のうち、Rust の実装が読むもの（js-yaml 3.14.1 が数や日付と読む引用符の無い値、
+  u フラグを付けない V8 の `RegExp` が読めない pattern、空の from か to の spec、入れ子の並びの pattern、文字列の
+  version）は揃えない。どれも今の辞書には無い。比べる間は textlint が先に止め、textlint を外した後は Rust の実装
+  だけが辞書を読むので、揃えても判定は変わらない。今の辞書を当てた結果は、このリポジトリと nixfiles の追跡して
+  いる 355 のファイルで `prh_rules.py` とすべて同じだった
