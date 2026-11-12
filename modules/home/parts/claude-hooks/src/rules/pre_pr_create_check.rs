@@ -57,13 +57,9 @@ pub(super) fn strip_opt_prefix<'a>(arg: &'a Arg, names: &[&str]) -> &'a str {
     &arg.text
 }
 
-/// `~` を展開してファイルを読む
+/// `~` と Git Bash のドライブのパスを解いてファイルを読む。相対のパスは hook の cwd から読む
 pub(super) fn read_body_file(path: &str) -> Option<String> {
-    let path = if let Some(rest) = path.strip_prefix("~/") {
-        Some(crate::shell::home().join(rest))
-    } else {
-        Some(Path::new(path).to_path_buf())
-    }?;
+    let path = crate::shell::resolve(&crate::shell::home(), Path::new(""), path);
     std::fs::read_to_string(path).ok()
 }
 

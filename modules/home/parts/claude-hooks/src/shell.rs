@@ -962,15 +962,22 @@ fn unescape_double(s: &str) -> String {
 
 /// bash の `~` のホーム。`HOME` を先に見るのは、bash が `~` を `HOME` で展開するため
 pub(crate) fn home() -> PathBuf {
-    home_from(std::env::var_os("HOME"), std::env::home_dir())
+    home_from(std::env::var_os("HOME"), std::env::home_dir)
 }
 
 /// `HOME` が無いか空なら OS のホーム（Windows では `USERPROFILE`）。Git Bash の外から起動した Claude Code の hook には
 /// `HOME` が無いことがあり、Git Bash は `HOME` が無ければ `USERPROFILE` をホームにする
-fn home_from(home: Option<std::ffi::OsString>, os_home: Option<PathBuf>) -> PathBuf {
+fn home_from(
+    home: Option<std::ffi::OsString>,
+    os_home: impl FnOnce() -> Option<PathBuf>,
+) -> PathBuf {
     home.filter(|h| !h.is_empty())
-        .map(|h| PathBuf::from(native(&h.to_string_lossy()).as_ref()))
-        .or(os_home)
+        // UTF-8 でない HOME（変換できるドライブのパスではない）は、そのまま使う
+        .map(|h| match h.to_str() {
+            Some(s) => PathBuf::from(native(s).as_ref()),
+            None => PathBuf::from(h),
+        })
+        .or_else(os_home)
         .unwrap_or_default()
 }
 
