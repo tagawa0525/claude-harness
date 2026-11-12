@@ -110,6 +110,10 @@ fn parse_rules(yaml: &str, name: &str) -> Result<Vec<Rule>, DictionaryError> {
     // js-yaml と同じく、先頭の BOM を外す
     let yaml = yaml.strip_prefix('\u{feff}').unwrap_or(yaml);
     let docs = YamlLoader::load_from_str(yaml).map_err(|e| fail(format!("読めない: {e}")))?;
+    if docs.len() > 1 {
+        // js-yaml の load は 2 つ目の文書があれば例外にする
+        return Err(fail("YAML の文書が 2 つ以上ある".into()));
+    }
     let Some(Yaml::Hash(data)) = docs.into_iter().next() else {
         return Err(fail("辞書の形（version と rules）でない".into()));
     };
