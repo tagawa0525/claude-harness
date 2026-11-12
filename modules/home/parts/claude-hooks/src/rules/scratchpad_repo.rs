@@ -153,6 +153,11 @@ pub(crate) mod fixture {
         }
     }
 
+    /// コマンドに書くパス。Windows の `\` は bash がエスケープと読むので、Git Bash で書く形（`C:/Users/…`）にする
+    pub fn sh(p: &Path) -> String {
+        p.display().to_string().replace('\\', "/")
+    }
+
     /// 手元の設定（グローバルの core.hooksPath など）を読まずに git を実行する
     pub fn git(dir: &Path, args: &[&str]) {
         let out = Command::new("git")
@@ -221,7 +226,7 @@ pub(crate) mod fixture {
 #[cfg(test)]
 mod tests {
     use super::check;
-    use super::fixture::{Fixture, SID, git, input};
+    use super::fixture::{Fixture, SID, git, input, sh};
     use crate::shell::Shell;
     use std::path::Path;
 
@@ -245,7 +250,7 @@ mod tests {
         let f = Fixture::new("cd-c-cwd");
         let repo = f.temp_repo("r");
         let elsewhere = f.prod();
-        let r = repo.display();
+        let r = sh(&repo);
         assert_eq!(judge(&format!("cd {r} && git add -A"), &elsewhere), Ok(()));
         assert_eq!(judge(&format!("git -C {r} add ."), &elsewhere), Ok(()));
         assert_eq!(judge("git add .", &repo), Ok(()));
@@ -262,11 +267,11 @@ mod tests {
         let r = f.scratchpad().join("new");
         let src = format!(
             "mkdir -p {r} && cd {r} && git init -q && git add -A",
-            r = r.display()
+            r = sh(&r)
         );
         let err = judge(&src, &f.prod()).unwrap_err();
         assert!(err.contains("git init"), "{err}");
-        let err = judge(&format!("cd {}; git add -A", r.display()), &f.prod()).unwrap_err();
+        let err = judge(&format!("cd {}; git add -A", sh(&r)), &f.prod()).unwrap_err();
         assert!(err.contains("git init"), "{err}");
         // ディレクトリはあるが、まだ git init していない
         let plain = f.scratchpad().join("plain");
@@ -283,7 +288,7 @@ mod tests {
         let sub = wt.join("sub");
         let src = format!(
             "mkdir -p {s} && cd {s} && git -c core.hooksPath=/dev/null commit -m x",
-            s = sub.display()
+            s = sh(&sub)
         );
         assert!(judge(&src, &f.prod()).is_err());
     }
@@ -315,7 +320,7 @@ mod tests {
         let prod = f.prod();
         let err = judge("git add -A", &prod).unwrap_err();
         assert!(err.contains("scratchpad の外"), "{err}");
-        let err = judge(&format!("git -C {} add .", prod.display()), &f.scratchpad()).unwrap_err();
+        let err = judge(&format!("git -C {} add .", sh(&prod)), &f.scratchpad()).unwrap_err();
         assert!(err.contains("scratchpad の外"), "{err}");
     }
 
@@ -352,18 +357,18 @@ mod tests {
         let repo = f.temp_repo("r");
         // `..` で scratchpad から出る（存在するパス）
         let up = repo.join("../../../../prod");
-        let err = judge(&format!("git -C {} add .", up.display()), &repo).unwrap_err();
+        let err = judge(&format!("git -C {} add .", sh(&up)), &repo).unwrap_err();
         assert!(err.contains("scratchpad の外"), "{err}");
         // まだ無いディレクトリの後の `..`
         let missing_up = f.scratchpad().join("missing/../../../../prod");
-        let err = judge(&format!("cd {} && git add .", missing_up.display()), &repo).unwrap_err();
+        let err = judge(&format!("cd {} && git add .", sh(&missing_up)), &repo).unwrap_err();
         assert!(err.contains("git init"), "{err}");
         // scratchpad の中の symlink が本番のリポジトリを指す（Windows の symlink は特権が要る）
         #[cfg(unix)]
         {
             let link = f.scratchpad().join("link");
             std::os::unix::fs::symlink(f.prod(), &link).unwrap();
-            let err = judge(&format!("cd {} && git add -A", link.display()), &repo).unwrap_err();
+            let err = judge(&format!("cd {} && git add -A", sh(&link)), &repo).unwrap_err();
             assert!(err.contains("scratchpad の外"), "{err}");
         }
     }
@@ -391,7 +396,7 @@ mod tests {
         // target_dir は cd だけをたどるので、pushd の先は hook の cwd（scratchpad のリポジトリ）と読まれる
         let f = Fixture::new("pushd");
         let repo = f.temp_repo("r");
-        let prod = f.prod().display().to_string();
+        let prod = sh(&f.prod());
         for src in [
             format!("pushd {prod} && git add -A && popd"),
             format!("pushd {prod} && popd && git add -A"),
@@ -406,7 +411,7 @@ mod tests {
         let f = Fixture::new("gitdir");
         let repo = f.temp_repo("r");
         let prod_git = f.prod().join(".git");
-        let g = prod_git.display();
+        let g = sh(&prod_git);
         for src in [
             format!("GIT_DIR={g} git add -A"),
             format!("git --git-dir={g} add -A"),

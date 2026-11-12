@@ -110,7 +110,7 @@ mod tests {
         use super::super::GuardGitAdd;
         use crate::output::Finding;
         use crate::rules::Rule;
-        use crate::rules::scratchpad_repo::fixture::{Fixture, SID, input};
+        use crate::rules::scratchpad_repo::fixture::{Fixture, SID, input, sh};
         use crate::shell::Shell;
         use std::path::Path;
 
@@ -129,8 +129,8 @@ mod tests {
             for src in [
                 "git add -A".to_string(),
                 "git add .".to_string(),
-                format!("cd {} && git add -A", repo.display()),
-                format!("git -C {} add .", repo.display()),
+                format!("cd {} && git add -A", sh(&repo)),
+                format!("git -C {} add .", sh(&repo)),
             ] {
                 assert_eq!(deny_reason(&src, &repo), None, "{src}");
             }
