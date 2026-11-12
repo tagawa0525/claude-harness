@@ -1068,6 +1068,46 @@ pub fn opt_value<'a>(args: &'a [Arg], names: &[&str]) -> Option<&'a Arg> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn msys_drive_paths_become_windows_drive_paths() {
+        assert_eq!(
+            msys_drive("/c/Users/u/repo").as_deref(),
+            Some("C:/Users/u/repo")
+        );
+        assert_eq!(msys_drive("/d").as_deref(), Some("D:/"));
+        assert_eq!(msys_drive("/c/").as_deref(), Some("C:/"));
+        // ドライブの 1 文字でないもの、Git Bash の mount の下（/tmp、/usr）、すでに Windows の形のものは変えない
+        for p in ["/cc/x", "/tmp/x", "/usr", "/", "C:/x", "c/x", "~/x"] {
+            assert_eq!(msys_drive(p), None, "{p}");
+        }
+    }
+
+    #[test]
+    fn home_falls_back_to_the_os_home_when_home_is_unset() {
+        let os = Some(PathBuf::from("/os/home"));
+        assert_eq!(
+            home_from(Some("/h".into()), os.clone()),
+            PathBuf::from("/h")
+        );
+        assert_eq!(home_from(None, os.clone()), PathBuf::from("/os/home"));
+        // 空の HOME は無いのと同じ
+        assert_eq!(home_from(Some("".into()), os), PathBuf::from("/os/home"));
+        assert_eq!(home_from(None, None), PathBuf::new());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn msys_drive_paths_resolve_on_windows() {
+        let base = Path::new(r"C:\base");
+        assert_eq!(
+            resolve(Path::new(r"C:\h"), base, "/c/Users/u"),
+            PathBuf::from("C:/Users/u")
+        );
+        let sh = Shell::parse("cd /d/work && git commit");
+        let git = sh.commands().iter().find(|c| c.name == "git").unwrap();
+        assert_eq!(sh.target_dir(git, base), PathBuf::from("D:/work"));
+    }
+
     fn cmds(src: &str) -> Vec<Cmd> {
         Shell::parse(src).commands().to_vec()
     }
