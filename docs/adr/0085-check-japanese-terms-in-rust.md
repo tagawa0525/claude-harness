@@ -12,7 +12,7 @@ issues: ["#101"]
 ## 背景
 
 崩れた日本語の語の検査（ADR-0014）は、辞書 `modules/home/parts/ja-terms/prh.yml` を textlint 15.7.1 と
-textlint-rule-prh 6.0.0（Node.js）で当てている（2026-11-13、`700b1460` の nixpkgs の版）。呼ぶ所は次のとおり。
+textlint-rule-prh 6.0.0（Node.js）で当てている（2026-11-13、flake.lock の nixpkgs `4fe25e12eb9f` の版）。呼ぶ所は次のとおり。
 
 - git hook: pre-commit の `ja-terms-staged`（`staged.sh`）、commit-msg の `commit-msg-check`（`commit-msg-check.sh`。中で
   `ja-terms-message`）
@@ -75,13 +75,17 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   - コミットのメッセージの規約: `commit-msg-check.sh` と `message.sh` の規約（上の背景の、件名の扱い、形、長さ、本文の
     切り出し、終了コード）を、同じ判定と同じ終了コードのまま CLI とライブラリに移す
 - 置き換えるもの: `ja-terms-message`、`commit-msg-check`、`ja-terms-staged`、`ja-terms-files`、`prh_rules.py`。
-  `claude-hooks` は子プロセスを呼ばずにライブラリの関数を呼ぶので、store のパスを渡す `makeWrapper` が要らなくなる。
+  `ja-terms-staged` と `ja-terms-files` の振る舞い（`.textlintignore` の除外、見る拡張子、出力の形）も同じに保つ。
   git hook（#101 の段階 4）と `history-rewrite`（段階 7）も同じライブラリか CLI を使う
+- `claude-hooks` からの呼び方: 今のとおり子プロセスで CLI を呼ぶ。辞書を `claude-hooks` のビルドに埋めると、辞書を
+  変えるたびに `claude-hooks` の作り直しとテストが走るため（`claude-hooks/package.nix` の注記）。Linux は今のとおり
+  `makeWrapper` の環境変数で store のパスを渡し、環境変数が無い Windows は PATH（`cargo install` の置き場）で探す
 - 移す順序: まず Rust の実装を作り、textlint と同じ入力に同じ結果を返すかを比べる。比べる入力は、辞書の specs と、
   このリポジトリの追跡している Markdown とコードのファイルと、コミットのメッセージの履歴。specs と、ファイルから
   選んだ固定の入力は `nix flake check` のテストにする（`nix flake check` の sandbox は `.git` を持たず、Linux の
   GitHub Actions も無いので、履歴との比較は実装の PR で手元で流し、結果を PR に書く）。結果が揃ってから、呼ぶ所を
-  1 つずつ付け替え、textlint を外す
+  1 つずつ付け替え、textlint を外す。外した後は、比べたときの textlint の結果を期待値のファイルに残し、テストは
+  それと比べる
 
 理由:
 
@@ -91,8 +95,9 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
 - 案 C は、同じ辞書を当てる実装が 1 つになる。今の textlint と `prh_rules.py` の 2 つは、同じ辞書を別の正規表現の
   エンジンで当てていて、揃っているかを確かめる手段が無い。段階 7 で `prh_rules.py` を Rust に移すときに Rust の
   実装がどのみち要るので、それを検査にも使う
-- 案 C は、PreToolUse hook が Node.js を起動せずに済む。`claude-hooks` の中で関数を呼ぶので、Windows でも store の
-  パスを解く問題（ADR-0084 が段階 3 に回したもの）が無くなる
+- 案 C は、PreToolUse hook が Node.js を起動せずに済む。Windows では、検査の CLI を `claude-hooks` と同じく
+  `cargo install` で入れれば PATH で見つかるので、store のパスの代わり（ADR-0084 が段階 3 に回したもの）を別に
+  用意しなくてよい
 - 案 A は、Windows の依存に Node.js と npm の版の管理が残り、段階 7 の Rust の実装と textlint の 2 つが残る
 - 案 B は、Windows と Linux で別の実装が判定するので、同じ文に違う判定を返しうる（ADR-0082 の要因に反する）
 - `regress` は ECMAScript 2018 の正規表現を実装し、長さの決まらない後読みも読むので、辞書の pattern を prh と同じ
