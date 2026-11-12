@@ -69,16 +69,14 @@ const LINE_TERMINATORS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
 const RULE_KEYS: [&str; 4] = ["expected", "pattern", "patterns", "specs"];
 
 impl Dictionary {
-    /// 辞書のファイルを順に読み、規則を並べる。どの規則も specs を確かめる（prh が辞書を読むときと同じ）
-    pub fn load<P: AsRef<Path>>(paths: &[P]) -> Result<Self, DictionaryError> {
-        let mut rules = Vec::new();
-        for path in paths {
-            let path = path.as_ref();
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| DictionaryError(format!("{}: 読めない: {e}", path.display())))?;
-            rules.extend(parse_rules(&text, &path.display().to_string())?);
-        }
-        Ok(Dictionary { rules })
+    /// 辞書のファイルを読む。どの規則も specs を確かめる（prh が辞書を読むときと同じ）。textlint-rule-prh は
+    /// 複数の辞書を prh の Engine.merge でつなぎ、前の辞書と同じ expected の規則を外すが、辞書は 1 つだけなので
+    /// 1 つのファイルだけを読む
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, DictionaryError> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| DictionaryError(format!("{}: 読めない: {e}", path.display())))?;
+        Self::parse(&text, &path.display().to_string())
     }
 
     /// 辞書の YAML を読む。name は理由の表示に使う

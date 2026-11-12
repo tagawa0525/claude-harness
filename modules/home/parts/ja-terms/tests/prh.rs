@@ -36,7 +36,7 @@ fn refused_rule(pattern: &str) -> String {
 #[test]
 fn loads_the_ja_terms_dictionary_and_its_specs_pass() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml");
-    let dictionary = Dictionary::load(&[path]).unwrap_or_else(|e| panic!("{e}"));
+    let dictionary = Dictionary::load(path).unwrap_or_else(|e| panic!("{e}"));
     assert!(dictionary.len() > 100);
     assert_eq!(
         apply(&dictionary, "確かめの結果を確かめる"),
@@ -53,22 +53,8 @@ fn a_dictionary_with_crlf_line_ends_reads_as_with_lf() {
 
 #[test]
 fn a_missing_file_is_refused_with_its_path() {
-    let e = Dictionary::load(&["/nonexistent/prh.yml"]).unwrap_err();
+    let e = Dictionary::load("/nonexistent/prh.yml").unwrap_err();
     assert!(e.to_string().contains("/nonexistent/prh.yml"), "{e}");
-}
-
-#[test]
-fn rules_of_several_files_are_applied_together() {
-    let dir = std::env::temp_dir().join(format!("ja-terms-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let a = dir.join("a.yml");
-    let b = dir.join("b.yml");
-    std::fs::write(&a, "version: 1\nrules:\n  - expected: X\n    pattern: a\n").unwrap();
-    std::fs::write(&b, "version: 1\nrules:\n  - expected: Y\n    pattern: b\n").unwrap();
-    let dictionary = Dictionary::load(&[&a, &b]).unwrap_or_else(|e| panic!("{e}"));
-    std::fs::remove_dir_all(&dir).unwrap();
-    assert_eq!(dictionary.len(), 2);
-    assert_eq!(apply(&dictionary, "ab"), "XY");
 }
 
 // pattern は JavaScript の正規表現（u と m のフラグ）として読む
