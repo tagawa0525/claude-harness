@@ -78,7 +78,10 @@ Bash ツール）では PATH に入っているが、Git for Windows の既定�
 - `design-records` を Windows で流すと、Git for Windows の既定の `core.autocrlf=true` で作業ツリーが CRLF になり、
   LF を期待したテストが 4 件落ちた（run 43072103532）。テストのリポジトリで改行の変換を止めて通し、CRLF の
   作業ツリーでの動きを確かめることは #104 に残した
-- 実装はまだ決定に追いついていない。matrix は `design-records` だけで、`claude-hooks` と `commit-refs` は #101 の
+- `claude-hooks` を Windows で流すと、sh の偽物と Unix の権限を使うテストのほかに、bash のコマンドに書いた Windows の
+  パスの `\` がエスケープと読まれるもの、`/` で始まるパスだけを絶対パスとみなす判定（/delegate の依頼のファイル、
+  /code-review の対象）、グローバルの設定に名前とメールの無い runner でのコミットで落ちた（#107）
+- 実装はまだ決定に追いついていない。matrix は `design-records` と `claude-hooks` で、`commit-refs` は #101 の
   段階で足す
 
 ### 確認
