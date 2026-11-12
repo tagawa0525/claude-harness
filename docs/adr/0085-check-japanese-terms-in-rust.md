@@ -25,7 +25,8 @@ textlint-rule-prh 6.0.0（Node.js）で当てている（2026-11-13、`700b1460`
 ADR-0082 は、この検査を Windows で Node.js のまま動かすか、辞書を Rust で読むかを #101 の段階 3 で決めるとした。
 ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows でどう用意するかを同じ段階に回した。関わる事実:
 
-- 辞書の 104 の規則の pattern は JavaScript の正規表現（prh は u と m のフラグで読む）で、先読みと後読み（`(?=…)`、
+- 辞書の 104 の規則の pattern は、`/…/` で囲んだ JavaScript の正規表現（prh は u と m のフラグで読む）か、固定の
+  文字列（`端のケース` など 56 の行。prh は正規表現の特殊な文字を逃がしてから読む）。正規表現は先読みと後読み（`(?=…)`、
   `(?!…)`、`(?<=…)`、`(?<!…)`）を使う。後読みには、長さの決まらないもの（`(?<!走らせ|走り|流し|測り)`、
   `(?<=(?<![一-龥])負の\n?)` など）がある。Rust の `regex` crate は先読みと後読みを扱わず、`fancy-regex` は長さの
   決まった後読みしか扱わない。`prh_rules.py` が Python の `re` でなく `regex` を使うのも、`re` が長さの決まった後読み
@@ -33,10 +34,15 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
 - textlint-rule-prh 6.0.0 は、Markdown を textlint の AST にし、Str のノードの原文（`getSource`。エスケープや改行を
   そのまま含む）に prh を当てる。Str でないコードスパンとコードブロックに加え、Link、BlockQuote、Emphasis（`*…*`。
   Strong の `**…**` は見る）の下は見ない。Header は見る（`textlint-rule-prh.js` の `createIgnoreNodeTypes` と既定の
-  options。ADR-0058）。コードとテキストのファイル（`.rs`、`.sh` など）は、`@textlint/text` が 1 行ずつ Paragraph と Str
+  options）。textlint 15.7.1 で確かめた見ない範囲は、ほかにブロックの HTML、画像の代替文字列、先頭の `---` で囲んだ
+  YAML front matter（ADR-0058 の帰結）。コードとテキストのファイル（`.rs`、`.sh` など）は、`@textlint/text` が 1 行ずつ Paragraph と Str
   にして当てる
-- `commit-msg-check.sh`（58 行）と `message.sh`（29 行）は、件名の形と長さの検査と、検査する本文の切り出し
-  （件名を除くか、scissors の行から後を除くか）で、textlint を呼ぶ前の処理は sh と sed で書いてある
+- `commit-msg-check.sh`（58 行）と `message.sh`（29 行）は、辞書の検査のほかに、Merge、fixup!、squash!、Revert の件名の
+  扱い、Conventional Commits の件名の形、件名の 72 文字の上限と 50 文字の警告、検査する本文の切り出し（件名を除くか、
+  scissors の行から後を除くか）、終了コード（0 = 通す、1 = 規約に反する、2 = 語の検査が失敗した）を持つ。sh と sed で
+  書いてある
+- `prh_rules.py` は、Markdown を区別せず、テキストのブロブの全文とコミットの本文に、段落ごとに規則を当てる
+  （ADR-0045 の案 D1）
 - textlint の起動は重く、`commit-msg-check.sh` は軽い検査の後に呼んでいる
 - Windows の機械に Node.js を入れずに、辞書を Rust で読む（2026-11-13 のユーザーの決定）
 
@@ -58,11 +64,16 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
 採用: 案 C。
 
 - 新しい crate（名前は実装の PR で決める）に、辞書を読み、文に当てるライブラリと CLI を置く
-  - 辞書: `prh.yml` を読み、pattern を ECMAScript の正規表現のエンジンの `regress` で、prh と同じ u と m のフラグで
-    読む（書き直さない）。specs を読み込むときに確かめる
+  - 辞書: `prh.yml` を読む。`/…/フラグ` の pattern は、ECMAScript の正規表現のエンジンの `regress` で、prh と同じ u と
+    m のフラグで読む（書き直さない）。固定の文字列は、prh と同じく特殊な文字を逃がしてから読む（`prh_rules.py` と同じ）。
+    specs を読み込むときに確かめる
   - 当て方: prh 6.0.0 の意味（段落ごとの一致、expected の `$1`、重なった一致の選び方。`prh_rules.py` の冒頭の注記）
-  - Markdown: `pulldown-cmark` で、textlint の Str のノードに当たる原文の範囲を当てる（見ない範囲は textlint と同じ。
-    上の背景）。コードとテキストのファイルは 1 行ずつ当てる
+  - 当てる範囲は 2 つの mode に分ける。検査の mode は textlint と同じ: Markdown は `pulldown-cmark` で、textlint の Str の
+    ノードに当たる原文の範囲を当て（見ない範囲は上の背景の、ノードの種類と ADR-0058 の一覧）、コードとテキストの
+    ファイルは 1 行ずつ当てる。履歴の書き換えの mode は `prh_rules.py` と同じ: 全文に段落ごとに当てる（ADR-0045 の
+    案 D1。コードの中の語と、行をまたぐ一致も直す）
+  - コミットのメッセージの規約: `commit-msg-check.sh` と `message.sh` の規約（上の背景の、件名の扱い、形、長さ、本文の
+    切り出し、終了コード）を、同じ判定と同じ終了コードのまま CLI とライブラリに移す
 - 置き換えるもの: `ja-terms-message`、`commit-msg-check`、`ja-terms-staged`、`ja-terms-files`、`prh_rules.py`。
   `claude-hooks` は子プロセスを呼ばずにライブラリの関数を呼ぶので、store のパスを渡す `makeWrapper` が要らなくなる。
   git hook（#101 の段階 4）と `history-rewrite`（段階 7）も同じライブラリか CLI を使う
