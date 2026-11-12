@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: [design-records, claude-hooks]
+        crate: [design-records, claude-hooks, ja-terms]
     defaults:
       run:
         working-directory: modules/home/parts/${{ matrix.crate }}
