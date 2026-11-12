@@ -19,7 +19,7 @@ textlint-rule-prh 6.0.0（Node.js）で当てている（2026-11-13、flake.lock
 - PreToolUse hook: `claude-hooks` の git merge と git commit の本文のルール（ADR-0050、ADR-0073）が、Nix の
   `makeWrapper` で渡した store のパスの `ja-terms-message` と `commit-msg-check` を子プロセスで呼ぶ
 - /retro: `memory-index.sh` が `~/.claude/bin/ja-terms-files`（`files.sh`）を呼ぶ（ADR-0074）
-- 履歴の書き換え: `history-rewrite` の `prh_rules.py`（378 行）が、辞書を Python で読み、prh 6.0.0 と同じ意味で当てる
+- 履歴の書き換え: `history-rewrite` の `prh_rules.py`（378 行）が、辞書を Python で読み、prh と同じ意味で当てる
   （ADR-0045）。JavaScript の正規表現を Python の `regex` の書き方に直し、直せない書き方は止める
 
 ADR-0082 は、この検査を Windows で Node.js のまま動かすか、辞書を Rust で読むかを #101 の段階 3 で決めるとした。
@@ -49,7 +49,7 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
 ## 決定の要因
 
 - Windows と Linux で、同じ文に同じ判定をすること（ADR-0082）
-- 辞書の意味（prh 6.0.0）と、Markdown のどこを見るか（ADR-0058）を変えないこと
+- 辞書の意味（textlint-rule-prh 6.0.0 が使う prh 5.4.4）と、Markdown のどこを見るか（ADR-0058）を変えないこと
 - 同じ辞書を当てる実装の数を減らすこと（今は textlint と `prh_rules.py` の 2 つ）
 - 依存を増やさないこと（ADR-0047 の数え方）
 
@@ -67,7 +67,7 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   - 辞書: `prh.yml` を読む。`/…/フラグ` の pattern は、ECMAScript の正規表現のエンジンの `regress` で、prh と同じ u と
     m のフラグで読む（書き直さない）。固定の文字列は、prh と同じく特殊な文字を逃がしてから読む（`prh_rules.py` と同じ）。
     specs を読み込むときに確かめる
-  - 当て方: prh 6.0.0 の意味（段落ごとの一致、expected の `$1`、重なった一致の選び方。`prh_rules.py` の冒頭の注記）
+  - 当て方: prh 5.4.4 の意味（段落ごとの一致、expected の `$1`、重なった一致の選び方。`prh_rules.py` の冒頭の注記）
   - 当てる範囲は 2 つの mode に分ける。検査の mode は textlint と同じ: Markdown は `pulldown-cmark` で、textlint の Str の
     ノードに当たる原文の範囲を当て（見ない範囲は上の背景の、ノードの種類と ADR-0058 の一覧）、コードとテキストの
     ファイルは 1 行ずつ当てる。履歴の書き換えの mode は `prh_rules.py` と同じ: 全文に段落ごとに当てる（ADR-0045 の
@@ -124,3 +124,18 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   あれば、その記録がある）
 - 辞書の specs が、Rust の実装で通る
 - Windows の CI（`windows.yml`）で、新しい crate と `claude-hooks` のテストが通る
+
+## 補足
+
+- 2026-11-13: 辞書を読み文に当てるライブラリ（`modules/home/parts/ja-terms/src/lib.rs`）を作る途中で、レビューで
+  次の版を捨てた。
+  - 複数の辞書の規則をただ並べた。textlint-rule-prh は複数の辞書を prh の `Engine.merge` でつなぎ、前の辞書と同じ
+    expected の規則を外す。辞書は 1 つなので、1 つのファイルだけを読む
+  - `diffs` で重なりを 2 度外した。textlint-rule-prh が報告するのは、prh の `ChangeSet` を作るときに 1 度外したもの。
+    外し方は前の要素を外す前の並びで比べるので、0〜10、5〜7、8〜12 の一致では、8〜12 が 2 度目にだけ外れる
+  - 引用符の無い `1:30` を、prh と同じく文字列と読むとした。prh 5.4.4 の js-yaml 3.14.1 は 60 進の数と読む
+- 2026-11-13: prh が読まずに止める辞書のうち、Rust の実装が読むもの（js-yaml 3.14.1 が数や日付と読む引用符の無い値、
+  u フラグを付けない V8 の `RegExp` が読めない pattern、空の from か to の spec、入れ子の並びの pattern、文字列の
+  version）は揃えない。どれも今の辞書には無い。比べる間は textlint が先に止め、textlint を外した後は Rust の実装
+  だけが辞書を読むので、揃えても判定は変わらない。今の辞書を当てた結果は、このリポジトリと nixfiles の追跡して
+  いる 355 のファイルで `prh_rules.py` とすべて同じだった
