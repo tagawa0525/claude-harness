@@ -234,8 +234,8 @@ fn pattern_source(pattern: &Yaml, origin: &str) -> Result<String, DictionaryErro
         if let Some(flag) = repeated_flag(flags) {
             return Err(fail(format!("{flag} フラグが 2 度ある")));
         }
-        // g と m は prh が必ず付け、y は外すので、意味を変えない。i は辞書に無く、prh が並びの pattern を 1 つに
-        // つなぐときにフラグをどう扱うかを確かめていないので止める
+        // g と m は prh が必ず付け、y は外すので、意味を変えない。i は辞書に無く、regress と V8 で大文字と小文字の
+        // 畳み方が揃うかを確かめていないので止める（prh は並びの pattern のフラグが違えば辞書を読まない）
         if flags.contains('i') {
             return Err(fail("i フラグは扱わない".into()));
         }
