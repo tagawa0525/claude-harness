@@ -85,7 +85,7 @@
         };
         # 設計の記録（ADR）のテンプレートと検査の CLI（modules/home/parts/git-hooks.nix が PATH に入れる）
         design-records = pkgs.callPackage ./modules/home/parts/design-records/package.nix { };
-        # 崩れた日本語の語の辞書を prh と同じ意味で当てる crate（ADR-0085。textlint と prh_rules.py を置き換える）
+        # 崩れた日本語の語の辞書を prh と同じ意味で当てる crate（ADR-0085。textlint と prh_rules.py を置き換えるもので、まだ呼ぶ所は無い）
         ja-terms = pkgs.callPackage ./modules/home/parts/ja-terms/package.nix { };
       };
 
