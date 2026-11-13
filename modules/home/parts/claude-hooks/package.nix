@@ -12,10 +12,9 @@
 }:
 let
   gitCheckConfig = callPackage ../lib/git-check-config.nix { };
-  # git merge の本文の語の検査（check-merge-body-ja-terms）が呼ぶ、commit-msg の hook と同じ語の検査
-  # （ja-terms-message）と、git commit のメッセージの検査（check-commit-message）が呼ぶ、commit-msg の hook と
-  # 同じ検査（commit-msg-check）
-  jaTermsTextlint = callPackage ../ja-terms/textlint.nix { };
+  # git merge の本文の語の検査（check-merge-body-ja-terms）が呼ぶ `ja-terms message` と、git commit のメッセージの
+  # 検査（check-commit-message）が呼ぶ `ja-terms commit-msg`。どちらも commit-msg の hook と同じ検査（ADR-0085）
+  jaTerms = callPackage ../ja-terms/package.nix { };
   unwrapped = rustPlatform.buildRustPackage {
     pname = "claude-hooks-unwrapped";
     version = "0.1.0";
@@ -50,8 +49,8 @@ let
     meta.mainProgram = "claude-hooks";
   };
 in
-# ja-terms-message と commit-msg-check の store のパスは、包む側で環境変数として固定する（ルールが実行時に読む）。
-# Rust のビルドに埋めると、辞書（prh.yml）や commit-msg の規則を変えるたびに crate の作り直しとテストが走る。hook は Claude Code が
+# ja-terms の store のパスは、包む側で環境変数として固定する（ルールが実行時に読む）。claude-hooks の Rust のビルドに
+# 埋めると、辞書（prh.yml）や commit-msg の規則を変えるたびに claude-hooks の作り直しとテストが走る。hook は Claude Code が
 # 起動するので、利用者の環境変数や PATH には頼らない。makeBinaryWrapper はシェルを挟まない
 stdenvNoCC.mkDerivation {
   pname = "claude-hooks";
@@ -61,11 +60,10 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     makeWrapper ${unwrapped}/bin/claude-hooks $out/bin/claude-hooks \
-      --set CLAUDE_HOOKS_JA_TERMS_MESSAGE ${jaTermsTextlint.messageCheck}/bin/ja-terms-message \
-      --set CLAUDE_HOOKS_COMMIT_MSG_CHECK ${jaTermsTextlint.commitMsgCheck}/bin/commit-msg-check
+      --set CLAUDE_HOOKS_JA_TERMS ${jaTerms}/bin/ja-terms
     runHook postInstall
   '';
-  # 包んだ ja-terms-message と辞書で git merge の本文の崩れた語を、包んだ commit-msg-check で git commit の
+  # 包んだ ja-terms と辞書で git merge の本文の崩れた語を、同じ ja-terms で git commit の
   # 件名を止めることと、/code-review の周を数えることを確かめる（ユニットテストは偽の検査を使う）
   doInstallCheck = true;
   nativeInstallCheckInputs = [
