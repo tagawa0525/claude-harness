@@ -55,9 +55,9 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
         if !src.exists() {
             continue;
         }
-        copy(&src, &dest, overwrite)?;
+        copy_place(&src, &dest, overwrite)?;
         // ソースに無いファイル（前の版の nix store から読むだけでコピーしたもの）も、利用者と次の同期が書けるようにする
-        writable_tree(&dest);
+        writable_place(&dest);
         let kept = if overwrite {
             ""
         } else {
@@ -212,6 +212,12 @@ fn copy(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
             if !overwrite {
                 return Ok(());
             }
+            remove_link(dest).map_err(|e| io_stop(dest, &e))?;
+        } else if dest_meta.as_ref().is_some_and(|m| !m.is_dir()) {
+            // ファイルがディレクトリになった（rsync -a と同じく入れ替える。既存を残す場所では触らない）
+            if !overwrite {
+                return Ok(());
+            }
             fs::remove_file(dest).map_err(|e| io_stop(dest, &e))?;
         }
         fs::create_dir_all(dest).map_err(|e| io_stop(dest, &e))?;
@@ -230,8 +236,19 @@ fn copy(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
         same_mode(&meta, dest);
         return Ok(());
     }
-    // 隣の一時のファイルに書いてから名前を付け替える（同期の間に読むほかのセッションに、消えたファイルや書きかけの
-    // ファイルを見せない。書けなければ前の版を残す）
+    // ディレクトリがファイルになった。空なら入れ替える（rsync -a と同じ。中身のあるディレクトリは消さずに止める）
+    if dest_meta
+        .as_ref()
+        .is_some_and(|m| m.is_dir() && !m.file_type().is_symlink())
+    {
+        fs::remove_dir(dest).map_err(|e| io_stop(dest, &e))?;
+    }
+    replace_file(src, dest)
+}
+
+/// src の中身を dest に置く。隣の一時のファイルに書いてから名前を付け替える（同期の間に読むほかのセッションに、
+/// 消えたファイルや書きかけのファイルを見せない。書けなければ前の版を残す）
+fn replace_file(src: &Path, dest: &Path) -> Result<(), Stop> {
     let name = dest
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -247,6 +264,40 @@ fn copy(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
         return Err(io_stop(dest, &e));
     }
     Ok(())
+}
+
+/// symlink を消す（Windows のディレクトリを指すリンクとジャンクションは remove_dir で消す）
+fn remove_link(path: &Path) -> std::io::Result<()> {
+    fs::remove_file(path).or_else(|_| fs::remove_dir(path))
+}
+
+/// いちばん上の場所（skills など）の同期。rsync -a "$SRC/skills/" "$DEST/skills/" と同じく、ソースの場所が
+/// ディレクトリを指すリンクなら中身を、~/.claude の場所がディレクトリを指すリンクならその中に同期する
+fn copy_place(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
+    if !fs::metadata(src).is_ok_and(|m| m.is_dir()) {
+        return copy(src, dest, overwrite);
+    }
+    fs::create_dir_all(dest).map_err(|e| io_stop(dest, &e))?;
+    let entries = fs::read_dir(src).map_err(|e| read_stop(src, &e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| read_stop(src, &e))?;
+        copy(&entry.path(), &dest.join(entry.file_name()), overwrite)?;
+    }
+    Ok(())
+}
+
+/// いちばん上の場所に writable_tree を当てる（chmod -R u+w と同じく、場所そのもののリンクは辿る）
+fn writable_place(dest: &Path) {
+    if fs::metadata(dest).is_ok_and(|m| m.is_dir())
+        && let Ok(entries) = fs::read_dir(dest)
+    {
+        writable(dest);
+        for entry in entries.flatten() {
+            writable_tree(&entry.path());
+        }
+    } else {
+        writable_tree(dest);
+    }
 }
 
 /// 中身の同じファイルの mode を、ソースに合わせる（rsync -a と同じ。実行の bit だけを足したコミット）。持ち主の
@@ -287,10 +338,7 @@ fn copy_link(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
         if fs::metadata(src).is_ok_and(|m| m.is_dir()) {
             return Ok(());
         }
-        let _ = fs::remove_file(dest);
-        fs::copy(src, dest)
-            .map(|_| ())
-            .map_err(|e| io_stop(dest, &e))
+        replace_file(src, dest)
     }
 }
 
