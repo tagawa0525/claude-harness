@@ -9,12 +9,31 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/textlint")
 }
 
-/// fixtures の中で、report.yml を辞書にして検査する
+/// 検査に渡す名前。固定の入力は markdownlint が直さないよう .markdown にしてあるので、Markdown は .md にして渡す
+/// （ja-terms-files と同じく、Markdown の拡張子は md だけ）。絶対パス（scratch のファイル）はそのまま渡す
+fn input_name(name: &str) -> String {
+    match name.strip_suffix(".markdown") {
+        Some(stem) if Path::new(name).is_relative() => format!("{stem}.md"),
+        _ => name.to_string(),
+    }
+}
+
+/// 固定の入力（相対の名前）を一時のディレクトリにコピーし、そこで report.yml を辞書にして検査する
 fn check(files: &[&str]) -> Output {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("inputs");
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in files.iter().filter(|name| Path::new(name).is_relative()) {
+        let source = fixtures().join(name);
+        if source.exists() {
+            std::fs::copy(&source, dir.join(input_name(name))).unwrap();
+        }
+    }
     Command::new(env!("CARGO_BIN_EXE_ja-terms"))
-        .current_dir(fixtures())
-        .args(["check", "--dictionary", "report.yml"])
-        .args(files)
+        .current_dir(&dir)
+        .arg("check")
+        .arg("--dictionary")
+        .arg(fixtures().join("report.yml"))
+        .args(files.iter().map(|name| input_name(name)))
         .output()
         .unwrap()
 }
@@ -23,8 +42,10 @@ fn stdout(out: &Output) -> String {
     String::from_utf8(out.stdout.clone()).unwrap()
 }
 
+/// textlint の報告の、ファイルの名前を検査に渡す名前にしたもの
 fn expected(name: &str) -> String {
-    std::fs::read_to_string(fixtures().join(format!("{name}.unix"))).unwrap()
+    let report = std::fs::read_to_string(fixtures().join(format!("{name}.unix"))).unwrap();
+    report.replace(&format!("{name}:"), &format!("{}:", input_name(name)))
 }
 
 /// 1 つのファイルの報告の行（末尾の件数の行と、その前の空行を除く）
@@ -131,7 +152,7 @@ fn code_files_are_read_line_by_line() {
 
 #[test]
 fn files_of_other_extensions_are_refused_with_exit_2() {
-    for name in ["notes.html", "Makefile"] {
+    for name in ["notes.html", "Makefile", "notes.markdown"] {
         let path = scratch(name, "確忍\n");
         let out = check(&[path.to_str().unwrap()]);
         assert_eq!(out.status.code(), Some(2), "{name}");
