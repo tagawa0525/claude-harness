@@ -43,10 +43,10 @@ pub fn run(langs: &[String]) -> i32 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or_default();
-    let work = Work(std::env::temp_dir().join(format!(
+    let dir = std::env::temp_dir().join(format!(
         "claude-hooks-staged-{}-{nanos}",
         std::process::id()
-    )));
+    ));
     // ステージした中身を書き出すので、持ち主だけが読める場所にする（mktemp -d と同じ 0700）。名前が既にあれば、
     // ほかの人が作ったかもしれないので使わない（create_dir_all でなく create）
     let mut builder = std::fs::DirBuilder::new();
@@ -55,13 +55,15 @@ pub fn run(langs: &[String]) -> i32 {
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
     }
-    if let Err(e) = builder.create(&work.0) {
+    if let Err(e) = builder.create(&dir) {
         println!(
             "❌ 一時のディレクトリ {} を作れません（{e}）",
-            work.0.display()
+            dir.display()
         );
         return 1;
     }
+    // 作れた後にだけ、片付けの対象にする（作れなかった場所は、ほかの人のものかもしれないので消さない）
+    let work = Work(dir);
     let mut failed = false;
     for (lang, spec, check) in [
         ("nix", "*.nix", nix as fn(&[Staged], &Path) -> bool),
@@ -454,7 +456,10 @@ fn restage(f: &Staged, md: &Path) -> Result<(), String> {
         return Ok(());
     }
     let filters = format!("--path={path}");
-    let before = git(&["cat-file", "--filters", &filters, &f.blob], None)?;
+    // ステージし直しは済んでいるので、比べる形を作れなければ（smudge のフィルタの失敗など）作業ツリーには書かない
+    let Ok(before) = git(&["cat-file", "--filters", &filters, &f.blob], None) else {
+        return Ok(());
+    };
     if std::fs::read(&f.path).ok().as_deref() != Some(before.as_slice()) {
         return Ok(());
     }
