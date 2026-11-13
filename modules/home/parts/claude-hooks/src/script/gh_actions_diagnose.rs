@@ -75,6 +75,17 @@ impl Gh {
     }
 }
 
+/// gh の出力の JSON。読めなければ理由を出して 1（空として扱うと、壊れた応答を健全な CI と言う）
+fn json(what: &str, out: &str) -> Result<Value, i32> {
+    serde_json::from_str(out).map_err(|e| {
+        eprintln!(
+            "ERROR: {what} の出力が JSON でない（{e}）: {}",
+            out.trim_end()
+        );
+        1
+    })
+}
+
 fn text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -117,14 +128,10 @@ fn diagnose(target: &str) -> Result<(), i32> {
         b
     } else if target.bytes().all(|b| b.is_ascii_digit()) {
         pr_number = target.clone();
-        let meta: Value = serde_json::from_str(&gh.output(&[
-            "pr",
-            "view",
-            &target,
-            "--json",
-            "headRefName,headRefOid",
-        ])?)
-        .unwrap_or(Value::Null);
+        let meta = json(
+            "gh pr view",
+            &gh.output(&["pr", "view", &target, "--json", "headRefName,headRefOid"])?,
+        )?;
         head_sha = meta["headRefOid"].as_str().unwrap_or("").to_string();
         text(&meta["headRefName"])
     } else {
@@ -138,17 +145,19 @@ fn diagnose(target: &str) -> Result<(), i32> {
     // --- 1. GitHub Actions ---
     let mut cause = "NONE";
     let mut next = String::new();
-    let runs: Value = serde_json::from_str(&gh.output(&[
-        "run",
-        "list",
-        "--branch",
-        &branch,
-        "--limit",
-        "5",
-        "--json",
-        "databaseId,name,status,conclusion,createdAt,url",
-    ])?)
-    .unwrap_or(Value::Array(Vec::new()));
+    let runs = json(
+        "gh run list",
+        &gh.output(&[
+            "run",
+            "list",
+            "--branch",
+            &branch,
+            "--limit",
+            "5",
+            "--json",
+            "databaseId,name,status,conclusion,createdAt,url",
+        ])?,
+    )?;
     let runs = runs.as_array().cloned().unwrap_or_default();
     if runs.is_empty() {
         println!("RUNS: 0");
@@ -176,14 +185,10 @@ fn diagnose(target: &str) -> Result<(), i32> {
             cause = "IN_PROGRESS";
             next = "実行中です。完了を待ってから再確認してください".to_string();
         } else if !matches!(conclusion.as_str(), "success" | "skipped" | "neutral") {
-            let view: Value = serde_json::from_str(&gh.output(&[
-                "run",
-                "view",
-                &id,
-                "--json",
-                "jobs,attempt",
-            ])?)
-            .unwrap_or(Value::Null);
+            let view = json(
+                "gh run view",
+                &gh.output(&["run", "view", &id, "--json", "jobs,attempt"])?,
+            )?;
             let attempt = view["attempt"].as_u64().unwrap_or(1);
             println!("ATTEMPT: {attempt}");
             for job in view["jobs"].as_array().into_iter().flatten() {

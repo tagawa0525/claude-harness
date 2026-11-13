@@ -36,7 +36,7 @@ pub fn parse(url: &str) -> Result<Pr, String> {
 }
 
 /// [`parse`] と同じだが、`#` 以降の付いた URL（コメントの URL）も受け、`#` 以降を [`Pr::fragment`] に入れる
-/// （sh の `parse_pr_url --allow-fragment`）
+///
 pub fn parse_allowing_fragment(url: &str) -> Result<Pr, String> {
     let not_a_pr_url = || {
         format!(
@@ -46,7 +46,7 @@ pub fn parse_allowing_fragment(url: &str) -> Result<Pr, String> {
     let Some(caps) = PR_URL.captures(url) else {
         return Err(not_a_pr_url());
     };
-    // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る（# の検査より先なのは sh と同じ）
+    // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る（# の検査より先に見る）
     if [&caps[1], &caps[2]]
         .iter()
         .any(|name| *name == "." || *name == "..")
