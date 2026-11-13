@@ -243,3 +243,18 @@ fn names_starting_with_a_dot_are_read_by_the_extension_after_it() {
         )
     );
 }
+
+#[test]
+fn a_file_given_twice_is_checked_once() {
+    // textlint は引数をファイルの集まりにするので、同じファイルは 1 度だけ報告する
+    let path = scratch("twice.txt", "確忍\n");
+    let dot = path.parent().unwrap().join(".").join("twice.txt");
+    let out = check(&[path.to_str().unwrap(), dot.to_str().unwrap()]);
+    assert_eq!(
+        stdout(&out),
+        format!(
+            "{}:1:1: 確忍 => 確認 [Error/prh]\n\n1 problem\n",
+            path.display()
+        )
+    );
+}
