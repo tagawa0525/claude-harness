@@ -125,8 +125,7 @@ fn an_escaped_backslash_before_a_note_and_symbol_labels_are_read_as_micromark_do
 
 #[test]
 fn lazy_lines_after_a_lone_carriage_return_are_cut_as_textlint_does() {
-    // 単独の CR の改行の後の lazy な行で、読み直しが止まらなかった。止まらないときに落とすよう、別の
-    // スレッドで読み、待つ時間を限る
+    // 切り出しは限った時間の中で終わること。終わらないときにテストを落とすよう、別のスレッドで読む
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         check("lone-cr.markdown");
