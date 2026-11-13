@@ -10,6 +10,7 @@
 //!   入る中身（index と HEAD の差）を gitleaks で見る（crate::gitleaks）。グローバルの pre-commit と pre-merge-commit
 //!   が、index を変える検査の後に呼ぶ。漏えいと、検査できないこと（gitleaks の失敗）を分けて出し、どちらも 1 で
 //!   止める。迂回は ALLOW_SECRET_COMMIT=<理由>（PreToolUse hook と同じ規則。ADR-0023）
+//! - staged-checks [言語]...: 既定の検査（ステージした版の書式と lint。crate::staged_checks）
 //! - post-rewrite <amend|rebase>: rebase と amend で変わったコミットの番号を、作業ツリーの追跡している文書の中で
 //!   付け直す（commit-refs remap。ADR-0012）。測ったコミットの番号を文書に書くリポジトリだけが要るので、
 //!   `git config remap.commitRefs true` でオプトインする。標準入力の旧と新の対応は一度しか渡されないので、取っておいて
@@ -22,10 +23,12 @@ use std::process::{Command, Stdio};
 
 use crate::git;
 use crate::output;
+use crate::process::Unfinished;
 use crate::rules::ja_terms;
 
 const USAGE: &str = "Usage: claude-hooks git-hook commit-msg <メッセージのファイル>
        claude-hooks git-hook scan-secrets
+       claude-hooks git-hook staged-checks [nix|python|markdown|rust]...
        claude-hooks git-hook post-rewrite <amend|rebase>";
 
 /// gitleaks の store のパスを持つ環境変数。package.nix のラッパーが固定する（crate::tools::find）
@@ -39,6 +42,7 @@ pub fn main(args: &[String]) -> i32 {
         [name, rest @ ..] if name == "commit-msg" => commit_msg(rest),
         [name, rest @ ..] if name == "post-rewrite" => post_rewrite(rest),
         [name] if name == "scan-secrets" => scan_secrets(),
+        [name, langs @ ..] if name == "staged-checks" => crate::staged_checks::run(langs),
         _ => {
             eprintln!("{USAGE}");
             2
@@ -109,13 +113,6 @@ fn local_command(hook: &Path, args: &[String]) -> Command {
     cmd
 }
 
-/// 子が終わったか。起動できなかった（何もしていない）のと、起動した後に終わりを待てなかった（途中まで動いたかも
-/// しれない）のとを分ける
-enum Unfinished {
-    NotStarted,
-    Lost,
-}
-
 /// cmd に input を標準入力で渡して実行し、終了コードと標準出力を返す（標準エラーは git に渡す）。終わりを受けられ
 /// なければ、理由を出して Unfinished
 fn run_with_input(
@@ -124,33 +121,19 @@ fn run_with_input(
     capture: bool,
     what: &str,
 ) -> Result<(i32, Vec<u8>), Unfinished> {
-    cmd.stdin(Stdio::piped());
     if capture {
         cmd.stdout(Stdio::piped());
     }
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            eprintln!("❌ {what} を起動できません（{e}）");
-            return Err(Unfinished::NotStarted);
-        }
-    };
-    // 入力を書き終える前に相手が標準出力を埋めても詰まらないよう、別のスレッドで書く。入力を読まずに終わる hook も
-    // あるので、書けないこと（EPIPE）は失敗にしない
-    let stdin = child.stdin.take();
-    let waited = std::thread::scope(|scope| {
-        if let Some(mut stdin) = stdin {
-            scope.spawn(move || {
-                let _ = stdin.write_all(input);
-            });
-        }
-        child.wait_with_output()
-    });
-    match waited {
+    match crate::process::output_with_input(cmd, input) {
+        // シグナルで終わったら（code が無い）失敗とする
         Ok(out) => Ok((out.status.code().unwrap_or(1), out.stdout)),
-        Err(e) => {
+        Err(Unfinished::NotStarted(e)) => {
+            eprintln!("❌ {what} を起動できません（{e}）");
+            Err(Unfinished::NotStarted(e))
+        }
+        Err(Unfinished::Lost(e)) => {
             eprintln!("❌ {what} の終わりを待てません（{e}）");
-            Err(Unfinished::Lost)
+            Err(Unfinished::Lost(e))
         }
     }
 }
@@ -216,7 +199,9 @@ fn post_rewrite(args: &[String]) -> i32 {
             eprintln!(
                 "❌ commit-refs が見つかりません（Linux は claude-hooks の package.nix が {COMMIT_REFS} を渡す）"
             );
-            Err(Unfinished::NotStarted)
+            Err(Unfinished::NotStarted(std::io::Error::from(
+                std::io::ErrorKind::NotFound,
+            )))
         }
     };
     // 貼って使えるよう、パスをシェルの引数の形にする（空白などを含むリポジトリのため）
@@ -237,13 +222,13 @@ fn post_rewrite(args: &[String]) -> i32 {
                     );
                     println!("   修正方法: 上の ERROR を直してから、{retry}");
                 }
-                Err(Unfinished::NotStarted) => {
+                Err(Unfinished::NotStarted(_)) => {
                     println!(
                         "❌ commit-refs を起動できなかったので、コミットの番号を付け直していません（何も書き換えていません）"
                     );
                     println!("   修正方法: commit-refs を起動できるようにしてから、{retry}");
                 }
-                Err(Unfinished::Lost) => {
+                Err(Unfinished::Lost(_)) => {
                     println!(
                         "❌ commit-refs の終わりを受けられなかったので、書き換えたかどうか分かりません"
                     );

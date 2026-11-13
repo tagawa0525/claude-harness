@@ -22,8 +22,10 @@ mod git_hook;
 mod gitleaks;
 mod input;
 mod output;
+mod process;
 mod rules;
 mod shell;
+mod staged_checks;
 mod tools;
 mod unwrap;
 
