@@ -4,7 +4,7 @@
 //!
 //! ファイルの全体に辞書を当て、textlint 15.7.1 の `--format unix` と同じ形
 //! （`<ファイル>:<行>:<列>: <誤り> => <正しい語> [Error/prh]` の行と、末尾の空行と件数の行）で報告する。
-//! `<ファイル>` は引数のとおり出す。拡張子 md と markdown は Markdown として、[`TEXT_EXTENSIONS`] はコードとテキストとして読み、
+//! `<ファイル>` は引数のとおり出す。拡張子 md は Markdown として、[`TEXT_EXTENSIONS`] はコードとテキストとして読み、
 //! ほかの拡張子は検査できないとして止める（textlint は知らない拡張子のファイルを検査せずに通す）。
 //! 辞書の既定は、ビルドに埋めた prh.yml。
 //!
@@ -96,11 +96,11 @@ fn read(path: &Path) -> Result<(Syntax, String), Failure> {
         .and_then(|name| Path::new(name).extension())
         .map(|e| e.to_string_lossy().to_lowercase());
     let syntax = match extension.as_deref() {
-        Some("md" | "markdown") => Syntax::Markdown,
+        Some("md") => Syntax::Markdown,
         Some(e) if TEXT_EXTENSIONS.contains(&e) => Syntax::Text,
         _ => {
             return Err(Failure(format!(
-                "検査する拡張子ではありません: {}（対象: md markdown {}）",
+                "検査する拡張子ではありません: {}（対象: md {}）",
                 path.display(),
                 TEXT_EXTENSIONS.join(" ")
             )));
