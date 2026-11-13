@@ -3,8 +3,8 @@
 //! 読まないので、micromark-extension-gfm-autolink-literal 0.5.7 の syntax.js の判定を移す。
 //!
 //! syntax.js が見る「前の文字」は、この文字の直前の原文の文字にする（micromark の previous は直前に読んだ文字）。
-//! 角括弧が閉じていないリンクの文字列の中では literal autolink を作らない規則（syntax.js の previous(events)）は
-//! 移していない。
+//! 角括弧が閉じていないリンクの文字列の中では literal autolink を作らない規則（syntax.js の previous(events)）は、
+//! ブロックの中の括弧を数える inline.rs が当てる。
 
 use std::ops::Range;
 use std::sync::OnceLock;
