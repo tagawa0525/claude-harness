@@ -38,12 +38,14 @@ for hook in pre-commit pre-merge-commit; do
   chmod +x "$HOOKS/$hook"
 done
 
+# 同期のコマンドは、ホームを差し替える前にビルドする（nix の設定とキャッシュは利用者のホームの下）
+claude_setup=$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-setup")
+
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 swap_home "$WORK/home"
 # 一時の ~/.claude は、配るときと同じ claude-setup sync で作る。必要なファイルを選んでコピーすると、run-checks.sh が
 # 読むファイルが増えたときに欠ける（scripts/lib/slurm-exclusive.sh が欠けて、検査を通るマージが止まった）
-claude_setup=$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-setup")
 "$claude_setup/bin/claude-setup" sync "$ROOT" >/dev/null
 # 手元の squeue を呼ばず、排他のジョブが無い状態にする（run-checks.sh は排他のジョブの間、1 コアに限る）
 mkdir -p "$WORK/bin"
