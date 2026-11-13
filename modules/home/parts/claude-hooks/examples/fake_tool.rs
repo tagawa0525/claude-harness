@@ -25,8 +25,10 @@ fn append(var: &str, text: &[u8]) {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     append("FAKE_TOOL_LOG", format!("{}\n", args.join(" ")).as_bytes());
-    let cwd = std::env::current_dir().expect("作業ディレクトリを読める");
-    append("FAKE_TOOL_CWD", format!("{}\n", cwd.display()).as_bytes());
+    if std::env::var_os("FAKE_TOOL_CWD").is_some() {
+        let cwd = std::env::current_dir().expect("作業ディレクトリを読める");
+        append("FAKE_TOOL_CWD", format!("{}\n", cwd.display()).as_bytes());
+    }
     if std::env::var_os("FAKE_TOOL_STDIN").is_some() {
         let mut input = Vec::new();
         std::io::stdin()
