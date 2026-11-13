@@ -137,3 +137,18 @@ fn several_random_plans_need_file_and_bad_arguments_are_errors() {
         );
     }
 }
+
+#[test]
+fn hidden_files_are_not_plans_and_symlinked_plans_are() {
+    let repo = Repo::new();
+    repo.write("docs/plans/.hidden.md", "h\n");
+    let elsewhere = repo.root.join("elsewhere.md");
+    std::fs::write(&elsewhere, "e\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&elsewhere, repo.root.join("docs/plans/link-plan.md")).unwrap();
+    let out = repo.run(&["--list"]);
+    #[cfg(unix)]
+    assert_eq!(text(&out.stdout), "docs/plans/link-plan.md\n");
+    #[cfg(not(unix))]
+    assert_eq!(text(&out.stdout), "");
+}
