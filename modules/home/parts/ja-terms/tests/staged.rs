@@ -14,6 +14,19 @@ fn broken(text: &str) -> String {
     text.replace("{B}", BROKEN)
 }
 
+/// 外の git（hook の中で走るテストなど）が渡す、リポジトリを指す環境変数を外す
+fn without_outer_repository(command: &mut Command) {
+    for name in [
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_PREFIX",
+    ] {
+        command.env_remove(name);
+    }
+}
+
 /// 利用者の git の設定に左右されない git のリポジトリ
 struct Repo(PathBuf);
 
@@ -36,16 +49,7 @@ impl Repo {
 
     fn command(&self, program: &str) -> Command {
         let mut command = Command::new(program);
-        // 外の git（hook の中で走るテストなど）が渡す、リポジトリを指す環境変数を外す
-        for name in [
-            "GIT_DIR",
-            "GIT_INDEX_FILE",
-            "GIT_WORK_TREE",
-            "GIT_COMMON_DIR",
-            "GIT_PREFIX",
-        ] {
-            command.env_remove(name);
-        }
+        without_outer_repository(&mut command);
         command
             .current_dir(&self.0)
             .env(
@@ -269,7 +273,9 @@ fn symbolic_links_are_not_checked_but_a_change_to_a_file_is() {
 fn outside_a_repository_is_a_failure() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("not-a-repo");
     std::fs::create_dir_all(&dir).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_ja-terms"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ja-terms"));
+    without_outer_repository(&mut command);
+    let out = command
         .arg("staged")
         .current_dir(&dir)
         .env("GIT_CEILING_DIRECTORIES", dir.parent().unwrap())
