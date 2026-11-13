@@ -17,6 +17,11 @@ if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
   echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
   exit 1
 fi
+# 渡されたバイナリが script を持つか（前の版を渡すと、移したスクリプトのテストがすべて「名前が無い」で落ち、古さが紛れる）
+if ! "$CLAUDE_HOOKS_BIN" script 2>&1 </dev/null | grep -q '^scripts: '; then
+  echo "claude-hooks が script のサブコマンドを持ちません（古いバイナリ）: $CLAUDE_HOOKS_BIN" >&2
+  exit 1
+fi
 REAL_CLAUDE_HOOKS="$CLAUDE_HOOKS_BIN"
 
 source "$(dirname "$0")/../lib.sh"
@@ -30,14 +35,18 @@ PR_URL="https://github.com/octo/repo/pull/1"
 # decide-next.sh と request-rereview.sh は、記録の判定を claude-hooks local-review-covers に任せる（判定そのものは
 # hooks.sh が本物のバイナリで確かめる）。ここでは偽物を置き、既定では偽 gh の記録（「SHA High の数」の行）から head の
 # 最後の記録が High 0 かだけを見る。記録を取得できなければ 3。rebase だけの判定は、テストごとに偽物を置き直す。
-# local-review-covers のほかのサブコマンド（script）は本物に渡す
+# script は本物に渡し、ほかのサブコマンドは使い方の誤り（2）にする（スクリプトが想定外のサブコマンドを呼べば落ちる）
 fake_hooks_exact() {
   mkdir -p "$TEST_ROOT/fakebin"
   : >"$TEST_ROOT/claude-hooks.log"
+  # 本物のパスは、引用符や $ を含んでも壊れないよう %q で埋める
+  local real
+  printf -v real '%q' "$REAL_CLAUDE_HOOKS"
   cat >"$TEST_ROOT/fakebin/claude-hooks" <<FAKE
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$TEST_ROOT/claude-hooks.log"
-[[ "\$1" == local-review-covers ]] || exec "$REAL_CLAUDE_HOOKS" "\$@"
+[[ "\$1" == script ]] && exec $real "\$@"
+[[ "\$1" == local-review-covers ]] || exit 2
 records=\$(gh api --paginate "repos/{owner}/{repo}/issues/\$3/comments?per_page=100" --jq local-review) || exit 3
 awk -v h="\$4" '\$1 == h { c = (\$2 == "0") } END { exit !c }' <<<"\$records"
 FAKE
