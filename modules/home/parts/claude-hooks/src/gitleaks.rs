@@ -75,12 +75,9 @@ pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let findings: Option<Vec<serde_json::Value>> = serde_json::from_str(stdout.trim()).ok();
-    // --staged（index と HEAD の差）の標準エラーは、中の git diff の失敗なので検査できなかったとみなす。--pre-commit
-    // （作業ツリーとの差）は、git diff の警告（`* text=auto` の下の CRLF のファイルの「CRLF will be replaced by LF」）
-    // も ERR [git] warning: として出して 0 を返す（gitleaks 8.30.1 で確かめた）ので、終了コードだけで決める
-    let errors_mean_failure = mode == "--staged";
+    let errors = stderr_errors(&stderr);
     match (out.status.code(), findings) {
-        (Some(0), _) if !errors_mean_failure || stderr.trim().is_empty() => Scan::Clean,
+        (Some(0), _) if errors.is_empty() => Scan::Clean,
         // 設定を読めないなどの失敗でも 1 を返すので、一覧が空でないときだけ漏えいとする
         (Some(1), Some(list)) if !list.is_empty() => Scan::Leaks(
             list.iter()
@@ -95,12 +92,35 @@ pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
                 .collect(),
         ),
         (code, _) => Scan::Failed(Failure {
-            what: format!(
-                "gitleaks が失敗しました（exit {}）",
-                code.map(|c| c.to_string())
-                    .unwrap_or_else(|| "signal".into())
-            ),
-            errors: stderr.trim().to_string(),
+            what: match code {
+                Some(0) => {
+                    "gitleaks が失敗しました（終了コードは 0 だが、標準エラーに行を出して差分を読むのをやめた。git の警告でも止まるので、警告の原因を直すと検査できる）".to_string()
+                }
+                Some(c) => format!("gitleaks が失敗しました（exit {c}）"),
+                None => "gitleaks が失敗しました（signal）".to_string(),
+            },
+            errors: strip_colors(stderr.trim()),
         }),
     }
+}
+
+/// 標準エラーの行（色を外したもの）。gitleaks は、中の git diff が標準エラーに何か出すと、警告でも（`* text=auto` の
+/// 下の CRLF のファイルの「CRLF will be replaced by LF」など）ERR の行と stderr is not empty を出し、差分を読むのを
+/// やめて 0 と空の一覧を返す（gitleaks 8.30.1 で、同じトークンが LF の差分では見つかり、CRLF の警告の出る差分では
+/// 見つからないことを確かめた）。どの行も、検査できなかったしるしとして扱う
+fn stderr_errors(stderr: &str) -> Vec<String> {
+    strip_colors(stderr)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// 端末の色の符号（ESC [ … m）を外す
+fn strip_colors(text: &str) -> String {
+    static COLOR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new("\x1b\\[[0-9;]*m").expect("正規表現は正しい")
+    });
+    COLOR.replace_all(text, "").into_owned()
 }
