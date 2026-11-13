@@ -19,3 +19,7 @@ rules:
     pattern: 確忍
   - expected: 検査
     pattern: 険査
+  # prh:disable:<pattern> の pattern は u のフラグ無しで読むので、. は UTF-16 の 1 単位に当たり、サロゲートペアの
+  # 文字の全体には当たらない
+  - expected: ほっけ
+    pattern: 𩸽
