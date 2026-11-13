@@ -65,18 +65,21 @@ jobs:
           claude-setup settings --static modules/home/parts/claude-settings.json \
             --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
       # 同期した sh のスクリプトは LF でないと Git Bash で動かない。runner の Git for Windows は core.autocrlf=true で、
-      # checkout が CRLF にしうる（#104）
+      # checkout が CRLF にしうる（#104）。grep は Windows ではテキストのファイルの CR を外してから照合するので（-U の
+      # 無いとき）、CR を探すのに使えない。tr で CR だけを残して数える
       - name: Check the synced scripts use LF
         run: |
-          if crlf=$(grep -rlI $'\r' ~/.claude/scripts ~/.claude/skills); then
+          set -euo pipefail
+          test -d ~/.claude/scripts && test -d ~/.claude/skills
+          crlf=""
+          while IFS= read -r -d '' f; do
+            if [ -n "$(tr -cd '\r' < "$f")" ]; then
+              crlf+="$f"$'\n'
+            fi
+          done < <(find ~/.claude/scripts ~/.claude/skills -type f -print0)
+          if [ -n "$crlf" ]; then
             echo "CRLF の同期したファイル:"
-            echo "$crlf"
-            # clone の側の改行と設定（どこで CRLF になったかを分ける）
-            git ls-files --eol .gitattributes .claude/scripts/base-moved.sh
-            head -c 80 .claude/scripts/base-moved.sh | od -c | head -4
-            head -c 80 ~/.claude/scripts/base-moved.sh | od -c | head -4
-            git config --show-origin --get-all core.autocrlf || true
-            git config --show-origin --get-all core.eol || true
+            printf '%s' "$crlf"
             exit 1
           fi
       - name: Check the registered hook
