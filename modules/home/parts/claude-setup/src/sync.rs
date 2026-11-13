@@ -265,6 +265,8 @@ fn replace_file(src: &Path, dest: &Path) -> Result<(), Stop> {
     let _ = fs::remove_file(&tmp);
     let copied = fs::copy(src, &tmp).and_then(|_| {
         writable(&tmp);
+        // Windows は読むだけの属性のファイルの上に名前を付け替えられない
+        writable(dest);
         fs::rename(&tmp, dest)
     });
     if let Err(e) = copied {
