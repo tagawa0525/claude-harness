@@ -14,8 +14,8 @@ edition = "2024"
 # bash の構文解析。入力を拒否せず ERROR ノードで継続するため hook 向き
 tree-sitter = "0.25"
 tree-sitter-bash = "0.25.1"
-# hook の入出力 JSON
-serde_json = "1"
+# hook の入出力 JSON。preserve_order は、スクリプトの出力（get-pr-info など）を jq と同じく作った順のキーで書くため
+serde_json = { version = "1", features = ["preserve_order"] }
 # 機密情報パターンと GraphQL mutation の検出。tree-sitter が既に依存している
 regex = "1"
 # ADR のパスの判定。ADR の形を持つのは design-records だけにする（ADR-0009）
