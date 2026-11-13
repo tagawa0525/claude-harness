@@ -164,6 +164,10 @@ fn replace(
     let groups = hooks
         .entry(event)
         .or_insert_with(|| Value::Array(Vec::new()));
+    // jq の filter と同じく、null は登録の無いイベントとして扱う
+    if groups.is_null() {
+        *groups = Value::Array(Vec::new());
+    }
     let Value::Array(groups) = groups else {
         return Err(format!(
             "❌ {} の hooks.{event} が配列ではありません。書き換えずに止めます",
