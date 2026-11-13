@@ -167,4 +167,4 @@ hook の登録の形:
     実際のホームに同期したので外した
 - 2026-11-13: Windows のバイナリの置き場を、cargo の既定の `~/.cargo/bin` から `cargo install --root ~/.claude` の
   `~/.claude/bin` に変えた（ADR-0087 の決定と補足。スキルの sh のスクリプトが Linux と同じパスで呼ぶため）。
-  `~/.claude/bin` を利用者の PATH の先頭に足す（README の「Windows で使う」）
+  `~/.claude/bin` は Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）

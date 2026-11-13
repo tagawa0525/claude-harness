@@ -67,12 +67,12 @@ done
 ~/.claude/bin/claude-setup git-hooks --bin "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ```
 
-初めて入れたときは、`~/.claude/bin` を利用者の PATH の先頭に足し、Git Bash を開き直す。スキルと hook の修正方法の文は
-`claude-setup` と `commit-refs` を名前で呼ぶ。前の手順で `~/.cargo/bin` に入れていたら、PATH で古い版が先に見つからない
-よう外す:
+初めて入れたときは、Git Bash の `~/.bashrc` で `~/.claude/bin` を PATH の先頭に足し、Git Bash を開き直す（Claude Code の
+Bash ツールも `~/.bashrc` を読む）。スキルと hook の修正方法の文は `claude-setup` と `commit-refs` を名前で呼ぶ。前の手順で
+`~/.cargo/bin` に入れていたら、古い版が残らないよう外す:
 
 ```bash
-powershell -NoProfile -Command '$d = "$env:USERPROFILE\.claude\bin"; $p = [Environment]::GetEnvironmentVariable("Path", "User"); if (($p -split ";") -notcontains $d) { [Environment]::SetEnvironmentVariable("Path", "$d;$p", "User") }'
+grep -qxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
 cargo uninstall claude-hooks ja-terms commit-refs claude-setup  # ~/.cargo/bin に入れていたときだけ
 ```
 

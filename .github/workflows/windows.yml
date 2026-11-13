@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cargo test --locked
-      # Windows の claude-hooks は、環境変数の無いとき PATH の ja-terms を呼ぶ（#115）。cargo install で入れた ja-terms と
+      # Windows の claude-hooks は、環境変数の無いとき ja-terms を名前で起動する（#115。隣に無ければ PATH）。cargo install で入れた ja-terms と
       # 辞書で、git merge と git commit のメッセージを止めることを、Linux の install check と同じ sh のテストで確かめる
       - if: matrix.crate == 'claude-hooks'
         run: cargo install --locked --path ../ja-terms
@@ -64,8 +64,7 @@ jobs:
           ~/.claude/bin/claude-setup sync "$PWD"
           ~/.claude/bin/claude-setup settings --static modules/home/parts/claude-settings.json \
             --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
-          # README は利用者の PATH の先頭に足す。CI は後の step の PATH に足す
-          cygpath -w "$HOME/.claude/bin" >>"$GITHUB_PATH"
+          grep -qxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
       # スキルの sh のスクリプトは、Linux と同じ "$HOME/.claude/bin/claude-hooks" で呼ぶ（ADR-0087）。Git Bash がこのパスに
       # .exe を補って起動することを、引数の足りない呼び出しの使い方の誤り（2）で確かめる（見つからなければ 127）
       - name: Check the paths the scripts and messages use
@@ -74,11 +73,13 @@ jobs:
           rc=0
           "$HOME/.claude/bin/claude-hooks" local-review-covers || rc=$?
           test "$rc" -eq 2
-          # スキルと修正方法の文が名前で呼ぶコマンドは、PATH の ~/.claude/bin のもの
+          # スキルと修正方法の文が名前で呼ぶコマンドは、README が ~/.bashrc で PATH に足す ~/.claude/bin のもの。CI の
+          # step は ~/.bashrc を読まない（後の git hook の確認は、PATH に無い ja-terms を claude-hooks の隣で見つける）
           for name in claude-setup commit-refs ja-terms; do
-            found=$(command -v "$name")
-            test "$(dirname "$found")" = "$HOME/.claude/bin"
+            found=$(bash -c 'source ~/.bashrc && command -v "$1"' _ "$name")
+            test "$found" -ef "$HOME/.claude/bin/$name.exe"
           done
+          ! command -v ja-terms
       # 同期した sh のスクリプトは LF でないと Git Bash で動かない。runner の Git for Windows は core.autocrlf=true で、
       # checkout が CRLF にしうる（#104）。grep は Windows ではテキストのファイルの CR を外してから照合するので（-U の
       # 無いとき）使わず、tr で CR だけを残して wc で数える（数を出すので、$(...) が CR を落としても数は変わらない）。
@@ -155,7 +156,7 @@ jobs:
       # README の手順の最後の git hook の設置。上の PreToolUse hook の確認は、git hook の無い Windows（グローバルの
       # core.hooksPath を使わないリポジトリでは、PreToolUse hook が機密情報を検査する）として流すので、その後に置く。
       # 置いた git hook が、Claude Code のセッションの main への直接のコミット、Conventional Commits でない件名、ステージ
-      # したトークンを止め、feature branch の正しい件名のコミットを通す（ja-terms は claude-hooks の隣のもの、gitleaks は PATH のもの）
+      # したトークンを止め、feature branch の正しい件名のコミットを通す（ja-terms は PATH に無く claude-hooks の隣のもの、gitleaks は PATH のもの）
       - name: Install and check the git hooks
         run: |
           set -euo pipefail

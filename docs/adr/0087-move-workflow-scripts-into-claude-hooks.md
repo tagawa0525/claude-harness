@@ -67,7 +67,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - Windows の置き場: crate を `cargo install --root ~/.claude` で `~/.claude/bin/` に入れ、Linux と同じパスで引く（Git Bash は
   `.exe` を補って実行する）。settings.json と git hook の登録もこのパスを指し、`ja-terms` と `commit-refs` は
   `claude-hooks` の隣のものを起動する。スキルと修正方法の文が名前で呼ぶ `claude-setup` と `commit-refs` のため、
-  `~/.claude/bin` を利用者の PATH に足す（README の「Windows で使う」）
+  `~/.claude/bin` を Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
 - `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す
 - PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を 1 行に置き換える
@@ -113,4 +113,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   `~/.claude/bin/` にコピーするとしていた。settings.json と git hook の登録は `~/.cargo/bin` を指したままなので、コピーを
   忘れると hook とスクリプトで版が分かれる（PR #142 のローカルレビュー）。`cargo install --root ~/.claude` で入れれば
   置き場が 1 つになり、コピーの手順も要らないので、そちらに変えた。`~/.claude/bin` は PATH に無いので、名前で呼ぶ
-  `claude-setup` と `commit-refs` のために利用者の PATH の先頭に足し、前の `~/.cargo/bin` の版は外す
+  `claude-setup` と `commit-refs` のために PATH の先頭に足し、前の `~/.cargo/bin` の版は外す。PATH は、はじめ PowerShell で
+  User の Path に足したが、User の Path の展開する項目（`%USERPROFILE%\...`）を固定のパスに潰し、System の Path の後に
+  並ぶので先頭にならず、`$HOME` と `USERPROFILE` が違えば置き場とずれる（PR のローカルレビュー）ので、Git Bash の
+  `~/.bashrc` に変えた
