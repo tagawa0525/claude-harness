@@ -34,11 +34,18 @@ pub fn markdown(text: &str) -> Vec<Range<usize>> {
     // 最初の lazy な行の前に空行を入れて読み直す。後の行が lazy かは、読み直した構造で決まる（前の行で項目が
     // 閉じると、後の行は別の項目の続きになりうる）ので、1 度に 1 行ずつ入れる
     let mut breaks: Vec<usize> = Vec::new();
+    // 空行を入れても同じ行が lazy なまま（読み直しが進まない）なら、lazy な行を探さずに読む（止まらないことを保つ）
+    let mut find_lazy = true;
     let runs = loop {
         let source = with_breaks(original, &breaks);
-        match parse(&source) {
+        match parse(&source, find_lazy) {
             Parsed::Lazy(line) => {
-                breaks.push(to_original(line, &breaks));
+                let at = to_original(line, &breaks);
+                if breaks.contains(&at) {
+                    find_lazy = false;
+                    continue;
+                }
+                breaks.push(at);
                 breaks.sort_unstable();
             }
             Parsed::Runs(runs) => {
@@ -150,7 +157,12 @@ fn with_breaks(original: &str, breaks: &[usize]) -> String {
     let mut last = 0;
     for &b in breaks {
         source.push_str(&original[last..b]);
-        source.push('\n');
+        // 単独の CR の後に \n を入れると、つないで 1 つの改行（CRLF）になり空行にならないので、同じ CR を入れる
+        source.push(if original[..b].ends_with('\r') {
+            '\r'
+        } else {
+            '\n'
+        });
         last = b;
     }
     source.push_str(&original[last..]);
@@ -185,7 +197,8 @@ enum Parsed {
     Runs(Vec<Run>),
 }
 
-fn parse(source: &str) -> Parsed {
+/// find_lazy なら、最初の lazy continuation の行で読むのを止めてその行を返す
+fn parse(source: &str, find_lazy: bool) -> Parsed {
     // 取り消し線は inline.rs が micromark の規則で読む（pulldown-cmark は 1 つの ~ を読まない）
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_TASKLISTS
@@ -204,8 +217,13 @@ fn parse(source: &str) -> Parsed {
     // 続いている Str（mdast の text は、行の終わりをはさんだ文字の並びを 1 つのノードにする）
     let mut current: Option<Range<usize>> = None;
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
-        if let Event::SoftBreak = event {
-            let line = range.start + source[range.start..].find('\n').map_or(0, |i| i + 1);
+        if find_lazy && let Event::SoftBreak = event {
+            // 行の終わりは \r\n、\n、\r のどれか（SoftBreak の範囲は行の終わりの前の空白から始まりうる）
+            let rest = &source[range.start..];
+            let line = range.start
+                + rest
+                    .find(['\r', '\n'])
+                    .map_or(0, |i| i + if rest[i..].starts_with("\r\n") { 2 } else { 1 });
             if !continues(source, line, &containers) {
                 return Parsed::Lazy(line);
             }
