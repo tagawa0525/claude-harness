@@ -4,7 +4,7 @@
 #
 # claude_hooks_script <名前> [引数]...
 #   claude-hooks script <名前> [引数]... を exec する。バイナリは CLAUDE_HOOKS_BIN（テストがブランチのバイナリに
-#   差し替える）か ~/.claude/bin/claude-hooks で、PATH では引かない（lib/local-review.sh と同じ）。
+#   差し替える）か ~/.claude/bin/claude-hooks で、PATH には ~/.claude/bin が無いことがあるので、PATH では引かない。
 #   バイナリが無ければ、入れ方を示して 127 で終える。sh の `exec: not found` だけでは何を入れるかが分からず、claude-sync は
 #   スクリプトだけを入れてバイナリを入れない。バイナリが古く <名前> を知らなければ、claude-hooks 自身が入れ直しの手順を示す
 
