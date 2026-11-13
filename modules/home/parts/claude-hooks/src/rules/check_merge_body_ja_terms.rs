@@ -714,6 +714,16 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn a_failed_body_check_is_undecided() {
+        // --no-ff の無い形（本文の語だけを見る ja-terms message）の失敗も、止めずに理由を出す
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        assert!(check("git merge feat/a -m 'Merge: a' -m '失敗'").is_empty());
+        assert!(take_notices().iter().any(|n| n.contains("boom")));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn denies_a_subject_commit_msg_rejects() {
         // commit-msg は Merge で始まらない件名の形と長さも見るので、同じ検査で先に止める
         let r = only_deny(&check("git merge --no-ff feat/a -m '形違い'"));

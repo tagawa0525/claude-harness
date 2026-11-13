@@ -330,7 +330,7 @@ mod tests {
     }
 
     /// ja-terms の代わり。`commit-msg` とメッセージのファイルを受け、隣の `seen` にコピーする。件名（最初の行）に
-    /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「失敗」があれば 2 で終わる（規則の実物は
+    /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「理由無し」なら何も出さずに 1 で、「失敗」があれば 2 で終わる（規則の実物は
     /// tests/commit-message.sh と modules/home/parts/tests/commit-msg-conventions.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
@@ -339,6 +339,7 @@ cp "$2" "$(dirname "$0")/seen"
 case "$(head -n 1 "$2")" in
   *長すぎ*) echo "❌ 件名が 72 文字を超えています (73 文字): $(head -n 1 "$2")"; exit 1 ;;
   *失敗*) echo "boom" >&2; exit 2 ;;
+  *理由無し*) exit 1 ;;
 esac
 exit 0
 "#;
@@ -780,5 +781,16 @@ exit 0
                 .is_empty()
         );
         assert_eq!(fake.seen().unwrap(), "feat: a\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rejection_without_a_reason_is_undecided() {
+        // 何を直すかを示せないので、止めずに判定できなかった理由を出す（commit-msg が同じ検査で止める）
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        let fake = Fake::new("no-reason");
+        assert!(fake.check("git commit -m '理由無し'").is_empty());
+        assert!(!take_notices().is_empty());
     }
 }
