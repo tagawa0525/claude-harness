@@ -348,7 +348,7 @@ in
       fi
 
       # 件名の形式と長さ、日本語の語は `ja-terms commit-msg`（./ja-terms/src/main.rs の commit_msg と src/message.rs）が判定する。
-      # claude-hooks の git commit の本文を先に検査するルールが同じものを呼ぶ（ADR-0073）。
+      # claude-hooks の git commit と git merge の本文を先に検査するルールが同じものを呼ぶ（ADR-0050、ADR-0073）。
       # 検証: modules/home/parts/tests/commit-msg-conventions.sh、modules/home/parts/tests/ja-terms.sh
       exec ${ja-terms}/bin/ja-terms commit-msg "$MSG_FILE"
     '';

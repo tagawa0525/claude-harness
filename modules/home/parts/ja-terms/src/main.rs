@@ -7,9 +7,10 @@
 //!   報告する。`<ファイル>` は引数のとおり出す。拡張子 md は Markdown として、[`report::TEXT_EXTENSIONS`] はコードとテキストとして
 //!   読み、ほかの拡張子は検査できないとして止める（textlint は知らない拡張子のファイルを検査せずに通す）
 //! - `ja-terms message [--dictionary <辞書>]`: 標準入力のコミットのメッセージの本文（[`ja_terms::message::body`]）を
-//!   Markdown として検査し、`<行>:<列>: <誤り> => <正しい語>` の行で報告する
+//!   Markdown として検査し、`<行>:<列>: <誤り> => <正しい語>` の行で報告する。claude-hooks の git merge のルールが、
+//!   マージコミットを作るのが確かでない形で呼ぶ
 //! - `ja-terms commit-msg [--dictionary <辞書>] <メッセージのファイル>`: git の commit-msg の hook と claude-hooks の
-//!   git commit のルールが呼ぶ、件名の形と長さと本文の語の検査。理由は標準出力に出す
+//!   git commit と git merge のルールが呼ぶ、件名の形と長さと本文の語の検査。理由は標準出力に出す
 //! - `ja-terms staged [--dictionary <辞書>]`: グローバルの pre-commit がリポジトリの直下で呼ぶ、ステージした中身の
 //!   検査（[`staged`]）
 //!
