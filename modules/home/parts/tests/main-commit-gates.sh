@@ -52,6 +52,9 @@ export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
 git config --global user.email test@example.com
 git config --global init.defaultBranch main
+# pre-commit は隣の pre-merge-commit を、git が hook を探す core.hooksPath の置き場で探す（git rev-parse --git-path
+# hooks/…）。git が呼ぶときと同じ置き場にする
+git config --global core.hooksPath "$WORK"
 export CLAUDECODE=1
 
 PASS=0
