@@ -169,11 +169,10 @@ fn replace(
             list.retain(|hook| !remove(hook));
         }
     }
-    groups.retain(|group| {
-        group
-            .get("hooks")
-            .and_then(Value::as_array)
-            .is_some_and(|list| !list.is_empty())
+    // hooks の配列を持たない組はハーネスの規則に当たらないので残し、外して空になった組だけを消す
+    groups.retain(|group| match group.get("hooks") {
+        Some(Value::Array(list)) => !list.is_empty(),
+        _ => true,
     });
     groups.push(entry);
 }
