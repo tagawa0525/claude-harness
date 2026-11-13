@@ -369,6 +369,10 @@ fn matches(rules: &[Rule], offset: usize, piece: &str) -> Result<Vec<Diff>, Text
 /// 外していないので、前の直しと重なる一致の誤りは、前の直しの一部になる。JavaScript と同じく UTF-16 の位置で
 /// 切る（UTF-8 のバイトで切ると、前の直しの中で切る位置が変わる）
 fn report_changes(text: &str, diffs: &[Diff]) -> Vec<Finding> {
+    // ほとんどの Str に直しは無い
+    if diffs.is_empty() {
+        return Vec::new();
+    }
     let mut current: Vec<u16> = text.encode_utf16().collect();
     let mut delta: isize = 0;
     let mut findings = Vec::new();
