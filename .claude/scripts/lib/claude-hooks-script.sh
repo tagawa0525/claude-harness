@@ -10,8 +10,12 @@
 
 claude_hooks_script() {
   claude_hooks_bin="${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}"
-  # Windows の Git Bash は .exe を補って実行するので、.exe の付いたものも在るものとして数える
-  if [ ! -e "$claude_hooks_bin" ] && [ ! -e "$claude_hooks_bin.exe" ]; then
+  # Windows の claude-hooks は .exe の付いた名前で入る。.exe だけがあれば、それを起動する（.exe を補って起動しない sh
+  # でも動くように）
+  if [ ! -e "$claude_hooks_bin" ] && [ -e "$claude_hooks_bin.exe" ]; then
+    claude_hooks_bin="$claude_hooks_bin.exe"
+  fi
+  if [ ! -e "$claude_hooks_bin" ]; then
     echo "ERROR: ${claude_hooks_bin} がありません。Linux は home-manager の rebuild、Windows は claude-harness の README の「Windows で使う」の cargo install で入れてください（claude-sync はバイナリを入れない）" >&2
     exit 127
   fi
