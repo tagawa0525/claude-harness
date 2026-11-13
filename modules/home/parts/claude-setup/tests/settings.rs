@@ -287,3 +287,12 @@ fn a_read_only_settings_file_is_replaced() {
     let got = home.ok(&json!({}), &["--pre-tool-use", HOOKS]);
     assert_eq!(got["hooks"]["PreToolUse"], json!([pre_tool_use()]));
 }
+
+#[test]
+fn a_null_event_counts_as_no_registrations() {
+    // jq の filter は null のイベントを空の配列として扱った
+    let home = Home::new();
+    home.write_settings(&json!({"hooks": {"PreToolUse": null}}));
+    let got = home.ok(&json!({}), &["--pre-tool-use", HOOKS]);
+    assert_eq!(got["hooks"]["PreToolUse"], json!([pre_tool_use()]));
+}
