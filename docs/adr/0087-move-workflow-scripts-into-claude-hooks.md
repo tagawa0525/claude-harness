@@ -18,13 +18,14 @@ Git と GitHub の作業手順のスクリプトを、#101 の段階 5 で Rust 
 （`f0083452`、2026-11-13、`wc -l`）。うち 12 本が jq を使い（`grep -l jq`）、Windows の手順は jq を入れている（README の
 「Windows で使う」）。`lib/pr-url.sh` と `lib/local-review.sh` は、ほかのスクリプトが source する部品で、単独では実行しない。
 
-これらのスクリプトは、スキルの文から `~/.claude/scripts/<名前>.sh` のパスで呼ばれる（`f0083452` で、`review-level.sh` を名前で書く
+これらのスクリプトは、スキルの文から `~/.claude/scripts/<名前>.sh` か `~/.claude/skills/gh-pr-review/scripts/<名前>.sh` のパスで
+呼ばれる（`f0083452` で、`review-level.sh` を名前で書く
 スキルの文は `.claude/skills` の下の 6 ファイル。`git grep -l`）。claude-hooks の PreToolUse のルールも、スクリプトの名前で呼び出しを
 見分ける（例: `require_background_wait.rs` は `gh-wait-review.sh` と `request-rereview.sh` をフォアグラウンドで実行させない）。
 拒否の文言も、修正方法としてスクリプトの名前を示す（`pre_merge_check.rs`、`guard_gh_api.rs` など）。`lib/local-review.sh`
-（`decide-next.sh`、`request-rereview.sh`、`record-local-review.sh` が source する）は、ローカルレビューの記録の判定を
+（`decide-next.sh`、`request-rereview.sh`、`record-local-review.sh` が source し、前の 2 本が判定の関数を呼ぶ）は、ローカルレビューの記録の判定を
 `claude-hooks local-review-covers` に任せ、バイナリを `${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}` で引く（PATH に
-頼らない。`claude-code.nix` の注記）。Windows では `~/.claude/bin/claude-hooks` が無く、この 3 本は今も動かない。
+頼らない。`claude-code.nix` の注記）。Windows では `~/.claude/bin/claude-hooks` が無く、前の 2 本は今も動かない。
 
 crate の分け方は、#101 の「決まっていないこと」で、段階 5 で 3 つ目のまとまりを作るときに決めるとしていた
 （ADR-0086 は git hook を `claude-hooks` のサブコマンドにした）。#101 の「作業の順序」は、sh の実装を、呼び出し元を
@@ -50,7 +51,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 呼ばれ方:
 
-- 案 A: スクリプトのファイル（`~/.claude/scripts/<名前>.sh`）の名前と場所を変えず、中身を `claude-hooks script <名前> "$@"`
+- 案 A: スクリプトのファイル（`~/.claude/scripts/` と `~/.claude/skills/gh-pr-review/scripts/` の `<名前>.sh`）の名前と場所を変えず、中身を `claude-hooks script <名前> "$@"`
   を exec するだけの 1 行にする
 - 案 B: スキルの文と hook のルールを、新しいコマンドの名前に書き換え、スクリプトのファイルを消す
 
@@ -82,8 +83,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   スキルの文と hook のルールを揃える PR になり、揃え漏れが hook の判定の抜けになる。sh を 1 つ挟む費用は呼び出しごとに
   1 回で、これらのスクリプトは作業の節目に呼ぶもの（PreToolUse hook のように毎回は走らない）
 - バイナリを PATH でなく固定のパスと `CLAUDE_HOOKS_BIN` で引くのは、今の `lib/local-review.sh` と揃え、テストで
-  ブランチのバイナリに差し替えられるようにするため。Windows も同じパスに置けば、引き方が 1 つで済み、今の
-  `lib/local-review.sh` も Windows で動く
+  ブランチのバイナリに差し替えられるようにするため。Windows も同じパスに置けば、スクリプトからの引き方が
+  Linux と 1 つで済み、今の `lib/local-review.sh` も Windows で動く
 
 ### 帰結
 
@@ -93,7 +94,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 悪い点: `claude-sync` は 1 行のスクリプトをすぐ配るが、バイナリは rebuild まで前の版のままで、その間、移した
   スクリプトは前の版のバイナリにサブコマンドが無く失敗する。移す PR は `claude-hooks` を変えるので、マージの後は
   `claude-sync` でなく rebuild（activation が sync も実行する）で入れる。Windows も、`claude-setup sync` の前に
-  `cargo install` とコピーを済ませる
+  `cargo install` とコピーを済ませる。Windows の settings.json と git hook は `cargo install` の置き場を指すので、
+  コピーを忘れると hook とスクリプトで版が分かれる。hook の登録もコピーに向けるかは、最初に移す PR で決める
 
 ### 確認
 
