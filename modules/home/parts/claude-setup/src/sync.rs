@@ -257,23 +257,31 @@ fn copy(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
 /// src の中身を dest に置く。隣の一時のファイルに書いてから名前を付け替える（同期の間に読むほかのセッションに、
 /// 消えたファイルや書きかけのファイルを見せない。書けなければ前の版を残す）
 fn replace_file(src: &Path, dest: &Path) -> Result<(), Stop> {
+    replace_with(dest, |tmp| fs::copy(src, tmp).map(|_| ())).map_err(|e| io_stop(dest, &e))
+}
+
+/// fill で隣の隠れた一時のファイル（`.<名前>.claude-setup-<pid>`）を書き、dest に名前を付け替える。失敗したら
+/// 一時のファイルを消し、dest は前の版のまま残す
+pub fn replace_with(
+    dest: &Path,
+    fill: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     let name = dest
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let tmp = dest.with_file_name(format!(".{name}.claude-setup-{}", std::process::id()));
     let _ = fs::remove_file(&tmp);
-    let copied = fs::copy(src, &tmp).and_then(|_| {
+    let replaced = fill(&tmp).and_then(|()| {
         writable(&tmp);
         // Windows は読むだけの属性のファイルの上に名前を付け替えられない
         writable(dest);
         fs::rename(&tmp, dest)
     });
-    if let Err(e) = copied {
+    if replaced.is_err() {
         let _ = fs::remove_file(&tmp);
-        return Err(io_stop(dest, &e));
     }
-    Ok(())
+    replaced
 }
 
 /// symlink を消す（Windows のディレクトリを指すリンクとジャンクションは remove_dir で消す）

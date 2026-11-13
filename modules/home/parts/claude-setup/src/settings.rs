@@ -121,12 +121,8 @@ fn read_json(path: &Path) -> Result<Value, String> {
 /// 隣の一時のファイルに書いてから名前を付け替える（Claude Code が読む途中のファイルを見せない）
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value).expect("JSON の値は書ける") + "\n";
-    let tmp = path.with_extension(format!("json.claude-setup-{}", std::process::id()));
-    let written = fs::write(&tmp, text).and_then(|()| fs::rename(&tmp, path));
-    written.map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        format!("❌ {} を書けません（{e}）", path.display())
-    })
+    crate::sync::replace_with(path, |tmp| fs::write(tmp, text))
+        .map_err(|e| format!("❌ {} を書けません（{e}）", path.display()))
 }
 
 fn command(hook: &Value) -> Option<&str> {
