@@ -53,17 +53,13 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
   python の置き換えで書き直すことが多い）を捕まえられない（#592）
 - 案 1 は、`ja-terms-message` がコミットのメッセージの規則（件名が Merge、fixup!、squash!、Revert なら件名を除く、
   scissors の行から後を除く）を掛けるので、それを外すために件名をこしらえて渡すことになる。メッセージの規則を変えると
-  メモリの検査が黙ってずれる。案 2 は、pre-commit（`staged.sh`）と同じく、textlint の設定（辞書、拡張子とパーサー）を
-  そのまま使い、ファイルの全体を見る。Markdown のコードスパン、フェンス、フロントマターは、pre-commit と同じく textlint の
-  パーサーが外す
-- `ja-terms-files` は、textlint が引数をグロブとして読む（ADR-0014）ので、`staged.sh` と同じく番号の名前のファイルに
-  書き出して 1 回の textlint で検査し、出力のパスを引数のとおりに戻す。ファイルごとに `--stdin` で呼ぶと、textlint の
-  起動（0.3 秒ほど。ADR-0050）がファイルの数だけ掛かる。textlint は知らない拡張子のファイルを検査せずに通すので、
-  対象の拡張子（`md` と `textlint.nix` の `codeExtensions`）に無いファイルと読めないファイルは、検査できないとして
-  終了コード 2 で止める
+  メモリの検査が黙ってずれる。案 2 は、pre-commit（`ja-terms staged`）と同じく、辞書、拡張子と読み方をそのまま使い、
+  ファイルの全体を見る。Markdown のコードスパン、フェンス、フロントマターは、pre-commit と同じく ja-terms が外す
+- 入口は `ja-terms check`（ADR-0085）。引数のファイルを 1 回で検査し、パスを引数のとおりに出す。対象の拡張子（`md` と
+  ja-terms の `TEXT_EXTENSIONS`）に無いファイルと読めないファイルは、検査できないとして終了コード 2 で止める
 - 案 ii は、スキルのスクリプトを claude-sync が store を経ずにそのままコピーする（`modules/home/scripts/claude-sync.sh`）
   ので、埋める場所が無い。スクリプトを Nix で組む形に変えると、claude-sync で即座に反映する運用から外れる
-- 案 i と案 iii の違いは、呼ぶ側が PATH に頼るかと、名前を全体の PATH に出すか。`ja-terms-files` を呼ぶのは Claude Code の
+- 案 i と案 iii の違いは、呼ぶ側が PATH に頼るかと、名前を全体の PATH に出すか。`~/.claude/bin/ja-terms` を呼ぶのは Claude Code の
   スクリプトだけで、`~/.claude/bin` には同じく Claude Code のためにだけ置く `claude-hooks` がある。テストは
   `JA_TERMS_FILES` で偽物か nix build したものに差し替える（`CLAUDE_HOOKS_BIN` と同じ）
 - memory-index.sh は、辞書の検査が無い（rebuild の前）か失敗したら、ほかの行を出した後に `ERROR:` を出して exit 1 に
@@ -76,15 +72,23 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
   コピーされた語は、今までどおりコミットの段で止まる
 - フロントマター（`description` など）の中の語は検査しない（pre-commit の Markdown と同じ）。メモリの索引 `MEMORY.md` の
   1 行の説明は本文なので検査する
-- `ja-terms-files` は rebuild で `~/.claude/bin` に入る。claude-sync だけで memory-index.sh を入れ替えると、rebuild まで
+- `ja-terms` は rebuild で `~/.claude/bin` に入る。claude-sync だけで memory-index.sh を入れ替えると、rebuild まで
   memory-index.sh は `ERROR:` で止まる（ほかの行は出る）
-- 辞書と textlint の設定を変えると、pre-commit、commit-msg、claude-hooks、memory-index.sh が同じものを使う（`textlint.nix`）
+- 辞書と検査の規則を変えると、pre-commit、commit-msg、claude-hooks、memory-index.sh が同じものを使う（ja-terms）
 
 ### 確認
 
-- `modules/home/parts/tests/ja-terms.sh`: nix build した `~/.claude/bin/ja-terms-files`（home-manager の home-files）が、
+- `modules/home/parts/tests/ja-terms.sh`: nix build した `~/.claude/bin/ja-terms` の check（home-manager の home-files）が、
   崩れた語を引数のパス（空白とグロブの文字を含む）と行で出し、コードスパンの中を数えず、最初の行が Merge でも全体を見て、
   拡張子の無いファイルと無いファイルを 2 で止めること。memory-index.sh がそれを使って `TERMS:` の行を出し、コードスパン、
   フェンス、フロントマターの中を数えず、崩れた語が無ければ出さないこと
-- `.claude/tests/scripts/retro.sh`: 偽の `ja-terms-files` で、memory-index.sh がすべての .md を 1 回で渡し、指摘を
+- `.claude/tests/scripts/retro.sh`: 偽の `ja-terms` で、memory-index.sh がすべての .md を 1 回で渡し、指摘を
   `TERMS:` の行にし、検査が無い、失敗した、指摘を読めないときに exit 1 で止まること
+
+## 変更
+
+- 2026-11-13: 入口を、textlint を呼ぶ `~/.claude/bin/ja-terms-files` から、Rust の `~/.claude/bin/ja-terms` の `check` に
+  変えた。前は「`ja-terms-files` は、textlint が引数をグロブとして読む（ADR-0014）ので、`staged.sh` と同じく番号の名前の
+  ファイルに書き出して 1 回の textlint で検査し、出力のパスを引数のとおりに戻す」と、案 2 の「textlint の設定（辞書、
+  拡張子とパーサー）をそのまま使い」。出力の形と終了コードは同じで、差し替えの環境変数は `JA_TERMS`。Windows の機械に
+  Node.js を入れずに同じ判定にするため（ADR-0085）

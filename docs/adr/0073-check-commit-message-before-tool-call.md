@@ -58,9 +58,9 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
 
 案 A と案 D を採る。
 
-- 規則は commit-msg-check（`modules/home/parts/ja-terms/commit-msg-check.sh`。`textlint.nix` の `commitMsgCheck`）の
+- 規則は `ja-terms commit-msg`（`modules/home/parts/ja-terms/src/message.rs`。ADR-0085）の
   1 か所に置く。commit-msg の hook は、ローカルの commit-msg、CLAUDECODE、upstream のある fork を見た後に、これを
-  `exec` する。終了コードは 0 が通す、1 が規約に反する、2 が語の検査（textlint）の失敗。git は 0 でないどの値でも
+  `exec` する。終了コードは 0 が通す、1 が規約に反する、2 が語の検査の失敗。git は 0 でないどの値でも
   コミットを止めるので、hook の振る舞いは変わらない。ルールは 1 で止め、2 と起動の失敗は判定できなかった理由を出して
   通す（ADR-0033）
 - ルール（check-commit-message）は、commit-msg に渡るのと同じメッセージを組み立てる（builtin/commit.c）。`-m` は値の後に
@@ -103,10 +103,11 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
 ### 帰結
 
 - `git commit -m/-F` の件名と語の誤りは、pre-commit の前に止まり、同じ呼び出しの後段は走らない
-- commit-msg の規則を変えると、commit-msg と claude-hooks の両方が同じスクリプトを使う。claude-hooks のパッケージは
-  makeBinaryWrapper で `CLAUDE_HOOKS_COMMIT_MSG_CHECK` に store のパスを固定する（ADR-0050 の ja-terms-message と同じ）。
+- commit-msg の規則を変えると、commit-msg と claude-hooks の両方が同じ ja-terms を使う。claude-hooks のパッケージは
+  makeBinaryWrapper で `CLAUDE_HOOKS_JA_TERMS` に ja-terms の store のパスを固定する（ADR-0050 と同じ）。
   cargo で直接ビルドしたバイナリ（`.claude/tests/hooks.sh` の既定）には無く、判定できない理由を出して通す
-- `git commit` のたびに commit-msg-check（textlint を含む）を 1 度呼ぶ。ADR-0050 の測定では ja-terms-message が 0.3〜0.5 秒
+- `git commit` のたびに `ja-terms commit-msg` を 1 度呼ぶ。textlint のときは ADR-0050 の測定で 0.3〜0.5 秒で、ja-terms は
+  0.01 秒未満（ADR-0085 の PR の測定、2026-11-13）
 - `-F -` に同じコマンドのヒアドキュメントが無い形（`printf … | git commit -F -`）、`<<<`、`< file` は判定できない理由を出して
   通し、commit-msg に任せる
 - `git merge` のルールは、前段が `-F` のファイルを書きうる形で、書く前の中身の語を示す代わりに、判定できないとして止める。
@@ -138,3 +139,7 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
   ファイルを書きうる（そのコマンドの行き先からの相対で同じパスを、引数に取るか出力のリダイレクトの先にする）とき」の
   「同じパス」を、書いたままの字面で比べていた。xlc のセッションの `S=<dir>; cat > $S/msg.txt <<'EOF' … ; git commit -F
   <dir>/msg.txt` と `sed -i … $S/msg.txt; git commit -F <dir>/msg.txt` を止めず、commit-msg が後で拒んだ（#619）
+- 2026-11-13: 規則の置き場を、textlint を呼ぶスクリプトから Rust の `ja-terms commit-msg` に変えた。前は「規則は
+  commit-msg-check（`modules/home/parts/ja-terms/commit-msg-check.sh`。`textlint.nix` の `commitMsgCheck`）の 1 か所に置く」と
+  「2 が語の検査（textlint）の失敗」。件名の形と長さ、文言、終了コードは同じ。Windows の機械に Node.js を入れずに同じ判定に
+  するため（ADR-0085）
