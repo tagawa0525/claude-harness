@@ -87,6 +87,8 @@
         design-records = pkgs.callPackage ./modules/home/parts/design-records/package.nix { };
         # 崩れた日本語の語の検査の crate と CLI（ADR-0085。pre-commit、commit-msg、claude-hooks、/retro が呼ぶ）
         ja-terms = pkgs.callPackage ./modules/home/parts/ja-terms/package.nix { };
+        # ハーネスを Claude Code の設定に配る設置のコマンド（ADR-0084。claude-sync と activation が呼ぶ）
+        claude-setup = pkgs.callPackage ./modules/home/parts/claude-setup/package.nix { };
       };
 
       # nix flake check は packages を評価するだけで checkPhase（cargo test）を実行しない。
@@ -95,6 +97,7 @@
       checks.${system} = {
         inherit (self.packages.${system})
           claude-hooks
+          claude-setup
           commit-refs
           design-records
           history-rewrite
