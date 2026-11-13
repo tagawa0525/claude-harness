@@ -71,6 +71,10 @@ jobs:
           if crlf=$(grep -rlI $'\r' ~/.claude/scripts ~/.claude/skills); then
             echo "CRLF の同期したファイル:"
             echo "$crlf"
+            # clone の側の改行と設定（どこで CRLF になったかを分ける）
+            git ls-files --eol .gitattributes .claude/scripts/base-moved.sh
+            git config --show-origin --get-all core.autocrlf || true
+            git config --show-origin --get-all core.eol || true
             exit 1
           fi
       - name: Check the registered hook
