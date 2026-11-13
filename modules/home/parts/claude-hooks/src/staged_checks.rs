@@ -179,7 +179,11 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     } else {
         vec![String::new()]
     };
+    // 相対の項目（node_modules/.bin や空の項目）は、ツールを別の作業ディレクトリ（書き出した場所、ファイルの
+    // ディレクトリ）で起動しても見つかるよう、今のディレクトリからの絶対パスにする
+    let cwd = std::env::current_dir().ok()?;
     std::env::split_paths(&path).find_map(|dir| {
+        let dir = cwd.join(dir);
         exts.iter()
             .map(|ext| dir.join(format!("{name}{ext}")))
             .find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && executable(&m)))
@@ -430,12 +434,26 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
         }
     }
     println!("🔍 Checking Markdown lint...");
-    let checked = succeeded(
-        Command::new(&markdownlint)
-            .arg("--")
-            .args(&paths)
-            .current_dir(&md),
-    );
+    // markdownlint は違反を標準エラーに出す。標準出力だけを読む呼び出し元（run-checks.sh の段の出力）にも違反の一覧が
+    // 届くよう、標準出力に寄せる（前の sh の 2>&1 と同じ）
+    let checked = match Command::new(&markdownlint)
+        .arg("--")
+        .args(&paths)
+        .current_dir(&md)
+        .output()
+    {
+        Ok(out) => {
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(&out.stdout);
+            let _ = stdout.write_all(&out.stderr);
+            out.status.success()
+        }
+        Err(e) => {
+            println!("❌ {} を起動できません（{e}）", markdownlint.display());
+            false
+        }
+    };
     if !checked {
         println!("❌ Markdown lint failed (unfixable issues remain)");
         passed = false;
@@ -478,8 +496,17 @@ fn restage(f: &Staged, md: &Path) -> Result<(), String> {
     if std::fs::read(&f.path).ok().as_deref() != Some(before.as_slice()) {
         return Ok(());
     }
-    let after = git(&["cat-file", "--filters", &filters, &fixed], None)?;
-    std::fs::write(&f.path, after).map_err(|e| e.to_string())
+    // ステージし直しは済んでいるので、書き戻せなくても止めない（作業ツリーは直す前のまま残り、次にステージした
+    // ときにまた直る）
+    let written = git(&["cat-file", "--filters", &filters, &fixed], None)
+        .and_then(|after| std::fs::write(&f.path, after).map_err(|e| e.to_string()));
+    if let Err(why) = written {
+        println!(
+            "⚠️  自動修正はステージしましたが、作業ツリーの {} には書けませんでした（{why}）",
+            f.path.display()
+        );
+    }
+    Ok(())
 }
 
 /// 1 つずつ標準入力で rustfmt に渡し（ファイルで渡すと mod の先を読みにいく）、整えた出力と比べる（標準入力では
