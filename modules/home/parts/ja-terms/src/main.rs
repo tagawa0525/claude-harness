@@ -55,18 +55,12 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
     if args.is_empty() {
         return Err(Failure(USAGE.to_string()));
     }
-    // textlint と同じく、引数をパスの字面でファイルの集まりにし（絶対パスにして . を除いたもので比べ、symlink は
-    // 辿らない。同じファイルは最初の引数の名前で 1 度だけ）、どのファイルも読めることを確かめてから検査する
+    // textlint と同じく、引数をパスの字面でファイルの集まりにし（同じファイルは最初の引数の名前で 1 度だけ）、
+    // どのファイルも読めることを確かめてから検査する
     let mut seen = std::collections::HashSet::new();
     let args: Vec<&OsString> = args
         .iter()
-        .filter(|path| {
-            let key = std::path::absolute(path).map_or_else(
-                |_| Path::new(path).to_path_buf(),
-                |p| p.components().collect::<std::path::PathBuf>(),
-            );
-            seen.insert(key)
-        })
+        .filter(|path| seen.insert(resolve(Path::new(path))))
         .collect();
     let files = args
         .iter()
@@ -97,6 +91,23 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
         }
         _ => Ok(total > 0),
     }
+}
+
+/// Node.js の path.resolve と同じく、絶対パスにして . と .. を字面で外す（symlink は辿らない）
+fn resolve(path: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut out = std::path::PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// ファイルの読み方と中身。UTF-8 でない並びは、Node.js の読み込みと同じく U+FFFD にする
