@@ -11,27 +11,36 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::git;
+use crate::output;
 use crate::rules::ja_terms;
 
+const USAGE: &str = "Usage: claude-hooks git-hook commit-msg <メッセージのファイル>";
+
 pub fn main(args: &[String]) -> i32 {
-    match args {
+    let code = match args {
         [name, rest @ ..] if name == "commit-msg" => commit_msg(rest),
         _ => {
-            eprintln!("Usage: claude-hooks git-hook commit-msg <メッセージのファイル>");
+            eprintln!("{USAGE}");
             2
         }
+    };
+    // git を起動できなかった理由（ローカルの hook と fork を判定できていない）を見せる
+    for notice in output::take_notices() {
+        eprintln!("{notice}");
     }
+    code
 }
 
 fn commit_msg(args: &[String]) -> i32 {
-    let [file] = args else {
-        eprintln!("Usage: claude-hooks git-hook commit-msg <メッセージのファイル>");
-        return 2;
-    };
     let dir = Path::new(".");
+    // ローカルの hook には、git から受けた引数をそのまま渡す（引数の数を確かめるのはこちらの検査だけ）
     if let Some(local) = local_hook(dir, "commit-msg") {
         return run_local(&local, args);
     }
+    let [file] = args else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
     if std::env::var("CLAUDECODE").as_deref() != Ok("1") {
         return 0;
     }
