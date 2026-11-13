@@ -73,14 +73,18 @@ pre-merge-commit の中で先に検査することもできない。
 
 ## 帰結
 
-- 本文の語の誤りは、数分の品質チェックの前に、0.3〜0.5 秒で止まる
+- 本文の語の誤りは、数分の品質チェックの前に止まる（textlint のときは 0.3〜0.5 秒、ja-terms では 0.01 秒未満）。
+  `--no-ff`（`-e` 無し）のマージは、Conventional Commits でないか 72 文字を超える件名も止まる
 - 検査の store のパスは、package.nix が crate を makeBinaryWrapper で包んで環境変数に固定する。ビルドに埋めると、
   辞書に語を足すたびに crate の作り直しと全テストが走る（ローカルのレビューの指摘で、途中の版から替えた）。
   cargo で直接ビルドしたバイナリ（`.claude/tests/hooks.sh` の既定）には無く、このルールは判定できない理由を出して
   通す。nix で包んだもの（配置するもの）だけが検査する
 - 辞書と検査する範囲を変えると、commit-msg と claude-hooks の両方が同じものを使う（ja-terms が 1 か所）
 - `--no-ff` の無い `git merge -m` は、fast-forward になれば commit-msg を呼ばないが、このルールは fast-forward に
-  なるかを見ずに検査する（崩れた語を置き換えれば通るので、止めすぎの害は小さい）
+  なるかを見ずに本文の語を検査する（崩れた語を置き換えれば通るので、止めすぎの害は小さい）。件名の形と長さは見ない
+  ので、分岐していてマージコミットを作るときの件名の誤りは、今までどおり commit-msg が数分後に拒む。`--no-ff` でも、
+  マージするものが既に取り込まれていれば（Already up to date）git はコミットせず commit-msg を呼ばないが、このルールは
+  件名で止める（件名を直せば通る）
 - マージの衝突の後に `git commit` でマージを終える形も、pre-merge-commit（pre-commit から呼ぶ）の後に commit-msg が
   走る。このルールは `git merge` だけを見て、`git commit` のメッセージは ADR-0073 の check-commit-message が commit-msg と
   同じ検査で先に見る（#445）
@@ -94,7 +98,8 @@ pre-merge-commit の中で先に検査することもできない。
 
 - ルールの判定（本文の取り出し、検査しない形、検査の終了コードの扱い）は、cargo のユニットテストが偽の
   ja-terms で確かめる
-- 包んで渡す ja-terms と辞書で、崩れた語を止め、正しい語と Merge の件名を通すことは、package.nix の
+- 包んで渡す ja-terms と辞書で、崩れた語と、`--no-ff` のマージの Conventional Commits でない件名を止め、正しい語と
+  Merge の件名を通すことは、package.nix の
   installCheckPhase がビルドしたバイナリで確かめる（`nix build .#claude-hooks`、flake の checks）
 - commit-msg の判定が変わらないことは、`modules/home/parts/tests/ja-terms.sh` と `commit-msg-conventions.sh` で確かめる
 
