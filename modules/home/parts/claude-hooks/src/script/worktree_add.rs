@@ -265,7 +265,15 @@ pub fn main(args: &[String]) -> i32 {
     // 設定はチェックアウトしたブランチのもの（ブランチごとに .gitignore と揃っている）を読む
     match std::fs::read_to_string(dir.join(".worktreelink")) {
         Ok(text) => share(&dir, &main_root, &text),
-        Err(_) => 0,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        // 読めない（UTF-8 でない、権限が無い）のを「無い」と同じにすると、共有しなかったことに気付けない
+        Err(e) => {
+            eprintln!(
+                "ERROR: .worktreelink を読めません（{e}）。symlink は作っていません。worktree は {} に作ってあります",
+                dir.display()
+            );
+            1
+        }
     }
 }
 

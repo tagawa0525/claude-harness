@@ -32,7 +32,7 @@ impl Repo {
         std::fs::create_dir_all(root.join("app")).unwrap();
         let repo = Repo { root };
         repo.git(&["init", "-q", "-b", "main"]);
-        repo.write(".gitignore", "/shared\n");
+        repo.write(".gitignore", "/shared\n/token.txt\n");
         repo.commit("init");
         repo
     }
@@ -136,26 +136,36 @@ fn an_existing_branch_is_checked_out_and_from_is_refused_for_it() {
 #[test]
 fn worktreelink_shares_ignored_paths_of_the_main_worktree() {
     let repo = Repo::new();
+    // ディレクトリとファイル（Windows は symlink_dir と symlink_file で作り方が違う）
     std::fs::create_dir_all(repo.app().join("shared")).unwrap();
-    repo.write(".worktreelink", "# 共有する\nshared\n");
+    std::fs::write(repo.app().join("token.txt"), "t\n").unwrap();
+    repo.write(".worktreelink", "# 共有する\nshared\ntoken.txt\n");
     repo.commit("add worktreelink");
     let out = repo.run(&["feat/x"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).ends_with("SHARED: shared\n"),
+        text(&out.stdout).ends_with("SHARED: shared\nSHARED: token.txt\n"),
         "{}",
         text(&out.stdout)
     );
-    let link = repo.root.join("app-feat-x/shared");
-    assert!(
-        std::fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
+    for name in ["shared", "token.txt"] {
+        let link = repo.root.join("app-feat-x").join(name);
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "{name}"
+        );
+        assert_eq!(
+            std::fs::canonicalize(&link).unwrap(),
+            std::fs::canonicalize(repo.app().join(name)).unwrap(),
+            "{name}"
+        );
+    }
     assert_eq!(
-        std::fs::canonicalize(&link).unwrap(),
-        std::fs::canonicalize(repo.app().join("shared")).unwrap()
+        std::fs::read_to_string(repo.root.join("app-feat-x/token.txt")).unwrap(),
+        "t\n"
     );
 }
 
