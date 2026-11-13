@@ -3,8 +3,9 @@
 //! git の hook は pre-merge-commit（run-checks --merge、数分）→ commit-msg（ja-terms commit-msg）の順に呼ばれる。
 //! 本文に辞書（ja-terms の prh.yml）で崩れた語があると、数分の品質チェックを待ってから commit-msg が拒む。
 //! pre-merge-commit からは `-m` の本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの
-//! 前に走るこのルールで、commit-msg が呼ぶのと同じ検査（`ja-terms message`。modules/home/parts/ja-terms の
-//! src/message.rs が検査する範囲を持つ。store のパスは package.nix が包んで渡す）に本文を渡す（ADR-0050、ADR-0085）。
+//! 前に走るこのルールで、commit-msg と同じ本文の語の検査（`ja-terms message`。commit-msg の hook が呼ぶ
+//! `ja-terms commit-msg` も、件名と長さを見た後に同じ検査をする。検査する範囲は modules/home/parts/ja-terms の
+//! src/message.rs が持つ。store のパスは package.nix が包んで渡す）に本文を渡す（ADR-0050、ADR-0085）。
 //!
 //! 対象は本文を持つ形（`-m` / `--message`、`-F` / `--file`）。本文の無い形（エディタ）は対象外。
 //! commit-msg を呼ばない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`、グローバルの core.hooksPath を
@@ -198,8 +199,9 @@ enum Lint {
     Failed(String),
 }
 
-/// commit-msg と同じく、メッセージを標準入力で `ja-terms message` に渡す。辞書はビルドに埋めてあるので、実行
-/// する場所（コマンドの行き先。commit-msg はリポジトリの直下）は判定に効かない
+/// メッセージを標準入力で `ja-terms message` に渡す（commit-msg の hook の `ja-terms commit-msg` と同じ本文の語の
+/// 検査）。辞書はビルドに埋めてあるので、実行する場所（コマンドの行き先。commit-msg はリポジトリの直下）は判定に
+/// 効かない
 fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     let child = Command::new(check)
         .arg("message")

@@ -97,7 +97,8 @@ pre-merge-commit の中で先に検査することもできない。
 
 ## 変更
 
-- 2026-11-13: commit-msg とこのルールが呼ぶ語の検査を、textlint のスクリプトから Rust の `ja-terms message` に変えた。
+- 2026-11-13: このルールが呼ぶ語の検査を、textlint のスクリプトから Rust の `ja-terms message` に変えた（commit-msg の hook は
+  `ja-terms commit-msg` を呼び、その中で同じ本文の語の検査をする）。
   前は「scissors の行から後を除く、空白だけなら textlint を呼ばない、textlint の設定と引数）を 1 つのスクリプト
   （ja-terms-message。`modules/home/parts/ja-terms/message.sh`、`textlint.nix`）にまとめ」。判定と終了コードは同じで、
   報告の行は「行:列: 誤り => 正しい語」になった（ルールはそこから「誤り => 正しい語」を取り出す）。store のパスの環境変数は
