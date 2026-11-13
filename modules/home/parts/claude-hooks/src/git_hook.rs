@@ -33,14 +33,13 @@ pub fn main(args: &[String]) -> i32 {
 
 fn commit_msg(args: &[String]) -> i32 {
     let dir = Path::new(".");
-    // 前の sh は `set -e` の下でこの rev-parse に失敗すると止まった。ローカルの hook を探せないまま通すと、
-    // プロジェクトの commit-msg（Change-Id を足すものなど）を飛ばす
+    // ローカルの hook を探せないまま通すと、プロジェクトの commit-msg（Change-Id を足すものなど）を飛ばすので止める
     let Some(common) = git::git(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     ) else {
         eprintln!(
-            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの commit-msg を探せません（理由は上の出力）"
+            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの commit-msg を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
         );
         return 1;
     };

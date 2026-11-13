@@ -273,7 +273,7 @@ fn without_ja_terms_the_commit_stops() {
 
 #[test]
 fn every_argument_reaches_the_local_hook() {
-    // 前の sh は `exec "$LOCAL_HOOK" "$@"` で、引数の数を問わず渡した
+    // ローカルの hook には、引数の数を問わず git から受けたものを渡す
     let repo = Repo::new();
     let local = repo.local_hook();
     let marker = repo.root.join("local.log");
