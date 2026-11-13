@@ -83,3 +83,31 @@ fn front_matter_only_at_the_start_escapes_symbols_and_references_are_cut_as_text
     check("misc.markdown");
     check("front-toml.markdown");
 }
+
+#[test]
+fn tabs_indent_list_items_by_four_columns() {
+    check("tabs.markdown");
+}
+
+#[test]
+fn footnote_definitions_need_four_columns_to_continue() {
+    check("footnotes.markdown");
+}
+
+#[test]
+fn urls_inside_open_brackets_are_not_links_and_an_escaped_note_is_text() {
+    check("brackets.markdown");
+}
+
+#[test]
+fn a_long_run_without_an_at_sign_is_cut_in_linear_time() {
+    // メールアドレスの判定が並びを読み直すと、20 万文字で秒の単位かかる
+    let text = "1".repeat(200_000);
+    let start = std::time::Instant::now();
+    assert_eq!(strs::markdown(&text), vec![0..200_000]);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+}
