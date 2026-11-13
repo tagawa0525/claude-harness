@@ -30,6 +30,8 @@ jobs:
       - if: matrix.crate == 'claude-hooks'
         shell: bash
         run: |
+          # 環境変数の無いときの、PATH の ja-terms の経路を確かめる
+          unset CLAUDE_HOOKS_JA_TERMS
           cargo build --locked
           bash tests/merge-ja-terms.sh target/debug/claude-hooks.exe
           bash tests/commit-message.sh target/debug/claude-hooks.exe
