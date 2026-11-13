@@ -10,6 +10,7 @@
 //! 1 = 崩れた語がある、2 = 検査できなかった
 
 use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ use ja_terms::report::{self, TEXT_EXTENSIONS};
 use crate::{Failure, print};
 
 /// git を実行し、標準出力を返す。top は -C で渡すディレクトリ（リポジトリの直下）
-fn git(top: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, Failure> {
+fn git<S: AsRef<OsStr>>(top: Option<&Path>, args: &[S]) -> Result<Vec<u8>, Failure> {
     let mut command = Command::new("git");
     if let Some(top) = top {
         command.arg("-C").arg(top);
@@ -33,7 +34,10 @@ fn git(top: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, Failure> {
     if !out.status.success() {
         return Err(Failure(format!(
             "git {} が失敗した（{}）: {}",
-            args.join(" "),
+            args.iter()
+                .map(|a| a.as_ref().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" "),
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         )));
@@ -114,11 +118,17 @@ fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
         let _ = std::fs::remove_file(&path);
         return Err(Failure(format!("{} に書けない: {e}", path.display())));
     }
-    let exclude = format!("--exclude-from={}", path.display());
-    let listed = git(
-        Some(top),
-        &["ls-files", "-z", "--cached", "--ignored", &exclude],
-    );
+    // パスはバイトのまま渡す（UTF-8 でない名前のディレクトリの下でも同じファイルを指す）
+    let mut exclude = OsString::from("--exclude-from=");
+    exclude.push(&path);
+    let args: [&OsStr; 5] = [
+        "ls-files".as_ref(),
+        "-z".as_ref(),
+        "--cached".as_ref(),
+        "--ignored".as_ref(),
+        &exclude,
+    ];
+    let listed = git(Some(top), &args);
     let _ = std::fs::remove_file(&path);
     Ok(listed?
         .split(|&b| b == 0)
