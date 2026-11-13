@@ -79,7 +79,7 @@ pub fn has_github_remote(dir: &Path) -> bool {
 }
 
 /// 他人のプロジェクトの fork（上流に PR を出す worktree）か。`upstream` リモートの有無で判定する。
-/// git の pre-commit / commit-msg hook（modules/home/parts/git-hooks.nix）と同じ判定
+/// git の pre-commit hook（modules/home/parts/git-hooks.nix）と、commit-msg の git hook（crate::git_hook）も使う
 pub fn is_fork(dir: &Path) -> bool {
     git(dir, &["remote", "get-url", "upstream"]).is_some()
 }

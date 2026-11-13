@@ -28,8 +28,9 @@ let
   scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
   # プロジェクトローカルの hook のパス。ローカルの hook は linked worktree でも共通の .git/hooks にある
   # （--git-dir は worktree ごとの場所）。--git-path hooks/... は core.hooksPath（この hook 自身）を指すので
-  # 使わない。検証: modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、
-  # commit-msg）、modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
+  # 使わない（commit-msg の中身は claude-hooks の src/git_hook.rs が同じ場所を探す）。検証:
+  # modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、commit-msg）、
+  # modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
   localHookPath = name: ''"$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
   # 崩れた日本語の語の検査（ADR-0014、ADR-0085）。pre-commit が `ja-terms staged` を store のパスで呼ぶ。commit-msg の
   # 中身と、claude-hooks の git merge と git commit のルールは、claude-hooks が包む ja-terms を呼ぶ（./claude-hooks/package.nix）
