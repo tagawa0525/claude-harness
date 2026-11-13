@@ -392,7 +392,7 @@ fn share(dir: &Path, main_root: &Path, text: &str) -> i32 {
         }
         Err((path, e)) => {
             eprintln!(
-                "ERROR: {path} の symlink を作れませんでした（{e}。Windows は開発者モードか管理者の権限が要る）。作った symlink は消しました。worktree は {} に作ってあります",
+                "ERROR: {path} の symlink を作れませんでした（{e}。Windows は開発者モードか管理者の権限が要る）。それまでに作った symlink は消しました（消せなかったものは上に出した）。worktree は {} に作ってあります",
                 dir.display()
             );
             1
@@ -434,7 +434,9 @@ fn link_all<'a>(
                 let link = dir.join(l);
                 if let Err(e) = std::fs::remove_file(&link).or_else(|_| std::fs::remove_dir(&link))
                 {
-                    eprintln!("ERROR: 作った {l} の symlink を消せませんでした: {e}");
+                    eprintln!(
+                        "ERROR: 作った {l} の symlink を消せませんでした（{e}）。手で消してください"
+                    );
                 }
             }
             return Err((path, e));

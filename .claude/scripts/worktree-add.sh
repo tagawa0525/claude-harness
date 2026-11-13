@@ -1,6 +1,6 @@
 #!/bin/sh
 # worktree-add.sh — 命名規則に従って worktree を作る。中身は claude-hooks script worktree-add（Rust にして Windows でも
-# 動かす。.worktreelink の規則の詳細もそこに書く）。スキルの文はこのスクリプトの名前とパスで呼ぶので、ファイルは残して
+# 動かす）。スキルの文はこのスクリプトの名前とパスで呼び、.worktreelink の規則はこの説明を見るので、ファイルは残して
 # 呼ぶ
 #
 # Usage: worktree-add.sh <branch> [--from <ref>] [--carry-changes]
