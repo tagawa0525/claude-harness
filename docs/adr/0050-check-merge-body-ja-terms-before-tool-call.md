@@ -42,9 +42,10 @@ pre-merge-commit の中で先に検査することもできない。
   ja-terms-message は 0.27〜0.32 秒、textlint を直に呼ぶと 0.32 秒。hook の全ルールで、崩れた語のある本文は
   0.33 秒、正しい本文は 0.28〜0.33 秒、本文の無い `git merge` は 5〜11 ミリ秒。ほかの計算が走る時刻では 0.5 秒ほどに
   延びた（textlint を直に呼んで 0.52〜0.54 秒）
-- 判定は commit-msg と同じにする。commit-msg の語の検査（件名が Merge / fixup! / squash! / Revert なら件名を除く、
-  scissors の行から後を除く、空白だけなら検査しない）を 1 か所（`modules/home/parts/ja-terms/src/message.rs`。ADR-0085）に
-  まとめ、commit-msg（`ja-terms commit-msg` の中）とこのルール（`ja-terms message`）が同じ検査をする。commit-msg が呼ばれない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`。後ろのオプションが勝つ。
+- 判定は commit-msg と同じにする。このルールは commit-msg の hook と同じ `ja-terms commit-msg`（ADR-0085）に、
+  commit-msg に渡るのと同じメッセージを渡す。件名が Merge / fixup! / squash! / Revert でなければ件名の Conventional
+  Commits の形と 72 文字の上限を見て、本文の語の検査（件名を除くか、scissors の行から後を除く、空白だけなら検査しない）
+  をする。commit-msg が呼ばれない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`。後ろのオプションが勝つ。
   グローバルの core.hooksPath を使わないリポジトリ）と、commit-msg が検査を飛ばすリポジトリ（`upstream` リモートのある fork、ローカルの commit-msg に
   置き換わるリポジトリ）では、このルールも検査しない。commit-msg より厳しく止めると、git が通すマージまで止める
 - 最初の版は、検査する範囲（件名を除く、scissors）を Rust で書き直し、textlint と設定だけを共有した。ローカルの
@@ -104,3 +105,9 @@ pre-merge-commit の中で先に検査することもできない。
   同じものを呼ぶ」。判定と終了コードは同じで、
   報告の行は「行:列: 誤り => 正しい語」になった（ルールはそこから「誤り => 正しい語」を取り出す）。store のパスの環境変数は
   `CLAUDE_HOOKS_JA_TERMS`。Windows の機械に Node.js を入れずに同じ判定にするため（ADR-0085）
+- 2026-11-13: このルールの検査を、本文の語だけ（`ja-terms message`）から、commit-msg の hook と同じ `ja-terms commit-msg` の
+  全体に広げた。前は「commit-msg の語の検査（件名が Merge / fixup! / squash! / Revert なら件名を除く、scissors の行から
+  後を除く、空白だけなら検査しない）を 1 か所（`modules/home/parts/ja-terms/src/message.rs`。ADR-0085）にまとめ、
+  commit-msg（`ja-terms commit-msg` の中）とこのルール（`ja-terms message`）が同じ検査をする」。Merge などで始まらず
+  Conventional Commits の形か 72 文字の上限に合わない件名は、このルールを通り、数分の pre-merge-commit の後で commit-msg が
+  拒んだ。commit-msg の検査が 1 つのサブコマンドになったので、git commit のルール（ADR-0073）と同じく、それを呼ぶ（#118）
