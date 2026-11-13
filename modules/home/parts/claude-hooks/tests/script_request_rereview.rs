@@ -76,10 +76,12 @@ fn requests_a_review_from_copilot_and_waits_from_the_request() {
 fn no_record_of_the_head_requests_nothing_and_shows_how_to_record() {
     for records in [String::new(), record(HEAD, 1), record(OLD, 0)] {
         let fake = FakeGh::new();
+        // 前の head の記録は、rebase だけかを確かめに PR の base を問い合わせる。失敗させて、テストの cwd（リポジトリの
+        // target の下）で本物の origin から fetch させない
         let out = fake.run_calls_with_env(
             "request-rereview",
             &[URL],
-            &calls(&records, 0, AFTER),
+            &[(BEFORE, 0), (HEAD, 0), (&records, 0), ("", 1)],
             NO_WAIT,
         );
         assert_eq!(out.status.code(), Some(1), "{records}");
