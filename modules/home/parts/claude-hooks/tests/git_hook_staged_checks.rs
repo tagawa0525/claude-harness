@@ -94,8 +94,7 @@ impl Repo {
             .env("USERPROFILE", self.root.join("home"))
             .env("GIT_CEILING_DIRECTORIES", &self.root)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", self.root.join("gitconfig"))
-            .env("FAKE_TOOL_LOG", self.log());
+            .env("GIT_CONFIG_GLOBAL", self.root.join("gitconfig"));
         for (key, _) in std::env::vars_os() {
             if key.to_string_lossy().starts_with("FAKE_") {
                 cmd.env_remove(key);
@@ -344,4 +343,50 @@ fn an_unknown_language_is_a_usage_error() {
     let repo = Repo::new();
     let out = repo.checks(&["go"], &[]);
     assert_eq!(out.status.code(), Some(2));
+}
+
+// Windows の一時の場所は利用者ごとにある
+#[cfg(unix)]
+#[test]
+fn the_copies_of_staged_files_are_readable_only_by_the_owner() {
+    // ステージした中身を一時の場所に書き出すので、同じ機械のほかの利用者に見せない（mktemp -d と同じ 0700）
+    let repo = Repo::new();
+    repo.tool("markdownlint");
+    repo.stage("a.md", "# a\n");
+    let modes = repo.root.join("parent.mode");
+    let out = repo.checks(
+        &[],
+        &[("FAKE_MARKDOWNLINT_PARENT_MODE", modes.to_str().unwrap())],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    for mode in std::fs::read_to_string(&modes).unwrap().lines() {
+        assert_eq!(mode, "700");
+    }
+}
+
+// Windows には実行の bit が無い
+#[cfg(unix)]
+#[test]
+fn a_tool_without_the_executable_bit_is_skipped() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("bin/nixfmt"), "not a program").unwrap();
+    repo.stage("a.nix", "{ }\n");
+    let out = repo.checks(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(said(&out).contains("SKIP: Nix の検査"), "{}", said(&out));
+}
+
+#[test]
+fn a_tool_that_cannot_start_says_why() {
+    let repo = Repo::new();
+    // 起動できない実行ファイル（中身が実行の形式でない）
+    let rustfmt = repo
+        .root
+        .join(format!("bin/rustfmt{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&rustfmt, "not a program").unwrap();
+    executable(&rustfmt);
+    repo.stage("a.rs", "fn main() {}\n");
+    let out = repo.checks(&[], &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(said(&out).contains("起動できません"), "{}", said(&out));
 }

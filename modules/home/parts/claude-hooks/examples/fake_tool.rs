@@ -9,6 +9,7 @@
 //! - `OUT`: 標準出力に書く文字列
 //! - `ERR`: 標準エラーに書く文字列
 //! - `CWD`: 起動された作業ディレクトリを 1 行ずつ足すファイル
+//! - `PARENT_MODE`: 作業ディレクトリの親の権限（Unix の 8 進。Windows は何も書かない）を 1 行ずつ足すファイル
 //! - `EXIT`: 終了コード（既定は 0）
 
 use std::io::{Read, Write};
@@ -46,6 +47,22 @@ fn main() {
     if var("CWD").is_some() {
         let cwd = std::env::current_dir().expect("作業ディレクトリを読める");
         append(var("CWD"), "CWD", format!("{}\n", cwd.display()).as_bytes());
+    }
+    #[cfg(unix)]
+    if var("PARENT_MODE").is_some() {
+        use std::os::unix::fs::PermissionsExt;
+        let cwd = std::env::current_dir().expect("作業ディレクトリを読める");
+        let parent = cwd.parent().expect("親がある");
+        let mode = std::fs::metadata(parent)
+            .expect("親を読める")
+            .permissions()
+            .mode()
+            & 0o777;
+        append(
+            var("PARENT_MODE"),
+            "PARENT_MODE",
+            format!("{mode:o}\n").as_bytes(),
+        );
     }
     let mut input = Vec::new();
     if var("STDIN").is_some() || var("ECHO").is_some() {
