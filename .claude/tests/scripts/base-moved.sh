@@ -3,6 +3,8 @@
 #
 # 実行: bash .claude/tests/scripts/base-moved.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
+# 中身は claude-hooks script base-moved（ADR-0087）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 REPO="$TEST_ROOT/bm/app"
@@ -282,5 +284,10 @@ rc=$?
 restore_git
 assert_eq 0 "$rc"
 assert_contains "$out" "COMMON: src/a.txt"
+
+it "base-moved: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/base-moved.sh" 2>&1)
+assert_eq 127 $?
+assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
 
 finish

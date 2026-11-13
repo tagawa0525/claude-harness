@@ -2,6 +2,7 @@
 //! `~/.claude/scripts/` と `~/.claude/skills/gh-pr-review/scripts/` の同じ名前の sh は、これを exec するだけにする
 //! （スキルの文と PreToolUse のルールはスクリプトの名前で呼び、見分けるので、名前と場所を変えない）
 
+mod base_moved;
 mod decide_next;
 mod get_latest_review;
 mod get_pr_info;
@@ -18,6 +19,7 @@ mod review_level;
 
 pub fn main(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
+        Some("base-moved") => base_moved::main(&args[1..]),
         Some("decide-next") => decide_next::main(&args[1..]),
         Some("get-latest-review") => get_latest_review::main(&args[1..]),
         Some("get-pr-info") => get_pr_info::main(&args[1..]),
@@ -33,7 +35,7 @@ pub fn main(args: &[String]) -> i32 {
         _ => {
             eprintln!("Usage: claude-hooks script <名前> [引数]...");
             eprintln!(
-                "scripts: decide-next, get-latest-review, get-pr-info, get-review-comments, gh-review-requests, gh-wait-review, record-local-review, reply-to-comment, request-rereview, reset-rounds, resolve-thread, review-level"
+                "scripts: base-moved, decide-next, get-latest-review, get-pr-info, get-review-comments, gh-review-requests, gh-wait-review, record-local-review, reply-to-comment, request-rereview, reset-rounds, resolve-thread, review-level"
             );
             eprintln!("{}", crate::OLDER_THAN_CALLER);
             2
