@@ -1,5 +1,5 @@
 # ja-terms: 崩れた日本語の語の辞書（prh.yml）を読み、prh 5.4.4（textlint-rule-prh 6.0.0 が使う版）と同じ意味で文に当てる Rust の crate と
-# CLI（ADR-0085）。git-hooks.nix（pre-commit と commit-msg）、claude-hooks のラッパー、claude-code.nix（~/.claude/bin）、
+# CLI（ADR-0085）。git-hooks.nix（pre-commit）、claude-hooks のラッパー（commit-msg の git hook と PreToolUse のルール）、claude-code.nix（~/.claude/bin）、
 # history-rewrite のテストが callPackage する。flake.nix の packages 出力（nix build .#ja-terms）と checks もここを参照し、
 # ビルドの中でテストを流す
 {

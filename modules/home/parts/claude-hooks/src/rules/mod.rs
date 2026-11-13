@@ -82,6 +82,7 @@ mod block_no_verify;
 mod block_secret_commit;
 mod check_commit_message;
 mod check_merge_body_ja_terms;
+pub(crate) use check_merge_body_ja_terms::ja_terms;
 mod check_merge_review;
 mod count_review_rounds;
 mod delegate_request_fields;

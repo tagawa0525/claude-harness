@@ -28,13 +28,15 @@ let
   scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
   # プロジェクトローカルの hook のパス。ローカルの hook は linked worktree でも共通の .git/hooks にある
   # （--git-dir は worktree ごとの場所）。--git-path hooks/... は core.hooksPath（この hook 自身）を指すので
-  # 使わない。検証: modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、
-  # commit-msg）、modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
+  # 使わない（commit-msg の中身は claude-hooks の src/git_hook.rs が同じ場所を探す）。検証:
+  # modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、commit-msg）、
+  # modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
   localHookPath = name: ''"$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
-  # 崩れた日本語の語の検査（ADR-0014、ADR-0085）。pre-commit が `ja-terms staged` を、commit-msg が
-  # `ja-terms commit-msg` を store のパスで呼ぶ。claude-hooks の git merge と git commit のルールも同じ ja-terms を
-  # 呼ぶ（./claude-hooks/package.nix）
+  # 崩れた日本語の語の検査（ADR-0014、ADR-0085）。pre-commit が `ja-terms staged` を store のパスで呼ぶ。commit-msg の
+  # 中身と、claude-hooks の git merge と git commit のルールは、claude-hooks が包む ja-terms を呼ぶ（./claude-hooks/package.nix）
   ja-terms = pkgs.callPackage ./ja-terms/package.nix { };
+  # git hook の中身（ADR-0086）。PreToolUse hook と同じバイナリ（claude-code.nix）
+  claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。ツールは利用者の PATH のもの
   stagedChecks = pkgs.writeShellApplication {
     name = "staged-checks";
@@ -320,37 +322,15 @@ in
   # commit-msg: Claude Code セッションのコミットに Conventional Commits を強制する。
   # 形式は決定的に判定できるため SKILL.md の文章ではなく hook で守る。
   # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多。判定は `ja-terms commit-msg`）。
-  # 手動コミットの自由度を残すため、pre-commit の main ガードと同じく CLAUDECODE=1 のときのみ
+  # 中身（ローカルの hook、Claude Code の外と fork の対象外、ja-terms への受け渡し）は claude-hooks の
+  # src/git_hook.rs（ADR-0086）。手で打つコミットの自由を残すため、CLAUDECODE=1 のときだけ検査する。
+  # 検証: claude-hooks の tests/git_hook_commit_msg.rs（判定）、modules/home/parts/tests/commit-msg-conventions.sh と
+  # local-hooks-worktree.sh（この hook のファイルと、包んだ ja-terms）
   xdg.configFile."git/hooks/commit-msg" = {
     executable = true;
     text = ''
-      #!/usr/bin/env bash
-      set -euo pipefail
-
-      MSG_FILE="$1"
-
-      # プロジェクトローカルの commit-msg があれば優先実行
-      LOCAL_HOOK=${localHookPath "commit-msg"}
-      if [ -x "$LOCAL_HOOK" ]; then
-        exec "$LOCAL_HOOK" "$@"
-      fi
-
-      [ "''${CLAUDECODE:-}" = "1" ] || exit 0
-
-      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
-      # Conventional Commits も件名の長さも日本語の語の辞書もこちらの規約で、上流の慣習（"Fix socket transport
-      # when …" のような文。Serena の main には 72 文字を超える件名が普通にある）と衝突して
-      # 上流向けのコミットを歪めるので、検査を全部飛ばす。pre-commit と同じ判定。
-      # 検証: modules/home/parts/tests/commit-msg-conventions.sh
-      if git remote get-url upstream >/dev/null 2>&1; then
-        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Conventional Commits、件名の長さ、日本語の語）を飛ばします"
-        exit 0
-      fi
-
-      # 件名の形式と長さ、日本語の語は `ja-terms commit-msg`（./ja-terms/src/main.rs の commit_msg と src/message.rs）が判定する。
-      # claude-hooks の git commit の本文を先に検査するルールと、--no-ff の git merge のルールが同じものを呼ぶ（ADR-0050、ADR-0073）。
-      # 検証: modules/home/parts/tests/commit-msg-conventions.sh、modules/home/parts/tests/ja-terms.sh
-      exec ${ja-terms}/bin/ja-terms commit-msg "$MSG_FILE"
+      #!/bin/sh
+      exec ${claude-hooks}/bin/claude-hooks git-hook commit-msg "$@"
     '';
   };
 

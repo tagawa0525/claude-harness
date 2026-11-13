@@ -9,7 +9,9 @@
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/commit-msg-conventions.sh
 #
-# hook のファイルを nix build で作る（hook が store のパスで呼ぶ ja-terms も一緒にビルドされる）。
+# hook のファイルを nix build で作る（hook が呼ぶ claude-hooks と、それが包む ja-terms も一緒にビルドされる）。
+# 判定の細部（ローカルの hook、fork、Claude Code の外）は claude-hooks の tests/git_hook_commit_msg.rs が偽の ja-terms で
+# 確かめ、ここは配備した hook のファイルと本物の ja-terms で通すものと止めるものを見る。
 
 set -euo pipefail
 

@@ -1,5 +1,6 @@
 # claude-hooks: Claude Code の PreToolUse hook（Rust）。
-# claude-code.nix から callPackage され、~/.claude/bin/claude-hooks に配置される。
+# claude-code.nix から callPackage され、~/.claude/bin/claude-hooks に配置される。git-hooks.nix も callPackage し、
+# git hook のファイルが store のパスで呼ぶ（git-hook のサブコマンド。ADR-0086）。
 # flake.nix の packages 出力（nix build .#claude-hooks）もここを参照する
 {
   lib,
