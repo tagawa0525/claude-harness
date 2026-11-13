@@ -36,12 +36,18 @@ use std::io::Read;
 
 // .claude/tests/hooks.sh と modules/home/parts/tests/main-commit-gates.sh は、引数なしで呼んで `rules: `
 // で始まる行が出ることで、渡されたバイナリが起動できるかを確かめる
+/// スクリプトの sh や git hook が、知らないサブコマンドや名前で呼んだときの案内。claude-sync は sh だけを入れ替え、
+/// ~/.claude/bin のバイナリは入れ直すまで前の版のまま
+pub const OLDER_THAN_CALLER: &str = "呼んだ側が正しい名前で呼んでも無いなら、claude-hooks が呼んだ側より古い。Linux は \
+     home-manager の rebuild、Windows は claude-harness の README の「Windows で使う」の cargo install で入れ直す";
+
 fn usage() -> ! {
     eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]...");
     eprintln!("       claude-hooks git-hook <hook の名前> [引数]...");
     eprintln!("       claude-hooks script <名前> [引数]...");
     eprintln!("       claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>");
     eprintln!("rules: {}", rules::names().join(", "));
+    eprintln!("{}", OLDER_THAN_CALLER);
     std::process::exit(2);
 }
 
