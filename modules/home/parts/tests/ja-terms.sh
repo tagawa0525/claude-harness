@@ -646,7 +646,8 @@ fi
 
 # --- 6b. 検査する本文が空のときは何も出さずに通す --------------------------------------------------------
 # commit-msg の出力の有無で見る（pre-commit の見出しの 🔍 の行は除く）
-commit_msg_quiet() { ! grep -v '^🔍 ' "$WORK/out" | grep -q .; }
+# （grep -q で読むのをやめると、pipefail のもとで前の grep の SIGPIPE が「出力が無い」に読めるので、行を数える）
+commit_msg_quiet() { [ "$(grep -vc '^🔍 ' "$WORK/out" || true)" = 0 ]; }
 echo u > "$REPO/u.txt"
 git -C "$REPO" add u.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "fixup! docs: add" >"$WORK/out" 2>&1; then
