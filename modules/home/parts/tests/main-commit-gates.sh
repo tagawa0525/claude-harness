@@ -2,13 +2,14 @@
 # =============================================================================
 # main 直接コミットを止める 2 つの層が同じ判定になることを検証する
 # =============================================================================
-# 同じルールを次の 2 か所で守っている:
-#   1. ../claude-hooks の block-main-commit   Claude Code の PreToolUse hook（Rust 製バイナリ）
-#   2. ../git-hooks.nix の pre-commit hook        git 側（core.hooksPath でグローバル配布）
+# 同じルールを次の 2 つの層で守っている。判定は同じ関数（../claude-hooks の main_commit_blocked）で、層ごとに
+# 入力（ブランチとステージしたファイル）を得る場所が違う:
+#   1. ../claude-hooks の block-main-commit   Claude Code の PreToolUse hook（実行の前に、コマンドの行き先で）
+#   2. ../git-hooks.nix の pre-commit hook    git 側（core.hooksPath でグローバル配布。コミットの中で）
 #
 # 片方だけが塞ぐと作業が止まる。実際に PR #165 で、flake.lock の例外が git 側にだけ
 # あって PreToolUse hook になく、nix-rebuild update がコミットできなくなった。
-# 例外を足すときは必ず両方に足す。このテストがその一致を確かめる。
+# このテストが、配備した 2 つの層の判定の一致を確かめる。
 #
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/main-commit-gates.sh

@@ -17,7 +17,8 @@ use crate::shell::Shell;
 
 pub struct BlockMainCommit;
 
-/// 拒否の文言。git の pre-commit（modules/home/parts/git-hooks.nix）も同じ趣旨の文言を出す
+/// 拒否の文言。git の pre-commit（crate::git_hook の MAIN_COMMIT_DENY）も同じ趣旨の文言を出す（cd の失敗の後に git が
+/// 走る場所の書き方だけが層で違う）
 const DENY_MESSAGE: &str = "main / master ブランチへの直接コミットは禁止されています。featureブランチを作成してください: /git-branch\n\
 - GitHub のリモートが無いリポジトリでも、ブランチは /git-merge で main にマージするので、main に直接コミットする理由はありません\
 （2026-11-06 に、cd が失敗した後の git commit が別のリポジトリの main に空のコミットを作りました）\n\
