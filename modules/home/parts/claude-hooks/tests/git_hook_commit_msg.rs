@@ -45,6 +45,11 @@ fn executable(path: &Path) {
 
 impl Repo {
     fn new() -> Repo {
+        assert!(
+            fake_tool().is_file(),
+            "{} が無い（cargo build --examples を先に流す）",
+            fake_tool().display()
+        );
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "commit-msg-{}-{}",
@@ -264,4 +269,40 @@ fn without_ja_terms_the_commit_stops() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(repo.commits(), 0);
+}
+
+#[test]
+fn every_argument_reaches_the_local_hook() {
+    // 前の sh は `exec "$LOCAL_HOOK" "$@"` で、引数の数を問わず渡した
+    let repo = Repo::new();
+    let local = repo.local_hook();
+    let marker = repo.root.join("local.log");
+    std::fs::write(
+        &local,
+        format!("#!/bin/sh\necho \"$#:$*\" >> \"{}\"\n", sh_path(&marker)),
+    )
+    .unwrap();
+    executable(&local);
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            cmd.env_remove(key);
+        }
+    }
+    let out = cmd
+        .args(["git-hook", "commit-msg", "a", "b"])
+        .current_dir(repo.work())
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap().trim_end(),
+        "2:a b"
+    );
 }
