@@ -111,3 +111,13 @@ fn a_long_run_without_an_at_sign_is_cut_in_linear_time() {
         start.elapsed()
     );
 }
+
+#[test]
+fn a_url_right_after_a_byte_order_mark_is_a_link() {
+    check("bom-www.markdown");
+}
+
+#[test]
+fn an_escaped_backslash_before_a_note_and_symbol_labels_are_read_as_micromark_does() {
+    check("escapes.markdown");
+}
