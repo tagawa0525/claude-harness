@@ -4,7 +4,7 @@ date: 2026-10-22
 requires: [ADR-0014, ADR-0033]
 supersedes: []
 superseded-by:
-issues: ["#445"]
+issues: ["#118", "#445"]
 ---
 
 # ADR-0050: git merge の本文の日本語の語を、ツール呼び出しの前に commit-msg と同じ textlint で検査する
@@ -42,10 +42,12 @@ pre-merge-commit の中で先に検査することもできない。
   ja-terms-message は 0.27〜0.32 秒、textlint を直に呼ぶと 0.32 秒。hook の全ルールで、崩れた語のある本文は
   0.33 秒、正しい本文は 0.28〜0.33 秒、本文の無い `git merge` は 5〜11 ミリ秒。ほかの計算が走る時刻では 0.5 秒ほどに
   延びた（textlint を直に呼んで 0.52〜0.54 秒）
-- 判定は commit-msg と同じにする。このルールは commit-msg の hook と同じ `ja-terms commit-msg`（ADR-0085）に、
-  commit-msg に渡るのと同じメッセージを渡す。件名が Merge / fixup! / squash! / Revert でなければ件名の Conventional
-  Commits の形と 72 文字の上限を見て、本文の語の検査（件名を除くか、scissors の行から後を除く、空白だけなら検査しない）
-  をする。commit-msg が呼ばれない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`。後ろのオプションが勝つ。
+- 判定は commit-msg と同じにする。マージコミットを作るのが確かな形（最後の `--ff` / `--no-ff` / `--ff-only` が `--no-ff`
+  で、`-e` / `--edit` が無い）では、commit-msg の hook と同じ `ja-terms commit-msg`（ADR-0085）に、commit-msg に渡るのと
+  同じメッセージを渡す。件名が Merge / fixup! / squash! / Revert でなければ件名の Conventional Commits の形と 72 文字の
+  上限を見て、本文の語の検査（件名を除くか、scissors の行から後を除く、空白だけなら検査しない）をする。ほかの形は、
+  fast-forward になれば commit-msg が呼ばれず、エディタで件名を直せるので、本文の語の検査だけ（`ja-terms message`）を
+  する。commit-msg が呼ばれない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`。後ろのオプションが勝つ。
   グローバルの core.hooksPath を使わないリポジトリ）と、commit-msg が検査を飛ばすリポジトリ（`upstream` リモートのある fork、ローカルの commit-msg に
   置き換わるリポジトリ）では、このルールも検査しない。commit-msg より厳しく止めると、git が通すマージまで止める
 - 最初の版は、検査する範囲（件名を除く、scissors）を Rust で書き直し、textlint と設定だけを共有した。ローカルの
@@ -110,4 +112,6 @@ pre-merge-commit の中で先に検査することもできない。
   後を除く、空白だけなら検査しない）を 1 か所（`modules/home/parts/ja-terms/src/message.rs`。ADR-0085）にまとめ、
   commit-msg（`ja-terms commit-msg` の中）とこのルール（`ja-terms message`）が同じ検査をする」。Merge などで始まらず
   Conventional Commits の形か 72 文字の上限に合わない件名は、このルールを通り、数分の pre-merge-commit の後で commit-msg が
-  拒んだ。commit-msg の検査が 1 つのサブコマンドになったので、git commit のルール（ADR-0073）と同じく、それを呼ぶ（#118）
+  拒んだ。commit-msg の検査が 1 つのサブコマンドになったので、git commit のルール（ADR-0073）と同じく、それを呼ぶ（#118）。
+  件名の形と長さまで見るのは、マージコミットを作るのが確かな `--no-ff` の形だけにした（fast-forward と `-e` まで件名で
+  止めると、git が通すマージを止め、commit-msg より厳しくなる）
