@@ -43,7 +43,7 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 - 案 i: `home.packages` で PATH に出す（`staged-checks` の形）
 - 案 ii: claude-code.nix でスクリプトに store のパスを埋める（ADR-0050 の package.nix の形）
 - 案 iii: claude-code.nix が `~/.claude/bin/ja-terms-files` の固定パスに置き、スクリプトはそのパスを呼ぶ（環境変数
-  `JA_TERMS_FILES` で差し替える。`~/.claude/bin/claude-hooks` と `.claude/scripts/lib/local-review.sh` の形）
+  `JA_TERMS` で差し替える。`~/.claude/bin/claude-hooks` と `.claude/scripts/lib/local-review.sh` の形）
 
 ## 決定と理由
 
@@ -61,7 +61,7 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
   ので、埋める場所が無い。スクリプトを Nix で組む形に変えると、claude-sync で即座に反映する運用から外れる
 - 案 i と案 iii の違いは、呼ぶ側が PATH に頼るかと、名前を全体の PATH に出すか。`~/.claude/bin/ja-terms` を呼ぶのは Claude Code の
   スクリプトだけで、`~/.claude/bin` には同じく Claude Code のためにだけ置く `claude-hooks` がある。テストは
-  `JA_TERMS_FILES` で偽物か nix build したものに差し替える（`CLAUDE_HOOKS_BIN` と同じ）
+  `JA_TERMS` で偽物か nix build したものに差し替える（`CLAUDE_HOOKS_BIN` と同じ）
 - memory-index.sh は、辞書の検査が無い（rebuild の前）か失敗したら、ほかの行を出した後に `ERROR:` を出して exit 1 に
   する。黙って 0 件にすると、検査していないメモリを検査したと読む。崩れた語があると言う（終了コード 1）のに指摘の行を
   読めないときも、出力の形が変わったとして同じく止める
