@@ -55,7 +55,7 @@ FAKE
   chmod +x "$TEST_ROOT/fakebin/claude-hooks"
 }
 # fake_hooks_covers <case の行>: local-review-covers の答えをテストごとに決める偽物。script は本物に渡す
-# （decide-next.sh が呼ぶ get-review-comments.sh も claude-hooks を起動する）
+# （decide-next.sh と request-rereview.sh が呼ぶ get-review-comments.sh や gh-review-requests.sh も claude-hooks を起動する）
 fake_hooks_covers() {
   local real
   printf -v real '%q' "$REAL_CLAUDE_HOOKS"
@@ -140,6 +140,13 @@ for script in get-latest-review.sh get-pr-info.sh get-review-comments.sh record-
   assert_contains "$out" "cargo install"
   assert_not_contains "$(fake_log gh)" "api"
 done
+
+it "gh-review-requests.sh: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+make_fake_gh '*) echo "{}" ;;'
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/gh-review-requests.sh" "$PR_URL" 2>&1)
+assert_eq 127 $?
+assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
+assert_not_contains "$(fake_log gh)" "api"
 
 it "移したスクリプト: Windows の .exe の付いた claude-hooks も、在るものとして起動する"
 # Windows の claude-hooks は .exe の付いた名前で入る。.exe だけがあれば、それを起動する
@@ -312,7 +319,7 @@ assert_not_contains "$(fake_log gh)" "requested_reviewers"
 
 it "request-rereview: 記録の後に rebase だけした head なら要求する（判定は local-review-covers）"
 fake_gh_rereview grow 'echo abc1234 0'
-make_fake_tool claude-hooks '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
+fake_hooks_covers '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
 out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "requested_reviewers"
