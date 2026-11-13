@@ -14,16 +14,17 @@ issues: ["#101"]
 Git と GitHub の作業手順のスクリプトを、#101 の段階 5 で Rust に移す（ADR-0082）。対象は `.claude/scripts/` の
 `worktree-add.sh`、`post-merge-cleanup.sh`、`gh-wait-review.sh`、`gh-review-requests.sh`、`review-level.sh`、
 `git-merge-state.sh`、`base-moved.sh`、`branch-topics.sh`、`rename-*.sh`、`check-each-commit.sh`、`git-info.sh`、
-`gh-actions-diagnose.sh` と `lib/` の共通の部品、`skills/gh-pr-review/scripts/*.sh` で、Slurm のものを除いて 3,162 行
-（`f0083452`、2026-11-13、`wc -l`）。うち 13 本が jq を使い（`grep -l jq`）、Windows の手順は jq を入れている（README の
+`gh-actions-diagnose.sh` と `lib/` の共通の部品、`skills/gh-pr-review/scripts/*.sh` で、Slurm のものを除いて 24 本、2,838 行
+（`f0083452`、2026-11-13、`wc -l`）。うち 12 本が jq を使い（`grep -l jq`）、Windows の手順は jq を入れている（README の
 「Windows で使う」）。`lib/pr-url.sh` と `lib/local-review.sh` は、ほかのスクリプトが source する部品で、単独では実行しない。
 
 これらのスクリプトは、スキルの文から `~/.claude/scripts/<名前>.sh` のパスで呼ばれる（`f0083452` で、`.claude` の下の
 `review-level.sh` を名前で書くファイルは 9 つ）。claude-hooks の PreToolUse のルールも、スクリプトの名前で呼び出しを
 見分ける（例: `require_background_wait.rs` は `gh-wait-review.sh` と `request-rereview.sh` をフォアグラウンドで実行させない）。
-拒否の文言も、修正方法としてスクリプトの名前を示す（`pre_merge_check.rs`、`guard_gh_api.rs` など）。`decide-next.sh` と
-`lib/local-review.sh` は、ローカルレビューの記録の判定を `claude-hooks local-review-covers` に任せ、バイナリを
-`${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}` で引く（PATH に頼らない。`claude-code.nix` の注記）。
+拒否の文言も、修正方法としてスクリプトの名前を示す（`pre_merge_check.rs`、`guard_gh_api.rs` など）。`lib/local-review.sh`
+（`decide-next.sh`、`request-rereview.sh`、`record-local-review.sh` が source する）は、ローカルレビューの記録の判定を
+`claude-hooks local-review-covers` に任せ、バイナリを `${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}` で引く（PATH に
+頼らない。`claude-code.nix` の注記）。Windows では `~/.claude/bin/claude-hooks` が無く、この 3 本は今も動かない。
 
 crate の分け方は、#101 の「決まっていないこと」で、段階 5 で 3 つ目のまとまりを作るときに決めるとしていた
 （ADR-0086 は git hook を `claude-hooks` のサブコマンドにした）。#101 の「作業の順序」は、sh の実装を、呼び出し元を
@@ -60,16 +61,17 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
 - スクリプトのファイル: 名前と場所を変えず、`exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
   だけの sh にする（`lib/local-review.sh` と同じ引き方。PATH に `claude-hooks` を置かない）。スキルの文と hook のルールは
-  変えない。Windows では Git Bash がこの sh を実行し、jq を使わない。Windows は `cargo install` の置き場の
-  `claude-hooks.exe` を `CLAUDE_HOOKS_BIN` で渡す（渡し方は、最初に移す PR で `claude-setup` の手順に足す）
+  変えない。Windows では Git Bash がこの sh を実行し、jq を使わない
+- Windows の置き場: `claude-setup` が `cargo install` の置き場の `claude-hooks.exe` を `~/.claude/bin/` にコピーし、
+  Linux と同じパスで引く（Git Bash は `.exe` を補って実行する）。最初に移す PR で足す
 - `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す
 - 移す順: gh-pr-review のスクリプト、`gh-wait-review.sh` と `gh-review-requests.sh`、`review-level.sh`、`git-merge-state.sh`、
   `base-moved.sh`、`branch-topics.sh`、`worktree-add.sh`、`post-merge-cleanup.sh`、残り。スクリプトごとに 1 つ以上の PR に
   し、中身を移した PR で sh の実装を 1 行に置き換える
-- テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える）で、Linux と Windows の CI で流す。今の
-  `.claude/tests/scripts.sh` は、1 行のスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチで
-  ビルドしたバイナリを渡して流す
+- テスト: 判定は `claude-hooks` の結合テスト（gh は、今の外部のコマンドと同じく環境変数で引き、`examples/fake_tool.rs`
+  の偽物に差し替える）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
+  1 行のスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
 
 理由:
 
@@ -81,8 +83,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   スキルの文と hook のルールを揃える PR になり、揃え漏れが hook の判定の抜けになる。sh を 1 つ挟む費用は呼び出しごとに
   1 回で、これらのスクリプトは作業の節目に呼ぶもの（PreToolUse hook のように毎回は走らない）
 - バイナリを PATH でなく固定のパスと `CLAUDE_HOOKS_BIN` で引くのは、今の `lib/local-review.sh` と揃え、テストで
-  ブランチのバイナリに差し替えられるようにするため。PATH に置くと `claude-hooks script <名前>` を直に呼ぶ 2 つ目の
-  書き方ができ、名前で見分ける hook のルールが見分けない
+  ブランチのバイナリに差し替えられるようにするため。Windows も同じパスに置けば、引き方が 1 つで済み、今の
+  `lib/local-review.sh` も Windows で動く
 
 ### 帰結
 
@@ -95,7 +97,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 ### 確認
 
-- 移したスクリプトの結合テストが、Linux と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
+- 移したスクリプトの結合テストが、`nix flake check` と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
   いるもの
 - 移した後、対象のスクリプトのファイルは `claude-hooks script <名前>` を呼ぶ 1 行だけになり、jq を使わない。`lib/` の
   部品は消えている
