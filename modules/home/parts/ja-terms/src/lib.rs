@@ -110,8 +110,8 @@ impl Dictionary {
         self.rules.is_empty()
     }
 
-    /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる（prh の makeChangeSet の diffs。
-    /// textlint-rule-prh は、このうち直しが一致した文字列と同じものを除いて報告する）
+    /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる（prh の makeChangeSet の diffs から、
+    /// prh:disable の指示で外す前のもの）。textlint-rule-prh と同じ報告は [`Dictionary::check`] が作る
     pub fn diffs(&self, text: &str) -> Result<Vec<Diff>, TextError> {
         let mut found = Vec::new();
         for (offset, paragraph) in paragraphs(text) {
