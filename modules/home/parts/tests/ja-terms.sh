@@ -4,12 +4,12 @@
 # 検証する（ADR-0014）
 # =============================================================================
 # pre-commit はステージした中身（作業ツリーではなく）の Markdown、テキスト、コードを、commit-msg は
-# Claude Code のセッションのコミットの本文を textlint と prh で検査する。辞書の項目は、名詞の用法を
-# 止め、動詞や別の語を通すことも確かめる。ファイルの全体の検査（ja-terms-files）と、それを使う /retro の
+# Claude Code のセッションのコミットの本文を ja-terms（prh の辞書を Rust で当てる。ADR-0085）で検査する。辞書の項目は、名詞の用法を
+# 止め、動詞や別の語を通すことも確かめる。ファイルの全体の検査（ja-terms check）と、それを使う /retro の
 # memory-index.sh の TERMS: の行も、同じ辞書で確かめる（ADR-0074）。
 #
-# hook のファイルを nix build で作る（hook が store のパスで呼ぶ textlint と設定も一緒にビルドされる）。
-# ja-terms-files は、claude-code.nix が置く ~/.claude/bin の形のまま、home-manager の home-files から取る。
+# hook のファイルを nix build で作る（hook が store のパスで呼ぶ ja-terms も一緒にビルドされる）。
+# ja-terms は、claude-code.nix が置く ~/.claude/bin の形のまま、home-manager の home-files から取る。
 #
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/ja-terms.sh
@@ -30,10 +30,10 @@ for hook in pre-commit commit-msg; do
   cp "$built" "$HOOKS/$hook"
   chmod +x "$HOOKS/$hook"
 done
-echo "==> ~/.claude/bin/ja-terms-files をビルドする（homeConfigurations.test）"
+echo "==> ~/.claude/bin/ja-terms をビルドする（homeConfigurations.test）"
 home_files=$(nix build --no-link --print-out-paths --option warn-dirty false \
   "$ROOT#homeConfigurations.test.config.home-files")
-JA_TERMS_FILES="$home_files/.claude/bin/ja-terms-files"
+JA_TERMS="$home_files/.claude/bin/ja-terms"
 MEMORY_INDEX="$ROOT/.claude/skills/retro/scripts/memory-index.sh"
 
 # shellcheck source=lib.sh
@@ -586,7 +586,7 @@ elif grep -q "確認" "$WORK/out"; then
 else
   ng "コードスパンの外の崩れた語で止めたが、直す語を示さない"
 fi
-# 検査する範囲は textlint の Markdown と prh の既定（checkLink / checkBlockQuote / checkEmphasis が false）で決まる
+# 検査する範囲は textlint-rule-prh の既定（checkLink / checkBlockQuote / checkEmphasis が false）と同じで、ja-terms が持つ
 # （ADR-0058）。既定が変わったときに気づくよう、範囲の内と外を 1 件ずつ確かめる
 while IFS='|' read -r expect text; do
   [ -n "$expect" ] || continue
@@ -673,7 +673,7 @@ else
   ok "fixup! の本文のある場合は今までどおり検査する"
 fi
 
-# --- 7. ファイルの全体（ja-terms-files）と /retro の memory-index.sh ------------------------------
+# --- 7. ファイルの全体（ja-terms check）と /retro の memory-index.sh ------------------------------
 DOCS="$WORK/files"
 mkdir -p "$DOCS/a [b] *"
 printf '# t\n\n確かめの結果。\n\n`確かめの結果` はコードの中。\n' > "$DOCS/a [b] */broken.md"
@@ -681,34 +681,34 @@ printf '# t\n\n結果を確かめる。`確かめの結果` はコードの中�
 printf 'Merge branch x\n\n確かめの結果。\n' > "$DOCS/merge.md"
 printf '確かめの結果。\n' > "$DOCS/no-ext"
 rc=0
-"$JA_TERMS_FILES" "$DOCS/a [b] */broken.md" "$DOCS/clean.md" >"$WORK/out" 2>&1 || rc=$?
+"$JA_TERMS" check "$DOCS/a [b] */broken.md" "$DOCS/clean.md" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 1 ] && grep -qxF "$DOCS/a [b] */broken.md:3:1: 確かめ => 確認 [Error/prh]" "$WORK/out" \
   && [ "$(grep -c ': .* => ' "$WORK/out")" = 1 ]; then
-  ok "ja-terms-files: 崩れた語を、引数のパス（空白とグロブの文字を含む）と行で出し、コードスパンの中は数えない"
+  ok "ja-terms check: 崩れた語を、引数のパス（空白とグロブの文字を含む）と行で出し、コードスパンの中は数えない"
 else
-  ng "ja-terms-files: 崩れた語の行が違う（終了コード $rc）"
+  ng "ja-terms check: 崩れた語の行が違う（終了コード $rc）"
 fi
 rc=0
-"$JA_TERMS_FILES" "$DOCS/clean.md" >"$WORK/out" 2>&1 || rc=$?
+"$JA_TERMS" check "$DOCS/clean.md" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 0 ] && ! grep -q ' => ' "$WORK/out"; then
-  ok "ja-terms-files: 崩れた語が無ければ 0 で何も指摘しない"
+  ok "ja-terms check: 崩れた語が無ければ 0 で何も指摘しない"
 else
-  ng "ja-terms-files: 崩れた語の無いファイルで指摘した（終了コード $rc）"
+  ng "ja-terms check: 崩れた語の無いファイルで指摘した（終了コード $rc）"
 fi
 rc=0
-"$JA_TERMS_FILES" "$DOCS/merge.md" >"$WORK/out" 2>&1 || rc=$?
+"$JA_TERMS" check "$DOCS/merge.md" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 1 ] && grep -q "merge.md:3:1: 確かめ => " "$WORK/out"; then
-  ok "ja-terms-files: 最初の行が Merge でも、コミットのメッセージの規則を掛けずに全体を見る"
+  ok "ja-terms check: 最初の行が Merge でも、コミットのメッセージの規則を掛けずに全体を見る"
 else
-  ng "ja-terms-files: 最初の行が Merge のファイルで崩れた語を出さない（終了コード $rc）"
+  ng "ja-terms check: 最初の行が Merge のファイルで崩れた語を出さない（終了コード $rc）"
 fi
 for bad in "$DOCS/no-ext" "$DOCS/missing.md"; do
   rc=0
-  "$JA_TERMS_FILES" "$bad" >"$WORK/out" 2>&1 || rc=$?
+  "$JA_TERMS" check "$bad" >"$WORK/out" 2>&1 || rc=$?
   if [ "$rc" = 2 ] && grep -q "ERROR: " "$WORK/out"; then
-    ok "ja-terms-files: 検査できないファイル（${bad##*/}）は 2 で止める"
+    ok "ja-terms check: 検査できないファイル（${bad##*/}）は 2 で止める"
   else
-    ng "ja-terms-files: 検査できないファイル（${bad##*/}）を通した（終了コード $rc）"
+    ng "ja-terms check: 検査できないファイル（${bad##*/}）を通した（終了コード $rc）"
   fi
 done
 
@@ -718,7 +718,7 @@ printf -- '- [a](a.md) — 説明\n- [b](b.md) — 説明\n' > "$MEM/MEMORY.md"
 printf -- '---\nname: a\ndescription: 確かめの結果\n---\n\n確かめの結果を書く。\n\n`確かめの結果` はコードの中。\n\n```\n確かめの結果\n```\n' > "$MEM/a.md"
 printf -- '---\nname: b\n---\n\n結果を確かめる。\n' > "$MEM/b.md"
 rc=0
-JA_TERMS_FILES="$JA_TERMS_FILES" "$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
+JA_TERMS="$JA_TERMS" "$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 0 ] && [ "$(grep '^TERMS: ' "$WORK/out")" = "TERMS: a.md:6 確かめ => 確認" ]; then
   ok "memory-index: 本文の崩れた語を TERMS: で出し、コードスパン、フェンス、フロントマターの中は数えない"
 else
@@ -726,7 +726,7 @@ else
 fi
 printf -- '---\nname: a\n---\n\n結果を確かめる。`確かめの結果` はコードの中。\n' > "$MEM/a.md"
 rc=0
-JA_TERMS_FILES="$JA_TERMS_FILES" "$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
+JA_TERMS="$JA_TERMS" "$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "ENTRIES: 2" ]; then
   ok "memory-index: 崩れた語が無ければ TERMS: の行を出さない"
 else

@@ -39,10 +39,10 @@ let
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
-  # ファイルの全体の崩れた日本語の語の検査（ADR-0074）。/retro の memory-index.sh が自動メモリに使う。
+  # 崩れた日本語の語の検査（ADR-0074、ADR-0085）。/retro の memory-index.sh が `ja-terms check` で自動メモリに使う。
   # スキルのスクリプトは claude-sync が store を経ずにコピーするので store のパスを埋められず、PATH に頼らない
   # よう claude-hooks と同じ固定パスに置く
-  jaTermsFiles = (pkgs.callPackage ./ja-terms/textlint.nix { }).filesCheck;
+  ja-terms = pkgs.callPackage ./ja-terms/package.nix { };
   # Stop の hook（応答の終わりごと）。自動メモリを ~/.claude の git の ref refs/memory-backup にコミットする（ADR-0076）。
   # claude-hooks と同じく、settings.json には store のパスでなく固定パスを書く
   claudeMemoryBackup = pkgs.writeShellApplication {
@@ -271,7 +271,7 @@ in
 
   # PreToolUse hook バイナリ（settings.json はこの固定パスを参照する）
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
-  home.file.".claude/bin/ja-terms-files".source = "${jaTermsFiles}/bin/ja-terms-files";
+  home.file.".claude/bin/ja-terms".source = "${ja-terms}/bin/ja-terms";
   home.file.${claudeMemoryBackupBinRel}.source = "${claudeMemoryBackup}/bin/claude-memory-backup";
 
   # .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド

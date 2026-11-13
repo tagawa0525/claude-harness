@@ -13,11 +13,11 @@
 #                                  name が <名前> のファイルが無い。コードの中（`...` と ``` か ~~~ のフェンス）と、名前の空のリンクは読まない
 #   TERMS: <file>:<行> <誤り> => <正しい語>
 #                                本文（MEMORY.md を含む各 .md）の崩れた日本語の語。commit の pre-commit と同じ辞書と規則
-#                                （ja-terms-files）で見るので、コードスパン、フェンス、フロントマターの中は数えない
+#                                （ja-terms check）で見るので、コードスパン、フェンス、フロントマターの中は数えない
 # 食い違いがあっても exit 0（判断はスキルが行う）。MEMORY.md が読めない、または辞書の検査を実行できなければ
 # （ほかの行を出した後に）ERROR: を標準エラーに出して exit 1。
 #
-# 辞書の検査は ~/.claude/bin/ja-terms-files（claude-code.nix が置く。JA_TERMS_FILES で差し替える）。メモリは git で
+# 辞書の検査は ~/.claude/bin/ja-terms の check（claude-code.nix が置く。JA_TERMS で差し替える）。メモリは git で
 # 追跡しないので pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る
 
 set -euo pipefail
@@ -90,21 +90,21 @@ for path in "${files[@]}"; do
   )
 done
 
-# 本文の崩れた語。ja-terms-files は引数のパスのまま「<path>:<行>:<列>: <中身> [Error/prh]」を出すので、ディレクトリを
+# 本文の崩れた語。ja-terms check は引数のパスのまま「<path>:<行>:<列>: <中身> [Error/prh]」を出すので、ディレクトリを
 # 外して列と印を落とす。パスは既知のファイル名との完全な前方一致で切る（名前の : で切り違えない）。files には
 # 少なくとも MEMORY.md が入る
-ja_terms_files="${JA_TERMS_FILES:-$HOME/.claude/bin/ja-terms-files}"
+ja_terms="${JA_TERMS:-$HOME/.claude/bin/ja-terms}"
 rc=0
-report=$("$ja_terms_files" "${files[@]}") || rc=$?
+report=$("$ja_terms" check "${files[@]}") || rc=$?
 case "$rc" in
   0 | 1) ;;
   127)
-    echo "ERROR: 辞書の検査（${ja_terms_files}）がありません。home-manager の rebuild で入れてください（claude-sync はバイナリを入れない）" >&2
+    echo "ERROR: 辞書の検査（${ja_terms} check）がありません。home-manager の rebuild で入れてください（claude-sync はバイナリを入れない）" >&2
     exit 1
     ;;
   *)
     printf '%s\n' "$report" >&2
-    echo "ERROR: 辞書の検査（${ja_terms_files}）が失敗しました（終了コード ${rc}）" >&2
+    echo "ERROR: 辞書の検査（${ja_terms} check）が失敗しました（終了コード ${rc}）" >&2
     exit 1
     ;;
 esac
@@ -128,7 +128,7 @@ terms=$(
 # 崩れた語があると言いながら 1 行も読めなければ、出力の形が変わっている。黙って 0 件にしない
 if ((rc == 1)) && [[ -z "$terms" ]]; then
   printf '%s\n' "$report" >&2
-  echo "ERROR: 辞書の検査（${ja_terms_files}）の出力を読めません（崩れた語があるが、<path>:<行>:<列>: の行が無い）" >&2
+  echo "ERROR: 辞書の検査（${ja_terms} check）の出力を読めません（崩れた語があるが、<path>:<行>:<列>: の行が無い）" >&2
   exit 1
 fi
 [[ -z "$terms" ]] || printf '%s\n' "$terms"
