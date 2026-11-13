@@ -20,13 +20,23 @@ pub fn find(text: &str, from: usize, until: usize, limit: usize) -> Vec<Range<us
         .collect();
     let mut result = Vec::new();
     let mut i = 0;
+    // メールアドレスにならなかった atext の並びの終わり。並びの中のどこから始めても同じ所で止まるので、
+    // 並びを読み直さない（長い数字の並びで 2 乗の時間になる）
+    let mut no_email_until = 0;
     while i < chars.len() && chars[i].0 < until {
         let previous = match i {
             0 => text[..from].chars().next_back(),
             _ => Some(chars[i - 1].1),
         };
         // syntax.js の text の hook は、文字ごとに email、それから http か www を試す
-        let end = email(&chars, i, previous)
+        let mail = if i < no_email_until {
+            None
+        } else {
+            email(&chars, i, previous)
+                .map_err(|end| no_email_until = end)
+                .ok()
+        };
+        let end = mail
             .or_else(|| http(&chars, i, previous))
             .or_else(|| www(&chars, i, previous));
         match end {
@@ -45,16 +55,18 @@ fn at(chars: &[(usize, char)], i: usize) -> Option<char> {
     chars.get(i).map(|&(_, c)| c)
 }
 
-fn email(chars: &[(usize, char)], start: usize, previous: Option<char>) -> Option<usize> {
+/// メールアドレスの終わり。ならなければ、読んだ atext の並びの終わり（そこまではどこから始めてもならない）
+fn email(chars: &[(usize, char)], start: usize, previous: Option<char>) -> Result<usize, usize> {
     if !at(chars, start).is_some_and(gfm_atext) || !previous_email(previous) {
-        return None;
+        return Err(start);
     }
     let mut i = start;
     while at(chars, i).is_some_and(gfm_atext) {
         i += 1;
     }
+    let atext_end = i;
     if at(chars, i) != Some('@') {
-        return None;
+        return Err(atext_end);
     }
     i += 1;
     let mut has_dot = false;
@@ -69,12 +81,12 @@ fn email(chars: &[(usize, char)], start: usize, previous: Option<char>) -> Optio
             }
             Some('-' | '_') => {
                 if punctuation(chars, i) {
-                    return None;
+                    return Err(atext_end);
                 }
                 i += 1;
                 if at(chars, i) == Some('.') {
                     if punctuation(chars, i) {
-                        return None;
+                        return Err(atext_end);
                     }
                     has_dot = true;
                     i += 1;
@@ -84,7 +96,7 @@ fn email(chars: &[(usize, char)], start: usize, previous: Option<char>) -> Optio
             _ => break,
         }
     }
-    has_dot.then_some(i)
+    if has_dot { Ok(i) } else { Err(atext_end) }
 }
 
 fn http(chars: &[(usize, char)], start: usize, previous: Option<char>) -> Option<usize> {
