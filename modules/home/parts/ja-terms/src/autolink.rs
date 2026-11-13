@@ -25,7 +25,11 @@ pub fn find(text: &str, from: usize, until: usize, limit: usize) -> Vec<Range<us
     let mut no_email_until = 0;
     while i < chars.len() && chars[i].0 < until {
         let previous = match i {
-            0 => text[..from].chars().next_back(),
+            // textlint は先頭の BOM を外して読むので、BOM の後は文の始め
+            0 => text[..from]
+                .trim_start_matches('\u{feff}')
+                .chars()
+                .next_back(),
             _ => Some(chars[i - 1].1),
         };
         // syntax.js の text の hook は、文字ごとに email、それから http か www を試す
