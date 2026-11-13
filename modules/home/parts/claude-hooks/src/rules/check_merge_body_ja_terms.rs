@@ -31,6 +31,10 @@ pub struct CheckMergeBodyJaTerms;
 /// ものには無い）。git commit のルールも使う
 pub(super) const JA_TERMS: &str = "CLAUDE_HOOKS_JA_TERMS";
 
+fn ja_terms_from(_env: Option<String>, _windows: bool) -> Option<String> {
+    None
+}
+
 /// 本文を判定できない理由
 #[derive(Debug, PartialEq)]
 pub(super) enum Undecided {
@@ -604,6 +608,17 @@ exit 0
             [Finding::Deny(r)] => r.clone(),
             _ => panic!("deny が 1 件のはず"),
         }
+    }
+
+    #[test]
+    fn ja_terms_is_the_wrapped_path_or_the_one_on_path_on_windows() {
+        // Nix の包む側が渡すパスが先。無ければ、cargo install で入れる Windows は PATH の ja-terms
+        assert_eq!(
+            ja_terms_from(Some("/nix/store/x/bin/ja-terms".to_string()), true),
+            Some("/nix/store/x/bin/ja-terms".to_string())
+        );
+        assert_eq!(ja_terms_from(None, true), Some("ja-terms".to_string()));
+        assert_eq!(ja_terms_from(None, false), None);
     }
 
     #[test]
