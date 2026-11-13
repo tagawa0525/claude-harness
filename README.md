@@ -37,8 +37,16 @@ home-manager の構成で `claude-harness.homeManagerModules.default` を import
 git hook が無いので、コミットとマージのメッセージの検査（Conventional Commits、件名の長さ、日本語の語）も、
 PreToolUse hook が飛ばして走らない（hook はグローバルの `core.hooksPath` を使うリポジトリだけを検査する）。
 
-前もって、Git for Windows、rustup（MSVC の toolchain。Visual Studio の Build Tools が要る）、gh、jq、
-[gitleaks](https://github.com/gitleaks/gitleaks) を入れ、PATH に置く（`winget install Git.Git Rustlang.Rustup GitHub.cli jqlang.jq Gitleaks.Gitleaks`）。
+前もって、Git for Windows、rustup、MSVC の toolchain が使う Visual Studio の Build Tools（C++ の workload。linker と
+Windows SDK）、gh、jq、[gitleaks](https://github.com/gitleaks/gitleaks) を入れ、PATH に置く。入れたら、PATH が反映されるよう
+Git Bash を開き直す:
+
+```bash
+winget install Git.Git Rustlang.Rustup GitHub.cli jqlang.jq Gitleaks.Gitleaks
+winget install Microsoft.VisualStudio.2022.BuildTools \
+  --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
 PreToolUse hook は、git の hook の無いリポジトリの `git commit` を gitleaks で調べ、gitleaks が無いとすべての `git commit` を
 止める。jq は、スキルが呼ぶ sh のスクリプト（`gh-pr-review/scripts/` など。#101 の段階 5 で Rust に移す）が使い、
 Git for Windows には入っていない。
