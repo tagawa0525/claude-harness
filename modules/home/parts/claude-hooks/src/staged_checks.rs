@@ -153,6 +153,18 @@ fn blob(staged: &Staged) -> Result<Vec<u8>, String> {
     git(&["cat-file", "blob", &staged.blob], None)
 }
 
+/// ステージした版の中身。読めなければ理由を出して None（書式の違反とは分ける）
+fn staged_text(staged: &Staged) -> Option<Vec<u8>> {
+    blob(staged)
+        .map_err(|why| {
+            println!(
+                "❌ {} のステージした版を読めません（{why}）",
+                staged.path.display()
+            )
+        })
+        .ok()
+}
+
 /// PATH で name を探す。Windows は PATHEXT の拡張子（npm の markdownlint.cmd など）も探し、見つけたパスで起動する
 /// （Command は拡張子の無い名前に .exe しか足さない）
 fn find_on_path(name: &str) -> Option<PathBuf> {
@@ -230,10 +242,6 @@ fn succeeded(cmd: &mut Command) -> bool {
     }
 }
 
-fn ok(out: &Option<Output>) -> bool {
-    out.as_ref().is_some_and(|o| o.status.success())
-}
-
 fn names(files: &[&PathBuf]) -> String {
     files
         .iter()
@@ -249,28 +257,32 @@ fn nix(files: &[Staged], _work: &Path) -> bool {
     };
     println!("🔍 Checking Nix format...");
     let mut bad = Vec::new();
+    // 読めないか起動できないもの（理由は出した）
+    let mut broken = false;
     for f in files {
-        let passed = blob(f).is_ok_and(|text| {
-            ok(&pipe(
-                &nixfmt,
-                &["--check".as_ref(), "-".as_ref()],
-                &text,
-                Path::new("."),
-                false,
-            ))
-        });
-        if !passed {
-            bad.push(&f.path);
+        let Some(text) = staged_text(f) else {
+            broken = true;
+            continue;
+        };
+        match pipe(
+            &nixfmt,
+            &["--check".as_ref(), "-".as_ref()],
+            &text,
+            Path::new("."),
+            false,
+        ) {
+            Some(out) if out.status.success() => {}
+            Some(_) => bad.push(&f.path),
+            None => broken = true,
         }
     }
-    if bad.is_empty() {
-        return true;
+    if !bad.is_empty() {
+        println!(
+            "❌ Nix format check failed: {}. Run: nixfmt <files>",
+            names(&bad)
+        );
     }
-    println!(
-        "❌ Nix format check failed: {}. Run: nixfmt <files>",
-        names(&bad)
-    );
-    false
+    bad.is_empty() && !broken
 }
 
 /// `--stdin-filename` の場所から、ruff はプロジェクトの設定を探す
@@ -279,23 +291,31 @@ fn python(files: &[Staged], _work: &Path) -> bool {
         println!("SKIP: Python の検査（ruff が PATH に無い）");
         return true;
     };
-    let texts: Vec<Option<Vec<u8>>> = files.iter().map(|f| blob(f).ok()).collect();
+    // 読めないもの（理由は出した）は、どちらの検査にも渡さない
+    let texts: Vec<Option<Vec<u8>>> = files.iter().map(staged_text).collect();
+    let mut passed = texts.iter().all(Option::is_some);
+    let run = |sub: &str, f: &Staged, text: &[u8], show: bool| {
+        let mut args: Vec<&std::ffi::OsStr> = vec![sub.as_ref()];
+        if sub == "check" {
+            args.push("--quiet".as_ref());
+        } else {
+            args.push("--check".as_ref());
+        }
+        args.extend([
+            "--stdin-filename".as_ref(),
+            f.path.as_os_str(),
+            "-".as_ref(),
+        ]);
+        pipe(&ruff, &args, text, Path::new("."), show)
+    };
     println!("🔍 Checking Python format...");
-    let mut passed = true;
     let mut bad = Vec::new();
     for (f, text) in files.iter().zip(&texts) {
-        let formatted = text.as_ref().is_some_and(|text| {
-            let args = [
-                "format".as_ref(),
-                "--check".as_ref(),
-                "--stdin-filename".as_ref(),
-                f.path.as_os_str(),
-                "-".as_ref(),
-            ];
-            ok(&pipe(&ruff, &args, text, Path::new("."), false))
-        });
-        if !formatted {
-            bad.push(&f.path);
+        let Some(text) = text else { continue };
+        match run("format", f, text, false) {
+            Some(out) if out.status.success() => {}
+            Some(_) => bad.push(&f.path),
+            None => passed = false,
         }
     }
     if !bad.is_empty() {
@@ -308,17 +328,12 @@ fn python(files: &[Staged], _work: &Path) -> bool {
     println!("🔍 Checking Python lint...");
     let mut lint_failed = false;
     for (f, text) in files.iter().zip(&texts) {
-        let linted = text.as_ref().is_some_and(|text| {
-            let args = [
-                "check".as_ref(),
-                "--quiet".as_ref(),
-                "--stdin-filename".as_ref(),
-                f.path.as_os_str(),
-                "-".as_ref(),
-            ];
-            ok(&pipe(&ruff, &args, text, Path::new("."), true))
-        });
-        lint_failed |= !linted;
+        let Some(text) = text else { continue };
+        match run("check", f, text, true) {
+            Some(out) if out.status.success() => {}
+            Some(_) => lint_failed = true,
+            None => passed = false,
+        }
     }
     if lint_failed {
         println!("❌ Python lint failed. Run: ruff check --fix <files>");
@@ -506,7 +521,7 @@ fn rust(files: &[Staged], _work: &Path) -> bool {
             };
             edition = Some(found.clone()).filter(|e| !e.is_empty());
         }
-        let Ok(text) = blob(f) else {
+        let Some(text) = staged_text(f) else {
             passed = false;
             continue;
         };
@@ -529,15 +544,16 @@ fn rust(files: &[Staged], _work: &Path) -> bool {
                     bad.push(&f.path);
                 }
             }
-            o => {
+            Some(o) => {
                 println!(
                     "❌ rustfmt が {} を読めません:\n{}",
                     f.path.display(),
-                    o.map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
-                        .unwrap_or_default()
+                    String::from_utf8_lossy(&o.stderr)
                 );
                 passed = false;
             }
+            // 起動できない理由は pipe が出した
+            None => passed = false,
         }
     }
     if !bad.is_empty() {
