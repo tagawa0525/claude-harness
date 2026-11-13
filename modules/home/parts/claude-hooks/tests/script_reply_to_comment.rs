@@ -183,3 +183,39 @@ fn a_missing_comment_id_or_body_shows_the_usage() {
         assert_eq!(fake.gh_log(), "", "{args:?}");
     }
 }
+
+#[test]
+fn a_comment_id_that_is_not_a_number_stops_before_gh() {
+    // id は API のパスに埋めるので、数でない値（URL の断片、`..`、クエリ）は別のエンドポイントに当たる
+    for id in ["abc", "111/../../../issues/1/comments", "111?x=", "-1"] {
+        let fake = Fake::new();
+        let out = fake.run(&["https://github.com/octo/repo/pull/1", id, "ok"], "", 0);
+        assert_eq!(out.status.code(), Some(1), "{id}");
+        assert!(
+            stderr(&out).contains("comment_id"),
+            "{id}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.gh_log(), "", "{id}");
+    }
+}
+
+#[test]
+fn extra_arguments_stop_before_gh() {
+    // 本文を引用符で囲み忘れると、最初の語だけが返信になる
+    let fake = Fake::new();
+    let out = fake.run(
+        &[
+            "https://github.com/octo/repo/pull/1",
+            "111",
+            "Fixed",
+            "in",
+            "abc.",
+        ],
+        "",
+        0,
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("Usage: reply-to-comment.sh"));
+    assert_eq!(fake.gh_log(), "");
+}
