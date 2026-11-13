@@ -10,13 +10,8 @@
 # 差し替える前にビルドする（hooks.sh と同じ）。CLAUDE_HOOKS_BIN（絶対パス）で差し替えられる
 if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
   CRATE_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/claude-hooks" && pwd)
-  # バイナリの場所は cargo に聞く（~/.cargo/config.toml の target-dir や CARGO_TARGET_DIR で target/ の外に出る）
-  BUILT=$(cargo build -q --message-format=json --manifest-path "$CRATE_DIR/Cargo.toml") || exit 1
-  CLAUDE_HOOKS_BIN=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "claude-hooks" and .executable != null) | .executable' <<<"$BUILT")
-  if [[ ! -x "$CLAUDE_HOOKS_BIN" ]]; then
-    echo "ERROR: ビルドした claude-hooks が見つかりません: '$CLAUDE_HOOKS_BIN'" >&2
-    exit 1
-  fi
+  source "$(dirname "$0")/../cargo-bin.sh"
+  CLAUDE_HOOKS_BIN=$(cargo_bin "$CRATE_DIR" claude-hooks) || exit 1
 fi
 if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
   echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
