@@ -95,7 +95,10 @@ fn a_new_branch_is_made_from_the_default_branch_next_to_the_main_worktree() {
     let repo = Repo::new();
     let out = repo.run(&["feat/login"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let dir = repo.root.join("app-feat-login");
+    // 期待するパスは git の出す形（Windows でも / で区切る）でつなぐ
+    let main_root = repo.git(&["rev-parse", "--show-toplevel"]);
+    let (parent, _) = main_root.rsplit_once('/').unwrap();
+    let dir = PathBuf::from(format!("{parent}/app-feat-login"));
     assert_eq!(
         text(&out.stdout),
         format!(
@@ -144,9 +147,15 @@ fn worktreelink_shares_ignored_paths_of_the_main_worktree() {
         text(&out.stdout)
     );
     let link = repo.root.join("app-feat-x/shared");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(
-        std::fs::read_link(&link).unwrap(),
-        repo.app().join("shared")
+        std::fs::canonicalize(&link).unwrap(),
+        std::fs::canonicalize(repo.app().join("shared")).unwrap()
     );
 }
 

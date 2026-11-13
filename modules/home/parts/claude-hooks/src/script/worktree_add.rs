@@ -97,12 +97,11 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("ERROR: メインの worktree を見つけられません");
         return 1;
     };
-    let repo_name = main_root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let parent = main_root.parent().unwrap_or(Path::new("/"));
-    let dir = parent.join(format!("{repo_name}-{}", branch.replace('/', "-")));
+    // git の出すパスは Windows でも / で区切る。join で \\ を混ぜると、出力の WORKTREE を Git Bash に渡したときに
+    // \\ が消える（tests/common の sh_path と同じ理由）ので、/ でつなぐ
+    let main_str = main_root.to_string_lossy().into_owned();
+    let (parent, repo_name) = main_str.rsplit_once('/').unwrap_or(("", &main_str));
+    let dir = PathBuf::from(format!("{parent}/{repo_name}-{}", branch.replace('/', "-")));
     if dir.exists() {
         eprintln!("ERROR: 作成先が既に存在します: {}", dir.display());
         return 1;
@@ -230,6 +229,11 @@ pub fn main(args: &[String]) -> i32 {
     worktree_add.extend(add_args.iter().map(String::as_str));
     if !git_inherit(here, &worktree_add) {
         eprintln!("ERROR: git worktree add が失敗しました");
+        if stashed {
+            eprintln!(
+                "変更は stash に退避したままです（git stash list の wip: move to worktree {branch}）。git stash pop --index で元の worktree に戻せます"
+            );
+        }
         return 1;
     }
     if stashed && !git_inherit(&dir, &["stash", "pop", "-q", "--index"]) {
@@ -410,7 +414,8 @@ fn link_all<'a>(
     let mut linked: Vec<&String> = Vec::new();
     let mut notes = Vec::new();
     for path in paths {
-        let target = main_root.join(path);
+        // / でつなぐ（Windows でも git の出すパスと区切りを揃える）
+        let target = PathBuf::from(format!("{}/{path}", main_root.to_string_lossy()));
         if !target.exists() {
             notes.push(format!(
                 "NOTE: メイン worktree に {path} がないため共有しません（{}）",
@@ -425,7 +430,12 @@ fn link_all<'a>(
             .and_then(|()| make(&target, &link));
         if let Err(e) = made {
             for l in &linked {
-                let _ = std::fs::remove_file(dir.join(l));
+                // Windows のディレクトリの symlink は remove_dir でしか消えない
+                let link = dir.join(l);
+                if let Err(e) = std::fs::remove_file(&link).or_else(|_| std::fs::remove_dir(&link))
+                {
+                    eprintln!("ERROR: 作った {l} の symlink を消せませんでした: {e}");
+                }
             }
             return Err((path, e));
         }

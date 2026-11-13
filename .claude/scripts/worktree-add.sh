@@ -15,10 +15,18 @@
 # --carry-changes: 未コミットの変更（未追跡ファイル含む）を stash 経由で worktree 側に移す
 #   （git-commit スキルの「main からの退避」）。
 #
-# 共有（.worktreelink）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス（ルートからの相対パス）を、
-# メイン worktree の同じパスへの絶対パスの symlink として作る。git で追跡しない大きなデータを worktree の間で共有するため。
-# パスはリテラルで、新しい worktree で git に無視され、メイン worktree で追跡されていないものだけ（dir/ でなく dir か
-# /dir と書く）。Windows の symlink は開発者モードか管理者の権限が要る。
+# 共有（.worktreelink）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス（ルートからの相対パス。空行と
+# # で始まる行は読み飛ばし、前後に空白のある行はエラー）を、メイン worktree の同じパスへの絶対パスの symlink として
+# 作る。git で追跡しない大きなデータ（キャッシュ・参照データ）を worktree の間でコピーせず共有するため。
+#   - パスはリテラルだけ。絶対パス、. / .. を含むもの、ワイルドカード（* ? [）と \、! か : で始まるものはエラー
+#   - 同じパスや入れ子のパス、親が新しい worktree でディレクトリでない（ファイルか symlink）パスはエラー
+#   - メイン worktree で追跡されているパスはエラー（新しい worktree での書き込みがメインの変更になる）
+#   - 新しい worktree で git に無視されていなければエラー（symlink が未追跡ファイルに見える）。symlink はディレクトリ
+#     ではないので、`dir/` のようにディレクトリだけに一致するパターンでは無視されない（dir か /dir と書く）
+#   - メイン worktree にそのパスが無ければ、作らずに NOTE で知らせる
+#   - エラーのときは symlink を 1 つも作らずに止める（worktree は作ったまま残し、場所を知らせる。
+#     直すのは .worktreelink か .gitignore で、そのブランチの worktree で直せるように）
+#   - Windows の symlink は開発者モードか管理者の権限が要る
 #
 # GitHub リモートがあり、ローカルにブランチが無く --from も無ければ、先に origin を fetch する（失敗したら止める）。
 #
