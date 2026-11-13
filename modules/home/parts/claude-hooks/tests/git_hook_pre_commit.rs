@@ -353,3 +353,39 @@ fn a_commit_that_concludes_a_merge_runs_the_pre_merge_commit_beside_it() {
     assert!(out.status.success(), "{}", said(&out));
     assert!(marker.exists(), "{}", said(&out));
 }
+
+#[test]
+fn a_failing_pre_merge_commit_stops_the_commit_that_concludes_a_merge() {
+    let repo = Repo::new();
+    repo.start_feature();
+    let sibling = repo.root.join("global-hooks/pre-merge-commit");
+    std::fs::write(&sibling, "#!/bin/sh\nexit 4\n").unwrap();
+    executable(&sibling);
+    std::fs::write(repo.work().join("c.txt"), "feat\n").unwrap();
+    repo.git(&["add", "c.txt"], &repo.work());
+    repo.git(
+        &["commit", "-q", "--no-verify", "-m", "feat: c"],
+        &repo.work(),
+    );
+    repo.git(&["switch", "-q", "main"], &repo.work());
+    std::fs::write(repo.work().join("c.txt"), "main\n").unwrap();
+    repo.git(&["add", "c.txt"], &repo.work());
+    repo.git(
+        &["commit", "-q", "--no-verify", "-m", "chore: c"],
+        &repo.work(),
+    );
+    let merge = repo
+        .command(&["merge", "-q", "--no-ff", "feat/x"])
+        .output()
+        .unwrap();
+    assert!(!merge.status.success(), "競合するはず");
+    std::fs::write(repo.work().join("c.txt"), "both\n").unwrap();
+    repo.git(&["add", "c.txt"], &repo.work());
+    let out = repo
+        .command(&["commit", "-q", "--no-edit"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    // マージ結果の検査に通らなければ、既定の検査も機密情報の検査も始めない
+    assert!(repo.calls().is_empty(), "{:?}", repo.calls());
+}
