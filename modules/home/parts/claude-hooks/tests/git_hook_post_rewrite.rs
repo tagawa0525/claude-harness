@@ -162,6 +162,13 @@ impl Repo {
             .unwrap_or_default()
     }
 
+    /// ローカルの post-rewrite のパス（init の template に hooks が無いこともあるので、ディレクトリを作る）
+    fn local_hook(&self) -> PathBuf {
+        let hooks = self.work().join(".git/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        hooks.join("post-rewrite")
+    }
+
     fn saved(&self) -> PathBuf {
         self.work().join(".git/commit-refs-remap.input")
     }
@@ -243,23 +250,79 @@ fn an_amend_inside_a_rebase_waits_for_the_end_of_the_rebase() {
 fn a_local_post_rewrite_gets_the_same_input_first() {
     let repo = Repo::new();
     repo.opt_in();
-    let hooks = repo.work().join(".git/hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    let local = hooks.join("post-rewrite");
+    let local = repo.local_hook();
     let marker = repo.root.join("local.stdin");
+    // 呼ばれた順を見るため、偽の commit-refs と同じ記録に書く
     std::fs::write(
         &local,
-        format!("#!/bin/sh\ncat >> \"{}\"\nexit 3\n", sh_path(&marker)),
+        format!(
+            "#!/bin/sh\ncat >> \"{}\"\necho local >> \"{}\"\nexit 3\n",
+            sh_path(&marker),
+            sh_path(&repo.log())
+        ),
     )
     .unwrap();
     executable(&local);
     repo.amend(&[], &[]);
     // ローカルの hook が失敗しても、付け直しは行う
-    assert_eq!(repo.calls(), ["remap"]);
+    assert_eq!(repo.calls(), ["local", "remap"]);
     assert_eq!(
         std::fs::read_to_string(&marker).unwrap(),
         std::fs::read_to_string(repo.stdin()).unwrap()
     );
+}
+
+#[test]
+fn the_exit_code_of_the_local_hook_is_returned() {
+    let repo = Repo::new();
+    repo.opt_in();
+    let local = repo.local_hook();
+    std::fs::write(&local, "#!/bin/sh\ncat > /dev/null\nexit 3\n").unwrap();
+    executable(&local);
+    // git は post-rewrite の終了コードを見ないので、hook を直に呼ぶ
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            cmd.env_remove(key);
+        }
+    }
+    let mut child = cmd
+        .args(["git-hook", "post-rewrite", "rebase"])
+        .current_dir(repo.work())
+        .env("GIT_CEILING_DIRECTORIES", &repo.root)
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("CLAUDE_HOOKS_COMMIT_REFS", fake_tool())
+        .env("FAKE_TOOL_OUT", "REFS: 0\n")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let head = repo.head();
+        writeln!(child.stdin.take().unwrap(), "{head} {head}").unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_wrong_argument_is_a_usage_error() {
+    let repo = Repo::new();
+    let out = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
+        .args(["git-hook", "post-rewrite", "squash"])
+        .current_dir(repo.work())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
 }
 
 // Windows は環境変数が無ければ PATH の commit-refs を使う（ADR-0086）
@@ -271,5 +334,7 @@ fn without_commit_refs_the_input_is_kept() {
     let out = repo.amend(&[], &["CLAUDE_HOOKS_COMMIT_REFS"]);
     let said = hook_output(&out);
     assert!(said.contains("commit-refs"), "{said}");
+    // commit-refs を起動していないので、書き換えたかを ERROR の行で探させない
+    assert!(!said.contains("ERROR"), "{said}");
     assert!(repo.saved().is_file());
 }
