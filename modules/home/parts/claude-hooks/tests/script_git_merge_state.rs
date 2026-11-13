@@ -70,7 +70,9 @@ impl Repo {
             .args(["script", "git-merge-state"])
             .args(args)
             .current_dir(&self.root)
+            // バイナリの中の git も、利用者のグローバルの設定を読まない
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
             .unwrap()
     }

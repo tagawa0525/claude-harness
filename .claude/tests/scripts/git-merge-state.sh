@@ -3,15 +3,8 @@
 #
 # 実行: bash .claude/tests/scripts/git-merge-state.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
-# ADR のフロントマターの status は design-records（設計の記録の CLI）が読む。リポジトリのクレートをビルドして PATH の先頭に置く。
-# lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
-DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
-source "$(dirname "$0")/../cargo-bin.sh"
-DESIGN_RECORDS_BIN=$(cargo_bin "$DESIGN_RECORDS_DIR" design-records) || exit 1
-PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"
-export PATH
-
-# 中身は claude-hooks script git-merge-state（ADR-0087）。ブランチでビルドしたバイナリで確かめる
+# 中身は claude-hooks script git-merge-state（ADR-0087。ADR の status も design-records の crate で読む）。
+# ブランチでビルドしたバイナリで確かめる
 source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
