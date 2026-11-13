@@ -627,6 +627,12 @@ exit 0
         );
         assert_eq!(ja_terms_from(None, true), Some("ja-terms".to_string()));
         assert_eq!(ja_terms_from(None, false), None);
+        // 空の値はパスでない（HOME と同じ）
+        assert_eq!(
+            ja_terms_from(Some(String::new()), true),
+            Some("ja-terms".to_string())
+        );
+        assert_eq!(ja_terms_from(Some(String::new()), false), None);
     }
 
     #[test]
