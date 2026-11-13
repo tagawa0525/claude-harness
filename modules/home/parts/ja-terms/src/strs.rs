@@ -151,11 +151,17 @@ fn with_breaks(original: &str, breaks: &[usize]) -> String {
 
 /// 空行を入れた文の位置を、元の文の位置にする（k 番目に入れた行は、入れた文の breaks[k] + k にある）
 fn to_original(p: usize, breaks: &[usize]) -> usize {
-    p - breaks
-        .iter()
-        .enumerate()
-        .take_while(|&(k, &b)| b + k < p)
-        .count()
+    // breaks[k] + k は k について増えるので、二分探索で数える
+    let (mut low, mut high) = (0, breaks.len());
+    while low < high {
+        let mid = (low + high) / 2;
+        if breaks[mid] + mid < p {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    p - low
 }
 
 /// 開いているコンテナ（lazy continuation の判定に使う）
