@@ -139,3 +139,19 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   version）は揃えない。どれも今の辞書には無い。比べる間は textlint が先に止め、textlint を外した後は Rust の実装
   だけが辞書を読むので、揃えても判定は変わらない。今の辞書を当てた結果は、このリポジトリと nixfiles の追跡して
   いる 355 のファイルで `prh_rules.py` とすべて同じだった
+- 2026-11-13: 検査の mode の Str の範囲（`modules/home/parts/ja-terms/src/strs.rs`）は、textlint 自身に答えさせて
+  比べる。Str の原文の全体に一致する規則だけの辞書（`tests/textlint/whole.yml`）を当てると、textlint は Str ごとに
+  開始の位置と原文を報告する。固定の入力の期待値は `tests/textlint/update.sh` がこれで作る。このリポジトリ、nixfiles、
+  r995 の 24 のリポジトリの Markdown 1369 ファイル（189,592 の Str）、コミットのメッセージ 34041 件（157,828）、
+  コードのファイル 2356（487,185 行）で、textlint の答えとすべて同じになった。違いの見つかった次の 5 つは、textlint の
+  micromark 2.11.4 と remark の拡張が CommonMark 0.31 の pulldown-cmark と違う読み方で、揃えた。
+  - lazy continuation を読まない。字下げか `>` の足りない段落の続きの行で、項目と引用を閉じて新しい段落にする
+    （引用の後の lazy な行は引用の外で、検査する）
+  - literal autolink（micromark-extension-gfm-autolink-literal 0.5.7）。`https://` は日本語の後でも始まり、パスは
+    空白、`<`、行の終わりまで続く（日本語の句読点では終わらず、後のコードスパンも含む）
+  - 1 つの `~` の取り消し線（micromark-extension-gfm-strikethrough 0.6.5）
+  - front matter は文の先頭だけ（pulldown-cmark の metadata block は文の途中の `---`…`...` も読む）
+  - ASCII でない記号を句読点に数えない（強調の区切りの判定。`C*×…*` を強調と読む）
+- 2026-11-13: lazy な行は、1 度の読みで見つけたものすべての前に空行を入れる方式を試して捨てた。前の行で項目が閉じると、
+  後の行が別の項目の続きになり、lazy でなくなる（lsp-det の `docs/vision.ja.md` で、`1b.` の行の前に入れると、後の
+  `2.` の行は新しい項目でなく段落の続きになり、その後の `2b.` の行は lazy でない）。最初の 1 行ずつ入れて読み直す
