@@ -268,9 +268,15 @@ fn a_file_given_twice_is_checked_once() {
 #[test]
 fn a_symbolic_link_and_its_target_are_checked_as_two_files() {
     // textlint はパスの字面でファイルの集まりを作り、symlink を辿らない
-    let path = scratch("target.txt", "確忍\n");
-    let link = path.with_file_name("link.txt");
-    let _ = std::fs::remove_file(&link);
+    // ほかのテストと同じ一時のディレクトリで消して作り直すと、並行に走るテストの実行と重なりうるので、プロセスごとの
+    // ディレクトリにする
+    let dir =
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("symlink-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("target.txt");
+    std::fs::write(&path, "確忍\n").unwrap();
+    let link = dir.join("link.txt");
     std::os::unix::fs::symlink(&path, &link).unwrap();
     let out = check(&[path.to_str().unwrap(), link.to_str().unwrap()]);
     assert_eq!(
