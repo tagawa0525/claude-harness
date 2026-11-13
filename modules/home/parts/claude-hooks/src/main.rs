@@ -10,6 +10,8 @@
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
 //!        claude-hooks git-hook <hook の名前> [引数]...
 //!   グローバルの git hook の中身（src/git_hook.rs。ADR-0086）
+//!        claude-hooks script <名前> [引数]...
+//!   スキルが呼ぶ作業手順のスクリプトの中身（src/script/。ADR-0087）
 //!        claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>
 //!   head がローカルレビューの記録で覆われているか（記録の後に rebase だけした head を含む）を pre-merge-check と同じ
 //!   判定で確かめる。rebase だけかは cwd の clone で比べる。覆われていれば終了コード 0、いなければ 1、引数の数の誤りは 2、
@@ -24,6 +26,7 @@ mod input;
 mod output;
 mod process;
 mod rules;
+mod script;
 mod shell;
 mod staged_checks;
 mod tools;
@@ -33,11 +36,18 @@ use std::io::Read;
 
 // .claude/tests/hooks.sh と modules/home/parts/tests/main-commit-gates.sh は、引数なしで呼んで `rules: `
 // で始まる行が出ることで、渡されたバイナリが起動できるかを確かめる
+/// スクリプトの sh や git hook が、知らないサブコマンドや名前で呼んだときの案内。claude-sync は sh だけを入れ替え、
+/// ~/.claude/bin のバイナリは入れ直すまで前の版のまま
+pub const OLDER_THAN_CALLER: &str = "呼んだ側が正しい名前で呼んでも無いなら、claude-hooks が呼んだ側より古い。Linux は \
+     home-manager の rebuild、Windows は claude-harness の README の「Windows で使う」の cargo install で入れ直す";
+
 fn usage() -> ! {
     eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]...");
     eprintln!("       claude-hooks git-hook <hook の名前> [引数]...");
+    eprintln!("       claude-hooks script <名前> [引数]...");
     eprintln!("       claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>");
     eprintln!("rules: {}", rules::names().join(", "));
+    eprintln!("{}", OLDER_THAN_CALLER);
     std::process::exit(2);
 }
 
@@ -71,6 +81,7 @@ fn main() {
         Some("pre-tool-use") => {}
         Some("local-review-covers") => local_review_covers(&args[1..]),
         Some("git-hook") => std::process::exit(git_hook::main(&args[1..])),
+        Some("script") => std::process::exit(script::main(&args[1..])),
         _ => usage(),
     }
     let mut selected: Vec<&str> = Vec::new();

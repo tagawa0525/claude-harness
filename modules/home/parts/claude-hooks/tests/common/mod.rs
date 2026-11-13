@@ -34,6 +34,7 @@ pub fn executable(path: &Path) {
 
 /// 呼んだ側のリポジトリ（run-checks.sh を実行する git の hook の中の GIT_DIR、GIT_INDEX_FILE など）を見せない。
 /// 残すと、テストの git が外のリポジトリに当たる
+#[allow(dead_code)]
 pub fn forget_git_env(cmd: &mut Command) -> &mut Command {
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {

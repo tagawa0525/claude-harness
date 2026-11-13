@@ -29,3 +29,22 @@ pub fn gh(dir: &Path, args: &[&str]) -> Result<String, ()> {
         .trim_end_matches('\n')
         .to_string())
 }
+
+/// `gh <args>` を、対象を repo（`<owner>/<repo>`）にして起動し、標準入出力を引き継いで終了コードを返す（スクリプトの
+/// 中身。[`crate::script`]）。cwd のリポジトリに依らないよう GH_REPO を渡し、GH_HOST も固定する（gh api は GH_REPO の
+/// ホストより環境の GH_HOST を使う。GH_REPO=github.com/<owner>/<repo> でも GH_HOST のホストへつなぐことを 2026-10-12 に
+/// 確かめた）。起動できなければ理由を標準エラーに出して 1
+pub fn run_for_repo(repo: &str, args: &[&str]) -> i32 {
+    match Command::new("gh")
+        .args(args)
+        .env("GH_REPO", repo)
+        .env("GH_HOST", "github.com")
+        .status()
+    {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("ERROR: gh を起動できません（PATH に gh が無い）: {e}");
+            1
+        }
+    }
+}

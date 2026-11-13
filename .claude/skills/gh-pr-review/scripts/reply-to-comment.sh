@@ -1,22 +1,11 @@
-#!/usr/bin/env bash
-# gh-pr-review: コメント返信スクリプト
+#!/bin/sh
+# gh-pr-review: コメント返信スクリプト。中身は claude-hooks script reply-to-comment（Rust にして Windows でも jq なしで
+# 動かす）。スキルの文と PreToolUse のルールはこのスクリプトの名前とパスで呼び、見分けるので、ファイルは残して exec する
 #
 # Usage: reply-to-comment.sh <PR の URL> <comment_id> <body>
 #
 # Output: 作成された返信の情報
-
-set -euo pipefail
-
-source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/pr-url.sh"
-COMMENT_ID="${2:-}"
-BODY="${3:-}"
-
-if ! parse_pr_url "${1:-}" || [[ -z "$COMMENT_ID" ]] || [[ -z "$BODY" ]]; then
-  echo "Usage: $0 <PR の URL> <comment_id> <body>" >&2
-  exit 1
-fi
-
-# コメントに返信
-gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments/${COMMENT_ID}/replies" \
-  -f body="$BODY" \
-  --jq '{id: .id, html_url: .html_url, body: .body}'
+# Windows の Git Bash は、ネイティブのコマンドに渡す / で始まる引数（"/gh-pr-review で直した" のような本文）を Windows の
+# パスに書き換えるので、書き換えを止めて渡す
+export MSYS_NO_PATHCONV=1
+exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script reply-to-comment "$@"

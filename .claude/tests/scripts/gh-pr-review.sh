@@ -6,6 +6,26 @@
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
 
+# 中身を claude-hooks script に移したスクリプト（ADR-0087）は、ブランチでビルドしたバイナリで確かめる。lib.sh が HOME を
+# 差し替える前にビルドする（hooks.sh と同じ）。CLAUDE_HOOKS_BIN（絶対パス）で差し替えられる
+if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
+  CRATE_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/claude-hooks" && pwd)
+  source "$(dirname "$0")/../cargo-bin.sh"
+  CLAUDE_HOOKS_BIN=$(cargo_bin "$CRATE_DIR" claude-hooks) || exit 1
+fi
+if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
+  echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
+  exit 1
+fi
+# 渡されたバイナリが script を持つか（前の版を渡すと、移したスクリプトのテストがすべて「名前が無い」で落ち、古さが紛れる）
+# script の使い方の文は終了コード 2 で終わるので、出力を受けてから見る（パイプにすると pipefail で 2 が残る）
+script_usage=$("$CLAUDE_HOOKS_BIN" script 2>&1 </dev/null) || true
+if ! grep -q '^scripts: ' <<<"$script_usage"; then
+  echo "claude-hooks が script のサブコマンドを持ちません（古いバイナリ）: $CLAUDE_HOOKS_BIN" >&2
+  exit 1
+fi
+REAL_CLAUDE_HOOKS="$CLAUDE_HOOKS_BIN"
+
 source "$(dirname "$0")/../lib.sh"
 
 REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
@@ -16,13 +36,18 @@ REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
 PR_URL="https://github.com/octo/repo/pull/1"
 # decide-next.sh と request-rereview.sh は、記録の判定を claude-hooks local-review-covers に任せる（判定そのものは
 # hooks.sh が本物のバイナリで確かめる）。ここでは偽物を置き、既定では偽 gh の記録（「SHA High の数」の行）から head の
-# 最後の記録が High 0 かだけを見る。記録を取得できなければ 3。rebase だけの判定は、テストごとに偽物を置き直す
+# 最後の記録が High 0 かだけを見る。記録を取得できなければ 3。rebase だけの判定は、テストごとに偽物を置き直す。
+# script は本物に渡し、ほかのサブコマンドは使い方の誤り（2）にする（スクリプトが想定外のサブコマンドを呼べば落ちる）
 fake_hooks_exact() {
   mkdir -p "$TEST_ROOT/fakebin"
   : >"$TEST_ROOT/claude-hooks.log"
+  # 本物のパスは、引用符や $ を含んでも壊れないよう %q で埋める
+  local real
+  printf -v real '%q' "$REAL_CLAUDE_HOOKS"
   cat >"$TEST_ROOT/fakebin/claude-hooks" <<FAKE
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$TEST_ROOT/claude-hooks.log"
+[[ "\$1" == script ]] && exec $real "\$@"
 [[ "\$1" == local-review-covers ]] || exit 2
 records=\$(gh api --paginate "repos/{owner}/{repo}/issues/\$3/comments?per_page=100" --jq local-review) || exit 3
 awk -v h="\$4" '\$1 == h { c = (\$2 == "0") } END { exit !c }' <<<"\$records"
@@ -55,8 +80,10 @@ for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comme
   "$SCRIPTS_DIR/gh-wait-review.sh" "$SCRIPTS_DIR/gh-review-requests.sh"; do
   read -ra rest <<<"${REST_ARGS[$(basename "$script")]}"
   # owner と repo は案内のコマンドに書くので、GitHub の名前に使えない文字（; や空白）を含む URL も拒む
+  # . と .. の名前も拒む（gh api の {owner}/{repo} に入り、API のパスを上に辿る）
   for arg in "" 1 "https://github.com/octo/repo/issues/1" "https://example.com/octo/repo/pull/1" \
-    "https://github.com/evil;echo_PWN/repo/pull/1" "https://github.com/octo/re po/pull/1"; do
+    "https://github.com/evil;echo_PWN/repo/pull/1" "https://github.com/octo/re po/pull/1" \
+    "https://github.com/../x/pull/1" "https://github.com/octo/./pull/1"; do
     it "$(basename "$script"): PR の URL でない第 1 引数（'$arg'）は gh を呼ばずにエラー"
     make_fake_gh '"auth status"*) ;;'
     out=$("$script" "$arg" "${rest[@]}" 2>&1)
@@ -83,6 +110,14 @@ for url in "$PR_URL#discussion_r111" "$PR_URL/files#r111"; do
   assert_ne 0 $?
   assert_not_contains "$(fake_log gh)" "api"
 done
+
+it "reply-to-comment: sh から claude-hooks に引数をそのまま渡し、空白を含む本文を 1 つの body で返信する"
+make_fake_gh '"api"*) echo "{\"id\":222}" ;;'
+out=$("$REVIEW_SCRIPTS/reply-to-comment.sh" "$PR_URL" 111 "Fixed in abc.")
+assert_eq 0 $?
+assert_eq '{"id":222}' "$out"
+assert_contains "$(fake_log gh)" "api repos/{owner}/{repo}/pulls/1/comments/111/replies -f body=Fixed in abc. --jq"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 # ===========================================================================
 # gh-pr-review/scripts/get-pr-info.sh: コメント URL の解析
