@@ -64,10 +64,10 @@ hook のファイル:
   Linux は `git-hooks.nix` が store のパスで書く。Windows は `claude-setup` が `cargo install` の置き場のパスで書き、
   グローバルの `core.hooksPath` を向ける（ADR-0084）。Git for Windows は、hook を同梱の sh で実行する
 - プロジェクトのローカルの hook（`.git/hooks/<名前>`）: 今の sh は実行の権限（`[ -x ]`）で見つけて直に起動する。Windows には
-  実行の権限が無く、sh のスクリプトを直に起動できないので、Windows ではファイルがあればローカルの hook とみなし、`sh` に
-  渡して起動する（git が hook を見つけて起動するやり方と同じ）。Linux は今のまま
-- 外のコマンド: `ja-terms` は今の `CLAUDE_HOOKS_JA_TERMS` で見つける（無ければ Windows は PATH。ADR-0085）。`gitleaks`
-  と `commit-refs` も同じ形の環境変数（Linux の `package.nix` が store のパスを渡す）と PATH で見つける。Windows の手順
+  実行の権限が無く、スクリプトを直に起動できないので、Windows では git が hook を見つけて起動するやり方に合わせる
+  （どう合わせるかは、ローカルの hook を扱う実装の PR でテストとともに決める）。Linux は今のまま
+- 外のコマンド: `ja-terms` は今の `CLAUDE_HOOKS_JA_TERMS` で見つける（無ければ Windows だけ PATH。ADR-0085）。`gitleaks`
+  と `commit-refs` も同じ形にする（環境変数は Linux の `package.nix` が store のパスで渡し、無ければ Windows だけ PATH）。Windows の手順
   （README の「Windows で使う」）は、`commit-refs` も `cargo install` で入れる。見つからないときの扱いは今と同じ
   （gitleaks が無ければ止め、post-rewrite の付け直しは失敗を示して対応を残す）。書式と lint のツール（nixfmt、ruff、
   markdownlint、rustfmt と、edition を読む cargo）と `prek` は、今のとおり利用者の PATH のものを使い、無ければ飛ばす。
@@ -85,13 +85,13 @@ hook のファイル:
     `nix build` した hook のファイルで本物の検査を 1 回ずつ通すテストで確かめる（今の sh のテストの組み立てを残す）。
     Windows は CI の `setup` のジョブ
   - `main-commit-gates.sh` は、2 つの層が同じ関数に渡す入力（PreToolUse hook はコマンドを読んで実行の前に、git hook は
-    コミットの中で、ブランチとステージしたファイルを得る）の一致を確かめる結合テストに置き換える。`git commit -a` や
-    パスを渡すコミットでは、2 つの層が見るファイルの一覧が違いうる
+    コミットの中で、ブランチとステージしたファイルを得る）を同じ場合で比べる結合テストに置き換える
 - 移す順: commit-msg、post-rewrite、pre-commit（既定の検査と機密情報の検査を含む）、pre-merge-commit。hook ごとに 1 つ以上の
   PR にし、sh の実装と sh のテストは、Rust の版に付け替えた PR で消す。Windows の設置（`claude-setup` が hook のファイルを
-  置く）は、4 つが揃い、#104（CRLF の clone）を片付けた後の PR にする。揃う前に `core.hooksPath` を向けると、移していない
-  hook が走らなくなる。CRLF の clone では、pre-merge-commit が `bash` で呼ぶ `run-checks.sh` が動かず、main へのマージが
-  すべて止まる
+  置く）は、4 つが揃い、clone の改行の扱い（ADR-0084 の帰結。#104）を同期する sh のスクリプトまで決めた後の PR にする。揃う
+  前に `core.hooksPath` を向けると、移していない hook が走らなくなる。CRLF の clone では、pre-merge-commit が `bash` で呼ぶ
+  `run-checks.sh` が動かず、main へのマージがすべて止まる。途中の PR でも、pre-commit は今のとおり同じ置き場の
+  `pre-merge-commit` を呼ぶ（マージを締めるコミット）
 
 理由:
 
@@ -111,8 +111,9 @@ hook のファイル:
 - 悪い点: git hook の判定を変えるたびに、`claude-hooks` のビルドとテストが要る（sh なら hook のファイルを書き換えて
   その場で試せた。ADR-0082 の帰結と同じ）
 - 悪い点: `claude-hooks` の `package.nix` が包むものが、`ja-terms` に加えて `gitleaks` と `commit-refs` に増える
-- Windows では、4 つの hook が揃って設置されるまで、コミットとマージのメッセージの検査が走らない（README の
-  「Windows で使う」）
+- Windows では、4 つの hook が揃って設置されるまで、git hook の検査（コミットとマージのメッセージ、ローカルの main への
+  マージの品質のチェック、競合の無いマージの機密情報の検査）が走らない（README の「Windows で使う」）。PATH の
+  `staged-checks` も Linux にしか置かないので、段階 6 までは Windows の `run-checks.sh` の Markdown の段が飛ぶ
 
 ### 確認
 
