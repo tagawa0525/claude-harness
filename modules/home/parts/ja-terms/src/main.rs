@@ -55,7 +55,13 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
     if args.is_empty() {
         return Err(Failure(USAGE.to_string()));
     }
-    // textlint と同じく、どのファイルも読めることを確かめてから検査する
+    // textlint と同じく、引数をファイルの集まりにし（同じファイルは最初の引数の名前で 1 度だけ）、どのファイルも
+    // 読めることを確かめてから検査する
+    let mut seen = std::collections::HashSet::new();
+    let args: Vec<&OsString> = args
+        .iter()
+        .filter(|path| seen.insert(std::fs::canonicalize(path).unwrap_or_else(|_| path.into())))
+        .collect();
     let files = args
         .iter()
         .map(|path| read(Path::new(path)))
