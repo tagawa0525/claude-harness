@@ -644,14 +644,16 @@ else
   ng "fixup! の件名で止めた"
 fi
 
-# --- 6b. 検査する本文が空のときは textlint を呼ばない（空の標準入力だと使い方の全文を出す）---------------
+# --- 6b. 検査する本文が空のときは何も出さずに通す --------------------------------------------------------
+# commit-msg の出力の有無で見る（pre-commit の見出しの 🔍 の行は除く）
+commit_msg_quiet() { ! grep -v '^🔍 ' "$WORK/out" | grep -q .; }
 echo u > "$REPO/u.txt"
 git -C "$REPO" add u.txt
 if CLAUDECODE=1 git -C "$REPO" commit -q -m "fixup! docs: add" >"$WORK/out" 2>&1; then
-  if [ -s "$WORK/out" ] && grep -q "textlint \[options\]" "$WORK/out"; then
-    ng "本文が空の fixup! のコミットが textlint の使い方を出す"
+  if commit_msg_quiet; then
+    ok "本文が空の fixup! のコミットは何も出さない"
   else
-    ok "本文が空の fixup! のコミットは textlint を呼ばず、何も出さない"
+    ng "本文が空の fixup! のコミットが何かを出す"
   fi
 else
   ng "本文が空の fixup! のコミットが止まった"
@@ -660,10 +662,10 @@ echo s > "$REPO/s.txt"
 git -C "$REPO" add s.txt
 printf 'Merge branch x\n\n  \n\n' > "$WORK/msg"
 if CLAUDECODE=1 git -C "$REPO" commit -q -F "$WORK/msg" --cleanup=verbatim >"$WORK/out" 2>&1 \
-  && ! grep -q "textlint \[options\]" "$WORK/out"; then
-  ok "空白だけの本文の Merge のコミットは textlint を呼ばない"
+  && commit_msg_quiet; then
+  ok "空白だけの本文の Merge のコミットは何も出さずに通す"
 else
-  ng "空白だけの本文の Merge のコミットが止まる、または textlint の使い方を出す"
+  ng "空白だけの本文の Merge のコミットが止まる、または何かを出す"
 fi
 echo t > "$REPO/t.txt"
 git -C "$REPO" add t.txt

@@ -9,7 +9,7 @@
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/commit-msg-conventions.sh
 #
-# hook のファイルを nix build で作る（hook が store のパスで呼ぶ textlint と設定も一緒にビルドされる）。
+# hook のファイルを nix build で作る（hook が store のパスで呼ぶ ja-terms も一緒にビルドされる）。
 
 set -euo pipefail
 
