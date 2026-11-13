@@ -101,6 +101,7 @@ mod guard_sbatch;
 mod pre_git_merge_check;
 mod pre_merge_check;
 pub use pre_merge_check::local_review_covers_for_pr;
+pub(crate) use pre_merge_check::local_review_mark;
 mod pre_pr_create_check;
 mod require_background_wait;
 mod scratchpad_repo;

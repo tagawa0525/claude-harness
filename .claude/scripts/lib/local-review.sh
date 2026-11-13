@@ -9,9 +9,6 @@
 #   （無ければ origin から取る）、PR のリポジトリの clone の外や API や fetch の失敗で比べられなければ no（止める側）。
 #   記録を取得できなければ 1 を返す
 
-# shellcheck disable=SC2034  # record-local-review.sh が使う
-LOCAL_REVIEW_MARK='<!-- local-review '
-
 local_review_covers() {
   local head="$1" hooks_bin rc=0
   # ~/.claude/bin は Linux では claude-code.nix が、Windows では README の手順の cargo install が置く。スクリプトの

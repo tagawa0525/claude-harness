@@ -205,6 +205,12 @@ fn local_review_marks(
     )
 }
 
+/// ローカルレビューの記録のコメントの 1 行目（record-local-review が書く印）。読むのは [`local_review_marks`] と
+/// [`marks_cover`]、[`last_local_record`]、[`local_review_rebase_source`] で、`high=0 ` の字面で High の無い記録を見分ける
+pub(crate) fn local_review_mark(sha: &str, high: u64, medium: u64, low: u64) -> String {
+    format!("<!-- local-review sha={sha} high={high} medium={medium} low={low} -->")
+}
+
 /// 記録（[`local_review_marks`]）が head を覆うか（[`local_review_covers`] の判定）
 fn marks_cover(
     dir: &std::path::Path,
@@ -245,7 +251,7 @@ fn local_review_rebase_source(marks: &str) -> Option<&str> {
         .last()?
         .strip_prefix("<!-- local-review sha=")?;
     let (sha, rest) = rest.split_once(' ')?;
-    // 形は record-local-review.sh が書く 16 進の小文字。崩れた記録は High ありと同じく比較元にしない
+    // 形は record-local-review（[`local_review_mark`]）が書く 16 進の小文字。崩れた記録は High ありと同じく比較元にしない
     // （git の引数に渡すので、- で始まる値も通さない）
     (is_hex_sha(sha) && rest.starts_with("high=0 ")).then_some(sha)
 }
