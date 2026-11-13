@@ -19,5 +19,9 @@ claude_hooks_script() {
     echo "ERROR: ${claude_hooks_bin} がありません。Linux は home-manager の rebuild、Windows は claude-harness の README の「Windows で使う」の cargo install で入れてください（claude-sync はバイナリを入れない）" >&2
     exit 127
   fi
+  # 案内に書くスクリプトのパスを、呼んだ sh と同じツリーから引くため（デプロイ先の古い版を案内しない）、sh の場所を
+  # 渡す。Windows の Git Bash の pwd は /c/... の形でネイティブの exe が読めないので、-W の C:/... の形にする
+  CLAUDE_HOOKS_SCRIPT_DIR=$(cd "$(dirname "$0")" && { pwd -W 2>/dev/null || pwd; })
+  export CLAUDE_HOOKS_SCRIPT_DIR
   exec "$claude_hooks_bin" script "$@"
 }

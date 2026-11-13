@@ -60,6 +60,27 @@ pub fn output_for_repo(repo: &str, args: &[&str]) -> Result<Vec<u8>, i32> {
     Ok(out.stdout)
 }
 
+/// [`run_for_repo`] と同じく repo に向けて起動し、標準エラーを捨てて標準出力を受ける。起動できないか失敗すれば
+/// None（失敗を待ちの続きとして扱う呼び出し元のため）
+pub fn quiet_output_for_repo(repo: &str, args: &[&str]) -> Option<Vec<u8>> {
+    let out = for_repo(repo, args)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// [`run_for_repo`] と同じく repo に向けて起動し、標準出力と標準エラーを捨てて終了の状態を返す（起動できなければ Err）
+pub fn quiet_status_for_repo(
+    repo: &str,
+    args: &[&str],
+) -> std::io::Result<std::process::ExitStatus> {
+    for_repo(repo, args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+}
+
 fn for_repo(repo: &str, args: &[&str]) -> Command {
     let mut cmd = Command::new("gh");
     cmd.args(args)

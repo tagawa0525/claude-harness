@@ -129,3 +129,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   していた。`.exe` だけがあり、`.exe` を補って起動しない sh では、在ると数えた後に `not found` で止まる（PR #148 の Copilot
   のレビュー。その版のテストは入れ方の文が出ないことしか見ず、起動の失敗でも通っていた）ので、`.exe` だけがあれば
   そのパスを起動するように変え、テストは起動して 0 で終えることを確かめる
+- 2026-11-14: 案内に書くスクリプトのパス（gh-wait-review の「次の一手」の request-rereview.sh など）は、sh の版では
+  自分の場所から辿り、デプロイ先の古い版を案内しないようにしていた。Rust に移すと自分の場所が分からないので、
+  `lib/claude-hooks-script.sh` が呼んだ sh の場所を `CLAUDE_HOOKS_SCRIPT_DIR` で渡し、`script::claude_root` がそこから
+  `<root>`（`~/.claude` か、リポジトリの `.claude`）を引く（渡されなければ `~/.claude`）。Windows の Git Bash の `pwd` は
+  `/c/...` の形でネイティブの exe が読めないので、`pwd -W` の形で渡す
