@@ -118,9 +118,9 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   「## 変更」を書く
 - 検査（pre-commit、commit-msg、claude-hooks の git merge と git commit のルール、/retro の memory-index.sh）は
   ja-terms に付け替え、textlint を外した（2026-11-13）。ADR-0014、ADR-0050、ADR-0058、ADR-0073、ADR-0074 に「## 変更」を
-  書いた。実装がまだ決定に追いついていないのは、履歴の書き換えの mode と `prh_rules.py` の置き換え（#101 の段階 7）と、
-  Windows で `claude-hooks` が環境変数の無いときに PATH の `ja-terms` を探すこと（今は判定できない理由を出して通す。#115）。
-  進みは #101 に書く
+  書いた。Windows の `claude-hooks` は、環境変数の無いとき PATH の `ja-terms` を呼ぶ（#115。Windows の CI が、
+  cargo install した ja-terms で git merge と git commit のメッセージを止めることを確かめる）。実装がまだ決定に追いついて
+  いないのは、履歴の書き換えの mode と `prh_rules.py` の置き換え（#101 の段階 7）。進みは #101 に書く
 
 ### 確認
 
