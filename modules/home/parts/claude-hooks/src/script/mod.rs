@@ -10,6 +10,7 @@ mod get_pr_info;
 mod get_review_comments;
 mod gh_review_requests;
 mod gh_wait_review;
+mod git_info;
 mod git_merge_state;
 mod post_merge_cleanup;
 mod pr_url;
@@ -37,6 +38,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("get-review-comments", get_review_comments::main),
     ("gh-review-requests", gh_review_requests::main),
     ("gh-wait-review", gh_wait_review::main),
+    ("git-info", git_info::main),
     ("git-merge-state", git_merge_state::main),
     ("post-merge-cleanup", post_merge_cleanup::main),
     ("record-local-review", record_local_review::main),
