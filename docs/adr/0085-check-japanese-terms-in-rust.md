@@ -170,6 +170,12 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   報告とすべて同じになった。レビューで次の版を捨てた。
   - 拡張子 markdown も Markdown として読んだ。ja-terms-files は md だけを読み、markdown は止めるので、見る拡張子が変わる
   - `prh:disable:<pattern>` を regress の文字の単位で照合した。prh は u のフラグ無しで読むので、V8 は UTF-16 の単位で
-    照合し、`^.$` はサロゲートペアの文字に当たらない
+    照合し、`^.$` はサロゲートペアの文字に当たらない。次に一致だけを UTF-16 の単位にした版も捨てた。pattern の中の
+    サロゲートペアの文字（`prh:disable:𩸽`）が 1 つの文字のまま、2 つのサロゲートの一致に当たらない
+  - 拡張子を `Path::extension` で読んだ。`.md` のように . で始まる名前に拡張子を返さず、ja-terms-files が md と読む
+    ファイルを止める
   - 同じ位置と同じ文の報告を 1 つにまとめた（textlint の filter-duplicated-process.js）。Str の範囲は重ならず、1 つの
     Str の中の一致は重なりを外した後に同じ開始を持たないので、prh だけの報告では起きない
+  - `prh:disable:<pattern>` の `\u{…}` は、textlint と揃えず違いとして残す（今の辞書にも比べた入力にも無い）。V8 は
+    u のフラグが無いと Annex B のとおり `u` と `{…}` の文字（または繰り返し）と読むが、regress は Annex B の読み方を
+    持たず、符号位置と読む
