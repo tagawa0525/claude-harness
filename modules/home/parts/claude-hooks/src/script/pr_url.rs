@@ -60,3 +60,15 @@ pub fn parse_allowing_fragment(url: &str) -> Result<Pr, String> {
         fragment: caps.get(7).map(|m| m.as_str().to_string()),
     })
 }
+
+/// 解析の結果を受け、受けられなければ理由とスクリプトの使い方の文を標準エラーに出して None を返す
+pub fn or_usage(parsed: Result<Pr, String>, usage: &str) -> Option<Pr> {
+    match parsed {
+        Ok(pr) => Some(pr),
+        Err(why) => {
+            eprintln!("{why}");
+            eprintln!("{usage}");
+            None
+        }
+    }
+}

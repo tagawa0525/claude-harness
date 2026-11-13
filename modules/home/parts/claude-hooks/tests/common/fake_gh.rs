@@ -41,13 +41,19 @@ impl FakeGh {
 
     /// `claude-hooks script <script> <args>...` を起動する。偽の gh は gh_out を標準出力に書き、gh_exit で終わる
     pub fn run(&self, script: &str, args: &[&str], gh_out: &str, gh_exit: i32) -> Output {
+        self.run_calls(script, args, &[(gh_out, gh_exit)])
+    }
+
+    /// [`FakeGh::run`] と同じだが、gh の n 回目の起動は calls の n 番目（0 から）の標準出力と終了コードを返す。calls より
+    /// 多く起動されたら最後のものを返す
+    pub fn run_calls(&self, script: &str, args: &[&str], calls: &[(&str, i32)]) -> Output {
         let path = std::env::join_paths(
             std::iter::once(self.root.join("bin"))
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
         )
         .unwrap();
-        Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
-            .args(["script", script])
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
+        cmd.args(["script", script])
             .args(args)
             .current_dir(&self.root)
             .env("PATH", path)
@@ -57,13 +63,18 @@ impl FakeGh {
             .env("FAKE_GH_LOG", self.root.join("gh.log"))
             .env("FAKE_GH_ENV", self.root.join("gh-env.log"))
             .env("FAKE_GH_ENV_NAMES", "GH_REPO,GH_HOST")
-            .env("FAKE_GH_OUT", gh_out)
-            .env("FAKE_GH_EXIT", gh_exit.to_string())
-            .output()
-            .unwrap()
+            .env("FAKE_GH_CALLS", self.root.join("gh-calls"));
+        let (last_out, last_exit) = calls.last().expect("calls は 1 つ以上");
+        cmd.env("FAKE_GH_OUT", last_out)
+            .env("FAKE_GH_EXIT", last_exit.to_string());
+        for (i, (out, exit)) in calls.iter().enumerate() {
+            cmd.env(format!("FAKE_GH_OUT_{}", i + 1), out)
+                .env(format!("FAKE_GH_EXIT_{}", i + 1), exit.to_string());
+        }
+        cmd.output().unwrap()
     }
 
-    /// gh に渡した引数（1 回の起動で 1 行）
+    /// gh に渡した引数（1 回の起動で、空白でつないで改行で終える。引数が改行を含めば複数の行になる）
     pub fn log(&self) -> String {
         std::fs::read_to_string(self.root.join("gh.log")).unwrap_or_default()
     }

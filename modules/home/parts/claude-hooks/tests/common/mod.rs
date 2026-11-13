@@ -1,4 +1,4 @@
-//! git hook と git の起動を確かめる結合テストの共通の部品
+//! 結合テストの共通の部品（git hook と git の起動、`claude-hooks script` の偽の gh）
 
 #[allow(dead_code)]
 pub mod fake_gh;

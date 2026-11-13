@@ -8,13 +8,11 @@ const USAGE: &str = "Usage: get-pr-info.sh <PR の URL | コメントの URL>";
 const FIELDS: &str = "number,title,url,state,reviewDecision,headRefName,baseRefName";
 
 pub fn main(args: &[String]) -> i32 {
-    let pr = match pr_url::parse_allowing_fragment(args.first().map(String::as_str).unwrap_or("")) {
-        Ok(pr) => pr,
-        Err(why) => {
-            eprintln!("{why}");
-            eprintln!("{USAGE}");
-            return 1;
-        }
+    let Some(pr) = pr_url::or_usage(
+        pr_url::parse_allowing_fragment(args.first().map(String::as_str).unwrap_or("")),
+        USAGE,
+    ) else {
+        return 1;
     };
     let stdout =
         match crate::gh::output_for_repo(&pr.repo, &["pr", "view", &pr.number, "--json", FIELDS]) {
