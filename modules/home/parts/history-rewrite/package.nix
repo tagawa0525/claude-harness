@@ -7,10 +7,9 @@
   makeWrapper,
   python3,
   git,
-  textlint,
-  textlint-rule-prh,
   callPackage,
   commit-refs ? callPackage ../commit-refs/package.nix { },
+  ja-terms ? callPackage ../ja-terms/package.nix { },
 }:
 let
   python = python3.withPackages (ps: [
@@ -52,11 +51,11 @@ stdenvNoCC.mkDerivation {
       ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "--set ${k} ${v}") env)}
     runHook postInstall
   '';
-  # テストは包んだ $out/bin/history-rewrite を実行する。textlint は、書き換えた結果が hook の検査を通るかを見る
+  # テストは包んだ $out/bin/history-rewrite を実行する。ja-terms は、書き換えた結果が hook の検査を通るかを見る
   doInstallCheck = true;
   nativeInstallCheckInputs = [
     git
-    (textlint.withPackages [ textlint-rule-prh ])
+    ja-terms
   ];
   installCheckPhase = ''
     runHook preInstallCheck

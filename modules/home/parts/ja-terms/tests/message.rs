@@ -1,5 +1,5 @@
-//! `ja-terms message` と `ja-terms commit-msg` が、今の message.sh（ja-terms-message）と commit-msg-check.sh
-//! （commit-msg-check）と同じ判定と終了コードを返すこと（ADR-0085）。
+//! `ja-terms message`（本文の語）と `ja-terms commit-msg`（件名の形と長さと本文の語）の判定と文言と終了コード
+//! （ADR-0014、ADR-0058、ADR-0073、ADR-0085）。
 //!
 //! 辞書の語を 1 行に書くと、このファイルが pre-commit の語の検査に掛かるので、崩れた語は分けて書いてつなぐ。
 

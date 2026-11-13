@@ -31,16 +31,10 @@ let
   # 使わない。検証: modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、
   # commit-msg）、modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
   localHookPath = name: ''"$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
-  # 崩れた日本語の語の検査（ADR-0014）。pre-commit が ja-terms-staged を、commit-msg が commit-msg-check（中で
-  # ja-terms-message）を store のパスで呼ぶ。textlint、設定、ja-terms-message、commit-msg-check は claude-hooks の
-  # git merge と git commit のルールと共有する（./ja-terms/textlint.nix）
-  jaTermsTextlint = pkgs.callPackage ./ja-terms/textlint.nix { };
-  inherit (jaTermsTextlint) textlint;
-  jaTermsCodeExtensions = jaTermsTextlint.codeExtensions;
-  # 拡張子は大文字と小文字を問わない。prh の辞書（prh.yml）は誤った語を並べるので外す
-  jaTermsPathspecs = map (ext: ":(icase,glob)**/*.${ext}") ([ "md" ] ++ jaTermsCodeExtensions) ++ [
-    ":(exclude,glob)**/prh.yml"
-  ];
+  # 崩れた日本語の語の検査（ADR-0014、ADR-0085）。pre-commit が `ja-terms staged` を、commit-msg が
+  # `ja-terms commit-msg` を store のパスで呼ぶ。claude-hooks の git merge と git commit のルールも同じ ja-terms を
+  # 呼ぶ（./claude-hooks/package.nix）
+  ja-terms = pkgs.callPackage ./ja-terms/package.nix { };
   # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。ツールは利用者の PATH のもの
   stagedChecks = pkgs.writeShellApplication {
     name = "staged-checks";
@@ -51,19 +45,6 @@ let
       pkgs.diffutils
     ];
     text = builtins.readFile ./staged-checks.sh;
-  };
-  jaTermsStaged = pkgs.writeShellApplication {
-    name = "ja-terms-staged";
-    runtimeInputs = [
-      pkgs.git
-      pkgs.gawk
-      textlint
-    ];
-    runtimeEnv = {
-      JA_TERMS_CONFIG = "${jaTermsTextlint.config}";
-      JA_TERMS_PATHSPECS = lib.concatStringsSep "\n" jaTermsPathspecs;
-    };
-    text = builtins.readFile ./ja-terms/staged.sh;
   };
 in
 {
@@ -184,7 +165,7 @@ in
       # 日本語の崩れた語（ADR-0014）。Markdown の自動修正がステージし直した後の、コミットに入る中身
       # （ステージした版）を見る
       # 検証: modules/home/parts/tests/ja-terms.sh
-      ${jaTermsStaged}/bin/ja-terms-staged || check_failed=1
+      ${ja-terms}/bin/ja-terms staged || check_failed=1
 
       ${scanSecrets} || check_failed=1
 
@@ -338,7 +319,7 @@ in
 
   # commit-msg: Claude Code セッションのコミットに Conventional Commits を強制する。
   # 形式は決定的に判定できるため SKILL.md の文章ではなく hook で守る。
-  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多。判定は commit-msg-check）。
+  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多。判定は `ja-terms commit-msg`）。
   # 手動コミットの自由度を残すため、pre-commit の main ガードと同じく CLAUDECODE=1 のときのみ
   xdg.configFile."git/hooks/commit-msg" = {
     executable = true;
@@ -366,10 +347,10 @@ in
         exit 0
       fi
 
-      # 件名の形式と長さ、日本語の語は commit-msg-check（./ja-terms/commit-msg-check.sh）が判定する。
+      # 件名の形式と長さ、日本語の語は `ja-terms commit-msg`（./ja-terms/src/main.rs の commit_msg と src/message.rs）が判定する。
       # claude-hooks の git commit の本文を先に検査するルールが同じものを呼ぶ（ADR-0073）。
       # 検証: modules/home/parts/tests/commit-msg-conventions.sh、modules/home/parts/tests/ja-terms.sh
-      exec ${jaTermsTextlint.commitMsgCheck}/bin/commit-msg-check "$MSG_FILE"
+      exec ${ja-terms}/bin/ja-terms commit-msg "$MSG_FILE"
     '';
   };
 

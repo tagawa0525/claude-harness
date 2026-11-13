@@ -1,11 +1,10 @@
 """history-rewrite が一時的なリポジトリの履歴の語を直し、番号を付け直し、照合を通すこと（ADR-0045）。
 
-PATH の history-rewrite、commit-refs、textlint を使う（package.nix の installCheckPhase が渡す）。nix の sandbox には
+PATH の history-rewrite、commit-refs、ja-terms を使う（package.nix の installCheckPhase が渡す）。nix の sandbox には
 git の全体設定が無いので、init.defaultBranch と user をこのテストが与える。辞書の語（崩れた語）をわざと含むので、
 .textlintignore で ja-terms の検査から外す。
 """
 
-import json
 import os
 import subprocess
 import tempfile
@@ -295,22 +294,19 @@ class HistoryRewrite(unittest.TestCase):
         )
 
     def lint(self, repo: Repo, commits: list[str]) -> subprocess.CompletedProcess:
-        """コミットの .md と .py と本文に、同じ辞書の textlint（prh）を当てる"""
-        config = Path(self.tmp.name) / "textlintrc.json"
-        config.write_text(
-            json.dumps(
-                {
-                    "plugins": {"@textlint/text": {"extensions": [".py"]}},
-                    "rules": {
-                        "prh": {
-                            "rulePaths": [
-                                os.environ["HISTORY_REWRITE_DICTIONARY"],
-                                str(self.extra),
-                            ]
-                        }
-                    },
-                }
-            )
+        """コミットの .md と .py と本文に、同じ辞書を pre-commit と同じ ja-terms check で当てる"""
+        # ja-terms check は辞書を 1 つ読むので、つなぐ。書き換え（prh_rules.load）も 2 つの辞書の規則を順に並べるので、
+        # 同じ規則になる。YAML として読み直して書き出すと、YAML 1.1（PyYAML）と 1.2（ja-terms）で読み方の違う値が
+        # 変わりうるので、文のまま、足す辞書の規則の行を本物の辞書の rules の並びの後ろに足す
+        main = Path(os.environ["HISTORY_REWRITE_DICTIONARY"]).read_text(
+            encoding="utf-8"
+        )
+        extra = self.extra.read_text(encoding="utf-8")
+        head = "version: 1\nrules:\n"
+        self.assertTrue(extra.startswith(head), extra)
+        dictionary = Path(self.tmp.name) / "dictionary.yml"
+        dictionary.write_text(
+            main.rstrip("\n") + "\n" + extra[len(head) :], encoding="utf-8"
         )
         files = Path(tempfile.mkdtemp(dir=self.tmp.name))
         n = 0
@@ -326,24 +322,28 @@ class HistoryRewrite(unittest.TestCase):
             n += 1
         return subprocess.run(
             [
-                "textlint",
-                "--config",
-                str(config),
-                "--format",
-                "unix",
-                "--no-color",
-                ".",
+                "ja-terms",
+                "check",
+                "--dictionary",
+                str(dictionary),
+                *sorted(str(p) for p in files.iterdir()),
             ],
-            cwd=files,
             capture_output=True,
             text=True,
             check=False,
         )
 
-    def test_textlint_with_the_same_dictionary_finds_nothing_after_the_rewrite(self):
+    def test_the_hook_check_with_the_same_dictionary_finds_nothing_after_the_rewrite(
+        self,
+    ):
         before = self.lint(self.repo, list(self.map))
-        self.assertNotEqual(
-            before.returncode, 0, "書き換える前の履歴に、辞書の語が無い"
+        # 1 は崩れた語がある、2 は検査できなかった（辞書を読めないなど）
+        self.assertEqual(
+            before.returncode,
+            1,
+            "書き換える前の履歴に辞書の語が無いか、検査できない: "
+            + before.stdout
+            + before.stderr,
         )
         after = self.lint(self.rewritten, list(self.map.values()))
         self.assertEqual(after.returncode, 0, after.stdout + after.stderr)

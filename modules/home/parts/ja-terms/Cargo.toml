@@ -1,8 +1,8 @@
 # =============================================================================
-# ja-terms: 崩れた日本語の語の辞書（prh.yml）を読み、prh 5.4.4（textlint-rule-prh 6.0.0 が使う版）と同じ意味で文に当てるライブラリ（ADR-0085）
+# ja-terms: 崩れた日本語の語の辞書（prh.yml）を読み、prh 5.4.4（textlint-rule-prh 6.0.0 が使う版）と同じ意味で文に当てるライブラリと CLI（ADR-0085）
 # =============================================================================
-# textlint（Node.js）と history-rewrite の prh_rules.py を置き換え、Windows と Linux で同じ判定にするためのもの。
-# 呼ぶ所の付け替えは #101 で進める。
+# 検査（pre-commit、commit-msg、claude-hooks、/retro）が呼び、Windows と Linux で同じ判定にする。history-rewrite の
+# prh_rules.py の置き換えは #101 で進める。
 # =============================================================================
 [package]
 name = "ja-terms"

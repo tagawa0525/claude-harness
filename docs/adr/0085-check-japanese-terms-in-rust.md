@@ -4,7 +4,7 @@ date: 2026-11-13
 requires: [ADR-0014, ADR-0045, ADR-0047, ADR-0058, ADR-0082, ADR-0084]
 supersedes: []
 superseded-by:
-issues: ["#101"]
+issues: ["#101", "#115"]
 ---
 
 # ADR-0085: 崩れた日本語の語の検査を、prh の辞書を読む Rust の実装 1 つにし、Windows と Linux の両方で使う
@@ -116,7 +116,11 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
 - ADR-0014 の決定（textlint と textlint-rule-prh で当てる）と ADR-0058（textlint の Markdown のパーサーで見る範囲を
   決める）は textlint を外す PR で、ADR-0045 の決定（`prh_rules.py` を Python で書く）は `prh_rules.py` を外す PR で、
   「## 変更」を書く
-- 実装はまだ決定に追いついていない。進みは #101 に書く
+- 検査（pre-commit、commit-msg、claude-hooks の git merge と git commit のルール、/retro の memory-index.sh）は
+  ja-terms に付け替え、textlint を外した（2026-11-13）。ADR-0014、ADR-0050、ADR-0058、ADR-0073、ADR-0074 に「## 変更」を
+  書いた。実装がまだ決定に追いついていないのは、履歴の書き換えの mode と `prh_rules.py` の置き換え（#101 の段階 7）と、
+  Windows で `claude-hooks` が環境変数の無いときに PATH の `ja-terms` を探すこと（今は判定できない理由を出して通す。#115）。
+  進みは #101 に書く
 
 ### 確認
 

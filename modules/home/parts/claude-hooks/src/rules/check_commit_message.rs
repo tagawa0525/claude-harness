@@ -4,8 +4,8 @@
 //! 崩れた日本語の語があるコミットを拒む。git の順で pre-commit（マージを終える commit では数分の品質チェック）の
 //! 後に走り、拒まれても同じコマンドの `;` や改行の後のコマンドは古い HEAD のまま走る。pre-commit からは `-m` の
 //! 本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg が
-//! 呼ぶのと同じスクリプト（commit-msg-check。modules/home/parts/ja-terms/commit-msg-check.sh。store のパスは
-//! package.nix が包んで渡す）に、commit-msg に渡るのと同じメッセージを渡す（ADR-0073）。
+//! 呼ぶのと同じ検査（`ja-terms commit-msg`。modules/home/parts/ja-terms の src/main.rs の commit_msg と src/message.rs。store のパスは
+//! package.nix が包んで渡す）に、commit-msg に渡るのと同じメッセージを渡す（ADR-0073、ADR-0085）。
 //!
 //! 対象は本文を持つ形（`-m` / `--message`、`-F` / `--file`）。commit-msg を呼ばない形（`-n` / `--no-verify`、
 //! `--dry-run`）、ほかのコミットからメッセージを作る形（`-c` / `-C`、`--fixup`、`--squash`）、commit-msg が検査しない
@@ -16,7 +16,7 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{
-    Undecided, commit_msg_skips, earlier_writer_reason, literal,
+    JA_TERMS, Undecided, commit_msg_skips, earlier_writer_reason, literal,
 };
 use crate::git;
 use crate::git_args::{Item, items_with_values};
@@ -28,10 +28,6 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub struct CheckCommitMessage;
-
-/// commit-msg-check の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドした
-/// ものには無い）
-const COMMIT_MSG_CHECK: &str = "CLAUDE_HOOKS_COMMIT_MSG_CHECK";
 
 /// メッセージを判定できない理由
 #[derive(Debug, PartialEq)]
@@ -148,7 +144,7 @@ fn stripspace(text: &str) -> String {
     out
 }
 
-/// commit-msg-check の結果
+/// `ja-terms commit-msg` の結果
 #[derive(Debug, PartialEq)]
 enum Verdict {
     Pass,
@@ -158,7 +154,7 @@ enum Verdict {
     Failed(String),
 }
 
-/// commit-msg と同じく、メッセージをファイルで commit-msg-check に渡す。実行する場所はコマンドの行き先
+/// commit-msg と同じく、メッセージをファイルで `ja-terms commit-msg` に渡す。実行する場所はコマンドの行き先
 fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -179,6 +175,7 @@ fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
         ));
     }
     let out = Command::new(check)
+        .arg("commit-msg")
         .arg(&path)
         .current_dir(dir)
         .stdin(Stdio::null())
@@ -217,7 +214,7 @@ fn deny_reason(output: &str) -> String {
 }
 
 impl CheckCommitMessage {
-    /// `check` は commit-msg-check のパス（無ければ判定できない）。`global_hooks` は dir で見た
+    /// `check` は ja-terms のパス（無ければ判定できない）。`global_hooks` は dir で見た
     /// グローバルの core.hooksPath
     fn check_with(
         &self,
@@ -252,7 +249,7 @@ impl CheckCommitMessage {
             }
             let Some(check) = check else {
                 notice(format!(
-                    "check-commit-message: commit-msg-check のパス（環境変数 {COMMIT_MSG_CHECK}）が無いので、git commit のメッセージを判定していません（nix で包んだものだけが検査する）"
+                    "check-commit-message: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git commit のメッセージを判定していません（nix で包んだものだけが検査する）"
                 ));
                 continue;
             };
@@ -293,7 +290,7 @@ impl Rule for CheckCommitMessage {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let check = std::env::var(COMMIT_MSG_CHECK).ok();
+        let check = std::env::var(JA_TERMS).ok();
         self.check_with(input, shell, check.as_deref(), &|dir| {
             git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
         })
@@ -331,21 +328,21 @@ mod tests {
         }
     }
 
-    /// commit-msg-check の代わり。メッセージのファイルを 1 つ受け、隣の `seen` にコピーする。件名（最初の行）に
+    /// ja-terms の代わり。`commit-msg` とメッセージのファイルを受け、隣の `seen` にコピーする。件名（最初の行）に
     /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「失敗」があれば 2 で終わる（規則の実物は
     /// tests/commit-message.sh と modules/home/parts/tests/commit-msg-conventions.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
-[ $# -eq 1 ] || exit 3
-cp "$1" "$(dirname "$0")/seen"
-case "$(head -n 1 "$1")" in
-  *長すぎ*) echo "❌ 件名が 72 文字を超えています (73 文字): $(head -n 1 "$1")"; exit 1 ;;
+[ $# -eq 2 ] && [ "$1" = commit-msg ] || exit 3
+cp "$2" "$(dirname "$0")/seen"
+case "$(head -n 1 "$2")" in
+  *長すぎ*) echo "❌ 件名が 72 文字を超えています (73 文字): $(head -n 1 "$2")"; exit 1 ;;
   *失敗*) echo "boom" >&2; exit 2 ;;
 esac
 exit 0
 "#;
 
-    /// 偽の commit-msg-check。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
+    /// 偽の ja-terms。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
     #[cfg(unix)]
     struct Fake {
         dir: TempDir,
@@ -358,7 +355,7 @@ exit 0
             use std::os::unix::fs::PermissionsExt;
             let dir = TempDir::new(tag);
             git_init(&dir.0);
-            let path = dir.0.join("commit-msg-check");
+            let path = dir.0.join("ja-terms");
             std::fs::write(&path, FAKE_CHECK).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
             // 並行するテストが子を fork した直後は、書き込みに開いた fd が exec までその子に残り、実行が
@@ -717,7 +714,7 @@ exit 0
         assert!(
             take_notices()
                 .iter()
-                .any(|n| n.contains("CLAUDE_HOOKS_COMMIT_MSG_CHECK"))
+                .any(|n| n.contains("CLAUDE_HOOKS_JA_TERMS"))
         );
     }
 

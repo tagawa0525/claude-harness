@@ -35,7 +35,7 @@ trap 'rm -rf "$work"' EXIT
 failed=0
 
 # collect <pathspec>...: ステージした普通のファイルのパスとブロブとモードを PATHS、BLOBS、MODES に並べる。シンボリック
-# リンク先とサブモジュール（gitlink）は外す（--raw -z の読み方は ja-terms/staged.sh と同じ）。
+# リンク先とサブモジュール（gitlink）は外す（--raw -z の読み方は ja-terms/src/staged.rs と同じ）。
 # git の出力は一度ファイルに受ける（プロセス置換の中の失敗は set -e に見えない）
 collect() {
   git diff --cached --raw -z --no-abbrev --no-renames --diff-filter=ACMRT -- "$@" >"$work/raw"

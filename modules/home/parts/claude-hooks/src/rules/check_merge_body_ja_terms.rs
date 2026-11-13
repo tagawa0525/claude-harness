@@ -1,10 +1,11 @@
 //! check-merge-body-ja-terms: `git merge -m/-F` の本文の崩れた日本語の語を、実行の前に検査する
 //!
-//! git の hook は pre-merge-commit（run-checks --merge、数分）→ commit-msg（textlint、数秒）の順に呼ばれる。
+//! git の hook は pre-merge-commit（run-checks --merge、数分）→ commit-msg（ja-terms commit-msg）の順に呼ばれる。
 //! 本文に辞書（ja-terms の prh.yml）で崩れた語があると、数分の品質チェックを待ってから commit-msg が拒む。
 //! pre-merge-commit からは `-m` の本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの
-//! 前に走るこのルールで、commit-msg が呼ぶのと同じ検査（ja-terms-message。modules/home/parts/ja-terms/
-//! message.sh。検査する範囲と textlint の設定を持つ。store のパスは package.nix が包んで渡す）に本文を渡す（ADR-0050）。
+//! 前に走るこのルールで、commit-msg と同じ本文の語の検査（`ja-terms message`。commit-msg の hook が呼ぶ
+//! `ja-terms commit-msg` も、件名と長さを見た後に同じ検査をする。検査する範囲は modules/home/parts/ja-terms の
+//! src/message.rs が持つ。store のパスは package.nix が包んで渡す）に本文を渡す（ADR-0050、ADR-0085）。
 //!
 //! 対象は本文を持つ形（`-m` / `--message`、`-F` / `--file`）。本文の無い形（エディタ）は対象外。
 //! commit-msg を呼ばない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`、グローバルの core.hooksPath を
@@ -24,9 +25,9 @@ use std::process::{Command, Stdio};
 
 pub struct CheckMergeBodyJaTerms;
 
-/// ja-terms-message の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドした
-/// ものには無い）
-const JA_TERMS_MESSAGE: &str = "CLAUDE_HOOKS_JA_TERMS_MESSAGE";
+/// ja-terms の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドした
+/// ものには無い）。git commit のルールも使う
+pub(super) const JA_TERMS: &str = "CLAUDE_HOOKS_JA_TERMS";
 
 /// 本文を判定できない理由
 #[derive(Debug, PartialEq)]
@@ -188,7 +189,7 @@ fn heredoc_body(text: &str) -> Option<(String, bool)> {
     None
 }
 
-/// ja-terms-message（textlint）の結果
+/// `ja-terms message` の結果
 #[derive(Debug, PartialEq)]
 enum Lint {
     Clean,
@@ -198,10 +199,12 @@ enum Lint {
     Failed(String),
 }
 
-/// commit-msg と同じく、メッセージを標準入力で ja-terms-message に渡す。設定を引数で渡すので、実行する場所
-/// （コマンドの行き先。commit-msg はリポジトリの直下）は判定に効かない
+/// メッセージを標準入力で `ja-terms message` に渡す（commit-msg の hook の `ja-terms commit-msg` と同じ本文の語の
+/// 検査）。辞書はビルドに埋めてあるので、実行する場所（コマンドの行き先。commit-msg はリポジトリの直下）は判定に
+/// 効かない
 fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     let child = Command::new(check)
+        .arg("message")
         .current_dir(dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -225,16 +228,15 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     let stdout = String::from_utf8_lossy(&out.stdout);
     match out.status.code() {
         Some(0) => Lint::Clean,
-        // prh の行（`  2:1  ✓ error  誤り => 正しい語  prh`）から「誤り => 正しい語」を取り出す
+        // 報告の行（`2:1: 誤り => 正しい語`）から「誤り => 正しい語」を取り出す
         Some(1) => {
             let terms: Vec<String> = stdout
                 .lines()
                 .filter(|l| l.contains(" => "))
                 .map(|l| {
-                    let l = l.trim_end().trim_end_matches("prh").trim();
-                    l.split_once("error")
-                        .map_or(l, |(_, rest)| rest)
-                        .trim()
+                    l.splitn(3, ':')
+                        .nth(2)
+                        .map_or(l, str::trim_start)
                         .to_string()
                 })
                 .collect();
@@ -347,7 +349,7 @@ fn is_executable(_: &std::fs::Metadata) -> bool {
 }
 
 impl CheckMergeBodyJaTerms {
-    /// `check` は ja-terms-message のパス（無ければ判定できない）。`global_hooks` は dir で見た
+    /// `check` は ja-terms のパス（無ければ判定できない）。`global_hooks` は dir で見た
     /// グローバルの core.hooksPath
     fn check_with(
         &self,
@@ -390,9 +392,9 @@ impl CheckMergeBodyJaTerms {
                 }
             };
             let Some(check) = check else {
-                notice(
-                    "check-merge-body-ja-terms: ja-terms-message のパス（環境変数 CLAUDE_HOOKS_JA_TERMS_MESSAGE）が無いので、git merge の本文の語を判定していません（nix で包んだものだけが検査する）".to_string(),
-                );
+                notice(format!(
+                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge の本文の語を判定していません（nix で包んだものだけが検査する）"
+                ));
                 continue;
             };
             match lint(check, &dir, &message) {
@@ -413,7 +415,7 @@ impl Rule for CheckMergeBodyJaTerms {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let check = std::env::var(JA_TERMS_MESSAGE).ok();
+        let check = std::env::var(JA_TERMS).ok();
         self.check_with(input, shell, check.as_deref(), &|dir| {
             git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
         })
@@ -451,28 +453,28 @@ mod tests {
         }
     }
 
-    /// ja-terms-message の代わり。引数なしで呼ばれたときだけ、標準入力の「誤語」を prh の形（誤語 => 正語）で
-    /// 報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
-    /// （実物の ja-terms-message と辞書は tests/merge-ja-terms.sh が確かめる）
+    /// ja-terms の代わり。`message` で呼ばれたときだけ、標準入力の「誤語」を ja-terms message の形
+    /// （行:列: 誤語 => 正語）で報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
+    /// （実物の ja-terms と辞書は tests/merge-ja-terms.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
-[ $# -eq 0 ] || exit 3
+[ $# -eq 1 ] && [ "$1" = message ] || exit 3
 body=$(cat)
 case "$body" in
   *失敗*) echo "boom" >&2; exit 2 ;;
   *無語*) exit 1 ;;
   *誤語*)
-    printf '%s\n' "COMMIT_EDITMSG.md" "  2:1  ✓ error  誤語 => 正語  prh" "" "✖ 1 problem (1 error, 0 warnings, 0 infos)"
+    printf '%s\n' "2:1: 誤語 => 正語"
     exit 1 ;;
 esac
 exit 0
 "#;
 
-    /// 偽の ja-terms-message を置き、そのパスを返す。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
+    /// 偽の ja-terms を置き、そのパスを返す。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
     #[cfg(unix)]
     fn fake_check(dir: &TempDir) -> String {
         use std::os::unix::fs::PermissionsExt;
-        let path = dir.0.join("ja-terms-message");
+        let path = dir.0.join("ja-terms");
         std::fs::write(&path, FAKE_CHECK).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         // 並行するテストが子を fork した直後は、書き込みに開いた fd が exec までその子に残り、実行が
@@ -534,7 +536,7 @@ exit 0
         CheckMergeBodyJaTerms.check_with(&input, &Shell::parse(command), check, &global_hooks)
     }
 
-    /// git のリポジトリの中で、偽の ja-terms-message で検査する
+    /// git のリポジトリの中で、偽の ja-terms で検査する
     #[cfg(unix)]
     fn check(command: &str) -> Vec<Finding> {
         let dir = TempDir::new("check");
@@ -649,7 +651,7 @@ exit 0
         };
         assert!(why.contains("boom"), "{why}");
         assert!(matches!(
-            lint("/nonexistent/ja-terms-message", &dir.0, "確認\n"),
+            lint("/nonexistent/ja-terms", &dir.0, "確認\n"),
             Lint::Failed(_)
         ));
     }
@@ -848,7 +850,7 @@ exit 0
         assert!(
             take_notices()
                 .iter()
-                .any(|n| n.contains("ja-terms-message")),
+                .any(|n| n.contains("CLAUDE_HOOKS_JA_TERMS")),
             "判定できなかった理由を出すはず"
         );
     }

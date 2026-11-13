@@ -31,7 +31,8 @@ issues: []
 
 ### 帰結
 
-Markdown の規則が本文にも及ぶ。textlint 15.7.1 で確かめた、検査しない範囲（文書と同じ）は、インデントした
+Markdown の規則が本文にも及ぶ。textlint 15.7.1 で確かめた、検査しない範囲（文書と同じ。今は ja-terms が textlint と
+同じ範囲を切り出す。ADR-0085）は、インデントした
 コードブロック（空行の後の 4 つ以上の空白か tab の字下げ）、フェンス、ブロックの HTML、引用（`>`）、リンクの文字列、画像の代替文字列、先頭の `---` で囲んだ YAML front matter、強調（`*語*`。
 `_語_` は前後が日本語のとき強調と読まれず検査する）。閉じていないフェンスや HTML の行があると、以降の本文を検査しない。リストと表、段落は検査する。
 文書の検査も同じ範囲を見落とす。引用、リンクの文字列、強調の見落としが問題になったら、前処理（案 B）
@@ -42,3 +43,10 @@ lib/textlint-rule-prh.js の createIgnoreNodeTypes）。
 
 modules/home/parts/tests/ja-terms.sh の 6 節が、コードスパンの中は通し、外は止めることと、引用、リンクの
 文字列、強調、フェンスは通し、見出しとリストは止めることを 1 件ずつ確かめる（prh の既定が変わったときに気づく）。
+
+## 変更
+
+- 2026-11-13: 本文を Markdown として読む決定は同じまま、読む実装を textlint（`--stdin-filename COMMIT_EDITMSG.md`）から、
+  textlint と同じ Str の範囲を切り出す ja-terms（`ja-terms message`。ADR-0085）に変えた。案 C の設定の置き場の
+  「textlint.nix の `rules.prh`」は無くなり、引用、リンクの文字列、強調を検査に戻すなら ja-terms の切り出し
+  （`modules/home/parts/ja-terms/src/strs.rs`）を変える
