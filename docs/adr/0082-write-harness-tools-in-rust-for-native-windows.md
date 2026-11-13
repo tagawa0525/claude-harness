@@ -69,7 +69,7 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
   自分で持つか、PATH で見つける形に変える。どちらにするかは、移すときに検査ごとに決める。崩れた日本語の語の検査
   （ADR-0014、textlint と prh、Node.js）は、Node.js を Windows の依存として残すか、prh の辞書を Rust で読むかを、
   この ADR では決めず、PreToolUse hook を移す段階（#101 の段階 3）で、同じ検査を使う git hook（段階 4）と
-  `prh_rules.py`（段階 7）も含めて決める
+  `prh_rules.py`（段階 7）も含めて決める（ADR-0085 で、prh の辞書を Rust で読む ja-terms にすると決めた）
 - この ADR が決めないこと: Windows への配備（バイナリのビルドと置き場、settings.json への exec form の登録、
   `claude-sync` が担うスキルと CLAUDE.md の同期、git hook の設置）と、Windows での確かめ方。どちらも移す先の言語に
   よらず要る決定で、それぞれ別の ADR にする（#101 の段階 1 と 2）。`claude-sync.sh` を Rust に移すかも、配備の
