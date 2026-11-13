@@ -451,28 +451,28 @@ mod tests {
         }
     }
 
-    /// ja-terms-message の代わり。引数なしで呼ばれたときだけ、標準入力の「誤語」を prh の形（誤語 => 正語）で
-    /// 報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
-    /// （実物の ja-terms-message と辞書は tests/merge-ja-terms.sh が確かめる）
+    /// ja-terms の代わり。`message` で呼ばれたときだけ、標準入力の「誤語」を ja-terms message の形
+    /// （行:列: 誤語 => 正語）で報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
+    /// （実物の ja-terms と辞書は tests/merge-ja-terms.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
-[ $# -eq 0 ] || exit 3
+[ $# -eq 1 ] && [ "$1" = message ] || exit 3
 body=$(cat)
 case "$body" in
   *失敗*) echo "boom" >&2; exit 2 ;;
   *無語*) exit 1 ;;
   *誤語*)
-    printf '%s\n' "COMMIT_EDITMSG.md" "  2:1  ✓ error  誤語 => 正語  prh" "" "✖ 1 problem (1 error, 0 warnings, 0 infos)"
+    printf '%s\n' "2:1: 誤語 => 正語"
     exit 1 ;;
 esac
 exit 0
 "#;
 
-    /// 偽の ja-terms-message を置き、そのパスを返す。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
+    /// 偽の ja-terms を置き、そのパスを返す。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
     #[cfg(unix)]
     fn fake_check(dir: &TempDir) -> String {
         use std::os::unix::fs::PermissionsExt;
-        let path = dir.0.join("ja-terms-message");
+        let path = dir.0.join("ja-terms");
         std::fs::write(&path, FAKE_CHECK).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         // 並行するテストが子を fork した直後は、書き込みに開いた fd が exec までその子に残り、実行が
@@ -534,7 +534,7 @@ exit 0
         CheckMergeBodyJaTerms.check_with(&input, &Shell::parse(command), check, &global_hooks)
     }
 
-    /// git のリポジトリの中で、偽の ja-terms-message で検査する
+    /// git のリポジトリの中で、偽の ja-terms で検査する
     #[cfg(unix)]
     fn check(command: &str) -> Vec<Finding> {
         let dir = TempDir::new("check");
@@ -649,7 +649,7 @@ exit 0
         };
         assert!(why.contains("boom"), "{why}");
         assert!(matches!(
-            lint("/nonexistent/ja-terms-message", &dir.0, "確認\n"),
+            lint("/nonexistent/ja-terms", &dir.0, "確認\n"),
             Lint::Failed(_)
         ));
     }
@@ -848,7 +848,7 @@ exit 0
         assert!(
             take_notices()
                 .iter()
-                .any(|n| n.contains("ja-terms-message")),
+                .any(|n| n.contains("CLAUDE_HOOKS_JA_TERMS")),
             "判定できなかった理由を出すはず"
         );
     }

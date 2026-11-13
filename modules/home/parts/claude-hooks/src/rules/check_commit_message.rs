@@ -331,21 +331,21 @@ mod tests {
         }
     }
 
-    /// commit-msg-check の代わり。メッセージのファイルを 1 つ受け、隣の `seen` にコピーする。件名（最初の行）に
+    /// ja-terms の代わり。`commit-msg` とメッセージのファイルを受け、隣の `seen` にコピーする。件名（最初の行）に
     /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「失敗」があれば 2 で終わる（規則の実物は
     /// tests/commit-message.sh と modules/home/parts/tests/commit-msg-conventions.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
-[ $# -eq 1 ] || exit 3
-cp "$1" "$(dirname "$0")/seen"
-case "$(head -n 1 "$1")" in
-  *長すぎ*) echo "❌ 件名が 72 文字を超えています (73 文字): $(head -n 1 "$1")"; exit 1 ;;
+[ $# -eq 2 ] && [ "$1" = commit-msg ] || exit 3
+cp "$2" "$(dirname "$0")/seen"
+case "$(head -n 1 "$2")" in
+  *長すぎ*) echo "❌ 件名が 72 文字を超えています (73 文字): $(head -n 1 "$2")"; exit 1 ;;
   *失敗*) echo "boom" >&2; exit 2 ;;
 esac
 exit 0
 "#;
 
-    /// 偽の commit-msg-check。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
+    /// 偽の ja-terms。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
     #[cfg(unix)]
     struct Fake {
         dir: TempDir,
@@ -358,7 +358,7 @@ exit 0
             use std::os::unix::fs::PermissionsExt;
             let dir = TempDir::new(tag);
             git_init(&dir.0);
-            let path = dir.0.join("commit-msg-check");
+            let path = dir.0.join("ja-terms");
             std::fs::write(&path, FAKE_CHECK).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
             // 並行するテストが子を fork した直後は、書き込みに開いた fd が exec までその子に残り、実行が
@@ -717,7 +717,7 @@ exit 0
         assert!(
             take_notices()
                 .iter()
-                .any(|n| n.contains("CLAUDE_HOOKS_COMMIT_MSG_CHECK"))
+                .any(|n| n.contains("CLAUDE_HOOKS_JA_TERMS"))
         );
     }
 
