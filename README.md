@@ -34,10 +34,14 @@ home-manager の構成で `claude-harness.homeManagerModules.default` を import
 ネイティブの Windows（WSL を使わない）では、Nix の代わりに `cargo install` と `claude-setup` で入れる（ADR-0084）。
 今入るのは、`~/.claude` の中身（CLAUDE.md、スキル、スクリプト）、settings.json の静的な設定、PreToolUse hook と、
 現在時刻の UserPromptSubmit hook。git hook と Stop の hook（自動メモリの退避）はまだ入らない（#101 の段階 4 と 8）。
+git hook が無いので、コミットとマージのメッセージの検査（Conventional Commits、件名の長さ、日本語の語）も、
+PreToolUse hook が飛ばして走らない（hook はグローバルの `core.hooksPath` を使うリポジトリだけを検査する）。
 
-前もって、Git for Windows、rustup（MSVC の toolchain。Visual Studio の Build Tools が要る）、gh、[gitleaks](https://github.com/gitleaks/gitleaks) を入れ、
-PATH に置く（`winget install Git.Git Rustlang.Rustup GitHub.cli Gitleaks.Gitleaks`）。PreToolUse hook は、git の hook の
-無いリポジトリの `git commit` を gitleaks で調べ、gitleaks が無いとすべての `git commit` を止める。
+前もって、Git for Windows、rustup（MSVC の toolchain。Visual Studio の Build Tools が要る）、gh、jq、
+[gitleaks](https://github.com/gitleaks/gitleaks) を入れ、PATH に置く（`winget install Git.Git Rustlang.Rustup GitHub.cli jqlang.jq Gitleaks.Gitleaks`）。
+PreToolUse hook は、git の hook の無いリポジトリの `git commit` を gitleaks で調べ、gitleaks が無いとすべての `git commit` を
+止める。jq は、スキルが呼ぶ sh のスクリプト（`gh-pr-review/scripts/` など。#101 の段階 5 で Rust に移す）が使い、
+Git for Windows には入っていない。
 
 Git Bash で、clone を作るか更新してから、crate を入れ、clone のパスを渡して設置する:
 
