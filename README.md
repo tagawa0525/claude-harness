@@ -56,7 +56,7 @@ Git Bash で、clone を作るか更新してから、crate を入れ、clone �
 ```bash
 git clone https://github.com/tagawa0525/claude-harness ~/nix/claude-harness  # 2 回目からは git -C ~/nix/claude-harness pull --ff-only
 cd ~/nix/claude-harness
-for crate in claude-hooks ja-terms claude-setup; do
+for crate in claude-hooks ja-terms commit-refs claude-setup; do
   cargo install --locked --force --path "modules/home/parts/$crate"
 done
 claude-setup sync ~/nix/claude-harness
