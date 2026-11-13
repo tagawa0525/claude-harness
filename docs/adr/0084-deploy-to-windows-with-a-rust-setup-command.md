@@ -100,7 +100,7 @@ hook の登録の形:
 - Windows で使い始めるのは #101 の段階 3 から: Nix が包んで渡すもの（`claude-hooks` の `CLAUDE_HOOKS_JA_TERMS`、
   `package.nix` の `makeWrapper`）と PATH に頼る `gitleaks`、`~/.claude/bin/` に固定のパスで置く `ja-terms` を、Windows で
   どう用意するかは、ADR-0082 のとおり段階 3 で決める。崩れた語の検査は ADR-0085 で、Rust の ja-terms を `cargo install`
-  で入れ、環境変数の無い Windows の claude-hooks は PATH で探すと決めた（#115）
+  で入れ、環境変数の無い Windows の claude-hooks は PATH で探すと決めた（#115）。
   それまでに PreToolUse hook を登録すると、`gitleaks` の無い Windows では機密情報の検査ができず、`block_secret_commit.rs`
   がすべての `git commit` を止める
 - hook の登録: バイナリの hook は exec form にし、Linux も同じ形に揃える（例: `command` に
