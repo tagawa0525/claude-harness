@@ -1,0 +1,13 @@
+report.markdown:1:7: 確忍 => 確認 [Error/prh]
+report.markdown:3:5: 行なう => 行ない [Error/prh]
+report.markdown:4:8: 確忍 => 確認 [Error/prh]
+report.markdown:6:7: あいうえおかきくけこ => 長い置き換えの語 [Error/prh]
+report.markdown:6:15: の語さし => 終わりの語 [Error/prh]
+report.markdown:8:5: 確忍 => 確認 [Error/prh]
+report.markdown:14:19: 確忍 => 確認 [Error/prh]
+report.markdown:16:41: 確忍 => 確認 [Error/prh]
+report.markdown:18:7: 確忍 => 確認 [Error/prh]
+report.markdown:20:3: 険査 => 検査 [Error/prh]
+report.markdown:20:8: 行なう => 行ない [Error/prh]
+
+11 problems

@@ -6,13 +6,16 @@
 //! - 一致した文字列が expected と同じなら直さない。expected の `$1`〜`$99` は捕捉した群に置き換える
 //! - 重なった一致は、同じ開始なら長い方、違う開始なら先の方を採る
 //!
-//! prh の `prh:disable` の指示（paragraph.js）は当てない。textlint-rule-prh は Markdown の Str のノードごとに prh を
-//! 呼ぶので、指示の効く範囲はノードで決まり、全文に当てる履歴の書き換え（ADR-0045）では同じ範囲にならない。
+//! prh の `prh:disable` の指示（paragraph.js）は、検査（[`Dictionary::check`]）でだけ当てる。textlint-rule-prh は
+//! Markdown の Str のノードごとに prh を呼ぶので、指示の効く範囲はノードで決まり、全文に当てる履歴の書き換え
+//! （ADR-0045。[`Dictionary::apply`]）では同じ範囲にならない。
 //!
 //! pattern は JavaScript の正規表現として、prh と同じ u と m のフラグで regress に読ませる。
 
 mod autolink;
 mod inline;
+mod pragma;
+pub mod report;
 pub mod strs;
 
 use std::fmt;
@@ -60,6 +63,15 @@ struct Rule {
     origin: String,
 }
 
+/// 検査の報告の 1 件。textlint-rule-prh の報告の「actual => expected」
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finding {
+    /// 一致の開始（文の UTF-8 のバイト）
+    pub start: usize,
+    pub actual: String,
+    pub expected: String,
+}
+
 /// 辞書の規則の並び
 #[derive(Debug)]
 pub struct Dictionary {
@@ -98,10 +110,25 @@ impl Dictionary {
         self.rules.is_empty()
     }
 
-    /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる（prh の makeChangeSet の diffs。
-    /// textlint-rule-prh は、このうち直しが一致した文字列と同じものを除いて報告する）
+    /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる（prh の makeChangeSet の diffs から、
+    /// prh:disable の指示で外す前のもの）。textlint-rule-prh と同じ報告は [`Dictionary::check`] が作る
     pub fn diffs(&self, text: &str) -> Result<Vec<Diff>, TextError> {
-        diffs(&self.rules, &paragraphs(text))
+        let mut found = Vec::new();
+        for (offset, paragraph) in paragraphs(text) {
+            found.extend(matches(&self.rules, offset, paragraph)?);
+        }
+        Ok(prepare(found))
+    }
+
+    /// textlint-rule-prh が 1 つの Str の原文 text に出す報告を、出す順に並べる。段落ごとに prh:disable の指示で
+    /// 一致を外してから重なりを外し（prh の makeChangeSet）、forEachChange のとおり報告する
+    pub fn check(&self, text: &str) -> Result<Vec<Finding>, TextError> {
+        let mut found = Vec::new();
+        for (offset, paragraph) in paragraphs(text) {
+            let diffs = matches(&self.rules, offset, paragraph)?;
+            found.extend(pragma::Pragmas::read(paragraph, offset)?.filter(text, diffs));
+        }
+        Ok(report_changes(text, &prepare(found)))
     }
 
     /// text に規則を当てた結果
@@ -299,8 +326,8 @@ fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError>
             )));
         };
         // prh の Rule.check は spec を段落に分けずに ChangeSet にし、applyChangeSets で当てる
-        let got = diffs(std::slice::from_ref(rule), &[(0, from)])
-            .map(|d| splice(from, &prepare(d)))
+        let got = matches(std::slice::from_ref(rule), 0, from)
+            .map(|d| splice(from, &prepare(prepare(d))))
             .map_err(|e| DictionaryError(e.0))?;
         if &got != to {
             return Err(fail(format!(
@@ -311,33 +338,78 @@ fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError>
     Ok(())
 }
 
-/// 文の部分 pieces（文の中の位置と中身）ごとに規則を当て、重なりを外す（prh の ChangeSet を作るとき）
-fn diffs(rules: &[Rule], pieces: &[(usize, &str)]) -> Result<Vec<Diff>, TextError> {
+/// 段落 piece（文の中の位置 offset）にすべての規則を当てた一致（prh の Paragraph の、指示で外す前の diffs）
+fn matches(rules: &[Rule], offset: usize, piece: &str) -> Result<Vec<Diff>, TextError> {
     let mut found = Vec::new();
-    for &(offset, piece) in pieces {
-        for rule in rules {
-            for m in rule.regex.find_iter(piece) {
-                if m.start() == m.end() {
-                    // JavaScript の exec の繰り返しは、空の一致で先に進まない
-                    return Err(TextError(format!("{}: 空の文字列に一致する", rule.origin)));
-                }
-                if piece[m.range()] == rule.expected {
-                    continue;
-                }
-                let groups: Vec<Option<&str>> = m
-                    .captures
-                    .iter()
-                    .map(|r| r.clone().map(|r| &piece[r]))
-                    .collect();
-                found.push(Diff {
-                    start: offset + m.start(),
-                    end: offset + m.end(),
-                    replacement: expand(&rule.expected, &groups),
-                });
+    for rule in rules {
+        for m in rule.regex.find_iter(piece) {
+            if m.start() == m.end() {
+                // JavaScript の exec の繰り返しは、空の一致で先に進まない
+                return Err(TextError(format!("{}: 空の文字列に一致する", rule.origin)));
             }
+            if piece[m.range()] == rule.expected {
+                continue;
+            }
+            let groups: Vec<Option<&str>> = m
+                .captures
+                .iter()
+                .map(|r| r.clone().map(|r| &piece[r]))
+                .collect();
+            found.push(Diff {
+                start: offset + m.start(),
+                end: offset + m.end(),
+                replacement: expand(&rule.expected, &groups),
+            });
         }
     }
-    Ok(prepare(found))
+    Ok(found)
+}
+
+/// textlint-rule-prh の forEachChange。直しを先頭から当てながら、誤りを当てた後の文から切る。重なりは 1 度しか
+/// 外していないので、前の直しと重なる一致の誤りは、前の直しの一部になる。JavaScript と同じく UTF-16 の位置で
+/// 切る（UTF-8 のバイトで切ると、前の直しの中で切る位置が変わる）
+fn report_changes(text: &str, diffs: &[Diff]) -> Vec<Finding> {
+    // ほとんどの Str に直しは無い
+    if diffs.is_empty() {
+        return Vec::new();
+    }
+    let mut current: Vec<u16> = text.encode_utf16().collect();
+    let mut delta: isize = 0;
+    let mut findings = Vec::new();
+    // diffs は開始の順なので、UTF-16 の位置を前から数え足す
+    let (mut byte, mut unit) = (0, 0isize);
+    for d in diffs {
+        unit += text[byte..d.start].encode_utf16().count() as isize;
+        byte = d.start;
+        let length = text[d.start..d.end].encode_utf16().count() as isize;
+        let expected: Vec<u16> = d.replacement.encode_utf16().collect();
+        let from = unit + delta;
+        let actual = js_slice(&current, from, from + length);
+        if actual != expected.as_slice() {
+            findings.push(Finding {
+                start: d.start,
+                actual: String::from_utf16_lossy(actual),
+                expected: d.replacement.clone(),
+            });
+        }
+        let end = current.len() as isize;
+        current = [
+            js_slice(&current, 0, from),
+            &expected,
+            js_slice(&current, from + length, end),
+        ]
+        .concat();
+        delta += expected.len() as isize - length;
+    }
+    findings
+}
+
+/// JavaScript の String.prototype.slice。負の位置は末尾から数え、範囲の外は端に寄せる
+fn js_slice(s: &[u16], start: isize, end: isize) -> &[u16] {
+    let len = s.len() as isize;
+    let at = |i: isize| (if i < 0 { len + i } else { i }).clamp(0, len) as usize;
+    let (start, end) = (at(start), at(end));
+    if start < end { &s[start..end] } else { &[] }
 }
 
 /// prh の engine.js の段落。前の区切りの後から次の `\n{2,}` までを段落にする

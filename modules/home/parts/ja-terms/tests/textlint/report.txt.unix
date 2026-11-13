@@ -1,0 +1,17 @@
+report.txt:1:1: あいうえおかきくけこ => 長い置き換えの語 [Error/prh]
+report.txt:1:9: の語さし => 終わりの語 [Error/prh]
+report.txt:2:1: 行なう => 行ない [Error/prh]
+report.txt:2:13: 確忍 => 確認 [Error/prh]
+report.txt:3:3: 確忍 => 確認 [Error/prh]
+report.txt:3:10: 険査 => 検査 [Error/prh]
+report.txt:4:1: 確忍 => 確認 [Error/prh]
+report.txt:4:20: 確忍 => 確認 [Error/prh]
+report.txt:5:22: 確忍 => 確認 [Error/prh]
+report.txt:6:18: 険査 => 検査 [Error/prh]
+report.txt:9:1: 確忍 => 確認 [Error/prh]
+report.txt:9:6: 険査 => 検査 [Error/prh]
+report.txt:11:1: 確忍 => 確認 [Error/prh]
+report.txt:13:5: 確忍 => 確認 [Error/prh]
+report.txt:14:1: 𩸽 => ほっけ [Error/prh]
+
+15 problems

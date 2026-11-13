@@ -15,15 +15,17 @@ use std::sync::OnceLock;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 use regress::Regex;
 
+use crate::TextError;
 use crate::inline::{self, Run};
 
 /// textlint は先頭の BOM を外して読む
-fn after_bom(text: &str) -> usize {
+pub(crate) fn after_bom(text: &str) -> usize {
     if text.starts_with('\u{feff}') { 3 } else { 0 }
 }
 
 /// Markdown の Str のノードの原文の範囲（文の UTF-8 のバイト）
-pub fn markdown(text: &str) -> Vec<Range<usize>> {
+/// 空行を入れても同じ行が lazy なまま（読み直しが進まない）なら、textlint と同じ範囲を切り出せないとして止める
+pub fn markdown(text: &str) -> Result<Vec<Range<usize>>, TextError> {
     let start = after_bom(text);
     let body = &text[start..];
     let blanked = without_front_matter(body);
@@ -38,7 +40,18 @@ pub fn markdown(text: &str) -> Vec<Range<usize>> {
         let source = with_breaks(original, &breaks);
         match parse(&source) {
             Parsed::Lazy(line) => {
-                breaks.push(to_original(line, &breaks));
+                let at = to_original(line, &breaks);
+                if breaks.contains(&at) {
+                    // 報告の行と同じく、\r\n、\r、\n、U+2028、U+2029 で行を数える
+                    let before = &text[..start + at];
+                    let line = before.matches(crate::LINE_TERMINATORS).count()
+                        - before.matches("\r\n").count()
+                        + 1;
+                    return Err(TextError(format!(
+                        "{line} 行目の lazy な行を、micromark 2.11.4 と同じ形に読み直せない"
+                    )));
+                }
+                breaks.push(at);
                 breaks.sort_unstable();
             }
             Parsed::Runs(runs) => {
@@ -55,7 +68,7 @@ pub fn markdown(text: &str) -> Vec<Range<usize>> {
             }
         }
     };
-    inline::refine(text, runs)
+    Ok(inline::refine(text, runs))
 }
 
 /// remark-frontmatter の front matter（文の先頭の、開きと閉じの柵で囲んだ行）を、改行を残して空白にする。
@@ -150,7 +163,12 @@ fn with_breaks(original: &str, breaks: &[usize]) -> String {
     let mut last = 0;
     for &b in breaks {
         source.push_str(&original[last..b]);
-        source.push('\n');
+        // 単独の CR の後に \n を入れると、つないで 1 つの改行（CRLF）になり空行にならないので、同じ CR を入れる
+        source.push(if original[..b].ends_with('\r') {
+            '\r'
+        } else {
+            '\n'
+        });
         last = b;
     }
     source.push_str(&original[last..]);
@@ -185,6 +203,17 @@ enum Parsed {
     Runs(Vec<Run>),
 }
 
+/// range の中の改行（\r\n、\n、\r）の後の、行の始め。SoftBreak の範囲は行の終わりの前の空白から始まりうる
+fn line_starts(source: &str, range: Range<usize>) -> impl Iterator<Item = usize> + '_ {
+    let bytes = source.as_bytes();
+    range.filter_map(move |i| match bytes[i] {
+        b'\n' => Some(i + 1),
+        b'\r' if bytes.get(i + 1) != Some(&b'\n') => Some(i + 1),
+        _ => None,
+    })
+}
+
+/// 最初の lazy continuation の行で読むのを止めてその行を返す
 fn parse(source: &str) -> Parsed {
     // 取り消し線は inline.rs が micromark の規則で読む（pulldown-cmark は 1 つの ~ を読まない）
     let options = Options::ENABLE_TABLES
@@ -204,11 +233,25 @@ fn parse(source: &str) -> Parsed {
     // 続いている Str（mdast の text は、行の終わりをはさんだ文字の並びを 1 つのノードにする）
     let mut current: Option<Range<usize>> = None;
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
-        if let Event::SoftBreak = event {
-            let line = range.start + source[range.start..].find('\n').map_or(0, |i| i + 1);
-            if !continues(source, line, &containers) {
-                return Parsed::Lazy(line);
-            }
+        // 段落の中の行の始めを確かめる。段落は範囲の全体を見る（行をまたぐリンクの title やコードスパンの中の行には
+        // SoftBreak が無い）。tight な項目の中身は段落のタグを持たないので、改行（SoftBreak、HardBreak）と、行を
+        // またぎうるインラインの範囲も見る
+        if matches!(
+            event,
+            Event::SoftBreak
+                | Event::HardBreak
+                | Event::Code(_)
+                | Event::InlineHtml(_)
+                | Event::Start(Tag::Paragraph | Tag::Link { .. } | Tag::Image { .. })
+        ) && let Some(line) = line_starts(source, range.clone())
+            // 段落とインラインの範囲は末尾の改行を含みうるので、範囲の後の行（中身の外）は見ない。改行の
+            // イベントは範囲が改行そのものなので、次の行の始めが範囲の終わりになる
+            .filter(|&line| {
+                line < range.end || matches!(event, Event::SoftBreak | Event::HardBreak)
+            })
+            .find(|&line| !continues(source, line, &containers))
+        {
+            return Parsed::Lazy(line);
         }
         match event {
             Event::Text(_) | Event::SoftBreak if ignored == 0 => {

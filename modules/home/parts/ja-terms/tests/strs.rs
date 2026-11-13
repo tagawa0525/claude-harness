@@ -31,7 +31,7 @@ fn check(name: &str) {
     let text = std::fs::read_to_string(dir.join(name)).unwrap();
     let expected = std::fs::read_to_string(dir.join(format!("{name}.strs"))).unwrap();
     let ranges = if name.ends_with(".markdown") {
-        strs::markdown(&text)
+        strs::markdown(&text).unwrap()
     } else {
         strs::text(&text)
     };
@@ -105,7 +105,7 @@ fn a_long_run_without_an_at_sign_is_cut_in_linear_time() {
     // ならないので、負荷のある builder でも揺れないよう、上限は 2 乗の時間との差の中で十分に緩くする
     let text = "1".repeat(200_000);
     let start = std::time::Instant::now();
-    assert_eq!(strs::markdown(&text), vec![0..200_000]);
+    assert_eq!(strs::markdown(&text).unwrap(), vec![0..200_000]);
     assert!(
         start.elapsed() < std::time::Duration::from_secs(30),
         "{:?}",
@@ -121,4 +121,31 @@ fn a_url_right_after_a_byte_order_mark_is_a_link() {
 #[test]
 fn an_escaped_backslash_before_a_note_and_symbol_labels_are_read_as_micromark_does() {
     check("escapes.markdown");
+}
+
+#[test]
+fn lazy_lines_after_a_lone_carriage_return_are_cut_as_textlint_does() {
+    // 切り出しは限った時間の中で終わること。終わらないときにテストを落とすよう、別のスレッドで読む
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        check("lone-cr.markdown");
+        send.send(()).unwrap();
+    });
+    match receive.recv_timeout(std::time::Duration::from_secs(30)) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("切り出しが textlint と違う")
+        }
+        Err(e) => panic!("30 秒で終わらない: {e}"),
+    }
+}
+
+#[test]
+fn lazy_lines_inside_code_spans_and_inline_html_are_cut_as_textlint_does() {
+    check("lazy-code.markdown");
+}
+
+#[test]
+fn lazy_lines_after_hard_breaks_and_inside_link_titles_are_cut_as_textlint_does() {
+    check("lazy-break.markdown");
 }
