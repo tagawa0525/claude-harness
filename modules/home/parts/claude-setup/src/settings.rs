@@ -77,27 +77,28 @@ pub fn run(home: &Path, options: &Options) -> Result<(), String> {
             "matcher": PRE_TOOL_USE_MATCHER,
             "hooks": [{"type": "command", "command": bin, "args": ["pre-tool-use"], "timeout": PRE_TOOL_USE_TIMEOUT}],
         });
-        replace(hooks, "PreToolUse", entry, |hook| {
+        replace(&path, hooks, "PreToolUse", entry, |hook| {
             is_binary(hook, "claude-hooks", Some("pre-tool-use"))
                 || options
                     .legacy
                     .iter()
                     .any(|name| command(hook).is_some_and(|c| c.ends_with(&format!("/{name}"))))
-        });
+        })?;
     }
     replace(
+        &path,
         hooks,
         "UserPromptSubmit",
         json!({"hooks": [{"type": "command", "command": PROMPT_DATE}]}),
         |hook| command(hook).is_some_and(|c| c.starts_with(PROMPT_DATE_PREFIX)),
-    );
+    )?;
     if let Some(bin) = &options.stop {
         let entry = json!({
             "hooks": [{"type": "command", "command": bin, "args": [], "timeout": STOP_TIMEOUT}],
         });
-        replace(hooks, "Stop", entry, |hook| {
+        replace(&path, hooks, "Stop", entry, |hook| {
             is_binary(hook, "claude-memory-backup", None)
-        });
+        })?;
     }
     write_json(&path, &Value::Object(settings))
 }
@@ -150,20 +151,24 @@ fn is_binary(hook: &Value, name: &str, arg: Option<&str>) -> bool {
     file == name && args.as_array().is_some_and(|a| *a == want)
 }
 
-/// event の登録から remove に当たる hook を外し、空になった組を消して、entry を足す
+/// event の登録から remove に当たる hook を外し、空になった組を消して、entry を足す（path は失敗の文に出す
+/// settings.json）
 fn replace(
+    path: &Path,
     hooks: &mut Map<String, Value>,
     event: &str,
     entry: Value,
     remove: impl Fn(&Value) -> bool,
-) {
+) -> Result<(), String> {
     let groups = hooks
         .entry(event)
         .or_insert_with(|| Value::Array(Vec::new()));
-    if !groups.is_array() {
-        *groups = Value::Array(Vec::new());
-    }
-    let groups = groups.as_array_mut().expect("配列にした");
+    let Value::Array(groups) = groups else {
+        return Err(format!(
+            "❌ {} の hooks.{event} が配列ではありません。書き換えずに止めます",
+            path.display()
+        ));
+    };
     for group in groups.iter_mut() {
         if let Some(list) = group.get_mut("hooks").and_then(Value::as_array_mut) {
             list.retain(|hook| !remove(hook));
@@ -175,4 +180,5 @@ fn replace(
         _ => true,
     });
     groups.push(entry);
+    Ok(())
 }
