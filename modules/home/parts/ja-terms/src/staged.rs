@@ -1,15 +1,16 @@
 //! `ja-terms staged`: ステージしたファイルの崩れた日本語の語を検査する（ADR-0014、ADR-0085。前の staged.sh と同じ
-//! 判定）。グローバルの pre-commit が、リポジトリの直下で呼ぶ。
+//! 判定）。グローバルの pre-commit が呼ぶ。
 //!
 //! - 見るのはステージした中身（作業ツリーではない）の、Markdown とテキストとコードのファイル（拡張子は
 //!   [`ja_terms::report::syntax_of`]。大文字と小文字を問わない）。prh の辞書（prh.yml）は誤った語を並べるので外す
 //! - symlink の行き先とサブモジュール（gitlink）は文章ではないので外す
 //! - ステージした `.textlintignore` に挙げたファイルを外す。書き方は gitignore と同じなので、git 自身に当てさせる
 //!
-//! 出力は `ja-terms check` と同じ形で、パスはリポジトリの直下からのもの。終了コード: 0 = 崩れた語が無い、
+//! 出力は `ja-terms check` と同じ形で、パスはリポジトリの直下からのもの（どのディレクトリで呼んでも同じ）。終了コード: 0 = 崩れた語が無い、
 //! 1 = 崩れた語がある、2 = 検査できなかった
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ja_terms::Dictionary;
@@ -17,9 +18,13 @@ use ja_terms::report::{self, TEXT_EXTENSIONS};
 
 use crate::{Failure, print};
 
-/// git を実行し、標準出力を返す
-fn git(args: &[&str]) -> Result<Vec<u8>, Failure> {
-    let out = Command::new("git")
+/// git を実行し、標準出力を返す。top は -C で渡すディレクトリ（リポジトリの直下）
+fn git(top: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, Failure> {
+    let mut command = Command::new("git");
+    if let Some(top) = top {
+        command.arg("-C").arg(top);
+    }
+    let out = command
         .args(args)
         .output()
         .map_err(|e| Failure(format!("git を起動できない: {e}")))?;
@@ -35,7 +40,7 @@ fn git(args: &[&str]) -> Result<Vec<u8>, Failure> {
 }
 
 /// ステージしたファイルの (パス, ブロブ)。symlink とサブモジュールを除く
-fn staged_files() -> Result<Vec<(String, String)>, Failure> {
+fn staged_files(top: &Path) -> Result<Vec<(String, String)>, Failure> {
     let mut pathspecs: Vec<String> = ["md"]
         .iter()
         .chain(TEXT_EXTENSIONS.iter())
@@ -56,7 +61,7 @@ fn staged_files() -> Result<Vec<(String, String)>, Failure> {
         "--",
     ];
     args.extend(pathspecs.iter().map(String::as_str));
-    let out = git(&args)?;
+    let out = git(Some(top), &args)?;
     let mut fields = out.split(|&b| b == 0).filter(|f| !f.is_empty());
     let mut files = Vec::new();
     while let (Some(meta), Some(path)) = (fields.next(), fields.next()) {
@@ -74,17 +79,20 @@ fn staged_files() -> Result<Vec<(String, String)>, Failure> {
 }
 
 /// ステージした .textlintignore に当たる、インデックスのファイルのパス
-fn ignored() -> Result<HashSet<String>, Failure> {
-    if git(&["cat-file", "-e", ":.textlintignore"]).is_err() {
+fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
+    if git(Some(top), &["cat-file", "-e", ":.textlintignore"]).is_err() {
         return Ok(HashSet::new());
     }
-    let patterns = git(&["show", ":.textlintignore"])?;
+    let patterns = git(Some(top), &["show", ":.textlintignore"])?;
     // --exclude-from はファイルを読むので、一時のファイルに書く
     let path = std::env::temp_dir().join(format!("ja-terms-ignore-{}", std::process::id()));
     std::fs::write(&path, patterns)
         .map_err(|e| Failure(format!("{} に書けない: {e}", path.display())))?;
     let exclude = format!("--exclude-from={}", path.display());
-    let listed = git(&["ls-files", "-z", "--cached", "--ignored", &exclude]);
+    let listed = git(
+        Some(top),
+        &["ls-files", "-z", "--cached", "--ignored", &exclude],
+    );
     let _ = std::fs::remove_file(&path);
     Ok(listed?
         .split(|&b| b == 0)
@@ -94,11 +102,15 @@ fn ignored() -> Result<HashSet<String>, Failure> {
 }
 
 pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
-    let files = staged_files()?;
+    // git diff --cached --raw は直下からのパスを出すが、pathspec と git ls-files は今のディレクトリから読むので、
+    // どの git も直下で実行する
+    let top = git(None, &["rev-parse", "--show-toplevel"])?;
+    let top = PathBuf::from(String::from_utf8_lossy(&top).trim_end_matches('\n'));
+    let files = staged_files(&top)?;
     if files.is_empty() {
         return Ok(0);
     }
-    let ignored = ignored()?;
+    let ignored = ignored(&top)?;
     let files: Vec<_> = files
         .into_iter()
         .filter(|(path, _)| !ignored.contains(path))
@@ -112,7 +124,8 @@ pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
     for (path, blob) in &files {
         // pathspec が拡張子で選んでいる
         let syntax = report::syntax_of(path).expect("pathspec の拡張子");
-        let text = String::from_utf8_lossy(&git(&["cat-file", "blob", blob])?).into_owned();
+        let text =
+            String::from_utf8_lossy(&git(Some(&top), &["cat-file", "blob", blob])?).into_owned();
         match report::check(dictionary, &text, syntax) {
             Ok(reports) => {
                 for r in &reports {
