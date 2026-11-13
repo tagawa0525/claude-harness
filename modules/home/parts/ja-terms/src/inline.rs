@@ -75,8 +75,15 @@ fn inline_notes(text: &str, run: Range<usize>) -> Vec<Range<usize>> {
     let mut search = run.start;
     while let Some(found) = text[search..run.end].find("^[") {
         let open = search + found;
-        // 逃がした \^[ は注でない
-        if text[..open].ends_with('\\') {
+        // 逃がした \^[ は注でない（\ の数が奇数なら ^ を逃がしている）
+        if text[..open]
+            .bytes()
+            .rev()
+            .take_while(|&b| b == b'\\')
+            .count()
+            % 2
+            == 1
+        {
             search = open + 2;
             continue;
         }
