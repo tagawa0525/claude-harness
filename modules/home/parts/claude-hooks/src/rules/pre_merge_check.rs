@@ -1099,6 +1099,31 @@ mod tests {
     }
 
     #[test]
+    fn the_record_that_record_local_review_writes_covers_its_head() {
+        let head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let dir = std::path::Path::new(".");
+        let never = || -> Option<String> {
+            panic!("記録が head を覆うなら、リベースを確かめない")
+        };
+        assert!(marks_cover(
+            dir,
+            &local_review_mark(head, 0, 2, 1),
+            head,
+            never
+        ));
+        assert!(!marks_cover(
+            dir,
+            &local_review_mark(head, 1, 0, 0),
+            head,
+            || None
+        ));
+        assert_eq!(
+            local_review_rebase_source(&local_review_mark(head, 0, 0, 0)),
+            Some(head)
+        );
+    }
+
+    #[test]
     fn rebase_source_is_none_without_records() {
         assert_eq!(local_review_rebase_source(""), None);
     }
