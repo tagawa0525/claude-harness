@@ -52,7 +52,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 呼ばれ方:
 
 - 案 A: スクリプトのファイル（`~/.claude/scripts/` と `~/.claude/skills/gh-pr-review/scripts/` の `<名前>.sh`）の名前と場所を変えず、中身を `claude-hooks script <名前> "$@"`
-  を exec するだけの 1 行にする
+  を起動するだけの sh にする
 - 案 B: スキルの文と hook のルールを、新しいコマンドの名前に書き換え、スクリプトのファイルを消す
 
 ## 決定と理由
@@ -65,8 +65,9 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   呼ぶだけの sh にする。`claude_hooks_script` は `"${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
   を exec し（`lib/local-review.sh` と同じ引き方。PATH で引かない）、バイナリが無ければ入れ方を示して 127 で終える。
   スキルの文と hook のルールは変えない。Windows では Git Bash がこの sh を実行し、jq を使わない
-- Windows の置き場: crate を `cargo install --root ~/.claude` で `~/.claude/bin/` に入れ、Linux と同じパスで引く（Git Bash は
-  `.exe` を補って実行する）。settings.json と git hook の登録もこのパスを指し、`ja-terms` と `commit-refs` は
+- Windows の置き場: crate を `cargo install --root ~/.claude` で `~/.claude/bin/` に入れ、Linux と同じパスで引く
+  （`claude_hooks_script` は、拡張子の無いパスが無く `.exe` だけがあれば `.exe` のパスを起動する。`.exe` を補って起動
+  しない sh でも動くように）。settings.json と git hook の登録もこのパスを指し、`ja-terms` と `commit-refs` は
   `claude-hooks` の隣のものを起動する。スキルと修正方法の文が名前で呼ぶ `claude-setup` と `commit-refs` のため、
   `~/.claude/bin` を Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
 - `lib/` の部品: source されるので、呼ぶだけの sh にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
@@ -124,3 +125,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   （get-review-comments.sh、get-latest-review.sh）を移すと、その前で案内なしに止まった（`.claude/tests/scripts/gh-pr-review.sh`
   の「claude-hooks が無ければ、入れ直しを案内して止める」が落ちた）。decide-next.sh の確認の順を入れ替えても、次に移す
   スクリプトがまたその前に来るので、入れ方を示すのを sh の共通の部品（`lib/claude-hooks-script.sh`）に移した
+- 2026-11-14: `claude_hooks_script` は、はじめ `.exe` の付いたパスも在るものとして数え、起動は拡張子の無いパスのまま exec
+  していた。`.exe` だけがあり、`.exe` を補って起動しない sh では、在ると数えた後に `not found` で止まる（PR #148 の Copilot
+  のレビュー。その版のテストは入れ方の文が出ないことしか見ず、起動の失敗でも通っていた）ので、`.exe` だけがあれば
+  そのパスを起動するように変え、テストは起動して 0 で終えることを確かめる
