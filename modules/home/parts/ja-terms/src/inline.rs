@@ -12,6 +12,8 @@ pub struct Run {
     pub cell_end: Option<usize>,
     /// インラインを持つブロックの番号
     pub block: usize,
+    /// 参照のリンクの文字列の中か
+    pub in_label: bool,
 }
 
 /// 補正の途中の Str
@@ -24,7 +26,13 @@ pub fn refine(text: &str, runs: Vec<Run>) -> Vec<Range<usize>> {
     let mut pieces = Vec::new();
     // literal autolink の終わり。パスは空白か行の終わりまで続き、後のコードスパンや Str を含みうる
     let mut covered = 0;
+    // ブロックの中の、閉じていない [ の数。micromark は閉じていないリンクの文字列の中で literal autolink を作らない
+    // （syntax.js の previous(events)。閉じる前の [ の後の URL は、後で閉じてもリンクにならない）
+    let mut open_brackets = (usize::MAX, 0usize);
     for mut run in runs {
+        if open_brackets.0 != run.block {
+            open_brackets = (run.block, 0);
+        }
         // Str の先頭の逃がした文字（\`、表のセルの \| など）は、pulldown-cmark が \ を範囲から外す（mdast の text は含む）
         if text[..run.range.start].ends_with('\\')
             && text[run.range.start..].starts_with(|c: char| c.is_ascii_punctuation())
@@ -36,7 +44,19 @@ pub fn refine(text: &str, runs: Vec<Run>) -> Vec<Range<usize>> {
                 continue;
             }
             range.start = range.start.max(covered);
-            for piece in autolinks(text, range, run.cell_end, &mut covered) {
+            let pieces_of_range = if run.in_label {
+                vec![range.clone()]
+            } else {
+                autolinks(
+                    text,
+                    range.clone(),
+                    run.cell_end,
+                    &mut covered,
+                    open_brackets.1,
+                )
+            };
+            open_brackets.1 = brackets_after(&text[range], open_brackets.1);
+            for piece in pieces_of_range {
                 pieces.push(Piece {
                     range: piece,
                     block: run.block,
@@ -90,12 +110,29 @@ fn closing_bracket(s: &str) -> Option<usize> {
     None
 }
 
-/// literal autolink（Link になり、textlint-rule-prh が見ない）を Str から外す
+/// s を読んだ後の、閉じていない [ の数（逃がした括弧は数えない）
+fn brackets_after(s: &str, mut open: usize) -> usize {
+    let mut escaped = false;
+    for c in s.chars() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '[' => open += 1,
+            ']' => open = open.saturating_sub(1),
+            _ => {}
+        }
+    }
+    open
+}
+
+/// literal autolink（Link になり、textlint-rule-prh が見ない）を Str から外す。open は range の前の、閉じていない
+/// [ の数
 fn autolinks(
     text: &str,
     range: Range<usize>,
     cell_end: Option<usize>,
     covered: &mut usize,
+    open: usize,
 ) -> Vec<Range<usize>> {
     let line_end = text[range.end..]
         .find('\n')
@@ -104,6 +141,9 @@ fn autolinks(
     let mut result = Vec::new();
     let mut last = range.start;
     for link in autolink::find(text, range.start, range.end, limit) {
+        if brackets_after(&text[range.start..link.start], open) > 0 {
+            continue;
+        }
         // 行の始めの literal autolink の前の字下げは、mdast の text に入らない
         let before = &text[last..link.start];
         let end = match before.rfind('\n') {

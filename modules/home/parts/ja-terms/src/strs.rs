@@ -49,6 +49,7 @@ pub fn markdown(text: &str) -> Vec<Range<usize>> {
                         range: back(r.range.start)..back(r.range.end),
                         cell_end: r.cell_end.map(back),
                         block: r.block,
+                        in_label: r.in_label,
                     })
                     .collect::<Vec<_>>();
             }
@@ -181,7 +182,7 @@ fn parse(source: &str) -> Parsed {
     // 見ないノード（textlint-rule-prh が子を見ないノードと、Str を持たないブロック）の深さ
     let mut ignored = 0usize;
     // 開いているリンクごとに、見ないリンクか（参照のリンクは mdast の linkReference で、textlint-rule-prh は見る）
-    let mut links = Vec::new();
+    let mut links: Vec<bool> = Vec::new();
     // 開いている表のセルの終わり
     let mut cell_end = None;
     // インラインを持つブロックの番号（取り消し線の組はブロックの中で作る）
@@ -207,6 +208,7 @@ fn parse(source: &str) -> Parsed {
                 range,
                 cell_end,
                 block,
+                in_label: links.iter().any(|&ignored| !ignored),
             })),
         }
         if let Event::Start(tag) = &event
@@ -267,6 +269,7 @@ fn parse(source: &str) -> Parsed {
         range,
         cell_end,
         block,
+        in_label: links.iter().any(|&ignored| !ignored),
     }));
     Parsed::Runs(runs)
 }
