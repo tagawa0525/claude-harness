@@ -176,6 +176,6 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
     ファイルを止める
   - 同じ位置と同じ文の報告を 1 つにまとめた（textlint の filter-duplicated-process.js）。Str の範囲は重ならず、1 つの
     Str の中の一致は重なりを外した後に同じ開始を持たないので、prh だけの報告では起きない
-  - `prh:disable:<pattern>` の `\u{…}` は、textlint と揃えず違いとして残す（今の辞書にも比べた入力にも無い）。V8 は
-    u のフラグが無いと Annex B のとおり `u` と `{…}` の文字（または繰り返し）と読むが、regress は Annex B の読み方を
-    持たず、符号位置と読む
+- 2026-11-13: `prh:disable:<pattern>` の `\u{…}` は、textlint と揃えず違いとして残す（今の辞書にも比べた入力にも無い）。
+  V8 は u のフラグが無いと Annex B のとおり `u` と `{…}` の文字（または繰り返し）と読むが、regress は Annex B の読み方を
+  持たず、符号位置と読む
