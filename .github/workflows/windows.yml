@@ -64,6 +64,47 @@ jobs:
           claude-setup sync "$PWD"
           claude-setup settings --static modules/home/parts/claude-settings.json \
             --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
+      # 同期した sh のスクリプトは LF でないと Git Bash で動かない。runner の Git for Windows は core.autocrlf=true で、
+      # checkout が CRLF にしうる（#104）。grep は Windows ではテキストのファイルの CR を外してから照合するので（-U の
+      # 無いとき）使わず、tr で CR だけを残して wc で数える（数を出すので、$(...) が CR を落としても数は変わらない）。
+      # 確かめ方そのものが CR を見つけることを、CRLF のファイルで毎回確かめてから調べる
+      - name: Check the synced files use LF
+        run: |
+          set -euo pipefail
+          # 数えられなければ（tr が読めない）止める。代入で受けるので、失敗が set -e に届く（[ ] の中の $(...) は届かない）
+          crs() { tr -cd '\r' < "$1" | wc -c; }
+          probe=$(mktemp)
+          trap 'rm -f "$probe"' EXIT
+          printf 'x\r\n' > "$probe"
+          n=$(crs "$probe")
+          if [ "$n" -eq 0 ]; then
+            echo "CR を数える確かめ方が、CRLF のファイルの CR を見つけません"
+            exit 1
+          fi
+          # && でつなぐと、最後以外の失敗は set -e に届かないので、1 つずつ確かめる
+          test -d ~/.claude/scripts
+          test -d ~/.claude/skills
+          test -f ~/.claude/CLAUDE.md
+          targets=(~/.claude/CLAUDE.md ~/.claude/scripts ~/.claude/skills)
+          if [ -d ~/.claude/commands ]; then
+            targets+=(~/.claude/commands)
+          fi
+          # プロセス置換の中の find の失敗は set -e に届かないので、ファイルに受けてから読む
+          list=$(mktemp)
+          trap 'rm -f "$probe" "$list"' EXIT
+          find "${targets[@]}" -type f -print0 > "$list"
+          crlf=""
+          while IFS= read -r -d '' f; do
+            n=$(crs "$f")
+            if [ "$n" -ne 0 ]; then
+              crlf+="$f"$'\n'
+            fi
+          done < "$list"
+          if [ -n "$crlf" ]; then
+            echo "CR を含む同期したファイル:"
+            printf '%s' "$crlf"
+            exit 1
+          fi
       - name: Check the registered hook
         run: |
           set -euo pipefail

@@ -1,0 +1,4 @@
+# 作業ツリーを OS と利用者の core.autocrlf に依らず LF で取り出す。Git for Windows の既定（core.autocrlf=true）の
+# clone では、~/.claude に同期する sh のスクリプト（run-checks.sh など）が CRLF になり、Git Bash で動かない（#104）。
+# 改行を確かめるテストのファイルは、下の階層の .gitattributes で -text にしてある
+* text=auto eol=lf

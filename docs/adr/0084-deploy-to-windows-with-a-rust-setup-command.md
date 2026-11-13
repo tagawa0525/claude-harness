@@ -135,7 +135,9 @@ hook の登録の形:
   同じ）。settings.json の PreToolUse の登録の形も、shell form から exec form に変わる
 - git hook は #101 の段階 4 まで、Stop の hook（自動メモリの退避）は段階 8 まで、Windows に置かれない
 - Git for Windows の既定（`core.autocrlf=true`）の clone では、同期する sh のスクリプトが CRLF になり、Git Bash で
-  動かない。clone の改行の扱いは #104 で決める
+  動かない。clone の直下の `.gitattributes`（`* text=auto eol=lf`）で、新しい checkout を OS と利用者の `core.autocrlf` に依らず
+  LF で取り出すようにした（PR #139。Windows の CI の `setup` が、同期したファイルに CR が無いことを確かめる）。design-records が
+  CRLF の作業ツリー（利用者のほかのリポジトリ）を読めるかは #104 に残る
 - 設置のコマンドの crate は `claude-setup`（`modules/home/parts/claude-setup`）。同期は `claude-setup sync` に移し、Linux の
   `claude-sync` と activation もそれを呼ぶ（2026-11-13）。settings.json の更新も `claude-setup settings` に移し、静的な設定は
   `modules/home/parts/claude-settings.json` に置く。activation は jq を使わず、このファイルのパスをコマンドに渡す（Nix で
