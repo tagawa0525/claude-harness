@@ -37,13 +37,15 @@ fn random_plans() -> Vec<String> {
         .filter_map(Result::ok)
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let meta = e.metadata().ok()?;
-            (meta.is_file() && name.ends_with(".md") && !numbered(&name)).then(|| {
-                (
-                    meta.modified().unwrap_or(std::time::UNIX_EPOCH),
-                    format!("{PLANS_DIR}/{name}"),
-                )
-            })
+            // symlink は先を辿る（計画書が別の場所への symlink でも数える）。隠しファイルは数えない（*.md の glob と同じ）
+            let meta = std::fs::metadata(e.path()).ok()?;
+            (meta.is_file() && !name.starts_with('.') && name.ends_with(".md") && !numbered(&name))
+                .then(|| {
+                    (
+                        meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+                        format!("{PLANS_DIR}/{name}"),
+                    )
+                })
         })
         .collect();
     plans.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
