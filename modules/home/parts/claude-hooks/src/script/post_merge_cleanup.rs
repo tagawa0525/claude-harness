@@ -64,18 +64,18 @@ fn worktree_of(list: &str, branch: &str) -> Option<String> {
     found
 }
 
-/// name のコマンドが PATH にあるか（sh の command -v と同じく、起動はしない。--version などに答えない偽物もある）
-fn on_path(name: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| {
-        dir.join(name).is_file() || (cfg!(windows) && dir.join(format!("{name}.exe")).is_file())
-    })
+/// PATH で name を探したパス（Windows は PATHEXT の .cmd なども探す。起動はしない。--version などに答えない偽物もある）
+fn tool(name: &str) -> Option<PathBuf> {
+    crate::staged_checks::find_on_path(name)
 }
 
 fn gh_available() -> bool {
-    on_path("gh")
+    tool("gh").is_some()
+}
+
+/// 見つけたパスの gh（Command は拡張子の無い名前に .exe しか足さない）
+fn gh() -> Command {
+    Command::new(tool("gh").unwrap_or_else(|| PathBuf::from("gh")))
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -273,7 +273,7 @@ fn trace(branch: &str, remote: &str, main_root: &str) -> Result<(), i32> {
     }
     // gh pr list は新しい順に返す。名前だけで照らすので、別のリポジトリのブランチと同じ名前の古い PR でも通る。どの PR
     // を痕跡にしたかを NOTE で見せ、呼ぶ側が自分の PR かを読めるようにする
-    let out = Command::new("gh")
+    let out = gh()
         .args([
             "pr",
             "list",
@@ -470,7 +470,7 @@ fn reservations() -> Result<(), i32> {
         println!("RESERVATIONS_RELEASED: kept (origin に届かない。予約のタグは残した)");
         return Ok(());
     }
-    match Command::new("design-records")
+    match Command::new(tool("design-records").unwrap_or_else(|| PathBuf::from("design-records")))
         .arg("prune")
         .stderr(std::process::Stdio::inherit())
         .output()
@@ -507,7 +507,7 @@ fn reservations() -> Result<(), i32> {
 }
 
 fn design_records_available() -> bool {
-    on_path("design-records")
+    tool("design-records").is_some()
 }
 
 /// 段階 5: リモートのブランチを消す
@@ -532,7 +532,7 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
             println!("REMOTE_BRANCH: kept (gh がないため open PR の有無を確認できない)");
             return Ok(());
         }
-        let open = Command::new("gh")
+        let open = gh()
             .args([
                 "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--jq",
                 "length",
