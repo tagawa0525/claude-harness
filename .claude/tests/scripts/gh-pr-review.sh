@@ -78,8 +78,10 @@ for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comme
   "$SCRIPTS_DIR/gh-wait-review.sh" "$SCRIPTS_DIR/gh-review-requests.sh"; do
   read -ra rest <<<"${REST_ARGS[$(basename "$script")]}"
   # owner と repo は案内のコマンドに書くので、GitHub の名前に使えない文字（; や空白）を含む URL も拒む
+  # . と .. の名前も拒む（gh api の {owner}/{repo} に入り、API のパスを上に辿る）
   for arg in "" 1 "https://github.com/octo/repo/issues/1" "https://example.com/octo/repo/pull/1" \
-    "https://github.com/evil;echo_PWN/repo/pull/1" "https://github.com/octo/re po/pull/1"; do
+    "https://github.com/evil;echo_PWN/repo/pull/1" "https://github.com/octo/re po/pull/1" \
+    "https://github.com/../x/pull/1" "https://github.com/octo/./pull/1"; do
     it "$(basename "$script"): PR の URL でない第 1 引数（'$arg'）は gh を呼ばずにエラー"
     make_fake_gh '"auth status"*) ;;'
     out=$("$script" "$arg" "${rest[@]}" 2>&1)
