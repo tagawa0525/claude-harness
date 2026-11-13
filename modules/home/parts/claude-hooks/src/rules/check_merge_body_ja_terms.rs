@@ -40,7 +40,8 @@ pub(crate) fn ja_terms() -> Option<String> {
 /// 環境変数のパスが先（空の値はパスでない）。無ければ、Nix のラッパーの無い Windows（ja-terms を cargo install で
 /// 入れる。ADR-0084、ADR-0085）は名前の `ja-terms` で起動する（Windows の起動は、PATH の前に claude-hooks の置き場と
 /// システムのディレクトリも探す。cargo install の置き場は同じ）。Linux で環境変数が無いのは cargo で直接ビルドした
-/// もので、判定できない理由を出して通す（PATH の別の版で判定しない）
+/// もので、None を返す（PATH の別の版で判定しない）。None のときの扱いは呼び出し元が決める（PreToolUse のルールは
+/// 判定できない理由を出して通し、commit-msg の git hook は止める）
 fn ja_terms_from(env: Option<String>, windows: bool) -> Option<String> {
     env.filter(|path| !path.is_empty())
         .or_else(|| windows.then(|| "ja-terms".to_string()))
@@ -363,7 +364,7 @@ fn deny_reason(output: &str) -> String {
 
 /// commit-msg が検査しない所か: git のリポジトリの外（コミットできない）、グローバルの core.hooksPath
 /// （commit-msg の置き場）を使わないリポジトリ、`upstream` リモートのある fork、ローカルの commit-msg に置き換わる
-/// リポジトリ（modules/home/parts/git-hooks.nix の commit-msg と同じ判定）
+/// リポジトリ（commit-msg の git hook の crate::git_hook と同じ判定。ローカルの hook は git::local_hook で探す）
 pub(super) fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool {
     // リポジトリの外の `git config --get` はグローバルの値を返すので、置き場の比較より先に見る
     let Some(common) = git::git(
@@ -380,20 +381,7 @@ pub(super) fn commit_msg_skips(dir: &Path, global_hooks: Option<String>) -> bool
     if git::is_fork(dir) {
         return true;
     }
-    std::fs::metadata(Path::new(&common).join("hooks/commit-msg"))
-        .is_ok_and(|m| m.is_file() && is_executable(&m))
-}
-
-#[cfg(unix)]
-fn is_executable(m: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    m.permissions().mode() & 0o111 != 0
-}
-
-/// Windows のファイルには実行の bit が無く、Git for Windows は hook のファイルがあれば実行する
-#[cfg(not(unix))]
-fn is_executable(_: &std::fs::Metadata) -> bool {
-    true
+    git::local_hook(Path::new(&common), "commit-msg").is_some()
 }
 
 impl CheckMergeBodyJaTerms {

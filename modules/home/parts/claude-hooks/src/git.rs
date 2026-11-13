@@ -84,6 +84,33 @@ pub fn is_fork(dir: &Path) -> bool {
     git(dir, &["remote", "get-url", "upstream"]).is_some()
 }
 
+/// ローカルの hook（`<git の共通のディレクトリ>/hooks/<名前>`）。linked worktree でも共通の .git/hooks にある
+/// （--git-path hooks/… は core.hooksPath、つまりグローバルの hook 自身を指すので使わない）。core.hooksPath を
+/// 向けると git はローカルの hook を探さないので、git と同じ規則で探す: Unix は実行の bit のあるファイル、Windows は
+/// 実行の bit が無く、ファイルがあれば hook とみなし、`<名前>.exe` も探す（Git for Windows の find_hook）。
+/// commit-msg の git hook（crate::git_hook）と、それを先回りする PreToolUse のルールが使う
+pub fn local_hook(common: &Path, name: &str) -> Option<std::path::PathBuf> {
+    let hooks = common.join("hooks");
+    let mut candidates = vec![hooks.join(name)];
+    if cfg!(windows) {
+        candidates.push(hooks.join(format!("{name}.exe")));
+    }
+    candidates
+        .into_iter()
+        .find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && is_executable(&m)))
+}
+
+#[cfg(unix)]
+fn is_executable(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_: &std::fs::Metadata) -> bool {
+    true
+}
+
 pub fn current_branch(dir: &Path) -> String {
     git(dir, &["branch", "--show-current"]).unwrap_or_default()
 }

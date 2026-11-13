@@ -7,7 +7,7 @@
 //!   崩れた日本語の語。PreToolUse hook の check-commit-message が同じ検査を先に呼ぶ）。手で打つコミットの自由を残す
 //!   ため、Claude Code の外のコミットは検査しない
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use crate::git;
@@ -33,8 +33,19 @@ pub fn main(args: &[String]) -> i32 {
 
 fn commit_msg(args: &[String]) -> i32 {
     let dir = Path::new(".");
+    // 前の sh は `set -e` の下でこの rev-parse に失敗すると止まった。ローカルの hook を探せないまま通すと、
+    // プロジェクトの commit-msg（Change-Id を足すものなど）を飛ばす
+    let Some(common) = git::git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ) else {
+        eprintln!(
+            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの commit-msg を探せません（理由は上の出力）"
+        );
+        return 1;
+    };
     // ローカルの hook には、git から受けた引数をそのまま渡す（引数の数を確かめるのはこちらの検査だけ）
-    if let Some(local) = local_hook(dir, "commit-msg") {
+    if let Some(local) = git::local_hook(Path::new(&common), "commit-msg") {
         return run_local(&local, args);
     }
     let [file] = args else {
@@ -62,29 +73,6 @@ fn commit_msg(args: &[String]) -> i32 {
         Command::new(&ja_terms).arg("commit-msg").arg(file),
         &ja_terms,
     )
-}
-
-/// プロジェクトのローカルの hook。linked worktree でも共通の .git/hooks にある（--git-path hooks/… は core.hooksPath、
-/// つまりこの hook 自身を指すので使わない）。Unix は実行の権限のあるファイル、Windows は実行の権限が無いので、
-/// git と同じくファイルがあれば hook とみなす
-fn local_hook(dir: &Path, name: &str) -> Option<PathBuf> {
-    let common = git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?;
-    let path = Path::new(&common).join("hooks").join(name);
-    let meta = std::fs::metadata(&path).ok()?;
-    if !meta.is_file() {
-        return None;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if meta.permissions().mode() & 0o111 == 0 {
-            return None;
-        }
-    }
-    Some(path)
 }
 
 /// ローカルの hook を、git から受けた引数のまま実行する。Windows はスクリプトを直に起動できないので、Git for Windows の
