@@ -991,6 +991,7 @@ fake_gitleaks() {
       ok)   body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]' ;;"$'\n' ;;
       fail) body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo 'error: x' >&2; exit 2 ;;"$'\n' ;;
       err)  body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]'; echo 'ERR git diff failed' >&2 ;;"$'\n' ;;
+      warn) body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]'; echo 'ERR [git] warning: CRLF will be replaced by LF' >&2; echo 'ERR error=stderr is not empty' >&2 ;;"$'\n' ;;
       *)    body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '$spec'; exit 1 ;;"$'\n' ;;
     esac
   done
@@ -1047,11 +1048,15 @@ out=$(run_hook block-secret-commit 'cd sub && git commit -m "chore: a"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "conf.txt:3"
 
-it "block-secret-commit: -a の --pre-commit では、git の警告（CRLF の変換など）を失敗とみなさない"
+it "block-secret-commit: git の警告（CRLF の変換など）は失敗とみなさず、ほかのエラーの行は失敗とみなす"
 # gitleaks 8.30.1 は、作業ツリーとの git diff の警告を ERR [git] warning: … として標準エラーに出し、0 を返す
-fake_gitleaks ok err
+fake_gitleaks ok warn
 out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
 assert_eq allow "$(decision "$out")"
+# 警告でないエラーの行は、--pre-commit でも検査できなかったとみなす
+fake_gitleaks ok err
+out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
+assert_eq deny "$(decision "$out")"
 
 it "block-secret-commit: 対象のディレクトリを決められないときは、git の hook に任せて通す（#281）"
 fake_gitleaks "$LEAK_JSON" ok

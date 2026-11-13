@@ -137,6 +137,24 @@ fn errors_on_stderr_mean_the_scan_did_not_run() {
 }
 
 #[test]
+fn git_warnings_passed_through_by_gitleaks_are_not_failures() {
+    // gitleaks 8.30.1 は git diff の警告（CRLF の変換など）を、色を付けた ERR [git] warning: の行と、それに付ける
+    // stderr is not empty の行で出し、0 を返す（scratchpad の一時のリポジトリで本物の出力をコピーした）
+    let repo = Repo::new();
+    let err = "\x1b[90m8:39PM\x1b[0m \x1b[31mERR\x1b[0m \x1b[1m[git] warning: in the working copy of 'a.txt', CRLF will be replaced by LF the next time Git touches it\x1b[0m\n\x1b[90m8:39PM\x1b[0m \x1b[31mERR\x1b[0m \x1b[36merror=\x1b[0m\x1b[31m\x1b[1m\"stderr is not empty\"\x1b[0m\x1b[0m\n";
+    let out = repo.scan(&[("FAKE_TOOL_ERR", err)], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+}
+
+#[test]
+fn a_failure_after_exit_zero_is_not_called_an_exit_failure() {
+    let repo = Repo::new();
+    let out = repo.scan(&[("FAKE_TOOL_ERR", "ERR [git] fatal: bad object\n")], &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!said(&out).contains("exit 0"), "{}", said(&out));
+}
+
+#[test]
 fn an_exit_of_one_without_findings_is_a_failure_not_a_leak() {
     // gitleaks は設定を読めないなどの失敗でも 1 を返す
     let repo = Repo::new();
