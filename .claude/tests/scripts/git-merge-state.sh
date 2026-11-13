@@ -11,6 +11,8 @@ DESIGN_RECORDS_BIN=$(cargo_bin "$DESIGN_RECORDS_DIR" design-records) || exit 1
 PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"
 export PATH
 
+# 中身は claude-hooks script git-merge-state（ADR-0087）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 SCRIPT="$SCRIPTS_DIR/git-merge-state.sh"
@@ -252,14 +254,14 @@ out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
-it "git-merge-state: 挙げた ADR のファイルがあって design-records が PATH に無ければ ERROR で止まる"
+it "git-merge-state: design-records が PATH に無くても、ADR の status を読んで PROPOSED_ADRS を出す"
+# status は claude-hooks が design-records の crate で読み、design-records のコマンドを起動しない
 NODR="$TEST_ROOT/no-design-records"
 mkdir -p "$NODR"
-for tool in bash git sed tr grep sort awk mktemp; do ln -s "$(command -v "$tool")" "$NODR/$tool"; done
+for tool in bash git sed tr grep sort awk mktemp dirname; do ln -s "$(command -v "$tool")" "$NODR/$tool"; done
 out=$(cd "$TEST_ROOT/p1" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
-assert_eq 1 $?
-assert_contains "$out" "ERROR: design-records"
-assert_not_contains "$out" "PROPOSED_ADRS:"
+assert_eq 0 $?
+assert_contains "$out" "PROPOSED_ADRS: ADR-"
 
 it "git-merge-state: 挙げた番号の ADR のファイルが無ければ、design-records が PATH に無くても none を出す"
 out=$(cd "$TEST_ROOT/p7" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
@@ -365,18 +367,6 @@ assert_ne 0 $?
 assert_not_contains "$out" "PROPOSED_ADRS:"
 assert_contains "$out" "ERROR:"
 
-it "git-merge-state: Refs: の値を絞る grep が失敗（2）したら、none にせず失敗する"
-FAKEGREP="$TEST_ROOT/fake-grep"
-mkdir -p "$FAKEGREP"
-REAL_GREP=$(command -v grep)
-# 入力を読み切ってから失敗する（読まずに終わると、前段が SIGPIPE で落ち、grep の失敗を見ないまま pipefail が止める）
-printf '#!/usr/bin/env bash\nif [[ "$1" == -xE ]]; then cat >/dev/null; exit 2; fi\nexec %q "$@"\n' "$REAL_GREP" > "$FAKEGREP/grep"
-chmod +x "$FAKEGREP/grep"
-out=$(cd "$TEST_ROOT/p1" && PATH="$FAKEGREP:$PATH" "$SCRIPT" feat/x 2>&1)
-assert_ne 0 $?
-assert_not_contains "$out" "PROPOSED_ADRS:"
-assert_contains "$out" "ERROR:"
-
 it "git-merge-state: docs/adr の無いリポジトリでは、design-records が PATH に無くても続行する"
 out=$(cd "$TEST_ROOT/p5" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 0 $?
@@ -440,5 +430,10 @@ assert_eq 1 "$(git -C "$REPO" rev-list --count --merges main)"
 "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x >/dev/null
 assert_eq "" "$(git -C "$REPO" branch --list feat/x)"
 cd "$TEST_ROOT" || exit 1
+
+it "git-merge-state: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPT" 2>&1)
+assert_eq 127 $?
+assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
 
 finish
