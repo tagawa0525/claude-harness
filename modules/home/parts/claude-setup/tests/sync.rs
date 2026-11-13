@@ -249,7 +249,7 @@ fn without_arguments_stops_off_the_default_branch_or_with_drafts() {
     home.stops(&format!("git -C {clone_path} switch main"));
     home.git(&clone, &["switch", "-q", "main"]);
     write(&clone.join(".claude/CLAUDE.md"), "draft");
-    home.stops(&format!("claude-setup sync {clone_path}"));
+    home.stops(&format!("claude-sync {clone_path}"));
     home.git(&clone, &["restore", ".claude/CLAUDE.md"]);
     // 同期しない場所の書きかけでは止めない
     write(&clone.join(".claude/notes.txt"), "memo");
@@ -257,7 +257,7 @@ fn without_arguments_stops_off_the_default_branch_or_with_drafts() {
     std::fs::remove_file(clone.join(".claude/notes.txt")).unwrap();
     // 同期する場所の、追跡していない新しいファイルでは止める
     write(&clone.join(".claude/skills/new/SKILL.md"), "wip");
-    home.stops(&format!("claude-setup sync {clone_path}"));
+    home.stops(&format!("claude-sync {clone_path}"));
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn without_arguments_stops_when_the_clone_cannot_pull() {
     let clone = home.clone_dir();
     write(&clone.join(".claude/CLAUDE.md"), "local");
     home.git(&clone, &["commit", "-qam", "docs: local"]);
-    home.stops(&format!("claude-setup sync {}", clone.display()));
+    home.stops(&format!("claude-sync {}", clone.display()));
 }
 
 #[test]
@@ -364,4 +364,51 @@ fn a_missing_source_is_an_error() {
     let out = home.sync(Some(&home.0.join("missing")));
     assert_eq!(out.status.code(), Some(1));
     assert!(stderr(&out).contains("ソースが見つかりません"));
+}
+
+#[test]
+fn an_empty_argument_means_the_default_clone() {
+    // 空の変数を渡したとき（claude-sync "$REPO"）に、今のディレクトリの .claude を同期しない
+    let home = Home::new();
+    write(&home.clone_dir().join(".claude/CLAUDE.md"), "harness");
+    write(&home.0.join(".claude/CLAUDE.md"), "cwd project");
+    let out = home.sync(Some(Path::new("")));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.dest("CLAUDE.md")), "harness");
+}
+
+#[cfg(unix)]
+#[test]
+fn symbolic_links_are_copied_as_links() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    std::os::unix::fs::symlink("s", src.join(".claude/skills/alias")).unwrap();
+    // 親を指すリンクで止まらない
+    std::os::unix::fs::symlink("..", src.join(".claude/skills/s/up")).unwrap();
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let link = home.dest("skills/alias");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("s"));
+}
+
+#[cfg(unix)]
+#[test]
+fn files_only_in_the_destination_become_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    let old = home.dest("skills/old/SKILL.md");
+    write(&old, "old");
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o444)).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    let mode = std::fs::metadata(&old).unwrap().permissions().mode();
+    assert_eq!(mode & 0o200, 0o200, "{mode:o}");
 }
