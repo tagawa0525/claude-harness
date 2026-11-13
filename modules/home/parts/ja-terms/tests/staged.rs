@@ -32,13 +32,20 @@ struct Repo(PathBuf);
 
 impl Repo {
     fn new() -> Repo {
+        Repo::named(std::ffi::OsString::new())
+    }
+
+    /// 名前の前に prefix を付けたディレクトリのリポジトリ
+    fn named(prefix: std::ffi::OsString) -> Repo {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("staged");
-        let dir = base.join(format!(
+        let mut name = prefix;
+        name.push(format!(
             "{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::SeqCst)
         ));
+        let dir = base.join(name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(base.join("gitconfig"), "").unwrap();
@@ -324,4 +331,19 @@ fn an_unreadable_blob_keeps_the_earlier_reports_and_fails() {
         report.contains("❌ 語の検査が失敗しました（z.md: "),
         "{report}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_repository_under_a_name_that_is_not_utf8_is_checked() {
+    use std::os::unix::ffi::OsStringExt;
+    // Latin-1 の é（UTF-8 として読めないバイト）を含む名前
+    let repo = Repo::named(std::ffi::OsString::from_vec(b"caf\xe9-".to_vec()));
+    repo.stage(".textlintignore", "fixtures/**\n");
+    repo.stage("fixtures/case.md", "# t\n\n{B}の結果。\n");
+    repo.stage("doc.md", "# t\n\n{B}の結果。\n");
+    let out = repo.staged();
+    assert!(stops(&out));
+    assert!(stdout(&out).contains("\ndoc.md:3:1: "));
+    assert!(!stdout(&out).contains("fixtures/case.md"));
 }
