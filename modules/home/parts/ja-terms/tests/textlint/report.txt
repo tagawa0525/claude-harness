@@ -10,3 +10,4 @@ b 確忍
 
 最後の 確忍
 𩸽 prh:disable:^.$
+𩸽 prh:disable:𩸽

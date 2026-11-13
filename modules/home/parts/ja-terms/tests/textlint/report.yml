@@ -19,7 +19,7 @@ rules:
     pattern: 確忍
   - expected: 検査
     pattern: 険査
-  # prh:disable:<pattern> の pattern は u のフラグ無しで読むので、. は UTF-16 の 1 単位に当たり、サロゲートペアの
-  # 文字の全体には当たらない
+  # prh:disable:<pattern> の pattern は u のフラグ無しで読むので、pattern も一致も UTF-16 の単位で照合する。. は
+  # 1 単位に当たり、サロゲートペアの文字の全体には当たらない。pattern の中のサロゲートペアの文字は 2 単位の並び
   - expected: ほっけ
     pattern: 𩸽
