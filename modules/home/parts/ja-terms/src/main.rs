@@ -57,18 +57,22 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
     }
     // textlint と同じく、引数をパスの字面でファイルの集まりにし（同じファイルは最初の引数の名前で 1 度だけ）、
     // どのファイルも読めることを確かめてから検査する
+    // ファイルは、textlint と同じく字面で外したパスで読む（OS に .. を任せると symlink を辿った先の親になる）
     let mut seen = std::collections::HashSet::new();
-    let args: Vec<&OsString> = args
+    let mut args_and_files = Vec::new();
+    for arg in args {
+        let resolved = resolve(Path::new(arg))?;
+        if seen.insert(resolved.clone()) {
+            args_and_files.push((arg, resolved));
+        }
+    }
+    let files = args_and_files
         .iter()
-        .filter(|path| seen.insert(resolve(Path::new(path))))
-        .collect();
-    let files = args
-        .iter()
-        .map(|path| read(Path::new(path)))
+        .map(|(arg, resolved)| read(Path::new(arg), resolved))
         .collect::<Result<Vec<_>, _>>()?;
     let mut out = String::new();
     let mut total = 0;
-    for (path, (syntax, text)) in args.iter().zip(&files) {
+    for ((path, _), (syntax, text)) in args_and_files.iter().zip(&files) {
         let path = path.to_string_lossy();
         let reports = report::check(&dictionary, text, *syntax)
             .map_err(|e| Failure(format!("{path}: {e}")))?;
@@ -94,9 +98,10 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
 }
 
 /// Node.js の path.resolve と同じく、絶対パスにして . と .. を字面で外す（symlink は辿らない）
-fn resolve(path: &Path) -> std::path::PathBuf {
+fn resolve(path: &Path) -> Result<std::path::PathBuf, Failure> {
     use std::path::Component;
-    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let absolute = std::path::absolute(path)
+        .map_err(|e| Failure(format!("絶対パスにできません: {}（{e}）", path.display())))?;
     let mut out = std::path::PathBuf::new();
     for component in absolute.components() {
         match component {
@@ -107,11 +112,12 @@ fn resolve(path: &Path) -> std::path::PathBuf {
             other => out.push(other),
         }
     }
-    out
+    Ok(out)
 }
 
 /// ファイルの読み方と中身。UTF-8 でない並びは、Node.js の読み込みと同じく U+FFFD にする
-fn read(path: &Path) -> Result<(Syntax, String), Failure> {
+/// path は引数（名前と表示に使う）、file は読むパス
+fn read(path: &Path, file: &Path) -> Result<(Syntax, String), Failure> {
     // ja-terms-files と同じく、名前に . があれば最後の . の後（.md の拡張子は md。Path::extension は . で始まる名前に
     // 拡張子を返さない）
     let name = path.file_name().map(|n| n.to_string_lossy());
@@ -130,7 +136,7 @@ fn read(path: &Path) -> Result<(Syntax, String), Failure> {
             )));
         }
     };
-    let bytes = std::fs::read(path)
+    let bytes = std::fs::read(file)
         .map_err(|e| Failure(format!("読めません: {}（{e}）", path.display())))?;
     Ok((syntax, String::from_utf8_lossy(&bytes).into_owned()))
 }
