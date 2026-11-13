@@ -5,6 +5,7 @@
 mod get_latest_review;
 mod get_pr_info;
 mod get_review_comments;
+mod gh_review_requests;
 mod pr_url;
 mod record_local_review;
 mod reply_to_comment;
@@ -16,6 +17,7 @@ pub fn main(args: &[String]) -> i32 {
         Some("get-latest-review") => get_latest_review::main(&args[1..]),
         Some("get-pr-info") => get_pr_info::main(&args[1..]),
         Some("get-review-comments") => get_review_comments::main(&args[1..]),
+        Some("gh-review-requests") => gh_review_requests::main(&args[1..]),
         Some("record-local-review") => record_local_review::main(&args[1..]),
         Some("reply-to-comment") => reply_to_comment::main(&args[1..]),
         Some("reset-rounds") => reset_rounds::main(&args[1..]),
@@ -23,7 +25,7 @@ pub fn main(args: &[String]) -> i32 {
         _ => {
             eprintln!("Usage: claude-hooks script <名前> [引数]...");
             eprintln!(
-                "scripts: get-latest-review, get-pr-info, get-review-comments, record-local-review, reply-to-comment, reset-rounds, resolve-thread"
+                "scripts: get-latest-review, get-pr-info, get-review-comments, gh-review-requests, record-local-review, reply-to-comment, reset-rounds, resolve-thread"
             );
             eprintln!("{}", crate::OLDER_THAN_CALLER);
             2
