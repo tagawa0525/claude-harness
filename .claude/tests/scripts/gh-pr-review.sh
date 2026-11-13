@@ -109,6 +109,14 @@ for url in "$PR_URL#discussion_r111" "$PR_URL/files#r111"; do
   assert_not_contains "$(fake_log gh)" "api"
 done
 
+it "reply-to-comment: sh から claude-hooks に引数をそのまま渡し、空白を含む本文を 1 つの body で返信する"
+make_fake_gh '"api"*) echo "{\"id\":222}" ;;'
+out=$("$REVIEW_SCRIPTS/reply-to-comment.sh" "$PR_URL" 111 "Fixed in abc.")
+assert_eq 0 $?
+assert_eq '{"id":222}' "$out"
+assert_contains "$(fake_log gh)" "api repos/{owner}/{repo}/pulls/1/comments/111/replies -f body=Fixed in abc. --jq"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
+
 # ===========================================================================
 # gh-pr-review/scripts/get-pr-info.sh: コメント URL の解析
 # ===========================================================================
