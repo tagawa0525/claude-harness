@@ -1,5 +1,5 @@
 //! `claude-hooks git-hook <名前> [引数]...`: グローバルの git hook の中身（ADR-0086）。hook のファイルは、これを呼ぶだけの
-//! sh（Linux は modules/home/parts/git-hooks.nix、Windows は claude-setup が置く）。終了コードは git に返す
+//! sh で、modules/home/parts/git-hooks.nix が置く（Windows の設置は、4 つの hook を移した後。ADR-0086）。終了コードは git に返す
 //! （0 以外は git がコミットを止める）。
 //!
 //! - commit-msg <メッセージのファイル>: ローカルの commit-msg があればそれに任せる。Claude Code のセッション
