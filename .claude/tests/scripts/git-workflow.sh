@@ -14,6 +14,8 @@ DESIGN_RECORDS_BIN=$(cargo_bin "$DESIGN_RECORDS_DIR" design-records) || exit 1
 PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"
 export PATH
 
+# worktree-add などは claude-hooks script に移した（ADR-0087）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 # gh を呼ばれたら失敗する状態を既定にする（呼ばれないことの検証にもなる）
@@ -330,26 +332,8 @@ assert_eq 0 $?
 assert_not_contains "$out" "SHARED:"
 assert_file_missing "$TEST_ROOT/share5/app-feat-noshare/references"
 
-REPO="$TEST_ROOT/share9/app"
-setup_share_repo "$REPO" '/one\n/two\n' 'one\ntwo\n'
-mkdir -p "$REPO/one" "$REPO/two"
-cd "$REPO" || exit 1
-# two の ln -s だけを失敗させる偽の ln
-REAL_LN=$(type -P ln)
-mkdir -p "$TEST_ROOT/fail-ln"
-cat > "$TEST_ROOT/fail-ln/ln" <<FAKE
-#!/usr/bin/env bash
-[[ "\${*: -1}" == */two ]] && exit 1
-exec "$REAL_LN" "\$@"
-FAKE
-chmod +x "$TEST_ROOT/fail-ln/ln"
-
-it "worktree-add: symlink を作る途中で失敗したら、作った symlink を消してエラーにし、SHARED を出さない"
-out=$(PATH="$TEST_ROOT/fail-ln:$PATH" "$SCRIPTS_DIR/worktree-add.sh" feat/ln-fails 2>&1)
-assert_eq 1 $?
-assert_contains "$out" "two の symlink を作れませんでした"
-assert_not_contains "$out" "SHARED:"
-assert_eq "no" "$([[ -L "$TEST_ROOT/share9/app-feat-ln-fails/one" ]] && echo yes || echo no)"
+# symlink を作る途中で失敗したときに作った symlink を消すことは、claude-hooks の worktree_add.rs の単体テストが
+# 確かめる（作り方を差し替えて失敗させる）
 
 REPO="$TEST_ROOT/share7/app"
 setup_share_repo "$REPO" '/foo\n' ':foo\n'
