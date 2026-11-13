@@ -127,8 +127,9 @@ fn cleanup(branch: &str) -> Result<(), i32> {
         .to_string();
     // メインの worktree でチェックアウトしているブランチ（worktree を作らずに作業した）は、メインの worktree を消さずに、
     // 段階 2 で既定のブランチへ切り替える
-    let in_main = worktree_of(&list, branch).as_deref() == Some(main_root.as_str());
-    let wt_path = worktree_of(&list, branch).filter(|_| !in_main);
+    let branch_wt = worktree_of(&list, branch);
+    let in_main = branch_wt.as_deref() == Some(main_root.as_str());
+    let wt_path = branch_wt.filter(|_| !in_main);
     let default_root = worktree_of(&list, default);
     // 以降は既定のブランチの worktree（どこにもチェックアウトされていなければメインの worktree）で行う。今いる
     // worktree が対象のものでも、無関係なブランチのものでも、そこでは既定のブランチへ switch できない
@@ -138,11 +139,12 @@ fn cleanup(branch: &str) -> Result<(), i32> {
         return Err(1);
     }
 
-    trace(branch, &remote, &main_root)?;
-    merged(branch, default, default_root.as_deref())?;
+    // 手元だけで決まる確認を、ネットワークに行く痕跡とマージ済みかの確認（fetch する）より先にする
     if in_main {
         main_worktree_can_switch(branch, default, &main_root, default_root.as_deref())?;
     }
+    trace(branch, &remote, &main_root)?;
+    merged(branch, default, default_root.as_deref())?;
 
     match &wt_path {
         Some(wt) => {
@@ -181,7 +183,10 @@ fn main_worktree_can_switch(
 ) -> Result<(), i32> {
     if git(&["-C", main_root, "status", "--porcelain"]).is_none_or(|s| !s.is_empty()) {
         eprintln!(
-            "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。/git-commit でコミットしてから、もう一度実行してください。何も変えていません"
+            "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。何も変えていません"
+        );
+        eprintln!(
+            "  修正方法: 変更を退避する（git stash、または {default} から作った新しいブランチにコミットする）か捨ててから、もう一度実行する。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる"
         );
         return Err(1);
     }
