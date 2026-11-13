@@ -43,8 +43,8 @@ pre-merge-commit の中で先に検査することもできない。
   0.33 秒、正しい本文は 0.28〜0.33 秒、本文の無い `git merge` は 5〜11 ミリ秒。ほかの計算が走る時刻では 0.5 秒ほどに
   延びた（textlint を直に呼んで 0.52〜0.54 秒）
 - 判定は commit-msg と同じにする。commit-msg の語の検査（件名が Merge / fixup! / squash! / Revert なら件名を除く、
-  scissors の行から後を除く、空白だけなら検査しない）を 1 つの CLI（`ja-terms message`。
-  `modules/home/parts/ja-terms/src/message.rs`。ADR-0085）にまとめ、commit-msg とこのルールが同じものを呼ぶ。commit-msg が呼ばれない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`。後ろのオプションが勝つ。
+  scissors の行から後を除く、空白だけなら検査しない）を 1 か所（`modules/home/parts/ja-terms/src/message.rs`。ADR-0085）に
+  まとめ、commit-msg（`ja-terms commit-msg` の中）とこのルール（`ja-terms message`）が同じ検査をする。commit-msg が呼ばれない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`。後ろのオプションが勝つ。
   グローバルの core.hooksPath を使わないリポジトリ）と、commit-msg が検査を飛ばすリポジトリ（`upstream` リモートのある fork、ローカルの commit-msg に
   置き換わるリポジトリ）では、このルールも検査しない。commit-msg より厳しく止めると、git が通すマージまで止める
 - 最初の版は、検査する範囲（件名を除く、scissors）を Rust で書き直し、textlint と設定だけを共有した。ローカルの
@@ -100,6 +100,7 @@ pre-merge-commit の中で先に検査することもできない。
 - 2026-11-13: このルールが呼ぶ語の検査を、textlint のスクリプトから Rust の `ja-terms message` に変えた（commit-msg の hook は
   `ja-terms commit-msg` を呼び、その中で同じ本文の語の検査をする）。
   前は「scissors の行から後を除く、空白だけなら textlint を呼ばない、textlint の設定と引数）を 1 つのスクリプト
-  （ja-terms-message。`modules/home/parts/ja-terms/message.sh`、`textlint.nix`）にまとめ」。判定と終了コードは同じで、
+  （ja-terms-message。`modules/home/parts/ja-terms/message.sh`、`textlint.nix`）にまとめ、commit-msg とこのルールが
+  同じものを呼ぶ」。判定と終了コードは同じで、
   報告の行は「行:列: 誤り => 正しい語」になった（ルールはそこから「誤り => 正しい語」を取り出す）。store のパスの環境変数は
   `CLAUDE_HOOKS_JA_TERMS`。Windows の機械に Node.js を入れずに同じ判定にするため（ADR-0085）
