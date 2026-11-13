@@ -12,6 +12,8 @@
 //! - `PARENT_MODE`: 作業ディレクトリの親の権限（Unix の 8 進。Windows は何も書かない）を 1 行ずつ足すファイル
 //! - `ENV`: `ENV_NAMES`（`,` 区切り）の環境変数を、`名前=値`（無ければ `名前` だけ）で 1 行ずつ足すファイル
 //! - `EXIT`: 終了コード（既定は 0）
+//! - `CALLS`: 起動の回数を数えるファイル（起動ごとに 1 行足す）。あれば、n 回目（1 から）の起動は `OUT_<n>` と `EXIT_<n>` を
+//!   `OUT` と `EXIT` より先に読む（1 回の実行で同じコマンドを何度も起動し、呼び出しごとに違う応答が要るテストのため）
 
 use std::io::{Read, Write};
 
@@ -88,13 +90,21 @@ fn main() {
             .write_all(&input)
             .expect("標準出力に書ける");
     }
-    if let Some(out) = var("OUT") {
+    let call = var("CALLS").map(|path| {
+        append(Some(path.clone()), "CALLS", b"\n");
+        std::fs::read(&path).expect("CALLS を読める").len()
+    });
+    let per_call = |key: &str| {
+        call.and_then(|n| var(&format!("{key}_{n}")))
+            .or_else(|| var(key))
+    };
+    if let Some(out) = per_call("OUT") {
         print!("{}", out.to_string_lossy());
     }
     if let Some(err) = var("ERR") {
         eprint!("{}", err.to_string_lossy());
     }
-    let code = var("EXIT")
+    let code = per_call("EXIT")
         .and_then(|c| c.to_string_lossy().parse().ok())
         .unwrap_or(0);
     std::process::exit(code);
