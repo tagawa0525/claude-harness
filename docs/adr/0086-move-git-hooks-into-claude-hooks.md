@@ -34,8 +34,8 @@ Nix の無い Windows では流せない。
 
 - PreToolUse hook と git hook の同じ判定を 1 つの関数にする（ADR-0082 の理由。照合のテストが要らなくなる）
 - Linux と Windows で、hook のファイルと中身を同じにする
-- Linux の配備（Nix）は今のまま使う。git hook は Claude Code の外（利用者の端末の git）でも走るが、hook が呼ぶ検査は
-  利用者の PATH に頼らない
+- Linux の配備（Nix）は今のまま使う。git hook は Claude Code の外（利用者の端末の git）でも走るので、Linux では、hook が
+  呼ぶハーネスの検査（`ja-terms`、`gitleaks`、`commit-refs`）を利用者の PATH に頼らない
 - 移す途中も、hook が止めるものと通すものを変えない
 
 ## 検討した案
@@ -63,25 +63,44 @@ hook のファイル:
 - hook のファイル: どちらの OS も、`claude-hooks` の絶対パスに `git-hook <名前> "$@"` を付けて exec するだけの sh にする。
   Linux は `git-hooks.nix` が store のパスで書く。Windows は `claude-setup` が `cargo install` の置き場のパスで書き、
   グローバルの `core.hooksPath` を向ける（ADR-0084）。Git for Windows は、hook を同梱の sh で実行する
+- プロジェクトのローカルの hook（`.git/hooks/<名前>`）: 今の sh は実行の権限（`[ -x ]`）で見つけて直に起動する。Windows には
+  実行の権限が無く、sh のスクリプトを直に起動できないので、Windows ではファイルがあればローカルの hook とみなし、`sh` に
+  渡して起動する（git が hook を見つけて起動するやり方と同じ）。Linux は今のまま
 - 外のコマンド: `ja-terms` は今の `CLAUDE_HOOKS_JA_TERMS` で見つける（無ければ Windows は PATH。ADR-0085）。`gitleaks`
-  と `commit-refs` も同じ形の環境変数（Linux の `package.nix` が store のパスを渡す）と PATH で見つける。書式と lint の
-  ツール（nixfmt、ruff、markdownlint、rustfmt）と `prek` は、今のとおり利用者の PATH のものを使い、無ければ飛ばす。
-  pre-merge-commit が呼ぶ `run-checks.sh` は段階 6 まで sh のままにし、`bash` で呼ぶ
+  と `commit-refs` も同じ形の環境変数（Linux の `package.nix` が store のパスを渡す）と PATH で見つける。Windows の手順
+  （README の「Windows で使う」）は、`commit-refs` も `cargo install` で入れる。見つからないときの扱いは今と同じ
+  （gitleaks が無ければ止め、post-rewrite の付け直しは失敗を示して対応を残す）。書式と lint のツール（nixfmt、ruff、
+  markdownlint、rustfmt と、edition を読む cargo）と `prek` は、今のとおり利用者の PATH のものを使い、無ければ飛ばす。
+  段階 6 まで sh と Python のままのもの（pre-merge-commit が呼ぶ `run-checks.sh`、Markdown の自動修正の
+  `fix-markdown-lint.py`）は、今のとおり `~/.claude` の下のものを `bash` と `python3` で呼び、`python3` が無ければ
+  自動修正を飛ばす
 - `staged-checks` のコマンド: `run-checks.sh` の Markdown の段が PATH の `staged-checks` を呼ぶ。Linux は、
   `claude-hooks git-hook staged-checks` を呼ぶだけの `staged-checks` を、段階 6 まで PATH に残す
-- テスト: `modules/home/parts/tests/` の git hook の sh を、`claude-hooks` の `tests/` の結合テストに置き換える。結合テストは、
-  一時のリポジトリで `git commit` などを実行し、hook のファイルから中身を呼ぶ。Linux（`nix flake check`）と Windows の CI
-  （ADR-0083）で流す。`main-commit-gates.sh` は、両方が同じ関数を呼ぶので消す
+- テスト: `modules/home/parts/tests/` の git hook の sh を、次の 2 つに置き換える
+  - 判定: `claude-hooks` の `tests/` の結合テスト。一時のリポジトリで `git commit` などを実行し、hook のファイルから
+    中身を呼ぶ。外のツール（gitleaks、書式と lint のツール、`~/.claude` の `run-checks.sh`）は、テストが一時の HOME と
+    PATH に偽のものを置く（crate のビルドの sandbox には本物が無い）。Linux（`nix flake check`）と Windows の CI
+    （ADR-0083）で流す
+  - 配備: Linux の hook のファイルと、`package.nix` が包む store のパス（`ja-terms`、`gitleaks`、`commit-refs`）は、
+    `nix build` した hook のファイルで本物の検査を 1 回ずつ通すテストで確かめる（今の sh のテストの組み立てを残す）。
+    Windows は CI の `setup` のジョブ
+  - `main-commit-gates.sh` は、2 つの層が同じ関数に渡す入力（PreToolUse hook はコマンドを読んで実行の前に、git hook は
+    コミットの中で、ブランチとステージしたファイルを得る）の一致を確かめる結合テストに置き換える。`git commit -a` や
+    パスを渡すコミットでは、2 つの層が見るファイルの一覧が違いうる
 - 移す順: commit-msg、post-rewrite、pre-commit（既定の検査と機密情報の検査を含む）、pre-merge-commit。hook ごとに 1 つ以上の
   PR にし、sh の実装と sh のテストは、Rust の版に付け替えた PR で消す。Windows の設置（`claude-setup` が hook のファイルを
-  置く）は、4 つが揃った後の PR にする。揃う前に `core.hooksPath` を向けると、移していない hook が走らなくなる
+  置く）は、4 つが揃い、#104（CRLF の clone）を片付けた後の PR にする。揃う前に `core.hooksPath` を向けると、移していない
+  hook が走らなくなる。CRLF の clone では、pre-merge-commit が `bash` で呼ぶ `run-checks.sh` が動かず、main へのマージが
+  すべて止まる
 
 理由:
 
 - 案 1 は、判定がすでに `claude-hooks` にあり、関数を呼ぶだけで揃う。バイナリが 1 つなので、Windows で入れるものも
   増えない。案 2 は、ライブラリの crate を切り出す作業と、2 つのバイナリの版を揃える費用がかかり、得るのはバイナリの
   名前の分け方だけ。crate の分け方（#101 の「決まっていないこと」）は、段階 5 で 3 つ目のまとまりを作るときに決める
-- 案 3 は、ADR-0082 が採らなかった案 A と同じ（Windows に jq を入れる手順が要り、sh の移植性を確かめる手段が無い）
+- 案 3 は、同じ判定を sh と Rust に書き分けたまま残す（決定の要因の 1 つめ）。jq は Windows の手順がすでに入れる
+  （README の「Windows で使う」。段階 5 までスキルの sh が使う）が、段階 8 で sh を移し終えたら外す依存で、git hook の
+  ために残すことになる
 - 案 A は、hook のファイルの形を OS で分けない。案 B は、git が hook を名前で探すので、同じバイナリを 4 つの名前で置く
   ことになる。Windows の symlink は権限が要るのでコピーになり、更新のたびに 4 つを入れ直す。案 A の sh を 1 つ挟む費用は
   コミットのたびに 1 回で、Bash ツールの呼び出しごとに走る PreToolUse hook（ADR-0084 の案 X）ほど効かない
