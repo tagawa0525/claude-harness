@@ -281,17 +281,19 @@ fn a_local_exe_hook_runs_on_windows() {
     let repo = Repo::new();
     let local = repo.local_hook().with_extension("exe");
     std::fs::copy(fake_tool(), &local).unwrap();
-    let out = repo.commit(&[], &[]);
+    // ローカルの hook（commit-msg の名前の偽のコマンド）の記録は、ja-terms の代わりの偽のコマンドと分ける
+    let local_log = repo.root.join("local.log");
+    let out = repo.commit(&[("FAKE_COMMIT_MSG_LOG", local_log.to_str().unwrap())], &[]);
     assert!(
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // ローカルの hook（偽のコマンドのコピー）だけが呼ばれ、ja-terms に渡す `commit-msg` の引数は付かない
-    let calls = repo.calls();
-    assert_eq!(calls.len(), 1, "{calls:?}");
-    assert!(calls[0].ends_with("COMMIT_EDITMSG"), "{calls:?}");
-    assert!(!calls[0].starts_with("commit-msg "), "{calls:?}");
+    // ローカルの hook だけが、メッセージのファイルを受けて呼ばれ、ja-terms は呼ばれない
+    let local = std::fs::read_to_string(&local_log).unwrap();
+    assert_eq!(local.lines().count(), 1, "{local}");
+    assert!(local.trim_end().ends_with("COMMIT_EDITMSG"), "{local}");
+    assert!(repo.calls().is_empty(), "{:?}", repo.calls());
 }
 
 #[test]
