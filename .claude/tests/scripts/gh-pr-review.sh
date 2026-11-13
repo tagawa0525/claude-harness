@@ -134,12 +134,13 @@ for script in get-pr-info.sh reply-to-comment.sh reset-rounds.sh resolve-thread.
 done
 
 it "移したスクリプト: Windows の .exe の付いた claude-hooks も、在るものとして起動する"
-# Git Bash は .exe を補って実行するので、名前に .exe の無いパスでも起動できる。在るかの確かめも .exe を見る
+# Windows の claude-hooks は .exe の付いた名前で入る。.exe だけがあれば、それを起動する
 mkdir -p "$TEST_ROOT/exe-only"
 printf '#!/bin/sh\necho "ran $*"\n' >"$TEST_ROOT/exe-only/claude-hooks.exe"
 chmod +x "$TEST_ROOT/exe-only/claude-hooks.exe"
 out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/exe-only/claude-hooks" "$REVIEW_SCRIPTS/get-pr-info.sh" "$PR_URL" 2>&1)
-assert_not_contains "$out" "がありません"
+assert_eq 0 $?
+assert_eq "ran script get-pr-info $PR_URL" "$out"
 
 # ===========================================================================
 # gh-pr-review/scripts/get-pr-info.sh: コメント URL の解析
