@@ -64,11 +64,14 @@ hook のファイル:
   Linux は `git-hooks.nix` が store のパスで書く。Windows は `claude-setup` が `cargo install` の置き場のパスで書き、
   グローバルの `core.hooksPath` を向ける（ADR-0084）。Git for Windows は、hook を同梱の sh で実行する
 - プロジェクトのローカルの hook（`.git/hooks/<名前>`）: 今の sh は実行の権限（`[ -x ]`）で見つけて直に起動する。Windows には
-  実行の権限が無く、スクリプトを直に起動できないので、Windows では git が hook を見つけて起動するやり方に合わせる
-  （どう合わせるかは、ローカルの hook を扱う実装の PR でテストとともに決める）。Linux は今のまま
+  実行の権限が無く、スクリプトを直に起動できない。`core.hooksPath` を向けると git はローカルの hook を探さないので、
+  Windows でも中身が `.git/hooks/<名前>` を自分で探し、ファイルがあれば hook とみなして、Git for Windows の sh に exec
+  させる（sh の exec は shebang の行を読むので、sh 以外のスクリプトも動く）。Linux は今のまま
 - 外のコマンド: `ja-terms` は今の `CLAUDE_HOOKS_JA_TERMS` で見つける（無ければ Windows だけ PATH。ADR-0085）。`gitleaks`
   と `commit-refs` も同じ形にする（環境変数は Linux の `package.nix` が store のパスで渡し、無ければ Windows だけ PATH）。Windows の手順
-  （README の「Windows で使う」）は、`commit-refs` も `cargo install` で入れる。見つからないときの扱いは今と同じ
+  （README の「Windows で使う」）は、`commit-refs` も `cargo install` で入れる。今の `commit-refs` は
+  `std::os::unix` を使い Windows でビルドできないので、post-rewrite を移す PR で Windows に対応させ、`windows.yml` の
+  matrix に足す。見つからないときの扱いは今と同じ
   （gitleaks が無ければ止め、post-rewrite の付け直しは失敗を示して対応を残す）。書式と lint のツール（nixfmt、ruff、
   markdownlint、rustfmt と、edition を読む cargo）と `prek` は、今のとおり利用者の PATH のものを使い、無ければ飛ばす。
   段階 6 まで sh と Python のままのもの（pre-merge-commit が呼ぶ `run-checks.sh`、Markdown の自動修正の
