@@ -10,6 +10,7 @@
 //! - `ERR`: 標準エラーに書く文字列
 //! - `CWD`: 起動された作業ディレクトリを 1 行ずつ足すファイル
 //! - `PARENT_MODE`: 作業ディレクトリの親の権限（Unix の 8 進。Windows は何も書かない）を 1 行ずつ足すファイル
+//! - `ENV`: `ENV_NAMES`（`,` 区切り）の環境変数を、`名前=値`（無ければ `名前` だけ）で 1 行ずつ足すファイル
 //! - `EXIT`: 終了コード（既定は 0）
 
 use std::io::{Read, Write};
@@ -45,6 +46,16 @@ fn main() {
         format!("{}\n", args.join(" "))
     };
     append(var("LOG"), "LOG", line.as_bytes());
+    if let Some(names) = var("ENV_NAMES") {
+        let mut text = String::new();
+        for name in names.to_string_lossy().split(',') {
+            match std::env::var(name) {
+                Ok(value) => text.push_str(&format!("{name}={value}\n")),
+                Err(_) => text.push_str(&format!("{name}\n")),
+            }
+        }
+        append(var("ENV"), "ENV", text.as_bytes());
+    }
     if var("CWD").is_some() {
         let cwd = std::env::current_dir().expect("作業ディレクトリを読める");
         append(var("CWD"), "CWD", format!("{}\n", cwd.display()).as_bytes());
