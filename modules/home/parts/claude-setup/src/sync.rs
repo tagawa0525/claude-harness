@@ -52,11 +52,13 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
     fs::create_dir_all(&to).map_err(|e| io_stop(&to, &e))?;
     for (name, overwrite) in PLACES {
         let (src, dest) = (from.join(name), to.join(name));
+        // ソースに無いファイルと場所（前の版の nix store から読むだけでコピーしたもの）も、利用者と次の同期が書ける
+        // ようにする（chmod -R u+w は 4 つの場所に当てていた）
         if !src.exists() {
+            writable_place(&dest);
             continue;
         }
         copy_place(&src, &dest, overwrite)?;
-        // ソースに無いファイル（前の版の nix store から読むだけでコピーしたもの）も、利用者と次の同期が書けるようにする
         writable_place(&dest);
         let kept = if overwrite {
             ""
@@ -119,6 +121,12 @@ fn git_out(repo: &Path, args: &[&str]) -> Option<String> {
 /// 既定の clone を、既定のブランチの、コミットされた最新にする
 fn pull(repo: &Path) -> Result<(), Stop> {
     let shown = repo.display();
+    // git を起動できなければ、その理由を出す（下の判定は git の出力を見せて止めるが、起動できないと何も出ない）
+    if let Err(e) = Command::new("git").arg("--version").output() {
+        return Err(stop(&[format!(
+            "❌ git を起動できません（{e}）。{shown} を最新にできないので、ここで止めます"
+        )]));
+    }
     let as_is = format!(
         "   今の中身をそのまま同期するなら: claude-sync {shown}（Windows では claude-setup sync {shown}）"
     );
@@ -330,7 +338,12 @@ fn copy_link(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
     }
     #[cfg(unix)]
     {
-        let _ = fs::remove_file(dest);
+        // ディレクトリが symlink になった。空なら入れ替える（中身のあるディレクトリは消さずに止める）
+        if fs::symlink_metadata(dest).is_ok_and(|m| m.is_dir()) {
+            fs::remove_dir(dest).map_err(|e| io_stop(dest, &e))?;
+        } else {
+            let _ = fs::remove_file(dest);
+        }
         std::os::unix::fs::symlink(&target, dest).map_err(|e| io_stop(dest, &e))
     }
     #[cfg(not(unix))]

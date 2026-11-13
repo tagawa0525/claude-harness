@@ -15,6 +15,12 @@ const USAGE: &str = "Usage: claude-setup sync [source-repo]";
 
 fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if matches!(args.as_slice(), [c, h] if c == "sync" && (h == "--help" || h == "-h"))
+        || matches!(args.as_slice(), [h] if h == "--help" || h == "-h")
+    {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let source = match args.as_slice() {
         [command] if command == "sync" => None,
         [command, source] if command == "sync" => Some(Path::new(source)),
