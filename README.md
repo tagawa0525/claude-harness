@@ -53,7 +53,7 @@ for crate in claude-hooks ja-terms claude-setup; do
 done
 claude-setup sync ~/nix/claude-harness
 claude-setup settings --static modules/home/parts/claude-settings.json \
-  --pre-tool-use "$(cygpath -w ~/.cargo/bin/claude-hooks.exe)"
+  --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
 ```
 
 clone を更新したら、同じ手順をもう一度流す（crate の版は変えないので `--force` で入れ直す）。Windows の CI

@@ -59,7 +59,7 @@ jobs:
           done
           claude-setup sync "$PWD"
           claude-setup settings --static modules/home/parts/claude-settings.json \
-            --pre-tool-use "$(cygpath -w ~/.cargo/bin/claude-hooks.exe)"
+            --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
       - name: Check the registered hook
         run: |
           set -euo pipefail
