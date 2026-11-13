@@ -1,19 +1,21 @@
-//! check-merge-body-ja-terms: `git merge -m/-F` の本文の崩れた日本語の語を、実行の前に検査する
+//! check-merge-body-ja-terms: `git merge -m/-F` のメッセージを、実行の前に commit-msg の hook と同じ検査で判定する
 //!
 //! git の hook は pre-merge-commit（run-checks --merge、数分）→ commit-msg（ja-terms commit-msg）の順に呼ばれる。
-//! 本文に辞書（ja-terms の prh.yml）で崩れた語があると、数分の品質チェックを待ってから commit-msg が拒む。
-//! pre-merge-commit からは `-m` の本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの
-//! 前に走るこのルールで、commit-msg と同じ本文の語の検査（`ja-terms message`。commit-msg の hook が呼ぶ
-//! `ja-terms commit-msg` も、件名と長さを見た後に同じ検査をする。検査する範囲は modules/home/parts/ja-terms の
-//! src/message.rs が持つ。store のパスは package.nix が包んで渡す）に本文を渡す（ADR-0050、ADR-0085）。
+//! 本文に辞書（ja-terms の prh.yml）で崩れた語があるか、Merge などで始まらない件名が Conventional Commits の形と
+//! 長さに合わないと、数分の品質チェックを待ってから commit-msg が拒む。pre-merge-commit からは `-m` の本文が読めず、
+//! git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg に渡るのと同じ
+//! メッセージを検査する（ADR-0050、ADR-0085。store のパスは package.nix が包んで渡す）。マージコミットを作るのが
+//! 確かな形（[`makes_merge_commit`]）は commit-msg と同じ `ja-terms commit-msg` に、ほかの形（fast-forward になれば
+//! commit-msg が呼ばれない、エディタで件名を直せる）は本文の語だけを `ja-terms message` に渡す。
 //!
 //! 対象は本文を持つ形（`-m` / `--message`、`-F` / `--file`）。本文の無い形（エディタ）は対象外。
 //! commit-msg を呼ばない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`、グローバルの core.hooksPath を
 //! 使わないリポジトリ）と、commit-msg が検査しない所（fork、ローカルの commit-msg に置き換わるリポジトリ）も対象外。
 //! 検査を起動できないか、検査に失敗したときは、判定できなかった理由を利用者に見せて通す（ADR-0033。
-//! commit-msg が同じ検査で止める）。エスケープは設けない（語を直せば通る）
+//! commit-msg が同じ検査で止める）。エスケープは設けない（メッセージを直せば通る）
 
 use super::Rule;
+use super::check_commit_message::{Verdict, run_check};
 use crate::git;
 use crate::git_args::{Item, items, items_with_values};
 use crate::input::Input;
@@ -134,6 +136,23 @@ fn makes_no_commit(args: &[Arg]) -> bool {
         }
     }
     ff_only || squash || no_commit || no_verify
+}
+
+/// マージコミットを作り、commit-msg が `-m` / `-F` のメッセージをそのまま受けるのが確かな形か: 最後の
+/// `--ff` / `--no-ff` / `--ff-only` が `--no-ff` で、`-e` / `--edit`（エディタで直せる）が無い。ほかの形は、
+/// fast-forward になれば commit-msg が呼ばれず、エディタで件名を直せるので、件名の形と長さでは止めない
+fn makes_merge_commit(args: &[Arg]) -> bool {
+    let (mut no_ff, mut edit) = (false, false);
+    for item in items("merge", args) {
+        match item {
+            Item::Long("--no-ff") => no_ff = true,
+            Item::Long("--ff" | "--ff-only") => no_ff = false,
+            Item::Long("--edit") | Item::Short('e') => edit = true,
+            Item::Long("--no-edit") => edit = false,
+            _ => {}
+        }
+    }
+    no_ff && !edit
 }
 
 /// `-m` か `-F` があるか
@@ -303,13 +322,23 @@ pub(super) fn earlier_writer_reason(
 }
 
 /// 崩れた語を止める文言
-fn deny_reason(terms: &[String]) -> String {
+fn terms_reason(terms: &[String]) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
     format!(
         "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
          本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
          数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます",
         list.join("\n")
+    )
+}
+
+/// commit-msg の検査に通らないメッセージを止める文言
+fn deny_reason(output: &str) -> String {
+    format!(
+        "git merge のメッセージが、commit-msg の hook と同じ検査に通りません:\n{output}\n\
+         上の ❌ の行のとおりにメッセージを直してから（崩れた語は「誤り => 正しい語」のとおりに置き換えてから）、\
+         もう一度実行してください。このまま実行すると、数分かかる pre-merge-commit の品質チェックの後で、\
+         commit-msg の hook が同じ検査で拒みます"
     )
 }
 
@@ -386,22 +415,32 @@ impl CheckMergeBodyJaTerms {
                         Undecided::Unreadable(p) => format!("-F {p} を読めない"),
                     };
                     notice(format!(
-                        "check-merge-body-ja-terms: git merge の本文の語を判定していません（{why}）"
+                        "check-merge-body-ja-terms: git merge のメッセージを判定していません（{why}）"
                     ));
                     continue;
                 }
             };
             let Some(check) = check else {
                 notice(format!(
-                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge の本文の語を判定していません（nix で包んだものだけが検査する）"
+                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge のメッセージを判定していません（nix で包んだものだけが検査する）"
                 ));
                 continue;
             };
-            match lint(check, &dir, &message) {
-                Lint::Clean => {}
-                Lint::Terms(terms) => out.push(Finding::Deny(deny_reason(&terms))),
-                Lint::Failed(why) => notice(format!(
-                    "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
+            if !makes_merge_commit(args) {
+                match lint(check, &dir, &message) {
+                    Lint::Clean => {}
+                    Lint::Terms(terms) => out.push(Finding::Deny(terms_reason(&terms))),
+                    Lint::Failed(why) => notice(format!(
+                        "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
+                    )),
+                }
+                continue;
+            }
+            match run_check(check, &dir, &message) {
+                Verdict::Pass => {}
+                Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(&output))),
+                Verdict::Failed(why) => notice(format!(
+                    "check-merge-body-ja-terms: git merge のメッセージを判定していません: {why}"
                 )),
             }
         }
@@ -453,11 +492,26 @@ mod tests {
         }
     }
 
-    /// ja-terms の代わり。`message` で呼ばれたときだけ、標準入力の「誤語」を ja-terms message の形
-    /// （行:列: 誤語 => 正語）で報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
+    /// ja-terms の代わり。`commit-msg <ファイル>` では、メッセージに「形違い」があれば commit-msg の形の件名の ❌ を、
+    /// 「誤語」があれば報告の行（行:列: 誤語 => 正語）と ❌ を出して 1 で終わる。`message` では、標準入力の「誤語」を
+    /// 報告の行で出して 1 で終わる（形は見ない）。どちらも「無語」なら何も出さずに 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
     /// （実物の ja-terms と辞書は tests/merge-ja-terms.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
+if [ $# -eq 2 ] && [ "$1" = commit-msg ]; then
+  body=$(cat "$2")
+  case "$body" in
+    *失敗*) echo "boom" >&2; exit 2 ;;
+    *無語*) exit 1 ;;
+    *形違い*)
+      echo "❌ Conventional Commits 形式ではありません: 形違い"
+      exit 1 ;;
+    *誤語*)
+      printf '%s\n' "2:1: 誤語 => 正語" "❌ コミットの本文に崩れた日本語の語があります。"
+      exit 1 ;;
+  esac
+  exit 0
+fi
 [ $# -eq 1 ] && [ "$1" = message ] || exit 3
 body=$(cat)
 case "$body" in
@@ -638,22 +692,39 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn lint_classifies_check_results() {
-        let dir = TempDir::new("lint");
-        let t = fake_check(&dir);
-        assert_eq!(lint(&t, &dir.0, "確認\n"), Lint::Clean);
-        assert_eq!(
-            lint(&t, &dir.0, "誤語\n"),
-            Lint::Terms(vec!["誤語 => 正語".to_string()])
+    fn a_failed_or_missing_check_is_undecided() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        assert!(check("git merge --no-ff feat/a -m 'Merge: a' -m '失敗'").is_empty());
+        assert!(take_notices().iter().any(|n| n.contains("boom")));
+        let dir = TempDir::new("missing");
+        git_init(&dir.0);
+        let findings = check_in(
+            "git merge --no-ff feat/a -m 'Merge: a' -m '確認'",
+            &dir.0,
+            Some("/nonexistent/ja-terms"),
         );
-        let Lint::Failed(why) = lint(&t, &dir.0, "失敗\n") else {
-            panic!("終了コード 2 は失敗のはず");
-        };
-        assert!(why.contains("boom"), "{why}");
-        assert!(matches!(
-            lint("/nonexistent/ja-terms", &dir.0, "確認\n"),
-            Lint::Failed(_)
-        ));
+        assert!(findings.is_empty());
+        assert!(!take_notices().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_body_check_is_undecided() {
+        // --no-ff の無い形（本文の語だけを見る ja-terms message）の失敗も、止めずに理由を出す
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        assert!(check("git merge feat/a -m 'Merge: a' -m '失敗'").is_empty());
+        assert!(take_notices().iter().any(|n| n.contains("boom")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denies_a_subject_commit_msg_rejects() {
+        // commit-msg は Merge で始まらない件名の形と長さも見るので、同じ検査で先に止める
+        let r = only_deny(&check("git merge --no-ff feat/a -m '形違い'"));
+        assert!(r.contains("Conventional Commits"), "{r}");
+        assert!(r.contains("pre-merge-commit"), "{r}");
     }
 
     #[cfg(unix)]
@@ -857,10 +928,34 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn lint_without_terms_is_failure() {
-        let dir = TempDir::new("no-terms");
-        let t = fake_check(&dir);
-        assert!(matches!(lint(&t, &dir.0, "無語\n"), Lint::Failed(_)));
+    fn a_rejection_without_output_is_undecided() {
+        // 何を直すかを示せないので、止めずに判定できなかった理由を出す（commit-msg が同じ検査で止める）
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        for cmd in [
+            "git merge --no-ff feat/a -m 'Merge: a' -m '無語'",
+            "git merge feat/a -m 'Merge: a' -m '無語'",
+        ] {
+            assert!(check(cmd).is_empty(), "{cmd}");
+            assert!(!take_notices().is_empty(), "{cmd}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checks_only_the_body_terms_when_git_may_not_make_a_merge_commit() {
+        // --no-ff の無い merge は fast-forward になれば commit-msg を呼ばず、-e はエディタで件名を直せるので、
+        // 件名の形では止めず、本文の語だけを見る
+        for cmd in [
+            "git merge feat/a -m '形違い'",
+            "git merge --no-ff --ff feat/a -m '形違い'",
+            "git merge --no-ff -e feat/a -m '形違い'",
+        ] {
+            assert!(check(cmd).is_empty(), "{cmd}");
+        }
+        let r = only_deny(&check("git merge feat/a -m '形違い' -m '誤語'"));
+        // 報告の行の「行:列:」を外した語の組を示す
+        assert!(r.lines().any(|l| l == "  誤語 => 正語"), "{r}");
     }
 
     #[cfg(unix)]

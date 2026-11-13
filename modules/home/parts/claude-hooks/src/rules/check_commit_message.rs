@@ -146,7 +146,7 @@ fn stripspace(text: &str) -> String {
 
 /// `ja-terms commit-msg` の結果
 #[derive(Debug, PartialEq)]
-enum Verdict {
+pub(super) enum Verdict {
     Pass,
     /// 規約に反する。検査の出力
     Reject(String),
@@ -154,8 +154,9 @@ enum Verdict {
     Failed(String),
 }
 
-/// commit-msg と同じく、メッセージをファイルで `ja-terms commit-msg` に渡す。実行する場所はコマンドの行き先
-fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
+/// commit-msg と同じく、メッセージをファイルで `ja-terms commit-msg` に渡す。実行する場所はコマンドの行き先。
+/// git merge のルールも使う
+pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
@@ -192,6 +193,10 @@ fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     );
     match out.status.code() {
         Some(0) => Verdict::Pass,
+        // 何を直すかを示せない拒否は、止めずに判定できなかった理由にする（commit-msg が同じ検査で止める）
+        Some(1) if text.trim().is_empty() => Verdict::Failed(format!(
+            "{check} commit-msg が理由を出さずに 1 で終わりました"
+        )),
         Some(1) => Verdict::Reject(text.trim().to_string()),
         _ => Verdict::Failed(format!(
             "{check} が失敗しました（{}）: {}",
@@ -329,7 +334,7 @@ mod tests {
     }
 
     /// ja-terms の代わり。`commit-msg` とメッセージのファイルを受け、隣の `seen` にコピーする。件名（最初の行）に
-    /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「失敗」があれば 2 で終わる（規則の実物は
+    /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「理由無し」なら何も出さずに 1 で、「失敗」があれば 2 で終わる（規則の実物は
     /// tests/commit-message.sh と modules/home/parts/tests/commit-msg-conventions.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
@@ -338,6 +343,7 @@ cp "$2" "$(dirname "$0")/seen"
 case "$(head -n 1 "$2")" in
   *長すぎ*) echo "❌ 件名が 72 文字を超えています (73 文字): $(head -n 1 "$2")"; exit 1 ;;
   *失敗*) echo "boom" >&2; exit 2 ;;
+  *理由無し*) exit 1 ;;
 esac
 exit 0
 "#;
@@ -779,5 +785,16 @@ exit 0
                 .is_empty()
         );
         assert_eq!(fake.seen().unwrap(), "feat: a\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rejection_without_a_reason_is_undecided() {
+        // 何を直すかを示せないので、止めずに判定できなかった理由を出す（commit-msg が同じ検査で止める）
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        let fake = Fake::new("no-reason");
+        assert!(fake.check("git commit -m '理由無し'").is_empty());
+        assert!(!take_notices().is_empty());
     }
 }

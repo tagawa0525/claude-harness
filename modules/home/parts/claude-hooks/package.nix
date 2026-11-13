@@ -12,8 +12,8 @@
 }:
 let
   gitCheckConfig = callPackage ../lib/git-check-config.nix { };
-  # git merge の本文の語の検査（check-merge-body-ja-terms）が呼ぶ `ja-terms message` と、git commit のメッセージの
-  # 検査（check-commit-message）が呼ぶ `ja-terms commit-msg`。どちらも commit-msg の hook と同じ検査（ADR-0085）
+  # git merge と git commit のメッセージの検査（check-merge-body-ja-terms、check-commit-message）が呼ぶ
+  # `ja-terms commit-msg`（commit-msg の hook と同じ検査）と、git merge の本文の語だけを見る `ja-terms message`（ADR-0085）
   jaTerms = callPackage ../ja-terms/package.nix { };
   unwrapped = rustPlatform.buildRustPackage {
     pname = "claude-hooks-unwrapped";
