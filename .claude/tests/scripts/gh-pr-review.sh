@@ -119,6 +119,28 @@ assert_eq '{"id":222}' "$out"
 assert_contains "$(fake_log gh)" "api repos/{owner}/{repo}/pulls/1/comments/111/replies -f body=Fixed in abc. --jq"
 assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
+# 中身を claude-hooks script に移したスクリプト（ADR-0087）は、claude-hooks が無ければ（claude-sync だけでバイナリを
+# 入れていない、Windows で cargo install の前）入れ方を示して止める。sh の `exec: not found` だけでは、何を入れるかが分からない
+for script in get-pr-info.sh reply-to-comment.sh reset-rounds.sh resolve-thread.sh; do
+  it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+  make_fake_gh '*) echo "{}" ;;'
+  read -ra rest <<<"${REST_ARGS[$script]}"
+  out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$REVIEW_SCRIPTS/$script" "$PR_URL" "${rest[@]}" 2>&1)
+  assert_eq 127 $?
+  assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
+  assert_contains "$out" "rebuild"
+  assert_contains "$out" "cargo install"
+  assert_not_contains "$(fake_log gh)" "api"
+done
+
+it "移したスクリプト: Windows の .exe の付いた claude-hooks も、在るものとして起動する"
+# Git Bash は .exe を補って実行するので、名前に .exe の無いパスでも起動できる。在るかの確かめも .exe を見る
+mkdir -p "$TEST_ROOT/exe-only"
+printf '#!/bin/sh\necho "ran $*"\n' >"$TEST_ROOT/exe-only/claude-hooks.exe"
+chmod +x "$TEST_ROOT/exe-only/claude-hooks.exe"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/exe-only/claude-hooks" "$REVIEW_SCRIPTS/get-pr-info.sh" "$PR_URL" 2>&1)
+assert_not_contains "$out" "がありません"
+
 # ===========================================================================
 # gh-pr-review/scripts/get-pr-info.sh: コメント URL の解析
 # ===========================================================================
