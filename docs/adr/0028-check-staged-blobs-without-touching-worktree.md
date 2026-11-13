@@ -55,7 +55,8 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
   ファイルはコピーされない
 - rustfmt は標準入力で読むので、rustfmt.toml の `ignore` が効かない
 - ruff と rustfmt は、ファイルごとに起動する（ファイルの数だけ起動の時間がかかる）
-- 実装は `modules/home/parts/staged-checks.sh`（`git.nix` の `stagedChecks`）
+- 実装は claude-hooks の `git-hook staged-checks`（`modules/home/parts/claude-hooks/src/staged_checks.rs`）。
+  `git-hooks.nix` の `stagedChecks` は、それを呼ぶだけの `staged-checks` のコマンド
 
 ### 確認
 
@@ -70,3 +71,5 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
 
 - 2026-10-12: `run-checks.sh` の Markdown の段（ステージした差分を見る既定の使い方）も、`staged-checks markdown` に
   任せるようにした（#338）。`staged-checks` は言語を渡すとその言語だけを検査し、`home.packages` で PATH に置く
+- 2026-11-13: 実装を `staged-checks.sh` から claude-hooks の `git-hook staged-checks` に移した（ADR-0086、#132）。
+  判定は変えていない（`pre-commit-partial-stage.sh` と `pre-commit-rust-format.sh` が、nix build した hook で通る）
