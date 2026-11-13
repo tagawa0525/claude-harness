@@ -17,13 +17,10 @@ let
   history-rewrite = pkgs.callPackage ./history-rewrite/package.nix { inherit commit-refs; };
   # プロジェクトローカルの hook のパス。ローカルの hook は linked worktree でも共通の .git/hooks にある
   # （--git-dir は worktree ごとの場所）。--git-path hooks/... は core.hooksPath（この hook 自身）を指すので
-  # 使わない（commit-msg の中身は claude-hooks の src/git_hook.rs が同じ場所を探す）。検証:
+  # 使わない（commit-msg、post-rewrite、pre-commit の中身は claude-hooks の src/git_hook.rs が同じ場所を探す）。検証:
   # modules/home/parts/tests/local-hooks-worktree.sh（pre-commit、pre-merge-commit、commit-msg）、
   # modules/home/parts/tests/post-rewrite-remap.sh（post-rewrite）
   localHookPath = name: ''"$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${name}"'';
-  # 崩れた日本語の語の検査（ADR-0014、ADR-0085）。pre-commit が `ja-terms staged` を store のパスで呼ぶ。commit-msg の
-  # 中身と、claude-hooks の git merge と git commit のルールは、claude-hooks が包む ja-terms を呼ぶ（./claude-hooks/package.nix）
-  ja-terms = pkgs.callPackage ./ja-terms/package.nix { };
   # git hook の中身（ADR-0086）。PreToolUse hook と同じバイナリ（claude-code.nix）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   # 機密情報の検査（ADR-0015。claude-hooks の src/git_hook.rs の scan-secrets）。pre-commit と pre-merge-commit が呼び、
@@ -38,7 +35,7 @@ let
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を実行する（下の pre-commit hook が呼ぶ）
-  # staged-checks: pre-commit の既定の検査。run-checks.sh の Markdown の段も呼ぶ（ADR-0028）
+  # staged-checks: run-checks.sh の Markdown の段が呼ぶ既定の検査（ADR-0028。pre-commit は claude-hooks の中で同じ検査を呼ぶ）
   home.packages = [
     commit-refs
     design-records
@@ -54,111 +51,17 @@ in
   # ===========================================================================
   # Git Hooks（グローバル）
   # ===========================================================================
-  # プロジェクトローカルの .git/hooks/ があれば優先、なければプロジェクトの pre-commit の設定と
-  # デフォルトチェック
+  # pre-commit: Claude Code のセッションの main / master への直接のコミットを止め、マージを締めるコミットでは
+  # pre-merge-commit を呼び、ローカルの .git/hooks/pre-commit があればそれと機密情報の検査だけ、無ければプロジェクトの
+  # .pre-commit-config.yaml（prek）、既定の検査、崩れた日本語の語、機密情報の検査を行う。中身は claude-hooks の
+  # src/git_hook.rs（ADR-0086）。main への直接のコミットの判定は、PreToolUse hook と同じ関数（main_commit_blocked）。
+  # 検証: claude-hooks の tests/git_hook_pre_commit.rs（判定）、modules/home/parts/tests/ の pre-commit-*.sh、
+  # main-commit-gates.sh、local-hooks-worktree.sh、ja-terms.sh（この hook のファイルと、包んだツール）
   xdg.configFile."git/hooks/pre-commit" = {
     executable = true;
     text = ''
-      #!/usr/bin/env bash
-      set -euo pipefail
-
-      # Claude Code セッションからの main/master 直接コミットをブロック
-      # （PreToolUse hook と異なり必ず対象リポジトリ内で実行されるため、
-      #   worktree や cd の失敗でも誤判定しない構造的なゲート。リモートの有無によらず止める
-      #   （GitHub のリモートが無いリポジトリも、ブランチは /git-merge でローカルの main にマージする）。
-      #   通すのは、flake.lock のみのコミット（nix-rebuild update の正規フロー）、マージを締めるコミット
-      #   （MERGE_HEAD がある。/git-merge で本文の語に拒まれた後や競合の解決の後の git commit）、HEAD の無い
-      #   リポジトリの最初のコミット。
-      #   例外は modules/home/parts/claude-hooks/src/rules/block_main_commit.rs と必ず揃える
-      #   → modules/home/parts/tests/main-commit-gates.sh が一致を検証する）
-      if [ "''${CLAUDECODE:-}" = "1" ]; then
-        BRANCH=$(git branch --show-current 2>/dev/null || echo "")
-        if { [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; } &&
-          git rev-parse -q --verify HEAD >/dev/null &&
-          ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-          # 変更(M)の flake.lock 1件のみ許可（削除・リネーム等は通さない）
-          if [ "$(git diff --cached --name-status)" != "$(printf 'M\tflake.lock')" ]; then
-            echo "❌ main / master ブランチへの直接コミットは禁止されています"
-            echo "   featureブランチを作成してください: /git-branch"
-            echo "   - GitHub のリモートが無いリポジトリでも、ブランチは /git-merge で main にマージするので、main に直接コミットする理由はありません（2026-11-06 に、cd が失敗した後の git commit が別のリポジトリの main に空のコミットを作りました）"
-            echo "   - 対象のディレクトリを確かめる（前の cd が失敗すると、git は元のディレクトリのリポジトリで走ります）"
-            echo "   - 試すための一時のリポジトリなら、main / master 以外のブランチで作る（git init -b <名前>、git switch -c <名前>）"
-            echo "   - 通すのは、flake.lock だけの変更、マージを締めるコミット（MERGE_HEAD がある）、HEAD の無いリポジトリの最初のコミットです"
-            exit 1
-          fi
-        fi
-      fi
-
-      # 機密情報の検査（ADR-0015）は ${scanSecrets} が行う。Claude Code のセッションのコミットで、コミットに
-      # 入る中身（git add と commit -a の後の index）を見る。index を変える検査（Markdown の自動修正。#282。
-      # ローカルの pre-commit）の後、ステージしたファイルが無くて抜ける前（種類の変更だけのコミット）、fork で
-      # 抜ける前に呼ぶ
-      # 検証: modules/home/parts/tests/pre-commit-secrets.sh
-
-      # マージを締めるコミット（競合を解決した後の git commit / git merge --continue、
-      # git merge --no-commit の後の git commit）では git が pre-merge-commit を呼ばないので、
-      # 同じ検査をここで行う
-      if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-        "$(dirname "$0")/pre-merge-commit"
-      fi
-
-      # プロジェクトローカルの pre-commit があれば優先実行
-      LOCAL_HOOK=${localHookPath "pre-commit"}
-      if [ -x "$LOCAL_HOOK" ]; then
-        # exec しないのは、ローカルの hook が index を変えた後に機密情報を検査するため
-        "$LOCAL_HOOK" "$@"
-        ${scanSecrets}
-        exit 0
-      fi
-
-      check_failed=0
-
-      # プロジェクトの pre-commit の設定（.pre-commit-config.yaml）があれば prek で実行する
-      # （設計の記録の検査などへのオプトイン。ADR-0009）。core.hooksPath があると prek install は
-      # 拒否されるので、ここから呼ぶ。exec しないのは、オプトインしたプロジェクトでも以下の既定の
-      # 検査を実行するため。設定はそのプロジェクトの規約なので、fork でも実行する。
-      # 検証: modules/home/parts/tests/pre-commit-prek.sh
-      if [ -f ".pre-commit-config.yaml" ]; then
-        if command -v prek >/dev/null 2>&1; then
-          prek run --hook-stage pre-commit "$@" || check_failed=1
-        else
-          echo "⚠️  .pre-commit-config.yaml がありますが prek が PATH に無いので、その検査を飛ばします"
-        fi
-      fi
-
-      # ========================================
-      # デフォルト: ステージされたファイルをチェック
-      # ========================================
-      STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMRT)
-      if [ -z "$STAGED_FILES" ]; then
-        ${scanSecrets} || check_failed=1
-        exit $check_failed
-      fi
-
-      # upstream リモートを持つ clone は他人のプロジェクトの fork（上流に PR を出す worktree）。
-      # 以下の検査はどれもこちらのツールの版と規約（ruff の新しいルール、markdownlint の設定、
-      # rustfmt の edition）を当てるもので、fork では上流の固定版と CI が正。新しい ruff は
-      # 触っていない上流の行を上流の版にないルール（RUF043 等）で落とし、Markdown の自動修正は
-      # 無関係な差分（``` → ```text 等）を上流向けのコミットに混ぜるので、fork では全部飛ばす。
-      # 検証: modules/home/parts/tests/pre-commit-fork.sh
-      if git remote get-url upstream >/dev/null 2>&1; then
-        echo "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust / 日本語の語）を飛ばします"
-        ${scanSecrets} || check_failed=1
-        exit $check_failed
-      fi
-
-      # Nix、Python、Markdown、Rust の書式と lint。ステージした版を見て、作業ツリーは書き換えない（ADR-0028）
-      # 検証: modules/home/parts/tests/pre-commit-partial-stage.sh
-      ${stagedChecks}/bin/staged-checks || check_failed=1
-
-      # 日本語の崩れた語（ADR-0014）。Markdown の自動修正がステージし直した後の、コミットに入る中身
-      # （ステージした版）を見る
-      # 検証: modules/home/parts/tests/ja-terms.sh
-      ${ja-terms}/bin/ja-terms staged || check_failed=1
-
-      ${scanSecrets} || check_failed=1
-
-      exit $check_failed
+      #!/bin/sh
+      exec ${claude-hooks}/bin/claude-hooks git-hook pre-commit "$@"
     '';
   };
 

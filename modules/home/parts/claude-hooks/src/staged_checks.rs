@@ -167,7 +167,7 @@ fn staged_text(staged: &Staged) -> Option<Vec<u8>> {
 
 /// PATH で name を探す。Windows は PATHEXT の拡張子（npm の markdownlint.cmd など）も探し、見つけたパスで起動する
 /// （Command は拡張子の無い名前に .exe しか足さない）
-fn find_on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     let exts: Vec<String> = if cfg!(windows) {
         std::env::var("PATHEXT")

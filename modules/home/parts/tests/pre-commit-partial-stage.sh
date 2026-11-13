@@ -223,27 +223,29 @@ else
 fi
 
 echo "==> staged-checks に言語を渡すと、その言語だけを検査する（run-checks.sh の Markdown の段）"
-STAGED_CHECKS=$(grep -o '/nix/store/[^ ]*/bin/staged-checks' "$WORK/pre-commit" | head -1)
-if [[ ! -x "$STAGED_CHECKS" ]]; then
-  echo "✗ pre-commit の hook から staged-checks の場所を読めない: '$STAGED_CHECKS'"
+# PATH の staged-checks は、pre-commit の hook と同じ claude-hooks の git-hook staged-checks を呼ぶだけのコマンド
+CLAUDE_HOOKS=$(grep -o '/nix/store/[^ ]*/bin/claude-hooks' "$WORK/pre-commit" | head -1)
+if [[ ! -x "$CLAUDE_HOOKS" ]]; then
+  echo "✗ pre-commit の hook から claude-hooks の場所を読めない: '$CLAUDE_HOOKS'"
   exit 1
 fi
+staged_checks() { "$CLAUDE_HOOKS" git-hook staged-checks "$@"; }
 R=$(repo only nix-and-md.txt $'x\n')
 printf '{a=1;}\n' >"$R/a.nix"
 printf '%s' "${LINES/l1/l1 }" >"$R/a.md"
 git -C "$R" add a.nix a.md
-if (cd "$R" && "$STAGED_CHECKS" markdown) >"$WORK/out" 2>&1 && [[ "$(git -C "$R" show :a.md)" == "${LINES%$'\n'}" ]]; then
+if (cd "$R" && staged_checks markdown) >"$WORK/out" 2>&1 && [[ "$(git -C "$R" show :a.md)" == "${LINES%$'\n'}" ]]; then
   ok "markdown だけを渡すと、崩れた Nix で止めず、Markdown を直す"
 else
   ng "markdown だけを渡すと、崩れた Nix で止めず、Markdown を直す"
 fi
-if (cd "$R" && "$STAGED_CHECKS" nix) >"$WORK/out" 2>&1; then
+if (cd "$R" && staged_checks nix) >"$WORK/out" 2>&1; then
   ng "nix を渡すと、崩れた Nix で止める"
 else
   ok "nix を渡すと、崩れた Nix で止める"
 fi
 rc=0
-(cd "$R" && "$STAGED_CHECKS" fortran) >"$WORK/out" 2>&1 || rc=$?
+(cd "$R" && staged_checks fortran) >"$WORK/out" 2>&1 || rc=$?
 if [[ $rc -eq 2 ]]; then
   ok "知らない言語は使い方の誤り（終了コード 2）として止める"
 else

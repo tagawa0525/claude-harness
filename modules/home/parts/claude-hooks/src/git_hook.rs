@@ -6,6 +6,13 @@
 //!   （`CLAUDECODE=1`）のコミットで、fork でなければ、`ja-terms commit-msg` に渡す（Conventional Commits、件名の長さ、
 //!   崩れた日本語の語。PreToolUse hook の check-commit-message が同じ検査を先に呼ぶ）。手で打つコミットの自由を残す
 //!   ため、Claude Code の外のコミットは検査しない
+//! - pre-commit: Claude Code のセッションの main / master への直接のコミットを止め（crate::rules::main_commit_blocked。
+//!   PreToolUse hook と同じ関数。git の hook は必ず対象のリポジトリの中で走るので、worktree や cd の失敗でも誤判定
+//!   しない）、マージを締めるコミット（MERGE_HEAD がある。git は pre-merge-commit を呼ばない）では隣の pre-merge-commit を
+//!   呼ぶ。ローカルの pre-commit があれば、それと機密情報の検査だけを行う（ローカルの hook が index を変えた後に検査
+//!   する）。無ければ、プロジェクトの .pre-commit-config.yaml を prek で（設定はそのプロジェクトの規約なので fork でも）、
+//!   ステージしたファイルがあれば、fork でなければ既定の検査（crate::staged_checks）と崩れた日本語の語（`ja-terms
+//!   staged`）を、最後に機密情報の検査を行う
 //! - scan-secrets: 機密情報の検査（ADR-0015）。Claude Code のセッション（`CLAUDECODE=1`）のコミットで、コミットに
 //!   入る中身（index と HEAD の差）を gitleaks で見る（crate::gitleaks）。グローバルの pre-commit と pre-merge-commit
 //!   が、index を変える検査の後に呼ぶ。漏えいと、検査できないこと（gitleaks の失敗）を分けて出し、どちらも 1 で
@@ -26,7 +33,8 @@ use crate::output;
 use crate::process::Unfinished;
 use crate::rules::ja_terms;
 
-const USAGE: &str = "Usage: claude-hooks git-hook commit-msg <メッセージのファイル>
+const USAGE: &str = "Usage: claude-hooks git-hook pre-commit
+       claude-hooks git-hook commit-msg <メッセージのファイル>
        claude-hooks git-hook scan-secrets
        claude-hooks git-hook staged-checks [nix|python|markdown|rust]...
        claude-hooks git-hook post-rewrite <amend|rebase>";
@@ -39,6 +47,7 @@ const COMMIT_REFS: &str = "CLAUDE_HOOKS_COMMIT_REFS";
 
 pub fn main(args: &[String]) -> i32 {
     let code = match args {
+        [name, rest @ ..] if name == "pre-commit" => pre_commit(rest),
         [name, rest @ ..] if name == "commit-msg" => commit_msg(rest),
         [name, rest @ ..] if name == "post-rewrite" => post_rewrite(rest),
         [name] if name == "scan-secrets" => scan_secrets(),
@@ -57,18 +66,11 @@ pub fn main(args: &[String]) -> i32 {
 
 fn commit_msg(args: &[String]) -> i32 {
     let dir = Path::new(".");
-    // ローカルの hook を探せないまま通すと、プロジェクトの commit-msg（Change-Id を足すものなど）を飛ばすので止める
-    let Some(common) = git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ) else {
-        eprintln!(
-            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの commit-msg を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
-        );
+    let Ok(local) = find_local_hook(dir, "commit-msg") else {
         return 1;
     };
     // ローカルの hook には、git から受けた引数をそのまま渡す（引数の数を確かめるのはこちらの検査だけ）
-    if let Some(local) = git::local_hook(Path::new(&common), "commit-msg") {
+    if let Some(local) = local {
         return run_local(&local, args);
     }
     let [file] = args else {
@@ -154,18 +156,12 @@ fn post_rewrite(args: &[String]) -> i32 {
         return 1;
     }
     let dir = Path::new(".");
-    let Some(common) = git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ) else {
-        eprintln!(
-            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの post-rewrite を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
-        );
+    let Ok(local) = find_local_hook(dir, "post-rewrite") else {
         return 1;
     };
     // ローカルの hook の失敗でも付け直しは行い、その終了コードを最後に返す（ローカルの hook があるだけで付け直しが
     // 外れないように）
-    let local_rc = match git::local_hook(Path::new(&common), "post-rewrite") {
+    let local_rc = match local {
         Some(hook) => {
             let what = hook.display().to_string();
             run_with_input(&mut local_command(&hook, args), &input, false, &what)
@@ -369,4 +365,119 @@ fn scan_secrets() -> i32 {
             1
         }
     }
+}
+
+/// main / master への直接のコミットを止めるときの文（PreToolUse hook の block-main-commit と同じ趣旨）
+const MAIN_COMMIT_DENY: &str = "❌ main / master ブランチへの直接コミットは禁止されています
+   featureブランチを作成してください: /git-branch
+   - GitHub のリモートが無いリポジトリでも、ブランチは /git-merge で main にマージするので、main に直接コミットする理由はありません（2026-11-06 に、cd が失敗した後の git commit が別のリポジトリの main に空のコミットを作りました）
+   - 対象のディレクトリを確かめる（前の cd が失敗すると、git は元のディレクトリのリポジトリで走ります）
+   - 試すための一時のリポジトリなら、main / master 以外のブランチで作る（git init -b <名前>、git switch -c <名前>）
+   - 通すのは、flake.lock だけの変更、マージを締めるコミット（MERGE_HEAD がある）、HEAD の無いリポジトリの最初のコミットです";
+
+fn pre_commit(args: &[String]) -> i32 {
+    let dir = Path::new(".");
+    let claude_code = std::env::var("CLAUDECODE").as_deref() == Ok("1");
+    if claude_code && crate::rules::main_commit_blocked(dir) {
+        println!("{MAIN_COMMIT_DENY}");
+        return 1;
+    }
+    // マージを締めるコミット（競合を解決した後の git commit / git merge --continue、git merge --no-commit の後の
+    // git commit）では git が pre-merge-commit を呼ばないので、同じ検査をここで呼ぶ。隣の hook は core.hooksPath の
+    // 置き場にあり、--git-path hooks/… がそこを指す
+    if git::git(dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_some() {
+        let Some(sibling) = git::git(dir, &["rev-parse", "--git-path", "hooks/pre-merge-commit"])
+        else {
+            println!(
+                "❌ pre-merge-commit の hook の場所を git から得られないので、マージ結果を検査できません"
+            );
+            return 1;
+        };
+        let code = run_local(Path::new(&sibling), &[]);
+        if code != 0 {
+            return code;
+        }
+    }
+    let Ok(local) = find_local_hook(dir, "pre-commit") else {
+        return 1;
+    };
+    if let Some(local) = local {
+        let code = run_local(&local, args);
+        if code != 0 {
+            return code;
+        }
+        return scan_secrets();
+    }
+    let mut failed = false;
+    // プロジェクトの pre-commit の設定（設計の記録の検査などへのオプトイン。ADR-0009）。core.hooksPath があると
+    // prek install は拒否されるので、ここから呼ぶ。設定はそのプロジェクトの規約なので、fork でも実行する
+    if Path::new(".pre-commit-config.yaml").is_file() {
+        match crate::staged_checks::find_on_path("prek") {
+            Some(prek) => {
+                let ran = Command::new(&prek)
+                    .args(["run", "--hook-stage", "pre-commit"])
+                    .args(args)
+                    .status();
+                match ran {
+                    Ok(status) => failed |= !status.success(),
+                    Err(e) => {
+                        println!("❌ {} を起動できません（{e}）", prek.display());
+                        failed = true;
+                    }
+                }
+            }
+            None => println!(
+                "⚠️  .pre-commit-config.yaml がありますが prek が PATH に無いので、その検査を飛ばします"
+            ),
+        }
+    }
+    let staged = git::git(
+        dir,
+        &["diff", "--cached", "--name-only", "--diff-filter=ACMRT"],
+    );
+    let Some(staged) = staged else {
+        println!("❌ ステージしたファイルを git から読めないので、検査できません");
+        return 1;
+    };
+    // ステージしたファイルが無くても（種類の変更だけのコミット）、機密情報は検査する
+    if !staged.is_empty() {
+        // 他人のプロジェクトの fork では、こちらのツールの版と規約（ruff の新しいルール、markdownlint の設定、
+        // rustfmt の edition）が上流の固定版と CI と食い違い、上流向けのコミットに無関係な差分を混ぜる
+        if git::is_fork(dir) {
+            println!(
+                "⏭️  upstream リモートのある fork なので、こちらの規約の検査（Nix / Python / Markdown / Rust / 日本語の語）を飛ばします"
+            );
+        } else {
+            failed |= crate::staged_checks::run(&[]) != 0;
+            // 日本語の崩れた語（ADR-0014）。Markdown の自動修正がステージし直した後の、コミットに入る中身を見る
+            failed |= ja_terms_staged() != 0;
+        }
+    }
+    failed |= scan_secrets() != 0;
+    i32::from(failed)
+}
+
+fn ja_terms_staged() -> i32 {
+    let Some(bin) = ja_terms() else {
+        println!(
+            "❌ ja-terms が見つからないので、崩れた日本語の語を検査できません（Linux は claude-hooks の package.nix が CLAUDE_HOOKS_JA_TERMS を渡す）"
+        );
+        return 1;
+    };
+    status(Command::new(&bin).arg("staged"), &bin)
+}
+
+/// プロジェクトのローカルの hook（git::local_hook）。git の共通のディレクトリを求められなければ、理由を出して Err。
+/// ローカルの hook を探せないまま通すと、プロジェクトの hook（Change-Id を足す commit-msg など）を飛ばすので止める
+fn find_local_hook(dir: &Path, name: &str) -> Result<Option<std::path::PathBuf>, ()> {
+    let Some(common) = git::git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ) else {
+        println!(
+            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの {name} を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
+        );
+        return Err(());
+    };
+    Ok(git::local_hook(Path::new(&common), name))
 }
