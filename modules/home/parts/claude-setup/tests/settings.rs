@@ -233,3 +233,57 @@ fn the_key_order_of_the_file_is_kept() {
         "{text}"
     );
 }
+
+#[test]
+fn groups_without_a_hooks_list_are_kept() {
+    // ハーネスの規則に当たらない組は、形が崩れていても消さない
+    let home = Home::new();
+    home.write_settings(&json!({"hooks": {"Stop": [{"matcher": "x"}]}}));
+    let got = home.ok(&json!({}), &["--stop", BACKUP]);
+    assert_eq!(got["hooks"]["Stop"], json!([{"matcher": "x"}, stop()]));
+}
+
+#[test]
+fn an_event_that_is_not_a_list_is_left_untouched() {
+    let home = Home::new();
+    let text = r#"{"hooks": {"PreToolUse": {"bad": 1}}}"#;
+    std::fs::write(home.settings(), text).unwrap();
+    let out = home.run(&json!({}), &["--pre-tool-use", HOOKS]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(std::fs::read_to_string(home.settings()).unwrap(), text);
+}
+
+#[test]
+fn an_exec_form_registration_without_args_is_recognized() {
+    let home = Home::new();
+    let windows = r"C:\Users\u\.claude\bin\claude-memory-backup.exe";
+    home.write_settings(&json!({"hooks": {"Stop": [
+        {"hooks": [{"type": "command", "command": windows, "timeout": 60}]},
+    ]}}));
+    let got = home.ok(&json!({}), &["--stop", windows]);
+    assert_eq!(
+        got["hooks"]["Stop"],
+        json!([{"hooks": [{"type": "command", "command": windows, "args": [], "timeout": 60}]}])
+    );
+}
+
+#[test]
+fn null_hooks_count_as_no_hooks() {
+    // jq の filter は null の hooks を空のオブジェクトとして扱った
+    let home = Home::new();
+    home.write_settings(&json!({"hooks": null}));
+    let got = home.ok(&json!({}), &["--pre-tool-use", HOOKS]);
+    assert_eq!(got["hooks"]["PreToolUse"], json!([pre_tool_use()]));
+}
+
+#[test]
+fn a_read_only_settings_file_is_replaced() {
+    // Windows は読むだけの属性のファイルの上に名前を付け替えられない
+    let home = Home::new();
+    home.write_settings(&json!({}));
+    let mut perms = std::fs::metadata(home.settings()).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(home.settings(), perms).unwrap();
+    let got = home.ok(&json!({}), &["--pre-tool-use", HOOKS]);
+    assert_eq!(got["hooks"]["PreToolUse"], json!([pre_tool_use()]));
+}
