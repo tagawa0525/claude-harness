@@ -128,7 +128,10 @@ in
     # 静的な設定（./claude-settings.json）と hook を settings.json に反映する（ADR-0084。規則と登録の形、timeout は
     # claude-setup の src/settings.rs）。静的な設定の enabledPlugins の rust-analyzer-lsp を false にするのは、lsp-det の
     # ドッグフーディング（~/.claude/skills/lsp-det-dogfood）と .rs を取り合うため（同じ拡張子は先に登録された方が勝ち、
-    # skills とマーケットプレイスの順序は文書化されていない）
+    # skills とマーケットプレイスの順序は文書化されていない）。permissions.allow の design-records と commit-refs は
+    # git-hooks.nix が PATH に入れる設計の記録の CLI（adr スキル、git-merge スキル、branch-topics.sh が呼ぶ）、~/.claude の下の
+    # スクリプトは gh-pr-review、language-checks、retro のスキルと共有のスクリプト（PR のレビュー待ち、git と gh の
+    # 決まった手順）
     $DRY_RUN_CMD ${claude-setup}/bin/claude-setup settings --static ${./claude-settings.json} \
       --pre-tool-use "$HOME/${claudeHooksBinRel}" \
       --stop "$HOME/${claudeMemoryBackupBinRel}" \
