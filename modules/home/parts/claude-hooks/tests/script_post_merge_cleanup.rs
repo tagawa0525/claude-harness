@@ -154,3 +154,44 @@ fn bad_arguments_and_the_default_branch_are_errors() {
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("既定ブランチ main は削除しません"));
 }
+
+#[test]
+fn a_branch_checked_out_in_the_main_worktree_is_switched_away_from() {
+    // worktree を作らずにメインの clone で作業したブランチ。メインの worktree は消さずに、既定のブランチへ切り替える
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/main-wt"]);
+    repo.write("c.txt", "c\n");
+    repo.commit("feat: c");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "-q", "--ff-only", "feat/main-wt"]);
+    repo.git(&["switch", "-q", "feat/main-wt"]);
+    let out = repo.run(&["feat/main-wt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).starts_with("WORKTREE_REMOVED: none\n"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert!(repo.app().exists());
+    assert_eq!(repo.git(&["branch", "--show-current"]), "main");
+    assert_eq!(repo.git(&["branch", "--list", "feat/main-wt"]), "");
+}
+
+#[test]
+fn a_remote_branch_with_a_longer_name_is_not_the_branch() {
+    // ls-remote の名前は末尾で一致するので、alice/fix-typo を fix-typo と取り違えない
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&["push", "-q", "-u", "origin", "main"]);
+    repo.git(&["push", "-q", "origin", "main:refs/heads/alice/fix-typo"]);
+    repo.git(&["branch", "fix-typo"]);
+    let out = repo.run(&["fix-typo"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).ends_with("REMOTE_BRANCH: none\n"),
+        "{}",
+        text(&out.stdout)
+    );
+}
