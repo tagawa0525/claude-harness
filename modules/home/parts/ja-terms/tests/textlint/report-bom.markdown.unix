@@ -1,0 +1,5 @@
+report-bom.markdown:1:10: 確忍 => 確認 [Error/prh]
+report-bom.markdown:3:7: 確忍 => 確認 [Error/prh]
+report-bom.markdown:4:5: 険査 => 検査 [Error/prh]
+
+3 problems

@@ -1,0 +1,21 @@
+# 報告の仕方（tests/check.rs）を確かめる規則。textlint にこの辞書を当てた報告を、update.sh が <入力>.unix に書く。
+# 語は今の辞書（prh.yml）に無いものにする（pre-commit の語の検査がこのファイルと入力を辞書で見る）
+version: 1
+rules:
+  # あいうえおかきくけこさし の 3 つの一致（0〜10、5〜7、8〜12）は、重なりを 1 度外しても 0〜10 と 8〜12 が残る。
+  # 8〜12 の誤りは、前の直しを当てた後の文から切る
+  - expected: 長い置き換えの語
+    pattern: あいうえおかきくけこ
+  - expected: 短
+    pattern: かき
+  - expected: 終わりの語
+    pattern: けこさし
+  - expected: $1い
+    pattern: /(行な)う/
+  # 一致した語と、$1 を置き換えた後の語が同じなら、報告しない
+  - expected: $1れる
+    pattern: /(さ)れる/
+  - expected: 確認
+    pattern: 確忍
+  - expected: 検査
+    pattern: 険査
