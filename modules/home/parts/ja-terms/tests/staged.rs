@@ -347,3 +347,13 @@ fn a_repository_under_a_name_that_is_not_utf8_is_checked() {
     assert!(stdout(&out).contains("\ndoc.md:3:1: "));
     assert!(!stdout(&out).contains("fixtures/case.md"));
 }
+
+#[test]
+fn a_directory_named_textlintignore_is_not_the_ignore_file() {
+    let repo = Repo::new();
+    repo.stage(".textlintignore/a.txt", "x\n");
+    repo.stage("doc.md", "# t\n\n{B}の結果。\n");
+    let out = repo.staged();
+    assert!(stops(&out));
+    assert!(stdout(&out).contains("\ndoc.md:3:1: "));
+}
