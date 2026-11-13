@@ -197,6 +197,16 @@ enum Parsed {
     Runs(Vec<Run>),
 }
 
+/// range の中の改行（\r\n、\n、\r）の後の、行の始め。SoftBreak の範囲は行の終わりの前の空白から始まりうる
+fn line_starts(source: &str, range: Range<usize>) -> impl Iterator<Item = usize> + '_ {
+    let bytes = source.as_bytes();
+    range.clone().filter_map(move |i| match bytes[i] {
+        b'\n' => Some(i + 1),
+        b'\r' if bytes.get(i + 1) != Some(&b'\n') => Some(i + 1),
+        _ => None,
+    })
+}
+
 /// find_lazy なら、最初の lazy continuation の行で読むのを止めてその行を返す
 fn parse(source: &str, find_lazy: bool) -> Parsed {
     // 取り消し線は inline.rs が micromark の規則で読む（pulldown-cmark は 1 つの ~ を読まない）
@@ -217,16 +227,17 @@ fn parse(source: &str, find_lazy: bool) -> Parsed {
     // 続いている Str（mdast の text は、行の終わりをはさんだ文字の並びを 1 つのノードにする）
     let mut current: Option<Range<usize>> = None;
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
-        if find_lazy && let Event::SoftBreak = event {
-            // 行の終わりは \r\n、\n、\r のどれか（SoftBreak の範囲は行の終わりの前の空白から始まりうる）
-            let rest = &source[range.start..];
-            let line = range.start
-                + rest
-                    .find(['\r', '\n'])
-                    .map_or(0, |i| i + if rest[i..].starts_with("\r\n") { 2 } else { 1 });
-            if !continues(source, line, &containers) {
-                return Parsed::Lazy(line);
-            }
+        // pulldown-cmark は行をまたぐコードスパンとインラインの HTML の中に SoftBreak を出さないので、その中の行の
+        // 始めも確かめる
+        if find_lazy
+            && matches!(
+                event,
+                Event::SoftBreak | Event::Code(_) | Event::InlineHtml(_)
+            )
+            && let Some(line) = line_starts(source, range.clone())
+                .find(|&line| !continues(source, line, &containers))
+        {
+            return Parsed::Lazy(line);
         }
         match event {
             Event::Text(_) | Event::SoftBreak if ignored == 0 => {
