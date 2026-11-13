@@ -69,13 +69,12 @@ impl Repo {
 
     /// 偽のツールを name で PATH に置く
     fn tool(&self, name: &str) {
-        std::fs::copy(
-            fake_tool(),
-            self.root
+        place_fake_tool(
+            &self
+                .root
                 .join("bin")
                 .join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
-        )
-        .unwrap();
+        );
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -233,7 +232,7 @@ fn a_failing_term_check_stops_the_commit_after_the_secret_scan() {
     let ja_terms = repo
         .root
         .join(format!("bin/ja-terms{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(fake_tool(), &ja_terms).unwrap();
+    place_fake_tool(&ja_terms);
     let out = repo.commit(
         "a.txt",
         &[
