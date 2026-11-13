@@ -16,7 +16,7 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{
-    JA_TERMS, Undecided, commit_msg_skips, earlier_writer_reason, literal,
+    JA_TERMS, Undecided, commit_msg_skips, earlier_writer_reason, ja_terms, literal,
 };
 use crate::git;
 use crate::git_args::{Item, items_with_values};
@@ -295,7 +295,7 @@ impl Rule for CheckCommitMessage {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let check = std::env::var(JA_TERMS).ok();
+        let check = ja_terms();
         self.check_with(input, shell, check.as_deref(), &|dir| {
             git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
         })

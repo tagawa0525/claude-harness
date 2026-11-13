@@ -31,8 +31,16 @@ pub struct CheckMergeBodyJaTerms;
 /// ものには無い）。git commit のルールも使う
 pub(super) const JA_TERMS: &str = "CLAUDE_HOOKS_JA_TERMS";
 
-fn ja_terms_from(_env: Option<String>, _windows: bool) -> Option<String> {
-    None
+/// 呼ぶ ja-terms。git merge と git commit のルールが使う
+pub(super) fn ja_terms() -> Option<String> {
+    ja_terms_from(std::env::var(JA_TERMS).ok(), cfg!(windows))
+}
+
+/// 環境変数のパスが先。無ければ、Nix のラッパーの無い Windows（ja-terms を cargo install で入れる。ADR-0084、
+/// ADR-0085）は PATH の `ja-terms`。Linux で環境変数が無いのは cargo で直接ビルドしたもので、判定できない理由を
+/// 出して通す（PATH の別の版で判定しない）
+fn ja_terms_from(env: Option<String>, windows: bool) -> Option<String> {
+    env.or_else(|| windows.then(|| "ja-terms".to_string()))
 }
 
 /// 本文を判定できない理由
@@ -458,7 +466,7 @@ impl Rule for CheckMergeBodyJaTerms {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let check = std::env::var(JA_TERMS).ok();
+        let check = ja_terms();
         self.check_with(input, shell, check.as_deref(), &|dir| {
             git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
         })
