@@ -25,23 +25,24 @@ pub struct Pr {
 /// （コメントの URL を渡した呼び出しが、別に渡す comment_id と食い違っても気付けないため）。受けられなければ、
 /// 標準エラーに出す理由を返す
 pub fn parse(url: &str) -> Result<Pr, String> {
-    let Some(caps) = PR_URL.captures(url) else {
-        return Err(format!(
+    let not_a_pr_url = || {
+        format!(
             "ERROR: 対象は PR の URL（https://github.com/<owner>/<repo>/pull/<番号>）で渡してください: '{url}'"
-        ));
+        )
     };
-    if caps.get(6).is_some() {
-        return Err(format!(
-            "ERROR: PR の URL に # 以降を付けないでください（コメントは別の引数で渡す）: '{url}'"
-        ));
-    }
-    // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る
+    let Some(caps) = PR_URL.captures(url) else {
+        return Err(not_a_pr_url());
+    };
+    // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る（# の検査より先なのは sh と同じ）
     if [&caps[1], &caps[2]]
         .iter()
         .any(|name| *name == "." || *name == "..")
     {
+        return Err(not_a_pr_url());
+    }
+    if caps.get(6).is_some() {
         return Err(format!(
-            "ERROR: 対象は PR の URL（https://github.com/<owner>/<repo>/pull/<番号>）で渡してください: '{url}'"
+            "ERROR: PR の URL に # 以降を付けないでください（コメントは別の引数で渡す）: '{url}'"
         ));
     }
     Ok(Pr {
