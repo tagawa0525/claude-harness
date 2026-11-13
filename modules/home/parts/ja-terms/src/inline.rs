@@ -152,8 +152,13 @@ fn autolinks(
     let limit = cell_end.map_or(line_end, |end| end.min(line_end));
     let mut result = Vec::new();
     let mut last = range.start;
+    // 括弧は、前の literal autolink の始めまで数えた続きから数える（毎回 range の始めから数えると、URL の数と
+    // 長さの積の時間になる）
+    let (mut counted, mut open) = (range.start, open);
     for link in autolink::find(text, range.start, range.end, limit) {
-        if brackets_after(&text[range.start..link.start], open) > 0 {
+        open = brackets_after(&text[counted..link.start], open);
+        counted = link.start;
+        if open > 0 {
             continue;
         }
         // 行の始めの literal autolink の前の字下げは、mdast の text に入らない
