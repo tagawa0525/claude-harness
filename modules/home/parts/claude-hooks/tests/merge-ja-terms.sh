@@ -47,6 +47,13 @@ out=$(run "git merge --no-ff feat/a -m 'Merge: a' -m '確認の結果を再実�
 out=$(run "git merge --no-ff feat/a -m 'Merge: 掃引' -m '確認'")
 [ -z "$out" ] || fail "commit-msg と同じく Merge の件名は検査しないはず" "$out"
 
+# --no-ff の無いマージは、本文の語だけを ja-terms message で見る（件名の形では止めない）
+out=$(run "git merge feat/a -m '何の型もない件名' -m '掃引して計算を流し直す'")
+reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' <<<"$out")
+grep -qxF "  掃引 => スイープ" <<<"$reason" || fail "--no-ff の無いマージの本文の語を、行と列を外して示すはず" "$out"
+out=$(run "git merge feat/a -m '何の型もない件名' -m '確認'")
+[ -z "$out" ] || fail "--no-ff の無いマージは件名の形では止めないはず" "$out"
+
 # commit-msg は Merge などで始まらない件名の形も見るので、同じ検査で先に止める（#118）
 out=$(run "git merge --no-ff feat/a -m '何の型もない件名'")
 [ "$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<<"$out")" = deny ] || fail "Conventional Commits でない件名を止めるはず" "$out"

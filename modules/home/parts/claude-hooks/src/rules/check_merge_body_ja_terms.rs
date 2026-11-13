@@ -954,7 +954,8 @@ exit 0
             assert!(check(cmd).is_empty(), "{cmd}");
         }
         let r = only_deny(&check("git merge feat/a -m '形違い' -m '誤語'"));
-        assert!(r.contains("誤語 => 正語"), "{r}");
+        // 報告の行の「行:列:」を外した語の組を示す
+        assert!(r.lines().any(|l| l == "  誤語 => 正語"), "{r}");
     }
 
     #[cfg(unix)]
