@@ -280,7 +280,7 @@ fn every_argument_reaches_the_local_hook() {
 fn a_local_exe_hook_runs_on_windows() {
     let repo = Repo::new();
     let local = repo.local_hook().with_extension("exe");
-    std::fs::copy(fake_tool(), &local).unwrap();
+    place_fake_tool(&local);
     // ローカルの hook（commit-msg の名前の偽のコマンド）の記録は、ja-terms の代わりの偽のコマンドと分ける
     let local_log = repo.root.join("local.log");
     let out = repo.commit(&[("FAKE_COMMIT_MSG_LOG", local_log.to_str().unwrap())], &[]);

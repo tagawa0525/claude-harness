@@ -17,6 +17,31 @@ pub fn fake_tool() -> PathBuf {
         .join(format!("fake_tool{}", std::env::consts::EXE_SUFFIX))
 }
 
+/// 偽のコマンド（[`fake_tool`]）を dest に置く。ハードリンクにするのは、コピーすると書き込みに開いた fd が、並行するテストが
+/// その間に fork した子に exec まで残り、置いたコマンドの起動が ETXTBSY（Text file busy）で失敗しうるため（リンクは
+/// 書き込みに開かない）。同じファイルシステムに無くリンクできなければコピーし、起動できるまで待つ
+#[allow(dead_code)]
+pub fn place_fake_tool(dest: &Path) {
+    let _ = std::fs::remove_file(dest);
+    if std::fs::hard_link(fake_tool(), dest).is_ok() {
+        return;
+    }
+    std::fs::copy(fake_tool(), dest).unwrap();
+    executable(dest);
+    for _ in 0..100 {
+        match Command::new(dest).output() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            _ => return,
+        }
+    }
+    panic!(
+        "偽のコマンドが 1 秒たっても Text file busy のまま: {}",
+        dest.display()
+    );
+}
+
 /// sh に書くパス（Windows の `\` は sh の中で消えるので `/` にする）
 #[allow(dead_code)]
 pub fn sh_path(path: &Path) -> String {

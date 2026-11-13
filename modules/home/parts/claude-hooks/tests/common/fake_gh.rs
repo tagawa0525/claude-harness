@@ -1,7 +1,7 @@
 //! `claude-hooks script <名前>` の結合テストの部品。偽の gh（examples/fake_tool.rs）を PATH の先頭に置いてスクリプトを
 //! 起動し、gh に渡した引数と環境（GH_REPO、GH_HOST）を記録する
 
-use super::{executable, fake_tool};
+use super::{fake_tool, place_fake_tool};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,8 +34,7 @@ impl FakeGh {
         let gh = root
             .join("bin")
             .join(format!("gh{}", std::env::consts::EXE_SUFFIX));
-        std::fs::copy(fake_tool(), &gh).unwrap();
-        executable(&gh);
+        place_fake_tool(&gh);
         FakeGh { root }
     }
 

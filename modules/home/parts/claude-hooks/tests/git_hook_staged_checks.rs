@@ -68,13 +68,12 @@ impl Repo {
 
     /// 偽のツールを name で置く
     fn tool(&self, name: &str) {
-        std::fs::copy(
-            fake_tool(),
-            self.root
+        place_fake_tool(
+            &self
+                .root
                 .join("bin")
                 .join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
-        )
-        .unwrap();
+        );
     }
 
     fn path_env(&self) -> std::ffi::OsString {
