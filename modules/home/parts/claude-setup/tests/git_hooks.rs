@@ -66,6 +66,14 @@ impl Home {
             .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// claude-hooks の代わりのファイル（--bin はあるファイルを指さなければ止まる）
+    fn bin(&self, name: &str) -> String {
+        let path = self.0.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "").unwrap();
+        path.display().to_string()
+    }
+
     fn run(&self, bin: &str) -> Output {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
         for (key, _) in std::env::vars_os() {
@@ -94,14 +102,16 @@ fn said(out: &Output) -> String {
 #[test]
 fn the_four_hook_files_exec_claude_hooks_and_hooks_path_points_at_them() {
     let home = Home::new();
-    let out = home.run("/opt/claude hooks/bin/claude-hooks");
+    let bin = home.bin("claude hooks/bin/claude-hooks");
+    let out = home.run(&bin);
     assert!(out.status.success(), "{}", said(&out));
     for name in HOOKS {
         let text = std::fs::read_to_string(home.hooks().join(name)).unwrap();
         assert_eq!(
             text,
             format!(
-                "#!/bin/sh\nexec '/opt/claude hooks/bin/claude-hooks' git-hook {name} \"$@\"\n"
+                "#!/bin/sh\nexec '{}' git-hook {name} \"$@\"\n",
+                bin.replace('\\', "/")
             ),
             "{name}"
         );
@@ -123,24 +133,27 @@ fn the_four_hook_files_exec_claude_hooks_and_hooks_path_points_at_them() {
 }
 
 #[test]
-fn windows_paths_are_written_with_forward_slashes() {
-    // sh は `\` を消すので、Windows のパス（cargo install の置き場）は `/` 区切りで書く
+fn quotes_in_the_path_are_kept_for_sh() {
+    // sh は `\` を消すので `/` 区切りで書き、' は sh の引用の中で書き直す
     let home = Home::new();
-    let out = home.run(r"C:\Users\it's me\.cargo\bin\claude-hooks.exe");
+    let bin = home.bin("it's me/claude-hooks");
+    let out = home.run(&bin);
     assert!(out.status.success(), "{}", said(&out));
     let text = std::fs::read_to_string(home.hooks().join("pre-commit")).unwrap();
+    let quoted = bin.replace('\\', "/").replace('\'', "'\\''");
     assert_eq!(
         text,
-        "#!/bin/sh\nexec 'C:/Users/it'\\''s me/.cargo/bin/claude-hooks.exe' git-hook pre-commit \"$@\"\n"
+        format!("#!/bin/sh\nexec '{quoted}' git-hook pre-commit \"$@\"\n")
     );
 }
 
 #[test]
 fn running_twice_gives_the_same_files() {
     let home = Home::new();
-    assert!(home.run("/opt/bin/claude-hooks").status.success());
+    let bin = home.bin("bin/claude-hooks");
+    assert!(home.run(&bin).status.success());
     let first = std::fs::read_to_string(home.hooks().join("commit-msg")).unwrap();
-    let again = home.run("/opt/bin/claude-hooks");
+    let again = home.run(&bin);
     assert!(again.status.success(), "{}", said(&again));
     assert_eq!(
         std::fs::read_to_string(home.hooks().join("commit-msg")).unwrap(),
@@ -158,7 +171,7 @@ fn another_global_hooks_path_is_not_overwritten() {
         .status()
         .unwrap();
     assert!(status.success());
-    let out = home.run("/opt/bin/claude-hooks");
+    let out = home.run(&home.bin("bin/claude-hooks"));
     assert_eq!(out.status.code(), Some(1));
     assert!(said(&out).contains("/opt/team-hooks"), "{}", said(&out));
     assert_eq!(home.hooks_path().as_deref(), Some("/opt/team-hooks"));
@@ -166,10 +179,59 @@ fn another_global_hooks_path_is_not_overwritten() {
 }
 
 #[test]
-fn a_missing_bin_is_a_usage_error() {
-    let out = Command::new(env!("CARGO_BIN_EXE_claude-setup"))
-        .arg("git-hooks")
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(2));
+fn a_hooks_path_from_an_included_file_counts() {
+    // ~/.gitconfig から include した設定の core.hooksPath も、git が使うので奪わない
+    let home = Home::new();
+    let inc = home.0.join("team.inc");
+    std::fs::write(&inc, "[core]\n\thooksPath = /opt/team-hooks\n").unwrap();
+    std::fs::write(
+        home.gitconfig(),
+        format!(
+            "[include]\n\tpath = {}\n",
+            inc.display().to_string().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    let out = home.run(&home.bin("bin/claude-hooks"));
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("/opt/team-hooks"), "{}", said(&out));
+}
+
+#[test]
+fn hook_files_that_are_not_ours_are_not_replaced() {
+    // 同じ置き場の、ハーネスのものでない hook のファイルは、黙って上書きせずに止める
+    let home = Home::new();
+    std::fs::create_dir_all(home.hooks()).unwrap();
+    std::fs::write(home.hooks().join("pre-commit"), "#!/bin/sh\nrun-my-lint\n").unwrap();
+    let out = home.run(&home.bin("bin/claude-hooks"));
+    assert_eq!(out.status.code(), Some(1));
+    assert!(said(&out).contains("pre-commit"), "{}", said(&out));
+    assert_eq!(
+        std::fs::read_to_string(home.hooks().join("pre-commit")).unwrap(),
+        "#!/bin/sh\nrun-my-lint\n"
+    );
+}
+
+#[test]
+fn a_bin_that_does_not_exist_is_refused() {
+    // 無いパスを書くと、その機械のすべてのコミットが止まる
+    let home = Home::new();
+    let out = home.run(&home.0.join("no/such/claude-hooks").display().to_string());
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!home.hooks().join("pre-commit").exists());
+    assert_eq!(home.hooks_path(), None);
+}
+
+#[test]
+fn wrong_arguments_are_usage_errors() {
+    for args in [
+        vec!["git-hooks", "--bin"],
+        vec!["git-hooks", "--pre-tool-use", "x"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_claude-setup"))
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+    }
 }
