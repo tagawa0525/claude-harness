@@ -299,7 +299,7 @@ in
     # 外部スキルのデプロイ（externalSkills）。上流のコピーなので --delete で完全一致させる。
     # claude-sync コマンドは flake input を知らないため、ここ（rebuild）でのみ同期される。
     # --checksum は、store のソースと -a でコピーした先がどちらも mtime 1 になり、既定の判定
-    # （サイズと mtime）では同じサイズの上流の変更を飛ばすため（claude-setup sync も同じ理由で中身を比べる）
+    # （サイズと mtime）では同じサイズの上流の変更を飛ばすため（claude-setup sync も同じ理由で中身を比べる。比べた案は nixfiles の issue 566）
     ${lib.concatMapStringsSep "\n" (s: ''
       $DRY_RUN_CMD mkdir -p "$CLAUDE_DIR/skills/${s.name}"
       $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --checksum --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
