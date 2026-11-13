@@ -18,8 +18,8 @@ Git と GitHub の作業手順のスクリプトを、#101 の段階 5 で Rust 
 （`f0083452`、2026-11-13、`wc -l`）。うち 12 本が jq を使い（`grep -l jq`）、Windows の手順は jq を入れている（README の
 「Windows で使う」）。`lib/pr-url.sh` と `lib/local-review.sh` は、ほかのスクリプトが source する部品で、単独では実行しない。
 
-これらのスクリプトは、スキルの文から `~/.claude/scripts/<名前>.sh` のパスで呼ばれる（`f0083452` で、`.claude` の下の
-`review-level.sh` を名前で書くファイルは 9 つ）。claude-hooks の PreToolUse のルールも、スクリプトの名前で呼び出しを
+これらのスクリプトは、スキルの文から `~/.claude/scripts/<名前>.sh` のパスで呼ばれる（`f0083452` で、`review-level.sh` を名前で書く
+スキルの文は `.claude/skills` の下の 6 ファイル。`git grep -l`）。claude-hooks の PreToolUse のルールも、スクリプトの名前で呼び出しを
 見分ける（例: `require_background_wait.rs` は `gh-wait-review.sh` と `request-rereview.sh` をフォアグラウンドで実行させない）。
 拒否の文言も、修正方法としてスクリプトの名前を示す（`pre_merge_check.rs`、`guard_gh_api.rs` など）。`lib/local-review.sh`
 （`decide-next.sh`、`request-rereview.sh`、`record-local-review.sh` が source する）は、ローカルレビューの記録の判定を
@@ -30,7 +30,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 （ADR-0086 は git hook を `claude-hooks` のサブコマンドにした）。#101 の「作業の順序」は、sh の実装を、呼び出し元を
 付け替えた PR で消すとしていた。
 
-決めること: Rust の中身の置き場、スクリプトのファイルと、スキルの文と hook のルールからの呼ばれ方、移す順とテスト。
+決めること: Rust の中身の置き場、スクリプトのファイルと、スキルの文と hook のルールからの呼ばれ方、テスト。移す順は #101 の
+「作業の順序」に書く。
 
 ## 決定の要因
 
@@ -66,11 +67,9 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   Linux と同じパスで引く（Git Bash は `.exe` を補って実行する）。最初に移す PR で足す
 - `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す
-- 移す順: gh-pr-review のスクリプト、`gh-wait-review.sh` と `gh-review-requests.sh`、`review-level.sh`、`git-merge-state.sh`、
-  `base-moved.sh`、`branch-topics.sh`、`worktree-add.sh`、`post-merge-cleanup.sh`、残り。スクリプトごとに 1 つ以上の PR に
-  し、中身を移した PR で sh の実装を 1 行に置き換える
-- テスト: 判定は `claude-hooks` の結合テスト（gh は、今の外部のコマンドと同じく環境変数で引き、`examples/fake_tool.rs`
-  の偽物に差し替える）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
+- PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を 1 行に置き換える
+- テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える。仕組みは最初に移す PR でテストとともに
+  決める）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
   1 行のスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
 
 理由:
@@ -93,7 +92,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 悪い点: スクリプトの判定を変えるたびに、`claude-hooks` のビルドとテストが要る（ADR-0082 の帰結と同じ）
 - 悪い点: `claude-sync` は 1 行のスクリプトをすぐ配るが、バイナリは rebuild まで前の版のままで、その間、移した
   スクリプトは前の版のバイナリにサブコマンドが無く失敗する。移す PR は `claude-hooks` を変えるので、マージの後は
-  `claude-sync` でなく rebuild（activation が sync も実行する）で入れる
+  `claude-sync` でなく rebuild（activation が sync も実行する）で入れる。Windows も、`claude-setup sync` の前に
+  `cargo install` とコピーを済ませる
 
 ### 確認
 
