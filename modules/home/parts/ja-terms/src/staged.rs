@@ -108,18 +108,24 @@ fn staged_files(top: &Path) -> Result<Vec<(String, String)>, Failure> {
 /// ステージした .textlintignore に当たる、インデックスのファイルのパス
 fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
     // 無いことと git の誤り（壊れたインデックスなど）を分けるため、cat-file -e の失敗でなく、インデックスに載って
-    // いるかで見る
+    // いるかで見る。pathspec はその名前のディレクトリの下のファイルにも当たるので、--stage の項目のパスが
+    // .textlintignore そのもので、普通のファイル（100644 か 100755）のものだけを数える
     let listed = git(
         Some(top),
         &[
             "ls-files",
             "-z",
-            "--cached",
+            "--stage",
             "--",
             ":(top,literal).textlintignore",
         ],
     )?;
-    if listed.is_empty() {
+    let is_file = listed.split(|&b| b == 0).any(|entry| {
+        // 「モード ブロブ ステージ\tパス」
+        entry.ends_with(b"\t.textlintignore")
+            && (entry.starts_with(b"100644 ") || entry.starts_with(b"100755 "))
+    });
+    if !is_file {
         return Ok(HashSet::new());
     }
     let patterns = git(Some(top), &["show", ":.textlintignore"])?;
