@@ -15,6 +15,7 @@ mod post_merge_cleanup;
 mod pr_url;
 mod record_local_review;
 mod rename_branch;
+mod rename_plan;
 mod reply_to_comment;
 mod request_rereview;
 mod reset_rounds;
@@ -40,6 +41,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("post-merge-cleanup", post_merge_cleanup::main),
     ("record-local-review", record_local_review::main),
     ("rename-branch", rename_branch::main),
+    ("rename-plan", rename_plan::main),
     ("reply-to-comment", reply_to_comment::main),
     ("request-rereview", request_rereview::main),
     ("reset-rounds", reset_rounds::main),
