@@ -24,46 +24,19 @@ struct Staged {
     mode: String,
 }
 
-/// 一時の作業の場所（終わったら消す）
-struct Work(PathBuf);
-
-impl Drop for Work {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 pub fn run(langs: &[String]) -> i32 {
     if let Some(lang) = langs.iter().find(|l| !LANGUAGES.contains(&l.as_str())) {
         eprintln!("staged-checks: 知らない言語です: {lang}（nix、python、markdown、rust）");
         return 2;
     }
     let wants = |lang: &str| langs.is_empty() || langs.iter().any(|l| l == lang);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let dir = std::env::temp_dir().join(format!(
-        "claude-hooks-staged-{}-{nanos}",
-        std::process::id()
-    ));
-    // ステージした中身を書き出すので、持ち主だけが読める場所にする（mktemp -d と同じ 0700）。名前が既にあれば、
-    // ほかの人が作ったかもしれないので使わない（create_dir_all でなく create）
-    let mut builder = std::fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    if let Err(e) = builder.create(&dir) {
-        println!(
-            "❌ 一時のディレクトリ {} を作れません（{e}）",
-            dir.display()
-        );
-        return 1;
-    }
-    // 作れた後にだけ、片付けの対象にする（作れなかった場所は、ほかの人のものかもしれないので消さない）
-    let work = Work(dir);
+    let work = match crate::process::private_temp_dir("claude-hooks-staged") {
+        Ok(dir) => dir,
+        Err(why) => {
+            println!("❌ {why}");
+            return 1;
+        }
+    };
     let mut failed = false;
     for (lang, spec, check) in [
         ("nix", "*.nix", nix as fn(&[Staged], &Path) -> bool),

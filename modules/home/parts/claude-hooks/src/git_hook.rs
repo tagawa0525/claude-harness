@@ -13,6 +13,12 @@
 //!   する）。無ければ、プロジェクトの .pre-commit-config.yaml を prek で（設定はそのプロジェクトの規約なので fork でも）、
 //!   ステージしたファイルがあれば、fork でなければ既定の検査（crate::staged_checks）と崩れた日本語の語（`ja-terms
 //!   staged`）を、最後に機密情報の検査を行う
+//! - pre-merge-commit: main / master へのマージコミットを、マージ結果が品質チェック（~/.claude の run-checks.sh
+//!   --merge）を通ったときだけ作る。git はマージを用意した後（作業ツリーと index がマージ結果の状態）、コミットの前に
+//!   呼ぶ。ローカルの pre-merge-commit を先に呼び（置き換えない。置き換えると、ローカルの hook があるだけでゲートが外れる）、
+//!   機密情報の検査はどのブランチへのマージでも行う（競合の無いマージでは pre-commit が走らない）。ほかのブランチへの
+//!   マージは途中経過なので品質チェックをしない。fork でも飛ばす。作業ツリーにマージ結果以外の変更があると、別の内容を
+//!   検査してしまうので止める
 //! - scan-secrets: 機密情報の検査（ADR-0015）。Claude Code のセッション（`CLAUDECODE=1`）のコミットで、コミットに
 //!   入る中身（index と HEAD の差）を gitleaks で見る（crate::gitleaks）。グローバルの pre-commit と pre-merge-commit
 //!   が、index を変える検査の後に呼ぶ。漏えいと、検査できないこと（gitleaks の失敗）を分けて出し、どちらも 1 で
@@ -34,6 +40,7 @@ use crate::process::Unfinished;
 use crate::rules::ja_terms;
 
 const USAGE: &str = "Usage: claude-hooks git-hook pre-commit
+       claude-hooks git-hook pre-merge-commit
        claude-hooks git-hook commit-msg <メッセージのファイル>
        claude-hooks git-hook scan-secrets
        claude-hooks git-hook staged-checks [nix|python|markdown|rust]...
@@ -48,6 +55,7 @@ const COMMIT_REFS: &str = "CLAUDE_HOOKS_COMMIT_REFS";
 pub fn main(args: &[String]) -> i32 {
     let code = match args {
         [name, rest @ ..] if name == "pre-commit" => pre_commit(rest),
+        [name, rest @ ..] if name == "pre-merge-commit" => pre_merge_commit(rest),
         [name, rest @ ..] if name == "commit-msg" => commit_msg(rest),
         [name, rest @ ..] if name == "post-rewrite" => post_rewrite(rest),
         [name] if name == "scan-secrets" => scan_secrets(),
@@ -480,4 +488,241 @@ fn find_local_hook(dir: &Path, name: &str) -> Result<Option<std::path::PathBuf>,
         return Err(());
     };
     Ok(git::local_hook(Path::new(&common), name))
+}
+
+fn pre_merge_commit(args: &[String]) -> i32 {
+    let dir = Path::new(".");
+    let Ok(local) = find_local_hook(dir, "pre-merge-commit") else {
+        return 1;
+    };
+    if let Some(local) = local {
+        let code = run_local(&local, args);
+        if code != 0 {
+            return code;
+        }
+    }
+    let scanned = scan_secrets();
+    if scanned != 0 {
+        return scanned;
+    }
+    let branch = git::current_branch(dir);
+    if branch != "main" && branch != "master" {
+        return 0;
+    }
+    if git::is_fork(dir) {
+        println!(
+            "⏭️  upstream リモートのある fork なので、マージ結果の品質チェック（run-checks.sh）を飛ばします"
+        );
+        return 0;
+    }
+    // 検査は作業ツリーで走るので、コミットされない変更があると、マージコミットとは別の内容を検査してしまう（比べる
+    // index は git が渡す GIT_INDEX_FILE。commit -a なら index.lock）。追跡していないファイルも、木全体の検査が拾う
+    // ので含める。.gitignore で除外したものは検査のツールも除外するので含めない。core.quotePath=false は、下の
+    // .gitignore から外れた生成物の一覧と同じく、非 ASCII のパスを 8 進で引用せずに出すため
+    let lines = |args: &[&str]| git::git(dir, args).map(|out| nonempty_lines(&out));
+    let (Some(modified), Some(untracked)) = (
+        lines(&["-c", "core.quotePath=false", "diff", "--name-only"]),
+        lines(&[
+            "-c",
+            "core.quotePath=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+        ]),
+    ) else {
+        println!("❌ 作業ツリーの変更を git から読めないので、マージ結果を検査できません");
+        return 1;
+    };
+    if !modified.is_empty() || !untracked.is_empty() {
+        report_unclean(dir, &modified, &untracked);
+        return 1;
+    }
+    let run_checks =
+        crate::shell::home().join(".claude/skills/language-checks/scripts/run-checks.sh");
+    if !run_checks.is_file() {
+        println!(
+            "❌ {} がないので、マージ結果を検査できません",
+            run_checks.display()
+        );
+        println!(
+            "   修正方法: claude-sync（または rebuild）で ~/.claude を同期してから、もう一度マージしてください"
+        );
+        return 1;
+    }
+    println!("🔍 マージ結果の品質チェック（run-checks.sh --merge）...");
+    // git が hook に渡す GIT_INDEX_FILE（.git/index や index.lock）は、検査が起動するテストの中の git にも引き継がれ、
+    // 別のリポジトリでこの index を読み書きさせてしまうので外す（--merge は HEAD と作業ツリーの差分で判定し、index
+    // に頼らない）
+    // Windows の起動は、PATH の前に System32 を探し、WSL の bash.exe（Linux のディストリビューションを起動するもの）を
+    // 見つける。Git for Windows の bash を使うよう、PATH を順に探して見つけたパスで起動する（Git for Windows は hook を
+    // 起動するとき、自分の bin を PATH の先頭に足すので、System32 より先に見つかる）
+    let bash = crate::staged_checks::find_on_path("bash").unwrap_or_else(|| "bash".into());
+    let checked = Command::new(&bash)
+        .arg(&run_checks)
+        .arg("--merge")
+        .env_remove("GIT_INDEX_FILE")
+        .status();
+    let passed = match checked {
+        Ok(status) => status.success(),
+        Err(e) => {
+            println!("❌ {} を起動できません（{e}）", bash.display());
+            false
+        }
+    };
+    if !passed {
+        println!("❌ マージ結果が品質チェックに通らないので、マージコミットを作りません");
+        println!(
+            "   修正方法: git merge --abort で取り消し、マージするブランチで直してコミットしてから、もう一度マージしてください"
+        );
+        return 1;
+    }
+    0
+}
+
+/// 作業ツリーにマージ結果以外の変更があることを、ファイルの一覧と修正方法で示す。マージするブランチが .gitignore から
+/// 行を外すと、HEAD の作業ツリーに残っていた生成物が未追跡として現れる。コミットするものではないので、HEAD の
+/// .gitignore で無視されていたファイルを見分け、別の一覧で示す
+fn report_unclean(dir: &Path, modified: &[String], untracked: &[String]) {
+    // --no-renames: ディレクトリを移したブランチで、改名として新しい .gitignore だけを出すと、無視の行を持っていた
+    // 元の .gitignore が落ちる
+    let ignore_changed = git::git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--cached",
+            "--no-renames",
+            "--name-only",
+            "HEAD",
+            "--",
+            ":(glob)**/.gitignore",
+        ],
+    )
+    .map(|out| nonempty_lines(&out));
+    let mut mark_failed = false;
+    // 読めなければ、変わる .gitignore も、無視されていたファイルも分からない（下の一覧に生成物が混ざりうる）
+    let ignore_unreadable = ignore_changed.is_none();
+    if ignore_unreadable {
+        println!("❌ マージで変わる .gitignore を git から読めません");
+    }
+    let ignore_changed = ignore_changed.unwrap_or_default();
+    let mut unignored = Vec::new();
+    if !ignore_changed.is_empty() && !untracked.is_empty() {
+        match head_ignored(dir, untracked) {
+            Ok(list) => unignored = list,
+            Err(why) => {
+                println!("❌ HEAD の .gitignore で無視されていたファイルを判定できません（{why}）");
+                mark_failed = true;
+            }
+        }
+    }
+    // 印の付いたファイルは下の一覧にだけ出す（同じファイルを 2 度並べると、大きな出力のディレクトリで修正方法が
+    // 埋もれる）
+    // 生成物のディレクトリは数万のファイルを持ちうるので、集合で引く
+    let marked: std::collections::HashSet<&String> = unignored.iter().collect();
+    let others: Vec<&String> = modified
+        .iter()
+        .chain(untracked)
+        .filter(|f| !marked.contains(f))
+        .collect();
+    println!("❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:");
+    for f in &others {
+        println!("     {f}");
+    }
+    if !unignored.is_empty() {
+        println!(
+            "   次のファイルは、マージするブランチが .gitignore から外した生成物（HEAD の .gitignore では無視されていた。ブランチが生成する処理を消したか置き換えたなど）:"
+        );
+        for f in &unignored {
+            println!("     {f}");
+        }
+        println!("   マージで変わる .gitignore:");
+        for f in &ignore_changed {
+            println!("     {f}");
+        }
+        println!(
+            "   修正方法: git merge --abort で取り消す。上の生成物は、DVC のキャッシュなどに記録された版と中身が同じで戻せるなら作業ツリーから消す。記録された版と中身が違うか、記録が無ければ、消すと戻せないので、何の出力でなぜ違うかの原因を調べてから消すか移すかを決める（残して無視し続けるなら、マージするブランチの .gitignore に行を戻す）。ほかの変更はコミットして（不要なファイルは消して）から、もう一度マージしてください"
+        );
+        return;
+    }
+    if ignore_unreadable && !untracked.is_empty() {
+        println!(
+            "   マージで変わる .gitignore を読めなかった（理由は上のエラー）。上の一覧には、マージするブランチが .gitignore から外した生成物が混ざりうる"
+        );
+    }
+    if mark_failed {
+        println!(
+            "   マージで次の .gitignore が変わるが、HEAD の .gitignore で無視されていたファイルの判定に失敗した（理由は上のエラー）。上の一覧には、マージするブランチが .gitignore から外した生成物が混ざりうる:"
+        );
+        for f in &ignore_changed {
+            println!("     {f}");
+        }
+    }
+    println!(
+        "   修正方法: git merge --abort で取り消し、変更をコミットして（不要なファイルは消して）から、もう一度マージしてください"
+    );
+}
+
+/// untracked のうち、HEAD の .gitignore で無視されていたもの。git check-ignore は作業ツリー（マージ結果）の
+/// .gitignore しか読まないので、HEAD の .gitignore だけを置いた一時のリポジトリで判定する（ファイルの実体は要らない。
+/// パスとパターンで決まる）。git archive は export-ignore の属性で .gitignore を落としうるので、git show で 1 本ずつ
+/// 取り出す
+fn head_ignored(dir: &Path, untracked: &[String]) -> Result<Vec<String>, String> {
+    let tmp = crate::process::private_temp_dir("claude-hooks-ignored")?;
+    let repo = tmp.0.join("repo");
+    let tree = crate::git::run(dir, &["ls-tree", "-r", "-z", "--name-only", "HEAD"], None)
+        .filter(|o| o.status.success())
+        .ok_or("git ls-tree HEAD に失敗しました")?;
+    for name in tree.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+        let name = String::from_utf8_lossy(name);
+        if name != ".gitignore" && !name.ends_with("/.gitignore") {
+            continue;
+        }
+        let text = crate::git::run(dir, &["show", &format!("HEAD:{name}")], None)
+            .filter(|o| o.status.success())
+            .ok_or_else(|| format!("git show HEAD:{name} に失敗しました"))?;
+        let dest = repo.join(&*name);
+        std::fs::create_dir_all(dest.parent().unwrap_or(&repo))
+            .and_then(|()| std::fs::write(&dest, text.stdout))
+            .map_err(|e| format!("{} を書けません（{e}）", dest.display()))?;
+    }
+    std::fs::create_dir_all(&repo).map_err(|e| e.to_string())?;
+    // hook に渡る GIT_INDEX_FILE などが、一時のリポジトリの git にも効かないように外す
+    let tmp_git = |args: &[&str], input: Option<&[u8]>| {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C")
+            .arg(&repo)
+            .args(args)
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        crate::process::output_with_input(&mut cmd, input.unwrap_or_default())
+            .map_err(|_| "一時のリポジトリで git を起動できません".to_string())
+    };
+    let init = tmp_git(&["init", "-q"], None)?;
+    if !init.status.success() {
+        return Err(String::from_utf8_lossy(&init.stderr).trim().to_string());
+    }
+    // ls-files と check-ignore は同じ C の引用（タブ、改行、"、\）で書き、読み戻すので、行のまま渡す
+    let input = untracked.join("\n") + "\n";
+    let out = tmp_git(
+        &["-c", "core.quotePath=false", "check-ignore", "--stdin"],
+        Some(input.as_bytes()),
+    )?;
+    // 終了値 1 は「どれも無視されない」
+    if !matches!(out.status.code(), Some(0 | 1)) {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(nonempty_lines(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// 空でない行
+fn nonempty_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
 }
