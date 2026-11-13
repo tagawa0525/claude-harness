@@ -29,17 +29,12 @@ let
   # 機密情報の検査（ADR-0015。claude-hooks の src/git_hook.rs の scan-secrets）。pre-commit と pre-merge-commit が呼び、
   # gitleaks は claude-hooks の package.nix が包むものを使う
   scanSecrets = "${claude-hooks}/bin/claude-hooks git-hook scan-secrets";
-  # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。ツールは利用者の PATH のもの
-  stagedChecks = pkgs.writeShellApplication {
-    name = "staged-checks";
-    runtimeInputs = [
-      pkgs.git
-      pkgs.jq
-      pkgs.coreutils
-      pkgs.diffutils
-    ];
-    text = builtins.readFile ./staged-checks.sh;
-  };
+  # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。ツールは利用者の PATH のもの。中身は
+  # claude-hooks の src/staged_checks.rs（ADR-0086）。run-checks.sh の Markdown の段が PATH の staged-checks を呼ぶので、
+  # それを呼ぶだけのコマンドを、run-checks.sh を移す #101 の段階 6 まで PATH に置く
+  stagedChecks = pkgs.writeShellScriptBin "staged-checks" ''
+    exec ${claude-hooks}/bin/claude-hooks git-hook staged-checks "$@"
+  '';
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を実行する（下の pre-commit hook が呼ぶ）
