@@ -7,7 +7,7 @@
 //! textlint は同じ位置と同じ文の報告を 1 つにする（filter-duplicated-process.js）が、prh だけの報告では起きない
 //! （Str の範囲は重ならず、1 つの Str の中の一致は重なりを外した後に同じ開始を持たない）ので、まとめない。
 
-use crate::{Dictionary, TextError, strs};
+use crate::{Dictionary, LINE_TERMINATORS, TextError, strs};
 
 /// ファイルの読み方（textlint のプラグイン）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +70,7 @@ impl<'a> Lines<'a> {
         while let Some((at, c)) = chars.next() {
             if c == '\r' && chars.next_if(|&(_, next)| next == '\n').is_some() {
                 starts.push(at + 2);
-            } else if matches!(c, '\r' | '\n' | '\u{2028}' | '\u{2029}') {
+            } else if LINE_TERMINATORS.contains(&c) {
                 starts.push(at + c.len_utf8());
             }
         }
