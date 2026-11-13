@@ -14,6 +14,7 @@ mod reply_to_comment;
 mod request_rereview;
 mod reset_rounds;
 mod resolve_thread;
+mod review_level;
 
 pub fn main(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
@@ -27,11 +28,12 @@ pub fn main(args: &[String]) -> i32 {
         Some("reply-to-comment") => reply_to_comment::main(&args[1..]),
         Some("request-rereview") => request_rereview::main(&args[1..]),
         Some("reset-rounds") => reset_rounds::main(&args[1..]),
+        Some("review-level") => review_level::main(&args[1..]),
         Some("resolve-thread") => resolve_thread::main(&args[1..]),
         _ => {
             eprintln!("Usage: claude-hooks script <名前> [引数]...");
             eprintln!(
-                "scripts: decide-next, get-latest-review, get-pr-info, get-review-comments, gh-review-requests, gh-wait-review, record-local-review, reply-to-comment, request-rereview, reset-rounds, resolve-thread"
+                "scripts: decide-next, get-latest-review, get-pr-info, get-review-comments, gh-review-requests, gh-wait-review, record-local-review, reply-to-comment, request-rereview, reset-rounds, resolve-thread, review-level"
             );
             eprintln!("{}", crate::OLDER_THAN_CALLER);
             2

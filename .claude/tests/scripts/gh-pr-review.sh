@@ -6,24 +6,8 @@
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
 
-# 中身を claude-hooks script に移したスクリプト（ADR-0087）は、ブランチでビルドしたバイナリで確かめる。lib.sh が HOME を
-# 差し替える前にビルドする（hooks.sh と同じ）。CLAUDE_HOOKS_BIN（絶対パス）で差し替えられる
-if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
-  CRATE_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/claude-hooks" && pwd)
-  source "$(dirname "$0")/../cargo-bin.sh"
-  CLAUDE_HOOKS_BIN=$(cargo_bin "$CRATE_DIR" claude-hooks) || exit 1
-fi
-if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
-  echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
-  exit 1
-fi
-# 渡されたバイナリが script を持つか（前の版を渡すと、移したスクリプトのテストがすべて「名前が無い」で落ち、古さが紛れる）
-# script の使い方の文は終了コード 2 で終わるので、出力を受けてから見る（パイプにすると pipefail で 2 が残る）
-script_usage=$("$CLAUDE_HOOKS_BIN" script 2>&1 </dev/null) || true
-if ! grep -q '^scripts: ' <<<"$script_usage"; then
-  echo "claude-hooks が script のサブコマンドを持ちません（古いバイナリ）: $CLAUDE_HOOKS_BIN" >&2
-  exit 1
-fi
+# 中身を claude-hooks script に移したスクリプト（ADR-0087）は、ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 REAL_CLAUDE_HOOKS="$CLAUDE_HOOKS_BIN"
 
 source "$(dirname "$0")/../lib.sh"

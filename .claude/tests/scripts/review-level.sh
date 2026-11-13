@@ -3,6 +3,8 @@
 #
 # 実行: bash .claude/tests/scripts/review-level.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
+# 中身は claude-hooks script review-level（ADR-0087）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 REPO="$TEST_ROOT/rl/app"
@@ -282,5 +284,11 @@ git switch -q -c feat/adr-readme main
 commit_file "$LEVEL_REPO" docs/adr/README.md "docs: adr readme"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "LEVEL: medium"
+
+
+it "review-level: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/review-level.sh" 2>&1)
+assert_eq 127 $?
+assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
 
 finish
