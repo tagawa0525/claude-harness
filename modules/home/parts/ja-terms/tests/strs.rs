@@ -62,3 +62,24 @@ fn a_byte_order_mark_and_crlf_are_cut_as_textlint_does() {
 fn text_files_are_cut_into_lines_as_textlint_does() {
     check("lines.txt");
 }
+
+#[test]
+fn lines_without_the_container_marks_start_new_paragraphs_as_micromark_2_does() {
+    check("lazy.markdown");
+}
+
+#[test]
+fn literal_autolinks_are_left_out_as_links() {
+    check("autolinks.markdown");
+}
+
+#[test]
+fn single_and_double_tilde_strikethrough_split_strs() {
+    check("strike.markdown");
+}
+
+#[test]
+fn front_matter_only_at_the_start_escapes_symbols_and_references_are_cut_as_textlint_does() {
+    check("misc.markdown");
+    check("front-toml.markdown");
+}
