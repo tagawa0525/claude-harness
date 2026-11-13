@@ -1,6 +1,6 @@
 # shellcheck shell=sh
-# claude-hooks-script.sh — 中身を claude-hooks script に移したスクリプト（ADR-0087）の sh が、claude-hooks を起動する
-# （source して使う）
+# claude-hooks-script.sh — 中身を claude-hooks script に移したスクリプトの sh が、claude-hooks を起動する（source して
+# 使う）。スキルの文と PreToolUse のルールはスクリプトの名前とパスで呼び、見分けるので、sh のファイルは残してこれを呼ぶ
 #
 # claude_hooks_script <名前> [引数]...
 #   claude-hooks script <名前> [引数]... を exec する。バイナリは CLAUDE_HOOKS_BIN（テストがブランチのバイナリに

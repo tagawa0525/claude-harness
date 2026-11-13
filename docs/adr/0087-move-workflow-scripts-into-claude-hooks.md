@@ -69,12 +69,12 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   `.exe` を補って実行する）。settings.json と git hook の登録もこのパスを指し、`ja-terms` と `commit-refs` は
   `claude-hooks` の隣のものを起動する。スキルと修正方法の文が名前で呼ぶ `claude-setup` と `commit-refs` のため、
   `~/.claude/bin` を Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
-- `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
+- `lib/` の部品: source されるので、呼ぶだけの sh にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す（`lib/claude-hooks-script.sh` は移したスクリプトが読むので残す）
-- PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を 1 行に置き換える
+- PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を、上の呼ぶだけの sh に置き換える
 - テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える。仕組みは最初に移す PR でテストとともに
   決める）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
-  1 行のスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
+  呼ぶだけのスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
 
 理由:
 
@@ -94,7 +94,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 良い点: 移した後のスクリプトは jq を使わない。Windows の手順から jq を外せるのは、段階 8 まで移し終えた後
 - 悪い点: `claude-hooks` という名前のバイナリが、hook でない作業手順の処理も持つ。名前は段階 8 の後に見直す
 - 悪い点: スクリプトの判定を変えるたびに、`claude-hooks` のビルドとテストが要る（ADR-0082 の帰結と同じ）
-- 悪い点: `claude-sync` は 1 行のスクリプトをすぐ配るが、バイナリは rebuild まで前の版のままで、その間、移した
+- 悪い点: `claude-sync` は呼ぶだけのスクリプトをすぐ配るが、バイナリは rebuild まで前の版のままで、その間、移した
   スクリプトは前の版のバイナリにサブコマンドが無く失敗する。移す PR は `claude-hooks` を変えるので、マージの後は
   `claude-sync` でなく rebuild（activation が sync も実行する）で入れる。Windows も、`claude-setup sync` の前に
   `cargo install` を済ませる
