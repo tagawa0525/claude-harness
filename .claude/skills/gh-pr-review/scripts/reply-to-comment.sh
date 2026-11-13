@@ -1,5 +1,6 @@
 #!/bin/sh
-# gh-pr-review: コメント返信スクリプト。中身は claude-hooks script reply-to-comment（ADR-0087）
+# gh-pr-review: コメント返信スクリプト。中身は claude-hooks script reply-to-comment（Rust にして Windows でも jq なしで
+# 動かす）。スキルの文と PreToolUse のルールはこのスクリプトの名前とパスで呼び、見分けるので、ファイルは残して exec する
 #
 # Usage: reply-to-comment.sh <PR の URL> <comment_id> <body>
 #
