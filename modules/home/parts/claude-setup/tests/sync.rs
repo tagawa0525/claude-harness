@@ -1,0 +1,367 @@
+//! `claude-setup sync` が、ハーネスの .claude（CLAUDE.md、commands、skills、scripts）を ~/.claude に同期すること
+//! （ADR-0084）。場合は前の modules/home/parts/tests/claude-sync.sh から取る。
+//!
+//! - CLAUDE.md、skills、scripts はソースが正として、中身の違うファイルを上書きする（サイズと mtime が同じでも）
+//! - commands は既にあるファイルを残す。どこも、ソースに無いファイルを消さない
+//! - 引数なしは既定の clone（ホームの下の nix/claude-harness）を、既定のブランチで、同期する場所に未コミットの変更が
+//!   無ければ `git pull --ff-only` してから同期する。どれかに当たれば、~/.claude を変えずに 1 で止まる
+//! - 引数を渡せば pull せず、その場所の今の中身を同期する
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// 一時のホームと、そこで動かす git と claude-setup
+struct Home(PathBuf);
+
+impl Home {
+    fn new() -> Home {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "sync-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("home")).unwrap();
+        std::fs::write(
+            dir.join("home/.gitconfig"),
+            "[user]\n\tname = test\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n",
+        )
+        .unwrap();
+        Home(dir)
+    }
+
+    fn home(&self) -> PathBuf {
+        self.0.join("home")
+    }
+
+    fn dest(&self, rel: &str) -> PathBuf {
+        self.home().join(".claude").join(rel)
+    }
+
+    fn clone_dir(&self) -> PathBuf {
+        self.home().join("nix/claude-harness")
+    }
+
+    fn env(&self, command: &mut Command) {
+        for name in [
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+        ] {
+            command.env_remove(name);
+        }
+        command
+            .env("HOME", self.home())
+            .env("USERPROFILE", self.home())
+            .env("GIT_CONFIG_GLOBAL", self.home().join(".gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+    }
+
+    fn git(&self, dir: &Path, args: &[&str]) {
+        let mut command = Command::new("git");
+        self.env(&mut command);
+        let out = command.current_dir(dir).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn sync(&self, source: Option<&Path>) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
+        self.env(&mut command);
+        command.arg("sync");
+        if let Some(source) = source {
+            command.arg(source);
+        }
+        command.current_dir(&self.0).output().unwrap()
+    }
+
+    /// 引数なしの同期が成功すること
+    fn sync_default(&self) {
+        let out = self.sync(None);
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+
+    /// 引数なしの同期が、1 で、理由に want を含めて止まり、~/.claude の CLAUDE.md を変えないこと
+    fn stops(&self, want: &str) {
+        let before = read(&self.dest("CLAUDE.md"));
+        let out = self.sync(None);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert!(stderr(&out).contains(want), "{want}: {}", stderr(&out));
+        assert_eq!(read(&self.dest("CLAUDE.md")), before);
+    }
+}
+
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|_| "(ファイルが無い)".to_string())
+}
+
+fn write(path: &Path, text: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+/// clone の CLAUDE.md を書き換えてコミットし、origin に push する
+fn advance(home: &Home, clone: &Path, text: &str) {
+    write(&clone.join(".claude/CLAUDE.md"), text);
+    home.git(clone, &["add", ".claude/CLAUDE.md"]);
+    home.git(clone, &["commit", "-qm", &format!("docs: {text}")]);
+    home.git(clone, &["push", "-q", "origin", "HEAD"]);
+}
+
+/// origin（bare）と、そこから clone した既定の clone と、もう 1 つの clone（origin を進める）を作る
+fn clones(home: &Home) -> PathBuf {
+    let origin = home.0.join("origin.git");
+    home.git(&home.0, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    let clone = home.clone_dir();
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    home.git(
+        &home.0,
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+    advance(home, &clone, "v1");
+    let other = home.0.join("other");
+    home.git(
+        &home.0,
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    other
+}
+
+#[test]
+fn overwrites_changed_files_and_keeps_existing_commands() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    for (rel, text) in [
+        ("CLAUDE.md", "ADR-0175"),
+        ("skills/s/SKILL.md", "ADR-0175"),
+        ("scripts/a.sh", "ADR-0175"),
+        ("commands/c.md", "source"),
+    ] {
+        write(&src.join(".claude").join(rel), text);
+    }
+    assert!(home.sync(Some(&src)).status.success());
+    // 利用者が手で直した commands は残す
+    write(&home.dest("commands/c.md"), "user");
+    // 同じサイズで中身だけ変える
+    for (rel, text) in [
+        ("CLAUDE.md", "ADR-NNNN"),
+        ("skills/s/SKILL.md", "ADR-NNNN"),
+        ("scripts/a.sh", "ADR-NNNN"),
+        ("commands/c.md", "change"),
+    ] {
+        write(&src.join(".claude").join(rel), text);
+    }
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.dest("CLAUDE.md")), "ADR-NNNN");
+    assert_eq!(read(&home.dest("skills/s/SKILL.md")), "ADR-NNNN");
+    assert_eq!(read(&home.dest("scripts/a.sh")), "ADR-NNNN");
+    assert_eq!(read(&home.dest("commands/c.md")), "user");
+}
+
+#[test]
+fn keeps_files_the_source_does_not_have() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    write(&home.dest("skills/mine/SKILL.md"), "mine");
+    assert!(home.sync(Some(&src)).status.success());
+    assert_eq!(read(&home.dest("skills/mine/SKILL.md")), "mine");
+}
+
+#[cfg(unix)]
+#[test]
+fn keeps_the_executable_bit_and_makes_read_only_copies_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new();
+    let src = home.0.join("src");
+    let script = src.join(".claude/scripts/run.sh");
+    write(&script, "#!/bin/sh\n");
+    // nix store のソースは読むだけ
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o555)).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    let mode = std::fs::metadata(home.dest("scripts/run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o700, 0o700, "{mode:o}");
+    // 読むだけのコピーの上にも、次の版を書ける
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write(&script, "#!/bin/sh\necho v2\n");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o555)).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    assert_eq!(read(&home.dest("scripts/run.sh")), "#!/bin/sh\necho v2\n");
+}
+
+#[test]
+fn without_arguments_syncs_the_harness_clone_not_nixfiles() {
+    let home = Home::new();
+    write(&home.clone_dir().join(".claude/CLAUDE.md"), "harness");
+    write(
+        &home.home().join("nix/nixfiles/.claude/CLAUDE.md"),
+        "nixfiles project",
+    );
+    home.sync_default();
+    assert_eq!(read(&home.dest("CLAUDE.md")), "harness");
+}
+
+#[test]
+fn without_arguments_pulls_the_clone_first() {
+    let home = Home::new();
+    let other = clones(&home);
+    advance(&home, &other, "v2");
+    let out = home.sync(None);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("📥 "));
+    assert_eq!(read(&home.dest("CLAUDE.md")), "v2");
+}
+
+#[test]
+fn without_arguments_stops_off_the_default_branch_or_with_drafts() {
+    let home = Home::new();
+    let _other = clones(&home);
+    home.sync_default();
+    let clone = home.clone_dir();
+    let clone_path = clone.display().to_string();
+    home.git(&clone, &["switch", "-qc", "feat/x"]);
+    home.stops(&format!("git -C {clone_path} switch main"));
+    home.git(&clone, &["switch", "-q", "--detach", "main"]);
+    home.stops(&format!("git -C {clone_path} switch main"));
+    home.git(&clone, &["switch", "-q", "main"]);
+    write(&clone.join(".claude/CLAUDE.md"), "draft");
+    home.stops(&format!("claude-setup sync {clone_path}"));
+    home.git(&clone, &["restore", ".claude/CLAUDE.md"]);
+    // 同期しない場所の書きかけでは止めない
+    write(&clone.join(".claude/notes.txt"), "memo");
+    home.sync_default();
+    std::fs::remove_file(clone.join(".claude/notes.txt")).unwrap();
+    // 同期する場所の、追跡していない新しいファイルでは止める
+    write(&clone.join(".claude/skills/new/SKILL.md"), "wip");
+    home.stops(&format!("claude-setup sync {clone_path}"));
+}
+
+#[test]
+fn with_a_path_syncs_the_current_contents_without_pulling() {
+    let home = Home::new();
+    let other = clones(&home);
+    let clone = home.clone_dir();
+    write(&clone.join(".claude/CLAUDE.md"), "draft");
+    advance(&home, &other, "v3");
+    let out = home.sync(Some(&clone));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.dest("CLAUDE.md")), "draft");
+}
+
+#[test]
+fn without_arguments_stops_when_the_clone_cannot_pull() {
+    let home = Home::new();
+    let other = clones(&home);
+    home.sync_default();
+    advance(&home, &other, "v2");
+    let clone = home.clone_dir();
+    write(&clone.join(".claude/CLAUDE.md"), "local");
+    home.git(&clone, &["commit", "-qam", "docs: local"]);
+    home.stops(&format!("claude-setup sync {}", clone.display()));
+}
+
+#[test]
+fn the_default_branch_comes_from_origin_head() {
+    let home = Home::new();
+    let origin = home.0.join("origin2.git");
+    home.git(
+        &home.0,
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "trunk",
+            origin.to_str().unwrap(),
+        ],
+    );
+    let seed = home.0.join("seed");
+    home.git(
+        &home.0,
+        &["init", "-q", "-b", "trunk", seed.to_str().unwrap()],
+    );
+    home.git(
+        &seed,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    advance(&home, &seed, "trunk1");
+    let clone = home.clone_dir();
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    home.git(
+        &home.0,
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+    home.sync_default();
+    assert_eq!(read(&home.dest("CLAUDE.md")), "trunk1");
+    home.git(&clone, &["switch", "-qc", "main"]);
+    home.stops(&format!("git -C {} switch trunk", clone.display()));
+}
+
+#[test]
+fn an_inherited_git_dir_does_not_redirect_the_default_clone() {
+    let home = Home::new();
+    let other = clones(&home);
+    let elsewhere = home.0.join("elsewhere");
+    home.git(&home.0, &["init", "-q", elsewhere.to_str().unwrap()]);
+    home.git(
+        &elsewhere,
+        &["commit", "-q", "--allow-empty", "-m", "chore: init"],
+    );
+    advance(&home, &other, "v4");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
+    home.env(&mut command);
+    let out = command
+        .arg("sync")
+        .env("GIT_DIR", elsewhere.join(".git"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.dest("CLAUDE.md")), "v4");
+}
+
+#[test]
+fn a_default_place_that_is_not_a_clone_is_synced_as_is() {
+    let home = Home::new();
+    // 親のリポジトリの中の、git でないディレクトリ
+    home.git(&home.home(), &["init", "-q", "nix"]);
+    write(&home.clone_dir().join(".claude/CLAUDE.md"), "plain copy");
+    home.sync_default();
+    assert_eq!(read(&home.dest("CLAUDE.md")), "plain copy");
+}
+
+#[test]
+fn a_missing_source_is_an_error() {
+    let home = Home::new();
+    let out = home.sync(Some(&home.0.join("missing")));
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("ソースが見つかりません"));
+}
