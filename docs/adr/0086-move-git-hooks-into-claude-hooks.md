@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-13
 requires: [ADR-0015, ADR-0028, ADR-0082, ADR-0083, ADR-0084, ADR-0085]
 supersedes: []
@@ -88,8 +88,10 @@ hook のファイル:
   - 配備: Linux の hook のファイルと、`package.nix` が包む store のパス（`ja-terms`、`gitleaks`、`commit-refs`）は、
     `nix build` した hook のファイルで本物の検査を 1 回ずつ通すテストで確かめる（今の sh のテストの組み立てを残す）。
     Windows は CI の `setup` のジョブ
-  - `main-commit-gates.sh` は、2 つの層が同じ関数に渡す入力（PreToolUse hook はコマンドを読んで実行の前に、git hook は
-    コミットの中で、ブランチとステージしたファイルを得る）を同じ場合で比べる結合テストに置き換える
+  - `main-commit-gates.sh` は残し、配備した 2 つの層（`nix build` した pre-commit の hook のファイルと、包んだ
+    `claude-hooks` の PreToolUse hook）の判定が同じ場合で一致することを確かめる。2 つの層は同じ関数
+    （`main_commit_blocked`）を呼ぶので、違いうるのは入力（PreToolUse hook はコマンドを読んで実行の前に、git hook は
+    コミットの中で、ブランチとステージしたファイルを得る）の得方だけになる
 - 移す順: commit-msg、post-rewrite、pre-commit（既定の検査と機密情報の検査を含む）、pre-merge-commit。hook ごとに 1 つ以上の
   PR にし、sh の実装と sh のテストは、Rust の版に付け替えた PR で消す。Windows の設置（`claude-setup` が hook のファイルを
   置く）は、4 つが揃い、clone の改行の扱い（ADR-0084 の帰結。#104）を同期する sh のスクリプトまで決めた後の PR にする。揃う
@@ -116,17 +118,22 @@ hook のファイル:
 - 悪い点: git hook の判定を変えるたびに、`claude-hooks` のビルドとテストが要る（sh なら hook のファイルを書き換えて
   その場で試せた。ADR-0082 の帰結と同じ）
 - 悪い点: `claude-hooks` の `package.nix` が包むものが、`ja-terms` に加えて `gitleaks` と `commit-refs` に増える
-- Windows では、4 つの hook が揃って設置されるまで、git hook の検査（コミットとマージのメッセージ、ローカルの main への
-  マージの品質のチェック、競合の無いマージの機密情報の検査）が走らない（README の「Windows で使う」）。PATH の
-  `staged-checks` も Linux にしか置かないので、段階 6 までは Windows の `run-checks.sh` の Markdown の段が飛ぶ
+- Windows の git hook は、`claude-setup git-hooks --bin <claude-hooks>` が `~/.config/git/hooks` に置き、グローバルの
+  `core.hooksPath` を向ける（README の「Windows で使う」）。利用者がほかの置き場を `core.hooksPath` にしていれば奪わずに
+  止める。PATH の `staged-checks` は Linux にしか置かないので、段階 6 までは Windows の `run-checks.sh` の Markdown の段が
+  飛ぶ
+- マージを締めるコミットの pre-commit は、隣の pre-merge-commit を、前の sh の自分の隣（`dirname "$0"`）でなく、git が hook を
+  探す `core.hooksPath` の置き場（`git rev-parse --git-path hooks/pre-merge-commit`。`~` は git が展開する）で探す。hook の
+  ファイルを `core.hooksPath` の外から直に起動すると、別の置き場を見る
 
 ### 確認
 
 - 4 つの hook の結合テストが、Linux と Windows の CI で通る。テストの期待値は、今の sh のテストが確かめているものと
   同じ（止めるもの、通すもの、文言の要点）
-- 移した後、`git-hooks.nix` の hook のファイルは `claude-hooks git-hook` を呼ぶ 1 行だけになり、`staged-checks.sh`、
-  `scan-staged-secrets.sh`、`main-commit-gates.sh` は無い
+- 移した後、`git-hooks.nix` の hook のファイルは `claude-hooks git-hook` を呼ぶ 1 行だけになり、`staged-checks.sh` と
+  `scan-staged-secrets.sh` は無い（#127、#129、#131、#132、#134、#136 で満たした）
 - Windows の CI の `setup` のジョブで、設置した hook が main への直接のコミットと、件名の形の誤ったコミットを止める
+  （`claude-setup git-hooks` を足した PR で満たした）
 
 ## 補足
 
@@ -149,3 +156,7 @@ hook のファイル:
   - `[ -n "$(tr -cd '\r' < f)" ]`: CR のあるファイルで落ちることを見ていなかった（`$(...)` が CR を落とす環境では
     いつも通る）
   - 採った形: `tr -cd '\r' < f | wc -c` で数え、調べる前に、作った CRLF のファイルで CR を見つけることを毎回確かめる
+- 2026-11-13: `main-commit-gates.sh` は、決めたときは入力を比べる結合テストに置き換えるとしたが、残した（#134）。2 つの
+  層が同じ関数を呼ぶようになった後も、配備した hook のファイルと包んだ claude-hooks で判定が一致することは、本物の
+  hook を起動するこのテストでしか確かめられず、結合テスト（crate の中）は配備を通らないため。隣の pre-merge-commit を
+  `core.hooksPath` で探すようにしたので、テストはグローバルの `core.hooksPath` を hook の置き場に向ける
