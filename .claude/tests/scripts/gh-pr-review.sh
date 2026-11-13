@@ -18,7 +18,9 @@ if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
   exit 1
 fi
 # 渡されたバイナリが script を持つか（前の版を渡すと、移したスクリプトのテストがすべて「名前が無い」で落ち、古さが紛れる）
-if ! "$CLAUDE_HOOKS_BIN" script 2>&1 </dev/null | grep -q '^scripts: '; then
+# script の使い方の文は終了コード 2 で終わるので、出力を受けてから見る（パイプにすると pipefail で 2 が残る）
+script_usage=$("$CLAUDE_HOOKS_BIN" script 2>&1 </dev/null) || true
+if ! grep -q '^scripts: ' <<<"$script_usage"; then
   echo "claude-hooks が script のサブコマンドを持ちません（古いバイナリ）: $CLAUDE_HOOKS_BIN" >&2
   exit 1
 fi
