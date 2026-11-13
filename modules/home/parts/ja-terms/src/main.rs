@@ -94,10 +94,7 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
 
 /// ファイルの読み方と中身。UTF-8 でない並びは、Node.js の読み込みと同じく U+FFFD にする
 fn read(path: &Path) -> Result<(Syntax, String), Failure> {
-    let extension = path
-        .file_name()
-        .and_then(|name| Path::new(name).extension())
-        .map(|e| e.to_string_lossy().to_lowercase());
+    let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase());
     let syntax = match extension.as_deref() {
         Some("md") => Syntax::Markdown,
         Some(e) if TEXT_EXTENSIONS.contains(&e) => Syntax::Text,
