@@ -73,7 +73,16 @@ fn rename(new: &str, remote_ok: bool) -> Result<(), i32> {
     let remote = git(here, &["config", &format!("branch.{old}.remote")])
         .unwrap_or_else(|| "origin".to_string());
     let has_remote = git(here, &["remote", "get-url", &remote]).is_some()
-        && git(here, &["ls-remote", "--heads", &remote, &old]).is_some_and(|s| !s.is_empty());
+        && git(
+            here,
+            &[
+                "ls-remote",
+                "--heads",
+                &remote,
+                &format!("refs/heads/{old}"),
+            ],
+        )
+        .is_some_and(|s| !s.is_empty());
     if has_remote && !remote_ok {
         println!(
             "STOP: リモート {remote} に {old} が存在します。リネームするとリモートも更新されます。"
@@ -82,7 +91,9 @@ fn rename(new: &str, remote_ok: bool) -> Result<(), i32> {
         return Err(2);
     }
     if has_remote && crate::git::has_github_remote(here) {
-        let out = match Command::new("gh")
+        // 見つけたパスで起動する（Windows の .cmd の shim も。Command は拡張子の無い名前に .exe しか足さない）
+        let gh = crate::staged_checks::find_on_path("gh").unwrap_or_else(|| "gh".into());
+        let out = match Command::new(gh)
             .args(["pr", "view", &old, "--json", "state", "--jq", ".state"])
             .output()
         {
