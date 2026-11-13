@@ -14,8 +14,8 @@
 #   受けられなければ理由を stderr に出して 1 を返す（gh は呼ばない）
 
 # owner と repo は GitHub の名前に使える文字だけを受ける。案内のコマンド（gh-actions-diagnose.sh の -R など）に
-# そのまま書くので、; や空白を通さない。claude-hooks の src/script/pr_url.rs が同じ規則で、Rust に移したスクリプトが使う
-# （Rust は加えて . と .. を拒む）。このファイルを source するスクリプトをすべて移して消すまで、両方を揃える
+# そのまま書くので、; や空白を通さない。claude-hooks の src/script/pr_url.rs が同じ規則で、Rust に移したスクリプトが
+# 使う。このファイルを source するスクリプトをすべて移して消すまで、両方を揃える
 PR_URL_RE='^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)(/[^?#]*)?(\?[^#]*)?(#(.*))?$'
 
 parse_pr_url() {
@@ -26,6 +26,11 @@ parse_pr_url() {
   fi
   if [[ ! "${1:-}" =~ $PR_URL_RE ]]; then
     echo "ERROR: 対象は PR の URL（https://github.com/<owner>/<repo>/pull/<番号>）で渡してください: '${1:-}'" >&2
+    return 1
+  fi
+  # . と .. の名前は、gh api の {owner}/{repo} に入り、API のパスを上に辿る
+  if [[ "${BASH_REMATCH[1]}" == . || "${BASH_REMATCH[1]}" == .. || "${BASH_REMATCH[2]}" == . || "${BASH_REMATCH[2]}" == .. ]]; then
+    echo "ERROR: 対象は PR の URL（https://github.com/<owner>/<repo>/pull/<番号>）で渡してください: '${1}'" >&2
     return 1
   fi
   if [[ -n "${BASH_REMATCH[6]}" ]] && ((!allow_fragment)); then
