@@ -301,3 +301,27 @@ fn paths_are_from_the_top_of_the_repository_wherever_it_runs() {
         .collect();
     assert_eq!(reported, ["docs/doc.md", "top.md"]);
 }
+
+#[test]
+fn an_unreadable_blob_keeps_the_earlier_reports_and_fails() {
+    let repo = Repo::new();
+    repo.stage("a.md", "# t\n\n{B}の結果。\n");
+    // インデックスに、オブジェクトの無いブロブを置く（部分 clone で取っていないブロブと同じ）
+    repo.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "100644,0123456789abcdef0123456789abcdef01234567,z.md",
+    ]);
+    let out = repo.staged();
+    assert_eq!(out.status.code(), Some(2));
+    let report = stdout(&out);
+    assert!(
+        report.starts_with("🔍 Checking Japanese terms...\na.md:3:1: "),
+        "{report}"
+    );
+    assert!(
+        report.contains("❌ 語の検査が失敗しました（z.md: "),
+        "{report}"
+    );
+}
