@@ -36,11 +36,13 @@ pub(super) fn ja_terms() -> Option<String> {
     ja_terms_from(std::env::var(JA_TERMS).ok(), cfg!(windows))
 }
 
-/// 環境変数のパスが先。無ければ、Nix のラッパーの無い Windows（ja-terms を cargo install で入れる。ADR-0084、
-/// ADR-0085）は PATH の `ja-terms`。Linux で環境変数が無いのは cargo で直接ビルドしたもので、判定できない理由を
-/// 出して通す（PATH の別の版で判定しない）
+/// 環境変数のパスが先（空の値はパスでない）。無ければ、Nix のラッパーの無い Windows（ja-terms を cargo install で
+/// 入れる。ADR-0084、ADR-0085）は名前の `ja-terms` で起動する（Windows の起動は、PATH の前に claude-hooks の置き場と
+/// システムのディレクトリも探す。cargo install の置き場は同じ）。Linux で環境変数が無いのは cargo で直接ビルドした
+/// もので、判定できない理由を出して通す（PATH の別の版で判定しない）
 fn ja_terms_from(env: Option<String>, windows: bool) -> Option<String> {
-    env.or_else(|| windows.then(|| "ja-terms".to_string()))
+    env.filter(|path| !path.is_empty())
+        .or_else(|| windows.then(|| "ja-terms".to_string()))
 }
 
 /// 本文を判定できない理由
