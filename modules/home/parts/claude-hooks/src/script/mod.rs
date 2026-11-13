@@ -10,6 +10,7 @@ mod get_pr_info;
 mod get_review_comments;
 mod gh_review_requests;
 mod gh_wait_review;
+mod git_merge_state;
 mod pr_url;
 mod record_local_review;
 mod reply_to_comment;
@@ -32,6 +33,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("get-review-comments", get_review_comments::main),
     ("gh-review-requests", gh_review_requests::main),
     ("gh-wait-review", gh_wait_review::main),
+    ("git-merge-state", git_merge_state::main),
     ("record-local-review", record_local_review::main),
     ("reply-to-comment", reply_to_comment::main),
     ("request-rereview", request_rereview::main),
@@ -69,4 +71,17 @@ pub fn claude_root() -> std::path::PathBuf {
         }
     }
     crate::shell::home().join(".claude")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SCRIPTS;
+
+    #[test]
+    fn the_scripts_are_in_the_order_of_their_names_without_duplicates() {
+        // find は最初に一致したものを返すので、重複した名前は後の行を黙って隠す
+        for pair in SCRIPTS.windows(2) {
+            assert!(pair[0].0 < pair[1].0, "{} と {}", pair[0].0, pair[1].0);
+        }
+    }
 }
