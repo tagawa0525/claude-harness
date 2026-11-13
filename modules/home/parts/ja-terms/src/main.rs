@@ -143,7 +143,8 @@ fn message_reports(dictionary: &Dictionary, text: &str) -> Result<String, Failur
 fn commit_msg(dictionary: &Dictionary, path: &Path) -> Result<u8, Failure> {
     let bytes = std::fs::read(path)
         .map_err(|e| Failure(format!("読めません: {}（{e}）", path.display())))?;
-    let text = String::from_utf8_lossy(&bytes);
+    // 件名も、本文の切り出し（message::body）と同じく NUL を落とした文で見る
+    let text = String::from_utf8_lossy(&bytes).replace('\0', "");
     let subject = message::subject(&text);
     let mut out = String::new();
     if !message::is_exempt(subject) {
