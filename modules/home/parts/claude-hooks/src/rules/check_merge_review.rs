@@ -515,15 +515,16 @@ mod tests {
             std::fs::write(p, text).unwrap();
         }
 
-        /// コミットの hash。先頭 12 字が数字だけの hash（9 字で約 1.5%）は、mask_hashes が 16 進の語とみなさない
-        /// （英字を 1 つは含む語だけを hash とする）ので、テストの付け替えが hash の差し替えに見えない。英字が出るまで
-        /// メッセージを変えて作り直す
+        /// コミットの hash。テストは hash の先頭（9 字など）を文書に書くが、数字だけの語は mask_hashes が 16 進の語と
+        /// みなさない（英字を 1 つは含む語だけを hash とする）ので、付け替えが hash の差し替えに見えない（9 字で約
+        /// 1.5%）。mask_hashes が hash とみなす最短の 7 字に英字が出るまで、メッセージを変えて作り直す（7 字に英字が
+        /// あれば、それより長いどの先頭も英字を含む）
         fn commit(&self, msg: &str) -> String {
             git(&self.dir(), &["add", "-A"]);
             git(&self.dir(), &["commit", "-q", "-m", msg]);
             let mut head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
             let mut n = 0;
-            while !head[..12].bytes().any(|b| b.is_ascii_alphabetic()) {
+            while !head[..7].bytes().any(|b| b.is_ascii_alphabetic()) {
                 n += 1;
                 assert!(n < 100, "英字を含む hash を作れない");
                 git(
