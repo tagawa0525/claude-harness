@@ -1,27 +1,26 @@
-//! check-merge-body-ja-terms: `git merge -m/-F` の本文の崩れた日本語の語を、実行の前に検査する
+//! check-merge-body-ja-terms: `git merge -m/-F` のメッセージを、実行の前に commit-msg の hook と同じ検査で判定する
 //!
 //! git の hook は pre-merge-commit（run-checks --merge、数分）→ commit-msg（ja-terms commit-msg）の順に呼ばれる。
-//! 本文に辞書（ja-terms の prh.yml）で崩れた語があると、数分の品質チェックを待ってから commit-msg が拒む。
-//! pre-merge-commit からは `-m` の本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの
-//! 前に走るこのルールで、commit-msg と同じ本文の語の検査（`ja-terms message`。commit-msg の hook が呼ぶ
-//! `ja-terms commit-msg` も、件名と長さを見た後に同じ検査をする。検査する範囲は modules/home/parts/ja-terms の
-//! src/message.rs が持つ。store のパスは package.nix が包んで渡す）に本文を渡す（ADR-0050、ADR-0085）。
-//!
+//! 本文に辞書（ja-terms の prh.yml）で崩れた語があるか、Merge などで始まらない件名が Conventional Commits の形と
+//! 長さに合わないと、数分の品質チェックを待ってから commit-msg が拒む。pre-merge-commit からは `-m` の本文が読めず、
+//! git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg が呼ぶのと同じ
+//! 検査（`ja-terms commit-msg`。store のパスは package.nix が包んで渡す）に、commit-msg に渡るのと同じメッセージを
+//! 渡す（ADR-0050、ADR-0085）。
+
 //! 対象は本文を持つ形（`-m` / `--message`、`-F` / `--file`）。本文の無い形（エディタ）は対象外。
 //! commit-msg を呼ばない形（`--ff-only`、`--squash`、`--no-commit`、`--no-verify`、グローバルの core.hooksPath を
 //! 使わないリポジトリ）と、commit-msg が検査しない所（fork、ローカルの commit-msg に置き換わるリポジトリ）も対象外。
 //! 検査を起動できないか、検査に失敗したときは、判定できなかった理由を利用者に見せて通す（ADR-0033。
-//! commit-msg が同じ検査で止める）。エスケープは設けない（語を直せば通る）
+//! commit-msg が同じ検査で止める）。エスケープは設けない（メッセージを直せば通る）
 
 use super::Rule;
+use super::check_commit_message::{Verdict, run_check};
 use crate::git;
 use crate::git_args::{Item, items, items_with_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
 use crate::shell::{self, Arg, Cmd, Shell};
-use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 pub struct CheckMergeBodyJaTerms;
 
@@ -189,75 +188,6 @@ fn heredoc_body(text: &str) -> Option<(String, bool)> {
     None
 }
 
-/// `ja-terms message` の結果
-#[derive(Debug, PartialEq)]
-enum Lint {
-    Clean,
-    /// 崩れた語がある。「誤り => 正しい語」の行
-    Terms(Vec<String>),
-    /// 検査を起動できない、または検査に失敗した。理由
-    Failed(String),
-}
-
-/// メッセージを標準入力で `ja-terms message` に渡す（commit-msg の hook の `ja-terms commit-msg` と同じ本文の語の
-/// 検査）。辞書はビルドに埋めてあるので、実行する場所（コマンドの行き先。commit-msg はリポジトリの直下）は判定に
-/// 効かない
-fn lint(check: &str, dir: &Path, message: &str) -> Lint {
-    let child = Command::new(check)
-        .arg("message")
-        .current_dir(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let mut child = match child {
-        Ok(c) => c,
-        Err(e) => return Lint::Failed(format!("{check} を起動できません（{e}）")),
-    };
-    // 本文は数 KB なので、書き終えてから出力を読んでもパイプは詰まらない
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(e) = stdin.write_all(message.as_bytes())
-    {
-        let _ = child.kill();
-        return Lint::Failed(format!("{check} に本文を渡せません（{e}）"));
-    }
-    let out = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => return Lint::Failed(format!("{check} の終わりを待てません（{e}）")),
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    match out.status.code() {
-        Some(0) => Lint::Clean,
-        // 報告の行（`2:1: 誤り => 正しい語`）から「誤り => 正しい語」を取り出す
-        Some(1) => {
-            let terms: Vec<String> = stdout
-                .lines()
-                .filter(|l| l.contains(" => "))
-                .map(|l| {
-                    l.splitn(3, ':')
-                        .nth(2)
-                        .map_or(l, str::trim_start)
-                        .to_string()
-                })
-                .collect();
-            if terms.is_empty() {
-                Lint::Failed(format!(
-                    "{check} が「誤り => 正しい語」を出さずに 1 で終わりました: {}",
-                    stdout.trim()
-                ))
-            } else {
-                Lint::Terms(terms)
-            }
-        }
-        _ => Lint::Failed(format!(
-            "{check} が失敗しました（{}）: {}{}",
-            out.status,
-            stdout.trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
-    }
-}
-
 /// 同じコマンドの前段（`writer`）が `-F <path>` のファイルを書きうるときに止める文言。`sub` は git のサブコマンド
 /// （commit か merge）。拒むとコマンド全体が止まり、前段も実行されない
 pub(super) fn split_calls_reason(sub: &str, path: &str, writer: &str) -> String {
@@ -302,14 +232,13 @@ pub(super) fn earlier_writer_reason(
         })
 }
 
-/// 崩れた語を止める文言
-fn deny_reason(terms: &[String]) -> String {
-    let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
+/// commit-msg の検査に通らない本文を止める文言
+fn deny_reason(output: &str) -> String {
     format!(
-        "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
-         本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
-         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます",
-        list.join("\n")
+        "git merge のメッセージが、commit-msg の hook と同じ検査に通りません:\n{output}\n\
+         上の ❌ の行のとおりにメッセージを直してから（崩れた語は「誤り => 正しい語」のとおりに置き換えてから）、\
+         もう一度実行してください。このまま実行すると、数分かかる pre-merge-commit の品質チェックの後で、\
+         commit-msg の hook が同じ検査で拒みます"
     )
 }
 
@@ -397,10 +326,10 @@ impl CheckMergeBodyJaTerms {
                 ));
                 continue;
             };
-            match lint(check, &dir, &message) {
-                Lint::Clean => {}
-                Lint::Terms(terms) => out.push(Finding::Deny(deny_reason(&terms))),
-                Lint::Failed(why) => notice(format!(
+            match run_check(check, &dir, &message) {
+                Verdict::Pass => {}
+                Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(&output))),
+                Verdict::Failed(why) => notice(format!(
                     "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
                 )),
             }

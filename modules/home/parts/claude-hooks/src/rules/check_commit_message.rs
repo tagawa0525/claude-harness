@@ -146,7 +146,7 @@ fn stripspace(text: &str) -> String {
 
 /// `ja-terms commit-msg` の結果
 #[derive(Debug, PartialEq)]
-enum Verdict {
+pub(super) enum Verdict {
     Pass,
     /// 規約に反する。検査の出力
     Reject(String),
@@ -154,8 +154,9 @@ enum Verdict {
     Failed(String),
 }
 
-/// commit-msg と同じく、メッセージをファイルで `ja-terms commit-msg` に渡す。実行する場所はコマンドの行き先
-fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
+/// commit-msg と同じく、メッセージをファイルで `ja-terms commit-msg` に渡す。実行する場所はコマンドの行き先。
+/// git merge のルールも使う
+pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
