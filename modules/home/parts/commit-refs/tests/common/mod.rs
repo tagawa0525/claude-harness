@@ -148,9 +148,15 @@ impl Drop for TempRepo {
     }
 }
 
+/// 実行の権限を付ける（Windows には実行の bit が無いので何もしない）
 pub fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 pub fn isolate(command: &mut Command) {
