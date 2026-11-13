@@ -12,13 +12,14 @@ use crate::{Diff, LINE_TERMINATORS, TextError};
 /// 1 つの段落の指示
 pub(crate) struct Pragmas {
     ignore_all: bool,
-    /// 行の頭から指示の終わりまで（段落の中の UTF-8 のバイト）
+    /// 行の頭から指示の終わりまで（文の中の UTF-8 のバイト）
     ranges: Vec<(usize, usize)>,
     patterns: Vec<Regex>,
 }
 
 impl Pragmas {
-    pub(crate) fn read(paragraph: &str) -> Result<Self, TextError> {
+    /// offset は段落の、文の中の位置
+    pub(crate) fn read(paragraph: &str, offset: usize) -> Result<Self, TextError> {
         const PRAGMA: &str = "prh:disable";
         let mut pragmas = Pragmas {
             ignore_all: false,
@@ -50,7 +51,7 @@ impl Pragmas {
                 continue;
             }
             let tail = start + at + PRAGMA.len() + 1 + length;
-            pragmas.ranges.push((start, tail));
+            pragmas.ranges.push((offset + start, offset + tail));
             // prh は new RegExp("(" + pattern + ")", "g") で読む（u のフラグは無い）。V8 は pattern も UTF-16 の単位で
             // 読むので、サロゲートペアの文字は 2 単位の並びにする
             let source = format!("({pattern})");
@@ -65,8 +66,8 @@ impl Pragmas {
         Ok(pragmas)
     }
 
-    /// 段落（文の中の位置 offset）の一致 diffs から、指示で外すものを除く。text は文の全体
-    pub(crate) fn filter(&self, text: &str, offset: usize, diffs: Vec<Diff>) -> Vec<Diff> {
+    /// 段落の一致 diffs から、指示で外すものを除く。text は文の全体
+    pub(crate) fn filter(&self, text: &str, diffs: Vec<Diff>) -> Vec<Diff> {
         if self.ignore_all {
             return Vec::new();
         }
@@ -75,7 +76,6 @@ impl Pragmas {
             .filter(|d| {
                 // diff.js の isCollide。開始が同じなら重なりとみなさない
                 self.ranges.iter().all(|&(start, tail)| {
-                    let (start, tail) = (offset + start, offset + tail);
                     !(start < d.start && d.start < tail || d.start < start && start < d.end)
                 })
             })

@@ -126,7 +126,7 @@ impl Dictionary {
         let mut found = Vec::new();
         for (offset, paragraph) in paragraphs(text) {
             let diffs = matches(&self.rules, offset, paragraph)?;
-            found.extend(pragma::Pragmas::read(paragraph)?.filter(text, offset, diffs));
+            found.extend(pragma::Pragmas::read(paragraph, offset)?.filter(text, diffs));
         }
         Ok(report_changes(text, &prepare(found)))
     }
