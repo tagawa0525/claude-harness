@@ -331,6 +331,8 @@ fn keeps_the_permissions_of_rewritten_files() {
     assert_eq!(mode & 0o777, 0o750);
 }
 
+// Windows のファイル名は末尾の空白を持てない
+#[cfg(unix)]
 #[test]
 fn works_in_a_repository_whose_directory_name_ends_with_a_space() {
     let t = TempRepo::new("outer");
@@ -370,6 +372,8 @@ fn works_in_a_repository_whose_directory_name_ends_with_a_space() {
     );
 }
 
+// /dev/full は Unix にしか無い
+#[cfg(unix)]
 #[test]
 fn rewrites_every_file_even_when_stdout_cannot_be_written() {
     let t = TempRepo::new("stdout-full");
@@ -458,6 +462,8 @@ fn every_stop_before_writing_says_nothing_was_rewritten() {
     );
 }
 
+// Windows の既定のパスの長さ（MAX_PATH の 260）を超える
+#[cfg(unix)]
 #[test]
 fn rewrites_files_whose_names_are_near_the_length_limit() {
     let t = TempRepo::new("long-name");

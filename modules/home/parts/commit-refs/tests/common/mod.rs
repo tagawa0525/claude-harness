@@ -27,6 +27,9 @@ impl TempRepo {
         fs::create_dir(&dir).unwrap();
         let repo = TempRepo { dir };
         repo.git(&["init", "-q", "-b", "main"]);
+        // 利用者の改行の設定（Git for Windows の既定の core.autocrlf=true）で、作業ツリーのファイルが CRLF に
+        // ならないように（期待値は LF で書く）
+        repo.git(&["config", "core.autocrlf", "false"]);
         let hooks = repo.dir.join(".git/capture-hooks");
         fs::create_dir(&hooks).unwrap();
         let hook = hooks.join("post-rewrite");
