@@ -12,18 +12,22 @@ issues: ["#101"]
 ## 背景
 
 Git と GitHub の作業手順のスクリプトを、#101 の段階 5 で Rust に移す（ADR-0082）。対象は `.claude/scripts/` の
-`worktree-add.sh`、`post-merge-cleanup.sh`、`gh-wait-review.sh`、`review-level.sh`、`git-merge-state.sh`、`base-moved.sh`、
-`branch-topics.sh`、`rename-*.sh`、`check-each-commit.sh`、`git-info.sh`、`gh-actions-diagnose.sh` と `lib/` の共通の部品、
-`skills/gh-pr-review/scripts/*.sh` で、Slurm のものを除いて約 2,800 行（2026-11-13、`wc -l`）。どれも jq を使い、Windows の
-手順は jq を入れている（README の「Windows で使う」）。
+`worktree-add.sh`、`post-merge-cleanup.sh`、`gh-wait-review.sh`、`gh-review-requests.sh`、`review-level.sh`、
+`git-merge-state.sh`、`base-moved.sh`、`branch-topics.sh`、`rename-*.sh`、`check-each-commit.sh`、`git-info.sh`、
+`gh-actions-diagnose.sh` と `lib/` の共通の部品、`skills/gh-pr-review/scripts/*.sh` で、Slurm のものを除いて 3,162 行
+（`f0083452`、2026-11-13、`wc -l`）。うち 13 本が jq を使い（`grep -l jq`）、Windows の手順は jq を入れている（README の
+「Windows で使う」）。`lib/pr-url.sh` と `lib/local-review.sh` は、ほかのスクリプトが source する部品で、単独では実行しない。
 
-これらのスクリプトは、スキルの文から `~/.claude/scripts/<名前>.sh` のパスで呼ばれる（`review-level.sh` は 10 か所、
-`worktree-add.sh` は 9 か所など）。claude-hooks の PreToolUse のルールも、スクリプトの名前で呼び出しを見分ける（例:
-`gh-wait-review.sh` を裏で待たせる、`record-local-review.sh` と `request-rereview.sh` を通す）。`decide-next.sh` と
-`lib/local-review.sh` は、ローカルレビューの記録の判定を `claude-hooks local-review-covers` に任せている。
+これらのスクリプトは、スキルの文から `~/.claude/scripts/<名前>.sh` のパスで呼ばれる（`f0083452` で、`.claude` の下の
+`review-level.sh` を名前で書くファイルは 9 つ）。claude-hooks の PreToolUse のルールも、スクリプトの名前で呼び出しを
+見分ける（例: `require_background_wait.rs` は `gh-wait-review.sh` と `request-rereview.sh` をフォアグラウンドで実行させない）。
+拒否の文言も、修正方法としてスクリプトの名前を示す（`pre_merge_check.rs`、`guard_gh_api.rs` など）。`decide-next.sh` と
+`lib/local-review.sh` は、ローカルレビューの記録の判定を `claude-hooks local-review-covers` に任せ、バイナリを
+`${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}` で引く（PATH に頼らない。`claude-code.nix` の注記）。
 
 crate の分け方は、#101 の「決まっていないこと」で、段階 5 で 3 つ目のまとまりを作るときに決めるとしていた
-（ADR-0086 は git hook を `claude-hooks` のサブコマンドにした）。
+（ADR-0086 は git hook を `claude-hooks` のサブコマンドにした）。#101 の「作業の順序」は、sh の実装を、呼び出し元を
+付け替えた PR で消すとしていた。
 
 決めること: Rust の中身の置き場、スクリプトのファイルと、スキルの文と hook のルールからの呼ばれ方、移す順とテスト。
 
@@ -50,19 +54,22 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 ## 決定と理由
 
-採用: 案 1、案 A。
+採用: 案 1、案 A。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
-- スクリプトのファイル: 名前と場所を変えず、`exec claude-hooks script <名前> "$@"` だけの sh にする。スキルの文と hook の
-  ルールは変えない。Windows では Git Bash がこの sh を実行し、jq を使わない
-- `claude-hooks` を PATH に置く: Linux は `claude-code.nix` が包んだ `claude-hooks` を `home.packages` に足す（今は
-  `~/.claude/bin/claude-hooks` の固定のパスだけ）。Windows は `cargo install` の置き場が PATH にある
-- 移す順: 共通の部品（`lib/pr-url.sh`、`lib/local-review.sh`）を使うものから、gh-pr-review のスクリプト、
-  `gh-wait-review.sh`、`review-level.sh`、`git-merge-state.sh`、`base-moved.sh`、`branch-topics.sh`、`worktree-add.sh`、
-  `post-merge-cleanup.sh`、残り。スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を 1 行に置き換える
+- スクリプトのファイル: 名前と場所を変えず、`exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
+  だけの sh にする（`lib/local-review.sh` と同じ引き方。PATH に `claude-hooks` を置かない）。スキルの文と hook のルールは
+  変えない。Windows では Git Bash がこの sh を実行し、jq を使わない。Windows は `cargo install` の置き場の
+  `claude-hooks.exe` を `CLAUDE_HOOKS_BIN` で渡す（渡し方は、最初に移す PR で `claude-setup` の手順に足す）
+- `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
+  すべて移った PR で消す
+- 移す順: gh-pr-review のスクリプト、`gh-wait-review.sh` と `gh-review-requests.sh`、`review-level.sh`、`git-merge-state.sh`、
+  `base-moved.sh`、`branch-topics.sh`、`worktree-add.sh`、`post-merge-cleanup.sh`、残り。スクリプトごとに 1 つ以上の PR に
+  し、中身を移した PR で sh の実装を 1 行に置き換える
 - テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える）で、Linux と Windows の CI で流す。今の
-  `.claude/tests/scripts.sh` は、1 行のスクリプトのファイルから呼ぶ配備の確認として残す
+  `.claude/tests/scripts.sh` は、1 行のスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチで
+  ビルドしたバイナリを渡して流す
 
 理由:
 
@@ -73,15 +80,22 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 案 A は、スキルの文と hook のルールを変えないので、移す PR ごとの変更がスクリプト 1 つに収まる。案 B は、移すたびに
   スキルの文と hook のルールを揃える PR になり、揃え漏れが hook の判定の抜けになる。sh を 1 つ挟む費用は呼び出しごとに
   1 回で、これらのスクリプトは作業の節目に呼ぶもの（PreToolUse hook のように毎回は走らない）
+- バイナリを PATH でなく固定のパスと `CLAUDE_HOOKS_BIN` で引くのは、今の `lib/local-review.sh` と揃え、テストで
+  ブランチのバイナリに差し替えられるようにするため。PATH に置くと `claude-hooks script <名前>` を直に呼ぶ 2 つ目の
+  書き方ができ、名前で見分ける hook のルールが見分けない
 
 ### 帰結
 
 - 良い点: 移した後のスクリプトは jq を使わない。Windows の手順から jq を外せるのは、段階 8 まで移し終えた後
 - 悪い点: `claude-hooks` という名前のバイナリが、hook でない作業手順の処理も持つ。名前は段階 8 の後に見直す
 - 悪い点: スクリプトの判定を変えるたびに、`claude-hooks` のビルドとテストが要る（ADR-0082 の帰結と同じ）
+- 悪い点: `claude-sync` は 1 行のスクリプトをすぐ配るが、バイナリは rebuild まで前の版のままで、その間、移した
+  スクリプトは前の版のバイナリにサブコマンドが無く失敗する。移す PR は `claude-hooks` を変えるので、マージの後は
+  `claude-sync` でなく rebuild（activation が sync も実行する）で入れる
 
 ### 確認
 
 - 移したスクリプトの結合テストが、Linux と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
   いるもの
-- 移した後、対象のスクリプトのファイルは `claude-hooks script <名前>` を呼ぶ 1 行だけになり、jq を使わない
+- 移した後、対象のスクリプトのファイルは `claude-hooks script <名前>` を呼ぶ 1 行だけになり、jq を使わない。`lib/` の
+  部品は消えている
