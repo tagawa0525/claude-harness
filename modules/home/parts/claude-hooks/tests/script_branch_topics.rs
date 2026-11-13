@@ -73,6 +73,9 @@ impl Repo {
             .args(["script", "branch-topics"])
             .args(args)
             .current_dir(&self.root)
+            // バイナリの中の git も、利用者のグローバルの設定（log.showSignature など）を読まない
+            .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
             .unwrap()
     }
