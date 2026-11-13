@@ -63,7 +63,7 @@ check ng "sanity" "flake: update (testhost)"
 check ng "sanity" "何の型もない件名"
 
 echo "==> 件名の長さ（UTF-8 の文字数で 72 まで）と、形式の対象外の件名"
-# claude-hooks の check-commit-message は、この hook と同じ検査（commit-msg-check）を先に呼ぶ。検査を hook から
+# claude-hooks の check-commit-message は、この hook と同じ検査（ja-terms commit-msg）を先に呼ぶ。検査を hook から
 # 切り出しても判定が変わらないことを、境界と対象外の形で見る
 # 文字数で数える（LANG=C だと ${#out} がバイト数になる）
 export LC_ALL=C.UTF-8

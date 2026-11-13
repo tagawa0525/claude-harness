@@ -319,7 +319,7 @@ in
 
   # commit-msg: Claude Code セッションのコミットに Conventional Commits を強制する。
   # 形式は決定的に判定できるため SKILL.md の文章ではなく hook で守る。
-  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多。判定は commit-msg-check）。
+  # 件名は 72 文字で失敗、50 文字超は警告（日本語件名の実態は 51〜72 が最多。判定は `ja-terms commit-msg`）。
   # 手動コミットの自由度を残すため、pre-commit の main ガードと同じく CLAUDECODE=1 のときのみ
   xdg.configFile."git/hooks/commit-msg" = {
     executable = true;
