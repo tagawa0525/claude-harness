@@ -55,12 +55,18 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
     if args.is_empty() {
         return Err(Failure(USAGE.to_string()));
     }
-    // textlint と同じく、引数をファイルの集まりにし（同じファイルは最初の引数の名前で 1 度だけ）、どのファイルも
-    // 読めることを確かめてから検査する
+    // textlint と同じく、引数をパスの字面でファイルの集まりにし（絶対パスにして . を除いたもので比べ、symlink は
+    // 辿らない。同じファイルは最初の引数の名前で 1 度だけ）、どのファイルも読めることを確かめてから検査する
     let mut seen = std::collections::HashSet::new();
     let args: Vec<&OsString> = args
         .iter()
-        .filter(|path| seen.insert(std::fs::canonicalize(path).unwrap_or_else(|_| path.into())))
+        .filter(|path| {
+            let key = std::path::absolute(path).map_or_else(
+                |_| Path::new(path).to_path_buf(),
+                |p| p.components().collect::<std::path::PathBuf>(),
+            );
+            seen.insert(key)
+        })
         .collect();
     let files = args
         .iter()
