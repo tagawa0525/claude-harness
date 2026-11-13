@@ -45,18 +45,13 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
     if args.next().as_deref() != Some("check".as_ref()) {
         return Err(Failure(USAGE.to_string()));
     }
-    let mut args: Vec<OsString> = args.collect();
-    let dictionary = if args.first().is_some_and(|a| a == "--dictionary") {
-        if args.len() < 2 {
-            return Err(Failure(USAGE.to_string()));
-        }
-        let path = args.remove(1);
-        args.remove(0);
-        Dictionary::load(&path)
-    } else {
-        Dictionary::parse(DICTIONARY, "prh.yml")
-    }
-    .map_err(|e| Failure(e.to_string()))?;
+    let args: Vec<OsString> = args.collect();
+    let (dictionary, args) = match args.as_slice() {
+        [option, path, files @ ..] if option == "--dictionary" => (Dictionary::load(path), files),
+        [option, ..] if option == "--dictionary" => return Err(Failure(USAGE.to_string())),
+        files => (Dictionary::parse(DICTIONARY, "prh.yml"), files),
+    };
+    let dictionary = dictionary.map_err(|e| Failure(e.to_string()))?;
     if args.is_empty() {
         return Err(Failure(USAGE.to_string()));
     }
