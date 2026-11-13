@@ -300,9 +300,8 @@ class HistoryRewrite(unittest.TestCase):
             yaml.safe_load(Path(path).read_text(encoding="utf-8"))["rules"]
             for path in [os.environ["HISTORY_REWRITE_DICTIONARY"], self.extra]
         )
-        # ja-terms check は辞書を 1 つ読むので、つなぐ。textlint-rule-prh は後の辞書の、前の辞書と同じ expected の
-        # 規則を外す（prh の Engine.merge）が、足す辞書の expected は前の辞書に無い
-        self.assertFalse({r["expected"] for r in main} & {r["expected"] for r in extra})
+        # ja-terms check は辞書を 1 つ読むので、つなぐ。書き換え（prh_rules.load）も 2 つの辞書の規則を順に並べるので、
+        # 同じ規則になる
         rules = main + extra
         dictionary = Path(self.tmp.name) / "dictionary.yml"
         dictionary.write_text(
