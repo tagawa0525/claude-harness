@@ -58,7 +58,7 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
 
 案 A と案 D を採る。
 
-- 規則は `ja-terms commit-msg`（`modules/home/parts/ja-terms/src/message.rs`。ADR-0085）の
+- 規則は `ja-terms commit-msg`（`modules/home/parts/ja-terms/src/main.rs` の `commit_msg` と `src/message.rs`。ADR-0085）の
   1 か所に置く。commit-msg の hook は、ローカルの commit-msg、CLAUDECODE、upstream のある fork を見た後に、これを
   `exec` する。終了コードは 0 が通す、1 が規約に反する、2 が語の検査の失敗。git は 0 でないどの値でも
   コミットを止めるので、hook の振る舞いは変わらない。ルールは 1 で止め、2 と起動の失敗は判定できなかった理由を出して

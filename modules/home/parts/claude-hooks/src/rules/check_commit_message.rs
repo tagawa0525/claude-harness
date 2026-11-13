@@ -4,7 +4,7 @@
 //! 崩れた日本語の語があるコミットを拒む。git の順で pre-commit（マージを終える commit では数分の品質チェック）の
 //! 後に走り、拒まれても同じコマンドの `;` や改行の後のコマンドは古い HEAD のまま走る。pre-commit からは `-m` の
 //! 本文が読めず、git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg が
-//! 呼ぶのと同じ検査（`ja-terms commit-msg`。modules/home/parts/ja-terms の src/message.rs。store のパスは
+//! 呼ぶのと同じ検査（`ja-terms commit-msg`。modules/home/parts/ja-terms の src/main.rs の commit_msg と src/message.rs。store のパスは
 //! package.nix が包んで渡す）に、commit-msg に渡るのと同じメッセージを渡す（ADR-0073、ADR-0085）。
 //!
 //! 対象は本文を持つ形（`-m` / `--message`、`-F` / `--file`）。commit-msg を呼ばない形（`-n` / `--no-verify`、
