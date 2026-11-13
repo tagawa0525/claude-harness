@@ -58,9 +58,27 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 1;
     }
+    match summary(&pr) {
+        Ok(text) => {
+            print!("{text}");
+            0
+        }
+        Err(code) => code,
+    }
+}
+
+/// 要約のテキスト（モジュールの説明の出力）。gh が失敗すれば、その終了コード（理由は標準エラーに出す）
+pub fn summary(pr: &pr_url::Pr) -> Result<String, i32> {
+    let mut out = String::new();
+    macro_rules! out_line {
+        ($($t:tt)*) => {{
+            out.push_str(&format!($($t)*));
+            out.push('\n');
+        }};
+    }
     // Copilot のレビューを提出の順に全件（周回の数に全件が要る）。--paginate に配列を返す --jq を渡すと、ページごとの
     // 配列がつながって不正な JSON になるので、要素を 1 つずつ出させて読む
-    let stdout = match crate::gh::output_for_repo(
+    let stdout = crate::gh::output_for_repo(
         &pr.repo,
         &[
             "api",
@@ -72,10 +90,7 @@ pub fn main(args: &[String]) -> i32 {
             "--jq",
             r#".[] | select(.user.login == "copilot-pull-request-reviewer[bot]")"#,
         ],
-    ) {
-        Ok(stdout) => stdout,
-        Err(code) => return code,
-    };
+    )?;
     let reviews: Result<Vec<Value>, _> = serde_json::Deserializer::from_slice(&stdout)
         .into_iter::<Value>()
         .collect();
@@ -87,29 +102,29 @@ pub fn main(args: &[String]) -> i32 {
             "ERROR: gh api の出力がレビューの並びでない: {}",
             String::from_utf8_lossy(&stdout)
         );
-        return 1;
+        return Err(1);
     };
     let Some(latest) = reviews.last() else {
-        println!("ROUND: 0");
-        println!("NOTE: Copilot のレビューはまだありません");
-        return 0;
+        out_line!("ROUND: 0");
+        out_line!("NOTE: Copilot のレビューはまだありません");
+        return Ok(out);
     };
     let review_id = latest["id"].as_u64().unwrap_or_default();
-    let inline = match crate::gh::output_for_repo(
-        &pr.repo,
-        &[
-            "api",
-            "--paginate",
-            &format!(
-                "repos/{{owner}}/{{repo}}/pulls/{}/reviews/{review_id}/comments?per_page=100",
-                pr.number
-            ),
-            "--jq",
-            ".[].id",
-        ],
-    ) {
-        Ok(stdout) => stdout.iter().filter(|&&b| b == b'\n').count(),
-        Err(code) => return code,
+    let inline = {
+        let stdout = crate::gh::output_for_repo(
+            &pr.repo,
+            &[
+                "api",
+                "--paginate",
+                &format!(
+                    "repos/{{owner}}/{{repo}}/pulls/{}/reviews/{review_id}/comments?per_page=100",
+                    pr.number
+                ),
+                "--jq",
+                ".[].id",
+            ],
+        )?;
+        stdout.iter().filter(|&&b| b == b'\n').count()
     };
     let body = body_of(latest);
     let lines: Vec<&str> = body.split('\n').collect();
@@ -127,11 +142,11 @@ pub fn main(args: &[String]) -> i32 {
         .filter(|review| !FAILED.is_match(first_line(&body_of(review))))
         .count();
 
-    println!("ROUND: {}", reviews.len());
-    println!("REVIEW_ID: {review_id}");
-    println!("STATE: {}", text(&latest["state"]));
-    println!("HEADLINE: {}", first_line(&body));
-    println!(
+    out_line!("ROUND: {}", reviews.len());
+    out_line!("REVIEW_ID: {review_id}");
+    out_line!("STATE: {}", text(&latest["state"]));
+    out_line!("HEADLINE: {}", first_line(&body));
+    out_line!(
         "REVIEW_FAILED: {}",
         if FAILED.is_match(first_line(&body)) {
             "yes"
@@ -139,10 +154,10 @@ pub fn main(args: &[String]) -> i32 {
             "no"
         }
     );
-    println!("SUCCESSFUL_REVIEWS: {successful}");
-    println!("INLINE_COMMENTS: {inline}");
-    println!("SUPPRESSED_COMMENTS: {suppressed_count}");
-    println!(
+    out_line!("SUCCESSFUL_REVIEWS: {successful}");
+    out_line!("INLINE_COMMENTS: {inline}");
+    out_line!("SUPPRESSED_COMMENTS: {suppressed_count}");
+    out_line!(
         "SEVERITY: {}",
         if severity_known { "v2" } else { "unknown" }
     );
@@ -155,7 +170,7 @@ pub fn main(args: &[String]) -> i32 {
                     .iter()
                     .filter(|(_, l)| *l == Some(level))
                     .count();
-                println!("REMAINING_{}: {n}", level.to_uppercase());
+                out_line!("REMAINING_{}: {n}", level.to_uppercase());
             }
         }
         missed_count = sections
@@ -163,20 +178,20 @@ pub fn main(args: &[String]) -> i32 {
             .iter()
             .filter(|(place, _)| *place == "missed")
             .count();
-        println!("PREVIOUSLY_MISSED: {missed_count}");
+        out_line!("PREVIOUSLY_MISSED: {missed_count}");
     }
     if suppressed_count != "0" {
-        println!("--- suppressed ---");
-        println!("{}", trim_trailing_newlines(&suppressed.join("\n")));
+        out_line!("--- suppressed ---");
+        out_line!("{}", trim_trailing_newlines(&suppressed.join("\n")));
     }
     if missed_count > 0 {
-        println!("--- previously missed ---");
+        out_line!("--- previously missed ---");
         let missed = sections
             .as_ref()
             .map_or(String::new(), |s| s.missed.join("\n"));
-        println!("{}", trim_trailing_newlines(&missed));
+        out_line!("{}", trim_trailing_newlines(&missed));
     }
-    0
+    Ok(out)
 }
 
 /// 本文（`jq -r .body` と同じく、null は "null"）。行の終わりの改行は除く（sh のコマンド置換と同じ）
