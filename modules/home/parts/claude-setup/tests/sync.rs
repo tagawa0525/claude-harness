@@ -45,13 +45,11 @@ impl Home {
     }
 
     fn env(&self, command: &mut Command) {
-        for name in [
-            "GIT_DIR",
-            "GIT_INDEX_FILE",
-            "GIT_WORK_TREE",
-            "GIT_COMMON_DIR",
-        ] {
-            command.env_remove(name);
+        // 外の git（hook の中で走るテストや git -c）が渡す GIT_* を外す（ほかの crate のテストと同じ）
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("GIT_") {
+                command.env_remove(name);
+            }
         }
         command
             .env("HOME", self.home())
@@ -411,4 +409,63 @@ fn files_only_in_the_destination_become_writable() {
     assert!(home.sync(Some(&src)).status.success());
     let mode = std::fs::metadata(&old).unwrap().permissions().mode();
     assert_eq!(mode & 0o200, 0o200, "{mode:o}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_mode_change_alone_reaches_the_destination() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new();
+    let src = home.0.join("src");
+    let script = src.join(".claude/scripts/run.sh");
+    write(&script, "#!/bin/sh\n");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    // 中身を変えずに実行の bit だけを足す（rsync -a は mode も合わせる）
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    let mode = std::fs::metadata(home.dest("scripts/run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111, "{mode:o}");
+}
+
+#[test]
+fn an_empty_home_is_an_error() {
+    let home = Home::new();
+    let out = Command::new(env!("CARGO_BIN_EXE_claude-setup"))
+        .arg("sync")
+        .env("HOME", "")
+        .env("USERPROFILE", "")
+        .current_dir(&home.0)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!home.0.join(".claude").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_in_the_destination_is_replaced_not_written_through() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/skills/foo/SKILL.md"), "harness");
+    write(&src.join(".claude/skills/ref.md"), "file");
+    // 利用者の作業の場所を指すリンクと、ファイルと同じ中身のファイルを指すリンク
+    let work = home.0.join("work");
+    write(&work.join("SKILL.md"), "mine");
+    write(&home.0.join("same.md"), "file");
+    std::fs::create_dir_all(home.dest("skills")).unwrap();
+    std::os::unix::fs::symlink(&work, home.dest("skills/foo")).unwrap();
+    std::os::unix::fs::symlink(home.0.join("same.md"), home.dest("skills/ref.md")).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    assert_eq!(read(&work.join("SKILL.md")), "mine");
+    for rel in ["skills/foo", "skills/ref.md"] {
+        let kind = std::fs::symlink_metadata(home.dest(rel))
+            .unwrap()
+            .file_type();
+        assert!(!kind.is_symlink(), "{rel}");
+    }
+    assert_eq!(read(&home.dest("skills/foo/SKILL.md")), "harness");
 }
