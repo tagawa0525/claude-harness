@@ -59,16 +59,6 @@ let
     text = builtins.readFile ../scripts/claude-memory-backup.sh;
   };
   claudeMemoryBackupBinRel = ".claude/bin/claude-memory-backup";
-  # git の操作は実際のメモリ（2026-11-06 に 17 プロジェクト、130 ファイル、624 KB）のコピーで 1 回 0.02 秒以下。
-  # 待つのはほかの応答の hook が持つロック（最大 30 秒）なので、それより長くする
-  claudeMemoryBackupTimeout = 60;
-  # hook の timeout は秒（https://code.claude.com/docs/en/hooks の "Seconds before canceling."。command の既定は 600）。
-  # pre-merge-check の gh は最大 14 か所の呼び出しで、1 回 0.4〜0.7 秒（2026-10-28 に gh pr view、repo view、api を
-  # 手元で測定）なので順に呼んでも約 10 秒。その数倍の 60 秒にする。hook が止まったとき、Agent の起動もこの時間待つ
-  claudeHookTimeout = 60;
-  # UserPromptSubmit hook。報告とメモリに書く時刻を推測しないため、ターンごとに現在時刻を 1 行、文脈に入れる
-  # （標準出力が文脈に足される）。コマンドを変えても古い登録を消せるよう、jq は先頭の date '+現在時刻 で識別する
-  promptSubmitDateCmd = "date '+現在時刻: %F %H:%M %Z'";
   # 旧 bash hook のファイル名。settings.json の登録と ~/.claude/hooks の残骸を掃除するために残す
   legacyHookFiles = [
     "block-main-commit.sh"
@@ -83,176 +73,6 @@ let
     "warn-large-commit.sh"
   ];
 
-  # Claude Code settings.json の静的設定
-  # nixos-rebuild 時に ~/.claude/settings.json へ自動反映される
-  # hooks, statusLine, skipDangerousModePermissionPrompt は別途管理
-  claudeCodeStaticSettings = {
-    autoUpdatesChannel = "stable";
-    enabledPlugins = {
-      "code-simplifier@claude-plugins-official" = true;
-      # lsp-det のドッグフーディング（~/.claude/skills/lsp-det-dogfood）と .rs を取り合う。
-      # 同じ拡張子は先に登録された方が勝ち、skills とマーケットプレイスの順序は文書化されていない
-      "rust-analyzer-lsp@claude-plugins-official" = false;
-    };
-    language = "Japanese";
-    permissions = {
-      allow = [
-        # Skills
-        "Skill(git-commit)"
-        "Skill(git-branch)"
-        "Skill(git-worktree)"
-        "Skill(git-push)"
-        "Skill(git-tidy)"
-        "Skill(git-cherry-pick)"
-        "Skill(git-info)"
-        "Skill(git-merge)"
-        "Skill(gh-pr-merge)"
-        "Skill(gh-pr-create)"
-        "Skill(gh-pr-review)"
-        "Skill(gh-actions-check)"
-        "Skill(delegate)"
-        # Git
-        "Bash(git add:*)"
-        "Bash(git branch:*)"
-        "Bash(git checkout:*)"
-        "Bash(git cherry-pick:*)"
-        "Bash(git clean:*)"
-        "Bash(git clone:*)"
-        "Bash(git commit:*)"
-        "Bash(git config:*)"
-        "Bash(git diff:*)"
-        "Bash(git diff-tree:*)"
-        "Bash(git fetch:*)"
-        "Bash(git log:*)"
-        "Bash(git merge:*)"
-        "Bash(git mv:*)"
-        "Bash(git pull:*)"
-        "Bash(git push:*)"
-        "Bash(git rebase:*)"
-        "Bash(git remote:*)"
-        "Bash(git reset:*)"
-        "Bash(git restore:*)"
-        "Bash(git rev-list:*)"
-        "Bash(git rm:*)"
-        "Bash(git show:*)"
-        "Bash(git stash list:*)"
-        "Bash(git stash show:*)"
-        "Bash(git status:*)"
-        "Bash(git submodule:*)"
-        "Bash(git switch:*)"
-        "Bash(git symbolic-ref:*)"
-        "Bash(git tag:*)"
-        "Bash(git worktree:*)"
-        # GitHub CLI
-        "Bash(gh api:*)"
-        "Bash(gh auth:*)"
-        "Bash(gh pr:*)"
-        "Bash(gh release:*)"
-        "Bash(gh repo:*)"
-        "Bash(gh run:*)"
-        "Bash(gh workflow:*)"
-        # Nix
-        "Bash(nix search:*)"
-        "Bash(nix build:*)"
-        "Bash(nix eval:*)"
-        "Bash(nix flake:*)"
-        "Bash(nix-build:*)"
-        "Bash(nix-instantiate:*)"
-        "Bash(nix-prefetch-url:*)"
-        "Bash(nixfmt:*)"
-        "Bash(statix:*)"
-        # 言語ツール
-        "Bash(cargo:*)"
-        "Bash(rustc:*)"
-        "Bash(rustup:*)"
-        "Bash(markdownlint:*)"
-        "Bash(python3:*)"
-        "Bash(node:*)"
-        "Bash(npx:*)"
-        # システム
-        "Bash(systemctl:*)"
-        "Bash(journalctl:*)"
-        "Bash(mount:*)"
-        "Bash(chmod:*)"
-        "Bash(fish:*)"
-        "Bash(direnv:*)"
-        "Bash(podman:*)"
-        "Bash(podman-compose:*)"
-        # ユーティリティ
-        "Bash(sort:*)"
-        "Bash(echo:*)"
-        "Bash(cat:*)"
-        "Bash(file:*)"
-        "Bash(test:*)"
-        "Bash(grep:*)"
-        "Bash(ls:*)"
-        "Bash(tree:*)"
-        "Bash(find:*)"
-        "Bash(wc:*)"
-        "Bash(jq:*)"
-        "Bash(xargs:*)"
-        "Bash(curl:*)"
-        "Bash(hash:*)"
-        "Bash(env)"
-        # gh-pr-review スキルスクリプト
-        "Bash(~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/decide-next.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/resolve-thread.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/request-rereview.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/reply-to-comment.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh:*)"
-        "Bash(~/.claude/skills/gh-pr-review/scripts/record-local-review.sh:*)"
-        # language-checks スキルスクリプト
-        "Bash(~/.claude/skills/language-checks/scripts/run-checks.sh:*)"
-        # retro スキルスクリプト
-        "Bash(~/.claude/skills/retro/scripts/session-events.sh:*)"
-        "Bash(~/.claude/skills/retro/scripts/memory-index.sh:*)"
-        # 設計の記録の CLI（adr スキル、git-merge スキル、branch-topics.sh。git-hooks.nix が PATH に入れる）
-        "Bash(design-records new:*)"
-        "Bash(design-records renumber:*)"
-        "Bash(design-records -C:*)"
-        "Bash(design-records check:*)"
-        "Bash(design-records status:*)"
-        "Bash(commit-refs remap:*)"
-        # 共有スクリプト（PRレビュー待ち、git/gh の決定的な手順）
-        "Bash(~/.claude/scripts/gh-wait-review.sh:*)"
-        "Bash(~/.claude/scripts/git-info.sh:*)"
-        "Bash(~/.claude/scripts/worktree-add.sh:*)"
-        "Bash(~/.claude/scripts/branch-topics.sh:*)"
-        "Bash(~/.claude/scripts/rename-branch.sh:*)"
-        "Bash(~/.claude/scripts/rename-plan.sh:*)"
-        "Bash(~/.claude/scripts/post-merge-cleanup.sh:*)"
-        "Bash(~/.claude/scripts/gh-actions-diagnose.sh:*)"
-        "Bash(~/.claude/scripts/review-level.sh:*)"
-        "Bash(~/.claude/scripts/base-moved.sh:*)"
-        "Bash(~/.claude/scripts/kept-sentences.py:*)"
-        "Bash(~/.claude/scripts/slurm-run.sh:*)"
-        "Bash(~/.claude/scripts/slurm-history.sh:*)"
-        # Web
-        "WebFetch(domain:api.github.com)"
-        "WebFetch(domain:claude.ai)"
-        "WebFetch(domain:code.visualstudio.com)"
-        "WebFetch(domain:crates.io)"
-        "WebFetch(domain:discourse.nixos.org)"
-        "WebFetch(domain:docs.rs)"
-        "WebFetch(domain:hub.docker.com)"
-        "WebFetch(domain:gist.github.com)"
-        "WebFetch(domain:github.com)"
-        "WebFetch(domain:lib.rs)"
-        "WebFetch(domain:mynixos.com)"
-        "WebFetch(domain:nix-community.github.io)"
-        "WebFetch(domain:raw.githubusercontent.com)"
-        "WebFetch(domain:search.nixos.org)"
-        "WebFetch(domain:www.anthropic.com)"
-        "WebSearch"
-      ];
-      deny = [ "Bash(sudo:*)" ];
-      defaultMode = "default";
-    };
-    plansDirectory = "docs/plans";
-  };
 in
 {
   # ===========================================================================
@@ -305,55 +125,14 @@ in
       $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --checksum --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
     '') externalSkills}
 
-    # 静的設定と hook を settings.json に反映
-    SETTINGS="$CLAUDE_DIR/settings.json"
-    if [ ! -f "$SETTINGS" ]; then
-      echo '{}' > "$SETTINGS"
-    fi
-    if [ "''${DRY_RUN:-0}" != "1" ]; then
-      ${pkgs.jq}/bin/jq \
-        --arg cmd "$HOME/${claudeHooksBinRel} pre-tool-use" \
-        --argjson timeout ${toString claudeHookTimeout} \
-        --arg dateCmd ${lib.escapeShellArg promptSubmitDateCmd} \
-        --arg memCmd "$HOME/${claudeMemoryBackupBinRel}" \
-        --argjson memTimeout ${toString claudeMemoryBackupTimeout} \
-        --arg dateCmdPrefix "date '+現在時刻" \
-        --argjson legacy '${builtins.toJSON legacyHookFiles}' \
-        --argjson static '${builtins.toJSON claudeCodeStaticSettings}' \
-        '. + $static |
-        .skipDangerousModePermissionPrompt = true |
-        .hooks.PreToolUse |= (
-          (. // [])
-          # 旧 bash hook（ファイル名で識別）の登録を外す
-          | map(.hooks |= map(select((.command | tostring) as $c | ($legacy | any(. as $f | $c | endswith("/" + $f))) | not)))
-          # バイナリの登録を、バイナリだけを持つ 1 つの組にする。バイナリは Bash のコマンド、Agent の依頼
-          # （/delegate の欄と /code-review の周）、Skill の呼び出し（/code-review の周）を検査する。ほかの hook と同じ組に置くと、その組の matcher を変えたときにほかの hook も
-          # Agent で走るので、既にある登録は外してから足し直す
-          | map(.hooks |= map(select((.command | tostring) | endswith("/bin/claude-hooks pre-tool-use") | not)))
-          # 空になった matcher を消す
-          | map(select((.hooks | length) > 0))
-          + [{"matcher": "Bash|Agent|Skill", "hooks": [{"type": "command", "command": $cmd, "timeout": $timeout}]}]
-        ) |
-        # 現在時刻の hook の登録を 1 件にする（他の UserPromptSubmit hook は残す）
-        .hooks.UserPromptSubmit |= (
-          (. // [])
-          | map(.hooks |= map(select((.command | tostring | startswith($dateCmdPrefix)) | not)))
-          | map(select((.hooks | length) > 0))
-          + [{"hooks": [{"type": "command", "command": $dateCmd}]}]
-        ) |
-        # 自動メモリの退避の登録を 1 件にする（他の Stop hook は残す）。async にしないのは、async の hook の
-        # 失敗の文が利用者に見えず（Claude にだけ次のターンで渡る）、退避の失敗に気づけないため
-        .hooks.Stop |= (
-          (. // [])
-          | map(.hooks |= map(select((.command | tostring) | endswith("/bin/claude-memory-backup") | not)))
-          | map(select((.hooks | length) > 0))
-          + [{"hooks": [{"type": "command", "command": $memCmd, "timeout": $memTimeout}]}]
-        )' \
-        "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-      echo "Claude Code: settings and hooks updated in settings.json"
-    else
-      $DRY_RUN_CMD echo "Claude Code: (dry run) settings and hooks would be updated in settings.json"
-    fi
+    # 静的な設定（./claude-settings.json）と hook を settings.json に反映する（ADR-0084。規則と登録の形、timeout は
+    # claude-setup の src/settings.rs）。静的な設定の enabledPlugins の rust-analyzer-lsp を false にするのは、lsp-det の
+    # ドッグフーディング（~/.claude/skills/lsp-det-dogfood）と .rs を取り合うため（同じ拡張子は先に登録された方が勝ち、
+    # skills とマーケットプレイスの順序は文書化されていない）
+    $DRY_RUN_CMD ${claude-setup}/bin/claude-setup settings --static ${./claude-settings.json} \
+      --pre-tool-use "$HOME/${claudeHooksBinRel}" \
+      --stop "$HOME/${claudeMemoryBackupBinRel}" \
+      ${lib.concatMapStringsSep " " (f: "--legacy ${f}") legacyHookFiles}
 
     # 旧 bash hook の残骸を消す（claude-sync は --delete を使わないため残り続ける）。
     # activation は限られた PATH で実行されるため、外部コマンドはストアパスで参照する
