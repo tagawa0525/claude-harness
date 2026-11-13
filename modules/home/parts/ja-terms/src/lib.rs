@@ -11,6 +11,8 @@
 //!
 //! pattern は JavaScript の正規表現として、prh と同じ u と m のフラグで regress に読ませる。
 
+mod autolink;
+mod inline;
 pub mod strs;
 
 use std::fmt;
