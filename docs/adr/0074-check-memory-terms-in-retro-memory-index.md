@@ -43,7 +43,7 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 - 案 i: `home.packages` で PATH に出す（`staged-checks` の形）
 - 案 ii: claude-code.nix でスクリプトに store のパスを埋める（ADR-0050 の package.nix の形）
 - 案 iii: claude-code.nix が `~/.claude/bin/ja-terms-files` の固定パスに置き、スクリプトはそのパスを呼ぶ（環境変数
-  `JA_TERMS` で差し替える。`~/.claude/bin/claude-hooks` と `.claude/scripts/lib/local-review.sh` の形）
+  `JA_TERMS_FILES` で差し替える。`~/.claude/bin/claude-hooks` と `.claude/scripts/lib/local-review.sh` の形）
 
 ## 決定と理由
 
