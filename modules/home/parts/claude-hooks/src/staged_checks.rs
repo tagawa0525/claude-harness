@@ -47,8 +47,19 @@ pub fn run(langs: &[String]) -> i32 {
         "claude-hooks-staged-{}-{nanos}",
         std::process::id()
     )));
-    if let Err(e) = std::fs::create_dir_all(&work.0) {
-        println!("❌ 一時のディレクトリを作れません（{e}）");
+    // ステージした中身を書き出すので、持ち主だけが読める場所にする（mktemp -d と同じ 0700）。名前が既にあれば、
+    // ほかの人が作ったかもしれないので使わない（create_dir_all でなく create）
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    if let Err(e) = builder.create(&work.0) {
+        println!(
+            "❌ 一時のディレクトリ {} を作れません（{e}）",
+            work.0.display()
+        );
         return 1;
     }
     let mut failed = false;
@@ -157,8 +168,22 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&path).find_map(|dir| {
         exts.iter()
             .map(|ext| dir.join(format!("{name}{ext}")))
-            .find(|p| p.is_file())
+            .find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && executable(&m)))
     })
+}
+
+/// 実行の bit があるか（`command -v` と同じく、無ければ PATH に無いものとする。Windows には実行の bit が無い）
+fn executable(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
 }
 
 /// tool に input を渡して実行する（stdout と stderr は捨てるか、受けるか、そのまま見せる）
@@ -176,7 +201,31 @@ fn pipe(
     } else {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
-    output_with_input(&mut cmd, input).ok()
+    match output_with_input(&mut cmd, input) {
+        Ok(out) => Some(out),
+        Err(crate::process::Unfinished::NotStarted(e)) => {
+            println!("❌ {} を起動できません（{e}）", tool.display());
+            None
+        }
+        Err(crate::process::Unfinished::Lost(e)) => {
+            println!("❌ {} の終わりを受けられません（{e}）", tool.display());
+            None
+        }
+    }
+}
+
+/// cmd を実行して、成功したか（起動できなければ理由を出して失敗とする）
+fn succeeded(cmd: &mut Command) -> bool {
+    match cmd.status() {
+        Ok(status) => status.success(),
+        Err(e) => {
+            println!(
+                "❌ {} を起動できません（{e}）",
+                cmd.get_program().to_string_lossy()
+            );
+            false
+        }
+    }
 }
 
 fn ok(out: &Option<Output>) -> bool {
@@ -296,8 +345,10 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
         ".markdownlintignore",
     ] {
         if let Ok(text) = git(&["cat-file", "blob", &format!(":{name}")], None) {
-            let _ = std::fs::create_dir_all(&md);
-            if std::fs::write(md.join(name), text).is_err() {
+            let written =
+                std::fs::create_dir_all(&md).and_then(|()| std::fs::write(md.join(name), text));
+            if let Err(e) = written {
+                println!("❌ ステージした {name} を書き出せません（{e}）");
                 passed = false;
             }
         }
@@ -318,6 +369,7 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
     // MD038（code span の内側の空白）だけは自動修正から外し、続く検査で違反として出す。markdownlint 0.50.0 の
     // --fix は code span の先頭の空白を落とし（` X` が `X` になる）、空白に意味のある書き方（シェルの <<' X' など）を
     // 書き手が気づかないまま変えるため。設定で MD038 を無効にしないのは、検査まで止めて違反に気づけなくなるため
+    // 直せない違反での失敗は、続く検査で出すので見ない（起動できないことは、続く検査で出る）
     let _ = Command::new(&markdownlint)
         .args(["--fix", "--disable", "MD038", "--"])
         .args(&paths)
@@ -332,12 +384,12 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
     match (fixer.is_file(), find_on_path("python3")) {
         (true, Some(python)) => {
             // fix-markdown-lint.py は -- で始まる引数を飛ばすので、./ を付けて渡す
-            let fixed = Command::new(python)
-                .arg(&fixer)
-                .args(files.iter().map(|f| Path::new(".").join(&f.path)))
-                .current_dir(&md)
-                .status()
-                .is_ok_and(|s| s.success());
+            let fixed = succeeded(
+                Command::new(python)
+                    .arg(&fixer)
+                    .args(files.iter().map(|f| Path::new(".").join(&f.path)))
+                    .current_dir(&md),
+            );
             if !fixed {
                 println!(
                     "❌ fix-markdown-lint.py failed. Run: python3 {} <files>",
@@ -361,12 +413,12 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
         }
     }
     println!("🔍 Checking Markdown lint...");
-    let checked = Command::new(&markdownlint)
-        .arg("--")
-        .args(&paths)
-        .current_dir(&md)
-        .status()
-        .is_ok_and(|s| s.success());
+    let checked = succeeded(
+        Command::new(&markdownlint)
+            .arg("--")
+            .args(&paths)
+            .current_dir(&md),
+    );
     if !checked {
         println!("❌ Markdown lint failed (unfixable issues remain)");
         passed = false;
