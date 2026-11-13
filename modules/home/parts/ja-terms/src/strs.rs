@@ -111,13 +111,21 @@ fn front_matter_end(text: &str) -> Option<usize> {
 
 /// ASCII でない記号（Unicode の S のカテゴリ）を、同じバイト数の文字に置き換える。CommonMark 0.31 の
 /// pulldown-cmark は強調の区切り（`*`、`_`）の前後の記号を句読点に数え、micromark 2.11.4 は数えない（`C*×…*` を
-/// micromark は強調と読む）。記号は区切りの判定にしか効かず、Str は元の文から切り出すので、置き換えても範囲は
-/// 変わらない
+/// micromark は強調と読む）。区切りの判定に効くのは区切りの隣の文字だけなので、`*` か `_` の隣の記号だけを置き換える
+/// （ほかの記号も置き換えると、`[→]` と `[←]:` のような参照のリンクのラベルが同じになる）。Str は元の文から切り出す
+/// ので、置き換えても範囲は変わらない
 fn without_symbols(text: &str) -> Cow<'_, str> {
     static SYMBOL: OnceLock<Regex> = OnceLock::new();
     let symbol = SYMBOL
         .get_or_init(|| Regex::with_flags(r"(?=[^\x00-\x7f])\p{S}", "u").expect("固定の正規表現"));
-    let mut found = symbol.find_iter(text).peekable();
+    let delimiter = |c: Option<char>| matches!(c, Some('*' | '_'));
+    let mut found = symbol
+        .find_iter(text)
+        .filter(|m| {
+            delimiter(text[..m.start()].chars().next_back())
+                || delimiter(text[m.end()..].chars().next())
+        })
+        .peekable();
     if found.peek().is_none() {
         return Cow::Borrowed(text);
     }
