@@ -136,7 +136,9 @@ hook の登録の形:
 - git hook は #101 の段階 4 まで、Stop の hook（自動メモリの退避）は段階 8 まで、Windows に置かれない
 - Git for Windows の既定（`core.autocrlf=true`）の clone では、同期する sh のスクリプトが CRLF になり、Git Bash で
   動かない。clone の改行の扱いは #104 で決める
-- 実装はまだ決定に追いついていない。進みは #101 に書く
+- 設置のコマンドの crate は `claude-setup`（`modules/home/parts/claude-setup`）。同期は `claude-setup sync` に移し、Linux の
+  `claude-sync` と activation もそれを呼ぶ（2026-11-13）。settings.json の更新はまだ activation の jq の filter にある。
+  進みは #101 に書く
 
 ### 確認
 
