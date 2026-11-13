@@ -18,9 +18,10 @@ const HOOKS: [&str; 4] = [
 pub fn run(home: &Path, bin: &str) -> Result<(), String> {
     // 無いパスや相対のパス（git は hook を各リポジトリの直下で起動する）を 4 つの hook に書くと、その機械のすべての
     // git commit が止まる
-    if !Path::new(bin).is_absolute() || !Path::new(bin).is_file() {
+    let runnable = std::fs::metadata(bin).is_ok_and(|m| m.is_file() && executable_bit(&m));
+    if !Path::new(bin).is_absolute() || !runnable {
         return Err(format!(
-            "❌ {bin} は絶対パスのファイルではありません。claude-hooks の実行ファイルの絶対パスを --bin に渡してください"
+            "❌ {bin} は絶対パスの実行できるファイルではありません。claude-hooks の実行ファイルの絶対パスを --bin に渡してください"
         ));
     }
     let dir = home.join(".config/git/hooks");
@@ -29,7 +30,7 @@ pub fn run(home: &Path, bin: &str) -> Result<(), String> {
         && !same_dir(home, &system, &dir)
     {
         return Err(format!(
-            "❌ system の core.hooksPath は {system} を指しています。global に書くと、そこの hook が走らなくなるので、ここで止めます"
+            "❌ system の core.hooksPath は {system} を指しています。global に書くと、そこの hook が走らなくなるので、ここで止めます\n   修正方法: system の設定を管理する人に、その hook の扱いを確かめてください（system の設定を読ませないなら GIT_CONFIG_NOSYSTEM=1）"
         ));
     }
     let current = hooks_path("--global")?;
@@ -43,15 +44,17 @@ pub fn run(home: &Path, bin: &str) -> Result<(), String> {
     }
     // 同じ置き場の、ハーネスのものでない hook（利用者が書いたもの）は、黙って上書きしない。ハーネスの hook のファイル
     // は、claude-hooks の置き場が変わっていても ` git-hook <名前> ` を含む
-    // 読めないファイル（UTF-8 でないものを含む）も、利用者のものとみなす。Git for Windows は `<名前>.exe` も hook として
-    // 探すので、それがあれば利用者の hook とみなす
+    // ハーネスの hook のファイルは、このコマンドが書く 2 行の形（claude-hooks の置き場は問わない）だけ。claude-hooks を
+    // 呼ぶ利用者のラッパー、読めないファイル（UTF-8 でないものを含む）、symlink（Linux の home-manager が store に置く
+    // もの）は、持ち主のものとして上書きしない。Git for Windows は `<名前>.exe` も hook として探す
     let foreign: Vec<&str> = HOOKS
         .into_iter()
         .filter(|name| {
-            let ours = format!(" git-hook {name} ");
-            let script = match std::fs::read(dir.join(name)) {
-                Ok(bytes) => !bytes.windows(ours.len()).any(|w| w == ours.as_bytes()),
+            let path = dir.join(name);
+            let script = match std::fs::symlink_metadata(&path) {
                 Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+                Ok(meta) if meta.file_type().is_symlink() => true,
+                Ok(_) => !std::fs::read_to_string(&path).is_ok_and(|text| generated(&text, name)),
             };
             script || (cfg!(windows) && dir.join(format!("{name}.exe")).exists())
         })
@@ -98,6 +101,10 @@ fn git() -> Command {
 
 /// scope（--global、--system）の core.hooksPath（無ければ None）
 fn hooks_path(scope: &str) -> Result<Option<String>, String> {
+    // GIT_CONFIG_NOSYSTEM では git は system の設定を読まないが、--system を付けた git config は読むので、ここで外す
+    if scope == "--system" && nosystem() {
+        return Ok(None);
+    }
     let out = git()
         // include した設定の値も git は使うので、--includes で読む（scope を付けると include を辿らない）
         .args(["config", scope, "--includes", "--get", "core.hooksPath"])
@@ -158,5 +165,35 @@ fn sh_path(bin: &str) -> String {
         bin.replace('\\', "/")
     } else {
         bin.to_string()
+    }
+}
+
+/// GIT_CONFIG_NOSYSTEM が真か（git と同じく true、yes、on、1 を真とする）
+fn nosystem() -> bool {
+    std::env::var("GIT_CONFIG_NOSYSTEM")
+        .is_ok_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// このコマンドが書いた hook のファイルの形か（claude-hooks の置き場は問わない）
+fn generated(text: &str, name: &str) -> bool {
+    let mut lines = text.lines();
+    lines.next() == Some("#!/bin/sh")
+        && lines.next().is_some_and(|line| {
+            line.starts_with("exec '") && line.ends_with(&format!("' git-hook {name} \"$@\""))
+        })
+        && lines.next().is_none()
+}
+
+/// 実行の bit があるか（Windows には実行の bit が無い）
+fn executable_bit(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
     }
 }
