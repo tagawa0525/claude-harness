@@ -382,22 +382,33 @@ mod tests {
         }
     }
 
-    /// ja-terms の代わり。`commit-msg <ファイル>` で呼ばれたときだけ、ファイルのメッセージに「形違い」があれば
-    /// commit-msg の形の件名の ❌ を、「誤語」があれば報告の行（行:列: 誤語 => 正語）と ❌ を出して 1 で、「無語」なら
-    /// 何も出さずに 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
+    /// ja-terms の代わり。`commit-msg <ファイル>` では、メッセージに「形違い」があれば commit-msg の形の件名の ❌ を、
+    /// 「誤語」があれば報告の行（行:列: 誤語 => 正語）と ❌ を出して 1 で終わる。`message` では、標準入力の「誤語」を
+    /// 報告の行で出して 1 で終わる（形は見ない）。どちらも「無語」なら何も出さずに 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
     /// （実物の ja-terms と辞書は tests/merge-ja-terms.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
-[ $# -eq 2 ] && [ "$1" = commit-msg ] || exit 3
-body=$(cat "$2")
+if [ $# -eq 2 ] && [ "$1" = commit-msg ]; then
+  body=$(cat "$2")
+  case "$body" in
+    *失敗*) echo "boom" >&2; exit 2 ;;
+    *無語*) exit 1 ;;
+    *形違い*)
+      echo "❌ Conventional Commits 形式ではありません: 形違い"
+      exit 1 ;;
+    *誤語*)
+      printf '%s\n' "2:1: 誤語 => 正語" "❌ コミットの本文に崩れた日本語の語があります。"
+      exit 1 ;;
+  esac
+  exit 0
+fi
+[ $# -eq 1 ] && [ "$1" = message ] || exit 3
+body=$(cat)
 case "$body" in
   *失敗*) echo "boom" >&2; exit 2 ;;
   *無語*) exit 1 ;;
-  *形違い*)
-    echo "❌ Conventional Commits 形式ではありません: 形違い"
-    exit 1 ;;
   *誤語*)
-    printf '%s\n' "2:1: 誤語 => 正語" "❌ コミットの本文に崩れた日本語の語があります。"
+    printf '%s\n' "2:1: 誤語 => 正語"
     exit 1 ;;
 esac
 exit 0
@@ -797,12 +808,33 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn a_rejection_without_output_still_denies() {
-        // 終了コード 1 は commit-msg が拒むこと（git も 0 でなければ止める）
-        assert!(matches!(
-            check("git merge --no-ff feat/a -m 'Merge: a' -m '無語'").as_slice(),
-            [Finding::Deny(_)]
-        ));
+    fn a_rejection_without_output_is_undecided() {
+        // 何を直すかを示せないので、止めずに判定できなかった理由を出す（commit-msg が同じ検査で止める）
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        for cmd in [
+            "git merge --no-ff feat/a -m 'Merge: a' -m '無語'",
+            "git merge feat/a -m 'Merge: a' -m '無語'",
+        ] {
+            assert!(check(cmd).is_empty(), "{cmd}");
+            assert!(!take_notices().is_empty(), "{cmd}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checks_only_the_body_terms_when_git_may_not_make_a_merge_commit() {
+        // --no-ff の無い merge は fast-forward になれば commit-msg を呼ばず、-e はエディタで件名を直せるので、
+        // 件名の形では止めず、本文の語だけを見る
+        for cmd in [
+            "git merge feat/a -m '形違い'",
+            "git merge --no-ff --ff feat/a -m '形違い'",
+            "git merge --no-ff -e feat/a -m '形違い'",
+        ] {
+            assert!(check(cmd).is_empty(), "{cmd}");
+        }
+        let r = only_deny(&check("git merge feat/a -m '形違い' -m '誤語'"));
+        assert!(r.contains("誤語 => 正語"), "{r}");
     }
 
     #[cfg(unix)]
