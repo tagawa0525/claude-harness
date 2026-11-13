@@ -415,14 +415,14 @@ impl CheckMergeBodyJaTerms {
                         Undecided::Unreadable(p) => format!("-F {p} を読めない"),
                     };
                     notice(format!(
-                        "check-merge-body-ja-terms: git merge の本文の語を判定していません（{why}）"
+                        "check-merge-body-ja-terms: git merge のメッセージを判定していません（{why}）"
                     ));
                     continue;
                 }
             };
             let Some(check) = check else {
                 notice(format!(
-                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge の本文の語を判定していません（nix で包んだものだけが検査する）"
+                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge のメッセージを判定していません（nix で包んだものだけが検査する）"
                 ));
                 continue;
             };
