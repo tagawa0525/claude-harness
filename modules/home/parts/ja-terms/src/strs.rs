@@ -42,7 +42,11 @@ pub fn markdown(text: &str) -> Result<Vec<Range<usize>>, TextError> {
             Parsed::Lazy(line) => {
                 let at = to_original(line, &breaks);
                 if breaks.contains(&at) {
-                    let line = text[..start + at].matches('\n').count() + 1;
+                    // 報告の行と同じく、\r\n、\r、\n、U+2028、U+2029 で行を数える
+                    let before = &text[..start + at];
+                    let line = before.matches(crate::LINE_TERMINATORS).count()
+                        - before.matches("\r\n").count()
+                        + 1;
                     return Err(TextError(format!(
                         "{line} 行目の lazy な行を、micromark 2.11.4 と同じ形に読み直せない"
                     )));
