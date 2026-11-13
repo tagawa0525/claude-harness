@@ -119,11 +119,18 @@ fn run_with_input(
             return None;
         }
     };
-    // 入力を読まずに終わる hook もあるので、書けないこと（EPIPE）は失敗にしない
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(input);
-    }
-    match child.wait_with_output() {
+    // 入力を書き終える前に相手が標準出力を埋めても詰まらないよう、別のスレッドで書く。入力を読まずに終わる hook も
+    // あるので、書けないこと（EPIPE）は失敗にしない
+    let stdin = child.stdin.take();
+    let waited = std::thread::scope(|scope| {
+        if let Some(mut stdin) = stdin {
+            scope.spawn(move || {
+                let _ = stdin.write_all(input);
+            });
+        }
+        child.wait_with_output()
+    });
+    match waited {
         Ok(out) => Some((out.status.code().unwrap_or(1), out.stdout)),
         Err(e) => {
             eprintln!("❌ {what} の終わりを待てません（{e}）");
@@ -133,6 +140,15 @@ fn run_with_input(
 }
 
 fn post_rewrite(args: &[String]) -> i32 {
+    // 標準入力を読む前に確かめる（端末から引数を誤って呼ぶと、入力を待って止まる）
+    let amend = match args {
+        [kind] if kind == "amend" => true,
+        [kind] if kind == "rebase" => false,
+        _ => {
+            eprintln!("{USAGE}");
+            return 2;
+        }
+    };
     let mut input = Vec::new();
     if let Err(e) = std::io::stdin().read_to_end(&mut input) {
         eprintln!("❌ git が渡した旧と新のコミットの対応を読めません（{e}）");
@@ -166,7 +182,7 @@ fn post_rewrite(args: &[String]) -> i32 {
     // rebase の途中（edit で止めた所）の amend でも git は呼ぶが、rebase の終わりにもう一度、元のコミットから最後の
     // コミットへの対応を渡す。途中で置き換えると作業ツリーを汚して rebase --continue に混ざり、途中の番号に置き換えた
     // 文書は最後の対応で引けなくなる
-    if args.first().map(String::as_str) == Some("amend") && rebasing(dir) {
+    if amend && rebasing(dir) {
         return local_rc;
     }
     let Some(git_dir) = git::git(dir, &["rev-parse", "--absolute-git-dir"]) else {
@@ -187,29 +203,39 @@ fn post_rewrite(args: &[String]) -> i32 {
             None
         }
     };
+    // 貼って使えるよう、パスをシェルの引数の形にする（空白などを含むリポジトリのため）
+    let retry = format!(
+        "commit-refs remap {}",
+        sh_quote(&saved.display().to_string())
+    );
     let stdout = match out {
         Some((0, stdout)) => stdout,
-        _ => {
+        failed => {
             if let Err(e) = std::fs::write(&saved, &input) {
                 eprintln!("❌ 対応を {} に残せません（{e}）", saved.display());
             }
-            println!(
-                "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
-            );
-            // 貼って使えるよう、パスをシェルの引数の形にする（空白などを含むリポジトリのため）
-            println!(
-                "   修正方法: 上の ERROR を直してから、commit-refs remap {}",
-                sh_quote(&saved.display().to_string())
-            );
+            if failed.is_some() {
+                println!(
+                    "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
+                );
+                println!("   修正方法: 上の ERROR を直してから、{retry}");
+            } else {
+                println!(
+                    "❌ commit-refs を起動できなかったので、コミットの番号を付け直していません（何も書き換えていません）"
+                );
+                println!("   修正方法: commit-refs を起動できるようにしてから、{retry}");
+            }
             return 1;
         }
     };
-    let text = String::from_utf8_lossy(&stdout);
-    print!("{text}");
-    if !text.ends_with('\n') && !text.is_empty() {
-        println!();
+    // commit-refs は REPLACED: のパスをバイト列のまま書く（UTF-8 とは限らない）ので、そのまま渡す
+    let mut stdout_lock = std::io::stdout().lock();
+    let _ = stdout_lock.write_all(&stdout);
+    if stdout.last().is_some_and(|b| *b != b'\n') {
+        let _ = stdout_lock.write_all(b"\n");
     }
-    if !text.lines().any(|line| line == "REFS: 0") {
+    drop(stdout_lock);
+    if !stdout.split(|b| *b == b'\n').any(|line| line == b"REFS: 0") {
         println!("📝 置き換えはコミットしていません。git diff で確かめて、コミットしてください");
     }
     local_rc
