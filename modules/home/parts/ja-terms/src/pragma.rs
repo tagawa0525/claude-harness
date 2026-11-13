@@ -6,6 +6,7 @@
 
 use regress::Regex;
 
+use crate::autolink::unicode_whitespace;
 use crate::{Diff, LINE_TERMINATORS, TextError};
 
 /// 1 つの段落の指示
@@ -14,15 +15,6 @@ pub(crate) struct Pragmas {
     /// 行の頭から指示の終わりまで（段落の中の UTF-8 のバイト）
     ranges: Vec<(usize, usize)>,
     patterns: Vec<Regex>,
-}
-
-/// JavaScript の `\s`（WhiteSpace と LineTerminator）
-fn js_space(c: char) -> bool {
-    const SPACES: [char; 14] = [
-        '\t', '\n', '\u{b}', '\u{c}', '\r', ' ', '\u{a0}', '\u{1680}', '\u{2028}', '\u{2029}',
-        '\u{202f}', '\u{205f}', '\u{3000}', '\u{feff}',
-    ];
-    SPACES.contains(&c) || ('\u{2000}'..='\u{200a}').contains(&c)
 }
 
 impl Pragmas {
@@ -46,9 +38,7 @@ impl Pragmas {
                 pragmas.ignore_all = true;
                 continue;
             };
-            let length = after
-                .find(|c| c == '\n' || js_space(c))
-                .unwrap_or(after.len());
+            let length = after.find(unicode_whitespace).unwrap_or(after.len());
             let pattern = &after[..length];
             if pattern.is_empty() {
                 pragmas.ignore_all = true;
