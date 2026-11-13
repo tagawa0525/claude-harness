@@ -14,7 +14,8 @@
 #   受けられなければ理由を stderr に出して 1 を返す（gh は呼ばない）
 
 # owner と repo は GitHub の名前に使える文字だけを受ける。案内のコマンド（gh-actions-diagnose.sh の -R など）に
-# そのまま書くので、; や空白を通さない
+# そのまま書くので、; や空白を通さない。claude-hooks の src/script/pr_url.rs が同じ規則で、Rust に移したスクリプトが使う
+# （Rust は加えて . と .. を拒む）。このファイルを source するスクリプトをすべて移して消すまで、両方を揃える
 PR_URL_RE='^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)(/[^?#]*)?(\?[^#]*)?(#(.*))?$'
 
 parse_pr_url() {
