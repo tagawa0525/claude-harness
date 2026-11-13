@@ -47,4 +47,10 @@ out=$(run "git merge --no-ff feat/a -m 'Merge: a' -m '確認の結果を再実�
 out=$(run "git merge --no-ff feat/a -m 'Merge: 掃引' -m '確認'")
 [ -z "$out" ] || fail "commit-msg と同じく Merge の件名は検査しないはず" "$out"
 
+# commit-msg は Merge などで始まらない件名の形も見るので、同じ検査で先に止める（#118）
+out=$(run "git merge --no-ff feat/a -m '何の型もない件名'")
+[ "$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<<"$out")" = deny ] || fail "Conventional Commits でない件名を止めるはず" "$out"
+grep -qF "Conventional Commits" <<<"$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out")" ||
+  fail "件名の形の理由を示すはず" "$out"
+
 echo "ok: check-merge-body-ja-terms"

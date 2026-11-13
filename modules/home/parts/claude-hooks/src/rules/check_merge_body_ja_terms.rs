@@ -453,18 +453,22 @@ mod tests {
         }
     }
 
-    /// ja-terms の代わり。`message` で呼ばれたときだけ、標準入力の「誤語」を ja-terms message の形
-    /// （行:列: 誤語 => 正語）で報告して 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
+    /// ja-terms の代わり。`commit-msg <ファイル>` で呼ばれたときだけ、ファイルのメッセージに「形違い」があれば
+    /// commit-msg の形の件名の ❌ を、「誤語」があれば報告の行（行:列: 誤語 => 正語）と ❌ を出して 1 で、「無語」なら
+    /// 何も出さずに 1 で、「失敗」を含めば 2 で終わる。辞書の実物の語はコミットの語の検査に掛かるので使わない
     /// （実物の ja-terms と辞書は tests/merge-ja-terms.sh が確かめる）
     #[cfg(unix)]
     const FAKE_CHECK: &str = r#"#!/bin/sh
-[ $# -eq 1 ] && [ "$1" = message ] || exit 3
-body=$(cat)
+[ $# -eq 2 ] && [ "$1" = commit-msg ] || exit 3
+body=$(cat "$2")
 case "$body" in
   *失敗*) echo "boom" >&2; exit 2 ;;
   *無語*) exit 1 ;;
+  *形違い*)
+    echo "❌ Conventional Commits 形式ではありません: 形違い"
+    exit 1 ;;
   *誤語*)
-    printf '%s\n' "2:1: 誤語 => 正語"
+    printf '%s\n' "2:1: 誤語 => 正語" "❌ コミットの本文に崩れた日本語の語があります。"
     exit 1 ;;
 esac
 exit 0
@@ -638,22 +642,29 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn lint_classifies_check_results() {
-        let dir = TempDir::new("lint");
-        let t = fake_check(&dir);
-        assert_eq!(lint(&t, &dir.0, "確認\n"), Lint::Clean);
-        assert_eq!(
-            lint(&t, &dir.0, "誤語\n"),
-            Lint::Terms(vec!["誤語 => 正語".to_string()])
+    fn a_failed_or_missing_check_is_undecided() {
+        let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+        take_notices();
+        assert!(check("git merge --no-ff feat/a -m 'Merge: a' -m '失敗'").is_empty());
+        assert!(take_notices().iter().any(|n| n.contains("boom")));
+        let dir = TempDir::new("missing");
+        git_init(&dir.0);
+        let findings = check_in(
+            "git merge --no-ff feat/a -m 'Merge: a' -m '確認'",
+            &dir.0,
+            Some("/nonexistent/ja-terms"),
         );
-        let Lint::Failed(why) = lint(&t, &dir.0, "失敗\n") else {
-            panic!("終了コード 2 は失敗のはず");
-        };
-        assert!(why.contains("boom"), "{why}");
-        assert!(matches!(
-            lint("/nonexistent/ja-terms", &dir.0, "確認\n"),
-            Lint::Failed(_)
-        ));
+        assert!(findings.is_empty());
+        assert!(!take_notices().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denies_a_subject_commit_msg_rejects() {
+        // commit-msg は Merge で始まらない件名の形と長さも見るので、同じ検査で先に止める
+        let r = only_deny(&check("git merge --no-ff feat/a -m '形違い'"));
+        assert!(r.contains("Conventional Commits"), "{r}");
+        assert!(r.contains("pre-merge-commit"), "{r}");
     }
 
     #[cfg(unix)]
@@ -857,10 +868,12 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn lint_without_terms_is_failure() {
-        let dir = TempDir::new("no-terms");
-        let t = fake_check(&dir);
-        assert!(matches!(lint(&t, &dir.0, "無語\n"), Lint::Failed(_)));
+    fn a_rejection_without_output_still_denies() {
+        // 終了コード 1 は commit-msg が拒むこと（git も 0 でなければ止める）
+        assert!(matches!(
+            check("git merge --no-ff feat/a -m 'Merge: a' -m '無語'").as_slice(),
+            [Finding::Deny(_)]
+        ));
     }
 
     #[cfg(unix)]
