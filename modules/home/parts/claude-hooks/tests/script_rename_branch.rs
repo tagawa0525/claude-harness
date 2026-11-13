@@ -141,3 +141,22 @@ fn the_default_branch_the_same_name_and_bad_arguments_are_errors() {
         );
     }
 }
+
+#[test]
+fn a_remote_branch_with_a_longer_name_is_not_the_branch() {
+    // ls-remote の名前は末尾で一致するので、feat/old を old と取り違えない
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&["push", "-q", "origin", "main:refs/heads/feat/old"]);
+    repo.git(&["switch", "-q", "-c", "old"]);
+    let out = repo.run(&["other"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(text(&out.stdout), "RENAMED: old -> other\nREMOTE: none\n");
+}
