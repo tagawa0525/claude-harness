@@ -16,14 +16,23 @@ const HOOKS: [&str; 4] = [
 ];
 
 pub fn run(home: &Path, bin: &str) -> Result<(), String> {
-    // 無いパスを 4 つの hook に書くと、その機械のすべての git commit が止まる
-    if !Path::new(bin).is_file() {
+    // 無いパスや相対のパス（git は hook を各リポジトリの直下で起動する）を 4 つの hook に書くと、その機械のすべての
+    // git commit が止まる
+    if !Path::new(bin).is_absolute() || !Path::new(bin).is_file() {
         return Err(format!(
-            "❌ {bin} はファイルではありません。claude-hooks の実行ファイルのパスを --bin に渡してください"
+            "❌ {bin} は絶対パスのファイルではありません。claude-hooks の実行ファイルの絶対パスを --bin に渡してください"
         ));
     }
     let dir = home.join(".config/git/hooks");
-    let current = global_hooks_path()?;
+    // system の値も git は使い、global に書くと上書きしてしまうので、同じく奪わない
+    if let Some(system) = hooks_path("--system")?
+        && !same_dir(home, &system, &dir)
+    {
+        return Err(format!(
+            "❌ system の core.hooksPath は {system} を指しています。global に書くと、そこの hook が走らなくなるので、ここで止めます"
+        ));
+    }
+    let current = hooks_path("--global")?;
     if let Some(current) = &current
         && !same_dir(home, current, &dir)
     {
@@ -34,11 +43,17 @@ pub fn run(home: &Path, bin: &str) -> Result<(), String> {
     }
     // 同じ置き場の、ハーネスのものでない hook（利用者が書いたもの）は、黙って上書きしない。ハーネスの hook のファイル
     // は、claude-hooks の置き場が変わっていても ` git-hook <名前> ` を含む
+    // 読めないファイル（UTF-8 でないものを含む）も、利用者のものとみなす。Git for Windows は `<名前>.exe` も hook として
+    // 探すので、それがあれば利用者の hook とみなす
     let foreign: Vec<&str> = HOOKS
         .into_iter()
         .filter(|name| {
-            std::fs::read_to_string(dir.join(name))
-                .is_ok_and(|text| !text.contains(&format!(" git-hook {name} ")))
+            let ours = format!(" git-hook {name} ");
+            let script = match std::fs::read(dir.join(name)) {
+                Ok(bytes) => !bytes.windows(ours.len()).any(|w| w == ours.as_bytes()),
+                Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+            };
+            script || (cfg!(windows) && dir.join(format!("{name}.exe")).exists())
         })
         .collect();
     if !foreign.is_empty() {
@@ -54,7 +69,7 @@ pub fn run(home: &Path, bin: &str) -> Result<(), String> {
         let path = dir.join(name);
         let text = format!(
             "#!/bin/sh\nexec {} git-hook {name} \"$@\"\n",
-            sh_quote(&bin.replace('\\', "/"))
+            sh_quote(&sh_path(bin))
         );
         crate::sync::replace_with(&path, |tmp| {
             std::fs::write(tmp, &text)?;
@@ -81,17 +96,11 @@ fn git() -> Command {
     Command::new("git")
 }
 
-/// グローバルの core.hooksPath（無ければ None）
-fn global_hooks_path() -> Result<Option<String>, String> {
+/// scope（--global、--system）の core.hooksPath（無ければ None）
+fn hooks_path(scope: &str) -> Result<Option<String>, String> {
     let out = git()
-        // include した設定の値も git は使うので、--includes で読む（--global だけでは include を辿らない）
-        .args([
-            "config",
-            "--global",
-            "--includes",
-            "--get",
-            "core.hooksPath",
-        ])
+        // include した設定の値も git は使うので、--includes で読む（scope を付けると include を辿らない）
+        .args(["config", scope, "--includes", "--get", "core.hooksPath"])
         .output()
         .map_err(|e| format!("❌ git を起動できません（{e}）"))?;
     match out.status.code() {
@@ -101,7 +110,7 @@ fn global_hooks_path() -> Result<Option<String>, String> {
         // 1 は「設定が無い」
         Some(1) => Ok(None),
         _ => Err(format!(
-            "❌ グローバルの core.hooksPath を読めません（{}）",
+            "❌ {scope} の core.hooksPath を読めません（{}）",
             String::from_utf8_lossy(&out.stderr).trim()
         )),
     }
@@ -140,5 +149,14 @@ fn executable(path: &Path) -> std::io::Result<()> {
     {
         let _ = path;
         Ok(())
+    }
+}
+
+/// sh に書くパス。Windows のパスの `\` は sh が消すので `/` にする（Unix では `\` もファイル名の字なので変えない）
+fn sh_path(bin: &str) -> String {
+    if cfg!(windows) {
+        bin.replace('\\', "/")
+    } else {
+        bin.to_string()
     }
 }
