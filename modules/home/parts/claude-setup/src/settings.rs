@@ -66,6 +66,10 @@ pub fn run(home: &Path, options: &Options) -> Result<(), String> {
     let hooks = settings
         .entry("hooks")
         .or_insert_with(|| Value::Object(Map::new()));
+    // jq の filter と同じく、null は登録の無い hooks として扱う
+    if hooks.is_null() {
+        *hooks = Value::Object(Map::new());
+    }
     let Value::Object(hooks) = hooks else {
         return Err(format!(
             "❌ {} の hooks がオブジェクトではありません。書き換えずに止めます",
