@@ -14,6 +14,7 @@
 
 mod autolink;
 mod inline;
+pub mod message;
 mod pragma;
 pub mod report;
 pub mod strs;
