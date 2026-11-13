@@ -36,11 +36,19 @@ impl std::fmt::Display for Failure {
 /// `--pre-commit`（作業ツリーと HEAD の差）。gitleaks は `.` を作業ディレクトリからの相対で読み、その下の変更と
 /// 設定（.gitleaks.toml、.gitleaksignore）だけを見るので、サブディレクトリからでも直下で調べる
 pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
-    let Some(top) = crate::git::git(dir, &["rev-parse", "--show-toplevel"]) else {
-        return Scan::Failed(Failure {
-            what: format!("{} のリポジトリの直下を求められません", dir.display()),
-            errors: String::new(),
-        });
+    // git の理由（リポジトリの外、safe.directory など）を見せるので、git::git でなく標準エラーを受ける git::run で呼ぶ
+    let top = match crate::git::run(dir, &["rev-parse", "--show-toplevel"], None) {
+        Some(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .trim_end_matches('\n')
+            .to_string(),
+        out => {
+            return Scan::Failed(Failure {
+                what: format!("{} のリポジトリの直下を求められません", dir.display()),
+                errors: out
+                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    .unwrap_or_default(),
+            });
+        }
     };
     // --log-level error: gitleaks は中の git diff の失敗を ERR に出すだけで、終了コード 0（漏えいなし）を返すので、
     // エラーの行だけを出させ、出たら検査できなかったとみなす
@@ -67,8 +75,12 @@ pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let findings: Option<Vec<serde_json::Value>> = serde_json::from_str(stdout.trim()).ok();
+    // --staged（index と HEAD の差）の標準エラーは、中の git diff の失敗なので検査できなかったとみなす。--pre-commit
+    // （作業ツリーとの差）は、git diff の警告（`* text=auto` の下の CRLF のファイルの「CRLF will be replaced by LF」）
+    // も ERR [git] warning: として出して 0 を返す（gitleaks 8.30.1 で確かめた）ので、終了コードだけで決める
+    let errors_mean_failure = mode == "--staged";
     match (out.status.code(), findings) {
-        (Some(0), _) if stderr.trim().is_empty() => Scan::Clean,
+        (Some(0), _) if !errors_mean_failure || stderr.trim().is_empty() => Scan::Clean,
         // 設定を読めないなどの失敗でも 1 を返すので、一覧が空でないときだけ漏えいとする
         (Some(1), Some(list)) if !list.is_empty() => Scan::Leaks(
             list.iter()
