@@ -201,5 +201,7 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
     `create_new` で作る
   - git を今のディレクトリで実行した。`git diff --cached --raw` は直下からのパスを出すが、pathspec と `git ls-files` は今の
     ディレクトリから読むので、直下でない所で呼ぶと見るファイルと `.textlintignore` の当て方がずれる。今は直下で実行する
-  - 直下のパスを UTF-8 として読んだ。UTF-8 でない名前のディレクトリでは、`git -C` が無いパスを指す
+  - 直下のパスを UTF-8 として読んだ。UTF-8 でない名前のディレクトリでは、`git -C` が無いパスを指す。次に直下だけを
+    バイトのまま持ち、`--exclude-from` の値を表示用の文字列で作った版も捨てた。git が一時のファイルを読めない
+  - `.textlintignore` の有無を `git cat-file -e` の成否で見た。壊れたインデックスなどの git の誤りも「無い」とみなす
   - PATH の git を使った。`staged.sh` は store の git を使っていたので、Nix で組む ja-terms は store の git を PATH の前に置く
