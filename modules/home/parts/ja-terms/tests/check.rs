@@ -205,3 +205,24 @@ fn the_ja_terms_dictionary_is_used_by_default() {
     );
     assert_eq!(out.status.code(), Some(1));
 }
+
+#[test]
+fn a_closed_output_still_exits_1_when_terms_are_found() {
+    // 報告を読み終える前に閉じる読み手（`| head -1` など）でも、判定は崩れた語があること
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ja-terms"))
+        .current_dir(fixtures())
+        .args(["check", "--dictionary", "report.yml", "report.txt"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
