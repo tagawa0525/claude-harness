@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# nix でビルドした claude-hooks の check-merge-body-ja-terms が、包んで渡す ja-terms と辞書（ja-terms の
+# claude-hooks の check-merge-body-ja-terms が、ja-terms と辞書（Linux は nix のラッパーが渡すもの、Windows の CI は
+# cargo install して PATH にあるもの。ja-terms の
 # prh.yml）で git merge の本文の崩れた語と、--no-ff のマージの Conventional Commits でない件名を止め、正しい語と、
-# commit-msg が見ない Merge の件名を通すことを確かめる（package.nix の installCheckPhase が呼ぶ）。本文の取り出しは、偽の ja-terms を使う
+# commit-msg が見ない Merge の件名を通すことを確かめる（package.nix の installCheckPhase と、Windows の CI の windows.yml が呼ぶ）。本文の取り出しは、偽の ja-terms を使う
 # ユニットテスト（src/rules/check_merge_body_ja_terms.rs）が見る。
 # 崩れた語をわざと含むので、語の検査から外す（.textlintignore）
 #
