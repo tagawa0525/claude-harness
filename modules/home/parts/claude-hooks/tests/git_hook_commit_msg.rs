@@ -84,8 +84,16 @@ impl Repo {
 
     fn command(&self, args: &[&str], dir: &Path) -> Command {
         let mut cmd = Command::new("git");
+        // 呼んだ側のリポジトリ（run-checks.sh を実行する git の hook の中の GIT_DIR、GIT_INDEX_FILE など）を見せない。
+        // 残すと、テストの init や commit が外のリポジトリに当たる
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("GIT_") {
+                cmd.env_remove(key);
+            }
+        }
         cmd.args(args)
             .current_dir(dir)
+            .env("GIT_CEILING_DIRECTORIES", &self.root)
             .env("GIT_CONFIG_GLOBAL", self.root.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_AUTHOR_NAME", "t")
@@ -124,6 +132,13 @@ impl Repo {
         cmd.output().unwrap()
     }
 
+    /// ローカルの commit-msg のパス（init の template に hooks が無いこともあるので、ディレクトリを作る）
+    fn local_hook(&self) -> PathBuf {
+        let hooks = self.work().join(".git/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        hooks.join("commit-msg")
+    }
+
     fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.log())
             .map(|s| s.lines().map(str::to_string).collect())
@@ -131,14 +146,8 @@ impl Repo {
     }
 
     fn commits(&self) -> usize {
-        let out = self
-            .command(&["rev-list", "--count", "--all"], &self.work())
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0)
+        let out = self.git(&["rev-list", "--count", "--all"], &self.work());
+        String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
     }
 }
 
@@ -162,6 +171,13 @@ fn a_failing_check_stops_the_commit() {
     let repo = Repo::new();
     let out = repo.commit(&[("FAKE_TOOL_EXIT", "1")], &[]);
     assert!(!out.status.success());
+    // 止めたのが検査であること（偽の ja-terms を起動できずに止まったのでないこと）
+    assert_eq!(
+        repo.calls().len(),
+        1,
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(repo.commits(), 0);
 }
 
@@ -198,7 +214,7 @@ fn forks_are_not_checked() {
 #[test]
 fn a_local_commit_msg_hook_runs_instead() {
     let repo = Repo::new();
-    let local = repo.work().join(".git/hooks/commit-msg");
+    let local = repo.local_hook();
     let marker = repo.root.join("local.log");
     std::fs::write(
         &local,
@@ -220,11 +236,18 @@ fn a_local_commit_msg_hook_runs_instead() {
 #[test]
 fn a_failing_local_hook_stops_the_commit() {
     let repo = Repo::new();
-    let local = repo.work().join(".git/hooks/commit-msg");
-    std::fs::write(&local, "#!/bin/sh\nexit 3\n").unwrap();
+    let local = repo.local_hook();
+    let marker = repo.root.join("local.log");
+    std::fs::write(
+        &local,
+        format!("#!/bin/sh\necho ran >> \"{}\"\nexit 3\n", sh_path(&marker)),
+    )
+    .unwrap();
     executable(&local);
     let out = repo.commit(&[], &[]);
     assert!(!out.status.success());
+    assert!(marker.exists(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(repo.calls().is_empty());
     assert_eq!(repo.commits(), 0);
 }
 
