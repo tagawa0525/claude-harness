@@ -16,7 +16,7 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{
-    JA_TERMS, Undecided, commit_msg_skips, earlier_writer_reason, literal,
+    JA_TERMS, Undecided, commit_msg_skips, earlier_writer_reason, ja_terms, literal,
 };
 use crate::git;
 use crate::git_args::{Item, items_with_values};
@@ -184,7 +184,11 @@ pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     let _ = std::fs::remove_file(&path);
     let out = match out {
         Ok(o) => o,
-        Err(e) => return Verdict::Failed(format!("{check} を起動できません（{e}）")),
+        Err(e) => {
+            return Verdict::Failed(format!(
+                "{check} を起動できません（{e}。Windows では modules/home/parts/ja-terms を cargo install で入れる）"
+            ));
+        }
     };
     let text = format!(
         "{}{}",
@@ -254,7 +258,7 @@ impl CheckCommitMessage {
             }
             let Some(check) = check else {
                 notice(format!(
-                    "check-commit-message: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git commit のメッセージを判定していません（nix で包んだものだけが検査する）"
+                    "check-commit-message: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git commit のメッセージを判定していません（Linux では nix のラッパーが渡す。cargo で直接ビルドしたものは検査しない）"
                 ));
                 continue;
             };
@@ -295,7 +299,7 @@ impl Rule for CheckCommitMessage {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let check = std::env::var(JA_TERMS).ok();
+        let check = ja_terms();
         self.check_with(input, shell, check.as_deref(), &|dir| {
             git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
         })

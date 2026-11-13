@@ -23,3 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cargo test --locked
+      # Windows の claude-hooks は、環境変数の無いとき PATH の ja-terms を呼ぶ（#115）。cargo install で入れた ja-terms と
+      # 辞書で、git merge と git commit のメッセージを止めることを、Linux の install check と同じ sh のテストで確かめる
+      - if: matrix.crate == 'claude-hooks'
+        run: cargo install --locked --path ../ja-terms
+      - if: matrix.crate == 'claude-hooks'
+        shell: bash
+        run: |
+          # 環境変数の無いときの、PATH の ja-terms の経路を確かめる
+          unset CLAUDE_HOOKS_JA_TERMS
+          cargo build --locked
+          bash tests/merge-ja-terms.sh target/debug/claude-hooks.exe
+          bash tests/commit-message.sh target/debug/claude-hooks.exe

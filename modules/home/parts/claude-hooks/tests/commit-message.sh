@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# nix でビルドした claude-hooks の check-commit-message が、包んで渡す ja-terms（commit-msg の hook と同じ
+# claude-hooks の check-commit-message が、ja-terms（Linux は nix のラッパーが渡すもの、Windows の CI は PATH のもの。commit-msg の hook と同じ
 # 検査）で、git commit の件名が 72 文字を超えるメッセージと Conventional Commits でないメッセージを止め、通る件名と、
-# 形式と長さを問わない Merge / fixup! / squash! / Revert の件名を通すことを確かめる（package.nix の installCheckPhase が呼ぶ）。
+# 形式と長さを問わない Merge / fixup! / squash! / Revert の件名を通すことを確かめる（package.nix の installCheckPhase と、Windows の CI の windows.yml が呼ぶ）。
 # メッセージの取り出しは、偽の検査を使うユニットテスト（src/rules/check_commit_message.rs）が見る。
 #
 # 使い方: commit-message.sh <claude-hooks の実行ファイル>

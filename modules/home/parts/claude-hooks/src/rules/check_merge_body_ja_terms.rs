@@ -4,7 +4,8 @@
 //! 本文に辞書（ja-terms の prh.yml）で崩れた語があるか、Merge などで始まらない件名が Conventional Commits の形と
 //! 長さに合わないと、数分の品質チェックを待ってから commit-msg が拒む。pre-merge-commit からは `-m` の本文が読めず、
 //! git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg に渡るのと同じ
-//! メッセージを検査する（ADR-0050、ADR-0085。store のパスは package.nix が包んで渡す）。マージコミットを作るのが
+//! メッセージを検査する（ADR-0050、ADR-0085。ja-terms は [`ja_terms`] が、Linux では package.nix のラッパーが渡すパスで、
+//! Windows では PATH で探す）。マージコミットを作るのが
 //! 確かな形（[`makes_merge_commit`]）は commit-msg と同じ `ja-terms commit-msg` に、ほかの形（fast-forward になれば
 //! commit-msg が呼ばれない、エディタで件名を直せる）は本文の語だけを `ja-terms message` に渡す。
 //!
@@ -27,9 +28,23 @@ use std::process::{Command, Stdio};
 
 pub struct CheckMergeBodyJaTerms;
 
-/// ja-terms の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドした
-/// ものには無い）。git commit のルールも使う
+/// ja-terms の store のパスを持つ環境変数。package.nix のラッパーが固定する（cargo で直接ビルドした
+/// ものには無く、Windows は PATH の ja-terms を使う。[`ja_terms`]）。git commit のルールも使う
 pub(super) const JA_TERMS: &str = "CLAUDE_HOOKS_JA_TERMS";
+
+/// 呼ぶ ja-terms。git merge と git commit のルールが使う
+pub(super) fn ja_terms() -> Option<String> {
+    ja_terms_from(std::env::var(JA_TERMS).ok(), cfg!(windows))
+}
+
+/// 環境変数のパスが先（空の値はパスでない）。無ければ、Nix のラッパーの無い Windows（ja-terms を cargo install で
+/// 入れる。ADR-0084、ADR-0085）は名前の `ja-terms` で起動する（Windows の起動は、PATH の前に claude-hooks の置き場と
+/// システムのディレクトリも探す。cargo install の置き場は同じ）。Linux で環境変数が無いのは cargo で直接ビルドした
+/// もので、判定できない理由を出して通す（PATH の別の版で判定しない）
+fn ja_terms_from(env: Option<String>, windows: bool) -> Option<String> {
+    env.filter(|path| !path.is_empty())
+        .or_else(|| windows.then(|| "ja-terms".to_string()))
+}
 
 /// 本文を判定できない理由
 #[derive(Debug, PartialEq)]
@@ -231,7 +246,11 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
         .spawn();
     let mut child = match child {
         Ok(c) => c,
-        Err(e) => return Lint::Failed(format!("{check} を起動できません（{e}）")),
+        Err(e) => {
+            return Lint::Failed(format!(
+                "{check} を起動できません（{e}。Windows では modules/home/parts/ja-terms を cargo install で入れる）"
+            ));
+        }
     };
     // 本文は数 KB なので、書き終えてから出力を読んでもパイプは詰まらない
     if let Some(mut stdin) = child.stdin.take()
@@ -422,7 +441,7 @@ impl CheckMergeBodyJaTerms {
             };
             let Some(check) = check else {
                 notice(format!(
-                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge のメッセージを判定していません（nix で包んだものだけが検査する）"
+                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge のメッセージを判定していません（Linux では nix のラッパーが渡す。cargo で直接ビルドしたものは検査しない）"
                 ));
                 continue;
             };
@@ -454,7 +473,7 @@ impl Rule for CheckMergeBodyJaTerms {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let check = std::env::var(JA_TERMS).ok();
+        let check = ja_terms();
         self.check_with(input, shell, check.as_deref(), &|dir| {
             git::git(dir, &["config", "--global", "--get", "core.hooksPath"])
         })
@@ -604,6 +623,23 @@ exit 0
             [Finding::Deny(r)] => r.clone(),
             _ => panic!("deny が 1 件のはず"),
         }
+    }
+
+    #[test]
+    fn ja_terms_is_the_wrapped_path_or_the_one_on_path_on_windows() {
+        // Nix の包む側が渡すパスが先。無ければ、cargo install で入れる Windows は PATH の ja-terms
+        assert_eq!(
+            ja_terms_from(Some("/nix/store/x/bin/ja-terms".to_string()), true),
+            Some("/nix/store/x/bin/ja-terms".to_string())
+        );
+        assert_eq!(ja_terms_from(None, true), Some("ja-terms".to_string()));
+        assert_eq!(ja_terms_from(None, false), None);
+        // 空の値はパスでない（HOME と同じ）
+        assert_eq!(
+            ja_terms_from(Some(String::new()), true),
+            Some("ja-terms".to_string())
+        );
+        assert_eq!(ja_terms_from(Some(String::new()), false), None);
     }
 
     #[test]
