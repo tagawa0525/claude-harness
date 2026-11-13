@@ -46,12 +46,15 @@ impl Pragmas {
             }
             let tail = start + at + PRAGMA.len() + 1 + length;
             pragmas.ranges.push((start, tail));
-            // prh は new RegExp("(" + pattern + ")", "g") で読む（u のフラグは無い）
-            let regex = Regex::with_flags(&format!("({pattern})"), "").map_err(|e| {
-                TextError(format!(
-                    "prh:disable:{pattern}: 正規表現として読めない: {e}"
-                ))
-            })?;
+            // prh は new RegExp("(" + pattern + ")", "g") で読む（u のフラグは無い）。V8 は pattern も UTF-16 の単位で
+            // 読むので、サロゲートペアの文字は 2 単位の並びにする
+            let source = format!("({pattern})");
+            let regex =
+                Regex::from_unicode(source.encode_utf16().map(u32::from), "").map_err(|e| {
+                    TextError(format!(
+                        "prh:disable:{pattern}: 正規表現として読めない: {e}"
+                    ))
+                })?;
             pragmas.patterns.push(regex);
         }
         Ok(pragmas)
