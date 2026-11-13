@@ -160,7 +160,7 @@ fn to_original(p: usize, breaks: &[usize]) -> usize {
 /// 開いているコンテナ（lazy continuation の判定に使う）
 enum Container {
     Quote,
-    /// 項目の中身の字下げ（行の始めからの桁）
+    /// 項目と脚注の定義の中身の桁（行の始めから）
     Item(usize),
 }
 
@@ -237,6 +237,15 @@ fn parse(source: &str) -> Parsed {
                 containers.push(Container::Item(item_indent(source, range.start)))
             }
             Event::End(TagEnd::Item) => {
+                containers.pop();
+            }
+            // remark-footnotes の脚注の定義は、続きの行に 4 桁の字下げを求める
+            Event::Start(Tag::FootnoteDefinition(_)) => {
+                let line_start = source[..range.start].rfind('\n').map_or(0, |i| i + 1);
+                let indent = column(&source.as_bytes()[line_start..range.start]) + 4;
+                containers.push(Container::Item(indent));
+            }
+            Event::End(TagEnd::FootnoteDefinition) => {
                 containers.pop();
             }
             Event::Start(tag) if ignores(&tag) => {
