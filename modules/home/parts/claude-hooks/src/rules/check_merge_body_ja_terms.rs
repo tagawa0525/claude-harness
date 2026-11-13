@@ -37,14 +37,9 @@ pub(crate) fn ja_terms() -> Option<String> {
     ja_terms_from(std::env::var(JA_TERMS).ok(), cfg!(windows))
 }
 
-/// 環境変数のパスが先（空の値はパスでない）。無ければ、Nix のラッパーの無い Windows（ja-terms を cargo install で
-/// 入れる。ADR-0084、ADR-0085）は名前の `ja-terms` で起動する（Windows の起動は、PATH の前に claude-hooks の置き場と
-/// システムのディレクトリも探す。cargo install の置き場は同じ）。Linux で環境変数が無いのは cargo で直接ビルドした
-/// もので、None を返す（PATH の別の版で判定しない）。None のときの扱いは呼び出し元が決める（PreToolUse のルールは
-/// 判定できない理由を出して通し、commit-msg の git hook は止める）
+/// 見つけ方は crate::tools::from
 fn ja_terms_from(env: Option<String>, windows: bool) -> Option<String> {
-    env.filter(|path| !path.is_empty())
-        .or_else(|| windows.then(|| "ja-terms".to_string()))
+    crate::tools::from(env, windows, "ja-terms")
 }
 
 /// 本文を判定できない理由
