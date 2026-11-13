@@ -1,0 +1,233 @@
+//! `claude-hooks script post-merge-cleanup <branch>` が、マージの後にブランチと worktree を片付けることを確かめる
+//! （ADR-0087。`~/.claude/scripts/post-merge-cleanup.sh` が呼ぶ）。痕跡、fetch と pull、NOTE、予約のタグ、リモートの
+//! ブランチの場合分けは、sh から呼ぶ `.claude/tests/scripts/git-workflow.sh` も確かめる
+
+mod common;
+
+use common::forget_git_env;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct Repo {
+    root: PathBuf,
+}
+
+impl Drop for Repo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+impl Repo {
+    fn new() -> Repo {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "post-merge-cleanup-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        let repo = Repo { root };
+        repo.git(&["init", "-q", "-b", "main"]);
+        repo.write("a.txt", "a\n");
+        repo.commit("init");
+        repo
+    }
+
+    fn app(&self) -> PathBuf {
+        self.root.join("app")
+    }
+
+    fn git(&self, args: &[&str]) -> String {
+        let out = forget_git_env(&mut Command::new("git"))
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(self.app())
+            // 利用者のグローバルの設定（グローバルの git hook など）を読まない
+            .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn write(&self, path: &str, text: &str) {
+        std::fs::write(self.app().join(path), text).unwrap();
+    }
+
+    fn commit(&self, msg: &str) {
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-q", "-m", msg]);
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
+        forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+            .args(["script", "post-merge-cleanup"])
+            .args(args)
+            .current_dir(self.app())
+            .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap()
+    }
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[test]
+fn a_merged_branch_and_its_worktree_are_removed() {
+    let repo = Repo::new();
+    let wt = repo.root.join("app-feat-x");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/x",
+        wt.to_str().unwrap(),
+    ]);
+    repo.git(&["merge", "-q", "--ff-only", "feat/x"]);
+    let out = repo.run(&["feat/x"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(stdout.starts_with("WORKTREE_REMOVED: "), "{stdout}");
+    assert!(
+        stdout
+            .ends_with("RESERVATIONS_RELEASED: none\nLOCAL_BRANCH: deleted\nREMOTE_BRANCH: none\n"),
+        "{stdout}"
+    );
+    assert!(!wt.exists());
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}
+
+#[test]
+fn an_unmerged_branch_is_left_as_it_is() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/y"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["switch", "-q", "main"]);
+    let out = repo.run(&["feat/y"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("feat/y は main にまだマージされていません"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(repo.git(&["branch", "--list", "feat/y"]), "feat/y");
+}
+
+#[test]
+fn a_branch_without_any_trace_changes_nothing() {
+    let repo = Repo::new();
+    let out = repo.run(&["feat/none"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("feat/none の痕跡"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(text(&out.stdout), "");
+}
+
+#[test]
+fn bad_arguments_and_the_default_branch_are_errors() {
+    let repo = Repo::new();
+    for args in [&[][..], &["a", "b"][..], &[""][..]] {
+        let out = repo.run(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            text(&out.stderr).contains("Usage: post-merge-cleanup.sh"),
+            "{args:?}"
+        );
+    }
+    let out = repo.run(&["main"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("既定ブランチ main は削除しません"));
+}
+
+#[test]
+fn a_branch_checked_out_in_the_main_worktree_is_switched_away_from() {
+    // worktree を作らずにメインの clone で作業したブランチ。メインの worktree は消さずに、既定のブランチへ切り替える
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/main-wt"]);
+    repo.write("c.txt", "c\n");
+    repo.commit("feat: c");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "-q", "--ff-only", "feat/main-wt"]);
+    repo.git(&["switch", "-q", "feat/main-wt"]);
+    let out = repo.run(&["feat/main-wt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).starts_with("WORKTREE_REMOVED: none\n"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert!(repo.app().exists());
+    assert_eq!(repo.git(&["branch", "--show-current"]), "main");
+    assert_eq!(repo.git(&["branch", "--list", "feat/main-wt"]), "");
+}
+
+#[test]
+fn a_remote_branch_with_a_longer_name_is_not_the_branch() {
+    // ls-remote の名前は末尾で一致するので、alice/fix-typo を fix-typo と取り違えない
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&["push", "-q", "-u", "origin", "main"]);
+    repo.git(&["push", "-q", "origin", "main:refs/heads/alice/fix-typo"]);
+    repo.git(&["branch", "fix-typo"]);
+    let out = repo.run(&["fix-typo"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).ends_with("REMOTE_BRANCH: none\n"),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
+fn uncommitted_changes_in_the_main_worktree_stop_the_cleanup() {
+    // 既定のブランチへ切り替えると、変更をそこへ持ち込む。linked worktree の remove と同じく止める
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/dirty"]);
+    // 追跡しているファイルの変更（switch が既定のブランチへ持ち込むもの）
+    repo.write("a.txt", "changed\n");
+    let out = repo.run(&["feat/dirty"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("未コミットの変更"), "{err}");
+    // マージ済みのブランチにコミットすると次の実行が止まるので、退避を勧める
+    assert!(err.contains("git stash"), "{err}");
+    assert_eq!(repo.git(&["branch", "--show-current"]), "feat/dirty");
+    assert_eq!(text(&out.stdout), "");
+}
+
+#[test]
+fn a_main_worktree_branch_with_the_default_branch_elsewhere_stops_before_changing_anything() {
+    // 既定のブランチは別の worktree にあるので、メインの worktree をそこへ切り替えられない
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/elsewhere"]);
+    let wt = repo.root.join("app-main");
+    repo.git(&["worktree", "add", "-q", wt.to_str().unwrap(), "main"]);
+    let out = repo.run(&["feat/elsewhere"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("は別の worktree"), "{err}");
+    assert!(!err.contains("未コミットの変更"), "{err}");
+    assert_eq!(
+        repo.git(&["branch", "--list", "feat/elsewhere"]),
+        "* feat/elsewhere"
+    );
+    assert_eq!(text(&out.stdout), "");
+}
