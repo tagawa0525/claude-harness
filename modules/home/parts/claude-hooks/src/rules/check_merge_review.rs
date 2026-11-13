@@ -515,10 +515,24 @@ mod tests {
             std::fs::write(p, text).unwrap();
         }
 
+        /// コミットの hash。先頭 12 字が数字だけの hash（9 字で約 1.5%）は、mask_hashes が 16 進の語とみなさない
+        /// （英字を 1 つは含む語だけを hash とする）ので、テストの付け替えが hash の差し替えに見えない。英字が出るまで
+        /// メッセージを変えて作り直す
         fn commit(&self, msg: &str) -> String {
             git(&self.dir(), &["add", "-A"]);
             git(&self.dir(), &["commit", "-q", "-m", msg]);
-            git_out(&self.dir(), &["rev-parse", "HEAD"])
+            let mut head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
+            let mut n = 0;
+            while !head[..12].bytes().any(|b| b.is_ascii_alphabetic()) {
+                n += 1;
+                assert!(n < 100, "英字を含む hash を作れない");
+                git(
+                    &self.dir(),
+                    &["commit", "-q", "--amend", "-m", &format!("{msg} {n}")],
+                );
+                head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
+            }
+            head
         }
 
         /// feat/x に移ってファイルを書き、コミットして main に戻る。コミットの hash
@@ -642,7 +656,15 @@ mod tests {
             ("src/b.rs", &remapped),
         ]);
         let r = repo.check_body(&body(&reviewed, FINDINGS));
-        assert!(r.is_empty(), "伝えることも無いはず: {}", r.len());
+        assert!(
+            r.is_empty(),
+            "伝えることも無いはず: {:?}",
+            r.iter()
+                .map(|f| match f {
+                    Finding::Deny(s) | Finding::Context(s) => s.clone(),
+                })
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
