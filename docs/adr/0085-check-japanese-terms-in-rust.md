@@ -195,3 +195,13 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
 - 2026-11-13: インデントしたコードブロックの行の後の、単独の CR の改行の後の段落（4 つの空白の字下げの `忍` と、CR と `険`）は、textlint と揃えず
   違いとして残す。pulldown-cmark はその段落を読まず、textlint は Str にする。main の切り出しから同じで、比べた入力には
   無い（5 周目のレビューの生成した入力で見つかった）
+- 2026-11-13: `ja-terms staged`（`modules/home/parts/ja-terms/src/staged.rs`）のレビューで、次の版を捨てた。
+  - `.textlintignore` を一時のディレクトリの、プロセスの番号だけの名前のファイルに書いた。ほかの利用者が先に同じ名前の
+    symlink を置けば行き先を書き換えて消し、PID の名前空間が違えば同じ番号の別のプロセスとも重なる。今は git dir の中に
+    `create_new` で作る
+  - git を今のディレクトリで実行した。`git diff --cached --raw` は直下からのパスを出すが、pathspec と `git ls-files` は今の
+    ディレクトリから読むので、直下でない所で呼ぶと見るファイルと `.textlintignore` の当て方がずれる。今は直下で実行する
+  - 直下のパスを UTF-8 として読んだ。UTF-8 でない名前のディレクトリでは、`git -C` が無いパスを指す。次に直下だけを
+    バイトのまま持ち、`--exclude-from` の値を表示用の文字列で作った版も捨てた。git が一時のファイルを読めない
+  - `.textlintignore` の有無を `git cat-file -e` の成否で見た。壊れたインデックスなどの git の誤りも「無い」とみなす
+  - PATH の git を使った。`staged.sh` は store の git を使っていたので、Nix で組む ja-terms は store の git を PATH の前に置く
