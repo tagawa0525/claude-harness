@@ -11,6 +11,8 @@ DESIGN_RECORDS_BIN=$(cargo_bin "$DESIGN_RECORDS_DIR" design-records) || exit 1
 PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"
 export PATH
 
+# 中身は claude-hooks script branch-topics（ADR-0087）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 # write_front <path> <status>: フロントマターに status を持つ文書を書く
@@ -154,5 +156,10 @@ assert_contains "$out" "TYPES: fix=1"
 assert_contains "$out" "DIRS: src"
 assert_not_contains "$out" "ADR_"
 assert_not_contains "$out" "ISSUE_"
+
+it "branch-topics: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/branch-topics.sh" 2>&1)
+assert_eq 127 $?
+assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
 
 finish
