@@ -14,12 +14,18 @@ pub fn main(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let (Some(id), Some(body)) = (args.get(1), args.get(2)) else {
+    // 本文を引用符で囲み忘れると語ごとの引数になり、最初の語だけが返信になるので、数をちょうど 3 つにする
+    let [_, id, body] = args else {
         eprintln!("{USAGE}");
         return 1;
     };
     if id.is_empty() || body.is_empty() {
         eprintln!("{USAGE}");
+        return 1;
+    }
+    // id は API のパスに埋めるので、数でない値（URL の断片、`..`、クエリ）は別のエンドポイントに当たる
+    if !id.bytes().all(|b| b.is_ascii_digit()) {
+        eprintln!("ERROR: comment_id は数で渡してください: '{id}'");
         return 1;
     }
     super::gh(
