@@ -25,6 +25,10 @@ impl Pragmas {
             ranges: Vec::new(),
             patterns: Vec::new(),
         };
+        // ほとんどの段落に指示は無い
+        if !paragraph.contains(PRAGMA) {
+            return Ok(pragmas);
+        }
         let mut line_start = 0;
         for line in paragraph.split(LINE_TERMINATORS) {
             let start = line_start;
@@ -75,6 +79,9 @@ impl Pragmas {
                 })
             })
             .filter(|d| {
+                if self.patterns.is_empty() {
+                    return true;
+                }
                 // u のフラグが無いので、V8 と同じく UTF-16 の単位で照合する
                 let matched: Vec<u16> = text[d.start..d.end].encode_utf16().collect();
                 self.patterns
