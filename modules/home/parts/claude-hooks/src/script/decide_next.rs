@@ -97,8 +97,9 @@ fn decide(pr: &pr_url::Pr) -> Result<String, i32> {
     let review_count: u64 = field("ROUND").parse().unwrap_or(0);
     let review_id = field("REVIEW_ID");
     let (mut last_review_at, mut reviewed_sha) = (String::new(), String::new());
-    if review_count > 0
-        && let Some(out) = crate::gh::quiet_output_for_repo(
+    if review_count > 0 {
+        // 取れなければ、応答が無いとみなさずに止める（届いたレビューの指摘を判定から落とす）
+        let Ok(out) = crate::gh::output_for_repo(
             &pr.repo,
             &[
                 "api",
@@ -106,8 +107,10 @@ fn decide(pr: &pr_url::Pr) -> Result<String, i32> {
                 "--jq",
                 r#""\(.submitted_at) \(.commit_id)""#,
             ],
-        )
-    {
+        ) else {
+            eprintln!("ERROR: PR #{number} のレビュー {review_id} を取得できませんでした");
+            return Err(1);
+        };
         let line = String::from_utf8_lossy(&out);
         let mut words = line.split_whitespace();
         last_review_at = words.next().unwrap_or("").to_string();
