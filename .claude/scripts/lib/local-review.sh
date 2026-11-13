@@ -14,20 +14,20 @@ LOCAL_REVIEW_MARK='<!-- local-review '
 
 local_review_covers() {
   local head="$1" hooks_bin rc=0
-  # ~/.claude/bin は Linux では claude-code.nix が、Windows では README の手順の cargo install が置く。スクリプトの場所から辿らないのは、リポジトリの checkout から実行しても同じ
-  # バイナリを使うため
+  # ~/.claude/bin は Linux では claude-code.nix が、Windows では README の手順の cargo install が置く。スクリプトの
+  # 場所から辿らないのは、リポジトリの checkout から実行しても同じバイナリを使うため
   hooks_bin="${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}"
   "$hooks_bin" local-review-covers "$GH_REPO" "$PR_NUMBER" "$head" || rc=$?
   case "$rc" in
     0) echo yes ;;
     1) echo no ;;
     127)
-      echo "ERROR: ${hooks_bin} がありません。home-manager の rebuild（Windows は README の「Windows で使う」の cargo install）で入れてください（claude-sync はバイナリを入れない）" >&2
+      echo "ERROR: ${hooks_bin} がありません。home-manager の rebuild（Windows は claude-harness の README の「Windows で使う」の cargo install）で入れてください（claude-sync はバイナリを入れない）" >&2
       return 1
       ;;
     2)
       # claude-sync はスクリプトだけを入れ替え、~/.claude/bin のバイナリは rebuild（Windows は cargo install）まで古いまま
-      echo "ERROR: ${hooks_bin} が使い方の誤り（終了コード 2）で止まりました。local-review-covers を知らない古いバイナリなら home-manager の rebuild（Windows は README の「Windows で使う」の cargo install）で入れ直してください" >&2
+      echo "ERROR: ${hooks_bin} が使い方の誤り（終了コード 2）で止まりました。local-review-covers を知らない古いバイナリなら home-manager の rebuild（Windows は claude-harness の README の「Windows で使う」の cargo install）で入れ直してください" >&2
       return 1
       ;;
     *)

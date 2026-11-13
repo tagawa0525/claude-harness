@@ -186,7 +186,7 @@ pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
         Ok(o) => o,
         Err(e) => {
             return Verdict::Failed(format!(
-                "{check} を起動できません（{e}。Windows では README の「Windows で使う」の手順で ~/.claude/bin に入れる）"
+                "{check} を起動できません（{e}。Windows では claude-harness の README の「Windows で使う」の手順で ~/.claude/bin に入れる）"
             ));
         }
     };

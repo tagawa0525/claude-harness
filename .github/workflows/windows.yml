@@ -64,7 +64,7 @@ jobs:
           ~/.claude/bin/claude-setup sync "$PWD"
           ~/.claude/bin/claude-setup settings --static modules/home/parts/claude-settings.json \
             --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
-          grep -qxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
+          grep -qsxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
       # スキルの sh のスクリプトは、Linux と同じ "$HOME/.claude/bin/claude-hooks" で呼ぶ（ADR-0087）。Git Bash がこのパスに
       # .exe を補って起動することを、引数の足りない呼び出しの使い方の誤り（2）で確かめる（見つからなければ 127）
       - name: Check the paths the scripts and messages use
@@ -79,7 +79,10 @@ jobs:
             found=$(bash -c 'source ~/.bashrc && command -v "$1"' _ "$name")
             test "$found" -ef "$HOME/.claude/bin/$name.exe"
           done
-          ! command -v ja-terms
+          if command -v ja-terms; then
+            echo "ja-terms が CI の step の PATH にあり、隣の ja-terms の経路を確かめられません" >&2
+            exit 1
+          fi
       # 同期した sh のスクリプトは LF でないと Git Bash で動かない。runner の Git for Windows は core.autocrlf=true で、
       # checkout が CRLF にしうる（#104）。grep は Windows ではテキストのファイルの CR を外してから照合するので（-U の
       # 無いとき）使わず、tr で CR だけを残して wc で数える（数を出すので、$(...) が CR を落としても数は変わらない）。

@@ -67,14 +67,17 @@ done
 ~/.claude/bin/claude-setup git-hooks --bin "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ```
 
-初めて入れたときは、Git Bash の `~/.bashrc` で `~/.claude/bin` を PATH の先頭に足し、Git Bash を開き直す（Claude Code の
+`~/.claude/bin` に初めて入れたとき（前の手順の `~/.cargo/bin` から移るときを含む）は、Git Bash の `~/.bashrc` で `~/.claude/bin` を PATH の先頭に足し、Git Bash を開き直す（Claude Code の
 Bash ツールも `~/.bashrc` を読む）。スキルと hook の修正方法の文は `claude-setup` と `commit-refs` を名前で呼ぶ。前の手順で
 `~/.cargo/bin` に入れていたら、古い版が残らないよう外す:
 
 ```bash
-grep -qxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
-cargo uninstall claude-hooks ja-terms commit-refs claude-setup  # ~/.cargo/bin に入れていたときだけ
+grep -qsxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
+cargo uninstall claude-hooks ja-terms commit-refs claude-setup  # ~/.cargo/bin に入れていたものだけを並べる
 ```
+
+開き直した Git Bash で `command -v claude-setup` が `~/.claude/bin/claude-setup` を示すことを確かめる（Git Bash の
+ログインシェルは `~/.bash_profile` を読み、Git for Windows の作る `~/.bash_profile` が `~/.bashrc` を読む）。
 
 `cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
 `--force` で入れ直すときに使うので消さない。
