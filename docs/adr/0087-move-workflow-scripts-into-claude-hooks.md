@@ -62,10 +62,12 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
 - スクリプトのファイル: 名前と場所を変えず、`exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
-  だけの sh にする（`lib/local-review.sh` と同じ引き方。PATH に `claude-hooks` を置かない）。スキルの文と hook のルールは
+  だけの sh にする（`lib/local-review.sh` と同じ引き方。PATH で引かない）。スキルの文と hook のルールは
   変えない。Windows では Git Bash がこの sh を実行し、jq を使わない
-- Windows の置き場: `claude-setup` が `cargo install` の置き場の `claude-hooks.exe` を `~/.claude/bin/` にコピーし、
-  Linux と同じパスで引く（Git Bash は `.exe` を補って実行する）。最初に移す PR で足す
+- Windows の置き場: crate を `cargo install --root ~/.claude` で `~/.claude/bin/` に入れ、Linux と同じパスで引く（Git Bash は
+  `.exe` を補って実行する）。settings.json と git hook の登録もこのパスを指し、`ja-terms` と `commit-refs` は
+  `claude-hooks` の隣のものを起動する。スキルと修正方法の文が名前で呼ぶ `claude-setup` と `commit-refs` のため、
+  `~/.claude/bin` を Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
 - `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す
 - PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を 1 行に置き換える
@@ -94,8 +96,9 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 悪い点: `claude-sync` は 1 行のスクリプトをすぐ配るが、バイナリは rebuild まで前の版のままで、その間、移した
   スクリプトは前の版のバイナリにサブコマンドが無く失敗する。移す PR は `claude-hooks` を変えるので、マージの後は
   `claude-sync` でなく rebuild（activation が sync も実行する）で入れる。Windows も、`claude-setup sync` の前に
-  `cargo install` とコピーを済ませる。Windows の settings.json と git hook は `cargo install` の置き場を指すので、
-  コピーを忘れると hook とスクリプトで版が分かれる。hook の登録もコピーに向けるかは、最初に移す PR で決める
+  `cargo install` を済ませる
+- 悪い点: Windows では、`cargo install --root ~/.claude` が入れた crate の記録（`.crates.toml`、`.crates2.json`）を
+  `~/.claude` に置く
 
 ### 確認
 
@@ -103,3 +106,14 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   いるもの
 - 移した後、対象のスクリプトのファイルは `claude-hooks script <名前>` を呼ぶ 1 行だけになり、jq を使わない。`lib/` の
   部品は消えている
+
+## 補足
+
+- 2026-11-13: Windows の置き場は、はじめ `claude-setup` が `cargo install` の置き場（`~/.cargo/bin`）の `claude-hooks.exe` を
+  `~/.claude/bin/` にコピーするとしていた。settings.json と git hook の登録は `~/.cargo/bin` を指したままなので、コピーを
+  忘れると hook とスクリプトで版が分かれる（PR #142 のローカルレビュー）。`cargo install --root ~/.claude` で入れれば
+  置き場が 1 つになり、コピーの手順も要らないので、そちらに変えた。`~/.claude/bin` は PATH に無いので、名前で呼ぶ
+  `claude-setup` と `commit-refs` のために PATH の先頭に足し、前の `~/.cargo/bin` の版は外す。PATH は、はじめ PowerShell で
+  User の Path に足したが、User の Path の展開する項目（`%USERPROFILE%\...`）を固定のパスに潰し、System の Path の後に
+  並ぶので先頭にならず、`$HOME` と `USERPROFILE` が違えば置き場とずれる（PR のローカルレビュー）ので、Git Bash の
+  `~/.bashrc` に変えた

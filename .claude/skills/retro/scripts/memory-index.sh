@@ -17,7 +17,7 @@
 # 食い違いがあっても exit 0（判断はスキルが行う）。MEMORY.md が読めない、または辞書の検査を実行できなければ
 # （ほかの行を出した後に）ERROR: を標準エラーに出して exit 1。
 #
-# 辞書の検査は ~/.claude/bin/ja-terms の check（claude-code.nix が置く。JA_TERMS で差し替える）。メモリは git で
+# 辞書の検査は ~/.claude/bin/ja-terms の check（Linux は claude-code.nix が、Windows は README の手順の cargo install が置く。JA_TERMS で差し替える）。メモリは git で
 # 追跡しないので pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る
 
 set -euo pipefail

@@ -51,19 +51,36 @@ PreToolUse hook は、git の hook の無いリポジトリの `git commit` を 
 止める。jq は、スキルが呼ぶ sh のスクリプト（`gh-pr-review/scripts/` など。#101 の段階 5 で Rust に移す）が使い、
 Git for Windows には入っていない。
 
-Git Bash で、clone を作るか更新してから、crate を入れ、clone のパスを渡して設置する:
+Git Bash で、clone を作るか更新してから、crate を `~/.claude/bin` に入れ、clone のパスを渡して設置する。Linux と同じ
+`~/.claude/bin/claude-hooks` に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため（ADR-0087）。`ja-terms` と
+`commit-refs` は、`claude-hooks` が隣のものを起動する（Windows の起動は、PATH の前に起動した側の置き場を探す）:
 
 ```bash
 git clone https://github.com/tagawa0525/claude-harness ~/nix/claude-harness  # 2 回目からは git -C ~/nix/claude-harness pull --ff-only
 cd ~/nix/claude-harness
 for crate in claude-hooks ja-terms commit-refs claude-setup; do
-  cargo install --locked --force --path "modules/home/parts/$crate"
+  cargo install --locked --force --root ~/.claude --path "modules/home/parts/$crate"
 done
-claude-setup sync ~/nix/claude-harness
-claude-setup settings --static modules/home/parts/claude-settings.json \
-  --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
-claude-setup git-hooks --bin "$(cygpath -w "$(command -v claude-hooks.exe)")"
+~/.claude/bin/claude-setup sync ~/nix/claude-harness
+~/.claude/bin/claude-setup settings --static modules/home/parts/claude-settings.json \
+  --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
+~/.claude/bin/claude-setup git-hooks --bin "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ```
+
+`~/.claude/bin` に初めて入れたとき（前の手順の `~/.cargo/bin` から移るときを含む）は、Git Bash の `~/.bashrc` で `~/.claude/bin` を PATH の先頭に足し、Git Bash を開き直す（Claude Code の
+Bash ツールも `~/.bashrc` を読む）。スキルと hook の修正方法の文は `claude-setup` と `commit-refs` を名前で呼ぶ。前の手順で
+`~/.cargo/bin` に入れていたら、古い版が残らないよう外す:
+
+```bash
+grep -qsxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
+cargo uninstall claude-hooks ja-terms commit-refs claude-setup  # ~/.cargo/bin に入れていたものだけを並べる
+```
+
+開き直した Git Bash で `command -v claude-setup` が `~/.claude/bin/claude-setup` を示すことを確かめる（Git Bash の
+ログインシェルは `~/.bash_profile` を読み、Git for Windows の作る `~/.bash_profile` が `~/.bashrc` を読む）。
+
+`cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
+`--force` で入れ直すときに使うので消さない。
 
 clone を更新したら、同じ手順をもう一度流す（crate の版は変えないので `--force` で入れ直す）。Windows の CI
 （`.github/workflows/windows.yml` の `setup`）が、この手順を流し、登録した PreToolUse hook と git hook が main への

@@ -3,9 +3,10 @@
 
 /// var の環境変数のパスが先（空の値はパスでない）。Linux では package.nix のラッパーが store のパスを固定する（hook は
 /// Claude Code や利用者の端末の git が起動するので、利用者の PATH に頼らない）。無ければ、Nix のラッパーの無い Windows
-/// （cargo install で入れる。ADR-0084）は name で起動する（Windows の起動は、PATH の前に claude-hooks の置き場と
-/// システムのディレクトリも探す。cargo install の置き場は同じ）。Linux で環境変数が無いのは cargo で直接ビルドした
-/// もので、None を返す（PATH の別の版で判定しない）。None のときの扱いは呼び出し元が決める
+/// （`cargo install --root ~/.claude` で ~/.claude/bin に入れる。README の「Windows で使う」）は name で起動する（Windows の
+/// 起動は、PATH の前に claude-hooks の置き場とシステムのディレクトリを探すので、隣に入れたものが先に見つかる）。
+/// Linux で環境変数が無いのは cargo で直接ビルドしたもので、None を返す（PATH の別の版で判定しない）。None のときの
+/// 扱いは呼び出し元が決める
 pub fn find(var: &str, name: &str) -> Option<String> {
     from(std::env::var(var).ok(), cfg!(windows), name)
 }
@@ -21,7 +22,7 @@ mod tests {
 
     #[test]
     fn the_wrapped_path_comes_first_and_windows_falls_back_to_the_name() {
-        // Nix の包む側が渡すパスが先。無ければ、cargo install で入れる Windows は PATH の名前
+        // Nix の包む側が渡すパスが先。無ければ、Windows は名前（claude-hooks の隣か PATH）
         assert_eq!(
             from(
                 Some("/nix/store/x/bin/ja-terms".to_string()),
