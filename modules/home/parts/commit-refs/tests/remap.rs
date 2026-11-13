@@ -246,7 +246,14 @@ fn more_than_one_map_argument_is_a_usage_error() {
 #[test]
 fn words_longer_than_64_hex_digits_and_uppercase_hex_are_not_hashes() {
     let t = TempRepo::new("not-hashes");
-    let old = t.commit_file("src.txt", "feat: measured");
+    // 先頭 8 字が数字だけの hash（約 2%）は、大文字にしても小文字の hash のままで付け直される。英字を含むまで
+    // コミットを足す
+    let mut old = t.commit_file("src.txt", "feat: measured");
+    let mut n = 0;
+    while !old[..8].bytes().any(|b| b.is_ascii_alphabetic()) {
+        n += 1;
+        old = t.commit_file("src.txt", &format!("feat: measured {n}"));
+    }
     let long = format!("{}{}", &old[..8], "0".repeat(57));
     let upper = old[..8].to_uppercase();
     let line = format!("{long} {upper}");
