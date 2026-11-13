@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 
 /// owner と repo は GitHub の名前に使える文字だけを受ける。案内のコマンド（`-R` など）にそのまま書くので、`;` や空白を
 /// 通さない。PR の下のページ（`/files`）と通知のクエリの付いた URL も、同じ PR を指すので受ける
+/// （`.claude/scripts/lib/pr-url.sh` の PR_URL_RE と同じ規則。sh のスクリプトをすべて移して消すまで、両方を揃える）
 static PR_URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)(/[^?#]*)?(\?[^#]*)?(#(.*))?$",
@@ -32,6 +33,15 @@ pub fn parse(url: &str) -> Result<Pr, String> {
     if caps.get(6).is_some() {
         return Err(format!(
             "ERROR: PR の URL に # 以降を付けないでください（コメントは別の引数で渡す）: '{url}'"
+        ));
+    }
+    // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る
+    if [&caps[1], &caps[2]]
+        .iter()
+        .any(|name| *name == "." || *name == "..")
+    {
+        return Err(format!(
+            "ERROR: 対象は PR の URL（https://github.com/<owner>/<repo>/pull/<番号>）で渡してください: '{url}'"
         ));
     }
     Ok(Pr {
