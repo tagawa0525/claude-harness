@@ -4,7 +4,7 @@
 //!
 //! - `ja-terms check [--dictionary <辞書>] <ファイル>...`: ファイルの全体に辞書を当て、textlint 15.7.1 の
 //!   `--format unix` と同じ形（`<ファイル>:<行>:<列>: <誤り> => <正しい語> [Error/prh]` の行と、末尾の空行と件数の行）で
-//!   報告する。`<ファイル>` は引数のとおり出す。拡張子 md は Markdown として、[`TEXT_EXTENSIONS`] はコードとテキストとして
+//!   報告する。`<ファイル>` は引数のとおり出す。拡張子 md は Markdown として、[`report::TEXT_EXTENSIONS`] はコードとテキストとして
 //!   読み、ほかの拡張子は検査できないとして止める（textlint は知らない拡張子のファイルを検査せずに通す）
 //! - `ja-terms message [--dictionary <辞書>]`: 標準入力のコミットのメッセージの本文（[`ja_terms::message::body`]）を
 //!   Markdown として検査し、`<行>:<列>: <誤り> => <正しい語>` の行で報告する
@@ -23,12 +23,8 @@ use std::process::ExitCode;
 
 use ja_terms::Dictionary;
 use ja_terms::message::{self, Subject};
-use ja_terms::report::{self, Syntax};
+use ja_terms::report::{self, Syntax, TEXT_EXTENSIONS};
 
-/// @textlint/text で読む拡張子（textlint.nix の codeExtensions と同じ）
-const TEXT_EXTENSIONS: [&str; 9] = [
-    "txt", "rs", "py", "sh", "nix", "toml", "yaml", "yml", "json",
-];
 const DICTIONARY: &str = include_str!("../prh.yml");
 const USAGE: &str = "Usage: ja-terms check [--dictionary <辞書>] <ファイル>...
        ja-terms message [--dictionary <辞書>] < <メッセージ>
@@ -193,23 +189,13 @@ fn resolve(path: &Path) -> Result<std::path::PathBuf, Failure> {
 /// ファイルの読み方と中身。UTF-8 でない並びは、Node.js の読み込みと同じく U+FFFD にする
 /// path は引数（名前と表示に使う）、file は読むパス
 fn read(path: &Path, file: &Path) -> Result<(Syntax, String), Failure> {
-    // ja-terms-files と同じく、名前に . があれば最後の . の後（.md の拡張子は md。Path::extension は . で始まる名前に
-    // 拡張子を返さない）
     let name = path.file_name().map(|n| n.to_string_lossy());
-    let extension = name
-        .as_deref()
-        .and_then(|n| n.rsplit_once('.'))
-        .map(|(_, e)| e.to_lowercase());
-    let syntax = match extension.as_deref() {
-        Some("md") => Syntax::Markdown,
-        Some(e) if TEXT_EXTENSIONS.contains(&e) => Syntax::Text,
-        _ => {
-            return Err(Failure(format!(
-                "検査する拡張子ではありません: {}（対象: md {}）",
-                path.display(),
-                TEXT_EXTENSIONS.join(" ")
-            )));
-        }
+    let Some(syntax) = name.as_deref().and_then(report::syntax_of) else {
+        return Err(Failure(format!(
+            "検査する拡張子ではありません: {}（対象: md {}）",
+            path.display(),
+            TEXT_EXTENSIONS.join(" ")
+        )));
     };
     let bytes = std::fs::read(file)
         .map_err(|e| Failure(format!("読めません: {}（{e}）", path.display())))?;

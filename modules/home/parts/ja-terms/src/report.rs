@@ -18,6 +18,25 @@ pub enum Syntax {
     Text,
 }
 
+/// @textlint/text で読む拡張子（textlint.nix の codeExtensions と同じ）
+pub const TEXT_EXTENSIONS: [&str; 9] = [
+    "txt", "rs", "py", "sh", "nix", "toml", "yaml", "yml", "json",
+];
+
+/// ファイルの名前 name の読み方。ja-terms-files と同じく、名前に . があれば最後の . の後を拡張子にし（.md の
+/// 拡張子は md）、大文字と小文字を問わない。md は Markdown、[`TEXT_EXTENSIONS`] はテキスト、ほかは None
+pub fn syntax_of(name: &str) -> Option<Syntax> {
+    let (_, extension) = name.rsplit_once('.')?;
+    let extension = extension.to_lowercase();
+    if extension == "md" {
+        Some(Syntax::Markdown)
+    } else {
+        TEXT_EXTENSIONS
+            .contains(&extension.as_str())
+            .then_some(Syntax::Text)
+    }
+}
+
 /// 1 件の報告
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
