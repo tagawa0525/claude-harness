@@ -137,6 +137,9 @@ fn a_first_argument_that_is_not_a_pr_url_stops_before_gh() {
         "https://example.com/octo/repo/pull/1",
         "https://github.com/evil;echo_PWN/repo/pull/1",
         "https://github.com/octo/re po/pull/1",
+        // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る
+        "https://github.com/../x/pull/1",
+        "https://github.com/octo/./pull/1",
     ] {
         let fake = Fake::new();
         let out = fake.run(&[url, "111", "ok"], "", 0);
