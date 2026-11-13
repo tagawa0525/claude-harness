@@ -208,6 +208,45 @@ fn blank_and_zero_values_count_as_no_escape() {
     }
 }
 
+#[test]
+fn the_whole_repository_is_scanned_from_a_subdirectory() {
+    // gitleaks は `.` を作業ディレクトリからの相対で読み、その下の変更だけを見る。サブディレクトリから呼んでも、
+    // リポジトリの直下で調べる
+    let repo = Repo::new();
+    let sub = repo.work().join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let cwd_log = repo.root.join("gitleaks.cwd");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
+    forget_git_env(&mut cmd);
+    let out = cmd
+        .args(["git-hook", "scan-secrets"])
+        .current_dir(&sub)
+        .env("GIT_CEILING_DIRECTORIES", &repo.root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("gitconfig"))
+        .env("CLAUDECODE", "1")
+        .env("CLAUDE_HOOKS_GITLEAKS", fake_tool())
+        .env("FAKE_TOOL_OUT", "[]")
+        .env("FAKE_TOOL_CWD", &cwd_log)
+        .env_remove("ALLOW_SECRET_COMMIT")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    let ran_in = std::fs::read_to_string(&cwd_log).unwrap();
+    assert_eq!(
+        std::fs::canonicalize(ran_in.trim()).unwrap(),
+        std::fs::canonicalize(repo.work()).unwrap()
+    );
+}
+
+#[test]
+fn a_failure_shows_gitleaks_errors_on_their_own_lines() {
+    let repo = Repo::new();
+    let out = repo.scan(&[("FAKE_TOOL_ERR", "ERR one\nERR two\n")], &[]);
+    let text = said(&out);
+    assert!(text.contains("\n   ERR one\n   ERR two"), "{text}");
+}
+
 // Windows は環境変数が無ければ PATH の gitleaks を使う（ADR-0086）
 #[cfg(not(windows))]
 #[test]
