@@ -101,12 +101,13 @@ fn urls_inside_open_brackets_are_not_links_and_an_escaped_note_is_text() {
 
 #[test]
 fn a_long_run_without_an_at_sign_is_cut_in_linear_time() {
-    // メールアドレスの判定が並びを読み直すと、20 万文字で秒の単位かかる
+    // メールアドレスの判定が並びを読み直すと、20 万文字で debug のビルドが 4 分ほどかかる。直した後は 1 秒に
+    // ならないので、負荷のある builder でも揺れないよう、上限は 2 乗の時間との差の中で十分に緩くする
     let text = "1".repeat(200_000);
     let start = std::time::Instant::now();
     assert_eq!(strs::markdown(&text), vec![0..200_000]);
     assert!(
-        start.elapsed() < std::time::Duration::from_secs(1),
+        start.elapsed() < std::time::Duration::from_secs(30),
         "{:?}",
         start.elapsed()
     );
