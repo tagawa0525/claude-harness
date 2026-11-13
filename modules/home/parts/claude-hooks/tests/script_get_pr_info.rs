@@ -171,3 +171,23 @@ fn no_argument_shows_the_usage() {
     assert!(stderr(&out).contains("Usage: get-pr-info.sh"));
     assert_eq!(fake.log(), "");
 }
+
+#[test]
+fn comment_id_comes_after_the_keys_of_gh() {
+    // jq の `. + {comment_id: ...}` と同じく、gh の出した順（gh の --json はキーの名前の順）のまま、comment_id を最後に足す
+    let fake = FakeGh::new();
+    let out = fake.run(
+        "get-pr-info",
+        &["https://github.com/octo/repo/pull/42"],
+        "{\"baseRefName\":\"main\",\"number\":42,\"title\":\"t\"}\n",
+        0,
+    );
+    let info = stdout_json(&out);
+    let keys: Vec<&str> = info
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["baseRefName", "number", "title", "comment_id"]);
+}
