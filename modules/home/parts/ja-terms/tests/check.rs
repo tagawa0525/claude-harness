@@ -263,3 +263,22 @@ fn a_file_given_twice_is_checked_once() {
         )
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_and_its_target_are_checked_as_two_files() {
+    // textlint はパスの字面でファイルの集まりを作り、symlink を辿らない
+    let path = scratch("target.txt", "確忍\n");
+    let link = path.with_file_name("link.txt");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    let out = check(&[path.to_str().unwrap(), link.to_str().unwrap()]);
+    assert_eq!(
+        stdout(&out),
+        format!(
+            "{}:1:1: 確忍 => 確認 [Error/prh]\n{}:1:1: 確忍 => 確認 [Error/prh]\n\n2 problems\n",
+            path.display(),
+            link.display()
+        )
+    );
+}
