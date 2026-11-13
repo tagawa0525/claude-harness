@@ -64,7 +64,6 @@ jobs:
           claude-setup sync "$PWD"
           claude-setup settings --static modules/home/parts/claude-settings.json \
             --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
-          claude-setup git-hooks --bin "$(cygpath -w "$(command -v claude-hooks.exe)")"
       # 同期した sh のスクリプトは LF でないと Git Bash で動かない。runner の Git for Windows は core.autocrlf=true で、
       # checkout が CRLF にしうる（#104）。grep は Windows ではテキストのファイルの CR を外してから照合するので（-U の
       # 無いとき）使わず、tr で CR だけを残して wc で数える（数を出すので、$(...) が CR を落としても数は変わらない）。
@@ -138,11 +137,14 @@ jobs:
           echo "token = \"ghp_$(openssl rand -hex 18)\"" >"$repo/b"
           git -C "$repo" add b
           expect_deny '機密情報らしき内容'
-      # 置いた git hook が、Claude Code のセッションの main への直接のコミットと、Conventional Commits でない件名を
-      # 止め、feature branch の正しい件名のコミットを通す（ja-terms と gitleaks は PATH のもの）
-      - name: Check the git hooks
+      # README の手順の最後の git hook の設置。上の PreToolUse hook の確認は、git hook の無い Windows（グローバルの
+      # core.hooksPath を使わないリポジトリでは、PreToolUse hook が機密情報を検査する）として流すので、その後に置く。
+      # 置いた git hook が、Claude Code のセッションの main への直接のコミット、Conventional Commits でない件名、ステージ
+      # したトークンを止め、feature branch の正しい件名のコミットを通す（ja-terms と gitleaks は PATH のもの）
+      - name: Install and check the git hooks
         run: |
           set -euo pipefail
+          claude-setup git-hooks --bin "$(cygpath -w "$(command -v claude-hooks.exe)")"
           repo=$(mktemp -d)
           export GIT_AUTHOR_NAME=ci GIT_AUTHOR_EMAIL=ci@example.com GIT_COMMITTER_NAME=ci GIT_COMMITTER_EMAIL=ci@example.com
           git -C "$repo" init -q -b main
@@ -164,3 +166,12 @@ jobs:
           grep -qF "Conventional Commits" "$repo.err"
           CLAUDECODE=1 git -C "$repo" commit -q -m "feat: add a"
           git -C "$repo" log --oneline -1
+          # トークンらしき値は、git の pre-commit の機密情報の検査が止める（値はその場で作り、ファイルに残さない）
+          echo "token = \"ghp_$(openssl rand -hex 18)\"" > "$repo/b"
+          git -C "$repo" add b
+          if CLAUDECODE=1 git -C "$repo" commit -q -m "feat: add b" 2> "$repo.err"; then
+            echo "ステージしたトークンを pre-commit が止めなかった"
+            exit 1
+          fi
+          cat "$repo.err"
+          grep -qF "機密情報らしき内容" "$repo.err"
