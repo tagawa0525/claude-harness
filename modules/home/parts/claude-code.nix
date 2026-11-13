@@ -33,13 +33,13 @@ let
     }
   ];
 
+  # ハーネスを Claude Code の設定に配る設置のコマンド（ADR-0084）。claude-sync と activation が sync を呼ぶ
+  claude-setup = pkgs.callPackage ./claude-setup/package.nix { };
+  claudeSync = pkgs.writeShellScriptBin "claude-sync" ''exec ${claude-setup}/bin/claude-setup sync "$@"'';
   # PreToolUse hook。10 本あった bash hook を Rust 製 1 バイナリ（./claude-hooks）に統合し、
   # settings.json には 1 件だけ登録する。Bash ツールの呼び出しごとに 1 プロセスで全ルールを評価する。
   # バイナリは store パスではなく固定パス ~/.claude/bin/claude-hooks 経由で参照する
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
-  # ハーネスを Claude Code の設定に配る設置のコマンド（ADR-0084）。claude-sync と activation が sync を呼ぶ
-  claude-setup = pkgs.callPackage ./claude-setup/package.nix { };
-  claudeSync = pkgs.writeShellScriptBin "claude-sync" ''exec ${claude-setup}/bin/claude-setup sync "$@"'';
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
   # 崩れた日本語の語の検査（ADR-0074、ADR-0085）。/retro の memory-index.sh が `ja-terms check` で自動メモリに使う。
