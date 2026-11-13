@@ -41,6 +41,23 @@ fn git(top: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, Failure> {
     Ok(out.stdout)
 }
 
+/// git rev-parse が出すパス（末尾の改行を除く）。Unix ではバイトのまま（UTF-8 でない名前のディレクトリも同じパスに
+/// する）、Windows では git は UTF-8 で出す
+fn path_from_git(mut out: Vec<u8>) -> PathBuf {
+    while out.last() == Some(&b'\n') {
+        out.pop();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(out))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+    }
+}
+
 /// ステージしたファイルの (パス, ブロブ)。symlink とサブモジュールを除く
 fn staged_files(top: &Path) -> Result<Vec<(String, String)>, Failure> {
     let mut pathspecs: Vec<String> = ["md"]
@@ -113,7 +130,7 @@ fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
 /// git dir の中に、まだ無い名前の空のファイルを作って開く（既にある名前の symlink を辿って書かない）
 fn private_file(top: &Path) -> Result<(PathBuf, File), Failure> {
     let dir = git(Some(top), &["rev-parse", "--absolute-git-dir"])?;
-    let dir = PathBuf::from(String::from_utf8_lossy(&dir).trim_end_matches('\n'));
+    let dir = path_from_git(dir);
     for n in 0.. {
         let path = dir.join(format!(
             "ja-terms-textlintignore-{}-{n}",
@@ -136,7 +153,7 @@ pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
     // git diff --cached --raw は直下からのパスを出すが、pathspec と git ls-files は今のディレクトリから読むので、
     // どの git も直下で実行する
     let top = git(None, &["rev-parse", "--show-toplevel"])?;
-    let top = PathBuf::from(String::from_utf8_lossy(&top).trim_end_matches('\n'));
+    let top = path_from_git(top);
     let files = staged_files(&top)?;
     if files.is_empty() {
         return Ok(0);
