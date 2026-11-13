@@ -8,7 +8,7 @@
 # 止め、動詞や別の語を通すことも確かめる。ファイルの全体の検査（ja-terms check）と、それを使う /retro の
 # memory-index.sh の TERMS: の行も、同じ辞書で確かめる（ADR-0074）。
 #
-# hook のファイルを nix build で作る（hook が store のパスで呼ぶ ja-terms も一緒にビルドされる）。
+# hook のファイルを nix build で作る（hook が呼ぶ claude-hooks と、それが包む ja-terms も一緒にビルドされる）。
 # ja-terms は、claude-code.nix が置く ~/.claude/bin の形のまま、home-manager の home-files から取る。
 #
 # 使い方（リポジトリルートで実行）:

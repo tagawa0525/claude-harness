@@ -35,7 +35,7 @@ let
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を実行する（下の pre-commit hook が呼ぶ）
-  # staged-checks: pre-commit の既定の検査。run-checks.sh の Markdown の段も呼ぶ（ADR-0028）
+  # staged-checks: run-checks.sh の Markdown の段が呼ぶ既定の検査（ADR-0028。pre-commit は claude-hooks の中で同じ検査を呼ぶ）
   home.packages = [
     commit-refs
     design-records
