@@ -140,3 +140,8 @@ fn lazy_lines_after_a_lone_carriage_return_are_cut_as_textlint_does() {
         Err(e) => panic!("30 秒で終わらない: {e}"),
     }
 }
+
+#[test]
+fn lazy_lines_inside_code_spans_and_inline_html_are_cut_as_textlint_does() {
+    check("lazy-code.markdown");
+}
