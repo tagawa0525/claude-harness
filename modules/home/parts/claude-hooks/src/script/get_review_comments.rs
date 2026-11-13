@@ -60,7 +60,19 @@ pub fn main(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let stdout = match crate::gh::output_for_repo(
+    match comments(&pr, unresolved_only) {
+        Ok(comments) => {
+            println!("{:#}", Value::Array(comments));
+            0
+        }
+        Err(code) => code,
+    }
+}
+
+/// PR のレビューコメント（モジュールの説明の要素の並び）。unresolved_only なら resolve していないスレッドに限る。
+/// gh が失敗すれば、その終了コード（理由は標準エラーに出す）
+pub fn comments(pr: &pr_url::Pr, unresolved_only: bool) -> Result<Vec<Value>, i32> {
+    let stdout = crate::gh::output_for_repo(
         &pr.repo,
         &[
             "api",
@@ -77,10 +89,7 @@ pub fn main(args: &[String]) -> i32 {
             "--jq",
             ".data.repository.pullRequest.reviewThreads.nodes[]",
         ],
-    ) {
-        Ok(stdout) => stdout,
-        Err(code) => return code,
-    };
+    )?;
     let threads: Result<Vec<Value>, _> = serde_json::Deserializer::from_slice(&stdout)
         .into_iter::<Value>()
         .collect();
@@ -89,7 +98,7 @@ pub fn main(args: &[String]) -> i32 {
             "ERROR: gh api graphql の出力がレビュースレッドの並びでない: {}",
             String::from_utf8_lossy(&stdout)
         );
-        return 1;
+        return Err(1);
     };
     if threads
         .iter()
@@ -115,8 +124,7 @@ pub fn main(args: &[String]) -> i32 {
             .unwrap_or("")
             .cmp(b["created_at"].as_str().unwrap_or(""))
     });
-    println!("{:#}", Value::Array(comments));
-    0
+    Ok(comments)
 }
 
 fn is_thread(thread: &Value) -> bool {
