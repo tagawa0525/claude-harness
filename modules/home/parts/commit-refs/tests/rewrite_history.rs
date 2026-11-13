@@ -335,6 +335,8 @@ fn creates_a_tag_that_points_at_another_tag() {
     assert_eq!(h.t.rev("outer^{commit}"), h.t.rev("main"));
 }
 
+// Windows の symlink は作るのに権限が要る
+#[cfg(unix)]
 #[test]
 fn leaves_symlink_targets_alone() {
     let h = History::new("symlink");

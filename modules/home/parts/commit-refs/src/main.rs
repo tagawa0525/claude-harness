@@ -28,7 +28,6 @@
 
 use std::fs;
 use std::io::Read;
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -43,10 +42,10 @@ fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let result = match args.as_slice() {
         [cmd] if cmd == "remap" => remap::run(None),
-        [cmd, path] if cmd == "remap" && !path.as_bytes().starts_with(b"-") => {
+        [cmd, path] if cmd == "remap" && !path.as_encoded_bytes().starts_with(b"-") => {
             remap::run(Some(Path::new(path)))
         }
-        [cmd, path] if cmd == "rewrite-history" && !path.as_bytes().starts_with(b"-") => {
+        [cmd, path] if cmd == "rewrite-history" && !path.as_encoded_bytes().starts_with(b"-") => {
             history::run(Path::new(path))
         }
         _ => {
