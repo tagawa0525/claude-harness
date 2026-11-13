@@ -66,18 +66,11 @@ pub fn main(args: &[String]) -> i32 {
 
 fn commit_msg(args: &[String]) -> i32 {
     let dir = Path::new(".");
-    // ローカルの hook を探せないまま通すと、プロジェクトの commit-msg（Change-Id を足すものなど）を飛ばすので止める
-    let Some(common) = git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ) else {
-        eprintln!(
-            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの commit-msg を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
-        );
+    let Ok(local) = find_local_hook(dir, "commit-msg") else {
         return 1;
     };
     // ローカルの hook には、git から受けた引数をそのまま渡す（引数の数を確かめるのはこちらの検査だけ）
-    if let Some(local) = git::local_hook(Path::new(&common), "commit-msg") {
+    if let Some(local) = local {
         return run_local(&local, args);
     }
     let [file] = args else {
@@ -163,18 +156,12 @@ fn post_rewrite(args: &[String]) -> i32 {
         return 1;
     }
     let dir = Path::new(".");
-    let Some(common) = git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ) else {
-        eprintln!(
-            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの post-rewrite を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
-        );
+    let Ok(local) = find_local_hook(dir, "post-rewrite") else {
         return 1;
     };
     // ローカルの hook の失敗でも付け直しは行い、その終了コードを最後に返す（ローカルの hook があるだけで付け直しが
     // 外れないように）
-    let local_rc = match git::local_hook(Path::new(&common), "post-rewrite") {
+    let local_rc = match local {
         Some(hook) => {
             let what = hook.display().to_string();
             run_with_input(&mut local_command(&hook, args), &input, false, &what)
@@ -411,16 +398,10 @@ fn pre_commit(args: &[String]) -> i32 {
             return code;
         }
     }
-    let Some(common) = git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ) else {
-        eprintln!(
-            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの pre-commit を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
-        );
+    let Ok(local) = find_local_hook(dir, "pre-commit") else {
         return 1;
     };
-    if let Some(local) = git::local_hook(Path::new(&common), "pre-commit") {
+    if let Some(local) = local {
         let code = run_local(&local, args);
         if code != 0 {
             return code;
@@ -484,4 +465,19 @@ fn ja_terms_staged() -> i32 {
         return 1;
     };
     status(Command::new(&bin).arg("staged"), &bin)
+}
+
+/// プロジェクトのローカルの hook（git::local_hook）。git の共通のディレクトリを求められなければ、理由を出して Err。
+/// ローカルの hook を探せないまま通すと、プロジェクトの hook（Change-Id を足す commit-msg など）を飛ばすので止める
+fn find_local_hook(dir: &Path, name: &str) -> Result<Option<std::path::PathBuf>, ()> {
+    let Some(common) = git::git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ) else {
+        println!(
+            "❌ git rev-parse --git-common-dir に失敗したので、ローカルの {name} を探せません（同じディレクトリで git rev-parse --path-format=absolute --git-common-dir を実行すると、git の理由が出ます）"
+        );
+        return Err(());
+    };
+    Ok(git::local_hook(Path::new(&common), name))
 }
