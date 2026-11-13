@@ -71,25 +71,35 @@ jobs:
       - name: Check the synced files use LF
         run: |
           set -euo pipefail
+          # 数えられなければ（tr が読めない）止める。代入で受けるので、失敗が set -e に届く（[ ] の中の $(...) は届かない）
           crs() { tr -cd '\r' < "$1" | wc -c; }
           probe=$(mktemp)
+          trap 'rm -f "$probe"' EXIT
           printf 'x\r\n' > "$probe"
-          if [ "$(crs "$probe")" -eq 0 ]; then
+          n=$(crs "$probe")
+          if [ "$n" -eq 0 ]; then
             echo "CR を数える確かめ方が、CRLF のファイルの CR を見つけません"
             exit 1
           fi
-          rm -f "$probe"
-          test -d ~/.claude/scripts && test -d ~/.claude/skills && test -f ~/.claude/CLAUDE.md
+          # && でつなぐと、最後以外の失敗は set -e に届かないので、1 つずつ確かめる
+          test -d ~/.claude/scripts
+          test -d ~/.claude/skills
+          test -f ~/.claude/CLAUDE.md
           targets=(~/.claude/CLAUDE.md ~/.claude/scripts ~/.claude/skills)
           if [ -d ~/.claude/commands ]; then
             targets+=(~/.claude/commands)
           fi
+          # プロセス置換の中の find の失敗は set -e に届かないので、ファイルに受けてから読む
+          list=$(mktemp)
+          trap 'rm -f "$probe" "$list"' EXIT
+          find "${targets[@]}" -type f -print0 > "$list"
           crlf=""
           while IFS= read -r -d '' f; do
-            if [ "$(crs "$f")" -ne 0 ]; then
+            n=$(crs "$f")
+            if [ "$n" -ne 0 ]; then
               crlf+="$f"$'\n'
             fi
-          done < <(find "${targets[@]}" -type f -print0)
+          done < "$list"
           if [ -n "$crlf" ]; then
             echo "CR を含む同期したファイル:"
             printf '%s' "$crlf"
