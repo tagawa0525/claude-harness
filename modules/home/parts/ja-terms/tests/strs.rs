@@ -31,7 +31,7 @@ fn check(name: &str) {
     let text = std::fs::read_to_string(dir.join(name)).unwrap();
     let expected = std::fs::read_to_string(dir.join(format!("{name}.strs"))).unwrap();
     let ranges = if name.ends_with(".markdown") {
-        strs::markdown(&text)
+        strs::markdown(&text).unwrap()
     } else {
         strs::text(&text)
     };
@@ -105,7 +105,7 @@ fn a_long_run_without_an_at_sign_is_cut_in_linear_time() {
     // ならないので、負荷のある builder でも揺れないよう、上限は 2 乗の時間との差の中で十分に緩くする
     let text = "1".repeat(200_000);
     let start = std::time::Instant::now();
-    assert_eq!(strs::markdown(&text), vec![0..200_000]);
+    assert_eq!(strs::markdown(&text).unwrap(), vec![0..200_000]);
     assert!(
         start.elapsed() < std::time::Duration::from_secs(30),
         "{:?}",

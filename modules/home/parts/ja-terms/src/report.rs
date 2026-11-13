@@ -36,7 +36,7 @@ pub fn check(
     syntax: Syntax,
 ) -> Result<Vec<Report>, TextError> {
     let ranges = match syntax {
-        Syntax::Markdown => strs::markdown(text),
+        Syntax::Markdown => strs::markdown(text)?,
         Syntax::Text => strs::text(text),
     };
     let bom = strs::after_bom(text);

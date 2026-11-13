@@ -15,6 +15,7 @@ use std::sync::OnceLock;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 use regress::Regex;
 
+use crate::TextError;
 use crate::inline::{self, Run};
 
 /// textlint は先頭の BOM を外して読む
@@ -23,7 +24,8 @@ pub(crate) fn after_bom(text: &str) -> usize {
 }
 
 /// Markdown の Str のノードの原文の範囲（文の UTF-8 のバイト）
-pub fn markdown(text: &str) -> Vec<Range<usize>> {
+/// 空行を入れても同じ行が lazy なまま（読み直しが進まない）なら、textlint と同じ範囲を切り出せないとして止める
+pub fn markdown(text: &str) -> Result<Vec<Range<usize>>, TextError> {
     let start = after_bom(text);
     let body = &text[start..];
     let blanked = without_front_matter(body);
@@ -34,16 +36,16 @@ pub fn markdown(text: &str) -> Vec<Range<usize>> {
     // 最初の lazy な行の前に空行を入れて読み直す。後の行が lazy かは、読み直した構造で決まる（前の行で項目が
     // 閉じると、後の行は別の項目の続きになりうる）ので、1 度に 1 行ずつ入れる
     let mut breaks: Vec<usize> = Vec::new();
-    // 空行を入れても同じ行が lazy なまま（読み直しが進まない）なら、lazy な行を探さずに読む（止まらないことを保つ）
-    let mut find_lazy = true;
     let runs = loop {
         let source = with_breaks(original, &breaks);
-        match parse(&source, find_lazy) {
+        match parse(&source) {
             Parsed::Lazy(line) => {
                 let at = to_original(line, &breaks);
                 if breaks.contains(&at) {
-                    find_lazy = false;
-                    continue;
+                    let line = text[..start + at].matches('\n').count() + 1;
+                    return Err(TextError(format!(
+                        "{line} 行目の lazy な行を、micromark 2.11.4 と同じ形に読み直せない"
+                    )));
                 }
                 breaks.push(at);
                 breaks.sort_unstable();
@@ -62,7 +64,7 @@ pub fn markdown(text: &str) -> Vec<Range<usize>> {
             }
         }
     };
-    inline::refine(text, runs)
+    Ok(inline::refine(text, runs))
 }
 
 /// remark-frontmatter の front matter（文の先頭の、開きと閉じの柵で囲んだ行）を、改行を残して空白にする。
@@ -207,8 +209,8 @@ fn line_starts(source: &str, range: Range<usize>) -> impl Iterator<Item = usize>
     })
 }
 
-/// find_lazy なら、最初の lazy continuation の行で読むのを止めてその行を返す
-fn parse(source: &str, find_lazy: bool) -> Parsed {
+/// 最初の lazy continuation の行で読むのを止めてその行を返す
+fn parse(source: &str) -> Parsed {
     // 取り消し線は inline.rs が micromark の規則で読む（pulldown-cmark は 1 つの ~ を読まない）
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_TASKLISTS
@@ -230,22 +232,20 @@ fn parse(source: &str, find_lazy: bool) -> Parsed {
         // 段落の中の行の始めを確かめる。段落は範囲の全体を見る（行をまたぐリンクの title やコードスパンの中の行には
         // SoftBreak が無い）。tight な項目の中身は段落のタグを持たないので、改行（SoftBreak、HardBreak）と、行を
         // またぎうるインラインの範囲も見る
-        if find_lazy
-            && matches!(
-                event,
-                Event::SoftBreak
-                    | Event::HardBreak
-                    | Event::Code(_)
-                    | Event::InlineHtml(_)
-                    | Event::Start(Tag::Paragraph | Tag::Link { .. } | Tag::Image { .. })
-            )
-            && let Some(line) = line_starts(source, range.clone())
-                // 段落とインラインの範囲は末尾の改行を含みうるので、範囲の後の行（中身の外）は見ない。改行の
-                // イベントは範囲が改行そのものなので、次の行の始めが範囲の終わりになる
-                .filter(|&line| {
-                    line < range.end || matches!(event, Event::SoftBreak | Event::HardBreak)
-                })
-                .find(|&line| !continues(source, line, &containers))
+        if matches!(
+            event,
+            Event::SoftBreak
+                | Event::HardBreak
+                | Event::Code(_)
+                | Event::InlineHtml(_)
+                | Event::Start(Tag::Paragraph | Tag::Link { .. } | Tag::Image { .. })
+        ) && let Some(line) = line_starts(source, range.clone())
+            // 段落とインラインの範囲は末尾の改行を含みうるので、範囲の後の行（中身の外）は見ない。改行の
+            // イベントは範囲が改行そのものなので、次の行の始めが範囲の終わりになる
+            .filter(|&line| {
+                line < range.end || matches!(event, Event::SoftBreak | Event::HardBreak)
+            })
+            .find(|&line| !continues(source, line, &containers))
         {
             return Parsed::Lazy(line);
         }
