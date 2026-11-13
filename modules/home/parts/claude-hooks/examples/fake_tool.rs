@@ -3,7 +3,7 @@
 //! examples もビルドする）。同じ偽のコマンドを別の名前でコピーして置けるよう、`FAKE_<名前>_<鍵>` があればそれを
 //! `FAKE_TOOL_<鍵>` より先に読む（名前は実行ファイルの名前を大文字にし、`-` を `_` にしたもの。`FAKE_NIXFMT_EXIT` など）。
 //!
-//! - `LOG`: 渡された引数を、空白でつないで 1 行ずつ足すファイル（名前の付いた偽のコマンドは、行の先頭に名前を付ける）
+//! - `LOG`: 渡された引数を、空白でつないで 1 行ずつ足すファイル（名前の付いた偽のコマンドは、行の先頭に実行ファイルの名前を付ける）
 //! - `STDIN`: 標準入力をそのまま書くファイル（あれば足す）
 //! - `ECHO`: 値があれば、標準入力をそのまま標準出力に書く
 //! - `OUT`: 標準出力に書く文字列
@@ -28,10 +28,11 @@ fn append(path: Option<std::ffi::OsString>, what: &str, text: &[u8]) {
 
 fn main() {
     let exe = std::env::current_exe().expect("実行ファイルのパスを読める");
-    let name = exe
+    let stem = exe
         .file_stem()
-        .map(|s| s.to_string_lossy().to_uppercase().replace('-', "_"))
+        .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let name = stem.to_uppercase().replace('-', "_");
     let named = name != "FAKE_TOOL";
     let var = |key: &str| {
         let own = format!("FAKE_{name}_{key}");
@@ -39,7 +40,7 @@ fn main() {
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let line = if named {
-        format!("{} {}\n", name.to_lowercase(), args.join(" "))
+        format!("{stem} {}\n", args.join(" "))
     } else {
         format!("{}\n", args.join(" "))
     };

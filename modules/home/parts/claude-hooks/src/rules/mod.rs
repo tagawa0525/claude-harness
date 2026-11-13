@@ -77,6 +77,7 @@ pub fn escape_hint(name: &str) -> String {
 }
 
 mod block_main_commit;
+pub(crate) use block_main_commit::main_commit_blocked;
 mod block_nested_heredoc_same_delimiter;
 mod block_no_verify;
 mod block_secret_commit;
