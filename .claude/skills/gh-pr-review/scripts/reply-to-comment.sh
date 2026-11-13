@@ -8,4 +8,5 @@
 # Windows の Git Bash は、ネイティブのコマンドに渡す / で始まる引数（"/gh-pr-review で直した" のような本文）を Windows の
 # パスに書き換えるので、書き換えを止めて渡す
 export MSYS_NO_PATHCONV=1
-exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script reply-to-comment "$@"
+. "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
+claude_hooks_script reply-to-comment "$@"

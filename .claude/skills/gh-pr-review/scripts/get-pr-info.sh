@@ -7,4 +7,5 @@
 # URL: https://github.com/{owner}/{repo}/pull/{n}[#discussion_r{comment_id}]
 #      comment_id（#discussion_r でなければ null）を PR 情報に添える
 # Output: JSON形式のPR情報
-exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script get-pr-info "$@"
+. "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
+claude_hooks_script get-pr-info "$@"
