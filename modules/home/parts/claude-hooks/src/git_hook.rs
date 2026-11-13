@@ -372,8 +372,14 @@ fn scan_secrets() -> i32 {
             reason_required();
             1
         }
-        crate::gitleaks::Scan::Failed(why) => {
-            println!("❌ {why}。機密情報を検査できないので、コミットを止めます");
+        crate::gitleaks::Scan::Failed(failure) => {
+            println!(
+                "❌ {}。機密情報を検査できないので、コミットを止めます:",
+                failure.what
+            );
+            for line in failure.errors.lines() {
+                println!("   {line}");
+            }
             reason_required();
             1
         }

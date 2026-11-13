@@ -11,13 +11,37 @@ pub enum Scan {
     Leaks(Vec<String>),
     /// gitleaks を起動できない
     Missing(std::io::Error),
-    /// gitleaks が失敗した。理由
-    Failed(String),
+    /// gitleaks が失敗した（直下を求められなかったときを含む）
+    Failed(Failure),
 }
 
-/// `<bin> git <mode> …` を dir で実行して結果を分類する。mode は `--staged`（index と HEAD の差）か
-/// `--pre-commit`（作業ツリーと HEAD の差）
+pub struct Failure {
+    /// 何が失敗したか（`gitleaks が失敗しました（exit 1）` など）
+    pub what: String,
+    /// gitleaks か git の標準エラー
+    pub errors: String,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.errors.is_empty() {
+            write!(f, "{}", self.what)
+        } else {
+            write!(f, "{}: {}", self.what, self.errors)
+        }
+    }
+}
+
+/// dir のリポジトリの直下で `<bin> git <mode> …` を実行して結果を分類する。mode は `--staged`（index と HEAD の差）か
+/// `--pre-commit`（作業ツリーと HEAD の差）。gitleaks は `.` を作業ディレクトリからの相対で読み、その下の変更と
+/// 設定（.gitleaks.toml、.gitleaksignore）だけを見るので、サブディレクトリからでも直下で調べる
 pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
+    let Some(top) = crate::git::git(dir, &["rev-parse", "--show-toplevel"]) else {
+        return Scan::Failed(Failure {
+            what: format!("{} のリポジトリの直下を求められません", dir.display()),
+            errors: String::new(),
+        });
+    };
     // --log-level error: gitleaks は中の git diff の失敗を ERR に出すだけで、終了コード 0（漏えいなし）を返すので、
     // エラーの行だけを出させ、出たら検査できなかったとみなす
     let out = Command::new(bin)
@@ -34,7 +58,7 @@ pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
             "-",
             ".",
         ])
-        .current_dir(dir)
+        .current_dir(&top)
         .output();
     let out = match out {
         Ok(o) => o,
@@ -58,11 +82,13 @@ pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
                 })
                 .collect(),
         ),
-        (code, _) => Scan::Failed(format!(
-            "gitleaks が失敗しました（exit {}）: {}",
-            code.map(|c| c.to_string())
-                .unwrap_or_else(|| "signal".into()),
-            stderr.trim()
-        )),
+        (code, _) => Scan::Failed(Failure {
+            what: format!(
+                "gitleaks が失敗しました（exit {}）",
+                code.map(|c| c.to_string())
+                    .unwrap_or_else(|| "signal".into())
+            ),
+            errors: stderr.trim().to_string(),
+        }),
     }
 }

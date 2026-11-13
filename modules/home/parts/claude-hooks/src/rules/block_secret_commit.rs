@@ -79,7 +79,7 @@ impl Rule for BlockSecretCommit {
                     Scan::Missing(e) => format!(
                         "gitleaks が PATH にありません（{e}）。gitleaks は claude-code.nix の home.packages で配布しています"
                     ),
-                    Scan::Failed(why) => why,
+                    Scan::Failed(failure) => failure.to_string(),
                 };
                 return vec![Finding::Deny(format!(
                     "機密情報の検査ができないためコミットを止めます（{why}）。\n{}",
