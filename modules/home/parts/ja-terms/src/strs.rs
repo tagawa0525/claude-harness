@@ -200,7 +200,7 @@ enum Parsed {
 /// range の中の改行（\r\n、\n、\r）の後の、行の始め。SoftBreak の範囲は行の終わりの前の空白から始まりうる
 fn line_starts(source: &str, range: Range<usize>) -> impl Iterator<Item = usize> + '_ {
     let bytes = source.as_bytes();
-    range.clone().filter_map(move |i| match bytes[i] {
+    range.filter_map(move |i| match bytes[i] {
         b'\n' => Some(i + 1),
         b'\r' if bytes.get(i + 1) != Some(&b'\n') => Some(i + 1),
         _ => None,
@@ -227,14 +227,24 @@ fn parse(source: &str, find_lazy: bool) -> Parsed {
     // 続いている Str（mdast の text は、行の終わりをはさんだ文字の並びを 1 つのノードにする）
     let mut current: Option<Range<usize>> = None;
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
-        // pulldown-cmark は行をまたぐコードスパンとインラインの HTML の中に SoftBreak を出さないので、その中の行の
-        // 始めも確かめる
+        // 段落の中の行の始めを確かめる。段落は範囲の全体を見る（行をまたぐリンクの title やコードスパンの中の行には
+        // SoftBreak が無い）。tight な項目の中身は段落のタグを持たないので、改行（SoftBreak、HardBreak）と、行を
+        // またぎうるインラインの範囲も見る
         if find_lazy
             && matches!(
                 event,
-                Event::SoftBreak | Event::Code(_) | Event::InlineHtml(_)
+                Event::SoftBreak
+                    | Event::HardBreak
+                    | Event::Code(_)
+                    | Event::InlineHtml(_)
+                    | Event::Start(Tag::Paragraph | Tag::Link { .. } | Tag::Image { .. })
             )
             && let Some(line) = line_starts(source, range.clone())
+                // 段落とインラインの範囲は末尾の改行を含みうるので、範囲の後の行（中身の外）は見ない。改行の
+                // イベントは範囲が改行そのものなので、次の行の始めが範囲の終わりになる
+                .filter(|&line| {
+                    line < range.end || matches!(event, Event::SoftBreak | Event::HardBreak)
+                })
                 .find(|&line| !continues(source, line, &containers))
         {
             return Parsed::Lazy(line);
