@@ -981,7 +981,8 @@ echo 'plain' > a.txt && git add a.txt
 
 LEAK_JSON='[{"File":"conf.txt","StartLine":3,"RuleID":"aws-access-token","Secret":"REDACTED","Fingerprint":"conf.txt:aws-access-token:3"}]'
 # fake_gitleaks <staged-json|ok|fail> <pre-commit-json|ok|fail>
-#   JSON を渡すと exit 1（漏えいあり）、"ok" なら [] と exit 0、"fail" なら JSON なしで exit 2
+#   JSON を渡すと exit 1（漏えいあり）、"ok" なら [] と exit 0、"fail" なら JSON なしで exit 2、
+#   "err" なら [] と exit 0 で標準エラーにエラーの行（gitleaks は中の git diff の失敗をこの形で出す）
 fake_gitleaks() {
   local body="" mode
   for mode in "--staged:$1" "--pre-commit:$2"; do
@@ -989,6 +990,7 @@ fake_gitleaks() {
     case "$spec" in
       ok)   body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]' ;;"$'\n' ;;
       fail) body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo 'error: x' >&2; exit 2 ;;"$'\n' ;;
+      err)  body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]'; echo 'ERR git diff failed' >&2 ;;"$'\n' ;;
       *)    body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '$spec'; exit 1 ;;"$'\n' ;;
     esac
   done
@@ -1050,6 +1052,10 @@ fake_gitleaks fail ok
 out=$(run_hook block-secret-commit 'git commit -m "chore: x"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "gitleaks が失敗しました"
+fake_gitleaks err ok
+out=$(run_hook block-secret-commit 'git commit -m "chore: x"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "git diff failed"
 remove_fake_tool gitleaks
 out=$(PATH="$(minimal_path)" run_hook block-secret-commit 'git commit -m "chore: x"')
 assert_eq deny "$(decision "$out")"
