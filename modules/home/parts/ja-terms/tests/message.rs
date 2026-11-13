@@ -261,6 +261,7 @@ fn a_missing_message_file_is_a_failure() {
 #[test]
 fn nul_bytes_are_dropped_from_the_subject_as_from_the_body() {
     // commit-msg-check.sh は件名を sh の変数に取り、NUL は落ちる（本文の切り出しと同じ）
-    let out = commit_msg("nul", "fix\0: x\n");
+    // ファイルの名前を nul にすると、Windows では予約のデバイスの名前で、書いても空のまま
+    let out = commit_msg("nul-subject", "fix\0: x\n");
     assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
 }
