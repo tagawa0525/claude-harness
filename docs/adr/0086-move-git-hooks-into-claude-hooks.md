@@ -127,3 +127,17 @@ hook のファイル:
 - 移した後、`git-hooks.nix` の hook のファイルは `claude-hooks git-hook` を呼ぶ 1 行だけになり、`staged-checks.sh`、
   `scan-staged-secrets.sh`、`main-commit-gates.sh` は無い
 - Windows の CI の `setup` のジョブで、設置した hook が main への直接のコミットと、件名の形の誤ったコミットを止める
+
+## 補足
+
+- 2026-11-13: 機密情報の検査（PreToolUse の block-secret-commit と git hook の scan-secrets が共有する
+  `claude-hooks` の `src/gitleaks.rs`）で、gitleaks の標準エラーの扱いを 2 つ試して捨てた（PR #131）。gitleaks
+  8.30.1 は、中の git diff が標準エラーに何か出すと、警告（`* text=auto` の下の CRLF のファイルの「CRLF will be
+  replaced by LF」）でも `ERR [git] warning: …` と `stderr is not empty` を出し、差分を読むのをやめて `[]` と
+  終了コード 0 を返す。scratchpad の一時のリポジトリで、同じ `ghp_` のトークンが、LF の差分では `github-pat` で
+  見つかり、CRLF の警告の出る差分では見つからなかった。
+  - `--pre-commit`（`git commit -a`）の標準エラーを見ない: 警告で誤って止めないために試したが、警告の出る差分の
+    秘密を通す
+  - `[git] warning:` と `stderr is not empty` の行を除く: 同じく、警告で読むのをやめた差分の秘密を通す
+  - 採った形: 色を外した標準エラーの行が 1 つでもあれば、どちらのモードでも検査できなかったとして止め、警告の原因を
+    直せば検査できると書く
