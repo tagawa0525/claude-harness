@@ -75,17 +75,14 @@ fn commit_msg(args: &[String]) -> i32 {
     )
 }
 
-/// ローカルの hook を、git から受けた引数のまま実行する。Windows はスクリプトを直に起動できないので、Git for Windows の
-/// sh に exec させる（sh の exec は shebang の行を読むので、sh 以外のスクリプトも同じく動く）
+/// ローカルの hook を、git から受けた引数のまま実行する。sh に exec させる: sh の exec は shebang の行を読んでその
+/// インタプリタで起動し、shebang の無い実行ファイルは sh のスクリプトとして実行する（git が hook を起動するのと同じ）。
+/// Windows はスクリプトを直に起動できないので、どちらにしても sh が要る。Unix はグローバルの hook のファイルの
+/// shebang と同じ /bin/sh、Windows は PATH の Git for Windows の sh
 fn run_local(hook: &Path, args: &[String]) -> i32 {
-    let mut cmd = if cfg!(windows) {
-        let mut cmd = Command::new("sh");
-        cmd.arg("-c").arg("exec \"$0\" \"$@\"").arg(hook);
-        cmd
-    } else {
-        Command::new(hook)
-    };
-    cmd.args(args);
+    let sh = if cfg!(windows) { "sh" } else { "/bin/sh" };
+    let mut cmd = Command::new(sh);
+    cmd.arg("-c").arg("exec \"$0\" \"$@\"").arg(hook).args(args);
     status(&mut cmd, &hook.display().to_string())
 }
 
