@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/textlint")
@@ -18,9 +19,13 @@ fn input_name(name: &str) -> String {
     }
 }
 
-/// 固定の入力（相対の名前）を一時のディレクトリにコピーし、そこで report.yml を辞書にして検査する
+/// 固定の入力（相対の名前）を一時のディレクトリにコピーし、そこで report.yml を辞書にして検査する。テストは並行に
+/// 走るので、呼ぶたびに別のディレクトリにする（同じ名前にコピーし直す間に、ほかのテストが読まないよう）
 fn check(files: &[&str]) -> Output {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("inputs");
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("inputs")
+        .join(NEXT.fetch_add(1, Ordering::SeqCst).to_string());
     std::fs::create_dir_all(&dir).unwrap();
     for name in files.iter().filter(|name| Path::new(name).is_relative()) {
         let source = fixtures().join(name);
