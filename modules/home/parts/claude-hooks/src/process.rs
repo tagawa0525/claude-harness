@@ -41,7 +41,7 @@ impl Drop for TempDir {
 
 /// 一時のディレクトリを作る。ステージした中身や HEAD の .gitignore を書き出すので、持ち主だけが読める場所にする
 /// （mktemp -d と同じ 0700）。名前が既にあれば、ほかの人が作ったかもしれないので使わない（create_dir_all でなく
-/// create）。作れた後にだけ片付けの対象にする（作れなかった場所は消さない）
+/// create）。作れた後にだけ片付けの対象にする（作れなかった場所は、ほかの人のものかもしれないので消さない）
 pub fn private_temp_dir(prefix: &str) -> Result<TempDir, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

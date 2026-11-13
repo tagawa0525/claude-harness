@@ -554,7 +554,8 @@ fn pre_merge_commit(args: &[String]) -> i32 {
     // 別のリポジトリでこの index を読み書きさせてしまうので外す（--merge は HEAD と作業ツリーの差分で判定し、index
     // に頼らない）
     // Windows の起動は、PATH の前に System32 を探し、WSL の bash.exe（Linux のディストリビューションを起動するもの）を
-    // 見つける。Git for Windows の bash を使うよう、PATH を順に探して見つけたパスで起動する
+    // 見つける。Git for Windows の bash を使うよう、PATH を順に探して見つけたパスで起動する（Git for Windows は hook を
+    // 起動するとき、自分の bin を PATH の先頭に足すので、System32 より先に見つかる）
     let bash = crate::staged_checks::find_on_path("bash").unwrap_or_else(|| "bash".into());
     let checked = Command::new(&bash)
         .arg(&run_checks)
@@ -600,11 +601,12 @@ fn report_unclean(dir: &Path, modified: &[String], untracked: &[String]) {
     )
     .map(|out| nonempty_lines(&out));
     let mut mark_failed = false;
-    let ignore_changed = ignore_changed.unwrap_or_else(|| {
+    // 読めなければ、変わる .gitignore も、無視されていたファイルも分からない（下の一覧に生成物が混ざりうる）
+    let ignore_unreadable = ignore_changed.is_none();
+    if ignore_unreadable {
         println!("❌ マージで変わる .gitignore を git から読めません");
-        mark_failed = true;
-        Vec::new()
-    });
+    }
+    let ignore_changed = ignore_changed.unwrap_or_default();
     let mut unignored = Vec::new();
     if !ignore_changed.is_empty() && !untracked.is_empty() {
         match head_ignored(dir, untracked) {
@@ -643,6 +645,11 @@ fn report_unclean(dir: &Path, modified: &[String], untracked: &[String]) {
             "   修正方法: git merge --abort で取り消す。上の生成物は、DVC のキャッシュなどに記録された版と中身が同じで戻せるなら作業ツリーから消す。記録された版と中身が違うか、記録が無ければ、消すと戻せないので、何の出力でなぜ違うかの原因を調べてから消すか移すかを決める（残して無視し続けるなら、マージするブランチの .gitignore に行を戻す）。ほかの変更はコミットして（不要なファイルは消して）から、もう一度マージしてください"
         );
         return;
+    }
+    if ignore_unreadable && !untracked.is_empty() {
+        println!(
+            "   マージで変わる .gitignore を読めなかった（理由は上のエラー）。上の一覧には、マージするブランチが .gitignore から外した生成物が混ざりうる"
+        );
     }
     if mark_failed {
         println!(
