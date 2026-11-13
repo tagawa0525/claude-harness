@@ -987,9 +987,9 @@ fake_gitleaks() {
   for mode in "--staged:$1" "--pre-commit:$2"; do
     local flag="${mode%%:*}" spec="${mode#*:}"
     case "$spec" in
-      ok)   body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo '[]' ;;"$'\n' ;;
-      fail) body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo 'error: x' >&2; exit 2 ;;"$'\n' ;;
-      *)    body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo '$spec'; exit 1 ;;"$'\n' ;;
+      ok)   body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]' ;;"$'\n' ;;
+      fail) body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo 'error: x' >&2; exit 2 ;;"$'\n' ;;
+      *)    body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '$spec'; exit 1 ;;"$'\n' ;;
     esac
   done
   make_fake_tool gitleaks "$body"

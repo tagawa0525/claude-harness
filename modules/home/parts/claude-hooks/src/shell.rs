@@ -42,8 +42,8 @@ pub enum Escape {
 /// 理由の幅。空白（Unicode の White_Space。全角空白、NBSP を含む）とバックスラッシュを除き、ASCII は 1、それ以外
 /// （日本語など）は 2 と数える。表示幅に近いが、`unicode-width` のような依存は足さず ASCII か否かだけで決める。
 /// `force` / `allow`（5）は弾き、日本語 3 文字（6）から通す。中身は検査しない（品質のゲートではなく、boolean 的な
-/// 値を弾くため。ADR-0023）。git 側の pre-commit（scan-staged-secrets.sh）は同じ White_Space を UTF-8 のバイト列で除く
-fn reason_width(value: &str) -> usize {
+/// 値を弾くため。ADR-0023）。git hook の scan-secrets（crate::git_hook）も同じ幅で数える
+pub(crate) fn reason_width(value: &str) -> usize {
     value
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '\\')
@@ -89,7 +89,7 @@ fn rank(esc: Escape) -> u8 {
     }
 }
 
-const REASON_MIN_WIDTH: usize = 6;
+pub(crate) const REASON_MIN_WIDTH: usize = 6;
 
 /// `bash -c '…'` のような文字列を再帰的に解析する深さの上限（ADR-0025）。超えた文字列は読まず、
 /// そのコマンドを [`Cmd::opaque`] にする（通す側ではなく止める側に倒す）
