@@ -136,7 +136,7 @@ fn pull(repo: &Path) -> Result<(), Stop> {
         repo,
         &["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"],
     )
-    .map(|r| r.trim_start_matches("origin/").to_string())
+    .map(|r| r.strip_prefix("origin/").unwrap_or(&r).to_string())
     .filter(|r| !r.is_empty())
     .unwrap_or_else(|| "main".to_string());
     let branch = git_quiet(repo, &["symbolic-ref", "--short", "-q", "HEAD"])
@@ -201,7 +201,19 @@ fn copy(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
     if meta.file_type().is_symlink() {
         return copy_link(src, dest, overwrite);
     }
+    let dest_meta = fs::symlink_metadata(dest).ok();
+    let dest_is_link = dest_meta
+        .as_ref()
+        .is_some_and(|m| m.file_type().is_symlink());
     if meta.is_dir() {
+        // ~/.claude の側の symlink は辿らない（利用者の作業の場所に書かない）。上書きする場所では、ソースのとおりの
+        // ディレクトリに置き換え、既存を残す場所（commands）では触らない
+        if dest_is_link {
+            if !overwrite {
+                return Ok(());
+            }
+            fs::remove_file(dest).map_err(|e| io_stop(dest, &e))?;
+        }
         fs::create_dir_all(dest).map_err(|e| io_stop(dest, &e))?;
         let entries = fs::read_dir(src).map_err(|e| read_stop(src, &e))?;
         for entry in entries {
@@ -210,7 +222,12 @@ fn copy(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
         }
         return Ok(());
     }
-    if fs::symlink_metadata(dest).is_ok() && (!overwrite || same(src, dest)) {
+    if dest_meta.is_some() && !overwrite {
+        return Ok(());
+    }
+    // 行き先が symlink なら、中身が同じでもソースのとおりのファイルに置き換える
+    if dest_meta.is_some() && !dest_is_link && same(src, dest) {
+        same_mode(&meta, dest);
         return Ok(());
     }
     // 隣の一時のファイルに書いてから名前を付け替える（同期の間に読むほかのセッションに、消えたファイルや書きかけの
@@ -230,6 +247,23 @@ fn copy(src: &Path, dest: &Path, overwrite: bool) -> Result<(), Stop> {
         return Err(io_stop(dest, &e));
     }
     Ok(())
+}
+
+/// 中身の同じファイルの mode を、ソースに合わせる（rsync -a と同じ。実行の bit だけを足したコミット）。持ち主の
+/// 書き込みは足したままにする
+fn same_mode(src: &fs::Metadata, dest: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let want = src.permissions().mode() | 0o200;
+        if fs::metadata(dest).is_ok_and(|m| m.permissions().mode() & 0o7777 != want & 0o7777) {
+            let _ = fs::set_permissions(dest, fs::Permissions::from_mode(want));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (src, dest);
+    }
 }
 
 /// symlink をリンクのままコピーする（Windows はリンクを作るのに権限が要るので、ファイルを指すリンクは行き先の
@@ -308,7 +342,8 @@ fn writable(path: &Path) {
     }
 }
 
-/// ホームのディレクトリ（HOME、Windows では USERPROFILE）
+/// ホームのディレクトリ（HOME、Windows では USERPROFILE。Unix で HOME が空なら passwd のホーム）。空のパスは
+/// 無いものとする（今のディレクトリの .claude に同期しない）
 pub fn home() -> Option<PathBuf> {
-    std::env::home_dir()
+    std::env::home_dir().filter(|p| !p.as_os_str().is_empty())
 }

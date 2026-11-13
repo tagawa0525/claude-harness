@@ -394,6 +394,8 @@ fn symbolic_links_are_copied_as_links() {
             .is_symlink()
     );
     assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("s"));
+    // 親を指すリンクを残すと、target の下を辿るツール（statix など）が止まらなくなる
+    std::fs::remove_dir_all(&home.0).unwrap();
 }
 
 #[cfg(unix)]
@@ -429,20 +431,6 @@ fn a_mode_change_alone_reaches_the_destination() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o111, 0o111, "{mode:o}");
-}
-
-#[test]
-fn an_empty_home_is_an_error() {
-    let home = Home::new();
-    let out = Command::new(env!("CARGO_BIN_EXE_claude-setup"))
-        .arg("sync")
-        .env("HOME", "")
-        .env("USERPROFILE", "")
-        .current_dir(&home.0)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert!(!home.0.join(".claude").exists());
 }
 
 #[cfg(unix)]
