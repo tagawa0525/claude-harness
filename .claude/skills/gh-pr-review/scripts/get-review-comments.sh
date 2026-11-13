@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
-# gh-pr-review: レビューコメント取得スクリプト
+#!/bin/sh
+# gh-pr-review: レビューコメント取得スクリプト。中身は claude-hooks script get-review-comments（Rust にして Windows
+# でも jq なしで動かす）。スキルの文はこのスクリプトの名前とパスで呼ぶので、ファイルは残して exec する
 #
 # Usage: get-review-comments.sh <PR の URL> [--unresolved]
 #
@@ -7,83 +8,6 @@
 #   id, node_id, path, line, body, user, user_type（Bot / User。resolve の可否判断に使う）,
 #   created_at, in_reply_to_id, html_url,
 #   thread_id（resolve-thread.sh の対象）, is_resolved, is_outdated
-#
-# REST の /pulls/{n}/comments はスレッドの resolve 状態を持たないため、GraphQL の
-# reviewThreads から取得する。--unresolved は isResolved == false のスレッドに限定する。
-
-set -euo pipefail
-
-source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/pr-url.sh"
-if (( $# < 1 || $# > 2 )) || ! parse_pr_url "$1"; then
-  echo "Usage: $0 <PR の URL> [--unresolved]" >&2
-  exit 1
-fi
-UNRESOLVED_ONLY="${2:-}"
-if [[ -n "$UNRESOLVED_ONLY" && "$UNRESOLVED_ONLY" != "--unresolved" ]]; then
-  echo "ERROR: 不明なオプション: ${UNRESOLVED_ONLY}" >&2
-  exit 1
-fi
-
-# スレッドは --paginate で全件。スレッド内コメントは 100 件まで（通常十分。超える場合は
-# 末尾を取りこぼすので、hasNextPage を見て警告する）
-raw=$(gh api graphql --paginate \
-  -F owner='{owner}' -F name='{repo}' -F number="$PR_NUMBER" \
-  -f query='
-    query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
-      repository(owner: $owner, name: $name) {
-        pullRequest(number: $number) {
-          reviewThreads(first: 100, after: $endCursor) {
-            pageInfo { hasNextPage endCursor }
-            nodes {
-              id
-              isResolved
-              isOutdated
-              path
-              line
-              comments(first: 100) {
-                pageInfo { hasNextPage }
-                nodes {
-                  databaseId
-                  id
-                  body
-                  author { __typename login }
-                  createdAt
-                  url
-                  replyTo { databaseId }
-                }
-              }
-            }
-          }
-        }
-      }
-    }' --jq '.data.repository.pullRequest.reviewThreads.nodes[]')
-
-if jq -e 'select(.comments.pageInfo.hasNextPage)' <<<"$raw" >/dev/null 2>&1; then
-  echo "WARN: 100 件を超える返信を持つスレッドがあり、末尾の返信は省略されています" >&2
-fi
-
-unresolved=false
-[[ "$UNRESOLVED_ONLY" == "--unresolved" ]] && unresolved=true
-
-jq -s --argjson unresolved "$unresolved" '
-  [ .[]
-    | select(($unresolved | not) or (.isResolved | not))
-    | . as $t
-    | .comments.nodes[]
-    | {
-        id: .databaseId,
-        node_id: .id,
-        path: $t.path,
-        line: $t.line,
-        body: .body,
-        user: (.author.login // null),
-        user_type: (.author.__typename // null),
-        created_at: .createdAt,
-        in_reply_to_id: (.replyTo.databaseId // null),
-        html_url: .url,
-        thread_id: $t.id,
-        is_resolved: $t.isResolved,
-        is_outdated: $t.isOutdated
-      }
-  ] | sort_by(.created_at)
-' <<<"$raw"
+# --unresolved は resolve していないスレッドに限る
+. "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
+claude_hooks_script get-review-comments "$@"

@@ -54,6 +54,14 @@ awk -v h="\$4" '\$1 == h { c = (\$2 == "0") } END { exit !c }' <<<"\$records"
 FAKE
   chmod +x "$TEST_ROOT/fakebin/claude-hooks"
 }
+# fake_hooks_covers <case の行>: local-review-covers の答えをテストごとに決める偽物。script は本物に渡す
+# （decide-next.sh が呼ぶ get-review-comments.sh も claude-hooks を起動する）
+fake_hooks_covers() {
+  local real
+  printf -v real '%q' "$REAL_CLAUDE_HOOKS"
+  make_fake_tool claude-hooks "script\ *) exec $real \"\$@\" ;;
+$1"
+}
 fake_hooks_exact
 export CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/claude-hooks"
 PR7_URL="https://github.com/octo/repo/pull/7"
@@ -121,7 +129,7 @@ assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 # 中身を claude-hooks script に移したスクリプト（ADR-0087）は、claude-hooks が無ければ（claude-sync だけでバイナリを
 # 入れていない、Windows で cargo install の前）入れ方を示して止める。sh の `exec: not found` だけでは、何を入れるかが分からない
-for script in get-pr-info.sh reply-to-comment.sh reset-rounds.sh resolve-thread.sh; do
+for script in get-pr-info.sh get-review-comments.sh reply-to-comment.sh reset-rounds.sh resolve-thread.sh; do
   it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
   make_fake_gh '*) echo "{}" ;;'
   read -ra rest <<<"${REST_ARGS[$script]}"
@@ -1170,14 +1178,14 @@ assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 # 記録の後に rebase だけした head も記録済みとみなす（ADR-0059）。判定は local-review-covers の終了コードに従う
 it "decide-next: local-review-covers が覆っていると言えば（記録の後に rebase だけ）LOCAL_REVIEWED: yes"
 fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
-make_fake_tool claude-hooks '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
+fake_hooks_covers '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_eq 0 $?
 assert_contains "$out" "LOCAL_REVIEWED: yes"
 assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
 
 it "decide-next: local-review-covers が覆っていないと言えば LOCAL_REVIEWED: no"
-make_fake_tool claude-hooks '"local-review-covers octo/repo 1 def5678") exit 1 ;;'
+fake_hooks_covers '"local-review-covers octo/repo 1 def5678") exit 1 ;;'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
 assert_eq 0 $?
 assert_contains "$out" "LOCAL_REVIEWED: no"
@@ -1185,7 +1193,7 @@ assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
 
 it "decide-next: claude-hooks が local-review-covers を知らなければ（使い方で終了コード 2）、入れ直しを案内して止める"
 # claude-sync はスクリプトだけを入れ替え、バイナリは rebuild まで古いまま
-make_fake_tool claude-hooks '*) exit 2 ;;'
+fake_hooks_covers 'local-review-covers\ *) exit 2 ;;'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
 assert_ne 0 $?
 assert_contains "$out" "rebuild"
@@ -1196,7 +1204,7 @@ assert_ne 0 $?
 assert_contains "$out" "rebuild"
 
 it "decide-next: 記録を確かめられなければ（local-review-covers の失敗）、記録済みとみなさずに止める"
-make_fake_tool claude-hooks '*) exit 3 ;;'
+fake_hooks_covers 'local-review-covers\ *) exit 3 ;;'
 out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
 assert_ne 0 $?
 assert_not_contains "$out" "VERDICT"
