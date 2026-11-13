@@ -148,3 +148,15 @@ hook の登録の形:
 - Linux で rebuild の前と後の `~/.claude/settings.json` を比べ、違いが hook の登録の形（exec form）だけである
 - #101 の段階 3 の後、Windows の機械で設置のコマンドを実行してから、Claude Code の Bash ツールで main への `git commit` が PreToolUse hook に
   止められる
+
+## 補足
+
+- 2026-11-13: 同期（`modules/home/parts/claude-setup/src/sync.rs`）を claude-sync.sh の rsync から移す途中で、レビューで
+  次の版を捨てた。どれも rsync -a と振る舞いが違った。
+  - 中身が同じファイルを飛ばした。mode だけの変更（実行の bit）が ~/.claude に届かない
+  - symlink を辿ってコピーした。親を指すリンクで止まらず、~/.claude の側のリンクを辿ると利用者の作業の場所に書く
+  - 上書きを、消してからコピーした。読む側に消えたファイルを見せ、コピーに失敗すると前の版も無くなる
+  - ファイルとディレクトリの入れ替わりで止まった（activation も止まる）
+  - いちばん上の場所（skills など）のリンクを、中の項目と同じくリンクのままコピーした。rsync は末尾の `/` で辿る
+  - 空の HOME を止めるテストを書いたが、`std::env::home_dir` は Unix で HOME が空なら passwd のホームを返し、テストが
+    実際のホームに同期したので外した
