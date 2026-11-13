@@ -134,3 +134,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   `lib/claude-hooks-script.sh` が呼んだ sh の場所を `CLAUDE_HOOKS_SCRIPT_DIR` で渡し、`script::claude_root` がそこから
   `<root>`（`~/.claude` か、リポジトリの `.claude`）を引く（渡されなければ `~/.claude`）。Windows の Git Bash の `pwd` は
   `/c/...` の形でネイティブの exe が読めないので、`pwd -W` の形で渡す
+- 2026-11-14: worktree-add の .worktreelink の symlink は、sh の版では `ln -s` で作っていた。Git Bash の `ln -s` は既定で
+  コピーを作るので、Windows では共有にならなかった。Rust に移した版は、Windows では `std::os::windows::fs` の
+  symlink_dir / symlink_file で作る。開発者モードか管理者の権限が無ければ作れないので、作った symlink を消して、その旨を
+  示して止める
