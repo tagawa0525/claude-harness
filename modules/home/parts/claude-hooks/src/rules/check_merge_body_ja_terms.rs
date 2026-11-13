@@ -438,10 +438,6 @@ impl CheckMergeBodyJaTerms {
             }
             match run_check(check, &dir, &message) {
                 Verdict::Pass => {}
-                // 何を直すかを示せないので止めない（commit-msg が同じ検査で止める）
-                Verdict::Reject(output) if output.trim().is_empty() => notice(format!(
-                    "check-merge-body-ja-terms: {check} commit-msg が理由を出さずに 1 で終わったので、git merge のメッセージを判定していません"
-                )),
                 Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(&output))),
                 Verdict::Failed(why) => notice(format!(
                     "check-merge-body-ja-terms: git merge のメッセージを判定していません: {why}"

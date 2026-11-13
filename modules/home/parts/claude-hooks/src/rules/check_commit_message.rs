@@ -193,6 +193,10 @@ pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     );
     match out.status.code() {
         Some(0) => Verdict::Pass,
+        // 何を直すかを示せない拒否は、止めずに判定できなかった理由にする（commit-msg が同じ検査で止める）
+        Some(1) if text.trim().is_empty() => Verdict::Failed(format!(
+            "{check} commit-msg が理由を出さずに 1 で終わりました"
+        )),
         Some(1) => Verdict::Reject(text.trim().to_string()),
         _ => Verdict::Failed(format!(
             "{check} が失敗しました（{}）: {}",
