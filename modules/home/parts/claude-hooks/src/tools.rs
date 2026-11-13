@@ -1,4 +1,5 @@
-//! hook が呼ぶハーネスの外のコマンド（ja-terms、commit-refs）の見つけ方（ADR-0085、ADR-0086）
+//! hook が呼ぶハーネスの外のコマンド（ja-terms、commit-refs、git hook の gitleaks）の見つけ方（ADR-0085、ADR-0086）。
+//! PreToolUse の block-secret-commit は PATH の gitleaks を使う（crate::rules::block_secret_commit）
 
 /// var の環境変数のパスが先（空の値はパスでない）。Linux では package.nix のラッパーが store のパスを固定する（hook は
 /// Claude Code や利用者の端末の git が起動するので、利用者の PATH に頼らない）。無ければ、Nix のラッパーの無い Windows
