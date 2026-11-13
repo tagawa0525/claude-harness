@@ -129,7 +129,7 @@ assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 # 中身を claude-hooks script に移したスクリプト（ADR-0087）は、claude-hooks が無ければ（claude-sync だけでバイナリを
 # 入れていない、Windows で cargo install の前）入れ方を示して止める。sh の `exec: not found` だけでは、何を入れるかが分からない
-for script in get-pr-info.sh reply-to-comment.sh reset-rounds.sh resolve-thread.sh; do
+for script in get-pr-info.sh get-review-comments.sh reply-to-comment.sh reset-rounds.sh resolve-thread.sh; do
   it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
   make_fake_gh '*) echo "{}" ;;'
   read -ra rest <<<"${REST_ARGS[$script]}"
