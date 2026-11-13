@@ -5,7 +5,9 @@
 //!   リモートではそのブランチを head とするマージ済みの PR）が無ければ、何も変えずに止める。確かめられないときも止める
 //! - 段階 0: ローカルの branch の先端が既定のブランチ（無ければ、追うリモートの既定のブランチを fetch したもの）の祖先で
 //!   なければ、何も消さずに止める
-//! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）
+//! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）。メインの worktree
+//!   なら消さずに、段階 2 で既定のブランチへ切り替える（未コミットの変更があるか、既定のブランチが別の worktree にあれば、
+//!   何も変えずに止まる）
 //! - 段階 2: 既定のブランチへ切り替え、fetch --prune、pull --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
@@ -125,7 +127,8 @@ fn cleanup(branch: &str) -> Result<(), i32> {
         .to_string();
     // メインの worktree でチェックアウトしているブランチ（worktree を作らずに作業した）は、メインの worktree を消さずに、
     // 段階 2 で既定のブランチへ切り替える
-    let wt_path = worktree_of(&list, branch).filter(|wt| *wt != main_root);
+    let in_main = worktree_of(&list, branch).as_deref() == Some(main_root.as_str());
+    let wt_path = worktree_of(&list, branch).filter(|_| !in_main);
     let default_root = worktree_of(&list, default);
     // 以降は既定のブランチの worktree（どこにもチェックアウトされていなければメインの worktree）で行う。今いる
     // worktree が対象のものでも、無関係なブランチのものでも、そこでは既定のブランチへ switch できない
@@ -137,6 +140,9 @@ fn cleanup(branch: &str) -> Result<(), i32> {
 
     trace(branch, &remote, &main_root)?;
     merged(branch, default, default_root.as_deref())?;
+    if in_main {
+        main_worktree_can_switch(branch, default, &main_root, default_root.as_deref())?;
+    }
 
     match &wt_path {
         Some(wt) => {
@@ -162,6 +168,33 @@ fn cleanup(branch: &str) -> Result<(), i32> {
     }
 
     remote_branch(branch, &remote, default)
+}
+
+/// メインの worktree でチェックアウトしているブランチは、段階 2 でメインの worktree を既定のブランチへ切り替えて外す。
+/// 未コミットの変更があると既定のブランチへ持ち込むので、linked worktree の remove と同じく止める。既定のブランチが別の
+/// worktree にあると切り替えられず、後の branch -d で止まるので、先に止めて外し方を示す（どちらも何も変えない）
+fn main_worktree_can_switch(
+    branch: &str,
+    default: &str,
+    main_root: &str,
+    default_root: Option<&str>,
+) -> Result<(), i32> {
+    if git(&["-C", main_root, "status", "--porcelain"]).is_none_or(|s| !s.is_empty()) {
+        eprintln!(
+            "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。/git-commit でコミットしてから、もう一度実行してください。何も変えていません"
+        );
+        return Err(1);
+    }
+    if let Some(other) = default_root {
+        eprintln!(
+            "ERROR: {branch} はメインの worktree（{main_root}）でチェックアウトされ、{default} は別の worktree（{other}）にあるので、メインの worktree を {branch} から外せません。何も変えていません"
+        );
+        eprintln!(
+            "  修正方法: メインの worktree で別のブランチに切り替える（git -C {main_root} switch --detach など）か、{other} を片付けてから、もう一度実行する"
+        );
+        return Err(1);
+    }
+    Ok(())
 }
 
 /// 手元（ローカルのブランチ、リモート追跡の ref）を先に見て、無いときだけネットワークに行く
