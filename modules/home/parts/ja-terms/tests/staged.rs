@@ -81,6 +81,15 @@ impl Repo {
             .output()
             .unwrap()
     }
+
+    /// リポジトリの中のディレクトリ dir で検査する
+    fn staged_in(&self, dir: &str) -> Output {
+        self.command(env!("CARGO_BIN_EXE_ja-terms"))
+            .current_dir(self.0.join(dir))
+            .arg("staged")
+            .output()
+            .unwrap()
+    }
 }
 
 fn stdout(out: &Output) -> String {
@@ -257,4 +266,22 @@ fn outside_a_repository_is_a_failure() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn paths_are_from_the_top_of_the_repository_wherever_it_runs() {
+    let repo = Repo::new();
+    repo.stage(".textlintignore", "docs/fixtures/**\n");
+    repo.stage("docs/fixtures/case.md", "# t\n\n{B}の結果。\n");
+    repo.stage("docs/doc.md", "# t\n\n{B}の結果。\n");
+    repo.stage("top.md", "# t\n\n{B}の結果。\n");
+    let out = repo.staged_in("docs");
+    assert!(stops(&out));
+    let report = stdout(&out);
+    let reported: Vec<&str> = report
+        .lines()
+        .filter(|l| l.ends_with("[Error/prh]"))
+        .map(|l| l.split(':').next().unwrap())
+        .collect();
+    assert_eq!(reported, ["docs/doc.md", "top.md"]);
 }
