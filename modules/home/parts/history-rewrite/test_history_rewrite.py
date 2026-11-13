@@ -13,7 +13,6 @@ import unittest
 from pathlib import Path
 
 import history_rewrite
-import yaml
 
 # 履歴に無いコミットの番号。対応表で「消えた」（新が 0）にすると、それを指す文書で commit-refs remap が止まる
 VANISHED = "deadbeef" * 5
@@ -296,17 +295,18 @@ class HistoryRewrite(unittest.TestCase):
 
     def lint(self, repo: Repo, commits: list[str]) -> subprocess.CompletedProcess:
         """コミットの .md と .py と本文に、同じ辞書を pre-commit と同じ ja-terms check で当てる"""
-        main, extra = (
-            yaml.safe_load(Path(path).read_text(encoding="utf-8"))["rules"]
-            for path in [os.environ["HISTORY_REWRITE_DICTIONARY"], self.extra]
-        )
         # ja-terms check は辞書を 1 つ読むので、つなぐ。書き換え（prh_rules.load）も 2 つの辞書の規則を順に並べるので、
-        # 同じ規則になる
-        rules = main + extra
+        # 同じ規則になる。YAML として読み直して書き出すと、YAML 1.1（PyYAML）と 1.2（ja-terms）で読み方の違う値が
+        # 変わりうるので、文のまま、足す辞書の規則の行を本物の辞書の rules の並びの後ろに足す
+        main = Path(os.environ["HISTORY_REWRITE_DICTIONARY"]).read_text(
+            encoding="utf-8"
+        )
+        extra = self.extra.read_text(encoding="utf-8")
+        head = "version: 1\nrules:\n"
+        self.assertTrue(extra.startswith(head), extra)
         dictionary = Path(self.tmp.name) / "dictionary.yml"
         dictionary.write_text(
-            yaml.safe_dump({"version": 1, "rules": rules}, allow_unicode=True),
-            encoding="utf-8",
+            main.rstrip("\n") + "\n" + extra[len(head) :], encoding="utf-8"
         )
         files = Path(tempfile.mkdtemp(dir=self.tmp.name))
         n = 0
