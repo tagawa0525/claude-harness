@@ -751,8 +751,8 @@ assert_eq "" "$(git branch --list feat/x)"
 assert_eq "adr-0001" "$(git tag --list adr-0001)"
 cd "$TEST_ROOT" || exit 1
 
-# claude-sync の元のリポジトリ（ハーネス）に見立てる。post-merge-cleanup は同期のコマンド（claude-setup の crate。
-# 前の版は claude-sync.sh。2 つ目の引数で選ぶ）の有無でそれを見分ける
+# claude-sync の元のリポジトリ（ハーネス）に見立てる。post-merge-cleanup は同期のコマンド（claude-setup の crate か、
+# 古い版の claude-sync.sh。2 つ目の引数で選ぶ）の有無でそれを見分ける
 setup_claude_sync_source() {
   setup_merged_branch "$1"
   commit_file "$1/app" "${2:-modules/home/parts/claude-setup/Cargo.toml}" "chore: claude-setup"

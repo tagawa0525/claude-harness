@@ -197,8 +197,8 @@ if [[ -n "$(git remote)" ]]; then
   # 判定は広く取る。配置するものを 1 つずつ挙げると漏れ、多めに知らせても害は無い
   HAS_SYNC=no
   HAS_REBUILD=no
-  # ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup。前は claude-sync.sh）を持ち、rebuild する構成の
-  # リポジトリ（nixfiles）は nix-rebuild.sh を持つ
+  # ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup の crate。古い版の clone と、ハーネスを分ける前の
+  # nixfiles は claude-sync.sh）を持ち、rebuild する構成のリポジトリ（nixfiles）は nix-rebuild.sh を持つ
   git cat-file -e HEAD:modules/home/parts/claude-setup/Cargo.toml 2>/dev/null && HAS_SYNC=yes
   git cat-file -e HEAD:modules/home/scripts/claude-sync.sh 2>/dev/null && HAS_SYNC=yes
   git cat-file -e HEAD:modules/home/scripts/nix-rebuild.sh 2>/dev/null && HAS_REBUILD=yes
