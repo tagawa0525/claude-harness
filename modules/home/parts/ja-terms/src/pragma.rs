@@ -29,11 +29,12 @@ impl Pragmas {
         if !paragraph.contains(PRAGMA) {
             return Ok(pragmas);
         }
-        let mut line_start = 0;
-        for line in paragraph.split(LINE_TERMINATORS) {
-            let start = line_start;
-            // 区切りの行の終わりは 1 文字（\r\n も \r と \n の 2 つの行の終わり）
-            line_start += line.len() + line_start_gap(paragraph, start + line.len());
+        let mut next = 0;
+        // 行の終わりは 1 文字ずつ（\r\n も \r と \n の 2 つの行の終わり）
+        for with_end in paragraph.split_inclusive(LINE_TERMINATORS) {
+            let start = next;
+            next += with_end.len();
+            let line = with_end.trim_end_matches(LINE_TERMINATORS);
             let Some(at) = line.find(PRAGMA) else {
                 continue;
             };
@@ -90,9 +91,4 @@ impl Pragmas {
             })
             .collect()
     }
-}
-
-/// paragraph の at にある行の終わりの長さ（UTF-8 のバイト。文の終わりなら 0）
-fn line_start_gap(paragraph: &str, at: usize) -> usize {
-    paragraph[at..].chars().next().map_or(0, char::len_utf8)
 }
