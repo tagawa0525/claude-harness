@@ -79,7 +79,7 @@ pub fn has_github_remote(dir: &Path) -> bool {
 }
 
 /// 他人のプロジェクトの fork（上流に PR を出す worktree）か。`upstream` リモートの有無で判定する。
-/// commit-msg と pre-commit の git hook（crate::git_hook）も使う
+/// commit-msg、pre-commit、pre-merge-commit の git hook（crate::git_hook）も使う
 pub fn is_fork(dir: &Path) -> bool {
     git(dir, &["remote", "get-url", "upstream"]).is_some()
 }
@@ -88,7 +88,8 @@ pub fn is_fork(dir: &Path) -> bool {
 /// （--git-path hooks/… は core.hooksPath、つまりグローバルの hook 自身を指すので使わない）。core.hooksPath を
 /// 向けると git はローカルの hook を探さないので、git と同じ規則で探す: Unix は実行の bit のあるファイル、Windows は
 /// 実行の bit が無く、ファイルがあれば hook とみなし、`<名前>.exe` も探す（Git for Windows の find_hook）。
-/// commit-msg、post-rewrite、pre-commit の git hook（crate::git_hook）と、commit-msg を先回りする PreToolUse のルールが使う
+/// commit-msg、post-rewrite、pre-commit、pre-merge-commit の git hook（crate::git_hook）と、commit-msg を先回りする
+/// PreToolUse のルールが使う
 pub fn local_hook(common: &Path, name: &str) -> Option<std::path::PathBuf> {
     let hooks = common.join("hooks");
     let mut candidates = vec![hooks.join(name)];

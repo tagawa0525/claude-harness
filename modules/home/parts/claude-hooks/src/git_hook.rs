@@ -519,14 +519,7 @@ fn pre_merge_commit(args: &[String]) -> i32 {
     // index は git が渡す GIT_INDEX_FILE。commit -a なら index.lock）。追跡していないファイルも、木全体の検査が拾う
     // ので含める。.gitignore で除外したものは検査のツールも除外するので含めない。core.quotePath=false は、下の
     // .gitignore から外れた生成物の一覧と同じく、非 ASCII のパスを 8 進で引用せずに出すため
-    let lines = |args: &[&str]| -> Option<Vec<String>> {
-        git::git(dir, args).map(|out| {
-            out.lines()
-                .filter(|l| !l.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-    };
+    let lines = |args: &[&str]| git::git(dir, args).map(|out| nonempty_lines(&out));
     let (Some(modified), Some(untracked)) = (
         lines(&["-c", "core.quotePath=false", "diff", "--name-only"]),
         lines(&[
@@ -591,7 +584,7 @@ fn pre_merge_commit(args: &[String]) -> i32 {
 fn report_unclean(dir: &Path, modified: &[String], untracked: &[String]) {
     // --no-renames: ディレクトリを移したブランチで、改名として新しい .gitignore だけを出すと、無視の行を持っていた
     // 元の .gitignore が落ちる
-    let ignore_changed: Vec<String> = git::git(
+    let ignore_changed = git::git(
         dir,
         &[
             "-c",
@@ -605,15 +598,14 @@ fn report_unclean(dir: &Path, modified: &[String], untracked: &[String]) {
             ":(glob)**/.gitignore",
         ],
     )
-    .map(|out| {
-        out.lines()
-            .filter(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect()
-    })
-    .unwrap_or_default();
-    let mut unignored = Vec::new();
+    .map(|out| nonempty_lines(&out));
     let mut mark_failed = false;
+    let ignore_changed = ignore_changed.unwrap_or_else(|| {
+        println!("❌ マージで変わる .gitignore を git から読めません");
+        mark_failed = true;
+        Vec::new()
+    });
+    let mut unignored = Vec::new();
     if !ignore_changed.is_empty() && !untracked.is_empty() {
         match head_ignored(dir, untracked) {
             Ok(list) => unignored = list,
@@ -625,10 +617,12 @@ fn report_unclean(dir: &Path, modified: &[String], untracked: &[String]) {
     }
     // 印の付いたファイルは下の一覧にだけ出す（同じファイルを 2 度並べると、大きな出力のディレクトリで修正方法が
     // 埋もれる）
+    // 生成物のディレクトリは数万のファイルを持ちうるので、集合で引く
+    let marked: std::collections::HashSet<&String> = unignored.iter().collect();
     let others: Vec<&String> = modified
         .iter()
         .chain(untracked)
-        .filter(|f| !unignored.contains(f))
+        .filter(|f| !marked.contains(f))
         .collect();
     println!("❌ 作業ツリーにマージ結果以外の変更があるので、マージ結果を検査できません:");
     for f in &others {
@@ -668,23 +662,8 @@ fn report_unclean(dir: &Path, modified: &[String], untracked: &[String]) {
 /// パスとパターンで決まる）。git archive は export-ignore の属性で .gitignore を落としうるので、git show で 1 本ずつ
 /// 取り出す
 fn head_ignored(dir: &Path, untracked: &[String]) -> Result<Vec<String>, String> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let tmp = std::env::temp_dir().join(format!(
-        "claude-hooks-ignored-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&tmp).map_err(|e| format!("{} を作れません（{e}）", tmp.display()))?;
-    struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let _cleanup = Cleanup(tmp.clone());
-    let repo = tmp.join("repo");
+    let tmp = crate::process::private_temp_dir("claude-hooks-ignored")?;
+    let repo = tmp.0.join("repo");
     let tree = crate::git::run(dir, &["ls-tree", "-r", "-z", "--name-only", "HEAD"], None)
         .filter(|o| o.status.success())
         .ok_or("git ls-tree HEAD に失敗しました")?;
@@ -730,9 +709,13 @@ fn head_ignored(dir: &Path, untracked: &[String]) -> Result<Vec<String>, String>
     if !matches!(out.status.code(), Some(0 | 1)) {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    Ok(String::from_utf8_lossy(&out.stdout)
-        .lines()
+    Ok(nonempty_lines(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// 空でない行
+fn nonempty_lines(text: &str) -> Vec<String> {
+    text.lines()
         .filter(|l| !l.is_empty())
         .map(str::to_string)
-        .collect())
+        .collect()
 }
