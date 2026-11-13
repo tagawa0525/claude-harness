@@ -129,11 +129,17 @@ pub fn run(map_path: &Path) -> Result<(), Errors> {
 
     let changed = rewrite.finals.iter().filter(|(c, f)| c != f).count();
     let shown = map_file.strip_prefix(&top).unwrap_or(&map_file);
+    // 貼って commit-refs remap に渡すパスなので、Windows でも git と同じ `/` 区切りで書く（Git Bash は `\` を消す）
+    let shown = shown.display().to_string();
+    let shown = if cfg!(windows) {
+        shown.replace('\\', "/")
+    } else {
+        shown
+    };
     let mut report = format!(
-        "COMMITS: {}\nCHANGED: {changed}\nREFS: {}\nMAP: {}\n",
+        "COMMITS: {}\nCHANGED: {changed}\nREFS: {}\nMAP: {shown}\n",
         rewrite.finals.len(),
         rewrite.refs_replaced,
-        shown.display()
     );
     for name in not_rewritten {
         report.push_str(&format!("NOT_REWRITTEN: {name}\n"));
