@@ -83,10 +83,13 @@ fn run(args: Vec<OsString>) -> Result<bool, Failure> {
         let plural = if total == 1 { "" } else { "s" };
         out.push_str(&format!("\n{total} problem{plural}\n"));
     }
-    std::io::stdout()
-        .write_all(out.as_bytes())
-        .map_err(|e| Failure(format!("報告を書けない: {e}")))?;
-    Ok(total > 0)
+    match std::io::stdout().write_all(out.as_bytes()) {
+        // 読み手が先に閉じても検査は済んでいるので、判定を返す
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+            Err(Failure(format!("報告を書けない: {e}")))
+        }
+        _ => Ok(total > 0),
+    }
 }
 
 /// ファイルの読み方と中身。UTF-8 でない並びは、Node.js の読み込みと同じく U+FFFD にする
