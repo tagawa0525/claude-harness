@@ -137,13 +137,21 @@ fn errors_on_stderr_mean_the_scan_did_not_run() {
 }
 
 #[test]
-fn git_warnings_passed_through_by_gitleaks_are_not_failures() {
+fn git_warnings_mean_the_scan_stopped() {
     // gitleaks 8.30.1 は git diff の警告（CRLF の変換など）を、色を付けた ERR [git] warning: の行と、それに付ける
-    // stderr is not empty の行で出し、0 を返す（scratchpad の一時のリポジトリで本物の出力をコピーした）
+    // stderr is not empty の行で出し、差分を読むのをやめて 0 と空の一覧を返す（scratchpad の一時のリポジトリで本物の
+    // 出力をコピーした。同じトークンが、警告の出ない LF の差分では見つかり、警告の出る差分では見つからない）
     let repo = Repo::new();
     let err = "\x1b[90m8:39PM\x1b[0m \x1b[31mERR\x1b[0m \x1b[1m[git] warning: in the working copy of 'a.txt', CRLF will be replaced by LF the next time Git touches it\x1b[0m\n\x1b[90m8:39PM\x1b[0m \x1b[31mERR\x1b[0m \x1b[36merror=\x1b[0m\x1b[31m\x1b[1m\"stderr is not empty\"\x1b[0m\x1b[0m\n";
     let out = repo.scan(&[("FAKE_TOOL_ERR", err)], &[]);
-    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let text = said(&out);
+    // 色の符号を外して見せる
+    assert!(
+        text.contains("ERR [git] warning: in the working copy"),
+        "{text}"
+    );
+    assert!(!text.contains('\x1b'), "{text}");
 }
 
 #[test]

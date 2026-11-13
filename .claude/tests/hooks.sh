@@ -1048,12 +1048,13 @@ out=$(run_hook block-secret-commit 'cd sub && git commit -m "chore: a"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "conf.txt:3"
 
-it "block-secret-commit: git の警告（CRLF の変換など）は失敗とみなさず、ほかのエラーの行は失敗とみなす"
-# gitleaks 8.30.1 は、作業ツリーとの git diff の警告を ERR [git] warning: … として標準エラーに出し、0 を返す
+it "block-secret-commit: -a の --pre-commit でも、標準エラーの行（git の警告を含む）は検査できなかったとみなす"
+# gitleaks 8.30.1 は、中の git diff の警告（CRLF の変換など）でも ERR [git] warning: … と stderr is not empty を出し、
+# 差分を読むのをやめて [] と 0 を返す（警告の出る差分のトークンを見つけない）
 fake_gitleaks ok warn
 out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
-assert_eq allow "$(decision "$out")"
-# 警告でないエラーの行は、--pre-commit でも検査できなかったとみなす
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "差分を読むのをやめた"
 fake_gitleaks ok err
 out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
 assert_eq deny "$(decision "$out")"
