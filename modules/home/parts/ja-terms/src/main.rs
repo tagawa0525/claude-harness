@@ -10,6 +10,8 @@
 //!   Markdown として検査し、`<行>:<列>: <誤り> => <正しい語>` の行で報告する
 //! - `ja-terms commit-msg [--dictionary <辞書>] <メッセージのファイル>`: git の commit-msg の hook と claude-hooks の
 //!   git commit のルールが呼ぶ、件名の形と長さと本文の語の検査。理由は標準出力に出す
+//! - `ja-terms staged [--dictionary <辞書>]`: グローバルの pre-commit がリポジトリの直下で呼ぶ、ステージした中身の
+//!   検査（[`staged`]）
 //!
 //! 辞書の既定は、ビルドに埋めた prh.yml。
 //!
@@ -21,6 +23,8 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+mod staged;
+
 use ja_terms::Dictionary;
 use ja_terms::message::{self, Subject};
 use ja_terms::report::{self, Syntax, TEXT_EXTENSIONS};
@@ -28,10 +32,11 @@ use ja_terms::report::{self, Syntax, TEXT_EXTENSIONS};
 const DICTIONARY: &str = include_str!("../prh.yml");
 const USAGE: &str = "Usage: ja-terms check [--dictionary <辞書>] <ファイル>...
        ja-terms message [--dictionary <辞書>] < <メッセージ>
-       ja-terms commit-msg [--dictionary <辞書>] <メッセージのファイル>";
+       ja-terms commit-msg [--dictionary <辞書>] <メッセージのファイル>
+       ja-terms staged [--dictionary <辞書>]";
 
 /// 検査できなかった理由
-struct Failure(String);
+pub(crate) struct Failure(pub(crate) String);
 
 fn main() -> ExitCode {
     match run(std::env::args_os().skip(1).collect()) {
@@ -67,12 +72,13 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
             Ok(u8::from(!reports.is_empty()))
         }
         (Some("commit-msg"), [path]) => commit_msg(&dictionary, Path::new(path)),
+        (Some("staged"), []) => staged::run(&dictionary),
         _ => Err(usage()),
     }
 }
 
 /// 報告を標準出力に書く。読み手が先に閉じても検査は済んでいるので、誤りにしない
-fn print(out: &str) -> Result<(), Failure> {
+pub(crate) fn print(out: &str) -> Result<(), Failure> {
     match std::io::stdout().write_all(out.as_bytes()) {
         Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
             Err(Failure(format!("報告を書けない: {e}")))
