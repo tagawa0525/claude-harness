@@ -10,6 +10,8 @@
 //! 1 = 崩れた語がある、2 = 検査できなかった
 
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -84,10 +86,14 @@ fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
         return Ok(HashSet::new());
     }
     let patterns = git(Some(top), &["show", ":.textlintignore"])?;
-    // --exclude-from はファイルを読むので、一時のファイルに書く
-    let path = std::env::temp_dir().join(format!("ja-terms-ignore-{}", std::process::id()));
-    std::fs::write(&path, patterns)
-        .map_err(|e| Failure(format!("{} に書けない: {e}", path.display())))?;
+    // --exclude-from はファイルを読むので、git dir の中（ほかの利用者が先に置けない）に、無い名前で作って書く
+    let (path, mut file) = private_file(top)?;
+    let written = file.write_all(&patterns);
+    drop(file);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&path);
+        return Err(Failure(format!("{} に書けない: {e}", path.display())));
+    }
     let exclude = format!("--exclude-from={}", path.display());
     let listed = git(
         Some(top),
@@ -99,6 +105,28 @@ fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
         .filter(|p| !p.is_empty())
         .map(|p| String::from_utf8_lossy(p).into_owned())
         .collect())
+}
+
+/// git dir の中に、まだ無い名前の空のファイルを作って開く（既にある名前の symlink を辿って書かない）
+fn private_file(top: &Path) -> Result<(PathBuf, File), Failure> {
+    let dir = git(Some(top), &["rev-parse", "--absolute-git-dir"])?;
+    let dir = PathBuf::from(String::from_utf8_lossy(&dir).trim_end_matches('\n'));
+    for n in 0.. {
+        let path = dir.join(format!(
+            "ja-terms-textlintignore-{}-{n}",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(Failure(format!("{} を作れない: {e}", path.display()))),
+        }
+    }
+    unreachable!("名前の数は尽きない")
 }
 
 pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
