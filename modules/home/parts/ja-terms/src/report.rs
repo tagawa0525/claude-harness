@@ -18,13 +18,13 @@ pub enum Syntax {
     Text,
 }
 
-/// @textlint/text で読む拡張子（textlint で検査していたときの codeExtensions と同じ。git-hooks.nix の pre-commit も
-/// ja-terms staged がこの一覧で選ぶ）
+/// 1 行ずつ読む（@textlint/text と同じ）コードとテキストの拡張子。ja-terms check と ja-terms staged（pre-commit）が
+/// この一覧で選ぶ
 pub const TEXT_EXTENSIONS: [&str; 9] = [
     "txt", "rs", "py", "sh", "nix", "toml", "yaml", "yml", "json",
 ];
 
-/// ファイルの名前 name の読み方。前の ja-terms-files（files.sh）と同じく、名前に . があれば最後の . の後を拡張子にし（.md の
+/// ファイルの名前 name の読み方。名前に . があれば最後の . の後を拡張子にし（.md の
 /// 拡張子は md）、大文字と小文字を問わない。md は Markdown、[`TEXT_EXTENSIONS`] はテキスト、ほかは None
 pub fn syntax_of(name: &str) -> Option<Syntax> {
     let (_, extension) = name.rsplit_once('.')?;

@@ -11,7 +11,7 @@ fn fixtures() -> PathBuf {
 }
 
 /// 検査に渡す名前。固定の入力は markdownlint が直さないよう .markdown にしてあるので、Markdown は .md にして渡す
-/// （ja-terms-files と同じく、Markdown の拡張子は md だけ）。絶対パス（scratch のファイル）はそのまま渡す
+/// （Markdown の拡張子は md だけ）。絶対パス（scratch のファイル）はそのまま渡す
 fn input_name(name: &str) -> String {
     match name.strip_suffix(".markdown") {
         Some(stem) if Path::new(name).is_relative() => format!("{stem}.md"),
@@ -234,7 +234,7 @@ fn a_closed_output_still_exits_1_when_terms_are_found() {
 
 #[test]
 fn names_starting_with_a_dot_are_read_by_the_extension_after_it() {
-    // ja-terms-files と同じく、`.md` の拡張子は md
+    // 名前に . があれば最後の . の後が拡張子なので、`.md` の拡張子は md
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dot");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(".md");

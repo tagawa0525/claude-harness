@@ -1,5 +1,5 @@
-//! `ja-terms staged` が、今の staged.sh（ja-terms-staged。グローバルの pre-commit が呼ぶ）と同じく、ステージした
-//! 中身を検査すること（ADR-0085）。場合は modules/home/parts/tests/ja-terms.sh の 2〜4c から取る。
+//! `ja-terms staged`（グローバルの pre-commit が呼ぶ）が、ステージした中身を検査すること（ADR-0014、ADR-0085）。
+//! 場合は modules/home/parts/tests/ja-terms.sh の 2〜4c から取る。
 //!
 //! 辞書の語を 1 行に書くと、このファイルが pre-commit の語の検査に掛かるので、崩れた語は分けて書いてつなぐ。
 
