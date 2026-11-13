@@ -1038,6 +1038,21 @@ out=$(run_hook block-secret-commit 'git commit -m --all')
 assert_eq allow "$(decision "$out")"
 assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
 
+it "block-secret-commit: サブディレクトリからのコミットも、リポジトリの直下で検査する"
+# gitleaks git は `.` を作業ディレクトリからの相対で読み、その下の変更だけを見る。直下で呼ばれたときだけ漏えいを返す
+mkdir -p "$HUSKY/sub"
+husky_top=$(cd "$HUSKY" && pwd -P)
+make_fake_tool gitleaks "  *) if [ \"\$(pwd -P)\" = '$husky_top' ]; then echo '$LEAK_JSON'; exit 1; fi; echo '[]' ;;"
+out=$(run_hook block-secret-commit 'cd sub && git commit -m "chore: a"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "conf.txt:3"
+
+it "block-secret-commit: -a の --pre-commit では、git の警告（CRLF の変換など）を失敗とみなさない"
+# gitleaks 8.30.1 は、作業ツリーとの git diff の警告を ERR [git] warning: … として標準エラーに出し、0 を返す
+fake_gitleaks ok err
+out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
+assert_eq allow "$(decision "$out")"
+
 it "block-secret-commit: 対象のディレクトリを決められないときは、git の hook に任せて通す（#281）"
 fake_gitleaks "$LEAK_JSON" ok
 for cmd in 'git -C $d commit -m "chore: a"' "git -C $TEST_ROOT/not-yet commit -m 'chore: a'" \
