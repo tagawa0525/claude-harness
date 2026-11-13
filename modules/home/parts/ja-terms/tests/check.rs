@@ -282,3 +282,20 @@ fn a_symbolic_link_and_its_target_are_checked_as_two_files() {
         )
     );
 }
+
+#[test]
+fn a_file_given_through_a_parent_directory_is_checked_once() {
+    // textlint はパスの .. を字面で外してからファイルの集まりにする
+    let path = scratch("parent.txt", "確忍\n");
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let up = dir.join("sub").join("..").join("parent.txt");
+    let out = check(&[path.to_str().unwrap(), up.to_str().unwrap()]);
+    assert_eq!(
+        stdout(&out),
+        format!(
+            "{}:1:1: 確忍 => 確認 [Error/prh]\n\n1 problem\n",
+            path.display()
+        )
+    );
+}
