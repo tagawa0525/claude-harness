@@ -6,6 +6,8 @@
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
 
+# 中身は claude-hooks script gh-actions-diagnose（ADR-0087）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 # ===========================================================================

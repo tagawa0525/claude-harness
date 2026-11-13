@@ -8,6 +8,7 @@ mod decide_next;
 mod get_latest_review;
 mod get_pr_info;
 mod get_review_comments;
+mod gh_actions_diagnose;
 mod gh_review_requests;
 mod gh_wait_review;
 mod git_info;
@@ -36,6 +37,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("get-latest-review", get_latest_review::main),
     ("get-pr-info", get_pr_info::main),
     ("get-review-comments", get_review_comments::main),
+    ("gh-actions-diagnose", gh_actions_diagnose::main),
     ("gh-review-requests", gh_review_requests::main),
     ("gh-wait-review", gh_wait_review::main),
     ("git-info", git_info::main),

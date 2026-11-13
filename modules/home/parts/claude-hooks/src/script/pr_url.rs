@@ -7,7 +7,6 @@ use std::sync::LazyLock;
 
 /// owner と repo は GitHub の名前に使える文字だけを受ける。案内のコマンド（`-R` など）にそのまま書くので、`;` や空白を
 /// 通さない。PR の下のページ（`/files`）と通知のクエリの付いた URL も、同じ PR を指すので受ける
-/// （`.claude/scripts/lib/pr-url.sh` の parse_pr_url と同じ規則。sh を消すまで両方を揃える）
 static PR_URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)(/[^?#]*)?(\?[^#]*)?(#(.*))?$",
@@ -37,7 +36,7 @@ pub fn parse(url: &str) -> Result<Pr, String> {
 }
 
 /// [`parse`] と同じだが、`#` 以降の付いた URL（コメントの URL）も受け、`#` 以降を [`Pr::fragment`] に入れる
-/// （sh の `parse_pr_url --allow-fragment`）
+///
 pub fn parse_allowing_fragment(url: &str) -> Result<Pr, String> {
     let not_a_pr_url = || {
         format!(
@@ -47,7 +46,7 @@ pub fn parse_allowing_fragment(url: &str) -> Result<Pr, String> {
     let Some(caps) = PR_URL.captures(url) else {
         return Err(not_a_pr_url());
     };
-    // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る（# の検査より先なのは sh と同じ）
+    // `.` と `..` は gh api の {owner}/{repo} に入り、API のパスを上に辿る（# の検査より先に見る）
     if [&caps[1], &caps[2]]
         .iter()
         .any(|name| *name == "." || *name == "..")
