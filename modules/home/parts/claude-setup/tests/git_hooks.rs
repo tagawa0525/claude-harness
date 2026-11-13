@@ -235,3 +235,66 @@ fn wrong_arguments_are_usage_errors() {
         assert_eq!(out.status.code(), Some(2), "{args:?}");
     }
 }
+
+#[test]
+fn a_relative_bin_is_refused() {
+    // git は hook を各リポジトリの直下で起動するので、相対のパスはほかのリポジトリで見つからない
+    let home = Home::new();
+    home.bin("rel/claude-hooks");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            cmd.env_remove(key);
+        }
+    }
+    let out = cmd
+        .args(["git-hooks", "--bin", "rel/claude-hooks"])
+        .current_dir(&home.0)
+        .env("GIT_CONFIG_GLOBAL", home.gitconfig())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home.0)
+        .env("USERPROFILE", &home.0)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(!home.hooks().join("pre-commit").exists());
+}
+
+#[test]
+fn an_unreadable_hook_file_counts_as_not_ours() {
+    // UTF-8 でない（コンパイルしたものや別の符号化の）hook も、利用者のものとして上書きしない
+    let home = Home::new();
+    std::fs::create_dir_all(home.hooks()).unwrap();
+    std::fs::write(home.hooks().join("commit-msg"), b"\x7fELF\xff\xfe").unwrap();
+    let out = home.run(&home.bin("bin/claude-hooks"));
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert_eq!(
+        std::fs::read(home.hooks().join("commit-msg")).unwrap(),
+        b"\x7fELF\xff\xfe"
+    );
+}
+
+#[test]
+fn a_system_hooks_path_is_not_taken_over() {
+    // system の core.hooksPath も git は使うので、global に書いて上書きしない
+    let home = Home::new();
+    let system = home.0.join("system.gitconfig");
+    std::fs::write(&system, "[core]\n\thooksPath = /opt/corp-hooks\n").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            cmd.env_remove(key);
+        }
+    }
+    let out = cmd
+        .args(["git-hooks", "--bin", &home.bin("bin/claude-hooks")])
+        .env("GIT_CONFIG_GLOBAL", home.gitconfig())
+        .env("GIT_CONFIG_SYSTEM", &system)
+        .env("HOME", &home.0)
+        .env("USERPROFILE", &home.0)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("/opt/corp-hooks"), "{}", said(&out));
+    assert_eq!(home.hooks_path(), None);
+}
