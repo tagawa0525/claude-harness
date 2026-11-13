@@ -98,3 +98,14 @@ fn output_of_gh_that_is_not_json_stops_instead_of_reporting_a_healthy_ci() {
         assert!(stderr(&out).contains("JSON"), "{calls:?}: {}", stderr(&out));
     }
 }
+
+#[test]
+fn a_run_list_that_is_not_an_array_stops_instead_of_reporting_no_run() {
+    for list in ["{}", "null", "\"oops\""] {
+        let fake = FakeGh::new();
+        let out = fake.run_calls("gh-actions-diagnose", &[URL], &[(PR, 0), (list, 0)]);
+        assert_eq!(out.status.code(), Some(1), "{list}: {}", stdout(&out));
+        assert!(!stdout(&out).contains("CAUSE:"), "{list}: {}", stdout(&out));
+        assert!(stderr(&out).contains("配列"), "{list}: {}", stderr(&out));
+    }
+}
