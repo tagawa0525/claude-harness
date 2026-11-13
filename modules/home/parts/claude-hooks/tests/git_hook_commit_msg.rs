@@ -326,3 +326,20 @@ fn a_local_exe_hook_runs_on_windows() {
     assert!(calls[0].ends_with("COMMIT_EDITMSG"), "{calls:?}");
     assert!(!calls[0].starts_with("commit-msg "), "{calls:?}");
 }
+
+#[test]
+fn a_local_hook_without_a_shebang_runs_as_sh() {
+    // git と POSIX の sh は、shebang の行の無い実行ファイルを sh のスクリプトとして実行する
+    let repo = Repo::new();
+    let local = repo.local_hook();
+    let marker = repo.root.join("local.log");
+    std::fs::write(&local, format!("echo ran >> \"{}\"\n", sh_path(&marker))).unwrap();
+    executable(&local);
+    let out = repo.commit(&[], &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(marker.exists());
+}
