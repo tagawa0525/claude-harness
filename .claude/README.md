@@ -1,7 +1,7 @@
 # .claude の構成
 
 Claude Code のグローバル設定。`claude-sync`（または home-manager の activation）で
-`~/.claude` に同期される（同期ポリシーは `modules/home/scripts/claude-sync.sh`）。
+`~/.claude` に同期される（同期ポリシーは `modules/home/parts/claude-setup/src/sync.rs`）。
 引数なしの `claude-sync` は、既定の clone（`~/nix/claude-harness`）を `git pull --ff-only` してから同期する。入れるのは既定の
 ブランチのコミットされた最新だけで、別のブランチや、同期する場所に書きかけの編集がある clone では止まる。worktree の直しや作業中の中身を
 入れるときは、パスを渡す（`claude-sync <worktree>`。pull しない）。

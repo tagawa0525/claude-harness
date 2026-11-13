@@ -1,5 +1,5 @@
 //! `claude-setup sync` が、ハーネスの .claude（CLAUDE.md、commands、skills、scripts）を ~/.claude に同期すること
-//! （ADR-0084）。場合は前の modules/home/parts/tests/claude-sync.sh から取る。
+//! （ADR-0084）。
 //!
 //! - CLAUDE.md、skills、scripts はソースが正として、中身の違うファイルを上書きする（サイズと mtime が同じでも）
 //! - commands は既にあるファイルを残す。どこも、ソースに無いファイルを消さない

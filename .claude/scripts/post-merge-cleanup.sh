@@ -18,7 +18,7 @@
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、pull --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
-#      pull で配置するものが変われば NOTE で知らせる。ハーネス（claude-sync.sh を持つ）では、modules か flake なら取り込む側の
+#      pull で配置するものが変われば NOTE で知らせる。ハーネス（同期のコマンドの claude-setup か claude-sync.sh を持つ）では、modules か flake なら取り込む側の
 #      lock の更新と rebuild、.claude なら claude-sync。rebuild する構成のリポジトリ（nix-rebuild.sh を持つ）では、
 #      modules、hosts、secrets、flake なら rebuild。両方を持つリポジトリ（自分の .claude を配り、自分で rebuild する）では、
 #      rebuild と claude-sync
@@ -197,7 +197,9 @@ if [[ -n "$(git remote)" ]]; then
   # 判定は広く取る。配置するものを 1 つずつ挙げると漏れ、多めに知らせても害は無い
   HAS_SYNC=no
   HAS_REBUILD=no
-  # ~/.claude の配置の元（ハーネス）は claude-sync.sh を持ち、rebuild する構成のリポジトリ（nixfiles）は nix-rebuild.sh を持つ
+  # ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup。前は claude-sync.sh）を持ち、rebuild する構成の
+  # リポジトリ（nixfiles）は nix-rebuild.sh を持つ
+  git cat-file -e HEAD:modules/home/parts/claude-setup/Cargo.toml 2>/dev/null && HAS_SYNC=yes
   git cat-file -e HEAD:modules/home/scripts/claude-sync.sh 2>/dev/null && HAS_SYNC=yes
   git cat-file -e HEAD:modules/home/scripts/nix-rebuild.sh 2>/dev/null && HAS_REBUILD=yes
   if [[ $HAS_REBUILD == yes ]]; then

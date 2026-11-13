@@ -37,6 +37,9 @@ let
   # settings.json には 1 件だけ登録する。Bash ツールの呼び出しごとに 1 プロセスで全ルールを評価する。
   # バイナリは store パスではなく固定パス ~/.claude/bin/claude-hooks 経由で参照する
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
+  # ハーネスを Claude Code の設定に配る設置のコマンド（ADR-0084）。claude-sync と activation が sync を呼ぶ
+  claude-setup = pkgs.callPackage ./claude-setup/package.nix { };
+  claudeSync = pkgs.writeShellScriptBin "claude-sync" ''exec ${claude-setup}/bin/claude-setup sync "$@"'';
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
   # 崩れた日本語の語の検査（ADR-0074、ADR-0085）。/retro の memory-index.sh が `ja-terms check` で自動メモリに使う。
@@ -258,7 +261,6 @@ in
   home.packages =
     with pkgs;
     [
-      rsync # claude-sync スクリプトの実行時依存
       gitleaks # 手で検査するため（git の pre-commit は store のパスで呼ぶ。ADR-0015）
       pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
     ]
@@ -275,34 +277,29 @@ in
   home.file.${claudeMemoryBackupBinRel}.source = "${claudeMemoryBackup}/bin/claude-memory-backup";
 
   # .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド
-  # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）
-  home.file.".local/bin/claude-sync" = {
-    source = ../scripts/claude-sync.sh;
-    executable = true;
-  };
+  # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）。中身は claude-setup sync（ADR-0084）
+  home.file.".local/bin/claude-sync".source = "${claudeSync}/bin/claude-sync";
 
   # ===========================================================================
   # アクティベーションスクリプト
   # ===========================================================================
 
   # Claude Code グローバル設定の同期
-  # flakeソースの .claude を ~/.claude に同期（ポリシーは scripts/claude-sync.sh を参照）
+  # flakeソースの .claude を ~/.claude に同期（ポリシーは ./claude-setup/src/sync.rs を参照）
   home.activation.claudeCodeSetup = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     CLAUDE_DIR="$HOME/.claude"
 
     # .claude ディレクトリを作成
     mkdir -p "$CLAUDE_DIR"
 
-    # CLAUDE.md/commands/skills/scripts の同期（claude-sync コマンドと共通実装）
-    # 同期ポリシーは modules/home/scripts/claude-sync.sh を参照
-    PATH="${pkgs.rsync}/bin:$PATH" $DRY_RUN_CMD ${pkgs.bash}/bin/bash \
-      ${../scripts/claude-sync.sh} "${claudeCodeSource}"
+    # CLAUDE.md/commands/skills/scripts の同期（claude-sync コマンドと共通実装の claude-setup sync）
+    $DRY_RUN_CMD ${claude-setup}/bin/claude-setup sync "${claudeCodeSource}"
 
 
     # 外部スキルのデプロイ（externalSkills）。上流のコピーなので --delete で完全一致させる。
     # claude-sync コマンドは flake input を知らないため、ここ（rebuild）でのみ同期される。
     # --checksum は、store のソースと -a でコピーした先がどちらも mtime 1 になり、既定の判定
-    # （サイズと mtime）では同じサイズの上流の変更を飛ばすため（理由の詳細は scripts/claude-sync.sh）
+    # （サイズと mtime）では同じサイズの上流の変更を飛ばすため（claude-setup sync も同じ理由で中身を比べる）
     ${lib.concatMapStringsSep "\n" (s: ''
       $DRY_RUN_CMD mkdir -p "$CLAUDE_DIR/skills/${s.name}"
       $DRY_RUN_CMD ${pkgs.rsync}/bin/rsync -a --checksum --delete --chmod=u+w "${s.src}/" "$CLAUDE_DIR/skills/${s.name}/"
