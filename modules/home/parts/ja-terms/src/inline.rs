@@ -233,12 +233,15 @@ fn strikethrough(text: &str, pieces: Vec<Piece>) -> Vec<Range<usize>> {
         if used[close] || !sequences[close].close {
             continue;
         }
-        let found = (0..close).rev().find(|&open| {
-            !used[open]
-                && sequences[open].open
-                && sequences[open].block == sequences[close].block
-                && sequences[open].range.len() == sequences[close].range.len()
-        });
+        // 印は文の順に並び、ブロックの番号は減らないので、別のブロックの印に来たら探すのをやめる
+        let found = (0..close)
+            .rev()
+            .take_while(|&open| sequences[open].block == sequences[close].block)
+            .find(|&open| {
+                !used[open]
+                    && sequences[open].open
+                    && sequences[open].range.len() == sequences[close].range.len()
+            });
         if let Some(open) = found {
             used[open..=close].fill(true);
             paired.push(sequences[open].range.clone());
