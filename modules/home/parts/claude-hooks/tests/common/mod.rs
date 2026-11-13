@@ -1,5 +1,8 @@
 //! git hook と git の起動を確かめる結合テストの共通の部品
 
+#[allow(dead_code)]
+pub mod fake_gh;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
