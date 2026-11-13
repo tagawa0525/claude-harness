@@ -61,15 +61,16 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
-- スクリプトのファイル: 名前と場所を変えず、`exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
-  だけの sh にする（`lib/local-review.sh` と同じ引き方。PATH で引かない）。スキルの文と hook のルールは
-  変えない。Windows では Git Bash がこの sh を実行し、jq を使わない
+- スクリプトのファイル: 名前と場所を変えず、`lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前> "$@"` を
+  呼ぶだけの sh にする。`claude_hooks_script` は `"${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
+  を exec し（`lib/local-review.sh` と同じ引き方。PATH で引かない）、バイナリが無ければ入れ方を示して 127 で終える。
+  スキルの文と hook のルールは変えない。Windows では Git Bash がこの sh を実行し、jq を使わない
 - Windows の置き場: crate を `cargo install --root ~/.claude` で `~/.claude/bin/` に入れ、Linux と同じパスで引く（Git Bash は
   `.exe` を補って実行する）。settings.json と git hook の登録もこのパスを指し、`ja-terms` と `commit-refs` は
   `claude-hooks` の隣のものを起動する。スキルと修正方法の文が名前で呼ぶ `claude-setup` と `commit-refs` のため、
   `~/.claude/bin` を Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
 - `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
-  すべて移った PR で消す
+  すべて移った PR で消す（`lib/claude-hooks-script.sh` は移したスクリプトが読むので残す）
 - PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を 1 行に置き換える
 - テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える。仕組みは最初に移す PR でテストとともに
   決める）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
@@ -104,8 +105,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 - 移したスクリプトの結合テストが、`nix flake check` と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
   いるもの
-- 移した後、対象のスクリプトのファイルは `claude-hooks script <名前>` を呼ぶ 1 行だけになり、jq を使わない。`lib/` の
-  部品は消えている
+- 移した後、対象のスクリプトのファイルは `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
+  なり、jq を使わない。`lib/` の部品は `claude-hooks-script.sh` のほかは消えている
 
 ## 補足
 
@@ -117,3 +118,9 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   User の Path に足したが、User の Path の展開する項目（`%USERPROFILE%\...`）を固定のパスに潰し、System の Path の後に
   並ぶので先頭にならず、`$HOME` と `USERPROFILE` が違えば置き場とずれる（PR のローカルレビュー）ので、Git Bash の
   `~/.bashrc` に変えた
+- 2026-11-14: スクリプトのファイルは、はじめ `exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
+  だけの sh としていた。バイナリが無いと sh の `exec: not found` だけで止まり、何を入れるかが分からない（claude-sync は
+  スクリプトだけを入れる）。decide-next.sh は `local_review_covers` で入れ方を示していたが、呼ぶスクリプト
+  （get-review-comments.sh、get-latest-review.sh）を移すと、その前で案内なしに止まった（`.claude/tests/scripts/gh-pr-review.sh`
+  の「claude-hooks が無ければ、入れ直しを案内して止める」が落ちた）。decide-next.sh の確認の順を入れ替えても、次に移す
+  スクリプトがまたその前に来るので、入れ方を示すのを sh の共通の部品（`lib/claude-hooks-script.sh`）に移した

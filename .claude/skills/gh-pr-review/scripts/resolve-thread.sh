@@ -8,4 +8,5 @@
 #               （get-review-comments.sh の id / URL の #discussion_r{id}）
 #
 # 人間が起こしたスレッドは既定で resolve せず、--allow-human はユーザーが明示的に求めたときだけ付ける
-exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script resolve-thread "$@"
+. "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
+claude_hooks_script resolve-thread "$@"
