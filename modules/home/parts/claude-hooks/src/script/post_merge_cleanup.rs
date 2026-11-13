@@ -123,7 +123,9 @@ fn cleanup(branch: &str) -> Result<(), i32> {
         .and_then(|l| l.strip_prefix("worktree "))
         .unwrap_or("")
         .to_string();
-    let wt_path = worktree_of(&list, branch);
+    // メインの worktree でチェックアウトしているブランチ（worktree を作らずに作業した）は、メインの worktree を消さずに、
+    // 段階 2 で既定のブランチへ切り替える
+    let wt_path = worktree_of(&list, branch).filter(|wt| *wt != main_root);
     let default_root = worktree_of(&list, default);
     // 以降は既定のブランチの worktree（どこにもチェックアウトされていなければメインの worktree）で行う。今いる
     // worktree が対象のものでも、無関係なブランチのものでも、そこでは既定のブランチへ switch できない
@@ -473,7 +475,13 @@ fn design_records_available() -> bool {
 /// 段階 5: リモートのブランチを消す
 fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
     let on_remote = ok(&["remote", "get-url", remote])
-        && git(&["ls-remote", "--heads", remote, branch]).is_some_and(|s| !s.is_empty());
+        && git(&[
+            "ls-remote",
+            "--heads",
+            remote,
+            &format!("refs/heads/{branch}"),
+        ])
+        .is_some_and(|s| !s.is_empty());
     if !on_remote {
         println!("REMOTE_BRANCH: none");
         return Ok(());
