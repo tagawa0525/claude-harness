@@ -513,6 +513,8 @@ fn rewrites_an_old_annotated_tag_without_a_tagger() {
     );
 }
 
+// /dev/full は Unix にしか無い
+#[cfg(unix)]
 #[test]
 fn a_failure_to_write_the_report_still_says_the_refs_were_moved() {
     let h = History::new("report-full");
