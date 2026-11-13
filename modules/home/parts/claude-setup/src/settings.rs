@@ -142,13 +142,14 @@ fn is_binary(hook: &Value, name: &str, arg: Option<&str>) -> bool {
     if command.ends_with(&shell) {
         return true;
     }
-    let Some(args) = hook.get("args") else {
-        return false;
-    };
     let file = command.rsplit(['/', '\\']).next().unwrap_or(command);
     let file = file.strip_suffix(".exe").unwrap_or(file);
     let want: Vec<Value> = arg.map(|a| vec![json!(a)]).unwrap_or_default();
-    file == name && args.as_array().is_some_and(|a| *a == want)
+    let args = match hook.get("args") {
+        None => Some(&[][..]),
+        Some(args) => args.as_array().map(Vec::as_slice),
+    };
+    file == name && args == Some(want.as_slice())
 }
 
 /// event の登録から remove に当たる hook を外し、空になった組を消して、entry を足す（path は失敗の文に出す
