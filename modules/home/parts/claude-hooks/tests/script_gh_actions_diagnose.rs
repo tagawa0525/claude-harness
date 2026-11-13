@@ -76,3 +76,25 @@ fn a_url_that_is_not_a_pr_stops() {
     assert!(stderr(&out).contains("PR の URL"), "{}", stderr(&out));
     assert_eq!(fake.log(), "");
 }
+
+#[test]
+fn output_of_gh_that_is_not_json_stops_instead_of_reporting_a_healthy_ci() {
+    for calls in [
+        // PR の情報
+        vec![("not json", 0)],
+        // run の一覧
+        vec![(PR, 0), ("warning: something\n[]", 0)],
+        // ジョブ（attempt を 1 と取り違えて再実行を勧めない）
+        vec![(PR, 0), (RUN_FAIL, 0), ("truncated {", 0)],
+    ] {
+        let fake = FakeGh::new();
+        let out = fake.run_calls("gh-actions-diagnose", &[URL], &calls);
+        assert_eq!(out.status.code(), Some(1), "{calls:?}: {}", stdout(&out));
+        assert!(
+            !stdout(&out).contains("CAUSE:"),
+            "{calls:?}: {}",
+            stdout(&out)
+        );
+        assert!(stderr(&out).contains("JSON"), "{calls:?}: {}", stderr(&out));
+    }
+}
