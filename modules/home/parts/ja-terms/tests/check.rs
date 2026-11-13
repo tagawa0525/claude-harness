@@ -226,3 +226,20 @@ fn a_closed_output_still_exits_1_when_terms_are_found() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn names_starting_with_a_dot_are_read_by_the_extension_after_it() {
+    // ja-terms-files と同じく、`.md` の拡張子は md
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dot");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(".md");
+    std::fs::write(&path, "# 確忍\n").unwrap();
+    let out = check(&[path.to_str().unwrap()]);
+    assert_eq!(
+        stdout(&out),
+        format!(
+            "{}:1:3: 確忍 => 確認 [Error/prh]\n\n1 problem\n",
+            path.display()
+        )
+    );
+}
