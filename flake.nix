@@ -77,7 +77,7 @@
         # Claude Code の PreToolUse hook（modules/home/parts/claude-code.nix が home に配置する）。
         # nix build .#claude-hooks で単体ビルドし、テストから CLAUDE_HOOKS_BIN で参照する
         claude-hooks = pkgs.callPackage ./modules/home/parts/claude-hooks/package.nix { };
-        # 文書の中のコミットの番号の付け直しの CLI（modules/home/parts/git-hooks.nix の post-rewrite hook が呼ぶ）
+        # 文書の中のコミットの番号の付け直しの CLI（post-rewrite の git hook の中身、claude-hooks の src/git_hook.rs が呼ぶ）
         commit-refs = pkgs.callPackage ./modules/home/parts/commit-refs/package.nix { };
         # 履歴の中の崩れた語を直し、番号を付け直す CLI（modules/home/parts/git-hooks.nix が PATH に入れる）
         history-rewrite = pkgs.callPackage ./modules/home/parts/history-rewrite/package.nix {
