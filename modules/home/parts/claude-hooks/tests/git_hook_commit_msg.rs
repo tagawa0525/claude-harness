@@ -17,7 +17,8 @@ impl Drop for Repo {
     }
 }
 
-/// examples/fake_tool の実行ファイル（テストの実行ファイルは target/<profile>/deps にある）
+/// examples/fake_tool の実行ファイル（テストの実行ファイルは target/<profile>/deps にある）。`cargo test` は examples も
+/// ビルドする（`--test` で絞ると作らないので、先に `cargo build --examples` を流す）
 fn fake_tool() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let profile = exe.parent().unwrap().parent().unwrap();
@@ -190,7 +191,8 @@ fn forks_are_not_checked() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(repo.calls().is_empty());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("fork"));
+    // git は hook の標準出力を標準エラーにつなぐ
+    assert!(String::from_utf8_lossy(&out.stderr).contains("fork"));
 }
 
 #[test]

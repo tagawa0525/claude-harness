@@ -8,6 +8,8 @@
 //!
 //! Usage: claude-hooks pre-tool-use [--rule <name>]...
 //!   --rule を指定するとそのルールだけを評価する（テストが 1 ルールずつ検証するため）
+//!        claude-hooks git-hook <hook の名前> [引数]...
+//!   グローバルの git hook の中身（src/git_hook.rs。ADR-0086）
 //!        claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>
 //!   head がローカルレビューの記録で覆われているか（記録の後に rebase だけした head を含む）を pre-merge-check と同じ
 //!   判定で確かめる。rebase だけかは cwd の clone で比べる。覆われていれば終了コード 0、いなければ 1、引数の数の誤りは 2、
@@ -16,6 +18,7 @@
 mod gh;
 mod git;
 mod git_args;
+mod git_hook;
 mod input;
 mod output;
 mod rules;
@@ -28,6 +31,7 @@ use std::io::Read;
 // で始まる行が出ることで、渡されたバイナリが起動できるかを確かめる
 fn usage() -> ! {
     eprintln!("Usage: claude-hooks pre-tool-use [--rule <name>]...");
+    eprintln!("       claude-hooks git-hook <hook の名前> [引数]...");
     eprintln!("       claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>");
     eprintln!("rules: {}", rules::names().join(", "));
     std::process::exit(2);
@@ -62,6 +66,7 @@ fn main() {
     match it.next().map(String::as_str) {
         Some("pre-tool-use") => {}
         Some("local-review-covers") => local_review_covers(&args[1..]),
+        Some("git-hook") => std::process::exit(git_hook::main(&args[1..])),
         _ => usage(),
     }
     let mut selected: Vec<&str> = Vec::new();

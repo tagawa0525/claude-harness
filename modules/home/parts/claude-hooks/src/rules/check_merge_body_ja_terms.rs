@@ -32,8 +32,8 @@ pub struct CheckMergeBodyJaTerms;
 /// ものには無く、Windows は PATH の ja-terms を使う。[`ja_terms`]）。git commit のルールも使う
 pub(super) const JA_TERMS: &str = "CLAUDE_HOOKS_JA_TERMS";
 
-/// 呼ぶ ja-terms。git merge と git commit のルールが使う
-pub(super) fn ja_terms() -> Option<String> {
+/// 呼ぶ ja-terms。git merge と git commit のルールと、commit-msg の git hook（crate::git_hook）が使う
+pub(crate) fn ja_terms() -> Option<String> {
     ja_terms_from(std::env::var(JA_TERMS).ok(), cfg!(windows))
 }
 
