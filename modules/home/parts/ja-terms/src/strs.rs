@@ -18,7 +18,7 @@ use regress::Regex;
 use crate::inline::{self, Run};
 
 /// textlint は先頭の BOM を外して読む
-fn after_bom(text: &str) -> usize {
+pub(crate) fn after_bom(text: &str) -> usize {
     if text.starts_with('\u{feff}') { 3 } else { 0 }
 }
 

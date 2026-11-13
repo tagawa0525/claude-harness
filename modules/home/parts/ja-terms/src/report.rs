@@ -39,7 +39,7 @@ pub fn check(
         Syntax::Markdown => strs::markdown(text),
         Syntax::Text => strs::text(text),
     };
-    let bom = if text.starts_with('\u{feff}') { 3 } else { 0 };
+    let bom = strs::after_bom(text);
     let lines = Lines::new(&text[bom..]);
     // (UTF-16 の位置、報告)
     let mut reports: Vec<(usize, Report)> = Vec::new();
