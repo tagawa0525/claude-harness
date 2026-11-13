@@ -145,3 +145,8 @@ fn lazy_lines_after_a_lone_carriage_return_are_cut_as_textlint_does() {
 fn lazy_lines_inside_code_spans_and_inline_html_are_cut_as_textlint_does() {
     check("lazy-code.markdown");
 }
+
+#[test]
+fn lazy_lines_after_hard_breaks_and_inside_link_titles_are_cut_as_textlint_does() {
+    check("lazy-break.markdown");
+}
