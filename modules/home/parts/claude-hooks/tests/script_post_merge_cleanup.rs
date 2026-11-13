@@ -195,3 +195,43 @@ fn a_remote_branch_with_a_longer_name_is_not_the_branch() {
         text(&out.stdout)
     );
 }
+
+#[test]
+fn uncommitted_changes_in_the_main_worktree_stop_the_cleanup() {
+    // 既定のブランチへ切り替えると、変更をそこへ持ち込む。linked worktree の remove と同じく止める
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/dirty"]);
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["switch", "-q", "feat/dirty"]);
+    repo.write("d.txt", "d\n");
+    let out = repo.run(&["feat/dirty"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("未コミットの変更"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(repo.git(&["branch", "--show-current"]), "feat/dirty");
+    assert_eq!(text(&out.stdout), "");
+}
+
+#[test]
+fn a_main_worktree_branch_with_the_default_branch_elsewhere_stops_before_changing_anything() {
+    // 既定のブランチは別の worktree にあるので、メインの worktree をそこへ切り替えられない
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/elsewhere"]);
+    let wt = repo.root.join("app-main");
+    repo.git(&["worktree", "add", "-q", wt.to_str().unwrap(), "main"]);
+    let out = repo.run(&["feat/elsewhere"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("メインの worktree"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        repo.git(&["branch", "--list", "feat/elsewhere"]),
+        "* feat/elsewhere"
+    );
+    assert_eq!(text(&out.stdout), "");
+}
