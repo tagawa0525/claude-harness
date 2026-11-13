@@ -163,3 +163,13 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
     中でだけ注を探すので、注を分けない
   - 取り消し線の `~` と強調の `*` が交差する文（`a ~b *c~ d* e`）: pulldown-cmark は取り消し線を知らずに強調を組む
     ので、micromark が Str に残す部分を強調として外す
+- 2026-11-13: 検査の mode の報告（`modules/home/parts/ja-terms/src/report.rs`、`pragma.rs`、`main.rs` の `ja-terms check`）は、
+  報告を確かめる規則だけの辞書（`tests/textlint/report.yml`）を当てた textlint の `--format unix` の出力を、固定の入力の
+  期待値にする（`tests/textlint/update.sh`）。Str の比較と同じ 37,766 のファイルとメッセージで、今の辞書の報告 2,882 件と、
+  一致が多く重なりやすい規則の辞書（`する`、`/[ぁ-ん]{3}/`、`/。\n?/` など 8 つ）の報告 367,017 件が、textlint の
+  報告とすべて同じになった。レビューで次の版を捨てた。
+  - 拡張子 markdown も Markdown として読んだ。ja-terms-files は md だけを読み、markdown は止めるので、見る拡張子が変わる
+  - `prh:disable:<pattern>` を regress の文字の単位で照合した。prh は u のフラグ無しで読むので、V8 は UTF-16 の単位で
+    照合し、`^.$` はサロゲートペアの文字に当たらない
+  - 同じ位置と同じ文の報告を 1 つにまとめた（textlint の filter-duplicated-process.js）。Str の範囲は重ならず、1 つの
+    Str の中の一致は重なりを外した後に同じ開始を持たないので、prh だけの報告では起きない
