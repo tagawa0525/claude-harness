@@ -158,7 +158,10 @@ fn diagnose(target: &str) -> Result<(), i32> {
             "databaseId,name,status,conclusion,createdAt,url",
         ])?,
     )?;
-    let runs = runs.as_array().cloned().unwrap_or_default();
+    let Value::Array(runs) = runs else {
+        eprintln!("ERROR: gh run list の出力が配列でない: {runs}");
+        return Err(1);
+    };
     if runs.is_empty() {
         println!("RUNS: 0");
     } else {
