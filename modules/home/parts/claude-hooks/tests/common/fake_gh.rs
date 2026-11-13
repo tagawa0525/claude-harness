@@ -63,7 +63,7 @@ impl FakeGh {
             .unwrap()
     }
 
-    /// gh に渡した引数（1 回の起動で 1 行）
+    /// gh に渡した引数（1 回の起動で、空白でつないで改行で終える。引数が改行を含めば複数の行になる）
     pub fn log(&self) -> String {
         std::fs::read_to_string(self.root.join("gh.log")).unwrap_or_default()
     }

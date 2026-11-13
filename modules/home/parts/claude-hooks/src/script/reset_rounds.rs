@@ -14,13 +14,8 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 1;
     };
-    let pr = match pr_url::parse(url) {
-        Ok(pr) => pr,
-        Err(why) => {
-            eprintln!("{why}");
-            eprintln!("{USAGE}");
-            return 1;
-        }
+    let Some(pr) = pr_url::or_usage(pr_url::parse(url), USAGE) else {
+        return 1;
     };
     if reason.is_empty() {
         eprintln!("{USAGE}");
