@@ -11,8 +11,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// 一時のホームと、そこで動かす git と claude-setup
+/// 一時のホームと、そこで動かす git と claude-setup。テストが落ちても消す（親を指すリンクを target の下に
+/// 残すと、target を辿るツールが止まらなくなる）
 struct Home(PathBuf);
+
+impl Drop for Home {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 impl Home {
     fn new() -> Home {
@@ -394,8 +401,6 @@ fn symbolic_links_are_copied_as_links() {
             .is_symlink()
     );
     assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("s"));
-    // 親を指すリンクを残すと、target の下を辿るツール（statix など）が止まらなくなる
-    std::fs::remove_dir_all(&home.0).unwrap();
 }
 
 #[cfg(unix)]
@@ -456,4 +461,47 @@ fn a_symlink_in_the_destination_is_replaced_not_written_through() {
         assert!(!kind.is_symlink(), "{rel}");
     }
     assert_eq!(read(&home.dest("skills/foo/SKILL.md")), "harness");
+}
+
+#[test]
+fn a_file_and_a_directory_can_swap_places() {
+    // ソースで、ファイルがディレクトリになり、ディレクトリ（空）がファイルになる（rsync -a は入れ替えた）
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/skills/foo"), "file");
+    std::fs::create_dir_all(src.join(".claude/skills/bar")).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    std::fs::remove_file(src.join(".claude/skills/foo")).unwrap();
+    write(&src.join(".claude/skills/foo/SKILL.md"), "dir");
+    std::fs::remove_dir(src.join(".claude/skills/bar")).unwrap();
+    write(&src.join(".claude/skills/bar"), "file");
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.dest("skills/foo/SKILL.md")), "dir");
+    assert_eq!(read(&home.dest("skills/bar")), "file");
+}
+
+#[cfg(unix)]
+#[test]
+fn top_level_places_are_followed_as_rsync_with_a_trailing_slash() {
+    // ソースの skills が別の場所を指すリンクなら中身を、~/.claude の skills が利用者の場所を指すリンクなら
+    // その中に同期する（rsync -a "$SRC/skills/" "$DEST/skills/"）
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&home.0.join("shared/s/SKILL.md"), "shared");
+    std::fs::create_dir_all(src.join(".claude")).unwrap();
+    std::os::unix::fs::symlink(home.0.join("shared"), src.join(".claude/skills")).unwrap();
+    let mine = home.0.join("mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::create_dir_all(home.dest("")).unwrap();
+    std::os::unix::fs::symlink(&mine, home.dest("skills")).unwrap();
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        std::fs::symlink_metadata(home.dest("skills"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(read(&mine.join("s/SKILL.md")), "shared");
 }
