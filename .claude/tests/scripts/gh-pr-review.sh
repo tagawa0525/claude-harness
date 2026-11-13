@@ -141,12 +141,14 @@ for script in get-latest-review.sh get-pr-info.sh get-review-comments.sh record-
   assert_not_contains "$(fake_log gh)" "api"
 done
 
-it "gh-review-requests.sh: claude-hooks が無ければ、入れ方を示して 127 で止まる"
-make_fake_gh '*) echo "{}" ;;'
-out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/gh-review-requests.sh" "$PR_URL" 2>&1)
-assert_eq 127 $?
-assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
-assert_not_contains "$(fake_log gh)" "api"
+for script in gh-review-requests.sh gh-wait-review.sh; do
+  it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+  make_fake_gh '*) echo "{}" ;;'
+  out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/$script" "$PR_URL" 2>&1)
+  assert_eq 127 $?
+  assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
+  assert_not_contains "$(fake_log gh)" "api"
+done
 
 it "移したスクリプト: Windows の .exe の付いた claude-hooks も、在るものとして起動する"
 # Windows の claude-hooks は .exe の付いた名前で入る。.exe だけがあれば、それを起動する

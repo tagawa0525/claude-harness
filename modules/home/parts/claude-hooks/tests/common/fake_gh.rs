@@ -46,6 +46,17 @@ impl FakeGh {
     /// [`FakeGh::run`] と同じだが、gh の n 回目の起動は calls の n 番目（0 から）の標準出力と終了コードを返す。calls より
     /// 多く起動されたら最後のものを返す
     pub fn run_calls(&self, script: &str, args: &[&str], calls: &[(&str, i32)]) -> Output {
+        self.run_calls_with_env(script, args, calls, &[])
+    }
+
+    /// [`FakeGh::run_calls`] と同じだが、スクリプトに env の環境変数を足して起動する
+    pub fn run_calls_with_env(
+        &self,
+        script: &str,
+        args: &[&str],
+        calls: &[(&str, i32)],
+        env: &[(&str, &str)],
+    ) -> Output {
         let path = std::env::join_paths(
             std::iter::once(self.root.join("bin"))
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
@@ -70,6 +81,7 @@ impl FakeGh {
             cmd.env(format!("FAKE_GH_OUT_{}", i + 1), out)
                 .env(format!("FAKE_GH_EXIT_{}", i + 1), exit.to_string());
         }
+        cmd.envs(env.iter().copied());
         cmd.output().unwrap()
     }
 
