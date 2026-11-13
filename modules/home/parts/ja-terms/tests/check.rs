@@ -305,3 +305,29 @@ fn a_file_given_through_a_parent_directory_is_checked_once() {
         )
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_path_through_a_symlink_and_dot_dot_reads_the_lexical_file() {
+    // textlint は path.resolve で .. を字面で外したパスを読むので、sub/../a.txt は sub の行き先の親でなく、
+    // 今のディレクトリの a.txt
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("dotdot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("w")).unwrap();
+    std::fs::create_dir_all(dir.join("other/deep")).unwrap();
+    std::fs::write(dir.join("w/a.txt"), "確忍\n").unwrap();
+    std::fs::write(dir.join("other/a.txt"), "険査\n").unwrap();
+    std::os::unix::fs::symlink(dir.join("other/deep"), dir.join("w/sub")).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_ja-terms"))
+        .current_dir(dir.join("w"))
+        .arg("check")
+        .arg("--dictionary")
+        .arg(fixtures().join("report.yml"))
+        .arg("sub/../a.txt")
+        .output()
+        .unwrap();
+    assert_eq!(
+        stdout(&out),
+        "sub/../a.txt:1:1: 確忍 => 確認 [Error/prh]\n\n1 problem\n"
+    );
+}
