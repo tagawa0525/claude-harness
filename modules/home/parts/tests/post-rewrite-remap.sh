@@ -248,8 +248,14 @@ else
   fi
   # hook は正規化した絶対パスを出す（TMPDIR が symlink の下でも比べられるよう、同じ形で求める）
   saved="$(git -C "$REPO" rev-parse --absolute-git-dir)/commit-refs-remap.input"
-  if grep -qF "修正方法: 上の ERROR を直してから、commit-refs remap $(printf '%q' "$saved")" "$WORK/out" \
-    && cmp -s "$WORK/ambiguous-input" "$saved"; then
+  # 表示したコマンドを貼ったときに sh が読む引数が、残した対応のパスになるか（引用の形は問わない）
+  hint=$(sed -n 's/.*修正方法: 上の ERROR を直してから、commit-refs remap //p' "$WORK/out")
+  pasted=""
+  if [ -n "$hint" ]; then
+    eval "set -- $hint"
+    pasted=$1
+  fi
+  if [ "$pasted" = "$saved" ] && cmp -s "$WORK/ambiguous-input" "$saved"; then
     ok "失敗したときは対応を残し、commit-refs remap で呼び直す方法を表示する"
   else
     ng "失敗したときに対応が残らないか、呼び直す方法が表示されない"

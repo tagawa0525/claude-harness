@@ -4,13 +4,13 @@
 # pre-commit、pre-merge-commit、commit-msg、post-rewrite と、hook が呼ぶ CLI。
 # git の利用者の設定（programs.git の残り、delta、gh）は git.nix
 # =============================================================================
-{ lib, pkgs, ... }:
+{ pkgs, ... }:
 
 let
   # 設計の記録（ADR）のテンプレートと検査（ADR-0009）。各プロジェクトの pre-commit が PATH から呼ぶ
   design-records = pkgs.callPackage ./design-records/package.nix { };
-  # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook が store のパスで呼び、
-  # 手で呼べるよう PATH にも入れる
+  # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook の中身は claude-hooks が包むものを呼ぶ。
+  # 手で呼べるよう PATH に入れる
   commit-refs = pkgs.callPackage ./commit-refs/package.nix { };
   # 履歴の中の崩れた語を辞書（./ja-terms/prh.yml）で直し、番号を commit-refs で付け直す（ADR-0045）。
   # 手で呼ぶツールなので PATH に入れる
@@ -335,57 +335,16 @@ in
   };
 
   # post-rewrite: rebase と amend で変わったコミットの番号を、作業ツリーの追跡している文書の中で
-  # 付け直す（commit-refs remap）。検証の記録などに測ったコミットの番号を書く
-  # リポジトリだけが要るので、`git config remap.commitRefs true` でオプトインする。置き換えは
-  # コミットしない（どのコミットに含めるかは書き換えた人が決める）。
-  # git は書き換えの後に呼ぶので、この hook の失敗は書き換えを止めない（表示するだけ）。
-  # 検証: modules/home/parts/tests/post-rewrite-remap.sh
+  # 付け直す（commit-refs remap）。`git config remap.commitRefs true` でオプトインする。中身（ローカルの hook、
+  # rebase の途中の amend、失敗したときに対応を残すこと）は claude-hooks の src/git_hook.rs（ADR-0086）。
+  # commit-refs は claude-hooks の package.nix が包むものを使う。
+  # 検証: claude-hooks の tests/git_hook_post_rewrite.rs（判定）、modules/home/parts/tests/post-rewrite-remap.sh
+  # （この hook のファイルと、包んだ commit-refs）
   xdg.configFile."git/hooks/post-rewrite" = {
     executable = true;
     text = ''
-      #!/usr/bin/env bash
-      set -euo pipefail
-
-      # 旧と新の対応は標準入力で一度だけ渡されるので、ローカルの hook と置き換えの両方に渡すため取っておく
-      INPUT=$(cat)
-
-      # プロジェクトローカルの post-rewrite があれば先に呼ぶ。exec で置き換えないのは、ローカルの hook が
-      # あるだけで置き換えが外れないようにするため。失敗しても置き換えは行い、終了コードは最後に返す
-      LOCAL_HOOK=${localHookPath "post-rewrite"}
-      local_rc=0
-      if [ -x "$LOCAL_HOOK" ]; then
-        printf '%s\n' "$INPUT" | "$LOCAL_HOOK" "$@" || local_rc=$?
-      fi
-
-      if [ "$(git config --type=bool --get remap.commitRefs || true)" != "true" ]; then
-        exit "$local_rc"
-      fi
-
-      # rebase の途中（edit で止めた所）の amend でも git は呼ぶが、rebase の終わりにもう一度、
-      # 元のコミットから最後のコミットへの対応を渡す。途中で置き換えると作業ツリーを汚して
-      # rebase --continue に混ざり、途中の番号に置き換えた文書は最後の対応で引けなくなるので、
-      # rebase の終わりに任せる
-      if [ "$1" = "amend" ] && { [ -d "$(git rev-parse --git-path rebase-merge)" ] \
-        || [ -d "$(git rev-parse --git-path rebase-apply)" ]; }; then
-        exit "$local_rc"
-      fi
-
-      # 失敗したときに対応を残す場所。書き換えは済んでいて、この対応は二度と渡されないので、
-      # 直してから手で呼び直せるようにする
-      SAVED="$(git rev-parse --absolute-git-dir)/commit-refs-remap.input"
-      echo "🔁 文書の中のコミットの番号を付け直します（remap.commitRefs）"
-      if ! OUT=$(printf '%s\n' "$INPUT" | ${lib.getExe commit-refs} remap); then
-        printf '%s\n' "$INPUT" > "$SAVED"
-        echo "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
-        # 貼って使えるよう、パスをシェルの引数の形にする（空白などを含むリポジトリのため）
-        echo "   修正方法: 上の ERROR を直してから、commit-refs remap $(printf '%q' "$SAVED")"
-        exit 1
-      fi
-      printf '%s\n' "$OUT"
-      if ! printf '%s\n' "$OUT" | grep -qx 'REFS: 0'; then
-        echo "📝 置き換えはコミットしていません。git diff で確かめて、コミットしてください"
-      fi
-      exit "$local_rc"
+      #!/bin/sh
+      exec ${claude-hooks}/bin/claude-hooks git-hook post-rewrite "$@"
     '';
   };
 }
