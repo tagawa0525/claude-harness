@@ -81,6 +81,20 @@ pub fn quiet_status_for_repo(
         .status()
 }
 
+/// [`run_for_repo`] と同じく repo に向けて起動し、標準出力を捨てる。失敗すれば、gh の標準エラー（起動できなければ
+/// その理由）を Err で返す（呼び出し元が自分の文の前に出す）
+pub fn quiet_stdout_output_for_repo(repo: &str, args: &[&str]) -> Result<(), String> {
+    let out = for_repo(repo, args)
+        .stdout(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("ERROR: gh を起動できません（PATH に gh が無い）: {e}\n"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).into_owned())
+    }
+}
+
 fn for_repo(repo: &str, args: &[&str]) -> Command {
     let mut cmd = Command::new("gh");
     cmd.args(args)

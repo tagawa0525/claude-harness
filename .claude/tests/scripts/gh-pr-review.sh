@@ -55,7 +55,7 @@ FAKE
   chmod +x "$TEST_ROOT/fakebin/claude-hooks"
 }
 # fake_hooks_covers <case の行>: local-review-covers の答えをテストごとに決める偽物。script は本物に渡す
-# （decide-next.sh と request-rereview.sh が呼ぶ get-review-comments.sh や gh-review-requests.sh も claude-hooks を起動する）
+# （decide-next.sh が呼ぶ get-review-comments.sh や gh-review-requests.sh も claude-hooks を起動する）
 fake_hooks_covers() {
   local real
   printf -v real '%q' "$REAL_CLAUDE_HOOKS"
@@ -129,7 +129,7 @@ assert_eq github.com/octo/repo "$(fake_gh_repos)"
 
 # 中身を claude-hooks script に移したスクリプト（ADR-0087）は、claude-hooks が無ければ（claude-sync だけでバイナリを
 # 入れていない、Windows で cargo install の前）入れ方を示して止める。sh の `exec: not found` だけでは、何を入れるかが分からない
-for script in get-latest-review.sh get-pr-info.sh get-review-comments.sh record-local-review.sh reply-to-comment.sh reset-rounds.sh resolve-thread.sh; do
+for script in get-latest-review.sh get-pr-info.sh get-review-comments.sh record-local-review.sh reply-to-comment.sh request-rereview.sh reset-rounds.sh resolve-thread.sh; do
   it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
   make_fake_gh '*) echo "{}" ;;'
   read -ra rest <<<"${REST_ARGS[$script]}"
@@ -240,98 +240,10 @@ assert_eq 0 $?
 assert_contains "$(fake_log gh)" "-F id=T2"
 
 # ===========================================================================
-# gh-pr-review/scripts/request-rereview.sh: 再レビューはレビュー要求 API で依頼する
+# gh-pr-review/scripts/request-rereview.sh: 要求の手順と記録の判定は、claude-hooks の結合テスト
+# （tests/script_request_rereview.rs）が確かめる。ここでは sh から呼べることを、引数と URL の検査（上の繰り返し）と
+# バイナリが無いときの案内で確かめる
 # ===========================================================================
-# @copilot メンションコメントに応答するのは copilot-swe-agent（コーディング
-# エージェント）で、copilot-pull-request-reviewer のレビューは提出されない。
-# 依頼は requested_reviewers API に一本化し、要求が登録されたことを timeline の
-# review_requested イベントで確かめてから待機する
-
-# fake_gh_rereview [grow|nogrow] [locals]: POST 後にだけ review_requested が現れる gh。
-# 引数に "nogrow" を渡すと POST しても timeline が増えない状況を作る。
-# locals はローカルレビューの記録の「SHA High の数」を出力するコマンド（既定は head の def5678）
-fake_gh_rereview() {
-  local grow="${1:-grow}" locals="${2:-echo def5678 0}"
-  rm -f "$TEST_ROOT/requested"
-  local event="if [ -f \"$TEST_ROOT/requested\" ]; then echo 2026-09-08T00:00:00Z; fi"
-  [[ "$grow" == "nogrow" ]] && event=":"
-  jq -n '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: "2026-09-08T00:05:00Z"}]}' \
-    > "$TEST_ROOT/reviews.json"
-  make_fake_gh "\"auth status\"*) ;;
-  \"pr view 1 --json headRefOid\"*) echo def5678 ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $event ;;
-  \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) touch \"$TEST_ROOT/requested\"; echo '{}' ;;
-  \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
-  \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;"
-}
-
-it "request-rereview: requested_reviewers API で Copilot にレビューを要求する"
-fake_gh_rereview
-out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_eq 0 $?
-assert_contains "$(fake_log gh)" "api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers"
-assert_contains "$(fake_log gh)" "reviewers[]=copilot-pull-request-reviewer[bot]"
-
-it "request-rereview: @copilot メンションコメントは投稿しない（応答するのは swe-agent でレビューは走らない）"
-assert_not_contains "$(fake_log gh)" "@copilot"
-
-it "request-rereview: 登録された review_requested の時刻を基準に待機する"
-assert_contains "$out" "SINCE: 2026-09-08T00:00:00Z"
-assert_contains "$out" "新しいレビューが到着"
-
-it "request-rereview: review_requested が増えなければ待機せずエラーで止まる"
-fake_gh_rereview nogrow
-err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_eq 1 $?
-assert_contains "$err" "ERROR"
-assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
-assert_contains "$err" "/gh-actions-check $PR_URL "
-
-it "request-rereview: レビュー要求 API が失敗したらフォールバックせずエラーで止まる"
-make_fake_gh "\"auth status\"*) ;;
-  \"pr view 1 --json headRefOid\"*) echo def5678 ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 0 ;;
-  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) ;;
-  \"api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers\"*) echo 'gh: HTTP 404' >&2; exit 1 ;;"
-err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_eq 1 $?
-assert_contains "$(fake_log gh)" "requested_reviewers"
-assert_not_contains "$(fake_log gh)" "@copilot"
-assert_not_contains "$(fake_log gh)" "pr view 1 --json number"
-
-it "request-rereview: head のローカルレビューの記録が無ければ、要求せずに記録の仕方を示して止まる"
-# Copilot に出す前に、直した差分をローカルの /code-review で確かめる（ADR-0043）
-fake_gh_rereview grow true
-err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_eq 1 $?
-assert_not_contains "$(fake_log gh)" "requested_reviewers"
-assert_contains "$err" "record-local-review.sh $PR_URL "
-
-it "request-rereview: 記録が無いときの案内は、記録してからこのスクリプトで要求し直させる"
-# REVIEW_FAILED の立て直しでも同じ道を通る。decide-next.sh に戻すと REVIEW_FAILED が続いて巡る
-assert_contains "$err" "request-rereview.sh $PR_URL"
-assert_not_contains "$err" "decide-next.sh"
-
-it "request-rereview: 記録が前の head のものなら要求しない"
-fake_gh_rereview grow 'echo abc1234 0'
-err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_eq 1 $?
-assert_not_contains "$(fake_log gh)" "requested_reviewers"
-
-it "request-rereview: 記録の後に rebase だけした head なら要求する（判定は local-review-covers）"
-fake_gh_rereview grow 'echo abc1234 0'
-fake_hooks_covers '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
-out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_eq 0 $?
-assert_contains "$(fake_log gh)" "requested_reviewers"
-fake_hooks_exact
-
-it "request-rereview: 記録を確かめられなければ要求しない"
-fake_gh_rereview grow 'exit 1'
-out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_ne 0 $?
-assert_not_contains "$(fake_log gh)" "requested_reviewers"
 
 # ===========================================================================
 # gh-pr-review/scripts/record-local-review.sh: ローカルレビューの結果を PR に残す
@@ -1297,13 +1209,6 @@ fake_gh_timeline_fails() {
   make_fake_gh "\"auth status\"*) ;;
   \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 'gh: HTTP 502' >&2; exit 1 ;;"
 }
-
-it "request-rereview: レビュー要求を取得できなければ理由を出して止まり、要求もしない"
-fake_gh_timeline_fails
-err=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
-assert_eq 1 $?
-assert_contains "$err" "レビュー要求"
-assert_not_contains "$(fake_log gh)" "requested_reviewers"
 
 it "decide-next: レビュー要求を取得できなければ周回数を推測せず止まる"
 fake_gh_timeline_fails
