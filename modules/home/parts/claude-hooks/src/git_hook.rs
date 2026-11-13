@@ -100,14 +100,21 @@ fn local_command(hook: &Path, args: &[String]) -> Command {
     cmd
 }
 
-/// cmd に input を標準入力で渡して実行し、終了コードと標準出力を返す（標準エラーは git に渡す）。起動できなければ
-/// 理由を出して None
+/// 子が終わったか。起動できなかった（何もしていない）のと、起動した後に終わりを待てなかった（途中まで動いたかも
+/// しれない）のとを分ける
+enum Unfinished {
+    NotStarted,
+    Lost,
+}
+
+/// cmd に input を標準入力で渡して実行し、終了コードと標準出力を返す（標準エラーは git に渡す）。終わりを受けられ
+/// なければ、理由を出して Unfinished
 fn run_with_input(
     cmd: &mut Command,
     input: &[u8],
     capture: bool,
     what: &str,
-) -> Option<(i32, Vec<u8>)> {
+) -> Result<(i32, Vec<u8>), Unfinished> {
     cmd.stdin(Stdio::piped());
     if capture {
         cmd.stdout(Stdio::piped());
@@ -116,7 +123,7 @@ fn run_with_input(
         Ok(child) => child,
         Err(e) => {
             eprintln!("❌ {what} を起動できません（{e}）");
-            return None;
+            return Err(Unfinished::NotStarted);
         }
     };
     // 入力を書き終える前に相手が標準出力を埋めても詰まらないよう、別のスレッドで書く。入力を読まずに終わる hook も
@@ -131,10 +138,10 @@ fn run_with_input(
         child.wait_with_output()
     });
     match waited {
-        Ok(out) => Some((out.status.code().unwrap_or(1), out.stdout)),
+        Ok(out) => Ok((out.status.code().unwrap_or(1), out.stdout)),
         Err(e) => {
             eprintln!("❌ {what} の終わりを待てません（{e}）");
-            None
+            Err(Unfinished::Lost)
         }
     }
 }
@@ -200,7 +207,7 @@ fn post_rewrite(args: &[String]) -> i32 {
             eprintln!(
                 "❌ commit-refs が見つかりません（Linux は claude-hooks の package.nix が {COMMIT_REFS} を渡す）"
             );
-            None
+            Err(Unfinished::NotStarted)
         }
     };
     // 貼って使えるよう、パスをシェルの引数の形にする（空白などを含むリポジトリのため）
@@ -209,21 +216,32 @@ fn post_rewrite(args: &[String]) -> i32 {
         sh_quote(&saved.display().to_string())
     );
     let stdout = match out {
-        Some((0, stdout)) => stdout,
+        Ok((0, stdout)) => stdout,
         failed => {
             if let Err(e) = std::fs::write(&saved, &input) {
                 eprintln!("❌ 対応を {} に残せません（{e}）", saved.display());
             }
-            if failed.is_some() {
-                println!(
-                    "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
-                );
-                println!("   修正方法: 上の ERROR を直してから、{retry}");
-            } else {
-                println!(
-                    "❌ commit-refs を起動できなかったので、コミットの番号を付け直していません（何も書き換えていません）"
-                );
-                println!("   修正方法: commit-refs を起動できるようにしてから、{retry}");
+            match failed {
+                Ok(_) => {
+                    println!(
+                        "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
+                    );
+                    println!("   修正方法: 上の ERROR を直してから、{retry}");
+                }
+                Err(Unfinished::NotStarted) => {
+                    println!(
+                        "❌ commit-refs を起動できなかったので、コミットの番号を付け直していません（何も書き換えていません）"
+                    );
+                    println!("   修正方法: commit-refs を起動できるようにしてから、{retry}");
+                }
+                Err(Unfinished::Lost) => {
+                    println!(
+                        "❌ commit-refs の終わりを受けられなかったので、書き換えたかどうか分かりません"
+                    );
+                    println!(
+                        "   修正方法: git diff で書き換えた文書を確かめ、書き換えていなければ {retry}"
+                    );
+                }
             }
             return 1;
         }
