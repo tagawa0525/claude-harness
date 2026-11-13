@@ -53,3 +53,29 @@ fn bad_arguments_stop_before_gh() {
         assert_eq!(fake.log(), "", "{args:?}");
     }
 }
+
+#[test]
+fn a_failed_query_of_the_latest_review_stops_without_a_verdict() {
+    // 要求の一覧、印、レビューの一覧、インラインのコメント、レビューの詳細（失敗）、head、未解決スレッド、記録。
+    // レビューが届いた後にその詳細を取れなければ、応答が無いとみなして WAITING などを出さない
+    let reviews = "{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}";
+    let fake = FakeGh::new();
+    let out = fake.run_calls_with_env(
+        "decide-next",
+        &[URL],
+        &[
+            ("2026-09-08T00:00:00Z\n", 0),
+            ("", 0),
+            (reviews, 0),
+            ("", 0),
+            ("", 1),
+            ("def5678def5678def5678def5678def5678def56\n", 0),
+            ("", 0),
+            ("", 0),
+        ],
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("VERDICT"));
+    assert!(stderr(&out).contains("ERROR: "), "{}", stderr(&out));
+}
