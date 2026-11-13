@@ -3,6 +3,7 @@
 //! （スキルの文と PreToolUse のルールはスクリプトの名前で呼び、見分けるので、名前と場所を変えない）
 
 mod base_moved;
+mod branch_topics;
 mod decide_next;
 mod get_latest_review;
 mod get_pr_info;
@@ -24,6 +25,7 @@ type Script = fn(&[String]) -> i32;
 /// 一覧の 1 行で衝突しないように）
 const SCRIPTS: &[(&str, Script)] = &[
     ("base-moved", base_moved::main),
+    ("branch-topics", branch_topics::main),
     ("decide-next", decide_next::main),
     ("get-latest-review", get_latest_review::main),
     ("get-pr-info", get_pr_info::main),
