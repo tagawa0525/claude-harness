@@ -6,6 +6,19 @@
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
 
+# 中身を claude-hooks script に移したスクリプト（ADR-0087）は、ブランチでビルドしたバイナリで確かめる。lib.sh が HOME を
+# 差し替える前にビルドする（hooks.sh と同じ）。CLAUDE_HOOKS_BIN（絶対パス）で差し替えられる
+if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
+  CRATE_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/claude-hooks" && pwd)
+  cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
+  CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
+fi
+if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
+  echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2
+  exit 1
+fi
+REAL_CLAUDE_HOOKS="$CLAUDE_HOOKS_BIN"
+
 source "$(dirname "$0")/../lib.sh"
 
 REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
@@ -16,14 +29,15 @@ REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
 PR_URL="https://github.com/octo/repo/pull/1"
 # decide-next.sh と request-rereview.sh は、記録の判定を claude-hooks local-review-covers に任せる（判定そのものは
 # hooks.sh が本物のバイナリで確かめる）。ここでは偽物を置き、既定では偽 gh の記録（「SHA High の数」の行）から head の
-# 最後の記録が High 0 かだけを見る。記録を取得できなければ 3。rebase だけの判定は、テストごとに偽物を置き直す
+# 最後の記録が High 0 かだけを見る。記録を取得できなければ 3。rebase だけの判定は、テストごとに偽物を置き直す。
+# local-review-covers のほかのサブコマンド（script）は本物に渡す
 fake_hooks_exact() {
   mkdir -p "$TEST_ROOT/fakebin"
   : >"$TEST_ROOT/claude-hooks.log"
   cat >"$TEST_ROOT/fakebin/claude-hooks" <<FAKE
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$TEST_ROOT/claude-hooks.log"
-[[ "\$1" == local-review-covers ]] || exit 2
+[[ "\$1" == local-review-covers ]] || exec "$REAL_CLAUDE_HOOKS" "\$@"
 records=\$(gh api --paginate "repos/{owner}/{repo}/issues/\$3/comments?per_page=100" --jq local-review) || exit 3
 awk -v h="\$4" '\$1 == h { c = (\$2 == "0") } END { exit !c }' <<<"\$records"
 FAKE
