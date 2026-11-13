@@ -36,6 +36,16 @@ impl Repo {
 
     fn command(&self, program: &str) -> Command {
         let mut command = Command::new(program);
+        // 外の git（hook の中で走るテストなど）が渡す、リポジトリを指す環境変数を外す
+        for name in [
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_PREFIX",
+        ] {
+            command.env_remove(name);
+        }
         command
             .current_dir(&self.0)
             .env(
