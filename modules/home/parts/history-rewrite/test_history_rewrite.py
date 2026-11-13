@@ -338,8 +338,13 @@ class HistoryRewrite(unittest.TestCase):
         self,
     ):
         before = self.lint(self.repo, list(self.map))
-        self.assertNotEqual(
-            before.returncode, 0, "書き換える前の履歴に、辞書の語が無い"
+        # 1 は崩れた語がある、2 は検査できなかった（辞書を読めないなど）
+        self.assertEqual(
+            before.returncode,
+            1,
+            "書き換える前の履歴に辞書の語が無いか、検査できない: "
+            + before.stdout
+            + before.stderr,
         )
         after = self.lint(self.rewritten, list(self.map.values()))
         self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
