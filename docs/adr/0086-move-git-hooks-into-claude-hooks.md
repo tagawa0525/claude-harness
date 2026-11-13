@@ -81,8 +81,9 @@ hook のファイル:
   `claude-hooks git-hook staged-checks` を呼ぶだけの `staged-checks` を、段階 6 まで PATH に残す
 - テスト: `modules/home/parts/tests/` の git hook の sh を、次の 2 つに置き換える
   - 判定: `claude-hooks` の `tests/` の結合テスト。一時のリポジトリで `git commit` などを実行し、hook のファイルから
-    中身を呼ぶ。外のツール（gitleaks、書式と lint のツール、`~/.claude` の `run-checks.sh`）は、テストが一時の HOME と
-    PATH に偽のものを置く（crate のビルドの sandbox には本物が無い）。Linux（`nix flake check`）と Windows の CI
+    中身を呼ぶ。外のツール（gitleaks、書式と lint のツール、`~/.claude` の `run-checks.sh`）は、テストが偽のものを
+    渡す（crate のビルドの sandbox には本物が無い）。渡し方は本物の見つけ方に合わせ、`ja-terms`、`gitleaks`、`commit-refs`
+    は環境変数で、ほかは一時の HOME と PATH に置く。Linux（`nix flake check`）と Windows の CI
     （ADR-0083）で流す
   - 配備: Linux の hook のファイルと、`package.nix` が包む store のパス（`ja-terms`、`gitleaks`、`commit-refs`）は、
     `nix build` した hook のファイルで本物の検査を 1 回ずつ通すテストで確かめる（今の sh のテストの組み立てを残す）。
@@ -105,7 +106,8 @@ hook のファイル:
   （README の「Windows で使う」。段階 5 までスキルの sh が使う）が、段階 8 で sh を移し終えたら外す依存で、git hook の
   ために残すことになる
 - 案 A は、hook のファイルの形を OS で分けない。案 B は、git が hook を名前で探すので、同じバイナリを 4 つの名前で置く
-  ことになる。Windows の symlink は権限が要るのでコピーになり、更新のたびに 4 つを入れ直す。案 A の sh を 1 つ挟む費用は
+  ことになる。Windows の symlink は権限（か開発者モード）が要り、hard link は `cargo install` がファイルを置き換えると
+  切れるので、コピーになり、更新のたびに 4 つを入れ直す。案 A の sh を 1 つ挟む費用は
   コミットのたびに 1 回で、Bash ツールの呼び出しごとに走る PreToolUse hook（ADR-0084 の案 X）ほど効かない
 
 ### 帰結
