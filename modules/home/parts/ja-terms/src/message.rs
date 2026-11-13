@@ -15,12 +15,7 @@ const LIMIT: usize = 72;
 const WARN: usize = 50;
 
 /// commit -v の scissors の行
-fn is_scissors(line: &str) -> bool {
-    line.strip_prefix("# ")
-        .and_then(|rest| rest.strip_prefix(&"-".repeat(24)))
-        .and_then(|rest| rest.strip_prefix(" >8 "))
-        .is_some_and(|rest| rest == "-".repeat(24))
-}
+const SCISSORS: &str = "# ------------------------ >8 ------------------------";
 
 /// メッセージの件名（`#` で始まらない最初の行。無ければ空）
 pub fn subject(message: &str) -> &str {
@@ -58,7 +53,7 @@ pub fn body(message: &str) -> Option<String> {
     }
     let end = lines
         .iter()
-        .position(|l| is_scissors(l))
+        .position(|l| *l == SCISSORS)
         .unwrap_or(lines.len());
     let body = trim_newlines(&lines[..end].join("\n")).to_string();
     body.chars()
