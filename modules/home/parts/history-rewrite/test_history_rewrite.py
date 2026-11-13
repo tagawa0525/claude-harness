@@ -1,11 +1,10 @@
 """history-rewrite が一時的なリポジトリの履歴の語を直し、番号を付け直し、照合を通すこと（ADR-0045）。
 
-PATH の history-rewrite、commit-refs、textlint を使う（package.nix の installCheckPhase が渡す）。nix の sandbox には
+PATH の history-rewrite、commit-refs、ja-terms を使う（package.nix の installCheckPhase が渡す）。nix の sandbox には
 git の全体設定が無いので、init.defaultBranch と user をこのテストが与える。辞書の語（崩れた語）をわざと含むので、
 .textlintignore で ja-terms の検査から外す。
 """
 
-import json
 import os
 import subprocess
 import tempfile
@@ -14,6 +13,7 @@ import unittest
 from pathlib import Path
 
 import history_rewrite
+import yaml
 
 # 履歴に無いコミットの番号。対応表で「消えた」（新が 0）にすると、それを指す文書で commit-refs remap が止まる
 VANISHED = "deadbeef" * 5
@@ -295,22 +295,19 @@ class HistoryRewrite(unittest.TestCase):
         )
 
     def lint(self, repo: Repo, commits: list[str]) -> subprocess.CompletedProcess:
-        """コミットの .md と .py と本文に、同じ辞書の textlint（prh）を当てる"""
-        config = Path(self.tmp.name) / "textlintrc.json"
-        config.write_text(
-            json.dumps(
-                {
-                    "plugins": {"@textlint/text": {"extensions": [".py"]}},
-                    "rules": {
-                        "prh": {
-                            "rulePaths": [
-                                os.environ["HISTORY_REWRITE_DICTIONARY"],
-                                str(self.extra),
-                            ]
-                        }
-                    },
-                }
-            )
+        """コミットの .md と .py と本文に、同じ辞書を pre-commit と同じ ja-terms check で当てる"""
+        main, extra = (
+            yaml.safe_load(Path(path).read_text(encoding="utf-8"))["rules"]
+            for path in [os.environ["HISTORY_REWRITE_DICTIONARY"], self.extra]
+        )
+        # ja-terms check は辞書を 1 つ読むので、つなぐ。textlint-rule-prh は後の辞書の、前の辞書と同じ expected の
+        # 規則を外す（prh の Engine.merge）が、足す辞書の expected は前の辞書に無い
+        self.assertFalse({r["expected"] for r in main} & {r["expected"] for r in extra})
+        rules = main + extra
+        dictionary = Path(self.tmp.name) / "dictionary.yml"
+        dictionary.write_text(
+            yaml.safe_dump({"version": 1, "rules": rules}, allow_unicode=True),
+            encoding="utf-8",
         )
         files = Path(tempfile.mkdtemp(dir=self.tmp.name))
         n = 0
@@ -326,21 +323,20 @@ class HistoryRewrite(unittest.TestCase):
             n += 1
         return subprocess.run(
             [
-                "textlint",
-                "--config",
-                str(config),
-                "--format",
-                "unix",
-                "--no-color",
-                ".",
+                "ja-terms",
+                "check",
+                "--dictionary",
+                str(dictionary),
+                *sorted(str(p) for p in files.iterdir()),
             ],
-            cwd=files,
             capture_output=True,
             text=True,
             check=False,
         )
 
-    def test_textlint_with_the_same_dictionary_finds_nothing_after_the_rewrite(self):
+    def test_the_hook_check_with_the_same_dictionary_finds_nothing_after_the_rewrite(
+        self,
+    ):
         before = self.lint(self.repo, list(self.map))
         self.assertNotEqual(
             before.returncode, 0, "書き換える前の履歴に、辞書の語が無い"
