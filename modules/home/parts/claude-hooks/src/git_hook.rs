@@ -560,7 +560,10 @@ fn pre_merge_commit(args: &[String]) -> i32 {
     // git が hook に渡す GIT_INDEX_FILE（.git/index や index.lock）は、検査が起動するテストの中の git にも引き継がれ、
     // 別のリポジトリでこの index を読み書きさせてしまうので外す（--merge は HEAD と作業ツリーの差分で判定し、index
     // に頼らない）
-    let checked = Command::new("bash")
+    // Windows の起動は、PATH の前に System32 を探し、WSL の bash.exe（Linux のディストリビューションを起動するもの）を
+    // 見つける。Git for Windows の bash を使うよう、PATH を順に探して見つけたパスで起動する
+    let bash = crate::staged_checks::find_on_path("bash").unwrap_or_else(|| "bash".into());
+    let checked = Command::new(&bash)
         .arg(&run_checks)
         .arg("--merge")
         .env_remove("GIT_INDEX_FILE")
@@ -568,7 +571,7 @@ fn pre_merge_commit(args: &[String]) -> i32 {
     let passed = match checked {
         Ok(status) => status.success(),
         Err(e) => {
-            println!("❌ bash を起動できません（{e}）");
+            println!("❌ {} を起動できません（{e}）", bash.display());
             false
         }
     };
