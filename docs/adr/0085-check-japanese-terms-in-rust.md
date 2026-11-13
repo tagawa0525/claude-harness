@@ -79,7 +79,8 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   git hook（#101 の段階 4）と `history-rewrite`（段階 7）も同じライブラリか CLI を使う
 - `claude-hooks` からの呼び方: 今のとおり子プロセスで CLI を呼ぶ。辞書を `claude-hooks` のビルドに埋めると、辞書を
   変えるたびに `claude-hooks` の作り直しとテストが走るため（`claude-hooks/package.nix` の注記）。Linux は今のとおり
-  `makeWrapper` の環境変数で store のパスを渡し、環境変数が無い Windows は PATH（`cargo install` の置き場）で探す
+  `makeWrapper` の環境変数で store のパスを渡し、環境変数が無い Windows は名前で起動する（Windows の起動は PATH の前に
+  起動した側の置き場を探すので、`~/.claude/bin` の隣のものが先に見つかる）
 - 移す順序: まず Rust の実装を作り、textlint と同じ入力に同じ結果を返すかを比べる。比べる入力は、辞書の specs と、
   このリポジトリの追跡している Markdown とコードのファイルと、コミットのメッセージの履歴。specs と、ファイルから
   選んだ固定の入力は `nix flake check` のテストにする（`nix flake check` の sandbox は `.git` を持たず、Linux の
@@ -118,8 +119,9 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   「## 変更」を書く
 - 検査（pre-commit、commit-msg、claude-hooks の git merge と git commit のルール、/retro の memory-index.sh）は
   ja-terms に付け替え、textlint を外した（2026-11-13）。ADR-0014、ADR-0050、ADR-0058、ADR-0073、ADR-0074 に「## 変更」を
-  書いた。Windows の `claude-hooks` は、環境変数の無いとき PATH の `ja-terms` を呼ぶ（#115。Windows の CI が、
-  cargo install した ja-terms で git merge と git commit のメッセージを止めることを確かめる）。実装がまだ決定に追いついて
+  書いた。Windows の `claude-hooks` は、環境変数の無いとき `ja-terms` を名前で起動し、`~/.claude/bin` の隣のものが先に見つかる
+  （#115。Windows の CI が、cargo install した ja-terms で git merge と git commit のメッセージを止め、README の手順の
+  git hook が PATH に無い隣の ja-terms で止めることを確かめる）。実装がまだ決定に追いついて
   いないのは、履歴の書き換えの mode と `prh_rules.py` の置き換え（#101 の段階 7）。進みは #101 に書く
 
 ### 確認

@@ -67,9 +67,10 @@ hook の登録の形:
 
 採用: 案 1、案 A、案 X。
 
-- バイナリ: Windows では clone の各 crate を `cargo install --locked --force --path modules/home/parts/<crate>` で入れる
-  （clone のルートに `Cargo.toml` は無い。crate の版は `0.1.0` のまま変えないので、`--force` で毎回入れ直す）。置き場は
-  cargo の既定（`%USERPROFILE%\.cargo\bin`）。Linux は今のとおり Nix でビルドする
+- バイナリ: Windows では clone の各 crate を `cargo install --locked --force --root ~/.claude --path modules/home/parts/<crate>`
+  で入れる（clone のルートに `Cargo.toml` は無い。crate の版は `0.1.0` のまま変えないので、`--force` で毎回入れ直す）。
+  置き場は Linux と同じ `~/.claude/bin`（スキルの sh のスクリプトがこのパスで呼ぶ。ADR-0087）で、Git Bash の `~/.bashrc` で
+  PATH の先頭に足す。Linux は今のとおり Nix でビルドする
 - 同期と settings.json の更新の先: ホームの下の `.claude`（今の `claude-sync.sh` と同じ）。`CLAUDE_CONFIG_DIR` には
   対応しない。hook のバイナリの置き場と Stop の hook の退避の先も `~/.claude` に固定していて、同期の先だけを変えると
   配備が 2 か所に分かれるため
@@ -100,7 +101,7 @@ hook の登録の形:
 - Windows で使い始めるのは #101 の段階 3 から: Nix が包んで渡すもの（`claude-hooks` の `CLAUDE_HOOKS_JA_TERMS`、
   `package.nix` の `makeWrapper`）と PATH に頼る `gitleaks`、`~/.claude/bin/` に固定のパスで置く `ja-terms` を、Windows で
   どう用意するかは、ADR-0082 のとおり段階 3 で決める。崩れた語の検査は ADR-0085 で、Rust の ja-terms を `cargo install`
-  で入れ、環境変数の無い Windows の claude-hooks は PATH で探すと決めた（#115）。
+  で入れ、環境変数の無い Windows の claude-hooks は名前で起動する（隣の `~/.claude/bin` のものが先に見つかる）と決めた（#115）。
   それまでに PreToolUse hook を登録すると、`gitleaks` の無い Windows では機密情報の検査ができず、`block_secret_commit.rs`
   がすべての `git commit` を止める
 - hook の登録: バイナリの hook は exec form にし、Linux も同じ形に揃える（例: `command` に
