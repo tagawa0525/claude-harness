@@ -1,8 +1,9 @@
 # =============================================================================
 # claude-setup: ハーネスを Claude Code の設定に配る設置のコマンド（ADR-0084）
 # =============================================================================
-# sync はハーネスの .claude を ~/.claude に同期する。Linux の claude-sync と home-manager の activation が呼び、
-# Windows では cargo install して直接呼ぶ。外の依存は git だけ（引数なしの同期が既定の clone を pull する）。
+# sync はハーネスの .claude を ~/.claude に同期し、settings は ~/.claude/settings.json に静的な設定とハーネスの hook の
+# 登録を書く。Linux の claude-sync と home-manager の activation が呼び、Windows では cargo install して直接呼ぶ。
+# 外のコマンドは git だけ（引数なしの同期が既定の clone を pull する）。
 # =============================================================================
 [package]
 name = "claude-setup"
@@ -10,3 +11,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# settings.json を読み書きする（jq の代わり。ADR-0082）。preserve_order で、利用者のファイルのキーの順を保つ
+serde_json = { version = "1", features = ["preserve_order"] }
