@@ -71,6 +71,11 @@ impl Home {
         let path = self.0.join(name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         path.display().to_string()
     }
 
@@ -297,4 +302,78 @@ fn a_system_hooks_path_is_not_taken_over() {
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     assert!(said(&out).contains("/opt/corp-hooks"), "{}", said(&out));
     assert_eq!(home.hooks_path(), None);
+}
+
+#[test]
+fn a_system_hooks_path_is_ignored_when_git_ignores_the_system_file() {
+    // GIT_CONFIG_NOSYSTEM では git は system の設定を読まないので、そこの値で止めない
+    let home = Home::new();
+    let system = home.0.join("system.gitconfig");
+    std::fs::write(&system, "[core]\n\thooksPath = /opt/corp-hooks\n").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            cmd.env_remove(key);
+        }
+    }
+    let out = cmd
+        .args(["git-hooks", "--bin", &home.bin("bin/claude-hooks")])
+        .env("GIT_CONFIG_GLOBAL", home.gitconfig())
+        .env("GIT_CONFIG_SYSTEM", &system)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", &home.0)
+        .env("USERPROFILE", &home.0)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", said(&out));
+}
+
+#[test]
+fn a_wrapper_that_calls_claude_hooks_is_not_ours() {
+    // ハーネスの hook のファイルは、生成した 2 行の形のものだけ。claude-hooks を呼ぶ利用者のラッパーは上書きしない
+    let home = Home::new();
+    std::fs::create_dir_all(home.hooks()).unwrap();
+    let wrapper = "#!/bin/sh\nrun-my-lint && exec claude-hooks git-hook pre-commit \"$@\"\n";
+    std::fs::write(home.hooks().join("pre-commit"), wrapper).unwrap();
+    let out = home.run(&home.bin("bin/claude-hooks"));
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert_eq!(
+        std::fs::read_to_string(home.hooks().join("pre-commit")).unwrap(),
+        wrapper
+    );
+}
+
+// Linux の home-manager は hook を store への symlink で置く。Windows の symlink は作るのに権限が要る
+#[cfg(unix)]
+#[test]
+fn hook_files_placed_as_symlinks_are_left_to_their_owner() {
+    let home = Home::new();
+    std::fs::create_dir_all(home.hooks()).unwrap();
+    let target = home.0.join("store-pre-commit");
+    std::fs::write(
+        &target,
+        "#!/bin/sh\nexec '/nix/store/x/bin/claude-hooks' git-hook pre-commit \"$@\"\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&target, home.hooks().join("pre-commit")).unwrap();
+    let out = home.run(&home.bin("bin/claude-hooks"));
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(
+        std::fs::symlink_metadata(home.hooks().join("pre-commit"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+// Windows には実行の bit が無い
+#[cfg(unix)]
+#[test]
+fn a_bin_without_the_executable_bit_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new();
+    let bin = home.bin("bin/claude-hooks");
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let out = home.run(&bin);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
 }
