@@ -64,6 +64,15 @@ jobs:
           claude-setup sync "$PWD"
           claude-setup settings --static modules/home/parts/claude-settings.json \
             --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
+      # 同期した sh のスクリプトは LF でないと Git Bash で動かない。runner の Git for Windows は core.autocrlf=true で、
+      # checkout が CRLF にしうる（#104）
+      - name: Check the synced scripts use LF
+        run: |
+          if crlf=$(grep -rlI $'\r' ~/.claude/scripts ~/.claude/skills); then
+            echo "CRLF の同期したファイル:"
+            echo "$crlf"
+            exit 1
+          fi
       - name: Check the registered hook
         run: |
           set -euo pipefail
