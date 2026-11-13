@@ -152,9 +152,12 @@ pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
     for (path, blob) in &files {
         // pathspec が拡張子で選んでいる
         let syntax = report::syntax_of(path).expect("pathspec の拡張子");
-        let text =
-            String::from_utf8_lossy(&git(Some(&top), &["cat-file", "blob", blob])?).into_owned();
-        match report::check(dictionary, &text, syntax) {
+        // 読めないブロブも、それまでの報告を出してから検査できなかったとする
+        let checked = git(Some(&top), &["cat-file", "blob", blob]).and_then(|blob| {
+            let text = String::from_utf8_lossy(&blob).into_owned();
+            report::check(dictionary, &text, syntax).map_err(|e| Failure(e.to_string()))
+        });
+        match checked {
             Ok(reports) => {
                 for r in &reports {
                     out.push_str(&format!(
@@ -164,8 +167,8 @@ pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
                 }
                 total += reports.len();
             }
-            Err(e) => {
-                failure = Some(format!("{path}: {e}"));
+            Err(Failure(why)) => {
+                failure = Some(format!("{path}: {why}"));
                 break;
             }
         }
