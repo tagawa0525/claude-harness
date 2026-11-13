@@ -62,11 +62,12 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
 - スクリプトのファイル: 名前と場所を変えず、`exec "${CLAUDE_HOOKS_BIN:-$HOME/.claude/bin/claude-hooks}" script <名前> "$@"`
-  だけの sh にする（`lib/local-review.sh` と同じ引き方。PATH に `claude-hooks` を置かない）。スキルの文と hook のルールは
+  だけの sh にする（`lib/local-review.sh` と同じ引き方。PATH で引かない）。スキルの文と hook のルールは
   変えない。Windows では Git Bash がこの sh を実行し、jq を使わない
 - Windows の置き場: crate を `cargo install --root ~/.claude` で `~/.claude/bin/` に入れ、Linux と同じパスで引く（Git Bash は
   `.exe` を補って実行する）。settings.json と git hook の登録もこのパスを指し、`ja-terms` と `commit-refs` は
-  `claude-hooks` の隣のものを起動する（README の「Windows で使う」）
+  `claude-hooks` の隣のものを起動する。スキルと修正方法の文が名前で呼ぶ `claude-setup` と `commit-refs` のため、
+  `~/.claude/bin` を利用者の PATH に足す（README の「Windows で使う」）
 - `lib/` の部品: source されるので 1 行にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す
 - PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を 1 行に置き換える
@@ -96,6 +97,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   スクリプトは前の版のバイナリにサブコマンドが無く失敗する。移す PR は `claude-hooks` を変えるので、マージの後は
   `claude-sync` でなく rebuild（activation が sync も実行する）で入れる。Windows も、`claude-setup sync` の前に
   `cargo install` を済ませる
+- 悪い点: Windows では、`cargo install --root ~/.claude` が入れた crate の記録（`.crates.toml`、`.crates2.json`）を
+  `~/.claude` に置く
 
 ### 確認
 
@@ -109,4 +112,5 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 2026-11-13: Windows の置き場は、はじめ `claude-setup` が `cargo install` の置き場（`~/.cargo/bin`）の `claude-hooks.exe` を
   `~/.claude/bin/` にコピーするとしていた。settings.json と git hook の登録は `~/.cargo/bin` を指したままなので、コピーを
   忘れると hook とスクリプトで版が分かれる（PR #142 のローカルレビュー）。`cargo install --root ~/.claude` で入れれば
-  置き場が 1 つになり、コピーの手順も要らないので、そちらに変えた
+  置き場が 1 つになり、コピーの手順も要らないので、そちらに変えた。`~/.claude/bin` は PATH に無いので、名前で呼ぶ
+  `claude-setup` と `commit-refs` のために利用者の PATH の先頭に足し、前の `~/.cargo/bin` の版は外す

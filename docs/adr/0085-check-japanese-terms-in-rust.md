@@ -209,3 +209,5 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
     バイトのまま持ち、`--exclude-from` の値を表示用の文字列で作った版も捨てた。git が一時のファイルを読めない
   - `.textlintignore` の有無を `git cat-file -e` の成否で見た。壊れたインデックスなどの git の誤りも「無い」とみなす
   - PATH の git を使った。`staged.sh` は store の git を使っていたので、Nix で組む ja-terms は store の git を PATH の前に置く
+- 2026-11-13: Windows の ja-terms は `~/.claude/bin` に入れ、`claude-hooks` の隣のものが先に見つかる（ADR-0087 の決定。
+  Windows の起動は PATH の前に起動した側の置き場を探す）。PATH で探すのはその後

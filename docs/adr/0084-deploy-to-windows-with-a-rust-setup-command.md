@@ -165,3 +165,6 @@ hook の登録の形:
   - いちばん上の場所（skills など）のリンクを、中の項目と同じくリンクのままコピーした。rsync は末尾の `/` で辿る
   - 空の HOME を止めるテストを書いたが、`std::env::home_dir` は Unix で HOME が空なら passwd のホームを返し、テストが
     実際のホームに同期したので外した
+- 2026-11-13: Windows のバイナリの置き場を、cargo の既定の `~/.cargo/bin` から `cargo install --root ~/.claude` の
+  `~/.claude/bin` に変えた（ADR-0087 の決定と補足。スキルの sh のスクリプトが Linux と同じパスで呼ぶため）。
+  `~/.claude/bin` を利用者の PATH の先頭に足す（README の「Windows で使う」）

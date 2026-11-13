@@ -67,6 +67,18 @@ done
 ~/.claude/bin/claude-setup git-hooks --bin "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ```
 
+初めて入れたときは、`~/.claude/bin` を利用者の PATH の先頭に足し、Git Bash を開き直す。スキルと hook の修正方法の文は
+`claude-setup` と `commit-refs` を名前で呼ぶ。前の手順で `~/.cargo/bin` に入れていたら、PATH で古い版が先に見つからない
+よう外す:
+
+```bash
+powershell -NoProfile -Command '$d = "$env:USERPROFILE\.claude\bin"; $p = [Environment]::GetEnvironmentVariable("Path", "User"); if (($p -split ";") -notcontains $d) { [Environment]::SetEnvironmentVariable("Path", "$d;$p", "User") }'
+cargo uninstall claude-hooks ja-terms commit-refs claude-setup  # ~/.cargo/bin に入れていたときだけ
+```
+
+`cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
+`--force` で入れ直すときに使うので消さない。
+
 clone を更新したら、同じ手順をもう一度流す（crate の版は変えないので `--force` で入れ直す）。Windows の CI
 （`.github/workflows/windows.yml` の `setup`）が、この手順を流し、登録した PreToolUse hook と git hook が main への
 `git commit` を止めることを確かめる。

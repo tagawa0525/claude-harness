@@ -239,7 +239,7 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
         Ok(c) => c,
         Err(e) => {
             return Lint::Failed(format!(
-                "{check} を起動できません（{e}。Windows では modules/home/parts/ja-terms を cargo install で入れる）"
+                "{check} を起動できません（{e}。Windows では README の「Windows で使う」の手順で ~/.claude/bin に入れる）"
             ));
         }
     };
