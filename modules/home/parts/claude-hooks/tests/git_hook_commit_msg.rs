@@ -306,3 +306,23 @@ fn every_argument_reaches_the_local_hook() {
         "2:a b"
     );
 }
+
+// Git for Windows は hooks/<名前>.exe も hook として探す
+#[cfg(windows)]
+#[test]
+fn a_local_exe_hook_runs_on_windows() {
+    let repo = Repo::new();
+    let local = repo.local_hook().with_extension("exe");
+    std::fs::copy(fake_tool(), &local).unwrap();
+    let out = repo.commit(&[], &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // ローカルの hook（偽のコマンドのコピー）だけが呼ばれ、ja-terms に渡す `commit-msg` の引数は付かない
+    let calls = repo.calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].ends_with("COMMIT_EDITMSG"), "{calls:?}");
+    assert!(!calls[0].starts_with("commit-msg "), "{calls:?}");
+}
