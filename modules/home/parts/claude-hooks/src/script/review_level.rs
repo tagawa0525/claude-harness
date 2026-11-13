@@ -55,7 +55,16 @@ pub fn main(args: &[String]) -> i32 {
             a => target = Some(a.to_string()),
         }
     }
-    let dir = Path::new(".");
+    // 差分のパスはリポジトリの直下からなので、git もそこで動かす（サブディレクトリの cwd からの相対の pathspec で、
+    // ADR の差分が空にならないように）
+    let Some(top) = git(Path::new("."), &["rev-parse", "--show-toplevel"]) else {
+        for notice in crate::output::take_notices() {
+            eprintln!("{notice}");
+        }
+        eprintln!("ERROR: git のリポジトリの中で実行してください");
+        return 1;
+    };
+    let dir = Path::new(&top);
     let base = match base {
         Some(base) => base,
         None => {
@@ -93,6 +102,9 @@ pub fn main(args: &[String]) -> i32 {
     let files = git(
         dir,
         &[
+            // ASCII でない文字のパス（日本語の名前の文書）を引用せずに読む
+            "-c",
+            "core.quotePath=false",
             "diff",
             "--no-renames",
             "--name-only",
@@ -193,6 +205,9 @@ fn adr_change_section_only(dir: &Path, merge_base: &str, target: &str, path: &st
             "diff",
             "-U0",
             "--no-renames",
+            // 利用者の設定の色や外の diff で、hunk の見出しの形を変えない
+            "--no-color",
+            "--no-ext-diff",
             merge_base,
             target,
             "--",
@@ -208,13 +223,16 @@ fn adr_change_section_only(dir: &Path, merge_base: &str, target: &str, path: &st
             start > heading
         }
     };
-    diff.lines().filter_map(|l| HUNK.captures(l)).all(|c| {
-        let num = |i: usize, default: usize| {
-            c.get(i)
-                .map_or(default, |m| m.as_str().parse().unwrap_or(0))
-        };
-        after(num(1, 0), num(2, 1), old_heading) && after(num(3, 0), num(4, 1), new_heading)
-    })
+    // hunk を 1 つも読めなければ、文書の変更とみなさない（high に倒す）
+    let hunks: Vec<_> = diff.lines().filter_map(|l| HUNK.captures(l)).collect();
+    !hunks.is_empty()
+        && hunks.iter().all(|c| {
+            let num = |i: usize, default: usize| {
+                c.get(i)
+                    .map_or(default, |m| m.as_str().parse().unwrap_or(0))
+            };
+            after(num(1, 0), num(2, 1), old_heading) && after(num(3, 0), num(4, 1), new_heading)
+        })
 }
 
 /// target をチェックアウトしている worktree のパス。ディレクトリが消えた worktree（prunable）は数えない
