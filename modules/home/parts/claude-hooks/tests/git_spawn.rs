@@ -1,5 +1,8 @@
 //! git や gh を起動できないときに、claude-hooks が理由を systemMessage で利用者に見せること（ADR-0033）
 
+mod common;
+
+use common::forget_git_env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -51,12 +54,8 @@ fn run(cwd: &Path, command: &str, rule: Option<&str>, path: Option<&str>) -> Hoo
     if let Some(rule) = rule {
         cmd.args(["--rule", rule]);
     }
-    // 呼んだ側のリポジトリ（git の hook の中の GIT_DIR など）や、上のディレクトリのリポジトリを見せない
-    for (key, _) in std::env::vars() {
-        if key.starts_with("GIT_") {
-            cmd.env_remove(key);
-        }
-    }
+    // 上のディレクトリのリポジトリも見せない（GIT_CEILING_DIRECTORIES）
+    forget_git_env(&mut cmd);
     let mut child = cmd
         .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
         .env("PATH", path.unwrap_or(""))

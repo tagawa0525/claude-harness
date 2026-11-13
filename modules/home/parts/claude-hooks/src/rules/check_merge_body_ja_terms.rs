@@ -34,17 +34,7 @@ pub(super) const JA_TERMS: &str = "CLAUDE_HOOKS_JA_TERMS";
 
 /// 呼ぶ ja-terms。git merge と git commit のルールと、commit-msg の git hook（crate::git_hook）が使う
 pub(crate) fn ja_terms() -> Option<String> {
-    ja_terms_from(std::env::var(JA_TERMS).ok(), cfg!(windows))
-}
-
-/// 環境変数のパスが先（空の値はパスでない）。無ければ、Nix のラッパーの無い Windows（ja-terms を cargo install で
-/// 入れる。ADR-0084、ADR-0085）は名前の `ja-terms` で起動する（Windows の起動は、PATH の前に claude-hooks の置き場と
-/// システムのディレクトリも探す。cargo install の置き場は同じ）。Linux で環境変数が無いのは cargo で直接ビルドした
-/// もので、None を返す（PATH の別の版で判定しない）。None のときの扱いは呼び出し元が決める（PreToolUse のルールは
-/// 判定できない理由を出して通し、commit-msg の git hook は止める）
-fn ja_terms_from(env: Option<String>, windows: bool) -> Option<String> {
-    env.filter(|path| !path.is_empty())
-        .or_else(|| windows.then(|| "ja-terms".to_string()))
+    crate::tools::find(JA_TERMS, "ja-terms")
 }
 
 /// 本文を判定できない理由
@@ -611,23 +601,6 @@ exit 0
             [Finding::Deny(r)] => r.clone(),
             _ => panic!("deny が 1 件のはず"),
         }
-    }
-
-    #[test]
-    fn ja_terms_is_the_wrapped_path_or_the_one_on_path_on_windows() {
-        // Nix の包む側が渡すパスが先。無ければ、cargo install で入れる Windows は PATH の ja-terms
-        assert_eq!(
-            ja_terms_from(Some("/nix/store/x/bin/ja-terms".to_string()), true),
-            Some("/nix/store/x/bin/ja-terms".to_string())
-        );
-        assert_eq!(ja_terms_from(None, true), Some("ja-terms".to_string()));
-        assert_eq!(ja_terms_from(None, false), None);
-        // 空の値はパスでない（HOME と同じ）
-        assert_eq!(
-            ja_terms_from(Some(String::new()), true),
-            Some("ja-terms".to_string())
-        );
-        assert_eq!(ja_terms_from(Some(String::new()), false), None);
     }
 
     #[test]

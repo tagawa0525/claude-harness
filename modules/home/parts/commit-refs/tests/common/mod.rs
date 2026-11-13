@@ -27,6 +27,9 @@ impl TempRepo {
         fs::create_dir(&dir).unwrap();
         let repo = TempRepo { dir };
         repo.git(&["init", "-q", "-b", "main"]);
+        // 利用者の改行の設定（Git for Windows の既定の core.autocrlf=true）で、作業ツリーのファイルが CRLF に
+        // ならないように（期待値は LF で書く）
+        repo.git(&["config", "core.autocrlf", "false"]);
         let hooks = repo.dir.join(".git/capture-hooks");
         fs::create_dir(&hooks).unwrap();
         let hook = hooks.join("post-rewrite");
@@ -148,9 +151,15 @@ impl Drop for TempRepo {
     }
 }
 
+/// 実行の権限を付ける（Windows には実行の bit が無いので何もしない）
 pub fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 pub fn isolate(command: &mut Command) {

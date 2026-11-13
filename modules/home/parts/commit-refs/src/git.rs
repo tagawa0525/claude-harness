@@ -1,18 +1,27 @@
 //! git を呼ぶツール。
 
-use std::ffi::OsStr;
 use std::io::Write;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+
+/// git が出したパスのバイト列。Unix はバイト列のまま（UTF-8 とは限らない）、Windows は git が UTF-8 で書く
+pub fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
 
 /// 今の作業ツリーの直下
 pub fn toplevel() -> Result<PathBuf, String> {
     let top = git(Path::new("."), &["rev-parse", "--show-toplevel"])?;
     // git が足す改行だけを外す（ディレクトリ名の末尾の空白は名前の一部）
-    Ok(PathBuf::from(OsStr::from_bytes(
-        top.strip_suffix(b"\n").unwrap_or(&top),
-    )))
+    Ok(path_from_bytes(top.strip_suffix(b"\n").unwrap_or(&top)))
 }
 
 /// `git args…` を `dir` で実行し、成功なら標準出力を返す。

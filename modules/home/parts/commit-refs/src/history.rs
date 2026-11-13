@@ -10,10 +10,8 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -131,11 +129,17 @@ pub fn run(map_path: &Path) -> Result<(), Errors> {
 
     let changed = rewrite.finals.iter().filter(|(c, f)| c != f).count();
     let shown = map_file.strip_prefix(&top).unwrap_or(&map_file);
+    // 貼って commit-refs remap に渡すパスなので、Windows でも git と同じ `/` 区切りで書く（Git Bash は `\` を消す）
+    let shown = shown.display().to_string();
+    let shown = if cfg!(windows) {
+        shown.replace('\\', "/")
+    } else {
+        shown
+    };
     let mut report = format!(
-        "COMMITS: {}\nCHANGED: {changed}\nREFS: {}\nMAP: {}\n",
+        "COMMITS: {}\nCHANGED: {changed}\nREFS: {}\nMAP: {shown}\n",
         rewrite.finals.len(),
         rewrite.refs_replaced,
-        shown.display()
     );
     for name in not_rewritten {
         report.push_str(&format!("NOT_REWRITTEN: {name}\n"));
@@ -166,8 +170,8 @@ fn map_file(top: &Path) -> Result<PathBuf, String> {
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?;
     // git が足す改行だけを外し、パスはバイト列のまま扱う（UTF-8 とは限らない）
-    let dir = OsStr::from_bytes(dir.strip_suffix(b"\n").unwrap_or(&dir));
-    Ok(Path::new(dir).join("commit-refs").join("commit-map"))
+    let dir = git::path_from_bytes(dir.strip_suffix(b"\n").unwrap_or(&dir));
+    Ok(dir.join("commit-refs").join("commit-map"))
 }
 
 /// 作業ツリーに変更が無く、ほかの worktree が無く、前の書き換えの ref と対応表が残っていないこと

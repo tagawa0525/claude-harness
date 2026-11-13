@@ -158,6 +158,8 @@ fn leaves_untracked_files_unmapped_hex_word_parts_and_short_hex_alone() {
     assert!(!stdout(&out).contains("other.md"), "{}", stdout(&out));
 }
 
+// UTF-8 でないファイル名は Unix にしか無い（Windows のファイル名は UTF-16）
+#[cfg(unix)]
 #[test]
 fn replaces_in_files_whose_names_are_not_utf8() {
     use std::ffi::OsStr;
@@ -185,6 +187,8 @@ fn leaves_binary_files_alone() {
     assert_eq!(t.read("blob.bin"), data);
 }
 
+// Windows の symlink は作るのに権限が要る
+#[cfg(unix)]
 #[test]
 fn does_not_write_through_tracked_symlinks() {
     let t = TempRepo::new("symlink");
@@ -284,6 +288,8 @@ fn a_line_whose_old_and_new_hashes_differ_in_length_stops() {
     assert_eq!(t.read("notes.md"), format!("at {}\n", &old[..8]));
 }
 
+// Unix の権限の bit で書けない・読めないファイルを作る
+#[cfg(unix)]
 #[test]
 fn a_write_failure_keeps_the_file_intact_and_names_the_files_already_rewritten() {
     use std::os::unix::fs::PermissionsExt;
@@ -307,6 +313,8 @@ fn a_write_failure_keeps_the_file_intact_and_names_the_files_already_rewritten()
     assert!(!err.contains("何も書き換えていない"), "{err}");
 }
 
+// Unix の権限の bit で書けない・読めないファイルを作る
+#[cfg(unix)]
 #[test]
 fn keeps_the_permissions_of_rewritten_files() {
     use std::os::unix::fs::PermissionsExt;
@@ -323,6 +331,8 @@ fn keeps_the_permissions_of_rewritten_files() {
     assert_eq!(mode & 0o777, 0o750);
 }
 
+// Windows のファイル名は末尾の空白を持てない
+#[cfg(unix)]
 #[test]
 fn works_in_a_repository_whose_directory_name_ends_with_a_space() {
     let t = TempRepo::new("outer");
@@ -362,6 +372,8 @@ fn works_in_a_repository_whose_directory_name_ends_with_a_space() {
     );
 }
 
+// /dev/full は Unix にしか無い
+#[cfg(unix)]
 #[test]
 fn rewrites_every_file_even_when_stdout_cannot_be_written() {
     let t = TempRepo::new("stdout-full");
@@ -382,6 +394,8 @@ fn rewrites_every_file_even_when_stdout_cannot_be_written() {
     assert_eq!(t.read("b.md"), "at 44444444\n");
 }
 
+// UTF-8 でないファイル名は Unix にしか無い（Windows のファイル名は UTF-16）
+#[cfg(unix)]
 #[test]
 fn accepts_a_map_path_that_is_not_utf8() {
     use std::ffi::OsStr;
@@ -416,6 +430,8 @@ fn a_zero_marker_of_any_length_marks_a_pruned_commit() {
     assert!(stderr(&out).contains("消えたコミット"), "{}", stderr(&out));
 }
 
+// Unix の権限の bit で書けない・読めないファイルを作る
+#[cfg(unix)]
 #[test]
 fn an_unreadable_file_does_not_hide_other_reasons_to_stop() {
     use std::os::unix::fs::PermissionsExt;
@@ -446,6 +462,8 @@ fn every_stop_before_writing_says_nothing_was_rewritten() {
     );
 }
 
+// Windows の既定のパスの長さ（MAX_PATH の 260）を超える
+#[cfg(unix)]
 #[test]
 fn rewrites_files_whose_names_are_near_the_length_limit() {
     let t = TempRepo::new("long-name");

@@ -335,6 +335,8 @@ fn creates_a_tag_that_points_at_another_tag() {
     assert_eq!(h.t.rev("outer^{commit}"), h.t.rev("main"));
 }
 
+// Windows の symlink は作るのに権限が要る
+#[cfg(unix)]
 #[test]
 fn leaves_symlink_targets_alone() {
     let h = History::new("symlink");
@@ -511,6 +513,8 @@ fn rewrites_an_old_annotated_tag_without_a_tagger() {
     );
 }
 
+// /dev/full は Unix にしか無い
+#[cfg(unix)]
 #[test]
 fn a_failure_to_write_the_report_still_says_the_refs_were_moved() {
     let h = History::new("report-full");

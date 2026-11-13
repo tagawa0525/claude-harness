@@ -3,6 +3,9 @@
 //! ローカルの commit-msg、Claude Code の外、fork では渡さないことを確かめる。ja-terms は偽のコマンド
 //! （examples/fake_tool.rs）にする。本物の ja-terms での判定は modules/home/parts/tests/commit-msg-conventions.sh
 
+mod common;
+
+use common::*;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,32 +18,6 @@ impl Drop for Repo {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
-}
-
-/// examples/fake_tool の実行ファイル（テストの実行ファイルは target/<profile>/deps にある）。`cargo test` は examples も
-/// ビルドする（`--test` で絞ると作らないので、先に `cargo build --examples` を流す）
-fn fake_tool() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let profile = exe.parent().unwrap().parent().unwrap();
-    profile
-        .join("examples")
-        .join(format!("fake_tool{}", std::env::consts::EXE_SUFFIX))
-}
-
-/// sh に書くパス（Windows の `\` は sh の中で消えるので `/` にする）
-fn sh_path(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
-/// 実行の権限を付ける（Windows には無い）
-fn executable(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    #[cfg(not(unix))]
-    let _ = path;
 }
 
 impl Repo {
@@ -89,13 +66,7 @@ impl Repo {
 
     fn command(&self, args: &[&str], dir: &Path) -> Command {
         let mut cmd = Command::new("git");
-        // 呼んだ側のリポジトリ（run-checks.sh を実行する git の hook の中の GIT_DIR、GIT_INDEX_FILE など）を見せない。
-        // 残すと、テストの init や commit が外のリポジトリに当たる
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("GIT_") {
-                cmd.env_remove(key);
-            }
-        }
+        forget_git_env(&mut cmd);
         cmd.args(args)
             .current_dir(dir)
             .env("GIT_CEILING_DIRECTORIES", &self.root)
@@ -284,11 +255,7 @@ fn every_argument_reaches_the_local_hook() {
     .unwrap();
     executable(&local);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            cmd.env_remove(key);
-        }
-    }
+    forget_git_env(&mut cmd);
     let out = cmd
         .args(["git-hook", "commit-msg", "a", "b"])
         .current_dir(repo.work())

@@ -1,9 +1,7 @@
 //! remap: 作業ツリーの追跡しているテキストのファイルの中の番号を、対応表で付け直す（ADR-0012）。
 
-use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use commit_refs::Map;
@@ -111,7 +109,7 @@ fn collect(top: &Path, paths: &[Vec<u8>], map: &Map) -> Result<Vec<Replacement>,
     let mut errors = Vec::new();
     let mut results = Vec::new();
     for path in paths {
-        let file = top.join(OsStr::from_bytes(path));
+        let file = top.join(git::path_from_bytes(path));
         let label = String::from_utf8_lossy(path);
         // 追跡している symlink は、書くとリンク先を変えてしまうので飛ばす
         // （リンク先が追跡しているファイルなら、そちらとして置き換わる）

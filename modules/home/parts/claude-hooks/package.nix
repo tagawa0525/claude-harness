@@ -16,6 +16,8 @@ let
   # git merge と git commit のメッセージの検査（check-merge-body-ja-terms、check-commit-message）が呼ぶ
   # `ja-terms commit-msg`（commit-msg の hook と同じ検査）と、git merge の本文の語だけを見る `ja-terms message`（ADR-0085）
   jaTerms = callPackage ../ja-terms/package.nix { };
+  # post-rewrite の git hook（git-hook post-rewrite）が呼ぶ `commit-refs remap`（ADR-0012、ADR-0086）
+  commitRefs = callPackage ../commit-refs/package.nix { };
   unwrapped = rustPlatform.buildRustPackage {
     pname = "claude-hooks-unwrapped";
     version = "0.1.0";
@@ -61,7 +63,8 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     makeWrapper ${unwrapped}/bin/claude-hooks $out/bin/claude-hooks \
-      --set CLAUDE_HOOKS_JA_TERMS ${jaTerms}/bin/ja-terms
+      --set CLAUDE_HOOKS_JA_TERMS ${jaTerms}/bin/ja-terms \
+      --set CLAUDE_HOOKS_COMMIT_REFS ${commitRefs}/bin/commit-refs
     runHook postInstall
   '';
   # 包んだ ja-terms と辞書で git merge の本文の崩れた語を、同じ ja-terms で git commit の
