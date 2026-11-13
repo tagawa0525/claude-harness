@@ -107,7 +107,19 @@ fn staged_files(top: &Path) -> Result<Vec<(String, String)>, Failure> {
 
 /// ステージした .textlintignore に当たる、インデックスのファイルのパス
 fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
-    if git(Some(top), &["cat-file", "-e", ":.textlintignore"]).is_err() {
+    // 無いことと git の誤り（壊れたインデックスなど）を分けるため、cat-file -e の失敗でなく、インデックスに載って
+    // いるかで見る
+    let listed = git(
+        Some(top),
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--",
+            ":(top,literal).textlintignore",
+        ],
+    )?;
+    if listed.is_empty() {
         return Ok(HashSet::new());
     }
     let patterns = git(Some(top), &["show", ":.textlintignore"])?;
