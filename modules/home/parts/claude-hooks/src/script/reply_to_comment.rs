@@ -28,8 +28,8 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("ERROR: comment_id は数で渡してください: '{id}'");
         return 1;
     }
-    super::gh(
-        &pr,
+    crate::gh::run_for_repo(
+        &pr.repo,
         &[
             "api",
             &format!(
