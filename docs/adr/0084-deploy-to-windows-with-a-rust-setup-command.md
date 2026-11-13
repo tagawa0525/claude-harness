@@ -139,8 +139,9 @@ hook の登録の形:
 - 設置のコマンドの crate は `claude-setup`（`modules/home/parts/claude-setup`）。同期は `claude-setup sync` に移し、Linux の
   `claude-sync` と activation もそれを呼ぶ（2026-11-13）。settings.json の更新も `claude-setup settings` に移し、静的な設定は
   `modules/home/parts/claude-settings.json` に置く。activation は jq を使わず、このファイルのパスをコマンドに渡す（Nix で
-  `builtins.fromJSON` で読む要は無くなった）。Linux の登録も exec form になった。残りは Windows の手順の通し（gitleaks の
-  用意を含む）と、git hook の設置（#101 の段階 4）。進みは #101 に書く
+  `builtins.fromJSON` で読む要は無くなった）。Linux の登録も exec form になった。Windows の手順は README の「Windows で
+  使う」に書き（gitleaks は winget で入れる）、Windows の CI の `setup` のジョブがその手順を流して、登録した hook が main への
+  `git commit` を止めることを確かめる（2026-11-13）。残りは git hook の設置（#101 の段階 4）。進みは #101 に書く
 
 ### 確認
 

@@ -35,3 +35,50 @@ jobs:
           cargo build --locked
           bash tests/merge-ja-terms.sh target/debug/claude-hooks.exe
           bash tests/commit-message.sh target/debug/claude-hooks.exe
+
+  # README の「Windows で使う」の手順を流し、settings.json に登録した PreToolUse hook が、main への git commit を
+  # 止め、feature branch の git commit を gitleaks に通して許すことを確かめる（ADR-0084 の確認）
+  setup:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      # README は winget で入れるが、runner には winget が無いので、リリースの zip を PATH に置く
+      - shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\gitleaks.zip"
+          Invoke-WebRequest -Uri https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip -OutFile $zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\gitleaks"
+          Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\gitleaks"
+      - name: Follow the README
+        run: |
+          for crate in claude-hooks ja-terms claude-setup; do
+            cargo install --locked --force --path "modules/home/parts/$crate"
+          done
+          claude-setup sync "$PWD"
+          claude-setup settings --static modules/home/parts/claude-settings.json \
+            --pre-tool-use "$(cygpath -w ~/.cargo/bin/claude-hooks.exe)"
+      - name: Check the registered hook
+        run: |
+          set -euo pipefail
+          hook=$(jq -r '.hooks.PreToolUse[].hooks[] | select(.args == ["pre-tool-use"]) | .command' ~/.claude/settings.json)
+          test -f "$(cygpath -u "$hook")"
+          repo=$(mktemp -d)
+          export GIT_AUTHOR_NAME=ci GIT_AUTHOR_EMAIL=ci@example.com GIT_COMMITTER_NAME=ci GIT_COMMITTER_EMAIL=ci@example.com
+          git -C "$repo" init -q -b main
+          git -C "$repo" commit -q --allow-empty -m "chore: start"
+          run() {
+            jq -n --arg c "$1" --arg d "$(cygpath -w "$repo")" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+              "$(cygpath -u "$hook")" pre-tool-use
+          }
+          out=$(run 'git commit -m "feat: add a"')
+          echo "$out"
+          [ "$(jq -r '.hookSpecificOutput.permissionDecision // empty' <<<"$out")" = deny ]
+          git -C "$repo" switch -q -c feat/a
+          echo a >"$repo/a"
+          git -C "$repo" add a
+          out=$(run 'git commit -m "feat: add a"')
+          echo "$out"
+          [ -z "$out" ]
