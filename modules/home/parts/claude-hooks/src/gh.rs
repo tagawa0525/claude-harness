@@ -35,16 +35,35 @@ pub fn gh(dir: &Path, args: &[&str]) -> Result<String, ()> {
 /// ホストより環境の GH_HOST を使う。GH_REPO=github.com/<owner>/<repo> でも GH_HOST のホストへつなぐことを 2026-10-12 に
 /// 確かめた）。起動できなければ理由を標準エラーに出して 1
 pub fn run_for_repo(repo: &str, args: &[&str]) -> i32 {
-    match Command::new("gh")
-        .args(args)
-        .env("GH_REPO", repo)
-        .env("GH_HOST", "github.com")
-        .status()
-    {
+    match for_repo(repo, args).status() {
         Ok(status) => status.code().unwrap_or(1),
         Err(e) => {
             eprintln!("ERROR: gh を起動できません（PATH に gh が無い）: {e}");
             1
         }
     }
+}
+
+/// [`run_for_repo`] と同じく repo に向けて起動し、標準出力を受けて返す（標準エラーは引き継ぐ）。失敗すれば、
+/// スクリプトの終了コードにする gh の終了コード（起動できなければ理由を標準エラーに出して 1）を Err で返す
+pub fn output_for_repo(repo: &str, args: &[&str]) -> Result<Vec<u8>, i32> {
+    let out = for_repo(repo, args)
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            eprintln!("ERROR: gh を起動できません（PATH に gh が無い）: {e}");
+            1
+        })?;
+    if !out.status.success() {
+        return Err(out.status.code().unwrap_or(1));
+    }
+    Ok(out.stdout)
+}
+
+fn for_repo(repo: &str, args: &[&str]) -> Command {
+    let mut cmd = Command::new("gh");
+    cmd.args(args)
+        .env("GH_REPO", repo)
+        .env("GH_HOST", "github.com");
+    cmd
 }
