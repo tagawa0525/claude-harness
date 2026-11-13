@@ -2,6 +2,7 @@
 //! `~/.claude/scripts/` と `~/.claude/skills/gh-pr-review/scripts/` の同じ名前の sh は、これを exec するだけにする
 //! （スキルの文と PreToolUse のルールはスクリプトの名前で呼び、見分けるので、名前と場所を変えない）
 
+mod base_moved;
 mod decide_next;
 mod get_latest_review;
 mod get_pr_info;
@@ -16,29 +17,37 @@ mod reset_rounds;
 mod resolve_thread;
 mod review_level;
 
+/// スクリプトの中身（引数を受けて終了コードを返す）
+type Script = fn(&[String]) -> i32;
+
+/// サブコマンドの名前と中身。名前の順に並べる（使い方の文の一覧もここから作る。スクリプトを足す PR どうしが、
+/// 一覧の 1 行で衝突しないように）
+const SCRIPTS: &[(&str, Script)] = &[
+    ("base-moved", base_moved::main),
+    ("decide-next", decide_next::main),
+    ("get-latest-review", get_latest_review::main),
+    ("get-pr-info", get_pr_info::main),
+    ("get-review-comments", get_review_comments::main),
+    ("gh-review-requests", gh_review_requests::main),
+    ("gh-wait-review", gh_wait_review::main),
+    ("record-local-review", record_local_review::main),
+    ("reply-to-comment", reply_to_comment::main),
+    ("request-rereview", request_rereview::main),
+    ("reset-rounds", reset_rounds::main),
+    ("resolve-thread", resolve_thread::main),
+    ("review-level", review_level::main),
+];
+
 pub fn main(args: &[String]) -> i32 {
-    match args.first().map(String::as_str) {
-        Some("decide-next") => decide_next::main(&args[1..]),
-        Some("get-latest-review") => get_latest_review::main(&args[1..]),
-        Some("get-pr-info") => get_pr_info::main(&args[1..]),
-        Some("get-review-comments") => get_review_comments::main(&args[1..]),
-        Some("gh-review-requests") => gh_review_requests::main(&args[1..]),
-        Some("gh-wait-review") => gh_wait_review::main(&args[1..]),
-        Some("record-local-review") => record_local_review::main(&args[1..]),
-        Some("reply-to-comment") => reply_to_comment::main(&args[1..]),
-        Some("request-rereview") => request_rereview::main(&args[1..]),
-        Some("reset-rounds") => reset_rounds::main(&args[1..]),
-        Some("review-level") => review_level::main(&args[1..]),
-        Some("resolve-thread") => resolve_thread::main(&args[1..]),
-        _ => {
-            eprintln!("Usage: claude-hooks script <名前> [引数]...");
-            eprintln!(
-                "scripts: decide-next, get-latest-review, get-pr-info, get-review-comments, gh-review-requests, gh-wait-review, record-local-review, reply-to-comment, request-rereview, reset-rounds, resolve-thread, review-level"
-            );
-            eprintln!("{}", crate::OLDER_THAN_CALLER);
-            2
-        }
+    let name = args.first().map(String::as_str);
+    if let Some((_, run)) = SCRIPTS.iter().find(|(n, _)| Some(*n) == name) {
+        return run(&args[1..]);
     }
+    eprintln!("Usage: claude-hooks script <名前> [引数]...");
+    let names: Vec<&str> = SCRIPTS.iter().map(|(n, _)| *n).collect();
+    eprintln!("scripts: {}", names.join(", "));
+    eprintln!("{}", crate::OLDER_THAN_CALLER);
+    2
 }
 
 /// スキルとスクリプトの置き場（`~/.claude` か、リポジトリの `.claude`）。案内に書くスクリプトのパスを、呼んだ sh と
