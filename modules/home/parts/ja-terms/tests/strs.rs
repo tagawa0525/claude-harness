@@ -122,3 +122,21 @@ fn a_url_right_after_a_byte_order_mark_is_a_link() {
 fn an_escaped_backslash_before_a_note_and_symbol_labels_are_read_as_micromark_does() {
     check("escapes.markdown");
 }
+
+#[test]
+fn lazy_lines_after_a_lone_carriage_return_are_cut_as_textlint_does() {
+    // 単独の CR の改行の後の lazy な行で、読み直しが止まらなかった。止まらないときに落とすよう、別の
+    // スレッドで読み、待つ時間を限る
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        check("lone-cr.markdown");
+        send.send(()).unwrap();
+    });
+    match receive.recv_timeout(std::time::Duration::from_secs(30)) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("切り出しが textlint と違う")
+        }
+        Err(e) => panic!("30 秒で終わらない: {e}"),
+    }
+}
