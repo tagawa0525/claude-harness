@@ -276,24 +276,54 @@ fn inline_tag_end(tag: &TagEnd) -> bool {
     )
 }
 
-/// 項目の印（start の位置）の後の中身の字下げ。印の後の空白が 1〜4 ならその後、5 以上か行の終わりなら印と空白 1 つの後
-fn item_indent(source: &str, start: usize) -> usize {
-    let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
-    // pulldown-cmark の Item の範囲は、印の前の字下げから始まりうる
-    let start = start + source[start..].bytes().take_while(|&b| b == b' ').count();
-    let rest = &source[start..];
-    let marker = match rest.as_bytes().first() {
-        Some(b'-' | b'*' | b'+') => 1,
-        _ => rest.bytes().take_while(u8::is_ascii_digit).count() + 1,
-    };
-    let after = &rest[marker.min(rest.len())..];
-    let spaces = after.bytes().take_while(|&b| b == b' ').count();
-    let at_end = after[spaces..].starts_with('\n') || after.len() == spaces;
-    let width = if at_end || spaces >= 5 { 1 } else { spaces };
-    start - line_start + marker + width
+/// 行の中の桁（tab は次の 4 の倍数の桁まで進める）
+fn column(line: &[u8]) -> usize {
+    line.iter().fold(0, |col, &b| {
+        if b == b'\t' {
+            col + 4 - col % 4
+        } else {
+            col + 1
+        }
+    })
 }
 
-/// line で始まる行が、開いているコンテナ（外から順）の続きの印（引用の >、項目の字下げ）を持つか
+/// 項目の印（start の位置）の後の中身の桁。印の後の空白が 1〜4 桁ならその後、5 桁以上か行の終わりなら印と空白
+/// 1 つの後
+fn item_indent(source: &str, start: usize) -> usize {
+    let bytes = source.as_bytes();
+    // pulldown-cmark の Item の範囲は、印の前の字下げか、前の行の改行から始まりうる
+    let start = start
+        + bytes[start..]
+            .iter()
+            .take_while(|&&b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            .count();
+    let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
+    let marker = match bytes.get(start) {
+        Some(b'-' | b'*' | b'+') => 1,
+        _ => {
+            bytes[start..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .count()
+                + 1
+        }
+    };
+    let after = (start + marker).min(bytes.len());
+    let spaces = bytes[after..]
+        .iter()
+        .take_while(|&&b| b == b' ' || b == b'\t')
+        .count();
+    let at_end = matches!(bytes.get(after + spaces), None | Some(b'\n' | b'\r'));
+    let marker_end = column(&bytes[line_start..after]);
+    let content = column(&bytes[line_start..after + spaces]);
+    if at_end || content - marker_end >= 5 {
+        marker_end + 1
+    } else {
+        content
+    }
+}
+
+/// line で始まる行が、開いているコンテナ（外から順）の続きの印（引用の >、項目と脚注の定義の字下げ）を持つか
 fn continues(source: &str, line: usize, containers: &[Container]) -> bool {
     let bytes = source.as_bytes();
     let mut pos = line;
@@ -308,21 +338,17 @@ fn continues(source: &str, line: usize, containers: &[Container]) -> bool {
                     return false;
                 }
                 p += 1;
-                if bytes.get(p) == Some(&b' ') {
+                if matches!(bytes.get(p), Some(b' ' | b'\t')) {
                     p += 1;
                 }
                 pos = p;
             }
             Container::Item(indent) => {
-                let target = line + indent;
-                if target > pos {
-                    if !bytes
-                        .get(pos..target)
-                        .is_some_and(|s| s.iter().all(|&b| b == b' '))
-                    {
-                        return false;
+                while column(&bytes[line..pos]) < indent {
+                    match bytes.get(pos) {
+                        Some(b' ' | b'\t') => pos += 1,
+                        _ => return false,
                     }
-                    pos = target;
                 }
             }
         }
