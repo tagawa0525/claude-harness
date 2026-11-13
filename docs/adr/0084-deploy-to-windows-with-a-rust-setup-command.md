@@ -137,8 +137,10 @@ hook の登録の形:
 - Git for Windows の既定（`core.autocrlf=true`）の clone では、同期する sh のスクリプトが CRLF になり、Git Bash で
   動かない。clone の改行の扱いは #104 で決める
 - 設置のコマンドの crate は `claude-setup`（`modules/home/parts/claude-setup`）。同期は `claude-setup sync` に移し、Linux の
-  `claude-sync` と activation もそれを呼ぶ（2026-11-13）。settings.json の更新はまだ activation の jq の filter にある。
-  進みは #101 に書く
+  `claude-sync` と activation もそれを呼ぶ（2026-11-13）。settings.json の更新も `claude-setup settings` に移し、静的な設定は
+  `modules/home/parts/claude-settings.json` に置く。activation は jq を使わず、このファイルのパスをコマンドに渡す（Nix で
+  `builtins.fromJSON` で読む要は無くなった）。Linux の登録も exec form になった。残りは Windows の手順の通し（gitleaks の
+  用意を含む）と、git hook の設置（#101 の段階 4）。進みは #101 に書く
 
 ### 確認
 
