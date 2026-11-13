@@ -751,11 +751,11 @@ assert_eq "" "$(git branch --list feat/x)"
 assert_eq "adr-0001" "$(git tag --list adr-0001)"
 cd "$TEST_ROOT" || exit 1
 
-# claude-sync の元のリポジトリ（ハーネス）に見立てる。post-merge-cleanup は同期のコマンド（claude-setup の crate）の
-# 有無でそれを見分ける
+# claude-sync の元のリポジトリ（ハーネス）に見立てる。post-merge-cleanup は同期のコマンド（claude-setup の crate。
+# 前の版は claude-sync.sh。2 つ目の引数で選ぶ）の有無でそれを見分ける
 setup_claude_sync_source() {
   setup_merged_branch "$1"
-  commit_file "$1/app" modules/home/parts/claude-setup/Cargo.toml "chore: claude-setup"
+  commit_file "$1/app" "${2:-modules/home/parts/claude-setup/Cargo.toml}" "chore: claude-setup"
   git -C "$1/app" push -q origin main
 }
 
@@ -854,7 +854,7 @@ cd "$TEST_ROOT" || exit 1
 # ハーネスを分ける前の nixfiles は、claude-sync.sh と nix-rebuild.sh の両方を持つ。自分で rebuild するので、取り込む側の
 # lock の更新でなく rebuild を知らせ、.claude は claude-sync を知らせる
 it "post-merge-cleanup: claude-sync.sh と nix-rebuild.sh の両方を持つリポジトリでは、hosts の変更に rebuild、.claude の変更に claude-sync を知らせる"
-setup_claude_sync_source "$TEST_ROOT/cleanup45"
+setup_claude_sync_source "$TEST_ROOT/cleanup45" modules/home/scripts/claude-sync.sh
 commit_file "$TEST_ROOT/cleanup45/app" modules/home/scripts/nix-rebuild.sh "chore: nix-rebuild"
 git -C "$TEST_ROOT/cleanup45/app" push -q origin main
 advance_origin_main "$TEST_ROOT/cleanup45/app" hosts/r995/default.nix >/dev/null
@@ -866,7 +866,7 @@ assert_not_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
 it "post-merge-cleanup: claude-sync.sh と nix-rebuild.sh の両方を持つリポジトリでは、.claude の変更に、そのリポジトリを元にした claude-sync を知らせる"
-setup_claude_sync_source "$TEST_ROOT/cleanup46"
+setup_claude_sync_source "$TEST_ROOT/cleanup46" modules/home/scripts/claude-sync.sh
 commit_file "$TEST_ROOT/cleanup46/app" modules/home/scripts/nix-rebuild.sh "chore: nix-rebuild"
 git -C "$TEST_ROOT/cleanup46/app" push -q origin main
 advance_origin_main "$TEST_ROOT/cleanup46/app" .claude/skills/x/SKILL.md >/dev/null
