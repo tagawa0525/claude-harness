@@ -64,6 +64,7 @@ jobs:
           claude-setup sync "$PWD"
           claude-setup settings --static modules/home/parts/claude-settings.json \
             --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
+          claude-setup git-hooks --bin "$(cygpath -w "$(command -v claude-hooks.exe)")"
       # 同期した sh のスクリプトは LF でないと Git Bash で動かない。runner の Git for Windows は core.autocrlf=true で、
       # checkout が CRLF にしうる（#104）。grep は Windows ではテキストのファイルの CR を外してから照合するので（-U の
       # 無いとき）使わず、tr で CR だけを残して wc で数える（数を出すので、$(...) が CR を落としても数は変わらない）。
@@ -137,3 +138,29 @@ jobs:
           echo "token = \"ghp_$(openssl rand -hex 18)\"" >"$repo/b"
           git -C "$repo" add b
           expect_deny '機密情報らしき内容'
+      # 置いた git hook が、Claude Code のセッションの main への直接のコミットと、Conventional Commits でない件名を
+      # 止め、feature branch の正しい件名のコミットを通す（ja-terms と gitleaks は PATH のもの）
+      - name: Check the git hooks
+        run: |
+          set -euo pipefail
+          repo=$(mktemp -d)
+          export GIT_AUTHOR_NAME=ci GIT_AUTHOR_EMAIL=ci@example.com GIT_COMMITTER_NAME=ci GIT_COMMITTER_EMAIL=ci@example.com
+          git -C "$repo" init -q -b main
+          git -C "$repo" commit -q --allow-empty -m "chore: start"
+          echo a > "$repo/a"
+          git -C "$repo" add a
+          if CLAUDECODE=1 git -C "$repo" commit -q -m "feat: add a" 2> "$repo.err"; then
+            echo "main への直接のコミットを pre-commit が止めなかった"
+            exit 1
+          fi
+          cat "$repo.err"
+          grep -qF "main / master ブランチへの直接コミット" "$repo.err"
+          git -C "$repo" switch -q -c feat/a
+          if CLAUDECODE=1 git -C "$repo" commit -q -m "add a" 2> "$repo.err"; then
+            echo "Conventional Commits でない件名を commit-msg が止めなかった"
+            exit 1
+          fi
+          cat "$repo.err"
+          grep -qF "Conventional Commits" "$repo.err"
+          CLAUDECODE=1 git -C "$repo" commit -q -m "feat: add a"
+          git -C "$repo" log --oneline -1

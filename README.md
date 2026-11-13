@@ -32,10 +32,10 @@ home-manager の構成で `claude-harness.homeManagerModules.default` を import
 ## Windows で使う
 
 ネイティブの Windows（WSL を使わない）では、Nix の代わりに `cargo install` と `claude-setup` で入れる（ADR-0084）。
-今入るのは、`~/.claude` の中身（CLAUDE.md、スキル、スクリプト）、settings.json の静的な設定、PreToolUse hook と、
-現在時刻の UserPromptSubmit hook。git hook と Stop の hook（自動メモリの退避）はまだ入らない（#101 の段階 4 と 8）。
-git hook が無いので、コミットとマージのメッセージの検査（Conventional Commits、件名の長さ、日本語の語）も、
-PreToolUse hook が飛ばして走らない（hook はグローバルの `core.hooksPath` を使うリポジトリだけを検査する）。
+今入るのは、`~/.claude` の中身（CLAUDE.md、スキル、スクリプト）、settings.json の静的な設定、PreToolUse hook、
+現在時刻の UserPromptSubmit hook、グローバルの git hook（pre-commit、pre-merge-commit、commit-msg、post-rewrite。
+`~/.config/git/hooks` に置き、グローバルの `core.hooksPath` を向ける）。Stop の hook（自動メモリの退避）はまだ入らない
+（#101 の段階 8）。グローバルの `core.hooksPath` をほかの置き場にしていれば、`claude-setup git-hooks` は奪わずに止まる。
 
 前もって、Git for Windows、rustup、MSVC の toolchain が使う Visual Studio の Build Tools（C++ の workload。linker と
 Windows SDK）、gh、jq、[gitleaks](https://github.com/gitleaks/gitleaks) を入れ、PATH に置く。入れたら、PATH が反映されるよう
@@ -62,11 +62,12 @@ done
 claude-setup sync ~/nix/claude-harness
 claude-setup settings --static modules/home/parts/claude-settings.json \
   --pre-tool-use "$(cygpath -w "$(command -v claude-hooks.exe)")"
+claude-setup git-hooks --bin "$(cygpath -w "$(command -v claude-hooks.exe)")"
 ```
 
 clone を更新したら、同じ手順をもう一度流す（crate の版は変えないので `--force` で入れ直す）。Windows の CI
-（`.github/workflows/windows.yml` の `setup`）が、この手順を流し、登録した hook が main への `git commit` を止めることを
-確かめる。
+（`.github/workflows/windows.yml` の `setup`）が、この手順を流し、登録した PreToolUse hook と git hook が main への
+`git commit` を止めることを確かめる。
 
 ## 経緯
 
