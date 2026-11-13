@@ -82,8 +82,11 @@ impl Pragmas {
                 })
             })
             .filter(|d| {
-                let matched = &text[d.start..d.end];
-                self.patterns.iter().all(|p| p.find(matched).is_none())
+                // u のフラグが無いので、V8 と同じく UTF-16 の単位で照合する
+                let matched: Vec<u16> = text[d.start..d.end].encode_utf16().collect();
+                self.patterns
+                    .iter()
+                    .all(|p| p.find_from_ucs2(&matched, 0).next().is_none())
             })
             .collect()
     }

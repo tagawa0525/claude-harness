@@ -11,7 +11,8 @@ edition = "2024"
 
 [dependencies]
 # 辞書の pattern は JavaScript の正規表現（長さの決まらない後読みを含む）。ECMAScript のエンジンで書き直さずに読む
-regress = "0.12"
+# utf16: prh:disable:<pattern> を、V8 の u のフラグの無い正規表現と同じく UTF-16 の単位で照合する
+regress = { version = "0.12", features = ["utf16"] }
 # Markdown のうち textlint の Str のノードに当たる原文を切り出す。Rust の CommonMark のパーサーとして事実上の標準
 pulldown-cmark = { version = "0.13", default-features = false }
 # 辞書の YAML。prh の js-yaml 3.14.1 と違い YAML 1.2 で読み、引用符の無い 1:30 を文字列と読む（js-yaml は 60 進の数と読み、
