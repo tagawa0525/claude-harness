@@ -66,8 +66,11 @@ fn staged_files(top: &Path) -> Result<Vec<(String, String)>, Failure> {
     let out = git(Some(top), &args)?;
     let mut fields = out.split(|&b| b == 0).filter(|f| !f.is_empty());
     let mut files = Vec::new();
-    while let (Some(meta), Some(path)) = (fields.next(), fields.next()) {
+    while let Some(meta) = fields.next() {
         let meta = String::from_utf8_lossy(meta);
+        let Some(path) = fields.next() else {
+            return Err(Failure(format!("git diff --raw の行にパスが無い: {meta}")));
+        };
         let parts: Vec<&str> = meta.split_whitespace().collect();
         let [_, mode, _, blob, _] = parts.as_slice() else {
             return Err(Failure(format!("git diff --raw の行を読めない: {meta}")));
