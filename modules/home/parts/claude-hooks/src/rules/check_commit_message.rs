@@ -184,7 +184,11 @@ pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     let _ = std::fs::remove_file(&path);
     let out = match out {
         Ok(o) => o,
-        Err(e) => return Verdict::Failed(format!("{check} を起動できません（{e}）")),
+        Err(e) => {
+            return Verdict::Failed(format!(
+                "{check} を起動できません（{e}。Windows では modules/home/parts/ja-terms を cargo install で入れる）"
+            ));
+        }
     };
     let text = format!(
         "{}{}",
@@ -254,7 +258,7 @@ impl CheckCommitMessage {
             }
             let Some(check) = check else {
                 notice(format!(
-                    "check-commit-message: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git commit のメッセージを判定していません（nix で包んだものだけが検査する）"
+                    "check-commit-message: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git commit のメッセージを判定していません（Linux では nix のラッパーが渡す。cargo で直接ビルドしたものは検査しない）"
                 ));
                 continue;
             };

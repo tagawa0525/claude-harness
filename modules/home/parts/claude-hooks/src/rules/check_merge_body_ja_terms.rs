@@ -4,7 +4,8 @@
 //! 本文に辞書（ja-terms の prh.yml）で崩れた語があるか、Merge などで始まらない件名が Conventional Commits の形と
 //! 長さに合わないと、数分の品質チェックを待ってから commit-msg が拒む。pre-merge-commit からは `-m` の本文が読めず、
 //! git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg に渡るのと同じ
-//! メッセージを検査する（ADR-0050、ADR-0085。store のパスは package.nix が包んで渡す）。マージコミットを作るのが
+//! メッセージを検査する（ADR-0050、ADR-0085。ja-terms は [`ja_terms`] が、Linux では package.nix のラッパーが渡すパスで、
+//! Windows では PATH で探す）。マージコミットを作るのが
 //! 確かな形（[`makes_merge_commit`]）は commit-msg と同じ `ja-terms commit-msg` に、ほかの形（fast-forward になれば
 //! commit-msg が呼ばれない、エディタで件名を直せる）は本文の語だけを `ja-terms message` に渡す。
 //!
@@ -27,8 +28,8 @@ use std::process::{Command, Stdio};
 
 pub struct CheckMergeBodyJaTerms;
 
-/// ja-terms の store のパスを持つ環境変数。package.nix の包む側が固定する（cargo で直接ビルドした
-/// ものには無い）。git commit のルールも使う
+/// ja-terms の store のパスを持つ環境変数。package.nix のラッパーが固定する（cargo で直接ビルドした
+/// ものには無く、Windows は PATH の ja-terms を使う。[`ja_terms`]）。git commit のルールも使う
 pub(super) const JA_TERMS: &str = "CLAUDE_HOOKS_JA_TERMS";
 
 /// 呼ぶ ja-terms。git merge と git commit のルールが使う
@@ -245,7 +246,11 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
         .spawn();
     let mut child = match child {
         Ok(c) => c,
-        Err(e) => return Lint::Failed(format!("{check} を起動できません（{e}）")),
+        Err(e) => {
+            return Lint::Failed(format!(
+                "{check} を起動できません（{e}。Windows では modules/home/parts/ja-terms を cargo install で入れる）"
+            ));
+        }
     };
     // 本文は数 KB なので、書き終えてから出力を読んでもパイプは詰まらない
     if let Some(mut stdin) = child.stdin.take()
@@ -436,7 +441,7 @@ impl CheckMergeBodyJaTerms {
             };
             let Some(check) = check else {
                 notice(format!(
-                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge のメッセージを判定していません（nix で包んだものだけが検査する）"
+                    "check-merge-body-ja-terms: ja-terms のパス（環境変数 {JA_TERMS}）が無いので、git merge のメッセージを判定していません（Linux では nix のラッパーが渡す。cargo で直接ビルドしたものは検査しない）"
                 ));
                 continue;
             };
