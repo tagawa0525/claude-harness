@@ -81,7 +81,7 @@ in
   home.packages =
     with pkgs;
     [
-      gitleaks # 手で検査するため（git の pre-commit は store のパスで呼ぶ。ADR-0015）
+      gitleaks # PreToolUse の block-secret-commit が PATH から呼び、手でも使う（git hook は claude-hooks の package.nix が包むものを使う。ADR-0015）
       pyright # lsp-det のドッグフーディングの .lsp.json が pyright-langserver を PATH に求める（公式の pyright-lsp も同じ）
     ]
     ++ [ lsp-det.packages.${pkgs.stdenv.hostPlatform.system}.default ];

@@ -981,15 +981,18 @@ echo 'plain' > a.txt && git add a.txt
 
 LEAK_JSON='[{"File":"conf.txt","StartLine":3,"RuleID":"aws-access-token","Secret":"REDACTED","Fingerprint":"conf.txt:aws-access-token:3"}]'
 # fake_gitleaks <staged-json|ok|fail> <pre-commit-json|ok|fail>
-#   JSON を渡すと exit 1（漏えいあり）、"ok" なら [] と exit 0、"fail" なら JSON なしで exit 2
+#   JSON を渡すと exit 1（漏えいあり）、"ok" なら [] と exit 0、"fail" なら JSON なしで exit 2、
+#   "err" なら [] と exit 0 で標準エラーにエラーの行（gitleaks は中の git diff の失敗をこの形で出す）
 fake_gitleaks() {
   local body="" mode
   for mode in "--staged:$1" "--pre-commit:$2"; do
     local flag="${mode%%:*}" spec="${mode#*:}"
     case "$spec" in
-      ok)   body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo '[]' ;;"$'\n' ;;
-      fail) body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo 'error: x' >&2; exit 2 ;;"$'\n' ;;
-      *)    body+="\"git $flag --no-banner --redact --report-format json --report-path - .\"*) echo '$spec'; exit 1 ;;"$'\n' ;;
+      ok)   body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]' ;;"$'\n' ;;
+      fail) body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo 'error: x' >&2; exit 2 ;;"$'\n' ;;
+      err)  body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]'; echo 'ERR git diff failed' >&2 ;;"$'\n' ;;
+      warn) body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '[]'; echo 'ERR [git] warning: CRLF will be replaced by LF' >&2; echo 'ERR error=stderr is not empty' >&2 ;;"$'\n' ;;
+      *)    body+="\"git $flag --no-banner --redact --log-level error --report-format json --report-path - .\"*) echo '$spec'; exit 1 ;;"$'\n' ;;
     esac
   done
   make_fake_tool gitleaks "$body"
@@ -1036,6 +1039,26 @@ out=$(run_hook block-secret-commit 'git commit -m --all')
 assert_eq allow "$(decision "$out")"
 assert_not_contains "$(fake_log gitleaks)" "git --pre-commit"
 
+it "block-secret-commit: サブディレクトリからのコミットも、リポジトリの直下で検査する"
+# gitleaks git は `.` を作業ディレクトリからの相対で読み、その下の変更だけを見る。直下で呼ばれたときだけ漏えいを返す
+mkdir -p "$HUSKY/sub"
+husky_top=$(cd "$HUSKY" && pwd -P)
+make_fake_tool gitleaks "  *) if [ \"\$(pwd -P)\" = '$husky_top' ]; then echo '$LEAK_JSON'; exit 1; fi; echo '[]' ;;"
+out=$(run_hook block-secret-commit 'cd sub && git commit -m "chore: a"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "conf.txt:3"
+
+it "block-secret-commit: -a の --pre-commit でも、標準エラーの行（git の警告を含む）は検査できなかったとみなす"
+# gitleaks 8.30.1 は、中の git diff の警告（CRLF の変換など）でも ERR [git] warning: … と stderr is not empty を出し、
+# 差分を読むのをやめて [] と 0 を返す（警告の出る差分のトークンを見つけない）
+fake_gitleaks ok warn
+out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "差分を読むのをやめた"
+fake_gitleaks ok err
+out=$(run_hook block-secret-commit 'git commit -am "chore: a"')
+assert_eq deny "$(decision "$out")"
+
 it "block-secret-commit: 対象のディレクトリを決められないときは、git の hook に任せて通す（#281）"
 fake_gitleaks "$LEAK_JSON" ok
 for cmd in 'git -C $d commit -m "chore: a"' "git -C $TEST_ROOT/not-yet commit -m 'chore: a'" \
@@ -1050,6 +1073,10 @@ fake_gitleaks fail ok
 out=$(run_hook block-secret-commit 'git commit -m "chore: x"')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "gitleaks が失敗しました"
+fake_gitleaks err ok
+out=$(run_hook block-secret-commit 'git commit -m "chore: x"')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "git diff failed"
 remove_fake_tool gitleaks
 out=$(PATH="$(minimal_path)" run_hook block-secret-commit 'git commit -m "chore: x"')
 assert_eq deny "$(decision "$out")"

@@ -19,6 +19,7 @@ mod gh;
 mod git;
 mod git_args;
 mod git_hook;
+mod gitleaks;
 mod input;
 mod output;
 mod rules;

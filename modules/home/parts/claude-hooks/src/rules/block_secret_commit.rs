@@ -15,79 +15,21 @@
 //! エスケープ: コマンドに `ALLOW_SECRET_COMMIT=<理由>` を付ける。
 
 use std::path::Path;
-use std::process::Command;
 
 use super::{Rule, escape_hint};
 use crate::git;
 use crate::git_args::git_flag;
+use crate::gitleaks::{self, Scan};
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Escape, Shell};
 
 pub struct BlockSecretCommit;
 
-enum Scan {
-    Clean,
-    /// `path:line (rule-id)` の一覧
-    Leaks(Vec<String>),
-    /// gitleaks が無い、または実行に失敗した
-    Unavailable(String),
-}
-
 /// dir のリポジトリがグローバルの git の hook を使うか（実際に効く core.hooksPath がグローバルの値と同じか）
 fn uses_global_hooks(dir: &Path) -> bool {
     let global = git::git(dir, &["config", "--global", "--get", "core.hooksPath"]);
     global.is_some() && git::git(dir, &["config", "--get", "core.hooksPath"]) == global
-}
-
-/// `gitleaks git <mode> …` を dir で実行して結果を分類する
-fn run_gitleaks(dir: &Path, mode: &str) -> Scan {
-    let out = Command::new("gitleaks")
-        .args([
-            "git",
-            mode,
-            "--no-banner",
-            "--redact",
-            "--report-format",
-            "json",
-            "--report-path",
-            "-",
-            ".",
-        ])
-        .current_dir(dir)
-        .output();
-    let out = match out {
-        Ok(o) => o,
-        // dir があることは呼ぶ側で確かめたので、起動できないのは gitleaks が無いとき
-        Err(e) => {
-            return Scan::Unavailable(format!(
-                "gitleaks が PATH にありません（{e}）。gitleaks は claude-code.nix の home.packages で配布しています"
-            ));
-        }
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let findings: Option<Vec<serde_json::Value>> = serde_json::from_str(stdout.trim()).ok();
-    match (out.status.code(), findings) {
-        (Some(0), _) => Scan::Clean,
-        (Some(1), Some(list)) if !list.is_empty() => Scan::Leaks(
-            list.iter()
-                .map(|f| {
-                    format!(
-                        "{}:{} ({})",
-                        f["File"].as_str().unwrap_or("?"),
-                        f["StartLine"].as_u64().unwrap_or(0),
-                        f["RuleID"].as_str().unwrap_or("?")
-                    )
-                })
-                .collect(),
-        ),
-        (code, _) => Scan::Unavailable(format!(
-            "gitleaks が失敗しました（exit {}）: {}",
-            code.map(|c| c.to_string())
-                .unwrap_or_else(|| "signal".into()),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
-    }
 }
 
 impl Rule for BlockSecretCommit {
@@ -127,16 +69,22 @@ impl Rule for BlockSecretCommit {
             };
             let mut leaks = Vec::new();
             for mode in modes {
-                match run_gitleaks(&dir, mode) {
-                    Scan::Clean => {}
-                    Scan::Leaks(list) => leaks.extend(list),
-                    Scan::Unavailable(why) => {
-                        return vec![Finding::Deny(format!(
-                            "機密情報の検査ができないためコミットを止めます（{why}）。\n{}",
-                            escape_hint("ALLOW_SECRET_COMMIT")
-                        ))];
+                // gitleaks は home.packages で PATH に置く（.claude/tests/hooks.sh は偽の gitleaks を PATH に置いて確かめる）
+                let why = match gitleaks::scan("gitleaks", &dir, mode) {
+                    Scan::Clean => continue,
+                    Scan::Leaks(list) => {
+                        leaks.extend(list);
+                        continue;
                     }
-                }
+                    Scan::Missing(e) => format!(
+                        "gitleaks が PATH にありません（{e}）。gitleaks は claude-code.nix の home.packages で配布しています"
+                    ),
+                    Scan::Failed(failure) => failure.to_string(),
+                };
+                return vec![Finding::Deny(format!(
+                    "機密情報の検査ができないためコミットを止めます（{why}）。\n{}",
+                    escape_hint("ALLOW_SECRET_COMMIT")
+                ))];
             }
             if leaks.is_empty() {
                 continue;

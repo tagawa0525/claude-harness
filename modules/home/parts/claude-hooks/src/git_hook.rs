@@ -6,6 +6,10 @@
 //!   （`CLAUDECODE=1`）のコミットで、fork でなければ、`ja-terms commit-msg` に渡す（Conventional Commits、件名の長さ、
 //!   崩れた日本語の語。PreToolUse hook の check-commit-message が同じ検査を先に呼ぶ）。手で打つコミットの自由を残す
 //!   ため、Claude Code の外のコミットは検査しない
+//! - scan-secrets: 機密情報の検査（ADR-0015）。Claude Code のセッション（`CLAUDECODE=1`）のコミットで、コミットに
+//!   入る中身（index と HEAD の差）を gitleaks で見る（crate::gitleaks）。グローバルの pre-commit と pre-merge-commit
+//!   が、index を変える検査の後に呼ぶ。漏えいと、検査できないこと（gitleaks の失敗）を分けて出し、どちらも 1 で
+//!   止める。迂回は ALLOW_SECRET_COMMIT=<理由>（PreToolUse hook と同じ規則。ADR-0023）
 //! - post-rewrite <amend|rebase>: rebase と amend で変わったコミットの番号を、作業ツリーの追跡している文書の中で
 //!   付け直す（commit-refs remap。ADR-0012）。測ったコミットの番号を文書に書くリポジトリだけが要るので、
 //!   `git config remap.commitRefs true` でオプトインする。標準入力の旧と新の対応は一度しか渡されないので、取っておいて
@@ -21,7 +25,11 @@ use crate::output;
 use crate::rules::ja_terms;
 
 const USAGE: &str = "Usage: claude-hooks git-hook commit-msg <メッセージのファイル>
+       claude-hooks git-hook scan-secrets
        claude-hooks git-hook post-rewrite <amend|rebase>";
+
+/// gitleaks の store のパスを持つ環境変数。package.nix のラッパーが固定する（crate::tools::find）
+const GITLEAKS: &str = "CLAUDE_HOOKS_GITLEAKS";
 
 /// commit-refs の store のパスを持つ環境変数。package.nix のラッパーが固定する（crate::tools::find）
 const COMMIT_REFS: &str = "CLAUDE_HOOKS_COMMIT_REFS";
@@ -30,6 +38,7 @@ pub fn main(args: &[String]) -> i32 {
     let code = match args {
         [name, rest @ ..] if name == "commit-msg" => commit_msg(rest),
         [name, rest @ ..] if name == "post-rewrite" => post_rewrite(rest),
+        [name] if name == "scan-secrets" => scan_secrets(),
         _ => {
             eprintln!("{USAGE}");
             2
@@ -283,6 +292,95 @@ fn status(cmd: &mut Command, what: &str) -> i32 {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
             eprintln!("❌ {what} を起動できません（{e}）");
+            1
+        }
+    }
+}
+
+/// ALLOW_SECRET_COMMIT の値。空白（Unicode の White_Space）とバックスラッシュを除いて空か 0 なら付けていないもの、
+/// 理由の幅（crate::shell::reason_width）が足りなければ短いものとする。展開（$VAR）を含む値は、この hook には
+/// 展開後の値しか見えないので、PreToolUse hook の側で止める
+#[derive(PartialEq)]
+enum Allow {
+    Absent,
+    Short,
+    Reason,
+}
+
+fn allow_secret_commit() -> Allow {
+    let value = std::env::var("ALLOW_SECRET_COMMIT").unwrap_or_default();
+    let stripped: String = value
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '\\')
+        .collect();
+    if stripped.is_empty() || stripped == "0" {
+        Allow::Absent
+    } else if crate::shell::reason_width(&value) >= crate::shell::REASON_MIN_WIDTH {
+        Allow::Reason
+    } else {
+        Allow::Short
+    }
+}
+
+fn scan_secrets() -> i32 {
+    if std::env::var("CLAUDECODE").as_deref() != Ok("1") {
+        return 0;
+    }
+    let allow = allow_secret_commit();
+    if allow == Allow::Reason {
+        return 0;
+    }
+    // 短い値は、止めるときに本来の文言に理由を求める行を足す（しきい値は文言に出さない。長さに合わせた無意味な値を
+    // 誘うため）
+    let reason_required = || {
+        if allow == Allow::Short {
+            println!(
+                "   ALLOW_SECRET_COMMIT には理由を記載してください（ALLOW_SECRET_COMMIT=<理由> の形で、値はそのまま記録に残ります）"
+            );
+        }
+    };
+    let Some(bin) = crate::tools::find(GITLEAKS, "gitleaks") else {
+        println!(
+            "❌ gitleaks が見つからないので、機密情報を検査できません。コミットを止めます（Linux は claude-hooks の package.nix が {GITLEAKS} を渡す）"
+        );
+        reason_required();
+        return 1;
+    };
+    match crate::gitleaks::scan(&bin, Path::new("."), "--staged") {
+        crate::gitleaks::Scan::Clean => 0,
+        crate::gitleaks::Scan::Leaks(list) => {
+            println!("❌ 機密情報らしき内容がコミット対象に含まれています（gitleaks）:");
+            for leak in list {
+                println!("- {leak}");
+            }
+            println!(
+                "   対処: git restore --staged <file> で外し、必要なら .gitignore に足してください。push 済みの値はローテーションしてください"
+            );
+            println!(
+                "   誤検出なら、その行に gitleaks:allow を書いてください（.gitleaksignore / .gitleaks.toml でも可）"
+            );
+            println!(
+                "   どうしても外すときは、理由を値にして ALLOW_SECRET_COMMIT=<理由> を付けてください（理由はそのまま記録に残ります）。機械で判定できる理由なら hook の不足なので、issue に書いてください"
+            );
+            reason_required();
+            1
+        }
+        crate::gitleaks::Scan::Missing(e) => {
+            println!(
+                "❌ {bin} を起動できないので、機密情報を検査できません。コミットを止めます（{e}）"
+            );
+            reason_required();
+            1
+        }
+        crate::gitleaks::Scan::Failed(failure) => {
+            println!(
+                "❌ {}。機密情報を検査できないので、コミットを止めます:",
+                failure.what
+            );
+            for line in failure.errors.lines() {
+                println!("   {line}");
+            }
+            reason_required();
             1
         }
     }
