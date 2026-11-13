@@ -16,6 +16,12 @@ const HOOKS: [&str; 4] = [
 ];
 
 pub fn run(home: &Path, bin: &str) -> Result<(), String> {
+    // 無いパスを 4 つの hook に書くと、その機械のすべての git commit が止まる
+    if !Path::new(bin).is_file() {
+        return Err(format!(
+            "❌ {bin} はファイルではありません。claude-hooks の実行ファイルのパスを --bin に渡してください"
+        ));
+    }
     let dir = home.join(".config/git/hooks");
     let current = global_hooks_path()?;
     if let Some(current) = &current
@@ -24,6 +30,22 @@ pub fn run(home: &Path, bin: &str) -> Result<(), String> {
         return Err(format!(
             "❌ グローバルの core.hooksPath は {current} を指しています。ハーネスの git hook（{}）に向けると、そこの hook が走らなくなるので、ここで止めます\n   修正方法: そこの hook を移すか外してから、git config --global --unset core.hooksPath のあと、もう一度実行してください",
             dir.display()
+        ));
+    }
+    // 同じ置き場の、ハーネスのものでない hook（利用者が書いたもの）は、黙って上書きしない。ハーネスの hook のファイル
+    // は、claude-hooks の置き場が変わっていても ` git-hook <名前> ` を含む
+    let foreign: Vec<&str> = HOOKS
+        .into_iter()
+        .filter(|name| {
+            std::fs::read_to_string(dir.join(name))
+                .is_ok_and(|text| !text.contains(&format!(" git-hook {name} ")))
+        })
+        .collect();
+    if !foreign.is_empty() {
+        return Err(format!(
+            "❌ {} に、ハーネスのものでない hook があります（{}）。上書きすると走らなくなるので、ここで止めます\n   修正方法: その hook を移すか外してから、もう一度実行してください",
+            dir.display(),
+            foreign.join("、")
         ));
     }
     std::fs::create_dir_all(&dir)
@@ -62,7 +84,14 @@ fn git() -> Command {
 /// グローバルの core.hooksPath（無ければ None）
 fn global_hooks_path() -> Result<Option<String>, String> {
     let out = git()
-        .args(["config", "--global", "--get", "core.hooksPath"])
+        // include した設定の値も git は使うので、--includes で読む（--global だけでは include を辿らない）
+        .args([
+            "config",
+            "--global",
+            "--includes",
+            "--get",
+            "core.hooksPath",
+        ])
         .output()
         .map_err(|e| format!("❌ git を起動できません（{e}）"))?;
     match out.status.code() {
@@ -78,10 +107,15 @@ fn global_hooks_path() -> Result<Option<String>, String> {
     }
 }
 
-/// core.hooksPath の値（`~/` は git と同じくホームとして読む）が dir と同じ場所か
+/// core.hooksPath の値（`~/` は git と同じくホームとして読む）が dir と同じ場所か。git は `~` を HOME で読む（Windows で
+/// HOME が USERPROFILE と違うこともある）ので、HOME があればそれを使う
 fn same_dir(home: &Path, value: &str, dir: &Path) -> bool {
+    let git_home = std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.to_path_buf());
     let path = match value.strip_prefix("~/") {
-        Some(rest) => home.join(rest),
+        Some(rest) => git_home.join(rest),
         None => PathBuf::from(value),
     };
     match (std::fs::canonicalize(&path), std::fs::canonicalize(dir)) {
