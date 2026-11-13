@@ -505,3 +505,64 @@ fn top_level_places_are_followed_as_rsync_with_a_trailing_slash() {
     );
     assert_eq!(read(&mine.join("s/SKILL.md")), "shared");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_directory_that_became_a_link_is_replaced() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    std::fs::create_dir_all(src.join(".claude/skills/s/ref")).unwrap();
+    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    assert!(home.sync(Some(&src)).status.success());
+    std::fs::remove_dir(src.join(".claude/skills/s/ref")).unwrap();
+    std::os::unix::fs::symlink("SKILL.md", src.join(".claude/skills/s/ref")).unwrap();
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        std::fs::symlink_metadata(home.dest("skills/s/ref"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn places_the_source_lacks_become_writable_too() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/CLAUDE.md"), "x");
+    let old = home.dest("commands/old.md");
+    write(&old, "old");
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o444)).unwrap();
+    assert!(home.sync(Some(&src)).status.success());
+    let mode = std::fs::metadata(&old).unwrap().permissions().mode();
+    assert_eq!(mode & 0o200, 0o200, "{mode:o}");
+}
+
+#[test]
+fn help_prints_the_usage() {
+    let home = Home::new();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
+    home.env(&mut command);
+    let out = command.args(["sync", "--help"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage: claude-setup sync"));
+}
+
+#[test]
+fn a_git_that_cannot_start_is_shown() {
+    let home = Home::new();
+    write(&home.clone_dir().join(".claude/CLAUDE.md"), "x");
+    std::fs::create_dir_all(home.clone_dir().join(".git")).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
+    home.env(&mut command);
+    let out = command.arg("sync").env("PATH", "").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("git を起動できません"),
+        "{}",
+        stderr(&out)
+    );
+}
