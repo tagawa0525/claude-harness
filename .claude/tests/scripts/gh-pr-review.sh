@@ -55,7 +55,7 @@ FAKE
   chmod +x "$TEST_ROOT/fakebin/claude-hooks"
 }
 # fake_hooks_covers <case の行>: local-review-covers の答えをテストごとに決める偽物。script は本物に渡す
-# （decide-next.sh が呼ぶ get-review-comments.sh も claude-hooks を起動する）
+# （decide-next.sh と request-rereview.sh が呼ぶ get-review-comments.sh や gh-review-requests.sh も claude-hooks を起動する）
 fake_hooks_covers() {
   local real
   printf -v real '%q' "$REAL_CLAUDE_HOOKS"
@@ -312,7 +312,7 @@ assert_not_contains "$(fake_log gh)" "requested_reviewers"
 
 it "request-rereview: 記録の後に rebase だけした head なら要求する（判定は local-review-covers）"
 fake_gh_rereview grow 'echo abc1234 0'
-make_fake_tool claude-hooks '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
+fake_hooks_covers '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
 out=$("$REVIEW_SCRIPTS/request-rereview.sh" "$PR_URL" 2>&1)
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "requested_reviewers"
