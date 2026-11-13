@@ -45,10 +45,11 @@ fn git<S: AsRef<OsStr>>(top: Option<&Path>, args: &[S]) -> Result<Vec<u8>, Failu
     Ok(out.stdout)
 }
 
-/// git rev-parse が出すパス（末尾の改行を除く）。Unix ではバイトのまま（UTF-8 でない名前のディレクトリも同じパスに
+/// git rev-parse が出すパス（git が足す末尾の改行を除く）。Unix ではバイトのまま（UTF-8 でない名前のディレクトリも同じパスに
 /// する）、Windows では git は UTF-8 で出す
 fn path_from_git(mut out: Vec<u8>) -> PathBuf {
-    while out.last() == Some(&b'\n') {
+    // git は改行を 1 つ足す（名前が改行で終わるディレクトリもあるので、1 つだけ外す）
+    if out.last() == Some(&b'\n') {
         out.pop();
     }
     #[cfg(unix)]
