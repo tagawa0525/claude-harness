@@ -9,7 +9,33 @@ pub fn find(var: &str, name: &str) -> Option<String> {
     from(std::env::var(var).ok(), cfg!(windows), name)
 }
 
-pub fn from(env: Option<String>, windows: bool, name: &str) -> Option<String> {
+fn from(env: Option<String>, windows: bool, name: &str) -> Option<String> {
     env.filter(|path| !path.is_empty())
         .or_else(|| windows.then(|| name.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::from;
+
+    #[test]
+    fn the_wrapped_path_comes_first_and_windows_falls_back_to_the_name() {
+        // Nix の包む側が渡すパスが先。無ければ、cargo install で入れる Windows は PATH の名前
+        assert_eq!(
+            from(
+                Some("/nix/store/x/bin/ja-terms".to_string()),
+                true,
+                "ja-terms"
+            ),
+            Some("/nix/store/x/bin/ja-terms".to_string())
+        );
+        assert_eq!(from(None, true, "ja-terms"), Some("ja-terms".to_string()));
+        assert_eq!(from(None, false, "ja-terms"), None);
+        // 空の値はパスでない（HOME と同じ）
+        assert_eq!(
+            from(Some(String::new()), true, "commit-refs"),
+            Some("commit-refs".to_string())
+        );
+        assert_eq!(from(Some(String::new()), false, "commit-refs"), None);
+    }
 }
