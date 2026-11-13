@@ -3,6 +3,9 @@
 //! commit-refs remap に渡すことを確かめる。commit-refs は偽のコマンド（examples/fake_tool.rs）にする。本物の
 //! commit-refs での付け直しは modules/home/parts/tests/post-rewrite-remap.sh
 
+mod common;
+
+use common::*;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,32 +18,6 @@ impl Drop for Repo {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
-}
-
-/// examples/fake_tool の実行ファイル（テストの実行ファイルは target/<profile>/deps にある）。`cargo test` は examples も
-/// ビルドする（`--test` で絞ると作らないので、先に `cargo build --examples` を流す）
-fn fake_tool() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let profile = exe.parent().unwrap().parent().unwrap();
-    profile
-        .join("examples")
-        .join(format!("fake_tool{}", std::env::consts::EXE_SUFFIX))
-}
-
-/// sh に書くパス（Windows の `\` は sh の中で消えるので `/` にする）
-fn sh_path(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
-/// 実行の権限を付ける（Windows には無い）
-fn executable(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    #[cfg(not(unix))]
-    let _ = path;
 }
 
 impl Repo {
@@ -100,12 +77,7 @@ impl Repo {
 
     fn command(&self, args: &[&str], dir: &Path) -> Command {
         let mut cmd = Command::new("git");
-        // 呼んだ側のリポジトリ（git の hook の中の GIT_DIR など）を見せない
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("GIT_") {
-                cmd.env_remove(key);
-            }
-        }
+        forget_git_env(&mut cmd);
         cmd.args(args)
             .current_dir(dir)
             .env("GIT_CEILING_DIRECTORIES", &self.root)
@@ -281,11 +253,7 @@ fn the_exit_code_of_the_local_hook_is_returned() {
     executable(&local);
     // git は post-rewrite の終了コードを見ないので、hook を直に呼ぶ
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            cmd.env_remove(key);
-        }
-    }
+    forget_git_env(&mut cmd);
     let mut child = cmd
         .args(["git-hook", "post-rewrite", "rebase"])
         .current_dir(repo.work())
