@@ -21,25 +21,16 @@ impl Drop for Repo {
     }
 }
 
-/// 呼ぶ git（PATH に本物のツールを混ぜないよう、git だけを偽のツールの置き場から見せる）
+/// 呼ぶ git（PATH に本物のツールを混ぜないよう、git だけを偽のツールの置き場から見せる）。which は Nix の sandbox に
+/// 無いので、PATH を自分で探す
 fn git_path() -> PathBuf {
-    let probe = Command::new("git")
-        .args(["--exec-path"])
-        .output()
-        .expect("git を起動できる");
-    assert!(probe.status.success());
-    let which = if cfg!(windows) { "where" } else { "which" };
-    let out = Command::new(which)
-        .arg("git")
-        .output()
-        .expect("git を探せる");
-    let first = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .next()
-        .expect("git が PATH にある")
-        .trim()
-        .to_string();
-    std::fs::canonicalize(first).unwrap()
+    let name = format!("git{}", std::env::consts::EXE_SUFFIX);
+    let path = std::env::var_os("PATH").expect("PATH がある");
+    let found = std::env::split_paths(&path)
+        .map(|dir| dir.join(&name))
+        .find(|p| p.is_file())
+        .expect("git が PATH にある");
+    std::fs::canonicalize(found).unwrap()
 }
 
 impl Repo {
