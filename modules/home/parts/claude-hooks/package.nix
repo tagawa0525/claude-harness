@@ -9,6 +9,7 @@
   makeBinaryWrapper,
   git,
   jq,
+  gitleaks,
   callPackage,
 }:
 let
@@ -64,7 +65,8 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     makeWrapper ${unwrapped}/bin/claude-hooks $out/bin/claude-hooks \
       --set CLAUDE_HOOKS_JA_TERMS ${jaTerms}/bin/ja-terms \
-      --set CLAUDE_HOOKS_COMMIT_REFS ${commitRefs}/bin/commit-refs
+      --set CLAUDE_HOOKS_COMMIT_REFS ${commitRefs}/bin/commit-refs \
+      --set CLAUDE_HOOKS_GITLEAKS ${gitleaks}/bin/gitleaks
     runHook postInstall
   '';
   # 包んだ ja-terms と辞書で git merge の本文の崩れた語を、同じ ja-terms で git commit の

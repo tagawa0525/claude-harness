@@ -15,17 +15,6 @@ let
   # 履歴の中の崩れた語を辞書（./ja-terms/prh.yml）で直し、番号を commit-refs で付け直す（ADR-0045）。
   # 手で呼ぶツールなので PATH に入れる
   history-rewrite = pkgs.callPackage ./history-rewrite/package.nix { inherit commit-refs; };
-  # 機密情報の検査（ADR-0015）。pre-commit と pre-merge-commit が store のパスで呼ぶ
-  scanStagedSecrets = pkgs.writeShellApplication {
-    name = "scan-staged-secrets";
-    runtimeInputs = [
-      pkgs.git
-      pkgs.gitleaks
-      pkgs.jq
-    ];
-    text = builtins.readFile ./scan-staged-secrets.sh;
-  };
-  scanSecrets = "${scanStagedSecrets}/bin/scan-staged-secrets";
   # プロジェクトローカルの hook のパス。ローカルの hook は linked worktree でも共通の .git/hooks にある
   # （--git-dir は worktree ごとの場所）。--git-path hooks/... は core.hooksPath（この hook 自身）を指すので
   # 使わない（commit-msg の中身は claude-hooks の src/git_hook.rs が同じ場所を探す）。検証:
@@ -37,6 +26,9 @@ let
   ja-terms = pkgs.callPackage ./ja-terms/package.nix { };
   # git hook の中身（ADR-0086）。PreToolUse hook と同じバイナリ（claude-code.nix）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
+  # 機密情報の検査（ADR-0015。claude-hooks の src/git_hook.rs の scan-secrets）。pre-commit と pre-merge-commit が呼び、
+  # gitleaks は claude-hooks の package.nix が包むものを使う
+  scanSecrets = "${claude-hooks}/bin/claude-hooks git-hook scan-secrets";
   # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。ツールは利用者の PATH のもの
   stagedChecks = pkgs.writeShellApplication {
     name = "staged-checks";

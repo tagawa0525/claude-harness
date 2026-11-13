@@ -7,7 +7,7 @@
 # ルール ID だけを出し、値は出さない。ALLOW_SECRET_COMMIT=<理由> で迂回でき、Claude Code のセッションでなければ
 # 検査しない。プロジェクトのローカルの pre-commit があっても、fork でも検査する。
 #
-# hook のファイルを nix build で作る（hook が store のパスで呼ぶ gitleaks も一緒にビルドされる）。
+# hook のファイルを nix build で作る（hook が呼ぶ claude-hooks と、それが包む gitleaks も一緒にビルドされる）。
 #
 # 使い方（リポジトリルートで実行）:
 #   ./modules/home/parts/tests/pre-commit-secrets.sh
