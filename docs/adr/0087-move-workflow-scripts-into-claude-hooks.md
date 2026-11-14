@@ -31,8 +31,19 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 （ADR-0086 は git hook を `claude-hooks` のサブコマンドにした）。#101 の「作業の順序」は、sh の実装を、呼び出し元を
 付け替えた PR で消すとしていた。
 
-決めること: Rust の中身の置き場、スクリプトのファイルと、スキルの文と hook のルールからの呼ばれ方、テスト。移す順は #101 の
-「作業の順序」に書く。
+段階 6 では、`.claude/skills/language-checks/scripts/` の `run-checks.sh` と `fix-markdown-lint.py` を移す（#101 の
+「作業の順序」）。`run-checks.sh` は、段階 5 のスクリプトと同じく、スキルの文から名前とパスで呼ばれる。`fix-markdown-lint.py`
+は、markdownlint --fix の直せない MD040（コードの塊の言語）と MD060（表の桁揃え）を直す。呼び出し元は
+`python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py` と Python を名指しする
+（`references/markdown-checks.md`、`SKILL.md`、`.claude/README.md`。2026-11-14 の `grep -rn fix-markdown-lint`）。PreToolUse の
+ルールは名前で見分けない。git hook の `staged-checks`（ADR-0086。`claude-hooks` の中）は、`~/.claude` の下の .py を `python3`
+で起動し、どちらかが無ければ自動修正を飛ばす。history-rewrite（ADR-0045）は、.py を Python のモジュールとして読み込み、
+`fence_open`、`fence_end`、`is_table_row`、`is_separator_row`、`format_table` を呼んで、書き換えた行を含む表だけを揃え直す
+（`history_rewrite.py` の `_realign_tables`）。.py の文字の幅（`display_width`）は、East Asian Width が F と W の文字だけを
+2 に、ほかを 1 文字 1 に数える（幅の曖昧な文字を、MD060 が使う string-width と同じく 1 にするため）。
+
+決めること: Rust の中身の置き場、スクリプトのファイルと、スキルの文と hook のルールからの呼ばれ方、テスト。段階 6 の
+`fix-markdown-lint.py` の呼ばれ方と、.py の扱いと、文字の幅の数え方。移す順は #101 の「作業の順序」に書く。
 
 ## 決定の要因
 
@@ -63,9 +74,25 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 案 丁: 呼ぶ sh が exec せずに `claude-hooks` を起動し、一時のディレクトリを作って自分の `trap` で片付ける
 - 案 戊: 移さず、sh のまま残す
 
+段階 6 の `fix-markdown-lint.py` の呼ばれ方:
+
+- 案 C: `.py` の名前と場所を残し、中身を `claude-hooks script fix-markdown-lint` を起動するだけの Python にする
+- 案 D: 呼ぶだけの `fix-markdown-lint.sh` を足し、呼び出し元の文書を付け替える
+
+`fix-markdown-lint.py` の扱い:
+
+- 案 ア: 消し、history-rewrite も `claude-hooks script fix-markdown-lint` を子のプロセスで呼ぶ
+- 案 イ: スキルの置き場に残し、history-rewrite の段階 7 で消す
+- 案 ウ: history-rewrite の隣（`modules/home/parts/history-rewrite/`）に移して残し、history-rewrite を Rust に移す段階 7 で消す
+
+文字の幅:
+
+- 案 い: `unicode-width` の crate（事実上の標準）の幅を使う
+- 案 ろ: East Asian Width が F と W の範囲の表（122 の範囲）を、Python の unicodedata から作って持つ
+
 ## 決定と理由
 
-採用: 案 1、案 A、案 戊。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
+採用: 案 1、案 A、案 戊。段階 6 の `fix-markdown-lint.py` は案 D、案 ウ、案 ろ。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
@@ -90,6 +117,17 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   決める）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
   呼ぶだけのスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
   （sh のまま残す `check-each-commit.sh` は、そこで振る舞いを確かめる）
+- 段階 6 の `run-checks.sh` は、名前とパスで呼ばれるので、段階 5 のスクリプトと同じ形（中身を移し、呼ぶだけの sh にする）にする
+- 段階 6 の `fix-markdown-lint.py`（案 D、案 ウ、案 ろ）: 中身を `claude-hooks script fix-markdown-lint` に移し、振る舞い（表の
+  桁揃え、言語の推定、CommonMark のフェンスの判定、字下げの保ち方、`Fixed:` と `OK:` の出力）を .py と同じにする。
+  `lib/claude-hooks-script.sh` を読んで `claude_hooks_script fix-markdown-lint "$@"` を呼ぶだけの
+  `skills/language-checks/scripts/fix-markdown-lint.sh` を足し、呼び出し元の文書をそれに付け替える。git hook の
+  `staged-checks` は、同じバイナリの中の関数を直に呼ぶ（子のプロセスにせず、`python3` もスクリプトの置き場も要らない）。
+  文字の幅は、.py と同じく East Asian Width の F と W だけを 2 に数える表を持ち、空白は Python の `str.strip` と同じ文字
+  （Unicode の White_Space と \x1c〜\x1f）を外す
+- 二重の実装の期間: .py は、段階 7 で history-rewrite を Rust に移す PR で消し、history-rewrite は Rust の関数を呼ぶ。それまで、
+  `.claude/tests/scripts/language-checks.sh` が、サロゲートと改行と `|` のほかのすべての文字で、Rust の版と .py の表の桁を
+  突き合わせる。表の段の振る舞いを変えるときは両方を直す（#46、#99）
 
 理由:
 
@@ -104,6 +142,18 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 案 A は、スキルの文と hook のルールを変えないので、移す PR ごとの変更がスクリプト 1 つに収まる。案 B は、移すたびに
   スキルの文と hook のルールを揃える PR になり、揃え漏れが hook の判定の抜けになる。sh を 1 つ挟む費用は呼び出しごとに
   1 回で、これらのスクリプトは作業の節目に呼ぶもの（PreToolUse hook のように毎回は走らない）
+- 案 D: 呼び出し元は文書の 3 か所だけで、PreToolUse のルールは名前で見分けないので、付け替えの費用は小さい。案 C は、
+  Windows で呼ぶのに `python3` が要るままで、移す目的（Python を外す）にならない
+- 案 ウ: history-rewrite は、ファイルの全体でなく、書き換えた行を含む表だけを揃え直すので、ファイルを受ける CLI を呼ぶ
+  案 ア では置き換えられず、表を渡すモードを CLI に足すことになる。そのモードは、段階 7 で history-rewrite を Rust に
+  すれば関数を呼べるので要らなくなる。案 イ は、配られた `~/.claude` の下に古い入口が残り、呼ぶ側がそちらを選びうる。
+  案 ウ は、history-rewrite の `package.nix` の参照を隣のファイルにするだけで済み、.py の使い手が 1 つだと置き場で分かる
+- 案 ろ: `unicode-width`（0.2.3）は、結合文字、ゼロ幅の文字、ハングルの中声などを 0 に数え、絵文字の列をまとめて 2 に
+  数えるので、.py と 7,479 の符号位置で幅が違う（2026-11-14、すべての符号位置で測った。うち 3,845 は未割り当ての文字、
+  2,012 は結合文字）。.py と同じ桁にするには例外の規則が要り、crate を使う意味が残らない。表は、作り方を表の上に書き、
+  Unicode の版を上げるときに作り直す（.py の幅も、動かす Python の unicodedata の版で変わる）
+- 言語の推定の正規表現は、Rust の `\w`、`\s`、`\b`（Unicode の定義）のままで、Python と非 ASCII の一部の文字で食い違う。
+  推定が外れても付く言語が変わるだけで、文書は壊れないので合わせない
 - バイナリを PATH でなく固定のパスと `CLAUDE_HOOKS_BIN` で引くのは、今の `lib/local-review.sh` と揃え、テストで
   ブランチのバイナリに差し替えられるようにするため。Windows も同じパスに置けば、スクリプトからの引き方が
   Linux と 1 つで済み、今の `lib/local-review.sh` も Windows で動く
@@ -119,11 +169,17 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   `cargo install` を済ませる
 - 悪い点: Windows では、`cargo install --root ~/.claude` が入れた crate の記録（`.crates.toml`、`.crates2.json`）を
   `~/.claude` に置く
+- 悪い点: 段階 7 まで、表の桁揃えの実装が Rust と Python の 2 つになる。照合のテストは Linux の sh のテストだけで流れる
+- 悪い点: fix-markdown-lint の幅は、.py と同じく、結合文字、ゼロ幅の文字、制御文字、絵文字の列で MD060（string-width）と
+  食い違う（#182）
 
 ### 確認
 
 - 移したスクリプトの結合テストが、`nix flake check` と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
   いるもの。sh のまま残す `check-each-commit.sh` は、`.claude/tests/scripts.sh` の振る舞いのテストで確かめ続ける
+- `claude-hooks script fix-markdown-lint` の結合テスト（`tests/script_fix_markdown_lint.rs`）が .py の出力を期待値にして通り、
+  `.claude/tests/scripts/language-checks.sh` の照合が、すべての文字で .py と同じ桁になる。`staged-checks` は
+  `python3` の無い環境で表と言語を直す（`tests/git_hook_staged_checks.rs`）
 - 移した後、対象のスクリプトのファイル（`check-each-commit.sh` を除く）は `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
   なり、jq を使わない。`lib/` の部品は `claude-hooks-script.sh` のほかは消えている
 
