@@ -17,6 +17,7 @@ mod git_merge_state;
 mod kept_sentences;
 mod post_merge_cleanup;
 mod pr_url;
+mod prose_size;
 mod record_local_review;
 mod rename_branch;
 mod rename_plan;
@@ -50,6 +51,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("git-merge-state", git_merge_state::main),
     ("kept-sentences", kept_sentences::main),
     ("post-merge-cleanup", post_merge_cleanup::main),
+    ("prose-size", prose_size::main),
     ("record-local-review", record_local_review::main),
     ("rename-branch", rename_branch::main),
     ("rename-plan", rename_plan::main),
