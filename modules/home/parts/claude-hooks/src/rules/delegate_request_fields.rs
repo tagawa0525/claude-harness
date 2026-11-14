@@ -496,9 +496,25 @@ mod tests {
     }
 
     #[test]
-    fn unquoted_path_with_spaces_is_denied_with_how_to_quote_it() {
-        // 空白で切ったパスは句に当たらず、prompt を判定する。欄が無ければ、囲み方を示して止める
-        let prompt = "依頼文は /nonexistent/Taro Yamada/brief.md にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。";
+    fn unreadable_pointer_on_the_first_line_is_denied_with_how_to_quote_it() {
+        // 句として読めない 1 行目（空白を含む囲まないパス、閉じ忘れた囲み）で、prompt の側の欄が欠けていれば、
+        // 欄を prompt に足すよう示さず、句の修正方法を示して止める
+        for first in [
+            "依頼文は /nonexistent/Taro Yamada/brief.md にある。",
+            "依頼文は `/nonexistent/brief.md にある。",
+        ] {
+            let prompt =
+                format!("{first}最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。");
+            let findings = check(&prompt);
+            let reason = deny_reason(&findings);
+            assert!(reason.contains("パスを読み取れません"), "{first}: {reason}");
+            assert!(reason.contains("囲み"), "{first}: {reason}");
+        }
+    }
+
+    #[test]
+    fn unreadable_request_file_is_denied_with_how_to_quote_it() {
+        let prompt = "依頼文は /nonexistent/brief.md にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。";
         let findings = check(prompt);
         let reason = deny_reason(&findings);
         assert!(reason.contains("空白を含むパスは"), "{reason}");
