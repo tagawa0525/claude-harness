@@ -128,12 +128,14 @@ fn is_wide(c: char) -> bool {
     .is_ok()
 }
 
-fn is_table_row(line: &str) -> bool {
+/// 表の行（両端の空白を外すと | で始まって | で終わり、間にも | がある）
+pub fn is_table_row(line: &str) -> bool {
     let s = strip(line);
     s.len() >= 2 && s.starts_with('|') && s.ends_with('|') && s[1..s.len() - 1].contains('|')
 }
 
-fn is_separator_row(line: &str) -> bool {
+/// 表の区切りの行（どのセルも `-` の並びで、両端に `:` を置ける）
+pub fn is_separator_row(line: &str) -> bool {
     static DASHES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^:?-+:?$").unwrap());
     if !is_table_row(line) {
         return false;
@@ -228,7 +230,7 @@ pub fn format_table(table: &[&str]) -> Vec<String> {
 
 /// 開きのフェンス（CommonMark）なら、フェンスの文字、本数、両端の空白を外した info string。` のフェンスで info
 /// string に ` があれば、フェンスでない
-fn fence_open(line: &str) -> Option<(char, usize, &str)> {
+pub fn fence_open(line: &str) -> Option<(char, usize, &str)> {
     static OPEN: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^ {0,3}(`{3,}|~{3,})(.*)$").unwrap());
     let caps = OPEN.captures(line)?;
@@ -254,7 +256,7 @@ fn fence_close(line: &str, ch: char, length: usize) -> bool {
 }
 
 /// start で開いたフェンスを閉じる行の番号。閉じなければ lines.len()
-fn fence_end(lines: &[&str], start: usize) -> usize {
+pub fn fence_end(lines: &[&str], start: usize) -> usize {
     let Some((ch, length, _)) = fence_open(lines[start]) else {
         return start;
     };
