@@ -9,7 +9,8 @@
 //! `home-manager switch|build`）は taskset で包んでも止める。ただし r995 のほかでは、手元でビルドする
 //! `nix-rebuild rebuild|update --local`（nixfiles の nix-rebuild.sh。既定のビルドは r995 に投げる）は通す。
 //! `run-checks.sh` と `run-python-tests.sh` は対象にしない（排他のジョブ中は自分で 1 コアに限る）。
-//! squeue が無いホスト、squeue の失敗、実行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
+//! squeue が無いホスト、squeue の失敗、実行中のジョブが無い場合は何もしない（ラップトップの squeue は r995 の
+//! 待ち行列を見る）。
 //! squeue は対象のコマンドがあるときだけ呼ぶ。エスケープはない。
 
 use std::io::Read;
@@ -129,7 +130,7 @@ fn is_local_rebuild(cmd: &Cmd) -> bool {
 }
 
 /// このホストが r995 でないと確かめられたか。r995 の上では手元のビルドも r995 で走るので、`hostname` が失敗したときと
-/// 同じく偽にする（止める側に倒す）
+/// 同じく偽にする（止める側に倒す）。ドメインの付いた名前と大文字も r995 とみなす
 fn off_r995() -> bool {
     Command::new("hostname")
         .stdin(Stdio::null())
@@ -139,8 +140,8 @@ fn off_r995() -> bool {
         .filter(|out| out.status.success())
         .is_some_and(|out| {
             let host = String::from_utf8_lossy(&out.stdout);
-            let host = host.trim();
-            !host.is_empty() && host != "r995"
+            let short = host.trim().split('.').next().unwrap_or_default();
+            !short.is_empty() && !short.eq_ignore_ascii_case("r995")
         })
 }
 
@@ -216,20 +217,24 @@ impl Rule for GuardExclusiveSlurm {
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
         let commands = shell.commands();
-        let off = std::cell::OnceCell::new();
-        let off_r995 = || *off.get_or_init(off_r995);
-        let rebuild = commands
-            .iter()
-            .any(|c| is_rebuild(c) && !(is_local_rebuild(c) && off_r995()));
-        if !rebuild && !commands.iter().any(is_heavy) {
+        let heavy = commands.iter().any(is_heavy);
+        if !heavy && !commands.iter().any(is_rebuild) {
             return Vec::new();
         }
         let Some((name, jobid)) = running_exclusive_job() else {
             return Vec::new();
         };
+        // ホストは、排他のジョブがあって rebuild を含むときだけ見る。ssh の先はこのホストでないので、--local でも除かない
+        let off = commands.iter().any(is_rebuild) && off_r995();
+        let rebuild = commands.iter().any(|c| {
+            is_rebuild(c) && !(off && is_local_rebuild(c) && !shell.runs_under_ssh_or_login(c))
+        });
+        if !rebuild && !heavy {
+            return Vec::new();
+        }
         let fix = if !rebuild {
             "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
-        } else if off_r995() {
+        } else if off {
             "rebuild のビルドは r995 に投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、nix-rebuild rebuild|update --local で手元でビルドしてください。"
         } else {
             "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
