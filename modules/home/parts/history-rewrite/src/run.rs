@@ -94,16 +94,24 @@ pub fn is_utf8(encoding: Option<&[u8]>) -> bool {
     encoding.is_none_or(|e| e.eq_ignore_ascii_case(b"utf-8") || e.eq_ignore_ascii_case(b"utf8"))
 }
 
-/// ISO-8859-1 の名前（iso-8859-1、iso8859-1、latin1、l1 など。大文字と小文字、- と _ を問わない）
+/// ISO-8859-1 の名前（iconv の別名。iso-8859-1、latin1、l1、csISOLatin1、ISO-IR-100 など。大文字と小文字、`-`、`_`、`:`
+/// を問わない）
 fn is_latin1(label: &[u8]) -> bool {
     let folded: String = String::from_utf8_lossy(label)
         .to_ascii_lowercase()
         .chars()
-        .filter(|c| !matches!(c, '-' | '_'))
+        .filter(|c| !matches!(c, '-' | '_' | ':'))
         .collect();
     matches!(
         folded.as_str(),
-        "iso88591" | "latin1" | "l1" | "iso885911987" | "cp819" | "ibm819"
+        "iso88591"
+            | "latin1"
+            | "l1"
+            | "iso885911987"
+            | "cp819"
+            | "ibm819"
+            | "csisolatin1"
+            | "isoir100"
     )
 }
 
@@ -989,7 +997,7 @@ fn resolve(path: &Path) -> Result<PathBuf, Stop> {
     let mut rest = Vec::new();
     let mut cur = absolute.as_path();
     loop {
-        if let Ok(real) = std::fs::canonicalize(cur) {
+        if let Ok(real) = crate::real_path(cur) {
             return Ok(rest
                 .iter()
                 .rev()
@@ -1009,7 +1017,7 @@ fn resolve(path: &Path) -> Result<PathBuf, Stop> {
 pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
     let mut transformer = Transformer::new(words)?;
     let source =
-        std::fs::canonicalize(source).map_err(|e| Stop(format!("{}: {e}", source.display())))?;
+        crate::real_path(source).map_err(|e| Stop(format!("{}: {e}", source.display())))?;
     let workdir = resolve(workdir)?;
     if workdir.starts_with(&source) {
         return Err(Stop(format!(

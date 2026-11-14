@@ -21,6 +21,22 @@ impl fmt::Display for Stop {
     }
 }
 
+/// 実体のパス（std::fs::canonicalize）。Windows の `\\?\` で始まる形は git が読めないので、ドライブの形（`D:\…`）と
+/// `\\server\share\…` の形に戻す
+pub fn real_path(path: &Path) -> std::io::Result<PathBuf> {
+    let real = std::fs::canonicalize(path)?;
+    if cfg!(windows) {
+        let text = real.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return Ok(PathBuf::from(format!(r"\\{rest}")));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return Ok(PathBuf::from(rest));
+        }
+    }
+    Ok(real)
+}
+
 /// `git -C repo <args>` の標準出力。失敗すれば、引数と終了コードと標準エラーを添えて止める
 pub fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, Stop> {
     let out = Command::new("git")
@@ -51,7 +67,7 @@ pub fn transform_files(words: &Words, files: &[String]) -> Result<(), Stop> {
         .trim_end_matches('\n')
         .to_string();
     // symlink を経たパスもリポジトリの中として比べるため、実体のパスにする
-    let top = std::fs::canonicalize(&top).map_err(|e| Stop(format!("{top}: {e}")))?;
+    let top = real_path(Path::new(&top)).map_err(|e| Stop(format!("{top}: {e}")))?;
     let mut results: Vec<(PathBuf, String, Vec<u8>)> = Vec::new();
     let mut skipped: Vec<(String, &'static str)> = Vec::new();
     for name in files {
@@ -62,7 +78,7 @@ pub fn transform_files(words: &Words, files: &[String]) -> Result<(), Stop> {
                 "{name}: ファイルでない（無いか、ディレクトリ）"
             )));
         };
-        let path = std::fs::canonicalize(parent)
+        let path = real_path(parent)
             .map_err(|_| Stop(format!("{name}: ファイルでない（無いか、ディレクトリ）")))?
             .join(file_name);
         let Ok(relative) = path.strip_prefix(&top) else {
