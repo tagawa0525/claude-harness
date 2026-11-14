@@ -436,6 +436,37 @@ mod tests {
     }
 
     #[test]
+    fn request_file_under_a_directory_with_spaces_is_read() {
+        // Windows のユーザー名には空白が入りうる（C:\Users\Taro Yamada\...）。囲んでも囲まなくても、パスを空白で切らない
+        let tmp = TempDir::new("spaces");
+        let dir = tmp.0.join("Taro Yamada");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("my brief.md");
+        std::fs::write(&path, COMPLETE).unwrap();
+        for quoted in [
+            format!("{}", path.display()),
+            format!("`{}`", path.display()),
+            format!("「{}」", path.display()),
+        ] {
+            let prompt = format!(
+                "依頼文は {quoted} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
+            );
+            assert!(check(&prompt).is_empty(), "{quoted}");
+        }
+    }
+
+    #[test]
+    fn missing_request_file_with_spaces_is_denied_with_its_whole_path() {
+        let path = "/nonexistent/Taro Yamada/brief.md";
+        let prompt = format!(
+            "依頼文は {path} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
+        );
+        let findings = check(&prompt);
+        let reason = deny_reason(&findings);
+        assert!(reason.contains(path), "{reason}");
+    }
+
+    #[test]
     fn request_file_given_by_a_relative_path_is_denied_with_the_fix() {
         let prompt = "依頼文は ~/brief.md にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。";
         let findings = check(prompt);
