@@ -107,6 +107,12 @@ impl Dictionary {
         })
     }
 
+    /// other の規則を、この辞書の規則の後ろに並べる。prh の Engine.merge と違い、同じ expected の規則を外さない
+    /// （history-rewrite が --dictionary と --extra-rules を渡した順に並べる。ADR-0045）
+    pub fn append(&mut self, other: Dictionary) {
+        self.rules.extend(other.rules);
+    }
+
     pub fn len(&self) -> usize {
         self.rules.len()
     }
