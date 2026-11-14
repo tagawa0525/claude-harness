@@ -21,3 +21,13 @@ exclusive_slurm_job() {
   done <<<"$out"
   return 1
 }
+
+# on_compute_node
+#   このホストが計算ノード（r995）なら 0。hostname のドメインの前の名前を大文字小文字によらず比べる。hostname が
+#   失敗したときも 0（止める側に倒す）。guard-exclusive-slurm の off_r995 と同じ判定にする
+on_compute_node() {
+  local host
+  host=$(hostname 2>/dev/null) || return 0
+  host=${host%%.*}
+  [[ -z "$host" || "${host,,}" == r995 ]]
+}
