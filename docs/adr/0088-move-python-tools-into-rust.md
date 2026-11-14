@@ -34,7 +34,9 @@ Issue #101 の段階 7 で、Python のツールを Rust に移す（ADR-0082）
 
 - 辞書を prh と同じ意味で当てる Rust の実装は ja-terms のライブラリにあり、履歴の書き換えの mode（全文に段落ごとに当てる）は
   `Dictionary::apply` で持つ（ADR-0085。`prh_rules.py` の置き換えは段階 7 に残していた）。今の `Dictionary::load` は
-  ファイルを 1 つ読み、history-rewrite は `--dictionary` と `--extra-rules` で複数の辞書の規則を順に並べる
+  ファイルを 1 つ読む（複数の辞書を prh の `Engine.merge` でつなぐと前の辞書の同じ expected の規則を外すが、検査の辞書は
+  1 つなので扱わない、と注記がある）。history-rewrite は `--dictionary` と `--extra-rules` で複数の辞書の規則を、同じ expected の
+  規則を外さずに渡した順に並べる（ADR-0045）
 - `commit-refs rewrite-history`（Rust）は、`git fast-export --no-data` の流れを読み、`git cat-file --batch` でブロブを読み、
   `git fast-import` に渡して履歴を書き換える。タグの署名の外し方、cat-file の読み方、対応表の形は、history_rewrite.py と
   「言語が違うので共有できない」として対にして保っている（history_rewrite.py の `SIGNATURE_MARKERS` の上の注記）
@@ -109,15 +111,16 @@ usage-report の日時:
 採用: 案 1、案 A、案 ア、案 甲、案 は、案 C、案 b。
 
 - history-rewrite は Rust の crate（案 A）にし、CLI の名前、サブコマンド、引数、出力の形、終了コードを Python の版と
-  同じにする。辞書は ja-terms のライブラリ（`Dictionary::apply`）で当て、複数の辞書の規則を渡した順に並べる読み方を
-  ja-terms に足す。第 2 段と worktree の番号の付け直しは、今のとおり `commit-refs rewrite-history` と `commit-refs remap` を
+  同じにする。辞書は ja-terms のライブラリ（`Dictionary::apply`）で当て、複数の辞書の規則を、同じ expected の規則を外さずに
+  渡した順に並べる読み方（ADR-0045 と同じ。`Engine.merge` の意味ではない）を ja-terms に足す。第 2 段と worktree の番号の付け直しは、今のとおり `commit-refs rewrite-history` と `commit-refs remap` を
   子プロセスで呼ぶ
 - 第 1 段（案 1）: fast-export と fast-import を直に扱う。fast-export の設定は filter-repo 2.47.0 の `fep_cmd` に、
   ブロブを流さない `--no-data` を足したもの（ブロブは cat-file で読み、直したものだけを流れに書く）。filter-repo の
-  `--prune-empty=never`、`--prune-degenerate=never`、`--preserve-commit-hashes`、`--preserve-commit-encoding`、`--no-gc` に
-  当たる振る舞い（コミットを消さない、本文の番号に触らない、本文の符号化を変えない、repack しない）は、流れを
-  書き換えずに渡すことで同じになる。対応表（`old new`）は fast-export の `original-oid` と fast-import の
-  `--export-marks` から作り、照合（ADR-0045）は今の Python の版と同じ項目を確かめる
+  `--prune-empty=never`、`--prune-degenerate=never`、`--preserve-commit-hashes`、`--preserve-commit-encoding`、`--no-gc`、
+  `--replace-refs=delete-no-add` に当たる振る舞い（コミットを消さない、本文の番号に触らない、本文の符号化を変えない、
+  repack しない、旧から新への replace の ref を足さない）は、流れを書き換えずに渡し、ref を足さないことで同じになる。
+  対応表（`old new`）は fast-export の `original-oid` と fast-import の `--export-marks` から作って書き換えたリポジトリの
+  git dir に置き、第 2 段の `commit-refs rewrite-history` に渡す。照合（ADR-0045）は今の Python の版と同じ項目を確かめる
 - 表の揃え直し（案 ア）: `fix_markdown_lint.rs` をライブラリの crate `fix-markdown-lint`（`modules/home/parts/fix-markdown-lint/`）に
   移す。`claude-hooks script fix-markdown-lint` と `staged-checks` はそれを呼ぶ。history-rewrite は fence の判定、表の行の
   判定、`format_table` を呼ぶ
@@ -130,11 +133,13 @@ usage-report の日時:
   `.claude/README.md` と `claude-settings.json` の allow を付け替え、.py を消す。`.claude/tests/scripts/` の sh のテストは、呼ぶだけの sh を呼ぶ配備の
   確認として残す（ADR-0087 の「テスト」）
 - usage-report の日時（案 b）: `--since`、`--until`、記録の timestamp、`%cI` を、時差つきの ISO 8601 として読み、UNIX の時刻で
-  比べる。受ける形は今の .py の `ISO_WITH_OFFSET` と同じにする。表示と今日の区切りは +09:00 の固定の時差で暦に直す
+  比べる。`--since` と `--until` の受ける形は今の .py の `ISO_WITH_OFFSET` と同じにする。記録の timestamp と `%cI` は、
+  時差つきの日時（`Z` か `±HH:MM`、秒の端数の桁数は問わない）を受け、読めなければ記録のパスを添えて止める（.py は
+  `fromisoformat` の例外で止まる）。表示と今日の区切りは +09:00 の固定の時差で暦に直す
 - テスト: Python のテストは、同じ振る舞いを Rust の結合テスト（`history-rewrite/tests/`、claude-hooks の `tests/script_*.rs`）に
   移す。`test_prh_rules.py` の振る舞いは ja-terms の `apply` のテストに移す（ja-terms に既にあるものは足さない）。
-  付け替える PR で、Python の `test_history_rewrite.py` のうち CLI を呼ぶテストを Rust の history-rewrite に向けて流し、
-  通ることを PR に書く（`Verifier` を直に呼ぶ 2 件は、Rust の照合の単体テストに移す）
+  付け替える PR で、Python の `test_history_rewrite.py` のうち CLI を呼ぶテストを、PATH の先頭に Rust の history-rewrite を
+  置いて手元で流し、通ることを PR に書く（`Verifier` を直に呼ぶ 2 件は、Rust の照合の単体テストに移す）
 - PR の順: kept-sentences、usage-report、fix-markdown-lint の crate への切り出し、commit-refs の部品の切り出し、
   history-rewrite の Rust の版（transform、run、sync-worktrees）、package.nix の付け替えと Python の版、`fix-markdown-lint.py`、
   `language-checks.sh` の .py との照合、`scripts/run-python-tests.sh` を消す PR（流す Python のテストが無くなるので、
