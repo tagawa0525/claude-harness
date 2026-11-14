@@ -55,21 +55,9 @@ static NAMED_SKILL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/([\w:-]+) �
 const USAGE: &str = "Usage: usage-report.sh [--since <日時>] [--until <日時>] [--repo <リポジトリ>]... [TRANSCRIPT]";
 
 /// 時差つきの日時。比べるのは UNIX の時刻（マイクロ秒）
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 struct Time {
     micros: i64,
-}
-
-impl PartialEq for Time {
-    fn eq(&self, other: &Time) -> bool {
-        self.micros == other.micros
-    }
-}
-
-impl PartialOrd for Time {
-    fn partial_cmp(&self, other: &Time) -> Option<std::cmp::Ordering> {
-        self.micros.partial_cmp(&other.micros)
-    }
 }
 
 /// 1970-01-01 からの日数（Howard Hinnant の days_from_civil。グレゴリオ暦）
@@ -113,8 +101,7 @@ fn days_in_month(y: i64, m: i64) -> i64 {
     }
 }
 
-/// `YYYY-MM-DDTHH:MM[:SS[.端数]](Z|±HH:MM)` を読む（Python の datetime.fromisoformat のうち、時差つきの形。秒の
-/// 端数は 6 桁より後を切り捨てる）。読めなければ None
+/// `YYYY-MM-DDTHH:MM[:SS[.端数]](Z|±HH:MM)` を読む（秒の端数は 6 桁より後を切り捨てる）。読めなければ None
 fn parse_time(s: &str) -> Option<Time> {
     let b = s.as_bytes();
     let num = |from: usize, len: usize| -> Option<i64> {
@@ -200,7 +187,7 @@ fn jst_fields(t: Time) -> (i64, i64, i64, i64, i64, i64, i64) {
     )
 }
 
-/// Python の `astimezone(JST).isoformat()`
+/// JST の `YYYY-MM-DDTHH:MM:SS[.ffffff]+09:00`（マイクロ秒は 0 でなければ付ける）
 fn jst_iso(t: Time) -> String {
     let (y, m, d, h, mi, s, us) = jst_fields(t);
     let frac = if us == 0 {
@@ -226,8 +213,8 @@ struct Args {
     transcript: Option<String>,
 }
 
-/// Python の argparse と同じく、`--opt value`、`--opt=value`、一意な省略形を受ける。`--since` と `--until` は後勝ち、
-/// `--repo` は重ねる。使い方の誤りは None
+/// `--opt value`、`--opt=value`、一意な省略形（`--si` など）を受ける。`--since` と `--until` は後勝ち、`--repo` は重ねる。
+/// 空の `--since` と `--until` は、渡さないのと同じ（開いた端）。使い方の誤りは None
 fn parse_args(args: &[String]) -> Option<Args> {
     let mut out = Args::default();
     let mut it = args.iter();
@@ -254,9 +241,10 @@ fn parse_args(args: &[String]) -> Option<Args> {
                 .filter(|v| !(v.starts_with('-') && v.len() > 1))?
                 .clone(),
         };
+        let bound = (!value.is_empty()).then_some(value.clone());
         match full {
-            "--since" => out.since = Some(value),
-            "--until" => out.until = Some(value),
+            "--since" => out.since = bound,
+            "--until" => out.until = bound,
             _ => out.repos.push(value),
         }
     }
@@ -294,7 +282,7 @@ fn parse_bound(name: &str, value: &str) -> Result<Time, ReportError> {
     }
 }
 
-/// `dir` の、`.` で始まらない名前のうち `suffix` で終わる項目（Python の glob の `*` と同じく、隠れた名前に当てない）
+/// `dir` の、`.` で始まらない名前のうち `suffix` で終わる項目を名前の順に（glob の `*` と同じく、隠れた名前に当てない）
 fn glob_dir(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -345,13 +333,13 @@ fn prices_for(model: &Value, prompt_tokens: u64) -> Result<Price, ReportError> {
         Some((_, price)) => Ok(*price),
         None => fail(format!(
             "価格表に無いモデル: {}（PRICES に価格のページの値を足してください）",
-            py_str(model.clone())
+            display_value(model.clone())
         )),
     }
 }
 
-/// Python の `str(x)`（f 文字列の `{x}`）に当たる表示。None は `None`
-fn py_str(v: Value) -> String {
+/// 値の表示（文字列は引用符なし、null は `None`）
+fn display_value(v: Value) -> String {
     match v {
         Value::Null => "None".to_string(),
         Value::String(s) => s,
@@ -359,8 +347,8 @@ fn py_str(v: Value) -> String {
     }
 }
 
-/// Python の `repr(x)`（f 文字列の `{x!r}`）に当たる表示
-fn py_repr(v: Option<&Value>) -> String {
+/// 値の表示（文字列は `'…'`、無いか null は `None`）
+fn quoted(v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => "None".to_string(),
         Some(Value::String(s)) => format!("'{s}'"),
@@ -383,7 +371,7 @@ fn text_of(content: Option<&Value>) -> String {
     }
 }
 
-/// Python の真偽（`x or default` の x が偽か）
+/// 値が真か（無い、null、false、0、空の文字列と並びとオブジェクトは偽）
 fn truthy(v: Option<&Value>) -> bool {
     match v {
         None | Some(Value::Null) | Some(Value::Bool(false)) => false,
@@ -446,9 +434,17 @@ struct Reply {
     rewrite_cost: f64,
 }
 
-/// usage の数（無いか null か 0 なら 0）
-fn count(v: Option<&Value>) -> u64 {
-    v.and_then(Value::as_u64).unwrap_or(0)
+/// usage の数（無いか null なら 0）。数でない値は、記録の形が変わったとみなして止める
+fn count(path: &Path, key: &str, v: Option<&Value>) -> Result<u64, ReportError> {
+    match v {
+        None | Some(Value::Null) => Ok(0),
+        Some(n) => n.as_u64().ok_or_else(|| {
+            ReportError(format!(
+                "usage.{key} が数でありません（{n}）: {}",
+                path.display()
+            ))
+        }),
+    }
 }
 
 fn price_reply(
@@ -457,17 +453,19 @@ fn price_reply(
     u: &Value,
 ) -> Result<(f64, Tokens, u64, f64), ReportError> {
     let cc = u.get("cache_creation");
+    let field = |key: &str| count(path, key, u.get(key));
+    let write = |key: &str| count(path, key, cc.and_then(|c| c.get(key)));
     let tokens = Tokens([
-        count(u.get("input_tokens")),
-        count(cc.and_then(|c| c.get("ephemeral_5m_input_tokens"))),
-        count(cc.and_then(|c| c.get("ephemeral_1h_input_tokens"))),
-        count(u.get("cache_read_input_tokens")),
-        count(u.get("output_tokens")),
+        field("input_tokens")?,
+        write("ephemeral_5m_input_tokens")?,
+        write("ephemeral_1h_input_tokens")?,
+        field("cache_read_input_tokens")?,
+        field("output_tokens")?,
     ]);
     if model.as_str() == Some("<synthetic>") && tokens.0.iter().all(|&t| t == 0) {
         return Ok((0.0, tokens, 0, 0.0)); // API の失敗で Claude Code が書く応答
     }
-    if tokens.0[1] + tokens.0[2] != count(u.get("cache_creation_input_tokens")) {
+    if tokens.0[1] + tokens.0[2] != field("cache_creation_input_tokens")? {
         return fail(format!(
             "書き込みの内訳（cache_creation）の和が cache_creation_input_tokens と合いません: {}",
             path.display()
@@ -481,7 +479,7 @@ fn price_reply(
         if u.get(key).and_then(Value::as_str) != Some(standard) {
             return fail(format!(
                 "usage.{key} が {} です（価格表は {standard} の値だけ）: {}",
-                py_repr(u.get(key)),
+                quoted(u.get(key)),
                 path.display()
             ));
         }
@@ -510,16 +508,21 @@ fn read_transcript(
     since: Option<Time>,
     until: Option<Time>,
 ) -> Result<Transcript, ReportError> {
-    let text = std::fs::read(path)
+    use std::io::BufRead;
+    let file = std::fs::File::open(path)
         .map_err(|e| ReportError(format!("記録を読めません: {}: {e}", path.display())))?;
-    let text = String::from_utf8_lossy(&text);
     let mut prompt: Option<String> = None;
     let mut skill: Option<String> = None;
     let mut seen: HashSet<String> = HashSet::new();
     let mut replies = Vec::new();
-    for line in text.split_inclusive('\n') {
+    for line in std::io::BufReader::new(file).split(b'\n') {
+        let line =
+            line.map_err(|e| ReportError(format!("記録を読めません: {}: {e}", path.display())))?;
+        let Ok(line) = String::from_utf8(line) else {
+            return fail(format!("記録を UTF-8 として読めません: {}", path.display()));
+        };
         // 走っている最中のセッションの書きかけの最後の行
-        let Ok(d) = serde_json::from_str::<Value>(line) else {
+        let Ok(d) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         if !d.is_object() {
@@ -533,16 +536,16 @@ fn read_transcript(
             continue;
         }
         let m = d.get("message").filter(|m| m.is_object());
-        if skill.is_none() {
-            if let Some(m) = m {
-                skill = invoked_skill(m.get("content"));
-            }
+        if skill.is_none()
+            && let Some(m) = m
+        {
+            skill = invoked_skill(m.get("content"));
         }
         let Some(m) = m else { continue };
         let Some(u) = m.get("usage").filter(|u| u.is_object()) else {
             continue;
         };
-        // id の無い応答は、Python の dict の get と同じく None を 1 つの id として数える
+        // id の無い応答は、null を 1 つの id として数える（2 つ目からは同じ応答の行として数えない）
         let id = m
             .get("id")
             .map(Value::to_string)
@@ -611,7 +614,7 @@ fn meta_name(path: &Path) -> Result<String, ReportError> {
     let value: Value = serde_json::from_str(&text)
         .map_err(|e| ReportError(format!("{} を JSON として読めません: {e}", meta.display())))?;
     let name = value.get("name").filter(|v| truthy(Some(v)));
-    Ok(name.map(|v| py_str(v.clone())).unwrap_or_default())
+    Ok(name.map(|v| display_value(v.clone())).unwrap_or_default())
 }
 
 fn git_out(repo: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -699,12 +702,12 @@ fn count_merges(
     Ok((n, reference))
 }
 
-/// Python の `f"{n:,}"`
+/// 3 桁ごとに `,` で区切った数
 fn thousands(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -712,7 +715,7 @@ fn thousands(n: u64) -> String {
     out
 }
 
-/// Python の `" ".join(prompt.split())[:70]`
+/// 依頼文の空白の並び（\x1c〜\x1f を含む）を 1 つの空白にした先頭の 70 文字
 fn prompt_head(prompt: &str) -> String {
     prompt
         .split(|c: char| c.is_whitespace() || ('\x1c'..='\x1f').contains(&c))
@@ -881,7 +884,7 @@ fn report(args: &Args) -> Result<(), ReportError> {
             total / merges as f64
         );
     }
-    // 費用の大きい順（同じ費用は読んだ順のまま。Python の sorted の reverse=True と同じく安定）
+    // 費用の大きい順（同じ費用は読んだ順のまま。sort_by は安定）
     top.sort_by(|a, b| {
         b.cost
             .partial_cmp(&a.cost)
@@ -914,7 +917,7 @@ mod tests {
         assert_eq!(t("2026-11-06T15:00:00.000Z"), t("2026-11-07T00:00+09:00"));
         // 6 桁より後の端数は切り捨てる
         assert_eq!(t("1970-01-01T00:00:00.1234567Z"), Some(123_456));
-        assert_eq!(t("2024-02-29T00:00Z").is_some(), true);
+        assert!(t("2024-02-29T00:00Z").is_some());
         for bad in [
             "2026-11-07T00:00",
             "2026-02-29T00:00Z",
@@ -939,7 +942,7 @@ mod tests {
 
     #[test]
     fn rounding_of_two_decimals_matches_python() {
-        // Python の f"{x:.2f}" は、2 進の値のまま最も近い方へ丸める（0.125 は 0.12、0.375 は 0.38）
+        // 小数 2 桁の表示は、2 進の値のまま最も近い方へ丸める（0.125 は 0.12、0.375 は 0.38）
         let cases = [
             (0.125, "0.12"),
             (0.375, "0.38"),
