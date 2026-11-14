@@ -106,7 +106,16 @@ fn restore_sigpipe() {
 fn restore_sigpipe() {}
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = Vec::new();
+    for arg in std::env::args_os().skip(1) {
+        match arg.into_string() {
+            Ok(a) => args.push(a),
+            Err(bad) => {
+                eprintln!("claude-hooks: UTF-8 でない引数は扱えません: {bad:?}");
+                std::process::exit(2);
+            }
+        }
+    }
     let mut it = args.iter();
     match it.next().map(String::as_str) {
         Some("pre-tool-use") => {}

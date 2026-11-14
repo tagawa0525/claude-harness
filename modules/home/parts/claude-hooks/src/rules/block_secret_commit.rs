@@ -76,9 +76,14 @@ impl Rule for BlockSecretCommit {
                         leaks.extend(list);
                         continue;
                     }
-                    Scan::Missing(e) => format!(
-                        "gitleaks が PATH にありません（{e}）。gitleaks は claude-code.nix の home.packages で配布しています"
-                    ),
+                    Scan::Missing(e) => {
+                        let install = if cfg!(windows) {
+                            "`winget install Gitleaks.Gitleaks` で入れてください"
+                        } else {
+                            "gitleaks は claude-code.nix の home.packages で配布しています"
+                        };
+                        format!("gitleaks が PATH にありません（{e}）。{install}")
+                    }
                     Scan::Failed(failure) => failure.to_string(),
                 };
                 return vec![Finding::Deny(format!(
