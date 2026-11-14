@@ -4,7 +4,7 @@ description: 同じ失敗が 2 回出たときと、ユーザーに訂正され�
 argument-hint: "[見る範囲や観点の補足]"
 allowed-tools:
   - Bash(~/.claude/skills/retro/scripts/*)
-  - Bash(~/.claude/scripts/usage-report.py*)
+  - Bash(~/.claude/scripts/usage-report.sh*)
   - Bash(~/.claude/scripts/worktree-add.sh*)
   - Bash(~/.claude/scripts/review-level.sh*)
   - Bash(~/.claude/scripts/gh-wait-review.sh*)
@@ -35,7 +35,7 @@ allowed-tools:
 ```bash
 ~/.claude/skills/retro/scripts/session-events.sh
 ~/.claude/skills/retro/scripts/memory-index.sh <メモリのディレクトリ>
-~/.claude/scripts/usage-report.py --repo <リポジトリ>...
+~/.claude/scripts/usage-report.sh --repo <リポジトリ>...
 ```
 
 - `session-events.sh`: `ERROR:` が区間の指定（`--since` / `--until` の形、前後）を指していれば、
@@ -49,7 +49,7 @@ allowed-tools:
 - `memory-index.sh`: メモリのディレクトリは、このセッションの自動メモリの
   `MEMORY.md` があるディレクトリ（システムプロンプトに示される）。メモリが無いプロジェクトでは飛ばす。`ERROR:` で
   止まったら（辞書の検査が rebuild の前で無いなど）、出たほかの行で進め、`TERMS:` を見ていないことを報告の「未確認」に書く
-- `usage-report.py`: トークン効率の
+- `usage-report.sh`: トークン効率の
   方針の効きを振り返りごとに比べるため、`PER_MERGE:`（マージ 1 本あたりの費用）と `REWRITES:`（文脈の書き直し。
   1 回の応答で 25 万トークンを超える書き込み）を報告の「費用」に書く。区間は
   `session-events.sh` と同じ `--since` / `--until` を付け、区間の指定が無ければ省く（JST の今日になる）。`--repo` には
@@ -136,7 +136,7 @@ ADR、既存のメモリ、git の履歴。
 
 ## 6. 報告する
 
-報告の前に、文章の増減を数える。`--since` は `usage-report.py` と同じにし、`--until` は付けない（後をこの振り返りの直しまで含めた
+報告の前に、文章の増減を数える。`--since` は `usage-report.sh` と同じにし、`--until` は付けない（後をこの振り返りの直しまで含めた
 今の大きさにする）。`--repo` には 5. のブランチの worktree も渡す:
 
 ```bash
