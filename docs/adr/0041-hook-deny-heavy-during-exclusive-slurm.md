@@ -125,8 +125,9 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
   `sudo nixos-rebuild`（root は daemon を通さずにビルドしうる）で taskset が効くかは確かめていないが、`nix-rebuild update` と
   `home-manager` は利用者の権限で daemon を通すので、形で分けず rebuild はすべて待たせる
 - 2026-11-14: r995 のほかのホストでは、手元でビルドする rebuild（`nix-rebuild rebuild|update --local`、関数の
-  `rebuild --local`・`update --local`）を対象から外し、rebuild の拒否の文言に `--local` を示す。前は rebuild を
-  「taskset で包んでも止める」だけで、ホストでは分けず、文言は「taskset が効かないことと終わるまで待つことだけを示す」
-  だった。ラップトップのビルドは r995 に投げられる（nixfiles の `nix.distributedBuilds`、`max-jobs = 0`）ので止める
+  `rebuild --local`・`update --local`。ssh の先は除かない）を対象から外し、rebuild の拒否の文言に `--local` を示す。
+  前は rebuild を「taskset で包んでも止める」だけで、ホストでは分けず、関数は「引数を捨てるので引数によらない」、
+  文言は「taskset が効かないことと終わるまで待つことだけを示す」だった（nixfiles の関数の `rebuild` も引数を渡すように
+  した）。ラップトップのビルドは r995 に投げられる（nixfiles の `nix.distributedBuilds`、`max-jobs = 0`）ので止める
   理由があるが、手元でビルドすれば r995 の時間を乱さない。r995 の上では `--local` でも r995 でビルドするので止め、
   `hostname` が失敗したときも止める側に倒す。既定のビルドは r995 に投げたまま（速い。ユーザーの判断）
