@@ -3,6 +3,8 @@
 #
 # 実行: bash .claude/tests/scripts/retro.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
+# prose-size の中身は claude-hooks script prose-size（ADR-0089）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 EVENTS="$CLAUDE_DIR/skills/retro/scripts/session-events.sh"
