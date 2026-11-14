@@ -82,12 +82,14 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   すべて移った PR で消す（`lib/claude-hooks-script.sh` は移したスクリプトが読むので残す）
 - `check-each-commit.sh` は移さず、sh のまま残す（案 戊。#169）。jq を使わず、Windows では、呼ぶだけの sh と同じく Git Bash が
   実行する（Windows の CI はこのスクリプトを流していない）。
-  中断されたとき（Ctrl-C、TERM、HUP）に一時の worktree を消す `trap` は、Rust の標準ライブラリでは書けず、移すには
-  シグナルを受ける crate（`ctrlc`、または `libc` と `windows-sys`）が要る
+  中断されたとき（Ctrl-C、TERM、HUP）に一時の worktree を消す `trap` は、Rust の標準ライブラリに手段が無く、移すには
+  シグナルを受ける crate（`ctrlc`、または `libc` と `windows-sys`）か、OS の関数（sigaction、SetConsoleCtrlHandler）を直に呼ぶ
+  unsafe のコードが要る
 - PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を、上の呼ぶだけの sh に置き換える
 - テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える。仕組みは最初に移す PR でテストとともに
   決める）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
   呼ぶだけのスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
+  （sh のまま残す `check-each-commit.sh` は、そこで振る舞いを確かめる）
 
 理由:
 
