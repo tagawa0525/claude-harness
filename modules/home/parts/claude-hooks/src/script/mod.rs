@@ -28,6 +28,7 @@ mod reset_rounds;
 mod resolve_thread;
 mod review_level;
 mod run_checks;
+mod session_events;
 mod time;
 mod usage_report;
 mod worktree_add;
@@ -63,6 +64,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("resolve-thread", resolve_thread::main),
     ("review-level", review_level::main),
     ("run-checks", run_checks::main),
+    ("session-events", session_events::main),
     ("usage-report", usage_report::main),
     ("worktree-add", worktree_add::main),
 ];

@@ -155,6 +155,21 @@ pub(super) fn jst_iso(t: Time) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}{frac}+09:00")
 }
 
+/// UTC の `YYYY-MM-DDTHH:MM:SS.mmmZ`（Claude Code の記録の timestamp と同じ形。ミリ秒より後は切り捨てる）
+pub(super) fn utc_millis(t: Time) -> String {
+    let days = t.micros.div_euclid(DAY_MICROS);
+    let rest = t.micros.rem_euclid(DAY_MICROS);
+    let (y, m, d) = civil_from_days(days);
+    let secs = rest / 1_000_000;
+    let millis = rest % 1_000_000 / 1000;
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
 pub(super) fn now_micros() -> i64 {
     let since_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -195,5 +210,16 @@ mod tests {
             t("2026-12-31T15:00:00.5Z"),
             "2027-01-01T00:00:00.500000+09:00"
         );
+    }
+
+    #[test]
+    fn utc_millis_cuts_the_fraction_to_milliseconds() {
+        let t = |s: &str| utc_millis(parse_time(s).unwrap());
+        assert_eq!(t("2026-11-06T00:00+09:00"), "2026-11-05T15:00:00.000Z");
+        assert_eq!(
+            t("2026-11-05T23:59:59.99999-01:00"),
+            "2026-11-06T00:59:59.999Z"
+        );
+        assert_eq!(t("1969-12-31T23:59:59.9995Z"), "1969-12-31T23:59:59.999Z");
     }
 }
