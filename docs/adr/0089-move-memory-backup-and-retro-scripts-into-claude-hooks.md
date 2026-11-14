@@ -110,7 +110,7 @@ retro のスクリプト:
 - 良い点: Windows でも自動メモリが退避される（2026-11-14 から。`~/.claude` が git のリポジトリの直下であることは、Linux と
   同じく利用者が用意する。README の「Windows で使う」）。retro の 3 本も移し終えた（2026-11-14）ので、スキルと hook が呼ぶ
   ハーネスの sh で jq を使うものは無い。テストの sh（Windows の CI が流す `tests/merge-ja-terms.sh` など）と `windows.yml` は、まだ
-  jq を使う。Windows の手順から jq を外すのは別の PR（#101 の「決まっていないこと」）
+  jq を使う。Windows の手順（README）の前もって入れるものからは、jq を外した（2026-11-14、#209）
 - 悪い点: `claude-hooks` が、Stop の hook と retro の処理も持つ。名前は段階 8 の後に見直す（ADR-0087 の帰結、#101）
 - 悪い点: `claude-hooks` の不具合が、PreToolUse の hook とメモリの退避の両方を止めうる（今は別のバイナリ）
 - 悪い点: ADR-0087 の帰結と同じく、移す PR の後は `claude-sync` でなく rebuild（Windows は `cargo install` の後に
