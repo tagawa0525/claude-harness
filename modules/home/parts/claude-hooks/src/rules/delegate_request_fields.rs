@@ -61,6 +61,15 @@ fn pointed_path<'a>(c: &regex::Captures<'a>) -> &'a str {
         .as_str()
 }
 
+/// 依頼のファイルを指そうとしたが、POINTER として読めない句（空白を含む囲まないパス、閉じ忘れた囲み）。prompt の
+/// 側の欄が欠けたとき、欄を prompt に足すよう示す代わりに、句の修正方法を示すために見る
+static UNREADABLE_POINTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"依頼文は\s*[`「]?\s*(?:[/~.]|[A-Za-z]:[\\/])[^\n]*?にある").unwrap()
+});
+
+/// 句の囲み方の案内（拒否の文に添える）
+const QUOTE_HINT: &str = "空白を含むパスは `` ` `` か「」で囲み、囲むなら閉じる記号まで書きます（囲まないパスは空白で切ります）";
+
 /// 中身を判定する欄（`FIELDS` の添字）と、その欄に要る語
 const SCOPE: usize = 5;
 const SCOPE_WORD: &str = "issue";
@@ -146,7 +155,7 @@ impl Rule for DelegateRequestFields {
                     Ok(_) => return Vec::new(),
                     Err(e) if prompt_calls => {
                         return vec![Finding::Deny(format!(
-                            "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の 1 行目の「依頼文は <絶対パス> にある」のパスを直してください（`~` や相対のパスは使えません）。"
+                            "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の 1 行目の「依頼文は <絶対パス> にある」のパスを直してください（`~` や相対のパスは使えません。{QUOTE_HINT}）。"
                         ))];
                     }
                     // /delegate を呼ぶかは読めないファイルの側にあるかもしれないが、prompt が呼ばないなら対象と決められない
@@ -166,6 +175,17 @@ impl Rule for DelegateRequestFields {
             .filter(|(_, heading)| !heading.is_match(&request))
             .map(|(f, _)| *f)
             .collect();
+        if !missing.is_empty()
+            && target == "prompt"
+            && UNREADABLE_POINTER.is_match(first_line(&input.prompt))
+        {
+            return vec![Finding::Deny(format!(
+                "/delegate の依頼の prompt の 1 行目「依頼文は … にある」から、依頼文のファイルのパスを読み取れません。\
+                 prompt を依頼として判定すると、定型の欄がそろっていません（欠けた欄: {}）。\n\
+                 修正方法: 依頼をファイルに置いたなら、1 行目の句を「依頼文は <絶対パス> にある」の形に直して、Agent を呼び直してください（{QUOTE_HINT}）。",
+                missing.join("、"),
+            ))];
+        }
         let mut findings = Vec::new();
         if !missing.is_empty() {
             findings.push(Finding::Deny(format!(
