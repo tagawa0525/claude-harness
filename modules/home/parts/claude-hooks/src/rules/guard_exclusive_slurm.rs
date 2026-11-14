@@ -178,7 +178,7 @@ fn running_exclusive_job() -> Option<(String, String)> {
         .spawn()
     {
         Ok(child) => child,
-        // r995 以外のホストには squeue が無い。判定の材料が無いだけで、環境の不具合ではない
+        // squeue が無いホスト（Slurm に投げないホスト）。判定の材料が無いだけで、環境の不具合ではない
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => return squeue_unavailable(&format!("起動できません: {e}")),
     };
