@@ -1,5 +1,6 @@
 //! git の呼び出し。PATH の git を使う（テストは PATH を差し替えて挙動を作る）
 
+use std::ffi::OsStr;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -8,11 +9,16 @@ use std::process::{Command, Output, Stdio};
 /// dir があるのに起動できない（PATH に git が無い、dir に入れない）のは環境の問題なので、理由を利用者に
 /// 見せる（[`crate::output::notice`]。理由はプロセスに 1 つの置き場に集まるので、結合テストで確かめる）。起動した後の失敗（入力を書けない、待てない）は、非 0 の終了と同じく呼ぶ側に任せる
 pub fn run(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Output> {
+    run_os(dir, args, input)
+}
+
+/// [`run`] の引数を `OsStr` で受ける版（UTF-8 でないパスを欠かさず git に渡す）
+pub fn run_os<S: AsRef<OsStr>>(dir: &Path, args: &[S], input: Option<&[u8]>) -> Option<Output> {
     if not_a_directory(dir) {
         return None;
     }
     let mut child = match Command::new("git")
-        .args(args)
+        .args(args.iter().map(AsRef::as_ref))
         .current_dir(dir)
         .stdin(if input.is_some() {
             Stdio::piped()
