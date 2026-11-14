@@ -2850,6 +2850,8 @@ mkdir -p "$FAKE_SQUEUE/conf-gpu2"
 echo 'ssh-ng://nix-ssh@gpu2?ssh-key=/root/k x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-gpu2/machines"
 mkdir -p "$FAKE_SQUEUE/conf-ip"
 echo 'ssh-ng://nix-ssh@100.64.0.5 x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-ip/machines"
+mkdir -p "$FAKE_SQUEUE/conf-ip6"
+echo 'ssh-ng://nix-ssh@[fd00::5] x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-ip6/machines"
 chmod +x "$FAKE_SQUEUE"/on-*/squeue "$FAKE_SQUEUE/host-gpu1/hostname" "$FAKE_SQUEUE/host-gpu2/hostname" \
   "$FAKE_SQUEUE/host-gpu3/hostname"
 
@@ -2987,8 +2989,8 @@ done
 out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix build .#x')
 assert_contains "$(reason "$out")" "--builders"
 
-it "guard-exclusive-slurm: r995 のほかでは、手元でビルドする nix のビルド（--builders '' か @/dev/null）は通す"
-for cmd in "nix build --builders '' --max-jobs auto .#x" 'nix build --builders @/dev/null -j auto .#x' \
+it "guard-exclusive-slurm: r995 のほかでは、手元でビルドする nix のビルド（--builders '' か --option builders ''）は通す"
+for cmd in "nix build --builders '' --max-jobs auto .#x" "nix build --option builders '' -j auto .#x" \
   "nix flake check --builders ''"; do
   out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq "" "$out"
@@ -3026,10 +3028,19 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "job-b（12）"
 out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'nix build .#x')
 assert_eq "" "$out"
-# IP アドレスのビルダーはノードと比べられないので、投げるとみなす
-out=$(NIX_CONF_DIR="$FAKE_SQUEUE/conf-ip" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" \
-  run_hook guard-exclusive-slurm 'nix build .#x')
+# IP アドレスのビルダー（IPv6 の [..] も）はノードと比べられないので、投げるとみなす
+for conf in conf-ip conf-ip6; do
+  out=$(NIX_CONF_DIR="$FAKE_SQUEUE/$conf" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" \
+    run_hook guard-exclusive-slurm 'nix build .#x')
+  assert_eq deny "$(decision "$out")"
+done
+# --builders @/dev/null は、trusted でない利用者の設定を nix-daemon が捨てるので、手元のビルドに数えない
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix build --builders @/dev/null .#x')
 assert_eq deny "$(decision "$out")"
+# ssh の先の nix のビルドには「このホストの」と書かない
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'ssh x1ng1 nix build .#x')
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "このホストの"
 
 it "guard-exclusive-slurm: リモートのビルダーに計算ノードが無いホストの nix のビルドは、手元でビルドするので通す"
 for cmd in 'nix build .#x' 'nix flake check' 'nix-rebuild update'; do
