@@ -36,7 +36,7 @@ pub fn gh(dir: &Path, args: &[&str]) -> Result<String, ()> {
 /// 確かめた）。起動できなければ理由を標準エラーに出して 1
 pub fn run_for_repo(repo: &str, args: &[&str]) -> i32 {
     match for_repo(repo, args).status() {
-        Ok(status) => status.code().unwrap_or(1),
+        Ok(status) => crate::child::exit_code(status),
         Err(e) => {
             eprintln!("ERROR: gh を起動できません（PATH に gh が無い）: {e}");
             1
