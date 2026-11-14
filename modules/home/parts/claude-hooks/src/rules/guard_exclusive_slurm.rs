@@ -59,26 +59,22 @@ fn is_heavy(cmd: &Cmd) -> bool {
     let program = cmd.program();
     let sub = global_subcommand(&cmd.args);
     let name = basename(program);
-    if sub == Subcommand::Unknown && matches!(name, "cargo" | "nix" | "dvc") {
+    if sub == Subcommand::Unknown && matches!(name, "cargo" | "dvc") {
         return true;
     }
-    let (first, second) = match sub {
-        Subcommand::At(i) => (
-            Some(cmd.args[i].text.as_str()),
-            cmd.args.get(i + 1).map(|a| a.text.as_str()),
-        ),
-        _ => (None, None),
+    let first = match sub {
+        Subcommand::At(i) => Some(cmd.args[i].text.as_str()),
+        _ => None,
     };
     match name {
         "cargo" => first.is_some_and(|s| CARGO_HEAVY.contains(&s)),
         "dvc" => first == Some("repro"),
-        "nix" => first == Some("build") || (first == Some("flake") && second == Some("check")),
         _ => BIN_PROGRAMS.contains(&name) && is_project_binary(program, name),
     }
 }
 
-/// r995 に投げられうる nix のビルド（`nix build`、`nix flake check`、サブコマンドを決められない nix）か。ほかのホストの
-/// ビルドは nix-daemon が r995 に投げるので、taskset は見ない
+/// nix のビルド（`nix build`、`nix flake check`、サブコマンドを決められない nix）か。ビルドは nix-daemon の中で走り
+/// （ほかのホストでは計算ノードに投げられ）、クライアントの taskset を引き継がないので、taskset は見ない
 fn is_nix_build(cmd: &Cmd) -> bool {
     if basename(cmd.program()) != "nix" {
         return false;
@@ -147,10 +143,13 @@ fn is_local_rebuild(cmd: &Cmd) -> bool {
         && cmd.args.iter().skip(1).any(|a| a.text == "--local")
 }
 
-/// 名前が r995 でないか。ドメインの付いた名前と大文字も r995 とみなす
-fn names_off_r995(host: &str) -> bool {
-    let short = host.trim().split('.').next().unwrap_or_default();
-    !short.is_empty() && !short.eq_ignore_ascii_case("r995")
+/// ホストの名前の比べ方（ドメインの前の名前を小文字で）
+fn short_name(host: &str) -> String {
+    host.trim()
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
 }
 
 /// コマンドの標準出力（成功したときだけ）
@@ -165,41 +164,85 @@ fn stdout_of(program: &str, args: &[&str]) -> Option<String> {
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// このホストが r995 でないと確かめられたか。r995 の上では手元のビルドも r995 で走るので、`hostname` が失敗したときと
-/// 同じく偽にする（止める側に倒す）
-fn off_r995() -> bool {
-    stdout_of("hostname", &[]).is_some_and(|host| names_off_r995(&host))
+/// このホストの名前。`hostname` が失敗したら None
+fn this_host() -> Option<String> {
+    stdout_of("hostname", &[]).filter(|h| !h.trim().is_empty())
 }
 
-/// ssh の接続先が r995 でないと確かめられたか。`~/.ssh/config` の別名（Host）は `ssh -G`（つながずに設定を読む）で
-/// HostName に解く。解けなければ止める側に倒す
-fn destination_off_r995(destination: &str) -> bool {
-    stdout_of("ssh", &["-G", destination]).is_some_and(|config| {
-        config
-            .lines()
-            .find_map(|line| line.strip_prefix("hostname "))
-            .is_some_and(names_off_r995)
-    })
+/// ssh の接続先のホストの名前。`~/.ssh/config` の別名（Host）は `ssh -G`（つながずに設定を読む）で HostName に解く。
+/// `localhost` と loopback のアドレスはこのホスト（this）にし、ほかの IP アドレスは名前と比べられないので None
+fn destination_host(destination: &str, this: Option<&str>) -> Option<String> {
+    let host = stdout_of("ssh", &["-G", destination])?
+        .lines()
+        .find_map(|line| line.strip_prefix("hostname "))?
+        .trim()
+        .to_string();
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) if ip.is_loopback() => this.map(str::to_string),
+        Ok(_) => None,
+        Err(_) if host.eq_ignore_ascii_case("localhost") => this.map(str::to_string),
+        Err(_) => Some(host),
+    }
+}
+
+/// このホストの nix のビルドが nodes のどれかに投げられるか。リモートのビルダーは `$NIX_CONF_DIR/machines`
+/// （既定 /etc/nix。NixOS が nix.buildMachines から書く）の各行の先頭の URI（`ssh-ng://<user>@<host>`）。ファイルが
+/// 無ければ手元でビルドする。読めなければ投げるとみなす（止める側に倒す）
+fn builds_reach(nodes: &[String]) -> bool {
+    let dir = std::env::var_os("NIX_CONF_DIR").unwrap_or_else(|| "/etc/nix".into());
+    let machines = match std::fs::read_to_string(std::path::Path::new(&dir).join("machines")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+    };
+    machines
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|uri| !uri.starts_with('#'))
+        .any(|uri| {
+            let host = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+            let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+            let host = host.split([':', '/']).next().unwrap_or_default();
+            nodes.contains(&short_name(host))
+        })
+}
+
+/// 実行中の排他のジョブ
+struct ExclusiveJob {
+    name: String,
+    id: String,
+    /// ジョブのノード（短い名前）。縮めた形（`node[1-3]`）や列の無い出力で読めなければ None
+    nodes: Option<Vec<String>>,
+}
+
+impl ExclusiveJob {
+    /// host（名前が分からなければ None）がジョブのノードか。分からなければノードとみなす（止める側に倒す）
+    fn runs_on(&self, host: Option<&str>) -> bool {
+        match (host, &self.nodes) {
+            (Some(host), Some(nodes)) => nodes.contains(&short_name(host)),
+            _ => true,
+        }
+    }
 }
 
 /// squeue の応答を待つ上限。slurmctld が応答しないホストで、対象のコマンドを何十秒も止めないため
 const SQUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// squeue を判定の材料に使えなかった理由を利用者に見せる（ADR-0033）。黙って許可にしない
-fn squeue_unavailable(reason: &str) -> Option<(String, String)> {
+fn squeue_unavailable(reason: &str) -> Option<ExclusiveJob> {
     crate::output::notice(format!(
         "claude-hooks: squeue の結果を使えず、排他の Slurm のジョブの有無を確かめられませんでした（{reason}）"
     ));
     None
 }
 
-/// 実行中の排他のジョブ（名前, ジョブ番号）。squeue が無い、排他のジョブが無いときは None（理由は見せない）。
+/// 実行中の排他のジョブ。squeue が無い、排他のジョブが無いときは None（理由は見せない）。
 /// squeue が失敗した、時間内に終わらない、出力を読めないときも None だが、理由を見せる。`-O` の固定幅の列は
 /// 長い名前がジョブ番号と続いてしまうので、区切りのある `-o` で読む（OverSubscribe は `%h`。実機の値は
 /// 排他のジョブが `NO`、共有できるジョブが `OK` か `YES`）
-fn running_exclusive_job() -> Option<(String, String)> {
+fn running_exclusive_job() -> Option<ExclusiveJob> {
     let mut child = match Command::new("squeue")
-        .args(["-h", "-t", "R", "-o", "%h|%j|%i"])
+        .args(["-h", "-t", "R", "-o", "%h|%j|%i|%N"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -239,11 +282,28 @@ fn running_exclusive_job() -> Option<(String, String)> {
     let Ok(Ok(bytes)) = bytes else {
         return squeue_unavailable("出力を読めません");
     };
-    // 名前が UTF-8 でなくても、OverSubscribe とジョブ番号は読める
+    // 名前が UTF-8 でなくても、OverSubscribe とジョブ番号とノードは読める。名前に | があっても、ノードと番号は後ろから取る
     String::from_utf8_lossy(&bytes).lines().find_map(|line| {
         let (shares, rest) = line.split_once('|')?;
-        let (name, jobid) = rest.rsplit_once('|')?;
-        (shares.trim() == "NO").then(|| (name.to_string(), jobid.trim().to_string()))
+        if shares.trim() != "NO" {
+            return None;
+        }
+        let (rest, node) = rest.rsplit_once('|')?;
+        let (name, id, nodes) = match rest.rsplit_once('|') {
+            Some((name, id)) => {
+                let node = node.trim();
+                let nodes = (!node.is_empty() && !node.contains('['))
+                    .then(|| node.split(',').map(short_name).collect());
+                (name, id, nodes)
+            }
+            // ノードの列の無い出力（名前|番号）
+            None => (rest, node, None),
+        };
+        Some(ExclusiveJob {
+            name: name.to_string(),
+            id: id.trim().to_string(),
+            nodes,
+        })
     })
 }
 
@@ -254,42 +314,62 @@ impl Rule for GuardExclusiveSlurm {
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
         let commands = shell.commands();
-        let rebuilds: Vec<&Cmd> = commands.iter().filter(|c| is_rebuild(c)).collect();
-        if rebuilds.is_empty() && !commands.iter().any(|c| is_heavy(c) || is_nix_build(c)) {
+        if !commands
+            .iter()
+            .any(|c| is_rebuild(c) || is_heavy(c) || is_nix_build(c))
+        {
             return Vec::new();
         }
-        let Some((name, jobid)) = running_exclusive_job() else {
+        let Some(job) = running_exclusive_job() else {
             return Vec::new();
         };
-        // 走るホスト（ssh の先なら接続先）が r995 でないか。ホストは排他のジョブがあるときだけ見る
-        let off = off_r995();
-        let runs_off = |c: &Cmd| match shell.ssh_destination(c) {
-            Some(destination) => destination_off_r995(destination),
-            None => off,
+        // 走るホスト（ssh の先なら接続先）がジョブのノードか。ホストは排他のジョブがあるときだけ見て、コマンドごとに
+        // 1 度だけ解く（ssh -G を起動し直さない）
+        let this = this_host();
+        let this_on_node = job.runs_on(this.as_deref());
+        let placed: Vec<(&Cmd, bool, bool)> = commands
+            .iter()
+            .map(|c| {
+                let via_ssh = shell.ssh_destination(c);
+                let on_node = via_ssh.map_or(this_on_node, |d| {
+                    job.runs_on(destination_host(d, this.as_deref()).as_deref())
+                });
+                (c, on_node, via_ssh.is_some())
+            })
+            .collect();
+        // ノードでないホストの nix のビルドが、ノードに投げられるか。ssh の先のビルダーは読めないので投げるとみなす
+        let local_reach = std::cell::OnceCell::new();
+        let sends = |via_ssh: bool| {
+            via_ssh || *local_reach.get_or_init(|| job.nodes.as_deref().is_none_or(builds_reach))
         };
-        // r995 の上では全コアを使うものを止め、ほかのホストでは r995 に投げられるビルドだけを止める
-        let heavy_on_node = commands.iter().any(|c| is_heavy(c) && !runs_off(c));
-        let build_sent = commands
+        // ノードの上では全コアを使うものと nix のビルドを止め、ほかのホストではノードに投げられるビルドだけを止める
+        let heavy_on_node = placed.iter().any(|&(c, on, _)| on && is_heavy(c));
+        let nix_on_node = placed.iter().any(|&(c, on, _)| on && is_nix_build(c));
+        let build_sent = placed.iter().any(|&(c, on, ssh)| {
+            !on && is_nix_build(c) && !without_remote_builders(c) && sends(ssh)
+        });
+        let blocking: Vec<bool> = placed
             .iter()
-            .any(|c| is_nix_build(c) && runs_off(c) && !without_remote_builders(c));
-        let blocking: Vec<&&Cmd> = rebuilds
-            .iter()
-            .filter(|c| !(is_local_rebuild(c) && runs_off(c)))
+            .filter(|&&(c, on, ssh)| is_rebuild(c) && (on || (sends(ssh) && !is_local_rebuild(c))))
+            .map(|&(_, _, ssh)| ssh)
             .collect();
         let rebuild = !blocking.is_empty();
-        if !rebuild && !heavy_on_node && !build_sent {
+        if !rebuild && !heavy_on_node && !nix_on_node && !build_sent {
             return Vec::new();
         }
-        let local_way = off && blocking.iter().all(|c| shell.ssh_destination(c).is_none());
+        let local_way = !this_on_node && blocking.iter().all(|&ssh| !ssh);
         let fix = if rebuild && local_way {
-            "rebuild のビルドは r995 に投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、nix-rebuild rebuild|update --local（関数の rebuild、update でなく）で手元でビルドしてください。"
+            "rebuild のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、nix-rebuild rebuild|update --local（関数の rebuild、update でなく）で手元でビルドしてください。"
         } else if rebuild {
             "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
-        } else if heavy_on_node {
-            "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
+        } else if build_sent && !nix_on_node {
+            "このホストの nix のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、--builders '' --max-jobs auto を付けて手元でビルドしてください。"
+        } else if nix_on_node || build_sent {
+            "nix のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
         } else {
-            "このホストの nix のビルドは r995 に投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、--builders '' --max-jobs auto を付けて手元でビルドしてください。"
+            "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
         };
+        let (name, jobid) = (job.name.as_str(), job.id.as_str());
         vec![Finding::Deny(format!(
             "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。{fix}"
         ))]
