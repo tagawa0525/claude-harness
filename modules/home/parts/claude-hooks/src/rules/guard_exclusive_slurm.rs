@@ -1,19 +1,21 @@
-//! guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、計算ノード（r995）の全コアを使うコマンドを止める
+//! guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、そのジョブの計算ノードの全コアを使うコマンドを止める
 //!
-//! 排他のジョブ（時間を記録する測定）の間に r995 で全コアを使うと、その時間が乱れて再測定になる
-//! （docs/adr/0041）。squeue で OverSubscribe が NO の実行中のジョブがあるときだけ、次を止める。
-//! r995 の上で走るもの（このホストが r995 か、ssh の接続先が r995。ホストが分からなければ r995 とみなす）:
+//! 排他のジョブ（時間を記録する測定）の間に、そのノードで全コアを使うと、その時間が乱れて再測定になる
+//! （docs/adr/0041）。squeue で OverSubscribe が NO の実行中のジョブがあるときだけ、次を止める。計算ノードは、排他の
+//! ジョブのどれかのノード（squeue の `%N`）で、名前を固定しない。
+//! ノードの上で走るもの（このホストか、ssh の接続先がノード。分からなければノードとみなす）:
 //! `cargo build|check|test|clippy|run|bench`（alias `b|c|t|r`）、`dvc repro`、`bin/` と `target/release|debug/` の
-//! `xs|lattice|core|chain`、`nix build`、`nix flake check`（`nix develop|shell -c` で包んでも）。1 つの CPU に限る `taskset` で
-//! 包めば通す（`-j 1` は限りにならない）。何を実行するか決められないコマンドも止める。
-//! ほかのホストで走るもの: 手元のコアは r995 を乱さないので、r995 に投げられるビルドだけを止める。`nix build`、
-//! `nix flake check` は taskset で包んでも止め（ビルドは r995 で走る）、`--builders ''` か `--builders @/dev/null` で
-//! 手元でビルドするものは通す。
+//! `xs|lattice|core|chain`（`nix develop|shell -c` で包んでも）、何を実行するか決められないコマンド。1 つの CPU に限る
+//! `taskset` で包めば通す（`-j 1` は限りにならない）。`nix build`、`nix flake check` は nix-daemon の中で走り
+//! taskset を引き継がないので、包んでも止める。
+//! ほかのホストで走るもの: 手元のコアはノードを乱さないので、ノードに投げられるビルド（nix の `builders` にノードが
+//! ある）だけを止める。`nix build`、`nix flake check` は taskset で包んでも止め、`--builders ''` か
+//! `--builders @/dev/null` で手元でビルドするものは通す。
 //! rebuild（`nix-rebuild rebuild|update`、shell の関数 `rebuild`・`update`、ビルドする `nixos-rebuild`、
-//! `home-manager switch|build`）は taskset で包んでも止める。ただし r995 のほかでは、手元でビルドする
-//! `nix-rebuild rebuild|update --local`（nixfiles の nix-rebuild.sh。既定のビルドは r995 に投げる）は通す。
-//! `run-checks.sh` と `run-python-tests.sh` は対象にしない（排他のジョブ中は自分で 1 コアに限る）。
-//! squeue が無いホスト、squeue の失敗、実行中のジョブが無い場合は何もしない（ラップトップの squeue は r995 の
+//! `home-manager switch|build`）は taskset で包んでも止める。ただしノードでないホストでは、手元でビルドする
+//! `nix-rebuild rebuild|update --local`（nixfiles の nix-rebuild.sh。既定のビルドはノードに投げる）は通す。
+//! `run-checks.sh` と `run-python-tests.sh` は対象にしない（排他のジョブ中は自分で限る）。
+//! squeue が無いホスト、squeue の失敗、実行中のジョブが無い場合は何もしない（ラップトップの squeue は計算ノードの
 //! 待ち行列を見る）。
 //! squeue は対象のコマンドがあるときだけ呼ぶ。エスケープはない。
 
@@ -46,9 +48,9 @@ fn is_project_binary(program: &str, name: &str) -> bool {
         .is_some_and(|dir| matches!(basename(dir), "bin" | "release" | "debug"))
 }
 
-/// 全コアを使いうる手元のコマンドか。1 コアの taskset で限ったものは含めない。何を実行するか決められない
-/// コマンド（`$CMD test`、`bash -s`、`source x.sh`）と、サブコマンドを決められない cargo・nix・dvc は、
-/// 止める側に倒す（ADR-0025）
+/// 全コアを使いうる手元のコマンドか（nix のビルドは [`is_nix_build`]）。1 コアの taskset で限ったものは含めない。
+/// 何を実行するか決められないコマンド（`$CMD test`、`bash -s`、`source x.sh`）と、サブコマンドを決められない
+/// cargo・dvc は、止める側に倒す（ADR-0025）
 fn is_heavy(cmd: &Cmd) -> bool {
     if cmd.pinned_to_one_cpu {
         return false;
@@ -185,33 +187,55 @@ fn destination_host(destination: &str, this: Option<&str>) -> Option<String> {
     }
 }
 
-/// このホストの nix のビルドが nodes のどれかに投げられるか。リモートのビルダーは `$NIX_CONF_DIR/machines`
-/// （既定 /etc/nix。NixOS が nix.buildMachines から書く）の各行の先頭の URI（`ssh-ng://<user>@<host>`）。ファイルが
-/// 無ければ手元でビルドする。読めなければ投げるとみなす（止める側に倒す）
+/// nix のリモートのビルダーの指定の、ホストの名前（`ssh-ng://nix-ssh@r995?ssh-key=…` の `r995`）。IP アドレスは
+/// 名前と比べられないので None
+fn builder_host(uri: &str) -> Option<String> {
+    let host = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    let host = host.split(['?', ':', '/']).next().unwrap_or_default();
+    (host.parse::<std::net::IpAddr>().is_err() && !host.is_empty()).then(|| short_name(host))
+}
+
+/// このホストの nix のビルドが nodes のどれかに投げられるか。ビルダーは nix の `builders` の設定（`nix config show`。
+/// 読めなければ既定の `@$NIX_CONF_DIR/machines`、NIX_CONF_DIR の既定は /etc/nix）で、`@<ファイル>` はファイルの行、
+/// ほかは `;` か改行で区切った指定。各指定の先頭の語がビルダーの URI。ファイルが無ければ手元でビルドする。読めない
+/// とき、IP アドレスのビルダーは投げるとみなす（止める側に倒す）
 fn builds_reach(nodes: &[String]) -> bool {
-    let dir = std::env::var_os("NIX_CONF_DIR").unwrap_or_else(|| "/etc/nix".into());
-    let machines = match std::fs::read_to_string(std::path::Path::new(&dir).join("machines")) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
-        Err(_) => return true,
+    let conf_dir = std::env::var_os("NIX_CONF_DIR").unwrap_or_else(|| "/etc/nix".into());
+    let default = format!(
+        "@{}",
+        std::path::Path::new(&conf_dir).join("machines").display()
+    );
+    let builders = stdout_of(
+        "nix",
+        &[
+            "--extra-experimental-features",
+            "nix-command",
+            "config",
+            "show",
+            "builders",
+        ],
+    )
+    .map_or(default, |b| b.trim().to_string());
+    let spec = match builders.strip_prefix('@') {
+        Some(file) => match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(_) => return true,
+        },
+        None => builders,
     };
-    machines
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
+    spec.split([';', '\n'])
+        .filter_map(|entry| entry.split_whitespace().next())
         .filter(|uri| !uri.starts_with('#'))
-        .any(|uri| {
-            let host = uri.split_once("://").map_or(uri, |(_, rest)| rest);
-            let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
-            let host = host.split([':', '/']).next().unwrap_or_default();
-            nodes.contains(&short_name(host))
-        })
+        .any(|uri| builder_host(uri).is_none_or(|host| nodes.contains(&host)))
 }
 
 /// 実行中の排他のジョブ
 struct ExclusiveJob {
     name: String,
     id: String,
-    /// ジョブのノード（短い名前）。縮めた形（`node[1-3]`）や列の無い出力で読めなければ None
+    /// ジョブのノード（短い名前）。縮めた形（`node[1-3]`）で読めなければ None
     nodes: Option<Vec<String>>,
 }
 
@@ -236,8 +260,8 @@ fn squeue_unavailable(reason: &str) -> Vec<ExclusiveJob> {
     Vec::new()
 }
 
-/// 実行中の排他のジョブのすべて（計算ノードが複数あれば、ノードごとに走りうる）。squeue が無い、排他のジョブが無いときは None（理由は見せない）。
-/// squeue が失敗した、時間内に終わらない、出力を読めないときも None だが、理由を見せる。`-O` の固定幅の列は
+/// 実行中の排他のジョブのすべて（計算ノードが複数あれば、ノードごとに走りうる）。squeue が無い、排他のジョブが無い
+/// ときは空（理由は見せない）。squeue が失敗した、時間内に終わらない、出力を読めないときも空だが、理由を見せる。`-O` の固定幅の列は
 /// 長い名前がジョブ番号と続いてしまうので、区切りのある `-o` で読む（OverSubscribe は `%h`。実機の値は
 /// 排他のジョブが `NO`、共有できるジョブが `OK` か `YES`）
 fn running_exclusive_jobs() -> Vec<ExclusiveJob> {
@@ -293,16 +317,10 @@ fn running_exclusive_jobs() -> Vec<ExclusiveJob> {
                 return None;
             }
             let (rest, node) = rest.rsplit_once('|')?;
-            let (name, id, nodes) = match rest.rsplit_once('|') {
-                Some((name, id)) => {
-                    let node = node.trim();
-                    let nodes = (!node.is_empty() && !node.contains('['))
-                        .then(|| node.split(',').map(short_name).collect());
-                    (name, id, nodes)
-                }
-                // ノードの列の無い出力（名前|番号）
-                None => (rest, node, None),
-            };
+            let (name, id) = rest.rsplit_once('|')?;
+            let node = node.trim();
+            let nodes = (!node.is_empty() && !node.contains('['))
+                .then(|| node.split(',').map(short_name).collect());
             Some(ExclusiveJob {
                 name: name.to_string(),
                 id: id.trim().to_string(),
@@ -329,8 +347,8 @@ impl Rule for GuardExclusiveSlurm {
         if jobs.is_empty() {
             return Vec::new();
         }
-        // 走るホスト（ssh の先なら接続先）で走る排他のジョブ。ホストは排他のジョブがあるときだけ見て、コマンドごとに
-        // 1 度だけ解く（ssh -G を起動し直さない）
+        // 走るホスト（ssh の先なら接続先）で走る排他のジョブ。ホストは排他のジョブがあるときだけ、対象のコマンドの
+        // ものだけを見て、接続先ごとに 1 度だけ解く（ssh -G を起動し直さない）
         let job_on = |host: Option<&str>| jobs.iter().find(|j| j.runs_on(host));
         let this = this_host();
         let this_job = job_on(this.as_deref());
@@ -349,12 +367,22 @@ impl Rule for GuardExclusiveSlurm {
         // ノードの上では全コアを使うものと nix のビルドを止め、ほかのホストではノードに投げられるビルドだけを止める
         let mut rebuilds: Vec<(&ExclusiveJob, bool)> = Vec::new();
         let (mut sent, mut nix_on_node, mut heavy_on_node) = (None, None, None);
+        let mut resolved: std::collections::HashMap<&str, Option<String>> = Default::default();
         for c in commands {
+            if !(is_rebuild(c) || is_nix_build(c) || is_heavy(c)) {
+                continue;
+            }
             let via_ssh = shell.ssh_destination(c);
             let ssh = via_ssh.is_some();
-            let on = via_ssh.map_or(this_job, |d| {
-                job_on(destination_host(d, this.as_deref()).as_deref())
-            });
+            let on = match via_ssh {
+                Some(d) => {
+                    let host = resolved
+                        .entry(d)
+                        .or_insert_with(|| destination_host(d, this.as_deref()));
+                    job_on(host.as_deref())
+                }
+                None => this_job,
+            };
             if is_rebuild(c) {
                 if let Some(j) =
                     on.or_else(|| (!is_local_rebuild(c)).then(|| sent_to(ssh)).flatten())

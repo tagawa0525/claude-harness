@@ -116,9 +116,9 @@ run_stage() {
 
 DETECTED=0
 
-# 排他の Slurm のジョブが実行中は、r995 の上では cargo と nix flake check を 1 コアに限る。全コアを使うとそのジョブの
+# 排他の Slurm のジョブが実行中は、そのジョブの計算ノードの上では cargo と nix flake check を 1 コアに限る。全コアを使うとそのジョブの
 # 時間の記録を乱し、止めるとジョブの間（数時間）マージできないため、止めずに遅く実行する。ほかのホストでは手元の
-# コアは r995 を乱さないので cargo は限らず、nix のビルドだけを r995 に投げずに手元でする（nixfiles の
+# コアはノードを乱さないので cargo は限らず、nix のビルドだけをノードに投げずに手元でする（nixfiles の
 # nix.distributedBuilds。空の --builders でリモートのビルダーを外し、max-jobs = 0 のラップトップでも手元のジョブを許す）。
 # claude-hooks の guard-exclusive-slurm は、このスクリプトを対象にしない
 CARGO_PIN=()
@@ -127,13 +127,16 @@ NIX_LIMIT=()
 # shellcheck source=../../../scripts/lib/slurm-exclusive.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/lib/slurm-exclusive.sh"
 if EXCLUSIVE_JOB=$(exclusive_slurm_job); then
-  if on_compute_node; then
-    echo "排他のジョブ ${EXCLUSIVE_JOB% *}（${EXCLUSIVE_JOB##* }）が実行中なので 1 コアで実行する（遅い）"
+  where=${EXCLUSIVE_JOB%% *}
+  job=${EXCLUSIVE_JOB#* }
+  job="${job% *}（${job##* }）"
+  if [[ "$where" == here ]]; then
+    echo "排他のジョブ ${job}がこのホストで実行中なので 1 コアで実行する（遅い）"
     CARGO_PIN=(taskset -c "$(( $(getconf _NPROCESSORS_ONLN) - 1 ))")
     CARGO_JOBS=(-j 1)
     NIX_LIMIT=(--cores 1 -j 1)
   else
-    echo "排他のジョブ ${EXCLUSIVE_JOB% *}（${EXCLUSIVE_JOB##* }）が r995 で実行中なので、nix のビルドは r995 に投げずに手元でビルドする"
+    echo "排他のジョブ ${job}が計算ノードで実行中なので、nix のビルドは計算ノードに投げずに手元でビルドする"
     NIX_LIMIT=(--builders '' --max-jobs auto)
   fi
 fi
