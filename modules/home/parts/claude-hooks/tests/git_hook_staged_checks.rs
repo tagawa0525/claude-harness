@@ -265,6 +265,43 @@ fn markdown_tables_and_fence_languages_are_fixed_in_the_staged_version_without_p
     assert!(!said(&out).contains("SKIP"), "{}", said(&out));
 }
 
+#[cfg(unix)]
+#[test]
+fn a_markdown_file_with_a_non_utf8_name_is_fixed_and_restaged() {
+    use std::os::unix::ffi::OsStrExt;
+    let repo = Repo::new();
+    repo.tool("markdownlint");
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.md");
+    std::fs::write(
+        repo.work().join(name),
+        "| a | b |\n| --- | --- |\n| ccc | d |\n",
+    )
+    .unwrap();
+    let add = Command::new("git")
+        .args(["add", "--"])
+        .arg(name)
+        .current_dir(repo.work())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("gitconfig"))
+        .output()
+        .unwrap();
+    assert!(add.status.success());
+    let out = repo.checks(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    // `<mode> <blob> <stage>\t<path>\0`
+    let listed = repo.git(&["ls-files", "-s", "-z"]).stdout;
+    let blob = String::from_utf8_lossy(&listed)
+        .split(' ')
+        .nth(1)
+        .unwrap()
+        .to_string();
+    let staged = repo.git(&["cat-file", "blob", &blob]);
+    assert_eq!(
+        String::from_utf8_lossy(&staged.stdout),
+        "| a   | b |\n| --- | - |\n| ccc | d |\n"
+    );
+}
+
 #[test]
 fn markdown_that_cannot_be_fixed_fails() {
     let repo = Repo::new();

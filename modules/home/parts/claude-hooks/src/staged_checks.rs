@@ -10,6 +10,7 @@
 //! 終了コード: 0 = 違反が無い、1 = 違反がある、2 = 使い方の誤り
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -119,6 +120,25 @@ fn git(args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
             String::from_utf8_lossy(&out.stderr).trim()
         )),
         None => Err(format!("git {} を起動できません", args.join(" "))),
+    }
+}
+
+/// [`git`] の引数を `OsStr` で受ける版（UTF-8 でないパスを欠かさず渡す）
+fn git_os(args: &[&OsStr], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let shown = || {
+        args.iter()
+            .map(|a| a.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    match crate::git::run_os(Path::new("."), args, input) {
+        Some(out) if out.status.success() => Ok(out.stdout),
+        Some(out) => Err(format!(
+            "git {} が失敗しました: {}",
+            shown(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+        None => Err(format!("git {} を起動できません", shown())),
     }
 }
 
@@ -417,19 +437,27 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
 /// 途中で空にしない
 fn restage(f: &Staged, md: &Path) -> Result<(), String> {
     let copy = md.join(&f.path);
-    let copy = copy.to_string_lossy();
     // 書き出したのはブロブ（clean の後の形）なので、clean のフィルタを二度掛けない
-    let fixed = git(&["hash-object", "-w", "--no-filters", copy.as_ref()], None)?;
+    let fixed = git_os(
+        &[
+            OsStr::new("hash-object"),
+            OsStr::new("-w"),
+            OsStr::new("--no-filters"),
+            copy.as_os_str(),
+        ],
+        None,
+    )?;
     let fixed = String::from_utf8_lossy(&fixed).trim().to_string();
     if fixed == f.blob {
         return Ok(());
     }
-    let path = f.path.to_string_lossy();
-    git(
+    let mut cacheinfo = OsString::from(format!("{},{fixed},", f.mode));
+    cacheinfo.push(f.path.as_os_str());
+    git_os(
         &[
-            "update-index",
-            "--cacheinfo",
-            &format!("{},{fixed},{path}", f.mode),
+            OsStr::new("update-index"),
+            OsStr::new("--cacheinfo"),
+            &cacheinfo,
         ],
         None,
     )?;
@@ -437,9 +465,21 @@ fn restage(f: &Staged, md: &Path) -> Result<(), String> {
     if !plain {
         return Ok(());
     }
-    let filters = format!("--path={path}");
+    let mut filters = OsString::from("--path=");
+    filters.push(f.path.as_os_str());
+    let cat = |blob: &str| {
+        git_os(
+            &[
+                OsStr::new("cat-file"),
+                OsStr::new("--filters"),
+                &filters,
+                OsStr::new(blob),
+            ],
+            None,
+        )
+    };
     // ステージし直しは済んでいるので、比べる形を作れなければ（smudge のフィルタの失敗など）作業ツリーには書かない
-    let Ok(before) = git(&["cat-file", "--filters", &filters, &f.blob], None) else {
+    let Ok(before) = cat(&f.blob) else {
         return Ok(());
     };
     if std::fs::read(&f.path).ok().as_deref() != Some(before.as_slice()) {
@@ -447,8 +487,8 @@ fn restage(f: &Staged, md: &Path) -> Result<(), String> {
     }
     // ステージし直しは済んでいるので、書き戻せなくても止めない（作業ツリーは直す前のまま残り、次にステージした
     // ときにまた直る）
-    let written = git(&["cat-file", "--filters", &filters, &fixed], None)
-        .and_then(|after| std::fs::write(&f.path, after).map_err(|e| e.to_string()));
+    let written =
+        cat(&fixed).and_then(|after| std::fs::write(&f.path, after).map_err(|e| e.to_string()));
     if let Err(why) = written {
         println!(
             "⚠️  自動修正はステージしましたが、作業ツリーの {} には書けませんでした（{why}）",

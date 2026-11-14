@@ -41,7 +41,10 @@ fn main() {
         let own = format!("FAKE_{name}_{key}");
         std::env::var_os(&own).or_else(|| std::env::var_os(format!("FAKE_TOOL_{key}")))
     };
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     let line = if named {
         format!("{stem} {}\n", args.join(" "))
     } else {
