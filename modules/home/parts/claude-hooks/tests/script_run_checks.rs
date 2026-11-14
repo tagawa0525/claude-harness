@@ -424,3 +424,35 @@ fn off_the_node_cargo_is_not_limited_and_nix_builds_here() {
         "{calls:?}"
     );
 }
+
+#[test]
+fn tracked_tests_under_a_non_ascii_directory_run_in_that_directory() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("実験/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    let cwd = repo.root.join("python3.cwd");
+    let out = repo.run(&[], &[("FAKE_PYTHON3_CWD", cwd.to_str().unwrap())]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("RUN: python test: cd 実験 && python3 -m pytest test_a.py\n"),
+        "{}",
+        said(&out)
+    );
+    let ran_in = std::fs::read_to_string(&cwd).unwrap();
+    assert!(
+        Path::new(ran_in.lines().last().unwrap()).ends_with("実験"),
+        "{ran_in}"
+    );
+}
+
+#[test]
+fn an_empty_directory_option_checks_the_current_directory() {
+    let repo = Repo::new();
+    repo.tool("shellcheck");
+    repo.stage("a.sh", "echo a\n");
+    let out = repo.run(&["-C", ""], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert_eq!(repo.calls(), ["shellcheck -S warning -- a.sh"]);
+}
