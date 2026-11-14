@@ -12,6 +12,15 @@ use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 
 /// 履歴に無いコミットの番号。対応表で「消えた」（新が 0）にすると、それを指す文書で commit-refs remap が止まる
+/// HEAD、index、印、MERGE_HEAD、作業ツリーのファイル
+type State = (
+    String,
+    String,
+    String,
+    Option<Vec<u8>>,
+    BTreeMap<String, Vec<u8>>,
+);
+
 const VANISHED: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
 fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {
@@ -89,15 +98,7 @@ impl Repo {
     }
 
     /// HEAD、index（印を含む）、MERGE_HEAD、作業ツリーのファイルの中身
-    fn state(
-        &self,
-    ) -> (
-        String,
-        String,
-        String,
-        Option<Vec<u8>>,
-        BTreeMap<String, Vec<u8>>,
-    ) {
+    fn state(&self) -> State {
         let merge_head = self
             .path
             .join(self.git(&["rev-parse", "--git-path", "MERGE_HEAD"]).trim());
@@ -134,16 +135,7 @@ struct Fixture {
     repo: Repo,
     w: HashMap<&'static str, Repo>,
     partial_before: (String, Vec<u8>),
-    before: HashMap<
-        &'static str,
-        (
-            String,
-            String,
-            String,
-            Option<Vec<u8>>,
-            BTreeMap<String, Vec<u8>>,
-        ),
-    >,
+    before: HashMap<&'static str, State>,
     status: Option<i32>,
     stdout: String,
     stderr: String,
