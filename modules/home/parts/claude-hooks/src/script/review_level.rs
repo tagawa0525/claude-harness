@@ -128,14 +128,14 @@ pub fn main(args: &[String]) -> i32 {
     } else {
         "high"
     };
-    outln!("BASE: {base}");
-    outln!("TARGET: {target}");
-    outln!(
+    println!("BASE: {base}");
+    println!("TARGET: {target}");
+    println!(
         "WORKTREE: {}",
         worktree_of(dir, &target).unwrap_or_else(|| "none".to_string())
     );
-    outln!("FILES: {}", files.len());
-    outln!("LEVEL: {level}");
+    println!("FILES: {}", files.len());
+    println!("LEVEL: {level}");
     0
 }
 

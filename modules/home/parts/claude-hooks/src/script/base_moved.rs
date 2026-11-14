@@ -193,13 +193,13 @@ pub fn main(args: &[String]) -> i32 {
         return 0;
     }
     let short = |r: &str| git(dir, &["rev-parse", "--short", r]).unwrap_or_default();
-    outln!(
+    println!(
         "BASE_MOVED: {base} が分岐点から {moved} commits 進んでいる（先頭 {}、分岐点 {}）",
         short(&base),
         short(&fork)
     );
     for path in common {
-        outln!("COMMON: {path}");
+        println!("COMMON: {path}");
     }
     0
 }

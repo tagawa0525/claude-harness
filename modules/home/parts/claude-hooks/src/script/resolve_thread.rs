@@ -115,7 +115,7 @@ pub fn main(args: &[String]) -> i32 {
     };
     let thread_id = thread["id"].as_str().unwrap_or("");
     if thread["isResolved"].as_bool() == Some(true) {
-        outln!("already resolved: {thread_id}");
+        println!("already resolved: {thread_id}");
         return 0;
     }
     // スレッドを起こした人（先頭のコメントの投稿者）が bot でなければ既定で拒む。消えたアカウント（author が null）も

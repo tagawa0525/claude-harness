@@ -84,10 +84,10 @@ fn rename(new: &str, remote_ok: bool) -> Result<(), i32> {
         )
         .is_some_and(|s| !s.is_empty());
     if has_remote && !remote_ok {
-        outln!(
+        println!(
             "STOP: リモート {remote} に {old} が存在します。リネームするとリモートも更新されます。"
         );
-        outln!("      続行するにはユーザーの承認を得てから --remote を付けて再実行してください");
+        println!("      続行するにはユーザーの承認を得てから --remote を付けて再実行してください");
         return Err(2);
     }
     if has_remote && crate::git::has_github_remote(here) {
@@ -120,11 +120,11 @@ fn rename(new: &str, remote_ok: bool) -> Result<(), i32> {
     if has_remote {
         step(&["push", "-q", "-u", &remote, new])?;
         step(&["push", "-q", &remote, "--delete", &old])?;
-        outln!("RENAMED: {old} -> {new}");
-        outln!("REMOTE: updated");
+        println!("RENAMED: {old} -> {new}");
+        println!("REMOTE: updated");
     } else {
-        outln!("RENAMED: {old} -> {new}");
-        outln!("REMOTE: none");
+        println!("RENAMED: {old} -> {new}");
+        println!("REMOTE: none");
     }
     Ok(())
 }

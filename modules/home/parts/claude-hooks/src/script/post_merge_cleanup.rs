@@ -149,9 +149,9 @@ fn cleanup(branch: &str) -> Result<(), i32> {
     match &wt_path {
         Some(wt) => {
             step(&["worktree", "remove", wt])?;
-            outln!("WORKTREE_REMOVED: {wt}");
+            println!("WORKTREE_REMOVED: {wt}");
         }
-        None => outln!("WORKTREE_REMOVED: none"),
+        None => println!("WORKTREE_REMOVED: none"),
     }
 
     update_default(default)?;
@@ -164,9 +164,9 @@ fn cleanup(branch: &str) -> Result<(), i32> {
         &format!("refs/heads/{branch}"),
     ]) {
         step(&["branch", "-d", "-q", branch])?;
-        outln!("LOCAL_BRANCH: deleted");
+        println!("LOCAL_BRANCH: deleted");
     } else {
-        outln!("LOCAL_BRANCH: none");
+        println!("LOCAL_BRANCH: none");
     }
 
     remote_branch(branch, &remote, default)
@@ -302,7 +302,7 @@ fn trace(branch: &str, remote: &str, main_root: &str) -> Result<(), i32> {
     if merged_pr.is_empty() {
         return no_trace("、マージ済みの PR");
     }
-    outln!(
+    println!(
         "NOTE: {branch} は手元にもリモートにも無く、マージ済みの PR {merged_pr} を痕跡として片付けを続ける。自分の PR でなければ、別のリポジトリのブランチを渡している（cd <そのリポジトリ> && post-merge-cleanup.sh {branch}）"
     );
     Ok(())
@@ -409,13 +409,13 @@ fn update_default(default: &str) -> Result<(), i32> {
     };
     if has_rebuild {
         if changed(&["modules", "hosts", "secrets", "flake.nix", "flake.lock"]) {
-            outln!(
+            println!(
                 "NOTE: rebuild が要る（modules、hosts、secrets か flake が変わった）。nix-rebuild rebuild まで hook や設定は古い版のまま動く"
             );
         }
     } else if has_sync && changed(&["modules", "flake.nix", "flake.lock"]) {
         // ハーネスの hook とモジュールは、取り込む側（nixfiles）の lock が固定した版で配置されるので、lock を進めてから rebuild する
-        outln!(
+        println!(
             "NOTE: lock の更新と rebuild が要る（modules か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
         );
     }
@@ -427,11 +427,11 @@ fn update_default(default: &str) -> Result<(), i32> {
             git(&["rev-parse", "--show-toplevel"]).unwrap_or_default()
         );
         if has_rebuild {
-            outln!(
+            println!(
                 "NOTE: claude-sync が要る（.claude が変わった）。{sync_cmd} か rebuild まで ~/.claude は古い版のまま"
             );
         } else {
-            outln!(
+            println!(
                 "NOTE: claude-sync が要る（.claude が変わった）。{sync_cmd} まで ~/.claude は古い版のまま。取り込む側（nixfiles）の lock を進める前に rebuild すると、lock が固定した古い版に戻る"
             );
         }
@@ -457,17 +457,17 @@ fn reservations() -> Result<(), i32> {
         .unwrap_or_default()
         .is_empty()
     {
-        outln!("RESERVATIONS_RELEASED: none");
+        println!("RESERVATIONS_RELEASED: none");
         return Ok(());
     }
     if !design_records_available() {
-        outln!(
+        println!(
             "RESERVATIONS_RELEASED: skipped (design-records が PATH に無い。予約のタグは残した)"
         );
         return Ok(());
     }
     if !reachable {
-        outln!("RESERVATIONS_RELEASED: kept (origin に届かない。予約のタグは残した)");
+        println!("RESERVATIONS_RELEASED: kept (origin に届かない。予約のタグは残した)");
         return Ok(());
     }
     match Command::new(tool("design-records").unwrap_or_else(|| PathBuf::from("design-records")))
@@ -476,7 +476,7 @@ fn reservations() -> Result<(), i32> {
         .output()
     {
         Err(_) => {
-            outln!(
+            println!(
                 "RESERVATIONS_RELEASED: skipped (design-records が PATH に無い。予約のタグは残した)"
             );
             Ok(())
@@ -487,7 +487,7 @@ fn reservations() -> Result<(), i32> {
                 .filter(|l| !l.is_empty())
                 .map(str::to_string)
                 .collect();
-            outln!(
+            println!(
                 "RESERVATIONS_RELEASED: {}",
                 if released.is_empty() {
                     "none".to_string()
@@ -521,7 +521,7 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         ])
         .is_some_and(|s| !s.is_empty());
     if !on_remote {
-        outln!("REMOTE_BRANCH: none");
+        println!("REMOTE_BRANCH: none");
         return Ok(());
     }
     if git(&["remote", "-v"])
@@ -529,7 +529,7 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         .contains("github.com")
     {
         if !gh_available() {
-            outln!("REMOTE_BRANCH: kept (gh がないため open PR の有無を確認できない)");
+            println!("REMOTE_BRANCH: kept (gh がないため open PR の有無を確認できない)");
             return Ok(());
         }
         let open = gh()
@@ -544,11 +544,11 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
                 .parse::<u64>()
                 .ok()
         }) else {
-            outln!("REMOTE_BRANCH: kept (open PR の有無を確認できない: gh pr list が失敗)");
+            println!("REMOTE_BRANCH: kept (open PR の有無を確認できない: gh pr list が失敗)");
             return Ok(());
         };
         if n > 0 {
-            outln!("REMOTE_BRANCH: kept (open PR {n} 件の head。削除すると PR が閉じる)");
+            println!("REMOTE_BRANCH: kept (open PR {n} 件の head。削除すると PR が閉じる)");
             return Ok(());
         }
     }
@@ -560,12 +560,12 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         &format!("{remote}/{branch}"),
         &format!("{remote}/{default}"),
     ]) {
-        outln!(
+        println!(
             "REMOTE_BRANCH: kept ({remote}/{default} がブランチの先端をまだ含まない。{default} を push してから消す)"
         );
         return Ok(());
     }
     step(&["push", "-q", remote, "--delete", branch])?;
-    outln!("REMOTE_BRANCH: deleted");
+    println!("REMOTE_BRANCH: deleted");
     Ok(())
 }

@@ -95,7 +95,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     if list {
         for plan in random_plans() {
-            outln!("{plan}");
+            println!("{plan}");
         }
         return 0;
     }
@@ -110,7 +110,7 @@ pub fn main(args: &[String]) -> i32 {
 
 fn rename(branch: &str, file: Option<&str>) -> Result<(), i32> {
     if !Path::new(PLANS_DIR).is_dir() {
-        outln!("NOTE: {PLANS_DIR} がありません。リネーム対象なし");
+        println!("NOTE: {PLANS_DIR} がありません。リネーム対象なし");
         return Ok(());
     }
     let file = match file {
@@ -119,7 +119,7 @@ fn rename(branch: &str, file: Option<&str>) -> Result<(), i32> {
             let candidates = random_plans();
             match candidates.as_slice() {
                 [] => {
-                    outln!("NOTE: リネーム対象の計画書はありません");
+                    println!("NOTE: リネーム対象の計画書はありません");
                     return Ok(());
                 }
                 [one] => one.clone(),
@@ -192,7 +192,7 @@ fn rename(branch: &str, file: Option<&str>) -> Result<(), i32> {
         }
         "no"
     };
-    outln!("RENAMED: {file} -> {new}");
-    outln!("COMMITTED: {committed}");
+    println!("RENAMED: {file} -> {new}");
+    println!("COMMITTED: {committed}");
     Ok(())
 }

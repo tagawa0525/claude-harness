@@ -2,23 +2,6 @@
 //! `~/.claude/scripts/` と `~/.claude/skills/gh-pr-review/scripts/` の同じ名前の sh は、これを exec するだけにする
 //! （スキルの文と PreToolUse のルールはスクリプトの名前で呼び、見分けるので、名前と場所を変えない）
 
-/// 標準出力に書く（`print!` の代わり。`write_stdout` を参照）
-macro_rules! out {
-    ($($t:tt)*) => {
-        $crate::script::write_stdout(format_args!($($t)*))
-    };
-}
-
-/// 標準出力に 1 行書く（`println!` の代わり。`write_stdout` を参照）
-macro_rules! outln {
-    () => {
-        $crate::script::write_stdout(format_args!("\n"))
-    };
-    ($($t:tt)*) => {
-        $crate::script::write_stdout(format_args!("{}\n", format_args!($($t)*)))
-    };
-}
-
 mod base_moved;
 mod branch_topics;
 mod decide_next;
@@ -72,6 +55,7 @@ const SCRIPTS: &[(&str, Script)] = &[
 ];
 
 pub fn main(args: &[String]) -> i32 {
+    restore_sigpipe();
     let name = args.first().map(String::as_str);
     if let Some((_, run)) = SCRIPTS.iter().find(|(n, _)| Some(*n) == name) {
         return run(&args[1..]);
@@ -83,19 +67,26 @@ pub fn main(args: &[String]) -> i32 {
     2
 }
 
-/// 標準出力に書く。読む側が先に閉じていれば（`git-info.sh | head -2`）、sh が SIGPIPE で終わるときと同じ 141 で
-/// 黙って終える。`println!` を使わないのは、Rust は SIGPIPE を無視し、閉じたパイプへの `println!` が panic して 101 で
-/// 終わるから。SIGPIPE を既定に戻すには libc が要り、依存を足さない（#170。ADR-0087 は check-each-commit でも
-/// シグナルを受ける依存を足さないとした）。`main.rs` は script のモジュールで `print!` と `println!` を禁じる
-pub fn write_stdout(args: std::fmt::Arguments) {
-    use std::io::Write;
-    if let Err(e) = std::io::stdout().lock().write_fmt(args) {
-        if e.kind() == std::io::ErrorKind::BrokenPipe {
-            std::process::exit(141);
-        }
-        panic!("標準出力に書けない: {e}");
+/// SIGPIPE を既定の動作（黙って終わる）に戻す。読む側が先に閉じたパイプ（`git-info.sh | head -2`）に書いても、sh の版と
+/// 同じく SIGPIPE で終わる。Rust は起動の時に SIGPIPE を無視にし、そのままだと閉じたパイプへの `println!` と `eprintln!` は
+/// panic して 101 で終わる。`libc` の crate を足さず、std が既にリンクする C の `signal` を直に呼ぶ（#170）。
+/// Windows には SIGPIPE が無く、閉じたパイプへの書き込みは今も panic する
+#[cfg(unix)]
+fn restore_sigpipe() {
+    unsafe extern "C" {
+        fn signal(signum: std::ffi::c_int, handler: usize) -> usize;
+    }
+    // Linux、macOS、BSD で同じ値（signal.h）
+    const SIGPIPE: std::ffi::c_int = 13;
+    const SIG_DFL: usize = 0;
+    // SAFETY: 起動の始め（スレッドを作る前）に、既定の動作に戻すだけで、ハンドラの関数は渡さない
+    unsafe {
+        signal(SIGPIPE, SIG_DFL);
     }
 }
+
+#[cfg(not(unix))]
+fn restore_sigpipe() {}
 
 /// スキルとスクリプトの置き場（`~/.claude` か、リポジトリの `.claude`）。案内に書くスクリプトのパスを、呼んだ sh と
 /// 同じツリーから引くため（デプロイ先の古い版を案内しない）。呼んだ sh の場所は `lib/claude-hooks-script.sh` が

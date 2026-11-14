@@ -126,8 +126,8 @@ pub fn main(args: &[String]) -> i32 {
         );
         return 1;
     }
-    outln!("REQUESTED: {REVIEWER}");
-    outln!("SINCE: {after}");
+    println!("REQUESTED: {REVIEWER}");
+    println!("SINCE: {after}");
     gh_wait_review::main(&[canonical, "--since".to_string(), after])
 }
 

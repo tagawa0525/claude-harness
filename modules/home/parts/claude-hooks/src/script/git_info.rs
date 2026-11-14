@@ -22,10 +22,10 @@ fn git(args: &[&str]) -> String {
 /// 各行を字下げして出す。空なら「(なし)」
 fn indent_or_none(text: &str) {
     if text.is_empty() {
-        outln!("   (なし)");
+        println!("   (なし)");
     } else {
         for line in text.lines() {
-            outln!("   {line}");
+            println!("   {line}");
         }
     }
 }
@@ -47,9 +47,9 @@ pub fn main(_args: &[String]) -> i32 {
         );
     }
     let upstream = git(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-    outln!("📍 現在のブランチ: {branch}");
+    println!("📍 現在のブランチ: {branch}");
     if upstream.is_empty() {
-        outln!("   上流: (未設定)");
+        println!("   上流: (未設定)");
     } else {
         let counts = git(&[
             "rev-list",
@@ -60,36 +60,36 @@ pub fn main(_args: &[String]) -> i32 {
         let mut words = counts.split_whitespace();
         let ahead = words.next().unwrap_or("?");
         let behind = words.next().unwrap_or("?");
-        outln!("   上流: {upstream} (ahead {ahead} / behind {behind})");
+        println!("   上流: {upstream} (ahead {ahead} / behind {behind})");
     }
 
-    outln!();
-    outln!("📝 未コミット変更:");
+    println!();
+    println!("📝 未コミット変更:");
     indent_or_none(&git(&["status", "--short"]));
 
-    outln!();
-    outln!("📤 未プッシュコミット:");
+    println!();
+    println!("📤 未プッシュコミット:");
     if upstream.is_empty() {
-        outln!("   (上流ブランチ未設定)");
+        println!("   (上流ブランチ未設定)");
     } else {
         indent_or_none(&git(&["log", &format!("{upstream}..HEAD"), "--oneline"]));
     }
 
-    outln!();
-    outln!("📦 stash:");
+    println!();
+    println!("📦 stash:");
     indent_or_none(&git(&["stash", "list"]));
 
-    outln!();
-    outln!("🌳 worktree:");
+    println!();
+    println!("🌳 worktree:");
     indent_or_none(&git(&["worktree", "list"]));
 
-    outln!();
-    outln!("🔗 関連PR:");
+    println!();
+    println!("🔗 関連PR:");
     if !git(&["remote", "-v"]).contains("github.com") {
-        outln!("   (GitHub リモートなし)");
+        println!("   (GitHub リモートなし)");
     } else {
         match crate::staged_checks::find_on_path("gh") {
-            None => outln!("   (gh 未インストール)"),
+            None => println!("   (gh 未インストール)"),
             Some(gh) => {
                 // gh pr status は標準エラーにも出すので、両方を順に並べる
                 let text = Command::new(gh)
@@ -148,15 +148,15 @@ fn stale_worktrees() {
     if stale.is_empty() {
         return;
     }
-    outln!();
-    outln!("⚠️ マージ済みブランチのworktreeがあります:");
-    outln!();
+    println!();
+    println!("⚠️ マージ済みブランチのworktreeがあります:");
+    println!();
     for (path, branch) in &stale {
-        outln!("- {path} ({branch}) - マージ済み");
+        println!("- {path} ({branch}) - マージ済み");
     }
-    outln!();
-    outln!("削除するには:");
+    println!();
+    println!("削除するには:");
     for (_, branch) in &stale {
-        outln!("  /git-worktree {branch} --remove");
+        println!("  /git-worktree {branch} --remove");
     }
 }

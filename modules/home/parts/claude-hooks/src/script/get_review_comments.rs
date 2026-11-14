@@ -62,7 +62,7 @@ pub fn main(args: &[String]) -> i32 {
     };
     match comments(&pr, unresolved_only) {
         Ok(comments) => {
-            outln!("{:#}", Value::Array(comments));
+            println!("{:#}", Value::Array(comments));
             0
         }
         Err(code) => code,

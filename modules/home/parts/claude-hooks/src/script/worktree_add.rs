@@ -241,14 +241,14 @@ pub fn main(args: &[String]) -> i32 {
         return 1;
     }
 
-    outln!("WORKTREE: {}", dir.display());
-    outln!("BRANCH: {branch}");
-    outln!(
+    println!("WORKTREE: {}", dir.display());
+    println!("BRANCH: {branch}");
+    println!(
         "CREATED_BRANCH: {}",
         if base.is_some() { "yes" } else { "no" }
     );
     if let Some(base) = &base {
-        outln!("BASE: {base}");
+        println!("BASE: {base}");
     }
     // fork の運用（GitHub のリモートが複数）では、gh の解決先が worktree に引き継がれないことがある
     let github_remotes: std::collections::BTreeSet<&str> = remotes
@@ -257,7 +257,7 @@ pub fn main(args: &[String]) -> i32 {
         .filter_map(|l| l.split_whitespace().next())
         .collect();
     if github_remotes.len() >= 2 {
-        outln!(
+        println!(
             "NOTE: GitHub リモートが複数あります。worktree で gh pr 系コマンドを使う前に gh repo set-default --view で解決先を確認してください"
         );
     }
@@ -391,10 +391,10 @@ fn share(dir: &Path, main_root: &Path, text: &str) -> i32 {
     match link_all(dir, main_root, &paths, symlink) {
         Ok((linked, notes)) => {
             for note in notes {
-                outln!("{note}");
+                println!("{note}");
             }
             for l in linked {
-                outln!("SHARED: {l}");
+                println!("SHARED: {l}");
             }
             0
         }
