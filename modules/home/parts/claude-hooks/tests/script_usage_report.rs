@@ -68,7 +68,10 @@ impl Home {
     }
 
     fn project(&self) -> PathBuf {
-        self.root.join(".claude/projects/-home-u-repo")
+        self.root
+            .join(".claude")
+            .join("projects")
+            .join("-home-u-repo")
     }
 
     fn write_lines(&self, path: &Path, lines: &[Value]) {
