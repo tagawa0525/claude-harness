@@ -730,8 +730,6 @@ before=$(sha256sum < "$MD_DIR/indented-ok.md")
 "$MD_FIXER" "$MD_DIR/indented-ok.md" >/dev/null
 assert_eq "$before" "$(sha256sum < "$MD_DIR/indented-ok.md")"
 
-finish
-
 # ===========================================================================
 # run-checks.sh: 排他の Slurm のジョブ中は 1 コアに限る（ADR-0041）
 # ===========================================================================
@@ -807,3 +805,5 @@ assert_not_contains "$out" "1 コアで実行する"
 assert_eq "" "$(fake_log taskset)"
 assert_contains "$(fake_log nix)" "flake check"
 assert_not_contains "$(fake_log nix)" "--cores"
+
+finish
