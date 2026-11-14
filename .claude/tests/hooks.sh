@@ -2886,6 +2886,60 @@ for cmd in 'nix-rebuild rebuild' 'nix-rebuild update' '/home/u/.local/bin/nix-re
   assert_not_contains "$(reason "$out")" "slurm-run.sh"
 done
 
+# hostname は偽のコマンドで置き換える（r995 のほかでは、ビルドは r995 に投げられるので、手元でビルドすれば乱さない）
+mkdir -p "$FAKE_SQUEUE/host-laptop" "$FAKE_SQUEUE/host-r995" "$FAKE_SQUEUE/host-broken"
+printf '#!/bin/sh\necho t14g4\n' >"$FAKE_SQUEUE/host-laptop/hostname"
+printf '#!/bin/sh\necho R995.lan\n' >"$FAKE_SQUEUE/host-r995/hostname"
+printf '#!/bin/sh\nexit 1\n' >"$FAKE_SQUEUE/host-broken/hostname"
+chmod +x "$FAKE_SQUEUE"/host-*/hostname
+# ssh は -G（つながずに設定を読む）だけを偽物にする。desk は r995 の別名、broken は解けない
+cat >"$FAKE_SQUEUE/host-laptop/ssh" <<'EOF'
+#!/bin/sh
+[ "$1" = -G ] || exit 255
+case "$2" in
+  desk) echo "hostname r995.lan" ;;
+  broken) exit 255 ;;
+  *@*) echo "hostname ${2#*@}" ;;
+  *) echo "hostname $2" ;;
+esac
+EOF
+chmod +x "$FAKE_SQUEUE/host-laptop/ssh"
+
+it "guard-exclusive-slurm: r995 のほかでは（ssh の先は接続先が r995 でなければ）、手元でビルドする nix-rebuild --local を通す"
+for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'nix-rebuild update --local claude-harness' \
+  'nix-rebuild update claude-harness --local' 'bash modules/home/scripts/nix-rebuild.sh rebuild --local' \
+  'sudo -i nix-rebuild update --local' "ssh x1ng1 'nix-rebuild update --local'" 'ssh tagawa@x1ng1 nix-rebuild rebuild --local'; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-exclusive-slurm: r995 の上、ホストが分からないとき、接続先が r995 か解けない ssh の先、shell の関数の --local は deny し、サブコマンドの前の --local は rebuild に数えない"
+for dir in host-r995 host-broken; do
+  for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'rebuild --local'; do
+    out=$(PATH="$FAKE_SQUEUE/$dir:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+    assert_eq deny "$(decision "$out")"
+  done
+done
+# 関数は数えない（前の版の関数 rebuild は引数を捨て、定義したまま走っているシェルでは --local が落ちる）
+for cmd in "ssh r995 'nix-rebuild update --local'" 'ssh r995 nix-rebuild rebuild --local' 'ssh desk nix-rebuild update --local' \
+  'ssh broken nix-rebuild update --local' 'rebuild --local' 'update --local'; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+# ssh の先の rebuild には、手元でビルドする道を示さない（ssh の先の --local も止める）
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'ssh r995 nix-rebuild update')
+assert_not_contains "$(reason "$out")" "--local"
+# nix-rebuild.sh は --local をサブコマンドの後でだけ受ける（前に置くと使い方の誤りで止まる）
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild --local rebuild')
+assert_eq "" "$out"
+
+it "guard-exclusive-slurm: r995 のほかでは、rebuild の deny が --local で手元でビルドする道を示す"
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild update')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "--local"
+out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild update')
+assert_not_contains "$(reason "$out")" "--local"
+
 it "guard-exclusive-slurm: ビルドしない nix-rebuild、nixos-rebuild、home-manager は通す"
 for cmd in 'nix-rebuild' 'nix-rebuild --help' 'home-manager generations' 'home-manager news' 'home-manager --version' \
   'nixos-rebuild --help' 'home-manager switch --help' 'home-manager -h' 'nixos-rebuild list-generations' 'nixos-rebuild edit' 'nixos-rebuild dry-build' \

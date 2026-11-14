@@ -852,7 +852,26 @@ impl Shell {
     /// cmd が `ssh` か `sudo -i` の中で走るか（`target_dir` が手元に実在しない場所の書き方から始める）。
     /// ルールが止める理由を、移れない cd 先と取り違えずに書くのに使う
     pub fn runs_under_ssh_or_login(&self, cmd: &Cmd) -> bool {
-        let moves_away = |c: &Cmd| c.remote.is_some() || c.login_home.is_some();
+        self.runs_under(cmd, |c| c.remote.is_some() || c.login_home.is_some())
+    }
+
+    /// cmd が `ssh` の先で走るなら、その接続先（書いたままの `[user@]host`）。`sudo -i` は同じホストなので数えない
+    pub fn ssh_destination<'a>(&'a self, cmd: &'a Cmd) -> Option<&'a str> {
+        let destination = |c: &'a Cmd| c.remote.as_deref().map(|r| r.trim_end_matches(':'));
+        destination(cmd).or_else(|| {
+            self.cmds
+                .iter()
+                .filter(|c| {
+                    c.start < cmd.start
+                        && c.spawns
+                            .is_some_and(|id| cmd.scope.get(c.scope.len()) == Some(&id))
+                })
+                .find_map(destination)
+        })
+    }
+
+    /// cmd 自身か、cmd を中で起動するコマンドが moves_away に当たるか
+    fn runs_under(&self, cmd: &Cmd, moves_away: impl Fn(&Cmd) -> bool) -> bool {
         moves_away(cmd)
             || self.cmds.iter().any(|c| {
                 c.start < cmd.start
