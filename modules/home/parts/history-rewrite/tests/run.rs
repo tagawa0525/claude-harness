@@ -671,11 +671,12 @@ fn replace_refs_of_the_source_do_not_change_the_original_commits() {
 
 #[test]
 fn a_quoted_path_is_fixed_by_its_real_name() {
-    // fast-export は特別な字を含むパスを引用する。.md の判定と --exclude は引用を外したパスで行う
+    // fast-export は特別な字（ASCII でない字を含む）を含むパスを引用する。.md の判定と --exclude は引用を外したパスで
+    // 行う（`"` などのエスケープは unquote の単体テスト。Windows では `"` を含む名前のファイルを作れない）
     let root = scratch("quoted");
     let repo = Repo::new(&root, "repo");
     repo.write(
-        "dir with \"quote\".md",
+        "表 の記録.md",
         "| a | b |\n| - | - |\n| 掃引 | x |\n".as_bytes(),
     );
     repo.write("確かめ.md", "確かめの記録\n".as_bytes());
@@ -688,7 +689,7 @@ fn a_quoted_path_is_fixed_by_its_real_name() {
         path: workdir.join("rewritten"),
     };
     assert_eq!(
-        rewritten.show_text("main", "dir with \"quote\".md"),
+        rewritten.show_text("main", "表 の記録.md"),
         "| a        | b |\n| -------- | - |\n| スイープ | x |\n"
     );
     assert_eq!(rewritten.show_text("main", "確かめ.md"), "確認の記録\n");
@@ -767,22 +768,25 @@ fn a_stop_in_the_first_stage_leaves_no_crash_report_of_fast_import() {
 
 #[test]
 fn a_latin1_message_with_c1_bytes_is_read() {
-    // ISO-8859-1 は 0x80〜0x9f も 1 字に読む（WHATWG の windows-1252 は 0x81、0x8d、0x8f、0x90、0x9d を持たない）
-    let root = scratch("c1");
-    let repo = Repo::new(&root, "repo");
-    repo.write("a.md", b"a\n");
-    repo.git(&["add", "a.md"]);
-    let message = root.join("message.txt");
-    std::fs::write(&message, b"docs: \x81\x8d\x90\n").unwrap();
-    repo.git(&[
-        "-c",
-        "i18n.commitEncoding=ISO-8859-1",
-        "commit",
-        "-q",
-        "--no-verify",
-        "-F",
-        &message.display().to_string(),
-    ]);
-    let out = run(&root, &repo.path, &root.join("work"), &[]);
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    // ISO-8859-1 は 0x80〜0x9f も 1 字に読む（WHATWG の windows-1252 は 0x81、0x8d、0x8f、0x90、0x9d を持たない）。iconv の
+    // 別名（csISOLatin1、ISO_8859-1:1987、ISO-IR-100）も同じ
+    for name in ["ISO-8859-1", "csISOLatin1", "ISO_8859-1:1987", "ISO-IR-100"] {
+        let root = scratch("c1");
+        let repo = Repo::new(&root, "repo");
+        repo.write("a.md", b"a\n");
+        repo.git(&["add", "a.md"]);
+        let message = root.join("message.txt");
+        std::fs::write(&message, b"docs: \x81\x8d\x90\n").unwrap();
+        repo.git(&[
+            "-c",
+            &format!("i18n.commitEncoding={name}"),
+            "commit",
+            "-q",
+            "--no-verify",
+            "-F",
+            &message.display().to_string(),
+        ]);
+        let out = run(&root, &repo.path, &root.join("work"), &[]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
+    }
 }
