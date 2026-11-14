@@ -596,6 +596,7 @@ exit 0
         check_in(command, &dir.0, Some(&check))
     }
 
+    #[cfg(unix)]
     fn only_deny(findings: &[Finding]) -> String {
         match findings {
             [Finding::Deny(r)] => r.clone(),
