@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# .claude/scripts/kept-sentences.py（規則の文書を縮めたとき、残した文が元の版の部分文字列かを確かめる）のテスト
+# .claude/scripts/kept-sentences.sh（規則の文書を縮めたとき、残した文が元の版の部分文字列かを確かめる）のテスト
 #
 # 実行: bash .claude/tests/scripts/kept-sentences.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
+# 中身は claude-hooks script kept-sentences（ADR-0088）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
-KEPT="$SCRIPTS_DIR/kept-sentences.py"
+KEPT="$SCRIPTS_DIR/kept-sentences.sh"
 D="$TEST_ROOT/docs"
 mkdir -p "$D"
 
