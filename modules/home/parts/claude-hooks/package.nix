@@ -58,6 +58,8 @@ in
 # ja-terms の store のパスは、包む側で環境変数として固定する（ルールが実行時に読む）。claude-hooks の Rust のビルドに
 # 埋めると、辞書（prh.yml）や commit-msg の規則を変えるたびに claude-hooks の作り直しとテストが走る。hook は Claude Code が
 # 起動するので、利用者の環境変数や PATH には頼らない。makeBinaryWrapper はシェルを挟まない
+# git は PATH の後ろに足す（利用者の git を先に使い、PATH に git の無い環境から起動した Claude Code でも、Stop の hook の
+# 退避と PreToolUse のルールが git を起動できる）
 stdenvNoCC.mkDerivation {
   pname = "claude-hooks";
   inherit (unwrapped) version;
@@ -68,7 +70,8 @@ stdenvNoCC.mkDerivation {
     makeWrapper ${unwrapped}/bin/claude-hooks $out/bin/claude-hooks \
       --set CLAUDE_HOOKS_JA_TERMS ${jaTerms}/bin/ja-terms \
       --set CLAUDE_HOOKS_COMMIT_REFS ${commitRefs}/bin/commit-refs \
-      --set CLAUDE_HOOKS_GITLEAKS ${gitleaks}/bin/gitleaks
+      --set CLAUDE_HOOKS_GITLEAKS ${gitleaks}/bin/gitleaks \
+      --suffix PATH : ${git}/bin
     runHook postInstall
   '';
   # 包んだ ja-terms と辞書で git merge の本文の崩れた語を、同じ ja-terms で git commit の
