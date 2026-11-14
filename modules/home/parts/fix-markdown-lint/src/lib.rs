@@ -143,23 +143,49 @@ pub fn is_separator_row(line: &str) -> bool {
     !cells.is_empty() && cells.iter().all(|c| DASHES.is_match(c))
 }
 
-/// 行の両端の空白と | を外し、| で切ったセル（両端の空白を外す）
+/// 行の両端の空白と | を外し、| で切ったセル（両端の空白を外す）。`\|` はセルの中の文字で、区切りでない（GFM）
 fn cells(line: &str) -> Vec<&str> {
-    strip(line)
-        .trim_matches('|')
-        .split('|')
-        .map(strip)
-        .collect()
+    let body = strip(line).trim_matches('|');
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut backslashes = 0;
+    for (i, b) in body.bytes().enumerate() {
+        match b {
+            b'\\' => backslashes += 1,
+            b'|' if backslashes % 2 == 0 => {
+                out.push(strip(&body[start..i]));
+                start = i + 1;
+                backslashes = 0;
+            }
+            _ => backslashes = 0,
+        }
+    }
+    out.push(strip(&body[start..]));
+    out
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Align {
     Left,
+    /// 区切りの行に `:--` と書いた左寄せ（書き手の `:` を残す）
+    ExplicitLeft,
     Right,
     Center,
 }
 
-/// 表の行の桁を揃える。2 行目（区切りの行）の : で寄せ方を決め、足りないセルは空のセルで埋める
+impl Align {
+    /// 区切りのセルが取る最小の桁（`-`、`:-`、`-:`、`:-:`）。列の幅がこれより狭いと、区切りのセルがほかの行より広くなる
+    fn min_width(self) -> usize {
+        match self {
+            Align::Left => 1,
+            Align::ExplicitLeft | Align::Right => 2,
+            Align::Center => 3,
+        }
+    }
+}
+
+/// 表の行の桁を揃える。2 行目（区切りの行）の : で寄せ方を決め、足りないセルは空のセルで埋める。見出しより多い
+/// セルの行がある表は、GFM が余分なセルを描かず markdownlint（MD056）が知らせるので、揃えずにそのまま返す
 pub fn format_table(table: &[&str]) -> Vec<String> {
     let indent: &str = table.first().map_or("", |l| {
         &l[..l.len() - l.trim_start_matches([' ', '\t']).len()]
@@ -168,18 +194,22 @@ pub fn format_table(table: &[&str]) -> Vec<String> {
     if rows.len() < 2 {
         return table.iter().map(|l| l.to_string()).collect();
     }
-    let ncols = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let ncols = rows[0].len();
+    if rows.iter().any(|r| r.len() > ncols) {
+        return table.iter().map(|l| l.to_string()).collect();
+    }
     let mut aligns: Vec<Align> = rows[1]
         .iter()
         .map(|c| match (c.starts_with(':'), c.ends_with(':')) {
             (true, true) => Align::Center,
             (_, true) => Align::Right,
+            (true, false) => Align::ExplicitLeft,
             _ => Align::Left,
         })
         .collect();
     aligns.resize(ncols, Align::Left);
 
-    let mut widths = vec![0usize; ncols];
+    let mut widths: Vec<usize> = aligns.iter().map(|a| a.min_width()).collect();
     for (ri, row) in rows.iter().enumerate() {
         if ri == 1 {
             continue;
@@ -203,6 +233,9 @@ pub fn format_table(table: &[&str]) -> Vec<String> {
                             Align::Right => {
                                 format!(" {}: ", "-".repeat(w.saturating_sub(1).max(1)))
                             }
+                            Align::ExplicitLeft => {
+                                format!(" :{} ", "-".repeat(w.saturating_sub(1).max(1)))
+                            }
                             Align::Left => format!(" {} ", "-".repeat(w.max(1))),
                         };
                     }
@@ -218,7 +251,9 @@ pub fn format_table(table: &[&str]) -> Vec<String> {
                                 " ".repeat(pad - left + 1)
                             )
                         }
-                        Align::Left => format!(" {cell}{}", " ".repeat(pad + 1)),
+                        Align::Left | Align::ExplicitLeft => {
+                            format!(" {cell}{}", " ".repeat(pad + 1))
+                        }
                     }
                 })
                 .collect();

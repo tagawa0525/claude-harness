@@ -183,8 +183,8 @@ fn an_indented_table_to_realign_stops_without_writing() {
 }
 
 #[test]
-fn a_table_row_with_an_escaped_pipe_stops_but_a_pipe_in_code_is_a_separator() {
-    // 表の揃え方は \| でも列を切るので、揃え直さずに止める。コードスパンの中のエスケープしていない | は GFM でも区切り
+fn an_escaped_pipe_stays_in_its_cell_but_a_pipe_in_code_is_a_separator() {
+    // \| は列を切らない。コードスパンの中のエスケープしていない | は GFM でも区切り
     let work = Work::new();
     work.write(
         "escaped.md",
@@ -194,11 +194,11 @@ fn a_table_row_with_an_escaped_pipe_stops_but_a_pipe_in_code_is_a_separator() {
         "code.md",
         "| a | b | c |\n| - | - | - |\n| `p|q` | 掃引 |\n".as_bytes(),
     );
-    let out = work.transform(&["escaped.md"]);
-    assert_eq!(out.status.code(), Some(1));
-    let err = text(&out.stderr);
-    assert!(err.contains("escaped.md") && err.contains("\\|"), "{err}");
-    assert!(work.read("escaped.md").contains("掃引"));
+    ok(&work.transform(&["escaped.md"]));
+    assert_eq!(
+        work.read("escaped.md"),
+        "| a      | b        |\n| ------ | -------- |\n| x \\| y | スイープ |\n"
+    );
     ok(&work.transform(&["code.md"]));
     assert_eq!(
         work.read("code.md"),

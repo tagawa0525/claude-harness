@@ -645,7 +645,7 @@ fn a_message_table_that_cannot_be_realigned_names_the_commit() {
     let root = scratch("message-table");
     let repo = Repo::new(&root, "repo");
     repo.write("a.md", b"a\n");
-    let commit = repo.commit("docs: a\n\n| a | b |\n| - | - |\n| x \\| y | 掃引 |\n");
+    let commit = repo.commit("docs: a\n\n  | a | b |\n  | - | - |\n  | x | 掃引 |\n");
     let out = run(&root, &repo.path, &root.join("work"), &[]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
     let err = text(&out.stderr);
@@ -745,14 +745,14 @@ fn a_stop_in_the_first_stage_leaves_no_crash_report_of_fast_import() {
     let repo = Repo::new(&root, "repo");
     repo.write(
         "a.md",
-        "| a | b |\n| - | - |\n| x \\| y | 掃引 |\n".as_bytes(),
+        "  | a | b |\n  | - | - |\n  | x | 掃引 |\n".as_bytes(),
     );
     repo.commit("docs: a\n");
     let workdir = root.join("work");
     let out = run(&root, &repo.path, &workdir, &[]);
     assert_eq!(out.status.code(), Some(1));
     let err = text(&out.stderr);
-    assert!(err.contains("\\|"), "{err}");
+    assert!(err.contains("字下げ"), "{err}");
     assert!(!err.contains("fatal:"), "{err}");
     let git_dir = workdir.join("rewritten").join(".git");
     let crashes: Vec<_> = std::fs::read_dir(&git_dir)

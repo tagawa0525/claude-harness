@@ -139,15 +139,8 @@ fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
             i = j;
             continue;
         }
-        // 表の揃え方は \| でも列を切るので、hook と同じ形に揃え直せない表は止める。字下げした表も止める（揃え方は
-        // 字下げを保つが、履歴の書き換えで字下げした表を揃え直した結果を確かめるテストが無い）
+        // 字下げした表は止める（揃え方は字下げを保つが、履歴の書き換えで字下げした表を揃え直した結果を確かめるテストが無い）
         for row in rows {
-            if row.contains("\\|") {
-                return Err(Stop(format!(
-                    "{name}: 直す表の行に \\| がある（揃え直せない）: {}",
-                    py_strip(row)
-                )));
-            }
             if row.chars().next().is_some_and(is_py_space) {
                 return Err(Stop(format!(
                     "{name}: 直す表が字下げしてある（揃え直せない）: {}",
