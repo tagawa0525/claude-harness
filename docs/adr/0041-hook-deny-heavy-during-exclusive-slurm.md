@@ -94,7 +94,7 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 `--local` で手元でビルドする道も示す。エスケープは設けない。
 
 `run-checks.sh` は、同じ squeue の判定（`.claude/scripts/lib/slurm-exclusive.sh`）で排他のジョブを見つけたら、
-冒頭に知らせ、排他のジョブの計算ノードの上（`on_compute_node`。hostname かノードが分からないときも）では 1 コアで実行する（`cargo` を
+冒頭に知らせ、排他のジョブの計算ノードの上（`exclusive_slurm_job` の `here`。hostname かノードが分からないときも）では 1 コアで実行する（`cargo` を
 `taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を `--cores 1 -j 1` で）。ほかのホストでは `cargo` を限らず、
 `nix flake check` を `--builders '' --max-jobs auto` で手元でビルドする。このスクリプトと `run-python-tests.sh` は
 hook の対象にしない。
