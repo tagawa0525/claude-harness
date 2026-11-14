@@ -53,7 +53,7 @@ static NAMED_SKILL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/([\w:-]+) �
 const USAGE: &str = "Usage: usage-report.sh [--since <日時>] [--until <日時>] [--repo <リポジトリ>]... [TRANSCRIPT]";
 
 #[derive(Debug)]
-struct ReportError(String);
+pub(super) struct ReportError(pub(super) String);
 
 fn fail<T>(message: String) -> Result<T, ReportError> {
     Err(ReportError(message))
@@ -136,7 +136,7 @@ fn parse_bound(name: &str, value: &str) -> Result<Time, ReportError> {
 }
 
 /// `dir` の、`.` で始まらない名前のうち `suffix` で終わる項目を名前の順に（glob の `*` と同じく、隠れた名前に当てない）
-fn glob_dir(dir: &Path, suffix: &str) -> Vec<PathBuf> {
+pub(super) fn glob_dir(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -153,7 +153,7 @@ fn glob_dir(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     found
 }
 
-fn find_transcript(path: Option<&str>) -> Result<PathBuf, ReportError> {
+pub(super) fn find_transcript(path: Option<&str>) -> Result<PathBuf, ReportError> {
     if let Some(path) = path {
         return Ok(PathBuf::from(path));
     }
