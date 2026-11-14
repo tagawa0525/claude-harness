@@ -476,12 +476,30 @@ fn memory_without_a_backup_before_since_fails_after_the_other_lines() {
     assert_eq!(code, 1);
     assert!(out.contains("PROSE: skills"), "{out}");
     assert!(!out.contains("PROSE: memory"), "{out}");
-    let claude = format!("{}/.claude", s(&home.root));
+    let claude = s(&home.claude_home());
     assert_eq!(
         err,
         format!(
             "ERROR: 2026-11-01T00:00:00+09:00 より前のメモリの退避（{claude} の refs/memory-backup）が無いので、前の大きさが分かりません: {m}\n"
         )
+    );
+}
+
+#[test]
+fn a_memory_directory_is_matched_by_path_components_not_by_the_spelling() {
+    // 重なった区切りと、Windows の `\` と `/` の混ざった書き方でも、退避の中の同じディレクトリを数える
+    let home = Home::new();
+    home.memory();
+    let m = format!(
+        "{}{}projects//-p/memory",
+        s(&home.claude_home()),
+        std::path::MAIN_SEPARATOR
+    );
+    let (code, out, _) = parts(&home.prose(&["--since", SINCE, "--until", UNTIL, "--memory", &m]));
+    assert_eq!(code, 0);
+    assert!(
+        out.ends_with(&format!("PROSE: memory 100 210 +110 {m}\n")),
+        "{out}"
     );
 }
 
@@ -492,7 +510,7 @@ fn a_memory_directory_outside_claude_home_fails() {
     let (code, out, err) = parts(&home.prose(&["--since", SINCE, "--memory", &m]));
     assert_eq!(code, 1);
     assert!(!out.contains("PROSE:"), "{out}");
-    let claude = format!("{}/.claude", s(&home.root));
+    let claude = s(&home.claude_home());
     assert_eq!(
         err,
         format!(
