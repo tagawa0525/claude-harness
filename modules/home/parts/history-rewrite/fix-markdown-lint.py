@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Fix markdown lint issues that markdownlint --fix cannot handle.
 
+history-rewrite が表の揃え直しに関数を読み込むために置く。スキルとチェックが呼ぶのは同じ振る舞いの
+claude-hooks script fix-markdown-lint（language-checks の fix-markdown-lint.sh）で、history-rewrite を Rust に
+移すときに消す（ADR-0087）。それまで、.claude/tests/scripts/language-checks.sh がすべての文字で表の桁を突き合わせる。
+
 Usage:
     python3 fix-markdown-lint.py <file>...
 

@@ -4,7 +4,7 @@
 # 飛ばされることを検証する
 # =============================================================================
 # ../git-hooks.nix の pre-commit は core.hooksPath でグローバル配布され、ステージ済みのファイルに
-# こちらのツールの版と規約（ruff、markdownlint --fix と fix-markdown-lint.py、rustfmt）を当てる。
+# こちらのツールの版と規約（ruff、markdownlint --fix と fix-markdown-lint、rustfmt）を当てる。
 # 他人のプロジェクトの fork（上流に PR を出す worktree。`upstream` リモートを持つ）でこれが走ると、
 # 新しい ruff が触っていない上流の行を上流の版にないルール（RUF043 等）で落とし、Markdown の
 # 自動修正が無関係な差分（``` → ```text 等）を上流向けのコミットに混ぜてしまう。
@@ -51,9 +51,7 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); echo "✓ $1"; }
 ng() { FAIL=$((FAIL + 1)); echo "✗ $1"; sed 's/^/    /' "$WORK/out"; }
 
-# 末尾の空白 3 つ（MD009。2 つは改行の意味で許される）は markdownlint --fix 単独で直る違反。
-# HOME を退避した環境には fix-markdown-lint.py（~/.claude 配下）が無いので、それに頼る違反
-# （言語指定のないフェンス）は使わない
+# 末尾の空白 3 つ（MD009。2 つは改行の意味で許される）は markdownlint --fix 単独で直る違反
 ORIGINAL=$'# Title\n\nSome text.   \n'
 # 使わない import（F401）はどの版の ruff でも既定で落ちる違反
 BAD_PY=$'import os\n'
