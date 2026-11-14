@@ -42,7 +42,7 @@ pub fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, Stop> {
 }
 
 /// transform: 作業ツリーのファイルの語を、run の第 1 段と同じ変換で直す（コミットはしない）。すべてのファイルの新しい
-/// 中身を作ってから書く（途中で止まるときは、どのファイルにも書かない）
+/// 中身を作ってから書く（変換が止まるファイルがあれば、どのファイルにも書かない）
 pub fn transform_files(words: &Words, files: &[String]) -> Result<(), Stop> {
     let mut transformer = Transformer::new(words)?;
     let top = git(Path::new("."), &["rev-parse", "--show-toplevel"])?;

@@ -14,5 +14,5 @@ edition = "2024"
 ja-terms = { path = "../ja-terms" }
 # 直した Markdown の表を、run-checks の自動修正と同じ形に揃え直す
 fix-markdown-lint = { path = "../fix-markdown-lint" }
-# --exclude の glob を正規表現に直して照合する。ja-terms と fix-markdown-lint と同じ版
+# --exclude の glob を正規表現に直して照合する。fix-markdown-lint と同じ版
 regex = "1"
