@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# .claude/scripts/usage-report.py（会話の記録から区間の費用を区分ごとに出す）のテスト
+# .claude/scripts/usage-report.sh（会話の記録から区間の費用を区分ごとに出す）のテスト
 #
 # 実行: bash .claude/tests/scripts/usage-report.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
+# 中身は claude-hooks script usage-report（ADR-0088）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
-REPORT="$SCRIPTS_DIR/usage-report.py"
+REPORT="$SCRIPTS_DIR/usage-report.sh"
 
 PROJECT="$HOME/.claude/projects/-home-u-repo"
 SESSION=11111111-2222-3333-4444-555555555555
