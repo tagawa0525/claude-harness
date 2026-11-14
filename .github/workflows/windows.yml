@@ -1,6 +1,6 @@
 # ネイティブの Windows で Rust の crate のテストを流す（ADR-0083）。Linux のテストは nix flake check が受け持つ。
 # matrix には Windows で通る crate だけを入れ、ほかの crate は Windows に移す PR で通してから足す（#101）。
-# setup のジョブは README の「Windows で使う」の手順を流す（手順を変えたら、このジョブも合わせる）
+# setup のジョブは docs/windows.md（README の「Windows で使う」が指す）の手順を流す（手順を変えたら、このジョブも合わせる）
 name: windows
 
 on:
@@ -43,7 +43,7 @@ jobs:
           bash tests/merge-ja-terms.sh target/debug/claude-hooks.exe
           bash tests/commit-message.sh target/debug/claude-hooks.exe
 
-  # README の「Windows で使う」の手順を流し、settings.json に登録した PreToolUse hook が、main への git commit を
+  # docs/windows.md の手順を流し、settings.json に登録した PreToolUse hook が、main への git commit を
   # 止め、feature branch の git commit を gitleaks に通して許すことを確かめる（ADR-0084 の確認）
   setup:
     runs-on: windows-latest
@@ -52,7 +52,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v5
-      # README は winget で入れるが、runner には winget が無いので、リリースの zip を PATH に置く。SHA256 は
+      # docs/windows.md は winget で入れるが、runner には winget が無いので、リリースの zip を PATH に置く。SHA256 は
       # リリースの gitleaks_8.30.1_checksums.txt の値（2026-11-13 に取得）
       - shell: pwsh
         run: |
@@ -62,9 +62,9 @@ jobs:
           if ($hash -ne 'D29144DEFF3A68AA93CED33DDDF84B7FDC26070ADD4AA0F4513094C8332AFC4E') { throw "gitleaks.zip の SHA256 が違います: $hash" }
           Expand-Archive $zip "$env:RUNNER_TEMP\gitleaks"
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\gitleaks"
-      - name: Follow the README
+      - name: Follow docs/windows.md
         run: |
-          for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite; do
+          for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records; do
             cargo install --locked --force --root ~/.claude --path "modules/home/parts/$crate"
           done
           ~/.claude/bin/claude-setup sync "$PWD"
@@ -79,9 +79,9 @@ jobs:
           rc=0
           "$HOME/.claude/bin/claude-hooks" local-review-covers || rc=$?
           test "$rc" -eq 2
-          # スキルと修正方法の文が名前で呼ぶコマンドは、README が ~/.bashrc で PATH に足す ~/.claude/bin のもの。CI の
+          # スキルと修正方法の文が名前で呼ぶコマンドは、docs/windows.md が ~/.bashrc で PATH に足す ~/.claude/bin のもの。CI の
           # step は ~/.bashrc を読まない（後の git hook の確認は、PATH に無い ja-terms を claude-hooks の隣で見つける）
-          for name in claude-setup commit-refs ja-terms; do
+          for name in claude-setup commit-refs ja-terms design-records; do
             found=$(bash -c 'source ~/.bashrc && command -v "$1"' _ "$name")
             test "$found" -ef "$HOME/.claude/bin/$name.exe"
           done
@@ -162,7 +162,7 @@ jobs:
           echo "token = \"ghp_$(openssl rand -hex 18)\"" >"$repo/b"
           git -C "$repo" add b
           expect_deny '機密情報らしき内容'
-      # README の、~/.claude をリポジトリにする手順の後に、登録した Stop の hook（claude-hooks stop）が自動メモリだけを
+      # docs/windows.md の、~/.claude をリポジトリにする手順の後に、登録した Stop の hook（claude-hooks stop）が自動メモリだけを
       # refs/memory-backup に退避することを確かめる（~/.claude の中の crate の記録や bin は、.gitignore で除外したまま残る）
       - name: Check the Stop hook
         run: |
@@ -182,7 +182,7 @@ jobs:
           # これらは見えるようにする）。settings.json、bin、crate の記録、会話の記録は除外のまま
           test "$(git -C ~/.claude status --porcelain)" = "$(printf '?? %s\n' .gitignore CLAUDE.md projects/ scripts/ skills/)"
           test "$(git -C ~/.claude status --porcelain --untracked-files=all projects)" = '?? projects/-ci/memory/MEMORY.md'
-      # README の手順の最後の git hook の設置。上の PreToolUse hook の確認は、git hook の無い Windows（グローバルの
+      # docs/windows.md の手順の最後の git hook の設置。上の PreToolUse hook の確認は、git hook の無い Windows（グローバルの
       # core.hooksPath を使わないリポジトリでは、PreToolUse hook が機密情報を検査する）として流すので、その後に置く。
       # 置いた git hook が、Claude Code のセッションの main への直接のコミット、Conventional Commits でない件名、ステージ
       # したトークンを止め、feature branch の正しい件名のコミットを通す（ja-terms は PATH に無く claude-hooks の隣のもの、gitleaks は PATH のもの）

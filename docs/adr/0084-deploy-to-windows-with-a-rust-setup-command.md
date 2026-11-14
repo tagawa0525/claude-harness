@@ -147,6 +147,8 @@ hook の登録の形:
   `builtins.fromJSON` で読む要は無くなった）。Linux の登録も exec form になった。Windows の手順は README の「Windows で
   使う」に書き（gitleaks は winget で入れる）、Windows の CI の `setup` のジョブがその手順を流して、登録した hook が main への
   `git commit` を止めることを確かめる（2026-11-13）。残りは git hook の設置（#101 の段階 4）。進みは #101 に書く
+- Windows の手順の本文は `docs/windows.md` に移した（2026-11-14）。README の「Windows で使う」は、そこへのリンクだけを持つ。
+  入れる crate の一覧には `design-records` も入る
 
 ### 確認
 
