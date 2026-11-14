@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-14
 requires: [ADR-0074, ADR-0076, ADR-0082, ADR-0084, ADR-0085, ADR-0086, ADR-0087]
 supersedes: []
@@ -76,7 +76,7 @@ retro のスクリプト:
 
 - 退避: `claude-hooks stop [claude-dir]` に、今の `claude-memory-backup.sh` の振る舞い（退避の範囲、symlink のメモリの
   ディレクトリと上の階層のリポジトリでの失敗、`commit-tree` と古い値つきの `update-ref`、失敗の 1 行目と終了コード）を
-  移す。git は今と同じく子のプロセスで呼び、`--local-env-vars` の変数は子の環境から外す。hook の JSON は serde_json で読む。
+  移す。失敗の 1 行目の名前は `claude-hooks stop:` にする（通知で、どのコマンドの失敗かが分かるように）。git は今と同じく子のプロセスで呼び、`--local-env-vars` の変数は子の環境から外す。hook の JSON は serde_json で読む。
   引数の誤りを含め、0 と 1 のほかで終えない（Stop の hook の 2 は応答を続けさせる）
 - 登録: `claude-setup settings` は Stop に `claude-hooks`（`~/.claude/bin/claude-hooks`）を引数 `stop` で登録し、前の
   `claude-memory-backup` の登録を外す。Linux は `claude-code.nix` の `writeShellApplication` と `~/.claude/bin/claude-memory-backup`
@@ -108,8 +108,9 @@ retro のスクリプト:
 ### 帰結
 
 - 良い点: Windows でも自動メモリが退避される（2026-11-14 から。`~/.claude` が git のリポジトリの直下であることは、Linux と
-  同じく利用者が用意する。README の「Windows で使う」）。移し終えると、ハーネスの sh で jq を使うものが無くなり、Windows の手順から
-  jq を外せる（#101 の「決まっていないこと」。外すのは別の PR）
+  同じく利用者が用意する。README の「Windows で使う」）。retro の 3 本も移し終えた（2026-11-14）ので、スキルと hook が呼ぶ
+  ハーネスの sh で jq を使うものは無い。テストの sh（Windows の CI が流す `tests/merge-ja-terms.sh` など）と `windows.yml` は、まだ
+  jq を使う。Windows の手順から jq を外すのは別の PR（#101 の「決まっていないこと」）
 - 悪い点: `claude-hooks` が、Stop の hook と retro の処理も持つ。名前は段階 8 の後に見直す（ADR-0087 の帰結、#101）
 - 悪い点: `claude-hooks` の不具合が、PreToolUse の hook とメモリの退避の両方を止めうる（今は別のバイナリ）
 - 悪い点: ADR-0087 の帰結と同じく、移す PR の後は `claude-sync` でなく rebuild（Windows は `cargo install` の後に
@@ -126,6 +127,14 @@ retro のスクリプト:
 
 - `claude-hooks` の結合テスト（`tests/stop.rs`）が、`modules/home/parts/tests/claude-memory-backup.sh` の確かめていた振る舞いに、
   引数の誤りの終了コード 1、読めない hook の JSON、リポジトリの下の階層、ロックを別のプロセスが持つときの 30 秒の待ちを
-  足して、`nix flake check` と Windows の CI で通る（symlink と fsmonitor の子の 2 件は Unix だけ）
+  足して、`nix flake check` と Windows の CI で通る（symlink のメモリのディレクトリ、git が起動して残る子、失敗する git hook と CLAUDECODE、UTF-8 でないプロジェクトの名前の
+  4 件は Unix だけ）
 - `claude-setup` のテストで、Stop の登録が `claude-hooks stop` の 1 件になり、前の `claude-memory-backup` の登録が消える
-- 移した後、retro のスクリプトのファイルは `claude_hooks_script <名前>` を呼ぶだけになり、jq を使わない
+- retro のスクリプトの結合テスト（`tests/script_memory_index.rs`、`tests/script_prose_size.rs`、`tests/script_session_events.rs`）が、
+  `nix flake check` と Windows の CI で通る。session-events は、手元の 19 の記録（`~/.claude/projects` の、2026-11-14 の時点のもの）を、区間なしと 3 つの区間の
+  76 通りで前の sh（`LC_ALL=C`）と移した版の両方で読ませ、出力と終了コードがすべて一致した。この 19 の記録には、jq が止まる
+  形の行は無かった。前の sh と違えたのは、同じ回数の並び（前の sh ではロケールで変わった）と、jq が止まる形の行の扱い
+  （5 で止まらず、理由を出して 1 で終える）で、どちらも結合テストで確かめる
+- 移した後、retro のスクリプトのファイル（`memory-index.sh`、`prose-size.sh`、`session-events.sh`）は `lib/claude-hooks-script.sh` を
+  読んで `claude_hooks_script <名前>` を呼ぶだけになり、jq を使わない。`.claude/tests/scripts/retro.sh` は、それらをブランチの
+  バイナリで呼ぶ配備の確認として通る
