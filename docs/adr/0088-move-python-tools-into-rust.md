@@ -120,7 +120,9 @@ usage-report の日時:
   `--replace-refs=delete-no-add` に当たる振る舞い（コミットを消さない、本文の番号に触らない、本文の符号化を変えない、
   repack しない、旧から新への replace の ref を足さない）は、流れを書き換えずに渡し、ref を足さないことで同じになる。
   対応表（`old new`）は fast-export の `original-oid` と fast-import の `--export-marks` から作って書き換えたリポジトリの
-  git dir に置き、第 2 段の `commit-refs rewrite-history` に渡す。照合（ADR-0045）は今の Python の版と同じ項目を確かめる
+  git dir に置き、第 2 段の `commit-refs rewrite-history` に渡す。照合（ADR-0045）は今の Python の版と同じ項目を確かめる。
+  UTF-8 でない符号化を宣言した本文に直す語があるかは、`encoding_rs`（Rust の符号化の事実上の標準。WHATWG の符号化の名前で
+  引く）で読んで確かめる（Python の版は codecs で読んでいた）
 - 表の揃え直し（案 ア）: `fix_markdown_lint.rs` をライブラリの crate `fix-markdown-lint`（`modules/home/parts/fix-markdown-lint/`）に
   移す。`claude-hooks script fix-markdown-lint` と `staged-checks` はそれを呼ぶ。history-rewrite は fence の判定、表の行の
   判定、`format_table` を呼ぶ

@@ -14,9 +14,22 @@ pub struct CatFile {
 
 impl CatFile {
     pub fn new(top: &Path) -> Result<Self, String> {
-        let mut child = Command::new("git")
-            .arg("-C")
-            .arg(top)
+        Self::spawn(Command::new("git").arg("-C").arg(top))
+    }
+
+    /// 別のリポジトリのオブジェクトも読む（`GIT_ALTERNATE_OBJECT_DIRECTORIES` に objects を渡す。照合は書き換える前の
+    /// オブジェクトをミラーから読み、書き換えたリポジトリに ref を足さない）
+    pub fn with_alternate(top: &Path, objects: &Path) -> Result<Self, String> {
+        Self::spawn(
+            Command::new("git")
+                .arg("-C")
+                .arg(top)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", objects),
+        )
+    }
+
+    fn spawn(command: &mut Command) -> Result<Self, String> {
+        let mut child = command
             .args(["cat-file", "--batch"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
