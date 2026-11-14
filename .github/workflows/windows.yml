@@ -66,7 +66,7 @@ jobs:
           done
           ~/.claude/bin/claude-setup sync "$PWD"
           ~/.claude/bin/claude-setup settings --static modules/home/parts/claude-settings.json \
-            --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
+            --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)" --stop "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
           grep -qsxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
       # スキルの sh のスクリプトは、Linux と同じ "$HOME/.claude/bin/claude-hooks" で呼ぶ（ADR-0087）。Git Bash がこのパスに
       # .exe を補って起動することを、引数の足りない呼び出しの使い方の誤り（2）で確かめる（見つからなければ 127）

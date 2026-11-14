@@ -46,19 +46,6 @@ let
   # スキルのスクリプトは claude-sync が store を経ずにコピーするので store のパスを埋められず、PATH に頼らない
   # よう claude-hooks と同じ固定パスに置く
   ja-terms = pkgs.callPackage ./ja-terms/package.nix { };
-  # Stop の hook（応答の終わりごと）。自動メモリを ~/.claude の git の ref refs/memory-backup にコミットする（ADR-0076）。
-  # claude-hooks と同じく、settings.json には store のパスでなく固定パスを書く
-  claudeMemoryBackup = pkgs.writeShellApplication {
-    name = "claude-memory-backup";
-    runtimeInputs = with pkgs; [
-      coreutils
-      git
-      jq
-      util-linux # flock
-    ];
-    text = builtins.readFile ../scripts/claude-memory-backup.sh;
-  };
-  claudeMemoryBackupBinRel = ".claude/bin/claude-memory-backup";
   # 旧 bash hook のファイル名。settings.json の登録と ~/.claude/hooks の残骸を掃除するために残す
   legacyHookFiles = [
     "block-main-commit.sh"
@@ -91,10 +78,10 @@ in
   # 上流は .lsp.json が PATH に求める（rust-analyzer は各リポジトリの devShell、nixd はシステム、pyright は上）
   home.file.".claude/skills/lsp-det-dogfood".source = "${lsp-det}/dogfood/claude-plugin";
 
-  # PreToolUse hook バイナリ（settings.json はこの固定パスを参照する）
+  # PreToolUse と Stop の hook のバイナリ（settings.json はこの固定パスを参照する。Stop は claude-hooks stop で自動メモリを
+  # ~/.claude の git の ref refs/memory-backup にコミットする。ADR-0076、ADR-0089）
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
   home.file.".claude/bin/ja-terms".source = "${ja-terms}/bin/ja-terms";
-  home.file.${claudeMemoryBackupBinRel}.source = "${claudeMemoryBackup}/bin/claude-memory-backup";
 
   # .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド
   # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）。中身は claude-setup sync（ADR-0084）
@@ -134,7 +121,7 @@ in
     # 決まった手順）
     $DRY_RUN_CMD ${claude-setup}/bin/claude-setup settings --static ${./claude-settings.json} \
       --pre-tool-use "$HOME/${claudeHooksBinRel}" \
-      --stop "$HOME/${claudeMemoryBackupBinRel}" \
+      --stop "$HOME/${claudeHooksBinRel}" \
       ${lib.concatMapStringsSep " " (f: "--legacy ${f}") legacyHookFiles}
 
     # 旧 bash hook の残骸を消す（claude-sync は --delete を使わないため残り続ける）。
