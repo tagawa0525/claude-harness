@@ -57,9 +57,8 @@ ADR-0014 の辞書（`modules/home/parts/ja-terms/prh.yml`）は、これから�
 採用: 案 A1、B1、C1、D1。
 
 置き場（A1）: 辞書は nixfiles のもので、ツールはどのリポジトリでも使う（A2 は xlc に固有でないものを xlc に置く）。
-ja-terms の辞書と fix-markdown-lint.py の両方を store のパスで参照できる（git.nix の textlint と同じ形）。第 1 段は
-filter-repo の Python の callback なので、ツールも Python で書く。依存（git-filter-repo、pyyaml、regex）は
-`python3.withPackages` で入れる。ADR-0012 の「依存を増やさない」は `commit-refs` の crate の話で、ここには当てない。
+ツールは Rust の crate にし、辞書は ja-terms のライブラリ（`Dictionary::apply`）、表の揃え直しは fix-markdown-lint の
+ライブラリで当てる。第 1 段は `git fast-export` と `git fast-import` を直に扱う（ADR-0088）。
 
 辞書（B1）: B2 は辞書と食い違う。B3 はブロブごとに node を起こし、Markdown のコードを直さない（下の D1）。
 
@@ -72,11 +71,7 @@ filter-repo の Python の callback なので、ツールも Python で書く。
   - expected の `$1`〜`$99` は捕捉した群に置き換える
   - 一致した文字列が expected と同じなら直さない
 - pattern は prh と同じく、`/…/` を JavaScript の正規表現（u フラグと m フラグ）、ほかを固定の文字列として読む。
-  Python の `regex` に書き直すのは、prh の辞書が長さの違う選択肢を lookbehind に使い（PR #413 の
-  `(?<=[にがのをはもでな、]|^)抜け`）、標準の re ではそれを読めないため
-- `^`、`$`、`.` は JavaScript の行の終わり（`\n`、`\r`、U+2028、U+2029）で読み替える。当たる範囲が Python と違う
-  書き方（`\d`、`\w`、`\s`、`\b`、i フラグ、空の文字クラス）と、書き直していない書き方（後方参照、名前つきの群、Unicode の
-  性質、prh の `options`、`regexpMustEmpty`、`imports`、pattern の無い規則）は、推測せずに止める
+  正規表現は ECMAScript の正規表現のエンジン（regress）で、書き直さずに読む（ADR-0085）
 - 辞書を読むとき、どの規則も specs を確かめる（prh と同じ）。書き直しの誤りは、ここで止まる
 
 2 段（C1）: C2 は ADR-0013 が案 A として採らなかった方式で、付け直しの規則も 2 か所になる。C3 は lookbehind を読む
@@ -143,8 +138,7 @@ ref を移す前の各 worktree の HEAD を控えれば、worktree の合わせ
 - 良い点: 規則の出典が prh.yml の 1 つになり、書き換えた履歴は hook の辞書の検査を通る
 - 良い点: 番号の付け直しは 1 回で終わり、規則は commit-refs の 1 か所にある
 - 良い点: 照合が通らなければ止まり、元のリポジトリは変わらない
-- 悪い点: prh の JavaScript の正規表現を Python に書き直すので、書き直していない書き方を辞書に足すと、このツールが止まる
-  （止まれば、その書き方の読み替えを足す）
+- 悪い点: prh の意味（段落、重なり、`$N`）を自前で持つので、prh の新しい版の変更には自分で追いつく（ADR-0085）
 - 悪い点: textlint は Markdown のコードを見ないが、このツールは直す。語を例に挙げる文書は、除くパスで外す
 - 悪い点: UTF-8 として読めないテキストのブロブは直さない（数を `NOT_UTF8:` に出す）。宣言した符号化（`encoding` の
   見出し）が UTF-8 でない本文は変えず、直す語があれば止める（UTF-8 の語を書くと文字化けする）。UTF-8 として読めない
@@ -203,3 +197,14 @@ xlc の `references/history-rewrite/`（`callback2.py`、`cb_lib.py`、`iterate3
   変更が無いこと」を、ツールが ref を移す前の HEAD と比べて確かめる。部分のステージは、前の手順ではファイルの全体を
   ステージし直して失っていたが、何も変えずに人に返す。diff-files が見ない変更（assume-unchanged の印）と、HEAD を
   移すと古い履歴を持ち込む操作の途中も、同じく人に返す（#673）
+- 2026-11-14: ツールを Python から Rust の crate に移した（ADR-0088。#101 の段階 7）。置き場（A1）の前は「ja-terms の辞書と
+  fix-markdown-lint.py の両方を store のパスで参照できる（git.nix の textlint と同じ形）。第 1 段は filter-repo の Python の
+  callback なので、ツールも Python で書く。依存（git-filter-repo、pyyaml、regex）は `python3.withPackages` で入れる。
+  ADR-0012 の「依存を増やさない」は `commit-refs` の crate の話で、ここには当てない。」。辞書（B1）の pattern の読み方の前は
+  「Python の `regex` に書き直すのは、prh の辞書が長さの違う選択肢を lookbehind に使い（PR #413 の
+  `(?<=[にがのをはもでな、]|^)抜け`）、標準の re ではそれを読めないため」と、`^`、`$`、`.` を読み替え、当たる範囲が
+  Python と違う書き方と書き直していない書き方で止める項。filter-repo は Python のプログラムなので、callback を Rust に
+  しても Windows で Python が要る（ADR-0088 の決定の要因）。第 1 段は fast-export と fast-import を直に扱い、C1 の
+  filter-repo の設定（`--preserve-commit-hashes`、`--prune-empty=never` など）に当たる振る舞いを同じにした。2 段（C1）の
+  C3 を採らない理由のうち「lookbehind を読むために fancy-regex のような crate が要り」は、ja-terms が regress で読むように
+  なって当たらなくなった。C3 を採らない今の理由は ADR-0088 の案 3（語の変換と番号の付け直しの間の照合ができない）
