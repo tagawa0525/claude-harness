@@ -13,7 +13,7 @@
 //! 失敗したときは、1 行目に理由を書いて終了コード 1 で終わる。Claude Code は Stop の hook の 0 と 2 のほかの終了コードを
 //! 止めない失敗として扱い、標準エラーの 1 行目を通知に出す。2 は応答を続けさせるので、引数の誤りでも使わない
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -102,7 +102,7 @@ impl Git {
         Ok(git)
     }
 
-    fn output(&self, args: &[&str], input: Option<&[u8]>) -> Result<Output, String> {
+    fn output<S: AsRef<OsStr>>(&self, args: &[S], input: Option<&[u8]>) -> Result<Output, String> {
         let mut cmd = Command::new("git");
         for var in &self.local_env {
             cmd.env_remove(var);
@@ -123,17 +123,17 @@ impl Git {
             }
             None => cmd.stdin(Stdio::null()).output(),
         }
-        .map_err(|e| format!("git {} を実行できません（{e}）", args.join(" ")))?;
+        .map_err(|e| format!("git {} を実行できません（{e}）", show(args)))?;
         Ok(out)
     }
 
     /// 成功したときの標準出力（末尾の改行を除く）。失敗は git の標準エラーを理由にする
-    fn run(&self, args: &[&str], input: Option<&[u8]>) -> Result<String, String> {
+    fn run<S: AsRef<OsStr>>(&self, args: &[S], input: Option<&[u8]>) -> Result<String, String> {
         let out = self.output(args, input)?;
         if !out.status.success() {
             return Err(format!(
                 "git {} が失敗しました: {}",
-                args.join(" "),
+                show(args),
                 String::from_utf8_lossy(&out.stderr).trim_end()
             ));
         }
@@ -145,6 +145,12 @@ impl Git {
     fn text(&self, args: &[&str]) -> Result<String, String> {
         self.run(args, None)
     }
+}
+
+/// 失敗の文に出す git の引数
+fn show<S: AsRef<OsStr>>(args: &[S]) -> String {
+    let args: Vec<_> = args.iter().map(|a| a.as_ref().to_string_lossy()).collect();
+    args.join(" ")
 }
 
 fn backup(dir: &Path, input: &Input) -> Result<(), String> {
@@ -193,15 +199,16 @@ fn backup(dir: &Path, input: &Input) -> Result<(), String> {
         }
     }
 
-    // 作業ツリーの index でなく一時の index に足す。利用者がステージした変更と、main の HEAD に触らない
-    let tmp = TempDir::new(&gitdir)?;
+    // 作業ツリーの index でなく一時の index に足す。利用者がステージした変更と、main の HEAD に触らない。index は
+    // メモリの中身を指すので、持ち主だけが読める場所に置く
+    let tmp = crate::process::private_temp_dir("claude-hooks-memory-backup")?;
     git.index = Some(tmp.0.join("index"));
 
     let mems = memory_dirs(dir)?;
     if !mems.is_empty() {
         // -f: ~/.claude の .gitignore（手で管理していて、ホストごとに無いこともある）に頼らず、メモリだけを入れる
-        let mut args = vec!["add", "-f", "--"];
-        args.extend(mems.iter().map(String::as_str));
+        let mut args: Vec<&OsStr> = ["add", "-f", "--"].map(OsStr::new).to_vec();
+        args.extend(mems.iter().map(|m| m.as_os_str()));
         git.run(&args, None)?;
     }
     let tree = git.text(&["write-tree"])?;
@@ -247,10 +254,10 @@ fn backup(dir: &Path, input: &Input) -> Result<(), String> {
     Ok(())
 }
 
-/// `projects/*/memory`（claude-dir からの相対パス）。bash の glob と同じく、`.` で始まる名前は読まない。symlink の
+/// `projects/*/memory`（claude-dir からの相対パス）。`.` で始まる名前は読まない。symlink の
 /// メモリのディレクトリは、git add がリンク（mode 120000）だけを入れて中身を退避しないので、成功と見せずに止める。
 /// リンクを追うと、リポジトリの外のファイルまで取り込める
-fn memory_dirs(dir: &Path) -> Result<Vec<String>, String> {
+fn memory_dirs(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let projects = dir.join("projects");
     let entries = match std::fs::read_dir(&projects) {
         Ok(entries) => entries,
@@ -261,52 +268,23 @@ fn memory_dirs(dir: &Path) -> Result<Vec<String>, String> {
     for entry in entries {
         let entry = entry.map_err(|e| format!("{} を読めません（{e}）", projects.display()))?;
         let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            return Err(format!(
-                "{} に UTF-8 でない名前があります: {}",
-                projects.display(),
-                name.to_string_lossy()
-            ));
-        };
-        if name.starts_with('.') || !entry.path().is_dir() {
+        if name.as_encoded_bytes().starts_with(b".") || !entry.path().is_dir() {
             continue;
         }
-        let rel = format!("projects/{name}/memory");
-        match std::fs::symlink_metadata(dir.join(&rel)) {
+        let rel = Path::new("projects").join(&name).join("memory");
+        let path = dir.join(&rel);
+        match std::fs::symlink_metadata(&path) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(format!(
-                    "{}/{rel} は symlink で、中身を退避できません",
-                    dir.display()
+                    "{} は symlink で、中身を退避できません",
+                    path.display()
                 ));
             }
             Ok(_) => mems.push(rel),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}/{rel} を読めません（{e}）", dir.display())),
+            Err(e) => return Err(format!("{} を読めません（{e}）", path.display())),
         }
     }
     mems.sort();
     Ok(mems)
-}
-
-/// gitdir の下の一時のディレクトリ（一時の index の置き場）。抜けるときに消す
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(gitdir: &Path) -> Result<TempDir, String> {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default();
-        let dir = gitdir.join(format!("memory-backup-tmp.{}.{nanos}", std::process::id()));
-        // 名前が既にあれば使わない（作れた後にだけ片付けの対象にする）
-        std::fs::create_dir(&dir)
-            .map_err(|e| format!("一時のディレクトリ {} を作れません（{e}）", dir.display()))?;
-        Ok(TempDir(dir))
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
