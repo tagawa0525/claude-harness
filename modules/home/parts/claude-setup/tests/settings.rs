@@ -71,7 +71,6 @@ impl Home {
 }
 
 const HOOKS: &str = "/home/u/.claude/bin/claude-hooks";
-const BACKUP: &str = "/home/u/.claude/bin/claude-memory-backup";
 const DATE: &str = "date '+現在時刻: %F %H:%M %Z'";
 
 fn pre_tool_use() -> Value {
@@ -81,7 +80,7 @@ fn pre_tool_use() -> Value {
 }
 
 fn stop() -> Value {
-    json!({"hooks": [{"type": "command", "command": BACKUP, "args": [], "timeout": 60}]})
+    json!({"hooks": [{"type": "command", "command": HOOKS, "args": ["stop"], "timeout": 60}]})
 }
 
 fn date() -> Value {
@@ -93,7 +92,7 @@ fn a_missing_settings_file_gets_the_static_settings_and_the_hooks() {
     let home = Home::new();
     let got = home.ok(
         &json!({"language": "Japanese"}),
-        &["--pre-tool-use", HOOKS, "--stop", BACKUP],
+        &["--pre-tool-use", HOOKS, "--stop", HOOKS],
     );
     assert_eq!(
         got,
@@ -152,7 +151,7 @@ fn the_old_registrations_are_replaced_and_other_hooks_are_kept() {
             "--pre-tool-use",
             HOOKS,
             "--stop",
-            BACKUP,
+            HOOKS,
             "--legacy",
             "guard-git-add.sh",
         ],
@@ -193,7 +192,7 @@ fn exec_form_registrations_including_windows_paths_are_recognized() {
 #[test]
 fn running_twice_gives_the_same_settings() {
     let home = Home::new();
-    let args = ["--pre-tool-use", HOOKS, "--stop", BACKUP];
+    let args = ["--pre-tool-use", HOOKS, "--stop", HOOKS];
     let first = home.ok(&json!({"language": "Japanese"}), &args);
     let second = home.ok(&json!({"language": "Japanese"}), &args);
     assert_eq!(first, second);
@@ -201,7 +200,7 @@ fn running_twice_gives_the_same_settings() {
 
 #[test]
 fn hooks_that_are_not_given_are_left_as_they_are() {
-    // Windows は claude-memory-backup を入れない（#101 の段階 8 まで）。渡さない hook の登録には触らない
+    // 渡さない hook の登録には触らない
     let home = Home::new();
     let existing = json!([{"hooks": [{"type": "command", "command": "/opt/stop"}]}]);
     home.write_settings(&json!({"hooks": {"Stop": existing}}));
@@ -239,7 +238,7 @@ fn groups_without_a_hooks_list_are_kept() {
     // ハーネスの規則に当たらない組は、形が崩れていても消さない
     let home = Home::new();
     home.write_settings(&json!({"hooks": {"Stop": [{"matcher": "x"}]}}));
-    let got = home.ok(&json!({}), &["--stop", BACKUP]);
+    let got = home.ok(&json!({}), &["--stop", HOOKS]);
     assert_eq!(got["hooks"]["Stop"], json!([{"matcher": "x"}, stop()]));
 }
 
@@ -254,16 +253,32 @@ fn an_event_that_is_not_a_list_is_left_untouched() {
 }
 
 #[test]
-fn an_exec_form_registration_without_args_is_recognized() {
+fn the_old_memory_backup_registration_without_args_is_replaced() {
+    // #101 の段階 8 の前は、退避を別のバイナリ claude-memory-backup で登録していた（ADR-0089）
     let home = Home::new();
-    let windows = r"C:\Users\u\.claude\bin\claude-memory-backup.exe";
+    let old = r"C:\Users\u\.claude\bin\claude-memory-backup.exe";
+    let hooks = r"C:\Users\u\.claude\bin\claude-hooks.exe";
     home.write_settings(&json!({"hooks": {"Stop": [
-        {"hooks": [{"type": "command", "command": windows, "timeout": 60}]},
+        {"hooks": [{"type": "command", "command": old, "timeout": 60}]},
     ]}}));
-    let got = home.ok(&json!({}), &["--stop", windows]);
+    let got = home.ok(&json!({}), &["--stop", hooks]);
     assert_eq!(
         got["hooks"]["Stop"],
-        json!([{"hooks": [{"type": "command", "command": windows, "args": [], "timeout": 60}]}])
+        json!([{"hooks": [{"type": "command", "command": hooks, "args": ["stop"], "timeout": 60}]}])
+    );
+}
+
+#[test]
+fn a_shell_form_stop_registration_of_claude_hooks_is_replaced() {
+    let home = Home::new();
+    home.write_settings(&json!({"hooks": {"Stop": [
+        {"hooks": [{"type": "command", "command": "/home/u/.claude/bin/claude-hooks stop", "timeout": 60}]},
+        {"hooks": [{"type": "command", "command": "/opt/stop"}]},
+    ]}}));
+    let got = home.ok(&json!({}), &["--stop", HOOKS]);
+    assert_eq!(
+        got["hooks"]["Stop"],
+        json!([{"hooks": [{"type": "command", "command": "/opt/stop"}]}, stop()])
     );
 }
 
