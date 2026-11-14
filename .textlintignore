@@ -4,3 +4,4 @@ modules/home/parts/history-rewrite/test_prh_rules.py
 modules/home/parts/history-rewrite/test_history_rewrite.py
 modules/home/parts/claude-hooks/tests/merge-ja-terms.sh
 modules/home/parts/ja-terms/tests/prh.rs
+modules/home/parts/history-rewrite/tests/

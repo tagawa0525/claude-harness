@@ -25,6 +25,10 @@ use std::path::Path;
 use regress::Regex;
 use yaml_rust2::{Yaml, YamlLoader};
 
+/// 崩れた日本語の語の辞書（prh.yml）。CLI の既定と、history-rewrite の既定の辞書（ビルドに埋めるので、置き場を
+/// 探さずに Windows でも同じ辞書を使う）
+pub const DICTIONARY: &str = include_str!("../prh.yml");
+
 /// 辞書を読めない、prh が読めない書き方がある、specs が合わない
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictionaryError(pub String);
@@ -101,6 +105,12 @@ impl Dictionary {
         Ok(Dictionary {
             rules: parse_rules(yaml, name)?,
         })
+    }
+
+    /// other の規則を、この辞書の規則の後ろに並べる。prh の Engine.merge と違い、同じ expected の規則を外さない
+    /// （history-rewrite が --dictionary と --extra-rules を渡した順に並べる。ADR-0045）
+    pub fn append(&mut self, other: Dictionary) {
+        self.rules.extend(other.rules);
     }
 
     pub fn len(&self) -> usize {

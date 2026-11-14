@@ -327,3 +327,28 @@ fn a_repeated_flag_is_refused() {
     let e = refused_rule("/a/gg");
     assert!(e.contains("フラグ"), "{e}");
 }
+
+// 複数の辞書（history-rewrite の --dictionary と --extra-rules）
+
+#[test]
+fn appended_dictionaries_keep_rules_with_the_same_expected_in_order() {
+    // prh の Engine.merge と違い、前の辞書の同じ expected の規則を外さない（ADR-0045）
+    let mut dictionary = rule("新", "旧");
+    dictionary.append(rule("新", "古"));
+    assert_eq!(dictionary.len(), 2);
+    assert_eq!(apply(&dictionary, "旧と古"), "新と新");
+}
+
+#[test]
+fn appended_rules_overlap_like_one_dictionary() {
+    // 重なった一致の選び方（同じ開始なら長い方）は、規則がどの辞書から来たかによらない
+    let mut dictionary = rule("短", "ab");
+    dictionary.append(rule("長", "abc"));
+    assert_eq!(apply(&dictionary, "abcd"), "長d");
+}
+
+#[test]
+fn the_built_in_dictionary_is_the_ja_terms_dictionary() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml");
+    assert_eq!(ja_terms::DICTIONARY, std::fs::read_to_string(path).unwrap());
+}
