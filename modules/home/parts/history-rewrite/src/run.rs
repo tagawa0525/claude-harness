@@ -8,7 +8,7 @@
 //! repack もしない（`--no-gc`）。replace の ref も足さない（`--replace-refs=delete-no-add`）。
 
 use crate::{Stop, Transformer, Words, git};
-use commit_refs::object::{CatFile, Header, split_object, strip_signature, values};
+use commit_refs::object::{CatFile, Header, split_command, split_object, strip_signature, values};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -88,16 +88,37 @@ fn write_map(path: &Path, map: &CommitMap) -> Result<(), Stop> {
     std::fs::write(path, text).map_err(|e| Stop(format!("{}: 書けない: {e}", path.display())))
 }
 
-/// コミットの encoding の見出しが無いか UTF-8 か（git の is_encoding_utf8 と同じく、大文字と小文字、- を問わない）
+/// コミットの encoding の見出しが無いか UTF-8 か（git の is_encoding_utf8 と同じく、大文字と小文字を問わずに utf-8 か
+/// utf8）
 pub fn is_utf8(encoding: Option<&[u8]>) -> bool {
-    encoding.is_none_or(|e| {
-        let e: Vec<u8> = e
-            .iter()
-            .filter(|b| **b != b'-')
-            .map(u8::to_ascii_lowercase)
-            .collect();
-        e == b"utf8"
-    })
+    encoding.is_none_or(|e| e.eq_ignore_ascii_case(b"utf-8") || e.eq_ignore_ascii_case(b"utf8"))
+}
+
+/// git が encoding の見出しの名前で iconv に渡す符号化。WHATWG の名前（encoding_rs）で引き、引けなければ iconv と
+/// Python の codecs の綴り（eucJP、euc_jp、cp932、latin1 など）を WHATWG の名前に読み替える
+fn codec_of(label: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    if let Some(found) = encoding_rs::Encoding::for_label(label) {
+        return Some(found);
+    }
+    let folded: String = String::from_utf8_lossy(label)
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_'))
+        .collect();
+    let whatwg = match folded.as_str() {
+        "eucjp" => "euc-jp".to_string(),
+        "shiftjis" | "sjis" => "shift_jis".to_string(),
+        "cp932" | "ms932" | "windows31j" => "windows-31j".to_string(),
+        "iso2022jp" => "iso-2022-jp".to_string(),
+        "euckr" => "euc-kr".to_string(),
+        "latin1" => "iso-8859-1".to_string(),
+        f if f.starts_with("iso8859") => format!("iso-8859-{}", &f["iso8859".len()..]),
+        f if f.len() > 2 && f.starts_with("cp") && f[2..].chars().all(|c| c.is_ascii_digit()) => {
+            format!("windows-{}", &f[2..])
+        }
+        _ => return None,
+    };
+    encoding_rs::Encoding::for_label(whatwg.as_bytes())
 }
 
 /// 宣言した符号化 encoding（UTF-8 でない）の本文に、直す語があるか
@@ -108,7 +129,7 @@ fn message_would_change(
     name: &str,
 ) -> Result<bool, Stop> {
     let label = String::from_utf8_lossy(encoding);
-    let Some(codec) = encoding_rs::Encoding::for_label(encoding) else {
+    let Some(codec) = codec_of(encoding) else {
         return Err(Stop(format!("{name}: 符号化 {label} を知らない")));
     };
     let Some(text) = codec.decode_without_bom_handling_and_without_replacement(data) else {
@@ -121,14 +142,6 @@ fn message_would_change(
 
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
-}
-
-/// 行を、最初の空白の前と後に分ける
-fn split_command(line: &[u8]) -> (&[u8], &[u8]) {
-    match line.iter().position(|b| *b == b' ') {
-        Some(p) => (&line[..p], &line[p + 1..]),
-        None => (line, &[]),
-    }
 }
 
 /// fast-export のパス（`"` で囲んだものは C の書き方のエスケープ）を、バイト列のパスにする（git の quote.c の
@@ -298,15 +311,26 @@ pub fn stage1(repo: &Path, transformer: &mut Transformer) -> Result<(Counts, Com
             messages: 0,
         },
         originals: HashMap::new(),
+        ended_early: false,
     };
     let result = filter.stream(&mut input, &mut output);
-    let (counts, originals) = (filter.counts, filter.originals);
-    drop(output);
+    let (counts, originals, ended_early) = (filter.counts, filter.originals, filter.ended_early);
     if result.is_err() {
-        let _ = export.kill();
+        // 途中で閉じた流れを fast-import に読ませると「stream ends early」と crash report を書き、止めた理由が埋もれる
+        let _ = import.kill();
+        if !ended_early {
+            let _ = export.kill();
+        }
     }
+    drop(output);
     let export_status = export.wait().map_err(io)?;
     let import_status = import.wait().map_err(io)?;
+    if ended_early && !export_status.success() {
+        // 流れが終わったのは fast-export が失敗したため（理由は fast-export の標準エラー）
+        return Err(Stop(format!(
+            "git fast-export が失敗した（{export_status}）"
+        )));
+    }
     result?;
     if !export_status.success() {
         return Err(Stop(format!(
@@ -348,6 +372,8 @@ struct Filter<'a> {
     counts: Counts,
     /// コミットの印 → 元の番号
     originals: HashMap<String, String>,
+    /// fast-export の流れが done の前に終わった
+    ended_early: bool,
 }
 
 impl Filter<'_> {
@@ -358,6 +384,7 @@ impl Filter<'_> {
     ) -> Result<(), Stop> {
         loop {
             let Some(line) = input.next()? else {
+                self.ended_early = true;
                 return Err(Stop("fast-export の流れが done の前に終わった".to_string()));
             };
             let (command, _) = split_command(&line);
@@ -928,7 +955,7 @@ fn refuse_nested_tags(repo: &Path) -> Result<(), Stop> {
     )))
 }
 
-/// path の実体のパス。無い末尾の成分は、ある祖先の実体のパスにつなぐ（Python の Path.resolve と同じく、無くても止めない）
+/// path の実体のパス。無い末尾の成分は、いちばん近い、ある祖先の実体のパスにつなぐ（無くても止めない）
 fn resolve(path: &Path) -> Result<PathBuf, Stop> {
     let absolute =
         std::path::absolute(path).map_err(|e| Stop(format!("{}: {e}", path.display())))?;
