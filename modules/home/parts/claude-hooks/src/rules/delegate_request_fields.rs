@@ -272,7 +272,7 @@ mod tests {
 
     fn pointer(path: &std::path::Path) -> String {
         format!(
-            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼んで、その手順に従って進める。",
+            "依頼文は `{}` にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼んで、その手順に従って進める。",
             path.display()
         )
     }
@@ -379,7 +379,7 @@ mod tests {
         let tmp = TempDir::new("file-first-line");
         let path = tmp.0.join("brief.md");
         std::fs::write(&path, COMPLETE.replace("完成の形: テストが通る\n", "")).unwrap();
-        let prompt = format!("依頼文は {} にある。Read で読んで従う。", path.display());
+        let prompt = format!("依頼文は `{}` にある。Read で読んで従う。", path.display());
         assert!(deny_reason(&check(&prompt)).contains("欠けた欄: 完成の形"));
     }
 
@@ -388,7 +388,7 @@ mod tests {
         let tmp = TempDir::new("file-other");
         let path = tmp.0.join("brief.md");
         std::fs::write(&path, "/retro を回す。\n").unwrap();
-        let prompt = format!("依頼文は {} にある。Read で読んで従う。", path.display());
+        let prompt = format!("依頼文は `{}` にある。Read で読んで従う。", path.display());
         assert!(check(&prompt).is_empty());
     }
 
@@ -553,7 +553,7 @@ mod tests {
     fn request_file_that_is_not_a_regular_file_is_denied_without_reading() {
         let tmp = TempDir::new("dir");
         let prompt = format!(
-            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            "依頼文は `{}` にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
             tmp.0.display()
         );
         let findings = check(&prompt);
@@ -585,7 +585,7 @@ mod tests {
         let complete = tmp.0.join("brief.md");
         std::fs::write(&complete, COMPLETE).unwrap();
         let prompt = format!(
-            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            "依頼文は `{}` にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
             crate::shell::to_msys(&complete)
         );
         assert!(check(&prompt).is_empty());
