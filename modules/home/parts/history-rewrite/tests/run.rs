@@ -133,7 +133,8 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// test_history_rewrite.py の setUpClass と同じ履歴を 1 度だけ書き換えた結果
+/// 語と番号を直す文書、手で直したコミット、ブランチ、タグ（署名つき、tagger の無いもの）、符号化を宣言した本文を
+/// 持つ履歴を、1 度だけ書き換えた結果
 struct Fixture {
     root: PathBuf,
     repo: Repo,

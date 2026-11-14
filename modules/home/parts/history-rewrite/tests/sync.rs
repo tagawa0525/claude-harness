@@ -1,6 +1,6 @@
 //! 書き換えた ref を生きているリポジトリに移した後、`history-rewrite sync-worktrees` が各 worktree を新しい履歴に
-//! 合わせること（ADR-0045 の「## 変更」の 2026-11-11、ADR-0088）。test_history_rewrite.py の SyncWorktrees と同じ
-//! worktree を作る。
+//! 合わせること（ADR-0045 の「## 変更」の 2026-11-11、ADR-0088）。合わせられる worktree と、
+//! 機械では合わせられない worktree を 1 つずつ作る。
 //!
 //! 第 2 段と worktree の番号の付け直しの `commit-refs` は PATH のものを使う。辞書の語（崩れた語）をわざと含むので、
 //! .textlintignore で ja-terms の検査から外す。
