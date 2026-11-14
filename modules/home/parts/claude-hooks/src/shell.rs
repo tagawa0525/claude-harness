@@ -852,7 +852,16 @@ impl Shell {
     /// cmd が `ssh` か `sudo -i` の中で走るか（`target_dir` が手元に実在しない場所の書き方から始める）。
     /// ルールが止める理由を、移れない cd 先と取り違えずに書くのに使う
     pub fn runs_under_ssh_or_login(&self, cmd: &Cmd) -> bool {
-        let moves_away = |c: &Cmd| c.remote.is_some() || c.login_home.is_some();
+        self.runs_under(cmd, |c| c.remote.is_some() || c.login_home.is_some())
+    }
+
+    /// cmd が `ssh` の先（別のホスト）で走るか。`sudo -i` は同じホストなので数えない
+    pub fn runs_under_ssh(&self, cmd: &Cmd) -> bool {
+        self.runs_under(cmd, |c| c.remote.is_some())
+    }
+
+    /// cmd 自身か、cmd を中で起動するコマンドが moves_away に当たるか
+    fn runs_under(&self, cmd: &Cmd, moves_away: impl Fn(&Cmd) -> bool) -> bool {
         moves_away(cmd)
             || self.cmds.iter().any(|c| {
                 c.start < cmd.start
