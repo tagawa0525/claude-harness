@@ -378,13 +378,30 @@ fn replace_file(f: &Path, data: &[u8]) -> Result<(), Stop> {
     let written = file
         .write_all(data)
         .and_then(|()| file.sync_all())
-        .and_then(|()| std::fs::set_permissions(&tmp, permissions))
-        .and_then(|()| std::fs::rename(&tmp, f));
+        .and_then(|()| std::fs::set_permissions(&tmp, permissions.clone()))
+        .and_then(|()| replace_over(&tmp, f, &permissions));
     if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
         return Err(fail(e));
     }
     Ok(())
+}
+
+/// tmp を f の名前に置き換える。Windows は読み出し専用のファイルの上に rename できないので、置き換える間だけ f の
+/// 読み出し専用を外す（置き換えた後の f は、tmp に付けた元の権限を持つ）
+fn replace_over(tmp: &Path, f: &Path, permissions: &std::fs::Permissions) -> std::io::Result<()> {
+    if cfg!(windows) && permissions.readonly() {
+        let mut writable = permissions.clone();
+        #[allow(clippy::permissions_set_readonly_false)]
+        writable.set_readonly(false);
+        std::fs::set_permissions(f, writable)?;
+        let renamed = std::fs::rename(tmp, f);
+        if renamed.is_err() {
+            let _ = std::fs::set_permissions(f, permissions.clone());
+        }
+        return renamed;
+    }
+    std::fs::rename(tmp, f)
 }
 
 /// 1 つの worktree を合わせる。変更が無ければ None、あれば commit-refs remap の出力を返す。
