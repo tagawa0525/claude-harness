@@ -493,10 +493,11 @@ assert_eq 1 $?
 assert_contains "$out" "FAILED: rust docs-test"
 assert_eq "" "$(fake_log cargo)"
 
-it "run-checks: 排他のジョブが実行中なら、宣言したテストを taskset の 1 コアで実行する"
+it "run-checks: r995 の上で排他のジョブが実行中なら、宣言したテストを taskset の 1 コアで実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-exclusive"
 echo 'body' >> doc.md && git add doc.md
 make_fake_tool squeue '*) printf "NO|openmc-2K|1234\\n" ;;'
+make_fake_tool hostname '*) echo r995 ;;'
 make_fake_tool taskset '*) shift 2; exec "$@" ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
@@ -504,6 +505,7 @@ assert_contains "$(fake_log taskset)" "bash scripts/run-rust-docs-tests.sh"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 make_fake_tool squeue '*) exit 0 ;;'
 remove_fake_tool taskset
+remove_fake_tool hostname
 
 it "run-checks: ステージ済みの .sh だけを shellcheck で検査する"
 # 既存の .sh 全体を見ると、shellcheck を通していない既存ファイルでコミットが止まる
