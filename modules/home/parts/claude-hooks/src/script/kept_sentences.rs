@@ -20,12 +20,15 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
+// `S` は Python の正規表現の `\s`（str.isspace の文字）。Rust の `\s`（Unicode の White_Space）は \x1c〜\x1f を含まない
 static LIST_MARK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(?:[-*+]|\d+\.)\s+").unwrap());
-static HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*#{1,6}\s+").unwrap());
-static QUOTE_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*>\s?").unwrap());
-static FENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*(```|~~~)").unwrap());
-static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+    LazyLock::new(|| Regex::new(&format!(r"^{S}*(?:[-*+]|\d+\.){S}+")).unwrap());
+static HEADING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"^{S}*#{{1,6}}{S}+")).unwrap());
+static QUOTE_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"^{S}*>{S}?")).unwrap());
+static FENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"^{S}*(```|~~~)")).unwrap());
+static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"{S}+")).unwrap());
+const S: &str = r"[\s\x1c-\x1f]";
 const SENTENCE_END: &str = "。？！";
 const OPEN: &str = "（(「『";
 const CLOSE: &str = "）)」』";
@@ -61,31 +64,49 @@ pub fn main(args: &[String]) -> i32 {
     i32::from(changed)
 }
 
-/// `--old` と `--new` の後に、次のオプションまでのファイルを 1 つ以上ずつ受ける
+/// `--old` と `--new` の後に、次のオプションまでのファイルを 1 つ以上ずつ受ける。.py の argparse（`nargs="+"`）と同じく、
+/// `--old=FILE` と一意な省略形（`--o`、`--ne` など）を受け、同じオプションを重ねると後のものだけを残す
 fn parse_args(args: &[String]) -> Option<(Vec<String>, Vec<String>)> {
     let mut olds: Option<Vec<String>> = None;
     let mut news: Option<Vec<String>> = None;
-    let mut current: Option<&mut Vec<String>> = None;
+    // 今ファイルを受けているオプション（true は --old）
+    let mut current: Option<bool> = None;
     for arg in args {
-        match arg.as_str() {
-            "--old" | "--new" => {
-                if current.as_ref().is_some_and(|c| c.is_empty()) {
+        if arg.starts_with('-') && arg.len() > 1 {
+            if let Some(is_old) = current {
+                let open = if is_old { &olds } else { &news };
+                if open.as_ref().is_some_and(Vec::is_empty) {
                     return None;
                 }
-                let slot = if arg == "--old" { &mut olds } else { &mut news };
-                current = Some(slot.get_or_insert_with(Vec::new));
             }
-            _ if arg.starts_with('-') && arg.len() > 1 => return None,
-            _ => current.as_mut()?.push(arg.clone()),
+            let (name, value) = match arg.split_once('=') {
+                Some((name, value)) => (name, Some(value)),
+                None => (arg.as_str(), None),
+            };
+            let is_old = match name {
+                _ if name.len() > 2 && "--old".starts_with(name) => true,
+                _ if name.len() > 2 && "--new".starts_with(name) => false,
+                _ => return None,
+            };
+            let slot = if is_old { &mut olds } else { &mut news };
+            *slot = Some(value.map(|v| vec![v.to_string()]).unwrap_or_default());
+            current = Some(is_old);
+            continue;
         }
+        let slot = match current? {
+            true => &mut olds,
+            false => &mut news,
+        };
+        slot.as_mut()?.push(arg.clone());
     }
     let (olds, news) = (olds?, news?);
     (!olds.is_empty() && !news.is_empty()).then_some((olds, news))
 }
 
+/// ファイルの中身。改行は .py の open の universal newlines と同じく、CRLF と CR を LF に読み替える
 fn read(path: &str) -> Option<String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => Some(text),
+        Ok(text) => Some(text.replace("\r\n", "\n").replace('\r', "\n")),
         Err(e) => {
             eprintln!("ERROR: 読めない: {path}: {e}");
             None

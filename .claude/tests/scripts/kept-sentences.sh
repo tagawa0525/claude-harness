@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# .claude/scripts/kept-sentences.sh（規則の文書を縮めたとき、残した文が元の版の部分文字列かを確かめる）のテスト
+# .claude/scripts/kept-sentences.sh（規則の文書を縮めたとき、残した文が元の版にあるかを確かめる）のテスト
 #
 # 実行: bash .claude/tests/scripts/kept-sentences.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
