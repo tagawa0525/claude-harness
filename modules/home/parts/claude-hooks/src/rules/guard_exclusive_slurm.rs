@@ -348,6 +348,20 @@ fn running_exclusive_jobs() -> Vec<ExclusiveJob> {
         .collect()
 }
 
+/// 実行中の排他のジョブの名前と番号と、このホストがそのジョブのノードか。このホストがどれかの排他のジョブのノードなら
+/// そのジョブと true、でなければ最初のジョブと false（ホストかノードが分からなければノードとみなす）。排他のジョブが
+/// 無ければ None。run-checks が、このルールと同じ判定で自分を限るため（ADR-0041）
+pub(crate) fn exclusive_job() -> Option<(String, String, bool)> {
+    let jobs = running_exclusive_jobs();
+    let first = jobs.first()?;
+    let this = this_host();
+    let (job, here) = match jobs.iter().find(|j| j.runs_on(this.as_deref())) {
+        Some(job) => (job, true),
+        None => (first, false),
+    };
+    Some((job.name.clone(), job.id.clone(), here))
+}
+
 impl Rule for GuardExclusiveSlurm {
     fn name(&self) -> &'static str {
         "guard-exclusive-slurm"

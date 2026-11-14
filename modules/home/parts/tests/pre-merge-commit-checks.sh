@@ -40,6 +40,10 @@ done
 
 # 同期のコマンドは、ホームを差し替える前にビルドする（nix の設定とキャッシュは利用者のホームの下）
 claude_setup=$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-setup")
+# run-checks.sh の中身は claude-hooks script run-checks で、sh は CLAUDE_HOOKS_BIN か ~/.claude/bin/claude-hooks を起動する。
+# 一時の ~/.claude には claude-setup sync がバイナリを置かないので、このブランチのものを渡す
+CLAUDE_HOOKS_BIN="$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-hooks")/bin/claude-hooks"
+export CLAUDE_HOOKS_BIN
 
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

@@ -89,6 +89,7 @@ mod count_review_rounds;
 mod delegate_request_fields;
 mod guard_branch_base;
 mod guard_exclusive_slurm;
+pub(crate) use guard_exclusive_slurm::exclusive_job;
 mod guard_gh_api;
 mod guard_gh_run_rerun;
 mod guard_git_add;
