@@ -150,6 +150,9 @@ ref を移す前の各 worktree の HEAD を控えれば、worktree の合わせ
 
 ### 確認
 
+- 2026-11-14 に Rust に移した後は、辞書の読み方と当て方を ja-terms の `tests/prh.rs` が、書き換えを
+  `modules/home/parts/history-rewrite/tests/`（`run.rs`、`sync.rs`、`transform.rs`）が確かめる。下の 2 項は Python の版の
+  テストの記録で、移す前にその CLI を呼ぶテストを Rust の版に向けて流して通った（ADR-0088 の確認）
 - `modules/home/parts/history-rewrite/test_prh_rules.py`: ja-terms の辞書と specs を読む、長さの違う lookbehind と `^`、
   `\r` の後の `^`、`.` が行の終わりに当たらない、lookahead の `\n?`、固定の文字列、patterns、`$N`、expected と同じ
   一致を直さない、元の文字列の上で集める、重なりの扱い、`prh:disable` を文として読む、前の段落を lookbehind が
