@@ -2886,6 +2886,38 @@ for cmd in 'nix-rebuild rebuild' 'nix-rebuild update' '/home/u/.local/bin/nix-re
   assert_not_contains "$(reason "$out")" "slurm-run.sh"
 done
 
+# hostname は偽のコマンドで置き換える（r995 のほかでは、ビルドは r995 に投げられるので、手元でビルドすれば乱さない）
+mkdir -p "$FAKE_SQUEUE/host-laptop" "$FAKE_SQUEUE/host-r995" "$FAKE_SQUEUE/host-broken"
+printf '#!/bin/sh\necho t14g4\n' >"$FAKE_SQUEUE/host-laptop/hostname"
+printf '#!/bin/sh\necho r995\n' >"$FAKE_SQUEUE/host-r995/hostname"
+printf '#!/bin/sh\nexit 1\n' >"$FAKE_SQUEUE/host-broken/hostname"
+chmod +x "$FAKE_SQUEUE"/host-*/hostname
+
+it "guard-exclusive-slurm: r995 のほかでは、手元でビルドする nix-rebuild --local を通す"
+for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'nix-rebuild update --local claude-harness' \
+  'nix-rebuild update claude-harness --local' 'update --local' 'bash modules/home/scripts/nix-rebuild.sh rebuild --local'; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-exclusive-slurm: r995 の上やホストが分からないとき、引数を捨てる rebuild の関数では、--local でも deny する"
+for dir in host-r995 host-broken; do
+  for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local'; do
+    out=$(PATH="$FAKE_SQUEUE/$dir:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+    assert_eq deny "$(decision "$out")"
+  done
+done
+# shell の関数 rebuild は引数を捨てて nix-rebuild rebuild を呼ぶ（modules/home/parts/shell.nix。update は渡す）
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'rebuild --local')
+assert_eq deny "$(decision "$out")"
+
+it "guard-exclusive-slurm: r995 のほかでは、rebuild の deny が --local で手元でビルドする道を示す"
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild update')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "--local"
+out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild update')
+assert_not_contains "$(reason "$out")" "--local"
+
 it "guard-exclusive-slurm: ビルドしない nix-rebuild、nixos-rebuild、home-manager は通す"
 for cmd in 'nix-rebuild' 'nix-rebuild --help' 'home-manager generations' 'home-manager news' 'home-manager --version' \
   'nixos-rebuild --help' 'home-manager switch --help' 'home-manager -h' 'nixos-rebuild list-generations' 'nixos-rebuild edit' 'nixos-rebuild dry-build' \
