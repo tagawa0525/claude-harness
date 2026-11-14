@@ -1,5 +1,5 @@
-//! `claude-hooks script` のスクリプトが、読む側が先に閉じた標準出力に書いても panic せず、sh が SIGPIPE で
-//! 終わるときと同じ 141 で黙って終わることを確かめる（`git-info.sh | head -2` のように、出力の先頭だけを読む使い方）
+//! `claude-hooks script` のスクリプトが、読む側が先に閉じた標準出力に書くと、panic せず、sh と同じく SIGPIPE で
+//! 黙って終わることを確かめる（`git-info.sh | head -2` のように、出力の先頭だけを読む使い方。シェルは 141 と見る）
 
 mod common;
 
@@ -8,7 +8,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 #[test]
-fn a_script_writing_to_a_closed_pipe_ends_quietly_with_141() {
+#[cfg(unix)]
+fn a_script_writing_to_a_closed_pipe_ends_by_sigpipe_like_sh() {
     let root =
         Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("broken-pipe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -46,7 +47,6 @@ fn a_script_writing_to_a_closed_pipe_ends_quietly_with_141() {
         .current_dir(&root)
         .env("GIT_CONFIG_GLOBAL", root.join("no-global-config"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("PATH", std::env::var_os("PATH").unwrap())
         .stdout(Stdio::from(writer))
         .stderr(Stdio::piped())
         .output()
@@ -54,5 +54,6 @@ fn a_script_writing_to_a_closed_pipe_ends_quietly_with_141() {
     let _ = std::fs::remove_dir_all(&root);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stderr.contains("panicked"), "{stderr}");
-    assert_eq!(out.status.code(), Some(141), "{stderr}");
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(out.status.signal(), Some(13), "{:?}: {stderr}", out.status);
 }
