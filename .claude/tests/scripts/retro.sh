@@ -3,8 +3,8 @@
 #
 # 実行: bash .claude/tests/scripts/retro.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
-# prose-size と memory-index の中身は claude-hooks script prose-size と memory-index（ADR-0089）。ブランチでビルドした
-# バイナリで確かめる
+# retro のスクリプト（prose-size、memory-index、session-events）の中身は claude-hooks script の同じ名前のサブコマンド
+# （ADR-0089）。ブランチでビルドしたバイナリで確かめる
 source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
