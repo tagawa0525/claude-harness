@@ -1,5 +1,5 @@
-//! git のオブジェクトの読み方（`git cat-file --batch`）と、コミットとタグのオブジェクトの分け方。履歴を書き換える
-//! 2 つの CLI（commit-refs の rewrite-history と history-rewrite）が同じ読み方と署名の外し方で照合するため、ここに置く
+//! git のオブジェクトの読み方（`git cat-file --batch`）と、コミットとタグのオブジェクトの分け方とタグの署名の外し方。
+//! rewrite-history の照合が使う。Rust に移す history-rewrite の照合も同じ関数を呼べるよう、ライブラリに置く（ADR-0088）
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
