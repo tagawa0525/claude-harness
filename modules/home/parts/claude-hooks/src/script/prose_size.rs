@@ -3,8 +3,8 @@
 //! 使い方、数える範囲、出力の形は sh の冒頭）。
 //!
 //! 誤りは、sh の `set -e` と同じく、git の失敗はその終了コードで止め（それまでに出した行は残る）、リポジトリごとの
-//! 誤り（既定ブランチが無い、共通の祖先が無い）は次のリポジトリに進んで最後に 1 で終える。git の標準エラーは
-//! そのまま流す。
+//! 誤り（既定ブランチが無い、`merge-base` が失敗する。sh と同じく、失敗の理由を分けずに共通の祖先が無いと書く）は
+//! 次のリポジトリに進んで最後に 1 で終える。git の標準エラーはそのまま流す。
 
 use super::time::{self, Time};
 use std::path::Path;
@@ -63,10 +63,10 @@ fn spawn_failed(e: &std::io::Error) -> Exit {
 }
 
 /// git の標準出力。失敗すれば、その終了コードで止める（標準エラーはそのまま流す）
-fn git(dir: &str, args: &[&str]) -> Result<Vec<u8>, Exit> {
+fn git(dir: &(impl AsRef<Path> + ?Sized), args: &[&str]) -> Result<Vec<u8>, Exit> {
     let out = Command::new("git")
         .arg("-C")
-        .arg(dir)
+        .arg(dir.as_ref())
         .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
@@ -80,17 +80,17 @@ fn git(dir: &str, args: &[&str]) -> Result<Vec<u8>, Exit> {
 }
 
 /// 1 行の出力（末尾の改行を除く）
-fn git_line(dir: &str, args: &[&str]) -> Result<String, Exit> {
+fn git_line(dir: &(impl AsRef<Path> + ?Sized), args: &[&str]) -> Result<String, Exit> {
     Ok(String::from_utf8_lossy(&git(dir, args)?)
         .trim_end()
         .to_string())
 }
 
 /// `rev-parse -q --verify <rev>^{commit}` が通るか（標準エラーは `quiet` なら捨てる）
-fn has_commit(dir: &str, rev: &str, quiet: bool) -> Result<bool, Exit> {
+fn has_commit(dir: &(impl AsRef<Path> + ?Sized), rev: &str, quiet: bool) -> Result<bool, Exit> {
     let status = Command::new("git")
         .arg("-C")
-        .arg(dir)
+        .arg(dir.as_ref())
         .args(["rev-parse", "-q", "--verify", &format!("{rev}^{{commit}}")])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -105,7 +105,11 @@ fn has_commit(dir: &str, rev: &str, quiet: bool) -> Result<bool, Exit> {
 }
 
 /// コミットの中で `cond` に合うパスのファイル（blob）の大きさの和。コミットが無ければ 0
-fn tree_bytes(dir: &str, commit: &str, cond: &dyn Fn(&[u8]) -> bool) -> Result<i64, Exit> {
+fn tree_bytes(
+    dir: &(impl AsRef<Path> + ?Sized),
+    commit: &str,
+    cond: &dyn Fn(&[u8]) -> bool,
+) -> Result<i64, Exit> {
     if commit.is_empty() {
         return Ok(0);
     }
@@ -236,8 +240,21 @@ fn read_failed(path: &Path, e: &std::io::Error) -> Exit {
 }
 
 fn report_memory(memory: &str, since: i64, until: Option<i64>) -> Result<(), Exit> {
-    let home = format!("{}/.claude", crate::shell::home().display());
-    let Some(rel) = memory.strip_prefix(&format!("{home}/")) else {
+    let home = crate::shell::home().join(".claude");
+    // 文字列の接頭辞でなく、パスの要素で比べる（Windows の `\` と `/` の混ざった書き方と、重なった区切りでも同じ
+    // ディレクトリと見る）。退避の中のパスは `/` で区切る
+    let rel = Path::new(memory)
+        .strip_prefix(&home)
+        .ok()
+        .map(|r| {
+            r.components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .filter(|r| !r.is_empty());
+    let Some(rel) = rel else {
+        let home = home.display();
         return Err(error(format!(
             "メモリのディレクトリが {home} の下にありません（退避は {home} の git にあります）: {memory}"
         )));
@@ -248,16 +265,9 @@ fn report_memory(memory: &str, since: i64, until: Option<i64>) -> Result<(), Exi
     // 読めなければ無いと数える（sh の `[[ -n "$(…)" ]]` は失敗で止まらない）
     let in_backup = has_ref
         && Command::new("git")
-            .args([
-                "-C",
-                &home,
-                "ls-tree",
-                "-r",
-                "--name-only",
-                BACKUP_REF,
-                "--",
-            ])
-            .arg(&prefix)
+            .arg("-C")
+            .arg(&home)
+            .args(["ls-tree", "-r", "--name-only", BACKUP_REF, "--", &prefix])
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
             .output()
@@ -273,8 +283,9 @@ fn report_memory(memory: &str, since: i64, until: Option<i64>) -> Result<(), Exi
     let dir = Path::new(memory);
     if old.is_empty() && (dir.is_dir() || in_backup) {
         return Err(error(format!(
-            "{} より前のメモリの退避（{home} の {BACKUP_REF}）が無いので、前の大きさが分かりません: {memory}",
-            jst(since)
+            "{} より前のメモリの退避（{} の {BACKUP_REF}）が無いので、前の大きさが分かりません: {memory}",
+            jst(since),
+            home.display()
         )));
     }
     let under = |path: &[u8]| path.starts_with(prefix.as_bytes());
