@@ -34,7 +34,8 @@ home-manager の構成で `claude-harness.homeManagerModules.default` を import
 ネイティブの Windows（WSL を使わない）では、Nix の代わりに `cargo install` と `claude-setup` で入れる（ADR-0084）。
 今入るのは、`~/.claude` の中身（CLAUDE.md、スキル、スクリプト）、settings.json の静的な設定、PreToolUse hook、
 現在時刻の UserPromptSubmit hook、自動メモリを退避する Stop の hook、グローバルの git hook（pre-commit、pre-merge-commit、
-commit-msg、post-rewrite。`~/.config/git/hooks` に置き、グローバルの `core.hooksPath` を向ける）。グローバルの `core.hooksPath` をほかの置き場にしていれば、`claude-setup git-hooks` は奪わずに止まる。
+commit-msg、post-rewrite。`~/.config/git/hooks` に置き、グローバルの `core.hooksPath` を向ける）。グローバルの
+`core.hooksPath` をほかの置き場にしていれば、`claude-setup git-hooks` は奪わずに止まる。
 
 前もって、Git for Windows、rustup、MSVC の toolchain が使う Visual Studio の Build Tools（C++ の workload。linker と
 Windows SDK）、gh、[gitleaks](https://github.com/gitleaks/gitleaks) を入れ、PATH に置く。入れたら、PATH が反映されるよう
@@ -47,8 +48,8 @@ winget install Microsoft.VisualStudio.2022.BuildTools \
 ```
 
 PreToolUse hook は、git の hook の無いリポジトリの `git commit` を gitleaks で調べ、gitleaks が無いとすべての `git commit` を
-止める。スキルと hook が呼ぶ sh のスクリプトは `claude-hooks` を呼ぶだけで、jq は要らない（前の手順で入れた jq は
-残しても外してもよい）。
+止める。スキルと hook が呼ぶ sh のスクリプトは jq を使わない（前の手順で入れた jq は、残しても外してもよい）。
+Windows でハーネスのテストの sh（`modules/home/parts/claude-hooks/tests/*.sh` など）を流すときだけ jq が要る。
 
 Git Bash で、clone を作るか更新してから、crate を `~/.claude/bin` に入れ、clone のパスを渡して設置する。Linux と同じ
 `~/.claude/bin/claude-hooks` に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため（ADR-0087）。`ja-terms` と
@@ -81,16 +82,15 @@ cargo uninstall claude-hooks ja-terms commit-refs claude-setup  # ~/.cargo/bin �
 
 Stop の hook（`claude-hooks stop`）は、応答の終わりごとに自動メモリ（`~/.claude/projects/*/memory/`）を `~/.claude` の
 git の ref `refs/memory-backup` にコミットする。`~/.claude` が git のリポジトリの直下でなければ、応答のたびに退避の失敗を
-通知するので、リポジトリにする（手順では作らない。`.gitignore` の無いまま作ると、後の `git add -A` で `.credentials.json`
-や会話の記録が入りうる。ADR-0076）。
-退避は `git add -f` でメモリだけを入れるので、main で何も追跡しないリポジトリでも動く（コミットには git の `user.name` と
-`user.email` が要る）。まだリポジトリでなければ、何も追跡しない `.gitignore` と一緒に作る（上の階層のリポジトリの下に
-あれば作らない。入れ子にするかは、その上のリポジトリとの兼ね合いで決める。ADR-0076）:
+通知する。`claude-setup` はリポジトリを作らない（`.gitignore` の無いまま作ると、後の `git add -A` で `.credentials.json`
+や会話の記録が入りうる。上の階層のリポジトリの下に作るかは、そのリポジトリとの兼ね合いで決める。ADR-0076）。退避は
+`git add -f` でメモリだけを入れるので、何も追跡しないリポジトリでも動く（コミットには git の `user.name` と `user.email`
+が要る）。`git -C ~/.claude rev-parse --show-toplevel` が「not a git repository」で失敗するときは、何も追跡しない
+`.gitignore` と一緒に作る（既にある `.gitignore` は上書きしない）:
 
 ```bash
-git -C ~/.claude rev-parse --git-dir >/dev/null 2>&1 || {
-  git init -q ~/.claude && printf '/*\n!/.gitignore\n' >~/.claude/.gitignore
-}
+git init -q -b main ~/.claude
+[ -e ~/.claude/.gitignore ] || printf '/*\n!/.gitignore\n' >~/.claude/.gitignore
 ```
 
 `cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
@@ -98,7 +98,7 @@ git -C ~/.claude rev-parse --git-dir >/dev/null 2>&1 || {
 
 clone を更新したら、同じ手順をもう一度流す（crate の版は変えないので `--force` で入れ直す）。Windows の CI
 （`.github/workflows/windows.yml` の `setup`）が、この手順を流し、登録した PreToolUse hook と git hook が main への
-`git commit` を止めることを確かめる。
+`git commit` を止めること、Stop の hook がメモリを退避することを確かめる。
 
 ## 経緯
 
