@@ -92,11 +92,12 @@ fn is_nix_build(cmd: &Cmd) -> bool {
     }
 }
 
-/// `--builders ''` か `--builders @/dev/null`（空のファイルを読ませる）で、リモートのビルダーを使わないか
+/// `--builders ''` か `--option builders ''` で、リモートのビルダーを使わないか。nix-daemon は trusted でない利用者の
+/// builders を空の値のときだけ受けるので、`@/dev/null` などは数えない
 fn without_remote_builders(cmd: &Cmd) -> bool {
-    cmd.args
-        .windows(2)
-        .any(|w| w[0].text == "--builders" && matches!(w[1].text.as_str(), "" | "@/dev/null"))
+    let args: Vec<&str> = cmd.args.iter().map(|a| a.text.as_str()).collect();
+    args.windows(2).any(|w| w == ["--builders", ""])
+        || args.windows(3).any(|w| w == ["--option", "builders", ""])
 }
 
 /// ビルドする nixos-rebuild のサブコマンド（dry-build は評価だけ、list-generations・edit・repl はビルドしない）
@@ -192,15 +193,19 @@ fn destination_host(destination: &str, this: Option<&str>) -> Option<String> {
 fn builder_host(uri: &str) -> Option<String> {
     let host = uri.split_once("://").map_or(uri, |(_, rest)| rest);
     let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    // IPv6 は [..] で囲む
+    if host.starts_with('[') {
+        return None;
+    }
     let host = host.split(['?', ':', '/']).next().unwrap_or_default();
     (host.parse::<std::net::IpAddr>().is_err() && !host.is_empty()).then(|| short_name(host))
 }
 
-/// このホストの nix のビルドが nodes のどれかに投げられるか。ビルダーは nix の `builders` の設定（`nix config show`。
-/// 読めなければ既定の `@$NIX_CONF_DIR/machines`、NIX_CONF_DIR の既定は /etc/nix）で、`@<ファイル>` はファイルの行、
-/// ほかは `;` か改行で区切った指定。各指定の先頭の語がビルダーの URI。ファイルが無ければ手元でビルドする。読めない
-/// とき、IP アドレスのビルダーは投げるとみなす（止める側に倒す）
-fn builds_reach(nodes: &[String]) -> bool {
+/// このホストの nix のリモートのビルダーのホスト（IP アドレスは None）。ビルダーは nix の `builders` の設定
+/// （`nix config show`。読めなければ既定の `@$NIX_CONF_DIR/machines`、NIX_CONF_DIR の既定は /etc/nix）で、`@<ファイル>`
+/// はファイルの行、ほかは `;` か改行で区切った指定。各指定の先頭の語がビルダーの URI。ファイルが無ければ空（手元で
+/// ビルドする）。読めなければ None（どのノードにも投げるとみなす）
+fn builder_hosts() -> Option<Vec<Option<String>>> {
     let conf_dir = std::env::var_os("NIX_CONF_DIR").unwrap_or_else(|| "/etc/nix".into());
     let default = format!(
         "@{}",
@@ -220,15 +225,28 @@ fn builds_reach(nodes: &[String]) -> bool {
     let spec = match builders.strip_prefix('@') {
         Some(file) => match std::fs::read_to_string(file) {
             Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
-            Err(_) => return true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Vec::new()),
+            Err(_) => return None,
         },
         None => builders,
     };
-    spec.split([';', '\n'])
-        .filter_map(|entry| entry.split_whitespace().next())
-        .filter(|uri| !uri.starts_with('#'))
-        .any(|uri| builder_host(uri).is_none_or(|host| nodes.contains(&host)))
+    Some(
+        spec.split([';', '\n'])
+            .filter_map(|entry| entry.split_whitespace().next())
+            .filter(|uri| !uri.starts_with('#'))
+            .map(builder_host)
+            .collect(),
+    )
+}
+
+/// ビルダーのホスト（[`builder_hosts`]）のどれかが nodes にあるか。IP アドレスのビルダーと、読めないビルダーは、
+/// 投げるとみなす（止める側に倒す）
+fn builds_reach(builders: Option<&[Option<String>]>, nodes: &[String]) -> bool {
+    builders.is_none_or(|hosts| {
+        hosts
+            .iter()
+            .any(|host| host.as_ref().is_none_or(|h| nodes.contains(h)))
+    })
 }
 
 /// 実行中の排他のジョブ
@@ -354,14 +372,18 @@ impl Rule for GuardExclusiveSlurm {
         let this_job = job_on(this.as_deref());
         // ビルドを投げる先で走る排他のジョブ。このホストは machines で見て、ssh の先のビルダーは読めないので、どれかの
         // ジョブのノードに投げるとみなす
+        let builders = std::cell::OnceCell::new();
         let reached = std::cell::OnceCell::new();
         let sent_to = |via_ssh: bool| -> Option<&ExclusiveJob> {
             if via_ssh {
                 return jobs.first();
             }
             *reached.get_or_init(|| {
-                jobs.iter()
-                    .find(|j| j.nodes.as_deref().is_none_or(builds_reach))
+                jobs.iter().find(|j| {
+                    j.nodes.as_deref().is_none_or(|nodes| {
+                        builds_reach(builders.get_or_init(builder_hosts).as_deref(), nodes)
+                    })
+                })
             })
         };
         // ノードの上では全コアを使うものと nix のビルドを止め、ほかのホストではノードに投げられるビルドだけを止める
@@ -414,7 +436,7 @@ impl Rule for GuardExclusiveSlurm {
         } else if let (Some(j), None) = (sent, nix_on_node) {
             (
                 j,
-                "このホストの nix のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、--builders '' --max-jobs auto を付けて手元でビルドしてください。",
+                "nix のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、--builders '' --max-jobs auto を付けて手元でビルドしてください。",
             )
         } else if let Some(j) = nix_on_node.or(sent) {
             (
