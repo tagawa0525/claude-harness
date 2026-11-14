@@ -309,8 +309,10 @@ impl Rule for CheckCommitMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::output::{NOTICES_LOCK as NOTICES, take_notices};
     use std::path::PathBuf;
+    #[cfg(unix)]
     use std::process::Command;
 
     /// テストの間だけある一時のディレクトリ（テストが panic しても消す）。テストは並行に走るので、同じ tag でも
@@ -401,12 +403,15 @@ exit 0
     }
 
     /// テストのグローバルの core.hooksPath。git_init のリポジトリはこれをローカルに持つ
+    #[cfg(unix)]
     const GLOBAL_HOOKS: &str = "/nonexistent/global-hooks";
 
+    #[cfg(unix)]
     fn global_hooks(_: &Path) -> Option<String> {
         Some(GLOBAL_HOOKS.to_string())
     }
 
+    #[cfg(unix)]
     fn git(dir: &Path, args: &[&str]) {
         let ok = Command::new("git")
             .args(args)
@@ -417,11 +422,13 @@ exit 0
         assert!(ok, "git {args:?}");
     }
 
+    #[cfg(unix)]
     fn git_init(dir: &Path) {
         git(dir, &["init", "-q"]);
         git(dir, &["config", "core.hooksPath", GLOBAL_HOOKS]);
     }
 
+    #[cfg(unix)]
     fn check_in(command: &str, cwd: &Path, check: Option<&str>) -> Vec<Finding> {
         let json = serde_json::json!({
             "tool_name": "Bash",
@@ -452,6 +459,7 @@ exit 0
         Ok(Some(s.to_string()))
     }
 
+    #[cfg(unix)]
     fn only_deny(findings: &[Finding]) -> String {
         match findings {
             [Finding::Deny(r)] => r.clone(),
@@ -461,6 +469,7 @@ exit 0
 
     /// xlc の記録にある件名（73 文字。2026-11-06 00:18 JST に commit-msg が拒み、後段の品質チェックが古い HEAD で
     /// 通ったと出した）の代わりに、偽の検査が拒む件名
+    #[cfg(unix)]
     const LONG: &str = "docs(plans): 長すぎる件名";
 
     #[test]

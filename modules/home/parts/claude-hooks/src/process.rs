@@ -48,6 +48,8 @@ pub fn private_temp_dir(prefix: &str) -> Result<TempDir, String> {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let dir = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+    // mode を付けるのは Unix だけなので、ほかの OS では mut が要らない
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {

@@ -27,6 +27,9 @@ jobs:
       - if: matrix.crate == 'history-rewrite'
         run: cargo install --locked --path ../commit-refs
       - run: cargo test --locked
+      # Unix だけのテスト（cfg(unix)）だけが使うヘルパーと import は、Windows のテストのビルドでだけ未使用の警告になる。
+      # run-checks.sh と同じ clippy を流し、実機の Windows の run-checks.sh が失敗する前にここで止める
+      - run: cargo clippy --locked --all-targets -- -D warnings
       # Windows の claude-hooks は、環境変数の無いとき ja-terms を名前で起動する（#115。隣に無ければ PATH）。cargo install で入れた ja-terms と
       # 辞書で、git merge と git commit のメッセージを止めることを、Linux の install check と同じ sh のテストで確かめる
       - if: matrix.crate == 'claude-hooks'

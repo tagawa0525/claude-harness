@@ -6,12 +6,15 @@ pub mod fake_gh;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// examples/fake_tool の実行ファイル（テストの実行ファイルは target/<profile>/deps にある）。`cargo test` は examples も
-/// ビルドする（`--test` で絞ると作らないので、先に `cargo build --examples` を流す）
+/// examples/fake_tool の実行ファイル（target/<profile>/examples にある）。`cargo test` は examples も
+/// ビルドする（`--test` で絞ると作らないので、先に `cargo build --examples` を流す）。
+/// profile の場所は、cargo が渡す claude-hooks の実行ファイルの隣とする。テストの実行ファイルの場所から数えない
+/// （cargo 1.100 は、テストの実行ファイルを target/<profile>/deps でなく target/<profile>/build/<crate>/<hash>/out に置く）
 #[allow(dead_code)]
 pub fn fake_tool() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let profile = exe.parent().unwrap().parent().unwrap();
+    let profile = Path::new(env!("CARGO_BIN_EXE_claude-hooks"))
+        .parent()
+        .unwrap();
     profile
         .join("examples")
         .join(format!("fake_tool{}", std::env::consts::EXE_SUFFIX))
