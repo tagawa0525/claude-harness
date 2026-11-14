@@ -163,7 +163,7 @@ jobs:
           git -C "$repo" add b
           expect_deny '機密情報らしき内容'
       # README の、~/.claude をリポジトリにする手順の後に、登録した Stop の hook（claude-hooks stop）が自動メモリだけを
-      # refs/memory-backup に退避することを確かめる（~/.claude の中の crate の記録や bin は、何も追跡しない .gitignore で残る）
+      # refs/memory-backup に退避することを確かめる（~/.claude の中の crate の記録や bin は、.gitignore で除外したまま残る）
       - name: Check the Stop hook
         run: |
           set -euo pipefail
