@@ -115,6 +115,10 @@ retro のスクリプト:
   `claude-setup`）で入れる。登録を `claude-hooks stop` に替えた settings.json は、そのサブコマンドを持つバイナリと揃って入る。
   揃わないとき（Windows で `claude-setup` だけを新しくした、`claude-hooks` を前の版に戻した）は、前の版の `claude-hooks` が
   知らないサブコマンドに使い方を出して 2 で終え、応答の終わりごとに Claude Code が応答を続ける
+- 悪い点: `claude-sync` だけで呼ぶだけの `memory-index.sh` を入れ、rebuild の前の `claude-hooks` が `memory-index` を
+  知らない間は、`TERMS:` だけでなく索引の照合（`ENTRIES:`、`MISSING:`、`UNINDEXED:`、`BROKEN_LINK:`）の行も出ず、
+  `ERROR:` で始まらない使い方の文と入れ直しの案内を出して 2 で終える（ADR-0074 の帰結の、rebuild の前でもほかの行は出る、は
+  sh の版のもの）
 
 ### 確認
 
