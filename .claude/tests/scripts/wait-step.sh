@@ -77,6 +77,11 @@ it "wait-step: 時計は鍵（worktree のパス）ごとに分かれる（日�
 out=$("$WAIT" "/計算/x" "$log")
 assert_eq 2 $?
 
+it "wait-step: 鍵のパスは正規化する（末尾の / があっても同じ時計）"
+"$WAIT" /wt/n "$log" >/dev/null
+out=$("$WAIT" /wt/n/ "$log")
+assert_eq 3 $?
+
 it "wait-step: 渡した出力のファイルが無ければ、理由を出して 1 で返る"
 out=$("$WAIT" /wt/h "$TEST_ROOT/no-such.out" 2>&1)
 assert_eq 1 $?
