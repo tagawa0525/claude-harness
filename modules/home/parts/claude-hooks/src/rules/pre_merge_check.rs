@@ -289,6 +289,17 @@ pub fn local_review_covers_for_pr(
     })
 }
 
+/// `-R` の値（`OWNER/REPO`、`HOST/OWNER/REPO`、URL）の owner と name。gh と同じく末尾の 2 つの区切りを使う
+fn split_repo(r: &str) -> (&str, &str) {
+    let r = r.trim_end_matches('/').trim_end_matches(".git");
+    let mut parts = r.rsplit('/');
+    let name = parts.next().unwrap_or("");
+    match parts.next() {
+        Some(owner) => (owner, name),
+        None => (r, ""),
+    }
+}
+
 /// PR の base ブランチの今の先頭（GitHub の値）
 fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> Option<String> {
     if base_ref.is_empty() {
@@ -637,8 +648,8 @@ impl Rule for PreMergeCheck {
             // 対象リポジトリ（base）。check-run と review thread はどちらも base 側に紐づく
             let (owner, name) = match repo.as_deref() {
                 Some(r) => {
-                    let (o, n) = r.split_once('/').unwrap_or((r, ""));
-                    (o.to_string(), n.trim_end_matches(".git").to_string())
+                    let (o, n) = split_repo(r);
+                    (o.to_string(), n.to_string())
                 }
                 None => (
                     gh::gh(
@@ -1036,6 +1047,18 @@ impl Rule for PreMergeCheck {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_repo_reads_owner_repo_host_and_url_forms() {
+        use super::split_repo;
+        assert_eq!(split_repo("octo/repo"), ("octo", "repo"));
+        assert_eq!(split_repo("github.com/octo/repo"), ("octo", "repo"));
+        assert_eq!(
+            split_repo("https://github.com/octo/repo.git"),
+            ("octo", "repo")
+        );
+        assert_eq!(split_repo("repo"), ("repo", ""));
+    }
+
     use super::*;
     use crate::shell::Shell;
 
