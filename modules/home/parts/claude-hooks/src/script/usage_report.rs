@@ -226,7 +226,7 @@ struct Args {
     transcript: Option<String>,
 }
 
-/// .py の argparse と同じく、`--opt value`、`--opt=value`、一意な省略形を受ける。`--since` と `--until` は後勝ち、
+/// Python の argparse と同じく、`--opt value`、`--opt=value`、一意な省略形を受ける。`--since` と `--until` は後勝ち、
 /// `--repo` は重ねる。使い方の誤りは None
 fn parse_args(args: &[String]) -> Option<Args> {
     let mut out = Args::default();
@@ -487,7 +487,7 @@ fn price_reply(
         }
     }
     let price = prices_for(model, tokens.prompt())?;
-    // .py の sum と同じ順に足す（浮動小数の和は順で変わる）
+    // 入力、5 分、1 時間、読み出し、出力の順に足す（浮動小数の和は順で変わり、表示の丸めが変わる）
     let cost = tokens
         .0
         .iter()

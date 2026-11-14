@@ -1,6 +1,6 @@
 #!/bin/sh
 # usage-report.sh — Claude Code の会話の記録から、区間の費用（ドル）を親・担当・レビュー・振り返りに分けて出す。中身は
-# claude-hooks script usage-report（Rust にして Windows でも動かす。ADR-0088）
+# claude-hooks script usage-report（Rust にして Windows でも Python なしで動かす）
 #
 # Usage: usage-report.sh [--since <日時>] [--until <日時>] [--repo <リポジトリ>]... [TRANSCRIPT]
 #   TRANSCRIPT  セッションの記録（~/.claude/projects/<プロジェクト>/<セッション>.jsonl）。
