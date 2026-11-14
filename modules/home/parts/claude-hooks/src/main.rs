@@ -80,7 +80,9 @@ fn local_review_covers(args: &[String]) -> ! {
 /// 終わる。Rust は起動の時に SIGPIPE を無視にし、そのままだと閉じたパイプへの `println!` と `eprintln!` は panic して
 /// 101 で終わる。`libc` の crate を足さず、std が既にリンクする C の `signal` を直に呼ぶ（#170）。
 /// Windows には SIGPIPE が無く、閉じたパイプへの書き込みは今も panic する。git hook と PreToolUse の hook では戻さない
-/// （ローカルの hook や git に標準入力を渡す。相手が読まずに終わったときの EPIPE を、エラーとして受けて先へ進む）
+/// （ローカルの hook や git に標準入力を渡し、相手が読まずに終わったときの EPIPE をエラーとして受けて先へ進む。読まずに
+/// 終わる hook はふつうにある）。script と local-review-covers が標準入力を渡すのは `git patch-id` だけで、入力を
+/// 終わりまで読むので、git が途中で落ちたときだけ SIGPIPE で終わる
 #[cfg(unix)]
 fn restore_sigpipe() {
     unsafe extern "C" {

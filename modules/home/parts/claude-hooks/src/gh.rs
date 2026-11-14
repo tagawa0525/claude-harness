@@ -55,7 +55,7 @@ pub fn output_for_repo(repo: &str, args: &[&str]) -> Result<Vec<u8>, i32> {
             1
         })?;
     if !out.status.success() {
-        return Err(out.status.code().unwrap_or(1));
+        return Err(crate::child::exit_code(out.status));
     }
     Ok(out.stdout)
 }
