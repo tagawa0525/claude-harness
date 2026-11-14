@@ -229,18 +229,18 @@ impl ExclusiveJob {
 const SQUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// squeue を判定の材料に使えなかった理由を利用者に見せる（ADR-0033）。黙って許可にしない
-fn squeue_unavailable(reason: &str) -> Option<ExclusiveJob> {
+fn squeue_unavailable(reason: &str) -> Vec<ExclusiveJob> {
     crate::output::notice(format!(
         "claude-hooks: squeue の結果を使えず、排他の Slurm のジョブの有無を確かめられませんでした（{reason}）"
     ));
-    None
+    Vec::new()
 }
 
-/// 実行中の排他のジョブ。squeue が無い、排他のジョブが無いときは None（理由は見せない）。
+/// 実行中の排他のジョブのすべて（計算ノードが複数あれば、ノードごとに走りうる）。squeue が無い、排他のジョブが無いときは None（理由は見せない）。
 /// squeue が失敗した、時間内に終わらない、出力を読めないときも None だが、理由を見せる。`-O` の固定幅の列は
 /// 長い名前がジョブ番号と続いてしまうので、区切りのある `-o` で読む（OverSubscribe は `%h`。実機の値は
 /// 排他のジョブが `NO`、共有できるジョブが `OK` か `YES`）
-fn running_exclusive_job() -> Option<ExclusiveJob> {
+fn running_exclusive_jobs() -> Vec<ExclusiveJob> {
     let mut child = match Command::new("squeue")
         .args(["-h", "-t", "R", "-o", "%h|%j|%i|%N"])
         .stdin(Stdio::null())
@@ -250,11 +250,13 @@ fn running_exclusive_job() -> Option<ExclusiveJob> {
     {
         Ok(child) => child,
         // squeue が無いホスト（Slurm に投げないホスト）。判定の材料が無いだけで、環境の不具合ではない
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(e) => return squeue_unavailable(&format!("起動できません: {e}")),
     };
     // 出力が多いと、読まない間に squeue がパイプを満たして終われない。別のスレッドで並行して読む
-    let mut pipe = child.stdout.take()?;
+    let Some(mut pipe) = child.stdout.take() else {
+        return Vec::new();
+    };
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         pipe.read_to_end(&mut bytes).map(|_| bytes)
@@ -283,28 +285,31 @@ fn running_exclusive_job() -> Option<ExclusiveJob> {
         return squeue_unavailable("出力を読めません");
     };
     // 名前が UTF-8 でなくても、OverSubscribe とジョブ番号とノードは読める。名前に | があっても、ノードと番号は後ろから取る
-    String::from_utf8_lossy(&bytes).lines().find_map(|line| {
-        let (shares, rest) = line.split_once('|')?;
-        if shares.trim() != "NO" {
-            return None;
-        }
-        let (rest, node) = rest.rsplit_once('|')?;
-        let (name, id, nodes) = match rest.rsplit_once('|') {
-            Some((name, id)) => {
-                let node = node.trim();
-                let nodes = (!node.is_empty() && !node.contains('['))
-                    .then(|| node.split(',').map(short_name).collect());
-                (name, id, nodes)
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter_map(|line| {
+            let (shares, rest) = line.split_once('|')?;
+            if shares.trim() != "NO" {
+                return None;
             }
-            // ノードの列の無い出力（名前|番号）
-            None => (rest, node, None),
-        };
-        Some(ExclusiveJob {
-            name: name.to_string(),
-            id: id.trim().to_string(),
-            nodes,
+            let (rest, node) = rest.rsplit_once('|')?;
+            let (name, id, nodes) = match rest.rsplit_once('|') {
+                Some((name, id)) => {
+                    let node = node.trim();
+                    let nodes = (!node.is_empty() && !node.contains('['))
+                        .then(|| node.split(',').map(short_name).collect());
+                    (name, id, nodes)
+                }
+                // ノードの列の無い出力（名前|番号）
+                None => (rest, node, None),
+            };
+            Some(ExclusiveJob {
+                name: name.to_string(),
+                id: id.trim().to_string(),
+                nodes,
+            })
         })
-    })
+        .collect()
 }
 
 impl Rule for GuardExclusiveSlurm {
@@ -320,54 +325,81 @@ impl Rule for GuardExclusiveSlurm {
         {
             return Vec::new();
         }
-        let Some(job) = running_exclusive_job() else {
-            return Vec::new();
-        };
-        // 走るホスト（ssh の先なら接続先）がジョブのノードか。ホストは排他のジョブがあるときだけ見て、コマンドごとに
-        // 1 度だけ解く（ssh -G を起動し直さない）
-        let this = this_host();
-        let this_on_node = job.runs_on(this.as_deref());
-        let placed: Vec<(&Cmd, bool, bool)> = commands
-            .iter()
-            .map(|c| {
-                let via_ssh = shell.ssh_destination(c);
-                let on_node = via_ssh.map_or(this_on_node, |d| {
-                    job.runs_on(destination_host(d, this.as_deref()).as_deref())
-                });
-                (c, on_node, via_ssh.is_some())
-            })
-            .collect();
-        // ノードでないホストの nix のビルドが、ノードに投げられるか。ssh の先のビルダーは読めないので投げるとみなす
-        let local_reach = std::cell::OnceCell::new();
-        let sends = |via_ssh: bool| {
-            via_ssh || *local_reach.get_or_init(|| job.nodes.as_deref().is_none_or(builds_reach))
-        };
-        // ノードの上では全コアを使うものと nix のビルドを止め、ほかのホストではノードに投げられるビルドだけを止める
-        let heavy_on_node = placed.iter().any(|&(c, on, _)| on && is_heavy(c));
-        let nix_on_node = placed.iter().any(|&(c, on, _)| on && is_nix_build(c));
-        let build_sent = placed.iter().any(|&(c, on, ssh)| {
-            !on && is_nix_build(c) && !without_remote_builders(c) && sends(ssh)
-        });
-        let blocking: Vec<bool> = placed
-            .iter()
-            .filter(|&&(c, on, ssh)| is_rebuild(c) && (on || (sends(ssh) && !is_local_rebuild(c))))
-            .map(|&(_, _, ssh)| ssh)
-            .collect();
-        let rebuild = !blocking.is_empty();
-        if !rebuild && !heavy_on_node && !nix_on_node && !build_sent {
+        let jobs = running_exclusive_jobs();
+        if jobs.is_empty() {
             return Vec::new();
         }
-        let local_way = !this_on_node && blocking.iter().all(|&ssh| !ssh);
-        let fix = if rebuild && local_way {
-            "rebuild のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、nix-rebuild rebuild|update --local（関数の rebuild、update でなく）で手元でビルドしてください。"
-        } else if rebuild {
-            "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
-        } else if build_sent && !nix_on_node {
-            "このホストの nix のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、--builders '' --max-jobs auto を付けて手元でビルドしてください。"
-        } else if nix_on_node || build_sent {
-            "nix のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
+        // 走るホスト（ssh の先なら接続先）で走る排他のジョブ。ホストは排他のジョブがあるときだけ見て、コマンドごとに
+        // 1 度だけ解く（ssh -G を起動し直さない）
+        let job_on = |host: Option<&str>| jobs.iter().find(|j| j.runs_on(host));
+        let this = this_host();
+        let this_job = job_on(this.as_deref());
+        // ビルドを投げる先で走る排他のジョブ。このホストは machines で見て、ssh の先のビルダーは読めないので、どれかの
+        // ジョブのノードに投げるとみなす
+        let reached = std::cell::OnceCell::new();
+        let sent_to = |via_ssh: bool| -> Option<&ExclusiveJob> {
+            if via_ssh {
+                return jobs.first();
+            }
+            *reached.get_or_init(|| {
+                jobs.iter()
+                    .find(|j| j.nodes.as_deref().is_none_or(builds_reach))
+            })
+        };
+        // ノードの上では全コアを使うものと nix のビルドを止め、ほかのホストではノードに投げられるビルドだけを止める
+        let mut rebuilds: Vec<(&ExclusiveJob, bool)> = Vec::new();
+        let (mut sent, mut nix_on_node, mut heavy_on_node) = (None, None, None);
+        for c in commands {
+            let via_ssh = shell.ssh_destination(c);
+            let ssh = via_ssh.is_some();
+            let on = via_ssh.map_or(this_job, |d| {
+                job_on(destination_host(d, this.as_deref()).as_deref())
+            });
+            if is_rebuild(c) {
+                if let Some(j) =
+                    on.or_else(|| (!is_local_rebuild(c)).then(|| sent_to(ssh)).flatten())
+                {
+                    rebuilds.push((j, ssh));
+                }
+            } else if is_nix_build(c) {
+                match on {
+                    Some(j) => nix_on_node = nix_on_node.or(Some(j)),
+                    None if !without_remote_builders(c) => sent = sent.or(sent_to(ssh)),
+                    None => {}
+                }
+            } else if is_heavy(c) {
+                heavy_on_node = heavy_on_node.or(on);
+            }
+        }
+        let (job, fix) = if let Some(&(j, _)) = rebuilds.first() {
+            if this_job.is_none() && rebuilds.iter().all(|&(_, ssh)| !ssh) {
+                (
+                    j,
+                    "rebuild のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、nix-rebuild rebuild|update --local（関数の rebuild、update でなく）で手元でビルドしてください。",
+                )
+            } else {
+                (
+                    j,
+                    "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。",
+                )
+            }
+        } else if let (Some(j), None) = (sent, nix_on_node) {
+            (
+                j,
+                "このホストの nix のビルドは計算ノードに投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、--builders '' --max-jobs auto を付けて手元でビルドしてください。",
+            )
+        } else if let Some(j) = nix_on_node.or(sent) {
+            (
+                j,
+                "nix のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。",
+            )
+        } else if let Some(j) = heavy_on_node {
+            (
+                j,
+                "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。",
+            )
         } else {
-            "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
+            return Vec::new();
         };
         let (name, jobid) = (job.name.as_str(), job.id.as_str());
         vec![Finding::Deny(format!(
