@@ -227,7 +227,7 @@ fn io(e: std::io::Error) -> Stop {
 }
 
 fn write_data(out: &mut impl Write, data: &[u8]) -> Result<(), Stop> {
-    write!(out, "data {}\n", data.len()).map_err(io)?;
+    writeln!(out, "data {}", data.len()).map_err(io)?;
     out.write_all(data).map_err(io)?;
     out.write_all(b"\n").map_err(io)
 }
