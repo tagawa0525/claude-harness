@@ -57,7 +57,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 中断の後片付けを持つ `check-each-commit.sh`（`trap` で一時の worktree を消す。#169）:
 
-- 案 甲: `ctrlc` の crate を足して中断を受け、検査のコマンドが終わった後に片付けて 130 で終える
+- 案 甲: `ctrlc` の crate を足して中断を受け（TERM と HUP も受けるには `termination` の feature が要る）、検査のコマンドが終わった後に片付けて 130 で終える
 - 案 乙: `libc`（Unix の sigaction）と `windows-sys`（SetConsoleCtrlHandler）を足して同じことをする
 - 案 丙: 中断の後片付けをやめ、次の起動の始めに前の一時の worktree を消す
 - 案 丁: 呼ぶ sh が exec せずに `claude-hooks` を起動し、一時のディレクトリを作って自分の `trap` で片付ける
@@ -65,7 +65,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 ## 決定と理由
 
-採用: 案 1、案 A。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
+採用: 案 1、案 A、案 戊。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
@@ -121,7 +121,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 ### 確認
 
 - 移したスクリプトの結合テストが、`nix flake check` と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
-  いるもの
+  いるもの。sh のまま残す `check-each-commit.sh` は、`.claude/tests/scripts.sh` の振る舞いのテストで確かめ続ける
 - 移した後、対象のスクリプトのファイル（`check-each-commit.sh` を除く）は `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
   なり、jq を使わない。`lib/` の部品は `claude-hooks-script.sh` のほかは消えている
 
