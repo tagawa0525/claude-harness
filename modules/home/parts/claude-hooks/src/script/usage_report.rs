@@ -215,7 +215,7 @@ struct Args {
 }
 
 /// `--opt value`、`--opt=value`、一意な省略形（`--si` など）を受ける。`--since` と `--until` は後勝ち、`--repo` は重ねる。
-/// 空の `--since` と `--until` は、渡さないのと同じ（開いた端）。使い方の誤りは None
+/// 使い方の誤りは None
 fn parse_args(args: &[String]) -> Option<Args> {
     let mut out = Args::default();
     let mut it = args.iter();
@@ -242,10 +242,9 @@ fn parse_args(args: &[String]) -> Option<Args> {
                 .filter(|v| !(v.starts_with('-') && v.len() > 1))?
                 .clone(),
         };
-        let bound = (!value.is_empty()).then_some(value.clone());
         match full {
-            "--since" => out.since = bound,
-            "--until" => out.until = bound,
+            "--since" => out.since = Some(value),
+            "--until" => out.until = Some(value),
             _ => out.repos.push(value),
         }
     }
@@ -796,16 +795,16 @@ fn report(args: &Args) -> Result<(), ReportError> {
             }),
         )
     } else {
-        let since = args
-            .since
-            .as_deref()
-            .map(|v| parse_bound("--since", v))
-            .transpose()?;
-        let until = args
-            .until
-            .as_deref()
-            .map(|v| parse_bound("--until", v))
-            .transpose()?;
+        // 空の値は開いた端（どちらかを渡せば、今日の区間にしない）
+        // 空の値は開いた端（片方でも渡せば、今日の区間にしない）
+        let bound = |name: &str, value: Option<&str>| {
+            value
+                .filter(|v| !v.is_empty())
+                .map(|v| parse_bound(name, v))
+                .transpose()
+        };
+        let since = bound("--since", args.since.as_deref())?;
+        let until = bound("--until", args.until.as_deref())?;
         if let (Some(s), Some(u)) = (since, until)
             && s >= u
         {
