@@ -130,4 +130,6 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 - 2026-11-14: 退避の中身を `claude-hooks stop` に移した（ADR-0089）。ロックは `flock` から標準ライブラリの `File::try_lock`
   に、hook の入力は jq から serde_json にした。前は「`.git/memory-backup.lock` を `flock` で取り、親を読んでから ref を進めるまでを
   1 つずつにする」「依存: git、jq（hook の入力の `session_id` と `cwd` をコミットの本文に入れる）、flock（util-linux）、coreutils」。
-  ネイティブの Windows（jq と flock が無い）でも退避するため。排他の範囲と `update-ref` の古い値は変えていない
+  失敗の 1 行目の名前は、前の「claude-memory-backup: メモリを … コミットできませんでした」から「claude-hooks stop: メモリを …
+  コミットできませんでした」になった。ネイティブの Windows（jq と flock が無い）でも退避するため。排他の範囲と
+  `update-ref` の古い値は変えていない

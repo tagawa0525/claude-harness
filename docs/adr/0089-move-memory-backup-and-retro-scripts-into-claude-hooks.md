@@ -114,7 +114,8 @@ retro のスクリプト:
 - 悪い点: `claude-hooks` の不具合が、PreToolUse の hook とメモリの退避の両方を止めうる（今は別のバイナリ）
 - 悪い点: ADR-0087 の帰結と同じく、移す PR の後は `claude-sync` でなく rebuild（Windows は `cargo install` の後に
   `claude-setup`）で入れる。登録を `claude-hooks stop` に替えた settings.json は、そのサブコマンドを持つバイナリと揃って入る。
-  揃わないとき（Windows で `claude-setup` だけを新しくした、`claude-hooks` を前の版に戻した）は、前の版の `claude-hooks` が
+  揃わないとき（Windows で `claude-setup` だけを新しくした、`claude-hooks` を前の版に戻した、Linux で home-manager の前の世代に
+  戻した。前の世代の `claude-setup` は `claude-hooks stop` の登録を知らずに残す）は、前の版の `claude-hooks` が
   知らないサブコマンドに使い方を出して 2 で終え、応答の終わりごとに Claude Code が応答を続ける
 - 悪い点: `claude-sync` だけで呼ぶだけの `memory-index.sh` を入れ、rebuild の前の `claude-hooks` が `memory-index` を
   知らない間は、`TERMS:` だけでなく索引の照合（`ENTRIES:`、`MISSING:`、`UNINDEXED:`、`BROKEN_LINK:`）の行も出ず、
