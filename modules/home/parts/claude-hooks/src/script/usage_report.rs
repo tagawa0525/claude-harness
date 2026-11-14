@@ -48,8 +48,9 @@ const DAY_MICROS: i64 = 86_400_000_000;
 static ISO_WITH_OFFSET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$").unwrap()
 });
+// Windows の Read の file_path は `\` で区切る
 static SKILL_FILE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"skills/([\w:-]+)/SKILL\.md").unwrap());
+    LazyLock::new(|| Regex::new(r"skills[/\\]([\w:-]+)[/\\]SKILL\.md").unwrap());
 static NAMED_SKILL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/([\w:-]+) を").unwrap());
 
 const USAGE: &str = "Usage: usage-report.sh [--since <日時>] [--until <日時>] [--repo <リポジトリ>]... [TRANSCRIPT]";
@@ -515,14 +516,25 @@ fn read_transcript(
     let mut skill: Option<String> = None;
     let mut seen: HashSet<String> = HashSet::new();
     let mut replies = Vec::new();
-    for line in std::io::BufReader::new(file).split(b'\n') {
-        let line =
-            line.map_err(|e| ReportError(format!("記録を読めません: {}: {e}", path.display())))?;
-        let Ok(line) = String::from_utf8(line) else {
-            return fail(format!("記録を UTF-8 として読めません: {}", path.display()));
+    let mut reader = std::io::BufReader::new(file);
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        let n = reader
+            .read_until(b'\n', &mut bytes)
+            .map_err(|e| ReportError(format!("記録を読めません: {}: {e}", path.display())))?;
+        if n == 0 {
+            break;
+        }
+        // 改行で終わらない最後の行は、走っている最中のセッションの書きかけ（文字の途中で切れることもある）
+        let complete = bytes.ends_with(b"\n");
+        let line = match std::str::from_utf8(&bytes) {
+            Ok(line) => line,
+            Err(_) if !complete => continue,
+            Err(_) => return fail(format!("記録を UTF-8 として読めません: {}", path.display())),
         };
         // 走っている最中のセッションの書きかけの最後の行
-        let Ok(d) = serde_json::from_str::<Value>(&line) else {
+        let Ok(d) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         if !d.is_object() {
@@ -602,10 +614,12 @@ fn kind_of(prompt: &str, skill: Option<String>, name: &str) -> &'static str {
 /// サブエージェントの記録の隣の .meta.json の name（/code-review が起動したものは `code-review`、`code-review-2` など）。
 /// 親が自由に書く description は「/code-review の指摘を直す」のような担当にも付くので見ない。meta や name の無い記録は空
 fn meta_name(path: &Path) -> Result<String, ReportError> {
-    let meta = PathBuf::from(format!(
-        "{}.meta.json",
-        path.display().to_string().trim_end_matches(".jsonl")
-    ));
+    let mut meta = path.as_os_str().to_owned();
+    if let Some(stem) = path.to_str().and_then(|p| p.strip_suffix(".jsonl")) {
+        meta = stem.into();
+    }
+    meta.push(".meta.json");
+    let meta = PathBuf::from(meta);
     if !meta.exists() {
         return Ok(String::new());
     }
@@ -812,8 +826,11 @@ fn report(args: &Args) -> Result<(), ReportError> {
     let mut top: Vec<Top> = Vec::new();
     let main = read_transcript(&transcript, since, until)?;
     totals.add("親", &main.replies);
-    let stem = transcript.display().to_string();
-    let subagents = Path::new(stem.strip_suffix(".jsonl").unwrap_or(&stem)).join("subagents");
+    let subagents = match transcript.to_str().and_then(|p| p.strip_suffix(".jsonl")) {
+        Some(stem) => PathBuf::from(stem),
+        None => transcript.clone(),
+    }
+    .join("subagents");
     for path in glob_dir(&subagents, ".jsonl") {
         let t = read_transcript(&path, since, until)?;
         let (Some(first), Some(last)) = (t.replies.first(), t.replies.last()) else {
@@ -941,7 +958,7 @@ mod tests {
     }
 
     #[test]
-    fn rounding_of_two_decimals_matches_python() {
+    fn two_decimals_round_the_binary_value_to_the_nearest() {
         // 小数 2 桁の表示は、2 進の値のまま最も近い方へ丸める（0.125 は 0.12、0.375 は 0.38）
         let cases = [
             (0.125, "0.12"),
@@ -959,7 +976,7 @@ mod tests {
     }
 
     #[test]
-    fn thousands_are_separated_like_python() {
+    fn thousands_are_separated_by_commas() {
         assert_eq!(thousands(0), "0");
         assert_eq!(thousands(999), "999");
         assert_eq!(thousands(1000), "1,000");
