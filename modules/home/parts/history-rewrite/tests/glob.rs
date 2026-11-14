@@ -40,6 +40,11 @@ fn globs_match_like_full_match() {
         ("b", "[a-c&&b]", true),
         ("^", "[^]", true),
         ("a", "[^]", false),
+        // path も PurePosixPath として読み直す
+        ("a//b", "a/b", true),
+        ("./a.md", "a.md", true),
+        ("a/b/", "a/b", true),
+        ("a/./b", "a/b", true),
     ];
     for (path, pattern, want) in cases {
         assert_eq!(full_match(path, pattern), want, "{path:?} {pattern:?}");
