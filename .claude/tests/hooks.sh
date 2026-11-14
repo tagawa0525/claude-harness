@@ -2805,11 +2805,12 @@ assert_eq "" "$out"
 
 FAKE_SQUEUE="$TEST_ROOT/fake-squeue"
 mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle"
-printf '#!/bin/sh\nprintf "NO|openmc-2K|1234\\nOK|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
-printf '#!/bin/sh\nprintf "OK|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
+# 列は OverSubscribe|名前|番号|ノード（排他のジョブは r995 で走る）
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
+printf '#!/bin/sh\nprintf "OK|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
 printf '#!/bin/sh\nexit 0\n' >"$FAKE_SQUEUE/idle/squeue"
 mkdir -p "$FAKE_SQUEUE/many"
-printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|shared-$n|$n"; done\necho "NO|openmc-2K|99999"\n' >"$FAKE_SQUEUE/many/squeue"
+printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|shared-$n|$n|r995"; done\necho "NO|openmc-2K|99999|r995"\n' >"$FAKE_SQUEUE/many/squeue"
 chmod +x "$FAKE_SQUEUE"/*/squeue
 cd "$TEST_ROOT" || exit 1
 # hostname は偽のコマンドで置き換える。r995 の上の振る舞いを確かめるテストは host-r995 を、ラップトップの振る舞いは
@@ -2831,6 +2832,16 @@ case "$2" in
 esac
 EOF
 chmod +x "$FAKE_SQUEUE/host-laptop/ssh"
+# NIX_CONF_DIR/machines は nix のリモートのビルダー（NixOS の nix.buildMachines）。ラップトップは r995 に投げる
+mkdir -p "$FAKE_SQUEUE/conf-laptop" "$FAKE_SQUEUE/conf-none"
+echo 'ssh-ng://nix-ssh@r995 x86_64-linux /root/.ssh/key 16 4 kvm - -' >"$FAKE_SQUEUE/conf-laptop/machines"
+export NIX_CONF_DIR="$FAKE_SQUEUE/conf-laptop"
+# 計算ノードの名前は固定しない（gpu1 で走るジョブ、縮めた形のノードの一覧）
+mkdir -p "$FAKE_SQUEUE/on-gpu1" "$FAKE_SQUEUE/on-range" "$FAKE_SQUEUE/host-gpu1"
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|gpu1\\n"\n' >"$FAKE_SQUEUE/on-gpu1/squeue"
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|node[1-3]\\n"\n' >"$FAKE_SQUEUE/on-range/squeue"
+printf '#!/bin/sh\necho gpu1\n' >"$FAKE_SQUEUE/host-gpu1/hostname"
+chmod +x "$FAKE_SQUEUE"/on-*/squeue "$FAKE_SQUEUE/host-gpu1/hostname"
 
 it "guard-exclusive-slurm: r995 の上では、排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と修正方法を示す"
 for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' 'cargo check' 'nix flake check' \
@@ -2981,6 +2992,22 @@ for cmd in "nix build --builders '' --max-jobs auto .#x" 'nix build --builders @
 done
 out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "nix build --builders '' .#x")
 assert_eq deny "$(decision "$out")"
+
+it "guard-exclusive-slurm: 計算ノードかは、排他のジョブのノードと比べて決める（名前を固定しない）"
+out=$(PATH="$FAKE_SQUEUE/host-gpu1:$FAKE_SQUEUE/on-gpu1:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq deny "$(decision "$out")"
+out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/on-gpu1:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq "" "$out"
+# 縮めた形の一覧は読まず、ノードの上とみなす
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-range:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq deny "$(decision "$out")"
+
+it "guard-exclusive-slurm: リモートのビルダーに計算ノードが無いホストの nix のビルドは、手元でビルドするので通す"
+for cmd in 'nix build .#x' 'nix flake check' 'nix-rebuild update'; do
+  out=$(NIX_CONF_DIR="$FAKE_SQUEUE/conf-none" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" \
+    run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
 
 it "guard-exclusive-slurm: 排他のジョブが無い（排他でないジョブだけ、ジョブなし）なら通す"
 for dir in shared idle; do
