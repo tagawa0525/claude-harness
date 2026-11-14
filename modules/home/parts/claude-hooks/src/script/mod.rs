@@ -55,7 +55,6 @@ const SCRIPTS: &[(&str, Script)] = &[
 ];
 
 pub fn main(args: &[String]) -> i32 {
-    restore_sigpipe();
     let name = args.first().map(String::as_str);
     if let Some((_, run)) = SCRIPTS.iter().find(|(n, _)| Some(*n) == name) {
         return run(&args[1..]);
@@ -66,27 +65,6 @@ pub fn main(args: &[String]) -> i32 {
     eprintln!("{}", crate::OLDER_THAN_CALLER);
     2
 }
-
-/// SIGPIPE を既定の動作（黙って終わる）に戻す。読む側が先に閉じたパイプ（`git-info.sh | head -2`）に書いても、sh の版と
-/// 同じく SIGPIPE で終わる。Rust は起動の時に SIGPIPE を無視にし、そのままだと閉じたパイプへの `println!` と `eprintln!` は
-/// panic して 101 で終わる。`libc` の crate を足さず、std が既にリンクする C の `signal` を直に呼ぶ（#170）。
-/// Windows には SIGPIPE が無く、閉じたパイプへの書き込みは今も panic する
-#[cfg(unix)]
-fn restore_sigpipe() {
-    unsafe extern "C" {
-        fn signal(signum: std::ffi::c_int, handler: usize) -> usize;
-    }
-    // Linux、macOS、BSD で同じ値（signal.h）
-    const SIGPIPE: std::ffi::c_int = 13;
-    const SIG_DFL: usize = 0;
-    // SAFETY: 起動の始め（スレッドを作る前）に、既定の動作に戻すだけで、ハンドラの関数は渡さない
-    unsafe {
-        signal(SIGPIPE, SIG_DFL);
-    }
-}
-
-#[cfg(not(unix))]
-fn restore_sigpipe() {}
 
 /// スキルとスクリプトの置き場（`~/.claude` か、リポジトリの `.claude`）。案内に書くスクリプトのパスを、呼んだ sh と
 /// 同じツリーから引くため（デプロイ先の古い版を案内しない）。呼んだ sh の場所は `lib/claude-hooks-script.sh` が
