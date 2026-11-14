@@ -60,7 +60,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     match summary(&pr) {
         Ok(text) => {
-            print!("{text}");
+            out!("{text}");
             0
         }
         Err(code) => code,

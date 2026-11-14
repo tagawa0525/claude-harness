@@ -2,6 +2,23 @@
 //! `~/.claude/scripts/` と `~/.claude/skills/gh-pr-review/scripts/` の同じ名前の sh は、これを exec するだけにする
 //! （スキルの文と PreToolUse のルールはスクリプトの名前で呼び、見分けるので、名前と場所を変えない）
 
+/// 標準出力に書く（`print!` の代わり。`write_stdout` を参照）
+macro_rules! out {
+    ($($t:tt)*) => {
+        $crate::script::write_stdout(format_args!($($t)*))
+    };
+}
+
+/// 標準出力に 1 行書く（`println!` の代わり。`write_stdout` を参照）
+macro_rules! outln {
+    () => {
+        $crate::script::write_stdout(format_args!("\n"))
+    };
+    ($($t:tt)*) => {
+        $crate::script::write_stdout(format_args!("{}\n", format_args!($($t)*)))
+    };
+}
+
 mod base_moved;
 mod branch_topics;
 mod decide_next;
@@ -64,6 +81,20 @@ pub fn main(args: &[String]) -> i32 {
     eprintln!("scripts: {}", names.join(", "));
     eprintln!("{}", crate::OLDER_THAN_CALLER);
     2
+}
+
+/// 標準出力に書く。読む側が先に閉じていれば（`git-info.sh | head -2`）、sh が SIGPIPE で終わるときと同じ 141 で
+/// 黙って終える。`println!` を使わないのは、Rust は SIGPIPE を無視し、閉じたパイプへの `println!` が panic して 101 で
+/// 終わるから。SIGPIPE を既定に戻すには libc が要り、依存を足さない（#170。ADR-0087 は check-each-commit でも
+/// シグナルを受ける依存を足さないとした）。`main.rs` は script のモジュールで `print!` と `println!` を禁じる
+pub fn write_stdout(args: std::fmt::Arguments) {
+    use std::io::Write;
+    if let Err(e) = std::io::stdout().lock().write_fmt(args) {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(141);
+        }
+        panic!("標準出力に書けない: {e}");
+    }
 }
 
 /// スキルとスクリプトの置き場（`~/.claude` か、リポジトリの `.claude`）。案内に書くスクリプトのパスを、呼んだ sh と

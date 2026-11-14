@@ -137,9 +137,9 @@ fn diagnose(target: &str) -> Result<(), i32> {
     } else {
         target.clone()
     };
-    println!("BRANCH: {branch}");
+    outln!("BRANCH: {branch}");
     if !pr_number.is_empty() {
-        println!("PR: {pr_number}");
+        outln!("PR: {pr_number}");
     }
 
     // --- 1. GitHub Actions ---
@@ -163,11 +163,11 @@ fn diagnose(target: &str) -> Result<(), i32> {
         return Err(1);
     };
     if runs.is_empty() {
-        println!("RUNS: 0");
+        outln!("RUNS: 0");
     } else {
-        println!("RUNS:");
+        outln!("RUNS:");
         for r in &runs {
-            println!(
+            outln!(
                 "- {} {} {}/{} {} {}",
                 text(&r["databaseId"]),
                 text(&r["name"]),
@@ -182,8 +182,8 @@ fn diagnose(target: &str) -> Result<(), i32> {
         let id = text(&latest["databaseId"]);
         let status = text(&latest["status"]);
         let conclusion = text(&latest["conclusion"]);
-        println!("RUN: {id}");
-        println!("STATUS: {status}/{conclusion}");
+        outln!("RUN: {id}");
+        outln!("STATUS: {status}/{conclusion}");
         if status != "completed" {
             cause = "IN_PROGRESS";
             next = "実行中です。完了を待ってから再確認してください".to_string();
@@ -193,13 +193,13 @@ fn diagnose(target: &str) -> Result<(), i32> {
                 &gh.output(&["run", "view", &id, "--json", "jobs,attempt"])?,
             )?;
             let attempt = view["attempt"].as_u64().unwrap_or(1);
-            println!("ATTEMPT: {attempt}");
+            outln!("ATTEMPT: {attempt}");
             for job in view["jobs"].as_array().into_iter().flatten() {
                 if job["conclusion"] == "failure" {
-                    println!("FAILED_JOB: {}", text(&job["name"]));
+                    outln!("FAILED_JOB: {}", text(&job["name"]));
                     for step in job["steps"].as_array().into_iter().flatten() {
                         if step["conclusion"] == "failure" {
-                            println!("FAILED_STEP: {}", text(&step["name"]));
+                            outln!("FAILED_STEP: {}", text(&step["name"]));
                         }
                     }
                 }
@@ -214,9 +214,9 @@ fn diagnose(target: &str) -> Result<(), i32> {
                     s
                 })
                 .unwrap_or_default();
-            println!("--- errors ---");
+            outln!("--- errors ---");
             for line in log.lines().filter(|l| ERROR_LINE.is_match(l)).take(40) {
-                println!("{line}");
+                outln!("{line}");
             }
             // 再実行を提案してよいのは初回の失敗だけ
             let rerun_or_report = |what: &str| {
@@ -301,14 +301,14 @@ fn diagnose(target: &str) -> Result<(), i32> {
     let (mut ext_failed, mut ext_pending) = (Vec::new(), 0);
     match &external {
         Some(ext) => {
-            println!("EXTERNAL_CHECKS: {}", ext.len());
+            outln!("EXTERNAL_CHECKS: {}", ext.len());
             for c in ext {
                 let url = if c["url"].is_null() {
                     "-".to_string()
                 } else {
                     text(&c["url"])
                 };
-                println!(
+                outln!(
                     "EXTERNAL_CHECK: {} {}/{} {} {url}",
                     text(&c["name"]),
                     text(&c["status"]),
@@ -323,8 +323,8 @@ fn diagnose(target: &str) -> Result<(), i32> {
             }
         }
         None => {
-            println!("EXTERNAL_CHECKS: unavailable");
-            println!(
+            outln!("EXTERNAL_CHECKS: unavailable");
+            outln!(
                 "NOTE: head SHA の check-run を取得できません（ブランチが未 push か、API エラー）"
             );
         }
@@ -332,21 +332,21 @@ fn diagnose(target: &str) -> Result<(), i32> {
 
     // --- 3. 総合の判定。GitHub Actions の側に原因があればそれを先にし、外部の CI は情報として添える ---
     if cause != "NONE" {
-        println!("CAUSE: {cause}");
-        println!("NEXT: {next}");
+        outln!("CAUSE: {cause}");
+        outln!("NEXT: {next}");
     } else if !ext_failed.is_empty() {
-        println!("CAUSE: EXTERNAL");
-        println!(
+        outln!("CAUSE: EXTERNAL");
+        outln!(
             "NEXT: 外部 CI の失敗です（GitHub Actions の run ではないため、ここからは再実行できません）。ログを details_url で確認し、一時的な失敗なら外部 CI 側で再実行してください: {}",
             ext_failed.join(", ")
         );
     } else if ext_pending > 0 {
-        println!("CAUSE: IN_PROGRESS");
-        println!("NEXT: 外部 CI が実行中です。完了を待ってから再確認してください");
+        outln!("CAUSE: IN_PROGRESS");
+        outln!("NEXT: 外部 CI が実行中です。完了を待ってから再確認してください");
     } else {
-        println!("CAUSE: NONE");
+        outln!("CAUSE: NONE");
         if runs.is_empty() {
-            println!("NOTE: ワークフローが未設定か、このブランチではまだ実行されていません");
+            outln!("NOTE: ワークフローが未設定か、このブランチではまだ実行されていません");
         }
     }
     Ok(())

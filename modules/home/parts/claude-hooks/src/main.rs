@@ -26,6 +26,8 @@ mod input;
 mod output;
 mod process;
 mod rules;
+// 閉じたパイプで panic しないよう、標準出力には out! と outln! で書く（script::write_stdout）
+#[deny(clippy::print_stdout)]
 mod script;
 mod shell;
 mod staged_checks;

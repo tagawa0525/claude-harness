@@ -280,6 +280,6 @@ pub fn main(args: &[String]) -> i32 {
             }
         ));
     }
-    print!("{out}");
+    out!("{out}");
     0
 }

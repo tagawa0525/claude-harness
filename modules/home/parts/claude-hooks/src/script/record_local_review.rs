@@ -105,9 +105,9 @@ pub fn main(args: &[String]) -> i32 {
     if code != 0 {
         return code;
     }
-    println!("RECORDED: {head}");
+    outln!("RECORDED: {head}");
     if high > 0 {
-        println!(
+        outln!(
             "NOTE: High の残る記録は、レビュー済みとして数えない。直して push し、回し直して記録する"
         );
     }

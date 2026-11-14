@@ -36,7 +36,7 @@ pub fn main(args: &[String]) -> i32 {
             .and_then(review_comment_id)
             .map_or(Value::Null, Value::from),
     );
-    println!("{:#}", Value::Object(info));
+    outln!("{:#}", Value::Object(info));
     0
 }
 

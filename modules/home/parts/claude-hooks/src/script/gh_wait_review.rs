@@ -33,17 +33,17 @@ pub fn main(args: &[String]) -> i32 {
             "--since" => match rest.next().filter(|v| !v.is_empty()) {
                 Some(v) => since = Some(v.clone()),
                 None => {
-                    println!("ERROR: --since には ISO 8601 の時刻が必要です");
+                    outln!("ERROR: --since には ISO 8601 の時刻が必要です");
                     return 5;
                 }
             },
             a if a.starts_with('-') => {
-                println!("ERROR: 不明なオプション: {a}");
+                outln!("ERROR: 不明なオプション: {a}");
                 return 5;
             }
             a => {
                 if let Some(first) = url {
-                    println!("ERROR: PR の URL は 1 つだけ指定してください: '{first}' と '{a}'");
+                    outln!("ERROR: PR の URL は 1 つだけ指定してください: '{first}' と '{a}'");
                     return 5;
                 }
                 url = Some(a);
@@ -62,11 +62,11 @@ pub fn main(args: &[String]) -> i32 {
     // PR の解決や待ちの失敗を「PR が無い」と混同しないよう、gh を使えるかを先に確かめる
     match crate::gh::quiet_status_for_repo(&pr.repo, &["auth", "status"]) {
         Err(_) => {
-            println!("ERROR: gh コマンドが見つかりません");
+            outln!("ERROR: gh コマンドが見つかりません");
             return 4;
         }
         Ok(status) if !status.success() => {
-            println!("ERROR: gh が未認証です。gh auth login を実行してください");
+            outln!("ERROR: gh が未認証です。gh auth login を実行してください");
             return 4;
         }
         Ok(_) => {}
@@ -76,7 +76,7 @@ pub fn main(args: &[String]) -> i32 {
     if crate::gh::quiet_output_for_repo(&pr.repo, &["pr", "view", &pr.number, "--json", "number"])
         .is_none()
     {
-        println!(
+        outln!(
             "ERROR: PR #{} が見つからないか、アクセスできません",
             pr.number
         );
@@ -85,12 +85,12 @@ pub fn main(args: &[String]) -> i32 {
 
     let since = match since {
         Some(since) => {
-            println!("INFO: {since} より新しいレビューの到着を待ちます");
+            outln!("INFO: {since} より新しいレビューの到着を待ちます");
             since
         }
         None => match last_request(&pr, &canonical) {
             Ok(since) => {
-                println!("INFO: 最後のレビュー要求は {since}。それ以降のレビューの到着を待ちます");
+                outln!("INFO: 最後のレビュー要求は {since}。それ以降のレビューの到着を待ちます");
                 since
             }
             Err(code) => return code,
@@ -103,27 +103,27 @@ pub fn main(args: &[String]) -> i32 {
             return 0;
         }
         if copilot_run_failed(&pr) {
-            println!(
+            outln!(
                 "ERROR: PR #{} の head でレビューの実行が失敗しています。待ってもレビューは来ません",
                 pr.number
             );
-            println!(
+            outln!(
                 "次の一手: /gh-actions-check {canonical} で原因を確認してください（レビュー用トークンの枯渇・内部エラーなど）"
             );
             return 7;
         }
-        println!("待機中: レビュー未着（経過{elapsed}秒）。{interval}秒後に再確認します");
+        outln!("待機中: レビュー未着（経過{elapsed}秒）。{interval}秒後に再確認します");
         std::thread::sleep(Duration::from_secs(interval));
         elapsed += interval;
     }
     if arrived(&pr, &since, elapsed) {
         return 0;
     }
-    println!(
+    outln!(
         "TIMEOUT: 約10分待ちましたがPR #{} に新しいレビューが来ていません",
         pr.number
     );
-    println!("次の一手: /gh-actions-check {canonical} で Actions の状況を診断してください");
+    outln!("次の一手: /gh-actions-check {canonical} で Actions の状況を診断してください");
     1
 }
 
@@ -135,7 +135,7 @@ fn last_request(pr: &pr_url::Pr, canonical: &str) -> Result<String, i32> {
     {
         std::thread::sleep(Duration::from_secs(interval));
         let Ok(times) = gh_review_requests::request_times(pr) else {
-            println!(
+            outln!(
                 "ERROR: PR #{} のレビュー要求を取得できません（timeline API が失敗）",
                 pr.number
             );
@@ -145,7 +145,7 @@ fn last_request(pr: &pr_url::Pr, canonical: &str) -> Result<String, i32> {
             return Ok(last.clone());
         }
     }
-    println!(
+    outln!(
         "ERROR: PR #{} には Copilot へのレビュー要求がありません。要求していないレビューは来ないので待ちません",
         pr.number
     );
@@ -154,7 +154,7 @@ fn last_request(pr: &pr_url::Pr, canonical: &str) -> Result<String, i32> {
         .display()
         .to_string()
         .replace('\\', "/");
-    println!(
+    outln!(
         "次の一手: {review_scripts}/request-rereview.sh {canonical} でレビューを要求できます（任意。head のローカルレビューの記録があればマージできる。要求の前に、/gh-pr-review の「ローカルレビュー」の手順で head に /code-review を回して {review_scripts}/record-local-review.sh で記録する）"
     );
     Err(6)
@@ -193,12 +193,12 @@ fn arrived(pr: &pr_url::Pr, since: &str, elapsed: u64) -> bool {
     let Some(latest) = latest.filter(|at| at.as_str() > since) else {
         return false;
     };
-    println!(
+    outln!(
         "OK: PR #{} に新しいレビューが到着しました（{latest}、待機{elapsed}秒）",
         pr.number
     );
     for review in reviews(pr) {
-        println!(
+        outln!(
             "- {}: {}",
             text(&review["author"]["login"]),
             text(&review["state"])

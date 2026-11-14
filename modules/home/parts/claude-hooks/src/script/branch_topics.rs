@@ -77,9 +77,9 @@ pub fn main(args: &[String]) -> i32 {
     let fork = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let range = format!("{base}..{tip}");
 
-    println!("BASE: {base}");
-    println!("HEAD: {tip}");
-    println!(
+    outln!("BASE: {base}");
+    outln!("HEAD: {tip}");
+    outln!(
         "COMMITS: {}",
         git(dir, &["rev-list", "--count", &range])
             .unwrap_or_default()
@@ -101,7 +101,7 @@ pub fn main(args: &[String]) -> i32 {
         // 件数の多い順、同数は名前の順（BTreeMap の順を保つ安定な並べ替え）
         types.sort_by_key(|t| std::cmp::Reverse(t.1));
         let line: Vec<String> = types.iter().map(|(t, n)| format!("{t}={n}")).collect();
-        println!("TYPES: {}", line.join(" "));
+        outln!("TYPES: {}", line.join(" "));
     }
 
     report(dir, &fork, &tip, "docs/adr", "ADR");
@@ -131,7 +131,7 @@ pub fn main(args: &[String]) -> i32 {
     })
     .collect();
     if !dirs.is_empty() {
-        println!("DIRS: {}", dirs.into_iter().collect::<Vec<_>>().join(" "));
+        outln!("DIRS: {}", dirs.into_iter().collect::<Vec<_>>().join(" "));
     }
     0
 }
@@ -176,11 +176,11 @@ fn report(dir: &Path, fork: &str, tip: &str, docs: &str, prefix: &str) {
             continue;
         }
         if kind == "A" {
-            println!("{prefix}_NEW: {path} ({})", status(dir, tip, path));
+            outln!("{prefix}_NEW: {path} ({})", status(dir, tip, path));
         } else if kind == "M" || kind.starts_with('R') {
             let (old, new) = (status(dir, fork, src), status(dir, tip, path));
             if old != new {
-                println!("{prefix}_STATUS: {path} {old} -> {new}");
+                outln!("{prefix}_STATUS: {path} {old} -> {new}");
             }
         }
     }

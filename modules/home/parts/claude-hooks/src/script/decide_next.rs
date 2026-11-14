@@ -42,7 +42,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     match decide(&pr) {
         Ok(text) => {
-            print!("{text}");
+            out!("{text}");
             0
         }
         Err(code) => code,
