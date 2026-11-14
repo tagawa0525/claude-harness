@@ -59,7 +59,8 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
     `home-manager switch|build`。`sudo` とフルパス（`/run/current-system/sw/bin/nixos-rebuild`）もほどいて判定する。
     ただし `hostname` が r995 でないと返すホストでは、手元でビルドする `nix-rebuild rebuild|update --local` を除く
     （ほかのホストのビルドは r995 に投げられる。`--local` は nixfiles の `nix-rebuild.sh` が手元でビルドする）。
-    ssh の先と、shell の関数の `rebuild --local`・`update --local` は除かない（前の版の関数 `rebuild` は引数を捨て、
+    ssh の先は、接続先（`~/.ssh/config` の別名は `ssh -G` で HostName に解く）が r995 でないときだけ除く。shell の関数の
+    `rebuild --local`・`update --local` は除かない（前の版の関数 `rebuild` は引数を捨て、
     それを定義したまま走っているシェルでは `--local` が落ちる）
   - `bin/` か、`release`・`debug` ディレクトリ（`target/`、`target/<triple>/`、`CARGO_TARGET_DIR` の下）にある
     `xs|lattice|core|chain`（`../../bin/xs` など相対も）
@@ -125,8 +126,8 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
   nix-daemon の中で走り、クライアントの taskset を引き継がないと確かめたので、rebuild に taskset の例外を当てない。
   `sudo nixos-rebuild`（root は daemon を通さずにビルドしうる）で taskset が効くかは確かめていないが、`nix-rebuild update` と
   `home-manager` は利用者の権限で daemon を通すので、形で分けず rebuild はすべて待たせる
-- 2026-11-14: r995 のほかのホストでは、手元でビルドする rebuild（`nix-rebuild rebuild|update --local`。ssh の先と
-  shell の関数は除かない）を対象から外し、rebuild の拒否の文言に `--local` を示す。
+- 2026-11-14: r995 のほかのホストでは、手元でビルドする rebuild（`nix-rebuild rebuild|update --local`。ssh の先は
+  接続先が r995 でないときだけ。shell の関数は除かない）を対象から外し、rebuild の拒否の文言に `--local` を示す。
   前は rebuild を「taskset で包んでも止める」だけで、ホストでは分けず、関数は「引数を捨てるので引数によらない」、
   文言は「taskset が効かないことと終わるまで待つことだけを示す」だった（nixfiles の関数の `rebuild` も引数を渡すように
   した）。ラップトップのビルドは r995 に投げられる（nixfiles の `nix.distributedBuilds`、`max-jobs = 0`）ので止める
