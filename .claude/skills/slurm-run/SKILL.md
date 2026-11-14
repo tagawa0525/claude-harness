@@ -39,7 +39,10 @@ r995 の Slurm の待ち行列に重い計算を流す。排他のジョブは�
 
 1 コアの処理（テスト、lint、比べるツール）と数分のビルドは、時間がかかっても手元で実行する。待ち行列に入れると、
 ほかのセッションの長い計算の後ろで待たされる。
-ただし排他のジョブが走っている間は、`taskset` で 1 コアに限る（hook が止める）。
+ただし排他のジョブが走っている間、そのジョブの計算ノードの上では `taskset` で 1 コアに限る（hook が止める）。ほかの
+ホストでは手元のコアは限らなくてよいが、`nix build`、`nix flake check`、rebuild は計算ノードに投げられるので待つか、
+`--builders '' --max-jobs auto`（rebuild は `nix-rebuild rebuild|update --local`）で手元でビルドする（hook が止める。
+nix-daemon の中で走るので `taskset` は効かない）。
 
 ## 投げ方
 
