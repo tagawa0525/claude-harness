@@ -4,7 +4,7 @@
 //! 1 行ずつ分けて書かせる。欄が欠けると、書く側は出典を開いたかを見返せず、受ける側は本文から事実を拾い出す。
 //! 欄の有無は依頼の文字列だけで決まるので、送る前にここで判定する。
 //!
-//! - 依頼の置き場: prompt の空でない最初の行に「依頼文は <絶対パス> にある」（パスは `` ` `` か「」で囲んでもよい）が
+//! - 依頼の置き場: prompt の空でない最初の行に「依頼文は <絶対パス> にある」（パスは `` ` `` か「」で囲んでもよい。空白を含むパスは囲む）が
 //!   あれば、そのファイル。無ければ prompt。2 行目以降の同じ句は、ほかの依頼文への言及として扱う
 //! - 対象: prompt か依頼のファイルの、空でない最初の行に「/delegate を呼び、」（呼ぶ。、呼んで、）がある呼び出し。定型の
 //!   1 行目がこの句なので、/delegate に触れるだけの prompt（/delegate を調べる依頼、差分の引用）は見ない
@@ -42,10 +42,33 @@ static CALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/delegate\s*を呼(?:び|ぶ|んで)(?:[、。,.\s]|$)").unwrap());
 
 /// 依頼のファイルを指す句。パスは `/`、`~`、`.` か、Windows のドライブ（`C:\`、`C:/`）で始まるものだけを見る
-/// （「依頼文は下にある」は指していない）。絶対パスかは句を見つけた後に確かめ、拒否の文言で修正方法を示す
+/// （「依頼文は下にある」は指していない）。絶対パスかは句を見つけた後に確かめ、拒否の文言で修正方法を示す。
+/// 囲んだパス（`` ` `` と「」）は閉じる記号までを取り、空白を含んでよい（Windows のユーザー名には空白が入りうる）。
+/// 内側の前後の空白は外す。囲まないパスは空白で切る（空白を許すと、パスの後の本文の「にある」まで取り込む）
 static POINTER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"依頼文は\s*[`「]?((?:[/~.]|[A-Za-z]:[\\/])[^\s`「」]*?)[`」]?\s*にある").unwrap()
+    const START: &str = r"(?:[/~.]|[A-Za-z]:[\\/])";
+    Regex::new(&format!(
+        r"依頼文は\s*(?:`\s*({START}[^`\n]*?)\s*`|「\s*({START}[^」\n]*?)\s*」|({START}[^\s`「」]*?))\s*にある"
+    ))
+    .unwrap()
 });
+
+/// POINTER に当たった句のパス（囲み方ごとの組のどれか 1 つに入る）
+fn pointed_path<'a>(c: &regex::Captures<'a>) -> &'a str {
+    (1..=3)
+        .find_map(|i| c.get(i))
+        .expect("POINTER の 3 つの組のどれかが当たる")
+        .as_str()
+}
+
+/// 依頼のファイルを指そうとしたが、POINTER として読めない句（空白を含む囲まないパス、閉じ忘れた囲み）。prompt の
+/// 側の欄が欠けたとき、欄を prompt に足すよう示す代わりに、句の修正方法を示すために見る
+static UNREADABLE_POINTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"依頼文は\s*[`「]?\s*(?:[/~.]|[A-Za-z]:[\\/])[^\n]*?にある").unwrap()
+});
+
+/// 句の囲み方の案内（拒否の文に添える）
+const QUOTE_HINT: &str = "空白を含むパスは `` ` `` か「」で囲み、囲むなら閉じる記号まで書きます（囲まないパスは空白で切ります）";
 
 /// 中身を判定する欄（`FIELDS` の添字）と、その欄に要る語
 const SCOPE: usize = 5;
@@ -124,7 +147,7 @@ impl Rule for DelegateRequestFields {
         // place は欠けた欄を書いた場所、target は欄を足す先（拒否の文言に使う）
         let (request, place, target) = match POINTER.captures(first_line(&input.prompt)) {
             Some(c) => {
-                let path = &c[1];
+                let path = pointed_path(&c);
                 match read_request(path) {
                     Ok(text) if prompt_calls || calls_delegate(&text) => {
                         (text, format!("依頼文のファイル {path}"), "ファイル")
@@ -132,7 +155,7 @@ impl Rule for DelegateRequestFields {
                     Ok(_) => return Vec::new(),
                     Err(e) if prompt_calls => {
                         return vec![Finding::Deny(format!(
-                            "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の 1 行目の「依頼文は <絶対パス> にある」のパスを直してください（`~` や相対のパスは使えません）。"
+                            "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の 1 行目の「依頼文は <絶対パス> にある」のパスを直してください（`~` や相対のパスは使えません。{QUOTE_HINT}）。"
                         ))];
                     }
                     // /delegate を呼ぶかは読めないファイルの側にあるかもしれないが、prompt が呼ばないなら対象と決められない
@@ -152,13 +175,24 @@ impl Rule for DelegateRequestFields {
             .filter(|(_, heading)| !heading.is_match(&request))
             .map(|(f, _)| *f)
             .collect();
+        if !missing.is_empty()
+            && target == "prompt"
+            && UNREADABLE_POINTER.is_match(first_line(&input.prompt))
+        {
+            return vec![Finding::Deny(format!(
+                "/delegate の依頼の prompt の 1 行目「依頼文は … にある」から、依頼文のファイルのパスを読み取れません。\
+                 prompt を依頼として判定すると、定型の欄がそろっていません（欠けた欄: {}）。\n\
+                 修正方法: 依頼をファイルに置いたなら、1 行目の句を「依頼文は <絶対パス> にある」の形に直して、Agent を呼び直してください（{QUOTE_HINT}）。",
+                missing.join("、"),
+            ))];
+        }
         let mut findings = Vec::new();
         if !missing.is_empty() {
             findings.push(Finding::Deny(format!(
                 "/delegate を呼ぶ依頼に定型の欄がそろっていません（{place}）。欠けた欄: {}\n\
                  依頼は 6 つの欄（{}）を見出しにして書きます。事実を「前提」の欄に 1 行ずつ出典とともに分けると、書く側は出典を開いたかを見返せ、受ける側は欄を順に確かめられます（~/.claude/skills/delegate/references/requesting.md）。\n\
                  判定: 行頭が欄の名前で始まり、直後に「:」か「（…）:」が続く行を見出しとします（例: `前提:`、`前提（確かめていない）:`。括弧の中に出典の括弧を 1 段まで入れられます）。箇条書きの中や、コロンの無い行は数えません。事実を使わない依頼は `前提: なし` と書きます。\n\
-                 修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt の 1 行目に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します。",
+                 修正方法: 欠けた欄を見出しつきで{}に足して、Agent を呼び直してください。依頼をファイルに置くときは、prompt の 1 行目に「依頼文は <絶対パス> にある」と書くと、そのファイルを判定します（空白を含むパスは `` ` `` か「」で囲みます）。",
                 missing.join("、"),
                 FIELDS.join("、"),
                 target,
@@ -238,7 +272,7 @@ mod tests {
 
     fn pointer(path: &std::path::Path) -> String {
         format!(
-            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼んで、その手順に従って進める。",
+            "依頼文は `{}` にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼んで、その手順に従って進める。",
             path.display()
         )
     }
@@ -345,7 +379,7 @@ mod tests {
         let tmp = TempDir::new("file-first-line");
         let path = tmp.0.join("brief.md");
         std::fs::write(&path, COMPLETE.replace("完成の形: テストが通る\n", "")).unwrap();
-        let prompt = format!("依頼文は {} にある。Read で読んで従う。", path.display());
+        let prompt = format!("依頼文は `{}` にある。Read で読んで従う。", path.display());
         assert!(deny_reason(&check(&prompt)).contains("欠けた欄: 完成の形"));
     }
 
@@ -354,7 +388,7 @@ mod tests {
         let tmp = TempDir::new("file-other");
         let path = tmp.0.join("brief.md");
         std::fs::write(&path, "/retro を回す。\n").unwrap();
-        let prompt = format!("依頼文は {} にある。Read で読んで従う。", path.display());
+        let prompt = format!("依頼文は `{}` にある。Read で読んで従う。", path.display());
         assert!(check(&prompt).is_empty());
     }
 
@@ -436,6 +470,77 @@ mod tests {
     }
 
     #[test]
+    fn quoted_request_file_under_a_directory_with_spaces_is_read() {
+        // Windows のユーザー名には空白が入りうる（C:\Users\Taro Yamada\...）。囲んだパスは閉じる記号までを取り、
+        // 内側の前後の空白は外す
+        let tmp = TempDir::new("spaces");
+        let dir = tmp.0.join("Taro Yamada");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("my brief.md");
+        std::fs::write(&path, COMPLETE).unwrap();
+        for quoted in [
+            format!("`{}`", path.display()),
+            format!("「{}」", path.display()),
+            format!("` {} `", path.display()),
+        ] {
+            let prompt = format!(
+                "依頼文は {quoted} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
+            );
+            assert!(check(&prompt).is_empty(), "{quoted}");
+        }
+    }
+
+    #[test]
+    fn missing_quoted_request_file_with_spaces_is_denied_with_its_whole_path() {
+        let path = "/nonexistent/Taro Yamada/brief.md";
+        for quoted in [format!("`{path}`"), format!("「{path}」")] {
+            let prompt = format!(
+                "依頼文は {quoted} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
+            );
+            let findings = check(&prompt);
+            let reason = deny_reason(&findings);
+            assert!(reason.contains(&format!("ファイル {path} を")), "{reason}");
+        }
+    }
+
+    #[test]
+    fn unquoted_path_ends_at_whitespace_and_does_not_take_the_text_after_it() {
+        // 囲まないパスは空白で切る。後の本文の「にある」まで取り込んで、書いていないパスで止めない
+        for first in [
+            "依頼文は /tmp/brief.md（手順は ~/.claude/skills/delegate/references/requesting.md にある）。/delegate を呼ぶ。",
+            "依頼文は /tmp/a.md と /tmp/b.md にある。/delegate を呼ぶ。",
+        ] {
+            let prompt = format!("{first}\n{COMPLETE}");
+            assert!(check(&prompt).is_empty(), "{first}");
+        }
+    }
+
+    #[test]
+    fn unreadable_pointer_on_the_first_line_is_denied_with_how_to_quote_it() {
+        // 句として読めない 1 行目（空白を含む囲まないパス、閉じ忘れた囲み）で、prompt の側の欄が欠けていれば、
+        // 欄を prompt に足すよう示さず、句の修正方法を示して止める
+        for first in [
+            "依頼文は /nonexistent/Taro Yamada/brief.md にある。",
+            "依頼文は `/nonexistent/brief.md にある。",
+        ] {
+            let prompt =
+                format!("{first}最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。");
+            let findings = check(&prompt);
+            let reason = deny_reason(&findings);
+            assert!(reason.contains("パスを読み取れません"), "{first}: {reason}");
+            assert!(reason.contains("囲み"), "{first}: {reason}");
+        }
+    }
+
+    #[test]
+    fn unreadable_request_file_is_denied_with_how_to_quote_it() {
+        let prompt = "依頼文は /nonexistent/brief.md にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。";
+        let findings = check(prompt);
+        let reason = deny_reason(&findings);
+        assert!(reason.contains("空白を含むパスは"), "{reason}");
+    }
+
+    #[test]
     fn request_file_given_by_a_relative_path_is_denied_with_the_fix() {
         let prompt = "依頼文は ~/brief.md にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。";
         let findings = check(prompt);
@@ -448,7 +553,7 @@ mod tests {
     fn request_file_that_is_not_a_regular_file_is_denied_without_reading() {
         let tmp = TempDir::new("dir");
         let prompt = format!(
-            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            "依頼文は `{}` にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
             tmp.0.display()
         );
         let findings = check(&prompt);
@@ -480,7 +585,7 @@ mod tests {
         let complete = tmp.0.join("brief.md");
         std::fs::write(&complete, COMPLETE).unwrap();
         let prompt = format!(
-            "依頼文は {} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
+            "依頼文は `{}` にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。",
             crate::shell::to_msys(&complete)
         );
         assert!(check(&prompt).is_empty());
