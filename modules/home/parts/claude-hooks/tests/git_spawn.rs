@@ -277,7 +277,7 @@ fn squeue_missing_from_path_is_silent() {
 #[cfg(unix)]
 #[test]
 fn squeue_with_non_utf8_job_name_still_finds_the_exclusive_job() {
-    let bin = fake_squeue("squeue-bytes", "printf 'NO|\\377name|42\\n'");
+    let bin = fake_squeue("squeue-bytes", "printf 'NO|\\377name|42|r995\\n'");
     let out = run(
         &bin.0,
         "cargo test",
