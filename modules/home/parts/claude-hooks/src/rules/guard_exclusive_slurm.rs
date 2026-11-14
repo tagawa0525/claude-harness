@@ -6,7 +6,8 @@
 //! `xs|lattice|core|chain`、`nix build`、`nix flake check`（`nix develop|shell -c` で包んでも）。1 つの CPU に限る `taskset` で
 //! 包めば通す（`-j 1` は限りにならない）。何を実行するか決められないコマンドも、排他のジョブ中は止める。
 //! rebuild（`nix-rebuild rebuild|update`、shell の関数 `rebuild`・`update`、ビルドする `nixos-rebuild`、
-//! `home-manager switch|build`）は taskset で包んでも止める。
+//! `home-manager switch|build`）は taskset で包んでも止める。ただし r995 のほかでは、手元でビルドする
+//! `nix-rebuild rebuild|update --local`（nixfiles の nix-rebuild.sh。既定のビルドは r995 に投げる）は通す。
 //! `run-checks.sh` と `run-python-tests.sh` は対象にしない（排他のジョブ中は自分で 1 コアに限る）。
 //! squeue が無いホスト、squeue の失敗、実行中のジョブが無い場合は何もしない（r995 以外では判定の材料が無い）。
 //! squeue は対象のコマンドがあるときだけ呼ぶ。エスケープはない。
@@ -88,7 +89,7 @@ const NIXOS_REBUILD_BUILDS: &[&str] = &[
 fn is_rebuild(cmd: &Cmd) -> bool {
     let has_arg = |names: &[&str]| cmd.args.iter().any(|a| names.contains(&a.text.as_str()));
     let program = cmd.program();
-    // modules/home/parts/shell.nix の関数は引数を捨てて nix-rebuild を呼ぶ。関数はパスで呼べないので、
+    // modules/home/parts/shell.nix の関数は引数を nix-rebuild のサブコマンドの後に渡す。関数はパスで呼べないので、
     // パスで呼ぶ同じ名前のスクリプトは別のもの
     if matches!(program, "rebuild" | "update") {
         return true;
@@ -107,6 +108,40 @@ fn is_rebuild(cmd: &Cmd) -> bool {
         "home-manager" => has_arg(&["switch", "build"]) && !has_arg(&["--help", "-h"]),
         _ => false,
     }
+}
+
+/// 手元でビルドする rebuild（`nix-rebuild rebuild|update ... --local`、shell の関数 `rebuild --local`・`update --local`）か。
+/// nix-rebuild.sh は `--local` をサブコマンドの後でだけ受ける
+fn is_local_rebuild(cmd: &Cmd) -> bool {
+    let program = cmd.program();
+    // 関数は引数をすべてサブコマンドの後に渡し、nix-rebuild.sh は最初の引数をサブコマンドに取る
+    let after_subcommand = if matches!(program, "rebuild" | "update") {
+        0
+    } else if matches!(basename(program), "nix-rebuild" | "nix-rebuild.sh") {
+        1
+    } else {
+        return false;
+    };
+    cmd.args
+        .iter()
+        .skip(after_subcommand)
+        .any(|a| a.text == "--local")
+}
+
+/// このホストが r995 でないと確かめられたか。r995 の上では手元のビルドも r995 で走るので、`hostname` が失敗したときと
+/// 同じく偽にする（止める側に倒す）
+fn off_r995() -> bool {
+    Command::new("hostname")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .is_some_and(|out| {
+            let host = String::from_utf8_lossy(&out.stdout);
+            let host = host.trim();
+            !host.is_empty() && host != "r995"
+        })
 }
 
 /// squeue の応答を待つ上限。slurmctld が応答しないホストで、対象のコマンドを何十秒も止めないため
@@ -181,17 +216,23 @@ impl Rule for GuardExclusiveSlurm {
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
         let commands = shell.commands();
-        let rebuild = commands.iter().any(is_rebuild);
+        let off = std::cell::OnceCell::new();
+        let off_r995 = || *off.get_or_init(off_r995);
+        let rebuild = commands
+            .iter()
+            .any(|c| is_rebuild(c) && !(is_local_rebuild(c) && off_r995()));
         if !rebuild && !commands.iter().any(is_heavy) {
             return Vec::new();
         }
         let Some((name, jobid)) = running_exclusive_job() else {
             return Vec::new();
         };
-        let fix = if rebuild {
-            "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
-        } else {
+        let fix = if !rebuild {
             "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
+        } else if off_r995() {
+            "rebuild のビルドは r995 に投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、nix-rebuild rebuild|update --local で手元でビルドしてください。"
+        } else {
+            "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
         };
         vec![Finding::Deny(format!(
             "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。{fix}"
