@@ -3,6 +3,7 @@
 
 pub mod glob;
 pub mod run;
+pub mod sync;
 pub mod transform;
 
 use std::fmt;
