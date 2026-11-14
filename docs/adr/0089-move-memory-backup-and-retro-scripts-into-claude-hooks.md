@@ -107,7 +107,8 @@ retro のスクリプト:
 
 ### 帰結
 
-- 良い点: Windows でも自動メモリが退避される。移し終えると、ハーネスの sh で jq を使うものが無くなり、Windows の手順から
+- 良い点: Windows でも自動メモリが退避される（2026-11-14 から。`~/.claude` が git のリポジトリの直下であることは、Linux と
+  同じく利用者が用意する。README の「Windows で使う」）。移し終えると、ハーネスの sh で jq を使うものが無くなり、Windows の手順から
   jq を外せる（#101 の「決まっていないこと」。外すのは別の PR）
 - 悪い点: `claude-hooks` が、Stop の hook と retro の処理も持つ。名前は段階 8 の後に見直す（ADR-0087 の帰結、#101）
 - 悪い点: `claude-hooks` の不具合が、PreToolUse の hook とメモリの退避の両方を止めうる（今は別のバイナリ）
@@ -122,7 +123,8 @@ retro のスクリプト:
 
 ### 確認
 
-- `claude-hooks` の結合テストが、`modules/home/parts/tests/claude-memory-backup.sh` の確かめていた振る舞いで、
-  `nix flake check` と Windows の CI で通る
+- `claude-hooks` の結合テスト（`tests/stop.rs`）が、`modules/home/parts/tests/claude-memory-backup.sh` の確かめていた振る舞いに、
+  引数の誤りの終了コード 1、読めない hook の JSON、リポジトリの下の階層、ロックを別のプロセスが持つときの 30 秒の待ちを
+  足して、`nix flake check` と Windows の CI で通る（symlink と fsmonitor の子の 2 件は Unix だけ）
 - `claude-setup` のテストで、Stop の登録が `claude-hooks stop` の 1 件になり、前の `claude-memory-backup` の登録が消える
 - 移した後、retro のスクリプトのファイルは `claude_hooks_script <名前>` を呼ぶだけになり、jq を使わない
