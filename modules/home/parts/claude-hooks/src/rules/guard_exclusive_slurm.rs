@@ -1,10 +1,14 @@
-//! guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、全コアを使う手元のコマンドを止める
+//! guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、計算ノード（r995）の全コアを使うコマンドを止める
 //!
-//! 排他のジョブ（時間を記録する測定）の間に手元で全コアを使うと、その時間が乱れて再測定になる
-//! （docs/adr/0041）。squeue で OverSubscribe が NO の実行中のジョブがあるときだけ、対象のコマンドを止める:
+//! 排他のジョブ（時間を記録する測定）の間に r995 で全コアを使うと、その時間が乱れて再測定になる
+//! （docs/adr/0041）。squeue で OverSubscribe が NO の実行中のジョブがあるときだけ、次を止める。
+//! r995 の上で走るもの（このホストが r995 か、ssh の接続先が r995。ホストが分からなければ r995 とみなす）:
 //! `cargo build|check|test|clippy|run|bench`（alias `b|c|t|r`）、`dvc repro`、`bin/` と `target/release|debug/` の
 //! `xs|lattice|core|chain`、`nix build`、`nix flake check`（`nix develop|shell -c` で包んでも）。1 つの CPU に限る `taskset` で
-//! 包めば通す（`-j 1` は限りにならない）。何を実行するか決められないコマンドも、排他のジョブ中は止める。
+//! 包めば通す（`-j 1` は限りにならない）。何を実行するか決められないコマンドも止める。
+//! ほかのホストで走るもの: 手元のコアは r995 を乱さないので、r995 に投げられるビルドだけを止める。`nix build`、
+//! `nix flake check` は taskset で包んでも止め（ビルドは r995 で走る）、`--builders ''` か `--builders @/dev/null` で
+//! 手元でビルドするものは通す。
 //! rebuild（`nix-rebuild rebuild|update`、shell の関数 `rebuild`・`update`、ビルドする `nixos-rebuild`、
 //! `home-manager switch|build`）は taskset で包んでも止める。ただし r995 のほかでは、手元でビルドする
 //! `nix-rebuild rebuild|update --local`（nixfiles の nix-rebuild.sh。既定のビルドは r995 に投げる）は通す。
@@ -71,6 +75,30 @@ fn is_heavy(cmd: &Cmd) -> bool {
         "nix" => first == Some("build") || (first == Some("flake") && second == Some("check")),
         _ => BIN_PROGRAMS.contains(&name) && is_project_binary(program, name),
     }
+}
+
+/// r995 に投げられうる nix のビルド（`nix build`、`nix flake check`、サブコマンドを決められない nix）か。ほかのホストの
+/// ビルドは nix-daemon が r995 に投げるので、taskset は見ない
+fn is_nix_build(cmd: &Cmd) -> bool {
+    if basename(cmd.program()) != "nix" {
+        return false;
+    }
+    match global_subcommand(&cmd.args) {
+        Subcommand::Unknown => true,
+        Subcommand::At(i) => {
+            let first = cmd.args[i].text.as_str();
+            let second = cmd.args.get(i + 1).map(|a| a.text.as_str());
+            first == "build" || (first == "flake" && second == Some("check"))
+        }
+        _ => false,
+    }
+}
+
+/// `--builders ''` か `--builders @/dev/null`（空のファイルを読ませる）で、リモートのビルダーを使わないか
+fn without_remote_builders(cmd: &Cmd) -> bool {
+    cmd.args
+        .windows(2)
+        .any(|w| w[0].text == "--builders" && matches!(w[1].text.as_str(), "" | "@/dev/null"))
 }
 
 /// ビルドする nixos-rebuild のサブコマンド（dry-build は評価だけ、list-generations・edit・repl はビルドしない）
@@ -226,38 +254,41 @@ impl Rule for GuardExclusiveSlurm {
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
         let commands = shell.commands();
-        let heavy = commands.iter().any(is_heavy);
         let rebuilds: Vec<&Cmd> = commands.iter().filter(|c| is_rebuild(c)).collect();
-        if !heavy && rebuilds.is_empty() {
+        if rebuilds.is_empty() && !commands.iter().any(|c| is_heavy(c) || is_nix_build(c)) {
             return Vec::new();
         }
         let Some((name, jobid)) = running_exclusive_job() else {
             return Vec::new();
         };
-        // ホストは、排他のジョブがあって rebuild を含むときだけ見る。--local の rebuild が手元でビルドするのは、走るホスト
-        // （ssh の先なら接続先）が r995 でないとき
-        let off = !rebuilds.is_empty() && off_r995();
+        // 走るホスト（ssh の先なら接続先）が r995 でないか。ホストは排他のジョブがあるときだけ見る
+        let off = off_r995();
+        let runs_off = |c: &Cmd| match shell.ssh_destination(c) {
+            Some(destination) => destination_off_r995(destination),
+            None => off,
+        };
+        // r995 の上では全コアを使うものを止め、ほかのホストでは r995 に投げられるビルドだけを止める
+        let heavy_on_node = commands.iter().any(|c| is_heavy(c) && !runs_off(c));
+        let build_sent = commands
+            .iter()
+            .any(|c| is_nix_build(c) && runs_off(c) && !without_remote_builders(c));
         let blocking: Vec<&&Cmd> = rebuilds
             .iter()
-            .filter(|c| {
-                !(is_local_rebuild(c)
-                    && match shell.ssh_destination(c) {
-                        Some(destination) => destination_off_r995(destination),
-                        None => off,
-                    })
-            })
+            .filter(|c| !(is_local_rebuild(c) && runs_off(c)))
             .collect();
         let rebuild = !blocking.is_empty();
-        if !rebuild && !heavy {
+        if !rebuild && !heavy_on_node && !build_sent {
             return Vec::new();
         }
         let local_way = off && blocking.iter().all(|c| shell.ssh_destination(c).is_none());
-        let fix = if !rebuild {
-            "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
-        } else if local_way {
+        let fix = if rebuild && local_way {
             "rebuild のビルドは r995 に投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、nix-rebuild rebuild|update --local（関数の rebuild、update でなく）で手元でビルドしてください。"
-        } else {
+        } else if rebuild {
             "rebuild のビルドは nix-daemon の中で走り taskset が効かないので、ジョブが終わるまで待ってください。"
+        } else if heavy_on_node {
+            "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
+        } else {
+            "このホストの nix のビルドは r995 に投げられ（nix-daemon の中で走り taskset も効かない）、ジョブが終わるまで待つか、--builders '' --max-jobs auto を付けて手元でビルドしてください。"
         };
         vec![Finding::Deny(format!(
             "排他の Slurm のジョブ {name}（{jobid}）が実行中で、その時間の記録を乱します。{fix}"
