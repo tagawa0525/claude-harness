@@ -115,12 +115,21 @@ Claude Code の自動メモリ（`~/.claude/projects/<プロジェクト>/memory
 
 ### 確認
 
-- `modules/home/parts/tests/claude-memory-backup.sh`: メモリだけがツリーに入る、ブランチ（`refs/heads` の下）を作らない、同じ中身では足さない、消したファイルが
+- `claude-hooks` の `tests/stop.rs`（2026-11-14 から。前は `modules/home/parts/tests/claude-memory-backup.sh`）: メモリだけがツリーに入る、ブランチ（`refs/heads` の下）を作らない、同じ中身では足さない、消したファイルが
   前のコミットから戻せる、main の HEAD とステージした変更が変わらない、どれも失敗する git の hook と `CLAUDECODE=1` の
   もとでも成功する、親の環境の `GIT_DIR` などに引かれない、同時の 6 本がどれも失敗しない（ロックを外すと 5 本が
   `update-ref` の古い値の不一致で落ちる）、git が起動して残る子（fsmonitor の hook のバックグラウンドのプロセス）に
   ロックを継がせない、リポジトリでないディレクトリと symlink のメモリのディレクトリでは 1 行目に理由を出して失敗する
-- ロックを別のプロセスで持ったまま呼ぶと、30 秒の後にロックを取れなかった理由を出して失敗することを手で確かめた
-  （2026-11-06。テストに入れると 30 秒かかる）
+- ロックを別のプロセスで持ったまま呼ぶと、30 秒の後にロックを取れなかった理由を出して失敗する（2026-11-06 は手で確かめた。
+  2026-11-14 から `tests/stop.rs` が 30 秒をかけて確かめる）
 - activation の settings.json の更新を `~/.claude/settings.json` のコピーで 2 回実行し、Stop の登録が 1 件だけで、
   ほかの設定が変わらないことを確かめた（2026-11-06）
+
+## 変更
+
+- 2026-11-14: 退避の中身を `claude-hooks stop` に移した（ADR-0089）。ロックは `flock` から標準ライブラリの `File::try_lock`
+  に、hook の入力は jq から serde_json にした。前は「`.git/memory-backup.lock` を `flock` で取り、親を読んでから ref を進めるまでを
+  1 つずつにする」「依存: git、jq（hook の入力の `session_id` と `cwd` をコミットの本文に入れる）、flock（util-linux）、coreutils」。
+  失敗の 1 行目の名前は、前の「claude-memory-backup: メモリを … コミットできませんでした」から「claude-hooks stop: メモリを …
+  コミットできませんでした」になった。ネイティブの Windows（jq と flock が無い）でも退避するため。排他の範囲と
+  `update-ref` の古い値は変えていない

@@ -127,14 +127,16 @@ hook の登録の形:
 ### 帰結
 
 - 良い点: Windows でも Linux でも、settings.json と `~/.claude` の中身が同じ規則で作られる。Windows の配備は jq と rsync
-  に頼らない。Linux では、外部のスキルの配備（rsync）と Stop の hook（jq と flock）が、#101 の段階 8 まで残る
+  に頼らない。Linux では、外部のスキルの配備（rsync）が残る（Stop の hook の jq と flock は、2026-11-14 に `claude-hooks stop`
+  に移して外した。ADR-0089）
 - 悪い点: Windows の機械に rustup と MSVC Build Tools（数 GB）が要り、更新のたびに手元でビルドする
 - 悪い点: 外部のスキル（`grilling`、`grill-me`）と lsp-det のプラグインは Windows に置かれない。要るようになったら、
   設置のコマンドが取る形を決める
 - 悪い点: Linux の rebuild が、設置のコマンドの crate のビルドとテスト（`package.nix` の check）を含むようになる
 - 悪い点: 同期の規則は、今は `claude-sync.sh` を直せばその場で試せるが、Rust に移すとビルドが要る（ADR-0082 の帰結と
   同じ）。settings.json の PreToolUse の登録の形も、shell form から exec form に変わる
-- git hook は #101 の段階 4 まで、Stop の hook（自動メモリの退避）は段階 8 まで、Windows に置かれない
+- git hook は #101 の段階 4 まで、Stop の hook（自動メモリの退避）は段階 8 まで、Windows に置かれなかった（git hook は
+  2026-11-13 に、Stop の hook は 2026-11-14 に置くようにした。ADR-0086、ADR-0089）
 - Git for Windows の既定（`core.autocrlf=true`）の clone では、同期する sh のスクリプトが CRLF になり、Git Bash で
   動かない。clone の直下の `.gitattributes`（`* text=auto eol=lf`）で、新しい checkout を OS と利用者の `core.autocrlf` に依らず
   LF で取り出すようにした（PR #139。Windows の CI の `setup` が、同期したファイルに CR が無いことを確かめる）。design-records が
@@ -169,3 +171,11 @@ hook の登録の形:
 - 2026-11-13: Windows のバイナリの置き場を、cargo の既定の `~/.cargo/bin` から `cargo install --root ~/.claude` の
   `~/.claude/bin` に変えた（ADR-0087 の決定と補足。スキルの sh のスクリプトが Linux と同じパスで呼ぶため）。
   `~/.claude/bin` は Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
+
+## 変更
+
+- 2026-11-14: Stop の hook は、どちらの OS も `claude-hooks` を `--stop` で渡し、`claude-setup` が引数 `stop` を付けて
+  登録する（ADR-0089）。前は「Linux の activation は `~/.claude/bin/` の `claude-hooks`（PreToolUse）と
+  `claude-memory-backup`（Stop）を渡す。Windows は `cargo install` の置き場の、入れたバイナリだけを渡す（Stop の
+  `claude-memory-backup` は jq と flock に頼る sh で、#101 の段階 8 で移すまで Windows には無い）」。退避の中身を
+  `claude-hooks stop` に移し、Windows にも置けるようになったため。前の `claude-memory-backup` の登録は `claude-setup` が外す

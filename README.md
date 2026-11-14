@@ -64,7 +64,7 @@ for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite; do
 done
 ~/.claude/bin/claude-setup sync ~/nix/claude-harness
 ~/.claude/bin/claude-setup settings --static modules/home/parts/claude-settings.json \
-  --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
+  --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)" --stop "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ~/.claude/bin/claude-setup git-hooks --bin "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ```
 
@@ -79,6 +79,11 @@ cargo uninstall claude-hooks ja-terms commit-refs claude-setup  # ~/.cargo/bin �
 
 開き直した Git Bash で `command -v claude-setup` が `~/.claude/bin/claude-setup` を示すことを確かめる（Git Bash の
 ログインシェルは `~/.bash_profile` を読み、Git for Windows の作る `~/.bash_profile` が `~/.bashrc` を読む）。
+
+Stop の hook（`claude-hooks stop`）は、応答の終わりごとに自動メモリ（`~/.claude/projects/*/memory/`）を `~/.claude` の
+git の ref `refs/memory-backup` にコミットする。`~/.claude` が git のリポジトリの直下でなければ、応答のたびに退避の失敗を
+通知するので、リポジトリにする（手順では作らない。`.gitignore` の無いまま作ると、後の `git add -A` で `.credentials.json`
+や会話の記録が入りうる。ADR-0076）。
 
 `cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
 `--force` で入れ直すときに使うので消さない。
