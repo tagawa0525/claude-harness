@@ -105,8 +105,8 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 周ごとに `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <base>` を実行し、出力の `LEVEL` と `WORKTREE` で
 `/code-review <LEVEL> <WORKTREE>` を回す。対象は worktree のパスで渡す（ブランチ名は cwd のリポジトリで解かれ、空振りして「指摘
 なし」と返る）。1 周目の LEVEL はスクリプトが決め、自分で下げない（直した後の周のレベルは、/git-merge の「直す指摘の基準」の
-「終わり」の項に従う）。/code-review が background で走ったら、「作業中の規則」の待ちの項のとおり待ち、終わりの
-通知で再開して指摘に対応してから先に進む。
+「終わり」の項に従う）。/code-review が background で走ったら、「作業中の規則」の待ちの項のとおりターンを終えずに待ち、
+終わりの通知を受けて指摘に対応してから先に進む。
 
 **リモートあり**のときは、続けて PR を出して自動レビューを受ける:
 
@@ -155,10 +155,10 @@ cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
 
 報告の前に片付ける:
 
-- 「作業中の規則」の待ちの項で待っているもの（打ち切ったレビューを除く）は、終わりの通知で再開して結果を取り込んでから報告する。
+- 「作業中の規則」の待ちの項で待っているもの（打ち切ったレビューを除く）は、ターンを終えずに待ち、終わりを受けて結果を取り込んでから報告する。
   取り込んで変更をコミットしたら、6 のチェックからやり直す
 - 自分で張った Monitor や background のコマンドのうち、結果を使わないものは TaskStop（deferred のときは
-  ToolSearch で読み込む）で止める（残すと、その通知で再開して同じ報告を送り直す）。`wait-step.sh --end <待ちの名前>` で待ちを消す。
+  ToolSearch で読み込む）で止める（残すと、その通知で再開して同じ報告を送り直す）。`wait-step.sh --end <worktree のパス>` で待ちを消す。
   SubagentHandback の後にジョブの通知で再開したら、
   「報告は送り済み」の 1 行だけで終える（SubagentHandback は呼ばない）
 - `git -C <worktree> status --short` が空であることを確かめる。空でなければ 6 の冒頭のとおり片付け、コミットしたら 6 のチェック
