@@ -730,27 +730,6 @@ before=$(sha256sum < "$MD_DIR/indented-ok.md")
 "$MD_FIXER" "$MD_DIR/indented-ok.md" >/dev/null
 assert_eq "$before" "$(sha256sum < "$MD_DIR/indented-ok.md")"
 
-# 表の段は、history-rewrite が使う fix-markdown-lint.py（Rust に移すまで残す。ADR-0087）と同じ桁に揃える。
-# 文字の幅（East Asian Width の F と W だけを 2）と、セルから外す空白（str.strip）を、サロゲートと改行と | の
-# ほかのすべての文字で突き合わせる。1 行に 1 文字を、セルの中ほどと、外される位置のセルの頭に置く
-it "fix-markdown-lint: すべての文字で、表の桁が fix-markdown-lint.py と同じになる"
-python3 -I - "$MD_DIR/every.md" <<'PY'
-import sys
-rows = ["| h | h |", "| - | - |"]
-for c in range(0x110000):
-    if 0xD800 <= c <= 0xDFFF or chr(c) in "\n\r|":
-        continue
-    rows.append(f"| a{chr(c)}b | {chr(c)}y |")
-with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as f:
-    f.write("\n".join(rows) + "\n")
-PY
-cp "$MD_DIR/every.md" "$MD_DIR/every-py.md"
-"$MD_FIXER" "$MD_DIR/every.md" >/dev/null
-assert_eq 0 $?
-python3 "$CLAUDE_DIR/../modules/home/parts/history-rewrite/fix-markdown-lint.py" "$MD_DIR/every-py.md" >/dev/null
-assert_eq 0 $?
-assert_eq "" "$(cmp "$MD_DIR/every.md" "$MD_DIR/every-py.md" 2>&1)"
-
 finish
 
 # ===========================================================================

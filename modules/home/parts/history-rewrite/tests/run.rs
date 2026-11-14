@@ -133,7 +133,8 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// test_history_rewrite.py の setUpClass と同じ履歴を 1 度だけ書き換えた結果
+/// 語と番号を直す文書、手で直したコミット、ブランチ、タグ（署名つき、tagger の無いもの）、符号化を宣言した本文を
+/// 持つ履歴を、1 度だけ書き換えた結果
 struct Fixture {
     root: PathBuf,
     repo: Repo,
@@ -789,4 +790,40 @@ fn a_latin1_message_with_c1_bytes_is_read() {
         let out = run(&root, &repo.path, &root.join("work"), &[]);
         assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
     }
+}
+
+/// コミットの .md と .py と本文に、pre-commit と commit-msg と同じ ja-terms の検査（textlint と同じ範囲）を、書き換えと
+/// 同じ辞書（ja-terms の辞書と --extra-rules）で当てた報告の数
+fn hook_findings(repo: &Repo, commits: &[&String], extra: &Path) -> usize {
+    use ja_terms::Dictionary;
+    use ja_terms::report::{Syntax, check, syntax_of};
+    let mut dictionary = Dictionary::parse(ja_terms::DICTIONARY, "prh.yml").unwrap();
+    dictionary.append(Dictionary::load(extra).unwrap());
+    let mut found = 0;
+    for commit in commits {
+        for name in repo.git(&["ls-tree", "-r", "--name-only", commit]).lines() {
+            if !(name.ends_with(".md") || name.ends_with(".py")) || name == "link.md" {
+                continue;
+            }
+            let text = repo.show_text(commit, name);
+            found += check(&dictionary, &text, syntax_of(name).unwrap())
+                .unwrap()
+                .len();
+        }
+        let body = repo.git(&["log", "-1", "--format=%B", commit]);
+        found += check(&dictionary, &body, Syntax::Markdown).unwrap().len();
+    }
+    found
+}
+
+#[test]
+fn the_hook_check_with_the_same_dictionary_finds_nothing_after_the_rewrite() {
+    let f = rewritten();
+    let before: Vec<&String> = f.map.keys().collect();
+    assert!(
+        hook_findings(&f.repo, &before, &f.extra) > 0,
+        "書き換える前の履歴に辞書の語が無い"
+    );
+    let after: Vec<&String> = f.map.values().collect();
+    assert_eq!(hook_findings(&f.rewritten, &after, &f.extra), 0);
 }

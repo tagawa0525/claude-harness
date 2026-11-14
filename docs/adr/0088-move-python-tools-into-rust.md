@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-14
 requires: [ADR-0045, ADR-0082, ADR-0084, ADR-0085, ADR-0087]
 supersedes: []
 superseded-by:
-issues: ["#101", "#190"]
+issues: ["#101", "#190", "#198"]
 ---
 
 # ADR-0088: Python のツール（history-rewrite、usage-report、kept-sentences）を Rust に移し、filter-repo と Python を依存から外す
@@ -182,13 +182,18 @@ usage-report の日時:
   `claude-sync` でなく rebuild（Windows は `cargo install` の後に `claude-setup sync`）で入れる（ADR-0087 の帰結と同じ）
 - 悪い点: kept-sentences の呼び方の `--old <(git show …)` は、Windows の Git Bash ではネイティブの exe が `/dev/fd/N` を
   開けない見込みで、確かめていない（.py を Windows のネイティブの Python で呼んでも同じ）。#190 に書いた
-- ADR-0045 の決定（Python で書き、filter-repo の callback で第 1 段を流す）は、Python の版を消す PR で「## 変更」を書く。
-  ADR-0087 の「二重の実装の期間」は、`fix-markdown-lint.py` を消す PR で帰結を直す
+- 悪い点: Rust の版の history-rewrite は、nixfiles の履歴（2026-11-14 の clone、4,004 コミット）の書き換えに 5 分 10 秒
+  かかった（Python の版は 1 分 20 秒。結果は同じ）。辞書を当てる ja-terms の regress が Python の regex の約 10 倍遅い
+  （200 KB の Markdown で測った）。#198 に書いた
+- 段階 7 は終わった（2026-11-14）。kept-sentences（#192）、usage-report（#195）、fix-markdown-lint の crate（#193）、
+  commit-refs の部品（#194）、history-rewrite の transform（#196）、run（#197）、sync-worktrees と package.nix の付け替え。
+  ADR-0045 の決定の「## 変更」と、ADR-0087 の帰結を直した
 
 ### 確認
 
-- history-rewrite の Rust の結合テストが、`nix flake check` と Windows の CI で通る。付け替える PR で、Python の
-  `test_history_rewrite.py` の CLI を呼ぶテストが Rust の版に対して通る
+- history-rewrite の Rust の結合テストが、`nix flake check` と Windows の CI で通る。Python の版を消す前に、
+  `test_history_rewrite.py` の 45 件を PATH の先頭に Rust の版を置いて流し、Python の版の内部を直に呼ぶ 2 件のほかの
+  43 件が通った（2026-11-14）。nixfiles の履歴を両方の版で書き換えた結果（すべてのブランチとタグ、対応表）が一致した
 - 付け替えた後、`git ls-files '*.py'` に history-rewrite、usage-report、kept-sentences、fix-markdown-lint の .py が無く、
   `history-rewrite/package.nix` が Python を参照しない
 - `~/.claude/scripts/usage-report.sh` と `kept-sentences.sh` が、`.claude/tests/scripts/` の今のテストの期待値で通る

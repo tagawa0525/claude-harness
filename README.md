@@ -53,12 +53,13 @@ Git for Windows には入っていない。
 
 Git Bash で、clone を作るか更新してから、crate を `~/.claude/bin` に入れ、clone のパスを渡して設置する。Linux と同じ
 `~/.claude/bin/claude-hooks` に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため（ADR-0087）。`ja-terms` と
-`commit-refs` は、`claude-hooks` が隣のものを起動する（Windows の起動は、PATH の前に起動した側の置き場を探す）:
+`commit-refs` は、`claude-hooks` が隣のものを起動する（Windows の起動は、PATH の前に起動した側の置き場を探す）。
+`history-rewrite`（スキル history-rewrite が名前で呼ぶ）は、PATH の `commit-refs` を呼ぶ:
 
 ```bash
 git clone https://github.com/tagawa0525/claude-harness ~/nix/claude-harness  # 2 回目からは git -C ~/nix/claude-harness pull --ff-only
 cd ~/nix/claude-harness
-for crate in claude-hooks ja-terms commit-refs claude-setup; do
+for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite; do
   cargo install --locked --force --root ~/.claude --path "modules/home/parts/$crate"
 done
 ~/.claude/bin/claude-setup sync ~/nix/claude-harness

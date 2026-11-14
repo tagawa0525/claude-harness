@@ -169,8 +169,9 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   `cargo install` を済ませる
 - 悪い点: Windows では、`cargo install --root ~/.claude` が入れた crate の記録（`.crates.toml`、`.crates2.json`）を
   `~/.claude` に置く
-- 悪い点: 段階 7 まで、表の桁揃えの実装が Rust と Python の 2 つになる。照合のテストは Linux の sh のテストだけで流れる
-- 悪い点: fix-markdown-lint の幅は、.py と同じく、結合文字、ゼロ幅の文字、制御文字、絵文字の列で MD060（string-width）と
+- 表の桁揃えの実装が Rust と Python の 2 つだった期間は、段階 7 で終わった（2026-11-14。history-rewrite を Rust に移し、
+  fix-markdown-lint のライブラリの crate を呼ぶ。.py と、language-checks.sh の .py との照合を消した。ADR-0088）
+- 悪い点: fix-markdown-lint の幅は、結合文字、ゼロ幅の文字、制御文字、絵文字の列で MD060（string-width）と
   食い違う（#182）
 
 ### 確認
@@ -178,7 +179,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 - 移したスクリプトの結合テストが、`nix flake check` と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
   いるもの。sh のまま残す `check-each-commit.sh` は、`.claude/tests/scripts.sh` の振る舞いのテストで確かめ続ける
 - `claude-hooks script fix-markdown-lint` の結合テスト（`tests/script_fix_markdown_lint.rs`）が .py の出力を期待値にして通り、
-  `.claude/tests/scripts/language-checks.sh` の照合が、すべての文字で .py と同じ桁になる。`staged-checks` は
+  .py を消すまで（段階 7）、`.claude/tests/scripts/language-checks.sh` の照合が、すべての文字で .py と同じ桁になった。`staged-checks` は
   `python3` の無い環境で表と言語を直す（`tests/git_hook_staged_checks.rs`）
 - 移した後、対象のスクリプトのファイル（`check-each-commit.sh` を除く）は `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
   なり、jq を使わない。`lib/` の部品は `claude-hooks-script.sh` のほかは消えている

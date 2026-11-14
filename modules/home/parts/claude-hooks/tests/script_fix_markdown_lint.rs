@@ -1,7 +1,6 @@
 //! `claude-hooks script fix-markdown-lint <file>...` が、markdownlint --fix の直せない MD040（コードの塊の言語）と
 //! MD060（表の桁揃え）を直すことを確かめる（ADR-0087。`~/.claude/skills/language-checks/scripts/fix-markdown-lint.sh`
-//! が呼ぶ）。期待値は fix-markdown-lint.py の出力と同じ。sh から呼ぶ確認と .py との突き合わせは
-//! `.claude/tests/scripts/language-checks.sh`
+//! が呼ぶ）。sh から呼ぶ確認は `.claude/tests/scripts/language-checks.sh`
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -230,7 +229,7 @@ fn width_of(ch: &str) -> usize {
 
 #[test]
 fn width_counts_fullwidth_and_wide_as_two_and_everything_else_as_one() {
-    // 期待値は fix-markdown-lint.py の display_width（Python 3.14、unicodedata 16.0.0）。East Asian Width が F と W
+    // 期待値は Python 3.14 の unicodedata 16.0.0 の East Asian Width で数えたもの。East Asian Width が F と W
     // だけを 2 に数え、幅の曖昧な文字（A）と、結合文字、制御文字、ゼロ幅の文字も 1 文字を 1 に数える。絵文字の列も
     // 1 文字ずつ足す
     let cases: &[(&str, usize)] = &[

@@ -11,10 +11,9 @@
 //!
 //! ファイルは改行を `\n` に揃えて読み（`\r\n` と `\r` も `\n` にする）、直したものだけを `\n` で書く（[`fix_file`]）。
 //!
-//! 振る舞いは、history-rewrite が表の揃え直しに使う fix-markdown-lint.py と同じにする（ADR-0087）。空白と幅は
-//! Python の定義に合わせる（`is_py_space`、[`display_width`]）。言語の推定の正規表現の `\w`、`\s`、`\b` は Rust の
-//! Unicode の定義のままで、Python と非 ASCII の一部の文字（結合文字、\x1c〜\x1f など）で食い違う。推定が外れても
-//! 付く言語が変わるだけで、文書は壊れないので合わせない
+//! 空白と幅は Python の定義に合わせる（`is_py_space`、[`display_width`]。ADR-0087）。言語の推定の正規表現の `\w`、
+//! `\s`、`\b` は Rust の Unicode の定義のままで、Python と非 ASCII の一部の文字（結合文字、\x1c〜\x1f など）で食い違う。
+//! 推定が外れても付く言語が変わるだけで、文書は壊れないので合わせない
 
 use regex::Regex;
 use std::path::Path;
@@ -108,8 +107,8 @@ fn rstrip(s: &str) -> &str {
 ///
 /// 幅の曖昧な文字（A。→、★、● など）を 1 に数えるのは、markdownlint の MD060 が string-width で、曖昧な文字を
 /// 狭く数えるため。2 に数えると、2 つのツールが桁揃えを取り合い、pre-commit の検査が通らない。結合文字、制御文字、
-/// ゼロ幅の文字も 1 に数えるのは、fix-markdown-lint.py の display_width と同じ桁にするため（string-width はこれらを
-/// 0 に数え、絵文字の列を 2 に数えるので、そこでは MD060 と食い違う）
+/// ゼロ幅の文字も 1 に数えるのは、East Asian Width の表だけで幅を決めるため（string-width はこれらを 0 に数え、
+/// 絵文字の列を 2 に数えるので、そこでは MD060 と食い違う。#182）
 pub fn display_width(s: &str) -> usize {
     s.chars().map(|c| if is_wide(c) { 2 } else { 1 }).sum()
 }
