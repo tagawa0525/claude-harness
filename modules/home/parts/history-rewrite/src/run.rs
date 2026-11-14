@@ -1116,6 +1116,8 @@ mod tests {
         assert_eq!(unquote(br#""a\tb\"c\\d""#), b"a\tb\"c\\d");
         assert_eq!(unquote(br#""\343\201\202.md""#), "あ.md".as_bytes());
         assert_eq!(unquote(br#""new\nline""#), b"new\nline");
+        // 8 進の数字でなければ、エスケープの字をそのまま残す（panic しない）
+        assert_eq!(unquote(br#""\39x""#), b"39x");
     }
 
     #[test]

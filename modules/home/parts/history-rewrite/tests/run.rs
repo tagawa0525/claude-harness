@@ -764,3 +764,25 @@ fn a_stop_in_the_first_stage_leaves_no_crash_report_of_fast_import() {
         .collect();
     assert!(crashes.is_empty(), "{crashes:?}");
 }
+
+#[test]
+fn a_latin1_message_with_c1_bytes_is_read() {
+    // ISO-8859-1 は 0x80〜0x9f も 1 字に読む（WHATWG の windows-1252 は 0x81、0x8d、0x8f、0x90、0x9d を持たない）
+    let root = scratch("c1");
+    let repo = Repo::new(&root, "repo");
+    repo.write("a.md", b"a\n");
+    repo.git(&["add", "a.md"]);
+    let message = root.join("message.txt");
+    std::fs::write(&message, b"docs: \x81\x8d\x90\n").unwrap();
+    repo.git(&[
+        "-c",
+        "i18n.commitEncoding=ISO-8859-1",
+        "commit",
+        "-q",
+        "--no-verify",
+        "-F",
+        &message.display().to_string(),
+    ]);
+    let out = run(&root, &repo.path, &root.join("work"), &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+}
