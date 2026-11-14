@@ -56,7 +56,7 @@ fn random_plans() -> Vec<String> {
 fn step(args: &[&str]) -> Result<(), i32> {
     match Command::new("git").args(args).status() {
         Ok(s) if s.success() => Ok(()),
-        Ok(s) => Err(s.code().unwrap_or(1)),
+        Ok(s) => Err(crate::child::exit_code(s)),
         Err(e) => {
             eprintln!("ERROR: git を起動できません: {e}");
             Err(1)

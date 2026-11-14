@@ -17,6 +17,7 @@
 //!   判定で確かめる。rebase だけかは cwd の clone で比べる。覆われていれば終了コード 0、いなければ 1、引数の数の誤りは 2、
 //!   記録を取得できないか、引数の形（完全な 16 進の SHA、数の PR 番号）が違えば 3（decide-next.sh と request-rereview.sh が使う）
 
+mod child;
 mod gh;
 mod git;
 mod git_args;
@@ -74,14 +75,45 @@ fn local_review_covers(args: &[String]) -> ! {
     });
 }
 
+/// SIGPIPE を既定の動作（黙って終わる）に戻す。読む側が先に閉じたパイプ（`git-info.sh | head -2`、標準エラーを
+/// 引き継ぐ `decide-next.sh <url> 2>&1 | head -1` の local-review-covers）に書いても、sh の版と同じく SIGPIPE で
+/// 終わる。Rust は起動の時に SIGPIPE を無視にし、そのままだと閉じたパイプへの `println!` と `eprintln!` は panic して
+/// 101 で終わる。`libc` の crate を足さず、std が既にリンクする C の `signal` を直に呼ぶ（#170）。
+/// Windows には SIGPIPE が無く、閉じたパイプへの書き込みは今も panic する。git hook と PreToolUse の hook では戻さない
+/// （ローカルの hook や git に標準入力を渡し、相手が読まずに終わったときの EPIPE をエラーとして受けて先へ進む。読まずに
+/// 終わる hook はふつうにある）。script と local-review-covers が標準入力を渡すのは `git patch-id` だけで、入力を
+/// 終わりまで読むので、git が途中で落ちたときだけ SIGPIPE で終わる
+#[cfg(unix)]
+fn restore_sigpipe() {
+    unsafe extern "C" {
+        fn signal(signum: std::ffi::c_int, handler: usize) -> usize;
+    }
+    // Linux、macOS、BSD で同じ値（signal.h）
+    const SIGPIPE: std::ffi::c_int = 13;
+    const SIG_DFL: usize = 0;
+    // SAFETY: 起動の始め（スレッドを作る前）に、既定の動作に戻すだけで、ハンドラの関数は渡さない
+    unsafe {
+        signal(SIGPIPE, SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_sigpipe() {}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut it = args.iter();
     match it.next().map(String::as_str) {
         Some("pre-tool-use") => {}
-        Some("local-review-covers") => local_review_covers(&args[1..]),
+        Some("local-review-covers") => {
+            restore_sigpipe();
+            local_review_covers(&args[1..])
+        }
         Some("git-hook") => std::process::exit(git_hook::main(&args[1..])),
-        Some("script") => std::process::exit(script::main(&args[1..])),
+        Some("script") => {
+            restore_sigpipe();
+            std::process::exit(script::main(&args[1..]))
+        }
         _ => usage(),
     }
     let mut selected: Vec<&str> = Vec::new();

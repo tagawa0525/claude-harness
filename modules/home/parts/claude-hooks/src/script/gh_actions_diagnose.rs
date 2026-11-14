@@ -57,7 +57,7 @@ impl Gh {
                 1
             })?;
         if !out.status.success() {
-            return Err(out.status.code().unwrap_or(1));
+            return Err(crate::child::exit_code(out.status));
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }

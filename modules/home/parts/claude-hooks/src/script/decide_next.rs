@@ -293,17 +293,17 @@ fn local_review_covers(pr: &pr_url::Pr, head: &str) -> Option<bool> {
         .env("GH_HOST", "github.com")
         .status();
     let install = "home-manager の rebuild（Windows は claude-harness の README の「Windows で使う」の cargo install）";
-    match status.map(|s| s.code()) {
-        Ok(Some(0)) => Some(true),
-        Ok(Some(1)) => Some(false),
-        Err(_) | Ok(Some(127)) => {
+    match status.map(crate::child::exit_code) {
+        Ok(0) => Some(true),
+        Ok(1) => Some(false),
+        Err(_) | Ok(127) => {
             eprintln!(
                 "ERROR: {} がありません。{install}で入れてください（claude-sync はバイナリを入れない）",
                 bin.display()
             );
             None
         }
-        Ok(Some(2)) => {
+        Ok(2) => {
             // claude-sync はスクリプトだけを入れ替え、~/.claude/bin のバイナリは入れ直すまで前の版のまま
             eprintln!(
                 "ERROR: {} が使い方の誤り（終了コード 2）で止まりました。local-review-covers を知らない古いバイナリなら {install}で入れ直してください",
@@ -315,7 +315,7 @@ fn local_review_covers(pr: &pr_url::Pr, head: &str) -> Option<bool> {
             eprintln!(
                 "ERROR: ローカルレビューの記録を確かめられませんでした（{} local-review-covers の終了コード {}）",
                 bin.display(),
-                code.map_or("なし".to_string(), |c| c.to_string())
+                code
             );
             None
         }
