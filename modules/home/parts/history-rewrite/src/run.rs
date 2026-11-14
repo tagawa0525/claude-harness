@@ -350,12 +350,8 @@ pub fn stage1(repo: &Path, transformer: &mut Transformer) -> Result<(Counts, Com
     };
     let result = filter.stream(&mut input, &mut output);
     let (counts, originals, ended_early) = (filter.counts, filter.originals, filter.ended_early);
-    if result.is_err() {
-        // 途中で閉じた流れを fast-import に読ませると「stream ends early」と crash report を書き、止めた理由が埋もれる
-        let _ = import.kill();
-        if !ended_early {
-            let _ = export.kill();
-        }
+    if result.is_err() && !ended_early {
+        let _ = export.kill();
     }
     drop(output);
     let export_status = export.wait().map_err(io)?;
@@ -426,11 +422,12 @@ impl Filter<'_> {
             match command {
                 b"commit" => self.commit(&line, input, out)?,
                 b"tag" => self.tag(&line, input, out)?,
-                b"done" => {
-                    out.write_all(b"done\n").map_err(io)?;
-                    return Ok(());
-                }
-                // reset とその from、feature done、空の行は、そのまま渡す
+                // fast-import には feature done と done を渡さない。渡すと、止めて途中で閉じた流れを fast-import が「stream
+                // ends early」と crash report で迎え、止めた理由が埋もれる（Windows では git の子の fast-import を kill
+                // できない）。流れが done の前に終わったことは、ここで見分ける
+                b"done" => return Ok(()),
+                b"feature" if line == b"feature done" => {}
+                // reset とその from、空の行は、そのまま渡す
                 _ => {
                     out.write_all(&line).map_err(io)?;
                     out.write_all(b"\n").map_err(io)?;
