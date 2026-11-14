@@ -22,7 +22,7 @@ let
   unwrapped = rustPlatform.buildRustPackage {
     pname = "claude-hooks-unwrapped";
     version = "0.1.0";
-    # パス依存の ../design-records（ADR の形）もソースに入れ、claude-hooks の中でビルドする。包む側の
+    # パス依存の ../design-records（ADR の形）と ../fix-markdown-lint（Markdown の直し）もソースに入れ、claude-hooks の中でビルドする。包む側の
     # ファイル（この package.nix と installCheckPhase のスクリプト）は除き、それらの変更で crate を作り直さない
     src = lib.fileset.toSource {
       root = ../.;
@@ -31,6 +31,7 @@ let
           (lib.fileset.unions [
             ./.
             ../design-records
+            ../fix-markdown-lint
           ])
           (
             lib.fileset.unions [

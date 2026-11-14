@@ -20,3 +20,5 @@ serde_json = { version = "1", features = ["preserve_order"] }
 regex = "1"
 # ADR のパスの判定。ADR の形を持つのは design-records だけにする（ADR-0009）
 design-records = { path = "../design-records" }
+# markdownlint --fix の直せない違反を直す（script fix-markdown-lint と staged-checks）
+fix-markdown-lint = { path = "../fix-markdown-lint" }
