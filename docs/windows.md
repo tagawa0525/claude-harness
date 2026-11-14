@@ -20,15 +20,24 @@ PreToolUse hook は、git の hook の無いリポジトリの `git commit` を 
 止める。スキルと hook が呼ぶ sh のスクリプトは jq を使わない（前の手順で入れた jq は、残しても外してもよい）。
 Windows でハーネスのテストの sh（`modules/home/parts/claude-hooks/tests/*.sh` など）を流すときだけ jq が要る。
 
+前から Git for Windows を入れている機械では、版を上げる（`winget upgrade Git.Git`）。`commit-refs` の履歴の書き換え
+（スキル history-rewrite が使う）は `git fast-export --signed-commits` を渡し、Git 2.47.1 はこのオプションを知らずに
+使い方を出して終わった（2.56.1 では動いた。実機の Windows、2026-11-14、#213）。
+
+symlink を作れるよう、Windows の開発者モードを有効にする（設定 → システム → 開発者向け）。`worktree-add.sh` は、
+リポジトリの `.worktreelink` に書いたパスをメインの worktree への symlink にする。開発者モードが無く管理者でもないと、
+symlink を作れずに失敗する（`claude-hooks` の `cargo test` も 1 件が失敗した。#213）。
+
 Git Bash で、clone を作るか更新してから、crate を `~/.claude/bin` に入れ、clone のパスを渡して設置する。Linux と同じ
 `~/.claude/bin/claude-hooks` に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため（ADR-0087）。`ja-terms` と
 `commit-refs` は、`claude-hooks` が隣のものを起動する（Windows の起動は、PATH の前に起動した側の置き場を探す）。
-`history-rewrite`（スキル history-rewrite が名前で呼ぶ）は、PATH の `commit-refs` を呼ぶ:
+`history-rewrite`（スキル history-rewrite が名前で呼ぶ）は、PATH の `commit-refs` を呼ぶ。`design-records` は、スキル adr、
+`run-checks.sh` の ADR の検査、`post-merge-cleanup.sh` の番号の予約の解放が名前で呼ぶ（無いと、検査と解放を飛ばす）:
 
 ```bash
 git clone https://github.com/tagawa0525/claude-harness ~/nix/claude-harness  # 2 回目からは git -C ~/nix/claude-harness pull --ff-only
 cd ~/nix/claude-harness
-for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite; do
+for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records; do
   cargo install --locked --force --root ~/.claude --path "modules/home/parts/$crate"
 done
 ~/.claude/bin/claude-setup sync ~/nix/claude-harness

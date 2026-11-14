@@ -64,7 +64,7 @@ jobs:
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\gitleaks"
       - name: Follow docs/windows.md
         run: |
-          for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite; do
+          for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records; do
             cargo install --locked --force --root ~/.claude --path "modules/home/parts/$crate"
           done
           ~/.claude/bin/claude-setup sync "$PWD"
