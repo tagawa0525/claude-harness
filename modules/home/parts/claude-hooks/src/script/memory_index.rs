@@ -185,9 +185,10 @@ fn wiki_links(body: &str) -> BTreeSet<String> {
 
 /// 本文の崩れた語を `ja-terms check` で見て、TERMS: の行を出す。終了コードを返す
 fn terms(dir: &str, files: &[String]) -> i32 {
+    // 環境変数の無い Linux は、cargo で直接ビルドしたもの（package.nix のラッパーを経ていない）
     let Some(ja_terms) = crate::rules::ja_terms() else {
         eprintln!(
-            "ERROR: 辞書の検査（ja-terms）が見つかりません（Linux は claude-hooks の package.nix が CLAUDE_HOOKS_JA_TERMS を渡す）。home-manager の rebuild で入れてください（claude-sync はバイナリを入れない）"
+            "ERROR: 辞書の検査（ja-terms）のパスがありません。Linux は claude-hooks の package.nix のラッパーが CLAUDE_HOOKS_JA_TERMS で渡します（cargo で直接ビルドしたものは、CLAUDE_HOOKS_JA_TERMS に ja-terms のパスを渡して起動する）"
         );
         return 1;
     };
@@ -197,17 +198,14 @@ fn terms(dir: &str, files: &[String]) -> i32 {
         .args(&paths)
         .stderr(Stdio::inherit())
         .output();
-    let missing = || {
-        eprintln!(
-            "ERROR: 辞書の検査（{ja_terms} check）がありません。Linux は home-manager の rebuild、Windows は claude-harness の README の「Windows で使う」の cargo install で入れてください（claude-sync はバイナリを入れない）"
-        );
-        1
-    };
     let output = match output {
-        // 127 は、包む sh（ja-terms の package.nix の wrapProgram）が中身を見つけられなかったとき
-        Ok(output) if output.status.code() == Some(127) => return missing(),
         Ok(output) => output,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return missing(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "ERROR: 辞書の検査（{ja_terms} check）がありません。Linux は home-manager の rebuild、Windows は claude-harness の README の「Windows で使う」の cargo install で入れてください（claude-sync はバイナリを入れない）"
+            );
+            return 1;
+        }
         Err(e) => {
             eprintln!("ERROR: 辞書の検査（{ja_terms} check）を起動できません: {e}");
             return 1;
