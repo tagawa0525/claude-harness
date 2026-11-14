@@ -4,7 +4,7 @@ date: 2026-11-13
 requires: [ADR-0082, ADR-0084, ADR-0086]
 supersedes: []
 superseded-by:
-issues: ["#101"]
+issues: ["#101", "#169"]
 ---
 
 # ADR-0087: Git と GitHub の作業手順のスクリプトの中身を claude-hooks のサブコマンドに移し、スクリプトのファイルはそれを呼ぶだけにする
@@ -55,9 +55,17 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   を起動するだけの sh にする
 - 案 B: スキルの文と hook のルールを、新しいコマンドの名前に書き換え、スクリプトのファイルを消す
 
+中断の後片付けを持つ `check-each-commit.sh`（`trap` で一時の worktree を消す。#169）:
+
+- 案 甲: `ctrlc` の crate を足して中断を受け（TERM と HUP も受けるには `termination` の feature が要る）、検査のコマンドが終わった後に片付けて 130 で終える
+- 案 乙: `libc`（Unix の sigaction）と `windows-sys`（SetConsoleCtrlHandler）を足して同じことをする
+- 案 丙: 中断の後片付けをやめ、次の起動の始めに前の一時の worktree を消す
+- 案 丁: 呼ぶ sh が exec せずに `claude-hooks` を起動し、一時のディレクトリを作って自分の `trap` で片付ける
+- 案 戊: 移さず、sh のまま残す
+
 ## 決定と理由
 
-採用: 案 1、案 A。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
+採用: 案 1、案 A、案 戊。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
@@ -72,13 +80,23 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   `~/.claude/bin` を Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
 - `lib/` の部品: source されるので、呼ぶだけの sh にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す（`lib/claude-hooks-script.sh` は移したスクリプトが読むので残す）
+- `check-each-commit.sh` は移さず、sh のまま残す（案 戊。#169）。jq を使わず、Windows では、呼ぶだけの sh と同じく Git Bash が
+  実行する（Windows の CI はこのスクリプトを流していない）。
+  中断されたとき（Ctrl-C、TERM、HUP）に一時の worktree を消す `trap` は、Rust の標準ライブラリに手段が無く、移すには
+  シグナルを受ける crate（`ctrlc`、または `libc` と `windows-sys`）か、OS の関数（sigaction、SetConsoleCtrlHandler）を直に呼ぶ
+  unsafe のコードが要る
 - PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を、上の呼ぶだけの sh に置き換える
 - テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える。仕組みは最初に移す PR でテストとともに
   決める）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
   呼ぶだけのスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
+  （sh のまま残す `check-each-commit.sh` は、そこで振る舞いを確かめる）
 
 理由:
 
+- 案 戊: `check-each-commit.sh` を移しても、jq を外すことにも、Git Bash を要らなくすることにもならない（jq は使わず、
+  呼ぶだけの sh も Git Bash が実行する）。案 甲と案 乙は、得るもののために依存を足す。案 丙は、同時に走る別の起動の
+  worktree を消さないための名前の決め方が要り、今の `trap` より複雑になる。案 丁は、片付けを sh に残したまま中身を
+  分けるので、sh と Rust の両方を読むことになる
 - 案 1 は、GitHub の API とローカルレビューの記録の扱いをそのまま使え、Windows で入れるものも増えない。案 2 は、
   ライブラリの crate を切り出す作業がかかり、得るのはバイナリの名前の分け方だけ（ADR-0086 の案 2 と同じ）。案 3 は、
   記録の判定が 2 つの crate に分かれ、`local-review-covers` で 1 つにした判定（`decide-next.sh` と pre-merge-check）が
@@ -105,8 +123,8 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 ### 確認
 
 - 移したスクリプトの結合テストが、`nix flake check` と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
-  いるもの
-- 移した後、対象のスクリプトのファイルは `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
+  いるもの。sh のまま残す `check-each-commit.sh` は、`.claude/tests/scripts.sh` の振る舞いのテストで確かめ続ける
+- 移した後、対象のスクリプトのファイル（`check-each-commit.sh` を除く）は `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
   なり、jq を使わない。`lib/` の部品は `claude-hooks-script.sh` のほかは消えている
 
 ## 補足
