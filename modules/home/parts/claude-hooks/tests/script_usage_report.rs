@@ -722,3 +722,88 @@ fn a_token_count_that_is_not_a_number_fails() {
         format!("ERROR: usage.output_tokens が数でありません（\"10\"）: {main_s}\n")
     );
 }
+
+#[test]
+fn a_last_line_cut_inside_a_character_is_skipped() {
+    let home = Home::new();
+    let main = home.project().join(format!("{SESSION}.jsonl"));
+    home.write_lines(
+        &main,
+        &[
+            user_text("始める"),
+            reply(
+                "c1",
+                "2026-11-07T01:00:00.000Z",
+                "claude-opus-5-5",
+                [0, 0, 0, 0, 1000],
+            ),
+        ],
+    );
+    // 書いている途中の最後の行が、「あ」（E3 81 82）の途中で切れている
+    let mut bytes = std::fs::read(&main).unwrap();
+    bytes.extend_from_slice(b"{\"type\": \"user\", \"message\": {\"content\": \"\xe3\x81");
+    std::fs::write(&main, bytes).unwrap();
+    let main_s = main.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.push(&main_s);
+    let out = stdout(&home.report(&args, None));
+    assert_eq!(lines_with(&out, "TOTAL: "), ["TOTAL: $0.02"]);
+}
+
+#[test]
+fn a_skill_file_read_with_windows_separators_is_the_first_skill() {
+    let home = Home::new();
+    let main = home.project().join(format!("{SESSION}.jsonl"));
+    let sub = home.project().join(SESSION).join("subagents");
+    home.write_lines(&main, &[user_text("始める")]);
+    home.write_lines(
+        &sub.join("agent-retro-windows.jsonl"),
+        &[
+            user_text("振り返りを行ってください。"),
+            tool_call(
+                "w1",
+                "2026-11-07T02:00:00.000Z",
+                "Read",
+                json!({"file_path": "C:\\Users\\u\\.claude\\skills\\retro\\SKILL.md"}),
+            ),
+        ],
+    );
+    let main_s = main.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.push(&main_s);
+    let out = stdout(&home.report(&args, None));
+    assert!(
+        out.contains("COST: 振り返り 1 本 $0.02 100.0% 書き直し 0 回 $0.00"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_meta_file_is_next_to_a_transcript_whose_name_repeats_the_suffix() {
+    let home = Home::new();
+    let main = home.project().join(format!("{SESSION}.jsonl"));
+    let sub = home.project().join(SESSION).join("subagents");
+    home.write_lines(&main, &[user_text("始める")]);
+    home.write_lines(
+        &sub.join("agent-x.jsonl.jsonl"),
+        &[
+            user_text("`high effort`"),
+            reply(
+                "m1",
+                "2026-11-07T02:00:00.000Z",
+                "claude-opus-5-5",
+                [0, 0, 0, 0, 1000],
+            ),
+        ],
+    );
+    std::fs::write(
+        sub.join("agent-x.jsonl.meta.json"),
+        r#"{"name":"code-review"}"#,
+    )
+    .unwrap();
+    let main_s = main.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.push(&main_s);
+    let out = stdout(&home.report(&args, None));
+    assert!(out.contains("COST: レビュー 1 本 $0.02"), "{out}");
+}
