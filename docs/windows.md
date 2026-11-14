@@ -24,15 +24,16 @@ Windows でハーネスのテストの sh（`modules/home/parts/claude-hooks/tes
 （スキル history-rewrite が使う）は `git fast-export --signed-commits` を渡し、Git 2.47.1 はこのオプションを知らずに
 使い方を出して終わった（2.56.1 では動いた。実機の Windows、2026-11-14、#213）。
 
-symlink を作れるよう、Windows の開発者モードを有効にする（設定 → システム → 開発者向け）。`worktree-add.sh` は、
+symlink を作れるよう、Windows の開発者モードを有効にする（設定の検索で「開発者モード」。置き場の名前は Windows の版で違う）。`worktree-add.sh` は、
 リポジトリの `.worktreelink` に書いたパスをメインの worktree への symlink にする。開発者モードが無く管理者でもないと、
 symlink を作れずに失敗する（`claude-hooks` の `cargo test` も 1 件が失敗した。#213）。
 
 Git Bash で、clone を作るか更新してから、crate を `~/.claude/bin` に入れ、clone のパスを渡して設置する。Linux と同じ
 `~/.claude/bin/claude-hooks` に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため（ADR-0087）。`ja-terms` と
 `commit-refs` は、`claude-hooks` が隣のものを起動する（Windows の起動は、PATH の前に起動した側の置き場を探す）。
-`history-rewrite`（スキル history-rewrite が名前で呼ぶ）は、PATH の `commit-refs` を呼ぶ。`design-records` は、スキル adr、
-`run-checks.sh` の ADR の検査、`post-merge-cleanup.sh` の番号の予約の解放が名前で呼ぶ（無いと、検査と解放を飛ばす）:
+`history-rewrite`（スキル history-rewrite が名前で呼ぶ）は、PATH の `commit-refs` を呼ぶ。`design-records` は、スキル adr と git-merge、
+`run-checks.sh` の ADR の検査、`post-merge-cleanup.sh` の番号の予約の解放が名前で呼ぶ（無いと、2 つのスクリプトは検査と解放を
+飛ばし、スキルの手順のコマンドは見つからずに止まる）:
 
 ```bash
 git clone https://github.com/tagawa0525/claude-harness ~/nix/claude-harness  # 2 回目からは git -C ~/nix/claude-harness pull --ff-only
