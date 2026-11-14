@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 
-/// 履歴に無いコミットの番号。対応表で「消えた」（新が 0）にすると、それを指す文書で commit-refs remap が止まる
 /// HEAD、index、印、MERGE_HEAD、作業ツリーのファイル
 type State = (
     String,
@@ -21,6 +20,7 @@ type State = (
     BTreeMap<String, Vec<u8>>,
 );
 
+/// 履歴に無いコミットの番号。対応表で「消えた」（新が 0）にすると、それを指す文書で commit-refs remap が止まる
 const VANISHED: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
 fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {

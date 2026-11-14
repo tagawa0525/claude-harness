@@ -73,9 +73,9 @@ fn spawn_git(
         .spawn()
         .map_err(|e| Stop(format!("git を起動できない: {e}")))?;
     if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        stdin
-            .write_all(input)
-            .map_err(|e| Stop(format!("git {} に書けない: {e}", args.join(" "))))?;
+        // git が入力を読む前に終わったら（hook や index の誤り）書けないが、理由は git の標準エラーと終了コードにあるので、
+        // 待って受ける
+        let _ = stdin.write_all(input);
     }
     child
         .wait_with_output()
@@ -159,7 +159,9 @@ fn rewritten_paths(w: &Path, old: &str, new: &str) -> Result<Vec<Vec<u8>>, Halt>
             .trim_start_matches(':')
             .split_whitespace()
             .collect();
-        let (mode_old, mode_new, status) = (parts[0], parts[1], parts[4]);
+        let [mode_old, mode_new, _, _, status] = parts[..] else {
+            return Err(Stop(format!("git diff-tree の知らない行: {status_line}")).into());
+        };
         if status != "M" || mode_old != mode_new {
             return Err(Leave(format!("書き換えが {} を {status} にした", text(path))).into());
         }
