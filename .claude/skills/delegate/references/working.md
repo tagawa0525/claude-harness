@@ -96,7 +96,7 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 `cd <worktree> && ~/.claude/scripts/check-each-commit.sh <base> -- <コマンド…>` で `<base>..HEAD` の各コミットを一時 worktree で
 調べる（RED を skip でコミットする運用ではビルドだけを通す。任意のコマンドを実行するので許可リストに無く、毎回確認を求められる）。
 規則の文書（スキル、CLAUDE.md、hook の文書）を縮めるブランチは、
-`cd <worktree> && ~/.claude/scripts/kept-sentences.py --old <(git show <base>:<パス>)… --new <パス>…`（文を別のファイルに
+`cd <worktree> && ~/.claude/scripts/kept-sentences.sh --old <(git show <base>:<パス>)… --new <パス>…`（文を別のファイルに
 移したら移した先も `--new` に並べる）で比べ、出た文ごとに、指す形に替えたものと依頼で足したものは報告の「決めたことと根拠」に
 書き、ほかは元の文に戻す（縮めるときは文を消すか指す形に替えるだけにし、残す文の語が落ちると、どの項や条件に掛かるかがずれる）。
 
