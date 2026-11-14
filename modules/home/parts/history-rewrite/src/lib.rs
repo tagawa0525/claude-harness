@@ -2,6 +2,7 @@
 //! 使い方と出力の形は main.rs の冒頭
 
 pub mod glob;
+pub mod run;
 pub mod transform;
 
 use std::fmt;

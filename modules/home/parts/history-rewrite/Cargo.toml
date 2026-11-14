@@ -14,5 +14,9 @@ edition = "2024"
 ja-terms = { path = "../ja-terms" }
 # 直した Markdown の表を、run-checks の自動修正と同じ形に揃え直す
 fix-markdown-lint = { path = "../fix-markdown-lint" }
+# 第 1 段の照合が、rewrite-history と同じ cat-file の読み方、オブジェクトの分け方、署名の外し方を使う
+commit-refs = { path = "../commit-refs" }
+# UTF-8 でない符号化を宣言した本文に、直す語があるかを読む（WHATWG の符号化の名前。Rust の符号化の事実上の標準）
+encoding_rs = "0.8"
 # --exclude の glob を正規表現に直して照合する。fix-markdown-lint と同じ版
 regex = "1"

@@ -30,6 +30,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "commit-refs"
+version = "0.1.0"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -73,6 +77,8 @@ dependencies = [
 name = "history-rewrite"
 version = "0.1.0"
 dependencies = [
+ "commit-refs",
+ "encoding_rs",
  "fix-markdown-lint",
  "ja-terms",
  "regex",
