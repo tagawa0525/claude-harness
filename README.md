@@ -85,12 +85,15 @@ git の ref `refs/memory-backup` にコミットする。`~/.claude` が git の
 通知する。`claude-setup` はリポジトリを作らない（`.gitignore` の無いまま作ると、後の `git add -A` で `.credentials.json`
 や会話の記録が入りうる。上の階層のリポジトリの下に作るかは、そのリポジトリとの兼ね合いで決める。ADR-0076）。退避は
 `git add -f` でメモリだけを入れるので、何も追跡しないリポジトリでも動く（コミットには git の `user.name` と `user.email`
-が要る）。`git -C ~/.claude rev-parse --show-toplevel` が「not a git repository」で失敗するときは、何も追跡しない
-`.gitignore` と一緒に作る（既にある `.gitignore` は上書きしない）:
+が要る）。`git -C ~/.claude rev-parse --show-toplevel` が「not a git repository」で失敗するときは、`.gitignore` と一緒に
+作る（既にある `.gitignore` は上書きしない）。`.gitignore` は、同期した CLAUDE.md、スキル、スクリプトと自動メモリだけを
+除外から外す。すべてを除外（`/*`）すると、Claude Code の Grep（ripgrep）が `.gitignore` に従って、`~/.claude` の中の
+スキルも自動メモリも見つけなくなる（実機の Windows で確かめた）。`.credentials.json`、会話の記録、`bin` は除外のまま残る:
 
 ```bash
 git init -q -b main ~/.claude
-[ -e ~/.claude/.gitignore ] || printf '/*\n!/.gitignore\n' >~/.claude/.gitignore
+[ -e ~/.claude/.gitignore ] || printf '%s\n' '/*' '!/.gitignore' '!/CLAUDE.md' '!/skills/' '!/scripts/' \
+  '!/projects/' '/projects/*/*' '!/projects/*/memory/' >~/.claude/.gitignore
 ```
 
 `cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
