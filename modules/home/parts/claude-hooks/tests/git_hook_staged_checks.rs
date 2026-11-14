@@ -242,12 +242,27 @@ fn markdownlint_fixes_then_checks_a_copy_of_the_staged_files() {
             std::fs::canonicalize(repo.work()).ok()
         );
     }
-    // fix-markdown-lint.py（~/.claude の下）が無ければ飛ばす
-    assert!(
-        said(&out).contains("SKIP: fix-markdown-lint.py"),
-        "{}",
-        said(&out)
+}
+
+#[test]
+fn markdown_tables_and_fence_languages_are_fixed_in_the_staged_version_without_python() {
+    // markdownlint --fix の直せない MD060 と MD040 は、同じバイナリの fix-markdown-lint で直す（python3 も
+    // ~/.claude の下のスクリプトも無い PATH と HOME で）
+    let repo = Repo::new();
+    repo.tool("markdownlint");
+    repo.stage(
+        "docs/a.md",
+        "| a | b |\n| --- | --- |\n| ccc | d |\n\n```\nfn main() {}\n```\n",
     );
+    let out = repo.checks(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    let staged = repo.git(&["show", ":docs/a.md"]);
+    assert_eq!(
+        String::from_utf8_lossy(&staged.stdout),
+        "| a   | b |\n| --- | - |\n| ccc | d |\n\n```rust\nfn main() {}\n```\n"
+    );
+    assert!(said(&out).contains("Fixed: docs/a.md"), "{}", said(&out));
+    assert!(!said(&out).contains("SKIP"), "{}", said(&out));
 }
 
 #[test]

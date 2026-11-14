@@ -16,10 +16,10 @@ markdownlint 0.50.0 の `--fix` は code span の先頭の空白を落とし、�
 ある書き方（シェルの `<<' X'` など）を書き手が気づかないまま変えるため。
 設定で MD038 を無効にしないのは、検査まで止めて違反に気づけなくなるため。
 
-## 2. 自動修正の補完 (fix-markdown-lint.py)
+## 2. 自動修正の補完 (fix-markdown-lint.sh)
 
 ```bash
-python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py <files>
+~/.claude/skills/language-checks/scripts/fix-markdown-lint.sh <files>
 ```
 
 **目的**: `markdownlint --fix` が直せない違反を修正する
@@ -52,7 +52,7 @@ markdownlint <files>
 ```bash
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --fix --disable MD038 --
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | \
-  xargs -0 -r python3 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.py
+  xargs -0 -r ~/.claude/skills/language-checks/scripts/fix-markdown-lint.sh
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r git add --
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --
 ```

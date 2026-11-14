@@ -20,8 +20,9 @@ let
   gitCheckConfig = callPackage ../lib/git-check-config.nix { };
   # 既定の辞書は、pre-commit と commit-msg の ja-terms の検査（ADR-0014）と同じもの
   dictionary = ../ja-terms/prh.yml;
-  # 表の揃え直しは、run-checks.sh の Markdown の自動修正と同じツール
-  fixMarkdownLint = ../../../../.claude/skills/language-checks/scripts/fix-markdown-lint.py;
+  # 表の揃え直しは、run-checks.sh の Markdown の自動修正（claude-hooks script fix-markdown-lint）と同じ振る舞いの
+  # Python の版（ADR-0087）
+  fixMarkdownLint = ./fix-markdown-lint.py;
   env = {
     HISTORY_REWRITE_DICTIONARY = "${dictionary}";
     HISTORY_REWRITE_FIX_MARKDOWN_LINT = "${fixMarkdownLint}";

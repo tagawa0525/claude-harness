@@ -205,20 +205,6 @@ fn pipe(
     }
 }
 
-/// cmd を実行して、成功したか（起動できなければ理由を出して失敗とする）
-fn succeeded(cmd: &mut Command) -> bool {
-    match cmd.status() {
-        Ok(status) => status.success(),
-        Err(e) => {
-            println!(
-                "❌ {} を起動できません（{e}）",
-                cmd.get_program().to_string_lossy()
-            );
-            false
-        }
-    }
-}
-
 fn names(files: &[&PathBuf]) -> String {
     files
         .iter()
@@ -371,31 +357,21 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    // markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完する。実体は
-    // language-checks スキルの同期先（~/.claude）。無ければ飛ばし、続く検査で残った違反として出る
-    let fixer =
-        crate::shell::home().join(".claude/skills/language-checks/scripts/fix-markdown-lint.py");
-    match (fixer.is_file(), find_on_path("python3")) {
-        (true, Some(python)) => {
-            // fix-markdown-lint.py は -- で始まる引数を飛ばすので、./ を付けて渡す
-            let fixed = succeeded(
-                Command::new(python)
-                    .arg(&fixer)
-                    .args(files.iter().map(|f| Path::new(".").join(&f.path)))
-                    .current_dir(&md),
-            );
-            if !fixed {
+    // markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完する
+    // （fix-markdown-lint.sh と同じ中身を、子のプロセスにせず呼ぶ）
+    for f in files {
+        match crate::script::fix_markdown_lint::fix_file(&md.join(&f.path)) {
+            Ok(Some(true)) => println!("Fixed: {}", f.path.display()),
+            Ok(Some(false)) => println!("OK: {}", f.path.display()),
+            Ok(None) => {}
+            Err(why) => {
                 println!(
-                    "❌ fix-markdown-lint.py failed. Run: python3 {} <files>",
-                    fixer.display()
+                    "❌ fix-markdown-lint: {} を直せません（{why}）",
+                    f.path.display()
                 );
                 passed = false;
             }
         }
-        _ => println!(
-            "SKIP: fix-markdown-lint.py（{} か python3 が無い）",
-            fixer.display()
-        ),
     }
     for f in files {
         if let Err(why) = restage(f, &md) {

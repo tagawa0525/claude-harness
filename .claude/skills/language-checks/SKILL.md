@@ -13,7 +13,7 @@ user-invocable: false
 - **Rust**: cargo fmt, clippy, test（ルートに `Cargo.toml` と `scripts/run-rust-docs-tests.sh` があれば、差分が `.md` だけならそのスクリプトだけを、ほかの差分では全体の後にそれも実行する。詳細は references/rust-checks.md）
 - **Python**: ruff format, ruff check, pytest（サブディレクトリのテストはディレクトリごとに、pytest が無ければ unittest。`scripts/run-python-tests.sh` があれば優先。詳細は references/python-checks.md）
 - **Nix**: nixfmt, statix, nix flake check（固定出力ハッシュの更新は nix-update）
-- **Markdown**: markdownlint, fix-markdown-lint.py
+- **Markdown**: markdownlint, fix-markdown-lint.sh
 
 ## 実行
 
