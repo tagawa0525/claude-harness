@@ -8,7 +8,7 @@
 //!   エスケープは持たない（どちらもただの字）
 //! - 隠れた名前（`.` で始まる成分）にも当たる。大文字と小文字は区別する
 //!
-//! pattern は先に PurePosixPath として読み直す（`.` の成分、重なった `/`、末尾の `/` を外す）。
+//! path と pattern は先に PurePosixPath として読み直す（`.` の成分、重なった `/`、末尾の `/` を外す）。
 
 use regex::Regex;
 
@@ -27,12 +27,13 @@ impl Glob {
         Glob(Regex::new(&translate(&normalize(pattern))).expect("translate は読める正規表現を作る"))
     }
 
+    /// path も PurePosixPath として読み直してから照合する
     pub fn matches(&self, path: &str) -> bool {
-        self.0.is_match(path)
+        self.0.is_match(&normalize(path))
     }
 }
 
-/// PurePosixPath の文字列の形。先頭の `//` が 2 つちょうどなら残し、ほかの重なった `/` は 1 つにし、`.` の成分と末尾の
+/// PurePosixPath の文字列の形（path にも pattern にも当てる）。先頭の `//` が 2 つちょうどなら残し、ほかの重なった `/` は 1 つにし、`.` の成分と末尾の
 /// `/` を外す。成分が残らなければ空（full_match は空のパスを `.` でなく空として照合する）
 fn normalize(pattern: &str) -> String {
     let root = if pattern.starts_with("//") && !pattern.starts_with("///") {
