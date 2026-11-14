@@ -23,6 +23,9 @@ jobs:
         working-directory: modules/home/parts/${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v5
+      # history-rewrite の run は第 2 段で PATH の commit-refs を呼ぶ
+      - if: matrix.crate == 'history-rewrite'
+        run: cargo install --locked --path ../commit-refs
       - run: cargo test --locked
       # Windows の claude-hooks は、環境変数の無いとき ja-terms を名前で起動する（#115。隣に無ければ PATH）。cargo install で入れた ja-terms と
       # 辞書で、git merge と git commit のメッセージを止めることを、Linux の install check と同じ sh のテストで確かめる
