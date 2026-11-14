@@ -119,20 +119,39 @@ fn is_local_rebuild(cmd: &Cmd) -> bool {
         && cmd.args.iter().skip(1).any(|a| a.text == "--local")
 }
 
-/// このホストが r995 でないと確かめられたか。r995 の上では手元のビルドも r995 で走るので、`hostname` が失敗したときと
-/// 同じく偽にする（止める側に倒す）。ドメインの付いた名前と大文字も r995 とみなす
-fn off_r995() -> bool {
-    Command::new("hostname")
+/// 名前が r995 でないか。ドメインの付いた名前と大文字も r995 とみなす
+fn names_off_r995(host: &str) -> bool {
+    let short = host.trim().split('.').next().unwrap_or_default();
+    !short.is_empty() && !short.eq_ignore_ascii_case("r995")
+}
+
+/// コマンドの標準出力（成功したときだけ）
+fn stdout_of(program: &str, args: &[&str]) -> Option<String> {
+    Command::new(program)
+        .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()
         .filter(|out| out.status.success())
-        .is_some_and(|out| {
-            let host = String::from_utf8_lossy(&out.stdout);
-            let short = host.trim().split('.').next().unwrap_or_default();
-            !short.is_empty() && !short.eq_ignore_ascii_case("r995")
-        })
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// このホストが r995 でないと確かめられたか。r995 の上では手元のビルドも r995 で走るので、`hostname` が失敗したときと
+/// 同じく偽にする（止める側に倒す）
+fn off_r995() -> bool {
+    stdout_of("hostname", &[]).is_some_and(|host| names_off_r995(&host))
+}
+
+/// ssh の接続先が r995 でないと確かめられたか。`~/.ssh/config` の別名（Host）は `ssh -G`（つながずに設定を読む）で
+/// HostName に解く。解けなければ止める側に倒す
+fn destination_off_r995(destination: &str) -> bool {
+    stdout_of("ssh", &["-G", destination]).is_some_and(|config| {
+        config
+            .lines()
+            .find_map(|line| line.strip_prefix("hostname "))
+            .is_some_and(names_off_r995)
+    })
 }
 
 /// squeue の応答を待つ上限。slurmctld が応答しないホストで、対象のコマンドを何十秒も止めないため
@@ -215,18 +234,24 @@ impl Rule for GuardExclusiveSlurm {
         let Some((name, jobid)) = running_exclusive_job() else {
             return Vec::new();
         };
-        // ホストは、排他のジョブがあって rebuild を含むときだけ見る。ssh の先はこのホストでないので、手元でビルドする
-        // 道も無い
+        // ホストは、排他のジョブがあって rebuild を含むときだけ見る。--local の rebuild が手元でビルドするのは、走るホスト
+        // （ssh の先なら接続先）が r995 でないとき
         let off = !rebuilds.is_empty() && off_r995();
         let blocking: Vec<&&Cmd> = rebuilds
             .iter()
-            .filter(|c| !(off && is_local_rebuild(c) && !shell.runs_under_ssh(c)))
+            .filter(|c| {
+                !(is_local_rebuild(c)
+                    && match shell.ssh_destination(c) {
+                        Some(destination) => destination_off_r995(destination),
+                        None => off,
+                    })
+            })
             .collect();
         let rebuild = !blocking.is_empty();
         if !rebuild && !heavy {
             return Vec::new();
         }
-        let local_way = off && blocking.iter().all(|c| !shell.runs_under_ssh(c));
+        let local_way = off && blocking.iter().all(|c| shell.ssh_destination(c).is_none());
         let fix = if !rebuild {
             "taskset で 1 コアに限る、終わるまで待つ、または slurm-run.sh で投げてください。"
         } else if local_way {
