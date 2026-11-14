@@ -2841,7 +2841,15 @@ mkdir -p "$FAKE_SQUEUE/on-gpu1" "$FAKE_SQUEUE/on-range" "$FAKE_SQUEUE/host-gpu1"
 printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|gpu1\\n"\n' >"$FAKE_SQUEUE/on-gpu1/squeue"
 printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|node[1-3]\\n"\n' >"$FAKE_SQUEUE/on-range/squeue"
 printf '#!/bin/sh\necho gpu1\n' >"$FAKE_SQUEUE/host-gpu1/hostname"
-chmod +x "$FAKE_SQUEUE"/on-*/squeue "$FAKE_SQUEUE/host-gpu1/hostname"
+# 2 台の計算ノードで、それぞれ排他のジョブが走る（gpu1 のジョブが先に出る）
+mkdir -p "$FAKE_SQUEUE/on-two" "$FAKE_SQUEUE/host-gpu2" "$FAKE_SQUEUE/host-gpu3"
+printf '#!/bin/sh\nprintf "NO|job-a|11|gpu1\\nNO|job-b|12|gpu2\\n"\n' >"$FAKE_SQUEUE/on-two/squeue"
+printf '#!/bin/sh\necho gpu2\n' >"$FAKE_SQUEUE/host-gpu2/hostname"
+printf '#!/bin/sh\necho gpu3\n' >"$FAKE_SQUEUE/host-gpu3/hostname"
+mkdir -p "$FAKE_SQUEUE/conf-gpu2"
+echo 'ssh-ng://nix-ssh@gpu2 x86_64-linux /root/.ssh/key 16 4 kvm - -' >"$FAKE_SQUEUE/conf-gpu2/machines"
+chmod +x "$FAKE_SQUEUE"/on-*/squeue "$FAKE_SQUEUE/host-gpu1/hostname" "$FAKE_SQUEUE/host-gpu2/hostname" \
+  "$FAKE_SQUEUE/host-gpu3/hostname"
 
 it "guard-exclusive-slurm: r995 の上では、排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と修正方法を示す"
 for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' 'cargo check' 'nix develop -c cargo test' 'nix develop ../..#references -c dvc repro' 'nix develop --command bin/xs in.toml' 'cargo test -j 1' 'cargo run --jobs=1 -- x' 'cargo bench -j1' 'cargo build -j 1' 'cargo build --jobs=1' 'cargo b -j1' 'cargo check -j 1' 'cargo clippy -j1' 'cargo c --jobs 1' 'cargo -j 1 check' 'CARGO_BUILD_JOBS=1 cargo check' 'CMD=cargo; $CMD test' 'bash -s <<< "cargo test"' 'source x.sh' 'bash "$SCRIPT"' 'eval "$CMD"' 'cargo --weird test' 'dvc --cd sub repro' 'nix develop --option k v -c cargo test' 'nix develop --expr 1 -c cargo test' 'target/x86_64-unknown-linux-gnu/release/xs in.toml' '/tmp/tgt/debug/lattice in.toml' 'cargo b' 'cargo c' 'cargo t' 'cargo r -- x' 'cargo --color never test' 'cargo -C /tmp build' 'nix -L develop -c cargo test' "nix develop ../..#references -c bash -c 'cargo test'" "nix develop -c bash -c 'taskset -c 0-31 cargo test'" 'nix shell nixpkgs#hello -c cargo test' 'nix shell -c dvc repro' "taskset -c 3 bash -c 'taskset -c 0-31 cargo test'" 'taskset -c 3 nix develop -c taskset -c 0-31 cargo test' 'target/release/xs in.toml' './target/debug/lattice in.toml' '../../target/release/core in.toml' 'CARGO_BUILD_JOBS=2 cargo check' 'CARGO_BUILD_JOBS=1 cargo test' 'cargo +nightly build' 'cargo build -j 4' 'dvc repro' 'dvc repro examples/vera/dvc.yaml' 'bin/xs in.toml' './bin/lattice in.toml' '../../bin/core in.toml' '../bin/chain in.toml' 'cargo --config a=b test' 'taskset -c 3 taskset -c 0-31 cargo test' 'cd repo && cargo test' 'env FOO=1 cargo test' "bash -c 'cargo test'" 'taskset -c 0-3 cargo test' 'taskset 0x3 cargo build'; do
@@ -3002,6 +3010,20 @@ for cmd in 'ssh 192.168.1.50 cargo test' 'ssh 127.0.0.1 cargo test'; do
   out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   [[ "$cmd" == *127.0.0.1* ]] && assert_eq "" "$out" || assert_eq deny "$(decision "$out")"
 done
+
+it "guard-exclusive-slurm: 計算ノードが複数あれば、走るホストかビルドを投げる先で排他のジョブが走るときだけ止め、そのジョブを示す"
+out=$(PATH="$FAKE_SQUEUE/host-gpu2:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "job-b（12）"
+out=$(PATH="$FAKE_SQUEUE/host-gpu3:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq "" "$out"
+# ビルドを投げる先（machines）が gpu2 なら止め、ジョブの無いノード（r995）なら通す
+out=$(NIX_CONF_DIR="$FAKE_SQUEUE/conf-gpu2" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" \
+  run_hook guard-exclusive-slurm 'nix build .#x')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "job-b（12）"
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'nix build .#x')
+assert_eq "" "$out"
 
 it "guard-exclusive-slurm: リモートのビルダーに計算ノードが無いホストの nix のビルドは、手元でビルドするので通す"
 for cmd in 'nix build .#x' 'nix flake check' 'nix-rebuild update'; do

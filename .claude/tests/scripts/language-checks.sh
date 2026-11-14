@@ -772,6 +772,21 @@ for host in t14g4 x1ng1.lan; do
   assert_contains "$(fake_log nix)" "flake check --builders  --max-jobs auto"
 done
 
+it "run-checks: 計算ノードが複数あれば、このホストで排他のジョブが走るときだけ 1 コアに限る"
+make_fake_tool squeue '*) printf "NO|job-a|11|gpu1\\nNO|job-b|12|gpu2\\n" ;;'
+for host in gpu2:1 gpu3:0; do
+  make_fake_tool hostname "*) echo ${host%:*} ;;"
+  make_fake_tool taskset '*) shift 2; exec "$@" ;;'
+  make_fake_tool nix '*) exit 0 ;;'
+  out=$("$LANG_SCRIPTS/run-checks.sh")
+  if [[ ${host#*:} == 1 ]]; then
+    assert_contains "$out" "1 コアで実行する"
+  else
+    assert_not_contains "$out" "1 コアで実行する"
+  fi
+done
+make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n" ;;'
+
 it "run-checks: ホストが分からなければ、r995 とみなして 1 コアに限る"
 make_fake_tool hostname '*) exit 1 ;;'
 make_fake_tool taskset '*) shift 2; exec "$@" ;;'
