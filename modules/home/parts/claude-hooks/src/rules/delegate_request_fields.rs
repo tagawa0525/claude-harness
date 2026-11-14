@@ -4,7 +4,7 @@
 //! 1 行ずつ分けて書かせる。欄が欠けると、書く側は出典を開いたかを見返せず、受ける側は本文から事実を拾い出す。
 //! 欄の有無は依頼の文字列だけで決まるので、送る前にここで判定する。
 //!
-//! - 依頼の置き場: prompt の空でない最初の行に「依頼文は <絶対パス> にある」（パスは `` ` `` か「」で囲んでもよい）が
+//! - 依頼の置き場: prompt の空でない最初の行に「依頼文は <絶対パス> にある」（パスは `` ` `` か「」で囲んでもよく、空白を含んでよい）が
 //!   あれば、そのファイル。無ければ prompt。2 行目以降の同じ句は、ほかの依頼文への言及として扱う
 //! - 対象: prompt か依頼のファイルの、空でない最初の行に「/delegate を呼び、」（呼ぶ。、呼んで、）がある呼び出し。定型の
 //!   1 行目がこの句なので、/delegate に触れるだけの prompt（/delegate を調べる依頼、差分の引用）は見ない
@@ -42,10 +42,21 @@ static CALL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/delegate\s*を呼(?:び|ぶ|んで)(?:[、。,.\s]|$)").unwrap());
 
 /// 依頼のファイルを指す句。パスは `/`、`~`、`.` か、Windows のドライブ（`C:\`、`C:/`）で始まるものだけを見る
-/// （「依頼文は下にある」は指していない）。絶対パスかは句を見つけた後に確かめ、拒否の文言で修正方法を示す
+/// （「依頼文は下にある」は指していない）。絶対パスかは句を見つけた後に確かめ、拒否の文言で修正方法を示す。
+/// パスは空白で切らない（Windows のユーザー名には空白が入りうる）。囲んだパスは閉じる記号まで、囲まないパスは
+/// 「にある」の前の空白までを取る
 static POINTER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"依頼文は\s*[`「]?((?:[/~.]|[A-Za-z]:[\\/])[^\s`「」]*?)[`」]?\s*にある").unwrap()
+    const START: &str = r"(?:[/~.]|[A-Za-z]:[\\/])";
+    Regex::new(&format!(
+        r"依頼文は\s*(?:`({START}[^`\n]*)`|「({START}[^」\n]*)」|({START}[^`「」\n]*?))\s*にある"
+    ))
+    .unwrap()
 });
+
+/// POINTER に当たった句のパス（囲み方ごとの組のどれか 1 つに入る）
+fn pointed_path<'a>(c: &regex::Captures<'a>) -> &'a str {
+    (1..=3).find_map(|i| c.get(i)).map_or("", |m| m.as_str())
+}
 
 /// 中身を判定する欄（`FIELDS` の添字）と、その欄に要る語
 const SCOPE: usize = 5;
@@ -124,7 +135,7 @@ impl Rule for DelegateRequestFields {
         // place は欠けた欄を書いた場所、target は欄を足す先（拒否の文言に使う）
         let (request, place, target) = match POINTER.captures(first_line(&input.prompt)) {
             Some(c) => {
-                let path = &c[1];
+                let path = pointed_path(&c);
                 match read_request(path) {
                     Ok(text) if prompt_calls || calls_delegate(&text) => {
                         (text, format!("依頼文のファイル {path}"), "ファイル")
