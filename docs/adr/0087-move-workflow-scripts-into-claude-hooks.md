@@ -72,6 +72,9 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   `~/.claude/bin` を Git Bash の `~/.bashrc` で PATH の先頭に足す（README の「Windows で使う」）
 - `lib/` の部品: source されるので、呼ぶだけの sh にしない。処理は `claude-hooks` の共通の関数に移し、source するスクリプトが
   すべて移った PR で消す（`lib/claude-hooks-script.sh` は移したスクリプトが読むので残す）
+- `check-each-commit.sh` は移さず、sh のまま残す（#169）。jq を使わず、Windows では呼ぶだけの sh と同じく Git Bash で動く。
+  中断されたとき（Ctrl-C、TERM、HUP）に一時の worktree を消す `trap` は、Rust の標準ライブラリでは書けず、移すには
+  シグナルを受ける crate（`ctrlc`、または `libc` と `windows-sys`）が要る
 - PR の単位: スクリプトごとに 1 つ以上の PR にし、中身を移した PR で sh の実装を、上の呼ぶだけの sh に置き換える
 - テスト: 判定は `claude-hooks` の結合テスト（gh は偽のコマンドで置き換える。仕組みは最初に移す PR でテストとともに
   決める）で、`nix flake check` と Windows の CI（`windows.yml`）で流す。今の `.claude/tests/scripts.sh` は、
@@ -79,6 +82,9 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 理由:
 
+- `check-each-commit.sh` を移して得るのは、jq を外すことでも Windows で動くようにすることでもない（どちらも今の sh で
+  満たす）。依存を足してまで移す理由が無い。中断の後片付けを、次の起動で前の一時の worktree を消す形に変える案は、
+  同時に走る別の起動の worktree を消さないための名前の決め方が要り、今の `trap` より複雑になる
 - 案 1 は、GitHub の API とローカルレビューの記録の扱いをそのまま使え、Windows で入れるものも増えない。案 2 は、
   ライブラリの crate を切り出す作業がかかり、得るのはバイナリの名前の分け方だけ（ADR-0086 の案 2 と同じ）。案 3 は、
   記録の判定が 2 つの crate に分かれ、`local-review-covers` で 1 つにした判定（`decide-next.sh` と pre-merge-check）が
@@ -106,7 +112,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 - 移したスクリプトの結合テストが、`nix flake check` と Windows の CI で通る。期待値は、今の `.claude/tests/scripts.sh` が確かめて
   いるもの
-- 移した後、対象のスクリプトのファイルは `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
+- 移した後、対象のスクリプトのファイル（`check-each-commit.sh` を除く）は `lib/claude-hooks-script.sh` を読んで `claude_hooks_script <名前>` を呼ぶだけに
   なり、jq を使わない。`lib/` の部品は `claude-hooks-script.sh` のほかは消えている
 
 ## 補足
