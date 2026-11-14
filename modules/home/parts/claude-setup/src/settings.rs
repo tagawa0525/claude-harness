@@ -6,8 +6,9 @@
 //!   claude-hooks の登録（shell form と exec form。Windows の `\` 区切りのパスも）と、`--legacy` の名前の旧 bash hook の
 //!   登録を外し、ほかの hook は残す。バイナリだけの組にするのは、ほかの hook と同じ組に置くと、その組の matcher を
 //!   変えたときにほかの hook も Agent で走るため
-//! - Stop: `--stop` のバイナリ（自動メモリの退避）を 1 件だけ登録する。async にしないのは、async の hook の失敗の文が
-//!   利用者に見えず（Claude にだけ次のターンで渡る）、退避の失敗に気づけないため
+//! - Stop: `--stop` のバイナリ（claude-hooks）を、引数 `stop`（自動メモリの退避。ADR-0089）で exec form で 1 件
+//!   だけ登録する。前の claude-hooks stop の登録と、前の退避のバイナリ claude-memory-backup の登録を外す。async に
+//!   しないのは、async の hook の失敗の文が利用者に見えず（Claude にだけ次のターンで渡る）、退避の失敗に気づけないため
 //! - UserPromptSubmit: 現在時刻を 1 行出すコマンドを 1 件だけ登録する（どちらの OS も同じ文字列の shell form）
 //! - 渡さない hook の登録には触らない。読めないか壊れた settings.json は書き換えずに止める
 
@@ -98,10 +99,11 @@ pub fn run(home: &Path, options: &Options) -> Result<(), String> {
     )?;
     if let Some(bin) = &options.stop {
         let entry = json!({
-            "hooks": [{"type": "command", "command": bin, "args": [], "timeout": STOP_TIMEOUT}],
+            "hooks": [{"type": "command", "command": bin, "args": ["stop"], "timeout": STOP_TIMEOUT}],
         });
         replace(&path, hooks, "Stop", entry, |hook| {
-            is_binary(hook, "claude-memory-backup", None)
+            is_binary(hook, "claude-hooks", Some("stop"))
+                || is_binary(hook, "claude-memory-backup", None)
         })?;
     }
     write_json(&path, &Value::Object(settings))
