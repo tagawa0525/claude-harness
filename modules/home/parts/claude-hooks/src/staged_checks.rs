@@ -360,7 +360,7 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
     // markdownlint --fix が直せない MD040（言語指定なし）/ MD060（CJK テーブル整列）を補完する
     // （fix-markdown-lint.sh と同じ中身を、子のプロセスにせず呼ぶ）
     for f in files {
-        match crate::script::fix_markdown_lint::fix_file(&md.join(&f.path)) {
+        match fix_markdown_lint::fix_file(&md.join(&f.path)) {
             Ok(Some(true)) => println!("Fixed: {}", f.path.display()),
             Ok(Some(false)) => println!("OK: {}", f.path.display()),
             Ok(None) => {}

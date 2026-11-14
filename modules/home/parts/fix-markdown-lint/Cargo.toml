@@ -1,0 +1,15 @@
+# =============================================================================
+# fix-markdown-lint: markdownlint --fix の直せない Markdown の違反（MD060 の表の桁、MD040 のコードの塊の言語）を直すライブラリ
+# =============================================================================
+# claude-hooks（`claude-hooks script fix-markdown-lint` と git hook の staged-checks）が path で依存する。表の揃え方を
+# 1 つの実装にするため、claude-hooks の中から切り出した（history-rewrite の表の揃え直しも、Rust に移した後にこれを呼ぶ）。
+# バイナリを持たないので、Windows でも cargo install するものは増えない
+# =============================================================================
+[package]
+name = "fix-markdown-lint"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# 言語の推定の正規表現。claude-hooks と同じ版
+regex = "1"
