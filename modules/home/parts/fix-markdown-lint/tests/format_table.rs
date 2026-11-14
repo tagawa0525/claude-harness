@@ -43,3 +43,11 @@ fn an_explicit_left_alignment_keeps_its_colon() {
         ["| a   | b |", "| :-- | - |", "| ccc | d |"]
     );
 }
+
+#[test]
+fn keeps_an_escaped_pipe_next_to_the_closing_pipe() {
+    assert_eq!(
+        fmt(&["| a | b |", "| - | - |", "| x | \\||"]),
+        ["| a | b  |", "| - | -- |", "| x | \\| |"]
+    );
+}

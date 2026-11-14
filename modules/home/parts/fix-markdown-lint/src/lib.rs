@@ -145,7 +145,10 @@ pub fn is_separator_row(line: &str) -> bool {
 
 /// 行の両端の空白と | を外し、| で切ったセル（両端の空白を外す）。`\|` はセルの中の文字で、区切りでない（GFM）
 fn cells(line: &str) -> Vec<&str> {
-    let body = strip(line).trim_matches('|');
+    // 外側の | は 1 本ずつだけ外す（`\||` の閉じの前の `\|` はセルの文字）
+    let line = strip(line);
+    let body = line.strip_prefix('|').unwrap_or(line);
+    let body = body.strip_suffix('|').unwrap_or(body);
     let mut out = Vec::new();
     let mut start = 0;
     let mut backslashes = 0;
