@@ -112,7 +112,7 @@ pub fn run(home: &Path, options: &Options) -> Result<(), String> {
 fn read_json(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path)
         .map_err(|e| format!("❌ {} を読めません（{e}）", path.display()))?;
-    serde_json::from_str(&text).map_err(|e| {
+    serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)).map_err(|e| {
         format!(
             "❌ {} を JSON として読めません（{e}）。書き換えずに止めます",
             path.display()
