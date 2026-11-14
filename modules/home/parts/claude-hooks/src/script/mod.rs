@@ -26,6 +26,7 @@ mod reset_rounds;
 mod resolve_thread;
 mod review_level;
 mod run_checks;
+mod time;
 mod usage_report;
 mod worktree_add;
 
