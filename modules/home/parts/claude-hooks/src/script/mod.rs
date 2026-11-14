@@ -23,6 +23,7 @@ mod request_rereview;
 mod reset_rounds;
 mod resolve_thread;
 mod review_level;
+mod run_checks;
 mod worktree_add;
 
 /// スクリプトの中身（引数を受けて終了コードを返す）
@@ -51,6 +52,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("reset-rounds", reset_rounds::main),
     ("resolve-thread", resolve_thread::main),
     ("review-level", review_level::main),
+    ("run-checks", run_checks::main),
     ("worktree-add", worktree_add::main),
 ];
 

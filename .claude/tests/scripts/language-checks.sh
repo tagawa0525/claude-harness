@@ -6,6 +6,8 @@
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
 
+# run-checks.sh の中身は claude-hooks script run-checks。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 LANG_SCRIPTS="$CLAUDE_DIR/skills/language-checks/scripts"

@@ -164,7 +164,7 @@ pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
 }
 
 /// 実行の bit があるか（`command -v` と同じく、無ければ PATH に無いものとする。Windows には実行の bit が無い）
-fn executable(meta: &std::fs::Metadata) -> bool {
+pub(crate) fn executable(meta: &std::fs::Metadata) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
