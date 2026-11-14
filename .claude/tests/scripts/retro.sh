@@ -3,7 +3,8 @@
 #
 # 実行: bash .claude/tests/scripts/retro.sh（まとめて実行: bash .claude/tests/scripts.sh）
 
-# prose-size の中身は claude-hooks script prose-size（ADR-0089）。ブランチでビルドしたバイナリで確かめる
+# prose-size と memory-index の中身は claude-hooks script prose-size と memory-index（ADR-0089）。ブランチでビルドした
+# バイナリで確かめる
 source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
@@ -336,10 +337,11 @@ assert_contains "$out" "ERROR:"
 MEMORY_INDEX="$CLAUDE_DIR/skills/retro/scripts/memory-index.sh"
 MEM="$TEST_ROOT/memory"
 mkdir -p "$MEM"
-# 辞書の検査（ja-terms check）は偽物にする。辞書の規則（コードスパンを数えないなど）は本物で
+# 辞書の検査（ja-terms check）は偽物にし、claude-hooks に CLAUDE_HOOKS_JA_TERMS で渡す（nix のラッパーはこれを store の
+# パスに固定するので、CLAUDE_HOOKS_BIN には cargo でビルドしたものを渡す）。辞書の規則（コードスパンを数えないなど）は本物で
 # modules/home/parts/tests/ja-terms.sh が確かめる。既定は崩れた語が無い
 make_fake_tool ja-terms '  check\ *) exit 0 ;;'
-export JA_TERMS="$TEST_ROOT/fakebin/ja-terms"
+export CLAUDE_HOOKS_JA_TERMS="$TEST_ROOT/fakebin/ja-terms"
 cat > "$MEM/MEMORY.md" <<'EOF'
 - [好み A](feedback-a.md) — 説明
 - [事情 B](project-b.md) — 説明
@@ -440,7 +442,7 @@ assert_contains "$out" "check crashed"
 assert_contains "$out" "ERROR:"
 
 it "memory-index: 辞書の検査が無ければ、rebuild を求めて失敗する"
-out=$(JA_TERMS="$TEST_ROOT/missing/ja-terms" "$MEMORY_INDEX" "$MEM" 2>&1)
+out=$(CLAUDE_HOOKS_JA_TERMS="$TEST_ROOT/missing/ja-terms" "$MEMORY_INDEX" "$MEM" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ENTRIES: 2"
 assert_contains "$out" "rebuild"

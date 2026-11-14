@@ -15,6 +15,7 @@ mod gh_wait_review;
 mod git_info;
 mod git_merge_state;
 mod kept_sentences;
+mod memory_index;
 mod post_merge_cleanup;
 mod pr_url;
 mod prose_size;
@@ -50,6 +51,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("git-info", git_info::main),
     ("git-merge-state", git_merge_state::main),
     ("kept-sentences", kept_sentences::main),
+    ("memory-index", memory_index::main),
     ("post-merge-cleanup", post_merge_cleanup::main),
     ("prose-size", prose_size::main),
     ("record-local-review", record_local_review::main),

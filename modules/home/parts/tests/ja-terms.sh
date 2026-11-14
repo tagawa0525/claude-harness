@@ -6,7 +6,7 @@
 # pre-commit はステージした中身（作業ツリーではなく）の Markdown、テキスト、コードを、commit-msg は
 # Claude Code のセッションのコミットの本文を ja-terms（prh の辞書を Rust で当てる。ADR-0085）で検査する。辞書の項目は、名詞の用法を
 # 止め、動詞や別の語を通すことも確かめる。ファイルの全体の検査（ja-terms check）と、それを使う /retro の
-# memory-index.sh の TERMS: の行も、同じ辞書で確かめる（ADR-0074）。
+# memory-index.sh（claude-hooks script memory-index）の TERMS: の行も、同じ辞書で確かめる（ADR-0074）。
 #
 # hook のファイルを nix build で作る（hook が呼ぶ claude-hooks と、それが包む ja-terms も一緒にビルドされる）。
 # ja-terms は、claude-code.nix が置く ~/.claude/bin の形のまま、home-manager の home-files から取る。
@@ -30,11 +30,14 @@ for hook in pre-commit commit-msg; do
   cp "$built" "$HOOKS/$hook"
   chmod +x "$HOOKS/$hook"
 done
-echo "==> ~/.claude/bin/ja-terms をビルドする（homeConfigurations.test）"
+echo "==> ~/.claude/bin/ja-terms と claude-hooks をビルドする（homeConfigurations.test）"
 home_files=$(nix build --no-link --print-out-paths --option warn-dirty false \
   "$ROOT#homeConfigurations.test.config.home-files")
 JA_TERMS="$home_files/.claude/bin/ja-terms"
 MEMORY_INDEX="$ROOT/.claude/skills/retro/scripts/memory-index.sh"
+# memory-index.sh が呼ぶ claude-hooks（package.nix のラッパーが、包んだ ja-terms のパスを渡す）。HOME は下で差し替えるので、
+# ~/.claude/bin の形のまま home-files から渡す
+export CLAUDE_HOOKS_BIN="$home_files/.claude/bin/claude-hooks"
 
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -721,7 +724,7 @@ printf -- '- [a](a.md) — 説明\n- [b](b.md) — 説明\n' > "$MEM/MEMORY.md"
 printf -- '---\nname: a\ndescription: 確かめの結果\n---\n\n確かめの結果を書く。\n\n`確かめの結果` はコードの中。\n\n```\n確かめの結果\n```\n' > "$MEM/a.md"
 printf -- '---\nname: b\n---\n\n結果を確かめる。\n' > "$MEM/b.md"
 rc=0
-JA_TERMS="$JA_TERMS" "$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
+"$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 0 ] && [ "$(grep '^TERMS: ' "$WORK/out")" = "TERMS: a.md:6 確かめ => 確認" ]; then
   ok "memory-index: 本文の崩れた語を TERMS: で出し、コードスパン、フェンス、フロントマターの中は数えない"
 else
@@ -729,7 +732,7 @@ else
 fi
 printf -- '---\nname: a\n---\n\n結果を確かめる。`確かめの結果` はコードの中。\n' > "$MEM/a.md"
 rc=0
-JA_TERMS="$JA_TERMS" "$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
+"$MEMORY_INDEX" "$MEM" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "ENTRIES: 2" ]; then
   ok "memory-index: 崩れた語が無ければ TERMS: の行を出さない"
 else
