@@ -53,6 +53,8 @@ impl Work {
             .env("TMPDIR", self.path("tmp"))
             .env("TMP", self.path("tmp"))
             .env("TEMP", self.path("tmp"))
+            // 一時の場所は target の下（手元では worktree の中）にあるので、外のリポジトリを見つけさせない
+            .env("GIT_CEILING_DIRECTORIES", &self.root)
             .env_remove("CLAUDECODE");
     }
 
@@ -424,7 +426,8 @@ fn fails_outside_a_repository() {
     let work = Work::new();
     let norepo = work.path("norepo");
     write(&norepo.join("projects/-a/memory/MEMORY.md"), "x\n");
-    assert_failed(&work.stop(&[&norepo], "{}"));
+    let err = assert_failed(&work.stop(&[&norepo], "{}"));
+    assert!(!err.contains("直下"), "外のリポジトリの下と読んだ: {err}");
 }
 
 /// 上の階層のリポジトリ（ホームを丸ごと追跡するものなど）に、知らずに ref を作らない
