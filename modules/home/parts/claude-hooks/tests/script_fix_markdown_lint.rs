@@ -214,9 +214,9 @@ fn cells_are_stripped_of_python_whitespace() {
     );
 }
 
-/// ch だけのセルを幅 4 の列に置いたときの、ch の幅（右の詰め物の数から逆算する）
+/// ch だけのセルを幅 8 の列（どの場合より広い）に置いたときの、ch の幅（右の詰め物の数から逆算する）
 fn width_of(ch: &str) -> usize {
-    let out = fixed(&format!("| abcd | x |\n| --- | --- |\n| {ch} | x |\n"));
+    let out = fixed(&format!("| abcdefgh | x |\n| --- | --- |\n| {ch} | x |\n"));
     let row = out.lines().nth(2).unwrap();
     let rest = row
         .strip_prefix(&format!("| {ch}"))
@@ -225,7 +225,7 @@ fn width_of(ch: &str) -> usize {
         .strip_suffix("| x |")
         .unwrap_or_else(|| panic!("{row:?}"));
     assert!(pad.chars().all(|c| c == ' '), "{row:?}");
-    5 - pad.len()
+    9 - pad.len()
 }
 
 #[test]
