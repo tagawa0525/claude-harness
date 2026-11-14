@@ -288,3 +288,33 @@ fn usage_errors_exit_2() {
         Some(2)
     );
 }
+
+#[test]
+fn options_also_take_their_value_after_an_equals_sign() {
+    let work = Work::new();
+    work.write("dict/terms.yml", "pattern: 確かめの\n".as_bytes());
+    let out = ok(&work.transform(&["--exclude=**/terms.yml", "dict/terms.yml"]));
+    assert_eq!(out, "SKIPPED: dict/terms.yml (excluded)\nFILES: 0\n");
+}
+
+#[test]
+fn a_replacement_that_changes_the_number_of_lines_in_markdown_stops() {
+    // 表の揃え直しは行の対応で直した表を決めるので、行の数を変える置き換えは止める
+    let work = Work::new();
+    let rules = work.root.join("newline.yml");
+    std::fs::write(
+        &rules,
+        "version: 1\nrules:\n  - expected: \"一\\n二\"\n    pattern: 一二\n",
+    )
+    .unwrap();
+    let rules = rules.display().to_string();
+    work.write("a.md", "一二\n".as_bytes());
+    let out = work.transform(&["--dictionary", &rules, "a.md"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("行の数が変わる"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(work.read("a.md"), "一二\n");
+}
