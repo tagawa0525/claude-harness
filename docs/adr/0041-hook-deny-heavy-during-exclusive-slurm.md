@@ -89,8 +89,10 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 `--local` で手元でビルドする道も示す。エスケープは設けない。
 
 `run-checks.sh` は、同じ squeue の判定（`.claude/scripts/lib/slurm-exclusive.sh`）で排他のジョブを見つけたら、
-冒頭に知らせて 1 コアで実行する（`cargo` を `taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を
-`--cores 1 -j 1` で）。このスクリプトと `run-python-tests.sh` は hook の対象にしない。
+冒頭に知らせ、r995 の上（`on_compute_node`。hostname が分からないときも）では 1 コアで実行する（`cargo` を
+`taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を `--cores 1 -j 1` で）。ほかのホストでは `cargo` を限らず、
+`nix flake check` を `--builders '' --max-jobs auto` で手元でビルドする。このスクリプトと `run-python-tests.sh` は
+hook の対象にしない。
 
 ### 帰結
 
@@ -142,4 +144,5 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
   （taskset で包んでも）止める（#176）。前は「r995 以外のホストでは判定の材料が無い。誤って止めるより通す」とし、
   ホストでは分けなかった。ラップトップも Slurm に投げるので squeue を持ち（nixfiles の `modules/slurm/submit.nix`）、
   r995 の待ち行列を見るので、手元のコアだけを使う cargo などまで止め、逆にラップトップの `taskset -c 3 nix build` は
-  r995 でビルドするのに通していた
+  r995 でビルドするのに通していた。`run-checks.sh` も、前は「1 コアで実行する」をホストによらず当て、ラップトップの
+  `nix flake check --cores 1 -j 1` のビルドは r995 に投げられていたので、r995 のほかでは手元でビルドする
