@@ -16,7 +16,8 @@
 //!
 //! 「ステージ済み」は、--merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分に読み替える。
 //! 最初に失敗したチェックで止まる。ツールが PATH に無ければ SKIP を出して続ける。`RUN:` と `FAILED:` の行のコマンドは、
-//! sh の版の段の関数の名前（`cargo_in`、`nix_fmt_check` など）をそのまま出す（読む側の文と揃える）
+//! 段の名前（`cargo_in <dir>`、`nix_fmt_check` など）で出す。実行できるコマンドの形にしないのは、run-checks.sh を
+//! Rust に移す前と行の文字列を変えないため（ADR-0087。変えるなら、行を読むテストと合わせて別に変える）
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -667,7 +668,7 @@ fn last_cpu() -> usize {
     online.saturating_sub(1)
 }
 
-/// ルートに test_*.py か *_test.py があるか（sh の `compgen -G` と同じく、. で始まる名前は * に一致しない）
+/// ルートに test_*.py か *_test.py があるか（glob と同じく、. で始まる名前は * に一致させない）
 fn root_has_test_file() -> bool {
     std::fs::read_dir(".").is_ok_and(|entries| {
         entries.flatten().any(|entry| {
