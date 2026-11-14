@@ -18,8 +18,9 @@
 # 出力と終了コード:
 #   DONE: <ファイル>   0  渡した background の出力のどれかが終わった（Claude Code が最後の行に [exited with code N] か
 #                         [killed] を書く）
-#   WAIT: <経過> 分    2  1 歩の時間がたった。もう一度呼ぶ
-#   REPORT: <経過> 分  3  途中の報告から 55 分を超えた。親に途中の報告を送ってから、もう一度呼ぶ（数え直した）
+#   WAIT: 途中の報告から <経過> 分             2  1 歩の時間がたった。もう一度呼ぶ
+#   REPORT: 途中の報告から <経過> 分を超えた…  3  途中の報告から 55 分を超えた。親に途中の報告を送ってから、もう一度呼ぶ
+#                                                 （数え直した）
 #   使い方の誤り、渡した出力のファイルが無い（パスの写し損ね）、状態を書けないときは、理由を出して 1
 #
 # テストは WAIT_STEP_SECONDS（1 歩、既定 270）と WAIT_STEP_REPORT（途中の報告の間隔の秒、既定 3300）で時間を縮める
@@ -32,9 +33,9 @@ usage() {
 }
 
 state_of() {
-  # 鍵はハッシュにしてファイル名に使う（パスの記号や日本語でも重ならない）
+  # 鍵は正規化したパス（末尾の / や . を揃える）のハッシュにしてファイル名に使う（パスの記号や日本語でも重ならない）
   local key
-  key=$(printf '%s' "$1" | sha256sum)
+  key=$(realpath -m -- "$1" | sha256sum)
   printf '%s/claude-wait-step/%s' "${TMPDIR:-/tmp}" "${key%% *}"
 }
 
@@ -79,34 +80,26 @@ finished() {
   return 1
 }
 
-# 終わりを先に見て、済んだものに途中の報告を出さない。返る前に最後に呼んだ時刻を残す
-check() {
-  local t
+# 1 秒ごとに、終わり、途中の報告の時刻、1 歩の時刻の順に見る（終わったものに途中の報告を出さない）。返る前に最後に
+# 呼んだ時刻を残す
+deadline=$(( now + step ))
+while :; do
   if finished "$@"; then
     save
     exit 0
   fi
   t=$(date +%s)
   if (( t - reported >= report )); then
+    elapsed=$(( (t - reported) / 60 ))
     reported=$t
     save
-    echo "REPORT: 途中の報告から $(( report / 60 )) 分を超えた。親に途中の報告を送ってから、もう一度呼ぶ"
+    echo "REPORT: 途中の報告から ${elapsed} 分を超えた。親に途中の報告を送ってから、もう一度呼ぶ"
     exit 3
   fi
-}
-
-check "$@"
-deadline=$(( now + step ))
-# 途中の報告の時刻を越えて待たない
-(( deadline > reported + report )) && deadline=$(( reported + report ))
-while (( $(date +%s) < deadline )); do
-  if finished "$@"; then
+  if (( t >= deadline )); then
     save
-    exit 0
+    echo "WAIT: 途中の報告から $(( (t - reported) / 60 )) 分"
+    exit 2
   fi
   sleep 1
 done
-check "$@"
-save
-echo "WAIT: 途中の報告から $(( ($(date +%s) - reported) / 60 )) 分"
-exit 2
