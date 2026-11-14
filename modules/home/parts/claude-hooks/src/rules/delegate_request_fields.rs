@@ -447,17 +447,18 @@ mod tests {
     }
 
     #[test]
-    fn request_file_under_a_directory_with_spaces_is_read() {
-        // Windows のユーザー名には空白が入りうる（C:\Users\Taro Yamada\...）。囲んでも囲まなくても、パスを空白で切らない
+    fn quoted_request_file_under_a_directory_with_spaces_is_read() {
+        // Windows のユーザー名には空白が入りうる（C:\Users\Taro Yamada\...）。囲んだパスは閉じる記号までを取り、
+        // 内側の前後の空白は外す
         let tmp = TempDir::new("spaces");
         let dir = tmp.0.join("Taro Yamada");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("my brief.md");
         std::fs::write(&path, COMPLETE).unwrap();
         for quoted in [
-            format!("{}", path.display()),
             format!("`{}`", path.display()),
             format!("「{}」", path.display()),
+            format!("` {} `", path.display()),
         ] {
             let prompt = format!(
                 "依頼文は {quoted} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
@@ -467,14 +468,37 @@ mod tests {
     }
 
     #[test]
-    fn missing_request_file_with_spaces_is_denied_with_its_whole_path() {
+    fn missing_quoted_request_file_with_spaces_is_denied_with_its_whole_path() {
         let path = "/nonexistent/Taro Yamada/brief.md";
-        let prompt = format!(
-            "依頼文は {path} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
-        );
-        let findings = check(&prompt);
+        for quoted in [format!("`{path}`"), format!("「{path}」")] {
+            let prompt = format!(
+                "依頼文は {quoted} にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。"
+            );
+            let findings = check(&prompt);
+            let reason = deny_reason(&findings);
+            assert!(reason.contains(&format!("ファイル {path} を")), "{reason}");
+        }
+    }
+
+    #[test]
+    fn unquoted_path_ends_at_whitespace_and_does_not_take_the_text_after_it() {
+        // 囲まないパスは空白で切る。後の本文の「にある」まで取り込んで、書いていないパスで止めない
+        for first in [
+            "依頼文は /tmp/brief.md（手順は ~/.claude/skills/delegate/references/requesting.md にある）。/delegate を呼ぶ。",
+            "依頼文は /tmp/a.md と /tmp/b.md にある。/delegate を呼ぶ。",
+        ] {
+            let prompt = format!("{first}\n{COMPLETE}");
+            assert!(check(&prompt).is_empty(), "{first}");
+        }
+    }
+
+    #[test]
+    fn unquoted_path_with_spaces_is_denied_with_how_to_quote_it() {
+        // 空白で切ったパスは句に当たらず、prompt を判定する。欄が無ければ、囲み方を示して止める
+        let prompt = "依頼文は /nonexistent/Taro Yamada/brief.md にある。最初にそれを Read で読み、冒頭の指示どおり /delegate を呼ぶ。";
+        let findings = check(prompt);
         let reason = deny_reason(&findings);
-        assert!(reason.contains(path), "{reason}");
+        assert!(reason.contains("空白を含むパスは"), "{reason}");
     }
 
     #[test]
