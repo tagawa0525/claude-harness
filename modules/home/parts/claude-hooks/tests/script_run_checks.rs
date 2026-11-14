@@ -370,6 +370,8 @@ fn exclusive_job_on(repo: &Repo) -> Vec<(&'static str, &'static str)> {
     )]
 }
 
+// 偽の hostname は sh のスクリプトで、Windows では System32 の hostname.exe が先に見つかり、ノードの上にならない
+#[cfg(unix)]
 #[test]
 fn on_the_node_of_an_exclusive_job_cargo_and_nix_use_one_core() {
     let repo = Repo::new();
