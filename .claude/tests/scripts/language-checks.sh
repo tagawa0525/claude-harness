@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# language-checks/scripts（run-checks.sh / fix-markdown-lint.py） のテスト
+# language-checks/scripts（run-checks.sh / fix-markdown-lint.sh） のテスト
 #
 # 実行: bash .claude/tests/scripts/language-checks.sh（まとめて実行: bash .claude/tests/scripts.sh）
 #
 # 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
 # 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
 
-# run-checks.sh の中身は claude-hooks script run-checks。ブランチでビルドしたバイナリで確かめる
+# run-checks.sh と fix-markdown-lint.sh の中身は claude-hooks script（ADR-0087）。ブランチでビルドしたバイナリで確かめる
 source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
@@ -662,73 +662,94 @@ assert_eq 0 $?
 assert_contains "$out" "NOTE"
 
 # ===========================================================================
-# language-checks/scripts/fix-markdown-lint.py: コードフェンスの判定は CommonMark に従う
+# language-checks/scripts/fix-markdown-lint.sh: コードフェンスの判定は CommonMark に従う
 # ===========================================================================
 # フェンスは「``` で始まる行のたびにトグル」ではなく、開きフェンスの文字（` / ~）と本数を
 # 覚え、同じ文字が同じ本数以上で後ろが空白だけの行で閉じる。中の短いフェンスは内容。
 # 以前は ````markdown の中の ``` の閉じフェンスを「言語のない開きフェンス」と誤認して
 # ```rust に書き換え、文書を壊していた。
 
-MD_FIXER="$LANG_SCRIPTS/fix-markdown-lint.py"
+MD_FIXER="$LANG_SCRIPTS/fix-markdown-lint.sh"
 MD_DIR="$TEST_ROOT/mdfix"
 mkdir -p "$MD_DIR"
 
 it "fix-markdown-lint: \`\`\`\`markdown の中の \`\`\`typescript … \`\`\` は 1 バイトも変わらない"
 printf '````markdown\n```typescript\nconst x: string = "a";\n```\n````\n' > "$MD_DIR/nested.md"
 cp "$MD_DIR/nested.md" "$MD_DIR/nested.orig"
-out=$(python3 "$MD_FIXER" "$MD_DIR/nested.md")
+out=$("$MD_FIXER" "$MD_DIR/nested.md")
 assert_eq 0 $?
 assert_contains "$out" "OK:"
 assert_eq "" "$(cmp "$MD_DIR/nested.md" "$MD_DIR/nested.orig" 2>&1)"
 
 it "fix-markdown-lint: 4 本で開いた言語のない外側のブロックには言語が付き、閉じは 4 本のまま"
 printf '````\nfn main() {}\n````\n' > "$MD_DIR/outer4.md"
-python3 "$MD_FIXER" "$MD_DIR/outer4.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/outer4.md" >/dev/null
 assert_eq $'````rust\nfn main() {}\n````' "$(cat "$MD_DIR/outer4.md")"
 
 it "fix-markdown-lint: ~~~ のフェンスの中の表は整形されず、閉じ ~~~ は変わらない"
 printf '~~~text\n| a | b |\n| --- | --- |\n| ccc | d |\n~~~\n' > "$MD_DIR/tilde.md"
 cp "$MD_DIR/tilde.md" "$MD_DIR/tilde.orig"
-python3 "$MD_FIXER" "$MD_DIR/tilde.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/tilde.md" >/dev/null
 assert_eq "" "$(cmp "$MD_DIR/tilde.md" "$MD_DIR/tilde.orig" 2>&1)"
 
 it "fix-markdown-lint: ~~~ の中の \`\`\` は内容で、閉じるのは ~~~ だけ"
 printf '~~~\n```\nfn main() {}\n```\n~~~\n' > "$MD_DIR/tilde-inner.md"
-python3 "$MD_FIXER" "$MD_DIR/tilde-inner.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/tilde-inner.md" >/dev/null
 assert_eq $'~~~rust\n```\nfn main() {}\n```\n~~~' "$(cat "$MD_DIR/tilde-inner.md")"
 
 it "fix-markdown-lint: \`\`\` のみのブロックには内容から言語を推定して付ける（既存の挙動）"
 printf '```\nfn main() {}\n```\n' > "$MD_DIR/plain.md"
-python3 "$MD_FIXER" "$MD_DIR/plain.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/plain.md" >/dev/null
 assert_eq $'```rust\nfn main() {}\n```' "$(cat "$MD_DIR/plain.md")"
 
 it "fix-markdown-lint: フェンスの外の表は整形され、フェンスの中の表は触らない（既存の挙動）"
 printf '| a | b |\n| --- | --- |\n| ccc | d |\n\n```text\n| a | b |\n| --- | --- |\n| ccc | d |\n```\n' > "$MD_DIR/table.md"
-python3 "$MD_FIXER" "$MD_DIR/table.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/table.md" >/dev/null
 assert_eq $'| a   | b |\n| --- | - |\n| ccc | d |\n\n```text\n| a | b |\n| --- | --- |\n| ccc | d |\n```' "$(cat "$MD_DIR/table.md")"
 
 it "fix-markdown-lint: 番号つきの項の中に字下げして置いた表は、字下げを保ったまま整形する"
 # 字下げを外すと表が項の外に出て、その後の項が別のリストになる
 printf '1. step\n\n   | a | b |\n   | --- | --- |\n   | ccc | d |\n\n2. next\n' > "$MD_DIR/indented.md"
-python3 "$MD_FIXER" "$MD_DIR/indented.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/indented.md" >/dev/null
 assert_eq $'1. step\n\n   | a   | b |\n   | --- | - |\n   | ccc | d |\n\n2. next' "$(cat "$MD_DIR/indented.md")"
 
 it "fix-markdown-lint: 字下げとして保つのは空白とタブだけで、行頭の全角の空白は外す"
 # Markdown の字下げは空白とタブだけ。全角の空白を残すと、区切りの行が表の行でなくなり、表として描かれない
 printf '\xe3\x80\x80| a | b |\n| --- | --- |\n| ccc | d |\n' > "$MD_DIR/zenkaku.md"
-python3 "$MD_FIXER" "$MD_DIR/zenkaku.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/zenkaku.md" >/dev/null
 assert_eq $'| a   | b |\n| --- | - |\n| ccc | d |' "$(cat "$MD_DIR/zenkaku.md")"
 
 it "fix-markdown-lint: タブで字下げした表は、タブを保ったまま整形する"
 printf -- '- item\n\n\t| a | b |\n\t| --- | --- |\n\t| ccc | d |\n' > "$MD_DIR/tab.md"
-python3 "$MD_FIXER" "$MD_DIR/tab.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/tab.md" >/dev/null
 assert_eq $'- item\n\n\t| a   | b |\n\t| --- | - |\n\t| ccc | d |' "$(cat "$MD_DIR/tab.md")"
 
 it "fix-markdown-lint: 整っている字下げした表は 1 バイトも変えない"
 printf '1. step\n\n   | a   | b |\n   | --- | - |\n   | ccc | d |\n' > "$MD_DIR/indented-ok.md"
 before=$(sha256sum < "$MD_DIR/indented-ok.md")
-python3 "$MD_FIXER" "$MD_DIR/indented-ok.md" >/dev/null
+"$MD_FIXER" "$MD_DIR/indented-ok.md" >/dev/null
 assert_eq "$before" "$(sha256sum < "$MD_DIR/indented-ok.md")"
+
+# 表の段は、history-rewrite が使う fix-markdown-lint.py（Rust に移すまで残す。ADR-0087）と同じ桁に揃える。
+# 文字の幅（East Asian Width の F と W だけを 2）と、セルから外す空白（str.strip）を、サロゲートと改行と | の
+# ほかのすべての文字で突き合わせる。1 行に 1 文字を、セルの中ほどと、外される位置のセルの頭に置く
+it "fix-markdown-lint: すべての文字で、表の桁が fix-markdown-lint.py と同じになる"
+python3 -I - "$MD_DIR/every.md" <<'PY'
+import sys
+rows = ["| h | h |", "| - | - |"]
+for c in range(0x110000):
+    if 0xD800 <= c <= 0xDFFF or chr(c) in "\n\r|":
+        continue
+    rows.append(f"| a{chr(c)}b | {chr(c)}y |")
+with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as f:
+    f.write("\n".join(rows) + "\n")
+PY
+cp "$MD_DIR/every.md" "$MD_DIR/every-py.md"
+"$MD_FIXER" "$MD_DIR/every.md" >/dev/null
+assert_eq 0 $?
+python3 "$CLAUDE_DIR/../modules/home/parts/history-rewrite/fix-markdown-lint.py" "$MD_DIR/every-py.md" >/dev/null
+assert_eq 0 $?
+assert_eq "" "$(cmp "$MD_DIR/every.md" "$MD_DIR/every-py.md" 2>&1)"
 
 finish
 
