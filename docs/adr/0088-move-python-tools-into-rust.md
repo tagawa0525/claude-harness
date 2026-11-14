@@ -4,7 +4,7 @@ date: 2026-11-14
 requires: [ADR-0045, ADR-0082, ADR-0084, ADR-0085, ADR-0087]
 supersedes: []
 superseded-by:
-issues: ["#101"]
+issues: ["#101", "#190"]
 ---
 
 # ADR-0088: Python のツール（history-rewrite、usage-report、kept-sentences）を Rust に移し、filter-repo と Python を依存から外す
@@ -27,7 +27,8 @@ Issue #101 の段階 7 で、Python のツールを Rust に移す（ADR-0082）
   パスで呼ぶ（`skills/retro/SKILL.md` の allowed-tools と本文）
 - `.claude/scripts/kept-sentences.py`（146 行）: 縮めた規則の文書の、元の版に無い文を出す。/delegate の文が
   `~/.claude/scripts/kept-sentences.py` のパスで呼ぶ（`skills/delegate/SKILL.md` の allowed-tools と
-  `references/working.md`）。`.claude/README.md` の表も名前を挙げる
+  `references/working.md`）。`.claude/README.md` の表も名前を挙げ、`modules/home/parts/claude-settings.json` の allow が
+  `Bash(~/.claude/scripts/kept-sentences.py:*)` を持つ
 
 関わる事実:
 
@@ -38,7 +39,12 @@ Issue #101 の段階 7 で、Python のツールを Rust に移す（ADR-0082）
   `git fast-import` に渡して履歴を書き換える。タグの署名の外し方、cat-file の読み方、対応表の形は、history_rewrite.py と
   「言語が違うので共有できない」として対にして保っている（history_rewrite.py の `SIGNATURE_MARKERS` の上の注記）
 - `fix_markdown_lint.rs` は `regex` と標準ライブラリだけを使い、claude-hooks のほかのモジュールを呼ばない
-- history-rewrite の `--exclude` は Python の `PurePosixPath.full_match` の書き方（`**` がディレクトリをまたぐ）
+- history-rewrite の `--exclude` は Python の `PurePosixPath.full_match` の書き方（`**` がディレクトリをまたぐ）。Python 3.14 の
+  `full_match` は、`glob` の `translate`（`recursive=True`、`include_hidden=True`）と同じ規則で glob を正規表現に直して照合する
+  （`pathlib` の `_StringGlobber`）。`{a,b}` の選択と `\` のエスケープは持たない
+- `scripts/run-python-tests.sh` は history-rewrite の直下の `test_*.py` だけを流し、ほかの Python のテストがあれば止まる。
+  ほかの Python のテストは無い（2026-11-14、`git ls-files '*.py'`）。`run-checks.sh` は、このファイルがあれば Python のテストの
+  段で優先して呼ぶ
 - usage-report が扱う日時は、時差つきの ISO 8601（記録の timestamp の `Z`、`--since` と `--until`、`git log --format=%cI`）と、
   JST（+09:00 の固定の時差）の表示と今日の区切りだけ
 
@@ -83,7 +89,8 @@ commit-refs と対にしている部品（署名の外し方、cat-file の読�
 `--exclude` の書き方:
 
 - 案 い: `globset`（ripgrep の crate。Rust の glob の事実上の標準）を、`/` をまたがない `*` の設定で使う
-- 案 ろ: `full_match` と同じ照合を手で書く
+- 案 ろ: `full_match` と同じ照合を手で書く（成分ごとの照合）
+- 案 は: Python の `glob.translate` と同じ規則で glob を正規表現に直し、`regex` で照合する
 
 usage-report と kept-sentences:
 
@@ -99,7 +106,7 @@ usage-report の日時:
 
 ## 決定と理由
 
-採用: 案 1、案 A、案 ア、案 甲、案 い、案 C、案 b。
+採用: 案 1、案 A、案 ア、案 甲、案 は、案 C、案 b。
 
 - history-rewrite は Rust の crate（案 A）にし、CLI の名前、サブコマンド、引数、出力の形、終了コードを Python の版と
   同じにする。辞書は ja-terms のライブラリ（`Dictionary::apply`）で当て、複数の辞書の規則を渡した順に並べる読み方を
@@ -116,21 +123,24 @@ usage-report の日時:
   判定、`format_table` を呼ぶ
 - 署名の外し方と cat-file の読み方（案 甲）は commit-refs のライブラリに移し、commit-refs の `rewrite-history` と
   history-rewrite が同じ関数を呼ぶ
-- `--exclude`（案 い）: `globset` で、`*` と `?` が `/` をまたがない設定（`literal_separator`）にする
+- `--exclude`（案 は）: Python の `full_match` と同じく、`glob.translate` の規則（`*` と `?` と `[…]` は `/` をまたがず、
+  成分の全体の `**` は 0 個以上の成分に当たる）で正規表現に直す
 - usage-report と kept-sentences（案 C）: `claude-hooks script usage-report` と `claude-hooks script kept-sentences` に移し、
   `~/.claude/scripts/usage-report.sh` と `kept-sentences.sh` を呼ぶだけの sh にする。スキルの文と allowed-tools と
-  `.claude/README.md` を付け替え、.py を消す。`.claude/tests/scripts/` の sh のテストは、呼ぶだけの sh を呼ぶ配備の
+  `.claude/README.md` と `claude-settings.json` の allow を付け替え、.py を消す。`.claude/tests/scripts/` の sh のテストは、呼ぶだけの sh を呼ぶ配備の
   確認として残す（ADR-0087 の「テスト」）
 - usage-report の日時（案 b）: `--since`、`--until`、記録の timestamp、`%cI` を、時差つきの ISO 8601 として読み、UNIX の時刻で
-  比べる。表示と今日の区切りは +09:00 の固定の時差で暦に直す
+  比べる。受ける形は今の .py の `ISO_WITH_OFFSET` と同じにする。表示と今日の区切りは +09:00 の固定の時差で暦に直す
 - テスト: Python のテストは、同じ振る舞いを Rust の結合テスト（`history-rewrite/tests/`、claude-hooks の `tests/script_*.rs`）に
   移す。`test_prh_rules.py` の振る舞いは ja-terms の `apply` のテストに移す（ja-terms に既にあるものは足さない）。
-  付け替える PR で、Python の `test_history_rewrite.py` を Rust の history-rewrite に向けて流し、通ることを PR に書く
+  付け替える PR で、Python の `test_history_rewrite.py` のうち CLI を呼ぶテストを Rust の history-rewrite に向けて流し、
+  通ることを PR に書く（`Verifier` を直に呼ぶ 2 件は、Rust の照合の単体テストに移す）
 - PR の順: kept-sentences、usage-report、fix-markdown-lint の crate への切り出し、commit-refs の部品の切り出し、
   history-rewrite の Rust の版（transform、run、sync-worktrees）、package.nix の付け替えと Python の版、`fix-markdown-lint.py`、
-  `language-checks.sh` の .py との照合、`scripts/run-python-tests.sh` の history-rewrite の部分を消す PR。Rust の版の
-  history-rewrite と fix-markdown-lint の crate は、Windows の CI（`windows.yml`）の matrix に足し、README の「Windows で使う」の
-  `cargo install` に history-rewrite を足す
+  `language-checks.sh` の .py との照合、`scripts/run-python-tests.sh` を消す PR（流す Python のテストが無くなるので、
+  `run-checks.sh` は自動の検出に戻る）。Rust の版の history-rewrite と fix-markdown-lint の crate は、Windows の CI
+  （`windows.yml`）の matrix に足し、history-rewrite を README の「Windows で使う」と `windows.yml` の `setup` のジョブの
+  `cargo install` の並びに足す
 
 理由:
 
@@ -145,9 +155,10 @@ usage-report の日時:
   増やさない（path の依存として一緒にビルドされる）
 - 案 甲: 2 つの実装が Rust になったので、対にして保つ理由（言語の違い）が無くなった。案 乙 は、片方を直して
   もう片方を忘れると、照合の期待と書き換えが食い違う
-- 案 い: `globset` は事実上の標準で、`**` の扱いは `full_match` と同じ（パスの成分の全体の `**` がディレクトリをまたぐ）。
-  案 ろ は、手で書く照合（文字クラス、エスケープ）を保守することになる
-- 案 C: 呼び出し元は retro と delegate のスキルの文と README の表だけで、PreToolUse のルールは名前で見分けない
+- 案 は: Python の版の照合の作り方そのもの（`translate` の規則）に揃えるので、同じ glob に同じ結果を返す。案 い の
+  `globset` は `{a,b}` の選択と `\` のエスケープを既定で持ち、選択を外す設定が無い（0.4 の `GlobBuilder`）ので、`{`、`}`、
+  `\` を含む glob で Python の版と結果が分かれる。案 ろ は、`translate` と別の書き方で同じ規則を保守することになる
+- 案 C: 呼び出し元は retro と delegate のスキルの文、README の表、`claude-settings.json` の allow だけで、PreToolUse のルールは名前で見分けない
   （2026-11-14、`grep -rn 'usage-report\|kept-sentences' .claude modules`）。案 D は Windows で入れる crate を増やす。
   案 E は Windows で呼ぶのに `python3` が要る
 - 案 b: 扱う形は時差つきの ISO 8601 と固定の時差だけで、時間帯の表（夏時間）を引かない。暦の変換は数十行で、
@@ -155,19 +166,22 @@ usage-report の日時:
 
 ### 帰結
 
-- 良い点: Python が、ハーネスの配る CLI とスクリプトの依存から外れる（`scripts/run-python-tests.sh` が流すほかの Python の
-  テストは対象の外）。Windows でも history-rewrite が使える
+- 良い点: Python が、ハーネスの配る CLI とスクリプトと、このリポジトリのテストの依存から外れる。Windows でも
+  history-rewrite が使える
 - 良い点: 表の揃え方、辞書の当て方、署名の外し方が、それぞれ 1 つの実装になる
 - 悪い点: filter-repo の振る舞い（fast-export と fast-import の設定、仮の tagger など）を自分で持つ。git の版を上げて
   fast-export の出力が変わったときは、照合が止めるので、それを見て合わせる
-- 悪い点: usage-report と kept-sentences の判定を変えるたびに、claude-hooks のビルドとテストが要る（ADR-0087 の帰結と同じ）
+- 悪い点: usage-report と kept-sentences の判定を変えるたびに、claude-hooks のビルドとテストが要る。マージの後は
+  `claude-sync` でなく rebuild（Windows は `cargo install` の後に `claude-setup sync`）で入れる（ADR-0087 の帰結と同じ）
+- 悪い点: kept-sentences の呼び方の `--old <(git show …)` は、Windows の Git Bash ではネイティブの exe が `/dev/fd/N` を
+  開けない見込みで、確かめていない（.py を Windows のネイティブの Python で呼んでも同じ）。#190 に書いた
 - ADR-0045 の決定（Python で書き、filter-repo の callback で第 1 段を流す）は、Python の版を消す PR で「## 変更」を書く。
   ADR-0087 の「二重の実装の期間」は、`fix-markdown-lint.py` を消す PR で帰結を直す
 
 ### 確認
 
 - history-rewrite の Rust の結合テストが、`nix flake check` と Windows の CI で通る。付け替える PR で、Python の
-  `test_history_rewrite.py` が Rust の版に対して通る
+  `test_history_rewrite.py` の CLI を呼ぶテストが Rust の版に対して通る
 - 付け替えた後、`git ls-files '*.py'` に history-rewrite、usage-report、kept-sentences、fix-markdown-lint の .py が無く、
   `history-rewrite/package.nix` が Python を参照しない
 - `~/.claude/scripts/usage-report.sh` と `kept-sentences.sh` が、`.claude/tests/scripts/` の今のテストの期待値で通る
