@@ -254,7 +254,7 @@ fn an_event_that_is_not_a_list_is_left_untouched() {
 
 #[test]
 fn the_old_memory_backup_registration_without_args_is_replaced() {
-    // #101 の段階 8 の前は、退避を別のバイナリ claude-memory-backup で登録していた（ADR-0089）
+    // 前の退避のバイナリ claude-memory-backup の登録は、claude-hooks stop の 1 件に置き換わる
     let home = Home::new();
     let old = r"C:\Users\u\.claude\bin\claude-memory-backup.exe";
     let hooks = r"C:\Users\u\.claude\bin\claude-hooks.exe";
