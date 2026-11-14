@@ -750,12 +750,12 @@ make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995
 make_fake_tool hostname '*) echo r995 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_contains "$out" "排他のジョブ openmc-2K（1234）が実行中なので 1 コアで実行する"
+assert_contains "$out" "排他のジョブ openmc-2K（1234）がこのホストで実行中なので 1 コアで実行する"
 assert_contains "$(fake_log taskset)" "cargo clippy -j 1 --all-targets -- -D warnings"
 assert_contains "$(fake_log taskset)" "cargo test -j 1"
 assert_contains "$(fake_log nix)" "flake check --cores 1 -j 1"
 
-it "run-checks: r995 のほかで排他のジョブが実行中なら、cargo は限らず、nix flake check は r995 に投げずに手元でビルドする"
+it "run-checks: 計算ノードでないホストで排他のジョブが実行中なら、cargo は限らず、nix flake check はノードに投げずに手元でビルドする"
 # ほかのホストの手元のコアは r995 を乱さないが、nix のビルドは r995 に投げられる（nixfiles の nix.distributedBuilds）
 for host in t14g4 x1ng1.lan; do
   make_fake_tool hostname "*) echo $host ;;"
@@ -780,14 +780,14 @@ for host in gpu2:1 gpu3:0; do
   make_fake_tool nix '*) exit 0 ;;'
   out=$("$LANG_SCRIPTS/run-checks.sh")
   if [[ ${host#*:} == 1 ]]; then
-    assert_contains "$out" "1 コアで実行する"
+    assert_contains "$out" "排他のジョブ job-b（12）がこのホストで実行中なので 1 コアで実行する"
   else
     assert_not_contains "$out" "1 コアで実行する"
   fi
 done
 make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n" ;;'
 
-it "run-checks: ホストが分からなければ、r995 とみなして 1 コアに限る"
+it "run-checks: ホストが分からなければ、計算ノードとみなして 1 コアに限る"
 make_fake_tool hostname '*) exit 1 ;;'
 make_fake_tool taskset '*) shift 2; exec "$@" ;;'
 make_fake_tool nix '*) exit 0 ;;'

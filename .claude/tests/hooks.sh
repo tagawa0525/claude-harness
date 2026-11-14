@@ -2847,7 +2847,9 @@ printf '#!/bin/sh\nprintf "NO|job-a|11|gpu1\\nNO|job-b|12|gpu2\\n"\n' >"$FAKE_SQ
 printf '#!/bin/sh\necho gpu2\n' >"$FAKE_SQUEUE/host-gpu2/hostname"
 printf '#!/bin/sh\necho gpu3\n' >"$FAKE_SQUEUE/host-gpu3/hostname"
 mkdir -p "$FAKE_SQUEUE/conf-gpu2"
-echo 'ssh-ng://nix-ssh@gpu2 x86_64-linux /root/.ssh/key 16 4 kvm - -' >"$FAKE_SQUEUE/conf-gpu2/machines"
+echo 'ssh-ng://nix-ssh@gpu2?ssh-key=/root/k x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-gpu2/machines"
+mkdir -p "$FAKE_SQUEUE/conf-ip"
+echo 'ssh-ng://nix-ssh@100.64.0.5 x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-ip/machines"
 chmod +x "$FAKE_SQUEUE"/on-*/squeue "$FAKE_SQUEUE/host-gpu1/hostname" "$FAKE_SQUEUE/host-gpu2/hostname" \
   "$FAKE_SQUEUE/host-gpu3/hostname"
 
@@ -3024,6 +3026,10 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "job-b（12）"
 out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'nix build .#x')
 assert_eq "" "$out"
+# IP アドレスのビルダーはノードと比べられないので、投げるとみなす
+out=$(NIX_CONF_DIR="$FAKE_SQUEUE/conf-ip" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" \
+  run_hook guard-exclusive-slurm 'nix build .#x')
+assert_eq deny "$(decision "$out")"
 
 it "guard-exclusive-slurm: リモートのビルダーに計算ノードが無いホストの nix のビルドは、手元でビルドするので通す"
 for cmd in 'nix build .#x' 'nix flake check' 'nix-rebuild update'; do
