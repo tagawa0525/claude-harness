@@ -25,6 +25,10 @@ use std::path::Path;
 use regress::Regex;
 use yaml_rust2::{Yaml, YamlLoader};
 
+/// 崩れた日本語の語の辞書（prh.yml）。CLI の既定と、history-rewrite の既定の辞書（ビルドに埋めるので、置き場を
+/// 探さずに Windows でも同じ辞書を使う）
+pub const DICTIONARY: &str = include_str!("../prh.yml");
+
 /// 辞書を読めない、prh が読めない書き方がある、specs が合わない
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictionaryError(pub String);

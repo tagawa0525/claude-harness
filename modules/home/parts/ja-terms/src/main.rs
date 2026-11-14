@@ -26,11 +26,10 @@ use std::process::ExitCode;
 
 mod staged;
 
-use ja_terms::Dictionary;
 use ja_terms::message::{self, Subject};
 use ja_terms::report::{self, Syntax, TEXT_EXTENSIONS};
+use ja_terms::{DICTIONARY, Dictionary};
 
-const DICTIONARY: &str = include_str!("../prh.yml");
 const USAGE: &str = "Usage: ja-terms check [--dictionary <辞書>] <ファイル>...
        ja-terms message [--dictionary <辞書>] < <メッセージ>
        ja-terms commit-msg [--dictionary <辞書>] <メッセージのファイル>
