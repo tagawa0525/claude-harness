@@ -1097,5 +1097,8 @@ mod tests {
         assert!(is_utf8(Some(b"UTF-8")));
         assert!(is_utf8(Some(b"utf8")));
         assert!(!is_utf8(Some(b"ISO-8859-1")));
+        // git の is_encoding_utf8 は utf-8 と utf8 の 2 つの綴りだけを UTF-8 とする
+        assert!(!is_utf8(Some(b"u-t-f-8")));
+        assert!(!is_utf8(Some(b"UTF--8")));
     }
 }

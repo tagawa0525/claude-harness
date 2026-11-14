@@ -712,3 +712,55 @@ fn usage_errors_exit_2() {
     );
     assert_eq!(history_rewrite(&root, &[]).status.code(), Some(2));
 }
+
+#[test]
+fn encoding_names_that_git_and_iconv_accept_are_read() {
+    // git は encoding の見出しの名前を iconv に渡す。WHATWG の名前に無い書き方（eucJP、euc_jp、cp932）も読む
+    for name in ["eucJP", "euc_jp", "cp932", "latin1"] {
+        let root = scratch("encoding");
+        let repo = Repo::new(&root, "repo");
+        repo.write("a.md", b"a\n");
+        repo.git(&["add", "a.md"]);
+        let message = root.join("message.txt");
+        std::fs::write(&message, b"docs: plain\n").unwrap();
+        repo.git(&[
+            "-c",
+            &format!("i18n.commitEncoding={name}"),
+            "commit",
+            "-q",
+            "--no-verify",
+            "-F",
+            &message.display().to_string(),
+        ]);
+        let out = run(&root, &repo.path, &root.join("work"), &[]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
+    }
+}
+
+#[test]
+fn a_stop_in_the_first_stage_leaves_no_crash_report_of_fast_import() {
+    let root = scratch("crash");
+    let repo = Repo::new(&root, "repo");
+    repo.write(
+        "a.md",
+        "| a | b |\n| - | - |\n| x \\| y | 掃引 |\n".as_bytes(),
+    );
+    repo.commit("docs: a\n");
+    let workdir = root.join("work");
+    let out = run(&root, &repo.path, &workdir, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("\\|"), "{err}");
+    assert!(!err.contains("fatal:"), "{err}");
+    let git_dir = workdir.join("rewritten").join(".git");
+    let crashes: Vec<_> = std::fs::read_dir(&git_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("fast_import_crash")
+        })
+        .collect();
+    assert!(crashes.is_empty(), "{crashes:?}");
+}
