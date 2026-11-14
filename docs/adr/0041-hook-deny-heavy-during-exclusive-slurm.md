@@ -53,10 +53,13 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
   - `dvc repro`
   - `nix build`、`nix flake check`
   - rebuild: `nix-rebuild rebuild|update`（`nix-rebuild.sh` を直に実行する形も）、modules/home/parts/shell.nix の
-    関数 `rebuild`・`update`（引数を捨てるので引数によらない。パスで呼ぶ同じ名前のスクリプトは除く）、ビルドする
+    関数 `rebuild`・`update`（パスで呼ぶ同じ名前のスクリプトは除く）、ビルドする
     サブコマンド（`switch`、`boot`、`test`、`build`、`dry-activate`、`build-vm`、`build-vm-with-bootloader`、
     `build-image`）の `nixos-rebuild`（`--rollback`、`--help`、`-h` を除く）、
-    `home-manager switch|build`。`sudo` とフルパス（`/run/current-system/sw/bin/nixos-rebuild`）もほどいて判定する
+    `home-manager switch|build`。`sudo` とフルパス（`/run/current-system/sw/bin/nixos-rebuild`）もほどいて判定する。
+    ただし `hostname` が r995 でないと返すホストでは、手元でビルドする `nix-rebuild rebuild|update --local` と関数の
+    `rebuild --local`・`update --local` を除く（ほかのホストのビルドは r995 に投げられる。`--local` は nixfiles の
+    `nix-rebuild.sh` が手元でビルドする）
   - `bin/` か、`release`・`debug` ディレクトリ（`target/`、`target/<triple>/`、`CARGO_TARGET_DIR` の下）にある
     `xs|lattice|core|chain`（`../../bin/xs` など相対も）
   - 何を実行するか決められないコマンド（`$CMD test`、`bash -s`、`source x.sh`）。サブコマンドを決められない
@@ -75,7 +78,8 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 最初のものを取る（`--help` があれば何も実行しない）。
 
 拒否の文言にジョブの名前と番号を入れ、修正方法（`taskset` で 1 コアに限る、終わるまで待つ、`slurm-run.sh` で
-投げる）を示す。rebuild を含むコマンドには、taskset が効かないことと終わるまで待つことだけを示す。エスケープは設けない。
+投げる）を示す。rebuild を含むコマンドには、taskset が効かないことと終わるまで待つことを示し、r995 のほかでは
+`--local` で手元でビルドする道も示す。エスケープは設けない。
 
 `run-checks.sh` は、同じ squeue の判定（`.claude/scripts/lib/slurm-exclusive.sh`）で排他のジョブを見つけたら、
 冒頭に知らせて 1 コアで実行する（`cargo` を `taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を
@@ -120,3 +124,9 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
   nix-daemon の中で走り、クライアントの taskset を引き継がないと確かめたので、rebuild に taskset の例外を当てない。
   `sudo nixos-rebuild`（root は daemon を通さずにビルドしうる）で taskset が効くかは確かめていないが、`nix-rebuild update` と
   `home-manager` は利用者の権限で daemon を通すので、形で分けず rebuild はすべて待たせる
+- 2026-11-14: r995 のほかのホストでは、手元でビルドする rebuild（`nix-rebuild rebuild|update --local`、関数の
+  `rebuild --local`・`update --local`）を対象から外し、rebuild の拒否の文言に `--local` を示す。前は rebuild を
+  「taskset で包んでも止める」だけで、ホストでは分けず、文言は「taskset が効かないことと終わるまで待つことだけを示す」
+  だった。ラップトップのビルドは r995 に投げられる（nixfiles の `nix.distributedBuilds`、`max-jobs = 0`）ので止める
+  理由があるが、手元でビルドすれば r995 の時間を乱さない。r995 の上では `--local` でも r995 でビルドするので止め、
+  `hostname` が失敗したときも止める側に倒す。既定のビルドは r995 に投げたまま（速い。ユーザーの判断）
