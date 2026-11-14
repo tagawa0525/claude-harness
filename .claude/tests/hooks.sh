@@ -2892,16 +2892,28 @@ printf '#!/bin/sh\necho t14g4\n' >"$FAKE_SQUEUE/host-laptop/hostname"
 printf '#!/bin/sh\necho R995.lan\n' >"$FAKE_SQUEUE/host-r995/hostname"
 printf '#!/bin/sh\nexit 1\n' >"$FAKE_SQUEUE/host-broken/hostname"
 chmod +x "$FAKE_SQUEUE"/host-*/hostname
+# ssh は -G（つながずに設定を読む）だけを偽物にする。desk は r995 の別名、broken は解けない
+cat >"$FAKE_SQUEUE/host-laptop/ssh" <<'EOF'
+#!/bin/sh
+[ "$1" = -G ] || exit 255
+case "$2" in
+  desk) echo "hostname r995.lan" ;;
+  broken) exit 255 ;;
+  *@*) echo "hostname ${2#*@}" ;;
+  *) echo "hostname $2" ;;
+esac
+EOF
+chmod +x "$FAKE_SQUEUE/host-laptop/ssh"
 
-it "guard-exclusive-slurm: r995 のほかでは、手元でビルドする nix-rebuild --local を通す"
+it "guard-exclusive-slurm: r995 のほかでは（ssh の先は接続先が r995 でなければ）、手元でビルドする nix-rebuild --local を通す"
 for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'nix-rebuild update --local claude-harness' \
   'nix-rebuild update claude-harness --local' 'bash modules/home/scripts/nix-rebuild.sh rebuild --local' \
-  'sudo -i nix-rebuild update --local'; do
+  'sudo -i nix-rebuild update --local' "ssh x1ng1 'nix-rebuild update --local'" 'ssh tagawa@x1ng1 nix-rebuild rebuild --local'; do
   out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq "" "$out"
 done
 
-it "guard-exclusive-slurm: r995 の上、ホストが分からないとき、ssh の先、shell の関数の --local は deny し、サブコマンドの前の --local は rebuild に数えない"
+it "guard-exclusive-slurm: r995 の上、ホストが分からないとき、接続先が r995 か解けない ssh の先、shell の関数の --local は deny し、サブコマンドの前の --local は rebuild に数えない"
 for dir in host-r995 host-broken; do
   for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'rebuild --local'; do
     out=$(PATH="$FAKE_SQUEUE/$dir:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
@@ -2909,7 +2921,8 @@ for dir in host-r995 host-broken; do
   done
 done
 # 関数は数えない（前の版の関数 rebuild は引数を捨て、定義したまま走っているシェルでは --local が落ちる）
-for cmd in "ssh r995 'nix-rebuild update --local'" 'ssh r995 nix-rebuild rebuild --local' 'rebuild --local' 'update --local'; do
+for cmd in "ssh r995 'nix-rebuild update --local'" 'ssh r995 nix-rebuild rebuild --local' 'ssh desk nix-rebuild update --local' \
+  'ssh broken nix-rebuild update --local' 'rebuild --local' 'update --local'; do
   out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq deny "$(decision "$out")"
 done
