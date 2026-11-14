@@ -1,6 +1,6 @@
 #!/bin/sh
 # kept-sentences.sh — 規則の文書を縮めたとき、今の版の文のうち元の版に無いものを出す。中身は
-# claude-hooks script kept-sentences（Rust にして Windows でも動かす。ADR-0088）
+# claude-hooks script kept-sentences（Rust にして Windows でも Python なしで動かす）
 #
 # Usage: kept-sentences.sh --old <元の版>... --new <今の版>...
 #   --old  縮める前の版（複数なら 1 つにつないで比べる）。git の版は `<(git show <base>:<path>)` で渡す

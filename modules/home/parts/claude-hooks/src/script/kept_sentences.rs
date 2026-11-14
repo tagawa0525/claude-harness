@@ -64,8 +64,8 @@ pub fn main(args: &[String]) -> i32 {
     i32::from(changed)
 }
 
-/// `--old` と `--new` の後に、次のオプションまでのファイルを 1 つ以上ずつ受ける。.py の argparse（`nargs="+"`）と同じく、
-/// `--old=FILE` と一意な省略形（`--o`、`--ne` など）を受け、同じオプションを重ねると後のものだけを残す
+/// `--old` と `--new` の後に、次のオプションまでのファイルを 1 つ以上ずつ受ける。Python の argparse（`nargs="+"`）と
+/// 同じく、`--old=FILE` と一意な省略形（`--o`、`--ne` など）を受け、同じオプションを重ねると後のものだけを残す
 fn parse_args(args: &[String]) -> Option<(Vec<String>, Vec<String>)> {
     let mut olds: Option<Vec<String>> = None;
     let mut news: Option<Vec<String>> = None;
@@ -103,7 +103,7 @@ fn parse_args(args: &[String]) -> Option<(Vec<String>, Vec<String>)> {
     (!olds.is_empty() && !news.is_empty()).then_some((olds, news))
 }
 
-/// ファイルの中身。改行は .py の open の universal newlines と同じく、CRLF と CR を LF に読み替える
+/// ファイルの中身。CRLF と CR を LF に読み替える（CR だけの改行も行の区切りに数える）
 fn read(path: &str) -> Option<String> {
     match std::fs::read_to_string(path) {
         Ok(text) => Some(text.replace("\r\n", "\n").replace('\r', "\n")),
