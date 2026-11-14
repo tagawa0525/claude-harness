@@ -1,5 +1,7 @@
-//! `claude-hooks script` のスクリプトが、読む側が先に閉じた標準出力に書くと、panic せず、sh と同じく SIGPIPE で
+//! `claude-hooks` が、読む側が先に閉じた標準出力か標準エラーに書くと、panic せず、sh と同じく SIGPIPE で
 //! 黙って終わることを確かめる（`git-info.sh | head -2` のように、出力の先頭だけを読む使い方。シェルは 141 と見る）
+
+#![cfg(unix)]
 
 mod common;
 
@@ -8,7 +10,6 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 #[test]
-#[cfg(unix)]
 fn a_script_writing_to_a_closed_pipe_ends_by_sigpipe_like_sh() {
     let root =
         Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("broken-pipe-{}", std::process::id()));
@@ -56,4 +57,19 @@ fn a_script_writing_to_a_closed_pipe_ends_by_sigpipe_like_sh() {
     assert!(!stderr.contains("panicked"), "{stderr}");
     use std::os::unix::process::ExitStatusExt;
     assert_eq!(out.status.signal(), Some(13), "{:?}: {stderr}", out.status);
+}
+
+#[test]
+fn a_subcommand_other_than_script_writing_to_a_closed_stderr_ends_by_sigpipe() {
+    // decide-next は local-review-covers の標準エラーを引き継ぐ（`decide-next.sh <url> 2>&1 | head -1`）
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let out = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
+        .args(["local-review-covers"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(writer))
+        .output()
+        .unwrap();
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(out.status.signal(), Some(13), "{:?}", out.status);
 }
