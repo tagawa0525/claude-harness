@@ -94,6 +94,19 @@ pub fn is_utf8(encoding: Option<&[u8]>) -> bool {
     encoding.is_none_or(|e| e.eq_ignore_ascii_case(b"utf-8") || e.eq_ignore_ascii_case(b"utf8"))
 }
 
+/// ISO-8859-1 の名前（iso-8859-1、iso8859-1、latin1、l1 など。大文字と小文字、- と _ を問わない）
+fn is_latin1(label: &[u8]) -> bool {
+    let folded: String = String::from_utf8_lossy(label)
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_'))
+        .collect();
+    matches!(
+        folded.as_str(),
+        "iso88591" | "latin1" | "l1" | "iso885911987" | "cp819" | "ibm819"
+    )
+}
+
 /// git が encoding の見出しの名前で iconv に渡す符号化。WHATWG の名前（encoding_rs）で引き、引けなければ iconv と
 /// Python の codecs の綴り（eucJP、euc_jp、cp932、latin1 など）を WHATWG の名前に読み替える
 fn codec_of(label: &[u8]) -> Option<&'static encoding_rs::Encoding> {
@@ -129,13 +142,23 @@ fn message_would_change(
     name: &str,
 ) -> Result<bool, Stop> {
     let label = String::from_utf8_lossy(encoding);
-    let Some(codec) = codec_of(encoding) else {
-        return Err(Stop(format!("{name}: 符号化 {label} を知らない")));
-    };
-    let Some(text) = codec.decode_without_bom_handling_and_without_replacement(data) else {
-        return Err(Stop(format!(
-            "{name}: 符号化 {label} として読めない本文がある"
-        )));
+    let text = if is_latin1(encoding) {
+        // WHATWG（encoding_rs）は ISO-8859-1 を windows-1252 として読み、0x81 などを持たない。iconv と同じく 1 バイトを
+        // 同じ番号の 1 字に読む
+        data.iter()
+            .map(|b| char::from(*b))
+            .collect::<String>()
+            .into()
+    } else {
+        let Some(codec) = codec_of(encoding) else {
+            return Err(Stop(format!("{name}: 符号化 {label} を知らない")));
+        };
+        let Some(text) = codec.decode_without_bom_handling_and_without_replacement(data) else {
+            return Err(Stop(format!(
+                "{name}: 符号化 {label} として読めない本文がある"
+            )));
+        };
+        text
     };
     Ok(transformer.text(name, &text, true)? != text)
 }
@@ -170,7 +193,10 @@ fn unquote(path: &[u8]) -> Vec<u8> {
             b't' => out.push(b'\t'),
             b'v' => out.push(0x0b),
             // \ooo の 8 進（git は 0〜3 で始まる 3 桁で書く）
-            b'0'..=b'3' if i + 1 < inner.len() => {
+            b'0'..=b'3'
+                if i + 1 < inner.len()
+                    && inner[i..i + 2].iter().all(|d| (b'0'..=b'7').contains(d)) =>
+            {
                 let digits = [e, inner[i], inner[i + 1]];
                 let value = digits
                     .iter()
@@ -267,6 +293,8 @@ pub fn stage1(repo: &Path, transformer: &mut Transformer) -> Result<(Counts, Com
     let marks_file = repo.join(".git").join("history-rewrite").join("marks");
     std::fs::create_dir_all(marks_file.parent().unwrap())
         .map_err(|e| Stop(format!("{}: {e}", marks_file.display())))?;
+    // cat-file を先に起動する（fast-import を起動した後に止まると、閉じた流れを読んで crash report を書く）
+    let mut cat = CatFile::new(repo).map_err(Stop)?;
     let mut export = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -295,7 +323,6 @@ pub fn stage1(repo: &Path, transformer: &mut Transformer) -> Result<(Counts, Com
         .stdout(Stdio::null())
         .spawn()
         .map_err(|e| Stop(format!("git fast-import を起動できない: {e}")))?;
-    let mut cat = CatFile::new(repo).map_err(Stop)?;
     let mut input = Lines {
         reader: BufReader::new(export.stdout.take().expect("piped")),
         peeked: None,
