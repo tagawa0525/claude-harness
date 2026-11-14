@@ -3,7 +3,9 @@
 
 mod common;
 
+#[cfg(unix)]
 use std::fs;
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 
 use common::*;
