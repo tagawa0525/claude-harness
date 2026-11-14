@@ -2895,21 +2895,21 @@ chmod +x "$FAKE_SQUEUE"/host-*/hostname
 
 it "guard-exclusive-slurm: r995 のほかでは、手元でビルドする nix-rebuild --local を通す"
 for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'nix-rebuild update --local claude-harness' \
-  'nix-rebuild update claude-harness --local' 'update --local' 'bash modules/home/scripts/nix-rebuild.sh rebuild --local'; do
+  'nix-rebuild update claude-harness --local' 'update --local' 'rebuild --local' 'bash modules/home/scripts/nix-rebuild.sh rebuild --local'; do
   out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq "" "$out"
 done
 
-it "guard-exclusive-slurm: r995 の上やホストが分からないとき、引数を捨てる rebuild の関数では、--local でも deny する"
+it "guard-exclusive-slurm: r995 の上やホストが分からないとき、サブコマンドの前の --local では deny する"
 for dir in host-r995 host-broken; do
-  for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local'; do
+  for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'rebuild --local'; do
     out=$(PATH="$FAKE_SQUEUE/$dir:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
     assert_eq deny "$(decision "$out")"
   done
 done
-# shell の関数 rebuild は引数を捨てて nix-rebuild rebuild を呼ぶ（modules/home/parts/shell.nix。update は渡す）
-out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'rebuild --local')
-assert_eq deny "$(decision "$out")"
+# nix-rebuild.sh は --local をサブコマンドの後でだけ受ける（前に置くと使い方の誤りで止まる）
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild --local rebuild')
+assert_eq "" "$out"
 
 it "guard-exclusive-slurm: r995 のほかでは、rebuild の deny が --local で手元でビルドする道を示す"
 out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild update')
