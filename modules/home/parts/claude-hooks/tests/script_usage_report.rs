@@ -807,3 +807,14 @@ fn the_meta_file_is_next_to_a_transcript_whose_name_repeats_the_suffix() {
     let out = stdout(&home.report(&args, None));
     assert!(out.contains("COST: レビュー 1 本 $0.02"), "{out}");
 }
+
+#[test]
+fn two_empty_bounds_are_an_open_range_not_today() {
+    let home = Home::new();
+    let main = home.first_session().display().to_string();
+    let out = stdout(&home.report(&["--since", "", "--until", "", &main], None));
+    assert!(lines_with(&out, "SINCE: ").is_empty(), "{out}");
+    assert!(lines_with(&out, "UNTIL: ").is_empty(), "{out}");
+    // 区間の外の応答（11-05 と 11-06 の分）も数える
+    assert_eq!(lines_with(&out, "TOTAL: "), ["TOTAL: $24.18"]);
+}
