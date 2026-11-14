@@ -204,3 +204,52 @@ fn missing_arguments_and_unreadable_files_exit_2() {
     assert_eq!(kept(&["--old", &none, "--new", &a]).0, 2);
     assert_eq!(kept(&["--old", &a, "--new", &none]).0, 2);
 }
+
+#[test]
+fn argparse_forms_of_the_options_are_accepted() {
+    let d = Dir::new();
+    let old = d.write("old.md", "一つ目の文。\n");
+    let other = d.write("other.md", "二つ目の文。\n");
+    let new = d.write("new.md", "一つ目の文。\n");
+    // --old=FILE と、一意な省略形
+    assert_eq!(
+        kept(&[&format!("--old={old}"), "--new", &new]),
+        (0, String::new())
+    );
+    assert_eq!(kept(&["--ol", &old, "--n", &new]), (0, String::new()));
+    // 同じオプションを重ねると、後のものだけが残る
+    let (code, out) = kept(&["--old", &old, "--old", &other, "--new", &new]);
+    assert_eq!(code, 1);
+    assert_eq!(out, format!("CHANGED: {new}:1: 一つ目の文。\n"));
+}
+
+#[test]
+fn crlf_and_cr_line_ends_are_read_as_lf() {
+    let (code, out, _) = compare(
+        "最初の文。\n\n- 項目の\n  文。\n",
+        "最初の文。\r\n\r\n- 項目の\r  文。\r\n",
+    );
+    assert_eq!((code, out.as_str()), (0, ""));
+    // CR だけの改行も行の区切り（行の終わりの英数字の後には空白を補う）
+    let (code, out, path) = compare("a\rb。\n", "x\rb。\n");
+    assert_eq!(code, 1);
+    assert_eq!(out, format!("CHANGED: {path}:1: x b。\n"));
+}
+
+#[test]
+fn python_whitespace_controls_are_spaces() {
+    let (code, out, _) = compare("- 項目の文。\n", "-\x1f項目の\x1c文。\n");
+    assert_eq!((code, out.as_str()), (0, ""));
+}
+
+#[test]
+fn a_file_that_is_not_utf8_exits_2() {
+    let d = Dir::new();
+    let old = d.write("old.md", "文。\n");
+    let bad = d.root.join("bad.md");
+    std::fs::write(&bad, b"\xff\xfe\n").unwrap();
+    assert_eq!(
+        kept(&["--old", &old, "--new", &bad.display().to_string()]).0,
+        2
+    );
+}
