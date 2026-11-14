@@ -31,6 +31,7 @@ impl Work {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("home")).unwrap();
+        std::fs::create_dir_all(root.join("tmp")).unwrap();
         let work = Work { root };
         std::fs::write(
             work.root.join("gitconfig"),
@@ -48,6 +49,10 @@ impl Work {
         forget_git_env(cmd)
             .env("HOME", self.path("home"))
             .env("GIT_CONFIG_GLOBAL", self.path("gitconfig"))
+            // 一時の index の置き場（std::env::temp_dir）。Unix は TMPDIR、Windows は TMP を読む
+            .env("TMPDIR", self.path("tmp"))
+            .env("TMP", self.path("tmp"))
+            .env("TEMP", self.path("tmp"))
             .env_remove("CLAUDECODE");
     }
 
@@ -98,12 +103,8 @@ impl Work {
         f(&mut cmd);
         let mut child = cmd.spawn().unwrap();
         use std::io::Write;
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
+        // 引数の誤りの子は読まずに終わるので、書けない（EPIPE）ことは失敗にしない
+        let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
         child.wait_with_output().unwrap()
     }
 }
@@ -331,11 +332,16 @@ fn keeps_every_change_when_run_at_the_same_time() {
         "0"
     );
     let gitdir = PathBuf::from(work.git(&cd, &["rev-parse", "--absolute-git-dir"]));
-    let left: Vec<String> = std::fs::read_dir(&gitdir)
+    let mut left: Vec<String> = std::fs::read_dir(&gitdir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| n.starts_with("memory-backup") && n != "memory-backup.lock")
         .collect();
+    left.extend(
+        std::fs::read_dir(work.path("tmp"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()),
+    );
     assert!(left.is_empty(), "一時の index が残った: {left:?}");
     assert_eq!(work.git(&cd, &["rev-parse", "HEAD"]), head);
     assert_eq!(
@@ -472,4 +478,31 @@ fn fails_with_1_on_extra_arguments() {
     let out = work.stop(&[&a, &b], "{}");
     let err = assert_failed(&out);
     assert!(err.contains("Usage: claude-hooks stop"), "{err}");
+}
+
+/// projects の下の UTF-8 でない名前（ほかのツールの残したファイルなど）で、ほかのプロジェクトの退避を止めない
+#[cfg(unix)]
+#[test]
+fn backs_up_beside_a_name_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    let odd = std::ffi::OsStr::from_bytes(b"-\xe9");
+    write(&cd.join("projects").join(odd).join("memory/x.md"), "odd\n");
+
+    assert_ok(&work.stop(&[&cd], "{}"));
+    let out = work.git_output(&cd, &["ls-tree", "-r", "-z", "--name-only", REF]);
+    let names: Vec<&[u8]> = out
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|n| !n.is_empty())
+        .collect();
+    assert!(
+        names.contains(&&b"projects/-\xe9/memory/x.md"[..]),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&&b"projects/-a/memory/MEMORY.md"[..]),
+        "{names:?}"
+    );
 }
