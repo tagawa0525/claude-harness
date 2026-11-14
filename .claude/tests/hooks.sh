@@ -2889,7 +2889,7 @@ done
 # hostname は偽のコマンドで置き換える（r995 のほかでは、ビルドは r995 に投げられるので、手元でビルドすれば乱さない）
 mkdir -p "$FAKE_SQUEUE/host-laptop" "$FAKE_SQUEUE/host-r995" "$FAKE_SQUEUE/host-broken"
 printf '#!/bin/sh\necho t14g4\n' >"$FAKE_SQUEUE/host-laptop/hostname"
-printf '#!/bin/sh\necho r995\n' >"$FAKE_SQUEUE/host-r995/hostname"
+printf '#!/bin/sh\necho R995.lan\n' >"$FAKE_SQUEUE/host-r995/hostname"
 printf '#!/bin/sh\nexit 1\n' >"$FAKE_SQUEUE/host-broken/hostname"
 chmod +x "$FAKE_SQUEUE"/host-*/hostname
 
@@ -2900,12 +2900,16 @@ for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'nix-rebui
   assert_eq "" "$out"
 done
 
-it "guard-exclusive-slurm: r995 の上やホストが分からないとき、サブコマンドの前の --local では deny する"
+it "guard-exclusive-slurm: r995 の上、ホストが分からないとき、ssh の先の --local は deny し、サブコマンドの前の --local は rebuild に数えない"
 for dir in host-r995 host-broken; do
   for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'rebuild --local'; do
     out=$(PATH="$FAKE_SQUEUE/$dir:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
     assert_eq deny "$(decision "$out")"
   done
+done
+for cmd in "ssh r995 'nix-rebuild update --local'" 'ssh r995 nix-rebuild rebuild --local'; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
 done
 # nix-rebuild.sh は --local をサブコマンドの後でだけ受ける（前に置くと使い方の誤りで止まる）
 out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix-rebuild --local rebuild')
