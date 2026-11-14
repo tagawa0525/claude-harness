@@ -665,3 +665,60 @@ fn a_missing_session_fails() {
         "{err}"
     );
 }
+
+#[test]
+fn an_empty_bound_is_an_open_end() {
+    let home = Home::new();
+    let main = home.first_session().display().to_string();
+    let out = stdout(&home.report(
+        &["--since", "", "--until", "2026-11-08T00:00+09:00", &main],
+        None,
+    ));
+    assert!(lines_with(&out, "SINCE: ").is_empty(), "{out}");
+    assert_eq!(
+        lines_with(&out, "UNTIL: "),
+        ["UNTIL: 2026-11-08T00:00:00+09:00"]
+    );
+}
+
+#[test]
+fn a_transcript_that_is_not_utf8_fails() {
+    let home = Home::new();
+    let main = home.project().join(format!("{SESSION}.jsonl"));
+    home.write_lines(&main, &[user_text("始める")]);
+    let mut bytes = std::fs::read(&main).unwrap();
+    bytes.extend_from_slice(b"\xff\xfe\n");
+    std::fs::write(&main, bytes).unwrap();
+    let main_s = main.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.push(&main_s);
+    let (code, err) = error(&home.report(&args, None));
+    assert_eq!(code, 1);
+    assert!(
+        err.starts_with(&format!("ERROR: 記録を UTF-8 として読めません: {main_s}")),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_token_count_that_is_not_a_number_fails() {
+    let home = Home::new();
+    let main = home.project().join(format!("{SESSION}.jsonl"));
+    let mut line = reply(
+        "n1",
+        "2026-11-07T01:00:00.000Z",
+        "claude-opus-5-5",
+        [0, 0, 0, 0, 0],
+    );
+    line["message"]["usage"]["output_tokens"] = json!("10");
+    home.write_lines(&main, &[user_text("始める"), line]);
+    let main_s = main.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.push(&main_s);
+    let (code, err) = error(&home.report(&args, None));
+    assert_eq!(code, 1);
+    assert_eq!(
+        err,
+        format!("ERROR: usage.output_tokens が数でありません（\"10\"）: {main_s}\n")
+    );
+}
