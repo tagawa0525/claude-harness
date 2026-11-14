@@ -493,10 +493,11 @@ assert_eq 1 $?
 assert_contains "$out" "FAILED: rust docs-test"
 assert_eq "" "$(fake_log cargo)"
 
-it "run-checks: 排他のジョブが実行中なら、宣言したテストを taskset の 1 コアで実行する"
+it "run-checks: r995 の上で排他のジョブが実行中なら、宣言したテストを taskset の 1 コアで実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-exclusive"
 echo 'body' >> doc.md && git add doc.md
-make_fake_tool squeue '*) printf "NO|openmc-2K|1234\\n" ;;'
+make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\n" ;;'
+make_fake_tool hostname '*) echo r995 ;;'
 make_fake_tool taskset '*) shift 2; exec "$@" ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
@@ -504,6 +505,7 @@ assert_contains "$(fake_log taskset)" "bash scripts/run-rust-docs-tests.sh"
 assert_eq "ran" "$(cat "$TEST_ROOT/docs-tests.log")"
 make_fake_tool squeue '*) exit 0 ;;'
 remove_fake_tool taskset
+remove_fake_tool hostname
 
 it "run-checks: ステージ済みの .sh だけを shellcheck で検査する"
 # 既存の .sh 全体を見ると、shellcheck を通していない既存ファイルでコミットが止まる
@@ -743,13 +745,54 @@ make_fake_tool nix '*) exit 0 ;;'
 make_fake_tool statix '*) exit 0 ;;'
 make_fake_tool nixfmt '*) exit 0 ;;'
 
-it "run-checks: 排他のジョブが実行中なら、cargo を taskset と -j 1 で、nix flake check を --cores 1 -j 1 で実行し、冒頭に知らせる"
-make_fake_tool squeue '*) printf "NO|openmc-2K|1234\\nOK|x-shared|1235\\n" ;;'
+it "run-checks: r995 の上で排他のジョブが実行中なら、cargo を taskset と -j 1 で、nix flake check を --cores 1 -j 1 で実行し、冒頭に知らせる"
+make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n" ;;'
+make_fake_tool hostname '*) echo r995 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_contains "$out" "排他のジョブ openmc-2K（1234）が実行中なので 1 コアで実行する"
+assert_contains "$out" "排他のジョブ openmc-2K（1234）がこのホストで実行中なので 1 コアで実行する"
 assert_contains "$(fake_log taskset)" "cargo clippy -j 1 --all-targets -- -D warnings"
 assert_contains "$(fake_log taskset)" "cargo test -j 1"
+assert_contains "$(fake_log nix)" "flake check --cores 1 -j 1"
+
+it "run-checks: 計算ノードでないホストで排他のジョブが実行中なら、cargo は限らず、nix flake check はノードに投げずに手元でビルドする"
+# ほかのホストの手元のコアは r995 を乱さないが、nix のビルドは r995 に投げられる（nixfiles の nix.distributedBuilds）
+for host in t14g4 x1ng1.lan; do
+  make_fake_tool hostname "*) echo $host ;;"
+  make_fake_tool taskset '*) shift 2; exec "$@" ;;'
+  make_fake_tool nix '*) exit 0 ;;'
+  make_fake_tool cargo '*) exit 0 ;;'
+  out=$("$LANG_SCRIPTS/run-checks.sh")
+  assert_eq 0 $?
+  assert_not_contains "$out" "1 コアで実行する"
+  assert_contains "$out" "手元でビルドする"
+  assert_eq "" "$(fake_log taskset)"
+  assert_contains "$(fake_log cargo)" "test"
+  assert_not_contains "$(fake_log cargo)" "-j 1"
+  assert_contains "$(fake_log nix)" "flake check --builders  --max-jobs auto"
+done
+
+it "run-checks: 計算ノードが複数あれば、このホストで排他のジョブが走るときだけ 1 コアに限る"
+make_fake_tool squeue '*) printf "NO|job-a|11|gpu1\\nNO|job-b|12|gpu2\\n" ;;'
+for host in gpu2:1 gpu3:0; do
+  make_fake_tool hostname "*) echo ${host%:*} ;;"
+  make_fake_tool taskset '*) shift 2; exec "$@" ;;'
+  make_fake_tool nix '*) exit 0 ;;'
+  out=$("$LANG_SCRIPTS/run-checks.sh")
+  if [[ ${host#*:} == 1 ]]; then
+    assert_contains "$out" "排他のジョブ job-b（12）がこのホストで実行中なので 1 コアで実行する"
+  else
+    assert_not_contains "$out" "1 コアで実行する"
+  fi
+done
+make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n" ;;'
+
+it "run-checks: ホストが分からなければ、計算ノードとみなして 1 コアに限る"
+make_fake_tool hostname '*) exit 1 ;;'
+make_fake_tool taskset '*) shift 2; exec "$@" ;;'
+make_fake_tool nix '*) exit 0 ;;'
+out=$("$LANG_SCRIPTS/run-checks.sh")
+assert_contains "$out" "1 コアで実行する"
 assert_contains "$(fake_log nix)" "flake check --cores 1 -j 1"
 
 it "run-checks: 排他のジョブが無ければ（排他でないジョブだけでも）制限しない"

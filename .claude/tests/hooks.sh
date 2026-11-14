@@ -2805,88 +2805,16 @@ assert_eq "" "$out"
 
 FAKE_SQUEUE="$TEST_ROOT/fake-squeue"
 mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle"
-printf '#!/bin/sh\nprintf "NO|openmc-2K|1234\\nOK|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
-printf '#!/bin/sh\nprintf "OK|x-shared|1235\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
+# 列は OverSubscribe|名前|番号|ノード（排他のジョブは r995 で走る）
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
+printf '#!/bin/sh\nprintf "OK|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
 printf '#!/bin/sh\nexit 0\n' >"$FAKE_SQUEUE/idle/squeue"
 mkdir -p "$FAKE_SQUEUE/many"
-printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|shared-$n|$n"; done\necho "NO|openmc-2K|99999"\n' >"$FAKE_SQUEUE/many/squeue"
+printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|shared-$n|$n|r995"; done\necho "NO|openmc-2K|99999|r995"\n' >"$FAKE_SQUEUE/many/squeue"
 chmod +x "$FAKE_SQUEUE"/*/squeue
 cd "$TEST_ROOT" || exit 1
-
-it "guard-exclusive-slurm: 排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と修正方法を示す"
-for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' 'cargo check' 'nix flake check' \
-  'nix develop -c cargo test' 'nix develop ../..#references -c dvc repro' 'nix develop --command bin/xs in.toml' \
-  'cargo test -j 1' 'cargo run --jobs=1 -- x' 'cargo bench -j1' 'cargo build -j 1' 'cargo build --jobs=1' 'cargo b -j1' 'cargo check -j 1' 'cargo clippy -j1' 'cargo c --jobs 1' 'cargo -j 1 check' \
-  'CARGO_BUILD_JOBS=1 cargo check' \
-  'CMD=cargo; $CMD test' 'bash -s <<< "cargo test"' 'source x.sh' 'bash "$SCRIPT"' 'eval "$CMD"' \
-  'nix --arg x 1 build .#x' 'nix --foo bar build .#x' 'cargo --weird test' 'dvc --cd sub repro' 'nix develop --option k v -c cargo test' \
-  'nix develop --expr 1 -c cargo test' 'target/x86_64-unknown-linux-gnu/release/xs in.toml' '/tmp/tgt/debug/lattice in.toml' \
-  'cargo b' 'cargo c' 'cargo t' 'cargo r -- x' 'cargo --color never test' 'cargo -C /tmp build' \
-  'nix -j 4 build .#x' 'nix --max-jobs 2 build .#x' 'nix --cores 2 build .#x' 'nix -I nixpkgs=. build .#x' 'nix --store /tmp/s build .#x' \
-  'nix --log-format bar build .#x' 'nix -L develop -c cargo test' \
-  "nix develop ../..#references -c bash -c 'cargo test'" "nix develop -c bash -c 'taskset -c 0-31 cargo test'" \
-  'nix shell nixpkgs#hello -c cargo test' 'nix shell -c dvc repro' \
-  "taskset -c 3 bash -c 'taskset -c 0-31 cargo test'" 'taskset -c 3 nix develop -c taskset -c 0-31 cargo test' \
-  'target/release/xs in.toml' './target/debug/lattice in.toml' '../../target/release/core in.toml' \
-  'CARGO_BUILD_JOBS=2 cargo check' 'CARGO_BUILD_JOBS=1 cargo test' \
-  'cargo +nightly build' 'cargo build -j 4' 'dvc repro' 'dvc repro examples/vera/dvc.yaml' \
-  'bin/xs in.toml' './bin/lattice in.toml' '../../bin/core in.toml' '../bin/chain in.toml' 'nix build .#x' \
-  'cargo --config a=b test' 'nix --extra-experimental-features nix-command build .#x' 'taskset -c 3 taskset -c 0-31 cargo test' 'cd repo && cargo test' 'env FOO=1 cargo test' "bash -c 'cargo test'" 'taskset -c 0-3 cargo test' 'taskset 0x3 cargo build'; do
-  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
-  assert_eq deny "$(decision "$out")"
-  assert_contains "$(reason "$out")" "openmc-2K"
-  assert_contains "$(reason "$out")" "1234"
-  assert_contains "$(reason "$out")" "taskset"
-  assert_contains "$(reason "$out")" "slurm-run.sh"
-done
-
-it "guard-exclusive-slurm: -j 1 か 1 コアの taskset で限れば通す"
-for cmd in 'taskset -c 3 cargo check' 'taskset -c 3 cargo clippy --all-targets' 'taskset -c 3 cargo build -j 1' 'taskset -c 3 $CMD test' \
-  "taskset -c 3 bash -s <<< 'cargo test'" 'nix develop --help' 'nix develop --expr 1 -c cargo fmt' 'cargo -q fmt --check' 'cargo +nightly fmt' \
-  'nix develop -c taskset -c 3 cargo test' "nix develop ../..#references -c bash -c 'taskset -c 2 dvc repro'" \
-  'nix shell nixpkgs#x -c taskset -c 1 cargo test' \
-  'taskset -c 3 target/release/xs in.toml' 'taskset -c 3 nix develop -c cargo test' 'taskset -c 3 cargo test' \
-  'taskset -c 3 bin/xs in.toml' 'taskset --cpu-list 2 dvc repro' 'taskset 0x4 cargo build' 'taskset -c 5-5 nix build .#x' \
-  'sudo taskset -c 3 cargo test' "taskset -c 3 bash -c 'cargo test'"; do
-  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
-  assert_eq "" "$out"
-done
-
-it "guard-sbatch: nix develop|shell -c の中の sbatch も止める"
-for cmd in 'nix develop -c sbatch job.sh' 'nix shell nixpkgs#x -c sbatch job.sh' 'nix develop --option k v -c sbatch job.sh'; do
-  out=$(run_hook guard-sbatch "$cmd")
-  assert_eq deny "$(decision "$out")"
-done
-out=$(run_hook guard-sbatch 'nix develop --help')
-assert_eq "" "$out"
-
-it "guard-exclusive-slurm: 対象のコマンド以外は通す"
-for cmd in 'cargo fmt --check' 'cargo --version' 'nix flake show' 'nix develop' 'nix develop -c cargo fmt' 'nix shell nixpkgs#x -c ls' 'nix develop -c bash -c "echo hi"' 'dvc status' 'git status' 'ls bin/' 'echo cargo test' \
-  'bin/other' 'target/release/other' 'squeue -t R'; do
-  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
-  assert_eq "" "$out"
-done
-
-it "guard-exclusive-slurm: 排他のジョブ中の rebuild は 1 コアの taskset で包んでも deny し、終わるまで待つことを示す"
-# rebuild のビルドは nix-daemon の中で走り、クライアントの taskset を引き継がない（ADR-0041 の「## 変更」）
-for cmd in 'nix-rebuild rebuild' 'nix-rebuild update' '/home/u/.local/bin/nix-rebuild rebuild' './nix-rebuild update' \
-  'nix-rebuild rebuild > log 2>&1; echo rc=$?' "bash -c 'nix-rebuild rebuild'" 'taskset -c 3 nix-rebuild rebuild' \
-  'bash modules/home/scripts/nix-rebuild.sh update' './modules/home/scripts/nix-rebuild.sh rebuild' 'rebuild' 'update' 'update --help' 'rebuild now' \
-  'nixos-rebuild switch --flake .' 'nixos-rebuild build' 'nixos-rebuild boot' 'nixos-rebuild test' 'nixos-rebuild --flake . switch' \
-  'sudo nixos-rebuild switch --flake ~/nix/nixfiles' \
-  'sudo /run/current-system/sw/bin/nixos-rebuild switch --flake /home/u/nix/nixfiles' 'taskset -c 3 sudo nixos-rebuild switch' \
-  'home-manager switch' 'home-manager build --flake .' 'home-manager --flake . switch' 'taskset -c 3 home-manager switch' \
-  'nix develop -c home-manager switch' 'cargo test && nix-rebuild rebuild' 'taskset -c 3 cargo test && taskset -c 3 nix-rebuild rebuild'; do
-  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
-  assert_eq deny "$(decision "$out")"
-  assert_contains "$(reason "$out")" "openmc-2K"
-  assert_contains "$(reason "$out")" "1234"
-  assert_contains "$(reason "$out")" "終わるまで待"
-  assert_contains "$(reason "$out")" "nix-daemon"
-  assert_not_contains "$(reason "$out")" "slurm-run.sh"
-done
-
-# hostname は偽のコマンドで置き換える（r995 のほかでは、ビルドは r995 に投げられるので、手元でビルドすれば乱さない）
+# hostname は偽のコマンドで置き換える。r995 の上の振る舞いを確かめるテストは host-r995 を、ラップトップの振る舞いは
+# host-laptop を PATH の先に置く（r995 のほかでは、手元のコアは r995 を乱さず、ビルドだけが r995 に投げられる）
 mkdir -p "$FAKE_SQUEUE/host-laptop" "$FAKE_SQUEUE/host-r995" "$FAKE_SQUEUE/host-broken"
 printf '#!/bin/sh\necho t14g4\n' >"$FAKE_SQUEUE/host-laptop/hostname"
 printf '#!/bin/sh\necho R995.lan\n' >"$FAKE_SQUEUE/host-r995/hostname"
@@ -2904,6 +2832,95 @@ case "$2" in
 esac
 EOF
 chmod +x "$FAKE_SQUEUE/host-laptop/ssh"
+# NIX_CONF_DIR/machines は nix のリモートのビルダー（NixOS の nix.buildMachines）。ラップトップは r995 に投げる
+mkdir -p "$FAKE_SQUEUE/conf-laptop" "$FAKE_SQUEUE/conf-none"
+echo 'ssh-ng://nix-ssh@r995 x86_64-linux /root/.ssh/key 16 4 kvm - -' >"$FAKE_SQUEUE/conf-laptop/machines"
+export NIX_CONF_DIR="$FAKE_SQUEUE/conf-laptop"
+# 計算ノードの名前は固定しない（gpu1 で走るジョブ、縮めた形のノードの一覧）
+mkdir -p "$FAKE_SQUEUE/on-gpu1" "$FAKE_SQUEUE/on-range" "$FAKE_SQUEUE/host-gpu1"
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|gpu1\\n"\n' >"$FAKE_SQUEUE/on-gpu1/squeue"
+printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|node[1-3]\\n"\n' >"$FAKE_SQUEUE/on-range/squeue"
+printf '#!/bin/sh\necho gpu1\n' >"$FAKE_SQUEUE/host-gpu1/hostname"
+# 2 台の計算ノードで、それぞれ排他のジョブが走る（gpu1 のジョブが先に出る）
+mkdir -p "$FAKE_SQUEUE/on-two" "$FAKE_SQUEUE/host-gpu2" "$FAKE_SQUEUE/host-gpu3"
+printf '#!/bin/sh\nprintf "NO|job-a|11|gpu1\\nNO|job-b|12|gpu2\\n"\n' >"$FAKE_SQUEUE/on-two/squeue"
+printf '#!/bin/sh\necho gpu2\n' >"$FAKE_SQUEUE/host-gpu2/hostname"
+printf '#!/bin/sh\necho gpu3\n' >"$FAKE_SQUEUE/host-gpu3/hostname"
+mkdir -p "$FAKE_SQUEUE/conf-gpu2"
+echo 'ssh-ng://nix-ssh@gpu2?ssh-key=/root/k x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-gpu2/machines"
+mkdir -p "$FAKE_SQUEUE/conf-ip"
+echo 'ssh-ng://nix-ssh@100.64.0.5 x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-ip/machines"
+mkdir -p "$FAKE_SQUEUE/conf-ip6"
+echo 'ssh-ng://nix-ssh@[fd00::5] x86_64-linux - 16 4 kvm - -' >"$FAKE_SQUEUE/conf-ip6/machines"
+chmod +x "$FAKE_SQUEUE"/on-*/squeue "$FAKE_SQUEUE/host-gpu1/hostname" "$FAKE_SQUEUE/host-gpu2/hostname" \
+  "$FAKE_SQUEUE/host-gpu3/hostname"
+
+it "guard-exclusive-slurm: r995 の上では、排他のジョブ中の全コアのコマンドは deny し、ジョブ名と番号と修正方法を示す"
+for cmd in 'cargo build' 'cargo test --release' 'cargo clippy --all-targets' 'cargo run -- x' 'cargo bench' 'cargo check' 'nix develop -c cargo test' 'nix develop ../..#references -c dvc repro' 'nix develop --command bin/xs in.toml' 'cargo test -j 1' 'cargo run --jobs=1 -- x' 'cargo bench -j1' 'cargo build -j 1' 'cargo build --jobs=1' 'cargo b -j1' 'cargo check -j 1' 'cargo clippy -j1' 'cargo c --jobs 1' 'cargo -j 1 check' 'CARGO_BUILD_JOBS=1 cargo check' 'CMD=cargo; $CMD test' 'bash -s <<< "cargo test"' 'source x.sh' 'bash "$SCRIPT"' 'eval "$CMD"' 'cargo --weird test' 'dvc --cd sub repro' 'nix develop --option k v -c cargo test' 'nix develop --expr 1 -c cargo test' 'target/x86_64-unknown-linux-gnu/release/xs in.toml' '/tmp/tgt/debug/lattice in.toml' 'cargo b' 'cargo c' 'cargo t' 'cargo r -- x' 'cargo --color never test' 'cargo -C /tmp build' 'nix -L develop -c cargo test' "nix develop ../..#references -c bash -c 'cargo test'" "nix develop -c bash -c 'taskset -c 0-31 cargo test'" 'nix shell nixpkgs#hello -c cargo test' 'nix shell -c dvc repro' "taskset -c 3 bash -c 'taskset -c 0-31 cargo test'" 'taskset -c 3 nix develop -c taskset -c 0-31 cargo test' 'target/release/xs in.toml' './target/debug/lattice in.toml' '../../target/release/core in.toml' 'CARGO_BUILD_JOBS=2 cargo check' 'CARGO_BUILD_JOBS=1 cargo test' 'cargo +nightly build' 'cargo build -j 4' 'dvc repro' 'dvc repro examples/vera/dvc.yaml' 'bin/xs in.toml' './bin/lattice in.toml' '../../bin/core in.toml' '../bin/chain in.toml' 'cargo --config a=b test' 'taskset -c 3 taskset -c 0-31 cargo test' 'cd repo && cargo test' 'env FOO=1 cargo test' "bash -c 'cargo test'" 'taskset -c 0-3 cargo test' 'taskset 0x3 cargo build'; do
+  out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "openmc-2K"
+  assert_contains "$(reason "$out")" "1234"
+  assert_contains "$(reason "$out")" "taskset"
+  assert_contains "$(reason "$out")" "slurm-run.sh"
+done
+
+it "guard-exclusive-slurm: r995 の上では、nix のビルドは 1 コアの taskset で包んでも deny し、終わるまで待つことを示す"
+# ビルドは nix-daemon の中で走り、クライアントの taskset を引き継がない
+for cmd in 'nix flake check' 'nix --arg x 1 build .#x' 'nix --foo bar build .#x' 'nix -j 4 build .#x' 'nix --max-jobs 2 build .#x' 'nix --cores 2 build .#x' 'nix -I nixpkgs=. build .#x' 'nix --store /tmp/s build .#x' 'nix --log-format bar build .#x' 'nix build .#x' 'nix --extra-experimental-features nix-command build .#x' 'taskset -c 5-5 nix build .#x'; do
+  out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "openmc-2K"
+  assert_contains "$(reason "$out")" "nix-daemon"
+  assert_contains "$(reason "$out")" "終わるまで待"
+done
+
+it "guard-exclusive-slurm: -j 1 か 1 コアの taskset で限れば通す"
+for cmd in 'taskset -c 3 cargo check' 'taskset -c 3 cargo clippy --all-targets' 'taskset -c 3 cargo build -j 1' 'taskset -c 3 $CMD test' \
+  "taskset -c 3 bash -s <<< 'cargo test'" 'nix develop --help' 'nix develop --expr 1 -c cargo fmt' 'cargo -q fmt --check' 'cargo +nightly fmt' \
+  'nix develop -c taskset -c 3 cargo test' "nix develop ../..#references -c bash -c 'taskset -c 2 dvc repro'" \
+  'nix shell nixpkgs#x -c taskset -c 1 cargo test' \
+  'taskset -c 3 target/release/xs in.toml' 'taskset -c 3 nix develop -c cargo test' 'taskset -c 3 cargo test' \
+  'taskset -c 3 bin/xs in.toml' 'taskset --cpu-list 2 dvc repro' 'taskset 0x4 cargo build' \
+  'sudo taskset -c 3 cargo test' "taskset -c 3 bash -c 'cargo test'"; do
+  out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-sbatch: nix develop|shell -c の中の sbatch も止める"
+for cmd in 'nix develop -c sbatch job.sh' 'nix shell nixpkgs#x -c sbatch job.sh' 'nix develop --option k v -c sbatch job.sh'; do
+  out=$(run_hook guard-sbatch "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+out=$(run_hook guard-sbatch 'nix develop --help')
+assert_eq "" "$out"
+
+it "guard-exclusive-slurm: 対象のコマンド以外は通す"
+for cmd in 'cargo fmt --check' 'cargo --version' 'nix flake show' 'nix develop' 'nix develop -c cargo fmt' 'nix shell nixpkgs#x -c ls' 'nix develop -c bash -c "echo hi"' 'dvc status' 'git status' 'ls bin/' 'echo cargo test' \
+  'bin/other' 'target/release/other' 'squeue -t R'; do
+  out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-exclusive-slurm: 排他のジョブ中の rebuild は 1 コアの taskset で包んでも deny し、終わるまで待つことを示す"
+# rebuild のビルドは nix-daemon の中で走り、クライアントの taskset を引き継がない（ADR-0041 の「## 変更」）
+for cmd in 'nix-rebuild rebuild' 'nix-rebuild update' '/home/u/.local/bin/nix-rebuild rebuild' './nix-rebuild update' \
+  'nix-rebuild rebuild > log 2>&1; echo rc=$?' "bash -c 'nix-rebuild rebuild'" 'taskset -c 3 nix-rebuild rebuild' \
+  'bash modules/home/scripts/nix-rebuild.sh update' './modules/home/scripts/nix-rebuild.sh rebuild' 'rebuild' 'update' 'update --help' 'rebuild now' \
+  'nixos-rebuild switch --flake .' 'nixos-rebuild build' 'nixos-rebuild boot' 'nixos-rebuild test' 'nixos-rebuild --flake . switch' \
+  'sudo nixos-rebuild switch --flake ~/nix/nixfiles' \
+  'sudo /run/current-system/sw/bin/nixos-rebuild switch --flake /home/u/nix/nixfiles' 'taskset -c 3 sudo nixos-rebuild switch' \
+  'home-manager switch' 'home-manager build --flake .' 'home-manager --flake . switch' 'taskset -c 3 home-manager switch' \
+  'nix develop -c home-manager switch' 'cargo test && nix-rebuild rebuild' 'taskset -c 3 cargo test && taskset -c 3 nix-rebuild rebuild'; do
+  out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "openmc-2K"
+  assert_contains "$(reason "$out")" "1234"
+  assert_contains "$(reason "$out")" "終わるまで待"
+  assert_contains "$(reason "$out")" "nix-daemon"
+  assert_not_contains "$(reason "$out")" "slurm-run.sh"
+done
+
 
 it "guard-exclusive-slurm: r995 のほかでは（ssh の先は接続先が r995 でなければ）、手元でビルドする nix-rebuild --local を通す"
 for cmd in 'nix-rebuild rebuild --local' 'nix-rebuild update --local' 'nix-rebuild update --local claude-harness' \
@@ -2945,14 +2962,92 @@ for cmd in 'nix-rebuild' 'nix-rebuild --help' 'home-manager generations' 'home-m
   'nixos-rebuild --help' 'home-manager switch --help' 'home-manager -h' 'nixos-rebuild list-generations' 'nixos-rebuild edit' 'nixos-rebuild dry-build' \
   'sudo nixos-rebuild switch --rollback' 'nixos-rebuild switch --help' 'nixos-rebuild -h' './scripts/update' 'tools/rebuild' \
   'echo nix-rebuild rebuild' 'grep -n nixos-rebuild modules/home/scripts/nix-rebuild.sh' 'cat modules/home/scripts/nix-rebuild.sh'; do
-  out=$(PATH="$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
   assert_eq "" "$out"
 done
 
 it "guard-exclusive-slurm: squeue の出力が大きくても（パイプを満たしても）排他のジョブを見つける"
-out=$(PATH="$FAKE_SQUEUE/many:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/many:$PATH" run_hook guard-exclusive-slurm 'cargo test')
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "99999"
+
+it "guard-exclusive-slurm: r995 のほかでは（ssh の先は接続先が r995 でなければ）、手元のコアだけを使うコマンドは通す"
+for cmd in 'cargo test' 'cargo build --release' 'dvc repro' 'bin/xs in.toml' 'target/release/lattice in.toml' 'bash "$SCRIPT"' \
+  'source x.sh' 'nix develop -c cargo test' 'ssh x1ng1 cargo test' "ssh x1ng1 'cd repo && cargo test'"; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+
+it "guard-exclusive-slurm: r995 のほかでも、r995 に投げられる nix のビルドと、r995 の上で走るコマンドは deny する"
+# ラップトップの nix のビルドは r995 に投げられ、クライアントの taskset は効かない
+for cmd in 'nix build .#x' 'nix flake check' 'taskset -c 3 nix build .#x' 'nix --foo bar build .#x' \
+  'ssh r995 cargo test' 'ssh desk cargo test' 'ssh broken cargo test'; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "openmc-2K"
+done
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix build .#x')
+assert_contains "$(reason "$out")" "--builders"
+
+it "guard-exclusive-slurm: r995 のほかでは、手元でビルドする nix のビルド（--builders '' か --option builders ''）は通す"
+for cmd in "nix build --builders '' --max-jobs auto .#x" "nix build --option builders '' -j auto .#x" \
+  "nix flake check --builders ''"; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
+out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "nix build --builders '' .#x")
+assert_eq deny "$(decision "$out")"
+
+it "guard-exclusive-slurm: 計算ノードかは、排他のジョブのノードと比べて決める（名前を固定しない）"
+out=$(PATH="$FAKE_SQUEUE/host-gpu1:$FAKE_SQUEUE/on-gpu1:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq deny "$(decision "$out")"
+out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/on-gpu1:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq "" "$out"
+# 縮めた形の一覧は読まず、ノードの上とみなす
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-range:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq deny "$(decision "$out")"
+
+it "guard-exclusive-slurm: ssh の接続先が loopback ならこのホスト、ほかの IP アドレスはノードとみなす"
+out=$(PATH="$FAKE_SQUEUE/host-r995:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'ssh localhost cargo test')
+assert_eq deny "$(decision "$out")"
+for cmd in 'ssh 192.168.1.50 cargo test' 'ssh 127.0.0.1 cargo test'; do
+  out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm "$cmd")
+  [[ "$cmd" == *127.0.0.1* ]] && assert_eq "" "$out" || assert_eq deny "$(decision "$out")"
+done
+
+it "guard-exclusive-slurm: 計算ノードが複数あれば、走るホストかビルドを投げる先で排他のジョブが走るときだけ止め、そのジョブを示す"
+out=$(PATH="$FAKE_SQUEUE/host-gpu2:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "job-b（12）"
+out=$(PATH="$FAKE_SQUEUE/host-gpu3:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'cargo test')
+assert_eq "" "$out"
+# ビルドを投げる先（machines）が gpu2 なら止め、ジョブの無いノード（r995）なら通す
+out=$(NIX_CONF_DIR="$FAKE_SQUEUE/conf-gpu2" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" \
+  run_hook guard-exclusive-slurm 'nix build .#x')
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "job-b（12）"
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" run_hook guard-exclusive-slurm 'nix build .#x')
+assert_eq "" "$out"
+# IP アドレスのビルダー（IPv6 の [..] も）はノードと比べられないので、投げるとみなす
+for conf in conf-ip conf-ip6; do
+  out=$(NIX_CONF_DIR="$FAKE_SQUEUE/$conf" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/on-two:$PATH" \
+    run_hook guard-exclusive-slurm 'nix build .#x')
+  assert_eq deny "$(decision "$out")"
+done
+# --builders @/dev/null は、trusted でない利用者の設定を nix-daemon が捨てるので、手元のビルドに数えない
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'nix build --builders @/dev/null .#x')
+assert_eq deny "$(decision "$out")"
+# ssh の先の nix のビルドには「このホストの」と書かない
+out=$(PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" run_hook guard-exclusive-slurm 'ssh x1ng1 nix build .#x')
+assert_eq deny "$(decision "$out")"
+assert_not_contains "$(reason "$out")" "このホストの"
+
+it "guard-exclusive-slurm: リモートのビルダーに計算ノードが無いホストの nix のビルドは、手元でビルドするので通す"
+for cmd in 'nix build .#x' 'nix flake check' 'nix-rebuild update'; do
+  out=$(NIX_CONF_DIR="$FAKE_SQUEUE/conf-none" PATH="$FAKE_SQUEUE/host-laptop:$FAKE_SQUEUE/exclusive:$PATH" \
+    run_hook guard-exclusive-slurm "$cmd")
+  assert_eq "" "$out"
+done
 
 it "guard-exclusive-slurm: 排他のジョブが無い（排他でないジョブだけ、ジョブなし）なら通す"
 for dir in shared idle; do

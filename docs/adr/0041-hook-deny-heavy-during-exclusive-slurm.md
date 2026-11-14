@@ -5,7 +5,7 @@ requires: [ADR-0007, ADR-0023, ADR-0026]
 supersedes: []
 superseded-by:
 amended-by: [ADR-0042]
-issues: ["#365", "#616", "#618"]
+issues: ["#365", "#616", "#618", "#176"]
 ---
 
 # ADR-0041: 排他の Slurm のジョブ中の全コアの手元の計算を hook で止める
@@ -66,6 +66,16 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
     `xs|lattice|core|chain`（`../../bin/xs` など相対も）
   - 何を実行するか決められないコマンド（`$CMD test`、`bash -s`、`source x.sh`）。サブコマンドを決められない
     `cargo`・`nix`・`dvc`（知らないオプションの後の語が、その値かサブコマンドか分からない）も同じ扱い
+- 上のうち rebuild と nix のビルド（`nix build`、`nix flake check`、サブコマンドを決められない `nix`）でないものは、
+  計算ノードの上で走るときだけ止める。計算ノードは、実行中の排他のジョブのどれかのノード（squeue の `%N`。計算
+  ノードが複数あれば、ジョブの走るノードだけ）で、このホストの
+  `hostname` か、ssh の接続先（`ssh -G` で HostName に解く。`localhost` と loopback はこのホスト）と、ドメインの前の名前を
+  比べる。名前を固定しない。ホストか接続先が分からないとき（IP アドレス、縮めた形の `node[1-3]`）はノードとみなす。
+  ほかのホストの手元のコアは、ノードの時間を乱さない
+- nix のビルドは、nix-daemon の中で走りクライアントの `taskset` を引き継がないので、taskset で包んでも止める。
+  計算ノードの上では常に、ほかのホストでは、そのビルドがノードに投げられるとき（`$NIX_CONF_DIR/machines`、既定
+  `/etc/nix/machines` に、排他のジョブの走るノードがある。nixfiles の `nix.buildMachines`。ssh の先は読めないので投げるとみなす）に止める。
+  `--builders ''` か `--builders @/dev/null` で手元でビルドするものは通す
 - rebuild でなく、`taskset` が中のコマンドを 1 つの CPU に限っていない（`-c 3`、`-c 5-5`、マスク `0x4`。複数の CPU や読めない
   指定は 1 コアとみなさない）。コマンドを直に包む最も内側の `taskset` が効き、`bash -c '…'` の中のコマンドにも
   外側の指定が効く。`-j 1` と `CARGO_BUILD_JOBS=1` は限りとみなさない
@@ -84,8 +94,10 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 `--local` で手元でビルドする道も示す。エスケープは設けない。
 
 `run-checks.sh` は、同じ squeue の判定（`.claude/scripts/lib/slurm-exclusive.sh`）で排他のジョブを見つけたら、
-冒頭に知らせて 1 コアで実行する（`cargo` を `taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を
-`--cores 1 -j 1` で）。このスクリプトと `run-python-tests.sh` は hook の対象にしない。
+冒頭に知らせ、排他のジョブの計算ノードの上（`exclusive_slurm_job` の `here`。hostname かノードが分からないときも）では 1 コアで実行する（`cargo` を
+`taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を `--cores 1 -j 1` で）。ほかのホストでは `cargo` を限らず、
+`nix flake check` を `--builders '' --max-jobs auto` で手元でビルドする。このスクリプトと `run-python-tests.sh` は
+hook の対象にしない。
 
 ### 帰結
 
@@ -95,10 +107,11 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
   ADR-0026 自体は書き換えない（案 B を、1 コアに限る条件つきで取り入れる）
 - 対象は決め打ちの一覧で、別の重い計算（直接の `openmc`、`cargo nextest`、`nix run`、`nix-build`）は止めない。
   足りないものは見つかったときに足す（rebuild は 2026-11-06 に足した。「## 変更」）
-- `nix build` と `nix flake check` も nix-daemon の中でビルドするので、1 コアの `taskset` で包んでも通す今の判定は
-  ビルドを 1 コアに限らない（#618）
-- 何を実行するか決められないコマンドは、排他のジョブ中は `taskset` で包まない限り止まる。誤って止めるのは、
-  排他のジョブの間だけである
+- `nix build` と `nix flake check` は、1 コアの `taskset` で包んでも止める（2026-11-14 から。前は通し、ビルドを
+  1 コアに限らなかった。#618）
+- 計算ノードの上では、何を実行するか決められないコマンドは `taskset` で包まない限り止まる。誤って止めるのは、
+  排他のジョブの間だけである。ほかのホストでは止めないので、その中の nix のビルド（スクリプトの中の `nix build`、
+  `nix develop` の devShell のビルド、`nix run`）は、ノードに投げられても止まらない
 - 排他でないジョブ（`-shared`、OverSubscribe が `OK`・`YES`）は対象外。#365 の run-checks.sh の直列化とは別の問題である
 
 ### 確認
@@ -133,3 +146,11 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
   した）。ラップトップのビルドは r995 に投げられる（nixfiles の `nix.distributedBuilds`、`max-jobs = 0`）ので止める
   理由があるが、手元でビルドすれば r995 の時間を乱さない。r995 の上では `--local` でも r995 でビルドするので止め、
   `hostname` が失敗したときも止める側に倒す。既定のビルドは r995 に投げたまま（速い。ユーザーの判断）
+- 2026-11-14: rebuild でない対象を、計算ノードの上で走るときだけ止め、ほかのホストではノードに投げられる nix の
+  ビルドだけを（taskset で包んでも）止める（#176）。前は「r995 以外のホストでは判定の材料が無い。誤って止めるより通す」とし、
+  ホストでは分けなかった。ラップトップも Slurm に投げるので squeue を持ち（nixfiles の `modules/slurm/submit.nix`）、
+  r995 の待ち行列を見るので、手元のコアだけを使う cargo などまで止め、逆にラップトップの `taskset -c 3 nix build` は
+  r995 でビルドするのに通していた。計算ノードは名前を固定せず、排他のジョブのノード（squeue の `%N`）と比べる。
+  nix のビルドは、計算ノードの上でも taskset で包んで通していた（「`taskset` が中のコマンドを 1 つの CPU に限って
+  いない」をどの対象にも掛けていた。#618）ので、taskset によらず止める。`run-checks.sh` も、前は「1 コアで実行する」をホストによらず当て、ラップトップの
+  `nix flake check --cores 1 -j 1` のビルドは r995 に投げられていたので、r995 のほかでは手元でビルドする
