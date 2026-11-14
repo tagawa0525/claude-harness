@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: [design-records, claude-hooks, ja-terms, claude-setup, commit-refs, fix-markdown-lint]
+        crate: [design-records, claude-hooks, ja-terms, claude-setup, commit-refs, fix-markdown-lint, history-rewrite]
     defaults:
       run:
         working-directory: modules/home/parts/${{ matrix.crate }}
