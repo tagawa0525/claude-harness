@@ -73,7 +73,8 @@ pub fn main(args: &[String]) -> i32 {
             }
         }
     }
-    if let Some(dir) = &dir
+    // 空の -C は今の場所を検査する（呼ぶ側の空の変数で止めない）
+    if let Some(dir) = dir.as_ref().filter(|d| !d.is_empty())
         && std::env::set_current_dir(dir).is_err()
     {
         eprintln!("ERROR: -C {dir} に移れません");
@@ -83,7 +84,8 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("ERROR: git リポジトリ内で実行してください");
         return 1;
     };
-    if std::env::set_current_dir(&root).is_err() {
+    if let Err(e) = std::env::set_current_dir(&root) {
+        eprintln!("ERROR: {root} に移れません（{e}）");
         return 1;
     }
     let diff_base = match &base_ref {
@@ -679,17 +681,18 @@ fn root_has_test_file() -> bool {
 /// git が追跡している test_*.py / *_test.py（サブディレクトリを含む。無視したディレクトリや references/ は追跡されない
 /// ので入らない）。git が失敗すれば None
 fn python_test_files() -> Option<Vec<String>> {
+    // -z が無いと、git は ASCII でないパスを引用符で括って出し、そのディレクトリに移れない
     git_bytes(&[
         "ls-files",
+        "-z",
         "--",
         ":(glob)**/test_*.py",
         ":(glob)**/*_test.py",
     ])
     .map(|out| {
-        String::from_utf8_lossy(&out)
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(str::to_string)
+        out.split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
             .collect()
     })
 }
