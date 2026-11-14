@@ -1,7 +1,7 @@
 ---
 status: proposed
 date: 2026-11-14
-requires: [ADR-0074, ADR-0076, ADR-0082, ADR-0084, ADR-0085, ADR-0087]
+requires: [ADR-0074, ADR-0076, ADR-0082, ADR-0084, ADR-0085, ADR-0086, ADR-0087]
 supersedes: []
 superseded-by:
 issues: ["#101"]
@@ -76,7 +76,8 @@ retro のスクリプト:
 
 - 退避: `claude-hooks stop [claude-dir]` に、今の `claude-memory-backup.sh` の振る舞い（退避の範囲、symlink のメモリの
   ディレクトリと上の階層のリポジトリでの失敗、`commit-tree` と古い値つきの `update-ref`、失敗の 1 行目と終了コード）を
-  移す。git は今と同じく子のプロセスで呼び、`--local-env-vars` の変数は子の環境から外す。hook の JSON は serde_json で読む
+  移す。git は今と同じく子のプロセスで呼び、`--local-env-vars` の変数は子の環境から外す。hook の JSON は serde_json で読む。
+  引数の誤りを含め、0 と 1 のほかで終えない（Stop の hook の 2 は応答を続けさせる）
 - 登録: `claude-setup settings` は Stop に `claude-hooks`（`~/.claude/bin/claude-hooks`）を引数 `stop` で登録し、前の
   `claude-memory-backup` の登録を外す。Linux は `claude-code.nix` の `writeShellApplication` と `~/.claude/bin/claude-memory-backup`
   を消す。Windows は、`cargo install` で入れた `claude-hooks` をそのまま登録する（手順の追加は無い）
@@ -88,8 +89,8 @@ retro のスクリプト:
 - PR の単位: 退避で 1 つ、retro のスクリプトごとに 1 つ以上。sh の実装は、中身を移した PR で消す（retro は呼ぶだけの sh に
   置き換える）
 - テスト: 退避の振る舞いは `claude-hooks` の結合テストに移し、`modules/home/parts/tests/claude-memory-backup.sh` は移した
-  PR で消す（呼ぶだけのファイルが無いので、配備の確認として残すものが無い）。同時の 6 本が落ちないことと、ロックを別の
-  プロセスが持つと失敗することも、そこで確かめる。retro は ADR-0087 のとおり、結合テストを足し、
+  PR で消す（呼ぶだけのファイルが無いので、配備の確認として残すものが無い）。同時の 6 本が落ちないこと、ロックを別の
+  プロセスが持つと失敗すること、git が起動して残る子にロックを継がせないことも、そこで確かめる。retro は ADR-0087 のとおり、結合テストを足し、
   `.claude/tests/scripts/retro.sh` を配備の確認として残す
 
 理由:
@@ -111,7 +112,9 @@ retro のスクリプト:
 - 悪い点: `claude-hooks` が、Stop の hook と retro の処理も持つ。名前は段階 8 の後に見直す（ADR-0087 の帰結、#101）
 - 悪い点: `claude-hooks` の不具合が、PreToolUse の hook とメモリの退避の両方を止めうる（今は別のバイナリ）
 - 悪い点: ADR-0087 の帰結と同じく、移す PR の後は `claude-sync` でなく rebuild（Windows は `cargo install` の後に
-  `claude-setup`）で入れる。登録を `claude-hooks stop` に替えた settings.json は、そのサブコマンドを持つバイナリと揃って入る
+  `claude-setup`）で入れる。登録を `claude-hooks stop` に替えた settings.json は、そのサブコマンドを持つバイナリと揃って入る。
+  揃わないとき（Windows で `claude-setup` だけを新しくした、`claude-hooks` を前の版に戻した）は、前の版の `claude-hooks` が
+  知らないサブコマンドに使い方を出して 2 で終え、応答の終わりごとに Claude Code が応答を続ける
 
 ### 確認
 
