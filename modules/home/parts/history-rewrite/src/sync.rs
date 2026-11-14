@@ -556,7 +556,7 @@ fn read_state(path: &Path) -> Result<Vec<(PathBuf, String, String)>, Stop> {
 pub fn sync_worktrees(words: &Words, workdir: &Path) -> Result<bool, Stop> {
     let mut transformer = Transformer::new(words)?;
     let workdir =
-        std::fs::canonicalize(workdir).map_err(|e| Stop(format!("{}: {e}", workdir.display())))?;
+        crate::real_path(workdir).map_err(|e| Stop(format!("{}: {e}", workdir.display())))?;
     let map_path = workdir.join("commit-map");
     let mapping = read_map(&map_path)?;
     let rows = read_state(&workdir.join("worktree-state"))?;
