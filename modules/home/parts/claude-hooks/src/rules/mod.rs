@@ -105,12 +105,14 @@ pub use pre_merge_check::local_review_covers_for_pr;
 pub(crate) use pre_merge_check::local_review_mark;
 mod pre_pr_create_check;
 mod require_background_wait;
+mod require_pipefail;
 mod scratchpad_repo;
 mod warn_large_commit;
 
 pub fn all() -> &'static [&'static dyn Rule] {
     &[
         &require_background_wait::RequireBackgroundWait,
+        &require_pipefail::RequirePipefail,
         &guard_sbatch::GuardSbatch,
         &block_main_commit::BlockMainCommit,
         &warn_large_commit::WarnLargeCommit,

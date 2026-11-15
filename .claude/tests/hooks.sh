@@ -142,7 +142,6 @@ commit_file "$REPO" "b.txt" "feat: b"
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "未プッシュ"
-assert_contains "$(reason "$out")" "別の呼び出し"
 git -C "$REPO" push -q
 
 it "pre-pr-create: 上流ブランチがなければ deny"
@@ -150,10 +149,28 @@ git -C "$REPO" switch -q -c feat/no-upstream
 out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "git push"
-assert_contains "$(reason "$out")" "別の呼び出し"
+git -C "$REPO" switch -q feat/x
+
+it "pre-pr-create: 同じ連結コマンドで先に git push していれば、上流と未プッシュを見ない"
+git -C "$REPO" switch -q feat/no-upstream
 out=$(run_hook pre-pr-create-check "git push -u origin HEAD && $GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook pre-pr-create-check "git push && $GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+# push が gh pr create の後ろなら、前の状態のまま止める
+out=$(run_hook pre-pr-create-check "$GOOD_CMD && git push -u origin HEAD")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "別の呼び出し"
+# 本文などの検査は push があっても残る
+out=$(run_hook pre-pr-create-check "git push -u origin HEAD && gh pr create --body x")
+assert_eq deny "$(decision "$out")"
+git -C "$REPO" switch -q feat/x
+
+it "pre-pr-create: --dry-run、-n、--delete、--tags の git push は push 済みとみなさない"
+git -C "$REPO" switch -q feat/no-upstream
+for p in 'git push --dry-run' 'git push -n origin HEAD' 'git push --delete origin x' 'git push --tags'; do
+  out=$(run_hook pre-pr-create-check "$p && $GOOD_CMD")
+  assert_eq deny "$(decision "$out")"
+done
 git -C "$REPO" switch -q feat/x
 
 it "pre-pr-create: --head 指定時は現在ブランチの push 状態を見ない"
@@ -3449,6 +3466,48 @@ for cmd in $'python3 - <<\'END MSG\'\ncat > f <<\'END MSG\'\nx\nEND MSG\necho "$
   $'python3 - <<\'EOF\'\ncat > f <<\'EOF\'\nx\nEOF\ngit commit -F - <<\'END MSG\'\nm\nEND MSG\nEOF'; do
   out=$(run_hook block-nested-heredoc-same-delimiter "$cmd")
   assert_eq deny "$(decision "$out")"
+done
+
+# ===========================================================================
+# require-pipefail
+# ===========================================================================
+
+it "require-pipefail: 成否を判断するコマンドを pipefail なしで tail / head につなぐ形は deny する"
+for cmd in 'nix build .#x 2>&1 | tail -20' 'nix flake check | tail' 'cargo test 2>&1 | tail -5' \
+  'cargo clippy | head -50' '~/.claude/skills/language-checks/scripts/run-checks.sh -C wt | tail' \
+  'cd wt && cargo test 2>&1 | tail' 'cargo test | tee log | tail'; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+assert_contains "$(reason "$out")" "pipefail"
+
+it "require-pipefail: bash -c や ssh の文字列の中のビルドも、外側のパイプが tail / head なら deny する"
+for cmd in "bash -c 'cargo test' | tail" "ssh host cargo test | tail" "bash -c 'cd x && nix build .#y' 2>&1 | head -5"; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+
+it "require-pipefail: pipefail を設けた形と、対象外の形は通す"
+for cmd in 'set -o pipefail; cargo test 2>&1 | tail -5' "bash -o pipefail -c 'nix build .#x | tail'" \
+  'cargo test' 'cargo test > log 2>&1; tail log' 'git log | tail' 'cargo test | grep ok' 'echo x | cargo run'; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "require-pipefail: pipefail の語が文字列にあるだけの形は deny する"
+for cmd in 'cargo test 2>&1 | tail # pipefail' 'echo pipefail; cargo test | tail' 'cargo test --features pipefail | tail'; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+for cmd in 'set -eo pipefail; cargo test | tail' 'set -euo pipefail; cargo test | tail' "bash -o pipefail -c 'cargo test | tail'"; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "require-pipefail: -o <名前> を挟んだ set と、パスつきの bash でも pipefail を読む"
+for cmd in 'set -o errexit -o pipefail; cargo test | tail' '/bin/bash -o pipefail -c "cargo test | tail"'; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq allow "$(decision "$out")"
 done
 
 finish

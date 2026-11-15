@@ -197,6 +197,8 @@ pub struct Cmd {
     pub stdin_heredoc: Option<Heredoc>,
     /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`）
     pub writes: Vec<Arg>,
+    /// パイプラインの後ろの段のコマンドの名前（書いたまま。順に）。パイプの途中でなければ空
+    pub piped_into: Vec<String>,
 }
 
 /// ヒアドキュメント 1 つ
@@ -570,6 +572,7 @@ impl Shell {
             git,
             stdin_heredoc,
             writes,
+            piped_into: self.later_pipeline_stages(node),
         };
         let Some(source) = unwrapped.source else {
             return Some((vec![cmd], None));
@@ -603,6 +606,8 @@ impl Shell {
             // 外側の環境変数の変更は、中のコマンドにも効く（ディレクトリは target_dir が、外側の `env -C` を
             // 中の `cd` より前に当てる）
             c.env = cmd.env.iter().cloned().chain(c.env).collect();
+            // 文字列を実行するコマンドがパイプの途中なら、中のコマンドの終了コードもその後ろの段に隠れる
+            c.piped_into.extend(cmd.piped_into.iter().cloned());
             // 外側の taskset は、文字列で実行する中のコマンドにも効く。中に taskset があれば最も内側が効く
             if !c.wrappers.iter().any(|w| basename(w) == "taskset") {
                 c.pinned_to_one_cpu = cmd.pinned_to_one_cpu;
@@ -611,6 +616,44 @@ impl Shell {
         }
         cmds.insert(0, cmd);
         Some((cmds, Some(shell)))
+    }
+
+    /// `command` ノードがパイプラインの段なら、後ろの段のコマンドの名前
+    fn later_pipeline_stages(&self, node: Node) -> Vec<String> {
+        // tree-sitter-bash は `a && b 2>&1 | tail` を `(a && b) 2>&1 | tail` と読むので、リダイレクトと
+        // `&&` の連なりの最後のコマンドは、それらを包む段として読む
+        let mut stage = node;
+        while let Some(p) = stage.parent() {
+            let wraps = match p.kind() {
+                "redirected_statement" => true,
+                "list" => p.named_child(p.named_child_count() - 1) == Some(stage),
+                _ => false,
+            };
+            if !wraps {
+                break;
+            }
+            stage = p;
+        }
+        if !stage.parent().is_some_and(|p| p.kind() == "pipeline") {
+            return Vec::new();
+        }
+        let mut names = Vec::new();
+        let mut next = stage.next_named_sibling();
+        while let Some(n) = next {
+            let command = if n.kind() == "redirected_statement" {
+                n.child_by_field_name("body")
+            } else {
+                Some(n)
+            };
+            if let Some(name) = command
+                .filter(|c| c.kind() == "command")
+                .and_then(|c| c.child_by_field_name("name"))
+            {
+                names.push(self.text(name).to_string());
+            }
+            next = n.next_named_sibling();
+        }
+        names
     }
 
     /// ノードを引数として読む。クォートとバックスラッシュのエスケープを外し、展開は原文のまま残す
