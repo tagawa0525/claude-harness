@@ -143,3 +143,40 @@ fn a_github_remote_belongs_to_the_pr_flow() {
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("GitHub リモートがあります"));
 }
+
+#[test]
+fn a_tag_named_like_the_target_or_default_branch_stops_the_merge() {
+    for tag in ["feat/x", "main"] {
+        let repo = Repo::new();
+        repo.git(&["tag", tag]);
+        repo.git(&["switch", "-q", "-c", "feat/x"]);
+        repo.write("a.txt", "a\n");
+        repo.commit("feat: a");
+        let out = repo.run(&[]);
+        assert_eq!(out.status.code(), Some(1), "tag {tag}");
+        assert!(
+            text(&out.stderr).contains(&format!("タグ {tag}")),
+            "{}",
+            text(&out.stderr)
+        );
+        assert_eq!(text(&out.stdout), "");
+    }
+}
+
+#[test]
+fn a_failed_tag_lookup_stops_instead_of_passing_as_no_collision() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("a.txt", "a\n");
+    repo.commit("feat: a");
+    // 壊れた packed-refs は、loose のブランチは読めてもタグの検索（loose に無ければ packed を読む）だけを失敗させる
+    repo.write(".git/packed-refs", "garbage line\n");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("git show-ref で失敗"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(text(&out.stdout), "");
+}

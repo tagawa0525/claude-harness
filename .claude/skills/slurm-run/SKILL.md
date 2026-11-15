@@ -107,9 +107,13 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   コマンドが読む入力のファイル（TOML など）は、比べる 2 本それぞれで、そのジョブが走った
   worktree（`WorkDir`）とコミットの版を開き、中身が同じかを確かめる。名前やコマンドが同じでも、入力のファイルの中身は別でありうる。
   入力は `git show <コミット>:<worktree の直下からのパス>` で開く（コマンドの中のパスは
-  `WorkDir` からの相対で、`WorkDir` が worktree の下のディレクトリのこともある）。`dvc repro` のジョブは、ステージが読むものが `dvc.yaml` の
-  定義、`vars`、params、上流のステージなどに広がり、どこまで比べれば足りるかを決めていない。開いて比べたファイルを書き、
-  「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の issue #556）。`VERSION:` が hash でも、次のときは
+  `WorkDir` からの相対で、`WorkDir` が worktree の下のディレクトリのこともある）。`dvc repro` のジョブは、`dvc.yaml` の
+  ステージの定義の全体（`cmd`、`deps`、`params`、`vars`、`foreach`、`wdir`。inline の `vars` と暗黙に読まれる `params.yaml` を含む）と、
+  `cmd` が読むファイルの全部（`deps` に無い TOML やスクリプトも）を、2 本それぞれの版で開いて比べる。`deps`、`params`、ステージの
+  `vars` のパスはステージの `wdir`、トップレベルの `vars` のパスは `dvc.yaml` のディレクトリからの相対で、`..` を含むパスは
+  正規化してから `git show` に渡す（git は木のパスの途中の `..` を解かない）。比べたファイルを書き、
+  上流のステージの出力など比べていないものがあれば「dvc の入力の範囲は確かめていない」と添える（構造的な直しは nixfiles の
+  issue #556）。`VERSION:` が hash でも、次のときは
   走った版を決められないので「確かめていない」と書く（`--job` は判定しない）:
 
   - 入力がそのコミットに無い（git で無視される試行の置き場など）、ログの先頭に nix の `Git tree '…' is dirty` が出ている

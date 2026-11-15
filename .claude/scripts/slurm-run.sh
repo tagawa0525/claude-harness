@@ -29,7 +29,7 @@
 # 連絡先として、git のブランチ、投げた場所、投げた時点の HEAD のコミット、Claude Code のセッションの ID をジョブの
 # コメントに書く（squeue の %k。sacct では SubmitLine の --comment）。サブエージェントは親と同じセッションなので、
 # ブランチで見分ける。コミットは「commit=<短い hash>」で、コミットしていない変更（git が無視しない、まだ追加して
-# いないファイルを含む）があれば「commit=<短い hash>-dirty」（作業中の版で、そのコミットの中身とは違う）。git の外とコミットの無いリポジトリでは付けない。
+# いないファイルを含む）があれば「commit=<短い hash>-dirty」（作業中の版で、そのコミットの中身とは違う）。git の外とコミットの無いリポジトリでは付けない（git の中で調べられなければ、警告して付けずに投げる）。
 # 記録に書く結果の出した版を、ブランチが消えた後もジョブから引くため。
 #
 # ログは r995 の ~/github/slurm-logs/<name>-<job>.out。ジョブは投げたときのパスで r995 の上で走るので、
@@ -176,12 +176,30 @@ fi
 # まだ追加していない新しいファイル（ソース、入力）もコミットに無いので数える。git が無視するもの（試行の置き場、
 # ビルドの出力）は --porcelain に出ない。
 # --no-optional-locks: 同じ worktree で走っている git の操作と index のロックを取り合わない
-if commit=$(git rev-parse -q --verify --short HEAD 2>/dev/null); then
+# git の中でも、版を調べられなければ（index の破損、safe.directory の拒否など）印は付けずに投げる。印のための処理で
+# ジョブを止めない。黙って付けないと、付かない理由が分からないので、警告に出す。コミットの無いリポジトリは、
+# rev-parse -q が何も出さずに失敗するので警告しない
+git_err=$(mktemp)
+# メッセージの言語に依らず「git の外」を見分けるため LC_ALL=C で読む。外なら黙って付けず、外でない失敗は警告する
+inside=$(LC_ALL=C git rev-parse --is-inside-work-tree 2>"$git_err") && inside_status=0 || inside_status=$?
+if ((inside_status != 0)) && grep -q "not a git repository" "$git_err"; then
+  : # git の外
+elif ((inside_status != 0)); then
+  echo "WARN: commit= を付けません（git rev-parse --is-inside-work-tree が失敗）: $(head -n 1 "$git_err")" >&2
+elif [[ $inside != true ]]; then
+  echo "WARN: commit= を付けません（作業ツリーの外。bare リポジトリか .git の中）: $PWD" >&2
+elif commit=$(git rev-parse -q --verify --short HEAD 2>"$git_err"); then
   # --untracked-files=normal: 利用者の status.showUntrackedFiles の設定によらず、追加していないファイルを数える
-  changes=$(git --no-optional-locks status --porcelain --untracked-files=normal)
-  [[ -z $changes ]] || commit+=-dirty
-  contact+=" commit=$commit"
+  if changes=$(git --no-optional-locks status --porcelain --untracked-files=normal 2>"$git_err"); then
+    [[ -z $changes ]] || commit+=-dirty
+    contact+=" commit=$commit"
+  else
+    echo "WARN: commit= を付けません（git status が失敗）: $(head -n 1 "$git_err")" >&2
+  fi
+elif [[ -s $git_err ]]; then
+  echo "WARN: commit= を付けません（git rev-parse HEAD が失敗）: $(head -n 1 "$git_err")" >&2
 fi
+rm -f "$git_err"
 if [[ -n ${CLAUDE_CODE_SESSION_ID:-} ]]; then
   contact+=" claude=$CLAUDE_CODE_SESSION_ID"
 fi

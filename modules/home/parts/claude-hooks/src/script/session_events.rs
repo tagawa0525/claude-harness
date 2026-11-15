@@ -48,8 +48,11 @@ fn error(message: String) -> Fail {
     Fail(format!("ERROR: {message}"))
 }
 
-fn usage() -> Fail {
-    Fail(USAGE.to_string())
+/// 引数の誤り。`ERROR:` の行で始め、使い方は次の行に添える
+fn usage(detail: &str) -> Fail {
+    Fail(format!(
+        "ERROR: 引数が正しくありません（{detail}）\n{USAGE}"
+    ))
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -110,23 +113,32 @@ fn run(args: &[String]) -> Result<String, Fail> {
     while i < args.len() {
         let arg = args[i].as_str();
         if arg == "--since" || arg == "--until" {
-            let value = args.get(i + 1).ok_or_else(usage)?;
-            let t = Some(to_utc(arg, value)?);
-            if arg == "--since" {
-                range.since = t;
+            let slot = if arg == "--since" {
+                &mut range.since
             } else {
-                range.until = t;
+                &mut range.until
+            };
+            if slot.is_some() {
+                return Err(error(format!("{arg} が 2 度指定されています")));
             }
+            let value = args
+                .get(i + 1)
+                .ok_or_else(|| usage(&format!("{arg} に値がありません")))?;
+            *slot = Some(to_utc(arg, value)?);
             i += 2;
+        } else if arg == "--" {
+            // `--` 以降は、- で始まるものも TRANSCRIPT として読む
+            rest.extend(args[i + 1..].iter().map(String::as_str));
+            break;
         } else if arg.starts_with("--") {
-            return Err(usage());
+            return Err(usage(&format!("知らないオプション {arg}")));
         } else {
             rest.push(arg);
             i += 1;
         }
     }
     if rest.len() > 1 {
-        return Err(usage());
+        return Err(usage("TRANSCRIPT は 1 つだけ渡せます"));
     }
     if let (Some(s), Some(u)) = (&range.since, &range.until)
         && s >= u
@@ -178,6 +190,11 @@ fn run(args: &[String]) -> Result<String, Fail> {
         if let Some(bad) = all().find_map(|f| f.bad_time.clone()) {
             return Err(Fail(format!(
                 "ERROR: {bad}\nERROR: 区間で絞れませんでした（上のエラーを参照）: {transcript}"
+            )));
+        }
+        if all().all(|f| f.stamped == 0) {
+            return Err(error(format!(
+                "timestamp を持つ行がありません（記録の形が変わったかもしれません）: {transcript}"
             )));
         }
         if !all().any(|f| f.in_range) {
@@ -254,6 +271,8 @@ struct FileEvents {
     /// user の行の tool_result（api-request-blob の行にもあるので数えない）
     results: usize,
     in_range: bool,
+    /// timestamp のキーを持つ行
+    stamped: usize,
     /// 区間を指定したときの、形の違う最初の timestamp
     bad_time: Option<String>,
     failures: Vec<(Kind, String)>,
@@ -281,6 +300,9 @@ fn read_file(path: &str, bytes: &[u8], is_main: bool, range: &Range) -> FileEven
             )
         };
         count_shape(&mut f, &line, is_main);
+        if line.get("timestamp").is_some() {
+            f.stamped += 1;
+        }
         if range.given()
             && f.bad_time.is_none()
             && let Some(ts) = line.get("timestamp")

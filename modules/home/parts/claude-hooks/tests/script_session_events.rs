@@ -805,3 +805,52 @@ fn a_missing_option_value_an_unknown_option_or_two_transcripts_show_the_usage() 
         );
     }
 }
+
+#[test]
+fn an_argument_mistake_is_reported_with_an_error_line() {
+    let home = Home::new();
+    let main = home.range_session();
+    for args in [
+        vec![main.as_str(), "--since"],
+        vec!["--from", "2026-11-06T00:00Z", &main],
+        vec!["--since=2026-11-06T00:00Z", &main],
+        vec![&main, &main],
+    ] {
+        assert_fails(&home.run(&args), "ERROR: 引数が正しくありません");
+    }
+}
+
+#[test]
+fn a_bound_given_twice_fails() {
+    let home = Home::new();
+    let main = home.range_session();
+    for name in ["--since", "--until"] {
+        assert_fails(
+            &home.run(&[name, "2026-11-06T00:00Z", name, "2026-11-07T00:00Z", &main]),
+            &format!("ERROR: {name} が 2 度指定されています"),
+        );
+    }
+}
+
+#[test]
+fn a_transcript_without_any_timestamp_fails_as_a_changed_format_under_a_range() {
+    let home = Home::new();
+    let path = home.write_lines(
+        &home.root.join("no-timestamp.jsonl"),
+        &[user_text("発言"), tool_error("Error: x")],
+    );
+    assert_fails(
+        &home.run(&["--since", "2026-11-06T00:00Z", &path]),
+        "ERROR: timestamp を持つ行がありません（記録の形が変わったかもしれません）",
+    );
+}
+
+#[test]
+fn after_double_dash_a_path_starting_with_a_dash_is_a_transcript() {
+    let home = Home::new();
+    let main = home.range_session();
+    let dir = Path::new(&main).parent().unwrap().to_path_buf();
+    std::fs::copy(&main, dir.join("-s.jsonl")).unwrap();
+    let out = stdout(&home.run_in(&["--", "-s.jsonl"], None, Some(&dir)));
+    assert_eq!(lines_with(&out, "TRANSCRIPT: "), ["TRANSCRIPT: ./-s.jsonl"]);
+}

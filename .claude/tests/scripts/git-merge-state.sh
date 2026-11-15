@@ -296,16 +296,16 @@ out=$("$SCRIPT" feat/x)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: ADR-0004" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
-it "git-merge-state: ブランチと同じ名前のタグがあっても、ブランチの先端を読む"
+it "git-merge-state: ブランチと同じ名前のタグがあれば、短い名前の操作がタグを指すので ERROR で止める"
 REPO="$TEST_ROOT/p9"
 adr_repo "$REPO"
 git -C "$REPO" tag feat/x
 commit_refs "$REPO" "feat: a" "ADR-0001"
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
-out=$("$SCRIPT" feat/x 2>/dev/null)
-assert_eq 0 $?
-assert_eq "PROPOSED_ADRS: ADR-0001" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
+out=$("$SCRIPT" feat/x 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: ブランチ feat/x と同じ名前のタグ feat/x があります"
 
 it "git-merge-state: feat / fix の Refs: に ADR が無ければ、design-records が PATH に無くても none を出す"
 REPO="$TEST_ROOT/p11"
@@ -316,7 +316,7 @@ out=$(cd "$REPO" && PATH="$NODR" "$SCRIPT" feat/x 2>&1)
 assert_eq 0 $?
 assert_eq "PROPOSED_ADRS: none" "$(grep '^PROPOSED_ADRS:' <<<"$out")"
 
-it "git-merge-state: 既定ブランチと同じ名前のタグがあっても、マージ済みのブランチを STACKED_ON に出さない"
+it "git-merge-state: 既定ブランチと同じ名前のタグがあれば、ERROR で止める"
 REPO="$TEST_ROOT/s8"
 make_repo "$REPO"
 git -C "$REPO" tag main
@@ -328,10 +328,8 @@ git -C "$REPO" switch -q -c feat/b
 commit_file "$REPO" b.txt "feat: b"
 git -C "$REPO" switch -q main
 out=$(cd "$REPO" && "$SCRIPT" feat/b 2>&1)
-assert_eq 0 $?
-assert_contains "$out" "STACKED_ON: none"
-assert_contains "$out" "COMMITS: 1"
-assert_not_contains "$out" "ambiguous"
+assert_eq 1 $?
+assert_contains "$out" "ERROR: ブランチ main と同じ名前のタグ main があります"
 
 it "git-merge-state: docs/adr がディレクトリでなくファイルなら、ADR の無いリポジトリとして扱う"
 REPO="$TEST_ROOT/p10"

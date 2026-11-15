@@ -1,6 +1,7 @@
 //! `git-merge-state.sh [branch]`: /git-merge の事前の確認（対象の検証と、マージの前に要る状態の収集）。branch を省くと
 //! 今のブランチを対象にする。次のときは ERROR を出して 1 で終える（マージに進まない）:
 //! - 対象がローカルに無い、または既定のブランチ（main / master）自身
+//! - 対象か既定のブランチと同じ名前のタグがある（短い名前の git の操作がタグを指す）
 //! - GitHub のリモートがある（/gh-pr-create と /gh-pr-merge の流れで、ここでは扱わない）
 //! - 対象か既定のブランチの worktree に未コミットの変更がある
 //! - git の問い合わせが失敗した（ERROR の行を出す。欠けた行を「無い」と読まれないように）
@@ -88,6 +89,34 @@ pub fn main(args: &[String]) -> i32 {
     if target == "main" || target == "master" {
         eprintln!("ERROR: 既定ブランチ {target} 自身はマージの対象にしません");
         return 1;
+    }
+    // スキルの後の手順（rebase、merge、range-diff）は短い名前を使う。同じ名前のタグがあると、git は短い名前を
+    // タグとして解き、merge が「Already up to date」で何もしないまま照合も通る。手順を refs/heads/ 付きにするより、
+    // 衝突を先に止める方が、手順の書き方に依らない
+    for branch in default.into_iter().chain([target.as_str()]) {
+        // show-ref の終了 1 は「無い」。ほかの失敗（壊れた packed-refs など）を無いと読むと、衝突の確認を迂回する
+        let Some(lookup) = crate::git::run(
+            dir,
+            &[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/tags/{branch}"),
+            ],
+            None,
+        ) else {
+            return failed("git show-ref");
+        };
+        match lookup.status.code() {
+            Some(1) => {}
+            Some(0) => {
+                eprintln!(
+                    "ERROR: ブランチ {branch} と同じ名前のタグ {branch} があります。短い名前の git の操作がタグを指すので、タグを消すか名前を変えてください（git tag -d {branch}）"
+                );
+                return 1;
+            }
+            _ => return failed("git show-ref"),
+        }
     }
     let Some(remotes) = git(dir, &["remote", "-v"]) else {
         return failed("git remote -v");
