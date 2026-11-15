@@ -3460,4 +3460,29 @@ for cmd in $'python3 - <<\'END MSG\'\ncat > f <<\'END MSG\'\nx\nEND MSG\necho "$
   assert_eq deny "$(decision "$out")"
 done
 
+# ===========================================================================
+# require-pipefail
+# ===========================================================================
+
+it "require-pipefail: 成否を判断するコマンドを pipefail なしで tail / head につなぐ形は deny する"
+# RED: 実装するまで RUN_RED=1 のときだけ実行する
+if [[ -n "${RUN_RED:-}" ]]; then
+  for cmd in 'nix build .#x 2>&1 | tail -20' 'nix flake check | tail' 'cargo test 2>&1 | tail -5' \
+    'cargo clippy | head -50' '~/.claude/skills/language-checks/scripts/run-checks.sh -C wt | tail' \
+    'cd wt && cargo test 2>&1 | tail' 'cargo test | tee log | tail'; do
+    out=$(run_hook require-pipefail "$cmd")
+    assert_eq deny "$(decision "$out")"
+  done
+  assert_contains "$(reason "$out")" "pipefail"
+fi
+
+it "require-pipefail: pipefail を設けた形と、対象外の形は通す"
+if [[ -n "${RUN_RED:-}" ]]; then
+  for cmd in 'set -o pipefail; cargo test 2>&1 | tail -5' "bash -o pipefail -c 'nix build .#x | tail'" \
+    'cargo test' 'cargo test > log 2>&1; tail log' 'git log | tail' 'cargo test | grep ok' 'echo x | cargo run'; do
+    out=$(run_hook require-pipefail "$cmd")
+    assert_eq allow "$(decision "$out")"
+  done
+fi
+
 finish
