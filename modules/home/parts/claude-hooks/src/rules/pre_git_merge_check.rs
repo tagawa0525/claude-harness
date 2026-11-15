@@ -228,16 +228,19 @@ pub(super) fn merge_source(dir: &Path, target: &str) -> Option<String> {
     if is_remote {
         return None;
     }
-    git::git(
-        dir,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{spec}^{{commit}}"),
-        ],
+    commit_ish(dir, spec).map(|_| spec.to_string())
+}
+
+/// 指定（SHA、`feat/x^0`、タグ、`:/文字列`）が指すコミットの hash。コミットかタグのオブジェクトだけを認め、
+/// 解決できなければ None。`^{commit}` を付けて解くと `:/f^{commit}` が検索の文字列の一部になるので、
+/// 付けずに解いてオブジェクトの種類で絞る。`$(…)` の展開を含む指定は値が分からないので、確かめない
+pub(super) fn commit_ish(dir: &Path, spec: &str) -> Option<String> {
+    let id = git::git(dir, &["rev-parse", "--verify", "--quiet", spec])?;
+    matches!(
+        git::git(dir, &["cat-file", "-t", &id]).as_deref(),
+        Some("commit" | "tag")
     )
-    .map(|_| spec.to_string())
+    .then_some(id)
 }
 
 impl Rule for PreGitMergeCheck {

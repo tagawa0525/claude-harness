@@ -13,7 +13,7 @@
 //! リモート追跡ブランチの取り込み、中断・再開は対象外）。エスケープはない（修正方法は理由に示す）
 
 use super::Rule;
-use super::pre_git_merge_check::{default_branch_merges, merge_source};
+use super::pre_git_merge_check::{commit_ish, default_branch_merges, merge_source};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -30,15 +30,10 @@ fn worktrees_of(dir: &Path, source: &str) -> Vec<(PathBuf, String)> {
     let Some(list) = git::git(dir, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
-    let Some(commit) = git::git(
-        dir,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{source}^{{commit}}"),
-        ],
-    ) else {
+    // 注釈つきタグのオブジェクトはコミットに剥がして、worktree の HEAD と比べる
+    let Some(commit) = commit_ish(dir, source)
+        .and_then(|id| git::git(dir, &["rev-parse", "--verify", &format!("{id}^{{commit}}")]))
+    else {
         return Vec::new();
     };
     let mut found = Vec::new();

@@ -2246,13 +2246,10 @@ git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 
 it "3 つのマージのルールは :/文字列 の指定（コミットの検索）も確かめる"
-# RED: 実装までは RUN_RED=1 のときだけ流す
-if [[ -n "${RUN_RED:-}" ]]; then
-  out=$(run_hook pre-git-merge-check "git merge --no-ff ':/b and c' -m 'Merge: x'")
-  assert_eq deny "$(decision "$out")"
-  out=$(run_hook check-merge-review "git merge --no-ff ':/b and c' -m 'Merge: x'")
-  assert_eq deny "$(decision "$out")"
-fi
+out=$(run_hook pre-git-merge-check "git merge --no-ff ':/b and c' -m 'Merge: x'")
+assert_eq deny "$(decision "$out")"
+out=$(run_hook check-merge-review "git merge --no-ff ':/b and c' -m 'Merge: x'")
+assert_eq deny "$(decision "$out")"
 
 it "pre-git-merge-check / check-merge-review: タグの指定でも確かめる"
 git tag tag-two feat/two
@@ -2450,7 +2447,7 @@ assert_contains "$(reason "$out")" "git rebase main"
 
 it "guard-git-merge: ブランチ名でなくコミットの指定（SHA、feat/behind^0）でも、遅れていれば deny"
 behind_sha=$(git rev-parse feat/behind)
-for target in "$behind_sha" 'feat/behind^0' 'feat/behind~0'; do
+for target in "$behind_sha" 'feat/behind^0' 'feat/behind~0' "':/feat: behind'"; do
   out=$(run_hook guard-git-merge "git merge --no-ff $target -m 'Merge: behind'")
   assert_eq deny "$(decision "$out")"
 done
