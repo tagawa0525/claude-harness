@@ -310,36 +310,12 @@ impl Rule for CheckCommitMessage {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_util::TempDir;
+    #[cfg(unix)]
+    use super::super::test_util::{git, git_init, global_hooks, write_fake_command};
     use super::*;
     #[cfg(unix)]
     use crate::output::{NOTICES_LOCK as NOTICES, take_notices};
-    use std::path::PathBuf;
-    #[cfg(unix)]
-    use std::process::Command;
-
-    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）。テストは並行に走るので、同じ tag でも
-    /// 呼ぶたびに別のディレクトリにする
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> TempDir {
-            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "claude-hooks-commit-message-{tag}-{}-{seq}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     /// ja-terms の代わり。`commit-msg` とメッセージのファイルを受け、隣の `seen` にコピーする。件名（最初の行）に
     /// 「長すぎ」があれば commit-msg の形の ❌ を出して 1 で、「理由無し」なら何も出さずに 1 で、「失敗」があれば 2 で終わる（規則の実物は
@@ -366,31 +342,14 @@ exit 0
     #[cfg(unix)]
     impl Fake {
         fn new(tag: &str) -> Fake {
-            use std::os::unix::fs::PermissionsExt;
             let dir = TempDir::new(tag);
             git_init(&dir.0);
             let path = dir.0.join("ja-terms");
-            std::fs::write(&path, FAKE_CHECK).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            // 並行するテストが子を fork した直後は、書き込みに開いた fd が exec までその子に残り、実行が
-            // ETXTBSY（Text file busy）で失敗する。引数 2 つ（偽の検査は 3 で終わる）で起動できるまで待つ
-            for _ in 0..100 {
-                match Command::new(&path).args(["probe", "x"]).output() {
-                    Err(e) if e.raw_os_error() == Some(26) => {
-                        std::thread::sleep(std::time::Duration::from_millis(10))
-                    }
-                    _ => {
-                        return Fake {
-                            path: path.to_string_lossy().into_owned(),
-                            dir,
-                        };
-                    }
-                }
+            write_fake_command(&path, FAKE_CHECK, &["probe", "x"]);
+            Fake {
+                path: path.to_string_lossy().into_owned(),
+                dir,
             }
-            panic!(
-                "偽の検査が 1 秒たっても Text file busy のまま: {}",
-                path.display()
-            );
         }
 
         /// リポジトリ（偽の検査の隣）で検査する
@@ -402,32 +361,6 @@ exit 0
         fn seen(&self) -> Option<String> {
             std::fs::read_to_string(self.dir.0.join("seen")).ok()
         }
-    }
-
-    /// テストのグローバルの core.hooksPath。git_init のリポジトリはこれをローカルに持つ
-    #[cfg(unix)]
-    const GLOBAL_HOOKS: &str = "/nonexistent/global-hooks";
-
-    #[cfg(unix)]
-    fn global_hooks(_: &Path) -> Option<String> {
-        Some(GLOBAL_HOOKS.to_string())
-    }
-
-    #[cfg(unix)]
-    fn git(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok, "git {args:?}");
-    }
-
-    #[cfg(unix)]
-    fn git_init(dir: &Path) {
-        git(dir, &["init", "-q"]);
-        git(dir, &["config", "core.hooksPath", GLOBAL_HOOKS]);
     }
 
     #[cfg(unix)]

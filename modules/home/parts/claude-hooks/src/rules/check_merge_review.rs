@@ -455,32 +455,10 @@ impl Rule for CheckMergeReview {
 #[cfg(test)]
 mod tests {
     use super::super::scratchpad_repo::fixture::sh;
+    use super::super::test_util::TempDir;
     use super::*;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-
-    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）。テストは並行に走るので、呼ぶたびに別のディレクトリにする
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> TempDir {
-            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "claude-hooks-merge-review-{tag}-{}-{seq}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn splits_a_diff_into_one_section_per_file() {
