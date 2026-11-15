@@ -214,7 +214,7 @@ pub(super) fn local_branch_ref(dir: &Path, target: &str) -> Option<String> {
 }
 
 /// マージ元の rev。ローカルのブランチは完全な ref、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は
-/// 指定のまま返す。リモート追跡ブランチやタグ（ref だが refs/heads/ でない）と、解決できない名前は None。
+/// タグも指定のまま返す。リモート追跡ブランチと、解決できない名前は None。
 /// ブランチ名だけを見ると、`git merge --no-ff <SHA>` が、rebase 済みの確認、ADR の数、本文のレビューの記録の
 /// どれにも掛からない。3 つのルール（guard-git-merge、pre-git-merge-check、check-merge-review）が共有する
 pub(super) fn merge_source(dir: &Path, target: &str) -> Option<String> {
@@ -222,9 +222,10 @@ pub(super) fn merge_source(dir: &Path, target: &str) -> Option<String> {
         return Some(full);
     }
     let spec = if target == "-" { "@{-1}" } else { target };
-    let is_ref =
-        git::git(dir, &["rev-parse", "--symbolic-full-name", spec]).is_some_and(|f| !f.is_empty());
-    if is_ref {
+    // リモート追跡ブランチの取り込みは別々にマージ済みのトピックの集まりなので対象外。タグは指定のまま確かめる
+    let is_remote = git::git(dir, &["rev-parse", "--symbolic-full-name", spec])
+        .is_some_and(|f| f.starts_with("refs/remotes/"));
+    if is_remote {
         return None;
     }
     git::git(

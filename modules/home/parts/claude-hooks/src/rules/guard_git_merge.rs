@@ -25,10 +25,12 @@ const SHOWN_CHANGES: usize = 5;
 
 /// マージ元をチェックアウトしている worktree と、そのブランチ名。ブランチの ref（refs/heads/…）はそのブランチの
 /// worktree、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は、HEAD がそのコミットで、ブランチをチェックアウト
-/// している worktree（detached は後片付けの対象でない）。見つからなければ None
-fn worktree_of(dir: &Path, source: &str) -> Option<(PathBuf, String)> {
-    let list = git::git(dir, &["worktree", "list", "--porcelain"])?;
-    let commit = git::git(
+/// している worktree（detached は後片付けの対象でない）。全部を返す（無ければ空）
+fn worktrees_of(dir: &Path, source: &str) -> Vec<(PathBuf, String)> {
+    let Some(list) = git::git(dir, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    let Some(commit) = git::git(
         dir,
         &[
             "rev-parse",
@@ -36,7 +38,10 @@ fn worktree_of(dir: &Path, source: &str) -> Option<(PathBuf, String)> {
             "--quiet",
             &format!("{source}^{{commit}}"),
         ],
-    )?;
+    ) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
     let by_ref = source.starts_with("refs/heads/");
     for block in list.split("\n\n") {
         let (mut path, mut head, mut branch) = (None, None, None);
@@ -59,10 +64,10 @@ fn worktree_of(dir: &Path, source: &str) -> Option<(PathBuf, String)> {
         };
         if hit {
             let name = branch.strip_prefix("refs/heads/").unwrap_or(branch);
-            return Some((path, name.to_string()));
+            found.push((path, name.to_string()));
         }
     }
-    None
+    found
 }
 
 /// worktree の未コミットの変更と未追跡のファイルを理由にした deny（無ければ None）。
@@ -119,14 +124,14 @@ impl Rule for GuardGitMerge {
                     git::git(&merge.dir, &["merge-base", "--is-ancestor", default, &full])
                         .is_some();
                 let branch = full.strip_prefix("refs/heads/").unwrap_or(name);
-                if let Some(reason) = worktree_of(&merge.dir, &full)
-                    .and_then(|(wt, wt_branch)| dirty_reason(&wt_branch, &wt))
-                {
-                    out.push(Finding::Deny(reason));
+                for (wt, wt_branch) in worktrees_of(&merge.dir, &full) {
+                    if let Some(reason) = dirty_reason(&wt_branch, &wt) {
+                        out.push(Finding::Deny(reason));
+                    }
                 }
                 if !up_to_date {
                     out.push(Finding::Deny(format!(
-                        "{branch} は {default} より遅れています（{default} にあるコミットが入っていません）。git switch {branch} && git rebase {default} で {default} の上に載せてから、チェックをやり直してマージしてください"
+                        "{branch} は {default} より遅れています（{default} にあるコミットが入っていません）。{branch} を {default} の上に rebase（ブランチなら git switch {branch} && git rebase {default}）してから、チェックをやり直してマージしてください"
                     )));
                 }
             }
