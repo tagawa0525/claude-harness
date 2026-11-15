@@ -32,6 +32,11 @@ exit "${FAKE_JOB_EXIT:-0}"
 EOF
 cat >"$FAKE_BIN/scontrol" <<'EOF'
 #!/usr/bin/env bash
+# show job は終わったジョブの JobState を返す（FAKE_SHOW_EXIT で失敗させられる）
+if [[ $1 == show ]]; then
+  echo "JobId=42 JobName=x JobState=${FAKE_SCONTROL_STATE:-COMPLETED} Reason=None"
+  exit "${FAKE_SHOW_EXIT:-0}"
+fi
 echo "$*" >>"$TEST_ROOT/scontrol.calls"
 # FAKE_TOP_FAILS: 最初のその回数だけ失敗する（列の 1 本が走り始めて scontrol top が拒む状態）
 if [[ -n ${FAKE_TOP_FAILS:-} ]] && (($(wc -l <"$TEST_ROOT/scontrol.calls") <= FAKE_TOP_FAILS)); then
@@ -61,7 +66,7 @@ echo "$n" >"$TEST_ROOT/sacct.count"
 part=main
 grep -qx -- '--partition=timed' "$TEST_ROOT/sbatch.args" && part=timed
 state=${FAKE_STATE:-COMPLETED}
-((n > ${FAKE_SACCT_EMPTY:-0} + ${FAKE_SACCT_RUNNING:-0})) || state=RUNNING
+((n > ${FAKE_SACCT_EMPTY:-0} + ${FAKE_SACCT_RUNNING:-0})) || state=${FAKE_SACCT_WAIT_STATE:-RUNNING}
 echo "${FAKE_SACCT_ELAPSED:-00:12:34}|${FAKE_SACCT_LIMIT:-00:30:00}|${FAKE_SACCT_PARTITION-$part}|${FAKE_SACCT_SUSPENDED-00:00:00}|$state"
 EOF2
 cat >"$FAKE_BIN/hostname" <<'EOF'
@@ -583,5 +588,40 @@ it "slurm-run: sacct の Partition か Suspended が空なら、確かめられ�
 out=$(FAKE_SACCT_PARTITION= FAKE_SACCT_SUSPENDED= "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
 assert_contains "$out" "partition=unknown"
 assert_contains "$out" "suspended=unknown"
+
+# RED: 実装まで skip（SLURM_RUN_RED=1 で実行する）
+if [[ -n ${SLURM_RUN_RED:-} ]]; then
+  cd "$HOME/github/proj" || exit 1
+
+  it "slurm-run: sacct に記録が届かなくても、scontrol の JobState で終わりの State を確かめ、CANCELLED なら 0 以外で終わる"
+  out=$(SLURM_RUN_SACCT_TRIES=2 FAKE_SACCT_EMPTY=99 FAKE_SCONTROL_STATE=CANCELLED "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'sleep 999' 2>&1)
+  assert_ne 0 $?
+  assert_contains "$out" "EXIT: 1 (State=CANCELLED)"
+  assert_not_contains "$out" "TIME:"
+
+  it "slurm-run: sacct に記録が届かず scontrol が COMPLETED なら、警告して 0 で終わる"
+  out=$(SLURM_RUN_SACCT_TRIES=2 FAKE_SACCT_EMPTY=99 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+  assert_eq 0 $?
+  assert_contains "$out" "WARN:"
+  assert_not_contains "$out" "TIME:"
+
+  it "slurm-run: sacct も scontrol も終わりの State を返さなければ、成功扱いにせず 0 以外で終わる"
+  out=$(SLURM_RUN_SACCT_TRIES=2 FAKE_SACCT_EXIT=1 FAKE_SHOW_EXIT=1 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+  assert_ne 0 $?
+  assert_contains "$out" "WARN:"
+  assert_contains "$out" "EXIT: 1 (State=unknown)"
+  out=$(SLURM_RUN_SACCT_TRIES=2 FAKE_SACCT_EXIT=1 FAKE_SCONTROL_STATE=RUNNING "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+  assert_ne 0 $?
+
+  it "slurm-run: State を確かめられなくても、ジョブが 0 以外で終わっていれば、その終了コードで終わる"
+  out=$(SLURM_RUN_SACCT_TRIES=2 FAKE_SACCT_EXIT=1 FAKE_SHOW_EXIT=1 FAKE_JOB_EXIT=3 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'false' 2>&1)
+  assert_eq 3 $?
+
+  it "slurm-run: CONFIGURING など終わりでない State は、終わりの State が届くまで待つ"
+  out=$(FAKE_SACCT_WAIT_STATE=CONFIGURING FAKE_SACCT_RUNNING=2 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+  assert_contains "$out" "TIME: job=42 elapsed=00:12:34"
+  assert_contains "$out" "state=COMPLETED"
+  assert_eq 3 "$(cat "$TEST_ROOT/sacct.count")"
+fi
 
 finish
