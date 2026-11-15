@@ -43,7 +43,7 @@
 #    止められていたときに付く。state=<終わったときの State>）
 #   EXIT: <終了コード>（COMPLETED 以外で終わったときは、後ろに (State=<State>) を付ける）
 # 終了コードはジョブの終了コード。ジョブが COMPLETED でなく（CANCELLED、TIMEOUT など）、sbatch が 0 を返したときは 1。
-# 終わった時間と State は sacct から読む。記録が slurmdbd に届くまで SLURM_RUN_SACCT_TRIES 回（既定 10）、
+# 終わった時間と State は sacct から読む（State だけは、読めなければ scontrol。どちらも確かめられなければ 1）。記録が slurmdbd に届くまで SLURM_RUN_SACCT_TRIES 回（既定 10）、
 # SLURM_RUN_SACCT_INTERVAL 秒（既定 1）おきに待ち、読めなければ警告して TIME 行を出さない。
 
 set -euo pipefail
@@ -256,26 +256,43 @@ wait "$pid" || status=$?
 # 終わったジョブの記録（終了の State、実際の時間、見積もり、パーティション、止められていた時間）は sacct から読む。
 # scontrol は slurmctld が覚えている MinJobAge（300 秒）の間しか読めない。slurmctld から slurmdbd へ記録が届くまで
 # 遅れがあり、その間は sacct が空か RUNNING などを返すので、終わりの State が見えるまで待つ。-X は割り当ての行だけ
-# （バッチのステップを除く）。ここで失敗しても、ジョブの終了コードは返す
+# （バッチのステップを除く）。時間を読めなくても、ジョブの終了コード（取り消しなどは 1）は返す
+# 終わった State だけを列挙する。それ以外（PENDING、CONFIGURING、RUNNING、SUSPENDED、COMPLETING、REQUEUED など
+# 今後増える非終端の State を含む）は、終わりが届くまで待つ。先頭の語だけで見る（「CANCELLED by 1000」）
+is_final_state() {
+  case "${1%% *}" in
+    COMPLETED | FAILED | CANCELLED | TIMEOUT | NODE_FAIL | OUT_OF_MEMORY | PREEMPTED | BOOT_FAIL | DEADLINE | REVOKED | SPECIAL_EXIT | STOPPED) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 tries=${SLURM_RUN_SACCT_TRIES:-10}
 interval=${SLURM_RUN_SACCT_INTERVAL:-1}
 record=""
 for ((attempt = 1; attempt <= tries; attempt++)); do
   if row=$(sacct -j "$job" -X -n -P -o Elapsed,Timelimit,Partition,Suspended,State 2>/dev/null) && [[ -n $row ]]; then
-    case "${row##*|}" in
-      PENDING | RUNNING | SUSPENDED | COMPLETING | REQUEUED | RESIZING | REQUEUE_HOLD | REQUEUE_FED) ;;
-      *)
-        record=$row
-        break
-        ;;
-    esac
+    if is_final_state "${row##*|}"; then
+      record=$row
+      break
+    fi
   fi
   ((attempt == tries)) || sleep "$interval"
 done
 
 state=""
 if [[ -z $record ]]; then
-  echo "WARN: ジョブ $job の記録が sacct から読めなかった（$tries 回。実際の時間と終了の State を確かめられない）" >&2
+  echo "WARN: ジョブ $job の記録が sacct から読めなかった（$tries 回。実際の時間は確かめられない）" >&2
+  # 終わりの State を確かめられないまま 0 を返すと、取り消されたジョブでも && の次が走る。終わった直後なら slurmctld が
+  # 覚えている（MinJobAge）ので、scontrol の JobState で確かめる。これも読めなければ、成功とは言えないので失敗にする
+  if info=$(scontrol show job "$job" 2>/dev/null) && [[ $info =~ JobState=([^[:space:]]+) ]] && is_final_state "${BASH_REMATCH[1]}"; then
+    state=${BASH_REMATCH[1]}
+  else
+    echo "WARN: ジョブ $job の終わりの State を sacct からも scontrol からも確かめられなかった" >&2
+    state=unknown
+  fi
+  if [[ $state != COMPLETED && $status -eq 0 ]]; then
+    status=1
+  fi
 else
   IFS='|' read -r elapsed limit partition suspended state <<<"$record"
   # sbatch --wait は、scancel で取り消したジョブでも 0 を返しうる。COMPLETED 以外（CANCELLED、TIMEOUT、NODE_FAIL など）で
