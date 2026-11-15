@@ -54,6 +54,48 @@ pub fn executable(path: &Path) {
     let _ = path;
 }
 
+/// 実行するファイルを書いて実行の権限を付け、起動できるまで待つ。並行するテストが fork した子が、書き込みに開いた
+/// fd を exec まで持つと、書いた直後の起動が ETXTBSY（Text file busy）で失敗しうる（Linux）。
+///
+/// 待ち方は、実際に起動を試して ETXTBSY（ErrorKind::ExecutableFileBusy）が消えるまで繰り返す（check_commit_message.rs のテストと同じ）。
+/// 起動の試しで hook の副作用（マーカーの追記、呼び出しの記録）を起こさないために、次の作りにする。
+/// - shebang のあるスクリプトは、1 行目の後ろに `CLAUDE_HOOKS_TEST_PROBE` が設定されていたら exit 0 する行を足して書く。
+///   試しはこの変数つきで起動するので、本文は走らない（試しの後の本物の起動は変数が無く、本文が走る）
+/// - shebang の無いファイルは、書いた内容に足さない。カーネルは ETXTBSY を shebang や形式の判定より先に返すので、
+///   busy でなければ ENOEXEC で失敗し、何も走らない
+///
+/// 代わりの案: /proc で書き込みに開いたファイルを探す方式は Linux 専用で、他の OS で待てない。短い固定の sleep は
+/// 待ちきれないことがある。どちらも採らない
+#[allow(dead_code)]
+pub fn write_executable(path: &Path, content: impl AsRef<str>) {
+    let content = content.as_ref();
+    let content = match content.split_once('\n') {
+        Some((first, rest)) if first.starts_with("#!") => {
+            format!("{first}\n[ -z \"$CLAUDE_HOOKS_TEST_PROBE\" ] || exit 0\n{rest}")
+        }
+        _ => content.to_string(),
+    };
+    std::fs::write(path, content).unwrap();
+    executable(path);
+    #[cfg(unix)]
+    for _ in 0..200 {
+        match Command::new(path)
+            .env("CLAUDE_HOOKS_TEST_PROBE", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            _ => return,
+        }
+    }
+    #[cfg(unix)]
+    panic!("{} が 2 秒たっても起動できない（ETXTBSY）", path.display());
+}
+
 /// 呼んだ側のリポジトリ（run-checks.sh を実行する git の hook の中の GIT_DIR、GIT_INDEX_FILE など）を見せない。
 /// 残すと、テストの git が外のリポジトリに当たる
 #[allow(dead_code)]

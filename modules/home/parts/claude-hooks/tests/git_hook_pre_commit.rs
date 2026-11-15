@@ -40,15 +40,13 @@ impl Repo {
         std::fs::create_dir_all(&hooks).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
         let hook = hooks.join("pre-commit");
-        std::fs::write(
+        write_executable(
             &hook,
             format!(
                 "#!/bin/sh\nexec \"{}\" git-hook pre-commit \"$@\"\n",
                 sh_path(Path::new(env!("CARGO_BIN_EXE_claude-hooks")))
             ),
-        )
-        .unwrap();
-        executable(&hook);
+        );
         std::fs::write(
             root.join("gitconfig"),
             format!("[core]\n\thooksPath = {}\n", sh_path(&hooks)),
@@ -273,12 +271,10 @@ fn a_local_pre_commit_replaces_the_default_checks_but_not_the_secret_scan() {
     let hooks = repo.work().join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let local = hooks.join("pre-commit");
-    std::fs::write(
+    write_executable(
         &local,
         format!("#!/bin/sh\necho local >> \"{}\"\n", sh_path(&repo.log())),
-    )
-    .unwrap();
-    executable(&local);
+    );
     let out = repo.commit("a.txt", &[], &[]);
     assert!(out.status.success(), "{}", said(&out));
     assert_eq!(repo.calls(), ["local", STAGED_SCAN]);
@@ -291,8 +287,7 @@ fn a_failing_local_pre_commit_stops_the_commit() {
     let hooks = repo.work().join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let local = hooks.join("pre-commit");
-    std::fs::write(&local, "#!/bin/sh\nexit 3\n").unwrap();
-    executable(&local);
+    write_executable(&local, "#!/bin/sh\nexit 3\n");
     let out = repo.commit("a.txt", &[], &[]);
     assert!(!out.status.success());
     assert!(repo.calls().is_empty(), "{:?}", repo.calls());
@@ -318,12 +313,10 @@ fn a_commit_that_concludes_a_merge_runs_the_pre_merge_commit_beside_it() {
     repo.start_feature();
     let marker = repo.root.join("pre-merge-commit.ran");
     let sibling = repo.root.join("global-hooks/pre-merge-commit");
-    std::fs::write(
+    write_executable(
         &sibling,
         format!("#!/bin/sh\necho ran >> \"{}\"\n", sh_path(&marker)),
-    )
-    .unwrap();
-    executable(&sibling);
+    );
     // feat/x と main を分けて、競合させる
     std::fs::write(repo.work().join("c.txt"), "feat\n").unwrap();
     repo.git(&["add", "c.txt"], &repo.work());
@@ -358,8 +351,7 @@ fn a_failing_pre_merge_commit_stops_the_commit_that_concludes_a_merge() {
     let repo = Repo::new();
     repo.start_feature();
     let sibling = repo.root.join("global-hooks/pre-merge-commit");
-    std::fs::write(&sibling, "#!/bin/sh\nexit 4\n").unwrap();
-    executable(&sibling);
+    write_executable(&sibling, "#!/bin/sh\nexit 4\n");
     std::fs::write(repo.work().join("c.txt"), "feat\n").unwrap();
     repo.git(&["add", "c.txt"], &repo.work());
     repo.git(

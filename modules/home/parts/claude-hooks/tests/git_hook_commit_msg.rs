@@ -37,15 +37,13 @@ impl Repo {
         let hooks = root.join("global-hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("commit-msg");
-        std::fs::write(
+        write_executable(
             &hook,
             format!(
                 "#!/bin/sh\nexec \"{}\" git-hook commit-msg \"$@\"\n",
                 sh_path(Path::new(env!("CARGO_BIN_EXE_claude-hooks")))
             ),
-        )
-        .unwrap();
-        executable(&hook);
+        );
         std::fs::write(
             root.join("gitconfig"),
             format!("[core]\n\thooksPath = {}\n", sh_path(&hooks)),
@@ -192,12 +190,10 @@ fn a_local_commit_msg_hook_runs_instead() {
     let repo = Repo::new();
     let local = repo.local_hook();
     let marker = repo.root.join("local.log");
-    std::fs::write(
+    write_executable(
         &local,
         format!("#!/bin/sh\necho \"$1\" >> \"{}\"\n", sh_path(&marker)),
-    )
-    .unwrap();
-    executable(&local);
+    );
     let out = repo.commit(&[("FAKE_TOOL_EXIT", "1")], &[]);
     assert!(
         out.status.success(),
@@ -214,12 +210,10 @@ fn a_failing_local_hook_stops_the_commit() {
     let repo = Repo::new();
     let local = repo.local_hook();
     let marker = repo.root.join("local.log");
-    std::fs::write(
+    write_executable(
         &local,
         format!("#!/bin/sh\necho ran >> \"{}\"\nexit 3\n", sh_path(&marker)),
-    )
-    .unwrap();
-    executable(&local);
+    );
     let out = repo.commit(&[], &[]);
     assert!(!out.status.success());
     assert!(marker.exists(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -248,12 +242,10 @@ fn every_argument_reaches_the_local_hook() {
     let repo = Repo::new();
     let local = repo.local_hook();
     let marker = repo.root.join("local.log");
-    std::fs::write(
+    write_executable(
         &local,
         format!("#!/bin/sh\necho \"$#:$*\" >> \"{}\"\n", sh_path(&marker)),
-    )
-    .unwrap();
-    executable(&local);
+    );
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
     forget_git_env(&mut cmd);
     let out = cmd
@@ -302,8 +294,7 @@ fn a_local_hook_without_a_shebang_runs_as_sh() {
     let repo = Repo::new();
     let local = repo.local_hook();
     let marker = repo.root.join("local.log");
-    std::fs::write(&local, format!("echo ran >> \"{}\"\n", sh_path(&marker))).unwrap();
-    executable(&local);
+    write_executable(&local, format!("echo ran >> \"{}\"\n", sh_path(&marker)));
     let out = repo.commit(&[], &[]);
     assert!(
         out.status.success(),
