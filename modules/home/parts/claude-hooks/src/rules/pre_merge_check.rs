@@ -1028,7 +1028,23 @@ impl Rule for PreMergeCheck {
                         reasons.extend(apply_escape_to_reasons(
                             shell.escape("ALLOW_MULTI_TOPIC"),
                             "ALLOW_MULTI_TOPIC",
-                            multi_topic_reason(&adrs).into_iter().collect(),
+                            multi_topic_reason(&adrs, |path| {
+                                // PR の head の中身を読む（ブランチを手元に持たないこともある）
+                                gh::gh(
+                                    &dir,
+                                    &[
+                                        "api",
+                                        &format!(
+                                            "repos/{owner}/{name}/contents/{path}?ref={head_sha}"
+                                        ),
+                                        "-H",
+                                        "Accept: application/vnd.github.raw",
+                                    ],
+                                )
+                                .ok()
+                            })
+                            .into_iter()
+                            .collect(),
                         ));
                     }
                 }

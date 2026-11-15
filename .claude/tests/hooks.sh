@@ -325,7 +325,6 @@ assert_eq deny "$(decision "$out")"
 assert_not_contains "$(reason "$out")" "/topic-triage"
 git -C "$REPO" switch -q feat/x
 
-if [[ -n "${RUN_RED:-}" ]]; then # RED: skip
 
 it "pre-pr-create: 同じブランチで足した ADR が requires でつながっていれば 1 トピックとして通す"
 git -C "$REPO" switch -q -c feat/linked-adrs main
@@ -359,8 +358,6 @@ git -C "$REPO" push -q -u origin feat/move-in
 out=$(run_hook pre-pr-create-check "$GOOD_CMD --base feat/moved-adr")
 assert_eq allow "$(decision "$out")"
 git -C "$REPO" switch -q feat/x
-
-fi # RED: skip
 
 # --- fork（upstream リモートのある clone）: こちらの規約は検査しない ---
 FORK="$TEST_ROOT/prcreate-fork"
@@ -2180,7 +2177,6 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "/topic-triage"
 assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
 
-if [[ -n "${RUN_RED:-}" ]]; then # RED: skip
 it "pre-merge-check: 同じ PR で足した ADR が requires でつながっていれば 1 トピックとして通す"
 cd "$TEST_ROOT/heredoc" || exit 1
 LINKED='case "$*" in *0003-use-c.md*) printf -- "---\nrequires: [ADR-0002]\n---\n" ;; *) printf -- "---\nrequires: []\n---\n" ;; esac'
@@ -2195,7 +2191,6 @@ assert_eq deny "$(decision "$out")"
 make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS"
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
-fi # RED: skip
 
 it "pre-merge-check: PR の変更ファイルを取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo abc' 'echo "error connecting to api.github.com" >&2; exit 1'
@@ -2324,7 +2319,6 @@ out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/rename')
 assert_eq allow "$(decision "$out")"
 git config --unset diff.renames
 
-if [[ -n "${RUN_RED:-}" ]]; then # RED: skip
 it "pre-git-merge-check: 同じブランチで足した ADR が requires でつながっていれば 1 トピックとして通す"
 git switch -q -c feat/linked main
 write_adr_requires "$REPO" 0008-use-h.md ""
@@ -2347,7 +2341,6 @@ git add docs && git commit -q -m "docs(adr): move and add k"
 git switch -q main
 out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/move-in')
 assert_eq allow "$(decision "$out")"
-fi # RED: skip
 
 it "pre-git-merge-check: マージ対象を標準入力で渡す --stdin は確かめられないので deny"
 out=$(run_hook pre-git-merge-check "printf 'feat/two\\n' | git merge --no-ff --stdin")
