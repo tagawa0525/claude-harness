@@ -42,7 +42,7 @@ pub fn fix_markdown(content: &str) -> String {
     let mut tabled: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
     while i < lines.len() {
-        if fence_open(lines[i]).is_some() {
+        if fence_open(&lines, i).is_some() {
             let end = fence_end(&lines, i);
             tabled.extend(
                 lines[i..(end + 1).min(lines.len())]
@@ -71,7 +71,7 @@ pub fn fix_markdown(content: &str) -> String {
     let mut output: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
     while i < lines.len() {
-        let Some((_, _, info)) = fence_open(lines[i]) else {
+        let Some((_, _, info)) = fence_open(&lines, i) else {
             output.push(lines[i].to_string());
             i += 1;
             continue;
@@ -309,11 +309,13 @@ pub fn is_indented_code(lines: &[&str], i: usize) -> bool {
     true
 }
 
-/// 開きのフェンス（CommonMark）なら、フェンスの文字、本数、両端の空白を外した info string。` のフェンスで info
-/// string に ` があれば、フェンスでない
-pub fn fence_open(line: &str) -> Option<(char, usize, &str)> {
+/// lines[i] が開きのフェンス（CommonMark）なら、フェンスの文字、本数、両端の空白を外した info string。` のフェンスで
+/// info string に ` があれば、フェンスでない。開きの字下げは 0〜3 桁で、4 桁以上はリストの項の中（項の字下げに
+/// 従う）のときだけ。項に属さない 4 桁以上の字下げはコードブロックの文字
+pub fn fence_open<'a>(lines: &[&'a str], i: usize) -> Option<(char, usize, &'a str)> {
     static OPEN: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^[ \t]*(`{3,}|~{3,})(.*)$").unwrap());
+    let line = lines[i];
     let caps = OPEN.captures(line)?;
     let fence = caps.get(1)?.as_str();
     let info = caps.get(2)?.as_str();
@@ -321,28 +323,33 @@ pub fn fence_open(line: &str) -> Option<(char, usize, &str)> {
     if ch == '`' && info.contains('`') {
         return None;
     }
+    if is_indented_code(lines, i) {
+        return None;
+    }
     Some((ch, fence.len(), strip(info)))
 }
 
-/// line が、ch を length 本以上並べて開いたフェンスを閉じるか。閉じのフェンスは同じ文字で、本数は同じ以上で、後ろは
-/// 空白だけ。短いフェンスと別の文字のフェンスは中身
-fn fence_close(line: &str, ch: char, length: usize) -> bool {
+/// line が、ch を length 本以上並べ、open_indent 桁の字下げで開いたフェンスを閉じるか。閉じのフェンスは同じ文字で、
+/// 本数は同じ以上で、後ろは空白だけで、字下げは開きより 4 桁以上深くない（深ければ中身）。短いフェンスと別の文字の
+/// フェンスも中身
+fn fence_close(line: &str, ch: char, length: usize, open_indent: usize) -> bool {
     // 後ろの空白は Python の \s（str.isspace）と同じく \x1c〜\x1f を含める
     static CLOSE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^[ \t]*(`{3,}|~{3,})[\s\x1c-\x1f]*$").unwrap());
     CLOSE.captures(line).is_some_and(|caps| {
         let fence = &caps[1];
-        fence.starts_with(ch) && fence.len() >= length
+        fence.starts_with(ch) && fence.len() >= length && indent_width(line) < open_indent + 4
     })
 }
 
 /// start で開いたフェンスを閉じる行の番号。閉じなければ lines.len()
 pub fn fence_end(lines: &[&str], start: usize) -> usize {
-    let Some((ch, length, _)) = fence_open(lines[start]) else {
+    let Some((ch, length, _)) = fence_open(lines, start) else {
         return start;
     };
+    let open_indent = indent_width(lines[start]);
     (start + 1..lines.len())
-        .find(|&j| fence_close(lines[j], ch, length))
+        .find(|&j| fence_close(lines[j], ch, length, open_indent))
         .unwrap_or(lines.len())
 }
 

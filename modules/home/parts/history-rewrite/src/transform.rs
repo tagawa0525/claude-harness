@@ -114,7 +114,7 @@ fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
     while i < lines.len() {
-        if fix_markdown_lint::fence_open(lines[i]).is_some() {
+        if fix_markdown_lint::fence_open(&lines, i).is_some() {
             let end = fix_markdown_lint::fence_end(&lines, i);
             let stop = (end + 1).min(lines.len());
             out.extend(lines[i..stop].iter().map(|l| l.to_string()));
