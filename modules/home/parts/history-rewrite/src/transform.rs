@@ -114,7 +114,7 @@ fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
     while i < lines.len() {
-        if fix_markdown_lint::fence_open(lines[i]).is_some() {
+        if fix_markdown_lint::fence_open(&lines, i).is_some() {
             let end = fix_markdown_lint::fence_end(&lines, i);
             let stop = (end + 1).min(lines.len());
             out.extend(lines[i..stop].iter().map(|l| l.to_string()));
@@ -123,7 +123,8 @@ fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
         }
         if !(fix_markdown_lint::is_table_row(lines[i])
             && i + 1 < lines.len()
-            && fix_markdown_lint::is_separator_row(lines[i + 1]))
+            && fix_markdown_lint::is_separator_row(lines[i + 1])
+            && !fix_markdown_lint::is_indented_code(&lines, i))
         {
             out.push(lines[i].to_string());
             i += 1;
@@ -139,15 +140,6 @@ fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
             i = j;
             continue;
         }
-        // 字下げした表は止める（揃え方は字下げを保つが、履歴の書き換えで字下げした表を揃え直した結果を確かめるテストが無い）
-        for row in rows {
-            if row.chars().next().is_some_and(is_py_space) {
-                return Err(Stop(format!(
-                    "{name}: 直す表が字下げしてある（揃え直せない）: {}",
-                    py_strip(row)
-                )));
-            }
-        }
         // 表の揃え方は行の両端の空白とともに CRLF の CR も外すので、元の行の CR を戻す
         let formatted = fix_markdown_lint::format_table(rows);
         for (row, original) in formatted.into_iter().zip(rows) {
@@ -157,13 +149,4 @@ fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
         i = j;
     }
     Ok(out.join("\n"))
-}
-
-/// 表の揃え方（fix-markdown-lint）と同じ空白（Unicode の White_Space と \x1c〜\x1f）
-fn is_py_space(c: char) -> bool {
-    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
-}
-
-fn py_strip(s: &str) -> &str {
-    s.trim_matches(is_py_space)
 }
