@@ -1133,6 +1133,61 @@ fn renumber_refuses_records_on_the_default_branch_and_uncommitted_changes() {
     assert_eq!(t.git(&["status", "--porcelain"]), "");
 }
 
+/// リポジトリの設定（core.autocrlf）をそのまま効かせて git を実行し、標準出力を返す
+fn crlf_git(t: &TempRepo, args: &[&str]) -> String {
+    let mut command = Command::new("git");
+    command.current_dir(&t.dir).args(args);
+    isolate(&mut command);
+    let out = command.output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    stdout(&out)
+}
+
+/// 作業ツリーを、`core.autocrlf=true` で checkout し直して CRLF にする（Git for Windows の既定。Linux の git でも効く）。
+/// テストの git は GIT_CONFIG で変換を止めるので、設定はリポジトリのファイルに書き、CLI の git だけが読む
+fn to_crlf_worktree(t: &TempRepo) {
+    crlf_git(t, &["config", "core.autocrlf", "true"]);
+    let tracked = t.git(&["ls-files"]);
+    for path in tracked.lines() {
+        fs::remove_file(t.dir.join(path)).unwrap();
+    }
+    crlf_git(t, &["checkout", "--", "."]);
+}
+
+#[test]
+fn check_reads_crlf_front_matter_and_headings_like_lf() {
+    let t = TempRepo::new("crlf-check");
+    t.run(&["new", "use-foo", "foo を使う"]);
+    t.commit_all("docs(adr): foo");
+    to_crlf_worktree(&t);
+    assert!(t.read("docs/adr/0001-use-foo.md").contains("---\r\n"));
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn renumber_keeps_crlf_in_a_crlf_worktree() {
+    let t = duplicated_after_rebase("crlf-renumber");
+    to_crlf_worktree(&t);
+    assert_eq!(crlf_git(&t, &["status", "--porcelain"]), "");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let b = t.read("docs/adr/0002-use-b.md");
+    assert!(b.contains("# ADR-0002: b を使う\r\n"), "{b:?}");
+    assert!(b.contains("[本文](0002-use-b.md) と ADR-0002\r\n"), "{b:?}");
+    assert!(!b.contains("0001"), "{b:?}");
+    assert!(
+        t.read("notes.md")
+            .starts_with("ADR-0002 の続き\r\n前置き\r\n"),
+        "{:?}",
+        t.read("notes.md")
+    );
+    assert_eq!(crlf_git(&t, &["status", "--porcelain"]), "");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
+
 #[test]
 fn renumber_issue_rewrites_hash_references_and_file_names() {
     let t = TempRepo::new("renumber-issue");
