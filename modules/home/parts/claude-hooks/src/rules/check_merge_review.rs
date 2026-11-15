@@ -243,28 +243,39 @@ fn behavior_changes(dir: &Path, default: &str, from: &str, to: &str) -> Option<V
             to,
         ],
     )?;
+    let paths: Vec<&str> = names.split('\0').filter(|p| !p.is_empty()).collect();
+    if paths
+        .iter()
+        .all(|p| is_plain_document(p) || is_dvc_record(p))
+    {
+        return Some(Vec::new());
+    }
+    // 差分は 1 回の git diff で取り、`diff --git` の行で分ける（`--name-only` と同じ並びで、改名を分けているので
+    // 1 ファイルが 1 区画。内容の行は先頭が + - 空白なので、見出しの行と取り違えない）
+    let all = git::git(
+        dir,
+        &[
+            "diff",
+            "-U0",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--no-relative",
+            from,
+            to,
+        ],
+    )?;
+    let sections = split_diff_sections(&all);
+    if sections.len() != paths.len() {
+        return None;
+    }
     let mut out = Vec::new();
-    for path in names.split('\0').filter(|p| !p.is_empty()) {
+    for (path, diff) in paths.into_iter().zip(sections) {
         if is_plain_document(path) || is_dvc_record(path) {
             continue;
         }
-        let diff = git::git(
-            dir,
-            &[
-                "diff",
-                "-U0",
-                "--no-color",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-renames",
-                "--no-relative",
-                from,
-                to,
-                "--",
-                &format!(":(top,literal){path}"),
-            ],
-        )?;
-        let remap = replaced_hashes(&diff).is_some_and(|pairs| {
+        let remap = replaced_hashes(diff).is_some_and(|pairs| {
             pairs.into_iter().all(|pair| {
                 *judged
                     .entry(pair)
@@ -276,6 +287,20 @@ fn behavior_changes(dir: &Path, default: &str, from: &str, to: &str) -> Option<V
         }
     }
     Some(out)
+}
+
+/// `git diff` の出力をファイルごとの区画（`diff --git` の行から次の行の前まで）に分ける
+fn split_diff_sections(diff: &str) -> Vec<&str> {
+    let mut starts: Vec<usize> = Vec::new();
+    let mut pos = 0;
+    for line in diff.split_inclusive('\n') {
+        if line.starts_with("diff --git ") {
+            starts.push(pos);
+        }
+        pos += line.len();
+    }
+    starts.push(diff.len());
+    starts.windows(2).map(|w| &diff[w[0]..w[1]]).collect()
 }
 
 fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
@@ -455,6 +480,19 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn splits_a_diff_into_one_section_per_file() {
+        let diff = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+diff --git y\ndiff --git a/b b/b\nold mode 100644\n";
+        assert_eq!(
+            split_diff_sections(diff),
+            vec![
+                "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+diff --git y\n",
+                "diff --git a/b b/b\nold mode 100644\n"
+            ]
+        );
+        assert!(split_diff_sections("").is_empty());
     }
 
     #[test]
