@@ -24,6 +24,8 @@ head の遅れなど機械的に判定できる条件は `pre-merge-check` hook 
 
 ## 事前確認
 
+下の `!` 行は cwd のリポジトリを見る。$ARGUMENTS の PR が別のリポジトリのものなら、その出力は PR と無関係なので読み飛ばし、状態は `gh pr view <PR の URL>` で見る。
+
 !`gh auth status 2>&1 | head -3`
 !`git branch -vv`
 
