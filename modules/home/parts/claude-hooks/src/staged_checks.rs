@@ -1,6 +1,6 @@
 //! `claude-hooks git-hook staged-checks [nix|python|markdown|rust]...`: ステージした版（コミットに入る中身）の Nix、
 //! Python、Markdown、Rust の書式と lint を検査する（ADR-0028、ADR-0086）。グローバルの pre-commit がリポジトリの直下で
-//! 呼び、run-checks.sh の Markdown の段が `staged-checks markdown` で呼ぶ。ツール（nixfmt、ruff、markdownlint、
+//! 呼び、run-checks の Markdown の段が `staged_checks::run` を直に呼ぶ。ツール（nixfmt、ruff、markdownlint、
 //! rustfmt と cargo）は利用者の PATH のものを使い、無ければその言語を飛ばす。言語を渡せばその言語だけを検査する。
 //!
 //! 作業ツリーは書き換えない。一部だけステージしたファイルで、ステージしていない編集を検査せず、コミットに入れない

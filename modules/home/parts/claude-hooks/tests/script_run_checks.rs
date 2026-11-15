@@ -231,15 +231,20 @@ fn only_the_staged_shell_scripts_go_to_shellcheck() {
 }
 
 #[test]
-fn the_staged_markdown_goes_to_staged_checks_and_merge_only_lints_it() {
+fn the_staged_markdown_is_checked_in_process_and_merge_only_lints_it() {
     let repo = Repo::new();
-    repo.tool("staged-checks");
     repo.tool("markdownlint");
     repo.stage("doc.md", "# doc\n");
     let out = repo.run(&[], &[]);
     assert_eq!(out.status.code(), Some(0), "{}", said(&out));
-    assert!(stdout(&out).contains("RUN: markdown staged: staged-checks markdown\n"));
-    assert_eq!(repo.calls(), ["staged-checks markdown"]);
+    assert!(stdout(&out).contains("RUN: markdown staged: staged_checks markdown\n"));
+    assert!(
+        repo.calls()
+            .iter()
+            .any(|c| c.starts_with("markdownlint --fix")),
+        "{:?}",
+        repo.calls()
+    );
 
     std::fs::remove_file(repo.log()).unwrap();
     let out = repo.run(&["--merge"], &[]);
@@ -269,28 +274,6 @@ fn an_unreadable_diff_fails_instead_of_skipping_the_stages() {
 }
 
 #[test]
-#[ignore = "RED: Markdown の段が PATH の staged-checks を呼ぶ（GREEN で解除）"]
-fn the_staged_markdown_is_checked_without_a_staged_checks_command_on_path() {
-    let repo = Repo::new();
-    repo.tool("markdownlint");
-    repo.stage("doc.md", "# doc\n");
-    let out = repo.run(&[], &[]);
-    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
-    let text = stdout(&out);
-    assert!(
-        text.contains("RUN: markdown staged: staged_checks markdown\n"),
-        "{text}"
-    );
-    assert!(text.contains("OK: markdown staged\n"), "{text}");
-    assert!(
-        repo.calls().iter().any(|c| c.starts_with("markdownlint ")),
-        "{:?}",
-        repo.calls()
-    );
-}
-
-#[test]
-#[ignore = "RED: Markdown の段が PATH の staged-checks を呼ぶ（GREEN で解除）"]
 fn the_staged_markdown_is_skipped_when_markdownlint_is_missing() {
     let repo = Repo::new();
     repo.stage("doc.md", "# doc\n");

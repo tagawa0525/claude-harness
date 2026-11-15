@@ -10,7 +10,7 @@
 //!   scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、それも無ければ追跡
 //!   している test_*.py / *_test.py のあるディレクトリごとに
 //! - Nix: flake.nix がある、または .nix がステージ済み
-//! - Markdown: .md がステージ済み（staged-checks markdown で、ステージした版を直して検査する。--merge では検査だけ）。
+//! - Markdown: .md がステージ済み（staged_checks の markdown で、ステージした版を直して検査する。--merge では検査だけ）。
 //!   .pre-commit-config.yaml で design-records にオプトインしていれば、.md の変更が無くても design-records check
 //! - Shell: .sh がステージ済み（ステージ済みのファイルだけを shellcheck で検査）
 //!
@@ -597,15 +597,16 @@ impl Checks {
                     },
                 )?;
             } else {
-                // ステージした版を直してステージし直し、検査する（グローバルの pre-commit と同じ staged-checks。作業ツリーを
-                // 書き換えないので、一部だけステージした .md のステージしていない編集をステージしない）
-                self.command_stage(
-                    "markdown",
-                    "staged",
-                    "staged-checks",
-                    "",
-                    &["staged-checks".to_string(), "markdown".to_string()],
-                )?;
+                // ステージした版を直してステージし直し、検査する（グローバルの pre-commit と同じ staged_checks。作業ツリーを
+                // 書き換えないので、一部だけステージした .md のステージしていない編集をステージしない）。同じバイナリの
+                // 関数を直に呼ぶので、PATH に staged-checks が要らない。markdownlint が無ければ staged_checks が SKIP を出す
+                println!("RUN: markdown staged: staged_checks markdown");
+                if crate::staged_checks::run(&["markdown".to_string()]) == 0 {
+                    println!("OK: markdown staged");
+                } else {
+                    println!("FAILED: markdown staged: staged_checks markdown");
+                    return Err(1);
+                }
             }
         }
         if design_records_opted_in()? {
