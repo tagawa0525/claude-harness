@@ -29,7 +29,7 @@ export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
 git config --global user.email test@example.com
 git config --global init.defaultBranch main
-# GitHub リモートなし・CLAUDECODE 未設定: main ガードは対象外にしてフォーマット検査だけを見る
+# GitHub リモートなし・CLAUDECODE 未設定: main ガードはリモートによらず効くが、コミットの無いリポジトリ（最初のコミットの例外）なので通る。フォーマット検査だけを見る
 
 REPO="$WORK/repo"
 git init -q -b main "$REPO"
