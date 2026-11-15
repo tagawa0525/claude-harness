@@ -457,10 +457,15 @@ mod tests {
         }
     }
 
+    /// コミットの日時。hash は日時にも依るので、固定してテストの hash を実行の時刻に依らず決める
+    const FIXED_DATE: &str = "1700000000 +0000";
+
     fn git_out(dir: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
             .args(args)
             .current_dir(dir)
+            .env("GIT_AUTHOR_DATE", FIXED_DATE)
+            .env("GIT_COMMITTER_DATE", FIXED_DATE)
             .output()
             .unwrap();
         assert!(
@@ -516,23 +521,18 @@ mod tests {
         }
 
         /// コミットの hash。テストは hash の先頭（9 字など）を文書に書くが、数字だけの語は mask_hashes が 16 進の語と
-        /// みなさない（英字を 1 つは含む語だけを hash とする）ので、付け替えが hash の差し替えに見えない（9 字で約
-        /// 1.5%）。mask_hashes が hash とみなす最短の 7 字に英字が出るまで、メッセージを変えて作り直す（7 字に英字が
-        /// あれば、それより長いどの先頭も英字を含む）
+        /// みなさない（英字を 1 つは含む語だけを hash とする）ので、付け替えが hash の差し替えに見えない。日時を固定
+        /// してあるので hash はメッセージと内容だけで決まり、7 字（mask_hashes が hash とみなす最短。これに英字が
+        /// あれば、それより長いどの先頭も英字を含む）が数字だけになるメッセージはテストが毎回落ちる。そのときは
+        /// メッセージを変える
         fn commit(&self, msg: &str) -> String {
             git(&self.dir(), &["add", "-A"]);
             git(&self.dir(), &["commit", "-q", "-m", msg]);
-            let mut head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
-            let mut n = 0;
-            while !head[..7].bytes().any(|b| b.is_ascii_alphabetic()) {
-                n += 1;
-                assert!(n < 100, "英字を含む hash を作れない");
-                git(
-                    &self.dir(),
-                    &["commit", "-q", "--amend", "-m", &format!("{msg} {n}")],
-                );
-                head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
-            }
+            let head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
+            assert!(
+                head[..7].bytes().any(|b| b.is_ascii_alphabetic()),
+                "コミット {msg:?} の hash {head} の先頭 7 字が数字だけ。メッセージを変える"
+            );
             head
         }
 
