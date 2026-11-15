@@ -24,7 +24,7 @@ head の遅れなど機械的に判定できる条件は `pre-merge-check` hook 
 
 ## 事前確認
 
-下の `!` 行は cwd のリポジトリを見る。$ARGUMENTS の PR が別のリポジトリのものなら、その出力は PR と無関係なので読み飛ばし、状態は `gh pr view <PR の URL>` で見る。
+下の `!` 行は cwd のリポジトリを見る。$ARGUMENTS の PR が別のリポジトリのものなら、その出力は PR と無関係なので読み飛ばし、状態は `gh pr view <PR の URL>` で見る。後の `gh pr view`、`gh pr merge` も、番号でなく PR の URL を渡す（番号は cwd のリポジトリで解かれ、同じ番号の無関係な PR を指す）。
 
 !`gh auth status 2>&1 | head -3`
 !`git branch -vv`
@@ -51,7 +51,7 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
 PR の内容を把握してから書く:
 
 ```bash
-gh pr view [PR番号] --json title,body,commits,files,headRefName
+gh pr view [PR番号または URL] --json title,body,commits,files,headRefName
 ```
 
 ```text
@@ -72,7 +72,7 @@ PR: #[番号]
 ## マージ実行
 
 ```bash
-gh pr merge [PR番号] --merge --delete-branch \
+gh pr merge [PR番号または URL] --merge --delete-branch \
   --subject "Merge: [subject]" \
   --body "[body]"
 ```
