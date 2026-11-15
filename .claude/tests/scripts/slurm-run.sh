@@ -409,6 +409,21 @@ assert_contains "$out" "WARN: commit= を付けません"
 assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit="
 cp "$TEST_ROOT/index.bak" .git/index
 
+# RED: 実装が入るまで skip（RUN_RED=1 で実行する）
+if [[ -n ${RUN_RED:-} ]]; then
+  it "slurm-run: bare リポジトリや git の外でない失敗では、git の外と区別して警告して投げる"
+  git init -q --bare "$HOME/github/bare.git"
+  cd "$HOME/github/bare.git" || exit 1
+  out=$("$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' 2>&1)
+  assert_eq 0 $?
+  assert_contains "$out" "WARN: commit= を付けません"
+  assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit="
+  cd "$HOME/github/plain" || exit 1
+  out=$("$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' 2>&1)
+  assert_not_contains "$out" "WARN: commit="
+  cd "$HOME/github/committed" || exit 1
+fi
+
 it "slurm-run: r995 以外では NFS の入口の下で投げ、ログは NFS の側に作る"
 rm -rf "$HOME/github/slurm-logs" "$NFS_ENTRY/slurm-logs"
 cd "$NFS_ENTRY/proj" || exit 1
