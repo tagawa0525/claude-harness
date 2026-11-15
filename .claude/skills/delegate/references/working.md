@@ -95,9 +95,15 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 方法があれば、それも実行する。各コミットでビルドが通るべきブランチ（依存や lock を変えるなど）は、
 `cd <worktree> && ~/.claude/scripts/check-each-commit.sh <base> -- <コマンド…>` で `<base>..HEAD` の各コミットを一時 worktree で
 調べる（RED を skip でコミットする運用ではビルドだけを通す。任意のコマンドを実行するので許可リストに無く、毎回確認を求められる）。
-規則の文書（スキル、CLAUDE.md、hook の文書）を縮めるブランチは、
-`cd <worktree> && ~/.claude/scripts/kept-sentences.sh --old <(git show <base>:<パス>)… --new <パス>…`（文を別のファイルに
-移したら移した先も `--new` に並べる）で比べ、出た文ごとに、指す形に替えたものと依頼で足したものは報告の「決めたことと根拠」に
+規則の文書（スキル、CLAUDE.md、hook の文書）を縮めるブランチは、縮める前の版を一時のファイルに書き出して比べる
+（プロセス置換 `<(git show …)` は Windows のネイティブの exe が `/dev/fd/N` を開けない見込みなので使わない）。
+
+```bash
+cd <worktree> && old=$(mktemp -d) && git show <base>:<パス> > "$old/1.md" && ~/.claude/scripts/kept-sentences.sh --old "$old"/*.md --new <パス>…
+```
+
+縮める前の版が複数のファイルなら `2.md`、`3.md` と書き出す。文を別のファイルに移したら移した先も `--new` に並べる。
+出た文ごとに、指す形に替えたものと依頼で足したものは報告の「決めたことと根拠」に
 書き、ほかは元の文に戻す（縮めるときは文を消すか指す形に替えるだけにし、残す文の語が落ちると、どの項や条件に掛かるかがずれる）。
 
 ### 7. レビューを受ける

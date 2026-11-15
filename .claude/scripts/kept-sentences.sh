@@ -3,7 +3,8 @@
 # claude-hooks script kept-sentences（Rust にして Windows でも Python なしで動かす）
 #
 # Usage: kept-sentences.sh --old <元の版>... --new <今の版>...
-#   --old  縮める前の版（複数なら 1 つにつないで比べる）。git の版は `<(git show <base>:<path>)` で渡す
+#   --old  縮める前の版（複数なら 1 つにつないで比べる）。git の版は `git show <base>:<path>` を一時のファイルに書き出して渡す
+#         （プロセス置換 `<(…)` の `/dev/fd/N` は Windows のネイティブの exe が開けない見込み）
 #   --new  縮めた後の版（文を別のファイルに移したときは、移した先も並べる）
 #
 # 出力（元に無い文ごと）: CHANGED: <今の版のファイル>:<文の始まる行>: <文>
