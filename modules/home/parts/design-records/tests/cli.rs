@@ -1355,6 +1355,37 @@ fn prune_stale_sees_records_on_branches_only_origin_has() {
     assert_eq!(stdout(&out), "");
 }
 
+#[cfg(unix)]
+#[test]
+#[ignore = "RED: prune --stale --delete removes a reservation another clone re-made after the scan"]
+fn prune_stale_delete_keeps_a_reservation_another_clone_remade_after_the_scan() {
+    let t = stale_reservations("stale-race");
+    let other = t.clone_remote("other");
+    // origin のタグの一覧の直後に、ほかの clone が古い予約を消して同じ番号を別の slug で予約し直す git
+    let mark = t.root.join("listed");
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
+        &format!(
+            "  *\" ls-remote --tags \"*)\n\
+             \x20   if [ ! -e {mark} ]; then : > {mark}; \"$GIT\" \"$@\"; \
+             \"$GIT\" -C {other} push -q origin --delete refs/tags/adr-0002; \
+             \"$GIT\" -C {other} tag -f -a adr-0002 -m use-c main; \
+             \"$GIT\" -C {other} push -q origin refs/tags/adr-0002; exit 0; fi ;;",
+            mark = sh_quote(mark.display()),
+            other = sh_quote(other.display()),
+        ),
+    );
+    let out = t.run_with_bin(&bin, &["prune", "--stale", "--days", "0", "--delete"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "");
+    let remote = git_in(&other, &["rev-parse", "refs/tags/adr-0002"]);
+    assert!(t.remote_tag("adr-0002").starts_with(remote.trim()));
+    // 手元のタグも、スキャンした予約でなくなったものは消さない
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+}
+
 #[test]
 fn prune_deletes_tags_of_records_merged_into_the_remote_default_branch() {
     let t = TempRepo::with_remote("prune");
