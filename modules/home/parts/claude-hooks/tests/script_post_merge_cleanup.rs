@@ -311,3 +311,22 @@ fn a_merge_that_deletes_the_rebuild_script_still_notes_the_rebuild() {
         text(&out.stdout)
     );
 }
+
+#[test]
+fn a_base_on_an_unrelated_branch_is_an_error_that_changes_nothing() {
+    let repo = Repo::new();
+    repo.git(&["branch", "feat/x"]);
+    repo.git(&["switch", "-q", "-c", "other"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("unrelated");
+    let unrelated = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "main"]);
+    let out = repo.run(&["feat/x", &unrelated]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("の祖先ではありません"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "feat/x");
+}
