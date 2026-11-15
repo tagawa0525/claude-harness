@@ -178,7 +178,7 @@ fn tables_outside_fences_are_aligned_and_those_inside_are_not() {
 fn right_and_center_alignment_and_missing_cells_are_kept() {
     assert_eq!(
         fixed("| a | b | c |\n|---:|:---:|---|\n| long | x |\n"),
-        "|    a | b | c |\n| ---: | :-: | - |\n| long | x |   |\n"
+        "|    a |  b  | c |\n| ---: | :-: | - |\n| long |  x  |   |\n"
     );
 }
 
