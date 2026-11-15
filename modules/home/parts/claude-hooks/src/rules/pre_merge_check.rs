@@ -289,6 +289,29 @@ pub fn local_review_covers_for_pr(
     })
 }
 
+/// `-R` の値（`OWNER/REPO`、`github.com/OWNER/REPO`、`https://github.com/OWNER/REPO`）の owner と name。
+/// 読めない形と github.com 以外のホスト（GHES など。API の呼び先に host を渡せない）は、空の組を返して検査の対象にしない
+fn split_repo(r: &str) -> (&str, &str) {
+    let r = r.trim_end_matches('/').trim_end_matches(".git");
+    let (r, has_scheme) = match r
+        .strip_prefix("https://")
+        .or_else(|| r.strip_prefix("http://"))
+    {
+        Some(rest) => (rest, true),
+        None => (r, false),
+    };
+    let parts: Vec<&str> = r.split('/').collect();
+    let (owner, name) = match parts.as_slice() {
+        [owner, name] if !has_scheme => (*owner, *name),
+        ["github.com", owner, name] => (*owner, *name),
+        _ => return ("", ""),
+    };
+    if owner.is_empty() || name.is_empty() {
+        return ("", "");
+    }
+    (owner, name)
+}
+
 /// PR の base ブランチの今の先頭（GitHub の値）
 fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> Option<String> {
     if base_ref.is_empty() {
@@ -637,8 +660,8 @@ impl Rule for PreMergeCheck {
             // 対象リポジトリ（base）。check-run と review thread はどちらも base 側に紐づく
             let (owner, name) = match repo.as_deref() {
                 Some(r) => {
-                    let (o, n) = r.split_once('/').unwrap_or((r, ""));
-                    (o.to_string(), n.trim_end_matches(".git").to_string())
+                    let (o, n) = split_repo(r);
+                    (o.to_string(), n.to_string())
                 }
                 None => (
                     gh::gh(
@@ -1036,6 +1059,22 @@ impl Rule for PreMergeCheck {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_repo_reads_owner_repo_host_and_url_forms() {
+        use super::split_repo;
+        assert_eq!(split_repo("octo/repo"), ("octo", "repo"));
+        assert_eq!(split_repo("github.com/octo/repo"), ("octo", "repo"));
+        assert_eq!(
+            split_repo("https://github.com/octo/repo.git"),
+            ("octo", "repo")
+        );
+        assert_eq!(split_repo("repo"), ("", ""));
+        // 読めない形と github.com 以外のホストは対象にしない
+        assert_eq!(split_repo("https://foo"), ("", ""));
+        assert_eq!(split_repo("ghe.example.com/octo/repo"), ("", ""));
+        assert_eq!(split_repo("https://ghe.example.com/octo/repo"), ("", ""));
+    }
+
     use super::*;
     use crate::shell::Shell;
 
