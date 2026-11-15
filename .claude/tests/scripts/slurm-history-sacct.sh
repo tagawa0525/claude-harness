@@ -5,11 +5,6 @@
 
 source "$(dirname "$0")/../lib.sh"
 
-# RED: 実装のコミットで外す
-echo "skip (RED): slurm-history.sh --sacct は未実装"
-finish
-exit 0
-
 # sacct の偽物。引数を記録し、-j の無い呼び出しには $FAKE_SACCT_ALL を出す。FAKE_SACCT_FAIL があれば失敗する
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN"
