@@ -52,7 +52,11 @@ pub fn fix_markdown(content: &str) -> String {
             i = end + 1;
             continue;
         }
-        if is_table_row(lines[i]) && i + 1 < lines.len() && is_separator_row(lines[i + 1]) {
+        if is_table_row(lines[i])
+            && i + 1 < lines.len()
+            && is_separator_row(lines[i + 1])
+            && !is_indented_code(&lines, i)
+        {
             let j = i + lines[i..].iter().take_while(|l| is_table_row(l)).count();
             tabled.extend(format_table(&lines[i..j]));
             i = j;
@@ -269,11 +273,47 @@ pub fn format_table(table: &[&str]) -> Vec<String> {
         .collect()
 }
 
+/// 行頭の空白の桁（タブは次の 4 の倍数まで進める）
+fn indent_width(line: &str) -> usize {
+    let mut width = 0;
+    for c in line.chars() {
+        match c {
+            ' ' => width += 1,
+            '\t' => width += 4 - width % 4,
+            _ => break,
+        }
+    }
+    width
+}
+
+/// lines[i] が、リストの項に属さない 4 桁以上の字下げ（フェンスの無いコードブロック）か。字下げした行は、前へ
+/// たどって最初の字下げの浅い行がリストの項の開き（`-`、`*`、`+`、`1.`）ならその項の中身で、そうでなければコード
+pub fn is_indented_code(lines: &[&str], i: usize) -> bool {
+    static MARKER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^ {0,3}([-*+]|\d{1,9}[.)])([ \t]|$)").unwrap());
+    if indent_width(lines[i]) < 4 {
+        return false;
+    }
+    for line in lines[..i].iter().rev() {
+        if strip(line).is_empty() || indent_width(line) >= 4 {
+            continue;
+        }
+        if MARKER.is_match(line) {
+            return false;
+        }
+        // 項の中身の続き（字下げが 1〜3 桁）は項の一部。字下げの無い行は、リストを閉じる段落
+        if indent_width(line) == 0 {
+            return true;
+        }
+    }
+    true
+}
+
 /// 開きのフェンス（CommonMark）なら、フェンスの文字、本数、両端の空白を外した info string。` のフェンスで info
 /// string に ` があれば、フェンスでない
 pub fn fence_open(line: &str) -> Option<(char, usize, &str)> {
     static OPEN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^ {0,3}(`{3,}|~{3,})(.*)$").unwrap());
+        LazyLock::new(|| Regex::new(r"^[ \t]*(`{3,}|~{3,})(.*)$").unwrap());
     let caps = OPEN.captures(line)?;
     let fence = caps.get(1)?.as_str();
     let info = caps.get(2)?.as_str();
@@ -289,7 +329,7 @@ pub fn fence_open(line: &str) -> Option<(char, usize, &str)> {
 fn fence_close(line: &str, ch: char, length: usize) -> bool {
     // 後ろの空白は Python の \s（str.isspace）と同じく \x1c〜\x1f を含める
     static CLOSE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^ {0,3}(`{3,}|~{3,})[\s\x1c-\x1f]*$").unwrap());
+        LazyLock::new(|| Regex::new(r"^[ \t]*(`{3,}|~{3,})[\s\x1c-\x1f]*$").unwrap());
     CLOSE.captures(line).is_some_and(|caps| {
         let fence = &caps[1];
         fence.starts_with(ch) && fence.len() >= length
