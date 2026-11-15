@@ -311,3 +311,12 @@ fn a_null_event_counts_as_no_registrations() {
     let got = home.ok(&json!({}), &["--pre-tool-use", HOOKS]);
     assert_eq!(got["hooks"]["PreToolUse"], json!([pre_tool_use()]));
 }
+
+#[test]
+fn a_settings_file_with_a_utf8_bom_is_read() {
+    let home = Home::new();
+    std::fs::write(home.settings(), "\u{feff}{\"theme\": \"dark\"}").unwrap();
+    let got = home.ok(&json!({"language": "Japanese"}), &[]);
+    assert_eq!(got["theme"], json!("dark"));
+    assert_eq!(got["language"], json!("Japanese"));
+}
