@@ -807,7 +807,6 @@ fn a_missing_option_value_an_unknown_option_or_two_transcripts_show_the_usage() 
 }
 
 #[test]
-#[ignore = "RED: 引数の誤りに ERROR: が付かない"]
 fn an_argument_mistake_is_reported_with_an_error_line() {
     let home = Home::new();
     let main = home.range_session();
@@ -815,7 +814,6 @@ fn an_argument_mistake_is_reported_with_an_error_line() {
         vec![main.as_str(), "--since"],
         vec!["--from", "2026-11-06T00:00Z", &main],
         vec!["--since=2026-11-06T00:00Z", &main],
-        vec!["--", &main],
         vec![&main, &main],
     ] {
         assert_fails(&home.run(&args), "ERROR: 引数が正しくありません");
@@ -823,7 +821,6 @@ fn an_argument_mistake_is_reported_with_an_error_line() {
 }
 
 #[test]
-#[ignore = "RED: 同じ端を 2 度渡すと黙って後の値を使う"]
 fn a_bound_given_twice_fails() {
     let home = Home::new();
     let main = home.range_session();
@@ -836,7 +833,6 @@ fn a_bound_given_twice_fails() {
 }
 
 #[test]
-#[ignore = "RED: timestamp のキーが無い記録を区間の書き誤りと読む"]
 fn a_transcript_without_any_timestamp_fails_as_a_changed_format_under_a_range() {
     let home = Home::new();
     let path = home.write_lines(
@@ -847,4 +843,14 @@ fn a_transcript_without_any_timestamp_fails_as_a_changed_format_under_a_range() 
         &home.run(&["--since", "2026-11-06T00:00Z", &path]),
         "ERROR: timestamp を持つ行がありません（記録の形が変わったかもしれません）",
     );
+}
+
+#[test]
+fn after_double_dash_a_path_starting_with_a_dash_is_a_transcript() {
+    let home = Home::new();
+    let main = home.range_session();
+    let dir = Path::new(&main).parent().unwrap().to_path_buf();
+    std::fs::copy(&main, dir.join("-s.jsonl")).unwrap();
+    let out = stdout(&home.run_in(&["--", "-s.jsonl"], None, Some(&dir)));
+    assert_eq!(lines_with(&out, "TRANSCRIPT: "), ["TRANSCRIPT: ./-s.jsonl"]);
 }
