@@ -207,6 +207,79 @@ pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
     out.0
 }
 
+/// docs/issues の issue のフロントマターの `status`。
+pub const ISSUE_STATUSES: [&str; 2] = ["open", "closed"];
+
+/// 閉じた issue の `resolution`。
+pub const ISSUE_RESOLUTIONS: [&str; 7] = [
+    "done",
+    "wontfix",
+    "by-design",
+    "external",
+    "cannot-reproduce",
+    "duplicate",
+    "obsolete",
+];
+
+/// issue の必須の節（`## ` の見出し）。
+pub const ISSUE_SECTIONS: [&str; 2] = ["問題", "完了の条件"];
+
+/// `issues`（docs/issues のパスと中身）のうち、フロントマターを持つものの形（`status`、閉じたときの `resolution`、
+/// 必須の節）。フロントマターを持たない issue は、別の形で書くリポジトリのものとして見ない（ADR-0018）。形の違いは、
+/// 既にある issue を止めないよう注意（warning）にする。
+pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
+    let mut out = Found::default();
+    for (path, text) in issues {
+        if !text.starts_with("---\n") {
+            continue;
+        }
+        let front = match parse_front_matter(text) {
+            Ok(front) => front,
+            Err(e) => {
+                out.warning(path, None, format!("front matter: {e}"));
+                continue;
+            }
+        };
+        let scalar = |key: &str| match front.get(key) {
+            Some(Value::Scalar(s)) => Some(s.as_str()),
+            _ => None,
+        };
+        match scalar("status") {
+            Some(status) if ISSUE_STATUSES.contains(&status) => {
+                if status == "closed"
+                    && !scalar("resolution").is_some_and(|r| ISSUE_RESOLUTIONS.contains(&r))
+                {
+                    out.warning(
+                        path,
+                        None,
+                        format!(
+                            "a closed issue needs `resolution` ({})",
+                            ISSUE_RESOLUTIONS.join(" | ")
+                        ),
+                    );
+                }
+            }
+            _ => out.warning(
+                path,
+                None,
+                format!("`status` must be {}", ISSUE_STATUSES.join(" or ")),
+            ),
+        }
+        let Ok(lines) = markdown_lines(text) else {
+            continue;
+        };
+        for section in ISSUE_SECTIONS {
+            if !lines
+                .iter()
+                .any(|(_, l)| l.strip_prefix("## ").is_some_and(|h| h.trim() == section))
+            {
+                out.warning(path, None, format!("no section `{section}`"));
+            }
+        }
+    }
+    out.0
+}
+
 /// `kind` の記録（`paths`）のうち、番号を予約したタグ（`reserved` は番号から slug へ）の slug と違う slug のもの
 /// （ほかの記録が予約した番号を使っている）。`origin` は、リモート origin があるか（打ち直しのコマンドを選ぶ）。
 pub fn check_reservations(

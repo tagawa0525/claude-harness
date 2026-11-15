@@ -480,7 +480,6 @@ fn check_counts_only_tracked_issues() {
 }
 
 #[test]
-#[ignore = "RED: check does not look at the format of docs/issues files yet"]
 fn check_warns_about_the_format_of_issues_with_front_matter() {
     let t = TempRepo::new("issue-format");
     let good = "---\nstatus: closed\nresolution: done\n---\n\n# ok\n\n## 問題\n\nx\n\n## 完了の条件\n\n- [x] y\n";
