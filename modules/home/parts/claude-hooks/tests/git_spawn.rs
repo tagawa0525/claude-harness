@@ -327,7 +327,6 @@ fn exclusive_job_on_the_timed_partition_denies() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: %P の既定のパーティションの印 * を外して比べていない（#237）"]
 fn exclusive_job_on_the_default_timed_partition_denies() {
     let bin = fake_squeue(
         "squeue-timed-star",

@@ -269,7 +269,8 @@ impl ExclusiveJob {
 }
 
 /// 時間を記録するジョブのパーティション（slurm-run.sh の `--timed`）。`main` のジョブは割り込まれうる（SUSPEND）ので
-/// 時間を記録に使わず、守る対象にしない（ADR-0041 の「## 変更」）
+/// 時間を記録に使わず、守る対象にしない（ADR-0041 の「## 変更」）。既定のパーティションに印の `*` が付く表示（sinfo の
+/// `main*`）に備え、比べる前に外す
 const TIMED_PARTITION: &str = "timed";
 
 /// squeue の応答を待つ上限。slurmctld が応答しないホストで、対象のコマンドを何十秒も止めないため
@@ -337,7 +338,7 @@ fn running_exclusive_jobs() -> Vec<ExclusiveJob> {
         .filter_map(|line| {
             let (shares, rest) = line.split_once('|')?;
             let (partition, rest) = rest.split_once('|')?;
-            if shares.trim() != "NO" || partition.trim() != TIMED_PARTITION {
+            if shares.trim() != "NO" || partition.trim().trim_end_matches('*') != TIMED_PARTITION {
                 return None;
             }
             let (rest, node) = rest.rsplit_once('|')?;
