@@ -1300,6 +1300,64 @@ fn check_quotes_the_slug_in_the_retag_command() {
     assert!(stdout(&out).contains("-m 'use b&c' "), "{}", stdout(&out));
 }
 
+/// ブランチ topic に記録が入った予約 adr-0001 と、記録を作らずに終わった予約 adr-0002
+fn stale_reservations(name: &str) -> TempRepo {
+    let t = TempRepo::with_remote(name);
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "main"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    fs::remove_file(t.dir.join("docs/adr/0002-use-b.md")).unwrap();
+    t
+}
+
+#[test]
+#[ignore = "RED: prune has no --stale (#52)"]
+fn prune_stale_lists_old_reservations_that_no_branch_recorded() {
+    let t = stale_reservations("stale-list");
+    // 既定の期間（30 日）より新しい予約は、まだ使うかもしれない
+    let out = t.run(&["prune", "--stale"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    let out = t.run(&["prune", "--stale", "--days", "0"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0002\tuse-b\t0 days\n");
+    // 一覧だけで、消さない
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+    assert!(t.remote_tag("adr-0002").contains("adr-0002"));
+}
+
+#[test]
+#[ignore = "RED: prune has no --stale (#52)"]
+fn prune_stale_delete_releases_them_locally_and_on_origin() {
+    let t = stale_reservations("stale-delete");
+    let out = t.run(&["prune", "--stale", "--days", "0", "--delete"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0002\n");
+    assert_eq!(t.git(&["tag", "--list", "adr-0002"]), "");
+    assert_eq!(t.remote_tag("adr-0002"), "");
+    // ブランチに記録のある予約は残す
+    assert_eq!(t.tag_message("adr-0001"), "use-a");
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+}
+
+#[test]
+#[ignore = "RED: prune has no --stale (#52)"]
+fn prune_stale_sees_records_on_branches_only_origin_has() {
+    let t = stale_reservations("stale-origin-branch");
+    let other = t.clone_remote("other");
+    git_in(&other, &["switch", "-q", "-c", "elsewhere"]);
+    fs::create_dir_all(other.join("docs/adr")).unwrap();
+    fs::write(other.join("docs/adr/0002-use-b.md"), "# ADR-0002: b\n").unwrap();
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): b"]);
+    git_in(&other, &["push", "-q", "origin", "elsewhere"]);
+    let out = t.run(&["prune", "--stale", "--days", "0"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
 #[test]
 fn prune_deletes_tags_of_records_merged_into_the_remote_default_branch() {
     let t = TempRepo::with_remote("prune");
