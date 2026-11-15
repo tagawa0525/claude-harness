@@ -385,7 +385,7 @@ fn read_transcript(
             Err(_) if !complete => continue,
             Err(_) => return fail(format!("記録を UTF-8 として読めません: {}", path.display())),
         };
-        // 走っている最中のセッションの書きかけの最後の行
+        // JSON として読めない行（走っている最中のセッションの書きかけの最後の行など）は、位置によらず飛ばす（session-events.sh と同じ）
         let Ok(d) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -409,12 +409,10 @@ fn read_transcript(
         let Some(u) = m.get("usage").filter(|u| u.is_object()) else {
             continue;
         };
-        // id の無い応答は、null を 1 つの id として数える（2 つ目からは同じ応答の行として数えない）
-        let id = m
-            .get("id")
-            .map(Value::to_string)
-            .unwrap_or_else(|| "null".to_string());
-        if !seen.insert(id) {
+        // id の無い応答は、同じ応答の行かを判定できないので、重複として外さない
+        if let Some(id) = m.get("id").map(Value::to_string)
+            && !seen.insert(id)
+        {
             continue;
         }
         let Some(stamp) = d.get("timestamp").and_then(Value::as_str) else {
@@ -547,6 +545,7 @@ fn count_merges(
             "--first-parent",
             "--format=%cI",
             &reference,
+            "--",
         ],
     );
     if !ok(&out) {

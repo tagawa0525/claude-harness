@@ -823,7 +823,6 @@ fn two_empty_bounds_are_an_open_range_not_today() {
 }
 
 #[test]
-#[ignore = "RED: replies without a message.id are counted as duplicates of each other"]
 fn replies_without_a_message_id_are_each_counted() {
     let home = Home::new();
     let main = home.project().join(format!("{SESSION}.jsonl"));
@@ -846,7 +845,6 @@ fn replies_without_a_message_id_are_each_counted() {
 }
 
 #[test]
-#[ignore = "RED: git log gets the branch name without --, so a file of the same name makes it ambiguous"]
 fn a_file_named_like_the_branch_does_not_break_the_merge_count() {
     let home = Home::new();
     let main = home.first_session().display().to_string();
