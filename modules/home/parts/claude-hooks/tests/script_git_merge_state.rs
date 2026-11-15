@@ -143,3 +143,23 @@ fn a_github_remote_belongs_to_the_pr_flow() {
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("GitHub リモートがあります"));
 }
+
+#[test]
+#[ignore = "RED: タグとブランチの名前の衝突を ERROR にする実装がまだ無い"]
+fn a_tag_named_like_the_target_or_default_branch_stops_the_merge() {
+    for tag in ["feat/x", "main"] {
+        let repo = Repo::new();
+        repo.git(&["tag", tag]);
+        repo.git(&["switch", "-q", "-c", "feat/x"]);
+        repo.write("a.txt", "a\n");
+        repo.commit("feat: a");
+        let out = repo.run(&[]);
+        assert_eq!(out.status.code(), Some(1), "tag {tag}");
+        assert!(
+            text(&out.stderr).contains(&format!("タグ {tag}")),
+            "{}",
+            text(&out.stderr)
+        );
+        assert_eq!(text(&out.stdout), "");
+    }
+}
