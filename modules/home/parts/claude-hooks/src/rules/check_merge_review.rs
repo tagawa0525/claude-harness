@@ -457,6 +457,16 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "RED: SHA-256 の完全な hash を Reviewed: に書けない"]
+    fn accepts_a_full_sha256_reviewed_hash() {
+        let body = |h: &str| format!("Merge: x\n\nReviewed: {h}\n再現: 例\n");
+        assert_eq!(reviewed_hash(&body(&"a1".repeat(32))), Ok("a1".repeat(32)));
+        assert_eq!(reviewed_hash(&body(&"a1".repeat(20))), Ok("a1".repeat(20)));
+        assert!(reviewed_hash(&body(&"a1".repeat(33))).is_err());
+        assert!(reviewed_hash(&body("abc123")).is_err());
+    }
+
     /// コミットの日時。hash は日時にも依るので、固定してテストの hash を実行の時刻に依らず決める
     const FIXED_DATE: &str = "1700000000 +0000";
 
