@@ -652,7 +652,6 @@ fn check_changed_shows_the_stale_confirmation_only_for_the_given_adr() {
 }
 
 #[test]
-#[ignore = "RED: the working tree ADR is not compared with HEAD"]
 fn check_is_quiet_when_the_adr_follows_the_file_only_in_the_working_tree() {
     let t = confirmed_topic("stale-uncommitted", |t| {
         t.write("src/impl.sh", "echo 2\n");
@@ -668,7 +667,6 @@ fn check_is_quiet_when_the_adr_follows_the_file_only_in_the_working_tree() {
 }
 
 #[test]
-#[ignore = "RED: a directory named in the confirmation counts as a file"]
 fn check_ignores_directories_named_in_the_confirmation() {
     let t = confirmed_topic("stale-directory", |t| {
         let a = "docs/adr/0001-use-a.md";

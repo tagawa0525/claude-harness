@@ -360,20 +360,24 @@ fn branch_changes(
 
 /// ブランチが ADR の最後に変えたコミットより後に、ADR の「確認」の節に挙げたファイルを変えたコミットがあれば、その
 /// ファイルごとの注意（#53）。実装を直したのに ADR の決定、帰結、確認が前の版のままになる食い違いを、書いた人の記憶に
-/// 頼らず見つける。ADR の変更がコミットに無い（作業ツリーだけ）ときは、ADR のほうが新しいので見ない。挙げたファイルが
-/// HEAD に無ければ見ない（コマンドや外のパスの可能性があり、実在でしか区別できない）。実装の変更が ADR の内容を
+/// 頼らず見つける。ADR を作業ツリーかインデックスで HEAD から変えているときは、ADR のほうが新しいので見ない。挙げたものが
+/// HEAD のファイル（blob）でなければ見ない（コマンドや外のパスの可能性があり、実在でしか区別できない）。実装の変更が ADR の内容を
 /// 変えるとは限らないので、直しを求めずに見直しを求める文にする。
 fn stale_confirmations(root: &Path, base: &str, adr: &str, text: &str) -> Result<Vec<Finding>> {
     let range = format!("{base}..HEAD");
     let last = git(root, &["log", "-1", "--format=%H", &range, "--", adr])?;
     let last = last.trim();
-    if last.is_empty() {
+    // 作業ツリーかインデックスの ADR が HEAD と違えば、ADR のほうが新しい（直した版をこれからコミットする）ので見ない
+    if last.is_empty() || !git_ok(root, &["diff", "--quiet", "HEAD", "--", adr])? {
         return Ok(Vec::new());
     }
     let after = format!("{last}..HEAD");
     let mut found = Vec::new();
     for path in confirmation_paths(text) {
-        if is_adr_path(&path) || !git_ok(root, &["cat-file", "-e", &format!("HEAD:{path}")])? {
+        // ディレクトリ（tree）は含めない。`cat-file -e` は tree にも成功するので、種類を見る
+        let is_file = git(root, &["cat-file", "-t", &format!("HEAD:{path}")])
+            .is_ok_and(|kind| kind.trim() == "blob");
+        if is_adr_path(&path) || !is_file {
             continue;
         }
         if !git(root, &["log", "-1", "--format=%H", &after, "--", &path])?
