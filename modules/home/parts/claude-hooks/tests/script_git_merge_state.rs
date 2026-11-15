@@ -164,7 +164,6 @@ fn a_tag_named_like_the_target_or_default_branch_stops_the_merge() {
 }
 
 #[test]
-#[ignore = "RED: タグの確認の失敗を、タグが無いと読んで進んでしまう"]
 fn a_failed_tag_lookup_stops_instead_of_passing_as_no_collision() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/x"]);

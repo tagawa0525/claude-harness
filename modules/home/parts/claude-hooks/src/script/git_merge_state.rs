@@ -94,7 +94,8 @@ pub fn main(args: &[String]) -> i32 {
     // タグとして解き、merge が「Already up to date」で何もしないまま照合も通る。手順を refs/heads/ 付きにするより、
     // 衝突を先に止める方が、手順の書き方に依らない
     for branch in default.into_iter().chain([target.as_str()]) {
-        if git(
+        // show-ref の終了 1 は「無い」。ほかの失敗（壊れた packed-refs など）を無いと読むと、衝突の確認を迂回する
+        let Some(lookup) = crate::git::run(
             dir,
             &[
                 "show-ref",
@@ -102,13 +103,19 @@ pub fn main(args: &[String]) -> i32 {
                 "--quiet",
                 &format!("refs/tags/{branch}"),
             ],
-        )
-        .is_some()
-        {
-            eprintln!(
-                "ERROR: ブランチ {branch} と同じ名前のタグ {branch} があります。短い名前の git の操作がタグを指すので、タグを消すか名前を変えてください（git tag -d {branch}）"
-            );
-            return 1;
+            None,
+        ) else {
+            return failed("git show-ref");
+        };
+        match lookup.status.code() {
+            Some(1) => {}
+            Some(0) => {
+                eprintln!(
+                    "ERROR: ブランチ {branch} と同じ名前のタグ {branch} があります。短い名前の git の操作がタグを指すので、タグを消すか名前を変えてください（git tag -d {branch}）"
+                );
+                return 1;
+            }
+            _ => return failed("git show-ref"),
         }
     }
     let Some(remotes) = git(dir, &["remote", "-v"]) else {
