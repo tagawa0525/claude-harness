@@ -189,6 +189,12 @@ out=$(run_hook pre-pr-create-check "cd \"\$NOWHERE\" && $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "コマンド中の cd 先に移動できません"
 
+# write_adr_requires <repo> <name> <requires の中身>: requires つきのフロントマターの ADR を書く
+write_adr_requires() {
+  mkdir -p "$1/docs/adr"
+  printf -- '---\nstatus: accepted\nrequires: [%s]\n---\n\n# %s\n' "$3" "$2" > "$1/docs/adr/$2"
+}
+
 # --- トピックが 1 つか（新しい ADR の数）: マージの時点と同じ判定を PR を作る時点で当てる ---
 # base から head までに加わった docs/adr 直下の NNNN-*.md を数え、2 件以上なら止める
 git -C "$REPO" switch -q -c feat/two-adrs main
@@ -318,6 +324,43 @@ out=$(run_hook pre-pr-create-check "ALLOW_MULTI_TOPIC=テスト用 $GOOD_CMD --w
 assert_eq deny "$(decision "$out")"
 assert_not_contains "$(reason "$out")" "/topic-triage"
 git -C "$REPO" switch -q feat/x
+
+if [[ -n "${RUN_RED:-}" ]]; then # RED: skip
+
+it "pre-pr-create: 同じブランチで足した ADR が requires でつながっていれば 1 トピックとして通す"
+git -C "$REPO" switch -q -c feat/linked-adrs main
+write_adr_requires "$REPO" 0002-use-b.md ""
+write_adr_requires "$REPO" 0003-use-c.md "ADR-0002"
+git -C "$REPO" add docs && git -C "$REPO" commit -q -m "docs(adr): b and c"
+git -C "$REPO" push -q -u origin feat/linked-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq allow "$(decision "$out")"
+# このブランチの外の ADR への requires ではつながらない
+git -C "$REPO" switch -q -c feat/unlinked-adrs main
+write_adr_requires "$REPO" 0002-use-b.md "ADR-0001"
+write_adr_requires "$REPO" 0003-use-c.md "ADR-0001"
+git -C "$REPO" add docs && git -C "$REPO" commit -q -m "docs(adr): b and c"
+git -C "$REPO" push -q -u origin feat/unlinked-adrs
+out=$(run_hook pre-pr-create-check "$GOOD_CMD")
+assert_eq deny "$(decision "$out")"
+
+it "pre-pr-create: 別のディレクトリから docs/adr へ移した ADR は新しい ADR と数えない"
+git -C "$REPO" switch -q -c feat/moved-adr main
+mkdir -p "$REPO/docs/decisions"
+seq 5 > "$REPO/docs/decisions/0006-moved.md"
+git -C "$REPO" add docs && git -C "$REPO" commit -q -m "docs: seed decisions"
+git -C "$REPO" switch -q -c feat/move-in
+git -C "$REPO" push -q -u origin feat/moved-adr
+mkdir -p "$REPO/docs/adr"
+git -C "$REPO" mv docs/decisions/0006-moved.md docs/adr/0006-moved.md
+git -C "$REPO" commit -q -m "docs(adr): move"
+commit_file "$REPO" "docs/adr/0007-new.md" "docs(adr): new"
+git -C "$REPO" push -q -u origin feat/move-in
+out=$(run_hook pre-pr-create-check "$GOOD_CMD --base feat/moved-adr")
+assert_eq allow "$(decision "$out")"
+git -C "$REPO" switch -q feat/x
+
+fi # RED: skip
 
 # --- fork（upstream リモートのある clone）: こちらの規約は検査しない ---
 FORK="$TEST_ROOT/prcreate-fork"
@@ -880,7 +923,7 @@ it "heredoc: マージ本文がヒアドキュメントでも見出しを読め�
 # コマンド（既定は、reviews が head なら head、ほかは無しで、head と違う reviews はレビューを 1 度も受けていない PR に
 # なる）。ローカルレビューの記録は無い
 make_fake_gh_merge() {
-  local reviews="${2:-echo abc}" files="${3:-true}" succeeded="${4:-}"
+  local reviews="${2:-echo abc}" files="${3:-true}" succeeded="${4:-}" contents="${5:-exit 1}"
   if [[ -z "$succeeded" ]]; then
     if [[ "$reviews" == "echo abc" ]]; then succeeded="echo abc"; else succeeded="echo"; fi
   fi
@@ -894,6 +937,7 @@ make_fake_gh_merge() {
   "api --paginate repos/example/heredoc/pulls/1/reviews"*"able to review"*) '"$succeeded"' ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviews"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
+  "api repos/example/heredoc/contents/"*) '"$contents"' ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
   "api graphql"*) echo "[]" ;;'
 }
@@ -2136,6 +2180,23 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "/topic-triage"
 assert_contains "$(reason "$out")" "ALLOW_MULTI_TOPIC には理由を記載"
 
+if [[ -n "${RUN_RED:-}" ]]; then # RED: skip
+it "pre-merge-check: 同じ PR で足した ADR が requires でつながっていれば 1 トピックとして通す"
+cd "$TEST_ROOT/heredoc" || exit 1
+LINKED='case "$*" in *0003-use-c.md*) printf -- "---\nrequires: [ADR-0002]\n---\n" ;; *) printf -- "---\nrequires: []\n---\n" ;; esac'
+make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS" "" "$LINKED"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: requires でつながらない 2 件と、中身を読めない 2 件は deny する"
+make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS" "" 'printf -- "---\nrequires: [ADR-0001]\n---\n"'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+make_fake_gh_merge 'echo 0' 'echo abc' "$TWO_ADRS"
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+fi # RED: skip
+
 it "pre-merge-check: PR の変更ファイルを取得できなければ deny"
 make_fake_gh_merge 'echo 0' 'echo abc' 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
@@ -2262,6 +2323,31 @@ git config diff.renames false
 out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/rename')
 assert_eq allow "$(decision "$out")"
 git config --unset diff.renames
+
+if [[ -n "${RUN_RED:-}" ]]; then # RED: skip
+it "pre-git-merge-check: 同じブランチで足した ADR が requires でつながっていれば 1 トピックとして通す"
+git switch -q -c feat/linked main
+write_adr_requires "$REPO" 0008-use-h.md ""
+write_adr_requires "$REPO" 0009-use-i.md "ADR-0008"
+git add docs && git commit -q -m "docs(adr): h and i"
+git switch -q main
+out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/linked')
+assert_eq allow "$(decision "$out")"
+
+it "pre-git-merge-check: 別のディレクトリから docs/adr へ移した ADR は新しい ADR と数えない"
+git switch -q -c feat/seed-decisions main
+mkdir -p docs/decisions
+echo moved > docs/decisions/0010-moved.md
+git add docs && git commit -q -m "docs: seed decisions"
+git switch -q main && git merge -q --no-ff feat/seed-decisions -m "Merge: seed"
+git switch -q -c feat/move-in main
+git mv docs/decisions/0010-moved.md docs/adr/0010-moved.md
+write_adr "$REPO" 0011-use-k.md
+git add docs && git commit -q -m "docs(adr): move and add k"
+git switch -q main
+out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/move-in')
+assert_eq allow "$(decision "$out")"
+fi # RED: skip
 
 it "pre-git-merge-check: マージ対象を標準入力で渡す --stdin は確かめられないので deny"
 out=$(run_hook pre-git-merge-check "printf 'feat/two\\n' | git merge --no-ff --stdin")

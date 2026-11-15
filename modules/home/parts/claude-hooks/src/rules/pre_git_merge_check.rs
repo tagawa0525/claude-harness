@@ -243,4 +243,38 @@ mod tests {
         assert_eq!(targets("git merge --continue"), None);
         assert_eq!(targets("git merge --quit"), None);
     }
+
+    fn git_in(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    #[ignore = "RED: added_adrs counts an ADR moved from another directory as new"]
+    fn moved_adr_is_not_added() {
+        let dir =
+            std::env::temp_dir().join(format!("claude-hooks-added-adrs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("docs/decisions")).unwrap();
+        git_in(&dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("docs/decisions/0001-x.md"), "x\n").unwrap();
+        git_in(&dir, &["add", "."]);
+        git_in(&dir, &["commit", "-q", "-m", "seed"]);
+        std::fs::create_dir_all(dir.join("docs/adr")).unwrap();
+        git_in(
+            &dir,
+            &["mv", "docs/decisions/0001-x.md", "docs/adr/0001-x.md"],
+        );
+        std::fs::write(dir.join("docs/adr/0002-y.md"), "y\n").unwrap();
+        git_in(&dir, &["add", "."]);
+        git_in(&dir, &["commit", "-q", "-m", "move"]);
+        let added = added_adrs(&dir, "HEAD~1...HEAD");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(added, Some(vec!["docs/adr/0002-y.md".to_string()]));
+    }
 }
