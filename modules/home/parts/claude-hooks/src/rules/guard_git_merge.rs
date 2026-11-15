@@ -62,6 +62,31 @@ fn dirty_reason(branch: &str, worktree: &Path) -> Option<String> {
     ))
 }
 
+/// マージ元の rev。ローカルのブランチは完全な ref、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は
+/// 指定のまま返す。リモート追跡ブランチやタグ（ref だが refs/heads/ でない）と、解決できない名前は None。
+/// ブランチ名だけを見ると、`git merge --no-ff <SHA>` で rebase 済みかの確認が飛ばされる
+fn merge_source(dir: &Path, target: &str) -> Option<String> {
+    if let Some(full) = local_branch_ref(dir, target) {
+        return Some(full);
+    }
+    let spec = if target == "-" { "@{-1}" } else { target };
+    let is_ref =
+        git::git(dir, &["rev-parse", "--symbolic-full-name", spec]).is_some_and(|f| !f.is_empty());
+    if is_ref {
+        return None;
+    }
+    git::git(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{spec}^{{commit}}"),
+        ],
+    )
+    .map(|_| spec.to_string())
+}
+
 pub struct GuardGitMerge;
 
 impl Rule for GuardGitMerge {
@@ -75,7 +100,7 @@ impl Rule for GuardGitMerge {
             let branches: Vec<(&str, String)> = merge
                 .targets
                 .iter()
-                .filter_map(|t| local_branch_ref(&merge.dir, t).map(|full| (t.as_str(), full)))
+                .filter_map(|t| merge_source(&merge.dir, t).map(|full| (t.as_str(), full)))
                 .collect();
             if branches.is_empty() {
                 continue;

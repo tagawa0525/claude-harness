@@ -2421,16 +2421,13 @@ assert_contains "$(reason "$out")" "feat/behind"
 assert_contains "$(reason "$out")" "git rebase main"
 
 it "guard-git-merge: ブランチ名でなくコミットの指定（SHA、feat/behind^0）でも、遅れていれば deny"
-# RED: 実装までは RUN_RED=1 のときだけ流す
-if [[ -n "${RUN_RED:-}" ]]; then
-  behind_sha=$(git rev-parse feat/behind)
-  for target in "$behind_sha" 'feat/behind^0' 'feat/behind~0'; do
-    out=$(run_hook guard-git-merge "git merge --no-ff $target -m 'Merge: behind'")
-    assert_eq deny "$(decision "$out")"
-  done
-  out=$(run_hook guard-git-merge "git merge --no-ff $(git rev-parse feat/rebased) -m 'Merge: rebased'")
-  assert_eq allow "$(decision "$out")"
-fi
+behind_sha=$(git rev-parse feat/behind)
+for target in "$behind_sha" 'feat/behind^0' 'feat/behind~0'; do
+  out=$(run_hook guard-git-merge "git merge --no-ff $target -m 'Merge: behind'")
+  assert_eq deny "$(decision "$out")"
+done
+out=$(run_hook guard-git-merge "git merge --no-ff $(git rev-parse feat/rebased) -m 'Merge: rebased'")
+assert_eq allow "$(decision "$out")"
 
 it "guard-git-merge: git merge - は直前のブランチとして判定する"
 git switch -q feat/behind && git switch -q main
