@@ -1357,7 +1357,6 @@ fn prune_stale_sees_records_on_branches_only_origin_has() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: prune --stale --delete removes a reservation another clone re-made after the scan"]
 fn prune_stale_delete_keeps_a_reservation_another_clone_remade_after_the_scan() {
     let t = stale_reservations("stale-race");
     let other = t.clone_remote("other");

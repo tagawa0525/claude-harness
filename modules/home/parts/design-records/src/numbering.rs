@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use design_records::{Kind, numbers_in, record_name, renumber_refs};
 
 use crate::git::{
-    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, remote_tags,
-    repo_root, reservations, run, tracked,
+    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, remote_tag_oid,
+    remote_tags, repo_root, reservations, run, tracked,
 };
 
 /// 予約をやり直す回数の上限。ほかの人の予約と続けてぶつかるのは、同時に作る人の数だけ。
@@ -643,30 +643,63 @@ fn release_old(root: &Path, kind: Kind, old: u32, slug: &str) -> Result<()> {
     git(root, &["tag", "-d", &tag]).map(|_| ())
 }
 
-/// 予約のタグ `tags` を origin（`remote` なら）とローカルから消し、名前を出す。
-fn release(root: &Path, remote: bool, tags: &[String]) -> Result<ExitCode> {
-    if tags.is_empty() {
-        return Ok(ExitCode::SUCCESS);
-    }
-    if remote {
-        let on_remote = remote_tags(root, &["refs/tags/adr-*", "refs/tags/issue-*"])?;
-        for tag in tags.iter().filter(|tag| on_remote.contains(*tag)) {
-            let full = format!("refs/tags/{tag}");
+/// 解放する予約のタグ。`oid` があれば、そのオブジェクトを指すときだけ消す。
+struct Release {
+    name: String,
+    oid: Option<String>,
+}
+
+/// 予約のタグ `tags` を origin（`remote` なら）とローカルから消し、消した名前を出す。`oid` つきのタグは、スキャンした
+/// 後にほかの clone が消して同じ番号を予約し直したかもしれないので、origin へは期待値つきの `--force-with-lease`
+/// で消し、ローカルは期待値と合うときだけ消す。合わなければ、別の予約になったので触らない。
+fn release(root: &Path, remote: bool, tags: &[Release]) -> Result<ExitCode> {
+    let mut released = Vec::new();
+    for Release { name, oid } in tags {
+        let full = format!("refs/tags/{name}");
+        if remote && let Some(on_origin) = remote_tag_oid(root, name)? {
+            if oid.as_ref().is_some_and(|expected| *expected != on_origin) {
+                continue;
+            }
             // タグごとに消す。一覧を取った後にほかの clone が消していれば、解放は済んでいる
-            let deleted = run(root, &["push", "--quiet", "origin", "--delete", &full])?;
-            if !deleted.status.success() && remote_tags(root, &[&full])?.contains(tag) {
-                return Err(format!(
-                    "cannot delete the reservation tag {tag} on origin: {}",
-                    String::from_utf8_lossy(&deleted.stderr).trim()
-                ));
+            let lease = oid
+                .as_ref()
+                .map(|o| format!("--force-with-lease={full}:{o}"));
+            let mut args = vec!["push", "--quiet"];
+            args.extend(lease.as_deref());
+            args.extend(["origin", "--delete", &full]);
+            let deleted = run(root, &args)?;
+            if !deleted.status.success() {
+                match remote_tag_oid(root, name)? {
+                    None => {}
+                    // 確かめた後に、ほかの clone が予約し直した
+                    Some(now) if oid.as_ref().is_some_and(|expected| *expected != now) => continue,
+                    Some(_) => {
+                        return Err(format!(
+                            "cannot delete the reservation tag {name} on origin: {}",
+                            String::from_utf8_lossy(&deleted.stderr).trim()
+                        ));
+                    }
+                }
             }
         }
+        match oid {
+            // 手元のタグがスキャンした予約でなければ、残す
+            Some(expected) => {
+                if !run(root, &["update-ref", "-d", &full, expected])?
+                    .status
+                    .success()
+                {
+                    continue;
+                }
+            }
+            None => {
+                git(root, &["tag", "-d", name])?;
+            }
+        }
+        released.push(name);
     }
-    let mut args = vec!["tag", "-d"];
-    args.extend(tags.iter().map(String::as_str));
-    git(root, &args)?;
-    for tag in tags {
-        println!("{tag}");
+    for name in released {
+        println!("{name}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -683,14 +716,17 @@ pub fn prune() -> Result<ExitCode> {
     let mut args = vec!["log", branch.as_str(), "--format=", "--name-only", "--"];
     args.extend(Kind::ALL.map(Kind::dir));
     let history: BTreeSet<String> = git(&root, &args)?.lines().map(str::to_string).collect();
-    let merged: Vec<String> = reservations(&root)?
+    let merged: Vec<Release> = reservations(&root)?
         .into_iter()
         .filter(|r| {
             r.slug
                 .as_ref()
                 .is_some_and(|slug| history.contains(&r.kind.path(r.number, slug)))
         })
-        .map(|r| r.name)
+        .map(|r| Release {
+            name: r.name,
+            oid: None,
+        })
         .collect();
     release(&root, remote, &merged)
 }
@@ -736,15 +772,21 @@ pub fn prune_stale(days: u64, delete: bool) -> Result<ExitCode> {
             };
             let age = now.saturating_sub(created) / 86_400;
             if age >= days && !recorded.contains(&r.number) {
-                stale.push((r.name, slug, age));
+                stale.push((r.name, slug, age, r.oid));
             }
         }
     }
     if delete {
-        let names: Vec<String> = stale.into_iter().map(|(name, ..)| name).collect();
-        return release(&root, remote, &names);
+        let tags: Vec<Release> = stale
+            .into_iter()
+            .map(|(name, _, _, oid)| Release {
+                name,
+                oid: Some(oid),
+            })
+            .collect();
+        return release(&root, remote, &tags);
     }
-    for (name, slug, age) in stale {
+    for (name, slug, age, _) in stale {
         println!("{name}\t{slug}\t{age} days");
     }
     Ok(ExitCode::SUCCESS)

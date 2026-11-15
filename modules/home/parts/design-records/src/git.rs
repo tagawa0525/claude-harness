@@ -205,6 +205,19 @@ fn remote_default(root: &Path) -> Result<Option<String>> {
         .map(str::to_string))
 }
 
+/// origin のタグ `name` の指すオブジェクト（origin に無ければ `None`）。
+pub fn remote_tag_oid(root: &Path, name: &str) -> Result<Option<String>> {
+    let full = format!("refs/tags/{name}");
+    Ok(
+        git(root, &["ls-remote", "--tags", "--refs", "origin", &full])?
+            .lines()
+            .find_map(|line| {
+                let (oid, name) = line.split_once('\t')?;
+                (name == full).then(|| oid.to_string())
+            }),
+    )
+}
+
 /// origin のタグのうち `patterns`（ls-remote のパターン）に合うものの名前（`refs/tags/` の後ろ）。
 pub fn remote_tags(root: &Path, patterns: &[&str]) -> Result<BTreeSet<String>> {
     let mut args = vec!["ls-remote", "--tags", "--refs", "origin"];
@@ -223,6 +236,8 @@ pub struct Reservation {
     pub number: u32,
     /// 注釈つきのタグのメッセージ（予約した記録の slug）。軽量のタグなら `None`（番号だけを予約する）。
     pub slug: Option<String>,
+    /// タグの ref が指すオブジェクト（注釈つきならタグのオブジェクト）。
+    pub oid: String,
     /// 注釈つきのタグを打った時刻（UNIX 秒）。軽量のタグなら `None`。
     pub created: Option<u64>,
 }
@@ -233,7 +248,7 @@ pub fn reservations(root: &Path) -> Result<Vec<Reservation>> {
         root,
         &[
             "for-each-ref",
-            "--format=%(refname)%00%(objecttype)%00%(contents:subject)%00%(creatordate:unix)",
+            "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(contents:subject)%00%(creatordate:unix)",
             "refs/tags/adr-*",
             "refs/tags/issue-*",
         ],
@@ -244,6 +259,7 @@ pub fn reservations(root: &Path) -> Result<Vec<Reservation>> {
             let mut fields = line.split('\0');
             let name = fields.next()?.strip_prefix("refs/tags/")?;
             let (kind, number) = parse_tag(name)?;
+            let oid = fields.next()?.to_string();
             let annotated = fields.next() == Some("tag");
             let slug = fields
                 .next()
@@ -258,6 +274,7 @@ pub fn reservations(root: &Path) -> Result<Vec<Reservation>> {
                 kind,
                 number,
                 slug,
+                oid,
                 created,
             })
         })
