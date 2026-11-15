@@ -2035,14 +2035,25 @@ fn renumber_without_a_common_ancestor_stops_when_a_mentioning_file_cannot_be_rea
     t.git(&["checkout", "-q", "--orphan", "lone"]);
     t.run(&["new", "use-a", "a を使う"]);
     t.write("notes.md", "ADR-0001 を見る\n");
+    // index より十分前の更新時刻で入れ、git が中身を読み直さずに（racy-git の確認なしに）変更なしと判断できるようにする
+    let notes = t.dir.join("notes.md");
+    fs::File::options()
+        .write(true)
+        .open(&notes)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
     t.commit_all("docs(adr): a");
     t.git(&["config", "core.fileMode", "false"]);
     t.git(&["config", "core.trustctime", "false"]);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    t.git(&["update-index", "-q", "--really-refresh"]);
     use std::os::unix::fs::PermissionsExt;
-    let notes = t.dir.join("notes.md");
     fs::set_permissions(&notes, fs::Permissions::from_mode(0o000)).unwrap();
+    // root は mode 000 のファイルも読めるので、この状況を作れない（Podman のコンテナなど）
+    if fs::File::open(&notes).is_ok() {
+        fs::set_permissions(&notes, fs::Permissions::from_mode(0o644)).unwrap();
+        eprintln!("skipped: mode 000 のファイルを読めてしまう（root で実行している）");
+        return;
+    }
     let out = t.run(&["renumber", "1", "5"]);
     fs::set_permissions(&notes, fs::Permissions::from_mode(0o644)).unwrap();
     assert!(!out.status.success(), "{}", stdout(&out));
