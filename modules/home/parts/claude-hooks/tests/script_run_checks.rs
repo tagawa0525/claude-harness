@@ -255,7 +255,6 @@ fn the_staged_markdown_goes_to_staged_checks_and_merge_only_lints_it() {
 }
 
 #[test]
-#[ignore = "RED: git diff の失敗で段を飛ばし ALL_OK になる（GREEN で解除）"]
 fn an_unreadable_diff_fails_instead_of_skipping_the_stages() {
     let repo = Repo::new();
     repo.stage("a.sh", "echo a\n");
