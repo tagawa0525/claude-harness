@@ -178,7 +178,9 @@ minimal_path() {
     for tool in bash sh env git jq awk sed grep xargs head tail sort uniq cut tr wc cat ls \
                 mktemp rm mv cp mkdir dirname basename readlink realpath printf echo test \
                 date seq chmod ln uname; do
-      src=$(command -v "$tool" 2>/dev/null) || continue
+      # type -P はシェルの組み込みでなく実行ファイルの path を返す（command -v は echo などで
+      # 裸の名前を返し、自分を指す symlink になる）
+      src=$(type -P "$tool" 2>/dev/null) || continue
       ln -s "$src" "$bin/$tool"
     done
   fi
