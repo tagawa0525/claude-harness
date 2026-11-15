@@ -459,6 +459,24 @@ fn off_the_node_cargo_is_not_limited_and_nix_builds_here() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+#[ignore = "RED: run-checks は main パーティションの排他のジョブでも 1 コアに限る（#50）"]
+fn exclusive_job_on_the_main_partition_does_not_limit_checks() {
+    let repo = Repo::new();
+    exclusive_job_on(&repo);
+    let env = [
+        ("FAKE_SQUEUE_OUT", "NO|main|openmc-2K|1234|r995\n"),
+        ("FAKE_HOSTNAME_OUT", "r995\n"),
+    ];
+    let out = repo.run(&[], &env);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!stdout(&out).contains("排他のジョブ"), "{}", said(&out));
+    let calls = repo.calls();
+    assert!(!calls.iter().any(|c| c.starts_with("taskset")), "{calls:?}");
+    assert!(calls.contains(&"cargo test".to_string()), "{calls:?}");
+}
+
 #[test]
 fn tracked_tests_under_a_non_ascii_directory_run_in_that_directory() {
     let repo = Repo::new();
