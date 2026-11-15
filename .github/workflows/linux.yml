@@ -1,0 +1,29 @@
+# Linux で Rust の crate のテストを流す。cfg(unix) のテスト（tests/git_spawn.rs の偽の squeue など）は Windows の CI で
+# 流れず、nix flake check は重くて PR の前に飛ばしやすいので、PR の上で cargo test だけを流す（#180）。
+# windows.yml と同じ形で、crate ごとの matrix にする
+name: linux
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [design-records, claude-hooks, ja-terms, claude-setup, commit-refs, fix-markdown-lint, history-rewrite]
+    defaults:
+      run:
+        working-directory: modules/home/parts/${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v5
+      # history-rewrite の run は第 2 段で PATH の commit-refs を呼ぶ
+      - if: matrix.crate == 'history-rewrite'
+        run: cargo install --locked --path ../commit-refs
+      - run: cargo test --locked

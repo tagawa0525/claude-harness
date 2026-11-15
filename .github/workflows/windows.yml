@@ -1,4 +1,4 @@
-# ネイティブの Windows で Rust の crate のテストを流す（ADR-0083）。Linux のテストは nix flake check が受け持つ。
+# ネイティブの Windows で Rust の crate のテストを流す（ADR-0083）。Linux のテストは linux.yml（cargo test）と nix flake check が受け持つ。
 # matrix には Windows で通る crate だけを入れ、ほかの crate は Windows に移す PR で通してから足す（#101）。
 # setup のジョブは docs/windows.md（README の「Windows で使う」が指す）の手順を流す（手順を変えたら、このジョブも合わせる）
 name: windows
