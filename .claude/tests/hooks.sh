@@ -2251,6 +2251,17 @@ assert_eq deny "$(decision "$out")"
 out=$(run_hook check-merge-review "git merge --no-ff ':/b and c' -m 'Merge: x'")
 assert_eq deny "$(decision "$out")"
 
+it "3 つのマージのルールは :/文字列 の指定を、ブランチと同じ内容で確かめる（誤った deny を出さない）"
+# 本文が形を満たし、Reviewed: が先端なら、検査は先端を解くところまで進んで deny しない
+two_sha=$(git rev-parse feat/two)
+out=$(run_hook check-merge-review "git merge --no-ff ':/b and c' -m 'Merge: x
+
+Reviewed: $two_sha
+指摘なし'")
+assert_not_contains "$(reason "$out")" "先端を読めません"
+out=$(run_hook pre-git-merge-check "git merge --no-ff ':/d supersedes a' -m 'Merge: x'")
+assert_eq allow "$(decision "$out")"
+
 it "pre-git-merge-check / check-merge-review: タグの指定でも確かめる"
 git tag tag-two feat/two
 out=$(run_hook pre-git-merge-check "git merge --no-ff tag-two -m 'Merge: x'")
