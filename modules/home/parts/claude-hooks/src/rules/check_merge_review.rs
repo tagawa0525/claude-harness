@@ -407,7 +407,7 @@ impl Rule for CheckMergeReview {
                 }
                 continue;
             };
-            let body = match merge_message(&merge.args, &merge.dir) {
+            let body = match merge_message(&merge.args, &merge.dir, &shell.literal_vars()) {
                 Ok(Some(b)) => b,
                 Ok(None) => {
                     out.push(Finding::Deny(undecided_reason(None)));

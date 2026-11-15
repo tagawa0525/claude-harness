@@ -118,8 +118,8 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
   `S=x cmd` の前置きの代入も数える）。実際の値と食い違えば、止める側にも止めない側にも誤りうる（例:
   `(S=/a); cat > $S/msg.txt; git commit -F /msg.txt` は、実際には `$S` が空で `/msg.txt` を書くが、`/a/msg.txt` と読んで
   止めない）。
-  引用符の外の値の単語分割とグロブも見ない。`-F` の値そのものに `$` があるもの（`git commit -F $S/msg.txt`）は、今も
-  展開せず判定できない理由を出して通す（#620）
+  引用符の外の値の単語分割とグロブも見ない。`-F` の値そのものの `$NAME` と `${NAME}` も、同じ変数で展開してから読み、
+  前段と比べる（`git commit -F $S/msg.txt`）。値が決まらないときは、判定できない理由を出して通し、前段とは比べない（#86）
 
 ### 確認
 
@@ -143,3 +143,7 @@ ADR-0050 と同じく、git の hook の順は変えられず、pre-commit か�
   commit-msg-check（`modules/home/parts/ja-terms/commit-msg-check.sh`。`textlint.nix` の `commitMsgCheck`）の 1 か所に置く」と
   「2 が語の検査（textlint）の失敗」。件名の形と長さ、文言、終了コードは同じ。Windows の機械に Node.js を入れずに同じ判定に
   するため（ADR-0085）
+- 2026-11-15: 帰結の、前段のパスの展開の項を変えた。前は「`-F` の値そのものに `$` があるもの（`git commit -F $S/msg.txt`）は、
+  今も展開せず判定できない理由を出して通す（#620）」。`S=<dir>; cat > $S/msg.txt <<'EOF' … EOF; git commit -F $S/msg.txt` を
+  止めず、件名が長ければ commit-msg が後で拒み、同じ呼び出しの後段が古い HEAD のまま走るため（#86）。前段のパスと同じ
+  `Shell::literal_vars` で `-F` の値を展開し、`git merge -F` も同じにした。決定と理由の項は変えない
