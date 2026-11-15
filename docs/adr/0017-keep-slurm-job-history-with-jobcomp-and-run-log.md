@@ -38,19 +38,19 @@ Slurm の既定（`accounting_storage/none`）のままで、`sacct` は履歴�
 
 - `modules/slurm/common.nix` に `JobCompType=jobcomp/filetxt` と `JobCompLoc=/var/log/slurm/job_completions` を置き、
   `/var/log/slurm` を `slurm` ユーザーのディレクトリとして tmpfiles で作る
-- `slurm-run.sh` は、ジョブが終わった直後に `scontrol show job` から `RunTime` と `TimeLimit` を読み、
+- `slurm-run.sh` は、ジョブが終わった直後に `sacct` から `Elapsed` と `Timelimit` を読み、
   `TIME: elapsed=<実際> estimate=<見積もり>` を出力し、同じ行をジョブのログの末尾にも書き足す
 
 ### 帰結
 
 - 良い点: 追加のサービスなしに、全ジョブの履歴と、`slurm-run.sh` の出力で見積もりとの比較が残る
 - 悪い点: jobcomp のファイルは増え続ける。`sacct` のような集計や絞り込みはできない（`grep` と `awk` で読む）。
-  `slurm-run.sh` の出力は `MinJobAge` の間に `scontrol` が読めたときだけ出る
+  `slurm-run.sh` の出力は `MinJobAge` の間に `scontrol` が読めたときだけ出る（2026-11-15 から、slurmdbd の `sacct` を読むので、この制約は無く、記録が届くまで待つ。#19）
 - 見直す条件: 利用者が増える、または集計が要るようになったとき（案 A に移る）
 
 ### 確認
 
-- `slurm-run.sh` の出力は `.claude/tests/scripts/slurm-run.sh` で確かめる
+- `slurm-run.sh` の出力は `.claude/tests/scripts/slurm-run.sh`（偽の `sacct`）で確かめる
 - 反映後に、短いジョブを 1 本流し、`/var/log/slurm/job_completions` に 1 行増えることと、`TIME:` が出ることを確かめる
 
 ## 各案の長所と短所
@@ -71,3 +71,7 @@ Slurm の既定（`accounting_storage/none`）のままで、`sacct` は履歴�
 ## 補足
 
 - 2026-10-12: 案 A（slurmdbd）を、待った時間の優先度のために採った（ADR-0031）。この ADR の jobcomp と TIME 行は残す
+
+## 変更
+
+- 2026-11-15: `slurm-run.sh` が実際の時間を読む元を `scontrol show job` から `sacct` に変えた。前は「`slurm-run.sh` は、ジョブが終わった直後に `scontrol show job` から `RunTime` と `TimeLimit` を読み、`TIME: elapsed=<実際> estimate=<見積もり>` を出力し、同じ行をジョブのログの末尾にも書き足す」。ADR-0031 で slurmdbd を置いたので `sacct` で終わったジョブをいつでも読め、`scontrol` が覚えている `MinJobAge`（300 秒）の窓に頼らなくてよいため（#19）。TIME 行を出すこと自体と、jobcomp の決定は変えない。記録が `sacct` に届くまで待ち、届かなければ `scontrol` の `JobState` で終わりの State だけを確かめる
