@@ -292,7 +292,8 @@ pub fn local_review_covers_for_pr(
 /// `-R` の値（`OWNER/REPO`、`github.com/OWNER/REPO`、`https://github.com/OWNER/REPO`）の owner と name。
 /// 読めない形と github.com 以外のホスト（GHES など。API の呼び先に host を渡せない）は、空の組を返して検査の対象にしない
 fn split_repo(r: &str) -> (&str, &str) {
-    let r = r.trim_end_matches('/').trim_end_matches(".git");
+    let r = r.trim_end_matches('/');
+    let r = r.strip_suffix(".git").unwrap_or(r);
     let (r, has_scheme) = match r
         .strip_prefix("https://")
         .or_else(|| r.strip_prefix("http://"))
@@ -1076,7 +1077,6 @@ impl Rule for PreMergeCheck {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[ignore = "RED: trim_end_matches strips every trailing .git"]
     fn split_repo_strips_one_dot_git() {
         assert_eq!(super::split_repo("octo/x.git.git"), ("octo", "x.git"));
     }
