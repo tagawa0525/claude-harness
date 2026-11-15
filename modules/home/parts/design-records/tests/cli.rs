@@ -540,6 +540,52 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     );
 }
 
+/// 確定した ADR の決定と理由を直した topic のブランチで、`item` を「## 変更」に足す（空なら足さない）。
+fn decision_edited(name: &str, item: &str) -> TempRepo {
+    let t = superseded_repo(name);
+    t.git(&["switch", "-q", "-c", "topic"]);
+    let b = "docs/adr/0002-use-b.md";
+    let mut text = t
+        .read(b)
+        .replace("## 決定と理由\n", "## 決定と理由\n\n決定を直す\n");
+    if !item.is_empty() {
+        text.push_str(&format!("\n## 変更\n\n{item}\n"));
+    }
+    t.write(b, &text);
+    t
+}
+
+const MISSING_CHANGE_ITEM: &str = "docs/adr/0002-use-b.md: warning: the decision outcome changed \
+     but no item was added to the `## 変更` section; add `- YYYY-MM-DD: <changed part>。前は\
+     「<quote of the previous text>」。<reason>`, or ignore this if the edit only fixes typos, \
+     grammar, markup or links\n";
+
+#[test]
+#[ignore = "RED: no warning for a decision change without a change item (#65)"]
+fn check_warns_when_the_decision_changes_without_a_change_item() {
+    let t = decision_edited("no-item", "");
+    let out = t.run(&["check", "docs/adr/0002-use-b.md"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains(MISSING_CHANGE_ITEM),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+#[ignore = "RED: no warning for a decision change without a change item (#65)"]
+fn check_accepts_a_decision_change_with_a_change_item() {
+    let t = decision_edited("with-item", "- 2026-11-01: 決定を直した。前は「決」。理由");
+    let out = t.run(&["check", "docs/adr/0002-use-b.md"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        !stdout(&out).contains(MISSING_CHANGE_ITEM),
+        "{}",
+        stdout(&out)
+    );
+}
+
 #[test]
 fn check_lets_consequences_and_changes_follow_a_decided_adr_on_main() {
     let t = superseded_repo("living");
