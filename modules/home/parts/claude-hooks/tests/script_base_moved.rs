@@ -142,3 +142,56 @@ fn bad_arguments_and_unknown_refs_are_errors() {
         );
     }
 }
+
+/// GitHub の URL の remote（github）と、実際に通信できる origin（bare）、origin 以外のリモート up を持つ clone
+fn github_clone_with_other_remote() -> Repo {
+    let repo = Repo::new();
+    for name in ["origin", "up"] {
+        let bare = repo.root.join(format!("{name}.git"));
+        repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+        repo.git(&["remote", "add", name, bare.to_str().unwrap()]);
+        repo.git(&["push", "-q", name, "main"]);
+    }
+    repo.git(&[
+        "remote",
+        "add",
+        "github",
+        "https://github.com/example/app.git",
+    ]);
+    repo.git(&["fetch", "-q", "up"]);
+    repo.git(&["switch", "-q", "-c", "feat/work"]);
+    repo.commit("src/a.txt", "a");
+    repo
+}
+
+#[test]
+fn a_base_on_a_remote_other_than_origin_is_warned_as_unfetched() {
+    let repo = github_clone_with_other_remote();
+    let out = repo.run(&["--base", "up/main"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("WARN: up/main") && err.contains("未確認"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_local_or_origin_base_in_a_github_clone_is_not_warned() {
+    let repo = github_clone_with_other_remote();
+    for base in ["main", "origin/main", "refs/remotes/origin/main"] {
+        let out = repo.run(&["--base", base]);
+        assert_eq!(out.status.code(), Some(0), "{base}");
+        assert_eq!(text(&out.stderr), "", "{base}");
+    }
+}
+
+#[test]
+fn a_full_local_ref_is_not_warned_without_a_github_origin() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/work"]);
+    repo.commit("src/a.txt", "a");
+    let out = repo.run(&["--base", "refs/heads/main"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(text(&out.stderr), "");
+}

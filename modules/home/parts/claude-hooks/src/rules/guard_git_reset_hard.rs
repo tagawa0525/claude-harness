@@ -77,7 +77,7 @@ impl Rule for GuardGitResetHard {
             if !is_hard_reset(cmd) || shell.runs_under_ssh_or_login(cmd) {
                 continue;
             }
-            let before = |c: &&Cmd| c.start < cmd.start && cmd.scope.starts_with(&c.scope);
+            let before = |c: &&Cmd| c.runs_before(cmd);
             let preceding_cds: Vec<&Cmd> = shell
                 .commands()
                 .iter()

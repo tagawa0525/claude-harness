@@ -1,11 +1,12 @@
 //! `base-moved.sh [branch] [--base BASE]`: 比較元が分岐点から進み、ブランチと同じパスを触っていないかを知らせる
 //! （/gh-pr-create の「比較元の進みの確認」）。branch を省けば今のブランチ、BASE を省けば origin の既定のブランチ
 //! （origin/HEAD → origin/main → origin/master）。積み重なったブランチは土台を origin/<土台のブランチ> で渡す（fetch が
-//! 更新するのは origin/* だけで、ローカルのブランチは古いまま比べることになる）。
+//! 更新するのは origin/* だけで、ローカルのブランチは古いまま比べることになる。GitHub の無い clone では origin/<土台> は
+//! fetch されない追跡ブランチなので、ローカルのブランチ名で渡す）。
 //!
-//! GitHub のリモートと origin が揃う clone では、比べる前に origin を fetch する（失敗したら WARN を出し、手元の追跡
-//! ブランチで比べる）。揃わない clone では、--base を渡されたときだけ fetch せずに比べ（リモートの無いリポジトリでは
-//! --base main を渡す）、--base がローカルのブランチでなければ WARN を出す。渡されなければ何もしない。WARN が出たときは
+//! GitHub のリモートと origin が揃う clone では、比べる前に origin だけを fetch する（失敗したら WARN を出し、手元の追跡
+//! ブランチで比べる。--base が origin 以外のリモートの追跡ブランチなら fetch せず WARN を出す）。揃わない clone では、--base を渡されたときだけ fetch せずに比べ
+//! （リモートの無いリポジトリでは --base main を渡す）、--base がローカルのブランチでなければ WARN を出す。渡されなければ何もしない。WARN が出たときは
 //! 比較が済んでいない（出力が空でも「進みなし」ではない）。ほかのセッションが同じファイルを main に入れていると、マージの
 //! 直前の rebase まで気付けない。知らせるだけで失敗にはしない（同じパスを触っても、衝突するとは限らない）。
 //!
@@ -40,6 +41,12 @@ pub fn main(args: &[String]) -> i32 {
     let dir = Path::new(".");
     let github_origin =
         crate::git::has_github_remote(dir) && git(dir, &["remote", "get-url", "origin"]).is_some();
+    // --base の完全な名前（refs/heads/…、refs/remotes/<リモート>/…）。origin/main~1 や @{u} のような書き方は、
+    // 追跡ブランチかを字面から決められず空になる
+    let base_ref = base.as_deref().and_then(|b| {
+        git(dir, &["rev-parse", "--symbolic-full-name", b]).filter(|r| !r.is_empty())
+    });
+    let base_ref = base_ref.as_deref().unwrap_or("");
     if github_origin {
         // origin を明示する。引数なしの fetch は今のブランチの上流のリモートへ行き、上流が別のリモートだと、BASE の
         // origin/* が更新されないまま古い比較になる
@@ -52,21 +59,21 @@ pub fn main(args: &[String]) -> i32 {
                 "WARN: fetch に失敗しました。比較は未確認です（手元の追跡ブランチは古い可能性があります）"
             );
         }
+        // origin 以外のリモートは fetch しない（ADR-0038: 比べる先は origin の既定のブランチに限る）。その追跡
+        // ブランチが指すと分かるときは、古いまま比べるので未確認と知らせる（origin/main~1 のような書き方は決められない）
+        if let Some(base) = &base
+            && base_ref.starts_with("refs/remotes/")
+            && !base_ref.starts_with("refs/remotes/origin/")
+        {
+            eprintln!(
+                "WARN: {base} は origin 以外のリモートの追跡ブランチで、fetch していません。比較は未確認です（fetch するのは origin だけです）"
+            );
+        }
     } else if let Some(base) = &base {
         // GitHub でないリモートは fetch しない。ローカルのブランチでないもの（追跡ブランチ、@{u} や origin/main~1 の
         // ような書き方）は、fetch していない追跡ブランチを指しうるので未確認と知らせる（書き方から追跡ブランチかを確実には
         // 決められない）
-        if git(
-            dir,
-            &[
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{base}"),
-            ],
-        )
-        .is_none()
-        {
+        if !base_ref.starts_with("refs/heads/") {
             eprintln!(
                 "WARN: {base} はローカルのブランチでなく、fetch していません。比較は未確認です（GitHub の origin だけを fetch します）"
             );
