@@ -21,12 +21,15 @@ use crate::git;
 use crate::git_args::{Item, items, items_with_values};
 use crate::input::Input;
 use crate::output::{Finding, notice};
-use crate::shell::{self, Arg, Cmd, Shell};
+use crate::shell::{self, Arg, Cmd, Expanded, Shell};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub struct CheckMergeBodyJaTerms;
+
+/// 同じ呼び出しで字面のまま決まる変数（[`Shell::literal_vars`]）
+pub(super) type Vars = std::collections::HashMap<String, String>;
 
 /// ja-terms の store のパスを持つ環境変数。package.nix のラッパーが固定する（cargo で直接ビルドした
 /// ものには無く、Windows は PATH の ja-terms を使う。[`ja_terms`]）。git commit のルールも使う
@@ -67,7 +70,11 @@ fn message_option(item: &Item) -> Option<MessageOption> {
 /// option_read_message）: `-m` の前は空行、`-F` の前は改行 1 つ（どちらも先に本文があるときだけ）、
 /// `--no-message` はそれまでを消す。`-F` は `-` も名前のファイルとして、dir からの相対で読む（`~` は HOME）。
 /// git は先頭の空行や --cleanup の整えを commit-msg の後で行うので、書いたままにする。本文の無い形は Ok(None)
-pub(super) fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, Undecided> {
+pub(super) fn merge_message(
+    args: &[Arg],
+    dir: &Path,
+    vars: &Vars,
+) -> Result<Option<String>, Undecided> {
     let mut buf = String::new();
     let mut have = false;
     for (item, value) in items_with_values("merge", args) {
@@ -80,7 +87,7 @@ pub(super) fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, 
                 have = true;
             }
             (Some(MessageOption::File), Some((value, arg))) => {
-                let path = literal(value, arg, "-F")?;
+                let path = file_path(value, arg, vars)?;
                 let text = std::fs::read_to_string(shell::resolve(&shell::home(), dir, &path))
                     .map_err(|_| Undecided::Unreadable(path))?;
                 if !buf.is_empty() {
@@ -97,6 +104,20 @@ pub(super) fn merge_message(args: &[Arg], dir: &Path) -> Result<Option<String>, 
         }
     }
     Ok(have.then_some(buf))
+}
+
+/// `-F` の値のパス。同じ呼び出しで字面のまま決まる変数（`vars`）は展開する（`-F $S/msg.txt`）。決まらない展開を
+/// 含むもの（`-F "$(mktemp)"`、`vars` に無い変数）は、シェルが展開した後の値が分からない。値は `arg` の語の末尾で、
+/// 前（`-F`、`--file=`）は展開を含まない字面
+pub(super) fn file_path(value: &str, arg: &Arg, vars: &Vars) -> Result<String, Undecided> {
+    if !value.contains(['$', '`']) {
+        return Ok(value.to_string());
+    }
+    let prefix = &arg.text[..arg.text.len() - value.len()];
+    match arg.expand(vars) {
+        Expanded::Known(t) => Ok(t.strip_prefix(prefix).unwrap_or(&t).to_string()),
+        Expanded::Tail(_) => Err(Undecided::Expanded("-F")),
+    }
 }
 
 /// 値を書いたままの文字列にする。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は
@@ -171,12 +192,15 @@ fn has_message(args: &[Arg]) -> bool {
     })
 }
 
-/// 本文に残る -F のファイルの名前（書いたまま。`--no-message` はそれまでの -F を本文から外す）
-fn body_files(args: &[Arg]) -> Vec<&str> {
+/// 本文に残る -F のファイルの名前（`vars` で展開したもの。決まらないものは除く。`--no-message` はそれまでの -F を
+/// 本文から外す）
+fn body_files(args: &[Arg], vars: &Vars) -> Vec<String> {
     let mut files = Vec::new();
     for (item, value) in items_with_values("merge", args) {
         match (message_option(&item), value) {
-            (Some(MessageOption::File), Some((value, _))) => files.push(value),
+            (Some(MessageOption::File), Some((value, arg))) => {
+                files.extend(file_path(value, arg, vars).ok());
+            }
             (Some(MessageOption::NoMessage), _) => files.clear(),
             _ => {}
         }
@@ -317,18 +341,15 @@ pub(super) fn earlier_writer_reason(
     base: &Path,
     dir: &Path,
     sub: &str,
-    files: &[&str],
+    files: &[String],
 ) -> Option<String> {
     let home = shell::home();
-    files
-        .iter()
-        .filter(|f| !f.contains(['$', '`']))
-        .find_map(|f| {
-            let target = shell::resolve(&home, dir, f);
-            shell
-                .writer_before(cmd, base, &target)
-                .map(|w| split_calls_reason(sub, f, &w.name))
-        })
+    files.iter().find_map(|f| {
+        let target = shell::resolve(&home, dir, f);
+        shell
+            .writer_before(cmd, base, &target)
+            .map(|w| split_calls_reason(sub, f, &w.name))
+    })
 }
 
 /// 崩れた語を止める文言
@@ -385,6 +406,7 @@ impl CheckMergeBodyJaTerms {
         global_hooks: &dyn Fn(&Path) -> Option<String>,
     ) -> Vec<Finding> {
         let mut out = Vec::new();
+        let vars = shell.literal_vars();
         for cmd in shell.commands() {
             let Some(("merge", args)) = cmd.git_subcommand() else {
                 continue;
@@ -397,13 +419,18 @@ impl CheckMergeBodyJaTerms {
             if commit_msg_skips(&dir, global_hooks(&dir)) {
                 continue;
             }
-            if let Some(reason) =
-                earlier_writer_reason(shell, cmd, &input.cwd, &dir, "merge", &body_files(args))
-            {
+            if let Some(reason) = earlier_writer_reason(
+                shell,
+                cmd,
+                &input.cwd,
+                &dir,
+                "merge",
+                &body_files(args, &vars),
+            ) {
                 out.push(Finding::Deny(reason));
                 continue;
             }
-            let message = match merge_message(args, &dir) {
+            let message = match merge_message(args, &dir, &vars) {
                 Ok(Some(m)) => m,
                 Ok(None) => continue,
                 Err(why) => {
@@ -574,7 +601,7 @@ exit 0
     }
 
     fn message(src: &str) -> Result<Option<String>, Undecided> {
-        merge_message(&args(src), Path::new("."))
+        merge_message(&args(src), Path::new("."), &Vars::new())
     }
 
     fn check_in(command: &str, cwd: &Path, check: Option<&str>) -> Vec<Finding> {
@@ -673,7 +700,7 @@ exit 0
             "git merge --file=msg.txt feat/a",
         ] {
             assert_eq!(
-                merge_message(&args(src), &dir.0),
+                merge_message(&args(src), &dir.0, &Vars::new()),
                 Ok(Some("Merge: a\n\n本文\n".to_string())),
                 "{src}"
             );
@@ -829,13 +856,14 @@ exit 0
     #[test]
     fn body_files_drops_files_before_no_message() {
         assert_eq!(
-            body_files(&args("git merge -F msg.txt feat/a")),
+            body_files(&args("git merge -F msg.txt feat/a"), &Vars::new()),
             ["msg.txt"]
         );
         assert!(
-            body_files(&args(
-                "git merge -F msg.txt --no-message -m 'Merge: a' feat/a"
-            ))
+            body_files(
+                &args("git merge -F msg.txt --no-message -m 'Merge: a' feat/a"),
+                &Vars::new()
+            )
             .is_empty()
         );
     }
@@ -1036,8 +1064,35 @@ exit 0
         let dir = TempDir::new("raw");
         std::fs::write(dir.0.join("msg.txt"), "\n\nMerge: a\n\n# c\n本文\n").unwrap();
         assert_eq!(
-            merge_message(&args("git merge --cleanup=strip -F msg.txt feat/a"), &dir.0),
+            merge_message(
+                &args("git merge --cleanup=strip -F msg.txt feat/a"),
+                &dir.0,
+                &Vars::new()
+            ),
             Ok(Some("\n\nMerge: a\n\n# c\n本文\n".to_string()))
+        );
+    }
+
+    #[test]
+    fn expands_file_value_with_literal_variables() {
+        let dir = TempDir::new("var-file");
+        std::fs::write(dir.0.join("msg.txt"), "Merge: a\n").unwrap();
+        let vars = Vars::from([("S".to_string(), ".".to_string())]);
+        assert_eq!(
+            merge_message(&args("git merge -F $S/msg.txt feat/a"), &dir.0, &vars),
+            Ok(Some("Merge: a\n".to_string()))
+        );
+        assert_eq!(
+            merge_message(&args("git merge --file=${S}/msg.txt feat/a"), &dir.0, &vars),
+            Ok(Some("Merge: a\n".to_string()))
+        );
+        assert_eq!(
+            merge_message(&args("git merge -F $T/msg.txt feat/a"), &dir.0, &vars),
+            Err(Undecided::Expanded("-F"))
+        );
+        assert_eq!(
+            body_files(&args("git merge -F $S/msg.txt feat/a"), &vars),
+            ["./msg.txt"]
         );
     }
 
@@ -1075,7 +1130,7 @@ exit 0
         let dir = TempDir::new("dash");
         std::fs::write(dir.0.join("-"), "Merge: a\n\n本文\n").unwrap();
         assert_eq!(
-            merge_message(&args("git merge --no-ff -F - feat/a"), &dir.0),
+            merge_message(&args("git merge --no-ff -F - feat/a"), &dir.0, &Vars::new()),
             Ok(Some("Merge: a\n\n本文\n".to_string()))
         );
     }
@@ -1085,7 +1140,7 @@ exit 0
         // -m どうしは空行で、-F の前は改行 1 つで連ね、--no-message はそれまでを消す
         let dir = TempDir::new("build");
         std::fs::write(dir.0.join("f.txt"), "FILE\n").unwrap();
-        let build = |src: &str| merge_message(&args(src), &dir.0);
+        let build = |src: &str| merge_message(&args(src), &dir.0, &Vars::new());
         assert_eq!(
             build("git merge -m A -F f.txt feat/a"),
             Ok(Some("A\nFILE\n".to_string()))

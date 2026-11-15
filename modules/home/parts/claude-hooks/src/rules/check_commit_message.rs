@@ -16,7 +16,8 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{
-    JA_TERMS, Undecided, commit_msg_skips, earlier_writer_reason, ja_terms, literal,
+    JA_TERMS, Undecided, Vars, commit_msg_skips, earlier_writer_reason, file_path, ja_terms,
+    literal,
 };
 use crate::git;
 use crate::git_args::{Item, items_with_values};
@@ -83,10 +84,10 @@ fn form(args: &[Arg]) -> Option<Form<'_>> {
 /// 挟む（opt_parse_m）。`-F -` は標準入力、ほかの `-F` は dir からの相対のファイル（`~` は HOME）。git は
 /// commit-msg の前に、`--cleanup=verbatim` でなければ行末の空白と先頭と末尾の空行を除いて続く空行を 1 つにする
 /// （strbuf_stripspace）。# の行は `--cleanup=strip` でも commit-msg の後で除くので、ここでは残す
-fn build(form: &Form, cmd: &Cmd, dir: &Path) -> Result<String, Unknown> {
+fn build(form: &Form, cmd: &Cmd, dir: &Path, vars: &Vars) -> Result<String, Unknown> {
     let raw = match form.file {
         Some((value, arg)) => {
-            let path = literal(value, arg, "-F").map_err(Unknown::Value)?;
+            let path = file_path(value, arg, vars).map_err(Unknown::Value)?;
             if is_stdin(&path) {
                 let heredoc = cmd.stdin_heredoc.as_ref().ok_or(Unknown::Stdin)?;
                 if !heredoc.quoted && heredoc.body.contains(['$', '`']) {
@@ -233,6 +234,7 @@ impl CheckCommitMessage {
         global_hooks: &dyn Fn(&Path) -> Option<String>,
     ) -> Vec<Finding> {
         let mut out = Vec::new();
+        let vars = shell.literal_vars();
         for cmd in shell.commands() {
             let Some(("commit", args)) = cmd.git_subcommand() else {
                 continue;
@@ -244,10 +246,10 @@ impl CheckCommitMessage {
             if commit_msg_skips(&dir, global_hooks(&dir)) {
                 continue;
             }
-            let files: Vec<&str> = form
+            let files: Vec<String> = form
                 .file
                 .iter()
-                .map(|(v, _)| *v)
+                .filter_map(|(v, a)| file_path(v, a, &vars).ok())
                 .filter(|v| !is_stdin(v))
                 .collect();
             if let Some(reason) =
@@ -262,7 +264,7 @@ impl CheckCommitMessage {
                 ));
                 continue;
             };
-            let message = match build(&form, cmd, &dir) {
+            let message = match build(&form, cmd, &dir, &vars) {
                 Ok(m) => m,
                 Err(why) => {
                     let why = match why {
@@ -448,7 +450,8 @@ exit 0
             .find(|c| matches!(c.git_subcommand(), Some(("commit", _))))
             .unwrap();
         let (_, args) = cmd.git_subcommand().unwrap();
-        form(args).map(|f| build(&f, cmd, dir)).transpose()
+        let vars = shell.literal_vars();
+        form(args).map(|f| build(&f, cmd, dir, &vars)).transpose()
     }
 
     fn message(src: &str) -> Result<Option<String>, Unknown> {
@@ -771,6 +774,33 @@ exit 0
             let r = only_deny(&fake.check(&cmd));
             assert!(r.contains("分けて"), "{cmd}: {r}");
         }
+        assert_eq!(fake.seen(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_message_file_named_through_a_variable() {
+        // -F の値が、同じ呼び出しの代入で字面のまま決まる変数なら、展開したパスのファイルを読む
+        let fake = Fake::new("var-file");
+        let d = fake.dir.0.display();
+        std::fs::write(fake.dir.0.join("msg.txt"), "feat: a\n").unwrap();
+        assert!(
+            fake.check(&format!("S={d}; git commit -F $S/msg.txt"))
+                .is_empty()
+        );
+        assert_eq!(fake.seen().unwrap(), "feat: a\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denies_variable_named_message_file_written_earlier() {
+        let fake = Fake::new("var-file-written");
+        let d = fake.dir.0.display();
+        std::fs::write(fake.dir.0.join("msg.txt"), "feat: 前の中身\n").unwrap();
+        let cmd =
+            format!("S={d}; cat > {d}/msg.txt <<'EOF2'\nfeat: a\nEOF2\ngit commit -F $S/msg.txt");
+        let r = only_deny(&fake.check(&cmd));
+        assert!(r.contains("分けて"), "{r}");
         assert_eq!(fake.seen(), None);
     }
 
