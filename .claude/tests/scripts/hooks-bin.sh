@@ -17,7 +17,7 @@ expect_stop() {
   local what="$1" bin="$2" message="$3" target out
   for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
     it "$target: $what CLAUDE_HOOKS_BIN ならその場で止まる"
-    out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$bin" bash "$target" 2>&1)
+    out=$(cd "$ROOT" && LC_ALL=C PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$bin" bash "$target" 2>&1)
     assert_eq 1 $?
     assert_contains "$out" "$message"
     assert_not_contains "$out" "passed:"
@@ -65,8 +65,10 @@ for target in .claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.
   # NO_NIX_PATH でも、テストのツール（lib.sh の偽コマンドと minimal_path）が使うコマンドはそろっている。
   # nix は NO_NIX_PATH がわざと外し、main-commit-gates.sh だけが起動の確認の後に nix build で止まるので、
   # main-commit-gates.sh のときだけ数えない
-  missing=$(grep 'command not found' "$outfile")
-  [[ -z $nix_ok ]] || missing=$(grep -v ': nix: command not found$' <<<"$missing")
+  # env、xargs、timeout や `#!/usr/bin/env X` で起動するツールが欠けると bash の文言でなく、No such file or directory になる
+  missing=$(grep -E 'command not found|No such file or directory' "$outfile")
+  # nix の無い結果を cp する `cp: cannot stat '': ...` も、同じ nix の欠けの続きなので数えない
+  [[ -z $nix_ok ]] || missing=$(grep -vE ': nix: command not found$|^cp: cannot stat '"''"': No such file or directory$' <<<"$missing")
   assert_eq "" "$missing"
 done
 
