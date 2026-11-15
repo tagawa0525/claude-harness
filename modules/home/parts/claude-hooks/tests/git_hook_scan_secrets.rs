@@ -155,6 +155,17 @@ fn git_warnings_mean_the_scan_stopped() {
 }
 
 #[test]
+#[ignore = "RED: #140 の拒否文に CRLF の原因と修正方法を足す"]
+fn the_stop_by_a_git_warning_names_crlf_and_the_fix() {
+    let repo = Repo::new();
+    let err = "ERR [git] warning: in the working copy of 'a.txt', CRLF will be replaced by LF the next time Git touches it\nERR error=\"stderr is not empty\"\n";
+    let text = said(&repo.scan(&[("FAKE_TOOL_ERR", err)], &[]));
+    assert!(text.contains("CRLF で保存したファイル"), "{text}");
+    assert!(text.contains("エディタの改行を LF"), "{text}");
+    assert!(text.contains("git add"), "{text}");
+}
+
+#[test]
 fn a_failure_after_exit_zero_is_not_called_an_exit_failure() {
     let repo = Repo::new();
     let out = repo.scan(&[("FAKE_TOOL_ERR", "ERR [git] fatal: bad object\n")], &[]);
