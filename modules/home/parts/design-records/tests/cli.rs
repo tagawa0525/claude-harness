@@ -676,7 +676,6 @@ fn check_rejects_amends_added_to_an_adr_on_main() {
 }
 
 #[test]
-#[ignore = "RED: check without FILE skips the amends added since the base (#67)"]
 fn check_rejects_amends_added_since_main_without_files() {
     let t = TempRepo::new("added-link-all");
     t.run(&["new", "use-a", "a を使う"]);

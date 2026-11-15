@@ -97,7 +97,7 @@ pub const KEYS: [&str; 6] = [
 
 /// 書いてもよいフロントマターのキー。`amends` はこの ADR が一部を置き換えた ADR、`amended-by` はこの ADR の一部を
 /// 置き換えた ADR で、check は両方向の一致を確かめる（ADR-0051）。既存の ADR に残る結びを読むために受け付ける。一部の
-/// 変更は同じ ADR の「## 変更」に書くので、既定ブランチとの分岐点から `amends` に足した ADR は、check が FILE の ADR で
+/// 変更は同じ ADR の「## 変更」に書くので、既定ブランチとの分岐点から `amends` に足した ADR は、check が（FILE によらず）
 /// 違反にする（ADR-0067）。結びの無い ADR が大半なので、すべての ADR には求めない。
 pub const OPTIONAL_KEYS: [&str; 2] = ["amends", "amended-by"];
 

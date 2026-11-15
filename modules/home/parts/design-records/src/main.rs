@@ -13,7 +13,7 @@
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
 //!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、決定
 //!                                      の要因、検討した案、決定と理由、各案の長所と短所、直せないフロントマターの
-//!                                      キー）の変更と、分岐点から足した amends を見る。FILE か
+//!                                      キー）の変更を見る。分岐点から足した amends は、FILE によらず全 ADR で見る（error）。FILE か
 //!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
 //!                                      ときも。pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
@@ -198,7 +198,8 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
 /// - 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）。main にマージする前のブランチの上の
 ///   変更は status によらず自由なので、分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない
 ///
-/// 中身は `files` の ADR だけを比べ（改名は改名前の版と比べる）、削除は渡されたかによらず示す（pre-commit は消した
+/// `amends` の追加は `files` によらずすべての ADR で見る。凍結の注意は `files` の ADR だけを比べ（改名は改名前の版と
+/// 比べる）、削除は渡されたかによらず示す（pre-commit は消した
 /// ファイルを渡さない）。
 fn branch_changes(
     root: &Path,
@@ -240,9 +241,12 @@ fn branch_changes(
             old_path
         };
         let deleted = kind == "D";
-        if !is_adr_path(old_path) || !(deleted || files.contains(&new_path)) {
+        if !is_adr_path(old_path) {
             continue;
         }
+        // amends の追加は error なので、FILE によらず分岐点から変わったすべての ADR を見る（ほかの error と同じ）。
+        // 凍結の注意（warning）は FILE の ADR だけにする。触っていない ADR の注意が並ぶと、今のコミットの注意が埋もれる
+        let in_files = deleted || files.contains(&new_path);
         let spec = format!("{base}:{old_path}");
         let old = if git_ok(root, &["cat-file", "-e", &spec])? {
             Some(git(root, &["show", &spec])?)
@@ -265,7 +269,7 @@ fn branch_changes(
                 });
             }
         }
-        let Some(old) = old else {
+        let Some(old) = old.filter(|_| in_files) else {
             continue;
         };
         let Some(status) =
