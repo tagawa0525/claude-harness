@@ -228,7 +228,6 @@ fn width_of(ch: &str) -> usize {
 }
 
 #[test]
-#[ignore = "RED: the width still counts one char at a time by East Asian Width"]
 fn width_follows_markdownlint_string_width() {
     // 期待値は markdownlint-cli 0.50.0 の string-width 8.3.0（MD060 が使う）で数えたもの。East Asian Width が F と W
     // の文字を 2、幅の曖昧な文字（A）を 1 に数え、結合文字、制御文字、ゼロ幅の文字を 0、絵文字の列を 2 に数える

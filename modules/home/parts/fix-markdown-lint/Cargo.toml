@@ -13,3 +13,5 @@ edition = "2024"
 [dependencies]
 # 言語の推定の正規表現。claude-hooks と同じ版
 regex = "1"
+# 表示の桁（string-width と同じ数え方）。Unicode の表を自分で持たずに済む標準的な crate
+unicode-width = "0.2"

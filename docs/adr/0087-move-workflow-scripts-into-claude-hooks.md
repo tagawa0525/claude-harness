@@ -213,3 +213,16 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   コピーを作るので、Windows では共有にならなかった。Rust に移した版は、Windows では `std::os::windows::fs` の
   symlink_dir / symlink_file で作る。開発者モードか管理者の権限が無ければ作れないので、作った symlink を消して、その旨を
   示して止める
+
+## 変更
+
+- 2026-11-15: 文字の幅は、案 ろ（East Asian Width が F と W の範囲の表を持つ）から、案 い（`unicode-width`）に変えた。
+  前は「`unicode-width`（0.2.3）は、結合文字、ゼロ幅の文字、ハングルの中声などを 0 に数え、絵文字の列をまとめて 2 に
+  数えるので、.py と 7,479 の符号位置で幅が違う。.py と同じ桁にするには例外の規則が要り、crate を使う意味が残らない」。
+  .py は #101 の段階 7 で消え、同じ桁にする相手が無くなった。残る基準は、桁を揃える相手の MD060 が使う string-width
+  （markdownlint-cli 0.50.0 の中の 8.3.0）で、表は結合文字、ゼロ幅の文字、絵文字の列を string-width と違う桁に数え、
+  2 つのツールが桁揃えを取り合った（#182）。全符号位置で比べると、`unicode-width` 0.2.3 は string-width と、制御文字
+  （`unicode-width` は 1、string-width は 0。制御文字で区切って足すと揃う）のほかは 375 字（ハングルの中声と終声、
+  インド系の文字の結合記号など、まれな文字）でしか違わず、結合の濁点つきの「か」、ZWJ の列、国旗、肌の色、keycap、
+  ZWSP、soft hyphen は揃う。表の 122 の範囲を持つより、標準的な crate のほうが保守が小さい（Unicode の版は crate が上げる）。
+  書記素に分ける `unicode-segmentation` は要らない（`unicode-width` が絵文字の列をまとめて数える）
