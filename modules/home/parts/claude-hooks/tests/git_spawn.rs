@@ -324,3 +324,24 @@ fn exclusive_job_on_the_timed_partition_denies() {
         out.json
     );
 }
+
+#[cfg(unix)]
+#[test]
+#[ignore = "RED: %P の既定のパーティションの印 * を外して比べていない（#237）"]
+fn exclusive_job_on_the_default_timed_partition_denies() {
+    let bin = fake_squeue(
+        "squeue-timed-star",
+        "printf 'NO|timed*|openmc-2K|1234|r995\\n'",
+    );
+    let out = run(
+        &bin.0,
+        "cargo test",
+        Some("guard-exclusive-slurm"),
+        Some(bin.0.to_str().unwrap()),
+    );
+    assert!(
+        out.json.to_string().contains("deny") && out.json.to_string().contains("1234"),
+        "json: {}",
+        out.json
+    );
+}
