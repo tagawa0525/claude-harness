@@ -289,15 +289,27 @@ pub fn local_review_covers_for_pr(
     })
 }
 
-/// `-R` の値（`OWNER/REPO`、`HOST/OWNER/REPO`、URL）の owner と name。gh と同じく末尾の 2 つの区切りを使う
+/// `-R` の値（`OWNER/REPO`、`github.com/OWNER/REPO`、`https://github.com/OWNER/REPO`）の owner と name。
+/// 読めない形と github.com 以外のホスト（GHES など。API の呼び先に host を渡せない）は、空の組を返して検査の対象にしない
 fn split_repo(r: &str) -> (&str, &str) {
     let r = r.trim_end_matches('/').trim_end_matches(".git");
-    let mut parts = r.rsplit('/');
-    let name = parts.next().unwrap_or("");
-    match parts.next() {
-        Some(owner) => (owner, name),
-        None => (r, ""),
+    let (r, has_scheme) = match r
+        .strip_prefix("https://")
+        .or_else(|| r.strip_prefix("http://"))
+    {
+        Some(rest) => (rest, true),
+        None => (r, false),
+    };
+    let parts: Vec<&str> = r.split('/').collect();
+    let (owner, name) = match parts.as_slice() {
+        [owner, name] if !has_scheme => (*owner, *name),
+        ["github.com", owner, name] => (*owner, *name),
+        _ => return ("", ""),
+    };
+    if owner.is_empty() || name.is_empty() {
+        return ("", "");
     }
+    (owner, name)
 }
 
 /// PR の base ブランチの今の先頭（GitHub の値）
@@ -1056,7 +1068,11 @@ mod tests {
             split_repo("https://github.com/octo/repo.git"),
             ("octo", "repo")
         );
-        assert_eq!(split_repo("repo"), ("repo", ""));
+        assert_eq!(split_repo("repo"), ("", ""));
+        // 読めない形と github.com 以外のホストは対象にしない
+        assert_eq!(split_repo("https://foo"), ("", ""));
+        assert_eq!(split_repo("ghe.example.com/octo/repo"), ("", ""));
+        assert_eq!(split_repo("https://ghe.example.com/octo/repo"), ("", ""));
     }
 
     use super::*;
