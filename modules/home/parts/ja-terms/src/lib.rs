@@ -64,6 +64,8 @@ pub struct Diff {
 struct Rule {
     expected: String,
     regex: Regex,
+    /// どの一致にも含まれる固定の文字列。文に無ければ regex を当てない（[`required_literal`]）
+    needle: Option<String>,
     /// 辞書のファイルと規則の位置（理由の表示に使う）
     origin: String,
 }
@@ -246,6 +248,7 @@ fn load_rule(raw: &Yaml, origin: &str) -> Result<Rule, DictionaryError> {
     let rule = Rule {
         expected: expected.clone(),
         regex,
+        needle: required_literal(&source),
         origin: origin.to_string(),
     };
     check_specs(&rule, raw.get(&key("specs")))?;
@@ -292,6 +295,99 @@ fn pattern_source(pattern: &Yaml, origin: &str) -> Result<String, DictionaryErro
             escape.into_iter().chain(std::iter::once(c))
         })
         .collect())
+}
+
+/// 正規表現の source の、一番上の階層（括弧の外）にある固定の文字の並びのうち最も長いもの。一致はすべてこの並びを
+/// 含むので、文に無ければ regex を当てなくてよい（regress は 104 の規則を全文に当てると遅い。#198）。一番上に `|` が
+/// あれば、一致が含む並びは決まらないので None。量指定子の付いた文字（`?` `*` `{` の前）は必須でないので外し、
+/// `+` の前の文字は 1 つ以上あるので含めて、そこで並びを切る。括弧の中（先読みと後読みを含む）、文字クラス、
+/// 記号の `.` `^` `$` とエスケープ（記号の前の `\` を除く）は並びを切る
+fn required_literal(source: &str) -> Option<String> {
+    fn flush(run: &mut String, best: &mut String) {
+        if run.chars().count() > best.chars().count() {
+            std::mem::swap(run, best);
+        }
+        run.clear();
+    }
+    let mut best = String::new();
+    let mut run = String::new();
+    let mut depth = 0usize;
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        // 括弧の中は、閉じるまで読み飛ばす。先読みと後読みも含む
+        if depth > 0 {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '[' => skip_class(&mut chars),
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
+        let literal = match c {
+            '(' => {
+                flush(&mut run, &mut best);
+                depth = 1;
+                continue;
+            }
+            '[' => {
+                flush(&mut run, &mut best);
+                skip_class(&mut chars);
+                continue;
+            }
+            '|' => return None,
+            '\\' => match chars.next() {
+                Some(e) if PRH_SPECIAL.contains(e) || e == '\\' => Some(e),
+                // 後ろに続く文字が escape の一部（\u3042、\p{L}、\k<name>）のものは、読み分けないので使わない
+                Some('u' | 'x' | 'p' | 'P' | 'c' | 'k' | '0'..='9') | None => return None,
+                Some(_) => None,
+            },
+            '.' | '^' | '$' | '?' | '*' | '+' | '{' => None,
+            _ => Some(c),
+        };
+        match literal {
+            Some(l) => match chars.peek() {
+                // 0 回もありうる文字は必須でない
+                Some('?' | '*' | '{') => flush(&mut run, &mut best),
+                // 1 回以上は必須だが、その先は繰り返しなので並びを切る
+                Some('+') => {
+                    run.push(l);
+                    flush(&mut run, &mut best);
+                }
+                _ => run.push(l),
+            },
+            None => flush(&mut run, &mut best),
+        }
+        // 量指定子（`{n,m}` と、後ろの `?`）は読み飛ばす
+        if matches!(chars.peek(), Some('?' | '*' | '+' | '{')) {
+            if chars.next() == Some('{') {
+                for d in chars.by_ref() {
+                    if d == '}' {
+                        break;
+                    }
+                }
+            }
+            chars.next_if_eq(&'?');
+        }
+    }
+    flush(&mut run, &mut best);
+    (!best.is_empty()).then_some(best)
+}
+
+/// 文字クラスの `[` を読んだ後、閉じる `]` まで読み飛ばす（中の `\]` は閉じでない）
+fn skip_class(chars: &mut impl Iterator<Item = char>) {
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            ']' => break,
+            _ => {}
+        }
+    }
 }
 
 /// prh の utils/regexp.js の regexpRegexp（`/^\/(.*)\/([gimy]*)$/`）。`.` は行の終わりに当たらず、m の無い `$` は
@@ -353,6 +449,13 @@ fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError>
 fn matches(rules: &[Rule], offset: usize, piece: &str) -> Result<Vec<Diff>, TextError> {
     let mut found = Vec::new();
     for rule in rules {
+        if rule
+            .needle
+            .as_ref()
+            .is_some_and(|n| !piece.contains(n.as_str()))
+        {
+            continue;
+        }
         for m in rule.regex.find_iter(piece) {
             if m.start() == m.end() {
                 // JavaScript の exec の繰り返しは、空の一致で先に進まない
@@ -498,4 +601,44 @@ fn splice(text: &str, diffs: &[Diff]) -> String {
     }
     out.push_str(&text[last..]);
     out
+}
+#[cfg(test)]
+mod needle_tests {
+    use super::*;
+
+    #[test]
+    fn literal_is_the_longest_top_level_run() {
+        let cases = [
+            ("あいう", Some("あいう")),
+            ("確かめ(?=[のでをだ])", Some("確かめ")),
+            ("(?<![さし])かきく(?![たるてな])", Some("かきく")),
+            ("(?:書き写|(?<![一-龥])写)す", Some("す")),
+            ("(?<=さ|し)すせ|(?<![一-龥])すせ(?![国骨状])", None),
+            ("ab?cd", Some("cd")),
+            ("abc*d", Some("ab")),
+            ("ab{2,3}cde", Some("cde")),
+            ("ab+c", Some("ab")),
+            ("a\\.bcd", Some("a.bcd")),
+            ("[ab]cd.ef", Some("cd")),
+            ("a\\u3042bc", None),
+            ("(?:あ|い)", None),
+        ];
+        for (source, want) in cases {
+            assert_eq!(required_literal(source).as_deref(), want, "{source}");
+        }
+    }
+
+    // 辞書の例と規則の文を含む prh.yml 自身を文にして、needle で絞っても一致が変わらないことを確かめる
+    #[test]
+    fn skipping_by_literal_keeps_every_match() {
+        let yaml = include_str!("../prh.yml");
+        let with = Dictionary::parse(yaml, "prh.yml").unwrap();
+        let mut without = Dictionary::parse(yaml, "prh.yml").unwrap();
+        for rule in &mut without.rules {
+            rule.needle = None;
+        }
+        let got = matches(&with.rules, 0, yaml).unwrap();
+        assert!(!got.is_empty());
+        assert_eq!(got, matches(&without.rules, 0, yaml).unwrap());
+    }
 }
