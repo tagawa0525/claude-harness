@@ -28,8 +28,10 @@
 set -uo pipefail
 
 # git の hook や GIT_DIR を export したシェルから呼ばれると、git -C "$wt" の checkout と
-# clean が一時 worktree でなく呼び出し元の作業ツリーに作用して消しうる。検査コマンドにも渡さない
-while IFS= read -r var; do unset "$var"; done < <(git rev-parse --local-env-vars)
+# clean が一時 worktree でなく呼び出し元の作業ツリーに作用して消しうる。検査コマンドにも渡さない。
+# リポジトリと作業ツリーを指す変数だけを消す。GIT_CONFIG_*（safe.directory など）や
+# オブジェクトの置き場は、呼び出し側がリポジトリを読めるようにしている設定なので残す
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_IMPLICIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR
 
 usage() {
   echo "Usage: ${0##*/} <base> -- <コマンド…>" >&2
@@ -77,9 +79,10 @@ git worktree add -q --detach "$wt" "${commits[0]}" || exit 3
 
 rc=0
 for sha in "${commits[@]}"; do
+  # 前の検査が書き込み不可のディレクトリを残すと、checkout がその配下の変更で失敗する
+  chmod -R u+w "$wt" 2>/dev/null
   git -C "$wt" checkout -q --detach "$sha" || exit 3
   # 検査の副産物（ビルド結果など）が次のコミットに残らないようにする
-  chmod -R u+w "$wt" 2>/dev/null
   git -C "$wt" clean -qffdx || {
     echo "git clean に失敗したので $sha を検査しません" >&2
     exit 3
