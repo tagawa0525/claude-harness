@@ -315,7 +315,12 @@ fn split_repo(r: &str) -> (&str, &str) {
 
 /// ファイルの中身を `ref` 時点で読む contents API の endpoint
 fn contents_endpoint(owner: &str, name: &str, path: &str, git_ref: &str) -> String {
-    format!("repos/{owner}/{name}/contents/{path}?ref={git_ref}")
+    // 区切りの / は残し、# ? 空白などをフラグメントや query と読まれないようにする
+    let path: Vec<String> = path.split('/').map(uri_encode).collect();
+    format!(
+        "repos/{owner}/{name}/contents/{}?ref={git_ref}",
+        path.join("/")
+    )
 }
 
 /// PR の base ブランチの今の先頭（GitHub の値）
@@ -1119,7 +1124,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: the path is not URL-encoded"]
     fn contents_endpoint_encodes_each_path_segment() {
         assert_eq!(
             contents_endpoint("o", "r", "docs/adr/0002-a b#c?.md", "abc"),

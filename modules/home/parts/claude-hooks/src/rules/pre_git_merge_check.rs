@@ -59,7 +59,13 @@ fn required_numbers(text: &str) -> Vec<u32> {
         .map(|v| {
             v.items()
                 .iter()
-                .filter_map(|r| r.strip_prefix("ADR-")?.parse().ok())
+                .filter_map(|r| {
+                    // design-records の規則: ADR- の後がちょうど 4 桁の ASCII 数字
+                    let digits = r.strip_prefix("ADR-")?;
+                    (digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit()))
+                        .then(|| digits.parse().ok())
+                        .flatten()
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -346,7 +352,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: requires items that are not ADR-NNNN link ADRs"]
     fn malformed_requires_items_do_not_link() {
         for bad in ["ADR-2", "ADR-00002", "ADR-+002", "ADR-０００２"] {
             let three = format!("---\nrequires: [{bad}]\n---\n");
