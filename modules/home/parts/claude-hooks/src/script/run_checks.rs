@@ -10,7 +10,7 @@
 //!   scripts/run-python-tests.sh があればそれ、なければ tests/ かルートの test_*.py を pytest で、それも無ければ追跡
 //!   している test_*.py / *_test.py のあるディレクトリごとに
 //! - Nix: flake.nix がある、または .nix がステージ済み
-//! - Markdown: .md がステージ済み（staged-checks markdown で、ステージした版を直して検査する。--merge では検査だけ）。
+//! - Markdown: .md がステージ済み（staged_checks の markdown で、ステージした版を直して検査する。--merge では検査だけ）。
 //!   .pre-commit-config.yaml で design-records にオプトインしていれば、.md の変更が無くても design-records check
 //! - Shell: .sh がステージ済み（ステージ済みのファイルだけを shellcheck で検査）
 //!
@@ -298,19 +298,25 @@ impl Checks {
         git_bytes(&args)
     }
 
-    /// 検査する変更ファイル（追加、変更、rename の後の名前）。pathspec が空なら全部
-    fn changed_files(&self, pathspec: &[&str]) -> Option<Vec<PathBuf>> {
+    /// 検査する変更ファイル（追加、変更、rename の後の名前）。pathspec が空なら全部。git diff が失敗したら、空の差分と
+    /// 区別がつかず段を飛ばして ALL_OK になるので、FAILED を出して止める
+    fn changed_files(&self, pathspec: &[&str]) -> Result<Vec<PathBuf>, i32> {
         let mut extra = vec!["--diff-filter=ACMR", "-z"];
         if !pathspec.is_empty() {
             extra.push("--");
             extra.extend(pathspec);
         }
-        self.diff_names(&extra).map(|out| nul_paths(&out))
+        match self.diff_names(&extra) {
+            Some(out) => Ok(nul_paths(&out)),
+            None => {
+                println!("FAILED: git diff: 差分（git diff）を読めません");
+                Err(1)
+            }
+        }
     }
 
-    fn staged_has(&self, pattern: &str) -> bool {
-        self.changed_files(&[pattern])
-            .is_some_and(|files| !files.is_empty())
+    fn staged_has(&self, pattern: &str) -> Result<bool, i32> {
+        Ok(!self.changed_files(&[pattern])?.is_empty())
     }
 
     /// 段を 1 つ実行する。tool が PATH に無ければ SKIP。display は RUN と FAILED の行に出すコマンド、run が中身
@@ -432,10 +438,10 @@ impl Checks {
     }
 
     /// ステージ済みの .rs ごとに、上へたどって最も近い Cargo.toml のディレクトリ（crate）。crate に属さない .rs は stray
-    fn rust_targets(&self) -> (Vec<String>, Vec<String>) {
+    fn rust_targets(&self) -> Result<(Vec<String>, Vec<String>), i32> {
         let mut crates = BTreeSet::new();
         let mut stray = BTreeSet::new();
-        for file in self.changed_files(&["*.rs"]).unwrap_or_default() {
+        for file in self.changed_files(&["*.rs"])? {
             let parent = |p: &Path| -> PathBuf {
                 match p.parent() {
                     Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
@@ -452,7 +458,7 @@ impl Checks {
                 stray.insert(file.to_string_lossy().into_owned());
             }
         }
-        (crates.into_iter().collect(), stray.into_iter().collect())
+        Ok((crates.into_iter().collect(), stray.into_iter().collect()))
     }
 
     fn rust(&self) -> Result<bool, i32> {
@@ -474,8 +480,8 @@ impl Checks {
             self.run_rust_docs_tests()?;
         } else if manifest {
             self.run_rust(".")?;
-        } else if self.staged_has("*.rs") {
-            let (crates, stray) = self.rust_targets();
+        } else if self.staged_has("*.rs")? {
+            let (crates, stray) = self.rust_targets()?;
             for dir in &crates {
                 self.run_rust(dir)?;
             }
@@ -497,7 +503,7 @@ impl Checks {
         if !(["pyproject.toml", "setup.py", "requirements.txt"]
             .iter()
             .any(|f| is_file(f))
-            || self.staged_has("*.py"))
+            || self.staged_has("*.py")?)
         {
             return Ok(false);
         }
@@ -540,7 +546,7 @@ impl Checks {
 
     fn nix(&self) -> Result<bool, i32> {
         let flake = is_file("flake.nix");
-        if !(flake || self.staged_has("*.nix")) {
+        if !(flake || self.staged_has("*.nix")?) {
             return Ok(false);
         }
         self.stage(
@@ -575,7 +581,7 @@ impl Checks {
 
     fn markdown(&self) -> Result<bool, i32> {
         let mut detected = false;
-        if self.staged_has("*.md") {
+        if self.staged_has("*.md")? {
             detected = true;
             if self.merge {
                 println!("SKIP: markdown format (--merge では自動修正しない)");
@@ -587,19 +593,20 @@ impl Checks {
                     &["md_lint".to_string()],
                     || {
                         self.changed_files(&["*.md"])
-                            .is_some_and(|files| xargs(&["markdownlint", "--"], &files))
+                            .is_ok_and(|files| xargs(&["markdownlint", "--"], &files))
                     },
                 )?;
             } else {
-                // ステージした版を直してステージし直し、検査する（グローバルの pre-commit と同じ staged-checks。作業ツリーを
-                // 書き換えないので、一部だけステージした .md のステージしていない編集をステージしない）
-                self.command_stage(
-                    "markdown",
-                    "staged",
-                    "staged-checks",
-                    "",
-                    &["staged-checks".to_string(), "markdown".to_string()],
-                )?;
+                // ステージした版を直してステージし直し、検査する（グローバルの pre-commit と同じ staged_checks。作業ツリーを
+                // 書き換えないので、一部だけステージした .md のステージしていない編集をステージしない）。同じバイナリの
+                // 関数を直に呼ぶので、PATH に staged-checks が要らない。markdownlint が無ければ staged_checks が SKIP を出す
+                println!("RUN: markdown staged: staged_checks markdown");
+                if crate::staged_checks::run(&["markdown".to_string()]) == 0 {
+                    println!("OK: markdown staged");
+                } else {
+                    println!("FAILED: markdown staged: staged_checks markdown");
+                    return Err(1);
+                }
             }
         }
         if design_records_opted_in()? {
@@ -620,7 +627,7 @@ impl Checks {
     /// 設定の types: [text] と同じ。テキストでないファイルは design-records が読み飛ばす）。--changed で、触っていない ADR の
     /// 推奨の節の warning を出さない。分けて呼ばないのは、ADR どうしの検査の指摘が重なるため
     fn design_records_check(&self) -> bool {
-        let Some(files) = self.changed_files(&[]) else {
+        let Ok(files) = self.changed_files(&[]) else {
             return false;
         };
         let mut argv = os(&["design-records", "check", "--changed"]);
@@ -631,7 +638,7 @@ impl Checks {
     // --- Shell ---
 
     fn shell(&self) -> Result<bool, i32> {
-        if !self.staged_has("*.sh") {
+        if !self.staged_has("*.sh")? {
             return Ok(false);
         }
         self.stage(
@@ -642,7 +649,7 @@ impl Checks {
             &["sh_lint".to_string()],
             || {
                 self.changed_files(&["*.sh"])
-                    .is_some_and(|files| xargs(&["shellcheck", "-S", "warning", "--"], &files))
+                    .is_ok_and(|files| xargs(&["shellcheck", "-S", "warning", "--"], &files))
             },
         )?;
         Ok(true)

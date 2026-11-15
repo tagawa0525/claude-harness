@@ -11,9 +11,9 @@ source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 LANG_SCRIPTS="$CLAUDE_DIR/skills/language-checks/scripts"
-# 手元の staged-checks（home-manager が PATH に置く）を実行せず、どのホストでも同じ結果にする。Markdown の段を
-# 確かめるテストは、この偽物を差し替える
-make_fake_tool staged-checks '*) exit 0 ;;'
+# 手元の markdownlint を実行せず、どのホストでも同じ結果にする。Markdown の段（claude-hooks の中の staged_checks が
+# markdownlint を呼ぶ）を確かめるテストは、この偽物を差し替える
+make_fake_tool markdownlint '*) exit 0 ;;'
 # 手元の squeue を呼ばず、排他のジョブが無い状態にする。排他のジョブ中の自己制限を確かめるテストが差し替える
 make_fake_tool squeue '*) exit 0 ;;'
 
@@ -117,32 +117,31 @@ assert_contains "$(fake_log nixfmt)" "--check"
 assert_eq "check" "$(fake_log statix)"
 assert_eq "" "$(fake_log nix)"
 
-it "run-checks: ステージした .md は staged-checks markdown で直して検査する（作業ツリーの版を見ない）"
+it "run-checks: ステージした .md は staged_checks で直して検査する（作業ツリーの版を見ない）"
 REPO="$TEST_ROOT/checks/md"
 make_repo "$REPO"
 cd "$REPO" || exit 1
 echo "# doc" > doc.md && git add doc.md
-make_fake_tool staged-checks '*) exit 0 ;;'
-make_fake_tool markdownlint '*) echo "should not lint the worktree"; exit 1 ;;'
+make_fake_tool markdownlint '*) exit 0 ;;'
 out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_eq "markdown" "$(fake_log staged-checks)"
-assert_eq "" "$(fake_log markdownlint)"
+assert_contains "$(fake_log markdownlint)" "--fix --disable MD038 -- doc.md"
+assert_not_contains "$(fake_log markdownlint)" "$REPO"
 assert_contains "$out" "OK: markdown staged"
 assert_contains "$out" "ALL_OK"
 
-it "run-checks: staged-checks が違反を出せば止める"
-make_fake_tool staged-checks '*) echo "Markdown lint failed"; exit 1 ;;'
+it "run-checks: markdownlint が違反を出せば止める"
+make_fake_tool markdownlint '"--fix"*) exit 0 ;; *) echo "Markdown lint failed"; exit 1 ;;'
 out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
 assert_eq 1 $?
 assert_contains "$out" "FAILED: markdown staged"
 
-it "run-checks: staged-checks が無ければ SKIP して続行する"
-remove_fake_tool staged-checks
+it "run-checks: markdownlint が無ければ SKIP して続行する"
+remove_fake_tool markdownlint
 out=$(PATH="$(minimal_path)" "$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_contains "$out" "SKIP: markdown staged (staged-checks not found)"
-make_fake_tool staged-checks '*) exit 0 ;;'
+assert_contains "$out" "SKIP: Markdown の検査（markdownlint が PATH に無い）"
+make_fake_tool markdownlint '*) exit 0 ;;'
 
 # design-records: .pre-commit-config.yaml でオプトインしたリポジトリでは、ADR の形と参照も検査する（ADR-0009）
 
@@ -551,10 +550,22 @@ make_repo "$REPO"
 cd "$REPO" || exit 1
 printf '# notes\n\nbody\n' > old.md && git add old.md && git commit -q -m "chore: old"
 git mv old.md new.md
-make_fake_tool staged-checks '*) exit 0 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
-assert_eq "markdown" "$(fake_log staged-checks)"
+assert_contains "$(fake_log markdownlint)" "--fix --disable MD038 -- new.md"
+
+it "run-checks: git diff を読めなければ段を飛ばさず FAILED で止める（壊れた index）"
+REPO="$TEST_ROOT/checks/broken-index"
+make_repo "$REPO"
+cd "$REPO" || exit 1
+echo "echo a" > a.sh && git add a.sh
+make_fake_tool shellcheck '*) exit 0 ;;'
+echo broken > .git/index
+out=$("$LANG_SCRIPTS/run-checks.sh" 2>/dev/null)
+assert_eq 1 $?
+assert_contains "$out" "FAILED: git diff"
+assert_not_contains "$out" "ALL_OK"
+assert_eq "" "$(fake_log shellcheck)"
 
 it "run-checks: .rs から .rs への rename でも crate で cargo を実行する"
 REPO="$TEST_ROOT/checks/rename-rs"

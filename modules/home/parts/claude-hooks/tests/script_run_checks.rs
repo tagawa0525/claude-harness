@@ -231,15 +231,20 @@ fn only_the_staged_shell_scripts_go_to_shellcheck() {
 }
 
 #[test]
-fn the_staged_markdown_goes_to_staged_checks_and_merge_only_lints_it() {
+fn the_staged_markdown_is_checked_in_process_and_merge_only_lints_it() {
     let repo = Repo::new();
-    repo.tool("staged-checks");
     repo.tool("markdownlint");
     repo.stage("doc.md", "# doc\n");
     let out = repo.run(&[], &[]);
     assert_eq!(out.status.code(), Some(0), "{}", said(&out));
-    assert!(stdout(&out).contains("RUN: markdown staged: staged-checks markdown\n"));
-    assert_eq!(repo.calls(), ["staged-checks markdown"]);
+    assert!(stdout(&out).contains("RUN: markdown staged: staged_checks markdown\n"));
+    assert!(
+        repo.calls()
+            .iter()
+            .any(|c| c.starts_with("markdownlint --fix")),
+        "{:?}",
+        repo.calls()
+    );
 
     std::fs::remove_file(repo.log()).unwrap();
     let out = repo.run(&["--merge"], &[]);
@@ -252,6 +257,33 @@ fn the_staged_markdown_goes_to_staged_checks_and_merge_only_lints_it() {
         "{text}"
     );
     assert_eq!(repo.calls(), ["markdownlint -- doc.md"]);
+}
+
+#[test]
+fn an_unreadable_diff_fails_instead_of_skipping_the_stages() {
+    let repo = Repo::new();
+    repo.stage("a.sh", "echo a\n");
+    repo.tool("shellcheck");
+    std::fs::write(repo.work().join(".git/index"), "broken").unwrap();
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let text = stdout(&out);
+    assert!(text.contains("FAILED:"), "{text}");
+    assert!(!text.contains("ALL_OK"), "{text}");
+    assert!(repo.calls().is_empty());
+}
+
+#[test]
+fn the_staged_markdown_is_skipped_when_markdownlint_is_missing() {
+    let repo = Repo::new();
+    repo.stage("doc.md", "# doc\n");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("SKIP: Markdown の検査（markdownlint が PATH に無い）\n"),
+        "{}",
+        stdout(&out)
+    );
 }
 
 #[test]

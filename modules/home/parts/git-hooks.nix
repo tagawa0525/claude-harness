@@ -17,22 +17,14 @@ let
   history-rewrite = pkgs.callPackage ./history-rewrite/package.nix { inherit commit-refs; };
   # git hook の中身（ADR-0086）。PreToolUse hook と同じバイナリ（claude-code.nix）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
-  # 既定の検査（Nix、Python、Markdown、Rust）。ステージした版を見る（ADR-0028）。ツールは利用者の PATH のもの。中身は
-  # claude-hooks の src/staged_checks.rs（ADR-0086）。run-checks.sh の Markdown の段が PATH の staged-checks を呼ぶので、
-  # それを呼ぶだけのコマンドを、run-checks.sh を移す #101 の段階 6 まで PATH に置く
-  stagedChecks = pkgs.writeShellScriptBin "staged-checks" ''
-    exec ${claude-hooks}/bin/claude-hooks git-hook staged-checks "$@"
-  '';
 in
 {
   # prek: プロジェクトの .pre-commit-config.yaml を実行する（下の pre-commit hook が呼ぶ）
-  # staged-checks: run-checks.sh の Markdown の段が呼ぶ既定の検査（ADR-0028。pre-commit は claude-hooks の中で同じ検査を呼ぶ）
   home.packages = [
     commit-refs
     design-records
     history-rewrite
     pkgs.prek
-    stagedChecks
   ];
 
   # core.hooksPath は programs.git が有効なときだけ gitconfig に書かれる。利用者の設定（git.nix）に頼らず、ここでも有効にする
