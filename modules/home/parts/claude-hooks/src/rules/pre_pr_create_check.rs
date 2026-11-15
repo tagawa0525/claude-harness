@@ -33,7 +33,7 @@
 
 use std::path::Path;
 
-use super::pre_git_merge_check::{added_adrs, multi_topic_reason};
+use super::pre_git_merge_check::{added_adrs, multi_topic_reason, read_at};
 use super::{Rule, apply_escape_to_reasons};
 use crate::git;
 use crate::input::Input;
@@ -237,8 +237,11 @@ impl Rule for PrePrCreateCheck {
                     .or_else(|| env_value(&cmd.env, "GH_REPO", inherited.as_deref()))
                     .filter(|r| !r.is_empty());
                 let topic: Vec<String> = adr_range(&dir, args, target_repo)
-                    .and_then(|range| added_adrs(&dir, &range))
-                    .and_then(|adrs| multi_topic_reason(&adrs))
+                    .and_then(|range| {
+                        let adrs = added_adrs(&dir, &range)?;
+                        let head = range.rsplit_once("...").map_or("HEAD", |(_, h)| h);
+                        multi_topic_reason(&adrs, read_at(&dir, head))
+                    })
                     .into_iter()
                     .collect();
                 reasons.extend(apply_escape_to_reasons(escape, "ALLOW_MULTI_TOPIC", topic));

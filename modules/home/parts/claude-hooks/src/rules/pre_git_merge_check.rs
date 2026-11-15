@@ -20,13 +20,18 @@ use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Shell};
 use design_records::is_adr_path;
+use design_records::parse::parse_front_matter;
 use std::path::{Path, PathBuf};
 
 pub struct PreGitMergeCheck;
 
-/// 新しい ADR が 2 件以上なら deny の理由
-pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
-    if new_adrs.len() < 2 {
+/// 新しい ADR が 2 件以上なら deny の理由。2 件以上でも、全部がフロントマターの `requires` で 1 つにつながっていれば
+/// 1 つの決定を分けて書いたものなので通す。`read` は ADR のパスから中身を読む（読めない ADR はつなげない）
+pub(super) fn multi_topic_reason(
+    new_adrs: &[String],
+    read: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if new_adrs.len() < 2 || linked_by_requires(new_adrs, &read) {
         return None;
     }
     let list: Vec<String> = new_adrs.iter().map(|a| format!("  - {a}")).collect();
@@ -39,31 +44,85 @@ pub(super) fn multi_topic_reason(new_adrs: &[String]) -> Option<String> {
     ))
 }
 
+/// ADR のパス（`docs/adr/0031-x.md`）の番号
+fn adr_number(path: &str) -> Option<u32> {
+    path.rsplit('/').next()?.get(..4)?.parse().ok()
+}
+
+/// フロントマターの `requires`（`[ADR-0031]`）が挙げる ADR の番号
+fn required_numbers(text: &str) -> Vec<u32> {
+    let Ok(front) = parse_front_matter(text) else {
+        return Vec::new();
+    };
+    front
+        .get("requires")
+        .map(|v| {
+            v.items()
+                .iter()
+                .filter_map(|r| {
+                    // design-records の規則: ADR- の後がちょうど 4 桁の ASCII 数字
+                    let digits = r.strip_prefix("ADR-")?;
+                    (digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit()))
+                        .then(|| digits.parse().ok())
+                        .flatten()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 新しい ADR 全部が、新しい ADR どうしの `requires`（向きは問わない）で 1 つにつながっているか。
+/// ブランチの外の ADR への `requires` はつなげない
+fn linked_by_requires(new_adrs: &[String], read: &impl Fn(&str) -> Option<String>) -> bool {
+    let numbers: Vec<Option<u32>> = new_adrs.iter().map(|p| adr_number(p)).collect();
+    let mut group: Vec<usize> = (0..new_adrs.len()).collect();
+    for (i, path) in new_adrs.iter().enumerate() {
+        let Some(text) = read(path) else { continue };
+        for required in required_numbers(&text) {
+            let Some(j) = numbers.iter().position(|n| *n == Some(required)) else {
+                continue;
+            };
+            let (from, to) = (group[i], group[j]);
+            for g in group.iter_mut().filter(|g| **g == from) {
+                *g = to;
+            }
+        }
+    }
+    group.iter().all(|g| *g == group[0])
+}
+
+/// `rev` 時点のファイルの中身を読む（`multi_topic_reason` の `read`）
+pub(super) fn read_at<'a>(dir: &'a Path, rev: &'a str) -> impl Fn(&str) -> Option<String> + 'a {
+    move |path| git::git(dir, &["show", &format!("{rev}:{path}")])
+}
+
 /// `range`（`A...B`）で加わった ADR のパス。git diff が失敗したら None
 pub(super) fn added_adrs(dir: &Path, range: &str) -> Option<Vec<String>> {
-    let added = git::git(
+    // pathspec で docs/adr に絞ると、git は移動元のパスを見ないので、別のディレクトリから移した ADR が
+    // 改名でなく追加になる。全体の差分から追加（A）の行を取り、パスで絞る
+    let diff = git::git(
         dir,
         &[
             "diff",
-            // 改名は新しい ADR ではない。検出を diff.renames の設定に左右させない
             "--find-renames",
             // 出力のパスをリポジトリの直下からにする。diff.relative の設定に左右させない
             "--no-relative",
             "--diff-filter=A",
-            "--name-only",
-            // パスをクォートせずに NUL 区切りで受け取る（非 ASCII のファイル名）
+            "--name-status",
+            // パスをクォートせずに NUL 区切りで受け取る（非 ASCII のファイル名）。--diff-filter=A なので
+            // 組は `A NUL パス NUL`（改名や複製の 2 パスの組は出ない）
             "-z",
             range,
-            "--",
-            // 実行するディレクトリでなくリポジトリの直下から解く（サブディレクトリから呼ばれても数える）
-            ":(top)docs/adr",
         ],
     )?;
+    let fields: Vec<&str> = diff.split('\0').collect();
     Some(
-        added
-            .split('\0')
+        fields
+            .chunks(2)
+            .filter(|c| c[0] == "A")
+            .filter_map(|c| c.get(1))
             .filter(|p| is_adr_path(p))
-            .map(str::to_string)
+            .map(|p| p.to_string())
             .collect(),
     )
 }
@@ -180,7 +239,7 @@ impl Rule for PreGitMergeCheck {
                         "{t} が加える ADR を確認できません（git diff HEAD...{full} が失敗）"
                     ))];
                 };
-                if let Some(reason) = multi_topic_reason(&adrs) {
+                if let Some(reason) = multi_topic_reason(&adrs, read_at(dir, &full)) {
                     return vec![Finding::Deny(reason)];
                 }
             }
@@ -201,10 +260,17 @@ mod tests {
 
     #[test]
     fn reason_only_for_two_or_more() {
-        assert_eq!(multi_topic_reason(&[]), None);
-        assert_eq!(multi_topic_reason(&["docs/adr/0002-a.md".into()]), None);
-        let r = multi_topic_reason(&["docs/adr/0002-a.md".into(), "docs/adr/0003-b.md".into()])
-            .unwrap();
+        let unreadable = |_: &str| None;
+        assert_eq!(multi_topic_reason(&[], unreadable), None);
+        assert_eq!(
+            multi_topic_reason(&["docs/adr/0002-a.md".into()], unreadable),
+            None
+        );
+        let r = multi_topic_reason(
+            &["docs/adr/0002-a.md".into(), "docs/adr/0003-b.md".into()],
+            unreadable,
+        )
+        .unwrap();
         assert!(r.contains("docs/adr/0002-a.md") && r.contains("docs/adr/0003-b.md"));
         assert!(r.contains("/topic-triage"));
         assert!(r.contains("ALLOW_MULTI_TOPIC=<理由>"));
@@ -242,5 +308,105 @@ mod tests {
         assert_eq!(targets("git merge --abort"), None);
         assert_eq!(targets("git merge --continue"), None);
         assert_eq!(targets("git merge --quit"), None);
+    }
+
+    fn linked(files: &[(&str, &str)], new: &[&str]) -> bool {
+        let read = |p: &str| {
+            files
+                .iter()
+                .find(|(n, _)| *n == p)
+                .map(|(_, t)| t.to_string())
+        };
+        let new: Vec<String> = new.iter().map(|s| s.to_string()).collect();
+        multi_topic_reason(&new, read).is_none()
+    }
+
+    const ADR_2: &str = "docs/adr/0002-a.md";
+    const ADR_3: &str = "docs/adr/0003-b.md";
+    const ADR_4: &str = "docs/adr/0004-c.md";
+
+    #[test]
+    fn adrs_linked_by_requires_are_one_topic() {
+        let two = "---\nrequires: []\n---\n";
+        let three = "---\nrequires: [ADR-0002]\n---\n";
+        assert!(linked(&[(ADR_2, two), (ADR_3, three)], &[ADR_2, ADR_3]));
+        // 向きは問わない
+        let two = "---\nrequires: [ADR-0003]\n---\n";
+        let three = "---\nrequires: []\n---\n";
+        assert!(linked(&[(ADR_2, two), (ADR_3, three)], &[ADR_2, ADR_3]));
+    }
+
+    #[test]
+    fn requires_chain_links_three_adrs_but_a_loose_one_does_not() {
+        let none = "---\nrequires: []\n---\n";
+        let on2 = "---\nrequires: [ADR-0002]\n---\n";
+        let on3 = "---\nrequires: [ADR-0003]\n---\n";
+        assert!(linked(
+            &[(ADR_2, none), (ADR_3, on2), (ADR_4, on3)],
+            &[ADR_2, ADR_3, ADR_4]
+        ));
+        assert!(!linked(
+            &[(ADR_2, none), (ADR_3, on2), (ADR_4, none)],
+            &[ADR_2, ADR_3, ADR_4]
+        ));
+    }
+
+    #[test]
+    fn malformed_requires_items_do_not_link() {
+        for bad in ["ADR-2", "ADR-00002", "ADR-+002", "ADR-０００２"] {
+            let three = format!("---\nrequires: [{bad}]\n---\n");
+            assert!(
+                !linked(
+                    &[(ADR_2, "---\nrequires: []\n---\n"), (ADR_3, &three)],
+                    &[ADR_2, ADR_3]
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn requires_outside_the_branch_or_unreadable_adrs_do_not_link() {
+        let on1 = "---\nrequires: [ADR-0001]\n---\n";
+        assert!(!linked(&[(ADR_2, on1), (ADR_3, on1)], &[ADR_2, ADR_3]));
+        assert!(!linked(&[], &[ADR_2, ADR_3]));
+        // フロントマターが読めない ADR はつなげない
+        assert!(!linked(
+            &[(ADR_2, "no front matter"), (ADR_3, "requires: [ADR-0002]")],
+            &[ADR_2, ADR_3]
+        ));
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn moved_adr_is_not_added() {
+        let dir =
+            std::env::temp_dir().join(format!("claude-hooks-added-adrs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("docs/decisions")).unwrap();
+        git_in(&dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("docs/decisions/0001-x.md"), "x\n").unwrap();
+        git_in(&dir, &["add", "."]);
+        git_in(&dir, &["commit", "-q", "-m", "seed"]);
+        std::fs::create_dir_all(dir.join("docs/adr")).unwrap();
+        git_in(
+            &dir,
+            &["mv", "docs/decisions/0001-x.md", "docs/adr/0001-x.md"],
+        );
+        std::fs::write(dir.join("docs/adr/0002-y.md"), "y\n").unwrap();
+        git_in(&dir, &["add", "."]);
+        git_in(&dir, &["commit", "-q", "-m", "move"]);
+        let added = added_adrs(&dir, "HEAD~1...HEAD");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(added, Some(vec!["docs/adr/0002-y.md".to_string()]));
     }
 }

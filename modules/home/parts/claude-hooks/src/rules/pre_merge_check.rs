@@ -292,7 +292,8 @@ pub fn local_review_covers_for_pr(
 /// `-R` の値（`OWNER/REPO`、`github.com/OWNER/REPO`、`https://github.com/OWNER/REPO`）の owner と name。
 /// 読めない形と github.com 以外のホスト（GHES など。API の呼び先に host を渡せない）は、空の組を返して検査の対象にしない
 fn split_repo(r: &str) -> (&str, &str) {
-    let r = r.trim_end_matches('/').trim_end_matches(".git");
+    let r = r.trim_end_matches('/');
+    let r = r.strip_suffix(".git").unwrap_or(r);
     let (r, has_scheme) = match r
         .strip_prefix("https://")
         .or_else(|| r.strip_prefix("http://"))
@@ -310,6 +311,16 @@ fn split_repo(r: &str) -> (&str, &str) {
         return ("", "");
     }
     (owner, name)
+}
+
+/// ファイルの中身を `ref` 時点で読む contents API の endpoint
+fn contents_endpoint(owner: &str, name: &str, path: &str, git_ref: &str) -> String {
+    // 区切りの / は残し、# ? 空白などをフラグメントや query と読まれないようにする
+    let path: Vec<String> = path.split('/').map(uri_encode).collect();
+    format!(
+        "repos/{owner}/{name}/contents/{}?ref={git_ref}",
+        path.join("/")
+    )
 }
 
 /// PR の base ブランチの今の先頭（GitHub の値）
@@ -1028,7 +1039,21 @@ impl Rule for PreMergeCheck {
                         reasons.extend(apply_escape_to_reasons(
                             shell.escape("ALLOW_MULTI_TOPIC"),
                             "ALLOW_MULTI_TOPIC",
-                            multi_topic_reason(&adrs).into_iter().collect(),
+                            multi_topic_reason(&adrs, |path| {
+                                // PR の head の中身を読む（ブランチを手元に持たないこともある）
+                                gh::gh(
+                                    &dir,
+                                    &[
+                                        "api",
+                                        &contents_endpoint(&owner, &name, path, &head_sha),
+                                        "-H",
+                                        "Accept: application/vnd.github.raw",
+                                    ],
+                                )
+                                .ok()
+                            })
+                            .into_iter()
+                            .collect(),
                         ));
                     }
                 }
@@ -1059,6 +1084,11 @@ impl Rule for PreMergeCheck {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_repo_strips_one_dot_git() {
+        assert_eq!(super::split_repo("octo/x.git.git"), ("octo", "x.git"));
+    }
+
     #[test]
     fn split_repo_reads_owner_repo_host_and_url_forms() {
         use super::split_repo;
@@ -1091,6 +1121,14 @@ mod tests {
             .commands()
             .to_vec();
         assert_eq!(pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()), None);
+    }
+
+    #[test]
+    fn contents_endpoint_encodes_each_path_segment() {
+        assert_eq!(
+            contents_endpoint("o", "r", "docs/adr/0002-a b#c?.md", "abc"),
+            "repos/o/r/contents/docs/adr/0002-a%20b%23c%3F.md?ref=abc"
+        );
     }
 
     #[test]
