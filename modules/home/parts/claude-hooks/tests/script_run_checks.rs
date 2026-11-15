@@ -398,7 +398,7 @@ fn exclusive_job_on(repo: &Repo) -> Vec<(&'static str, &'static str)> {
     }
     vec![(
         "FAKE_SQUEUE_OUT",
-        "NO|openmc-2K|1234|r995\nOK|x-shared|1235|r995\n",
+        "NO|timed|openmc-2K|1234|r995\nOK|main|x-shared|1235|r995\n",
     )]
 }
 
@@ -457,6 +457,23 @@ fn off_the_node_cargo_is_not_limited_and_nix_builds_here() {
         calls.contains(&"nix flake check --builders  --max-jobs auto".to_string()),
         "{calls:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn exclusive_job_on_the_main_partition_does_not_limit_checks() {
+    let repo = Repo::new();
+    exclusive_job_on(&repo);
+    let env = [
+        ("FAKE_SQUEUE_OUT", "NO|main|openmc-2K|1234|r995\n"),
+        ("FAKE_HOSTNAME_OUT", "r995\n"),
+    ];
+    let out = repo.run(&[], &env);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!stdout(&out).contains("排他のジョブ"), "{}", said(&out));
+    let calls = repo.calls();
+    assert!(!calls.iter().any(|c| c.starts_with("taskset")), "{calls:?}");
+    assert!(calls.contains(&"cargo test".to_string()), "{calls:?}");
 }
 
 #[test]

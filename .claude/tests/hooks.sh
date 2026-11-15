@@ -2883,13 +2883,15 @@ assert_eq "" "$out"
 # 排他のジョブの時間の記録を乱すため（ADR-0041）。squeue は偽のコマンドで置き換える
 
 FAKE_SQUEUE="$TEST_ROOT/fake-squeue"
-mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle"
+mkdir -p "$FAKE_SQUEUE/exclusive" "$FAKE_SQUEUE/shared" "$FAKE_SQUEUE/idle" "$FAKE_SQUEUE/main-exclusive"
 # 列は OverSubscribe|名前|番号|ノード（排他のジョブは r995 で走る）
-printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
-printf '#!/bin/sh\nprintf "OK|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
+printf '#!/bin/sh\nprintf "NO|timed|openmc-2K|1234|r995\\nOK|main|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/exclusive/squeue"
+printf '#!/bin/sh\nprintf "OK|main|x-shared|1235|r995\\n"\n' >"$FAKE_SQUEUE/shared/squeue"
 printf '#!/bin/sh\nexit 0\n' >"$FAKE_SQUEUE/idle/squeue"
+# main のジョブは割り込まれうる（時間を記録しない）ので、排他でも対象にしない
+printf '#!/bin/sh\nprintf "NO|main|table-build|1236|r995\\n"\n' >"$FAKE_SQUEUE/main-exclusive/squeue"
 mkdir -p "$FAKE_SQUEUE/many"
-printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|shared-$n|$n|r995"; done\necho "NO|openmc-2K|99999|r995"\n' >"$FAKE_SQUEUE/many/squeue"
+printf '#!/bin/sh\nseq 1 30000 | while read -r n; do echo "YES|main|shared-$n|$n|r995"; done\necho "NO|timed|openmc-2K|99999|r995"\n' >"$FAKE_SQUEUE/many/squeue"
 chmod +x "$FAKE_SQUEUE"/*/squeue
 cd "$TEST_ROOT" || exit 1
 # hostname は偽のコマンドで置き換える。r995 の上の振る舞いを確かめるテストは host-r995 を、ラップトップの振る舞いは
@@ -2917,12 +2919,12 @@ echo 'ssh-ng://nix-ssh@r995 x86_64-linux /root/.ssh/key 16 4 kvm - -' >"$FAKE_SQ
 export NIX_CONF_DIR="$FAKE_SQUEUE/conf-laptop"
 # 計算ノードの名前は固定しない（gpu1 で走るジョブ、縮めた形のノードの一覧）
 mkdir -p "$FAKE_SQUEUE/on-gpu1" "$FAKE_SQUEUE/on-range" "$FAKE_SQUEUE/host-gpu1"
-printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|gpu1\\n"\n' >"$FAKE_SQUEUE/on-gpu1/squeue"
-printf '#!/bin/sh\nprintf "NO|openmc-2K|1234|node[1-3]\\n"\n' >"$FAKE_SQUEUE/on-range/squeue"
+printf '#!/bin/sh\nprintf "NO|timed|openmc-2K|1234|gpu1\\n"\n' >"$FAKE_SQUEUE/on-gpu1/squeue"
+printf '#!/bin/sh\nprintf "NO|timed|openmc-2K|1234|node[1-3]\\n"\n' >"$FAKE_SQUEUE/on-range/squeue"
 printf '#!/bin/sh\necho gpu1\n' >"$FAKE_SQUEUE/host-gpu1/hostname"
 # 2 台の計算ノードで、それぞれ排他のジョブが走る（gpu1 のジョブが先に出る）
 mkdir -p "$FAKE_SQUEUE/on-two" "$FAKE_SQUEUE/host-gpu2" "$FAKE_SQUEUE/host-gpu3"
-printf '#!/bin/sh\nprintf "NO|job-a|11|gpu1\\nNO|job-b|12|gpu2\\n"\n' >"$FAKE_SQUEUE/on-two/squeue"
+printf '#!/bin/sh\nprintf "NO|timed|job-a|11|gpu1\\nNO|timed|job-b|12|gpu2\\n"\n' >"$FAKE_SQUEUE/on-two/squeue"
 printf '#!/bin/sh\necho gpu2\n' >"$FAKE_SQUEUE/host-gpu2/hostname"
 printf '#!/bin/sh\necho gpu3\n' >"$FAKE_SQUEUE/host-gpu3/hostname"
 mkdir -p "$FAKE_SQUEUE/conf-gpu2"
@@ -3128,8 +3130,8 @@ for cmd in 'nix build .#x' 'nix flake check' 'nix-rebuild update'; do
   assert_eq "" "$out"
 done
 
-it "guard-exclusive-slurm: 排他のジョブが無い（排他でないジョブだけ、ジョブなし）なら通す"
-for dir in shared idle; do
+it "guard-exclusive-slurm: 時間を記録する排他のジョブ（timed）が無い（main の排他のジョブ、排他でないジョブだけ、ジョブなし）なら通す"
+for dir in main-exclusive shared idle; do
   for cmd in 'cargo test' 'nix-rebuild rebuild' 'sudo nixos-rebuild switch' 'home-manager switch'; do
     out=$(PATH="$FAKE_SQUEUE/$dir:$PATH" run_hook guard-exclusive-slurm "$cmd")
     assert_eq "" "$out"

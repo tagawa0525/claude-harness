@@ -58,8 +58,7 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
 
 - 移す範囲: PreToolUse hook（すでに Rust）と、git hook、`.claude/scripts/` とスキルの `scripts/`、Python のツール、
   `claude-memory-backup`。テストは、移すときに Rust の結合テスト（`tests/`）に置き換える
-- 残す範囲: Slurm のスクリプト（`slurm-run.sh`、`lib/slurm-job.sh`、`slurm-queue.sh`、`slurm-history.sh`、
-  `lib/slurm-exclusive.sh`）と Nix のモジュール。Slurm は r995（Linux）でしか使わない
+- 残す範囲: Slurm のスクリプト（`slurm-run.sh`、`lib/slurm-job.sh`、`slurm-queue.sh`、`slurm-history.sh`）と Nix のモジュール。Slurm は r995（Linux）でしか使わない
 - 対象にする Claude Code のツール: Bash ツール（Windows では Git Bash）だけ。PowerShell ツール
   （`CLAUDE_CODE_USE_POWERSHELL_TOOL`）は使わない（2026-11-12 のユーザーの決定）。PreToolUse hook のルールは bash の
   構文を読むので、PowerShell のコマンドは判定できない
@@ -111,3 +110,11 @@ Windows で sh のスクリプトが動かない理由は、sh そのものよ�
   を使うもの、偽の検査を sh のスクリプトで作るもの）があり、それらを Windows でも動く形にするまでは、揃ったとは
   言えない（#101 の段階 1）。sh のテスト（`.claude/tests/hooks.sh`）
   の入力は、移すときに Rust のテストに移す
+
+## 変更
+
+- 2026-11-15: 残す範囲から `lib/slurm-exclusive.sh` を外す（#184）。前は「残す範囲: Slurm のスクリプト（`slurm-run.sh`、
+  `lib/slurm-job.sh`、`slurm-queue.sh`、`slurm-history.sh`、`lib/slurm-exclusive.sh`）と Nix のモジュール」だった。
+  `run-checks.sh` を `claude-hooks script run-checks` に移した（#101）ので、排他のジョブの判定は guard-exclusive-slurm の
+  関数（`rules::exclusive_job`）を使い、`lib/slurm-exclusive.sh` を source するものが無くなった。ADR-0087 の、source する
+  スクリプトがすべて移った PR で `lib/` の部品を消す扱いに従って消した

@@ -277,7 +277,7 @@ fn squeue_missing_from_path_is_silent() {
 #[cfg(unix)]
 #[test]
 fn squeue_with_non_utf8_job_name_still_finds_the_exclusive_job() {
-    let bin = fake_squeue("squeue-bytes", "printf 'NO|\\377name|42|r995\\n'");
+    let bin = fake_squeue("squeue-bytes", "printf 'NO|timed|\\377name|42|r995\\n'");
     let out = run(
         &bin.0,
         "cargo test",
@@ -286,6 +286,60 @@ fn squeue_with_non_utf8_job_name_still_finds_the_exclusive_job() {
     );
     assert!(
         out.json.to_string().contains("deny") && out.json.to_string().contains("42"),
+        "json: {}",
+        out.json
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn exclusive_job_on_the_main_partition_does_not_deny() {
+    let bin = fake_squeue("squeue-main", "printf 'NO|main|openmc-2K|1234|r995\\n'");
+    let out = run(
+        &bin.0,
+        "cargo test",
+        Some("guard-exclusive-slurm"),
+        Some(bin.0.to_str().unwrap()),
+    );
+    assert!(
+        out.json.get("hookSpecificOutput").is_none(),
+        "json: {}",
+        out.json
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn exclusive_job_on_the_timed_partition_denies() {
+    let bin = fake_squeue("squeue-timed", "printf 'NO|timed|openmc-2K|1234|r995\\n'");
+    let out = run(
+        &bin.0,
+        "cargo test",
+        Some("guard-exclusive-slurm"),
+        Some(bin.0.to_str().unwrap()),
+    );
+    assert!(
+        out.json.to_string().contains("deny") && out.json.to_string().contains("1234"),
+        "json: {}",
+        out.json
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn exclusive_job_on_the_default_timed_partition_denies() {
+    let bin = fake_squeue(
+        "squeue-timed-star",
+        "printf 'NO|timed*|openmc-2K|1234|r995\\n'",
+    );
+    let out = run(
+        &bin.0,
+        "cargo test",
+        Some("guard-exclusive-slurm"),
+        Some(bin.0.to_str().unwrap()),
+    );
+    assert!(
+        out.json.to_string().contains("deny") && out.json.to_string().contains("1234"),
         "json: {}",
         out.json
     );

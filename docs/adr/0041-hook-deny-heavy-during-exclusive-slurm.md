@@ -5,7 +5,7 @@ requires: [ADR-0007, ADR-0023, ADR-0026]
 supersedes: []
 superseded-by:
 amended-by: [ADR-0042]
-issues: ["#365", "#616", "#618", "#176"]
+issues: ["#365", "#616", "#618", "#176", "#50", "#184"]
 ---
 
 # ADR-0041: 排他の Slurm のジョブ中の全コアの手元の計算を hook で止める
@@ -79,8 +79,10 @@ ADR-0026 は案 B（時間を測るジョブの間は手元で全コアを使わ
 - rebuild でなく、`taskset` が中のコマンドを 1 つの CPU に限っていない（`-c 3`、`-c 5-5`、マスク `0x4`。複数の CPU や読めない
   指定は 1 コアとみなさない）。コマンドを直に包む最も内側の `taskset` が効き、`bash -c '…'` の中のコマンドにも
   外側の指定が効く。`-j 1` と `CARGO_BUILD_JOBS=1` は限りとみなさない
-- `squeue -h -t R -o '%h|%j|%i'` に OverSubscribe（`%h`）が `NO` の行がある。r995 の実機で、排他のジョブが `NO`、
-  `-shared` などで共有できるジョブが `OK` か `YES` と出る
+- `squeue -h -t R -o '%h|%P|%j|%i|%N'` に、OverSubscribe（`%h`）が `NO` で、パーティション（`%P`）が `timed` の行がある。
+  r995 の実機で、排他のジョブが `NO`、`-shared` などで共有できるジョブが `OK` か `YES` と出る。時間を記録するジョブは
+  `slurm-run.sh --timed` で timed に投げる（ADR-0053）。既定の `main` の排他のジョブは、`--timed` のジョブに止められうる
+  ので時間を記録に使わず、数えない
 
 squeue は、対象のコマンドがあるときだけ呼ぶ。出力は別のスレッドで並行して読み（パイプを満たして終われないのを
 避ける）、5 秒で打ち切る。`-O` の固定幅の列は長い名前がジョブ番号と続くので、区切りのある `-o` で読む。
@@ -93,8 +95,8 @@ squeue が無いホストと、排他のジョブが無いときは何もしな�
 投げる）を示す。rebuild を含むコマンドには、taskset が効かないことと終わるまで待つことを示し、r995 のほかでは
 `--local` で手元でビルドする道も示す。エスケープは設けない。
 
-`run-checks.sh` は、同じ squeue の判定（`.claude/scripts/lib/slurm-exclusive.sh`）で排他のジョブを見つけたら、
-冒頭に知らせ、排他のジョブの計算ノードの上（`exclusive_slurm_job` の `here`。hostname かノードが分からないときも）では 1 コアで実行する（`cargo` を
+`run-checks.sh` は、同じ判定（claude-hooks の `rules::exclusive_job`。`claude-hooks script run-checks` がこの関数を呼ぶ）で
+排他のジョブを見つけたら、冒頭に知らせ、排他のジョブの計算ノードの上（`here`。hostname かノードが分からないときも）では 1 コアで実行する（`cargo` を
 `taskset -c <最後の CPU>` と `-j 1` で、`nix flake check` を `--cores 1 -j 1` で）。ほかのホストでは `cargo` を限らず、
 `nix flake check` を `--builders '' --max-jobs auto` で手元でビルドする。このスクリプトと `run-python-tests.sh` は
 hook の対象にしない。
@@ -112,7 +114,7 @@ hook の対象にしない。
 - 計算ノードの上では、何を実行するか決められないコマンドは `taskset` で包まない限り止まる。誤って止めるのは、
   排他のジョブの間だけである。ほかのホストでは止めないので、その中の nix のビルド（スクリプトの中の `nix build`、
   `nix develop` の devShell のビルド、`nix run`）は、ノードに投げられても止まらない
-- 排他でないジョブ（`-shared`、OverSubscribe が `OK`・`YES`）は対象外。#365 の run-checks.sh の直列化とは別の問題である
+- 排他でないジョブ（`-shared`、OverSubscribe が `OK`・`YES`）と、`main` の排他のジョブは対象外（2026-11-15 から。「## 変更」）。#365 の run-checks.sh の直列化とは別の問題である
 
 ### 確認
 
@@ -154,3 +156,13 @@ hook の対象にしない。
   nix のビルドは、計算ノードの上でも taskset で包んで通していた（「`taskset` が中のコマンドを 1 つの CPU に限って
   いない」をどの対象にも掛けていた。#618）ので、taskset によらず止める。`run-checks.sh` も、前は「1 コアで実行する」をホストによらず当て、ラップトップの
   `nix flake check --cores 1 -j 1` のビルドは r995 に投げられていたので、r995 のほかでは手元でビルドする
+- 2026-11-15: 数える排他のジョブを、パーティションが `timed` のものに絞る（#50）。前は「`squeue -h -t R -o '%h|%j|%i'` に
+  OverSubscribe（`%h`）が `NO` の行がある」で、パーティションを見ず、`main` の排他のジョブも数えた。`run-checks.sh` の判定
+  （`.claude/scripts/lib/slurm-exclusive.sh`）は、`claude-hooks script run-checks` が hook と同じ関数を呼ぶようになり（#101）、
+  このファイルを source するものが無くなったので消した（#184）。
+  守るのは時間の記録で、`main` のジョブは `--timed` のジョブに止められうる（SUSPEND。ADR-0053）ので時間を記録に使わず、
+  守る対象が無い。xlc の 2026-10-30 に、`main` の排他のジョブ（Slurm 612、616。どちらも時間を記録しない）だけが走る間、
+  マージの前のチェック（約 9 分）とマージの hook のチェック（約 11 分）が 1 コアに絞られた。squeue に `%P` を足し、hook と
+  run-checks は同じ関数で判定する。絞らない案（`main` の排他のジョブも守る）は、止められる側（`main` のジョブ）が
+  手元の全コアの計算で遅くなっても記録を壊さないので、守る理由が見つからず採らなかった。`slurm-exclusive.sh` に同じ絞り込みを
+  足して残す案は、判定が 2 か所に分かれて食い違うので採らなかった

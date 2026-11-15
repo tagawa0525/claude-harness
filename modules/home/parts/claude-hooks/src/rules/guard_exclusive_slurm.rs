@@ -1,7 +1,8 @@
 //! guard-exclusive-slurm: 排他の Slurm のジョブが実行中は、そのジョブの計算ノードの全コアを使うコマンドを止める
 //!
 //! 排他のジョブ（時間を記録する測定）の間に、そのノードで全コアを使うと、その時間が乱れて再測定になる
-//! （docs/adr/0041）。squeue で OverSubscribe が NO の実行中のジョブがあるときだけ、次を止める。計算ノードは、排他の
+//! （docs/adr/0041）。squeue で OverSubscribe が NO で、パーティションが timed の実行中のジョブがあるときだけ、
+//! 次を止める（main のジョブは割り込まれうるので時間を記録せず、対象にしない）。計算ノードは、排他の
 //! ジョブのどれかのノード（squeue の `%N`）で、名前を固定しない。
 //! ノードの上で走るもの（このホストか、ssh の接続先がノード。分からなければノードとみなす）:
 //! `cargo build|check|test|clippy|run|bench`（alias `b|c|t|r`）、`dvc repro`、`bin/` と `target/release|debug/` の
@@ -267,6 +268,11 @@ impl ExclusiveJob {
     }
 }
 
+/// 時間を記録するジョブのパーティション（slurm-run.sh の `--timed`）。`main` のジョブは割り込まれうる（SUSPEND）ので
+/// 時間を記録に使わず、守る対象にしない（ADR-0041 の「## 変更」）。既定のパーティションに印の `*` が付く表示（sinfo の
+/// `main*`）に備え、比べる前に外す
+const TIMED_PARTITION: &str = "timed";
+
 /// squeue の応答を待つ上限。slurmctld が応答しないホストで、対象のコマンドを何十秒も止めないため
 const SQUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -278,13 +284,13 @@ fn squeue_unavailable(reason: &str) -> Vec<ExclusiveJob> {
     Vec::new()
 }
 
-/// 実行中の排他のジョブのすべて（計算ノードが複数あれば、ノードごとに走りうる）。squeue が無い、排他のジョブが無い
+/// 実行中の、時間を記録する排他のジョブ（パーティション timed）のすべて（計算ノードが複数あれば、ノードごとに走りうる）。squeue が無い、排他のジョブが無い
 /// ときは空（理由は見せない）。squeue が失敗した、時間内に終わらない、出力を読めないときも空だが、理由を見せる。`-O` の固定幅の列は
 /// 長い名前がジョブ番号と続いてしまうので、区切りのある `-o` で読む（OverSubscribe は `%h`。実機の値は
-/// 排他のジョブが `NO`、共有できるジョブが `OK` か `YES`）
+/// 排他のジョブが `NO`、共有できるジョブが `OK` か `YES`。パーティションは `%P`）
 fn running_exclusive_jobs() -> Vec<ExclusiveJob> {
     let mut child = match Command::new("squeue")
-        .args(["-h", "-t", "R", "-o", "%h|%j|%i|%N"])
+        .args(["-h", "-t", "R", "-o", "%h|%P|%j|%i|%N"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -326,12 +332,13 @@ fn running_exclusive_jobs() -> Vec<ExclusiveJob> {
     let Ok(Ok(bytes)) = bytes else {
         return squeue_unavailable("出力を読めません");
     };
-    // 名前が UTF-8 でなくても、OverSubscribe とジョブ番号とノードは読める。名前に | があっても、ノードと番号は後ろから取る
+    // 名前が UTF-8 でなくても、OverSubscribe とパーティションとジョブ番号とノードは読める。名前に | があっても、ノードと番号は後ろから取る
     String::from_utf8_lossy(&bytes)
         .lines()
         .filter_map(|line| {
             let (shares, rest) = line.split_once('|')?;
-            if shares.trim() != "NO" {
+            let (partition, rest) = rest.split_once('|')?;
+            if shares.trim() != "NO" || partition.trim().trim_end_matches('*') != TIMED_PARTITION {
                 return None;
             }
             let (rest, node) = rest.rsplit_once('|')?;
