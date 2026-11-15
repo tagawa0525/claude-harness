@@ -148,7 +148,11 @@ fn cells(line: &str) -> Vec<&str> {
     // 外側の | は 1 本ずつだけ外す（`\||` の閉じの前の `\|` はセルの文字）
     let line = strip(line);
     let body = line.strip_prefix('|').unwrap_or(line);
-    let body = body.strip_suffix('|').unwrap_or(body);
+    // 末尾の | は、直前のバックスラッシュが偶数個のときだけ閉じ（奇数個なら `\|` でセルの文字）
+    let body = match body.strip_suffix('|') {
+        Some(rest) if (rest.len() - rest.trim_end_matches('\\').len()) % 2 == 0 => rest,
+        _ => body,
+    };
     let mut out = Vec::new();
     let mut start = 0;
     let mut backslashes = 0;

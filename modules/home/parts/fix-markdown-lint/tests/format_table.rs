@@ -53,7 +53,6 @@ fn keeps_an_escaped_pipe_next_to_the_closing_pipe() {
 }
 
 #[test]
-#[ignore = "RED: #221 cells() drops a closing-less trailing escaped pipe"]
 fn a_row_without_a_closing_pipe_keeps_a_trailing_escaped_pipe() {
     assert_eq!(
         fmt(&["| a | b |", "| - | - |", "| x | y \\|"]),
