@@ -57,7 +57,7 @@ pub fn executable(path: &Path) {
 /// 実行するファイルを書いて実行の権限を付け、起動できるまで待つ。並行するテストが fork した子が、書き込みに開いた
 /// fd を exec まで持つと、書いた直後の起動が ETXTBSY（Text file busy）で失敗しうる（Linux）。
 ///
-/// 待ち方は、実際に起動を試して ETXTBSY（raw_os_error 26）が消えるまで繰り返す（check_commit_message.rs のテストと同じ）。
+/// 待ち方は、実際に起動を試して ETXTBSY（ErrorKind::ExecutableFileBusy）が消えるまで繰り返す（check_commit_message.rs のテストと同じ）。
 /// 起動の試しで hook の副作用（マーカーの追記、呼び出しの記録）を起こさないために、次の作りにする。
 /// - shebang のあるスクリプトは、1 行目の後ろに `CLAUDE_HOOKS_TEST_PROBE` が設定されていたら exit 0 する行を足して書く。
 ///   試しはこの変数つきで起動するので、本文は走らない（試しの後の本物の起動は変数が無く、本文が走る）
@@ -86,7 +86,7 @@ pub fn write_executable(path: &Path, content: impl AsRef<str>) {
             .stderr(std::process::Stdio::null())
             .status()
         {
-            Err(e) if e.raw_os_error() == Some(26) => {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
                 std::thread::sleep(std::time::Duration::from_millis(10))
             }
             _ => return,
