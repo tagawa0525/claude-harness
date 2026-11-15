@@ -676,6 +676,29 @@ fn check_rejects_amends_added_to_an_adr_on_main() {
 }
 
 #[test]
+#[ignore = "RED: check without FILE skips the amends added since the base (#67)"]
+fn check_rejects_amends_added_since_main_without_files() {
+    let t = TempRepo::new("added-link-all");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let b = "docs/adr/0002-use-b.md";
+    t.commit_all("docs(adr): a and b");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.write(
+        b,
+        &t.read(b)
+            .replace("superseded-by:\n", "superseded-by:\namends: [ADR-0001]\n"),
+    );
+    t.commit_all("docs(adr): link");
+    let out = t.run(&["check"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), new_link_error(b, 1));
+    // FILE が別の ADR でも、error はすべて出す
+    let out = t.run(&["check", "--changed", "docs/adr/0001-use-a.md"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+}
+
+#[test]
 fn check_keeps_amendment_links_already_on_main() {
     let t = TempRepo::new("old-links");
     t.run(&["new", "use-a", "a を使う"]);
