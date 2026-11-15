@@ -399,18 +399,15 @@ for dir in "$HOME/github/plain" "$HOME/github/proj"; do
   assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit="
 done
 
-# RED: 実装が入るまで skip（RUN_RED=1 で実行する）
-if [[ -n ${RUN_RED:-} ]]; then
-  it "slurm-run: git の中で版を調べられなくても、警告して commit= を付けずに投げる"
-  cd "$HOME/github/committed" || exit 1
-  cp .git/index "$TEST_ROOT/index.bak"
-  echo garbage >.git/index
-  out=$("$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' 2>&1)
-  assert_eq 0 $?
-  assert_contains "$out" "WARN: commit= を付けません"
-  assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit="
-  cp "$TEST_ROOT/index.bak" .git/index
-fi
+it "slurm-run: git の中で版を調べられなくても、警告して commit= を付けずに投げる"
+cd "$HOME/github/committed" || exit 1
+cp .git/index "$TEST_ROOT/index.bak"
+echo garbage >.git/index
+out=$("$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "WARN: commit= を付けません"
+assert_not_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit="
+cp "$TEST_ROOT/index.bak" .git/index
 
 it "slurm-run: r995 以外では NFS の入口の下で投げ、ログは NFS の側に作る"
 rm -rf "$HOME/github/slurm-logs" "$NFS_ENTRY/slurm-logs"
