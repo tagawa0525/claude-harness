@@ -139,7 +139,7 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   （main の作業ツリーなど）で走る。2026-10-14 に `dvc repro` が main の作業ツリーで走り、dvc.lock と出力を書き換えた。
   クォートしたコマンドの中の `cd` は連絡先に反映されない
 - 投げた直後に `squeue` の連絡先のパスが、意図した worktree であることを確かめる
-- 出力は `JOB:`、`LOG:`、ログの末尾 20 行、`EXIT:`。終了コードはジョブのもの
+- 出力は `JOB:`、`LOG:`、ログの末尾 20 行、`EXIT:`。終了コードはジョブのもの（取り消し、時間切れなど COMPLETED 以外で終わったジョブは、sbatch が 0 を返しても 1 になり、`EXIT: 1 (State=CANCELLED)` の形で State も出る）
 
 ## 順番
 
@@ -242,7 +242,7 @@ nixfiles #460 を対応せずに閉じた（2026-10-24）。測定の時間を�
 ## ログと時間
 
 ログは r995 の `~/github/slurm-logs/<名前>-<ジョブ番号>.out`（`slurm-run.sh` が `LOG:` に出す）。終わった直後に、末尾へ
-`TIME: job=<番号> elapsed=<実際> estimate=<見積もり> <印> class=<区分> ref=<参照> purpose=<目的>` が足される（印は下の段落）。全ジョブの履歴は `sacct` で、名前や期間で絞り、
+`TIME: job=<番号> elapsed=<実際> estimate=<見積もり> <印> class=<区分> ref=<参照> purpose=<目的>` が足される（印は下の段落。終わったときの State は `state=<State>` で付く）。全ジョブの履歴は `sacct` で、名前や期間で絞り、
 メモリの最大値も読める:
 
 ```bash
