@@ -46,8 +46,9 @@ issues: []
   測定の予定があるときは、排他でない長いジョブを入れない
 - メモリは Slurm が数えない（`CR_Core`、`modules/slurm/common.nix`）ので、排他でないジョブを複数流すと、メモリの合計が
   搭載量を超えて OOM killer が長い計算を殺しうる。投げる側が合計を数える
-- jobcomp（`/var/log/slurm/job_completions`）は排他かどうかを持たないので、`slurm-history.sh` の実績に排他でないジョブの
-  時間が混ざる。排他でないジョブは名前の末尾に `-shared` を付けて分ける（スキル slurm-run）
+- jobcomp（`/var/log/slurm/job_completions`）は排他かどうかを持たないので、jobcomp だけを読む 2026-10-12 より前の分では
+  `slurm-history.sh` の実績に排他でないジョブの時間が混ざる。排他でないジョブは名前の末尾に `-shared` を付けて分ける
+  （スキル slurm-run）。2026-10-12 以降は sacct の SubmitLine で外す（下の「## 変更」）
 - 見積もり（`-t`）が外れて長引いた排他でないジョブは、待っている排他のジョブの開始の見込みを狂わせる
   （`OverTimeLimit=UNLIMITED`。ADR-0007）
 
@@ -59,3 +60,21 @@ issues: []
   出した（`modules/slurm/common.nix` は 34244d4 の `SelectTypeParameters=CR_Core`、`ThreadsPerCore=2`。r995 で、2026-10-12）
 - 反映後に、待ち行列が空のときに、`-c 1` のジョブを流している間、排他のジョブが `PENDING` のままであることを `squeue`
   で確かめる（ADR-0007、ADR-0017 と同じく反映後の確認）。違えば帰結を直す新しい ADR を書く
+
+## 変更
+
+- 2026-11-15: `slurm-history.sh` が排他でないジョブを外す方法。前は帰結の「jobcomp は排他かどうかを持たないので、
+  `slurm-history.sh` の実績に排他でないジョブの時間が混ざる。排他でないジョブは名前の末尾に `-shared` を付けて分ける」だけで、
+  `-shared` を付け忘れたジョブ（depletion-library-1C、`-c 8`、27 分）が実績に混ざり、2 時間 5 分のジョブを 45 分と
+  見積もった（issue #48）。今は、2026-10-12（sacct の記録を始めた日。ADR-0031）以降を sacct から読み、SubmitLine の sbatch の
+  直後の語が `--cpus-per-task=N` のジョブを実績から外す（`SHARED:` に数える）。`--exclusive` か、読めない（slurm-run.sh を
+  通らない）ジョブは入れる。名前の `-shared` は、sacct の無い 2026-10-12 より前の jobcomp にだけ使う。jobcomp にも sacct にも
+  ある JobId は sacct を使い、MaxRSS も同じ sacct から読む（issue #20）。排他かの語の読み方は `--job`（`lib/slurm-job.sh`）と
+  同じ関数を使う。検討した案:
+  - 案 A（採らない）: jobcomp の ProcCnt が 32 未満の行を外す。過去の行にも効くが、`-c 31` と `-c 32` は物理コアに切り上がって
+    ProcCnt が 32 になり、排他と見分けられない（`-c 1` は 2。issue #48 の確認）。取り違えが残るので根の直しにならない
+  - 案 C（採らない）: slurm-run.sh が `-c` で `-shared` の無い名前を止める。今後のジョブにしか効かず、すでに混ざった実績は
+    直らない。案 B は名前に頼らず SubmitLine から読むので、名前の規則を強制する必要が無い。issue は B と C の併用を
+    勧めたが、C は B で足りる分を足すだけなので足さない（PR tagawa0525/nixfiles#450 のレビューでも、A/B のほうが根に近いとして
+    C を外した）
+  - 試して捨てた方式: sacct の `AllocCPUS < 32` で排他を見分ける（`-c 32` の排他でないジョブも 32）
