@@ -42,9 +42,9 @@ let
   # （settings.json に store パスを書くと世代ごとに書き換わる。zellij.nix のプラグインと同じ理由）
   claude-hooks = pkgs.callPackage ./claude-hooks/package.nix { };
   claudeHooksBinRel = ".claude/bin/claude-hooks";
-  # 崩れた日本語の語の検査（ADR-0074、ADR-0085）。/retro の memory-index.sh が `ja-terms check` で自動メモリに使う。
-  # スキルのスクリプトは claude-sync が store を経ずにコピーするので store のパスを埋められず、PATH に頼らない
-  # よう claude-hooks と同じ固定パスに置く
+  # 崩れた日本語の語の検査（ADR-0074、ADR-0085）。hook は package.nix のラッパーが渡す store のパスで起動するので、
+  # ~/.claude/bin/ja-terms を読むのは、home-files から `ja-terms check` を直に試す tests/ja-terms.sh と、名前で手で
+  # 起動する利用者。後者は Windows の置き場（~/.claude/bin）と揃え、PATH に頼らない固定パスに置く
   ja-terms = pkgs.callPackage ./ja-terms/package.nix { };
   # 旧 bash hook のファイル名。settings.json の登録と ~/.claude/hooks の残骸を掃除するために残す
   legacyHookFiles = [
