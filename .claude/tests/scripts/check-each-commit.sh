@@ -120,8 +120,6 @@ assert_eq "$other_head" "$(git -C "$OTHER" rev-parse HEAD)"
 assert_eq "$other_status" "$(git -C "$OTHER" status --porcelain)"
 assert_eq "keep" "$(cat "$OTHER/untracked.txt")"
 
-# RED: 実装前は skip（RUN_RED=1 で実行できる）
-if [[ -n "${RUN_RED-}" ]]; then
 it "check-each-commit: 前のコミットの検査が残した書き込み不可のディレクトリの配下を、次のコミットが変えても exit 3 にならない"
 RO="$TEST_ROOT/cec/ro"
 make_repo "$RO"
@@ -137,6 +135,5 @@ rm -f "$TEST_ROOT/cec/env.log"
 it "check-each-commit: GIT_CONFIG_* など、リポジトリを指さない git の環境変数は検査コマンドに渡す"
 out=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' "$SCRIPT" main -- sh -c "echo \"\$GIT_CONFIG_COUNT\" >> $TEST_ROOT/cec/env.log" 2>/dev/null)
 assert_eq "1" "$(sort -u "$TEST_ROOT/cec/env.log")"
-fi
 
 finish
