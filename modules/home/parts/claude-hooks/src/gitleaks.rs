@@ -94,7 +94,7 @@ pub fn scan(bin: &str, dir: &Path, mode: &str) -> Scan {
         (code, _) => Scan::Failed(Failure {
             what: match code {
                 Some(0) => {
-                    "gitleaks が失敗しました（終了コードは 0 だが、標準エラーに行を出して差分を読むのをやめた。git の警告でも止まるので、警告の原因を直すと検査できる）".to_string()
+                    "gitleaks が失敗しました（終了コードは 0 だが、標準エラーに行を出して差分を読むのをやめた。git の警告でも止まる。CRLF で保存したファイルが原因のことがある。エディタの改行を LF にして保存し直すか、git add してから -a を付けずにコミットすると検査できる）".to_string()
                 }
                 Some(c) => format!("gitleaks が失敗しました（exit {c}）"),
                 None => "gitleaks が失敗しました（signal）".to_string(),
