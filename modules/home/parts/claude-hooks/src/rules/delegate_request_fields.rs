@@ -219,6 +219,7 @@ impl Rule for DelegateRequestFields {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_util::TempDir;
     use super::*;
 
     const COMPLETE: &str = "最初に /delegate を呼び、その手順に従って進める。
@@ -247,27 +248,6 @@ mod tests {
         match findings {
             [Finding::Deny(reason)] => reason,
             _ => panic!("deny が 1 つではない"),
-        }
-    }
-
-    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> TempDir {
-            let dir = std::env::temp_dir().join(format!(
-                "claude-hooks-delegate-{tag}-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 

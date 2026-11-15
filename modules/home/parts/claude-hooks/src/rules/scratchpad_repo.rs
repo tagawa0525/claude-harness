@@ -125,33 +125,11 @@ fn scratchpad_root(path: &Path, session_id: &str) -> Option<PathBuf> {
 #[cfg(test)]
 pub(crate) mod fixture {
     use crate::input::Input;
+    use crate::rules::test_util::TempDir;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
     pub const SID: &str = "0f0e0d0c-1111-2222-3333-444455556666";
-
-    /// テストの間だけある一時のディレクトリ。テストは並行に走るので、呼ぶたびに別のディレクトリにする
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> TempDir {
-            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "claude-hooks-scratchpad-{tag}-{}-{seq}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     /// コマンドに書くパス。Windows の `\` は bash がエスケープと読むので、Git Bash で書く形（`C:/Users/…`）にする
     pub fn sh(p: &Path) -> String {

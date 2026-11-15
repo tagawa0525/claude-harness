@@ -107,6 +107,8 @@ mod pre_pr_create_check;
 mod require_background_wait;
 mod require_pipefail;
 mod scratchpad_repo;
+#[cfg(test)]
+mod test_util;
 mod warn_large_commit;
 
 pub fn all() -> &'static [&'static dyn Rule] {

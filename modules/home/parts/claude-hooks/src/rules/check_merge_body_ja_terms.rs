@@ -120,6 +120,12 @@ pub(super) fn file_path(value: &str, arg: &Arg, vars: &Vars) -> Result<String, U
     }
 }
 
+/// 区切りをクォートしないヒアドキュメントの本文をシェルが展開するか。`$` とバッククォートの展開に加えて、
+/// `\` は後ろの `$` `` ` `` `\` を残して `\` を除き、`\` と改行は除いて行をつなぐ（件名が変わりうる）
+pub(super) fn heredoc_expands(body: &str) -> bool {
+    body.contains(['$', '`', '\\'])
+}
+
 /// 値を書いたままの文字列にする。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は
 /// 本文を取り出す。単引用符で書いた値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
 /// バッククォートを含むもの（単引用符に `"$X"` が続く値を含む）は、シェルが展開した後の値が分からない
@@ -132,7 +138,7 @@ pub(super) fn literal(value: &str, arg: &Arg, option: &'static str) -> Result<St
         return Ok(value.to_string());
     }
     if let Some((body, quoted)) = heredoc_body(value) {
-        return if quoted || !expands(&body) {
+        return if quoted || !heredoc_expands(&body) {
             Ok(body)
         } else {
             Err(Undecided::Expanded(option))
@@ -487,34 +493,12 @@ impl Rule for CheckMergeBodyJaTerms {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::super::test_util::write_fake_command;
+    use super::super::test_util::{TempDir, git, git_init, global_hooks};
     use super::*;
     use crate::output::{NOTICES_LOCK as NOTICES, take_notices};
-    use std::path::PathBuf;
     use std::process::Command;
-
-    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）。テストは並行に走るので、同じ tag でも
-    /// 呼ぶたびに別のディレクトリにする
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> TempDir {
-            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "claude-hooks-merge-body-{tag}-{}-{seq}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     /// ja-terms の代わり。`commit-msg <ファイル>` では、メッセージに「形違い」があれば commit-msg の形の件名の ❌ を、
     /// 「誤語」があれば報告の行（行:列: 誤語 => 正語）と ❌ を出して 1 で終わる。`message` では、標準入力の「誤語」を
@@ -551,47 +535,9 @@ exit 0
     /// 偽の ja-terms を置き、そのパスを返す。Windows はシバンの sh のスクリプトを実行ファイルとして起動できないので、sh の偽物を使うテストは Unix だけで流す（ADR-0083）
     #[cfg(unix)]
     fn fake_check(dir: &TempDir) -> String {
-        use std::os::unix::fs::PermissionsExt;
         let path = dir.0.join("ja-terms");
-        std::fs::write(&path, FAKE_CHECK).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // 並行するテストが子を fork した直後は、書き込みに開いた fd が exec までその子に残り、実行が
-        // ETXTBSY（Text file busy）で失敗する。引数つき（偽の検査は 3 で終わる）で起動できるまで待つ
-        for _ in 0..100 {
-            match Command::new(&path).arg("probe").output() {
-                Err(e) if e.raw_os_error() == Some(26) => {
-                    std::thread::sleep(std::time::Duration::from_millis(10))
-                }
-                _ => return path.to_string_lossy().into_owned(),
-            }
-        }
-        panic!(
-            "偽の検査が 1 秒たっても Text file busy のまま: {}",
-            path.display()
-        );
-    }
-
-    /// テストのグローバルの core.hooksPath。git_init のリポジトリはこれをローカルに持つ（手元とサンドボックスで
-    /// グローバルの設定が違っても、グローバルの hook を使うリポジトリにする）
-    const GLOBAL_HOOKS: &str = "/nonexistent/global-hooks";
-
-    fn global_hooks(_: &Path) -> Option<String> {
-        Some(GLOBAL_HOOKS.to_string())
-    }
-
-    fn git(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok, "git {args:?}");
-    }
-
-    fn git_init(dir: &Path) {
-        git(dir, &["init", "-q"]);
-        git(dir, &["config", "core.hooksPath", GLOBAL_HOOKS]);
+        write_fake_command(&path, FAKE_CHECK, &["probe"]);
+        path.to_string_lossy().into_owned()
     }
 
     fn args(src: &str) -> Vec<Arg> {
@@ -682,6 +628,18 @@ exit 0
         assert_eq!(
             message("git merge -m \"$(cat <<EOF\nMerge: a\n\n本文\nEOF\n)\" feat/a"),
             Ok(Some("Merge: a\n\n本文".to_string()))
+        );
+    }
+
+    #[test]
+    fn message_from_unquoted_heredoc_with_backslash_is_undecided() {
+        assert_eq!(
+            message("git merge -m \"$(cat <<EOF\nMerge: a \\\nb\nEOF\n)\" feat/a"),
+            Err(Undecided::Expanded("-m"))
+        );
+        assert_eq!(
+            message("git merge -m \"$(cat <<'EOF'\nMerge: a \\\nb\nEOF\n)\" feat/a"),
+            Ok(Some("Merge: a \\\nb".to_string()))
         );
     }
 

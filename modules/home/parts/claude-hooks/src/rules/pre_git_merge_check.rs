@@ -213,6 +213,39 @@ pub(super) fn local_branch_ref(dir: &Path, target: &str) -> Option<String> {
         .filter(|f| f.starts_with("refs/heads/"))
 }
 
+/// マージ元の rev。ローカルのブランチは完全な ref、ブランチ名でないコミットの指定（SHA、`feat/x^0`、タグ、`:/文字列`）は
+/// コミットの hash にして返す。リモート追跡ブランチと、解決できない名前は None。
+/// ブランチ名だけを見ると、`git merge --no-ff <SHA>` が、rebase 済みの確認、ADR の数、本文のレビューの記録の
+/// どれにも掛からない。3 つのルール（guard-git-merge、pre-git-merge-check、check-merge-review）が共有する
+pub(super) fn merge_source(dir: &Path, target: &str) -> Option<String> {
+    if let Some(full) = local_branch_ref(dir, target) {
+        return Some(full);
+    }
+    let spec = if target == "-" { "@{-1}" } else { target };
+    // リモート追跡ブランチの取り込みは別々にマージ済みのトピックの集まりなので対象外。タグは指定のまま確かめる
+    let is_remote = git::git(dir, &["rev-parse", "--symbolic-full-name", spec])
+        .is_some_and(|f| f.starts_with("refs/remotes/"));
+    if is_remote {
+        return None;
+    }
+    // 指定のままでなく hash を返す（後の `{rev}:{path}` や `A...B` の組み立てで、`:/文字列` や空白が壊れない）。
+    // 注釈つきタグはコミットに剥がす
+    commit_ish(dir, spec)
+        .and_then(|id| git::git(dir, &["rev-parse", "--verify", &format!("{id}^{{commit}}")]))
+}
+
+/// 指定（SHA、`feat/x^0`、タグ、`:/文字列`）が指すコミットの hash。コミットかタグのオブジェクトだけを認め、
+/// 解決できなければ None。`^{commit}` を付けて解くと `:/f^{commit}` が検索の文字列の一部になるので、
+/// 付けずに解いてオブジェクトの種類で絞る。`$(…)` の展開を含む指定は値が分からないので、確かめない
+pub(super) fn commit_ish(dir: &Path, spec: &str) -> Option<String> {
+    let id = git::git(dir, &["rev-parse", "--verify", "--quiet", spec])?;
+    matches!(
+        git::git(dir, &["cat-file", "-t", &id]).as_deref(),
+        Some("commit" | "tag")
+    )
+    .then_some(id)
+}
+
 impl Rule for PreGitMergeCheck {
     fn name(&self) -> &'static str {
         "pre-git-merge-check"
@@ -231,7 +264,7 @@ impl Rule for PreGitMergeCheck {
                         "git merge --stdin はマージ対象を標準入力で受け取るので、新しい ADR の数を確かめられません。ブランチ名を引数で渡してください".to_string(),
                     )];
                 }
-                let Some(full) = local_branch_ref(dir, t) else {
+                let Some(full) = merge_source(dir, t) else {
                     continue;
                 };
                 let Some(adrs) = added_adrs(dir, &format!("HEAD...{full}")) else {

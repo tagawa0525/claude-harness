@@ -13,7 +13,7 @@
 //! リモート追跡ブランチの取り込み、中断・再開は対象外）。エスケープはない（修正方法は理由に示す）
 
 use super::Rule;
-use super::pre_git_merge_check::{default_branch_merges, local_branch_ref};
+use super::pre_git_merge_check::{commit_ish, default_branch_merges, merge_source};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -23,18 +23,46 @@ use std::path::{Path, PathBuf};
 /// deny の理由に示す、未コミットの変更の先頭の件数
 const SHOWN_CHANGES: usize = 5;
 
-/// ブランチ（refs/heads/…）をチェックアウトしている worktree。チェックアウトされていなければ None
-fn worktree_of(dir: &Path, full_ref: &str) -> Option<PathBuf> {
-    let list = git::git(dir, &["worktree", "list", "--porcelain"])?;
-    let mut path = None;
-    for line in list.lines() {
-        if let Some(p) = line.strip_prefix("worktree ") {
-            path = Some(PathBuf::from(p));
-        } else if line.strip_prefix("branch ") == Some(full_ref) {
-            return path;
+/// マージ元をチェックアウトしている worktree と、そのブランチ名。ブランチの ref（refs/heads/…）はそのブランチの
+/// worktree、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は、HEAD がそのコミットで、ブランチをチェックアウト
+/// している worktree（detached は後片付けの対象でない）。全部を返す（無ければ空）
+fn worktrees_of(dir: &Path, source: &str) -> Vec<(PathBuf, String)> {
+    let Some(list) = git::git(dir, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    // 注釈つきタグのオブジェクトはコミットに剥がして、worktree の HEAD と比べる
+    let Some(commit) = commit_ish(dir, source)
+        .and_then(|id| git::git(dir, &["rev-parse", "--verify", &format!("{id}^{{commit}}")]))
+    else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let by_ref = source.starts_with("refs/heads/");
+    for block in list.split("\n\n") {
+        let (mut path, mut head, mut branch) = (None, None, None);
+        for line in block.lines() {
+            if let Some(p) = line.strip_prefix("worktree ") {
+                path = Some(PathBuf::from(p));
+            } else if let Some(h) = line.strip_prefix("HEAD ") {
+                head = Some(h);
+            } else if let Some(b) = line.strip_prefix("branch ") {
+                branch = Some(b);
+            }
+        }
+        let (Some(path), Some(head), Some(branch)) = (path, head, branch) else {
+            continue;
+        };
+        let hit = if by_ref {
+            branch == source
+        } else {
+            head == commit
+        };
+        if hit {
+            let name = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+            found.push((path, name.to_string()));
         }
     }
-    None
+    found
 }
 
 /// worktree の未コミットの変更と未追跡のファイルを理由にした deny（無ければ None）。
@@ -75,7 +103,7 @@ impl Rule for GuardGitMerge {
             let branches: Vec<(&str, String)> = merge
                 .targets
                 .iter()
-                .filter_map(|t| local_branch_ref(&merge.dir, t).map(|full| (t.as_str(), full)))
+                .filter_map(|t| merge_source(&merge.dir, t).map(|full| (t.as_str(), full)))
                 .collect();
             if branches.is_empty() {
                 continue;
@@ -91,14 +119,14 @@ impl Rule for GuardGitMerge {
                     git::git(&merge.dir, &["merge-base", "--is-ancestor", default, &full])
                         .is_some();
                 let branch = full.strip_prefix("refs/heads/").unwrap_or(name);
-                if let Some(reason) =
-                    worktree_of(&merge.dir, &full).and_then(|wt| dirty_reason(branch, &wt))
-                {
-                    out.push(Finding::Deny(reason));
+                for (wt, wt_branch) in worktrees_of(&merge.dir, &full) {
+                    if let Some(reason) = dirty_reason(&wt_branch, &wt) {
+                        out.push(Finding::Deny(reason));
+                    }
                 }
                 if !up_to_date {
                     out.push(Finding::Deny(format!(
-                        "{branch} は {default} より遅れています（{default} にあるコミットが入っていません）。git switch {branch} && git rebase {default} で {default} の上に載せてから、チェックをやり直してマージしてください"
+                        "{branch} は {default} より遅れています（{default} にあるコミットが入っていません）。{branch} を {default} の上に rebase（ブランチなら git switch {branch} && git rebase {default}）してから、チェックをやり直してマージしてください"
                     )));
                 }
             }

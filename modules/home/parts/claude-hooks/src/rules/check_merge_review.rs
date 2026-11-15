@@ -4,7 +4,7 @@
 //! GitHub の PR はローカルレビューの記録（PR のコメント）を pre-merge-check が head と照らすが、ローカルのマージには
 //! PR が無い。記録をマージの本文に置き、履歴に残す（ADR-0070）。本文の形:
 //!
-//! - `Reviewed: <hash>` の行がちょうど 1 つ（7〜40 桁の小文字の 16 進。最後のレビューの周を回した HEAD）
+//! - `Reviewed: <hash>` の行がちょうど 1 つ（7〜64 桁の小文字の 16 進。最後のレビューの周を回した HEAD）
 //! - 指摘ごとの行（`再現: …`、`再現なし: …`、`再現なし → #<番号>…`、`前提が誤り: …`、`抜け道: …`）か `指摘なし` の行が
 //!   1 つ以上
 //!
@@ -19,7 +19,7 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{Undecided, merge_message};
-use super::pre_git_merge_check::{default_branch_merges, local_branch_ref};
+use super::pre_git_merge_check::{default_branch_merges, merge_source};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -33,7 +33,7 @@ const SHOWN_FILES: usize = 10;
 
 /// 本文に書く形。拒否の文言が示す
 const FORM: &str = "本文に次の行を書いてください（行の先頭の空白と `- ` は付けてよい）:\n\
-  Reviewed: <最後にレビューの周を回した HEAD の hash（7〜40 桁）>\n\
+  Reviewed: <最後にレビューの周を回した HEAD の hash（7〜64 桁）>\n\
   指摘ごとに 1 行: 再現: <テスト名 | 手順 | 出典> / 再現なし: <指摘の要旨> / 前提が誤り: <確かめた事実> / 抜け道: <理由>\n\
   （直さない指摘を別のトピックとして issue にしたときは、再現なし: の代わりに 再現なし → #<issue の番号>: <指摘の要旨>）\n\
   どの周にも指摘が無ければ: 指摘なし\n\
@@ -63,7 +63,7 @@ fn is_finding_line(line: &str) -> bool {
 }
 
 fn is_hash(s: &str) -> bool {
-    (7..=40).contains(&s.len())
+    (7..=64).contains(&s.len())
         && s.chars()
             .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
@@ -81,7 +81,7 @@ fn reviewed_hash(body: &str) -> Result<String, String> {
         [h] if is_hash(h) => Some(h.to_string()),
         [h] => {
             missing.push(format!(
-                "Reviewed: の値 `{h}` がコミットの hash（7〜40 桁の小文字の 16 進）ではありません"
+                "Reviewed: の値 `{h}` がコミットの hash（7〜64 桁の小文字の 16 進）ではありません"
             ));
             None
         }
@@ -243,28 +243,39 @@ fn behavior_changes(dir: &Path, default: &str, from: &str, to: &str) -> Option<V
             to,
         ],
     )?;
+    let paths: Vec<&str> = names.split('\0').filter(|p| !p.is_empty()).collect();
+    if paths
+        .iter()
+        .all(|p| is_plain_document(p) || is_dvc_record(p))
+    {
+        return Some(Vec::new());
+    }
+    // 差分は 1 回の git diff で取り、`diff --git` の行で分ける（`--name-only` と同じ並びで、改名を分けているので
+    // 1 ファイルが 1 区画。内容の行は先頭が + - 空白なので、見出しの行と取り違えない）
+    let all = git::git(
+        dir,
+        &[
+            "diff",
+            "-U0",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--no-relative",
+            from,
+            to,
+        ],
+    )?;
+    let sections = split_diff_sections(&all);
+    if sections.len() != paths.len() {
+        return None;
+    }
     let mut out = Vec::new();
-    for path in names.split('\0').filter(|p| !p.is_empty()) {
+    for (path, diff) in paths.into_iter().zip(sections) {
         if is_plain_document(path) || is_dvc_record(path) {
             continue;
         }
-        let diff = git::git(
-            dir,
-            &[
-                "diff",
-                "-U0",
-                "--no-color",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-renames",
-                "--no-relative",
-                from,
-                to,
-                "--",
-                &format!(":(top,literal){path}"),
-            ],
-        )?;
-        let remap = replaced_hashes(&diff).is_some_and(|pairs| {
+        let remap = replaced_hashes(diff).is_some_and(|pairs| {
             pairs.into_iter().all(|pair| {
                 *judged
                     .entry(pair)
@@ -276,6 +287,20 @@ fn behavior_changes(dir: &Path, default: &str, from: &str, to: &str) -> Option<V
         }
     }
     Some(out)
+}
+
+/// `git diff` の出力をファイルごとの区画（`diff --git` の行から次の行の前まで）に分ける
+fn split_diff_sections(diff: &str) -> Vec<&str> {
+    let mut starts: Vec<usize> = Vec::new();
+    let mut pos = 0;
+    for line in diff.split_inclusive('\n') {
+        if line.starts_with("diff --git ") {
+            starts.push(pos);
+        }
+        pos += line.len();
+    }
+    starts.push(diff.len());
+    starts.windows(2).map(|w| &diff[w[0]..w[1]]).collect()
 }
 
 fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
@@ -396,7 +421,7 @@ impl Rule for CheckMergeReview {
             let branches: Vec<(&str, String)> = merge
                 .targets
                 .iter()
-                .filter_map(|t| local_branch_ref(&merge.dir, t).map(|full| (t.as_str(), full)))
+                .filter_map(|t| merge_source(&merge.dir, t).map(|full| (t.as_str(), full)))
                 .collect();
             let [(name, full)] = branches.as_slice() else {
                 if branches.len() > 1 {
@@ -430,31 +455,31 @@ impl Rule for CheckMergeReview {
 #[cfg(test)]
 mod tests {
     use super::super::scratchpad_repo::fixture::sh;
+    use super::super::test_util::TempDir;
     use super::*;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    /// テストの間だけある一時のディレクトリ（テストが panic しても消す）。テストは並行に走るので、呼ぶたびに別のディレクトリにする
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> TempDir {
-            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "claude-hooks-merge-review-{tag}-{}-{seq}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
+    #[test]
+    fn splits_a_diff_into_one_section_per_file() {
+        let diff = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+diff --git y\ndiff --git a/b b/b\nold mode 100644\n";
+        assert_eq!(
+            split_diff_sections(diff),
+            vec![
+                "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+diff --git y\n",
+                "diff --git a/b b/b\nold mode 100644\n"
+            ]
+        );
+        assert!(split_diff_sections("").is_empty());
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
+    #[test]
+    fn accepts_a_full_sha256_reviewed_hash() {
+        let body = |h: &str| format!("Merge: x\n\nReviewed: {h}\n再現: 例\n");
+        assert_eq!(reviewed_hash(&body(&"a1".repeat(32))), Ok("a1".repeat(32)));
+        assert_eq!(reviewed_hash(&body(&"a1".repeat(20))), Ok("a1".repeat(20)));
+        assert!(reviewed_hash(&body(&"a1".repeat(33))).is_err());
+        assert!(reviewed_hash(&body("abc123")).is_err());
     }
 
     /// コミットの日時。hash は日時にも依るので、固定してテストの hash を実行の時刻に依らず決める
