@@ -20,6 +20,8 @@ static RECORD_TIME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$").unwrap()
 });
 static HOOK_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\S+ hook error: ").unwrap());
+static RULE_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|\n\n)(\[[a-z0-9-]+\]) ").unwrap());
 static PERMISSION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(Permission (for this \w+|to use .*) (was|has been) denied|The server-side auto mode classifier)")
         .unwrap()
@@ -358,7 +360,7 @@ fn failures_of(line: &Value) -> Result<Vec<(Kind, String)>, &'static str> {
                 if b.get("type").and_then(Value::as_str) == Some("tool_result")
                     && b.get("is_error") == Some(&Value::Bool(true))
                 {
-                    found.push(classify(&body(b.get("content"))?));
+                    found.extend(classify(&body(b.get("content"))?));
                 }
             }
             Value::Null => {}
@@ -410,7 +412,23 @@ fn cut(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-fn classify(b: &str) -> (Kind, String) {
+/// 失敗 1 件の種類と要約。1 回の hook で複数ルールが deny すると理由は空行でつながるので、その全部の名前を返す
+fn classify(b: &str) -> Vec<(Kind, String)> {
+    if HOOK_ERROR.is_match(b) {
+        let rest = HOOK_ERROR.replace(b, "");
+        // ルールの名前が付いた理由は、名前だけで数える（本文の番号やパスの違いに依らない）。付かない理由（古い記録）は正規化で寄せる
+        let names: Vec<_> = RULE_NAME
+            .captures_iter(&rest)
+            .map(|c| (Kind::Hook, c[1].to_string()))
+            .collect();
+        if !names.is_empty() {
+            return names;
+        }
+    }
+    vec![classify_one(b)]
+}
+
+fn classify_one(b: &str) -> (Kind, String) {
     if HOOK_ERROR.is_match(b) {
         let rest = HOOK_ERROR.replace(b, "");
         return (Kind::Hook, cut(&normalize(first_line(&rest)), 160));
