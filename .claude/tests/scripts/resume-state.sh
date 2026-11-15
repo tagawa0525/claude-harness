@@ -33,4 +33,18 @@ assert_contains "$out" "== prs"
 assert_contains "$out" "(なし: gh か origin が無い)"
 assert_contains "$out" "== slurm"
 
+# RED: 実装まで RED=1 のときだけ実行する
+if [[ -n "${RED:-}" ]]; then
+it "resume-state: 引用符つきの status: \"open\" の issue も出す"
+printf -- '---\nstatus: "open"\n---\n\n# q\n' > docs/issues/0003-q.md
+out=$("$SCRIPT")
+assert_contains "$out" "docs/issues/0003-q.md"
+
+it "resume-state: origin 以外の名前の GitHub の remote でも PR を集める"
+git remote add upstream https://github.com/example/app.git
+make_fake_gh '  "pr list"*) echo "fake-pr-listed" ;;'
+out=$(PATH="$(minimal_path)" "$SCRIPT")
+assert_contains "$out" "fake-pr-listed"
+fi
+
 finish

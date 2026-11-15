@@ -506,6 +506,27 @@ fn check_warns_about_the_format_of_issues_with_front_matter() {
     );
 }
 
+#[test]
+#[ignore = "RED: check only looks for the heading of 完了の条件, not a checklist"]
+fn check_warns_when_the_conditions_section_has_no_checklist() {
+    let t = TempRepo::new("issue-checklist");
+    t.write(
+        "docs/issues/0001-prose.md",
+        "---\nstatus: open\n---\n\n## 問題\n\nx\n\n## 完了の条件\n\n直ったら終わり\n",
+    );
+    t.write(
+        "docs/issues/0002-empty.md",
+        "---\nstatus: open\n---\n\n## 問題\n\nx\n\n## 完了の条件\n",
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert_eq!(
+        stdout(&out),
+        "docs/issues/0001-prose.md: warning: section `完了の条件` has no checklist item (`- [ ]` or `- [x]`)\n\
+         docs/issues/0002-empty.md: warning: section `完了の条件` has no checklist item (`- [ ]` or `- [x]`)\n"
+    );
+}
+
 /// ADR-0001 を ADR-0002 で置き換えた main
 fn superseded_repo(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
