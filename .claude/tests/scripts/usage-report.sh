@@ -139,9 +139,12 @@ out=$("$REPORT" "${RANGE[@]}" "$MAIN" 2>&1)
 assert_contains "$out" "TOP: \$2.00 振り返り 1 回"
 
 it "usage-report: 区間を省くと JST の今日にする"
+# JST の 0 時をまたいでも落ちないよう、実行の前と後の今日のどちらかに当たればよい
+before=$(TZ=Asia/Tokyo date +%Y-%m-%d)
 out=$("$REPORT" "$MAIN" 2>&1)
-today=$(TZ=Asia/Tokyo date +%Y-%m-%d)
-assert_contains "$out" "SINCE: ${today}T00:00:00+09:00"
+after=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+since=$(grep '^SINCE: ' <<<"$out")
+if [[ $since == "SINCE: ${before}T00:00:00+09:00"* || $since == "SINCE: ${after}T00:00:00+09:00"* ]]; then _pass; else _fail "SINCE が JST の今日でない: $since"; fi
 
 it "usage-report: 記録を省くと CLAUDE_CODE_SESSION_ID の記録を探す"
 out=$(CLAUDE_CODE_SESSION_ID=$SESSION "$REPORT" "${RANGE[@]}" 2>&1)

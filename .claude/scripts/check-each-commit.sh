@@ -13,7 +13,7 @@
 # 実行時の環境の失敗は 3（git rev-list、一時ディレクトリ、worktree の作成、checkout、clean の失敗。
 # shallow clone や壊れたオブジェクトなど）。clean に失敗したコミットは検査しない
 # （前のコミットの副産物が残ったまま通ると、誤って exit=0 と出る）。
-# 失敗しても止まらず全コミットを実行する。
+# TERM / HUP / INT で止められたときは 143 / 129 / 130。失敗しても止まらず全コミットを実行する。
 #
 # 使いどころ: 依存や lock を変えるブランチなど、各コミットでビルドが通るべきとき
 # （`git bisect` が使えなくなる）。例:
@@ -73,15 +73,23 @@ cleanup() {
   [[ ! -e "$tmp" ]] || echo "一時ディレクトリを消せませんでした: $tmp" >&2
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
+# 終了コードは 128 + シグナル番号（bash は、フォアグラウンドの検査コマンドが終わってから trap を実行する。
+# SIGKILL では trap が走らず、一時 worktree が残る）
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
-git worktree add -q --detach "$wt" "${commits[0]}" || exit 3
+# core.hooksPath を /dev/null にしてフックを止める: post-checkout などが、使い捨ての worktree で副作用（依存の取得や通知）を
+# 出さないようにする
+NO_HOOKS=(-c core.hooksPath=/dev/null)
+
+git "${NO_HOOKS[@]}" worktree add -q --detach "$wt" "${commits[0]}" || exit 3
 
 rc=0
 for sha in "${commits[@]}"; do
   # 前の検査が書き込み不可のディレクトリを残すと、checkout がその配下の変更で失敗する
   chmod -R u+w "$wt" 2>/dev/null
-  git -C "$wt" checkout -q --detach "$sha" || exit 3
+  git "${NO_HOOKS[@]}" -C "$wt" checkout -q --detach "$sha" || exit 3
   # 検査の副産物（ビルド結果など）が次のコミットに残らないようにする
   git -C "$wt" clean -qffdx || {
     echo "git clean に失敗したので $sha を検査しません" >&2

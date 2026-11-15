@@ -821,3 +821,41 @@ fn two_empty_bounds_are_an_open_range_not_today() {
     // 区間の外の応答（11-05 と 11-06 の分）も数える
     assert_eq!(lines_with(&out, "TOTAL: "), ["TOTAL: $24.18"]);
 }
+
+#[test]
+fn replies_without_a_message_id_are_each_counted() {
+    let home = Home::new();
+    let main = home.project().join(format!("{SESSION}.jsonl"));
+    let mut without_id = reply(
+        "x",
+        "2026-11-07T01:00:00.000Z",
+        "claude-opus-5-5",
+        [0, 0, 0, 0, 1000],
+    );
+    without_id["message"].as_object_mut().unwrap().remove("id");
+    home.write_lines(
+        &main,
+        &[user_text("始める"), without_id.clone(), without_id],
+    );
+    let main_s = main.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.push(&main_s);
+    let out = stdout(&home.report(&args, None));
+    assert_eq!(lines_with(&out, "TOTAL: "), ["TOTAL: $0.04"]);
+}
+
+#[test]
+fn a_file_named_like_the_branch_does_not_break_the_merge_count() {
+    let home = Home::new();
+    let main = home.first_session().display().to_string();
+    let repo = home.repo();
+    std::fs::write(repo.join("main"), "x\n").unwrap();
+    let repo_s = repo.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.extend(["--repo", &repo_s, &main]);
+    let out = stdout(&home.report(&args, None));
+    assert_eq!(
+        lines_with(&out, "MERGES: "),
+        [format!("MERGES: 2 {repo_s} main")]
+    );
+}

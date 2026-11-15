@@ -63,6 +63,12 @@ impl Kind {
         format!("{}{number:04}", self.ref_prefix())
     }
 
+    /// `renumber_refs` が書き換えうる参照の、固定の文字列（本文での参照とファイル名の `-<slug>.md`）。どちらも含まない
+    /// ファイルに書き換える行は無いので、`git grep` の絞り込みはこれで探す。参照の形を増やすときは、ここも直す
+    pub fn renumber_terms(self, old: u32, slug: &str) -> [String; 2] {
+        [self.reference(old), format!("-{slug}.md")]
+    }
+
     /// 番号を予約するタグの名前（`adr-0018`、`issue-0018`）。
     pub fn tag(self, number: u32) -> String {
         format!("{}-{number:04}", self.name())
@@ -307,7 +313,7 @@ pub fn renumber_refs(
     // 番号の始まりから終わりまで。本文の参照は 4 桁、ファイル名は 3 桁で振った記録（[`numbers_in`]）も含む
     let mut spans: std::collections::BTreeMap<usize, usize> =
         starts.into_iter().map(|start| (start, start + 4)).collect();
-    let file = format!("-{slug}.md");
+    let [_, file] = kind.renumber_terms(old, slug);
     let kind_dir = Path::new(kind.dir());
     let bare_is_kind = !Kind::ALL
         .into_iter()

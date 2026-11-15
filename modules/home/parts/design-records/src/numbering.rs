@@ -462,8 +462,7 @@ fn move_record(
     let mentions: Option<BTreeSet<String>> = match added {
         Some(_) => None,
         None => {
-            let reference = kind.reference(old);
-            let file = format!("-{slug}.md");
+            let [reference, file] = kind.renumber_terms(old, slug);
             let found = run(
                 root,
                 &[

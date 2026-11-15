@@ -10,6 +10,9 @@
 set -euo pipefail
 
 BIN=$1
+# 下の out=$(…) にコマンドの出力を入れる。nix の devShell やビルドは out を export するので、そのままだと出力が
+# 子の環境に入り、128 KB を超えると次の exec が E2BIG で失敗する
+export -n out
 REPO=$(mktemp -d)
 trap 'rm -rf "$REPO" "$REPO.gitconfig"' EXIT
 # ルールは、グローバルの core.hooksPath（commit-msg の置き場）を使うリポジトリだけを検査する

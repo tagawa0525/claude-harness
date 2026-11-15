@@ -369,6 +369,7 @@ fn markdown(files: &[Staged], work: &Path) -> bool {
     // MD038（code span の内側の空白）だけは自動修正から外し、続く検査で違反として出す。markdownlint 0.50.0 の
     // --fix は code span の先頭の空白を落とし（` X` が `X` になる）、空白に意味のある書き方（シェルの <<' X' など）を
     // 書き手が気づかないまま変えるため。設定で MD038 を無効にしないのは、検査まで止めて違反に気づけなくなるため
+    // ファイルの中の `<!-- markdownlint-enable MD038 -->` は --disable を上書きし、--fix は空白を落とす（書き手が有効にした場合なので外さない）。
     // 直せない違反での失敗は、続く検査で出すので見ない（起動できないことは、続く検査で出る）
     let _ = Command::new(&markdownlint)
         .args(["--fix", "--disable", "MD038", "--"])
