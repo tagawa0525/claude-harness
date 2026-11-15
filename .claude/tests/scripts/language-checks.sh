@@ -497,7 +497,7 @@ assert_eq "" "$(fake_log cargo)"
 it "run-checks: r995 の上で排他のジョブが実行中なら、宣言したテストを taskset の 1 コアで実行する"
 docs_tests_repo "$TEST_ROOT/checks/docs-tests-exclusive"
 echo 'body' >> doc.md && git add doc.md
-make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\n" ;;'
+make_fake_tool squeue '*) printf "NO|timed|openmc-2K|1234|r995\\n" ;;'
 make_fake_tool hostname '*) echo r995 ;;'
 make_fake_tool taskset '*) shift 2; exec "$@" ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
@@ -757,7 +757,7 @@ make_fake_tool statix '*) exit 0 ;;'
 make_fake_tool nixfmt '*) exit 0 ;;'
 
 it "run-checks: r995 の上で排他のジョブが実行中なら、cargo を taskset と -j 1 で、nix flake check を --cores 1 -j 1 で実行し、冒頭に知らせる"
-make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n" ;;'
+make_fake_tool squeue '*) printf "NO|timed|openmc-2K|1234|r995\\nOK|main|x-shared|1235|r995\\n" ;;'
 make_fake_tool hostname '*) echo r995 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
@@ -784,7 +784,7 @@ for host in t14g4 x1ng1.lan; do
 done
 
 it "run-checks: 計算ノードが複数あれば、このホストで排他のジョブが走るときだけ 1 コアに限る"
-make_fake_tool squeue '*) printf "NO|job-a|11|gpu1\\nNO|job-b|12|gpu2\\n" ;;'
+make_fake_tool squeue '*) printf "NO|timed|job-a|11|gpu1\\nNO|timed|job-b|12|gpu2\\n" ;;'
 for host in gpu2:1 gpu3:0; do
   make_fake_tool hostname "*) echo ${host%:*} ;;"
   make_fake_tool taskset '*) shift 2; exec "$@" ;;'
@@ -796,7 +796,7 @@ for host in gpu2:1 gpu3:0; do
     assert_not_contains "$out" "1 コアで実行する"
   fi
 done
-make_fake_tool squeue '*) printf "NO|openmc-2K|1234|r995\\nOK|x-shared|1235|r995\\n" ;;'
+make_fake_tool squeue '*) printf "NO|timed|openmc-2K|1234|r995\\nOK|main|x-shared|1235|r995\\n" ;;'
 
 it "run-checks: ホストが分からなければ、計算ノードとみなして 1 コアに限る"
 make_fake_tool hostname '*) exit 1 ;;'
@@ -807,7 +807,7 @@ assert_contains "$out" "1 コアで実行する"
 assert_contains "$(fake_log nix)" "flake check --cores 1 -j 1"
 
 it "run-checks: 排他のジョブが無ければ（排他でないジョブだけでも）制限しない"
-make_fake_tool squeue '*) printf "OK|x-shared|1235\\n" ;;'
+make_fake_tool squeue '*) printf "OK|main|x-shared|1235\\n" ;;'
 make_fake_tool taskset '*) shift 2; exec "$@" ;;'
 make_fake_tool nix '*) exit 0 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh")

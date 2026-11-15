@@ -398,7 +398,7 @@ fn exclusive_job_on(repo: &Repo) -> Vec<(&'static str, &'static str)> {
     }
     vec![(
         "FAKE_SQUEUE_OUT",
-        "NO|openmc-2K|1234|r995\nOK|x-shared|1235|r995\n",
+        "NO|timed|openmc-2K|1234|r995\nOK|main|x-shared|1235|r995\n",
     )]
 }
 
@@ -461,7 +461,6 @@ fn off_the_node_cargo_is_not_limited_and_nix_builds_here() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: run-checks は main パーティションの排他のジョブでも 1 コアに限る（#50）"]
 fn exclusive_job_on_the_main_partition_does_not_limit_checks() {
     let repo = Repo::new();
     exclusive_job_on(&repo);
