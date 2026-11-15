@@ -493,7 +493,9 @@ impl Rule for CheckMergeBodyJaTerms {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_util::{TempDir, git, git_init, global_hooks, write_fake_command};
+    #[cfg(unix)]
+    use super::super::test_util::write_fake_command;
+    use super::super::test_util::{TempDir, git, git_init, global_hooks};
     use super::*;
     use crate::output::{NOTICES_LOCK as NOTICES, take_notices};
     use std::process::Command;
