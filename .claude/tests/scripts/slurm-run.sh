@@ -13,7 +13,7 @@ cat >"$FAKE_BIN/sbatch" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$TEST_ROOT/sbatch.args"
 # 投げるたびに、偽の squeue の読んだ回数を数え直す
-rm -f "$TEST_ROOT/squeue.count"
+rm -f "$TEST_ROOT/squeue.count" "$TEST_ROOT/sacct.count"
 name="" log=""
 while (($#)); do
   case "$1" in
@@ -63,6 +63,20 @@ var=FAKE_SQUEUE_OUT
 [[ -z ${!var:-} ]] || printf '%s\n' "${!var}"
 exit "${FAKE_SQUEUE_EXIT:-0}"
 EOF
+# sacct は終わったジョブの記録（-X -P -n の Elapsed|Timelimit|Partition|Suspended|State）を返す。
+# FAKE_SACCT_EMPTY: 最初のその回数は、記録がまだ届いていない（空）。FAKE_SACCT_RUNNING: 同じく RUNNING の記録を返す
+cat >"$FAKE_BIN/sacct" <<'EOF2'
+#!/usr/bin/env bash
+n=$(($(cat "$TEST_ROOT/sacct.count" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$TEST_ROOT/sacct.count"
+[[ -z ${FAKE_SACCT_EXIT:-} ]] || exit "$FAKE_SACCT_EXIT"
+((n > ${FAKE_SACCT_EMPTY:-0})) || exit 0
+part=main
+grep -qx -- '--partition=timed' "$TEST_ROOT/sbatch.args" && part=timed
+state=${FAKE_STATE:-COMPLETED}
+((n > ${FAKE_SACCT_EMPTY:-0} + ${FAKE_SACCT_RUNNING:-0})) || state=RUNNING
+echo "${FAKE_SACCT_ELAPSED:-00:12:34}|${FAKE_SACCT_LIMIT:-00:30:00}|${FAKE_SACCT_PARTITION:-$part}|${FAKE_SACCT_SUSPENDED:-00:00:00}|$state"
+EOF2
 cat >"$FAKE_BIN/hostname" <<'EOF'
 #!/usr/bin/env bash
 echo "${FAKE_HOST:-r995}"
@@ -550,5 +564,74 @@ it "slurm-run: ほかの区分に --timed を付けると（数分の急ぐ計�
 args=$(cat "$TEST_ROOT/sbatch.args")
 assert_contains "$args" "--partition=timed"
 assert_contains "$args" $'--comment\ndecision | #1 | 急ぐ確認 | '
+
+# RED: 実装まで skip（SLURM_RUN_RED=1 で実行する）
+if [[ -n ${SLURM_RUN_RED:-} ]]; then
+  export SLURM_RUN_SACCT_INTERVAL=0
+  cd "$HOME/github/proj" || exit 1
+
+  it "slurm-run: scancel で止めたジョブ（sbatch は 0、State は CANCELLED）は、0 以外で終わり、State を出す"
+  out=$(FAKE_STATE="CANCELLED by 1000" "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'sleep 999')
+  assert_ne 0 $?
+  assert_contains "$out" "state=CANCELLED"
+  assert_contains "$out" "EXIT: 1 (State=CANCELLED)"
+
+  it "slurm-run: 取り消したジョブの後ろに && でつないだコマンドは走らない"
+  ran=no
+  FAKE_STATE=CANCELLED "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'sleep 999' >/dev/null && ran=yes
+  assert_eq no "$ran"
+
+  it "slurm-run: 時間切れ（TIMEOUT）は 0 以外で終わる"
+  FAKE_STATE=TIMEOUT "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' >/dev/null
+  assert_ne 0 $?
+
+  it "slurm-run: 失敗（FAILED）はジョブの終了コードのまま、State を出す"
+  out=$(FAKE_STATE=FAILED FAKE_JOB_EXIT=3 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'false')
+  assert_eq 3 $?
+  assert_contains "$out" "state=FAILED"
+  assert_contains "$out" "EXIT: 3 (State=FAILED)"
+
+  it "slurm-run: 完了（COMPLETED）は 0 で終わり、State を出す"
+  out=$("$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true')
+  assert_eq 0 $?
+  assert_contains "$out" "state=COMPLETED"
+  assert_contains "$out" "EXIT: 0"$'\n'
+
+  it "slurm-run: 時間は scontrol でなく sacct から読む（scontrol が読めなくても出る）"
+  out=$(FAKE_SHOW_EXIT=1 FAKE_SACCT_ELAPSED=01:02:03 FAKE_SACCT_LIMIT=02:00:00 "$RUN" "${PURPOSE[@]}" -t 120 xlc-2G 'true' 2>&1)
+  assert_contains "$out" "TIME: job=42 elapsed=01:02:03 estimate=02:00:00"
+  assert_not_contains "$out" "WARN:"
+
+  it "slurm-run: sacct に記録が届くまで待ち、届いたら読む"
+  out=$(FAKE_SACCT_EMPTY=2 FAKE_SACCT_RUNNING=1 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+  assert_contains "$out" "TIME: job=42 elapsed=00:12:34"
+  assert_eq 4 "$(cat "$TEST_ROOT/sacct.count")"
+
+  it "slurm-run: 記録が届かなければ、警告して TIME 行を出さず、ジョブの終了コードで終わる"
+  out=$(SLURM_RUN_SACCT_TRIES=3 FAKE_SACCT_EMPTY=99 FAKE_JOB_EXIT=3 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'false' 2>&1)
+  assert_eq 3 $?
+  assert_contains "$out" "WARN:"
+  assert_not_contains "$out" "TIME:"
+  assert_eq 3 "$(cat "$TEST_ROOT/sacct.count")"
+
+  it "slurm-run: sacct が読めなければ、警告して TIME 行を出さず、ジョブの終了コードで終わる"
+  out=$(SLURM_RUN_SACCT_TRIES=2 FAKE_SACCT_EXIT=1 "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+  assert_eq 0 $?
+  assert_contains "$out" "WARN:"
+  assert_not_contains "$out" "TIME:"
+
+  it "slurm-run: sacct の Partition と Suspended から、割り込まれうる印と止められた印を決める"
+  out=$(FAKE_SACCT_PARTITION=main FAKE_SACCT_SUSPENDED=00:05:00 "$RUN" "${PURPOSE[@]}" --timed -t 30 xlc-bench 'true')
+  assert_contains "$out" "preemptible: 割り込まれうるので時間は記録に使わない"
+  assert_contains "$out" "suspended: 止められていたので時間は当てにならない"
+  out=$(FAKE_SACCT_PARTITION=timed "$RUN" "${PURPOSE[@]}" --timed -t 30 xlc-bench 'true')
+  assert_not_contains "$out" "preemptible"
+  assert_not_contains "$out" "suspended"
+
+  it "slurm-run: sacct の Partition か Suspended が空なら、確かめられない印を付ける"
+  out=$(FAKE_SACCT_PARTITION= FAKE_SACCT_SUSPENDED= "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+  assert_contains "$out" "partition=unknown"
+  assert_contains "$out" "suspended=unknown"
+fi
 
 finish
