@@ -8,9 +8,9 @@
 //!
 //! コマンドは解析のときに一度だけ読み、規則はそれを共有する:
 //! - コマンドを包むもの（env、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice、sudo、xargs、flock、
-//!   chrt、taskset、watch、script、ssh、`bash [opts] <script>`）はほどき、中のコマンドと、前置きの代入やラッパーが
+//!   chrt、taskset、ssh、`bash [opts] <script>`）はほどき、中のコマンドと、前置きの代入やラッパーが
 //!   変える環境変数・ディレクトリを `Cmd` に持たせる（unwrap.rs）
-//! - sh -c で実行する文字列（`bash -c '…'`、`eval`、`watch`、`ssh <接続先> …`）は、同じ構文解析を再帰的に当て、
+//! - sh -c で実行する文字列（`bash -c '…'`、`eval`、`ssh <接続先> …`）は、同じ構文解析を再帰的に当て、
 //!   中のコマンドを `commands()` に含める。深さの上限は `MAX_DEPTH`（ADR-0025）
 //! - 実行するプログラムを決められないコマンド（`$CMD`、`source`、`bash -s`）は `Cmd::opaque` にし、
 //!   `runs_program` が止める側に倒す
@@ -1726,11 +1726,7 @@ mod tests {
         );
         assert_eq!(cs[0].dirs, ["/x"]);
         assert!(cs[0].spawns.is_some() && cs[1].dirs.is_empty());
-        // watch、ssh、eval は残りの語を空白でつないだ文字列を sh -c で実行する
-        assert_eq!(
-            names(&cmds("watch -n 5 'squeue; sbatch'")),
-            ["watch", "squeue", "sbatch"]
-        );
+        // ssh、eval は残りの語を空白でつないだ文字列を sh -c で実行する
         assert_eq!(names(&cmds("ssh r995 sbatch --wrap x")), ["ssh", "sbatch"]);
         assert_eq!(names(&cmds("eval git commit -n")), ["eval", "git"]);
         assert_eq!(
@@ -1779,7 +1775,6 @@ mod tests {
             "bash \"$SCRIPT\" sbatch",
             "ssh r995 < run-sbatch.sh",
             "sudo -s < run-sbatch.sh",
-            "script log.txt < run-sbatch.sh",
             "sbatch --wrap x",
         ] {
             assert!(runs(src), "{src}");

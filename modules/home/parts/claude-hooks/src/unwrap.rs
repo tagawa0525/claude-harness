@@ -1,14 +1,14 @@
 //! コマンドを包むもの（env、builtin、command、exec、nohup、time、nice、timeout、setsid、stdbuf、ionice、sudo、xargs、
-//! flock、chrt、taskset、watch、script、ssh、eval、bash、sh）をほどき、中のコマンドと、ラッパーが変える環境変数・
+//! flock、chrt、taskset、ssh、eval、bash、sh）をほどき、中のコマンドと、ラッパーが変える環境変数・
 //! ディレクトリを取り出す（ADR-0025）
 //!
 //! ラッパーごとのオプションの読み方は、coreutils（env、nice、timeout、stdbuf、nohup）、util-linux（setsid、ionice、flock、
-//! chrt、taskset、script）、GNU time、sudo、findutils（xargs）、procps（watch）、OpenSSH（ssh）の man と、bash の
+//! chrt、taskset）、GNU time、sudo、findutils（xargs）、OpenSSH（ssh）の man と、bash の
 //! 組み込み（builtin、command、exec、eval、source）と bash 自身の起動オプションから、値を取るものと、ほどき方を変える
 //! ものだけを持つ。短縮形のまとまり（`-iu X`）、続けて書いた値（`-uX`、`--unset=X`）、長い形の一意な省略形（`--ign`）を読む
 //!
 //! ラッパーの中には、次の語をプログラムとして実行するものと、文字列を sh -c で実行するもの（`bash -c`、`flock … -c`、
-//! `script -c`、`eval`、`watch`、`ssh`。[`Unwrapped::source`]）と、何を実行するか文字列からは分からないもの
+//! `eval`、`ssh`。[`Unwrapped::source`]）と、何を実行するか文字列からは分からないもの
 //! （`bash -s`、`source`。[`Unwrapped::opaque`]）がある
 
 use std::collections::VecDeque;
@@ -319,57 +319,6 @@ const WRAPPERS: &[Wrapper] = &[
         assigns: false,
     },
     Wrapper {
-        name: "watch",
-        value_shorts: "nqs",
-        optional_shorts: "d",
-        longs: &[
-            ("--beep", Some('b'), false),
-            ("--color", Some('c'), false),
-            ("--no-color", Some('C'), false),
-            ("--differences", Some('d'), false),
-            ("--errexit", Some('e'), false),
-            ("--follow", Some('f'), false),
-            ("--chgexit", Some('g'), false),
-            ("--interval", Some('n'), true),
-            ("--precise", Some('p'), false),
-            ("--equexit", Some('q'), true),
-            ("--no-rerun", Some('r'), false),
-            ("--shotsdir", Some('s'), true),
-            ("--no-title", Some('t'), false),
-            ("--no-wrap", Some('w'), false),
-            ("--exec", Some('x'), false),
-            ("--help", Some('h'), false),
-            ("--version", Some('v'), false),
-        ],
-        positionals: 0,
-        assigns: false,
-    },
-    Wrapper {
-        name: "script",
-        value_shorts: "cEIOBTmo",
-        optional_shorts: "t",
-        longs: &[
-            ("--append", Some('a'), false),
-            ("--command", Some('c'), true),
-            ("--echo", Some('E'), true),
-            ("--return", Some('e'), false),
-            ("--flush", Some('f'), false),
-            ("--force", None, false),
-            ("--log-io", Some('B'), true),
-            ("--log-in", Some('I'), true),
-            ("--log-out", Some('O'), true),
-            ("--log-timing", Some('T'), true),
-            ("--logging-format", Some('m'), true),
-            ("--output-limit", Some('o'), true),
-            ("--quiet", Some('q'), false),
-            ("--timing", Some('t'), false),
-            ("--help", Some('h'), false),
-            ("--version", Some('V'), false),
-        ],
-        positionals: 0,
-        assigns: false,
-    },
-    Wrapper {
         name: "ssh",
         value_shorts: "BbcDEeFIiJLlmOoPpQRSWw",
         optional_shorts: "",
@@ -436,11 +385,11 @@ pub struct Unwrapped {
     pub login_home: Option<String>,
     /// `ssh` の接続先のホームの書き方（`host:`）。中のコマンドは手元のどのパスでもない場所で走る
     pub remote: Option<String>,
-    /// `name` が sh -c で実行する文字列（`bash -c '…'`、`flock <file> -c '…'`、`script -c '…'`、`eval`・`watch`・
+    /// `name` が sh -c で実行する文字列（`bash -c '…'`、`flock <file> -c '…'`、`eval`・
     /// `ssh <接続先>` の残りの語を空白でつないだもの）。shell.rs が再帰的に解析する
     pub source: Option<String>,
     /// `name` が何を実行するか、文字列からは分からない: 標準入力からコマンドを読む（`bash -s`、引数の無い `bash`、
-    /// コマンドの無い `ssh <接続先>` / `sudo -s` / `script`）、ファイルを読んで実行する（`source` / `.`）
+    /// コマンドの無い `ssh <接続先>` / `sudo -s`）、ファイルを読んで実行する（`source` / `.`）
     pub opaque: bool,
     /// 包んだ `taskset` が、中のコマンドを 1 つの CPU に限る（`-c 3`、`-c 5-5`、マスク `0x4`）。
     /// 複数の CPU を指す、または読めない指定は false
@@ -706,7 +655,7 @@ pub fn split_env_string(s: &str) -> Vec<String> {
     words
 }
 
-/// 残りの語を空白でつないだ、sh -c で実行する文字列（eval、watch、ssh は語をつないで渡す）
+/// 残りの語を空白でつないだ、sh -c で実行する文字列（eval、ssh は語をつないで渡す）
 fn joined(words: &VecDeque<Arg>) -> String {
     words
         .iter()
@@ -761,11 +710,9 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut takes_source = false;
         // bash -s、sudo -s / -i: 標準入力からコマンドを読む（sudo はコマンドが無ければ対話シェル）
         let mut reads_stdin = false;
-        // watch -x: 文字列を sh -c に渡さず、語をそのまま exec する
-        let mut execs = false;
         // sudo は -E が無ければ環境変数を受け継がない（env_reset）。ssh の接続先には環境変数は渡らない
         let mut preserves_env = !matches!(wrapper.name, "sudo" | "ssh");
-        // flock <file> -c、script -c: 実行する文字列
+        // flock <file> -c: 実行する文字列
         let mut source: Option<String> = None;
         // コマンドの前の位置引数のうち、まだ読んでいない数
         let mut positionals = wrapper.positionals;
@@ -774,8 +721,6 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
         let mut user: Option<String> = None;
         // ssh の接続先
         let mut host: Option<String> = None;
-        // script のログのファイルを読んだか（getopt が語を並べ替えるので、ファイルの後ろのオプションも読む）
-        let mut log_file_seen = false;
         // taskset -c: 次の位置引数は CPU の一覧（無ければマスク）
         let mut cpu_list = false;
         let mut pinned = false;
@@ -908,8 +853,6 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                         }
                         ("chrt", Some('p' | 'm')) | ("taskset", Some('p')) => runs = false,
                         ("taskset", Some('c')) => cpu_list = true,
-                        ("watch", Some('x')) => execs = true,
-                        ("script", Some('c')) => source = value,
                         ("ssh", Some('G' | 'N' | 'O' | 'Q' | 'V' | 'Z' | 's')) => runs = false,
                         _ => {}
                     }
@@ -930,14 +873,6 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                 if wrapper.name == "ssh" && !options_done {
                     continue;
                 }
-            } else if wrapper.name == "script"
-                && !options_done
-                && !log_file_seen
-                && !words.is_empty()
-            {
-                words.pop_front();
-                log_file_seen = true;
-                continue;
             }
             break;
         }
@@ -986,15 +921,8 @@ pub fn unwrap(name: &str, args: &[Arg]) -> Unwrapped {
                     source = words.pop_front().map(|w| w.text);
                 }
             }
-            // -c が無ければ、`--` の後ろの語をコマンドとして実行する。それも無ければ対話シェル
-            "script" if source.is_none() => {
-                if !options_done {
-                    out.opaque = true;
-                    return out;
-                }
-            }
             // 残りの語を空白でつないで sh -c で実行する（ssh は接続先のシェルで。コマンドが無ければ標準入力を読む）
-            "eval" | "watch" | "ssh" if !execs => {
+            "eval" | "ssh" => {
                 if words.is_empty() {
                     if wrapper.name == "ssh" {
                         out.opaque = true;
@@ -1060,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn unwraps_sudo_xargs_flock_chrt_taskset_watch_script_and_bash() {
+    fn unwraps_sudo_xargs_flock_chrt_taskset_and_bash() {
         for src in [
             "sudo sbatch --wrap x",
             "sudo -u slurm -g users -H sbatch",
@@ -1082,15 +1010,11 @@ mod tests {
             "taskset 0x1 sbatch",
             "taskset -c 0-3 sbatch",
             "taskset --cpu-list 0 sbatch",
-            "watch -x sbatch",
-            "watch -n 5 -x sbatch",
-            "script log.txt -- sbatch",
             "bash -x sbatch",
             "sh -eu -o pipefail sbatch",
             "bash --rcfile r -- sbatch",
             "sudo flock /tmp/l chrt -f 10 sbatch",
             "bash - sbatch",
-            "script log.txt -q -- sbatch",
         ] {
             let u = un(src);
             assert_eq!(u.name, "sbatch", "{src}");
@@ -1114,26 +1038,19 @@ mod tests {
     #[test]
     fn wrappers_that_run_a_shell_string_give_the_source() {
         for (src, source) in [
-            ("watch -n 5 sbatch --wrap x", "sbatch --wrap x"),
-            ("watch -dpermanent sbatch", "sbatch"),
-            ("watch --interval=5 -d sbatch", "sbatch"),
             ("ssh r995 sbatch --wrap x", "sbatch --wrap x"),
             ("ssh -p 22 -o X=y -i k -J b user@r995 sbatch", "sbatch"),
             ("ssh -t r995 sbatch", "sbatch"),
             ("flock /tmp/l -c sbatch", "sbatch"),
             ("flock -n /tmp/l --command sbatch", "sbatch"),
-            ("script -c sbatch log.txt", "sbatch"),
-            ("script -q --command sbatch", "sbatch"),
             ("eval sbatch --wrap x", "sbatch --wrap x"),
             ("bash -c sbatch arg0", "sbatch"),
             ("sh -ec sbatch", "sbatch"),
             ("bash -o pipefail -c sbatch", "sbatch"),
             ("nohup bash -c sbatch", "sbatch"),
-            // ssh は接続先の後ろのオプションも読む。script の getopt は語を並べ替える
+            // ssh は接続先の後ろのオプションも読む
             ("ssh r995 -t sbatch --wrap x", "sbatch --wrap x"),
             ("ssh r995 -p 22 -- sbatch", "sbatch"),
-            ("script log.txt -c sbatch", "sbatch"),
-            ("script log.txt -q --command sbatch", "sbatch"),
             ("ssh r995 bash -c sbatch", "bash -c sbatch"),
         ] {
             let u = un(src);
@@ -1219,7 +1136,6 @@ mod tests {
             "bash --version sbatch",
             "env --version sbatch",
             "nice --help sbatch",
-            "watch --help sbatch",
             "sudo --help sbatch",
             "sudo",
         ] {
@@ -1239,8 +1155,6 @@ mod tests {
             "ssh r995",
             "sudo -s",
             "sudo -i",
-            "script log.txt",
-            "script",
             "source f",
             ". f",
             "builtin source f",
@@ -1267,7 +1181,6 @@ mod tests {
         );
         assert_eq!(un("sudo -E FOO=1 git commit").env, [set("FOO", "1")]);
         assert_eq!(un("ssh host git commit").env, [EnvChange::Clear]);
-        assert_eq!(un("watch git commit").env, []);
     }
 
     #[test]
