@@ -1076,6 +1076,12 @@ impl Rule for PreMergeCheck {
 #[cfg(test)]
 mod tests {
     #[test]
+    #[ignore = "RED: trim_end_matches strips every trailing .git"]
+    fn split_repo_strips_one_dot_git() {
+        assert_eq!(super::split_repo("octo/x.git.git"), ("octo", "x.git"));
+    }
+
+    #[test]
     fn split_repo_reads_owner_repo_host_and_url_forms() {
         use super::split_repo;
         assert_eq!(split_repo("octo/repo"), ("octo", "repo"));
