@@ -463,6 +463,21 @@ exit 0
     }
 
     #[test]
+    #[ignore = "RED: クォートしない区切りのヒアドキュメントの \\ を展開とみなさない"]
+    fn message_from_unquoted_heredoc_with_backslash_is_undecided() {
+        // bash は区切りをクォートしないヒアドキュメントで、`\` と改行を除いて 1 行につなぐ（件名が変わる）
+        assert_eq!(
+            message("git commit -F - <<EOF\nfeat: a \\\nb\nEOF\n"),
+            Err(Unknown::Value(Undecided::Expanded("-F -")))
+        );
+        // 区切りをクォートすれば本文はそのまま
+        assert_eq!(
+            message("git commit -F - <<'EOF'\nfeat: a \\\nb\nEOF\n"),
+            some("feat: a \\\nb\n")
+        );
+    }
+
+    #[test]
     fn message_reads_stdin_heredoc_for_file_dash() {
         assert_eq!(
             message("git add a && git commit -q -F - <<'EOF'\nfeat: a\n\nbody $X\nEOF\ngit log -1"),
