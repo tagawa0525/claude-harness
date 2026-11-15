@@ -145,7 +145,6 @@ fn a_github_remote_belongs_to_the_pr_flow() {
 }
 
 #[test]
-#[ignore = "RED: タグとブランチの名前の衝突を ERROR にする実装がまだ無い"]
 fn a_tag_named_like_the_target_or_default_branch_stops_the_merge() {
     for tag in ["feat/x", "main"] {
         let repo = Repo::new();
