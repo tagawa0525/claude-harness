@@ -104,6 +104,19 @@ _slurm_job_moves() {
   done <<<"$1"
 }
 
+# slurm_job_exclusive <SubmitLine>: 排他かを「yes」「no (--cpus-per-task=N)」「unknown (<sbatch の直後の語>)」で出す。
+# 排他は sbatch の直後の語で読む（slurm-run.sh は排他のときだけそこに --exclusive を置く。AllocCPUS は -c 32 でも 32）
+slurm_job_exclusive() {
+  local first_arg=-
+  [[ $1 != *"sbatch "* ]] || first_arg=${1#*sbatch }
+  first_arg=${first_arg%%[[:space:]]*}
+  case "$first_arg" in
+    --exclusive) echo yes ;;
+    --cpus-per-task=*) echo "no ($first_arg)" ;;
+    *) echo "unknown ($first_arg)" ;;
+  esac
+}
+
 _slurm_job_one() {
   local id=$1 repo_opt=$2 raw
   if ! raw=$(sacct -j "$id" -X -P -n --delimiter="$SLURM_JOB_SEP" -o "$SLURM_JOB_FIELDS"); then
@@ -131,15 +144,8 @@ _slurm_job_one() {
     return 1
   fi
 
-  # 排他は sbatch の直後の語で読む（slurm-run.sh は排他のときだけそこに --exclusive を置く。AllocCPUS は -c 32 でも 32）
-  local first_arg=- exclusive
-  [[ $submitline != *"sbatch "* ]] || first_arg=${submitline#*sbatch }
-  first_arg=${first_arg%%[[:space:]]*}
-  case "$first_arg" in
-    --exclusive) exclusive=yes ;;
-    --cpus-per-task=*) exclusive="no ($first_arg)" ;;
-    *) exclusive="unknown ($first_arg)" ;;
-  esac
+  local exclusive
+  exclusive=$(slurm_job_exclusive "$submitline")
 
   # 連絡先は SubmitLine の --comment から読む（sacct の Comment の欄は空。r995 の Slurm はコメントを記録に残さない）。
   # slurm-run.sh のコメントは「<区分> | <参照> | <目的> | <連絡先>」で、参照と目的は | を含まないが「 --wrap 」を
