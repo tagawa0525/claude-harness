@@ -37,15 +37,13 @@ impl Repo {
         let hooks = root.join("global-hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("post-rewrite");
-        std::fs::write(
+        write_executable(
             &hook,
             format!(
                 "#!/bin/sh\nexec \"{}\" git-hook post-rewrite \"$@\"\n",
                 sh_path(Path::new(env!("CARGO_BIN_EXE_claude-hooks")))
             ),
-        )
-        .unwrap();
-        executable(&hook);
+        );
         std::fs::write(
             root.join("gitconfig"),
             format!("[core]\n\thooksPath = {}\n", sh_path(&hooks)),
@@ -225,16 +223,14 @@ fn a_local_post_rewrite_gets_the_same_input_first() {
     let local = repo.local_hook();
     let marker = repo.root.join("local.stdin");
     // 呼ばれた順を見るため、偽の commit-refs と同じ記録に書く
-    std::fs::write(
+    write_executable(
         &local,
         format!(
             "#!/bin/sh\ncat >> \"{}\"\necho local >> \"{}\"\nexit 3\n",
             sh_path(&marker),
             sh_path(&repo.log())
         ),
-    )
-    .unwrap();
-    executable(&local);
+    );
     repo.amend(&[], &[]);
     // ローカルの hook が失敗しても、付け直しは行う
     assert_eq!(repo.calls(), ["local", "remap"]);
@@ -249,8 +245,7 @@ fn the_exit_code_of_the_local_hook_is_returned() {
     let repo = Repo::new();
     repo.opt_in();
     let local = repo.local_hook();
-    std::fs::write(&local, "#!/bin/sh\ncat > /dev/null\nexit 3\n").unwrap();
-    executable(&local);
+    write_executable(&local, "#!/bin/sh\ncat > /dev/null\nexit 3\n");
     // git は post-rewrite の終了コードを見ないので、hook を直に呼ぶ
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
     forget_git_env(&mut cmd);

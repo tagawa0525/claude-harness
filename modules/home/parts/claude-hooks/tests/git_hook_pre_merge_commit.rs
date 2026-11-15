@@ -38,15 +38,13 @@ impl Repo {
         let hooks = root.join("global-hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("pre-merge-commit");
-        std::fs::write(
+        write_executable(
             &hook,
             format!(
                 "#!/bin/sh\nexec \"{}\" git-hook pre-merge-commit \"$@\"\n",
                 sh_path(Path::new(env!("CARGO_BIN_EXE_claude-hooks")))
             ),
-        )
-        .unwrap();
-        executable(&hook);
+        );
         std::fs::write(
             root.join("gitconfig"),
             format!("[core]\n\thooksPath = {}\n", sh_path(&hooks)),
@@ -239,15 +237,13 @@ fn a_local_pre_merge_commit_runs_first_and_its_failure_stops_the_merge() {
     let hooks = repo.work().join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let local = hooks.join("pre-merge-commit");
-    std::fs::write(
+    write_executable(
         &local,
         format!(
             "#!/bin/sh\necho local >> \"{}\"\nexit 3\n",
             sh_path(&repo.log())
         ),
-    )
-    .unwrap();
-    executable(&local);
+    );
     let out = repo.merge();
     assert!(!out.status.success());
     assert_eq!(repo.calls(), ["local"]);
