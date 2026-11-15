@@ -237,12 +237,18 @@ fn hook_denials_with_a_rule_name_are_counted_by_the_name() {
             tool_error("PreToolUse:Bash hook error: [guard-git-add] git add -A は禁止です（ブランチ feat/a、12 件）"),
             tool_error("PreToolUse:Bash hook error: [guard-git-add] git add . は禁止です（ブランチ feat/b、3 件）"),
             tool_error("PreToolUse:Bash hook error: [guard-git-push] 別のルール"),
+            // 複数のルールが同時に止めた理由は空行でつながる。それぞれを数える
+            tool_error("PreToolUse:Bash hook error: [guard-git-add] 1 つ目\n\n[guard-git-push] 2 つ目\nつづき\n\n[pre-merge-check] 3 つ目"),
         ],
     );
     let out = stdout(&home.run(&[&main]));
     assert_eq!(
         lines_with(&out, "HOOK"),
-        ["HOOK: 2 [guard-git-add]", "HOOK: 1 [guard-git-push]"]
+        [
+            "HOOK: 3 [guard-git-add]",
+            "HOOK: 2 [guard-git-push]",
+            "HOOK: 1 [pre-merge-check]"
+        ]
     );
 }
 
