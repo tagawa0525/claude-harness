@@ -3471,12 +3471,10 @@ done
 assert_contains "$(reason "$out")" "pipefail"
 
 it "require-pipefail: bash -c や ssh の文字列の中のビルドも、外側のパイプが tail / head なら deny する"
-if [[ -n "${RUN_RED:-}" ]]; then
-  for cmd in "bash -c 'cargo test' | tail" "ssh host cargo test | tail" "bash -c 'cd x && nix build .#y' 2>&1 | head -5"; do
-    out=$(run_hook require-pipefail "$cmd")
-    assert_eq deny "$(decision "$out")"
-  done
-fi
+for cmd in "bash -c 'cargo test' | tail" "ssh host cargo test | tail" "bash -c 'cd x && nix build .#y' 2>&1 | head -5"; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
 
 it "require-pipefail: pipefail を設けた形と、対象外の形は通す"
 for cmd in 'set -o pipefail; cargo test 2>&1 | tail -5' "bash -o pipefail -c 'nix build .#x | tail'" \
