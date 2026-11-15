@@ -776,6 +776,35 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "RED: -F の値の変数を展開しない (#86)"]
+    fn reads_message_file_named_through_a_variable() {
+        // -F の値が、同じ呼び出しの代入で字面のまま決まる変数なら、展開したパスのファイルを読む
+        let fake = Fake::new("var-file");
+        let d = fake.dir.0.display();
+        std::fs::write(fake.dir.0.join("msg.txt"), "feat: a\n").unwrap();
+        assert!(
+            fake.check(&format!("S={d}; git commit -F $S/msg.txt"))
+                .is_empty()
+        );
+        assert_eq!(fake.seen().unwrap(), "feat: a\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "RED: -F の値の変数を展開しない (#86)"]
+    fn denies_variable_named_message_file_written_earlier() {
+        let fake = Fake::new("var-file-written");
+        let d = fake.dir.0.display();
+        std::fs::write(fake.dir.0.join("msg.txt"), "feat: 前の中身\n").unwrap();
+        let cmd =
+            format!("S={d}; cat > {d}/msg.txt <<'EOF2'\nfeat: a\nEOF2\ngit commit -F $S/msg.txt");
+        let r = only_deny(&fake.check(&cmd));
+        assert!(r.contains("分けて"), "{r}");
+        assert_eq!(fake.seen(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn denies_message_file_that_an_earlier_command_only_reads() {
         // 読むだけの前段も、書きうるものと区別しない（本文を直接渡せば通る）
         let fake = Fake::new("read-earlier");
