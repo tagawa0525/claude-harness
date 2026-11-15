@@ -13,7 +13,7 @@
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
 //!                                      参照を探し、FILE の ADR は確定した後の、決めた時点の記録（表題、背景、決定
 //!                                      の要因、検討した案、決定と理由、各案の長所と短所、直せないフロントマターの
-//!                                      キー）の変更を見る。分岐点から足した amends は、FILE によらず全 ADR で見る（error）。FILE か
+//!                                      キー）の変更と、決定と理由の変更に「## 変更」の項が足されたか（項の形は見ない）を見る。分岐点から足した amends は、FILE によらず全 ADR で見る（error）。FILE か
 //!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
 //!                                      ときも。pre-commit で使う）
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
@@ -31,6 +31,7 @@ use std::process::{Command, ExitCode};
 
 use design_records::check::{
     Finding, Severity, added_amends, body_changed, check, check_issue_numbers, check_reservations,
+    decision_changed_without_change_item,
 };
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
@@ -195,7 +196,8 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
 ///
 /// - 一部の置き換えの結び（`amends`）に足した ADR（違反。[`added_amends`]）。一部の変更は、変える ADR の「## 変更」に
 ///   書き、結びは分岐点に既にあるものだけを残す（ADR-0067）。status によらず、分岐点に無い ADR も見る
-/// - 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）。main にマージする前のブランチの上の
+/// - 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）と、決定と理由の変更に「## 変更」の項が
+///   足されていないこと（注意。[`decision_changed_without_change_item`]）。main にマージする前のブランチの上の
 ///   変更は status によらず自由なので、分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない
 ///
 /// `amends` の追加は `files` によらずすべての ADR で見る。凍結の注意は `files` の ADR だけを比べ（改名は改名前の版と
@@ -308,6 +310,20 @@ fn branch_changes(
             severity: Severity::Warning,
             message,
         });
+        if let Some(new) = adrs.get(new_path).filter(|_| !deleted)
+            && decision_changed_without_change_item(&old, new)
+        {
+            found.push(Finding {
+                path: new_path.to_string(),
+                line: None,
+                severity: Severity::Warning,
+                message: "the decision outcome changed but no item was added to the `## 変更` \
+                          section; add `- YYYY-MM-DD: <changed part>。前は「<quote of the previous \
+                          text>」。<reason>`, or ignore this if the edit only fixes typos, grammar, \
+                          markup or links"
+                    .to_string(),
+            });
+        }
     }
     Ok(found)
 }

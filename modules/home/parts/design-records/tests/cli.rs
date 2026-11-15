@@ -561,7 +561,6 @@ const MISSING_CHANGE_ITEM: &str = "docs/adr/0002-use-b.md: warning: the decision
      grammar, markup or links\n";
 
 #[test]
-#[ignore = "RED: no warning for a decision change without a change item (#65)"]
 fn check_warns_when_the_decision_changes_without_a_change_item() {
     let t = decision_edited("no-item", "");
     let out = t.run(&["check", "docs/adr/0002-use-b.md"]);
@@ -574,7 +573,6 @@ fn check_warns_when_the_decision_changes_without_a_change_item() {
 }
 
 #[test]
-#[ignore = "RED: no warning for a decision change without a change item (#65)"]
 fn check_accepts_a_decision_change_with_a_change_item() {
     let t = decision_edited("with-item", "- 2026-11-01: 決定を直した。前は「決」。理由");
     let out = t.run(&["check", "docs/adr/0002-use-b.md"]);
