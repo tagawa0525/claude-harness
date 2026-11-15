@@ -177,7 +177,7 @@ fn main() {
                     // それまでに足した理由（output::notice）は残る
                     let run = std::panic::AssertUnwindSafe(|| rules::run(*rule, &input, &shell));
                     match std::panic::catch_unwind(run) {
-                        Ok(f) => findings.extend(f),
+                        Ok(f) => findings.extend(output::label_denies(rule.name(), f)),
                         Err(payload) => output::notice(format!(
                             "claude-hooks: ルール {} が panic で止まり、このツールの呼び出しを判定していません: {}",
                             rule.name(),

@@ -33,6 +33,18 @@ pub enum Finding {
     Context(String),
 }
 
+/// 止める理由の先頭にルールの名前を `[<name>] ` として付ける。振り返り（session-events）が、本文の番号やパスの違いに
+/// 依らず拒否をルールごとに数えるための安定した印
+pub fn label_denies(name: &str, findings: Vec<Finding>) -> Vec<Finding> {
+    findings
+        .into_iter()
+        .map(|f| match f {
+            Finding::Deny(s) => Finding::Deny(format!("[{name}] {s}")),
+            other => other,
+        })
+        .collect()
+}
+
 /// 判定結果を 1 つの hookSpecificOutput に、判定できなかった理由を最上位の systemMessage にまとめる。
 /// どちらもなければ None（= 許可、出力なし）
 pub fn render(findings: &[Finding], notices: &[String]) -> Option<Value> {
@@ -85,6 +97,16 @@ mod tests {
         let v = render(&[], &["n".into()]).unwrap();
         assert_eq!(v["systemMessage"], "n");
         assert!(v.get("hookSpecificOutput").is_none());
+    }
+
+    #[test]
+    fn denies_get_the_rule_name_and_contexts_do_not() {
+        let labeled = label_denies(
+            "r",
+            vec![Finding::Deny("a".into()), Finding::Context("c".into())],
+        );
+        assert!(matches!(&labeled[0], Finding::Deny(s) if s == "[r] a"));
+        assert!(matches!(&labeled[1], Finding::Context(s) if s == "c"));
     }
 
     #[test]

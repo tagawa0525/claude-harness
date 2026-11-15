@@ -175,7 +175,7 @@ it "pre-pr-create: ssh と sudo -i の中の gh は、cd 先でなく、その�
 # 手元の場所の検査（本文の見出し、上流ブランチ）は、接続先の PR に当たらないので理由に混ぜない
 out=$(run_hook pre-pr-create-check "ssh host gh pr create --title 'feat: x' --body y")
 assert_eq deny "$(decision "$out")"
-assert_eq "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます" "$(reason "$out")"
+assert_eq "[pre-pr-create-check] ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます" "$(reason "$out")"
 out=$(run_hook pre-pr-create-check "ssh host $GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"
@@ -1940,7 +1940,7 @@ it "pre-merge-check: ssh と sudo -i の中の gh pr merge は、cd 先でなく
 # 手元の場所の検査（マージ方式の指定など）は、接続先の PR に当たらないので理由に混ぜない
 out=$(run_hook pre-merge-check "ssh host gh pr merge 1")
 assert_eq deny "$(decision "$out")"
-assert_eq "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます" "$(reason "$out")"
+assert_eq "[pre-merge-check] ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます" "$(reason "$out")"
 out=$(run_hook pre-merge-check "ssh host $MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "ssh や sudo -i の中で走る gh は、手元の場所で検査できないため止めます"

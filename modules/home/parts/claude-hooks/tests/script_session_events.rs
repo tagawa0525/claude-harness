@@ -229,7 +229,6 @@ fn lines_with<'a>(out: &'a str, prefix: &str) -> Vec<&'a str> {
 }
 
 #[test]
-#[ignore = "RED: ルールの名前で数えない"]
 fn hook_denials_with_a_rule_name_are_counted_by_the_name() {
     let home = Home::new();
     let main = home.write_lines(

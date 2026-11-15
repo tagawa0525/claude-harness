@@ -20,6 +20,7 @@ static RECORD_TIME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$").unwrap()
 });
 static HOOK_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\S+ hook error: ").unwrap());
+static RULE_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\[[a-z0-9-]+\]").unwrap());
 static PERMISSION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(Permission (for this \w+|to use .*) (was|has been) denied|The server-side auto mode classifier)")
         .unwrap()
@@ -413,7 +414,12 @@ fn cut(s: &str, n: usize) -> String {
 fn classify(b: &str) -> (Kind, String) {
     if HOOK_ERROR.is_match(b) {
         let rest = HOOK_ERROR.replace(b, "");
-        return (Kind::Hook, cut(&normalize(first_line(&rest)), 160));
+        let line = first_line(&rest);
+        // ルールの名前が付いた理由は、名前だけで数える（本文の番号やパスの違いに依らない）。付かない理由（古い記録）は正規化で寄せる
+        if let Some(name) = RULE_NAME.find(line) {
+            return (Kind::Hook, name.as_str().to_string());
+        }
+        return (Kind::Hook, cut(&normalize(line), 160));
     }
     if PERMISSION.is_match(first_line(b)) {
         return (Kind::Permission, cut(first_line(b), 160));

@@ -26,7 +26,6 @@ fn reason(command: &str) -> String {
 }
 
 #[test]
-#[ignore = "RED: deny の理由にルールの名前が付かない"]
 fn deny_reason_starts_with_the_rule_name() {
     assert!(
         reason("git add -A").starts_with("[guard-git-add] "),
@@ -36,7 +35,6 @@ fn deny_reason_starts_with_the_rule_name() {
 }
 
 #[test]
-#[ignore = "RED: deny の理由にルールの名前が付かない"]
 fn escape_without_a_reason_is_labeled_too() {
     let r = reason("ALLOW_GIT_ADD_ALL=x git add -A");
     assert!(
