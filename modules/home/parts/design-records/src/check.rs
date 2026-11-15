@@ -680,6 +680,54 @@ pub fn added_amends(old: Option<&str>, new: &str) -> Vec<u32> {
         .collect()
 }
 
+/// 「## 変更」の節の項（`- ` で始まる行）。決定の一部の変更を 1 項ずつ書き足す（ADR-0067）。
+fn change_items(text: &str) -> BTreeSet<&str> {
+    section_lines(text, &["変更"])
+        .into_iter()
+        .filter(|l| l.starts_with("- "))
+        .collect()
+}
+
+/// 2 段目の節 `titles` のどれかの行。見出しはコードブロックの外で探し、決定と理由の下の帰結と確認は含めない
+/// （今の事実を書く節）。
+fn section_lines<'a>(text: &'a str, titles: &[&str]) -> Vec<&'a str> {
+    let Ok(outside) = markdown_lines(text) else {
+        return Vec::new();
+    };
+    let mut inside = false;
+    let mut facts = false;
+    let mut out = Vec::new();
+    for (_, line) in outside {
+        let title = line.trim_start_matches('#').trim();
+        if line.starts_with("# ") || line.starts_with("## ") {
+            inside = line.starts_with("## ") && titles.contains(&title);
+            facts = false;
+        } else if line.starts_with("### ") {
+            facts = RECOMMENDED_SECTIONS
+                .iter()
+                .any(|s| title == s.ja || title == s.en);
+        } else if inside && !facts {
+            out.push(line);
+        }
+    }
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    out
+}
+
+/// 決定と理由が `old`（分岐点の版）から変わったのに、`new` の「## 変更」に `old` に無い項が足されていないか。
+/// 誤字の修正など、決定の意味を変えない直しにも当たる（機械では区別できない）ので、注意に使う。項の形（日付、引用、理由）は
+/// 見ない（#65。形の検査は書き方の揺れで誤検出が多く、レビューで見る）。
+pub fn decision_changed_without_change_item(old: &str, new: &str) -> bool {
+    let decision = |t| section_lines(t, &[DECISION_SECTION.ja, DECISION_SECTION.en]);
+    decision(old) != decision(new)
+        && change_items(new)
+            .difference(&change_items(old))
+            .next()
+            .is_none()
+}
+
 /// 確定した後も直してよいフロントマターのキー（[`AMENDABLE_KEYS`]）を除いたフロントマターと、表題、必須の節
 /// （[`REQUIRED_SECTIONS`]）と決めた時点の文脈の節（[`DECIDED_CONTEXT_SECTIONS`]）の行。推奨の節（[`RECOMMENDED_SECTIONS`]。帰結と確認）は、決定と理由の下の 3 段目に
 /// あっても今の事実を書く節なので除く。補足、決定の変更を書き留める節、ほかの 2 段目の節も除く。末尾の空行は除く
@@ -1628,5 +1676,27 @@ mod tests {
         assert!(!body_changed(SECTIONS, &new));
         let old = SECTIONS.to_string() + "\n## 付録\n\nx\n";
         assert!(!body_changed(&old, &old.replace("\nx\n", "\ny\n")));
+    }
+
+    #[test]
+    fn decision_change_needs_a_new_change_item() {
+        let edited = SECTIONS.replace("決\n", "別\n");
+        assert!(decision_changed_without_change_item(SECTIONS, &edited));
+        let item = "\n## 変更\n\n- 2026-11-01: 「決」を改めた。前は「決」。理由\n";
+        assert!(!decision_changed_without_change_item(
+            SECTIONS,
+            &(edited.clone() + item)
+        ));
+        // 項が既にあるだけでは足したことにならない
+        let old = SECTIONS.to_string() + item;
+        assert!(decision_changed_without_change_item(
+            &old,
+            &old.replace("決\n", "別\n")
+        ));
+        // 帰結と確認、ほかの節の変更は決定の変更ではない
+        assert!(!decision_changed_without_change_item(
+            SECTIONS,
+            &SECTIONS.replace("帰\n", "別\n").replace("前\n", "後\n")
+        ));
     }
 }

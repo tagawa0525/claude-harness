@@ -540,6 +540,50 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     );
 }
 
+/// 確定した ADR の決定と理由を直した topic のブランチで、`item` を「## 変更」に足す（空なら足さない）。
+fn decision_edited(name: &str, item: &str) -> TempRepo {
+    let t = superseded_repo(name);
+    t.git(&["switch", "-q", "-c", "topic"]);
+    let b = "docs/adr/0002-use-b.md";
+    let mut text = t
+        .read(b)
+        .replace("## 決定と理由\n", "## 決定と理由\n\n決定を直す\n");
+    if !item.is_empty() {
+        text.push_str(&format!("\n## 変更\n\n{item}\n"));
+    }
+    t.write(b, &text);
+    t
+}
+
+const MISSING_CHANGE_ITEM: &str = "docs/adr/0002-use-b.md: warning: the decision outcome changed \
+     but no item was added to the `## 変更` section; add `- YYYY-MM-DD: <changed part>。前は\
+     「<quote of the previous text>」。<reason>`, or ignore this if the edit only fixes typos, \
+     grammar, markup or links\n";
+
+#[test]
+fn check_warns_when_the_decision_changes_without_a_change_item() {
+    let t = decision_edited("no-item", "");
+    let out = t.run(&["check", "docs/adr/0002-use-b.md"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains(MISSING_CHANGE_ITEM),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_accepts_a_decision_change_with_a_change_item() {
+    let t = decision_edited("with-item", "- 2026-11-01: 決定を直した。前は「決」。理由");
+    let out = t.run(&["check", "docs/adr/0002-use-b.md"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        !stdout(&out).contains(MISSING_CHANGE_ITEM),
+        "{}",
+        stdout(&out)
+    );
+}
+
 #[test]
 fn check_lets_consequences_and_changes_follow_a_decided_adr_on_main() {
     let t = superseded_repo("living");
@@ -673,6 +717,28 @@ fn check_rejects_amends_added_to_an_adr_on_main() {
     let out = t.run(&["check", b]);
     assert!(!out.status.success(), "{}", stdout(&out));
     assert_eq!(stdout(&out), new_link_error(b, 1));
+}
+
+#[test]
+fn check_rejects_amends_added_since_main_without_files() {
+    let t = TempRepo::new("added-link-all");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let b = "docs/adr/0002-use-b.md";
+    t.commit_all("docs(adr): a and b");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.write(
+        b,
+        &t.read(b)
+            .replace("superseded-by:\n", "superseded-by:\namends: [ADR-0001]\n"),
+    );
+    t.commit_all("docs(adr): link");
+    let out = t.run(&["check"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), new_link_error(b, 1));
+    // FILE が別の ADR でも、error はすべて出す
+    let out = t.run(&["check", "--changed", "docs/adr/0001-use-a.md"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
 }
 
 #[test]
@@ -1232,6 +1298,91 @@ fn check_quotes_the_slug_in_the_retag_command() {
     t.git(&["add", "-A"]);
     let out = t.run(&["check"]);
     assert!(stdout(&out).contains("-m 'use b&c' "), "{}", stdout(&out));
+}
+
+/// ブランチ topic に記録が入った予約 adr-0001 と、記録を作らずに終わった予約 adr-0002
+fn stale_reservations(name: &str) -> TempRepo {
+    let t = TempRepo::with_remote(name);
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.commit_all("docs(adr): a");
+    t.git(&["switch", "-q", "main"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    fs::remove_file(t.dir.join("docs/adr/0002-use-b.md")).unwrap();
+    t
+}
+
+#[test]
+fn prune_stale_lists_old_reservations_that_no_branch_recorded() {
+    let t = stale_reservations("stale-list");
+    // 既定の期間（30 日）より新しい予約は、まだ使うかもしれない
+    let out = t.run(&["prune", "--stale"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    let out = t.run(&["prune", "--stale", "--days", "0"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0002\tuse-b\t0 days\n");
+    // 一覧だけで、消さない
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
+    assert!(t.remote_tag("adr-0002").contains("adr-0002"));
+}
+
+#[test]
+fn prune_stale_delete_releases_them_locally_and_on_origin() {
+    let t = stale_reservations("stale-delete");
+    let out = t.run(&["prune", "--stale", "--days", "0", "--delete"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "adr-0002\n");
+    assert_eq!(t.git(&["tag", "--list", "adr-0002"]), "");
+    assert_eq!(t.remote_tag("adr-0002"), "");
+    // ブランチに記録のある予約は残す
+    assert_eq!(t.tag_message("adr-0001"), "use-a");
+    assert!(t.remote_tag("adr-0001").contains("adr-0001"));
+}
+
+#[test]
+fn prune_stale_sees_records_on_branches_only_origin_has() {
+    let t = stale_reservations("stale-origin-branch");
+    let other = t.clone_remote("other");
+    git_in(&other, &["switch", "-q", "-c", "elsewhere"]);
+    fs::create_dir_all(other.join("docs/adr")).unwrap();
+    fs::write(other.join("docs/adr/0002-use-b.md"), "# ADR-0002: b\n").unwrap();
+    git_in(&other, &["add", "-A"]);
+    git_in(&other, &["commit", "-q", "-m", "docs(adr): b"]);
+    git_in(&other, &["push", "-q", "origin", "elsewhere"]);
+    let out = t.run(&["prune", "--stale", "--days", "0"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[cfg(unix)]
+#[test]
+fn prune_stale_delete_keeps_a_reservation_another_clone_remade_after_the_scan() {
+    let t = stale_reservations("stale-race");
+    let other = t.clone_remote("other");
+    // origin のタグの一覧の直後に、ほかの clone が古い予約を消して同じ番号を別の slug で予約し直す git
+    let mark = t.root.join("listed");
+    let bin = t.root.join("bin");
+    fake_git(
+        &bin,
+        &format!(
+            "  *\" ls-remote --tags \"*)\n\
+             \x20   if [ ! -e {mark} ]; then : > {mark}; \"$GIT\" \"$@\"; \
+             \"$GIT\" -C {other} push -q origin --delete refs/tags/adr-0002; \
+             \"$GIT\" -C {other} tag -f -a adr-0002 -m use-c main; \
+             \"$GIT\" -C {other} push -q origin refs/tags/adr-0002; exit 0; fi ;;",
+            mark = sh_quote(mark.display()),
+            other = sh_quote(other.display()),
+        ),
+    );
+    let out = t.run_with_bin(&bin, &["prune", "--stale", "--days", "0", "--delete"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(mark.exists());
+    assert_eq!(stdout(&out), "");
+    let remote = git_in(&other, &["rev-parse", "refs/tags/adr-0002"]);
+    assert!(t.remote_tag("adr-0002").starts_with(remote.trim()));
+    // 手元のタグも、スキャンした予約でなくなったものは消さない
+    assert_eq!(t.tag_message("adr-0002"), "use-b");
 }
 
 #[test]

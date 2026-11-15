@@ -4,22 +4,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use design_records::{Kind, numbers_in, record_name, renumber_refs};
 
 use crate::git::{
-    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, remote_tags,
-    repo_root, reservations, run, tracked,
+    Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, remote_tag_oid,
+    remote_tags, repo_root, reservations, run, tracked,
 };
 
 /// 予約をやり直す回数の上限。ほかの人の予約と続けてぶつかるのは、同時に作る人の数だけ。
 const ATTEMPTS: usize = 20;
 
-/// `kind` の使った番号: 全ブランチの履歴、作業ツリー、予約のタグ。削除した記録の番号を再利用すると、古い参照が
-/// 別の記録を指してしまうので、履歴も数える。
-fn used_numbers(root: &Path, kind: Kind) -> Result<BTreeSet<u32>> {
-    // 浅い clone の履歴は切った先を返さない。マージした記録の予約は prune で消えるので、切った先で消した記録の
-    // 番号は、履歴にもタグにも残らない
+/// 浅い clone の履歴は切った先を返さない。マージした記録の予約は prune で消えるので、切った先で消した記録の
+/// 番号は、履歴にもタグにも残らない。
+fn ensure_full_history(root: &Path) -> Result<()> {
     if git(root, &["rev-parse", "--is-shallow-repository"])?.trim() == "true" {
         return Err(
             "the repository is a shallow clone, whose history may hide the numbers of deleted records; \
@@ -27,6 +26,13 @@ fn used_numbers(root: &Path, kind: Kind) -> Result<BTreeSet<u32>> {
                 .into(),
         );
     }
+    Ok(())
+}
+
+/// `kind` の使った番号: 全ブランチの履歴、作業ツリー、予約のタグ。削除した記録の番号を再利用すると、古い参照が
+/// 別の記録を指してしまうので、履歴も数える。
+fn used_numbers(root: &Path, kind: Kind) -> Result<BTreeSet<u32>> {
+    ensure_full_history(root)?;
     let history = git(
         root,
         &["log", "--all", "--format=", "--name-only", "--", kind.dir()],
@@ -637,6 +643,67 @@ fn release_old(root: &Path, kind: Kind, old: u32, slug: &str) -> Result<()> {
     git(root, &["tag", "-d", &tag]).map(|_| ())
 }
 
+/// 解放する予約のタグ。`oid` があれば、そのオブジェクトを指すときだけ消す。
+struct Release {
+    name: String,
+    oid: Option<String>,
+}
+
+/// 予約のタグ `tags` を origin（`remote` なら）とローカルから消し、消した名前を出す。`oid` つきのタグは、スキャンした
+/// 後にほかの clone が消して同じ番号を予約し直したかもしれないので、origin へは期待値つきの `--force-with-lease`
+/// で消し、ローカルは期待値と合うときだけ消す。合わなければ、別の予約になったので触らない。
+fn release(root: &Path, remote: bool, tags: &[Release]) -> Result<ExitCode> {
+    let mut released = Vec::new();
+    for Release { name, oid } in tags {
+        let full = format!("refs/tags/{name}");
+        if remote && let Some(on_origin) = remote_tag_oid(root, name)? {
+            if oid.as_ref().is_some_and(|expected| *expected != on_origin) {
+                continue;
+            }
+            // タグごとに消す。一覧を取った後にほかの clone が消していれば、解放は済んでいる
+            let lease = oid
+                .as_ref()
+                .map(|o| format!("--force-with-lease={full}:{o}"));
+            let mut args = vec!["push", "--quiet"];
+            args.extend(lease.as_deref());
+            args.extend(["origin", "--delete", &full]);
+            let deleted = run(root, &args)?;
+            if !deleted.status.success() {
+                match remote_tag_oid(root, name)? {
+                    None => {}
+                    // 確かめた後に、ほかの clone が予約し直した
+                    Some(now) if oid.as_ref().is_some_and(|expected| *expected != now) => continue,
+                    Some(_) => {
+                        return Err(format!(
+                            "cannot delete the reservation tag {name} on origin: {}",
+                            String::from_utf8_lossy(&deleted.stderr).trim()
+                        ));
+                    }
+                }
+            }
+        }
+        match oid {
+            // 手元のタグがスキャンした予約でなければ、残す
+            Some(expected) => {
+                if !run(root, &["update-ref", "-d", &full, expected])?
+                    .status
+                    .success()
+                {
+                    continue;
+                }
+            }
+            None => {
+                git(root, &["tag", "-d", name])?;
+            }
+        }
+        released.push(name);
+    }
+    for name in released {
+        println!("{name}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// `prune`: 既定ブランチ（origin があれば origin の）の履歴に記録が入った予約のタグを、ローカルと origin から消し、
 /// 消したタグの名前を出す。履歴に無い記録のタグは、消すと番号が再利用されるので残す。
 pub fn prune() -> Result<ExitCode> {
@@ -649,37 +716,78 @@ pub fn prune() -> Result<ExitCode> {
     let mut args = vec!["log", branch.as_str(), "--format=", "--name-only", "--"];
     args.extend(Kind::ALL.map(Kind::dir));
     let history: BTreeSet<String> = git(&root, &args)?.lines().map(str::to_string).collect();
-    let merged: Vec<String> = reservations(&root)?
+    let merged: Vec<Release> = reservations(&root)?
         .into_iter()
         .filter(|r| {
             r.slug
                 .as_ref()
                 .is_some_and(|slug| history.contains(&r.kind.path(r.number, slug)))
         })
-        .map(|r| r.name)
+        .map(|r| Release {
+            name: r.name,
+            oid: None,
+        })
         .collect();
-    if merged.is_empty() {
-        return Ok(ExitCode::SUCCESS);
-    }
+    release(&root, remote, &merged)
+}
+
+/// `prune --stale`: `days` 日より前に打った注釈つきの予約のタグのうち、どのブランチ（ローカルと、取ってきた origin の
+/// もの）の履歴にもその番号の記録が無いものを、`name<TAB>slug<TAB>N days` の行で出す。`delete` ならローカルと origin
+/// から消す（名前だけを出す）。履歴に記録が入った予約は、マージの後に通常の `prune` が消す。軽量のタグは出どころが
+/// 分からないので見ない。
+pub fn prune_stale(days: u64, delete: bool) -> Result<ExitCode> {
+    let root = repo_root()?;
+    let _lock = lock(&root)?;
+    ensure_full_history(&root)?;
+    let remote = has_origin(&root)?;
     if remote {
-        let on_remote = remote_tags(&root, &["refs/tags/adr-*", "refs/tags/issue-*"])?;
-        for tag in merged.iter().filter(|tag| on_remote.contains(*tag)) {
-            let full = format!("refs/tags/{tag}");
-            // タグごとに消す。一覧を取った後にほかの clone が消していれば、解放は済んでいる
-            let deleted = run(&root, &["push", "--quiet", "origin", "--delete", &full])?;
-            if !deleted.status.success() && remote_tags(&root, &[&full])?.contains(tag) {
-                return Err(format!(
-                    "cannot delete the reservation tag {tag} on origin: {}",
-                    String::from_utf8_lossy(&deleted.stderr).trim()
-                ));
+        fetch_origin(&root)?;
+        // 記録がほかのブランチにだけあれば、そのブランチも見ないと予約を解放して番号を再利用してしまう
+        git(
+            &root,
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--prune",
+                "origin",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        )?;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("cannot read the clock: {e}"))?
+        .as_secs();
+    let mut stale = Vec::new();
+    for kind in Kind::ALL {
+        let history = git(
+            &root,
+            &["log", "--all", "--format=", "--name-only", "--", kind.dir()],
+        )?;
+        let recorded: BTreeSet<u32> = numbers_in(kind, history.lines()).collect();
+        for r in reservations(&root)?.into_iter().filter(|r| r.kind == kind) {
+            let (Some(slug), Some(created)) = (r.slug, r.created) else {
+                continue;
+            };
+            let age = now.saturating_sub(created) / 86_400;
+            if age >= days && !recorded.contains(&r.number) {
+                stale.push((r.name, slug, age, r.oid));
             }
         }
     }
-    let mut args = vec!["tag", "-d"];
-    args.extend(merged.iter().map(String::as_str));
-    git(&root, &args)?;
-    for tag in &merged {
-        println!("{tag}");
+    if delete {
+        let tags: Vec<Release> = stale
+            .into_iter()
+            .map(|(name, _, _, oid)| Release {
+                name,
+                oid: Some(oid),
+            })
+            .collect();
+        return release(&root, remote, &tags);
+    }
+    for (name, slug, age, _) in stale {
+        println!("{name}\t{slug}\t{age} days");
     }
     Ok(ExitCode::SUCCESS)
 }
