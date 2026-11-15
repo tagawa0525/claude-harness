@@ -231,3 +231,27 @@ fn a_main_worktree_branch_with_the_default_branch_elsewhere_stops_before_changin
     );
     assert_eq!(text(&out.stdout), "");
 }
+
+#[test]
+fn the_default_branch_is_updated_without_depending_on_fetch_head() {
+    // pull.rebase の pull は FETCH_HEAD のマージの対象が 2 つ以上あると止まる（同じ clone の別の fetch が
+    // FETCH_HEAD を書き換えたときに出た）。同じ症状を、branch.main.merge を 2 つにして作る
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&["push", "-q", "-u", "origin", "main"]);
+    repo.git(&["push", "-q", "origin", "main:refs/heads/other"]);
+    repo.git(&["config", "pull.rebase", "true"]);
+    repo.git(&["config", "--add", "branch.main.merge", "refs/heads/other"]);
+    repo.git(&["branch", "feat/x"]);
+    // リモートだけが進んだ状態にする
+    repo.write("b.txt", "b\n");
+    repo.commit("remote only");
+    repo.git(&["push", "-q", "origin", "main"]);
+    let remote_tip = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    let out = repo.run(&["feat/x"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]), remote_tip);
+}
