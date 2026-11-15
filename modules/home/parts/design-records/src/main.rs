@@ -35,7 +35,7 @@ use std::process::{Command, ExitCode};
 
 use design_records::check::{
     Finding, Severity, added_amends, body_changed, check, check_issue_numbers, check_reservations,
-    decision_changed_without_change_item,
+    confirmation_paths, decision_changed_without_change_item,
 };
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
@@ -196,7 +196,7 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     if changed_only {
         found.retain(|f| f.severity == Severity::Error || files.contains(&f.path.as_str()));
     }
-    found.extend(branch_changes(&root, &adrs, files)?);
+    found.extend(branch_changes(&root, &adrs, files, changed_only)?);
     for finding in &found {
         println!("{finding}");
     }
@@ -221,6 +221,7 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
 ///   足されていないこと（注意。[`decision_changed_without_change_item`]）。main にマージする前のブランチの上の
 ///   変更は status によらず自由なので、分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない
 ///
+/// 確認の節のファイルの注意（[`stale_confirmations`]）は、`changed_only` でなければ全 ADR で、そうなら `files` の ADR だけ見る。
 /// `amends` の追加は `files` によらずすべての ADR で見る。凍結の注意は `files` の ADR だけを比べ（改名は改名前の版と
 /// 比べる）、削除は渡されたかによらず示す（pre-commit は消した
 /// ファイルを渡さない）。
@@ -228,6 +229,7 @@ fn branch_changes(
     root: &Path,
     adrs: &BTreeMap<String, String>,
     files: &[&str],
+    changed_only: bool,
 ) -> Result<Vec<Finding>> {
     if !git_ok(root, &["rev-parse", "--verify", "--quiet", "HEAD"])? {
         return Ok(Vec::new());
@@ -292,6 +294,13 @@ fn branch_changes(
                 });
             }
         }
+        // FILE も --changed も無い check は、ほかの warning と同じく全 ADR を見る（凍結の注意は FILE の ADR だけ）
+        if let Some(new) = adrs
+            .get(new_path)
+            .filter(|_| !deleted && (in_files || !changed_only))
+        {
+            found.extend(stale_confirmations(root, &base, new_path, new)?);
+        }
         let Some(old) = old.filter(|_| in_files) else {
             continue;
         };
@@ -343,6 +352,46 @@ fn branch_changes(
                           text>」。<reason>`, or ignore this if the edit only fixes typos, grammar, \
                           markup or links"
                     .to_string(),
+            });
+        }
+    }
+    Ok(found)
+}
+
+/// ブランチが ADR の最後に変えたコミットより後に、ADR の「確認」の節に挙げたファイルを変えたコミットがあれば、その
+/// ファイルごとの注意（#53）。実装を直したのに ADR の決定、帰結、確認が前の版のままになる食い違いを、書いた人の記憶に
+/// 頼らず見つける。ADR を作業ツリーかインデックスで HEAD から変えているときは、ADR のほうが新しいので見ない。挙げたものが
+/// HEAD のファイル（blob）でなければ見ない（コマンドや外のパスの可能性があり、実在でしか区別できない）。実装の変更が ADR の内容を
+/// 変えるとは限らないので、直しを求めずに見直しを求める文にする。
+fn stale_confirmations(root: &Path, base: &str, adr: &str, text: &str) -> Result<Vec<Finding>> {
+    let range = format!("{base}..HEAD");
+    let last = git(root, &["log", "-1", "--format=%H", &range, "--", adr])?;
+    let last = last.trim();
+    // 作業ツリーかインデックスの ADR が HEAD と違えば、ADR のほうが新しい（直した版をこれからコミットする）ので見ない
+    if last.is_empty() || !git_ok(root, &["diff", "--quiet", "HEAD", "--", adr])? {
+        return Ok(Vec::new());
+    }
+    let after = format!("{last}..HEAD");
+    let mut found = Vec::new();
+    for path in confirmation_paths(text) {
+        // ディレクトリ（tree）は含めない。`cat-file -e` は tree にも成功するので、種類を見る
+        let is_file = git(root, &["cat-file", "-t", &format!("HEAD:{path}")])
+            .is_ok_and(|kind| kind.trim() == "blob");
+        if is_adr_path(&path) || !is_file {
+            continue;
+        }
+        if !git(root, &["log", "-1", "--format=%H", &after, "--", &path])?
+            .trim()
+            .is_empty()
+        {
+            found.push(Finding {
+                path: adr.to_string(),
+                line: None,
+                severity: Severity::Warning,
+                message: format!(
+                    "`{path}`, named in the confirmation section, changed in a later commit than \
+                     the ADR; check that the decision, consequences and confirmation still match it"
+                ),
             });
         }
     }

@@ -92,7 +92,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
 
 ## 決定と理由
 
-採用: 案 1、案 A、案 戊。段階 6 の `fix-markdown-lint.py` は案 D、案 ウ、案 ろ。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
+採用: 案 1、案 A、案 戊。段階 6 の `fix-markdown-lint.py` は案 D、案 ウ、案 い。#101 の「作業の順序」の、sh を呼び出し元の付け替えで消す、は段階 5 のスクリプトには当てはめない。
 
 - 中身: `claude-hooks` に `script` のサブコマンドを足し、スクリプトごとの処理を移す。GitHub の API（`gh` の子プロセス）と
   ローカルレビューの記録の扱いは、今の `claude-hooks` の関数を使う
@@ -118,12 +118,12 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   呼ぶだけのスクリプトのファイルから呼ぶ配備の確認として残し、`CLAUDE_HOOKS_BIN` にブランチでビルドしたバイナリを渡して流す
   （sh のまま残す `check-each-commit.sh` は、そこで振る舞いを確かめる）
 - 段階 6 の `run-checks.sh` は、名前とパスで呼ばれるので、段階 5 のスクリプトと同じ形（中身を移し、呼ぶだけの sh にする）にする
-- 段階 6 の `fix-markdown-lint.py`（案 D、案 ウ、案 ろ）: 中身を `claude-hooks script fix-markdown-lint` に移し、振る舞い（表の
+- 段階 6 の `fix-markdown-lint.py`（案 D、案 ウ、案 い）: 中身を `claude-hooks script fix-markdown-lint` に移し、振る舞い（表の
   桁揃え、言語の推定、CommonMark のフェンスの判定、字下げの保ち方、`Fixed:` と `OK:` の出力）を .py と同じにする。
   `lib/claude-hooks-script.sh` を読んで `claude_hooks_script fix-markdown-lint "$@"` を呼ぶだけの
   `skills/language-checks/scripts/fix-markdown-lint.sh` を足し、呼び出し元の文書をそれに付け替える。git hook の
   `staged-checks` は、同じバイナリの中の関数を直に呼ぶ（子のプロセスにせず、`python3` もスクリプトの置き場も要らない）。
-  文字の幅は、.py と同じく East Asian Width の F と W だけを 2 に数える表を持ち、空白は Python の `str.strip` と同じ文字
+  文字の幅は `unicode-width` で数え（markdownlint の MD060 の string-width と同じ桁。変更の項）、空白は Python の `str.strip` と同じ文字
   （Unicode の White_Space と \x1c〜\x1f）を外す
 - 二重の実装の期間: .py は、段階 7 で history-rewrite を Rust に移す PR で消し、history-rewrite は Rust の関数を呼ぶ。それまで、
   `.claude/tests/scripts/language-checks.sh` が、サロゲートと改行と `|` のほかのすべての文字で、Rust の版と .py の表の桁を
@@ -148,10 +148,10 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   案 ア では置き換えられず、表を渡すモードを CLI に足すことになる。そのモードは、段階 7 で history-rewrite を Rust に
   すれば関数を呼べるので要らなくなる。案 イ は、配られた `~/.claude` の下に古い入口が残り、呼ぶ側がそちらを選びうる。
   案 ウ は、history-rewrite の `package.nix` の参照を隣のファイルにするだけで済み、.py の使い手が 1 つだと置き場で分かる
-- 案 ろ: `unicode-width`（0.2.3）は、結合文字、ゼロ幅の文字、ハングルの中声などを 0 に数え、絵文字の列をまとめて 2 に
-  数えるので、.py と 7,479 の符号位置で幅が違う（2026-11-14、すべての符号位置で測った。うち 3,845 は未割り当ての文字、
-  2,012 は結合文字）。.py と同じ桁にするには例外の規則が要り、crate を使う意味が残らない。表は、作り方を表の上に書き、
-  Unicode の版を上げるときに作り直す（.py の幅も、動かす Python の unicodedata の版で変わる）
+- 案 い: 桁を揃える相手の MD060 が使う string-width（markdownlint-cli 0.50.0 の 8.3.0）と同じ桁にする。`unicode-width`
+  （0.2.3）は、全符号位置を比べると、制御文字（`unicode-width` は 1、string-width は 0。制御文字で区切って足すと揃う）の
+  ほかは 375 字でしか違わない。標準的な crate で、表を自分で持つより保守が小さい。案 ろ は .py と同じ桁にする案で、
+  .py が消えたので理由を失った（変更の項）
 - 言語の推定の正規表現は、Rust の `\w`、`\s`、`\b`（Unicode の定義）のままで、Python と非 ASCII の一部の文字で食い違う。
   推定が外れても付く言語が変わるだけで、文書は壊れないので合わせない
 - バイナリを PATH でなく固定のパスと `CLAUDE_HOOKS_BIN` で引くのは、今の `lib/local-review.sh` と揃え、テストで
@@ -213,3 +213,16 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   コピーを作るので、Windows では共有にならなかった。Rust に移した版は、Windows では `std::os::windows::fs` の
   symlink_dir / symlink_file で作る。開発者モードか管理者の権限が無ければ作れないので、作った symlink を消して、その旨を
   示して止める
+
+## 変更
+
+- 2026-11-15: 文字の幅は、案 ろ（East Asian Width が F と W の範囲の表を持つ）から、案 い（`unicode-width`）に変えた。
+  前は「採用: … 段階 6 の `fix-markdown-lint.py` は案 D、案 ウ、案 ろ」と「文字の幅は、.py と同じく East Asian Width の F と W だけを 2 に数える表を持ち」と「`unicode-width`（0.2.3）は、結合文字、ゼロ幅の文字、ハングルの中声などを 0 に数え、絵文字の列をまとめて 2 に
+  数えるので、.py と 7,479 の符号位置で幅が違う。.py と同じ桁にするには例外の規則が要り、crate を使う意味が残らない」。
+  .py は #101 の段階 7 で消え、同じ桁にする相手が無くなった。残る基準は、桁を揃える相手の MD060 が使う string-width
+  （markdownlint-cli 0.50.0 の中の 8.3.0）で、表は結合文字、ゼロ幅の文字、絵文字の列を string-width と違う桁に数え、
+  2 つのツールが桁揃えを取り合った（#182）。全符号位置で比べると、`unicode-width` 0.2.3 は string-width と、制御文字
+  （`unicode-width` は 1、string-width は 0。制御文字で区切って足すと揃う）のほかは 375 字（ハングルの中声と終声、
+  インド系の文字の結合記号など、まれな文字）でしか違わず、結合の濁点つきの「か」、ZWJ の列、国旗、肌の色、keycap、
+  ZWSP、soft hyphen は揃う。表の 122 の範囲を持つより、標準的な crate のほうが保守が小さい（Unicode の版は crate が上げる）。
+  書記素に分ける `unicode-segmentation` は要らない（`unicode-width` が絵文字の列をまとめて数える）

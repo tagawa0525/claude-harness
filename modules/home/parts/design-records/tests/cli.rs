@@ -601,6 +601,117 @@ fn check_lets_consequences_and_changes_follow_a_decided_adr_on_main() {
     assert_eq!(stdout(&out), "");
 }
 
+/// topic のブランチで ADR-0001 を足し、その「確認」に `src/impl.sh` を挙げ、実装を足した後、`later` を実行する
+fn confirmed_topic(name: &str, later: impl Fn(&TempRepo)) -> TempRepo {
+    let t = TempRepo::new(name);
+    t.write("src/impl.sh", "echo 1\n");
+    t.commit_all("feat: impl");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a)
+            .replace("### 確認\n", "### 確認\n\n- `src/impl.sh` が 1 を出す\n"),
+    );
+    t.commit_all("docs(adr): a");
+    later(&t);
+    t
+}
+
+#[test]
+fn check_warns_when_a_file_named_in_the_confirmation_changed_after_the_adr() {
+    let t = confirmed_topic("stale-confirmation", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        "docs/adr/0001-use-a.md: warning: `src/impl.sh`, named in the confirmation section, \
+         changed in a later commit than the ADR; check that the decision, consequences and \
+         confirmation still match it\n"
+    );
+}
+
+#[test]
+fn check_changed_shows_the_stale_confirmation_only_for_the_given_adr() {
+    let t = confirmed_topic("stale-changed", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+    });
+    let out = t.run(&["check", "--changed"]);
+    assert_eq!(stdout(&out), "");
+    let out = t.run(&["check", "--changed", "docs/adr/0001-use-a.md"]);
+    assert!(
+        stdout(&out).contains("`src/impl.sh`, named in the confirmation"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_is_quiet_when_the_adr_follows_the_file_only_in_the_working_tree() {
+    let t = confirmed_topic("stale-uncommitted", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+        t.write(
+            "docs/adr/0001-use-a.md",
+            &(t.read("docs/adr/0001-use-a.md") + "\n追記\n"),
+        );
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_ignores_directories_named_in_the_confirmation() {
+    let t = confirmed_topic("stale-directory", |t| {
+        let a = "docs/adr/0001-use-a.md";
+        t.write(a, &t.read(a).replace("`src/impl.sh` が", "`src/` の下が"));
+        t.commit_all("docs(adr): directory");
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_is_quiet_when_the_adr_follows_the_file_named_in_the_confirmation() {
+    let t = confirmed_topic("fresh-confirmation", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+        t.write(
+            "docs/adr/0001-use-a.md",
+            &(t.read("docs/adr/0001-use-a.md") + "\n追記\n"),
+        );
+        t.commit_all("docs(adr): follow impl");
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_ignores_confirmation_paths_that_changed_before_the_adr_or_do_not_exist() {
+    let t = confirmed_topic("no-confirmation-change", |t| {
+        let a = "docs/adr/0001-use-a.md";
+        t.write(
+            a,
+            &t.read(a)
+                .replace("`src/impl.sh` が", "`src/impl.sh` と `src/none.sh` が"),
+        );
+        t.commit_all("docs(adr): more");
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
 /// accepted の ADR-0001 だけを持つ main から分けた topic ブランチ（ADR-0001 の予約は解放済み）
 fn decided_topic(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
@@ -1131,6 +1242,61 @@ fn renumber_refuses_records_on_the_default_branch_and_uncommitted_changes() {
     assert!(!out.status.success(), "{}", stdout(&out));
     assert!(t.dir.join("docs/adr/0001-use-a.md").exists());
     assert_eq!(t.git(&["status", "--porcelain"]), "");
+}
+
+/// リポジトリの設定（core.autocrlf）をそのまま効かせて git を実行し、標準出力を返す
+fn crlf_git(t: &TempRepo, args: &[&str]) -> String {
+    let mut command = Command::new("git");
+    command.current_dir(&t.dir).args(args);
+    isolate(&mut command);
+    let out = command.output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    stdout(&out)
+}
+
+/// 作業ツリーを、`core.autocrlf=true` で checkout し直して CRLF にする（Git for Windows の既定。Linux の git でも効く）。
+/// テストの git は GIT_CONFIG で変換を止めるので、設定はリポジトリのファイルに書き、CLI の git だけが読む
+fn to_crlf_worktree(t: &TempRepo) {
+    crlf_git(t, &["config", "core.autocrlf", "true"]);
+    let tracked = t.git(&["ls-files"]);
+    for path in tracked.lines() {
+        fs::remove_file(t.dir.join(path)).unwrap();
+    }
+    crlf_git(t, &["checkout", "--", "."]);
+}
+
+#[test]
+fn check_reads_crlf_front_matter_and_headings_like_lf() {
+    let t = TempRepo::new("crlf-check");
+    t.run(&["new", "use-foo", "foo を使う"]);
+    t.commit_all("docs(adr): foo");
+    to_crlf_worktree(&t);
+    assert!(t.read("docs/adr/0001-use-foo.md").contains("---\r\n"));
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn renumber_keeps_crlf_in_a_crlf_worktree() {
+    let t = duplicated_after_rebase("crlf-renumber");
+    to_crlf_worktree(&t);
+    assert_eq!(crlf_git(&t, &["status", "--porcelain"]), "");
+    let out = t.run(&["renumber", "1"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let b = t.read("docs/adr/0002-use-b.md");
+    assert!(b.contains("# ADR-0002: b を使う\r\n"), "{b:?}");
+    assert!(b.contains("[本文](0002-use-b.md) と ADR-0002\r\n"), "{b:?}");
+    assert!(!b.contains("0001"), "{b:?}");
+    assert!(
+        t.read("notes.md")
+            .starts_with("ADR-0002 の続き\r\n前置き\r\n"),
+        "{:?}",
+        t.read("notes.md")
+    );
+    assert_eq!(crlf_git(&t, &["status", "--porcelain"]), "");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
 
 #[test]
