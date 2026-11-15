@@ -168,18 +168,26 @@ fn realigned_tables_keep_crlf_line_ends() {
 }
 
 #[test]
-fn an_indented_table_to_realign_stops_without_writing() {
-    // 字下げした表を揃え直す場面は確かめていないので、揃え直さずに止める
+fn an_indented_table_in_a_list_item_is_realigned_keeping_its_indent() {
     let work = Work::new();
     work.write(
         "list.md",
         "- item\n\n  | a | b |\n  | - | - |\n  | 掃引 | x |\n".as_bytes(),
     );
-    let out = work.transform(&["list.md"]);
-    assert_eq!(out.status.code(), Some(1));
-    let err = text(&out.stderr);
-    assert!(err.contains("list.md") && err.contains("字下げ"), "{err}");
-    assert!(work.read("list.md").contains("掃引"));
+    ok(&work.transform(&["list.md"]));
+    assert_eq!(
+        work.read("list.md"),
+        "- item\n\n  | a        | b |\n  | -------- | - |\n  | スイープ | x |\n"
+    );
+}
+
+#[test]
+fn a_table_shaped_row_in_an_indented_code_block_is_left_alone() {
+    let work = Work::new();
+    let src = "text\n\n    | a | b |\n    | - | - |\n    | 掃引 | x |\n";
+    work.write("code.md", src.as_bytes());
+    ok(&work.transform(&["code.md"]));
+    assert_eq!(work.read("code.md"), src.replace("掃引", "スイープ"));
 }
 
 #[test]
