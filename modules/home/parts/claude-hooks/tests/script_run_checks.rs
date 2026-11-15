@@ -255,6 +255,21 @@ fn the_staged_markdown_goes_to_staged_checks_and_merge_only_lints_it() {
 }
 
 #[test]
+#[ignore = "RED: git diff の失敗で段を飛ばし ALL_OK になる（GREEN で解除）"]
+fn an_unreadable_diff_fails_instead_of_skipping_the_stages() {
+    let repo = Repo::new();
+    repo.stage("a.sh", "echo a\n");
+    repo.tool("shellcheck");
+    std::fs::write(repo.work().join(".git/index"), "broken").unwrap();
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let text = stdout(&out);
+    assert!(text.contains("FAILED:"), "{text}");
+    assert!(!text.contains("ALL_OK"), "{text}");
+    assert!(repo.calls().is_empty());
+}
+
+#[test]
 fn rust_files_without_a_root_manifest_run_cargo_in_their_crate() {
     let repo = Repo::new();
     repo.commit("sub/app/Cargo.toml", "[package]\n");
