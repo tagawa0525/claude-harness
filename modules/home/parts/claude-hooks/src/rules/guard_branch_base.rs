@@ -229,11 +229,8 @@ fn switched_to(dir: &Path, sub: &str, args: &[Arg]) -> Result<Option<String>, ()
 /// cd と同じ範囲）。移った先が分からなければ None。detached HEAD は空文字列
 pub(super) fn branch_at(shell: &Shell, cmd: &Cmd, base: &Path, dir: &Path) -> Option<String> {
     let mut branch = Some(git::current_branch(dir));
-    for c in shell.commands() {
-        if c.start >= cmd.start {
-            break;
-        }
-        if !cmd.scope.starts_with(&c.scope) || shell.target_dir(c, base) != dir {
+    for c in shell.commands_before(cmd) {
+        if shell.target_dir(c, base) != dir {
             continue;
         }
         if let Some((sub, args)) = c.git_subcommand() {

@@ -375,8 +375,7 @@ impl Shell {
     /// `cmd` を文字列で実行するラッパー（`bash -c` や `ssh`）、カレントディレクトリを変えるだけの `cd` は除く
     pub fn commands_before<'a>(&'a self, cmd: &'a Cmd) -> impl Iterator<Item = &'a Cmd> {
         self.cmds.iter().filter(move |c| {
-            c.start < cmd.start
-                && cmd.scope.starts_with(&c.scope)
+            c.runs_before(cmd)
                 && !c.changes_dir()
                 && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
         })
@@ -1063,6 +1062,11 @@ fn enter(wrapped: &Cmd, home: &Path, dir: &mut PathBuf) {
 }
 
 impl Cmd {
+    /// `cmd` より前に始まり、`cmd` と同じか外側のスコープにあるか（前のコマンドの `$(…)` の中は含まない）
+    pub fn runs_before(&self, cmd: &Cmd) -> bool {
+        self.start < cmd.start && cmd.scope.starts_with(&self.scope)
+    }
+
     /// シェルの cd か。builtin / command と、先頭に修飾せずに書いた time（bash の予約語）はシェルの cd を
     /// 呼ぶ。env や /usr/bin/time など外部のラッパーは cd という外部コマンドを探して失敗し、シェルのディレクトリを
     /// 変えない。予約語は先頭でだけ予約語として読まれるので、command time は外部の time を呼ぶ
