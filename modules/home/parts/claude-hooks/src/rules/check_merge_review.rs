@@ -4,7 +4,7 @@
 //! GitHub の PR はローカルレビューの記録（PR のコメント）を pre-merge-check が head と照らすが、ローカルのマージには
 //! PR が無い。記録をマージの本文に置き、履歴に残す（ADR-0070）。本文の形:
 //!
-//! - `Reviewed: <hash>` の行がちょうど 1 つ（7〜40 桁の小文字の 16 進。最後のレビューの周を回した HEAD）
+//! - `Reviewed: <hash>` の行がちょうど 1 つ（7〜64 桁の小文字の 16 進。最後のレビューの周を回した HEAD）
 //! - 指摘ごとの行（`再現: …`、`再現なし: …`、`再現なし → #<番号>…`、`前提が誤り: …`、`抜け道: …`）か `指摘なし` の行が
 //!   1 つ以上
 //!
@@ -33,7 +33,7 @@ const SHOWN_FILES: usize = 10;
 
 /// 本文に書く形。拒否の文言が示す
 const FORM: &str = "本文に次の行を書いてください（行の先頭の空白と `- ` は付けてよい）:\n\
-  Reviewed: <最後にレビューの周を回した HEAD の hash（7〜40 桁）>\n\
+  Reviewed: <最後にレビューの周を回した HEAD の hash（7〜64 桁）>\n\
   指摘ごとに 1 行: 再現: <テスト名 | 手順 | 出典> / 再現なし: <指摘の要旨> / 前提が誤り: <確かめた事実> / 抜け道: <理由>\n\
   （直さない指摘を別のトピックとして issue にしたときは、再現なし: の代わりに 再現なし → #<issue の番号>: <指摘の要旨>）\n\
   どの周にも指摘が無ければ: 指摘なし\n\
@@ -63,7 +63,7 @@ fn is_finding_line(line: &str) -> bool {
 }
 
 fn is_hash(s: &str) -> bool {
-    (7..=40).contains(&s.len())
+    (7..=64).contains(&s.len())
         && s.chars()
             .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
@@ -81,7 +81,7 @@ fn reviewed_hash(body: &str) -> Result<String, String> {
         [h] if is_hash(h) => Some(h.to_string()),
         [h] => {
             missing.push(format!(
-                "Reviewed: の値 `{h}` がコミットの hash（7〜40 桁の小文字の 16 進）ではありません"
+                "Reviewed: の値 `{h}` がコミットの hash（7〜64 桁の小文字の 16 進）ではありません"
             ));
             None
         }
@@ -458,7 +458,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: SHA-256 の完全な hash を Reviewed: に書けない"]
     fn accepts_a_full_sha256_reviewed_hash() {
         let body = |h: &str| format!("Merge: x\n\nReviewed: {h}\n再現: 例\n");
         assert_eq!(reviewed_hash(&body(&"a1".repeat(32))), Ok("a1".repeat(32)));
