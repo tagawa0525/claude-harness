@@ -37,6 +37,7 @@ use std::path::Path;
 use super::pre_git_merge_check::{added_adrs, multi_topic_reason, read_at};
 use super::{Rule, apply_escape_to_reasons};
 use crate::git;
+use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
@@ -207,7 +208,8 @@ impl Rule for PrePrCreateCheck {
 
             // --- 3. 未プッシュコミット ---
             let pushed_before = shell.commands_before(cmd).any(|c| {
-                matches!(c.git_subcommand(), Some(("push", _)))
+                matches!(c.git_subcommand(), Some(("push", a))
+                    if !git_flag("push", a, Some('n'), &["--dry-run", "--delete", "--tags"]))
                     && shell.target_dir(c, &input.cwd) == dir
             });
             if !has_flag(args, &["--head", "-H"]) && !pushed_before {

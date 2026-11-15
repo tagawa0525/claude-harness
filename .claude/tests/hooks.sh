@@ -166,14 +166,12 @@ assert_eq deny "$(decision "$out")"
 git -C "$REPO" switch -q feat/x
 
 it "pre-pr-create: --dry-run、-n、--delete、--tags の git push は push 済みとみなさない"
-if [[ -n "${RUN_RED:-}" ]]; then
-  git -C "$REPO" switch -q feat/no-upstream
-  for p in 'git push --dry-run' 'git push -n origin HEAD' 'git push --delete origin x' 'git push --tags'; do
-    out=$(run_hook pre-pr-create-check "$p && $GOOD_CMD")
-    assert_eq deny "$(decision "$out")"
-  done
-  git -C "$REPO" switch -q feat/x
-fi
+git -C "$REPO" switch -q feat/no-upstream
+for p in 'git push --dry-run' 'git push -n origin HEAD' 'git push --delete origin x' 'git push --tags'; do
+  out=$(run_hook pre-pr-create-check "$p && $GOOD_CMD")
+  assert_eq deny "$(decision "$out")"
+done
+git -C "$REPO" switch -q feat/x
 
 it "pre-pr-create: --head 指定時は現在ブランチの push 状態を見ない"
 git -C "$REPO" switch -q feat/no-upstream
@@ -3497,15 +3495,13 @@ for cmd in 'set -o pipefail; cargo test 2>&1 | tail -5' "bash -o pipefail -c 'ni
 done
 
 it "require-pipefail: pipefail の語が文字列にあるだけの形は deny する"
-if [[ -n "${RUN_RED:-}" ]]; then
-  for cmd in 'cargo test 2>&1 | tail # pipefail' 'echo pipefail; cargo test | tail' 'cargo test --features pipefail | tail'; do
-    out=$(run_hook require-pipefail "$cmd")
-    assert_eq deny "$(decision "$out")"
-  done
-  for cmd in 'set -eo pipefail; cargo test | tail' 'set -euo pipefail; cargo test | tail' "bash -o pipefail -c 'cargo test | tail'"; do
-    out=$(run_hook require-pipefail "$cmd")
-    assert_eq allow "$(decision "$out")"
-  done
-fi
+for cmd in 'cargo test 2>&1 | tail # pipefail' 'echo pipefail; cargo test | tail' 'cargo test --features pipefail | tail'; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+for cmd in 'set -eo pipefail; cargo test | tail' 'set -euo pipefail; cargo test | tail' "bash -o pipefail -c 'cargo test | tail'"; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
 
 finish
