@@ -269,6 +269,41 @@ fn an_unreadable_diff_fails_instead_of_skipping_the_stages() {
 }
 
 #[test]
+#[ignore = "RED: Markdown の段が PATH の staged-checks を呼ぶ（GREEN で解除）"]
+fn the_staged_markdown_is_checked_without_a_staged_checks_command_on_path() {
+    let repo = Repo::new();
+    repo.tool("markdownlint");
+    repo.stage("doc.md", "# doc\n");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("RUN: markdown staged: staged_checks markdown\n"),
+        "{text}"
+    );
+    assert!(text.contains("OK: markdown staged\n"), "{text}");
+    assert!(
+        repo.calls().iter().any(|c| c.starts_with("markdownlint ")),
+        "{:?}",
+        repo.calls()
+    );
+}
+
+#[test]
+#[ignore = "RED: Markdown の段が PATH の staged-checks を呼ぶ（GREEN で解除）"]
+fn the_staged_markdown_is_skipped_when_markdownlint_is_missing() {
+    let repo = Repo::new();
+    repo.stage("doc.md", "# doc\n");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("SKIP: Markdown の検査（markdownlint が PATH に無い）\n"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn rust_files_without_a_root_manifest_run_cargo_in_their_crate() {
     let repo = Repo::new();
     repo.commit("sub/app/Cargo.toml", "[package]\n");
