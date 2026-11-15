@@ -34,6 +34,11 @@ home-manager の構成で `claude-harness.homeManagerModules.default` を import
 ネイティブの Windows（WSL を使わない）でも、Nix の代わりに `cargo install` と `claude-setup` で入れて使える（ADR-0084）。
 前もって入れるものと手順は [docs/windows.md](docs/windows.md) にある。
 
+前提:
+
+- symlink を作れること（開発者モードか `SeCreateSymbolicLinkPrivilege`）。無いと `worktree-add` の `.worktreelink` が使えない
+- Git for Windows は新しい版にする。`commit-refs` の履歴の書き換えが使う `git fast-export --signed-commits` を、2.47.1 は知らない（2.56.1 では動いた。最小の版は確かめていない）
+
 ## 経緯
 
 2026-11-12 に nixfiles から切り出した。履歴はハーネスのパスだけを残して引き継いでいる。切り出しの決定は nixfiles の

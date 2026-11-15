@@ -249,9 +249,9 @@ fn without_arguments_stops_off_the_default_branch_or_with_drafts() {
     let clone = home.clone_dir();
     let clone_path = clone.display().to_string();
     home.git(&clone, &["switch", "-qc", "feat/x"]);
-    home.stops(&format!("git -C {clone_path} switch main"));
+    home.stops("別のセッションがこのブランチで作業中かもしれない");
     home.git(&clone, &["switch", "-q", "--detach", "main"]);
-    home.stops(&format!("git -C {clone_path} switch main"));
+    home.stops("別のセッションがこのブランチで作業中かもしれない");
     home.git(&clone, &["switch", "-q", "main"]);
     write(&clone.join(".claude/CLAUDE.md"), "draft");
     home.stops(&format!("claude-sync {clone_path}"));
@@ -328,7 +328,7 @@ fn the_default_branch_comes_from_origin_head() {
     home.sync_default();
     assert_eq!(read(&home.dest("CLAUDE.md")), "trunk1");
     home.git(&clone, &["switch", "-qc", "main"]);
-    home.stops(&format!("git -C {} switch trunk", clone.display()));
+    home.stops("trunk を別の worktree で開いて");
 }
 
 #[test]

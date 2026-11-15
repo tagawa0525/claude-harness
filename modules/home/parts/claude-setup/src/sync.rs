@@ -155,7 +155,7 @@ fn pull(repo: &Path) -> Result<(), Stop> {
                 "❌ {shown} は {default} でなく {branch} にあります。古い中身を同期しないよう、ここで止めます"
             ),
             format!(
-                "   最新を入れるなら: git -C {shown} switch {default} のあと、もう一度 claude-sync（Windows では claude-setup sync）"
+                "   別のセッションがこのブランチで作業中かもしれないので、ここで switch しません（切り替えると、その作業を黙って外します）。最新を入れるなら、作業の終わりを待つか、{default} を別の worktree で開いて、そのパスで claude-sync（Windows では claude-setup sync）を実行します"
             ),
             as_is,
         ]));
