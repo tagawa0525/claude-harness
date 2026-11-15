@@ -1313,7 +1313,6 @@ fn stale_reservations(name: &str) -> TempRepo {
 }
 
 #[test]
-#[ignore = "RED: prune has no --stale (#52)"]
 fn prune_stale_lists_old_reservations_that_no_branch_recorded() {
     let t = stale_reservations("stale-list");
     // 既定の期間（30 日）より新しい予約は、まだ使うかもしれない
@@ -1329,7 +1328,6 @@ fn prune_stale_lists_old_reservations_that_no_branch_recorded() {
 }
 
 #[test]
-#[ignore = "RED: prune has no --stale (#52)"]
 fn prune_stale_delete_releases_them_locally_and_on_origin() {
     let t = stale_reservations("stale-delete");
     let out = t.run(&["prune", "--stale", "--days", "0", "--delete"]);
@@ -1343,7 +1341,6 @@ fn prune_stale_delete_releases_them_locally_and_on_origin() {
 }
 
 #[test]
-#[ignore = "RED: prune has no --stale (#52)"]
 fn prune_stale_sees_records_on_branches_only_origin_has() {
     let t = stale_reservations("stale-origin-branch");
     let other = t.clone_remote("other");

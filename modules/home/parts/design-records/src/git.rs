@@ -223,6 +223,8 @@ pub struct Reservation {
     pub number: u32,
     /// 注釈つきのタグのメッセージ（予約した記録の slug）。軽量のタグなら `None`（番号だけを予約する）。
     pub slug: Option<String>,
+    /// 注釈つきのタグを打った時刻（UNIX 秒）。軽量のタグなら `None`。
+    pub created: Option<u64>,
 }
 
 /// ローカルの予約のタグ。
@@ -231,7 +233,7 @@ pub fn reservations(root: &Path) -> Result<Vec<Reservation>> {
         root,
         &[
             "for-each-ref",
-            "--format=%(refname)%00%(objecttype)%00%(contents:subject)",
+            "--format=%(refname)%00%(objecttype)%00%(contents:subject)%00%(creatordate:unix)",
             "refs/tags/adr-*",
             "refs/tags/issue-*",
         ],
@@ -247,11 +249,16 @@ pub fn reservations(root: &Path) -> Result<Vec<Reservation>> {
                 .next()
                 .filter(|s| annotated && !s.is_empty())
                 .map(str::to_string);
+            let created = fields
+                .next()
+                .and_then(|t| t.parse().ok())
+                .filter(|_| annotated);
             Some(Reservation {
                 name: name.to_string(),
                 kind,
                 number,
                 slug,
+                created,
             })
         })
         .collect())

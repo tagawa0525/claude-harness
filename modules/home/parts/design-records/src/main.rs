@@ -8,6 +8,10 @@
 //!                                      このブランチで足した記録 <old> を <new>（省けば次の番号）に振り直し、
 //!                                      ファイル名と参照を付け替えて 1 コミットにする。新しいパスを出す
 //!   design-records prune               既定ブランチの履歴に記録が入った予約のタグを、ローカルと origin から消す
+//!   design-records prune --stale [--days N] [--delete]
+//!                                      N 日（既定 30）より前の予約のうち、どのブランチの履歴にも記録が無いものを
+//!                                      一覧にする。--delete で、ローカルと origin から消す。origin のブランチを
+//!                                      取ってきて調べる
 //!   design-records check [--changed] [FILE]...
 //!                                      docs/adr の ADR と docs/issues の番号を検査する。FILE（リポジトリの直下からの
 //!                                      パス。pre-commit が渡すステージ済みのファイル）からは置き換えられた ADR への
@@ -41,7 +45,7 @@ use design_records::{
 use git::{Result, default_branch, git, git_ok, has_origin, repo_root, reservations, tracked};
 
 const USAGE: &str = "Usage: design-records [-C <dir>] new [--kind adr|issue] <slug> <title> \
-     | renumber [--kind adr|issue] <old> [<new>] | prune | check [--changed] [FILE]... | status";
+     | renumber [--kind adr|issue] <old> [<new>] | prune [--stale [--days N] [--delete]] | check [--changed] [FILE]... | status";
 
 /// 使い方の誤り。
 struct UsageError;
@@ -64,6 +68,13 @@ fn number(arg: &str) -> std::result::Result<u32, UsageError> {
     arg.parse().ok().filter(|&n| n > 0).ok_or(UsageError)
 }
 
+/// 予約を使わずに置いておく日数の既定。担当が記録を作るまでに数日かかっても解放しない。
+const STALE_DAYS: u64 = 30;
+
+fn days(arg: &str) -> std::result::Result<u64, UsageError> {
+    arg.parse().map_err(|_| UsageError)
+}
+
 fn dispatch(args: &[&str]) -> std::result::Result<Result<ExitCode>, UsageError> {
     Ok(match args {
         ["new", rest @ ..] => match kind_and_rest(rest)? {
@@ -76,6 +87,16 @@ fn dispatch(args: &[&str]) -> std::result::Result<Result<ExitCode>, UsageError> 
             _ => return Err(UsageError),
         },
         ["prune"] => numbering::prune(),
+        ["prune", "--stale", rest @ ..] => {
+            let (days, delete) = match rest {
+                [] => (STALE_DAYS, false),
+                ["--delete"] => (STALE_DAYS, true),
+                ["--days", n] => (days(n)?, false),
+                ["--days", n, "--delete"] => (days(n)?, true),
+                _ => return Err(UsageError),
+            };
+            numbering::prune_stale(days, delete)
+        }
         ["check", "--changed", files @ ..] => run_check(files, true),
         ["check", files @ ..] if !files.iter().any(|f| f.starts_with('-')) => {
             run_check(files, !files.is_empty())
