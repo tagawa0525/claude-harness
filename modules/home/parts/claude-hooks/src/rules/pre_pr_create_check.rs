@@ -7,7 +7,8 @@
 //!    揃っている（見出しは常に英語。本文の言語は問わない。--body を省くと gh がエディタを
 //!    開き、Claude Code セッションでは固まる）
 //! 3. 現在のブランチに上流があり、未プッシュのコミットがない（--head 指定時は見ない）。
-//!    同じコマンドの前に連ねた git push は反映されない（実行前の状態を見る）
+//!    同じコマンドで gh pr create より前に、同じ場所で git push を連ねていれば、その push が満たすので見ない
+//!    （`git push -u origin HEAD && gh pr create …`。ADR-0042 の普通に書く形。push の引数や `;` `||` は読まない）
 //! 4. --web を使わない（ブラウザを開かず URL を報告する）
 //! 5. ブランチが新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はマージの時点の
 //!    pre-git-merge-check と共有する。レビューの周を回した後にマージで止まると、その周が無駄になる）。
@@ -40,10 +41,6 @@ use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
 use crate::unwrap::env_value;
-
-/// 検査は実行前のブランチの状態を見る。同じコマンドの前に連ねた git push は反映されず、
-/// 連ねるとコマンド全体が止まって前半も実行されないので、分け方を deny の文言で示す。
-const SPLIT_CALLS_HINT: &str = "同じコマンドの前に git push を連ねても検査には反映されません。push と gh pr create は別の呼び出しに分けてください";
 
 pub struct PrePrCreateCheck;
 
@@ -209,17 +206,19 @@ impl Rule for PrePrCreateCheck {
             }
 
             // --- 3. 未プッシュコミット ---
-            if !has_flag(args, &["--head", "-H"]) {
+            let pushed_before = shell.commands_before(cmd).any(|c| {
+                matches!(c.git_subcommand(), Some(("push", _)))
+                    && shell.target_dir(c, &input.cwd) == dir
+            });
+            if !has_flag(args, &["--head", "-H"]) && !pushed_before {
                 match git::git(&dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) {
-                    None => reasons.push(format!("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）。{SPLIT_CALLS_HINT}")),
+                    None => reasons.push("現在のブランチに上流ブランチがありません。先に git push してください（gh が対話的に push 先を尋ねて固まるのを防ぐ）".to_string()),
                     Some(upstream) => {
                         let ahead = git::git(&dir, &["rev-list", "--count", "@{u}..HEAD"])
                             .unwrap_or_else(|| "?".to_string());
                         if ahead != "0" {
-                            // 件数が取れなかった（"?"）ときは原因が未プッシュとは限らないので、分け方は示さない
-                            let hint = if ahead == "?" { String::new() } else { format!("。{SPLIT_CALLS_HINT}") };
                             reasons.push(format!(
-                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください{hint}"
+                                "未プッシュのコミットが {ahead} 件あります（{upstream} より先）。先に git push してください"
                             ));
                         }
                     }
