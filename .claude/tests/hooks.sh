@@ -2245,6 +2245,15 @@ git -C "$REPO" add docs && git -C "$REPO" commit -q -m "docs(adr): d supersedes 
 git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 
+it "3 つのマージのルールは :/文字列 の指定（コミットの検索）も確かめる"
+# RED: 実装までは RUN_RED=1 のときだけ流す
+if [[ -n "${RUN_RED:-}" ]]; then
+  out=$(run_hook pre-git-merge-check "git merge --no-ff ':/b and c' -m 'Merge: x'")
+  assert_eq deny "$(decision "$out")"
+  out=$(run_hook check-merge-review "git merge --no-ff ':/b and c' -m 'Merge: x'")
+  assert_eq deny "$(decision "$out")"
+fi
+
 it "pre-git-merge-check / check-merge-review: タグの指定でも確かめる"
 git tag tag-two feat/two
 out=$(run_hook pre-git-merge-check "git merge --no-ff tag-two -m 'Merge: x'")
