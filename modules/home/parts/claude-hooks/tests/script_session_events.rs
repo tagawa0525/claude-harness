@@ -229,6 +229,25 @@ fn lines_with<'a>(out: &'a str, prefix: &str) -> Vec<&'a str> {
 }
 
 #[test]
+#[ignore = "RED: ルールの名前で数えない"]
+fn hook_denials_with_a_rule_name_are_counted_by_the_name() {
+    let home = Home::new();
+    let main = home.write_lines(
+        &home.root.join("named.jsonl"),
+        &[
+            tool_error("PreToolUse:Bash hook error: [guard-git-add] git add -A は禁止です（ブランチ feat/a、12 件）"),
+            tool_error("PreToolUse:Bash hook error: [guard-git-add] git add . は禁止です（ブランチ feat/b、3 件）"),
+            tool_error("PreToolUse:Bash hook error: [guard-git-push] 別のルール"),
+        ],
+    );
+    let out = stdout(&home.run(&[&main]));
+    assert_eq!(
+        lines_with(&out, "HOOK"),
+        ["HOOK: 2 [guard-git-add]", "HOOK: 1 [guard-git-push]"]
+    );
+}
+
+#[test]
 fn failures_are_counted_by_kind_and_summary_and_user_messages_follow_in_order() {
     let home = Home::new();
     let main = home.first_session();
