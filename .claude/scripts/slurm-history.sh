@@ -9,7 +9,7 @@
 #   --job      ジョブごとに、状態、時間、排他か、コマンド、作業ディレクトリ、走った版（決められなければ理由）を
 #              sacct の記録と git の reflog から出す。出力の形と版の決め方は lib/slurm-job.sh の先頭
 #
-# 出力（表のあとに 2 行）:
+# 出力（表のあとに 3 行）:
 #   ジョブごと: JOBID NAME ESTIMATE ELAPSED RATIO MAX_RSS
 #   ジョブ名ごと: NAME RUNS ESTIMATE ELAPSED RATIO MAX_RATIO MAX_RSS（ESTIMATE と ELAPSED は平均。
 #   見積もりのあるジョブだけで求め、RUNS は見積もりのないジョブも数える。UNTIMED のジョブは数えない）
@@ -96,7 +96,7 @@ trap 'rm -f "$SACCT_FILE"' EXIT
 if ((SACCT)); then
   source "$(dirname "${BASH_SOURCE[0]}")/lib/slurm-job.sh"
   if ! raw=$(sacct -S "$SACCT_SINCE" -P -n --units=M --delimiter="$SLURM_JOB_SEP" \
-    -o JobID,JobName,State,Partition,TimelimitRaw,Start,End,MaxRSS,SubmitLine); then
+    -o JobID,JobName,State,Partition,TimelimitRaw,Start,End,MaxRSS,SubmitLine); then # TimelimitRaw は分（sacct(1)。jobcomp の TimeLimit と同じ単位で、take が 60 倍して秒にする）
     echo "ERROR: sacct を読めませんでした" >&2
     exit 1
   fi
