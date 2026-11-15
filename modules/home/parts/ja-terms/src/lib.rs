@@ -64,6 +64,8 @@ pub struct Diff {
 struct Rule {
     expected: String,
     regex: Regex,
+    /// どの一致にも含まれる固定の文字列。文に無ければ regex を当てない（[`required_literal`]）
+    needle: Option<String>,
     /// 辞書のファイルと規則の位置（理由の表示に使う）
     origin: String,
 }
@@ -246,6 +248,7 @@ fn load_rule(raw: &Yaml, origin: &str) -> Result<Rule, DictionaryError> {
     let rule = Rule {
         expected: expected.clone(),
         regex,
+        needle: required_literal(&source),
         origin: origin.to_string(),
     };
     check_specs(&rule, raw.get(&key("specs")))?;
@@ -292,6 +295,111 @@ fn pattern_source(pattern: &Yaml, origin: &str) -> Result<String, DictionaryErro
             escape.into_iter().chain(std::iter::once(c))
         })
         .collect())
+}
+
+/// 正規表現の source の、一番上の階層（括弧の外）にある固定の文字の並びのうち最も長いもの。一致はすべてこの並びを
+/// 含むので、文に無ければ regex を当てなくてよい（regress は 104 の規則を全文に当てると遅い。#198）。一番上に `|` が
+/// あれば、一致が含む並びは決まらないので None。量指定子の付いた文字（`?` `*` `{` の前）は必須でないので外し、
+/// `+` の前の文字は 1 つ以上あるので含めて、そこで並びを切る。括弧の中（先読みと後読みを含む）、文字クラス、
+/// 記号の `.` `^` `$` とエスケープ（記号の前の `\` を除く）は並びを切る
+fn required_literal(source: &str) -> Option<String> {
+    fn flush(run: &mut String, best: &mut String) {
+        if run.chars().count() > best.chars().count() {
+            std::mem::swap(run, best);
+        }
+        run.clear();
+    }
+    let mut best = String::new();
+    let mut run = String::new();
+    let mut depth = 0usize;
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        // 括弧の中は、閉じるまで読み飛ばす。先読みと後読みも含む
+        if depth > 0 {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '[' => skip_class(&mut chars),
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        skip_quantifier(&mut chars);
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let literal = match c {
+            '(' => {
+                flush(&mut run, &mut best);
+                depth = 1;
+                continue;
+            }
+            '[' => {
+                flush(&mut run, &mut best);
+                skip_class(&mut chars);
+                skip_quantifier(&mut chars);
+                continue;
+            }
+            '|' => return None,
+            '\\' => match chars.next() {
+                Some(e) if PRH_SPECIAL.contains(e) || e == '\\' => Some(e),
+                // 後ろに続く文字が escape の一部（\u3042、\p{L}、\k<name>）のものは、読み分けないので使わない
+                Some('u' | 'x' | 'p' | 'P' | 'c' | 'k' | '0'..='9') | None => return None,
+                Some(_) => None,
+            },
+            '.' | '^' | '$' => None,
+            // 量指定子は直前の要素と一緒に読み飛ばすので、ここに来るのは読み分けられない形
+            '?' | '*' | '+' | '{' => return None,
+            _ => Some(c),
+        };
+        match literal {
+            Some(l) => match chars.peek() {
+                // 0 回もありうる文字は必須でない
+                Some('?' | '*' | '{') => flush(&mut run, &mut best),
+                // 1 回以上は必須だが、その先は繰り返しなので並びを切る
+                Some('+') => {
+                    run.push(l);
+                    flush(&mut run, &mut best);
+                }
+                _ => run.push(l),
+            },
+            None => flush(&mut run, &mut best),
+        }
+        skip_quantifier(&mut chars);
+    }
+    flush(&mut run, &mut best);
+    (!best.is_empty()).then_some(best)
+}
+
+/// 直後に量指定子（`?` `*` `+` `{n,m}` と、後ろの `?`）があれば読み飛ばす
+fn skip_quantifier(chars: &mut std::iter::Peekable<impl Iterator<Item = char>>) {
+    if matches!(chars.peek(), Some('?' | '*' | '+' | '{')) {
+        if chars.next() == Some('{') {
+            for d in chars.by_ref() {
+                if d == '}' {
+                    break;
+                }
+            }
+        }
+        chars.next_if_eq(&'?');
+    }
+}
+
+/// 文字クラスの `[` を読んだ後、閉じる `]` まで読み飛ばす（中の `\]` は閉じでない）
+fn skip_class(chars: &mut std::iter::Peekable<impl Iterator<Item = char>>) {
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            ']' => break,
+            _ => {}
+        }
+    }
 }
 
 /// prh の utils/regexp.js の regexpRegexp（`/^\/(.*)\/([gimy]*)$/`）。`.` は行の終わりに当たらず、m の無い `$` は
@@ -353,6 +461,13 @@ fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError>
 fn matches(rules: &[Rule], offset: usize, piece: &str) -> Result<Vec<Diff>, TextError> {
     let mut found = Vec::new();
     for rule in rules {
+        if rule
+            .needle
+            .as_ref()
+            .is_some_and(|n| !piece.contains(n.as_str()))
+        {
+            continue;
+        }
         for m in rule.regex.find_iter(piece) {
             if m.start() == m.end() {
                 // JavaScript の exec の繰り返しは、空の一致で先に進まない
@@ -498,4 +613,133 @@ fn splice(text: &str, diffs: &[Diff]) -> String {
     }
     out.push_str(&text[last..]);
     out
+}
+#[cfg(test)]
+mod needle_tests {
+    use super::*;
+
+    #[test]
+    fn literal_is_the_longest_top_level_run() {
+        let cases = [
+            ("あいう", Some("あいう")),
+            ("確かめ(?=[のでをだ])", Some("確かめ")),
+            ("(?<![さし])かきく(?![たるてな])", Some("かきく")),
+            ("(?:書き写|(?<![一-龥])写)す", Some("す")),
+            ("(?<=さ|し)すせ|(?<![一-龥])すせ(?![国骨状])", None),
+            ("ab?cd", Some("cd")),
+            ("abc*d", Some("ab")),
+            ("ab{2,3}cde", Some("cde")),
+            ("ab+c", Some("ab")),
+            ("a\\.bcd", Some("a.bcd")),
+            ("[ab]cd.ef", Some("cd")),
+            ("a\\u3042bc", None),
+            ("(?:あ|い)", None),
+        ];
+        for (source, want) in cases {
+            assert_eq!(required_literal(source).as_deref(), want, "{source}");
+        }
+    }
+
+    #[test]
+    fn a_quantifier_on_a_group_or_class_is_not_part_of_the_literal() {
+        let cases = [
+            ("(?:ab){2}cd", Some("cd")),
+            ("(?:ab)*cd", Some("cd")),
+            ("(?:ab)+?cd", Some("cd")),
+            ("[ab]{2,3}cd", Some("cd")),
+            ("[ab]?cd", Some("cd")),
+            ("x{", None),
+        ];
+        for (source, want) in cases {
+            assert_eq!(required_literal(source).as_deref(), want, "{source}");
+        }
+    }
+
+    // 固定の文字列は、正規表現に一致するどの文にも含まれる。小さな文字種のすべての文（長さ 7 まで）に、量指定子、
+    // 括弧、先読みと後読み、文字クラス、選択を組み合わせた pattern を当てて確かめる
+    #[test]
+    fn every_text_a_pattern_matches_contains_its_literal() {
+        let patterns = [
+            "ab",
+            "a(?:bc){2}d",
+            "(?:ab){2}cd",
+            "(?:ab)*cd",
+            "(?:ab)+?cd",
+            "(?:ab)?c",
+            "[ab]{2,3}cd",
+            "[ab]?cd",
+            "[ab]+c",
+            "a{2}b",
+            "ab{2}c",
+            "a{0}bc",
+            "ab*c",
+            "ab+c",
+            "ab?c",
+            "ab??c",
+            "(?<!a)bc(?!d)",
+            "(?<=a)bcd",
+            "(?:a|b)cd",
+            "a|bc",
+            "a.c",
+            "^ab$",
+            "ab(?:cd|dc)",
+            "(?:(?:ab){2}){2}c",
+            "(a(?:b)){2}c",
+            "[a\\]]{2}b",
+            "a\\.b",
+        ];
+        let alphabet = ['a', 'b', 'c', 'd'];
+        let mut texts = vec![String::new()];
+        let mut layer = vec![String::new()];
+        for _ in 0..7 {
+            layer = layer
+                .iter()
+                .flat_map(|t| alphabet.iter().map(move |c| format!("{t}{c}")))
+                .collect();
+            texts.extend(layer.iter().cloned());
+        }
+        for source in patterns {
+            let regex = Regex::with_flags(source, "mu").unwrap();
+            let Some(needle) = required_literal(source) else {
+                continue;
+            };
+            for text in &texts {
+                if regex.find(text).is_some() {
+                    assert!(
+                        text.contains(&needle),
+                        "/{source}/ matches {text:?} without {needle:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // 辞書の例と規則の文を含む prh.yml 自身を文にして、needle で絞っても一致が変わらないことを確かめる
+    #[test]
+    fn skipping_by_literal_keeps_every_match() {
+        let yaml = include_str!("../prh.yml");
+        let with = Dictionary::parse(yaml, "prh.yml").unwrap();
+        let mut without = Dictionary::parse(yaml, "prh.yml").unwrap();
+        for rule in &mut without.rules {
+            rule.needle = None;
+        }
+        // 全文のほか、行ごと、行の前半と後半、単語の切り出しでも比べ、規則ごとに当たる文の形を変える
+        let mut texts = vec![yaml.to_string()];
+        for line in yaml.lines() {
+            texts.push(line.to_string());
+            let mid = line
+                .char_indices()
+                .nth(line.chars().count() / 2)
+                .map_or(0, |(i, _)| i);
+            texts.push(line[..mid].to_string());
+            texts.push(line[mid..].to_string());
+        }
+        let mut hits = 0;
+        for text in &texts {
+            let got = matches(&with.rules, 0, text).unwrap();
+            hits += got.len();
+            assert_eq!(got, matches(&without.rules, 0, text).unwrap(), "{text:?}");
+        }
+        assert!(hits > 0);
+    }
 }
