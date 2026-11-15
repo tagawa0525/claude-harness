@@ -2246,18 +2246,15 @@ git -C "$REPO" switch -q main
 cd "$REPO" || exit 1
 
 it "pre-git-merge-check / check-merge-review: ブランチ名でなくコミットの指定（SHA、feat/two^0）でも確かめる"
-# RED: 実装までは RUN_RED=1 のときだけ流す
-if [[ -n "${RUN_RED:-}" ]]; then
-  two_sha=$(git rev-parse feat/two)
-  for target in "$two_sha" 'feat/two^0'; do
-    out=$(run_hook pre-git-merge-check "git merge --no-ff $target -m 'Merge: two'")
-    assert_eq deny "$(decision "$out")"
-    assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
-    out=$(run_hook check-merge-review "git merge --no-ff $target -m 'Merge: two'")
-    assert_eq deny "$(decision "$out")"
-    assert_contains "$(reason "$out")" "Reviewed:"
-  done
-fi
+two_sha=$(git rev-parse feat/two)
+for target in "$two_sha" 'feat/two^0'; do
+  out=$(run_hook pre-git-merge-check "git merge --no-ff $target -m 'Merge: two'")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "docs/adr/0002-use-b.md"
+  out=$(run_hook check-merge-review "git merge --no-ff $target -m 'Merge: two'")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "Reviewed:"
+done
 
 it "pre-git-merge-check: 既定ブランチに新しい ADR が 2 件以上のブランチをマージするなら deny"
 out=$(run_hook pre-git-merge-check 'git merge --no-ff feat/two -m "Merge: two"')
@@ -2509,16 +2506,13 @@ assert_contains "$(reason "$out")" "コミット"
 assert_contains "$(reason "$out")" ".gitignore"
 
 it "guard-git-merge: コミットの指定（SHA、feat/wt^0）でも、対象の worktree の未コミットの変更があれば deny"
-# RED: 実装までは RUN_RED=1 のときだけ流す
-if [[ -n "${RUN_RED:-}" ]]; then
-  echo changed >"$TEST_ROOT/mergeshape-wt/wt.txt"
-  for target in "$(git rev-parse feat/wt)" 'feat/wt^0'; do
-    out=$(run_hook guard-git-merge "git merge --no-ff $target -m 'Merge: wt'")
-    assert_eq deny "$(decision "$out")"
-    assert_contains "$(reason "$out")" "wt.txt"
-  done
-  git -C "$TEST_ROOT/mergeshape-wt" checkout -q -- wt.txt
-fi
+echo changed >"$TEST_ROOT/mergeshape-wt/wt.txt"
+for target in "$(git rev-parse feat/wt)" 'feat/wt^0'; do
+  out=$(run_hook guard-git-merge "git merge --no-ff $target -m 'Merge: wt'")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "wt.txt"
+done
+git -C "$TEST_ROOT/mergeshape-wt" checkout -q -- wt.txt
 
 it "guard-git-merge: 未コミットの変更が多いときは先頭の数件と残りの件数を示す"
 for i in 3 4 5 6 7 8 9; do echo out >"$TEST_ROOT/mergeshape-wt/trial$i.out"; done

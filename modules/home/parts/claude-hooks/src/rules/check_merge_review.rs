@@ -19,7 +19,7 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{Undecided, merge_message};
-use super::pre_git_merge_check::{default_branch_merges, local_branch_ref};
+use super::pre_git_merge_check::{default_branch_merges, merge_source};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -421,7 +421,7 @@ impl Rule for CheckMergeReview {
             let branches: Vec<(&str, String)> = merge
                 .targets
                 .iter()
-                .filter_map(|t| local_branch_ref(&merge.dir, t).map(|full| (t.as_str(), full)))
+                .filter_map(|t| merge_source(&merge.dir, t).map(|full| (t.as_str(), full)))
                 .collect();
             let [(name, full)] = branches.as_slice() else {
                 if branches.len() > 1 {

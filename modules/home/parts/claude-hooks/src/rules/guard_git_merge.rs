@@ -13,7 +13,7 @@
 //! リモート追跡ブランチの取り込み、中断・再開は対象外）。エスケープはない（修正方法は理由に示す）
 
 use super::Rule;
-use super::pre_git_merge_check::{default_branch_merges, local_branch_ref};
+use super::pre_git_merge_check::{default_branch_merges, merge_source};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -23,15 +23,43 @@ use std::path::{Path, PathBuf};
 /// deny の理由に示す、未コミットの変更の先頭の件数
 const SHOWN_CHANGES: usize = 5;
 
-/// ブランチ（refs/heads/…）をチェックアウトしている worktree。チェックアウトされていなければ None
-fn worktree_of(dir: &Path, full_ref: &str) -> Option<PathBuf> {
+/// マージ元をチェックアウトしている worktree と、そのブランチ名。ブランチの ref（refs/heads/…）はそのブランチの
+/// worktree、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は、HEAD がそのコミットで、ブランチをチェックアウト
+/// している worktree（detached は後片付けの対象でない）。見つからなければ None
+fn worktree_of(dir: &Path, source: &str) -> Option<(PathBuf, String)> {
     let list = git::git(dir, &["worktree", "list", "--porcelain"])?;
-    let mut path = None;
-    for line in list.lines() {
-        if let Some(p) = line.strip_prefix("worktree ") {
-            path = Some(PathBuf::from(p));
-        } else if line.strip_prefix("branch ") == Some(full_ref) {
-            return path;
+    let commit = git::git(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{source}^{{commit}}"),
+        ],
+    )?;
+    let by_ref = source.starts_with("refs/heads/");
+    for block in list.split("\n\n") {
+        let (mut path, mut head, mut branch) = (None, None, None);
+        for line in block.lines() {
+            if let Some(p) = line.strip_prefix("worktree ") {
+                path = Some(PathBuf::from(p));
+            } else if let Some(h) = line.strip_prefix("HEAD ") {
+                head = Some(h);
+            } else if let Some(b) = line.strip_prefix("branch ") {
+                branch = Some(b);
+            }
+        }
+        let (Some(path), Some(head), Some(branch)) = (path, head, branch) else {
+            continue;
+        };
+        let hit = if by_ref {
+            branch == source
+        } else {
+            head == commit
+        };
+        if hit {
+            let name = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+            return Some((path, name.to_string()));
         }
     }
     None
@@ -60,31 +88,6 @@ fn dirty_reason(branch: &str, worktree: &Path) -> Option<String> {
         lines.len(),
         shown.join("\n")
     ))
-}
-
-/// マージ元の rev。ローカルのブランチは完全な ref、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は
-/// 指定のまま返す。リモート追跡ブランチやタグ（ref だが refs/heads/ でない）と、解決できない名前は None。
-/// ブランチ名だけを見ると、`git merge --no-ff <SHA>` で rebase 済みかの確認が飛ばされる
-fn merge_source(dir: &Path, target: &str) -> Option<String> {
-    if let Some(full) = local_branch_ref(dir, target) {
-        return Some(full);
-    }
-    let spec = if target == "-" { "@{-1}" } else { target };
-    let is_ref =
-        git::git(dir, &["rev-parse", "--symbolic-full-name", spec]).is_some_and(|f| !f.is_empty());
-    if is_ref {
-        return None;
-    }
-    git::git(
-        dir,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{spec}^{{commit}}"),
-        ],
-    )
-    .map(|_| spec.to_string())
 }
 
 pub struct GuardGitMerge;
@@ -116,8 +119,8 @@ impl Rule for GuardGitMerge {
                     git::git(&merge.dir, &["merge-base", "--is-ancestor", default, &full])
                         .is_some();
                 let branch = full.strip_prefix("refs/heads/").unwrap_or(name);
-                if let Some(reason) =
-                    worktree_of(&merge.dir, &full).and_then(|wt| dirty_reason(branch, &wt))
+                if let Some(reason) = worktree_of(&merge.dir, &full)
+                    .and_then(|(wt, wt_branch)| dirty_reason(&wt_branch, &wt))
                 {
                     out.push(Finding::Deny(reason));
                 }

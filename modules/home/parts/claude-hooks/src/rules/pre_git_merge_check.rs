@@ -213,6 +213,32 @@ pub(super) fn local_branch_ref(dir: &Path, target: &str) -> Option<String> {
         .filter(|f| f.starts_with("refs/heads/"))
 }
 
+/// マージ元の rev。ローカルのブランチは完全な ref、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は
+/// 指定のまま返す。リモート追跡ブランチやタグ（ref だが refs/heads/ でない）と、解決できない名前は None。
+/// ブランチ名だけを見ると、`git merge --no-ff <SHA>` が、rebase 済みの確認、ADR の数、本文のレビューの記録の
+/// どれにも掛からない。3 つのルール（guard-git-merge、pre-git-merge-check、check-merge-review）が共有する
+pub(super) fn merge_source(dir: &Path, target: &str) -> Option<String> {
+    if let Some(full) = local_branch_ref(dir, target) {
+        return Some(full);
+    }
+    let spec = if target == "-" { "@{-1}" } else { target };
+    let is_ref =
+        git::git(dir, &["rev-parse", "--symbolic-full-name", spec]).is_some_and(|f| !f.is_empty());
+    if is_ref {
+        return None;
+    }
+    git::git(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{spec}^{{commit}}"),
+        ],
+    )
+    .map(|_| spec.to_string())
+}
+
 impl Rule for PreGitMergeCheck {
     fn name(&self) -> &'static str {
         "pre-git-merge-check"
@@ -231,7 +257,7 @@ impl Rule for PreGitMergeCheck {
                         "git merge --stdin はマージ対象を標準入力で受け取るので、新しい ADR の数を確かめられません。ブランチ名を引数で渡してください".to_string(),
                     )];
                 }
-                let Some(full) = local_branch_ref(dir, t) else {
+                let Some(full) = merge_source(dir, t) else {
                     continue;
                 };
                 let Some(adrs) = added_adrs(dir, &format!("HEAD...{full}")) else {
