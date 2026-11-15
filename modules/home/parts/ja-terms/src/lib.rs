@@ -628,6 +628,22 @@ mod needle_tests {
         }
     }
 
+    #[test]
+    #[ignore = "RED: 括弧と文字クラスに付いた {n,m} を読み飛ばさない"]
+    fn a_quantifier_on_a_group_or_class_is_not_part_of_the_literal() {
+        let cases = [
+            ("(?:ab){2}cd", Some("cd")),
+            ("(?:ab)*cd", Some("cd")),
+            ("(?:ab)+?cd", Some("cd")),
+            ("[ab]{2,3}cd", Some("cd")),
+            ("[ab]?cd", Some("cd")),
+            ("x{", None),
+        ];
+        for (source, want) in cases {
+            assert_eq!(required_literal(source).as_deref(), want, "{source}");
+        }
+    }
+
     // 辞書の例と規則の文を含む prh.yml 自身を文にして、needle で絞っても一致が変わらないことを確かめる
     #[test]
     fn skipping_by_literal_keeps_every_match() {
