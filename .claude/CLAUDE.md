@@ -32,7 +32,7 @@
 - 作業は feature branch → PR → マージ。機械的に判定できる禁止事項（mainへの直接commit/push、マージ方式、PR・マージコミットの本文形式など）はhookがdenyし、理由と修正方法をその場で示す
 - 手順とhookは必須ゲート。通らないときは原因を調査して直す。文言を変える・別の書き方にするなどして迂回しない
 - マージの前にレビューを受け、指摘に対応する。手順は /gh-pr-review と /gh-pr-merge（GitHub リモートがなければ /git-merge）に従う。自動レビューを待つときは `~/.claude/scripts/gh-wait-review.sh <PR の URL>`（/delegate の担当は、/delegate の「作業中の規則」の待ちの項に従う）
-- PR のスクリプト（`gh-wait-review.sh`、`gh-pr-review/scripts/`）には PR の URL を渡す（cwd のリポジトリに依らずその PR を読み書きする）。URL は `gh pr create` の出力か、`cd <worktree> && gh pr view --json url -q .url` で得る。ビルドやチェックなど成否を判断するコマンドは、出力をそのまま受けて終了コードで判定する（`tail` などにつなぐと終了コードが消える）
+- PR のスクリプト（`gh-wait-review.sh`、`gh-pr-review/scripts/`）には PR の URL を渡す（cwd のリポジトリに依らずその PR を読み書きする）。URL は `gh pr create` の出力か、`cd <worktree> && gh pr view --json url -q .url` で得る。ビルドやチェックなど成否を判断するコマンドは、出力をそのまま受けて終了コードで判定する
 - 同一worktree内では、1つのPRがマージされてから次のPRの実装を始める。worktreeを分ければ並行着手可（マージ前にrebaseしてgit graphを整える）
 - 複数エージェントで並行作業しているとき、指示されたPRのみに集中する。別エージェントが対応中のPRの確認・修正をしない（競合するため）
 - 他のセッションから作業を頼まれたら、対象のブランチのコミットの `Claude-Session:` で担当を確かめる。自分のセッションでなければ引き受けず、担当のセッション（分からなければユーザー）に回す

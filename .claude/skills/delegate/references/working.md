@@ -91,7 +91,7 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 ~/.claude/skills/language-checks/scripts/run-checks.sh -C <worktree> --base <base>
 ```
 
-終了コードで判定する（`tail` などにつなぐと終了コードが消える）。失敗したら原因を直してコミットし、やり直す。CLAUDE.md にチェックの
+終了コードで判定する。失敗したら原因を直してコミットし、やり直す。CLAUDE.md にチェックの
 方法があれば、それも実行する。各コミットでビルドが通るべきブランチ（依存や lock を変えるなど）は、
 `cd <worktree> && ~/.claude/scripts/check-each-commit.sh <base> -- <コマンド…>` で `<base>..HEAD` の各コミットを一時 worktree で
 調べる（RED を skip でコミットする運用ではビルドだけを通す。任意のコマンドを実行するので許可リストに無く、毎回確認を求められる）。
