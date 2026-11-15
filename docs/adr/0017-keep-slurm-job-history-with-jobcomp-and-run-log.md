@@ -45,12 +45,12 @@ Slurm の既定（`accounting_storage/none`）のままで、`sacct` は履歴�
 
 - 良い点: 追加のサービスなしに、全ジョブの履歴と、`slurm-run.sh` の出力で見積もりとの比較が残る
 - 悪い点: jobcomp のファイルは増え続ける。`sacct` のような集計や絞り込みはできない（`grep` と `awk` で読む）。
-  `slurm-run.sh` の出力は `MinJobAge` の間に `scontrol` が読めたときだけ出る
+  `slurm-run.sh` の出力は `MinJobAge` の間に `scontrol` が読めたときだけ出る（2026-11-15 から、slurmdbd の `sacct` を読むので、この制約は無く、記録が届くまで待つ。#19）
 - 見直す条件: 利用者が増える、または集計が要るようになったとき（案 A に移る）
 
 ### 確認
 
-- `slurm-run.sh` の出力は `.claude/tests/scripts/slurm-run.sh` で確かめる
+- `slurm-run.sh` の出力は `.claude/tests/scripts/slurm-run.sh`（偽の `sacct`）で確かめる
 - 反映後に、短いジョブを 1 本流し、`/var/log/slurm/job_completions` に 1 行増えることと、`TIME:` が出ることを確かめる
 
 ## 各案の長所と短所

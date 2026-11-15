@@ -40,9 +40,11 @@
 #   LOG: <このホストから読めるログのパス>
 #   （ログの末尾 20 行。終わった直後なら、最後に TIME: job=<番号> elapsed=<実際の時間> estimate=<見積もり> <印>
 #    class=<区分> ref=<参照> purpose=<目的> をログへ書き足すので、その行も含む。印は、-c のとき、timed で走らなかったとき、
-#    止められていたときに付く）
-#   EXIT: <ジョブの終了コード>
-# 終了コードはジョブの終了コード。
+#    止められていたときに付く。state=<終わったときの State>）
+#   EXIT: <終了コード>（COMPLETED 以外で終わったときは、後ろに (State=<State>) を付ける）
+# 終了コードはジョブの終了コード。ジョブが COMPLETED でなく（CANCELLED、TIMEOUT など）、sbatch が 0 を返したときは 1。
+# 終わった時間と State は sacct から読む。記録が slurmdbd に届くまで SLURM_RUN_SACCT_TRIES 回（既定 10）、
+# SLURM_RUN_SACCT_INTERVAL 秒（既定 1）おきに待ち、読めなければ警告して TIME 行を出さない。
 
 set -euo pipefail
 
@@ -251,45 +253,71 @@ fi
 
 status=0
 wait "$pid" || status=$?
-# 終わった直後なら、slurmctld がジョブを覚えている（MinJobAge の間）。見積もりと実際の時間を
-# ログの末尾に書き足し、tail で一緒に見せる。ここで失敗しても、ジョブの終了コードは返す。
-# RunTime と TimeLimit は scontrol が隣り合わせに出す。後ろの行の Comment や WorkDir は利用者が
-# 決める値なので、.* でまたいで拾わない
-if ! info=$(scontrol show job "$job"); then
-  echo "WARN: ジョブ $job の実際の時間を scontrol から読めなかった" >&2
-elif [[ $info =~ RunTime=([^ ]+)\ TimeLimit=([^ ]+) ]]; then
-  time_line="TIME: job=$job elapsed=${BASH_REMATCH[1]} estimate=${BASH_REMATCH[2]}"
+# 終わったジョブの記録（終了の State、実際の時間、見積もり、パーティション、止められていた時間）は sacct から読む。
+# scontrol は slurmctld が覚えている MinJobAge（300 秒）の間しか読めない。slurmctld から slurmdbd へ記録が届くまで
+# 遅れがあり、その間は sacct が空か RUNNING などを返すので、終わりの State が見えるまで待つ。-X は割り当ての行だけ
+# （バッチのステップを除く）。ここで失敗しても、ジョブの終了コードは返す
+tries=${SLURM_RUN_SACCT_TRIES:-10}
+interval=${SLURM_RUN_SACCT_INTERVAL:-1}
+record=""
+for ((attempt = 1; attempt <= tries; attempt++)); do
+  if row=$(sacct -j "$job" -X -n -P -o Elapsed,Timelimit,Partition,Suspended,State 2>/dev/null) && [[ -n $row ]]; then
+    case "${row##*|}" in
+      PENDING | RUNNING | SUSPENDED | COMPLETING | REQUEUED | RESIZING | REQUEUE_HOLD | REQUEUE_FED) ;;
+      *)
+        record=$row
+        break
+        ;;
+    esac
+  fi
+  ((attempt == tries)) || sleep "$interval"
+done
+
+state=""
+if [[ -z $record ]]; then
+  echo "WARN: ジョブ $job の記録が sacct から読めなかった（$tries 回。実際の時間と終了の State を確かめられない）" >&2
+else
+  IFS='|' read -r elapsed limit partition suspended state <<<"$record"
+  # sbatch --wait は、scancel で取り消したジョブでも 0 を返しうる。COMPLETED 以外（CANCELLED、TIMEOUT、NODE_FAIL など）で
+  # 終わったジョブは失敗として扱い、&& の次を実行しない。State は「CANCELLED by 1000」のように後ろが付くので最初の語で見る
+  state=${state%% *}
+  if [[ $state != COMPLETED && $status -eq 0 ]]; then
+    status=1
+  fi
+  time_line="TIME: job=$job elapsed=$elapsed estimate=$limit"
   if $shared; then
     time_line+=" shared (-c $cpus): 時間は当てにならない"
   fi
   # 止められたかによらず付ける。止められなかったジョブも、割り込まれうる条件で走った値で、付け忘れた --timed を見分けるため。
   # flag でなく実際に走ったパーティションで決める（SBATCH_PARTITION などで変わりうる。slurm-history.sh も jobcomp の
-  # Partition で決める）。前に出る欄は固定の欄と JobName だけなので、最初の「空白 + Partition=」が本物の欄
-  if [[ ! $info =~ [[:space:]]Partition=([^[:space:]]+) ]]; then
-    echo "WARN: ジョブ $job の scontrol の出力に Partition が見つからず、割り込まれうるかを確かめられなかった" >&2
+  # Partition で決める）
+  if [[ -z $partition ]]; then
+    echo "WARN: ジョブ $job の sacct の記録に Partition が無く、割り込まれうるかを確かめられなかった" >&2
     time_line+=" partition=unknown: 割り込まれうるかを確かめられないので時間は記録に使わない"
-  elif [[ ${BASH_REMATCH[1]} != timed ]]; then
+  elif [[ $partition != timed ]]; then
     time_line+=" preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
   fi
   # timed のジョブは割り込まれないので、この印が付けば設定か運用（scontrol suspend）の誤り。
-  # RunTime は止められていた時間を除くが、再開後のキャッシュの冷えや、プログラムが自分で測る経過時間は残る。
-  # SuspendTime は一度も止められていなければ None。前に出る欄は固定の欄と JobName（slurm-run.sh は空白を
-  # 許さない）だけなので、最初の「空白 + SuspendTime=」が本物の欄で、後ろの Comment などの値は拾わない
-  if [[ ! $info =~ [[:space:]]SuspendTime=([^[:space:]]+) ]]; then
-    echo "WARN: ジョブ $job の scontrol の出力に SuspendTime が見つからず、止められていたかを確かめられなかった（sacct の Suspended で確かめる）" >&2
+  # Suspended は止められていた時間で、一度も止められていなければ 00:00:00。Elapsed は止められていた時間を含み
+  # （RunTime と違う）、再開後のキャッシュの冷えやプログラムが自分で測る経過時間も残るので、止められていれば当てにならない
+  if [[ -z $suspended ]]; then
+    echo "WARN: ジョブ $job の sacct の記録に Suspended が無く、止められていたかを確かめられなかった" >&2
     time_line+=" suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
-  elif [[ ${BASH_REMATCH[1]} != None ]]; then
+  elif [[ ! $suspended =~ ^[0:]*$ ]]; then
     time_line+=" suspended: 止められていたので時間は当てにならない"
   fi
-  # 目的は利用者の書く文なので、印のあとの末尾に置く
+  time_line+=" state=$state"
+  # 目的は利用者の書く文なので、末尾に置く
   time_line+=" class=$class ref=$ref purpose=$purpose"
   echo "$time_line" >>"$log" || {
     echo "WARN: ジョブ $job の実際の時間をログに書き足せなかった: $log" >&2
     echo "$time_line"
   }
-else
-  echo "WARN: ジョブ $job の scontrol の出力に RunTime と TimeLimit が見つからなかった" >&2
 fi
 tail -n 20 "$log" 2>/dev/null || true
-echo "EXIT: $status"
+if [[ -n $state && $state != COMPLETED ]]; then
+  echo "EXIT: $status (State=$state)"
+else
+  echo "EXIT: $status"
+fi
 exit "$status"
