@@ -120,6 +120,12 @@ pub(super) fn file_path(value: &str, arg: &Arg, vars: &Vars) -> Result<String, U
     }
 }
 
+/// 区切りをクォートしないヒアドキュメントの本文をシェルが展開するか。`$` とバッククォートの展開に加えて、
+/// `\` は後ろの `$` `` ` `` `\` を残して `\` を除き、`\` と改行は除いて行をつなぐ（件名が変わりうる）
+pub(super) fn heredoc_expands(body: &str) -> bool {
+    body.contains(['$', '`', '\\'])
+}
+
 /// 値を書いたままの文字列にする。ヒアドキュメントを `$(cat <<…)` で渡した形（`-m "$(cat <<'EOF' … EOF)"`）は
 /// 本文を取り出す。単引用符で書いた値と、区切りをクォートしたヒアドキュメントは展開されない。ほかで `$` や
 /// バッククォートを含むもの（単引用符に `"$X"` が続く値を含む）は、シェルが展開した後の値が分からない
@@ -132,7 +138,7 @@ pub(super) fn literal(value: &str, arg: &Arg, option: &'static str) -> Result<St
         return Ok(value.to_string());
     }
     if let Some((body, quoted)) = heredoc_body(value) {
-        return if quoted || !expands(&body) {
+        return if quoted || !heredoc_expands(&body) {
             Ok(body)
         } else {
             Err(Undecided::Expanded(option))
@@ -620,6 +626,18 @@ exit 0
         assert_eq!(
             message("git merge -m \"$(cat <<EOF\nMerge: a\n\n本文\nEOF\n)\" feat/a"),
             Ok(Some("Merge: a\n\n本文".to_string()))
+        );
+    }
+
+    #[test]
+    fn message_from_unquoted_heredoc_with_backslash_is_undecided() {
+        assert_eq!(
+            message("git merge -m \"$(cat <<EOF\nMerge: a \\\nb\nEOF\n)\" feat/a"),
+            Err(Undecided::Expanded("-m"))
+        );
+        assert_eq!(
+            message("git merge -m \"$(cat <<'EOF'\nMerge: a \\\nb\nEOF\n)\" feat/a"),
+            Ok(Some("Merge: a \\\nb".to_string()))
         );
     }
 

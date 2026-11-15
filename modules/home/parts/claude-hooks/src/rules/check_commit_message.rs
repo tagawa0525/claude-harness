@@ -16,8 +16,8 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{
-    JA_TERMS, Undecided, Vars, commit_msg_skips, earlier_writer_reason, file_path, ja_terms,
-    literal,
+    JA_TERMS, Undecided, Vars, commit_msg_skips, earlier_writer_reason, file_path, heredoc_expands,
+    ja_terms, literal,
 };
 use crate::git;
 use crate::git_args::{Item, items_with_values};
@@ -90,7 +90,7 @@ fn build(form: &Form, cmd: &Cmd, dir: &Path, vars: &Vars) -> Result<String, Unkn
             let path = file_path(value, arg, vars).map_err(Unknown::Value)?;
             if is_stdin(&path) {
                 let heredoc = cmd.stdin_heredoc.as_ref().ok_or(Unknown::Stdin)?;
-                if !heredoc.quoted && heredoc.body.contains(['$', '`']) {
+                if !heredoc.quoted && heredoc_expands(&heredoc.body) {
                     return Err(Unknown::Value(Undecided::Expanded("-F -")));
                 }
                 heredoc.body.clone()
@@ -463,7 +463,6 @@ exit 0
     }
 
     #[test]
-    #[ignore = "RED: クォートしない区切りのヒアドキュメントの \\ を展開とみなさない"]
     fn message_from_unquoted_heredoc_with_backslash_is_undecided() {
         // bash は区切りをクォートしないヒアドキュメントで、`\` と改行を除いて 1 行につなぐ（件名が変わる）
         assert_eq!(
