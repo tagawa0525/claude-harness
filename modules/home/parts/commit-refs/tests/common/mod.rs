@@ -8,6 +8,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+const FIXED_DATE: &str = "1700000000 +0000";
+
 /// テストで作る一時的なリポジトリ。落ちたときも含めて、片付けで消す。
 pub struct TempRepo {
     pub dir: PathBuf,
@@ -68,6 +70,10 @@ impl TempRepo {
             .arg(format!("core.hooksPath={}", hooks.display()))
             .args(args);
         isolate(&mut command);
+        // コミットの日時を決めて、hash を実行の時刻に依らず内容だけで決める。日時を決めたいテストは `env` で上書きする
+        command
+            .env("GIT_AUTHOR_DATE", FIXED_DATE)
+            .env("GIT_COMMITTER_DATE", FIXED_DATE);
         command.envs(env.iter().copied());
         let output = command.output().unwrap();
         assert!(
