@@ -1993,6 +1993,40 @@ fn renumber_without_a_common_ancestor_finds_references_and_file_links() {
     assert_eq!(t.read("links.md"), "[a](docs/adr/0005-use-a.md)\n");
 }
 
+/// 基準の無い renumber を、`GIT_TRACE` を付けた git で実行する（git grep の標準エラーに trace が出る）
+#[cfg(unix)]
+#[test]
+fn renumber_without_a_common_ancestor_ignores_git_diagnostics_on_stderr() {
+    let t = TempRepo::new("no-ancestor-trace");
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write("notes.md", "ADR-0001 を見る\n");
+    t.commit_all("docs(adr): a");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
+    command.current_dir(&t.dir).args(["renumber", "1", "5"]);
+    isolate(&mut command);
+    command.env("GIT_TRACE", "1");
+    let out = command.output().unwrap();
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
+}
+
+/// assume-unchanged のエントリーは、git grep が index のブロブを読むので、作業ツリーだけにある旧番号を見落とす。
+/// skip-worktree は git add が受け付けない（sparse-checkout の外）ので対象にしない
+#[test]
+fn renumber_without_a_common_ancestor_rewrites_assume_unchanged_files() {
+    let t = TempRepo::new("no-ancestor-assume-unchanged");
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write("notes.md", "nothing\n");
+    t.commit_all("docs(adr): a");
+    t.git(&["update-index", "--assume-unchanged", "notes.md"]);
+    t.write("notes.md", "ADR-0001 を見る\n");
+    let out = t.run(&["renumber", "1", "5"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
+}
+
 // 読めないファイルを mode 000 で作る。Windows の権限は mode で表せない
 #[cfg(unix)]
 #[test]
@@ -2001,14 +2035,25 @@ fn renumber_without_a_common_ancestor_stops_when_a_mentioning_file_cannot_be_rea
     t.git(&["checkout", "-q", "--orphan", "lone"]);
     t.run(&["new", "use-a", "a を使う"]);
     t.write("notes.md", "ADR-0001 を見る\n");
+    // index より十分前の更新時刻で入れ、git が中身を読み直さずに（racy-git の確認なしに）変更なしと判断できるようにする
+    let notes = t.dir.join("notes.md");
+    fs::File::options()
+        .write(true)
+        .open(&notes)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
     t.commit_all("docs(adr): a");
     t.git(&["config", "core.fileMode", "false"]);
     t.git(&["config", "core.trustctime", "false"]);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    t.git(&["update-index", "-q", "--really-refresh"]);
     use std::os::unix::fs::PermissionsExt;
-    let notes = t.dir.join("notes.md");
     fs::set_permissions(&notes, fs::Permissions::from_mode(0o000)).unwrap();
+    // root は mode 000 のファイルも読めるので、この状況を作れない（Podman のコンテナなど）
+    if fs::File::open(&notes).is_ok() {
+        fs::set_permissions(&notes, fs::Permissions::from_mode(0o644)).unwrap();
+        eprintln!("skipped: mode 000 のファイルを読めてしまう（root で実行している）");
+        return;
+    }
     let out = t.run(&["renumber", "1", "5"]);
     fs::set_permissions(&notes, fs::Permissions::from_mode(0o644)).unwrap();
     assert!(!out.status.success(), "{}", stdout(&out));
