@@ -34,12 +34,12 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use design_records::check::{
-    Finding, Severity, added_amends, body_changed, check, check_issue_numbers, check_reservations,
-    confirmation_paths, decision_changed_without_change_item,
+    Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_numbers,
+    check_reservations, confirmation_paths, decision_changed_without_change_item,
 };
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
-    numbers_in,
+    numbers_in, record_name,
 };
 
 use git::{Result, default_branch, git, git_ok, has_origin, repo_root, reservations, tracked};
@@ -185,6 +185,17 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
 
     let mut found = check(&adrs, issues.as_ref(), &scanned);
     found.extend(check_issue_numbers(&issue_paths));
+    let mut issue_texts = BTreeMap::new();
+    for path in issue_paths
+        .iter()
+        .filter(|p| record_name(Kind::Issue, p).is_some())
+    {
+        // 追跡していても消した作業ツリーのファイルは読めない。形は見られないので飛ばす
+        if let Ok(text) = fs::read_to_string(root.join(path)) {
+            issue_texts.insert(path.clone(), text);
+        }
+    }
+    found.extend(check_issue_format(&issue_texts));
     let origin = has_origin(&root)?;
     for (kind, paths) in [(Kind::Adr, &adr_paths), (Kind::Issue, &issue_paths)] {
         if let Some(reserved) = reserved.get(&kind) {
