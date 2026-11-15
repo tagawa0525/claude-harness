@@ -15,12 +15,13 @@ use crate::unwrap::basename;
 pub struct RequirePipefail;
 
 /// `set -o pipefail`、`set -eo pipefail`、`bash -o pipefail` のように、シェルのオプションとして書かれているか。
-/// コメントや引数の中の語は数えない
+/// 語がシェルのオプションの位置にあるかだけを見る。コメント（`# set -o pipefail`）や `echo "set -o pipefail"` の
+/// 文字列の中の同じ形は、シェルのオプションと区別せず通す（ADR-0042: 普通に書く形だけを止める）
 fn sets_pipefail(command: &str) -> bool {
     static CELL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     CELL.get_or_init(|| {
         regex::Regex::new(
-            r#"(^|[\s;&|(){`'"])(set|bash|sh|zsh)\s+(-\S+\s+)*-[A-Za-z]*o\s+pipefail\b"#,
+            r#"(^|[\s;&|(){`'"/])(set|bash|sh|zsh)\s+(-[A-Za-z]*o\s+\S+\s+|-\S+\s+)*-[A-Za-z]*o\s+pipefail\b"#,
         )
         .expect("re")
     })

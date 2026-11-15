@@ -3504,12 +3504,10 @@ for cmd in 'set -eo pipefail; cargo test | tail' 'set -euo pipefail; cargo test 
   assert_eq allow "$(decision "$out")"
 done
 
-
 it "require-pipefail: -o <名前> を挟んだ set と、パスつきの bash でも pipefail を読む"
-if [[ -n "${RUN_RED:-}" ]]; then
-  for cmd in 'set -o errexit -o pipefail; cargo test | tail' '/bin/bash -o pipefail -c "cargo test | tail"'; do
-    out=$(run_hook require-pipefail "$cmd")
-    assert_eq allow "$(decision "$out")"
-  done
-fi
+for cmd in 'set -o errexit -o pipefail; cargo test | tail' '/bin/bash -o pipefail -c "cargo test | tail"'; do
+  out=$(run_hook require-pipefail "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 finish
