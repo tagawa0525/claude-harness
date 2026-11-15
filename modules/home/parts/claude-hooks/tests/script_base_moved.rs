@@ -165,7 +165,6 @@ fn github_clone_with_other_remote() -> Repo {
 }
 
 #[test]
-#[ignore = "RED: GitHub の clone で origin 以外のリモートの追跡ブランチを --base に渡しても WARN が出ない (#55)"]
 fn a_base_on_a_remote_other_than_origin_is_warned_as_unfetched() {
     let repo = github_clone_with_other_remote();
     let out = repo.run(&["--base", "up/main"]);
@@ -188,7 +187,6 @@ fn a_local_or_origin_base_in_a_github_clone_is_not_warned() {
 }
 
 #[test]
-#[ignore = "RED: refs/heads/<ブランチ> の形のローカルのブランチにも WARN が出る (#55)"]
 fn a_full_local_ref_is_not_warned_without_a_github_origin() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/work"]);
