@@ -1993,6 +1993,41 @@ fn renumber_without_a_common_ancestor_finds_references_and_file_links() {
     assert_eq!(t.read("links.md"), "[a](docs/adr/0005-use-a.md)\n");
 }
 
+/// 基準の無い renumber を、`GIT_TRACE` を付けた git で実行する（git grep の標準エラーに trace が出る）
+#[cfg(unix)]
+#[test]
+#[ignore = "RED: git grep の標準エラーが空でないと失敗にしている"]
+fn renumber_without_a_common_ancestor_ignores_git_diagnostics_on_stderr() {
+    let t = TempRepo::new("no-ancestor-trace");
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write("notes.md", "ADR-0001 を見る\n");
+    t.commit_all("docs(adr): a");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_design-records"));
+    command.current_dir(&t.dir).args(["renumber", "1", "5"]);
+    isolate(&mut command);
+    command.env("GIT_TRACE", "1");
+    let out = command.output().unwrap();
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
+}
+
+/// skip-worktree のエントリーは、git grep が index のブロブを読むので、作業ツリーだけにある旧番号を見落とす
+#[test]
+#[ignore = "RED: git grep は skip-worktree のファイルの index のブロブを読む"]
+fn renumber_without_a_common_ancestor_rewrites_skip_worktree_files() {
+    let t = TempRepo::new("no-ancestor-skip-worktree");
+    t.git(&["checkout", "-q", "--orphan", "lone"]);
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write("notes.md", "nothing\n");
+    t.commit_all("docs(adr): a");
+    t.git(&["update-index", "--skip-worktree", "notes.md"]);
+    t.write("notes.md", "ADR-0001 を見る\n");
+    let out = t.run(&["renumber", "1", "5"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(t.read("notes.md"), "ADR-0005 を見る\n");
+}
+
 // 読めないファイルを mode 000 で作る。Windows の権限は mode で表せない
 #[cfg(unix)]
 #[test]
