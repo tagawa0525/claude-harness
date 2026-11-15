@@ -716,6 +716,46 @@ fn section_lines<'a>(text: &'a str, titles: &[&str]) -> Vec<&'a str> {
     out
 }
 
+/// 「確認」の節（2 段目でも、決定と理由の下の 3 段目でも）の、バッククォートで囲んだ語のうち、ファイルのパスの形
+/// （空白を含まず、`/` を含むか拡張子を持つ）のもの。実在は見ない（呼び出し側が調べる）。節の見出しはコードブロックの外で探す。
+pub fn confirmation_paths(text: &str) -> Vec<String> {
+    let Ok(outside) = markdown_lines(text) else {
+        return Vec::new();
+    };
+    let mut level = 0;
+    let mut paths = Vec::new();
+    for (_, line) in outside {
+        let hashes = line.bytes().take_while(|&b| b == b'#').count();
+        if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
+            let title = line[hashes..].trim();
+            level = if CONFIRMATION_TITLES.contains(&title) {
+                hashes
+            } else if hashes <= level {
+                0
+            } else {
+                level
+            };
+        } else if level > 0 {
+            // 偶数番目の `` ` `` で区切った断片がコードスパン
+            for span in line.split('`').skip(1).step_by(2) {
+                if is_path_like(span) && !paths.iter().any(|p| p == span) {
+                    paths.push(span.to_string());
+                }
+            }
+        }
+    }
+    paths
+}
+
+const CONFIRMATION_TITLES: [&str; 2] = ["確認", "Confirmation"];
+
+fn is_path_like(span: &str) -> bool {
+    let name = span.rsplit('/').next().unwrap_or(span);
+    !span.contains(char::is_whitespace)
+        && !span.contains(['*', '<', '>', '$', '(', ':'])
+        && (span.contains('/') || name.trim_start_matches('.').contains('.'))
+}
+
 /// 決定と理由が `old`（分岐点の版）から変わったのに、`new` の「## 変更」に `old` に無い項が足されていないか。
 /// 誤字の修正など、決定の意味を変えない直しにも当たる（機械では区別できない）ので、注意に使う。項の形（日付、引用、理由）は
 /// 見ない（#65。形の検査は書き方の揺れで誤検出が多く、レビューで見る）。
@@ -1622,6 +1662,18 @@ mod tests {
                 "{heading}"
             );
         }
+    }
+
+    #[test]
+    fn confirmation_paths_are_the_path_like_code_spans_of_the_confirmation_section() {
+        let text = "# t\n\n## 背景\n\n`a/no.rs`\n\n## 決定と理由\n\n### 確認\n\n\
+                    - `src/a.rs` と `.claude/x.sh`、`cargo test`、`https://x/y`、`a/*.md`\n\
+                    - `Cargo.toml` と `src/a.rs`\n\n### 帰結\n\n`out/side.rs`\n\n\
+                    ## Confirmation\n\n`b/c.rs`\n\n```\n## 補足\n```\n`d/e.rs`\n\n## 補足\n\n`f/g.rs`\n";
+        assert_eq!(
+            confirmation_paths(text),
+            ["src/a.rs", ".claude/x.sh", "Cargo.toml", "b/c.rs", "d/e.rs"]
+        );
     }
 
     #[test]

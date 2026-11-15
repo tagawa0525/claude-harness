@@ -620,7 +620,6 @@ fn confirmed_topic(name: &str, later: impl Fn(&TempRepo)) -> TempRepo {
 }
 
 #[test]
-#[ignore = "RED: check does not read the files named in the confirmation section"]
 fn check_warns_when_a_file_named_in_the_confirmation_changed_after_the_adr() {
     let t = confirmed_topic("stale-confirmation", |t| {
         t.write("src/impl.sh", "echo 2\n");
@@ -633,6 +632,22 @@ fn check_warns_when_a_file_named_in_the_confirmation_changed_after_the_adr() {
         "docs/adr/0001-use-a.md: warning: `src/impl.sh`, named in the confirmation section, \
          changed in a later commit than the ADR; check that the decision, consequences and \
          confirmation still match it\n"
+    );
+}
+
+#[test]
+fn check_changed_shows_the_stale_confirmation_only_for_the_given_adr() {
+    let t = confirmed_topic("stale-changed", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+    });
+    let out = t.run(&["check", "--changed"]);
+    assert_eq!(stdout(&out), "");
+    let out = t.run(&["check", "--changed", "docs/adr/0001-use-a.md"]);
+    assert!(
+        stdout(&out).contains("`src/impl.sh`, named in the confirmation"),
+        "{}",
+        stdout(&out)
     );
 }
 
