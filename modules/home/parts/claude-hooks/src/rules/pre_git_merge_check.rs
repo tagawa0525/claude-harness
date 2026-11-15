@@ -346,6 +346,21 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: requires items that are not ADR-NNNN link ADRs"]
+    fn malformed_requires_items_do_not_link() {
+        for bad in ["ADR-2", "ADR-00002", "ADR-+002", "ADR-０００２"] {
+            let three = format!("---\nrequires: [{bad}]\n---\n");
+            assert!(
+                !linked(
+                    &[(ADR_2, "---\nrequires: []\n---\n"), (ADR_3, &three)],
+                    &[ADR_2, ADR_3]
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn requires_outside_the_branch_or_unreadable_adrs_do_not_link() {
         let on1 = "---\nrequires: [ADR-0001]\n---\n";
         assert!(!linked(&[(ADR_2, on1), (ADR_3, on1)], &[ADR_2, ADR_3]));

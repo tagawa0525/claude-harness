@@ -313,6 +313,11 @@ fn split_repo(r: &str) -> (&str, &str) {
     (owner, name)
 }
 
+/// ファイルの中身を `ref` 時点で読む contents API の endpoint
+fn contents_endpoint(owner: &str, name: &str, path: &str, git_ref: &str) -> String {
+    format!("repos/{owner}/{name}/contents/{path}?ref={git_ref}")
+}
+
 /// PR の base ブランチの今の先頭（GitHub の値）
 fn base_tip(dir: &std::path::Path, owner: &str, name: &str, base_ref: &str) -> Option<String> {
     if base_ref.is_empty() {
@@ -1035,9 +1040,7 @@ impl Rule for PreMergeCheck {
                                     &dir,
                                     &[
                                         "api",
-                                        &format!(
-                                            "repos/{owner}/{name}/contents/{path}?ref={head_sha}"
-                                        ),
+                                        &contents_endpoint(&owner, &name, path, &head_sha),
                                         "-H",
                                         "Accept: application/vnd.github.raw",
                                     ],
@@ -1113,6 +1116,15 @@ mod tests {
             .commands()
             .to_vec();
         assert_eq!(pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()), None);
+    }
+
+    #[test]
+    #[ignore = "RED: the path is not URL-encoded"]
+    fn contents_endpoint_encodes_each_path_segment() {
+        assert_eq!(
+            contents_endpoint("o", "r", "docs/adr/0002-a b#c?.md", "abc"),
+            "repos/o/r/contents/docs/adr/0002-a%20b%23c%3F.md?ref=abc"
+        );
     }
 
     #[test]
