@@ -479,6 +479,34 @@ fn check_counts_only_tracked_issues() {
     );
 }
 
+#[test]
+#[ignore = "RED: check does not look at the format of docs/issues files yet"]
+fn check_warns_about_the_format_of_issues_with_front_matter() {
+    let t = TempRepo::new("issue-format");
+    let good = "---\nstatus: closed\nresolution: done\n---\n\n# ok\n\n## 問題\n\nx\n\n## 完了の条件\n\n- [x] y\n";
+    t.write("docs/issues/0001-good.md", good);
+    t.write(
+        "docs/issues/0002-bad.md",
+        "---\nstatus: closed\n---\n\n# bad\n\n## 問題\n\nx\n",
+    );
+    t.write(
+        "docs/issues/0003-state.md",
+        "---\nstatus: wip\n---\n\n## 問題\n\n## 完了の条件\n",
+    );
+    // フロントマターの無い issue は、別の形で書くリポジトリのものとして見ない
+    t.write("docs/issues/0004-plain.md", "# plain\n");
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        "docs/issues/0002-bad.md: warning: a closed issue needs `resolution` \
+         (done | wontfix | by-design | external | cannot-reproduce | duplicate | obsolete)\n\
+         docs/issues/0002-bad.md: warning: no section `完了の条件`\n\
+         docs/issues/0003-state.md: warning: `status` must be open or closed\n"
+    );
+}
+
 /// ADR-0001 を ADR-0002 で置き換えた main
 fn superseded_repo(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
