@@ -2505,6 +2505,28 @@ assert_contains "$(reason "$out")" "trial1.out"
 assert_contains "$(reason "$out")" "コミット"
 assert_contains "$(reason "$out")" ".gitignore"
 
+it "タグの指定でも、3 つのマージのルールが確かめる。同じコミットを指す worktree が複数あれば全部を検査する"
+# RED: 実装までは RUN_RED=1 のときだけ流す
+if [[ -n "${RUN_RED:-}" ]]; then
+  git tag tag-behind feat/behind
+  out=$(run_hook guard-git-merge "git merge --no-ff tag-behind -m 'Merge: x'")
+  assert_eq deny "$(decision "$out")"
+  git tag tag-two feat/two
+  out=$(run_hook pre-git-merge-check "git merge --no-ff tag-two -m 'Merge: x'")
+  assert_eq deny "$(decision "$out")"
+  out=$(run_hook check-merge-review "git merge --no-ff tag-two -m 'Merge: x'")
+  assert_eq deny "$(decision "$out")"
+  git worktree add -q -b feat/wt2 "$TEST_ROOT/mergeshape-wt2" feat/wt
+  echo changed >"$TEST_ROOT/mergeshape-wt2/wt.txt"
+  git -C "$TEST_ROOT/mergeshape-wt" stash -q 2>/dev/null
+  out=$(run_hook guard-git-merge "git merge --no-ff $(git rev-parse feat/wt) -m 'Merge: wt'")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "mergeshape-wt2"
+  git -C "$TEST_ROOT/mergeshape-wt2" checkout -q -- wt.txt
+  git worktree remove --force "$TEST_ROOT/mergeshape-wt2"; git branch -q -D feat/wt2
+  git tag -d tag-behind tag-two >/dev/null
+fi
+
 it "guard-git-merge: コミットの指定（SHA、feat/wt^0）でも、対象の worktree の未コミットの変更があれば deny"
 echo changed >"$TEST_ROOT/mergeshape-wt/wt.txt"
 for target in "$(git rev-parse feat/wt)" 'feat/wt^0'; do
