@@ -151,10 +151,24 @@ out=$(run_hook pre-pr-create-check "$GOOD_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "git push"
 assert_contains "$(reason "$out")" "別の呼び出し"
-out=$(run_hook pre-pr-create-check "git push -u origin HEAD && $GOOD_CMD")
-assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "別の呼び出し"
 git -C "$REPO" switch -q feat/x
+
+it "pre-pr-create: 同じ連結コマンドで先に git push していれば、上流と未プッシュを見ない"
+# RED: 実装するまで RUN_RED=1 のときだけ実行する
+if [[ -n "${RUN_RED:-}" ]]; then
+  git -C "$REPO" switch -q feat/no-upstream
+  out=$(run_hook pre-pr-create-check "git push -u origin HEAD && $GOOD_CMD")
+  assert_eq allow "$(decision "$out")"
+  out=$(run_hook pre-pr-create-check "git push && $GOOD_CMD")
+  assert_eq allow "$(decision "$out")"
+  # push が gh pr create の後ろなら、前の状態のまま止める
+  out=$(run_hook pre-pr-create-check "$GOOD_CMD && git push -u origin HEAD")
+  assert_eq deny "$(decision "$out")"
+  # 本文などの検査は push があっても残る
+  out=$(run_hook pre-pr-create-check "git push -u origin HEAD && gh pr create --body x")
+  assert_eq deny "$(decision "$out")"
+  git -C "$REPO" switch -q feat/x
+fi
 
 it "pre-pr-create: --head 指定時は現在ブランチの push 状態を見ない"
 git -C "$REPO" switch -q feat/no-upstream
