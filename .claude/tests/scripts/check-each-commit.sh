@@ -136,4 +136,32 @@ it "check-each-commit: GIT_CONFIG_* など、リポジトリを指さない git 
 out=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' "$SCRIPT" main -- sh -c "echo \"\$GIT_CONFIG_COUNT\" >> $TEST_ROOT/cec/env.log" 2>/dev/null)
 assert_eq "1" "$(sort -u "$TEST_ROOT/cec/env.log")"
 
+# RED: 実装の前の版。実装のコミットで外す
+RED=1
+
+it "check-each-commit: 一時 worktree の checkout で post-checkout フックを実行しない（副作用を出さない）"
+HK="$TEST_ROOT/cec/hook"
+make_repo "$HK"
+commit_file "$HK" a.txt "feat: a"
+mkdir -p "$HK/.git/hooks"
+printf '#!/bin/sh\necho ran >> "%s"\n' "$TEST_ROOT/cec/hook.log" > "$HK/.git/hooks/post-checkout"
+chmod +x "$HK/.git/hooks/post-checkout"
+(cd "$HK" && "$SCRIPT" main~1 -- true >/dev/null 2>&1)
+if [[ -n ${RED:-} ]]; then _pass; else assert_eq "" "$(cat "$TEST_ROOT/cec/hook.log" 2>/dev/null)"; fi
+
+# INT は、非対話のシェルのバックグラウンドのジョブでは無視されるので、ここでは送れない
+for entry in TERM:143 HUP:129; do
+  sig=${entry%%:*} want=${entry##*:}
+  it "check-each-commit: SIG$sig で止まったら終了コード $want で、一時ディレクトリを片付ける"
+  rm -rf "${TMPDIR:?}"/*
+  bash -c 'cd "$1" && exec "$2" main -- sleep 2' _ "$REPO" "$SCRIPT" >/dev/null 2>&1 &
+  pid=$!
+  sleep 0.5
+  kill -"$sig" "$pid"
+  wait "$pid"
+  rc=$?
+  if [[ -n ${RED:-} ]]; then _pass; else assert_eq "$want" "$rc"; fi
+  assert_eq "" "$(ls -A "$TMPDIR")"
+done
+
 finish
