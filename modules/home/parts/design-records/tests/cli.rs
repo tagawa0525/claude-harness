@@ -490,7 +490,7 @@ fn check_warns_about_the_format_of_issues_with_front_matter() {
     );
     t.write(
         "docs/issues/0003-state.md",
-        "---\nstatus: wip\n---\n\n## 問題\n\n## 完了の条件\n",
+        "---\nstatus: wip\n---\n\n## 問題\n\n## 完了の条件\n\n- [ ] y\n",
     );
     // フロントマターの無い issue は、別の形で書くリポジトリのものとして見ない
     t.write("docs/issues/0004-plain.md", "# plain\n");
@@ -507,7 +507,6 @@ fn check_warns_about_the_format_of_issues_with_front_matter() {
 }
 
 #[test]
-#[ignore = "RED: check only looks for the heading of 完了の条件, not a checklist"]
 fn check_warns_when_the_conditions_section_has_no_checklist() {
     let t = TempRepo::new("issue-checklist");
     t.write(

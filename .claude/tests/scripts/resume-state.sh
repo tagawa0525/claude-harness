@@ -30,11 +30,9 @@ assert_not_contains "$out" "0001-b.md"
 
 it "resume-state: origin が無ければ PR の節は理由を出して止まらない"
 assert_contains "$out" "== prs"
-assert_contains "$out" "(なし: gh か origin が無い)"
+assert_contains "$out" "(なし: gh か GitHub の remote が無い)"
 assert_contains "$out" "== slurm"
 
-# RED: 実装まで RED=1 のときだけ実行する
-if [[ -n "${RED:-}" ]]; then
 it "resume-state: 引用符つきの status: \"open\" の issue も出す"
 printf -- '---\nstatus: "open"\n---\n\n# q\n' > docs/issues/0003-q.md
 out=$("$SCRIPT")
@@ -45,6 +43,5 @@ git remote add upstream https://github.com/example/app.git
 make_fake_gh '  "pr list"*) echo "fake-pr-listed" ;;'
 out=$(PATH="$(minimal_path)" "$SCRIPT")
 assert_contains "$out" "fake-pr-listed"
-fi
 
 finish

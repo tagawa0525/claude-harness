@@ -222,7 +222,10 @@ pub const ISSUE_RESOLUTIONS: [&str; 7] = [
 ];
 
 /// issue の必須の節（`## ` の見出し）。
-pub const ISSUE_SECTIONS: [&str; 2] = ["問題", "完了の条件"];
+pub const ISSUE_SECTIONS: [&str; 2] = ["問題", CHECKLIST_SECTION];
+
+/// チェックボックスの一覧を求める節。
+const CHECKLIST_SECTION: &str = "完了の条件";
 
 /// `issues`（docs/issues のパスと中身）のうち、フロントマターを持つものの形（`status`、閉じたときの `resolution`、
 /// 必須の節）。フロントマターを持たない issue は、別の形で書くリポジトリのものとして見ない（ADR-0018）。形の違いは、
@@ -269,11 +272,29 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
             continue;
         };
         for section in ISSUE_SECTIONS {
-            if !lines
+            let Some(start) = lines
                 .iter()
-                .any(|(_, l)| l.strip_prefix("## ").is_some_and(|h| h.trim() == section))
-            {
+                .position(|(_, l)| l.strip_prefix("## ").is_some_and(|h| h.trim() == section))
+            else {
                 out.warning(path, None, format!("no section `{section}`"));
+                continue;
+            };
+            if section == CHECKLIST_SECTION {
+                let has_item = lines[start + 1..]
+                    .iter()
+                    .take_while(|(_, l)| !l.starts_with("## "))
+                    .any(|(_, l)| {
+                        ["- [ ]", "- [x]", "- [X]"]
+                            .iter()
+                            .any(|mark| l.trim_start().starts_with(mark))
+                    });
+                if !has_item {
+                    out.warning(
+                        path,
+                        None,
+                        format!("section `{section}` has no checklist item (`- [ ]` or `- [x]`)"),
+                    );
+                }
             }
         }
     }

@@ -5,7 +5,7 @@
 #
 # 出力（節ごとに `== <名前>` の見出し。集められないものは `(なし)` か理由の 1 行。失敗では止めない）:
 #   == worktrees   <パス> <ブランチ> [dirty] [session=<Claude-Session>]（先端のコミットの trailer、無ければ省く）
-#   == prs         gh pr list の開いている PR（GitHub のリモートと gh があるときだけ）
+#   == prs         gh pr list の開いている PR（GitHub の URL を持つ remote と gh があるときだけ）
 #   == slurm       squeue の自分のジョブ
 #   == issues      docs/issues の status: open の issue（blocked-by があれば添える）
 #
@@ -25,11 +25,12 @@ git worktree list --porcelain | awk '
 done
 
 echo "== prs"
-if command -v gh >/dev/null 2>&1 && git remote get-url origin >/dev/null 2>&1; then
+# remote の名前は問わず、GitHub の URL を持つ remote があるときだけ集める
+if command -v gh >/dev/null 2>&1 && git remote -v | grep -q 'github\.com'; then
   gh pr list --state open --json number,title,headRefName \
     --template '{{range .}}#{{.number}} {{.headRefName}} {{.title}}{{"\n"}}{{end}}' 2>&1 || echo "(gh pr list に失敗)"
 else
-  echo "(なし: gh か origin が無い)"
+  echo "(なし: gh か GitHub の remote が無い)"
 fi
 
 echo "== slurm"
@@ -46,7 +47,7 @@ for f in "$root"/docs/issues/*.md; do
   [ -f "$f" ] || continue
   # 先頭のフロントマター（最初の --- から次の ---）だけを読む
   front=$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } NR > 1 { print }' "$f")
-  echo "$front" | grep -q '^status: open$' || continue
+  echo "$front" | grep -Eq '^status: *"?open"?$' || continue
   line="docs/issues/$(basename "$f")"
   blocked=$(echo "$front" | sed -n 's/^blocked-by: *//p')
   [ -n "$blocked" ] && [ "$blocked" != "[]" ] && line="$line blocked-by=$blocked"
