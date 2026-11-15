@@ -99,7 +99,7 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 （プロセス置換 `<(git show …)` は Windows のネイティブの exe が `/dev/fd/N` を開けない見込みなので使わない）。
 
 ```bash
-cd <worktree> && old=$(mktemp -d) && git show <base>:<パス> > "$old/1.md" && ~/.claude/scripts/kept-sentences.sh --old "$old"/*.md --new <パス>…
+cd <worktree> && old=$(mktemp -d) && trap 'rm -rf "$old"' EXIT && git show <base>:<パス> > "$old/1.md" && ~/.claude/scripts/kept-sentences.sh --old "$old"/*.md --new <パス>…
 ```
 
 縮める前の版が複数のファイルなら `2.md`、`3.md` と書き出す。文を別のファイルに移したら移した先も `--new` に並べる。
