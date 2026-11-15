@@ -435,10 +435,22 @@ fn move_record(
     number: u32,
     added: Option<&BTreeMap<String, BTreeSet<usize>>>,
 ) -> Result<()> {
-    let listed = git(root, &["ls-files", "-z"])?;
+    // -v の先頭の 1 字は状態で、assume-unchanged（小文字）のエントリーは、git grep が
+    // index のブロブを読んで作業ツリーを読まないので、絞り込まずに必ず読む。skip-worktree（S）は git add が受け付けない（sparse-checkout の外）ので対象にしない
+    let tracked = git(root, &["ls-files", "-v", "-z"])?;
+    let mut listed = Vec::new();
+    let mut unsearched = BTreeSet::new();
+    for entry in tracked.split('\0').filter(|e| !e.is_empty()) {
+        let (tag, path) = entry.split_at(2);
+        if tag.starts_with(|c: char| c.is_ascii_lowercase()) {
+            unsearched.insert(path);
+        }
+        listed.push(path);
+    }
     // 足した行の無い（基準の無い）ときは、旧番号の参照か記録のファイル名を含むファイルだけを読む（大きな
     // リポジトリで、追跡しているファイルをすべて読まない）。git grep は見つからないと 1 で終わり、読めない
-    // ファイルは標準エラーに出すだけなので、標準エラーに何かあれば止める（参照を見落としたまま進めない）。
+    // ファイルは標準エラーに `error:` か `fatal:` で出すだけなので、その行があれば止める（参照を見落としたまま進めない）。
+    // trace や警告（GIT_TRACE、読めない attributes など）は全部読めていても出るので、止めない。
     // 色の設定でファイル名が飾られないようにし、submodule の中は探さない。テキストかは後で読んで決める
     // （-I は git がバイナリとみなす UTF-8 のファイルも外す）
     let mentions: Option<BTreeSet<String>> = match added {
@@ -463,8 +475,13 @@ fn move_record(
                 ],
             )?;
             let stderr = String::from_utf8_lossy(&found.stderr);
-            if !stderr.trim().is_empty() {
-                return Err(format!("git grep failed: {}", stderr.trim()));
+            let failures: Vec<&str> = stderr
+                .lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with("error:") || l.starts_with("fatal:"))
+                .collect();
+            if !failures.is_empty() {
+                return Err(format!("git grep failed: {}", failures.join("; ")));
             }
             match found.status.code() {
                 Some(0) => Some(
@@ -477,7 +494,8 @@ fn move_record(
                 Some(1) => Some(BTreeSet::new()),
                 _ => {
                     return Err(format!(
-                        "git grep failed: {}",
+                        "git grep failed ({}): {}",
+                        found.status,
                         String::from_utf8_lossy(&found.stderr).trim()
                     ));
                 }
@@ -485,10 +503,10 @@ fn move_record(
         }
     };
     let mut changed = Vec::new();
-    for path in listed.split('\0').filter(|p| !p.is_empty()) {
+    for path in listed {
         if mentions
             .as_ref()
-            .is_some_and(|m| path != record && !m.contains(path))
+            .is_some_and(|m| path != record && !m.contains(path) && !unsearched.contains(path))
         {
             continue;
         }
