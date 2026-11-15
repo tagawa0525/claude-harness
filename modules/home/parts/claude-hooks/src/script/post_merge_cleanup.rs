@@ -8,7 +8,7 @@
 //! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）。メインの worktree
 //!   なら消さずに、段階 2 で既定のブランチへ切り替える（未コミットの変更があるか、既定のブランチが別の worktree にあれば、
 //!   何も変えずに止まる）
-//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、pull --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE
+//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
 //! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head のときは残す）
@@ -395,7 +395,9 @@ fn update_default(default: &str) -> Result<(), i32> {
     }
     step(&["fetch", "-q", "--prune"])?;
     let before = git(&["rev-parse", "HEAD"]).unwrap_or_default();
-    step(&["pull", "-q", "--ff-only"])?;
+    // pull は FETCH_HEAD を読み、同じ clone の別の fetch が書き換えると Cannot rebase onto multiple branches で止まる。
+    // fetch の後の追跡ブランチへ進める merge は FETCH_HEAD に頼らない
+    step(&["merge", "-q", "--ff-only", "@{upstream}"])?;
     // ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup の crate。古い版の clone と、ハーネスを分ける前の
     // nixfiles は claude-sync.sh）を持ち、rebuild する構成のリポジトリ（nixfiles）は nix-rebuild.sh を持つ
     let has = |path: &str| ok(&["cat-file", "-e", &format!("HEAD:{path}")]);

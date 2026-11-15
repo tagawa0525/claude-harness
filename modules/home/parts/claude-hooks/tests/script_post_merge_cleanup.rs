@@ -233,7 +233,6 @@ fn a_main_worktree_branch_with_the_default_branch_elsewhere_stops_before_changin
 }
 
 #[test]
-#[ignore = "RED: pull は FETCH_HEAD の対象が複数だと Cannot rebase onto multiple branches で止まる（GREEN で解除）"]
 fn the_default_branch_is_updated_without_depending_on_fetch_head() {
     // pull.rebase の pull は FETCH_HEAD のマージの対象が 2 つ以上あると止まる（同じ clone の別の fetch が
     // FETCH_HEAD を書き換えたときに出た）。同じ症状を、branch.main.merge を 2 つにして作る
