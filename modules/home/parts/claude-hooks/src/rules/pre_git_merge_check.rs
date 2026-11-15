@@ -213,8 +213,8 @@ pub(super) fn local_branch_ref(dir: &Path, target: &str) -> Option<String> {
         .filter(|f| f.starts_with("refs/heads/"))
 }
 
-/// マージ元の rev。ローカルのブランチは完全な ref、ブランチ名でないコミットの指定（SHA、`feat/x^0`）は
-/// タグも指定のまま返す。リモート追跡ブランチと、解決できない名前は None。
+/// マージ元の rev。ローカルのブランチは完全な ref、ブランチ名でないコミットの指定（SHA、`feat/x^0`、タグ、`:/文字列`）は
+/// コミットの hash にして返す。リモート追跡ブランチと、解決できない名前は None。
 /// ブランチ名だけを見ると、`git merge --no-ff <SHA>` が、rebase 済みの確認、ADR の数、本文のレビューの記録の
 /// どれにも掛からない。3 つのルール（guard-git-merge、pre-git-merge-check、check-merge-review）が共有する
 pub(super) fn merge_source(dir: &Path, target: &str) -> Option<String> {
@@ -228,7 +228,10 @@ pub(super) fn merge_source(dir: &Path, target: &str) -> Option<String> {
     if is_remote {
         return None;
     }
-    commit_ish(dir, spec).map(|_| spec.to_string())
+    // 指定のままでなく hash を返す（後の `{rev}:{path}` や `A...B` の組み立てで、`:/文字列` や空白が壊れない）。
+    // 注釈つきタグはコミットに剥がす
+    commit_ish(dir, spec)
+        .and_then(|id| git::git(dir, &["rev-parse", "--verify", &format!("{id}^{{commit}}")]))
 }
 
 /// 指定（SHA、`feat/x^0`、タグ、`:/文字列`）が指すコミットの hash。コミットかタグのオブジェクトだけを認め、
