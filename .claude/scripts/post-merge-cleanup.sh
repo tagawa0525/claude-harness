@@ -3,7 +3,9 @@
 # post-merge-cleanup（Rust にして Windows でも動かす）。スキルの文はこのスクリプトの名前とパスで呼ぶので、ファイルは
 # 残して呼ぶ
 #
-# Usage: post-merge-cleanup.sh <branch>
+# Usage: post-merge-cleanup.sh <branch> [<マージの前の既定ブランチ>]
+#   第 2 引数は 2 の NOTE の差の起点。/git-merge は手元で main を進めてから呼ぶので、pull の前後だけを見ると差が空になる。
+#   渡すときは、既定ブランチの祖先のコミット（/git-merge は マージコミットの HEAD^1）。省くと pull の前の HEAD
 #
 # 順に行う（gh-pr-merge スキルの「クリーンアップ」）:
 #   -. （0 の前）cwd のリポジトリに <branch> の痕跡が無ければ、何も変えずに ERROR で止まる（別のリポジトリの
@@ -22,7 +24,7 @@
 #      何も変えずに ERROR で止まる）
 #   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートがなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
-#      merge で配置するものが変われば NOTE で知らせる。ハーネス（同期のコマンドの claude-setup か claude-sync.sh を持つ）では、modules か flake なら取り込む側の
+#      merge で配置するものが変われば NOTE で知らせる（リモートが無くても、第 2 引数があれば見る。判定の目印のファイルは、差の起点と HEAD のどちらかにあればよい）。ハーネス（同期のコマンドの claude-setup か claude-sync.sh を持つ）では、modules か flake なら取り込む側の
 #      lock の更新と rebuild、.claude なら claude-sync。rebuild する構成のリポジトリ（nix-rebuild.sh を持つ）では、
 #      modules、hosts、secrets、flake なら rebuild。両方を持つリポジトリ（自分の .claude を配り、自分で rebuild する）では、
 #      rebuild と claude-sync

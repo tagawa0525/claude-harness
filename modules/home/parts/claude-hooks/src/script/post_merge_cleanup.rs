@@ -8,7 +8,7 @@
 //! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）。メインの worktree
 //!   なら消さずに、段階 2 で既定のブランチへ切り替える（未コミットの変更があるか、既定のブランチが別の worktree にあれば、
 //!   何も変えずに止まる）
-//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE
+//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
 //! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head のときは残す）
@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-const USAGE: &str = "Usage: post-merge-cleanup.sh <branch>";
+const USAGE: &str = "Usage: post-merge-cleanup.sh <branch> [<マージの前の既定のブランチ>]";
 
 /// git を起動して出力を受ける（起動できなければ None）
 fn run(args: &[&str]) -> Option<Output> {
@@ -79,21 +79,25 @@ fn gh() -> Command {
 }
 
 pub fn main(args: &[String]) -> i32 {
-    let [branch] = args else {
-        eprintln!("{USAGE}");
-        return 1;
+    let (branch, base) = match args {
+        [branch] => (branch, None),
+        [branch, base] if !base.is_empty() => (branch, Some(base.as_str())),
+        _ => {
+            eprintln!("{USAGE}");
+            return 1;
+        }
     };
     if branch.is_empty() {
         eprintln!("{USAGE}");
         return 1;
     }
-    match cleanup(branch) {
+    match cleanup(branch, base) {
         Ok(()) => 0,
         Err(code) => code,
     }
 }
 
-fn cleanup(branch: &str) -> Result<(), i32> {
+fn cleanup(branch: &str, base: Option<&str>) -> Result<(), i32> {
     if git(&["rev-parse", "--git-dir"]).is_none() {
         eprintln!("ERROR: git リポジトリではありません");
         return Err(1);
@@ -113,6 +117,31 @@ fn cleanup(branch: &str) -> Result<(), i32> {
         eprintln!("ERROR: 既定ブランチ {default} は削除しません");
         return Err(1);
     }
+    // 何も変える前に、渡されたマージの前の既定のブランチを確かめる（NOTE の差の起点になる）
+    let before = match base {
+        None => None,
+        Some(rev) => {
+            let Some(commit) = git(&["rev-parse", "--verify", "-q", &format!("{rev}^{{commit}}")])
+            else {
+                eprintln!(
+                    "ERROR: マージの前の既定のブランチ {rev} がコミットとして解決できません。何も変えていません"
+                );
+                return Err(1);
+            };
+            if !ok(&[
+                "merge-base",
+                "--is-ancestor",
+                &commit,
+                &format!("refs/heads/{default}"),
+            ]) {
+                eprintln!(
+                    "ERROR: {rev} は {default} の祖先ではありません（マージの前の {default} を渡す）。何も変えていません"
+                );
+                return Err(1);
+            }
+            Some(commit)
+        }
+    };
     // リモートの名前はブランチを消す前に読む（branch -d で設定も消える）
     let remote = git(&["config", &format!("branch.{branch}.remote")])
         .unwrap_or_else(|| "origin".to_string());
@@ -154,7 +183,7 @@ fn cleanup(branch: &str) -> Result<(), i32> {
         None => println!("WORKTREE_REMOVED: none"),
     }
 
-    update_default(default)?;
+    update_default(default, before.as_deref())?;
     reservations()?;
 
     if ok(&[
@@ -385,25 +414,50 @@ fn merged(branch: &str, default: &str, default_root: Option<&str>) -> Result<(),
 /// 段階 2: 既定のブランチを最新にする。hook のバイナリと ~/.claude は rebuild か claude-sync で配置される。pull しただけでは
 /// 古いまま動くので知らせる（自動では実行しない。rebuild は sudo が要り、走っている別のセッションの hook も入れ替わる）。
 /// 判定は広く取る（配置するものを 1 つずつ挙げると漏れ、多めに知らせても害は無い）
-fn update_default(default: &str) -> Result<(), i32> {
+///
+/// 差の起点は、呼ぶ側が渡したマージの前の既定のブランチ（/git-merge は pull より前に手元で main を進めるので、pull の前後だけを
+/// 見ると差が空になる）。渡されなければ pull の前の HEAD（reflog から取らないのは、reflog はマージのほかの更新も含み、
+/// 期限で消え、どのエントリが今回のマージの前かを決められないため。#4）
+fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
     if git(&["branch", "--show-current"]).as_deref() != Some(default) {
         step(&["switch", "-q", default])?;
     }
+    let mut before = base
+        .map(str::to_string)
+        .or_else(|| git(&["rev-parse", "HEAD"]))
+        .unwrap_or_default();
     // リモートの無いリポジトリ（/git-merge でローカルにマージした後）では最新にする先が無い
-    if git(&["remote"]).unwrap_or_default().is_empty() {
-        return Ok(());
+    if !git(&["remote"]).unwrap_or_default().is_empty() {
+        step(&["fetch", "-q", "--prune"])?;
+        if base.is_none() {
+            before = git(&["rev-parse", "HEAD"]).unwrap_or_default();
+        }
+        // pull は FETCH_HEAD を読み、同じ clone の別の fetch が書き換えると Cannot rebase onto multiple branches で止まる。
+        // fetch の後の追跡ブランチへ進める merge は FETCH_HEAD に頼らない
+        step(&["merge", "-q", "--ff-only", "@{upstream}"])?;
     }
-    step(&["fetch", "-q", "--prune"])?;
-    let before = git(&["rev-parse", "HEAD"]).unwrap_or_default();
-    // pull は FETCH_HEAD を読み、同じ clone の別の fetch が書き換えると Cannot rebase onto multiple branches で止まる。
-    // fetch の後の追跡ブランチへ進める merge は FETCH_HEAD に頼らない
-    step(&["merge", "-q", "--ff-only", "@{upstream}"])?;
     // ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup の crate。古い版の clone と、ハーネスを分ける前の
     // nixfiles は claude-sync.sh）を持ち、rebuild する構成のリポジトリ（nixfiles）は nix-rebuild.sh を持つ
-    let has = |path: &str| ok(&["cat-file", "-e", &format!("HEAD:{path}")]);
-    let has_sync = has("modules/home/parts/claude-setup/Cargo.toml")
-        || has("modules/home/scripts/claude-sync.sh");
-    let has_rebuild = has("modules/home/scripts/nix-rebuild.sh");
+    // 目印は差の起点と HEAD のどちらかにあればよい（目印を消すコミットを取り込んでも、その変更に知らせが要る）。
+    // ls-tree は、無いときは空の出力で成功し、オブジェクトの破損などでは失敗する。後者は無いことにせず止める
+    let has = |path: &str| -> Result<bool, i32> {
+        for rev in [before.as_str(), "HEAD"] {
+            match git(&["ls-tree", "--name-only", rev, "--", path]) {
+                Some(s) if !s.is_empty() => return Ok(true),
+                Some(_) => {}
+                None => {
+                    eprintln!(
+                        "ERROR: {rev} の {path} の有無を確かめられません（git ls-tree が失敗）"
+                    );
+                    return Err(1);
+                }
+            }
+        }
+        Ok(false)
+    };
+    let has_sync = has("modules/home/parts/claude-setup/Cargo.toml")?
+        || has("modules/home/scripts/claude-sync.sh")?;
+    let has_rebuild = has("modules/home/scripts/nix-rebuild.sh")?;
     let changed = |paths: &[&str]| {
         let mut args = vec!["diff", "--name-only", before.as_str(), "HEAD", "--"];
         args.extend(paths);

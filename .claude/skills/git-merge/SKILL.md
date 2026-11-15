@@ -293,8 +293,10 @@ worktree に MERGE_HEAD が残る:
 ## 後片付け
 
 ```bash
-~/.claude/scripts/post-merge-cleanup.sh [branch]
+~/.claude/scripts/post-merge-cleanup.sh [branch] "$(git -C [DEFAULT_WORKTREE] rev-parse HEAD^1)"
 ```
+
+第 2 引数はマージの前の main（マージコミットの第 1 親。`DEFAULT_WORKTREE` が none なら今の worktree）。NOTE は、この点から後の差で判定する（渡さないと、手元で進めた main では差が空になり、知らせが出ない）。
 
 対象の worktree とブランチを削除する。未マージなら何も消さずに止まり、変更が残っていれば失敗する（確認して対処する）。cwd の
 リポジトリにブランチの痕跡（ローカルのブランチ、worktree、リモート追跡の ref、リモートのブランチ）が無ければ何も変えずに止まるので、

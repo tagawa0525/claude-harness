@@ -142,7 +142,7 @@ fn a_branch_without_any_trace_changes_nothing() {
 #[test]
 fn bad_arguments_and_the_default_branch_are_errors() {
     let repo = Repo::new();
-    for args in [&[][..], &["a", "b"][..], &[""][..]] {
+    for args in [&[][..], &["a", "b", "c"][..], &[""][..]] {
         let out = repo.run(args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         assert!(
@@ -254,4 +254,79 @@ fn the_default_branch_is_updated_without_depending_on_fetch_head() {
     let out = repo.run(&["feat/x"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(repo.git(&["rev-parse", "HEAD"]), remote_tip);
+}
+
+#[test]
+fn a_local_merge_without_a_remote_notes_the_rebuild_from_the_given_base() {
+    let repo = Repo::new();
+    // marker は before にも要るので、先に main へ入れる
+    std::fs::create_dir_all(repo.app().join("modules/home/scripts")).unwrap();
+    repo.write("modules/home/scripts/nix-rebuild.sh", "#!/bin/sh\n");
+    repo.commit("add rebuild script");
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write(
+        "modules/home/scripts/nix-rebuild.sh",
+        "#!/bin/sh\n# changed\n",
+    );
+    repo.commit("change module");
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("NOTE: rebuild が要る"),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
+fn a_base_that_is_not_an_ancestor_of_head_is_an_error() {
+    let repo = Repo::new();
+    repo.git(&["branch", "feat/x"]);
+    let out = repo.run(&["feat/x", "refs/heads/feat/nope"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("ERROR"), "{}", text(&out.stderr));
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "feat/x");
+}
+
+#[test]
+fn a_merge_that_deletes_the_rebuild_script_still_notes_the_rebuild() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.app().join("modules/home/scripts")).unwrap();
+    repo.write("modules/home/scripts/nix-rebuild.sh", "#!/bin/sh\n");
+    repo.commit("add rebuild script");
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "-c", "feat/y", "main"]);
+    repo.git(&["rm", "-q", "-r", "modules"]);
+    repo.commit("remove modules");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/y"]);
+    let out = repo.run(&["feat/y", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("NOTE: rebuild が要る"),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
+fn a_base_on_an_unrelated_branch_is_an_error_that_changes_nothing() {
+    let repo = Repo::new();
+    repo.git(&["branch", "feat/x"]);
+    repo.git(&["switch", "-q", "-c", "other"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("unrelated");
+    let unrelated = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "main"]);
+    let out = repo.run(&["feat/x", &unrelated]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("の祖先ではありません"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "feat/x");
 }
