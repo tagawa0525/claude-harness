@@ -211,6 +211,30 @@ fn does_not_write_through_tracked_symlinks() {
     assert!(stdout(&out).contains("REFS: 1\n"), "{}", stdout(&out));
 }
 
+/// core.symlinks=false の取り出しでは、symlink が行き先の文字を中身に持つ普通のファイルになる
+#[test]
+fn skips_index_symlinks_checked_out_as_regular_files() {
+    let t = TempRepo::new("symlink-config");
+    t.git(&["config", "core.symlinks", "false"]);
+    let old = t.commit_file("src.txt", "feat: measured");
+    let content = format!("{}.md", &old[..8]);
+    t.write("link.md", &content);
+    let blob = t.git(&["hash-object", "-w", "link.md"]).trim().to_string();
+    t.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("120000,{blob},link.md"),
+    ]);
+    // add -A は core.symlinks=false だと普通のファイルとして入れ直すので使わない
+    t.git(&["commit", "-q", "-m", "docs: link"]);
+    let map = t.map_file(&format!("{old} 6666666666666666666666666666666666666666\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert_eq!(t.read("link.md"), content);
+    assert!(stdout(&out).contains("REFS: 0\n"), "{}", stdout(&out));
+}
+
 #[test]
 fn reports_zero_when_there_is_nothing_to_replace() {
     let t = TempRepo::new("none");
