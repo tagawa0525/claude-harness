@@ -1191,14 +1191,14 @@ for cmd in 'git commit --no-verify -m "chore: a"' 'git commit --no-verif -m "cho
   assert_contains "$(reason "$out")" "ALLOW_NO_VERIFY=<理由>"
 done
 
-it "block-no-verify: sudo、xargs、flock、ssh、eval で包んだ git と、bash -c の文字列の中の git も見る"
+it "block-no-verify: sudo、xargs、flock、ssh、watch、eval で包んだ git と、bash -c の文字列の中の git も見る"
 for cmd in 'sudo -E git commit --no-verify -m x' 'sudo -Eu me git commit -n -m x' 'xargs -0 git commit -n -m x' \
-  'flock /tmp/l git commit --no-verify -m x' 'ssh host git commit --no-verify -m x' \
+  'flock /tmp/l git commit --no-verify -m x' 'ssh host git commit --no-verify -m x' 'watch git commit -n -m x' \
   'eval "git commit --no-verify -m x"' 'eval git commit -n -m x' "bash -c 'git commit --no-verify -m x'" \
   "bash -x -c 'git commit -n -m x'" "sh -c 'CLAUDECODE=0 git commit -m x'" "bash -c 'CLAUDECODE=0; git commit -m x'" \
   "bash -c 'unset CLAUDECODE; git commit -m x'" "env -u CLAUDECODE bash -c 'git commit -m x'" \
   "bash -c 'git -c core.hooksPath=/x commit -m x'" 'sudo -E GIT_CONFIG_COUNT=1 git commit -m x' \
-  'flock /tmp/l -c "git commit -n -m x"'; do
+  'flock /tmp/l -c "git commit -n -m x"' 'script -c "git commit --no-verify -m x" log.txt'; do
   out=$(run_hook block-no-verify "$cmd")
   assert_eq deny "$(decision "$out")"
 done
@@ -2612,7 +2612,7 @@ for _ in 1 2 3 4 5 6; do deep="bash -c $(printf '%q' "$deep")"; done
 out=$(run_hook guard-sbatch "$deep")
 assert_eq allow "$(decision "$out")"
 
-it "guard-sbatch: sudo、xargs、flock、chrt、taskset、ssh、eval で包んだ sbatch も止める"
+it "guard-sbatch: sudo、xargs、flock、chrt、taskset、watch、script -c、ssh、eval で包んだ sbatch も止める"
 for wrapped in "sudo sbatch --wrap true" "sudo -u slurm -g users sbatch --wrap true" "sudo -E FOO=1 sbatch --wrap true" \
   "sudo --user=slurm -n -- sbatch --wrap true" "sudo -H -D /tmp sbatch --wrap true" \
   "echo x | xargs sbatch --wrap" "xargs -0 -I{} sbatch --wrap {}" "xargs -n1 -P 4 -d '\n' sbatch --wrap" \
@@ -2621,10 +2621,13 @@ for wrapped in "sudo sbatch --wrap true" "sudo -u slurm -g users sbatch --wrap t
   "flock --timeout=10 /tmp/lock -c 'sbatch --wrap true'" "flock -n /tmp/lock -c 'cd /tmp && sbatch --wrap true'" \
   "chrt -f 10 sbatch --wrap true" "chrt -i 0 sbatch --wrap true" "chrt --idle 0 sbatch --wrap true" \
   "chrt -T 1000 -d 0 sbatch --wrap true" "taskset 0x1 sbatch --wrap true" "taskset -c 0-3 sbatch --wrap true" \
-  "taskset --cpu-list 0 sbatch --wrap true" \
+  "taskset --cpu-list 0 sbatch --wrap true" "watch sbatch --wrap true" "watch -n 5 'sbatch --wrap true'" \
+  "watch -x sbatch --wrap true" "watch --interval=5 -d sbatch --wrap true" "watch -dpermanent 'squeue; sbatch --wrap true'" \
+  "script -c 'sbatch --wrap true' log.txt" "script -q --command 'sbatch --wrap true'" "script log.txt -- sbatch --wrap true" \
   "ssh r995 sbatch --wrap true" "ssh -p 22 -o StrictHostKeyChecking=no user@r995 'sbatch --wrap true'" \
   "ssh -t r995 'cd ~/x && sbatch --wrap true'" "ssh -i ~/.ssh/id -J bastion r995 sbatch --wrap true" \
-  "ssh r995 -t sbatch --wrap true" "ssh r995 -p 22 -- sbatch --wrap true" \
+  "ssh r995 -t sbatch --wrap true" "ssh r995 -p 22 -- sbatch --wrap true" "script log.txt -c 'sbatch --wrap true'" \
+  "script log.txt -q --command 'sbatch --wrap true'" \
   "eval 'sbatch --wrap true'" "eval sbatch --wrap true" "eval \"cd /tmp; sbatch --wrap true\"" \
   "sudo flock /tmp/lock chrt -f 10 sbatch --wrap true" "ssh r995 bash -c 'sbatch --wrap true'"; do
   out=$(run_hook guard-sbatch "$wrapped")
@@ -2633,9 +2636,9 @@ done
 
 it "guard-sbatch: ラッパーが実行しない形（sudo -l / -e / -v、chrt -p、taskset -p、ssh -N / -G、flock <fd>）は通す"
 for cmd in "sudo -l sbatch" "sudo -e sbatch" "sudo -v" "sudo -K" "chrt -p 10 1234" "chrt -m" "taskset -p 1 1234" \
-  "taskset -ap 1234" "ssh -N r995" "ssh r995 -N" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" \
+  "taskset -ap 1234" "ssh -N r995" "ssh r995 -N" "ssh -G r995" "ssh -Q cipher" "flock 9" "flock -u 9" "script log.txt" \
   "env FOO=1 -i sbatch --wrap true" "bash --help sbatch --wrap true" "bash --version sbatch" "xargs --help sbatch" \
-  "env --version sbatch" "sudo --help sbatch"; do
+  "env --version sbatch" "watch --help sbatch" "sudo --help sbatch"; do
   out=$(run_hook guard-sbatch "$cmd")
   assert_eq allow "$(decision "$out")"
 done
