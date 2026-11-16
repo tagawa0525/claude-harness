@@ -124,7 +124,7 @@ fn is_lower_hex(c: char) -> bool {
     c.is_ascii_digit() || ('a'..='f').contains(&c)
 }
 
-/// 16 進の語（コミットの hash）を印に置き換えた行と、置き換えた語。語は、前後が英数字と `_` でなく、a〜f を 1 字以上
+/// 16 進の語（コミットの hash）を印に置き換えた行と、置き換えた語。語は、前後が英数字と `_` でなく、
 /// 7〜64 桁の小文字の 16 進。数字だけの語も候補にする（rebase で書き換わった hash の先頭は約 1.5% が数字だけ）。数の
 /// 変更は、is_rebase_remap がコミットに解けない語として付け替えに数えない
 fn mask_hashes(line: &str) -> (String, Vec<String>) {
@@ -221,13 +221,13 @@ pub(super) fn is_dvc_record(path: &str) -> bool {
 /// コミットや別のブランチのコミットへの差し替えは挙動を変えうるので含めない
 fn is_rebase_remap(dir: &Path, default: &str, tip: &str, old: &str, new: &str) -> bool {
     // 数の変更のようにコミットに解けない語が大半なので、新しい側が解けなければ古い側は調べず早く捨てる
-    let Some(c) = resolve_commit(dir, new) else {
+    let Some(c) = resolve_word(dir, new) else {
         return false;
     };
     if !is_ancestor(dir, &c, tip) || is_ancestor(dir, &c, default) {
         return false;
     }
-    resolve_commit(dir, old).is_none_or(|c| !is_ancestor(dir, &c, tip))
+    resolve_word(dir, old).is_none_or(|c| !is_ancestor(dir, &c, tip))
 }
 
 /// from から to（ブランチの先端）までに変わったファイルのうち、挙動を変えうるもの。git diff が失敗したら None
@@ -309,6 +309,22 @@ fn split_diff_sections(diff: &str) -> Vec<&str> {
 
 fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
     git::git(dir, &["merge-base", "--is-ancestor", a, b]).is_some()
+}
+
+/// 16 進の語をコミットに解く。10 進の数字だけの語は、同名の ref（`1234567` というブランチ）や、複数の object に
+/// 当たる短縮 ID として解けてしまい、数の変更を付け替えに見せるので、ref 名としては解かず、object の ID として
+/// 一意に当たり、それがコミットのときだけ解く（`--disambiguate` は ref を見ない）
+fn resolve_word(dir: &Path, word: &str) -> Option<String> {
+    if !word.bytes().all(|b| b.is_ascii_digit()) {
+        return resolve_commit(dir, word);
+    }
+    let ids = git::git(dir, &["rev-parse", &format!("--disambiguate={word}")])?;
+    let mut ids = ids.lines();
+    let id = ids.next()?;
+    if ids.next().is_some() {
+        return None;
+    }
+    resolve_commit(dir, id)
 }
 
 fn resolve_commit(dir: &Path, spec: &str) -> Option<String> {
@@ -926,7 +942,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 10 進の語を ref 名としても解いている"]
     fn tells_a_number_change_that_collides_with_a_ref_name() {
         let repo = Repo::new("number-ref");
         let reviewed = repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234566;\n")]);
