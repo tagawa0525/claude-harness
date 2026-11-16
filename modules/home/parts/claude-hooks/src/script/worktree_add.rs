@@ -9,8 +9,9 @@
 //!   トピックに入るため
 //!
 //! --from <ref> は新しく作る起点を明示する（今のブランチの続きなら --from HEAD）。既存のブランチに付けたらエラー。
-//! --carry-changes は未コミットの変更（未追跡のファイルを含む）を stash で worktree の側に移す（git-commit のスキルの
-//! 「main からの退避」）。
+//! --carry-changes は未コミットの変更（index の変更と未追跡のファイルを含む）を patch にして worktree の側へ移し、
+//! 元の作業ツリーから取り除く（git-commit のスキルの「main からの退避」）。stash は全 worktree と全セッションで共有
+//! なので使わない。worktree に当てるのに失敗したら、元の変更を残して止める。
 //!
 //! 共有（.worktreelink）: 新しい worktree の直下に .worktreelink があれば、1 行 1 パス（直下からの相対のパス。空行と
 //! # で始まる行は読み飛ばし、前後に空白のある行はエラー）を、メインの worktree の同じパスへの絶対パスの symlink として
@@ -206,38 +207,17 @@ pub fn main(args: &[String]) -> i32 {
         ]
     };
 
-    // stash は worktree の間で共有される（common dir）ので、ここで退避して worktree の側で戻せる
-    let mut stashed = false;
-    if carry && git(here, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty()) {
-        if !git_inherit(
-            here,
-            &[
-                "stash",
-                "push",
-                "-q",
-                "-u",
-                "-m",
-                &format!("wip: move to worktree {branch}"),
-            ],
-        ) {
-            eprintln!("ERROR: 変更を stash に退避できませんでした");
-            return 1;
-        }
-        stashed = true;
-    }
     let mut worktree_add = vec!["worktree", "add", "-q"];
     worktree_add.extend(add_args.iter().map(String::as_str));
     if !git_inherit(here, &worktree_add) {
         eprintln!("ERROR: git worktree add が失敗しました");
-        if stashed {
-            eprintln!(
-                "変更は stash に退避したままです（git stash list の wip: move to worktree {branch}）。git stash pop --index で元の worktree に戻せます"
-            );
-        }
         return 1;
     }
-    if stashed && !git_inherit(&dir, &["stash", "pop", "-q", "--index"]) {
-        eprintln!("ERROR: 変更の適用に失敗しました。変更は stash に残っています（git stash list）");
+    if carry && let Err(e) = carry_changes(here, &dir, || {}) {
+        eprintln!(
+            "ERROR: 変更を worktree に移せませんでした（{e}）。worktree は {} に作ってあります",
+            dir.display()
+        );
         return 1;
     }
 
@@ -275,6 +255,194 @@ pub fn main(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// 未コミットの変更（index の変更と未追跡ファイルを含む）を from の作業ツリーから dir の作業ツリーへ移す。
+///
+/// 変更は、from の index の複製に `git add -A` した上で HEAD との差分（`--binary`）にする。本物の index と作業ツリーは
+/// 触らず、削除、改名、実行権限、バイナリ、未追跡ファイルを 1 つの patch に集められる。dir に当てるのに成功した後でだけ、
+/// from から変更を取り除く（失敗したら元に残す）。stash は全 worktree と全セッションで共有で、push と pop の間に
+/// 別のセッションが積むと取り違えるので使わない。元から取り除くのは patch が触れたパスだけで、patch の作成後に元が
+/// 変わっていたら取り除かずに止める。after_apply は、dir に当てた後で元を取り除く前に呼ぶ（テストが
+/// 並行する編集を差し込むため）。dir の index には載せず作業ツリーの変更にする（ステージ済みかどうかは
+/// 引き継がない）
+fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<(), String> {
+    // patch のパスはリポジトリのルート基準なので、サブディレクトリから呼ばれてもルートで扱う
+    let from = &git(from, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "リポジトリのルートを調べられません（変更は元の作業ツリーに残っています）".to_string()
+        })?;
+    if git(from, &["status", "--porcelain"]).is_none_or(|s| s.is_empty()) {
+        return Ok(());
+    }
+    let git_path = |name: &str| {
+        git(from, &["rev-parse", "--git-path", name])
+            .map(|p| std::path::absolute(from.join(p)).unwrap_or_default())
+            .ok_or_else(|| "git のディレクトリを調べられません".to_string())
+    };
+    let index = git_path("index")?;
+    let temp_index = git_path(&format!("worktree-add-carry-index-{}", std::process::id()))?;
+    let snapshot = || snapshot(from, &index, &temp_index);
+    let before = snapshot()
+        .map_err(|e| format!("差分を作れません: {e}（変更は元の作業ツリーに残っています）"))?;
+    if before.patch.is_empty() {
+        return Ok(());
+    }
+    let applied =
+        crate::git::run(dir, &["apply", "--binary"], Some(&before.patch)).ok_or_else(|| {
+            "git apply を起動できません（変更は元の作業ツリーに残っています）".to_string()
+        })?;
+    if !applied.status.success() {
+        return Err(format!(
+            "git apply が失敗しました: {}（変更は元の作業ツリーに残っています）",
+            String::from_utf8_lossy(&applied.stderr).trim()
+        ));
+    }
+    after_apply();
+    // patch を作った後に別のセッションが元を編集していたら、その編集は patch に無いので消さない
+    if snapshot().map_err(|e| {
+        format!("差分を作り直せません: {e}（worktree には当てた後です。変更は両方にあります）")
+    })? != before
+    {
+        return Err(
+            "patch を作った後に元の作業ツリーが変わったので、取り除きませんでした（worktree には当てた後です。変更は両方にあります）"
+                .to_string(),
+        );
+    }
+    restore_paths(from, &before.paths).map_err(|e| {
+        format!("worktree には移しましたが、元の作業ツリーから取り除けませんでした（{e}。変更は両方にあります）")
+    })
+}
+
+/// 元の作業ツリーの状態の控え。patch と、patch が触れるパス、`git status` の出力
+#[derive(PartialEq)]
+struct PatchPath {
+    /// パスのバイト列（非 UTF-8 のこともある）
+    bytes: Vec<u8>,
+    /// HEAD に無い（patch が追加するファイル）
+    new: bool,
+}
+
+#[derive(PartialEq)]
+struct Snapshot {
+    patch: Vec<u8>,
+    paths: Vec<PatchPath>,
+    status: Vec<u8>,
+}
+
+fn snapshot(from: &Path, index: &Path, temp_index: &Path) -> Result<Snapshot, String> {
+    std::fs::copy(index, temp_index).map_err(|e| format!("index を複製できません: {e}"))?;
+    let result = (|| {
+        let output = |args: &[&str], temp: bool| {
+            let mut cmd = Command::new("git");
+            cmd.args(args).current_dir(from);
+            if temp {
+                cmd.env("GIT_INDEX_FILE", temp_index);
+            }
+            let o = cmd
+                .output()
+                .map_err(|e| format!("git を起動できません: {e}"))?;
+            if o.status.success() {
+                Ok(o.stdout)
+            } else {
+                Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+            }
+        };
+        output(&["add", "-A"], true)?;
+        let patch = output(
+            &["diff", "--cached", "--binary", "--no-ext-diff", "HEAD"],
+            true,
+        )?;
+        let names = output(
+            &[
+                "diff",
+                "--cached",
+                "--name-status",
+                "-z",
+                "--no-renames",
+                "HEAD",
+            ],
+            true,
+        )?;
+        let status = output(&["status", "--porcelain=v1", "-z"], false)?;
+        // 出力は「状態 NUL パス NUL」の繰り返し（--no-renames なのでパスは 1 つ）。HEAD にあるかは、パスの
+        // 文字列を git に渡して調べず、ここで A（追加）かどうかから決める（非 UTF-8 のパスを壊さない）
+        let mut fields = names.split(|b| *b == 0).filter(|f| !f.is_empty());
+        let mut paths = Vec::new();
+        while let (Some(state), Some(bytes)) = (fields.next(), fields.next()) {
+            paths.push(PatchPath {
+                bytes: bytes.to_vec(),
+                new: state == b"A",
+            });
+        }
+        Ok(Snapshot {
+            patch,
+            paths,
+            status,
+        })
+    })();
+    let _ = std::fs::remove_file(temp_index);
+    result
+}
+
+/// patch が触れたパスだけを HEAD の状態に戻す（HEAD にあるものは checkout、無いもの（新規ファイル）は削除）。
+/// `reset --hard` と `clean -fd` は、patch に入らなかった未追跡ファイル（`git add -A` で拾えない、同じ変更で
+/// .gitignore に加えたものなど）も消すので使わない
+fn restore_paths(from: &Path, paths: &[PatchPath]) -> Result<(), String> {
+    let git_with_paths = |args: &[&str], list: &[&PatchPath]| {
+        let spec: Vec<u8> = list
+            .iter()
+            .flat_map(|p| p.bytes.iter().copied().chain([0]))
+            .collect();
+        let mut full = vec!["--literal-pathspecs"];
+        full.extend_from_slice(args);
+        full.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
+        crate::git::run(from, &full, Some(&spec)).is_some_and(|o| o.status.success())
+    };
+    let all: Vec<&PatchPath> = paths.iter().collect();
+    if !git_with_paths(&["reset", "-q", "HEAD"], &all) {
+        return Err("git reset が失敗しました".to_string());
+    }
+    let (new, in_head): (Vec<&PatchPath>, Vec<&PatchPath>) = all.into_iter().partition(|p| p.new);
+    // 新規ファイルの削除は checkout より先にする。HEAD のファイル d を作業ツリーでディレクトリ d/ に置き換えた
+    // ときは、checkout が先に d/f を消してしまい、後の remove_file が失敗する
+    for p in new {
+        let path = from.join(os_path(&p.bytes));
+        std::fs::remove_file(&path).map_err(|e| {
+            if path.is_dir() {
+                format!(
+                    "{} はディレクトリです（埋め込みのリポジトリなどは自動では取り除けません。手で消してください）: {e}",
+                    path.display()
+                )
+            } else {
+                format!("{}: {e}", path.display())
+            }
+        })?;
+        // 空になったディレクトリは片付ける（空でなければ remove_dir が失敗して止まる）
+        let mut dir = path.parent();
+        while let Some(d) = dir.filter(|d| *d != from) {
+            if std::fs::remove_dir(d).is_err() {
+                break;
+            }
+            dir = d.parent();
+        }
+    }
+    if !in_head.is_empty() && !git_with_paths(&["checkout", "HEAD"], &in_head) {
+        return Err("git checkout が失敗しました".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn os_path(bytes: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+}
+
+#[cfg(not(unix))]
+fn os_path(bytes: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
 /// .worktreelink のパスを、メインの worktree への symlink にする
@@ -472,6 +640,99 @@ fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sh(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", dir.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    }
+
+    fn carry_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("worktree-add-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (from, dir) = (root.join("app"), root.join("app-x"));
+        std::fs::create_dir_all(&from).unwrap();
+        sh(&from, &["init", "-q", "-b", "main"]);
+        (root, from, dir)
+    }
+
+    fn commit_and_branch(from: &Path, dir: &Path) {
+        sh(from, &["add", "-A"]);
+        sh(from, &["commit", "-q", "-m", "init"]);
+        sh(
+            from,
+            &["worktree", "add", "-q", dir.to_str().unwrap(), "-b", "x"],
+        );
+    }
+
+    #[test]
+    fn a_file_replaced_by_a_directory_is_carried_and_the_source_restored() {
+        let (root, from, dir) = carry_fixture("file-to-dir");
+        std::fs::write(from.join("d"), "file\n").unwrap();
+        commit_and_branch(&from, &dir);
+        std::fs::remove_file(from.join("d")).unwrap();
+        std::fs::create_dir(from.join("d")).unwrap();
+        std::fs::write(from.join("d/f"), "new\n").unwrap();
+        let result = carry_changes(&from, &dir, || {});
+        assert_eq!(result, Ok(()));
+        assert_eq!(std::fs::read_to_string(from.join("d")).unwrap(), "file\n");
+        assert_eq!(std::fs::read_to_string(dir.join("d/f")).unwrap(), "new\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_paths_are_carried_and_removed_from_the_source() {
+        use std::os::unix::ffi::OsStrExt;
+        let (root, from, dir) = carry_fixture("non-utf8");
+        let tracked = std::ffi::OsStr::from_bytes(b"tracked\xff");
+        let added = std::ffi::OsStr::from_bytes(b"bad\xff");
+        std::fs::write(from.join(tracked), "base\n").unwrap();
+        commit_and_branch(&from, &dir);
+        std::fs::write(from.join(tracked), "edited\n").unwrap();
+        std::fs::write(from.join(added), "new\n").unwrap();
+        let result = carry_changes(&from, &dir, || {});
+        assert_eq!(result, Ok(()));
+        assert_eq!(std::fs::read(from.join(tracked)).unwrap(), b"base\n");
+        assert!(!from.join(added).exists());
+        assert_eq!(std::fs::read(dir.join(tracked)).unwrap(), b"edited\n");
+        assert_eq!(std::fs::read(dir.join(added)).unwrap(), b"new\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_edit_made_after_the_patch_keeps_the_source_untouched() {
+        let root = std::env::temp_dir().join(format!("worktree-add-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (from, dir) = (root.join("app"), root.join("app-x"));
+        std::fs::create_dir_all(&from).unwrap();
+        sh(&from, &["init", "-q", "-b", "main"]);
+        std::fs::write(from.join("a.txt"), "base\n").unwrap();
+        sh(&from, &["add", "-A"]);
+        sh(&from, &["commit", "-q", "-m", "init"]);
+        sh(
+            &from,
+            &["worktree", "add", "-q", dir.to_str().unwrap(), "-b", "x"],
+        );
+        std::fs::write(from.join("a.txt"), "carried\n").unwrap();
+        let result = carry_changes(&from, &dir, || {
+            std::fs::write(from.join("a.txt"), "edited by another session\n").unwrap();
+            std::fs::write(from.join("late.txt"), "late\n").unwrap();
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read_to_string(from.join("a.txt")).unwrap(),
+            "edited by another session\n"
+        );
+        assert!(from.join("late.txt").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_link_that_cannot_be_made_removes_the_links_made_before_it() {
