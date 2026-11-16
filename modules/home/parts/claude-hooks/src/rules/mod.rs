@@ -99,6 +99,7 @@ mod guard_git_push;
 mod guard_git_reset_hard;
 mod guard_git_stash;
 mod guard_sbatch;
+mod guard_track_remote;
 mod pre_git_merge_check;
 mod pre_merge_check;
 pub use pre_merge_check::local_review_covers_for_pr;
@@ -121,6 +122,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_git_add::GuardGitAdd,
         &guard_git_push::GuardGitPush,
         &guard_branch_base::GuardBranchBase,
+        &guard_track_remote::GuardTrackRemote,
         &block_secret_commit::BlockSecretCommit,
         &block_no_verify::BlockNoVerify,
         &guard_gh_run_rerun::GuardGhRunRerun,
