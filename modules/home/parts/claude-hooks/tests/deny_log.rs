@@ -111,3 +111,37 @@ fn unwritable_state_dir_does_not_change_the_decision() {
     let out = run(&blocked, None, "git add -A", &[]);
     assert!(out.contains("\"permissionDecision\":\"deny\""), "{out}");
 }
+
+#[cfg(unix)]
+#[test]
+#[ignore = "RED: existing file mode is not tightened (ADR-0090)"]
+fn existing_file_is_tightened_to_mode_0600() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = tmp("tighten");
+    let f = s.join("claude-harness/deny.jsonl");
+    std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+    std::fs::write(&f, "").unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+    run(&s, None, "git add -A", &[]);
+    assert_eq!(
+        std::fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(lines(&s).len(), 1);
+}
+
+#[test]
+fn concurrent_hooks_never_mix_lines() {
+    let s = tmp("concurrent");
+    let long = format!("git add -A # {}", "x".repeat(150));
+    std::thread::scope(|sc| {
+        for _ in 0..16 {
+            sc.spawn(|| {
+                for _ in 0..10 {
+                    run(&s, None, &long, &[]);
+                }
+            });
+        }
+    });
+    assert_eq!(lines(&s).len(), 160);
+}
