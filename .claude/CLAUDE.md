@@ -30,7 +30,7 @@
 ### Git
 
 - 作業は feature branch → PR → マージ。機械的に判定できる禁止事項はhookがdenyし、理由と修正方法をその場で示す
-- 手順とhookは必須ゲート。通らないときは原因を調査して直す。hook の理由に従って必要な修正を加えて条件を満たし、文言を言い換えて通す形にはしない
+- 手順とhookは必須ゲート。通らないときは原因を調査して直す。hook の理由に従って必要な修正を加えて条件を満たす。文言の言い換えにも、別のコマンド形やエスケープにも逃げない
 - マージの前にレビューを受け、指摘に対応する。手順は /gh-pr-review と /gh-pr-merge（GitHub リモートがなければ /git-merge）に従う。自動レビューを待つときは `~/.claude/scripts/gh-wait-review.sh <PR の URL>`（/delegate の担当は、/delegate の「作業中の規則」の待ちの項に従う）
 - PR のスクリプト（`gh-wait-review.sh`、`gh-pr-review/scripts/`）には PR の URL を渡す（cwd のリポジトリに依らずその PR を読み書きする）。URL は `gh pr create` の出力か、`cd <worktree> && gh pr view --json url -q .url` で得る。ビルドやチェックなど成否を判断するコマンドは、出力をそのまま受けて終了コードで判定する
 - 同一worktree内では、1つのPRがマージされてから次のPRの実装を始める。worktreeを分ければ並行着手可（マージ前にrebaseしてgit graphを整える）
