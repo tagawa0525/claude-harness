@@ -144,3 +144,23 @@ fn concurrent_hooks_never_mix_lines() {
     });
     assert_eq!(lines(&s).len(), 160);
 }
+
+#[cfg(unix)]
+#[test]
+#[ignore = "RED: fixed in the next commit"]
+fn log_dir_is_created_and_tightened_to_mode_0700() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = tmp("dirmode");
+    run(&s, None, "git add -A", &[]);
+    let d = s.join("claude-harness");
+    assert_eq!(
+        std::fs::metadata(&d).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    run(&s, None, "git add -A", &[]);
+    assert_eq!(
+        std::fs::metadata(&d).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}
