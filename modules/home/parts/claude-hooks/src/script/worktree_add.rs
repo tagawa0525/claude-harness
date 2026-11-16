@@ -213,7 +213,7 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("ERROR: git worktree add が失敗しました");
         return 1;
     }
-    if carry && let Err(e) = carry_changes(here, &dir) {
+    if carry && let Err(e) = carry_changes(here, &dir, || {}) {
         eprintln!(
             "ERROR: 変更を worktree に移せませんでした（{e}）。変更は元の作業ツリーに残っています。worktree は {} に作ってあります",
             dir.display()
@@ -262,9 +262,10 @@ pub fn main(args: &[String]) -> i32 {
 /// 変更は、from の index の複製に `git add -A` した上で HEAD との差分（`--binary`）にする。本物の index と作業ツリーは
 /// 触らず、削除、改名、実行権限、バイナリ、未追跡ファイルを 1 つの patch に集められる。dir に当てるのに成功した後でだけ、
 /// from から変更を取り除く（失敗したら元に残す）。stash は全 worktree と全セッションで共有で、push と pop の間に
-/// 別のセッションが積むと取り違えるので使わない。dir の index には載せず作業ツリーの変更にする（ステージ済みかどうかは
+/// 別のセッションが積むと取り違えるので使わない。after_apply は、dir に当てた後で元を取り除く前に呼ぶ（テストが
+/// 並行する編集を差し込むため）。dir の index には載せず作業ツリーの変更にする（ステージ済みかどうかは
 /// 引き継がない）
-fn carry_changes(from: &Path, dir: &Path) -> Result<(), String> {
+fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<(), String> {
     if git(from, &["status", "--porcelain"]).is_none_or(|s| s.is_empty()) {
         return Ok(());
     }
@@ -310,6 +311,7 @@ fn carry_changes(from: &Path, dir: &Path) -> Result<(), String> {
             String::from_utf8_lossy(&applied.stderr).trim()
         ));
     }
+    after_apply();
     if !git_inherit(from, &["reset", "-q", "--hard", "HEAD"])
         || !git_inherit(from, &["clean", "-fdq"])
     {
