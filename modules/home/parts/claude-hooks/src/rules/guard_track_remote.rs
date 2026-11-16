@@ -6,7 +6,8 @@
 //!
 //! 対象: `git switch -c|-C <b> <start>`、`git checkout -b|-B <b> <start>`、`git branch <b> <start>`。
 //! 起点がリモート追跡ブランチ（`refs/remotes/<start>` がある）のときだけ止める。
-//! `git worktree add` は worktree-add.sh が `--no-track` を付けるので対象にしない。
+//! `git worktree add` は worktree-add.sh を使う前提で対象外（そのスクリプトが `--no-track` を付ける。
+//! guard-branch-base も起点つきの worktree add は見ない）。直接呼んだ `git worktree add -b <b> <path> origin/main` は止まらない。
 
 use super::Rule;
 use super::guard_branch_base::{is_branch_create_flags, read};
@@ -29,7 +30,10 @@ fn tracking_start(sub: &str, args: &[Arg]) -> Option<(String, String)> {
     let p = read(args, create, &[]);
     // 上流の扱いを明示した形（--track、-t、--no-track）は止めない
     let explicit = p.flags.iter().any(|f| {
-        matches!(f.as_str(), "--track" | "--no-track" | "-t") || f.starts_with("--track=")
+        matches!(f.as_str(), "--track" | "--no-track")
+            || f.starts_with("--track=")
+            // まとめた短いフラグ（-t、-tf、-ft）
+            || f.strip_prefix('-').is_some_and(|c| !c.starts_with('-') && c.contains('t'))
     });
     // switch / checkout の `--` の後はパス（ファイルを戻す形）。branch の `--` の後はブランチ名と起点
     let pathspec = !branch_mode
@@ -63,8 +67,9 @@ impl Rule for GuardTrackRemote {
                 continue;
             };
             let dir = shell.target_dir(cmd, &input.cwd);
-            let remote_ref = format!("refs/remotes/{start}");
-            if git::git(&dir, &["rev-parse", "--verify", "--quiet", &remote_ref]).is_none() {
+            // origin/main、remotes/origin/main、refs/remotes/origin/main のどの書き方も完全な ref 名に解く
+            let full = git::git(&dir, &["rev-parse", "--symbolic-full-name", &start]);
+            if !full.is_some_and(|f| f.trim().starts_with("refs/remotes/")) {
                 continue;
             }
             return vec![Finding::Deny(format!(
@@ -140,7 +145,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: clustered -t is not recognized"]
     fn clustered_short_track_flag_is_explicit() {
         assert_eq!(parse("git branch -tf feat/a origin/main"), None);
         assert_eq!(parse("git branch -ft feat/a origin/main"), None);
@@ -152,7 +156,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: full ref spellings are not resolved"]
     fn full_ref_spellings_of_a_remote_tracking_start_are_denied() {
         let (_t, work) = setup("track-remote-spell");
         for start in [
