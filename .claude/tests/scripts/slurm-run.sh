@@ -384,8 +384,7 @@ head=$(git rev-parse --short HEAD)
 git config diff.ignoreSubmodules all
 git -C sub -c user.name=t -c user.email=t@t commit -q --allow-empty -m next
 "$RUN" "${PURPOSE[@]}" -t 1 xlc-2G 'true' >/dev/null
-# RED: 実装のコミットで外す（RED_89 を設定すれば失敗を確かめられる）
-[[ -z ${RED_89:-} ]] || assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
+assert_contains "$(cat "$TEST_ROOT/sbatch.args")" "commit=$head-dirty"
 git config --unset diff.ignoreSubmodules
 git submodule deinit -q -f sub
 git rm -q -f sub

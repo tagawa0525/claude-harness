@@ -174,7 +174,8 @@ if branch=$(git symbolic-ref --short -q HEAD 2>/dev/null); then
 fi
 # 未コミットの変更はどのコミットにも無い版なので、hash だけでは結果を出した版を名指せない。印を付けて見分ける。
 # まだ追加していない新しいファイル（ソース、入力）もコミットに無いので数える。git が無視するもの（試行の置き場、
-# ビルドの出力）は --porcelain に出ない。
+# ビルドの出力）は --porcelain に出ない。利用者の設定（status.showUntrackedFiles、diff.ignoreSubmodules、submodule.<名前>.ignore）で
+# 数えない変更が出ないよう、--untracked-files=normal と --ignore-submodules=none を明示する。
 # --no-optional-locks: 同じ worktree で走っている git の操作と index のロックを取り合わない
 # git の中でも、版を調べられなければ（index の破損、safe.directory の拒否など）印は付けずに投げる。印のための処理で
 # ジョブを止めない。黙って付けないと、付かない理由が分からないので、警告に出す。コミットの無いリポジトリは、
@@ -190,7 +191,7 @@ elif [[ $inside != true ]]; then
   echo "WARN: commit= を付けません（作業ツリーの外。bare リポジトリか .git の中）: $PWD" >&2
 elif commit=$(git rev-parse -q --verify --short HEAD 2>"$git_err"); then
   # --untracked-files=normal: 利用者の status.showUntrackedFiles の設定によらず、追加していないファイルを数える
-  if changes=$(git --no-optional-locks status --porcelain --untracked-files=normal 2>"$git_err"); then
+  if changes=$(git --no-optional-locks status --porcelain --untracked-files=normal --ignore-submodules=none 2>"$git_err"); then
     [[ -z $changes ]] || commit+=-dirty
     contact+=" commit=$commit"
   else
