@@ -50,7 +50,7 @@ git reset --hard origin/main
 ```bash
 git fetch origin
 git branch [backup] main             # 確認後に削除
-git switch --no-track -c [branch] origin/main   # 行き先ごとに。上流を origin/main にしない（push 先が main になる）
+git switch --no-track -c [branch] origin/main   # 行き先ごとに
 git cherry-pick [commit...]
 git switch main
 git reset --hard origin/main
