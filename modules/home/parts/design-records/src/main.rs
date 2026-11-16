@@ -39,7 +39,7 @@ use design_records::check::{
     Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_numbers,
     check_reservations, confirmation_paths, decision_changed_without_change_item,
 };
-use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes};
+use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
     numbers_in, record_name,
@@ -430,6 +430,12 @@ fn status() -> Result<ExitCode> {
 /// docs/ の .md のパスと中身（`untracked` なら追跡していないものも含める）。
 fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>> {
     let mut files = BTreeMap::new();
+    // バンドルでなければ（docs/index.md が okf_version を持たなければ）、ほかの docs/ のファイルを読まない
+    let root_index =
+        fs::read_to_string(root.join(BUNDLE_ROOT).join("index.md")).unwrap_or_default();
+    if !is_bundle_index(&root_index) {
+        return Ok(files);
+    }
     for path in markdown_under(root, BUNDLE_ROOT, untracked)? {
         let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         files.insert(path, text);
@@ -440,7 +446,13 @@ fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>
 /// バンドルの索引に載っていない行を足し、書いたパスを出す（ADR-0092）。
 fn index() -> Result<ExitCode> {
     let root = repo_root()?;
-    for (path, text) in complete_indexes(&bundle_files(&root, true)?) {
+    let files = bundle_files(&root, true)?;
+    if files.is_empty() {
+        eprintln!(
+            "design-records: docs/index.md has no `okf_version` in its front matter, so docs/ is not an OKF bundle"
+        );
+    }
+    for (path, text) in complete_indexes(&files) {
         fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
         println!("{path}");
     }

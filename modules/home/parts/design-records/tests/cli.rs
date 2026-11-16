@@ -2533,3 +2533,20 @@ fn index_completes_the_bundle_and_check_then_passes() {
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert!(t.run(&["index"]).stdout.is_empty());
 }
+
+#[test]
+fn check_does_not_read_docs_outside_a_bundle() {
+    let t = TempRepo::new("okf-nonbundle");
+    t.write("docs/index.md", "# docs\n");
+    fs::write(t.dir.join("docs/binary.md"), [0xff, 0xfe, 0x00]).unwrap();
+    t.commit_all("docs: not utf-8");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let out = t.run(&["index"]);
+    assert!(out.status.success());
+    assert!(
+        stderr(&out).contains("not an OKF bundle"),
+        "{}",
+        stderr(&out)
+    );
+}

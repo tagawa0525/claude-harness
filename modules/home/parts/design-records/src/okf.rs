@@ -30,9 +30,9 @@ fn top_level(text: &str) -> Option<BTreeMap<String, String>> {
         }
         if let Some((key, value)) = line.split_once(':') {
             let value = value.trim();
-            let value = value
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
+            let value = ['"', '\'']
+                .iter()
+                .find_map(|q| value.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
                 .unwrap_or(value);
             keys.insert(key.trim().to_string(), value.to_string());
         }
@@ -41,11 +41,15 @@ fn top_level(text: &str) -> Option<BTreeMap<String, String>> {
 }
 
 /// `docs/index.md` が `okf_version` を持つか。
+/// `docs/index.md` の中身が `okf_version` を持つか（バンドルのルートか）。
+pub fn is_bundle_index(text: &str) -> bool {
+    top_level(text).is_some_and(|front| front.contains_key("okf_version"))
+}
+
 fn is_bundle(files: &BTreeMap<String, String>) -> bool {
     files
         .get(&format!("{BUNDLE_ROOT}/{INDEX}"))
-        .and_then(|text| top_level(text))
-        .is_some_and(|front| front.contains_key("okf_version"))
+        .is_some_and(|text| is_bundle_index(text))
 }
 
 fn dir_of(path: &str) -> &str {
@@ -101,7 +105,10 @@ struct Entry<'a> {
 fn entries(text: &str) -> Vec<Entry<'_>> {
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
-        let Some(rest) = line.strip_prefix("* [") else {
+        let Some(rest) = line
+            .strip_prefix("* [")
+            .or_else(|| line.strip_prefix("- ["))
+        else {
             continue;
         };
         let Some((title, rest)) = rest.split_once("](") else {
@@ -168,7 +175,12 @@ fn title_of(path: &str, text: &str) -> String {
     {
         return title;
     }
-    text.lines()
+    // フロントマターの YAML のコメント（`# ...`）を題と読まないよう、フロントマターの後ろの行だけを見る
+    let body = text
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n").map(|(_, body)| body))
+        .unwrap_or(text);
+    body.lines()
         .find_map(|l| l.strip_prefix("# "))
         .map(|t| t.trim().to_string())
         .unwrap_or_else(|| name_of(path).trim_end_matches(".md").to_string())
@@ -666,5 +678,29 @@ mod tests {
             "# adr\n\n* [ADR-0001: foo](0001-foo.md)\n* [ADR-0002: bar](0002-bar.md)\n"
         );
         assert!(complete_indexes(&bundle(&[("docs/a.md", "x")])).is_empty());
+    }
+
+    #[test]
+    fn titles_skip_front_matter_comments_and_dash_entries_count() {
+        let doc = "---
+type: Guide
+# a comment
+---
+
+# Real
+";
+        let files = bundle(&[
+            (
+                "docs/index.md",
+                "---
+okf_version: \"0.2\"
+---
+
+- [Real](a.md)
+",
+            ),
+            ("docs/a.md", doc),
+        ]);
+        assert_eq!(check_bundle(&files), vec![]);
     }
 }
