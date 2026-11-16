@@ -232,7 +232,6 @@ fn carry_changes_moves_every_kind_of_change_without_touching_stash() {
 }
 
 #[test]
-#[ignore = "RED: fixed in the next commit"]
 fn carry_changes_works_from_a_subdirectory() {
     let repo = Repo::new();
     repo.write("sub/tracked.txt", "one\n");

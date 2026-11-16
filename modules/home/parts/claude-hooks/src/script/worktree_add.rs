@@ -215,7 +215,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     if carry && let Err(e) = carry_changes(here, &dir, || {}) {
         eprintln!(
-            "ERROR: 変更を worktree に移せませんでした（{e}）。変更は元の作業ツリーに残っています。worktree は {} に作ってあります",
+            "ERROR: 変更を worktree に移せませんでした（{e}）。worktree は {} に作ってあります",
             dir.display()
         );
         return 1;
@@ -267,6 +267,12 @@ pub fn main(args: &[String]) -> i32 {
 /// 並行する編集を差し込むため）。dir の index には載せず作業ツリーの変更にする（ステージ済みかどうかは
 /// 引き継がない）
 fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<(), String> {
+    // patch のパスはリポジトリのルート基準なので、サブディレクトリから呼ばれてもルートで扱う
+    let from = &git(from, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "リポジトリのルートを調べられません（変更は元の作業ツリーに残っています）".to_string()
+        })?;
     if git(from, &["status", "--porcelain"]).is_none_or(|s| s.is_empty()) {
         return Ok(());
     }
@@ -278,23 +284,29 @@ fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<
     let index = git_path("index")?;
     let temp_index = git_path(&format!("worktree-add-carry-index-{}", std::process::id()))?;
     let snapshot = || snapshot(from, &index, &temp_index);
-    let before = snapshot().map_err(|e| format!("差分を作れません: {e}"))?;
+    let before = snapshot()
+        .map_err(|e| format!("差分を作れません: {e}（変更は元の作業ツリーに残っています）"))?;
     if before.patch.is_empty() {
         return Ok(());
     }
-    let applied = crate::git::run(dir, &["apply", "--binary"], Some(&before.patch))
-        .ok_or_else(|| "git apply を起動できません".to_string())?;
+    let applied =
+        crate::git::run(dir, &["apply", "--binary"], Some(&before.patch)).ok_or_else(|| {
+            "git apply を起動できません（変更は元の作業ツリーに残っています）".to_string()
+        })?;
     if !applied.status.success() {
         return Err(format!(
-            "git apply が失敗しました: {}",
+            "git apply が失敗しました: {}（変更は元の作業ツリーに残っています）",
             String::from_utf8_lossy(&applied.stderr).trim()
         ));
     }
     after_apply();
     // patch を作った後に別のセッションが元を編集していたら、その編集は patch に無いので消さない
-    if snapshot().map_err(|e| format!("差分を作り直せません: {e}"))? != before {
+    if snapshot().map_err(|e| {
+        format!("差分を作り直せません: {e}（worktree には当てた後です。変更は両方にあります）")
+    })? != before
+    {
         return Err(
-            "patch を作った後に元の作業ツリーが変わったので、取り除きませんでした（worktree には当てた後です）"
+            "patch を作った後に元の作業ツリーが変わったので、取り除きませんでした（worktree には当てた後です。変更は両方にあります）"
                 .to_string(),
         );
     }
