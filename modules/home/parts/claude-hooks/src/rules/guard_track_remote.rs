@@ -184,6 +184,7 @@ mod tests {
             prompt: String::new(),
             skill: String::new(),
             args: String::new(),
+            file_path: String::new(),
             cwd: work.to_path_buf(),
             session_id: String::new(),
         };

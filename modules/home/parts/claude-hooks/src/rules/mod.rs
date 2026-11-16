@@ -76,6 +76,7 @@ pub fn escape_hint(name: &str) -> String {
     )
 }
 
+mod block_claude_generated_write;
 mod block_main_commit;
 pub(crate) use block_main_commit::main_commit_blocked;
 mod block_nested_heredoc_same_delimiter;
@@ -114,6 +115,7 @@ mod warn_large_commit;
 
 pub fn all() -> &'static [&'static dyn Rule] {
     &[
+        &block_claude_generated_write::BlockClaudeGeneratedWrite,
         &require_background_wait::RequireBackgroundWait,
         &require_pipefail::RequirePipefail,
         &guard_sbatch::GuardSbatch,
@@ -185,6 +187,12 @@ mod tests {
         assert!(bash.contains(&"guard-git-stash"));
         assert!(bash.contains(&"guard-git-reset-hard"));
         assert!(!bash.contains(&"delegate-request-fields"));
+    }
+
+    #[test]
+    fn edit_and_write_tools_run_only_the_generated_file_check() {
+        assert_eq!(names_for("Edit"), ["block-claude-generated-write"]);
+        assert_eq!(names_for("Write"), ["block-claude-generated-write"]);
     }
 
     #[test]
