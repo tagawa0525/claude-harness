@@ -130,8 +130,6 @@ fork から上流へ出す PR（`-R owner/repo --head my-account:branch`）な�
 
 ## PR作成
 
-`--title` と `--body` は必ず指定する（`--fill` や本文省略はエディタが開いて止まる）。
-
 ### 通常のPR
 
 ```bash
@@ -152,7 +150,7 @@ EOF
 
 ## 完了
 
-`gh pr create` が出力したURLを報告する（ブラウザは開かない）。
+`gh pr create` が出力したURLを報告する。
 URLを取り直す場合:
 
 ```bash
