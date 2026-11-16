@@ -6,7 +6,8 @@
 //!   mtime が 1 になり、サイズと mtime では同じサイズの変更を見落とすため。比べた案は
 //!   <https://github.com/tagawa0525/nixfiles/issues/566>）
 //! - commands: 既にあるファイルは上書きしない（利用者が手で直したもの）
-//! - どこも、ソースに無いファイルを消さない（手で足したものを残す）
+//! - ソースに無いファイルは、前の同期の一覧（`~/.claude/.claude-sync-manifest`）にある skills、scripts のファイルだけを
+//!   消す（リポジトリから消した物が残らない）。一覧に無い、手で足したものは消さない。一覧が無い初回は消さずに作る
 //! - 引数なし: ホームの下の nix/claude-harness（ハーネスの clone）から同期する。clone なら、既定のブランチで、同期する
 //!   場所に未コミットの変更が無ければ `git pull --ff-only` で最新にしてから同期し、どれかに当たれば止める（古い版や
 //!   書きかけで、rebuild の配った新しい版を黙って上書きしない）。clone でなければ（.git が無い）、そのまま同期する
@@ -26,6 +27,12 @@ const PLACES: [(&str, bool); 4] = [
     ("skills", true),
     ("scripts", true),
 ];
+
+/// 配ったファイルの一覧（.claude の下。1 行 1 パス、.claude からの相対で `/` 区切り）
+const MANIFEST: &str = ".claude-sync-manifest";
+
+/// 一覧に載せて、ソースから消えたら消す場所。commands は利用者が手で直すので、載せない
+const MANAGED: [&str; 2] = ["skills", "scripts"];
 
 /// 止める理由（標準エラーに出す行）
 pub struct Stop(pub Vec<String>);
@@ -50,6 +57,8 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
     }
     let to = home.join(".claude");
     fs::create_dir_all(&to).map_err(|e| io_stop(&to, &e))?;
+    let old_manifest = fs::read_to_string(to.join(MANIFEST)).ok();
+    let mut delivered = Vec::new();
     for (name, overwrite) in PLACES {
         let (src, dest) = (from.join(name), to.join(name));
         // ソースに無いファイルと場所（前の版の nix store から読むだけでコピーしたもの）も、利用者と次の同期が書ける
@@ -60,6 +69,9 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
         }
         copy_place(&src, &dest, overwrite)?;
         writable_place(&dest);
+        if MANAGED.contains(&name) {
+            list_files(&src, name, &mut delivered)?;
+        }
         let kept = if overwrite {
             ""
         } else {
@@ -67,12 +79,92 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
         };
         println!("✅ {name} synced{kept}");
     }
+    delivered.sort();
+    if let Some(old) = old_manifest {
+        remove_dropped(&to, &old, &delivered);
+    }
+    let text: String = delivered.iter().map(|p| format!("{p}\n")).collect();
+    replace_with(&to.join(MANIFEST), |tmp| fs::write(tmp, &text))
+        .map_err(|e| io_stop(&to.join(MANIFEST), &e))?;
     println!(
         "🎉 Claude Code 設定を同期しました: {} → {}",
         from.display(),
         to.display()
     );
     Ok(())
+}
+
+/// src の下のファイルと symlink（ディレクトリは含めない。symlink は辿らない）の、.claude からの相対パス（prefix
+/// から始まる、`/` 区切り）を out に足す。ソースの場所そのものがディレクトリを指すリンクなら中身を数える
+fn list_files(src: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), Stop> {
+    let entries = fs::read_dir(src).map_err(|e| read_stop(src, &e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| read_stop(src, &e))?;
+        let rel = format!("{prefix}/{}", entry.file_name().to_string_lossy());
+        let meta = fs::symlink_metadata(entry.path()).map_err(|e| read_stop(&entry.path(), &e))?;
+        if meta.is_dir() {
+            list_files(&entry.path(), &rel, out)?;
+        } else {
+            out.push(rel);
+        }
+    }
+    Ok(())
+}
+
+/// 前の一覧にあって、今配った物に無いファイルを、to の下から消す。消せなくても同期は止めない（次の同期でもう 1 度
+/// 試す）が、理由は標準エラーに出す。一覧の行は信用しない: skills、scripts の下の相対パスだけを受け、途中に
+/// symlink があれば辿らずに飛ばす。消すのはファイルと symlink そのものだけで、空になった親のディレクトリも消す
+fn remove_dropped(to: &Path, old: &str, delivered: &[String]) {
+    for line in old.lines() {
+        if delivered.binary_search_by(|d| d.as_str().cmp(line)).is_ok() {
+            continue;
+        }
+        let Some(path) = safe_path(to, line) else {
+            continue;
+        };
+        match fs::symlink_metadata(&path) {
+            Ok(m) if !m.is_dir() => {}
+            _ => continue,
+        }
+        if let Err(e) = remove_link(&path) {
+            eprintln!("⚠️ {} を消せません（{e}）", path.display());
+            continue;
+        }
+        // 空になった親を、場所（skills など）の手前まで消す。中身があれば remove_dir が失敗して止まる
+        let mut parent = path.parent();
+        while let Some(dir) = parent {
+            if MANAGED.iter().any(|m| dir == to.join(m)) || fs::remove_dir(dir).is_err() {
+                break;
+            }
+            parent = dir.parent();
+        }
+    }
+}
+
+/// 一覧の 1 行を、to の下の消してよいパスにする。skills か scripts の下の、`..` や絶対パスを含まない相対パスで、
+/// to から途中のどの親も symlink でないものだけ（Windows の `\` も区切りに数えて断る）
+fn safe_path(to: &Path, line: &str) -> Option<PathBuf> {
+    if line.contains(['\\', '\0']) {
+        return None;
+    }
+    let parts: Vec<&str> = line.split('/').collect();
+    if parts.len() < 2
+        || !MANAGED.contains(&parts[0])
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || *p == "." || *p == "..")
+    {
+        return None;
+    }
+    let mut path = to.to_path_buf();
+    for (i, part) in parts.iter().enumerate() {
+        path.push(part);
+        // 最後の項目は symlink そのものを消すので許し、親だけを辿らない
+        if i + 1 < parts.len() && fs::symlink_metadata(&path).ok()?.file_type().is_symlink() {
+            return None;
+        }
+    }
+    Some(path)
 }
 
 fn io_stop(path: &Path, e: &std::io::Error) -> Stop {

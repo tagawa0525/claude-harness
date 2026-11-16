@@ -195,7 +195,6 @@ fn symlink_dir(target: &Path, link: &Path) {
 }
 
 #[test]
-#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
 fn removes_only_files_the_previous_sync_delivered_and_the_source_dropped() {
     let home = Home::new();
     let src = home.0.join("src");
@@ -220,7 +219,6 @@ fn removes_only_files_the_previous_sync_delivered_and_the_source_dropped() {
 }
 
 #[test]
-#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
 fn first_sync_without_a_manifest_deletes_nothing_and_writes_one() {
     let home = Home::new();
     let src = home.0.join("src");
@@ -232,7 +230,6 @@ fn first_sync_without_a_manifest_deletes_nothing_and_writes_one() {
 }
 
 #[test]
-#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
 fn does_not_delete_commands_or_paths_outside_skills_and_scripts() {
     let home = Home::new();
     let src = home.0.join("src");
@@ -253,16 +250,17 @@ fn does_not_delete_commands_or_paths_outside_skills_and_scripts() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
 fn does_not_follow_symlinks_when_removing() {
     let home = Home::new();
     let src = home.0.join("src");
     write(&src.join(".claude/scripts/a.sh"), "a");
     write(&home.0.join("outside/x.txt"), "outside");
     // 一覧の親ディレクトリが、外を指す symlink
+    std::fs::create_dir_all(home.dest("")).unwrap();
     symlink_dir(&home.0.join("outside"), &home.dest("skills"));
     write(&home.dest(MANIFEST), "skills/x.txt\nscripts/link\n");
     // 一覧の項目そのものが symlink なら、リンクだけを消して行き先は残す
+    std::fs::create_dir_all(home.dest("scripts")).unwrap();
     symlink_dir(&home.0.join("outside"), &home.dest("scripts/link"));
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
