@@ -262,7 +262,8 @@ pub fn main(args: &[String]) -> i32 {
 /// 変更は、from の index の複製に `git add -A` した上で HEAD との差分（`--binary`）にする。本物の index と作業ツリーは
 /// 触らず、削除、改名、実行権限、バイナリ、未追跡ファイルを 1 つの patch に集められる。dir に当てるのに成功した後でだけ、
 /// from から変更を取り除く（失敗したら元に残す）。stash は全 worktree と全セッションで共有で、push と pop の間に
-/// 別のセッションが積むと取り違えるので使わない。after_apply は、dir に当てた後で元を取り除く前に呼ぶ（テストが
+/// 別のセッションが積むと取り違えるので使わない。元から取り除くのは patch が触れたパスだけで、patch の作成後に元が
+/// 変わっていたら取り除かずに止める。after_apply は、dir に当てた後で元を取り除く前に呼ぶ（テストが
 /// 並行する編集を差し込むため）。dir の index には載せず作業ツリーの変更にする（ステージ済みかどうかは
 /// 引き継がない）
 fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<(), String> {
@@ -274,36 +275,14 @@ fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<
             .map(|p| std::path::absolute(from.join(p)).unwrap_or_default())
             .ok_or_else(|| "git のディレクトリを調べられません".to_string())
     };
-    let (index, temp_index) = (
-        git_path("index")?,
-        git_path(&format!("worktree-add-carry-index-{}", std::process::id()))?,
-    );
-    std::fs::copy(&index, &temp_index).map_err(|e| format!("index を複製できません: {e}"))?;
-    let patch = (|| {
-        let with_index = |args: &[&str]| {
-            Command::new("git")
-                .args(args)
-                .current_dir(from)
-                .env("GIT_INDEX_FILE", &temp_index)
-                .output()
-                .map_err(|e| format!("git を起動できません: {e}"))
-                .and_then(|o| {
-                    if o.status.success() {
-                        Ok(o.stdout)
-                    } else {
-                        Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
-                    }
-                })
-        };
-        with_index(&["add", "-A"])?;
-        with_index(&["diff", "--cached", "--binary", "--no-ext-diff", "HEAD"])
-    })();
-    let _ = std::fs::remove_file(&temp_index);
-    let patch = patch.map_err(|e| format!("差分を作れません: {e}"))?;
-    if patch.is_empty() {
+    let index = git_path("index")?;
+    let temp_index = git_path(&format!("worktree-add-carry-index-{}", std::process::id()))?;
+    let snapshot = || snapshot(from, &index, &temp_index);
+    let before = snapshot().map_err(|e| format!("差分を作れません: {e}"))?;
+    if before.patch.is_empty() {
         return Ok(());
     }
-    let applied = crate::git::run(dir, &["apply", "--binary"], Some(&patch))
+    let applied = crate::git::run(dir, &["apply", "--binary"], Some(&before.patch))
         .ok_or_else(|| "git apply を起動できません".to_string())?;
     if !applied.status.success() {
         return Err(format!(
@@ -312,13 +291,115 @@ fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<
         ));
     }
     after_apply();
-    if !git_inherit(from, &["reset", "-q", "--hard", "HEAD"])
-        || !git_inherit(from, &["clean", "-fdq"])
-    {
+    // patch を作った後に別のセッションが元を編集していたら、その編集は patch に無いので消さない
+    if snapshot().map_err(|e| format!("差分を作り直せません: {e}"))? != before {
         return Err(
-            "worktree には移しましたが、元の作業ツリーから取り除けませんでした（変更は両方にあります）"
+            "patch を作った後に元の作業ツリーが変わったので、取り除きませんでした（worktree には当てた後です）"
                 .to_string(),
         );
+    }
+    restore_paths(from, &before.paths).map_err(|e| {
+        format!("worktree には移しましたが、元の作業ツリーから取り除けませんでした（{e}。変更は両方にあります）")
+    })
+}
+
+/// 元の作業ツリーの状態の控え。patch と、patch が触れるパス、`git status` の出力
+#[derive(PartialEq)]
+struct Snapshot {
+    patch: Vec<u8>,
+    /// NUL 区切りでなく、パスごとのバイト列
+    paths: Vec<Vec<u8>>,
+    status: Vec<u8>,
+}
+
+fn snapshot(from: &Path, index: &Path, temp_index: &Path) -> Result<Snapshot, String> {
+    std::fs::copy(index, temp_index).map_err(|e| format!("index を複製できません: {e}"))?;
+    let result = (|| {
+        let output = |args: &[&str], temp: bool| {
+            let mut cmd = Command::new("git");
+            cmd.args(args).current_dir(from);
+            if temp {
+                cmd.env("GIT_INDEX_FILE", temp_index);
+            }
+            let o = cmd
+                .output()
+                .map_err(|e| format!("git を起動できません: {e}"))?;
+            if o.status.success() {
+                Ok(o.stdout)
+            } else {
+                Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+            }
+        };
+        output(&["add", "-A"], true)?;
+        let patch = output(
+            &["diff", "--cached", "--binary", "--no-ext-diff", "HEAD"],
+            true,
+        )?;
+        let names = output(
+            &[
+                "diff",
+                "--cached",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "HEAD",
+            ],
+            true,
+        )?;
+        let status = output(&["status", "--porcelain=v1", "-z"], false)?;
+        Ok(Snapshot {
+            patch,
+            paths: names
+                .split(|b| *b == 0)
+                .filter(|p| !p.is_empty())
+                .map(<[u8]>::to_vec)
+                .collect(),
+            status,
+        })
+    })();
+    let _ = std::fs::remove_file(temp_index);
+    result
+}
+
+/// patch が触れたパスだけを HEAD の状態に戻す（HEAD にあるものは checkout、無いもの（新規ファイル）は削除）。
+/// `reset --hard` と `clean -fd` は、patch に入らなかった未追跡ファイル（`git add -A` で拾えない、同じ変更で
+/// .gitignore に加えたものなど）も消すので使わない
+fn restore_paths(from: &Path, paths: &[Vec<u8>]) -> Result<(), String> {
+    let nul_separated = |list: &[&Vec<u8>]| -> Vec<u8> {
+        list.iter()
+            .flat_map(|p| p.iter().copied().chain([0]))
+            .collect()
+    };
+    let git_with_paths = |args: &[&str], list: &[&Vec<u8>]| {
+        let spec = nul_separated(list);
+        let mut full = vec!["--literal-pathspecs"];
+        full.extend_from_slice(args);
+        full.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
+        crate::git::run(from, &full, Some(&spec)).is_some_and(|o| o.status.success())
+    };
+    let all: Vec<&Vec<u8>> = paths.iter().collect();
+    if !git_with_paths(&["reset", "-q", "HEAD"], &all) {
+        return Err("git reset が失敗しました".to_string());
+    }
+    let (in_head, new): (Vec<&Vec<u8>>, Vec<&Vec<u8>>) = all.into_iter().partition(|p| {
+        let name = String::from_utf8_lossy(p).into_owned();
+        crate::git::run(from, &["cat-file", "-e", &format!("HEAD:{name}")], None)
+            .is_some_and(|o| o.status.success())
+    });
+    if !in_head.is_empty() && !git_with_paths(&["checkout", "HEAD"], &in_head) {
+        return Err("git checkout が失敗しました".to_string());
+    }
+    for p in new {
+        let path = from.join(String::from_utf8_lossy(p).as_ref());
+        std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        // 空になったディレクトリは片付ける（空でなければ remove_dir が失敗して止まる）
+        let mut dir = path.parent();
+        while let Some(d) = dir.filter(|d| *d != from) {
+            if std::fs::remove_dir(d).is_err() {
+                break;
+            }
+            dir = d.parent();
+        }
     }
     Ok(())
 }
@@ -532,7 +613,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: patch 作成後の編集を確かめずに reset --hard と clean -fd が消す"]
     fn an_edit_made_after_the_patch_keeps_the_source_untouched() {
         let root = std::env::temp_dir().join(format!("worktree-add-race-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

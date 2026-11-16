@@ -252,7 +252,6 @@ fn carry_changes_keeps_the_original_changes_when_they_do_not_apply() {
 }
 
 #[test]
-#[ignore = "RED: clean -fd が patch に入らなかった未追跡ファイルを消す"]
 fn carry_changes_keeps_untracked_files_that_the_patch_could_not_hold() {
     let repo = Repo::new();
     // secret/ は未追跡のまま、同時に .gitignore で無視する変更をすると、git add -A では patch に入らない
