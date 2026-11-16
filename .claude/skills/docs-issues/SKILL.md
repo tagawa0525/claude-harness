@@ -4,6 +4,7 @@ description: GitHub の issue を使わないリポジトリの docs/issues/ に
 allowed-tools:
   - Bash(design-records new:*)
   - Bash(design-records check:*)
+  - Bash(design-records index:*)
   - Read
   - Edit
   - Write
@@ -18,6 +19,7 @@ GitHub の issue があるリポジトリでは、そこに書く。ない場合
 
 ```yaml
 ---
+type: Issue
 status: open
 resolution: done
 resolved-by: 0012-slug
@@ -31,6 +33,7 @@ closed: 2026-10-11
 キーの行に `#` のコメントを書かない（`design-records check` のフロントマターの読み方は YAML のコメントを外さず、`#` 以降を値に
 含める）。値の意味は次のとおり。
 
+- `type`: `Issue`（`docs/index.md` が `okf_version` を持つリポジトリでは必須。OKF の概念の種類）
 - `status`: `open` か `closed`
 - `resolution`: closed のとき。`done`、`wontfix`、`by-design`、`external`、`cannot-reproduce`、`duplicate`、`obsolete`
 - `resolved-by`: done のとき。ADR の番号かコミットの hash。任意
