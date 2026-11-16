@@ -30,17 +30,17 @@ struct NewBranch {
 
 /// 引数を読んだ結果
 #[derive(Default)]
-struct Parsed {
+pub(super) struct Parsed {
     /// ブランチ名を値に取るフラグ（`-c` / `-b` など）の値
-    branch: Option<String>,
+    pub branch: Option<String>,
     /// 位置引数（`--` の後も含む）
-    positional: Vec<String>,
+    pub positional: Vec<String>,
     /// それ以外のフラグ
-    flags: Vec<String>,
+    pub flags: Vec<String>,
 }
 
 /// `create` はブランチ名を値に取るフラグ（長い形は `--x=<b>` も）、`takes_value` は値を飛ばすフラグ
-fn read(args: &[Arg], create: &[&str], takes_value: &[&str]) -> Parsed {
+pub(super) fn read(args: &[Arg], create: &[&str], takes_value: &[&str]) -> Parsed {
     let mut p = Parsed::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -101,6 +101,25 @@ fn has_any(flags: &[String], names: &[&str]) -> bool {
     flags.iter().any(|f| names.contains(&f.as_str()))
 }
 
+/// `git branch` のフラグが作成の形（git branch [--track|--no-track] [-f] <name> [<start>]）のものだけか
+pub(super) fn is_branch_create_flags(flags: &[String]) -> bool {
+    flags.iter().all(|f| {
+        matches!(
+            f.as_str(),
+            "--force"
+                | "--track"
+                | "--no-track"
+                | "--recurse-submodules"
+                | "--quiet"
+                | "--create-reflog"
+        ) || f.starts_with("--track=")
+            // 短いオプション（-f / -t / -q）とそのまとまり（-qf）
+            || f.strip_prefix('-').is_some_and(|c| {
+                !c.is_empty() && !c.starts_with('-') && c.chars().all(|ch| "ftq".contains(ch))
+            })
+    })
+}
+
 /// 起点を省いていれば、HEAD を明示した同じコマンドとともに返す
 fn without_start(sub: &str, args: &[Arg], name: String, positional: usize) -> Option<NewBranch> {
     if positional > 0 {
@@ -136,21 +155,7 @@ fn new_branch(sub: &str, args: &[Arg]) -> Option<NewBranch> {
             // 作成の形（git branch [--track|--no-track] [-f] <name> [<start>]）に現れるフラグ以外が
             // あれば一覧・削除・リネームなどの別の操作
             let p = read(args, &[], &[]);
-            let creating = p.flags.iter().all(|f| {
-                matches!(
-                    f.as_str(),
-                    "--force"
-                        | "--track"
-                        | "--no-track"
-                        | "--recurse-submodules"
-                        | "--quiet"
-                        | "--create-reflog"
-                ) || f.starts_with("--track=")
-                    // 短いオプション（-f / -t / -q）とそのまとまり（-qf）
-                    || f.strip_prefix('-').is_some_and(|c| {
-                        !c.is_empty() && !c.starts_with('-') && c.chars().all(|ch| "ftq".contains(ch))
-                    })
-            });
+            let creating = is_branch_create_flags(&p.flags);
             if !creating || p.positional.len() != 1 {
                 return None;
             }
