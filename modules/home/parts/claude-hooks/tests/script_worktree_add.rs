@@ -170,6 +170,89 @@ fn worktreelink_shares_ignored_paths_of_the_main_worktree() {
 }
 
 #[test]
+fn carry_changes_moves_every_kind_of_change_without_touching_stash() {
+    let repo = Repo::new();
+    repo.write("edit.txt", "one\n");
+    repo.write("gone.txt", "gone\n");
+    repo.write("old-name.txt", "renamed content\nsecond line\n");
+    repo.write("script.sh", "#!/bin/sh\n");
+    repo.commit("fixtures");
+    // 別のセッションが積んだ stash（触れてはいけない）
+    repo.write("other.txt", "other\n");
+    repo.git(&["add", "other.txt"]);
+    repo.git(&["stash", "push", "-q", "-m", "someone else"]);
+    let stash_before = repo.git(&["rev-parse", "refs/stash"]);
+
+    repo.write("edit.txt", "one\ntwo\n");
+    repo.git(&["add", "edit.txt"]);
+    repo.write("edit.txt", "one\ntwo\nthree\n"); // index と作業ツリーで違う
+    std::fs::remove_file(repo.app().join("gone.txt")).unwrap();
+    repo.git(&["mv", "old-name.txt", "new-name.txt"]);
+    std::fs::write(repo.app().join("bin.dat"), [0u8, 159, 146, 150, 255, 0]).unwrap();
+    repo.git(&["add", "bin.dat"]);
+    repo.write("untracked/sub/file.txt", "untracked\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = repo.app().join("script.sh");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let out = repo.run(&["feat/carry", "--carry-changes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let wt = repo.root.join("app-feat-carry");
+
+    // 元の作業ツリーからは取り除く（移動）
+    assert_eq!(repo.git(&["status", "--porcelain"]), "");
+    assert!(!repo.app().join("untracked").exists());
+    // 並行する別セッションの stash には触れない
+    assert_eq!(repo.git(&["rev-parse", "refs/stash"]), stash_before);
+    assert_eq!(repo.git(&["stash", "list"]).lines().count(), 1);
+
+    let read = |p: &str| std::fs::read(wt.join(p)).unwrap();
+    assert_eq!(read("edit.txt"), b"one\ntwo\nthree\n");
+    assert!(!wt.join("gone.txt").exists());
+    assert!(!wt.join("old-name.txt").exists());
+    assert_eq!(read("new-name.txt"), b"renamed content\nsecond line\n");
+    assert_eq!(read("bin.dat"), [0u8, 159, 146, 150, 255, 0]);
+    assert_eq!(read("untracked/sub/file.txt"), b"untracked\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(wt.join("script.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111);
+    }
+}
+
+#[test]
+#[ignore = "RED: --carry-changes が stash を使い、適用に失敗すると元の変更が stash に移る"]
+fn carry_changes_keeps_the_original_changes_when_they_do_not_apply() {
+    let repo = Repo::new();
+    repo.write("a.txt", "base\n");
+    repo.commit("a");
+    repo.write("a.txt", "newer\n");
+    repo.commit("a newer");
+    // 起点（HEAD~1）に当たらない変更: a.txt の base は起点にある newer と食い違う
+    repo.write("a.txt", "newer\nlocal\n");
+    repo.write("fresh.txt", "fresh\n");
+    let out = repo.run(&["feat/fail", "--from", "HEAD~1", "--carry-changes"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert_eq!(repo.git(&["stash", "list"]), "");
+    // git_in は出力の前後の空白を落とすので、先頭の " M" は "M" になる
+    assert_eq!(
+        repo.git(&["status", "--porcelain"]),
+        "M a.txt\n?? fresh.txt"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.app().join("a.txt")).unwrap(),
+        "newer\nlocal\n"
+    );
+}
+
+#[test]
 fn bad_arguments_or_an_existing_directory_are_errors() {
     let repo = Repo::new();
     for args in [
