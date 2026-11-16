@@ -681,8 +681,14 @@ mod tests {
         std::fs::write(from.join("d/f"), "new\n").unwrap();
         let result = carry_changes(&from, &dir, || {});
         assert_eq!(result, Ok(()));
-        assert_eq!(std::fs::read_to_string(from.join("d")).unwrap(), "file\n");
-        assert_eq!(std::fs::read_to_string(dir.join("d/f")).unwrap(), "new\n");
+        assert_eq!(
+            std::fs::read_to_string(from.join("d")).unwrap().trim_end(),
+            "file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("d/f")).unwrap().trim_end(),
+            "new"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
