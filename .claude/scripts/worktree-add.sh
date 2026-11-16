@@ -12,8 +12,9 @@
 #                            から上流なしで新規作成。今の HEAD から作ると、作業中のブランチの未完了のコミットが別の
 #                            トピックに入るため
 # --from <ref>: 新規作成の起点を明示する（今のブランチの続きなら --from HEAD）。既存のブランチに付けたらエラー。
-# --carry-changes: 未コミットの変更（未追跡ファイル含む）を stash 経由で worktree 側に移す
-#   （git-commit スキルの「main からの退避」）。
+# --carry-changes: 未コミットの変更（未追跡ファイル含む）を patch で worktree 側に移し、元の作業ツリーから
+#   取り除く（git-commit スキルの「main からの退避」）。stash は全 worktree と全セッションで共有なので使わない。
+#   worktree に当てるのに失敗したら、元の変更を残して止める
 #
 # 共有（.worktreelink）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス（ルートからの相対パス。空行と
 # # で始まる行は読み飛ばし、前後に空白のある行はエラー）を、メイン worktree の同じパスへの絶対パスの symlink として

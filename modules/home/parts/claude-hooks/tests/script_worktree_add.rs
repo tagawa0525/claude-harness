@@ -228,7 +228,6 @@ fn carry_changes_moves_every_kind_of_change_without_touching_stash() {
 }
 
 #[test]
-#[ignore = "RED: --carry-changes が stash を使い、適用に失敗すると元の変更が stash に移る"]
 fn carry_changes_keeps_the_original_changes_when_they_do_not_apply() {
     let repo = Repo::new();
     repo.write("a.txt", "base\n");

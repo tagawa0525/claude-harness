@@ -9,8 +9,9 @@
 //!   トピックに入るため
 //!
 //! --from <ref> は新しく作る起点を明示する（今のブランチの続きなら --from HEAD）。既存のブランチに付けたらエラー。
-//! --carry-changes は未コミットの変更（未追跡のファイルを含む）を stash で worktree の側に移す（git-commit のスキルの
-//! 「main からの退避」）。
+//! --carry-changes は未コミットの変更（index の変更と未追跡のファイルを含む）を patch にして worktree の側へ移し、
+//! 元の作業ツリーから取り除く（git-commit のスキルの「main からの退避」）。stash は全 worktree と全セッションで共有
+//! なので使わない。worktree に当てるのに失敗したら、元の変更を残して止める。
 //!
 //! 共有（.worktreelink）: 新しい worktree の直下に .worktreelink があれば、1 行 1 パス（直下からの相対のパス。空行と
 //! # で始まる行は読み飛ばし、前後に空白のある行はエラー）を、メインの worktree の同じパスへの絶対パスの symlink として
@@ -206,38 +207,17 @@ pub fn main(args: &[String]) -> i32 {
         ]
     };
 
-    // stash は worktree の間で共有される（common dir）ので、ここで退避して worktree の側で戻せる
-    let mut stashed = false;
-    if carry && git(here, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty()) {
-        if !git_inherit(
-            here,
-            &[
-                "stash",
-                "push",
-                "-q",
-                "-u",
-                "-m",
-                &format!("wip: move to worktree {branch}"),
-            ],
-        ) {
-            eprintln!("ERROR: 変更を stash に退避できませんでした");
-            return 1;
-        }
-        stashed = true;
-    }
     let mut worktree_add = vec!["worktree", "add", "-q"];
     worktree_add.extend(add_args.iter().map(String::as_str));
     if !git_inherit(here, &worktree_add) {
         eprintln!("ERROR: git worktree add が失敗しました");
-        if stashed {
-            eprintln!(
-                "変更は stash に退避したままです（git stash list の wip: move to worktree {branch}）。git stash pop --index で元の worktree に戻せます"
-            );
-        }
         return 1;
     }
-    if stashed && !git_inherit(&dir, &["stash", "pop", "-q", "--index"]) {
-        eprintln!("ERROR: 変更の適用に失敗しました。変更は stash に残っています（git stash list）");
+    if carry && let Err(e) = carry_changes(here, &dir) {
+        eprintln!(
+            "ERROR: 変更を worktree に移せませんでした（{e}）。変更は元の作業ツリーに残っています。worktree は {} に作ってあります",
+            dir.display()
+        );
         return 1;
     }
 
@@ -275,6 +255,70 @@ pub fn main(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// 未コミットの変更（index の変更と未追跡ファイルを含む）を from の作業ツリーから dir の作業ツリーへ移す。
+///
+/// 変更は、from の index の複製に `git add -A` した上で HEAD との差分（`--binary`）にする。本物の index と作業ツリーは
+/// 触らず、削除、改名、実行権限、バイナリ、未追跡ファイルを 1 つの patch に集められる。dir に当てるのに成功した後でだけ、
+/// from から変更を取り除く（失敗したら元に残す）。stash は全 worktree と全セッションで共有で、push と pop の間に
+/// 別のセッションが積むと取り違えるので使わない。dir の index には載せず作業ツリーの変更にする（ステージ済みかどうかは
+/// 引き継がない）
+fn carry_changes(from: &Path, dir: &Path) -> Result<(), String> {
+    if git(from, &["status", "--porcelain"]).is_none_or(|s| s.is_empty()) {
+        return Ok(());
+    }
+    let git_path = |name: &str| {
+        git(from, &["rev-parse", "--git-path", name])
+            .map(|p| std::path::absolute(from.join(p)).unwrap_or_default())
+            .ok_or_else(|| "git のディレクトリを調べられません".to_string())
+    };
+    let (index, temp_index) = (
+        git_path("index")?,
+        git_path(&format!("worktree-add-carry-index-{}", std::process::id()))?,
+    );
+    std::fs::copy(&index, &temp_index).map_err(|e| format!("index を複製できません: {e}"))?;
+    let patch = (|| {
+        let with_index = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(from)
+                .env("GIT_INDEX_FILE", &temp_index)
+                .output()
+                .map_err(|e| format!("git を起動できません: {e}"))
+                .and_then(|o| {
+                    if o.status.success() {
+                        Ok(o.stdout)
+                    } else {
+                        Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    }
+                })
+        };
+        with_index(&["add", "-A"])?;
+        with_index(&["diff", "--cached", "--binary", "--no-ext-diff", "HEAD"])
+    })();
+    let _ = std::fs::remove_file(&temp_index);
+    let patch = patch.map_err(|e| format!("差分を作れません: {e}"))?;
+    if patch.is_empty() {
+        return Ok(());
+    }
+    let applied = crate::git::run(dir, &["apply", "--binary"], Some(&patch))
+        .ok_or_else(|| "git apply を起動できません".to_string())?;
+    if !applied.status.success() {
+        return Err(format!(
+            "git apply が失敗しました: {}",
+            String::from_utf8_lossy(&applied.stderr).trim()
+        ));
+    }
+    if !git_inherit(from, &["reset", "-q", "--hard", "HEAD"])
+        || !git_inherit(from, &["clean", "-fdq"])
+    {
+        return Err(
+            "worktree には移しましたが、元の作業ツリーから取り除けませんでした（変更は両方にあります）"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// .worktreelink のパスを、メインの worktree への symlink にする
