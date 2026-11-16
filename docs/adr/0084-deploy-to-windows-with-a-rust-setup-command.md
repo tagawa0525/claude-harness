@@ -76,7 +76,7 @@ hook の登録の形:
   配備が 2 か所に分かれるため
 - 設置のコマンド: 新しい crate に Rust で書き、サブコマンドで次を持つ。名前とサブコマンドの形は実装の PR で決める
   - 同期: `claude-sync.sh` を置き換える。規則（CLAUDE.md、skills、scripts はソースが正として中身で比べて上書き、
-    commands は既存を残す、消さない、引数なしは既定の clone を `pull --ff-only` してからコピーする）は今のまま。既定の
+    commands は既存を残す、前の同期が配った skills と scripts のうちソースから消えたものだけを消す（ADR-0091）、引数なしは既定の clone を `pull --ff-only` してからコピーする）は今のまま。既定の
     clone は、どちらの OS でもホームの下の `nix/claude-harness`（Windows では `%USERPROFILE%\nix\claude-harness`）。
     Linux の `claude-sync` もこれを呼ぶ。activation は今のとおり source（flake の `claudeCodeSource`）を引数で渡して
     呼び、clone を読まない
@@ -181,3 +181,4 @@ hook の登録の形:
   `claude-memory-backup`（Stop）を渡す。Windows は `cargo install` の置き場の、入れたバイナリだけを渡す（Stop の
   `claude-memory-backup` は jq と flock に頼る sh で、#101 の段階 8 で移すまで Windows には無い）」。退避の中身を
   `claude-hooks stop` に移し、Windows にも置けるようになったため。前の `claude-memory-backup` の登録は `claude-setup` が外す
+- 2026-11-16: 同期の「消さない」を、ソースから消えた物だけを消す形に変えた（ADR-0091）。前は「commands は既存を残す、消さない、引数なしは既定の clone を `pull --ff-only` してからコピーする」。消さないと、リポジトリから消したスクリプトが `~/.claude/scripts` に残り続けたため（#24）。手で足したファイルは一覧に載らないので残る
