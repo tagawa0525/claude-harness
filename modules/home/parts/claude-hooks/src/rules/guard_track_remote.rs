@@ -20,8 +20,27 @@ pub struct GuardTrackRemote;
 /// 上流を設定する意図が示されていない、起点つきのブランチ作成の（ブランチ名、起点）。
 /// 起点を省いた作成は guard-branch-base の対象
 fn tracking_start(sub: &str, args: &[Arg]) -> Option<(String, String)> {
-    let _ = (sub, args, read, is_branch_create_flags);
-    None
+    let (create, branch_mode): (&[&str], bool) = match sub {
+        "switch" => (&["-c", "-C", "--create", "--force-create"], false),
+        "checkout" => (&["-b", "-B"], false),
+        "branch" => (&[], true),
+        _ => return None,
+    };
+    let p = read(args, create, &[]);
+    // 上流の扱いを明示した形（--track、-t、--no-track）は止めない
+    let explicit = p.flags.iter().any(|f| {
+        matches!(f.as_str(), "--track" | "--no-track" | "-t") || f.starts_with("--track=")
+    });
+    if explicit || args.iter().any(|a| a.text == "--") {
+        return None;
+    }
+    match (branch_mode, p.branch, p.positional.as_slice()) {
+        (false, Some(name), [start]) => Some((name, start.clone())),
+        (true, None, [name, start]) if is_branch_create_flags(&p.flags) => {
+            Some((name.clone(), start.clone()))
+        }
+        _ => None,
+    }
 }
 
 impl Rule for GuardTrackRemote {
@@ -69,7 +88,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: tracking_start is not implemented yet"]
     fn start_given_without_track_option_is_a_target() {
         assert_eq!(
             parse("git switch -c feat/a origin/main"),
@@ -173,7 +191,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: tracking_start is not implemented yet"]
     fn remote_tracking_start_is_denied_with_the_fix() {
         let (_t, work) = setup("track-remote-deny");
         let f = check(&work, "git switch -c feat/a origin/main");
