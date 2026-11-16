@@ -120,6 +120,21 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: -- excludes git branch although it is not a pathspec there"]
+    fn double_dash_is_a_pathspec_only_for_switch_and_checkout() {
+        assert_eq!(
+            parse("git branch -- feat/a origin/main"),
+            pair("feat/a", "origin/main")
+        );
+        assert_eq!(
+            parse("git switch -c feat/a origin/main --"),
+            pair("feat/a", "origin/main")
+        );
+        assert_eq!(parse("git checkout origin/main -- a.txt"), None);
+        assert_eq!(parse("git checkout -b feat/a origin/main -- a.txt"), None);
+    }
+
+    #[test]
     fn track_option_start_omitted_or_other_operations_are_not_targets() {
         for src in [
             "git switch --no-track -c feat/a origin/main",

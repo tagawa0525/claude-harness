@@ -117,4 +117,26 @@ mod tests {
             assert!(!deny(&p), "{p}");
         }
     }
+
+    #[test]
+    #[ignore = "RED: the message claims an overwrite that commands does not get"]
+    fn the_message_holds_for_every_synced_place() {
+        let h = home();
+        for place in SYNCED {
+            let raw = serde_json::json!({
+                "tool_name": "Edit",
+                "tool_input": {"file_path": format!("{h}/.claude/{place}/x")},
+                "cwd": "/work/repo",
+            })
+            .to_string();
+            let input = Input::parse(&raw).unwrap();
+            let f = BlockClaudeGeneratedWrite.check(&input, &Shell::parse(""));
+            let [Finding::Deny(msg)] = f.as_slice() else {
+                panic!("{place}")
+            };
+            // commands は同期が既存のファイルを上書きしない。全部に真な文だけを言う
+            assert!(!msg.contains("上書き"), "{place}: {msg}");
+            assert!(msg.contains(".claude/"), "{msg}");
+        }
+    }
 }
