@@ -114,7 +114,6 @@ fn unwritable_state_dir_does_not_change_the_decision() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: existing file mode is not tightened (ADR-0090)"]
 fn existing_file_is_tightened_to_mode_0600() {
     use std::os::unix::fs::PermissionsExt;
     let s = tmp("tighten");

@@ -62,9 +62,14 @@ fn append(line: &str) -> std::io::Result<()> {
     opts.create(true).append(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    // 1 回の write で書く。並行する hook の行が混ざらない
-    opts.open(dir.join("deny.jsonl"))?
-        .write_all(line.as_bytes())
+    let mut file = opts.open(dir.join("deny.jsonl"))?;
+    // mode は新規作成のときだけ効くので、既存のファイルの権限も締める
+    #[cfg(unix)]
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    // write_all は複数回の write になりうる。並行する hook の行が混ざらないよう、プロセス間のロック（std の
+    // File::lock。Unix は flock、Windows は LockFileEx）の間に書く。ロックは閉じると外れる
+    file.lock()?;
+    file.write_all(line.as_bytes())
 }
 
 /// ルール `rule` の Deny（`reason` はルール名の接頭辞の前の理由）を記録する

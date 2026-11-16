@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-16
 requires: [ADR-0033]
 supersedes: []
@@ -53,10 +53,11 @@ PreToolUse でルールが Deny を出すたびに、次の項目の JSON を 1 
 
 - 良い点: 規則ごと・リポジトリごとの deny の回数を、実際の記録から数えられる
 - 悪い点: コマンドの先頭が平文でディスクに残る。0600 と 200 文字の切り詰めで抑えるが、無くならない
+- 良い点: 追記は std の `File::lock`（プロセス間のロック）の間に書くので、並行する hook の行が混ざらない。既存のファイルの権限も 0600 に締める
 - 悪い点: ファイルは大きくなり続ける
 - 悪い点: テストが deny を出すたびに利用者の記録が汚れる。claude-hooks の crate の `.cargo/config.toml` で
   `CLAUDE_HARNESS_DENY_LOG=0` を cargo の実行に渡して防ぐ（記録を確かめるテストだけが `XDG_STATE_HOME` を向ける）
 
 ### 確認
 
-- `tests/deny_log.rs` が、記録の項目、200 文字の切り詰め、0600、`CLAUDE_HARNESS_DENY_LOG=0`、書き込めないときも判定が変わらないことを確かめる
+- `tests/deny_log.rs` が、記録の項目、200 文字の切り詰め、0600、`CLAUDE_HARNESS_DENY_LOG=0`、書き込めないときも判定が変わらないこと、既存のファイルの権限を 0600 に締めること、並行する hook の行が混ざらないことを確かめる
