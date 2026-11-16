@@ -20,6 +20,8 @@
 //!                                      キー）の変更と、決定と理由の変更に「## 変更」の項が足されたか（項の形は見ない）を見る。分岐点から足した amends は、FILE によらず全 ADR で見る（error）。FILE か
 //!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
 //!                                      ときも。pre-commit で使う）
+//!   design-records index               OKF のバンドル（docs/index.md が okf_version を持つ docs/）の索引に、載っていない文書と下位の
+//!                                      ディレクトリの行を足し、書いたパスを出す（ADR-0092）。`check` が同じバンドルの type と索引を検査する
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
 //!
 //! 終了コード: 0 = 成功（注意だけのときも）、1 = 違反か失敗、2 = 使い方の誤り
@@ -37,15 +39,19 @@ use design_records::check::{
     Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_numbers,
     check_reservations, confirmation_paths, decision_changed_without_change_item,
 };
+use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
     numbers_in, record_name,
 };
 
-use git::{Result, default_branch, git, git_ok, has_origin, repo_root, reservations, tracked};
+use git::{
+    Result, default_branch, git, git_ok, has_origin, markdown_under, repo_root, reservations,
+    tracked,
+};
 
 const USAGE: &str = "Usage: design-records [-C <dir>] new [--kind adr|issue] <slug> <title> \
-     | renumber [--kind adr|issue] <old> [<new>] | prune [--stale [--days N] [--delete]] | check [--changed] [FILE]... | status";
+     | renumber [--kind adr|issue] <old> [<new>] | prune [--stale [--days N] [--delete]] | check [--changed] [FILE]... | index | status";
 
 /// 使い方の誤り。
 struct UsageError;
@@ -101,6 +107,7 @@ fn dispatch(args: &[&str]) -> std::result::Result<Result<ExitCode>, UsageError> 
         ["check", files @ ..] if !files.iter().any(|f| f.starts_with('-')) => {
             run_check(files, !files.is_empty())
         }
+        ["index"] => index(),
         ["status"] => status(),
         _ => return Err(UsageError),
     })
@@ -184,6 +191,7 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     }
 
     let mut found = check(&adrs, issues.as_ref(), &scanned);
+    found.extend(check_bundle(&bundle_files(&root, false)?));
     found.extend(check_issue_numbers(&issue_paths));
     let mut issue_texts = BTreeMap::new();
     for path in issue_paths
@@ -416,5 +424,40 @@ fn status() -> Result<ExitCode> {
         .map_err(|e| format!("cannot read stdin: {e}"))?;
     let status = design_records::status(&text);
     println!("{}", status.as_deref().unwrap_or("-"));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// docs/ の .md のパスと中身（`untracked` なら追跡していないものも含める）。
+fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>> {
+    let mut files = BTreeMap::new();
+    // バンドルでなければ（docs/index.md が okf_version を持たなければ）、ほかの docs/ のファイルを読まない
+    let root_index = match fs::read_to_string(root.join(BUNDLE_ROOT).join("index.md")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(files),
+        Err(e) => return Err(format!("{BUNDLE_ROOT}/index.md: {e}")),
+    };
+    if !is_bundle_index(&root_index) {
+        return Ok(files);
+    }
+    for path in markdown_under(root, BUNDLE_ROOT, untracked)? {
+        let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+        files.insert(path, text);
+    }
+    Ok(files)
+}
+
+/// バンドルの索引に載っていない行を足し、書いたパスを出す（ADR-0092）。
+fn index() -> Result<ExitCode> {
+    let root = repo_root()?;
+    let files = bundle_files(&root, true)?;
+    if files.is_empty() {
+        eprintln!(
+            "design-records: docs/index.md has no `okf_version` in its front matter, so docs/ is not an OKF bundle"
+        );
+    }
+    for (path, text) in complete_indexes(&files) {
+        fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
+        println!("{path}");
+    }
     Ok(ExitCode::SUCCESS)
 }

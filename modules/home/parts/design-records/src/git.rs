@@ -77,6 +77,25 @@ pub fn tracked(root: &Path, dir: &str) -> Result<Vec<String>> {
         .collect())
 }
 
+/// `dir` の下の（下位のディレクトリを含む）、追跡している .md のうち、作業ツリーにあるもの。`untracked` なら、
+/// 追跡していない（無視していない）ファイルも含める（`index` が、作ったばかりの記録を載せるため）。
+pub fn markdown_under(root: &Path, dir: &str, untracked: bool) -> Result<Vec<String>> {
+    let mut args = vec!["ls-files", "-z", "--cached"];
+    if untracked {
+        args.extend(["--others", "--exclude-standard"]);
+    }
+    args.extend(["--", dir]);
+    let listed = git(root, &args)?;
+    let mut paths: Vec<String> = listed
+        .split('\0')
+        .filter(|p| p.ends_with(".md") && root.join(p).is_file())
+        .map(str::to_string)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 /// `refs/remotes/origin/` の既定ブランチ（`origin/HEAD`、`origin/main`、`origin/master` の順）。
 pub fn origin_default(root: &Path) -> Result<Option<String>> {
     // origin/HEAD の指す先が消えていれば（origin で既定ブランチの名前を変えた後など）、使わずに名前で探す

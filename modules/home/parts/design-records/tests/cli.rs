@@ -575,7 +575,7 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     assert_eq!(
         stdout(&out),
         "docs/adr/0002-use-b.md: warning: the decided sections changed although the ADR is \
-         accepted on main; the title, the front matter other than status, superseded-by, date, \
+         accepted on main; the title, the front matter other than type, status, superseded-by, date, \
          amends, amended-by, issues, and the context, decision drivers, considered options, \
          decision outcome and pros and cons of the options record the decision as made, so \
          change them only to fix typos, grammar, markup and broken links or to replace words \
@@ -2489,4 +2489,64 @@ fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(merged.exists());
     assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
+}
+
+const OKF_ROOT_INDEX: &str = "---\nokf_version: \"0.2\"\n---\n\n# docs\n";
+
+#[test]
+fn check_reports_okf_findings_only_in_a_bundle() {
+    let t = TempRepo::new("okf-check");
+    t.write("docs/note.md", "no front matter\n");
+    t.commit_all("docs: note");
+    assert!(t.run(&["check"]).status.success());
+
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.commit_all("docs: bundle root");
+    let out = t.run(&["check"]);
+    assert!(!out.status.success());
+    let shown = stdout(&out);
+    assert!(shown.contains("docs/note.md: error"), "{shown}");
+    assert!(shown.contains("`note.md` is not listed"), "{shown}");
+}
+
+#[test]
+fn index_completes_the_bundle_and_check_then_passes() {
+    let t = TempRepo::new("okf-index");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/windows.md",
+        "---\ntype: Guide\ntitle: Windows\ndescription: 入れ方\n---\n",
+    );
+    assert_eq!(
+        stdout(&t.run(&["new", "use-foo", "foo を使う"])),
+        "docs/adr/0001-use-foo.md\n"
+    );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/index.md\ndocs/index.md\n");
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n"
+    );
+    t.commit_all("docs: bundle");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(t.run(&["index"]).stdout.is_empty());
+}
+
+#[test]
+fn check_does_not_read_docs_outside_a_bundle() {
+    let t = TempRepo::new("okf-nonbundle");
+    t.write("docs/index.md", "# docs\n");
+    fs::write(t.dir.join("docs/binary.md"), [0xff, 0xfe, 0x00]).unwrap();
+    t.commit_all("docs: not utf-8");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let out = t.run(&["index"]);
+    assert!(out.status.success());
+    assert!(
+        stderr(&out).contains("not an OKF bundle"),
+        "{}",
+        stderr(&out)
+    );
 }

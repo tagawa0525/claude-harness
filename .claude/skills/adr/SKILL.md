@@ -5,6 +5,7 @@ allowed-tools:
   - Bash(design-records new:*)
   - Bash(design-records renumber:*)
   - Bash(design-records check:*)
+  - Bash(design-records index:*)
 ---
 
 # ADR
@@ -31,6 +32,7 @@ allowed-tools:
 design-records new <slug> "<決めたことの 1 文>"
 design-records renumber <旧番号> [<新番号>]
 design-records check [--changed] [FILE]...
+design-records index
 ```
 
 `new` は `docs/adr/NNNN-<slug>.md` を、次の番号、フロントマター、必須と推奨の見出しつきで作る。slug は決めたことを動詞で
@@ -48,6 +50,10 @@ docs/issues の issue も同じ仕組みで番号を振る（`--kind issue`。�
 `NNNN-<slug>.md`）を付け替えて、1 つのコミットにする。main から来た行の参照と、振り直す記録のフロントマターの参照は、
 main の記録を指すのでそのまま残す。作業ツリーに変更（追跡していないファイルを含む）があれば止まる。マージした後の予約のタグは、`post-merge-cleanup.sh` が
 消す。
+
+`docs/index.md` のフロントマターに `okf_version` を持つリポジトリは、`docs/` 全体を OKF のバンドルとして扱い、`check` が `type`（ADR は `type: ADR`、
+`docs/issues/` の issue は `type: Issue`）、各ディレクトリの `index.md`（文書と下位のディレクトリがすべて載り、リンク先が実在すること）、
+`log.md` の日付の見出しも検査する。`index` は、索引に載っていない文書の行を足す（`new` で ADR を作ったら実行し、足した索引もコミットする）。
 
 `check` は docs/adr の追跡している ADR の形と、ADR どうしの参照（置き換えの双方向の一致、参照先の有無）、ADR と
 docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。予約のタグの slug と違う slug の記録には注意を出す。
@@ -78,7 +84,7 @@ repos:
   補足。必須は背景・検討した案・決定と理由、推奨は帰結・確認（`rejected` の ADR には推奨の節を求めない。採らなかった
   決定には確かめるものも帰結も無いため。採らない理由を書く節はプロジェクトの運用に従う）。
   ほかの節を足してもよい
-- **フロントマター**のキーは `status`、`date` と次の 4 つ、それに既存の ADR に残る 2 つ（MADR の `decision-makers` などに
+- **フロントマター**のキーは `type: ADR`（OKF の概念の種類。`new` が書く）、`status`、`date` と次の 4 つ、それに既存の ADR に残る 2 つ（MADR の `decision-makers` などに
   代えて、置き換えと参照を grep で引けるようにする）。一覧は `[a, b]` の形で 1 行に書く
   - `requires`: 前提にしている ADR（`[ADR-NNNN]`）
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く

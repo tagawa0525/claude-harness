@@ -411,7 +411,7 @@ fn check_front(doc: &Adr, out: &mut Found) {
 }
 
 /// 暦にある日付の `YYYY-MM-DD` か（月の日数と閏年を見る）。
-fn is_date(s: &str) -> bool {
+pub(crate) fn is_date(s: &str) -> bool {
     let bytes = s.as_bytes();
     let digits = |r: std::ops::Range<usize>| bytes[r].iter().all(u8::is_ascii_digit);
     if bytes.len() != 10

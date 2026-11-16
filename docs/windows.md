@@ -1,3 +1,9 @@
+---
+type: Guide
+title: Windows で使う
+description: ネイティブの Windows（WSL を使わない）で、cargo install と claude-setup でハーネスを入れる手順。
+---
+
 # Windows で使う
 
 ネイティブの Windows（WSL を使わない）では、Nix の代わりに `cargo install` と `claude-setup` で入れる（ADR-0084）。

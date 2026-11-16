@@ -14,7 +14,7 @@ Claude Code のハーネス。PC 全体のセッションが読む指示、ス�
 | `modules/home/parts/claude-setup/`                                       | `~/.claude` への同期と `settings.json` の更新（Linux の activation と Windows の設置が呼ぶ）    |
 | `modules/home/parts/commit-refs/`、`design-records/`、`history-rewrite/` | hook とスキルが使う CLI                                                                         |
 | `modules/home/parts/ja-terms/`                                           | 日本語の語の辞書と検査                                                                          |
-| `docs/adr/`                                                              | 決定の記録                                                                                      |
+| `docs/`                                                                  | OKF のバンドル（`docs/adr/` に決定の記録）。`design-records check` が `type` と `index.md` を検査 |
 
 ## 取り込み方
 
