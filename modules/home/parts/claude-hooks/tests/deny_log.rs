@@ -147,7 +147,6 @@ fn concurrent_hooks_never_mix_lines() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: fixed in the next commit"]
 fn log_dir_is_created_and_tightened_to_mode_0700() {
     use std::os::unix::fs::PermissionsExt;
     let s = tmp("dirmode");
