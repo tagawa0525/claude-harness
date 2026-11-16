@@ -1325,6 +1325,22 @@ fn check_reads_crlf_front_matter_and_headings_like_lf() {
 }
 
 #[test]
+fn new_writes_lf_in_a_crlf_worktree_and_check_accepts_it() {
+    let t = TempRepo::new("crlf-new");
+    t.run(&["new", "use-foo", "foo を使う"]);
+    t.commit_all("docs(adr): foo");
+    to_crlf_worktree(&t);
+    let out = t.run(&["new", "use-bar", "bar を使う"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let bar = t.read("docs/adr/0002-use-bar.md");
+    assert!(bar.starts_with("---\n"), "{bar:?}");
+    assert!(!bar.contains('\r'), "{bar:?}");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
 fn renumber_keeps_crlf_in_a_crlf_worktree() {
     let t = duplicated_after_rebase("crlf-renumber");
     to_crlf_worktree(&t);
