@@ -305,10 +305,17 @@ fn carry_changes(from: &Path, dir: &Path, after_apply: impl FnOnce()) -> Result<
 
 /// 元の作業ツリーの状態の控え。patch と、patch が触れるパス、`git status` の出力
 #[derive(PartialEq)]
+struct PatchPath {
+    /// パスのバイト列（非 UTF-8 のこともある）
+    bytes: Vec<u8>,
+    /// HEAD に無い（patch が追加するファイル）
+    new: bool,
+}
+
+#[derive(PartialEq)]
 struct Snapshot {
     patch: Vec<u8>,
-    /// NUL 区切りでなく、パスごとのバイト列
-    paths: Vec<Vec<u8>>,
+    paths: Vec<PatchPath>,
     status: Vec<u8>,
 }
 
@@ -339,7 +346,7 @@ fn snapshot(from: &Path, index: &Path, temp_index: &Path) -> Result<Snapshot, St
             &[
                 "diff",
                 "--cached",
-                "--name-only",
+                "--name-status",
                 "-z",
                 "--no-renames",
                 "HEAD",
@@ -347,13 +354,19 @@ fn snapshot(from: &Path, index: &Path, temp_index: &Path) -> Result<Snapshot, St
             true,
         )?;
         let status = output(&["status", "--porcelain=v1", "-z"], false)?;
+        // 出力は「状態 NUL パス NUL」の繰り返し（--no-renames なのでパスは 1 つ）。HEAD にあるかは、パスの
+        // 文字列を git に渡して調べず、ここで A（追加）かどうかから決める（非 UTF-8 のパスを壊さない）
+        let mut fields = names.split(|b| *b == 0).filter(|f| !f.is_empty());
+        let mut paths = Vec::new();
+        while let (Some(state), Some(bytes)) = (fields.next(), fields.next()) {
+            paths.push(PatchPath {
+                bytes: bytes.to_vec(),
+                new: state == b"A",
+            });
+        }
         Ok(Snapshot {
             patch,
-            paths: names
-                .split(|b| *b == 0)
-                .filter(|p| !p.is_empty())
-                .map(<[u8]>::to_vec)
-                .collect(),
+            paths,
             status,
         })
     })();
@@ -364,34 +377,36 @@ fn snapshot(from: &Path, index: &Path, temp_index: &Path) -> Result<Snapshot, St
 /// patch が触れたパスだけを HEAD の状態に戻す（HEAD にあるものは checkout、無いもの（新規ファイル）は削除）。
 /// `reset --hard` と `clean -fd` は、patch に入らなかった未追跡ファイル（`git add -A` で拾えない、同じ変更で
 /// .gitignore に加えたものなど）も消すので使わない
-fn restore_paths(from: &Path, paths: &[Vec<u8>]) -> Result<(), String> {
-    let nul_separated = |list: &[&Vec<u8>]| -> Vec<u8> {
-        list.iter()
-            .flat_map(|p| p.iter().copied().chain([0]))
-            .collect()
-    };
-    let git_with_paths = |args: &[&str], list: &[&Vec<u8>]| {
-        let spec = nul_separated(list);
+fn restore_paths(from: &Path, paths: &[PatchPath]) -> Result<(), String> {
+    let git_with_paths = |args: &[&str], list: &[&PatchPath]| {
+        let spec: Vec<u8> = list
+            .iter()
+            .flat_map(|p| p.bytes.iter().copied().chain([0]))
+            .collect();
         let mut full = vec!["--literal-pathspecs"];
         full.extend_from_slice(args);
         full.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
         crate::git::run(from, &full, Some(&spec)).is_some_and(|o| o.status.success())
     };
-    let all: Vec<&Vec<u8>> = paths.iter().collect();
+    let all: Vec<&PatchPath> = paths.iter().collect();
     if !git_with_paths(&["reset", "-q", "HEAD"], &all) {
         return Err("git reset が失敗しました".to_string());
     }
-    let (in_head, new): (Vec<&Vec<u8>>, Vec<&Vec<u8>>) = all.into_iter().partition(|p| {
-        let name = String::from_utf8_lossy(p).into_owned();
-        crate::git::run(from, &["cat-file", "-e", &format!("HEAD:{name}")], None)
-            .is_some_and(|o| o.status.success())
-    });
-    if !in_head.is_empty() && !git_with_paths(&["checkout", "HEAD"], &in_head) {
-        return Err("git checkout が失敗しました".to_string());
-    }
+    let (new, in_head): (Vec<&PatchPath>, Vec<&PatchPath>) = all.into_iter().partition(|p| p.new);
+    // 新規ファイルの削除は checkout より先にする。HEAD のファイル d を作業ツリーでディレクトリ d/ に置き換えた
+    // ときは、checkout が先に d/f を消してしまい、後の remove_file が失敗する
     for p in new {
-        let path = from.join(String::from_utf8_lossy(p).as_ref());
-        std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let path = from.join(os_path(&p.bytes));
+        std::fs::remove_file(&path).map_err(|e| {
+            if path.is_dir() {
+                format!(
+                    "{} はディレクトリです（埋め込みのリポジトリなどは自動では取り除けません。手で消してください）: {e}",
+                    path.display()
+                )
+            } else {
+                format!("{}: {e}", path.display())
+            }
+        })?;
         // 空になったディレクトリは片付ける（空でなければ remove_dir が失敗して止まる）
         let mut dir = path.parent();
         while let Some(d) = dir.filter(|d| *d != from) {
@@ -401,7 +416,21 @@ fn restore_paths(from: &Path, paths: &[Vec<u8>]) -> Result<(), String> {
             dir = d.parent();
         }
     }
+    if !in_head.is_empty() && !git_with_paths(&["checkout", "HEAD"], &in_head) {
+        return Err("git checkout が失敗しました".to_string());
+    }
     Ok(())
+}
+
+#[cfg(unix)]
+fn os_path(bytes: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+}
+
+#[cfg(not(unix))]
+fn os_path(bytes: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
 /// .worktreelink のパスを、メインの worktree への symlink にする
@@ -631,7 +660,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: fixed in the next commit"]
     fn a_file_replaced_by_a_directory_is_carried_and_the_source_restored() {
         let (root, from, dir) = carry_fixture("file-to-dir");
         std::fs::write(from.join("d"), "file\n").unwrap();
@@ -648,7 +676,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    #[ignore = "RED: fixed in the next commit"]
     fn non_utf8_paths_are_carried_and_removed_from_the_source() {
         use std::os::unix::ffi::OsStrExt;
         let (root, from, dir) = carry_fixture("non-utf8");
