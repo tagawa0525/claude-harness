@@ -48,7 +48,6 @@ fn tmp(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-#[ignore = "RED: deny log not implemented (ADR-0090)"]
 fn deny_appends_one_json_line_with_the_fields() {
     let s = tmp("fields");
     run(&s, Some("sess-1"), "git add -A", &[]);
@@ -67,7 +66,6 @@ fn deny_appends_one_json_line_with_the_fields() {
 }
 
 #[test]
-#[ignore = "RED: deny log not implemented (ADR-0090)"]
 fn command_and_reason_are_cut_to_200_chars() {
     let s = tmp("cut");
     let long = format!("git add -A # {}", "あ".repeat(300));
@@ -78,7 +76,6 @@ fn command_and_reason_are_cut_to_200_chars() {
 }
 
 #[test]
-#[ignore = "RED: deny log not implemented (ADR-0090)"]
 fn allowed_command_is_not_logged() {
     let s = tmp("allow");
     run(&s, None, "git status", &[]);
@@ -87,7 +84,6 @@ fn allowed_command_is_not_logged() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: deny log not implemented (ADR-0090)"]
 fn file_is_created_with_mode_0600() {
     use std::os::unix::fs::PermissionsExt;
     let s = tmp("mode");
@@ -100,7 +96,6 @@ fn file_is_created_with_mode_0600() {
 }
 
 #[test]
-#[ignore = "RED: deny log not implemented (ADR-0090)"]
 fn env_zero_disables_the_log() {
     let s = tmp("off");
     run(&s, None, "git add -A", &[("CLAUDE_HARNESS_DENY_LOG", "0")]);
@@ -108,7 +103,6 @@ fn env_zero_disables_the_log() {
 }
 
 #[test]
-#[ignore = "RED: deny log not implemented (ADR-0090)"]
 fn unwritable_state_dir_does_not_change_the_decision() {
     let s = tmp("unwritable");
     // 状態ディレクトリの場所がファイルなので、作れない
