@@ -252,6 +252,21 @@ fn carry_changes_keeps_the_original_changes_when_they_do_not_apply() {
 }
 
 #[test]
+#[ignore = "RED: clean -fd が patch に入らなかった未追跡ファイルを消す"]
+fn carry_changes_keeps_untracked_files_that_the_patch_could_not_hold() {
+    let repo = Repo::new();
+    // secret/ は未追跡のまま、同時に .gitignore で無視する変更をすると、git add -A では patch に入らない
+    repo.write("secret/key.txt", "secret\n");
+    repo.write(".gitignore", "/shared\n/token.txt\n/secret/\n");
+    let out = repo.run(&["feat/keep", "--carry-changes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        std::fs::read_to_string(repo.app().join("secret/key.txt")).unwrap(),
+        "secret\n"
+    );
+}
+
+#[test]
 fn bad_arguments_or_an_existing_directory_are_errors() {
     let repo = Repo::new();
     for args in [

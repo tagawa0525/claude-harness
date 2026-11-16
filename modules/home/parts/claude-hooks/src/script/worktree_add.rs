@@ -519,6 +519,47 @@ fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    fn sh(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", dir.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    }
+
+    #[test]
+    #[ignore = "RED: patch 作成後の編集を確かめずに reset --hard と clean -fd が消す"]
+    fn an_edit_made_after_the_patch_keeps_the_source_untouched() {
+        let root = std::env::temp_dir().join(format!("worktree-add-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (from, dir) = (root.join("app"), root.join("app-x"));
+        std::fs::create_dir_all(&from).unwrap();
+        sh(&from, &["init", "-q", "-b", "main"]);
+        std::fs::write(from.join("a.txt"), "base\n").unwrap();
+        sh(&from, &["add", "-A"]);
+        sh(&from, &["commit", "-q", "-m", "init"]);
+        sh(
+            &from,
+            &["worktree", "add", "-q", dir.to_str().unwrap(), "-b", "x"],
+        );
+        std::fs::write(from.join("a.txt"), "carried\n").unwrap();
+        let result = carry_changes(&from, &dir, || {
+            std::fs::write(from.join("a.txt"), "edited by another session\n").unwrap();
+            std::fs::write(from.join("late.txt"), "late\n").unwrap();
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read_to_string(from.join("a.txt")).unwrap(),
+            "edited by another session\n"
+        );
+        assert!(from.join("late.txt").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_link_that_cannot_be_made_removes_the_links_made_before_it() {
         let root =
