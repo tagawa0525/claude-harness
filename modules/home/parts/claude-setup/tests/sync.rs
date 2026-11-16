@@ -187,11 +187,9 @@ fn overwrites_changed_files_and_keeps_existing_commands() {
 
 const MANIFEST: &str = ".claude-sync-manifest";
 
+#[cfg(unix)]
 fn symlink_dir(target: &Path, link: &Path) {
-    #[cfg(unix)]
     std::os::unix::fs::symlink(target, link).unwrap();
-    #[cfg(not(unix))]
-    let _ = (target, link);
 }
 
 #[test]
