@@ -75,10 +75,14 @@ impl Repo {
     }
 
     fn run(&self, args: &[&str]) -> Output {
+        self.run_in(&self.app(), args)
+    }
+
+    fn run_in(&self, dir: &Path, args: &[&str]) -> Output {
         forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
             .args(["script", "worktree-add"])
             .args(args)
-            .current_dir(self.app())
+            .current_dir(dir)
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-config"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()
@@ -225,6 +229,33 @@ fn carry_changes_moves_every_kind_of_change_without_touching_stash() {
             .mode();
         assert_eq!(mode & 0o111, 0o111);
     }
+}
+
+#[test]
+#[ignore = "RED: fixed in the next commit"]
+fn carry_changes_works_from_a_subdirectory() {
+    let repo = Repo::new();
+    repo.write("sub/tracked.txt", "one\n");
+    repo.commit("fixtures");
+    repo.write("sub/tracked.txt", "one\ntwo\n");
+    repo.write("sub/new.txt", "new\n");
+    let out = repo.run_in(&repo.app().join("sub"), &["feat/sub", "--carry-changes"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let wt = repo.root.join("app-feat-sub");
+    assert_eq!(
+        std::fs::read_to_string(wt.join("sub/tracked.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(wt.join("sub/new.txt")).unwrap(),
+        "new\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.app().join("sub/tracked.txt")).unwrap(),
+        "one\n"
+    );
+    assert!(!repo.app().join("sub/new.txt").exists());
+    assert!(repo.git(&["status", "--porcelain"]).is_empty());
 }
 
 #[test]
