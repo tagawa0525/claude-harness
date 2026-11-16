@@ -1,4 +1,5 @@
 ---
+type: ADR
 status: proposed
 date: 2026-10-20
 requires: []

@@ -1,4 +1,5 @@
 ---
+type: ADR
 status: superseded
 date: 2026-10-21
 requires: [ADR-0004, ADR-0021, ADR-0023]
