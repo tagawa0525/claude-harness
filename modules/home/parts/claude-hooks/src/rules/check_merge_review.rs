@@ -545,20 +545,27 @@ mod tests {
             std::fs::write(p, text).unwrap();
         }
 
-        /// コミットの hash。テストは hash の先頭（9 字など）を文書に書くが、数字だけの語は mask_hashes が 16 進の語と
-        /// みなさない（英字を 1 つは含む語だけを hash とする）ので、付け替えが hash の差し替えに見えない。日時を固定
-        /// してあるので hash はメッセージと内容だけで決まり、7 字（mask_hashes が hash とみなす最短。これに英字が
-        /// あれば、それより長いどの先頭も英字を含む）が数字だけになるメッセージはテストが毎回落ちる。そのときは
-        /// メッセージを変える
+        /// コミットの hash。日時を固定してあるので hash はメッセージと内容だけで決まる
         fn commit(&self, msg: &str) -> String {
             git(&self.dir(), &["add", "-A"]);
             git(&self.dir(), &["commit", "-q", "-m", msg]);
-            let head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
-            assert!(
-                head[..7].bytes().any(|b| b.is_ascii_alphabetic()),
-                "コミット {msg:?} の hash {head} の先頭 7 字が数字だけ。メッセージを変える"
-            );
-            head
+            git_out(&self.dir(), &["rev-parse", "HEAD"])
+        }
+
+        /// 直前のコミットのメッセージを変えて、hash の先頭 9 字が数字だけになるまで繰り返す（約 1.5% なので数十〜数百回）。
+        /// コミットの hash
+        fn amend_to_digit_only_hash(&self) -> String {
+            for n in 0..5000 {
+                git(
+                    &self.dir(),
+                    &["commit", "-q", "--amend", "-m", &format!("try {n}")],
+                );
+                let head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
+                if head[..9].bytes().all(|b| b.is_ascii_digit()) {
+                    return head;
+                }
+            }
+            panic!("先頭 9 字が数字だけの hash が見つからない");
         }
 
         /// feat/x に移ってファイルを書き、コミットして main に戻る。コミットの hash
@@ -879,18 +886,50 @@ mod tests {
     }
 
     #[test]
-    fn masks_only_whole_hex_words_with_a_letter() {
+    #[ignore = "RED: 数字だけの hash を候補にしていない"]
+    fn masks_whole_hex_words_of_7_to_64_digits() {
         let masked = |l: &str| mask_hashes(l).0;
         assert_eq!(masked("see b7e01d512。"), masked("see 0123abcd4。"));
         assert_eq!(
             mask_hashes("see b7e01d512。").1,
             vec!["b7e01d512".to_string()]
         );
-        // 数字だけの語は数の変更と見分けられない
-        assert_ne!(masked("k = 1234567"), masked("k = 1234568"));
+        // 数字だけの語も候補にする（付け替えかは is_rebase_remap が git で確かめる）
+        assert_eq!(
+            mask_hashes("see 123456789。").1,
+            vec!["123456789".to_string()]
+        );
+        assert_eq!(masked("k = 1234567"), masked("k = 1234568"));
+        // 7 桁に満たない数は候補にしない
+        assert_ne!(masked("k = 42"), masked("k = 43"));
         // 語の一部は置き換えない
         assert_ne!(masked("xabcdef12"), masked("xabcdef13"));
         assert_ne!(masked("abc12"), masked("abc13"));
+        assert_ne!(masked("x1234567"), masked("x1234568"));
+    }
+
+    #[test]
+    #[ignore = "RED: 数字だけの hash を候補にしていない"]
+    fn passes_a_remap_of_a_digit_only_hash() {
+        let repo = Repo::new("digit-remap");
+        let gone = repo.gone_commit();
+        git(&repo.dir(), &["switch", "-q", "feat/x"]);
+        repo.write("src/b.rs", &format!("// see {}\n", &gone[..9]));
+        repo.commit("change");
+        let reviewed = repo.amend_to_digit_only_hash();
+        git(&repo.dir(), &["switch", "-q", "main"]);
+        repo.commit_on_branch(&[("src/b.rs", &format!("// see {}\n", &reviewed[..9]))]);
+        let r = repo.check_body(&body(&reviewed, FINDINGS));
+        assert!(r.is_empty(), "付け替えは知らせない");
+    }
+
+    #[test]
+    fn tells_a_number_change_that_is_not_a_commit() {
+        let repo = Repo::new("number-change");
+        let reviewed = repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234567;\n")]);
+        repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234568;\n")]);
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(r.contains("src/n.rs"), "{r}");
     }
 
     #[test]
