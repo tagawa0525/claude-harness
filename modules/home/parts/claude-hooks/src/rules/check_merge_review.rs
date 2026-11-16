@@ -124,8 +124,9 @@ fn is_lower_hex(c: char) -> bool {
     c.is_ascii_digit() || ('a'..='f').contains(&c)
 }
 
-/// 16 進の語（コミットの hash）を印に置き換えた行と、置き換えた語。語は、前後が英数字と `_` でなく、a〜f を 1 字以上
-/// 含む 7〜64 桁の小文字の 16 進。数字だけの語は数と見分けられないので置き換えない（数の変更を hash の付け替えに数えない）
+/// 16 進の語（コミットの hash）を印に置き換えた行と、置き換えた語。語は、前後が英数字と `_` でなく、
+/// 7〜64 桁の小文字の 16 進。数字だけの語も候補にする（rebase で書き換わった hash の先頭は約 1.5% が数字だけ）。数の
+/// 変更は、is_rebase_remap がコミットに解けない語として付け替えに数えない
 fn mask_hashes(line: &str) -> (String, Vec<String>) {
     let chars: Vec<char> = line.chars().collect();
     let mut out = String::new();
@@ -139,8 +140,7 @@ fn mask_hashes(line: &str) -> (String, Vec<String>) {
             }
             let run = &chars[i..j];
             let whole = j == chars.len() || !is_word(chars[j]);
-            if whole && (7..=64).contains(&run.len()) && run.iter().any(|c| c.is_ascii_alphabetic())
-            {
+            if whole && (7..=64).contains(&run.len()) {
                 out.push('\0');
                 words.push(run.iter().collect());
             } else {
@@ -220,10 +220,14 @@ pub(super) fn is_dvc_record(path: &str) -> bool {
 /// hash を、それに当たるブランチのコミット（先端の祖先で、既定ブランチの祖先でない）の hash にする。依存の rev、既定ブランチの
 /// コミットや別のブランチのコミットへの差し替えは挙動を変えうるので含めない
 fn is_rebase_remap(dir: &Path, default: &str, tip: &str, old: &str, new: &str) -> bool {
-    let on_branch = resolve_commit(dir, new)
-        .is_some_and(|c| is_ancestor(dir, &c, tip) && !is_ancestor(dir, &c, default));
-    let gone = resolve_commit(dir, old).is_none_or(|c| !is_ancestor(dir, &c, tip));
-    on_branch && gone
+    // 数の変更のようにコミットに解けない語が大半なので、新しい側が解けなければ古い側は調べず早く捨てる
+    let Some(c) = resolve_word(dir, new) else {
+        return false;
+    };
+    if !is_ancestor(dir, &c, tip) || is_ancestor(dir, &c, default) {
+        return false;
+    }
+    resolve_word(dir, old).is_none_or(|c| !is_ancestor(dir, &c, tip))
 }
 
 /// from から to（ブランチの先端）までに変わったファイルのうち、挙動を変えうるもの。git diff が失敗したら None
@@ -305,6 +309,22 @@ fn split_diff_sections(diff: &str) -> Vec<&str> {
 
 fn is_ancestor(dir: &Path, a: &str, b: &str) -> bool {
     git::git(dir, &["merge-base", "--is-ancestor", a, b]).is_some()
+}
+
+/// 16 進の語をコミットに解く。10 進の数字だけの語は、同名の ref（`1234567` というブランチ）や、複数の object に
+/// 当たる短縮 ID として解けてしまい、数の変更を付け替えに見せるので、ref 名としては解かず、object の ID として
+/// 一意に当たり、それがコミットのときだけ解く（`--disambiguate` は ref を見ない）
+fn resolve_word(dir: &Path, word: &str) -> Option<String> {
+    if !word.bytes().all(|b| b.is_ascii_digit()) {
+        return resolve_commit(dir, word);
+    }
+    let ids = git::git(dir, &["rev-parse", &format!("--disambiguate={word}")])?;
+    let mut ids = ids.lines();
+    let id = ids.next()?;
+    if ids.next().is_some() {
+        return None;
+    }
+    resolve_commit(dir, id)
 }
 
 fn resolve_commit(dir: &Path, spec: &str) -> Option<String> {
@@ -545,20 +565,27 @@ mod tests {
             std::fs::write(p, text).unwrap();
         }
 
-        /// コミットの hash。テストは hash の先頭（9 字など）を文書に書くが、数字だけの語は mask_hashes が 16 進の語と
-        /// みなさない（英字を 1 つは含む語だけを hash とする）ので、付け替えが hash の差し替えに見えない。日時を固定
-        /// してあるので hash はメッセージと内容だけで決まり、7 字（mask_hashes が hash とみなす最短。これに英字が
-        /// あれば、それより長いどの先頭も英字を含む）が数字だけになるメッセージはテストが毎回落ちる。そのときは
-        /// メッセージを変える
+        /// コミットの hash。日時を固定してあるので hash はメッセージと内容だけで決まる
         fn commit(&self, msg: &str) -> String {
             git(&self.dir(), &["add", "-A"]);
             git(&self.dir(), &["commit", "-q", "-m", msg]);
-            let head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
-            assert!(
-                head[..7].bytes().any(|b| b.is_ascii_alphabetic()),
-                "コミット {msg:?} の hash {head} の先頭 7 字が数字だけ。メッセージを変える"
-            );
-            head
+            git_out(&self.dir(), &["rev-parse", "HEAD"])
+        }
+
+        /// 直前のコミットのメッセージを変えて、hash の先頭 9 字が数字だけになるまで繰り返す（約 1.5% なので数十〜数百回）。
+        /// コミットの hash
+        fn amend_to_digit_only_hash(&self) -> String {
+            for n in 0..5000 {
+                git(
+                    &self.dir(),
+                    &["commit", "-q", "--amend", "-m", &format!("try {n}")],
+                );
+                let head = git_out(&self.dir(), &["rev-parse", "HEAD"]);
+                if head[..9].bytes().all(|b| b.is_ascii_digit()) {
+                    return head;
+                }
+            }
+            panic!("先頭 9 字が数字だけの hash が見つからない");
         }
 
         /// feat/x に移ってファイルを書き、コミットして main に戻る。コミットの hash
@@ -879,18 +906,59 @@ mod tests {
     }
 
     #[test]
-    fn masks_only_whole_hex_words_with_a_letter() {
+    fn masks_whole_hex_words_of_7_to_64_digits() {
         let masked = |l: &str| mask_hashes(l).0;
         assert_eq!(masked("see b7e01d512。"), masked("see 0123abcd4。"));
         assert_eq!(
             mask_hashes("see b7e01d512。").1,
             vec!["b7e01d512".to_string()]
         );
-        // 数字だけの語は数の変更と見分けられない
-        assert_ne!(masked("k = 1234567"), masked("k = 1234568"));
+        // 数字だけの語も候補にする（付け替えかは is_rebase_remap が git で確かめる）
+        assert_eq!(
+            mask_hashes("see 123456789。").1,
+            vec!["123456789".to_string()]
+        );
+        assert_eq!(masked("k = 1234567"), masked("k = 1234568"));
+        // 7 桁に満たない数は候補にしない
+        assert_ne!(masked("k = 42"), masked("k = 43"));
         // 語の一部は置き換えない
         assert_ne!(masked("xabcdef12"), masked("xabcdef13"));
         assert_ne!(masked("abc12"), masked("abc13"));
+        assert_ne!(masked("x1234567"), masked("x1234568"));
+    }
+
+    #[test]
+    fn passes_a_remap_of_a_digit_only_hash() {
+        let repo = Repo::new("digit-remap");
+        let gone = repo.gone_commit();
+        git(&repo.dir(), &["switch", "-q", "feat/x"]);
+        repo.write("src/b.rs", &format!("// see {}\n", &gone[..9]));
+        repo.commit("change");
+        let reviewed = repo.amend_to_digit_only_hash();
+        git(&repo.dir(), &["switch", "-q", "main"]);
+        repo.commit_on_branch(&[("src/b.rs", &format!("// see {}\n", &reviewed[..9]))]);
+        let r = repo.check_body(&body(&reviewed, FINDINGS));
+        assert!(r.is_empty(), "付け替えは知らせない");
+    }
+
+    #[test]
+    fn tells_a_number_change_that_collides_with_a_ref_name() {
+        let repo = Repo::new("number-ref");
+        let reviewed = repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234566;\n")]);
+        // 同名の ref（ブランチのコミットを指す）があっても、数は付け替えの hash とみなさない
+        git(&repo.dir(), &["branch", "-q", "1234567", "feat/x"]);
+        repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234567;\n")]);
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(r.contains("src/n.rs"), "{r}");
+    }
+
+    #[test]
+    fn tells_a_number_change_that_is_not_a_commit() {
+        let repo = Repo::new("number-change");
+        let reviewed = repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234567;\n")]);
+        repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234568;\n")]);
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(r.contains("src/n.rs"), "{r}");
     }
 
     #[test]
