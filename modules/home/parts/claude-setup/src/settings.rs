@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value, json};
 
 /// claude-hooks の matcher
-const PRE_TOOL_USE_MATCHER: &str = "Bash|Agent|Skill";
+const PRE_TOOL_USE_MATCHER: &str = "Bash|Agent|Skill|Edit|Write";
 /// hook の timeout は秒（https://code.claude.com/docs/en/hooks の "Seconds before canceling."。command の既定は 600）。
 /// pre-merge-check の gh は最大 14 か所の呼び出しで、1 回 0.4〜0.7 秒（2026-10-28 に gh pr view、repo view、api を
 /// 手元で測定）なので順に呼んでも約 10 秒。その数倍の 60 秒にする。hook が止まったとき、Agent の起動もこの時間待つ

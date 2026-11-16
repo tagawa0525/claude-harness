@@ -2,13 +2,14 @@
 //!
 //! `claude-setup sync` が `.claude` のソースから ~/.claude の CLAUDE.md、commands、skills、scripts へ配る。
 //! ここを直接書き換えても次の同期で上書きされ、ソースのリポジトリには届かない。
-//! ~/.claude の ほかの場所（settings.json、projects の下のメモリなど）は同期の対象でないので止めない。
+//! ~/.claude のほかの場所（settings.json、projects の下のメモリなど）は同期の対象でないので止めない。
 //! 見るのは file_path の書き方（`~/`、相対、`..` を字面で解いたもの）だけで、symlinkは辿らない。
 
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::shell::Shell;
+use std::path::{Component, Path, PathBuf};
 
 pub struct BlockClaudeGeneratedWrite;
 
@@ -22,9 +23,45 @@ impl Rule for BlockClaudeGeneratedWrite {
     }
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
-        let _ = &input.file_path;
-        Vec::new()
+        let Some(rel) = synced_path(&input.file_path, &input.cwd, &crate::shell::home()) else {
+            return Vec::new();
+        };
+        vec![Finding::Deny(format!(
+            "~/.claude/{rel} は claude-setup sync がソースのリポジトリの .claude から配る生成物です。ここを書き換えても次の同期で\
+             上書きされ、ソースには届きません。ソースのリポジトリ（claude-harness の .claude/{rel}）の worktree で直してください。\
+             直すものが自分の作業の範囲外なら、直す内容を報告に書いてください。"
+        ))]
     }
+}
+
+/// 同期で配られるもの（`claude-setup sync` の対象）。~/.claude の直下の名前
+const SYNCED: [&str; 4] = ["CLAUDE.md", "commands", "skills", "scripts"];
+
+/// path が ~/.claude の同期されるものの下なら、~/.claude からの相対パス。`~/` は home、相対は cwd からとし、
+/// `.` と `..` は字面で解く
+fn synced_path(path: &str, cwd: &Path, home: &Path) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    let full = match path.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None => cwd.join(path),
+    };
+    let mut norm = PathBuf::new();
+    for c in full.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                norm.pop();
+            }
+            c => norm.push(c),
+        }
+    }
+    let rel = norm.strip_prefix(home.join(".claude")).ok()?;
+    let first = rel.components().next()?.as_os_str().to_str()?;
+    SYNCED
+        .contains(&first)
+        .then(|| rel.to_string_lossy().replace('\\', "/"))
 }
 
 #[cfg(test)]
@@ -49,7 +86,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: the rule is not implemented yet"]
     fn synced_paths_under_the_claude_directory_are_denied() {
         let h = home();
         for p in [
