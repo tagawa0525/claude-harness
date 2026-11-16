@@ -612,6 +612,61 @@ mod tests {
         assert!(out.status.success(), "git {args:?}");
     }
 
+    fn carry_fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("worktree-add-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (from, dir) = (root.join("app"), root.join("app-x"));
+        std::fs::create_dir_all(&from).unwrap();
+        sh(&from, &["init", "-q", "-b", "main"]);
+        (root, from, dir)
+    }
+
+    fn commit_and_branch(from: &Path, dir: &Path) {
+        sh(from, &["add", "-A"]);
+        sh(from, &["commit", "-q", "-m", "init"]);
+        sh(
+            from,
+            &["worktree", "add", "-q", dir.to_str().unwrap(), "-b", "x"],
+        );
+    }
+
+    #[test]
+    #[ignore = "RED: fixed in the next commit"]
+    fn a_file_replaced_by_a_directory_is_carried_and_the_source_restored() {
+        let (root, from, dir) = carry_fixture("file-to-dir");
+        std::fs::write(from.join("d"), "file\n").unwrap();
+        commit_and_branch(&from, &dir);
+        std::fs::remove_file(from.join("d")).unwrap();
+        std::fs::create_dir(from.join("d")).unwrap();
+        std::fs::write(from.join("d/f"), "new\n").unwrap();
+        let result = carry_changes(&from, &dir, || {});
+        assert_eq!(result, Ok(()));
+        assert_eq!(std::fs::read_to_string(from.join("d")).unwrap(), "file\n");
+        assert_eq!(std::fs::read_to_string(dir.join("d/f")).unwrap(), "new\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "RED: fixed in the next commit"]
+    fn non_utf8_paths_are_carried_and_removed_from_the_source() {
+        use std::os::unix::ffi::OsStrExt;
+        let (root, from, dir) = carry_fixture("non-utf8");
+        let tracked = std::ffi::OsStr::from_bytes(b"tracked\xff");
+        let added = std::ffi::OsStr::from_bytes(b"bad\xff");
+        std::fs::write(from.join(tracked), "base\n").unwrap();
+        commit_and_branch(&from, &dir);
+        std::fs::write(from.join(tracked), "edited\n").unwrap();
+        std::fs::write(from.join(added), "new\n").unwrap();
+        let result = carry_changes(&from, &dir, || {});
+        assert_eq!(result, Ok(()));
+        assert_eq!(std::fs::read(from.join(tracked)).unwrap(), b"base\n");
+        assert!(!from.join(added).exists());
+        assert_eq!(std::fs::read(dir.join(tracked)).unwrap(), b"edited\n");
+        assert_eq!(std::fs::read(dir.join(added)).unwrap(), b"new\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn an_edit_made_after_the_patch_keeps_the_source_untouched() {
         let root = std::env::temp_dir().join(format!("worktree-add-race-{}", std::process::id()));
