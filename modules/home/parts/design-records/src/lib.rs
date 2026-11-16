@@ -5,6 +5,7 @@
 //! claude-hooks はライブラリとしてパスの判定を使う。
 
 pub mod check;
+pub mod okf;
 pub mod parse;
 
 use std::path::Path;
