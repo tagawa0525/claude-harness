@@ -1335,6 +1335,7 @@ fn new_writes_lf_in_a_crlf_worktree_and_check_accepts_it() {
     let bar = t.read("docs/adr/0002-use-bar.md");
     assert!(bar.starts_with("---\n"), "{bar:?}");
     assert!(!bar.contains('\r'), "{bar:?}");
+    t.git(&["add", "docs/adr/0002-use-bar.md"]);
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(stdout(&out), "");
