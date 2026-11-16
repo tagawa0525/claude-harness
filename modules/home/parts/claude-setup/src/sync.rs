@@ -81,7 +81,7 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
     }
     delivered.sort();
     if let Some(old) = old_manifest {
-        remove_dropped(&to, &old, &delivered);
+        let _ = remove_dropped(&to, &old, &delivered);
     }
     let text: String = delivered.iter().map(|p| format!("{p}\n")).collect();
     replace_with(&to.join(MANIFEST), |tmp| fs::write(tmp, &text))
@@ -114,7 +114,17 @@ fn list_files(src: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), Sto
 /// 前の一覧にあって、今配った物に無いファイルを、to の下から消す。消せなくても同期は止めない（次の同期でもう 1 度
 /// 試す）が、理由は標準エラーに出す。一覧の行は信用しない: skills、scripts の下の相対パスだけを受け、途中に
 /// symlink があれば辿らずに飛ばす。消すのはファイルと symlink そのものだけで、空になった親のディレクトリも消す
-fn remove_dropped(to: &Path, old: &str, delivered: &[String]) {
+fn remove_dropped(to: &Path, old: &str, delivered: &[String]) -> Vec<String> {
+    remove_dropped_with(to, old, delivered, remove_link)
+}
+
+/// remove_dropped の、消す操作を差し替えられる形。消せなかった行を返す
+fn remove_dropped_with(
+    to: &Path,
+    old: &str,
+    delivered: &[String],
+    remove: impl Fn(&Path) -> std::io::Result<()>,
+) -> Vec<String> {
     for line in old.lines() {
         if delivered.binary_search_by(|d| d.as_str().cmp(line)).is_ok() {
             continue;
@@ -126,7 +136,7 @@ fn remove_dropped(to: &Path, old: &str, delivered: &[String]) {
             Ok(m) if !m.is_dir() => {}
             _ => continue,
         }
-        if let Err(e) = remove_link(&path) {
+        if let Err(e) = remove(&path) {
             eprintln!("⚠️ {} を消せません（{e}）", path.display());
             continue;
         }
@@ -139,6 +149,7 @@ fn remove_dropped(to: &Path, old: &str, delivered: &[String]) {
             parent = dir.parent();
         }
     }
+    Vec::new()
 }
 
 /// 一覧の 1 行を、to の下の消してよいパスにする。skills か scripts の下の、`..` や絶対パスを含まない相対パスで、
@@ -509,4 +520,28 @@ fn writable(path: &Path) {
 /// 無いものとする（今のディレクトリの .claude に同期しない）
 pub fn home() -> Option<PathBuf> {
     std::env::home_dir().filter(|p| !p.as_os_str().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "RED: 消せなかった行を一覧に残さない（#24 のレビュー）"]
+    fn keeps_entries_that_could_not_be_removed() {
+        let dir = std::env::temp_dir().join(format!("sync-unit-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("scripts")).unwrap();
+        fs::write(dir.join("scripts/locked.sh"), "x").unwrap();
+        fs::write(dir.join("scripts/free.sh"), "x").unwrap();
+        let failed = remove_dropped_with(&dir, "scripts/free.sh\nscripts/locked.sh\n", &[], |p| {
+            if p.ends_with("locked.sh") {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                fs::remove_file(p)
+            }
+        });
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(failed, vec!["scripts/locked.sh".to_string()]);
+    }
 }
