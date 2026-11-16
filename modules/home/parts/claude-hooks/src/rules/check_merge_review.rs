@@ -125,7 +125,8 @@ fn is_lower_hex(c: char) -> bool {
 }
 
 /// 16 進の語（コミットの hash）を印に置き換えた行と、置き換えた語。語は、前後が英数字と `_` でなく、a〜f を 1 字以上
-/// 含む 7〜64 桁の小文字の 16 進。数字だけの語は数と見分けられないので置き換えない（数の変更を hash の付け替えに数えない）
+/// 7〜64 桁の小文字の 16 進。数字だけの語も候補にする（rebase で書き換わった hash の先頭は約 1.5% が数字だけ）。数の
+/// 変更は、is_rebase_remap がコミットに解けない語として付け替えに数えない
 fn mask_hashes(line: &str) -> (String, Vec<String>) {
     let chars: Vec<char> = line.chars().collect();
     let mut out = String::new();
@@ -139,8 +140,7 @@ fn mask_hashes(line: &str) -> (String, Vec<String>) {
             }
             let run = &chars[i..j];
             let whole = j == chars.len() || !is_word(chars[j]);
-            if whole && (7..=64).contains(&run.len()) && run.iter().any(|c| c.is_ascii_alphabetic())
-            {
+            if whole && (7..=64).contains(&run.len()) {
                 out.push('\0');
                 words.push(run.iter().collect());
             } else {
@@ -220,10 +220,14 @@ pub(super) fn is_dvc_record(path: &str) -> bool {
 /// hash を、それに当たるブランチのコミット（先端の祖先で、既定ブランチの祖先でない）の hash にする。依存の rev、既定ブランチの
 /// コミットや別のブランチのコミットへの差し替えは挙動を変えうるので含めない
 fn is_rebase_remap(dir: &Path, default: &str, tip: &str, old: &str, new: &str) -> bool {
-    let on_branch = resolve_commit(dir, new)
-        .is_some_and(|c| is_ancestor(dir, &c, tip) && !is_ancestor(dir, &c, default));
-    let gone = resolve_commit(dir, old).is_none_or(|c| !is_ancestor(dir, &c, tip));
-    on_branch && gone
+    // 数の変更のようにコミットに解けない語が大半なので、新しい側が解けなければ古い側は調べず早く捨てる
+    let Some(c) = resolve_commit(dir, new) else {
+        return false;
+    };
+    if !is_ancestor(dir, &c, tip) || is_ancestor(dir, &c, default) {
+        return false;
+    }
+    resolve_commit(dir, old).is_none_or(|c| !is_ancestor(dir, &c, tip))
 }
 
 /// from から to（ブランチの先端）までに変わったファイルのうち、挙動を変えうるもの。git diff が失敗したら None
@@ -886,7 +890,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 数字だけの hash を候補にしていない"]
     fn masks_whole_hex_words_of_7_to_64_digits() {
         let masked = |l: &str| mask_hashes(l).0;
         assert_eq!(masked("see b7e01d512。"), masked("see 0123abcd4。"));
@@ -909,7 +912,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 数字だけの hash を候補にしていない"]
     fn passes_a_remap_of_a_digit_only_hash() {
         let repo = Repo::new("digit-remap");
         let gone = repo.gone_commit();
