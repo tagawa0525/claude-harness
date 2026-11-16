@@ -926,6 +926,18 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: 10 進の語を ref 名としても解いている"]
+    fn tells_a_number_change_that_collides_with_a_ref_name() {
+        let repo = Repo::new("number-ref");
+        let reviewed = repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234566;\n")]);
+        // 同名の ref（ブランチのコミットを指す）があっても、数は付け替えの hash とみなさない
+        git(&repo.dir(), &["branch", "-q", "1234567", "feat/x"]);
+        repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234567;\n")]);
+        let r = only_context(&repo.check_body(&body(&reviewed, FINDINGS)));
+        assert!(r.contains("src/n.rs"), "{r}");
+    }
+
+    #[test]
     fn tells_a_number_change_that_is_not_a_commit() {
         let repo = Repo::new("number-change");
         let reviewed = repo.commit_on_branch(&[("src/n.rs", "const K: u64 = 1234567;\n")]);
