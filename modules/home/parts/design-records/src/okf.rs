@@ -40,7 +40,6 @@ fn top_level(text: &str) -> Option<BTreeMap<String, String>> {
     None
 }
 
-/// `docs/index.md` が `okf_version` を持つか。
 /// `docs/index.md` の中身が `okf_version` を持つか（バンドルのルートか）。
 pub fn is_bundle_index(text: &str) -> bool {
     top_level(text).is_some_and(|front| front.contains_key("okf_version"))
@@ -306,28 +305,33 @@ fn check_index(
             continue;
         };
         let title = title_of(&target, text);
+        let description = description_of(text);
+        let mut mismatches = Vec::new();
         if entry.title != title {
-            out.push(finding(
-                Severity::Warning,
-                index_path,
-                Some(entry.line),
-                format!(
-                    "the entry title differs from the title of `{}`: {title:?}",
-                    entry.url
-                ),
+            mismatches.push(format!(
+                "title {:?} but the document's is {title:?}",
+                entry.title
             ));
         }
-        if let Some(description) = description_of(text)
-            && entry.description != Some(description.as_str())
-        {
+        if entry.description != description.as_deref() {
+            mismatches.push(format!(
+                "description {:?} but the document's is {description:?}",
+                entry.description
+            ));
+        }
+        // check --changed は FILE のパスの warning だけを残すので、索引と文書のどちらを直しても見えるよう両方に出す
+        for mismatch in mismatches {
             out.push(finding(
                 Severity::Warning,
                 index_path,
                 Some(entry.line),
-                format!(
-                    "the entry description differs from the description of `{}`: {description:?}",
-                    entry.url
-                ),
+                format!("the entry of `{}` has the {mismatch}", entry.url),
+            ));
+            out.push(finding(
+                Severity::Warning,
+                &target,
+                None,
+                format!("the entry in `{index_path}` has the {mismatch}"),
             ));
         }
     }
@@ -604,7 +608,7 @@ mod tests {
             "---\nokf_version: \"0.2\"\n---\n\n* [adr](adr/)\n* [Win](windows.md) - 別\n",
         ));
         let found = warnings(&files);
-        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found.len(), 4, "{found:?}");
         assert!(found.iter().any(|m| m.contains("title")));
         assert!(found.iter().any(|m| m.contains("description")));
 
@@ -613,7 +617,7 @@ mod tests {
             "docs/adr/index.md",
             "# adr\n\n* [ADR-0001: other](0001-foo.md)\n",
         ));
-        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found.len(), 2, "{found:?}");
     }
 
     #[test]
@@ -702,5 +706,22 @@ okf_version: \"0.2\"
             ("docs/a.md", doc),
         ]);
         assert_eq!(check_bundle(&files), vec![]);
+    }
+
+    #[test]
+    fn an_entry_description_needs_a_description_in_the_document() {
+        let found = warnings(&with(
+            "docs/adr/index.md",
+            "# adr
+
+* [ADR-0001: foo](0001-foo.md) - stale
+",
+        ));
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(
+            found
+                .iter()
+                .any(|m| m.starts_with("docs/adr/0001-foo.md: warning"))
+        );
     }
 }

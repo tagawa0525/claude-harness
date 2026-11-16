@@ -431,8 +431,11 @@ fn status() -> Result<ExitCode> {
 fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>> {
     let mut files = BTreeMap::new();
     // バンドルでなければ（docs/index.md が okf_version を持たなければ）、ほかの docs/ のファイルを読まない
-    let root_index =
-        fs::read_to_string(root.join(BUNDLE_ROOT).join("index.md")).unwrap_or_default();
+    let root_index = match fs::read_to_string(root.join(BUNDLE_ROOT).join("index.md")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(files),
+        Err(e) => return Err(format!("{BUNDLE_ROOT}/index.md: {e}")),
+    };
     if !is_bundle_index(&root_index) {
         return Ok(files);
     }
