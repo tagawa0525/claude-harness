@@ -74,7 +74,7 @@ const HOOKS: &str = "/home/u/.claude/bin/claude-hooks";
 const DATE: &str = "date '+現在時刻: %F %H:%M %Z'";
 
 fn pre_tool_use() -> Value {
-    json!({"matcher": "Bash|Agent|Skill", "hooks": [
+    json!({"matcher": "Bash|Agent|Skill|Edit|Write", "hooks": [
         {"type": "command", "command": HOOKS, "args": ["pre-tool-use"], "timeout": 60}
     ]})
 }
@@ -132,7 +132,7 @@ fn the_old_registrations_are_replaced_and_other_hooks_are_kept() {
                 {"type": "command", "command": "/home/u/.claude/hooks/guard-git-add.sh"},
                 other,
             ]},
-            {"matcher": "Bash|Agent|Skill", "hooks": [
+            {"matcher": "Bash|Agent|Skill|Edit|Write", "hooks": [
                 {"type": "command", "command": "/home/u/.claude/bin/claude-hooks pre-tool-use", "timeout": 60}
             ]},
         ],
@@ -176,14 +176,14 @@ fn exec_form_registrations_including_windows_paths_are_recognized() {
     let home = Home::new();
     let windows = r"C:\Users\u\.cargo\bin\claude-hooks.exe";
     home.write_settings(&json!({"hooks": {"PreToolUse": [
-        {"matcher": "Bash|Agent|Skill", "hooks": [
+        {"matcher": "Bash|Agent|Skill|Edit|Write", "hooks": [
             {"type": "command", "command": windows, "args": ["pre-tool-use"], "timeout": 60}
         ]},
     ]}}));
     let got = home.ok(&json!({}), &["--pre-tool-use", windows]);
     assert_eq!(
         got["hooks"]["PreToolUse"],
-        json!([{"matcher": "Bash|Agent|Skill", "hooks": [
+        json!([{"matcher": "Bash|Agent|Skill|Edit|Write", "hooks": [
             {"type": "command", "command": windows, "args": ["pre-tool-use"], "timeout": 60}
         ]}])
     );

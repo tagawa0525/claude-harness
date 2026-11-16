@@ -2158,6 +2158,32 @@ out=$(run_hook guard-branch-base "$(write_doc '例: git switch -c feat/other')")
 assert_eq allow "$(decision "$out")"
 
 # ===========================================================================
+# guard-track-remote: リモート追跡ブランチを起点にしたブランチ作成は --no-track なしで作らせない
+# ===========================================================================
+# 起点が origin/main だと上流が origin/main になり、引数なしの git push の行き先が main になる
+
+cd "$REPO" || exit 1
+
+it "guard-track-remote: origin/main を起点に --no-track なしで作るのは deny し、--no-track を示す"
+for cmd in 'git switch -c feat/other origin/main' 'git checkout -b feat/other origin/main' \
+           'git branch feat/other origin/main' 'git switch -C feat/other origin/main'; do
+  out=$(run_hook guard-track-remote "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "--no-track"
+done
+
+it "guard-track-remote: --no-track / --track の明示、ローカルの起点、起点なしは許可する"
+for cmd in 'git switch --no-track -c feat/other origin/main' \
+           'git switch -c feat/other --no-track origin/main' \
+           'git branch --no-track feat/other origin/main' \
+           'git switch --track -c feat/other origin/main' \
+           'git switch -c feat/other main' 'git switch -c feat/other' \
+           'git worktree add -b feat/other ../wt origin/main'; do
+  out=$(run_hook guard-track-remote "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+# ===========================================================================
 # マージ前のトピック確認: 新しい ADR が 2 件以上のブランチは止める（1 ブランチ 1 トピック）
 # ===========================================================================
 # 決定は ADR に 1 件 1 決定で書くので、新しい ADR の数はブランチのトピックの数の目安になる。

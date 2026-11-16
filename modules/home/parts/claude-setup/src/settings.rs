@@ -2,7 +2,7 @@
 //! ~/.claude/settings.json に、ハーネスの静的な設定を重ね、ハーネスの hook の登録を 1 件ずつに揃える（ADR-0084）。
 //!
 //! - 静的な設定: JSON のファイルのいちばん上のキーごとに置き換える（ほかのキーとその順は残す）
-//! - PreToolUse: `--pre-tool-use` のバイナリを、Bash、Agent、Skill の組に exec form で 1 件だけ登録する。前の
+//! - PreToolUse: `--pre-tool-use` のバイナリを、Bash、Agent、Skill、Edit、Write の組に exec form で 1 件だけ登録する。前の
 //!   claude-hooks の登録（shell form と exec form。Windows の `\` 区切りのパスも）と、`--legacy` の名前の旧 bash hook の
 //!   登録を外し、ほかの hook は残す。バイナリだけの組にするのは、ほかの hook と同じ組に置くと、その組の matcher を
 //!   変えたときにほかの hook も Agent で走るため
@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value, json};
 
 /// claude-hooks の matcher
-const PRE_TOOL_USE_MATCHER: &str = "Bash|Agent|Skill";
+const PRE_TOOL_USE_MATCHER: &str = "Bash|Agent|Skill|Edit|Write";
 /// hook の timeout は秒（https://code.claude.com/docs/en/hooks の "Seconds before canceling."。command の既定は 600）。
 /// pre-merge-check の gh は最大 14 か所の呼び出しで、1 回 0.4〜0.7 秒（2026-10-28 に gh pr view、repo view、api を
 /// 手元で測定）なので順に呼んでも約 10 秒。その数倍の 60 秒にする。hook が止まったとき、Agent の起動もこの時間待つ
