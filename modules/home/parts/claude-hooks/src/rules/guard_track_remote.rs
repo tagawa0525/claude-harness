@@ -140,6 +140,32 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: clustered -t is not recognized"]
+    fn clustered_short_track_flag_is_explicit() {
+        assert_eq!(parse("git branch -tf feat/a origin/main"), None);
+        assert_eq!(parse("git branch -ft feat/a origin/main"), None);
+        assert_eq!(parse("git branch -qt feat/a origin/main"), None);
+        assert_eq!(
+            parse("git branch -f feat/a origin/main"),
+            pair("feat/a", "origin/main")
+        );
+    }
+
+    #[test]
+    #[ignore = "RED: full ref spellings are not resolved"]
+    fn full_ref_spellings_of_a_remote_tracking_start_are_denied() {
+        let (_t, work) = setup("track-remote-spell");
+        for start in [
+            "origin/main",
+            "remotes/origin/main",
+            "refs/remotes/origin/main",
+        ] {
+            let f = check(&work, &format!("git switch -c feat/a {start}"));
+            assert_eq!(f.len(), 1, "{start}");
+        }
+    }
+
+    #[test]
     fn track_option_start_omitted_or_other_operations_are_not_targets() {
         for src in [
             "git switch --no-track -c feat/a origin/main",
