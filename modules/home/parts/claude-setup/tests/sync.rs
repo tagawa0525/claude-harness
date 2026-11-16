@@ -2,7 +2,8 @@
 //! （ADR-0084）。
 //!
 //! - CLAUDE.md、skills、scripts はソースが正として、中身の違うファイルを上書きする（サイズと mtime が同じでも）
-//! - commands は既にあるファイルを残す。どこも、ソースに無いファイルを消さない
+//! - commands は既にあるファイルを残す。ソースに無いファイルは、前の同期の一覧（~/.claude/.claude-sync-manifest）に
+//!   あるもの（skills、scripts の配った物）だけを消し、手で足したものは残す
 //! - 引数なしは既定の clone（ホームの下の nix/claude-harness）を、既定のブランチで、同期する場所に未コミットの変更が
 //!   無ければ `git pull --ff-only` してから同期する。どれかに当たれば、~/.claude を変えずに 1 で止まる
 //! - 引数を渡せば pull せず、その場所の今の中身を同期する
@@ -182,6 +183,91 @@ fn overwrites_changed_files_and_keeps_existing_commands() {
     assert_eq!(read(&home.dest("skills/s/SKILL.md")), "ADR-NNNN");
     assert_eq!(read(&home.dest("scripts/a.sh")), "ADR-NNNN");
     assert_eq!(read(&home.dest("commands/c.md")), "user");
+}
+
+const MANIFEST: &str = ".claude-sync-manifest";
+
+fn symlink_dir(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(not(unix))]
+    let _ = (target, link);
+}
+
+#[test]
+#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
+fn removes_only_files_the_previous_sync_delivered_and_the_source_dropped() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/scripts/a.sh"), "a");
+    write(&src.join(".claude/scripts/old.sh"), "old");
+    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    write(&src.join(".claude/skills/gone/SKILL.md"), "gone");
+    assert!(home.sync(Some(&src)).status.success());
+    write(&home.dest("scripts/mine.sh"), "mine");
+    std::fs::remove_file(src.join(".claude/scripts/old.sh")).unwrap();
+    std::fs::remove_dir_all(src.join(".claude/skills/gone")).unwrap();
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!home.dest("scripts/old.sh").exists());
+    assert!(
+        !home.dest("skills/gone").exists(),
+        "空になったディレクトリも消す"
+    );
+    assert_eq!(read(&home.dest("scripts/a.sh")), "a");
+    assert_eq!(read(&home.dest("scripts/mine.sh")), "mine");
+    assert_eq!(read(&home.dest("skills/s/SKILL.md")), "s");
+}
+
+#[test]
+#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
+fn first_sync_without_a_manifest_deletes_nothing_and_writes_one() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/scripts/a.sh"), "a");
+    write(&home.dest("scripts/old.sh"), "old");
+    assert!(home.sync(Some(&src)).status.success());
+    assert_eq!(read(&home.dest("scripts/old.sh")), "old");
+    assert_eq!(read(&home.dest(MANIFEST)), "scripts/a.sh\n");
+}
+
+#[test]
+#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
+fn does_not_delete_commands_or_paths_outside_skills_and_scripts() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/scripts/a.sh"), "a");
+    write(&home.dest("commands/c.md"), "c");
+    write(&home.dest("settings.json"), "{}");
+    write(&home.0.join("outside.txt"), "outside");
+    write(
+        &home.dest(MANIFEST),
+        "commands/c.md\nsettings.json\n../../outside.txt\n/etc/passwd\nscripts/../settings.json\n",
+    );
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.dest("commands/c.md")), "c");
+    assert_eq!(read(&home.dest("settings.json")), "{}");
+    assert_eq!(read(&home.0.join("outside.txt")), "outside");
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "RED: manifest 方式の削除は未実装（#24）"]
+fn does_not_follow_symlinks_when_removing() {
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join(".claude/scripts/a.sh"), "a");
+    write(&home.0.join("outside/x.txt"), "outside");
+    // 一覧の親ディレクトリが、外を指す symlink
+    symlink_dir(&home.0.join("outside"), &home.dest("skills"));
+    write(&home.dest(MANIFEST), "skills/x.txt\nscripts/link\n");
+    // 一覧の項目そのものが symlink なら、リンクだけを消して行き先は残す
+    symlink_dir(&home.0.join("outside"), &home.dest("scripts/link"));
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.0.join("outside/x.txt")), "outside");
+    assert!(std::fs::symlink_metadata(home.dest("scripts/link")).is_err());
 }
 
 #[test]
