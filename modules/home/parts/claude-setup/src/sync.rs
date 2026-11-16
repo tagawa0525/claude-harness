@@ -81,7 +81,10 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
     }
     delivered.sort();
     if let Some(old) = old_manifest {
-        let _ = remove_dropped(&to, &old, &delivered);
+        // 消せなかった行は一覧に残し、次の同期でもう 1 度試す
+        delivered.extend(remove_dropped(&to, &old, &delivered));
+        delivered.sort();
+        delivered.dedup();
     }
     let text: String = delivered.iter().map(|p| format!("{p}\n")).collect();
     replace_with(&to.join(MANIFEST), |tmp| fs::write(tmp, &text))
@@ -104,11 +107,25 @@ fn list_files(src: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), Sto
         let meta = fs::symlink_metadata(entry.path()).map_err(|e| read_stop(&entry.path(), &e))?;
         if meta.is_dir() {
             list_files(&entry.path(), &rel, out)?;
-        } else {
+        } else if copied(&entry.path(), &meta) {
             out.push(rel);
         }
     }
     Ok(())
+}
+
+/// copy が ~/.claude に実際に置くファイルか（置かない物を一覧に載せると、そこにある利用者のファイルを、ソースから
+/// 消えたときに消してしまう）。Windows はディレクトリを指す symlink を置かない（copy_link）
+fn copied(src: &Path, meta: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        let _ = (src, meta);
+        true
+    }
+    #[cfg(not(unix))]
+    {
+        !(meta.file_type().is_symlink() && fs::metadata(src).is_ok_and(|m| m.is_dir()))
+    }
 }
 
 /// 前の一覧にあって、今配った物に無いファイルを、to の下から消す。消せなくても同期は止めない（次の同期でもう 1 度
@@ -125,6 +142,7 @@ fn remove_dropped_with(
     delivered: &[String],
     remove: impl Fn(&Path) -> std::io::Result<()>,
 ) -> Vec<String> {
+    let mut failed = Vec::new();
     for line in old.lines() {
         if delivered.binary_search_by(|d| d.as_str().cmp(line)).is_ok() {
             continue;
@@ -138,6 +156,7 @@ fn remove_dropped_with(
         }
         if let Err(e) = remove(&path) {
             eprintln!("⚠️ {} を消せません（{e}）", path.display());
+            failed.push(line.to_string());
             continue;
         }
         // 空になった親を、場所（skills など）の手前まで消す。中身があれば remove_dir が失敗して止まる
@@ -149,7 +168,7 @@ fn remove_dropped_with(
             parent = dir.parent();
         }
     }
-    Vec::new()
+    failed
 }
 
 /// 一覧の 1 行を、to の下の消してよいパスにする。skills か scripts の下の、`..` や絶対パスを含まない相対パスで、
@@ -527,7 +546,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "RED: 消せなかった行を一覧に残さない（#24 のレビュー）"]
     fn keeps_entries_that_could_not_be_removed() {
         let dir = std::env::temp_dir().join(format!("sync-unit-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
