@@ -1,7 +1,7 @@
 //! block-claude-generated-write: ~/.claude の下の、ハーネスから同期されるファイルへの Edit / Write を止める
 //!
 //! `claude-setup sync` が `.claude` のソースから ~/.claude の CLAUDE.md、commands、skills、scripts へ配る。
-//! ここを直接書き換えても次の同期で上書きされ、ソースのリポジトリには届かない。
+//! ここを直接書き換えても、ソースのリポジトリには届かない（skills、scripts、CLAUDE.md は次の同期で上書きもされる）。
 //! ~/.claude のほかの場所（settings.json、projects の下のメモリなど）は同期の対象でないので止めない。
 //! 見るのは file_path の書き方（`~/`、相対、`..` を字面で解いたもの）だけで、symlinkは辿らない。
 
@@ -27,8 +27,8 @@ impl Rule for BlockClaudeGeneratedWrite {
             return Vec::new();
         };
         vec![Finding::Deny(format!(
-            "~/.claude/{rel} は claude-setup sync がソースのリポジトリの .claude から配る生成物です。ここを書き換えても次の同期で\
-             上書きされ、ソースには届きません。ソースのリポジトリ（claude-harness の .claude/{rel}）の worktree で直してください。\
+            "~/.claude/{rel} は claude-setup sync がソースのリポジトリの .claude から配るファイルの置き場です。ここを書き換えても\
+             ソースには届きません。ソースのリポジトリ（claude-harness の .claude/{rel}）の worktree で直してください。\
              直すものが自分の作業の範囲外なら、直す内容を報告に書いてください。"
         ))]
     }
@@ -119,7 +119,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: the message claims an overwrite that commands does not get"]
     fn the_message_holds_for_every_synced_place() {
         let h = home();
         for place in SYNCED {

@@ -2,7 +2,7 @@
 //! ~/.claude/settings.json に、ハーネスの静的な設定を重ね、ハーネスの hook の登録を 1 件ずつに揃える（ADR-0084）。
 //!
 //! - 静的な設定: JSON のファイルのいちばん上のキーごとに置き換える（ほかのキーとその順は残す）
-//! - PreToolUse: `--pre-tool-use` のバイナリを、Bash、Agent、Skill の組に exec form で 1 件だけ登録する。前の
+//! - PreToolUse: `--pre-tool-use` のバイナリを、Bash、Agent、Skill、Edit、Write の組に exec form で 1 件だけ登録する。前の
 //!   claude-hooks の登録（shell form と exec form。Windows の `\` 区切りのパスも）と、`--legacy` の名前の旧 bash hook の
 //!   登録を外し、ほかの hook は残す。バイナリだけの組にするのは、ほかの hook と同じ組に置くと、その組の matcher を
 //!   変えたときにほかの hook も Agent で走るため

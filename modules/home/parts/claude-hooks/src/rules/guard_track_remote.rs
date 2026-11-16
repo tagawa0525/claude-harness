@@ -31,7 +31,13 @@ fn tracking_start(sub: &str, args: &[Arg]) -> Option<(String, String)> {
     let explicit = p.flags.iter().any(|f| {
         matches!(f.as_str(), "--track" | "--no-track" | "-t") || f.starts_with("--track=")
     });
-    if explicit || args.iter().any(|a| a.text == "--") {
+    // switch / checkout の `--` の後はパス（ファイルを戻す形）。branch の `--` の後はブランチ名と起点
+    let pathspec = !branch_mode
+        && args
+            .iter()
+            .position(|a| a.text == "--")
+            .is_some_and(|i| i + 1 < args.len());
+    if explicit || pathspec {
         return None;
     }
     match (branch_mode, p.branch, p.positional.as_slice()) {
@@ -120,7 +126,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: -- excludes git branch although it is not a pathspec there"]
     fn double_dash_is_a_pathspec_only_for_switch_and_checkout() {
         assert_eq!(
             parse("git branch -- feat/a origin/main"),
