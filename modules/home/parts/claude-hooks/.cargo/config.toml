@@ -1,0 +1,3 @@
+# テストが deny を出すたびに利用者の deny.jsonl を汚さない（ADR-0090）。記録を確かめるテストは自分で環境を決める
+[env]
+CLAUDE_HARNESS_DENY_LOG = "0"
