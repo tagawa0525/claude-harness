@@ -501,7 +501,7 @@ fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) 
     };
     format!(
         "{why}この PR はレビュー（失敗していない自動レビューか、ローカルレビューの記録）を 1 度も受けていません。1 周目のレビューは省けません。\
-         ローカルの /code-review を回して、PR の worktree で ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh {url} <SHA> <high> <medium> <low> を実行して記録するか、\
+         /gh-pr-review の Step 6 の「ローカルレビュー」の回し方でローカルの /code-review を回して、PR の worktree で ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh {url} <SHA> <high> <medium> <low> を実行して記録するか、\
          ~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {url} で再レビューを依頼してください（次の一手は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {url} で決めます）。\
          指摘に対応してからマージしてください"
     )
@@ -1084,6 +1084,19 @@ impl Rule for PreMergeCheck {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn never_reviewed_reason_points_to_the_local_review_of_step_6() {
+        // マージの直前に止められた人が、記録の手順をスキルの中で探さずに済むよう、その節を指す
+        let url = "https://github.com/o/r/pull/1";
+        for failed in [false, true] {
+            let reason = super::never_reviewed_reason("abc1234abc", failed, url);
+            assert!(
+                reason.contains("/gh-pr-review の Step 6 の「ローカルレビュー」"),
+                "{reason}"
+            );
+        }
+    }
+
     #[test]
     fn split_repo_strips_one_dot_git() {
         assert_eq!(super::split_repo("octo/x.git.git"), ("octo", "x.git"));

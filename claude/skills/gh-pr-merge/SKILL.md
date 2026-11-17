@@ -40,13 +40,11 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
 - 上の出力から、マージのメッセージの Why を 1 文で書けるか確かめる。2 文要るならマージせず /topic-triage で分ける。
   PR の head が今のブランチでなければ、`git fetch` のあと `~/.claude/scripts/branch-topics.sh origin/<base> origin/<head>` で見る
 - head にローカルレビューの記録（`record-local-review.sh`、High なし）があれば、Copilot のレビューを待たずにマージできる。
-  記録が無く自動レビューも未着なら `~/.claude/scripts/gh-wait-review.sh <PR の URL>` で待つ（約 10 分。
-  `run_in_background=true` で実行。URL は PR のリポジトリの worktree で `cd <worktree> && gh pr view [PR番号] --json url -q .url`）。
-  タイムアウト（exit 1）は /gh-actions-check で診断
+  記録が無く自動レビューも未着なら `~/.claude/scripts/gh-wait-review.sh <PR の URL>` で待つ（約 10 分。URL は PR の
+  リポジトリの worktree で `cd <worktree> && gh pr view [PR番号] --json url -q .url`）
 - CI が実行中か、push の直後で check が未登録なら `~/.claude/scripts/gh-wait-checks.sh <PR の URL> <push したコミットの SHA>` で待つ
-  （`run_in_background=true` で実行。`CHECKS: failed`（exit 6）とタイムアウト（exit 1）は /gh-actions-check で診断）
+- 待ちの出力の次の一手（`次の一手:`、`NEXT:`）に従う
 - 指摘への対応が残っていれば /gh-pr-review に戻る
-- レビューを 1 度も受けていない PR は hook が止める。/gh-pr-review の Step 6 に戻ってローカルレビューを記録する
 - head がレビューの後に変わっていても hook は止めず、変わったファイルをマージの後に知らせる。もう 1 周回すかは
   マージの前に /git-merge の「直す指摘の基準」の「終わり」の項で決め、回さないなら理由をマージの本文の Impact に書く
 
