@@ -155,8 +155,8 @@ fn finished(path: &str) -> bool {
     last.starts_with("[exited with code") || last.starts_with("[killed")
 }
 
-/// bash に貼れる形の 1 語。記号の無い語（日本語を含む）はそのまま、ほかは単一引用符で囲む（base-moved と worktree-add の
-/// 案内のコマンドも使う）
+/// bash に貼れる形の 1 語。記号の無い語（日本語を含む）はそのまま、ほかは単一引用符で囲む（base-moved、review-level、
+/// worktree-add の案内のコマンドも使う）
 pub(crate) fn quote(word: &str) -> String {
     let plain = !word.is_empty()
         && word
