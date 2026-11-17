@@ -19,6 +19,9 @@ use crate::shell::{Arg, Shell};
 
 pub struct GuardGitPush;
 
+/// main / master への push を止めたときの修正方法。main で作ったコミットは main に残っているので、移してから PR にする
+const TO_FEATURE: &str = "main / master で作ったコミットは /git-cherry-pick で feature branch に移し（main からは外れる）、feature branch から PR を作成してください: /gh-pr-create";
+
 fn deny(reason: &str) -> Finding {
     Finding::Deny(format!(
         "{reason}\n\n{}",
@@ -76,7 +79,7 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
             .unwrap_or(&upstream);
         if is_protected_ref(&current) || is_protected_ref(upstream) {
             return Some(format!(
-                "main / master への直接 push は禁止です（現在のブランチ: {current}）。feature branch から PR を作成してください: /gh-pr-create"
+                "main / master への直接 push は禁止です（現在のブランチ: {current}）。{TO_FEATURE}"
             ));
         }
         return None;
@@ -96,7 +99,7 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
         };
         if is_protected_ref(&dst) {
             return Some(format!(
-                "main / master への直接 push は禁止です（refspec: {rs}）。feature branch から PR を作成してください: /gh-pr-create"
+                "main / master への直接 push は禁止です（refspec: {rs}）。{TO_FEATURE}"
             ));
         }
     }
