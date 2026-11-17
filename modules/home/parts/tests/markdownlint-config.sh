@@ -74,6 +74,28 @@ else
   ng "無効にしていない規則 MD009 を指摘しない: $configured"
 fi
 
+# front matter の title と # の見出しを両方持つ文書（docs/ の文書）は、title を先頭の見出しに数えない設定で通る
+{
+  echo '---'
+  echo 'title: T'
+  echo '---'
+  echo
+  echo '# T'
+} >"$WORK/cwd/fm.md"
+lint_fm() {
+  (cd "$WORK/cwd" && HOME="$1" "$MARKDOWNLINT" -- fm.md 2>&1 || true)
+}
+if grep -q MD025 <<<"$(lint_fm "$WORK/bare")"; then
+  ok "設定が無いと、front matter の title と # の見出しを MD025 が指摘する（対照）"
+else
+  ng "設定が無いのに MD025 を指摘しない。この検査は設定の有無を見分けられない"
+fi
+if grep -q MD025 <<<"$(lint_fm "$WORK/configured")"; then
+  ng "配る設定を置いても、front matter の title と # の見出しを MD025 が指摘する"
+else
+  ok "配る設定が、front matter の title を先頭の見出しに数えない"
+fi
+
 if ((failures > 0)); then
   echo "FAILED: $failures" >&2
   exit 1
