@@ -32,7 +32,7 @@
 #
 #   MAX_RSS  sacct のジョブのステップ（.batch など）の MaxRSS の最大。jobcomp は持たないので、sacct に無いジョブは -。
 #            ジョブ名ごとは、ジョブの MAX_RSS の最大。M（MiB）か G（GiB）
-# sacct: 2026-10-12（ADR-0031 で記録を始めた日）以降を読む。jobcomp にも sacct にもある JobId は sacct のほうを使う
+# sacct: 2026-10-12（sacct の記録を始めた日）以降を読む。jobcomp にも sacct にもある JobId は sacct のほうを使う
 #       （jobcomp の行を数えない）。SubmitLine の sbatch の直後の語が --cpus-per-task=N のジョブ（slurm-run.sh -c）は
 #       排他でないので、時間が当てにならず、表に入れずに SHARED に数える。--exclusive か、読めない（slurm-run.sh を
 #       通らない）ジョブは入れる。2026-10-12 より前の jobcomp は排他かを持たないので、名前の -shared で分ける。
@@ -86,7 +86,7 @@ if [[ ! -r "$FILE" ]]; then
   exit 1
 fi
 
-# sacct の記録を始めた日（ADR-0031）。sacct の既定の範囲は今日だけなので、-S で渡す
+# sacct の記録を始めた日。sacct の既定の範囲は今日だけなので、-S で渡す
 SACCT_SINCE=2026-10-12
 
 # sacct の記録を、awk が読む形（欄は \x1f 区切り、最後の欄を SubmitLine から排他かの語に替える）で $SACCT_FILE に書く。
