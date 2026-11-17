@@ -2534,6 +2534,26 @@ git fetch -q origin
 out=$(run_hook guard-git-merge 'git merge --ff-only origin/main')
 assert_eq allow "$(decision "$out")"
 
+it "guard-git-merge: 既定ブランチでない HEAD で、そのブランチ自身をマージするコマンドは deny"
+git switch -q feat/rebased
+for cmd in 'git merge --no-ff feat/rebased -m "Merge: rebased"' "git -C $REPO merge --no-ff refs/heads/feat/rebased"; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "feat/rebased 自身"
+  assert_contains "$(reason "$out")" "git switch main"
+done
+git switch -q main
+out=$(run_hook guard-git-merge 'git switch feat/rebased && git merge --no-ff feat/rebased')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-merge 'git switch feat/rebased && git merge feat/behind')
+assert_eq allow "$(decision "$out")"
+# git merge - は switch の後の直前のブランチ（ここでは main）を指すので、ブランチ自身へのマージではない
+git switch -q feat/rebased && git switch -q main
+for cmd in 'git switch feat/rebased && git merge -' 'git switch feat/rebased && git merge @{-1}'; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "guard-git-merge: 同じコマンドの前の git switch で移った先のブランチで判定する"
 git switch -q feat/rebased
 out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
@@ -2826,6 +2846,7 @@ for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh $PR12" "sh -eu ~/.cl
 done
 
 it "require-background-wait: CI の終わりを待つ gh-wait-checks.sh も、フォアグラウンドなら止める"
+# shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 for cmd in "~/.claude/scripts/gh-wait-checks.sh $PR12" "bash $HOME/.claude/scripts/gh-wait-checks.sh $PR12"; do
   out=$(run_hook require-background-wait "$cmd")
   assert_eq deny "$(decision "$out")"
@@ -3588,6 +3609,7 @@ done
 # ===========================================================================
 
 it "require-pipefail: 成否を判断するコマンドを pipefail なしで tail / head につなぐ形は deny する"
+# shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 for cmd in 'nix build .#x 2>&1 | tail -20' 'nix flake check | tail' 'cargo test 2>&1 | tail -5' \
   'cargo clippy | head -50' '~/.claude/skills/language-checks/scripts/run-checks.sh -C wt | tail' \
   'cd wt && cargo test 2>&1 | tail' 'cargo test | tee log | tail'; do

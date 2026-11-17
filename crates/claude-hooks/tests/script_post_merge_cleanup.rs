@@ -330,3 +330,46 @@ fn a_base_on_an_unrelated_branch_is_an_error_that_changes_nothing() {
     );
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "feat/x");
 }
+
+#[test]
+fn with_a_base_a_merge_without_the_branch_tip_as_a_second_parent_is_an_error() {
+    let repo = Repo::new();
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["switch", "-q", "main"]);
+    // fast-forward はマージコミットを作らない（/git-merge の --no-ff のマージが済んでいない）
+    repo.git(&["merge", "-q", "--ff-only", "feat/x"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("第 2 親"), "{stderr}");
+    assert!(stderr.contains("何も消していません"), "{stderr}");
+    // 先端はもう main にあるので、マージのやり直しは「Already up to date」で何もしない。戻してからやり直す方法を示す
+    assert!(
+        stderr.contains(&format!("git reset --keep {before}")),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("別の worktree"), "{stderr}");
+    // 戻すと消えるコミットと、第 2 引数の誤りも、戻す前に確かめさせる
+    assert!(stderr.contains("後に積んだコミット"), "{stderr}");
+    assert!(stderr.contains("第 2 引数がマージの第 1 親"), "{stderr}");
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "feat/x");
+}
+
+#[test]
+fn with_a_base_the_merge_commit_of_the_branch_passes_even_after_later_commits() {
+    let repo = Repo::new();
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    repo.write("c.txt", "c\n");
+    repo.commit("later");
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}

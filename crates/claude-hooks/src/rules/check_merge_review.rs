@@ -37,6 +37,7 @@ const FORM: &str = "本文に次の行を書いてください（行の先頭の
   指摘ごとに 1 行: 再現: <テスト名 | 手順 | 出典> / 再現なし: <指摘の要旨> / 前提が誤り: <確かめた事実> / 抜け道: <理由>\n\
   （直さない指摘を別のトピックとして issue にしたときは、再現なし: の代わりに 再現なし → #<issue の番号>: <指摘の要旨>）\n\
   どの周にも指摘が無ければ: 指摘なし\n\
+  （行は先頭の語で読むので、文の中に括弧で入れた「（再現: …）」は行として読まれません。1 件を 1 行にして、その語で始めます）\n\
 どの head をレビューし、指摘をどう分けたかをマージの履歴に残し、その head より後に挙動を変えるコミットが無いかを確かめるためです。\
 直さない指摘は issue に集めず、要旨を本文の 1 行に残します（直さない指摘を集めた issue は読み返す場面が無く、issue の一覧を埋めるためです）。\
 レビューを回していなければ、先に /git-merge の「レビュー」の節のとおり回してください";
@@ -502,6 +503,14 @@ mod tests {
         assert_eq!(reviewed_hash(&body(&"a1".repeat(20))), Ok("a1".repeat(20)));
         assert!(reviewed_hash(&body(&"a1".repeat(33))).is_err());
         assert!(reviewed_hash(&body("abc123")).is_err());
+    }
+
+    #[test]
+    fn a_finding_inside_a_sentence_is_not_a_line_and_the_reason_says_so() {
+        let err =
+            reviewed_hash("Merge: x\n\nReviewed: abc1234\n直した（再現: test_a）\n").unwrap_err();
+        assert!(err.contains("指摘ごとの行"), "{err}");
+        assert!(err.contains("文の中に括弧で入れた"), "{err}");
     }
 
     /// コミットの日時。hash は日時にも依るので、固定してテストの hash を実行の時刻に依らず決める

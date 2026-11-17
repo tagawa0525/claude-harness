@@ -129,7 +129,7 @@ pub(super) fn added_adrs(dir: &Path, range: &str) -> Option<Vec<String>> {
 
 /// `git merge args…` のマージ対象。中断・再開（--abort / --continue / --quit）なら None。
 /// 対象を標準入力で受け取る `--stdin` はそのまま対象に入れる（check で確かめられないとして止める）
-fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
+pub(super) fn merge_targets(args: &[Arg]) -> Option<Vec<String>> {
     let mut out = Vec::new();
     for item in items("merge", args) {
         match item {

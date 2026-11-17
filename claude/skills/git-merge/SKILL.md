@@ -35,9 +35,7 @@ GitHub リモートの無いリポジトリで、feature ブランチをロー�
 !`~/.claude/scripts/git-merge-state.sh $ARGUMENTS`
 !`git log --oneline --graph --all -20`
 
-$ARGUMENTS のブランチ（省略時は今のブランチ）が対象。`ERROR:` の行があれば、その指示に従って止まる（`ERROR:` はほかの行の後に
-来ることがあるので、その前の行も使わない）。`ERROR:` が無くても、`fatal:` か `error:` が出たか行の値が欠けたら、その出力を
-使わずに原因を直して取り直す。
+$ARGUMENTS のブランチ（省略時は今のブランチ）が対象。`ERROR:` の行があれば、その指示に従って止まる。
 
 ブランチの操作は `git -C [TARGET_WORKTREE]`、マージは `git -C [DEFAULT_WORKTREE]` で行う（別の worktree にあるブランチへは
 switch できない）。`TARGET_WORKTREE` が none なら `git -C [DEFAULT_WORKTREE] switch [branch]` で取り出して以降はそこを指し、
@@ -78,20 +76,12 @@ git -C [TARGET_WORKTREE] rebase main
 コンフリクトしたら内容と解決案を示し、`git rebase --continue` か `git rebase --abort` かを決める。
 
 `remap.commitRefs` が true のリポジトリでは、rebase と `commit --amend` の後に post-rewrite の hook が文書の中のコミットの hash を
-付け替え、作業ツリーに残す。次に進む前に、hook の出力に従って片付ける（後の手順で amend したときも）:
-
-- `📝 置き換えはコミットしていません`: `git -C [TARGET_WORKTREE] diff` で旧と新の hash の置き換えだけと確かめ、きっかけを
-  書いた件名（`chore: remap the commit refs after the rebase` など）でコミットする
-- `❌ コミットの番号を付け直せませんでした`: 先に `git -C [TARGET_WORKTREE] diff` で書き換え済みの分を見て、原因を直し、出力の
-  修正方法の `commit-refs remap <保存した対応>` を `cd [TARGET_WORKTREE] &&` を付けて実行し（対応は二度と渡されない）、上と
-  同じく確かめてコミットする
+付け替え、作業ツリーに残す。次に進む前に、hook の出力に従って片付ける（後の手順で amend したときも）。
 
 ### 番号の重複（rebase の後）
 
-設計の記録（docs/adr か docs/issues）のあるリポジトリでは、rebase の直後に `design-records -C [TARGET_WORKTREE] check` で確かめる。
-重複があれば、このブランチで足した側を `design-records -C [TARGET_WORKTREE] renumber NNNN`（issue は
-`design-records -C [TARGET_WORKTREE] renumber --kind issue NNNN`）で振り直し（コミットまで行う）、`git show` で付け替えた参照が
-振り直した記録を指すと確かめてから次に進む。
+設計の記録（docs/adr か docs/issues）のあるリポジトリでは、rebase の直後に `design-records -C [TARGET_WORKTREE] check` を実行し、
+重複があれば出力に従って振り直してから次に進む（`renumber` にも `-C [TARGET_WORKTREE]` を付ける）。
 
 ### proposed の ADR（どのブランチでも、チェックの前に）
 
@@ -242,7 +232,7 @@ Branch: [branch]
 ```
 
 - 指摘の行: 担当と親の全部の周の指摘を 1 行に 1 件、上の形のどれかで書く（先頭の `-` は任意）。どの周にも指摘が無ければ
-  `指摘なし` の 1 行。1 つの文に括弧で入れた「（再現: …）」は行として読まれない
+  `指摘なし` の 1 行
 - `Reviewed:`: 1 行だけ、7〜64 桁（SHA-256 のリポジトリは完全な 64 桁）の hash。最後にレビューの周を回した HEAD を書く
   （/delegate の担当の最後の周か、その後に親が回した周。親は許可にその hash を添える）。rebase で書き換わったときは、
   「rebase の後」のとおり range-diff で対応する hash を書く
@@ -264,8 +254,7 @@ EOF
 成否は終了コードで判定するので、出力を `tail` などにつながず、後片付けとは別の呼び出しにする。hook のチェックが数分かかるので、
 マージは 1 本ずつ前景で、Bash の `timeout` を上限の 600000 ms にして行う。git の書き込み（rebase、merge、commit）を
 バックグラウンドに重ねず、前景の上限を超えてバックグラウンドに移ったコマンドがあれば、その終わりの通知まで同じリポジトリに
-git で書き込まない。通ったら、`git -C [DEFAULT_WORKTREE] rev-parse HEAD^2`（none なら今の worktree）がブランチの先端と一致する
-ことを確かめてから後片付けに進む。hook に拒まれると、マージはステージされたまま main の worktree に MERGE_HEAD が残る:
+git で書き込まない。通ったら後片付けに進む。hook に拒まれると、マージはステージされたまま main の worktree に MERGE_HEAD が残る:
 
 - 本文の語で拒まれたら、本文を直して `git -C [DEFAULT_WORKTREE] commit -m "…"` でそのマージを終える（品質チェックはもう一度走る。
   `git merge` のやり直しは MERGE_HEAD で拒まれる）
@@ -279,7 +268,7 @@ git で書き込まない。通ったら、`git -C [DEFAULT_WORKTREE] rev-parse 
 ```
 
 第 2 引数はマージの前の main（マージコミットの第 1 親。`DEFAULT_WORKTREE` が none なら今の worktree）で、省かない（`NOTE:` の
-判定の起点）。対象の worktree とブランチを削除する。cwd のリポジトリのブランチを片付けるので、別のリポジトリのブランチなら
+判定の起点と、このブランチのマージコミットの確認に使う）。対象の worktree とブランチを削除する。cwd のリポジトリのブランチを片付けるので、別のリポジトリのブランチなら
 `cd <そのリポジトリ> &&` を付けて呼ぶ。未マージなら何も消さずに止まり、変更が残っていれば失敗する（確認して対処する）。出力の `NOTE:` の行は、完了メッセージでそのまま
 ユーザーに伝える。マージ済みの PR を痕跡にした `NOTE:` の行は、別のリポジトリのブランチを渡しているので、マージした
 リポジトリで `cd <そのリポジトリ> &&` を付けてやり直す。

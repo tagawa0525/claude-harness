@@ -216,15 +216,22 @@ fn post_rewrite(args: &[String]) -> i32 {
     let stdout = match out {
         Ok((0, stdout)) => stdout,
         failed => {
-            if let Err(e) = std::fs::write(&saved, &input) {
-                eprintln!("❌ 対応を {} に残せません（{e}）", saved.display());
-            }
+            let kept = match std::fs::write(&saved, &input) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("❌ 対応を {} に残せません（{e}）", saved.display());
+                    false
+                }
+            };
             match failed {
                 Ok(_) => {
                     println!(
                         "❌ コミットの番号を付け直せませんでした（書き換えたかどうかは、上の ERROR の最後の行にあります）"
                     );
                     println!("   修正方法: 上の ERROR を直してから、{retry}");
+                    println!(
+                        "   直す前に、先に git diff で書き換え済みの分を見る（途中まで書き換えていることがある）"
+                    );
                 }
                 Err(Unfinished::NotStarted(_)) => {
                     println!(
@@ -241,6 +248,15 @@ fn post_rewrite(args: &[String]) -> i32 {
                     );
                 }
             }
+            // commit-refs remap は cwd の作業ツリーの文書を書き換える。hook は書き換えた worktree の直下で動くので、
+            // その場所を示す（別の worktree や既定ブランチの作業ツリーから呼び直すと、そこの文書を書き換える）
+            // 対応を残せなかったときは、渡すファイルが無いので示さない
+            if kept && let Some(top) = git::git(dir, &["rev-parse", "--show-toplevel"]) {
+                println!(
+                    "   やり直すときは cd {} && {retry} で行う（対応は二度と渡されないので、残した対応を渡す）。終えたら、成功したときと同じく git diff で確認してコミットする",
+                    sh_quote(&top)
+                );
+            }
             return 1;
         }
     };
@@ -253,6 +269,10 @@ fn post_rewrite(args: &[String]) -> i32 {
     drop(stdout_lock);
     if !stdout.split(|b| *b == b'\n').any(|line| line == b"REFS: 0") {
         println!("📝 置き換えはコミットしていません。git diff で確かめて、コミットしてください");
+        let kind = if amend { "amend" } else { "rebase" };
+        println!(
+            "   確認: git diff が旧と新のコミットの hash の置き換えだけであることを確かめ、きっかけを書いた件名（chore: remap the commit refs after the {kind} など）でコミットする。ほかの変更が混ざっていれば、コミットせずに原因を調べる"
+        );
     }
     local_rc
 }

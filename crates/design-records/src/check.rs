@@ -172,15 +172,20 @@ fn parse_adrs<'a>(adrs: &'a BTreeMap<String, String>, out: &mut Found) -> Vec<Ad
 
 /// 番号の重複。
 fn check_unique(docs: &[Adr], out: &mut Found) {
-    unique(docs.iter().map(|d| (d.path, d.number)), out);
+    unique(Kind::Adr, docs.iter().map(|d| (d.path, d.number)), out);
 }
 
-/// `numbered`（パスと番号）の番号の重複。
-fn unique<'a>(numbered: impl Iterator<Item = (&'a str, u32)>, out: &mut Found) {
+/// `numbered`（パスと番号）の番号の重複。振り直しのコマンドを添える（renumber は、このブランチで足した側を自分で
+/// 選んで振り直し、コミットまで行う。どちらが足した側かは check からは決めないので、番号だけを渡す形にする）
+fn unique<'a>(kind: Kind, numbered: impl Iterator<Item = (&'a str, u32)>, out: &mut Found) {
     let mut by_number: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
     for (path, number) in numbered {
         by_number.entry(number).or_default().push(path);
     }
+    let kind_arg = match kind {
+        Kind::Adr => "",
+        Kind::Issue => "--kind issue ",
+    };
     for (number, paths) in by_number {
         if let [first, rest @ ..] = paths.as_slice()
             && !rest.is_empty()
@@ -188,7 +193,12 @@ fn unique<'a>(numbered: impl Iterator<Item = (&'a str, u32)>, out: &mut Found) {
             out.error(
                 first,
                 None,
-                format!("number {number:04} is also used by {}", rest.join(", ")),
+                format!(
+                    "number {number:04} is also used by {}; renumber the record this branch added with \
+                     `design-records renumber {kind_arg}{number:04}` (it commits), then check with `git show` \
+                     that the moved references point to the renumbered record",
+                    rest.join(", ")
+                ),
             );
         }
     }
@@ -198,6 +208,7 @@ fn unique<'a>(numbered: impl Iterator<Item = (&'a str, u32)>, out: &mut Found) {
 pub fn check_issue_numbers(paths: &[String]) -> Vec<Finding> {
     let mut out = Found::default();
     unique(
+        Kind::Issue,
         paths
             .iter()
             // 番号を振るときと同じく、3 桁で振った issue も数える
@@ -1098,7 +1109,27 @@ mod tests {
         ]);
         assert_eq!(
             run(&set),
-            ["docs/adr/0001-a.md: error: number 0001 is also used by docs/adr/0001-b.md"]
+            [
+                "docs/adr/0001-a.md: error: number 0001 is also used by docs/adr/0001-b.md; \
+                 renumber the record this branch added with `design-records renumber 0001` (it commits), \
+                 then check with `git show` that the moved references point to the renumbered record"
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_issue_numbers_name_the_renumber_command_for_issues() {
+        let paths = vec![
+            "docs/issues/0001-a.md".to_string(),
+            "docs/issues/0001-b.md".to_string(),
+        ];
+        assert_eq!(
+            shown(check_issue_numbers(&paths)),
+            [
+                "docs/issues/0001-a.md: error: number 0001 is also used by docs/issues/0001-b.md; \
+                 renumber the record this branch added with `design-records renumber --kind issue 0001` (it commits), \
+                 then check with `git show` that the moved references point to the renumbered record"
+            ]
         );
     }
 

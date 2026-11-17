@@ -180,3 +180,89 @@ fn a_failed_tag_lookup_stops_instead_of_passing_as_no_collision() {
     );
     assert_eq!(text(&out.stdout), "");
 }
+
+/// PATH の本物の git
+#[cfg(unix)]
+fn real_git() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|d| d.join("git"))
+        .find(|p| p.is_file())
+        .expect("PATH に git が無い")
+}
+
+/// 引数が pattern（sh の case の形）に当たる呼び出しだけを 128 で失敗させ、ほかは本物の git に渡す git を置いた
+/// PATH で、git-merge-state を実行する
+#[cfg(unix)]
+fn run_with_failing_git(repo: &Repo, pattern: &str) -> Output {
+    // .git の下に置く（作業ツリーに置くと、未コミットの変更として止まる）
+    let bin = repo.root.join(".git/fake-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    common::write_executable(
+        &bin.join("git"),
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  {pattern}) echo 'fatal: injected' >&2; exit 128 ;;\nesac\nexec '{}' \"$@\"\n",
+            real_git().display()
+        ),
+    );
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+        .args(["script", "git-merge-state"])
+        .current_dir(&repo.root)
+        .env("PATH", path)
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_default_branch_lookup_stops_instead_of_reporting_no_default() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("a.txt", "a\n");
+    repo.commit("feat: a");
+    let out = run_with_failing_git(&repo, "*'show-ref --verify --quiet refs/heads/main'*");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains("git show-ref で失敗"),
+        "{}",
+        text(&out.stderr)
+    );
+    // 失敗した git の標準エラーも見せる（原因が分からないまま止めない）
+    assert!(
+        text(&out.stderr).contains("fatal: injected"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(text(&out.stdout), "");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_ancestry_check_stops_instead_of_reporting_no_stack() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/base"]);
+    repo.write("a.txt", "a\n");
+    repo.commit("feat: a");
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    let out = run_with_failing_git(&repo, "*'merge-base --is-ancestor'*");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains("git merge-base で失敗"),
+        "{}",
+        text(&out.stderr)
+    );
+    // 失敗した git の標準エラーも見せる（原因が分からないまま止めない）
+    assert!(
+        text(&out.stderr).contains("fatal: injected"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(text(&out.stdout), "");
+}
