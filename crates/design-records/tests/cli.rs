@@ -604,6 +604,77 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     );
 }
 
+/// main で ADR-0001 を ADR-0003（accepted）と ADR-0004（rejected）が requires に持ち、topic のブランチで ADR-0002 が
+/// ADR-0001 を置き換える
+fn superseding_topic(name: &str) -> TempRepo {
+    let t = TempRepo::new(name);
+    for slug in ["use-a", "use-c", "use-d"] {
+        t.run(&["new", slug, "x"]);
+    }
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a).replace("status: proposed", "status: accepted"),
+    );
+    for (path, status) in [
+        ("docs/adr/0002-use-c.md", "accepted"),
+        ("docs/adr/0003-use-d.md", "rejected"),
+    ] {
+        t.write(
+            path,
+            &t.read(path)
+                .replace("status: proposed", &format!("status: {status}"))
+                .replace("requires: []", "requires: [ADR-0001]"),
+        );
+    }
+    t.commit_all("docs(adr): a, c and d");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let b = "docs/adr/0004-use-b.md";
+    t.write(
+        b,
+        &t.read(b)
+            .replace("status: proposed", "status: accepted")
+            .replace("supersedes: []", "supersedes: [ADR-0001]")
+            .replace("requires: []", "requires: [ADR-0001]"),
+    );
+    t.write(
+        a,
+        &t.read(a)
+            .replace("status: accepted", "status: superseded")
+            .replace("superseded-by:", "superseded-by: ADR-0004"),
+    );
+    t
+}
+
+#[test]
+fn check_names_the_adrs_that_require_an_adr_superseded_on_the_branch() {
+    let t = superseding_topic("requires-superseded");
+    let out = t.run(&["check", "docs/adr/0001-use-a.md", "docs/adr/0004-use-b.md"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    // 置き換えた ADR-0004 と、効力を持たなかった ADR-0003 は見直す相手に挙げない
+    assert!(
+        stdout(&out).contains(
+            "docs/adr/0001-use-a.md: warning: the ADR became superseded since main, but ADR-0002 \
+             still lists it in `requires`; review whether their decisions hold with ADR-0004, \
+             which supersedes it\n"
+        ),
+        "{}",
+        stdout(&out)
+    );
+    // main で既に置き換えられていた ADR には出さない（一度見直した。requires は確定した後に直せない）
+    t.commit_all("docs(adr): supersede a");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge", "topic"]);
+    t.git(&["switch", "-q", "-c", "later"]);
+    let out = t.run(&["check"]);
+    assert!(
+        !stdout(&out).contains("became superseded"),
+        "{}",
+        stdout(&out)
+    );
+}
+
 /// 確定した ADR の決定と理由を直した topic のブランチで、`item` を「## 変更」に足す（空なら足さない）。
 fn decision_edited(name: &str, item: &str) -> TempRepo {
     let t = superseded_repo(name);
