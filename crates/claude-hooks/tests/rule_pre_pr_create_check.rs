@@ -185,8 +185,8 @@ fn a_pr_from_the_own_repository_gets_the_next_steps_whatever_the_order() {
     for (first, second) in [(&fork_dir, &own_dir), (&own_dir, &fork_dir)] {
         let command = format!(
             "cd {} && {CREATE}; cd {} && {CREATE}",
-            first.display(),
-            second.display()
+            common::sh_path(first),
+            common::sh_path(second)
         );
         let out = repo.hook(&command);
         assert!(
