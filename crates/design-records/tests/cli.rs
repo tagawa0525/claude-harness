@@ -543,6 +543,84 @@ fn check_warns_when_the_conditions_section_has_no_checklist() {
     );
 }
 
+/// 問題と完了の条件の節を持つ issue（フロントマターの行は `front`）
+fn issue(front: &str) -> String {
+    format!("---\n{front}\n---\n\n# x\n\n## 問題\n\nx\n\n## 完了の条件\n\n- [ ] y\n")
+}
+
+#[test]
+fn check_warns_about_comments_on_issue_front_matter_lines() {
+    let t = TempRepo::new("issue-comment");
+    t.write(
+        "docs/issues/0001-commented.md",
+        &issue("status: open\nopened: 2026-10-10 # 気づいた日"),
+    );
+    // 値の先頭の # と、一覧の要素の先頭の # は値（引用符なしで書いた番号）
+    t.write(
+        "docs/issues/0002-numbers.md",
+        &issue("status: closed\nresolution: duplicate\nduplicate-of: #0001\nblocked-by: [#0001, \"#0001\"]"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains(
+            "docs/issues/0001-commented.md:3: warning: the value of `opened` has ` #`, which YAML \
+             reads as a comment but design-records reads as part of the value; write only the \
+             value on the key line\n"
+        ),
+        "{}",
+        stdout(&out)
+    );
+    assert!(!stdout(&out).contains("0002-numbers"), "{}", stdout(&out));
+}
+
+#[test]
+fn check_warns_about_inconsistent_issue_links() {
+    let t = TempRepo::new("issue-links");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write(
+        "docs/issues/0001-early.md",
+        &issue("status: open\nresolution: done\nclosed: 2026-10-11"),
+    );
+    t.write(
+        "docs/issues/0002-dup.md",
+        &issue("status: closed\nresolution: duplicate"),
+    );
+    t.write(
+        "docs/issues/0003-blocked.md",
+        &issue(
+            "status: closed\nresolution: done\nresolved-by: 0001-use-a\nblocked-by: [\"#0001\"]",
+        ),
+    );
+    t.write(
+        "docs/issues/0004-missing.md",
+        &issue("status: closed\nresolution: duplicate\nduplicate-of: \"#0009\"\nresolved-by: 0007-use-g\nblocked-by: [\"#0008\"]"),
+    );
+    // 閉じた相手に塞がれていた issue と、コミットの hash で解決した issue は黙る
+    t.write(
+        "docs/issues/0005-fine.md",
+        &issue("status: closed\nresolution: done\nresolved-by: 1a2b3c4\nblocked-by: [\"#0003\"]"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        "docs/issues/0001-early.md: warning: an open issue has `resolution`, `closed`; write \
+         them when closing it\n\
+         docs/issues/0002-dup.md: warning: a duplicate issue needs `duplicate-of`\n\
+         docs/issues/0003-blocked.md: warning: the issue is closed but `blocked-by` names #0001, \
+         which is open; close it after the issues blocking it are closed\n\
+         docs/issues/0004-missing.md: warning: `blocked-by` names #0008, which does not exist in \
+         docs/issues\n\
+         docs/issues/0004-missing.md: warning: `duplicate-of` names #0009, which does not exist in \
+         docs/issues\n\
+         docs/issues/0004-missing.md: warning: `resolved-by` names 0007-use-g, which is not an \
+         ADR in docs/adr\n"
+    );
+}
+
 /// ADR-0001 を ADR-0002 で置き換えた main
 fn superseded_repo(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
