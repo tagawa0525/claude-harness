@@ -197,9 +197,11 @@ impl Rule for DelegateRequestFields {
                     }
                     Ok(_) => return Vec::new(),
                     Err(e) if prompt_calls => {
-                        return vec![Finding::Deny(format!(
+                        let mut findings = vec![Finding::Deny(format!(
                             "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の 1 行目の「依頼文は <絶対パス> にある」のパスを直してください（`~` や相対のパスは使えません。{QUOTE_HINT}）。"
                         ))];
+                        findings.extend(description_finding(input));
+                        return findings;
                     }
                     // /delegate を呼ぶかは読めないファイルの側にあるかもしれないが、prompt が呼ばないなら対象と決められない
                     Err(_) => return Vec::new(),
