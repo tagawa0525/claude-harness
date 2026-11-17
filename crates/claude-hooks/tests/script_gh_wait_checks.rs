@@ -137,7 +137,15 @@ fn a_failed_check_ends_with_failed_and_its_name() {
         stderr(&out)
     );
     assert!(
-        stdout(&out).ends_with("CHECKS: failed\nFAILED: cargo-test (failure)\n"),
+        stdout(&out).contains("CHECKS: failed\nFAILED: cargo-test (failure)\n"),
+        "{}",
+        stdout(&out)
+    );
+    // 落ちた check の診断先を、失敗の行の後に PR の URL 付きで出す
+    assert!(
+        stdout(&out).ends_with(&format!(
+            "FAILED: cargo-test (failure)\nNEXT: /gh-actions-check {URL} で原因を診断する\n"
+        )),
         "{}",
         stdout(&out)
     );
@@ -179,7 +187,15 @@ fn a_failed_check_is_reported_without_waiting_for_the_running_ones() {
         stderr(&out)
     );
     assert!(
-        stdout(&out).ends_with("CHECKS: failed\nFAILED: cargo-test (failure)\n"),
+        stdout(&out).contains("CHECKS: failed\nFAILED: cargo-test (failure)\n"),
+        "{}",
+        stdout(&out)
+    );
+    // 落ちた check の診断先を、失敗の行の後に PR の URL 付きで出す
+    assert!(
+        stdout(&out).ends_with(&format!(
+            "FAILED: cargo-test (failure)\nNEXT: /gh-actions-check {URL} で原因を診断する\n"
+        )),
         "{}",
         stdout(&out)
     );
@@ -412,6 +428,13 @@ fn checks_still_running_at_the_end_are_a_timeout() {
     );
     assert!(
         stdout(&out).contains("TIMEOUT: 実行中の check が残っています（cargo-test, setup）"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).ends_with(&format!(
+            "\nNEXT: /gh-actions-check {URL} で Actions の状況を診断する\n"
+        )),
         "{}",
         stdout(&out)
     );
