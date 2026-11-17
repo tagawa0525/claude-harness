@@ -140,8 +140,8 @@ fn worktrees_show_the_branch_uncommitted_changes_and_the_session_of_the_tip() {
         section(&text, "worktrees"),
         format!(
             "{} main session=sess-1\n{} feat/x dirty session=sess-1\n",
-            repo.app().display(),
-            wt.display()
+            common::sh_path(&repo.app()),
+            common::sh_path(&wt)
         )
     );
 }
@@ -155,7 +155,7 @@ fn a_tip_without_a_session_trailer_shows_no_session() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "worktrees"),
-        format!("{} main\n", repo.app().display())
+        format!("{} main\n", common::sh_path(&repo.app()))
     );
 }
 
