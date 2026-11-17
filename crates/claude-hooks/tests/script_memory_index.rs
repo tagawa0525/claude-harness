@@ -377,7 +377,7 @@ fn a_missing_index_tells_to_skip_a_project_without_memory_or_report_it_unchecked
     let r = m.run();
     assert_eq!(
         last_line(&r.err),
-        "NEXT: メモリの無いプロジェクトなら飛ばす。MEMORY.md があるなら、メモリを見ていないことを報告の「未確認」に書いて進める",
+        "NEXT: 渡したディレクトリが、このセッションの自動メモリの MEMORY.md のあるディレクトリかを確かめて再実行する。メモリの無いプロジェクトなら飛ばす。MEMORY.md があるのに読めなければ、メモリを見ていないことを報告の「未確認」に書いて進める",
         "{}",
         r.err
     );
