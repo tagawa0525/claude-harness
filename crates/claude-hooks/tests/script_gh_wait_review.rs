@@ -116,6 +116,92 @@ fn no_review_after_since_times_out() {
     );
 }
 
+/// 時間切れの後に読む値: 起動の確認、待つ間の 1 回（レビューの一覧、head、失敗したチェック）、最後のレビューの一覧の後に、
+/// head、head の Copilot のチェック、未解決スレッド
+fn timeout_calls<'a>(
+    head: (&'a str, i32),
+    checks: (&'a str, i32),
+    threads: (&'a str, i32),
+) -> Vec<(&'a str, i32)> {
+    vec![
+        ("", 0),
+        ("{\"number\":42}", 0),
+        (REVIEWS, 0),
+        ("abc\n", 0),
+        ("", 0),
+        (REVIEWS, 0),
+        head,
+        checks,
+        threads,
+    ]
+}
+
+const OPEN_THREAD: &str = r#"{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}"#;
+
+#[test]
+fn a_timeout_shows_the_copilot_check_and_the_unresolved_threads_of_the_head() {
+    // 時間切れは失敗とは限らない（指摘ゼロだと何も投稿しない bot がある）。判断に使う 2 つの値を、時間切れの行の後に出す
+    let fake = FakeGh::new();
+    let out = fake.run_calls_with_env(
+        "gh-wait-review",
+        &[URL, "--since", "2026-09-08T06:00:00Z"],
+        &timeout_calls(
+            ("abc\n", 0),
+            ("Copilot code review=success\n", 0),
+            (OPEN_THREAD, 0),
+        ),
+        NO_WAIT,
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let text = stdout(&out);
+    let after = text.split_once("TIMEOUT: ").map(|(_, r)| r).expect(&text);
+    assert!(
+        after.contains("\nCOPILOT_CHECK: abc Copilot code review=success\n"),
+        "{text}"
+    );
+    assert!(after.contains("\nUNRESOLVED: 1\n"), "{text}");
+    assert!(
+        fake.log().contains(
+            "gh api --paginate repos/{owner}/{repo}/commits/abc/check-runs?per_page=100 --jq "
+        ),
+        "{}",
+        fake.log()
+    );
+    assert!(
+        after.contains(&format!("/gh-actions-check {URL} ")),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_timeout_says_unknown_for_values_it_cannot_read() {
+    let fake = FakeGh::new();
+    let out = fake.run_calls_with_env(
+        "gh-wait-review",
+        &[URL, "--since", "2026-09-08T06:00:00Z"],
+        &timeout_calls(("", 1), ("", 0), ("", 1)),
+        NO_WAIT,
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("\nCOPILOT_CHECK: unknown\n"), "{text}");
+    assert!(text.contains("\nUNRESOLVED: unknown\n"), "{text}");
+}
+
+#[test]
+fn a_timeout_without_a_copilot_check_says_none() {
+    let fake = FakeGh::new();
+    let out = fake.run_calls_with_env(
+        "gh-wait-review",
+        &[URL, "--since", "2026-09-08T06:00:00Z"],
+        &timeout_calls(("abc\n", 0), ("", 0), ("", 0)),
+        NO_WAIT,
+    );
+    let text = stdout(&out);
+    assert!(text.contains("\nCOPILOT_CHECK: abc none\n"), "{text}");
+    assert!(text.contains("\nUNRESOLVED: 0\n"), "{text}");
+}
+
 #[test]
 fn a_failed_copilot_run_on_the_head_stops_the_wait() {
     // トークン切れや内部エラーでレビューが走らなかったなら、待っても来ない
