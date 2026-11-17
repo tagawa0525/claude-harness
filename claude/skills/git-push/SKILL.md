@@ -12,8 +12,6 @@ allowed-tools:
 
 # Git Push Command
 
-ローカルコミットをリモートリポジトリにプッシュする。
-
 ## 現在の状態
 
 !`git status --short`
@@ -32,7 +30,7 @@ git log @{upstream}..HEAD --oneline 2>/dev/null || echo "上流ブランチ未�
 
 ## プッシュ実行
 
-上流ブランチは `push.autoSetupRemote` により初回 push で設定される:
+引数なしで実行する（上流ブランチは `push.autoSetupRemote` が初回 push で設定する）:
 
 ```bash
 git push
