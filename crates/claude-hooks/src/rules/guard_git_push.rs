@@ -73,16 +73,23 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
             &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
         )
         .unwrap_or_default();
-        let (remote, upstream) = upstream.split_once('/').unwrap_or(("origin", &upstream));
+        let upstream = upstream
+            .split_once('/')
+            .map(|(_, b)| b)
+            .unwrap_or(&upstream);
         if is_protected_ref(&current) {
             return Some(format!(
                 "main / master への直接 push は禁止です（現在のブランチ: {current}）。{TO_FEATURE}"
             ));
         }
         if is_protected_ref(upstream) {
-            // コミットは feature branch にあり main には無いので、移さずに上流を直す
+            // コミットは feature branch にあり main には無いので、移さずに上流を直す。上流のリモートは設定から読む
+            // （@{u} の短い名前からは、ローカルの上流や / を含むブランチ名を見分けられない）
+            let remote = git::git(dir, &["config", &format!("branch.{current}.remote")])
+                .filter(|r| !r.is_empty() && r != ".")
+                .unwrap_or_else(|| "<リモート>".to_string());
             return Some(format!(
-                "main / master への直接 push は禁止です（{current} の上流が {remote}/{upstream}）。git push -u {remote} {current} で上流を feature branch にしてから、PR を作成してください: /gh-pr-create"
+                "main / master への直接 push は禁止です（{current} の上流が {upstream}）。git push -u {remote} {current} で上流を feature branch にしてから、PR を作成してください: /gh-pr-create"
             ));
         }
         return None;
@@ -101,15 +108,21 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
             dst.to_string()
         };
         if is_protected_ref(&dst) {
-            let current = git::current_branch(dir);
-            // main にいなければ、コミットは main に無いので、push 先を feature branch にする
-            if current.is_empty() || is_protected_ref(&current) {
+            // 送る元（src:dst の src、無ければ全体。HEAD は今のブランチ）が main なら、コミットは main にあるので
+            // 移す。ほかなら、送る元はそのままに、送り先を feature branch にする
+            let src = rs.split_once(':').map_or(*rs, |(s, _)| s);
+            let src_branch = if src == "HEAD" {
+                git::current_branch(dir)
+            } else {
+                src.to_string()
+            };
+            if src_branch.is_empty() || is_protected_ref(&src_branch) {
                 return Some(format!(
                     "main / master への直接 push は禁止です（refspec: {rs}）。{TO_FEATURE}"
                 ));
             }
             return Some(format!(
-                "main / master への直接 push は禁止です（refspec: {rs}）。push 先を feature branch にし（git push {} {current}）、PR を作成してください: /gh-pr-create",
+                "main / master への直接 push は禁止です（refspec: {rs}）。送り先を feature branch にし（git push {} {src}:<feature branch>）、PR を作成してください: /gh-pr-create",
                 positional[0]
             ));
         }
