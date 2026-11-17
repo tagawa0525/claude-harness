@@ -964,6 +964,27 @@ fn check_counts_a_hand_written_commit_that_starts_like_renumber() {
 }
 
 #[test]
+fn check_counts_a_change_made_while_resolving_a_merge() {
+    let t = confirmed_topic("stale-evil-merge", |t| {
+        t.git(&["switch", "-q", "main"]);
+        t.write("README.md", "main\n");
+        t.commit_all("docs: readme on main");
+        t.git(&["switch", "-q", "topic"]);
+        t.git(&["merge", "-q", "--no-commit", "main"]);
+        // マージのコミットの中でだけ実装を直す
+        t.write("src/impl.sh", "echo 2\n");
+        t.git(&["add", "src/impl.sh"]);
+        t.git(&["commit", "-q", "--no-edit"]);
+    });
+    let out = t.run(&["check"]);
+    assert!(
+        stdout(&out).contains("`src/impl.sh`, named in the confirmation section"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn check_ignores_changes_merged_from_the_default_branch() {
     let t = confirmed_topic("stale-merged", |t| {
         t.git(&["switch", "-q", "main"]);
