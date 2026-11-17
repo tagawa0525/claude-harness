@@ -21,9 +21,8 @@ allowed-tools:
 
 # GitHub PR Review Command
 
-PRについたレビューコメントを確認し、対応する。取得・集計・状態判定は
-`~/.claude/skills/gh-pr-review/scripts/` のスクリプトが行う。数える・比べる・探すは
-記憶に頼らずスクリプトの出力を使い、判断だけをモデルが行う。
+PR のレビューコメントを確認し、対応する。件数・状態・比較は `~/.claude/skills/gh-pr-review/scripts/` の
+スクリプトの出力を使い、モデルは判断だけを行う。
 
 ## 事前確認
 
@@ -33,14 +32,13 @@ PRについたレビューコメントを確認し、対応する。取得・集
 
 ## Step 1: 対象の特定
 
-スクリプトは対象の PR を URL（`https://github.com/{owner}/{repo}/pull/{n}`。以下 `{pr_url}`）で受け、
-cwd のリポジトリに依らずその PR を読み書きする。
+スクリプトには PR の URL（`https://github.com/{owner}/{repo}/pull/{n}`。以下 `{pr_url}`）を渡す。
 
-- コメント URL（`…/pull/{n}#discussion_r{id}`）→ URL を渡す。出力の `number` と `comment_id` の
-  コメントだけに対応する。`{pr_url}` は出力の `url`
+- コメント URL（`…/pull/{n}#discussion_r{id}`）→ そのまま渡し、出力の `comment_id` のコメントだけに対応する。
+  `{pr_url}` は出力の `url`
 - PR の URL → その PR の全コメント
-- PR 番号・引数なし → PR のリポジトリの worktree で `cd <worktree> && gh pr view [{番号}] --json url -q .url`
-  で URL を得る。出力の owner/repo が対象のリポジトリかを確かめてから使う
+- PR 番号・引数なし → PR のリポジトリの worktree で `cd <worktree> && gh pr view [{番号}] --json url -q .url`。
+  出力の owner/repo が対象のリポジトリかを確かめてから使う
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh "{pr_url または コメント URL}"
@@ -53,73 +51,65 @@ cwd のリポジトリに依らずその PR を読み書きする。
 ~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh "{pr_url}"
 ```
 
-`get-latest-review.sh` の **Suppressed comments** は Copilot が低確度と判断した指摘で、
-レビュー本文にだけ現れる（スレッドがないので返信できない）。扱いは Step 6 の基準に従う。
+`get-latest-review.sh` の次の 2 つはレビュー本文にだけ現れ、スレッドが無い（返信と resolve はできない）:
 
-**Previously missed**（`--- previously missed ---` 以降）は、前の周で見落とした、変わっていないコードへの
-指摘で、これも本文にだけ現れる。重大度を持つ通常の指摘として Step 3 で処置を決め、台帳に載せる
-（返信と resolve はできない）。`REMAINING_HIGH` は、開いている指摘とこの節の High の数。
+- **Suppressed comments**: Copilot が低確度と判断した指摘。扱いは Step 6
+- **Previously missed**（`--- previously missed ---` 以降）: 前の周で見落とした、変わっていないコードへの指摘。
+  通常の指摘として Step 3 で処置を決め、台帳に載せる。`REMAINING_HIGH` は、開いている指摘とこの節の High の数
 
 ## Step 3: 前提の検証と処置の決定
 
 ### 3.1 前提を一次情報で検証する
 
-bot の指摘は前提が誤っていることがある。**着手前に、指摘が依拠する事実を一次情報で
-確かめる**: コードの実際の挙動（呼び出し元まで読む・実行する）、公式ドキュメントや
-ライブラリのソース（バージョンは lock ファイルで確認）、CLAUDE.md や `git log -S` の経緯、文書や記録に書いた数値なら
-その元の出力やデータ。
-直すのも見送るのも、確かめた結果で決める。
+着手前に、指摘が依拠する事実を一次情報で確かめる（bot の指摘は前提が誤ることがある）: コードの実際の挙動
+（呼び出し元まで読む・実行する）、公式ドキュメントやライブラリのソース（バージョンは lock ファイル）、
+CLAUDE.md や `git log -S` の経緯、文書に書いた数値ならその元の出力やデータ。直すのも見送るのも、確かめた結果で決める。
 
 ### 3.2 処置を決める
 
-Copilot の指摘も、直すかはローカルの周と同じく /git-merge の「レビュー」の節の「直す指摘の基準」で決める（Copilot の重大度で
-は決めない。周の終わりは Step 6。文書だけの PR は下の段落）。判断が付かないものは escalate に倒す:
+Copilot の指摘も、直すかは /git-merge の「レビュー」の節の「直す指摘の基準」で決める（Copilot の重大度では決めない）。
+判断が付かないものは escalate にする:
 
-| 処置         | 条件                                                                                                                                                    | 行動                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **fix**      | 検証の結果、指摘が「直す指摘の基準」の直す（blocking）に当たり、修正が PR の範囲内に収まる                                                              | Step 4 で修正・コミット → Step 5 で `Fixed in {hash}` と返信                                  |
-| **decline**  | 検証の結果、指摘の前提が誤っている、意図的な設計判断（CLAUDE.md・過去の決定・仕様上の理由）、または「直す指摘の基準」の直さない（non-blocking）に当たる | 修正せず、Step 5 で根拠（検証で得た事実か、直さない（non-blocking）に当たる理由）を添えて返信 |
-| **escalate** | 設計方針の変更、PR の範囲を超える修正、要件の衝突、検証しても正誤が確定しない、破壊的な変更を伴う                                                       | 修正も返信もせず、Step 8 の「要判断」に検証結果と選択肢を添えて列挙し、ユーザーに委ねる       |
+| 処置         | 条件                                                                                                                    | 行動                                                                    |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **fix**      | 「直す指摘の基準」の直す（blocking）に当たり、修正が PR の範囲内に収まる                                                | Step 4 で修正・コミット → Step 5 で返信                                 |
+| **decline**  | 指摘の前提が誤っている、意図的な設計判断（CLAUDE.md・過去の決定・仕様上の理由）、または直さない（non-blocking）に当たる | 修正せず、Step 5 で根拠を添えて返信                                     |
+| **escalate** | 設計方針の変更、PR の範囲を超える修正、要件の衝突、検証しても正誤が確定しない、破壊的な変更を伴う                       | 修正も返信もせず、Step 8 の「要判断」に検証結果と選択肢を添えて列挙する |
 
-decline は、検証で得た事実か、直さない（non-blocking）に当たる理由を返信に書けるときだけ。どちらも書けないなら fix か escalate。
-claude-hooks の、普通に書く形（`cd <worktree> &&`、`env` や `timeout` の前置き、`bash -c '…'`、`nix develop -c` など、普通の手順で書くコマンド。
-珍しい git の設定や全体オプションで行き先を変える、pipefail を途中で外す、のような作為的な書き方は含まない）でない抜け道の指摘は、重大度によらず decline する
-（hook は境界ではなく、抜け道を 1 つ塞ぐと次の反例が出て周が終わらない。抜け道はモデルの判断と人のレビューに任せる、
-と示すことが事実に基づく反論に当たる）。普通の形を誤って止める指摘は直す。
+- decline は、検証で得た事実か、直さない（non-blocking）に当たる理由を返信に書けるときだけ。書けないなら fix か escalate
+- claude-hooks の抜け道の指摘は、重大度によらず decline する。対象は、普通の手順で書く形（`cd <worktree> &&`、`env` や
+  `timeout` の前置き、`bash -c '…'`、`nix develop -c` など）でない、作為的な書き方（珍しい git の設定や全体オプションで
+  行き先を変える、pipefail を途中で外す）の抜け道。返信の根拠は「hook は境界ではなく、抜け道はモデルの判断と人のレビューに
+  任せる」。普通の形を誤って止める指摘は直す
 
-文書（変更ファイルがすべて `docs/` 配下。判定は `decide-next.sh` の `docs_only`）だけの PR は、上の基準の代わりに次で分ける
-（文章は細部をいくらでも掘れるので、直した文が次の指摘の的になり、周回が収束しない）:
+文書だけの PR（変更ファイルがすべて `docs/` 配下。`decide-next.sh` の `docs_only`）は、上の基準の代わりに次で分ける:
 
-- fix: 検証できる誤り（コードや事実と食い違う記述、壊れた参照・リンク）と、方針に関わる指摘
+- fix: 検証できる誤り（コードや事実と食い違う記述、壊れた参照・リンク）と、方針に関わる指摘。コードの挙動は文書に
+  重複して書かず、コードへの参照（ファイルと関数名）で書く
 - decline: 競合状態・エッジケースなど実装の細部、言い回しや網羅性の指摘。
   `This will be settled with tests in the implementation PR.` か、不要な理由の事実を添えて返信する
+- レビューは最初の 1 周で止まる（`STOP_DOCS_REVIEWED`）。その後に直した文は GitHub のレビューを受けないので、fix の
+  コミットを push する前に、Step 6 の「ローカルレビュー」の回し方で `/code-review medium` を回す
 
-レビューは最初の 1 周で止まる（Step 6 の `STOP_DOCS_REVIEWED`）。止まった後に直した文は GitHub のレビューを
-受けないので、fix のコミットを push する前に、ローカルで `/code-review medium` を回す。対象は `~/.claude/scripts/review-level.sh`
-が出す `WORKTREE` を対象にする（PR の worktree で実行する。Step 6 の「ローカルレビュー」と同じ。積み重なった PR は
-`--base <土台のブランチ>` を付ける）。
-直すときも、コードの挙動を文書に重複して書かず、コードへの参照（ファイルと関数名）で書く。
-
-重大度は Copilot の本文に揃えて High / Medium / Low で数える（ローカルの `/code-review` の指摘は、/git-merge の「レビュー」の節の
-「直す指摘の基準」の blocking を High、non-blocking を Medium か Low（表記・好み）として数える）。
-対応順は High（誤動作・セキュリティ・データの破損・ゲートの迂回）→ Medium（限られた条件の
-不具合・品質）→ Low（表記・好み）→ 質問（回答のみ）。Copilot の指摘は本文の重大度のまま数えて並べる（直すかは 3.2 の基準で決める）。
+重大度は Copilot の本文のまま High / Medium / Low で数える。ローカルの `/code-review` の指摘は、「直す指摘の基準」の
+blocking を High、non-blocking を Medium か Low（表記・好み）として数える。対応順は High（誤動作・セキュリティ・
+データの破損・ゲートの迂回）→ Medium（限られた条件の不具合・品質）→ Low（表記・好み）→ 質問（回答のみ）。
 
 ### 3.3 同一指摘の再提起（2 周目以降）
 
-前の周の台帳（Step 8）と突き合わせ、同じ論点なら新規として扱わない:
+前の周の台帳（Step 8）と突き合わせ、同じ論点は新規として扱わない:
 
 - decline 済み → 前回の返信 URL を引いて同じ根拠で返信する。再検証は前提が変わったときだけ
 - fix 済みの箇所 → 修正の反映漏れ（push 漏れ、別箇所の取り残し）を確認する
 
 ## Step 4: 修正
 
-fix のコメントごとに、修正 → `git add` → チェック → コミットを繰り返す（**1 コメント = 1 コミット**）。
-直した結果、ADR の決定・帰結・確認に書いた内容が変わるなら、同じコミットで ADR も合わせる（確定した ADR の凍結する部分は
-マージの後には「## 変更」でしか直せない。/adr の「確定後の運用」の、マージ前の項）。
+fix のコメントごとに、修正 → `git add` → チェック → コミットを繰り返す（1 コメント = 1 コミット）。
+修正で ADR の決定・帰結・確認に書いた内容が変わるなら、同じコミットで ADR も合わせる（/adr の「確定後の運用」の、
+マージ前の項）。
 
-チェック対象はステージ済みのファイル。`FAILED:` なら `FIX:` か手直しで `ALL_OK` まで直し、
-再度 `git add` する。プロジェクトの CLAUDE.md にチェックコマンドがあればそちらを使う。
+チェックの対象はステージ済みのファイル。`FAILED:` なら `FIX:` か手直しで `ALL_OK` まで直し、再度 `git add` する。
+プロジェクトの CLAUDE.md にチェックコマンドがあればそちらを使う。
 
 ```bash
 ~/.claude/skills/language-checks/scripts/run-checks.sh
@@ -131,7 +121,7 @@ EOF
 )"
 ```
 
-全件対応したら `git push`。force push はせず追加コミットで対応する（レビュー履歴を保持）。
+全件対応したら `git push`。追加コミットで対応する（force push はレビュー履歴を失う）。
 
 ## Step 5: 返信と resolve
 
@@ -142,92 +132,79 @@ EOF
 
 - 返信: fix は `Fixed in {hash}.`、decline は `I've decided to keep the current approach
   because {検証で得た事実か、直さない（non-blocking）に当たる理由}.`、再提起は `This is the same point as {前回の返信 URL}.`
-- resolve するのは bot（`user_type: Bot`）のスレッドだけ。人間のスレッドは返信のみで、
-  閉じるのはレビュアー（`--allow-human` はユーザーの明示的な指示があるときだけ）。
-  未解決の人間スレッドで `pre-merge-check` がマージを止めるのは正しい状態なので、
-  Step 8 で「レビュアーの確認待ち」として報告する
+- resolve するのは bot（`user_type: Bot`）のスレッドだけ。人間のスレッドは返信のみ行い、Step 8 で「レビュアーの
+  確認待ち」として報告する（`--allow-human` はユーザーの明示的な指示があるときだけ。未解決の人間スレッドで
+  `pre-merge-check` がマージを止めるのは正しい状態）
 
 ## Step 6: 再レビューの判定
 
-再レビューは毎周新しい指摘を生みうるので、指摘ゼロを終了条件にすると収束しない。
-判定はスクリプトに任せる（スクリプトに周回の上限は無い。head にローカルレビューの記録があれば終わる。ローカルの
-`/code-review` の直す指摘と周の終わりは下の「ローカルレビュー」）:
+周の終わりは、指摘ゼロでなく次の `VERDICT` で決める（周回の上限は無い）:
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/decide-next.sh "{pr_url}"
 ```
 
-ユーザーが途中で追加の変更を求めたときは、周回を数え直す印を PR に付けてよい（`ROUND` の表示が 0 から数え直すだけで、
-判定とマージには効かない）。マージの可否は、追加の変更を入れた新しい head のローカルレビューの記録で決まる:
+| VERDICT                  | 意味                                                                  | 次の一手                                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ACT`                    | 未解決スレッドがある                                                  | Step 3〜5 で対応する                                                                                                                     |
+| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head をローカルで確かめていない                    | 回すかを「ローカルレビュー」のとおり決め、回したら記録して `decide-next.sh` を再実行し、回さないなら Step 7 へ                           |
+| `STOP_LOCAL_REVIEWED`    | head はローカルでレビュー済み（記録に High が無い）                   | Copilot を要求も待ちもせず Step 7 へ。Copilot の指摘が既にあれば、`PREVIOUSLY_MISSED` を含め台帳に処置があるかを先に確かめる             |
+| `STOP_DOCS_REVIEWED`     | 文書だけの PR で、対応を push 済み                                    | 要求せず Step 7 へ                                                                                                                       |
+| `STOP_DECLINED`          | 未解決ゼロ・head はレビュー済み                                       | 要求せず Step 7 へ                                                                                                                       |
+| `STOP_PREVIOUSLY_MISSED` | head はレビュー済みで、スレッドの無い Previously missed が残る        | 本文を読んで Step 3 で処置を決める。fix するなら Step 4 → push（次の判定はローカルレビューから）、しないなら台帳に理由を書いて Step 7 へ |
+| `STOP_SUPPRESSED_ONLY`   | Suppressed comments のみ                                              | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                                         |
+| `STOP_CLEAN`             | 指摘なし                                                              | Step 7 へ                                                                                                                                |
+| `REVIEW_FAILED`          | Copilot がレビューできずに終わり、head のローカルレビューの記録も無い | 「ローカルレビュー」を回して記録する（Copilot の失敗の診断は任意）                                                                       |
+| `WAITING`                | 要求後のレビューが未着で、head のローカルレビューの記録も無い         | 「ローカルレビュー」を回して記録する（Copilot を待つなら `~/.claude/scripts/gh-wait-review.sh "{pr_url}"`。任意。background）            |
 
-```bash
-~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh "{pr_url}" "ユーザーの要望: {要望の要旨}"
-```
+レビューが届いたら `decide-next.sh` を再実行する。新しい周に入るときは、台帳（Step 8 の形式）を先に出力してから
+Step 2 に戻る（コンテキストが要約されても処置の履歴を残すため）。
 
-| VERDICT                  | 意味                                                                                                | 次の一手                                                                                                                                                           |
-| ------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ACT`                    | 未解決スレッドがある                                                                                | Step 3〜5 で対応する                                                                                                                                               |
-| `LOCAL_REVIEW_NEEDED`    | 対応を push したが head をローカルで確かめていない                                                  | 回すかを下記の「ローカルレビュー」のとおり決め、回したら記録して `decide-next.sh` を再実行し、回さないなら Step 7 へ                                               |
-| `STOP_LOCAL_REVIEWED`    | head はローカルでレビュー済み（記録に High が無い）。Copilot のレビューの有無・到着・内容は問わない | 要求せず、Copilot を待たずに Step 7 へ（マージ時の hook も同じ条件で通す）。Copilot の指摘が既にあれば、`PREVIOUSLY_MISSED` を含め台帳に処置があるかを先に確かめる |
-| `STOP_DOCS_REVIEWED`     | 文書だけの PR で、対応を push 済み                                                                  | 要求せず Step 7 へ（文書は最初のレビューで足りる。一度レビューが成功していれば、マージ時の hook も再レビューを求めない）                                           |
-| `STOP_DECLINED`          | 未解決ゼロ・head はレビュー済み                                                                     | 要求せず Step 7 へ（再要求しても同じレビューが返るだけ）                                                                                                           |
-| `STOP_PREVIOUSLY_MISSED` | head はレビュー済みで、スレッドの無い Previously missed が残る                                      | 本文を読んで Step 3 で処置を決める。fix するなら Step 4 → push（次の判定はローカルレビューから）、しないなら台帳に理由を書いて Step 7 へ                           |
-| `STOP_SUPPRESSED_ONLY`   | Suppressed comments のみ                                                                            | 本文を読んで要否を判断（下記）。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ                                                                   |
-| `STOP_CLEAN`             | 指摘なし                                                                                            | Step 7 へ                                                                                                                                                          |
-| `REVIEW_FAILED`          | Copilot がレビューできずに終わり、head のローカルレビューの記録も無い                               | 下記の「ローカルレビュー」を回して記録する（Copilot の失敗の診断は任意）                                                                                           |
-| `WAITING`                | 要求後のレビューが未着で、head のローカルレビューの記録も無い                                       | 下記の「ローカルレビュー」を回して記録する（Copilot を待つなら `~/.claude/scripts/gh-wait-review.sh "{pr_url}"`。任意。background）                                |
+**ローカルレビュー**: head のローカルレビューの記録は、Copilot のレビューの代わりになる。
 
-**ローカルレビュー**: head のローカルレビューの記録は、Copilot のレビューの代わりになる。記録は、その head に `/code-review` を
-回した後（PR を作る前の /gh-pr-create の周を含む）にだけ書き、自分で差分を読んだだけの head は記録しない（マージの hook は記録を Copilot のレビューの代わりに
-数えるので、読んだだけの記録は誰もレビューしていない head をレビュー済みにする。2026-10-28 に、Copilot がレビューできなかった 2 つの
-PR で、親が差分を読んで 0 件を記録してマージした。片方の head は担当が最後のレビューの後に積んだ未レビューの修正だった）。
-最初の head は必ず回す（1 度もレビューを受けていない PR はマージの hook が止める）。対応を push した head に回すかは、/git-merge の
-「直す指摘の基準」の「終わり」の項で決める（回さないなら、その理由をマージの本文に書く。マージの hook は止めずに、変わった
-ファイルを知らせる）。回すときは、PR の worktree で `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>` を実行し、出力の `LEVEL` と
-`WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す。ブランチ名で渡すと /code-review は cwd のリポジトリで
-解くので、cwd が別のリポジトリだと対象を見つけられない。`WORKTREE` が none なら、PR の URL を対象に渡す。
-PR の差分（対応の後なら、直した差分と、同じ種類の問題が他に残っていないか）を見る。回した head（`git rev-parse HEAD`。push 済みで PR の
-head と同じもの）に、その回で検証して正しいと判断した指摘の数を、High / Medium / Low で記録する
-（decline した指摘は数えない）:
+- 記録するのは `/code-review` を回した head だけ（PR を作る前の /gh-pr-create の周を含む）。差分を読んだだけの head は
+  記録しない（マージの hook が記録をレビュー済みに数える）
+- 最初の head は必ず回す。対応を push した head に回すかは、/git-merge の「直す指摘の基準」の「終わり」の項で決め、
+  回さないなら理由をマージの本文に書く
+- 回し方: `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>`（積み重なった PR は `--base <土台のブランチ>` を
+  付ける）の `LEVEL` と `WORKTREE` で `/code-review <LEVEL> <WORKTREE>`。対象はブランチ名でなく `WORKTREE` で渡し
+  （ブランチ名は cwd のリポジトリで解かれる）、`WORKTREE` が none なら PR の URL を渡す。見るのは PR の差分（対応の後なら、
+  直した差分と、同じ種類の問題が他に残っていないか）
+- 記録: 回した head（`git rev-parse HEAD`。push 済みで PR の head と同じ）に、その回で検証して正しいと判断した指摘の数を
+  High / Medium / Low で付ける（decline した指摘は数えない）
 
 ```bash
 cd <worktree> && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
 ```
 
-スクリプトは、その head で /code-review を呼んだ行（hook が clone に書く）が無ければ記録せず、次の手を示す。`WORKTREE` が
-none で PR の URL を対象に渡した周は、hook が行を書かず cd する worktree も無いので、`cd` を付けずに、末尾に
-`--unlogged '<その回し方>'` を付けて呼ぶ。
+- PR の URL を対象に渡した周（`WORKTREE` が none）は、`cd` を付けずに、末尾に `--unlogged '<その回し方>'` を付ける
+- 記録は回した head とその回の指摘の数の組。指摘を直したら、直した head を push して回し直し、その head に記録する。
+  同じ head を回し直したら、最後の記録で決まる
+- High（blocking）の残る記録はレビュー済みに数えないので直し、回し直すかは「終わり」の項で決める。Medium と Low
+  （non-blocking）は直さず、「直す指摘の基準」のとおり扱ってその head で終える
+- レビューが対象を見つけられなかった、実行できなかったとき（「ブランチが存在しない」、エラー、`[]` だけの返答）は未実施で
+  ある。0 件で記録せず、対象を直して回し直す。`[]` が指摘ゼロなのは、返答に見たファイルや確かめた点が書かれているときだけ
 
-記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
-して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`。
-マージ時の hook は止めずに High が残ると知らせる）ので、High（blocking）は直し、回し直すかは「終わり」の項で決める。Medium と Low（non-blocking）は直さず、/git-merge の
-「直す指摘の基準」のとおり扱ってその head で終える。同じ head を回し直したら、最後の記録で決まる。
-直す指摘と周の終わりは、担当も親も /git-merge の「レビュー」の節の「直す指摘の基準」に従う。
-件数は、後に Copilot が出した数と比べて、効果を測るのに使う。
-
-レビューが対象を見つけられなかった、または実行できなかったとき（「ブランチが存在しない」、エラー、`[]` だけの
-返答）は、指摘ゼロではなく未実施である。`record-local-review.sh` に 0 件で記録せず、対象を直して回し直す。
-`[]` が指摘ゼロだと言えるのは、返答が対象の差分を読んだと示しているとき（見たファイルや確かめた点が書かれている）だけ。
-
-**Copilot への再レビューの要求**は任意で、head の記録が無くても Copilot のレビューを受けたいときだけ、
-次のスクリプトで行う（要求後そのまま待機する。約 10 分。
-`run_in_background=true` で実行）。
+**Copilot への再レビューの要求**は任意で、head の記録が無くても Copilot のレビューを受けたいときだけ行う
+（約 10 分待つので `run_in_background=true`）:
 
 ```bash
 ~/.claude/skills/gh-pr-review/scripts/request-rereview.sh "{pr_url}"
 ```
 
-`@copilot` メンションには copilot-swe-agent がコメントを返すだけで、レビューは走らない。
-要求が失敗したらフォールバックせず、対応内容を PR コメントで伝えてレビュアーの判断を待つ。
-待機がタイムアウトしても失敗とは限らない（Greptile 等は指摘ゼロだと何も投稿しない）。
-head SHA の check-run と未解決スレッド数で判断する。
+要求が失敗したら、対応内容を PR コメントで伝えてレビュアーの判断を待つ（`@copilot` メンションではレビューは走らない）。
+待機のタイムアウトは失敗とは限らない（指摘ゼロだと何も投稿しない bot がある）ので、head SHA の check-run と
+未解決スレッド数で判断する。
 
-**Suppressed comments**: 3.2 の分け方（文書だけの PR はその段落の分け方）で fix に当たるものだけ対応する。
-escalate に当たるものは Step 8 の「要判断」に入れ、ほかは対応せず、Step 8 に列挙する（返信するスレッドが無い）。
+**Suppressed comments**: 3.2 の分け方（文書だけの PR はその分け方）で fix に当たるものだけ対応する。escalate に
+当たるものは Step 8 の「要判断」に入れ、ほかは対応せず Step 8 に列挙する。
 
-レビューが届いたら `decide-next.sh` を再実行する。新しい周に入るときは、
-**台帳（Step 8 の形式）を先に出力してから** Step 2 に戻る（コンテキストが要約されても
-処置の履歴を失わないため）。
+**追加の変更**: ユーザーが途中で追加の変更を求めたときは、周回を数え直す印を付けてよい（`ROUND` の表示だけが 0 に戻る。
+マージの可否は、新しい head のローカルレビューの記録で決まる）:
+
+```bash
+~/.claude/skills/gh-pr-review/scripts/reset-rounds.sh "{pr_url}" "ユーザーの要望: {要望の要旨}"
+```
 
 ## Step 7: CI確認
 
@@ -235,8 +212,7 @@ escalate に当たるものは Step 8 の「要判断」に入れ、ほかは対
 ~/.claude/scripts/gh-actions-diagnose.sh "{pr_url}"
 ```
 
-`CAUSE:` への対応は gh-actions-check スキルの表に従う。`CODE` はレビュー対応と同じく
-修正・コミット・push する。
+`CAUSE:` への対応は gh-actions-check スキルの表に従う。`CODE` は Step 4 と同じく修正・コミット・push する。
 
 ## Step 8: 完了報告
 

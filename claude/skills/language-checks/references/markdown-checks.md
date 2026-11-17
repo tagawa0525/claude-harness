@@ -1,6 +1,6 @@
 # Markdown Quality Checks
 
-Markdown ファイル（`.md`）で実行する品質チェック。
+Markdown ファイル（`.md`）は、次の 1 → 2 → 3 の順に実行する。
 
 ## 1. 自動修正 (markdownlint --fix)
 
@@ -8,16 +8,10 @@ Markdown ファイル（`.md`）で実行する品質チェック。
 markdownlint --fix --disable MD038 -- <files>
 ```
 
-**目的**: markdownlint が機械的に直せる違反（末尾空白、見出し前後の空行、
-リスト記号の統一など）を修正する
-
-MD038（code span の内側の空白）は自動修正から外し、3 の検査で違反として出す。
-markdownlint 0.50.0 の `--fix` は code span の先頭の空白を落とし、空白に意味の
-ある書き方（シェルの `<<' X'` など）を書き手が気づかないまま変えるため。
-設定で MD038 を無効にしないのは、検査まで止めて違反に気づけなくなるため。
-`--disable` は CLI の既定の設定を変えるだけなので、ファイルの中の `<!-- markdownlint-enable MD038 -->` や
-`markdownlint-configure-file` が MD038 を有効に戻すと、`--fix` はまた先頭の空白を落とす（markdownlint 0.50.0 で確認。
-わざわざ有効に戻す書き方は普通は書かない）。この場合は書き手が有効にしているので、自動修正から外す対象にしない。
+MD038（code span の内側の空白）は自動修正から外し、3 の検査で違反として出す（`--fix` は code span の先頭の
+空白を落とし、シェルの `<<' X'` のような空白に意味のある書き方を変える）。設定では MD038 を無効にしない
+（検査まで止まる）。ファイルの中の `<!-- markdownlint-enable MD038 -->` や `markdownlint-configure-file` が
+MD038 を有効に戻していると `--fix` はまた先頭の空白を落とすが、書き手が有効にしたものなので、そのままにする。
 
 ## 2. 自動修正の補完 (fix-markdown-lint.sh)
 
@@ -25,16 +19,15 @@ markdownlint 0.50.0 の `--fix` は code span の先頭の空白を落とし、�
 ~/.claude/skills/language-checks/scripts/fix-markdown-lint.sh <files>
 ```
 
-**目的**: `markdownlint --fix` が直せない違反を修正する
+`markdownlint --fix` が直せない違反を修正する。
 
 | コード | 説明                           | 修正方法                   |
 | ------ | ------------------------------ | -------------------------- |
 | MD040  | コードフェンスに言語指定がない | 内容から言語を推定して付与 |
 | MD060  | テーブルの列幅が揃っていない   | CJK 全角幅を考慮して整列   |
 
-MD060 の幅計算は markdownlint（string-width パッケージ）に合わせ、East Asian
-Width が Ambiguous の文字（→ ★ ● など）を幅 1 として扱う。幅 2 で揃えると
-2 つのツールが互いの整形を崩し合い、pre-commit ゲートが通らなくなる。
+MD060 の幅は markdownlint に合わせ、East Asian Width が Ambiguous の文字（→ ★ ● など）を幅 1 で数える
+（幅 2 で揃えると markdownlint の整形と崩し合う）。
 
 ## 3. Lint Check (markdownlint)
 
@@ -42,11 +35,7 @@ Width が Ambiguous の文字（→ ★ ● など）を幅 1 として扱う。
 markdownlint <files>
 ```
 
-**目的**: 1・2 で直せなかった違反が残っていないか確認する
-
-**成功条件**: 終了コード 0
-
-**失敗時の対応**: 残った違反は手で修正する（構造的な問題であることが多い）
+終了コード 0 で成功。残った違反は手で修正する。
 
 ## ステージ済みファイルへの適用
 
@@ -60,9 +49,8 @@ git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r git 
 git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --
 ```
 
-注: この手順は作業ツリーのファイルを直して `git add` するので、一部だけステージした `.md` では、ステージして
-いない編集までステージする。手で直すときは、代わりに `claude-hooks git-hook staged-checks markdown` を使う（ステージした版を書き出して
-直してステージし直し、作業ツリーに触れない。claude-hooks の `git-hook staged-checks`、`crates/claude-hooks/src/staged_checks.rs`）。
-home-manager が配布する git の pre-commit フック（`nix/git-hooks.nix`）と `run-checks.sh` の Markdown
-ステージも同じ検査（`staged_checks`）を使う。`run-checks.sh` の `--merge` と `--base` は、自動修正せず、作業ツリーの
+この手順は作業ツリーのファイルを直して `git add` するので、一部だけステージした `.md` では、ステージして
+いない編集までステージする。手で直すときは、代わりに `claude-hooks git-hook staged-checks markdown` を使う
+（ステージした版を直してステージし直し、作業ツリーに触れない）。git の pre-commit フックと `run-checks.sh` の
+Markdown のチェックも同じ検査を使う。`run-checks.sh` の `--merge` と `--base` は、自動修正せず、作業ツリーの
 `.md` を `markdownlint` で検査だけする。

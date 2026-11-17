@@ -19,8 +19,6 @@ allowed-tools:
 
 # Git Tidy Command
 
-同一ブランチ内のコミットを整理する（squash、split、reorder）。
-
 ## 現在の状態
 
 !`git status --short`

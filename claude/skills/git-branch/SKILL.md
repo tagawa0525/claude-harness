@@ -14,8 +14,8 @@ allowed-tools:
 
 # Git Branch Command
 
-変更内容から適切なブランチ名を自動生成し、ブランチの作成またはリネームを行う。
-このスキルの本体はブランチ名を考えること。作成・リネーム・計画書のリネームはスクリプトに任せる。
+変更内容からブランチ名を生成し、main / master にいれば feature ブランチを作成、feature ブランチにいれば
+そのブランチをリネームする。引数は受け付けない（名前は常に生成する）。
 
 ## 現在の状態
 
@@ -25,34 +25,19 @@ allowed-tools:
 !`git fetch -q; git log --oneline HEAD..origin/main 2>/dev/null | head -3`
 !`~/.claude/scripts/rename-plan.sh --list`
 
-## 動作モードの判定
-
-現在のブランチによって動作が変わる:
-
-- **mainブランチ** → 新規featureブランチを作成
-- **featureブランチ** → 現在のブランチをリネーム
-
 ## ブランチ名の自動生成
-
-**常にLLMがブランチ名を生成する。** 引数は受け付けない。
 
 ### Step 1: 計画書の把握
 
-上の `rename-plan.sh --list` の出力（連番のない計画書）があれば、その内容を読み、
-タイトル（`# ...` 行）から意図を把握する。計画書の情報はブランチ名生成の最優先ソースとして使用する。
+上の `rename-plan.sh --list` の出力（連番のない計画書）があれば読み、タイトル（`# ...` 行）から意図を
+把握する。計画書はブランチ名の最優先の材料にする。
 
 ### Step 2: 変更内容の分析
 
-計画書がない場合、以下を確認してブランチ名を決定:
+計画書がないときは、変更から意図を把握する:
 
-- mainブランチの場合:
-  1. ステージされた変更: `git diff --cached --name-only`
-  2. 未ステージの変更: `git diff --name-only`
-  3. 変更ファイルの内容を読んで意図を把握
-- featureブランチの場合:
-  1. mainとの差分: `git log --oneline main..HEAD`
-  2. 未コミットの変更: `git diff --name-only`
-  3. コミットメッセージとファイルの内容から全体の意図を把握
+- mainブランチ: `git diff --cached --name-only` と `git diff --name-only` のファイルの内容
+- featureブランチ: `git log --oneline main..HEAD` のコミットメッセージと、`git diff --name-only` のファイルの内容
 
 ### Step 3: 命名規則に従い候補を生成
 
@@ -64,14 +49,13 @@ allowed-tools:
 
 ### Step 4: AskUserQuestion で候補を提示
 
-2-3個の候補を生成し、ユーザーに選択させる。
-「Other」で自由入力も可能。
+2-3個の候補を示し、ユーザーに選択させる（「Other」で自由入力）。
 
 ## mainブランチの場合: ブランチ作成
 
 ### 起点の確認
 
-ローカルmainが `origin/main` より遅れている場合（上記のログ出力がある場合）は警告:
+上の `HEAD..origin/main` のログに出力があれば（ローカルmainが遅れている）、警告して選ばせる:
 
 ```text
 ⚠️ ローカルmainがorigin/mainより遅れています。
@@ -95,13 +79,12 @@ git switch -C [branch-name] --no-track origin/main
 git branch --unset-upstream [branch-name]
 ```
 
-`--no-track` は、作り直すブランチに元からある上流の設定（`origin/[branch-name]` など）を消さない。
-引数なしの `git push` や `git pull` が古い上流に向かないよう、`--unset-upstream` で外す。
-一度も push していないブランチは上流が無く、`--unset-upstream` が
-`fatal: branch '[branch-name]' has no upstream information` と終了コード 128 を返す。
-その場合は外すものが無いので、そのまま進めてよい（コマンドを `&&` でつながない）。
-作り直す前に、そのブランチが別の worktree で使われていないことを `git worktree list` で確かめる。
-元の位置は `git rev-parse [branch-name]` で控えておくと戻せる。
+作り直す場合:
+
+- 先に `git worktree list` でそのブランチが別の worktree で使われていないことを確かめ、
+  `git rev-parse [branch-name]` で元の位置を控える
+- `--unset-upstream` は `&&` でつながずに実行する。一度も push していないブランチでは
+  `has no upstream information`（終了コード 128）で失敗するが、外す上流が無いだけなのでそのまま進める
 
 ## featureブランチの場合: リネーム
 
@@ -109,22 +92,19 @@ git branch --unset-upstream [branch-name]
 ~/.claude/scripts/rename-branch.sh [new-name]
 ```
 
-- exit 2（`STOP:` 行）: リモートに同名ブランチがある。リモートも更新されることをユーザーに
-  伝えて承認を得てから `--remote` を付けて再実行する
-- open PR の head ブランチはスクリプトが拒否する（リモート削除で PR が閉じるため）。
-  その場合はリネームせず、PR をマージ/クローズしてから行うよう案内する
+- exit 2（`STOP:` 行）: リモートに同名ブランチがある。リモートも更新されることをユーザーに伝え、
+  承認を得てから `--remote` を付けて再実行する
+- open PR の head ブランチは拒否される。リネームせず、PR をマージかクローズしてから行うよう案内する
 
 ## 計画書のリネーム
 
-ブランチ作成・リネーム後、連番のない計画書があれば連番つきにリネームする:
+ブランチ作成・リネーム後、連番のない計画書があれば連番つきにリネームする（コミットまでスクリプトが行う）:
 
 ```bash
 ~/.claude/scripts/rename-plan.sh [branch-name]
 ```
 
-連番・名前（`NNN_<ブランチ名から type/ を除き - を _ に>.md`）・`git mv` とコミットはスクリプトが行う。
-`COMMITTED: no` の場合は計画書が git 追跡外（`docs/plans/*.md` が gitignore されている等）なので、
-リネームだけ行われている。複数の候補があってエラーになったら、対象を確認して `--file` で指定する。
+`COMMITTED: no` は計画書が git の追跡外で、リネームだけ行われたことを示す（そのままでよい）。
 
 ## 完了確認
 

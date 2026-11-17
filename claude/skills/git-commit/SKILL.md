@@ -38,7 +38,7 @@ allowed-tools:
 git remote -v | grep -q 'github\.com'
 ```
 
-**GitHubリモートあり → worktree**（未コミットの変更も patch で一緒に移す。stash は使わない。worktree に当てられなければ変更は main に残り、エラーで止まる）:
+**GitHubリモートあり → worktree**（未コミットの変更も一緒に移る）:
 
 ```bash
 ~/.claude/scripts/worktree-add.sh [branch-name] --carry-changes
@@ -47,10 +47,8 @@ cd <出力の WORKTREE の値>
 
 以降のステージング・コミット・プッシュはworktree側で実行する。
 
-`WORKTREE:` を出したうえで `ERROR:` で終わったとき（`.worktreelink` の誤り）も、変更はもう worktree 側に
-移っている（main には残っていない）。やり直さず（作成先があるので再実行もできない）、その worktree に移って
-`.worktreelink` か `.gitignore` を直し、各パスを `mkdir -p "$(dirname <worktree>/<path>)"` の後に
-`ln -s <メイン worktree>/<path> <worktree>/<path>`（先は絶対パス）で張る。symlink は 1 つも作られていない。
+`WORKTREE:` を出したうえで `ERROR:` で終わったとき（`.worktreelink` の誤り）は、変更はもう worktree 側に
+移っている。再実行せず、その worktree に移って /git-worktree の「`ERROR:` の修正方法」に従う。
 
 **GitHubリモートなし → その場でfeatureブランチ:**
 

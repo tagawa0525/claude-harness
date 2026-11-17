@@ -1,21 +1,12 @@
 # Rust Quality Checks
 
-Rustプロジェクトで実行する品質チェック。
+上から順に実行する。どれも終了コード 0 で成功。
 
 ## 1. Format Check (cargo fmt)
 
 ```bash
-cargo fmt --check
-```
-
-**目的**: Rust標準フォーマットスタイルに従っているか確認
-
-**成功条件**: 終了コード 0
-
-**失敗時の対応**:
-
-```bash
-cargo fmt
+cargo fmt --check   # 検査
+cargo fmt           # 失敗時の自動修正
 ```
 
 ## 2. Lint Check (cargo clippy)
@@ -24,25 +15,7 @@ cargo fmt
 cargo clippy --all-targets -- -D warnings
 ```
 
-**目的**: コード品質問題、バグの可能性、非推奨パターンを検出
-
-**成功条件**: 警告が0件、終了コード 0
-
-**失敗時の対応**: エラーメッセージを確認し手動で修正
-
-### オプション説明
-
-- `--all-targets`: tests, benches, examples を含む全ターゲット
-- `-- -D warnings`: 全警告をエラー扱い
-
-### よくある警告
-
-| リント               | 説明                 |
-| -------------------- | -------------------- |
-| unused_variables     | 未使用の変数         |
-| needless_return      | 不要な return 文     |
-| redundant_clone      | 不要な clone()       |
-| match_single_binding | 単一パターンの match |
+自動修正は無い。メッセージを確認して手で直す。
 
 ## 3. Test (cargo test)
 
@@ -50,75 +23,38 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-**目的**: ユニットテスト、統合テスト、doctest を実行
+**文書だけの差分**（run-checks.sh）:
 
-**成功条件**: 全テスト成功、終了コード 0
+- ルートに `Cargo.toml` と `scripts/run-rust-docs-tests.sh` があり、差分が空でなくすべて `.md`（削除と rename の
+  前後を含む）なら、fmt、clippy、全体の `cargo test` の代わりにそのスクリプトだけを実行する
+- `.md` 以外（`clippy.toml` やテストが読むデータを含む）を含む差分では全体を実行し、その後にスクリプトも実行する
+- スクリプトは `bash <スクリプト>` で実行し、終了コードで判定する。実行権限が無ければ差分によらず失敗する
+- スクリプトが無いリポジトリは、差分によらず全体を実行する
 
-**失敗時の対応**: テスト失敗の詳細を確認し修正
-
-**文書だけの差分**（run-checks.sh）: ルートに `Cargo.toml` と `scripts/run-rust-docs-tests.sh` があり、差分が空でなく
-すべて `.md`（削除と rename の前後を含む）なら、fmt、clippy、全体の `cargo test` の代わりにそのスクリプトだけを実行する。
-`.md` 以外（`clippy.toml` やテストが読むデータを含む）を含む差分では全体を実行し、その後にスクリプトも実行する。
-スクリプトは `bash <スクリプト>` で実行し、終了コードで判定する。実行権限が無ければ差分によらず失敗する。スクリプトが無い
-リポジトリは、差分によらず全体を実行する。
-
-文書を読むテストを持つリポジトリが、文書の差分で実行するテスト（例: `exec cargo test -p <文書のテストの crate>`）を書く。
-`.md` を `include_str!` で取り込むクレート（doctest や clippy の doc の lint が `.md` で変わる）と、実行時に `.md` を読む
-テスト（fixture など）も、宣言に含めるか、宣言を置かない。
-
-### テストの種類
-
-| 種類              | 場所                        |
-| ----------------- | --------------------------- |
-| Unit tests        | `#[cfg(test)]` モジュール内 |
-| Integration tests | `tests/` ディレクトリ       |
-| Doc tests         | ドキュメントコメント内      |
-
-## クイックリファレンス
-
-| ツール       | チェック                       | 自動修正   |
-| ------------ | ------------------------------ | ---------- |
-| cargo fmt    | `--check`                      | (引数なし) |
-| cargo clippy | `--all-targets -- -D warnings` | -          |
-| cargo test   | (引数なし)                     | -          |
+スクリプトは、文書を読むテストを持つリポジトリが書く。中身は文書の差分で実行するテスト
+（例: `exec cargo test -p <文書のテストの crate>`）。`.md` を `include_str!` で取り込むクレート（doctest や clippy の
+doc の lint が `.md` で変わる）と、実行時に `.md` を読むテスト（fixture など）もスクリプトに含める。含められなければ
+スクリプトを置かない。
 
 ## トラブルシューティング
 
 ### テストが "memory allocation of N bytes failed" / SIGABRT で落ちる
 
-テストバイナリはデフォルトで CPU 数ぶん並列実行される。メモリ上限のある
-環境（サンドボックスの ulimit、コンテナ等）では大きなテストスイートが
-確保失敗で abort することがある。コードの問題ではないので、並列度を
-下げて再実行する:
+テストは既定で CPU 数ぶん並列に走るので、メモリ上限のある環境（サンドボックスの ulimit、コンテナなど）では
+確保に失敗する。コードの問題ではないので、並列度を下げて再実行する:
 
 ```bash
 cargo test -- --test-threads=4
 ```
 
-### "cargo fmt not found" / "cargo clippy not found"
-
-```bash
-rustup component add rustfmt
-rustup component add clippy
-```
-
-### テストが遅い
-
-```bash
-cargo test -- --test-threads=1  # 並列実行数を制限
-cargo test test_name            # 特定テストのみ
-```
-
 ## NixOS環境特有の問題
 
-いずれもコードの問題に見えるが環境起因。プロダクトコード側での回避は禁止。
+いずれもコードの問題に見えるが環境起因。環境の側で直し、プロダクトコードは変えない。
 
 ### cargo / rustc が "No such file or directory (os error 2)" で起動しない
 
-過去に patchelf で ELF インタープリタを nix store パス直指定に書き換えた
-バイナリは、システム更新後の GC でそのパスが消えると壊れる。再パッチせず
-ツールチェーンを入れ直して未加工バイナリに戻す（rustup 製バイナリは
-nix-ld 経由でそのまま動き、GC 耐性がある）:
+patchelf で ELF インタープリタを nix store のパスに書き換えたバイナリは、GC でそのパスが消えると壊れる。
+再パッチせず、ツールチェーンを入れ直して未加工のバイナリに戻す（rustup のバイナリは nix-ld 経由でそのまま動く）:
 
 ```bash
 # インタープリタが /nix/store/... 直指定なら patchelf 痕（要入れ直し）
@@ -135,18 +71,14 @@ rustup target add wasm32-unknown-unknown
 
 ### `error: command failed: 'cargo-fmt': No such file or directory`
 
-`~/.cargo/bin/cargo-fmt` / `cargo-clippy` が rustup proxy で、その環境で
-rustup バイナリが実行不能な場合に全プロジェクトで失敗する。該当 proxy を
-削除すると cargo が PATH 上の実バイナリ（devenv / nix のツールチェーン）に
-フォールバックして動く。
+`~/.cargo/bin/cargo-fmt` / `cargo-clippy` が rustup proxy で、rustup のバイナリが実行できない環境。その proxy を
+削除すると、cargo が PATH 上の実バイナリ（devenv / nix のツールチェーン）を使う。
 
 ### bindgen が "Unable to find libclang" で panic する
 
-開発環境に libclang が宣言されていない。恒久対応は devenv.nix / flake.nix に
-libclang を追加。暫定なら `LIBCLANG_PATH` を設定してから実行する。
+恒久対応は devenv.nix / flake.nix に libclang を追加する。暫定なら `LIBCLANG_PATH` を設定して実行する。
 
 ### build script が "could not execute process … (never executed)" で失敗する
 
-古い環境世代でビルドされた `target/` 内の build script の ELF インタープリタが
-GC 済み。`cargo clean -p <crate>` で該当クレートのみ再ビルドする
-（フルクリーンは大規模プロジェクトでは高コスト）。
+`target/` の中の build script の ELF インタープリタが GC 済み。`cargo clean -p <crate>` で該当クレートだけを
+再ビルドする（フルクリーンは大きなプロジェクトでは高コスト）。
