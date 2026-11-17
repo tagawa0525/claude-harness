@@ -300,8 +300,8 @@ fn hits_in_memory_are_listed_with_their_places() {
     let out = format!(
         "{p}/p1/memory/a.md:6:3: 道具 => ツール [Error/prh]\n{p}/p2/memory/b.md:2:1: 写し => コピー [Error/prh]\n"
     );
-    // 比較元にもある指摘も、メモリは直す対象なので出す
-    let r = h.preview(&["--base", "old.yml"], &[(&out, 1), (&out, 1)]);
+    // 比較元があっても、メモリへの新しい辞書の指摘はすべて出す（比較元の検査にはメモリを渡さない）
+    let r = h.preview(&["--base", "old.yml"], &[(&out, 1), ("", 0)]);
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(
         r.out,

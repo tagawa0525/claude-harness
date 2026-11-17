@@ -6,7 +6,8 @@
 //! 読むもの（`--projects` の既定は `~/.claude/projects`）:
 //!
 //! - `<DIR>` の下のすべての `*.jsonl`（サブエージェントの記録を含む）の、`type` が `assistant` の行の `text` の要素。
-//!   行に分け、前後の空白を外し、空の行とコードのフェンス（``` か ~~~）の中を除き、同じ行は 1 回だけ数える
+//!   行に分け、前後の空白を外し、空の行とコードのフェンス（``` か ~~~）の中、後の行を隠す行（`prose_lines`）を除き、
+//!   同じ行は 1 回だけ数える
 //! - `<DIR>/*/memory/*.md`
 //!
 //! 出力:
@@ -26,6 +27,7 @@
 //! コードスパンの中を pre-commit と同じく数えない。空行で区切り、行どうしを 1 つの段落にしない）。辞書の検査は hook と
 //! 同じく claude-hooks の隣の ja-terms（[`crate::rules::ja_terms`]）
 
+use super::usage_report::glob_dir;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
@@ -61,15 +63,6 @@ struct Hit {
     column: usize,
     from: String,
     to: String,
-}
-
-/// 作業用のディレクトリ。終わるときに消す
-struct Work(PathBuf);
-
-impl Drop for Work {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -108,13 +101,20 @@ fn parse(args: &[String]) -> Option<Options> {
         dictionary: dictionary?,
         base,
         examples,
-        projects: projects.unwrap_or_else(|| {
-            crate::shell::home()
+        // 検査は作業用のディレクトリで起動するので、メモリのパスの頭になる projects は絶対パスにする
+        projects: match projects {
+            Some(projects) => absolute(&projects),
+            None => crate::shell::home()
                 .join(".claude/projects")
                 .display()
-                .to_string()
-        }),
+                .to_string(),
+        },
     })
+}
+
+/// 作業ディレクトリからの絶対パス（求められなければ、渡されたまま）
+fn absolute(path: &str) -> String {
+    std::path::absolute(path).map_or_else(|_| path.to_string(), |p| p.display().to_string())
 }
 
 fn run(options: &Options) -> Result<String, String> {
@@ -124,18 +124,14 @@ fn run(options: &Options) -> Result<String, String> {
     let utterances = utterances(&transcripts);
     let memory = memory_files(projects);
 
-    let work = Work(std::env::temp_dir().join(format!(
-        "claude-hooks-dictionary-preview-{}",
-        std::process::id()
-    )));
-    std::fs::create_dir_all(&work.0)
-        .and_then(|()| std::fs::write(work.0.join(UTTERANCES), document(&utterances)))
-        .map_err(|e| {
-            format!(
-                "作業用のディレクトリに書けません: {}: {e}",
-                work.0.display()
-            )
-        })?;
+    // 発言をすべて書き出すので、持ち主だけが読める場所にする
+    let work = crate::process::private_temp_dir("claude-hooks-dictionary-preview")?;
+    std::fs::write(work.0.join(UTTERANCES), document(&utterances)).map_err(|e| {
+        format!(
+            "作業用のディレクトリに書けません: {}: {e}",
+            work.0.display()
+        )
+    })?;
 
     let ja_terms = crate::rules::ja_terms().ok_or(
         "辞書の検査（ja-terms）のパスがありません。Linux は claude-hooks の package.nix のラッパーが CLAUDE_HOOKS_JA_TERMS で渡します（cargo で直接ビルドしたものは、CLAUDE_HOOKS_JA_TERMS に ja-terms のパスを渡して起動する）",
@@ -143,7 +139,8 @@ fn run(options: &Options) -> Result<String, String> {
     let paths: Vec<String> = memory.iter().map(|m| format!("{projects}/{m}")).collect();
     let new = check(&ja_terms, &work.0, &options.dictionary, &paths)?;
     let base = match &options.base {
-        Some(base) => Some(check(&ja_terms, &work.0, base, &paths)?),
+        // メモリの指摘は新しい辞書のものだけを出すので、比較元にはメモリを渡さない
+        Some(base) => Some(check(&ja_terms, &work.0, base, &[])?),
         None => None,
     };
 
@@ -206,7 +203,8 @@ fn jsonl_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
             continue;
         }
         let path = entry.path();
-        if path.is_dir() {
+        // symlink は辿らない（親を指す symlink で再帰が終わらない）
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
             // 読めない下のディレクトリは飛ばす（一番上が読めないときだけ失敗にする）
             found.extend(jsonl_files(&path).unwrap_or_default());
         } else if name.ends_with(".jsonl") {
@@ -230,16 +228,11 @@ fn memory_files(projects: &str) -> Vec<String> {
 
 /// `dir` の、`.` で始まらない名前のうち `suffix` で終わるもの。名前の順
 fn names(dir: &Path, suffix: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<String> = entries
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| !n.starts_with('.') && n.ends_with(suffix))
-        .collect();
-    found.sort();
-    found
+    glob_dir(dir, suffix)
+        .iter()
+        .filter_map(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// 記録のアシスタントの発言の行。読めない記録と JSON でない行は飛ばす
@@ -278,21 +271,40 @@ fn utterances(transcripts: &[PathBuf]) -> Vec<String> {
     lines
 }
 
-/// 発言の、コードのフェンスの外の空でない行（前後の空白を外す）
+/// 発言の、コードのフェンスの外の空でない行（前後の空白を外す）。行は、辞書の検査が行の終わりに数える文字
+/// （LF、CR、U+2028、U+2029）で分ける（発言の中に残すと、[`document`] の行と発言の対応がずれる）。次の行は除く:
+///
+/// - `<` で始まる行。HTML のブロック（`<!--`、`<pre` など）は空行で終わらず、後の発言を検査から隠す
+/// - `prh:disable` を含む行。その行の指摘を消し、後ろが正規表現として読めなければ検査の全体を止める
 fn prose_lines(text: &str) -> Vec<&str> {
-    let mut fence = false;
+    // 開いているフェンスの文字と長さ
+    let mut open: Option<(char, usize)> = None;
     let mut lines = Vec::new();
-    for line in text.split('\n') {
+    for line in text.split(['\n', '\r', '\u{2028}', '\u{2029}']) {
         let line = line.trim();
-        if line.starts_with("```") || line.starts_with("~~~") {
-            fence = !fence;
-            continue;
-        }
-        if !fence && !line.is_empty() {
-            lines.push(line);
+        match (open, fence(line)) {
+            // 閉じるのは、同じ文字で、開いたもの以上の長さの、後ろに何も無い行だけ（入れ子の短いフェンスは中身）
+            (Some((c, n)), Some((d, m, rest))) if c == d && m >= n && rest.is_empty() => {
+                open = None
+            }
+            (Some(_), _) => {}
+            // ` のフェンスは、後ろに ` があれば文の中のコードスパン（```名前``` は…）
+            (None, Some((c, n, rest))) if c != '`' || !rest.contains('`') => open = Some((c, n)),
+            (None, _) => {
+                if !line.is_empty() && !line.starts_with('<') && !line.contains("prh:disable") {
+                    lines.push(line);
+                }
+            }
         }
     }
     lines
+}
+
+/// 行の頭の、3 つ以上続く ` か ~（フェンスの印）の文字と長さと、その後ろ（前後の空白を外す）
+fn fence(line: &str) -> Option<(char, usize, &str)> {
+    let c = line.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let n = line.chars().take_while(|&d| d == c).count();
+    (n >= 3).then(|| (c, n, line[n..].trim()))
 }
 
 /// 検査に渡す文書。n 番目（0 から）の発言は 2n + 3 行目（[`utterance_of`] が逆に引く）
@@ -323,9 +335,7 @@ fn check(
     memory: &[String],
 ) -> Result<Vec<Hit>, String> {
     // 検査は作業用のディレクトリで起動するので、辞書のパスは絶対パスにする
-    let dictionary = std::path::absolute(dictionary)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| dictionary.to_string());
+    let dictionary = absolute(dictionary);
     let output = Command::new(ja_terms)
         .current_dir(work)
         .args(["check", "--dictionary", &dictionary, UTTERANCES])
