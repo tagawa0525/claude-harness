@@ -13,6 +13,8 @@
 //!   書きかけで、rebuild の配った新しい版を黙って上書きしない）。clone でなければ（.git が無い）、そのまま同期する
 //! - 引数あり: pull せず、その場所の今の中身を同期する（worktree で直しを試す、activation、pull できないとき）
 //!
+//! - HOME_FILES（markdownlint の設定）: ~/.claude の外のホームの下に置く。ソースが正で、中身が違えば上書きする（ADR-0093）
+//!
 //! 外部のスキル（flake の input）は、rebuild の activation だけが配る。
 
 use std::fs;
@@ -27,6 +29,12 @@ const PLACES: [(&str, bool); 4] = [
     ("skills", true),
     ("scripts", true),
 ];
+
+/// ~/.claude の外に置くファイル（.claude の下のソースの相対パス、ホームからの相対の行き先。`/` 区切り）。ソースが正で、
+/// 中身が違えば上書きする。行き先が symlink（home-manager が置いていた store への link）なら、辿らず通常のファイルに
+/// 置き換える。ソースが無ければ何もしない。markdownlint の設定は ~/.config/markdownlint/config を markdownlint-cli が
+/// 読む（0.50.0 で確認。config.json は読まれない。ADR-0093）
+const HOME_FILES: [(&str, &str); 1] = [("markdownlint.jsonc", ".config/markdownlint/config")];
 
 /// 配ったファイルの一覧（.claude の下。1 行 1 パス、.claude からの相対で `/` 区切り）
 const MANIFEST: &str = ".claude-sync-manifest";
@@ -78,6 +86,18 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
             "（既存ファイルは保持）"
         };
         println!("✅ {name} synced{kept}");
+    }
+    for (rel, dest_rel) in HOME_FILES {
+        let src = from.join(rel);
+        if !src.exists() {
+            continue;
+        }
+        let dest = home.join(dest_rel);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_stop(parent, &e))?;
+        }
+        copy(&src, &dest, true)?;
+        println!("✅ {dest_rel} synced");
     }
     delivered.sort();
     if let Some(old) = old_manifest {
@@ -284,7 +304,11 @@ fn pull(repo: &Path) -> Result<(), Stop> {
     }
     // 見るのは同期する場所だけ。追跡していない新しいファイルも、同期されるので数える
     let mut status = vec!["status", "--porcelain", "--untracked-files=all", "--"];
-    let places: Vec<String> = PLACES.iter().map(|(n, _)| format!(".claude/{n}")).collect();
+    let places: Vec<String> = PLACES
+        .iter()
+        .map(|(n, _)| format!(".claude/{n}"))
+        .chain(HOME_FILES.iter().map(|(n, _)| format!(".claude/{n}")))
+        .collect();
     status.extend(places.iter().map(String::as_str));
     let Some(dirty) = git_out(repo, &status) else {
         return Err(stop(&[
