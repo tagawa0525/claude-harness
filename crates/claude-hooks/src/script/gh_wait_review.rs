@@ -11,6 +11,9 @@
 //! 待つ間隔（秒）は GH_WAIT_INTERVALS、要求の記録を待つ間隔は GH_WAIT_REQUEST_INTERVALS で上書きできる（テスト用）。
 //! メッセージは標準出力に出す（sh の版と同じ）。
 //!
+//! 時間切れのときは、判断の材料に `COPILOT_CHECK: <head> <名前>=<結論>, … | <head> none | unknown`（head の Copilot の
+//! チェック）と `UNRESOLVED: <n> | unknown`（未解決スレッドの数）を出す。
+//!
 //! 終了コード: 0 = レビューが到着、1 = 時間切れ（約 10 分）、3 = PR が見つからない、4 = gh が使えない（無い、
 //! 認証していない）、5 = 引数の誤り、6 = レビューの要求が無い（待っても来ない）か取れない、7 = レビューの実行が失敗
 //! している（トークン切れ、内部エラーなど。待っても来ない）
@@ -123,8 +126,74 @@ pub fn main(args: &[String]) -> i32 {
         "TIMEOUT: 約10分待ちましたがPR #{} に新しいレビューが来ていません",
         pr.number
     );
+    println!("COPILOT_CHECK: {}", copilot_checks(&pr));
+    println!("UNRESOLVED: {}", unresolved_threads(&pr));
+    println!(
+        "NOTE: 時間切れは失敗とは限らない（指摘ゼロだと何も投稿しない bot がある）。COPILOT_CHECK が success で UNRESOLVED が 0 なら、レビューは走って指摘が無かった見込み"
+    );
     println!("次の一手: /gh-actions-check {canonical} で Actions の状況を診断してください");
     1
+}
+
+/// 時間切れの後に出す、今の head と、その Copilot のチェックの「名前=結論（終わっていなければ状態）」（無ければ none）。
+/// 取れなければ unknown
+fn copilot_checks(pr: &pr_url::Pr) -> String {
+    let Some(head) = head(pr) else {
+        return "unknown".to_string();
+    };
+    let Some(out) = crate::gh::quiet_output_for_repo(
+        &pr.repo,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{{owner}}/{{repo}}/commits/{head}/check-runs?per_page=100"),
+            "--jq",
+            r#".check_runs[] | select(.name | ascii_downcase | test("copilot")) | "\(.name)=\(.conclusion // .status)""#,
+        ],
+    ) else {
+        return "unknown".to_string();
+    };
+    let checks: Vec<String> = String::from_utf8_lossy(&out)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    if checks.is_empty() {
+        format!("{head} none")
+    } else {
+        format!("{head} {}", checks.join(", "))
+    }
+}
+
+/// 未解決のレビュースレッドの数（返信を数えないよう thread_id で畳む。decide-next と同じ）。取れなければ unknown
+fn unresolved_threads(pr: &pr_url::Pr) -> String {
+    match super::get_review_comments::comments(pr, true) {
+        Ok(comments) => comments
+            .iter()
+            .map(|c| c["thread_id"].to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            .to_string(),
+        Err(_) => "unknown".to_string(),
+    }
+}
+
+/// PR の今の head。取れないか空なら None
+fn head(pr: &pr_url::Pr) -> Option<String> {
+    let out = crate::gh::quiet_output_for_repo(
+        &pr.repo,
+        &[
+            "pr",
+            "view",
+            &pr.number,
+            "--json",
+            "headRefOid",
+            "-q",
+            ".headRefOid",
+        ],
+    )?;
+    let head = String::from_utf8_lossy(&out).trim().to_string();
+    (!head.is_empty()).then_some(head)
 }
 
 /// 最後の Copilot へのレビューの要求の時刻。要求が見つかるまで少し読み直す（gh pr create の直後に呼ばれても
@@ -218,24 +287,9 @@ fn text(value: &Value) -> String {
 /// 10 分待たずに切り上げる）。head は待つ間の push で変わるので毎回取り直す（古い head の失敗で打ち切らない）。
 /// 取れなければ失敗していないとして待ちを続ける（誤って打ち切らない）
 fn copilot_run_failed(pr: &pr_url::Pr) -> bool {
-    let Some(head) = crate::gh::quiet_output_for_repo(
-        &pr.repo,
-        &[
-            "pr",
-            "view",
-            &pr.number,
-            "--json",
-            "headRefOid",
-            "-q",
-            ".headRefOid",
-        ],
-    ) else {
+    let Some(head) = head(pr) else {
         return false;
     };
-    let head = String::from_utf8_lossy(&head).trim().to_string();
-    if head.is_empty() {
-        return false;
-    }
     // チェックの多い PR で取りこぼさないよう全ページを見る。--paginate に配列を返す --jq を渡すと不正な JSON に
     // なるので、名前を 1 つずつ出させる
     crate::gh::quiet_output_for_repo(
