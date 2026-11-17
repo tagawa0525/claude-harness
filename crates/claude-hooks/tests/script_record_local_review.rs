@@ -228,6 +228,29 @@ fn a_refusal_never_ends_as_a_success() {
 }
 
 #[test]
+fn the_rebase_hint_is_for_a_head_that_was_not_reviewed_again() {
+    // rebase だけの head でも、回し直したなら記録する（見つけた High を、前の head の記録で隠さない）。案内は、回した人が
+    // 先に読む順に並べ、rebase の案内は「回し直していない」head に限る
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(
+        &fake,
+        &[&format!("{URL}/files?a=1"), "def5678", "2", "0", "0"],
+        "true\n",
+    );
+    let err = stderr(&out);
+    let unlogged = err.find("--unlogged").expect(&err);
+    let rebase = err.find("回し直していない").expect(&err);
+    assert!(unlogged < rebase, "{err}");
+    // 案内のコマンドには、受けた URL のページやクエリを除いた PR の URL を書く
+    assert!(
+        err.contains(&format!("scripts/decide-next.sh {URL} ")),
+        "{err}"
+    );
+}
+
+#[test]
 fn an_unlogged_review_is_recorded_where_the_directory_is_not_a_clone() {
     // WORKTREE が none で PR の URL を対象に渡した周は、cd する worktree が無い
     let fake = FakeGh::new();
