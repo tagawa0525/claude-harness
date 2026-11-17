@@ -116,6 +116,12 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
             } else {
                 src.to_string()
             };
+            // 送る元の無い refspec（:main）は main を消す push で、移すコミットは無い
+            if src.is_empty() {
+                return Some(format!(
+                    "main / master を消す push は禁止です（refspec: {rs}）"
+                ));
+            }
             if src_branch.is_empty() || is_protected_ref(&src_branch) {
                 return Some(format!(
                     "main / master への直接 push は禁止です（refspec: {rs}）。{TO_FEATURE}"
