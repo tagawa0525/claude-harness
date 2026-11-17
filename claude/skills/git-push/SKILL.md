@@ -17,6 +17,11 @@ allowed-tools:
 !`git status --short`
 !`git branch -vv`
 
+## GitHub のリモートが無いリポジトリ
+
+hook（guard-git-push）は GitHub のリモートがあるリポジトリだけを止める。リモートが GitHub でなければ、`main` / `master`
+では push せず、/git-cherry-pick で feature ブランチに移してから進むよう案内する。
+
 ## プッシュ対象の確認
 
 ```bash
