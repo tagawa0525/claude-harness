@@ -305,6 +305,37 @@ fn the_report_splits_the_cost_of_the_range_by_kind() {
 }
 
 #[test]
+fn the_report_ends_with_the_rows_of_the_cost_table() {
+    let home = Home::new();
+    let main_s = home.first_session().display().to_string();
+    let repo_s = home.repo().display().to_string();
+    let mut args = RANGE.to_vec();
+    args.extend(["--repo", &repo_s, &main_s]);
+    let out = stdout(&home.report(&args, None));
+    let rows = [
+        "TABLE: | 区間 | 合計 | 親 | 担当 | レビュー | 振り返り | マージ 1 本あたりの費用 | 文脈の書き直しの回数 |",
+        "TABLE: | ---- | ---- | -- | ---- | -------- | -------- | ----------------------- | -------------------- |",
+        "TABLE: | 2026-11-07T00:00:00+09:00〜2026-11-08T00:00:00+09:00 | $10.18 | $6.27（61.6%） | $1.31（12.9%） | $0.60（5.9%） | $2.00（19.6%） | $5.09（マージ 2 本） | 2 回 $8.00 |",
+    ];
+    assert_eq!(lines_with(&out, "TABLE: "), rows);
+    assert!(out.ends_with(&format!("{}\n", rows.join("\n"))), "{out}");
+}
+
+#[test]
+fn an_open_end_of_the_range_is_a_dash_in_the_table() {
+    let home = Home::new();
+    let main_s = home.first_session().display().to_string();
+    let out = stdout(&home.report(&["--since", "2026-11-07T00:00+09:00", &main_s], None));
+    let row = lines_with(&out, "TABLE: | 2026");
+    assert_eq!(row.len(), 1, "{out}");
+    assert!(
+        row[0].starts_with("TABLE: | 2026-11-07T00:00:00+09:00〜- | ")
+            && row[0].ends_with(" | -（--repo なし） | 2 回 $8.00 |"),
+        "{out}"
+    );
+}
+
+#[test]
 fn a_repository_without_a_remote_counts_the_branch_of_the_main_worktree() {
     let home = Home::new();
     let main = home.first_session().display().to_string();
