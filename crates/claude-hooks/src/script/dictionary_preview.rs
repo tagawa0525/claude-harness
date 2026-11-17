@@ -44,6 +44,9 @@ const CONTEXT: usize = 20;
 /// ja-terms check の指摘の行の、パスの後（`<行>:<列>: <誤り> => <正しい語>`）
 static HIT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([0-9]+):([0-9]+): (.*?) => (.*)$").unwrap());
+/// 行の頭の山括弧のリンク（`<scheme:…>`。CommonMark の autolink）
+static AUTOLINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>").unwrap());
 /// ja-terms check の指摘の行の末尾の印（` [Error/prh]`）
 static MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" \[[^\]]*\]$").unwrap());
 
@@ -122,7 +125,7 @@ fn run(options: &Options) -> Result<String, String> {
     let transcripts = jsonl_files(Path::new(projects))
         .map_err(|e| format!("記録のディレクトリを読めません: {projects}: {e}"))?;
     let utterances = utterances(&transcripts);
-    let memory = memory_files(projects);
+    let memory = memory_files(projects)?;
 
     // 発言をすべて書き出すので、持ち主だけが読める場所にする
     let work = crate::process::private_temp_dir("claude-hooks-dictionary-preview")?;
@@ -214,21 +217,29 @@ fn jsonl_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(found)
 }
 
-/// `<projects>/*/memory/*.md` を、projects からの相対パス（`<project>/memory/<file>`）で。パスの順
-fn memory_files(projects: &str) -> Vec<String> {
+/// `<projects>/*/memory/*.md` を、projects からの相対パス（`<project>/memory/<file>`）で。パスの順。memory の無い
+/// プロジェクトと、projects の直下のファイルは読み飛ばす。あるのに読めない memory は、理由を返す（黙って 0 件にすると、
+/// メモリの一部を検査しないまま成功する）
+fn memory_files(projects: &str) -> Result<Vec<String>, String> {
+    use std::io::ErrorKind::{NotADirectory, NotFound};
     let mut found = Vec::new();
-    for project in names(Path::new(projects), "") {
+    for project in names(glob_dir(Path::new(projects), "")) {
         let dir = format!("{projects}/{project}/memory");
-        for file in names(Path::new(&dir), ".md") {
+        match std::fs::read_dir(&dir) {
+            Ok(_) => {}
+            Err(e) if matches!(e.kind(), NotFound | NotADirectory) => continue,
+            Err(e) => return Err(format!("メモリのディレクトリを読めません: {dir}: {e}")),
+        }
+        for file in names(glob_dir(Path::new(&dir), ".md")) {
             found.push(format!("{project}/memory/{file}"));
         }
     }
-    found
+    Ok(found)
 }
 
-/// `dir` の、`.` で始まらない名前のうち `suffix` で終わるもの。名前の順
-fn names(dir: &Path, suffix: &str) -> Vec<String> {
-    glob_dir(dir, suffix)
+/// パスの最後の名前
+fn names(paths: Vec<PathBuf>) -> Vec<String> {
+    paths
         .iter()
         .filter_map(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
@@ -274,7 +285,8 @@ fn utterances(transcripts: &[PathBuf]) -> Vec<String> {
 /// 発言の、コードのフェンスの外の空でない行（前後の空白を外す）。行は、辞書の検査が行の終わりに数える文字
 /// （LF、CR、U+2028、U+2029）で分ける（発言の中に残すと、[`document`] の行と発言の対応がずれる）。次の行は除く:
 ///
-/// - `<` で始まる行。HTML のブロック（`<!--`、`<pre` など）は空行で終わらず、後の発言を検査から隠す
+/// - `<` で始まる行。HTML のブロック（`<!--`、`<pre` など）は空行で終わらず、後の発言を検査から隠す。山括弧のリンク
+///   （`<https://…>`）で始まる行は、ブロックを始めないので読む
 /// - `prh:disable` を含む行。その行の指摘を消し、後ろが正規表現として読めなければ検査の全体を止める
 fn prose_lines(text: &str) -> Vec<&str> {
     // 開いているフェンスの文字と長さ
@@ -291,7 +303,8 @@ fn prose_lines(text: &str) -> Vec<&str> {
             // ` のフェンスは、後ろに ` があれば文の中のコードスパン（```名前``` は…）
             (None, Some((c, n, rest))) if c != '`' || !rest.contains('`') => open = Some((c, n)),
             (None, _) => {
-                if !line.is_empty() && !line.starts_with('<') && !line.contains("prh:disable") {
+                let html = line.starts_with('<') && !AUTOLINK.is_match(line);
+                if !line.is_empty() && !html && !line.contains("prh:disable") {
                     lines.push(line);
                 }
             }
