@@ -316,3 +316,79 @@ fn bad_arguments_or_an_existing_directory_are_errors() {
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("作成先が既に存在します"));
 }
+
+/// メインの worktree と、作った worktree（app-<branch>）の git の出す形のパス
+fn roots(repo: &Repo, branch: &str) -> (String, String) {
+    let main_root = repo.git(&["rev-parse", "--show-toplevel"]);
+    let (parent, _) = main_root.rsplit_once('/').unwrap();
+    let worktree = format!("{parent}/app-{}", branch.replace('/', "-"));
+    (main_root, worktree)
+}
+
+#[test]
+fn a_bad_worktreelink_shows_the_commands_to_link_each_path_by_hand() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.app().join("shared")).unwrap();
+    repo.write(".worktreelink", "shared\nnot-ignored\n");
+    repo.commit("add worktreelink");
+    // 変更を持ち込んだときは、変更がもう worktree の側にあることも知らせる
+    repo.write("draft.txt", "d\n");
+    let out = repo.run(&["feat/link", "--carry-changes"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    let err = text(&out.stderr);
+    let (main_root, worktree) = roots(&repo, "feat/link");
+    assert!(err.contains("再実行できません"), "{err}");
+    assert!(
+        err.contains(&format!(
+            "  mkdir -p {worktree} && ln -s {main_root}/shared {worktree}/shared\n"
+        )),
+        "{err}"
+    );
+    // 誤ったパスは、直した後のパスで張る形を示す
+    assert!(
+        err.contains(&format!(
+            "  mkdir -p \"$(dirname {worktree}/<直したパス>)\" && ln -s {main_root}/<直したパス> {worktree}/<直したパス>\n"
+        )),
+        "{err}"
+    );
+    assert!(err.contains("変更は worktree に移してあります"), "{err}");
+}
+
+#[test]
+fn a_failed_fetch_points_to_a_local_branch_or_from() {
+    let repo = Repo::new();
+    repo.git(&["remote", "add", "origin", "../no-such-remote.git"]);
+    repo.git(&[
+        "remote",
+        "add",
+        "github",
+        "https://github.com/example/app.git",
+    ]);
+    let out = repo.run(&["feat/offline"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("ERROR: fetch に失敗しました"), "{err}");
+    assert!(
+        err.contains("オフラインなら") && err.contains("--from"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_path_missing_from_the_main_worktree_is_noted_with_the_link_to_make_later() {
+    let repo = Repo::new();
+    repo.write(".worktreelink", "shared\n");
+    repo.commit("add worktreelink");
+    let out = repo.run(&["feat/later"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let (main_root, worktree) = roots(&repo, "feat/later");
+    let stdout = text(&out.stdout);
+    let note = stdout
+        .lines()
+        .find(|l| l.starts_with("NOTE: メイン worktree に shared がない"))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(
+        note.contains(&format!("ln -s {main_root}/shared {worktree}/shared")),
+        "{note}"
+    );
+}
