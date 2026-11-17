@@ -191,8 +191,8 @@ pub fn main(args: &[String]) -> i32 {
         }
         0
     };
-    // マージコミットで入る PR は 1 件と数える（--first-parent）
-    let moved: u64 = git(
+    // マージコミットで入る PR は 1 件と数える（--first-parent）。数えられなければ、進みなしと読まれないよう未確認にする
+    let Some(moved) = git(
         dir,
         &[
             "rev-list",
@@ -201,8 +201,11 @@ pub fn main(args: &[String]) -> i32 {
             &format!("{fork}..{base}"),
         ],
     )
-    .and_then(|n| n.trim().parse().ok())
-    .unwrap_or(0);
+    .and_then(|n| n.trim().parse::<u64>().ok()) else {
+        eprintln!("WARN: git rev-list が失敗しました。比較は未確認です");
+        println!("{UNVERIFIED}");
+        return 0;
+    };
     if moved == 0 {
         return finish(warned);
     }
