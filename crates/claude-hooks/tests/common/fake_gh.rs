@@ -1,7 +1,7 @@
 //! `claude-hooks script <名前>` の結合テストの部品。偽の gh（examples/fake_tool.rs）を PATH の先頭に置いてスクリプトを
 //! 起動し、gh に渡した引数と環境（GH_REPO、GH_HOST）を記録する
 
-use super::{fake_tool, place_fake_tool};
+use super::{fake_tool, forget_git_env, place_fake_tool};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -63,7 +63,9 @@ impl FakeGh {
         )
         .unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
-        cmd.args(["script", script])
+        // スクリプトが cwd の clone を見るとき（record-local-review）、外の git が渡す GIT_DIR で外のリポジトリに当たらない
+        forget_git_env(&mut cmd)
+            .args(["script", script])
             .args(args)
             .current_dir(&self.root)
             .env("PATH", path)
@@ -83,6 +85,11 @@ impl FakeGh {
         }
         cmd.envs(env.iter().copied());
         cmd.output().unwrap()
+    }
+
+    /// スクリプトを起動するディレクトリ（テストが git のリポジトリなどを用意する場所）
+    pub fn dir(&self) -> &Path {
+        &self.root
     }
 
     /// gh に渡した引数（1 回の起動で、空白でつないで改行で終える。引数が改行を含めば複数の行になる）

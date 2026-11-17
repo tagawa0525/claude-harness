@@ -1,11 +1,14 @@
 //! `claude-hooks script record-local-review <PR の URL> <SHA> <high> <medium> <low>` が、ローカルの /code-review を
 //! 回した PR の head の記録を、マージの hook（pre-merge-check）が数える印のコメントとして PR に付けることを確かめる
 //! （ADR-0087。`~/.claude/skills/gh-pr-review/scripts/record-local-review.sh` が呼ぶ）。記録はマージの hook が Copilot
-//! のレビューの代わりに数えるので、head でない SHA、push できないリポジトリ、形の崩れた件数では付けない
+//! のレビューの代わりに数えるので、head でない SHA、push できないリポジトリ、形の崩れた件数では付けない。その head で
+//! /code-review を回した記録（count-review-rounds の hook が clone に書く行）が、起動したディレクトリの clone に無いときも付けない
+//! （hook が書かない回し方をしたときは、`--unlogged <理由>` で理由を記録に残して付ける）
 
 mod common;
 
 use common::fake_gh::{FakeGh, stderr};
+use common::forget_git_env;
 
 const URL: &str = "https://github.com/octo/repo/pull/42";
 const HEAD: &str = "def5678def5678def5678def5678def5678def56";
@@ -14,7 +17,32 @@ fn stdout(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// 起動するディレクトリを git のリポジトリにし、rounds の HEAD で /code-review を回した記録を置く（count-review-rounds が
+/// 書く形: 共通の git ディレクトリの claude-review-rounds/<ブランチ名> に、1 行が `<HEAD> <UNIX 秒>`）
+fn reviewed_at(fake: &FakeGh, rounds: &[&str]) {
+    let mut cmd = std::process::Command::new("git");
+    let ok = forget_git_env(&mut cmd)
+        .args(["init", "-q"])
+        .current_dir(fake.dir())
+        .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git init");
+    let dir = fake.dir().join(".git/claude-review-rounds");
+    std::fs::create_dir_all(&dir).unwrap();
+    let text: String = rounds.iter().map(|h| format!("{h} 1794900000\n")).collect();
+    std::fs::write(dir.join("feat%2Fx"), text).unwrap();
+}
+
+/// HEAD で /code-review を回した clone から起動する
 fn run(fake: &FakeGh, args: &[&str], push: &str) -> std::process::Output {
+    reviewed_at(fake, &[HEAD]);
+    run_as_is(fake, args, push)
+}
+
+fn run_as_is(fake: &FakeGh, args: &[&str], push: &str) -> std::process::Output {
     fake.run_calls(
         "record-local-review",
         args,
@@ -77,6 +105,247 @@ fn a_sha_that_is_not_the_head_records_nothing() {
         stderr(&out)
     );
     assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn a_head_without_a_review_round_in_this_clone_records_nothing() {
+    // 直した後の head や rebase の後の head に、回さずに前の周の数で記録を付けない
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(&fake, &[URL, "def5678", "0", "1", "4"], "true\n");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("def5678 で /code-review を回した記録が"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("記録を付けていません"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn outside_a_clone_records_nothing() {
+    // 回した記録は clone が持つので、PR のリポジトリの外からは確かめられない。テストの置き場はこのリポジトリの target の
+    // 下なので、git が上のリポジトリを見つけないよう、探す範囲を置き場で止める
+    let fake = FakeGh::new();
+    let ceiling = fake.dir().parent().unwrap().to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, "def5678", "0", "0", "0"],
+        &[(&format!("{HEAD}\n"), 0), ("true\n", 0), ("", 0)],
+        &[("GIT_CEILING_DIRECTORIES", &ceiling)],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("git の共通のディレクトリを引けない"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn a_round_on_any_branch_of_the_clone_counts() {
+    // 記録は SHA で引く（ブランチの名前を変えても、同じコミットを回している）。別のブランチの行でも数える
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &["abc1234abc1234abc1234abc1234abc1234abc12"]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/other"),
+        format!("{HEAD} 1794900000\n"),
+    )
+    .unwrap();
+    let out = run_as_is(&fake, &[URL, HEAD, "0", "0", "0"], "true\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn an_unlogged_review_is_recorded_with_its_reason() {
+    // hook が回した HEAD を書かない回し方（対象に PR の URL を渡した、detached HEAD、ユーザーが打った /code-review、
+    // 回した後の amend）でも、理由を記録に残せば付けられる
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(
+        &fake,
+        &[
+            URL,
+            "def5678",
+            "0",
+            "1",
+            "0",
+            "--unlogged",
+            "対象に PR の URL を渡して回した",
+        ],
+        "true\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        fake.log().contains(
+            "ローカルの /code-review で def5678 を確かめた: High 0 / Medium 1 / Low 0\n\
+             回した記録を確かめていない理由: 対象に PR の URL を渡して回した\n"
+        ),
+        "{}",
+        fake.log()
+    );
+}
+
+#[test]
+fn the_refusal_names_the_clone_it_checked_and_the_way_out() {
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(&fake, &[URL, "def5678", "0", "0", "0"], "true\n");
+    let err = stderr(&out);
+    assert!(err.contains("claude-review-rounds"), "{err}");
+    assert!(err.contains("--unlogged"), "{err}");
+    // 中身が変わりうる理由（回した後の amend）と、確かめようのない理由（別の clone）を、逃げ道の例に挙げない
+    assert!(!err.contains("amend"), "{err}");
+    assert!(!err.contains("別の clone"), "{err}");
+}
+
+#[test]
+fn a_refusal_never_ends_as_a_success() {
+    // 回していない head への呼び出しを、記録を足さないまま 0 で終えない（回し直して見つけた High の件数を渡した
+    // 呼び出しが、成功に見えて消えないように）。rebase だけの head かは decide-next.sh が示す
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(&fake, &[URL, "def5678", "2", "0", "0"], "true\n");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert!(
+        stderr(&out).contains("scripts/decide-next.sh"),
+        "{}",
+        stderr(&out)
+    );
+    // 確かめるのは clone の行だけで、gh は head と権限の 2 回しか呼ばない
+    assert_eq!(fake.log().lines().count(), 2, "{}", fake.log());
+}
+
+#[test]
+fn the_rebase_hint_is_for_a_head_that_was_not_reviewed_again() {
+    // rebase だけの head でも、回し直したなら記録する（見つけた High を、前の head の記録で隠さない）。案内は、回した人が
+    // 先に読む順に並べ、rebase の案内は「回し直していない」head に限る
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(
+        &fake,
+        &[&format!("{URL}/files?a=1"), "def5678", "2", "0", "0"],
+        "true\n",
+    );
+    let err = stderr(&out);
+    let unlogged = err.find("--unlogged").expect(&err);
+    let rebase = err.find("回し直していない").expect(&err);
+    assert!(unlogged < rebase, "{err}");
+    // 案内のコマンドには、受けた URL のページやクエリを除いた PR の URL を書く
+    assert!(
+        err.contains(&format!("scripts/decide-next.sh {URL} ")),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_inherited_git_dir_does_not_redirect_the_lookup() {
+    // git の hook の中や、そこから起動したセッションでは GIT_DIR が渡る。起動したディレクトリの clone でなく、
+    // GIT_DIR のリポジトリの行を見ない
+    let fake = FakeGh::new();
+    // 起動したディレクトリの clone には、別の head の行しか無い
+    reviewed_at(&fake, &["abc1234abc1234abc1234abc1234abc1234abc12"]);
+    // GIT_DIR が指す別のリポジトリには、head の行がある
+    let other = fake.dir().join("other");
+    let mut cmd = std::process::Command::new("git");
+    let ok = forget_git_env(&mut cmd)
+        .args(["init", "-q"])
+        .arg(&other)
+        .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git init");
+    std::fs::create_dir_all(other.join(".git/claude-review-rounds")).unwrap();
+    std::fs::write(
+        other.join(".git/claude-review-rounds/x"),
+        format!("{HEAD} 1794900000\n"),
+    )
+    .unwrap();
+    let git_dir = other.join(".git").to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, "def5678", "0", "0", "0"],
+        &[(&format!("{HEAD}\n"), 0), ("true\n", 0), ("", 0)],
+        &[("GIT_DIR", &git_dir)],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn an_unlogged_review_is_recorded_where_the_directory_is_not_a_clone() {
+    // WORKTREE が none で PR の URL を対象に渡した周は、cd する worktree が無い
+    let fake = FakeGh::new();
+    let ceiling = fake.dir().parent().unwrap().to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
+        "record-local-review",
+        &[
+            URL,
+            "def5678",
+            "0",
+            "0",
+            "0",
+            "--unlogged",
+            "対象に PR の URL を渡して回した",
+        ],
+        &[(&format!("{HEAD}\n"), 0), ("true\n", 0), ("", 0)],
+        &[("GIT_CEILING_DIRECTORIES", &ceiling)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        fake.log().contains("回した記録を確かめていない理由"),
+        "{}",
+        fake.log()
+    );
+}
+
+#[test]
+fn a_reason_is_dropped_when_the_round_is_logged() {
+    // 行があるのに理由を付けても、記録のコメントに「行が無い」と書かない
+    let fake = FakeGh::new();
+    let out = run(
+        &fake,
+        &[URL, "def5678", "0", "0", "0", "--unlogged", "念のため"],
+        "true\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        !fake.log().contains("回した記録を確かめていない理由"),
+        "{}",
+        fake.log()
+    );
+}
+
+#[test]
+fn an_empty_reason_is_a_usage_error() {
+    let fake = FakeGh::new();
+    for args in [
+        &[URL, "def5678", "0", "0", "0", "--unlogged"][..],
+        &[URL, "def5678", "0", "0", "0", "--unlogged", " "][..],
+        &[URL, "def5678", "0", "0", "0", "--other", "x"][..],
+    ] {
+        let out = run(&fake, args, "true\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            stderr(&out).contains("Usage: record-local-review.sh"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+    }
 }
 
 #[test]

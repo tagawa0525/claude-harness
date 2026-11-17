@@ -87,6 +87,7 @@ mod check_merge_body_ja_terms;
 pub(crate) use check_merge_body_ja_terms::ja_terms;
 mod check_merge_review;
 mod count_review_rounds;
+pub(crate) use count_review_rounds::round_ran_at;
 mod delegate_request_fields;
 mod guard_branch_base;
 mod guard_exclusive_slurm;
