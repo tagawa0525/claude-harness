@@ -352,6 +352,9 @@ fn with_a_base_a_merge_without_the_branch_tip_as_a_second_parent_is_an_error() {
         "{stderr}"
     );
     assert!(!stderr.contains("別の worktree"), "{stderr}");
+    // 戻すと消えるコミットと、第 2 引数の誤りも、戻す前に確かめさせる
+    assert!(stderr.contains("後に積んだコミット"), "{stderr}");
+    assert!(stderr.contains("第 2 引数がマージの第 1 親"), "{stderr}");
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "feat/x");
 }
 

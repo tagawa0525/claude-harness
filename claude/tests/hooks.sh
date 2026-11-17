@@ -2549,8 +2549,10 @@ out=$(run_hook guard-git-merge 'git switch feat/rebased && git merge feat/behind
 assert_eq allow "$(decision "$out")"
 # git merge - は switch の後の直前のブランチ（ここでは main）を指すので、ブランチ自身へのマージではない
 git switch -q feat/rebased && git switch -q main
-out=$(run_hook guard-git-merge 'git switch feat/rebased && git merge -')
-assert_eq allow "$(decision "$out")"
+for cmd in 'git switch feat/rebased && git merge -' 'git switch feat/rebased && git merge @{-1}'; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
 
 it "guard-git-merge: 同じコマンドの前の git switch で移った先のブランチで判定する"
 git switch -q feat/rebased
