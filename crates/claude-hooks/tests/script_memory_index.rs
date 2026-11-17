@@ -353,6 +353,24 @@ fn a_missing_term_check_asks_for_the_install_after_the_other_lines() {
     assert!(r.err.contains("rebuild"), "{}", r.err);
 }
 
+/// 標準エラーの最後の行
+fn last_line(err: &str) -> &str {
+    err.lines().last().unwrap_or_default()
+}
+
+#[test]
+fn a_term_check_that_cannot_run_tells_to_go_on_without_terms() {
+    let m = consistent();
+    let next = "NEXT: 出た行で進め、TERMS: を見ていないことを報告の「未確認」に書く";
+    let failing = m.run_with(&[&m.dir()], "check crashed\n", 2);
+    assert_eq!(last_line(&failing.err), next, "{}", failing.err);
+    let unreadable = m.run_with(&[&m.dir()], "something else\n", 1);
+    assert_eq!(last_line(&unreadable.err), next, "{}", unreadable.err);
+    let missing = m.root.join("missing").join("ja-terms");
+    let absent = m.run_ja_terms(&[&m.dir()], &missing, "", 0);
+    assert_eq!(last_line(&absent.err), next, "{}", absent.err);
+}
+
 #[test]
 fn a_missing_index_stops_it() {
     let m = Mem::new();
