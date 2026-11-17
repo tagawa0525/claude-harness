@@ -95,6 +95,8 @@ issues: ["#290"]
   symlink とサブモジュールと辞書と `.textlintignore` のファイルを外すこと、fork で飛ばすこと。コミットの
   本文は、`#` で始まる行も見て、scissors の後と、fixup のコピーした件名は見ないこと
 - 辞書の各項目の `specs`（prh が辞書を読み込むときに確かめる）
+- 辞書の規則を足す・変える PR では、`~/.claude/scripts/dictionary-preview.sh --dictionary <辞書> --base <変える前の辞書>` で、
+  セッションの発言とメモリへの置き換えの差を読む（specs は書いた人が思いついた例しか見ない。#284）
 
 ## 補足
 

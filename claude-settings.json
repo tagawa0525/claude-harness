@@ -123,6 +123,7 @@
       "Bash(~/.claude/skills/resume/scripts/resume-state.sh:*)",
       "Bash(~/.claude/scripts/worktree-add.sh:*)",
       "Bash(~/.claude/scripts/branch-topics.sh:*)",
+      "Bash(~/.claude/scripts/dictionary-preview.sh:*)",
       "Bash(~/.claude/scripts/rename-branch.sh:*)",
       "Bash(~/.claude/scripts/rename-plan.sh:*)",
       "Bash(~/.claude/scripts/post-merge-cleanup.sh:*)",

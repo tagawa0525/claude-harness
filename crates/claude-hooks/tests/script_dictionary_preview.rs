@@ -66,6 +66,11 @@ impl Home {
         std::fs::write(path, text).unwrap();
     }
 
+    /// 辞書の絶対パス（スクリプトは、検査を作業用のディレクトリで起動するので、辞書を絶対パスにして渡す）
+    fn dictionary(&self, name: &str) -> String {
+        self.root.join(name).display().to_string()
+    }
+
     fn log(&self) -> String {
         std::fs::read_to_string(self.root.join("ja-terms.log")).unwrap_or_default()
     }
@@ -98,8 +103,12 @@ impl Home {
     /// --dictionary new.yml と --projects を付けて実行する
     fn preview(&self, more: &[&str], outs: &[(&str, i32)]) -> Run {
         let projects = self.projects();
-        let mut args = vec!["--dictionary", "new.yml", "--projects", &projects];
-        args.extend_from_slice(more);
+        let dictionary = self.dictionary("new.yml");
+        let mut args = vec!["--dictionary", &dictionary, "--projects", &projects];
+        let base = self.dictionary("old.yml");
+        for arg in more {
+            args.push(if *arg == "old.yml" { &base } else { arg });
+        }
         self.run(&args, outs)
     }
 }
@@ -149,10 +158,11 @@ fn ja_terms_gets_the_dictionary_the_utterances_and_the_memory_files() {
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(r.out, "SOURCES: transcripts=1 utterances=3 memory=3\n");
     let p = h.projects();
+    let d = h.dictionary("new.yml");
     assert_eq!(
         h.log(),
         format!(
-            "ja-terms check --dictionary new.yml utterances.md {p}/p1/memory/MEMORY.md {p}/p1/memory/a.md {p}/p2/memory/b.md\n"
+            "ja-terms check --dictionary {d} utterances.md {p}/p1/memory/MEMORY.md {p}/p1/memory/a.md {p}/p2/memory/b.md\n"
         )
     );
 }
@@ -211,8 +221,13 @@ fn with_a_base_only_the_differences_are_shown() {
     let log = h.log();
     let calls: Vec<&str> = log.lines().collect();
     assert_eq!(calls.len(), 2, "{log}");
-    assert!(calls[0].starts_with("ja-terms check --dictionary new.yml utterances.md"));
-    assert!(calls[1].starts_with("ja-terms check --dictionary old.yml utterances.md"));
+    for (call, name) in calls.iter().zip(["new.yml", "old.yml"]) {
+        let want = format!(
+            "ja-terms check --dictionary {} utterances.md",
+            h.dictionary(name)
+        );
+        assert!(call.starts_with(&want), "{call}");
+    }
 }
 
 #[test]
