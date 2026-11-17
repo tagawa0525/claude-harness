@@ -162,10 +162,10 @@ fn the_prose_lines_are_followed_by_the_rows_of_the_report_table() {
     let out = home.prose(&["--since", SINCE, "--until", UNTIL, "--repo", &r]);
     let text = String::from_utf8(out.stdout.clone()).unwrap();
     let rows = [
-        "TABLE: | 種類 | 前 | 後 | 差 | パス |".to_string(),
-        "TABLE: | ---- | -- | -- | -- | ---- |".to_string(),
-        format!("TABLE: | skills | 100 | 70 | -30 | {r} |"),
-        format!("TABLE: | claude-md | 50 | 30 | -20 | {r} |"),
+        "TABLE: | 種類 | 前 | 後 | 差 | パス | 理由 |".to_string(),
+        "TABLE: | ---- | -- | -- | -- | ---- | ---- |".to_string(),
+        format!("TABLE: | skills | 100 | 70 | -30 | {r} |  |"),
+        format!("TABLE: | claude-md | 50 | 30 | -20 | {r} |  |"),
     ];
     assert_eq!(table(&out), rows);
     // 表は PROSE: の行の後にまとめて出す
@@ -185,10 +185,10 @@ fn the_table_has_rows_only_for_what_was_counted() {
     assert_eq!(
         table(&out),
         [
-            "TABLE: | 種類 | 前 | 後 | 差 | パス |".to_string(),
-            "TABLE: | ---- | -- | -- | -- | ---- |".to_string(),
-            format!("TABLE: | skills | 100 | 70 | -30 | {r} |"),
-            format!("TABLE: | claude-md | 50 | 80 | +30 | {r} |"),
+            "TABLE: | 種類 | 前 | 後 | 差 | パス | 理由 |".to_string(),
+            "TABLE: | ---- | -- | -- | -- | ---- | ---- |".to_string(),
+            format!("TABLE: | skills | 100 | 70 | -30 | {r} |  |"),
+            format!("TABLE: | claude-md | 50 | 80 | +30 | {r} |  |"),
         ]
     );
 }

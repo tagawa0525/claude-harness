@@ -372,6 +372,37 @@ fn a_term_check_that_cannot_run_tells_to_go_on_without_terms() {
 }
 
 #[test]
+fn a_missing_index_tells_to_skip_a_project_without_memory_or_report_it_unchecked() {
+    let m = Mem::new();
+    let r = m.run();
+    assert_eq!(
+        last_line(&r.err),
+        "NEXT: メモリの無いプロジェクトなら飛ばす。MEMORY.md があるなら、メモリを見ていないことを報告の「未確認」に書いて進める",
+        "{}",
+        r.err
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unlistable_directory_tells_which_lines_are_not_checked() {
+    use std::os::unix::fs::PermissionsExt;
+    let m = consistent();
+    let dir = m.root.join("memory");
+    // 書き込みと検索だけを許す（MEMORY.md は読めるが、ディレクトリの一覧は読めない）
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o300)).unwrap();
+    let r = m.run();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(r.code, 1);
+    assert_eq!(
+        last_line(&r.err),
+        "NEXT: 出た行で進め、UNINDEXED:、BROKEN_LINK:、TERMS: を見ていないことを報告の「未確認」に書く",
+        "{}",
+        r.err
+    );
+}
+
+#[test]
 fn a_missing_index_stops_it() {
     let m = Mem::new();
     let r = m.run();

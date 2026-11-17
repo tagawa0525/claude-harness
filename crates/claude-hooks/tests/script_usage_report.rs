@@ -456,6 +456,14 @@ fn a_failed_fetch_counts_the_local_origin_head_and_warns_that_merges_are_unverif
             == format!("WARN: {repo_s} の origin を fetch できませんでした。MERGES と PER_MERGE は手元の origin/HEAD で数えたもので、未確認です")),
         "{err}"
     );
+    // 表の行をそのまま報告に書いても、マージ 1 本あたりの費用が未確認と分かる
+    let text = stdout(&out);
+    let row = lines_with(&text, "TABLE: | 2026");
+    assert!(
+        row.len() == 1
+            && row[0].ends_with(" | $5.09（マージ 2 本。fetch できず未確認） | 2 回 $8.00 |"),
+        "{text}"
+    );
 }
 
 #[test]
