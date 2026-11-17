@@ -1085,6 +1085,19 @@ impl Rule for PreMergeCheck {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn never_reviewed_reason_points_to_the_local_review_of_step_6() {
+        // マージの直前に止められた人が、記録の手順をスキルの中で探さずに済むよう、その節を指す
+        let url = "https://github.com/o/r/pull/1";
+        for failed in [false, true] {
+            let reason = super::never_reviewed_reason("abc1234abc", failed, url);
+            assert!(
+                reason.contains("/gh-pr-review の Step 6 の「ローカルレビュー」"),
+                "{reason}"
+            );
+        }
+    }
+
+    #[test]
     fn split_repo_strips_one_dot_git() {
         assert_eq!(super::split_repo("octo/x.git.git"), ("octo", "x.git"));
     }
