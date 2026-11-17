@@ -4,7 +4,8 @@
 //! - （0 の前）cwd のリポジトリに branch の痕跡（ローカルのブランチ、リモート追跡の ref、リモートのブランチ、GitHub の
 //!   リモートではそのブランチを head とするマージ済みの PR）が無ければ、何も変えずに止める。確かめられないときも止める
 //! - 段階 0: ローカルの branch の先端が既定のブランチ（無ければ、追うリモートの既定のブランチを fetch したもの）の祖先で
-//!   なければ、何も消さずに止める
+//!   なければ、何も消さずに止める。第 2 引数（マージの前の既定のブランチ。/git-merge が渡す）を受けたら、その後の
+//!   既定のブランチの第 1 親の列に、branch の先端を 2 番目以降の親に持つマージコミットが無ければ、何も消さずに止める
 //! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）。メインの worktree
 //!   なら消さずに、段階 2 で既定のブランチへ切り替える（未コミットの変更があるか、既定のブランチが別の worktree にあれば、
 //!   何も変えずに止まる）
@@ -174,6 +175,9 @@ fn cleanup(branch: &str, base: Option<&str>) -> Result<(), i32> {
     }
     trace(branch, &remote, &main_root)?;
     merged(branch, default, default_root.as_deref())?;
+    if let Some(before) = &before {
+        merge_commit_of(branch, default, before)?;
+    }
 
     match &wt_path {
         Some(wt) => {
@@ -408,6 +412,52 @@ fn merged(branch: &str, default: &str, default_root: Option<&str>) -> Result<(),
         "ERROR: {branch} は {default} にまだマージされていません（{detail}）。何も消していません"
     );
     eprintln!("  修正方法: {hint}。そのあと、もう一度実行する");
+    Err(1)
+}
+
+/// 段階 0 の続き: before（マージの前の既定のブランチ）から既定のブランチまでの第 1 親の列に、branch の先端を 2 番目以降の
+/// 親に持つマージコミットがあるか。/git-merge の `git merge --no-ff` が、別の worktree で実行されたり別のブランチを
+/// マージしたりして、このブランチのマージコミットを作っていないことを、ブランチを消す前に見つける。マージの後の
+/// コミットは通す（最後のコミットの第 2 親だけを見ると、続けて積んだコミットで止まる）。ローカルのブランチが無ければ
+/// （消した後のやり直し）見ない
+fn merge_commit_of(branch: &str, default: &str, before: &str) -> Result<(), i32> {
+    let local = format!("refs/heads/{branch}");
+    if !ok(&["show-ref", "--verify", "--quiet", &local]) {
+        return Ok(());
+    }
+    let (Some(tip), Some(merges)) = (
+        git(&[
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("{local}^{{commit}}"),
+        ]),
+        git(&[
+            "rev-list",
+            "--first-parent",
+            "--merges",
+            "--parents",
+            &format!("{before}..refs/heads/{default}"),
+        ]),
+    ) else {
+        eprintln!(
+            "ERROR: {branch} のマージコミットを確かめられません（git rev-parse か git rev-list が失敗）。何も消していません"
+        );
+        return Err(1);
+    };
+    // 行は「マージコミット 第 1 親 第 2 親 …」
+    if merges
+        .lines()
+        .any(|l| l.split_whitespace().skip(2).any(|p| p == tip))
+    {
+        return Ok(());
+    }
+    eprintln!(
+        "ERROR: {before} の後の {default} に、{branch} の先端 {tip} を第 2 親に持つマージコミットがありません（--no-ff のマージを作っていない、別の worktree か別のブランチでマージした）。何も消していません"
+    );
+    eprintln!(
+        "  修正方法: {default} の worktree で git merge --no-ff {branch} をやり直してから、そのマージの第 1 親を第 2 引数に渡して、もう一度実行する"
+    );
     Err(1)
 }
 
