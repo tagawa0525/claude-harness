@@ -121,10 +121,13 @@ pre-merge-commit は main / master へのローカルのマージ（GitHub リ�
 `gh pr merge` は GitHub 側のマージなので、CI と `pre-merge-check` が守る。
 post-rewrite はゲートではなく、`git config remap.commitRefs true` でオプトインしたリポジトリで、
 rebase と amend の後に `commit-refs remap`（`crates/commit-refs`、ADR-0012）を呼び、
-文書の中の変わったコミットの番号を付け直す（コミットはしない。確認の方法とコミットの件名の例、失敗したときのやり直しのコマンドを出力に示す）。git filter-repo の後は
+文書の中の変わったコミットの番号を付け直す（コミットはしない。確認の方法とコミットの件名の例、失敗したときのやり直しのコマンドを出力に示す）。
+`commit-refs remap` は追跡しているファイルだけを読み、対応表の旧の番号を含む追跡していないファイルを `WARN:` に挙げ、`git add` してからの再実行を `NEXT:` で示す。git filter-repo の後は
 `commit-refs rewrite-history .git/filter-repo/commit-map` で、履歴の中の文書と本文の番号も付け直す（ADR-0013）。
 履歴の中の崩れた語は `history-rewrite`（`crates/history-rewrite`、ADR-0045）が同じ辞書で直し、番号を
 `commit-refs rewrite-history` で付け直す。生きているリポジトリに移す手順は `skills/history-rewrite/` にある。
+`history-rewrite run` は、届かないコミットの detached HEAD の worktree があれば付けるブランチのコマンドを添えて止まり、語の指定と掃除の issue の本文（`ISSUE:`）を作業ディレクトリに残す。
+`sync-worktrees` は記録した語の指定を使い、worktree ごとの行の後に次の行動を `NEXT:` で出す。
 
 **main への直接コミットはリモートの有無によらず止める**。GitHub のリモートが無いリポジトリも、ブランチは
 /git-merge でローカルの main にマージするので、`block-main-commit` と git の pre-commit はどちらも止める
