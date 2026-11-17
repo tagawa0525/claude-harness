@@ -630,12 +630,19 @@ fn link_all<'a>(
         // / でつなぐ（Windows でも git の出すパスと区切りを揃える）
         let target = PathBuf::from(format!("{}/{path}", main_root.to_string_lossy()));
         if !target.exists() {
-            let link = format!("{}/{path}", dir.to_string_lossy());
+            let wt = dir.to_string_lossy();
+            let link = format!("{wt}/{path}");
+            // 入れ子のパスは worktree の側の親が無いので、親も作る
+            let parent = path
+                .rsplit_once('/')
+                .map_or(wt.to_string(), |(p, _)| format!("{wt}/{p}"));
+            let quote = super::wait_step::quote;
             notes.push(format!(
-                "NOTE: メイン worktree に {path} がないため共有しません（{}）。必要ならメイン worktree に用意してから、ln -s {} {} で張る",
+                "NOTE: メイン worktree に {path} がないため共有しません（{}）。必要ならメイン worktree に用意してから、mkdir -p {} && ln -s {} {} で張る",
                 target.display(),
-                super::wait_step::quote(&target.to_string_lossy()),
-                super::wait_step::quote(&link)
+                quote(&parent),
+                quote(&target.to_string_lossy()),
+                quote(&link)
             ));
             continue;
         }
