@@ -15,7 +15,11 @@
 //!   トピックを、範囲の外だとして報告にだけ残さないため。語があるかだけを見て、否定の文（「issue は作らない」）は
 //!   見分けない
 //!
-//! ほかの欄の中身（出典の有無、本文の事実）は判定しない。エスケープはない（欄を直す以外に直す方法が無いため）。
+//! - description: 先頭が英字で始まるモデル名（`Opus`、`Sonnet 4.6`）と `:`（全角の `：` も）であること。model を渡した
+//!   呼び出しは、その名前で始まること（大文字と小文字を区別しない）。subagent_type が fork なら model は無視されて親の
+//!   モデルで走るので、model とは照らさない。親のモデル名は hook から分からないので、model の無い呼び出しは形だけを見る
+//!
+//! ほかの欄の中身（本文の事実）は判定しない。エスケープはない（欄を直す以外に直す方法が無いため）。
 
 use super::Rule;
 use crate::input::Input;
@@ -73,6 +77,31 @@ const QUOTE_HINT: &str = "空白を含むパスは `` ` `` か「」で囲み、
 /// 中身を判定する欄（`FIELDS` の添字）と、その欄に要る語
 const SCOPE: usize = 5;
 const SCOPE_WORD: &str = "issue";
+
+/// description の先頭のモデル名（1 語の英字の名前と、数字で始まる版の 1 語まで）と区切りのコロン
+static MODEL_HEAD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([A-Za-z][A-Za-z0-9.\-]*(?: [0-9][A-Za-z0-9.\-]*)?)\s*[:：]").unwrap()
+});
+
+/// description の先頭のモデル名の誤り。合っていれば None
+fn description_error(input: &Input) -> Option<String> {
+    let Some(c) = MODEL_HEAD.captures(&input.description) else {
+        return Some("先頭がモデル名と `:` で始まりません".to_string());
+    };
+    let model = input.model.trim();
+    if !model.is_empty()
+        && input.subagent_type != "fork"
+        && !c[1]
+            .to_ascii_lowercase()
+            .starts_with(&model.to_ascii_lowercase())
+    {
+        return Some(format!(
+            "先頭のモデル名 `{}` が、渡した model の `{model}` と違います",
+            &c[1]
+        ));
+    }
+    None
+}
 
 /// 依頼のファイルの大きさの上限。hook は Agent の呼び出しを待たせるので、依頼文より大きいものを読まない
 const MAX_REQUEST_BYTES: u64 = 1 << 20;
@@ -197,6 +226,15 @@ impl Rule for DelegateRequestFields {
                 missing.join("、"),
                 FIELDS.join("、"),
                 target,
+            )));
+        }
+        if let Some(error) = description_error(input) {
+            findings.push(Finding::Deny(format!(
+                "/delegate を呼ぶ Agent の description の{error}（description: 「{}」）。\n\
+                 担当に触れる報告と通知で、どのモデルの担当かを見分けるため、description の先頭にモデル名を書きます（~/.claude/skills/delegate/references/requesting.md）。\n\
+                 判定: 先頭が英字のモデル名（`Opus`、`Sonnet 4.6` など）と `:` で始まるかを見ます。model を渡した呼び出しは、その名前で始まるかも見ます（subagent_type が fork なら model は無視されるので見ません）。\n\
+                 修正方法: description を `<モデル名>: <作業>` の形（例: `Opus: 履歴の書き換えツールの PR`）にして、Agent を呼び直してください。model を渡すときはそのモデルの名前を、渡さないときと fork は親のモデルの名前を書きます。",
+                input.description,
             )));
         }
         let bodies = scope_bodies(&request);

@@ -8,6 +8,10 @@ pub struct Input {
     pub run_in_background: bool,
     /// Agent ツールの tool_input.prompt（Bash では空）
     pub prompt: String,
+    /// Agent ツールの tool_input.description、model、subagent_type（無ければ空）
+    pub description: String,
+    pub model: String,
+    pub subagent_type: String,
     /// Skill ツールの tool_input.skill（スキルの名前。ほかのツールでは空）
     pub skill: String,
     /// Skill ツールの tool_input.args（スキルに渡す引数の文字列。無ければ空）
@@ -36,6 +40,9 @@ impl Input {
                 .and_then(|x| x.as_bool())
                 .unwrap_or(false),
             prompt: s("/tool_input/prompt").unwrap_or_default(),
+            description: s("/tool_input/description").unwrap_or_default(),
+            model: s("/tool_input/model").unwrap_or_default(),
+            subagent_type: s("/tool_input/subagent_type").unwrap_or_default(),
             skill: s("/tool_input/skill").unwrap_or_default(),
             args: s("/tool_input/args").unwrap_or_default(),
             file_path: s("/tool_input/file_path").unwrap_or_default(),
