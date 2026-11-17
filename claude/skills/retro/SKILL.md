@@ -22,8 +22,8 @@ allowed-tools:
 
 # Retro
 
-ここまでの作業（$ARGUMENTS があればその範囲と観点）を振り返り、同じ失敗や手戻りが次のセッションで起きないように、
-仕組み（hook、script、skill、prompt、memory）を直す。文章（メモリ、スキル、CLAUDE.md）は毎回読み込まれるので
+同じ失敗が 2 回出たときと、ユーザーに訂正されたときに、ここまでの作業（$ARGUMENTS があればその範囲と観点）を振り返り、
+同じ失敗や手戻りが次のセッションで起きないように、仕組み（hook、script、skill、prompt、memory）を直す。文章（メモリ、スキル、CLAUDE.md）は毎回読み込まれるので
 減らす方向に、機械（hook、script）は足してよい方向に直す。
 
 ## 1. 手がかりを集める

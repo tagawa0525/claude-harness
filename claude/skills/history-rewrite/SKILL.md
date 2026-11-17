@@ -105,6 +105,8 @@ diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads r
   git -C "$R" update-ref --stdin <"$D/transaction"
 ```
 
+比べてから移すまでの間に作られた ref は残りうる（1 で作業中のセッションが無いことを確かめるのは、このため）。
+
 ## 5. worktree を合わせる
 
 ref を移した後、各 worktree の index と作業ツリーは元の番号のまま残る。2 と同じ語の指定で合わせる:
