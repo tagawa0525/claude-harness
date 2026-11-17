@@ -14,7 +14,8 @@
 //!   .pre-commit-config.yaml で design-records にオプトインしていれば、.md の変更が無くても design-records check
 //! - Shell: .sh がステージ済み（ステージ済みのファイルだけを shellcheck で検査）
 //!
-//! 「ステージ済み」は、--merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分に読み替える。
+//! 「ステージ済み」は、--merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分に読み替える。--base は
+//! 作業ツリーに変更（無視されるファイルを除く）があれば、検査せずに ERROR と片付け方を出して 1 で止まる。
 //! 最初に失敗したチェックで止まる。ツールが PATH に無ければ SKIP を出して続ける。`RUN:` と `FAILED:` の行のコマンドは、
 //! チェックの名前（`cargo_in <dir>`、`nix_fmt_check` など）で出す。実行できるコマンドの形にしないのは、run-checks.sh を
 //! Rust に移す前と行の文字列を変えないため（ADR-0087。変えるなら、行を読むテストと合わせて別に変える）
@@ -99,6 +100,25 @@ pub fn main(args: &[String]) -> i32 {
             }
         },
     };
+    // --base はコミット済みのブランチを検査する。作業ツリーの変更はコミットに入らないので、通っても次の手順（報告、
+    // マージ）が見るコミットを検査したことにならない。ステージ済みと --merge は変更があるのがふつうなので見ない
+    if base_ref.is_some() {
+        let Some(status) = git_output(&["status", "--porcelain"], Stdio::null()) else {
+            eprintln!("ERROR: git status が失敗しました");
+            return 1;
+        };
+        if !status.is_empty() {
+            eprintln!(
+                "ERROR: 作業ツリーに変更があります。--base はコミット済みのブランチを検査するので、片付けてから実行し直してください:"
+            );
+            eprint!("{}", String::from_utf8_lossy(&status));
+            eprintln!(
+                "- 追跡しているファイルの変更（ツールが書き換えたものも）は、論理ごとにコミットする\n\
+                 - 未追跡のファイルは、リポジトリの規則に従ってコミットするか、.gitignore が無視する置き場に移すか、自分が作った使い捨てなら消す"
+            );
+            return 1;
+        }
+    }
     let mut checks = Checks {
         merge,
         diff_base,
