@@ -14,6 +14,9 @@ mkdir -p "$TMPDIR"
 export WAIT_STEP_SECONDS=1 WAIT_STEP_REPORT=60
 log="$TEST_ROOT/job.out"
 : >"$log"
+# NEXT の行は ~ を展開しない形でコマンドを出す
+# shellcheck disable=SC2088
+shown='~/.claude/scripts/wait-step.sh'
 
 it "wait-step: 待つものが終わらなければ、1 歩の時間で WAIT と次の行動を出して 2 で返る"
 out=$("$WAIT" /wt/a "$log")
@@ -26,8 +29,8 @@ printf 'job output\n[exited with code 0]\n' >"$TEST_ROOT/done.out"
 out=$("$WAIT" /wt/b "$log" "$TEST_ROOT/done.out")
 assert_eq 0 $?
 assert_contains "$out" "DONE: $TEST_ROOT/done.out"
-assert_contains "$out" "~/.claude/scripts/wait-step.sh /wt/b $log で呼び直し"
-assert_contains "$out" "~/.claude/scripts/wait-step.sh --end /wt/b"
+assert_contains "$out" "$shown /wt/b $log で呼び直し"
+assert_contains "$out" "$shown --end /wt/b"
 
 it "wait-step: 途中の報告から間隔を超えると、REPORT と親に送る文面を出して 3 で返る"
 WAIT_STEP_REPORT=2 "$WAIT" /wt/c "$log" >/dev/null
