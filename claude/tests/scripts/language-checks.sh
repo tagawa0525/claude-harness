@@ -59,7 +59,8 @@ make_fake_tool ruff '*) exit 0 ;;'
 REAL_PY=$(python3 -c 'import sys; print(sys.executable)')
 # 空のまま進むと、偽の python3 が `exec -m unittest …` になって必ず落ち、「落ちれば失敗する」のテストだけが通る
 [[ -x "$REAL_PY" ]] || { echo "ERROR: 本物の python3 の実体が分からない: '$REAL_PY'" >&2; exit 1; }
-make_fake_tool python3 '"-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$REAL_PY"' "$@" ;;'
+# 実体のパスは、空白があっても割れないよう、シェルの語にしてから偽のスクリプトに埋める
+make_fake_tool python3 '"-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$(printf '%q' "$REAL_PY")"' "$@" ;;'
 mkdir -p pkg/sub
 printf 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1, 2)\n' > pkg/test_a.py
 git add pkg/test_a.py
