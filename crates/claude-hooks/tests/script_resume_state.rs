@@ -514,4 +514,22 @@ fn an_issue_file_that_cannot_be_read_is_reported_not_dropped() {
         "{issues}"
     );
     assert!(!issues.contains("(なし)"), "{issues}");
+    assert!(
+        issues.ends_with(
+            "NEXT: unreadable= のファイルは、開いているかを確かめられない。UTF-8 で読める形と読める権限に直すか、ユーザーに確かめる\n"
+        ),
+        "{issues}"
+    );
+}
+
+#[test]
+fn a_docs_issues_that_is_not_a_directory_is_reported() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.app().join("docs")).unwrap();
+    std::fs::write(repo.app().join("docs/issues"), "not a dir\n").unwrap();
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues").starts_with("(docs/issues を読めない: "),
+        "{text}"
+    );
 }
