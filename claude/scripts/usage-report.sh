@@ -10,8 +10,9 @@
 #               （Z か +09:00 の形）を必ず付ける（シェルの TZ で意味が変わらないため）。両方を省くと JST の今日、
 #               片方だけなら、もう片方の端は開いたまま
 #   --repo      マージの数を数えるリポジトリ（複数可）。origin/HEAD があればそれ、無ければ主の worktree のブランチの
-#               first-parent のマージコミットのうち、コミットの日時が区間に入るものを数える。origin/HEAD は
-#               fetch しないと古いので、呼ぶ前に fetch する
+#               first-parent のマージコミットのうち、コミットの日時が区間に入るものを数える。GitHub のリモートと
+#               origin があるリポジトリは、数える前に origin を fetch する（失敗したら WARN: を標準エラーに出し、
+#               手元の origin/HEAD で数える）
 #
 # サブエージェントの記録の読み方と区分の決め方は、claude-hooks の src/script/usage_report.rs の冒頭
 #

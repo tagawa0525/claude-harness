@@ -523,11 +523,33 @@ fn main_branch(repo: &str) -> Result<String, ReportError> {
     }
 }
 
+/// GitHub のリモートと origin がある clone は、origin だけを fetch する（origin/HEAD は fetch しないと古く、マージを
+/// 少なく数える）。引数なしの fetch は今のブランチの上流のリモートへ行くので、origin を明示する。失敗しても止めずに、
+/// 手元の origin/HEAD で数えたことを WARN で知らせる（オフラインでも費用の行は出す）
+fn fetch_github_origin(repo: &str) {
+    let dir = Path::new(repo);
+    if !crate::git::has_github_remote(dir) || !ok(&git_out(repo, &["remote", "get-url", "origin"]))
+    {
+        return;
+    }
+    let out = git_out(repo, &["fetch", "-q", "origin"]);
+    if !ok(&out) {
+        let detail = stderr_of(&out);
+        if !detail.is_empty() {
+            eprintln!("{detail}");
+        }
+        eprintln!(
+            "WARN: {repo} の origin を fetch できませんでした。MERGES と PER_MERGE は手元の origin/HEAD で数えたもので、未確認です"
+        );
+    }
+}
+
 fn count_merges(
     repo: &str,
     since: Option<Time>,
     until: Option<Time>,
 ) -> Result<(usize, String), ReportError> {
+    fetch_github_origin(repo);
     let has_origin = ok(&git_out(
         repo,
         &["rev-parse", "--verify", "-q", "origin/HEAD"],
