@@ -9,7 +9,12 @@ use commit_refs::Map;
 use crate::{git, read_map};
 
 pub fn run(map_path: Option<&Path>) -> Result<(), Vec<String>> {
-    let results = match prepare(map_path) {
+    let Prepared {
+        results,
+        map,
+        top,
+        tracked,
+    } = match prepare(map_path) {
         Ok(results) => results,
         Err(mut errors) => {
             errors.push("何も書き換えていない".to_string());
@@ -48,18 +53,102 @@ pub fn run(map_path: Option<&Path>) -> Result<(), Vec<String>> {
         vec![format!(
             "標準出力に書けない（ファイルはすべて書き換えた）: {e}"
         )]
-    })
+    })?;
+    // 標準出力の行を読むほかのツール（sync-worktrees は追跡していないファイルをわざと残す）の出力に混ぜないよう、
+    // 警告は標準エラーに出す
+    warn_untracked(&top, &tracked, &map);
+    Ok(())
+}
+
+/// 対応表の旧の番号を含むのに、追跡していないので読まなかったファイルを挙げ、付け直し方を示す。ファイルは
+/// 書き終えているので、調べられなくても失敗にはしない（その理由を警告に出す）
+fn warn_untracked(top: &Path, tracked: &[Vec<u8>], map: &Map) {
+    let found = match untracked_with_old_hashes(top, tracked, map) {
+        Ok(found) => found,
+        Err(e) => {
+            eprintln!("WARN: 追跡していないファイルに旧の番号があるかを調べられない: {e}");
+            return;
+        }
+    };
+    if found.is_empty() {
+        return;
+    }
+    eprintln!(
+        "WARN: 追跡していないファイルは読まないので、旧の番号を付け直していない: {}",
+        found.join(", ")
+    );
+    let quoted: Vec<String> = found.iter().map(|p| sh_quote(p)).collect();
+    eprintln!(
+        "NEXT: 付け直すなら、リポジトリの直下で git add {} をしてから、同じ対応表でもう一度 commit-refs remap を実行する（付け直した番号は対応表の旧に当たらないので、2 度目は変えない）",
+        quoted.join(" ")
+    );
+}
+
+fn untracked_with_old_hashes(
+    top: &Path,
+    tracked: &[Vec<u8>],
+    map: &Map,
+) -> Result<Vec<String>, String> {
+    // --untracked は、無視しない追跡していないファイルを、追跡しているファイルとともに読む
+    let args = ["grep", "-z", "-l", "-I", "-E", "--untracked", "[0-9a-f]{7}"];
+    let output = git::run_git(top, &args)?;
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return Err(git::git_failure(&args, &output));
+    }
+    let mut found = Vec::new();
+    for path in output.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        if tracked.iter().any(|t| t == path) {
+            continue;
+        }
+        let file = top.join(git::path_from_bytes(path));
+        let label = String::from_utf8_lossy(path).into_owned();
+        let data = fs::read(&file).map_err(|e| format!("{label}: 読めない: {e}"))?;
+        // 消えたコミットや曖昧な番号も、追跡すれば止まる理由になるので挙げる
+        let mut errors = Vec::new();
+        let (_, count) = map.replace(&label, &data, &mut errors);
+        if count > 0 || !errors.is_empty() {
+            found.push(label);
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// コマンドに貼れる形のパス。sh で特別な意味を持つ文字を含むときだけ、単一引用符で囲む
+fn sh_quote(path: &str) -> String {
+    if !path.is_empty()
+        && path
+            .chars()
+            .all(|c| c.is_alphanumeric() || "/._-+=:,@%".contains(c))
+    {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', r"'\''"))
+    }
+}
+
+/// prepare の結果。置き換え、対応表、作業ツリーの直下、追跡している候補のパス
+struct Prepared {
+    results: Vec<Replacement>,
+    map: Map,
+    top: PathBuf,
+    tracked: Vec<Vec<u8>>,
 }
 
 /// 対応表を読み、書き換える前に、すべてのファイルの新しい内容を作る
-fn prepare(map_path: Option<&Path>) -> Result<Vec<Replacement>, Vec<String>> {
+fn prepare(map_path: Option<&Path>) -> Result<Prepared, Vec<String>> {
     let text = read_map(map_path)?;
     let map = Map::parse(&text)?;
 
     let top = git::toplevel().map_err(|e| vec![e])?;
     let (paths, mut problems) = candidate_paths(&top).map_err(|e| vec![e])?;
     match collect(&top, &paths, &map) {
-        Ok(results) if problems.is_empty() => Ok(results),
+        Ok(results) if problems.is_empty() => Ok(Prepared {
+            results,
+            map,
+            top,
+            tracked: paths,
+        }),
         Ok(_) => Err(problems),
         Err(errors) => {
             problems.extend(errors);
