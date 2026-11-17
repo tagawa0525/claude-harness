@@ -28,7 +28,7 @@ $ARGUMENTS（PR の URL、PR番号、ブランチ名。省略時は現在のブ�
 
 ## Step 2: NEXT に従って対応する
 
-`NEXT:` に従う。
+`NEXT:` に従う。`gh run rerun` は `NEXT:` が提案したときだけ実行する。
 
 ## Step 3: 報告
 
