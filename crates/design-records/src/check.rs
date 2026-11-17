@@ -460,7 +460,8 @@ fn commented_keys(text: &str) -> Vec<(usize, &str)> {
             !item.starts_with('"')
                 && item
                     .char_indices()
-                    .any(|(j, c)| c == '#' && (j == 0 || item[..j].ends_with(char::is_whitespace)))
+                    // YAML のコメントの前に置けるのは空白とタブだけ（全角の空白の後の # は値）
+                    .any(|(j, c)| c == '#' && (j == 0 || item[..j].ends_with([' ', '\t'])))
         });
         if commented {
             found.push((i + 1, key.trim()));
