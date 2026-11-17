@@ -15,6 +15,9 @@ use std::sync::LazyLock;
 
 const USAGE: &str = "Usage: session-events.sh [--since <日時>] [--until <日時>] [TRANSCRIPT]";
 
+/// 区間に行が無いときの次の手。区間をずらして行を拾うと、指定と違う期間を数えたまま報告に載る
+const EMPTY_RANGE_NEXT: &str = "NEXT: 年と時差の書き誤りを直すか、区間が /clear の前など別のセッションにあれば、その記録を TRANSCRIPT に渡して再実行する。区間はずらさない（ずらすと、ほかの期間を数える）";
+
 /// 記録の timestamp の形。区間の端と文字列で比べるので、この形でなければ黙って区間の外に落ちる
 static RECORD_TIME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$").unwrap()
@@ -198,8 +201,8 @@ fn run(args: &[String]) -> Result<String, Fail> {
             )));
         }
         if !all().any(|f| f.in_range) {
-            return Err(error(format!(
-                "区間 [{}, {}) に timestamp の入る行が、本体にもサブエージェントにもありません（区間の書き誤り？）: {transcript}",
+            return Err(Fail(format!(
+                "ERROR: 区間 [{}, {}) に timestamp の入る行が、本体にもサブエージェントにもありません（区間の書き誤り？）: {transcript}\n{EMPTY_RANGE_NEXT}",
                 range.since.as_deref().unwrap_or("-"),
                 range.until.as_deref().unwrap_or("-")
             )));
