@@ -187,7 +187,7 @@ fn an_unlogged_review_is_recorded_with_its_reason() {
     assert!(
         fake.log().contains(
             "ローカルの /code-review で def5678 を確かめた: High 0 / Medium 1 / Low 0\n\
-             回した記録が clone に無い理由: 対象に PR の URL を渡して回した\n"
+             回した記録を確かめていない理由: 対象に PR の URL を渡して回した\n"
         ),
         "{}",
         fake.log()
@@ -271,7 +271,7 @@ fn an_unlogged_review_is_recorded_where_the_directory_is_not_a_clone() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
-        fake.log().contains("回した記録が clone に無い理由"),
+        fake.log().contains("回した記録を確かめていない理由"),
         "{}",
         fake.log()
     );
@@ -288,7 +288,7 @@ fn a_reason_is_dropped_when_the_round_is_logged() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
-        !fake.log().contains("回した記録が clone に無い理由"),
+        !fake.log().contains("回した記録を確かめていない理由"),
         "{}",
         fake.log()
     );

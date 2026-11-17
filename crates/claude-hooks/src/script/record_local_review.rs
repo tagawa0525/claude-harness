@@ -11,7 +11,7 @@
 //! 回さずに前の周の数で記録を付けると、マージの hook の「最後の push を覆うレビューがありません」の知らせが出なくなる。
 //! hook が行を書かない回し方（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）は、
 //! `--unlogged <理由>` で理由を記録のコメントに残して付ける。前の記録が覆う head（rebase だけの head）かは、ここでは
-//! 確かめない（確かめて 0 で終える版は、回し直して見つけた High の件数まで成功として捨てた）
+//! 確かめず、拒否の文で decide-next.sh を示す（比べた案は claude-harness の issue 281）
 
 use super::pr_url;
 use regex::Regex;
@@ -108,10 +108,12 @@ pub fn main(args: &[String]) -> i32 {
         );
         return 1;
     }
-    // 今のディレクトリを取れないときは、clone を引けないとき（None）と同じに扱う（--unlogged の記録は cwd に頼らない）
-    let cwd = std::env::current_dir().ok();
+    // 今のディレクトリを取れないときは、clone を引けないときと同じに扱う（--unlogged の記録は cwd に頼らない）。取れない
+    // 理由は拒否の文に出す
+    let cwd = std::env::current_dir();
     let rounds = cwd
         .as_deref()
+        .ok()
         .and_then(|dir| crate::rules::round_ran_at(dir, &head));
     let logged = matches!(rounds, Some((_, true)));
     if !logged && unlogged.is_none() {
@@ -121,21 +123,29 @@ pub fn main(args: &[String]) -> i32 {
                 short(&head),
                 dir.display()
             ),
-            (None, Some(dir)) => format!(
+            (None, Ok(dir)) => format!(
                 "{} で git の共通のディレクトリを引けないので、{} で /code-review を回した記録を確かめられません",
                 dir.display(),
                 short(&head)
             ),
-            (None, None) => format!(
-                "今のディレクトリを取れないので、{} で /code-review を回した記録を確かめられません",
+            (None, Err(e)) => format!(
+                "今のディレクトリを取れないので（{e}）、{} で /code-review を回した記録を確かめられません",
                 short(&head)
             ),
         };
+        let canonical = format!("https://github.com/{}/pull/{}", pr.repo, pr.number);
+        let scripts = super::claude_root()
+            .join("skills/gh-pr-review/scripts")
+            .display()
+            .to_string()
+            .replace('\\', "/");
+        // 回した人が先に読む順に並べる。rebase の案内を先に置くと、rebase だけの head を回し直して見つけた High を、
+        // 記録しないまま進ませる
         eprintln!(
             "ERROR: {place}（記録を付けていません）\n\
              - この head をまだ回していないなら、PR の worktree で /code-review を回してから、その worktree で記録する\n\
-             - base への rebase だけの head なら、前の head の記録で足りるので記録を足さない（足りるかは ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {url} が示す）\n\
-             - この head で回したのに hook が行を書かない回し方だったなら（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）、末尾に --unlogged '<その回し方>' を付ける（記録のコメントに残る）"
+             - この head で回したのに hook が行を書かない回し方だったなら（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）、末尾に --unlogged '<その回し方>' を付ける（記録のコメントに残る）\n\
+             - 回し直していない、base への rebase だけの head なら、記録を足さない（前の head の記録で足りるかは、PR の worktree で {scripts}/decide-next.sh {canonical} を実行すると LOCAL_REVIEWED: の行に出る）"
         );
         return 1;
     }
@@ -145,7 +155,7 @@ pub fn main(args: &[String]) -> i32 {
         short(&head)
     );
     if let Some(reason) = unlogged.filter(|_| !logged) {
-        body.push_str(&format!("\n回した記録が clone に無い理由: {reason}"));
+        body.push_str(&format!("\n回した記録を確かめていない理由: {reason}"));
     }
     let code = crate::gh::run_for_repo(&pr.repo, &["pr", "comment", &pr.number, "--body", &body]);
     if code != 0 {
