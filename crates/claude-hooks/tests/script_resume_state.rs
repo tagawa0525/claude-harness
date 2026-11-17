@@ -259,7 +259,7 @@ fn an_issue_whose_blockers_are_all_closed_is_not_marked() {
 }
 
 #[test]
-fn a_blocker_that_is_not_in_docs_issues_is_marked_missing() {
+fn a_blocker_that_is_not_in_docs_issues_is_marked_unknown() {
     let repo = Repo::new();
     repo.issue(
         "0002-a.md",
@@ -268,7 +268,100 @@ fn a_blocker_that_is_not_in_docs_issues_is_marked_missing() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0002-a.md blocked-by=[\"#0009\"] blocker-missing=#0009\n\
-         NEXT: blocker-missing= の issue は、blocked-by の相手が docs/issues に無い。閉じたかを確かめられないので、着手の前に blocked-by を直すかユーザーに確かめる\n"
+        "docs/issues/0002-a.md blocked-by=[\"#0009\"] blocker-unknown=#0009\n\
+         NEXT: blocker-unknown= の issue は、blocked-by の相手が docs/issues に無いか、相手の status を読めない。閉じたかを確かめられないので、着手の前に blocked-by か相手の status を直すか、ユーザーに確かめる\n"
+    );
+}
+
+#[test]
+fn a_blocker_without_a_readable_status_or_a_reference_that_is_not_an_issue_is_unknown() {
+    let repo = Repo::new();
+    // フロントマターの無い相手、# の無い参照、5 桁の参照（番号の打ち間違い）
+    repo.issue("0001-old.md", "# old\n");
+    repo.issue("0012-x.md", "---\nstatus: closed\n---\n\n# x\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\", \"0012\", \"#00012\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    let issues = section(&text, "issues");
+    assert!(
+        issues.starts_with(
+            "docs/issues/0002-a.md blocked-by=[\"#0001\", \"0012\", \"#00012\"] \
+             blocker-unknown=#0001,0012,#00012\n"
+        ),
+        "{issues}"
+    );
+    assert!(
+        issues.contains("NEXT: blocker-unknown= の issue は"),
+        "{issues}"
+    );
+    assert!(!issues.contains("blocked="), "{issues}");
+}
+
+#[test]
+fn a_blocked_by_that_cannot_be_parsed_is_unknown() {
+    let repo = Repo::new();
+    repo.issue("0003-c.md", "---\nstatus: open\n---\n\n# c\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by:\n  - \"#0003\"\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues").contains("docs/issues/0002-a.md blocker-unknown=unparsed\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_status_with_a_trailing_space_or_a_comment_is_read_like_design_records() {
+    let repo = Repo::new();
+    repo.issue("0001-b.md", "---\nstatus: closed \n---\n\n# b\n");
+    repo.issue("0003-c.md", "---\nstatus: closed # done\n---\n\n# c\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\", \"#0003\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert_eq!(
+        section(&text, "issues"),
+        "docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"]\n"
+    );
+}
+
+#[test]
+fn a_file_with_a_date_for_a_number_is_not_an_issue_number() {
+    let repo = Repo::new();
+    repo.issue("20261010-notes.md", "---\nstatus: closed\n---\n\n# n\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0010\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues")
+            .starts_with("docs/issues/0002-a.md blocked-by=[\"#0010\"] blocker-unknown=#0010\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_blocker_closed_as_a_duplicate_of_an_open_issue_still_blocks() {
+    let repo = Repo::new();
+    repo.issue(
+        "0001-b.md",
+        "---\nstatus: closed\nresolution: duplicate\nduplicate-of: \"#0005\"\n---\n\n# b\n",
+    );
+    repo.issue("0005-e.md", "---\nstatus: open\n---\n\n# e\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues")
+            .starts_with("docs/issues/0002-a.md blocked-by=[\"#0001\"] blocked=#0001\n"),
+        "{text}"
     );
 }
