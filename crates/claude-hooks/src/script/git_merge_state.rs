@@ -402,7 +402,13 @@ pub fn main(args: &[String]) -> i32 {
                 proposed.join(" ")
             }
         ));
-        let Some(stale) = stale_confirmations(dir, &range, &tip, default, &names) else {
+        // 確認の節のパスと `-- docs/adr` はリポジトリの直下からのパスなので、直下で問い合わせる（サブディレクトリから
+        // 呼ぶと、git は今のディレクトリから解く）
+        let Some(top) = git(dir, &["rev-parse", "--show-toplevel"]) else {
+            return failed("git rev-parse");
+        };
+        let top = Path::new(top.trim());
+        let Some(stale) = stale_confirmations(top, &range, &tip, default, &names) else {
             return failed("git log");
         };
         out.push_str(&format!(
