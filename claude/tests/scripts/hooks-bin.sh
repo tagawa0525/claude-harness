@@ -7,6 +7,8 @@
 source "$(dirname "$0")/../lib.sh"
 
 ROOT=$(cd "$CLAUDE_DIR/.." && pwd)
+# 呼ぶ側の環境に残った差し替えを持ち込まない（差し替えは、下のルールの呼び出しの場合だけが呼び出しごとに渡す）
+unset MAIN_COMMIT_GATES_PRE_COMMIT
 # 止まらなかったときに、main-commit-gates.sh が NixOS の構成を nix build しないよう、nix の無い PATH で実行する
 NO_NIX_PATH=$(minimal_path)
 # 起動しても使い方を出さないバイナリ（壊れたバイナリの代わり）。理由を標準エラーに出す
@@ -79,14 +81,16 @@ make_fake_tool rule-fails "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
 # 入力を読み切ってから終わる
 make_fake_tool rule-panics "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo \"thread 'main' panicked at src/shell.rs\" >&2; exit 0 ;;"
-# main-commit-gates.sh は、比べる前に pre-commit の hook を nix build する（評価だけで数秒）ので、nix の
-# ある PATH で実行する。ルールの呼び出しの失敗では、そこで止まり、シナリオを失敗や allow と数えない
+# main-commit-gates.sh は、比べる前に pre-commit の hook を nix build する。ここで確かめるのは claude-hooks の呼び出しの
+# 失敗で止まることだけなので、何もせず通す pre-commit を渡し、nix の無い PATH（nix の無い CI と同じ）で実行する。
+# ルールの呼び出しの失敗では、そこで止まり、シナリオを失敗や allow と数えない
+printf '#!/usr/bin/env bash\nexit 0\n' >"$TEST_ROOT/fake-pre-commit"
+chmod +x "$TEST_ROOT/fake-pre-commit"
+FAKE_PRE_COMMIT="$TEST_ROOT/fake-pre-commit"
 for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
-  path="$NO_NIX_PATH"
-  [[ $target == */main-commit-gates.sh ]] && path="$PATH"
   for bin in rule-fails rule-panics; do
     it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、バイナリの標準エラーを出して止まる"
-    out=$(cd "$ROOT" && PATH="$path" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" bash "$target" 2>&1)
+    out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" MAIN_COMMIT_GATES_PRE_COMMIT="$FAKE_PRE_COMMIT" bash "$target" 2>&1)
     assert_eq 1 $?
     assert_contains "$out" "claude-hooks が失敗しました"
     if [[ $bin == rule-fails ]]; then
@@ -108,11 +112,9 @@ make_fake_tool rule-scalar "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
 make_fake_tool rule-multi "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo '{}'; echo '{}'; exit 0 ;;"
 for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
-  path="$NO_NIX_PATH"
-  [[ $target == */main-commit-gates.sh ]] && path="$PATH"
   for bin in rule-notice rule-scalar rule-multi; do
     it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、出力を出して止まる"
-    out=$(cd "$ROOT" && PATH="$path" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" bash "$target" 2>&1)
+    out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" MAIN_COMMIT_GATES_PRE_COMMIT="$FAKE_PRE_COMMIT" bash "$target" 2>&1)
     assert_eq 1 $?
     assert_contains "$out" "claude-hooks が失敗しました"
     assert_not_contains "$out" "passed:"

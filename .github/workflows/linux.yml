@@ -1,5 +1,5 @@
-# Linux で Rust の crate のテストを流す。cfg(unix) のテスト（tests/git_spawn.rs の偽の squeue など）は Windows の CI で
-# 流れず、nix flake check は重くて PR の前に飛ばしやすいので、PR の上で cargo test だけを流す（#180）。
+# Linux で Rust の crate のテスト（cargo-test）と、claude/tests の sh のテスト（sh-test）を流す。cfg(unix) のテスト（tests/git_spawn.rs の偽の squeue など）は Windows の CI で
+# 流れず、nix flake check は重くて PR の前に飛ばしやすいので、PR の上では nix を使わないテストを流す（#180）。
 # windows.yml と同じ形で、crate ごとの matrix にする
 name: linux
 
@@ -27,3 +27,18 @@ jobs:
       - if: matrix.crate == 'history-rewrite'
         run: cargo install --locked --path ../commit-refs
       - run: cargo test --locked
+
+  # claude/tests の sh のテスト（hook の判定、スクリプト、スキルの文書の検査。#273）。hooks.sh と scripts.sh は claude-hooks を
+  # cargo build してから走る。nix でビルドするテスト（modules/home/parts/tests/）は流さない（scripts の hooks-bin.sh が、
+  # main-commit-gates.sh の止まり方だけを、差し替えた pre-commit で確かめる）
+  sh-test:
+    runs-on: ubuntu-latest
+    # scripts は 4 分ほど。待つスクリプトのテストが終わらなくなったとき、既定の 6 時間でなくここで落とす
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [hooks, scripts, skills]
+    steps:
+      - uses: actions/checkout@v5
+      - run: bash claude/tests/${{ matrix.suite }}.sh
