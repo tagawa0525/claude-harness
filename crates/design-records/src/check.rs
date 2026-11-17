@@ -254,6 +254,16 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
                 continue;
             }
         };
+        for (line, key) in commented_keys(text) {
+            out.warning(
+                path,
+                Some(line),
+                format!(
+                    "the value of `{key}` has ` #`, which YAML reads as a comment but design-records \
+                     reads as part of the value; write only the value on the key line"
+                ),
+            );
+        }
         let scalar = |key: &str| match front.get(key) {
             Some(Value::Scalar(s)) => Some(s.as_str()),
             _ => None,
@@ -310,6 +320,36 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
         }
     }
     out.0
+}
+
+/// フロントマターの行のうち、値（一覧なら要素）の途中に空白と `#` が続くもの（YAML のコメント）の、ファイルの行番号と
+/// キー。[`parse_front_matter`] は `#` を値として読むので、コメントのつもりの文が値に混ざる。値と要素の先頭の `#` は
+/// 引用符なしで書いた番号（`#0012`）として読むので含めない。引用符で囲んだ要素の中の `#` も値。
+fn commented_keys(text: &str) -> Vec<(usize, &str)> {
+    let mut found = Vec::new();
+    for (i, line) in text.lines().enumerate().skip(1) {
+        if line == "---" {
+            break;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        let items: Vec<&str> = match value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+            Some(inner) => inner.split(',').map(str::trim).collect(),
+            None => vec![value],
+        };
+        let commented = items.iter().any(|item| {
+            !item.starts_with('"')
+                && item
+                    .char_indices()
+                    .any(|(j, c)| c == '#' && item[..j].ends_with(char::is_whitespace))
+        });
+        if commented {
+            found.push((i + 1, key.trim()));
+        }
+    }
+    found
 }
 
 /// `kind` の記録（`paths`）のうち、番号を予約したタグ（`reserved` は番号から slug へ）の slug と違う slug のもの
