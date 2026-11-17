@@ -311,7 +311,7 @@ fn a_cancelled_check_does_not_end_the_wait_while_others_run() {
         stdout(&out)
     );
     assert!(
-        stdout(&out).ends_with("FAILED: build (cancelled)\n"),
+        stdout(&out).contains("\nFAILED: build (cancelled)\nNEXT: "),
         "{}",
         stdout(&out)
     );
