@@ -825,6 +825,15 @@ assert_eq 0 $?
 assert_not_contains "$out" "NOTE:"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: 古い配置のハーネスが、crates へ移すコミットを pull すれば、lock の更新と rebuild が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup50" modules/home/parts/claude-setup/Cargo.toml
+advance_origin_main "$TEST_ROOT/cleanup50/app" crates/claude-setup/Cargo.toml >/dev/null
+cd "$TEST_ROOT/cleanup50/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: lock の更新と rebuild が要る"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: ハーネスで pull で flake.lock が変われば、取り込む側の lock の更新と rebuild が要ると NOTE で知らせる"
 setup_claude_sync_source "$TEST_ROOT/cleanup42"
 advance_origin_main "$TEST_ROOT/cleanup42/app" flake.lock >/dev/null

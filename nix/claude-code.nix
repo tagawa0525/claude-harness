@@ -3,7 +3,6 @@
 # =============================================================================
 # グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook、
 # （../crates/claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻）と Stop hook（自動メモリの退避）の登録、settings.json 管理
-# （cc-bar 統合は ./modules/cc-bar.nix に集約）
 # =============================================================================
 # flake.nix が lib.modules.importApply で 1 つ目の引数を束ねる。モジュールの引数（_module.args、specialArgs）で
 # 受けないのは、利用する側が同じ名前を specialArgs で渡すと、黙ってそちらが勝つため

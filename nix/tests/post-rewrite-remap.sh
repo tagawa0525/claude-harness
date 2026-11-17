@@ -4,7 +4,7 @@
 # 文書の中のコミットの番号を付け直すことを検証する
 # =============================================================================
 # ../git-hooks.nix の post-rewrite は core.hooksPath でグローバル配布され、`git config remap.commitRefs true`
-# のリポジトリで commit-refs remap（../commit-refs）に旧と新の対応を渡す。置き換えはコミット
+# のリポジトリで commit-refs remap（../../crates/commit-refs）に旧と新の対応を渡す。置き換えはコミット
 # しないので、コミットが要ることを表示する。プロジェクトローカルの .git/hooks/post-rewrite が
 # あれば先に呼ぶ。
 #
