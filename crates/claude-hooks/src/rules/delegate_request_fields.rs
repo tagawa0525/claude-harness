@@ -234,10 +234,15 @@ mod tests {
 ";
 
     fn check(prompt: &str) -> Vec<Finding> {
+        check_agent(serde_json::json!({ "prompt": prompt, "description": "Opus: d" }))
+    }
+
+    /// Agent の tool_input をそのまま渡す
+    fn check_agent(tool_input: serde_json::Value) -> Vec<Finding> {
         let raw = serde_json::json!({
             "tool_name": "Agent",
             "cwd": "/",
-            "tool_input": { "prompt": prompt, "description": "d" },
+            "tool_input": tool_input,
         })
         .to_string();
         let input = Input::parse(&raw).unwrap();
@@ -629,5 +634,70 @@ mod tests {
         let prompt = with_scope("変える範囲: src/\n").replace("完成の形: テストが通る\n", "");
         let findings = check(&prompt);
         assert_eq!(findings.len(), 2);
+    }
+
+    fn with_description(description: &str) -> Vec<Finding> {
+        check_agent(serde_json::json!({ "prompt": COMPLETE, "description": description }))
+    }
+
+    #[test]
+    fn description_without_a_model_name_at_the_head_is_denied_with_the_fix() {
+        for description in [
+            "d",
+            "履歴の書き換えツールの PR",
+            "修正: x",
+            "Fix bug: x",
+            ": x",
+        ] {
+            let findings = with_description(description);
+            let reason = deny_reason(&findings);
+            assert!(reason.contains("description"), "{description}: {reason}");
+            assert!(reason.contains("モデル名"), "{description}: {reason}");
+            assert!(reason.contains("修正方法"), "{description}: {reason}");
+        }
+    }
+
+    #[test]
+    fn description_starting_with_a_model_name_passes() {
+        for description in [
+            "Opus: 履歴の書き換えツールの PR",
+            "Sonnet 4.6: x",
+            "Opus 5.5: x",
+            "fable：x",
+        ] {
+            assert!(with_description(description).is_empty(), "{description}");
+        }
+    }
+
+    #[test]
+    fn description_must_name_the_model_passed_to_the_agent() {
+        let denied = check_agent(serde_json::json!({
+            "prompt": COMPLETE, "description": "Opus: x", "model": "sonnet",
+        }));
+        assert!(deny_reason(&denied).contains("sonnet"));
+        assert!(
+            check_agent(serde_json::json!({
+                "prompt": COMPLETE, "description": "Sonnet 4.6: x", "model": "sonnet",
+            }))
+            .is_empty()
+        );
+        // fork は model を無視して親のモデルで走るので、親のモデル名を書く
+        assert!(
+            check_agent(serde_json::json!({
+                "prompt": COMPLETE, "description": "Opus: x", "model": "sonnet",
+                "subagent_type": "fork",
+            }))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn description_of_agents_that_do_not_call_delegate_is_not_checked() {
+        assert!(
+            check_agent(serde_json::json!({
+                "prompt": "/code-review high /home/u/repo-feat-x", "description": "d",
+            }))
+            .is_empty()
+        );
     }
 }
