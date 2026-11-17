@@ -342,6 +342,23 @@ fn new_rejects_bad_slugs_and_missing_titles_without_writing() {
     assert!(!t.dir.join("docs").exists());
 }
 
+#[test]
+fn new_names_the_verb_first_rule_when_an_adr_slug_is_rejected() {
+    let t = TempRepo::new("bad-verb");
+    let out = t.run(&["new", "Foo_Usage", "foo を使う"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("start it with the verb of the decision"),
+        "{}",
+        stderr(&out)
+    );
+    // issue の slug は決定ではないので、動詞の規則を添えない
+    let out = t.run(&["new", "--kind", "issue", "Bad_Slug", "壊れる"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("kebab-case"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("verb"), "{}", stderr(&out));
+}
+
 #[cfg(unix)]
 #[test]
 fn new_fails_without_writing_when_the_history_cannot_be_read() {
