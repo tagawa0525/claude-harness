@@ -453,7 +453,7 @@ fn a_failed_fetch_counts_the_local_origin_head_and_warns_that_merges_are_unverif
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
         err.lines().any(|l| l
-            == format!("WARN: {repo_s} の origin を fetch できませんでした。MERGES と PER_MERGE は手元の origin/HEAD で数えたもので、未確認です")),
+            == format!("WARN: {repo_s} の origin を fetch できませんでした。MERGES と PER_MERGE は手元の参照（MERGES: の行の ref）で数えたもので、未確認です")),
         "{err}"
     );
     // 表の行をそのまま報告に書いても、マージ 1 本あたりの費用が未確認と分かる
