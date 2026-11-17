@@ -18,6 +18,7 @@
 # 出力:
 #   RENAMED: <old> -> <new>
 #   COMMITTED: yes|no
+#   NOTE: ...   COMMITTED が no のとき、その意味（追跡の外なので名前だけを変えた。このままでよい）
 
 . "$(dirname "$0")/lib/claude-hooks-script.sh"
 claude_hooks_script rename-plan "$@"

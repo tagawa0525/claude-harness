@@ -8,7 +8,7 @@
 //! - name はブランチ名から先頭の type/ を除き、- と / を _ にしたもの
 //! - git が追跡していれば git mv してコミットする。追跡していなければ名前だけ変える
 //!
-//! 出力: `RENAMED: <old> -> <new>`、`COMMITTED: yes|no`
+//! 出力: `RENAMED: <old> -> <new>`、`COMMITTED: yes|no`、`NOTE: …`（COMMITTED が no のとき、その意味）
 
 use crate::git::git;
 use std::path::Path;
@@ -194,5 +194,10 @@ fn rename(branch: &str, file: Option<&str>) -> Result<(), i32> {
     };
     println!("RENAMED: {file} -> {new}");
     println!("COMMITTED: {committed}");
+    if committed == "no" {
+        println!(
+            "NOTE: 計画書は git の追跡の外なので、名前だけを変えてコミットしていない（このままでよい）"
+        );
+    }
     Ok(())
 }
