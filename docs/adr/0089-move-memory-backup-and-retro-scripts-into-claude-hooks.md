@@ -29,7 +29,7 @@ Linux では `claude-code.nix` が `writeShellApplication`（git、jq、flock、
 （ADR-0084 の帰結。jq と flock に頼る sh のため）。処理は次のとおり:
 
 - hook の JSON（標準入力。端末なら読まない）から `session_id` と `cwd` を jq で取り、コミットの本文に入れる
-- `git rev-parse --local-env-vars` の変数を外す（親の環境の `GIT_DIR` などに引かれない）
+- `git rev-parse --local-env-vars` の変数を外す（親の環境の `GIT_DIR` などに影響されない）
 - `<gitdir>/memory-backup.lock` を `flock -w 30` で取り、親を読んでから `update-ref` で ref を進めるまでを 1 つずつにする。
   ロックを外すと、同時の 6 本のうち 5 本が `update-ref` の古い値の不一致で落ちる（ADR-0076 の確認）。git の子にロックの
   fd を継がせないよう、`git` を `9>&-` で包む（fsmonitor の daemon などが fd を持つと、次の退避が待ちきれない）
