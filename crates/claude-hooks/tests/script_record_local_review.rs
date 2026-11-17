@@ -251,6 +251,42 @@ fn the_rebase_hint_is_for_a_head_that_was_not_reviewed_again() {
 }
 
 #[test]
+fn an_inherited_git_dir_does_not_redirect_the_lookup() {
+    // git の hook の中や、そこから起動したセッションでは GIT_DIR が渡る。起動したディレクトリの clone でなく、
+    // GIT_DIR のリポジトリの行を見ない
+    let fake = FakeGh::new();
+    // 起動したディレクトリの clone には、別の head の行しか無い
+    reviewed_at(&fake, &["abc1234abc1234abc1234abc1234abc1234abc12"]);
+    // GIT_DIR が指す別のリポジトリには、head の行がある
+    let other = fake.dir().join("other");
+    let mut cmd = std::process::Command::new("git");
+    let ok = forget_git_env(&mut cmd)
+        .args(["init", "-q"])
+        .arg(&other)
+        .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git init");
+    std::fs::create_dir_all(other.join(".git/claude-review-rounds")).unwrap();
+    std::fs::write(
+        other.join(".git/claude-review-rounds/x"),
+        format!("{HEAD} 1794900000\n"),
+    )
+    .unwrap();
+    let git_dir = other.join(".git").to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, "def5678", "0", "0", "0"],
+        &[(&format!("{HEAD}\n"), 0), ("true\n", 0), ("", 0)],
+        &[("GIT_DIR", &git_dir)],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
 fn an_unlogged_review_is_recorded_where_the_directory_is_not_a_clone() {
     // WORKTREE が none で PR の URL を対象に渡した周は、cd する worktree が無い
     let fake = FakeGh::new();
