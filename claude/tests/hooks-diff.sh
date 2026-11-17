@@ -63,6 +63,7 @@ COMMANDS=(
   "git push origin main" "git push --force origin x" "git push -f origin x" "git push --all" "git push --mirror"
   "git push -o --force origin x" "git push origin +x" "git push --force-with-lease"
   "git add -A" "git add ." "git add --all" "git add :/" "git add a.txt" "git add -A src" "git add -u" "git add -- ."
+  "git add -u ." "git add -u :/" "git add -u --no-update ."
   "git add -A --pathspec-from-file=p" "git add --pathspec-from-file=p"
   "git config core.hooksPath /x" "git config --get core.hooksPath"
   "sbatch x.sh" "bash slurm-run.sh -t 1 n x" "slurm-run.sh -t 1 n x"

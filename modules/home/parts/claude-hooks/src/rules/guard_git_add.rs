@@ -4,7 +4,9 @@
 //! ステージするため禁止する。git の pre-commit の機密情報の検査（内容の検査。ADR-0015）と対で効く。
 //! 1 コミット 1 論理変更のためにも、`git add <file>` / `git add -p` で対象を選ぶ。
 //!
-//! 通すもの: パスを指定した add（範囲を限定した `git add -A src/` も可）、`-u`（追跡済みのみ）、
+//! 通すもの: パスを指定した add（範囲を限定した `git add -A src/` も可）、`-u`（追跡済みのみ。パスが `.` でも
+//! 未追跡のファイルは入らない。`-A` と一緒のときと、`--no-update`（省略形を含む）か
+//! `--end-of-options` があるときは通さない）、
 //! `-p` / `-i`（対話的に選ぶ）。セッションの scratchpad の下に git init で作った一時のリポジトリ（scratchpad_repo.rs）
 //! では止めない。エスケープはコマンドに `ALLOW_GIT_ADD_ALL=<理由>` を付ける。
 
@@ -34,6 +36,15 @@ fn check_add(args: &[Arg]) -> Option<String> {
     // --pathspec-from-file のファイルの中身（`.` や `:/` も書ける）は見ないので、パスを指定したことにしない
     if all && pathspecs.is_empty() {
         return Some("git add -A / --all はパスを指定しない限り禁止です".to_string());
+    }
+    // -u は追跡しているファイルの変更だけをステージするので、パスが全体でも未追跡のファイルは入らない。
+    // -u を無効にする語があれば、位置と順序を見ずに止める側に倒す: --no-update とその省略形（git は一意な前置きを
+    // 受ける）は -u を打ち消し、--end-of-options の後ろの -u はパスになる
+    let cancelled = args
+        .iter()
+        .any(|a| a.text.starts_with("--no-u") || a.text == "--end-of-options");
+    if git_flag("add", args, Some('u'), &["--update"]) && !all && !cancelled {
+        return None;
     }
     pathspecs
         .iter()
@@ -90,6 +101,31 @@ mod tests {
         assert!(args("git add -u").is_none());
         assert!(args("git add ./src").is_none());
         assert!(args("git add .claude/").is_none());
+    }
+
+    #[test]
+    fn tracked_only_with_an_unscoped_path_is_allowed() {
+        // -u は追跡しているファイルの変更だけをステージするので、パスが全体でも未追跡のファイルは入らない
+        for c in [
+            "git add -u .",
+            "git add --update .",
+            "git add -u :/",
+            "git add -u -- .",
+            "git add . -u",
+        ] {
+            assert!(args(c).is_none(), "{c}");
+        }
+        // -A と一緒なら全体のステージ（git は -A と -u の組を拒むが、止める側に倒す）
+        assert!(args("git add -A -u").is_some());
+        assert!(args("git add -u -A .").is_some());
+        assert!(args("git add -u --all .").is_some());
+        // --no-update は -u を打ち消し、未追跡のファイルもステージする
+        assert!(args("git add -u --no-update .").is_some());
+        // git は一意な省略形（--no-up、--no-u）も受ける
+        assert!(args("git add -u --no-up .").is_some());
+        assert!(args("git add --update --no-u .").is_some());
+        // --end-of-options の後ろの -u はパスで、オプションでない
+        assert!(args("git add --end-of-options -u .").is_some());
     }
 
     #[test]
