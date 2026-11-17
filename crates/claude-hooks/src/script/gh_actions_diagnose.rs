@@ -359,13 +359,18 @@ fn diagnose(target: &str) -> Result<(), i32> {
             next = "ワークフローが未設定か未実行で、外部 CI は確認できていないと報告してください"
                 .to_string();
         } else if runs.is_empty() && external.as_ref().is_some_and(|e| !e.is_empty()) {
-            next = "GitHub Actions の run は無く、外部 CI は成功しています。その 2 点を報告してください"
+            next = "GitHub Actions の run は無く、外部 CI に失敗はありません。その 2 点を報告してください"
                 .to_string();
         } else if runs.is_empty() {
             next = "ワークフローが未設定か未実行であると報告してください".to_string();
         } else if latest_conclusion != "success" {
+            let unchecked = if external.is_none() {
+                "し、外部 CI は確認できていないと添えてください"
+            } else {
+                "してください"
+            };
             next = format!(
-                "GitHub Actions の最新の run は {latest_conclusion} で、失敗はありません。成功とは書かず、{latest_conclusion} と報告してください"
+                "GitHub Actions の最新の run は {latest_conclusion} で、失敗はありません。成功とは書かず、{latest_conclusion} と報告{unchecked}"
             );
         } else if external.is_none() {
             next = "GitHub Actions は成功しています。外部 CI は確認できていないと添えて報告してください"
