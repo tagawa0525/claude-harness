@@ -456,6 +456,46 @@ fn the_source_repository_is_not_touched() {
     );
 }
 
+#[test]
+fn run_writes_the_body_of_the_cleanup_issue() {
+    let f = rewritten();
+    let map = Path::new(&f.out["MAP"]);
+    let workdir = map.parent().unwrap();
+    assert_eq!(
+        f.out["ISSUE"],
+        workdir.join("issue.md").display().to_string()
+    );
+    let body = std::fs::read_to_string(&f.out["ISSUE"]).unwrap();
+    // 1 行目が題
+    assert!(body.starts_with("# "), "{body}");
+    let source = f.repo.path.display().to_string();
+    for part in [
+        // 作業ディレクトリと控え
+        workdir.display().to_string(),
+        f.out["ORIGINAL"].clone(),
+        // 直した語（辞書、追加の規則の中身、除くパス）
+        "ja-terms".to_string(),
+        "pattern: 旧称".to_string(),
+        "**/terms.yml".to_string(),
+        // 掃除のコマンド
+        format!("git -C {source} reflog expire --expire=now --all"),
+        format!("git -C {source} gc --prune=now"),
+    ] {
+        assert!(body.contains(&part), "{part}: {body}");
+    }
+    // 書き換えた日（YYYY-MM-DD）
+    let date = body
+        .split_once("書き換えた日: ")
+        .map(|(_, rest)| rest.chars().take(10).collect::<String>())
+        .unwrap_or_default();
+    let digits: Vec<bool> = date.chars().map(|c| c.is_ascii_digit()).collect();
+    assert_eq!(
+        digits,
+        [true, true, true, true, false, true, true, false, true, true],
+        "{body}"
+    );
+}
+
 fn words(f: &Fixture, extra: &[PathBuf]) -> Words {
     let mut extra_rules = vec![f.extra.clone()];
     extra_rules.extend_from_slice(extra);
