@@ -56,13 +56,13 @@ pub fn run(map_path: Option<&Path>) -> Result<(), Vec<String>> {
     })?;
     // 標準出力の行を読むほかのツール（sync-worktrees は追跡していないファイルをわざと残す）の出力に混ぜないよう、
     // 警告は標準エラーに出す
-    warn_untracked(&top, &tracked, &map);
+    warn_untracked(&top, &tracked, &map, map_path);
     Ok(())
 }
 
 /// 対応表の旧の番号を含むのに、追跡していないので読まなかったファイルを挙げ、付け直し方を示す。ファイルは
 /// 書き終えているので、調べられなくても失敗にはしない（その理由を警告に出す）
-fn warn_untracked(top: &Path, tracked: &[Vec<u8>], map: &Map) {
+fn warn_untracked(top: &Path, tracked: &[Vec<u8>], map: &Map, map_path: Option<&Path>) {
     let found = match untracked_with_old_hashes(top, tracked, map) {
         Ok(found) => found,
         Err(e) => {
@@ -78,8 +78,17 @@ fn warn_untracked(top: &Path, tracked: &[Vec<u8>], map: &Map) {
         found.join(", ")
     );
     let quoted: Vec<String> = found.iter().map(|p| sh_quote(p)).collect();
+    // 再実行はリポジトリの直下で行うので、cwd から読んだ相対のパスを絶対のパスにする
+    let again = match map_path.map(std::path::absolute) {
+        Some(Ok(path)) => format!(
+            "commit-refs remap {} を実行する",
+            sh_quote(&path.display().to_string())
+        ),
+        Some(Err(_)) => "同じ対応表で commit-refs remap を実行する".to_string(),
+        None => "標準入力に同じ対応を渡して commit-refs remap を実行する（対応が残っていなければ、挙げたファイルの番号を手で直す）".to_string(),
+    };
     eprintln!(
-        "NEXT: 付け直すなら、リポジトリの直下で git add {} をしてから、同じ対応表でもう一度 commit-refs remap を実行する（付け直した番号は対応表の旧に当たらないので、2 度目は変えない）",
+        "NEXT: 付け直すなら、リポジトリの直下で git add {} をしてから、もう一度 {again}。付け直した番号は対応表の旧に当たらないので、2 度目は変えない",
         quoted.join(" ")
     );
 }
