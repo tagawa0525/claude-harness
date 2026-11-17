@@ -12,7 +12,7 @@
 #   GitHub Actions 以外の App（外部 CI）と commit status（gh run rerun では再実行できない）
 #
 # 出力: BRANCH、PR、RUNS、RUN、STATUS、ATTEMPT、FAILED_JOB、FAILED_STEP、--- errors ---、EXTERNAL_CHECKS、
-#   EXTERNAL_CHECK、CAUSE、NEXT
+#   EXTERNAL_CHECK、CAUSE、NEXT（どの CAUSE でも出す）、--- report ---（報告の形にまとめた行）
 #   CAUSE: NONE（run が無いか成功）、IN_PROGRESS（実行中）、PERMISSION（権限不足。ワークフローの permissions: を最小限で
 #   宣言し、default_workflow_permissions の緩和で回避しない）、TRANSIENT_API（GitHub API の一時障害）、COPILOT_INTERNAL
 #   （Copilot の内部エラー）、EXTERNAL（外部 CI の失敗。details_url を見る）、CODE（ビルド・テスト・lint の失敗）
