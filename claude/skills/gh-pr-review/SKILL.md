@@ -179,10 +179,12 @@ Step 2 に戻る（コンテキストが要約されても処置の履歴を残�
 cd <worktree> && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
 ```
 
+- PR の URL を対象に渡した周（`WORKTREE` が none）は、`cd` を付けずに、末尾に `--unlogged '<その回し方>'` を付ける
 - 記録は回した head とその回の指摘の数の組。指摘を直したら、直した head を push して回し直し、その head に記録する。
   同じ head を回し直したら、最後の記録で決まる
 - High（blocking）の残る記録はレビュー済みに数えないので直し、回し直すかは「終わり」の項で決める。Medium と Low
   （non-blocking）は直さず、「直す指摘の基準」のとおり扱ってその head で終える
+- 対象が見つからない、エラー、`[]` だけの返答の回は未実施で、0 件で記録せずに対象を直して回し直す
 - 記録の出力の `NOTE:` と、拒否の文の案内に従う
 
 **Copilot への再レビューの要求**は任意で、head の記録が無くても Copilot のレビューを受けたいときだけ行う
