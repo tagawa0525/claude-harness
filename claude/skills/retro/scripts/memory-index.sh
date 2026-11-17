@@ -15,7 +15,7 @@
 #                                本文（MEMORY.md を含む各 .md）の崩れた日本語の語。commit の pre-commit と同じ辞書と規則
 #                                （ja-terms check）で見るので、コードスパン、フェンス、フロントマターの中は数えない
 # 食い違いがあっても exit 0（判断はスキルが行う）。MEMORY.md が読めない、または辞書の検査を実行できなければ
-# （ほかの行を出した後に）ERROR: を標準エラーに出して exit 1。
+# （ほかの行を出した後に）ERROR: と次の手の NEXT: を標準エラーに出して exit 1。
 #
 # 辞書の検査は、hook と同じく claude-hooks の隣の ja-terms（Linux は claude-hooks の package.nix が渡すパス）。メモリは git で
 # 追跡しないので pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る

@@ -185,7 +185,7 @@ fn prices_for(model: &Value, prompt_tokens: u64) -> Result<Price, ReportError> {
     match PRICES.iter().find(|(n, _)| Some(*n) == name) {
         Some((_, price)) => Ok(*price),
         None => fail(format!(
-            "価格表に無いモデル: {}（PRICES に価格のページの値を足してください）",
+            "価格表に無いモデル: {}（PRICES に価格のページの値を足してください）\nNEXT: 生成元のリポジトリ（claude-harness）の crates/claude-hooks/src/script/usage_report.rs の PRICES に、価格のページ（https://platform.claude.com/docs/en/about-claude/pricing）の値を足す PR を出す。この区間の費用は未確認として報告する",
             display_value(model.clone())
         )),
     }
@@ -523,11 +523,36 @@ fn main_branch(repo: &str) -> Result<String, ReportError> {
     }
 }
 
+/// GitHub のリモートと origin がある clone は、origin だけを fetch する（origin/HEAD は fetch しないと古く、マージを
+/// 少なく数える）。引数なしの fetch は今のブランチの上流のリモートへ行くので、origin を明示する。失敗しても止めずに、
+/// 手元の参照で数えたことを WARN で知らせ、false を返す（オフラインでも費用の行は出す）
+fn fetch_github_origin(repo: &str) -> bool {
+    let dir = Path::new(repo);
+    if !crate::git::has_github_remote(dir) || !ok(&git_out(repo, &["remote", "get-url", "origin"]))
+    {
+        return true;
+    }
+    let out = git_out(repo, &["fetch", "-q", "origin"]);
+    if !ok(&out) {
+        let detail = stderr_of(&out);
+        if !detail.is_empty() {
+            eprintln!("{detail}");
+        }
+        eprintln!(
+            "WARN: {repo} の origin を fetch できませんでした。MERGES と PER_MERGE は手元の参照（MERGES: の行の ref）で数えたもので、未確認です"
+        );
+        return false;
+    }
+    true
+}
+
+/// 区間のマージの数と数えた ref、origin を fetch できたか（fetch しない clone は true）
 fn count_merges(
     repo: &str,
     since: Option<Time>,
     until: Option<Time>,
-) -> Result<(usize, String), ReportError> {
+) -> Result<(usize, String, bool), ReportError> {
+    let fetched = fetch_github_origin(repo);
     let has_origin = ok(&git_out(
         repo,
         &["rev-parse", "--verify", "-q", "origin/HEAD"],
@@ -564,7 +589,7 @@ fn count_merges(
             n += 1;
         }
     }
-    Ok((n, reference))
+    Ok((n, reference, fetched))
 }
 
 /// 3 桁ごとに `,` で区切った数
@@ -707,15 +732,21 @@ fn report(args: &Args) -> Result<(), ReportError> {
         println!("UNTIL: {}", jst_iso(u));
     }
     println!("TOTAL: ${total:.2}");
-    for (k, name) in KINDS.iter().enumerate() {
-        let share = if total != 0.0 {
+    let share = |k: usize| {
+        if total != 0.0 {
             totals.cost[k] / total * 100.0
         } else {
             0.0
-        };
+        }
+    };
+    for (k, name) in KINDS.iter().enumerate() {
         println!(
-            "COST: {name} {} 本 ${:.2} {share:.1}% 書き直し {} 回 ${:.2}",
-            totals.count[k], totals.cost[k], totals.rewrites[k], totals.rewrite_cost[k]
+            "COST: {name} {} 本 ${:.2} {:.1}% 書き直し {} 回 ${:.2}",
+            totals.count[k],
+            totals.cost[k],
+            share(k),
+            totals.rewrites[k],
+            totals.rewrite_cost[k]
         );
     }
     for (k, name) in KINDS.iter().enumerate() {
@@ -730,21 +761,25 @@ fn report(args: &Args) -> Result<(), ReportError> {
     let rewrite_cost = totals.rewrite_cost.iter().fold(0.0, |acc, c| acc + c);
     println!("REWRITES: {rewrites} 回 ${rewrite_cost:.2}");
     let mut merges = 0;
+    let mut all_fetched = true;
     for repo in &args.repos {
-        let (n, reference) = count_merges(repo, since, until)?;
+        let (n, reference, fetched) = count_merges(repo, since, until)?;
         merges += n;
+        all_fetched &= fetched;
         println!("MERGES: {n} {repo} {reference}");
     }
-    if args.repos.is_empty() {
-        println!("PER_MERGE: -（--repo なし）");
+    // 値と括弧の中の注。表のセルは注に未確認を足す
+    let (per_merge, per_merge_note) = if args.repos.is_empty() {
+        ("-".to_string(), "--repo なし".to_string())
     } else if merges == 0 {
-        println!("PER_MERGE: -（マージ 0 本）");
+        ("-".to_string(), "マージ 0 本".to_string())
     } else {
-        println!(
-            "PER_MERGE: ${:.2}（マージ {merges} 本）",
-            total / merges as f64
-        );
-    }
+        (
+            format!("${:.2}", total / merges as f64),
+            format!("マージ {merges} 本"),
+        )
+    };
+    println!("PER_MERGE: {per_merge}（{per_merge_note}）");
     // 費用の大きい順（同じ費用は読んだ順のまま。sort_by は安定）
     top.sort_by(|a, b| {
         b.cost
@@ -762,6 +797,29 @@ fn report(args: &Args) -> Result<(), ReportError> {
             thousands(t.context),
             prompt_head(&t.prompt)
         );
+    }
+    // 報告の「費用」の表。区分の列は COST: の費用と割合、開いた端は -。fetch できなかったマージの数は、行をそのまま
+    // 報告に書いても未確認と分かるよう、セルに書く
+    let end = |t: Option<Time>| t.map_or_else(|| "-".to_string(), jst_iso);
+    // 区切りの - は見出しの幅（ASCII は 1、ほかは 2）だけ並べる
+    let dashes = |s: &str| "-".repeat(s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum());
+    let mut head = vec!["区間", "合計"];
+    head.extend(KINDS);
+    head.extend(["マージ 1 本あたりの費用", "文脈の書き直しの回数"]);
+    let rule: Vec<String> = head.iter().map(|h| dashes(h)).collect();
+    let per_merge_cell = if all_fetched {
+        format!("{per_merge}（{per_merge_note}）")
+    } else {
+        format!("{per_merge}（{per_merge_note}。fetch できず未確認）")
+    };
+    let mut row = vec![
+        format!("{}〜{}", end(since), end(until)),
+        format!("${total:.2}"),
+    ];
+    row.extend((0..KINDS.len()).map(|k| format!("${:.2}（{:.1}%）", totals.cost[k], share(k))));
+    row.extend([per_merge_cell, format!("{rewrites} 回 ${rewrite_cost:.2}")]);
+    for cells in [head.iter().map(|h| h.to_string()).collect(), rule, row] {
+        println!("TABLE: | {} |", cells.join(" | "));
     }
     Ok(())
 }

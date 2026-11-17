@@ -753,6 +753,16 @@ fn a_range_without_lines_fails_as_a_mistaken_range() {
 }
 
 #[test]
+fn a_range_without_lines_tells_to_fix_the_bounds_or_the_transcript_and_not_to_move_the_range() {
+    let home = Home::new();
+    let main = home.range_session();
+    assert_fails(
+        &home.run(&["--since", "2027-01-01T00:00Z", &main]),
+        "NEXT: 年と時差の書き誤りを直すか、区間が /clear の前など別のセッションにあれば、その記録を TRANSCRIPT に渡して再実行する。区間はずらさない（ずらすと、ほかの期間を数える）",
+    );
+}
+
+#[test]
 fn lines_of_a_subagent_count_when_the_transcript_has_none_in_the_range() {
     let home = Home::new();
     let main = home.range_session();
@@ -804,6 +814,16 @@ fn a_missing_option_value_an_unknown_option_or_two_transcripts_show_the_usage() 
             "Usage: session-events.sh [--since <日時>] [--until <日時>] [TRANSCRIPT]",
         );
     }
+}
+
+#[test]
+fn the_usage_shows_the_form_of_the_bounds_and_that_until_is_excluded() {
+    let home = Home::new();
+    let main = home.range_session();
+    assert_fails(
+        &home.run(&[&main, "--since"]),
+        "  日時は時差つきの ISO 8601（例 2026-11-06T00:00+09:00、2026-11-05T15:00Z）。区間は [since, until) で、until の時刻は含まない（11:05 の分まで含めるなら 11:06 を渡す）",
+    );
 }
 
 #[test]

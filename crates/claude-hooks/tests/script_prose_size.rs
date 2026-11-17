@@ -130,13 +130,67 @@ fn s(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// 終了コード、標準出力、標準エラー
+/// 終了コード、標準出力（`TABLE:` の行を除く）、標準エラー。`TABLE:` の行は `PROSE:` の行を表にしたもので、
+/// [`table`] を使うテストで確かめる
 fn parts(out: &Output) -> (i32, String, String) {
+    let stdout = String::from_utf8(out.stdout.clone()).unwrap();
     (
         out.status.code().unwrap(),
-        String::from_utf8(out.stdout.clone()).unwrap(),
+        stdout
+            .split_inclusive('\n')
+            .filter(|l| !l.starts_with("TABLE: "))
+            .collect(),
         String::from_utf8(out.stderr.clone()).unwrap(),
     )
+}
+
+/// 標準出力の `TABLE:` の行
+fn table(out: &Output) -> Vec<String> {
+    String::from_utf8(out.stdout.clone())
+        .unwrap()
+        .lines()
+        .filter(|l| l.starts_with("TABLE: "))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn the_prose_lines_are_followed_by_the_rows_of_the_report_table() {
+    let home = Home::new();
+    let repo = home.repo();
+    let r = s(&repo);
+    let out = home.prose(&["--since", SINCE, "--until", UNTIL, "--repo", &r]);
+    let text = String::from_utf8(out.stdout.clone()).unwrap();
+    let rows = [
+        "TABLE: | 種類 | 前 | 後 | 差 | パス | 理由 |".to_string(),
+        "TABLE: | ---- | -- | -- | -- | ---- | ---- |".to_string(),
+        format!("TABLE: | skills | 100 | 70 | -30 | {r} |  |"),
+        format!("TABLE: | claude-md | 50 | 30 | -20 | {r} |  |"),
+    ];
+    assert_eq!(table(&out), rows);
+    // 表は PROSE: の行の後にまとめて出す
+    assert!(text.ends_with(&format!("{}\n", rows.join("\n"))), "{text}");
+}
+
+#[test]
+fn the_table_has_rows_only_for_what_was_counted() {
+    let home = Home::new();
+    let repo = home.repo();
+    let empty = home.root.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    home.git(&empty, &["init", "-q", "-b", "trunk"], None);
+    let (e, r) = (s(&empty), s(&repo));
+    let out = home.prose(&["--since", SINCE, "--repo", &e, "--repo", &r]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        table(&out),
+        [
+            "TABLE: | 種類 | 前 | 後 | 差 | パス | 理由 |".to_string(),
+            "TABLE: | ---- | -- | -- | -- | ---- | ---- |".to_string(),
+            format!("TABLE: | skills | 100 | 70 | -30 | {r} |  |"),
+            format!("TABLE: | claude-md | 50 | 80 | +30 | {r} |  |"),
+        ]
+    );
 }
 
 #[test]
