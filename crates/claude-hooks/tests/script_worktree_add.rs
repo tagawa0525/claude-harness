@@ -421,3 +421,21 @@ fn a_bad_worktreelink_does_not_offer_links_to_paths_missing_from_the_main_worktr
         "{err}"
     );
 }
+
+#[test]
+fn a_nested_path_missing_from_the_main_worktree_is_noted_with_its_parent_made() {
+    let repo = Repo::new();
+    repo.write(".gitignore", "/shared\n/token.txt\n");
+    repo.write(".worktreelink", "shared/cache\n");
+    repo.commit("add worktreelink");
+    let out = repo.run(&["feat/nested"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let (main_root, worktree) = roots(&repo, "feat/nested");
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "mkdir -p {worktree}/shared && ln -s {main_root}/shared/cache {worktree}/shared/cache"
+        )),
+        "{stdout}"
+    );
+}
