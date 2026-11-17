@@ -18,9 +18,26 @@ const BACKUP_REF: &str = "refs/memory-backup";
 type Exit = i32;
 
 pub fn main(args: &[String]) -> i32 {
-    match run(args) {
+    let mut rows = Vec::new();
+    let code = match run(args, &mut rows) {
         Ok(code) | Err(code) => code,
+    };
+    // 報告の「文章の増減」の表。止まったときも、数えた分の行を出す（数えられなかったものは ERROR: の側にある）
+    if !rows.is_empty() {
+        println!("TABLE: | 種類 | 前 | 後 | 差 | パス |");
+        println!("TABLE: | ---- | -- | -- | -- | ---- |");
+        for row in rows {
+            println!("TABLE: {row}");
+        }
     }
+    code
+}
+
+/// PROSE: の行を出し、表の行を控える
+fn prose(rows: &mut Vec<String>, kind: &str, before: i64, after: i64, path: &str) {
+    let d = delta(before, after);
+    println!("PROSE: {kind} {before} {after} {d} {path}");
+    rows.push(format!("| {kind} | {before} | {after} | {d} | {path} |"));
 }
 
 fn usage() -> Result<i32, Exit> {
@@ -173,7 +190,12 @@ impl After {
 }
 
 /// リポジトリの 2 行を出す。続けられる誤り（既定ブランチが無い、共通の祖先が無い）は Ok(false)
-fn report_repo(repo: &str, since: i64, until: Option<i64>) -> Result<bool, Exit> {
+fn report_repo(
+    rows: &mut Vec<String>,
+    repo: &str,
+    since: i64,
+    until: Option<i64>,
+) -> Result<bool, Exit> {
     let mut base = None;
     for r in ["origin/HEAD", "main", "master"] {
         if has_commit(repo, r, false)? {
@@ -214,7 +236,7 @@ fn report_repo(repo: &str, since: i64, until: Option<i64>) -> Result<bool, Exit>
     ] {
         let a = tree_bytes(repo, &old, cond)?;
         let b = after.bytes(repo, cond)?;
-        println!("PROSE: {kind} {a} {b} {} {repo}", delta(a, b));
+        prose(rows, kind, a, b, repo);
     }
     Ok(true)
 }
@@ -240,7 +262,12 @@ fn read_failed(path: &Path, e: &std::io::Error) -> Exit {
     error(format!("{} を読めません: {e}", path.display()))
 }
 
-fn report_memory(memory: &str, since: i64, until: Option<i64>) -> Result<(), Exit> {
+fn report_memory(
+    rows: &mut Vec<String>,
+    memory: &str,
+    since: i64,
+    until: Option<i64>,
+) -> Result<(), Exit> {
     let home = crate::shell::home().join(".claude");
     // 文字列の接頭辞でなく、パスの要素で比べる（Windows の `\` と `/` の混ざった書き方と、重なった区切りでも同じ
     // ディレクトリと見る）。退避の中のパスは `/` で区切る
@@ -296,11 +323,11 @@ fn report_memory(memory: &str, since: i64, until: Option<i64>) -> Result<(), Exi
         None if dir.is_dir() => disk_bytes(dir)?,
         None => 0,
     };
-    println!("PROSE: memory {a} {b} {} {memory}", delta(a, b));
+    prose(rows, "memory", a, b, memory);
     Ok(())
 }
 
-fn run(args: &[String]) -> Result<i32, Exit> {
+fn run(args: &[String], rows: &mut Vec<String>) -> Result<i32, Exit> {
     let mut since = None;
     let mut until = None;
     let mut memory = String::new();
@@ -347,12 +374,12 @@ fn run(args: &[String]) -> Result<i32, Exit> {
 
     let mut failed = 0;
     for repo in &repos {
-        if !report_repo(repo, since, until)? {
+        if !report_repo(rows, repo, since, until)? {
             failed = 1;
         }
     }
     if !memory.is_empty() {
-        report_memory(&memory, since, until)?;
+        report_memory(rows, &memory, since, until)?;
     }
     Ok(failed)
 }

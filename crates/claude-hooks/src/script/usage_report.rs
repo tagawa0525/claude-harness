@@ -729,15 +729,21 @@ fn report(args: &Args) -> Result<(), ReportError> {
         println!("UNTIL: {}", jst_iso(u));
     }
     println!("TOTAL: ${total:.2}");
-    for (k, name) in KINDS.iter().enumerate() {
-        let share = if total != 0.0 {
+    let share = |k: usize| {
+        if total != 0.0 {
             totals.cost[k] / total * 100.0
         } else {
             0.0
-        };
+        }
+    };
+    for (k, name) in KINDS.iter().enumerate() {
         println!(
-            "COST: {name} {} 本 ${:.2} {share:.1}% 書き直し {} 回 ${:.2}",
-            totals.count[k], totals.cost[k], totals.rewrites[k], totals.rewrite_cost[k]
+            "COST: {name} {} 本 ${:.2} {:.1}% 書き直し {} 回 ${:.2}",
+            totals.count[k],
+            totals.cost[k],
+            share(k),
+            totals.rewrites[k],
+            totals.rewrite_cost[k]
         );
     }
     for (k, name) in KINDS.iter().enumerate() {
@@ -757,16 +763,14 @@ fn report(args: &Args) -> Result<(), ReportError> {
         merges += n;
         println!("MERGES: {n} {repo} {reference}");
     }
-    if args.repos.is_empty() {
-        println!("PER_MERGE: -（--repo なし）");
+    let per_merge = if args.repos.is_empty() {
+        "-（--repo なし）".to_string()
     } else if merges == 0 {
-        println!("PER_MERGE: -（マージ 0 本）");
+        "-（マージ 0 本）".to_string()
     } else {
-        println!(
-            "PER_MERGE: ${:.2}（マージ {merges} 本）",
-            total / merges as f64
-        );
-    }
+        format!("${:.2}（マージ {merges} 本）", total / merges as f64)
+    };
+    println!("PER_MERGE: {per_merge}");
     // 費用の大きい順（同じ費用は読んだ順のまま。sort_by は安定）
     top.sort_by(|a, b| {
         b.cost
@@ -785,6 +789,23 @@ fn report(args: &Args) -> Result<(), ReportError> {
             prompt_head(&t.prompt)
         );
     }
+    // 報告の「費用」の表。区分の列は COST: の費用と割合、開いた端は -
+    let end = |t: Option<Time>| t.map_or_else(|| "-".to_string(), jst_iso);
+    let kinds: Vec<String> = (0..KINDS.len())
+        .map(|k| format!("${:.2}（{:.1}%）", totals.cost[k], share(k)))
+        .collect();
+    println!(
+        "TABLE: | 区間 | 合計 | 親 | 担当 | レビュー | 振り返り | マージ 1 本あたりの費用 | 文脈の書き直しの回数 |"
+    );
+    println!(
+        "TABLE: | ---- | ---- | -- | ---- | -------- | -------- | ----------------------- | -------------------- |"
+    );
+    println!(
+        "TABLE: | {}〜{} | ${total:.2} | {} | {per_merge} | {rewrites} 回 ${rewrite_cost:.2} |",
+        end(since),
+        end(until),
+        kinds.join(" | ")
+    );
     Ok(())
 }
 
