@@ -4,7 +4,8 @@
 //! ステージするため禁止する。git の pre-commit の機密情報の検査（内容の検査。ADR-0015）と対で効く。
 //! 1 コミット 1 論理変更のためにも、`git add <file>` / `git add -p` で対象を選ぶ。
 //!
-//! 通すもの: パスを指定した add（範囲を限定した `git add -A src/` も可）、`-u`（追跡済みのみ）、
+//! 通すもの: パスを指定した add（範囲を限定した `git add -A src/` も可）、`-u`（追跡済みのみ。パスが `.` でも
+//! 未追跡のファイルは入らない）、
 //! `-p` / `-i`（対話的に選ぶ）。セッションの scratchpad の下に git init で作った一時のリポジトリ（scratchpad_repo.rs）
 //! では止めない。エスケープはコマンドに `ALLOW_GIT_ADD_ALL=<理由>` を付ける。
 
@@ -34,6 +35,10 @@ fn check_add(args: &[Arg]) -> Option<String> {
     // --pathspec-from-file のファイルの中身（`.` や `:/` も書ける）は見ないので、パスを指定したことにしない
     if all && pathspecs.is_empty() {
         return Some("git add -A / --all はパスを指定しない限り禁止です".to_string());
+    }
+    // -u は追跡しているファイルの変更だけをステージするので、パスが全体でも未追跡のファイルは入らない
+    if git_flag("add", args, Some('u'), &["--update"]) && !all {
+        return None;
     }
     pathspecs
         .iter()
