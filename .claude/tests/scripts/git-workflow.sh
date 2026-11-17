@@ -858,9 +858,9 @@ assert_contains "$out" "claude-sync $TEST_ROOT/cleanup46/app"
 assert_not_contains "$out" "lock を進める前に rebuild"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: ハーネスで pull で .claude の下が変われば、claude-sync が要ると NOTE で知らせる"
+it "post-merge-cleanup: ハーネスで pull で claude の下が変われば、claude-sync が要ると NOTE で知らせる"
 setup_claude_sync_source "$TEST_ROOT/cleanup16"
-advance_origin_main "$TEST_ROOT/cleanup16/app" .claude/skills/x/SKILL.md >/dev/null
+advance_origin_main "$TEST_ROOT/cleanup16/app" claude/skills/x/SKILL.md >/dev/null
 cd "$TEST_ROOT/cleanup16/app" || exit 1
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
@@ -873,16 +873,25 @@ assert_not_contains "$out" "NOTE: rebuild が要る"
 assert_not_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: pull で .claude の下のどこ（tests）が変わっても、claude-sync が要ると NOTE で知らせる"
+it "post-merge-cleanup: pull で claude の下のどこ（tests）が変わっても、claude-sync が要ると NOTE で知らせる"
 setup_claude_sync_source "$TEST_ROOT/cleanup19"
-advance_origin_main "$TEST_ROOT/cleanup19/app" .claude/tests/x.sh >/dev/null
+advance_origin_main "$TEST_ROOT/cleanup19/app" claude/tests/x.sh >/dev/null
 cd "$TEST_ROOT/cleanup19/app" || exit 1
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_contains "$out" "NOTE: claude-sync が要る"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: ハーネスで pull で modules、flake、.claude のどれも変わらなければ NOTE を出さない"
+it "post-merge-cleanup: ハーネスで pull で config の下（~/.config に配る設定）が変われば、claude-sync が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup47"
+advance_origin_main "$TEST_ROOT/cleanup47/app" config/markdownlint/config >/dev/null
+cd "$TEST_ROOT/cleanup47/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: claude-sync が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: ハーネスで pull で modules、flake、claude、config のどれも変わらなければ NOTE を出さない"
 setup_claude_sync_source "$TEST_ROOT/cleanup17"
 advance_origin_main "$TEST_ROOT/cleanup17/app" docs/x.md >/dev/null
 cd "$TEST_ROOT/cleanup17/app" || exit 1

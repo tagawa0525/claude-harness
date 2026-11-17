@@ -28,7 +28,7 @@ it "review-level: 文書でないファイルを含む変更は high"
 git switch -q main
 git switch -q -c feat/mixed
 commit_file "$REPO" docs/plans/x.md "docs: plan"
-commit_file "$REPO" .claude/scripts/x.sh "feat: x"
+commit_file "$REPO" claude/scripts/x.sh "feat: x"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "LEVEL: high"
 
@@ -204,9 +204,10 @@ git commit -q -m "docs: adr"
 
 it "review-level: スキルの文書と CLAUDE.md だけの変更は medium"
 git switch -q -c feat/rule-docs main
-commit_file "$LEVEL_REPO" .claude/skills/x/SKILL.md "docs(skills): x"
+commit_file "$LEVEL_REPO" claude/skills/x/SKILL.md "docs(skills): x"
+commit_file "$LEVEL_REPO" claude/skills/x/references/r.md "docs(skills): r"
 commit_file "$LEVEL_REPO" CLAUDE.md "docs: claude"
-commit_file "$LEVEL_REPO" .claude/README.md "docs: readme"
+commit_file "$LEVEL_REPO" claude/README.md "docs: readme"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "LEVEL: medium"
 
@@ -219,8 +220,8 @@ assert_contains "$out" "LEVEL: medium"
 
 it "review-level: スキルの中のスクリプトを含む変更は high"
 git switch -q -c feat/skill-script main
-commit_file "$LEVEL_REPO" .claude/skills/x/SKILL.md "docs(skills): x"
-commit_file "$LEVEL_REPO" .claude/skills/x/scripts/a.sh "feat: a"
+commit_file "$LEVEL_REPO" claude/skills/x/SKILL.md "docs(skills): x"
+commit_file "$LEVEL_REPO" claude/skills/x/scripts/a.sh "feat: a"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "LEVEL: high"
 

@@ -135,7 +135,10 @@ mod tests {
             };
             // commands は同期が既存のファイルを上書きしない。全部に真な文だけを言う
             assert!(!msg.contains("上書き"), "{place}: {msg}");
-            assert!(msg.contains(".claude/"), "{msg}");
+            assert!(
+                msg.contains(&format!("claude-harness の claude/{place}")),
+                "{msg}"
+            );
         }
     }
 }

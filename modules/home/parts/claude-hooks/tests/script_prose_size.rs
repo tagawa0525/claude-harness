@@ -156,6 +156,27 @@ fn skills_and_claude_md_are_measured_on_the_default_branch_before_since_and_befo
 }
 
 #[test]
+fn the_skills_of_the_harness_are_counted_under_the_undotted_directory_at_the_top() {
+    let home = Home::new();
+    let repo = home.root.join("prose-harness");
+    std::fs::create_dir_all(&repo).unwrap();
+    home.git(&repo, &["init", "-q", "-b", "main"], None);
+    write_bytes(&repo.join("claude/skills/a/SKILL.md"), 100);
+    write_bytes(&repo.join("claude/skills/a/scripts/x.sh"), 50);
+    write_bytes(&repo.join("sub/claude/skills/a/SKILL.md"), 40);
+    home.commit_at(&repo, "2026-11-09T12:00:00+09:00");
+    write_bytes(&repo.join("claude/skills/a/SKILL.md"), 60);
+    home.commit_at(&repo, "2026-11-10T12:00:00+09:00");
+    let r = s(&repo);
+    let (code, out, _) = parts(&home.prose(&["--since", SINCE, "--until", UNTIL, "--repo", &r]));
+    assert_eq!(code, 0);
+    assert!(
+        out.contains(&format!("PROSE: skills 100 60 -40 {r}\n")),
+        "{out}"
+    );
+}
+
+#[test]
 fn the_bounds_are_printed_in_jst() {
     let home = Home::new();
     let r = s(&home.repo());

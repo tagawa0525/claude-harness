@@ -125,11 +125,26 @@ fn documents_only_is_medium() {
 }
 
 #[test]
+fn documents_under_the_harness_source_directory_are_medium() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/rule-docs"]);
+    repo.commit("claude/README.md", "readme");
+    repo.commit("claude/skills/x/references/r.md", "reference");
+    let out = repo.run(&["feat/rule-docs", "--base", "main"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        stdout(&out).ends_with("FILES: 2\nLEVEL: medium\n"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn a_file_that_is_not_a_document_is_high() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/mixed"]);
     repo.commit("docs/plans/x.md", "plan");
-    repo.commit(".claude/scripts/x.sh", "script");
+    repo.commit("claude/scripts/x.sh", "script");
     let out = repo.run(&["feat/mixed", "--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
     assert!(

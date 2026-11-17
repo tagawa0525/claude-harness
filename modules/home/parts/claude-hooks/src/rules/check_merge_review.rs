@@ -768,6 +768,8 @@ mod tests {
         for path in [
             ".claude/skills/a/SKILL.md",
             ".claude/README.md",
+            "claude/skills/a/references/r.md",
+            "claude/README.md",
             "CLAUDE.md",
             "sub/CLAUDE.md",
             "skills/b/SKILL.md",
