@@ -56,7 +56,7 @@ const NEXT_STEPS: &str = "PR を作ったら、gh pr create が出力した URL 
 - レビューコメントに対応する場合 → /gh-pr-review
 - レビューの後にマージする場合 → /gh-pr-merge
 - 状態を確かめる場合 → /git-info
-/delegate の担当は、待ち方とマージをこの案内でなく /delegate の手順（待ちは「作業中の規則」の待ちの項、マージは親の許可の後）に従う";
+/delegate の担当は、待ち方とマージをこの案内でなく、/delegate の受ける側の手順（~/.claude/skills/delegate/references/working.md の「作業中の規則」の待ちの項と、手順 10「許可の後にマージする」）に従う";
 
 /// `--x=value` 形式なら value を、そうでなければそのまま
 pub(super) fn strip_opt_prefix<'a>(arg: &'a Arg, names: &[&str]) -> &'a str {
@@ -167,7 +167,6 @@ impl Rule for PrePrCreateCheck {
             let Some(args) = cmd.gh_subcommand(&["pr", "create"]) else {
                 continue;
             };
-            creates = true;
             let mut reasons: Vec<String> = Vec::new();
 
             // gh / git の実行コンテキストをコマンドに合わせる（`cd <path> && gh pr create`）
@@ -190,7 +189,7 @@ impl Rule for PrePrCreateCheck {
 
             // fork ではこちらの規約（件名の長さ、本文の見出し、新しい ADR の数）を検査しない
             let fork = git::is_fork(&dir);
-            creates &= !fork;
+            creates |= !fork;
 
             // --- 4. --web ---
             if has_flag(args, &["--web", "-w"]) {
