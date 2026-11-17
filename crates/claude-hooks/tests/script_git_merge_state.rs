@@ -320,3 +320,60 @@ fn a_failed_ancestry_check_stops_instead_of_reporting_no_stack() {
     );
     assert_eq!(text(&out.stdout), "");
 }
+
+#[test]
+fn a_renumber_commit_does_not_hide_earlier_changes_of_the_named_files() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.commit("fix: impl");
+    // design-records renumber が作るコミット（改名と表題の付け替え）
+    repo.git(&["mv", "docs/adr/0002-b.md", "docs/adr/0003-b.md"]);
+    repo.commit("docs: renumber ADR-0002 to ADR-0003");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        stale_line(&out),
+        "STALE_CONFIRMATIONS: ADR-0003:src/impl.sh"
+    );
+}
+
+#[test]
+fn changes_merged_from_the_default_branch_are_not_stale() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.git(&["switch", "-q", "main"]);
+    repo.write("src/impl.sh", "echo 3\n");
+    repo.commit("fix: impl on main");
+    repo.git(&["switch", "-q", "feat/x"]);
+    repo.git(&["merge", "-q", "--no-edit", "main"]);
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
+}
+
+#[test]
+fn a_submodule_named_in_a_confirmation_is_not_a_file() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    let head = repo.git(&["rev-parse", "HEAD"]);
+    let link = format!("160000,{},vendor/lib", head.trim());
+    repo.git(&["update-index", "--add", "--cacheinfo", &link]);
+    // 取ってきていないサブモジュールと同じく空のディレクトリを置く（無いと消した変更に見える）
+    std::fs::create_dir_all(repo.root.join("vendor/lib")).unwrap();
+    repo.git(&["commit", "-q", "-m", "chore: vendor"]);
+    repo.write(
+        "docs/adr/0002-b.md",
+        "---\nstatus: proposed\n---\n\n# B\n\n## 確認\n\n- `vendor/lib` を使う\n",
+    );
+    // add -A は作業ツリーに無い gitlink を消すので、ADR だけをステージする
+    repo.git(&["add", "docs/adr/0002-b.md"]);
+    repo.git(&["commit", "-q", "-m", "docs(adr): b names the submodule"]);
+    let other = repo.git(&["rev-parse", "HEAD~1"]);
+    let link = format!("160000,{},vendor/lib", other.trim());
+    repo.git(&["update-index", "--cacheinfo", &link]);
+    repo.git(&["commit", "-q", "-m", "chore: bump vendor"]);
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
+}
