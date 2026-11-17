@@ -24,8 +24,8 @@ pub fn main(args: &[String]) -> i32 {
     };
     // 報告の「文章の増減」の表。止まったときも、数えた分の行を出す（数えられなかったものは ERROR: の側にある）
     if !rows.is_empty() {
-        println!("TABLE: | 種類 | 前 | 後 | 差 | パス |");
-        println!("TABLE: | ---- | -- | -- | -- | ---- |");
+        println!("TABLE: | 種類 | 前 | 後 | 差 | パス | 理由 |");
+        println!("TABLE: | ---- | -- | -- | -- | ---- | ---- |");
         for row in rows {
             println!("TABLE: {row}");
         }
@@ -37,7 +37,8 @@ pub fn main(args: &[String]) -> i32 {
 fn prose(rows: &mut Vec<String>, kind: &str, before: i64, after: i64, path: &str) {
     let d = delta(before, after);
     println!("PROSE: {kind} {before} {after} {d} {path}");
-    rows.push(format!("| {kind} | {before} | {after} | {d} | {path} |"));
+    // 理由の列は空。増えた行に読み手が書く
+    rows.push(format!("| {kind} | {before} | {after} | {d} | {path} |  |"));
 }
 
 fn usage() -> Result<i32, Exit> {

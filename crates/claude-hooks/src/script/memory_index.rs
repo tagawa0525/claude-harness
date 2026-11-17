@@ -12,8 +12,8 @@
 //!   同じ辞書と規則（`ja-terms check`）で見るので、コードスパン、フェンス、フロントマターの中は数えない
 //!
 //! ファイルは名前のバイトの順に見る。食い違いがあっても 0 で終える（判断はスキルが行う）。MEMORY.md が読めない、または
-//! 辞書の検査を実行できなければ、（ほかの行を出した後に）`ERROR:` を標準エラーに出して 1 で終える（辞書の検査のときは、
-//! 続けて次の手の `NEXT:` も出す）。引数の誤りも 1。
+//! 辞書の検査を実行できなければ、（ほかの行を出した後に）`ERROR:` と次の手の `NEXT:` を標準エラーに出して 1 で終える。
+//! 引数の誤りも 1。
 //!
 //! 辞書の検査は、hook と同じく claude-hooks の隣の ja-terms（[`crate::rules::ja_terms`]）。メモリは git で追跡しないので
 //! pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る
@@ -44,6 +44,9 @@ pub fn main(args: &[String]) -> i32 {
     let index = format!("{dir}/MEMORY.md");
     let Ok(text) = std::fs::read(&index) else {
         eprintln!("ERROR: 索引を読めません: {index}");
+        eprintln!(
+            "NEXT: メモリの無いプロジェクトなら飛ばす。MEMORY.md があるなら、メモリを見ていないことを報告の「未確認」に書いて進める"
+        );
         return 1;
     };
     let linked = index_links(&String::from_utf8_lossy(&text));
@@ -58,6 +61,9 @@ pub fn main(args: &[String]) -> i32 {
         Ok(files) => files,
         Err(e) => {
             eprintln!("ERROR: メモリのディレクトリを読めません: {dir}: {e}");
+            eprintln!(
+                "NEXT: 出た行で進め、UNINDEXED:、BROKEN_LINK:、TERMS: を見ていないことを報告の「未確認」に書く"
+            );
             return 1;
         }
     };
