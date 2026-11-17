@@ -22,6 +22,7 @@
 //!
 //! 検査に通った gh pr create には、PR を作った後の次のステップ（レビューの待ち方、診断、対応、マージ）を
 //! additionalContext で添える（呼び出しの結果と同じ時に届く。PR の URL は gh の出力にしかないので、置き場の印で示す）。
+//! fork の PR には添えない。
 //!
 //! 本文の見出しは `--body` 引数ノードの原文（ヒアドキュメント本文を含む）だけを見る。
 //! 別のヒアドキュメントに書かれた見出しの例でゲートを通すことはできない。
@@ -54,7 +55,8 @@ const NEXT_STEPS: &str = "PR を作ったら、gh pr create が出力した URL 
 - Copilot のレビューか CI の状況を確かめる場合 → /gh-actions-check
 - レビューコメントに対応する場合 → /gh-pr-review
 - レビューの後にマージする場合 → /gh-pr-merge
-- 状態を確かめる場合 → /git-info";
+- 状態を確かめる場合 → /git-info
+/delegate の担当は、待ち方とマージをこの案内でなく /delegate の手順（待ちは「作業中の規則」の待ちの項、マージは親の許可の後）に従う";
 
 /// `--x=value` 形式なら value を、そうでなければそのまま
 pub(super) fn strip_opt_prefix<'a>(arg: &'a Arg, names: &[&str]) -> &'a str {
@@ -159,6 +161,7 @@ impl Rule for PrePrCreateCheck {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        // fork から上流に出す PR は、レビューとマージが上流の側の手順なので、案内を添えない
         let mut creates = false;
         for cmd in shell.commands() {
             let Some(args) = cmd.gh_subcommand(&["pr", "create"]) else {
@@ -187,6 +190,7 @@ impl Rule for PrePrCreateCheck {
 
             // fork ではこちらの規約（件名の長さ、本文の見出し、新しい ADR の数）を検査しない
             let fork = git::is_fork(&dir);
+            creates &= !fork;
 
             // --- 4. --web ---
             if has_flag(args, &["--web", "-w"]) {
