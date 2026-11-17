@@ -20,7 +20,7 @@ GitHub の issue があるリポジトリでは、そこに書く。ない場合
 ```yaml
 ---
 type: Issue
-status: open
+status: closed
 resolution: done
 resolved-by: 0012-slug
 duplicate-of: "#0012"
@@ -30,8 +30,7 @@ closed: 2026-10-11
 ---
 ```
 
-例は全部のキーを並べたもの。開いている issue には `resolution`、`resolved-by`、`duplicate-of`、`closed` を書かない。
-キーの行には値だけを書く（`design-records check` は `#` 以降のコメントも値として読む）。
+例は全部のキーを並べたもの。
 
 - `type`: `Issue`（`docs/index.md` が `okf_version` を持つリポジトリでは必須）
 - `status`: `open` か `closed`
@@ -43,11 +42,9 @@ closed: 2026-10-11
 節（見出しの 2 段目）は、必須が「問題」と「完了の条件」（`- [ ]` か `- [x]` の項目を 1 つ以上）、推奨が「経緯」。
 
 - 関係は、その文書だけを読んで分かる側に置く。ADR との関係は ADR の `issues` から引き、issue 側には「関係する ADR:」を書かない
-- 閉じるのは、`blocked-by` の issue がすべて閉じてから
 - 閉じるときは `status: closed` と `resolution` を同時に書く
 
 ## 検査
 
-`design-records check` は、フロントマターを持つ issue の `status`、閉じた issue の `resolution`、必須の節
-（完了の条件は項目の有無まで）を注意（warning）として示す。フロントマターの無い issue は見ない。
-`resolved-by`、`duplicate-of`、`blocked-by` の整合（相手の存在、開いている相手を持つ closed）は検査しない。
+`design-records check` は、フロントマターを持つ issue の形と関係を注意（warning）として示す。
+フロントマターの無い issue は見ない。

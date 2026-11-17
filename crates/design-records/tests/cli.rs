@@ -342,6 +342,23 @@ fn new_rejects_bad_slugs_and_missing_titles_without_writing() {
     assert!(!t.dir.join("docs").exists());
 }
 
+#[test]
+fn new_names_the_verb_first_rule_when_an_adr_slug_is_rejected() {
+    let t = TempRepo::new("bad-verb");
+    let out = t.run(&["new", "Foo_Usage", "foo を使う"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("start it with the verb of the decision"),
+        "{}",
+        stderr(&out)
+    );
+    // issue の slug は決定ではないので、動詞の規則を添えない
+    let out = t.run(&["new", "--kind", "issue", "Bad_Slug", "壊れる"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("kebab-case"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("verb"), "{}", stderr(&out));
+}
+
 #[cfg(unix)]
 #[test]
 fn new_fails_without_writing_when_the_history_cannot_be_read() {
@@ -526,6 +543,117 @@ fn check_warns_when_the_conditions_section_has_no_checklist() {
     );
 }
 
+/// 問題と完了の条件の節を持つ issue（フロントマターの行は `front`）
+fn issue(front: &str) -> String {
+    format!("---\n{front}\n---\n\n# x\n\n## 問題\n\nx\n\n## 完了の条件\n\n- [ ] y\n")
+}
+
+#[test]
+fn check_warns_about_comments_on_issue_front_matter_lines() {
+    let t = TempRepo::new("issue-comment");
+    t.write(
+        "docs/issues/0001-commented.md",
+        &issue("status: closed\nresolution: done\nopened: 2026-10-10 # 気づいた日"),
+    );
+    // 全角の空白の後の # と、単一引用符で囲んだ番号は、YAML でもコメントではない
+    t.write(
+        "docs/issues/0004-not-comments.md",
+        &issue(
+            "status: closed\nresolution: duplicate\nopened: 2026-10-10　#12\nduplicate-of: '#0001'",
+        ),
+    );
+    // 引用符で囲んだ番号は値。引用符なしの値と一覧の要素の先頭の # も、YAML ではコメント（か読めない一覧）になる
+    t.write(
+        "docs/issues/0002-numbers.md",
+        &issue("status: closed\nresolution: duplicate\nduplicate-of: \"#0001\"\nblocked-by: [\"#0001\"]"),
+    );
+    t.write(
+        "docs/issues/0003-bare.md",
+        &issue("status: closed\nresolution: duplicate\nduplicate-of: #0001\nblocked-by: [#0001]"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains(
+            "docs/issues/0001-commented.md:4: warning: the value of `opened` has `#` outside \
+             quotes, which YAML reads as a comment but design-records reads as part of the value; \
+             write only the value on the key line and quote issue numbers (\"#0012\")\n"
+        ),
+        "{}",
+        stdout(&out)
+    );
+    for line in [4, 5] {
+        assert!(
+            stdout(&out).contains(&format!(
+                "docs/issues/0003-bare.md:{line}: warning: the value of"
+            )),
+            "{}",
+            stdout(&out)
+        );
+    }
+    assert!(!stdout(&out).contains("0002-numbers"), "{}", stdout(&out));
+    assert!(
+        !stdout(&out).contains("0004-not-comments.md:4:")
+            && !stdout(&out).contains("0004-not-comments.md:5:"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_warns_about_inconsistent_issue_links() {
+    let t = TempRepo::new("issue-links");
+    t.run(&["new", "use-a", "a を使う"]);
+    t.write(
+        "docs/issues/0001-early.md",
+        &issue("status: open\nresolution: done\nclosed: 2026-10-11"),
+    );
+    t.write(
+        "docs/issues/0002-dup.md",
+        &issue("status: closed\nresolution: duplicate"),
+    );
+    t.write(
+        "docs/issues/0003-blocked.md",
+        &issue(
+            "status: closed\nresolution: done\nresolved-by: 0001-use-a\nblocked-by: [\"#0001\"]",
+        ),
+    );
+    t.write(
+        "docs/issues/0004-missing.md",
+        &issue("status: closed\nresolution: duplicate\nduplicate-of: \"#0009\"\nresolved-by: 0007-use-g\nblocked-by: [\"#0008\"]"),
+    );
+    // ADR の番号だけで書いた resolved-by も ADR として探す
+    t.write(
+        "docs/issues/0006-number.md",
+        &issue("status: closed\nresolution: done\nresolved-by: \"0009\""),
+    );
+    // 閉じた相手に塞がれていた issue と、コミットの hash で解決した issue は黙る
+    t.write(
+        "docs/issues/0005-fine.md",
+        &issue("status: closed\nresolution: done\nresolved-by: 1a2b3c4\nblocked-by: [\"#0003\"]"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        "docs/issues/0001-early.md: warning: an open issue has `resolution`, `closed`; write \
+         them when closing it\n\
+         docs/issues/0002-dup.md: warning: a duplicate issue needs `duplicate-of`\n\
+         docs/issues/0003-blocked.md: warning: the issue is closed but `blocked-by` names #0001, \
+         which is open; close it after the issues blocking it are closed\n\
+         docs/issues/0004-missing.md: warning: `blocked-by` names #0008, which does not exist in \
+         docs/issues\n\
+         docs/issues/0004-missing.md: warning: `duplicate-of` names #0009, which does not exist in \
+         docs/issues\n\
+         docs/issues/0004-missing.md: warning: `resolved-by` names 0007-use-g, which is not an \
+         ADR in docs/adr\n\
+         docs/issues/0006-number.md: warning: `resolved-by` names 0009, which is not an ADR in \
+         docs/adr\n"
+    );
+}
+
 /// ADR-0001 を ADR-0002 で置き換えた main
 fn superseded_repo(name: &str) -> TempRepo {
     let t = TempRepo::new(name);
@@ -584,6 +712,109 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
          decision, edit the decision outcome and add a dated item to the `## 変更` section that \
          quotes the replaced text and gives the reason; to change all of it, supersede the ADR \
          with a new one\n"
+    );
+}
+
+/// main で ADR-0001 を ADR-0003（accepted）と ADR-0004（rejected）が requires に持ち、topic のブランチで ADR-0002 が
+/// ADR-0001 を置き換える
+fn superseding_topic(name: &str) -> TempRepo {
+    let t = TempRepo::new(name);
+    for slug in ["use-a", "use-c", "use-d"] {
+        t.run(&["new", slug, "x"]);
+    }
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a).replace("status: proposed", "status: accepted"),
+    );
+    for (path, status) in [
+        ("docs/adr/0002-use-c.md", "accepted"),
+        ("docs/adr/0003-use-d.md", "rejected"),
+    ] {
+        t.write(
+            path,
+            &t.read(path)
+                .replace("status: proposed", &format!("status: {status}"))
+                .replace("requires: []", "requires: [ADR-0001]"),
+        );
+    }
+    t.commit_all("docs(adr): a, c and d");
+    t.git(&["switch", "-q", "-c", "topic"]);
+    t.run(&["new", "use-b", "b を使う"]);
+    let b = "docs/adr/0004-use-b.md";
+    t.write(
+        b,
+        &t.read(b)
+            .replace("status: proposed", "status: accepted")
+            .replace("supersedes: []", "supersedes: [ADR-0001]")
+            .replace("requires: []", "requires: [ADR-0001]"),
+    );
+    t.write(
+        a,
+        &t.read(a)
+            .replace("status: accepted", "status: superseded")
+            .replace("superseded-by:", "superseded-by: ADR-0004"),
+    );
+    // check は追跡している ADR だけを読む
+    t.git(&["add", "-A"]);
+    t
+}
+
+#[test]
+fn check_names_the_adrs_that_require_an_adr_superseded_on_the_branch() {
+    let t = superseding_topic("requires-superseded");
+    let out = t.run(&["check", "docs/adr/0001-use-a.md", "docs/adr/0004-use-b.md"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    // 置き換えた ADR-0004 と、効力を持たなかった ADR-0003 は見直す相手に挙げない
+    assert!(
+        stdout(&out).contains(
+            "docs/adr/0001-use-a.md: warning: the ADR became superseded since main; review \
+             whether the decisions of the ADRs that still list it in `requires` hold with \
+             ADR-0004, which supersedes it: ADR-0002\n"
+        ),
+        "{}",
+        stdout(&out)
+    );
+    // main で既に置き換えられていた ADR には出さない（一度見直した。requires は確定した後に直せない）
+    t.commit_all("docs(adr): supersede a");
+    t.git(&["switch", "-q", "main"]);
+    t.git(&["merge", "-q", "--no-ff", "-m", "Merge", "topic"]);
+    t.git(&["switch", "-q", "-c", "later"]);
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &(t.read(a) + "\n## 変更\n\n- 2026-11-01: ADR-0004 で置き換えた\n"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check", a]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(
+        !stdout(&out).contains("became superseded"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_names_the_dependents_of_a_superseded_adr_without_a_successor() {
+    let t = superseding_topic("requires-no-successor");
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a)
+            .replace("superseded-by: ADR-0004", "superseded-by:"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check", a]);
+    // superseded-by が空なのは違反（別に示す）。置き換えた ADR は supersedes の側から引く
+    assert!(
+        stdout(&out).contains(
+            "docs/adr/0001-use-a.md: warning: the ADR became superseded since main; review \
+             whether the decisions of the ADRs that still list it in `requires` hold with \
+             ADR-0004, which supersedes it: ADR-0002\n"
+        ),
+        "{}",
+        stdout(&out)
     );
 }
 
@@ -680,6 +911,91 @@ fn check_warns_when_a_file_named_in_the_confirmation_changed_after_the_adr() {
          changed in a later commit than the ADR; check that the decision, consequences and \
          confirmation still match it\n"
     );
+}
+
+#[test]
+fn check_keeps_the_stale_confirmation_after_the_adr_is_renumbered() {
+    let t = confirmed_topic("stale-renumbered", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+    });
+    let out = t.run(&["renumber", "1", "5"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let out = t.run(&["check"]);
+    assert!(
+        stdout(&out).contains(
+            "docs/adr/0005-use-a.md: warning: `src/impl.sh`, named in the confirmation section"
+        ),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_does_not_count_the_references_renumber_rewrites_as_a_change() {
+    let t = confirmed_topic("stale-renumber-refs", |t| {
+        // ブランチで足した行の ADR-0001 の参照は、renumber が付け替える
+        t.write("src/impl.sh", "echo 1\n# ADR-0001\n");
+        t.commit_all("fix: impl");
+        let a = "docs/adr/0001-use-a.md";
+        t.write(a, &(t.read(a) + "\n追記\n"));
+        t.commit_all("docs(adr): follow impl");
+    });
+    let out = t.run(&["renumber", "1", "5"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(t.read("src/impl.sh").contains("ADR-0005"));
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_counts_a_hand_written_commit_that_starts_like_renumber() {
+    let t = confirmed_topic("stale-renumber-like", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+        let a = "docs/adr/0001-use-a.md";
+        t.write(a, &t.read(a).replace("1 を出す", "2 を出す"));
+        t.commit_all("docs: renumber the steps in the confirmation");
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_counts_a_change_made_while_resolving_a_merge() {
+    let t = confirmed_topic("stale-evil-merge", |t| {
+        t.git(&["switch", "-q", "main"]);
+        t.write("README.md", "main\n");
+        t.commit_all("docs: readme on main");
+        t.git(&["switch", "-q", "topic"]);
+        t.git(&["merge", "-q", "--no-commit", "main"]);
+        // マージのコミットの中でだけ実装を直す
+        t.write("src/impl.sh", "echo 2\n");
+        t.git(&["add", "src/impl.sh"]);
+        t.git(&["commit", "-q", "--no-edit"]);
+    });
+    let out = t.run(&["check"]);
+    assert!(
+        stdout(&out).contains("`src/impl.sh`, named in the confirmation section"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_ignores_changes_merged_from_the_default_branch() {
+    let t = confirmed_topic("stale-merged", |t| {
+        t.git(&["switch", "-q", "main"]);
+        t.write("src/impl.sh", "echo 3\n");
+        t.commit_all("fix: impl on main");
+        t.git(&["switch", "-q", "topic"]);
+        t.git(&["merge", "-q", "--no-edit", "main"]);
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
 }
 
 #[test]
@@ -2517,9 +2833,10 @@ fn index_completes_the_bundle_and_check_then_passes() {
         "docs/windows.md",
         "---\ntype: Guide\ntitle: Windows\ndescription: 入れ方\n---\n",
     );
-    assert_eq!(
-        stdout(&t.run(&["new", "use-foo", "foo を使う"])),
-        "docs/adr/0001-use-foo.md\n"
+    // new も索引を足すので、index の確かめには ADR を手で書く
+    t.write(
+        "docs/adr/0001-use-foo.md",
+        &design_records::template(1, "foo を使う", &today()),
     );
     let out = t.run(&["index"]);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -2549,4 +2866,120 @@ fn check_does_not_read_docs_outside_a_bundle() {
         "{}",
         stderr(&out)
     );
+}
+
+#[test]
+fn new_in_a_bundle_adds_the_index_lines_and_names_them_to_commit() {
+    let t = TempRepo::new("okf-new");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.commit_all("docs: bundle root");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    // 標準出力は記録のパスだけ（`$(design-records new …)` で受ける呼び出しを壊さない）
+    assert_eq!(stdout(&out), "docs/adr/0001-use-foo.md\n");
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n"
+    );
+    assert!(
+        stderr(&out).contains(
+            "NEXT: commit the index lines added to docs/adr/index.md docs/index.md together with \
+             docs/adr/0001-use-foo.md"
+        ),
+        "{}",
+        stderr(&out)
+    );
+    assert!(t.run(&["index"]).stdout.is_empty());
+}
+
+#[test]
+fn new_in_a_bundle_leaves_untracked_drafts_out_of_the_index() {
+    let t = TempRepo::new("okf-new-draft");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.commit_all("docs: bundle root");
+    t.write(
+        "docs/plans/wip.md",
+        "---\ntype: Plan\ntitle: wip\ndescription: 下書き\n---\n",
+    );
+    // 索引まで書いた下書きのディレクトリも、記録の索引ではないので載せない
+    t.write("docs/drafts/index.md", "# drafts\n");
+    t.write(
+        "docs/drafts/idea.md",
+        "---\ntype: Note\ntitle: idea\ndescription: 案\n---\n",
+    );
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!t.dir.join("docs/plans/index.md").exists());
+    assert!(
+        !t.read("docs/index.md").contains("plans/"),
+        "{}",
+        t.read("docs/index.md")
+    );
+    assert!(
+        !t.read("docs/index.md").contains("drafts/"),
+        "{}",
+        t.read("docs/index.md")
+    );
+    assert_eq!(t.read("docs/drafts/index.md"), "# drafts\n");
+    // 続けて作った記録は、先の new が書いた（まだ追跡していない）索引に足す
+    t.run(&["new", "use-bar", "bar を使う"]);
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n* [ADR-0002: bar を使う](0002-use-bar.md)\n"
+    );
+}
+
+#[test]
+fn new_leaves_other_untracked_indexes_and_unreadable_drafts_alone() {
+    let t = TempRepo::new("okf-new-others");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/plans/a.md",
+        "---\ntype: Plan\ntitle: a\ndescription: 計画\n---\n",
+    );
+    t.commit_all("docs: bundle with a plan");
+    // index が作り、手で直した、まだコミットしていない索引
+    t.write(
+        "docs/plans/index.md",
+        "# 計画\n\n* [計画 A](a.md) - 手で直した\n",
+    );
+    // 読めない下書き（索引に載せないので読まない）
+    fs::write(t.dir.join("docs/plans/scratch.md"), [0xff, 0xfe, 0x00]).unwrap();
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("cannot add"), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/plans/index.md"),
+        "# 計画\n\n* [計画 A](a.md) - 手で直した\n"
+    );
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n"
+    );
+}
+
+#[test]
+fn new_keeps_the_record_when_the_index_cannot_be_written() {
+    let t = TempRepo::new("okf-new-broken");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    fs::write(t.dir.join("docs/broken.md"), [0xff, 0xfe, 0x00]).unwrap();
+    t.commit_all("docs: bundle with a non-utf-8 file");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    // 番号は予約して記録も書いたので、成功で終えてパスを出し、索引の失敗と修正方法を示す
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/0001-use-foo.md\n");
+    assert!(
+        stderr(&out).contains("NEXT: fix it, run `design-records index`"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn new_outside_a_bundle_writes_no_index() {
+    let t = TempRepo::new("okf-new-plain");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+    assert!(!t.dir.join("docs/adr/index.md").exists());
 }

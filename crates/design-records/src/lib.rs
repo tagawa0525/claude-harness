@@ -16,6 +16,38 @@ pub const ADR_DIR: &str = "docs/adr";
 /// issue を置くディレクトリ（リポジトリの直下から）。
 pub const ISSUE_DIR: &str = "docs/issues";
 
+/// `renumber` が作るコミットの件名（`docs: renumber ADR-<旧> to ADR-<新>`、`docs: renumber issue #<旧> to #<新>`。番号は 4 桁）。
+pub fn renumber_subject(kind: Kind, old: u32, new: u32) -> String {
+    let kind_word = match kind {
+        Kind::Adr => "",
+        Kind::Issue => "issue ",
+    };
+    format!(
+        "docs: renumber {kind_word}{} to {}",
+        kind.reference(old),
+        kind.reference(new)
+    )
+}
+
+/// `subject` が [`renumber_subject`] の形か。renumber のコミットは改名と参照の付け替えだけの機械的な変更なので、記録を
+/// 見直したコミットとしても、実装を直したコミットとしても数えない（確認の節の注意）。書き出しだけで判定すると、
+/// 同じ書き出しの手書きのコミットを取り違える。
+pub fn is_renumber_subject(subject: &str) -> bool {
+    let number = |s: &str, prefix: &str| {
+        s.strip_prefix(prefix)
+            .is_some_and(|n| n.len() == 4 && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let Some(rest) = subject.strip_prefix("docs: renumber ") else {
+        return false;
+    };
+    let (rest, prefix) = match rest.strip_prefix("issue ") {
+        Some(rest) => (rest, Kind::Issue.ref_prefix()),
+        None => (rest, Kind::Adr.ref_prefix()),
+    };
+    rest.split_once(" to ")
+        .is_some_and(|(old, new)| number(old, prefix) && number(new, prefix))
+}
+
 /// 番号を振る記録の種類。どちらも `<dir>/NNNN-<slug>.md` に置き、番号を再利用しない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {

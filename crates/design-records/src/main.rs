@@ -3,7 +3,9 @@
 //! Usage（どのコマンドも、前に `-C <dir>` を付けると `<dir>` で実行する。git の `-C` と同じ）:
 //!   design-records new [--kind adr|issue] <slug> <title>
 //!                                      番号を予約して <dir>/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
-//!                                      （dir は docs/adr か docs/issues。省けば adr）
+//!                                      （dir は docs/adr か docs/issues。省けば adr）。ADR の slug は決めたことを
+//!                                      動詞で始めた英語の kebab-case。OKF のバンドルでは index と同じく索引の行も
+//!                                      足し、一緒にコミットする索引を標準エラーの NEXT: に出す
 //!   design-records renumber [--kind adr|issue] <old> [<new>]
 //!                                      このブランチで足した記録 <old> を <new>（省けば次の番号）に振り直し、
 //!                                      ファイル名と参照を付け替えて 1 コミットにする。新しいパスを出す
@@ -36,8 +38,9 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use design_records::check::{
-    Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_numbers,
-    check_reservations, confirmation_paths, decision_changed_without_change_item,
+    Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_links,
+    check_issue_numbers, check_reservations, decision_changed_without_change_item,
+    superseded_dependents,
 };
 use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
 use design_records::{
@@ -138,14 +141,41 @@ fn main() -> ExitCode {
 
 fn new(kind: Kind, slug: &str, title: &str) -> Result<ExitCode> {
     if !is_slug(slug) {
+        // ADR の slug は決めたことを動詞で始める（`use-foo`）。kebab-case のほかは機械で見ないので、拒んだときに添える
+        let verb = match kind {
+            Kind::Adr => "; start it with the verb of the decision in English (use-foo, keep-bar)",
+            Kind::Issue => "",
+        };
         return Err(format!(
-            "the slug must be lowercase kebab-case ([a-z0-9]+(-[a-z0-9]+)*): {slug}"
+            "the slug must be lowercase kebab-case ([a-z0-9]+(-[a-z0-9]+)*){verb}: {slug}"
         ));
     }
     if !is_title(title) {
         return Err(format!("the title must be one non-blank line: {title:?}"));
     }
-    numbering::new(kind, slug, title, &today()?)
+    let path = numbering::new(kind, slug, title, &today()?)?;
+    println!("{path}");
+    // OKF のバンドルでは、記録を足すと索引に載っていない文書になり、check が止める。index と同じ行を足し、
+    // 一緒にコミットする索引を示す。パスを受ける呼び出し（`$(design-records new …)`）を壊さないよう、標準エラーに出す
+    // 番号の予約と記録はもう済んでいるので、索引を書けなくても失敗で終えない（呼び直すと番号をもう 1 つ予約する）
+    match repo_root().and_then(|root| write_indexes(&root, Some(&path))) {
+        Ok(written) => {
+            let written = written.unwrap_or_default();
+            if !written.is_empty() {
+                eprintln!(
+                    "NEXT: commit the index lines added to {} together with {path}",
+                    written.join(" ")
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("design-records: cannot add the index lines for {path}: {e}");
+            eprintln!(
+                "NEXT: fix it, run `design-records index`, and commit the index lines for {path} with it (index also adds lines for other untracked documents; leave those out)"
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// 手元の暦の今日（`date +%F`。標準ライブラリには時間帯の変換が無い）。
@@ -191,7 +221,7 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     }
 
     let mut found = check(&adrs, issues.as_ref(), &scanned);
-    found.extend(check_bundle(&bundle_files(&root, false)?));
+    found.extend(check_bundle(&bundle_files(&root, false, &|_| true)?));
     found.extend(check_issue_numbers(&issue_paths));
     let mut issue_texts = BTreeMap::new();
     for path in issue_paths
@@ -204,6 +234,7 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
         }
     }
     found.extend(check_issue_format(&issue_texts));
+    found.extend(check_issue_links(&issue_texts, &adr_paths));
     let origin = has_origin(&root)?;
     for (kind, paths) in [(Kind::Adr, &adr_paths), (Kind::Issue, &issue_paths)] {
         if let Some(reserved) = reserved.get(&kind) {
@@ -239,6 +270,7 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
 /// - 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）と、決定と理由の変更に「## 変更」の項が
 ///   足されていないこと（注意。[`decision_changed_without_change_item`]）。main にマージする前のブランチの上の
 ///   変更は status によらず自由なので、分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない
+/// - 分岐点から superseded になった ADR を、まだ `requires` に持つ ADR（注意。[`superseded_dependents`]）
 ///
 /// 確認の節のファイルの注意（[`stale_confirmations`]）は、`changed_only` でなければ全 ADR で、そうなら `files` の ADR だけ見る。
 /// `amends` の追加は `files` によらずすべての ADR で見る。凍結の注意は `files` の ADR だけを比べ（改名は改名前の版と
@@ -320,6 +352,46 @@ fn branch_changes(
         {
             found.extend(stale_confirmations(root, &base, new_path, new)?);
         }
+        // ブランチで置き換えた ADR を、まだ前提にしている ADR。main で既に置き換えられていたものは一度見直したので
+        // 出さない（requires は確定した後に直せず、毎回並ぶ）
+        if let (Some(before), Some(now)) = (
+            old.as_deref(),
+            adrs.get(new_path)
+                .filter(|_| !deleted && (in_files || !changed_only)),
+        ) && design_records::status(before).as_deref() != Some("superseded")
+            && design_records::status(now).as_deref() == Some("superseded")
+        {
+            let (dependents, successors) = superseded_dependents(adrs, new_path);
+            if !dependents.is_empty() {
+                let names = |ns: &[u32]| {
+                    ns.iter()
+                        .map(|n| format!("ADR-{n:04}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                found.push(Finding {
+                    path: new_path.to_string(),
+                    line: None,
+                    severity: Severity::Warning,
+                    // superseded-by が空なのは check の違反で、そのときは比べる相手を挙げられない
+                    message: if successors.is_empty() {
+                        format!(
+                            "the ADR became superseded since {shown}; review whether the decisions \
+                             of the ADRs that still list it in `requires` still hold: {}",
+                            names(&dependents)
+                        )
+                    } else {
+                        format!(
+                            "the ADR became superseded since {shown}; review whether the decisions \
+                             of the ADRs that still list it in `requires` hold with {}, which \
+                             supersedes it: {}",
+                            names(&successors),
+                            names(&dependents)
+                        )
+                    },
+                });
+            }
+        }
         let Some(old) = old.filter(|_| in_files) else {
             continue;
         };
@@ -383,38 +455,35 @@ fn branch_changes(
 /// HEAD のファイル（blob）でなければ見ない（コマンドや外のパスの可能性があり、実在でしか区別できない）。実装の変更が ADR の内容を
 /// 変えるとは限らないので、直しを求めずに見直しを求める文にする。
 fn stale_confirmations(root: &Path, base: &str, adr: &str, text: &str) -> Result<Vec<Finding>> {
-    let range = format!("{base}..HEAD");
-    let last = git(root, &["log", "-1", "--format=%H", &range, "--", adr])?;
-    let last = last.trim();
     // 作業ツリーかインデックスの ADR が HEAD と違えば、ADR のほうが新しい（直した版をこれからコミットする）ので見ない
-    if last.is_empty() || !git_ok(root, &["diff", "--quiet", "HEAD", "--", adr])? {
+    if !git_ok(root, &["diff", "--quiet", "HEAD", "--", adr])? {
         return Ok(Vec::new());
     }
-    let after = format!("{last}..HEAD");
-    let mut found = Vec::new();
-    for path in confirmation_paths(text) {
+    let paths = design_records::check::stale_confirmations(
+        &mut |args| git(root, args),
+        &format!("{base}..HEAD"),
+        "HEAD",
+        Some(base),
+        adr,
+        text,
         // ディレクトリ（tree）は含めない。`cat-file -e` は tree にも成功するので、種類を見る
-        let is_file = git(root, &["cat-file", "-t", &format!("HEAD:{path}")])
-            .is_ok_and(|kind| kind.trim() == "blob");
-        if is_adr_path(&path) || !is_file {
-            continue;
-        }
-        if !git(root, &["log", "-1", "--format=%H", &after, "--", &path])?
-            .trim()
-            .is_empty()
-        {
-            found.push(Finding {
-                path: adr.to_string(),
-                line: None,
-                severity: Severity::Warning,
-                message: format!(
-                    "`{path}`, named in the confirmation section, changed in a later commit than \
-                     the ADR; check that the decision, consequences and confirmation still match it"
-                ),
-            });
-        }
-    }
-    Ok(found)
+        &mut |path| {
+            Ok(git(root, &["cat-file", "-t", &format!("HEAD:{path}")])
+                .is_ok_and(|kind| kind.trim() == "blob"))
+        },
+    )?;
+    Ok(paths
+        .into_iter()
+        .map(|path| Finding {
+            path: adr.to_string(),
+            line: None,
+            severity: Severity::Warning,
+            message: format!(
+                "`{path}`, named in the confirmation section, changed in a later commit than \
+                 the ADR; check that the decision, consequences and confirmation still match it"
+            ),
+        })
+        .collect())
 }
 
 fn status() -> Result<ExitCode> {
@@ -427,8 +496,12 @@ fn status() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// docs/ の .md のパスと中身（`untracked` なら追跡していないものも含める）。
-fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>> {
+/// docs/ の .md のうち `keep` に当たるもののパスと中身（`untracked` なら追跡していないものも含める）。バンドルでなければ空。
+fn bundle_files(
+    root: &Path,
+    untracked: bool,
+    keep: &dyn Fn(&str) -> bool,
+) -> Result<BTreeMap<String, String>> {
     let mut files = BTreeMap::new();
     // バンドルでなければ（docs/index.md が okf_version を持たなければ）、ほかの docs/ のファイルを読まない
     let root_index = match fs::read_to_string(root.join(BUNDLE_ROOT).join("index.md")) {
@@ -439,7 +512,10 @@ fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>
     if !is_bundle_index(&root_index) {
         return Ok(files);
     }
-    for path in markdown_under(root, BUNDLE_ROOT, untracked)? {
+    for path in markdown_under(root, BUNDLE_ROOT, untracked)?
+        .into_iter()
+        .filter(|p| keep(p))
+    {
         let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         files.insert(path, text);
     }
@@ -448,16 +524,66 @@ fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>
 
 /// バンドルの索引に載っていない行を足し、書いたパスを出す（ADR-0092）。
 fn index() -> Result<ExitCode> {
-    let root = repo_root()?;
-    let files = bundle_files(&root, true)?;
-    if files.is_empty() {
+    let Some(written) = write_indexes(&repo_root()?, None)? else {
         eprintln!(
             "design-records: docs/index.md has no `okf_version` in its front matter, so docs/ is not an OKF bundle"
         );
-    }
-    for (path, text) in complete_indexes(&files) {
-        fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
+        return Ok(ExitCode::SUCCESS);
+    };
+    for path in written {
         println!("{path}");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// バンドルの索引に、追跡していないものを含めて載っていない文書と下位のディレクトリの行を足し、書いた索引のパスを返す。
+/// `record` を渡すと（new）、追跡していない文書は、その記録と、記録の上のディレクトリの索引（先の new が書いた、まだ
+/// コミットしていない索引）だけを数える。ほかの下書き（索引まで書いたディレクトリを含む）を索引に載せると、コミットしない
+/// ファイルへの行を記録と一緒にコミットさせる。バンドルでなければ何も書かずに `None`。
+fn write_indexes(root: &Path, record: Option<&str>) -> Result<Option<Vec<String>>> {
+    // 記録の上のディレクトリの索引（new が足す先）
+    let indexes: BTreeSet<String> = record
+        .map(|record| {
+            Path::new(record)
+                .ancestors()
+                .skip(1)
+                .take_while(|dir| dir.starts_with(BUNDLE_ROOT))
+                .map(|dir| format!("{}/index.md", dir.display()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let tracked: BTreeSet<String> = match record {
+        Some(_) => markdown_under(root, BUNDLE_ROOT, false)?
+            .into_iter()
+            .collect(),
+        None => BTreeSet::new(),
+    };
+    // new は、追跡していない文書のうち記録と上の索引だけを読む（ほかの下書きは載せず、読めなくても止まらない）
+    let keep = |path: &str| {
+        record
+            .is_none_or(|record| tracked.contains(path) || path == record || indexes.contains(path))
+    };
+    // untracked なら docs/index.md 自身が入るので、空はバンドルでないときだけ
+    let files = bundle_files(root, true, &keep)?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let mut written = Vec::new();
+    // new は上の索引だけを書く。ほかの索引（追跡していない、手で直したものを含む）は読んでいないので、作り直すと上書きする
+    for (path, text) in complete_indexes(&files)
+        .into_iter()
+        .filter(|(path, _)| record.is_none() || indexes.contains(path))
+    {
+        // 途中で失敗しても、もう書いた索引をコミットできるよう示す
+        fs::write(root.join(&path), text).map_err(|e| {
+            let before = if written.is_empty() {
+                String::new()
+            } else {
+                format!(" (already wrote {})", written.join(" "))
+            };
+            format!("{path}: {e}{before}")
+        })?;
+        written.push(path);
+    }
+    Ok(Some(written))
 }

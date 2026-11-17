@@ -6,8 +6,8 @@ use std::fmt;
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
     ADR_DIR, AMENDABLE_KEYS, DECIDED_CONTEXT_SECTIONS, DECISION_SECTION, KEYS, Kind, OPTIONAL_KEYS,
-    RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, recommended_sections,
-    record_name, record_number,
+    RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, is_renumber_subject,
+    recommended_sections, record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -254,6 +254,17 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
                 continue;
             }
         };
+        for (line, key) in commented_keys(text) {
+            out.warning(
+                path,
+                Some(line),
+                format!(
+                    "the value of `{key}` has `#` outside quotes, which YAML reads as a comment but \
+                     design-records reads as part of the value; write only the value on the key line \
+                     and quote issue numbers (\"#0012\")"
+                ),
+            );
+        }
         let scalar = |key: &str| match front.get(key) {
             Some(Value::Scalar(s)) => Some(s.as_str()),
             _ => None,
@@ -310,6 +321,153 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
         }
     }
     out.0
+}
+
+/// 閉じるときにだけ書くキー（開いている issue には無い）。
+const CLOSING_KEYS: [&str; 4] = ["resolution", "resolved-by", "duplicate-of", "closed"];
+
+/// `issues`（docs/issues のパスと中身）のうち、フロントマターを持つものの関係: 開いている issue の閉じるときのキー、
+/// duplicate の `duplicate-of`、`blocked-by` と `duplicate-of` の相手の存在、開いている相手に塞がれたまま閉じた issue、
+/// ADR の名前の形の `resolved-by` の相手（`adr_paths` は追跡している ADR のパス）。`resolved-by` のコミットの hash は
+/// rebase で変わり、探すと正しい記録を誤って示すので見ない。形の違いと同じく注意にする。
+pub fn check_issue_links(issues: &BTreeMap<String, String>, adr_paths: &[String]) -> Vec<Finding> {
+    let fronts: BTreeMap<&str, FrontMatter> = issues
+        .iter()
+        .filter(|(_, text)| text.starts_with("---\n"))
+        .filter_map(|(path, text)| Some((path.as_str(), parse_front_matter(text).ok()?)))
+        .collect();
+    let scalar = |front: &FrontMatter, key: &str| match front.get(key) {
+        Some(Value::Scalar(s)) => Some(s.clone()),
+        _ => None,
+    };
+    // 番号ごとの status（フロントマターの無い issue は None）
+    let status: BTreeMap<u32, Option<String>> = issues
+        .keys()
+        .filter_map(|path| {
+            let (number, _) = record_name(Kind::Issue, path)?;
+            let front = fronts.get(path.as_str());
+            Some((number, front.and_then(|f| scalar(f, "status"))))
+        })
+        .collect();
+    let adr_numbers: BTreeSet<u32> = adr_paths
+        .iter()
+        .filter_map(|p| record_name(Kind::Adr, p).map(|(n, _)| n))
+        .collect();
+    let mut out = Found::default();
+    for (path, front) in &fronts {
+        let state = scalar(front, "status");
+        let present = |key: &str| front.get(key).is_some_and(|v| !v.items().is_empty());
+        if state.as_deref() == Some("open") {
+            let written: Vec<String> = CLOSING_KEYS
+                .iter()
+                .filter(|k| present(k))
+                .map(|k| format!("`{k}`"))
+                .collect();
+            if !written.is_empty() {
+                out.warning(
+                    path,
+                    None,
+                    format!(
+                        "an open issue has {}; write them when closing it",
+                        written.join(", ")
+                    ),
+                );
+            }
+        }
+        let closed = state.as_deref() == Some("closed");
+        if closed
+            && scalar(front, "resolution").as_deref() == Some("duplicate")
+            && !present("duplicate-of")
+        {
+            out.warning(path, None, "a duplicate issue needs `duplicate-of`");
+        }
+        for key in ["blocked-by", "duplicate-of"] {
+            for item in front.get(key).map(Value::items).unwrap_or_default() {
+                let number = item
+                    .strip_prefix('#')
+                    .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                    .and_then(|n| n.parse::<u32>().ok());
+                match number.map(|n| status.get(&n)) {
+                    None => out.warning(
+                        path,
+                        None,
+                        format!("`{key}` item {item:?} is not #<number>"),
+                    ),
+                    Some(None) => out.warning(
+                        path,
+                        None,
+                        format!("`{key}` names {item}, which does not exist in docs/issues"),
+                    ),
+                    Some(Some(other)) => {
+                        if key == "blocked-by" && closed && other.as_deref() == Some("open") {
+                            out.warning(
+                                path,
+                                None,
+                                format!(
+                                    "the issue is closed but `blocked-by` names {item}, which is \
+                                     open; close it after the issues blocking it are closed"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(by) = scalar(front, "resolved-by") {
+            // ADR の番号（`ADR-0012` か `0012`）か、ADR のファイルの名前（`0012-slug`）なら探す
+            let bare = (by.len() == 4 && by.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| by.parse::<u32>().ok())
+                .flatten();
+            let missing = match single_adr(&by).or(bare) {
+                Some(n) => !adr_numbers.contains(&n),
+                None => {
+                    record_number(&format!("{by}.md")).is_some()
+                        && !adr_paths.contains(&format!("{ADR_DIR}/{by}.md"))
+                }
+            };
+            if missing {
+                out.warning(
+                    path,
+                    None,
+                    format!("`resolved-by` names {by}, which is not an ADR in docs/adr"),
+                );
+            }
+        }
+    }
+    let mut found = out.0;
+    found.sort();
+    found
+}
+
+/// フロントマターの行のうち、引用符の外の値（一覧なら要素）の先頭か空白の後に `#` があるもの（YAML のコメント）の、
+/// ファイルの行番号とキー。[`parse_front_matter`] は `#` を値として読む（引用符なしの `#0012` を消さないため）ので、
+/// コメントのつもりの文が値に混ざり、ほかの YAML の読み手とは値が食い違う。引用符で囲んだ要素の中の `#` は値。
+fn commented_keys(text: &str) -> Vec<(usize, &str)> {
+    let mut found = Vec::new();
+    for (i, line) in text.lines().enumerate().skip(1) {
+        if line == "---" {
+            break;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        let items: Vec<&str> = match value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+            Some(inner) => inner.split(',').map(str::trim).collect(),
+            None => vec![value],
+        };
+        let commented = items.iter().any(|item| {
+            !item.starts_with('"')
+                && item
+                    .char_indices()
+                    // YAML のコメントの前に置けるのは空白とタブだけ（全角の空白の後の # は値）
+                    .any(|(j, c)| c == '#' && (j == 0 || item[..j].ends_with([' ', '\t'])))
+        });
+        if commented {
+            found.push((i + 1, key.trim()));
+        }
+    }
+    found
 }
 
 /// `kind` の記録（`paths`）のうち、番号を予約したタグ（`reserved` は番号から slug へ）の slug と違う slug のもの
@@ -759,6 +917,58 @@ fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Fo
     }
 }
 
+/// 置き換えた ADR を前提にしたままなら見直す status（効いているか、まだ決める前）。
+const LIVE: [&str; 3] = ["accepted", "proposed", "deferred"];
+
+/// `adrs` のうち ADR `path` を `requires` に持ち、status が [`LIVE`] の ADR の番号と、`path` を置き換えた ADR の番号
+/// （`path` の `superseded-by` と、`supersedes` に `path` を挙げた ADR。片方だけのときの食い違いは [`check`] の違反）。
+/// 置き換えた ADR は古い ADR を前提に書いた新しい決定なので、見直す相手から除く。読めないフロントマターの ADR は
+/// 飛ばす（形の違反は [`check`] が示す）。
+pub fn superseded_dependents(adrs: &BTreeMap<String, String>, path: &str) -> (Vec<u32>, Vec<u32>) {
+    let front = |text: &str| parse_front_matter(text).ok();
+    let adr_items = |front: &FrontMatter, key: &str| -> BTreeSet<u32> {
+        front
+            .get(key)
+            .map(|v| v.items().into_iter().filter_map(single_adr).collect())
+            .unwrap_or_default()
+    };
+    let number = |p: &str| {
+        p.strip_prefix(ADR_DIR)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .and_then(record_number)
+    };
+    let (Some(old), Some(mut successors)) = (
+        number(path),
+        adrs.get(path)
+            .and_then(|t| front(t))
+            .map(|f| adr_items(&f, "superseded-by")),
+    ) else {
+        return (Vec::new(), Vec::new());
+    };
+    let others: Vec<(u32, FrontMatter)> = adrs
+        .iter()
+        .filter(|(p, _)| is_adr_path(p))
+        .filter_map(|(p, text)| Some((number(p)?, front(text)?)))
+        .collect();
+    successors.extend(
+        others
+            .iter()
+            .filter(|(_, f)| adr_items(f, "supersedes").contains(&old))
+            .map(|(n, _)| *n),
+    );
+    let dependents = others
+        .iter()
+        .filter(|(n, f)| {
+            *n != old
+                && !successors.contains(n)
+                && matches!(f.get("status"), Some(Value::Scalar(s)) if LIVE.contains(&s.as_str()))
+                && adr_items(f, "requires").contains(&old)
+        })
+        .map(|(n, _)| *n)
+        .collect();
+    (dependents, successors.into_iter().collect())
+}
+
 /// 決めた時点の記録（フロントマターの直せないキー、表題、必須の 3 節、決定の要因、各案の長所と短所）が変わったか（確定した ADR に許す変更を除いて比べる）。
 pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)
@@ -853,6 +1063,81 @@ pub fn confirmation_paths(text: &str) -> Vec<String> {
 }
 
 const CONFIRMATION_TITLES: [&str; 2] = ["確認", "Confirmation"];
+
+/// ADR `adr`（`tip` でのパス。中身は `text`）の「確認」の節に挙げたファイルのうち、`range` で ADR を最後に見直した
+/// コミットより後に、`tip` までに変わったもの（挙げた順）。実装を直したのに ADR が前の版のままになる食い違いを示す（#53）。
+/// design-records check と git-merge-state が同じ判定を使う。
+///
+/// - `git` は git を引数で実行し、標準出力を返す。`log.showSignature` は切る（署名の検証の行が hash の行に混ざる）
+/// - renumber のコミット（[`is_renumber_subject`]）は、見直しとしても実装の変更としても数えない。改名の前の版も辿る
+/// - `excluded`（既定ブランチ）から入った変更は、このブランチが実装を直したのではないので数えない
+/// - ADR と、`tip` のファイル（blob。`is_file`）でないもの（ディレクトリ、サブモジュール、コマンド、外のパス）は見ない
+pub fn stale_confirmations<E>(
+    git: &mut dyn FnMut(&[&str]) -> Result<String, E>,
+    range: &str,
+    tip: &str,
+    excluded: Option<&str>,
+    adr: &str,
+    text: &str,
+    is_file: &mut dyn FnMut(&str) -> Result<bool, E>,
+) -> Result<Vec<String>, E> {
+    const NO_SIGNATURE: [&str; 2] = ["-c", "log.showSignature=false"];
+    // 見るファイルが無ければ、履歴を辿らずに終える
+    let mut paths = Vec::new();
+    for path in confirmation_paths(text) {
+        if !is_adr_path(&path) && is_file(&path)? {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    // --invert-grep で除くと --follow がその改名を見ずに辿りやめるので、件名を見て選ぶ
+    let mut args = NO_SIGNATURE.to_vec();
+    args.extend(["log", "--follow", "--format=%H %s", range, "--", adr]);
+    let log = git(&args)?;
+    let Some(last) = log
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .find(|(_, subject)| !is_renumber_subject(subject))
+        .map(|(hash, _)| hash.to_string())
+    else {
+        return Ok(Vec::new());
+    };
+    let since = format!("^{last}");
+    let excluded = excluded.map(|e| format!("^{e}"));
+    let mut args = NO_SIGNATURE.to_vec();
+    args.extend([
+        "-c",
+        "core.quotePath=false",
+        "log",
+        "--format=%x01%s",
+        "--name-only",
+        // マージのコミットは既定では変更を出さない。--cc で、どの親とも違う（マージの中で直した）ファイルを出す
+        "--cc",
+        tip,
+        &since,
+    ]);
+    args.extend(excluded.as_deref());
+    args.push("--");
+    args.extend(paths.iter().map(String::as_str));
+    let log = git(&args)?;
+    // コミットごとに `\x01<件名>` の行と、変えたパスの行が続く
+    let changed: BTreeSet<&str> = log
+        .split('\x01')
+        .filter_map(|commit| {
+            let mut lines = commit.lines();
+            let subject = lines.next()?;
+            (!is_renumber_subject(subject)).then_some(lines)
+        })
+        .flatten()
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok(paths
+        .into_iter()
+        .filter(|p| changed.contains(p.as_str()))
+        .collect())
+}
 
 fn is_path_like(span: &str) -> bool {
     let name = span.rsplit('/').next().unwrap_or(span);

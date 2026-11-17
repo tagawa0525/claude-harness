@@ -95,10 +95,64 @@ fn reports_the_state_before_the_merge() {
         text(&out.stdout),
         format!(
             "TARGET: feat/x\nDEFAULT: main\nCOMMITS: 1\nBEHIND: 0\nSTACKED_ON: none\n\
-             TARGET_WORKTREE: {}\nDEFAULT_WORKTREE: none\nPROPOSED_ADRS: ADR-0001\n",
+             TARGET_WORKTREE: {}\nDEFAULT_WORKTREE: none\nPROPOSED_ADRS: ADR-0001\n\
+             STALE_CONFIRMATIONS: none\n",
             root.trim()
         )
     );
+}
+
+/// 「確認」に `src/impl.sh` と `src/` と `docs/adr/0001-a.md` を挙げた ADR-0002 を、実装の後に足したブランチ
+fn confirmed_branch(repo: &Repo) {
+    repo.write("src/impl.sh", "echo 1\n");
+    repo.commit("feat: impl");
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write(
+        "docs/adr/0002-b.md",
+        "---\nstatus: proposed\n---\n\n# B\n\n## 確認\n\n- `src/impl.sh` が 1 を出す。`src/` と \
+         `docs/adr/0001-a.md` も見る\n",
+    );
+    repo.commit("docs(adr): b");
+}
+
+fn stale_line(out: &Output) -> String {
+    text(&out.stdout)
+        .lines()
+        .find(|l| l.starts_with("STALE_CONFIRMATIONS:"))
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn lists_files_named_in_a_confirmation_that_changed_after_the_adr() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.write("docs/adr/0001-a.md", "---\nstatus: proposed\n---\n\n# A2\n");
+    repo.commit("fix: impl");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    // ディレクトリと ADR は見ない（design-records check の注意と同じ）
+    assert_eq!(
+        stale_line(&out),
+        "STALE_CONFIRMATIONS: ADR-0002:src/impl.sh"
+    );
+}
+
+#[test]
+fn an_adr_updated_after_the_files_it_names_is_not_stale() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.commit("fix: impl");
+    repo.write(
+        "docs/adr/0002-b.md",
+        "---\nstatus: accepted\n---\n\n# B\n\n## 確認\n\n- `src/impl.sh` が 2 を出す\n",
+    );
+    repo.commit("docs(adr): follow impl");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
 }
 
 #[test]
@@ -265,4 +319,94 @@ fn a_failed_ancestry_check_stops_instead_of_reporting_no_stack() {
         text(&out.stderr)
     );
     assert_eq!(text(&out.stdout), "");
+}
+
+#[test]
+fn a_renumber_commit_does_not_hide_earlier_changes_of_the_named_files() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.commit("fix: impl");
+    // design-records renumber が作るコミット（改名と表題の付け替え）
+    repo.git(&["mv", "docs/adr/0002-b.md", "docs/adr/0003-b.md"]);
+    repo.commit("docs: renumber ADR-0002 to ADR-0003");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        stale_line(&out),
+        "STALE_CONFIRMATIONS: ADR-0003:src/impl.sh"
+    );
+}
+
+#[test]
+fn changes_merged_from_the_default_branch_are_not_stale() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.git(&["switch", "-q", "main"]);
+    repo.write("src/impl.sh", "echo 3\n");
+    repo.commit("fix: impl on main");
+    repo.git(&["switch", "-q", "feat/x"]);
+    repo.git(&["merge", "-q", "--no-edit", "main"]);
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
+}
+
+#[test]
+fn a_submodule_named_in_a_confirmation_is_not_a_file() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    let head = repo.git(&["rev-parse", "HEAD"]);
+    let link = format!("160000,{},vendor/lib", head.trim());
+    repo.git(&["update-index", "--add", "--cacheinfo", &link]);
+    // 取ってきていないサブモジュールと同じく空のディレクトリを置く（無いと消した変更に見える）
+    std::fs::create_dir_all(repo.root.join("vendor/lib")).unwrap();
+    repo.git(&["commit", "-q", "-m", "chore: vendor"]);
+    repo.write(
+        "docs/adr/0002-b.md",
+        "---\nstatus: proposed\n---\n\n# B\n\n## 確認\n\n- `vendor/lib` を使う\n",
+    );
+    // add -A は作業ツリーに無い gitlink を消すので、ADR だけをステージする
+    repo.git(&["add", "docs/adr/0002-b.md"]);
+    repo.git(&["commit", "-q", "-m", "docs(adr): b names the submodule"]);
+    let other = repo.git(&["rev-parse", "HEAD~1"]);
+    let link = format!("160000,{},vendor/lib", other.trim());
+    repo.git(&["update-index", "--cacheinfo", &link]);
+    repo.git(&["commit", "-q", "-m", "chore: bump vendor"]);
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
+}
+
+#[test]
+fn the_references_a_renumber_commit_rewrites_are_not_a_change() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    // design-records renumber は、ブランチで足した行の参照も同じコミットで付け替える
+    repo.git(&["mv", "docs/adr/0002-b.md", "docs/adr/0003-b.md"]);
+    repo.write("src/impl.sh", "echo 1\n# ADR-0003\n");
+    repo.commit("docs: renumber ADR-0002 to ADR-0003");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
+}
+
+#[test]
+fn stale_confirmations_are_found_from_a_subdirectory() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.commit("fix: impl");
+    let out = forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+        .args(["script", "git-merge-state"])
+        .current_dir(repo.root.join("src"))
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        stale_line(&out),
+        "STALE_CONFIRMATIONS: ADR-0002:src/impl.sh"
+    );
 }

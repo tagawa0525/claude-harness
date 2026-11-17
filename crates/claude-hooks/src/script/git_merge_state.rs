@@ -19,6 +19,9 @@
 //! - `PROPOSED_ADRS: ADR-NNNN ...|none`: 対象のコミット（既定のブランチが無ければ全部）のうち、件名の型が feat か fix の
 //!   ものが本文の `Refs:` の行で挙げた ADR（カンマで区切った値のうち ADR-NNNN そのもの）で、対象の先端で
 //!   docs/adr/NNNN-*.md の status が proposed のもの（番号の順）。対象の先端に docs/adr が無ければ行を出さない
+//! - `STALE_CONFIRMATIONS: ADR-NNNN:<path> ...|none`: 対象のコミットで変えた ADR の「確認」の節に挙げたファイルのうち、
+//!   その ADR を最後に変えたコミットより後に変わったもの（決定、帰結、確認が今の実装と合うかを見直す）。PROPOSED_ADRS と
+//!   同じく、対象の先端に docs/adr が無ければ行を出さない
 //!
 //! 実装をマージするブランチは、実装した proposed の ADR を同じブランチで accepted にする。確定した ADR の凍結する部分は
 //! マージの後には「## 変更」でしか直せないので、マージの前に見落としを一覧にする（止めはしない。一部だけを実装した
@@ -66,6 +69,83 @@ fn yes_no(dir: &Path, args: &[&str]) -> Option<bool> {
 
 fn has_ref(dir: &Path, name: &str) -> Option<bool> {
     yes_no(dir, &["show-ref", "--verify", "--quiet", name])
+}
+
+/// `range` で変えた ADR（`names` は先端の docs/adr の名前）の「確認」の節に挙げたファイルのうち、その ADR を最後に変えた
+/// コミットより後に `tip` までに変わったもの（`ADR-NNNN:<パス>`。ADR とパスの順）。design-records check の同じ注意は
+/// pre-commit では渡したファイルの ADR にしか出ず、実装だけを直したコミットでは出ないので、マージの前にここで拾う。
+/// 判定は check と同じ [`design_records::check::stale_confirmations`] で、先端のファイル（blob）を木から 1 度だけ読む。
+/// git の失敗は None
+fn stale_confirmations(
+    dir: &Path,
+    range: &str,
+    tip: &str,
+    default: Option<&str>,
+    names: &str,
+) -> Option<Vec<String>> {
+    let changed = git(
+        dir,
+        &[
+            "-c",
+            "log.showSignature=false",
+            "-c",
+            "core.quotePath=false",
+            "log",
+            "--format=",
+            "--name-only",
+            range,
+            "--",
+            "docs/adr",
+        ],
+    )?;
+    let changed: BTreeSet<&str> = changed.lines().collect();
+    let adrs: Vec<(&str, String)> = names
+        .lines()
+        .map(|name| (name, format!("docs/adr/{name}")))
+        .filter(|(_, adr)| design_records::is_adr_path(adr) && changed.contains(adr.as_str()))
+        .collect();
+    let mut stale = Vec::new();
+    if adrs.is_empty() {
+        return Some(stale);
+    }
+    let tree = git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "ls-tree",
+            "-r",
+            "--full-tree",
+            tip,
+        ],
+    )?;
+    // `<mode> <type> <hash>\t<path>` のうち blob だけ（サブモジュールは commit）
+    let files: BTreeSet<&str> = tree
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(meta, _)| meta.split_whitespace().nth(1) == Some("blob"))
+        .map(|(_, path)| path)
+        .collect();
+    let excluded = default.map(|d| format!("refs/heads/{d}"));
+    for (name, adr) in adrs {
+        let text = git(dir, &["show", &format!("{tip}:{adr}")])?;
+        let paths = design_records::check::stale_confirmations(
+            &mut |args| git(dir, args).ok_or(()),
+            range,
+            tip,
+            excluded.as_deref(),
+            &adr,
+            &text,
+            &mut |path| Ok(files.contains(path)),
+        )
+        .ok()?;
+        stale.extend(
+            paths
+                .into_iter()
+                .map(|path| format!("ADR-{}:{path}", &name[..4])),
+        );
+    }
+    Some(stale)
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -320,6 +400,23 @@ pub fn main(args: &[String]) -> i32 {
                 "none".to_string()
             } else {
                 proposed.join(" ")
+            }
+        ));
+        // 確認の節のパスと `-- docs/adr` はリポジトリの直下からのパスなので、直下で問い合わせる（サブディレクトリから
+        // 呼ぶと、git は今のディレクトリから解く）
+        let Some(top) = git(dir, &["rev-parse", "--show-toplevel"]) else {
+            return failed("git rev-parse");
+        };
+        let top = Path::new(top.trim());
+        let Some(stale) = stale_confirmations(top, &range, &tip, default, &names) else {
+            return failed("git log");
+        };
+        out.push_str(&format!(
+            "STALE_CONFIRMATIONS: {}\n",
+            if stale.is_empty() {
+                "none".to_string()
+            } else {
+                stale.join(" ")
             }
         ));
     }

@@ -9,6 +9,7 @@
 #
 # 出力: TARGET、DEFAULT、COMMITS、BEHIND（既定ブランチが無ければ ROOT_COMMITS）、STACKED_ON、TARGET_WORKTREE、
 #   DEFAULT_WORKTREE、PROPOSED_ADRS（feat / fix のコミットが Refs: で挙げた、対象の先端で proposed の ADR。実装を
-#   マージするブランチは、同じブランチで accepted にする）
+#   マージするブランチは、同じブランチで accepted にする）、STALE_CONFIRMATIONS（対象で変えた ADR の確認の節のファイルの
+#   うち、その ADR より後に変わったもの）
 . "$(dirname "$0")/lib/claude-hooks-script.sh"
 claude_hooks_script git-merge-state "$@"
