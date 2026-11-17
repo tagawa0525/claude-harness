@@ -392,3 +392,22 @@ fn a_path_missing_from_the_main_worktree_is_noted_with_the_link_to_make_later() 
         "{note}"
     );
 }
+
+#[test]
+fn a_bad_worktreelink_does_not_offer_links_to_paths_missing_from_the_main_worktree() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.app().join("shared")).unwrap();
+    // token.txt は無視されるが、メイン worktree に無い（張ると壊れた symlink になる）
+    repo.write(".worktreelink", "shared\ntoken.txt\nnot-ignored\n");
+    repo.commit("add worktreelink");
+    let out = repo.run(&["feat/missing"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    let err = text(&out.stderr);
+    let (main_root, _) = roots(&repo, "feat/missing");
+    assert!(err.contains(&format!("ln -s {main_root}/shared ")), "{err}");
+    assert!(
+        !err.contains(&format!("ln -s {main_root}/token.txt ")),
+        "{err}"
+    );
+    assert!(err.contains("メイン worktree に token.txt が無い"), "{err}");
+}

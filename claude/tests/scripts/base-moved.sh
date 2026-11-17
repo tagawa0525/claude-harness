@@ -249,6 +249,18 @@ assert_eq 0 "$rc"
 assert_contains "$out" "WARN:"
 assert_contains "$out" "比較は未確認"
 
+it "base-moved: 進んだ件数を数えられなければ、BEHIND を出さずに未確認と出す"
+D=$(fixture first_parent_fails)
+commit_file "$D" src/a.txt "feat: a"
+in_other "$D" bash -c 'mkdir -p src && seq 3 > src/a.txt && git add src && git commit -q -m "feat: other a"'
+fail_git --first-parent 128
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>&1)
+rc=$?
+restore_git
+assert_eq 0 "$rc"
+assert_contains "$out" "UNVERIFIED:"
+assert_not_contains "$out" "BEHIND:"
+
 it "base-moved: merge-base が 1 以外で失敗したら、終了コードと stderr を出す（共通の祖先なしとは区別する）"
 D=$(fixture merge_base_fails)
 commit_file "$D" src/a.txt "feat: a"

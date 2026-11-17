@@ -463,6 +463,36 @@ fn a_crate_with_features_is_noted_before_its_cargo_checks() {
 }
 
 #[test]
+fn features_of_the_members_of_a_workspace_root_are_noted() {
+    let repo = Repo::new();
+    repo.commit("Cargo.toml", "[workspace]\nmembers = [\"crates/foo\"]\n");
+    repo.commit(
+        "crates/foo/Cargo.toml",
+        "[package]\nname = \"foo\"\n\n[features] # 任意の機能\nextra = []\n",
+    );
+    repo.tool("cargo");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).starts_with("NOTE: crates/foo/Cargo.toml に [features] がある"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn the_uncommitted_changes_are_listed_with_their_names_unquoted() {
+    let repo = Repo::new();
+    repo.git(&["checkout", "-q", "-b", "feat/x"]);
+    repo.commit("a.sh", "echo a\n");
+    repo.write("下書き.txt", "x\n");
+    let out = repo.run(&["--base", "main"], &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("?? 下書き.txt\n"), "{err}");
+}
+
+#[test]
 fn a_project_without_check_commands_or_features_gets_no_note() {
     let repo = Repo::new();
     repo.commit("CLAUDE.md", "# app\n\nテストは CI で回す\n");

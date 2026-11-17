@@ -6,6 +6,7 @@ use common::forget_git_env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// GitHub の origin を持ち、main にいるリポジトリ
 struct Repo {
@@ -20,8 +21,12 @@ impl Drop for Repo {
 
 impl Repo {
     fn new() -> Repo {
-        let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("guard-git-push-{}", std::process::id()));
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "guard-git-push-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let repo = Repo { root };
@@ -107,4 +112,20 @@ fn a_push_to_main_shows_how_to_move_the_commits_to_a_feature_branch() {
             "{command}: {reason}"
         );
     }
+}
+
+#[test]
+fn a_push_from_a_feature_branch_to_main_is_not_told_to_move_commits() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    // refspec で main を指す: コミットは main に無いので、push 先を直す
+    let reason = repo.deny_reason("git push origin feat/x:main").unwrap();
+    assert!(!reason.contains("/git-cherry-pick"), "{reason}");
+    assert!(reason.contains("git push origin feat/x"), "{reason}");
+    // 上流が main: 上流を直す
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    repo.git(&["branch", "-q", "--set-upstream-to=origin/main", "feat/x"]);
+    let reason = repo.deny_reason("git push").unwrap();
+    assert!(!reason.contains("/git-cherry-pick"), "{reason}");
+    assert!(reason.contains("git push -u origin feat/x"), "{reason}");
 }

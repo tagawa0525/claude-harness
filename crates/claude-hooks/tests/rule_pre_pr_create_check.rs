@@ -142,3 +142,26 @@ fn other_gh_commands_get_no_next_steps() {
     let repo = Repo::new();
     assert!(repo.hook("gh pr view --json url").is_null());
 }
+
+#[test]
+fn the_next_steps_defer_to_the_delegate_rules_for_workers() {
+    let repo = Repo::new();
+    let out = repo.hook(CREATE);
+    let context = out["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(context.contains("/delegate の担当"), "{context}");
+}
+
+#[test]
+fn a_pr_from_a_fork_gets_no_next_steps() {
+    let repo = Repo::new();
+    repo.git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/other/app.git",
+    ]);
+    let out = repo.hook(CREATE);
+    assert!(out.is_null(), "{out}");
+}
