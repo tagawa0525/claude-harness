@@ -1,7 +1,7 @@
 //! `claude-hooks script dictionary-preview --dictionary <辞書> [--base <辞書>]` が、セッションの記録のアシスタントの発言と
 //! メモリに辞書の検査（ja-terms check）をかけ、置き換えを種類ごとに件数と例つきで出すことを確かめる
 //! （`~/.claude/scripts/dictionary-preview.sh` が呼ぶ）。ja-terms は偽のコマンド（examples/fake_tool.rs）にする。
-//! 本物の辞書での確認は `modules/home/parts/tests/ja-terms.sh` がする
+//! 本物の辞書での確認は `nix/tests/ja-terms.sh` がする
 
 mod common;
 

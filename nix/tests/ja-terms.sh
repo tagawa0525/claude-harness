@@ -824,7 +824,7 @@ printf -- '---\nname: a\n---\n\n端のケースを足す。\n' > "$PROJ/p1/memor
 BASE_DICT="$WORK/base.yml"
 printf 'version: 1\nrules:\n  - expected: エッジケース\n    pattern: 端のケース\n' > "$BASE_DICT"
 rc=0
-"$PREVIEW" --dictionary "$ROOT/modules/home/parts/ja-terms/prh.yml" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
+"$PREVIEW" --dictionary "$ROOT/crates/ja-terms/prh.yml" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
 want="SOURCES: transcripts=1 utterances=3 memory=1
 HIT: 1 確かめ => 確認
   😀 【確かめ】の結果を書く。
@@ -835,7 +835,7 @@ else
   ng "dictionary-preview: 出力が違う（終了コード $rc）"
 fi
 rc=0
-"$PREVIEW" --dictionary "$ROOT/modules/home/parts/ja-terms/prh.yml" --base "$BASE_DICT" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
+"$PREVIEW" --dictionary "$ROOT/crates/ja-terms/prh.yml" --base "$BASE_DICT" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
 want="SOURCES: transcripts=1 utterances=3 memory=1
 NEW: 1 確かめ => 確認
   😀 【確かめ】の結果を書く。
@@ -846,7 +846,7 @@ else
   ng "dictionary-preview: 比較元との差が違う（終了コード $rc）"
 fi
 rc=0
-"$PREVIEW" --dictionary "$BASE_DICT" --base "$ROOT/modules/home/parts/ja-terms/prh.yml" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
+"$PREVIEW" --dictionary "$BASE_DICT" --base "$ROOT/crates/ja-terms/prh.yml" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
 if [ "$rc" = 0 ] && grep -qx 'GONE: 1 確かめ => 確認' "$WORK/out"; then
   ok "dictionary-preview: 比較元だけにある指摘を GONE: で出す"
 else

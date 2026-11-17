@@ -11,8 +11,8 @@
 #
 # 使いどころ: 辞書の規則を足す・変える PR で、置き換えた後の文を読み、活用の崩れや別の語の一部への一致を見つける
 # （specs は書いた人が思いついた例しか見ない）。比較元は、変える前の辞書を書き出して渡す。例:
-#   git show origin/main:modules/home/parts/ja-terms/prh.yml > "$TMPDIR/base.yml"
-#   dictionary-preview.sh --dictionary modules/home/parts/ja-terms/prh.yml --base "$TMPDIR/base.yml"
+#   git show origin/main:crates/ja-terms/prh.yml > "$TMPDIR/base.yml"
+#   dictionary-preview.sh --dictionary crates/ja-terms/prh.yml --base "$TMPDIR/base.yml"
 #
 # 出力:
 #   SOURCES: transcripts=<記録の数> utterances=<発言の行の数> memory=<メモリのファイルの数>
