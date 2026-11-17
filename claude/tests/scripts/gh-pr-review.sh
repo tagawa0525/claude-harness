@@ -1,0 +1,1204 @@
+#!/usr/bin/env bash
+# Copilot レビューの周回（gh-pr-review/scripts/*.sh / gh-wait-review.sh） のテスト
+#
+# 実行: bash claude/tests/scripts/gh-pr-review.sh（まとめて実行: bash claude/tests/scripts.sh）
+#
+# 実物の gh・ruff 等は使わず、make_fake_tool で PATH 先頭に置いた偽コマンドで
+# 「スクリプトが何を呼び、出力をどう判定するか」を検証する。
+
+# 中身を claude-hooks script に移したスクリプト（ADR-0087）は、ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
+REAL_CLAUDE_HOOKS="$CLAUDE_HOOKS_BIN"
+
+source "$(dirname "$0")/../lib.sh"
+
+REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
+
+# 対象の PR は URL で渡す。リポジトリは URL から GH_REPO に入り、gh api の {owner} / {repo} も
+# それで解決される。cwd は git のリポジトリでない場所にして、cwd に頼らないことを確かめる。
+# 偽 gh に repo view の分岐は置かないので、呼べば unexpected で失敗する
+PR_URL="https://github.com/octo/repo/pull/1"
+# decide-next.sh と request-rereview.sh は、記録の判定を claude-hooks local-review-covers に任せる（判定そのものは
+# hooks.sh が本物のバイナリで確かめる）。ここでは偽物を置き、既定では偽 gh の記録（「SHA High の数」の行）から head の
+# 最後の記録が High 0 かだけを見る。記録を取得できなければ 3。rebase だけの判定は、テストごとに偽物を置き直す。
+# script は本物に渡し、ほかのサブコマンドは使い方の誤り（2）にする（スクリプトが想定外のサブコマンドを呼べば落ちる）
+fake_hooks_exact() {
+  mkdir -p "$TEST_ROOT/fakebin"
+  : >"$TEST_ROOT/claude-hooks.log"
+  # 本物のパスは、引用符や $ を含んでも壊れないよう %q で埋める
+  local real
+  printf -v real '%q' "$REAL_CLAUDE_HOOKS"
+  cat >"$TEST_ROOT/fakebin/claude-hooks" <<FAKE
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$TEST_ROOT/claude-hooks.log"
+[[ "\$1" == script ]] && exec $real "\$@"
+[[ "\$1" == local-review-covers ]] || exit 2
+records=\$(gh api --paginate "repos/{owner}/{repo}/issues/\$3/comments?per_page=100" --jq local-review) || exit 3
+awk -v h="\$4" '\$1 == h { c = (\$2 == "0") } END { exit !c }' <<<"\$records"
+FAKE
+  chmod +x "$TEST_ROOT/fakebin/claude-hooks"
+}
+# fake_hooks_covers <case の行>: local-review-covers の答えをテストごとに決める偽物。script は本物に渡す
+# （decide-next.sh が呼ぶ get-review-comments.sh や gh-review-requests.sh も claude-hooks を起動する）
+fake_hooks_covers() {
+  local real
+  printf -v real '%q' "$REAL_CLAUDE_HOOKS"
+  make_fake_tool claude-hooks "script\ *) exec $real \"\$@\" ;;
+$1"
+}
+fake_hooks_exact
+export CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/claude-hooks"
+PR7_URL="https://github.com/octo/repo/pull/7"
+mkdir -p "$TEST_ROOT/elsewhere"
+cd "$TEST_ROOT/elsewhere" || exit 1
+
+# ===========================================================================
+# 対象の PR は URL で受ける（ADR-0032）
+# ===========================================================================
+# 番号だけだと cwd のリポジトリの PR として読まれ、cd の付け忘れで別のリポジトリの PR を読み書きする
+
+# 第 1 引数のほかは、各スクリプトの正しい数の引数を渡す（引数の数の検査で止まらず、URL の検査まで届くように）
+declare -A REST_ARGS=(
+  [get-pr-info.sh]="" [get-review-comments.sh]="--unresolved" [get-latest-review.sh]=""
+  [decide-next.sh]="" [resolve-thread.sh]="11" [reply-to-comment.sh]="11 body"
+  [request-rereview.sh]="" [reset-rounds.sh]="reason" [gh-wait-review.sh]=""
+  [gh-review-requests.sh]="" [record-local-review.sh]="def5678 0 0 0"
+)
+for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comments.sh" \
+  "$REVIEW_SCRIPTS/get-latest-review.sh" "$REVIEW_SCRIPTS/decide-next.sh" \
+  "$REVIEW_SCRIPTS/resolve-thread.sh" "$REVIEW_SCRIPTS/reply-to-comment.sh" \
+  "$REVIEW_SCRIPTS/request-rereview.sh" "$REVIEW_SCRIPTS/reset-rounds.sh" \
+  "$REVIEW_SCRIPTS/record-local-review.sh" \
+  "$SCRIPTS_DIR/gh-wait-review.sh" "$SCRIPTS_DIR/gh-review-requests.sh"; do
+  read -ra rest <<<"${REST_ARGS[$(basename "$script")]}"
+  # owner と repo は案内のコマンドに書くので、GitHub の名前に使えない文字（; や空白）を含む URL も拒む
+  # . と .. の名前も拒む（gh api の {owner}/{repo} に入り、API のパスを上に辿る）
+  for arg in "" 1 "https://github.com/octo/repo/issues/1" "https://example.com/octo/repo/pull/1" \
+    "https://github.com/evil;echo_PWN/repo/pull/1" "https://github.com/octo/re po/pull/1" \
+    "https://github.com/../x/pull/1" "https://github.com/octo/./pull/1"; do
+    it "$(basename "$script"): PR の URL でない第 1 引数（'$arg'）は gh を呼ばずにエラー"
+    make_fake_gh '"auth status"*) ;;'
+    out=$("$script" "$arg" "${rest[@]}" 2>&1)
+    assert_ne 0 $?
+    assert_contains "$out" "PR の URL"
+    assert_not_contains "$(fake_log gh)" "api"
+    assert_not_contains "$(fake_log gh)" "pr "
+  done
+done
+
+for url in "https://github.com/octo/repo/pull/42/files" "https://github.com/octo/repo/pull/42/commits" \
+  "https://github.com/octo/repo/pull/42?notification_referrer_id=x"; do
+  it "get-pr-info: PR の下のページやクエリの付いた URL（$url）も PR の URL として受ける"
+  make_fake_gh '"pr view 42 --json"*) echo "{\"number\":42}" ;;'
+  out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "$url")
+  assert_eq 0 $?
+  assert_eq github.com/octo/repo "$(fake_gh_repos)"
+done
+
+for url in "$PR_URL#discussion_r111" "$PR_URL/files#r111"; do
+  it "reply-to-comment: # の付いた URL（$url）は、comment_id と取り違えないよう gh を呼ばずにエラー"
+  make_fake_gh '"api"*) echo "{}" ;;'
+  out=$("$REVIEW_SCRIPTS/reply-to-comment.sh" "$url" 222 "Fixed" 2>&1)
+  assert_ne 0 $?
+  assert_not_contains "$(fake_log gh)" "api"
+done
+
+it "reply-to-comment: sh から claude-hooks に引数をそのまま渡し、空白を含む本文を 1 つの body で返信する"
+make_fake_gh '"api"*) echo "{\"id\":222}" ;;'
+out=$("$REVIEW_SCRIPTS/reply-to-comment.sh" "$PR_URL" 111 "Fixed in abc.")
+assert_eq 0 $?
+assert_eq '{"id":222}' "$out"
+assert_contains "$(fake_log gh)" "api repos/{owner}/{repo}/pulls/1/comments/111/replies -f body=Fixed in abc. --jq"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
+
+# 中身を claude-hooks script に移したスクリプト（ADR-0087）は、claude-hooks が無ければ（claude-sync だけでバイナリを
+# 入れていない、Windows で cargo install の前）入れ方を示して止める。sh の `exec: not found` だけでは、何を入れるかが分からない
+for script in get-latest-review.sh get-pr-info.sh get-review-comments.sh record-local-review.sh reply-to-comment.sh request-rereview.sh reset-rounds.sh resolve-thread.sh; do
+  it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+  make_fake_gh '*) echo "{}" ;;'
+  read -ra rest <<<"${REST_ARGS[$script]}"
+  out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$REVIEW_SCRIPTS/$script" "$PR_URL" "${rest[@]}" 2>&1)
+  assert_eq 127 $?
+  assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
+  assert_contains "$out" "rebuild"
+  assert_contains "$out" "cargo install"
+  assert_not_contains "$(fake_log gh)" "api"
+done
+
+for script in gh-review-requests.sh gh-wait-review.sh; do
+  it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
+  make_fake_gh '*) echo "{}" ;;'
+  out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/$script" "$PR_URL" 2>&1)
+  assert_eq 127 $?
+  assert_contains "$out" "$TEST_ROOT/missing/claude-hooks がありません"
+  assert_not_contains "$(fake_log gh)" "api"
+done
+
+it "移したスクリプト: Windows の .exe の付いた claude-hooks も、在るものとして起動する"
+# Windows の claude-hooks は .exe の付いた名前で入る。.exe だけがあれば、それを起動する
+mkdir -p "$TEST_ROOT/exe-only"
+printf '#!/bin/sh\necho "ran $*"\n' >"$TEST_ROOT/exe-only/claude-hooks.exe"
+chmod +x "$TEST_ROOT/exe-only/claude-hooks.exe"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/exe-only/claude-hooks" "$REVIEW_SCRIPTS/get-pr-info.sh" "$PR_URL" 2>&1)
+assert_eq 0 $?
+assert_eq "ran script get-pr-info $PR_URL" "$out"
+
+# ===========================================================================
+# gh-pr-review/scripts/get-pr-info.sh: コメント URL の解析
+# ===========================================================================
+
+it "get-pr-info: コメント URL から PR 番号とコメント ID を取り出し PR 情報に添える"
+make_fake_gh '"pr view 42 --json"*) echo "{\"number\":42,\"title\":\"t\"}" ;;'
+out=$(GH_HOST=ghe.example.com "$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42#discussion_r123456")
+assert_eq 0 $?
+assert_eq 42 "$(jq -r .number <<<"$out")"
+assert_eq 123456 "$(jq -r .comment_id <<<"$out")"
+
+it "get-pr-info: URL のリポジトリを GH_REPO で、ホストを GH_HOST で gh に渡す（環境の GH_HOST に向かない）"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
+
+it "get-pr-info: レビューコメントでない # の URL（#issuecomment-1）は comment_id が null"
+out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42#issuecomment-1")
+assert_eq 0 $?
+assert_eq null "$(jq -r .comment_id <<<"$out")"
+
+it "get-pr-info: PR の URL（コメントなし）は comment_id が null"
+out=$("$REVIEW_SCRIPTS/get-pr-info.sh" "https://github.com/octo/repo/pull/42")
+assert_eq null "$(jq -r .comment_id <<<"$out")"
+
+# ===========================================================================
+# gh-pr-review/scripts/get-review-comments.sh: 投稿者が bot か人間かを user_type で返す
+# ===========================================================================
+# resolve の可否（bot のスレッドは対応後に resolve、人間のスレッドは返信のみ）を
+# SKILL.md で判断するため、GraphQL の author.__typename（Bot / User）をそのまま出す
+
+BOT_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-01T00:00:00Z","url":"u1","replyTo":null}]}}'
+HUMAN_THREAD='{"id":"T2","isResolved":false,"isOutdated":false,"path":"b.txt","line":5,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":22,"id":"C2","body":"why?","author":{"__typename":"User","login":"alice"},"createdAt":"2026-09-01T00:01:00Z","url":"u2","replyTo":null}]}}'
+
+it "get-review-comments: 各コメントに user_type（Bot / User）を付ける"
+make_fake_gh "\"api graphql --paginate\"*) printf '%s\n' '$BOT_THREAD' '$HUMAN_THREAD' ;;"
+out=$("$REVIEW_SCRIPTS/get-review-comments.sh" "$PR_URL")
+assert_eq 0 $?
+assert_eq Bot "$(jq -r '.[] | select(.id == 11) | .user_type' <<<"$out")"
+assert_eq User "$(jq -r '.[] | select(.id == 22) | .user_type' <<<"$out")"
+
+it "get-review-comments: owner / name は gh の {owner} / {repo} に解決させる"
+assert_contains "$(fake_log gh)" "-F owner={owner} -F name={repo}"
+
+# ===========================================================================
+# gh-pr-review/scripts/resolve-thread.sh: 人間のスレッドは既定で resolve しない
+# ===========================================================================
+# スレッドを閉じるのはレビュアーの権限。bot（Copilot 等）のスレッドは対応後に resolve するが、
+# 人間が起こしたスレッドは返信だけにして相手に委ねる。明示的に --allow-human を付けたときだけ resolve する
+
+# fake_gh_threads <threads_json>: resolve-thread.sh が読む reviewThreads と mutation を偽装する
+fake_gh_threads() {
+  make_fake_gh "\"api graphql -F owner=\"*) echo '$1' ;;
+  \"api graphql -F id=\"*) echo 'resolved' ;;"
+}
+THREADS='{"pageInfo":{"hasNextPage":false},"nodes":[
+  {"id":"T1","isResolved":false,"comments":{"nodes":[{"databaseId":11,"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]}},
+  {"id":"T2","isResolved":false,"comments":{"nodes":[{"databaseId":22,"author":{"__typename":"User","login":"alice"}},{"databaseId":23,"author":{"__typename":"User","login":"me"}}]}}
+]}'
+
+it "resolve-thread: bot が起こしたスレッドは resolve する"
+fake_gh_threads "$THREADS"
+out=$("$REVIEW_SCRIPTS/resolve-thread.sh" "$PR_URL" 11)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "-F id=T1"
+
+it "resolve-thread: owner / name は gh の {owner} / {repo} に解決させる"
+assert_contains "$(fake_log gh)" "-F owner={owner} -F name={repo}"
+
+it "resolve-thread: 人間が起こしたスレッドは既定では resolve せず exit 1（mutation を呼ばない）"
+fake_gh_threads "$THREADS"
+err=$("$REVIEW_SCRIPTS/resolve-thread.sh" "$PR_URL" 23 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "--allow-human"
+assert_not_contains "$(fake_log gh)" "-F id="
+
+it "resolve-thread: --allow-human を付ければ人間のスレッドも resolve する"
+fake_gh_threads "$THREADS"
+out=$("$REVIEW_SCRIPTS/resolve-thread.sh" "$PR_URL" 22 --allow-human)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "-F id=T2"
+
+# ===========================================================================
+# gh-pr-review/scripts/request-rereview.sh: 要求の手順と記録の判定は、claude-hooks の結合テスト
+# （tests/script_request_rereview.rs）が確かめる。ここでは sh から呼べることを、引数と URL の検査（上の繰り返し）と
+# バイナリが無いときの案内で確かめる
+# ===========================================================================
+
+# ===========================================================================
+# gh-pr-review/scripts/record-local-review.sh: ローカルレビューの結果を PR に残す
+# ===========================================================================
+# Copilot に再依頼する前と、再依頼せずに終える前に、head をローカルの /code-review にかけた
+# ことと、重大度ごとの件数を残す。decide-next.sh、request-rereview.sh、pre-merge-check が読む
+
+it "record-local-review: レビューした SHA と重大度ごとの件数を印にしたコメントを PR に付ける"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
+  "pr comment 1 --body"*) ;;'
+"$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 2 0
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "<!-- local-review sha=def5678 high=1 medium=2 low=0 -->"
+
+it "record-local-review: 件数が数でなければ、コメントを付けずに使い方を出してエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 x 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: head を取得できなければ、コメントを付けずにエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) exit 1 ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 0 0 0 2>&1)
+assert_eq 1 $?
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: レビューした SHA が PR の head でなければ、コメントを付けずにエラー"
+# レビューの後に head が動いた（push、自動の修正）なら、その head はレビューしていない
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" abc1234 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: リポジトリに push できなければ（上流の PR）、コメントを付けずにエラー"
+# 書き込めない人の記録は読む側が数えないので、付けても効かず、相手の PR を汚すだけ
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo false ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: 権限を問い合わせられなければ、push できないとは言わずにエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo "gh: HTTP 502" >&2; exit 1 ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "権限を取得できませんでした"
+assert_not_contains "$out" "push できない"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: 件数の先頭に 0 があれば、コメントを付けずに使い方を出してエラー"
+# 読む側は high=0 の字面で比べるので、high=00 は High のある記録に見える
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 00 1 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: SHA が 16 進の文字列でなければ、コメントを付けずに使い方を出してエラー"
+make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" HEAD 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+assert_not_contains "$(fake_log gh)" "pr comment"
+
+# ===========================================================================
+# gh-pr-review/scripts/decide-next.sh: 周回と応答はレビュー要求とレビュー提出で数える
+# ===========================================================================
+# Copilot のコメント（swe-agent の「対応を確認しました」等）はレビューではないので
+# 周回を終わらせない。数えるのは Copilot へのレビュー要求とレビュー提出だけにする
+
+# 未解決／解決済みのレビュースレッド（GraphQL reviewThreads の 1 ノード）
+OPEN_THREAD='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
+OPEN_THREAD_WITH_REPLY='{"id":"T1","isResolved":false,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null},{"databaseId":12,"id":"C2","body":"Fixed in abc","author":{"__typename":"User","login":"me"},"createdAt":"2026-09-08T02:40:00Z","url":"u2","replyTo":{"databaseId":11}}]}}'
+DONE_THREAD='{"id":"T1","isResolved":true,"isOutdated":false,"path":"a.txt","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":11,"id":"C1","body":"fix this","author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"createdAt":"2026-09-08T02:30:00Z","url":"u1","replyTo":null}]}}'
+
+# fake_gh_decide <review_submitted_at> [head_sha] [reviewed_sha] [thread] [files] [resets] [locals]
+# レビュー要求2件（00:00 と 02:00）・レビュー1件（インライン指摘2件）の PR を模す。
+# 既定では head とレビュー対象が一致し、スレッドは解決済み。
+# files は PR の変更ファイルを出力するコマンド（既定はコードのファイル 1 件）。
+# gh pr view --json files は先頭 100 件で切れるので、ページングする REST API で取る
+# resets は周回を数え直した印のコメントの時刻を出力するコマンド（既定は無し）
+# locals はローカルレビューの記録の「SHA High の数」を出力するコマンド（既定は対応を push した head の def5678）。
+# レビューの本文は v2 の形でないので、重大度は分からない（High が残るとみなす）
+fake_gh_decide() {
+  local head="${2:-abc1234}" reviewed="${3:-abc1234}" thread="${4:-$DONE_THREAD}"
+  local files="${5:-echo a.txt}" resets="${6:-true}" locals="${7:-echo def5678 0}"
+  make_fake_gh "\"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
+  \"pr view 1 --json headRefOid\"*) echo $head ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) echo '{\"id\":9,\"state\":\"COMMENTED\",\"body\":\"### 🟡 Changes recommended\"}' ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) printf '%s\n' 101 102 ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo \"$1 $reviewed\" ;;
+  \"api graphql --paginate\"*) echo '$thread' ;;"
+}
+
+it "decide-next: ROUND は Copilot へのレビュー要求の件数で数える"
+fake_gh_decide 2026-09-08T03:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "ROUND: 2"
+assert_contains "$out" "RESPONSE: review"
+assert_contains "$out" "INLINE_COMMENTS: 2"
+
+it "decide-next: 下請けのスクリプトの gh も URL のリポジトリに向く"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
+
+it "decide-next: 未解決スレッドがあれば ACT（対応する）"
+fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "UNRESOLVED: 1"
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: UNRESOLVED はスレッド数（返信を数えない）"
+# get-review-comments.sh はスレッド内のコメントをフラットに返すので、
+# 素朴に数えると返信の分だけ多くなる
+fake_gh_decide 2026-09-08T03:00:00Z abc1234 abc1234 "$OPEN_THREAD_WITH_REPLY"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "UNRESOLVED: 1"
+
+it "decide-next: 未解決が残っていれば、push 済みでもまず ACT（対応が先）"
+# 一部だけ直して push した状態。未対応のまま再レビューを要求しない
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "UNRESOLVED: 1"
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: 対応を push した head にローカルレビューの記録があれば、Copilot に出さず STOP_LOCAL_REVIEWED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: 文書（docs/）だけの PR は、対応を push しても再レビューを要求せず STOP_DOCS_REVIEWED"
+# 文章は細部をいくらでも掘れるので、最初のレビューで指摘を受けたら周回を止める
+# （hook の pre-merge-check も同じ条件で再レビューを求めない）
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/plans/010_x.md docs/plans/sub/011_y.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: ADR（docs/adr/）だけの PR も STOP_DOCS_REVIEWED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/adr/0004-x.md docs/issues/y.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: 文書だけの PR でも、未解決スレッドが残っていればまず ACT"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$OPEN_THREAD" 'echo docs/adr/0004-x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: docs/ 以外のファイルも含む PR は、文書だけとみなさず LOCAL_REVIEW_NEEDED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs/adr/0004-x.md src/docs/x.md' true true
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: docs/ に似た別の場所（docs.md、docs-extra/）は文書として扱わない"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'printf "%s\n" docs.md docs-extra/x.md' true true
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: src/ から docs/ への移動は、旧パスも数えて文書だけとみなさず LOCAL_REVIEW_NEEDED"
+# files API は移動の旧パスを previous_filename で返す。要求していなければ docs/ だけに見える
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'case "$*" in *previous_filename*) printf "%s\n" docs/foo.md src/foo.rs ;; *) echo docs/foo.md ;; esac' true true
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: 変更ファイルを取得できなければ、文書だけとみなさず LOCAL_REVIEW_NEEDED"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'exit 1' true true
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: 周回の上限は無い（MAX_ROUNDS を出さず、--max-rounds を受けない）"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_not_contains "$out" "MAX_ROUNDS"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" --max-rounds 2 2>&1)
+assert_eq 1 $?
+
+it "decide-next: 周回を数え直した印があれば、それより後の要求だけを数える"
+# ユーザーの追加の要望に対応した変更は、新しい周回として数える（reset-rounds.sh）
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'echo 2026-09-08T01:00:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "ROUND: 1"
+
+it "decide-next: 印は書き込みの権限を持つ人のコメントだけを受け付ける"
+# PR にコメントできる第三者が印を付けて上限を外せないようにする
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'echo 2026-09-08T01:00:00Z'
+"$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" >/dev/null
+assert_contains "$(fake_log gh)" "author_association"
+
+it "decide-next: 印が複数あれば最後の印から数える"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' \
+  'printf %s\\n 2026-09-07T00:00:00Z 2026-09-08T02:30:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "ROUND: 0"
+
+it "decide-next: 印のコメントを取得できなければ、周回を数えずにエラー"
+fake_gh_decide 2026-09-08T03:00:00Z def5678 abc1234 "$DONE_THREAD" 'echo a.txt' 'exit 1'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+
+it "reset-rounds: 理由を書いた印のコメントを PR に付ける"
+make_fake_gh '"pr comment 7 --body"*) ;;'
+"$REVIEW_SCRIPTS/reset-rounds.sh" "$PR7_URL" "ユーザーの追加の要望（エスケープ）に対応した"
+assert_eq 0 $?
+log=$(fake_log gh)
+assert_contains "$log" "<!-- review-rounds-reset -->"
+assert_contains "$log" "ユーザーの追加の要望（エスケープ）に対応した"
+
+it "reset-rounds: 理由がなければ使い方を出してエラー"
+out=$("$REVIEW_SCRIPTS/reset-rounds.sh" "$PR7_URL" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "Usage:"
+
+it "decide-next: 指摘に対応済み（未解決ゼロ・head レビュー済み）なら STOP_DECLINED"
+# 全件 decline のように push を伴わない対応で終わった周。再度要求しても同じ
+# レビューが返るだけなので、依頼せず終了する
+fake_gh_decide 2026-09-08T03:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "HEAD_REVIEWED: yes"
+assert_contains "$out" "UNRESOLVED: 0"
+assert_contains "$out" "VERDICT: STOP_DECLINED"
+
+it "decide-next: 要求後にレビューが来ていなければ WAITING（Copilot のコメントは応答に数えない）"
+fake_gh_decide 2026-09-08T01:00:00Z
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "RESPONSE: none"
+assert_contains "$out" "VERDICT: WAITING"
+assert_not_contains "$out" "COMMENT_ONLY"
+
+it "decide-next: 要求後のレビューが未着でも、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED（待たない）"
+fake_gh_decide 2026-09-08T01:00:00Z def5678 abc1234
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "RESPONSE: none"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: レビューが未着で記録があっても、未解決スレッドがあればまず ACT"
+fake_gh_decide 2026-09-08T01:00:00Z def5678 abc1234 "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: ACT"
+
+# ===========================================================================
+# gh-wait-review.sh: 待つのはレビュー提出だけ
+# ===========================================================================
+# Copilot のコメント（swe-agent の応答）で待機を打ち切ると、レビューが来ていないのに
+# 「応答あり」になる。待機間隔は GH_WAIT_INTERVALS で上書きできる（テスト用）
+
+# fake_gh_wait <copilot_review_at> [review_requested_at] [failed_check_runs] [lag_reads]
+# copilot_review_at に提出された Copilot のレビューが 1 件ある PR を模す。
+# review_requested_at に "" を渡すと「レビュー要求なし」の PR を模す。
+# failed_check_runs は head の Copilot チェックのうち失敗した件数（既定 0）
+# lag_reads は要求が timeline に現れるまでの空振り回数（既定 0）。PR 作成時の
+# 自動要求は作成の 1〜5 秒後に記録される（PR #239〜#241 で実測）
+# レビュー一覧は gh が返す JSON の形で渡し、絞り込みはスクリプト側の jq に任せる
+fake_gh_wait() {
+  local requested="${2-2026-09-08T00:00:00Z}"
+  local failed_runs="${3:-0}"
+  local lag_reads="${4:-0}"
+  local timeline="echo $requested"
+  [[ -z "$requested" ]] && timeline=":"
+  rm -f "$TEST_ROOT/timeline_reads"
+  if (( lag_reads > 0 )); then
+    timeline="echo x >> \"$TEST_ROOT/timeline_reads\"; if [ \$(wc -l < \"$TEST_ROOT/timeline_reads\") -gt $lag_reads ]; then $timeline; fi"
+  fi
+  jq -n --arg at "$1" \
+    '{reviews: [{author: {login: "copilot-pull-request-reviewer"}, state: "COMMENTED", submittedAt: $at}]}' \
+    > "$TEST_ROOT/reviews.json"
+  make_fake_gh "\"auth status\"*) ;;
+  \"pr view 1 --json number\"*) echo '{\"number\":1}' ;;
+  \"pr view 1 --json reviews\"*) cat \"$TEST_ROOT/reviews.json\" ;;
+  \"pr view 1 --json headRefOid\"*) echo abc ;;
+  \"api --paginate repos/{owner}/{repo}/commits/abc/check-runs?per_page=100\"*) seq 0 $failed_runs | tail -n +2 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) $timeline ;;"
+}
+
+# add_review <login> <submitted_at>: fake_gh_wait のレビュー一覧にレビューを 1 件足す
+add_review() {
+  jq --arg login "$1" --arg at "$2" \
+    '.reviews += [{author: {login: $login}, state: "COMMENTED", submittedAt: $at}]' \
+    "$TEST_ROOT/reviews.json" > "$TEST_ROOT/reviews.json.new"
+  mv "$TEST_ROOT/reviews.json.new" "$TEST_ROOT/reviews.json"
+}
+
+# add_review_without_author <submitted_at>: author が null のレビューを足す
+# （投稿者のアカウントが削除されたレビューなど）
+add_review_without_author() {
+  jq --arg at "$1" '.reviews += [{author: null, state: "COMMENTED", submittedAt: $at}]' \
+    "$TEST_ROOT/reviews.json" > "$TEST_ROOT/reviews.json.new"
+  mv "$TEST_ROOT/reviews.json.new" "$TEST_ROOT/reviews.json"
+}
+
+it "gh-wait-review: 基準時刻より新しいレビュー提出で成功する"
+fake_gh_wait 2026-09-08T01:00:00Z
+out=$("$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL" --since 2026-09-08T00:00:00Z)
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着"
+
+it "gh-wait-review: --since 省略時は最後のレビュー要求以降のレビューを待つ"
+# 要求(02:00)より後のレビュー(03:00)が既にあるので、待たずに成功する。
+# これにより request-rereview.sh のあとに続けて呼んでも無害になる
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+out=$(GH_WAIT_INTERVALS=0 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着"
+
+it "gh-wait-review: cwd が GitHub のリポジトリでなくても、URL のリポジトリの PR を待つ"
+assert_eq github.com/octo/repo "$(fake_gh_repos)"
+
+it "gh-wait-review: PR 作成直後で自動要求が未記録でも、記録を待ってから待機に入る"
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z 0 2
+out=$(GH_WAIT_INTERVALS=0 GH_WAIT_REQUEST_INTERVALS="0 0 0" "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "最後のレビュー要求は 2026-09-08T02:00:00Z"
+
+it "gh-wait-review: レビュー要求が無ければ待たずにエラーで終わる"
+# 要求していないレビューは来ない。待つ意味がないので短い確認のあと理由を出して止まる
+fake_gh_wait 2026-09-08T03:00:00Z ""
+out=$(GH_WAIT_INTERVALS=0 GH_WAIT_REQUEST_INTERVALS="0 0 0" "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL" 2>&1)
+assert_eq 6 $?
+assert_contains "$out" "レビュー要求"
+assert_not_contains "$out" "TIMEOUT"
+# 案内はこのスクリプトと同じツリーの request-rereview.sh を指す（デプロイ先の旧版を案内しない）
+assert_contains "$out" "$CLAUDE_DIR/skills/gh-pr-review/scripts/request-rereview.sh $PR_URL"
+assert_contains "$out" "$CLAUDE_DIR/skills/gh-pr-review/scripts/record-local-review.sh"
+
+it "gh-wait-review: 案内には、受けた URL のページやクエリを除いた PR の URL を書く"
+out=$(GH_WAIT_INTERVALS=0 GH_WAIT_REQUEST_INTERVALS="0 0 0" "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL/files?a=1&b=2" 2>&1)
+assert_contains "$out" "request-rereview.sh $PR_URL "
+assert_not_contains "$out" "?a=1"
+
+it "gh-wait-review: 要求後にまだレビューが無ければ待つ"
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL")
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
+
+it "gh-wait-review: タイムアウトの案内の診断にも PR の URL を渡す"
+assert_contains "$out" "/gh-actions-check $PR_URL "
+
+it "gh-wait-review: レビューの実行が失敗していたら待たずに終わる（トークン切れ等）"
+# 要求は登録されているがレビューが走らなかった場合、10分待っても来ない
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z 1
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL" 2>&1)
+assert_eq 7 $?
+assert_contains "$out" "レビューの実行が失敗"
+assert_not_contains "$out" "TIMEOUT"
+assert_contains "$out" "/gh-actions-check $PR_URL "
+
+it "gh-wait-review: 待機のたびに head を取り直す（待機中の push で古い head を見ない）"
+# 起動時の 1 回だけで固定すると、待機中に push されても古い head の失敗を見て
+# 打ち切ってしまう
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z 0
+out=$(GH_WAIT_INTERVALS="0 0" timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+head_lookups=$(grep -c 'json headRefOid' "$TEST_ROOT/gh.log")
+assert_eq yes "$( ((head_lookups >= 2)) && echo yes || echo "no($head_lookups)" )"
+
+it "gh-wait-review: 新しいレビューが無ければタイムアウトする（Copilot のコメントは見ない）"
+fake_gh_wait 2026-09-08T00:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL" --since 2026-09-08T00:00:00Z)
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
+assert_not_contains "$(fake_log gh)" "issues/1/comments"
+
+it "gh-wait-review: PR 作成者自身のレビューでは打ち切らない"
+# インラインコメントに返信すると、作成者名義の COMMENTED レビューが作られる。
+# 待っているのは要求した Copilot のレビューなので、これを到着とみなしてはいけない
+# （2026-09-23、PR #201 で返信直後に「到着」と誤判定した）
+fake_gh_wait 2026-09-08T01:00:00Z 2026-09-08T02:00:00Z
+add_review me 2026-09-08T03:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL")
+assert_eq 1 $?
+assert_contains "$out" "TIMEOUT"
+
+it "gh-wait-review: 作成者のレビューが後にあっても Copilot のレビューの時刻で報告する"
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+add_review me 2026-09-08T04:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着しました（2026-09-08T03:00:00Z"
+
+it "gh-wait-review: author が null のレビューがあっても Copilot のレビューを拾う"
+# 投稿者が削除されたレビューは author が null になる。login をそのまま
+# ascii_downcase に渡すと jq ごと失敗し、同じ一覧にある Copilot のレビューまで
+# 捨てて時間切れになる
+fake_gh_wait 2026-09-08T03:00:00Z 2026-09-08T02:00:00Z
+add_review_without_author 2026-09-08T01:00:00Z
+out=$(GH_WAIT_INTERVALS=0 timeout 20 "$SCRIPTS_DIR/gh-wait-review.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "新しいレビューが到着しました（2026-09-08T03:00:00Z"
+
+# ===========================================================================
+# gh-pr-review/scripts/get-latest-review.sh: レビュー失敗を指摘ゼロと区別する
+# ===========================================================================
+# Copilot はレビューできなかったときも本文だけのレビューを提出する
+# （"Copilot wasn't able to review any files in this pull request."）。
+# インライン指摘 0 件なので、区別しないと「指摘なし」と同じ扱いでマージへ進む
+
+# fake_gh_review_body <body> [inline_ids...]
+# 本文はアポストロフィを含むため、偽 gh のソースに埋め込まず JSON ファイルから読ませる
+fake_gh_review_body() {
+  local body="$1"; shift
+  local ids="printf '%s\n' $*"
+  [[ $# -eq 0 ]] && ids=":"
+  jq -n --arg body "$body" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
+  make_fake_gh "\"pr view 1 --json headRefOid\"*) echo abc1234 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) $ids ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
+}
+
+it "get-latest-review: レビューできなかったレビューは REVIEW_FAILED: yes"
+fake_gh_review_body "Copilot wasn't able to review any files in this pull request."
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "REVIEW_FAILED: yes"
+
+it "get-latest-review: 通常のレビューは REVIEW_FAILED: no"
+fake_gh_review_body "### 🟡 Changes recommended" 101 102
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REVIEW_FAILED: no"
+assert_contains "$out" "INLINE_COMMENTS: 2"
+
+it "decide-next: レビュー失敗は指摘なし（STOP_CLEAN）と区別する"
+fake_gh_review_body "Copilot encountered an error and was unable to review this pull request."
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REVIEW_FAILED"
+assert_not_contains "$out" "STOP_CLEAN"
+
+# 過去に成功したレビューがある文書だけの PR は、後のレビューが失敗しても止めない
+# （pre-merge-check と同じ条件。ADR-0004）。最初のレビューが失敗しただけの PR は止める
+
+# fake_gh_failed_after_success <files> [thread] [first_body]
+# レビューが 2 件（1 件目は first_body、2 件目は失敗）ある PR の偽 gh
+fake_gh_failed_after_success() {
+  local files="$1" thread="${2:-$DONE_THREAD}" first="${3:-### 🟡 Changes recommended}"
+  {
+    jq -n --arg body "$first" '{id: 8, state: "COMMENTED", body: $body}'
+    jq -n --arg body "Copilot wasn't able to review any files in this pull request." '{id: 9, state: "COMMENTED", body: $body}'
+  } > "$TEST_ROOT/review.json"
+  make_fake_gh "\"pr view 1 --json headRefOid\"*) echo abc1234 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$thread' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
+}
+
+it "get-latest-review: SUCCESSFUL_REVIEWS は失敗していないレビューの件数"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md'
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "ROUND: 2"
+assert_contains "$out" "REVIEW_FAILED: yes"
+assert_contains "$out" "SUCCESSFUL_REVIEWS: 1"
+
+it "get-latest-review: レビューが失敗した 1 件だけなら SUCCESSFUL_REVIEWS は 0"
+fake_gh_review_body "Copilot wasn't able to review any files in this pull request."
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SUCCESSFUL_REVIEWS: 0"
+
+it "decide-next: 文書だけの PR は、成功したレビューの後に失敗しても STOP_DOCS_REVIEWED"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: 文書だけの PR でも、失敗の後に未解決スレッドが残っていればまず ACT"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md' "$OPEN_THREAD"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: ACT"
+
+it "decide-next: 文書以外を含む PR は、成功したレビューの後に失敗したら REVIEW_FAILED"
+fake_gh_failed_after_success 'printf "%s\n" docs/adr/0004-x.md src/main.rs'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REVIEW_FAILED"
+
+it "decide-next: 文書だけの PR でも、最初のレビューが失敗しただけなら REVIEW_FAILED"
+fake_gh_failed_after_success 'echo docs/adr/0004-x.md' "$DONE_THREAD" "Copilot wasn't able to review any files in this pull request."
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: REVIEW_FAILED"
+
+it "decide-next: Copilot のレビューが失敗しても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
+fake_gh_review_body "Copilot encountered an error and was unable to review this pull request."
+make_fake_gh "\"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) echo a.txt ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) echo def5678 0 ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+# ===========================================================================
+# 重大度: Copilot の本文（v2）で残っている High を数え、再依頼を決める（ADR-0043）
+# ===========================================================================
+# 2026-09-19 からの本文は <!-- ccr-overview-v2 --> で始まり、指摘ごとに重大度のアイコン（alt="High severity"）を
+# 持つ。開いている指摘（その回の新しい指摘には「· New」）、解決した指摘、Previously missed（前の周で見落とした、
+# 変わっていないコードへの指摘。本文だけにあり、スレッドにならない）の節に分かれる
+
+# sev <High|Medium|Low>: 本文の重大度のアイコン
+sev() {
+  printf '<picture><source media="(prefers-color-scheme: dark)" srcset="https://github.githubassets.com/static/images/icons/copilot-code-review/%s-v2-dark.svg"><img src="x.png" alt="%s severity" width="12" height="12"></picture>' \
+    "${1,,}" "$1"
+}
+
+# v2_body <headline> <open の行> [resolved の行] [previously missed の行]
+v2_body() {
+  printf '%s\n' '<!-- ccr-overview-v2 -->' '' "### $1" '' 'summary' '' '<details open>' \
+    '<summary><strong>open findings</strong></summary>' '' "$2" '</details>'
+  if [[ -n "${3:-}" ]]; then
+    printf '%s\n' '' '<details>' '<summary><strong>1 resolved since last review</strong></summary>' '' "$3" '</details>'
+  fi
+  if [[ -n "${4:-}" ]]; then
+    printf '%s\n' '' '<details>' '<summary><strong>Previously missed (1)</strong></summary>' '' \
+      "In code that hasn't changed since last review" '' '<details>' "<summary>$4</summary>" '' \
+      '`src/a.rs:10`' '' 'The detail of the missed finding.' '</details>' '</details>'
+  fi
+  printf '%s\n' '' '🧠 **Review effort:** Lite'
+}
+
+BODY_MEDIUM=$(v2_body "🟡 Changes recommended" \
+  "- $(sev Medium) [m](u#discussion_r1) · New
+- $(sev Low) [l](u#discussion_r2) · New" \
+  "- $(sev High) [resolved high](u#discussion_r0)")
+BODY_NEW_HIGH=$(v2_body "🟡 Changes recommended" "- $(sev High) [h](u#discussion_r3) · New")
+BODY_CARRIED_HIGH=$(v2_body "🟡 Changes recommended" "- $(sev High) [h](u#discussion_r3)")
+BODY_MISSED_HIGH=$(v2_body "🔵 Needs a closer look" "" "" "$(sev High) Missed high")
+BODY_MISSED_MEDIUM=$(v2_body "🔵 Needs a closer look" "" "" "$(sev Medium) Missed medium")
+
+it "get-latest-review: v2 の本文は、開いている指摘を重大度ごとに数え、解決した指摘は数えない"
+fake_gh_review_body "$BODY_MEDIUM" 101 102
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 0"
+assert_contains "$out" "REMAINING_MEDIUM: 1"
+assert_contains "$out" "REMAINING_LOW: 1"
+
+it "get-latest-review: 前の周から残る（New の付かない）High も数える"
+fake_gh_review_body "$BODY_CARRIED_HIGH" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+
+it "get-latest-review: Previously missed の指摘を数え、本文を見せる（スレッドが無いので）"
+fake_gh_review_body "$BODY_MISSED_HIGH"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+assert_contains "$out" "--- previously missed ---"
+assert_contains "$out" "The detail of the missed finding."
+assert_contains "$out" "</details>"
+
+it "get-latest-review: 指摘の題名に節の見出しと同じ語があっても、後ろの High を数える"
+# 節の切り替えは見出しの行（<summary><strong>）だけで行う
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- $(sev Medium) [Handle the Previously missed and resolved since last review text](u#discussion_r1) · New
+- $(sev High) [h](u#discussion_r2) · New")" 101 102
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+assert_contains "$out" "PREVIOUSLY_MISSED: 0"
+
+it "get-latest-review: v2 でも、重大度のアイコンの無い指摘があれば重大度が分からない（0 と数えない）"
+# アイコンの形が変われば数え落とすので、High が無いと誤らず、分からない側に倒す
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- [h](u#discussion_r2) · New")" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: Previously missed の指摘にアイコンが無ければ重大度が分からない"
+fake_gh_review_body "$(v2_body "🔵 Needs a closer look" "" "" "Missed without icon")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 指摘の無い v2 の本文は、High が 0（分からないではない）"
+fake_gh_review_body "$(v2_body "🟢 Approval recommended" "")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 0"
+
+it "decide-next: 重大度が分からなくても、Previously missed があれば STOP_PREVIOUSLY_MISSED"
+fake_gh_review_body "$(v2_body "🔵 Needs a closer look" "" "" "Missed without icon")"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_PREVIOUSLY_MISSED"
+
+it "decide-next: head がレビュー済みで、スレッドの無い Previously missed だけが残れば STOP_PREVIOUSLY_MISSED"
+# 指摘なし（STOP_CLEAN）と区別し、本文を読んで処置を決めさせる
+fake_gh_review_body "$BODY_MISSED_MEDIUM"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "HEAD_REVIEWED: yes"
+assert_contains "$out" "VERDICT: STOP_PREVIOUSLY_MISSED"
+assert_contains "$out" "The detail of the missed finding."
+
+it "get-latest-review: 見出しが Open (N) の形でも開いている指摘を数え、変更の一覧の節は数えない"
+# 2026-09 の本文は「Open (N)」、後の本文は「N open findings」。「What changed in this PR」の節の
+# 箇条書きは指摘ではない
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+## Copilot review overview
+
+**Findings:** 1 $(sev High)
+
+<details open>
+<summary><strong>Open (1)</strong></summary>
+
+- $(sev High) [h](#discussion_r1) · New
+</details>
+
+<details>
+<summary><strong>What changed in this PR</strong></summary>
+
+**Changes:**
+- a change without severity
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 1"
+
+it "get-latest-review: 節が閉じた後の箇条書きや <summary> は、その節の指摘として数えない"
+# 節は </details> で閉じる。Previously missed の中の入れ子の <details> を越えて、外側が閉じるまでが節
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- $(sev Medium) [m](u#discussion_r1) · New" "" "$(sev Medium) Missed medium")
+- **Files reviewed:** 3/4
+
+<details>
+<summary>Tip</summary>
+
+text
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_MEDIUM: 2"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+
+it "get-latest-review: 見出しの数の前後の空白が違っても、開いている指摘の節と読む（pre-merge-check と同じ）"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+<details open>
+<summary><strong> 2  open findings</strong></summary>
+
+- $(sev High) [h](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+
+it "get-latest-review: 知らない見出しの節があれば重大度が分からない（形が変われば High を数え落としうる）"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+<details open>
+<summary><strong>New findings (1)</strong></summary>
+
+- $(sev High) [h](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 開いている指摘の節に「- 」で始まらない行があれば重大度が分からない"
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "* $(sev High) [h](u#discussion_r1) · New")" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 知っている節の外に重大度のアイコンがあれば分からない（見出しの形が変わった）"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+**Findings:** 1 $(sev High)
+
+<details open>
+<summary><b>1 open finding</b></summary>
+
+- $(sev High) [h](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 要約の行（**Findings:**）のアイコンは、節の外でも分からないにしない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+**Findings:** 1 $(sev Medium)
+
+<details open>
+<summary><strong>Open (1)</strong></summary>
+
+- $(sev Medium) [m](u#discussion_r1) · New
+</details>" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_MEDIUM: 1"
+
+it "get-latest-review: Previously missed の節の <summary> でない行にアイコンがあれば分からない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+- $(sev High) missed as a bullet
+</details>"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: Previously missed の 1 行の <details> の指摘も数える"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+<details><summary>$(sev High) one line</summary>detail</details>
+</details>"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+
+it "get-latest-review: 重大度が分からなくても、Previously missed の数と本文は見せる（スレッドが無いので）"
+fake_gh_review_body "$(v2_body "🔵 Needs a closer look" "" "" "Missed without icon")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+assert_contains "$out" "The detail of the missed finding."
+
+it "get-latest-review: 1 行に複数のアイコンがあれば High を優先する（pre-merge-check と同じ）"
+fake_gh_review_body "$(v2_body "🟡 Changes recommended" "- $(sev Medium) [quotes $(sev High)](u#discussion_r1) · New")" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "REMAINING_HIGH: 1"
+
+it "get-latest-review: 指摘の無い v2 の本文でも PREVIOUSLY_MISSED: 0 を出す"
+fake_gh_review_body "$(v2_body "🟢 Approval recommended" "")"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "PREVIOUSLY_MISSED: 0"
+
+it "get-latest-review: Previously missed の節の指摘でない行のアイコンは、件数に数えない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+<details>
+<summary><strong>Previously missed (1)</strong></summary>
+
+<details>
+<summary>$(sev Medium) one</summary>
+
+$(sev Medium) described in the detail
+</details>
+</details>"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+assert_contains "$out" "PREVIOUSLY_MISSED: 1"
+
+it "get-latest-review: 節が閉じないまま本文が終われば（切れた本文）重大度が分からない"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟡 Changes recommended
+
+<details open>
+<summary><strong>1 open finding</strong></summary>
+" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 判定の見出し（### 🟢/🟡/🔵）が無い v2 の本文は重大度が分からない"
+# 切れた本文や、完走しなかったレビュー（警告の付いた本文）は、指摘を数え落としうる
+fake_gh_review_body "<!-- ccr-overview-v2 -->"
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+
+it "get-latest-review: 節の無い v2 の本文でも、判定の見出しがあれば High は 0"
+fake_gh_review_body "<!-- ccr-overview-v2 -->
+
+### 🟢 Approval recommended
+
+No issues."
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: v2"
+assert_contains "$out" "REMAINING_HIGH: 0"
+
+it "get-latest-review: v2 でない本文は重大度が分からない（SEVERITY: unknown）"
+fake_gh_review_body "### 🟡 Changes recommended" 101
+out=$("$REVIEW_SCRIPTS/get-latest-review.sh" "$PR_URL")
+assert_contains "$out" "SEVERITY: unknown"
+assert_not_contains "$out" "REMAINING_HIGH"
+
+# fake_gh_severity <body> [locals] [resets] [files]
+# 要求 2 件（00:00、02:00）、レビュー 1 件（03:00、abc1234 を見た）の PR で、対応を def5678 として push した後。
+# locals はローカルレビューの記録の「SHA High の数」、resets は数え直しの印の時刻を出力するコマンド（既定はどちらも無し）
+fake_gh_severity() {
+  local locals="${2:-true}" resets="${3:-true}" files="${4:-echo a.txt}"
+  jq -n --arg body "$1" '{id: 9, state: "COMMENTED", body: $body}' > "$TEST_ROOT/review.json"
+  make_fake_gh "\"pr view 1 --json headRefOid\"*) echo def5678 ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/files\"*) $files ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*local-review*) $locals ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) $resets ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) printf '%s\n' 2026-09-08T00:00:00Z 2026-09-08T02:00:00Z ;;"
+}
+
+it "decide-next: High が残らず、head のローカルレビューの記録があれば、Copilot に出さず STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "HEAD_REVIEWED: no"
+assert_contains "$out" "LOCAL_REVIEWED: yes"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: High が残らなくても、head のローカルレビューの記録が無ければ LOCAL_REVIEW_NEEDED"
+fake_gh_severity "$BODY_MEDIUM"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "LOCAL_REVIEWED: no"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: 記録が前の head のものなら LOCAL_REVIEW_NEEDED"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+# 記録の後に rebase だけした head も記録済みとみなす（ADR-0059）。判定は local-review-covers の終了コードに従う
+it "decide-next: local-review-covers が覆っていると言えば（記録の後に rebase だけ）LOCAL_REVIEWED: yes"
+fake_gh_severity "$BODY_MEDIUM" 'echo abc1234 0'
+fake_hooks_covers '"local-review-covers octo/repo 1 def5678") exit 0 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_REVIEWED: yes"
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: local-review-covers が覆っていないと言えば LOCAL_REVIEWED: no"
+fake_hooks_covers '"local-review-covers octo/repo 1 def5678") exit 1 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_eq 0 $?
+assert_contains "$out" "LOCAL_REVIEWED: no"
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: claude-hooks が local-review-covers を知らなければ（使い方で終了コード 2）、入れ直しを案内して止める"
+# claude-sync はスクリプトだけを入れ替え、バイナリは rebuild まで古いまま
+fake_hooks_covers 'local-review-covers\ *) exit 2 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_contains "$out" "rebuild"
+
+it "decide-next: claude-hooks が無ければ、入れ直しを案内して止める"
+out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_contains "$out" "rebuild"
+
+it "decide-next: 記録を確かめられなければ（local-review-covers の失敗）、記録済みとみなさずに止める"
+fake_hooks_covers 'local-review-covers\ *) exit 3 ;;'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_ne 0 $?
+assert_not_contains "$out" "VERDICT"
+fake_hooks_exact
+
+it "decide-next: High が残っていても、Copilot に出す前にまず LOCAL_REVIEW_NEEDED"
+fake_gh_severity "$BODY_NEW_HIGH"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: LOCAL_REVIEW_NEEDED"
+
+it "decide-next: 新しい High が残っていても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_NEW_HIGH" 'echo def5678 0'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: 前の周から残る High でも STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_CARRIED_HIGH" 'echo def5678 0'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: Previously missed の High でも STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_MISSED_HIGH" 'echo def5678 0'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: Previously missed が Medium だけなら STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_MISSED_MEDIUM" 'echo def5678 0'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: 重大度が分からない本文（v2 でない）でも STOP_LOCAL_REVIEWED"
+fake_gh_severity "### 🟡 Changes recommended" 'echo def5678 0'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: レビューの後に周回を数え直していても、head にローカルレビューの記録があれば STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0' 'echo 2026-09-08T04:00:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: レビューより前の数え直しでも STOP_LOCAL_REVIEWED"
+fake_gh_severity "$BODY_MEDIUM" 'echo def5678 0' 'echo 2026-09-08T01:00:00Z'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_LOCAL_REVIEWED"
+
+it "decide-next: 文書だけの PR は、ローカルレビューの記録が無くても STOP_DOCS_REVIEWED（ADR-0004）"
+fake_gh_severity "$BODY_NEW_HIGH" true true 'echo docs/adr/0004-x.md'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL")
+assert_contains "$out" "VERDICT: STOP_DOCS_REVIEWED"
+
+it "decide-next: head を取得できなければ（空）、記録があるとみなさずにエラー"
+# 空の SHA は、記録の無い出力の空行と一致してしまう
+fake_gh_review_body "$BODY_MEDIUM" 101
+make_fake_gh "\"pr view 1 --json headRefOid\"*) echo ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews?per_page=100\"*) cat \"$TEST_ROOT/review.json\" ;;
+  \"api --paginate repos/{owner}/{repo}/pulls/1/reviews/9/comments?per_page=100\"*) : ;;
+  \"api repos/{owner}/{repo}/pulls/1/reviews/9\"*) echo 2026-09-08T03:00:00Z abc1234 ;;
+  \"api graphql --paginate\"*) echo '$DONE_THREAD' ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 2026-09-08T02:00:00Z ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/comments\"*) ;;"
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$out" "VERDICT:"
+
+it "decide-next: ローカルレビューの記録を取得できなければ、判定せずにエラー"
+fake_gh_severity "$BODY_MEDIUM" 'exit 1'
+out=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR:"
+assert_not_contains "$out" "VERDICT:"
+
+# ===========================================================================
+# レビュー要求の取得失敗は「要求なし」と区別する
+# ===========================================================================
+# 取得できないまま空として続けると、要求が登録されているのに「登録されません
+# でした」と誤診したり、周回数を過少に見積もったりする。理由を出して止める
+
+# fake_gh_timeline_fails: レビュー要求（timeline）の取得だけが失敗する gh
+fake_gh_timeline_fails() {
+  make_fake_gh "\"auth status\"*) ;;
+  \"api --paginate repos/{owner}/{repo}/issues/1/timeline\"*) echo 'gh: HTTP 502' >&2; exit 1 ;;"
+}
+
+it "decide-next: レビュー要求を取得できなければ周回数を推測せず止まる"
+fake_gh_timeline_fails
+err=$("$REVIEW_SCRIPTS/decide-next.sh" "$PR_URL" 2>&1)
+assert_eq 1 $?
+assert_contains "$err" "レビュー要求"
+assert_not_contains "$err" "ROUND:"
+
+finish

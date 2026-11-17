@@ -1,5 +1,5 @@
 //! `claude-hooks script prose-size [--since <日時>] [--until <日時>] [--memory <ディレクトリ>] [--repo <パス>]...`: 区間の
-//! 前後の文章（メモリ、スキル、CLAUDE.md）の大きさをバイトで出す（`.claude/skills/retro/scripts/prose-size.sh` が呼ぶ。
+//! 前後の文章（メモリ、スキル、CLAUDE.md）の大きさをバイトで出す（`claude/skills/retro/scripts/prose-size.sh` が呼ぶ。
 //! 使い方、数える範囲、出力の形は sh の冒頭）。
 //!
 //! 誤りは、sh の `set -e` と同じく、git の失敗はその終了コードで止め（それまでに出した行は残る）、リポジトリごとの
@@ -133,7 +133,8 @@ fn tree_bytes(
 }
 
 fn is_skill(path: &[u8]) -> bool {
-    path.starts_with(b".claude/skills/") && path.ends_with(b".md")
+    (path.starts_with(b".claude/skills/") || path.starts_with(b"claude/skills/"))
+        && path.ends_with(b".md")
 }
 
 fn is_claude_md(path: &[u8]) -> bool {

@@ -1,6 +1,6 @@
 //! `claude-hooks script rename-plan --list | <branch-name> [--file <path>]` が、docs/plans/ のランダムな名前の計画書を
 //! 連番つきの名前にすることを確かめる（ADR-0087。`~/.claude/scripts/rename-plan.sh` が呼ぶ）。場合分けは、sh から呼ぶ
-//! `.claude/tests/scripts/git-workflow.sh` も確かめる
+//! `claude/tests/scripts/git-workflow.sh` も確かめる
 
 mod common;
 

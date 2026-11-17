@@ -8,7 +8,7 @@
 # 競合を解決して git commit（git merge --continue）で締めるときは pre-merge-commit が
 # 呼ばれず pre-commit だけが呼ばれるので、pre-commit が MERGE_HEAD を見て同じ検査に回す。
 #
-# 実物の run-checks.sh（このリポジトリの .claude/skills/language-checks/scripts）を一時 HOME の
+# 実物の run-checks.sh（このリポジトリの claude/skills/language-checks/scripts）を一時 HOME の
 # ~/.claude に置き、実物の ruff / markdownlint で判定させる。
 #
 # 使い方（リポジトリルートで実行）:

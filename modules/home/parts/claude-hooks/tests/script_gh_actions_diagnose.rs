@@ -1,6 +1,6 @@
 //! `claude-hooks script gh-actions-diagnose [PR の URL | PR 番号 | ブランチ名]` が、CI の最新の結果を調べて失敗の原因を
 //! 分類することを確かめる（ADR-0087。`~/.claude/scripts/gh-actions-diagnose.sh` が呼ぶ）。原因の分類と外部の CI の
-//! 場合分けは、sh から呼ぶ `.claude/tests/scripts/gh-actions-diagnose.sh` も確かめる
+//! 場合分けは、sh から呼ぶ `claude/tests/scripts/gh-actions-diagnose.sh` も確かめる
 
 mod common;
 

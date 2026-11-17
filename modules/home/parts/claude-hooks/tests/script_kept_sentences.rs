@@ -1,6 +1,6 @@
 //! `claude-hooks script kept-sentences --old <元の版>... --new <今の版>...` が、縮めた規則の文書の文のうち、元の版に
 //! 同じ文が無いものを出すことを確かめる（ADR-0088。`~/.claude/scripts/kept-sentences.sh` が呼ぶ）。sh から呼ぶ
-//! 配備の確認は `.claude/tests/scripts/kept-sentences.sh`
+//! 配備の確認は `claude/tests/scripts/kept-sentences.sh`
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

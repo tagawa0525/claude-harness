@@ -69,7 +69,7 @@ impl Rule for BlockSecretCommit {
             };
             let mut leaks = Vec::new();
             for mode in modes {
-                // gitleaks は home.packages で PATH に置く（.claude/tests/hooks.sh は偽の gitleaks を PATH に置いて確かめる）
+                // gitleaks は home.packages で PATH に置く（claude/tests/hooks.sh は偽の gitleaks を PATH に置いて確かめる）
                 let why = match gitleaks::scan("gitleaks", &dir, mode) {
                     Scan::Clean => continue,
                     Scan::Leaks(list) => {

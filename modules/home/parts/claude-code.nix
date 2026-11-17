@@ -8,7 +8,7 @@
 # flake.nix が lib.modules.importApply で 1 つ目の引数を束ねる。モジュールの引数（_module.args、specialArgs）で
 # 受けないのは、利用する側が同じ名前を specialArgs で渡すと、黙ってそちらが勝つため
 {
-  claudeCodeSource, # .claude/ を ~/.claude に同期する元（この flake の self）
+  claudeCodeSource, # claude/ を ~/.claude に同期する元（この flake の self）
   mattpocock-skills,
   lsp-det,
 }:
@@ -83,7 +83,7 @@ in
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
   home.file.".claude/bin/ja-terms".source = "${ja-terms}/bin/ja-terms";
 
-  # .claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド
+  # claude（CLAUDE.md/commands/skills/scripts）を ~/.claude に手動同期するコマンド
   # nixos-rebuild を待たずにスキル変更を反映する（bash/fish 共通で使用可）。中身は claude-setup sync（ADR-0084）
   home.file.".local/bin/claude-sync".source = "${claudeSync}/bin/claude-sync";
 
@@ -92,7 +92,7 @@ in
   # ===========================================================================
 
   # Claude Code グローバル設定の同期
-  # flakeソースの .claude を ~/.claude に同期（ポリシーは ./claude-setup/src/sync.rs を参照）
+  # flakeソースの claude を ~/.claude に同期（ポリシーは ./claude-setup/src/sync.rs を参照）
   home.activation.claudeCodeSetup = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     CLAUDE_DIR="$HOME/.claude"
 

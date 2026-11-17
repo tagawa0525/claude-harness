@@ -1,6 +1,6 @@
 //! `claude-hooks script review-level [branch] [--base BASE]` が、ローカルの /code-review に渡すレベルと対象を決める
 //! ことを確かめる（ADR-0087。`~/.claude/scripts/review-level.sh` が呼ぶ）。文書の判定の細かい場合分け（ADR の
-//! 「## 変更」の節、.claude の下の文書、移動）と比較元の決め方は、sh から呼ぶ `.claude/tests/scripts/review-level.sh` も
+//! 「## 変更」の節、.claude の下の文書、移動）と比較元の決め方は、sh から呼ぶ `claude/tests/scripts/review-level.sh` も
 //! 確かめる
 
 mod common;

@@ -28,7 +28,7 @@ in
     pkgs.markdownlint-cli # run-checks、staged-checks、fix-markdown-lint が PATH から呼ぶ（設定は下のコメントのとおり sync が置く）
   ];
 
-  # markdownlint のグローバルの設定（~/.config/markdownlint/config）は、ここでなく claude-setup sync が .config/markdownlint/config から
+  # markdownlint のグローバルの設定（~/.config/markdownlint/config）は、ここでなく claude-setup sync が config/markdownlint/config から
   # 置く。Windows にも同じ中身を配るため（home-manager の activation も claude-setup sync を呼ぶ。ADR-0093）
 
   # core.hooksPath は programs.git が有効なときだけ gitconfig に書かれる。利用者の設定（git.nix）に頼らず、ここでも有効にする

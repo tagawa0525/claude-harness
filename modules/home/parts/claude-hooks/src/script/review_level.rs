@@ -13,7 +13,8 @@
 //!
 //! 「文書」は、凍結せずマージの後も直せるので、周を重ねて取り切るより後で直す方が安いもの:
 //! - docs/ の下の、ADR（docs/adr/NNNN-*.md）でない .md（issue、計画、説明の文書）
-//! - 規則の文書: どこかの .claude/ の下の .md（スキルの文書、hook の一覧）と、どこにある CLAUDE.md と SKILL.md も
+//! - 規則の文書: どこかの .claude/ の下か、リポジトリの先頭の claude/（ハーネスが配る元）の下の .md（スキルの文書、
+//!   hook の一覧）と、どこにある CLAUDE.md と SKILL.md も
 //!   （check-merge-review の is_plain_document が挙動に数える文書と同じ）
 //! - 既存の ADR の「## 変更」の節より後だけを変えるもの（凍結する節やフロントマターを変えるもの、新しい ADR、消す ADR、
 //!   「## 変更」の節を足す ADR は入らない）
@@ -172,7 +173,10 @@ fn is_document(dir: &Path, merge_base: &str, target: &str, path: &str) -> bool {
     }
     let name = path.rsplit('/').next().unwrap_or(path);
     (path.starts_with("docs/") && path.ends_with(".md"))
-        || ((path.starts_with(".claude/") || path.contains("/.claude/")) && path.ends_with(".md"))
+        || ((path.starts_with(".claude/")
+            || path.contains("/.claude/")
+            || path.starts_with("claude/"))
+            && path.ends_with(".md"))
         || name == "CLAUDE.md"
         || name == "SKILL.md"
 }

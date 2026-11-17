@@ -124,7 +124,7 @@ pub fn current_branch(dir: &Path) -> String {
 
 /// 既定ブランチ。新しいトピックのブランチの起点に使う ref（`origin/main` や `main`）。
 /// origin/HEAD → origin/main → origin/master → main → master の最初にあるもの。
-/// .claude/scripts/worktree-add.sh と branch-topics.sh も同じ順で探す
+/// claude/scripts/worktree-add.sh と branch-topics.sh も同じ順で探す
 pub fn default_branch(dir: &Path) -> Option<String> {
     if let Some(r) = git(
         dir,

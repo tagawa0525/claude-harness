@@ -1,6 +1,6 @@
 //! `claude-hooks script git-merge-state [branch]` が、/git-merge の事前の確認（対象の検証と、マージの前に要る状態）を
 //! 出すことを確かめる（ADR-0087。`~/.claude/scripts/git-merge-state.sh` が呼ぶ）。積んだブランチ、worktree、
-//! PROPOSED_ADRS の Refs: の読み方などの場合分けは、sh から呼ぶ `.claude/tests/scripts/git-merge-state.sh` も確かめる
+//! PROPOSED_ADRS の Refs: の読み方などの場合分けは、sh から呼ぶ `claude/tests/scripts/git-merge-state.sh` も確かめる
 
 mod common;
 

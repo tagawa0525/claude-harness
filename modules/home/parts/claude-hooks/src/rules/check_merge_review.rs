@@ -200,12 +200,14 @@ fn replaced_hashes(diff: &str) -> Option<Vec<(String, String)>> {
     Some(words)
 }
 
-/// レビューの後に変えても挙動を変えない文書か。スキルと hook の文書（`.claude` の下、`CLAUDE.md`、`SKILL.md`）と
+/// レビューの後に変えても挙動を変えない文書か。スキルと hook の文書（`.claude` の下、ハーネスが配る元であるリポジトリの
+/// 先頭の `claude` の下、`CLAUDE.md`、`SKILL.md`）と
 /// ADR（マージの前の accepted への変更もレビューを受ける）は挙動に数える
 pub(super) fn is_plain_document(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     path.ends_with(".md")
         && !path.split('/').any(|c| c == ".claude")
+        && !path.starts_with("claude/")
         && name != "CLAUDE.md"
         && name != "SKILL.md"
         && !path.starts_with("docs/adr/")

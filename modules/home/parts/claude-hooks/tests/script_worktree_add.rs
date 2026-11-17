@@ -1,6 +1,6 @@
 //! `claude-hooks script worktree-add <branch> [--from <ref>] [--carry-changes]` が、命名の規則に従って worktree を作る
 //! ことを確かめる（ADR-0087。`~/.claude/scripts/worktree-add.sh` が呼ぶ）。fetch、--carry-changes、.worktreelink の
-//! 場合分けは、sh から呼ぶ `.claude/tests/scripts/git-workflow.sh` も確かめる
+//! 場合分けは、sh から呼ぶ `claude/tests/scripts/git-workflow.sh` も確かめる
 
 mod common;
 

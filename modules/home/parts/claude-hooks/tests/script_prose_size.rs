@@ -1,6 +1,6 @@
 //! `claude-hooks script prose-size [--since <日時>] [--until <日時>] [--memory <ディレクトリ>] [--repo <パス>]...` が、区間の
 //! 前後の文章（メモリ、スキル、CLAUDE.md）の大きさをバイトで出すことを確かめる（ADR-0089。
-//! `.claude/skills/retro/scripts/prose-size.sh` が呼ぶ）。sh から呼ぶ配備の確認は `.claude/tests/scripts/retro.sh`
+//! `claude/skills/retro/scripts/prose-size.sh` が呼ぶ）。sh から呼ぶ配備の確認は `claude/tests/scripts/retro.sh`
 
 mod common;
 

@@ -1,6 +1,6 @@
 //! `claude-hooks script session-events [--since <日時>] [--until <日時>] [TRANSCRIPT]` が、会話の記録から振り返りの
 //! 手がかり（拒否、失敗、ユーザーの発言）を集めることを確かめる（ADR-0089。`~/.claude/skills/retro/scripts/session-events.sh`
-//! が呼ぶ）。sh から呼ぶ配備の確認は `.claude/tests/scripts/retro.sh`
+//! が呼ぶ）。sh から呼ぶ配備の確認は `claude/tests/scripts/retro.sh`
 
 mod common;
 

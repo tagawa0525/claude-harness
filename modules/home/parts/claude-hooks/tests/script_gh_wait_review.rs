@@ -1,7 +1,7 @@
 //! `claude-hooks script gh-wait-review <PR の URL> [--since <時刻>]` が、PR に Copilot のレビューが提出されるのを
 //! 待つことを確かめる（ADR-0087。`~/.claude/scripts/gh-wait-review.sh` が呼び、request-rereview.sh も要求の後に呼ぶ）。
 //! 待ち方の細かい場合分け（要求の記録を待つ、作成者のレビューで打ち切らない、待つたびに head を取り直す）は、sh から
-//! 呼ぶ `.claude/tests/scripts/gh-pr-review.sh` も確かめる
+//! 呼ぶ `claude/tests/scripts/gh-pr-review.sh` も確かめる
 
 mod common;
 
