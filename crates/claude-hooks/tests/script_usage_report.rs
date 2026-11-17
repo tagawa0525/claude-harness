@@ -576,6 +576,12 @@ fn a_model_missing_from_the_price_table_fails() {
         err.starts_with("ERROR: 価格表に無いモデル: claude-unknown-9"),
         "{err}"
     );
+    // 次の手は、価格表を足す PR と、この区間の費用を未確認として報告すること
+    assert!(
+        err.lines().any(|l| l
+            == "NEXT: 生成元のリポジトリ（claude-harness）の crates/claude-hooks/src/script/usage_report.rs の PRICES に、価格のページ（https://platform.claude.com/docs/en/about-claude/pricing）の値を足す PR を出す。この区間の費用は未確認として報告する"),
+        "{err}"
+    );
 }
 
 #[test]
