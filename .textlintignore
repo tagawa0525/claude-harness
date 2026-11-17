@@ -3,3 +3,4 @@ nix/tests/ja-terms.sh
 crates/claude-hooks/tests/merge-ja-terms.sh
 crates/ja-terms/tests/prh.rs
 crates/history-rewrite/tests/
+crates/claude-hooks/tests/script_dictionary_preview.rs
