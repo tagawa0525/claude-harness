@@ -218,3 +218,57 @@ fn a_github_remote_of_any_name_lists_the_open_prs() {
     let text = stdout(&repo.run(&env));
     assert_eq!(section(&text, "prs"), "#7 feat/x title\n");
 }
+
+#[test]
+fn an_issue_blocked_by_an_open_issue_is_marked_blocked_with_the_next_step() {
+    let repo = Repo::new();
+    repo.issue("0001-b.md", "---\nstatus: open\n---\n\n# b\n");
+    repo.issue(
+        "0003-c.md",
+        "---\nstatus: closed\nresolution: done\n---\n\n# c\n",
+    );
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\", \"#0003\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert_eq!(
+        section(&text, "issues"),
+        "docs/issues/0001-b.md\n\
+         docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"] blocked=#0001\n\
+         NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない\n"
+    );
+}
+
+#[test]
+fn an_issue_whose_blockers_are_all_closed_is_not_marked() {
+    let repo = Repo::new();
+    repo.issue(
+        "0001-b.md",
+        "---\nstatus: closed\nresolution: done\n---\n\n# b\n",
+    );
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#1\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert_eq!(
+        section(&text, "issues"),
+        "docs/issues/0002-a.md blocked-by=[\"#1\"]\n"
+    );
+}
+
+#[test]
+fn a_blocker_that_is_not_in_docs_issues_is_marked_missing() {
+    let repo = Repo::new();
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0009\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert_eq!(
+        section(&text, "issues"),
+        "docs/issues/0002-a.md blocked-by=[\"#0009\"] blocker-missing=#0009\n\
+         NEXT: blocker-missing= の issue は、blocked-by の相手が docs/issues に無い。閉じたかを確かめられないので、着手の前に blocked-by を直すかユーザーに確かめる\n"
+    );
+}
