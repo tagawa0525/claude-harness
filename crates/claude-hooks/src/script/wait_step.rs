@@ -1,5 +1,5 @@
 //! `wait-step.sh <自分の worktree のパス> [<background の出力のファイル>...]` / `wait-step.sh --end <自分の worktree のパス>`:
-//! /delegate の担当が、ターンを終えずに待つ 1 歩（ADR-0082 で sh から移した。`~/.claude/scripts/wait-step.sh` が呼ぶ）。
+//! /delegate の担当が、ターンを終えずに待つ 1 歩（ADR-0082。`~/.claude/scripts/wait-step.sh` が呼ぶ）。
 //!
 //! 担当は、待つ間これをフォアグラウンドで続けて呼ぶ。ターンを終えると、そのたびに親に通知が届き親が応答するので、終えずに
 //! 待つ。1 回の呼び出しは約 4 分 30 秒で返るので、呼ぶたびの応答で担当のキャッシュ（5 分で切れる）が保たれる。待つ間に届いた
@@ -36,7 +36,7 @@ const SCRIPT: &str = "~/.claude/scripts/wait-step.sh";
 pub fn main(args: &[String]) -> i32 {
     match args {
         [end, key] if end == "--end" && !key.is_empty() => {
-            // 無い状態を消すのは成功（sh の rm -f と同じ）
+            // 無い状態を消すのも成功（待ちを消し忘れたかを担当に問わない）
             let _ = std::fs::remove_file(state_of(key));
             0
         }
@@ -65,21 +65,36 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
-/// 鍵のパスを正規化する（相対を絶対に、`.` と `..` と末尾の `/` を揃える。sh の `realpath -m` と同じく、無いパスも受ける）
+/// 鍵のパスを正規化する。相対を絶対にし、`.` と `..` と末尾の `/` を揃え、在る部分の symlink を解く（同じ worktree を
+/// symlink を通ったパスで渡しても、同じ時計にする）。無い部分はそのまま後ろに付ける
 fn normalize(key: &str) -> PathBuf {
     let path = Path::new(key);
     let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    let mut out = PathBuf::new();
+    let mut lexical = PathBuf::new();
     for c in abs.components() {
         match c {
             Component::CurDir => {}
             Component::ParentDir => {
-                out.pop();
+                lexical.pop();
             }
-            other => out.push(other.as_os_str()),
+            other => lexical.push(other.as_os_str()),
         }
     }
-    out
+    let mut existing = lexical.as_path();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(existing) {
+            let rest = lexical.strip_prefix(existing).unwrap_or(Path::new(""));
+            return if rest.as_os_str().is_empty() {
+                real
+            } else {
+                real.join(rest)
+            };
+        }
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return lexical,
+        }
+    }
 }
 
 /// 状態のファイル。鍵は正規化したパスのハッシュにしてファイル名に使う（パスの記号や日本語でも重ならない）。ハッシュは
@@ -212,7 +227,7 @@ fn wait(key: &str, files: &[String]) -> i32 {
         }
         let t = now();
         if t.saturating_sub(reported) >= report {
-            let elapsed = (t - reported) / 60;
+            let elapsed = t.saturating_sub(reported) / 60;
             reported = t;
             if let Err(code) = save(&state, reported) {
                 return code;
@@ -229,7 +244,10 @@ fn wait(key: &str, files: &[String]) -> i32 {
             if let Err(code) = save(&state, reported) {
                 return code;
             }
-            println!("WAIT: 途中の報告から {} 分", (t - reported) / 60);
+            println!(
+                "WAIT: 途中の報告から {} 分",
+                t.saturating_sub(reported) / 60
+            );
             println!(
                 "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ。呼び出しの後に通知（終わりの通知、親の返事）が届いていれば、それで続ける。途中で親に報告するのは REPORT の後だけ"
             );
