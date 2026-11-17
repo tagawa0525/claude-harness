@@ -11,18 +11,10 @@ allowed-tools:
 
 # Git Worktree Command
 
-並行作業用に別ディレクトリで作業環境を作成する。
-
 ## 現在の状態
 
 !`git worktree list`
 !`git branch -vv`
-
-## 使用シナリオ
-
-- 複数のPRを同時に進める
-- レビュー待ちの間に別作業
-- 長時間かかる作業を中断せず別タスク
 
 ## 作成
 
@@ -32,24 +24,25 @@ $ARGUMENTS のブランチ名で作成する:
 ~/.claude/scripts/worktree-add.sh <branch-name>
 ```
 
-スクリプトが決めること（手順で考えなくてよい）:
+- ブランチがローカルかリモートにあればそれをチェックアウトし、なければ既定ブランチ（`BASE:` の値）から
+  新規作成する。今のブランチの続きにするときだけ `--from HEAD` を付ける
+- fetch の失敗で `ERROR:` になったら（オフライン）、ローカルにあるブランチか `--from` を使う
+- `SHARED:` 行は、`.worktreelink` に書いたパスをメイン worktree への symlink にしたことを示す
+- `NOTE:` 行は指示に従う。メイン worktree に無いパスの `NOTE:` は、必要ならメイン worktree に用意してから
+  `ln -s` で足す
 
-- 作成先は親ディレクトリの `<repo>-<branch>`（ブランチ名の `/` は `-` に変換）
-- ブランチがローカル/リモートに既にあればそれをチェックアウト、なければ既定ブランチ（`BASE:` の値）から新規作成。
-  今のブランチの続きにするときだけ `--from HEAD` を付ける
-- GitHub リモートがあり、ローカルにそのブランチが無く `--from` も無いときは、base を決める前に origin を
-  fetch する。失敗すると `ERROR: fetch に失敗しました…` で終了コード 1 になり、worktree は作られない
-  （オフラインではローカルにあるブランチか `--from` を使う）
-- GitHub リモートが複数ある（fork 運用）という `NOTE:` 行が出たら、worktree で `gh pr` 系を使う前に
-  `gh repo set-default --view` で解決先を確認する。未設定だと PR 番号が意図しない側の
-  リポジトリで解決され「PRが見つからない」になる
-- リポジトリの `.worktreelink` に書いたパスは、メイン worktree への symlink になる（`SHARED:` 行）。
-  メイン worktree に無いパスは `NOTE:` 行で知らせるので、必要ならメイン worktree に用意してから
-  `ln -s` で足す。`.worktreelink` の誤りで `ERROR:` になったら、worktree は残っているので、
-  そのブランチで `.worktreelink` か `.gitignore` を直す（書き方は `worktree-add.sh` の冒頭のコメント）。スクリプトは
-  作成先があるので再実行できず、symlink は 1 つも作られていない。直した後、`.worktreelink` の各パスを
-  `mkdir -p "$(dirname <worktree>/<path>)"` の後に `ln -s <メイン worktree>/<path> <worktree>/<path>`
-  （先は絶対パス）で張る
+### `ERROR:` の修正方法
+
+`.worktreelink` の誤りで `ERROR:` になったとき、worktree は残っていて、symlink は 1 つも作られていない。
+作成先があるのでスクリプトは再実行できない。
+
+1. その worktree（そのブランチ）で `.worktreelink` か `.gitignore` を直す（書き方は `worktree-add.sh` の冒頭のコメント）
+2. `.worktreelink` の各パスを張る（先は絶対パス）:
+
+```bash
+mkdir -p "$(dirname <worktree>/<path>)"
+ln -s <メイン worktree>/<path> <worktree>/<path>
+```
 
 ## 削除（--remove 指定時）
 
@@ -82,15 +75,3 @@ git worktree prune
 現在の worktree:
 <git worktree list の出力>
 ```
-
-## 注意事項
-
-- 同じブランチを複数のworktreeでチェックアウトすることはできない
-- worktreeのディレクトリを手動で削除した場合は `git worktree prune` が必要
-- マージ済みブランチのworktreeは `/git-info` で検出される
-
-## 関連コマンド
-
-- `/git-branch` - 通常のブランチ切り替え（同じディレクトリ）
-- `/git-info` - 不要なworktreeの検出
-- `/gh-pr-merge` - マージ後にworktreeを自動削除
