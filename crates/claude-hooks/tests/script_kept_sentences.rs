@@ -323,20 +323,15 @@ fn base_reads_paths_relative_to_the_cwd_and_absolute_paths() {
         kept_in(&d.root.join("docs"), &["--base", "main", "a.md"]),
         (1, "CHANGED: a.md:1: 別の文。\n".to_string())
     );
+    // 絶対パスは cwd によらず、ファイルのあるリポジトリで base を引く（cwd は別のリポジトリの worktree でもよい）
     let abs = d.root.join("docs/a.md").display().to_string();
-    assert_eq!(
-        kept_in(
-            Path::new(env!("CARGO_TARGET_TMPDIR")),
-            &["--base", "main", &abs]
-        )
-        .0,
-        2,
-        "cwd がリポジトリの外なら base を引けない"
-    );
-    assert_eq!(
-        kept_in(&d.root, &["--base", "main", &abs]),
-        (1, format!("CHANGED: {abs}:1: 別の文。\n"))
-    );
+    let other = repo(&[("x.md", "x。\n")]);
+    for cwd in [&d.root, &other.root] {
+        assert_eq!(
+            kept_in(cwd, &["--base", "main", &abs]),
+            (1, format!("CHANGED: {abs}:1: 別の文。\n"))
+        );
+    }
 }
 
 #[test]
