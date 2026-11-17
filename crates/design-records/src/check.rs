@@ -414,7 +414,11 @@ pub fn check_issue_links(issues: &BTreeMap<String, String>, adr_paths: &[String]
             }
         }
         if let Some(by) = scalar(front, "resolved-by") {
-            let missing = match single_adr(&by) {
+            // ADR の番号（`ADR-0012` か `0012`）か、ADR のファイルの名前（`0012-slug`）なら探す
+            let bare = (by.len() == 4 && by.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| by.parse::<u32>().ok())
+                .flatten();
+            let missing = match single_adr(&by).or(bare) {
                 Some(n) => !adr_numbers.contains(&n),
                 None => {
                     record_number(&format!("{by}.md")).is_some()
@@ -1077,6 +1081,16 @@ pub fn stale_confirmations<E>(
     is_file: &mut dyn FnMut(&str) -> Result<bool, E>,
 ) -> Result<Vec<String>, E> {
     const NO_SIGNATURE: [&str; 2] = ["-c", "log.showSignature=false"];
+    // 見るファイルが無ければ、履歴を辿らずに終える
+    let mut paths = Vec::new();
+    for path in confirmation_paths(text) {
+        if !is_adr_path(&path) && is_file(&path)? {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
     // --invert-grep で除くと --follow がその改名を見ずに辿りやめるので、件名を見て選ぶ
     let mut args = NO_SIGNATURE.to_vec();
     args.extend(["log", "--follow", "--format=%H %s", range, "--", adr]);
@@ -1089,15 +1103,6 @@ pub fn stale_confirmations<E>(
     else {
         return Ok(Vec::new());
     };
-    let mut paths = Vec::new();
-    for path in confirmation_paths(text) {
-        if !is_adr_path(&path) && is_file(&path)? {
-            paths.push(path);
-        }
-    }
-    if paths.is_empty() {
-        return Ok(Vec::new());
-    }
     let since = format!("^{last}");
     let excluded = excluded.map(|e| format!("^{e}"));
     let mut args = NO_SIGNATURE.to_vec();
