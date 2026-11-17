@@ -9,9 +9,9 @@
 //! その head で /code-review を呼んだことは、count-review-rounds の hook が clone に書く行（呼んだときの HEAD）で
 //! 確かめ、行が無ければ記録しない。確かめる clone は起動したディレクトリのもの。直した後の head と rebase の後の head に、
 //! 回さずに前の周の数で記録を付けると、マージの hook の「最後の push を覆うレビューがありません」の知らせが出なくなる。
-//! 行が無くても、前の記録が覆う head（rebase だけの head）には記録を足さずに 0 で終える。hook が行を書かない回し方
-//! （対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）は、`--unlogged <理由>` で
-//! 理由を記録のコメントに残して付ける
+//! hook が行を書かない回し方（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）は、
+//! `--unlogged <理由>` で理由を記録のコメントに残して付ける。前の記録が覆う head（rebase だけの head）かは、ここでは
+//! 確かめない（確かめて 0 で終える版は、回し直して見つけた High の件数まで成功として捨てた）
 
 use super::pr_url;
 use regex::Regex;
@@ -108,43 +108,33 @@ pub fn main(args: &[String]) -> i32 {
         );
         return 1;
     }
-    let cwd = match std::env::current_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            eprintln!("ERROR: 今のディレクトリを取れません: {e}（記録を付けていません）");
-            return 1;
-        }
-    };
-    let rounds = crate::rules::round_ran_at(&cwd, &head);
+    // 今のディレクトリを取れないときは、clone を引けないとき（None）と同じに扱う（--unlogged の記録は cwd に頼らない）
+    let cwd = std::env::current_dir().ok();
+    let rounds = cwd
+        .as_deref()
+        .and_then(|dir| crate::rules::round_ran_at(dir, &head));
     let logged = matches!(rounds, Some((_, true)));
     if !logged && unlogged.is_none() {
-        // 行が無くても、前の記録が覆う head（rebase だけの head、すでに記録のある head）には記録が要らない
-        let covered = crate::rules::local_review_covers_for_pr(&cwd, &pr.repo, &pr.number, &head);
-        for notice in crate::output::take_notices() {
-            eprintln!("{notice}");
-        }
-        if covered == Ok(true) {
-            println!(
-                "COVERED: {} は、すでにある記録（同じ head の記録か、rebase だけの前の head の記録）で覆われています。記録を足していません",
-                short(&head)
-            );
-            return 0;
-        }
-        let place = match &rounds {
-            Some((dir, _)) => format!(
+        let place = match (&rounds, &cwd) {
+            (Some((dir, _)), _) => format!(
                 "{} で /code-review を回した記録が {} にありません",
                 short(&head),
                 dir.display()
             ),
-            None => format!(
+            (None, Some(dir)) => format!(
                 "{} で git の共通のディレクトリを引けないので、{} で /code-review を回した記録を確かめられません",
-                cwd.display(),
+                dir.display(),
+                short(&head)
+            ),
+            (None, None) => format!(
+                "今のディレクトリを取れないので、{} で /code-review を回した記録を確かめられません",
                 short(&head)
             ),
         };
         eprintln!(
             "ERROR: {place}（記録を付けていません）\n\
              - この head をまだ回していないなら、PR の worktree で /code-review を回してから、その worktree で記録する\n\
+             - base への rebase だけの head なら、前の head の記録で足りるので記録を足さない（足りるかは ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {url} が示す）\n\
              - この head で回したのに hook が行を書かない回し方だったなら（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）、末尾に --unlogged '<その回し方>' を付ける（記録のコメントに残る）"
         );
         return 1;
