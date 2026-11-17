@@ -222,7 +222,7 @@ else
   ng "- で始まるディレクトリの Markdown も直す"
 fi
 
-echo "==> staged-checks に言語を渡すと、その言語だけを検査する（run-checks.sh の Markdown の段）"
+echo "==> staged-checks に言語を渡すと、その言語だけを検査する（run-checks.sh の Markdown のステージ）"
 # PATH の staged-checks は、pre-commit の hook と同じ claude-hooks の git-hook staged-checks を呼ぶだけのコマンド
 CLAUDE_HOOKS=$(grep -o '/nix/store/[^ ]*/bin/claude-hooks' "$WORK/pre-commit" | head -1)
 if [[ ! -x "$CLAUDE_HOOKS" ]]; then
@@ -263,9 +263,9 @@ else
   ok "先頭が空白の code span のコミットを止める"
 fi
 if grep -q 'MD038' "$WORK/out"; then
-  ok "検査の段が MD038 の違反を出す"
+  ok "検査のステージが MD038 の違反を出す"
 else
-  ng "検査の段が MD038 の違反を出す"
+  ng "検査のステージが MD038 の違反を出す"
 fi
 if [[ "$(git -C "$R" show :a.md)" == "${SPAN%$'\n'}" && "$(cat "$R/a.md")" == "${SPAN%$'\n'}" ]]; then
   ok "ステージした版と作業ツリーの code span の空白を残す"

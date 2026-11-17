@@ -100,7 +100,7 @@ impl Transformer {
 }
 
 /// new のうち、old から直した行を含む表だけを揃え直す（ほかの表の崩れは、この書き換えの範囲の外）。
-/// fix-markdown-lint の表の段と同じく、コードフェンスの中を飛ばし、区切りの行が続く行から表とみなす
+/// fix-markdown-lint の表の処理と同じく、コードフェンスの中を飛ばし、区切りの行が続く行から表とみなす
 fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
     let old_lines: Vec<&str> = old.split('\n').collect();
     let lines: Vec<&str> = new.split('\n').collect();

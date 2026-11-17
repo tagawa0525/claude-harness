@@ -1,7 +1,7 @@
 //! require-pipefail: 成否を判断するコマンドを、pipefail なしで tail / head につなぐ形を止める
 //!
-//! パイプの終了コードは最後の段（tail / head）のものになり、`nix build | tail` のビルドの失敗を見落とす。
-//! 対象は `nix build`、`nix flake check`、`cargo`、`run-checks.sh` を、後ろの段に tail か head がある
+//! パイプの終了コードは最後のステージ（tail / head）のものになり、`nix build | tail` のビルドの失敗を見落とす。
+//! 対象は `nix build`、`nix flake check`、`cargo`、`run-checks.sh` を、後ろのステージに tail か head がある
 //! パイプの途中に置いた形。コマンドに `set -o pipefail` / `bash -o pipefail` のシェルのオプションがあれば通す。
 //! pipefail が実際に効く位置かは読まない（ADR-0042: 普通に書く形だけを止める）。エスケープは設けない
 //! （出力を絞りたいなら、ファイルに書いて tail で読むか、pipefail を付ける）

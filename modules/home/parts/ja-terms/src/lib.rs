@@ -595,7 +595,7 @@ fn prepare(mut diffs: Vec<Diff>) -> Vec<Diff> {
         })
         .map(|(_, d)| d)
         .collect();
-    // 前の要素は、この段で外す前の並び（JavaScript の filter は元の配列を見る）
+    // 前の要素は、この処理で外す前の並び（JavaScript の filter は元の配列を見る）
     kept.iter()
         .enumerate()
         .filter(|&(k, d)| !(k > 0 && d.start < kept[k - 1].end))

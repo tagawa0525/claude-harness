@@ -92,7 +92,7 @@ run_hook() {
   return $rc
 }
 
-# --- 1. 設定があれば prek を pre-commit の段で実行し、そのうえで既定の検査も走る ------------
+# --- 1. 設定があれば prek を pre-commit のステージで実行し、そのうえで既定の検査も走る ------------
 R=$(repo opted config)
 printf '%s' "$BAD_PY" >"$R/bad.py"
 git -C "$R" add bad.py

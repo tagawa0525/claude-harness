@@ -47,7 +47,7 @@ Issue #101 の段階 7 で、Python のツールを Rust に移す（ADR-0082）
   （`pathlib` の `_StringGlobber`）。`{a,b}` の選択と `\` のエスケープは持たない
 - `scripts/run-python-tests.sh` は history-rewrite の直下の `test_*.py` だけを流し、ほかの Python のテストがあれば止まる。
   ほかの Python のテストは無い（2026-11-14、`git ls-files '*.py'`）。`run-checks.sh` は、このファイルがあれば Python のテストの
-  段で優先して呼ぶ
+  ステージで優先して呼ぶ
 - usage-report が扱う日時は、時差つきの ISO 8601（記録の timestamp の `Z`、`--since` と `--until`、`git log --format=%cI`）と、
   JST（+09:00 の固定の時差）の表示と今日の区切りだけ
 

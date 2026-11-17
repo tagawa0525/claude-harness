@@ -128,7 +128,7 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   （Unicode の White_Space と \x1c〜\x1f）を外す
 - 二重の実装の期間: .py は、段階 7 で history-rewrite を Rust に移す PR で消し、history-rewrite は Rust の関数を呼ぶ。それまで、
   `.claude/tests/scripts/language-checks.sh` が、サロゲートと改行と `|` のほかのすべての文字で、Rust の版と .py の表の桁を
-  突き合わせる。表の段の振る舞いを変えるときは両方を直す（#46、#99）
+  突き合わせる。表の処理の振る舞いを変えるときは両方を直す（#46、#99）
 
 理由:
 

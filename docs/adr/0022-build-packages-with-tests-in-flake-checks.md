@@ -21,7 +21,7 @@ PR #305 のマージ後、rebuild で claude-hooks のビルドが失敗した�
 測定は 2026-10-11、対象は main の e1e7e73（PR #305 のマージコミット）。失敗は `/nix/store/n5r31rf5kvfbywdnrfb1jrhx3f7rr0lm-claude-hooks-0.1.0.drv` の
 `nix log`、修正後は `nix build .#packages.x86_64-linux.claude-hooks --no-link` のあとの `nix log`（`test result: ok. 44 passed`）で読める。
 
-PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix の段は `nix flake check` だが、claude-hooks は
+PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix のステージは `nix flake check` だが、claude-hooks は
 `packages` にしか無く、`nix flake check` は packages を評価するだけで build しない（checkPhase が走らない）。
 普通のシェルの `cargo test` と `.claude/tests/hooks.sh` は通るので、サンドボックスだけで落ちる失敗は rebuild まで見つからなかった。
 
@@ -33,8 +33,8 @@ PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix の�
 
 ## 検討した案
 
-- 案 A: `run-checks.sh` に、claude-hooks のソースが変わったときだけ `nix build .#claude-hooks` を実行する段を足す。
-  共有スクリプトに claude-hooks 専用の分岐が入る。他のパッケージ（design-records など）にも同じ段が要る
+- 案 A: `run-checks.sh` に、claude-hooks のソースが変わったときだけ `nix build .#claude-hooks` を実行するステージを足す。
+  共有スクリプトに claude-hooks 専用の分岐が入る。他のパッケージ（design-records など）にも同じステージが要る
 - 案 B（採用）: `flake.nix` の `checks.x86_64-linux` にパッケージを入れる。`nix flake check` が build し、checkPhase が走る。
   壊した状態（`nativeCheckInputs` なし）で `nix flake check` が失敗することを確かめた
 - 案 C: テストの helper で git の失敗を詳しく出す。診断は良くなるが、サンドボックスで落ちること自体は見つからない（別件）
@@ -47,7 +47,7 @@ PR #305 の `run-checks.sh` は ALL_OK だった。`run-checks.sh` の nix の�
 
 ### 帰結
 
-- `run-checks.sh` の nix の段が、claude-hooks のサンドボックスでのテストも実行する（ローカルで build するときは cargo の build 分だけ長くなる）
+- `run-checks.sh` の nix のステージが、claude-hooks のサンドボックスでのテストも実行する（ローカルで build するときは cargo の build 分だけ長くなる）
 
 ### 確認
 
