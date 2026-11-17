@@ -45,7 +45,7 @@ pub fn main(args: &[String]) -> i32 {
     let Ok(text) = std::fs::read(&index) else {
         eprintln!("ERROR: 索引を読めません: {index}");
         eprintln!(
-            "NEXT: メモリの無いプロジェクトなら飛ばす。MEMORY.md があるなら、メモリを見ていないことを報告の「未確認」に書いて進める"
+            "NEXT: 渡したディレクトリが、このセッションの自動メモリの MEMORY.md のあるディレクトリかを確かめて再実行する。メモリの無いプロジェクトなら飛ばす。MEMORY.md があるのに読めなければ、メモリを見ていないことを報告の「未確認」に書いて進める"
         );
         return 1;
     };
