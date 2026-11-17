@@ -533,3 +533,24 @@ fn a_docs_issues_that_is_not_a_directory_is_reported() {
         "{text}"
     );
 }
+
+#[test]
+fn the_same_open_issue_is_listed_once_in_blocked() {
+    let repo = Repo::new();
+    for n in ["0003-c.md", "0004-d.md"] {
+        repo.issue(
+            n,
+            "---\nstatus: closed\nresolution: duplicate\nduplicate-of: \"#0005\"\n---\n\n# x\n",
+        );
+    }
+    repo.issue("0005-e.md", "---\nstatus: open\n---\n\n# e\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0003\", \"#0004\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues").contains(" blocked=#0005\n"),
+        "{text}"
+    );
+}
