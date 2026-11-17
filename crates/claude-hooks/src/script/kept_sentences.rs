@@ -2,7 +2,7 @@
 //! `claude-hooks script kept-sentences --base <base> <パス>...`: 規則の文書を縮めたとき、今の版の文のうち
 //! 元の版に無いものを出す（ADR-0088。`~/.claude/scripts/kept-sentences.sh` が呼ぶ）。
 //!
-//! `--base` は、各パスの `<base>` の版（`git show <base>:./<ファイル名>` をファイルのあるディレクトリで引く。絶対パスは
+//! `--base` は、各パスの `<base>` の版（`git show <base>:./<相対のパス>` を、ファイルに最も近い在るディレクトリで引く。絶対パスは
 //! cwd によらずファイルのあるリポジトリで引く）を元の版に、作業ツリーのファイルを今の版にする。`<base>` に無いパス
 //! （文を移した先の新しいファイル）は今の版だけ、作業ツリーに無いパス（文を移した元の消したファイル）は元の版だけに
 //! 数え、どちらにも無いパスは誤り。一時のファイルに書き出させないのは、プロセス置換 `<(…)` の `/dev/fd/N` を
@@ -123,13 +123,28 @@ fn from_base(base: &str, paths: &[String]) -> Option<Versions> {
     let mut news = Vec::new();
     for path in paths {
         let p = Path::new(path);
-        let dir = match p.parent() {
-            Some(d) if !d.as_os_str().is_empty() => d,
-            _ => Path::new("."),
-        };
-        let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+        if p.file_name().is_none() {
             eprintln!("ERROR: ファイルのパスではない: {path}");
             return None;
+        }
+        // git はファイルに最も近い在るディレクトリで呼ぶ（文を移した元のディレクトリごと消したときも引ける）
+        let mut dir = p.parent().unwrap_or(Path::new(""));
+        while !dir.as_os_str().is_empty() && !dir.is_dir() {
+            dir = dir.parent().unwrap_or(Path::new(""));
+        }
+        let Some(name) = p
+            .strip_prefix(dir)
+            .ok()
+            .and_then(|r| r.to_str())
+            .map(|r| r.replace('\\', "/"))
+        else {
+            eprintln!("ERROR: ファイルのパスではない: {path}");
+            return None;
+        };
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
         };
         if git(
             dir,
