@@ -553,7 +553,7 @@ fn check_warns_about_comments_on_issue_front_matter_lines() {
     let t = TempRepo::new("issue-comment");
     t.write(
         "docs/issues/0001-commented.md",
-        &issue("status: open\nopened: 2026-10-10 # 気づいた日"),
+        &issue("status: closed\nresolution: done\nopened: 2026-10-10 # 気づいた日"),
     );
     // 値の先頭の # と、一覧の要素の先頭の # は値（引用符なしで書いた番号）
     t.write(
@@ -565,7 +565,7 @@ fn check_warns_about_comments_on_issue_front_matter_lines() {
     assert!(out.status.success(), "{}", stdout(&out));
     assert!(
         stdout(&out).contains(
-            "docs/issues/0001-commented.md:3: warning: the value of `opened` has ` #`, which YAML \
+            "docs/issues/0001-commented.md:4: warning: the value of `opened` has ` #`, which YAML \
              reads as a comment but design-records reads as part of the value; write only the \
              value on the key line\n"
         ),

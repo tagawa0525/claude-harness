@@ -322,6 +322,118 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
     out.0
 }
 
+/// 閉じるときにだけ書くキー（開いている issue には無い）。
+const CLOSING_KEYS: [&str; 4] = ["resolution", "resolved-by", "duplicate-of", "closed"];
+
+/// `issues`（docs/issues のパスと中身）のうち、フロントマターを持つものの関係: 開いている issue の閉じるときのキー、
+/// duplicate の `duplicate-of`、`blocked-by` と `duplicate-of` の相手の存在、開いている相手に塞がれたまま閉じた issue、
+/// ADR の名前の形の `resolved-by` の相手（`adr_paths` は追跡している ADR のパス）。`resolved-by` のコミットの hash は
+/// rebase で変わり、探すと正しい記録を誤って示すので見ない。形の違いと同じく注意にする。
+pub fn check_issue_links(issues: &BTreeMap<String, String>, adr_paths: &[String]) -> Vec<Finding> {
+    let fronts: BTreeMap<&str, FrontMatter> = issues
+        .iter()
+        .filter(|(_, text)| text.starts_with("---\n"))
+        .filter_map(|(path, text)| Some((path.as_str(), parse_front_matter(text).ok()?)))
+        .collect();
+    let scalar = |front: &FrontMatter, key: &str| match front.get(key) {
+        Some(Value::Scalar(s)) => Some(s.clone()),
+        _ => None,
+    };
+    // 番号ごとの status（フロントマターの無い issue は None）
+    let status: BTreeMap<u32, Option<String>> = issues
+        .keys()
+        .filter_map(|path| {
+            let (number, _) = record_name(Kind::Issue, path)?;
+            let front = fronts.get(path.as_str());
+            Some((number, front.and_then(|f| scalar(f, "status"))))
+        })
+        .collect();
+    let adr_numbers: BTreeSet<u32> = adr_paths
+        .iter()
+        .filter_map(|p| record_name(Kind::Adr, p).map(|(n, _)| n))
+        .collect();
+    let mut out = Found::default();
+    for (path, front) in &fronts {
+        let state = scalar(front, "status");
+        let present = |key: &str| front.get(key).is_some_and(|v| !v.items().is_empty());
+        if state.as_deref() == Some("open") {
+            let written: Vec<String> = CLOSING_KEYS
+                .iter()
+                .filter(|k| present(k))
+                .map(|k| format!("`{k}`"))
+                .collect();
+            if !written.is_empty() {
+                out.warning(
+                    path,
+                    None,
+                    format!(
+                        "an open issue has {}; write them when closing it",
+                        written.join(", ")
+                    ),
+                );
+            }
+        }
+        let closed = state.as_deref() == Some("closed");
+        if closed
+            && scalar(front, "resolution").as_deref() == Some("duplicate")
+            && !present("duplicate-of")
+        {
+            out.warning(path, None, "a duplicate issue needs `duplicate-of`");
+        }
+        for key in ["blocked-by", "duplicate-of"] {
+            for item in front.get(key).map(Value::items).unwrap_or_default() {
+                let number = item
+                    .strip_prefix('#')
+                    .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                    .and_then(|n| n.parse::<u32>().ok());
+                match number.map(|n| status.get(&n)) {
+                    None => out.warning(
+                        path,
+                        None,
+                        format!("`{key}` item {item:?} is not #<number>"),
+                    ),
+                    Some(None) => out.warning(
+                        path,
+                        None,
+                        format!("`{key}` names {item}, which does not exist in docs/issues"),
+                    ),
+                    Some(Some(other)) => {
+                        if key == "blocked-by" && closed && other.as_deref() == Some("open") {
+                            out.warning(
+                                path,
+                                None,
+                                format!(
+                                    "the issue is closed but `blocked-by` names {item}, which is \
+                                     open; close it after the issues blocking it are closed"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(by) = scalar(front, "resolved-by") {
+            let missing = match single_adr(&by) {
+                Some(n) => !adr_numbers.contains(&n),
+                None => {
+                    record_number(&format!("{by}.md")).is_some()
+                        && !adr_paths.contains(&format!("{ADR_DIR}/{by}.md"))
+                }
+            };
+            if missing {
+                out.warning(
+                    path,
+                    None,
+                    format!("`resolved-by` names {by}, which is not an ADR in docs/adr"),
+                );
+            }
+        }
+    }
+    let mut found = out.0;
+    found.sort();
+    found
+}
+
 /// フロントマターの行のうち、値（一覧なら要素）の途中に空白と `#` が続くもの（YAML のコメント）の、ファイルの行番号と
 /// キー。[`parse_front_matter`] は `#` を値として読むので、コメントのつもりの文が値に混ざる。値と要素の先頭の `#` は
 /// 引用符なしで書いた番号（`#0012`）として読むので含めない。引用符で囲んだ要素の中の `#` も値。

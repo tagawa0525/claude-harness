@@ -38,9 +38,9 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use design_records::check::{
-    Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_numbers,
-    check_reservations, confirmation_paths, decision_changed_without_change_item,
-    superseded_dependents,
+    Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_links,
+    check_issue_numbers, check_reservations, confirmation_paths,
+    decision_changed_without_change_item, superseded_dependents,
 };
 use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
 use design_records::{
@@ -224,6 +224,7 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
         }
     }
     found.extend(check_issue_format(&issue_texts));
+    found.extend(check_issue_links(&issue_texts, &adr_paths));
     let origin = has_origin(&root)?;
     for (kind, paths) in [(Kind::Adr, &adr_paths), (Kind::Issue, &issue_paths)] {
         if let Some(reserved) = reserved.get(&kind) {
