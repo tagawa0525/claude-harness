@@ -80,7 +80,7 @@ pub fn main(args: &[String]) -> i32 {
                 head.get(..7).unwrap_or(&head)
             );
             eprintln!(
-                "次の一手: /gh-pr-review の「ローカルレビュー」の手順で /code-review を回したら {scripts}/record-local-review.sh {canonical} <SHA> <high> <medium> <low> で記録し（High が残れば直して回し直す）、もう一度 {scripts}/request-rereview.sh {canonical} で要求してください"
+                "次の一手: /gh-pr-review の「ローカルレビュー」の手順で /code-review を回したら、PR の worktree で {scripts}/record-local-review.sh {canonical} <SHA> <high> <medium> <low> を実行して記録し（High が残れば直して回し直す）、もう一度 {scripts}/request-rereview.sh {canonical} で要求してください"
             );
             return 1;
         }

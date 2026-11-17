@@ -142,7 +142,7 @@ fn outside_a_clone_records_nothing() {
     );
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        stderr(&out).contains("PR の worktree で実行してください"),
+        stderr(&out).contains("git の共通のディレクトリを引けない"),
         "{}",
         stderr(&out)
     );

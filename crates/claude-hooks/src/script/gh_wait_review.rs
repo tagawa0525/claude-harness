@@ -155,7 +155,7 @@ fn last_request(pr: &pr_url::Pr, canonical: &str) -> Result<String, i32> {
         .to_string()
         .replace('\\', "/");
     println!(
-        "次の一手: {review_scripts}/request-rereview.sh {canonical} でレビューを要求できます（任意。head のローカルレビューの記録があればマージできる。要求の前に、/gh-pr-review の「ローカルレビュー」の手順で head に /code-review を回して {review_scripts}/record-local-review.sh で記録する）"
+        "次の一手: {review_scripts}/request-rereview.sh {canonical} でレビューを要求できます（任意。head のローカルレビューの記録があればマージできる。要求の前に、/gh-pr-review の「ローカルレビュー」の手順で head に /code-review を回して、PR の worktree で {review_scripts}/record-local-review.sh を実行して記録する）"
     );
     Err(6)
 }

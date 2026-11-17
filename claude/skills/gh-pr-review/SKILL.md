@@ -194,7 +194,8 @@ head と同じもの）に、その回で検証して正しいと判断した指
 cd <worktree> && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
 ```
 
-スクリプトは、その head で /code-review を呼んだ行（hook が clone に書く）が無ければ記録せず、次の手を示す。
+スクリプトは、その head で /code-review を呼んだ行（hook が clone に書く）が無ければ記録せず、次の手を示す。`WORKTREE` が
+none で PR の URL を対象に渡した周は、hook が行を書かないので、末尾に `--unlogged '<その回し方>'` を付ける。
 
 記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
 して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`。

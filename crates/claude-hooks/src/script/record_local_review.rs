@@ -9,8 +9,9 @@
 //! その head で /code-review を呼んだことは、count-review-rounds の hook が clone に書く行（呼んだときの HEAD）で
 //! 確かめ、行が無ければ記録しない。確かめる clone は起動したディレクトリのもの。直した後の head と rebase の後の head に、
 //! 回さずに前の周の数で記録を付けると、マージの hook の「最後の push を覆うレビューがありません」の知らせが出なくなる。
-//! hook が行を書かない回し方（対象に PR の URL を渡した、detached HEAD、ユーザーが打った /code-review、回した後の
-//! amend、別の clone で回した）は、`--unlogged <理由>` で理由を記録のコメントに残して付ける
+//! 行が無くても、前の記録が覆う head（rebase だけの head）には記録を足さずに 0 で終える。hook が行を書かない回し方
+//! （対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）は、`--unlogged <理由>` で
+//! 理由を記録のコメントに残して付ける
 
 use super::pr_url;
 use regex::Regex;
@@ -107,40 +108,53 @@ pub fn main(args: &[String]) -> i32 {
         );
         return 1;
     }
-    if unlogged.is_none() {
-        let cwd = std::env::current_dir()
-            .map(|d| d.display().to_string())
-            .unwrap_or_else(|e| format!("（今のディレクトリを取れません: {e}）"));
-        let next = format!(
-            "- この head をまだ回していないなら、PR の worktree で /code-review を回してから、その worktree で記録する\n\
-             - base への rebase だけの head なら、記録は足さない（前の head の記録で足りるかは decide-next.sh {url} が示す）\n\
-             - 回したのに行が無いなら（対象に PR の URL を渡した、detached HEAD、ユーザーが打った /code-review、回した後の amend、別の clone で回した）、末尾に --unlogged '<その理由>' を付ける（理由は記録のコメントに残る）"
-        );
-        match crate::rules::round_ran_at(std::path::Path::new(&cwd), &head) {
-            Some((_, true)) => {}
-            Some((rounds, false)) => {
-                eprintln!(
-                    "ERROR: {} で /code-review を回した記録が {} にありません（記録を付けていません）\n{next}",
-                    short(&head),
-                    rounds.display()
-                );
-                return 1;
-            }
-            None => {
-                eprintln!(
-                    "ERROR: {cwd} で git の共通のディレクトリを引けないので、{} で /code-review を回した記録を確かめられません。PR の worktree で実行してください（記録を付けていません）\n{next}",
-                    short(&head)
-                );
-                return 1;
-            }
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("ERROR: 今のディレクトリを取れません: {e}（記録を付けていません）");
+            return 1;
         }
+    };
+    let rounds = crate::rules::round_ran_at(&cwd, &head);
+    let logged = matches!(rounds, Some((_, true)));
+    if !logged && unlogged.is_none() {
+        // 行が無くても、前の記録が覆う head（rebase だけの head、すでに記録のある head）には記録が要らない
+        let covered = crate::rules::local_review_covers_for_pr(&cwd, &pr.repo, &pr.number, &head);
+        for notice in crate::output::take_notices() {
+            eprintln!("{notice}");
+        }
+        if covered == Ok(true) {
+            println!(
+                "COVERED: {} は、すでにある記録（同じ head の記録か、rebase だけの前の head の記録）で覆われています。記録を足していません",
+                short(&head)
+            );
+            return 0;
+        }
+        let place = match &rounds {
+            Some((dir, _)) => format!(
+                "{} で /code-review を回した記録が {} にありません",
+                short(&head),
+                dir.display()
+            ),
+            None => format!(
+                "{} で git の共通のディレクトリを引けないので、{} で /code-review を回した記録を確かめられません",
+                cwd.display(),
+                short(&head)
+            ),
+        };
+        eprintln!(
+            "ERROR: {place}（記録を付けていません）\n\
+             - この head をまだ回していないなら、PR の worktree で /code-review を回してから、その worktree で記録する\n\
+             - この head で回したのに hook が行を書かない回し方だったなら（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）、末尾に --unlogged '<その回し方>' を付ける（記録のコメントに残る）"
+        );
+        return 1;
     }
     let mut body = format!(
         "{}\nローカルの /code-review で {} を確かめた: High {high} / Medium {medium} / Low {low}",
         crate::rules::local_review_mark(&head, high, medium, low),
         short(&head)
     );
-    if let Some(reason) = unlogged {
+    if let Some(reason) = unlogged.filter(|_| !logged) {
         body.push_str(&format!("\n回した記録が clone に無い理由: {reason}"));
     }
     let code = crate::gh::run_for_repo(&pr.repo, &["pr", "comment", &pr.number, "--body", &body]);

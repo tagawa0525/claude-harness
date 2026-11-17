@@ -71,15 +71,21 @@ fn live_rounds(dir: &Path, branch: &str, path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// dir の clone の、周の数の置き場と、そこに head を HEAD にして /code-review を呼んだ行があるか。ブランチは問わない
-/// （同じ SHA なら同じコミット。ブランチの名前を変えても引ける）。dir が git のリポジトリの中でなければ None。
-/// 行があるのは呼んだことで、レビューが対象を読めたことまでは示さない（[`CountReviewRounds`] は結果を見ない）
-pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<(PathBuf, bool)> {
+/// dir の clone の、周の数の置き場（共通の git ディレクトリの下。worktree をまたいで 1 つ）。dir が git のリポジトリの
+/// 中でなければ None
+fn state_dir(dir: &Path) -> Option<PathBuf> {
     let common = git::git(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?;
-    let state_dir = Path::new(&common).join(STATE_DIR);
+    Some(Path::new(&common).join(STATE_DIR))
+}
+
+/// dir の clone の、周の数の置き場と、そこに head を HEAD にして /code-review を呼んだ行があるか。ブランチは問わない
+/// （同じ SHA なら同じコミット。ブランチの名前を変えても引ける）。dir が git のリポジトリの中でなければ None。
+/// 行があるのは呼んだことで、レビューが対象を読めたことまでは示さない（[`CountReviewRounds`] は結果を見ない）
+pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<(PathBuf, bool)> {
+    let state_dir = state_dir(dir)?;
     let found = std::fs::read_dir(&state_dir).is_ok_and(|files| {
         files.flatten().any(|file| {
             std::fs::read_to_string(file.path()).is_ok_and(|text| {
@@ -117,13 +123,9 @@ impl Rule for CountReviewRounds {
         if branch.is_empty() {
             return Vec::new();
         }
-        let Some(common) = git::git(
-            &dir,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        ) else {
+        let Some(state_dir) = state_dir(&dir) else {
             return Vec::new();
         };
-        let state_dir = Path::new(&common).join(STATE_DIR);
         let path = state_dir.join(state_file_name(&branch));
         let mut lines = live_rounds(&dir, &branch, &path);
         let head = git::git(&dir, &["rev-parse", "HEAD"]).unwrap_or_default();

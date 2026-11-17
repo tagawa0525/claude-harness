@@ -15,7 +15,8 @@ source "$(dirname "$0")/../lib.sh"
 REVIEW_SCRIPTS="$CLAUDE_DIR/skills/gh-pr-review/scripts"
 
 # 対象の PR は URL で渡す。リポジトリは URL から GH_REPO に入り、gh api の {owner} / {repo} も
-# それで解決される。cwd は git のリポジトリでない場所にして、cwd に頼らないことを確かめる。
+# それで解決される。cwd は git のリポジトリでない場所にして、cwd に頼らないことを確かめる
+# （record-local-review.sh は、その head で回した行を起動したディレクトリの clone で確かめるので、その節だけ clone の中で呼ぶ）。
 # 偽 gh に repo view の分岐は置かないので、呼べば unexpected で失敗する
 PR_URL="https://github.com/octo/repo/pull/1"
 # decide-next.sh と request-rereview.sh は、記録の判定を claude-hooks local-review-covers に任せる（判定そのものは
