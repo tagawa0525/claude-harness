@@ -410,11 +410,23 @@ mod tests {
         ));
     }
 
+    /// 手元の設定（グローバルの core.hooksPath など）と、外の git が渡す GIT_*（GIT_DIR など）を読まずに git を実行する。
+    /// 設定を読むと、Claude Code のセッションの中ではグローバルの commit-msg の hook がテストのコミットの件名を止める。
+    /// GIT_DIR を読むと、git の hook の中から走ったとき、一時のリポジトリでなく外のリポジトリにコミットする
     fn git_in(dir: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("GIT_") {
+                command.env_remove(key);
+            }
+        }
+        let status = command
             .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
             .args(args)
             .current_dir(dir)
+            // 作業ツリーの外（git add . が拾わない場所）の、無いファイル
+            .env("GIT_CONFIG_GLOBAL", dir.join(".git/no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .status()
             .unwrap();
         assert!(status.success(), "git {args:?}");
