@@ -555,6 +555,13 @@ fn check_warns_about_comments_on_issue_front_matter_lines() {
         "docs/issues/0001-commented.md",
         &issue("status: closed\nresolution: done\nopened: 2026-10-10 # 気づいた日"),
     );
+    // 全角の空白の後の # と、単一引用符で囲んだ番号は、YAML でもコメントではない
+    t.write(
+        "docs/issues/0004-not-comments.md",
+        &issue(
+            "status: closed\nresolution: duplicate\nopened: 2026-10-10　#12\nduplicate-of: '#0001'",
+        ),
+    );
     // 引用符で囲んだ番号は値。引用符なしの値と一覧の要素の先頭の # も、YAML ではコメント（か読めない一覧）になる
     t.write(
         "docs/issues/0002-numbers.md",
@@ -586,6 +593,12 @@ fn check_warns_about_comments_on_issue_front_matter_lines() {
         );
     }
     assert!(!stdout(&out).contains("0002-numbers"), "{}", stdout(&out));
+    assert!(
+        !stdout(&out).contains("0004-not-comments.md:4:")
+            && !stdout(&out).contains("0004-not-comments.md:5:"),
+        "{}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -2892,6 +2905,35 @@ fn new_in_a_bundle_leaves_untracked_drafts_out_of_the_index() {
     assert_eq!(
         t.read("docs/adr/index.md"),
         "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n* [ADR-0002: bar を使う](0002-use-bar.md)\n"
+    );
+}
+
+#[test]
+fn new_leaves_other_untracked_indexes_and_unreadable_drafts_alone() {
+    let t = TempRepo::new("okf-new-others");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/plans/a.md",
+        "---\ntype: Plan\ntitle: a\ndescription: 計画\n---\n",
+    );
+    t.commit_all("docs: bundle with a plan");
+    // index が作り、手で直した、まだコミットしていない索引
+    t.write(
+        "docs/plans/index.md",
+        "# 計画\n\n* [計画 A](a.md) - 手で直した\n",
+    );
+    // 読めない下書き（索引に載せないので読まない）
+    fs::write(t.dir.join("docs/plans/scratch.md"), [0xff, 0xfe, 0x00]).unwrap();
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("cannot add"), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/plans/index.md"),
+        "# 計画\n\n* [計画 A](a.md) - 手で直した\n"
+    );
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n"
     );
 }
 
