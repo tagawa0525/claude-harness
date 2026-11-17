@@ -247,6 +247,61 @@ fn with_a_sha_it_waits_until_the_pr_head_is_that_commit() {
 }
 
 #[test]
+fn a_head_that_moved_past_the_sha_is_followed() {
+    // 渡したコミットが head になった後で、さらに push された（自動の修正など）。前のコミットに戻るのを待ち続けない
+    const NEWER: &str = "abc1234abc1234abc1234abc1234abc1234abc12\n";
+    let fake = FakeGh::new();
+    let mut calls = vec![("", 0), ("{\"number\":42}", 0)];
+    calls.extend([(HEAD, 0), (RUNNING, 0), ("[]", 0)]);
+    for _ in 0..2 {
+        calls.extend([(NEWER, 0), (PASSED, 0), ("[]", 0)]);
+    }
+    let out = fake.run_calls_with_env("gh-wait-checks", &[URL, "DEF5678"], &calls, NO_WAIT);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("HEAD: abc1234abc1234abc1234abc1234abc1234abc12"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(stdout(&out).contains("CHECKS: passed"), "{}", stdout(&out));
+}
+
+#[test]
+fn a_cancelled_check_does_not_end_the_wait_while_others_run() {
+    // 取り消された run は、同じ head の次の run に置き換わることがある。実行中の check がある間は、failure と timed_out
+    // だけですぐ終える。取り消しは、全部が終わってから失敗に数える
+    let fake = FakeGh::new();
+    let cancelled_running = "{\"name\":\"build\",\"status\":\"completed\",\"conclusion\":\"cancelled\"}\n\
+                             {\"name\":\"cargo-test\",\"status\":\"in_progress\",\"conclusion\":null}\n";
+    let cancelled_done = "{\"name\":\"build\",\"status\":\"completed\",\"conclusion\":\"cancelled\"}\n\
+                          {\"name\":\"cargo-test\",\"status\":\"completed\",\"conclusion\":\"success\"}\n";
+    let out = wait(&fake, &[(cancelled_running, "[]"), (cancelled_done, "[]")]);
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("待機中: 実行中の check が 1 件（cargo-test）"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).ends_with("FAILED: build (cancelled)\n"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn a_new_head_gets_its_own_time_to_register_checks() {
     // 待つ間に push された head にも、check の登録を待つ時間を初めから与える
     const NEW: &str = "abc1234abc1234abc1234abc1234abc1234abc12\n";
@@ -310,12 +365,12 @@ fn checks_still_running_at_the_end_are_a_timeout() {
 }
 
 #[test]
-fn a_state_it_cannot_read_three_times_in_a_row_stops_with_the_way_to_see_why() {
+fn a_state_it_cannot_read_five_times_in_a_row_stops_with_the_way_to_see_why() {
     // check run か status を取れない回は、通ったとも無いとも数えない。続けて取れなければ、時間切れまで待たずに止まる
     // （権限の無いトークンなど、待っても変わらない失敗）
     let fake = FakeGh::new();
     let mut calls = vec![("", 0), ("{\"number\":42}", 0)];
-    for _ in 0..3 {
+    for _ in 0..5 {
         calls.extend([(HEAD, 0), ("", 1), ("[]", 0)]);
     }
     let env: Vec<(&str, &str)> = NO_WAIT
@@ -332,7 +387,7 @@ fn a_state_it_cannot_read_three_times_in_a_row_stops_with_the_way_to_see_why() {
         stderr(&out)
     );
     assert!(
-        stdout(&out).contains("ERROR: check の状態を 3 回続けて取得できません"),
+        stdout(&out).contains("ERROR: check の状態を 5 回続けて取得できません"),
         "{}",
         stdout(&out)
     );
