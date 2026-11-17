@@ -160,3 +160,41 @@ fn a_remote_branch_with_a_longer_name_is_not_the_branch() {
     );
     assert_eq!(text(&out.stdout), "RENAMED: old -> other\nREMOTE: none\n");
 }
+
+#[test]
+fn the_head_branch_of_an_open_pr_is_refused_with_what_to_do_instead() {
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&[
+        "remote",
+        "add",
+        "github",
+        "https://github.com/example/app.git",
+    ]);
+    repo.git(&["switch", "-q", "-c", "feat/old"]);
+    repo.git(&["push", "-q", "-u", "origin", "feat/old"]);
+    // gh pr view の答えを OPEN にする偽の gh
+    let bin = repo.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    common::place_fake_tool(&bin.join(format!("gh{}", std::env::consts::EXE_SUFFIX)));
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let out = forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+        .args(["script", "rename-branch", "feat/new", "--remote"])
+        .current_dir(repo.app())
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("PATH", path)
+        .env("FAKE_TOOL_OUT", "OPEN\n")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let err = text(&out.stderr);
+    assert!(err.contains("open PR があります"), "{err}");
+    assert!(err.contains("PR をマージかクローズしてから"), "{err}");
+    assert_eq!(repo.git(&["branch", "--show-current"]), "feat/old");
+}

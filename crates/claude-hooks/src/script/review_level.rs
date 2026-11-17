@@ -10,6 +10,8 @@
 //! - `FILES: <変更ファイルの数>`
 //! - `LEVEL: medium | high`: 差分のどのファイルも下の「文書」なら medium、ほかは high。指摘の上限が高いと文書の周ごとに
 //!   8〜10 件が出て、指摘の数が収束の目安にならない
+//! - `NEXT: /code-review <LEVEL> <WORKTREE>（…）`: 回す 1 行。WORKTREE が none なら対象を `<PR の URL>` にし、PR が無い
+//!   ときの取り出し方を添える
 //!
 //! 「文書」は、凍結せずマージの後も直せるので、周を重ねて取り切るより後で直す方が安いもの:
 //! - docs/ の下の、ADR（docs/adr/NNNN-*.md）でない .md（issue、計画、説明の文書）
@@ -129,14 +131,22 @@ pub fn main(args: &[String]) -> i32 {
     } else {
         "high"
     };
+    let worktree = worktree_of(dir, &target);
     println!("BASE: {base}");
     println!("TARGET: {target}");
-    println!(
-        "WORKTREE: {}",
-        worktree_of(dir, &target).unwrap_or_else(|| "none".to_string())
-    );
+    println!("WORKTREE: {}", worktree.as_deref().unwrap_or("none"));
     println!("FILES: {}", files.len());
     println!("LEVEL: {level}");
+    const ROUND: &str = "1 周目はこの LEVEL で回す。直した後の周のレベルは /git-merge の「直す指摘の基準」の「終わり」の項で決める";
+    match worktree {
+        Some(path) => println!(
+            "NEXT: /code-review {level} {}（{ROUND}）",
+            super::wait_step::quote(&path)
+        ),
+        None => println!(
+            "NEXT: /code-review {level} <PR の URL>（{target} をチェックアウトした worktree が無い。ブランチ名は cwd のリポジトリで解かれ、空の結果が返る。PR が無ければ git worktree add で取り出して review-level を実行し直す。{ROUND}）"
+        ),
+    }
     0
 }
 

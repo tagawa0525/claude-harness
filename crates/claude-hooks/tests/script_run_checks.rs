@@ -349,6 +349,50 @@ fn base_checks_the_committed_changes_of_the_branch_from_another_directory() {
 }
 
 #[test]
+fn base_stops_on_uncommitted_changes_and_shows_how_to_clear_them() {
+    let repo = Repo::new();
+    repo.git(&["checkout", "-q", "-b", "feat/x"]);
+    repo.commit("a.sh", "echo a\n");
+    repo.tool("shellcheck");
+    repo.write("a.sh", "echo changed\n");
+    repo.write("scratch.txt", "x\n");
+    let out = repo.run(&["--base", "main"], &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert_eq!(stdout(&out), "");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.starts_with("ERROR: 作業ツリーに変更があります"),
+        "{err}"
+    );
+    assert!(
+        err.contains(" M a.sh\n") && err.contains("?? scratch.txt\n"),
+        "{err}"
+    );
+    for how in ["コミット", ".gitignore", "消す"] {
+        assert!(err.contains(how), "{how}: {err}");
+    }
+    assert!(repo.calls().is_empty());
+}
+
+#[test]
+fn ignored_files_and_the_staged_and_merge_modes_do_not_stop_on_changes() {
+    let repo = Repo::new();
+    repo.commit(".gitignore", "target/\n");
+    repo.git(&["checkout", "-q", "-b", "feat/x"]);
+    repo.commit("a.sh", "echo a\n");
+    repo.tool("shellcheck");
+    repo.write("target/out", "x\n");
+    let out = repo.run(&["--base", "main"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    // ステージ済み（コミットの前）と --merge（マージの結果）は、変更があるのがふつうの状態
+    repo.stage("b.sh", "echo b\n");
+    for args in [&[][..], &["--merge"][..]] {
+        let out = repo.run(args, &[]);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", said(&out));
+    }
+}
+
+#[test]
 fn an_unresolvable_base_and_unknown_options_are_errors() {
     let repo = Repo::new();
     let out = repo.run(&["--base", "nonexistent"], &[]);
@@ -362,6 +406,119 @@ fn an_unresolvable_base_and_unknown_options_are_errors() {
     let out = repo.run(&["--base"], &[]);
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
     assert!(said(&out).contains("ERROR: --base には引数が要ります"));
+}
+
+#[test]
+fn check_commands_in_the_project_claude_md_are_noted_with_their_lines() {
+    let repo = Repo::new();
+    repo.commit(
+        "CLAUDE.md",
+        "# app\n\n検査:\n\n```bash\ncargo clippy --all-features\n```\n\n説明の行\n",
+    );
+    repo.commit(".claude/CLAUDE.md", "nix flake check を通す\n");
+    repo.write("pyproject.toml", "");
+    repo.tool("ruff");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    let text = stdout(&out);
+    let notes: Vec<&str> = text.lines().filter(|l| l.starts_with("NOTE: ")).collect();
+    assert_eq!(notes.len(), 2, "{text}");
+    assert!(
+        notes[0].starts_with("NOTE: CLAUDE.md の 6 行目にチェックのコマンドがある"),
+        "{}",
+        notes[0]
+    );
+    assert!(
+        notes[1].starts_with("NOTE: .claude/CLAUDE.md の 1 行目にチェックのコマンドがある"),
+        "{}",
+        notes[1]
+    );
+    assert!(notes[0].contains("優先"), "{}", notes[0]);
+    // 知らせは検査の前に出す（失敗で止まっても読める）
+    assert!(text.starts_with("NOTE: "), "{text}");
+}
+
+#[test]
+fn a_crate_with_features_is_noted_before_its_cargo_checks() {
+    let repo = Repo::new();
+    repo.commit(
+        "sub/app/Cargo.toml",
+        "[package]\nname = \"app\"\n\n[features]\nextra = []\n",
+    );
+    repo.tool("cargo");
+    repo.stage("sub/app/src/lib.rs", "\n");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    let text = stdout(&out);
+    assert!(
+        text.starts_with(
+            "NOTE: sub/app/Cargo.toml に [features] がある。既定のチェックは --all-features を付けないので"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("\nRUN: rust format: cargo_in sub/app fmt --check\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn features_of_the_members_of_a_workspace_root_are_noted() {
+    let repo = Repo::new();
+    repo.commit("Cargo.toml", "[workspace]\nmembers = [\"crates/foo\"]\n");
+    repo.commit(
+        "crates/foo/Cargo.toml",
+        "[package]\nname = \"foo\"\n\n[features] # 任意の機能\nextra = []\n",
+    );
+    repo.tool("cargo");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).starts_with("NOTE: crates/foo/Cargo.toml に [features] がある"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn members_of_a_root_package_are_not_noted_as_checked() {
+    // 根が [package] を持つ workspace では、cargo は根の package だけを検査する（メンバーは既定で検査しない）
+    let repo = Repo::new();
+    repo.commit(
+        "Cargo.toml",
+        "[package]\nname = \"app\"\n\n[workspace]\nmembers = [\"crates/foo\"]\n",
+    );
+    repo.commit(
+        "crates/foo/Cargo.toml",
+        "[package]\nname = \"foo\"\n\n[features]\nextra = []\n",
+    );
+    repo.tool("cargo");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!stdout(&out).contains("NOTE: "), "{}", stdout(&out));
+}
+
+#[test]
+fn the_uncommitted_changes_are_listed_with_their_names_unquoted() {
+    let repo = Repo::new();
+    repo.git(&["checkout", "-q", "-b", "feat/x"]);
+    repo.commit("a.sh", "echo a\n");
+    repo.write("下書き.txt", "x\n");
+    let out = repo.run(&["--base", "main"], &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("?? 下書き.txt\n"), "{err}");
+}
+
+#[test]
+fn a_project_without_check_commands_or_features_gets_no_note() {
+    let repo = Repo::new();
+    repo.commit("CLAUDE.md", "# app\n\nテストは CI で回す\n");
+    repo.commit("Cargo.toml", "[package]\nname = \"app\"\n");
+    repo.tool("cargo");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!stdout(&out).contains("NOTE: "), "{}", stdout(&out));
 }
 
 #[test]

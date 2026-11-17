@@ -42,10 +42,7 @@ PR の Why を1文で書く。2文要る（無関係な決定や話題が混ざ�
 ~/.claude/scripts/base-moved.sh <ブランチ名>
 ```
 
-- 何も出ず、`WARN:` も無ければ進める
-- `WARN:` が出たら、出力が空でも比較は未確認。原因を直して再実行するか、未確認のまま進めると PR 本文に書く
-- `COMMON:` が出たら、出力の分岐点と先頭の hash で `git diff <分岐点>..<先頭> -- <パス>` を読む。同じ変更の二重なら
-  PR を出さずに止め、衝突しうるなら PR 本文の Summary に書いて進める
+出力の `NEXT:` と `UNVERIFIED:` の行に従う。どちらも無ければ進める。
 
 ## ローカルレビュー（PR を出す前）
 
@@ -55,9 +52,8 @@ PR を出す前にローカルの `/code-review` を回し、直す指摘が無�
 ~/.claude/scripts/review-level.sh
 ```
 
-- 出力の `LEVEL` と `WORKTREE` で `/code-review <LEVEL> <WORKTREE>` を回す（対象はブランチ名でなく `WORKTREE` で渡す。
-  引数なしやブランチ名は cwd のリポジトリを見て、空の結果が返る）。別のブランチの上に積んでいるときは
-  `review-level.sh` に `--base <土台のブランチ>` を付ける
+- 出力の `NEXT:` の `/code-review` を回す。別のブランチの上に積んでいるときは `review-level.sh` に `--base <土台のブランチ>` を
+  付ける
 - レビューが対象を見つけられなかった・実行できなかった返答は、指摘ゼロでなく未実施として扱う
   （`[]` は、返答が差分を読んだと示しているときだけ指摘ゼロ）
 - 直すのは /git-merge の「レビュー」の節の「直す指摘の基準」の blocking だけ。直したらコミットし、もう一度回すかを
@@ -107,17 +103,4 @@ EOF
 
 ## 完了
 
-`gh pr create` が出力したURLを報告する（取り直すときは `gh pr view --json url -q .url`）。
-
-## 次のステップ
-
-```text
-✅ PRを作成しました: [URL]
-
-次のステップ:
-- Copilotのレビューを待つ場合（任意。head のローカルレビューの記録があればマージできる） → ~/.claude/scripts/gh-wait-review.sh <作成した PR の URL>（約 10 分。`run_in_background=true` で実行）
-- Copilotレビュー/CIの状況を確認する場合 → /gh-actions-check
-- レビューコメントに対応する場合 → /gh-pr-review
-- レビュー後にマージする場合 → /gh-pr-merge
-- 状態を確認する場合 → /git-info
-```
+URL の報告と次のステップは、`gh pr create` に hook が添える案内に従う。

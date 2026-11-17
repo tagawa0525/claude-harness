@@ -92,9 +92,11 @@ fn a_base_that_moved_and_touched_the_same_paths_is_reported() {
     assert_eq!(
         text(&out.stdout),
         format!(
-            "BASE_MOVED: main が分岐点から 2 commits 進んでいる（先頭 {}、分岐点 {}）\nCOMMON: src/a.txt\n",
-            head.trim(),
-            &fork.trim()[..head.trim().len()]
+            "BASE_MOVED: main が分岐点から 2 commits 進んでいる（先頭 {head}、分岐点 {fork}）\nCOMMON: src/a.txt\n\
+             NEXT: git diff {fork}..{head} -- src/a.txt で main の変更を読む。同じ変更の二重なら作業を止め、衝突しうるなら PR 本文の Summary（/delegate の担当は報告）に書いて進める\n\
+             BEHIND: 2\n",
+            head = head.trim(),
+            fork = &fork.trim()[..head.trim().len()]
         )
     );
     // リモートの無いリポジトリでも、ローカルのブランチの --base は確かめた比較として WARN を出さない
@@ -102,27 +104,100 @@ fn a_base_that_moved_and_touched_the_same_paths_is_reported() {
 }
 
 #[test]
-fn no_common_path_or_no_move_prints_nothing() {
+fn no_common_path_or_no_move_prints_only_the_count_behind() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/work"]);
     repo.commit("src/a.txt", "a");
     let out = repo.run(&["--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(text(&out.stdout), "");
+    assert_eq!(text(&out.stdout), "BEHIND: 0\n");
     repo.git(&["switch", "-q", "main"]);
     repo.commit("src/c.txt", "main c");
     let out = repo.run(&["feat/work", "--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(text(&out.stdout), "");
+    assert_eq!(text(&out.stdout), "BEHIND: 1\n");
 }
 
 #[test]
-fn without_a_github_origin_or_base_it_does_nothing() {
+fn the_count_behind_counts_every_commit_of_a_merged_branch() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/work"]);
+    repo.commit("src/a.txt", "a");
+    repo.git(&["switch", "-q", "-c", "side", "main"]);
+    repo.commit("src/s1.txt", "s1");
+    repo.commit("src/s2.txt", "s2");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "Merge: side", "side"]);
+    let out = repo.run(&["feat/work", "--base", "main"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    // マージコミットと、マージで入った 2 件（BASE_MOVED の件数と違い、マージを 1 件と数えない）
+    assert_eq!(text(&out.stdout), "BEHIND: 3\n");
+}
+
+#[test]
+fn common_paths_are_followed_by_the_diff_to_read() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/work"]);
+    repo.commit("src/a.txt", "a");
+    repo.commit("src/b.txt", "b");
+    repo.git(&["switch", "-q", "main"]);
+    repo.commit("src/a.txt", "main a");
+    repo.commit("src/b.txt", "main b");
+    let fork = repo.git(&["merge-base", "main", "feat/work"]);
+    let head = repo.git(&["rev-parse", "--short", "main"]);
+    let fork = &fork.trim()[..head.trim().len()];
+    let out = repo.run(&["feat/work", "--base", "main"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    let next = stdout
+        .lines()
+        .find(|l| l.starts_with("NEXT: "))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(
+        next.contains(&format!(
+            "git diff {fork}..{} -- src/a.txt src/b.txt",
+            head.trim()
+        )),
+        "{next}"
+    );
+    assert!(next.contains("二重") && next.contains("Summary"), "{next}");
+    assert!(stdout.ends_with("BEHIND: 2\n"), "{stdout}");
+}
+
+#[test]
+fn without_a_github_origin_or_base_the_comparison_is_unverified() {
     let repo = Repo::new();
     let out = repo.run(&[]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(text(&out.stdout), "");
-    assert_eq!(text(&out.stderr), "");
+    let stdout = text(&out.stdout);
+    assert!(stdout.starts_with("UNVERIFIED: "), "{stdout}");
+    assert!(stdout.contains("--base"), "{stdout}");
+    assert!(!stdout.contains("BEHIND:"), "{stdout}");
+}
+
+#[test]
+fn a_warning_makes_the_comparison_unverified_instead_of_counting() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/work"]);
+    repo.commit("src/a.txt", "a");
+    // GitHub の無い clone で、ローカルのブランチでない --base は fetch していない追跡ブランチを指しうる
+    let out = repo.run(&["--base", "main~0"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("WARN: "),
+        "{}",
+        text(&out.stderr)
+    );
+    let stdout = text(&out.stdout);
+    assert!(!stdout.contains("BEHIND:"), "{stdout}");
+    let unverified = stdout
+        .lines()
+        .find(|l| l.starts_with("UNVERIFIED: "))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(
+        unverified.contains("再実行") && unverified.contains("PR 本文"),
+        "{unverified}"
+    );
 }
 
 #[test]

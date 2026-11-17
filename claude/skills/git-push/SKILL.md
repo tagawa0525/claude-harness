@@ -17,10 +17,10 @@ allowed-tools:
 !`git status --short`
 !`git branch -vv`
 
-## main / master では push しない
+## GitHub のリモートが無いリポジトリ
 
-現在のブランチが `main` / `master` なら push せず、/git-cherry-pick で feature ブランチに
-移してから /gh-pr-create へ進むよう案内する。
+hook（guard-git-push）は GitHub のリモートがあるリポジトリだけを止める。リモートが GitHub でなければ、`main` / `master`
+では push せず、/git-cherry-pick で feature ブランチに移してから進むよう案内する。
 
 ## プッシュ対象の確認
 

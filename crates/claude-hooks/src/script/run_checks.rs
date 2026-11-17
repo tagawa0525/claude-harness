@@ -14,7 +14,10 @@
 //!   .pre-commit-config.yaml で design-records にオプトインしていれば、.md の変更が無くても design-records check
 //! - Shell: .sh がステージ済み（ステージ済みのファイルだけを shellcheck で検査）
 //!
-//! 「ステージ済み」は、--merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分に読み替える。
+//! 「ステージ済み」は、--merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分に読み替える。--base は
+//! 作業ツリーに変更（無視されるファイルを除く）があれば、検査せずに ERROR と片付け方を出して 1 で止まる。
+//! 検査の前に、プロジェクトの CLAUDE.md のチェックのコマンドの行を、crate の cargo の前に Cargo.toml の [features] を
+//! NOTE で知らせる（既定のコマンドは汎用で、プロジェクトの設定を優先するため）。
 //! 最初に失敗したチェックで止まる。ツールが PATH に無ければ SKIP を出して続ける。`RUN:` と `FAILED:` の行のコマンドは、
 //! チェックの名前（`cargo_in <dir>`、`nix_fmt_check` など）で出す。実行できるコマンドの形にしないのは、run-checks.sh を
 //! Rust に移す前と行の文字列を変えないため（ADR-0087。変えるなら、行を読むテストと合わせて別に変える）
@@ -99,6 +102,29 @@ pub fn main(args: &[String]) -> i32 {
             }
         },
     };
+    // --base はコミット済みのブランチを検査する。作業ツリーの変更はコミットに入らないので、通っても次の手順（報告、
+    // マージ）が見るコミットを検査したことにならない。ステージ済みと --merge は変更があるのがふつうなので見ない
+    if base_ref.is_some() {
+        // 日本語の名前を八進の表記にせずに出す
+        let Some(status) = git_output(
+            &["-c", "core.quotePath=false", "status", "--porcelain"],
+            Stdio::null(),
+        ) else {
+            eprintln!("ERROR: git status が失敗しました");
+            return 1;
+        };
+        if !status.is_empty() {
+            eprintln!(
+                "ERROR: 作業ツリーに変更があります。--base はコミット済みのブランチを検査するので、片付けてから実行し直してください:"
+            );
+            eprint!("{}", String::from_utf8_lossy(&status));
+            eprintln!(
+                "- 追跡しているファイルの変更（ツールが書き換えたものも）は、論理ごとにコミットする\n\
+                 - 未追跡のファイルは、リポジトリの規則に従ってコミットするか、.gitignore が無視する置き場に移すか、自分が作った使い捨てなら消す"
+            );
+            return 1;
+        }
+    }
     let mut checks = Checks {
         merge,
         diff_base,
@@ -247,6 +273,81 @@ fn xargs(prefix: &[&str], files: &[PathBuf]) -> bool {
     ok
 }
 
+/// crate のディレクトリ dir の Cargo.toml と、dir が virtual workspace（[package] の無い [workspace]）ならその下の
+/// 追跡している Cargo.toml（メンバー）のうち、[features] の表を持つもの（リポジトリの直下からのパス）。virtual
+/// workspace では cargo が dir でメンバー全体を検査するので、メンバーの feature も既定のチェックから漏れる。根が
+/// [package] を持つ workspace では、cargo は根の package だけを検査するので、メンバーは数えない
+fn manifests_with_features(dir: &str) -> Vec<String> {
+    let prefix = if dir == "." {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let root = format!("{prefix}Cargo.toml");
+    let tables = |path: &str| -> Vec<String> {
+        std::fs::read_to_string(path)
+            .map(|text| {
+                text.lines()
+                    .map(|l| l.split('#').next().unwrap_or("").trim().to_string())
+                    .filter(|l| l.starts_with('['))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let root_tables = tables(&root);
+    let has = |t: &[String], name: &str| t.iter().any(|l| l == name);
+    if !(has(&root_tables, "[workspace]") && !has(&root_tables, "[package]")) {
+        return if has(&root_tables, "[features]") {
+            vec![root]
+        } else {
+            Vec::new()
+        };
+    }
+    let mut manifests: BTreeSet<String> = git_text(&[
+        "-c",
+        "core.quotePath=false",
+        "ls-files",
+        "--",
+        &format!(":(glob){prefix}**/Cargo.toml"),
+    ])
+    .map(|out| out.lines().map(str::to_string).collect())
+    .unwrap_or_default();
+    manifests.insert(root);
+    manifests
+        .into_iter()
+        .filter(|m| has(&tables(m), "[features]"))
+        .collect()
+}
+
+/// プロジェクトの CLAUDE.md の、チェックのコマンドを書いた行を NOTE で知らせる。run-checks の既定のコマンドは汎用で、
+/// プロジェクトが別の形（feature の指定、別のテストの実行）を決めていればそちらを優先するため。語の一覧は
+/// run-checks が実行するツールと、その周りでよく書かれるもの
+fn project_check_notes() {
+    static CHECK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"\b(cargo +(fmt|clippy|test|nextest|check)|pytest|ruff +(check|format)|nix +flake +check|nixfmt|statix|markdownlint|shellcheck|run-checks\.sh)\b",
+        )
+        .unwrap()
+    });
+    for file in ["CLAUDE.md", ".claude/CLAUDE.md"] {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        let lines: Vec<String> = text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| CHECK.is_match(l))
+            .map(|(i, _)| (i + 1).to_string())
+            .collect();
+        if !lines.is_empty() {
+            println!(
+                "NOTE: {file} の {} 行目にチェックのコマンドがある。既定のチェックと違えば（feature の指定、別のテストなど）、プロジェクトの設定を優先してそれも実行する",
+                lines.join(", ")
+            );
+        }
+    }
+}
+
 fn is_file(path: &str) -> bool {
     Path::new(path).is_file()
 }
@@ -361,6 +462,7 @@ impl Checks {
     }
 
     fn run(&self) -> Step {
+        project_check_notes();
         let mut detected = false;
         detected |= self.rust()?;
         detected |= self.python()?;
@@ -381,6 +483,11 @@ impl Checks {
 
     /// crate のディレクトリ dir で cargo の fmt、clippy、test を実行する
     fn run_rust(&self, dir: &str) -> Step {
+        for manifest in manifests_with_features(dir) {
+            println!(
+                "NOTE: {manifest} に [features] がある。既定のチェックは --all-features を付けないので、feature の下のコードは検査されない。プロジェクトの CLAUDE.md や CI のコマンド（--all-features など）でも実行する"
+            );
+        }
         let cargo_in = |args: &[&str]| -> (Vec<String>, Vec<OsString>) {
             let mut display = vec!["cargo_in".to_string(), dir.to_string()];
             let mut argv: Vec<OsString> = self.cargo_pin.iter().map(OsString::from).collect();

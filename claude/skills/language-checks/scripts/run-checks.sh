@@ -12,7 +12,8 @@
 #   -C <dir>  <dir> の worktree を検査する（git -C と同じ。今いる場所と別の worktree のブランチを検査するとき）
 #   --base <ref>  コミット済みのブランチを検査する（/git-merge がマージの前に実行する）。<ref> との分岐点から
 #            作業ツリーまでの差分で言語と対象を決め、--merge と同じく自動修正はしない。
-#            ステージ済みの差分は、クリーンなブランチでは空なので使えない
+#            ステージ済みの差分は、クリーンなブランチでは空なので使えない。作業ツリーに変更（未追跡の
+#            ファイルを含む。無視されるものは除く）があれば、検査せずに ERROR と片付け方を出して 1 で止まる
 #
 # 最初に失敗したチェックで止まり、失敗したコマンドと自動修正コマンド（あれば）を出す。
 # ツールがなければ SKIP を出して続行する。排他の Slurm のジョブ中は、そのジョブの計算ノードの上では cargo と
@@ -23,8 +24,10 @@
 #   OK: <lang> <stage> | SKIP: <lang> <stage> (<理由>) | FAILED: <lang> <stage>: <command>
 #   FIX: <自動修正コマンド>（FAILED のときのみ、あれば）
 #   ALL_OK（すべて通ったとき）
+#   NOTE: <ファイル> の <行> 行目にチェックのコマンドがある…（プロジェクトの CLAUDE.md と .claude/CLAUDE.md。検査の前）
+#   NOTE: <dir>/Cargo.toml に [features] がある…（その crate の cargo の前）
 #
-# プロジェクトの CLAUDE.md にチェックコマンドが明記されていればそちらを優先する
-# （例: feature gate のあるクレートでは --all-features が必要）。ここでの既定値は汎用。
+# ここでの既定値は汎用。プロジェクトの CLAUDE.md にチェックコマンドが明記されていればそちらを優先する
+# （例: feature gate のあるクレートでは --all-features が必要）。
 . "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
 claude_hooks_script run-checks "$@"

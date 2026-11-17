@@ -26,15 +26,15 @@ git switch -q -c feat/work
 commit_file "$REPO" src/a.txt "feat: a"
 commit_file "$REPO" src/b.txt "feat: b"
 
-it "base-moved: base が進んでいなければ何も出さず exit 0"
+it "base-moved: base が進んでいなければ、遅れの 0 件だけを出して exit 0"
 out=$("$SCRIPTS_DIR/base-moved.sh")
 assert_eq 0 $?
-assert_eq "" "$out"
+assert_eq "BEHIND: 0" "$out"
 
-it "base-moved: base が進んでも、触ったパスが重ならなければ何も出さない"
+it "base-moved: base が進んでも、触ったパスが重ならなければ遅れの件数だけを出す"
 push_from_other other/x.txt
 out=$("$SCRIPTS_DIR/base-moved.sh")
-assert_eq "" "$out"
+assert_eq "BEHIND: 1" "$out"
 
 it "base-moved: fetch して、進んだ件数・先頭の hash・共通のパスを出す（exit 0）"
 push_from_other src/a.txt src/c.txt 5
@@ -54,14 +54,14 @@ out=$("$SCRIPTS_DIR/base-moved.sh" --base stack-base)
 assert_contains "$out" "BASE_MOVED: stack-base"
 assert_contains "$out" "2 commits"
 
-it "base-moved: GitHub リモートがなければ何も出さない"
+it "base-moved: GitHub リモートが無く --base も無ければ、比べずに未確認と出す"
 NOGH="$TEST_ROOT/bm/nogh"
 make_repo "$NOGH"
 git -C "$NOGH" switch -q -c feat/x
 commit_file "$NOGH" a.txt "feat: a"
 out=$(cd "$NOGH" && "$SCRIPTS_DIR/base-moved.sh")
 assert_eq 0 $?
-assert_eq "" "$out"
+assert_contains "$out" "UNVERIFIED: 比較元が決まらない"
 
 it "base-moved: GitHub リモートが無くても --base を渡せば、fetch せずに手元のブランチで比べる"
 git -C "$NOGH" switch -q main
@@ -218,7 +218,7 @@ restore_git() {
   PATH="${PATH#"$TEST_ROOT/fakebin:"}"
 }
 
-it "base-moved: origin が無い GitHub clone では何も出さずに終わる（誤った WARN を出し続けない）"
+it "base-moved: origin が無い GitHub clone では、WARN を出さずに比べていないことだけを出す（誤った WARN を出し続けない）"
 D="$TEST_ROOT/bm/no_origin"
 make_repo "$D"
 git -C "$D" remote add github "https://github.com/example/no_origin.git"
@@ -226,7 +226,8 @@ git -C "$D" switch -q -c feat/work
 commit_file "$D" src/a.txt "feat: a"
 out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>&1)
 assert_eq 0 $?
-assert_eq "" "$out"
+assert_contains "$out" "UNVERIFIED: 比較元が決まらない"
+assert_not_contains "$out" "WARN"
 
 it "base-moved: origin が無い GitHub clone でも、--base を渡せば手元のブランチで比べる"
 git -C "$D" switch -q main
@@ -247,6 +248,18 @@ restore_git
 assert_eq 0 "$rc"
 assert_contains "$out" "WARN:"
 assert_contains "$out" "比較は未確認"
+
+it "base-moved: 進んだ件数を数えられなければ、BEHIND を出さずに未確認と出す"
+D=$(fixture first_parent_fails)
+commit_file "$D" src/a.txt "feat: a"
+in_other "$D" bash -c 'mkdir -p src && seq 3 > src/a.txt && git add src && git commit -q -m "feat: other a"'
+fail_git --first-parent 128
+out=$(cd "$D" && "$SCRIPTS_DIR/base-moved.sh" 2>&1)
+rc=$?
+restore_git
+assert_eq 0 "$rc"
+assert_contains "$out" "UNVERIFIED:"
+assert_not_contains "$out" "BEHIND:"
 
 it "base-moved: merge-base が 1 以外で失敗したら、終了コードと stderr を出す（共通の祖先なしとは区別する）"
 D=$(fixture merge_base_fails)

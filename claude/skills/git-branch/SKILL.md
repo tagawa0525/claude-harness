@@ -94,7 +94,6 @@ git branch --unset-upstream [branch-name]
 
 - exit 2（`STOP:` 行）: リモートに同名ブランチがある。リモートも更新されることをユーザーに伝え、
   承認を得てから `--remote` を付けて再実行する
-- open PR の head ブランチは拒否される。リネームせず、PR をマージかクローズしてから行うよう案内する
 
 ## 計画書のリネーム
 
@@ -103,8 +102,6 @@ git branch --unset-upstream [branch-name]
 ```bash
 ~/.claude/scripts/rename-plan.sh [branch-name]
 ```
-
-`COMMITTED: no` は計画書が git の追跡外で、リネームだけ行われたことを示す（そのままでよい）。
 
 ## 完了確認
 

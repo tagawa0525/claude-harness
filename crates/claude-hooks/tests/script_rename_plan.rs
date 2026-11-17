@@ -107,7 +107,8 @@ fn an_untracked_plan_is_only_moved_and_list_shows_the_random_ones() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(
         text(&out.stdout),
-        "RENAMED: docs/plans/quiet-red-owl.md -> docs/plans/002_a_b_c.md\nCOMMITTED: no\n"
+        "RENAMED: docs/plans/quiet-red-owl.md -> docs/plans/002_a_b_c.md\nCOMMITTED: no\n\
+         NOTE: 計画書は git の追跡の外なので、名前だけを変えてコミットしていない（このままでよい）\n"
     );
 }
 
