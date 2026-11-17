@@ -208,7 +208,8 @@ struct Plan {
 fn plan(w: &Path, old: &str, mapping: &CommitMap) -> Result<Plan, Halt> {
     let Some(new) = mapping.get(old) else {
         return Err(Leave(format!(
-            "{old} が書き換えに入っていない（1 でブランチを付けてやり直す）"
+            "{old} が書き換えに入っていない（ブランチを付けて 1 からやり直す: git -C {} branch <名前> {old}）",
+            crate::sh_quote(w)
         ))
         .into());
     };
@@ -590,19 +591,29 @@ pub fn sync_worktrees(words: &Words, workdir: &Path) -> Result<bool, Stop> {
             }
             sync_one(&w, &old, &mapping, &map_path, &mut transformer).map(Some)
         })();
+        let (quoted, patch_q) = (crate::sh_quote(&w), crate::sh_quote(Path::new(&patch)));
         match result {
             Ok(None) => println!("SKIPPED: {} (bare)", w.display()),
             Ok(Some(None)) => println!("RESET: {}", w.display()),
             Ok(Some(Some(remapped))) => {
                 println!("KEPT: {} {patch}", w.display());
                 print!("{remapped}");
+                println!(
+                    "NEXT: git -C {quoted} diff HEAD が、控えのパッチ {patch_q} と同じ変更に語と番号の変換を当てたものだけか確かめる。書き換えで変わらなかったファイルへの変更は、番号だけが付け直り、語は直らない"
+                );
             }
             Err(Halt::Leave(Leave(why))) => {
                 println!("LEFT: {} ({})", w.display(), one_line(&why));
+                println!(
+                    "NEXT: この worktree は何も変えていない。理由を見て、合わせ方をユーザーと決める（ref を移す前の HEAD は {old}、控えのパッチは {patch_q}）"
+                );
                 ok = false;
             }
             Err(Halt::Stop(Stop(why))) => {
                 eprintln!("ERROR: {}", one_line(&why));
+                eprintln!(
+                    "NEXT: ref を移す前の HEAD {old}、控えのパッチ {patch_q}、git -C {quoted} status を見て、合わせ方をユーザーと決める。sync-worktrees をこの worktree に当て直さない（ref を移す前の HEAD と比べるので、合わせた分も変更に見える）"
+                );
                 ok = false;
             }
         }
