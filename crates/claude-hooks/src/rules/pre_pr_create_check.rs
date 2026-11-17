@@ -20,6 +20,9 @@
 //!    pre-merge-check が GitHub の変更ファイルから数える。止めると docs/adr の無いリポジトリでも
 //!    既定ブランチが見つからないだけで PR を作れなくなる。ADR-0056）
 //!
+//! 検査に通った gh pr create には、PR を作った後の次のステップ（レビューの待ち方、診断、対応、マージ）を
+//! additionalContext で添える（呼び出しの結果と同じ時に届く。PR の URL は gh の出力にしかないので、置き場の印で示す）。
+//!
 //! 本文の見出しは `--body` 引数ノードの原文（ヒアドキュメント本文を含む）だけを見る。
 //! 別のヒアドキュメントに書かれた見出しの例でゲートを通すことはできない。
 //! 1〜4 のエスケープは設けない（いずれも満たしてから実行し直せばよい）。5 は、1 つの決定を複数の
@@ -44,6 +47,14 @@ use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
 use crate::unwrap::env_value;
 
 pub struct PrePrCreateCheck;
+
+/// 検査に通った gh pr create に添える、PR を作った後の次のステップ
+const NEXT_STEPS: &str = "PR を作ったら、gh pr create が出力した URL を報告し（取り直すときは gh pr view --json url -q .url）、次のステップを示す:
+- Copilot のレビューを待つ場合（任意。head のローカルレビューの記録があればマージできる） → ~/.claude/scripts/gh-wait-review.sh <PR の URL>（約 10 分。run_in_background=true で実行）
+- Copilot のレビューか CI の状況を確かめる場合 → /gh-actions-check
+- レビューコメントに対応する場合 → /gh-pr-review
+- レビューの後にマージする場合 → /gh-pr-merge
+- 状態を確かめる場合 → /git-info";
 
 /// `--x=value` 形式なら value を、そうでなければそのまま
 pub(super) fn strip_opt_prefix<'a>(arg: &'a Arg, names: &[&str]) -> &'a str {
@@ -148,10 +159,12 @@ impl Rule for PrePrCreateCheck {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
+        let mut creates = false;
         for cmd in shell.commands() {
             let Some(args) = cmd.gh_subcommand(&["pr", "create"]) else {
                 continue;
             };
+            creates = true;
             let mut reasons: Vec<String> = Vec::new();
 
             // gh / git の実行コンテキストをコマンドに合わせる（`cd <path> && gh pr create`）
@@ -251,6 +264,9 @@ impl Rule for PrePrCreateCheck {
             if !reasons.is_empty() {
                 return vec![Finding::Deny(reasons.join("\n"))];
             }
+        }
+        if creates {
+            return vec![Finding::Context(NEXT_STEPS.to_string())];
         }
         Vec::new()
     }
