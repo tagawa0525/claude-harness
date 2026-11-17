@@ -45,7 +45,7 @@ issues: ["#518", "#636"]
 - [Conventional Comments](https://conventionalcomments.org/): 指摘に issue、suggestion、nitpick などのラベルと
   (blocking)、(non-blocking) の印を付ける。nitpick は性質上 non-blocking とする
 - SonarQube（[10.3 の Issues](https://docs.sonarsource.com/sonarqube-server/10.3/user-guide/issues)）: 重大度は
-  ソフトウェアの品質への影響で決まり、編集できない。旧来の BLOCKER と CRITICAL は、本番の挙動に影響する確率の高低で分ける
+  ソフトウェアの品質への影響で決まり、編集できない。旧来の BLOCKER と CRITICAL は、本番の挙動に影響を与える確率の高低で分ける
 - AI のレビューの指摘が尽きない問題は世間でも同じで、対策に、バグ、セキュリティ、大きな保守の費用など実際の問題の強い
   根拠があるものだけを出す設定と、止める規則（テストとチェックが通り、重大な指摘が残っていなければ承認）の事前の合意が
   挙がっている（[掲示板の質問と回答](https://yomotherboard.com/question/how-do-we-stop-ai-assisted-code-reviews-from-becoming-endless-nitpicking/)。
