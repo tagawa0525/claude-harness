@@ -90,7 +90,7 @@ gh pr merge [PR番号または URL] --merge --delete-branch \
 worktree の削除、main の最新化、ローカルとリモートのブランチの削除を行う（残したときは `REMOTE_BRANCH: kept` に理由が出る）。
 PR のリポジトリと cwd が違えば、`cd <PR のリポジトリ> && ~/.claude/scripts/post-merge-cleanup.sh [headRefName]` で呼ぶ。
 ERROR で止まったら、出力の原因を直してやり直す。未コミットの変更や履歴の分岐で失敗したとき（git のメッセージだけで、
-ERROR の行は出ない）も、原因を確かめて対処してからやり直す。
+ERROR の行は出ない）も、原因を確認して対処する。
 
 出力の `NOTE:` の行（rebuild か claude-sync が要る）は、完了メッセージでそのままユーザーに伝える。マージ済みの PR を
 痕跡にした `NOTE:` の行は、その URL がマージした PR かを確かめ、違えば PR のリポジトリでやり直す。
