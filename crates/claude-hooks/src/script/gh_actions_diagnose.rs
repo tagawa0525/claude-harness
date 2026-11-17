@@ -150,6 +150,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
     let mut report = Report::default();
     // 最新の run の結論（NONE の NEXT で、skipped と neutral を成功と書かないため）
     let mut latest_conclusion = String::new();
+    let mut latest_name = String::new();
     let runs = json(
         "gh run list",
         &gh.output(&[
@@ -188,6 +189,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
         let status = text(&latest["status"]);
         let conclusion = text(&latest["conclusion"]);
         latest_conclusion = conclusion.clone();
+        latest_name = text(&latest["name"]);
         println!("RUN: {id}");
         println!("STATUS: {status}/{conclusion}");
         report.run = id.clone();
@@ -364,12 +366,15 @@ fn diagnose(target: &str) -> Result<(), i32> {
         } else if runs.is_empty() {
             next = "ワークフローが未設定か未実行であると報告してください".to_string();
         } else {
-            // 見たのは最新の 1 run（runs[0]）だけなので、CI 全体を言い切らず、RUNS のほかの run を確かめさせる（#300）
+            // 判定したのは最新の 1 run（runs[0]）だけなので、CI 全体を言い切らない。RUNS は全ワークフローの直近 5 件で、
+            // 同じワークフローの古い run も並ぶので、読み手に RUNS から判定させない（ワークフローごとの判定は #300）
             let head = if latest_conclusion == "success" {
-                "GitHub Actions の最新の run は成功しています。RUNS のほかのワークフローの run に失敗があればそれを、無ければ正常完了と報告してください".to_string()
+                format!(
+                    "GitHub Actions の最新の run（{latest_name}）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください"
+                )
             } else {
                 format!(
-                    "GitHub Actions の最新の run は {latest_conclusion} です。成功とは書かず、RUNS のほかのワークフローの run に失敗があればそれを、無ければ {latest_conclusion} と報告してください"
+                    "GitHub Actions の最新の run（{latest_name}）は {latest_conclusion} です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください"
                 )
             };
             let unchecked = if external.is_none() {
