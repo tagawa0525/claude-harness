@@ -738,4 +738,14 @@ mod tests {
             .is_empty()
         );
     }
+
+    #[test]
+    fn unreadable_pointer_and_description_without_a_model_are_reported_together() {
+        // 1 回の呼び直しで両方を直せるよう、句の誤りと description の誤りを一緒に示す
+        let findings = check_agent(serde_json::json!({
+            "prompt": "依頼文は /nonexistent/Taro Yamada/brief.md にある。最初に /delegate を呼ぶ。",
+            "description": "d",
+        }));
+        assert_eq!(findings.len(), 2);
+    }
 }
