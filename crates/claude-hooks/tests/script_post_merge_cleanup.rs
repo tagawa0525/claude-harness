@@ -346,6 +346,12 @@ fn with_a_base_a_merge_without_the_branch_tip_as_a_second_parent_is_an_error() {
     let stderr = text(&out.stderr);
     assert!(stderr.contains("第 2 親"), "{stderr}");
     assert!(stderr.contains("何も消していません"), "{stderr}");
+    // 先端はもう main にあるので、マージのやり直しは「Already up to date」で何もしない。戻してからやり直す方法を示す
+    assert!(
+        stderr.contains(&format!("git reset --keep {before}")),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("別の worktree"), "{stderr}");
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "feat/x");
 }
 

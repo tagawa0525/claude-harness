@@ -232,6 +232,12 @@ fn a_failed_default_branch_lookup_stops_instead_of_reporting_no_default() {
         "{}",
         text(&out.stderr)
     );
+    // 失敗した git の標準エラーも見せる（原因が分からないまま止めない）
+    assert!(
+        text(&out.stderr).contains("fatal: injected"),
+        "{}",
+        text(&out.stderr)
+    );
     assert_eq!(text(&out.stdout), "");
 }
 
@@ -249,6 +255,12 @@ fn a_failed_ancestry_check_stops_instead_of_reporting_no_stack() {
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
     assert!(
         text(&out.stderr).contains("git merge-base で失敗"),
+        "{}",
+        text(&out.stderr)
+    );
+    // 失敗した git の標準エラーも見せる（原因が分からないまま止めない）
+    assert!(
+        text(&out.stderr).contains("fatal: injected"),
         "{}",
         text(&out.stderr)
     );
