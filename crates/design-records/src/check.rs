@@ -259,8 +259,9 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
                 path,
                 Some(line),
                 format!(
-                    "the value of `{key}` has ` #`, which YAML reads as a comment but design-records \
-                     reads as part of the value; write only the value on the key line"
+                    "the value of `{key}` has `#` outside quotes, which YAML reads as a comment but \
+                     design-records reads as part of the value; write only the value on the key line \
+                     and quote issue numbers (\"#0012\")"
                 ),
             );
         }
@@ -434,9 +435,9 @@ pub fn check_issue_links(issues: &BTreeMap<String, String>, adr_paths: &[String]
     found
 }
 
-/// フロントマターの行のうち、値（一覧なら要素）の途中に空白と `#` が続くもの（YAML のコメント）の、ファイルの行番号と
-/// キー。[`parse_front_matter`] は `#` を値として読むので、コメントのつもりの文が値に混ざる。値と要素の先頭の `#` は
-/// 引用符なしで書いた番号（`#0012`）として読むので含めない。引用符で囲んだ要素の中の `#` も値。
+/// フロントマターの行のうち、引用符の外の値（一覧なら要素）の先頭か空白の後に `#` があるもの（YAML のコメント）の、
+/// ファイルの行番号とキー。[`parse_front_matter`] は `#` を値として読む（引用符なしの `#0012` を消さないため）ので、
+/// コメントのつもりの文が値に混ざり、ほかの YAML の読み手とは値が食い違う。引用符で囲んだ要素の中の `#` は値。
 fn commented_keys(text: &str) -> Vec<(usize, &str)> {
     let mut found = Vec::new();
     for (i, line) in text.lines().enumerate().skip(1) {
@@ -455,7 +456,7 @@ fn commented_keys(text: &str) -> Vec<(usize, &str)> {
             !item.starts_with('"')
                 && item
                     .char_indices()
-                    .any(|(j, c)| c == '#' && item[..j].ends_with(char::is_whitespace))
+                    .any(|(j, c)| c == '#' && (j == 0 || item[..j].ends_with(char::is_whitespace)))
         });
         if commented {
             found.push((i + 1, key.trim()));

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use design_records::{Kind, numbers_in, record_name, renumber_refs};
+use design_records::{Kind, RENUMBER_SUBJECT, numbers_in, record_name, renumber_refs};
 
 use crate::git::{
     Result, fetch_origin, file_names, git, git_ok, has_origin, local_default, lock, remote_tag_oid,
@@ -554,12 +554,12 @@ fn move_record(
     git(root, &add)?;
     let message = match kind {
         Kind::Adr => format!(
-            "docs: renumber {} to {}",
+            "{RENUMBER_SUBJECT}{} to {}",
             kind.reference(old),
             kind.reference(number)
         ),
         Kind::Issue => format!(
-            "docs: renumber issue {} to {}",
+            "{RENUMBER_SUBJECT}issue {} to {}",
             kind.reference(old),
             kind.reference(number)
         ),

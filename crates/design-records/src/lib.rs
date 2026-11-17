@@ -16,6 +16,10 @@ pub const ADR_DIR: &str = "docs/adr";
 /// issue を置くディレクトリ（リポジトリの直下から）。
 pub const ISSUE_DIR: &str = "docs/issues";
 
+/// `renumber` が作るコミットの件名の始まり。改名と参照の付け替えだけの機械的な変更なので、記録を見直したコミットとして
+/// 数えない（確認の節の注意の起点に使わない）。
+pub const RENUMBER_SUBJECT: &str = "docs: renumber ";
+
 /// 番号を振る記録の種類。どちらも `<dir>/NNNN-<slug>.md` に置き、番号を再利用しない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {

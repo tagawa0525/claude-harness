@@ -44,8 +44,8 @@ use design_records::check::{
 };
 use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
 use design_records::{
-    ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
-    numbers_in, record_name,
+    ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, RENUMBER_SUBJECT, is_adr_path,
+    is_slug, is_title, numbers_in, record_name,
 };
 
 use git::{
@@ -157,13 +157,23 @@ fn new(kind: Kind, slug: &str, title: &str) -> Result<ExitCode> {
     println!("{path}");
     // OKF のバンドルでは、記録を足すと索引に載っていない文書になり、check が止める。index と同じ行を足し、
     // 一緒にコミットする索引を示す。パスを受ける呼び出し（`$(design-records new …)`）を壊さないよう、標準エラーに出す
-    let root = repo_root()?;
-    let written = write_indexes(&root)?.unwrap_or_default();
-    if !written.is_empty() {
-        eprintln!(
-            "NEXT: commit the index lines added to {} together with {path}",
-            written.join(" ")
-        );
+    // 番号の予約と記録はもう済んでいるので、索引を書けなくても失敗で終えない（呼び直すと番号をもう 1 つ予約する）
+    match repo_root().and_then(|root| write_indexes(&root, Some(&path))) {
+        Ok(written) => {
+            let written = written.unwrap_or_default();
+            if !written.is_empty() {
+                eprintln!(
+                    "NEXT: commit the index lines added to {} together with {path}",
+                    written.join(" ")
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("design-records: cannot add the index lines for {path}: {e}");
+            eprintln!(
+                "NEXT: fix it, run `design-records index`, and commit the index lines it adds together with {path}"
+            );
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -437,13 +447,23 @@ fn branch_changes(
 /// 変えるとは限らないので、直しを求めずに見直しを求める文にする。
 fn stale_confirmations(root: &Path, base: &str, adr: &str, text: &str) -> Result<Vec<Finding>> {
     let range = format!("{base}..HEAD");
-    let last = git(root, &["log", "-1", "--format=%H", &range, "--", adr])?;
-    let last = last.trim();
+    // renumber のコミットは改名と参照の付け替えだけなので起点にしない。改名の前の版のコミットも辿る。--invert-grep で
+    // 除くと --follow がその改名を見ずに辿りやめるので、件名を見て選ぶ
+    let log = git(
+        root,
+        &["log", "--follow", "--format=%H %s", &range, "--", adr],
+    )?;
+    let last = log
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .find(|(_, subject)| !subject.starts_with(RENUMBER_SUBJECT))
+        .map_or("", |(hash, _)| hash);
     // 作業ツリーかインデックスの ADR が HEAD と違えば、ADR のほうが新しい（直した版をこれからコミットする）ので見ない
     if last.is_empty() || !git_ok(root, &["diff", "--quiet", "HEAD", "--", adr])? {
         return Ok(Vec::new());
     }
-    let after = format!("{last}..HEAD");
+    // 既定ブランチをマージして入った変更は、このブランチが実装を直したのではないので除く
+    let (since, merged) = (format!("^{last}"), format!("^{base}"));
     let mut found = Vec::new();
     for path in confirmation_paths(text) {
         // ディレクトリ（tree）は含めない。`cat-file -e` は tree にも成功するので、種類を見る
@@ -452,9 +472,21 @@ fn stale_confirmations(root: &Path, base: &str, adr: &str, text: &str) -> Result
         if is_adr_path(&path) || !is_file {
             continue;
         }
-        if !git(root, &["log", "-1", "--format=%H", &after, "--", &path])?
-            .trim()
-            .is_empty()
+        if !git(
+            root,
+            &[
+                "log",
+                "-1",
+                "--format=%H",
+                "HEAD",
+                &since,
+                &merged,
+                "--",
+                &path,
+            ],
+        )?
+        .trim()
+        .is_empty()
         {
             found.push(Finding {
                 path: adr.to_string(),
@@ -501,7 +533,7 @@ fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>
 
 /// バンドルの索引に載っていない行を足し、書いたパスを出す（ADR-0092）。
 fn index() -> Result<ExitCode> {
-    let Some(written) = write_indexes(&repo_root()?)? else {
+    let Some(written) = write_indexes(&repo_root()?, None)? else {
         eprintln!(
             "design-records: docs/index.md has no `okf_version` in its front matter, so docs/ is not an OKF bundle"
         );
@@ -514,12 +546,22 @@ fn index() -> Result<ExitCode> {
 }
 
 /// バンドルの索引に、追跡していないものを含めて載っていない文書と下位のディレクトリの行を足し、書いた索引のパスを返す。
-/// バンドルでなければ何も書かずに `None`。
-fn write_indexes(root: &Path) -> Result<Option<Vec<String>>> {
+/// `record` を渡すと（new）、追跡していない文書は、その記録と索引（先の new が書いた、まだコミットしていない索引）だけを
+/// 数える。ほかの下書きを索引に載せると、コミットしないファイルへの行を記録と一緒にコミットさせる。バンドルでなければ
+/// 何も書かずに `None`。
+fn write_indexes(root: &Path, record: Option<&str>) -> Result<Option<Vec<String>>> {
     // untracked なら docs/index.md 自身が入るので、空はバンドルでないときだけ
-    let files = bundle_files(root, true)?;
+    let mut files = bundle_files(root, true)?;
     if files.is_empty() {
         return Ok(None);
+    }
+    if let Some(record) = record {
+        let tracked: BTreeSet<String> = markdown_under(root, BUNDLE_ROOT, false)?
+            .into_iter()
+            .collect();
+        files.retain(|path, _| {
+            tracked.contains(path) || path == record || path.ends_with("/index.md")
+        });
     }
     let mut written = Vec::new();
     for (path, text) in complete_indexes(&files) {
