@@ -258,3 +258,21 @@ fn no_run_with_only_external_ci_tells_whether_it_passed() {
         "{text}"
     );
 }
+
+#[test]
+fn a_skipped_latest_run_is_not_reported_as_a_success() {
+    let skipped = RUN_OK.replace("success", "skipped");
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&skipped, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run は skipped で、失敗はありません。成功とは書かず、skipped と報告してください\n"
+        ),
+        "{text}"
+    );
+}
