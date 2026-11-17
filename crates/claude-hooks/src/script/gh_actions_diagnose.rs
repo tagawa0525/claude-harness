@@ -148,6 +148,8 @@ fn diagnose(target: &str) -> Result<(), i32> {
     let mut cause = "NONE";
     let mut next = String::new();
     let mut report = Report::default();
+    // 最新の run の結論（NONE の NEXT で、skipped と neutral を成功と書かないため）
+    let mut latest_conclusion = String::new();
     let runs = json(
         "gh run list",
         &gh.output(&[
@@ -185,6 +187,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
         let id = text(&latest["databaseId"]);
         let status = text(&latest["status"]);
         let conclusion = text(&latest["conclusion"]);
+        latest_conclusion = conclusion.clone();
         println!("RUN: {id}");
         println!("STATUS: {status}/{conclusion}");
         report.run = id.clone();
@@ -360,6 +363,10 @@ fn diagnose(target: &str) -> Result<(), i32> {
                 .to_string();
         } else if runs.is_empty() {
             next = "ワークフローが未設定か未実行であると報告してください".to_string();
+        } else if latest_conclusion != "success" {
+            next = format!(
+                "GitHub Actions の最新の run は {latest_conclusion} で、失敗はありません。成功とは書かず、{latest_conclusion} と報告してください"
+            );
         } else if external.is_none() {
             next = "GitHub Actions は成功しています。外部 CI は確認できていないと添えて報告してください"
                 .to_string();
