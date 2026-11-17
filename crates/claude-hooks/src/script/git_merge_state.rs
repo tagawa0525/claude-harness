@@ -49,10 +49,18 @@ fn failed(what: &str) -> i32 {
 /// ほかの失敗（壊れた packed-refs、読めないオブジェクト）は None。無いと読むと、既定ブランチや積み重なりを
 /// 黙って none と出す
 fn yes_no(dir: &Path, args: &[&str]) -> Option<bool> {
-    match crate::git::run(dir, args, None)?.status.code() {
+    let out = crate::git::run(dir, args, None)?;
+    match out.status.code() {
         Some(0) => Some(true),
         Some(1) => Some(false),
-        _ => None,
+        _ => {
+            // 失敗の原因は git の標準エラーにある。failed() が ERROR の前に出す
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if !stderr.trim().is_empty() {
+                crate::output::notice(stderr.trim_end().to_string());
+            }
+            None
+        }
     }
 }
 

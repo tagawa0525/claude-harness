@@ -416,14 +416,22 @@ fn merged(branch: &str, default: &str, default_root: Option<&str>) -> Result<(),
 }
 
 /// 段階 0 の続き: before（マージの前の既定のブランチ）から既定のブランチまでの第 1 親の列に、branch の先端を 2 番目以降の
-/// 親に持つマージコミットがあるか。/git-merge の `git merge --no-ff` が、別の worktree で実行されたり別のブランチを
-/// マージしたりして、このブランチのマージコミットを作っていないことを、ブランチを消す前に見つける。マージの後の
+/// 親に持つマージコミットがあるか。先端が fast-forward やほかのブランチのマージで既定のブランチに入り、/git-merge の
+/// `git merge --no-ff` がこのブランチのマージコミットを作っていないことを、ブランチを消す前に見つける。マージの後の
 /// コミットは通す（最後のコミットの第 2 親だけを見ると、続けて積んだコミットで止まる）。ローカルのブランチが無ければ
 /// （消した後のやり直し）見ない
 fn merge_commit_of(branch: &str, default: &str, before: &str) -> Result<(), i32> {
     let local = format!("refs/heads/{branch}");
-    if !ok(&["show-ref", "--verify", "--quiet", &local]) {
-        return Ok(());
+    // show-ref の終了 1 は「無い」。ほかの失敗を無いと読むと、確かめずにブランチを消す
+    match run(&["show-ref", "--verify", "--quiet", &local]).and_then(|o| o.status.code()) {
+        Some(0) => {}
+        Some(1) => return Ok(()),
+        _ => {
+            eprintln!(
+                "ERROR: ローカルのブランチ {branch} の有無を確かめられません（git show-ref が失敗）。何も消していません"
+            );
+            return Err(1);
+        }
     }
     let (Some(tip), Some(merges)) = (
         git(&[
@@ -453,10 +461,10 @@ fn merge_commit_of(branch: &str, default: &str, before: &str) -> Result<(), i32>
         return Ok(());
     }
     eprintln!(
-        "ERROR: {before} の後の {default} に、{branch} の先端 {tip} を第 2 親に持つマージコミットがありません（--no-ff のマージを作っていない、別の worktree か別のブランチでマージした）。何も消していません"
+        "ERROR: {branch} の先端 {tip} は {default} に入っているが、{before} の後の {default} に、それを第 2 親に持つマージコミットがありません（fast-forward で入った、またはほかのブランチのマージで入った）。何も消していません"
     );
     eprintln!(
-        "  修正方法: {default} の worktree で git merge --no-ff {branch} をやり直してから、そのマージの第 1 親を第 2 引数に渡して、もう一度実行する"
+        "  修正方法: git log --first-parent --oneline {before}..{default} で入り方を確かめる。fast-forward なら、{default} の worktree で git reset --keep {before} で戻してから git merge --no-ff {branch} をやり直し、そのマージの第 1 親を第 2 引数に渡して、もう一度実行する（戻さずにマージをやり直すと、Already up to date で何もしない）。ほかのブランチのマージで入ったなら、そのマージが正しいかを確かめる"
     );
     Err(1)
 }

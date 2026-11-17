@@ -120,8 +120,11 @@ fn self_merges(input: &Input, shell: &Shell) -> Vec<Finding> {
             continue;
         };
         let head_ref = format!("refs/heads/{head}");
+        // `-`（直前のブランチ）は、同じコマンドの前の switch で変わる。hook の時点で解くと、switch の前の直前の
+        // ブランチを指して誤るので見ない（`-` が今のブランチ自身を指すことは、普通の操作では無い）
         if targets
             .iter()
+            .filter(|t| t.as_str() != "-")
             .any(|t| local_branch_ref(&dir, t).as_deref() == Some(head_ref.as_str()))
         {
             out.push(Finding::Deny(format!(
