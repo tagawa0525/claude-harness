@@ -817,6 +817,16 @@ fn a_missing_option_value_an_unknown_option_or_two_transcripts_show_the_usage() 
 }
 
 #[test]
+fn the_usage_shows_the_form_of_the_bounds_and_that_until_is_excluded() {
+    let home = Home::new();
+    let main = home.range_session();
+    assert_fails(
+        &home.run(&[&main, "--since"]),
+        "  日時は時差つきの ISO 8601（例 2026-11-06T00:00+09:00、2026-11-05T15:00Z）。区間は [since, until) で、until の時刻は含まない（11:05 の分まで含めるなら 11:06 を渡す）",
+    );
+}
+
+#[test]
 fn an_argument_mistake_is_reported_with_an_error_line() {
     let home = Home::new();
     let main = home.range_session();
