@@ -235,6 +235,12 @@ assert_contains "$(fake_log gh)" "-F id=T2"
 # Copilot に再依頼する前と、再依頼せずに終える前に、head をローカルの /code-review にかけた
 # ことと、重大度ごとの件数を残す。decide-next.sh、request-rereview.sh、pre-merge-check が読む
 
+# 記録は、その head で /code-review を回した clone（count-review-rounds の hook が回した HEAD を書く）から付ける
+git init -q "$TEST_ROOT/reviewed"
+mkdir -p "$TEST_ROOT/reviewed/.git/claude-review-rounds"
+echo "def5678 1794900000" >"$TEST_ROOT/reviewed/.git/claude-review-rounds/feat%2Fx"
+cd "$TEST_ROOT/reviewed" || exit 1
+
 it "record-local-review: レビューした SHA と重大度ごとの件数を印にしたコメントを PR に付ける"
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
   "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
@@ -307,6 +313,17 @@ out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" HEAD 0 0 0 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "Usage:"
 assert_not_contains "$(fake_log gh)" "pr comment"
+
+it "record-local-review: その head で /code-review を回した記録が clone に無ければ、コメントを付けずにエラー"
+# 直した後の head や rebase の後の head に、回さずに記録を付けない
+make_fake_gh '"pr view 1 --json headRefOid"*) echo abc1234 ;;
+  "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
+  "pr comment 1 --body"*) ;;'
+out=$("$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" abc1234 0 0 0 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "/code-review を回した記録が"
+assert_not_contains "$(fake_log gh)" "pr comment"
+cd "$TEST_ROOT/elsewhere" || exit 1
 
 # ===========================================================================
 # gh-pr-review/scripts/decide-next.sh: 周回と応答はレビュー要求とレビュー提出で数える

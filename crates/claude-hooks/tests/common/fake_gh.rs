@@ -85,6 +85,11 @@ impl FakeGh {
         cmd.output().unwrap()
     }
 
+    /// スクリプトを起動するディレクトリ（テストが git のリポジトリなどを用意する場所）
+    pub fn dir(&self) -> &Path {
+        &self.root
+    }
+
     /// gh に渡した引数（1 回の起動で、空白でつないで改行で終える。引数が改行を含めば複数の行になる）
     pub fn log(&self) -> String {
         std::fs::read_to_string(self.root.join("gh.log")).unwrap_or_default()

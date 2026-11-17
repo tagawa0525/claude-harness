@@ -1,11 +1,13 @@
 //! `claude-hooks script record-local-review <PR の URL> <SHA> <high> <medium> <low>` が、ローカルの /code-review を
 //! 回した PR の head の記録を、マージの hook（pre-merge-check）が数える印のコメントとして PR に付けることを確かめる
 //! （ADR-0087。`~/.claude/skills/gh-pr-review/scripts/record-local-review.sh` が呼ぶ）。記録はマージの hook が Copilot
-//! のレビューの代わりに数えるので、head でない SHA、push できないリポジトリ、形の崩れた件数では付けない
+//! のレビューの代わりに数えるので、head でない SHA、push できないリポジトリ、形の崩れた件数では付けない。その head で
+//! /code-review を回した記録（count-review-rounds の hook が clone に書く行）が、起動したディレクトリの clone に無いときも付けない
 
 mod common;
 
 use common::fake_gh::{FakeGh, stderr};
+use common::forget_git_env;
 
 const URL: &str = "https://github.com/octo/repo/pull/42";
 const HEAD: &str = "def5678def5678def5678def5678def5678def56";
@@ -14,7 +16,32 @@ fn stdout(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// 起動するディレクトリを git のリポジトリにし、rounds の HEAD で /code-review を回した記録を置く（count-review-rounds が
+/// 書く形: 共通の git ディレクトリの claude-review-rounds/<ブランチ名> に、1 行が `<HEAD> <UNIX 秒>`）
+fn reviewed_at(fake: &FakeGh, rounds: &[&str]) {
+    let mut cmd = std::process::Command::new("git");
+    let ok = forget_git_env(&mut cmd)
+        .args(["init", "-q"])
+        .current_dir(fake.dir())
+        .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git init");
+    let dir = fake.dir().join(".git/claude-review-rounds");
+    std::fs::create_dir_all(&dir).unwrap();
+    let text: String = rounds.iter().map(|h| format!("{h} 1794900000\n")).collect();
+    std::fs::write(dir.join("feat%2Fx"), text).unwrap();
+}
+
+/// HEAD で /code-review を回した clone から起動する
 fn run(fake: &FakeGh, args: &[&str], push: &str) -> std::process::Output {
+    reviewed_at(fake, &[HEAD]);
+    run_as_is(fake, args, push)
+}
+
+fn run_as_is(fake: &FakeGh, args: &[&str], push: &str) -> std::process::Output {
     fake.run_calls(
         "record-local-review",
         args,
@@ -77,6 +104,57 @@ fn a_sha_that_is_not_the_head_records_nothing() {
         stderr(&out)
     );
     assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn a_head_without_a_review_round_in_this_clone_records_nothing() {
+    // 直した後の head や rebase の後の head に、回さずに前の周の数で記録を付けない
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(&fake, &[URL, "def5678", "0", "1", "4"], "true\n");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("def5678 で /code-review を回した記録が"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("記録を付けていません"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn outside_a_clone_records_nothing() {
+    // 回した記録は clone が持つので、PR のリポジトリの外からは確かめられない。テストの置き場はこのリポジトリの target の
+    // 下なので、git が上のリポジトリを見つけないよう、探す範囲を置き場で止める
+    let fake = FakeGh::new();
+    let ceiling = fake.dir().parent().unwrap().to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, "def5678", "0", "0", "0"],
+        &[(&format!("{HEAD}\n"), 0), ("true\n", 0), ("", 0)],
+        &[("GIT_CEILING_DIRECTORIES", &ceiling)],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("PR の worktree で実行してください"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn a_round_on_any_branch_of_the_clone_counts() {
+    // 記録は SHA で引く（ブランチの名前を変えても、別の worktree で回しても、同じコミットを回している）
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &["abc1234abc1234abc1234abc1234abc1234abc12", HEAD]);
+    let out = run_as_is(&fake, &[URL, HEAD, "0", "0", "0"], "true\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
 
 #[test]
