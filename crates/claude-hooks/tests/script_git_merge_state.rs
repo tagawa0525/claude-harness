@@ -377,3 +377,16 @@ fn a_submodule_named_in_a_confirmation_is_not_a_file() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
 }
+
+#[test]
+fn the_references_a_renumber_commit_rewrites_are_not_a_change() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    // design-records renumber は、ブランチで足した行の参照も同じコミットで付け替える
+    repo.git(&["mv", "docs/adr/0002-b.md", "docs/adr/0003-b.md"]);
+    repo.write("src/impl.sh", "echo 1\n# ADR-0003\n");
+    repo.commit("docs: renumber ADR-0002 to ADR-0003");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
+}

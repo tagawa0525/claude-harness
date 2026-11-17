@@ -589,6 +589,23 @@ fn check_warns_about_comments_on_issue_front_matter_lines() {
 }
 
 #[test]
+fn check_finds_link_targets_that_are_tracked_but_deleted_in_the_working_tree() {
+    let t = TempRepo::new("issue-links-deleted");
+    t.write(
+        "docs/issues/0003-gone.md",
+        &issue("status: closed\nresolution: done"),
+    );
+    t.write(
+        "docs/issues/0005-after.md",
+        &issue("status: open\nblocked-by: [\"#0003\"]"),
+    );
+    t.commit_all("docs(issues): 3 and 5");
+    fs::remove_file(t.dir.join("docs/issues/0003-gone.md")).unwrap();
+    let out = t.run(&["check"]);
+    assert!(!stdout(&out).contains("does not exist"), "{}", stdout(&out));
+}
+
+#[test]
 fn check_warns_about_inconsistent_issue_links() {
     let t = TempRepo::new("issue-links");
     t.run(&["new", "use-a", "a を使う"]);
@@ -775,6 +792,29 @@ fn check_names_the_adrs_that_require_an_adr_superseded_on_the_branch() {
     );
 }
 
+#[test]
+fn check_names_the_dependents_of_a_superseded_adr_without_a_successor() {
+    let t = superseding_topic("requires-no-successor");
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a)
+            .replace("superseded-by: ADR-0004", "superseded-by:"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check", a]);
+    // superseded-by が空なのは違反（別に示す）。注意は置き換えた ADR を挙げずに、見直す相手を示す
+    assert!(
+        stdout(&out).contains(
+            "docs/adr/0001-use-a.md: warning: the ADR became superseded since main; review \
+             whether the decisions of the ADRs that still list it in `requires` still hold: \
+             ADR-0002\n"
+        ),
+        "{}",
+        stdout(&out)
+    );
+}
+
 /// 確定した ADR の決定と理由を直した topic のブランチで、`item` を「## 変更」に足す（空なら足さない）。
 fn decision_edited(name: &str, item: &str) -> TempRepo {
     let t = superseded_repo(name);
@@ -886,6 +926,38 @@ fn check_keeps_the_stale_confirmation_after_the_adr_is_renumbered() {
         "{}",
         stdout(&out)
     );
+}
+
+#[test]
+fn check_does_not_count_the_references_renumber_rewrites_as_a_change() {
+    let t = confirmed_topic("stale-renumber-refs", |t| {
+        // ブランチで足した行の ADR-0001 の参照は、renumber が付け替える
+        t.write("src/impl.sh", "echo 1\n# ADR-0001\n");
+        t.commit_all("fix: impl");
+        let a = "docs/adr/0001-use-a.md";
+        t.write(a, &(t.read(a) + "\n追記\n"));
+        t.commit_all("docs(adr): follow impl");
+    });
+    let out = t.run(&["renumber", "1", "5"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(t.read("src/impl.sh").contains("ADR-0005"));
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_counts_a_hand_written_commit_that_starts_like_renumber() {
+    let t = confirmed_topic("stale-renumber-like", |t| {
+        t.write("src/impl.sh", "echo 2\n");
+        t.commit_all("fix: impl");
+        let a = "docs/adr/0001-use-a.md";
+        t.write(a, &t.read(a).replace("1 を出す", "2 を出す"));
+        t.commit_all("docs: renumber the steps in the confirmation");
+    });
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
 }
 
 #[test]
@@ -2805,6 +2877,12 @@ fn new_in_a_bundle_leaves_untracked_drafts_out_of_the_index() {
         "docs/plans/wip.md",
         "---\ntype: Plan\ntitle: wip\ndescription: 下書き\n---\n",
     );
+    // 索引まで書いた下書きのディレクトリも、記録の索引ではないので載せない
+    t.write("docs/drafts/index.md", "# drafts\n");
+    t.write(
+        "docs/drafts/idea.md",
+        "---\ntype: Note\ntitle: idea\ndescription: 案\n---\n",
+    );
     let out = t.run(&["new", "use-foo", "foo を使う"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(!t.dir.join("docs/plans/index.md").exists());
@@ -2813,6 +2891,12 @@ fn new_in_a_bundle_leaves_untracked_drafts_out_of_the_index() {
         "{}",
         t.read("docs/index.md")
     );
+    assert!(
+        !t.read("docs/index.md").contains("drafts/"),
+        "{}",
+        t.read("docs/index.md")
+    );
+    assert_eq!(t.read("docs/drafts/index.md"), "# drafts\n");
     // 続けて作った記録は、先の new が書いた（まだ追跡していない）索引に足す
     t.run(&["new", "use-bar", "bar を使う"]);
     assert_eq!(
