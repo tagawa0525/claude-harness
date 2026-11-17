@@ -346,6 +346,87 @@ fn a_repository_with_origin_head_counts_its_merges() {
     );
 }
 
+/// origin（実際に通信できる bare）に push して origin/HEAD を張り、GitHub の URL のリモート github を足したリポジトリ。
+/// bare のパスを返す
+fn github_clone(home: &Home, repo: &Path) -> String {
+    let remote = home.root.join("remote.git").display().to_string();
+    home.git(&home.root, &["init", "-q", "--bare", &remote], None);
+    home.git(repo, &["remote", "add", "origin", &remote], None);
+    home.git(repo, &["push", "-q", "origin", "main"], None);
+    home.git(repo, &["remote", "set-head", "origin", "main"], None);
+    home.git(
+        repo,
+        &[
+            "remote",
+            "add",
+            "github",
+            "https://github.com/example/app.git",
+        ],
+        None,
+    );
+    remote
+}
+
+#[test]
+fn a_github_clone_fetches_origin_before_counting_merges() {
+    let home = Home::new();
+    let main = home.first_session().display().to_string();
+    let repo = home.repo();
+    let remote = github_clone(&home, &repo);
+    // ほかの clone が区間の中のマージを 1 本 push する（repo の origin/main の追跡ブランチは古いまま）
+    let other = home.root.join("other");
+    let other_s = other.display().to_string();
+    home.git(
+        &home.root,
+        &["clone", "-q", "-b", "main", &remote, &other_s],
+        None,
+    );
+    home.git(&other, &["switch", "-q", "-c", "d"], None);
+    std::fs::write(other.join("d.txt"), "x\n").unwrap();
+    home.git(&other, &["add", "d.txt"], None);
+    home.git(&other, &["commit", "-q", "-m", "feat: d"], None);
+    home.git(&other, &["switch", "-q", "main"], None);
+    home.git(
+        &other,
+        &["merge", "-q", "--no-ff", "-m", "Merge d", "d"],
+        Some("2026-11-07T21:00:00+09:00"),
+    );
+    home.git(&other, &["push", "-q", "origin", "main"], None);
+    let repo_s = repo.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.extend(["--repo", &repo_s, &main]);
+    let out = home.report(&args, None);
+    assert_eq!(
+        lines_with(&stdout(&out), "MERGES: "),
+        [format!("MERGES: 3 {repo_s} origin/HEAD")]
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
+#[test]
+fn a_failed_fetch_counts_the_local_origin_head_and_warns_that_merges_are_unverified() {
+    let home = Home::new();
+    let main = home.first_session().display().to_string();
+    let repo = home.repo();
+    github_clone(&home, &repo);
+    let gone = home.root.join("gone.git").display().to_string();
+    home.git(&repo, &["remote", "set-url", "origin", &gone], None);
+    let repo_s = repo.display().to_string();
+    let mut args = RANGE.to_vec();
+    args.extend(["--repo", &repo_s, &main]);
+    let out = home.report(&args, None);
+    assert_eq!(
+        lines_with(&stdout(&out), "MERGES: "),
+        [format!("MERGES: 2 {repo_s} origin/HEAD")]
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.lines().any(|l| l
+            == format!("WARN: {repo_s} の origin を fetch できませんでした。MERGES と PER_MERGE は手元の origin/HEAD で数えたもので、未確認です")),
+        "{err}"
+    );
+}
+
 #[test]
 fn without_a_repository_the_cost_per_merge_is_not_given() {
     let home = Home::new();
