@@ -54,8 +54,13 @@ assert_eq "" "$(fake_log pytest)"
 it "run-checks: サブディレクトリのテストが落ちれば失敗する（unittest）"
 make_fake_tool ruff '*) exit 0 ;;'
 # host に pytest があっても unittest の経路を通すため、python3 から pytest が使えない状態にする
-REAL_PY=$(command -v python3)
-make_fake_tool python3 '"-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$REAL_PY"' "$@" ;;'
+# 本物は、PATH の先頭の名前でなくインタープリタの実体で呼ぶ。PATH の python3 が mise の shim だと、shim は版の指定が
+# 無いとき PATH から python3 を探し直し、偽の python3 に戻って再帰になる
+REAL_PY=$(python3 -c 'import sys; print(sys.executable)')
+# 空のまま進むと、偽の python3 が `exec -m unittest …` になって必ず落ち、「落ちれば失敗する」のテストだけが通る
+[[ -x "$REAL_PY" ]] || { echo "ERROR: 本物の python3 の実体が分からない: '$REAL_PY'" >&2; exit 1; }
+# 実体のパスは、空白があっても割れないよう、シェルの語にしてから偽のスクリプトに埋める
+make_fake_tool python3 '"-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$(printf '%q' "$REAL_PY")"' "$@" ;;'
 mkdir -p pkg/sub
 printf 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1, 2)\n' > pkg/test_a.py
 git add pkg/test_a.py
