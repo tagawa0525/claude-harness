@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::LazyLock;
 
-const USAGE: &str = "Usage: session-events.sh [--since <日時>] [--until <日時>] [TRANSCRIPT]";
+const USAGE: &str = "Usage: session-events.sh [--since <日時>] [--until <日時>] [TRANSCRIPT]
+  日時は時差つきの ISO 8601（例 2026-11-06T00:00+09:00、2026-11-05T15:00Z）。区間は [since, until) で、until の時刻は含まない（11:05 の分まで含めるなら 11:06 を渡す）";
 
 /// 区間に行が無いときの次の手。区間をずらして行を拾うと、指定と違う期間を数えたまま報告に載る
 const EMPTY_RANGE_NEXT: &str = "NEXT: 年と時差の書き誤りを直すか、区間が /clear の前など別のセッションにあれば、その記録を TRANSCRIPT に渡して再実行する。区間はずらさない（ずらすと、ほかの期間を数える）";
