@@ -240,3 +240,43 @@ fn usage_errors_exit_1() {
         assert!(out.contains("Usage"), "{args:?}: {out}");
     }
 }
+
+#[test]
+fn a_report_time_later_than_now_does_not_break_the_wait() {
+    // 時計が戻った（NTP の補正）後も、経過を負にせず WAIT を返す
+    let d = Dir::new();
+    let log = d.file("job.out", "");
+    d.wait(1, 60, &["/wt/clock", &log]);
+    let dir = d.root.join("tmp").join("claude-wait-step");
+    let state = std::fs::read_dir(&dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(&state, format!("{} {now}\n", now + 30)).unwrap();
+    let (code, out) = d.wait(1, 60, &["/wt/clock", &log]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("WAIT: 途中の報告から 0 分"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_key_reached_through_a_symlink_shares_the_clock() {
+    let d = Dir::new();
+    let log = d.file("job.out", "");
+    let real = d.root.join("real");
+    std::fs::create_dir_all(real.join("wt")).unwrap();
+    let link = d.root.join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    d.wait(2, 3, &[&real.join("wt").display().to_string(), &log]);
+    assert_eq!(
+        d.wait(2, 3, &[&link.join("wt").display().to_string(), &log])
+            .0,
+        3
+    );
+}

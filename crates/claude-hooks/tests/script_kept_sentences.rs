@@ -362,3 +362,26 @@ fn base_errors_exit_2() {
         2
     );
 }
+
+#[test]
+fn base_takes_a_file_whose_directory_was_deleted_as_a_source() {
+    // スキルのディレクトリごと消して、文を別のスキルに移した
+    let d = repo(&[
+        ("skills/foo/SKILL.md", "移す文。\n"),
+        ("skills/bar/SKILL.md", "残る文。\n"),
+    ]);
+    std::fs::remove_dir_all(d.root.join("skills/foo")).unwrap();
+    d.write("skills/bar/SKILL.md", "残る文。移す文。\n");
+    assert_eq!(
+        kept_in(
+            &d.root,
+            &[
+                "--base",
+                "main",
+                "skills/foo/SKILL.md",
+                "skills/bar/SKILL.md"
+            ]
+        ),
+        (0, String::new())
+    );
+}
