@@ -405,8 +405,10 @@ fn a_bad_worktreelink_does_not_offer_links_to_paths_missing_from_the_main_worktr
     let err = text(&out.stderr);
     let (main_root, _) = roots(&repo, "feat/missing");
     assert!(err.contains(&format!("ln -s {main_root}/shared ")), "{err}");
+    // そのまま実行される行（# の注でない行）には、無いパスの ln -s を出さない
     assert!(
-        !err.contains(&format!("ln -s {main_root}/token.txt ")),
+        !err.lines().any(|l| !l.trim_start().starts_with('#')
+            && l.contains(&format!("ln -s {main_root}/token.txt "))),
         "{err}"
     );
     assert!(err.contains("メイン worktree に token.txt が無い"), "{err}");

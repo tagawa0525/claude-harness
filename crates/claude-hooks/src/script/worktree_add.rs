@@ -568,21 +568,23 @@ fn share(dir: &Path, main_root: &Path, text: &str, carry: bool) -> i32 {
         // 張るのは link_all と同じく、メイン worktree にあるパスだけ（無いパスに張ると壊れた symlink になる）
         for path in &paths {
             let target = format!("{main}/{path}");
-            if !Path::new(&target).exists() {
-                eprintln!(
-                    "  （メイン worktree に {path} が無いので張らない。用意してから下の形で張る）"
-                );
-                continue;
-            }
             let parent = path
                 .rsplit_once('/')
                 .map_or(wt.to_string(), |(p, _)| format!("{wt}/{p}"));
-            eprintln!(
-                "  mkdir -p {} && ln -s {} {}",
+            let command = format!(
+                "mkdir -p {} && ln -s {} {}",
                 quote(&parent),
                 quote(&target),
                 quote(&format!("{wt}/{path}"))
             );
+            if Path::new(&target).exists() {
+                eprintln!("  {command}");
+            } else {
+                eprintln!(
+                    "  （メイン worktree に {path} が無い。張ると壊れた symlink になるので、用意してから # を外して実行する）"
+                );
+                eprintln!("  # {command}");
+            }
         }
         let (wt_q, main_q) = (quote(&wt), quote(&main));
         eprintln!(
