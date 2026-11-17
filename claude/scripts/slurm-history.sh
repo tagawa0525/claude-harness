@@ -86,7 +86,7 @@ if [[ ! -r "$FILE" ]]; then
   exit 1
 fi
 
-# sacct の記録を始めた日。sacct の既定の範囲は今日だけなので、-S で渡す
+# sacct の記録を始めた日（r995 に slurmdbd を置いた日。それより前のジョブは sacct に無い）。sacct の既定の範囲は今日だけなので、-S で渡す
 SACCT_SINCE=2026-10-12
 
 # sacct の記録を、awk が読む形（欄は \x1f 区切り、最後の欄を SubmitLine から排他かの語に替える）で $SACCT_FILE に書く。
