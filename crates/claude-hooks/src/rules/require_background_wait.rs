@@ -1,7 +1,7 @@
 //! require-background-wait: 長時間待機するスクリプトのフォアグラウンド実行を止める
 //!
-//! gh-wait-review.sh / request-rereview.sh は漸増バックオフで約 10 分待つため、Bash ツールの
-//! フォアグラウンド上限を必ず超えて失敗する。run_in_background=true でのみ許可する。
+//! gh-wait-review.sh / request-rereview.sh は漸増バックオフで約 10 分、gh-wait-checks.sh は約 20 分まで待つため、
+//! Bash ツールのフォアグラウンド上限を超えて失敗する。run_in_background=true でのみ許可する。
 //! 回避する正当な理由がないため、エスケープは設けない。
 //! ラッパー（`bash <path>`、sudo など）と `bash -c` の文字列の中は shell.rs がほどき、実行するプログラムを
 //! 決められない形（`$WAIT 12`）はスクリプト名が文字列にあれば止める。
@@ -15,7 +15,11 @@ use crate::unwrap::basename;
 
 pub struct RequireBackgroundWait;
 
-const SCRIPTS: &[&str] = &["gh-wait-review.sh", "request-rereview.sh"];
+const SCRIPTS: &[&str] = &[
+    "gh-wait-review.sh",
+    "request-rereview.sh",
+    "gh-wait-checks.sh",
+];
 
 impl Rule for RequireBackgroundWait {
     fn name(&self) -> &'static str {
@@ -30,7 +34,7 @@ impl Rule for RequireBackgroundWait {
             return Vec::new();
         }
         vec![Finding::Deny(
-            "gh-wait-review.sh / request-rereview.sh は約10分待機するため、Bash ツールの run_in_background=true で実行してください（フォアグラウンドでは上限に達して必ず失敗します）".to_string(),
+            "gh-wait-review.sh / request-rereview.sh / gh-wait-checks.sh は 10 分以上待機するため、Bash ツールの run_in_background=true で実行してください（フォアグラウンドでは上限に達して失敗します）".to_string(),
         )]
     }
 }
