@@ -78,10 +78,8 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 
 ### 6. チェックする
 
-チェックの前に `git -C <worktree> status --short` を空にする。追跡しているファイルの変更は、ツールが書き換えたもの
-（`dvc.lock`、フォーマッタの修正など）も論理ごとにコミットする。未追跡のファイルは、リポジトリの規則に従ってコミットするか、
-`.gitignore` が無視する試行の置き場（リポジトリの規則にあるもの）に移すか、この作業で自分が作った使い捨てなら消す。移したものの
-場所と、途中で止まるときに残った変更は「マージの前後で人の手が要ること」に書く（worktree の中の置き場は後片付けで消える）。
+作業ツリーの変更は、下の `run-checks.sh` が止まって示す片付け方に従う。無視される置き場に移したものの場所と、途中で止まるときに
+残った変更は「マージの前後で人の手が要ること」に書く（worktree の中の置き場は後片付けで消える）。
 
 ```bash
 ~/.claude/skills/language-checks/scripts/run-checks.sh -C <worktree> --base <base>
@@ -104,10 +102,8 @@ cd <worktree> && ~/.claude/scripts/kept-sentences.sh --base <base> <パス>…
 
 ### 7. レビューを受ける
 
-周ごとに `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <base>` を実行し、出力の `LEVEL` と `WORKTREE` で
-`/code-review <LEVEL> <WORKTREE>` を回す。対象は worktree のパスで渡す（ブランチ名は cwd のリポジトリで解かれ、空振りして「指摘
-なし」と返る）。1 周目の LEVEL はスクリプトが決め、自分で下げない（直した後の周のレベルは、/git-merge の「直す指摘の基準」の
-「終わり」の項に従う）。/code-review が background で走ったら、「作業中の規則」の待ちの項のとおりターンを終えずに待ち、
+周ごとに `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名> --base <base>` を実行し、出力の `NEXT:` の
+`/code-review` を回す。/code-review が background で走ったら、「作業中の規則」の待ちの項のとおりターンを終えずに待ち、
 終わりの通知を受けて指摘に対応してから先に進む。
 
 **リモートあり**のときは、続けて PR を出して自動レビューを受ける:
@@ -145,13 +141,12 @@ cd <worktree> && ~/.claude/scripts/kept-sentences.sh --base <base> <パス>…
 cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
 ```
 
-これを実行し、続けて main の進みを `git -C <worktree> rev-list --count HEAD..<base>` で数える（`base-moved.sh` が比較元を fetch
-した後に数える。`BASE_MOVED:` の件数はマージを 1 件と数えるので使わない）。進んでいれば、/git-merge の「rebase」「番号の重複
-（rebase の後）」「rebase の後」を Read で読み、そのとおり `<base>` に rebase して周を回すかを決め、手順 6 のチェックからやり直す
-（リモートありは `cd <worktree> && git push --force-with-lease origin <ブランチ名>`）。最後に実行した結果を報告に書く。
+これを実行し、`BEHIND:` が 0 でなければ、/git-merge の「rebase」「番号の重複（rebase の後）」「rebase の後」を Read で読み、
+そのとおり `<base>` に rebase して周を回すかを決め、手順 6 のチェックからやり直す（リモートありは
+`cd <worktree> && git push --force-with-lease origin <ブランチ名>`）。最後に実行した結果を報告に書く。
 
-`COMMON:` の行が両方の変えたファイルで、終了コード 0 で出力が空なら重なりは無い。`WARN:`、`ERROR:`、0 でない終了コードのときは
-比較が済んでいないので、重なりと件数の両方を未確認と書く。重なりの有無はこの出力で書く（記憶や推測を使わない）。
+`COMMON:` の行が両方の変えたファイルで、`BEHIND:` の行が無ければ、重なりと件数の両方を未確認と書く。重なりの有無はこの出力で
+書く（記憶や推測を使わない）。
 
 ### 9. 報告する
 
@@ -162,8 +157,7 @@ cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
 - 自分で張った Monitor や background のコマンドのうち、結果を使わないものは TaskStop（deferred のときは ToolSearch で読み込む）で
   止める（残すと、その通知で再開して同じ報告を送り直す）。`wait-step.sh --end <worktree のパス>` で待ちを消す。
   SubagentHandback の後にジョブの通知で再開したら、「報告は送り済み」の 1 行だけで終える（SubagentHandback は呼ばない）
-- `git -C <worktree> status --short` が空であることを確かめる。空でなければ 6 の冒頭のとおり片付け、コミットしたら 6 のチェック
-  からやり直す
+- `git -C <worktree> status --short` が空であることを確かめる。空でなければ 6 のチェックからやり直す
 
 報告は次の見出しで書く。該当が無い節は「なし」と書き、節を省かない。手順 8 まで済み、途中で止まらず「続きの作業」が「なし」の
 報告は、SendMessage（`to: "main"`。deferred のときは ToolSearch で読み込む）で親に送ってマージの許可を求め、終わらずに「作業中の
@@ -270,9 +264,8 @@ cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
   あるもの）から取る（`sacct` は allowed-tools に無い）。`EXIT:` は行のジョブの順に並ぶ（`a && b` の行は、前が失敗すると後は
   投げられず `EXIT:` が 1 つだけ）。時間とログの中身は `LOG:` のログから読む。投げられなかったジョブ（`JOB:` が無い、`ERROR:` の
   行がある）は、原因を直してコマンドを報告に書き直す
-- 計算を投げる直前と、投げるコマンドを報告に書く直前に、既定ブランチの進みを見る（手順 8 と同じく `base-moved.sh` で比較元を
-  fetch してから `git -C <worktree> rev-list --count HEAD..<base>`）。結果を変える変更（コード、入力、環境）が入っていれば、先に
-  rebase してから投げる（書く）
+- 計算を投げる直前と、投げるコマンドを報告に書く直前に、既定ブランチの進みを見る（手順 8 と同じく `base-moved.sh` の
+  `BEHIND:`）。結果を変える変更（コード、入力、環境）が入っていれば、先に rebase してから投げる（書く）
 - レビューの周は、/git-merge の「レビュー」の節の「直す指摘の基準」に従う
 - 使用量を節約する。同じ測定を繰り返さない。実機の試験や計算は、投げる前に 1 本の見積もりと合計の時間を出し、失敗や方針の
   変更で再実行するときは理由を控え、どちらも報告の「確認の結果」の「計算」に書く。完成の形に本数の上限があれば、超えそうなら
