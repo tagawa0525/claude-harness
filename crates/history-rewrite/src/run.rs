@@ -1094,7 +1094,8 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
         )));
     }
     refuse_unreachable_detached(&source)?;
-    let words_record = words.resolved()?.record()?;
+    let resolved = words.resolved()?;
+    let words_record = resolved.record()?;
     std::fs::create_dir_all(&workdir).map_err(|e| Stop(format!("{}: {e}", workdir.display())))?;
     let original = workdir.join("original.git");
     let rewritten = workdir.join("rewritten");
@@ -1197,6 +1198,11 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
     std::fs::write(&words_path, words_record)
         .map_err(|e| Stop(format!("{}: 書けない: {e}", words_path.display())))?;
     println!("WORDS: {}", words_path.display());
+    let issue_path = workdir.join("issue.md");
+    let issue = crate::issue::body(&source, &workdir, &resolved)?;
+    std::fs::write(&issue_path, issue)
+        .map_err(|e| Stop(format!("{}: 書けない: {e}", issue_path.display())))?;
+    println!("ISSUE: {}", issue_path.display());
     Ok(())
 }
 
