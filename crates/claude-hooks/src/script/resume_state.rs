@@ -38,7 +38,10 @@ pub fn main(_args: &[String]) -> i32 {
 }
 
 fn worktrees(here: &Path) {
-    let list = crate::git::git(here, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let Some(list) = crate::git::git(here, &["worktree", "list", "--porcelain"]) else {
+        println!("(git worktree list に失敗)");
+        return;
+    };
     let mut path: Option<String> = None;
     for line in list.lines() {
         if let Some(p) = line.strip_prefix("worktree ") {
@@ -117,8 +120,11 @@ fn slurm() {
             ["USER", "USERNAME"]
                 .iter()
                 .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
-        })
-        .unwrap_or_default();
+        });
+    let Some(user) = user else {
+        println!("(なし: 利用者の名前を引けない（id も USER も無い）)");
+        return;
+    };
     match Command::new(squeue).args(["-h", "-u", &user]).output() {
         Ok(o) => {
             print!("{}", String::from_utf8_lossy(&o.stdout));
@@ -226,9 +232,19 @@ fn duplicate_targets(front: &FrontMatter) -> Option<Vec<u32>> {
 
 fn issues(root: &Path) {
     let dir = Kind::Issue.dir();
-    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join(dir))
-        .into_iter()
-        .flatten()
+    let read = match std::fs::read_dir(root.join(dir)) {
+        Ok(read) => read,
+        // docs/issues の無いリポジトリは普通にある
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("(なし)");
+            return;
+        }
+        Err(e) => {
+            println!("({dir} を読めない: {e})");
+            return;
+        }
+    };
+    let mut files: Vec<PathBuf> = read
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "md") && p.is_file())
@@ -283,7 +299,8 @@ fn issues(root: &Path) {
         };
         records.entry(n).or_default().push(record);
     }
-    let (mut found, mut any_blocked, mut any_unknown) = (false, false, false);
+    let (mut found, mut any_blocked, mut any_unknown, mut any_unreadable) =
+        (false, false, false, false);
     for e in &entries {
         let text = match &e.text {
             Ok(text) => text,
@@ -291,6 +308,7 @@ fn issues(root: &Path) {
             Err(why) => {
                 println!("{dir}/{} unreadable={why}", e.name);
                 found = true;
+                any_unreadable = true;
                 continue;
             }
         };
@@ -340,6 +358,11 @@ fn issues(root: &Path) {
     }
     if any_blocked {
         println!("NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない");
+    }
+    if any_unreadable {
+        println!(
+            "NEXT: unreadable= のファイルは、開いているかを確かめられない。UTF-8 で読める形と読める権限に直すか、ユーザーに確かめる"
+        );
     }
     if any_unknown {
         println!(
