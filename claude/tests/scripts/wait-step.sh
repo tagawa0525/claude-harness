@@ -82,6 +82,37 @@ it "wait-step: 鍵のパスは正規化する（末尾の / があっても同�
 out=$("$WAIT" /wt/n/ "$log")
 assert_eq 3 $?
 
+it "wait-step: WAIT の次の行で、ターンを終えずに同じ引数で呼び直すことと、届いた通知で続けることを示す"
+out=$(WAIT_STEP_REPORT=60 "$WAIT" /wt/next-wait "$log")
+assert_eq 2 $?
+assert_contains "$out" "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ"
+assert_contains "$out" "通知（終わりの通知、親の返事）"
+
+it "wait-step: DONE の次の行で、残りの出力のファイルで呼び直すコマンドと、すべて済んだときの --end のコマンドを示す"
+printf '[exited with code 0]\n' >"$TEST_ROOT/fin.out"
+out=$(WAIT_STEP_REPORT=60 "$WAIT" "/wt/next done" "$log" "$TEST_ROOT/fin.out")
+assert_eq 0 $?
+assert_contains "$out" "DONE: $TEST_ROOT/fin.out"
+assert_contains "$out" "~/.claude/scripts/wait-step.sh /wt/next\\ done $log"
+assert_not_contains "$out" "wait-step.sh /wt/next\\ done $log $TEST_ROOT/fin.out"
+assert_contains "$out" "~/.claude/scripts/wait-step.sh --end /wt/next\\ done"
+
+it "wait-step: 最後の出力のファイルが終われば、DONE の次の行は出力のファイルの無い呼び直しを示す"
+out=$(WAIT_STEP_REPORT=60 "$WAIT" /wt/next-last "$TEST_ROOT/fin.out")
+assert_eq 0 $?
+assert_contains "$out" "出力のファイルの無い待ち"
+assert_contains "$out" "~/.claude/scripts/wait-step.sh /wt/next-last"
+assert_contains "$out" "~/.claude/scripts/wait-step.sh --end /wt/next-last"
+
+it "wait-step: REPORT の次の行で、親への途中の報告の宛先と文面を示し、待ちを続けさせる"
+"$WAIT" /wt/next-report "$log" >/dev/null
+out=$("$WAIT" /wt/next-report "$log")
+assert_eq 3 $?
+assert_contains "$out" 'SendMessage（to: "main"）'
+assert_contains "$out" "<待つもの> の待ちが 55 分を超えた。終わり次第、残りの作業を続ける"
+assert_contains "$out" "同じ引数でもう一度呼ぶ"
+assert_contains "$out" "止めるかは親の返事で決める"
+
 it "wait-step: 渡した出力のファイルが無ければ、理由を出して 1 で返る"
 out=$("$WAIT" /wt/h "$TEST_ROOT/no-such.out" 2>&1)
 assert_eq 1 $?
