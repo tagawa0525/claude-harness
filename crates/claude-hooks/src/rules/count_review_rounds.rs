@@ -71,6 +71,24 @@ fn live_rounds(dir: &Path, branch: &str, path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// dir の clone で、head を HEAD にして /code-review を回した行があるか。ブランチは問わない（同じ SHA なら同じコミットを
+/// 回している。ブランチの名前を変えても、別の worktree で回しても引ける）。dir が git のリポジトリの中でなければ None
+pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<bool> {
+    let common = git::git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let Ok(files) = std::fs::read_dir(Path::new(&common).join(STATE_DIR)) else {
+        return Some(false);
+    };
+    Some(files.flatten().any(|file| {
+        std::fs::read_to_string(file.path()).is_ok_and(|text| {
+            text.lines()
+                .any(|l| l.split_whitespace().next() == Some(head))
+        })
+    }))
+}
+
 fn context(branch: &str, round: usize) -> String {
     format!(
         "ブランチ {branch} のローカルの /code-review の {round} 周目です（担当と親の周の合計。rebase の後の周も数えます）。\

@@ -4,7 +4,11 @@
 //! 確かめて正しいと判断した指摘の数で、後に Copilot が出した数と比べるために残す。
 //!
 //! 記録はマージの hook（pre-merge-check）が Copilot のレビューの代わりに数えるので、差分を読んだだけのコミットは
-//! 記録しない。記録を数えるのは書き込める人のコメントだけなので、push できないリポジトリ（上流の PR）には付けない
+//! 記録しない。記録を数えるのは書き込める人のコメントだけなので、push できないリポジトリ（上流の PR）には付けない。
+//!
+//! その head で /code-review を回したことは、count-review-rounds の hook が clone に書く行（回したときの HEAD）で
+//! 確かめ、行が無ければ記録しない。確かめる clone は起動したディレクトリのもの。直した後の head と rebase の後の head に、
+//! 回さずに前の周の数で記録を付けると、マージの hook の「最後の push を覆うレビューがありません」の知らせが出なくなる
 
 use super::pr_url;
 use regex::Regex;
@@ -95,6 +99,25 @@ pub fn main(args: &[String]) -> i32 {
             short(&head)
         );
         return 1;
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    match crate::rules::round_ran_at(&cwd, &head) {
+        Some(true) => {}
+        Some(false) => {
+            eprintln!(
+                "ERROR: {} で /code-review を回した記録が、この clone にありません。この head で /code-review を回してから記録してください。base への rebase だけの head なら、マージの hook が前の head の記録で認めるかを先に確かめます（記録を付けていません）",
+                short(&head)
+            );
+            return 1;
+        }
+        None => {
+            eprintln!(
+                "ERROR: {} は git のリポジトリの中ではないので、{} で /code-review を回した記録を確かめられません。PR の worktree で実行してください（記録を付けていません）",
+                cwd.display(),
+                short(&head)
+            );
+            return 1;
+        }
     }
     let body = format!(
         "{}\nローカルの /code-review で {} を確かめた: High {high} / Medium {medium} / Low {low}",
