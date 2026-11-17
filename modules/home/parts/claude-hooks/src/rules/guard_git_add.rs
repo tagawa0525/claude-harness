@@ -119,6 +119,11 @@ mod tests {
         assert!(args("git add -u --all .").is_some());
         // --no-update は -u を打ち消し、未追跡のファイルもステージする
         assert!(args("git add -u --no-update .").is_some());
+        // git は一意な省略形（--no-up、--no-u）も受ける
+        assert!(args("git add -u --no-up .").is_some());
+        assert!(args("git add --update --no-u .").is_some());
+        // --end-of-options の後ろの -u はパスで、オプションでない
+        assert!(args("git add --end-of-options -u .").is_some());
     }
 
     #[test]

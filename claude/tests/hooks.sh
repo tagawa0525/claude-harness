@@ -1282,7 +1282,7 @@ for cmd in 'git add -u .' 'git add --update .' 'git add -u :/' 'git add -u . && 
 done
 
 it "guard-git-add: -u でも、-A を足すか --no-update で打ち消せば、全体のパスは deny する"
-for cmd in 'git add -u -A .' 'git add -u --no-update .'; do
+for cmd in 'git add -u -A .' 'git add -u --no-update .' 'git add -u --no-up .' 'git add --end-of-options -u .'; do
   out=$(run_hook guard-git-add "$cmd")
   assert_eq deny "$(decision "$out")"
 done
