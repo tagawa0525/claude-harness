@@ -24,8 +24,10 @@
 #   OK: <lang> <stage> | SKIP: <lang> <stage> (<理由>) | FAILED: <lang> <stage>: <command>
 #   FIX: <自動修正コマンド>（FAILED のときのみ、あれば）
 #   ALL_OK（すべて通ったとき）
+#   NOTE: <ファイル> の <行> 行目にチェックのコマンドがある…（プロジェクトの CLAUDE.md と .claude/CLAUDE.md。検査の前）
+#   NOTE: <dir>/Cargo.toml に [features] がある…（その crate の cargo の前）
 #
-# プロジェクトの CLAUDE.md にチェックコマンドが明記されていればそちらを優先する
-# （例: feature gate のあるクレートでは --all-features が必要）。ここでの既定値は汎用。
+# ここでの既定値は汎用。プロジェクトの CLAUDE.md にチェックコマンドが明記されていればそちらを優先する
+# （例: feature gate のあるクレートでは --all-features が必要）。
 . "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
 claude_hooks_script run-checks "$@"

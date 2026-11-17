@@ -16,6 +16,8 @@
 //!
 //! 「ステージ済み」は、--merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分に読み替える。--base は
 //! 作業ツリーに変更（無視されるファイルを除く）があれば、検査せずに ERROR と片付け方を出して 1 で止まる。
+//! 検査の前に、プロジェクトの CLAUDE.md のチェックのコマンドの行を、crate の cargo の前に Cargo.toml の [features] を
+//! NOTE で知らせる（既定のコマンドは汎用で、プロジェクトの設定を優先するため）。
 //! 最初に失敗したチェックで止まる。ツールが PATH に無ければ SKIP を出して続ける。`RUN:` と `FAILED:` の行のコマンドは、
 //! チェックの名前（`cargo_in <dir>`、`nix_fmt_check` など）で出す。実行できるコマンドの形にしないのは、run-checks.sh を
 //! Rust に移す前と行の文字列を変えないため（ADR-0087。変えるなら、行を読むテストと合わせて別に変える）
@@ -267,6 +269,35 @@ fn xargs(prefix: &[&str], files: &[PathBuf]) -> bool {
     ok
 }
 
+/// プロジェクトの CLAUDE.md の、チェックのコマンドを書いた行を NOTE で知らせる。run-checks の既定のコマンドは汎用で、
+/// プロジェクトが別の形（feature の指定、別のテストの実行）を決めていればそちらを優先するため。語の一覧は
+/// run-checks が実行するツールと、その周りでよく書かれるもの
+fn project_check_notes() {
+    static CHECK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"\b(cargo +(fmt|clippy|test|nextest|check)|pytest|ruff +(check|format)|nix +flake +check|nixfmt|statix|markdownlint|shellcheck|run-checks\.sh)\b",
+        )
+        .unwrap()
+    });
+    for file in ["CLAUDE.md", ".claude/CLAUDE.md"] {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        let lines: Vec<String> = text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| CHECK.is_match(l))
+            .map(|(i, _)| (i + 1).to_string())
+            .collect();
+        if !lines.is_empty() {
+            println!(
+                "NOTE: {file} の {} 行目にチェックのコマンドがある。既定のチェックと違えば（feature の指定、別のテストなど）、プロジェクトの設定を優先してそれも実行する",
+                lines.join(", ")
+            );
+        }
+    }
+}
+
 fn is_file(path: &str) -> bool {
     Path::new(path).is_file()
 }
@@ -381,6 +412,7 @@ impl Checks {
     }
 
     fn run(&self) -> Step {
+        project_check_notes();
         let mut detected = false;
         detected |= self.rust()?;
         detected |= self.python()?;
@@ -401,6 +433,19 @@ impl Checks {
 
     /// crate のディレクトリ dir で cargo の fmt、clippy、test を実行する
     fn run_rust(&self, dir: &str) -> Step {
+        let manifest = Path::new(dir).join("Cargo.toml");
+        if std::fs::read_to_string(&manifest)
+            .is_ok_and(|text| text.lines().any(|l| l.trim() == "[features]"))
+        {
+            let shown = if dir == "." {
+                "Cargo.toml".to_string()
+            } else {
+                format!("{dir}/Cargo.toml")
+            };
+            println!(
+                "NOTE: {shown} に [features] がある。既定のチェックは --all-features を付けないので、feature の下のコードは検査されない。プロジェクトの CLAUDE.md や CI のコマンド（--all-features など）でも実行する"
+            );
+        }
         let cargo_in = |args: &[&str]| -> (Vec<String>, Vec<OsString>) {
             let mut display = vec!["cargo_in".to_string(), dir.to_string()];
             let mut argv: Vec<OsString> = self.cargo_pin.iter().map(OsString::from).collect();
