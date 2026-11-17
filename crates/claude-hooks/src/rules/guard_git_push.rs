@@ -19,7 +19,7 @@ use crate::shell::{Arg, Shell};
 
 pub struct GuardGitPush;
 
-/// main / master への push を止めたときの修正方法。main で作ったコミットは main に残っているので、移してから PR にする
+/// main / master にいて push を止めたときの修正方法。main で作ったコミットは main に残っているので、移してから PR にする
 const TO_FEATURE: &str = "main / master で作ったコミットは /git-cherry-pick で feature branch に移し（main からは外れる）、feature branch から PR を作成してください: /gh-pr-create";
 
 fn deny(reason: &str) -> Finding {
@@ -73,13 +73,16 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
             &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
         )
         .unwrap_or_default();
-        let upstream = upstream
-            .split_once('/')
-            .map(|(_, b)| b)
-            .unwrap_or(&upstream);
-        if is_protected_ref(&current) || is_protected_ref(upstream) {
+        let (remote, upstream) = upstream.split_once('/').unwrap_or(("origin", &upstream));
+        if is_protected_ref(&current) {
             return Some(format!(
                 "main / master への直接 push は禁止です（現在のブランチ: {current}）。{TO_FEATURE}"
+            ));
+        }
+        if is_protected_ref(upstream) {
+            // コミットは feature branch にあり main には無いので、移さずに上流を直す
+            return Some(format!(
+                "main / master への直接 push は禁止です（{current} の上流が {remote}/{upstream}）。git push -u {remote} {current} で上流を feature branch にしてから、PR を作成してください: /gh-pr-create"
             ));
         }
         return None;
@@ -98,8 +101,16 @@ fn check_push(dir: &Path, args: &[Arg], has_error: bool) -> Option<String> {
             dst.to_string()
         };
         if is_protected_ref(&dst) {
+            let current = git::current_branch(dir);
+            // main にいなければ、コミットは main に無いので、push 先を feature branch にする
+            if current.is_empty() || is_protected_ref(&current) {
+                return Some(format!(
+                    "main / master への直接 push は禁止です（refspec: {rs}）。{TO_FEATURE}"
+                ));
+            }
             return Some(format!(
-                "main / master への直接 push は禁止です（refspec: {rs}）。{TO_FEATURE}"
+                "main / master への直接 push は禁止です（refspec: {rs}）。push 先を feature branch にし（git push {} {current}）、PR を作成してください: /gh-pr-create",
+                positional[0]
             ));
         }
     }
