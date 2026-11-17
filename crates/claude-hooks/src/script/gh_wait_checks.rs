@@ -35,6 +35,8 @@ const INTERVALS: &str = "15 30 45 60 60 60 60 90 90 90 90 120 120 120 120";
 const REGISTER_INTERVALS: &str = "5 10 15 30";
 /// 全部が通って見えてから、もう 1 度見るまでの秒数（後から登録される check を待つ。登録を待つ間隔の最後と同じ）
 const SETTLE: &str = "30";
+/// 通って見えた後に、件数が変わって見直す回数の上限
+const MAX_SETTLES: u32 = 10;
 /// 状態を続けて取れなかったら止まる回数（最初の間隔は 15、30、45、60 秒なので、2 分半の不調までは待つ）
 const MAX_UNKNOWN: u32 = 5;
 
@@ -113,18 +115,19 @@ pub fn main(args: &[String]) -> i32 {
     let mut elapsed = 0u64;
     let mut shown_head = String::new();
     let mut unknown = 0u32;
+    let mut settles = 0u32;
     // 全部が通って見えた head と件数（次に見て同じなら通ったとする）
     let mut settled: Option<(String, usize)> = None;
     loop {
         let (head, state) = state(&pr, want.as_deref());
         if !head.is_empty() && head != shown_head && !matches!(state, State::OtherHead(_)) {
             println!("HEAD: {head}");
-            // 新しい head には、check の登録と終わりを待つ時間を初めから与える
-            if !shown_head.is_empty() {
-                register =
-                    intervals("GH_WAIT_CHECKS_REGISTER_INTERVALS", REGISTER_INTERVALS).into_iter();
-                wait = intervals("GH_WAIT_CHECKS_INTERVALS", INTERVALS).into_iter();
-            }
+            // 新しい head には、check の登録と終わりを待つ時間を初めから与える（渡したコミットが head になるのを待った
+            // 時間も、その head の check を待つ時間から引かない）
+            register =
+                intervals("GH_WAIT_CHECKS_REGISTER_INTERVALS", REGISTER_INTERVALS).into_iter();
+            wait = intervals("GH_WAIT_CHECKS_INTERVALS", INTERVALS).into_iter();
+            settles = 0;
             shown_head = head.clone();
             // 渡したコミットが head になった後は、その後の push の head を追う（前のコミットに戻るのを待たない）
             want = None;
@@ -145,12 +148,15 @@ pub fn main(args: &[String]) -> i32 {
                     return 0;
                 }
                 settled = Some((head.clone(), *count));
-                // 通って見える間も待つ時間を使う（件数が変わり続けても、時間切れで終わる）
-                let bounded = wait.next().map(|_| settle);
-                if bounded.is_none() {
+                // 件数が変わり続けても終わるよう、見直す回数を限る（待つ間隔は使わない。最後の間隔で通った check を
+                // 時間切れにしない）
+                settles += 1;
+                if settles > MAX_SETTLES {
                     println!("TIMEOUT: check の数が定まりません（今は {count} 件）");
+                    None
+                } else {
+                    Some(settle)
                 }
-                bounded
             }
             State::Failed(failed) => {
                 println!("CHECKS: failed");
