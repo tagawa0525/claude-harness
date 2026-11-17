@@ -269,7 +269,7 @@ fn a_blocker_that_is_not_in_docs_issues_is_marked_unknown() {
     assert_eq!(
         section(&text, "issues"),
         "docs/issues/0002-a.md blocked-by=[\"#0009\"] blocker-unknown=#0009\n\
-         NEXT: blocker-unknown= の issue は、blocked-by の相手が docs/issues に無いか、相手の status を読めない。閉じたかを確かめられないので、着手の前に blocked-by か相手の status を直すか、ユーザーに確かめる\n"
+         NEXT: blocker-unknown= の issue は、相手が閉じたかを確かめられない（相手の記録が無い、status か duplicate-of を読めない、#NNNN の形でない、たどると自分に戻る、blocked-by を読めない）。着手の前に blocked-by か相手の記録を直すか、ユーザーに確かめる\n"
     );
 }
 
@@ -445,4 +445,73 @@ fn an_issue_is_not_marked_blocked_by_itself() {
         ),
         "{text}"
     );
+}
+
+#[test]
+fn an_empty_blocked_by_in_an_unparsable_front_matter_is_not_a_blocker() {
+    let repo = Repo::new();
+    repo.issue(
+        "0005-x.md",
+        "---\nstatus: open\nblocked-by: []\ntags: a\ntags: b\n---\n\n# x\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert_eq!(section(&text, "issues"), "docs/issues/0005-x.md\n");
+}
+
+#[test]
+fn every_duplicate_target_is_followed() {
+    let repo = Repo::new();
+    repo.issue(
+        "0001-b.md",
+        "---\nstatus: closed\nresolution: duplicate\nduplicate-of: [\"#0003\", \"#0004\"]\n---\n\n# b\n",
+    );
+    repo.issue(
+        "0003-c.md",
+        "---\nstatus: closed\nresolution: done\n---\n\n# c\n",
+    );
+    repo.issue("0004-d.md", "---\nstatus: open\n---\n\n# d\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues")
+            .contains("docs/issues/0002-a.md blocked-by=[\"#0001\"] blocked=#0004\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_open_blocker_with_a_leftover_duplicate_resolution_still_blocks() {
+    let repo = Repo::new();
+    repo.issue(
+        "0003-c.md",
+        "---\nstatus: open\nresolution: duplicate\n---\n\n# c\n",
+    );
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0003\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues")
+            .contains("docs/issues/0002-a.md blocked-by=[\"#0003\"] blocked=#0003\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_issue_file_that_cannot_be_read_is_reported_not_dropped() {
+    let repo = Repo::new();
+    let dir = repo.app().join("docs/issues");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("0007-x.md"), b"---\nstatus: open\n---\n\n# \xe9\n").unwrap();
+    let text = stdout(&repo.run(&[]));
+    let issues = section(&text, "issues");
+    assert!(
+        issues.starts_with("docs/issues/0007-x.md unreadable="),
+        "{issues}"
+    );
+    assert!(!issues.contains("(なし)"), "{issues}");
 }
