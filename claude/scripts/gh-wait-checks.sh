@@ -6,7 +6,7 @@
 #
 # 使い方: gh-wait-checks.sh <PR の URL> [<push したコミットの SHA>]
 #   SHA を渡すと、PR の head がそのコミットになるまで待ってから check を見る（push の直後は、PR の head がまだ前の
-#   コミットのことがあり、渡さないと前の head の結果を返しうる）
+#   コミットのことがあり、渡さないと前の head の結果を返しうる）。なった後に push された head は追う
 #
 # 出力: HEAD: <SHA>、CHECKS: passed | failed | none、FAILED: <名前> (<結論>)
 # 終了コード: 0 = 全部が通った（か check が無い）、1 = タイムアウト（約 20 分）、3 = 対象 PR が見つからない、

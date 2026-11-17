@@ -5,15 +5,15 @@
 //! `gh pr checks --watch` でなくこれを使うのは、push の直後は check がまだ登録されておらず、--watch が「check が無い」で
 //! すぐ終わるため。push の直後に起きることを、次のように扱う。
 //!
-//! - PR の head がまだ前のコミットのまま: SHA（push したコミット）を渡せば、PR の head がそれになるまで待つ。渡さなければ
-//!   そのときの head を見る（前の head の結果を返しうる）
+//! - PR の head がまだ前のコミットのまま: SHA（push したコミット）を渡せば、PR の head がそれになるまで待つ（なった後の
+//!   push の head は追う）。渡さなければそのときの head を見る（前の head の結果を返しうる）
 //! - check が 1 件も無い: 登録を待つ間（約 1 分）待ち、それでも無ければ CI の無い head として `CHECKS: none` で終える。
 //!   head が変わったら、登録を待つ時間を初めから数える
 //! - 先に登録された check だけが終わっている: 全部が通って見えても、少し置いて（GH_WAIT_CHECKS_SETTLE 秒）もう 1 度
-//!   見て、同じなら通ったとする
+//!   見て、同じなら通ったとする（それより後に登録される check は見落とす）
 //!
-//! 落ちた check があれば、ほかの check の終わりを待たずに `CHECKS: failed` で終える。状態を取れない回は、通ったとも
-//! 無いとも数えず、3 回続けば止まる（権限の無いトークンなど、待っても変わらない失敗）。Copilot のレビューの実行の
+//! 落ちた check（failure、timed_out）があれば、ほかの check の終わりを待たずに `CHECKS: failed` で終える。状態を
+//! 取れない回は、通ったとも無いとも数えず、5 回続けば止まる（権限の無いトークンなど、待っても変わらない失敗）。Copilot のレビューの実行の
 //! 失敗は、コードの問題でないので失敗に数えない（マージの hook と同じ）。
 //!
 //! 待つ間隔（秒）は GH_WAIT_CHECKS_INTERVALS、登録を待つ間隔は GH_WAIT_CHECKS_REGISTER_INTERVALS で上書きできる
@@ -33,10 +33,10 @@ use std::time::Duration;
 const INTERVALS: &str = "15 30 45 60 60 60 60 90 90 90 90 120 120 120 120";
 /// push から check の登録までは数秒から十数秒（2026-11-17 の PR で、push の直後の gh pr checks が「check が無い」を返した）
 const REGISTER_INTERVALS: &str = "5 10 15 30";
-/// 全部が通って見えてから、もう 1 度見るまでの秒数（後から登録される check を待つ）
-const SETTLE: &str = "10";
-/// 状態を続けて取れなかったら止まる回数
-const MAX_UNKNOWN: u32 = 3;
+/// 全部が通って見えてから、もう 1 度見るまでの秒数（後から登録される check を待つ。登録を待つ間隔の最後と同じ）
+const SETTLE: &str = "30";
+/// 状態を続けて取れなかったら止まる回数（最初の間隔は 15、30、45、60 秒なので、2 分半の不調までは待つ）
+const MAX_UNKNOWN: u32 = 5;
 
 /// head の check の状態
 enum State {
@@ -62,10 +62,9 @@ pub fn main(args: &[String]) -> i32 {
     let (url, want) = match args {
         [url] => (url, None),
         [url, sha]
-            if (7..=40).contains(&sha.len())
-                && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
+            if (7..=40).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit()) =>
         {
-            (url, Some(sha.as_str()))
+            (url, Some(sha.to_ascii_lowercase()))
         }
         _ => {
             println!(
@@ -107,6 +106,7 @@ pub fn main(args: &[String]) -> i32 {
         .first()
         .copied()
         .unwrap_or(0);
+    let mut want = want;
     let mut register =
         intervals("GH_WAIT_CHECKS_REGISTER_INTERVALS", REGISTER_INTERVALS).into_iter();
     let mut wait = intervals("GH_WAIT_CHECKS_INTERVALS", INTERVALS).into_iter();
@@ -116,15 +116,18 @@ pub fn main(args: &[String]) -> i32 {
     // 全部が通って見えた head と件数（次に見て同じなら通ったとする）
     let mut settled: Option<(String, usize)> = None;
     loop {
-        let (head, state) = state(&pr, want);
+        let (head, state) = state(&pr, want.as_deref());
         if !head.is_empty() && head != shown_head && !matches!(state, State::OtherHead(_)) {
             println!("HEAD: {head}");
-            // 新しい head には、check の登録を待つ時間を初めから与える
+            // 新しい head には、check の登録と終わりを待つ時間を初めから与える
             if !shown_head.is_empty() {
                 register =
                     intervals("GH_WAIT_CHECKS_REGISTER_INTERVALS", REGISTER_INTERVALS).into_iter();
+                wait = intervals("GH_WAIT_CHECKS_INTERVALS", INTERVALS).into_iter();
             }
             shown_head = head.clone();
+            // 渡したコミットが head になった後は、その後の push の head を追う（前のコミットに戻るのを待たない）
+            want = None;
         }
         unknown = if matches!(state, State::Unknown) {
             unknown + 1
@@ -142,7 +145,12 @@ pub fn main(args: &[String]) -> i32 {
                     return 0;
                 }
                 settled = Some((head.clone(), *count));
-                Some(settle)
+                // 通って見える間も待つ時間を使う（件数が変わり続けても、時間切れで終わる）
+                let bounded = wait.next().map(|_| settle);
+                if bounded.is_none() {
+                    println!("TIMEOUT: check の数が定まりません（今は {count} 件）");
+                }
+                bounded
             }
             State::Failed(failed) => {
                 println!("CHECKS: failed");
@@ -168,13 +176,13 @@ pub fn main(args: &[String]) -> i32 {
                 if let Some(interval) = interval {
                     println!(
                         "待機中: PR の head がまだ {} になっていません（今は {}）（経過 {elapsed} 秒）。{interval} 秒後に再確認します",
-                        short(want.unwrap_or("")),
+                        short(want.as_deref().unwrap_or("")),
                         short(now)
                     );
                 } else {
                     println!(
                         "TIMEOUT: PR の head が {} になりません（今は {}）",
-                        short(want.unwrap_or("")),
+                        short(want.as_deref().unwrap_or("")),
                         short(now)
                     );
                 }
@@ -198,15 +206,17 @@ pub fn main(args: &[String]) -> i32 {
             }
             State::Unknown => {
                 if unknown >= MAX_UNKNOWN {
-                    println!(
-                        "ERROR: check の状態を {MAX_UNKNOWN} 回続けて取得できません。理由は gh api repos/{}/commits/{}/check-runs で確かめてください",
-                        pr.repo,
-                        if head.is_empty() {
-                            "<head の SHA>"
-                        } else {
-                            &head
-                        }
-                    );
+                    if head.is_empty() {
+                        println!(
+                            "ERROR: check の状態を {MAX_UNKNOWN} 回続けて取得できません。理由は gh pr view {} -R {} --json headRefOid で確かめてください",
+                            pr.number, pr.repo
+                        );
+                    } else {
+                        println!(
+                            "ERROR: check の状態を {MAX_UNKNOWN} 回続けて取得できません。理由は gh api repos/{repo}/commits/{head}/check-runs と gh api repos/{repo}/commits/{head}/status で確かめてください",
+                            repo = pr.repo
+                        );
+                    }
                     return 4;
                 }
                 let interval = wait.next();
@@ -298,15 +308,20 @@ fn state(pr: &pr_url::Pr, want: Option<&str>) -> (String, State) {
     }
     let name = |c: &Value| c["name"].as_str().unwrap_or("").to_string();
     let done = |c: &&Value| c["status"] == "completed";
+    let mut running: Vec<String> = all.iter().filter(|c| !done(c)).map(name).collect();
+    // 実行中の check がある間は、failure と timed_out だけを落ちたと数える（取り消された run は、同じ head の次の run に
+    // 置き換わることがある）。全部が終わったら、通っていない結論をすべて数える（マージの hook と同じ）
+    let counts_as_failed = |conclusion: Option<&str>| {
+        if running.is_empty() {
+            !matches!(conclusion, Some("success" | "neutral" | "skipped"))
+        } else {
+            matches!(conclusion, Some("failure" | "timed_out"))
+        }
+    };
     let mut failed: Vec<String> = all
         .iter()
         .filter(done)
-        .filter(|c| {
-            !matches!(
-                c["conclusion"].as_str(),
-                Some("success" | "neutral" | "skipped")
-            )
-        })
+        .filter(|c| counts_as_failed(c["conclusion"].as_str()))
         .filter(|c| !name(c).to_ascii_lowercase().contains("copilot"))
         .map(|c| {
             format!(
@@ -321,7 +336,6 @@ fn state(pr: &pr_url::Pr, want: Option<&str>) -> (String, State) {
         failed.dedup();
         return (head, State::Failed(failed));
     }
-    let mut running: Vec<String> = all.iter().filter(|c| !done(c)).map(name).collect();
     if !running.is_empty() {
         running.sort();
         running.dedup();
