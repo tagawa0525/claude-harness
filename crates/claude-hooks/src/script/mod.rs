@@ -1,5 +1,5 @@
 //! `claude-hooks script <名前> [引数]...`: スキルが呼ぶ作業手順のスクリプトの中身（ADR-0087）。
-//! `~/.claude/scripts/` と `~/.claude/skills/gh-pr-review/scripts/` の同じ名前の sh は、これを exec するだけにする
+//! `~/.claude/scripts/` と `~/.claude/skills/<スキル>/scripts/` の同じ名前の sh は、これを exec するだけにする
 //! （スキルの文と PreToolUse のルールはスクリプトの名前で呼び、見分けるので、名前と場所を変えない）
 
 mod base_moved;
@@ -28,6 +28,7 @@ mod reply_to_comment;
 mod request_rereview;
 mod reset_rounds;
 mod resolve_thread;
+mod resume_state;
 mod review_level;
 mod run_checks;
 mod session_events;
@@ -67,6 +68,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("request-rereview", request_rereview::main),
     ("reset-rounds", reset_rounds::main),
     ("resolve-thread", resolve_thread::main),
+    ("resume-state", resume_state::main),
     ("review-level", review_level::main),
     ("run-checks", run_checks::main),
     ("session-events", session_events::main),
