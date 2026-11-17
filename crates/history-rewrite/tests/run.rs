@@ -456,6 +456,51 @@ fn the_source_repository_is_not_touched() {
     );
 }
 
+#[test]
+fn run_writes_the_body_of_the_cleanup_issue() {
+    let f = rewritten();
+    let map = Path::new(&f.out["MAP"]);
+    let workdir = map.parent().unwrap();
+    assert_eq!(
+        f.out["ISSUE"],
+        workdir.join("issue.md").display().to_string()
+    );
+    let body = std::fs::read_to_string(&f.out["ISSUE"]).unwrap();
+    // 1 行目が題
+    assert!(body.starts_with("# "), "{body}");
+    // コマンドに貼るパスは、sh で特別な文字（Windows の \ など）を含めば引用符で囲む
+    let source = history_rewrite::sh_quote(&f.repo.path);
+    for part in [
+        // 作業ディレクトリと控え
+        workdir.display().to_string(),
+        f.out["ORIGINAL"].clone(),
+        // 直した語（辞書、追加の規則の中身、除くパス）
+        "ja-terms".to_string(),
+        "pattern: 旧称".to_string(),
+        "**/terms.yml".to_string(),
+        // 掃除のコマンド
+        format!("git -C {source} reflog expire --expire=now --all"),
+        // 作業ディレクトリ（控え）は、掃除が通ったときだけ消す
+        format!(
+            "git -C {source} gc --prune=now && rm -rf {}",
+            history_rewrite::sh_quote(workdir)
+        ),
+    ] {
+        assert!(body.contains(&part), "{part}: {body}");
+    }
+    // 書き換えた日（YYYY-MM-DD）
+    let date = body
+        .split_once("書き換えた日: ")
+        .map(|(_, rest)| rest.chars().take(10).collect::<String>())
+        .unwrap_or_default();
+    let digits: Vec<bool> = date.chars().map(|c| c.is_ascii_digit()).collect();
+    assert_eq!(
+        digits,
+        [true, true, true, true, false, true, true, false, true, true],
+        "{body}"
+    );
+}
+
 fn words(f: &Fixture, extra: &[PathBuf]) -> Words {
     let mut extra_rules = vec![f.extra.clone()];
     extra_rules.extend_from_slice(extra);
@@ -547,6 +592,95 @@ fn a_non_empty_workdir_stops_without_rewriting() {
         "{}",
         text(&out.stderr)
     );
+}
+
+#[test]
+fn a_detached_worktree_on_an_unreachable_commit_stops_with_the_branch_to_add() {
+    // ブランチとタグから届かないコミットは書き換えに入らないので、sync-worktrees がその worktree を合わせられない
+    let root = scratch("detached");
+    let repo = Repo::new(&root, "repo");
+    repo.write("a.md", b"a\n");
+    let base = repo.commit("docs: a\n");
+    let reachable = root.join("reachable");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        &reachable.display().to_string(),
+        &base,
+    ]);
+    let loose = Repo {
+        root: root.clone(),
+        path: root.join("loose"),
+    };
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        &loose.path.display().to_string(),
+        &base,
+    ]);
+    loose.write("b.md", b"b\n");
+    let orphan = loose.commit("docs: b\n");
+
+    let workdir = root.join("work");
+    let out = run(&root, &repo.path, &workdir, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    assert!(stderr.starts_with("ERROR:"), "{stderr}");
+    // パスは git worktree list の書き方（Windows では / で区切る）で出る
+    let git_path = |r: &Repo| {
+        let top = r.git(&["rev-parse", "--show-toplevel"]);
+        history_rewrite::sh_quote(Path::new(top.trim_end_matches('\n')))
+    };
+    assert!(
+        stderr.contains(&format!(
+            "git -C {} branch <名前> {orphan}",
+            git_path(&loose)
+        )),
+        "{stderr}"
+    );
+    // 届くコミットの detached HEAD は挙げない
+    let reachable = Repo {
+        root: root.clone(),
+        path: reachable,
+    };
+    let top = reachable.git(&["rev-parse", "--show-toplevel"]);
+    assert!(!stderr.contains(top.trim_end_matches('\n')), "{stderr}");
+    assert!(!workdir.exists());
+
+    loose.git(&["branch", "loose", &orphan]);
+    let out = run(&root, &repo.path, &workdir, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+}
+
+#[test]
+fn a_detached_worktree_whose_directory_is_gone_does_not_stop_run() {
+    // ディレクトリを消した worktree（prunable）は合わせる作業ツリーが無く、git -C <パス> branch も実行できない
+    let root = scratch("prunable");
+    let repo = Repo::new(&root, "repo");
+    repo.write("a.md", b"a\n");
+    let base = repo.commit("docs: a\n");
+    let gone = Repo {
+        root: root.clone(),
+        path: root.join("gone"),
+    };
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        &gone.path.display().to_string(),
+        &base,
+    ]);
+    gone.write("b.md", b"b\n");
+    gone.commit("docs: b\n");
+    std::fs::remove_dir_all(&gone.path).unwrap();
+
+    let out = run(&root, &repo.path, &root.join("work"), &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
 }
 
 #[test]

@@ -2,6 +2,7 @@
 //! 使い方と出力の形は main.rs の冒頭
 
 pub mod glob;
+pub mod issue;
 pub mod run;
 pub mod sync;
 pub mod transform;
@@ -36,6 +37,20 @@ pub fn real_path(path: &Path) -> std::io::Result<PathBuf> {
         }
     }
     Ok(real)
+}
+
+/// 出力に書くコマンドへ貼れる形のパス。sh で特別な意味を持つ文字（空白、引用符、Windows の `\` など）を含むときだけ、
+/// 単一引用符で囲む
+pub fn sh_quote(path: &Path) -> String {
+    let s = path.display().to_string();
+    let plain = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || "/._-+=:,@%".contains(c));
+    if plain {
+        s
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
 }
 
 /// `git -C repo <args>` の標準出力。失敗すれば、引数と終了コードと標準エラーを添えて止める

@@ -17,6 +17,104 @@ pub struct Words {
     pub excludes: Vec<String>,
 }
 
+/// 記録の行の種類と、Words の列
+const RECORD_KEYS: [&str; 3] = ["dictionary", "extra-rules", "exclude"];
+
+impl Words {
+    pub fn is_empty(&self) -> bool {
+        self.dictionaries.is_empty() && self.extra_rules.is_empty() && self.excludes.is_empty()
+    }
+
+    /// 辞書と追加の規則を実体のパスにした指定（cwd の違う run と sync-worktrees で、同じファイルを同じと比べるため）
+    pub fn resolved(&self) -> Result<Words, Stop> {
+        let real = |paths: &[PathBuf]| -> Result<Vec<PathBuf>, Stop> {
+            paths
+                .iter()
+                .map(|p| crate::real_path(p).map_err(|e| Stop(format!("{}: {e}", p.display()))))
+                .collect()
+        };
+        Ok(Words {
+            dictionaries: real(&self.dictionaries)?,
+            extra_rules: real(&self.extra_rules)?,
+            excludes: self.excludes.clone(),
+        })
+    }
+
+    /// 同じ変換になる指定か。辞書と追加の規則は当てる順が意味を持つので順に比べ、除くパスは集まりとして比べる
+    pub fn same(&self, other: &Words) -> bool {
+        let sorted = |w: &Words| {
+            let mut e = w.excludes.clone();
+            e.sort();
+            e
+        };
+        self.dictionaries == other.dictionaries
+            && self.extra_rules == other.extra_rules
+            && sorted(self) == sorted(other)
+    }
+
+    fn columns(&self) -> [Vec<String>; 3] {
+        let shown = |paths: &[PathBuf]| paths.iter().map(|p| p.display().to_string()).collect();
+        [
+            shown(&self.dictionaries),
+            shown(&self.extra_rules),
+            self.excludes.clone(),
+        ]
+    }
+
+    /// コマンドの引数の形（`--extra-rules FILE --exclude GLOB`）。空なら「なし」
+    pub fn args(&self) -> String {
+        let mut out = Vec::new();
+        for (key, values) in RECORD_KEYS.iter().zip(self.columns()) {
+            for v in values {
+                out.push(format!(
+                    "--{key} {}",
+                    crate::sh_quote(std::path::Path::new(&v))
+                ));
+            }
+        }
+        if out.is_empty() {
+            "なし".to_string()
+        } else {
+            out.join(" ")
+        }
+    }
+
+    /// 記録の中身（1 行に「種類 TAB 値」）。値に改行かタブがあれば、行に収まらないので止める
+    pub fn record(&self) -> Result<String, Stop> {
+        let mut out = String::new();
+        for (key, values) in RECORD_KEYS.iter().zip(self.columns()) {
+            for v in values {
+                if v.contains(['\n', '\r', '\t']) {
+                    return Err(Stop(format!(
+                        "語の指定に改行かタブを含む値がある（作業ディレクトリに記録できない）: {v:?}"
+                    )));
+                }
+                out.push_str(&format!("{key}\t{v}\n"));
+            }
+        }
+        Ok(out)
+    }
+
+    /// record の中身を読む
+    pub fn parse_record(text: &str, name: &str) -> Result<Words, Stop> {
+        let mut words = Words::default();
+        for (k, line) in text.lines().enumerate() {
+            match line.split_once('\t') {
+                Some(("dictionary", v)) => words.dictionaries.push(PathBuf::from(v)),
+                Some(("extra-rules", v)) => words.extra_rules.push(PathBuf::from(v)),
+                Some(("exclude", v)) => words.excludes.push(v.to_string()),
+                _ => {
+                    return Err(Stop(format!(
+                        "{name}:{}: 語の指定の記録の行でない: {line:?}",
+                        k + 1
+                    )));
+                }
+            }
+        }
+        Ok(words)
+    }
+}
+
 pub struct Transformer {
     dictionary: Dictionary,
     excludes: Vec<Glob>,

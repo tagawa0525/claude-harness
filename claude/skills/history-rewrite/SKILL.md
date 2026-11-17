@@ -27,9 +27,6 @@ squeue   # そのリポジトリの計算が走っていないか
 worktree ごとのブランチの `Claude-Session:` を見て、作業中のセッションが無いことをユーザーに確かめる。走っている
 セッションや計算があれば、終わるまで待つ（途中で増えたコミットは書き換えに入らない）。
 
-書き換えに入るのは、ブランチとタグから届くコミットだけ。detached HEAD の worktree が、どのブランチとタグからも
-届かないコミットにあれば、そのコミットにブランチを付けてから進める（付けないと 5 で合わせられない）。
-
 ## 2. 語の指定を決める
 
 - 辞書: 省くと ja-terms の辞書。辞書に無い 1 回限りの置き換えは、prh の形のファイルにして `--extra-rules` で足す
@@ -38,19 +35,13 @@ worktree ごとのブランチの `Claude-Session:` を見て、作業中のセ�
   `.textlintignore` に挙げたファイルと、辞書そのもの（claude-harness なら `**/prh.yml`）を渡す。語を論じる文書でも、
   その語が直す対象の造語なら除かない
 
-決めた指定は 1 度だけ書き、`run` と 5 の `sync-worktrees` の両方に同じものを渡す:
-
-```bash
-WORDS=(--extra-rules <ファイル> --exclude '<パス>' ...)
-```
-
 ## 3. 書き換えて照合する
 
 作業ディレクトリは、対象のリポジトリの外の、空のディレクトリにする。中のミラー（`original.git`）は書き換える前の
 控えなので、7 の issue でユーザーが決めるまで残す。
 
 ```bash
-history-rewrite run --source <リポジトリ> --workdir <作業ディレクトリ> "${WORDS[@]}"
+history-rewrite run --source <リポジトリ> --workdir <作業ディレクトリ> <2 で決めた語の指定>
 ```
 
 `ERROR:` で止まったら、理由を直してから空の作業ディレクトリでやり直す（照合が合わないときはツールの不具合なので、
@@ -109,22 +100,15 @@ diff <(git -C "$R" for-each-ref --format='%(refname) %(objectname)' refs/heads r
 
 ## 5. worktree を合わせる
 
-ref を移した後、各 worktree の index と作業ツリーは元の番号のまま残る。2 と同じ語の指定で合わせる:
+ref を移した後、各 worktree の index と作業ツリーは元の番号のまま残る。run が作業ディレクトリに記録した語の
+指定で合わせる:
 
 ```bash
-history-rewrite sync-worktrees --workdir "$D" "${WORDS[@]}"
+history-rewrite sync-worktrees --workdir "$D"
 ```
 
-出力の行ごとに対応する（`RESET:` と `SKIPPED:` は対応不要。追跡していないファイルは残る）:
-
-- `KEPT:` の worktree: `git -C <パス> diff HEAD` が、控えのパッチと同じ変更に語と番号の変換を当てたものだけに
-  なっていることを確かめる。書き換えで変わらなかったファイルへの変更は、番号だけが付け直り、語は直らない
-- `LEFT:` の worktree: ツールは何も変えていない。理由を見て、合わせ方をユーザーと決める（対応表に無いコミットなら、
-  1 でブランチを付けて 1 からやり直す）
-- `ERROR: <パス>:` の行（標準エラー）: 書き始めた後に止まった worktree。未コミットの変更は作業ツリーに残るが、HEAD、
-  index、作業ツリーの一部だけが新しい履歴になっている。`worktree-state` のその行の HEAD と控えのパッチ、
-  `git -C <パス> status` を見て、合わせ方をユーザーと決める。ツールは同じ worktree に当て直さない（ref を移す前の
-  HEAD と比べるので、合わせた分も変更に見える）
+worktree ごとの行の後の `NEXT:` に従う（`NEXT:` の無い `RESET:` と `SKIPPED:` は対応不要。追跡していないファイルは
+残る）。
 
 ## 6. 書き換えの外に残るもの
 
@@ -132,13 +116,9 @@ history-rewrite sync-worktrees --workdir "$D" "${WORDS[@]}"
   （GitHub のバックアップのリモートも同じ）
 - 対象のリポジトリが DVC を使うときは `~/.claude/skills/history-rewrite/references/dvc.md` を読む
 - ほかのリポジトリやメモリの中の、このリポジトリの番号は、そのリポジトリで `commit-refs remap "$D/commit-map"` で
-  付け直す。remap は追跡しているファイルだけを読むので、先に `git -C <ディレクトリ> ls-files` で追跡を確かめ、
-  されていなければ `git add` してから実行する（Claude Code のメモリは `~/.claude` の git の下にあり、追跡されて
-  いなければ `FILES: 0` になる）
+  付け直す
 
 ## 7. 古いオブジェクトの掃除を issue にする
 
-`git reflog expire --expire=now --all && git gc --prune=now` と作業ディレクトリ（ミラーの控え）の削除は取り消せない
-ので、ここでは行わず、対象のリポジトリの issue にしてユーザーが決める。issue には、書き換えた日、直した語（辞書と
-追加の規則）、作業ディレクトリのパス、控えの場所、完了の条件（ユーザーが書き換えた後の履歴で困らないと判断したら、
-上のコマンドを行う）を書く。
+古いオブジェクトの掃除と作業ディレクトリ（ミラーの控え）の削除は取り消せないので、ここでは行わず、3 の run の
+出力の `ISSUE:` のファイル（1 行目の見出し（`#` の後）が題、残りが本文）で対象のリポジトリの issue を開き、ユーザーが決める。

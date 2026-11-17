@@ -3,18 +3,23 @@
 //! Usage:
 //!   history-rewrite run --source REPO --workdir DIR [語の指定]
 //!       REPO のすべてのブランチとタグを DIR にコピーして書き換える。REPO には書き込まない。
+//!       始めに、REPO の detached HEAD の worktree がどのブランチとタグからも届かないコミットにあれば、付ける
+//!       ブランチのコマンド（git -C <worktree> branch <名前> <コミット>）を添えて止める
 //!       1. DIR/original.git に REPO のミラーを取る（書き換える前の控え）
 //!       2. DIR/rewritten に、ミラーのブランチとタグを持つ作業ツリーつきのリポジトリを作る
 //!       3. ステージ 1: git fast-export と fast-import で、テキストのブロブの全文とコミットとタグの本文の語を 1 回で直す
 //!          （番号には触らない）
 //!       4. 照合: 元のすべてのコミットと書き換えた後を 1 対 1 で突き合わせる（作者と日時、親、本文、すべてのファイル）
 //!       5. ステージ 2: commit-refs rewrite-history（ADR-0013）で、文書と本文の番号を最後の番号に付け直す
-//!       6. 元の番号から最後の番号への対応表を DIR/commit-map に書く
+//!       6. 元の番号から最後の番号への対応表を DIR/commit-map に、語の指定（辞書と追加の規則は実体のパス）を
+//!          DIR/words に書く
 //!   history-rewrite transform [語の指定] FILE...
 //!       作業ツリーのファイルの語を、run のステージ 1 と同じ変換で直す（コミットはしない）
 //!   history-rewrite sync-worktrees --workdir DIR [語の指定]
 //!       run の結果の ref を元のリポジトリに移した後、DIR/worktree-state の行（worktree のパス、ref を移す前の
 //!       HEAD、控えのパッチのパスをタブで区切る）ごとに、worktree の HEAD、index、作業ツリーを新しい履歴に合わせる。
+//!       語の指定は DIR/words（run の記録）を使う。省けば記録を使い、記録と違う指定を渡せば worktree に触れずに止める
+//!       （記録の無い DIR では、渡した指定を使う）
 //!       - detached HEAD は DIR/commit-map の対応で移す
 //!       - 変更の無い worktree は、新しい HEAD に reset --hard する（追跡していないファイルは残る）
 //!       - 変更のある worktree は、commit-refs remap で番号を付け直し、書き換えたファイルのうち手を付けていないものを
@@ -39,6 +44,8 @@
 //!   NOT_UTF8: <UTF-8 として読めないので直さなかったテキストのブロブの数>
 //!   （ここに commit-refs rewrite-history の出力が続く）
 //!   MAP: <元の番号から最後の番号への対応表のパス>
+//!   WORDS: <語の指定の記録のパス>
+//!   ISSUE: <古いオブジェクトと控えの掃除の issue の本文のパス（1 行目の見出し（`#` の後）が題、残りが本文）>
 //! transform の出力:
 //!   SKIPPED: <パス> (<理由>)  読まなかったファイルごと（symlink、excluded、binary、not UTF-8）
 //!   REPLACED: <パス>    直したファイルごと
@@ -51,6 +58,7 @@
 //!   SKIPPED: <パス> (bare)     作業ツリーが無い
 //!   ERROR: <パス>: <理由>      書き始めた後に止まった（標準エラー）。未コミットの変更は作業ツリーに残るが、HEAD、
 //!                              index、作業ツリーの一部だけが新しい履歴になっている
+//!   KEPT:（remap の出力の後）、LEFT:、ERROR:（標準エラー）の後には、その worktree の次の行動を NEXT: の行で出す
 //!
 //! 終了コード: 0 = 成功、1 = 止めたか失敗（sync-worktrees は LEFT か ERROR が 1 つでもあれば）、2 = 使い方の誤り
 

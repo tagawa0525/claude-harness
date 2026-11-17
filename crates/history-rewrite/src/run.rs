@@ -39,6 +39,9 @@ const BLOB_MARKS: u64 = 1 << 40;
 /// fast-export の --fake-missing-tagger が付ける仮の tagger（git 2.56.0 の fast-export.c で確かめた）
 const FAKE_TAGGER: &[u8] = b"Unspecified Tagger <unspecified-tagger> 0 +0000";
 
+/// run が語の指定を記録し、sync-worktrees が読む、作業ディレクトリの中のファイルの名前
+pub const WORDS_RECORD: &str = "words";
+
 /// 元の番号から新しい番号への対応表
 pub type CommitMap = HashMap<String, String>;
 
@@ -989,6 +992,61 @@ fn refuse_nested_tags(repo: &Path) -> Result<(), Stop> {
     )))
 }
 
+/// detached HEAD の worktree が、どのブランチとタグからも届かないコミットにあれば止める（そのコミットは書き換えに
+/// 入らないので、sync-worktrees が対応表で HEAD を移せない）
+fn refuse_unreachable_detached(source: &Path) -> Result<(), Stop> {
+    let out = git(source, &["worktree", "list", "--porcelain", "-z"])?;
+    let mut found = Vec::new();
+    // 1 つの worktree は NUL で区切った属性の並びで、空の属性で終わる
+    for record in out
+        .split(|b| *b == 0)
+        .collect::<Vec<_>>()
+        .split(|f| f.is_empty())
+    {
+        let attr = |key: &str| {
+            record.iter().find_map(|f| {
+                f.strip_prefix(key.as_bytes())
+                    .map(|v| String::from_utf8_lossy(v).into_owned())
+            })
+        };
+        if !record.iter().any(|f| *f == b"detached") {
+            continue;
+        }
+        let (Some(path), Some(head)) = (attr("worktree "), attr("HEAD ")) else {
+            continue;
+        };
+        // ディレクトリの無い worktree（prunable）は、合わせる作業ツリーが無く、git -C <パス> も実行できない
+        if !Path::new(&path).is_dir() {
+            continue;
+        }
+        let containing = git(
+            source,
+            &[
+                "for-each-ref",
+                "--count=1",
+                "--format=%(refname)",
+                "--contains",
+                &head,
+                "refs/heads/",
+                "refs/tags/",
+            ],
+        )?;
+        if containing.is_empty() {
+            found.push(format!(
+                "git -C {} branch <名前> {head}",
+                crate::sh_quote(Path::new(&path))
+            ));
+        }
+    }
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(Stop(format!(
+        "detached HEAD の worktree が、どのブランチとタグからも届かないコミットにある（書き換えに入らず、sync-worktrees で合わせられない）。ブランチを付けてから、空の作業ディレクトリでやり直す: {}",
+        found.join("、")
+    )))
+}
+
 /// path の実体のパス。無い末尾の成分は、いちばん近い、ある祖先の実体のパスにつなぐ（無くても止めない）
 fn resolve(path: &Path) -> Result<PathBuf, Stop> {
     let absolute =
@@ -1039,6 +1097,9 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
             workdir.display()
         )));
     }
+    refuse_unreachable_detached(&source)?;
+    let resolved = words.resolved()?;
+    let words_record = resolved.record()?;
     std::fs::create_dir_all(&workdir).map_err(|e| Stop(format!("{}: {e}", workdir.display())))?;
     let original = workdir.join("original.git");
     let rewritten = workdir.join("rewritten");
@@ -1137,6 +1198,15 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
     let map_path = workdir.join("commit-map");
     write_map(&map_path, &last)?;
     println!("MAP: {}", map_path.display());
+    let words_path = workdir.join(WORDS_RECORD);
+    std::fs::write(&words_path, words_record)
+        .map_err(|e| Stop(format!("{}: 書けない: {e}", words_path.display())))?;
+    println!("WORDS: {}", words_path.display());
+    let issue_path = workdir.join("issue.md");
+    let issue = crate::issue::body(&source, &workdir, &resolved)?;
+    std::fs::write(&issue_path, issue)
+        .map_err(|e| Stop(format!("{}: 書けない: {e}", issue_path.display())))?;
+    println!("ISSUE: {}", issue_path.display());
     Ok(())
 }
 

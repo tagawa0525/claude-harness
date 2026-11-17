@@ -6,6 +6,7 @@
 //! .textlintignore で ja-terms の検査から外す。
 
 use history_rewrite::run::read_map;
+use history_rewrite::sh_quote;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -436,6 +437,72 @@ fn a_worktree_with_partly_staged_changes_is_left_as_it_was() {
     assert_eq!(f.status, Some(1), "{}", f.stderr);
 }
 
+/// out の中の、prefix で始まる行の後の、最初の worktree の行か NEXT: の行（KEPT: の後の commit-refs remap の行は飛ばす）
+fn line_after<'a>(out: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut lines = out.lines().skip_while(|l| !l.starts_with(prefix));
+    lines.next()?;
+    lines.find(|l| {
+        ["RESET:", "KEPT:", "LEFT:", "SKIPPED:", "ERROR:", "NEXT:"]
+            .iter()
+            .any(|k| l.starts_with(k))
+    })
+}
+
+#[test]
+fn a_kept_worktree_is_followed_by_how_to_compare_it_with_the_patch() {
+    let f = fixture();
+    let next = line_after(&f.stdout, &format!("KEPT: {} ", f.path("changed"))).unwrap_or_default();
+    assert!(next.starts_with("NEXT: "), "{}", f.stdout);
+    // コマンドに貼るパスは、sh で特別な文字（Windows の \ など）を含めば引用符で囲む
+    let w = sh_quote(&f.w["changed"].path);
+    assert!(next.contains(&format!("git -C {w} diff HEAD")), "{next}");
+    let patch = sh_quote(&f.workdir.join("worktree-3.patch"));
+    assert!(next.contains(&patch), "{next}");
+}
+
+#[test]
+fn a_left_worktree_is_followed_by_deciding_with_the_user() {
+    let f = fixture();
+    let next = line_after(&f.stdout, &format!("LEFT: {} ", f.path("partial"))).unwrap_or_default();
+    assert!(next.starts_with("NEXT: "), "{}", f.stdout);
+    assert!(next.contains("ユーザーと決める"), "{next}");
+}
+
+#[test]
+fn a_worktree_left_for_a_commit_outside_the_map_says_how_to_branch_it() {
+    let f = fixture();
+    let workdir = f.root.join("unmapped-branch");
+    std::fs::create_dir_all(&workdir).unwrap();
+    std::fs::copy(f.workdir.join("commit-map"), workdir.join("commit-map")).unwrap();
+    let orphan = "1".repeat(40);
+    std::fs::write(
+        workdir.join("worktree-state"),
+        format!(
+            "{}\t{orphan}\t{}\n",
+            f.path("detached"),
+            workdir.join("worktree-1.patch").display()
+        ),
+    )
+    .unwrap();
+    let out = history_rewrite(
+        &f.root,
+        &[
+            "sync-worktrees",
+            "--workdir",
+            &workdir.display().to_string(),
+        ],
+        &[],
+    );
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "git -C {} branch <名前> {orphan}",
+            sh_quote(&f.w["detached"].path)
+        )),
+        "{stdout}"
+    );
+}
+
 #[test]
 fn a_worktree_whose_commit_is_not_in_the_map_is_left() {
     let f = fixture();
@@ -598,7 +665,7 @@ fn a_deleted_intent_to_add_file_is_not_a_partial_stage() {
 
 #[cfg(unix)]
 #[test]
-fn a_git_failure_while_writing_names_the_worktree_and_keeps_the_changes() {
+fn a_git_failure_while_writing_names_the_worktree_and_what_to_look_at() {
     use std::os::unix::fs::PermissionsExt;
     let f = fixture();
     let hooks = f.root.join("hooks");
@@ -621,6 +688,18 @@ fn a_git_failure_while_writing_names_the_worktree_and_keeps_the_changes() {
     );
     assert!(!text(&out.stdout).contains("KEPT:"));
     assert!(f.w["broken"].read("a.md").contains("確かめの追記"));
+    // 止まった worktree の行の後に、見るもの（ref を移す前の HEAD、控えのパッチ、status）を示す
+    let stderr = text(&out.stderr);
+    let next = line_after(&stderr, "ERROR: ").unwrap_or_default();
+    assert!(next.starts_with("NEXT: "), "{stderr}");
+    let patch = f.root.join("work-broken").join("worktree-1.patch");
+    for part in [
+        f.second.clone(),
+        sh_quote(&patch),
+        format!("git -C {} status", sh_quote(&f.w["broken"].path)),
+    ] {
+        assert!(next.contains(&part), "{part}: {next}");
+    }
 }
 
 #[test]
@@ -645,4 +724,117 @@ fn a_malformed_worktree_state_stops() {
         "{}",
         text(&out.stderr)
     );
+}
+
+/// 追加の規則（旧称 → 新称）で run し、ref を移した 1 つのリポジトリ。メインの worktree に、旧称を含む未コミットの
+/// 変更を残す
+struct Moved {
+    root: PathBuf,
+    repo: Repo,
+    workdir: PathBuf,
+    extra: PathBuf,
+}
+
+fn moved_with_extra_rules(name: &str) -> Moved {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("sync-words-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::write(
+        root.join("home").join(".gitconfig"),
+        "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n[commit]\n\tgpgsign = false\n",
+    )
+    .unwrap();
+    let repo = Repo {
+        root: root.clone(),
+        path: root.join("source"),
+    };
+    std::fs::create_dir_all(&repo.path).unwrap();
+    repo.git(&["init", "-q"]);
+    repo.write("a.md", "旧称の記録\n");
+    let old = repo.commit("docs: a\n");
+    let extra = root.join("extra.yml");
+    std::fs::write(
+        &extra,
+        "version: 1\nrules:\n  - expected: 新称\n    pattern: 旧称\n",
+    )
+    .unwrap();
+    let workdir = root.join("work");
+    let (source, work, extra_s) = (
+        repo.path.display().to_string(),
+        workdir.display().to_string(),
+        extra.display().to_string(),
+    );
+    let run = history_rewrite(
+        &root,
+        &[
+            "run",
+            "--source",
+            &source,
+            "--workdir",
+            &work,
+            "--extra-rules",
+            &extra_s,
+        ],
+        &[],
+    );
+    assert!(run.status.success(), "{}", text(&run.stderr));
+    repo.write("a.md", "旧称の記録\n旧称の追記\n");
+    let patch = workdir.join("worktree-1.patch");
+    std::fs::write(&patch, repo.git(&["diff", "HEAD"])).unwrap();
+    std::fs::write(
+        workdir.join("worktree-state"),
+        format!("{source}\t{old}\t{}\n", patch.display()),
+    )
+    .unwrap();
+    let rewritten = workdir.join("rewritten").display().to_string();
+    repo.git(&["fetch", "-q", &rewritten, "+refs/heads/*:refs/rewritten/*"]);
+    let new = repo.git(&["rev-parse", "refs/rewritten/main"]);
+    repo.git(&["update-ref", "refs/heads/main", new.trim(), &old]);
+    Moved {
+        root,
+        repo,
+        workdir,
+        extra,
+    }
+}
+
+impl Moved {
+    fn sync(&self, words: &[&str]) -> Output {
+        let work = self.workdir.display().to_string();
+        history_rewrite(
+            &self.root,
+            &[&["sync-worktrees", "--workdir", &work][..], words].concat(),
+            &[],
+        )
+    }
+}
+
+#[test]
+fn sync_without_words_uses_the_words_that_run_recorded() {
+    let m = moved_with_extra_rules("recorded");
+    let out = m.sync(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(m.repo.read("a.md"), "新称の記録\n新称の追記\n");
+}
+
+#[test]
+fn sync_with_the_same_words_as_run_is_accepted() {
+    let m = moved_with_extra_rules("same");
+    let extra = m.extra.display().to_string();
+    let out = m.sync(&["--extra-rules", &extra]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(m.repo.read("a.md"), "新称の記録\n新称の追記\n");
+}
+
+#[test]
+fn sync_with_words_other_than_run_stops_before_changing_a_worktree() {
+    let m = moved_with_extra_rules("other");
+    let out = m.sync(&["--exclude", "a.md"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    assert!(stderr.starts_with("ERROR:"), "{stderr}");
+    assert!(stderr.contains(&m.extra.display().to_string()), "{stderr}");
+    assert_eq!(text(&out.stdout), "");
+    assert_eq!(m.repo.read("a.md"), "旧称の記録\n旧称の追記\n");
 }
