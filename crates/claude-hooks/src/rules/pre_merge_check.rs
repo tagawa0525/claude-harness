@@ -501,7 +501,7 @@ fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) 
     };
     format!(
         "{why}この PR はレビュー（失敗していない自動レビューか、ローカルレビューの記録）を 1 度も受けていません。1 周目のレビューは省けません。\
-         ローカルの /code-review を回して、PR の worktree で ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh {url} <SHA> <high> <medium> <low> を実行して記録するか、\
+         /gh-pr-review の Step 6 の「ローカルレビュー」の回し方でローカルの /code-review を回して、PR の worktree で ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh {url} <SHA> <high> <medium> <low> を実行して記録するか、\
          ~/.claude/skills/gh-pr-review/scripts/request-rereview.sh {url} で再レビューを依頼してください（次の一手は ~/.claude/skills/gh-pr-review/scripts/decide-next.sh {url} で決めます）。\
          指摘に対応してからマージしてください"
     )
