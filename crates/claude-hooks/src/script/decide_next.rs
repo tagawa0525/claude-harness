@@ -13,7 +13,10 @@
 //!   あるか。判定は `claude-hooks local-review-covers`（pre-merge-check と同じ判定）で、rebase だけかは cwd の clone で比べる
 //! - RESPONSE が review のとき: `REVIEW_ID`、`HEADLINE`、`INLINE_COMMENTS`、`SUPPRESSED_COMMENTS`、`SEVERITY`、v2 なら
 //!   `REMAINING_HIGH` と `PREVIOUSLY_MISSED`（get-latest-review の値）
-//! - `VERDICT: <判定>`（意味と次の一手は /gh-pr-review の Step 6 の表）
+//! - `VERDICT: <判定>`（意味は /gh-pr-review の Step 6 の表）
+//! - `NEXT: <次の一手>`: VERDICT の次の行。判定ごとに決まった一手（[`next_step`]）
+//! - `NOTE: <確かめること>`: STOP_LOCAL_REVIEWED で Copilot の指摘（インライン、Previously missed、Suppressed）が既に
+//!   あるとき、台帳に処置があるかを確かめる
 //! - Suppressed comments か Previously missed があれば、`--- suppressed ---` / `--- previously missed ---` の後に本文
 //!
 //! 「対応する」「push する」「要求する」を 1 つの判定に潰すと、どの段階にいるかがモデルの記憶頼りになり、要求を忘れる。
@@ -177,6 +180,22 @@ fn decide(pr: &pr_url::Pr) -> Result<String, i32> {
     line(format!("UNRESOLVED: {unresolved}"));
     line(format!("LOCAL_REVIEWED: {}", yes_no(local_reviewed)));
 
+    let inline: u64 = field("INLINE_COMMENTS").parse().unwrap_or(0);
+    let suppressed: u64 = field("SUPPRESSED_COMMENTS").parse().unwrap_or(0);
+    let missed: u64 = field("PREVIOUSLY_MISSED").parse().unwrap_or(0);
+    let canonical = format!("https://github.com/{}/pull/{number}", pr.repo);
+    // 判定の次の行に次の一手を、Copilot の指摘が既にあるのに Copilot を待たずに終えるときは台帳の確認を出す。指摘は
+    // 今の周の応答でなくても（要求の後のレビューが未着でも）、前の周のものが台帳に載っているはず
+    let next = |line: &mut dyn FnMut(String), verdict: &str| {
+        line(format!("NEXT: {}", next_step(verdict, &canonical)));
+        if verdict == "STOP_LOCAL_REVIEWED" && review_count > 0 && inline + missed + suppressed > 0
+        {
+            line(format!(
+                "NOTE: Copilot の指摘が既にある（INLINE_COMMENTS {inline} / PREVIOUSLY_MISSED {missed} / SUPPRESSED_COMMENTS {suppressed}）。Step 7 の前に、PREVIOUSLY_MISSED を含め、台帳（/gh-pr-review の Step 8）にどれも処置があるかを確かめる"
+            ));
+        }
+    };
+
     if !response {
         // head のローカルレビューの記録があれば、Copilot のレビューを待たない
         let verdict = match (local_reviewed, unresolved > 0) {
@@ -185,15 +204,13 @@ fn decide(pr: &pr_url::Pr) -> Result<String, i32> {
             (false, _) => "WAITING",
         };
         line(format!("VERDICT: {verdict}"));
+        next(&mut line, verdict);
         return Ok(out);
     }
 
     let failed = field("REVIEW_FAILED") == "yes";
     let successful: u64 = field("SUCCESSFUL_REVIEWS").parse().unwrap_or(0);
-    let inline: u64 = field("INLINE_COMMENTS").parse().unwrap_or(0);
-    let suppressed: u64 = field("SUPPRESSED_COMMENTS").parse().unwrap_or(0);
     let severity = field("SEVERITY");
-    let missed: u64 = field("PREVIOUSLY_MISSED").parse().unwrap_or(0);
     line(format!("REVIEW_ID: {review_id}"));
     line(format!("HEADLINE: {}", field("HEADLINE")));
     line(format!("INLINE_COMMENTS: {}", field("INLINE_COMMENTS")));
@@ -241,6 +258,7 @@ fn decide(pr: &pr_url::Pr) -> Result<String, i32> {
         "STOP_CLEAN"
     };
     line(format!("VERDICT: {verdict}"));
+    next(&mut line, verdict);
     if suppressed > 0 || missed > 0 {
         let mut on = false;
         for l in latest.lines() {
@@ -251,6 +269,36 @@ fn decide(pr: &pr_url::Pr) -> Result<String, i32> {
         }
     }
     Ok(out)
+}
+
+/// 判定ごとの次の一手（`NEXT:` の行。手順の番号は /gh-pr-review のもの）。スクリプトのパスは呼んだ sh と同じツリーから引く
+fn next_step(verdict: &str, url: &str) -> String {
+    let root = super::claude_root();
+    let path = |p: &str| root.join(p).display().to_string().replace('\\', "/");
+    let scripts = path("skills/gh-pr-review/scripts");
+    let record = format!(
+        "Step 6 の「ローカルレビュー」の回し方で /code-review を回し、PR の worktree で {scripts}/record-local-review.sh {url} <SHA> <high> <medium> <low> で記録して、{scripts}/decide-next.sh {url} を再実行する"
+    );
+    match verdict {
+        "ACT" => "Step 3〜5 で未解決のスレッドに対応する".to_string(),
+        "LOCAL_REVIEW_NEEDED" => format!(
+            "回すかを Step 6 の「ローカルレビュー」のとおり決める。回すなら{record}。回さないなら Step 7 へ"
+        ),
+        "STOP_LOCAL_REVIEWED" => "Copilot を要求も待ちもせず Step 7 へ".to_string(),
+        "STOP_DOCS_REVIEWED" => "再レビューを要求せず Step 7 へ。この後に直す文は GitHub のレビューを受けないので、fix のコミットを push する前に、Step 6 の「ローカルレビュー」の回し方で /code-review medium を回す".to_string(),
+        "STOP_DECLINED" => "再レビューを要求せず Step 7 へ".to_string(),
+        "STOP_PREVIOUSLY_MISSED" => "下の --- previously missed --- の本文を読んで Step 3 で処置を決める。fix するなら Step 4 で直して push し、次の判定はローカルレビューから。しないなら台帳に理由を書いて Step 7 へ".to_string(),
+        "STOP_SUPPRESSED_ONLY" => "下の --- suppressed --- の本文を読み、Step 6 の「Suppressed comments」のとおり要否を決める。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ".to_string(),
+        "REVIEW_FAILED" => format!(
+            "{record}（Copilot の失敗の診断は任意: /gh-actions-check {url}）"
+        ),
+        "WAITING" => format!(
+            "{record}（Copilot を待つのは任意: {} {url} を run_in_background=true で）",
+            path("scripts/gh-wait-review.sh")
+        ),
+        // STOP_CLEAN
+        _ => "Step 7 へ".to_string(),
+    }
 }
 
 fn yes_no(b: bool) -> &'static str {
