@@ -565,19 +565,28 @@ fn share(dir: &Path, main_root: &Path, text: &str, carry: bool) -> i32 {
         eprintln!("2. .worktreelink の各パスを、メイン worktree への絶対パスの symlink にする:");
         let quote = super::wait_step::quote;
         let (wt, main) = (dir.to_string_lossy(), main_root.to_string_lossy());
+        // 張るのは link_all と同じく、メイン worktree にあるパスだけ（無いパスに張ると壊れた symlink になる）
         for path in &paths {
+            let target = format!("{main}/{path}");
+            if !Path::new(&target).exists() {
+                eprintln!(
+                    "  （メイン worktree に {path} が無いので張らない。用意してから下の形で張る）"
+                );
+                continue;
+            }
             let parent = path
                 .rsplit_once('/')
                 .map_or(wt.to_string(), |(p, _)| format!("{wt}/{p}"));
             eprintln!(
                 "  mkdir -p {} && ln -s {} {}",
                 quote(&parent),
-                quote(&format!("{main}/{path}")),
+                quote(&target),
                 quote(&format!("{wt}/{path}"))
             );
         }
+        let (wt_q, main_q) = (quote(&wt), quote(&main));
         eprintln!(
-            "  mkdir -p \"$(dirname {wt}/<直したパス>)\" && ln -s {main}/<直したパス> {wt}/<直したパス>"
+            "  mkdir -p \"$(dirname {wt_q}/<直したパス>)\" && ln -s {main_q}/<直したパス> {wt_q}/<直したパス>"
         );
         return 1;
     }
