@@ -273,15 +273,36 @@ fn xargs(prefix: &[&str], files: &[PathBuf]) -> bool {
     ok
 }
 
-/// crate のディレクトリ dir の Cargo.toml と、その下の追跡している Cargo.toml（workspace のメンバー）のうち、
-/// [features] の表を持つもの（リポジトリの直下からのパス）。cargo は dir で全体を検査するので、メンバーの feature も
-/// 既定のチェックから漏れる
+/// crate のディレクトリ dir の Cargo.toml と、dir が virtual workspace（[package] の無い [workspace]）ならその下の
+/// 追跡している Cargo.toml（メンバー）のうち、[features] の表を持つもの（リポジトリの直下からのパス）。virtual
+/// workspace では cargo が dir でメンバー全体を検査するので、メンバーの feature も既定のチェックから漏れる。根が
+/// [package] を持つ workspace では、cargo は根の package だけを検査するので、メンバーは数えない
 fn manifests_with_features(dir: &str) -> Vec<String> {
     let prefix = if dir == "." {
         String::new()
     } else {
         format!("{dir}/")
     };
+    let root = format!("{prefix}Cargo.toml");
+    let tables = |path: &str| -> Vec<String> {
+        std::fs::read_to_string(path)
+            .map(|text| {
+                text.lines()
+                    .map(|l| l.split('#').next().unwrap_or("").trim().to_string())
+                    .filter(|l| l.starts_with('['))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let root_tables = tables(&root);
+    let has = |t: &[String], name: &str| t.iter().any(|l| l == name);
+    if !(has(&root_tables, "[workspace]") && !has(&root_tables, "[package]")) {
+        return if has(&root_tables, "[features]") {
+            vec![root]
+        } else {
+            Vec::new()
+        };
+    }
     let mut manifests: BTreeSet<String> = git_text(&[
         "-c",
         "core.quotePath=false",
@@ -291,16 +312,10 @@ fn manifests_with_features(dir: &str) -> Vec<String> {
     ])
     .map(|out| out.lines().map(str::to_string).collect())
     .unwrap_or_default();
-    // 追跡する前の crate（ステージ済みの .rs から見つけた dir）も見る
-    manifests.insert(format!("{prefix}Cargo.toml"));
+    manifests.insert(root);
     manifests
         .into_iter()
-        .filter(|m| {
-            std::fs::read_to_string(m).is_ok_and(|text| {
-                text.lines()
-                    .any(|l| l.split('#').next().unwrap_or("").trim() == "[features]")
-            })
-        })
+        .filter(|m| has(&tables(m), "[features]"))
         .collect()
 }
 
