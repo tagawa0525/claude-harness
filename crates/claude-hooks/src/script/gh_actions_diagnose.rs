@@ -363,20 +363,21 @@ fn diagnose(target: &str) -> Result<(), i32> {
                 .to_string();
         } else if runs.is_empty() {
             next = "ワークフローが未設定か未実行であると報告してください".to_string();
-        } else if latest_conclusion != "success" {
-            let unchecked = if external.is_none() {
-                "し、外部 CI は確認できていないと添えてください"
-            } else {
-                "してください"
-            };
-            next = format!(
-                "GitHub Actions の最新の run は {latest_conclusion} で、失敗はありません。成功とは書かず、{latest_conclusion} と報告{unchecked}"
-            );
-        } else if external.is_none() {
-            next = "GitHub Actions は成功しています。外部 CI は確認できていないと添えて報告してください"
-                .to_string();
         } else {
-            next = "CI は成功しています。正常完了と報告してください".to_string();
+            // 見たのは最新の 1 run（runs[0]）だけなので、CI 全体を言い切らず、RUNS のほかの run を確かめさせる（#300）
+            let head = if latest_conclusion == "success" {
+                "GitHub Actions の最新の run は成功しています。RUNS のほかのワークフローの run に失敗があればそれを、無ければ正常完了と報告してください".to_string()
+            } else {
+                format!(
+                    "GitHub Actions の最新の run は {latest_conclusion} です。成功とは書かず、RUNS のほかのワークフローの run に失敗があればそれを、無ければ {latest_conclusion} と報告してください"
+                )
+            };
+            let unchecked = if external.is_none() {
+                "。外部 CI は確認できていないと添えてください"
+            } else {
+                ""
+            };
+            next = format!("{head}{unchecked}");
         }
     }
     println!("CAUSE: {cause}");
