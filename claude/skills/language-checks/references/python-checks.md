@@ -1,47 +1,20 @@
 # Python Quality Checks
 
-Pythonプロジェクトで実行する品質チェック。
+上から順に実行する。どれも終了コード 0 で成功。
 
 ## 1. Format Check (ruff format)
 
 ```bash
-ruff format --check .
-```
-
-**目的**: Black互換のフォーマットでコードスタイルを統一
-
-**成功条件**: 終了コード 0
-
-**失敗時の対応**:
-
-```bash
-ruff format .
+ruff format --check .   # 検査
+ruff format .           # 失敗時の自動修正
 ```
 
 ## 2. Lint Check (ruff check)
 
 ```bash
-ruff check .
+ruff check .         # 検査
+ruff check --fix .   # 失敗時の自動修正
 ```
-
-**目的**: コード品質問題、バグの可能性、スタイル違反を検出
-
-**成功条件**: エラー・警告が0件、終了コード 0
-
-**失敗時の対応**:
-
-```bash
-ruff check --fix .
-```
-
-### よくあるエラー
-
-| コード | 説明                             |
-| ------ | -------------------------------- |
-| F401   | インポートされているが未使用     |
-| E501   | 行が長すぎる（88文字超）         |
-| F841   | 変数が割り当てられているが未使用 |
-| I001   | インポート順序が不正             |
 
 ## 3. Test (pytest)
 
@@ -49,52 +22,12 @@ ruff check --fix .
 pytest
 ```
 
-**目的**: ユニットテスト、統合テストを実行
+自動修正は無い。失敗の詳細を確認して直す。
 
-**成功条件**: 全テスト成功、終了コード 0
+run-checks.sh は、テストを次の順に探し、最初に当たったものを実行する。
 
-**失敗時の対応**: テスト失敗の詳細を確認し修正
-
-**テストの置き場と実行方法**（run-checks.sh）: `scripts/run-python-tests.sh` があればそれを優先して実行する（終了コードで判定。
-実行権限が無ければ失敗）。無ければ `tests/` かルート直下の `test_*.py` を `pytest` で実行する。それも無く、git が追跡している
-`test_*.py` / `*_test.py` がサブディレクトリにあれば、そのディレクトリごとに、追跡しているファイルだけを渡して実行する
-（`python3 -m pytest` が使えれば pytest、無ければ `python3 -m unittest <モジュール>`）。テストが 1 つも無いときだけ SKIP。
-
-### オプション
-
-```bash
-pytest -v                              # 詳細出力
-pytest --tb=short                      # 短いトレースバック
-pytest --cov=src --cov-report=term-missing  # カバレッジ
-pytest -n auto                         # 並列実行
-```
-
-### テスト発見パターン
-
-- `test_*.py` または `*_test.py` ファイル
-- `Test*` クラス
-- `test_*` 関数/メソッド
-
-## クイックリファレンス
-
-| ツール      | チェック    | 自動修正  |
-| ----------- | ----------- | --------- |
-| ruff format | `--check .` | `.`       |
-| ruff check  | `.`         | `--fix .` |
-| pytest      | (なし)      | -         |
-
-## トラブルシューティング
-
-### テストが見つからない
-
-```bash
-pytest tests/           # ディレクトリ明示
-pytest --collect-only   # 発見ログ表示
-```
-
-### インポートエラー
-
-```bash
-PYTHONPATH=. pytest     # パス追加
-pip install -e .        # 開発モード
-```
+1. `scripts/run-python-tests.sh` があれば、それを実行する（終了コードで判定。実行権限が無ければ失敗）
+2. `tests/` かルート直下の `test_*.py` があれば、`pytest` で実行する
+3. git が追跡している `test_*.py` / `*_test.py` がサブディレクトリにあれば、そのディレクトリごとに、追跡している
+   ファイルだけを渡して実行する（`python3 -m pytest` が使えれば pytest、無ければ `python3 -m unittest <モジュール>`）
+4. テストが 1 つも無いときだけ SKIP
