@@ -22,6 +22,8 @@
 #   REPORT: 途中の報告から <経過> 分を超えた…  3  途中の報告から 55 分を超えた。親に途中の報告を送ってから、もう一度呼ぶ
 #                                                 （数え直した）
 #   使い方の誤り、渡した出力のファイルが無い（パスのコピーミス）、状態を書けないときは、理由を出して 1
+# DONE、WAIT、REPORT の行の後には、担当の次の行動を NEXT: の行で出す（DONE は、残りのファイルで呼び直すコマンドと
+# --end のコマンドを、引数を埋めて出す）
 #
 # テストは WAIT_STEP_SECONDS（1 歩、既定 270）と WAIT_STEP_REPORT（途中の報告の間隔の秒、既定 3300）で時間を縮める
 
@@ -46,7 +48,8 @@ if [[ "$1" == --end ]]; then
   exit 0
 fi
 
-state=$(state_of "$1")
+key=$1
+state=$(state_of "$key")
 shift
 for f in "$@"; do
   [[ -f "$f" ]] || { echo "ERROR: 出力のファイルがありません: $f" >&2; exit 1; }
@@ -68,12 +71,27 @@ save() {
 }
 save
 
+# 担当が貼る形のコマンド。スキルの allowed-tools は ~ のパスで許すので、展開したパスにしない
+cmd() {
+  local out='~/.claude/scripts/wait-step.sh' a
+  for a in "$@"; do out+=" $(printf '%q' "$a")"; done
+  printf '%s' "$out"
+}
+
 finished() {
-  local f
+  local f g
+  local -a rest
   for f in "$@"; do
     # 最後の行だけを見る（途中の行の同じ文字列で誤らず、大きな出力を毎秒読み直さない）
     if tail -n 1 "$f" | grep -qE '^\[(exited with code|killed)'; then
       echo "DONE: $f"
+      rest=()
+      for g in "$@"; do [[ "$g" == "$f" ]] || rest+=("$g"); done
+      if (( ${#rest[@]} )); then
+        echo "NEXT: このファイルの結果を取り込む。ほかにも待つもの（残りの出力のファイル、出力のファイルの無い /code-review、親の返事）があれば、ターンを終えずに $(cmd "$key" "${rest[@]}") で呼び直し、すべて済んだら $(cmd --end "$key") で待ちを消す"
+      else
+        echo "NEXT: このファイルの結果を取り込む。ほかにも出力のファイルの無い待ち（/code-review、親の返事）があれば、ターンを終えずに $(cmd "$key") で呼び直し、すべて済んだら $(cmd --end "$key") で待ちを消す"
+      fi
       return 0
     fi
   done
@@ -94,11 +112,13 @@ while :; do
     reported=$t
     save
     echo "REPORT: 途中の報告から ${elapsed} 分を超えた。親に途中の報告を送ってから、もう一度呼ぶ"
+    echo 'NEXT: SendMessage（to: "main"）で「<待つもの> の待ちが 55 分を超えた。終わり次第、残りの作業を続ける」とだけ送り、待つのも作業もやめずに、ターンを終えずに同じ引数でもう一度呼ぶ。<待つもの> には、止まって通知の来ない /code-review と返事の来ない許可も入れる（止めるかは親の返事で決める）'
     exit 3
   fi
   if (( t >= deadline )); then
     save
     echo "WAIT: 途中の報告から $(( (t - reported) / 60 )) 分"
+    echo "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ。呼び出しの後に通知（終わりの通知、親の返事）が届いていれば、それで続ける。途中で親に報告するのは REPORT の後だけ"
     exit 2
   fi
   sleep 1
