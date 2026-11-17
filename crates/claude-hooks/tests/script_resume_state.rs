@@ -403,3 +403,46 @@ fn a_closed_blocker_whose_front_matter_cannot_be_parsed_is_unknown() {
         "{text}"
     );
 }
+
+#[test]
+fn a_blocker_closed_as_a_duplicate_without_a_readable_target_or_with_an_unknown_status_is_unknown()
+{
+    let repo = Repo::new();
+    repo.issue(
+        "0001-b.md",
+        "---\nstatus: closed\nresolution: duplicate\nduplicate-of: \"#12\"\n---\n\n# b\n",
+    );
+    repo.issue("0003-c.md", "---\nstatus: done\n---\n\n# c\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\", \"#0003\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues").contains(
+            "docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"] blocker-unknown=#0001,#0003\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_issue_is_not_marked_blocked_by_itself() {
+    // 相手が自分の重複として閉じた、または自分を挙げた
+    let repo = Repo::new();
+    repo.issue(
+        "0001-b.md",
+        "---\nstatus: closed\nresolution: duplicate\nduplicate-of: \"#0002\"\n---\n\n# b\n",
+    );
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\", \"#0002\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues").contains(
+            "docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0002\"] blocker-unknown=#0001,#0002\n"
+        ),
+        "{text}"
+    );
+}

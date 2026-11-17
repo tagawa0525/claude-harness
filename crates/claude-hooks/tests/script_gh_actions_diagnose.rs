@@ -240,7 +240,7 @@ fn no_run_with_only_external_ci_tells_whether_it_passed() {
     let text = stdout(&out);
     assert!(
         text.contains(
-            "NEXT: GitHub Actions の run は無く、外部 CI は成功しています。その 2 点を報告してください\n"
+            "NEXT: GitHub Actions の run は無く、外部 CI に失敗はありません。その 2 点を報告してください\n"
         ),
         "{text}"
     );
@@ -272,6 +272,24 @@ fn a_skipped_latest_run_is_not_reported_as_a_success() {
     assert!(
         text.contains(
             "CAUSE: NONE\nNEXT: GitHub Actions の最新の run は skipped で、失敗はありません。成功とは書かず、skipped と報告してください\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_skipped_latest_run_without_external_ci_says_it_was_not_checked() {
+    let skipped = RUN_OK.replace("success", "skipped");
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&skipped, 0), ("", 1)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "NEXT: GitHub Actions の最新の run は skipped で、失敗はありません。成功とは書かず、skipped と報告し、外部 CI は確認できていないと添えてください\n"
         ),
         "{text}"
     );
