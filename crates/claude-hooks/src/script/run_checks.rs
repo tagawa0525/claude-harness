@@ -105,7 +105,11 @@ pub fn main(args: &[String]) -> i32 {
     // --base はコミット済みのブランチを検査する。作業ツリーの変更はコミットに入らないので、通っても次の手順（報告、
     // マージ）が見るコミットを検査したことにならない。ステージ済みと --merge は変更があるのがふつうなので見ない
     if base_ref.is_some() {
-        let Some(status) = git_output(&["status", "--porcelain"], Stdio::null()) else {
+        // 日本語の名前を八進の表記にせずに出す
+        let Some(status) = git_output(
+            &["-c", "core.quotePath=false", "status", "--porcelain"],
+            Stdio::null(),
+        ) else {
             eprintln!("ERROR: git status が失敗しました");
             return 1;
         };
@@ -267,6 +271,37 @@ fn xargs(prefix: &[&str], files: &[PathBuf]) -> bool {
         ok &= spawn(&[os(prefix), chunk].concat(), None);
     }
     ok
+}
+
+/// crate のディレクトリ dir の Cargo.toml と、その下の追跡している Cargo.toml（workspace のメンバー）のうち、
+/// [features] の表を持つもの（リポジトリの直下からのパス）。cargo は dir で全体を検査するので、メンバーの feature も
+/// 既定のチェックから漏れる
+fn manifests_with_features(dir: &str) -> Vec<String> {
+    let prefix = if dir == "." {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let mut manifests: BTreeSet<String> = git_text(&[
+        "-c",
+        "core.quotePath=false",
+        "ls-files",
+        "--",
+        &format!(":(glob){prefix}**/Cargo.toml"),
+    ])
+    .map(|out| out.lines().map(str::to_string).collect())
+    .unwrap_or_default();
+    // 追跡する前の crate（ステージ済みの .rs から見つけた dir）も見る
+    manifests.insert(format!("{prefix}Cargo.toml"));
+    manifests
+        .into_iter()
+        .filter(|m| {
+            std::fs::read_to_string(m).is_ok_and(|text| {
+                text.lines()
+                    .any(|l| l.split('#').next().unwrap_or("").trim() == "[features]")
+            })
+        })
+        .collect()
 }
 
 /// プロジェクトの CLAUDE.md の、チェックのコマンドを書いた行を NOTE で知らせる。run-checks の既定のコマンドは汎用で、
@@ -433,17 +468,9 @@ impl Checks {
 
     /// crate のディレクトリ dir で cargo の fmt、clippy、test を実行する
     fn run_rust(&self, dir: &str) -> Step {
-        let manifest = Path::new(dir).join("Cargo.toml");
-        if std::fs::read_to_string(&manifest)
-            .is_ok_and(|text| text.lines().any(|l| l.trim() == "[features]"))
-        {
-            let shown = if dir == "." {
-                "Cargo.toml".to_string()
-            } else {
-                format!("{dir}/Cargo.toml")
-            };
+        for manifest in manifests_with_features(dir) {
             println!(
-                "NOTE: {shown} に [features] がある。既定のチェックは --all-features を付けないので、feature の下のコードは検査されない。プロジェクトの CLAUDE.md や CI のコマンド（--all-features など）でも実行する"
+                "NOTE: {manifest} に [features] がある。既定のチェックは --all-features を付けないので、feature の下のコードは検査されない。プロジェクトの CLAUDE.md や CI のコマンド（--all-features など）でも実行する"
             );
         }
         let cargo_in = |args: &[&str]| -> (Vec<String>, Vec<OsString>) {
