@@ -118,10 +118,66 @@ fn documents_only_is_medium() {
     assert_eq!(
         stdout(&out),
         format!(
-            "BASE: main\nTARGET: feat/docs\nWORKTREE: {}\nFILES: 2\nLEVEL: medium\n",
-            root.trim()
+            "BASE: main\nTARGET: feat/docs\nWORKTREE: {root}\nFILES: 2\nLEVEL: medium\n\
+             NEXT: /code-review medium {root}（1 周目はこの LEVEL で回す。直した後の周のレベルは /git-merge の「直す指摘の基準」の「終わり」の項で決める）\n",
+            root = root.trim()
         )
     );
+}
+
+#[test]
+fn the_next_line_names_the_worktree_quoted_for_the_shell() {
+    let repo = Repo::new();
+    repo.commit("src/a.rs", "a");
+    let dir = repo.root.join("work tree");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/code",
+        dir.to_str().unwrap(),
+    ]);
+    std::fs::write(dir.join("b.rs"), "b\n").unwrap();
+    let at = dir.to_str().unwrap();
+    repo.git(&["-C", at, "add", "b.rs"]);
+    repo.git(&["-C", at, "commit", "-q", "-m", "b"]);
+    let out = repo.run(&["feat/code", "--base", "main"]);
+    assert_eq!(out.status.code(), Some(0));
+    let next = stdout(&out)
+        .lines()
+        .find(|l| l.starts_with("NEXT: "))
+        .unwrap_or_else(|| panic!("{}", stdout(&out)))
+        .to_string();
+    let worktree = repo
+        .git(&["-C", at, "rev-parse", "--show-toplevel"])
+        .trim()
+        .to_string();
+    assert!(
+        next.starts_with(&format!("NEXT: /code-review high '{worktree}'（")),
+        "{next}"
+    );
+}
+
+#[test]
+fn a_branch_checked_out_nowhere_is_reviewed_by_the_pr_url() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/away"]);
+    repo.commit("src/a.rs", "a");
+    repo.git(&["switch", "-q", "main"]);
+    let out = repo.run(&["feat/away"]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = stdout(&out);
+    assert!(text.contains("WORKTREE: none\n"), "{text}");
+    let next = text
+        .lines()
+        .find(|l| l.starts_with("NEXT: "))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(
+        next.starts_with("NEXT: /code-review high <PR の URL>（"),
+        "{next}"
+    );
+    assert!(next.contains("git worktree add"), "{next}");
 }
 
 #[test]
@@ -133,7 +189,7 @@ fn documents_under_the_harness_source_directory_are_medium() {
     let out = repo.run(&["feat/rule-docs", "--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
     assert!(
-        stdout(&out).ends_with("FILES: 2\nLEVEL: medium\n"),
+        stdout(&out).contains("FILES: 2\nLEVEL: medium\n"),
         "{}",
         stdout(&out)
     );
@@ -148,7 +204,7 @@ fn a_file_that_is_not_a_document_is_high() {
     let out = repo.run(&["feat/mixed", "--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
     assert!(
-        stdout(&out).ends_with("FILES: 2\nLEVEL: high\n"),
+        stdout(&out).contains("FILES: 2\nLEVEL: high\n"),
         "{}",
         stdout(&out)
     );
@@ -190,7 +246,7 @@ fn a_change_to_a_frozen_section_of_an_adr_is_high_from_a_subdirectory() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(stdout(&out).ends_with("LEVEL: high\n"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("LEVEL: high\n"), "{}", stdout(&out));
 }
 
 #[test]
@@ -206,7 +262,7 @@ fn a_change_to_a_frozen_section_of_an_adr_is_high_with_colored_diffs() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(stdout(&out).ends_with("LEVEL: high\n"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("LEVEL: high\n"), "{}", stdout(&out));
 }
 
 #[test]
@@ -221,9 +277,5 @@ fn a_document_with_a_japanese_name_is_a_document() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        stdout(&out).ends_with("LEVEL: medium\n"),
-        "{}",
-        stdout(&out)
-    );
+    assert!(stdout(&out).contains("LEVEL: medium\n"), "{}", stdout(&out));
 }
