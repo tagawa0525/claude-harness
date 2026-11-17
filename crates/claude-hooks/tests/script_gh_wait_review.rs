@@ -179,7 +179,7 @@ fn a_timeout_says_unknown_for_values_it_cannot_read() {
     let out = fake.run_calls_with_env(
         "gh-wait-review",
         &[URL, "--since", "2026-09-08T06:00:00Z"],
-        &timeout_calls(("", 1), ("", 0), ("", 1)),
+        &timeout_calls(("", 1), ("", 1), ("", 1)),
         NO_WAIT,
     );
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
