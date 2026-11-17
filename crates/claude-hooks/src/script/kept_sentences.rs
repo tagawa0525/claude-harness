@@ -164,10 +164,22 @@ fn from_base(base: &str, paths: &[String]) -> Option<Versions> {
             return None;
         }
         let spec = format!("{base}:./{name}");
-        let at_base = git(dir, &["cat-file", "-e", &spec]).is_some();
+        // ファイル（blob）だけを元の版にする。ディレクトリ（tree）を渡すと、git show の木の一覧を文として読んでしまう
+        let kind = git(dir, &["cat-file", "-t", &spec]);
+        let at_base = kind.is_some();
+        if let Some(kind) = kind.filter(|k| k != "blob") {
+            eprintln!("ERROR: ファイルのパスではない（{base} では {kind}）: {path}");
+            return None;
+        }
         if at_base {
-            let Some(text) = git(dir, &["show", &spec]) else {
-                eprintln!("ERROR: 読めない: {spec}（{}）", dir.display());
+            let text = crate::git::run(dir, &["show", &spec], None)
+                .filter(|out| out.status.success())
+                .map(|out| String::from_utf8(out.stdout));
+            let Some(Ok(text)) = text else {
+                eprintln!(
+                    "ERROR: 読めない（UTF-8 でないか git が失敗した）: {spec}（{}）",
+                    dir.display()
+                );
                 return None;
             };
             olds.push(text.replace("\r\n", "\n").replace('\r', "\n"));
