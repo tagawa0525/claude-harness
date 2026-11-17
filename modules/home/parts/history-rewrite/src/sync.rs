@@ -16,7 +16,7 @@ use std::process::{Command, Output, Stdio};
 #[derive(Debug)]
 struct Leave(String);
 
-/// 合わせ方を決める段の止まり方
+/// 合わせ方を決める手順の止まり方
 enum Halt {
     Leave(Leave),
     Stop(Stop),
@@ -120,7 +120,7 @@ fn path_in(w: &Path, p: &[u8]) -> PathBuf {
     }
 }
 
-/// `ls-files -s -z` と `ls-tree -r -z` の行を、パスから「モードと番号」への表にする。ls-files の段が 0 でない項
+/// `ls-files -s -z` と `ls-tree -r -z` の行を、パスから「モードと番号」への表にする。ls-files のステージが 0 でない項
 /// （衝突の項）があれば残す
 fn entries(raw: &[u8]) -> Result<HashMap<Vec<u8>, String>, Leave> {
     let mut out = HashMap::new();
@@ -130,7 +130,7 @@ fn entries(raw: &[u8]) -> Result<HashMap<Vec<u8>, String>, Leave> {
         };
         let (head, path) = (text(&line[..tab]), line[tab + 1..].to_vec());
         let fields: Vec<&str> = head.split_whitespace().collect();
-        // ls-files -s は「モード 番号 段」、ls-tree は「モード 種類 番号」
+        // ls-files -s は「モード 番号 ステージ」、ls-tree は「モード 種類 番号」
         let (mode, oid) = if fields.len() == 3 && matches!(fields[1], "blob" | "commit" | "tree") {
             (fields[0], fields[2])
         } else {

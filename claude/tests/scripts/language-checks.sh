@@ -11,7 +11,7 @@ source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 LANG_SCRIPTS="$CLAUDE_DIR/skills/language-checks/scripts"
-# 手元の markdownlint を実行せず、どのホストでも同じ結果にする。Markdown の段（claude-hooks の中の staged_checks が
+# 手元の markdownlint を実行せず、どのホストでも同じ結果にする。Markdown のチェック（claude-hooks の中の staged_checks が
 # markdownlint を呼ぶ）を確かめるテストは、この偽物を差し替える
 make_fake_tool markdownlint '*) exit 0 ;;'
 # 手元の squeue を呼ばず、排他のジョブが無い状態にする。排他のジョブ中の自己制限を確かめるテストが差し替える
@@ -549,7 +549,7 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_eq "-S warning -- new.sh" "$(fake_log shellcheck)"
 
-it "run-checks: .md から .md への rename も Markdown の段で検査する"
+it "run-checks: .md から .md への rename も Markdown のチェックで検査する"
 REPO="$TEST_ROOT/checks/rename-md"
 make_repo "$REPO"
 cd "$REPO" || exit 1
@@ -559,7 +559,7 @@ out=$("$LANG_SCRIPTS/run-checks.sh")
 assert_eq 0 $?
 assert_contains "$(fake_log markdownlint)" "--fix --disable MD038 -- new.md"
 
-it "run-checks: git diff を読めなければ段を飛ばさず FAILED で止める（壊れた index）"
+it "run-checks: git diff を読めなければチェックを飛ばさず FAILED で止める（壊れた index）"
 REPO="$TEST_ROOT/checks/broken-index"
 make_repo "$REPO"
 cd "$REPO" || exit 1

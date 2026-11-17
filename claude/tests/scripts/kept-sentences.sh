@@ -84,7 +84,7 @@ out=$("$KEPT" --old "$D/old.md" --new "$D/old.md" 2>&1)
 assert_eq 0 $?
 assert_eq "" "$out"
 
-it "kept-sentences: 文を消しただけ、行の折り返し、箇条書きの印、見出しの段、字下げの違いは数えない"
+it "kept-sentences: 文を消しただけ、行の折り返し、箇条書きの印、見出しのレベル、字下げの違いは数えない"
 cat >"$D/a.md" <<'MD'
 ## 見出し
 

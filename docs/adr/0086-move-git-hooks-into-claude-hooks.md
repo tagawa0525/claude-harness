@@ -78,7 +78,7 @@ hook のファイル:
   段階 6 まで sh と Python のままのもの（pre-merge-commit が呼ぶ `run-checks.sh`、Markdown の自動修正の
   `fix-markdown-lint.py`）は、今のとおり `~/.claude` の下のものを `bash` と `python3` で呼び、`python3` が無ければ
   自動修正を飛ばす
-- `staged-checks` のコマンド: `run-checks.sh` の Markdown の段が PATH の `staged-checks` を呼ぶ。Linux は、
+- `staged-checks` のコマンド: `run-checks.sh` の Markdown のチェックが PATH の `staged-checks` を呼ぶ。Linux は、
   `claude-hooks git-hook staged-checks` を呼ぶだけの `staged-checks` を、段階 6 まで PATH に残す
 - テスト: `modules/home/parts/tests/` の git hook の sh を、次の 2 つに置き換える
   - 判定: `claude-hooks` の `tests/` の結合テスト。一時のリポジトリで `git commit` などを実行し、hook のファイルから
@@ -121,7 +121,7 @@ hook のファイル:
 - 悪い点: `claude-hooks` の `package.nix` が包むものが、`ja-terms` に加えて `gitleaks` と `commit-refs` に増える
 - Windows の git hook は、`claude-setup git-hooks --bin <claude-hooks>` が `~/.config/git/hooks` に置き、グローバルの
   `core.hooksPath` を向ける（README の「Windows で使う」）。利用者がほかの置き場を `core.hooksPath` にしていれば奪わずに
-  止める。PATH の `staged-checks` は Linux にしか置かないので、段階 6 までは Windows の `run-checks.sh` の Markdown の段が
+  止める。PATH の `staged-checks` は Linux にしか置かないので、段階 6 までは Windows の `run-checks.sh` の Markdown のチェックが
   飛ぶ
 - マージを締めるコミットの pre-commit は、隣の pre-merge-commit を、前の sh の自分の隣（`dirname "$0"`）でなく、git が hook を
   探す `core.hooksPath` の置き場（`git rev-parse --git-path hooks/pre-merge-commit`。`~` は git が展開する）で探す。hook の

@@ -70,9 +70,9 @@ rustfmt）は、作業ツリーのファイルを読んでいた。Markdown の�
 
 ## 補足
 
-- 2026-10-12: `run-checks.sh` の Markdown の段（ステージした差分を見る既定の使い方）も、`staged-checks markdown` に
+- 2026-10-12: `run-checks.sh` の Markdown のチェック（ステージした差分を見る既定の使い方）も、`staged-checks markdown` に
   任せるようにした（#338）。`staged-checks` は言語を渡すとその言語だけを検査し、`home.packages` で PATH に置く
 - 2026-11-13: 実装を `staged-checks.sh` から claude-hooks の `git-hook staged-checks` に移した（ADR-0086、#132）。
   判定は変えていない（`pre-commit-partial-stage.sh` と `pre-commit-rust-format.sh` が、nix build した hook で通る）
-- 2026-11-15: `run-checks` の Markdown の段が同じバイナリの `staged_checks::run` を直に呼ぶようになり、PATH の `staged-checks` の
+- 2026-11-15: `run-checks` の Markdown のチェックが同じバイナリの `staged_checks::run` を直に呼ぶようになり、PATH の `staged-checks` の
   コマンド（`git-hooks.nix` の `stagedChecks`）を外した（#183）。手で呼ぶときは `claude-hooks git-hook staged-checks`

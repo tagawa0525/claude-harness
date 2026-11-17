@@ -118,8 +118,8 @@ hash が既定ブランチの祖先（ブランチのコミットでない）。
 - 文書: `.md` のファイルのうち、`.claude` のディレクトリの下でなく、名前が `CLAUDE.md` でも `SKILL.md` でもなく、
   `docs/adr/` の下でないもの。/git-merge は「挙動（コード、計算、hook の判定、テストの比べる範囲、スキルと hook の文書、
   記録の数値）を変える変更があれば回す」「挙動を変えない文書だけ（docs/ の説明、記録の本文など）なら回さず」と書く。
-  スキルと hook の文書（`.claude/` の下と `CLAUDE.md`、`SKILL.md`）は挙動に数える。ADR は、/git-merge の「proposed の ADR」の段が
-  「この段で直した ADR は、docs/ だけの変更でもレビューを受けさせる」と書くので数える
+  スキルと hook の文書（`.claude/` の下と `CLAUDE.md`、`SKILL.md`）は挙動に数える。ADR は、/git-merge の「proposed の ADR」の手順が
+  「この手順で直した ADR は、docs/ だけの変更でもレビューを受けさせる」と書くので数える
 - DVC の記録: 名前が `dvc.lock` のファイルと `.dvc` で終わるファイル（rebase の後の /dvc-relock が書き直す。計算の入力の
   `dvc.yaml` は含めない）
 - remap: どのファイルでも、`git diff -U0` のすべての hunk で、消した行と足した行が同じ数で、対の行が 16 進の語（a〜f を 1 字以上

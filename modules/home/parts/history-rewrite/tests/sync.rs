@@ -2,7 +2,7 @@
 //! 合わせること（ADR-0045 の「## 変更」の 2026-11-11、ADR-0088）。合わせられる worktree と、
 //! 機械では合わせられない worktree を 1 つずつ作る。
 //!
-//! 第 2 段と worktree の番号の付け直しの `commit-refs` は PATH のものを使う。辞書の語（崩れた語）をわざと含むので、
+//! ステージ 2 と worktree の番号の付け直しの `commit-refs` は PATH のものを使う。辞書の語（崩れた語）をわざと含むので、
 //! .textlintignore で ja-terms の検査から外す。
 
 use history_rewrite::run::read_map;

@@ -100,7 +100,7 @@ git -C [TARGET_WORKTREE] rebase main
 
 `PROPOSED_ADRS` は、ブランチの feat と fix のコミットが `Refs:` で挙げた ADR のうち、先端で `status: proposed` のもの。
 ブランチのコミットを変えた後（rebase、番号の振り直し、コミットの追加や amend）は `~/.claude/scripts/git-merge-state.sh [branch]` を
-再実行して取り直す（読み込んだときの none や行の無さで、この段を飛ばさない）。一覧に加えて、次も見る:
+再実行して取り直す（読み込んだときの none や行の無さで、この手順を飛ばさない）。一覧に加えて、次も見る:
 
 - このブランチが足すか直した proposed の ADR（`git diff --name-status main...[branch] -- docs/adr`）
 - `Refs:` の無いコミットや perf などの型のコミットだけが実装した main の ADR（一覧にも diff にも出ないので、実装から見る）
@@ -120,9 +120,9 @@ proposed のまま残してよく、機械では決められないため）:
   外す（残すと rejected の ADR と main のコードが食い違ったまま確定する）
 - 試しただけでまだ決めない、または決定だけを足し実装は後のブランチで行う: proposed のまま残す
 
-proposed のまま残した ADR は、マージの本文の Impact に番号と理由を書く。この段で直した ADR は、docs/ だけの変更でも
+proposed のまま残した ADR は、マージの本文の Impact に番号と理由を書く。この手順で直した ADR は、docs/ だけの変更でも
 （/delegate の担当の最後の周の後でも、「レビュー」の挙動を変えない文書の扱いに当てず）レビューを受けさせる。後から ADR や
-ブランチのコミットを変えたら、「レビュー」の節のとおり rebase の要否、この段の一覧の取り直し、チェックからやり直す。
+ブランチのコミットを変えたら、「レビュー」の節のとおり rebase の要否、この手順の一覧の取り直し、チェックからやり直す。
 
 ### チェック（CI の代わり）
 

@@ -1,10 +1,10 @@
 //! run: 元のリポジトリのすべてのブランチとタグを作業ディレクトリにコピーして書き換える（ADR-0045、ADR-0088）。
 //!
-//! 第 1 段は `git fast-export --no-data` の流れを読み、語を直したブロブと本文を `git fast-import` に渡す。
+//! ステージ 1 は `git fast-export --no-data` の流れを読み、語を直したブロブと本文を `git fast-import` に渡す。
 //! fast-export の設定は filter-repo 2.47.0 の fep_cmd に、ブロブを流さない `--no-data` と、署名つきのコミットの扱いを
 //! 足したもの（コミットの署名は中身を変えると合わないので外す。照合は gpgsig の見出しを比べない）。流れはブロブと本文の
 //! ほかを書き換えずに渡すので、コミットは消えず（filter-repo の `--prune-empty=never`、`--prune-degenerate=never`）、
-//! 本文の番号は第 2 段だけが付け直し（`--preserve-commit-hashes`）、本文の符号化は変わらず（`--preserve-commit-encoding`）、
+//! 本文の番号はステージ 2 だけが付け直し（`--preserve-commit-hashes`）、本文の符号化は変わらず（`--preserve-commit-encoding`）、
 //! repack もしない（`--no-gc`）。replace の ref も足さない（`--replace-refs=delete-no-add`）。
 
 use crate::{Stop, Transformer, Words, git};
@@ -279,7 +279,7 @@ fn write_data(out: &mut impl Write, data: &[u8]) -> Result<(), Stop> {
     out.write_all(b"\n").map_err(io)
 }
 
-/// 第 1 段の数
+/// ステージ 1 の数
 pub struct Counts {
     /// 語を直したブロブの数（パスとブロブの組ごと）
     pub blobs: usize,
@@ -287,7 +287,7 @@ pub struct Counts {
     pub messages: usize,
 }
 
-/// 第 1 段: ブランチとタグの流れに語の変換だけを当てる。対応表（元の番号 → 第 1 段の番号）を返す
+/// ステージ 1: ブランチとタグの流れに語の変換だけを当てる。対応表（元の番号 → ステージ 1 の番号）を返す
 pub fn stage1(repo: &Path, transformer: &mut Transformer) -> Result<(Counts, CommitMap), Stop> {
     let refs = git(
         repo,
@@ -604,7 +604,7 @@ impl Filter<'_> {
     }
 }
 
-/// 元の履歴（ミラーのオブジェクトを alternates で見る）と第 1 段の結果を突き合わせる
+/// 元の履歴（ミラーのオブジェクトを alternates で見る）とステージ 1 の結果を突き合わせる
 pub struct Verifier<'a> {
     rewritten: PathBuf,
     original: PathBuf,
@@ -667,8 +667,10 @@ impl<'a> Verifier<'a> {
         pruned.sort();
         if !pruned.is_empty() {
             let pruned: Vec<&str> = pruned.iter().map(|s| s.as_str()).collect();
-            self.problems
-                .push(format!("第 1 段でコミットが消えた: {}", pruned.join(" ")));
+            self.problems.push(format!(
+                "ステージ 1 でコミットが消えた: {}",
+                pruned.join(" ")
+            ));
         }
         // 番号の変わらないコミットも確かめる（変換が中身を変えるはずなのに当てなかったものを見る）
         let mut pairs: Vec<(String, String)> = self
@@ -734,7 +736,7 @@ impl<'a> Verifier<'a> {
                 "{old}: 親が対応しない: {old_parents:?} → {new_parents:?}"
             ));
         }
-        // 宣言した符号化が UTF-8 でない本文は変えない（変わるなら第 1 段が止める）
+        // 宣言した符号化が UTF-8 でない本文は変えない（変わるならステージ 1 が止める）
         let encoding = values(&old_headers, b"encoding").into_iter().next();
         let want = if is_utf8(encoding.as_deref()) {
             self.transformer
@@ -880,7 +882,7 @@ impl<'a> Verifier<'a> {
         Ok(())
     }
 
-    /// 注釈つきのタグを、第 1 段が作るはずのオブジェクトにしたもの
+    /// 注釈つきのタグを、ステージ 1 が作るはずのオブジェクトにしたもの
     fn tag(&mut self, cat: &mut CatFile, oid: &str) -> Result<Vec<u8>, Stop> {
         let data = cat.object(oid).map_err(Stop)?;
         let (mut headers, body) = split_object(&data);
@@ -1086,7 +1088,7 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
     refuse_nested_tags(&rewritten)?;
 
     let (counts, stage1_map) = stage1(&rewritten, &mut transformer)?;
-    // 照合も同じブロブを読み直して数えるので、第 1 段の数をここで取る
+    // 照合も同じブロブを読み直して数えるので、ステージ 1 の数をここで取る
     let not_utf8 = transformer.not_utf8;
     Verifier::new(&rewritten, &original, &stage1_map, &mut transformer).run()?;
 
