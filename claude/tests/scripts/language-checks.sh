@@ -57,6 +57,8 @@ make_fake_tool ruff '*) exit 0 ;;'
 # 本物は、PATH の先頭の名前でなくインタープリタの実体で呼ぶ。PATH の python3 が mise の shim だと、shim は版の指定が
 # 無いとき PATH から python3 を探し直し、偽の python3 に戻って再帰になる
 REAL_PY=$(python3 -c 'import sys; print(sys.executable)')
+# 空のまま進むと、偽の python3 が `exec -m unittest …` になって必ず落ち、「落ちれば失敗する」のテストだけが通る
+[[ -x "$REAL_PY" ]] || { echo "ERROR: 本物の python3 の実体が分からない: '$REAL_PY'" >&2; exit 1; }
 make_fake_tool python3 '"-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$REAL_PY"' "$@" ;;'
 mkdir -p pkg/sub
 printf 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1, 2)\n' > pkg/test_a.py
