@@ -109,3 +109,188 @@ fn a_run_list_that_is_not_an_array_stops_instead_of_reporting_no_run() {
         assert!(stderr(&out).contains("配列"), "{list}: {}", stderr(&out));
     }
 }
+
+const RUN_OK: &str = r#"[{"databaseId":101,"name":"CI","status":"completed","conclusion":"success","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/101"}]"#;
+const RUN_GOING: &str = r#"[{"databaseId":102,"name":"CI","status":"in_progress","conclusion":"","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/102"}]"#;
+
+/// `--- report ---` から最後までの行
+fn report(text: &str) -> &str {
+    text.find("--- report ---\n")
+        .map(|i| &text[i..])
+        .unwrap_or_else(|| panic!("--- report --- が無い: {text}"))
+}
+
+#[test]
+fn no_run_tells_what_to_report_on_the_next_line() {
+    let fake = FakeGh::new();
+    let out = fake.run_calls("gh-actions-diagnose", &["feat/x"], &[("[]", 0), ("", 1)]);
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "CAUSE: NONE\nNOTE: ワークフローが未設定か、このブランチではまだ実行されていません\n\
+             NEXT: ワークフローが未設定か未実行で、外部 CI は確認できていないと報告してください\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_successful_run_tells_to_report_success_and_whether_external_ci_was_seen() {
+    // run の一覧、head の SHA、check-run、commit status
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(RUN_OK, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください\n"),
+        "{text}"
+    );
+
+    // 外部の CI を読めなければ、その旨を添える（成功と言い切らない）
+    let fake = FakeGh::new();
+    let out = fake.run_calls("gh-actions-diagnose", &["feat/x"], &[(RUN_OK, 0), ("", 1)]);
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください。外部 CI は確認できていないと添えてください\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_report_lines_gather_the_run_the_failures_the_external_ci_and_the_next_step() {
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &[URL],
+        &[
+            (PR, 0),
+            (RUN_FAIL, 0),
+            (JOBS_FAIL, 0),
+            ("##[error]Request failed: HTTP 502\n", 0),
+            (
+                r#"{"name":"lint","status":"completed","conclusion":"success","app":"circleci","url":"https://ci/1"}"#,
+                0,
+            ),
+            ("[]", 0),
+        ],
+    );
+    let text = stdout(&out);
+    assert_eq!(
+        report(&text),
+        "--- report ---\nGitHub Actions 状況:\n- Run: 100（attempt 1）\n- Status: completed/failure\n\
+         - 失敗ジョブ: build\n- 失敗ステップ: Test\n- 外部 CI: lint completed/success circleci https://ci/1\n\
+         - 原因: TRANSIENT_API\n\
+         - 推奨対応: GitHub API 側の一時障害です。1 回だけ再実行してください: gh run rerun 100 -R octo/repo\n"
+    );
+}
+
+#[test]
+fn the_report_lines_say_none_for_what_was_not_found() {
+    // run が無く、外部の CI も読めない
+    let fake = FakeGh::new();
+    let out = fake.run_calls("gh-actions-diagnose", &["feat/x"], &[("[]", 0), ("", 1)]);
+    assert_eq!(
+        report(&stdout(&out)),
+        "--- report ---\nGitHub Actions 状況:\n- Run: なし\n- Status: なし\n- 失敗ジョブ: なし\n\
+         - 失敗ステップ: なし\n- 外部 CI: 確認できず\n- 原因: NONE\n\
+         - 推奨対応: ワークフローが未設定か未実行で、外部 CI は確認できていないと報告してください\n"
+    );
+
+    // 実行中の run は attempt を読まないので、Run に attempt を添えない
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(RUN_GOING, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    let rep = report(&text);
+    assert!(
+        rep.contains("- Run: 102\n- Status: in_progress/\n"),
+        "{rep}"
+    );
+    assert!(
+        rep.contains("- 外部 CI: なし\n- 原因: IN_PROGRESS\n"),
+        "{rep}"
+    );
+}
+
+#[test]
+fn no_run_with_only_external_ci_tells_whether_it_passed() {
+    // run の一覧、head の SHA、check-run（外部の CI が成功）、commit status
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[
+            ("[]", 0),
+            ("abc\n", 0),
+            (
+                r#"{"name":"lint","status":"completed","conclusion":"success","app":"circleci","url":"https://ci/1"}"#,
+                0,
+            ),
+            ("[]", 0),
+        ],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "NEXT: GitHub Actions の run は無く、外部 CI に失敗はありません。その 2 点を報告してください\n"
+        ),
+        "{text}"
+    );
+
+    // run も外部の CI も無い
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[("[]", 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("NEXT: ワークフローが未設定か未実行であると報告してください\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_skipped_latest_run_is_not_reported_as_a_success() {
+    let skipped = RUN_OK.replace("success", "skipped");
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&skipped, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は skipped です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_skipped_latest_run_without_external_ci_says_it_was_not_checked() {
+    let skipped = RUN_OK.replace("success", "skipped");
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&skipped, 0), ("", 1)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "NEXT: GitHub Actions の最新の run（CI）は skipped です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください。外部 CI は確認できていないと添えてください\n"
+        ),
+        "{text}"
+    );
+}

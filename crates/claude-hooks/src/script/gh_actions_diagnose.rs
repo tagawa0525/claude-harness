@@ -6,8 +6,10 @@
 //! GitHub Actions でない App（外部の CI）と commit status（gh run では見えず、gh run rerun でも再実行できない）。
 //!
 //! 出力: `BRANCH:`、`PR:`、`RUNS:`（直近 5 件）、`RUN:`、`STATUS:`、`ATTEMPT:`、`FAILED_JOB:`、`FAILED_STEP:`、
-//! `--- errors ---`（失敗したステップのログのエラーの行）、`EXTERNAL_CHECKS:`、`EXTERNAL_CHECK:`、`CAUSE:`、`NEXT:`。
-//! CAUSE は NONE、IN_PROGRESS、PERMISSION、TRANSIENT_API、COPILOT_INTERNAL、EXTERNAL、CODE（意味は sh の説明）。
+//! `--- errors ---`（失敗したステップのログのエラーの行）、`EXTERNAL_CHECKS:`、`EXTERNAL_CHECK:`、`CAUSE:`、`NEXT:`、
+//! `--- report ---`（/gh-actions-check の報告の形にまとめた行）。
+//! CAUSE は NONE、IN_PROGRESS、PERMISSION、TRANSIENT_API、COPILOT_INTERNAL、EXTERNAL、CODE（意味は sh の説明）。NEXT は
+//! どの CAUSE でも出す。
 //!
 //! 再実行の提案は attempt 1 のときだけ。既に再実行した（attempt 2 以上）同じ失敗は、一時の障害でない見込みが高く、
 //! 何度再実行しても直らないので、報告に切り替える。PERMISSION は HttpError を含むことがあるので TRANSIENT_API より先に
@@ -145,6 +147,10 @@ fn diagnose(target: &str) -> Result<(), i32> {
     // --- 1. GitHub Actions ---
     let mut cause = "NONE";
     let mut next = String::new();
+    let mut report = Report::default();
+    // 最新の run の結論（NONE の NEXT で、skipped と neutral を成功と書かないため）
+    let mut latest_conclusion = String::new();
+    let mut latest_name = String::new();
     let runs = json(
         "gh run list",
         &gh.output(&[
@@ -182,8 +188,12 @@ fn diagnose(target: &str) -> Result<(), i32> {
         let id = text(&latest["databaseId"]);
         let status = text(&latest["status"]);
         let conclusion = text(&latest["conclusion"]);
+        latest_conclusion = conclusion.clone();
+        latest_name = text(&latest["name"]);
         println!("RUN: {id}");
         println!("STATUS: {status}/{conclusion}");
+        report.run = id.clone();
+        report.status = format!("{status}/{conclusion}");
         if status != "completed" {
             cause = "IN_PROGRESS";
             next = "実行中です。完了を待ってから再確認してください".to_string();
@@ -194,12 +204,15 @@ fn diagnose(target: &str) -> Result<(), i32> {
             )?;
             let attempt = view["attempt"].as_u64().unwrap_or(1);
             println!("ATTEMPT: {attempt}");
+            report.attempt = Some(attempt);
             for job in view["jobs"].as_array().into_iter().flatten() {
                 if job["conclusion"] == "failure" {
                     println!("FAILED_JOB: {}", text(&job["name"]));
+                    report.failed_jobs.push(text(&job["name"]));
                     for step in job["steps"].as_array().into_iter().flatten() {
                         if step["conclusion"] == "failure" {
                             println!("FAILED_STEP: {}", text(&step["name"]));
+                            report.failed_steps.push(text(&step["name"]));
                         }
                     }
                 }
@@ -308,13 +321,15 @@ fn diagnose(target: &str) -> Result<(), i32> {
                 } else {
                     text(&c["url"])
                 };
-                println!(
-                    "EXTERNAL_CHECK: {} {}/{} {} {url}",
+                let check = format!(
+                    "{} {}/{} {} {url}",
                     text(&c["name"]),
                     text(&c["status"]),
                     text(&c["conclusion"]),
                     text(&c["app"])
                 );
+                println!("EXTERNAL_CHECK: {check}");
+                report.external.push(check);
                 if c["status"] != "completed" {
                     ext_pending += 1;
                 } else if !ok(c) {
@@ -323,6 +338,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
             }
         }
         None => {
+            report.external_unavailable = true;
             println!("EXTERNAL_CHECKS: unavailable");
             println!(
                 "NOTE: head SHA の check-run を取得できません（ブランチが未 push か、API エラー）"
@@ -331,23 +347,98 @@ fn diagnose(target: &str) -> Result<(), i32> {
     }
 
     // --- 3. 総合の判定。GitHub Actions の側に原因があればそれを先にし、外部の CI は情報として添える ---
-    if cause != "NONE" {
-        println!("CAUSE: {cause}");
-        println!("NEXT: {next}");
-    } else if !ext_failed.is_empty() {
-        println!("CAUSE: EXTERNAL");
-        println!(
-            "NEXT: 外部 CI の失敗です（GitHub Actions の run ではないため、ここからは再実行できません）。ログを details_url で確認し、一時的な失敗なら外部 CI 側で再実行してください: {}",
-            ext_failed.join(", ")
-        );
-    } else if ext_pending > 0 {
-        println!("CAUSE: IN_PROGRESS");
-        println!("NEXT: 外部 CI が実行中です。完了を待ってから再確認してください");
-    } else {
-        println!("CAUSE: NONE");
-        if runs.is_empty() {
-            println!("NOTE: ワークフローが未設定か、このブランチではまだ実行されていません");
+    if cause == "NONE" {
+        if !ext_failed.is_empty() {
+            cause = "EXTERNAL";
+            next = format!(
+                "外部 CI の失敗です（GitHub Actions の run ではないため、ここからは再実行できません）。ログを details_url で確認し、一時的な失敗なら外部 CI 側で再実行してください: {}",
+                ext_failed.join(", ")
+            );
+        } else if ext_pending > 0 {
+            cause = "IN_PROGRESS";
+            next = "外部 CI が実行中です。完了を待ってから再確認してください".to_string();
+        } else if runs.is_empty() && external.is_none() {
+            next = "ワークフローが未設定か未実行で、外部 CI は確認できていないと報告してください"
+                .to_string();
+        } else if runs.is_empty() && external.as_ref().is_some_and(|e| !e.is_empty()) {
+            next = "GitHub Actions の run は無く、外部 CI に失敗はありません。その 2 点を報告してください"
+                .to_string();
+        } else if runs.is_empty() {
+            next = "ワークフローが未設定か未実行であると報告してください".to_string();
+        } else {
+            // 判定したのは最新の 1 run（runs[0]）だけなので、CI 全体を言い切らない。RUNS は全ワークフローの直近 5 件で、
+            // 同じワークフローの古い run も並ぶので、読み手に RUNS から判定させない（ワークフローごとの判定は #300）
+            let head = if latest_conclusion == "success" {
+                format!(
+                    "GitHub Actions の最新の run（{latest_name}）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください"
+                )
+            } else {
+                format!(
+                    "GitHub Actions の最新の run（{latest_name}）は {latest_conclusion} です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください"
+                )
+            };
+            let unchecked = if external.is_none() {
+                "。外部 CI は確認できていないと添えてください"
+            } else {
+                ""
+            };
+            next = format!("{head}{unchecked}");
         }
     }
+    println!("CAUSE: {cause}");
+    if cause == "NONE" && runs.is_empty() {
+        println!("NOTE: ワークフローが未設定か、このブランチではまだ実行されていません");
+    }
+    println!("NEXT: {next}");
+    report.print(cause, &next);
     Ok(())
+}
+
+/// 報告の形（/gh-actions-check の報告）にまとめる値。読めなかったものは空のまま「なし」と出す
+#[derive(Default)]
+struct Report {
+    run: String,
+    status: String,
+    attempt: Option<u64>,
+    failed_jobs: Vec<String>,
+    failed_steps: Vec<String>,
+    /// EXTERNAL_CHECK の行と同じ形（URL まで）
+    external: Vec<String>,
+    external_unavailable: bool,
+}
+
+impl Report {
+    fn print(&self, cause: &str, next: &str) {
+        let or_none = |v: &[String]| {
+            if v.is_empty() {
+                "なし".to_string()
+            } else {
+                v.join(", ")
+            }
+        };
+        let run = match (self.run.is_empty(), self.attempt) {
+            (true, _) => "なし".to_string(),
+            (false, Some(a)) => format!("{}（attempt {a}）", self.run),
+            (false, None) => self.run.clone(),
+        };
+        let status = if self.status.is_empty() {
+            "なし"
+        } else {
+            &self.status
+        };
+        let external = if self.external_unavailable {
+            "確認できず".to_string()
+        } else {
+            or_none(&self.external)
+        };
+        println!("--- report ---");
+        println!("GitHub Actions 状況:");
+        println!("- Run: {run}");
+        println!("- Status: {status}");
+        println!("- 失敗ジョブ: {}", or_none(&self.failed_jobs));
+        println!("- 失敗ステップ: {}", or_none(&self.failed_steps));
+        println!("- 外部 CI: {external}");
+        println!("- 原因: {cause}");
+        println!("- 推奨対応: {next}");
+    }
 }

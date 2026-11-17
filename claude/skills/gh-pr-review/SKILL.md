@@ -213,7 +213,7 @@ cd <worktree> && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{
 ~/.claude/scripts/gh-actions-diagnose.sh "{pr_url}"
 ```
 
-`CAUSE:` への対応は gh-actions-check スキルの表に従う。`CODE` は Step 4 と同じく修正・コミット・push する。
+`NEXT:` に従う。`CODE` は Step 4 と同じく修正・コミット・push する。
 
 ## Step 8: 完了報告
 

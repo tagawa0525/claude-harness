@@ -39,18 +39,12 @@ markdownlint <files>
 
 ## ステージ済みファイルへの適用
 
-コミット前にステージされた `.md` だけを対象にする場合:
+コミット前にステージされた `.md` だけを対象にする場合は、次を使う（ステージした版に 1 → 2 → 3 を当ててステージし直し、
+作業ツリーに触れない）:
 
 ```bash
-git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --fix --disable MD038 --
-git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | \
-  xargs -0 -r ~/.claude/skills/language-checks/scripts/fix-markdown-lint.sh
-git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r git add --
-git diff --cached --name-only -z --diff-filter=ACMR -- '*.md' | xargs -0 -r markdownlint --
+~/.claude/bin/claude-hooks git-hook staged-checks markdown
 ```
 
-この手順は作業ツリーのファイルを直して `git add` するので、一部だけステージした `.md` では、ステージして
-いない編集までステージする。手で直すときは、代わりに `claude-hooks git-hook staged-checks markdown` を使う
-（ステージした版を直してステージし直し、作業ツリーに触れない）。git の pre-commit フックと `run-checks.sh` の
-Markdown のチェックも同じ検査を使う。`run-checks.sh` の `--merge` と `--base` は、自動修正せず、作業ツリーの
-`.md` を `markdownlint` で検査だけする。
+git の pre-commit フックと `run-checks.sh` の Markdown のチェックも同じ検査を使う。`run-checks.sh` の `--merge` と
+`--base` は、自動修正せず、作業ツリーの `.md` を `markdownlint` で検査だけする。
