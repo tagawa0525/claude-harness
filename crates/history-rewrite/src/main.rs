@@ -3,6 +3,8 @@
 //! Usage:
 //!   history-rewrite run --source REPO --workdir DIR [語の指定]
 //!       REPO のすべてのブランチとタグを DIR にコピーして書き換える。REPO には書き込まない。
+//!       始めに、REPO の detached HEAD の worktree がどのブランチとタグからも届かないコミットにあれば、付ける
+//!       ブランチのコマンド（git -C <worktree> branch <名前> <コミット>）を添えて止める
 //!       1. DIR/original.git に REPO のミラーを取る（書き換える前の控え）
 //!       2. DIR/rewritten に、ミラーのブランチとタグを持つ作業ツリーつきのリポジトリを作る
 //!       3. ステージ 1: git fast-export と fast-import で、テキストのブロブの全文とコミットとタグの本文の語を 1 回で直す
