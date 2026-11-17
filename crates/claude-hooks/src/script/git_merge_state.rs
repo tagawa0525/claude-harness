@@ -4,7 +4,8 @@
 //! - 対象か既定のブランチと同じ名前のタグがある（短い名前の git の操作がタグを指す）
 //! - GitHub のリモートがある（/gh-pr-create と /gh-pr-merge の流れで、ここでは扱わない）
 //! - 対象か既定のブランチの worktree に未コミットの変更がある
-//! - git の問い合わせが失敗した（ERROR の行を出す。欠けた行を「無い」と読まれないように）
+//! - git の問い合わせが失敗した（ERROR の行を出す。欠けた行を「無い」と読まれないように）。ref の有無と祖先の判定も、
+//!   「無い」（終了 1）とほかの失敗を分ける。どの ERROR でも標準出力には何も出さない（行は最後にまとめて出す）
 //!
 //! 既定のブランチはローカルの main / master（リモートの無いリポジトリ向けなので origin は見ない）。
 //!
@@ -44,24 +45,38 @@ fn failed(what: &str) -> i32 {
     1
 }
 
+/// `git <args>` の終了 0 を true、1 を false にする（show-ref --verify --quiet と merge-base --is-ancestor の「無い」）。
+/// ほかの失敗（壊れた packed-refs、読めないオブジェクト）は None。無いと読むと、既定ブランチや積み重なりを
+/// 黙って none と出す
+fn yes_no(dir: &Path, args: &[&str]) -> Option<bool> {
+    match crate::git::run(dir, args, None)?.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
+fn has_ref(dir: &Path, name: &str) -> Option<bool> {
+    yes_no(dir, &["show-ref", "--verify", "--quiet", name])
+}
+
 pub fn main(args: &[String]) -> i32 {
     let dir = Path::new(".");
     if git(dir, &["rev-parse", "--git-dir"]).is_none() {
         eprintln!("ERROR: git リポジトリではありません");
         return 1;
     }
-    let default = ["main", "master"].into_iter().find(|b| {
-        git(
-            dir,
-            &[
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{b}"),
-            ],
-        )
-        .is_some()
-    });
+    let mut default = None;
+    for b in ["main", "master"] {
+        match has_ref(dir, &format!("refs/heads/{b}")) {
+            Some(true) => {
+                default = Some(b);
+                break;
+            }
+            Some(false) => {}
+            None => return failed("git show-ref"),
+        }
+    }
     let target = match args.first().filter(|a| !a.is_empty()) {
         Some(t) => t.clone(),
         None => crate::git::current_branch(dir),
@@ -72,19 +87,13 @@ pub fn main(args: &[String]) -> i32 {
         );
         return 1;
     }
-    if git(
-        dir,
-        &[
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{target}"),
-        ],
-    )
-    .is_none()
-    {
-        eprintln!("ERROR: ローカルにブランチ {target} がありません");
-        return 1;
+    match has_ref(dir, &format!("refs/heads/{target}")) {
+        Some(true) => {}
+        Some(false) => {
+            eprintln!("ERROR: ローカルにブランチ {target} がありません");
+            return 1;
+        }
+        None => return failed("git show-ref"),
     }
     if target == "main" || target == "master" {
         eprintln!("ERROR: 既定ブランチ {target} 自身はマージの対象にしません");
@@ -95,27 +104,15 @@ pub fn main(args: &[String]) -> i32 {
     // 衝突を先に止める方が、手順の書き方に依らない
     for branch in default.into_iter().chain([target.as_str()]) {
         // show-ref の終了 1 は「無い」。ほかの失敗（壊れた packed-refs など）を無いと読むと、衝突の確認を迂回する
-        let Some(lookup) = crate::git::run(
-            dir,
-            &[
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/tags/{branch}"),
-            ],
-            None,
-        ) else {
-            return failed("git show-ref");
-        };
-        match lookup.status.code() {
-            Some(1) => {}
-            Some(0) => {
+        match has_ref(dir, &format!("refs/tags/{branch}")) {
+            Some(false) => {}
+            Some(true) => {
                 eprintln!(
                     "ERROR: ブランチ {branch} と同じ名前のタグ {branch} があります。短い名前の git の操作がタグを指すので、タグを消すか名前を変えてください（git tag -d {branch}）"
                 );
                 return 1;
             }
-            _ => return failed("git show-ref"),
+            None => return failed("git show-ref"),
         }
     }
     let Some(remotes) = git(dir, &["remote", "-v"]) else {
@@ -197,7 +194,7 @@ pub fn main(args: &[String]) -> i32 {
     ) else {
         return failed("git for-each-ref");
     };
-    let is_ancestor = |a: &str, b: &str| git(dir, &["merge-base", "--is-ancestor", a, b]).is_some();
+    let is_ancestor = |a: &str, b: &str| yes_no(dir, &["merge-base", "--is-ancestor", a, b]);
     let mut stacked = Vec::new();
     for b in branches.lines() {
         if b == target || Some(b) == default {
@@ -206,11 +203,20 @@ pub fn main(args: &[String]) -> i32 {
         let Some(b_tip) = git(dir, &["rev-parse", &format!("refs/heads/{b}")]) else {
             return failed("git rev-parse");
         };
-        if b_tip == target_tip || !is_ancestor(&b_tip, &target_tip) {
+        if b_tip == target_tip {
             continue;
         }
-        if default.is_some_and(|d| is_ancestor(&b_tip, &format!("refs/heads/{d}"))) {
-            continue;
+        match is_ancestor(&b_tip, &target_tip) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => return failed("git merge-base"),
+        }
+        if let Some(d) = default {
+            match is_ancestor(&b_tip, &format!("refs/heads/{d}")) {
+                Some(true) => continue,
+                Some(false) => {}
+                None => return failed("git merge-base"),
+            }
         }
         stacked.push(b.to_string());
     }
