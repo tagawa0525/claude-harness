@@ -1098,7 +1098,27 @@ mod tests {
         ]);
         assert_eq!(
             run(&set),
-            ["docs/adr/0001-a.md: error: number 0001 is also used by docs/adr/0001-b.md"]
+            [
+                "docs/adr/0001-a.md: error: number 0001 is also used by docs/adr/0001-b.md; \
+                 renumber the record this branch added with `design-records renumber 0001` (it commits), \
+                 then check with `git show` that the moved references point to the renumbered record"
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_issue_numbers_name_the_renumber_command_for_issues() {
+        let paths = vec![
+            "docs/issues/0001-a.md".to_string(),
+            "docs/issues/0001-b.md".to_string(),
+        ];
+        assert_eq!(
+            shown(check_issue_numbers(&paths)),
+            [
+                "docs/issues/0001-a.md: error: number 0001 is also used by docs/issues/0001-b.md; \
+                 renumber the record this branch added with `design-records renumber --kind issue 0001` (it commits), \
+                 then check with `git show` that the moved references point to the renumbered record"
+            ]
         );
     }
 
