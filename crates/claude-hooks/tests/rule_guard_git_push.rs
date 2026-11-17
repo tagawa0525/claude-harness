@@ -129,3 +129,16 @@ fn a_push_from_a_feature_branch_to_main_is_not_told_to_move_commits() {
     assert!(!reason.contains("/git-cherry-pick"), "{reason}");
     assert!(reason.contains("git push -u origin feat/x"), "{reason}");
 }
+
+#[test]
+fn a_push_of_local_main_from_a_feature_branch_is_told_to_move_the_commits() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    // 送る元は main（コミットは main にある）
+    let reason = repo.deny_reason("git push origin main").unwrap();
+    assert!(reason.contains("/git-cherry-pick"), "{reason}");
+    // 送る元がほかのブランチなら、そのブランチを feature branch の名前で送る
+    let reason = repo.deny_reason("git push origin other:main").unwrap();
+    assert!(!reason.contains("/git-cherry-pick"), "{reason}");
+    assert!(reason.contains("git push origin other:"), "{reason}");
+}

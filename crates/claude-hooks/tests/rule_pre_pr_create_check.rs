@@ -151,6 +151,10 @@ fn the_next_steps_defer_to_the_delegate_rules_for_workers() {
         .as_str()
         .unwrap_or_default();
     assert!(context.contains("/delegate の担当"), "{context}");
+    assert!(
+        context.contains("手順 10「許可の後にマージする」"),
+        "{context}"
+    );
 }
 
 #[test]
@@ -164,4 +168,32 @@ fn a_pr_from_a_fork_gets_no_next_steps() {
     ]);
     let out = repo.hook(CREATE);
     assert!(out.is_null(), "{out}");
+}
+
+#[test]
+fn a_pr_from_the_own_repository_gets_the_next_steps_whatever_the_order() {
+    let repo = Repo::new();
+    let fork = Repo::new();
+    fork.git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/other/app.git",
+    ]);
+    let fork_dir = fork.app();
+    let own_dir = repo.app();
+    for (first, second) in [(&fork_dir, &own_dir), (&own_dir, &fork_dir)] {
+        let command = format!(
+            "cd {} && {CREATE}; cd {} && {CREATE}",
+            first.display(),
+            second.display()
+        );
+        let out = repo.hook(&command);
+        assert!(
+            out["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .is_some_and(|c| c.contains("/gh-pr-review")),
+            "{command}: {out}"
+        );
+    }
 }

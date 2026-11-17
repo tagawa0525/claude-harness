@@ -410,4 +410,12 @@ fn a_bad_worktreelink_does_not_offer_links_to_paths_missing_from_the_main_worktr
         "{err}"
     );
     assert!(err.contains("メイン worktree に token.txt が無い"), "{err}");
+    // 用意した後に張るコマンドも、そのまま貼れる形で示す
+    let (_, worktree) = roots(&repo, "feat/missing");
+    assert!(
+        err.contains(&format!(
+            "  # mkdir -p {worktree} && ln -s {main_root}/token.txt {worktree}/token.txt\n"
+        )),
+        "{err}"
+    );
 }

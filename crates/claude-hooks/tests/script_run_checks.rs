@@ -481,6 +481,24 @@ fn features_of_the_members_of_a_workspace_root_are_noted() {
 }
 
 #[test]
+fn members_of_a_root_package_are_not_noted_as_checked() {
+    // 根が [package] を持つ workspace では、cargo は根の package だけを検査する（メンバーは既定で検査しない）
+    let repo = Repo::new();
+    repo.commit(
+        "Cargo.toml",
+        "[package]\nname = \"app\"\n\n[workspace]\nmembers = [\"crates/foo\"]\n",
+    );
+    repo.commit(
+        "crates/foo/Cargo.toml",
+        "[package]\nname = \"foo\"\n\n[features]\nextra = []\n",
+    );
+    repo.tool("cargo");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!stdout(&out).contains("NOTE: "), "{}", stdout(&out));
+}
+
+#[test]
 fn the_uncommitted_changes_are_listed_with_their_names_unquoted() {
     let repo = Repo::new();
     repo.git(&["checkout", "-q", "-b", "feat/x"]);
