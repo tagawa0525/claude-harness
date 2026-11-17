@@ -77,7 +77,12 @@ home-manager の activation も `claude-setup sync` を呼ぶので、Linux も�
 - 設定にコメントを書ける（rc が JSON のコメントを除く）。ファイル名は `config` で拡張子が無い（markdownlint が読む名前で、`config.json` は読まれない）
 - Linux の設定は、home-manager の宣言でなく、activation（と手動の `claude-sync`）が置く通常のファイルになる。利用者が手で
   直した設定は、次の同期で上書きされる
-- 古い `~/.markdownlintrc`（home-manager の symlink）は、`git-hooks.nix` から消えた世代の switch で home-manager が外す
+- 古い `~/.markdownlintrc`（home-manager の symlink）は、`git-hooks.nix` から消えた世代の switch で home-manager が外す。
+  手で作った残りの `~/.markdownlintrc` は外れない。markdownlint-cli は両方を読んで重ね、同じ規則の値が違えば
+  `~/.markdownlintrc` が `~/.config/markdownlint/config` に勝つ（2026-11-17、r995 で、MD013 の値を逆にした 2 つのファイルで確かめた）。
+  残りは消す
+- `HOME_FILES` から外したり名前を変えたりしても、配った設定は消えない（manifest が管理するのは skills と scripts だけ）。
+  消すなら、利用者が手で消す
 - Windows で `~` が `%USERPROFILE%` に解かれ、`%USERPROFILE%\.config\markdownlint\config` が markdownlint に読まれるかは、
   実機で確かめていない（上の表は Linux）。確かめて、結果をこの節に書く
 - VSCode の markdownlint 拡張がこの場所を読むかは、前の `~/.markdownlintrc` のときから確かめていない
