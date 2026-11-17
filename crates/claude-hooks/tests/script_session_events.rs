@@ -753,6 +753,16 @@ fn a_range_without_lines_fails_as_a_mistaken_range() {
 }
 
 #[test]
+fn a_range_without_lines_tells_to_fix_the_bounds_or_the_transcript_and_not_to_move_the_range() {
+    let home = Home::new();
+    let main = home.range_session();
+    assert_fails(
+        &home.run(&["--since", "2027-01-01T00:00Z", &main]),
+        "NEXT: 年と時差の書き誤りを直すか、区間が /clear の前など別のセッションにあれば、その記録を TRANSCRIPT に渡して再実行する。区間はずらさない（ずらすと、ほかの期間を数える）",
+    );
+}
+
+#[test]
 fn lines_of_a_subagent_count_when_the_transcript_has_none_in_the_range() {
     let home = Home::new();
     let main = home.range_session();
