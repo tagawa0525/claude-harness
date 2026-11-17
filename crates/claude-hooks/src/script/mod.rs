@@ -33,6 +33,7 @@ mod run_checks;
 mod session_events;
 mod time;
 mod usage_report;
+mod wait_step;
 mod worktree_add;
 
 /// スクリプトの中身（引数を受けて終了コードを返す）
@@ -70,6 +71,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("run-checks", run_checks::main),
     ("session-events", session_events::main),
     ("usage-report", usage_report::main),
+    ("wait-step", wait_step::main),
     ("worktree-add", worktree_add::main),
 ];
 
