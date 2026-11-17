@@ -208,7 +208,8 @@ fn wait(key: &str, files: &[String]) -> i32 {
     let start = now();
     // 前の呼び出しから報告の間隔を超えて空いていれば、終わった待ちの時計なので数え直す
     let mut reported = match read_state(&state) {
-        Some((r, last)) if start.saturating_sub(last) <= report => r,
+        // 途中の報告の時刻が今より後なら、時計が戻ったので数え直す（戻った分だけ REPORT が遅れないように）
+        Some((r, last)) if start.saturating_sub(last) <= report && r <= start => r,
         _ => start,
     };
     if let Err(code) = save(&state, reported) {
@@ -249,7 +250,8 @@ fn wait(key: &str, files: &[String]) -> i32 {
                 t.saturating_sub(reported) / 60
             );
             println!(
-                "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ。呼び出しの後に通知（終わりの通知、親の返事）が届いていれば、それで続ける。途中で親に報告するのは REPORT の後だけ"
+                "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ。呼び出しの後に通知（終わりの通知、親の返事）が届いていれば、それで続け、待つものがすべて済んだら {} で待ちを消す。途中で親に報告するのは REPORT の後だけ",
+                command(&["--end", key])
             );
             return 2;
         }
