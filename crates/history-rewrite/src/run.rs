@@ -39,6 +39,9 @@ const BLOB_MARKS: u64 = 1 << 40;
 /// fast-export の --fake-missing-tagger が付ける仮の tagger（git 2.56.0 の fast-export.c で確かめた）
 const FAKE_TAGGER: &[u8] = b"Unspecified Tagger <unspecified-tagger> 0 +0000";
 
+/// run が語の指定を記録し、sync-worktrees が読む、作業ディレクトリの中のファイルの名前
+pub const WORDS_RECORD: &str = "words";
+
 /// 元の番号から新しい番号への対応表
 pub type CommitMap = HashMap<String, String>;
 
@@ -1091,6 +1094,7 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
         )));
     }
     refuse_unreachable_detached(&source)?;
+    let words_record = words.resolved()?.record()?;
     std::fs::create_dir_all(&workdir).map_err(|e| Stop(format!("{}: {e}", workdir.display())))?;
     let original = workdir.join("original.git");
     let rewritten = workdir.join("rewritten");
@@ -1189,6 +1193,10 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
     let map_path = workdir.join("commit-map");
     write_map(&map_path, &last)?;
     println!("MAP: {}", map_path.display());
+    let words_path = workdir.join(WORDS_RECORD);
+    std::fs::write(&words_path, words_record)
+        .map_err(|e| Stop(format!("{}: 書けない: {e}", words_path.display())))?;
+    println!("WORDS: {}", words_path.display());
     Ok(())
 }
 

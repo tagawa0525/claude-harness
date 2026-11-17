@@ -570,11 +570,33 @@ fn read_state(path: &Path) -> Result<Vec<(PathBuf, String, String)>, Stop> {
     Ok(rows)
 }
 
+/// 使う語の指定。run の記録があればそれを使い、違う指定を渡されたら止める（未コミットの変更に、書き換えた履歴と
+/// 違う変換を当てないため）。記録の無い作業ディレクトリでは、渡した指定を使う
+fn recorded_words(given: &Words, workdir: &Path) -> Result<Words, Stop> {
+    let path = workdir.join(crate::run::WORDS_RECORD);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(given.clone()),
+        Err(e) => return Err(Stop(format!("{}: 読めない: {e}", path.display()))),
+    };
+    let recorded = Words::parse_record(&text, &path.display().to_string())?;
+    if given.is_empty() || given.resolved()?.same(&recorded) {
+        return Ok(recorded);
+    }
+    Err(Stop(format!(
+        "語の指定が、run が {} に記録したものと違う（記録: {}。渡した指定: {}）。語の指定を省けば記録を使う",
+        path.display(),
+        recorded.args(),
+        given.args()
+    )))
+}
+
 /// sync-worktrees の本体。LEFT か ERROR が 1 つでもあれば false
 pub fn sync_worktrees(words: &Words, workdir: &Path) -> Result<bool, Stop> {
-    let mut transformer = Transformer::new(words)?;
     let workdir =
         crate::real_path(workdir).map_err(|e| Stop(format!("{}: {e}", workdir.display())))?;
+    let words = recorded_words(words, &workdir)?;
+    let mut transformer = Transformer::new(&words)?;
     let map_path = workdir.join("commit-map");
     let mapping = read_map(&map_path)?;
     let rows = read_state(&workdir.join("worktree-state"))?;
