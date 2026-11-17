@@ -9,7 +9,7 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 `~/.claude` の外へ置くファイルは、リポジトリの `config/markdownlint/config`（markdownlint のグローバルの設定）だけで、
 `~/.config/markdownlint/config` に置く（ADR-0093）。ソースが正で、中身が違えば上書きする。
 
-配る元のディレクトリは dot なしの `claude/` と `config/` で、このリポジトリは Claude Code のプロジェクトの設定（`.claude/`）を
+配る元のディレクトリは dot なしの `claude/` と `config/` で、このリポジトリは追跡する Claude Code のプロジェクトの設定（`.claude/`）を
 持たない（ADR-0094）。このリポジトリのセッションも、配られた `~/.claude` の指示とスキルを読む。worktree で直した指示や
 スキルをセッションで試すときは、`claude-sync <worktree>` で入れる。
 

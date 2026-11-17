@@ -75,8 +75,9 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
   `~/.config/markdownlint/config` に置く。ソースのパスと置き先のパスは、同期のコードが対で持つ（ADR-0093 の「同じ相対パス」は
   やめる。ADR-0093 の「## 変更」）。`.claude/` を持つ古い版のソースは読まない（古い名前を探す分岐を残すと、名前が 2 つ
   ある状態が続く）
-- `.claude/settings.json`（`claudeMdExcludes`）と、`.gitignore` の `.claude/settings.local.json` は消す。このリポジトリは
-  プロジェクトの設定を持たない
+- `.claude/settings.json`（`claudeMdExcludes`）は消す。このリポジトリは、追跡するプロジェクトの設定を持たない。
+  `.gitignore` の `.claude/settings.local.json` は残す（Claude Code は、このリポジトリのセッションで許可を選ぶと、
+  `.claude/` が無くてもこのファイルを作る。2026-11-17、Claude Code 2.1.326 で、main の作業ツリーに作られた）
 - 変更の後のレビューの要否とレビューのレベルを決める「規則の文書」の判定（`check-merge-review`、`review-level.sh`）、
   `/retro` の `prose-size.sh` のスキルの判定は、リポジトリの先頭の `claude/` を `.claude/` と同じに数える（ほかの
   リポジトリの `.claude/` はそのまま数える）。`guard-sbatch` が通すテストは `claude/tests/scripts/slurm-run.sh`、
@@ -88,7 +89,7 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
 
 ### 帰結
 
-- 良い点: 配る元が `ls` に出る。このリポジトリに Claude Code のプロジェクトの設定が無くなる
+- 良い点: 配る元が `ls` に出る。このリポジトリに 追跡する Claude Code のプロジェクトの設定が無くなる
 - 悪い点: このリポジトリの worktree で指示やスキルを直しても、そのセッションには効かない。試すときは
   `claude-sync <worktree>` で `~/.claude` に入れる（ほかのセッションにも効く。試し終えたら引数なしの `claude-sync` で main の
   版に戻す）。ADR-0080 の「指示を直すブランチでは、同期しなくてもその worktree のセッションに効く」は無くなる
