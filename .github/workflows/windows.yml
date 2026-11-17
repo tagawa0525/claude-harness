@@ -20,7 +20,7 @@ jobs:
         crate: [design-records, claude-hooks, ja-terms, claude-setup, commit-refs, fix-markdown-lint, history-rewrite]
     defaults:
       run:
-        working-directory: modules/home/parts/${{ matrix.crate }}
+        working-directory: crates/${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v5
       # history-rewrite の run はステージ 2 で PATH の commit-refs を呼ぶ
@@ -65,10 +65,10 @@ jobs:
       - name: Follow docs/windows.md
         run: |
           for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records; do
-            cargo install --locked --force --root ~/.claude --path "modules/home/parts/$crate"
+            cargo install --locked --force --root ~/.claude --path "crates/$crate"
           done
           ~/.claude/bin/claude-setup sync "$PWD"
-          ~/.claude/bin/claude-setup settings --static modules/home/parts/claude-settings.json \
+          ~/.claude/bin/claude-setup settings --static claude-settings.json \
             --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)" --stop "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
           grep -qsxF 'export PATH="$HOME/.claude/bin:$PATH"' ~/.bashrc || echo 'export PATH="$HOME/.claude/bin:$PATH"' >>~/.bashrc
       # スキルの sh のスクリプトは、Linux と同じ "$HOME/.claude/bin/claude-hooks" で呼ぶ（ADR-0087）。Git Bash がこのパスに

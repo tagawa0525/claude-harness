@@ -11,7 +11,7 @@ allowed-tools:
 
 # 履歴の語を直す
 
-`history-rewrite`（`modules/home/parts/history-rewrite/`）で、対象のリポジトリ（$ARGUMENTS）のすべてのブランチと
+`history-rewrite`（`crates/history-rewrite/`）で、対象のリポジトリ（$ARGUMENTS）のすべてのブランチと
 タグの語を辞書で直し、番号を `commit-refs rewrite-history` で付け直す。ツールは対象のリポジトリに書き込まず、
 作業ディレクトリで書き換えて照合する。生きているリポジトリに移すのは、この手順の 4 から。
 

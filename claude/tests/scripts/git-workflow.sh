@@ -8,7 +8,7 @@
 
 # post-merge-cleanup が予約のタグを消すのに使う design-records（設計の記録の CLI）は、リポジトリのクレートを
 # ビルドして PATH の先頭に置く。lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
-DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
+DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../crates/design-records" && pwd)
 source "$(dirname "$0")/../cargo-bin.sh"
 DESIGN_RECORDS_BIN=$(cargo_bin "$DESIGN_RECORDS_DIR" design-records) || exit 1
 PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"

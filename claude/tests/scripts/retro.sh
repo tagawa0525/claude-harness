@@ -339,7 +339,7 @@ MEM="$TEST_ROOT/memory"
 mkdir -p "$MEM"
 # 辞書の検査（ja-terms check）は偽物にし、claude-hooks に CLAUDE_HOOKS_JA_TERMS で渡す（nix のラッパーはこれを store の
 # パスに固定するので、CLAUDE_HOOKS_BIN には cargo でビルドしたものを渡す）。辞書の規則（コードスパンを数えないなど）は本物で
-# modules/home/parts/tests/ja-terms.sh が確かめる。既定は崩れた語が無い
+# nix/tests/ja-terms.sh が確かめる。既定は崩れた語が無い
 make_fake_tool ja-terms '  check\ *) exit 0 ;;'
 export CLAUDE_HOOKS_JA_TERMS="$TEST_ROOT/fakebin/ja-terms"
 cat > "$MEM/MEMORY.md" <<'EOF'

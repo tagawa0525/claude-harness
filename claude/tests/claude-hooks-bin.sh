@@ -10,7 +10,7 @@
 if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
   # shellcheck source=cargo-bin.sh
   source "$(dirname "${BASH_SOURCE[0]}")/cargo-bin.sh"
-  CLAUDE_HOOKS_BIN=$(cargo_bin "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../modules/home/parts/claude-hooks" && pwd)" claude-hooks) || exit 1
+  CLAUDE_HOOKS_BIN=$(cargo_bin "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../crates/claude-hooks" && pwd)" claude-hooks) || exit 1
 fi
 if [[ "$CLAUDE_HOOKS_BIN" != /* ]]; then
   echo "CLAUDE_HOOKS_BIN は絶対パスで渡してください: $CLAUDE_HOOKS_BIN" >&2

@@ -55,7 +55,7 @@ done
 # スキル、スクリプト、CLAUDE.md は PC 全体のセッションで読み込まれる。nixfiles の ADR の番号は、ほかの
 # プロジェクトでは参照できないノイズになるので、番号を書かず、その場で規則と理由が分かるように書く。
 # ADR-0123、ADR-46、adr-0123、ADR 0123、docs/adr/0123-... のどれも対象にする（書式の例は NNNN と書く）
-HOOK_SRC="$CLAUDE_DIR/../modules/home/parts/claude-hooks/src"
+HOOK_SRC="$CLAUDE_DIR/../crates/claude-hooks/src"
 ADR_REF='\b(ADR|adr)[- ]?[0-9]{2,5}|docs/adr/[0-9]{2,5}'
 
 it "skills: ADR の番号の検査の対象（CLAUDE.md、skills、scripts、hook のルール）が見つかる"

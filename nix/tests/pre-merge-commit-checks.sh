@@ -1,0 +1,448 @@
+#!/usr/bin/env bash
+# =============================================================================
+# main / master へのマージコミットが、マージ結果に対する品質チェックを通ったときだけ
+# 作られることを検証する
+# =============================================================================
+# ../git-hooks.nix の pre-merge-commit は core.hooksPath でグローバル配布され、マージコミットを
+# 作る直前（作業ツリーと index がマージ結果になった状態）に run-checks.sh --merge を実行する。
+# 競合を解決して git commit（git merge --continue）で締めるときは pre-merge-commit が
+# 呼ばれず pre-commit だけが呼ばれるので、pre-commit が MERGE_HEAD を見て同じ検査に回す。
+#
+# 実物の run-checks.sh（このリポジトリの claude/skills/language-checks/scripts）を一時 HOME の
+# ~/.claude に置き、実物の ruff / markdownlint で判定させる。
+#
+# 使い方（リポジトリルートで実行）:
+#   ./nix/tests/pre-merge-commit-checks.sh
+
+set -euo pipefail
+
+ROOT=$(git rev-parse --show-toplevel)
+
+for tool in ruff markdownlint; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "✗ $tool が PATH にない。run-checks.sh の判定を再現できないので、このテストは成立しない"
+    exit 1
+  fi
+done
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+HOOKS="$WORK/hooks"
+mkdir -p "$HOOKS"
+for hook in pre-commit pre-merge-commit; do
+  echo "==> $hook hook をビルドする（homeConfigurations.test）"
+  cp "$(nix build --no-link --print-out-paths --option warn-dirty false \
+    "$ROOT#homeConfigurations.test.config.xdg.configFile.\"git/hooks/$hook\".source")" \
+    "$HOOKS/$hook"
+  chmod +x "$HOOKS/$hook"
+done
+
+# 同期のコマンドは、ホームを差し替える前にビルドする（nix の設定とキャッシュは利用者のホームの下）
+claude_setup=$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-setup")
+# run-checks.sh の中身は claude-hooks script run-checks で、sh は CLAUDE_HOOKS_BIN か ~/.claude/bin/claude-hooks を起動する。
+# 一時の ~/.claude には claude-setup sync がバイナリを置かないので、このブランチのものを渡す
+CLAUDE_HOOKS_BIN="$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-hooks")/bin/claude-hooks"
+export CLAUDE_HOOKS_BIN
+
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+swap_home "$WORK/home"
+# 一時の ~/.claude は、配るときと同じ claude-setup sync で作る。必要なファイルを選んでコピーすると、run-checks.sh が
+# 読むファイルが増えたときに欠ける（scripts/lib/slurm-exclusive.sh が欠けて、検査を通るマージが止まった）
+"$claude_setup/bin/claude-setup" sync "$ROOT" >/dev/null
+# 手元の squeue を呼ばず、排他のジョブが無い状態にする（run-checks.sh は排他のジョブの間、1 コアに限る）
+mkdir -p "$WORK/bin"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/squeue"
+chmod +x "$WORK/bin/squeue"
+export PATH="$WORK/bin:$PATH"
+export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+export GIT_CONFIG_NOSYSTEM=1
+git config --global user.name test
+git config --global user.email test@example.com
+git config --global init.defaultBranch main
+git config --global core.hooksPath "$HOOKS"
+# 検査は Claude Code セッションに限らない。main ガード（GitHub リモートのみ）も対象外
+unset CLAUDECODE
+
+PASS=0
+FAIL=0
+
+ok() { PASS=$((PASS + 1)); echo "✓ $1"; }
+ng() { FAIL=$((FAIL + 1)); echo "✗ $1"; sed 's/^/    /' "$WORK/out"; }
+
+# 使わない import（F401）はどの版の ruff でも既定で落ちる違反
+BAD_PY=$'import os\n'
+GOOD_PY=$'print("ok")\n'
+# 末尾の空白 3 つ（MD009）は markdownlint --fix が直せる違反。マージでは直さずに止める
+BAD_MD=$'# Title\n\nSome text.   \n'
+
+# new_repo <dir>: main に shared.txt だけを持つ repo を作る
+new_repo() {
+  git init -q -b main "$1"
+  echo base > "$1/shared.txt"
+  git -C "$1" add shared.txt
+  git -C "$1" commit -q --no-verify -m "chore: init"
+}
+
+# branch_with <repo> <branch> <file> <content>: main から branch を作り、file を足してコミットする。
+# 違反を含むファイルも置けるよう pre-commit は飛ばす（マージの検査だけを見る）
+branch_with() {
+  git -C "$1" switch -q -c "$2" main
+  printf '%s' "$4" > "$1/$3"
+  git -C "$1" add "$3"
+  git -C "$1" commit -q --no-verify -m "feat: $3"
+  git -C "$1" switch -q main
+}
+
+# run <repo> <command...>: repo で実行し、出力を $WORK/out に残して終了コードを返す
+run() {
+  local repo="$1" rc=0
+  shift
+  (cd "$repo" && "$@") >"$WORK/out" 2>&1 </dev/null || rc=$?
+  return $rc
+}
+
+parents() { git -C "$1" rev-list --parents -n 1 HEAD | wc -w; }
+
+# --- 1. 検査を通るマージ結果: マージコミットが作られる ---------------------------------------
+R="$WORK/pass"
+new_repo "$R"
+branch_with "$R" feat good.py "$GOOD_PY"
+if run "$R" git merge --no-ff -m "Merge: good" feat && [ "$(parents "$R")" -eq 3 ] \
+  && grep -q "ALL_OK" "$WORK/out"; then
+  ok "検査を通るマージ結果は main にマージコミットとして入る"
+else
+  ng "検査を通るマージ結果なのにマージコミットが作られない（または検査が走っていない）"
+fi
+
+# --- 2. 検査に落ちるマージ結果: マージコミットを作らず、修正方法を示す -------------------------
+R="$WORK/fail"
+new_repo "$R"
+branch_with "$R" feat bad.py "$BAD_PY"
+BEFORE=$(git -C "$R" rev-parse HEAD)
+if run "$R" git merge --no-ff -m "Merge: bad" feat; then
+  ng "lint に落ちるマージ結果なのに main にマージコミットが作られた"
+elif [ "$(git -C "$R" rev-parse HEAD)" != "$BEFORE" ]; then
+  ng "マージは失敗扱いなのに HEAD が動いた"
+elif grep -q "FAILED: python lint" "$WORK/out" && grep -q "git merge --abort" "$WORK/out"; then
+  ok "lint に落ちるマージ結果ではマージコミットを作らず、失敗した検査と修正方法を示す"
+else
+  ng "マージは止まったが、失敗した検査か修正方法（git merge --abort）が出力にない"
+fi
+# 止まったあと git commit で締めようとしても、同じ検査で止まる
+if run "$R" git commit --no-edit; then
+  ng "pre-merge-commit で止まったマージが git commit で検査なしに締められた"
+elif grep -q "FAILED: python lint" "$WORK/out"; then
+  ok "pre-merge-commit で止まったマージは git commit でも同じ検査で止まる"
+else
+  ng "git commit は止まったが、失敗した検査（python lint）が出力にない"
+fi
+git -C "$R" merge --abort
+
+# --- 3. Markdown の違反は直さずに止める（マージコミットに親にない修正を混ぜない） ----------------
+R="$WORK/md"
+new_repo "$R"
+branch_with "$R" feat README.md "$BAD_MD"
+if run "$R" git merge --no-ff -m "Merge: md" feat; then
+  ng "lint に落ちる Markdown のマージ結果なのにマージコミットが作られた"
+elif ! grep -q "FAILED: markdown" "$WORK/out"; then
+  ng "Markdown のマージは止まったが、失敗した検査（markdown）が出力にない"
+else
+  staged=$(git -C "$R" show :README.md; printf x); staged=${staged%x}
+  if [[ "$staged" == "$BAD_MD" ]]; then
+    ok "Markdown の違反はマージで自動修正せずに止める"
+  else
+    ng "マージの検査が Markdown を書き換えた"
+  fi
+  git -C "$R" merge --abort
+fi
+
+# --- 4. main / master 以外へのマージは検査しない ---------------------------------------------
+R="$WORK/other"
+new_repo "$R"
+branch_with "$R" feat bad.py "$BAD_PY"
+git -C "$R" switch -q -c topic main
+if run "$R" git merge --no-ff -m "Merge: into topic" feat && [ "$(parents "$R")" -eq 3 ]; then
+  ok "main 以外のブランチへのマージは検査しない"
+else
+  ng "main 以外のブランチへのマージが止められた"
+fi
+
+# --- 5. master も main と同じく検査する -------------------------------------------------------
+R="$WORK/master"
+new_repo "$R"
+git -C "$R" branch -q -m main master
+git -C "$R" switch -q -c feat master
+printf '%s' "$BAD_PY" > "$R/bad.py"
+git -C "$R" add bad.py
+git -C "$R" commit -q --no-verify -m "feat: bad.py"
+git -C "$R" switch -q master
+if run "$R" git merge --no-ff -m "Merge: bad" feat; then
+  ng "lint に落ちるマージ結果なのに master にマージコミットが作られた"
+elif ! grep -q "FAILED: python lint" "$WORK/out"; then
+  ng "master へのマージは止まったが、失敗した検査（python lint）が出力にない"
+else
+  ok "master へのマージも検査する"
+  git -C "$R" merge --abort
+fi
+
+# --- 6. fast-forward はマージコミットを作らないので検査しない ---------------------------------
+R="$WORK/ff"
+new_repo "$R"
+branch_with "$R" feat bad.py "$BAD_PY"
+if run "$R" git merge --ff-only feat && [ "$(git -C "$R" rev-parse HEAD)" = "$(git -C "$R" rev-parse feat)" ]; then
+  ok "git merge --ff-only は検査なしで進む（マージコミットがない）"
+else
+  ng "fast-forward が止められた"
+fi
+
+# --- 7. 競合を解決して締めるときも検査する（pre-commit 経由） ---------------------------------
+R="$WORK/conflict"
+new_repo "$R"
+git -C "$R" switch -q -c feat-bad main
+echo theirs > "$R/shared.txt"
+printf '%s' "$BAD_PY" > "$R/bad.py"
+git -C "$R" add shared.txt bad.py
+git -C "$R" commit -q --no-verify -m "feat: bad"
+git -C "$R" switch -q -c feat-good main
+echo theirs > "$R/shared.txt"
+printf '%s' "$GOOD_PY" > "$R/good.py"
+git -C "$R" add shared.txt good.py
+git -C "$R" commit -q --no-verify -m "feat: good"
+git -C "$R" switch -q main
+echo ours > "$R/shared.txt"
+git -C "$R" commit -q --no-verify -am "chore: ours"
+BEFORE=$(git -C "$R" rev-parse HEAD)
+
+run "$R" git merge --no-ff -m "Merge: bad" feat-bad || true
+echo resolved > "$R/shared.txt"
+git -C "$R" add shared.txt
+if run "$R" env GIT_EDITOR=true git merge --continue; then
+  ng "競合を解決したマージ結果が lint に落ちるのに git merge --continue でマージコミットが作られた"
+elif [ "$(git -C "$R" rev-parse HEAD)" = "$BEFORE" ] && grep -q "FAILED: python lint" "$WORK/out"; then
+  ok "競合を解決して git merge --continue で締めるときも検査で止める"
+else
+  ng "git merge --continue は失敗したが、検査の失敗として止まっていない"
+fi
+git -C "$R" merge --abort
+
+run "$R" git merge --no-ff -m "Merge: good" feat-good || true
+echo resolved > "$R/shared.txt"
+# commit -a では hook に渡る index が一時ファイル（index.lock）になる
+if run "$R" git commit -a --no-edit && [ "$(parents "$R")" -eq 3 ] && grep -q "ALL_OK" "$WORK/out"; then
+  ok "競合を解決して git commit -a で締めるとき、検査を通ればマージコミットが作られる"
+else
+  ng "競合を解決した検査を通るマージ結果が git commit -a で締められない（または検査が走っていない）"
+fi
+
+# --- 8. 作業ツリーにマージ結果以外の変更があれば止める ----------------------------------------
+# 検査は作業ツリーで走るので、コミットされない変更があると、マージコミットとは別物を検査してしまう
+R="$WORK/dirty"
+new_repo "$R"
+echo local > "$R/local.txt"
+git -C "$R" add local.txt
+git -C "$R" commit -q --no-verify -m "chore: local"
+branch_with "$R" feat good.py "$GOOD_PY"
+echo "uncommitted" > "$R/local.txt"
+if run "$R" git merge --no-ff -m "Merge: dirty" feat; then
+  ng "作業ツリーに未コミットの変更があるのにマージコミットが作られた"
+elif grep -q "local.txt" "$WORK/out" && [ "$(cat "$R/local.txt")" = "uncommitted" ]; then
+  ok "作業ツリーにマージ結果以外の変更があれば止め、そのファイルを示す（変更は残す）"
+else
+  ng "作業ツリーの変更で止まったが、ファイルを示していないか変更が消えた"
+fi
+
+# 追跡していないファイルもコミットされないが、ruff check . や pytest のような木全体の検査は見る
+# （検査を通る中身でも、コミットされる内容と違うものを検査したことになる）
+R="$WORK/untracked"
+new_repo "$R"
+branch_with "$R" feat good.py "$GOOD_PY"
+printf '%s' "$GOOD_PY" > "$R/scratch.py"
+if run "$R" git merge --no-ff -m "Merge: untracked" feat; then
+  ng "追跡していないファイルがあるのにマージコミットが作られた"
+elif grep -q "マージ結果以外" "$WORK/out" && grep -q "scratch.py" "$WORK/out" && [ -f "$R/scratch.py" ]; then
+  ok "追跡していないファイルがあれば止め、そのファイルを示す（ファイルは残す）"
+else
+  ng "追跡していないファイルで止まったが、ファイルを示していないかファイルが消えた"
+fi
+# .gitignore がマージで変わらなければ、無視の行が外れた旨は出さない
+if grep -q "無視されていた" "$WORK/out"; then
+  ng ".gitignore が変わらないマージで、無視の行が外れた旨を出した"
+else
+  ok ".gitignore が変わらないマージでは、無視の行が外れた旨を出さない"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+# マージするブランチが .gitignore から行を外すと、マージ先の作業ツリーに残っていた生成物
+# （HEAD の .gitignore では無視されていたもの）が未追跡として現れて止まる。止めたまま、
+# どの .gitignore が変わり、どのファイルが HEAD で無視されていたかを示す
+R="$WORK/unignored"
+new_repo "$R"
+mkdir -p "$R/sub"
+printf 'gen/\n*.log\n' > "$R/.gitignore"
+printf '/out.bin\n/出力.bin\n' > "$R/sub/.gitignore"
+git -C "$R" add .gitignore sub/.gitignore
+git -C "$R" commit -q --no-verify -m "chore: ignore outputs"
+git -C "$R" switch -q -c feat main
+printf '*.log\n' > "$R/.gitignore"
+: > "$R/sub/.gitignore"
+printf '%s' "$GOOD_PY" > "$R/good.py"
+git -C "$R" add .gitignore sub/.gitignore good.py
+git -C "$R" commit -q --no-verify -m "feat: drop the old outputs"
+git -C "$R" switch -q main
+mkdir -p "$R/gen"
+echo gen > "$R/gen/x.bin"
+echo out > "$R/sub/out.bin"
+echo out > "$R/sub/出力.bin"
+echo log > "$R/run.log"
+echo note > "$R/new.txt"
+# listed <見出しの語>: その語を含む見出しの行から、次の字下げの浅い行までの一覧（1 行に 1 つ、字下げを除く）
+listed() { awk -v h="$1" 'index($0, h) {on=1; next} on && /^     / {print; next} {on=0}' "$WORK/out" | sed 's/^ *//'; }
+# 印の付いた一覧（HEAD の .gitignore では無視されていたファイル）と、マージで変わる .gitignore の一覧
+marked() { listed "無視されていた"; }
+changed_ignores() { listed "マージで変わる .gitignore"; }
+if run "$R" git merge --no-ff -m "Merge: unignored" feat; then
+  ng ".gitignore から外れた生成物が未追跡で残るのにマージコミットが作られた"
+elif ! grep -q "マージ結果以外" "$WORK/out"; then
+  ng ".gitignore から外れた生成物で止まったが、作業ツリーの変更として止まっていない"
+elif [ "$(changed_ignores | tr '\n' ' ')" != ".gitignore sub/.gitignore " ]; then
+  ng ".gitignore から外れた生成物で止まったが、マージで変わる .gitignore（ルートと sub/）を 1 行ずつ示していない"
+elif [ "$(marked | LC_ALL=C sort | tr '\n' ' ')" != "gen/x.bin sub/out.bin sub/出力.bin " ]; then
+  ng "HEAD の .gitignore で無視されていたファイルだけに印が付いていない（印: $(marked | tr '\n' ' ')）"
+elif grep -q '\\[0-7][0-7][0-7]' "$WORK/out"; then
+  ng "非 ASCII のパスを 8 進で引用して出した（印の一覧と書き方が食い違う）"
+elif ! grep -q "new.txt" "$WORK/out"; then
+  ng "HEAD でも無視されていない未追跡のファイル（new.txt）を示していない"
+elif [ "$(grep -c -F -e gen/x.bin -e sub/out.bin -e sub/出力.bin "$WORK/out")" -ne 3 ]; then
+  ng "印の付いたファイルを、作業ツリーの変更の一覧と印の一覧に 2 度並べた"
+elif ! { [ -f "$R/gen/x.bin" ] && [ -f "$R/sub/out.bin" ] && [ -f "$R/sub/出力.bin" ]; }; then
+  ng ".gitignore から外れた生成物を hook が消した"
+else
+  ok ".gitignore から外れた生成物で止め、変わる .gitignore と HEAD で無視されていたファイルを示す（ファイルは残す）"
+fi
+# 理由（マージするブランチが .gitignore から外した生成物）と、修正方法（キャッシュから戻せる版と同じなら消し、
+# 記録された版と違えば消す前に原因を調べる）を示す
+FIX=$(grep "修正方法:" "$WORK/out" || true)
+if ! grep -q "マージするブランチが .gitignore から外した" "$WORK/out"; then
+  ng ".gitignore から外れた生成物で止まったが、マージするブランチが .gitignore から外したことを理由として示していない"
+elif ! { [[ "$FIX" == *"キャッシュ"* ]] && [[ "$FIX" == *"原因を調べ"* ]]; }; then
+  ng ".gitignore から外れた生成物の修正方法が、キャッシュから戻せるなら消すことと、版が違えば原因を調べることを示していない"
+else
+  ok ".gitignore から外れた生成物の理由と、消す条件と原因を調べる条件を修正方法に示す"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+# ブランチがディレクトリを移すと、無視の行を持っていた .gitignore は元の場所から消える。
+# 生成物を現した元の .gitignore も、変わる .gitignore として示す（改名として新しい名前だけにしない）。
+# パスの中のコンマは区切りに書き換えない
+R="$WORK/moved-ignore"
+new_repo "$R"
+mkdir -p "$R/old"
+printf '/gen.bin\n' > "$R/old/.gitignore"
+printf 'keep\n' > "$R/old/input.txt"
+git -C "$R" add old/.gitignore old/input.txt
+git -C "$R" commit -q --no-verify -m "chore: ignore the old output"
+git -C "$R" switch -q -c feat main
+git -C "$R" mv old "new,dir"
+git -C "$R" commit -q --no-verify -m "refactor: move old to new,dir"
+git -C "$R" switch -q main
+echo gen > "$R/old/gen.bin"
+if run "$R" git merge --no-ff -m "Merge: moved" feat; then
+  ng "移したディレクトリの生成物が未追跡で残るのにマージコミットが作られた"
+elif [ "$(changed_ignores | tr '\n' ' ')" != "new,dir/.gitignore old/.gitignore " ]; then
+  ng "移した .gitignore の元の場所（old/.gitignore）と、コンマを含む移した先のパスを、変わる .gitignore としてそのまま示していない"
+elif [ "$(marked)" != "old/gen.bin" ]; then
+  ng "移したディレクトリに残った生成物に印が付いていない（印: $(marked | tr '\n' ' ')）"
+else
+  ok "ブランチがディレクトリを移したとき、元の .gitignore も示し、残った生成物に印を付ける"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+# 印を付ける判定（一時リポジトリ）に失敗しても、マージは止め、変更の一覧と修正方法は出す。
+# 判定に失敗したことも示す（印が無いのを「外れた生成物は無い」と読まれないように）
+if run "$R" env TMPDIR="$WORK/no-such-dir" git merge --no-ff -m "Merge: moved" feat; then
+  ng "印の判定に失敗したのにマージコミットが作られた"
+elif ! { grep -q "old/gen.bin" "$WORK/out" && grep -q "修正方法: git merge --abort" "$WORK/out"; }; then
+  ng "印の判定に失敗したとき、変更の一覧か修正方法を出していない"
+elif ! grep -q "判定に失敗" "$WORK/out"; then
+  ng "印の判定に失敗したことを示していない"
+else
+  ok "印の判定に失敗しても止め、変更の一覧と修正方法と判定の失敗を示す"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+# .gitignore で除外したファイル（ビルド成果物など）は検査のツールも除外するので止めない
+R="$WORK/ignored"
+new_repo "$R"
+echo "scratch/" > "$R/.gitignore"
+git -C "$R" add .gitignore
+git -C "$R" commit -q --no-verify -m "chore: ignore"
+branch_with "$R" feat good.py "$GOOD_PY"
+mkdir -p "$R/scratch" && echo x > "$R/scratch/note.txt"
+if run "$R" git merge --no-ff -m "Merge: ignored" feat && [ "$(parents "$R")" -eq 3 ]; then
+  ok ".gitignore で除外したファイルは止めない"
+else
+  ng ".gitignore で除外したファイルでマージが止められた"
+fi
+
+# --- 9. fork（upstream リモートあり）では検査しない ---------------------------------------------
+R="$WORK/fork"
+new_repo "$R"
+git -C "$R" remote add upstream https://example.invalid/upstream.git
+branch_with "$R" feat bad.py "$BAD_PY"
+if run "$R" git merge --no-ff -m "Merge: fork" feat && [ "$(parents "$R")" -eq 3 ] \
+  && grep -q "飛ばします" "$WORK/out"; then
+  ok "upstream リモートのある fork では検査を飛ばし、その旨を出す"
+else
+  ng "fork のマージが止められた（または飛ばした旨の出力がない）"
+fi
+
+# --- 10. run-checks.sh が無ければ止める（検査できないままマージしない） ------------------------
+R="$WORK/missing"
+new_repo "$R"
+branch_with "$R" feat good.py "$GOOD_PY"
+mv "$HOME/.claude" "$HOME/.claude.off"
+if run "$R" git merge --no-ff -m "Merge: missing" feat; then
+  ng "run-checks.sh が無いのにマージコミットが作られた"
+elif grep -q "run-checks.sh" "$WORK/out"; then
+  ok "run-checks.sh が無ければマージコミットを作らず、その旨を示す"
+else
+  ng "run-checks.sh が無くて止まったが、理由が出力にない"
+fi
+mv "$HOME/.claude.off" "$HOME/.claude"
+
+# --- 11. プロジェクトローカルの pre-merge-commit は検査の前に走り、検査を置き換えない --------------
+# 置き換えると、ローカルの hook があるだけで --no-verify なしに検査を外せてしまう
+R="$WORK/local-hook"
+new_repo "$R"
+branch_with "$R" feat bad.py "$BAD_PY"
+mkdir -p "$R/.git/hooks"
+printf '#!/bin/sh\necho "local hook ran"\n' > "$R/.git/hooks/pre-merge-commit"
+chmod +x "$R/.git/hooks/pre-merge-commit"
+if run "$R" git merge --no-ff -m "Merge: local" feat; then
+  ng "ローカルの pre-merge-commit があると、lint に落ちるマージ結果が検査なしで main に入る"
+elif grep -q "local hook ran" "$WORK/out" && grep -q "FAILED: python lint" "$WORK/out"; then
+  ok "ローカルの pre-merge-commit を実行したうえで、グローバルの検査も行う"
+else
+  ng "マージは止まったが、ローカルの hook か検査のどちらかが走っていない"
+fi
+git -C "$R" merge --abort 2>/dev/null || true
+
+R="$WORK/local-hook-fail"
+new_repo "$R"
+branch_with "$R" feat good.py "$GOOD_PY"
+mkdir -p "$R/.git/hooks"
+printf '#!/bin/sh\necho "local hook rejects"\nexit 1\n' > "$R/.git/hooks/pre-merge-commit"
+chmod +x "$R/.git/hooks/pre-merge-commit"
+if run "$R" git merge --no-ff -m "Merge: local fail" feat; then
+  ng "ローカルの pre-merge-commit が失敗したのにマージコミットが作られた"
+elif grep -q "local hook rejects" "$WORK/out"; then
+  ok "ローカルの pre-merge-commit が失敗すればマージコミットを作らない"
+else
+  ng "マージは止まったが、ローカルの hook の出力がない"
+fi
+
+echo
+echo "passed: $PASS, failed: $FAIL"
+(( FAIL == 0 ))

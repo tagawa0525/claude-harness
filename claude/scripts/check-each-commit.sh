@@ -22,7 +22,7 @@
 # 現在の worktree と stash には触れず、`git worktree add --detach` の一時 worktree で
 # 調べる。一時 worktree は終了時（失敗、中断を含む）に必ず消す。
 #
-# 許可リスト（modules/home/parts/claude-code.nix）に入れない。`-- <任意のコマンド>` を
+# 許可リスト（nix/claude-code.nix）に入れない。`-- <任意のコマンド>` を
 # 実行するので、プレフィックス一致で事前承認すると何でも確認なしで走ってしまう。
 
 set -uo pipefail
