@@ -7,18 +7,18 @@
 //! - `== worktrees`: `<パス> <ブランチ> [dirty] [session=<Claude-Session>]`（先端のコミットの trailer。無ければ省く）
 //! - `== prs`: gh pr list の開いている PR（GitHub の URL を持つ remote と gh があるときだけ。remote の名前は問わない）
 //! - `== slurm`: squeue の自分のジョブ
-//! - `== issues`: docs/issues の status: open の issue（blocked-by があれば添える）。blocked-by の `#<番号>` の相手を
-//!   docs/issues の同じ番号のファイルで引き、閉じていない相手を `blocked=`、見つからない相手を `blocker-missing=` で
-//!   添え、印があれば節の最後に、その印の issue の扱いを `NEXT:` で出す
+//! - `== issues`: docs/issues の status: open の issue（blocked-by があれば添える）。blocked-by の `#NNNN` の相手を
+//!   docs/issues の同じ番号の記録で引き、閉じていない相手を `blocked=`、閉じたかを確かめられない相手（記録が無い、
+//!   status を読めない、`#NNNN` の形でない、blocked-by を読めない）を `blocker-unknown=` で添え、印があれば節の最後に、
+//!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる
 //!
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
 
-use regex::Regex;
+use design_records::Kind;
+use design_records::parse::{Value, numbered_refs, parse_front_matter};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::LazyLock;
-
-static ISSUE_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#(\d+)").unwrap());
 
 pub fn main(_args: &[String]) -> i32 {
     let here = Path::new(".");
@@ -104,12 +104,18 @@ fn slurm() {
         println!("(なし: squeue が無い)");
         return;
     };
-    let user = Command::new("id")
-        .arg("-un")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    // id は Windows に無いので、先に環境変数を見る
+    let user = ["USER", "USERNAME"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+        .or_else(|| {
+            Command::new("id")
+                .arg("-un")
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        })
         .unwrap_or_default();
     match Command::new(squeue).args(["-h", "-u", &user]).output() {
         Ok(o) => {
@@ -123,36 +129,60 @@ fn slurm() {
     }
 }
 
-/// 先頭のフロントマター（1 行目の `---` から次の `---` まで）の行。1 行目が `---` でなければ空
-fn front_matter(text: &str) -> Vec<&str> {
+/// 先頭のフロントマター（1 行目の `---` から次の `---` まで）の `<key>:` の行の値（そのまま）。表示に使う
+fn raw_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     let mut lines = text.lines();
     if lines.next() != Some("---") {
-        return Vec::new();
+        return None;
     }
-    lines.take_while(|l| *l != "---").collect()
+    lines
+        .take_while(|l| *l != "---")
+        .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+        .map(|v| v.trim_start_matches(' '))
 }
 
-fn value<'a>(front: &[&'a str], key: &str) -> Option<&'a str> {
-    front.iter().find_map(|l| {
-        l.strip_prefix(key)
-            .and_then(|r| r.strip_prefix(':'))
-            .map(|v| v.trim_start_matches(' '))
-    })
+/// `#NNNN` だけの参照の番号（design-records の参照と同じく 4 桁）
+fn issue_ref(item: &str) -> Option<u32> {
+    match numbered_refs(item, "#").as_slice() {
+        [(0, n)] if item.len() == 5 => Some(*n),
+        _ => None,
+    }
 }
 
-fn is_open(front: &[&str]) -> bool {
-    value(front, "status").is_some_and(|v| v == "open" || v == "\"open\"")
+/// 番号ごとの記録（status と、duplicate で閉じたときの重複先）
+struct Record {
+    status: Option<String>,
+    duplicate_of: Option<u32>,
 }
 
-/// ファイルの名前の先頭の番号（`0003-slug.md` の 3）
-fn number_of(path: &Path) -> Option<u64> {
-    let name = path.file_name()?.to_str()?;
-    let digits: String = name.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
+/// 相手が閉じているか。Some(true) は閉じた、Some(false) は閉じていない、None は確かめられない。duplicate で閉じた
+/// 相手は、仕事が重複先に移っているので、重複先をたどって決める
+fn closed(records: &HashMap<u32, Vec<Record>>, number: u32) -> Option<bool> {
+    let mut seen = Vec::new();
+    let mut n = number;
+    loop {
+        if seen.contains(&n) {
+            return None;
+        }
+        seen.push(n);
+        let rs = records.get(&n)?;
+        // 同じ番号の記録が複数あれば、どれかが閉じていなければ閉じていないとみなす
+        if rs.iter().any(|r| r.status.is_none()) {
+            return None;
+        }
+        if rs.iter().any(|r| r.status.as_deref() != Some("closed")) {
+            return Some(false);
+        }
+        match rs.iter().find_map(|r| r.duplicate_of) {
+            Some(next) => n = next,
+            None => return Some(true),
+        }
+    }
 }
 
 fn issues(root: &Path) {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("docs/issues"))
+    let dir = root.join(Kind::Issue.dir());
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .into_iter()
         .flatten()
         .flatten()
@@ -160,49 +190,70 @@ fn issues(root: &Path) {
         .filter(|p| p.extension().is_some_and(|e| e == "md") && p.is_file())
         .collect();
     files.sort();
-    let texts: Vec<String> = files
+    let entries: Vec<(String, String)> = files
         .iter()
-        .map(|f| std::fs::read_to_string(f).unwrap_or_default())
+        .map(|f| {
+            let name = f
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            (name, std::fs::read_to_string(f).unwrap_or_default())
+        })
         .collect();
-    // 番号ごとに、閉じているか（同じ番号のファイルが複数あれば、どれかが閉じていなければ閉じていないとみなす）
-    let mut closed: std::collections::HashMap<u64, bool> = std::collections::HashMap::new();
-    for (f, text) in files.iter().zip(&texts) {
-        if let Some(n) = number_of(f) {
-            let is_closed = value(&front_matter(text), "status")
-                .is_some_and(|v| v == "closed" || v == "\"closed\"");
-            closed
-                .entry(n)
-                .and_modify(|c| *c &= is_closed)
-                .or_insert(is_closed);
-        }
+    let mut records: HashMap<u32, Vec<Record>> = HashMap::new();
+    for (name, text) in &entries {
+        let path = format!("{}/{name}", Kind::Issue.dir());
+        let Some((n, _)) = design_records::record_name(Kind::Issue, &path) else {
+            continue;
+        };
+        let front = parse_front_matter(text).ok();
+        let duplicate_of = front
+            .as_ref()
+            .filter(|f| f.get("resolution") == Some(&Value::Scalar("duplicate".into())))
+            .and_then(|f| f.get("duplicate-of"))
+            .and_then(|v| v.items().first().and_then(|i| issue_ref(i)));
+        records.entry(n).or_default().push(Record {
+            status: design_records::status(text),
+            duplicate_of,
+        });
     }
-    let (mut found, mut any_blocked, mut any_missing) = (false, false, false);
-    for (f, text) in files.iter().zip(&texts) {
-        let front = front_matter(text);
-        if !is_open(&front) {
+    let (mut found, mut any_blocked, mut any_unknown) = (false, false, false);
+    for (name, text) in &entries {
+        if design_records::status(text).as_deref() != Some("open") {
             continue;
         }
-        let name = f.file_name().unwrap_or_default().to_string_lossy();
         let mut line = format!("docs/issues/{name}");
-        if let Some(blocked) = value(&front, "blocked-by").filter(|v| !v.is_empty() && *v != "[]") {
+        let shown = raw_value(text, "blocked-by").filter(|v| !v.is_empty() && *v != "[]");
+        if let Some(blocked) = shown {
             line.push_str(&format!(" blocked-by={blocked}"));
-            let (mut open, mut missing) = (Vec::new(), Vec::new());
-            for c in ISSUE_REF.captures_iter(blocked) {
-                let shown = c[0].to_string();
-                match c[1].parse::<u64>().ok().and_then(|n| closed.get(&n)) {
-                    Some(true) => {}
-                    Some(false) => open.push(shown),
-                    None => missing.push(shown),
+        }
+        let (mut open, mut unknown) = (Vec::new(), Vec::new());
+        match parse_front_matter(text) {
+            Ok(front) => {
+                for item in front
+                    .get("blocked-by")
+                    .map(Value::items)
+                    .unwrap_or_default()
+                {
+                    match issue_ref(item).and_then(|n| closed(&records, n)) {
+                        Some(true) => {}
+                        Some(false) => open.push(item.to_string()),
+                        None => unknown.push(item.to_string()),
+                    }
                 }
             }
-            if !open.is_empty() {
-                line.push_str(&format!(" blocked={}", open.join(",")));
-                any_blocked = true;
-            }
-            if !missing.is_empty() {
-                line.push_str(&format!(" blocker-missing={}", missing.join(",")));
-                any_missing = true;
-            }
+            // 読めないフロントマターの blocked-by は、相手を決められない
+            Err(_) if raw_value(text, "blocked-by").is_some() => unknown.push("unparsed".into()),
+            Err(_) => {}
+        }
+        if !open.is_empty() {
+            line.push_str(&format!(" blocked={}", open.join(",")));
+            any_blocked = true;
+        }
+        if !unknown.is_empty() {
+            line.push_str(&format!(" blocker-unknown={}", unknown.join(",")));
+            any_unknown = true;
         }
         println!("{line}");
         found = true;
@@ -213,9 +264,9 @@ fn issues(root: &Path) {
     if any_blocked {
         println!("NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない");
     }
-    if any_missing {
+    if any_unknown {
         println!(
-            "NEXT: blocker-missing= の issue は、blocked-by の相手が docs/issues に無い。閉じたかを確かめられないので、着手の前に blocked-by を直すかユーザーに確かめる"
+            "NEXT: blocker-unknown= の issue は、blocked-by の相手が docs/issues に無いか、相手の status を読めない。閉じたかを確かめられないので、着手の前に blocked-by か相手の status を直すか、ユーザーに確かめる"
         );
     }
 }
