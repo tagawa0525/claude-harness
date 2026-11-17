@@ -84,6 +84,7 @@ impl Home {
         command
             .args(["script", "dictionary-preview"])
             .args(args)
+            .current_dir(&self.root)
             .env("CLAUDE_HOOKS_JA_TERMS", ja_terms)
             .env("FAKE_JA_TERMS_LOG", self.root.join("ja-terms.log"))
             .env("FAKE_JA_TERMS_CALLS", self.root.join("ja-terms.calls"));
@@ -218,16 +219,21 @@ fn with_a_base_only_the_differences_are_shown() {
          GONE: 1 確認し => 確かめ\n  \
          設定を【確認し】ました。\n"
     );
-    let log = h.log();
-    let calls: Vec<&str> = log.lines().collect();
-    assert_eq!(calls.len(), 2, "{log}");
-    for (call, name) in calls.iter().zip(["new.yml", "old.yml"]) {
-        let want = format!(
-            "ja-terms check --dictionary {} utterances.md",
-            h.dictionary(name)
-        );
-        assert!(call.starts_with(&want), "{call}");
-    }
+    // 比較元の検査にはメモリを渡さない（メモリの指摘は新しい辞書のものだけを出す）
+    h.write("p1/memory/a.md", "本文\n");
+    std::fs::remove_file(h.root.join("ja-terms.log")).unwrap();
+    std::fs::remove_file(h.root.join("ja-terms.calls")).unwrap();
+    let r = h.preview(&["--base", "old.yml"], &[("", 0), ("", 0)]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(
+        h.log(),
+        format!(
+            "ja-terms check --dictionary {} utterances.md {}/p1/memory/a.md\nja-terms check --dictionary {} utterances.md\n",
+            h.dictionary("new.yml"),
+            h.projects(),
+            h.dictionary("old.yml")
+        )
+    );
 }
 
 #[test]
@@ -345,4 +351,90 @@ fn bad_arguments_show_the_usage() {
     assert_eq!(r.code, 1);
     assert!(r.err.contains("ERROR: "), "{}", r.err);
     assert!(h.log().is_empty());
+}
+
+#[test]
+fn relative_paths_are_read_from_the_working_directory() {
+    let h = three_utterances();
+    h.write("p1/memory/a.md", "本文\n");
+    let p = h.projects();
+    // 検査は作業用のディレクトリで起動するので、相対パスの引数は絶対パスにして渡す
+    let out = format!("{p}/p1/memory/a.md:6:3: 道具 => ツール [Error/prh]\n");
+    let r = h.run(
+        &["--dictionary", "new.yml", "--projects", "projects"],
+        &[(&out, 1)],
+    );
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(
+        r.out,
+        "SOURCES: transcripts=1 utterances=3 memory=1\nMEMORY: p1/memory/a.md:6 道具 => ツール\n"
+    );
+    assert_eq!(
+        h.log(),
+        format!(
+            "ja-terms check --dictionary {} utterances.md {p}/p1/memory/a.md\n",
+            h.dictionary("new.yml")
+        )
+    );
+}
+
+#[test]
+fn lines_that_would_hide_or_shift_other_lines_are_left_out() {
+    let h = Home::new();
+    let text = [
+        // 入れ子のフェンス: 内側の ``` は外側の ```` を閉じない
+        "一行目",
+        "````markdown",
+        "```sh",
+        "フェンスの中",
+        "```",
+        "まだフェンスの中",
+        "````",
+        // 後ろに文の続く ``` はフェンスでない
+        "```名前``` は文の中",
+        // ~~~ は ``` のフェンスを閉じない
+        "```",
+        "~~~",
+        "フェンスの中 2",
+        "```",
+        // HTML のブロックを始める行は、後の行を隠すので除く。検査を止める印の行も除く
+        "<!-- コメント",
+        "この行は prh:disable の説明",
+        // 行の終わりとして数えられる文字で分ける
+        "前半\u{2028}後半\r続き",
+        "最後の行",
+    ]
+    .join("\n");
+    h.write("p1/s1.jsonl", &format!("{}\n", assistant(&text)));
+    let r = h.preview(
+        &[],
+        &[(
+            "utterances.md:5:11: 文 => 文章 [Error/prh]\n\
+             utterances.md:7:1: 前半 => 前 [Error/prh]\n\
+             utterances.md:13:1: 最後 => 末尾 [Error/prh]\n",
+            1,
+        )],
+    );
+    assert_eq!(r.code, 0, "{}", r.err);
+    // 一行目、```名前``` は文の中、前半、後半、続き、最後の行（2 つ目は 5 行目、6 つ目は 13 行目）
+    assert_eq!(
+        r.out,
+        "SOURCES: transcripts=1 utterances=6 memory=0\n\
+         HIT: 1 前半 => 前\n  \
+         【前半】\n\
+         HIT: 1 文 => 文章\n  \
+         ```名前``` は【文】の中\n\
+         HIT: 1 最後 => 末尾\n  \
+         【最後】の行\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_to_a_parent_directory_is_not_followed() {
+    let h = three_utterances();
+    std::os::unix::fs::symlink("..", h.root.join("projects/p1/loop")).unwrap();
+    let r = h.preview(&[], &[("", 0)]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(r.out, "SOURCES: transcripts=1 utterances=3 memory=0\n");
 }
