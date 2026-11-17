@@ -190,10 +190,33 @@ fn an_untracked_file_with_an_old_hash_is_warned_with_git_add() {
         .find(|l| l.starts_with("NEXT: "))
         .unwrap_or_default();
     assert!(next.contains("git add memo/untracked.md"), "{err}");
+    // 再実行に渡す対応表を名指す
+    assert!(next.contains(&map), "{err}");
     assert_eq!(
         t.read("memo/untracked.md"),
         format!("untracked {}\n", &old[..8])
     );
+}
+
+#[test]
+fn the_warning_for_a_map_from_stdin_says_the_same_input_is_needed() {
+    // post-rewrite の hook は対応を標準入力で渡し、成功したときは残さない
+    let t = TempRepo::new("untracked-stdin");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.write("untracked.md", &format!("untracked {}\n", &old[..8]));
+    let out = t.remap_in(
+        "",
+        &[],
+        &format!("{old} 6666666666666666666666666666666666666666\n"),
+    );
+    assert_ok(&out);
+    let err = stderr(&out);
+    let next = err
+        .lines()
+        .find(|l| l.starts_with("NEXT: "))
+        .unwrap_or_default();
+    assert!(next.contains("git add untracked.md"), "{err}");
+    assert!(next.contains("標準入力"), "{err}");
 }
 
 #[test]
