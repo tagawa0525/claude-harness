@@ -2840,6 +2840,7 @@ for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh $PR12" "sh -eu ~/.cl
 done
 
 it "require-background-wait: CI の終わりを待つ gh-wait-checks.sh も、フォアグラウンドなら止める"
+# shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 for cmd in "~/.claude/scripts/gh-wait-checks.sh $PR12" "bash $HOME/.claude/scripts/gh-wait-checks.sh $PR12"; do
   out=$(run_hook require-background-wait "$cmd")
   assert_eq deny "$(decision "$out")"
@@ -3602,6 +3603,7 @@ done
 # ===========================================================================
 
 it "require-pipefail: 成否を判断するコマンドを pipefail なしで tail / head につなぐ形は deny する"
+# shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 for cmd in 'nix build .#x 2>&1 | tail -20' 'nix flake check | tail' 'cargo test 2>&1 | tail -5' \
   'cargo clippy | head -50' '~/.claude/skills/language-checks/scripts/run-checks.sh -C wt | tail' \
   'cd wt && cargo test 2>&1 | tail' 'cargo test | tee log | tail'; do
