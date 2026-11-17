@@ -1113,6 +1113,8 @@ pub fn stale_confirmations<E>(
         "log",
         "--format=%x01%s",
         "--name-only",
+        // マージのコミットは既定では変更を出さない。--cc で、どの親とも違う（マージの中で直した）ファイルを出す
+        "--cc",
         tip,
         &since,
     ]);

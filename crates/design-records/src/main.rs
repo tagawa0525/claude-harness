@@ -496,7 +496,6 @@ fn status() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// docs/ の .md のパスと中身（`untracked` なら追跡していないものも含める）。
 /// docs/ の .md のうち `keep` に当たるもののパスと中身（`untracked` なら追跡していないものも含める）。バンドルでなければ空。
 fn bundle_files(
     root: &Path,
