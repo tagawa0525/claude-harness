@@ -95,10 +95,64 @@ fn reports_the_state_before_the_merge() {
         text(&out.stdout),
         format!(
             "TARGET: feat/x\nDEFAULT: main\nCOMMITS: 1\nBEHIND: 0\nSTACKED_ON: none\n\
-             TARGET_WORKTREE: {}\nDEFAULT_WORKTREE: none\nPROPOSED_ADRS: ADR-0001\n",
+             TARGET_WORKTREE: {}\nDEFAULT_WORKTREE: none\nPROPOSED_ADRS: ADR-0001\n\
+             STALE_CONFIRMATIONS: none\n",
             root.trim()
         )
     );
+}
+
+/// 「確認」に `src/impl.sh` と `src/` と `docs/adr/0001-a.md` を挙げた ADR-0002 を、実装の後に足したブランチ
+fn confirmed_branch(repo: &Repo) {
+    repo.write("src/impl.sh", "echo 1\n");
+    repo.commit("feat: impl");
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write(
+        "docs/adr/0002-b.md",
+        "---\nstatus: proposed\n---\n\n# B\n\n## 確認\n\n- `src/impl.sh` が 1 を出す。`src/` と \
+         `docs/adr/0001-a.md` も見る\n",
+    );
+    repo.commit("docs(adr): b");
+}
+
+fn stale_line(out: &Output) -> String {
+    text(&out.stdout)
+        .lines()
+        .find(|l| l.starts_with("STALE_CONFIRMATIONS:"))
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn lists_files_named_in_a_confirmation_that_changed_after_the_adr() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.write("docs/adr/0001-a.md", "---\nstatus: proposed\n---\n\n# A2\n");
+    repo.commit("fix: impl");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    // ディレクトリと ADR は見ない（design-records check の注意と同じ）
+    assert_eq!(
+        stale_line(&out),
+        "STALE_CONFIRMATIONS: ADR-0002:src/impl.sh"
+    );
+}
+
+#[test]
+fn an_adr_updated_after_the_files_it_names_is_not_stale() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.commit("fix: impl");
+    repo.write(
+        "docs/adr/0002-b.md",
+        "---\nstatus: accepted\n---\n\n# B\n\n## 確認\n\n- `src/impl.sh` が 2 を出す\n",
+    );
+    repo.commit("docs(adr): follow impl");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
 }
 
 #[test]
