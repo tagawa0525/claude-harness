@@ -39,6 +39,12 @@ trap 'rm -rf "$WORK"' EXIT
 # pre-commit の hook。MAIN_COMMIT_GATES_PRE_COMMIT（絶対パス）で差し替え可（既定は nix build の成果物）。差し替えるのは、
 # このテストが claude-hooks の呼び出しの失敗で止まることを確かめる claude/tests/scripts/hooks-bin.sh（nix の無い CI でも走る）
 if [[ -n "${MAIN_COMMIT_GATES_PRE_COMMIT:-}" ]]; then
+  if [[ "$MAIN_COMMIT_GATES_PRE_COMMIT" != /* || ! -f "$MAIN_COMMIT_GATES_PRE_COMMIT" ]]; then
+    echo "MAIN_COMMIT_GATES_PRE_COMMIT は、あるファイルの絶対パスで渡してください: $MAIN_COMMIT_GATES_PRE_COMMIT" >&2
+    exit 1
+  fi
+  # 配備する hook を比べていないことを出力に残す
+  echo "==> pre-commit hook を差し替える（配備する hook でない）: $MAIN_COMMIT_GATES_PRE_COMMIT"
   cp "$MAIN_COMMIT_GATES_PRE_COMMIT" "$WORK/pre-commit"
 else
   echo "==> pre-commit hook をビルドする（homeConfigurations.test）"
