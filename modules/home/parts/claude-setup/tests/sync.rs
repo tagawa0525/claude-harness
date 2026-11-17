@@ -7,7 +7,7 @@
 //! - 引数なしは既定の clone（ホームの下の nix/claude-harness）を、既定のブランチで、同期する場所に未コミットの変更が
 //!   無ければ `git pull --ff-only` してから同期する。どれかに当たれば、~/.claude を変えずに 1 で止まる
 //! - 引数を渡せば pull せず、その場所の今の中身を同期する
-//! - .claude/markdownlint.jsonc は、ソースが正として ~/.config/markdownlint/config に置く（ADR-0093）
+//! - ソースの .config/markdownlint/config は、ソースが正として ~/.config/markdownlint/config に置く（ADR-0093）
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -661,13 +661,14 @@ impl Home {
 fn delivers_the_markdownlint_config_outside_claude() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/markdownlint.jsonc"), "{\"v\": 1}");
+    write(&src.join(".claude/CLAUDE.md"), "x");
+    write(&src.join(".config/markdownlint/config"), "{\"v\": 1}");
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(read(&home.markdownlint_config()), "{\"v\": 1}");
     // 利用者が手で直した設定も、同じサイズの変更も、ソースが正として上書きする
     write(&home.markdownlint_config(), "{\"v\": 9}");
-    write(&src.join(".claude/markdownlint.jsonc"), "{\"v\": 2}");
+    write(&src.join(".config/markdownlint/config"), "{\"v\": 2}");
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(read(&home.markdownlint_config()), "{\"v\": 2}");
@@ -692,7 +693,8 @@ fn does_not_create_the_markdownlint_config_without_a_source() {
 fn replaces_a_symlinked_markdownlint_config_without_writing_through() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/markdownlint.jsonc"), "new");
+    write(&src.join(".claude/CLAUDE.md"), "x");
+    write(&src.join(".config/markdownlint/config"), "new");
     // home-manager が置いていた store への symlink（読むだけの先）を、辿って書かない
     let target = home.0.join("store/config");
     write(&target, "old");
@@ -716,6 +718,6 @@ fn without_arguments_stops_on_a_draft_of_the_markdownlint_source() {
     let _other = clones(&home);
     home.sync_default();
     let clone = home.clone_dir();
-    write(&clone.join(".claude/markdownlint.jsonc"), "draft");
+    write(&clone.join(".config/markdownlint/config"), "draft");
     home.stops(&format!("claude-sync {}", clone.display()));
 }
