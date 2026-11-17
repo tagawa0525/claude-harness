@@ -639,7 +639,12 @@ fn a_detached_worktree_on_an_unreachable_commit_stops_with_the_branch_to_add() {
         "{stderr}"
     );
     // 届くコミットの detached HEAD は挙げない
-    assert_eq!(stderr.matches("git -C ").count(), 1, "{stderr}");
+    let reachable = Repo {
+        root: root.clone(),
+        path: reachable,
+    };
+    let top = reachable.git(&["rev-parse", "--show-toplevel"]);
+    assert!(!stderr.contains(top.trim_end_matches('\n')), "{stderr}");
     assert!(!workdir.exists());
 
     loose.git(&["branch", "loose", &orphan]);
