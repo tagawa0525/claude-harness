@@ -759,6 +759,48 @@ fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Fo
     }
 }
 
+/// 置き換えた ADR を前提にしたままなら見直す status（効いているか、まだ決める前）。
+const LIVE: [&str; 3] = ["accepted", "proposed", "deferred"];
+
+/// `adrs` のうち ADR `path` を `requires` に持ち、status が [`LIVE`] の ADR の番号と、`path` の `superseded-by` の番号。
+/// 置き換えた ADR は古い ADR を前提に書いた新しい決定なので、見直す相手から除く。読めないフロントマターの ADR は
+/// 飛ばす（形の違反は [`check`] が示す）。
+pub fn superseded_dependents(adrs: &BTreeMap<String, String>, path: &str) -> (Vec<u32>, Vec<u32>) {
+    let front = |text: &str| parse_front_matter(text).ok();
+    let adr_items = |front: &FrontMatter, key: &str| -> BTreeSet<u32> {
+        front
+            .get(key)
+            .map(|v| v.items().into_iter().filter_map(single_adr).collect())
+            .unwrap_or_default()
+    };
+    let number = |p: &str| {
+        p.strip_prefix(ADR_DIR)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .and_then(record_number)
+    };
+    let (Some(old), Some(successors)) = (
+        number(path),
+        adrs.get(path)
+            .and_then(|t| front(t))
+            .map(|f| adr_items(&f, "superseded-by")),
+    ) else {
+        return (Vec::new(), Vec::new());
+    };
+    let dependents = adrs
+        .iter()
+        .filter(|(p, _)| is_adr_path(p))
+        .filter_map(|(p, text)| Some((number(p)?, front(text)?)))
+        .filter(|(n, f)| {
+            *n != old
+                && !successors.contains(n)
+                && matches!(f.get("status"), Some(Value::Scalar(s)) if LIVE.contains(&s.as_str()))
+                && adr_items(f, "requires").contains(&old)
+        })
+        .map(|(n, _)| n)
+        .collect();
+    (dependents, successors.into_iter().collect())
+}
+
 /// 決めた時点の記録（フロントマターの直せないキー、表題、必須の 3 節、決定の要因、各案の長所と短所）が変わったか（確定した ADR に許す変更を除いて比べる）。
 pub fn body_changed(old: &str, new: &str) -> bool {
     body(old) != body(new)

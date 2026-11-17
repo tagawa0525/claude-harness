@@ -644,6 +644,8 @@ fn superseding_topic(name: &str) -> TempRepo {
             .replace("status: accepted", "status: superseded")
             .replace("superseded-by:", "superseded-by: ADR-0004"),
     );
+    // check は追跡している ADR だけを読む
+    t.git(&["add", "-A"]);
     t
 }
 
@@ -655,9 +657,9 @@ fn check_names_the_adrs_that_require_an_adr_superseded_on_the_branch() {
     // 置き換えた ADR-0004 と、効力を持たなかった ADR-0003 は見直す相手に挙げない
     assert!(
         stdout(&out).contains(
-            "docs/adr/0001-use-a.md: warning: the ADR became superseded since main, but ADR-0002 \
-             still lists it in `requires`; review whether their decisions hold with ADR-0004, \
-             which supersedes it\n"
+            "docs/adr/0001-use-a.md: warning: the ADR became superseded since main; review \
+             whether the decisions of the ADRs that still list it in `requires` hold with \
+             ADR-0004, which supersedes it: ADR-0002\n"
         ),
         "{}",
         stdout(&out)

@@ -40,6 +40,7 @@ use std::process::{Command, ExitCode};
 use design_records::check::{
     Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_numbers,
     check_reservations, confirmation_paths, decision_changed_without_change_item,
+    superseded_dependents,
 };
 use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
 use design_records::{
@@ -258,6 +259,7 @@ fn issue_numbers(paths: &[String]) -> Option<BTreeSet<u32>> {
 /// - 確定した ADR の決めた時点の記録（[`body_changed`]）の変更と削除（注意）と、決定と理由の変更に「## 変更」の項が
 ///   足されていないこと（注意。[`decision_changed_without_change_item`]）。main にマージする前のブランチの上の
 ///   変更は status によらず自由なので、分岐点で決める前の status だった ADR と、分岐点に無い ADR は見ない
+/// - 分岐点から superseded になった ADR を、まだ `requires` に持つ ADR（注意。[`superseded_dependents`]）
 ///
 /// 確認の節のファイルの注意（[`stale_confirmations`]）は、`changed_only` でなければ全 ADR で、そうなら `files` の ADR だけ見る。
 /// `amends` の追加は `files` によらずすべての ADR で見る。凍結の注意は `files` の ADR だけを比べ（改名は改名前の版と
@@ -338,6 +340,37 @@ fn branch_changes(
             .filter(|_| !deleted && (in_files || !changed_only))
         {
             found.extend(stale_confirmations(root, &base, new_path, new)?);
+        }
+        // ブランチで置き換えた ADR を、まだ前提にしている ADR。main で既に置き換えられていたものは一度見直したので
+        // 出さない（requires は確定した後に直せず、毎回並ぶ）
+        if let (Some(before), Some(now)) = (
+            old.as_deref(),
+            adrs.get(new_path)
+                .filter(|_| !deleted && (in_files || !changed_only)),
+        ) && design_records::status(before).as_deref() != Some("superseded")
+            && design_records::status(now).as_deref() == Some("superseded")
+        {
+            let (dependents, successors) = superseded_dependents(adrs, new_path);
+            if !dependents.is_empty() {
+                let names = |ns: &[u32]| {
+                    ns.iter()
+                        .map(|n| format!("ADR-{n:04}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                found.push(Finding {
+                    path: new_path.to_string(),
+                    line: None,
+                    severity: Severity::Warning,
+                    message: format!(
+                        "the ADR became superseded since {shown}; review whether the decisions of \
+                         the ADRs that still list it in `requires` hold with {}, which supersedes \
+                         it: {}",
+                        names(&successors),
+                        names(&dependents)
+                    ),
+                });
+            }
         }
         let Some(old) = old.filter(|_| in_files) else {
             continue;
