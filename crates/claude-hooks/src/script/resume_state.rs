@@ -245,11 +245,15 @@ fn issues(root: &Path) {
             return;
         }
     };
-    let mut files: Vec<PathBuf> = read
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "md") && p.is_file())
-        .collect();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in read {
+        match entry {
+            Ok(e) => files.push(e.path()),
+            Err(e) => println!("({dir} の項目を読めない: {e})"),
+        }
+    }
+    // 壊れた symlink は落とさず、読めないファイルとして出す（is_file は壊れた symlink で false になる）
+    files.retain(|p| p.extension().is_some_and(|e| e == "md") && !p.is_dir());
     files.sort();
     let entries: Vec<Entry> = files
         .iter()
@@ -340,7 +344,11 @@ fn issues(root: &Path) {
                                 open.push(r);
                             }
                         }
-                        Blocker::Unknown => unknown.push(item.to_string()),
+                        Blocker::Unknown => {
+                            if !unknown.iter().any(|u| u == item) {
+                                unknown.push(item.to_string());
+                            }
+                        }
                     }
                 }
             }
