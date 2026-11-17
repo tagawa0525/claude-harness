@@ -455,8 +455,8 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         }
         Ok(false)
     };
-    let has_sync = has("modules/home/parts/claude-setup/Cargo.toml")?
-        || has("modules/home/scripts/claude-sync.sh")?;
+    let has_sync =
+        has("crates/claude-setup/Cargo.toml")? || has("modules/home/scripts/claude-sync.sh")?;
     let has_rebuild = has("modules/home/scripts/nix-rebuild.sh")?;
     let changed = |paths: &[&str]| {
         let mut args = vec!["diff", "--name-only", before.as_str(), "HEAD", "--"];
@@ -469,10 +469,18 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
                 "NOTE: rebuild が要る（modules、hosts、secrets か flake が変わった）。nix-rebuild rebuild まで hook や設定は古い版のまま動く"
             );
         }
-    } else if has_sync && changed(&["modules", "flake.nix", "flake.lock"]) {
+    } else if has_sync
+        && changed(&[
+            "crates",
+            "nix",
+            "claude-settings.json",
+            "flake.nix",
+            "flake.lock",
+        ])
+    {
         // ハーネスの hook とモジュールは、取り込む側（nixfiles）の lock が固定した版で配置されるので、lock を進めてから rebuild する
         println!(
-            "NOTE: lock の更新と rebuild が要る（modules か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
+            "NOTE: lock の更新と rebuild が要る（crates、nix、claude-settings.json か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
         );
     }
     // 配る元は claude と config（ADR-0094 より前の版と、ハーネスを分ける前の nixfiles は .claude）。同期のコマンドを
