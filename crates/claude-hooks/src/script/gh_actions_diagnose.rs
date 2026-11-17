@@ -316,20 +316,15 @@ fn diagnose(target: &str) -> Result<(), i32> {
                 } else {
                     text(&c["url"])
                 };
-                println!(
-                    "EXTERNAL_CHECK: {} {}/{} {} {url}",
+                let check = format!(
+                    "{} {}/{} {} {url}",
                     text(&c["name"]),
                     text(&c["status"]),
                     text(&c["conclusion"]),
                     text(&c["app"])
                 );
-                report.external.push(format!(
-                    "{} {}/{} {}",
-                    text(&c["name"]),
-                    text(&c["status"]),
-                    text(&c["conclusion"]),
-                    text(&c["app"])
-                ));
+                println!("EXTERNAL_CHECK: {check}");
+                report.external.push(check);
                 if c["status"] != "completed" {
                     ext_pending += 1;
                 } else if !ok(c) {
@@ -338,6 +333,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
             }
         }
         None => {
+            report.external_unavailable = true;
             println!("EXTERNAL_CHECKS: unavailable");
             println!(
                 "NOTE: head SHA の check-run を取得できません（ブランチが未 push か、API エラー）"
@@ -356,6 +352,12 @@ fn diagnose(target: &str) -> Result<(), i32> {
         } else if ext_pending > 0 {
             cause = "IN_PROGRESS";
             next = "外部 CI が実行中です。完了を待ってから再確認してください".to_string();
+        } else if runs.is_empty() && external.is_none() {
+            next = "ワークフローが未設定か未実行で、外部 CI は確認できていないと報告してください"
+                .to_string();
+        } else if runs.is_empty() && external.as_ref().is_some_and(|e| !e.is_empty()) {
+            next = "GitHub Actions の run は無く、外部 CI は成功しています。その 2 点を報告してください"
+                .to_string();
         } else if runs.is_empty() {
             next = "ワークフローが未設定か未実行であると報告してください".to_string();
         } else if external.is_none() {
@@ -370,7 +372,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
         println!("NOTE: ワークフローが未設定か、このブランチではまだ実行されていません");
     }
     println!("NEXT: {next}");
-    report.print(cause, &next, external.is_some());
+    report.print(cause, &next);
     Ok(())
 }
 
@@ -382,11 +384,13 @@ struct Report {
     attempt: Option<u64>,
     failed_jobs: Vec<String>,
     failed_steps: Vec<String>,
+    /// EXTERNAL_CHECK の行と同じ形（URL まで）
     external: Vec<String>,
+    external_unavailable: bool,
 }
 
 impl Report {
-    fn print(&self, cause: &str, next: &str, external_seen: bool) {
+    fn print(&self, cause: &str, next: &str) {
         let or_none = |v: &[String]| {
             if v.is_empty() {
                 "なし".to_string()
@@ -404,10 +408,10 @@ impl Report {
         } else {
             &self.status
         };
-        let external = if external_seen {
-            or_none(&self.external)
-        } else {
+        let external = if self.external_unavailable {
             "確認できず".to_string()
+        } else {
+            or_none(&self.external)
         };
         println!("--- report ---");
         println!("GitHub Actions 状況:");
