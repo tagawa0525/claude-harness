@@ -26,23 +26,12 @@ $ARGUMENTS のブランチ名で作成する:
 
 - ブランチがローカルかリモートにあればそれをチェックアウトし、なければ既定ブランチ（`BASE:` の値）から
   新規作成する。今のブランチの続きにするときだけ `--from HEAD` を付ける
-- fetch の失敗で `ERROR:` になったら（オフライン）、ローカルにあるブランチか `--from` を使う
 - `SHARED:` 行は、`.worktreelink` に書いたパスをメイン worktree への symlink にしたことを示す
-- `NOTE:` 行は指示に従う。メイン worktree に無いパスの `NOTE:` は、必要ならメイン worktree に用意してから
-  `ln -s` で足す
+- `NOTE:` 行と `ERROR:` 行は指示に従う
 
 ### `ERROR:` の修正方法
 
-`.worktreelink` の誤りで `ERROR:` になったとき、worktree は残っていて、symlink は 1 つも作られていない。
-作成先があるのでスクリプトは再実行できない。
-
-1. その worktree（そのブランチ）で `.worktreelink` か `.gitignore` を直す（書き方は `worktree-add.sh` の冒頭のコメント）
-2. `.worktreelink` の各パスを張る（先は絶対パス）:
-
-```bash
-mkdir -p "$(dirname <worktree>/<path>)"
-ln -s <メイン worktree>/<path> <worktree>/<path>
-```
+`.worktreelink` の誤りの `ERROR:` は、出力の直す順と、各パスを張るコマンドに従う（スクリプトは再実行しない）。
 
 ## 削除（--remove 指定時）
 

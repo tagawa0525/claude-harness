@@ -17,11 +17,6 @@ allowed-tools:
 !`git status --short`
 !`git branch -vv`
 
-## main / master では push しない
-
-現在のブランチが `main` / `master` なら push せず、/git-cherry-pick で feature ブランチに
-移してから /gh-pr-create へ進むよう案内する。
-
 ## プッシュ対象の確認
 
 ```bash
