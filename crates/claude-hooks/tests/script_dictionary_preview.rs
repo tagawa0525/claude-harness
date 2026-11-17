@@ -399,6 +399,8 @@ fn lines_that_would_hide_or_shift_other_lines_are_left_out() {
         "```",
         // HTML のブロックを始める行は、後の行を隠すので除く。検査を止める印の行も除く
         "<!-- コメント",
+        // 山括弧のリンクで始まる行は、ブロックを始めないので読む
+        "<https://example.com> の説明",
         "この行は prh:disable の説明",
         // 行の終わりとして数えられる文字で分ける
         "前半\u{2028}後半\r続き",
@@ -410,16 +412,16 @@ fn lines_that_would_hide_or_shift_other_lines_are_left_out() {
         &[],
         &[(
             "utterances.md:5:11: 文 => 文章 [Error/prh]\n\
-             utterances.md:7:1: 前半 => 前 [Error/prh]\n\
-             utterances.md:13:1: 最後 => 末尾 [Error/prh]\n",
+             utterances.md:9:1: 前半 => 前 [Error/prh]\n\
+             utterances.md:15:1: 最後 => 末尾 [Error/prh]\n",
             1,
         )],
     );
     assert_eq!(r.code, 0, "{}", r.err);
-    // 一行目、```名前``` は文の中、前半、後半、続き、最後の行（2 つ目は 5 行目、6 つ目は 13 行目）
+    // 一行目、```名前``` は文の中、山括弧のリンクの行、前半、後半、続き、最後の行（2 つ目は 5 行目、7 つ目は 15 行目）
     assert_eq!(
         r.out,
-        "SOURCES: transcripts=1 utterances=6 memory=0\n\
+        "SOURCES: transcripts=1 utterances=7 memory=0\n\
          HIT: 1 前半 => 前\n  \
          【前半】\n\
          HIT: 1 文 => 文章\n  \
@@ -437,4 +439,33 @@ fn a_symlink_to_a_parent_directory_is_not_followed() {
     let r = h.preview(&[], &[("", 0)]);
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(r.out, "SOURCES: transcripts=1 utterances=3 memory=0\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_memory_directory_stops_with_an_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = three_utterances();
+    h.write("p1/memory/a.md", "本文\n");
+    // memory の無いプロジェクトと、projects の直下のファイルは、メモリが無いものとして読み飛ばす
+    h.write("p2/s2.jsonl", "");
+    h.write("note.txt", "");
+    let r = h.preview(&[], &[("", 0)]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(r.out, "SOURCES: transcripts=2 utterances=3 memory=1\n");
+
+    let memory = h.root.join("projects/p1/memory");
+    std::fs::set_permissions(&memory, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // root は権限に関わらず読めるので、読めなくなったときだけ確かめる
+    let unreadable = std::fs::read_dir(&memory).is_err();
+    let r = h.preview(&[], &[("", 0)]);
+    std::fs::set_permissions(&memory, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if unreadable {
+        assert_eq!(r.code, 1, "{}", r.out);
+        assert!(
+            r.err.contains("ERROR: メモリのディレクトリを読めません"),
+            "{}",
+            r.err
+        );
+    }
 }
