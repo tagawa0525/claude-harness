@@ -45,7 +45,7 @@
 //!   （ここに commit-refs rewrite-history の出力が続く）
 //!   MAP: <元の番号から最後の番号への対応表のパス>
 //!   WORDS: <語の指定の記録のパス>
-//!   ISSUE: <古いオブジェクトと控えの掃除の issue の本文のパス（1 行目が題）>
+//!   ISSUE: <古いオブジェクトと控えの掃除の issue の本文のパス（1 行目の見出し（`#` の後）が題、残りが本文）>
 //! transform の出力:
 //!   SKIPPED: <パス> (<理由>)  読まなかったファイルごと（symlink、excluded、binary、not UTF-8）
 //!   REPLACED: <パス>    直したファイルごと

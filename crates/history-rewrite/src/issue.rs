@@ -4,7 +4,7 @@
 use crate::{Stop, Words, git, sh_quote};
 use std::path::Path;
 
-/// issue の本文。1 行目が題
+/// issue の本文。1 行目の見出し（`#` の後）が題
 pub fn body(source: &Path, workdir: &Path, words: &Words) -> Result<String, Stop> {
     let (source_q, workdir_q) = (sh_quote(source), sh_quote(workdir));
     let mut out = String::new();
