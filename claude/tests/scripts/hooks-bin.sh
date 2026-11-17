@@ -73,6 +73,13 @@ for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.s
 done
 
 # 起動の確認は通り、ルールの呼び出しで失敗する版（ルールの足りない古い版など）
+# main-commit-gates.sh は pre-commit の hook を nix build してから比べるので、nix の無い環境（GitHub の CI）では、ルールの
+# 呼び出しまで進めない。その場合は飛ばしたことを出す（黙って通った数に入れない）。nix のあるホストでは必ず走る
+needs_nix_but_missing() {
+  [[ $1 == */main-commit-gates.sh ]] && ! command -v nix >/dev/null
+}
+skipped_without_nix=0
+
 make_fake_tool rule-fails "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo 'unknown rule: block-main-commit' >&2; exit 2 ;;"
 # ルールが panic する版（claude-hooks は panic を捕捉し、標準エラーに出して 0 で終わる）。どちらも本物と同じく
@@ -84,6 +91,10 @@ make_fake_tool rule-panics "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
 for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
   path="$NO_NIX_PATH"
   [[ $target == */main-commit-gates.sh ]] && path="$PATH"
+  if needs_nix_but_missing "$target"; then
+    skipped_without_nix=$((skipped_without_nix + 1))
+    continue
+  fi
   for bin in rule-fails rule-panics; do
     it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、バイナリの標準エラーを出して止まる"
     out=$(cd "$ROOT" && PATH="$path" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" bash "$target" 2>&1)
@@ -110,6 +121,10 @@ make_fake_tool rule-multi "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
 for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
   path="$NO_NIX_PATH"
   [[ $target == */main-commit-gates.sh ]] && path="$PATH"
+  if needs_nix_but_missing "$target"; then
+    skipped_without_nix=$((skipped_without_nix + 1))
+    continue
+  fi
   for bin in rule-notice rule-scalar rule-multi; do
     it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、出力を出して止まる"
     out=$(cd "$ROOT" && PATH="$path" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" bash "$target" 2>&1)
@@ -120,4 +135,7 @@ for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.s
   done
 done
 
+if ((skipped_without_nix > 0)); then
+  echo "SKIP: nix が無いので、main-commit-gates.sh のルールの呼び出しの場合（rule-fails など）を確かめていない"
+fi
 finish
