@@ -74,9 +74,40 @@ fn has_ref(dir: &Path, name: &str) -> Option<bool> {
 /// `range` で変えた ADR（`names` は先端の docs/adr の名前）の「確認」の節に挙げたファイルのうち、その ADR を最後に変えた
 /// コミットより後に `tip` までに変わったもの（`ADR-NNNN:<パス>`。ADR とパスの順）。design-records check の同じ注意は
 /// pre-commit では渡したファイルの ADR にしか出ず、実装だけを直したコミットでは出ないので、マージの前にここで拾う。
-/// 先端のファイル（blob）でないもの（ディレクトリ、コマンド、外のパス）と ADR は、check と同じく見ない。git の失敗は None
-fn stale_confirmations(dir: &Path, range: &str, tip: &str, names: &str) -> Option<Vec<String>> {
-    let files = git(
+/// 判定は check の stale_confirmations と同じ: 先端のファイル（blob）でないもの（ディレクトリ、サブモジュール、コマンド、
+/// 外のパス）と ADR は見ない。renumber のコミットは起点にしない。`default`（既定のブランチ）から入った変更は数えない。
+/// git の失敗は None
+fn stale_confirmations(
+    dir: &Path,
+    range: &str,
+    tip: &str,
+    default: Option<&str>,
+    names: &str,
+) -> Option<Vec<String>> {
+    let changed = git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "log",
+            "--format=",
+            "--name-only",
+            range,
+            "--",
+            "docs/adr",
+        ],
+    )?;
+    let changed: BTreeSet<&str> = changed.lines().collect();
+    let adrs: Vec<(&str, String)> = names
+        .lines()
+        .map(|name| (name, format!("docs/adr/{name}")))
+        .filter(|(_, adr)| design_records::is_adr_path(adr) && changed.contains(adr.as_str()))
+        .collect();
+    let mut stale = Vec::new();
+    if adrs.is_empty() {
+        return Some(stale);
+    }
+    let tree = git(
         dir,
         &[
             "-c",
@@ -84,37 +115,42 @@ fn stale_confirmations(dir: &Path, range: &str, tip: &str, names: &str) -> Optio
             "ls-tree",
             "-r",
             "--full-tree",
-            "--name-only",
             tip,
         ],
     )?;
-    let files: BTreeSet<&str> = files.lines().collect();
-    let last_change = |range: &str, path: &str| -> Option<String> {
-        Some(
-            git(dir, &["log", "-1", "--format=%H", range, "--", path])?
-                .trim()
-                .to_string(),
-        )
-    };
-    let mut stale = Vec::new();
-    for name in names.lines() {
-        let adr = format!("docs/adr/{name}");
-        if !design_records::is_adr_path(&adr) {
+    // `<mode> <type> <hash>\t<path>` のうち blob だけ（サブモジュールは commit）
+    let files: BTreeSet<&str> = tree
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(meta, _)| meta.split_whitespace().nth(1) == Some("blob"))
+        .map(|(_, path)| path)
+        .collect();
+    let excluded = default.map(|d| format!("^refs/heads/{d}"));
+    for (name, adr) in adrs {
+        // --invert-grep で除くと --follow がその改名を見ずに辿りやめるので、件名を見て選ぶ
+        let log = git(
+            dir,
+            &["log", "--follow", "--format=%H %s", range, "--", &adr],
+        )?;
+        let Some(last) = log
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .find(|(_, subject)| !subject.starts_with(design_records::RENUMBER_SUBJECT))
+            .map(|(hash, _)| hash)
+        else {
             continue;
-        }
-        let number = &name[..4];
-        let last = last_change(range, &adr)?;
-        if last.is_empty() {
-            continue;
-        }
+        };
+        let since = format!("^{last}");
         let text = git(dir, &["show", &format!("{tip}:{adr}")])?;
-        let after = format!("{last}..{tip}");
         for path in design_records::check::confirmation_paths(&text) {
             if design_records::is_adr_path(&path) || !files.contains(path.as_str()) {
                 continue;
             }
-            if !last_change(&after, &path)?.is_empty() {
-                stale.push(format!("ADR-{number}:{path}"));
+            let mut args = vec!["log", "-1", "--format=%H", tip, since.as_str()];
+            args.extend(excluded.as_deref());
+            args.extend(["--", path.as_str()]);
+            if !git(dir, &args)?.trim().is_empty() {
+                stale.push(format!("ADR-{}:{path}", &name[..4]));
             }
         }
     }
@@ -375,7 +411,7 @@ pub fn main(args: &[String]) -> i32 {
                 proposed.join(" ")
             }
         ));
-        let Some(stale) = stale_confirmations(dir, &range, &tip, &names) else {
+        let Some(stale) = stale_confirmations(dir, &range, &tip, default, &names) else {
             return failed("git log");
         };
         out.push_str(&format!(
