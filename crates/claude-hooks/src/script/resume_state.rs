@@ -9,7 +9,8 @@
 //! - `== slurm`: squeue の自分のジョブ
 //! - `== issues`: docs/issues の status: open の issue（blocked-by があれば添える）。blocked-by の `#NNNN` の相手を
 //!   docs/issues の同じ番号の記録で引き、閉じていない相手（duplicate で閉じた相手は開いている重複先）を `blocked=`、閉じたかを確かめられない相手（記録が無い、
-//!   status を読めない、`#NNNN` の形でない、blocked-by を読めない）を `blocker-unknown=` で添え、印があれば節の最後に、
+//!   status が open でも closed でもない、duplicate の重複先を読めない、たどると自分に戻る、`#NNNN` の形でない、
+//!   blocked-by を読めない）を `blocker-unknown=` で添え、印があれば節の最後に、
 //!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる
 //!
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
@@ -167,8 +168,9 @@ enum Blocker {
 }
 
 /// 相手が閉じているか。duplicate で閉じた相手は、仕事が重複先に移っているので、重複先をたどって決める
-fn blocker(records: &HashMap<u32, Vec<Record>>, number: u32) -> Blocker {
-    let mut seen = Vec::new();
+/// 自分（me）にたどり着いたら、自分を待つことになるので確かめられないものとする
+fn blocker(records: &HashMap<u32, Vec<Record>>, number: u32, me: Option<u32>) -> Blocker {
+    let mut seen: Vec<u32> = me.into_iter().collect();
     let mut n = number;
     loop {
         if seen.contains(&n) {
@@ -179,13 +181,11 @@ fn blocker(records: &HashMap<u32, Vec<Record>>, number: u32) -> Blocker {
             return Blocker::Unknown;
         };
         // 同じ番号の記録が複数あれば、どれかが開いていれば開いているとみなす
-        if rs
-            .iter()
-            .any(|r| r.status.as_deref().is_some_and(|s| s != "closed"))
-        {
+        if rs.iter().any(|r| r.status.as_deref() == Some("open")) {
             return Blocker::Open(n);
         }
-        if rs.iter().any(|r| r.status.is_none()) {
+        // open でも closed でもない status は、閉じたかを決められない
+        if rs.iter().any(|r| r.status.as_deref() != Some("closed")) {
             return Blocker::Unknown;
         }
         match rs.iter().find_map(|r| r.duplicate_of) {
@@ -226,17 +226,23 @@ fn issues(root: &Path) {
         let Some((n, _)) = design_records::record_name(Kind::Issue, &path) else {
             continue;
         };
-        // 閉じた記録は、フロントマターを読めなければ重複先を確かめられないので、status を読めないものとして扱う
-        let status = match front {
-            Err(_) if status.as_deref() == Some("closed") => None,
-            _ => status.clone(),
-        };
+        let duplicate = front
+            .as_ref()
+            .ok()
+            .is_some_and(|f| f.get("resolution") == Some(&Value::Scalar("duplicate".into())));
         let duplicate_of = front
             .as_ref()
             .ok()
-            .filter(|f| f.get("resolution") == Some(&Value::Scalar("duplicate".into())))
+            .filter(|_| duplicate)
             .and_then(|f| f.get("duplicate-of"))
             .and_then(|v| v.items().first().and_then(|i| issue_ref(i)));
+        // 閉じた記録は、フロントマターを読めないか、duplicate なのに重複先を読めなければ、仕事が済んだかを確かめられない
+        // ので、status を読めないものとして扱う
+        let status = match front {
+            Err(_) if status.as_deref() == Some("closed") => None,
+            Ok(_) if duplicate && duplicate_of.is_none() => None,
+            _ => status.clone(),
+        };
         records.entry(n).or_default().push(Record {
             status,
             duplicate_of,
@@ -247,6 +253,8 @@ fn issues(root: &Path) {
         if status.as_deref() != Some("open") {
             continue;
         }
+        let me = design_records::record_name(Kind::Issue, &format!("{}/{name}", Kind::Issue.dir()))
+            .map(|(n, _)| n);
         let mut line = format!("docs/issues/{name}");
         let raw = raw_value(text, "blocked-by");
         if let Some(blocked) = raw.filter(|v| !v.is_empty() && *v != "[]") {
@@ -260,7 +268,7 @@ fn issues(root: &Path) {
                     .map(Value::items)
                     .unwrap_or_default()
                 {
-                    match issue_ref(item).map_or(Blocker::Unknown, |n| blocker(&records, n)) {
+                    match issue_ref(item).map_or(Blocker::Unknown, |n| blocker(&records, n, me)) {
                         Blocker::Closed => {}
                         Blocker::Open(n) => open.push(Kind::Issue.reference(n)),
                         Blocker::Unknown => unknown.push(item.to_string()),
