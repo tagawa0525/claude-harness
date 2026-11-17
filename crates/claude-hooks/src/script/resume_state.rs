@@ -31,6 +31,7 @@ pub fn main(_args: &[String]) -> i32 {
     slurm();
     println!("== issues");
     let Some(root) = crate::git::git(here, &["rev-parse", "--show-toplevel"]) else {
+        println!("(git rev-parse --show-toplevel に失敗。リポジトリの中で実行する)");
         return 1;
     };
     issues(Path::new(&root));
@@ -332,7 +333,13 @@ fn issues(root: &Path) {
                     match issue_ref(item).map_or(Blocker::Unknown, |n| blocker(&records, n, &seen))
                     {
                         Blocker::Closed => {}
-                        Blocker::Open(n) => open.push(Kind::Issue.reference(n)),
+                        Blocker::Open(n) => {
+                            // 別の相手が同じ重複先にたどり着くことがある
+                            let r = Kind::Issue.reference(n);
+                            if !open.contains(&r) {
+                                open.push(r);
+                            }
+                        }
                         Blocker::Unknown => unknown.push(item.to_string()),
                     }
                 }
