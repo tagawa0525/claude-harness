@@ -768,14 +768,18 @@ fn report(args: &Args) -> Result<(), ReportError> {
         all_fetched &= fetched;
         println!("MERGES: {n} {repo} {reference}");
     }
-    let per_merge = if args.repos.is_empty() {
-        "-（--repo なし）".to_string()
+    // 値と括弧の中の注。表のセルは注に未確認を足す
+    let (per_merge, per_merge_note) = if args.repos.is_empty() {
+        ("-".to_string(), "--repo なし".to_string())
     } else if merges == 0 {
-        "-（マージ 0 本）".to_string()
+        ("-".to_string(), "マージ 0 本".to_string())
     } else {
-        format!("${:.2}（マージ {merges} 本）", total / merges as f64)
+        (
+            format!("${:.2}", total / merges as f64),
+            format!("マージ {merges} 本"),
+        )
     };
-    println!("PER_MERGE: {per_merge}");
+    println!("PER_MERGE: {per_merge}（{per_merge_note}）");
     // 費用の大きい順（同じ費用は読んだ順のまま。sort_by は安定）
     top.sort_by(|a, b| {
         b.cost
@@ -803,9 +807,10 @@ fn report(args: &Args) -> Result<(), ReportError> {
     head.extend(KINDS);
     head.extend(["マージ 1 本あたりの費用", "文脈の書き直しの回数"]);
     let rule: Vec<String> = head.iter().map(|h| dashes(h)).collect();
-    let per_merge_cell = match per_merge.strip_suffix('）') {
-        Some(open) if !all_fetched => format!("{open}。fetch できず未確認）"),
-        _ => per_merge.clone(),
+    let per_merge_cell = if all_fetched {
+        format!("{per_merge}（{per_merge_note}）")
+    } else {
+        format!("{per_merge}（{per_merge_note}。fetch できず未確認）")
     };
     let mut row = vec![
         format!("{}〜{}", end(since), end(until)),
