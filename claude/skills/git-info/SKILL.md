@@ -9,8 +9,6 @@ allowed-tools:
 
 # Git Info Command
 
-現在のGit状態を俯瞰する。収集・整形・マージ済み worktree の検出はスクリプトが行う。
-
 ## 情報収集
 
 !`~/.claude/scripts/git-info.sh`
