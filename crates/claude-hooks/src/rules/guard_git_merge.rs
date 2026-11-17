@@ -11,9 +11,16 @@
 //! 既定ブランチの worktree は見ない（git が自分で、未コミットの変更とぶつかるときに止める）。
 //! 対象は pre-git-merge-check と同じ（ローカルのブランチを既定ブランチの上でマージするときだけ。
 //! リモート追跡ブランチの取り込み、中断・再開は対象外）。エスケープはない（修正方法は理由に示す）
+//!
+//! 既定ブランチでない HEAD で、そのブランチ自身をマージするコマンドも止める。既定ブランチの worktree でなく対象の
+//! ブランチの worktree で実行すると、git は「Already up to date」で何もせずに 0 で終わり、マージしたと読み違える。
+//! ほかのブランチを取り込むマージ（main を feature ブランチへ、など）は普通の操作なので止めない
 
 use super::Rule;
-use super::pre_git_merge_check::{commit_ish, default_branch_merges, merge_source};
+use super::guard_branch_base::branch_at;
+use super::pre_git_merge_check::{
+    commit_ish, default_branch_merges, local_branch_ref, merge_source, merge_targets,
+};
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -90,6 +97,42 @@ fn dirty_reason(branch: &str, worktree: &Path) -> Option<String> {
     ))
 }
 
+/// 既定ブランチでない HEAD で、そのブランチ自身をマージする `git merge` ごとの deny
+fn self_merges(input: &Input, shell: &Shell) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for cmd in shell.commands() {
+        let Some(targets) = cmd
+            .git_subcommand()
+            .filter(|(sub, _)| *sub == "merge")
+            .and_then(|(_, args)| merge_targets(args))
+        else {
+            continue;
+        };
+        let dir = shell.target_dir(cmd, &input.cwd);
+        let Some(default_ref) = git::default_branch(&dir) else {
+            continue;
+        };
+        let default = git::local_name(&default_ref);
+        // detached HEAD（空）はブランチ自身へのマージにならない
+        let Some(head) = branch_at(shell, cmd, &input.cwd, &dir)
+            .filter(|b| !b.is_empty() && b.as_str() != default)
+        else {
+            continue;
+        };
+        let head_ref = format!("refs/heads/{head}");
+        if targets
+            .iter()
+            .any(|t| local_branch_ref(&dir, t).as_deref() == Some(head_ref.as_str()))
+        {
+            out.push(Finding::Deny(format!(
+                "{head} を {head} 自身にマージしようとしています（{} の HEAD は {default} でなく {head}）。git は何もせずに「Already up to date」で終わり、{default} には入りません。{default} の worktree で実行する（git -C <{default} の worktree> merge …）か、{default} の worktree が無ければ git switch {default} してからマージしてください",
+                dir.display()
+            )));
+        }
+    }
+    out
+}
+
 pub struct GuardGitMerge;
 
 impl Rule for GuardGitMerge {
@@ -98,7 +141,7 @@ impl Rule for GuardGitMerge {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let mut out = Vec::new();
+        let mut out = self_merges(input, shell);
         for merge in default_branch_merges(input, shell) {
             let branches: Vec<(&str, String)> = merge
                 .targets
