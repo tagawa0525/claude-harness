@@ -170,6 +170,27 @@ fn an_amend_passes_the_old_and_new_commits_to_commit_refs_remap() {
     assert!(said.contains("REFS: 2"), "{said}");
     // 置き換えはコミットしないので、確かめてコミットするよう伝える
     assert!(said.contains("git diff"), "{said}");
+    // 何を確かめ、どの件名でコミットするか
+    assert!(said.contains("hash の置き換えだけ"), "{said}");
+    assert!(
+        said.contains("chore: remap the commit refs after the amend"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_failing_remap_says_where_to_retry_and_to_look_at_the_diff_first() {
+    let repo = Repo::new();
+    repo.opt_in();
+    let out = repo.amend(&[("FAKE_TOOL_EXIT", "1")], &[]);
+    let said = hook_output(&out);
+    let top = repo.git(&["rev-parse", "--show-toplevel"], &repo.work());
+    let top = String::from_utf8_lossy(&top.stdout).trim().to_string();
+    assert!(
+        said.contains(&format!("cd {top} && commit-refs remap")),
+        "{said}"
+    );
+    assert!(said.contains("先に git diff"), "{said}");
 }
 
 #[test]
