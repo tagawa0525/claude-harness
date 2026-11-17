@@ -1015,6 +1015,10 @@ fn refuse_unreachable_detached(source: &Path) -> Result<(), Stop> {
         let (Some(path), Some(head)) = (attr("worktree "), attr("HEAD ")) else {
             continue;
         };
+        // ディレクトリの無い worktree（prunable）は、合わせる作業ツリーが無く、git -C <パス> も実行できない
+        if !Path::new(&path).is_dir() {
+            continue;
+        }
         let containing = git(
             source,
             &[
