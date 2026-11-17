@@ -145,7 +145,7 @@ fn a_successful_run_tells_to_report_success_and_whether_external_ci_was_seen() {
     );
     let text = stdout(&out);
     assert!(
-        text.contains("CAUSE: NONE\nNEXT: GitHub Actions の最新の run は成功しています。RUNS のほかのワークフローの run に失敗があればそれを、無ければ正常完了と報告してください\n"),
+        text.contains("CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください\n"),
         "{text}"
     );
 
@@ -155,7 +155,7 @@ fn a_successful_run_tells_to_report_success_and_whether_external_ci_was_seen() {
     let text = stdout(&out);
     assert!(
         text.contains(
-            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run は成功しています。RUNS のほかのワークフローの run に失敗があればそれを、無ければ正常完了と報告してください。外部 CI は確認できていないと添えてください\n"
+            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください。外部 CI は確認できていないと添えてください\n"
         ),
         "{text}"
     );
@@ -271,7 +271,7 @@ fn a_skipped_latest_run_is_not_reported_as_a_success() {
     let text = stdout(&out);
     assert!(
         text.contains(
-            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run は skipped です。成功とは書かず、RUNS のほかのワークフローの run に失敗があればそれを、無ければ skipped と報告してください\n"
+            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は skipped です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください\n"
         ),
         "{text}"
     );
@@ -289,7 +289,7 @@ fn a_skipped_latest_run_without_external_ci_says_it_was_not_checked() {
     let text = stdout(&out);
     assert!(
         text.contains(
-            "NEXT: GitHub Actions の最新の run は skipped です。成功とは書かず、RUNS のほかのワークフローの run に失敗があればそれを、無ければ skipped と報告してください。外部 CI は確認できていないと添えてください\n"
+            "NEXT: GitHub Actions の最新の run（CI）は skipped です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください。外部 CI は確認できていないと添えてください\n"
         ),
         "{text}"
     );

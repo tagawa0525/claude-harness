@@ -554,3 +554,31 @@ fn the_same_open_issue_is_listed_once_in_blocked() {
         "{text}"
     );
 }
+
+#[test]
+fn the_same_unknown_blocker_is_listed_once() {
+    let repo = Repo::new();
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0009\", \"#0009\"]\n---\n\n# a\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues").contains(" blocker-unknown=#0009\n"),
+        "{text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_in_docs_issues_is_reported_as_unreadable() {
+    let repo = Repo::new();
+    let dir = repo.app().join("docs/issues");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::os::unix::fs::symlink(dir.join("gone.md"), dir.join("0005-x.md")).unwrap();
+    let text = stdout(&repo.run(&[]));
+    assert!(
+        section(&text, "issues").starts_with("docs/issues/0005-x.md unreadable="),
+        "{text}"
+    );
+}
