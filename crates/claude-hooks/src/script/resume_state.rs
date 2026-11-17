@@ -8,7 +8,7 @@
 //! - `== prs`: gh pr list の開いている PR（GitHub の URL を持つ remote と gh があるときだけ。remote の名前は問わない）
 //! - `== slurm`: squeue の自分のジョブ
 //! - `== issues`: docs/issues の status: open の issue（blocked-by があれば添える）。blocked-by の `#NNNN` の相手を
-//!   docs/issues の同じ番号の記録で引き、閉じていない相手を `blocked=`、閉じたかを確かめられない相手（記録が無い、
+//!   docs/issues の同じ番号の記録で引き、閉じていない相手（duplicate で閉じた相手は開いている重複先）を `blocked=`、閉じたかを確かめられない相手（記録が無い、
 //!   status を読めない、`#NNNN` の形でない、blocked-by を読めない）を `blocker-unknown=` で添え、印があれば節の最後に、
 //!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる
 //!
@@ -104,17 +104,18 @@ fn slurm() {
         println!("(なし: squeue が無い)");
         return;
     };
-    // id は Windows に無いので、先に環境変数を見る
-    let user = ["USER", "USERNAME"]
-        .iter()
-        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+    // 実効の利用者は id で引く（USER は su や sudo -E の後に元の利用者のまま残る）。id が無い環境だけ環境変数を見る
+    let user = Command::new("id")
+        .arg("-un")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|u| !u.is_empty())
         .or_else(|| {
-            Command::new("id")
-                .arg("-un")
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            ["USER", "USERNAME"]
+                .iter()
+                .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
         })
         .unwrap_or_default();
     match Command::new(squeue).args(["-h", "-u", &user]).output() {
@@ -149,33 +150,47 @@ fn issue_ref(item: &str) -> Option<u32> {
     }
 }
 
-/// 番号ごとの記録（status と、duplicate で閉じたときの重複先）
+/// 番号ごとの記録の、閉じたかの判定に要るもの
 struct Record {
+    /// status（読めなければ None）
     status: Option<String>,
+    /// duplicate で閉じたときの重複先
     duplicate_of: Option<u32>,
 }
 
-/// 相手が閉じているか。Some(true) は閉じた、Some(false) は閉じていない、None は確かめられない。duplicate で閉じた
-/// 相手は、仕事が重複先に移っているので、重複先をたどって決める
-fn closed(records: &HashMap<u32, Vec<Record>>, number: u32) -> Option<bool> {
+/// 相手の状態
+enum Blocker {
+    Closed,
+    /// 開いている記録の番号（duplicate で閉じた相手は、たどった先の重複先）
+    Open(u32),
+    Unknown,
+}
+
+/// 相手が閉じているか。duplicate で閉じた相手は、仕事が重複先に移っているので、重複先をたどって決める
+fn blocker(records: &HashMap<u32, Vec<Record>>, number: u32) -> Blocker {
     let mut seen = Vec::new();
     let mut n = number;
     loop {
         if seen.contains(&n) {
-            return None;
+            return Blocker::Unknown;
         }
         seen.push(n);
-        let rs = records.get(&n)?;
-        // 同じ番号の記録が複数あれば、どれかが閉じていなければ閉じていないとみなす
-        if rs.iter().any(|r| r.status.is_none()) {
-            return None;
+        let Some(rs) = records.get(&n) else {
+            return Blocker::Unknown;
+        };
+        // 同じ番号の記録が複数あれば、どれかが開いていれば開いているとみなす
+        if rs
+            .iter()
+            .any(|r| r.status.as_deref().is_some_and(|s| s != "closed"))
+        {
+            return Blocker::Open(n);
         }
-        if rs.iter().any(|r| r.status.as_deref() != Some("closed")) {
-            return Some(false);
+        if rs.iter().any(|r| r.status.is_none()) {
+            return Blocker::Unknown;
         }
         match rs.iter().find_map(|r| r.duplicate_of) {
             Some(next) => n = next,
-            None => return Some(true),
+            None => return Blocker::Closed,
         }
     }
 }
@@ -190,7 +205,8 @@ fn issues(root: &Path) {
         .filter(|p| p.extension().is_some_and(|e| e == "md") && p.is_file())
         .collect();
     files.sort();
-    let entries: Vec<(String, String)> = files
+    // (ファイル名, 本文, status, フロントマター) を 1 度だけ読む
+    let entries: Vec<_> = files
         .iter()
         .map(|f| {
             let name = f
@@ -198,53 +214,61 @@ fn issues(root: &Path) {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            (name, std::fs::read_to_string(f).unwrap_or_default())
+            let text = std::fs::read_to_string(f).unwrap_or_default();
+            let status = design_records::status(&text);
+            let front = parse_front_matter(&text);
+            (name, text, status, front)
         })
         .collect();
     let mut records: HashMap<u32, Vec<Record>> = HashMap::new();
-    for (name, text) in &entries {
+    for (name, _, status, front) in &entries {
         let path = format!("{}/{name}", Kind::Issue.dir());
         let Some((n, _)) = design_records::record_name(Kind::Issue, &path) else {
             continue;
         };
-        let front = parse_front_matter(text).ok();
+        // 閉じた記録は、フロントマターを読めなければ重複先を確かめられないので、status を読めないものとして扱う
+        let status = match front {
+            Err(_) if status.as_deref() == Some("closed") => None,
+            _ => status.clone(),
+        };
         let duplicate_of = front
             .as_ref()
+            .ok()
             .filter(|f| f.get("resolution") == Some(&Value::Scalar("duplicate".into())))
             .and_then(|f| f.get("duplicate-of"))
             .and_then(|v| v.items().first().and_then(|i| issue_ref(i)));
         records.entry(n).or_default().push(Record {
-            status: design_records::status(text),
+            status,
             duplicate_of,
         });
     }
     let (mut found, mut any_blocked, mut any_unknown) = (false, false, false);
-    for (name, text) in &entries {
-        if design_records::status(text).as_deref() != Some("open") {
+    for (name, text, status, front) in &entries {
+        if status.as_deref() != Some("open") {
             continue;
         }
         let mut line = format!("docs/issues/{name}");
-        let shown = raw_value(text, "blocked-by").filter(|v| !v.is_empty() && *v != "[]");
-        if let Some(blocked) = shown {
+        let raw = raw_value(text, "blocked-by");
+        if let Some(blocked) = raw.filter(|v| !v.is_empty() && *v != "[]") {
             line.push_str(&format!(" blocked-by={blocked}"));
         }
         let (mut open, mut unknown) = (Vec::new(), Vec::new());
-        match parse_front_matter(text) {
+        match front {
             Ok(front) => {
                 for item in front
                     .get("blocked-by")
                     .map(Value::items)
                     .unwrap_or_default()
                 {
-                    match issue_ref(item).and_then(|n| closed(&records, n)) {
-                        Some(true) => {}
-                        Some(false) => open.push(item.to_string()),
-                        None => unknown.push(item.to_string()),
+                    match issue_ref(item).map_or(Blocker::Unknown, |n| blocker(&records, n)) {
+                        Blocker::Closed => {}
+                        Blocker::Open(n) => open.push(Kind::Issue.reference(n)),
+                        Blocker::Unknown => unknown.push(item.to_string()),
                     }
                 }
             }
             // 読めないフロントマターの blocked-by は、相手を決められない
-            Err(_) if raw_value(text, "blocked-by").is_some() => unknown.push("unparsed".into()),
+            Err(_) if raw.is_some() => unknown.push("unparsed".into()),
             Err(_) => {}
         }
         if !open.is_empty() {
