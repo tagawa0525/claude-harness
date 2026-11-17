@@ -2825,6 +2825,15 @@ for cmd in "bash -x $HOME/.claude/scripts/gh-wait-review.sh $PR12" "sh -eu ~/.cl
   assert_eq allow "$(decision "$out")"
 done
 
+it "require-background-wait: CI の終わりを待つ gh-wait-checks.sh も、フォアグラウンドなら止める"
+for cmd in "~/.claude/scripts/gh-wait-checks.sh $PR12" "bash $HOME/.claude/scripts/gh-wait-checks.sh $PR12"; do
+  out=$(run_hook require-background-wait "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$out" "gh-wait-checks.sh"
+  out=$(run_hook require-background-wait "$cmd" true)
+  assert_eq allow "$(decision "$out")"
+done
+
 it "require-background-wait: 実行するプログラムを決められない形は、文字列に対象のスクリプト名があれば止める"
 out=$(run_hook require-background-wait 'WAIT=~/.claude/scripts/gh-wait-review.sh; $WAIT https://github.com/o/r/pull/12')
 assert_eq deny "$(decision "$out")"

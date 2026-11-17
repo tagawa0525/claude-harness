@@ -62,7 +62,7 @@ cd "$TEST_ROOT/elsewhere" || exit 1
 declare -A REST_ARGS=(
   [get-pr-info.sh]="" [get-review-comments.sh]="--unresolved" [get-latest-review.sh]=""
   [decide-next.sh]="" [resolve-thread.sh]="11" [reply-to-comment.sh]="11 body"
-  [request-rereview.sh]="" [reset-rounds.sh]="reason" [gh-wait-review.sh]=""
+  [request-rereview.sh]="" [reset-rounds.sh]="reason" [gh-wait-review.sh]="" [gh-wait-checks.sh]=""
   [gh-review-requests.sh]="" [record-local-review.sh]="def5678 0 0 0"
 )
 for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comments.sh" \
@@ -70,7 +70,7 @@ for script in "$REVIEW_SCRIPTS/get-pr-info.sh" "$REVIEW_SCRIPTS/get-review-comme
   "$REVIEW_SCRIPTS/resolve-thread.sh" "$REVIEW_SCRIPTS/reply-to-comment.sh" \
   "$REVIEW_SCRIPTS/request-rereview.sh" "$REVIEW_SCRIPTS/reset-rounds.sh" \
   "$REVIEW_SCRIPTS/record-local-review.sh" \
-  "$SCRIPTS_DIR/gh-wait-review.sh" "$SCRIPTS_DIR/gh-review-requests.sh"; do
+  "$SCRIPTS_DIR/gh-wait-review.sh" "$SCRIPTS_DIR/gh-wait-checks.sh" "$SCRIPTS_DIR/gh-review-requests.sh"; do
   read -ra rest <<<"${REST_ARGS[$(basename "$script")]}"
   # owner と repo は案内のコマンドに書くので、GitHub の名前に使えない文字（; や空白）を含む URL も拒む
   # . と .. の名前も拒む（gh api の {owner}/{repo} に入り、API のパスを上に辿る）
@@ -126,7 +126,7 @@ for script in get-latest-review.sh get-pr-info.sh get-review-comments.sh record-
   assert_not_contains "$(fake_log gh)" "api"
 done
 
-for script in gh-review-requests.sh gh-wait-review.sh; do
+for script in gh-review-requests.sh gh-wait-review.sh gh-wait-checks.sh; do
   it "$script: claude-hooks が無ければ、入れ方を示して 127 で止まる"
   make_fake_gh '*) echo "{}" ;;'
   out=$(CLAUDE_HOOKS_BIN="$TEST_ROOT/missing/claude-hooks" "$SCRIPTS_DIR/$script" "$PR_URL" 2>&1)
