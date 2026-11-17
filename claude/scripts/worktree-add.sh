@@ -13,7 +13,7 @@
 #                            トピックに入るため
 # --from <ref>: 新規作成の起点を明示する（今のブランチの続きなら --from HEAD）。既存のブランチに付けたらエラー。
 # --carry-changes: 未コミットの変更（未追跡ファイル含む）を patch で worktree 側に移し、元の作業ツリーから
-#   取り除く（git-commit スキルの「main からの退避」）。stash は全 worktree と全セッションで共有なので使わない。
+#   取り除く（git-commit スキルの「mainブランチからの退避」）。stash は全 worktree と全セッションで共有なので使わない。
 #   worktree に当てるのに失敗したら、元の変更を残して止める
 #
 # 共有（.worktreelink）: 新しい worktree のルートに .worktreelink があれば、1 行 1 パス（ルートからの相対パス。空行と

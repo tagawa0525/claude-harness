@@ -10,7 +10,7 @@
 //!
 //! --from <ref> は新しく作る起点を明示する（今のブランチの続きなら --from HEAD）。既存のブランチに付けたらエラー。
 //! --carry-changes は未コミットの変更（index の変更と未追跡のファイルを含む）を patch にして worktree の側へ移し、
-//! 元の作業ツリーから取り除く（git-commit のスキルの「main からの退避」）。stash は全 worktree と全セッションで共有
+//! 元の作業ツリーから取り除く（git-commit のスキルの「mainブランチからの退避」）。stash は全 worktree と全セッションで共有
 //! なので使わない。worktree に当てるのに失敗したら、元の変更を残して止める。
 //!
 //! 共有（.worktreelink）: 新しい worktree の直下に .worktreelink があれば、1 行 1 パス（直下からの相対のパス。空行と
