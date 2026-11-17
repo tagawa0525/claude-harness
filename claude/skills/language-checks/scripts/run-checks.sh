@@ -1,6 +1,6 @@
 #!/bin/sh
 # run-checks.sh — プロジェクトの言語を検出し、フォーマット → リント → テストを実行する。中身は claude-hooks script
-# run-checks（Rust にして Windows でも動かす。言語の検出とステージの中身もそこに書く）。スキルの文と git の pre-merge-commit
+# run-checks（Rust にして Windows でも動かす。言語の検出とチェックの中身もそこに書く）。スキルの文と git の pre-merge-commit
 # hook はこのスクリプトの名前とパスで呼ぶので、ファイルは残して呼ぶ
 #
 # Usage: run-checks.sh [-C <dir>] [--merge] [--base <ref>]

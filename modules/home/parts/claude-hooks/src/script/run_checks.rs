@@ -16,7 +16,7 @@
 //!
 //! 「ステージ済み」は、--merge では HEAD と作業ツリーの差分、--base では分岐点と作業ツリーの差分に読み替える。
 //! 最初に失敗したチェックで止まる。ツールが PATH に無ければ SKIP を出して続ける。`RUN:` と `FAILED:` の行のコマンドは、
-//! ステージの名前（`cargo_in <dir>`、`nix_fmt_check` など）で出す。実行できるコマンドの形にしないのは、run-checks.sh を
+//! チェックの名前（`cargo_in <dir>`、`nix_fmt_check` など）で出す。実行できるコマンドの形にしないのは、run-checks.sh を
 //! Rust に移す前と行の文字列を変えないため（ADR-0087。変えるなら、行を読むテストと合わせて別に変える）
 
 use std::collections::BTreeSet;
@@ -299,7 +299,7 @@ impl Checks {
     }
 
     /// 検査する変更ファイル（追加、変更、rename の後の名前）。pathspec が空なら全部。git diff が失敗したら、空の差分と
-    /// 区別がつかずステージを飛ばして ALL_OK になるので、FAILED を出して止める
+    /// 区別がつかずチェックを飛ばして ALL_OK になるので、FAILED を出して止める
     fn changed_files(&self, pathspec: &[&str]) -> Result<Vec<PathBuf>, i32> {
         let mut extra = vec!["--diff-filter=ACMR", "-z"];
         if !pathspec.is_empty() {
@@ -319,7 +319,7 @@ impl Checks {
         Ok(!self.changed_files(&[pattern])?.is_empty())
     }
 
-    /// ステージを 1 つ実行する。tool が PATH に無ければ SKIP。display は RUN と FAILED の行に出すコマンド、run が中身
+    /// チェックを 1 つ実行する。tool が PATH に無ければ SKIP。display は RUN と FAILED の行に出すコマンド、run が中身
     fn stage(
         &self,
         lang: &str,
@@ -347,7 +347,7 @@ impl Checks {
         }
     }
 
-    /// argv をそのまま RUN の行に出して実行するステージ
+    /// argv をそのまま RUN の行に出して実行するチェック
     fn command_stage(
         &self,
         lang: &str,

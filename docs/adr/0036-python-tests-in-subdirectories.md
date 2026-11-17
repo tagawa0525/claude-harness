@@ -12,7 +12,7 @@ issues: []
 
 ## 背景
 
-`run-checks.sh` の Python のテストのステージは、`tests/` かリポジトリの直下の `test_*.py` / `*_test.py` があるときだけ pytest を
+`run-checks.sh` の Python のテストのチェックは、`tests/` かリポジトリの直下の `test_*.py` / `*_test.py` があるときだけ pytest を
 実行し、無ければ `SKIP` で成功を返していた。xlc のテストは `examples/` と `examples/vera/` の下にあり（隣の .py を import する
 ツールのテスト）、チェックで一度も走らないまま通っていた（2026-10-15 に判明）。xlc の 1 つのテストは OpenMC の Python を import
 するので、既定の devShell では落ちる。
@@ -35,10 +35,10 @@ issues: []
 
 ### 帰結
 
-- Python のステージは .py の変更があるときだけ走る（既存の検出のまま）。全部を実行したいときは `scripts/run-python-tests.sh` を
+- Python のチェックは .py の変更があるときだけ走る（既存の検出のまま）。全部を実行したいときは `scripts/run-python-tests.sh` を
   手で実行する
 - pytest 形式（関数だけ）のテストは、python3 から pytest が使えない環境では unittest がテストを 1 件も見つけず、
-  exit 5（NO TESTS RAN）でこのステージが落ちる。pytest を devShell に足すか、override を置く
+  exit 5（NO TESTS RAN）でこのチェックが落ちる。pytest を devShell に足すか、override を置く
 - ルート直下と `tests/` の判定は従来どおり `pytest` コマンドで、サブディレクトリは `python3 -m pytest` で見る。前者は
   既存の挙動を変えないため、後者は xlc で PATH の pytest が devShell の python3 と別の環境だったため
 - 既存のルート直下の判定（`compgen -G`）は、PATH 先頭の bash に compgen が無い環境で偽になる（#375。この ADR では直さない）

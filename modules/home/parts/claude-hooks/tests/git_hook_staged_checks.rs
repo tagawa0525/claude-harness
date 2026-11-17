@@ -1,6 +1,6 @@
 //! `claude-hooks git-hook staged-checks [言語]...` が、ステージした版（コミットに入る中身）の Nix、Python、Markdown、
 //! Rust を、PATH のツールで検査することを確かめる（ADR-0028、ADR-0086。グローバルの pre-commit と run-checks.sh の
-//! Markdown のステージが呼ぶ）。ツールは偽のコマンド（examples/fake_tool.rs）を名前を変えて置く。本物のツールでの
+//! Markdown のチェックが呼ぶ）。ツールは偽のコマンド（examples/fake_tool.rs）を名前を変えて置く。本物のツールでの
 //! Markdown の自動修正の書き戻しと Rust の edition は、modules/home/parts/tests/ の pre-commit-partial-stage.sh、
 //! pre-commit-rust-format.sh、pre-commit-renamed-files.sh
 
