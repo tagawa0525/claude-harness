@@ -504,6 +504,14 @@ mod tests {
         assert!(reviewed_hash(&body("abc123")).is_err());
     }
 
+    #[test]
+    fn a_finding_inside_a_sentence_is_not_a_line_and_the_reason_says_so() {
+        let err =
+            reviewed_hash("Merge: x\n\nReviewed: abc1234\n直した（再現: test_a）\n").unwrap_err();
+        assert!(err.contains("指摘ごとの行"), "{err}");
+        assert!(err.contains("文の中に括弧で入れた"), "{err}");
+    }
+
     /// コミットの日時。hash は日時にも依るので、固定してテストの hash を実行の時刻に依らず決める
     const FIXED_DATE: &str = "1700000000 +0000";
 
