@@ -209,27 +209,49 @@ fn the_refusal_names_the_clone_it_checked_and_the_way_out() {
 }
 
 #[test]
-fn a_head_the_earlier_records_cover_needs_no_record() {
-    // rebase だけの head や、すでに記録のある head は、マージの hook が前の記録で認める。記録を足さずに 0 で終える
+fn a_refusal_never_ends_as_a_success() {
+    // 回していない head への呼び出しを、記録を足さないまま 0 で終えない（回し直して見つけた High の件数を渡した
+    // 呼び出しが、成功に見えて消えないように）。rebase だけの head かは decide-next.sh が示す
     const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
     let fake = FakeGh::new();
     reviewed_at(&fake, &[EARLIER]);
-    let out = fake.run_calls(
+    let out = run_as_is(&fake, &[URL, "def5678", "2", "0", "0"], "true\n");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert!(
+        stderr(&out).contains("scripts/decide-next.sh"),
+        "{}",
+        stderr(&out)
+    );
+    // 確かめるのは clone の行だけで、gh は head と権限の 2 回しか呼ばない
+    assert_eq!(fake.log().lines().count(), 2, "{}", fake.log());
+}
+
+#[test]
+fn an_unlogged_review_is_recorded_where_the_directory_is_not_a_clone() {
+    // WORKTREE が none で PR の URL を対象に渡した周は、cd する worktree が無い
+    let fake = FakeGh::new();
+    let ceiling = fake.dir().parent().unwrap().to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
         "record-local-review",
-        &[URL, "def5678", "0", "0", "0"],
         &[
-            (&format!("{HEAD}\n"), 0),
-            ("true\n", 0),
-            // 書き込める人の記録の 1 行目（同じ head の、High の無い記録）
-            (
-                &format!("<!-- local-review sha={HEAD} high=0 medium=1 low=4 -->\n"),
-                0,
-            ),
+            URL,
+            "def5678",
+            "0",
+            "0",
+            "0",
+            "--unlogged",
+            "対象に PR の URL を渡して回した",
         ],
+        &[(&format!("{HEAD}\n"), 0), ("true\n", 0), ("", 0)],
+        &[("GIT_CEILING_DIRECTORIES", &ceiling)],
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert!(stdout(&out).starts_with("COVERED: "), "{}", stdout(&out));
-    assert!(!fake.log().contains("pr comment"));
+    assert!(
+        fake.log().contains("回した記録が clone に無い理由"),
+        "{}",
+        fake.log()
+    );
 }
 
 #[test]
