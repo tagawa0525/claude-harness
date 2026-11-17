@@ -23,7 +23,8 @@
 //!   ではないので、`dir/` のようにディレクトリだけに一致するパターンでは無視されない
 //! - メインの worktree にそのパスが無ければ、作らずに NOTE で知らせる
 //! - エラーのときは symlink を 1 つも作らずに止める（worktree は作ったまま残し、場所を知らせる。直すのは .worktreelink
-//!   か .gitignore で、そのブランチの worktree で直せるように）
+//!   か .gitignore で、そのブランチの worktree で直せるように）。作成先があり再実行できないので、直す順と、各パスを
+//!   張る mkdir -p と ln -s のコマンドを実際のパスで出す
 //! - Windows の symlink は開発者モードか管理者の権限が要る。作れなければ、作った symlink を消して止める
 //!
 //! GitHub のリモートがあり、ローカルにブランチが無く --from も無ければ、ブランチの状態を調べる前に fetch する。古い
@@ -130,7 +131,7 @@ pub fn main(args: &[String]) -> i32 {
         && !git_inherit(here, &["fetch", "-q", "origin"])
     {
         eprintln!(
-            "ERROR: fetch に失敗しました。古い追跡ブランチから作らないよう止めます。リモートへの接続を確かめてください"
+            "ERROR: fetch に失敗しました。古い追跡ブランチから作らないよう止めます。リモートへの接続を確かめてください。オフラインなら、ローカルにあるブランチを渡すか、--from <ref> で手元の起点から作ってください"
         );
         return 1;
     }
@@ -244,7 +245,7 @@ pub fn main(args: &[String]) -> i32 {
 
     // 設定はチェックアウトしたブランチのもの（ブランチごとに .gitignore と揃っている）を読む
     match std::fs::read_to_string(dir.join(".worktreelink")) {
-        Ok(text) => share(&dir, &main_root, &text),
+        Ok(text) => share(&dir, &main_root, &text, carry),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
         // 読めない（UTF-8 でない、権限が無い）のを「無い」と同じにすると、共有しなかったことに気付けない
         Err(e) => {
@@ -445,8 +446,8 @@ fn os_path(bytes: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
-/// .worktreelink のパスを、メインの worktree への symlink にする
-fn share(dir: &Path, main_root: &Path, text: &str) -> i32 {
+/// .worktreelink のパスを、メインの worktree への symlink にする。carry は変更を持ち込んだか（誤りのときに知らせる）
+fn share(dir: &Path, main_root: &Path, text: &str, carry: bool) -> i32 {
     let mut paths: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
@@ -550,8 +551,33 @@ fn share(dir: &Path, main_root: &Path, text: &str) -> i32 {
             eprintln!("  {e}");
         }
         eprintln!(
-            "worktree は {} に作ってあります。そのブランチで .worktreelink か .gitignore を直してください",
-            dir.display()
+            "worktree は {} に作ってあります{}。作成先があるのでスクリプトは再実行できません。次の順に直してください:",
+            dir.display(),
+            if carry {
+                "（--carry-changes の変更は worktree に移してあります）"
+            } else {
+                ""
+            }
+        );
+        eprintln!(
+            "1. その worktree（そのブランチ）で .worktreelink か .gitignore を直す（書き方は worktree-add.sh の冒頭のコメント）"
+        );
+        eprintln!("2. .worktreelink の各パスを、メイン worktree への絶対パスの symlink にする:");
+        let quote = super::wait_step::quote;
+        let (wt, main) = (dir.to_string_lossy(), main_root.to_string_lossy());
+        for path in &paths {
+            let parent = path
+                .rsplit_once('/')
+                .map_or(wt.to_string(), |(p, _)| format!("{wt}/{p}"));
+            eprintln!(
+                "  mkdir -p {} && ln -s {} {}",
+                quote(&parent),
+                quote(&format!("{main}/{path}")),
+                quote(&format!("{wt}/{path}"))
+            );
+        }
+        eprintln!(
+            "  mkdir -p \"$(dirname {wt}/<直したパス>)\" && ln -s {main}/<直したパス> {wt}/<直したパス>"
         );
         return 1;
     }
@@ -593,9 +619,12 @@ fn link_all<'a>(
         // / でつなぐ（Windows でも git の出すパスと区切りを揃える）
         let target = PathBuf::from(format!("{}/{path}", main_root.to_string_lossy()));
         if !target.exists() {
+            let link = format!("{}/{path}", dir.to_string_lossy());
             notes.push(format!(
-                "NOTE: メイン worktree に {path} がないため共有しません（{}）",
-                target.display()
+                "NOTE: メイン worktree に {path} がないため共有しません（{}）。必要ならメイン worktree に用意してから、ln -s {} {} で張る",
+                target.display(),
+                super::wait_step::quote(&target.to_string_lossy()),
+                super::wait_step::quote(&link)
             ));
             continue;
         }

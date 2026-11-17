@@ -26,10 +26,12 @@
 #     ではないので、`dir/` のようにディレクトリだけに一致するパターンでは無視されない（dir か /dir と書く）
 #   - メイン worktree にそのパスが無ければ、作らずに NOTE で知らせる
 #   - エラーのときは symlink を 1 つも作らずに止める（worktree は作ったまま残し、場所を知らせる。
-#     直すのは .worktreelink か .gitignore で、そのブランチの worktree で直せるように）
+#     直すのは .worktreelink か .gitignore で、そのブランチの worktree で直せるように）。再実行できないので、
+#     直す順と、各パスを張る mkdir -p と ln -s のコマンドを実際のパスで出す
 #   - Windows の symlink は開発者モードか管理者の権限が要る
 #
-# GitHub リモートがあり、ローカルにブランチが無く --from も無ければ、先に origin を fetch する（失敗したら止める）。
+# GitHub リモートがあり、ローカルにブランチが無く --from も無ければ、先に origin を fetch する（失敗したら止め、
+# オフラインならローカルのブランチか --from を使うよう示す）。
 #
 # 出力: WORKTREE、BRANCH、CREATED_BRANCH（yes|no）、BASE（新規作成のときの起点）、SHARED（共有したパスごと）、NOTE
 . "$(dirname "$0")/lib/claude-hooks-script.sh"
