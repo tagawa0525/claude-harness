@@ -4,7 +4,8 @@
 //!   design-records new [--kind adr|issue] <slug> <title>
 //!                                      番号を予約して <dir>/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
 //!                                      （dir は docs/adr か docs/issues。省けば adr）。ADR の slug は決めたことを
-//!                                      動詞で始めた英語の kebab-case
+//!                                      動詞で始めた英語の kebab-case。OKF のバンドルでは index と同じく索引の行も
+//!                                      足し、一緒にコミットする索引を標準エラーの NEXT: に出す
 //!   design-records renumber [--kind adr|issue] <old> [<new>]
 //!                                      このブランチで足した記録 <old> を <new>（省けば次の番号）に振り直し、
 //!                                      ファイル名と参照を付け替えて 1 コミットにする。新しいパスを出す
@@ -151,7 +152,19 @@ fn new(kind: Kind, slug: &str, title: &str) -> Result<ExitCode> {
     if !is_title(title) {
         return Err(format!("the title must be one non-blank line: {title:?}"));
     }
-    numbering::new(kind, slug, title, &today()?)
+    let path = numbering::new(kind, slug, title, &today()?)?;
+    println!("{path}");
+    // OKF のバンドルでは、記録を足すと索引に載っていない文書になり、check が止める。index と同じ行を足し、
+    // 一緒にコミットする索引を示す。パスを受ける呼び出し（`$(design-records new …)`）を壊さないよう、標準エラーに出す
+    let root = repo_root()?;
+    let written = write_indexes(&root)?.unwrap_or_default();
+    if !written.is_empty() {
+        eprintln!(
+            "NEXT: commit the index lines added to {} together with {path}",
+            written.join(" ")
+        );
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// 手元の暦の今日（`date +%F`。標準ライブラリには時間帯の変換が無い）。
@@ -454,16 +467,30 @@ fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>
 
 /// バンドルの索引に載っていない行を足し、書いたパスを出す（ADR-0092）。
 fn index() -> Result<ExitCode> {
-    let root = repo_root()?;
-    let files = bundle_files(&root, true)?;
-    if files.is_empty() {
+    let Some(written) = write_indexes(&repo_root()?)? else {
         eprintln!(
             "design-records: docs/index.md has no `okf_version` in its front matter, so docs/ is not an OKF bundle"
         );
-    }
-    for (path, text) in complete_indexes(&files) {
-        fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
+        return Ok(ExitCode::SUCCESS);
+    };
+    for path in written {
         println!("{path}");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// バンドルの索引に、追跡していないものを含めて載っていない文書と下位のディレクトリの行を足し、書いた索引のパスを返す。
+/// バンドルでなければ何も書かずに `None`。
+fn write_indexes(root: &Path) -> Result<Option<Vec<String>>> {
+    // untracked なら docs/index.md 自身が入るので、空はバンドルでないときだけ
+    let files = bundle_files(root, true)?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let mut written = Vec::new();
+    for (path, text) in complete_indexes(&files) {
+        fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
+        written.push(path);
+    }
+    Ok(Some(written))
 }

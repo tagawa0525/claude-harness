@@ -160,8 +160,8 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
     ))
 }
 
-/// `new`: 番号を予約し、テンプレートを書いて、リポジトリの直下からのパスを出す。
-pub fn new(kind: Kind, slug: &str, title: &str, date: &str) -> Result<ExitCode> {
+/// `new`: 番号を予約し、テンプレートを書いて、リポジトリの直下からのパスを返す。
+pub fn new(kind: Kind, slug: &str, title: &str, date: &str) -> Result<String> {
     let root = repo_root()?;
     let number = reserve(&root, kind, slug, None)?;
     let path = kind.path(number, slug);
@@ -171,8 +171,7 @@ pub fn new(kind: Kind, slug: &str, title: &str, date: &str) -> Result<ExitCode> 
     };
     fs::create_dir_all(root.join(kind.dir())).map_err(|e| format!("{}: {e}", kind.dir()))?;
     fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
-    println!("{path}");
-    Ok(ExitCode::SUCCESS)
+    Ok(path)
 }
 
 /// `base` から HEAD までに足した行（ファイルごとの行番号、1 から）。
