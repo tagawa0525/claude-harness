@@ -19,6 +19,9 @@
 //! - `PROPOSED_ADRS: ADR-NNNN ...|none`: 対象のコミット（既定のブランチが無ければ全部）のうち、件名の型が feat か fix の
 //!   ものが本文の `Refs:` の行で挙げた ADR（カンマで区切った値のうち ADR-NNNN そのもの）で、対象の先端で
 //!   docs/adr/NNNN-*.md の status が proposed のもの（番号の順）。対象の先端に docs/adr が無ければ行を出さない
+//! - `STALE_CONFIRMATIONS: ADR-NNNN:<path> ...|none`: 対象のコミットで変えた ADR の「確認」の節に挙げたファイルのうち、
+//!   その ADR を最後に変えたコミットより後に変わったもの（決定、帰結、確認が今の実装と合うかを見直す）。PROPOSED_ADRS と
+//!   同じく、対象の先端に docs/adr が無ければ行を出さない
 //!
 //! 実装をマージするブランチは、実装した proposed の ADR を同じブランチで accepted にする。確定した ADR の凍結する部分は
 //! マージの後には「## 変更」でしか直せないので、マージの前に見落としを一覧にする（止めはしない。一部だけを実装した
@@ -66,6 +69,56 @@ fn yes_no(dir: &Path, args: &[&str]) -> Option<bool> {
 
 fn has_ref(dir: &Path, name: &str) -> Option<bool> {
     yes_no(dir, &["show-ref", "--verify", "--quiet", name])
+}
+
+/// `range` で変えた ADR（`names` は先端の docs/adr の名前）の「確認」の節に挙げたファイルのうち、その ADR を最後に変えた
+/// コミットより後に `tip` までに変わったもの（`ADR-NNNN:<パス>`。ADR とパスの順）。design-records check の同じ注意は
+/// pre-commit では渡したファイルの ADR にしか出ず、実装だけを直したコミットでは出ないので、マージの前にここで拾う。
+/// 先端のファイル（blob）でないもの（ディレクトリ、コマンド、外のパス）と ADR は、check と同じく見ない。git の失敗は None
+fn stale_confirmations(dir: &Path, range: &str, tip: &str, names: &str) -> Option<Vec<String>> {
+    let files = git(
+        dir,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "ls-tree",
+            "-r",
+            "--full-tree",
+            "--name-only",
+            tip,
+        ],
+    )?;
+    let files: BTreeSet<&str> = files.lines().collect();
+    let last_change = |range: &str, path: &str| -> Option<String> {
+        Some(
+            git(dir, &["log", "-1", "--format=%H", range, "--", path])?
+                .trim()
+                .to_string(),
+        )
+    };
+    let mut stale = Vec::new();
+    for name in names.lines() {
+        let adr = format!("docs/adr/{name}");
+        if !design_records::is_adr_path(&adr) {
+            continue;
+        }
+        let number = &name[..4];
+        let last = last_change(range, &adr)?;
+        if last.is_empty() {
+            continue;
+        }
+        let text = git(dir, &["show", &format!("{tip}:{adr}")])?;
+        let after = format!("{last}..{tip}");
+        for path in design_records::check::confirmation_paths(&text) {
+            if design_records::is_adr_path(&path) || !files.contains(path.as_str()) {
+                continue;
+            }
+            if !last_change(&after, &path)?.is_empty() {
+                stale.push(format!("ADR-{number}:{path}"));
+            }
+        }
+    }
+    Some(stale)
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -320,6 +373,17 @@ pub fn main(args: &[String]) -> i32 {
                 "none".to_string()
             } else {
                 proposed.join(" ")
+            }
+        ));
+        let Some(stale) = stale_confirmations(dir, &range, &tip, &names) else {
+            return failed("git log");
+        };
+        out.push_str(&format!(
+            "STALE_CONFIRMATIONS: {}\n",
+            if stale.is_empty() {
+                "none".to_string()
+            } else {
+                stale.join(" ")
             }
         ));
     }
