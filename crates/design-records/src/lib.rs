@@ -16,7 +16,7 @@ pub const ADR_DIR: &str = "docs/adr";
 /// issue を置くディレクトリ（リポジトリの直下から）。
 pub const ISSUE_DIR: &str = "docs/issues";
 
-/// `renumber` が作るコミットの件名（`docs: renumber ADR-0005 to ADR-0006`、`docs: renumber issue #0005 to #0006`）。
+/// `renumber` が作るコミットの件名（`docs: renumber ADR-<旧> to ADR-<新>`、`docs: renumber issue #<旧> to #<新>`。番号は 4 桁）。
 pub fn renumber_subject(kind: Kind, old: u32, new: u32) -> String {
     let kind_word = match kind {
         Kind::Adr => "",
