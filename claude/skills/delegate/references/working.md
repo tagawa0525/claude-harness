@@ -171,7 +171,7 @@ cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
 ## ブランチと worktree
 - リポジトリ: <path>
 - ブランチ: <branch>（<base> から N コミット遅れ（`base-moved.sh` の `BEHIND:`） | 遅れは未確認（`UNVERIFIED:` か `ERROR:`））
-- <base> と両方が変えたファイル: <`base-moved.sh` の `COMMON:` のパス | なし | 未確認（`UNVERIFIED:` と `WARN:` か `ERROR:` の内容）>
+- <base> と両方が変えたファイル: <`base-moved.sh` の `COMMON:` のパス | なし | 未確認（`UNVERIFIED:`（と、あれば `WARN:`）か `ERROR:` の内容）>
 - worktree: <path>
 - PR: <URL | なし>
 
