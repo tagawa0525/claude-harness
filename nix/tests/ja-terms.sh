@@ -6,7 +6,8 @@
 # pre-commit はステージした中身（作業ツリーではなく）の Markdown、テキスト、コードを、commit-msg は
 # Claude Code のセッションのコミットの本文を ja-terms（prh の辞書を Rust で当てる。ADR-0085）で検査する。辞書の項目は、名詞の用法を
 # 止め、動詞や別の語を通すことも確かめる。ファイルの全体の検査（ja-terms check）と、それを使う /retro の
-# memory-index.sh（claude-hooks script memory-index）の TERMS: の行も、同じ辞書で確かめる（ADR-0074）。
+# memory-index.sh（claude-hooks script memory-index）の TERMS: の行も、同じ辞書で確かめる（ADR-0074）。発言とメモリに辞書を
+# かける dictionary-preview.sh（#284）も、本物の ja-terms と辞書で確かめる。
 #
 # hook のファイルを nix build で作る（hook が呼ぶ claude-hooks と、それが包む ja-terms も一緒にビルドされる）。
 # ja-terms は、claude-code.nix が置く ~/.claude/bin の形のまま、home-manager の home-files から取る。
@@ -807,6 +808,49 @@ if [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "ENTRIES: 2" ]; then
   ok "memory-index: 崩れた語が無ければ TERMS: の行を出さない"
 else
   ng "memory-index: 崩れた語の無いメモリで TERMS: の行か食い違いを出した（終了コード $rc）"
+fi
+
+# --- dictionary-preview: 発言とメモリに辞書をかけ、置き換えを例つきで出す（#284） -----------------------------
+PREVIEW="$ROOT/claude/scripts/dictionary-preview.sh"
+PROJ="$WORK/projects"
+mkdir -p "$PROJ/p1/memory"
+# 発言は 3 行。コードスパンとフェンスの中は数えず、😀（UTF-16 で 2 つ）の後の語も前後の文脈を正しく切る
+cat > "$PROJ/p1/s1.jsonl" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"text","text":"😀 確かめの結果を書く。\n`確かめの結果` はコードの中。\n```\n確かめの結果\n```\n結果を確かめる。"}]}}
+{"type":"user","message":{"content":"確かめの結果"}}
+JSONL
+printf -- '---\nname: a\n---\n\n端のケースを足す。\n' > "$PROJ/p1/memory/a.md"
+# 比較元は、「確かめ」の規則だけを持たない辞書
+BASE_DICT="$WORK/base.yml"
+printf 'version: 1\nrules:\n  - expected: エッジケース\n    pattern: 端のケース\n' > "$BASE_DICT"
+rc=0
+"$PREVIEW" --dictionary "$ROOT/crates/ja-terms/prh.yml" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
+want="SOURCES: transcripts=1 utterances=3 memory=1
+HIT: 1 確かめ => 確認
+  😀 【確かめ】の結果を書く。
+MEMORY: p1/memory/a.md:5 端のケース => エッジケース"
+if [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "$want" ]; then
+  ok "dictionary-preview: 発言への指摘を種類ごとに例つきで、メモリへの指摘を場所つきで出す"
+else
+  ng "dictionary-preview: 出力が違う（終了コード $rc）"
+fi
+rc=0
+"$PREVIEW" --dictionary "$ROOT/crates/ja-terms/prh.yml" --base "$BASE_DICT" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
+want="SOURCES: transcripts=1 utterances=3 memory=1
+NEW: 1 確かめ => 確認
+  😀 【確かめ】の結果を書く。
+MEMORY: p1/memory/a.md:5 端のケース => エッジケース"
+if [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "$want" ]; then
+  ok "dictionary-preview: 比較元を渡すと、新しい辞書だけにある指摘を NEW: で出す"
+else
+  ng "dictionary-preview: 比較元との差が違う（終了コード $rc）"
+fi
+rc=0
+"$PREVIEW" --dictionary "$BASE_DICT" --base "$ROOT/crates/ja-terms/prh.yml" --projects "$PROJ" >"$WORK/out" 2>&1 || rc=$?
+if [ "$rc" = 0 ] && grep -qx 'GONE: 1 確かめ => 確認' "$WORK/out"; then
+  ok "dictionary-preview: 比較元だけにある指摘を GONE: で出す"
+else
+  ng "dictionary-preview: GONE: の行が無い（終了コード $rc）"
 fi
 
 echo

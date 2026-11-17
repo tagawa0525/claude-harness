@@ -5,6 +5,7 @@
 mod base_moved;
 mod branch_topics;
 mod decide_next;
+mod dictionary_preview;
 mod fix_markdown_lint;
 mod get_latest_review;
 mod get_pr_info;
@@ -43,6 +44,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("base-moved", base_moved::main),
     ("branch-topics", branch_topics::main),
     ("decide-next", decide_next::main),
+    ("dictionary-preview", dictionary_preview::main),
     ("fix-markdown-lint", fix_markdown_lint::main),
     ("get-latest-review", get_latest_review::main),
     ("get-pr-info", get_pr_info::main),
