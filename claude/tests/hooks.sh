@@ -1275,6 +1275,14 @@ for cmd in 'git add src/a.txt' 'git add -p' 'git add -u' 'git add ./src' 'git ad
   assert_eq allow "$(decision "$out")"
 done
 
+it "guard-git-add: -u（追跡済みだけ）は、パスが全体でも許可する"
+for cmd in 'git add -u .' 'git add --update .' 'git add -u :/' 'git add -u . && git add src/a.txt'; do
+  out=$(run_hook guard-git-add "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+out=$(run_hook guard-git-add 'git add -u -A .')
+assert_eq deny "$(decision "$out")"
+
 it "guard-git-add: -A / --all / . / :/ / * は deny し、代わりの手順を示す"
 for cmd in 'git add -A' 'git add --all' 'git add .' 'git add -A .' 'git add :/' 'git add *' 'git add -An' \
   'git add -A --pathspec-from-file paths.txt' 'git add -A --pathspec-from-file=paths.txt' \

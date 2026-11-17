@@ -93,6 +93,23 @@ mod tests {
     }
 
     #[test]
+    fn tracked_only_with_an_unscoped_path_is_allowed() {
+        // -u は追跡しているファイルの変更だけをステージするので、パスが全体でも未追跡のファイルは入らない
+        for c in [
+            "git add -u .",
+            "git add --update .",
+            "git add -u :/",
+            "git add -u -- .",
+            "git add . -u",
+        ] {
+            assert!(args(c).is_none(), "{c}");
+        }
+        // -A と一緒なら全体のステージ（git は -A と -u の組を拒むが、止める側に倒す）
+        assert!(args("git add -A -u").is_some());
+        assert!(args("git add -u -A .").is_some());
+    }
+
+    #[test]
     fn unscoped_forms_are_denied() {
         for c in [
             "git add -A",
