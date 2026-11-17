@@ -23,7 +23,7 @@ jobs:
         working-directory: modules/home/parts/${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v5
-      # history-rewrite の run は第 2 段で PATH の commit-refs を呼ぶ
+      # history-rewrite の run はステージ 2 で PATH の commit-refs を呼ぶ
       - if: matrix.crate == 'history-rewrite'
         run: cargo install --locked --path ../commit-refs
       - run: cargo test --locked

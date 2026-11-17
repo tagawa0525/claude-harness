@@ -1,4 +1,4 @@
-//! `history-rewrite transform [語の指定] FILE...` が、作業ツリーのファイルの語を、run の第 1 段と同じ変換で直すこと
+//! `history-rewrite transform [語の指定] FILE...` が、作業ツリーのファイルの語を、run のステージ 1 と同じ変換で直すこと
 //! （ADR-0045、ADR-0088）。既定の辞書は ja-terms の辞書（ビルドに埋めたもの）。
 //!
 //! 辞書の語（崩れた語）をわざと含むので、.textlintignore で ja-terms の検査から外す。

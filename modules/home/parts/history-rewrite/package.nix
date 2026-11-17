@@ -33,7 +33,7 @@ rustPlatform.buildRustPackage {
   buildAndTestSubdir = "history-rewrite";
   cargoRoot = "history-rewrite";
   cargoLock.lockFile = ./Cargo.lock;
-  # テストは一時のリポジトリで git を実行し、run の第 2 段と sync-worktrees は PATH の commit-refs を呼ぶ
+  # テストは一時のリポジトリで git を実行し、run のステージ 2 と sync-worktrees は PATH の commit-refs を呼ぶ
   nativeCheckInputs = [
     git
     commit-refs

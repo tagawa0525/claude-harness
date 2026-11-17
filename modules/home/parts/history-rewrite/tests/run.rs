@@ -1,6 +1,6 @@
 //! `history-rewrite run` が一時のリポジトリの履歴の語を直し、番号を付け直し、照合を通すこと（ADR-0045、ADR-0088）。
 //!
-//! 第 2 段の `commit-refs` は PATH のものを使う（Windows の CI は cargo install で入れ、Nix のビルドは
+//! ステージ 2 の `commit-refs` は PATH のものを使う（Windows の CI は cargo install で入れ、Nix のビルドは
 //! nativeCheckInputs で渡す）。git の全体設定は、テストの HOME の .gitconfig で与える。辞書の語（崩れた語）を
 //! わざと含むので、.textlintignore で ja-terms の検査から外す。
 
@@ -479,7 +479,7 @@ fn stage1_map(f: &Fixture) -> HashMap<String, String> {
 
 #[test]
 fn verification_rejects_a_history_that_differs_from_the_transform() {
-    // 第 1 段の結果を、ブロブを 1 つ余分に直す変換と突き合わせると、照合が止める
+    // ステージ 1 の結果を、ブロブを 1 つ余分に直す変換と突き合わせると、照合が止める
     let f = rewritten();
     let rules = f.root.join("rules-項目.yml");
     std::fs::write(
@@ -667,7 +667,7 @@ fn a_message_that_cannot_be_rewritten_names_the_commit() {
 
 #[test]
 fn replace_refs_of_the_source_do_not_change_the_original_commits() {
-    // clone --mirror は refs/replace/ も写すが、第 1 段に渡すのはブランチとタグだけ
+    // clone --mirror は refs/replace/ もコピーするが、ステージ 1 に渡すのはブランチとタグだけ
     let root = scratch("replaced");
     let repo = Repo::new(&root, "repo");
     repo.write("a.md", b"a\n");

@@ -1,4 +1,4 @@
-//! 第 1 段の変換（ADR-0045）。ブロブと本文に辞書の規則を当て、直した Markdown の表を揃え直す
+//! ステージ 1 の変換（ADR-0045）。ブロブと本文に辞書の規則を当て、直した Markdown の表を揃え直す
 
 use crate::Stop;
 use crate::glob::Glob;

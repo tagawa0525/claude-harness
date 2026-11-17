@@ -5,13 +5,13 @@
 //!       REPO のすべてのブランチとタグを DIR にコピーして書き換える。REPO には書き込まない。
 //!       1. DIR/original.git に REPO のミラーを取る（書き換える前の控え）
 //!       2. DIR/rewritten に、ミラーのブランチとタグを持つ作業ツリーつきのリポジトリを作る
-//!       3. 第 1 段: git fast-export と fast-import で、テキストのブロブの全文とコミットとタグの本文の語を 1 回で直す
+//!       3. ステージ 1: git fast-export と fast-import で、テキストのブロブの全文とコミットとタグの本文の語を 1 回で直す
 //!          （番号には触らない）
 //!       4. 照合: 元のすべてのコミットと書き換えた後を 1 対 1 で突き合わせる（作者と日時、親、本文、すべてのファイル）
-//!       5. 第 2 段: commit-refs rewrite-history（ADR-0013）で、文書と本文の番号を最後の番号に付け直す
+//!       5. ステージ 2: commit-refs rewrite-history（ADR-0013）で、文書と本文の番号を最後の番号に付け直す
 //!       6. 元の番号から最後の番号への対応表を DIR/commit-map に書く
 //!   history-rewrite transform [語の指定] FILE...
-//!       作業ツリーのファイルの語を、run の第 1 段と同じ変換で直す（コミットはしない）
+//!       作業ツリーのファイルの語を、run のステージ 1 と同じ変換で直す（コミットはしない）
 //!   history-rewrite sync-worktrees --workdir DIR [語の指定]
 //!       run の結果の ref を元のリポジトリに移した後、DIR/worktree-state の行（worktree のパス、ref を移す前の
 //!       HEAD、控えのパッチのパスをタブで区切る）ごとに、worktree の HEAD、index、作業ツリーを新しい履歴に合わせる。
@@ -33,7 +33,7 @@
 //! run の出力（KEY: value）:
 //!   ORIGINAL: <ミラーのパス>
 //!   REWRITTEN: <書き換えたリポジトリのパス>
-//!   COMMITS: <第 1 段で流したコミットの数>
+//!   COMMITS: <ステージ 1 で流したコミットの数>
 //!   BLOBS: <語を直したブロブの数>
 //!   MESSAGES: <語を直したコミットとタグの本文の数>
 //!   NOT_UTF8: <UTF-8 として読めないので直さなかったテキストのブロブの数>

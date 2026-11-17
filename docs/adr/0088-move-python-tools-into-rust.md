@@ -17,7 +17,7 @@ Issue #101 の段階 7 で、Python のツールを Rust に移す（ADR-0082）
 - `modules/home/parts/history-rewrite/history_rewrite.py`（1,119 行）と `prh_rules.py`（378 行）: 履歴の語を辞書で直し、
   番号を `commit-refs rewrite-history` で付け直す CLI（ADR-0045）。`package.nix` が `python3.withPackages`
   （git-filter-repo、pyyaml、regex）のラッパーにし、PATH に `history-rewrite` として入れる。スキル `history-rewrite` は
-  `history-rewrite run`、`transform`、`sync-worktrees` を名前で呼ぶ。第 1 段は git-filter-repo の Python の callback
+  `history-rewrite run`、`transform`、`sync-worktrees` を名前で呼ぶ。ステージ 1 は git-filter-repo の Python の callback
   （file-info-callback、commit と tag の callback）で、テキストのブロブと本文に辞書を当てる。テストは
   `test_history_rewrite.py`（1,080 行。多くはラッパーの CLI を子プロセスで呼び、照合の拒否の 2 件は `Verifier` を直に呼ぶ）と
   `test_prh_rules.py`（274 行）
@@ -51,7 +51,7 @@ Issue #101 の段階 7 で、Python のツールを Rust に移す（ADR-0082）
 - usage-report が扱う日時は、時差つきの ISO 8601（記録の timestamp の `Z`、`--since` と `--until`、`git log --format=%cI`）と、
   JST（+09:00 の固定の時差）の表示と今日の区切りだけ
 
-決めること: history-rewrite の第 1 段の書き換えの方式、置き場と依存（表の揃え直しの関数と、commit-refs と対にしている部品）、
+決めること: history-rewrite のステージ 1 の書き換えの方式、置き場と依存（表の揃え直しの関数と、commit-refs と対にしている部品）、
 usage-report と kept-sentences の置き場と呼ばれ方、テストの移し方。
 
 ## 決定の要因
@@ -64,13 +64,13 @@ usage-report と kept-sentences の置き場と呼ばれ方、テストの移し
 
 ## 検討した案
 
-history-rewrite の第 1 段:
+history-rewrite のステージ 1:
 
 - 案 1: Rust で `git fast-export --no-data` の流れを読み、直したブロブと本文を `git fast-import` に渡す（filter-repo の
   2.47.0 が fast-export と fast-import に渡す設定と同じにする）
 - 案 2: filter-repo を子プロセスで呼び、変換だけを Rust の CLI にする（filter-repo の `--blob-callback` などに、Rust の
   CLI を起動する Python の 1 行を渡す）
-- 案 3: `commit-refs rewrite-history` に辞書の適用を足し、1 段にする（ADR-0045 の案 C3）
+- 案 3: `commit-refs rewrite-history` に辞書の適用を足し、1 つのステージにする（ADR-0045 の案 C3）
 
 history-rewrite の置き場:
 
@@ -113,15 +113,15 @@ usage-report の日時:
 
 - history-rewrite は Rust の crate（案 A）にし、CLI の名前、サブコマンド、引数、出力の形、終了コードを Python の版と
   同じにする。辞書は ja-terms のライブラリ（`Dictionary::apply`）で当て、複数の辞書の規則を、同じ expected の規則を外さずに
-  渡した順に並べる読み方（ADR-0045 と同じ。`Engine.merge` の意味ではない）を ja-terms に足す。第 2 段と worktree の番号の付け直しは、今のとおり `commit-refs rewrite-history` と `commit-refs remap` を
+  渡した順に並べる読み方（ADR-0045 と同じ。`Engine.merge` の意味ではない）を ja-terms に足す。ステージ 2 と worktree の番号の付け直しは、今のとおり `commit-refs rewrite-history` と `commit-refs remap` を
   子プロセスで呼ぶ
-- 第 1 段（案 1）: fast-export と fast-import を直に扱う。fast-export の設定は filter-repo 2.47.0 の `fep_cmd` に、
+- ステージ 1（案 1）: fast-export と fast-import を直に扱う。fast-export の設定は filter-repo 2.47.0 の `fep_cmd` に、
   ブロブを流さない `--no-data` を足したもの（ブロブは cat-file で読み、直したものだけを流れに書く）。filter-repo の
   `--prune-empty=never`、`--prune-degenerate=never`、`--preserve-commit-hashes`、`--preserve-commit-encoding`、`--no-gc`、
   `--replace-refs=delete-no-add` に当たる振る舞い（コミットを消さない、本文の番号に触らない、本文の符号化を変えない、
   repack しない、旧から新への replace の ref を足さない）は、流れを書き換えずに渡し、ref を足さないことで同じになる。
   対応表（`old new`）は fast-export の `original-oid` と fast-import の `--export-marks` から作って書き換えたリポジトリの
-  git dir に置き、第 2 段の `commit-refs rewrite-history` に渡す。照合（ADR-0045）は今の Python の版と同じ項目を確かめる。
+  git dir に置き、ステージ 2 の `commit-refs rewrite-history` に渡す。照合（ADR-0045）は今の Python の版と同じ項目を確かめる。
   UTF-8 でない符号化を宣言した本文に直す語があるかは、`encoding_rs`（Rust の符号化の事実上の標準。WHATWG の符号化の名前で
   引く）で読んで確かめる（Python の版は codecs で読んでいた）
 - 表の揃え直し（案 ア）: `fix_markdown_lint.rs` をライブラリの crate `fix-markdown-lint`（`modules/home/parts/fix-markdown-lint/`）に
@@ -153,7 +153,7 @@ usage-report の日時:
 理由:
 
 - 案 1: 案 2 は filter-repo を使うので Python が残り、移す目的にならない。案 3 は ADR-0045 が採らなかった案で、語の変換と
-  番号の付け直しが 1 段になると、その間の照合（変換だけを当てた履歴との 1 対 1 の照合）ができない。
+  番号の付け直しが 1 つのステージになると、その間の照合（変換だけを当てた履歴との 1 対 1 の照合）ができない。
   fast-export と fast-import の読み書きは commit-refs が既に持つので、同じ書き方で足りる
 - 案 A: スキルと PATH の名前をそのまま使え、Windows でも `cargo install` で `history-rewrite` が入る。案 B は、PATH の名前の
   ためにラッパーのスクリプトが要り（Windows では Git Bash の外から呼べない）、履歴の書き換えのテストと依存（ja-terms）が

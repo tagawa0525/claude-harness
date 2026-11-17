@@ -45,7 +45,7 @@ ADR-0014 の辞書（`modules/home/parts/ja-terms/prh.yml`）は、これから�
   - 案 B2: 規則をツールに書く（`cb_lib.py` の形）
   - 案 B3: textlint の `--fix` を各ブロブに当てる
 - 番号の付け直し
-  - 案 C1: 2 段にする。第 1 段は filter-repo の file-info-callback と message-callback で語だけを 1 回で直す。第 2 段は
+  - 案 C1: 2 つのステージにする。ステージ 1 は filter-repo の file-info-callback と message-callback で語だけを 1 回で直す。ステージ 2 は
     同じリポジトリで `commit-refs rewrite-history .git/filter-repo/commit-map`（ADR-0013）
   - 案 C2: 語と番号を同じ callback で直し、filter-repo を収束まで繰り返す（xlc のツール）
   - 案 C3: `commit-refs rewrite-history` に辞書の適用を足す（Rust）
@@ -59,7 +59,7 @@ ADR-0014 の辞書（`modules/home/parts/ja-terms/prh.yml`）は、これから�
 
 置き場（A1）: 辞書は nixfiles のもので、ツールはどのリポジトリでも使う（A2 は xlc に固有でないものを xlc に置く）。
 ツールは Rust の crate にし、辞書は ja-terms のライブラリ（`Dictionary::apply`）、表の揃え直しは fix-markdown-lint の
-ライブラリで当てる。第 1 段は `git fast-export` と `git fast-import` を直に扱う（ADR-0088）。
+ライブラリで当てる。ステージ 1 は `git fast-export` と `git fast-import` を直に扱う（ADR-0088）。
 
 辞書（B1）: B2 は辞書と食い違う。B3 はブロブごとに node を起こし、Markdown のコードを直さない（下の D1）。
 
@@ -75,15 +75,15 @@ ADR-0014 の辞書（`modules/home/parts/ja-terms/prh.yml`）は、これから�
   正規表現は ECMAScript の正規表現のエンジン（regress）で、書き直さずに読む（ADR-0085）
 - 辞書を読むとき、どの規則も specs を確かめる（prh と同じ）。書き直しの誤りは、ここで止まる
 
-2 段（C1）: C2 は ADR-0013 が案 A として採らなかった方式で、付け直しの規則も 2 か所になる。C3 は lookbehind を読む
+2 つのステージ（C1）: C2 は ADR-0013 が案 A として採らなかった方式で、付け直しの規則も 2 か所になる。C3 は lookbehind を読む
 ために fancy-regex のような crate が要り、JavaScript の正規表現の意味の書き直しを Rust で書くことになる。
 
-- 第 1 段は番号に触らない（`--preserve-commit-hashes`）。番号は第 2 段の `commit-refs` だけが付け直すので、規則は
-  `commit_refs::Map`（ADR-0012）の 1 か所に残る。番号の置き換えは同じ桁数なので、第 1 段で揃えた表は崩れない
-- 第 1 段は空になったコミットも消さない（`--prune-empty=never`、`--prune-degenerate=never`）。語を手で直しただけの
+- ステージ 1 は番号に触らない（`--preserve-commit-hashes`）。番号はステージ 2 の `commit-refs` だけが付け直すので、規則は
+  `commit_refs::Map`（ADR-0012）の 1 か所に残る。番号の置き換えは同じ桁数なので、ステージ 1 で揃えた表は崩れない
+- ステージ 1 は空になったコミットも消さない（`--prune-empty=never`、`--prune-degenerate=never`）。語を手で直しただけの
   コミットは、変換の後に親と同じ中身になる。消すと元のコミットとの 1 対 1 の照合ができず、文書がそのコミットを指して
-  いると、第 2 段が「消えたコミットを指す」で止まる
-- 第 1 段の後に、元のすべてのコミットについて、書き換えた後のものと突き合わせる（照合）。作者とコミッターと符号化、
+  いると、ステージ 2 が「消えたコミットを指す」で止まる
+- ステージ 1 の後に、元のすべてのコミットについて、書き換えた後のものと突き合わせる（照合）。作者とコミッターと符号化、
   親の対応、本文（元の本文に変換を当てたもの）、すべてのファイル（テキストは変換を当てたもの、ほかは元のまま。
   symlinkとサブモジュールは元のまま）、ブランチとタグの行き先（注釈つきのタグは、元のタグに変換を当てた
   オブジェクト）が合わなければ止める。番号の変わらないコミットも確かめる（変換が中身を変えるはずなのに
@@ -91,9 +91,9 @@ ADR-0014 の辞書（`modules/home/parts/ja-terms/prh.yml`）は、これから�
   ref を足さない
 - 照合の期待は、filter-repo 2.47.0 が fast-export に渡す設定と同じ形にする: タグの本文の署名を外す
   （`--signed-tags=strip`）、tagger の無いタグに仮の tagger を付ける（`--fake-missing-tagger`）。本文は元の符号化の
-  まま渡す（`--preserve-commit-encoding`。UTF-8 に直すと encoding の見出しが消える）。第 2 段がすぐに全体を
-  書き直すので、第 1 段では repack しない（`--no-gc`）
-- 第 2 段の照合と ref の移し方は ADR-0013 のとおり。`commit-refs` が止まれば、ツールも止まる
+  まま渡す（`--preserve-commit-encoding`。UTF-8 に直すと encoding の見出しが消える）。ステージ 2 がすぐに全体を
+  書き直すので、ステージ 1 では repack しない（`--no-gc`）
+- ステージ 2 の照合と ref の移し方は ADR-0013 のとおり。`commit-refs` が止まれば、ツールも止まる
 
 直す範囲（D1）: 直したいのは、コードのコメントとコミットの本文の語でもある。ja-terms の pre-commit も、コードと
 テキストはファイルの全体を見る（`@textlint/text`）。D1 は Markdown のコードブロックとインラインのコードも直すので、
@@ -115,7 +115,7 @@ textlint との違い: textlint-rule-prh は、Markdown の Str ノード（イ�
   nixfiles の履歴で起きるかは確かめていない）
 
 書き換える場所: ツールは `--source` のリポジトリに書き込まない。`--workdir` にミラー（`original.git`、書き換える前の
-控え）と、ミラーのブランチとタグを持つ作業ツリーつきのリポジトリ（`rewritten`）を作り、そこで 2 段を実行する。
+控え）と、ミラーのブランチとタグを持つ作業ツリーつきのリポジトリ（`rewritten`）を作り、そこで 2 つのステージを実行する。
 `commit-refs rewrite-history` が、作業ツリーを持ち、ほかの worktree の無いリポジトリを前提にするため（ADR-0013 の
 「始める前に止める」）。元の番号から最後の番号への対応表を `--workdir` の `commit-map` に書く。
 
@@ -173,7 +173,7 @@ ref を移す前の各 worktree の HEAD を控えれば、worktree の合わせ
 - テストは nixfiles の今の prh.yml（main の 8d6261ea、100 の規則）を読み、どの規則の specs も通る。PR #413 の時点の
   prh.yml（35 の規則）も、specs を通って読めることを手で確かめた（2026-10-21）
 - nixfiles の clone（2026-10-21、main の 8d6261ea の 2634 コミット、同じ時点の辞書。辞書と辞書のテストを除くパスに
-  渡した）で、語の段と照合と第 2 段が 17.6 秒で通った（1443 のブロブと 278 の本文を直した）。このブランチの
+  渡した）で、語のステージと照合とステージ 2 が 17.6 秒で通った（1443 のブロブと 278 の本文を直した）。このブランチの
   `history-rewrite transform` を同じ辞書で ADR とスキルに当てた結果も、textlint（prh）の指摘が 0 になった
 
 ## 補足
@@ -202,13 +202,13 @@ xlc の `references/history-rewrite/`（`callback2.py`、`cb_lib.py`、`iterate3
   ステージし直して失っていたが、何も変えずに人に返す。diff-files が見ない変更（assume-unchanged の印）と、HEAD を
   移すと古い履歴を持ち込む操作の途中も、同じく人に返す（#673）
 - 2026-11-14: ツールを Python から Rust の crate に移した（ADR-0088。#101 の段階 7）。置き場（A1）の前は「ja-terms の辞書と
-  fix-markdown-lint.py の両方を store のパスで参照できる（git.nix の textlint と同じ形）。第 1 段は filter-repo の Python の
+  fix-markdown-lint.py の両方を store のパスで参照できる（git.nix の textlint と同じ形）。ステージ 1 は filter-repo の Python の
   callback なので、ツールも Python で書く。依存（git-filter-repo、pyyaml、regex）は `python3.withPackages` で入れる。
   ADR-0012 の「依存を増やさない」は `commit-refs` の crate の話で、ここには当てない。」。辞書（B1）の pattern の読み方の前は
   「Python の `regex` に書き直すのは、prh の辞書が長さの違う選択肢を lookbehind に使い（PR #413 の
   `(?<=[にがのをはもでな、]|^)抜け`）、標準の re ではそれを読めないため」と、`^`、`$`、`.` を読み替え、当たる範囲が
   Python と違う書き方と書き直していない書き方で止める項。filter-repo は Python のプログラムなので、callback を Rust に
-  しても Windows で Python が要る（ADR-0088 の決定の要因）。第 1 段は fast-export と fast-import を直に扱い、C1 の
-  filter-repo の設定（`--preserve-commit-hashes`、`--prune-empty=never` など）に当たる振る舞いを同じにした。2 段（C1）の
+  しても Windows で Python が要る（ADR-0088 の決定の要因）。ステージ 1 は fast-export と fast-import を直に扱い、C1 の
+  filter-repo の設定（`--preserve-commit-hashes`、`--prune-empty=never` など）に当たる振る舞いを同じにした。2 つのステージ（C1）の
   C3 を採らない理由のうち「lookbehind を読むために fancy-regex のような crate が要り」は、ja-terms が regress で読むように
   なって当たらなくなった。C3 を採らない今の理由は ADR-0088 の案 3（語の変換と番号の付け直しの間の照合ができない）
