@@ -2534,9 +2534,10 @@ fn index_completes_the_bundle_and_check_then_passes() {
         "docs/windows.md",
         "---\ntype: Guide\ntitle: Windows\ndescription: 入れ方\n---\n",
     );
-    assert_eq!(
-        stdout(&t.run(&["new", "use-foo", "foo を使う"])),
-        "docs/adr/0001-use-foo.md\n"
+    // new も索引を足すので、index の確かめには ADR を手で書く
+    t.write(
+        "docs/adr/0001-use-foo.md",
+        &design_records::template(1, "foo を使う", &today()),
     );
     let out = t.run(&["index"]);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -2566,4 +2567,37 @@ fn check_does_not_read_docs_outside_a_bundle() {
         "{}",
         stderr(&out)
     );
+}
+
+#[test]
+fn new_in_a_bundle_adds_the_index_lines_and_names_them_to_commit() {
+    let t = TempRepo::new("okf-new");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.commit_all("docs: bundle root");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    // 標準出力は記録のパスだけ（`$(design-records new …)` で受ける呼び出しを壊さない）
+    assert_eq!(stdout(&out), "docs/adr/0001-use-foo.md\n");
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n"
+    );
+    assert!(
+        stderr(&out).contains(
+            "NEXT: commit the index lines added to docs/adr/index.md docs/index.md together with \
+             docs/adr/0001-use-foo.md"
+        ),
+        "{}",
+        stderr(&out)
+    );
+    assert!(t.run(&["index"]).stdout.is_empty());
+}
+
+#[test]
+fn new_outside_a_bundle_writes_no_index() {
+    let t = TempRepo::new("okf-new-plain");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+    assert!(!t.dir.join("docs/adr/index.md").exists());
 }
