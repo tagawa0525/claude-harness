@@ -12,7 +12,7 @@
 #   --repo      マージの数を数えるリポジトリ（複数可）。origin/HEAD があればそれ、無ければ主の worktree のブランチの
 #               first-parent のマージコミットのうち、コミットの日時が区間に入るものを数える。GitHub のリモートと
 #               origin があるリポジトリは、数える前に origin を fetch する（失敗したら WARN: を標準エラーに出し、
-#               手元の origin/HEAD で数える）
+#               手元の参照で数える）
 #
 # サブエージェントの記録の読み方と区分の決め方は、claude-hooks の src/script/usage_report.rs の冒頭
 #
