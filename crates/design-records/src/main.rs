@@ -553,7 +553,15 @@ fn write_indexes(root: &Path, record: Option<&str>) -> Result<Option<Vec<String>
     }
     let mut written = Vec::new();
     for (path, text) in complete_indexes(&files) {
-        fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
+        // 途中で失敗しても、もう書いた索引をコミットできるよう示す
+        fs::write(root.join(&path), text).map_err(|e| {
+            let before = if written.is_empty() {
+                String::new()
+            } else {
+                format!(" (already wrote {})", written.join(" "))
+            };
+            format!("{path}: {e}{before}")
+        })?;
         written.push(path);
     }
     Ok(Some(written))
