@@ -71,22 +71,24 @@ fn live_rounds(dir: &Path, branch: &str, path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// dir の clone で、head を HEAD にして /code-review を回した行があるか。ブランチは問わない（同じ SHA なら同じコミットを
-/// 回している。ブランチの名前を変えても、別の worktree で回しても引ける）。dir が git のリポジトリの中でなければ None
-pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<bool> {
+/// dir の clone の、周の数の置き場と、そこに head を HEAD にして /code-review を呼んだ行があるか。ブランチは問わない
+/// （同じ SHA なら同じコミット。ブランチの名前を変えても引ける）。dir が git のリポジトリの中でなければ None。
+/// 行があるのは呼んだことで、レビューが対象を読めたことまでは示さない（[`CountReviewRounds`] は結果を見ない）
+pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<(PathBuf, bool)> {
     let common = git::git(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )?;
-    let Ok(files) = std::fs::read_dir(Path::new(&common).join(STATE_DIR)) else {
-        return Some(false);
-    };
-    Some(files.flatten().any(|file| {
-        std::fs::read_to_string(file.path()).is_ok_and(|text| {
-            text.lines()
-                .any(|l| l.split_whitespace().next() == Some(head))
+    let state_dir = Path::new(&common).join(STATE_DIR);
+    let found = std::fs::read_dir(&state_dir).is_ok_and(|files| {
+        files.flatten().any(|file| {
+            std::fs::read_to_string(file.path()).is_ok_and(|text| {
+                text.lines()
+                    .any(|l| l.split_whitespace().next() == Some(head))
+            })
         })
-    }))
+    });
+    Some((state_dir, found))
 }
 
 fn context(branch: &str, round: usize) -> String {

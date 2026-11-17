@@ -191,8 +191,10 @@ head と同じもの）に、その回で検証して正しいと判断した指
 （decline した指摘は数えない）:
 
 ```bash
-~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
+cd <worktree> && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
 ```
+
+スクリプトは、その head で /code-review を呼んだ行（hook が clone に書く）が無ければ記録せず、次の手を示す。
 
 記録は、回した head とその回の指摘の数の組で、直した後の head の分ではない。指摘を直したら、直した head を push
 して回し直し、その head に記録する。High の残る head の記録はレビュー済みとして数えない（`decide-next.sh`。
