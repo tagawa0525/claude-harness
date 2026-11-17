@@ -42,9 +42,9 @@ design-records index
   含む）を先に片付ける。main から来た行の参照と、振り直す記録のフロントマターの参照は、main の記録を指すので
   そのまま残る。マージした後の予約のタグは `post-merge-cleanup.sh` が消す
 - `index`: `docs/index.md` のフロントマターに `okf_version` を持つリポジトリ（`docs/` 全体が OKF のバンドル）で、索引に
-  載っていない文書の行を足す。`new` で ADR を作ったら実行し、足した索引もコミットする。このリポジトリでは `check` が
-  `type`（ADR は `type: ADR`、`docs/issues/` の issue は `type: Issue`）、各ディレクトリの `index.md`、`log.md` の日付の
-  見出しも検査する
+  載っていない文書の行を足す。`new` で ADR を作ったら実行し、足した索引もコミットする。そのリポジトリでは `check` が
+  `type`（ADR は `type: ADR`、`docs/issues/` の issue は `type: Issue`）、各ディレクトリの `index.md`（文書と下位のディレクトリがすべて載り、
+  リンク先が実在すること）、`log.md` の日付の見出しも検査する
 - `check`: ADR の形、ADR どうしの参照、ADR と docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。
   注意（warning）では止まらないので、文言に従って確かめる。FILE を渡すと、置き換えられた ADR への参照と、確定した ADR の
   凍結する部分（下の「確定後の運用」）の変更も、FILE の分だけ注意する

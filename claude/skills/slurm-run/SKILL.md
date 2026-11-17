@@ -52,7 +52,7 @@ cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh --class <区分>
 例:
 
 ```bash
-~/.claude/scripts/slurm-run.sh --class decision --ref '#0200' --purpose '平衡キセノンで軸方向の振動が消えるかで、#0200 の修正方法を決める' \
+cd ~/github/xlc && ~/.claude/scripts/slurm-run.sh --class decision --ref '#0200' --purpose '平衡キセノンで軸方向の振動が消えるかで、#0200 の修正方法を決める' \
   -t 150 xlc-small-core-equilibrium 'dvc repro examples/small-core/dvc.yaml'
 ```
 
@@ -104,7 +104,8 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
 
 ## 順番
 
-パーティション `main` の待っているジョブは、区分の順（`timed` > `record` > `decision` > `trial`。同じ区分は投げた順）に流す。
+パーティション `main` の待っているジョブは、区分の順（`timed` > `record` > `decision` > `trial`。同じ区分は今の順。投げたジョブは自分の区分の末尾、
+`--top` なら先頭）に流す。
 `slurm-run.sh` が `main` に投げるたびに並べ直すので、投げる側は何もしなくてよい。パーティション `timed` は区分で並べず、
 投げた順に走る。`timed` の待っているジョブは、`main` の待っているジョブより先に走る。
 
@@ -113,8 +114,8 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
   出したら（`slurm-run.sh` の外で順が崩れたとき）、その `scontrol top` に行の番号をすべて渡し、1 回で実行する（1 本ずつ分けると、
   最後に出したジョブが先頭になる）。ほかのセッションのジョブを含んでいても実行してよい
 - 急ぐ短いジョブは `--top` で投げる。`main` では自分の区分の先頭に出て、上の区分のジョブは追い越さない。`timed` では待っている
-  ジョブすべての前に出る。待っているほかのセッションのジョブも後ろに回すので、見積もりが数分のジョブに限る。
-  区分の順を越えて 1 本を先に出す仕組みは無い
+  ジョブすべての前に出る。区分の順を越えて 1 本を先に出す仕組みは無い
+- `--top` は、どちらのパーティションでも、待っているほかのセッションのジョブを後ろに回すので、見積もりが数分のジョブに限る
 - 走っているジョブの終わりを待てない数分の計算は、区分を変えずに `--timed` で投げる（下の「時間を記録するジョブ（--timed）」）
 - 順番を変えるのは、`slurm-run.sh` の並べ直しと `--top`、`ORDER:` の行の `scontrol top`、`--timed` だけ。`scontrol hold` と
   `release` は使わない（held のジョブを、ほかのエージェントが取り消しうる）

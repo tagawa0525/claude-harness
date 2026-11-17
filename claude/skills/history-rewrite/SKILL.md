@@ -128,7 +128,7 @@ history-rewrite sync-worktrees --workdir "$D" "${WORDS[@]}"
 
 - `refs/remotes/`、`refs/stash`、notes は移さない。リモートに送るには force push が要るので、ユーザーが決める
   （GitHub のバックアップのリモートも同じ）
-- 対象のリポジトリが DVC を使うときは `references/dvc.md` を読む
+- 対象のリポジトリが DVC を使うときは `~/.claude/skills/history-rewrite/references/dvc.md` を読む
 - ほかのリポジトリやメモリの中の、このリポジトリの番号は、そのリポジトリで `commit-refs remap "$D/commit-map"` で
   付け直す。remap は追跡しているファイルだけを読むので、先に `git -C <ディレクトリ> ls-files` で追跡を確かめ、
   されていなければ `git add` してから実行する（Claude Code のメモリは `~/.claude` の git の下にあり、追跡されて
