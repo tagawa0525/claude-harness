@@ -78,3 +78,4 @@
 * [ADR-0091: 同期で配ったファイルの一覧を ~/.claude に残し、ソースから消えたものだけを次の同期で消す](0091-remove-dropped-files-with-sync-manifest.md)
 * [ADR-0092: docs/ を OKF のバンドルとして design-records check で検査する](0092-check-okf-bundle-in-design-records.md)
 * [ADR-0093: markdownlint のグローバル設定は、リポジトリの .config/markdownlint/config を claude-setup sync がホームの同じパスに配る](0093-deliver-markdownlint-config-with-claude-setup-sync.md)
+* [ADR-0094: ハーネスの配る元は dot なしの claude/ と config/ に置き、このリポジトリのセッションは ~/.claude だけを読む](0094-place-harness-sources-in-undotted-claude-and-config.md)
