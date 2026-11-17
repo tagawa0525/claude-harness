@@ -550,6 +550,61 @@ fn a_non_empty_workdir_stops_without_rewriting() {
 }
 
 #[test]
+fn a_detached_worktree_on_an_unreachable_commit_stops_with_the_branch_to_add() {
+    // ブランチとタグから届かないコミットは書き換えに入らないので、sync-worktrees がその worktree を合わせられない
+    let root = scratch("detached");
+    let repo = Repo::new(&root, "repo");
+    repo.write("a.md", b"a\n");
+    let base = repo.commit("docs: a\n");
+    let reachable = root.join("reachable");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        &reachable.display().to_string(),
+        &base,
+    ]);
+    let loose = Repo {
+        root: root.clone(),
+        path: root.join("loose"),
+    };
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        &loose.path.display().to_string(),
+        &base,
+    ]);
+    loose.write("b.md", b"b\n");
+    let orphan = loose.commit("docs: b\n");
+
+    let workdir = root.join("work");
+    let out = run(&root, &repo.path, &workdir, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    assert!(stderr.starts_with("ERROR:"), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "git -C {} branch <名前> {orphan}",
+            loose.path.display()
+        )),
+        "{stderr}"
+    );
+    // 届くコミットの detached HEAD は挙げない
+    assert!(
+        !stderr.contains(&reachable.display().to_string()),
+        "{stderr}"
+    );
+    assert!(!workdir.exists());
+
+    loose.git(&["branch", "loose", &orphan]);
+    let out = run(&root, &repo.path, &workdir, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+}
+
+#[test]
 fn a_tag_of_a_tag_stops_before_rewriting() {
     // fast-export は入れ子のタグを平らにする（外のタグの名前で内のタグを作り直す）ので、照合できる形でない
     let root = scratch("nested");
