@@ -180,7 +180,8 @@ fn a_failed_copilot_review_run_is_not_a_failed_check() {
 #[test]
 fn checks_still_running_at_the_end_are_a_timeout() {
     let fake = FakeGh::new();
-    let out = wait(&fake, &[(RUNNING, "[]")]);
+    // 待つ間隔は 3 つなので、見るのは 4 回（偽の gh は、渡した応答が尽きると最後の応答を返し続ける）
+    let out = wait(&fake, &[(RUNNING, "[]"); 4]);
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -200,7 +201,9 @@ fn a_state_it_cannot_read_is_not_passed() {
     // check run か status を取れない回は、通ったとも無いとも数えずに待ち続ける
     let fake = FakeGh::new();
     let mut calls = vec![("", 0), ("{\"number\":42}", 0)];
-    calls.extend([(HEAD, 0), ("", 1), ("[]", 0)]);
+    for _ in 0..4 {
+        calls.extend([(HEAD, 0), ("", 1), ("[]", 0)]);
+    }
     let out = fake.run_calls_with_env("gh-wait-checks", &[URL], &calls, NO_WAIT);
     assert_eq!(
         out.status.code(),
