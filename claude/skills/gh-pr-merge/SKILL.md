@@ -42,8 +42,9 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
   記録が無く自動レビューも未着なら `~/.claude/scripts/gh-wait-review.sh <PR の URL>` で待つ（URL は PR のリポジトリの worktree で
   `cd <worktree> && gh pr view [PR番号] --json url -q .url` で得る）（約 10 分。
   `run_in_background=true` で実行）。タイムアウト（exit 1）は /gh-actions-check で診断
-- CI が実行中なら `~/.claude/scripts/gh-wait-checks.sh <PR の URL>` で終わりを待つ（`run_in_background=true` で実行。push の直後の、
-  check が未登録の間も待つ。`CHECKS: failed`（exit 2）とタイムアウト（exit 1）は /gh-actions-check で診断）
+- CI が実行中なら `~/.claude/scripts/gh-wait-checks.sh <PR の URL> <push したコミットの SHA>` で終わりを待つ
+  （`run_in_background=true` で実行。push の直後の、check が未登録の間も待つ。`CHECKS: failed`（exit 6）とタイムアウト
+  （exit 1）は /gh-actions-check で診断）
 - 指摘への対応が残っていれば /gh-pr-review に戻る
 - レビューを 1 度も受けていない PR で `pre-merge-check` に止められたら、/gh-pr-review の Step 6 に戻ってローカルレビューを記録する。
   head がレビューに覆われていないとき、hook は止めずに変わったファイルを知らせる。知らせはマージの後に届くので、もう 1 周回すかは
