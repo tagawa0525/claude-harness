@@ -480,7 +480,11 @@ fn run_writes_the_body_of_the_cleanup_issue() {
         "**/terms.yml".to_string(),
         // 掃除のコマンド
         format!("git -C {source} reflog expire --expire=now --all"),
-        format!("git -C {source} gc --prune=now"),
+        // 作業ディレクトリ（控え）は、掃除が通ったときだけ消す
+        format!(
+            "git -C {source} gc --prune=now && rm -rf {}",
+            history_rewrite::sh_quote(workdir)
+        ),
     ] {
         assert!(body.contains(&part), "{part}: {body}");
     }
