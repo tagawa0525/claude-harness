@@ -185,7 +185,7 @@ fn prices_for(model: &Value, prompt_tokens: u64) -> Result<Price, ReportError> {
     match PRICES.iter().find(|(n, _)| Some(*n) == name) {
         Some((_, price)) => Ok(*price),
         None => fail(format!(
-            "価格表に無いモデル: {}（PRICES に価格のページの値を足してください）",
+            "価格表に無いモデル: {}（PRICES に価格のページの値を足してください）\nNEXT: 生成元のリポジトリ（claude-harness）の crates/claude-hooks/src/script/usage_report.rs の PRICES に、価格のページ（https://platform.claude.com/docs/en/about-claude/pricing）の値を足す PR を出す。この区間の費用は未確認として報告する",
             display_value(model.clone())
         )),
     }
