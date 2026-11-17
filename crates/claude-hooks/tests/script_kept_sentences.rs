@@ -2,6 +2,9 @@
 //! 同じ文が無いものを出すことを確かめる（ADR-0088。`~/.claude/scripts/kept-sentences.sh` が呼ぶ）。sh から呼ぶ
 //! 配備の確認は `claude/tests/scripts/kept-sentences.sh`
 
+mod common;
+
+use common::forget_git_env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -252,4 +255,156 @@ fn a_file_that_is_not_utf8_exits_2() {
         kept(&["--old", &old, "--new", &bad.display().to_string()]).0,
         2
     );
+}
+
+/// git の版を比べる元にするテストのリポジトリ（main に 1 つのコミット）
+fn repo(files: &[(&str, &str)]) -> Dir {
+    let d = Dir::new();
+    for (name, text) in files {
+        if let Some(parent) = Path::new(name).parent() {
+            std::fs::create_dir_all(d.root.join(parent)).unwrap();
+        }
+        d.write(name, text);
+    }
+    let git = |args: &[&str]| {
+        let ok = forget_git_env(&mut Command::new("git"))
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&d.root)
+            // 利用者のグローバルの設定（core.hooksPath のグローバルの git hook など）を読まない
+            .env("GIT_CONFIG_GLOBAL", d.root.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "init"]);
+    d
+}
+
+/// dir を cwd にして kept-sentences を呼ぶ
+fn kept_in(dir: &Path, args: &[&str]) -> (i32, String) {
+    let out = forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+        .args(["script", "kept-sentences"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8(out.stdout).unwrap(),
+    )
+}
+
+#[test]
+fn base_compares_the_version_at_the_base_with_the_working_tree() {
+    let d = repo(&[("docs/a.md", "最初の文。最後の文。\n")]);
+    assert_eq!(
+        kept_in(&d.root, &["--base", "main", "docs/a.md"]),
+        (0, String::new())
+    );
+    d.write("docs/a.md", "最初の文。最後の。\n");
+    assert_eq!(
+        kept_in(&d.root, &["--base", "main", "docs/a.md"]),
+        (1, "CHANGED: docs/a.md:1: 最後の。\n".to_string())
+    );
+}
+
+#[test]
+fn base_reads_paths_relative_to_the_cwd_and_absolute_paths() {
+    let d = repo(&[("docs/a.md", "最初の文。\n")]);
+    d.write("docs/a.md", "別の文。\n");
+    assert_eq!(
+        kept_in(&d.root.join("docs"), &["--base", "main", "a.md"]),
+        (1, "CHANGED: a.md:1: 別の文。\n".to_string())
+    );
+    // 絶対パスは cwd によらず、ファイルのあるリポジトリで base を引く（cwd は別のリポジトリの worktree でもよい）
+    let abs = d.root.join("docs/a.md").display().to_string();
+    let other = repo(&[("x.md", "x。\n")]);
+    for cwd in [&d.root, &other.root] {
+        assert_eq!(
+            kept_in(cwd, &["--base", "main", &abs]),
+            (1, format!("CHANGED: {abs}:1: 別の文。\n"))
+        );
+    }
+}
+
+#[test]
+fn base_takes_a_new_file_as_a_destination_and_a_deleted_file_as_a_source() {
+    // 文を移した先の新しいファイルは今の版だけ、移した元の消したファイルは元の版だけを比べる
+    let d = repo(&[
+        ("a.md", "- 一つ目の文。\n- 二つ目の文。\n"),
+        ("c.md", "三つ目の文。\n"),
+    ]);
+    d.write("a.md", "- 一つ目の文。\n");
+    d.write("b.md", "- 二つ目の文。\n- 三つ目の文。\n");
+    std::fs::remove_file(d.root.join("c.md")).unwrap();
+    assert_eq!(
+        kept_in(&d.root, &["--base", "main", "a.md", "b.md", "c.md"]),
+        (0, String::new())
+    );
+}
+
+#[test]
+fn base_errors_exit_2() {
+    let d = repo(&[("a.md", "文。\n")]);
+    // 解けない base、どちらの版にも無いパス、--old と --new との併用
+    assert_eq!(kept_in(&d.root, &["--base", "no-such", "a.md"]).0, 2);
+    assert_eq!(kept_in(&d.root, &["--base", "main", "none.md"]).0, 2);
+    assert_eq!(kept_in(&d.root, &["--base", "main"]).0, 2);
+    assert_eq!(
+        kept_in(&d.root, &["--base", "main", "a.md", "--new", "a.md"]).0,
+        2
+    );
+}
+
+#[test]
+fn base_takes_a_file_whose_directory_was_deleted_as_a_source() {
+    // スキルのディレクトリごと消して、文を別のスキルに移した
+    let d = repo(&[
+        ("skills/foo/SKILL.md", "移す文。\n"),
+        ("skills/bar/SKILL.md", "残る文。\n"),
+    ]);
+    std::fs::remove_dir_all(d.root.join("skills/foo")).unwrap();
+    d.write("skills/bar/SKILL.md", "残る文。移す文。\n");
+    assert_eq!(
+        kept_in(
+            &d.root,
+            &[
+                "--base",
+                "main",
+                "skills/foo/SKILL.md",
+                "skills/bar/SKILL.md"
+            ]
+        ),
+        (0, String::new())
+    );
+}
+
+#[test]
+fn base_rejects_a_directory_and_a_file_that_is_not_utf8_at_the_base() {
+    let d = repo(&[("skills/foo/SKILL.md", "文。\n")]);
+    // ディレクトリを渡すと、木の一覧を元の版として読まずに 2 で終わる
+    assert_eq!(kept_in(&d.root, &["--base", "main", "skills/foo"]).0, 2);
+    std::fs::write(d.root.join("bad.md"), b"\xff\xfe\n").unwrap();
+    let git = |args: &[&str]| {
+        forget_git_env(&mut Command::new("git"))
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&d.root)
+            .env("GIT_CONFIG_GLOBAL", d.root.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap()
+    };
+    git(&["add", "bad.md"]);
+    git(&["commit", "-q", "-m", "bad"]);
+    d.write("bad.md", "文。\n");
+    assert_eq!(kept_in(&d.root, &["--base", "main", "bad.md"]).0, 2);
 }

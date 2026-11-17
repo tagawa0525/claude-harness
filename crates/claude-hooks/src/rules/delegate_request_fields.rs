@@ -15,7 +15,11 @@
 //!   トピックを、範囲の外だとして報告にだけ残さないため。語があるかだけを見て、否定の文（「issue は作らない」）は
 //!   見分けない
 //!
-//! ほかの欄の中身（出典の有無、本文の事実）は判定しない。エスケープはない（欄を直す以外に直す方法が無いため）。
+//! - description: 先頭が英字で始まるモデル名（`Opus`、`Sonnet 4.6`）と `:`（全角の `：` も）であること。model を渡した
+//!   呼び出しは、その名前で始まること（大文字と小文字を区別しない）。subagent_type が fork なら model は無視されて親の
+//!   モデルで走るので、model とは照らさない。親のモデル名は hook から分からないので、model の無い呼び出しは形だけを見る
+//!
+//! ほかの欄の中身（本文の事実）は判定しない。エスケープはない（欄を直す以外に直す方法が無いため）。
 
 use super::Rule;
 use crate::input::Input;
@@ -73,6 +77,44 @@ const QUOTE_HINT: &str = "空白を含むパスは `` ` `` か「」で囲み、
 /// 中身を判定する欄（`FIELDS` の添字）と、その欄に要る語
 const SCOPE: usize = 5;
 const SCOPE_WORD: &str = "issue";
+
+/// description の先頭のモデル名（1 語の英字の名前と、数字で始まる版の 1 語まで）と区切りのコロン
+static MODEL_HEAD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([A-Za-z][A-Za-z0-9.\-]*(?: [0-9][A-Za-z0-9.\-]*)?)\s*[:：]").unwrap()
+});
+
+/// description の先頭のモデル名の誤り。合っていれば None
+fn description_error(input: &Input) -> Option<String> {
+    let Some(c) = MODEL_HEAD.captures(&input.description) else {
+        return Some("先頭がモデル名と `:` で始まりません".to_string());
+    };
+    let model = input.model.trim();
+    if !model.is_empty()
+        && input.subagent_type != "fork"
+        && !c[1]
+            .to_ascii_lowercase()
+            .starts_with(&model.to_ascii_lowercase())
+    {
+        return Some(format!(
+            "先頭のモデル名 `{}` が、渡した model の `{model}` と違います",
+            &c[1]
+        ));
+    }
+    None
+}
+
+/// description の先頭のモデル名の誤りの拒否。合っていれば None
+fn description_finding(input: &Input) -> Option<Finding> {
+    description_error(input).map(|error| {
+        Finding::Deny(format!(
+                "/delegate を呼ぶ Agent の description の{error}（description: 「{}」）。\n\
+                 担当に触れる報告と通知で、どのモデルの担当かを見分けるため、description の先頭にモデル名を書きます（~/.claude/skills/delegate/references/requesting.md）。\n\
+                 判定: 先頭が英字のモデル名（`Opus`、`Sonnet 4.6` など）と `:` で始まるかを見ます。model を渡した呼び出しは、その名前で始まるかも見ます（subagent_type が fork なら model は無視されるので見ません）。\n\
+                 修正方法: description を `<モデル名>: <作業>` の形（例: `Opus: 履歴の書き換えツールの PR`）にして、Agent を呼び直してください。model を渡すときはそのモデルの名前を、渡さないときと fork は親のモデルの名前を書きます。",
+                input.description,
+            ))
+    })
+}
 
 /// 依頼のファイルの大きさの上限。hook は Agent の呼び出しを待たせるので、依頼文より大きいものを読まない
 const MAX_REQUEST_BYTES: u64 = 1 << 20;
@@ -155,9 +197,11 @@ impl Rule for DelegateRequestFields {
                     }
                     Ok(_) => return Vec::new(),
                     Err(e) if prompt_calls => {
-                        return vec![Finding::Deny(format!(
+                        let mut findings = vec![Finding::Deny(format!(
                             "/delegate の依頼文のファイル {path} を読めません（{e}）。欄がそろっているかを判定できないので止めました。\nファイルを書いてから呼び直すか、prompt の 1 行目の「依頼文は <絶対パス> にある」のパスを直してください（`~` や相対のパスは使えません。{QUOTE_HINT}）。"
                         ))];
+                        findings.extend(description_finding(input));
+                        return findings;
                     }
                     // /delegate を呼ぶかは読めないファイルの側にあるかもしれないが、prompt が呼ばないなら対象と決められない
                     Err(_) => return Vec::new(),
@@ -180,12 +224,14 @@ impl Rule for DelegateRequestFields {
             && target == "prompt"
             && UNREADABLE_POINTER.is_match(first_line(&input.prompt))
         {
-            return vec![Finding::Deny(format!(
+            let mut findings = vec![Finding::Deny(format!(
                 "/delegate の依頼の prompt の 1 行目「依頼文は … にある」から、依頼文のファイルのパスを読み取れません。\
                  prompt を依頼として判定すると、定型の欄がそろっていません（欠けた欄: {}）。\n\
                  修正方法: 依頼をファイルに置いたなら、1 行目の句を「依頼文は <絶対パス> にある」の形に直して、Agent を呼び直してください（{QUOTE_HINT}）。",
                 missing.join("、"),
             ))];
+            findings.extend(description_finding(input));
+            return findings;
         }
         let mut findings = Vec::new();
         if !missing.is_empty() {
@@ -199,6 +245,7 @@ impl Rule for DelegateRequestFields {
                 target,
             )));
         }
+        findings.extend(description_finding(input));
         let bodies = scope_bodies(&request);
         if !bodies.is_empty()
             && !bodies
@@ -234,10 +281,15 @@ mod tests {
 ";
 
     fn check(prompt: &str) -> Vec<Finding> {
+        check_agent(serde_json::json!({ "prompt": prompt, "description": "Opus: d" }))
+    }
+
+    /// Agent の tool_input をそのまま渡す
+    fn check_agent(tool_input: serde_json::Value) -> Vec<Finding> {
         let raw = serde_json::json!({
             "tool_name": "Agent",
             "cwd": "/",
-            "tool_input": { "prompt": prompt, "description": "d" },
+            "tool_input": tool_input,
         })
         .to_string();
         let input = Input::parse(&raw).unwrap();
@@ -628,6 +680,90 @@ mod tests {
     fn missing_fields_and_scope_without_issue_are_both_reported() {
         let prompt = with_scope("変える範囲: src/\n").replace("完成の形: テストが通る\n", "");
         let findings = check(&prompt);
+        assert_eq!(findings.len(), 2);
+    }
+
+    fn with_description(description: &str) -> Vec<Finding> {
+        check_agent(serde_json::json!({ "prompt": COMPLETE, "description": description }))
+    }
+
+    #[test]
+    fn description_without_a_model_name_at_the_head_is_denied_with_the_fix() {
+        for description in [
+            "d",
+            "履歴の書き換えツールの PR",
+            "修正: x",
+            "Fix bug: x",
+            ": x",
+        ] {
+            let findings = with_description(description);
+            let reason = deny_reason(&findings);
+            assert!(reason.contains("description"), "{description}: {reason}");
+            assert!(reason.contains("モデル名"), "{description}: {reason}");
+            assert!(reason.contains("修正方法"), "{description}: {reason}");
+        }
+    }
+
+    #[test]
+    fn description_starting_with_a_model_name_passes() {
+        for description in [
+            "Opus: 履歴の書き換えツールの PR",
+            "Sonnet 4.6: x",
+            "Opus 5.5: x",
+            "fable：x",
+        ] {
+            assert!(with_description(description).is_empty(), "{description}");
+        }
+    }
+
+    #[test]
+    fn description_must_name_the_model_passed_to_the_agent() {
+        let denied = check_agent(serde_json::json!({
+            "prompt": COMPLETE, "description": "Opus: x", "model": "sonnet",
+        }));
+        assert!(deny_reason(&denied).contains("sonnet"));
+        assert!(
+            check_agent(serde_json::json!({
+                "prompt": COMPLETE, "description": "Sonnet 4.6: x", "model": "sonnet",
+            }))
+            .is_empty()
+        );
+        // fork は model を無視して親のモデルで走るので、親のモデル名を書く
+        assert!(
+            check_agent(serde_json::json!({
+                "prompt": COMPLETE, "description": "Opus: x", "model": "sonnet",
+                "subagent_type": "fork",
+            }))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn description_of_agents_that_do_not_call_delegate_is_not_checked() {
+        assert!(
+            check_agent(serde_json::json!({
+                "prompt": "/code-review high /home/u/repo-feat-x", "description": "d",
+            }))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn unreadable_pointer_and_description_without_a_model_are_reported_together() {
+        // 1 回の呼び直しで両方を直せるよう、句の誤りと description の誤りを一緒に示す
+        let findings = check_agent(serde_json::json!({
+            "prompt": "依頼文は /nonexistent/Taro Yamada/brief.md にある。最初に /delegate を呼ぶ。",
+            "description": "d",
+        }));
+        assert_eq!(findings.len(), 2);
+    }
+
+    #[test]
+    fn unreadable_request_file_and_description_without_a_model_are_reported_together() {
+        let findings = check_agent(serde_json::json!({
+            "prompt": "依頼文は /nonexistent/brief.md にある。最初に /delegate を呼ぶ。",
+            "description": "d",
+        }));
         assert_eq!(findings.len(), 2);
     }
 }

@@ -92,13 +92,13 @@ git -C <リポジトリ> log --format='%h %(trailers:key=Claude-Session)' <base>
 `cd <worktree> && ~/.claude/scripts/check-each-commit.sh <base> -- <コマンド…>` で `<base>..HEAD` の各コミットを調べる
 （RED を skip でコミットする運用ではビルドだけを通す）。
 
-規則の文書（スキル、CLAUDE.md、hook の文書）を縮めるブランチは、縮める前の版を一時のファイルに書き出して比べる:
+規則の文書（スキル、CLAUDE.md、hook の文書）を縮めるブランチは、縮める前の版と比べる（文を別のファイルに移したら、移した
+先と元のファイルも並べる）:
 
 ```bash
-cd <worktree> && old=$(mktemp -d) && trap 'rm -rf "$old"' EXIT && git show <base>:<パス> > "$old/1.md" && ~/.claude/scripts/kept-sentences.sh --old "$old"/*.md --new <パス>…
+cd <worktree> && ~/.claude/scripts/kept-sentences.sh --base <base> <パス>…
 ```
 
-縮める前の版が複数のファイルなら `2.md`、`3.md` と書き出す。文を別のファイルに移したら移した先も `--new` に並べる。
 出た文ごとに、指す形に替えたものと依頼で足したものは報告の「決めたことと根拠」に書き、ほかは元の文に戻す（縮めるときは
 文を消すか指す形に替えるだけにする）。
 
@@ -255,14 +255,9 @@ cd <worktree> && ~/.claude/scripts/base-moved.sh <ブランチ名> --base <base>
     走りながら入力を読む）
   - 待ち方: ターンを終えずに、`~/.claude/scripts/wait-step.sh <自分の worktree のパス> <background の出力のファイル>...` を
     フォアグラウンドの Bash（`timeout` は 300000）で続けて呼ぶ。出力のファイルは background の Bash を投げたときの結果に出るパスを
-    渡す（/code-review のように出力のファイルが無いものは渡さない）。`WAIT:` ならもう一度呼び、`DONE:` か、呼び出しの後に届いた
-    通知（終わりの通知、親の返事）で続ける。ほかにも待つものがあれば、`DONE:` の出たファイルを外して呼び直し、すべて済んだら
-    `--end` で消す。待つ手段は `wait-step.sh` だけにし（background の `sleep` のタイマーは張らない）、待つ間にターンを終えない
-    （終えるたびに親に通知が届き、親が応答する）。`REPORT:` のほかは、途中で親に報告しない
-  - 途中の報告: `wait-step.sh` が `REPORT:`（待ちが 55 分を超えた）を出したら、SendMessage（`to: "main"`）で
-    「<待つもの> の待ちが 55 分を超えた。終わり次第、残りの作業を続ける」とだけ親に送り、同じように待ちを続ける。待つのをやめず、
-    作業も止めない。止まった /code-review（止まると通知が来ない）や返事の来ない許可も、この報告で親に知らせ、止めるかは親の
-    返事で決める
+    渡す（/code-review のように出力のファイルが無いものは渡さない）。待つ手段は `wait-step.sh` だけにし（background の `sleep` の
+    タイマーは張らない）、出力の `NEXT:` の行に従う
+  - 途中の報告: `wait-step.sh` が `REPORT:`（待ちが 55 分を超えた）を出したら、`NEXT:` の行のとおり親に送り、待ちを続ける
   - 打ち切り: 親が途中の報告の返事で止めるよう送ったときと、PR の自動レビューの待ちの後（扱いは /gh-pr-review に従う）も Copilot
     を待つときは、そのレビューを待つのをやめ、投げたジョブの終わりを待ってから、下の 55 分を超える見込みの待ちの項のとおり報告
     して終わる

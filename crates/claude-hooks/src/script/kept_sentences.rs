@@ -1,5 +1,12 @@
-//! `claude-hooks script kept-sentences --old <元の版>... --new <今の版>...`: 規則の文書を縮めたとき、今の版の文のうち
+//! `claude-hooks script kept-sentences --old <元の版>... --new <今の版>...` /
+//! `claude-hooks script kept-sentences --base <base> <パス>...`: 規則の文書を縮めたとき、今の版の文のうち
 //! 元の版に無いものを出す（ADR-0088。`~/.claude/scripts/kept-sentences.sh` が呼ぶ）。
+//!
+//! `--base` は、各パスの `<base>` の版（`git show <base>:./<相対のパス>` を、ファイルに最も近い在るディレクトリで引く。絶対パスは
+//! cwd によらずファイルのあるリポジトリで引く）を元の版に、作業ツリーのファイルを今の版にする。`<base>` に無いパス
+//! （文を移した先の新しいファイル）は今の版だけ、作業ツリーに無いパス（文を移した元の消したファイル）は元の版だけに
+//! 数え、どちらにも無いパスは誤り。一時のファイルに書き出させないのは、プロセス置換 `<(…)` の `/dev/fd/N` を
+//! Windows のネイティブの exe が開けない見込みのため。
 //!
 //! 規則の文書を縮めるときは、文を消すか、ほかの置き場を指す形に替えるだけにし、残す文の字句を変えない
 //! （言い換えると、どの項や量に掛かるか（主語、否定、条件）がずれ、レビューの周ごとに食い違いが出る）。
@@ -16,8 +23,10 @@
 //!
 //! 終了コード: 0 どの文も元の版にある / 1 元に無い文がある / 2 使い方の誤り、ファイルが読めない
 
+use crate::git::git;
 use regex::Regex;
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::LazyLock;
 
 // `S` は Python の正規表現の `\s`（str.isspace の文字）。Rust の `\s`（Unicode の White_Space）は \x1c〜\x1f を含まない
@@ -33,25 +42,37 @@ const SENTENCE_END: &str = "。？！";
 const OPEN: &str = "（(「『";
 const CLOSE: &str = "）)」』";
 
-const USAGE: &str = "Usage: kept-sentences.sh --old <元の版>... --new <今の版>...";
+const USAGE: &str =
+    "Usage: kept-sentences.sh --old <元の版>... --new <今の版>... | --base <base> <パス>...";
+
+/// 比べる版の並び（元の版の中身、(今の版のパス, 中身)）
+type Versions = (Vec<String>, Vec<(String, String)>);
 
 pub fn main(args: &[String]) -> i32 {
-    let Some((olds, news)) = parse_args(args) else {
-        eprintln!("{USAGE}");
+    let versions = match parse_base(args) {
+        Some(Ok((base, paths))) => from_base(&base, &paths),
+        Some(Err(())) => None,
+        None => match parse_args(args) {
+            Some((olds, news)) => from_files(&olds, &news),
+            None => {
+                eprintln!("{USAGE}");
+                None
+            }
+        },
+    };
+    let Some((olds, news)) = versions else {
         return 2;
     };
     // 塊ごとに切るので、別の段落の文をつないだ文は元の版のどの文とも一致しない
     let mut old = HashSet::new();
-    for path in &olds {
-        let Some(text) = read(path) else { return 2 };
-        for block in blocks(&text) {
+    for text in &olds {
+        for block in blocks(text) {
             old.extend(sentences(&block).into_iter().map(|(_, s)| key(&s)));
         }
     }
     let mut changed = false;
-    for path in &news {
-        let Some(text) = read(path) else { return 2 };
-        for block in blocks(&text) {
+    for (path, text) in &news {
+        for block in blocks(text) {
             for (line, sentence) in sentences(&block) {
                 let k = key(&sentence);
                 if !k.is_empty() && !old.contains(&k) {
@@ -62,6 +83,115 @@ pub fn main(args: &[String]) -> i32 {
         }
     }
     i32::from(changed)
+}
+
+fn from_files(olds: &[String], news: &[String]) -> Option<Versions> {
+    let olds = olds.iter().map(|p| read(p)).collect::<Option<Vec<_>>>()?;
+    let news = news
+        .iter()
+        .map(|p| read(p).map(|t| (p.clone(), t)))
+        .collect::<Option<Vec<_>>>()?;
+    Some((olds, news))
+}
+
+/// `--base <base> <パス>...` の形なら Some。形が誤っていれば（パスが無い、ほかのオプションとの併用）Some(Err)
+fn parse_base(args: &[String]) -> Option<Result<(String, Vec<String>), ()>> {
+    let first = args.first()?;
+    let (name, value) = match first.split_once('=') {
+        Some((name, value)) => (name, Some(value.to_string())),
+        None => (first.as_str(), None),
+    };
+    if !(name.len() > 2 && "--base".starts_with(name)) {
+        return None;
+    }
+    let mut rest = args[1..].iter();
+    let Some(base) = value.or_else(|| rest.next().cloned()) else {
+        eprintln!("{USAGE}");
+        return Some(Err(()));
+    };
+    let paths: Vec<String> = rest.cloned().collect();
+    if base.is_empty() || paths.is_empty() || paths.iter().any(|p| p.starts_with('-')) {
+        eprintln!("{USAGE}");
+        return Some(Err(()));
+    }
+    Some(Ok((base, paths)))
+}
+
+/// 各パスの base の版と作業ツリーの版
+fn from_base(base: &str, paths: &[String]) -> Option<Versions> {
+    let mut olds = Vec::new();
+    let mut news = Vec::new();
+    for path in paths {
+        let p = Path::new(path);
+        if p.file_name().is_none() {
+            eprintln!("ERROR: ファイルのパスではない: {path}");
+            return None;
+        }
+        // git はファイルに最も近い在るディレクトリで呼ぶ（文を移した元のディレクトリごと消したときも引ける）
+        let mut dir = p.parent().unwrap_or(Path::new(""));
+        while !dir.as_os_str().is_empty() && !dir.is_dir() {
+            dir = dir.parent().unwrap_or(Path::new(""));
+        }
+        let Some(name) = p
+            .strip_prefix(dir)
+            .ok()
+            .and_then(|r| r.to_str())
+            .map(|r| r.replace('\\', "/"))
+        else {
+            eprintln!("ERROR: ファイルのパスではない: {path}");
+            return None;
+        };
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        };
+        if git(
+            dir,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{base}^{{commit}}"),
+            ],
+        )
+        .is_none()
+        {
+            eprintln!(
+                "ERROR: {base} を {} のリポジトリで解けない（ディレクトリが無いか、git のリポジトリでないか、ref が無い）: {path}",
+                dir.display()
+            );
+            return None;
+        }
+        let spec = format!("{base}:./{name}");
+        // ファイル（blob）だけを元の版にする。ディレクトリ（tree）を渡すと、git show の木の一覧を文として読んでしまう
+        let kind = git(dir, &["cat-file", "-t", &spec]);
+        let at_base = kind.is_some();
+        if let Some(kind) = kind.filter(|k| k != "blob") {
+            eprintln!("ERROR: ファイルのパスではない（{base} では {kind}）: {path}");
+            return None;
+        }
+        if at_base {
+            let text = crate::git::run(dir, &["show", &spec], None)
+                .filter(|out| out.status.success())
+                .map(|out| String::from_utf8(out.stdout));
+            let Some(Ok(text)) = text else {
+                eprintln!(
+                    "ERROR: 読めない（UTF-8 でないか git が失敗した）: {spec}（{}）",
+                    dir.display()
+                );
+                return None;
+            };
+            olds.push(text.replace("\r\n", "\n").replace('\r', "\n"));
+        }
+        if p.is_file() {
+            news.push((path.clone(), read(path)?));
+        } else if !at_base {
+            eprintln!("ERROR: {base} にも作業ツリーにも無い: {path}");
+            return None;
+        }
+    }
+    Some((olds, news))
 }
 
 /// `--old` と `--new` の後に、次のオプションまでのファイルを 1 つ以上ずつ受ける。Python の argparse（`nargs="+"`）と
