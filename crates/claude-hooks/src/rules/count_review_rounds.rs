@@ -74,11 +74,20 @@ fn live_rounds(dir: &Path, branch: &str, path: &Path) -> Vec<String> {
 /// dir の clone の、周の数の置き場（共通の git ディレクトリの下。worktree をまたいで 1 つ）。dir が git のリポジトリの
 /// 中でなければ None
 fn state_dir(dir: &Path) -> Option<PathBuf> {
-    let common = git::git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?;
-    Some(Path::new(&common).join(STATE_DIR))
+    // リポジトリを指す GIT_* を継承しない（git の hook の中や、そこから起動したセッションでは GIT_DIR が渡り、dir の
+    // clone でなくそのリポジトリを引く）。探す範囲を止める GIT_CEILING_DIRECTORIES などは残す
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let common = String::from_utf8_lossy(&out.stdout);
+    let common = common.trim_end_matches('\n');
+    (out.status.success() && !common.is_empty()).then(|| Path::new(common).join(STATE_DIR))
 }
 
 /// dir の clone の、周の数の置き場と、そこに head を HEAD にして /code-review を呼んだ行があるか。ブランチは問わない
