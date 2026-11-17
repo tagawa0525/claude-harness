@@ -41,9 +41,9 @@ $ARGUMENTS の PR（省略時は現在のブランチの PR）について:
   PR の head が今のブランチでなければ、`git fetch` のあと `~/.claude/scripts/branch-topics.sh origin/<base> origin/<head>` で見る
 - head にローカルレビューの記録（`record-local-review.sh`、High なし）があれば、Copilot のレビューを待たずにマージできる。
   記録が無く自動レビューも未着なら `~/.claude/scripts/gh-wait-review.sh <PR の URL>` で待つ（約 10 分。
-  `run_in_background=true` で実行。URL は `cd <worktree> && gh pr view [PR番号] --json url -q .url`）。
+  `run_in_background=true` で実行。URL は PR のリポジトリの worktree で `cd <worktree> && gh pr view [PR番号] --json url -q .url`）。
   タイムアウト（exit 1）は /gh-actions-check で診断
-- CI が実行中なら `~/.claude/scripts/gh-wait-checks.sh <PR の URL> <push したコミットの SHA>` で待つ
+- CI が実行中か、push の直後で check が未登録なら `~/.claude/scripts/gh-wait-checks.sh <PR の URL> <push したコミットの SHA>` で待つ
   （`run_in_background=true` で実行。`CHECKS: failed`（exit 6）とタイムアウト（exit 1）は /gh-actions-check で診断）
 - 指摘への対応が残っていれば /gh-pr-review に戻る
 - レビューを 1 度も受けていない PR は hook が止める。/gh-pr-review の Step 6 に戻ってローカルレビューを記録する
@@ -89,7 +89,8 @@ gh pr merge [PR番号または URL] --merge --delete-branch \
 
 worktree の削除、main の最新化、ローカルとリモートのブランチの削除を行う（残したときは `REMOTE_BRANCH: kept` に理由が出る）。
 PR のリポジトリと cwd が違えば、`cd <PR のリポジトリ> && ~/.claude/scripts/post-merge-cleanup.sh [headRefName]` で呼ぶ。
-ERROR で止まったら、出力の原因を直してやり直す。
+ERROR で止まったら、出力の原因を直してやり直す。未コミットの変更や履歴の分岐で失敗したとき（git のメッセージだけで、
+ERROR の行は出ない）も、原因を確かめて対処してからやり直す。
 
 出力の `NOTE:` の行（rebuild か claude-sync が要る）は、完了メッセージでそのままユーザーに伝える。マージ済みの PR を
 痕跡にした `NOTE:` の行は、その URL がマージした PR かを確かめ、違えば PR のリポジトリでやり直す。

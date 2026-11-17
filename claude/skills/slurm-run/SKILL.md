@@ -131,8 +131,8 @@ Bash ツールの `run_in_background=true` で実行する（ジョブが終わ�
 ## 時間を記録するジョブ（--timed）
 
 ```bash
-~/.claude/scripts/slurm-run.sh --class timed --ref '<参照>' --purpose '<目的>' -t <見積もり> <名前> '<コマンド>'   # 時間を記録する
-~/.claude/scripts/slurm-run.sh --class decision --ref '<参照>' --purpose '<目的>' --timed -t <見積もり> <名前> '<コマンド>'   # 数分の急ぐ計算
+cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh --class timed --ref '<参照>' --purpose '<目的>' -t <見積もり> <名前> '<コマンド>'   # 時間を記録する
+cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh --class decision --ref '<参照>' --purpose '<目的>' --timed -t <見積もり> <名前> '<コマンド>'   # 数分の急ぐ計算
 ```
 
 時間を記録するジョブ（検証の記録に書く時間、本番の燃焼、ライブラリの作り直し、高速化の測定）は区分 `timed` で投げる。
@@ -225,7 +225,7 @@ sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,S
 ## 排他でない投げ方（-c）
 
 ```bash
-~/.claude/scripts/slurm-run.sh <区分と目的> -c <コア数> -t <見積もり> <名前> '<コマンド>'
+cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh <区分と目的> -c <コア数> -t <見積もり> <名前> '<コマンド>'
 ```
 
 `--exclusive` を付けず、`<コア数>` の CPU だけを取る。時間を記録しない長い計算（何時間もの参照解、開発中の試行）向け。

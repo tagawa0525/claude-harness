@@ -45,7 +45,7 @@ design-records index
   載っていない文書の行を足す。`new` で ADR を作ったら実行し、足した索引もコミットする。そのリポジトリでは `check` が
   `type`（ADR は `type: ADR`、`docs/issues/` の issue は `type: Issue`）、各ディレクトリの `index.md`（文書と下位のディレクトリがすべて載り、
   リンク先が実在すること）、`log.md` の日付の見出しも検査する
-- `check`: ADR の形、ADR どうしの参照、ADR と docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。
+- `check`: 追跡している ADR の形、ADR どうしの参照、ADR と docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。
   注意（warning）では止まらないので、文言に従って確かめる。FILE を渡すと、置き換えられた ADR への参照と、確定した ADR の
   凍結する部分（下の「確定後の運用」）の変更も、FILE の分だけ注意する
   - 予約のタグの slug と記録の slug が違うという注意: 記録を改名したのなら、注意が示すコマンドでタグを新しい slug に
