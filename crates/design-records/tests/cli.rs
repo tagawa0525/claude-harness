@@ -610,6 +610,11 @@ fn check_warns_about_inconsistent_issue_links() {
         "docs/issues/0004-missing.md",
         &issue("status: closed\nresolution: duplicate\nduplicate-of: \"#0009\"\nresolved-by: 0007-use-g\nblocked-by: [\"#0008\"]"),
     );
+    // ADR の番号だけで書いた resolved-by も ADR として探す
+    t.write(
+        "docs/issues/0006-number.md",
+        &issue("status: closed\nresolution: done\nresolved-by: \"0009\""),
+    );
     // 閉じた相手に塞がれていた issue と、コミットの hash で解決した issue は黙る
     t.write(
         "docs/issues/0005-fine.md",
@@ -630,7 +635,9 @@ fn check_warns_about_inconsistent_issue_links() {
          docs/issues/0004-missing.md: warning: `duplicate-of` names #0009, which does not exist in \
          docs/issues\n\
          docs/issues/0004-missing.md: warning: `resolved-by` names 0007-use-g, which is not an \
-         ADR in docs/adr\n"
+         ADR in docs/adr\n\
+         docs/issues/0006-number.md: warning: `resolved-by` names 0009, which is not an ADR in \
+         docs/adr\n"
     );
 }
 

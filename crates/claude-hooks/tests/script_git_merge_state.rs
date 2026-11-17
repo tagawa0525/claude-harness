@@ -390,3 +390,23 @@ fn the_references_a_renumber_commit_rewrites_are_not_a_change() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(stale_line(&out), "STALE_CONFIRMATIONS: none");
 }
+
+#[test]
+fn stale_confirmations_are_found_from_a_subdirectory() {
+    let repo = Repo::new();
+    confirmed_branch(&repo);
+    repo.write("src/impl.sh", "echo 2\n");
+    repo.commit("fix: impl");
+    let out = forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+        .args(["script", "git-merge-state"])
+        .current_dir(repo.root.join("src"))
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        stale_line(&out),
+        "STALE_CONFIRMATIONS: ADR-0002:src/impl.sh"
+    );
+}
