@@ -1,7 +1,7 @@
 # claude の構成
 
 Claude Code のグローバル設定。`claude-sync`（または home-manager の activation）で
-`~/.claude` に同期される（同期ポリシーは `modules/home/parts/claude-setup/src/sync.rs`）。
+`~/.claude` に同期される（同期ポリシーは `crates/claude-setup/src/sync.rs`）。
 引数なしの `claude-sync` は、既定の clone（`~/nix/claude-harness`）を `git pull --ff-only` してから同期する。入れるのは既定の
 ブランチのコミットされた最新だけで、別のブランチや、同期する場所に書きかけの編集がある clone では止まる。worktree の直しや作業中の中身を
 入れるときは、パスを渡す（`claude-sync <worktree>`。pull しない）。
@@ -28,13 +28,13 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 
 ## スクリプトの置き場所
 
-| 場所                                  | 用途                                                                                                                                                                                                      | 例                                                                                                       |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `../modules/home/parts/claude-hooks/` | Claude Code の PreToolUse hook（Rust 製 1 バイナリ）。`claude-code.nix` がビルドして `~/.claude/bin/claude-hooks` に置き、settings.json に 1 件だけ登録する（matcher は Bash、Agent、Skill、Edit、Write） | `src/rules/block_main_commit.rs`, `src/shell.rs`                                                         |
-| `scripts/`                            | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                                                                                                  | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh` |
-| `skills/<name>/scripts/`              | そのスキル専用のスクリプト                                                                                                                                                                                | `gh-pr-review/scripts/decide-next.sh`                                                                    |
-| `skills/language-checks/scripts/`     | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                                                                                          | `run-checks.sh`, `fix-markdown-lint.sh`                                                                  |
-| `tests/`                              | hook のルール / scripts / skills のテスト（`claude-sync` の同期対象外）。scripts のテストは対象ごとに `tests/scripts/` に分け、`scripts.sh` がまとめて実行する                                            | `hooks.sh`, `hooks-diff.sh`, `scripts.sh`, `scripts/gh-pr-review.sh`, `skills.sh`                        |
+| 場所                              | 用途                                                                                                                                                                                                      | 例                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `../crates/claude-hooks/`         | Claude Code の PreToolUse hook（Rust 製 1 バイナリ）。`claude-code.nix` がビルドして `~/.claude/bin/claude-hooks` に置き、settings.json に 1 件だけ登録する（matcher は Bash、Agent、Skill、Edit、Write） | `src/rules/block_main_commit.rs`, `src/shell.rs`                                                         |
+| `scripts/`                        | 複数スキルから呼ばれる、または git/gh に対する汎用の手順                                                                                                                                                  | `gh-wait-review.sh`, `git-info.sh`, `worktree-add.sh`, `post-merge-cleanup.sh`, `gh-actions-diagnose.sh` |
+| `skills/<name>/scripts/`          | そのスキル専用のスクリプト                                                                                                                                                                                | `gh-pr-review/scripts/decide-next.sh`                                                                    |
+| `skills/language-checks/scripts/` | 言語別の品質チェック・自動修正ツール。language-checks を参照する全スキル（git-commit / gh-pr-review 等）から使う                                                                                          | `run-checks.sh`, `fix-markdown-lint.sh`                                                                  |
+| `tests/`                          | hook のルール / scripts / skills のテスト（`claude-sync` の同期対象外）。scripts のテストは対象ごとに `tests/scripts/` に分け、`scripts.sh` がまとめて実行する                                            | `hooks.sh`, `hooks-diff.sh`, `scripts.sh`, `scripts/gh-pr-review.sh`, `skills.sh`                        |
 
 判断基準:
 
@@ -48,7 +48,7 @@ SKILL.md（文章）・script（手順）・hook（ゲート）の使い分け:
 
 `~/.claude/skills/` には、このリポジトリの `claude/skills/` 以外に外部リポジトリの
 スキルもデプロイされる。出所は flake input として `flake.nix` / `flake.lock` に記録し、
-対象は `modules/home/parts/claude-code.nix` の `externalSkills` で列挙する。
+対象は `nix/claude-code.nix` の `externalSkills` で列挙する。
 
 | スキル                 | 出所                                                                             |
 | ---------------------- | -------------------------------------------------------------------------------- |
@@ -111,7 +111,7 @@ GraphQL の mutation）は、その引数ノードの原文（入れ子のヒア
 そのコマンドより前にある `cd <dir>` で決める。新しいルールは `src/rules/` に 1 ファイルで追加し、
 `rules/mod.rs` の一覧に載せる（テストは `tests/hooks.sh` に `--rule <name>` で 1 ルールずつ書く）。
 
-git 側の hook（`modules/home/parts/git-hooks.nix`、`core.hooksPath` でグローバル配布）も同じ考え方で、
+git 側の hook（`nix/git-hooks.nix`、`core.hooksPath` でグローバル配布）も同じ考え方で、
 Claude Code セッション（`CLAUDECODE=1`）のコミットに対して pre-commit が main 直接コミットの
 拒否、機密情報の検査（gitleaks。ステージした中身を見る。行の `gitleaks:allow`、`.gitleaksignore`、
 `.gitleaks.toml` で除き、`ALLOW_SECRET_COMMIT=<理由>` で迂回する。ADR-0015）と言語別チェック・Markdown 自動修正を、
@@ -120,10 +120,10 @@ pre-merge-commit は main / master へのローカルのマージ（GitHub リ�
 マージ結果が `run-checks.sh --merge` を通ったときだけコミットさせる（セッションを問わない）。
 `gh pr merge` は GitHub 側のマージなので、CI と `pre-merge-check` が守る。
 post-rewrite はゲートではなく、`git config remap.commitRefs true` でオプトインしたリポジトリで、
-rebase と amend の後に `commit-refs remap`（`modules/home/parts/commit-refs`、ADR-0012）を呼び、
+rebase と amend の後に `commit-refs remap`（`crates/commit-refs`、ADR-0012）を呼び、
 文書の中の変わったコミットの番号を付け直す（コミットはしない）。git filter-repo の後は
 `commit-refs rewrite-history .git/filter-repo/commit-map` で、履歴の中の文書と本文の番号も付け直す（ADR-0013）。
-履歴の中の崩れた語は `history-rewrite`（`modules/home/parts/history-rewrite`、ADR-0045）が同じ辞書で直し、番号を
+履歴の中の崩れた語は `history-rewrite`（`crates/history-rewrite`、ADR-0045）が同じ辞書で直し、番号を
 `commit-refs rewrite-history` で付け直す。生きているリポジトリに移す手順は `skills/history-rewrite/` にある。
 
 **main への直接コミットはリモートの有無によらず止める**。GitHub のリモートが無いリポジトリも、ブランチは
@@ -135,8 +135,8 @@ rebase と amend の後に `commit-refs remap`（`modules/home/parts/commit-refs
 どちらも main への直接コミットを拒否するが、`flake.lock` だけの更新（`nix-rebuild update` の正規フロー）、
 マージを締めるコミット（MERGE_HEAD がある）、HEAD の無いリポジトリの最初のコミットは両方で例外にする。
 片方だけが塞ぐと作業が止まる（PR #165）。
-`modules/home/parts/tests/main-commit-gates.sh` が両層の判定の一致を検証する。
-commit-msg hook の判定は `modules/home/parts/tests/commit-msg-conventions.sh` が検証する。自動コミットするスクリプトの
+`nix/tests/main-commit-gates.sh` が両層の判定の一致を検証する。
+commit-msg hook の判定は `nix/tests/commit-msg-conventions.sh` が検証する。自動コミットするスクリプトの
 件名との整合は、スクリプトを持つリポジトリ（nixfiles）の側のテストが、スクリプトの `git commit -m` を集めて hook に通して
 確かめる。
 
@@ -201,7 +201,7 @@ references
 - shellcheck を通す（`run-checks.sh` がステージ済みの `.sh` を `shellcheck -S warning` で検査する）
 - hook / script / SKILL.md を変えたら `bash claude/tests/{hooks,scripts,skills}.sh` を通す
   （hooks.sh は `cargo build` してからバイナリを `--rule` でルールごとに評価する。構文解析の単体テストは
-  `cargo test --manifest-path modules/home/parts/claude-hooks/Cargo.toml`）。
+  `cargo test --manifest-path crates/claude-hooks/Cargo.toml`）。
   テストは一時 HOME と偽の `gh` / `gitleaks` / 言語ツールで隔離実行され、実環境の設定・認証を参照しない。
   TDD（テストを先にコミットしてから実装）で進める
 - claude-hooks のコマンドの読み方（`shell.rs`、`unwrap.rs`、`git_args.rs`）やルールを書き直したら、PR の前に

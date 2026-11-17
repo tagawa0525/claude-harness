@@ -79,3 +79,4 @@
 * [ADR-0092: docs/ を OKF のバンドルとして design-records check で検査する](0092-check-okf-bundle-in-design-records.md)
 * [ADR-0093: markdownlint のグローバル設定は、リポジトリの .config/markdownlint/config を claude-setup sync がホームの同じパスに配る](0093-deliver-markdownlint-config-with-claude-setup-sync.md)
 * [ADR-0094: ハーネスの配る元は dot なしの claude/ と config/ に置き、このリポジトリのセッションは ~/.claude だけを読む](0094-place-harness-sources-in-undotted-claude-and-config.md)
+* [ADR-0095: Rust の crate は crates/ に、Nix のモジュールは nix/ に置き、modules/home/parts/ をやめる](0095-place-crates-and-nix-modules-at-top-level.md)

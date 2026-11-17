@@ -18,7 +18,7 @@
     };
 
     # mattpocock/skills: Claude Code 向けスキル集。grilling / grill-me を ~/.claude/skills にデプロイする
-    # （対象は modules/home/parts/claude-code.nix の externalSkills）。flake ではないので出所と rev の記録の
+    # （対象は nix/claude-code.nix の externalSkills）。flake ではないので出所と rev の記録の
     # ためだけに input にする
     mattpocock-skills = {
       url = "github:mattpocock/skills";
@@ -52,15 +52,15 @@
         _file = ./flake.nix;
         key = "claude-harness#homeManagerModules.default"; # 2 か所から import されても 1 つにまとまる
         imports = [
-          (nixpkgs.lib.modules.importApply ./modules/home/parts/claude-code.nix {
+          (nixpkgs.lib.modules.importApply ./nix/claude-code.nix {
             claudeCodeSource = self;
             inherit mattpocock-skills lsp-det;
           })
-          ./modules/home/parts/git-hooks.nix
+          ./nix/git-hooks.nix
         ];
       };
 
-      # テストが hook のファイルをビルドするための構成（modules/home/parts/tests/）。実際のホームには使わない
+      # テストが hook のファイルをビルドするための構成（nix/tests/）。実際のホームには使わない
       homeConfigurations.test = home-manager.lib.homeManagerConfiguration {
         inherit pkgs;
         modules = [
@@ -74,21 +74,21 @@
       };
 
       packages.${system} = {
-        # Claude Code の PreToolUse hook（modules/home/parts/claude-code.nix が home に配置する）。
+        # Claude Code の PreToolUse hook（nix/claude-code.nix が home に配置する）。
         # nix build .#claude-hooks で単体ビルドし、テストから CLAUDE_HOOKS_BIN で参照する
-        claude-hooks = pkgs.callPackage ./modules/home/parts/claude-hooks/package.nix { };
+        claude-hooks = pkgs.callPackage ./crates/claude-hooks/package.nix { };
         # 文書の中のコミットの番号の付け直しの CLI（post-rewrite の git hook の中身、claude-hooks の src/git_hook.rs が呼ぶ）
-        commit-refs = pkgs.callPackage ./modules/home/parts/commit-refs/package.nix { };
-        # 履歴の中の崩れた語を直し、番号を付け直す CLI（modules/home/parts/git-hooks.nix が PATH に入れる）
-        history-rewrite = pkgs.callPackage ./modules/home/parts/history-rewrite/package.nix {
+        commit-refs = pkgs.callPackage ./crates/commit-refs/package.nix { };
+        # 履歴の中の崩れた語を直し、番号を付け直す CLI（nix/git-hooks.nix が PATH に入れる）
+        history-rewrite = pkgs.callPackage ./crates/history-rewrite/package.nix {
           inherit (self.packages.${system}) commit-refs;
         };
-        # 設計の記録（ADR）のテンプレートと検査の CLI（modules/home/parts/git-hooks.nix が PATH に入れる）
-        design-records = pkgs.callPackage ./modules/home/parts/design-records/package.nix { };
+        # 設計の記録（ADR）のテンプレートと検査の CLI（nix/git-hooks.nix が PATH に入れる）
+        design-records = pkgs.callPackage ./crates/design-records/package.nix { };
         # 崩れた日本語の語の検査の crate と CLI（ADR-0085。pre-commit、commit-msg、claude-hooks、/retro が呼ぶ）
-        ja-terms = pkgs.callPackage ./modules/home/parts/ja-terms/package.nix { };
+        ja-terms = pkgs.callPackage ./crates/ja-terms/package.nix { };
         # ハーネスを Claude Code の設定に配る設置のコマンド（ADR-0084。claude-sync と activation が呼ぶ）
-        claude-setup = pkgs.callPackage ./modules/home/parts/claude-setup/package.nix { };
+        claude-setup = pkgs.callPackage ./crates/claude-setup/package.nix { };
       };
 
       # nix flake check は packages を評価するだけで checkPhase（cargo test）を実行しない。

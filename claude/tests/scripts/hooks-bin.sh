@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-hooks のバイナリを受け取るテスト（claude/tests/hooks.sh、modules/home/parts/tests/main-commit-gates.sh）が、
+# claude-hooks のバイナリを受け取るテスト（claude/tests/hooks.sh、nix/tests/main-commit-gates.sh）が、
 # 実行できないバイナリを渡されたら、各テストを失敗として数えずに、その場で止まることのテスト
 #
 # 実行: bash claude/tests/scripts/hooks-bin.sh（まとめて実行: bash claude/tests/scripts.sh）
@@ -17,7 +17,7 @@ make_fake_tool not-hooks "  *) echo 'cannot load libfoo.so' >&2; exit 127 ;;"
 # expect_stop <説明> <CLAUDE_HOOKS_BIN> <文言>: どちらのテストも、<文言> を出して終了コード 1 で止まる
 expect_stop() {
   local what="$1" bin="$2" message="$3" target out
-  for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
+  for target in claude/tests/hooks.sh nix/tests/main-commit-gates.sh; do
     it "$target: $what CLAUDE_HOOKS_BIN ならその場で止まる"
     out=$(cd "$ROOT" && LC_ALL=C PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$bin" bash "$target" 2>&1)
     assert_eq 1 $?
@@ -41,7 +41,7 @@ expect_stop "nix build の失敗の文言の" "error: Cannot build '/nix/store/x
 make_fake_tool hooks-like "  '') [[ \$(readlink /proc/self/fd/0) == /dev/null ]] || exit 1
     echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) exit 0 ;;"
-for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
+for target in claude/tests/hooks.sh nix/tests/main-commit-gates.sh; do
   it "$target: 使い方を出すバイナリは、標準入力を閉じて呼び、通す"
   # LC_ALL=C: 下の command not found を、翻訳を持つ bash でも英語の文言で探すため。
   # 出力はファイルに書いて grep する（hooks.sh の出力は 128 KB を超えうり、変数に入れると環境の上限に当たる）
@@ -87,7 +87,7 @@ make_fake_tool rule-panics "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TEST_ROOT/fake-pre-commit"
 chmod +x "$TEST_ROOT/fake-pre-commit"
 FAKE_PRE_COMMIT="$TEST_ROOT/fake-pre-commit"
-for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
+for target in claude/tests/hooks.sh nix/tests/main-commit-gates.sh; do
   for bin in rule-fails rule-panics; do
     it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、バイナリの標準エラーを出して止まる"
     out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" MAIN_COMMIT_GATES_PRE_COMMIT="$FAKE_PRE_COMMIT" bash "$target" 2>&1)
@@ -111,7 +111,7 @@ make_fake_tool rule-scalar "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo 42; exit 0 ;;"
 make_fake_tool rule-multi "  '') echo 'rules: block-main-commit' >&2; exit 2 ;;
   *) cat >/dev/null; echo '{}'; echo '{}'; exit 0 ;;"
-for target in claude/tests/hooks.sh modules/home/parts/tests/main-commit-gates.sh; do
+for target in claude/tests/hooks.sh nix/tests/main-commit-gates.sh; do
   for bin in rule-notice rule-scalar rule-multi; do
     it "$target: ルールの呼び出しで $bin なら、テストを失敗と数えずに、出力を出して止まる"
     out=$(cd "$ROOT" && PATH="$NO_NIX_PATH" CLAUDE_HOOKS_BIN="$TEST_ROOT/fakebin/$bin" MAIN_COMMIT_GATES_PRE_COMMIT="$FAKE_PRE_COMMIT" bash "$target" 2>&1)

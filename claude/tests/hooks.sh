@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse hook（modules/home/parts/claude-hooks、Rust 製 1 バイナリ）のルールごとのテスト
+# PreToolUse hook（crates/claude-hooks、Rust 製 1 バイナリ）のルールごとのテスト
 #
 # 実行: bash claude/tests/hooks.sh
 #   claude-hooks を cargo build してから各ルールを --rule で個別に評価する
@@ -13,7 +13,7 @@
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
 # CLAUDE_HOOKS_BIN（絶対パス）で差し替えられる（nix でビルドしたバイナリの検証用）
 if [[ -z "${CLAUDE_HOOKS_BIN:-}" ]]; then
-  CRATE_DIR=$(cd "$(dirname "$0")/../../modules/home/parts/claude-hooks" && pwd)
+  CRATE_DIR=$(cd "$(dirname "$0")/../../crates/claude-hooks" && pwd)
   cargo build -q --manifest-path "$CRATE_DIR/Cargo.toml" || exit 1
   CLAUDE_HOOKS_BIN="$CRATE_DIR/target/debug/claude-hooks"
 fi
@@ -627,7 +627,7 @@ assert_eq "" "$(cat "$FAKE_GH_LOG")"
 # block-main-commit: flake.lock だけの更新は main でも通す
 # ===========================================================================
 # nix-rebuild update は検証済みの flake.lock を main に直接コミットする正規フロー。
-# git 側の pre-commit hook（modules/home/parts/git-hooks.nix）は既にこれを例外として
+# git 側の pre-commit hook（nix/git-hooks.nix）は既にこれを例外として
 # 許可しているので、PreToolUse hook 側も同じ判定にする（片方だけ塞ぐと update が止まる）
 
 REPO="$TEST_ROOT/lock"

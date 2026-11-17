@@ -20,7 +20,7 @@ jobs:
         crate: [design-records, claude-hooks, ja-terms, claude-setup, commit-refs, fix-markdown-lint, history-rewrite]
     defaults:
       run:
-        working-directory: modules/home/parts/${{ matrix.crate }}
+        working-directory: crates/${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v5
       # history-rewrite の run はステージ 2 で PATH の commit-refs を呼ぶ
@@ -29,7 +29,7 @@ jobs:
       - run: cargo test --locked
 
   # claude/tests の sh のテスト（hook の判定、スクリプト、スキルの文書の検査。#273）。hooks.sh と scripts.sh は claude-hooks を
-  # cargo build してから走る。nix でビルドするテスト（modules/home/parts/tests/）は流さない（scripts の hooks-bin.sh が、
+  # cargo build してから走る。nix でビルドするテスト（nix/tests/）は流さない（scripts の hooks-bin.sh が、
   # main-commit-gates.sh の止まり方だけを、差し替えた pre-commit で確かめる）
   sh-test:
     runs-on: ubuntu-latest

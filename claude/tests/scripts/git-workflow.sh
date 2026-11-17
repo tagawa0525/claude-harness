@@ -8,7 +8,7 @@
 
 # post-merge-cleanup が予約のタグを消すのに使う design-records（設計の記録の CLI）は、リポジトリのクレートを
 # ビルドして PATH の先頭に置く。lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）
-DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../modules/home/parts/design-records" && pwd)
+DESIGN_RECORDS_DIR=$(cd "$(dirname "$0")/../../../crates/design-records" && pwd)
 source "$(dirname "$0")/../cargo-bin.sh"
 DESIGN_RECORDS_BIN=$(cargo_bin "$DESIGN_RECORDS_DIR" design-records) || exit 1
 PATH="${DESIGN_RECORDS_BIN%/*}:$PATH"
@@ -734,7 +734,7 @@ cd "$TEST_ROOT" || exit 1
 # 古い版の claude-sync.sh。2 つ目の引数で選ぶ）の有無でそれを見分ける
 setup_claude_sync_source() {
   setup_merged_branch "$1"
-  commit_file "$1/app" "${2:-modules/home/parts/claude-setup/Cargo.toml}" "chore: claude-setup"
+  commit_file "$1/app" "${2:-crates/claude-setup/Cargo.toml}" "chore: claude-setup"
   git -C "$1/app" push -q origin main
 }
 
@@ -745,9 +745,9 @@ setup_rebuild_source() {
   git -C "$1/app" push -q origin main
 }
 
-it "post-merge-cleanup: ハーネスで pull で modules の下（claude-hooks）が変われば、取り込む側の lock の更新と rebuild が要ると NOTE で知らせる"
+it "post-merge-cleanup: ハーネスで pull で crates の下（claude-hooks）が変われば、取り込む側の lock の更新と rebuild が要ると NOTE で知らせる"
 setup_claude_sync_source "$TEST_ROOT/cleanup14"
-advance_origin_main "$TEST_ROOT/cleanup14/app" modules/home/parts/claude-hooks/src/main.rs >/dev/null
+advance_origin_main "$TEST_ROOT/cleanup14/app" crates/claude-hooks/src/main.rs >/dev/null
 cd "$TEST_ROOT/cleanup14/app" || exit 1
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
@@ -755,6 +755,28 @@ assert_contains "$out" "NOTE: lock の更新と rebuild が要る"
 assert_contains "$out" "nix-rebuild update"
 assert_not_contains "$out" "NOTE: rebuild が要る"
 assert_not_contains "$out" "NOTE: claude-sync が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: ハーネスで pull で nix の下（モジュール）か claude-settings.json が変わっても、lock の更新と rebuild が要ると NOTE で知らせる"
+i=0
+for path in nix/git-hooks.nix claude-settings.json; do
+  i=$((i + 1))
+  setup_claude_sync_source "$TEST_ROOT/cleanup48-$i"
+  advance_origin_main "$TEST_ROOT/cleanup48-$i/app" "$path" >/dev/null
+  cd "$TEST_ROOT/cleanup48-$i/app" || exit 1
+  out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+  assert_eq 0 $?
+  assert_contains "$out" "NOTE: lock の更新と rebuild が要る"
+  cd "$TEST_ROOT" || exit 1
+done
+
+it "post-merge-cleanup: 古い配置（modules/home/parts）の目印だけを持つリポジトリは、ハーネスと見分けない"
+setup_claude_sync_source "$TEST_ROOT/cleanup49" modules/home/parts/claude-setup/Cargo.toml
+advance_origin_main "$TEST_ROOT/cleanup49/app" claude/skills/x/SKILL.md >/dev/null
+cd "$TEST_ROOT/cleanup49/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_not_contains "$out" "NOTE:"
 cd "$TEST_ROOT" || exit 1
 
 it "post-merge-cleanup: rebuild する構成のリポジトリで pull で hosts の下が変われば、rebuild が要ると NOTE で知らせる"
@@ -801,6 +823,15 @@ cd "$TEST_ROOT/cleanup41/app" || exit 1
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_not_contains "$out" "NOTE:"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: 古い配置のハーネスが、crates へ移すコミットを pull すれば、lock の更新と rebuild が要ると NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup50" modules/home/parts/claude-setup/Cargo.toml
+advance_origin_main "$TEST_ROOT/cleanup50/app" crates/claude-setup/Cargo.toml >/dev/null
+cd "$TEST_ROOT/cleanup50/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: lock の更新と rebuild が要る"
 cd "$TEST_ROOT" || exit 1
 
 it "post-merge-cleanup: ハーネスで pull で flake.lock が変われば、取り込む側の lock の更新と rebuild が要ると NOTE で知らせる"
@@ -891,7 +922,7 @@ assert_eq 0 $?
 assert_contains "$out" "NOTE: claude-sync が要る"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: ハーネスで pull で modules、flake、claude、config のどれも変わらなければ NOTE を出さない"
+it "post-merge-cleanup: ハーネスで pull で crates、nix、claude-settings.json、flake、claude、config のどれも変わらなければ NOTE を出さない"
 setup_claude_sync_source "$TEST_ROOT/cleanup17"
 advance_origin_main "$TEST_ROOT/cleanup17/app" docs/x.md >/dev/null
 cd "$TEST_ROOT/cleanup17/app" || exit 1

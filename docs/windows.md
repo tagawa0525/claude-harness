@@ -24,7 +24,7 @@ winget install Microsoft.VisualStudio.2022.BuildTools \
 
 PreToolUse hook は、git の hook の無いリポジトリの `git commit` を gitleaks で調べ、gitleaks が無いとすべての `git commit` を
 止める。スキルと hook が呼ぶ sh のスクリプトは jq を使わない（前の手順で入れた jq は、残しても外してもよい）。
-Windows でハーネスのテストの sh（`modules/home/parts/claude-hooks/tests/*.sh` など）を流すときだけ jq が要る。
+Windows でハーネスのテストの sh（`crates/claude-hooks/tests/*.sh` など）を流すときだけ jq が要る。
 
 前から Git for Windows を入れている機械では、版を上げる（`winget upgrade Git.Git`）。`commit-refs` の履歴の書き換え
 （スキル history-rewrite が使う）は `git fast-export --signed-commits` を渡し、Git 2.47.1 はこのオプションを知らずに
@@ -45,10 +45,10 @@ Git Bash で、clone を作るか更新してから、crate を `~/.claude/bin` 
 git clone https://github.com/tagawa0525/claude-harness ~/nix/claude-harness  # 2 回目からは git -C ~/nix/claude-harness pull --ff-only
 cd ~/nix/claude-harness
 for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records; do
-  cargo install --locked --force --root ~/.claude --path "modules/home/parts/$crate"
+  cargo install --locked --force --root ~/.claude --path "crates/$crate"
 done
 ~/.claude/bin/claude-setup sync ~/nix/claude-harness
-~/.claude/bin/claude-setup settings --static modules/home/parts/claude-settings.json \
+~/.claude/bin/claude-setup settings --static claude-settings.json \
   --pre-tool-use "$(cygpath -w ~/.claude/bin/claude-hooks.exe)" --stop "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ~/.claude/bin/claude-setup git-hooks --bin "$(cygpath -w ~/.claude/bin/claude-hooks.exe)"
 ```
