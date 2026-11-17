@@ -346,6 +346,59 @@ fn a_failed_copilot_review_run_is_not_a_failed_check() {
 }
 
 #[test]
+fn checks_that_pass_on_the_last_look_are_passed_not_a_timeout() {
+    // 待つ間隔を使い切った回に全部が通ったら、確認の 1 回を待って通ったとする
+    let fake = FakeGh::new();
+    let mut calls = vec![("", 0), ("{\"number\":42}", 0)];
+    calls.extend([(HEAD, 0), (RUNNING, 0), ("[]", 0)]);
+    for _ in 0..2 {
+        calls.extend([(HEAD, 0), (PASSED, 0), ("[]", 0)]);
+    }
+    let env: Vec<(&str, &str)> = NO_WAIT
+        .iter()
+        .copied()
+        .chain([("GH_WAIT_CHECKS_INTERVALS", "0")])
+        .collect();
+    let out = fake.run_calls_with_env("gh-wait-checks", &[URL], &calls, &env);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(stdout(&out).contains("CHECKS: passed"), "{}", stdout(&out));
+}
+
+#[test]
+fn waiting_for_the_sha_does_not_shorten_the_wait_for_its_checks() {
+    // PR の head が渡したコミットになるのを待った時間を、その head の check を待つ時間から引かない
+    const OLD: &str = "abc1234abc1234abc1234abc1234abc1234abc12\n";
+    let fake = FakeGh::new();
+    let mut calls = vec![("", 0), ("{\"number\":42}", 0)];
+    calls.extend([(OLD, 0), (OLD, 0)]);
+    calls.extend([(HEAD, 0), (RUNNING, 0), ("[]", 0)]);
+    calls.extend([(HEAD, 0), (RUNNING, 0), ("[]", 0)]);
+    for _ in 0..2 {
+        calls.extend([(HEAD, 0), (PASSED, 0), ("[]", 0)]);
+    }
+    let env: Vec<(&str, &str)> = NO_WAIT
+        .iter()
+        .copied()
+        .chain([("GH_WAIT_CHECKS_INTERVALS", "0 0")])
+        .collect();
+    let out = fake.run_calls_with_env("gh-wait-checks", &[URL, "def5678"], &calls, &env);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(stdout(&out).contains("CHECKS: passed"), "{}", stdout(&out));
+}
+
+#[test]
 fn checks_still_running_at_the_end_are_a_timeout() {
     let fake = FakeGh::new();
     // 待つ間隔は 3 つなので、見るのは 4 回（偽の gh は、渡した応答が尽きると最後の応答を返し続ける）
