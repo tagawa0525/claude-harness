@@ -54,7 +54,7 @@ done
 ```
 
 Markdown の検査（`run-checks.sh`、pre-commit）が呼ぶ `markdownlint` は npm で入れる（`npm install -g markdownlint-cli`。無いと検査は
-SKIP になる）。設定を持たないリポジトリで効くグローバルの設定は、`claude-setup sync` が `.config/markdownlint/config` から
+SKIP になる）。設定を持たないリポジトリで効くグローバルの設定は、`claude-setup sync` が `config/markdownlint/config` から
 `~/.config/markdownlint/config` に置く。Windows の `%USERPROFILE%` の下で markdownlint がこの場所を読むかは、実機で確かめていない（ADR-0093）。
 
 `~/.claude/bin` に初めて入れたとき（前の手順の `~/.cargo/bin` から移るときを含む）は、Git Bash の `~/.bashrc` で `~/.claude/bin` を PATH の先頭に足し、Git Bash を開き直す（Claude Code の

@@ -5,16 +5,17 @@ Claude Code のハーネス。PC 全体のセッションが読む指示、ス�
 
 ## 中身
 
-| 場所                                                                     | 何があるか                                                                                      |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `.claude/`                                                               | グローバルの指示（`CLAUDE.md`）、スキル、スクリプト、それらのテスト。構成は `.claude/README.md` |
-| `modules/home/parts/claude-code.nix`                                     | `~/.claude` への同期、`settings.json`、PreToolUse hook の登録                                   |
-| `modules/home/parts/git-hooks.nix`                                       | git のグローバルの hook（pre-commit、pre-merge-commit、commit-msg、post-rewrite）               |
-| `modules/home/parts/claude-hooks/`                                       | PreToolUse hook（Rust 製の 1 バイナリ）                                                         |
-| `modules/home/parts/claude-setup/`                                       | `~/.claude` への同期と `settings.json` の更新（Linux の activation と Windows の設置が呼ぶ）    |
-| `modules/home/parts/commit-refs/`、`design-records/`、`history-rewrite/` | hook とスキルが使う CLI                                                                         |
-| `modules/home/parts/ja-terms/`                                           | 日本語の語の辞書と検査                                                                          |
-| `docs/`                                                                  | OKF のバンドル（`docs/adr/` に決定の記録）。`design-records check` が `type` と `index.md` を検査 |
+| 場所                                                                     | 何があるか                                                                                                                       |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `claude/`                                                                | グローバルの指示（`CLAUDE.md`）、スキル、スクリプト、それらのテスト。`~/.claude` に配る元（ADR-0094）。構成は `claude/README.md` |
+| `config/`                                                                | `~/.config` に配る元（markdownlint のグローバルの設定。ADR-0093）                                                                |
+| `modules/home/parts/claude-code.nix`                                     | `~/.claude` への同期、`settings.json`、PreToolUse hook の登録                                                                    |
+| `modules/home/parts/git-hooks.nix`                                       | git のグローバルの hook（pre-commit、pre-merge-commit、commit-msg、post-rewrite）                                                |
+| `modules/home/parts/claude-hooks/`                                       | PreToolUse hook（Rust 製の 1 バイナリ）                                                                                          |
+| `modules/home/parts/claude-setup/`                                       | `~/.claude` への同期と `settings.json` の更新（Linux の activation と Windows の設置が呼ぶ）                                     |
+| `modules/home/parts/commit-refs/`、`design-records/`、`history-rewrite/` | hook とスキルが使う CLI                                                                                                          |
+| `modules/home/parts/ja-terms/`                                           | 日本語の語の辞書と検査                                                                                                           |
+| `docs/`                                                                  | OKF のバンドル（`docs/adr/` に決定の記録）。`design-records check` が `type` と `index.md` を検査                                |
 
 ## 取り込み方
 

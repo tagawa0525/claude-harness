@@ -1,6 +1,6 @@
 //! `claude-hooks script usage-report [--since <日時>] [--until <日時>] [--repo <リポジトリ>]... [TRANSCRIPT]` が、会話の
 //! 記録から区間の費用を親・担当・レビュー・振り返りに分けて出すことを確かめる（ADR-0088。`~/.claude/scripts/usage-report.sh`
-//! が呼ぶ）。sh から呼ぶ配備の確認は `.claude/tests/scripts/usage-report.sh`
+//! が呼ぶ）。sh から呼ぶ配備の確認は `claude/tests/scripts/usage-report.sh`
 
 mod common;
 

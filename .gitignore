@@ -1,3 +1,3 @@
-# Claude Code - ローカル設定のみ除外、コマンドとスキルはバージョン管理
+# Claude Code がセッションの許可の選択を書くローカルの設定（このリポジトリは .claude/ に追跡するファイルを持たない）
 .claude/settings.local.json
 docs/plans/*.md

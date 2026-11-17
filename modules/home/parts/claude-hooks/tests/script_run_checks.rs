@@ -2,7 +2,7 @@
 //! 差分と目印のファイルから言語を選び、段ごとに `RUN:` と `OK:` / `SKIP:` / `FAILED:`（あれば `FIX:`）を出し、すべて
 //! 通れば `ALL_OK` を出すことを確かめる（ADR-0087。`~/.claude/skills/language-checks/scripts/run-checks.sh` が呼ぶ）。
 //! 排他の Slurm のジョブ中の制限は ADR-0041。ツールは偽のコマンド（examples/fake_tool.rs）を名前を変えて置く。
-//! 場合分けの残りは、sh から呼ぶ `.claude/tests/scripts/language-checks.sh` も確かめる
+//! 場合分けの残りは、sh から呼ぶ `claude/tests/scripts/language-checks.sh` も確かめる
 
 mod common;
 

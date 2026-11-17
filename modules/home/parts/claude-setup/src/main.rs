@@ -2,7 +2,7 @@
 //!
 //! 使い方:
 //!
-//! - `claude-setup sync [<ソースのリポジトリ>]`: ハーネスの .claude を ~/.claude に同期する（[`sync`]）
+//! - `claude-setup sync [<ソースのリポジトリ>]`: ハーネスの claude を ~/.claude に同期する（[`sync`]）
 //! - `claude-setup settings --static <JSON> [--pre-tool-use <バイナリ>] [--stop <バイナリ>] [--legacy <ファイル名>]...`:
 //!   ~/.claude/settings.json に静的な設定を重ね、ハーネスの hook を登録する（[`settings`]）
 //! - `claude-setup git-hooks --bin <claude-hooks>`: グローバルの git hook を置き、core.hooksPath を向ける（[`git_hooks`]）

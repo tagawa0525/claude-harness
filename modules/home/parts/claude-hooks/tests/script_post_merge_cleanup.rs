@@ -1,6 +1,6 @@
 //! `claude-hooks script post-merge-cleanup <branch>` が、マージの後にブランチと worktree を片付けることを確かめる
 //! （ADR-0087。`~/.claude/scripts/post-merge-cleanup.sh` が呼ぶ）。痕跡、fetch と pull、NOTE、予約のタグ、リモートの
-//! ブランチの場合分けは、sh から呼ぶ `.claude/tests/scripts/git-workflow.sh` も確かめる
+//! ブランチの場合分けは、sh から呼ぶ `claude/tests/scripts/git-workflow.sh` も確かめる
 
 mod common;
 

@@ -1,6 +1,6 @@
 //! `claude-hooks script prose-size [--since <日時>] [--until <日時>] [--memory <ディレクトリ>] [--repo <パス>]...` が、区間の
 //! 前後の文章（メモリ、スキル、CLAUDE.md）の大きさをバイトで出すことを確かめる（ADR-0089。
-//! `.claude/skills/retro/scripts/prose-size.sh` が呼ぶ）。sh から呼ぶ配備の確認は `.claude/tests/scripts/retro.sh`
+//! `claude/skills/retro/scripts/prose-size.sh` が呼ぶ）。sh から呼ぶ配備の確認は `claude/tests/scripts/retro.sh`
 
 mod common;
 
@@ -152,6 +152,27 @@ fn skills_and_claude_md_are_measured_on_the_default_branch_before_since_and_befo
             "SINCE: 2026-11-10T00:00:00+09:00\nUNTIL: 2026-11-11T00:00:00+09:00\n\
              PROSE: skills 100 70 -30 {r}\nPROSE: claude-md 50 30 -20 {r}\n"
         )
+    );
+}
+
+#[test]
+fn the_skills_of_the_harness_are_counted_under_the_undotted_directory_at_the_top() {
+    let home = Home::new();
+    let repo = home.root.join("prose-harness");
+    std::fs::create_dir_all(&repo).unwrap();
+    home.git(&repo, &["init", "-q", "-b", "main"], None);
+    write_bytes(&repo.join("claude/skills/a/SKILL.md"), 100);
+    write_bytes(&repo.join("claude/skills/a/scripts/x.sh"), 50);
+    write_bytes(&repo.join("sub/claude/skills/a/SKILL.md"), 40);
+    home.commit_at(&repo, "2026-11-09T12:00:00+09:00");
+    write_bytes(&repo.join("claude/skills/a/SKILL.md"), 60);
+    home.commit_at(&repo, "2026-11-10T12:00:00+09:00");
+    let r = s(&repo);
+    let (code, out, _) = parts(&home.prose(&["--since", SINCE, "--until", UNTIL, "--repo", &r]));
+    assert_eq!(code, 0);
+    assert!(
+        out.contains(&format!("PROSE: skills 100 60 -40 {r}\n")),
+        "{out}"
     );
 }
 

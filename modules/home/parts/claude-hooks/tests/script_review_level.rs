@@ -1,6 +1,6 @@
 //! `claude-hooks script review-level [branch] [--base BASE]` が、ローカルの /code-review に渡すレベルと対象を決める
 //! ことを確かめる（ADR-0087。`~/.claude/scripts/review-level.sh` が呼ぶ）。文書の判定の細かい場合分け（ADR の
-//! 「## 変更」の節、.claude の下の文書、移動）と比較元の決め方は、sh から呼ぶ `.claude/tests/scripts/review-level.sh` も
+//! 「## 変更」の節、.claude の下の文書、移動）と比較元の決め方は、sh から呼ぶ `claude/tests/scripts/review-level.sh` も
 //! 確かめる
 
 mod common;
@@ -125,11 +125,26 @@ fn documents_only_is_medium() {
 }
 
 #[test]
+fn documents_under_the_harness_source_directory_are_medium() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/rule-docs"]);
+    repo.commit("claude/README.md", "readme");
+    repo.commit("claude/skills/x/references/r.md", "reference");
+    let out = repo.run(&["feat/rule-docs", "--base", "main"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        stdout(&out).ends_with("FILES: 2\nLEVEL: medium\n"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn a_file_that_is_not_a_document_is_high() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/mixed"]);
     repo.commit("docs/plans/x.md", "plan");
-    repo.commit(".claude/scripts/x.sh", "script");
+    repo.commit("claude/scripts/x.sh", "script");
     let out = repo.run(&["feat/mixed", "--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
     assert!(

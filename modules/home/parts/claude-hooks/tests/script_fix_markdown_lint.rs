@@ -1,6 +1,6 @@
 //! `claude-hooks script fix-markdown-lint <file>...` が、markdownlint --fix の直せない MD040（コードの塊の言語）と
 //! MD060（表の桁揃え）を直すことを確かめる（ADR-0087。`~/.claude/skills/language-checks/scripts/fix-markdown-lint.sh`
-//! が呼ぶ）。sh から呼ぶ確認は `.claude/tests/scripts/language-checks.sh`
+//! が呼ぶ）。sh から呼ぶ確認は `claude/tests/scripts/language-checks.sh`
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

@@ -1,7 +1,7 @@
 //! 設計の記録（ADR）の形。フロントマターのキーと status、必須と推奨の節、ファイル名と番号、テンプレートを持つ（ADR-0009）。
 //! ADR と docs/issues の issue の番号の予約（タグの名前）と振り直し（参照の付け替え）も持つ（ADR-0018）。
 //!
-//! 形の値を持つのはこのクレートだけにする。スキル `adr` と `.claude/scripts/branch-topics.sh` は CLI を呼び、
+//! 形の値を持つのはこのクレートだけにする。スキル `adr` と `claude/scripts/branch-topics.sh` は CLI を呼び、
 //! claude-hooks はライブラリとしてパスの判定を使う。
 
 pub mod check;

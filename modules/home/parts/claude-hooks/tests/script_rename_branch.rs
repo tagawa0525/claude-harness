@@ -1,6 +1,6 @@
 //! `claude-hooks script rename-branch <new-name> [--remote]` が、今の feature ブランチの名前を変えることを確かめる
 //! （ADR-0087。`~/.claude/scripts/rename-branch.sh` が呼ぶ）。リモートと open の PR の場合分けは、sh から呼ぶ
-//! `.claude/tests/scripts/git-workflow.sh` も確かめる
+//! `claude/tests/scripts/git-workflow.sh` も確かめる
 
 mod common;
 

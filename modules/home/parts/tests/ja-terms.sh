@@ -34,7 +34,7 @@ echo "==> ~/.claude/bin/ja-terms と claude-hooks をビルドする（homeConfi
 home_files=$(nix build --no-link --print-out-paths --option warn-dirty false \
   "$ROOT#homeConfigurations.test.config.home-files")
 JA_TERMS="$home_files/.claude/bin/ja-terms"
-MEMORY_INDEX="$ROOT/.claude/skills/retro/scripts/memory-index.sh"
+MEMORY_INDEX="$ROOT/claude/skills/retro/scripts/memory-index.sh"
 # memory-index.sh が呼ぶ claude-hooks（package.nix のラッパーが、包んだ ja-terms のパスを渡す）。HOME は下で差し替えるので、
 # ~/.claude/bin の形のまま home-files から渡す
 export CLAUDE_HOOKS_BIN="$home_files/.claude/bin/claude-hooks"

@@ -1,4 +1,4 @@
-//! `claude-setup sync [<ソースのリポジトリ>]`: ハーネスの .claude（CLAUDE.md、commands、skills、scripts）を ~/.claude に
+//! `claude-setup sync [<ソースのリポジトリ>]`: ハーネスの claude（CLAUDE.md、commands、skills、scripts）を ~/.claude に
 //! 同期する（ADR-0084）。nixos-rebuild を待たずに作業中のスキルの変更を反映するためのコマンドで、home-manager の
 //! activation も同じものを呼ぶ。
 //!
@@ -13,8 +13,11 @@
 //!   書きかけで、rebuild の配った新しい版を黙って上書きしない）。clone でなければ（.git が無い）、そのまま同期する
 //! - 引数あり: pull せず、その場所の今の中身を同期する（worktree で直しを試す、activation、pull できないとき）
 //!
-//! - HOME_FILES（markdownlint の設定）: ~/.claude の外のホームの下に、ソースと同じ相対パスで置く。ソースが正で、中身が
-//!   違えば上書きする（ADR-0093）
+//! - HOME_FILES（markdownlint の設定）: ~/.claude の外のホームの下に置く。ソースが正で、中身が違えば上書きする
+//!   （ADR-0093）
+//!
+//! ソースのディレクトリは dot なしの claude と config（ADR-0094）。ソースのリポジトリの .claude は、そのリポジトリの
+//! プロジェクトの設定なので読まない
 //!
 //! 外部のスキル（flake の input）は、rebuild の activation だけが配る。
 
@@ -23,7 +26,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
-/// 同期の場所（.claude の下の名前）と、既にあるファイルを上書きするか
+/// ソースのリポジトリの、~/.claude に配る元のディレクトリ
+const SOURCE: &str = "claude";
+
+/// 同期の場所（SOURCE と ~/.claude の下の名前）と、既にあるファイルを上書きするか
 const PLACES: [(&str, bool); 4] = [
     ("CLAUDE.md", true),
     ("commands", false),
@@ -31,13 +37,14 @@ const PLACES: [(&str, bool); 4] = [
     ("scripts", true),
 ];
 
-/// ~/.claude の外に置くファイル（ソースのリポジトリの先頭からの相対パス。ホームの下の同じ相対パスに置く。`/` 区切り）。
+/// ~/.claude の外に置くファイル（ソースのリポジトリの先頭からの相対パスと、ホームからの相対パス。`/` 区切り）。
 /// ソースが正で、中身が違えば上書きする。行き先が symlink（home-manager が置いていた store への link）なら、辿らず
 /// 通常のファイルに置き換える。ソースが無ければ何もしない。markdownlint の設定は ~/.config/markdownlint/config を
 /// markdownlint-cli が読む（0.50.0 で確認。config.json は読まれない。ADR-0093）
-const HOME_FILES: [&str; 1] = [".config/markdownlint/config"];
+const HOME_FILES: [(&str, &str); 1] =
+    [("config/markdownlint/config", ".config/markdownlint/config")];
 
-/// 配ったファイルの一覧（.claude の下。1 行 1 パス、.claude からの相対で `/` 区切り）
+/// 配ったファイルの一覧（~/.claude の下。1 行 1 パス、~/.claude からの相対で `/` 区切り）
 const MANIFEST: &str = ".claude-sync-manifest";
 
 /// 一覧に載せて、ソースから消えたら消す場所。commands は利用者が手で直すので、載せない
@@ -51,13 +58,13 @@ fn stop(lines: &[String]) -> Stop {
 }
 
 pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
-    // 空の引数は引数なしと同じ（空の変数を渡した claude-sync "$REPO" で、今のディレクトリの .claude を同期しない）
+    // 空の引数は引数なしと同じ（空の変数を渡した claude-sync "$REPO" で、今のディレクトリの claude を同期しない）
     let source = source.filter(|s| !s.as_os_str().is_empty());
     let repo = source.map_or_else(|| home.join("nix/claude-harness"), Path::to_path_buf);
     if source.is_none() && repo.join(".git").exists() {
         pull(&repo)?;
     }
-    let from = repo.join(".claude");
+    let from = repo.join(SOURCE);
     if !from.is_dir() {
         return Err(stop(&[
             format!("❌ ソースが見つかりません: {}", from.display()),
@@ -88,17 +95,17 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
         };
         println!("✅ {name} synced{kept}");
     }
-    for rel in HOME_FILES {
-        let src = repo.join(rel);
+    for (source_rel, home_rel) in HOME_FILES {
+        let src = repo.join(source_rel);
         if !src.exists() {
             continue;
         }
-        let dest = home.join(rel);
+        let dest = home.join(home_rel);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| io_stop(parent, &e))?;
         }
         copy(&src, &dest, true)?;
-        println!("✅ {rel} synced");
+        println!("✅ {home_rel} synced");
     }
     delivered.sort();
     if let Some(old) = old_manifest {
@@ -118,7 +125,7 @@ pub fn run(home: &Path, source: Option<&Path>) -> Result<(), Stop> {
     Ok(())
 }
 
-/// src の下のファイルと symlink（ディレクトリは含めない。symlink は辿らない）の、.claude からの相対パス（prefix
+/// src の下のファイルと symlink（ディレクトリは含めない。symlink は辿らない）の、配る元（claude）からの相対パス（prefix
 /// から始まる、`/` 区切り）を out に足す。ソースの場所そのものがディレクトリを指すリンクなら中身を数える
 fn list_files(src: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), Stop> {
     let entries = fs::read_dir(src).map_err(|e| read_stop(src, &e))?;
@@ -307,8 +314,8 @@ fn pull(repo: &Path) -> Result<(), Stop> {
     let mut status = vec!["status", "--porcelain", "--untracked-files=all", "--"];
     let places: Vec<String> = PLACES
         .iter()
-        .map(|(n, _)| format!(".claude/{n}"))
-        .chain(HOME_FILES.iter().map(|rel| (*rel).to_string()))
+        .map(|(n, _)| format!("{SOURCE}/{n}"))
+        .chain(HOME_FILES.iter().map(|(rel, _)| (*rel).to_string()))
         .collect();
     status.extend(places.iter().map(String::as_str));
     let Some(dirty) = git_out(repo, &status) else {

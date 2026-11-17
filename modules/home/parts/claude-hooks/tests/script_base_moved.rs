@@ -1,6 +1,6 @@
 //! `claude-hooks script base-moved [branch] [--base BASE]` が、比較元が分岐点から進み、ブランチと同じパスを触って
 //! いれば知らせることを確かめる（ADR-0087。`~/.claude/scripts/base-moved.sh` が呼ぶ）。fetch するかの決め方（GitHub の
-//! origin）と WARN の場合分けは、sh から呼ぶ `.claude/tests/scripts/base-moved.sh` が確かめる
+//! origin）と WARN の場合分けは、sh から呼ぶ `claude/tests/scripts/base-moved.sh` が確かめる
 
 mod common;
 

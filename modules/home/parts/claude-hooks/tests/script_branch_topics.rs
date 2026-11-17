@@ -1,6 +1,6 @@
 //! `claude-hooks script branch-topics [base [head]]` が、ブランチが含むトピック（コミットの型、ADR と issue の追加と
 //! status の変化、変えたディレクトリ）を要約することを確かめる（ADR-0087。`~/.claude/scripts/branch-topics.sh` が呼ぶ）。
-//! 改名や README の扱いなどの場合分けは、sh から呼ぶ `.claude/tests/scripts/branch-topics.sh` も確かめる
+//! 改名や README の扱いなどの場合分けは、sh から呼ぶ `claude/tests/scripts/branch-topics.sh` も確かめる
 
 mod common;
 

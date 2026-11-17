@@ -40,7 +40,7 @@ mod unwrap;
 
 use std::io::Read;
 
-// .claude/tests/hooks.sh と modules/home/parts/tests/main-commit-gates.sh は、引数なしで呼んで `rules: `
+// claude/tests/hooks.sh と modules/home/parts/tests/main-commit-gates.sh は、引数なしで呼んで `rules: `
 // で始まる行が出ることで、渡されたバイナリが起動できるかを確かめる
 /// スクリプトの sh や git hook が、知らないサブコマンドや名前で呼んだときの案内。claude-sync は sh だけを入れ替え、
 /// ~/.claude/bin のバイナリは入れ直すまで前の版のまま

@@ -1,7 +1,7 @@
 //! `claude-hooks script get-latest-review <PR の URL>` が、PR の最新の Copilot のレビューの要約（周回の材料、失敗の別、
 //! 残る指摘の重大度、Suppressed comments と Previously missed の本文）をテキストで出すことを確かめる（ADR-0087。
 //! `~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh` が呼ぶ）。本文の形の細かい場合分けは、sh から呼ぶ
-//! `.claude/tests/scripts/gh-pr-review.sh` も確かめる
+//! `claude/tests/scripts/gh-pr-review.sh` も確かめる
 
 mod common;
 

@@ -20,9 +20,9 @@ use crate::unwrap::basename;
 pub struct GuardSbatch;
 
 const SCRIPT: &str = "slurm-run.sh";
-const TEST: &str = ".claude/tests/scripts/slurm-run.sh";
+const TEST: &str = "claude/tests/scripts/slurm-run.sh";
 
-/// slurm-run.sh か。同名のテスト（`.claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で走り、Slurm に
+/// slurm-run.sh か。同名のテスト（`claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で走り、Slurm に
 /// 触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、除くのはテストの
 /// 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
 fn is_slurm_run(program: &str) -> bool {

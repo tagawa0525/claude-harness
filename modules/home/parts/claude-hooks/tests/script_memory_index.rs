@@ -2,7 +2,7 @@
 //! 突き合わせ、本文の崩れた日本語の語を辞書の検査（ja-terms check）の指摘から出すことを確かめる
 //! （`~/.claude/skills/retro/scripts/memory-index.sh` が呼ぶ）。ja-terms は偽のコマンド（examples/fake_tool.rs）にする。
 //! 本物の辞書の規則（コードスパンを数えないなど）は `modules/home/parts/tests/ja-terms.sh` が、sh から呼ぶ配備の確認は
-//! `.claude/tests/scripts/retro.sh` が確かめる
+//! `claude/tests/scripts/retro.sh` が確かめる
 
 mod common;
 

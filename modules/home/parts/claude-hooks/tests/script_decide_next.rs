@@ -1,7 +1,7 @@
 //! `claude-hooks script decide-next <PR の URL>` が、PR のレビューの状態から次の一手（VERDICT）を 1 つに決めることを
 //! 確かめる（ADR-0087。`~/.claude/skills/gh-pr-review/scripts/decide-next.sh` が呼ぶ）。判定の表の場合分け（周回の
 //! 数え方、文書だけの PR、レビューの失敗、重大度、ローカルレビューの記録）は、sh から呼ぶ
-//! `.claude/tests/scripts/gh-pr-review.sh` が確かめる。記録の判定は `claude-hooks local-review-covers` を呼ぶ
+//! `claude/tests/scripts/gh-pr-review.sh` が確かめる。記録の判定は `claude-hooks local-review-covers` を呼ぶ
 //! （CLAUDE_HOOKS_BIN があればそれ、無ければ自分。sh のテストが偽物に差し替える）
 
 mod common;

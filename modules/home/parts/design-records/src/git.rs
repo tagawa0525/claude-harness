@@ -127,7 +127,7 @@ pub fn local_default(root: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
-/// 既定ブランチ。.claude/scripts/branch-topics.sh、worktree-add.sh、claude-hooks（git.rs）と同じ順で探す。
+/// 既定ブランチ。claude/scripts/branch-topics.sh、worktree-add.sh、claude-hooks（git.rs）と同じ順で探す。
 pub fn default_branch(root: &Path) -> Result<Option<String>> {
     if let Some(name) = origin_default(root)? {
         return Ok(Some(name));

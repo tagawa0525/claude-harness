@@ -47,7 +47,7 @@ let
     cargoRoot = "claude-hooks";
     cargoLock.lockFile = ./Cargo.lock;
     # ユニットテストをビルド時に実行する。pre_merge_check のテストは一時ディレクトリに git の
-    # リポジトリを作るので、git を渡す（gh と hook の入出力を伴う結合テストは .claude/tests/hooks.sh）
+    # リポジトリを作るので、git を渡す（gh と hook の入出力を伴う結合テストは claude/tests/hooks.sh）
     doCheck = true;
     nativeCheckInputs = [ git ];
     # sandbox に無い git の全体設定を環境の側から渡す（lib/git-check-config.nix）

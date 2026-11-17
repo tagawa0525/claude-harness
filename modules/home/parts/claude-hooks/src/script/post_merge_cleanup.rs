@@ -1,5 +1,5 @@
 //! `post-merge-cleanup.sh <branch>`: PR のマージの後（または /git-merge の後）に、ブランチと worktree を片付ける。
-//! 順は gh-pr-merge のスキルの「クリーンアップ」と、`.claude/scripts/post-merge-cleanup.sh` の説明に書く:
+//! 順は gh-pr-merge のスキルの「クリーンアップ」と、`claude/scripts/post-merge-cleanup.sh` の説明に書く:
 //!
 //! - （0 の前）cwd のリポジトリに branch の痕跡（ローカルのブランチ、リモート追跡の ref、リモートのブランチ、GitHub の
 //!   リモートではそのブランチを head とするマージ済みの PR）が無ければ、何も変えずに止める。確かめられないときも止める
@@ -475,8 +475,9 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
             "NOTE: lock の更新と rebuild が要る（modules か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
         );
     }
-    // rebuild する構成のリポジトリだけの .claude はプロジェクトの指示で、その場で読まれる
-    if has_sync && changed(&[".claude"]) {
+    // 配る元は claude と config（ADR-0094 より前の版と、ハーネスを分ける前の nixfiles は .claude）。同期のコマンドを
+    // 持たないリポジトリの .claude はプロジェクトの指示で、その場で読まれる
+    if has_sync && changed(&["claude", "config", ".claude"]) {
         // 引数なしの claude-sync は既定の clone を読む。pull したのがそこと限らないので、このリポジトリを元に渡す形で示す
         let sync_cmd = format!(
             "claude-sync {}",
@@ -484,11 +485,11 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         );
         if has_rebuild {
             println!(
-                "NOTE: claude-sync が要る（.claude が変わった）。{sync_cmd} か rebuild まで ~/.claude は古い版のまま"
+                "NOTE: claude-sync が要る（配る元が変わった）。{sync_cmd} か rebuild まで ~/.claude は古い版のまま"
             );
         } else {
             println!(
-                "NOTE: claude-sync が要る（.claude が変わった）。{sync_cmd} まで ~/.claude は古い版のまま。取り込む側（nixfiles）の lock を進める前に rebuild すると、lock が固定した古い版に戻る"
+                "NOTE: claude-sync が要る（配る元が変わった）。{sync_cmd} まで ~/.claude は古い版のまま。取り込む側（nixfiles）の lock を進める前に rebuild すると、lock が固定した古い版に戻る"
             );
         }
     }

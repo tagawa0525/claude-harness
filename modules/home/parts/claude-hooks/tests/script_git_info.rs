@@ -1,6 +1,6 @@
 //! `claude-hooks script git-info` が、今の Git の状態（ブランチ、未コミットの変更、未プッシュのコミット、stash、
 //! worktree、関連の PR）とマージ済みのブランチの worktree を出すことを確かめる（ADR-0087。`~/.claude/scripts/git-info.sh`
-//! が呼ぶ）。場合分けは、sh から呼ぶ `.claude/tests/scripts/git-workflow.sh` も確かめる
+//! が呼ぶ）。場合分けは、sh から呼ぶ `claude/tests/scripts/git-workflow.sh` も確かめる
 
 mod common;
 

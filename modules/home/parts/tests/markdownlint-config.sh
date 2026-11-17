@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 配る markdownlint のグローバル設定（../../../../.config/markdownlint/config）を、markdownlint-cli が
+# 配る markdownlint のグローバル設定（../../../../config/markdownlint/config）を、markdownlint-cli が
 # ~/.config/markdownlint/config から読み、規則が効くことを検証する（ADR-0093）
 # =============================================================================
 # 読み込みの rc は、{ で始まらない内容を JSON でなく ini として読み、設定が黙って効かなくなる。設定の先頭にコメントを
@@ -58,7 +58,7 @@ for rule in MD013 MD033 MD034; do
 done
 
 mkdir -p "$WORK/configured/.config/markdownlint"
-cp "$ROOT/.config/markdownlint/config" "$WORK/configured/.config/markdownlint/config"
+cp "$ROOT/config/markdownlint/config" "$WORK/configured/.config/markdownlint/config"
 configured=$(lint "$WORK/configured")
 for rule in MD013 MD033 MD034; do
   if grep -q "$rule" <<<"$configured"; then

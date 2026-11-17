@@ -1,4 +1,4 @@
-//! `claude-setup sync` が、ハーネスの .claude（CLAUDE.md、commands、skills、scripts）を ~/.claude に同期すること
+//! `claude-setup sync` が、ハーネスの claude（CLAUDE.md、commands、skills、scripts）を ~/.claude に同期すること
 //! （ADR-0084）。
 //!
 //! - CLAUDE.md、skills、scripts はソースが正として、中身の違うファイルを上書きする（サイズと mtime が同じでも）
@@ -7,7 +7,7 @@
 //! - 引数なしは既定の clone（ホームの下の nix/claude-harness）を、既定のブランチで、同期する場所に未コミットの変更が
 //!   無ければ `git pull --ff-only` してから同期する。どれかに当たれば、~/.claude を変えずに 1 で止まる
 //! - 引数を渡せば pull せず、その場所の今の中身を同期する
-//! - ソースの .config/markdownlint/config は、ソースが正として ~/.config/markdownlint/config に置く（ADR-0093）
+//! - ソースの config/markdownlint/config は、ソースが正として ~/.config/markdownlint/config に置く（ADR-0093）
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -119,8 +119,8 @@ fn write(path: &Path, text: &str) {
 
 /// clone の CLAUDE.md を書き換えてコミットし、origin に push する
 fn advance(home: &Home, clone: &Path, text: &str) {
-    write(&clone.join(".claude/CLAUDE.md"), text);
-    home.git(clone, &["add", ".claude/CLAUDE.md"]);
+    write(&clone.join("claude/CLAUDE.md"), text);
+    home.git(clone, &["add", "claude/CLAUDE.md"]);
     home.git(clone, &["commit", "-qm", &format!("docs: {text}")]);
     home.git(clone, &["push", "-q", "origin", "HEAD"]);
 }
@@ -164,7 +164,7 @@ fn overwrites_changed_files_and_keeps_existing_commands() {
         ("scripts/a.sh", "ADR-0175"),
         ("commands/c.md", "source"),
     ] {
-        write(&src.join(".claude").join(rel), text);
+        write(&src.join("claude").join(rel), text);
     }
     assert!(home.sync(Some(&src)).status.success());
     // 利用者が手で直した commands は残す
@@ -176,7 +176,7 @@ fn overwrites_changed_files_and_keeps_existing_commands() {
         ("scripts/a.sh", "ADR-NNNN"),
         ("commands/c.md", "change"),
     ] {
-        write(&src.join(".claude").join(rel), text);
+        write(&src.join("claude").join(rel), text);
     }
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
@@ -197,14 +197,14 @@ fn symlink_dir(target: &Path, link: &Path) {
 fn removes_only_files_the_previous_sync_delivered_and_the_source_dropped() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/scripts/a.sh"), "a");
-    write(&src.join(".claude/scripts/old.sh"), "old");
-    write(&src.join(".claude/skills/s/SKILL.md"), "s");
-    write(&src.join(".claude/skills/gone/SKILL.md"), "gone");
+    write(&src.join("claude/scripts/a.sh"), "a");
+    write(&src.join("claude/scripts/old.sh"), "old");
+    write(&src.join("claude/skills/s/SKILL.md"), "s");
+    write(&src.join("claude/skills/gone/SKILL.md"), "gone");
     assert!(home.sync(Some(&src)).status.success());
     write(&home.dest("scripts/mine.sh"), "mine");
-    std::fs::remove_file(src.join(".claude/scripts/old.sh")).unwrap();
-    std::fs::remove_dir_all(src.join(".claude/skills/gone")).unwrap();
+    std::fs::remove_file(src.join("claude/scripts/old.sh")).unwrap();
+    std::fs::remove_dir_all(src.join("claude/skills/gone")).unwrap();
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(!home.dest("scripts/old.sh").exists());
@@ -221,7 +221,7 @@ fn removes_only_files_the_previous_sync_delivered_and_the_source_dropped() {
 fn first_sync_without_a_manifest_deletes_nothing_and_writes_one() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/scripts/a.sh"), "a");
+    write(&src.join("claude/scripts/a.sh"), "a");
     write(&home.dest("scripts/old.sh"), "old");
     assert!(home.sync(Some(&src)).status.success());
     assert_eq!(read(&home.dest("scripts/old.sh")), "old");
@@ -232,7 +232,7 @@ fn first_sync_without_a_manifest_deletes_nothing_and_writes_one() {
 fn does_not_delete_commands_or_paths_outside_skills_and_scripts() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/scripts/a.sh"), "a");
+    write(&src.join("claude/scripts/a.sh"), "a");
     write(&home.dest("commands/c.md"), "c");
     write(&home.dest("settings.json"), "{}");
     write(&home.0.join("outside.txt"), "outside");
@@ -252,7 +252,7 @@ fn does_not_delete_commands_or_paths_outside_skills_and_scripts() {
 fn does_not_follow_symlinks_when_removing() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/scripts/a.sh"), "a");
+    write(&src.join("claude/scripts/a.sh"), "a");
     write(&home.0.join("outside/x.txt"), "outside");
     // 一覧の親ディレクトリが、外を指す symlink
     std::fs::create_dir_all(home.dest("")).unwrap();
@@ -271,7 +271,7 @@ fn does_not_follow_symlinks_when_removing() {
 fn keeps_files_the_source_does_not_have() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    write(&src.join("claude/skills/s/SKILL.md"), "s");
     write(&home.dest("skills/mine/SKILL.md"), "mine");
     assert!(home.sync(Some(&src)).status.success());
     assert_eq!(read(&home.dest("skills/mine/SKILL.md")), "mine");
@@ -283,7 +283,7 @@ fn keeps_the_executable_bit_and_makes_read_only_copies_writable() {
     use std::os::unix::fs::PermissionsExt;
     let home = Home::new();
     let src = home.0.join("src");
-    let script = src.join(".claude/scripts/run.sh");
+    let script = src.join("claude/scripts/run.sh");
     write(&script, "#!/bin/sh\n");
     // nix store のソースは読むだけ
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o555)).unwrap();
@@ -304,7 +304,7 @@ fn keeps_the_executable_bit_and_makes_read_only_copies_writable() {
 #[test]
 fn without_arguments_syncs_the_harness_clone_not_nixfiles() {
     let home = Home::new();
-    write(&home.clone_dir().join(".claude/CLAUDE.md"), "harness");
+    write(&home.clone_dir().join("claude/CLAUDE.md"), "harness");
     write(
         &home.home().join("nix/nixfiles/.claude/CLAUDE.md"),
         "nixfiles project",
@@ -336,15 +336,15 @@ fn without_arguments_stops_off_the_default_branch_or_with_drafts() {
     home.git(&clone, &["switch", "-q", "--detach", "main"]);
     home.stops("別のセッションがこのブランチで作業中かもしれない");
     home.git(&clone, &["switch", "-q", "main"]);
-    write(&clone.join(".claude/CLAUDE.md"), "draft");
+    write(&clone.join("claude/CLAUDE.md"), "draft");
     home.stops(&format!("claude-sync {clone_path}"));
-    home.git(&clone, &["restore", ".claude/CLAUDE.md"]);
+    home.git(&clone, &["restore", "claude/CLAUDE.md"]);
     // 同期しない場所の書きかけでは止めない
-    write(&clone.join(".claude/notes.txt"), "memo");
+    write(&clone.join("claude/notes.txt"), "memo");
     home.sync_default();
-    std::fs::remove_file(clone.join(".claude/notes.txt")).unwrap();
+    std::fs::remove_file(clone.join("claude/notes.txt")).unwrap();
     // 同期する場所の、追跡していない新しいファイルでは止める
-    write(&clone.join(".claude/skills/new/SKILL.md"), "wip");
+    write(&clone.join("claude/skills/new/SKILL.md"), "wip");
     home.stops(&format!("claude-sync {clone_path}"));
 }
 
@@ -353,7 +353,7 @@ fn with_a_path_syncs_the_current_contents_without_pulling() {
     let home = Home::new();
     let other = clones(&home);
     let clone = home.clone_dir();
-    write(&clone.join(".claude/CLAUDE.md"), "draft");
+    write(&clone.join("claude/CLAUDE.md"), "draft");
     advance(&home, &other, "v3");
     let out = home.sync(Some(&clone));
     assert!(out.status.success(), "{}", stderr(&out));
@@ -367,7 +367,7 @@ fn without_arguments_stops_when_the_clone_cannot_pull() {
     home.sync_default();
     advance(&home, &other, "v2");
     let clone = home.clone_dir();
-    write(&clone.join(".claude/CLAUDE.md"), "local");
+    write(&clone.join("claude/CLAUDE.md"), "local");
     home.git(&clone, &["commit", "-qam", "docs: local"]);
     home.stops(&format!("claude-sync {}", clone.display()));
 }
@@ -441,7 +441,7 @@ fn a_default_place_that_is_not_a_clone_is_synced_as_is() {
     let home = Home::new();
     // 親のリポジトリの中の、git でないディレクトリ
     home.git(&home.home(), &["init", "-q", "nix"]);
-    write(&home.clone_dir().join(".claude/CLAUDE.md"), "plain copy");
+    write(&home.clone_dir().join("claude/CLAUDE.md"), "plain copy");
     home.sync_default();
     assert_eq!(read(&home.dest("CLAUDE.md")), "plain copy");
 }
@@ -455,11 +455,23 @@ fn a_missing_source_is_an_error() {
 }
 
 #[test]
-fn an_empty_argument_means_the_default_clone() {
-    // 空の変数を渡したとき（claude-sync "$REPO"）に、今のディレクトリの .claude を同期しない
+fn a_source_with_only_the_dotted_directory_is_an_error() {
+    // 配る元は claude/。.claude はそのリポジトリのプロジェクトの設定で、配らない
     let home = Home::new();
-    write(&home.clone_dir().join(".claude/CLAUDE.md"), "harness");
-    write(&home.0.join(".claude/CLAUDE.md"), "cwd project");
+    let src = home.0.join("project");
+    write(&src.join(".claude/CLAUDE.md"), "project");
+    let out = home.sync(Some(&src));
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("ソースが見つかりません"));
+    assert!(!home.dest("CLAUDE.md").exists());
+}
+
+#[test]
+fn an_empty_argument_means_the_default_clone() {
+    // 空の変数を渡したとき（claude-sync "$REPO"）に、今のディレクトリの claude を同期しない
+    let home = Home::new();
+    write(&home.clone_dir().join("claude/CLAUDE.md"), "harness");
+    write(&home.0.join("claude/CLAUDE.md"), "cwd project");
     let out = home.sync(Some(Path::new("")));
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(read(&home.dest("CLAUDE.md")), "harness");
@@ -470,10 +482,10 @@ fn an_empty_argument_means_the_default_clone() {
 fn symbolic_links_are_copied_as_links() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/skills/s/SKILL.md"), "s");
-    std::os::unix::fs::symlink("s", src.join(".claude/skills/alias")).unwrap();
+    write(&src.join("claude/skills/s/SKILL.md"), "s");
+    std::os::unix::fs::symlink("s", src.join("claude/skills/alias")).unwrap();
     // 親を指すリンクで止まらない
-    std::os::unix::fs::symlink("..", src.join(".claude/skills/s/up")).unwrap();
+    std::os::unix::fs::symlink("..", src.join("claude/skills/s/up")).unwrap();
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     let link = home.dest("skills/alias");
@@ -492,7 +504,7 @@ fn files_only_in_the_destination_become_writable() {
     use std::os::unix::fs::PermissionsExt;
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    write(&src.join("claude/skills/s/SKILL.md"), "s");
     let old = home.dest("skills/old/SKILL.md");
     write(&old, "old");
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o444)).unwrap();
@@ -507,7 +519,7 @@ fn a_mode_change_alone_reaches_the_destination() {
     use std::os::unix::fs::PermissionsExt;
     let home = Home::new();
     let src = home.0.join("src");
-    let script = src.join(".claude/scripts/run.sh");
+    let script = src.join("claude/scripts/run.sh");
     write(&script, "#!/bin/sh\n");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert!(home.sync(Some(&src)).status.success());
@@ -526,8 +538,8 @@ fn a_mode_change_alone_reaches_the_destination() {
 fn a_symlink_in_the_destination_is_replaced_not_written_through() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/skills/foo/SKILL.md"), "harness");
-    write(&src.join(".claude/skills/ref.md"), "file");
+    write(&src.join("claude/skills/foo/SKILL.md"), "harness");
+    write(&src.join("claude/skills/ref.md"), "file");
     // 利用者の作業の場所を指すリンクと、ファイルと同じ中身のファイルを指すリンク
     let work = home.0.join("work");
     write(&work.join("SKILL.md"), "mine");
@@ -551,13 +563,13 @@ fn a_file_and_a_directory_can_swap_places() {
     // ソースで、ファイルがディレクトリになり、ディレクトリ（空）がファイルになる（rsync -a は入れ替えた）
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/skills/foo"), "file");
-    std::fs::create_dir_all(src.join(".claude/skills/bar")).unwrap();
+    write(&src.join("claude/skills/foo"), "file");
+    std::fs::create_dir_all(src.join("claude/skills/bar")).unwrap();
     assert!(home.sync(Some(&src)).status.success());
-    std::fs::remove_file(src.join(".claude/skills/foo")).unwrap();
-    write(&src.join(".claude/skills/foo/SKILL.md"), "dir");
-    std::fs::remove_dir(src.join(".claude/skills/bar")).unwrap();
-    write(&src.join(".claude/skills/bar"), "file");
+    std::fs::remove_file(src.join("claude/skills/foo")).unwrap();
+    write(&src.join("claude/skills/foo/SKILL.md"), "dir");
+    std::fs::remove_dir(src.join("claude/skills/bar")).unwrap();
+    write(&src.join("claude/skills/bar"), "file");
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(read(&home.dest("skills/foo/SKILL.md")), "dir");
@@ -572,8 +584,8 @@ fn top_level_places_are_followed_as_rsync_with_a_trailing_slash() {
     let home = Home::new();
     let src = home.0.join("src");
     write(&home.0.join("shared/s/SKILL.md"), "shared");
-    std::fs::create_dir_all(src.join(".claude")).unwrap();
-    std::os::unix::fs::symlink(home.0.join("shared"), src.join(".claude/skills")).unwrap();
+    std::fs::create_dir_all(src.join("claude")).unwrap();
+    std::os::unix::fs::symlink(home.0.join("shared"), src.join("claude/skills")).unwrap();
     let mine = home.0.join("mine");
     std::fs::create_dir_all(&mine).unwrap();
     std::fs::create_dir_all(home.dest("")).unwrap();
@@ -594,11 +606,11 @@ fn top_level_places_are_followed_as_rsync_with_a_trailing_slash() {
 fn a_directory_that_became_a_link_is_replaced() {
     let home = Home::new();
     let src = home.0.join("src");
-    std::fs::create_dir_all(src.join(".claude/skills/s/ref")).unwrap();
-    write(&src.join(".claude/skills/s/SKILL.md"), "s");
+    std::fs::create_dir_all(src.join("claude/skills/s/ref")).unwrap();
+    write(&src.join("claude/skills/s/SKILL.md"), "s");
     assert!(home.sync(Some(&src)).status.success());
-    std::fs::remove_dir(src.join(".claude/skills/s/ref")).unwrap();
-    std::os::unix::fs::symlink("SKILL.md", src.join(".claude/skills/s/ref")).unwrap();
+    std::fs::remove_dir(src.join("claude/skills/s/ref")).unwrap();
+    std::os::unix::fs::symlink("SKILL.md", src.join("claude/skills/s/ref")).unwrap();
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(
@@ -615,7 +627,7 @@ fn places_the_source_lacks_become_writable_too() {
     use std::os::unix::fs::PermissionsExt;
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/CLAUDE.md"), "x");
+    write(&src.join("claude/CLAUDE.md"), "x");
     let old = home.dest("commands/old.md");
     write(&old, "old");
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o444)).unwrap();
@@ -637,7 +649,7 @@ fn help_prints_the_usage() {
 #[test]
 fn a_git_that_cannot_start_is_shown() {
     let home = Home::new();
-    write(&home.clone_dir().join(".claude/CLAUDE.md"), "x");
+    write(&home.clone_dir().join("claude/CLAUDE.md"), "x");
     std::fs::create_dir_all(home.clone_dir().join(".git")).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_claude-setup"));
     home.env(&mut command);
@@ -661,14 +673,14 @@ impl Home {
 fn delivers_the_markdownlint_config_outside_claude() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/CLAUDE.md"), "x");
-    write(&src.join(".config/markdownlint/config"), "{\"v\": 1}");
+    write(&src.join("claude/CLAUDE.md"), "x");
+    write(&src.join("config/markdownlint/config"), "{\"v\": 1}");
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(read(&home.markdownlint_config()), "{\"v\": 1}");
     // 利用者が手で直した設定も、同じサイズの変更も、ソースが正として上書きする
     write(&home.markdownlint_config(), "{\"v\": 9}");
-    write(&src.join(".config/markdownlint/config"), "{\"v\": 2}");
+    write(&src.join("config/markdownlint/config"), "{\"v\": 2}");
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(read(&home.markdownlint_config()), "{\"v\": 2}");
@@ -678,7 +690,7 @@ fn delivers_the_markdownlint_config_outside_claude() {
 fn does_not_create_the_markdownlint_config_without_a_source() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/CLAUDE.md"), "x");
+    write(&src.join("claude/CLAUDE.md"), "x");
     let out = home.sync(Some(&src));
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(!home.markdownlint_config().exists());
@@ -693,8 +705,8 @@ fn does_not_create_the_markdownlint_config_without_a_source() {
 fn replaces_a_symlinked_markdownlint_config_without_writing_through() {
     let home = Home::new();
     let src = home.0.join("src");
-    write(&src.join(".claude/CLAUDE.md"), "x");
-    write(&src.join(".config/markdownlint/config"), "new");
+    write(&src.join("claude/CLAUDE.md"), "x");
+    write(&src.join("config/markdownlint/config"), "new");
     // home-manager が置いていた store への symlink（読むだけの先）を、辿って書かない
     let target = home.0.join("store/config");
     write(&target, "old");
@@ -718,6 +730,6 @@ fn without_arguments_stops_on_a_draft_of_the_markdownlint_source() {
     let _other = clones(&home);
     home.sync_default();
     let clone = home.clone_dir();
-    write(&clone.join(".config/markdownlint/config"), "draft");
+    write(&clone.join("config/markdownlint/config"), "draft");
     home.stops(&format!("claude-sync {}", clone.display()));
 }
