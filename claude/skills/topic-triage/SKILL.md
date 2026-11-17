@@ -44,7 +44,7 @@ allowed-tools:
 
 ## issue の書き方
 
-- GitHub のリモートがあれば `gh issue create`、なければ `docs/issues/` の README の書式に従う（番号は最大＋1。マージ前の rebase で重なったら振り直す）
+- GitHub のリモートがあれば `gh issue create`、なければ /docs-issues の形で `docs/issues/` に書く
 - 問題、完了の条件、見つけた経緯を書く。今のブランチ名を経緯に残す
 - `docs/issues/` のファイルは文書だけの変更なので、今のブランチにコミットしてよい
 
