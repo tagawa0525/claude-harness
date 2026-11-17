@@ -27,3 +27,15 @@ jobs:
       - if: matrix.crate == 'history-rewrite'
         run: cargo install --locked --path ../commit-refs
       - run: cargo test --locked
+
+  # claude/tests の sh のテスト（hook の判定、スクリプト、スキルの文書の検査）。cargo test と違って流すゲートが無く、手で
+  # 流さないと落ちたまま main に入っていた（#273）。hooks.sh と scripts.sh は claude-hooks を cargo build してから走る
+  sh-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [hooks, scripts, skills]
+    steps:
+      - uses: actions/checkout@v5
+      - run: bash claude/tests/${{ matrix.suite }}.sh
