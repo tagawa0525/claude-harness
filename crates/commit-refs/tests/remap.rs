@@ -160,6 +160,54 @@ fn leaves_untracked_files_unmapped_hex_word_parts_and_short_hex_alone() {
     assert!(!stdout(&out).contains("other.md"), "{}", stdout(&out));
 }
 
+#[test]
+fn an_untracked_file_with_an_old_hash_is_warned_with_git_add() {
+    let t = TempRepo::new("untracked-warn");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    t.write("memo/untracked.md", &format!("untracked {}\n", &old[..8]));
+    // 旧の番号を含まない、追跡していないファイルと、無視するファイルは挙げない
+    t.write("plain.md", "deadbeef0\n");
+    t.write(".gitignore", "ignored.md\n");
+    t.write("ignored.md", &format!("ignored {}\n", &old[..8]));
+    let map = t.map_file(&format!("{old} 6666666666666666666666666666666666666666\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    // 出力の行（標準出力）は変えない。警告は標準エラー
+    assert!(stdout(&out).contains("FILES: 1\n"), "{}", stdout(&out));
+    let err = stderr(&out);
+    let warn = err
+        .lines()
+        .find(|l| l.starts_with("WARN: "))
+        .unwrap_or_default();
+    assert!(warn.contains("memo/untracked.md"), "{err}");
+    assert!(
+        !warn.contains("plain.md") && !warn.contains("ignored.md"),
+        "{err}"
+    );
+    let next = err
+        .lines()
+        .find(|l| l.starts_with("NEXT: "))
+        .unwrap_or_default();
+    assert!(next.contains("git add memo/untracked.md"), "{err}");
+    assert_eq!(
+        t.read("memo/untracked.md"),
+        format!("untracked {}\n", &old[..8])
+    );
+}
+
+#[test]
+fn no_warning_when_untracked_files_have_no_old_hash() {
+    let t = TempRepo::new("untracked-quiet");
+    let old = t.commit_file("src.txt", "feat: measured");
+    t.record("notes.md", &format!("at {}", &old[..8]));
+    t.write("plain.md", "deadbeef0\n");
+    let map = t.map_file(&format!("{old} 6666666666666666666666666666666666666666\n"));
+    let out = t.remap(&[&map]);
+    assert_ok(&out);
+    assert_eq!(stderr(&out), "");
+}
+
 // UTF-8 でないファイル名は Unix にしか無い（Windows のファイル名は UTF-16）
 #[cfg(unix)]
 #[test]
