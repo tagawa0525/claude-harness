@@ -74,8 +74,7 @@ fn has_ref(dir: &Path, name: &str) -> Option<bool> {
 /// `range` で変えた ADR（`names` は先端の docs/adr の名前）の「確認」の節に挙げたファイルのうち、その ADR を最後に変えた
 /// コミットより後に `tip` までに変わったもの（`ADR-NNNN:<パス>`。ADR とパスの順）。design-records check の同じ注意は
 /// pre-commit では渡したファイルの ADR にしか出ず、実装だけを直したコミットでは出ないので、マージの前にここで拾う。
-/// 判定は check の stale_confirmations と同じ: 先端のファイル（blob）でないもの（ディレクトリ、サブモジュール、コマンド、
-/// 外のパス）と ADR は見ない。renumber のコミットは起点にしない。`default`（既定のブランチ）から入った変更は数えない。
+/// 判定は check と同じ [`design_records::check::stale_confirmations`] で、先端のファイル（blob）を木から 1 度だけ読む。
 /// git の失敗は None
 fn stale_confirmations(
     dir: &Path,
@@ -87,6 +86,8 @@ fn stale_confirmations(
     let changed = git(
         dir,
         &[
+            "-c",
+            "log.showSignature=false",
             "-c",
             "core.quotePath=false",
             "log",
@@ -125,34 +126,24 @@ fn stale_confirmations(
         .filter(|(meta, _)| meta.split_whitespace().nth(1) == Some("blob"))
         .map(|(_, path)| path)
         .collect();
-    let excluded = default.map(|d| format!("^refs/heads/{d}"));
+    let excluded = default.map(|d| format!("refs/heads/{d}"));
     for (name, adr) in adrs {
-        // --invert-grep で除くと --follow がその改名を見ずに辿りやめるので、件名を見て選ぶ
-        let log = git(
-            dir,
-            &["log", "--follow", "--format=%H %s", range, "--", &adr],
-        )?;
-        let Some(last) = log
-            .lines()
-            .filter_map(|l| l.split_once(' '))
-            .find(|(_, subject)| !subject.starts_with(design_records::RENUMBER_SUBJECT))
-            .map(|(hash, _)| hash)
-        else {
-            continue;
-        };
-        let since = format!("^{last}");
         let text = git(dir, &["show", &format!("{tip}:{adr}")])?;
-        for path in design_records::check::confirmation_paths(&text) {
-            if design_records::is_adr_path(&path) || !files.contains(path.as_str()) {
-                continue;
-            }
-            let mut args = vec!["log", "-1", "--format=%H", tip, since.as_str()];
-            args.extend(excluded.as_deref());
-            args.extend(["--", path.as_str()]);
-            if !git(dir, &args)?.trim().is_empty() {
-                stale.push(format!("ADR-{}:{path}", &name[..4]));
-            }
-        }
+        let paths = design_records::check::stale_confirmations(
+            &mut |args| git(dir, args).ok_or(()),
+            range,
+            tip,
+            excluded.as_deref(),
+            &adr,
+            &text,
+            &mut |path| Ok(files.contains(path)),
+        )
+        .ok()?;
+        stale.extend(
+            paths
+                .into_iter()
+                .map(|path| format!("ADR-{}:{path}", &name[..4])),
+        );
     }
     Some(stale)
 }

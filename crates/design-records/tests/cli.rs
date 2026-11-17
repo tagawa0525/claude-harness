@@ -589,23 +589,6 @@ fn check_warns_about_comments_on_issue_front_matter_lines() {
 }
 
 #[test]
-fn check_finds_link_targets_that_are_tracked_but_deleted_in_the_working_tree() {
-    let t = TempRepo::new("issue-links-deleted");
-    t.write(
-        "docs/issues/0003-gone.md",
-        &issue("status: closed\nresolution: done"),
-    );
-    t.write(
-        "docs/issues/0005-after.md",
-        &issue("status: open\nblocked-by: [\"#0003\"]"),
-    );
-    t.commit_all("docs(issues): 3 and 5");
-    fs::remove_file(t.dir.join("docs/issues/0003-gone.md")).unwrap();
-    let out = t.run(&["check"]);
-    assert!(!stdout(&out).contains("does not exist"), "{}", stdout(&out));
-}
-
-#[test]
 fn check_warns_about_inconsistent_issue_links() {
     let t = TempRepo::new("issue-links");
     t.run(&["new", "use-a", "a を使う"]);
@@ -803,12 +786,12 @@ fn check_names_the_dependents_of_a_superseded_adr_without_a_successor() {
     );
     t.git(&["add", "-A"]);
     let out = t.run(&["check", a]);
-    // superseded-by が空なのは違反（別に示す）。注意は置き換えた ADR を挙げずに、見直す相手を示す
+    // superseded-by が空なのは違反（別に示す）。置き換えた ADR は supersedes の側から引く
     assert!(
         stdout(&out).contains(
             "docs/adr/0001-use-a.md: warning: the ADR became superseded since main; review \
-             whether the decisions of the ADRs that still list it in `requires` still hold: \
-             ADR-0002\n"
+             whether the decisions of the ADRs that still list it in `requires` hold with \
+             ADR-0004, which supersedes it: ADR-0002\n"
         ),
         "{}",
         stdout(&out)

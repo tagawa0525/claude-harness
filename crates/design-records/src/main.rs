@@ -39,13 +39,13 @@ use std::process::{Command, ExitCode};
 
 use design_records::check::{
     Finding, Severity, added_amends, body_changed, check, check_issue_format, check_issue_links,
-    check_issue_numbers, check_reservations, confirmation_paths,
-    decision_changed_without_change_item, superseded_dependents,
+    check_issue_numbers, check_reservations, decision_changed_without_change_item,
+    superseded_dependents,
 };
 use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
 use design_records::{
-    ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, RENUMBER_SUBJECT, is_adr_path,
-    is_slug, is_title, numbers_in, record_name,
+    ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
+    numbers_in, record_name,
 };
 
 use git::{
@@ -373,13 +373,22 @@ fn branch_changes(
                     path: new_path.to_string(),
                     line: None,
                     severity: Severity::Warning,
-                    message: format!(
-                        "the ADR became superseded since {shown}; review whether the decisions of \
-                         the ADRs that still list it in `requires` hold with {}, which supersedes \
-                         it: {}",
-                        names(&successors),
-                        names(&dependents)
-                    ),
+                    // superseded-by が空なのは check の違反で、そのときは比べる相手を挙げられない
+                    message: if successors.is_empty() {
+                        format!(
+                            "the ADR became superseded since {shown}; review whether the decisions \
+                             of the ADRs that still list it in `requires` still hold: {}",
+                            names(&dependents)
+                        )
+                    } else {
+                        format!(
+                            "the ADR became superseded since {shown}; review whether the decisions \
+                             of the ADRs that still list it in `requires` hold with {}, which \
+                             supersedes it: {}",
+                            names(&successors),
+                            names(&dependents)
+                        )
+                    },
                 });
             }
         }
@@ -446,60 +455,35 @@ fn branch_changes(
 /// HEAD のファイル（blob）でなければ見ない（コマンドや外のパスの可能性があり、実在でしか区別できない）。実装の変更が ADR の内容を
 /// 変えるとは限らないので、直しを求めずに見直しを求める文にする。
 fn stale_confirmations(root: &Path, base: &str, adr: &str, text: &str) -> Result<Vec<Finding>> {
-    let range = format!("{base}..HEAD");
-    // renumber のコミットは改名と参照の付け替えだけなので起点にしない。改名の前の版のコミットも辿る。--invert-grep で
-    // 除くと --follow がその改名を見ずに辿りやめるので、件名を見て選ぶ
-    let log = git(
-        root,
-        &["log", "--follow", "--format=%H %s", &range, "--", adr],
-    )?;
-    let last = log
-        .lines()
-        .filter_map(|l| l.split_once(' '))
-        .find(|(_, subject)| !subject.starts_with(RENUMBER_SUBJECT))
-        .map_or("", |(hash, _)| hash);
     // 作業ツリーかインデックスの ADR が HEAD と違えば、ADR のほうが新しい（直した版をこれからコミットする）ので見ない
-    if last.is_empty() || !git_ok(root, &["diff", "--quiet", "HEAD", "--", adr])? {
+    if !git_ok(root, &["diff", "--quiet", "HEAD", "--", adr])? {
         return Ok(Vec::new());
     }
-    // 既定ブランチをマージして入った変更は、このブランチが実装を直したのではないので除く
-    let (since, merged) = (format!("^{last}"), format!("^{base}"));
-    let mut found = Vec::new();
-    for path in confirmation_paths(text) {
+    let paths = design_records::check::stale_confirmations(
+        &mut |args| git(root, args),
+        &format!("{base}..HEAD"),
+        "HEAD",
+        Some(base),
+        adr,
+        text,
         // ディレクトリ（tree）は含めない。`cat-file -e` は tree にも成功するので、種類を見る
-        let is_file = git(root, &["cat-file", "-t", &format!("HEAD:{path}")])
-            .is_ok_and(|kind| kind.trim() == "blob");
-        if is_adr_path(&path) || !is_file {
-            continue;
-        }
-        if !git(
-            root,
-            &[
-                "log",
-                "-1",
-                "--format=%H",
-                "HEAD",
-                &since,
-                &merged,
-                "--",
-                &path,
-            ],
-        )?
-        .trim()
-        .is_empty()
-        {
-            found.push(Finding {
-                path: adr.to_string(),
-                line: None,
-                severity: Severity::Warning,
-                message: format!(
-                    "`{path}`, named in the confirmation section, changed in a later commit than \
-                     the ADR; check that the decision, consequences and confirmation still match it"
-                ),
-            });
-        }
-    }
-    Ok(found)
+        &mut |path| {
+            Ok(git(root, &["cat-file", "-t", &format!("HEAD:{path}")])
+                .is_ok_and(|kind| kind.trim() == "blob"))
+        },
+    )?;
+    Ok(paths
+        .into_iter()
+        .map(|path| Finding {
+            path: adr.to_string(),
+            line: None,
+            severity: Severity::Warning,
+            message: format!(
+                "`{path}`, named in the confirmation section, changed in a later commit than \
+                 the ADR; check that the decision, consequences and confirmation still match it"
+            ),
+        })
+        .collect())
 }
 
 fn status() -> Result<ExitCode> {
@@ -546,9 +530,9 @@ fn index() -> Result<ExitCode> {
 }
 
 /// バンドルの索引に、追跡していないものを含めて載っていない文書と下位のディレクトリの行を足し、書いた索引のパスを返す。
-/// `record` を渡すと（new）、追跡していない文書は、その記録と索引（先の new が書いた、まだコミットしていない索引）だけを
-/// 数える。ほかの下書きを索引に載せると、コミットしないファイルへの行を記録と一緒にコミットさせる。バンドルでなければ
-/// 何も書かずに `None`。
+/// `record` を渡すと（new）、追跡していない文書は、その記録と、記録の上のディレクトリの索引（先の new が書いた、まだ
+/// コミットしていない索引）だけを数える。ほかの下書き（索引まで書いたディレクトリを含む）を索引に載せると、コミットしない
+/// ファイルへの行を記録と一緒にコミットさせる。バンドルでなければ何も書かずに `None`。
 fn write_indexes(root: &Path, record: Option<&str>) -> Result<Option<Vec<String>>> {
     // untracked なら docs/index.md 自身が入るので、空はバンドルでないときだけ
     let mut files = bundle_files(root, true)?;
@@ -559,9 +543,13 @@ fn write_indexes(root: &Path, record: Option<&str>) -> Result<Option<Vec<String>
         let tracked: BTreeSet<String> = markdown_under(root, BUNDLE_ROOT, false)?
             .into_iter()
             .collect();
-        files.retain(|path, _| {
-            tracked.contains(path) || path == record || path.ends_with("/index.md")
-        });
+        let indexes: BTreeSet<String> = Path::new(record)
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| dir.starts_with(BUNDLE_ROOT))
+            .map(|dir| format!("{}/index.md", dir.display()))
+            .collect();
+        files.retain(|path, _| tracked.contains(path) || path == record || indexes.contains(path));
     }
     let mut written = Vec::new();
     for (path, text) in complete_indexes(&files) {

@@ -6,8 +6,8 @@ use std::fmt;
 use crate::parse::{FrontMatter, Value, adr_refs, markdown_lines, parse_front_matter};
 use crate::{
     ADR_DIR, AMENDABLE_KEYS, DECIDED_CONTEXT_SECTIONS, DECISION_SECTION, KEYS, Kind, OPTIONAL_KEYS,
-    RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, recommended_sections,
-    record_name, record_number,
+    RECOMMENDED_SECTIONS, REQUIRED_SECTIONS, STATUSES, Section, is_adr_path, is_renumber_subject,
+    recommended_sections, record_name, record_number,
 };
 
 /// 違反か注意か。違反があればコミットを止める。
@@ -915,7 +915,8 @@ fn check_mentions(docs: &[Adr], scanned: &BTreeMap<String, String>, out: &mut Fo
 /// 置き換えた ADR を前提にしたままなら見直す status（効いているか、まだ決める前）。
 const LIVE: [&str; 3] = ["accepted", "proposed", "deferred"];
 
-/// `adrs` のうち ADR `path` を `requires` に持ち、status が [`LIVE`] の ADR の番号と、`path` の `superseded-by` の番号。
+/// `adrs` のうち ADR `path` を `requires` に持ち、status が [`LIVE`] の ADR の番号と、`path` を置き換えた ADR の番号
+/// （`path` の `superseded-by` と、`supersedes` に `path` を挙げた ADR。片方だけのときの食い違いは [`check`] の違反）。
 /// 置き換えた ADR は古い ADR を前提に書いた新しい決定なので、見直す相手から除く。読めないフロントマターの ADR は
 /// 飛ばす（形の違反は [`check`] が示す）。
 pub fn superseded_dependents(adrs: &BTreeMap<String, String>, path: &str) -> (Vec<u32>, Vec<u32>) {
@@ -931,7 +932,7 @@ pub fn superseded_dependents(adrs: &BTreeMap<String, String>, path: &str) -> (Ve
             .and_then(|rest| rest.strip_prefix('/'))
             .and_then(record_number)
     };
-    let (Some(old), Some(successors)) = (
+    let (Some(old), Some(mut successors)) = (
         number(path),
         adrs.get(path)
             .and_then(|t| front(t))
@@ -939,17 +940,26 @@ pub fn superseded_dependents(adrs: &BTreeMap<String, String>, path: &str) -> (Ve
     ) else {
         return (Vec::new(), Vec::new());
     };
-    let dependents = adrs
+    let others: Vec<(u32, FrontMatter)> = adrs
         .iter()
         .filter(|(p, _)| is_adr_path(p))
         .filter_map(|(p, text)| Some((number(p)?, front(text)?)))
+        .collect();
+    successors.extend(
+        others
+            .iter()
+            .filter(|(_, f)| adr_items(f, "supersedes").contains(&old))
+            .map(|(n, _)| *n),
+    );
+    let dependents = others
+        .iter()
         .filter(|(n, f)| {
             *n != old
                 && !successors.contains(n)
                 && matches!(f.get("status"), Some(Value::Scalar(s)) if LIVE.contains(&s.as_str()))
                 && adr_items(f, "requires").contains(&old)
         })
-        .map(|(n, _)| n)
+        .map(|(n, _)| *n)
         .collect();
     (dependents, successors.into_iter().collect())
 }
@@ -1048,6 +1058,78 @@ pub fn confirmation_paths(text: &str) -> Vec<String> {
 }
 
 const CONFIRMATION_TITLES: [&str; 2] = ["確認", "Confirmation"];
+
+/// ADR `adr`（`tip` でのパス。中身は `text`）の「確認」の節に挙げたファイルのうち、`range` で ADR を最後に見直した
+/// コミットより後に、`tip` までに変わったもの（挙げた順）。実装を直したのに ADR が前の版のままになる食い違いを示す（#53）。
+/// design-records check と git-merge-state が同じ判定を使う。
+///
+/// - `git` は git を引数で実行し、標準出力を返す。`log.showSignature` は切る（署名の検証の行が hash の行に混ざる）
+/// - renumber のコミット（[`is_renumber_subject`]）は、見直しとしても実装の変更としても数えない。改名の前の版も辿る
+/// - `excluded`（既定ブランチ）から入った変更は、このブランチが実装を直したのではないので数えない
+/// - ADR と、`tip` のファイル（blob。`is_file`）でないもの（ディレクトリ、サブモジュール、コマンド、外のパス）は見ない
+pub fn stale_confirmations<E>(
+    git: &mut dyn FnMut(&[&str]) -> Result<String, E>,
+    range: &str,
+    tip: &str,
+    excluded: Option<&str>,
+    adr: &str,
+    text: &str,
+    is_file: &mut dyn FnMut(&str) -> Result<bool, E>,
+) -> Result<Vec<String>, E> {
+    const NO_SIGNATURE: [&str; 2] = ["-c", "log.showSignature=false"];
+    // --invert-grep で除くと --follow がその改名を見ずに辿りやめるので、件名を見て選ぶ
+    let mut args = NO_SIGNATURE.to_vec();
+    args.extend(["log", "--follow", "--format=%H %s", range, "--", adr]);
+    let log = git(&args)?;
+    let Some(last) = log
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .find(|(_, subject)| !is_renumber_subject(subject))
+        .map(|(hash, _)| hash.to_string())
+    else {
+        return Ok(Vec::new());
+    };
+    let mut paths = Vec::new();
+    for path in confirmation_paths(text) {
+        if !is_adr_path(&path) && is_file(&path)? {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let since = format!("^{last}");
+    let excluded = excluded.map(|e| format!("^{e}"));
+    let mut args = NO_SIGNATURE.to_vec();
+    args.extend([
+        "-c",
+        "core.quotePath=false",
+        "log",
+        "--format=%x01%s",
+        "--name-only",
+        tip,
+        &since,
+    ]);
+    args.extend(excluded.as_deref());
+    args.push("--");
+    args.extend(paths.iter().map(String::as_str));
+    let log = git(&args)?;
+    // コミットごとに `\x01<件名>` の行と、変えたパスの行が続く
+    let changed: BTreeSet<&str> = log
+        .split('\x01')
+        .filter_map(|commit| {
+            let mut lines = commit.lines();
+            let subject = lines.next()?;
+            (!is_renumber_subject(subject)).then_some(lines)
+        })
+        .flatten()
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok(paths
+        .into_iter()
+        .filter(|p| changed.contains(p.as_str()))
+        .collect())
+}
 
 fn is_path_like(span: &str) -> bool {
     let name = span.rsplit('/').next().unwrap_or(span);
