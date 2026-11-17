@@ -1,10 +1,10 @@
 ---
 type: ADR
-status: accepted
-date: 2026-11-11
+status: superseded
+date: 2026-11-17
 requires: []
 supersedes: []
-superseded-by:
+superseded-by: ADR-0094
 issues: []
 ---
 
@@ -76,3 +76,8 @@ nixfiles とその worktree で始めたセッションは、同じ中身を毎�
   2 と 1
 - 自動のテストは無い（確かめるには Claude Code を起動して API を呼ぶ必要がある）。Claude Code の更新で指示が 2 回読まれて
   いると疑うときは、上の 2 つ目を繰り返す
+
+## 変更
+
+- 2026-11-17: ADR-0094 で置き換えた。配る元を `claude/` に改名し（この ADR の案 D）、`.claude/settings.json` の
+  `claudeMdExcludes` を消した。隠しディレクトリで配る元が見えにくいことが要因に加わった（#268）

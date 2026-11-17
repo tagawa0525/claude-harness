@@ -65,7 +65,7 @@ home-manager の activation も `claude-setup sync` を呼ぶので、Linux も�
 
 ## 決定と理由
 
-案 A。リポジトリの `.config/markdownlint/config` を正とし、`claude-setup sync` がホームの同じ相対パス（`~/.config/markdownlint/config`）に置く。
+案 A。リポジトリの `config/markdownlint/config` を正とし、`claude-setup sync` が `~/.config/markdownlint/config` に置く。
 
 - 中身が違えば上書きする（`CLAUDE.md` と同じく、ソースが正）。行き先が symlink なら、リンクを辿らず通常のファイルに置き換える
 - ソースに無ければ何もしない
@@ -91,7 +91,14 @@ home-manager の activation も `claude-setup sync` を呼ぶので、Linux も�
 
 - `modules/home/parts/claude-setup/tests/sync.rs` の `delivers_the_markdownlint_config_outside_claude` ほか: 配る、上書きする、
   ソースが無ければ置かない、symlink を置き換える、未コミットの変更で止める
-- `modules/home/parts/tests/markdownlint-config.sh`: 配る設定を `~/.config/markdownlint/config` に置き、markdownlint-cli が規則（MD013、
+- `modules/home/parts/tests/markdownlint-config.sh`: 配る設定（`config/markdownlint/config`）を `~/.config/markdownlint/config` に置き、markdownlint-cli が規則（MD013、
   MD033、MD034）を無効にすることを確かめる（設定の無い対照つき）。読み込みの rc は、`{` で始まらない内容を JSON でなく ini として
   読み、規則が黙って効かなくなる（2026-11-17、先頭にコメントを置いて起きた）ので、設定の先頭は `{` にする
 - Windows で markdownlint が置いた設定を読むかは、これらのテストでは確かめない（Linux で動かす）
+
+## 変更
+
+- 2026-11-17: ソースの置き場を `config/markdownlint/config` にした（ADR-0094。配る元を隠しディレクトリに置かない）。
+  前は「案 A。リポジトリの `.config/markdownlint/config` を正とし、`claude-setup sync` がホームの同じ相対パス
+  （`~/.config/markdownlint/config`）に置く。」。ソースのパスと置き先のパスは、同期のコードが対で持つ。決定の要因の
+  「置き先と同じ相対パスで持ち」は、この変更でやめた
