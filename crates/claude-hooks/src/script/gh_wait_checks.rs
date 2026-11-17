@@ -20,7 +20,7 @@
 //! （テスト用）。
 //!
 //! 出力: `HEAD: <SHA>`、`CHECKS: passed（N 件、待機 S 秒） | failed | none`、失敗した check ごとに
-//! `FAILED: <名前> (<結論>)`。
+//! `FAILED: <名前> (<結論>)`。落ちた check と時間切れの後には、診断先を `NEXT: /gh-actions-check <PR の URL> …` で出す。
 //! 終了コード: 0 = 全部が通った（か check が無い）、1 = 時間切れ（約 20 分）、3 = PR が見つからない、
 //! 4 = gh が使えないか、check の状態を取れない、5 = 引数の誤り、6 = 失敗した check がある（2 は、このスクリプトを
 //! 知らない古い claude-hooks が返すので使わない）
@@ -82,6 +82,7 @@ pub fn main(args: &[String]) -> i32 {
             return 5;
         }
     };
+    let canonical = format!("https://github.com/{}/pull/{}", pr.repo, pr.number);
     match crate::gh::quiet_status_for_repo(&pr.repo, &["auth", "status"]) {
         Err(_) => {
             println!("ERROR: gh コマンドが見つかりません");
@@ -163,6 +164,7 @@ pub fn main(args: &[String]) -> i32 {
                 for name in failed {
                     println!("FAILED: {name}");
                 }
+                println!("NEXT: /gh-actions-check {canonical} で原因を診断する");
                 return 6;
             }
             State::Empty => match register.next() {
@@ -237,6 +239,7 @@ pub fn main(args: &[String]) -> i32 {
             }
         };
         let Some(next) = next else {
+            println!("NEXT: /gh-actions-check {canonical} で Actions の状況を診断する");
             return 1;
         };
         std::thread::sleep(Duration::from_secs(next));
