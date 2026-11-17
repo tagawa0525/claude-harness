@@ -191,13 +191,15 @@ fn an_untracked_file_with_an_old_hash_is_warned_with_git_add() {
         .unwrap_or_default();
     assert!(next.contains("git add memo/untracked.md"), "{err}");
     // 再実行に渡す対応表を名指す。sh で特別な文字（Windows の \ など）を含むパスは引用符で囲む
-    let plain = map
+    // パスは絶対のパスにして出す（Windows では join で入った / も \ にそろう）
+    let absolute = std::path::absolute(&map).unwrap().display().to_string();
+    let plain = absolute
         .chars()
         .all(|c| c.is_alphanumeric() || "/._-+=:,@%".contains(c));
     let quoted = if plain {
-        map.clone()
+        absolute
     } else {
-        format!("'{map}'")
+        format!("'{absolute}'")
     };
     assert!(
         next.contains(&format!("commit-refs remap {quoted} を実行する")),
