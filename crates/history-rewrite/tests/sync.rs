@@ -6,6 +6,7 @@
 //! .textlintignore で ja-terms の検査から外す。
 
 use history_rewrite::run::read_map;
+use history_rewrite::sh_quote;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -450,12 +451,13 @@ fn line_after<'a>(out: &'a str, prefix: &str) -> Option<&'a str> {
 #[test]
 fn a_kept_worktree_is_followed_by_how_to_compare_it_with_the_patch() {
     let f = fixture();
-    let w = f.path("changed");
-    let next = line_after(&f.stdout, &format!("KEPT: {w} ")).unwrap_or_default();
+    let next = line_after(&f.stdout, &format!("KEPT: {} ", f.path("changed"))).unwrap_or_default();
     assert!(next.starts_with("NEXT: "), "{}", f.stdout);
+    // コマンドに貼るパスは、sh で特別な文字（Windows の \ など）を含めば引用符で囲む
+    let w = sh_quote(&f.w["changed"].path);
     assert!(next.contains(&format!("git -C {w} diff HEAD")), "{next}");
-    let patch = f.workdir.join("worktree-3.patch");
-    assert!(next.contains(&patch.display().to_string()), "{next}");
+    let patch = sh_quote(&f.workdir.join("worktree-3.patch"));
+    assert!(next.contains(&patch), "{next}");
 }
 
 #[test]
@@ -495,7 +497,7 @@ fn a_worktree_left_for_a_commit_outside_the_map_says_how_to_branch_it() {
     assert!(
         stdout.contains(&format!(
             "git -C {} branch <名前> {orphan}",
-            f.path("detached")
+            sh_quote(&f.w["detached"].path)
         )),
         "{stdout}"
     );
@@ -693,8 +695,8 @@ fn a_git_failure_while_writing_names_the_worktree_and_what_to_look_at() {
     let patch = f.root.join("work-broken").join("worktree-1.patch");
     for part in [
         f.second.clone(),
-        patch.display().to_string(),
-        format!("git -C {} status", f.path("broken")),
+        sh_quote(&patch),
+        format!("git -C {} status", sh_quote(&f.w["broken"].path)),
     ] {
         assert!(next.contains(&part), "{part}: {next}");
     }

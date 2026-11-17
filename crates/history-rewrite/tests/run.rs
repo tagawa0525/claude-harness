@@ -468,7 +468,8 @@ fn run_writes_the_body_of_the_cleanup_issue() {
     let body = std::fs::read_to_string(&f.out["ISSUE"]).unwrap();
     // 1 行目が題
     assert!(body.starts_with("# "), "{body}");
-    let source = f.repo.path.display().to_string();
+    // コマンドに貼るパスは、sh で特別な文字（Windows の \ など）を含めば引用符で囲む
+    let source = history_rewrite::sh_quote(&f.repo.path);
     for part in [
         // 作業ディレクトリと控え
         workdir.display().to_string(),
@@ -625,18 +626,20 @@ fn a_detached_worktree_on_an_unreachable_commit_stops_with_the_branch_to_add() {
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let stderr = text(&out.stderr);
     assert!(stderr.starts_with("ERROR:"), "{stderr}");
+    // パスは git worktree list の書き方（Windows では / で区切る）で出る
+    let git_path = |r: &Repo| {
+        let top = r.git(&["rev-parse", "--show-toplevel"]);
+        history_rewrite::sh_quote(Path::new(top.trim_end_matches('\n')))
+    };
     assert!(
         stderr.contains(&format!(
             "git -C {} branch <名前> {orphan}",
-            loose.path.display()
+            git_path(&loose)
         )),
         "{stderr}"
     );
     // 届くコミットの detached HEAD は挙げない
-    assert!(
-        !stderr.contains(&reachable.display().to_string()),
-        "{stderr}"
-    );
+    assert_eq!(stderr.matches("git -C ").count(), 1, "{stderr}");
     assert!(!workdir.exists());
 
     loose.git(&["branch", "loose", &orphan]);
