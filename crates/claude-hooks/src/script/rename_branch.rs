@@ -107,7 +107,7 @@ fn rename(new: &str, remote_ok: bool) -> Result<(), i32> {
         if out.status.success() {
             if String::from_utf8_lossy(&out.stdout).trim() == "OPEN" {
                 eprintln!(
-                    "ERROR: {old} を head とする open PR があります。リモートのブランチを消すと PR が閉じるため、リネームしません"
+                    "ERROR: {old} を head とする open PR があります。リモートのブランチを消すと PR が閉じるため、リネームしません。リネームは、PR をマージかクローズしてから行ってください"
                 );
                 return Err(1);
             }
