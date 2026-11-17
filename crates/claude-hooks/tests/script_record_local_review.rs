@@ -209,6 +209,37 @@ fn the_refusal_names_the_clone_it_checked_and_the_way_out() {
 }
 
 #[test]
+fn the_unlogged_way_out_says_it_needs_no_cd_into_a_worktree() {
+    // 対象に PR の URL を渡した周には、cd する worktree が無い。--unlogged の記録は今のディレクトリに頼らない
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(&fake, &[URL, "def5678", "0", "0", "0"], "true\n");
+    let err = stderr(&out);
+    let unlogged = err
+        .lines()
+        .find(|l| l.contains("--unlogged"))
+        .unwrap_or_else(|| panic!("{err}"));
+    assert!(unlogged.contains("cd <worktree> && は要らない"), "{err}");
+}
+
+#[test]
+fn a_record_with_no_findings_notes_that_the_reply_must_show_the_diff_was_read() {
+    // 対象を見つけられなかった、エラーで終わった、`[]` だけの返答の周は未実施で、0 件の記録はレビュー済みに見える
+    let fake = FakeGh::new();
+    let out = run(&fake, &[URL, HEAD, "0", "0", "0"], "true\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    let note = text
+        .lines()
+        .find(|l| l.starts_with("NOTE: "))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(note.contains("`[]`"), "{text}");
+    assert!(note.contains("回し直"), "{text}");
+    assert!(note.contains("最後の記録"), "{text}");
+}
+
+#[test]
 fn a_refusal_never_ends_as_a_success() {
     // 回していない head への呼び出しを、記録を足さないまま 0 で終えない（回し直して見つけた High の件数を渡した
     // 呼び出しが、成功に見えて消えないように）。rebase だけの head かは decide-next.sh が示す
