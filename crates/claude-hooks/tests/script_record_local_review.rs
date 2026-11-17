@@ -3,6 +3,7 @@
 //! （ADR-0087。`~/.claude/skills/gh-pr-review/scripts/record-local-review.sh` が呼ぶ）。記録はマージの hook が Copilot
 //! のレビューの代わりに数えるので、head でない SHA、push できないリポジトリ、形の崩れた件数では付けない。その head で
 //! /code-review を回した記録（count-review-rounds の hook が clone に書く行）が、起動したディレクトリの clone に無いときも付けない
+//! （hook が書かない回し方をしたときは、`--unlogged <理由>` で理由を記録に残して付ける）
 
 mod common;
 
@@ -150,11 +151,77 @@ fn outside_a_clone_records_nothing() {
 
 #[test]
 fn a_round_on_any_branch_of_the_clone_counts() {
-    // 記録は SHA で引く（ブランチの名前を変えても、別の worktree で回しても、同じコミットを回している）
+    // 記録は SHA で引く（ブランチの名前を変えても、同じコミットを回している）。別のブランチの行でも数える
     let fake = FakeGh::new();
-    reviewed_at(&fake, &["abc1234abc1234abc1234abc1234abc1234abc12", HEAD]);
+    reviewed_at(&fake, &["abc1234abc1234abc1234abc1234abc1234abc12"]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/other"),
+        format!("{HEAD} 1794900000\n"),
+    )
+    .unwrap();
     let out = run_as_is(&fake, &[URL, HEAD, "0", "0", "0"], "true\n");
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn an_unlogged_review_is_recorded_with_its_reason() {
+    // hook が回した HEAD を書かない回し方（対象に PR の URL を渡した、detached HEAD、ユーザーが打った /code-review、
+    // 回した後の amend）でも、理由を記録に残せば付けられる
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(
+        &fake,
+        &[
+            URL,
+            "def5678",
+            "0",
+            "1",
+            "0",
+            "--unlogged",
+            "対象に PR の URL を渡して回した",
+        ],
+        "true\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        fake.log().contains(
+            "ローカルの /code-review で def5678 を確かめた: High 0 / Medium 1 / Low 0\n\
+             回した記録が clone に無い理由: 対象に PR の URL を渡して回した\n"
+        ),
+        "{}",
+        fake.log()
+    );
+}
+
+#[test]
+fn the_refusal_names_the_clone_it_checked_and_the_way_out() {
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = run_as_is(&fake, &[URL, "def5678", "0", "0", "0"], "true\n");
+    let err = stderr(&out);
+    assert!(err.contains("claude-review-rounds"), "{err}");
+    assert!(err.contains("--unlogged"), "{err}");
+    assert!(err.contains("decide-next.sh"), "{err}");
+}
+
+#[test]
+fn an_empty_reason_is_a_usage_error() {
+    let fake = FakeGh::new();
+    for args in [
+        &[URL, "def5678", "0", "0", "0", "--unlogged"][..],
+        &[URL, "def5678", "0", "0", "0", "--unlogged", " "][..],
+        &[URL, "def5678", "0", "0", "0", "--other", "x"][..],
+    ] {
+        let out = run(&fake, args, "true\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            stderr(&out).contains("Usage: record-local-review.sh"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+    }
 }
 
 #[test]
