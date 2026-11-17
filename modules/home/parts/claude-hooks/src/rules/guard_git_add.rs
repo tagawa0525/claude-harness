@@ -36,8 +36,12 @@ fn check_add(args: &[Arg]) -> Option<String> {
     if all && pathspecs.is_empty() {
         return Some("git add -A / --all はパスを指定しない限り禁止です".to_string());
     }
-    // -u は追跡しているファイルの変更だけをステージするので、パスが全体でも未追跡のファイルは入らない
-    if git_flag("add", args, Some('u'), &["--update"]) && !all {
+    // -u は追跡しているファイルの変更だけをステージするので、パスが全体でも未追跡のファイルは入らない。
+    // 後ろの --no-update は -u を打ち消す
+    if git_flag("add", args, Some('u'), &["--update"])
+        && !all
+        && !git_flag("add", args, None, &["--no-update"])
+    {
         return None;
     }
     pathspecs
@@ -110,8 +114,10 @@ mod tests {
             assert!(args(c).is_none(), "{c}");
         }
         // -A と一緒なら全体のステージ（git は -A と -u の組を拒むが、止める側に倒す）
-        assert!(args("git add -A -u").is_some());
         assert!(args("git add -u -A .").is_some());
+        assert!(args("git add -u --all .").is_some());
+        // --no-update は -u を打ち消し、未追跡のファイルもステージする
+        assert!(args("git add -u --no-update .").is_some());
     }
 
     #[test]
