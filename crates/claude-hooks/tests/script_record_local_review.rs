@@ -203,7 +203,50 @@ fn the_refusal_names_the_clone_it_checked_and_the_way_out() {
     let err = stderr(&out);
     assert!(err.contains("claude-review-rounds"), "{err}");
     assert!(err.contains("--unlogged"), "{err}");
-    assert!(err.contains("decide-next.sh"), "{err}");
+    // 中身が変わりうる理由（回した後の amend）と、確かめようのない理由（別の clone）を、逃げ道の例に挙げない
+    assert!(!err.contains("amend"), "{err}");
+    assert!(!err.contains("別の clone"), "{err}");
+}
+
+#[test]
+fn a_head_the_earlier_records_cover_needs_no_record() {
+    // rebase だけの head や、すでに記録のある head は、マージの hook が前の記録で認める。記録を足さずに 0 で終える
+    const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[EARLIER]);
+    let out = fake.run_calls(
+        "record-local-review",
+        &[URL, "def5678", "0", "0", "0"],
+        &[
+            (&format!("{HEAD}\n"), 0),
+            ("true\n", 0),
+            // 書き込める人の記録の 1 行目（同じ head の、High の無い記録）
+            (
+                &format!("<!-- local-review sha={HEAD} high=0 medium=1 low=4 -->\n"),
+                0,
+            ),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stdout(&out).starts_with("COVERED: "), "{}", stdout(&out));
+    assert!(!fake.log().contains("pr comment"));
+}
+
+#[test]
+fn a_reason_is_dropped_when_the_round_is_logged() {
+    // 行があるのに理由を付けても、記録のコメントに「行が無い」と書かない
+    let fake = FakeGh::new();
+    let out = run(
+        &fake,
+        &[URL, "def5678", "0", "0", "0", "--unlogged", "念のため"],
+        "true\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        !fake.log().contains("回した記録が clone に無い理由"),
+        "{}",
+        fake.log()
+    );
 }
 
 #[test]
