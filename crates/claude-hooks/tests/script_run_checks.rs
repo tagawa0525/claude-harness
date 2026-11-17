@@ -349,6 +349,50 @@ fn base_checks_the_committed_changes_of_the_branch_from_another_directory() {
 }
 
 #[test]
+fn base_stops_on_uncommitted_changes_and_shows_how_to_clear_them() {
+    let repo = Repo::new();
+    repo.git(&["checkout", "-q", "-b", "feat/x"]);
+    repo.commit("a.sh", "echo a\n");
+    repo.tool("shellcheck");
+    repo.write("a.sh", "echo changed\n");
+    repo.write("scratch.txt", "x\n");
+    let out = repo.run(&["--base", "main"], &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert_eq!(stdout(&out), "");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.starts_with("ERROR: 作業ツリーに変更があります"),
+        "{err}"
+    );
+    assert!(
+        err.contains(" M a.sh\n") && err.contains("?? scratch.txt\n"),
+        "{err}"
+    );
+    for how in ["コミット", ".gitignore", "消す"] {
+        assert!(err.contains(how), "{how}: {err}");
+    }
+    assert!(repo.calls().is_empty());
+}
+
+#[test]
+fn ignored_files_and_the_staged_and_merge_modes_do_not_stop_on_changes() {
+    let repo = Repo::new();
+    repo.commit(".gitignore", "target/\n");
+    repo.git(&["checkout", "-q", "-b", "feat/x"]);
+    repo.commit("a.sh", "echo a\n");
+    repo.tool("shellcheck");
+    repo.write("target/out", "x\n");
+    let out = repo.run(&["--base", "main"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    // ステージ済み（コミットの前）と --merge（マージの結果）は、変更があるのがふつうの状態
+    repo.stage("b.sh", "echo b\n");
+    for args in [&[][..], &["--merge"][..]] {
+        let out = repo.run(args, &[]);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", said(&out));
+    }
+}
+
+#[test]
 fn an_unresolvable_base_and_unknown_options_are_errors() {
     let repo = Repo::new();
     let out = repo.run(&["--base", "nonexistent"], &[]);
