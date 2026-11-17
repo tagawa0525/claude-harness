@@ -436,6 +436,71 @@ fn a_worktree_with_partly_staged_changes_is_left_as_it_was() {
     assert_eq!(f.status, Some(1), "{}", f.stderr);
 }
 
+/// out の中の、prefix で始まる行の後の、最初の worktree の行か NEXT: の行（KEPT: の後の commit-refs remap の行は飛ばす）
+fn line_after<'a>(out: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut lines = out.lines().skip_while(|l| !l.starts_with(prefix));
+    lines.next()?;
+    lines.find(|l| {
+        ["RESET:", "KEPT:", "LEFT:", "SKIPPED:", "ERROR:", "NEXT:"]
+            .iter()
+            .any(|k| l.starts_with(k))
+    })
+}
+
+#[test]
+fn a_kept_worktree_is_followed_by_how_to_compare_it_with_the_patch() {
+    let f = fixture();
+    let w = f.path("changed");
+    let next = line_after(&f.stdout, &format!("KEPT: {w} ")).unwrap_or_default();
+    assert!(next.starts_with("NEXT: "), "{}", f.stdout);
+    assert!(next.contains(&format!("git -C {w} diff HEAD")), "{next}");
+    let patch = f.workdir.join("worktree-3.patch");
+    assert!(next.contains(&patch.display().to_string()), "{next}");
+}
+
+#[test]
+fn a_left_worktree_is_followed_by_deciding_with_the_user() {
+    let f = fixture();
+    let next = line_after(&f.stdout, &format!("LEFT: {} ", f.path("partial"))).unwrap_or_default();
+    assert!(next.starts_with("NEXT: "), "{}", f.stdout);
+    assert!(next.contains("ユーザーと決める"), "{next}");
+}
+
+#[test]
+fn a_worktree_left_for_a_commit_outside_the_map_says_how_to_branch_it() {
+    let f = fixture();
+    let workdir = f.root.join("unmapped-branch");
+    std::fs::create_dir_all(&workdir).unwrap();
+    std::fs::copy(f.workdir.join("commit-map"), workdir.join("commit-map")).unwrap();
+    let orphan = "1".repeat(40);
+    std::fs::write(
+        workdir.join("worktree-state"),
+        format!(
+            "{}\t{orphan}\t{}\n",
+            f.path("detached"),
+            workdir.join("worktree-1.patch").display()
+        ),
+    )
+    .unwrap();
+    let out = history_rewrite(
+        &f.root,
+        &[
+            "sync-worktrees",
+            "--workdir",
+            &workdir.display().to_string(),
+        ],
+        &[],
+    );
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "git -C {} branch <名前> {orphan}",
+            f.path("detached")
+        )),
+        "{stdout}"
+    );
+}
+
 #[test]
 fn a_worktree_whose_commit_is_not_in_the_map_is_left() {
     let f = fixture();
@@ -598,7 +663,7 @@ fn a_deleted_intent_to_add_file_is_not_a_partial_stage() {
 
 #[cfg(unix)]
 #[test]
-fn a_git_failure_while_writing_names_the_worktree_and_keeps_the_changes() {
+fn a_git_failure_while_writing_names_the_worktree_and_what_to_look_at() {
     use std::os::unix::fs::PermissionsExt;
     let f = fixture();
     let hooks = f.root.join("hooks");
@@ -621,6 +686,18 @@ fn a_git_failure_while_writing_names_the_worktree_and_keeps_the_changes() {
     );
     assert!(!text(&out.stdout).contains("KEPT:"));
     assert!(f.w["broken"].read("a.md").contains("確かめの追記"));
+    // 止まった worktree の行の後に、見るもの（ref を移す前の HEAD、控えのパッチ、status）を示す
+    let stderr = text(&out.stderr);
+    let next = line_after(&stderr, "ERROR: ").unwrap_or_default();
+    assert!(next.starts_with("NEXT: "), "{stderr}");
+    let patch = f.root.join("work-broken").join("worktree-1.patch");
+    for part in [
+        f.second.clone(),
+        patch.display().to_string(),
+        format!("git -C {} status", f.path("broken")),
+    ] {
+        assert!(next.contains(&part), "{part}: {next}");
+    }
 }
 
 #[test]
