@@ -645,6 +645,33 @@ fn a_detached_worktree_on_an_unreachable_commit_stops_with_the_branch_to_add() {
 }
 
 #[test]
+fn a_detached_worktree_whose_directory_is_gone_does_not_stop_run() {
+    // ディレクトリを消した worktree（prunable）は合わせる作業ツリーが無く、git -C <パス> branch も実行できない
+    let root = scratch("prunable");
+    let repo = Repo::new(&root, "repo");
+    repo.write("a.md", b"a\n");
+    let base = repo.commit("docs: a\n");
+    let gone = Repo {
+        root: root.clone(),
+        path: root.join("gone"),
+    };
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        &gone.path.display().to_string(),
+        &base,
+    ]);
+    gone.write("b.md", b"b\n");
+    gone.commit("docs: b\n");
+    std::fs::remove_dir_all(&gone.path).unwrap();
+
+    let out = run(&root, &repo.path, &root.join("work"), &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+}
+
+#[test]
 fn a_tag_of_a_tag_stops_before_rewriting() {
     // fast-export は入れ子のタグを平らにする（外のタグの名前で内のタグを作り直す）ので、照合できる形でない
     let root = scratch("nested");
