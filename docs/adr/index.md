@@ -77,3 +77,4 @@
 * [ADR-0090: PreToolUse の deny を、状態ディレクトリの deny.jsonl に 1 件 1 行で追記する](0090-log-pre-tool-use-denies.md)
 * [ADR-0091: 同期で配ったファイルの一覧を ~/.claude に残し、ソースから消えたものだけを次の同期で消す](0091-remove-dropped-files-with-sync-manifest.md)
 * [ADR-0092: docs/ を OKF のバンドルとして design-records check で検査する](0092-check-okf-bundle-in-design-records.md)
+* [ADR-0093: markdownlint のグローバル設定は、.claude の 1 ファイルを claude-setup sync が ~/.config/markdownlint/config に配る](0093-deliver-markdownlint-config-with-claude-setup-sync.md)
