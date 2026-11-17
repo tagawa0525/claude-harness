@@ -7,12 +7,18 @@
 //! - `== worktrees`: `<パス> <ブランチ> [dirty] [session=<Claude-Session>]`（先端のコミットの trailer。無ければ省く）
 //! - `== prs`: gh pr list の開いている PR（GitHub の URL を持つ remote と gh があるときだけ。remote の名前は問わない）
 //! - `== slurm`: squeue の自分のジョブ
-//! - `== issues`: docs/issues の status: open の issue（blocked-by があれば添える）
+//! - `== issues`: docs/issues の status: open の issue（blocked-by があれば添える）。blocked-by の `#<番号>` の相手を
+//!   docs/issues の同じ番号のファイルで引き、閉じていない相手を `blocked=`、見つからない相手を `blocker-missing=` で
+//!   添え、印があれば節の最後に、その印の issue の扱いを `NEXT:` で出す
 //!
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
 
-use std::path::Path;
+use regex::Regex;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
+
+static ISSUE_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#(\d+)").unwrap());
 
 pub fn main(_args: &[String]) -> i32 {
     let here = Path::new(".");
@@ -138,8 +144,15 @@ fn is_open(front: &[&str]) -> bool {
     value(front, "status").is_some_and(|v| v == "open" || v == "\"open\"")
 }
 
+/// ファイルの名前の先頭の番号（`0003-slug.md` の 3）
+fn number_of(path: &Path) -> Option<u64> {
+    let name = path.file_name()?.to_str()?;
+    let digits: String = name.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
 fn issues(root: &Path) {
-    let mut files: Vec<_> = std::fs::read_dir(root.join("docs/issues"))
+    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("docs/issues"))
         .into_iter()
         .flatten()
         .flatten()
@@ -147,10 +160,25 @@ fn issues(root: &Path) {
         .filter(|p| p.extension().is_some_and(|e| e == "md") && p.is_file())
         .collect();
     files.sort();
-    let mut found = false;
-    for f in &files {
-        let text = std::fs::read_to_string(f).unwrap_or_default();
-        let front = front_matter(&text);
+    let texts: Vec<String> = files
+        .iter()
+        .map(|f| std::fs::read_to_string(f).unwrap_or_default())
+        .collect();
+    // 番号ごとに、閉じているか（同じ番号のファイルが複数あれば、どれかが閉じていなければ閉じていないとみなす）
+    let mut closed: std::collections::HashMap<u64, bool> = std::collections::HashMap::new();
+    for (f, text) in files.iter().zip(&texts) {
+        if let Some(n) = number_of(f) {
+            let is_closed = value(&front_matter(text), "status")
+                .is_some_and(|v| v == "closed" || v == "\"closed\"");
+            closed
+                .entry(n)
+                .and_modify(|c| *c &= is_closed)
+                .or_insert(is_closed);
+        }
+    }
+    let (mut found, mut any_blocked, mut any_missing) = (false, false, false);
+    for (f, text) in files.iter().zip(&texts) {
+        let front = front_matter(text);
         if !is_open(&front) {
             continue;
         }
@@ -158,11 +186,36 @@ fn issues(root: &Path) {
         let mut line = format!("docs/issues/{name}");
         if let Some(blocked) = value(&front, "blocked-by").filter(|v| !v.is_empty() && *v != "[]") {
             line.push_str(&format!(" blocked-by={blocked}"));
+            let (mut open, mut missing) = (Vec::new(), Vec::new());
+            for c in ISSUE_REF.captures_iter(blocked) {
+                let shown = c[0].to_string();
+                match c[1].parse::<u64>().ok().and_then(|n| closed.get(&n)) {
+                    Some(true) => {}
+                    Some(false) => open.push(shown),
+                    None => missing.push(shown),
+                }
+            }
+            if !open.is_empty() {
+                line.push_str(&format!(" blocked={}", open.join(",")));
+                any_blocked = true;
+            }
+            if !missing.is_empty() {
+                line.push_str(&format!(" blocker-missing={}", missing.join(",")));
+                any_missing = true;
+            }
         }
         println!("{line}");
         found = true;
     }
     if !found {
         println!("(なし)");
+    }
+    if any_blocked {
+        println!("NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない");
+    }
+    if any_missing {
+        println!(
+            "NEXT: blocker-missing= の issue は、blocked-by の相手が docs/issues に無い。閉じたかを確かめられないので、着手の前に blocked-by を直すかユーザーに確かめる"
+        );
     }
 }

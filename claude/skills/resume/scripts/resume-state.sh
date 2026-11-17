@@ -9,6 +9,7 @@
 #   == worktrees   <パス> <ブランチ> [dirty] [session=<Claude-Session>]（先端のコミットの trailer、無ければ省く）
 #   == prs         gh pr list の開いている PR（GitHub の URL を持つ remote と gh があるときだけ）
 #   == slurm       squeue の自分のジョブ
-#   == issues      docs/issues の status: open の issue（blocked-by があれば添える）
+#   == issues      docs/issues の status: open の issue（blocked-by があれば添え、閉じていない相手を blocked=、無い相手を
+#                  blocker-missing= で示し、印があれば NEXT: で扱いを出す）
 . "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
 claude_hooks_script resume-state "$@"
