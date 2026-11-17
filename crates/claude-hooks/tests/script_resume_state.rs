@@ -249,12 +249,12 @@ fn an_issue_whose_blockers_are_all_closed_is_not_marked() {
     );
     repo.issue(
         "0002-a.md",
-        "---\nstatus: open\nblocked-by: [\"#1\"]\n---\n\n# a\n",
+        "---\nstatus: open\nblocked-by: [\"#0001\"]\n---\n\n# a\n",
     );
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0002-a.md blocked-by=[\"#1\"]\n"
+        "docs/issues/0002-a.md blocked-by=[\"#0001\"]\n"
     );
 }
 
