@@ -54,7 +54,9 @@ assert_eq "" "$(fake_log pytest)"
 it "run-checks: サブディレクトリのテストが落ちれば失敗する（unittest）"
 make_fake_tool ruff '*) exit 0 ;;'
 # host に pytest があっても unittest の経路を通すため、python3 から pytest が使えない状態にする
-REAL_PY=$(command -v python3)
+# 本物は、PATH の先頭の名前でなくインタープリタの実体で呼ぶ。PATH の python3 が mise の shim だと、shim は版の指定が
+# 無いとき PATH から python3 を探し直し、偽の python3 に戻って再帰になる
+REAL_PY=$(python3 -c 'import sys; print(sys.executable)')
 make_fake_tool python3 '"-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$REAL_PY"' "$@" ;;'
 mkdir -p pkg/sub
 printf 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1, 2)\n' > pkg/test_a.py
