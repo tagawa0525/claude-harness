@@ -171,7 +171,7 @@ fn new(kind: Kind, slug: &str, title: &str) -> Result<ExitCode> {
         Err(e) => {
             eprintln!("design-records: cannot add the index lines for {path}: {e}");
             eprintln!(
-                "NEXT: fix it, run `design-records index`, and commit the index lines it adds together with {path}"
+                "NEXT: fix it, run `design-records index`, and commit the index lines for {path} with it (index also adds lines for other untracked documents; leave those out)"
             );
         }
     }
@@ -221,7 +221,7 @@ fn run_check(files: &[&str], changed_only: bool) -> Result<ExitCode> {
     }
 
     let mut found = check(&adrs, issues.as_ref(), &scanned);
-    found.extend(check_bundle(&bundle_files(&root, false)?));
+    found.extend(check_bundle(&bundle_files(&root, false, &|_| true)?));
     found.extend(check_issue_numbers(&issue_paths));
     let mut issue_texts = BTreeMap::new();
     for path in issue_paths
@@ -497,7 +497,12 @@ fn status() -> Result<ExitCode> {
 }
 
 /// docs/ の .md のパスと中身（`untracked` なら追跡していないものも含める）。
-fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>> {
+/// docs/ の .md のうち `keep` に当たるもののパスと中身（`untracked` なら追跡していないものも含める）。バンドルでなければ空。
+fn bundle_files(
+    root: &Path,
+    untracked: bool,
+    keep: &dyn Fn(&str) -> bool,
+) -> Result<BTreeMap<String, String>> {
     let mut files = BTreeMap::new();
     // バンドルでなければ（docs/index.md が okf_version を持たなければ）、ほかの docs/ のファイルを読まない
     let root_index = match fs::read_to_string(root.join(BUNDLE_ROOT).join("index.md")) {
@@ -508,7 +513,10 @@ fn bundle_files(root: &Path, untracked: bool) -> Result<BTreeMap<String, String>
     if !is_bundle_index(&root_index) {
         return Ok(files);
     }
-    for path in markdown_under(root, BUNDLE_ROOT, untracked)? {
+    for path in markdown_under(root, BUNDLE_ROOT, untracked)?
+        .into_iter()
+        .filter(|p| keep(p))
+    {
         let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         files.insert(path, text);
     }
@@ -534,25 +542,39 @@ fn index() -> Result<ExitCode> {
 /// コミットしていない索引）だけを数える。ほかの下書き（索引まで書いたディレクトリを含む）を索引に載せると、コミットしない
 /// ファイルへの行を記録と一緒にコミットさせる。バンドルでなければ何も書かずに `None`。
 fn write_indexes(root: &Path, record: Option<&str>) -> Result<Option<Vec<String>>> {
+    // 記録の上のディレクトリの索引（new が足す先）
+    let indexes: BTreeSet<String> = record
+        .map(|record| {
+            Path::new(record)
+                .ancestors()
+                .skip(1)
+                .take_while(|dir| dir.starts_with(BUNDLE_ROOT))
+                .map(|dir| format!("{}/index.md", dir.display()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let tracked: BTreeSet<String> = match record {
+        Some(_) => markdown_under(root, BUNDLE_ROOT, false)?
+            .into_iter()
+            .collect(),
+        None => BTreeSet::new(),
+    };
+    // new は、追跡していない文書のうち記録と上の索引だけを読む（ほかの下書きは載せず、読めなくても止まらない）
+    let keep = |path: &str| {
+        record
+            .is_none_or(|record| tracked.contains(path) || path == record || indexes.contains(path))
+    };
     // untracked なら docs/index.md 自身が入るので、空はバンドルでないときだけ
-    let mut files = bundle_files(root, true)?;
+    let files = bundle_files(root, true, &keep)?;
     if files.is_empty() {
         return Ok(None);
     }
-    if let Some(record) = record {
-        let tracked: BTreeSet<String> = markdown_under(root, BUNDLE_ROOT, false)?
-            .into_iter()
-            .collect();
-        let indexes: BTreeSet<String> = Path::new(record)
-            .ancestors()
-            .skip(1)
-            .take_while(|dir| dir.starts_with(BUNDLE_ROOT))
-            .map(|dir| format!("{}/index.md", dir.display()))
-            .collect();
-        files.retain(|path, _| tracked.contains(path) || path == record || indexes.contains(path));
-    }
     let mut written = Vec::new();
-    for (path, text) in complete_indexes(&files) {
+    // new は上の索引だけを書く。ほかの索引（追跡していない、手で直したものを含む）は読んでいないので、作り直すと上書きする
+    for (path, text) in complete_indexes(&files)
+        .into_iter()
+        .filter(|(path, _)| record.is_none() || indexes.contains(path))
+    {
         // 途中で失敗しても、もう書いた索引をコミットできるよう示す
         fs::write(root.join(&path), text).map_err(|e| {
             let before = if written.is_empty() {
