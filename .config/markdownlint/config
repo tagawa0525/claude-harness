@@ -1,0 +1,15 @@
+{
+  // markdownlint のグローバルの設定。claude-setup sync が ~/.config/markdownlint/config に置く（ADR-0093）。
+  // markdownlint-cli は、カレントディレクトリに設定が無いときだけこれを読む（リポジトリの設定が優先）。
+  // 先頭の文字は { にする（読み込みの rc は、{ で始まらない内容を JSON でなく ini として読み、規則が効かない）
+  "default": true,
+  "MD013": false, // 行の長さ制限を無効化
+  "MD024": { "siblings_only": true }, // 異なるセクション間の見出し重複は許可
+  "MD025": { "front_matter_title": "" }, // front matter の title を先頭の見出しに数えない（docs/ の文書は title と同じ題の # の見出しを両方持つ）
+  "MD029": false, // 番号つきリストのプレフィックス順序を強制しない
+  "MD033": false, // インラインHTMLを許可
+  "MD034": false, // URLの直書きを許可
+  "MD036": false, // 強調テキストを見出し代わりに使うことを許可
+  "MD041": false, // 先頭行がH1でなくてもよい
+  "MD059": false // リンクURLの重複チェックを無効化
+}
