@@ -65,8 +65,7 @@ pub fn body(source: &Path, workdir: &Path, words: &Words) -> Result<String, Stop
         "\n## 完了の条件\n\n\
          ユーザーが、書き換えた後の履歴で困らないと判断したら、次を行う。どちらも取り消せない（書き換える前の履歴に戻せなくなる）。\n\n\
          ```sh\n\
-         git -C {source_q} reflog expire --expire=now --all && git -C {source_q} gc --prune=now\n\
-         rm -rf {workdir_q}\n\
+         git -C {source_q} reflog expire --expire=now --all && git -C {source_q} gc --prune=now && rm -rf {workdir_q}\n\
          ```\n\n\
          作業ディレクトリを消す前に、ほかのリポジトリとメモリの番号を、対応表で付け直し終えていることを確かめる（消すと対応表も無くなる）。\n"
     ));
