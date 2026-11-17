@@ -128,7 +128,7 @@ fn no_run_tells_what_to_report_on_the_next_line() {
     assert!(
         text.contains(
             "CAUSE: NONE\nNOTE: ワークフローが未設定か、このブランチではまだ実行されていません\n\
-             NEXT: ワークフローが未設定か未実行であると報告してください\n"
+             NEXT: ワークフローが未設定か未実行で、外部 CI は確認できていないと報告してください\n"
         ),
         "{text}"
     );
@@ -183,7 +183,7 @@ fn the_report_lines_gather_the_run_the_failures_the_external_ci_and_the_next_ste
     assert_eq!(
         report(&text),
         "--- report ---\nGitHub Actions 状況:\n- Run: 100（attempt 1）\n- Status: completed/failure\n\
-         - 失敗ジョブ: build\n- 失敗ステップ: Test\n- 外部 CI: lint completed/success circleci\n\
+         - 失敗ジョブ: build\n- 失敗ステップ: Test\n- 外部 CI: lint completed/success circleci https://ci/1\n\
          - 原因: TRANSIENT_API\n\
          - 推奨対応: GitHub API 側の一時障害です。1 回だけ再実行してください: gh run rerun 100 -R octo/repo\n"
     );
@@ -198,7 +198,7 @@ fn the_report_lines_say_none_for_what_was_not_found() {
         report(&stdout(&out)),
         "--- report ---\nGitHub Actions 状況:\n- Run: なし\n- Status: なし\n- 失敗ジョブ: なし\n\
          - 失敗ステップ: なし\n- 外部 CI: 確認できず\n- 原因: NONE\n\
-         - 推奨対応: ワークフローが未設定か未実行であると報告してください\n"
+         - 推奨対応: ワークフローが未設定か未実行で、外部 CI は確認できていないと報告してください\n"
     );
 
     // 実行中の run は attempt を読まないので、Run に attempt を添えない
@@ -217,5 +217,44 @@ fn the_report_lines_say_none_for_what_was_not_found() {
     assert!(
         rep.contains("- 外部 CI: なし\n- 原因: IN_PROGRESS\n"),
         "{rep}"
+    );
+}
+
+#[test]
+fn no_run_with_only_external_ci_tells_whether_it_passed() {
+    // run の一覧、head の SHA、check-run（外部の CI が成功）、commit status
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[
+            ("[]", 0),
+            ("abc\n", 0),
+            (
+                r#"{"name":"lint","status":"completed","conclusion":"success","app":"circleci","url":"https://ci/1"}"#,
+                0,
+            ),
+            ("[]", 0),
+        ],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "NEXT: GitHub Actions の run は無く、外部 CI は成功しています。その 2 点を報告してください\n"
+        ),
+        "{text}"
+    );
+
+    // run も外部の CI も無い
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[("[]", 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains("NEXT: ワークフローが未設定か未実行であると報告してください\n"),
+        "{text}"
     );
 }
