@@ -103,6 +103,19 @@ fn description_error(input: &Input) -> Option<String> {
     None
 }
 
+/// description の先頭のモデル名の誤りの拒否。合っていれば None
+fn description_finding(input: &Input) -> Option<Finding> {
+    description_error(input).map(|error| {
+        Finding::Deny(format!(
+                "/delegate を呼ぶ Agent の description の{error}（description: 「{}」）。\n\
+                 担当に触れる報告と通知で、どのモデルの担当かを見分けるため、description の先頭にモデル名を書きます（~/.claude/skills/delegate/references/requesting.md）。\n\
+                 判定: 先頭が英字のモデル名（`Opus`、`Sonnet 4.6` など）と `:` で始まるかを見ます。model を渡した呼び出しは、その名前で始まるかも見ます（subagent_type が fork なら model は無視されるので見ません）。\n\
+                 修正方法: description を `<モデル名>: <作業>` の形（例: `Opus: 履歴の書き換えツールの PR`）にして、Agent を呼び直してください。model を渡すときはそのモデルの名前を、渡さないときと fork は親のモデルの名前を書きます。",
+                input.description,
+            ))
+    })
+}
+
 /// 依頼のファイルの大きさの上限。hook は Agent の呼び出しを待たせるので、依頼文より大きいものを読まない
 const MAX_REQUEST_BYTES: u64 = 1 << 20;
 
@@ -209,12 +222,14 @@ impl Rule for DelegateRequestFields {
             && target == "prompt"
             && UNREADABLE_POINTER.is_match(first_line(&input.prompt))
         {
-            return vec![Finding::Deny(format!(
+            let mut findings = vec![Finding::Deny(format!(
                 "/delegate の依頼の prompt の 1 行目「依頼文は … にある」から、依頼文のファイルのパスを読み取れません。\
                  prompt を依頼として判定すると、定型の欄がそろっていません（欠けた欄: {}）。\n\
                  修正方法: 依頼をファイルに置いたなら、1 行目の句を「依頼文は <絶対パス> にある」の形に直して、Agent を呼び直してください（{QUOTE_HINT}）。",
                 missing.join("、"),
             ))];
+            findings.extend(description_finding(input));
+            return findings;
         }
         let mut findings = Vec::new();
         if !missing.is_empty() {
@@ -228,15 +243,7 @@ impl Rule for DelegateRequestFields {
                 target,
             )));
         }
-        if let Some(error) = description_error(input) {
-            findings.push(Finding::Deny(format!(
-                "/delegate を呼ぶ Agent の description の{error}（description: 「{}」）。\n\
-                 担当に触れる報告と通知で、どのモデルの担当かを見分けるため、description の先頭にモデル名を書きます（~/.claude/skills/delegate/references/requesting.md）。\n\
-                 判定: 先頭が英字のモデル名（`Opus`、`Sonnet 4.6` など）と `:` で始まるかを見ます。model を渡した呼び出しは、その名前で始まるかも見ます（subagent_type が fork なら model は無視されるので見ません）。\n\
-                 修正方法: description を `<モデル名>: <作業>` の形（例: `Opus: 履歴の書き換えツールの PR`）にして、Agent を呼び直してください。model を渡すときはそのモデルの名前を、渡さないときと fork は親のモデルの名前を書きます。",
-                input.description,
-            )));
-        }
+        findings.extend(description_finding(input));
         let bodies = scope_bodies(&request);
         if !bodies.is_empty()
             && !bodies
