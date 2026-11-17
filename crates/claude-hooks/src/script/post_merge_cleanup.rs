@@ -423,10 +423,14 @@ fn merged(branch: &str, default: &str, default_root: Option<&str>) -> Result<(),
 fn merge_commit_of(branch: &str, default: &str, before: &str) -> Result<(), i32> {
     let local = format!("refs/heads/{branch}");
     // show-ref の終了 1 は「無い」。ほかの失敗を無いと読むと、確かめずにブランチを消す
-    match run(&["show-ref", "--verify", "--quiet", &local]).and_then(|o| o.status.code()) {
+    let lookup = run(&["show-ref", "--verify", "--quiet", &local]);
+    match lookup.as_ref().and_then(|o| o.status.code()) {
         Some(0) => {}
         Some(1) => return Ok(()),
         _ => {
+            if let Some(o) = &lookup {
+                eprint!("{}", String::from_utf8_lossy(&o.stderr));
+            }
             eprintln!(
                 "ERROR: ローカルのブランチ {branch} の有無を確かめられません（git show-ref が失敗）。何も消していません"
             );
@@ -461,10 +465,10 @@ fn merge_commit_of(branch: &str, default: &str, before: &str) -> Result<(), i32>
         return Ok(());
     }
     eprintln!(
-        "ERROR: {branch} の先端 {tip} は {default} に入っているが、{before} の後の {default} に、それを第 2 親に持つマージコミットがありません（fast-forward で入った、またはほかのブランチのマージで入った）。何も消していません"
+        "ERROR: {branch} の先端 {tip} は {default} に入っているが、{before} の後の {default} に、それを第 2 親に持つマージコミットがありません（fast-forward で入った、ほかのブランチのマージで入った、または第 2 引数がマージの前の {default} でない）。何も消していません"
     );
     eprintln!(
-        "  修正方法: git log --first-parent --oneline {before}..{default} で入り方を確かめる。fast-forward なら、{default} の worktree で git reset --keep {before} で戻してから git merge --no-ff {branch} をやり直し、そのマージの第 1 親を第 2 引数に渡して、もう一度実行する（戻さずにマージをやり直すと、Already up to date で何もしない）。ほかのブランチのマージで入ったなら、そのマージが正しいかを確かめる"
+        "  修正方法: 先に、第 2 引数がマージの第 1 親（マージの前の {default}）かを確かめる。合っていれば、git log --first-parent --oneline {before}..{default} で入り方を確かめる。fast-forward で、その後に積んだコミットが {default} に無ければ、{default} の worktree で git reset --keep {before} で戻してから git merge --no-ff {branch} をやり直し、そのマージの第 1 親を第 2 引数に渡して、もう一度実行する（戻さずにマージをやり直すと、Already up to date で何もしない）。後に積んだコミットがあるか、ほかのブランチのマージで入ったなら、戻さずにユーザーに確認する"
     );
     Err(1)
 }
