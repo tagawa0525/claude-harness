@@ -20,7 +20,7 @@ GitHub の issue があるリポジトリでは、そこに書く。ない場合
 ```yaml
 ---
 type: Issue
-status: open
+status: closed
 resolution: done
 resolved-by: 0012-slug
 duplicate-of: "#0012"
