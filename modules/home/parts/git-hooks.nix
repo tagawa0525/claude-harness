@@ -25,25 +25,11 @@ in
     design-records
     history-rewrite
     pkgs.prek
-    pkgs.markdownlint-cli # run-checks、staged-checks、fix-markdown-lint が PATH から呼ぶ
+    pkgs.markdownlint-cli # run-checks、staged-checks、fix-markdown-lint が PATH から呼ぶ（設定は下のコメントのとおり sync が置く）
   ];
 
-  # markdownlint のグローバル設定。設定を持たないリポジトリでも、ハーネスの検査（run-checks、staged-checks）と
-  # fix-markdown-lint が同じ規則で動くよう、ハーネスが提供する。VSCode の拡張も同じファイルを読む
-  home.file.".markdownlintrc".text = builtins.toJSON {
-    default = true;
-    MD013 = false; # 行の長さ制限を無効化
-    MD024 = {
-      siblings_only = true;
-    }; # 異なるセクション間の見出し重複は許可
-    MD029 = false; # 番号つきリストのプレフィックス順序を強制しない
-    MD033 = false; # インラインHTMLを許可
-    MD034 = false; # URLの直書きを許可
-    MD036 = false; # 強調テキストを見出し代わりに使うことを許可
-    MD041 = false; # 先頭行がH1でなくてもよい
-    MD056 = true; # 表の列数の一貫性を強制
-    MD059 = false; # リンクURLの重複チェックを無効化
-  };
+  # markdownlint のグローバルの設定（~/.config/markdownlint/config）は、ここでなく claude-setup sync が .config/markdownlint/config から
+  # 置く。Windows にも同じ中身を配るため（home-manager の activation も claude-setup sync を呼ぶ。ADR-0093）
 
   # core.hooksPath は programs.git が有効なときだけ gitconfig に書かれる。利用者の設定（git.nix）に頼らず、ここでも有効にする
   programs.git.enable = true;

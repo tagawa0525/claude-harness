@@ -6,6 +6,9 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 ブランチのコミットされた最新だけで、別のブランチや、同期する場所に書きかけの編集がある clone では止まる。worktree の直しや作業中の中身を
 入れるときは、パスを渡す（`claude-sync <worktree>`。pull しない）。
 
+`~/.claude` の外へ置くファイルは、リポジトリの `.config/markdownlint/config`（markdownlint のグローバルの設定）だけで、
+ホームの下の同じパス（`~/.config/markdownlint/config`）に置く（ADR-0093）。ソースが正で、中身が違えば上書きする。
+
 `.claude/settings.json` はこのリポジトリのセッションのためのプロジェクトの設定で、同期の対象ではない（`~/.claude/settings.json` に
 入ると、どのリポジトリでもグローバルの指示が読まれなくなる）。
 
