@@ -755,4 +755,13 @@ mod tests {
         }));
         assert_eq!(findings.len(), 2);
     }
+
+    #[test]
+    fn unreadable_request_file_and_description_without_a_model_are_reported_together() {
+        let findings = check_agent(serde_json::json!({
+            "prompt": "依頼文は /nonexistent/brief.md にある。最初に /delegate を呼ぶ。",
+            "description": "d",
+        }));
+        assert_eq!(findings.len(), 2);
+    }
 }

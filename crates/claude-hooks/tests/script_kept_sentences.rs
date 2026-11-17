@@ -385,3 +385,26 @@ fn base_takes_a_file_whose_directory_was_deleted_as_a_source() {
         (0, String::new())
     );
 }
+
+#[test]
+fn base_rejects_a_directory_and_a_file_that_is_not_utf8_at_the_base() {
+    let d = repo(&[("skills/foo/SKILL.md", "文。\n")]);
+    // ディレクトリを渡すと、木の一覧を元の版として読まずに 2 で終わる
+    assert_eq!(kept_in(&d.root, &["--base", "main", "skills/foo"]).0, 2);
+    std::fs::write(d.root.join("bad.md"), b"\xff\xfe\n").unwrap();
+    let git = |args: &[&str]| {
+        forget_git_env(&mut Command::new("git"))
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&d.root)
+            .env("GIT_CONFIG_GLOBAL", d.root.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap()
+    };
+    git(&["add", "bad.md"]);
+    git(&["commit", "-q", "-m", "bad"]);
+    d.write("bad.md", "文。\n");
+    assert_eq!(kept_in(&d.root, &["--base", "main", "bad.md"]).0, 2);
+}

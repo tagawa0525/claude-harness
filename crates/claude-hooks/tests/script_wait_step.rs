@@ -76,6 +76,11 @@ fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
         "{out}"
     );
     assert!(out.contains("通知（終わりの通知、親の返事）"), "{out}");
+    // 通知で待ちが済んだときも、時計を消すコマンドを示す
+    assert!(
+        out.contains("~/.claude/scripts/wait-step.sh --end /wt/a"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -279,4 +284,26 @@ fn a_key_reached_through_a_symlink_shares_the_clock() {
             .0,
         3
     );
+}
+
+#[test]
+fn a_report_time_later_than_now_restarts_the_clock() {
+    // 時計が大きく戻ったら、未来の途中の報告の時刻を待たずに数え直す（REPORT が戻った分だけ遅れない）
+    let d = Dir::new();
+    let log = d.file("job.out", "");
+    d.wait(1, 3, &["/wt/back", &log]);
+    let dir = d.root.join("tmp").join("claude-wait-step");
+    let state = std::fs::read_dir(&dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(&state, format!("{} {now}\n", now + 1800)).unwrap();
+    d.wait(2, 3, &["/wt/back", &log]);
+    assert_eq!(d.wait(2, 3, &["/wt/back", &log]).0, 3);
 }
