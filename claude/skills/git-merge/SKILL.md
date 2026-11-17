@@ -16,6 +16,7 @@ allowed-tools:
   - Bash(git range-diff*)
   - Bash(git merge-base*)
   - Bash(git rev-parse*)
+  - Bash(git symbolic-ref*)
   - Bash(git show*)
   - Bash(git switch*)
   - Bash(git rebase*)
@@ -240,7 +241,8 @@ Branch: [branch]
 
 ### マージ
 
-`git merge` は main の worktree から実行する。`DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う:
+`git merge` は main の worktree から実行する。`DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う。
+直前に `git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD`（none なら今の worktree）が main であることを確かめ、違えば止まる:
 
 ```bash
 git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'
@@ -266,7 +268,7 @@ git で書き込まない。通ったら後片付けに進む。hook に拒ま�
 ```
 
 第 2 引数はマージの前の main（マージコミットの第 1 親。`DEFAULT_WORKTREE` が none なら今の worktree）で、省かない（`NOTE:` の
-判定の起点と、このブランチのマージコミットの確かめに使う）。対象の worktree とブランチを削除する。cwd のリポジトリのブランチを片付けるので、別のリポジトリのブランチなら
+判定の起点と、このブランチのマージコミットの確認に使う）。対象の worktree とブランチを削除する。cwd のリポジトリのブランチを片付けるので、別のリポジトリのブランチなら
 `cd <そのリポジトリ> &&` を付けて呼ぶ。未マージなら何も消さずに止まり、変更が残っていれば失敗する（確認して対処する）。出力の `NOTE:` の行は、完了メッセージでそのまま
 ユーザーに伝える。マージ済みの PR を痕跡にした `NOTE:` の行は、別のリポジトリのブランチを渡しているので、マージした
 リポジトリで `cd <そのリポジトリ> &&` を付けてやり直す。

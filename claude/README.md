@@ -121,7 +121,7 @@ pre-merge-commit は main / master へのローカルのマージ（GitHub リ�
 `gh pr merge` は GitHub 側のマージなので、CI と `pre-merge-check` が守る。
 post-rewrite はゲートではなく、`git config remap.commitRefs true` でオプトインしたリポジトリで、
 rebase と amend の後に `commit-refs remap`（`crates/commit-refs`、ADR-0012）を呼び、
-文書の中の変わったコミットの番号を付け直す（コミットはしない。確かめ方とコミットの件名の例、失敗したときのやり直しのコマンドを出力に示す）。git filter-repo の後は
+文書の中の変わったコミットの番号を付け直す（コミットはしない。確認の方法とコミットの件名の例、失敗したときのやり直しのコマンドを出力に示す）。git filter-repo の後は
 `commit-refs rewrite-history .git/filter-repo/commit-map` で、履歴の中の文書と本文の番号も付け直す（ADR-0013）。
 履歴の中の崩れた語は `history-rewrite`（`crates/history-rewrite`、ADR-0045）が同じ辞書で直し、番号を
 `commit-refs rewrite-history` で付け直す。生きているリポジトリに移す手順は `skills/history-rewrite/` にある。
