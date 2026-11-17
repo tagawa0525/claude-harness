@@ -86,6 +86,8 @@ git -C [TARGET_WORKTREE] rebase main
 ### proposed の ADR（どのブランチでも、チェックの前に）
 
 `PROPOSED_ADRS` は、ブランチの feat と fix のコミットが `Refs:` で挙げた ADR のうち、先端で `status: proposed` のもの。
+`STALE_CONFIRMATIONS` は、ブランチで変えた ADR の「確認」に挙げたファイルのうち、その ADR を最後に変えたコミットより後に
+変わったもの（`ADR-NNNN:<パス>`）で、挙がった ADR は決定、帰結、確認がそのファイルの今の実装と合うかを確かめて直す。
 ブランチのコミットを変えた後（rebase、番号の振り直し、コミットの追加や amend）は `~/.claude/scripts/git-merge-state.sh [branch]` を
 再実行して取り直す（読み込んだときの none や行の無さで、この手順を飛ばさない）。一覧に加えて、次も見る:
 
