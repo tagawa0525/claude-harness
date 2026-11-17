@@ -3,7 +3,8 @@
 //! Usage（どのコマンドも、前に `-C <dir>` を付けると `<dir>` で実行する。git の `-C` と同じ）:
 //!   design-records new [--kind adr|issue] <slug> <title>
 //!                                      番号を予約して <dir>/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
-//!                                      （dir は docs/adr か docs/issues。省けば adr）
+//!                                      （dir は docs/adr か docs/issues。省けば adr）。ADR の slug は決めたことを
+//!                                      動詞で始めた英語の kebab-case
 //!   design-records renumber [--kind adr|issue] <old> [<new>]
 //!                                      このブランチで足した記録 <old> を <new>（省けば次の番号）に振り直し、
 //!                                      ファイル名と参照を付け替えて 1 コミットにする。新しいパスを出す
@@ -138,8 +139,13 @@ fn main() -> ExitCode {
 
 fn new(kind: Kind, slug: &str, title: &str) -> Result<ExitCode> {
     if !is_slug(slug) {
+        // ADR の slug は決めたことを動詞で始める（`use-foo`）。kebab-case のほかは機械で見ないので、拒んだときに添える
+        let verb = match kind {
+            Kind::Adr => "; start it with the verb of the decision in English (use-foo, keep-bar)",
+            Kind::Issue => "",
+        };
         return Err(format!(
-            "the slug must be lowercase kebab-case ([a-z0-9]+(-[a-z0-9]+)*): {slug}"
+            "the slug must be lowercase kebab-case ([a-z0-9]+(-[a-z0-9]+)*){verb}: {slug}"
         ));
     }
     if !is_title(title) {
