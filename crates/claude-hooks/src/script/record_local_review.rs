@@ -144,7 +144,7 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!(
             "ERROR: {place}（記録を付けていません）\n\
              - この head をまだ回していないなら、PR の worktree で /code-review を回してから、その worktree で記録する\n\
-             - この head で回したのに hook が行を書かない回し方だったなら（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）、末尾に --unlogged '<その回し方>' を付ける（記録のコメントに残る）\n\
+             - この head で回したのに hook が行を書かない回し方だったなら（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）、末尾に --unlogged '<その回し方>' を付ける（記録のコメントに残る。--unlogged の記録は今のディレクトリに頼らないので、cd <worktree> && は要らない）\n\
              - 回し直していない、base への rebase だけの head なら、記録を足さない（前の head の記録で足りるかは、PR の worktree で {scripts}/decide-next.sh {canonical} を実行すると LOCAL_REVIEWED: の行に出る）"
         );
         return 1;
@@ -165,6 +165,13 @@ pub fn main(args: &[String]) -> i32 {
     if high > 0 {
         println!(
             "NOTE: High の残る記録は、レビュー済みとして数えない。直して push し、回し直して記録する"
+        );
+    }
+    // 回した行は /code-review を呼んだことしか示さない（count-review-rounds は結果を見ない）ので、対象を読めなかった回の
+    // 0 件と指摘ゼロの 0 件は、返答を読んだ人にしか見分けられない
+    if high + medium + low == 0 {
+        println!(
+            "NOTE: 0 件の記録が正しいのは、/code-review の返答に見たファイルや確かめた点が書かれているときだけ。対象が見つからない（「ブランチが存在しない」など）、エラー、`[]` だけの返答は未実施なので、対象を直して回し直し、同じ head にもう一度記録する（最後の記録で決まる）"
         );
     }
     0
