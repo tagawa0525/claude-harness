@@ -2534,6 +2534,20 @@ git fetch -q origin
 out=$(run_hook guard-git-merge 'git merge --ff-only origin/main')
 assert_eq allow "$(decision "$out")"
 
+it "guard-git-merge: 既定ブランチでない HEAD で、そのブランチ自身をマージするコマンドは deny"
+git switch -q feat/rebased
+for cmd in 'git merge --no-ff feat/rebased -m "Merge: rebased"' "git -C $REPO merge --no-ff refs/heads/feat/rebased"; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "feat/rebased 自身"
+  assert_contains "$(reason "$out")" "git switch main"
+done
+git switch -q main
+out=$(run_hook guard-git-merge 'git switch feat/rebased && git merge --no-ff feat/rebased')
+assert_eq deny "$(decision "$out")"
+out=$(run_hook guard-git-merge 'git switch feat/rebased && git merge feat/behind')
+assert_eq allow "$(decision "$out")"
+
 it "guard-git-merge: 同じコマンドの前の git switch で移った先のブランチで判定する"
 git switch -q feat/rebased
 out=$(run_hook guard-git-merge 'git switch main && git merge feat/rebased')
