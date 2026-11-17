@@ -410,11 +410,15 @@ mod tests {
         ));
     }
 
+    /// 手元の設定（グローバルの core.hooksPath など）を読まずに git を実行する。読むと、Claude Code のセッションの中では
+    /// グローバルの commit-msg の hook がテストのコミットの件名を止める
     fn git_in(dir: &Path, args: &[&str]) {
         let status = std::process::Command::new("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
             .args(args)
             .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", dir.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .status()
             .unwrap();
         assert!(status.success(), "git {args:?}");
