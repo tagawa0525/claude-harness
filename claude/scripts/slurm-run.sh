@@ -243,6 +243,39 @@ else
   resources+=(--partition=main)
 fi
 
+# 作業ディレクトリの worktree の直下（git の外ならそのディレクトリ）
+worktree_of() {
+  git -C "$1" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$1"
+}
+
+# timed のジョブは走っている main のジョブを止め、止められたジョブは持っているロック（cargo のビルドディレクトリ、
+# DVC の .dvc/tmp/lock）を持ったまま止まる。同じ worktree の timed のジョブは同じロックを待って、どちらも進まない。
+# worktree によらないロック（$CARGO_HOME、nix の評価のキャッシュ）はコマンドから決められないので見ない
+if $timed; then
+  if running=$(squeue --noheader --partition=main --states=RUNNING,SUSPENDED,CONFIGURING --format '%i|%k' 2>/dev/null); then
+    here=$(worktree_of "$PWD")
+    while IFS='|' read -r id comment; do
+      # 連絡先は slurm-run.sh が書く「<区分> | <参照> | <目的> | [<ブランチ> ]<場所>[ commit=…][ claude=…][ shared-cpus=…]」。
+      # 区分の無いジョブは、連絡先の形が分からないので比べない。ブランチの名前は / で始まらないので、最初の「/」から場所
+      [[ -n $id && $comment == *' | '*' | '*' | '* ]] || continue
+      job_contact=${comment#* | }
+      job_contact=${job_contact#* | }
+      job_contact=${job_contact#* | }
+      [[ $job_contact == /* ]] || job_contact=/${job_contact#* /}
+      job_dir=${job_contact%% commit=*}
+      job_dir=${job_dir%% claude=*}
+      job_dir=${job_dir%% shared-cpus=*}
+      if [[ $(worktree_of "$job_dir") == "$here" ]]; then
+        echo "ERROR: 走っている main のジョブ $id が同じ worktree（$here）で走っている。timed のジョブはそれを止め、止められたジョブはロック（cargo のビルドディレクトリ、DVC の lock）を持ったまま止まるので、同じロックを取るとどちらも進まない" >&2
+        echo "NEXT: 別の worktree（git worktree add）から投げるか、ジョブ $id が終わってから投げる" >&2
+        exit 1
+      fi
+    done <<<"$running"
+  else
+    echo "WARN: 走っている main のジョブを読めず、同じ worktree で走っているかを確かめられなかった（squeue が失敗）" >&2
+  fi
+fi
+
 # sbatch --wait は終わるまで戻らないので、裏で実行し、最初の行から番号を読む
 submitted=$(mktemp)
 trap 'rm -f "$submitted"' EXIT
