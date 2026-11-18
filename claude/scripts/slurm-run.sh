@@ -298,6 +298,8 @@ done
 echo "JOB: $job"
 log="$local_logs/$name-$job.out"
 echo "LOG: $log"
+# ジョブは投げたときの $PWD で走る。`cd d && a & b` の b のように、cd が届かずに別の場所から投げたものを、終わる前に見つける
+echo "NEXT: ジョブは $PWD で走る。意図した worktree でなければ scancel $job で取り消し、cd <worktree> && で投げ直す"
 # main は投げるたびに区分の順に並べ直す（並べ方は slurm-queue.sh --order の 1 か所。--top のジョブは自分の区分の先頭、
 # 無ければ末尾）。投げたセッションが並べ直すので、区分の順は誰かが一覧の ORDER: を実行するのを待たない。timed は投げた順に
 # 実行し、--top のときだけ投げたジョブを先頭に出す。並べ替えに失敗しても、投げたジョブは待ち行列にあるので、終わりまで待つ
