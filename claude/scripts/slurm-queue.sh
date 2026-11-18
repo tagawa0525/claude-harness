@@ -8,7 +8,9 @@
 #   <番号> <状態>[（動かせない）] <パーティション> <優先度> <区分> <見積もり> <開始の見込み> <名前> <参照>
 #     目的: <結果が何を決めるか>
 #     連絡先: <ブランチ、投げた場所、commit= 投げた時点のコミット（未コミットの変更があれば -dirty）、claude= セッション、shared-cpus=>
+#   NOTE: <一覧にある印（-dirty、区分 -、（動かせない）、SUSPENDED）の意味。当たる行があるときだけ>
 #   ORDER: main: <番号>（<区分>）が <番号>（<区分>）の後ろ、…で待っている。scontrol top <番号>,<番号>,…[（区分の無い …）]
+#   NEXT: <ORDER: のコマンドの実行の仕方。ORDER: を出したときだけ>
 #
 # 走る順は、パーティション timed（PriorityTier が高い）、main の順で、その中は走っているもの（走り始めた CONFIGURING
 # なども）、止められたもの、待っているもの（優先度の高い順、同じなら番号の順）。
@@ -88,6 +90,11 @@ BEGIN {
     printf "%s %s%s %s %s %s %s %s %s %s\n", job, state, unmovable ? "（動かせない）" : "", part, prio, class, limit, start, name, ref
     printf "  目的: %s\n", purpose
     printf "  連絡先: %s\n", contact
+    # 印の意味は、当たる行があるときだけ一覧の後に出す
+    if (contact ~ /(^| )commit=[^ ]*-dirty( |$)/) note_dirty = 1
+    if (class == "-") note_unclassed = 1
+    if (unmovable) note_unmovable = 1
+    if (state == "SUSPENDED") note_suspended = 1
   }
   if (state != "PENDING" || part != "main" || unmovable) next
   if (class == "-") {
@@ -112,6 +119,10 @@ BEGIN {
   pend_class[count] = class
 }
 END {
+  if (note_dirty) print "NOTE: commit= の末尾が -dirty のジョブは、コミットしていない変更のある版で走り、結果は hash のコミットから再現できない"
+  if (note_unclassed) print "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無く、並べ直されずに区分のあるジョブの後ろに回る"
+  if (note_unmovable) print "NOTE: （動かせない）は保留（優先度が 1 以下）か配列の親ジョブで、scontrol top で並べ直せず、並べ直したジョブの後ろに回る"
+  if (note_suspended) print "NOTE: SUSPENDED は timed のジョブに止められた main のジョブで、それが終わると続きから再開する"
   # 区分の順、同じ区分は今の順（--first のジョブは区分の先頭）に並べる（挿入ソート。待っているジョブは数本）
   for (i = 1; i <= count; i++) {
     idx[i] = i
@@ -134,4 +145,5 @@ END {
   }
   note = (unclassed == "") ? "" : sprintf("（区分の無い %s は後ろに回る）", unclassed)
   printf "ORDER: main: %sで待っている。scontrol top %s%s\n", behind, list, note
+  print "NEXT: 上の scontrol top を、番号を分けずに 1 回で実行する（1 本ずつ分けると最後に出したジョブが先頭になる）。ほかのセッションのジョブを含んでいても実行してよい"
 }'
