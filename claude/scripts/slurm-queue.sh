@@ -92,7 +92,8 @@ BEGIN {
     printf "  連絡先: %s\n", contact
     # 印の意味は、当たる行があるときだけ一覧の後に出す
     if (contact ~ /(^| )commit=[^ ]*-dirty( |$)/) note_dirty = 1
-    if (class == "-") note_unclassed = 1
+    # 並べ直されずに後ろに回るのは、待っている main のジョブだけ
+    if (class == "-") note_unclassed = (state == "PENDING" && part == "main") ? 2 : (note_unclassed ? note_unclassed : 1)
     if (unmovable) note_unmovable = 1
     if (state == "SUSPENDED") note_suspended = 1
   }
@@ -120,7 +121,8 @@ BEGIN {
 }
 END {
   if (note_dirty) print "NOTE: commit= の末尾が -dirty のジョブは、コミットしていない変更のある版で走り、結果は hash のコミットから再現できない"
-  if (note_unclassed) print "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無く、並べ直されずに区分のあるジョブの後ろに回る"
+  if (note_unclassed == 2) print "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無く、並べ直されずに区分のあるジョブの後ろに回る"
+  else if (note_unclassed) print "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無い"
   if (note_unmovable) print "NOTE: （動かせない）は保留（優先度が 1 以下）か配列の親ジョブで、scontrol top で並べ直せず、並べ直したジョブの後ろに回る"
   if (note_suspended) print "NOTE: SUSPENDED は timed のジョブに止められた main のジョブで、それが終わると続きから再開する"
   # 区分の順、同じ区分は今の順（--first のジョブは区分の先頭）に並べる（挿入ソート。待っているジョブは数本）
