@@ -399,8 +399,9 @@ else
     time_line+=" preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
   fi
   # timed のジョブは割り込まれないので、この印が付けば設定か運用（scontrol suspend）の誤り。
-  # Suspended は止められていた時間で、一度も止められていなければ 00:00:00。Elapsed は止められていた時間を含み
-  # （RunTime と違う）、再開後のキャッシュの冷えやプログラムが自分で測る経過時間も残るので、止められていれば当てにならない
+  # Suspended は止められていた時間で、一度も止められていなければ 00:00:00。Elapsed は止められていた時間を除く
+  # （End - Start = Elapsed + Suspended。r995 のジョブ 498、656 で確かめた）が、再開後のキャッシュの冷えと、プログラムが
+  # 自分で測る経過時間（止められていた間を含む）が残るので、止められていれば当てにならない
   if [[ -z $suspended ]]; then
     echo "WARN: ジョブ $job の sacct の記録に Suspended が無く、止められていたかを確かめられなかった" >&2
     time_line+=" suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
