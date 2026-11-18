@@ -672,8 +672,8 @@ assert_contains "$out" "ERROR: --ref の値が無い"
 assert_contains "$out" "--ref '#0200'"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
-it "slurm-run: -t が sbatch の時間の形でなければ（25m、1h など）、投げずに分の数か H:MM:SS の形を示してエラー"
-for bad in 25m 1h 1.5 abc; do
+it "slurm-run: -t が分の数か H:MM:SS（日-時の形も）でなければ（25m、1h、sbatch が分:秒と読む 1:30 など）、投げずに分の数か H:MM:SS の形を示してエラー"
+for bad in 25m 1h 1.5 abc 1:30 30:00; do
   rm -f "$TEST_ROOT/sbatch.args"
   out=$("$RUN" "${PURPOSE[@]}" -t "$bad" xlc-2G 'true' 2>&1)
   assert_eq 1 $?
@@ -681,8 +681,8 @@ for bad in 25m 1h 1.5 abc; do
   assert_file_missing "$TEST_ROOT/sbatch.args"
 done
 
-it "slurm-run: -t は sbatch の時間の形（分、分:秒、時:分:秒、日-時、日-時:分、日-時:分:秒）を受け付ける"
-for good in 90 30:00 1:30:00 1-00 1-12:00 2-12:00:00; do
+it "slurm-run: -t は分、時:分:秒、日-時、日-時:分、日-時:分:秒を受け付ける"
+for good in 90 1:30:00 1-00 1-12:00 2-12:00:00; do
   rm -f "$TEST_ROOT/sbatch.args"
   "$RUN" "${PURPOSE[@]}" -t "$good" xlc-2G 'true' >/dev/null 2>&1
   assert_eq 0 $?
@@ -773,6 +773,8 @@ for opts in "-t 5" "-c 4 -t 5" "--timed -t 5"; do
   # shellcheck disable=SC2086 # オプションを分けて渡す
   out=$(FAKE_SACCT_SUSPENDED=$suspended "$RUN" "${PURPOSE[@]}" $opts "$name" 'true' 2>&1)
   assert_contains "$out" "NEXT: TIME 行に印があるので、この時間（elapsed も、プログラムが自分で測った時間も）は記録に使わない"
+  # 時間を記録しない main のジョブにまで、timed で投げ直させない
+  assert_contains "$out" "時間を記録しない計算は投げ直さない"
 done
 
 it "slurm-run: 印の無い TIME 行の後には、記録に使わない NEXT: を出さない"
@@ -785,5 +787,29 @@ assert_contains "$out" "RESULT: job=42 name=xlc-2G exit=0 state=COMPLETED"
 assert_eq "EXIT: 0" "$(grep -A1 '^RESULT:' <<<"$out" | sed -n 2p)"
 out=$(FAKE_STATE=FAILED FAKE_JOB_EXIT=3 "$RUN" "${PURPOSE[@]}" -t 5 xlc-2G 'false' 2>&1)
 assert_contains "$out" "RESULT: job=42 name=xlc-2G exit=3 state=FAILED"
+
+it "slurm-run: r995 と NFS の入口で書き方の違う同じ worktree も、同じとみなして --timed のジョブを止める"
+# r995 以外から NFS の入口の下で投げ、走っているジョブは r995 の上のパスで投げられている
+cd "$NFS_ENTRY/proj" || exit 1
+rm -f "$TEST_ROOT/sbatch.args"
+out=$(SLURM_RUN_NFS_ENTRY=$NFS_ENTRY FAKE_HOST=t14g4 FAKE_SQUEUE_RUNNING="702|trial | #1 | p | feat/x $HOME/github/proj commit=abc" \
+  "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: 走っている main のジョブ 702"
+assert_file_missing "$TEST_ROOT/sbatch.args"
+# r995 から投げ、走っているジョブは NFS の入口の下から投げられている
+cd "$HOME/github/proj" || exit 1
+out=$(SLURM_RUN_NFS_ENTRY=$NFS_ENTRY FAKE_SQUEUE_RUNNING="703|trial | #1 | p | feat/x $NFS_ENTRY/proj commit=abc" \
+  "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: 走っている main のジョブ 703"
+
+it "slurm-run: コメントの先頭が区分でないジョブ（slurm-run.sh の外から投げたもの）とは、場所を比べない"
+cd "$HOME/github/committed" || exit 1
+rm -f "$TEST_ROOT/sbatch.args"
+FAKE_SQUEUE_RUNNING="704|x | y | z | feat/commit $HOME/github/committed" \
+  "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' >/dev/null 2>&1
+assert_eq 0 $?
+assert_file_exists "$TEST_ROOT/sbatch.args"
 
 finish
