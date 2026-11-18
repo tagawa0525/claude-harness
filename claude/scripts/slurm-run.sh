@@ -170,6 +170,12 @@ if [[ ! $name =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 1
 fi
 
+# sacct を手で読むときに、名前で排他のジョブと見分ける（slurm-history.sh も古い jobcomp では名前で分ける）
+if $shared && [[ $name != *-shared ]]; then
+  echo "ERROR: -c のジョブの名前は末尾に -shared を付ける（$name-shared）。sacct で排他のジョブと見分けるため: $name" >&2
+  exit 1
+fi
+
 # slurmd が書く r995 の側のパスと、このホストから読むパス
 remote_logs="$HOME/github/slurm-logs"
 if [[ $(hostname) == r995 ]]; then
