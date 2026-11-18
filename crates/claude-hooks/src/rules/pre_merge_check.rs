@@ -36,6 +36,7 @@ use crate::gh;
 use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
+use crate::script::pr_url;
 use crate::shell::{Arg, Cmd, Escape, Shell, has_flag, opt_value};
 use crate::unwrap::basename;
 use design_records::is_adr_path;
@@ -74,35 +75,40 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
         "\n同じコマンドで gh pr merge より前にあるコマンド（{}）は、この判定の後に走るので判定に反映されず、\
          拒んだのでどれも実行されていません。それらで状態を変える（ローカルレビューの記録、push など）なら、\
          先に別の呼び出しで実行してから、gh pr merge を前に cd だけを付けた呼び出しで投げ直してください",
-        // cd を外させない: 担当のスレッドは呼び出しごとに cwd が戻り、cd の無い gh は別のリポジトリの PR を解く
+        // cd を外させない: 担当のスレッドは呼び出しごとに cwd が戻り、cd の無い gh は、番号やブランチ名の指定を別の
+        // リポジトリの PR として解く。レビューの記録を読む git も cwd のリポジトリで動く
         names.join(", ")
     )
 }
 
-/// 引数から PR 番号を探す。本文（--body / --subject）より前のトークンから、値を取るフラグの
-/// 値を飛ばして最初の数値を採る（`gh pr merge -R owner/repo 12 …` の形にも対応）
-fn pr_ref(args: &[Arg]) -> Option<String> {
+/// 引数から PR の指定（番号、URL、ブランチ名）を探す。値を取るフラグの値を飛ばして、最初の位置引数を採る
+/// （`gh pr merge -R owner/repo 12 …` と、本文の後ろに指定を置く形にも対応）。指定の形はここで解かず、そのまま
+/// `gh pr view` に渡す（gh pr merge と同じ解き方で同じ PR を検査する。形ごとに手で解くと、解けない形のときに cwd の
+/// ブランチの PR を検査したまま、gh は指定の PR をマージする）
+fn pr_selector(args: &[Arg]) -> Option<String> {
+    // gh pr merge の、値を次の語で取るフラグ（`--flag=値` の形は 1 語なので、下の `-` で始まる語として飛ばす）
+    const VALUE_FLAGS: &[&str] = &[
+        "-R",
+        "--repo",
+        "-F",
+        "--body-file",
+        "-b",
+        "--body",
+        "-t",
+        "--subject",
+        "-A",
+        "--author-email",
+        "--match-head-commit",
+    ];
     let mut skip = false;
     for a in args {
         let t = a.text.as_str();
         if skip {
             skip = false;
-            continue;
-        }
-        if matches!(t, "--body" | "-b" | "--subject" | "-t")
-            || t.starts_with("--body=")
-            || t.starts_with("--subject=")
-        {
-            break;
-        }
-        match t {
-            "-R" | "--repo" | "-F" | "--body-file" => skip = true,
-            _ if t.starts_with("--repo=") || t.starts_with("--body-file=") => {}
-            _ if t.starts_with('-') => {}
-            _ if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) => {
-                return Some(t.to_string());
-            }
-            _ => {}
+        } else if VALUE_FLAGS.contains(&t) {
+            skip = true;
+        } else if !t.starts_with('-') && !t.is_empty() {
+            return Some(t.to_string());
         }
     }
     None
@@ -617,7 +623,7 @@ impl Rule for PreMergeCheck {
             if let Some(r) = repo.as_deref() {
                 repo_args.extend(["-R", r]);
             }
-            let pr_ref = pr_ref(args);
+            let selector = pr_selector(args);
 
             // コマンドの文字列だけで決まる理由の数。前のコマンドの実行で変わりえない（ファイルや GitHub の状態を読まない）
             // ので、これだけで拒むときは投げ直しの案内を付けない
@@ -668,8 +674,25 @@ impl Rule for PreMergeCheck {
                 }
             }
 
-            // 対象リポジトリ（base）。check-run と review thread はどちらも base 側に紐づく
-            let (owner, name) = match repo.as_deref() {
+            // --- 4. CI チェック ---
+            let mut view_args: Vec<&str> = vec!["pr", "view"];
+            view_args.extend(repo_args.iter().copied());
+            if let Some(r) = selector.as_deref() {
+                view_args.push(r);
+            }
+            view_args.extend(["--json", "number,headRefOid,reviewDecision,baseRefName,url"]);
+            let pr_meta: Option<Value> = gh::gh(&dir, &view_args)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok());
+
+            // 対象リポジトリ（base）。check-run と review thread はどちらも base 側に紐づく。gh が解いた PR の url の
+            // リポジトリを使う（URL で渡した PR は、-R や cwd のリポジトリと違いうる）。url を読めなければ -R か cwd
+            let url_repo = pr_meta
+                .as_ref()
+                .and_then(|m| m["url"].as_str())
+                .and_then(|u| pr_url::parse(u).ok())
+                .map(|pr| pr.repo);
+            let (owner, name) = match url_repo.as_deref().or(repo.as_deref()) {
                 Some(r) => {
                     let (o, n) = split_repo(r);
                     (o.to_string(), n.to_string())
@@ -684,17 +707,6 @@ impl Rule for PreMergeCheck {
                         .unwrap_or_default(),
                 ),
             };
-
-            // --- 4. CI チェック ---
-            let mut view_args: Vec<&str> = vec!["pr", "view"];
-            view_args.extend(repo_args.iter().copied());
-            if let Some(r) = pr_ref.as_deref() {
-                view_args.push(r);
-            }
-            view_args.extend(["--json", "number,headRefOid,reviewDecision,baseRefName"]);
-            let pr_meta: Option<Value> = gh::gh(&dir, &view_args)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok());
 
             let mut head_sha = String::new();
             let mut copilot_check_failed = false;
@@ -789,7 +801,7 @@ impl Rule for PreMergeCheck {
                     ),
                 }
             } else {
-                reasons.push("PR またはリポジトリの情報を取得できません（gh pr view / gh repo view が失敗。PR番号・リポジトリ指定・認証・ネットワークを確認）".to_string());
+                reasons.push("PR またはリポジトリの情報を取得できません（gh pr view / gh repo view が失敗。PR の指定・リポジトリ指定・認証・ネットワークを確認）".to_string());
             }
 
             // --- 5. レビュー判定 ---
@@ -808,14 +820,18 @@ impl Rule for PreMergeCheck {
             // --- 6. 未解決レビュースレッド ---
             // Copilot のレビューは COMMENTED で提出され reviewDecision を変えないため、
             // 指摘への対応漏れはスレッドの resolve 状態で判定する
-            let pr_number = pr_ref.clone().or_else(|| {
-                pr_meta
-                    .as_ref()
-                    .and_then(|m| m["number"].as_u64())
-                    .map(|n| n.to_string())
-            });
+            // gh が解いた PR の番号。読めなければ、番号で渡された指定を使う
+            let pr_number = pr_meta
+                .as_ref()
+                .and_then(|m| m["number"].as_u64())
+                .map(|n| n.to_string())
+                .or_else(|| {
+                    selector
+                        .clone()
+                        .filter(|s| s.chars().all(|c| c.is_ascii_digit()))
+                });
             match pr_number.as_deref() {
-                None => reasons.push("対象 PR を特定できません（PR番号を指定するか、PR のあるブランチで実行してください）".to_string()),
+                None => reasons.push("対象 PR を特定できません（PR の URL を渡すか、PR のあるブランチで実行してください）".to_string()),
                 Some(number) => {
                     let unresolved = gh::gh(
                         &dir,
@@ -1122,18 +1138,36 @@ mod tests {
     use crate::shell::Shell;
 
     #[test]
-    fn pr_ref_skips_option_values_and_stops_at_body() {
-        let cs = Shell::parse("gh pr merge -R owner/repo 12 --merge --body \"PR 99\"")
-            .commands()
-            .to_vec();
+    fn pr_selector_skips_option_values_and_stops_at_body() {
+        let selector = |cmd: &str| {
+            let cs = Shell::parse(cmd).commands().to_vec();
+            pr_selector(cs[0].gh_subcommand(&["pr", "merge"]).unwrap())
+        };
         assert_eq!(
-            pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()).as_deref(),
+            selector("gh pr merge -R owner/repo 12 --merge --body \"PR 99\"").as_deref(),
             Some("12")
         );
-        let cs = Shell::parse("gh pr merge --merge --subject 'x 7'")
-            .commands()
-            .to_vec();
-        assert_eq!(pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()), None);
+        assert_eq!(selector("gh pr merge --merge --subject 'x 7'"), None);
+        // URL とブランチ名も、解かずにそのまま返す
+        assert_eq!(
+            selector("gh pr merge https://github.com/octo/repo/pull/34 --merge --body 'x'")
+                .as_deref(),
+            Some("https://github.com/octo/repo/pull/34")
+        );
+        assert_eq!(
+            selector("gh pr merge --merge feat/x --delete-branch").as_deref(),
+            Some("feat/x")
+        );
+        // 値を取るフラグの値は指定にせず、本文の後ろの指定も読む
+        assert_eq!(
+            selector("gh pr merge --match-head-commit 555 -A me@example.com 34 --merge").as_deref(),
+            Some("34")
+        );
+        assert_eq!(
+            selector("gh pr merge --merge --body 'PR 99' https://github.com/octo/repo/pull/34")
+                .as_deref(),
+            Some("https://github.com/octo/repo/pull/34")
+        );
     }
 
     #[test]

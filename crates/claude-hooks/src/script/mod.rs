@@ -19,7 +19,7 @@ mod git_merge_state;
 mod kept_sentences;
 mod memory_index;
 mod post_merge_cleanup;
-mod pr_url;
+pub(crate) mod pr_url;
 mod prose_size;
 mod record_local_review;
 mod rename_branch;

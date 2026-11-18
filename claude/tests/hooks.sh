@@ -1010,6 +1010,37 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
+# make_fake_gh_merge_selector <gh pr view に渡る PR の指定>: octo/repo の PR #34 を、その指定で引いたときだけ返す gh。
+# repo view には答えない（cwd のリポジトリでなく、gh が解いた PR の url のリポジトリで検査することを見る）
+make_fake_gh_merge_selector() {
+  make_fake_gh '"pr view '"$1"' --json number,headRefOid,reviewDecision,baseRefName,url"*) echo "{\"number\":34,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"url\":\"https://github.com/octo/repo/pull/34\"}" ;;
+  "api --paginate repos/octo/repo/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api repos/octo/repo/commits/abc/status"*) echo "[]" ;;
+  "api repos/octo/repo/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/octo/repo/pulls/34/reviews"*) echo abc ;;
+  "api --paginate repos/octo/repo/pulls/34/files"*) true ;;
+  "api --paginate repos/octo/repo/issues/34/comments"*) true ;;
+  "api graphql"*) echo "[]" ;;'
+}
+
+it "pre-merge-check: PR の URL で渡した PR を、その URL のリポジトリで検査する"
+make_fake_gh_merge_selector 'https://github.com/octo/repo/pull/34'
+out=$(run_hook pre-merge-check "${MERGE_CMD/gh pr merge 1/gh pr merge https://github.com/octo/repo/pull/34}")
+assert_eq allow "$(decision "$out")"
+assert_contains "$(cat "$FAKE_GH_LOG")" "repos/octo/repo/pulls/34/reviews"
+
+it "pre-merge-check: ブランチ名で渡した PR を、gh が解いた PR として検査する"
+make_fake_gh_merge_selector 'feat/x'
+out=$(run_hook pre-merge-check "${MERGE_CMD/gh pr merge 1/gh pr merge feat/x}")
+assert_eq allow "$(decision "$out")"
+assert_contains "$(cat "$FAKE_GH_LOG")" "repos/octo/repo/pulls/34/reviews"
+
+it "pre-merge-check: -R と URL の両方があれば、どちらも gh pr view に渡して gh の解いた PR を検査する"
+make_fake_gh_merge_selector '-R a/b https://github.com/octo/repo/pull/34'
+out=$(run_hook pre-merge-check "${MERGE_CMD/gh pr merge 1/gh pr merge -R a/b https://github.com/octo/repo/pull/34}")
+assert_eq allow "$(decision "$out")"
+assert_contains "$(cat "$FAKE_GH_LOG")" "repos/octo/repo/pulls/34/reviews"
+
 it "pre-merge-check: base との差を取得できなければ deny"
 make_fake_gh_merge 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
