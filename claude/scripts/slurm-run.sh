@@ -359,6 +359,7 @@ for ((attempt = 1; attempt <= tries; attempt++)); do
 done
 
 state=""
+marked=false
 if [[ -z $record ]]; then
   echo "WARN: ジョブ $job の記録が sacct から読めなかった（$tries 回。実際の時間は確かめられない）" >&2
   # 終わりの State を確かめられないまま 0 を返すと、取り消されたジョブでも && の次が走る。終わった直後なら slurmctld が
@@ -381,6 +382,7 @@ else
     status=1
   fi
   time_line="TIME: job=$job elapsed=$elapsed estimate=$limit"
+  plain_time_line=$time_line
   if $shared; then
     time_line+=" shared (-c $cpus): 時間は当てにならない"
   fi
@@ -402,6 +404,8 @@ else
   elif [[ ! $suspended =~ ^[0:]*$ ]]; then
     time_line+=" suspended: 止められていたので時間は当てにならない"
   fi
+  # 印の付いた行は、時間を記録に使わない扱いを、行の後の NEXT: で示す
+  [[ $time_line == "$plain_time_line" ]] || marked=true
   time_line+=" state=$state"
   # 目的は利用者の書く文なので、末尾に置く
   time_line+=" class=$class ref=$ref purpose=$purpose"
@@ -411,6 +415,9 @@ else
   }
 fi
 tail -n 20 "$log" 2>/dev/null || true
+if $marked; then
+  echo "NEXT: TIME 行に印があるので、この時間（elapsed も、プログラムが自分で測った時間も）は記録に使わない。記録する時間は、-c を付けずに区分 timed（急ぐ計算なら --timed）で投げ直して測る"
+fi
 if [[ -n $state && $state != COMPLETED ]]; then
   echo "EXIT: $status (State=$state)"
 else
