@@ -43,13 +43,30 @@
 #    class=<区分> ref=<参照> purpose=<目的> をログへ書き足すので、その行も含む。印は、-c のとき、timed で走らなかったとき、
 #    止められていたときに付く。state=<終わったときの State>）
 #   NEXT: （TIME 行に印があるときだけ）その時間を記録に使わないことと、測り直し方
-#   RESULT: job=<番号> name=<名前> exit=<終了コード> state=<State>（& と wait で待った複数のジョブを見分ける）
+#   RESULT: job=<番号> name=<名前> exit=<終了コード> state=<State>（& と wait で待った複数のジョブを見分ける。投げる前に
+#           止めたときと sbatch が投げられなかったときも、job=- state=NOT_SUBMITTED で出す）
 #   EXIT: <終了コード>（COMPLETED 以外で終わったときは、後ろに (State=<State>) を付ける）
 # 終了コードはジョブの終了コード。ジョブが COMPLETED でなく（CANCELLED、TIMEOUT など）、sbatch が 0 を返したときは 1。
 # 終わった時間と State は sacct から読む（State だけは、読めなければ scontrol。どちらも確かめられなければ 1）。記録が slurmdbd に届くまで SLURM_RUN_SACCT_TRIES 回（既定 10）、
 # SLURM_RUN_SACCT_INTERVAL 秒（既定 1）おきに待ち、読めなければ警告して TIME 行を出さない。
 
 set -euo pipefail
+
+# & と wait で待った複数のジョブを RESULT: の行で見分けるので、投げる前に止めたときと sbatch が投げられなかったときも出す
+name=""
+job=""
+submitted=""
+result_printed=false
+on_exit() {
+  local code=$?
+  [[ -z $submitted ]] || rm -f "$submitted"
+  if ! $result_printed; then
+    local state=NOT_SUBMITTED
+    [[ -z $job ]] || state=unknown
+    echo "RESULT: job=${job:--} name=${name:--} exit=$code state=$state"
+  fi
+}
+trap on_exit EXIT
 
 usage() {
   echo "Usage: $0 --class <timed|record|decision|trial> --ref <#NNNN|ADR-NNNN|- 理由> --purpose <結果が何を決めるか> [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>" >&2
@@ -163,7 +180,7 @@ fi
 
 # ジョブは r995（NixOS）で走り、/usr/bin/time が無いので、包んだコマンドは 0 秒で失敗する（2026-10-24、ジョブ 538〜540）。
 # 標準エラーを自分のファイルに向けたコマンドでは Slurm のログにも原因が出ないので、投げる前に止める
-usr_bin_time="(^|[^[:alnum:]_./-])/usr/bin/time(\$|[[:space:];|&)\"'])"
+usr_bin_time="(^|[^[:alnum:]_./-])/usr/bin/time(\$|[[:space:];|&)}<>\"'])"
 if [[ $command =~ $usr_bin_time ]]; then
   echo "ERROR: /usr/bin/time は r995 に無く、ジョブが 0 秒で失敗する。ジョブの時間とメモリは TIME: 行と sacct -j <番号>.batch -o Elapsed,MaxRSS で取る。プログラムだけの時間が要るなら、ジョブの PATH に GNU time があることを type -P time で確かめてから command time -o <ファイル> -f \"%e s %M KB\" <コマンド> と書く" >&2
   exit 1
@@ -268,39 +285,33 @@ local_path() {
 
 # timed のジョブは走っている main のジョブを止め、止められたジョブは持っているロック（cargo のビルドディレクトリ、
 # DVC の .dvc/tmp/lock）を持ったまま止まる。同じ worktree の timed のジョブは同じロックを待って、どちらも進まない。
-# worktree によらないロック（$CARGO_HOME、nix の評価のキャッシュ）はコマンドから決められないので見ない
+# worktree によらないロック（$CARGO_HOME、nix の評価のキャッシュ）はコマンドから決められないので見ない。
+# 場所は squeue の作業ディレクトリ（%Z。投げたときの $PWD）で読む。コメントの連絡先と違い、slurm-run.sh の外から投げた
+# ジョブにもある
 if $timed; then
-  if running=$(squeue --noheader --partition=main --states=RUNNING,SUSPENDED,CONFIGURING --format '%i|%k' 2>/dev/null); then
+  squeue_err=$(mktemp)
+  if running=$(squeue --noheader --partition=main --states=RUNNING,SUSPENDED,CONFIGURING --format '%i|%Z' 2>"$squeue_err"); then
     here=$(worktree_of "$PWD")
-    while IFS='|' read -r id comment; do
-      # 連絡先は slurm-run.sh が書く「<区分> | <参照> | <目的> | [<ブランチ> ]<場所>[ commit=…][ claude=…][ shared-cpus=…]」。
-      # 区分の無いジョブは、連絡先の形が分からないので比べない。ブランチの名前は / で始まらないので、最初の「/」から場所
-      [[ -n $id && $comment =~ ^(timed|record|decision|trial)\ \|\ .*\ \|\ .*\ \|\ . ]] || continue
-      job_contact=${comment#* | }
-      job_contact=${job_contact#* | }
-      job_contact=${job_contact#* | }
-      [[ $job_contact == /* ]] || job_contact=/${job_contact#* /}
-      job_dir=${job_contact%% commit=*}
-      job_dir=${job_dir%% claude=*}
-      job_dir=${job_dir%% shared-cpus=*}
+    while IFS='|' read -r id job_dir; do
+      [[ -n $id && -n $job_dir ]] || continue
       if [[ $(worktree_of "$(local_path "$job_dir")") == "$here" ]]; then
         echo "ERROR: 走っている main のジョブ $id が同じ worktree（$here）で走っている。timed のジョブはそれを止め、止められたジョブはロック（cargo のビルドディレクトリ、DVC の lock）を持ったまま止まるので、同じロックを取るとどちらも進まない" >&2
         echo "NEXT: 別の worktree（git worktree add）から投げるか、ジョブ $id が終わってから投げる" >&2
+        rm -f "$squeue_err"
         exit 1
       fi
     done <<<"$running"
   else
-    echo "WARN: 走っている main のジョブを読めず、同じ worktree で走っているかを確かめられなかった（squeue が失敗）" >&2
+    echo "WARN: 走っている main のジョブを読めず、同じ worktree で走っているかを確かめられなかった（squeue が失敗）: $(head -n 1 "$squeue_err")" >&2
   fi
+  rm -f "$squeue_err"
 fi
 
 # sbatch --wait は終わるまで戻らないので、裏で実行し、最初の行から番号を読む
 submitted=$(mktemp)
-trap 'rm -f "$submitted"' EXIT
 sbatch "${resources[@]}" --wait --export=ALL -J "$name" -o "$remote_logs/%x-%j.out" \
   --time "$estimate" --comment "$class | $ref | $purpose | $contact" --wrap "$command" >"$submitted" &
 pid=$!
-job=""
 while [[ -z $job ]]; do
   if read -r line <"$submitted" && [[ $line =~ ^Submitted\ batch\ job\ ([0-9]+) ]]; then
     job=${BASH_REMATCH[1]}
@@ -439,6 +450,7 @@ if $marked; then
 fi
 # & と wait で同時に待った複数のジョブは、EXIT: の行がどのジョブのものか分からないので、1 行で番号と名前を添える
 echo "RESULT: job=$job name=$name exit=$status state=${state:-unknown}"
+result_printed=true
 if [[ -n $state && $state != COMPLETED ]]; then
   echo "EXIT: $status (State=$state)"
 else
