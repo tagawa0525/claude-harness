@@ -12,12 +12,12 @@
 //! `echo sbatch` や `grep sbatch …` のように引数に現れるだけの場合は対象外。
 //!
 //! /slurm-run の「順番」と「複数のジョブを待つ」で使わない操作も止め、代わりの手を示す:
-//! `scontrol hold|uhold|release|suspend|resume|requeuehold` と `update` の Priority（大文字と略記も。held のジョブは
+//! `scontrol hold|uhold|release|suspend|resume|requeuehold` と `update` の Priority・Nice・Partition・QOS（大文字と略記も。held のジョブは
 //! ほかのエージェントが取り消しうる。main のジョブを止めて再開するのは
 //! `--timed` のジョブだけ）、利用者・名前・状態などで絞る `scancel`（ほかのエージェントのジョブも取り消す）、
 //! `slurm-run.sh` の出力のパイプと、同じスコープで後ろに続く表示のコマンド（`tail`、`head`、`grep`、`cat`。終了コードと
 //! `TIME:` の行が消えるか、表示のコマンドの終了コードになる）。前の 2 つは `ALLOW_SLURM_CONTROL=<理由>` で外せる。
-//! 表示のコマンドはスコープが同じものだけを数え、`slurm-run.sh` の引数の `$(cat …)` は数えない。
+//! 表示のコマンドは slurm-run.sh と同じか外側のスコープのものだけを数え、`slurm-run.sh` の引数の `$(cat …)` は数えない。
 
 use super::{Rule, apply_escape, escape_hint};
 use crate::input::Input;
@@ -52,6 +52,8 @@ const SCONTROL_DENIED: &[&str] = &[
     "resume",
     "requeuehold",
 ];
+/// scontrol update の、待ち行列の順か止めることを変える欄
+const UPDATE_DENIED: &[&str] = &["priority=", "nice=", "partition=", "qos="];
 /// scontrol のオプションのうち、次の語を値に取るもの（その値をサブコマンドと読まない）
 const SCONTROL_VALUED: &[&str] = &["-M", "--clusters"];
 
@@ -91,8 +93,8 @@ fn scontrol_subcommand(cmd: &Cmd) -> Option<usize> {
     None
 }
 
-/// scontrol はサブコマンドの大文字と小文字を区別せず、一意な略記（`ho`、`rel`）も受ける。requeue は requeuehold の
-/// 略記の形だが、別のサブコマンドなので数えない
+/// scontrol はサブコマンドの大文字と小文字を区別せず、一意な略記（`ho`、`rel`）も受ける。requeue とその略記
+/// （`requeu`）は requeuehold の頭でもあるが、scontrol は requeue と読むので数えない
 fn scontrol_denied(cmd: &Cmd) -> bool {
     if basename(cmd.program()) != "scontrol" {
         return false;
@@ -101,15 +103,17 @@ fn scontrol_denied(cmd: &Cmd) -> bool {
         return false;
     };
     let sub = cmd.args[i].text.to_ascii_lowercase();
-    let denied = sub != "requeue"
+    let denied = !"requeue".starts_with(&sub)
         && SCONTROL_DENIED
             .iter()
             .any(|d| *d == sub || (sub.len() >= 2 && d.starts_with(&sub)));
-    // 優先度を書き換えると、0 は hold と同じで、ほかの値は区分の順を崩す
+    // 優先度を書き換えると、0 は hold と同じで、ほかの値は区分の順を崩す。nice と QOS は優先度を、パーティションは
+    // timed に移すと main のジョブを止める
     let priority = (sub.len() >= 2 && "update".starts_with(&sub))
-        && cmd.args[i + 1..]
-            .iter()
-            .any(|a| a.text.to_ascii_lowercase().starts_with("priority="));
+        && cmd.args[i + 1..].iter().any(|a| {
+            let key = a.text.to_ascii_lowercase();
+            UPDATE_DENIED.iter().any(|k| key.starts_with(k))
+        });
     denied || priority
 }
 
@@ -144,7 +148,9 @@ fn scancel_filters(cmd: &Cmd) -> bool {
         })
 }
 
-/// slurm-run.sh の出力をパイプにつなぐか、同じスコープで後ろに表示のコマンドが続くか
+/// slurm-run.sh の出力をパイプにつなぐか、後ろに表示のコマンドが続くか。後ろのコマンドは、slurm-run.sh と同じか外側の
+/// スコープのものだけを数える（サブシェルや `bash -c` の中の slurm-run.sh も、外の `| tail` や `; cat` が隠す）。
+/// 内側のスコープは slurm-run.sh の引数の `$(cat …)` なので数えない
 fn hides_slurm_run_output(shell: &Shell) -> bool {
     let cmds = shell.commands();
     cmds.iter()
@@ -153,7 +159,7 @@ fn hides_slurm_run_output(shell: &Shell) -> bool {
             !run.piped_into.is_empty()
                 || cmds.iter().any(|c| {
                     c.start > run.start
-                        && c.scope == run.scope
+                        && run.scope.starts_with(&c.scope)
                         && DISPLAY.contains(&basename(c.program()))
                 })
         })
@@ -168,7 +174,7 @@ impl Rule for GuardSbatch {
         let mut control = Vec::new();
         if shell.commands().iter().any(scontrol_denied) {
             control.push(Finding::Deny(format!(
-                "scontrol hold / uhold / release / suspend / resume / requeuehold と、update の Priority は使わないでください（held のジョブはほかのエージェントが取り消しうる。main のジョブを止めて再開するのは --timed のジョブだけ）。順番は slurm-run.sh が投げるたびに区分の順に並べ直します。変えるときは、急ぐ数分のジョブを --top で投げる、slurm-queue.sh の ORDER: の行の scontrol top を実行する、走っているジョブの終わりを待てない数分の計算を --timed で投げる、のどれかにしてください（/slurm-run の「順番」）。{}",
+                "scontrol hold / uhold / release / suspend / resume / requeuehold と、update の Priority、Nice、Partition、QOS は使わないでください（held のジョブはほかのエージェントが取り消しうる。main のジョブを止めて再開するのは --timed のジョブだけ）。順番は slurm-run.sh が投げるたびに区分の順に並べ直します。変えるときは、急ぐ数分のジョブを --top で投げる、slurm-queue.sh の ORDER: の行の scontrol top を実行する、走っているジョブの終わりを待てない数分の計算を --timed で投げる、のどれかにしてください（/slurm-run の「順番」）。{}",
                 escape_hint("ALLOW_SLURM_CONTROL")
             )));
         }
@@ -178,16 +184,12 @@ impl Rule for GuardSbatch {
                 escape_hint("ALLOW_SLURM_CONTROL")
             )));
         }
-        let control = apply_escape(
+        // 拒否の理由はまとめて示す（1 つずつだと、直すたびに次の拒否を受ける）
+        let mut findings = apply_escape(
             shell.escape("ALLOW_SLURM_CONTROL"),
             "ALLOW_SLURM_CONTROL",
             control,
         );
-        if !control.is_empty() {
-            return control;
-        }
-        // 出力の扱いとフォアグラウンドは、どちらも直す形なので、まとめて示す（1 つずつだと拒否を 2 回受ける）
-        let mut findings = Vec::new();
         if hides_slurm_run_output(shell) {
             findings.push(Finding::Deny(
                 "slurm-run.sh の出力はパイプや、後ろに ; && || でつないだ表示のコマンド（tail、head、grep、cat）に渡さず、そのまま受けてください（終了コードと TIME: の行が消えるか、表示のコマンドの終了コードになります）。表示は、通知の後に別の呼び出しで読んでください（複数のファイルの末尾は tail -n 3 a.txt b.txt）".to_string(),
