@@ -150,6 +150,13 @@ if $shared && [[ ! $cpus =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
+# sbatch --time の形（分、分:秒、時:分:秒、日-時、日-時:分、日-時:分:秒）。sbatch に渡してから拒まれると、理由が
+# sbatch の英語の 1 行だけになるので、先に確かめて修正方法を示す
+if [[ ! $estimate =~ ^([0-9]+-)?[0-9]+(:[0-9]+){0,2}$ ]]; then
+  echo "ERROR: -t は分の数（-t 90）か H:MM:SS（-t 1:30:00）。25m や 1h の形は sbatch が受け付けない: '$estimate'" >&2
+  exit 1
+fi
+
 if [[ ! $name =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "ERROR: 名前はファイル名に使える英数字と . _ - だけにする: $name" >&2
   exit 1
