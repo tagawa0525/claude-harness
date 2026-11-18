@@ -157,6 +157,14 @@ if [[ ! $estimate =~ ^([0-9]+-)?[0-9]+(:[0-9]+){0,2}$ ]]; then
   exit 1
 fi
 
+# ジョブは r995（NixOS）で走り、/usr/bin/time が無いので、包んだコマンドは 0 秒で失敗する（2026-10-24、ジョブ 538〜540）。
+# 標準エラーを自分のファイルに向けたコマンドでは Slurm のログにも原因が出ないので、投げる前に止める
+usr_bin_time="(^|[^[:alnum:]_./-])/usr/bin/time(\$|[[:space:];|&)\"'])"
+if [[ $command =~ $usr_bin_time ]]; then
+  echo "ERROR: /usr/bin/time は r995 に無く、ジョブが 0 秒で失敗する。ジョブの時間とメモリは TIME: 行と sacct -j <番号>.batch -o Elapsed,MaxRSS で取る。プログラムだけの時間が要るなら、ジョブの PATH に GNU time があることを type -P time で確かめてから command time -o <ファイル> -f \"%e s %M KB\" <コマンド> と書く" >&2
+  exit 1
+fi
+
 if [[ ! $name =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "ERROR: 名前はファイル名に使える英数字と . _ - だけにする: $name" >&2
   exit 1
