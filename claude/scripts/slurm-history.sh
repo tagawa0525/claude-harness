@@ -9,13 +9,14 @@
 #   --job      ジョブごとに、状態、時間、排他か、コマンド、作業ディレクトリ、走った版（決められなければ理由）を
 #              sacct の記録と git の reflog から出す。出力の形と版の決め方は lib/slurm-job.sh の先頭
 #
-# 出力（表のあとに 3 行）:
+# 出力（表のあとに 3 行と、当たるときだけ NEXT:）:
 #   ジョブごと: JOBID NAME ESTIMATE ELAPSED RATIO MAX_RSS
 #   ジョブ名ごと: NAME RUNS ESTIMATE ELAPSED RATIO MAX_RATIO MAX_RSS（ESTIMATE と ELAPSED は平均。
 #   見積もりのあるジョブだけで求め、RUNS は見積もりのないジョブも数える。UNTIMED のジョブは数えない）
 #   SKIPPED: <最後まで走っていないので表に入れなかった行数>
 #   SHARED: <排他でないので表に入れなかった sacct のジョブの数>
 #   UNTIMED: <割り込みを入れた後に終わった、timed でないので表に入れなかったジョブの数>
+#   NEXT: <UNTIMED か SHARED が 0 でないときだけ、そのジョブの実績を sacct で読むコマンド>
 #
 # 定義:
 #   ELAPSED  EndTime - StartTime（jobcomp に Elapsed の欄は無い）
@@ -277,5 +278,6 @@ END {
   printf "SKIPPED: %d\n", skipped + 0
   printf "UNTIMED: %d\n", untimed + 0
   printf "SHARED: %d\n", shared + 0
+  if (untimed + shared > 0) print "NEXT: UNTIMED と SHARED のジョブ（main か -c で走り、時間が当てにならない）の実績は sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,State,MaxRSS,Suspended で読む（Elapsed は止められていた時間を除く）"
 }
 ' "$SACCT_FILE" "$FILE"
