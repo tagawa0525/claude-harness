@@ -628,7 +628,7 @@ assert_not_contains "$out" "preemptible"
 assert_not_contains "$out" "suspended"
 
 it "slurm-run: sacct の Partition か Suspended が空なら、確かめられない印を付ける"
-out=$(FAKE_SACCT_PARTITION= FAKE_SACCT_SUSPENDED= "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
+out=$(FAKE_SACCT_PARTITION='' FAKE_SACCT_SUSPENDED='' "$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true' 2>&1)
 assert_contains "$out" "partition=unknown"
 assert_contains "$out" "suspended=unknown"
 
