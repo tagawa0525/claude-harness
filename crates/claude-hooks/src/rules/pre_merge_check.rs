@@ -79,6 +79,20 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
     )
 }
 
+/// `gh pr merge` の対象の PR。URL で渡されたときは、そのリポジトリも持つ
+struct PrTarget {
+    number: Option<String>,
+    /// PR の URL の `<owner>/<repo>`。番号で渡されたときは None
+    url_repo: Option<String>,
+}
+
+fn pr_target(args: &[Arg]) -> PrTarget {
+    PrTarget {
+        number: pr_ref(args),
+        url_repo: None,
+    }
+}
+
 /// 引数から PR 番号を探す。本文（--body / --subject）より前のトークンから、値を取るフラグの
 /// 値を飛ばして最初の数値を採る（`gh pr merge -R owner/repo 12 …` の形にも対応）
 fn pr_ref(args: &[Arg]) -> Option<String> {
@@ -1134,6 +1148,26 @@ mod tests {
             .commands()
             .to_vec();
         assert_eq!(pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()), None);
+    }
+
+    #[test]
+    fn pr_target_reads_the_number_and_the_repository_from_a_pr_url() {
+        let cs = Shell::parse(
+            "gh pr merge https://github.com/octo/repo/pull/34 --merge --body 'https://github.com/a/b/pull/9'",
+        )
+        .commands()
+        .to_vec();
+        let target = pr_target(cs[0].gh_subcommand(&["pr", "merge"]).unwrap());
+        assert_eq!(target.number.as_deref(), Some("34"));
+        assert_eq!(target.url_repo.as_deref(), Some("octo/repo"));
+    }
+
+    #[test]
+    fn pr_target_of_a_number_has_no_repository() {
+        let cs = Shell::parse("gh pr merge 12 --merge").commands().to_vec();
+        let target = pr_target(cs[0].gh_subcommand(&["pr", "merge"]).unwrap());
+        assert_eq!(target.number.as_deref(), Some("12"));
+        assert_eq!(target.url_repo, None);
     }
 
     #[test]
