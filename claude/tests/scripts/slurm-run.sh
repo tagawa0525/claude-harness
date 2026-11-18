@@ -48,9 +48,12 @@ EOF
 # FAKE_SQUEUE_OUT<n> を出し（無ければ空。並べ直しが済んだ状態）、FAKE_SQUEUE_EXIT で終わる
 cat >"$FAKE_BIN/squeue" <<'EOF'
 #!/usr/bin/env bash
-# 走っている main のジョブを問い合わせたら（--timed の投げる前の確認）、FAKE_SQUEUE_RUNNING を出す。読んだ回数に数えない
+# 走っている main のジョブを問い合わせたら（--timed の投げる前の確認）、FAKE_SQUEUE_RUNNING（<番号>|<作業ディレクトリ>）を
+# 出し、FAKE_SQUEUE_RUNNING_ERR を標準エラーに出す。読んだ回数に数えない
 if [[ " $* " == *" --states=RUNNING,SUSPENDED,CONFIGURING "* ]]; then
+  printf '%s\n' "$@" >"$TEST_ROOT/squeue.args.running"
   [[ -z ${FAKE_SQUEUE_RUNNING:-} ]] || printf '%s\n' "$FAKE_SQUEUE_RUNNING"
+  [[ -z ${FAKE_SQUEUE_RUNNING_ERR:-} ]] || echo "$FAKE_SQUEUE_RUNNING_ERR" >&2
   exit "${FAKE_SQUEUE_RUNNING_EXIT:-0}"
 fi
 n=$(($(cat "$TEST_ROOT/squeue.count" 2>/dev/null || echo 0) + 1))
@@ -725,14 +728,14 @@ cd "$HOME/github/committed" || exit 1
 mkdir -p sub
 for path in "$HOME/github/committed" "$HOME/github/committed/sub"; do
   rm -f "$TEST_ROOT/sbatch.args"
-  out=$(FAKE_SQUEUE_RUNNING="700|trial | #1 | p | feat/commit $path commit=abc claude=x" \
+  out=$(FAKE_SQUEUE_RUNNING="700|$path" \
     "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' 2>&1)
   assert_eq 1 $?
   assert_contains "$out" "ERROR: 走っている main のジョブ 700 が同じ worktree"
   assert_contains "$out" "NEXT: 別の worktree（git worktree add）から投げるか、ジョブ 700 が終わってから投げる"
   assert_file_missing "$TEST_ROOT/sbatch.args"
 done
-out=$(cd sub && FAKE_SQUEUE_RUNNING="700|trial | #1 | p | feat/commit $HOME/github/committed commit=abc" \
+out=$(cd sub && FAKE_SQUEUE_RUNNING="700|$HOME/github/committed" \
   "$RUN" "${PURPOSE[@]}" --class timed -t 5 xlc-bench 'true' 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR: 走っている main のジョブ 700"
@@ -740,12 +743,12 @@ assert_contains "$out" "ERROR: 走っている main のジョブ 700"
 it "slurm-run: --timed のジョブは、走っている main のジョブが別の worktree なら投げる。timed でないジョブは確かめない"
 cd "$HOME/github/committed" || exit 1
 rm -f "$TEST_ROOT/sbatch.args"
-FAKE_SQUEUE_RUNNING="701|trial | #1 | p | feat/other $HOME/github/proj commit=abc" \
+FAKE_SQUEUE_RUNNING="701|$HOME/github/proj" \
   "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' >/dev/null 2>&1
 assert_eq 0 $?
 assert_file_exists "$TEST_ROOT/sbatch.args"
 rm -f "$TEST_ROOT/sbatch.args"
-FAKE_SQUEUE_RUNNING="700|trial | #1 | p | feat/commit $HOME/github/committed commit=abc" \
+FAKE_SQUEUE_RUNNING="700|$HOME/github/committed" \
   "$RUN" "${PURPOSE[@]}" -t 5 xlc-2G 'true' >/dev/null 2>&1
 assert_eq 0 $?
 assert_file_exists "$TEST_ROOT/sbatch.args"
@@ -792,24 +795,50 @@ it "slurm-run: r995 と NFS の入口で書き方の違う同じ worktree も、
 # r995 以外から NFS の入口の下で投げ、走っているジョブは r995 の上のパスで投げられている
 cd "$NFS_ENTRY/proj" || exit 1
 rm -f "$TEST_ROOT/sbatch.args"
-out=$(SLURM_RUN_NFS_ENTRY=$NFS_ENTRY FAKE_HOST=t14g4 FAKE_SQUEUE_RUNNING="702|trial | #1 | p | feat/x $HOME/github/proj commit=abc" \
+out=$(SLURM_RUN_NFS_ENTRY=$NFS_ENTRY FAKE_HOST=t14g4 FAKE_SQUEUE_RUNNING="702|$HOME/github/proj" \
   "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR: 走っている main のジョブ 702"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 # r995 から投げ、走っているジョブは NFS の入口の下から投げられている
 cd "$HOME/github/proj" || exit 1
-out=$(SLURM_RUN_NFS_ENTRY=$NFS_ENTRY FAKE_SQUEUE_RUNNING="703|trial | #1 | p | feat/x $NFS_ENTRY/proj commit=abc" \
+out=$(SLURM_RUN_NFS_ENTRY=$NFS_ENTRY FAKE_SQUEUE_RUNNING="703|$NFS_ENTRY/proj" \
   "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR: 走っている main のジョブ 703"
 
-it "slurm-run: コメントの先頭が区分でないジョブ（slurm-run.sh の外から投げたもの）とは、場所を比べない"
+it "slurm-run: slurm-run.sh の外から投げた main のジョブも、作業ディレクトリで比べて --timed のジョブを止める"
 cd "$HOME/github/committed" || exit 1
 rm -f "$TEST_ROOT/sbatch.args"
-FAKE_SQUEUE_RUNNING="704|x | y | z | feat/commit $HOME/github/committed" \
-  "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' >/dev/null 2>&1
-assert_eq 0 $?
-assert_file_exists "$TEST_ROOT/sbatch.args"
+out=$(FAKE_SQUEUE_RUNNING="704|$HOME/github/committed" "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: 走っている main のジョブ 704"
+assert_contains "$(cat "$TEST_ROOT/squeue.args.running" 2>/dev/null)" "%i|%Z"
+
+it "slurm-run: 走っている main のジョブを読めないときの警告に、squeue の理由を添える"
+cd "$HOME/github/committed" || exit 1
+out=$(FAKE_SQUEUE_RUNNING_EXIT=1 FAKE_SQUEUE_RUNNING_ERR="slurm_load_jobs error: Unable to contact slurm controller" \
+  "$RUN" "${PURPOSE[@]}" --timed -t 5 xlc-bench 'true' 2>&1)
+assert_contains "$out" "WARN: 走っている main のジョブを読めず"
+assert_contains "$out" "Unable to contact slurm controller"
+
+it "slurm-run: 投げる前に止めたときと sbatch が投げられなかったときも、名前と成否の RESULT: を出す"
+cd "$HOME/github/proj" || exit 1
+out=$("$RUN" "${PURPOSE[@]}" -t 25m xlc-early 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "RESULT: job=- name=xlc-early exit=1 state=NOT_SUBMITTED"
+out=$("$RUN" "${PURPOSE[@]}" -t 5 xlc-early '/usr/bin/time xs' 2>&1)
+assert_contains "$out" "RESULT: job=- name=xlc-early exit=1 state=NOT_SUBMITTED"
+# 投げたジョブの RESULT: は 1 行だけ
+out=$("$RUN" "${PURPOSE[@]}" -t 5 xlc-2G 'true' 2>&1)
+assert_eq 1 "$(grep -c '^RESULT:' <<<"$out")"
+
+it "slurm-run: /usr/bin/time の直後がリダイレクトや } でも止める"
+for cmd in '/usr/bin/time>t.txt xs' '{ /usr/bin/time; }' '/usr/bin/time<in xs'; do
+  rm -f "$TEST_ROOT/sbatch.args"
+  out=$("$RUN" "${PURPOSE[@]}" -t 5 xlc-2G "$cmd" 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "ERROR: /usr/bin/time"
+done
 
 finish

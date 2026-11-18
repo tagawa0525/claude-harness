@@ -234,4 +234,9 @@ out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
 assert_eq "NEXT: 上の scontrol top を、番号を分けずに 1 回で実行する（1 本ずつ分けると最後に出したジョブが先頭になる）。ほかのセッションのジョブを含んでいても実行してよい" \
   "$(grep -A1 '^ORDER:' <<<"$out" | sed -n 2p)"
 
+it "slurm-queue: 区分の無いジョブの NOTE: の、並べ直されずに後ろに回る、は待っている main のジョブのときだけ言う"
+out=$(FAKE_SQUEUE_OUT="590|main|old-job|RUNNING|10000|20:00|N/A|$C" "$QUEUE")
+assert_contains "$out" "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無い"
+assert_not_contains "$out" "後ろに回る"
+
 finish
