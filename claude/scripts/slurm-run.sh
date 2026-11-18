@@ -38,9 +38,12 @@
 # 出力:
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
+#   NEXT: ジョブの走る場所（$PWD）と、違ったときの取り消し方
 #   （ログの末尾 20 行。終わった直後なら、最後に TIME: job=<番号> elapsed=<実際の時間> estimate=<見積もり> <印>
 #    class=<区分> ref=<参照> purpose=<目的> をログへ書き足すので、その行も含む。印は、-c のとき、timed で走らなかったとき、
 #    止められていたときに付く。state=<終わったときの State>）
+#   NEXT: （TIME 行に印があるときだけ）その時間を記録に使わないことと、測り直し方
+#   RESULT: job=<番号> name=<名前> exit=<終了コード> state=<State>（& と wait で待った複数のジョブを見分ける）
 #   EXIT: <終了コード>（COMPLETED 以外で終わったときは、後ろに (State=<State>) を付ける）
 # 終了コードはジョブの終了コード。ジョブが COMPLETED でなく（CANCELLED、TIMEOUT など）、sbatch が 0 を返したときは 1。
 # 終わった時間と State は sacct から読む（State だけは、読めなければ scontrol。どちらも確かめられなければ 1）。記録が slurmdbd に届くまで SLURM_RUN_SACCT_TRIES 回（既定 10）、
@@ -418,6 +421,8 @@ tail -n 20 "$log" 2>/dev/null || true
 if $marked; then
   echo "NEXT: TIME 行に印があるので、この時間（elapsed も、プログラムが自分で測った時間も）は記録に使わない。記録する時間は、-c を付けずに区分 timed（急ぐ計算なら --timed）で投げ直して測る"
 fi
+# & と wait で同時に待った複数のジョブは、EXIT: の行がどのジョブのものか分からないので、1 行で番号と名前を添える
+echo "RESULT: job=$job name=$name exit=$status state=${state:-unknown}"
 if [[ -n $state && $state != COMPLETED ]]; then
   echo "EXIT: $status (State=$state)"
 else
