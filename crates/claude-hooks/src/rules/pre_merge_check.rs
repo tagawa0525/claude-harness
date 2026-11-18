@@ -36,6 +36,7 @@ use crate::gh;
 use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
+use crate::script::pr_url;
 use crate::shell::{Arg, Cmd, Escape, Shell, has_flag, opt_value};
 use crate::unwrap::basename;
 use design_records::is_adr_path;
@@ -80,22 +81,17 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
 }
 
 /// `gh pr merge` の対象の PR。URL で渡されたときは、そのリポジトリも持つ
+#[derive(Debug, Default, PartialEq)]
 struct PrTarget {
     number: Option<String>,
     /// PR の URL の `<owner>/<repo>`。番号で渡されたときは None
     url_repo: Option<String>,
 }
 
+/// 引数から対象の PR を探す。本文（--body / --subject）より前のトークンから、値を取るフラグの値を飛ばして、最初の
+/// 数値か PR の URL を採る（`gh pr merge -R owner/repo 12 …` の形にも対応）。URL を読まないと、cwd のブランチの PR を
+/// 検査したまま gh は URL の PR をマージする
 fn pr_target(args: &[Arg]) -> PrTarget {
-    PrTarget {
-        number: pr_ref(args),
-        url_repo: None,
-    }
-}
-
-/// 引数から PR 番号を探す。本文（--body / --subject）より前のトークンから、値を取るフラグの
-/// 値を飛ばして最初の数値を採る（`gh pr merge -R owner/repo 12 …` の形にも対応）
-fn pr_ref(args: &[Arg]) -> Option<String> {
     let mut skip = false;
     for a in args {
         let t = a.text.as_str();
@@ -114,12 +110,22 @@ fn pr_ref(args: &[Arg]) -> Option<String> {
             _ if t.starts_with("--repo=") || t.starts_with("--body-file=") => {}
             _ if t.starts_with('-') => {}
             _ if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) => {
-                return Some(t.to_string());
+                return PrTarget {
+                    number: Some(t.to_string()),
+                    url_repo: None,
+                };
             }
-            _ => {}
+            _ => {
+                if let Ok(pr) = pr_url::parse_allowing_fragment(t) {
+                    return PrTarget {
+                        number: Some(pr.number),
+                        url_repo: Some(pr.repo),
+                    };
+                }
+            }
         }
     }
-    None
+    PrTarget::default()
 }
 
 /// SHA を短縮して読みやすくする（7 文字未満はそのまま）
@@ -620,18 +626,22 @@ impl Rule for PreMergeCheck {
                 dir = input.cwd.clone();
             }
 
-            let repo = opt_value(args, &["-R", "--repo"]).map(|a| {
-                a.text
-                    .strip_prefix("--repo=")
-                    .or_else(|| a.text.strip_prefix("-R="))
-                    .unwrap_or(&a.text)
-                    .to_string()
-            });
+            let target = pr_target(args);
+            // -R が無ければ、PR の URL のリポジトリで読む（cwd が別のリポジトリでも、その PR を検査する）
+            let repo = opt_value(args, &["-R", "--repo"])
+                .map(|a| {
+                    a.text
+                        .strip_prefix("--repo=")
+                        .or_else(|| a.text.strip_prefix("-R="))
+                        .unwrap_or(&a.text)
+                        .to_string()
+                })
+                .or(target.url_repo);
             let mut repo_args: Vec<&str> = Vec::new();
             if let Some(r) = repo.as_deref() {
                 repo_args.extend(["-R", r]);
             }
-            let pr_ref = pr_ref(args);
+            let pr_ref = target.number;
 
             // コマンドの文字列だけで決まる理由の数。前のコマンドの実行で変わりえない（ファイルや GitHub の状態を読まない）
             // ので、これだけで拒むときは投げ直しの案内を付けない
@@ -1136,18 +1146,23 @@ mod tests {
     use crate::shell::Shell;
 
     #[test]
-    fn pr_ref_skips_option_values_and_stops_at_body() {
+    fn pr_target_skips_option_values_and_stops_at_body() {
         let cs = Shell::parse("gh pr merge -R owner/repo 12 --merge --body \"PR 99\"")
             .commands()
             .to_vec();
         assert_eq!(
-            pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()).as_deref(),
+            pr_target(cs[0].gh_subcommand(&["pr", "merge"]).unwrap())
+                .number
+                .as_deref(),
             Some("12")
         );
         let cs = Shell::parse("gh pr merge --merge --subject 'x 7'")
             .commands()
             .to_vec();
-        assert_eq!(pr_ref(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()), None);
+        assert_eq!(
+            pr_target(cs[0].gh_subcommand(&["pr", "merge"]).unwrap()),
+            PrTarget::default()
+        );
     }
 
     #[test]
