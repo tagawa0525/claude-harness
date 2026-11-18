@@ -659,4 +659,12 @@ assert_contains "$out" "TIME: job=42 elapsed=00:12:34"
 assert_contains "$out" "state=COMPLETED"
 assert_eq 3 "$(cat "$TEST_ROOT/sacct.count")"
 
+it "slurm-run: --ref の値が無ければ（囲まない # から後ろがシェルの注釈になった）、投げずに引用符で囲む形を示してエラー"
+rm -f "$TEST_ROOT/sbatch.args"
+out=$("$RUN" --class trial --ref 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: --ref の値が無い"
+assert_contains "$out" "--ref '#0200'"
+assert_file_missing "$TEST_ROOT/sbatch.args"
+
 finish
