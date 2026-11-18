@@ -1152,6 +1152,16 @@ mod tests {
             selector("gh pr merge --merge feat/x --delete-branch").as_deref(),
             Some("feat/x")
         );
+        // 値を取るフラグの値は指定にせず、本文の後ろの指定も読む
+        assert_eq!(
+            selector("gh pr merge --match-head-commit 555 -A me@example.com 34 --merge").as_deref(),
+            Some("34")
+        );
+        assert_eq!(
+            selector("gh pr merge --merge --body 'PR 99' https://github.com/octo/repo/pull/34")
+                .as_deref(),
+            Some("https://github.com/octo/repo/pull/34")
+        );
     }
 
     #[test]
