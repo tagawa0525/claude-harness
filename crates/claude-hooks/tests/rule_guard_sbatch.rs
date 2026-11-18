@@ -63,6 +63,10 @@ fn scontrol_hold_release_and_suspend_are_denied_with_the_ways_to_change_the_orde
         // 優先度 0 は hold と同じ
         "scontrol update JobId=42 Priority=0",
         "scontrol update jobid=42 priority=10000",
+        // パーティションと nice と QOS も、待ち行列の順を変える
+        "scontrol update JobId=42 Partition=timed",
+        "scontrol update JobId=42 Nice=-10000",
+        "scontrol update JobId=42 QOS=high",
     ] {
         let reason = deny_reason(command).unwrap_or_else(|| panic!("{command} が止まらない"));
         assert!(reason.contains("--top"), "{command}: {reason}");
@@ -79,6 +83,9 @@ fn other_scontrol_commands_pass() {
         "scontrol show config",
         "scontrol update JobId=42 TimeLimit=30",
         "scontrol -M r995 show job 42",
+        // requeue の略記は requeuehold と読まない
+        "scontrol requeue 42",
+        "scontrol requeu 42",
         "squeue -o '%i %T'",
     ] {
         assert_eq!(deny_reason(command), None, "{command}");
@@ -133,6 +140,10 @@ fn slurm_run_output_into_a_pipe_or_a_display_command_is_denied() {
         format!("{RUN} && cat out.txt"),
         format!("{RUN} || head log.txt"),
         format!("cd ~/github/xlc && {{ {RUN} & {RUN} & wait; }}; tail -n 3 a.txt b.txt"),
+        // サブシェルと bash -c の中の slurm-run.sh も、外の後ろの表示で隠れる
+        format!("( {RUN} ) | tail -n 5"),
+        format!("( {RUN} & {RUN} & wait ); tail -n 3 a.txt b.txt"),
+        format!("bash -c \"{RUN}\"; cat out.txt"),
     ] {
         let reason = deny_reason(&command).unwrap_or_else(|| panic!("{command} が止まらない"));
         assert!(reason.contains("別の呼び出し"), "{command}: {reason}");
@@ -158,6 +169,14 @@ fn slurm_run_alone_and_display_commands_before_it_pass() {
 #[test]
 fn a_foreground_slurm_run_into_a_pipe_is_told_both_reasons_at_once() {
     let reason = deny_reason_in(&format!("{RUN} | tail -n 5"), false).unwrap();
+    assert!(reason.contains("別の呼び出し"), "{reason}");
+    assert!(reason.contains("run_in_background=true"), "{reason}");
+}
+
+#[test]
+fn every_reason_is_told_at_once() {
+    let reason = deny_reason_in(&format!("scontrol hold 42; {RUN} | tail -n 5"), false).unwrap();
+    assert!(reason.contains("scontrol hold"), "{reason}");
     assert!(reason.contains("別の呼び出し"), "{reason}");
     assert!(reason.contains("run_in_background=true"), "{reason}");
 }
