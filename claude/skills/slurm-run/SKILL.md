@@ -181,7 +181,7 @@ sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,S
 ## 排他でない投げ方（-c）
 
 ```bash
-cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh <区分と目的> -c <コア数> -t <見積もり> <名前> '<コマンド>'
+cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh <区分と目的> -c <コア数> -t <見積もり> <名前>-shared '<コマンド>'
 ```
 
 `--exclusive` を付けず、`<コア数>` の CPU だけを取る。時間を記録しない長い計算（何時間もの参照解、開発中の試行）向け。
