@@ -1,6 +1,8 @@
 //! スクリプトが対象の PR を URL で受けるための解析。cwd のリポジトリに依らずその PR を読み書きするため、gh には
 //! URL のリポジトリを渡す（[`crate::gh::run_for_repo`]）。番号だけだと cwd のリポジトリの PR として読まれ、cd の付け忘れで別の
 //! リポジトリの PR を読み書きする（ADR-0032）
+//!
+//! pre-merge-check も、gh が解いた PR の url からリポジトリを取るのに使う
 
 use regex::Regex;
 use std::sync::LazyLock;
