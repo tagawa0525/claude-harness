@@ -127,7 +127,7 @@ assert_contains "$out" "EXIT: 3"
 
 it "slurm-run: -c <コア数> を付けると、--exclusive を付けず --cpus-per-task を渡し、連絡先に印を付ける"
 cd "$HOME/github/proj" || exit 1
-"$RUN" "${PURPOSE[@]}" -c 8 -t 30 openmc-2G 'true' >/dev/null
+"$RUN" "${PURPOSE[@]}" -c 8 -t 30 openmc-2G-shared 'true' >/dev/null
 args=$(cat "$TEST_ROOT/sbatch.args")
 assert_not_contains "$args" "--exclusive"
 assert_contains "$args" "--cpus-per-task=8"
@@ -135,9 +135,9 @@ assert_contains "$args" "--wait"
 assert_contains "$args" "shared-cpus=8"
 
 it "slurm-run: -c を付けたジョブの TIME 行とログの末尾に、時間は当てにならない印を付ける"
-out=$("$RUN" "${PURPOSE[@]}" -c 8 -t 30 openmc-2G 'true')
+out=$("$RUN" "${PURPOSE[@]}" -c 8 -t 30 openmc-2G-shared 'true')
 assert_contains "$out" "TIME: job=42 elapsed=00:12:34 estimate=00:30:00 shared (-c 8): 時間は当てにならない"
-assert_contains "$(cat "$HOME/github/slurm-logs/openmc-2G-42.out")" "shared (-c 8): 時間は当てにならない"
+assert_contains "$(cat "$HOME/github/slurm-logs/openmc-2G-shared-42.out")" "shared (-c 8): 時間は当てにならない"
 
 it "slurm-run: -c を付けなければ、排他で投げ、TIME 行に印を付けない"
 out=$("$RUN" "${PURPOSE[@]}" -t 30 xlc-2G 'true')
@@ -201,7 +201,7 @@ assert_contains "$out" "preemptible: 割り込まれうるので時間は記録�
 assert_contains "$out" "suspended: 止められていたので時間は当てにならない"
 
 it "slurm-run: 排他でなく、止められてもいたら、すべての印を付ける"
-out=$(FAKE_SACCT_SUSPENDED=00:10:00 "$RUN" "${PURPOSE[@]}" -c 8 -t 30 openmc-2G 'true')
+out=$(FAKE_SACCT_SUSPENDED=00:10:00 "$RUN" "${PURPOSE[@]}" -c 8 -t 30 openmc-2G-shared 'true')
 assert_contains "$out" "shared (-c 8): 時間は当てにならない"
 assert_contains "$out" "preemptible: 割り込まれうるので時間は記録に使わない"
 assert_contains "$out" "suspended: 止められていたので時間は当てにならない"
@@ -209,7 +209,7 @@ assert_contains "$out" "suspended: 止められていたので時間は当てに
 it "slurm-run: -c が正の整数でなければ、投げずにエラー"
 for bad in 0 -1 abc 1.5 ""; do
   rm -f "$TEST_ROOT/sbatch.args"
-  out=$("$RUN" "${PURPOSE[@]}" -c "$bad" -t 30 openmc-2G 'true' 2>&1)
+  out=$("$RUN" "${PURPOSE[@]}" -c "$bad" -t 30 openmc-2G-shared 'true' 2>&1)
   assert_eq 1 $?
   assert_contains "$out" "ERROR:"
   assert_file_missing "$TEST_ROOT/sbatch.args"
@@ -683,5 +683,36 @@ for good in 90 30:00 1:30:00 1-00 1-12:00 2-12:00:00; do
   assert_eq 0 $?
   assert_contains "$(cat "$TEST_ROOT/sbatch.args" 2>/dev/null)" $'--time\n'"$good"
 done
+
+it "slurm-run: コマンドに /usr/bin/time があれば（r995 に無く、ジョブが 0 秒で失敗する）、投げずに時間の取り方を示してエラー"
+for cmd in '/usr/bin/time -v xs run.toml' 'cd sub && /usr/bin/time xs run.toml' 'env A=1 /usr/bin/time -f %e xs'; do
+  rm -f "$TEST_ROOT/sbatch.args"
+  out=$("$RUN" "${PURPOSE[@]}" -t 5 xlc-2G "$cmd" 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "ERROR: /usr/bin/time"
+  assert_contains "$out" "sacct -j <番号>.batch -o Elapsed,MaxRSS"
+  assert_contains "$out" 'command time -o <ファイル> -f "%e s %M KB"'
+  assert_file_missing "$TEST_ROOT/sbatch.args"
+done
+
+it "slurm-run: /usr/bin/time を含まないコマンド（command time、time の予約語、似た名前）は投げる"
+for cmd in 'command time -o t.txt xs' 'time xs' '/usr/bin/timeout 5 xs' 'ls /usr/bin/time-tools'; do
+  rm -f "$TEST_ROOT/sbatch.args"
+  "$RUN" "${PURPOSE[@]}" -t 5 xlc-2G "$cmd" >/dev/null 2>&1
+  assert_eq 0 $?
+  assert_file_exists "$TEST_ROOT/sbatch.args"
+done
+
+it "slurm-run: -c のジョブの名前の末尾が -shared でなければ、投げずに付ける形を示してエラー"
+rm -f "$TEST_ROOT/sbatch.args"
+out=$("$RUN" "${PURPOSE[@]}" -c 8 -t 30 openmc-2G 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: -c のジョブの名前は末尾に -shared を付ける（openmc-2G-shared）"
+assert_file_missing "$TEST_ROOT/sbatch.args"
+
+it "slurm-run: --timed と -c を組んだときのエラーは、どちらを外すかを示す"
+out=$("$RUN" "${PURPOSE[@]}" --timed -c 4 -t 5 xlc-bench-shared 'true' 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "時間を記録するなら -c を外し、記録しないなら --timed を外す"
 
 finish
