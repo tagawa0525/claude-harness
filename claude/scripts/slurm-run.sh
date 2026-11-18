@@ -153,10 +153,11 @@ if $shared && [[ ! $cpus =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
-# sbatch --time の形（分、分:秒、時:分:秒、日-時、日-時:分、日-時:分:秒）。sbatch に渡してから拒まれると、理由が
-# sbatch の英語の 1 行だけになるので、先に確かめて修正方法を示す
-if [[ ! $estimate =~ ^([0-9]+-)?[0-9]+(:[0-9]+){0,2}$ ]]; then
-  echo "ERROR: -t は分の数（-t 90）か H:MM:SS（-t 1:30:00）。25m や 1h の形は sbatch が受け付けない: '$estimate'" >&2
+# sbatch --time の形のうち、分、時:分:秒、日-時[:分[:秒]]。sbatch に渡してから拒まれると、理由が sbatch の英語の 1 行だけに
+# なるので、先に確かめて修正方法を示す。分:秒（1:30）は sbatch が受けるが、時:分のつもりで書くと 60 分の 1 の見積もりに
+# なるので受けない
+if [[ ! $estimate =~ ^([0-9]+|[0-9]+:[0-9]{2}:[0-9]{2}|[0-9]+-[0-9]+(:[0-9]{2}){0,2})$ ]]; then
+  echo "ERROR: -t は分の数（-t 90）か H:MM:SS（-t 1:30:00）。25m や 1h の形は sbatch が受け付けず、1:30 は sbatch が 1 分 30 秒と読む: '$estimate'" >&2
   exit 1
 fi
 
@@ -181,10 +182,14 @@ fi
 
 # slurmd が書く r995 の側のパスと、このホストから読むパス
 remote_logs="$HOME/github/slurm-logs"
+# r995 の ~/github と、ほかのホストの NFS の入口は同じ場所（走っているジョブの連絡先の場所を、このホストの書き方に直すのにも使う）
+remote_root="$HOME/github"
+nfs_entry=${SLURM_RUN_NFS_ENTRY:-/mnt/r995/github}
+on_r995=false
 if [[ $(hostname) == r995 ]]; then
+  on_r995=true
   local_logs=$remote_logs
 else
-  nfs_entry=${SLURM_RUN_NFS_ENTRY:-/mnt/r995/github}
   case "$PWD/" in
     "$nfs_entry/"*) ;;
     *)
@@ -251,6 +256,16 @@ worktree_of() {
   git -C "$1" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$1"
 }
 
+# 連絡先の場所（r995 から投げたら ~/github の下、ほかのホストからなら NFS の入口の下）を、このホストの書き方に直す
+local_path() {
+  if $on_r995; then
+    case "$1/" in "$nfs_entry/"*) printf '%s\n' "$remote_root${1#"$nfs_entry"}" && return ;; esac
+  else
+    case "$1/" in "$remote_root/"*) printf '%s\n' "$nfs_entry${1#"$remote_root"}" && return ;; esac
+  fi
+  printf '%s\n' "$1"
+}
+
 # timed のジョブは走っている main のジョブを止め、止められたジョブは持っているロック（cargo のビルドディレクトリ、
 # DVC の .dvc/tmp/lock）を持ったまま止まる。同じ worktree の timed のジョブは同じロックを待って、どちらも進まない。
 # worktree によらないロック（$CARGO_HOME、nix の評価のキャッシュ）はコマンドから決められないので見ない
@@ -260,7 +275,7 @@ if $timed; then
     while IFS='|' read -r id comment; do
       # 連絡先は slurm-run.sh が書く「<区分> | <参照> | <目的> | [<ブランチ> ]<場所>[ commit=…][ claude=…][ shared-cpus=…]」。
       # 区分の無いジョブは、連絡先の形が分からないので比べない。ブランチの名前は / で始まらないので、最初の「/」から場所
-      [[ -n $id && $comment == *' | '*' | '*' | '* ]] || continue
+      [[ -n $id && $comment =~ ^(timed|record|decision|trial)\ \|\ .*\ \|\ .*\ \|\ . ]] || continue
       job_contact=${comment#* | }
       job_contact=${job_contact#* | }
       job_contact=${job_contact#* | }
@@ -268,7 +283,7 @@ if $timed; then
       job_dir=${job_contact%% commit=*}
       job_dir=${job_dir%% claude=*}
       job_dir=${job_dir%% shared-cpus=*}
-      if [[ $(worktree_of "$job_dir") == "$here" ]]; then
+      if [[ $(worktree_of "$(local_path "$job_dir")") == "$here" ]]; then
         echo "ERROR: 走っている main のジョブ $id が同じ worktree（$here）で走っている。timed のジョブはそれを止め、止められたジョブはロック（cargo のビルドディレクトリ、DVC の lock）を持ったまま止まるので、同じロックを取るとどちらも進まない" >&2
         echo "NEXT: 別の worktree（git worktree add）から投げるか、ジョブ $id が終わってから投げる" >&2
         exit 1
@@ -420,7 +435,7 @@ else
 fi
 tail -n 20 "$log" 2>/dev/null || true
 if $marked; then
-  echo "NEXT: TIME 行に印があるので、この時間（elapsed も、プログラムが自分で測った時間も）は記録に使わない。記録する時間は、-c を付けずに区分 timed（急ぐ計算なら --timed）で投げ直して測る"
+  echo "NEXT: TIME 行に印があるので、この時間（elapsed も、プログラムが自分で測った時間も）は記録に使わない。時間を記録する計算なら、-c を付けずに区分 timed で投げ直して測る（時間を記録しない計算は投げ直さない）"
 fi
 # & と wait で同時に待った複数のジョブは、EXIT: の行がどのジョブのものか分からないので、1 行で番号と名前を添える
 echo "RESULT: job=$job name=$name exit=$status state=${state:-unknown}"
