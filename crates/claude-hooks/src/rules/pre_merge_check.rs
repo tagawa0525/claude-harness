@@ -81,28 +81,34 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
     )
 }
 
-/// 引数から PR の指定（番号、URL、ブランチ名）を探す。本文（--body / --subject）より前のトークンから、値を取るフラグの
-/// 値を飛ばして最初の位置引数を採る（`gh pr merge -R owner/repo 12 …` の形にも対応）。指定の形はここで解かず、そのまま
+/// 引数から PR の指定（番号、URL、ブランチ名）を探す。値を取るフラグの値を飛ばして、最初の位置引数を採る
+/// （`gh pr merge -R owner/repo 12 …` と、本文の後ろに指定を置く形にも対応）。指定の形はここで解かず、そのまま
 /// `gh pr view` に渡す（gh pr merge と同じ解き方で同じ PR を検査する。形ごとに手で解くと、解けない形のときに cwd の
 /// ブランチの PR を検査したまま、gh は指定の PR をマージする）
 fn pr_selector(args: &[Arg]) -> Option<String> {
+    // gh pr merge の、値を次の語で取るフラグ（`--flag=値` の形は 1 語なので、下の `-` で始まる語として飛ばす）
+    const VALUE_FLAGS: &[&str] = &[
+        "-R",
+        "--repo",
+        "-F",
+        "--body-file",
+        "-b",
+        "--body",
+        "-t",
+        "--subject",
+        "-A",
+        "--author-email",
+        "--match-head-commit",
+    ];
     let mut skip = false;
     for a in args {
         let t = a.text.as_str();
         if skip {
             skip = false;
-            continue;
-        }
-        if matches!(t, "--body" | "-b" | "--subject" | "-t")
-            || t.starts_with("--body=")
-            || t.starts_with("--subject=")
-        {
-            break;
-        }
-        match t {
-            "-R" | "--repo" | "-F" | "--body-file" => skip = true,
-            _ if t.starts_with('-') || t.is_empty() => {}
-            _ => return Some(t.to_string()),
+        } else if VALUE_FLAGS.contains(&t) {
+            skip = true;
+        } else if !t.starts_with('-') && !t.is_empty() {
+            return Some(t.to_string());
         }
     }
     None
@@ -684,7 +690,7 @@ impl Rule for PreMergeCheck {
             let url_repo = pr_meta
                 .as_ref()
                 .and_then(|m| m["url"].as_str())
-                .and_then(|u| pr_url::parse_allowing_fragment(u).ok())
+                .and_then(|u| pr_url::parse(u).ok())
                 .map(|pr| pr.repo);
             let (owner, name) = match url_repo.as_deref().or(repo.as_deref()) {
                 Some(r) => {
@@ -795,7 +801,7 @@ impl Rule for PreMergeCheck {
                     ),
                 }
             } else {
-                reasons.push("PR またはリポジトリの情報を取得できません（gh pr view / gh repo view が失敗。PR番号・リポジトリ指定・認証・ネットワークを確認）".to_string());
+                reasons.push("PR またはリポジトリの情報を取得できません（gh pr view / gh repo view が失敗。PR の指定・リポジトリ指定・認証・ネットワークを確認）".to_string());
             }
 
             // --- 5. レビュー判定 ---
