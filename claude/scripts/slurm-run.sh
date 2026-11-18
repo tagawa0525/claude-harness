@@ -38,15 +38,35 @@
 # 出力:
 #   JOB: <job id>
 #   LOG: <このホストから読めるログのパス>
+#   NEXT: ジョブの走る場所（$PWD）と、違ったときの取り消し方
 #   （ログの末尾 20 行。終わった直後なら、最後に TIME: job=<番号> elapsed=<実際の時間> estimate=<見積もり> <印>
 #    class=<区分> ref=<参照> purpose=<目的> をログへ書き足すので、その行も含む。印は、-c のとき、timed で走らなかったとき、
 #    止められていたときに付く。state=<終わったときの State>）
+#   NEXT: （TIME 行に印があるときだけ）その時間を記録に使わないことと、測り直し方
+#   RESULT: job=<番号> name=<名前> exit=<終了コード> state=<State>（& と wait で待った複数のジョブを見分ける。投げる前に
+#           止めたときと sbatch が投げられなかったときも、job=- state=NOT_SUBMITTED で出す）
 #   EXIT: <終了コード>（COMPLETED 以外で終わったときは、後ろに (State=<State>) を付ける）
 # 終了コードはジョブの終了コード。ジョブが COMPLETED でなく（CANCELLED、TIMEOUT など）、sbatch が 0 を返したときは 1。
 # 終わった時間と State は sacct から読む（State だけは、読めなければ scontrol。どちらも確かめられなければ 1）。記録が slurmdbd に届くまで SLURM_RUN_SACCT_TRIES 回（既定 10）、
 # SLURM_RUN_SACCT_INTERVAL 秒（既定 1）おきに待ち、読めなければ警告して TIME 行を出さない。
 
 set -euo pipefail
+
+# & と wait で待った複数のジョブを RESULT: の行で見分けるので、投げる前に止めたときと sbatch が投げられなかったときも出す
+name=""
+job=""
+submitted=""
+result_printed=false
+on_exit() {
+  local code=$?
+  [[ -z $submitted ]] || rm -f "$submitted"
+  if ! $result_printed; then
+    local state=NOT_SUBMITTED
+    [[ -z $job ]] || state=unknown
+    echo "RESULT: job=${job:--} name=${name:--} exit=$code state=$state"
+  fi
+}
+trap on_exit EXIT
 
 usage() {
   echo "Usage: $0 --class <timed|record|decision|trial> --ref <#NNNN|ADR-NNNN|- 理由> --purpose <結果が何を決めるか> [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>" >&2
@@ -76,7 +96,11 @@ while (($#)); do
       shift
       ;;
     --ref)
-      (($# >= 2)) || usage
+      if (($# < 2)); then
+        # 囲まない #0200 は、# から後ろ（後ろの引数を含む）がシェルの注釈になり、ここには値の無い --ref だけが届く
+        echo "ERROR: --ref の値が無い。# で始まる参照は引用符で囲む（--ref '#0200'。囲まないと # から後ろがシェルの注釈になり、後ろの引数も消える）" >&2
+        usage
+      fi
       ref=$2
       have_ref=true
       shift
@@ -137,7 +161,7 @@ if [[ $purpose == *[$'\n'\|]* ]] || [[ ! $purpose =~ [^[:space:]] ]]; then
 fi
 
 if $timed && $shared; then
-  echo "ERROR: --timed と区分 timed は -c と組めない（排他でないジョブの時間は記録に使えない）" >&2
+  echo "ERROR: --timed と区分 timed は -c と組めない（排他でないジョブの時間は記録に使えない）。時間を記録するなら -c を外し、記録しないなら --timed を外す（区分 timed なら区分を変える）" >&2
   exit 1
 fi
 
@@ -146,17 +170,43 @@ if $shared && [[ ! $cpus =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
+# sbatch --time の形のうち、分、時:分:秒、日-時[:分[:秒]]。sbatch に渡してから拒まれると、理由が sbatch の英語の 1 行だけに
+# なるので、先に確かめて修正方法を示す。分:秒（1:30）は sbatch が受けるが、時:分のつもりで書くと 60 分の 1 の見積もりに
+# なるので受けない
+if [[ ! $estimate =~ ^([0-9]+|[0-9]+:[0-9]{2}:[0-9]{2}|[0-9]+-[0-9]+(:[0-9]{2}){0,2})$ ]]; then
+  echo "ERROR: -t は分の数（-t 90）か H:MM:SS（-t 1:30:00）。25m や 1h の形は sbatch が受け付けず、1:30 は sbatch が 1 分 30 秒と読む: '$estimate'" >&2
+  exit 1
+fi
+
+# ジョブは r995（NixOS）で走り、/usr/bin/time が無いので、包んだコマンドは 0 秒で失敗する（2026-10-24、ジョブ 538〜540）。
+# 標準エラーを自分のファイルに向けたコマンドでは Slurm のログにも原因が出ないので、投げる前に止める
+usr_bin_time="(^|[^[:alnum:]_./-])/usr/bin/time(\$|[[:space:];|&)}<>\"'])"
+if [[ $command =~ $usr_bin_time ]]; then
+  echo "ERROR: /usr/bin/time は r995 に無く、ジョブが 0 秒で失敗する。ジョブの時間とメモリは TIME: 行と sacct -j <番号>.batch -o Elapsed,MaxRSS で取る。プログラムだけの時間が要るなら、ジョブの PATH に GNU time があることを type -P time で確かめてから command time -o <ファイル> -f \"%e s %M KB\" <コマンド> と書く" >&2
+  exit 1
+fi
+
 if [[ ! $name =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "ERROR: 名前はファイル名に使える英数字と . _ - だけにする: $name" >&2
   exit 1
 fi
 
+# sacct を手で読むときに、名前で排他のジョブと見分ける（slurm-history.sh も古い jobcomp では名前で分ける）
+if $shared && [[ $name != *-shared ]]; then
+  echo "ERROR: -c のジョブの名前は末尾に -shared を付ける（$name-shared）。sacct で排他のジョブと見分けるため: $name" >&2
+  exit 1
+fi
+
 # slurmd が書く r995 の側のパスと、このホストから読むパス
 remote_logs="$HOME/github/slurm-logs"
+# r995 の ~/github と、ほかのホストの NFS の入口は同じ場所（走っているジョブの連絡先の場所を、このホストの書き方に直すのにも使う）
+remote_root="$HOME/github"
+nfs_entry=${SLURM_RUN_NFS_ENTRY:-/mnt/r995/github}
+on_r995=false
 if [[ $(hostname) == r995 ]]; then
+  on_r995=true
   local_logs=$remote_logs
 else
-  nfs_entry=${SLURM_RUN_NFS_ENTRY:-/mnt/r995/github}
   case "$PWD/" in
     "$nfs_entry/"*) ;;
     *)
@@ -218,13 +268,50 @@ else
   resources+=(--partition=main)
 fi
 
+# 作業ディレクトリの worktree の直下（git の外ならそのディレクトリ）
+worktree_of() {
+  git -C "$1" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$1"
+}
+
+# 連絡先の場所（r995 から投げたら ~/github の下、ほかのホストからなら NFS の入口の下）を、このホストの書き方に直す
+local_path() {
+  if $on_r995; then
+    case "$1/" in "$nfs_entry/"*) printf '%s\n' "$remote_root${1#"$nfs_entry"}" && return ;; esac
+  else
+    case "$1/" in "$remote_root/"*) printf '%s\n' "$nfs_entry${1#"$remote_root"}" && return ;; esac
+  fi
+  printf '%s\n' "$1"
+}
+
+# timed のジョブは走っている main のジョブを止め、止められたジョブは持っているロック（cargo のビルドディレクトリ、
+# DVC の .dvc/tmp/lock）を持ったまま止まる。同じ worktree の timed のジョブは同じロックを待って、どちらも進まない。
+# worktree によらないロック（$CARGO_HOME、nix の評価のキャッシュ）はコマンドから決められないので見ない。
+# 場所は squeue の作業ディレクトリ（%Z。投げたときの $PWD）で読む。コメントの連絡先と違い、slurm-run.sh の外から投げた
+# ジョブにもある
+if $timed; then
+  squeue_err=$(mktemp)
+  if running=$(squeue --noheader --partition=main --states=RUNNING,SUSPENDED,CONFIGURING --format '%i|%Z' 2>"$squeue_err"); then
+    here=$(worktree_of "$PWD")
+    while IFS='|' read -r id job_dir; do
+      [[ -n $id && -n $job_dir ]] || continue
+      if [[ $(worktree_of "$(local_path "$job_dir")") == "$here" ]]; then
+        echo "ERROR: 走っている main のジョブ $id が同じ worktree（$here）で走っている。timed のジョブはそれを止め、止められたジョブはロック（cargo のビルドディレクトリ、DVC の lock）を持ったまま止まるので、同じロックを取るとどちらも進まない" >&2
+        echo "NEXT: 別の worktree（git worktree add）から投げるか、ジョブ $id が終わってから投げる" >&2
+        rm -f "$squeue_err"
+        exit 1
+      fi
+    done <<<"$running"
+  else
+    echo "WARN: 走っている main のジョブを読めず、同じ worktree で走っているかを確かめられなかった（squeue が失敗）: $(head -n 1 "$squeue_err")" >&2
+  fi
+  rm -f "$squeue_err"
+fi
+
 # sbatch --wait は終わるまで戻らないので、裏で実行し、最初の行から番号を読む
 submitted=$(mktemp)
-trap 'rm -f "$submitted"' EXIT
 sbatch "${resources[@]}" --wait --export=ALL -J "$name" -o "$remote_logs/%x-%j.out" \
   --time "$estimate" --comment "$class | $ref | $purpose | $contact" --wrap "$command" >"$submitted" &
 pid=$!
-job=""
 while [[ -z $job ]]; do
   if read -r line <"$submitted" && [[ $line =~ ^Submitted\ batch\ job\ ([0-9]+) ]]; then
     job=${BASH_REMATCH[1]}
@@ -240,6 +327,8 @@ done
 echo "JOB: $job"
 log="$local_logs/$name-$job.out"
 echo "LOG: $log"
+# ジョブは投げたときの $PWD で走る。`cd d && a & b` の b のように、cd が届かずに別の場所から投げたものを、終わる前に見つける
+echo "NEXT: ジョブは $PWD で走る。意図した worktree でなければ scancel $job で取り消し、cd <worktree> && で投げ直す"
 # main は投げるたびに区分の順に並べ直す（並べ方は slurm-queue.sh --order の 1 か所。--top のジョブは自分の区分の先頭、
 # 無ければ末尾）。投げたセッションが並べ直すので、区分の順は誰かが一覧の ORDER: を実行するのを待たない。timed は投げた順に
 # 実行し、--top のときだけ投げたジョブを先頭に出す。並べ替えに失敗しても、投げたジョブは待ち行列にあるので、終わりまで待つ
@@ -299,6 +388,7 @@ for ((attempt = 1; attempt <= tries; attempt++)); do
 done
 
 state=""
+marked=false
 if [[ -z $record ]]; then
   echo "WARN: ジョブ $job の記録が sacct から読めなかった（$tries 回。実際の時間は確かめられない）" >&2
   # 終わりの State を確かめられないまま 0 を返すと、取り消されたジョブでも && の次が走る。終わった直後なら slurmctld が
@@ -321,6 +411,7 @@ else
     status=1
   fi
   time_line="TIME: job=$job elapsed=$elapsed estimate=$limit"
+  plain_time_line=$time_line
   if $shared; then
     time_line+=" shared (-c $cpus): 時間は当てにならない"
   fi
@@ -334,14 +425,17 @@ else
     time_line+=" preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）"
   fi
   # timed のジョブは割り込まれないので、この印が付けば設定か運用（scontrol suspend）の誤り。
-  # Suspended は止められていた時間で、一度も止められていなければ 00:00:00。Elapsed は止められていた時間を含み
-  # （RunTime と違う）、再開後のキャッシュの冷えやプログラムが自分で測る経過時間も残るので、止められていれば当てにならない
+  # Suspended は止められていた時間で、一度も止められていなければ 00:00:00。Elapsed は止められていた時間を除く
+  # （End - Start = Elapsed + Suspended。r995 のジョブ 498、656 で確かめた）が、再開後のキャッシュの冷えと、プログラムが
+  # 自分で測る経過時間（止められていた間を含む）が残るので、止められていれば当てにならない
   if [[ -z $suspended ]]; then
     echo "WARN: ジョブ $job の sacct の記録に Suspended が無く、止められていたかを確かめられなかった" >&2
     time_line+=" suspended=unknown: 止められたかを確かめられないので時間は当てにならない"
   elif [[ ! $suspended =~ ^[0:]*$ ]]; then
     time_line+=" suspended: 止められていたので時間は当てにならない"
   fi
+  # 印の付いた行は、時間を記録に使わない扱いを、行の後の NEXT: で示す
+  [[ $time_line == "$plain_time_line" ]] || marked=true
   time_line+=" state=$state"
   # 目的は利用者の書く文なので、末尾に置く
   time_line+=" class=$class ref=$ref purpose=$purpose"
@@ -351,6 +445,12 @@ else
   }
 fi
 tail -n 20 "$log" 2>/dev/null || true
+if $marked; then
+  echo "NEXT: TIME 行に印があるので、この時間（elapsed も、プログラムが自分で測った時間も）は記録に使わない。時間を記録する計算なら、-c を付けずに区分 timed で投げ直して測る（時間を記録しない計算は投げ直さない）"
+fi
+# & と wait で同時に待った複数のジョブは、EXIT: の行がどのジョブのものか分からないので、1 行で番号と名前を添える
+echo "RESULT: job=$job name=$name exit=$status state=${state:-unknown}"
+result_printed=true
 if [[ -n $state && $state != COMPLETED ]]; then
   echo "EXIT: $status (State=$state)"
 else

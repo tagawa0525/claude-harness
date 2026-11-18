@@ -238,4 +238,16 @@ out=$("$SCRIPTS_DIR/slurm-history.sh" --nope "$LOG" 2>&1)
 assert_eq 1 $?
 assert_contains "$out" "ERROR"
 
+it "UNTIMED か SHARED が 0 でなければ、表に入れなかったジョブの実績の読み方を NEXT: で示す"
+{
+  job 73 bench COMPLETED 45 2026-11-01T13:45:32 2026-11-01T14:24:05 1 timed
+  job 74 table COMPLETED 45 2026-11-01T14:24:05 2026-11-01T15:14:32 1 main
+} > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
+assert_eq "NEXT: UNTIMED と SHARED のジョブ（main か -c で走り、時間が当てにならない）の実績は sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,State,MaxRSS,Suspended で読む（Elapsed は止められていた時間を除く）" \
+  "$(tail -n 1 <<<"$out")"
+job 73 bench COMPLETED 45 2026-11-01T13:45:32 2026-11-01T14:24:05 1 timed > "$LOG"
+out=$("$SCRIPTS_DIR/slurm-history.sh" --by-name "$LOG")
+assert_not_contains "$out" "NEXT:"
+
 finish

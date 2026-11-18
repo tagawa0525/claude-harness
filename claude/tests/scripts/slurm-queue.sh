@@ -207,4 +207,36 @@ for bad in "--all" "--first 42" "--order --first" "--order extra"; do
   assert_contains "$out" "Usage:"
 done
 
+it "slurm-queue: -dirty、区分の無いジョブ、動かせないジョブ、SUSPENDED があるときだけ、一覧の後に意味を NOTE: で出す"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "10|main|s|SUSPENDED|10050|10:00|N/A|trial | #1 | p | feat/x /p commit=abc1234-dirty" \
+  "11|main|old|PENDING|10040|10:00|N/A|$C" \
+  "13|main|held|PENDING|0|10:00|N/A|record | #1 | p | $C")" "$QUEUE")
+assert_contains "$out" "NOTE: commit= の末尾が -dirty のジョブは、コミットしていない変更のある版で走り、結果は hash のコミットから再現できない"
+assert_contains "$out" "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無く、並べ直されずに区分のあるジョブの後ろに回る"
+assert_contains "$out" "NOTE: （動かせない）は保留（優先度が 1 以下）か配列の親ジョブで、scontrol top で並べ直せず、並べ直したジョブの後ろに回る"
+assert_contains "$out" "NOTE: SUSPENDED は timed のジョブに止められた main のジョブで、それが終わると続きから再開する"
+# NOTE: は 3 行ずつのジョブの後ろに出す
+assert_eq "NOTE:" "$(sed -n 10p <<<"$out" | cut -d' ' -f1)"
+out=$(FAKE_SQUEUE_OUT="601|main|x|RUNNING|10030|30:00|N/A|trial | #1 | p | feat/x /p commit=abc1234" "$QUEUE")
+assert_not_contains "$out" "NOTE:"
+
+it "slurm-queue: --order には NOTE: を出さない"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "11|main|old|PENDING|10040|10:00|N/A|$C" \
+  "10|main|s|SUSPENDED|10050|10:00|N/A|trial | #1 | p | feat/x /p commit=abc1234-dirty")" "$QUEUE" --order)
+assert_eq "" "$out"
+
+it "slurm-queue: ORDER: の行の後に、番号を分けずに 1 回で実行することを NEXT: で示す"
+out=$(FAKE_SQUEUE_OUT="$(printf '%s\n' \
+  "20|main|trial-job|PENDING|10010|10:00|N/A|trial | #1 | p | $C" \
+  "21|main|record-job|PENDING|10005|10:00|N/A|record | #2 | p | $C")" "$QUEUE")
+assert_eq "NEXT: 上の scontrol top を、番号を分けずに 1 回で実行する（1 本ずつ分けると最後に出したジョブが先頭になる）。ほかのセッションのジョブを含んでいても実行してよい" \
+  "$(grep -A1 '^ORDER:' <<<"$out" | sed -n 2p)"
+
+it "slurm-queue: 区分の無いジョブの NOTE: の、並べ直されずに後ろに回る、は待っている main のジョブのときだけ言う"
+out=$(FAKE_SQUEUE_OUT="590|main|old-job|RUNNING|10000|20:00|N/A|$C" "$QUEUE")
+assert_contains "$out" "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無い"
+assert_not_contains "$out" "後ろに回る"
+
 finish
