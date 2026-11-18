@@ -141,7 +141,7 @@ if [[ $purpose == *[$'\n'\|]* ]] || [[ ! $purpose =~ [^[:space:]] ]]; then
 fi
 
 if $timed && $shared; then
-  echo "ERROR: --timed と区分 timed は -c と組めない（排他でないジョブの時間は記録に使えない）" >&2
+  echo "ERROR: --timed と区分 timed は -c と組めない（排他でないジョブの時間は記録に使えない）。時間を記録するなら -c を外し、記録しないなら --timed を外す（区分 timed なら区分を変える）" >&2
   exit 1
 fi
 
