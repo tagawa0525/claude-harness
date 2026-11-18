@@ -667,4 +667,21 @@ assert_contains "$out" "ERROR: --ref の値が無い"
 assert_contains "$out" "--ref '#0200'"
 assert_file_missing "$TEST_ROOT/sbatch.args"
 
+it "slurm-run: -t が sbatch の時間の形でなければ（25m、1h など）、投げずに分の数か H:MM:SS の形を示してエラー"
+for bad in 25m 1h 1.5 abc; do
+  rm -f "$TEST_ROOT/sbatch.args"
+  out=$("$RUN" "${PURPOSE[@]}" -t "$bad" xlc-2G 'true' 2>&1)
+  assert_eq 1 $?
+  assert_contains "$out" "ERROR: -t は分の数（-t 90）か H:MM:SS（-t 1:30:00）"
+  assert_file_missing "$TEST_ROOT/sbatch.args"
+done
+
+it "slurm-run: -t は sbatch の時間の形（分、分:秒、時:分:秒、日-時、日-時:分、日-時:分:秒）を受け付ける"
+for good in 90 30:00 1:30:00 1-00 1-12:00 2-12:00:00; do
+  rm -f "$TEST_ROOT/sbatch.args"
+  "$RUN" "${PURPOSE[@]}" -t "$good" xlc-2G 'true' >/dev/null 2>&1
+  assert_eq 0 $?
+  assert_contains "$(cat "$TEST_ROOT/sbatch.args" 2>/dev/null)" $'--time\n'"$good"
+done
+
 finish
