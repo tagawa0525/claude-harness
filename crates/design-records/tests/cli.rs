@@ -2900,9 +2900,14 @@ fn new_issue_in_a_bundle_writes_the_type_so_that_check_accepts_it() {
     t.commit_all("docs: bundle root");
     let out = t.run(&["new", "--kind", "issue", "fix-bar", "bar を直す"]);
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(
-        t.read("docs/issues/0001-fix-bar.md"),
-        "---\ntype: Issue\nstatus: open\n---\n\n# bar を直す\n"
+    let issue = t.read("docs/issues/0001-fix-bar.md");
+    assert!(
+        issue.starts_with("---\ntype: Issue\nstatus: open\nopened: 20"),
+        "{issue}"
+    );
+    assert!(
+        issue.contains("\n---\n\n# bar を直す\n\n## 問題\n"),
+        "{issue}"
     );
     assert_eq!(
         t.read("docs/issues/index.md"),
@@ -2910,8 +2915,31 @@ fn new_issue_in_a_bundle_writes_the_type_so_that_check_accepts_it() {
     );
     t.git(&["add", "docs"]);
     let out = t.run(&["check"]);
-    assert!(!stderr(&out).contains("error:"), "{}", stderr(&out));
+    // 作ったままの issue に、違反も注意も出ない（フロントマターを持つ issue には、節の形の注意が掛かる）
+    assert!(
+        !stderr(&out).contains("0001-fix-bar.md"),
+        "{}",
+        stderr(&out)
+    );
     assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
+fn new_issue_stops_before_reserving_when_the_bundle_root_index_cannot_be_read() {
+    // バンドルかどうかを決められないまま番号を予約して、バンドルでない形の issue を書かない
+    let t = TempRepo::new("okf-new-issue-unreadable");
+    fs::create_dir_all(t.dir.join("docs")).unwrap();
+    fs::write(
+        t.dir.join("docs/index.md"),
+        b"---\nokf_version: \"0.3\"\n---\n\xff\n",
+    )
+    .unwrap();
+    t.commit_all("docs: bundle root");
+    let out = t.run(&["new", "--kind", "issue", "fix-bar", "bar を直す"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(stderr(&out).contains("docs/index.md"), "{}", stderr(&out));
+    assert!(!t.dir.join("docs/issues/0001-fix-bar.md").exists());
+    assert_eq!(t.tag_message("issue-0001"), "");
 }
 
 #[test]
