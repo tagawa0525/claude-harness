@@ -13,7 +13,8 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 ja-terms は辞書が無いとして検査を止める。リポジトリの辞書（作業ツリーの直下の `.ja-terms/prh.yml`）は、共通の辞書の同じ
 expected の規則を外す（ADR-0096）。リポジトリの辞書を変える PR では、そのリポジトリで `ja-terms overrides` を実行し、
 `REPLACED:` の行（pattern の違う規則に置き換わって、もう当たらない共通の規則）が意図したものかを確かめる。置き換えるつもりが
-無ければ、その共通の規則もリポジトリの辞書にコピーする（`SAME:` の行になる）。辞書を変えるコミットでは、pre-commit も
+無ければ、その共通の規則もリポジトリの辞書にコピーする（`SAME:` の行になる）。グローバルの pre-commit が語を検査する
+リポジトリ（fork と、ローカルの pre-commit の hook を持つリポジトリは除く）では、辞書を変えるコミットで pre-commit も
 `REPLACED:` の行を出す（止めない）。
 
 配る元のディレクトリは dot なしの `claude/` と `config/` で、このリポジトリは追跡する Claude Code のプロジェクトの設定（`.claude/`）を
