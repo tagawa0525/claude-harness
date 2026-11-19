@@ -278,15 +278,12 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
-    // 作れなかった理由（OS の文）も出す
+    // 作れなかった理由（OS の文）も出す。置き場の書き方は OS が決める（Windows の temp_dir は末尾に \ を付ける）
     let reason = std::fs::create_dir(missing.join("x")).unwrap_err();
-    assert_eq!(
-        stderr(&out),
-        format!(
-            "一時ディレクトリを作れません: {}（{reason}）\n",
-            missing.to_str().unwrap()
-        )
-    );
+    let err = stderr(&out);
+    assert!(err.starts_with("一時ディレクトリを作れません: "), "{err}");
+    assert!(err.contains(missing.to_str().unwrap()), "{err}");
+    assert!(err.ends_with(&format!("（{reason}）\n")), "{err}");
     assert!(!missing.exists());
 }
 
