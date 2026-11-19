@@ -954,8 +954,8 @@ make_fake_gh_merge() {
   if [[ -z "$succeeded" ]]; then
     if [[ "$reviews" == "echo abc" ]]; then succeeded="echo abc"; else succeeded="echo"; fi
   fi
-  make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
-  "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  make_fake_gh '"pr view --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
+  "pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
@@ -966,7 +966,8 @@ make_fake_gh_merge() {
   "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
   "api repos/example/heredoc/contents/"*) '"$contents"' ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 }
 make_fake_gh_merge 'echo 0'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
@@ -1011,7 +1012,7 @@ assert_contains "$(reason "$out")" "2 コミット"
 assert_contains "$(reason "$out")" "リベース"
 
 it "pre-merge-check: base 名に / があっても compare のパスとして正しく渡す（URL エンコード）"
-make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"release/x\"}" ;;
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"release/x\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
@@ -1019,21 +1020,23 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api repos/example/heredoc/compare/release%2Fx...abc"*) echo 0 ;;
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo abc ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 
 # make_fake_gh_merge_selector <gh pr view に渡る PR の指定>: octo/repo の PR #34 を、その指定で引いたときだけ返す gh。
 # repo view には答えない（cwd のリポジトリでなく、gh が解いた PR の url のリポジトリで検査することを見る）
 make_fake_gh_merge_selector() {
-  make_fake_gh '"pr view '"$1"' --json number,headRefOid,reviewDecision,baseRefName,url"*) echo "{\"number\":34,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"url\":\"https://github.com/octo/repo/pull/34\"}" ;;
+  make_fake_gh '"pr view '"$1"' --json number,headRefOid,reviewDecision,baseRefName,url"*) echo "{\"number\":34,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"url\":\"https://github.com/octo/repo/pull/34\",\"headRefName\":\"feat/x\"}" ;;
   "api --paginate repos/octo/repo/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
   "api repos/octo/repo/commits/abc/status"*) echo "[]" ;;
   "api repos/octo/repo/compare/main...abc"*) echo 0 ;;
   "api --paginate repos/octo/repo/pulls/34/reviews"*) echo abc ;;
   "api --paginate repos/octo/repo/pulls/34/files"*) true ;;
   "api --paginate repos/octo/repo/issues/34/comments"*) true ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R octo/repo --base feat/x --state open "*) true ;;'
 }
 
 it "pre-merge-check: PR の URL で渡した PR を、その URL のリポジトリで検査する"
@@ -1076,6 +1079,69 @@ make_fake_gh_merge 'echo "error connecting to api.github.com" >&2; exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
+
+# ===========================================================================
+# pre-merge-check: head のブランチを base にした開いている PR があれば deny（積み重ねた PR）
+# ===========================================================================
+# --delete-branch でマージすると head のブランチが消え、GitHub はそれを base にした開いている PR を閉じる。
+# 閉じた PR は base を付け替えられないので、上の PR の base を先に付け替えさせる
+
+# make_fake_gh_merge_stacked <pr list の応答のコマンド> [pr view の JSON に足す項目]: マージできる PR #1（head は
+# feat/x）の gh。pr list は head のブランチを base にした開いている PR の番号を 1 行に 1 つ返す
+make_fake_gh_merge_stacked() {
+  # 偽 gh の中では echo "…" の中に置くので、" は \" で書く
+  local extra=',\"headRefName\":\"feat/x\",\"isCrossRepository\":false'
+  if [[ $# -ge 2 ]]; then extra="$2"; fi
+  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"'"$extra"'}" ;;
+  "repo view --json owner"*) echo example ;;
+  "repo view --json name"*) echo heredoc ;;
+  "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
+  "api repos/example/heredoc/commits/abc/status"*) echo "[]" ;;
+  "api repos/example/heredoc/compare/main...abc"*) echo 0 ;;
+  "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo abc ;;
+  "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
+  "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) '"$1"' ;;'
+}
+
+it "pre-merge-check: head のブランチを base にした開いている PR があれば deny し、base を付け替える手順を示す"
+make_fake_gh_merge_stacked 'echo 7'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "#7"
+# -R を付ける（番号は cwd のリポジトリで解かれるので、別のリポジトリで実行すると別の PR を付け替える）
+assert_contains "$(reason "$out")" "gh pr edit 7 --base main -R example/heredoc"
+
+it "pre-merge-check: head のブランチを base にした PR が複数あれば、すべての番号に手順を示す"
+make_fake_gh_merge_stacked 'printf "7\n9\n"'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "gh pr edit 7 --base main"
+assert_contains "$(reason "$out")" "gh pr edit 9 --base main"
+
+it "pre-merge-check: head のブランチを base にした開いている PR が無ければ通す"
+make_fake_gh_merge_stacked 'true'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+assert_contains "$(cat "$FAKE_GH_LOG")" "pr list -R example/heredoc --base feat/x --state open"
+
+it "pre-merge-check: head のブランチを base にした PR を確かめられなければ deny"
+make_fake_gh_merge_stacked 'exit 1'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "確認できません"
+make_fake_gh_merge_stacked 'true' ''
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "head のブランチ名"
+
+it "pre-merge-check: fork からの PR は、同じ名前のブランチを base にした PR があっても止めない"
+# マージで消えるのは fork の側のブランチで、base のリポジトリの同じ名前のブランチは残る
+make_fake_gh_merge_stacked 'echo 7' ',\"headRefName\":\"feat/x\",\"isCrossRepository\":true'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_eq allow "$(decision "$out")"
+assert_not_contains "$(cat "$FAKE_GH_LOG")" "pr list"
 
 # ===========================================================================
 # block-secret-commit: グローバルの git の hook を使わないリポジトリの git commit を gitleaks で止める
@@ -1598,7 +1664,7 @@ assert_eq allow "$(decision "$out")"
 it "pre-merge-check: レビューの実行が失敗していたら、CI 失敗ではなくレビュー未実施として報告する"
 # トークン枯渇や内部エラーで Copilot のチェックが落ちた場合、コードの問題ではない。
 # CI 失敗として止めると、レビューが回らない間まったくマージできなくなる
-make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
@@ -1608,7 +1674,8 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo old ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
@@ -1620,7 +1687,7 @@ assert_contains "$(reason "$out")" "/gh-actions-check https://github.com/example
 it "pre-merge-check: レビューが 1 件も無くてもチェックが失敗していれば止める"
 # 初回レビューがトークン枯渇で落ちた PR。レビュー 0 件なので commit_id の比較では
 # 検出できないが、レビュー未実施であることに変わりはない
-make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
@@ -1630,7 +1697,8 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo "" ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
@@ -1668,7 +1736,7 @@ assert_eq allow "$(decision "$out")"
 
 it "pre-merge-check: head を見た bot のレビューが失敗したものだけなら、1 度もレビューを受けていないとして止める"
 # Copilot はレビューできなかったときも、head を commit_id にした本文だけのレビューを提出する
-make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo "{\"name\":\"copilot-pull-request-reviewer\",\"status\":\"completed\",\"conclusion\":\"failure\"}" ;;
@@ -1678,7 +1746,8 @@ make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) 
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) echo abc ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "レビューが実行されていません"
@@ -1719,7 +1788,7 @@ REBASE_CHANGED=$(git -C "$REBASE_REPO" rev-parse HEAD)
 make_fake_gh_rebased() {
   # $1: 今の head、$2: bot がレビューした commit、$3: ローカルレビューの記録の 1 行目を出力するコマンド（既定は記録なし）、
   # $4: 失敗していない最後の bot のレビューが見た commit を出力するコマンド（既定は $2）。PR の変更ファイルは pr.txt
-  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"'"$1"'\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"'"$1"'\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/'"$1"'/check-runs"*) echo "{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"}" ;;
@@ -1731,7 +1800,8 @@ make_fake_gh_rebased() {
   "api --paginate repos/example/heredoc/pulls/1/files"*) echo pr.txt ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) '"${3:-true}"' ;;
   "api repos/example/heredoc/pulls/1 "*) echo main ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 }
 
 it "pre-merge-check: リベースだけで head が変わり、PR の差分がレビュー済みと同じなら再レビューを求めない"
@@ -1909,7 +1979,7 @@ assert_contains "$(reason "$out")" "decide-next.sh https://github.com/example/he
 make_fake_gh_merge_local() {
   local check_run="${2:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
   local reviewed="${3:-echo old}"
-  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo '"'$check_run'"' ;;
@@ -1919,7 +1989,8 @@ make_fake_gh_merge_local() {
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviewed"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) echo src/main.rs ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) '"$1"' ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 }
 LOCAL_ABC="printf '%s\n' '<!-- local-review sha=abc high=0 medium=1 low=0 -->'"
 
@@ -1996,7 +2067,7 @@ assert_eq deny "$(decision "$out")"
 make_fake_gh_merge_files() {
   local files="$1" reviewed="${2:-echo old}" succeeded="${4:-echo old}"
   local check_run="${3:-{\"name\":\"ci\",\"status\":\"completed\",\"conclusion\":\"success\"\}}"
-  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"}" ;;
+  make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\",\"headRefName\":\"feat/x\"}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
   "api --paginate repos/example/heredoc/commits/abc/check-runs"*) echo '"'$check_run'"' ;;
@@ -2006,7 +2077,8 @@ make_fake_gh_merge_files() {
   "api --paginate repos/example/heredoc/pulls/1/reviews"*) '"$reviewed"' ;;
   "api --paginate repos/example/heredoc/pulls/1/files"*) '"$files"' ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
-  "api graphql"*) echo "[]" ;;'
+  "api graphql"*) echo "[]" ;;
+  "pr list -R example/heredoc --base feat/x --state open "*) true ;;'
 }
 
 it "pre-merge-check: 文書（docs/）だけの PR は、最後の push が未レビューでも、伝えることも無くマージできる"
