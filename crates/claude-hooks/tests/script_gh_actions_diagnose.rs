@@ -516,3 +516,42 @@ fn without_the_head_of_the_branch_the_commit_of_the_latest_run_is_judged() {
     assert!(text.contains("EXTERNAL_CHECKS: unavailable\n"), "{text}");
     assert!(text.contains("CAUSE: CODE\n"), "{text}");
 }
+
+#[test]
+fn a_cancelled_workflow_at_the_head_is_not_diagnosed_as_a_code_failure() {
+    // 取り消した run はログに失敗が無く、コードの誤りでもない。成功と書かせずに並べる
+    let list = runs(&[
+        run(
+            701,
+            "Lint",
+            2,
+            "pull_request",
+            "abc",
+            "completed",
+            "success",
+        ),
+        run(
+            700,
+            "CI",
+            1,
+            "pull_request",
+            "abc",
+            "completed",
+            "cancelled",
+        ),
+    ]);
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&list, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "CAUSE: NONE\nNEXT: head の SHA（abc）の GitHub Actions の run に失敗と実行中はありません。success でない run（CI: cancelled）を添え、成功とは書かずに報告してください\n"
+        ),
+        "{text}"
+    );
+}
