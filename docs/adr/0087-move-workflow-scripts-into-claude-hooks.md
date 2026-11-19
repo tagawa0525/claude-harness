@@ -229,4 +229,5 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   書記素に分ける `unicode-segmentation` は要らない（`unicode-width` が絵文字の列をまとめて数える）
 - 2026-11-19: `check-each-commit.sh` の扱い。前は「`check-each-commit.sh` は移さず、sh のまま残す（案 戊。#169）」。
   Slurm のスクリプトを移すと、中断の後片付けを Rust で受ける手段（`ctrlc`）が入り、残す理由が無くなる。sh に残るロジックを
-  すべて移す決定は ADR-0101 に書き、移すまではこの ADR の決定のとおり sh に残る
+  すべて移す決定は ADR-0101 に書き、`check-each-commit.sh` の中身は #369 で `claude-hooks script check-each-commit` に移した
+  （sh は呼ぶだけになった）

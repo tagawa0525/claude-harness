@@ -4,6 +4,7 @@
 
 mod base_moved;
 mod branch_topics;
+mod check_each_commit;
 mod decide_next;
 pub(crate) mod delegate_wait;
 pub(crate) mod dictionary_preview;
@@ -51,6 +52,7 @@ type Script = fn(&[String]) -> i32;
 const SCRIPTS: &[(&str, Script)] = &[
     ("base-moved", base_moved::main),
     ("branch-topics", branch_topics::main),
+    ("check-each-commit", check_each_commit::main),
     ("decide-next", decide_next::main),
     ("dictionary-preview", dictionary_preview::main),
     ("fix-markdown-lint", fix_markdown_lint::main),
