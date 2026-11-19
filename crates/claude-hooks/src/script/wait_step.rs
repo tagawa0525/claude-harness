@@ -59,7 +59,14 @@ fn env_secs(name: &str) -> Result<Option<u64>, ()> {
         Ok(v) => v.parse().map(Some).map_err(|_| {
             eprintln!("ERROR: {name} は 0 以上の整数の秒にしてください: {v}");
         }),
-        Err(_) => Ok(None),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(v)) => {
+            eprintln!(
+                "ERROR: {name} は 0 以上の整数の秒にしてください: {}",
+                v.to_string_lossy()
+            );
+            Err(())
+        }
     }
 }
 
