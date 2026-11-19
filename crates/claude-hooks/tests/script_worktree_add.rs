@@ -107,7 +107,7 @@ fn a_new_branch_is_made_from_the_default_branch_next_to_the_main_worktree() {
         text(&out.stdout),
         format!(
             "WORKTREE: {}\nBRANCH: feat/login\nCREATED_BRANCH: yes\nBASE: main\n",
-            dir.display()
+            common::sh_path(&dir)
         )
     );
     assert_eq!(

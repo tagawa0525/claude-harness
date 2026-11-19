@@ -255,7 +255,7 @@ fn run_with_failing_git(repo: &Repo, pattern: &str) -> Output {
         &bin.join("git"),
         format!(
             "#!/bin/sh\ncase \"$*\" in\n  {pattern}) echo 'fatal: injected' >&2; exit 128 ;;\nesac\nexec '{}' \"$@\"\n",
-            real_git().display()
+            common::sh_path(&real_git())
         ),
     );
     let path = std::env::join_paths(

@@ -2,6 +2,8 @@
 //! MD060（表の桁揃え）を直すことを確かめる（ADR-0087。`~/.claude/skills/language-checks/scripts/fix-markdown-lint.sh`
 //! が呼ぶ）。sh から呼ぶ確認は `claude/tests/scripts/language-checks.sh`
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -67,12 +69,11 @@ fn a_fixed_file_is_reported_as_fixed_and_a_clean_one_as_ok() {
     let dir = Dir::new();
     let bad = dir.write("bad.md", b"| a | b |\n| --- | --- |\n| ccc | d |\n");
     let good = dir.write("good.md", b"# ok\n");
-    let out = fix(&[bad.as_os_str(), good.as_os_str()]);
+    // 出力は渡したパスをそのまま返すので、渡すパスも期待値も sh_path でそろえる
+    let (bad, good) = (common::sh_path(&bad), common::sh_path(&good));
+    let out = fix(&[bad.as_ref(), good.as_ref()]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        stdout(&out),
-        format!("Fixed: {}\nOK: {}\n", bad.display(), good.display())
-    );
+    assert_eq!(stdout(&out), format!("Fixed: {bad}\nOK: {good}\n"));
 }
 
 #[test]

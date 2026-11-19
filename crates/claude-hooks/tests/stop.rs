@@ -365,7 +365,7 @@ fn does_not_hand_the_lock_to_a_git_child_left_running() {
         &hook,
         &format!(
             "#!/bin/sh\nsleep 60 </dev/null >/dev/null 2>&1 &\necho $! >>'{}'\nexit 1\n",
-            pids.display()
+            common::sh_path(&pids)
         ),
     );
     common::executable(&hook);
