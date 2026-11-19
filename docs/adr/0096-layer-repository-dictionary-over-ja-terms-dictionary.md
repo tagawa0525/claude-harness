@@ -127,7 +127,9 @@ claude-harness（`crates/ja-terms/prh.yml`）だけだった（2026-11-19、`git
 - 良い点: 共通の辞書から規則を移す間も、検査の抜けと重なりが無い
 - 悪い点: ja-terms が、`--dictionary` の無い作業ツリーの中の呼び出しで、git を 1 度多く起動する
 - 悪い点: リポジトリの辞書が共通の辞書と同じ expected の規則を持つと、共通の規則は当たらない。置き換えるつもりの無い同じ
-  expected の規則を足すと、共通の規則が外れる（prh の `imports` と同じ）
+  expected の規則を足すと、共通の規則が外れる（prh の `imports` と同じ）。外れる共通の規則は、`ja-terms overrides` が、
+  リポジトリの辞書に同じ pattern の規則があるもの（`SAME:`。移す途中の重なり）と無いもの（`REPLACED:`。置き換え）に分けて
+  出す。リポジトリの辞書を変えるコミットでは、`ja-terms staged` も `REPLACED:` の行を出す（止めない。#316）
 - `dictionary-preview.sh` は、リポジトリの辞書と共通の辞書を重ねた結果を見せない（渡した 1 つの辞書の版どうしの差を見る）
 
 ### 確認
@@ -143,6 +145,10 @@ claude-harness（`crates/ja-terms/prh.yml`）だけだった（2026-11-19、`git
 - 本物の git hook の pre-commit と commit-msg、/retro の `memory-index.sh` が、リポジトリの辞書を当て、worktree でその worktree の
   辞書を読み、壊れた辞書をステージしたコミットを止め、`memory-index.sh` がリポジトリの外で共通の辞書だけを当てること
   （`nix/tests/ja-terms.sh` の 4d と 7。2026-11-19 に 392 件が通った）
+- `ja-terms overrides` が、外れる共通の規則を `REPLACED:` と `SAME:`（specs の違いを添える）に分けて出し、外れる規則の無い
+  辞書、辞書の無いリポジトリ、作業ツリーの外で 0 で終わること。`ja-terms staged` が、共通の規則を置き換える辞書をステージした
+  コミットで `REPLACED:` の行を出して判定を変えず、そのまま移した規則と、辞書を変えないコミットでは出さないこと
+  （`crates/ja-terms/tests/repo_dictionary.rs`、`nix/tests/ja-terms.sh` の 4d）
 - `history-rewrite` の `transform` がリポジトリの辞書を重ね、`--dictionary` では重ねず、`--repo-dictionary` で明示でき、読めない
   辞書で止まり、`run` が `--source` の辞書を記録に残して `sync-worktrees` がそれで直すこと（`crates/history-rewrite/tests/transform.rs`、
   `sync.rs`）
