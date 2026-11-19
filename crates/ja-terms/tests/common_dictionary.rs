@@ -104,12 +104,11 @@ fn ja_terms(
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    // 共通の辞書を読めないサブコマンドは標準入力を読む前に終わるので、閉じた入力に書く失敗は誤りにしない
+    match child.stdin.take().unwrap().write_all(stdin.as_bytes()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("標準入力に書けない: {e}"),
+        _ => {}
+    }
     child.wait_with_output().unwrap()
 }
 
