@@ -14,8 +14,7 @@
 //!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる。docs/issues が
 //!   あれば、一覧の後に `open-count now=<作業ツリーの open の数 | unknown（読めないファイルがある）>
 //!   14d-ago=<HEAD の第 1 親の履歴で 14 日より前の最も新しいコミットの数 | unknown（理由）> diff=<差>`（どちらかが unknown
-//!   なら diff は出さない）を出し、増えていれば棚卸しを先にする `NEXT:` を出す（issue は 1 つの
-//!   トピックを閉じるための置き場で、積み上がったまま新しい作業に進まないため）
+//!   なら diff は出さない）を出す。数を知らせるだけで、増えていても行動は指示しない
 //!
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
 
@@ -383,11 +382,10 @@ fn issues(root: &Path) {
     } else {
         Ok(open_now)
     };
-    let grown = match (now, open_count_before(root, dir)) {
+    match (now, open_count_before(root, dir)) {
         (Ok(now), Ok(past)) => {
             let diff = now as i64 - past as i64;
             println!("open-count now={now} {COUNT_AGO}={past} diff={diff:+}");
-            (diff > 0).then_some(diff)
         }
         (now, past) => {
             let show = |v: Result<usize, String>| {
@@ -398,13 +396,7 @@ fn issues(root: &Path) {
                 show(now.map_err(str::to_string)),
                 show(past)
             );
-            None
         }
-    };
-    if let Some(diff) = grown {
-        println!(
-            "NEXT: open の issue が 14 日前より {diff} 件増えた。新しい作業の前に棚卸しをする（済んだもの、重複、同じトピックの直し残しを集めたものを閉じるか、まとめる）"
-        );
     }
     if any_blocked {
         println!("NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない");
