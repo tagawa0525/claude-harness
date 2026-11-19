@@ -971,7 +971,15 @@ fn run_and_sync_after_the_common_dictionary_changes(name: &str, sync_words: &[&s
     );
     let run = history_rewrite(
         &root,
-        &["run", "--source", &source, "--workdir", &work],
+        &[
+            "run",
+            "--source",
+            &source,
+            "--workdir",
+            &work,
+            "--exclude",
+            "**/never.md",
+        ],
         &[(COMMON_DICTIONARY.0, &common_s)],
     );
     assert!(run.status.success(), "{}", text(&run.stderr));
@@ -981,7 +989,10 @@ fn run_and_sync_after_the_common_dictionary_changes(name: &str, sync_words: &[&s
         .join("common-prh.yml");
     assert_eq!(std::fs::read_to_string(&copy).unwrap(), rules);
     let record = std::fs::read_to_string(workdir.join("words")).unwrap();
-    assert_eq!(record, format!("dictionary\t{}\n", copy.display()));
+    assert_eq!(
+        record,
+        format!("dictionary\t{}\nexclude\t**/never.md\n", copy.display())
+    );
     let rewritten = workdir.join("rewritten").display().to_string();
     repo.git(&["fetch", "-q", &rewritten, "+refs/heads/*:refs/rewritten/*"]);
     let new = repo.git(&["rev-parse", "refs/rewritten/main"]);

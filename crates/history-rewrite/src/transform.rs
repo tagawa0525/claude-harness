@@ -149,11 +149,19 @@ impl Transformer {
     /// あれば、その後ろに共通の辞書を prh の Engine.merge でつなぎ（ja-terms の検査と同じ。ADR-0096）、追加の規則は
     /// 最後に並べる
     pub fn new(words: &Words) -> Result<Transformer, Stop> {
+        Self::with_common(words, None)
+    }
+
+    /// [`Transformer::new`] の、`--dictionary` が無いときの共通の辞書を渡せる形（None なら配った場所から読む）。run は
+    /// 読んだ共通の辞書の中身を作業ディレクトリにコピーするので、同じ中身から変換を作る（読み直すと、間に配り直された
+    /// 辞書になりうる。ADR-0097）
+    pub fn with_common(words: &Words, common: Option<Dictionary>) -> Result<Transformer, Stop> {
         let load = |path: &PathBuf| Dictionary::load(path).map_err(|e| Stop(e.to_string()));
         let mut given = words.dictionaries.iter();
-        let mut base = match given.next() {
-            None => Dictionary::common().map_err(|e| Stop(e.to_string()))?,
-            Some(first) => load(first)?,
+        let mut base = match (given.next(), common) {
+            (Some(first), _) => load(first)?,
+            (None, Some(common)) => common,
+            (None, None) => Dictionary::common().map_err(|e| Stop(e.to_string()))?,
         };
         for path in given {
             base.append(load(path)?);

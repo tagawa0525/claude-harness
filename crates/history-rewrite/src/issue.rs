@@ -34,7 +34,7 @@ pub fn body(source: &Path, workdir: &Path, words: &Words) -> Result<String, Stop
             .join("、")
     };
     let dictionaries = if words.dictionaries.is_empty() {
-        "ja-terms の共通の辞書（history-rewrite のビルドに埋めたもの）".to_string()
+        "ja-terms の共通の辞書（claude-setup sync が配ったもの）".to_string()
     } else {
         shown(&words.dictionaries)
     };
