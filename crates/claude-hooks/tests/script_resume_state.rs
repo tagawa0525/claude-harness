@@ -625,14 +625,12 @@ fn open_count_is_compared_with_the_commit_from_14_days_before() {
         issues.contains("\nopen-count now=4 14d-ago=1 diff=+3\n"),
         "{issues}"
     );
-    assert!(
-        issues.contains("NEXT: open の issue が 14 日前より 3 件増えた。"),
-        "{issues}"
-    );
+    // 増えていても、数を出すだけで行動は指示しない（開く数と閉じる数を比べる規則は無い）
+    assert!(!issues.contains("NEXT:"), "{issues}");
 }
 
 #[test]
-fn open_count_that_did_not_grow_gives_no_next_line() {
+fn open_count_that_did_not_grow_shows_a_negative_diff() {
     let repo = Repo::new();
     repo.issue("0001-a.md", OPEN);
     repo.issue("0002-b.md", OPEN);
@@ -644,7 +642,7 @@ fn open_count_that_did_not_grow_gives_no_next_line() {
         issues.contains("\nopen-count now=1 14d-ago=2 diff=-1\n"),
         "{issues}"
     );
-    assert!(!issues.contains("増えた"), "{issues}");
+    assert!(!issues.contains("NEXT:"), "{issues}");
 }
 
 #[test]
@@ -676,7 +674,7 @@ fn open_count_without_a_commit_from_14_days_before_says_so() {
         issues.contains("open-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"),
         "{issues}"
     );
-    assert!(!issues.contains("増えた"), "{issues}");
+    assert!(!issues.contains("NEXT:"), "{issues}");
 }
 
 #[test]
@@ -704,5 +702,12 @@ fn unreadable_files_make_the_current_count_unknown() {
         issues.contains("open-count now=unknown（読めないファイルがある） 14d-ago=1\n"),
         "{issues}"
     );
-    assert!(!issues.contains("増えた"), "{issues}");
+    // NEXT は読めないファイルの扱いだけで、数についての指示は無い
+    assert!(
+        issues
+            .lines()
+            .filter(|l| l.starts_with("NEXT:"))
+            .all(|l| l.contains("unreadable=")),
+        "{issues}"
+    );
 }
