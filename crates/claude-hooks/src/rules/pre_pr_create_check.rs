@@ -44,7 +44,7 @@ use crate::git;
 use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Escape, Shell, asks_help, has_flag, opt_value};
+use crate::shell::{Arg, Escape, Shell, asks_help, has_flag, help_hint, opt_value};
 use crate::unwrap::env_value;
 
 pub struct PrePrCreateCheck;
@@ -268,6 +268,7 @@ impl Rule for PrePrCreateCheck {
             }
 
             if !reasons.is_empty() {
+                reasons.extend(help_hint(args, "gh pr create"));
                 return vec![Finding::Deny(reasons.join("\n"))];
             }
         }
