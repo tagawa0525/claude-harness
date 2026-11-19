@@ -302,7 +302,6 @@ fn sacct_is_read_as_json_with_steps_since_the_accounting_started_and_merged_with
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_step_with_a_few_bytes_of_memory_is_read_as_0m_rather_than_stopping() {
     // 1 ページ（4096 バイト）は、sacct --units=M の文字の出力で 0.00M。単位の無い 0（0 バイト）と違い、読める値
     let h = History::new();

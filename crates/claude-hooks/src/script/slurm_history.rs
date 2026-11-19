@@ -8,7 +8,9 @@
 //! 出力の行とエラーの文に書く Slurm の語（`StartTime`、`sacct`、`timed`）は、出力の行を変えないために、ここの文字列に
 //! 残す（ADR-0101 の決定と理由）。
 
-use super::slurm::{self, AccountingError, AccountingRow, Allocation, CompletionLine, PastJob};
+use super::slurm::{
+    self, AccountingError, AccountingRow, Allocation, CompletionLine, MaxRss, PastJob,
+};
 use std::collections::{HashMap, HashSet};
 use std::process::{Command, Stdio};
 
@@ -139,12 +141,13 @@ fn table(
         let bad = |why: &str| format!("ERROR: sacct の {} 行目を読めません（{why}）", i + 1);
         match row {
             AccountingRow::Step { job, max_rss } => {
-                // 0 は、sacct の文字の出力が単位を付けない値で、sh の版が読めずに止まった（同じく止める。#376）
-                if *max_rss == Some(0.0) {
-                    return Err(bad("MaxRSS を読めません"));
-                }
-                // 無いものは -1 として比べる（sh の版と同じく、無い値のステップだけなら -）
-                let m = max_rss.unwrap_or(-1.0);
+                // 0 バイトは読めない値として止める（直すのは #376）
+                let m = match max_rss {
+                    MaxRss::Zero => return Err(bad("MaxRSS を読めません")),
+                    // 無いものは -1 として比べる（無い値のステップだけなら -）
+                    MaxRss::Missing => -1.0,
+                    MaxRss::Mib(m) => *m,
+                };
                 let held = memory.entry(job.as_str()).or_insert(m);
                 if m > *held {
                     *held = m;
@@ -232,7 +235,7 @@ struct Group {
     elapsed_sum: i64,
     timed_runs: usize,
     max_ratio: f64,
-    /// メモリの最大の MiB。0 から比べる（無い値だけのジョブ名は、sh の版と同じく 0M と出る。#375）
+    /// メモリの最大の MiB。0 から比べる（無い値だけのジョブ名も 0M と出る。直すのは #375）
     max_rss: f64,
 }
 
@@ -396,7 +399,7 @@ fn job_main(args: &[String]) -> i32 {
             rc = 1;
             continue;
         }
-        // 前のジョブを出した後は、読めなかったジョブの前にも空行を置く（sh の版と同じ）
+        // 前のジョブを出した後は、読めなかったジョブの前にも空行を置く
         if !first {
             println!();
         }
@@ -750,7 +753,7 @@ fn decide(e: &Evidence) -> Version {
     let mut version_at: Option<i64> = None;
     let mut since: Option<i64> = None;
     if let Some(commit) = e.commit {
-        // 投げた時刻の無い記録は、sh の版の文字の比べ方（`Unknown` はどの時刻より後）と同じく、どの項より後とする
+        // 投げた時刻の無い記録は、どの項より後とする（会計の記録の文字の出力の `Unknown` を時刻の文字列と比べた順）
         let at = e.submitted.unwrap_or(i64::MAX);
         since = Some(at);
         if commit.ends_with("-dirty") {
@@ -868,7 +871,9 @@ fn clock(at: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Contact, Evidence, ReflogEntry, Version, contact, decide, reflog_entry, table};
-    use crate::script::slurm::{AccountingRow, Allocation, CompletionLine, PastJob, wall_clock};
+    use crate::script::slurm::{
+        AccountingRow, Allocation, CompletionLine, MaxRss, PastJob, wall_clock,
+    };
 
     /// 最後まで走ったジョブ（見積もりの分、開始と終わりの時刻、パーティション）
     fn done(
@@ -912,11 +917,7 @@ mod tests {
     }
 
     /// 会計の記録のジョブの行（資源の取り方と、ステップのメモリの最大の MiB）
-    fn accounted(
-        job: PastJob,
-        allocation: Allocation,
-        steps: &[Option<f64>],
-    ) -> Vec<AccountingRow> {
+    fn accounted(job: PastJob, allocation: Allocation, steps: &[MaxRss]) -> Vec<AccountingRow> {
         let id = job.id.clone();
         let mut rows = vec![AccountingRow::Job(PastJob {
             allocation: Some(allocation),
@@ -1031,7 +1032,7 @@ mod tests {
 
     #[test]
     fn by_name_gives_runs_averages_the_total_ratio_and_the_largest_ratio() {
-        // メモリの値の無いジョブだけのジョブ名の MAX_RSS は、sh の版のまま 0M（直すのは #375）
+        // メモリの値の無いジョブだけのジョブ名の MAX_RSS は 0M（直すのは #375）
         let out = names(vec![
             done(
                 "73",
@@ -1432,7 +1433,7 @@ mod tests {
                 "2026-11-01T10:30:00",
             ),
             Allocation::Exclusive,
-            &[None, Some(512.0), Some(2048.0)],
+            &[MaxRss::Missing, MaxRss::Mib(512.0), MaxRss::Mib(2048.0)],
         );
         let completions = lines(vec![done(
             "100",
@@ -1463,7 +1464,7 @@ mod tests {
                 "2026-11-01T10:30:00",
             ),
             Allocation::Exclusive,
-            &[Some(2048.0)],
+            &[MaxRss::Mib(2048.0)],
         );
         let completions = lines(vec![
             done(
@@ -1498,7 +1499,7 @@ mod tests {
                 "2026-11-01T11:27:00",
             ),
             Allocation::Cpus("8".to_string()),
-            &[Some(100.0)],
+            &[MaxRss::Mib(100.0)],
         );
         accounting.extend(accounted(
             sacct_job(
@@ -1517,8 +1518,8 @@ mod tests {
     }
 
     #[test]
-    fn a_step_with_zero_memory_stops_with_its_sacct_line_number_like_the_sh_version() {
-        // sacct の文字の出力は 0 バイトに単位を付けず、sh の版はそれを読めずに止まった（直すのは #376）
+    fn a_step_with_zero_bytes_of_memory_stops_with_its_sacct_line_number() {
+        // 0 バイトは読めない値として止まる（直すのは #376）。丸めて 0 になる数バイトは読める
         let accounting = accounted(
             sacct_job(
                 "201",
@@ -1527,12 +1528,18 @@ mod tests {
                 "2026-11-01T10:30:00",
             ),
             Allocation::Exclusive,
-            &[Some(512.0), Some(0.0)],
+            &[MaxRss::Mib(512.0), MaxRss::Zero],
         );
         assert_eq!(
             table(&accounting, &[], false).unwrap_err(),
             "ERROR: sacct の 3 行目を読めません（MaxRSS を読めません）"
         );
+        let tiny = accounted(
+            sacct_job("201", "tiny", "2026-11-01T10:00:00", "2026-11-01T10:30:00"),
+            Allocation::Exclusive,
+            &[MaxRss::Mib(0.0)],
+        );
+        assert!(row(&table(&tiny, &[], false).unwrap(), "201").ends_with(" 0M"));
     }
 
     #[test]

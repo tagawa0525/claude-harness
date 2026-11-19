@@ -819,10 +819,19 @@ pub enum AccountingRow {
     /// ジョブのステップ（.batch など）
     Step {
         job: String,
-        /// メモリの最大（MaxRSS）の MiB（無ければ None）。sacct の `--units=M` の文字の出力と同じく、整数でなければ小数
-        /// 2 桁に丸めた値
-        max_rss: Option<f64>,
+        max_rss: MaxRss,
     },
+}
+
+/// ステップのメモリの最大（MaxRSS）
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MaxRss {
+    /// 記録に無い（sacct の文字の出力は空の欄）
+    Missing,
+    /// 0 バイト（sacct の文字の出力は単位の無い `0`）
+    Zero,
+    /// MiB。sacct の `--units=M` の文字の出力と同じく、整数でなければ小数 2 桁に丸めた値（数バイトは 0.0）
+    Mib(f64),
 }
 
 /// 会計の記録を読めなかった理由
@@ -886,22 +895,27 @@ fn accounting_rows(json: &str) -> Result<Vec<AccountingRow>, String> {
 
 /// ステップのメモリの最大の MiB。sacct の MaxRSS の文字の出力（26.05.6 の src/sacct/print.c の PRINT_MAXRSS と、
 /// src/common/slurm_protocol_api.c の convert_num_unit2。2026-11-20 に slurm-26-05-6-1 のタグで読んだ）と同じく、
-/// 割り切れれば整数、割り切れなければ小数 2 桁に丸める。0 バイトは単位の無い `0` で、0 になる
-fn max_rss(step: &Value) -> Option<f64> {
+/// 割り切れれば整数、割り切れなければ小数 2 桁に丸める。0 バイトは、丸めて 0 になる数バイトと分ける（文字の出力が違う）
+fn max_rss(step: &Value) -> MaxRss {
     let bytes = step["tres"]["requested"]["max"]
-        .as_array()?
-        .iter()
-        .find(|tres| tres["type"].as_str() == Some("mem"))?["count"]
-        .as_u64()?;
-    // 記録が無い値（NO_VAL64、INFINITE64）は空の欄
-    if bytes >= NO_VAL64 {
-        return None;
-    }
-    let mib = bytes as f64 / 1024.0 / 1024.0;
-    if mib.fract() == 0.0 {
-        Some(mib)
-    } else {
-        format!("{mib:.2}").parse().ok()
+        .as_array()
+        .and_then(|all| all.iter().find(|tres| tres["type"].as_str() == Some("mem")))
+        .and_then(|mem| mem["count"].as_u64());
+    match bytes {
+        // 記録が無い値（NO_VAL64、INFINITE64）は空の欄
+        None => MaxRss::Missing,
+        Some(b) if b >= NO_VAL64 => MaxRss::Missing,
+        Some(0) => MaxRss::Zero,
+        Some(b) => {
+            let mib = b as f64 / 1024.0 / 1024.0;
+            if mib.fract() == 0.0 {
+                MaxRss::Mib(mib)
+            } else {
+                format!("{mib:.2}")
+                    .parse()
+                    .map_or(MaxRss::Missing, MaxRss::Mib)
+            }
+        }
     }
 }
 
@@ -1781,11 +1795,11 @@ mod tests {
                 }),
                 AccountingRow::Step {
                     job: "128".to_string(),
-                    max_rss: Some(1774.97),
+                    max_rss: super::MaxRss::Mib(1774.97),
                 },
                 AccountingRow::Step {
                     job: "128".to_string(),
-                    max_rss: None,
+                    max_rss: super::MaxRss::Missing,
                 },
             ]
         );
@@ -1793,15 +1807,17 @@ mod tests {
 
     #[test]
     fn the_max_rss_is_mib_rounded_to_2_decimals_unless_whole_like_sacct_units_m() {
-        // sacct --units=M の文字の出力（1861193728 バイトは 1774.97M、1 GiB は 1024M、0 バイトは単位の無い 0）
+        use super::MaxRss;
+        // sacct --units=M の文字の出力（1861193728 バイトは 1774.97M、1 GiB は 1024M、4096 バイトは 0.00M、0 バイトは単位の無い 0）
         for (bytes, mib) in [
-            (Some(1_861_193_728), Some(1774.97)),
-            (Some(8_990_720), Some(8.57)),
-            (Some(1 << 30), Some(1024.0)),
-            (Some(0), Some(0.0)),
-            (Some(0xffff_ffff_ffff_fffe), None),
-            (Some(u64::MAX), None),
-            (None, None),
+            (Some(1_861_193_728), MaxRss::Mib(1774.97)),
+            (Some(8_990_720), MaxRss::Mib(8.57)),
+            (Some(1 << 30), MaxRss::Mib(1024.0)),
+            (Some(4096), MaxRss::Mib(0.0)),
+            (Some(0), MaxRss::Zero),
+            (Some(0xffff_ffff_ffff_fffe), MaxRss::Missing),
+            (Some(u64::MAX), MaxRss::Missing),
+            (None, MaxRss::Missing),
         ] {
             let got = rows(&[sacct_job(json!({}), &[("1.batch", bytes)])]);
             assert_eq!(
