@@ -938,6 +938,14 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: 空の状態の配列を受けてしまう"]
+    fn a_job_without_a_state_is_an_error_like_scontrol() {
+        // squeue の文字の出力は、どのジョブにも土台の状態の語を書く
+        assert!(queued(json!({"job_state": []})).is_err());
+        assert!(queued(json!({"job_state": [1]})).is_err());
+    }
+
+    #[test]
     fn an_unexpected_shape_is_an_error() {
         for bad in ["not json", "{}", "[]", r#""jobs""#, r#"{"jobs": {}}"#] {
             assert!(queue_jobs(bad).is_err(), "{bad}");
