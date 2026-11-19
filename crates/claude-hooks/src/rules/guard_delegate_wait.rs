@@ -10,7 +10,7 @@
 //! ジョブが、親でも途中で切れる（ADR-0078）ので、hook で分ける。
 //!
 //! `-t` の値は、字面で決まる形（`-t 30`、`-t '1:30:00'`）だけを読む。変数や置き換え（`-t "$T"`）、実行するプログラムを
-//! 決められない形（`$CMD`、`source`）は、見込みが分からないものとして止める（担当は字面で書き直せ、止める側に倒しても
+//! 決められない形（`$CMD`、`source`）、繰り返し（`for`、`while`。投げる本数が決まらない）は、見込みが分からないものとして止める（担当は字面で書き直せ、止める側に倒しても
 //! 失うものが無い。ADR-0025、ADR-0042）。エスケープは無い（線を担当の判断で外させないため）。
 //!
 //! 待ち行列は squeue で読む。読めなければ見込みが分からないものとして止める。
@@ -30,8 +30,10 @@ const VALUED: &[&str] = &["--class", "--ref", "--purpose", "-t", "-c"];
 /// 値を取らないオプション
 const FLAGS: &[&str] = &["--top", "--timed"];
 
-/// 1 つの slurm-run.sh の呼び出しの見積もり（分）。字面で決まらなければ理由
+/// 1 つの slurm-run.sh の呼び出しの見積もり（分）。slurm-run は `-t` を重ねると最後のものを使うので、最後の `-t` を
+/// 読む。字面で決まらなければ理由
 fn estimate_of(cmd: &Cmd) -> Result<u64, String> {
+    let mut estimate = None;
     let mut i = 0;
     while let Some(arg) = cmd.args.get(i) {
         let text = arg.text.as_str();
@@ -52,12 +54,14 @@ fn estimate_of(cmd: &Cmd) -> Result<u64, String> {
                     value.raw
                 ));
             }
-            return slurm::estimate_minutes(&value.text)
-                .ok_or_else(|| format!("-t の値 '{}' を見積もりとして読めない", value.text));
+            estimate = Some(
+                slurm::estimate_minutes(&value.text)
+                    .ok_or_else(|| format!("-t の値 '{}' を見積もりとして読めない", value.text))?,
+            );
         }
         i += 2;
     }
-    Err("-t が無い".to_string())
+    estimate.ok_or_else(|| "-t が無い".to_string())
 }
 
 /// コマンドの slurm-run.sh の見積もりの合計（分）。どれかが字面で決まらなければ理由
@@ -70,15 +74,12 @@ fn total_estimate(shell: &Shell) -> Result<u64, String> {
     if runs.is_empty() || shell.commands().iter().any(|c| c.opaque) {
         return Err("実行するプログラムを字面から決められない".to_string());
     }
+    if shell.has_loop() {
+        return Err("繰り返しの中で投げる本数が字面から決まらない".to_string());
+    }
     runs.iter()
         .map(|cmd| estimate_of(cmd))
         .sum::<Result<u64, String>>()
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// 見込みを計算する（待ち行列を読む）
@@ -88,7 +89,7 @@ fn run_outlook(shell: &Shell) -> Outlook {
         Err(reason) => return Outlook::Unknown(reason),
     };
     match slurm::queued_jobs() {
-        Ok(queue) => delegate_wait::outlook(now(), &queue, estimate),
+        Ok(queue) => delegate_wait::outlook(delegate_wait::now(), &queue, estimate),
         Err(slurm::QueueError::Spawn { error, .. }) => {
             Outlook::Unknown(format!("squeue を起動できない（{error}）"))
         }
@@ -166,7 +167,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 繰り返しの中の slurm-run.sh を 1 本と数える"]
     fn an_estimate_not_fixed_by_the_text_is_unknown() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         for command in [
@@ -186,7 +186,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 最初の -t を読む"]
     fn a_repeated_t_is_read_as_the_last_one_like_slurm_run() {
         let command = "~/.claude/scripts/slurm-run.sh -t 5 --class trial --ref '#1' --purpose p -t 600 x true";
         assert_eq!(estimate(command), Ok(600));

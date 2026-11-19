@@ -43,8 +43,8 @@ impl Outlook {
 /// 待ち行列のジョブの終わりは、開始の見込み（走り始めたものは走り始めた時刻）と見積もりの和で、その最も遅いものの後に
 /// 投げるジョブが走るとみなす（区分の順で前に並ぶことと、排他でないジョブが並んで走ることは数えない。短く見積もらない）。
 /// 待っているジョブの開始の見込みが過ぎていれば、今から走るとみなす。見込みが分からないのは、開始の見込みの無いジョブ、
-/// 見積もりの無いジョブ（無制限、パーティションの上限に任せたもの）、見積もりを超えて走っているジョブ（終わりが読めない）が
-/// あるとき
+/// 見積もりの無いジョブ（無制限、パーティションの上限に任せたもの）、止められたジョブ（止められていた間だけ終わりが延びる）、
+/// 見積もりを超えて走っているジョブ（終わりが読めない）があるとき
 pub fn outlook(now: i64, queue: &[QueuedJob], estimate_minutes: u64) -> Outlook {
     let mut queue_end = now;
     let mut last_job = None;
@@ -61,6 +61,12 @@ pub fn outlook(now: i64, queue: &[QueuedJob], estimate_minutes: u64) -> Outlook 
                 job.id, job.limit
             ));
         };
+        if job.phase == Phase::Suspended {
+            return Outlook::Unknown(format!(
+                "ジョブ {} が止められている（再開の時刻が読めない）",
+                job.id
+            ));
+        }
         let span = (limit as i64).saturating_mul(60);
         let end = if job.phase == Phase::Pending {
             start.max(now).saturating_add(span)
@@ -123,13 +129,14 @@ fn minutes_from(now: i64, then: i64) -> i64 {
     ((then - now).max(0) as u64).div_ceil(60) as i64
 }
 
-/// 時刻を JST の %FT%T で（squeue の一覧と同じ書き方）
+/// 今の UNIX の秒
+pub fn now() -> i64 {
+    super::time::now_micros() / 1_000_000
+}
+
+/// 時刻を JST の %FT%T で（squeue の一覧と同じ書き方。slurm の開始の時刻の書き方と同じ関数）
 fn clock(secs: i64) -> String {
-    let Some(micros) = secs.checked_mul(1_000_000) else {
-        return secs.to_string();
-    };
-    let (y, mo, d, h, mi, s, _) = super::time::jst_fields(super::time::Time { micros });
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}")
+    super::slurm::clock_text(secs).unwrap_or_else(|| secs.to_string())
 }
 
 #[cfg(test)]
@@ -240,7 +247,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 止められたジョブを走っているジョブと同じに数える"]
     fn a_suspended_job_makes_the_outlook_unknown() {
         // 止められていた間だけ終わりが延びるので、見積もりの内でも終わりは読めない
         let o = outlook(

@@ -397,13 +397,16 @@ fn start_text(time: i64) -> Option<String> {
         0 => Some("N/A".to_string()),
         t if t == INFINITE as i64 => Some("Unknown".to_string()),
         t if t == NO_VAL as i64 => Some("None".to_string()),
-        t => {
-            let (y, mo, d, h, mi, s, _) = super::time::jst_fields(super::time::Time {
-                micros: t.checked_mul(1_000_000)?,
-            });
-            Some(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}"))
-        }
+        t => clock_text(t),
     }
+}
+
+/// 時刻（UNIX の秒）を JST の %FT%T で。範囲の外なら None
+pub fn clock_text(time: i64) -> Option<String> {
+    let (y, mo, d, h, mi, s, _) = super::time::jst_fields(super::time::Time {
+        micros: time.checked_mul(1_000_000)?,
+    });
+    Some(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}"))
 }
 
 /// ジョブの状態

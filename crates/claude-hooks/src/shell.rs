@@ -368,6 +368,19 @@ impl Shell {
         }
     }
 
+    /// 繰り返し（`for`、`while`、`until`、`select`）が、文字列の中のシェルを含めてどこかにあるか（中のコマンドが何度
+    /// 走るかは字面から決まらない）
+    pub fn has_loop(&self) -> bool {
+        let mut found = false;
+        self.walk(self.tree.root_node(), &mut |n| {
+            found |= matches!(
+                n.kind(),
+                "for_statement" | "c_style_for_statement" | "while_statement"
+            );
+        });
+        found || self.inner.iter().any(Shell::has_loop)
+    }
+
     /// 全コマンドを文書順で返す（コマンド置換・サブシェル・ERROR 配下も含む）
     pub fn commands(&self) -> &[Cmd] {
         &self.cmds
