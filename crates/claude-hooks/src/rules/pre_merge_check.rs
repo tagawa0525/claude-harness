@@ -81,26 +81,25 @@ fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
     )
 }
 
-/// gh pr merge の、値を次の語で取るフラグ（`--flag=値` の形は 1 語なので、`-` で始まる語として扱う）
-const VALUE_FLAGS: &[&str] = &[
-    "-R",
-    "--repo",
-    "-F",
-    "--body-file",
-    "-b",
-    "--body",
-    "-t",
-    "--subject",
-    "-A",
-    "--author-email",
-    "--match-head-commit",
-];
-
 /// 引数から PR の指定（番号、URL、ブランチ名）を探す。値を取るフラグの値を飛ばして、最初の位置引数を採る
 /// （`gh pr merge -R owner/repo 12 …` と、本文の後ろに指定を置く形にも対応）。指定の形はここで解かず、そのまま
 /// `gh pr view` に渡す（gh pr merge と同じ解き方で同じ PR を検査する。形ごとに手で解くと、解けない形のときに cwd の
 /// ブランチの PR を検査したまま、gh は指定の PR をマージする）
 fn pr_selector(args: &[Arg]) -> Option<String> {
+    // gh pr merge の、値を次の語で取るフラグ（`--flag=値` の形は 1 語なので、下の `-` で始まる語として飛ばす）
+    const VALUE_FLAGS: &[&str] = &[
+        "-R",
+        "--repo",
+        "-F",
+        "--body-file",
+        "-b",
+        "--body",
+        "-t",
+        "--subject",
+        "-A",
+        "--author-email",
+        "--match-head-commit",
+    ];
     let mut skip = false;
     for a in args {
         let t = a.text.as_str();
@@ -595,7 +594,7 @@ impl Rule for PreMergeCheck {
             let Some(args) = cmd.gh_subcommand(&["pr", "merge"]) else {
                 continue;
             };
-            if asks_help(args, VALUE_FLAGS) {
+            if asks_help(args) {
                 continue;
             }
             let mut reasons: Vec<String> = Vec::new();

@@ -1164,21 +1164,12 @@ pub fn has_flag(args: &[Arg], names: &[&str]) -> bool {
     })
 }
 
-/// `--help` か `-h` がフラグとして現れるか（gh はヘルプを表示して終わり、サブコマンドの動作をしない）。
-/// `value_flags`（値を次の語で取るフラグ）の値としての `--help` は数えない（`--body --help` は本文が `--help` の実行になる）
-pub fn asks_help(args: &[Arg], value_flags: &[&str]) -> bool {
-    let mut skip = false;
-    for a in args {
-        let t = a.text.as_str();
-        if skip {
-            skip = false;
-        } else if value_flags.contains(&t) {
-            skip = true;
-        } else if t == "--help" || t == "-h" {
-            return true;
-        }
-    }
-    false
+/// 引数が `--help` か `-h` の 1 語だけか（gh はヘルプを表示して終わり、サブコマンドの動作をしない）。
+/// ほかの引数と並ぶ `--help` は数えない。前の語が値を取るフラグ（`--body --help`、まとめた短いフラグの `-sdb --help`、
+/// 変数から展開されるフラグ）か `--` なら、gh は `--help` を値か位置引数として読んで実行に進む。それを見分けるには
+/// gh のフラグの表をコピーすることになり、表が古くなると検査を飛ばす側に倒れる
+pub fn asks_help(args: &[Arg]) -> bool {
+    matches!(args, [a] if a.text == "--help" || a.text == "-h")
 }
 
 /// フラグの値（`--x value` / `--x=value`）。最初に現れたもの
