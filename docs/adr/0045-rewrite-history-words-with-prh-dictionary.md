@@ -63,9 +63,9 @@ ADR-0014 の辞書（`modules/home/parts/ja-terms/prh.yml`）は、これから�
 
 辞書（B1）: B2 は辞書と食い違う。B3 はブロブごとに node を起こし、Markdown のコードを直さない（下の D1）。
 
-- 既定の辞書は ja-terms の prh.yml（hook と同じもの）。`--dictionary` で置き換え、`--extra-rules` で規則を足す
-  （どちらも prh の形で、重ねて渡せる。規則は渡した順に並べ、prh の `Engine.merge` のように同じ expected の規則を
-  外さない）
+- 既定の辞書は ja-terms の prh.yml に、対象のリポジトリの `.ja-terms/prh.yml` があれば重ねたもの（hook と同じ組。ADR-0096）。
+  `--dictionary` で置き換え、`--extra-rules` で規則を足す（どちらも prh の形で、重ねて渡せる。規則は渡した順に並べ、prh の
+  `Engine.merge` のように同じ expected の規則を外さない）
 - 一致の意味は prh 6.0.0（`lib/engine.js`、`rule.js`、`paragraph.js`、`changeset/`）に揃える:
   - 文章を `\n{2,}` で段落に分け、段落ごとに、すべての規則の一致を元の文字列の上で集める（規則を順に当てない）
   - 重なった一致は、同じ開始なら長い方、違う開始なら先の方を採る
@@ -212,3 +212,8 @@ xlc の `references/history-rewrite/`（`callback2.py`、`cb_lib.py`、`iterate3
   filter-repo の設定（`--preserve-commit-hashes`、`--prune-empty=never` など）に当たる振る舞いを同じにした。2 つのステージ（C1）の
   C3 を採らない理由のうち「lookbehind を読むために fancy-regex のような crate が要り」は、ja-terms が regress で読むように
   なって当たらなくなった。C3 を採らない今の理由は ADR-0088 の案 3（語の変換と番号の付け直しの間の照合ができない）
+- 2026-11-19: 既定の辞書を、ja-terms の prh.yml に、対象のリポジトリの `.ja-terms/prh.yml`（`run` は `--source` の、`transform`
+  は今のディレクトリの作業ツリー）があれば prh の `Engine.merge` で重ねたものにした。前は「既定の辞書は ja-terms の prh.yml
+  （hook と同じもの）。`--dictionary` で置き換え」。hook がリポジトリの辞書を重ねるようになり（ADR-0096）、履歴の書き換えも
+  同じ語を直すため。`run` は使ったリポジトリの辞書を記録（`DIR/words` の `repo-dictionary` の行）に残し、`--repo-dictionary`
+  で明示もできる

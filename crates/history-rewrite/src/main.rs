@@ -30,7 +30,12 @@
 //!         パスの増減を含む書き換え、変換か remap が止まるファイル）は、何も変えずに LEFT に出す
 //!
 //! 語の指定:
-//!   --dictionary FILE   辞書（prh の形）。省くと ja-terms の辞書（ADR-0014。ビルドに埋めたもの）。重ねて渡せる
+//!   --dictionary FILE   辞書（prh の形）。省くと ja-terms の共通の辞書（ADR-0014。ビルドに埋めたもの）。重ねて渡せる
+//!   --repo-dictionary FILE
+//!                       共通の辞書（--dictionary があればそれ）に重ねるリポジトリの辞書（prh の形。ADR-0096）。同じ
+//!                       expected の規則は、こちらのものだけを残す。--dictionary も --repo-dictionary も省くと、run は
+//!                       --source の、transform は今のディレクトリの作業ツリーの直下の .ja-terms/prh.yml があれば使う
+//!                       （ja-terms の検査と同じ辞書の組）。run はそれを DIR/words に記録する
 //!   --extra-rules FILE  辞書に足す規則（prh の形。辞書に無い 1 回限りの置き換え）。重ねて渡せる
 //!   --exclude GLOB      直さないパス（リポジトリの直下から。Python の PurePosixPath.full_match の書き方で、** が
 //!                       ディレクトリをまたぐ）。重ねて渡せる。コミットとタグの本文には当てない
@@ -69,7 +74,7 @@ use std::process::ExitCode;
 const USAGE: &str = "Usage: history-rewrite run --source REPO --workdir DIR [語の指定]
        history-rewrite transform [語の指定] FILE...
        history-rewrite sync-worktrees --workdir DIR [語の指定]
-語の指定: [--dictionary FILE]... [--extra-rules FILE]... [--exclude GLOB]...";
+語の指定: [--dictionary FILE]... [--repo-dictionary FILE]... [--extra-rules FILE]... [--exclude GLOB]...";
 
 enum Cli {
     Run(Words, PathBuf, PathBuf),
@@ -100,6 +105,7 @@ fn parse(args: &[String]) -> Option<Cli> {
         };
         match name {
             "--dictionary" => words.dictionaries.push(PathBuf::from(value)),
+            "--repo-dictionary" => words.repo_dictionaries.push(PathBuf::from(value)),
             "--extra-rules" => words.extra_rules.push(PathBuf::from(value)),
             "--exclude" => words.excludes.push(value),
             "--source" => source = Some(PathBuf::from(value)),
@@ -126,8 +132,12 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     let result = match cli {
-        Cli::Run(words, source, workdir) => history_rewrite::run::run(&words, &source, &workdir),
-        Cli::Transform(words, files) => transform_files(&words, &files),
+        Cli::Run(words, source, workdir) => words
+            .with_repo_dictionary(&source)
+            .and_then(|words| history_rewrite::run::run(&words, &source, &workdir)),
+        Cli::Transform(words, files) => words
+            .with_repo_dictionary(std::path::Path::new("."))
+            .and_then(|words| transform_files(&words, &files)),
         Cli::Sync(words, workdir) => {
             match history_rewrite::sync::sync_worktrees(&words, &workdir) {
                 Ok(true) => Ok(()),

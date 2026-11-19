@@ -326,3 +326,88 @@ fn a_replacement_that_changes_the_number_of_lines_in_markdown_stops() {
     );
     assert_eq!(work.read("a.md"), "一二\n");
 }
+
+// リポジトリの辞書（作業ツリーの直下の .ja-terms/prh.yml。ADR-0096）
+
+const REPO_RULES: &str = "version: 1\nrules:\n  - expected: 新称\n    pattern: 旧称\n";
+
+#[test]
+fn the_repository_dictionary_is_layered_over_the_common_one() {
+    let work = Work::new();
+    work.write(".ja-terms/prh.yml", REPO_RULES.as_bytes());
+    work.write("doc.md", "確かめの旧称\n".as_bytes());
+    ok(&work.transform(&["doc.md"]));
+    assert_eq!(work.read("doc.md"), "確認の新称\n");
+}
+
+#[test]
+fn a_repository_rule_with_the_same_expected_replaces_the_common_rule() {
+    // prh の Engine.merge（imports）と同じく、共通の辞書の同じ expected の規則を外す
+    let work = Work::new();
+    work.write(
+        ".ja-terms/prh.yml",
+        "version: 1\nrules:\n  - expected: 確認\n    pattern: 旧称\n".as_bytes(),
+    );
+    work.write("doc.md", "確かめの旧称\n".as_bytes());
+    ok(&work.transform(&["doc.md"]));
+    assert_eq!(work.read("doc.md"), "確かめの確認\n");
+}
+
+#[test]
+fn an_explicit_dictionary_is_not_layered_with_the_repository_dictionary() {
+    let work = Work::new();
+    work.write(".ja-terms/prh.yml", REPO_RULES.as_bytes());
+    work.write("doc.md", "確かめの旧称\n".as_bytes());
+    let given = work.root.join("given.yml");
+    std::fs::write(
+        &given,
+        "version: 1\nrules:\n  - expected: 確認\n    pattern: 確かめ\n",
+    )
+    .unwrap();
+    ok(&work.transform(&["--dictionary", given.to_str().unwrap(), "doc.md"]));
+    assert_eq!(work.read("doc.md"), "確認の旧称\n");
+}
+
+#[test]
+fn an_explicit_repository_dictionary_is_layered_over_the_common_one() {
+    // 作業ツリーの外のファイルでも、--repo-dictionary で渡せば重ねる
+    let work = Work::new();
+    let given = work.root.join("repo.yml");
+    std::fs::write(&given, REPO_RULES).unwrap();
+    work.write("doc.md", "確かめの旧称\n".as_bytes());
+    ok(&work.transform(&["--repo-dictionary", given.to_str().unwrap(), "doc.md"]));
+    assert_eq!(work.read("doc.md"), "確認の新称\n");
+}
+
+#[test]
+fn an_unreadable_repository_dictionary_stops_the_transform() {
+    let work = Work::new();
+    work.write(".ja-terms/prh.yml", b"version: 1\nrules: [\n");
+    work.write("doc.md", "確かめの旧称\n".as_bytes());
+    let out = work.transform(&["doc.md"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains(".ja-terms/prh.yml"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(work.read("doc.md"), "確かめの旧称\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_repository_dictionary_stops_the_transform() {
+    // 行き先の無い symlink は「辞書が無い」でなく、読めない辞書として止める
+    let work = Work::new();
+    std::fs::create_dir_all(work.repo().join(".ja-terms")).unwrap();
+    std::os::unix::fs::symlink("missing.yml", work.repo().join(".ja-terms/prh.yml")).unwrap();
+    work.write("doc.md", "確かめの旧称\n".as_bytes());
+    let out = work.transform(&["doc.md"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains(".ja-terms/prh.yml"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(work.read("doc.md"), "確かめの旧称\n");
+}

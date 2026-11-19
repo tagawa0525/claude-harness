@@ -64,4 +64,25 @@ out=$(run "git merge --no-ff feat/a -m '何の型もない件名'")
 grep -qF "Conventional Commits" <<<"$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out")" ||
   fail "件名の形の理由を示すはず" "$out"
 
+# リポジトリの辞書（.ja-terms/prh.yml。ADR-0096）は、コマンドの行き先のリポジトリのものを、共通の辞書に重ねて当てる。
+# 行き先が hook の cwd と違う git -C の形でも、行き先のリポジトリの辞書を読む
+OTHER=$(mktemp -d)
+trap 'rm -rf "$REPO" "$REPO.gitconfig" "$OTHER"' EXIT
+git -C "$OTHER" init -q
+mkdir "$OTHER/.ja-terms"
+printf 'version: 1\nrules:\n  - expected: ほげ\n    pattern: ふがふが\n' >"$OTHER/.ja-terms/prh.yml"
+# コマンドの文字列の中のパスは claude-hooks が読む。Windows（Git Bash）の /tmp の形は claude-hooks.exe に通じないので、
+# Windows の形にする
+if command -v cygpath >/dev/null; then OTHER=$(cygpath -m "$OTHER"); fi
+out=$(run "git -C '$OTHER' merge --no-ff feat/a -m 'Merge: a' -m 'ふがふがと掃引'")
+reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' <<<"$out")
+for term in "ふがふが => ほげ" "掃引 => スイープ"; do
+  grep -qF "$term" <<<"$reason" || fail "行き先のリポジトリの辞書と共通の辞書の「$term」を示すはず" "$out"
+done
+out=$(run "git merge --no-ff feat/a -m 'Merge: a' -m 'ふがふが'")
+[ -z "$out" ] || fail "辞書の無いリポジトリには、ほかのリポジトリの辞書を当てないはず" "$out"
+out=$(run "cd '$OTHER' && git merge feat/a -m 'a' -m 'ふがふが'")
+grep -qxF "  ふがふが => ほげ" <<<"$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' <<<"$out")" ||
+  fail "--no-ff の無いマージ（ja-terms message）も、cd の行き先のリポジトリの辞書で見るはず" "$out"
+
 echo "ok: check-merge-body-ja-terms"

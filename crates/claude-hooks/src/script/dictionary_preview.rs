@@ -25,7 +25,8 @@
 //!
 //! 発言は、作業用のディレクトリの `utterances.md` に、見出しの後に 1 行おきに書いて検査に渡す（Markdown として読ませ、
 //! コードスパンの中を pre-commit と同じく数えない。空行で区切り、行どうしを 1 つの段落にしない）。辞書の検査は hook と
-//! 同じく claude-hooks の隣の ja-terms（[`crate::rules::ja_terms`]）
+//! 同じく claude-hooks の隣の ja-terms（[`crate::rules::ja_terms`]）。`--dictionary` を渡すので、ja-terms は渡した辞書
+//! だけをかけ、リポジトリの辞書（`.ja-terms/prh.yml`）を重ねない（ADR-0096。辞書の版どうしの差を見る）
 
 use super::usage_report::glob_dir;
 use regex::Regex;
