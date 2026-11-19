@@ -172,7 +172,11 @@ fn read_state(path: &Path) -> Option<(u64, u64, Option<Vec<u64>>)> {
 
 /// 出力のファイルのパスのハッシュ
 fn file_hashes(files: &[String]) -> Vec<u64> {
-    files.iter().map(|f| fnv1a(f.as_bytes())).collect()
+    // 同じファイルを別の書き方（`./`、`//`、相対）で渡しても、新しいファイルと数えない
+    files
+        .iter()
+        .map(|f| fnv1a(normalize(f).as_os_str().as_encoded_bytes()))
+        .collect()
 }
 
 /// 状態に、待つだけになった時刻と、最後に呼んだ時刻 called と、待った出力のファイル files を残す
