@@ -1267,6 +1267,16 @@ mod tests {
     }
 
     #[test]
+    fn sh_word_quotes_branch_names_the_shell_would_expand() {
+        // 付け替えの手順はそのまま貼って実行されるので、git が許すブランチ名の $ ; ' を語のまま渡す
+        assert_eq!(sh_word("main"), "main");
+        assert_eq!(sh_word("release/1.2_x-y"), "release/1.2_x-y");
+        assert_eq!(sh_word("feat/$USER"), "'feat/$USER'");
+        assert_eq!(sh_word("a;b"), "'a;b'");
+        assert_eq!(sh_word("it's"), "'it'\\''s'");
+    }
+
+    #[test]
     fn uri_encode_matches_jq_uri() {
         assert_eq!(uri_encode("release/x"), "release%2Fx");
         assert_eq!(uri_encode("main"), "main");
