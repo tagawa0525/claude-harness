@@ -74,7 +74,7 @@ const HOOKS: &str = "/home/u/.claude/bin/claude-hooks";
 const DATE: &str = "date '+現在時刻: %F %H:%M %Z'";
 
 fn pre_tool_use() -> Value {
-    json!({"matcher": "Bash|Agent|Skill|Edit|Write", "hooks": [
+    json!({"matcher": "Bash|Agent|Skill|Edit|Write|SendMessage|SubagentHandback", "hooks": [
         {"type": "command", "command": HOOKS, "args": ["pre-tool-use"], "timeout": 60}
     ]})
 }
@@ -183,7 +183,7 @@ fn exec_form_registrations_including_windows_paths_are_recognized() {
     let got = home.ok(&json!({}), &["--pre-tool-use", windows]);
     assert_eq!(
         got["hooks"]["PreToolUse"],
-        json!([{"matcher": "Bash|Agent|Skill|Edit|Write", "hooks": [
+        json!([{"matcher": "Bash|Agent|Skill|Edit|Write|SendMessage|SubagentHandback", "hooks": [
             {"type": "command", "command": windows, "args": ["pre-tool-use"], "timeout": 60}
         ]}])
     );

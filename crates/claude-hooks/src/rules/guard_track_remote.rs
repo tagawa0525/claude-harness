@@ -237,6 +237,7 @@ mod tests {
             skill: String::new(),
             args: String::new(),
             file_path: String::new(),
+            message: String::new(),
             cwd: work.to_path_buf(),
             session_id: String::new(),
         };
