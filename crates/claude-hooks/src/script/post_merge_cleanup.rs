@@ -778,3 +778,42 @@ fn stacked_prs(branch: &str, default: &str) -> Option<String> {
         commands.join("\n")
     ))
 }
+
+/// リモートの URL が GitHub のリポジトリを指すなら、その owner/name
+fn github_repo(_url: &str) -> Option<String> {
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::github_repo;
+
+    #[test]
+    fn github_repo_reads_https_ssh_and_scp_like_urls() {
+        for url in [
+            "https://github.com/octo/repo.git",
+            "https://github.com/octo/repo",
+            "https://github.com/octo/repo/",
+            "https://user@github.com/octo/repo.git",
+            "ssh://git@github.com/octo/repo.git",
+            "git@github.com:octo/repo.git",
+            "git@github.com:octo/repo",
+        ] {
+            assert_eq!(github_repo(url).as_deref(), Some("octo/repo"), "{url}");
+        }
+    }
+
+    #[test]
+    fn github_repo_is_none_for_other_hosts_paths_and_partial_urls() {
+        for url in [
+            "/srv/git/repo.git",
+            "https://gitlab.com/octo/repo.git",
+            "https://github.com.evil.example/octo/repo.git",
+            "https://github.com/octo",
+            "https://github.com/octo/repo/extra",
+            "git@github.com:repo.git",
+        ] {
+            assert_eq!(github_repo(url), None, "{url}");
+        }
+    }
+}

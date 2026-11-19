@@ -585,37 +585,70 @@ assert_contains "$out" "REMOTE_BRANCH: kept"
 it "post-merge-cleanup: GitHub リモートで open PR がなければリモートも削除する"
 setup_merged_branch "$TEST_ROOT/cleanup4" github
 cd "$TEST_ROOT/cleanup4/app" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
-  "repo view --json nameWithOwner"*) echo example/app ;;
-  "pr list -R example/app --base feat/x --state open"*) ;;'
+make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq "" "$(git ls-remote --heads origin feat/x)"
 assert_contains "$out" "REMOTE_BRANCH: deleted"
-assert_contains "$(fake_log gh)" "pr list -R example/app --base feat/x --state open --json number --jq .[].number"
 
-it "post-merge-cleanup: リモートブランチを base とする open PR があれば削除せず、PR ごとに base の付け替えを示す"
+it "post-merge-cleanup: 消すリモートが GitHub でなければ、それを base とする PR を探さない"
+# origin はローカルの bare。そのブランチを消しても、GitHub の PR は閉じない
+assert_not_contains "$(fake_log gh)" "--base"
+
+# github_origin <repo> <url>: origin の URL を GitHub の <url> にし、git の読み書きは insteadOf でローカルの bare に向ける。
+# insteadOf はほかのリモートの同じ URL も書き換え、git remote -v から github.com が消えるので、<url> は github の remote
+# （example/<repo>）と違うものにする
+github_origin() {
+  git -C "$1" config "url.$1.git.insteadOf" "$2"
+  git -C "$1" remote set-url origin "$2"
+}
+
+it "post-merge-cleanup: リモートブランチを base とする open PR があれば削除せず、PR ごとに base の付け替えと削除のコマンドを示す"
 setup_merged_branch "$TEST_ROOT/cleanup51" github
+# fork の clone: ブランチは origin（fork）にあり、上の PR も fork にある。gh の既定のリポジトリ（github の remote）ではなく、
+# 消すリモートのリポジトリを探す
+github_origin "$TEST_ROOT/cleanup51/app" https://github.com/fork-owner/app.git
 cd "$TEST_ROOT/cleanup51/app" || exit 1
 make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
-  "repo view --json nameWithOwner"*) echo example/app ;;
-  "pr list -R example/app --base feat/x --state open"*) printf "12\n13\n" ;;'
+  "pr list -R fork-owner/app --base feat/x --state open --json number --jq .[].number") printf "12\n13\n" ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
 assert_contains "$out" "REMOTE_BRANCH: kept (open PR 2 件（#12, #13）の base。"
-assert_contains "$out" "  gh pr edit 12 --base main -R example/app"
-assert_contains "$out" "  gh pr edit 13 --base main -R example/app"
+assert_contains "$out" "
+  gh pr edit 12 --base main -R fork-owner/app
+  gh pr edit 13 --base main -R fork-owner/app
+  git push origin --delete feat/x"
 
 it "post-merge-cleanup: base とする open PR を確認できなければ削除しない"
 setup_merged_branch "$TEST_ROOT/cleanup52" github
+github_origin "$TEST_ROOT/cleanup52/app" https://github.com/fork-owner/app.git
 cd "$TEST_ROOT/cleanup52/app" || exit 1
 make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
-  "repo view --json nameWithOwner"*) echo example/app ;;
-  "pr list -R example/app --base feat/x --state open"*) exit 1 ;;'
+  "pr list -R fork-owner/app --base feat/x --state open"*) exit 1 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
 assert_contains "$out" "REMOTE_BRANCH: kept (feat/x を base にした open PR の有無を確認できない: gh pr list が失敗)"
+
+it "post-merge-cleanup: リモートの既定ブランチにまだ入っていなければ、base とする PR があっても付け替えを示さない"
+# push していない main へ上の PR を付け替えると、上の PR の差分にこのブランチのコミットが入る
+REPO="$TEST_ROOT/cleanup53/app"
+make_repo "$REPO"
+make_remote "$REPO" github
+github_origin "$REPO" https://github.com/fork-owner/app.git
+git -C "$REPO" switch -q -c feat/x
+commit_file "$REPO" a.txt "feat: a"
+git -C "$REPO" push -q -u origin feat/x
+git -C "$REPO" switch -q main
+git -C "$REPO" merge -q --no-ff -m "Merge: feat/x" feat/x
+cd "$REPO" || exit 1
+make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+  "pr list -R fork-owner/app --base feat/x --state open"*) echo 12 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (origin/main がブランチの先端をまだ含まない"
+assert_not_contains "$out" "gh pr edit"
 
 it "post-merge-cleanup: リモートのないリポジトリ（/git-merge の後）でも worktree とブランチを片付ける"
 REPO="$TEST_ROOT/cleanup6/app"
