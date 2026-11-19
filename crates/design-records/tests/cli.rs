@@ -3440,3 +3440,124 @@ fn index_escapes_a_directory_name_so_that_check_reads_the_entry() {
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert_eq!(entry_findings(&out), Vec::<String>::new());
 }
+
+/// バンドルのルートと、`description` を書いた（`None` なら書かない）ADR-0001 のテンプレートを書き、ADR のパスを返す
+fn bundle_with_adr(t: &TempRepo, description: Option<&str>) -> &'static str {
+    let path = "docs/adr/0001-use-foo.md";
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    let text = design_records::template(1, "foo を使う", &today());
+    let text = match description {
+        Some(d) => text.replace("type: ADR\n", &format!("type: ADR\ndescription: {d}\n")),
+        None => text,
+    };
+    t.write(path, &text);
+    path
+}
+
+#[test]
+fn check_accepts_an_adr_description_and_index_lists_it() {
+    let t = TempRepo::new("okf-adr-description");
+    let adr = bundle_with_adr(&t, Some("foo の使い方"));
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md) - foo の使い方\n"
+    );
+    t.commit_all("docs: an ADR with a description");
+    let out = t.run(&["check", adr, "docs/adr/index.md"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "", "{}", stderr(&out));
+}
+
+#[test]
+fn index_writes_a_description_added_to_a_listed_adr_and_check_then_passes() {
+    let t = TempRepo::new("okf-adr-description-later");
+    let adr = bundle_with_adr(&t, None);
+    assert!(t.run(&["index"]).status.success());
+    t.commit_all("docs: an ADR without a description");
+    t.write(
+        adr,
+        &t.read(adr)
+            .replace("type: ADR\n", "type: ADR\ndescription: foo の使い方\n"),
+    );
+    t.commit_all("docs: describe the ADR");
+    let out = t.run(&["check", adr]);
+    assert!(
+        entry_findings(&out)
+            .iter()
+            .any(|l| l.contains("description")),
+        "{}",
+        stdout(&out)
+    );
+
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "docs/adr/index.md\n");
+    assert_eq!(
+        t.read("docs/adr/index.md"),
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md) - foo の使い方\n"
+    );
+    t.commit_all("docs: index the description");
+    let out = t.run(&["check", adr, "docs/adr/index.md"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "", "{}", stderr(&out));
+    assert!(t.run(&["index"]).stdout.is_empty());
+}
+
+#[test]
+fn index_follows_a_changed_or_removed_description_and_keeps_the_rest_of_the_line() {
+    let t = TempRepo::new("okf-description-sync");
+    let doc = |d: &str| format!("---\ntype: Guide\n{d}---\n\n# g\n");
+    t.write("docs/a.md", &doc("description: 新しい\n"));
+    t.write("docs/b.md", &doc(""));
+    t.write("docs/c.md", &doc("description: 説明\n"));
+    t.write("docs/d.md", &doc("description: 説明\n"));
+    // a は説明が古く、b は文書が説明を消し、c は行が CRLF、d は説明の形でない手書きの続きを持つ
+    t.write(
+        "docs/index.md",
+        &format!(
+            "{OKF_ROOT_INDEX}\n* [g](a.md) - 古い\n- [g](b.md) - 消した\n* [g](c.md)\r\n* [g](d.md) メモ\n"
+        ),
+    );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!(
+            "{OKF_ROOT_INDEX}\n* [g](a.md) - 新しい\n- [g](b.md)\n* [g](c.md) - 説明\r\n* [g](d.md) メモ\n"
+        )
+    );
+}
+
+#[test]
+fn new_in_a_bundle_leaves_the_descriptions_of_existing_lines_to_index() {
+    // new は記録の行を足すだけにする（ほかの行の修正を、記録のコミットに混ぜない）
+    let t = TempRepo::new("okf-new-description");
+    t.write("docs/index.md", &format!("{OKF_ROOT_INDEX}\n* [g](g.md)\n"));
+    t.write(
+        "docs/g.md",
+        "---\ntype: Guide\ndescription: 説明\n---\n\n# g\n",
+    );
+    t.commit_all("docs: a guide listed without its description");
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{OKF_ROOT_INDEX}\n* [g](g.md)\n* [adr](adr/)\n")
+    );
+}
+
+#[test]
+fn check_lets_a_description_be_added_to_a_decided_adr_on_main() {
+    let t = decided_topic("description-decided");
+    let a = "docs/adr/0001-use-a.md";
+    t.write(
+        a,
+        &t.read(a)
+            .replace("type: ADR\n", "type: ADR\ndescription: a の使い方\n"),
+    );
+    let out = t.run(&["check", a]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(stdout(&out), "", "{}", stderr(&out));
+}
