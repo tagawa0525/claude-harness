@@ -678,3 +678,31 @@ fn open_count_without_a_commit_from_14_days_before_says_so() {
     );
     assert!(!issues.contains("増えた"), "{issues}");
 }
+
+#[test]
+fn issue_names_that_git_quotes_are_counted_14_days_before() {
+    let repo = Repo::new();
+    repo.issue("0001-ä b.md", OPEN);
+    repo.commit_issues("old", Some(LONG_AGO));
+    let issues = section(&stdout(&repo.run(&[])), "issues");
+    assert!(
+        issues.contains("open-count now=1 14d-ago=1 diff=+0\n"),
+        "{issues}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_files_make_the_current_count_unknown() {
+    let repo = Repo::new();
+    repo.issue("0001-a.md", OPEN);
+    repo.commit_issues("old", Some(LONG_AGO));
+    let dir = repo.app().join("docs/issues");
+    std::os::unix::fs::symlink(dir.join("gone.md"), dir.join("0002-x.md")).unwrap();
+    let issues = section(&stdout(&repo.run(&[])), "issues");
+    assert!(
+        issues.contains("open-count now=unknown（読めないファイルがある） 14d-ago=1\n"),
+        "{issues}"
+    );
+    assert!(!issues.contains("増えた"), "{issues}");
+}

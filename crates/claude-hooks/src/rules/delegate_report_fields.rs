@@ -217,4 +217,64 @@ mod tests {
         let report = "## 親が先に読む要点\n- x\n\n## 外したもの、後回しにしたもの\n```text\nscripts/a.py を検査から外した\n```\n";
         assert!(check("SendMessage", report).is_empty());
     }
+
+    #[test]
+    fn code_span_at_the_start_of_a_line_does_not_open_a_code_block() {
+        let report = REPORT.replace("- 完成の形を満たした", "```cargo test``` を流した");
+        assert!(check("SendMessage", &report).is_empty());
+    }
+
+    #[test]
+    fn report_quoted_in_a_tilde_code_block_is_not_checked() {
+        let message = "前の報告:\n\n~~~markdown\n## 親が先に読む要点\n- x\n~~~\n";
+        assert!(check("SendMessage", message).is_empty());
+    }
+
+    #[test]
+    fn unclosed_code_block_before_the_summary_does_not_hide_the_report() {
+        let report = format!(
+            "```bash で実行した\n\n{}",
+            REPORT.replace("## 外したもの、後回しにしたもの\nなし\n\n", "")
+        );
+        assert_eq!(check("SendMessage", &report).len(), 1);
+    }
+
+    #[test]
+    fn qualifier_in_half_width_parentheses_is_accepted() {
+        let report = REPORT
+            .replace("## 親が先に読む要点", "## 親が先に読む要点 (要約)")
+            .replace(
+                "## 外したもの、後回しにしたもの",
+                "## 外したもの、後回しにしたもの (この PR)",
+            );
+        assert!(check("SendMessage", &report).is_empty());
+        let unfielded = REPORT
+            .replace("## 親が先に読む要点", "## 親が先に読む要点 (要約)")
+            .replace("## 外したもの、後回しにしたもの\nなし\n\n", "");
+        assert_eq!(check("SendMessage", &unfielded).len(), 1);
+    }
+
+    #[test]
+    fn heading_with_text_after_a_closed_qualifier_is_not_the_field() {
+        let report = REPORT.replace(
+            "## 外したもの、後回しにしたもの",
+            "## 外したもの、後回しにしたもの（なし）以下は別の話",
+        );
+        assert_eq!(check("SendMessage", &report).len(), 1);
+    }
+
+    #[test]
+    fn heading_indented_by_up_to_three_spaces_counts() {
+        let report = REPORT
+            .replace("## 外したもの、後回しにしたもの\nなし\n\n", "")
+            .replace("## 親が先に読む要点", "   ## 親が先に読む要点");
+        assert_eq!(check("SendMessage", &report).len(), 1);
+    }
+
+    #[test]
+    fn deny_reason_does_not_cite_an_adr_number() {
+        let report = REPORT.replace("## 外したもの、後回しにしたもの\nなし\n\n", "");
+        let findings = check("SendMessage", &report);
+        assert!(!deny_reason(&findings).contains("ADR-"));
+    }
 }
