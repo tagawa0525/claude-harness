@@ -2983,3 +2983,24 @@ fn new_outside_a_bundle_writes_no_index() {
     assert_eq!(stderr(&out), "");
     assert!(!t.dir.join("docs/adr/index.md").exists());
 }
+
+#[test]
+fn check_accepts_bundle_metadata_in_a_v0_3_root_index_and_index_keeps_it() {
+    let t = TempRepo::new("okf-metadata");
+    let front = "---\nokf_version: \"0.3\"\ntitle: docs\ndescription: 決定の記録と手順\n\
+                 license: Apache-2.0\nx-acme-owner: team:a\n---\n";
+    t.write("docs/index.md", &format!("{front}\n# docs\n"));
+    t.write(
+        "docs/windows.md",
+        "---\ntype: Guide\ntitle: Windows\ndescription: 入れ方\n---\n",
+    );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{front}\n# docs\n\n* [Windows](windows.md) - 入れ方\n")
+    );
+    t.commit_all("docs: bundle with metadata");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
