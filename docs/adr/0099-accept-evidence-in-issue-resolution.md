@@ -46,7 +46,9 @@ xlc のリポジトリ（/home/tagawa/github/xlc）は、docs/issues の README 
 閉じた issue の `resolution` に通す形:
 
 - 決まった 7 語のどれか
-- `<7 語のどれか>: <理由>`（理由は空でない）。理由は読まない。引用符で囲んでもよい（`"wontfix: 理由"`）
+- `<7 語のどれか>: <理由>`（理由は空でない）。理由は読まない。/docs-issues は引用符で囲んで書かせる（`"wontfix: 理由"`。
+  YAML の引用符の無い値はコロンと空白を含めないので、ほかの YAML の読み手が読めない）。囲まない値も通す（xlc の 10 件がこの形で、
+  `#` のコメントと違って design-records と値の読み違いは起きない）
 - `ADR-NNNN`（決めた ADR）
 - `コミット <hash>`（解決したコミット。7〜40 桁の英小文字の16進）
 
@@ -56,7 +58,8 @@ xlc のリポジトリ（/home/tagawa/github/xlc）は、docs/issues の README 
   挙げているかは見ない（`resolved-by` でも見ていない。xlc は自分の検査で見る）
 - `コミット <hash>` の hash は、`resolved-by` のコミットと同じく探さない。hash は rebase で変わり、探すと正しい記録を誤って
   示す
-- `duplicate: <理由>` は `duplicate` と同じく `duplicate-of` を求める
+- `duplicate: <理由>` は `duplicate` と同じく `duplicate-of` を求める。/resume（resume-state）も同じく重複先をたどる。
+  `resolution` の形の解釈は design-records の `Resolution` の 1 か所に置き、両方から使う
 - 開いている issue の `resolution` は、形によらず閉じるときのキーとして注意する（空の `resolution:` は書いていないものとする）
 
 ### 帰結
@@ -70,5 +73,6 @@ xlc のリポジトリ（/home/tagawa/github/xlc）は、docs/issues の README 
 ### 確認
 
 `crates/design-records/tests/cli.rs` の `check_accepts_resolutions_that_are_a_word_or_name_the_evidence`、
-`check_warns_about_resolutions_in_neither_form`、`check_follows_the_links_of_resolutions_that_name_the_evidence` と、
+`check_warns_about_resolutions_in_neither_form`、`check_follows_the_links_of_resolutions_that_name_the_evidence`、
+`crates/claude-hooks/tests/script_resume_state.rs` の `a_blocker_closed_as_a_duplicate_with_a_reason_is_read_as_a_duplicate` と、
 /docs-issues の「形」（`claude/skills/docs-issues/SKILL.md`）。
