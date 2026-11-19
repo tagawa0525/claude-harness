@@ -85,9 +85,8 @@ EOF
 
 ## 失敗時の対応
 
-pre-commit hookエラー等で失敗した場合、エラー内容を表示し、
-自動修正（フォーマッタ等の `--fix`）/ 手動修正 / 中断 を選択させる。
-自動修正後は再ステージして再試行。Markdown で「unfixable issues remain」と出たら
+pre-commit hookエラー等で失敗した場合、原因を直して（フォーマッタ等の `--fix` があればそれで、
+なければ手で）再ステージし、再試行する。直せなければ、迂回せずにエラー内容と原因を報告して止まる。Markdown で「unfixable issues remain」と出たら
 language-checks の markdown-checks.md を見て手で直す。
 
 ## 完了確認
