@@ -10,7 +10,11 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 `~/.config/markdownlint/config` に（ADR-0093）、`crates/ja-terms/prh.yml`（崩れた日本語の語の共通の辞書）を
 `~/.config/ja-terms/prh.yml` に置く（ADR-0097）。ソースが正で、中身が違えば上書きする。ja-terms は共通の辞書をビルドに埋めず
 この場所から読むので、辞書の規則を足したら、マージの後に `claude-sync` で効く（rebuild を待たない）。配っていない機械では、
-ja-terms は辞書が無いとして検査を止める。
+ja-terms は辞書が無いとして検査を止める。リポジトリの辞書（作業ツリーの直下の `.ja-terms/prh.yml`）は、共通の辞書の同じ
+expected の規則を外す（ADR-0096）。リポジトリの辞書を変える PR では、そのリポジトリで `ja-terms overrides` を実行し、
+`REPLACED:` の行（pattern の違う規則に置き換わって、もう当たらない共通の規則）が意図したものかを確かめる。置き換えるつもりが
+無ければ、その共通の規則もリポジトリの辞書にコピーする（`SAME:` の行になる）。辞書を変えるコミットでは、pre-commit も
+`REPLACED:` の行を出す（止めない）。
 
 配る元のディレクトリは dot なしの `claude/` と `config/` で、このリポジトリは追跡する Claude Code のプロジェクトの設定（`.claude/`）を
 持たない（ADR-0094）。このリポジトリのセッションも、配られた `~/.claude` の指示とスキルを読む。worktree で直した指示や
