@@ -53,6 +53,11 @@ fn version(files: &BTreeMap<String, String>) -> Option<String> {
     top_level(files.get(&format!("{BUNDLE_ROOT}/{INDEX}"))?)?.remove("okf_version")
 }
 
+/// リポジトリの直下からのパスが、バンドルの一部か（名前が `.` で始まるファイルとディレクトリの下でない、OKF v0.3 §3.2）。
+pub fn in_bundle(path: &str) -> bool {
+    !path.split('/').any(|part| part.starts_with('.'))
+}
+
 fn is_bundle(files: &BTreeMap<String, String>) -> bool {
     version(files).is_some()
 }

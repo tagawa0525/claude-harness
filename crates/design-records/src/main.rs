@@ -42,7 +42,9 @@ use design_records::check::{
     check_issue_numbers, check_reservations, decision_changed_without_change_item,
     superseded_dependents,
 };
-use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, is_bundle_index};
+use design_records::okf::{
+    BUNDLE_ROOT, check_bundle, complete_indexes, in_bundle, is_bundle_index,
+};
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
     numbers_in, record_name,
@@ -496,7 +498,8 @@ fn status() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// docs/ の .md のうち `keep` に当たるもののパスと中身（`untracked` なら追跡していないものも含める）。バンドルでなければ空。
+/// docs/ の、バンドルの一部の .md のうち `keep` に当たるもののパスと中身（`untracked` なら追跡していないものも含める）。
+/// バンドルでなければ空。
 fn bundle_files(
     root: &Path,
     untracked: bool,
@@ -514,7 +517,7 @@ fn bundle_files(
     }
     for path in markdown_under(root, BUNDLE_ROOT, untracked)?
         .into_iter()
-        .filter(|p| keep(p))
+        .filter(|p| in_bundle(p) && keep(p))
     {
         let text = fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         files.insert(path, text);
