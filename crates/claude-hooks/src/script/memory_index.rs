@@ -16,7 +16,9 @@
 //! 引数の誤りも 1。
 //!
 //! 辞書の検査は、hook と同じく claude-hooks の隣の ja-terms（[`crate::rules::ja_terms`]）。メモリは git で追跡しないので
-//! pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る
+//! pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る。ja-terms は呼んだ
+//! 今のディレクトリで実行し、そのリポジトリの辞書（`.ja-terms/prh.yml`）を共通の辞書に重ねる（ADR-0096。メモリは
+//! リポジトリの外にあり、そのリポジトリのセッションが読み込む）
 
 use regex::Regex;
 use std::collections::{BTreeSet, HashSet};

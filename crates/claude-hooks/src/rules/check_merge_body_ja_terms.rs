@@ -1,7 +1,7 @@
 //! check-merge-body-ja-terms: `git merge -m/-F` のメッセージを、実行の前に commit-msg の hook と同じ検査で判定する
 //!
 //! git の hook は pre-merge-commit（run-checks --merge、数分）→ commit-msg（ja-terms commit-msg）の順に呼ばれる。
-//! 本文に辞書（ja-terms の prh.yml）で崩れた語があるか、Merge などで始まらない件名が Conventional Commits の形と
+//! 本文に辞書（ja-terms の prh.yml と、行き先のリポジトリの .ja-terms/prh.yml。ADR-0096）で崩れた語があるか、Merge などで始まらない件名が Conventional Commits の形と
 //! 長さに合わないと、数分の品質チェックを待ってから commit-msg が拒む。pre-merge-commit からは `-m` の本文が読めず、
 //! git の hook の順も変えられないので、Claude のツール呼び出しの前に走るこのルールで、commit-msg に渡るのと同じ
 //! メッセージを検査する（ADR-0050、ADR-0085。ja-terms は [`ja_terms`] が、Linux では package.nix のラッパーが渡すパスで、
@@ -255,8 +255,8 @@ enum Lint {
 }
 
 /// メッセージを標準入力で `ja-terms message` に渡す（commit-msg の hook の `ja-terms commit-msg` と同じ本文の語の
-/// 検査）。辞書はビルドに埋めてあるので、実行する場所（コマンドの行き先。commit-msg はリポジトリの直下）は判定に
-/// 効かない
+/// 検査）。ja-terms は実行する場所の作業ツリーの辞書（`.ja-terms/prh.yml`）を共通の辞書に重ねるので（ADR-0096）、
+/// commit-msg がリポジトリの直下で読むのと同じく、コマンドの行き先で実行する
 fn lint(check: &str, dir: &Path, message: &str) -> Lint {
     let child = Command::new(check)
         .arg("message")

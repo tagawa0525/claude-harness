@@ -18,6 +18,7 @@
 # （ほかの行を出した後に）ERROR: と次の手の NEXT: を標準エラーに出して exit 1。
 #
 # 辞書の検査は、hook と同じく claude-hooks の隣の ja-terms（Linux は claude-hooks の package.nix が渡すパス）。メモリは git で
-# 追跡しないので pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る
+# 追跡しないので pre-commit が掛からず、毎回のセッションに読み込まれて依頼やコミットにコピーされるため、ここで見る。
+# 今のディレクトリのリポジトリの辞書（.ja-terms/prh.yml）も重ねるので、そのメモリのリポジトリで呼ぶ
 . "$(dirname "$0")/../../../scripts/lib/claude-hooks-script.sh"
 claude_hooks_script memory-index "$@"
