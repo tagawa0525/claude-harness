@@ -17,14 +17,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// scontrol show job <番号> の偽物。FAKE_FORGOTTEN なら覚えていない（空の jobs）。ほかは、その番号で呼ばれて FAKE_RUNNING
 /// 回（番号ごとの FAKE_RUNNING_<番号> があればそれ）までは RUNNING、その後は FAKE_STATE（既定 COMPLETED）と終了コード
-/// FAKE_EXIT_<番号>（無ければ FAKE_EXIT、既定 0）の終わったジョブを返す。FAKE_FAILING 回までは失敗する（制御のデーモンの
+/// FAKE_EXIT_<番号>（無ければ FAKE_EXIT、既定 0）の終わったジョブを返す。FAKE_FAILING_<番号>（無ければ FAKE_FAILING）回までは失敗する（制御のデーモンの
 /// 一時の不調）。呼ばれた番号は scontrol.count に足す
 const SCONTROL: &str = r#"#!/bin/sh
 job=$3
 n=$(($(cat "$T/scontrol.$job" 2>/dev/null || echo 0) + 1))
 echo "$n" >"$T/scontrol.$job"
 echo "$job" >>"$T/scontrol.count"
-[ "$n" -gt "${FAKE_FAILING:-0}" ] || { echo 'slurm_load_jobs error: Socket timed out' >&2; exit 1; }
+eval "failing=\${FAKE_FAILING_$job:-\${FAKE_FAILING:-0}}"
+[ "$n" -gt "$failing" ] || { echo 'slurm_load_jobs error: Socket timed out' >&2; exit 1; }
 if [ -n "$FAKE_FORGOTTEN" ]; then
   echo '{"jobs":[]}'
   exit 0
@@ -396,19 +397,43 @@ fn a_failing_scontrol_is_read_again_instead_of_taken_as_a_forgotten_job() {
 }
 
 #[test]
-fn a_scontrol_that_keeps_failing_ends_after_the_limit_of_tries() {
+#[ignore = "RED: 回数で打ち切る"]
+fn a_scontrol_that_keeps_failing_gives_up_on_that_job_after_the_time_limit() {
     let s = Slurm::new();
-    let out = s.run(&["42"], &[("FAKE_FAILING", "1000")]);
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("20 回続けて読めない"),
-        "{}",
-        stderr(&out)
+    // 読めないまま SLURM_WAIT_GIVE_UP 秒（既定 600）たったら、そのジョブを待つのをやめる
+    let out = s.run(
+        &["42"],
+        &[("FAKE_FAILING", "1000"), ("SLURM_WAIT_GIVE_UP", "0")],
     );
-    assert_eq!(s.polls().len(), 20);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("読めないまま"), "{}", stderr(&out));
     assert!(
         stdout(&out).contains("RESULT: job=42 name=- exit=1 state=unknown"),
         "{}",
         stdout(&out)
+    );
+}
+
+#[test]
+#[ignore = "RED: 1 本が読めないと全部の待ちをやめる"]
+fn a_job_that_cannot_be_read_does_not_stop_the_wait_for_the_others() {
+    let s = Slurm::new();
+    for job in ["962", "963"] {
+        std::fs::write(s.log_of(job), format!("output of {job}\n")).unwrap();
+    }
+    let out = s.run(
+        &["962", "963"],
+        &[("FAKE_FAILING_963", "1000"), ("SLURM_WAIT_GIVE_UP", "0")],
+    );
+    let text = stdout(&out);
+    assert_eq!(out.status.code(), Some(1), "{text}{}", stderr(&out));
+    assert!(
+        text.contains("RESULT: job=962 name=xlc-2G exit=0 state=COMPLETED"),
+        "{text}"
+    );
+    assert!(text.contains("TIME: job=962 "), "{text}");
+    assert!(
+        text.contains("RESULT: job=963 name=- exit=1 state=unknown"),
+        "{text}"
     );
 }

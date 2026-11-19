@@ -205,6 +205,7 @@ fn slurm_wait_runs_only_in_the_background_like_slurm_run() {
 }
 
 #[test]
+#[ignore = "RED: 拒否の文が slurm-run.sh だけを書く"]
 fn slurm_wait_output_into_a_pipe_or_a_display_command_is_denied_like_slurm_run() {
     for command in [
         "~/.claude/scripts/slurm-wait.sh 962 963 | tail -n 5",
@@ -212,5 +213,6 @@ fn slurm_wait_output_into_a_pipe_or_a_display_command_is_denied_like_slurm_run()
     ] {
         let reason = deny_reason(command).unwrap_or_else(|| panic!("{command} が止まらない"));
         assert!(reason.contains("別の呼び出し"), "{reason}");
+        assert!(reason.contains("slurm-wait.sh"), "{reason}");
     }
 }
