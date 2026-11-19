@@ -1094,9 +1094,14 @@ pub fn accounted_job(job: &str) -> Result<Option<AccountedJob>, AccountingError>
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     };
     let json = run(&[JSON, "-X", "-j", job])?;
+    let Some(mut found) = accounted_job_json(&json, "").map_err(AccountingError::Unreadable)?
+    else {
+        return Ok(None);
+    };
+    // 記録のあるジョブだけ、状態を読み足す
     let state = run(&["-j", job, "-X", "-P", "-n", "-o", "State"])?;
-    accounted_job_json(&json, state.lines().next().unwrap_or(""))
-        .map_err(AccountingError::Unreadable)
+    found.state = state.lines().next().unwrap_or("").to_string();
+    Ok(Some(found))
 }
 
 fn accounted_job_json(json: &str, state: &str) -> Result<Option<AccountedJob>, String> {

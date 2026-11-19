@@ -492,6 +492,8 @@ fn job_separates_jobs_with_a_blank_line_and_reports_missing_ones_after_the_other
         stderr(&out),
         "ERROR: sacct にジョブ 999 が無い（番号の誤りか、sacct の記録より前のジョブ）\n"
     );
+    // 記録の無いジョブの状態は読まない
+    assert!(!h.sacct_log().contains("-j 999 -X -P"), "{}", h.sacct_log());
     // 前のジョブを出した後は、読めなかったジョブの前にも空行を置く
     let text = stdout(&out);
     assert_eq!(text.matches("JOB:").count(), 2);
