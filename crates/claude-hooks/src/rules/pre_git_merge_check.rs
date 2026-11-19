@@ -167,7 +167,8 @@ pub(super) struct DefaultBranchMerge {
     /// マージ対象の指定（ブランチ名、`-`、`--stdin`）。`after_switch` に分けたものは含めない
     pub targets: Vec<String>,
     /// 同じコマンドの前の git switch / checkout で指す先が変わる `-` と `@{-N}`。hook の時点の履歴で解くと、git が
-    /// マージするのと別のブランチを確かめるので、解かずに分ける（guard-git-merge が止める）
+    /// マージするのと別のブランチを確かめるので、解かずに分ける（guard-git-merge が止める。switch の後の履歴で解かない
+    /// 理由は issue #295 のコメント）
     pub after_switch: Vec<String>,
     /// `--no-ff` で、fast-forward や squash になる指定がない
     pub no_ff: bool,
