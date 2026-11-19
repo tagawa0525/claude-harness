@@ -22,7 +22,8 @@
 //! DONE、WAIT、REPORT の行の後には、担当の次の行動を `NEXT:` の行で出す（DONE は、残りのファイルで呼び直すコマンドと
 //! --end のコマンドを、引数を埋めて出す）。
 //!
-//! テストは WAIT_STEP_SECONDS（1 歩、既定 270）と WAIT_STEP_REPORT（途中の報告の間隔の秒、既定 3300）で時間を縮める
+//! テストは WAIT_STEP_SECONDS（1 歩、既定 270）と WAIT_STEP_REPORT（途中の報告の間隔の秒、既定 3300）で時間を縮め、
+//! WAIT_STEP_NOW（UNIX の秒）で時計を差し替える
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
@@ -58,11 +59,37 @@ fn env_secs(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+/// 1 回の呼び出しの時計。WAIT_STEP_NOW があれば、その時刻から始め、眠らずに 1 歩ごとに 1 秒進める。壁の時計は秒に
+/// 切り捨てて約 1 秒ごとに読むので、起動の遅れや眠りの延びが秒の境目をまたぐと、秒の差の小さい 1 歩と途中の報告の
+/// 順が入れ替わる。テストはこの時計で時刻の並びを決める
+struct Clock {
+    fake: Option<u64>,
+}
+
+impl Clock {
+    fn from_env() -> Clock {
+        Clock {
+            fake: std::env::var("WAIT_STEP_NOW")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+        }
+    }
+
+    fn now(&self) -> u64 {
+        self.fake.unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        })
+    }
+
+    fn sleep(&mut self) {
+        match &mut self.fake {
+            Some(t) => *t += 1,
+            None => std::thread::sleep(Duration::from_secs(1)),
+        }
+    }
 }
 
 /// 鍵のパスを正規化する。相対を絶対にし、`.` と `..` と末尾の `/` を揃え、在る部分の symlink を解く（同じ worktree を
@@ -117,12 +144,13 @@ fn read_state(path: &Path) -> Option<(u64, u64)> {
     Some((it.next()??, it.next()??))
 }
 
-fn save(path: &Path, reported: u64) -> Result<(), i32> {
+/// 状態に、途中の報告の時刻と、最後に呼んだ時刻 called を残す
+fn save(path: &Path, reported: u64, called: u64) -> Result<(), i32> {
     let write = || -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, format!("{reported} {}\n", now()))
+        std::fs::write(path, format!("{reported} {called}\n"))
     };
     write().map_err(|_| {
         eprintln!("ERROR: 待ちの状態を書けません: {}", path.display());
@@ -206,32 +234,33 @@ fn wait(key: &str, files: &[String]) -> i32 {
     let state = state_of(key);
     let step = env_secs("WAIT_STEP_SECONDS", 270);
     let report = env_secs("WAIT_STEP_REPORT", 3300);
-    let start = now();
+    let mut clock = Clock::from_env();
+    let start = clock.now();
     // 前の呼び出しから報告の間隔を超えて空いていれば、終わった待ちの時計なので数え直す
     let mut reported = match read_state(&state) {
         // 途中の報告の時刻が今より後なら、時計が戻ったので数え直す（戻った分だけ REPORT が遅れないように）
         Some((r, last)) if start.saturating_sub(last) <= report && r <= start => r,
         _ => start,
     };
-    if let Err(code) = save(&state, reported) {
+    if let Err(code) = save(&state, reported, start) {
         return code;
     }
     // 1 秒ごとに、終わり、途中の報告の時刻、1 歩の時刻の順に見る（終わったものに途中の報告を出さない）。返る前に最後に
     // 呼んだ時刻を残す
     let deadline = start + step;
     loop {
+        let t = clock.now();
         if let Some(done) = files.iter().find(|f| finished(f)) {
-            if let Err(code) = save(&state, reported) {
+            if let Err(code) = save(&state, reported, t) {
                 return code;
             }
             print_done(key, files, done);
             return 0;
         }
-        let t = now();
         if t.saturating_sub(reported) >= report {
             let elapsed = t.saturating_sub(reported) / 60;
             reported = t;
-            if let Err(code) = save(&state, reported) {
+            if let Err(code) = save(&state, reported, t) {
                 return code;
             }
             println!(
@@ -243,7 +272,7 @@ fn wait(key: &str, files: &[String]) -> i32 {
             return 3;
         }
         if t >= deadline {
-            if let Err(code) = save(&state, reported) {
+            if let Err(code) = save(&state, reported, t) {
                 return code;
             }
             println!(
@@ -256,6 +285,6 @@ fn wait(key: &str, files: &[String]) -> i32 {
             );
             return 2;
         }
-        std::thread::sleep(Duration::from_secs(1));
+        clock.sleep();
     }
 }
