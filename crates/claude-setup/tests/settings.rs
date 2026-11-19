@@ -329,16 +329,19 @@ fn prompt(command: &str) -> Value {
 /// バイナリが失敗したときに出す行。終了コードは 0 のまま（0 のほかでは Claude Code が標準出力の date の行も文脈に入れない）
 const FAILED: &str = r#"|| echo "claude-hooks user-prompt-submit が終了コード $? で終わりました（既定ブランチの進みを確かめていません）""#;
 
-const PROMPT: &str = concat!(
-    "date '+現在時刻: %F %H:%M %Z'; '/home/u/.claude/bin/claude-hooks' user-prompt-submit ",
-    r#"|| echo "claude-hooks user-prompt-submit が終了コード $? で終わりました（既定ブランチの進みを確かめていません）""#
-);
+/// HOOKS を渡したときの登録のコマンド
+fn prompt_command() -> String {
+    format!("date '+現在時刻: %F %H:%M %Z'; '{HOOKS}' user-prompt-submit {FAILED}")
+}
 
 #[test]
 fn the_prompt_hook_runs_the_date_and_the_binary_in_one_registration() {
     let home = Home::new();
     let got = home.ok(&json!({}), &["--user-prompt-submit", HOOKS]);
-    assert_eq!(got["hooks"]["UserPromptSubmit"], json!([prompt(PROMPT)]));
+    assert_eq!(
+        got["hooks"]["UserPromptSubmit"],
+        json!([prompt(&prompt_command())])
+    );
 }
 
 #[test]
@@ -358,7 +361,7 @@ fn the_date_only_registration_is_replaced_by_the_prompt_hook() {
     let got = home.ok(&json!({}), &args);
     assert_eq!(
         got["hooks"]["UserPromptSubmit"],
-        json!([other, prompt(PROMPT)])
+        json!([other, prompt(&prompt_command())])
     );
     let again = home.ok(&json!({}), &args);
     assert_eq!(again, got);
