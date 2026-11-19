@@ -36,8 +36,10 @@ closed: 2026-10-11
 - `type`: `Issue`（`docs/index.md` が `okf_version` を持つリポジトリでは必須）
 - `status`: `open` か `closed`
 - `resolution`: closed のとき。`done`、`wontfix`、`by-design`、`external`、`cannot-reproduce`、`duplicate`、`obsolete`
-  のどれか。理由を添えるときは引用符で囲む（`"wontfix: 理由"`。囲まないと、コロンと空白を含む値をほかの YAML の読み手が読めない）。根拠を書く形の `ADR-NNNN`（決めた ADR）と `コミット <hash>`
-  （解決したコミット。7〜40 桁の英小文字の16進）も通る。どれも閉じた理由を辿れるので、リポジトリの既にある形に揃える
+  のどれか。理由を添えるときは引用符で囲む（`"wontfix: 理由"`。囲まないと、コロンと空白を含む値をほかの YAML の読み手が
+  読めない）。根拠を書く形の `ADR-NNNN`（決めた ADR）と `コミット <hash>`（解決したコミット。7〜40 桁の英小文字の16進）も
+  通り、`done` と `resolved-by` の組と同じ意味になる。1 つのリポジトリで形が混ざると、閉じた理由を探す grep が 2 通りになる
+  ので、リポジトリの既にある形に揃え、`resolution: ADR-NNNN` に `resolved-by` を重ねない
 - `resolved-by`: done のとき。ADR の番号かコミットの hash。任意
 - `duplicate-of`: duplicate のとき
 - `blocked-by`: 片方向。逆向きは grep で引く
