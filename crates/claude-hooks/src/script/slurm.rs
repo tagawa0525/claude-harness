@@ -828,8 +828,6 @@ pub enum AccountingRow {
 pub enum MaxRss {
     /// 記録に無い（sacct の文字の出力は空の欄）
     Missing,
-    /// 0 バイト（sacct の文字の出力は単位の無い `0`）
-    Zero,
     /// MiB。sacct の `--units=M` の文字の出力と同じく、整数でなければ小数 2 桁に丸めた値（数バイトは 0.0）
     Mib(f64),
 }
@@ -895,7 +893,7 @@ fn accounting_rows(json: &str) -> Result<Vec<AccountingRow>, String> {
 
 /// ステップのメモリの最大の MiB。sacct の MaxRSS の文字の出力（26.05.6 の src/sacct/print.c の PRINT_MAXRSS と、
 /// src/common/slurm_protocol_api.c の convert_num_unit2。2026-11-20 に slurm-26-05-6-1 のタグで読んだ）と同じく、
-/// 割り切れれば整数、割り切れなければ小数 2 桁に丸める。0 バイトは、丸めて 0 になる数バイトと分ける（文字の出力が違う）
+/// 割り切れれば整数、割り切れなければ小数 2 桁に丸める
 fn max_rss(step: &Value) -> MaxRss {
     let bytes = step["tres"]["requested"]["max"]
         .as_array()
@@ -905,7 +903,6 @@ fn max_rss(step: &Value) -> MaxRss {
         // 記録が無い値（NO_VAL64、INFINITE64）は空の欄
         None => MaxRss::Missing,
         Some(b) if b >= NO_VAL64 => MaxRss::Missing,
-        Some(0) => MaxRss::Zero,
         Some(b) => {
             let mib = b as f64 / 1024.0 / 1024.0;
             if mib.fract() == 0.0 {

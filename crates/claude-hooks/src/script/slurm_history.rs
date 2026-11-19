@@ -141,9 +141,7 @@ fn table(
         let bad = |why: &str| format!("ERROR: sacct の {} 行目を読めません（{why}）", i + 1);
         match row {
             AccountingRow::Step { job, max_rss } => {
-                // 0 バイトは読めない値として止める（直すのは #376）
                 let m = match max_rss {
-                    MaxRss::Zero => return Err(bad("MaxRSS を読めません")),
                     // 無いものは -1 として比べる（無い値のステップだけなら -）
                     MaxRss::Missing => -1.0,
                     MaxRss::Mib(m) => *m,
