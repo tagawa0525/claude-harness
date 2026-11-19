@@ -232,6 +232,40 @@ pub const ISSUE_RESOLUTIONS: [&str; 7] = [
     "obsolete",
 ];
 
+/// 閉じた issue の `resolution` の読み方。決まった語（理由を添えてもよい）か、根拠（決めた ADR か解決したコミット）を
+/// 書く形（xlc の docs/issues の形）。どちらも閉じた理由を機械で辿れるので通す（ADR-0099）。
+#[derive(Debug, PartialEq, Eq)]
+enum Resolution<'a> {
+    /// [`ISSUE_RESOLUTIONS`] の語。`<語>: <理由>` の理由は読まない
+    Word(&'a str),
+    /// `ADR-NNNN`
+    Adr(u32),
+    /// `コミット <hash>`（7〜40 桁の英小文字の16進）。hash は rebase で変わるので探さない
+    Commit,
+}
+
+impl<'a> Resolution<'a> {
+    fn parse(value: &'a str) -> Option<Self> {
+        if let Some(hash) = value.strip_prefix("コミット ") {
+            let hex = hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            return ((7..=40).contains(&hash.len()) && hex).then_some(Resolution::Commit);
+        }
+        if let Some(n) = single_adr(value) {
+            return Some(Resolution::Adr(n));
+        }
+        let word = match value.split_once(':') {
+            Some((word, reason)) if !reason.trim().is_empty() => word,
+            Some(_) => return None,
+            None => value,
+        };
+        ISSUE_RESOLUTIONS
+            .contains(&word)
+            .then_some(Resolution::Word(word))
+    }
+}
+
 /// issue の必須の節（`## ` の見出し）。
 pub const ISSUE_SECTIONS: [&str; 2] = ["問題", CHECKLIST_SECTION];
 
@@ -271,14 +305,15 @@ pub fn check_issue_format(issues: &BTreeMap<String, String>) -> Vec<Finding> {
         };
         match scalar("status") {
             Some(status) if ISSUE_STATUSES.contains(&status) => {
-                if status == "closed"
-                    && !scalar("resolution").is_some_and(|r| ISSUE_RESOLUTIONS.contains(&r))
+                if status == "closed" && scalar("resolution").and_then(Resolution::parse).is_none()
                 {
                     out.warning(
                         path,
                         None,
                         format!(
-                            "a closed issue needs `resolution` ({})",
+                            "a closed issue needs `resolution`: one of {} (optionally followed by \
+                             `: <reason>`), `ADR-NNNN` (the deciding ADR), or `コミット <hash>` \
+                             (the resolving commit, 7 to 40 lowercase hex digits)",
                             ISSUE_RESOLUTIONS.join(" | ")
                         ),
                     );
@@ -328,8 +363,8 @@ const CLOSING_KEYS: [&str; 4] = ["resolution", "resolved-by", "duplicate-of", "c
 
 /// `issues`（docs/issues のパスと中身）のうち、フロントマターを持つものの関係: 開いている issue の閉じるときのキー、
 /// duplicate の `duplicate-of`、`blocked-by` と `duplicate-of` の相手の存在、開いている相手に塞がれたまま閉じた issue、
-/// ADR の名前の形の `resolved-by` の相手（`adr_paths` は追跡している ADR のパス）。`resolved-by` のコミットの hash は
-/// rebase で変わり、探すと正しい記録を誤って示すので見ない。形の違いと同じく注意にする。
+/// ADR の名前の形の `resolved-by` と `ADR-NNNN` の `resolution` の相手（`adr_paths` は追跡している ADR のパス）。
+/// `resolved-by` と `resolution` のコミットの hash は rebase で変わり、探すと正しい記録を誤って示すので見ない。形の違いと同じく注意にする。
 pub fn check_issue_links(issues: &BTreeMap<String, String>, adr_paths: &[String]) -> Vec<Finding> {
     let fronts: BTreeMap<&str, FrontMatter> = issues
         .iter()
@@ -375,11 +410,20 @@ pub fn check_issue_links(issues: &BTreeMap<String, String>, adr_paths: &[String]
             }
         }
         let closed = state.as_deref() == Some("closed");
-        if closed
-            && scalar(front, "resolution").as_deref() == Some("duplicate")
-            && !present("duplicate-of")
-        {
+        let resolution = scalar(front, "resolution");
+        let resolution = resolution.as_deref().and_then(Resolution::parse);
+        if closed && resolution == Some(Resolution::Word("duplicate")) && !present("duplicate-of") {
             out.warning(path, None, "a duplicate issue needs `duplicate-of`");
+        }
+        // resolved-by の ADR と同じく、docs/adr にあるかを見る
+        if let Some(Resolution::Adr(n)) = resolution
+            && !adr_numbers.contains(&n)
+        {
+            out.warning(
+                path,
+                None,
+                format!("`resolution` names ADR-{n:04}, which is not an ADR in docs/adr"),
+            );
         }
         for key in ["blocked-by", "duplicate-of"] {
             for item in front.get(key).map(Value::items).unwrap_or_default() {
