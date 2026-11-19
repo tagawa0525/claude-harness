@@ -517,19 +517,6 @@ fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) 
     )
 }
 
-/// 示すコマンドに埋める値を、シェルが 1 語として読む形にする。展開も区切りもしない文字だけならそのまま、ほかは
-/// 単一引用符で囲む
-fn sh_word(s: &str) -> String {
-    let plain = !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"/._-+@%:=,".contains(&b));
-    if plain {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
-}
-
 /// head のブランチ（`head_ref`）を base にした開いている PR があれば、その base を先に付け替えさせる deny の理由。
 /// 探せなければ、確認できない理由（ほかの GitHub の読み取りと同じく止める）
 fn stacked_prs_reason(
@@ -580,8 +567,8 @@ fn stacked_prs_reason(
         .map(|n| {
             format!(
                 "  gh pr edit {n} --base {} -R {}",
-                sh_word(base),
-                sh_word(&repo)
+                crate::shell::sh_word(base),
+                crate::shell::sh_word(&repo)
             )
         })
         .collect();
@@ -1283,16 +1270,6 @@ mod tests {
             contents_endpoint("o", "r", "docs/adr/0002-a b#c?.md", "abc"),
             "repos/o/r/contents/docs/adr/0002-a%20b%23c%3F.md?ref=abc"
         );
-    }
-
-    #[test]
-    fn sh_word_quotes_branch_names_the_shell_would_expand() {
-        // 付け替えの手順はそのまま貼って実行されるので、git が許すブランチ名の $ ; ' を語のまま渡す
-        assert_eq!(sh_word("main"), "main");
-        assert_eq!(sh_word("release/1.2_x-y"), "release/1.2_x-y");
-        assert_eq!(sh_word("feat/$USER"), "'feat/$USER'");
-        assert_eq!(sh_word("a;b"), "'a;b'");
-        assert_eq!(sh_word("it's"), "'it'\\''s'");
     }
 
     #[test]
