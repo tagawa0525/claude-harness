@@ -393,3 +393,21 @@ fn an_unreadable_repository_dictionary_stops_the_transform() {
     );
     assert_eq!(work.read("doc.md"), "確かめの旧称\n");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_repository_dictionary_stops_the_transform() {
+    // 行き先の無い symlink は「辞書が無い」でなく、読めない辞書として止める
+    let work = Work::new();
+    std::fs::create_dir_all(work.repo().join(".ja-terms")).unwrap();
+    std::os::unix::fs::symlink("missing.yml", work.repo().join(".ja-terms/prh.yml")).unwrap();
+    work.write("doc.md", "確かめの旧称\n".as_bytes());
+    let out = work.transform(&["doc.md"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains(".ja-terms/prh.yml"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(work.read("doc.md"), "確かめの旧称\n");
+}

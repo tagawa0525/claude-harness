@@ -373,3 +373,33 @@ fn a_staged_dictionary_that_is_not_utf8_stops_like_the_work_tree_one() {
         assert!(said.contains(".ja-terms/prh.yml"), "{args:?}: {said}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_dictionary_stops_instead_of_being_absent() {
+    // 行き先の無い symlink は「辞書が無い」でなく、読めない辞書として止める
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.top().join(".ja-terms")).unwrap();
+    std::os::unix::fs::symlink("missing.yml", repo.top().join(".ja-terms/prh.yml")).unwrap();
+    repo.write("doc.md", &both());
+    let out = repo.ja_terms(&repo.top(), &["check", "doc.md"], "");
+    let said = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(2), "{said}");
+    assert!(said.contains(".ja-terms/prh.yml"), "{said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_reached_through_a_symlink_reads_the_dictionary_of_its_work_tree() {
+    // git と同じく、symlink を辿った実体のディレクトリの作業ツリーの辞書を読む
+    let repo = Repo::new();
+    repo.write(".ja-terms/prh.yml", REPO_RULES);
+    repo.write("sub/doc.md", &both());
+    // symlink は作業ツリーの外（根までに .git の無い所）に置く
+    let outside = scratch(&std::env::temp_dir(), "link");
+    let link = outside.join("link");
+    std::os::unix::fs::symlink(repo.top().join("sub"), &link).unwrap();
+    let out = repo.ja_terms(&link, &["check", "doc.md"], "");
+    let _ = std::fs::remove_dir_all(&outside);
+    assert_eq!(findings(&out), [common_finding(), REPO_FINDING.to_string()]);
+}
