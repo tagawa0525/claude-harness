@@ -8,33 +8,35 @@ description: claude-harness の PR をマージした後に、lock の更新、r
 マージした変更を、この機械の `~/.claude`、hook、git hook に入れる。ユーザーに頼まず自分で実行する（sudoers の NOPASSWD で
 通る）。複数の PR を続けてマージするときは、最後のマージの後に 1 度でよい。
 
-## 何を実行するか
+## いつ実行するか
 
-`post-merge-cleanup.sh` の `NOTE:` の行で決める。
-
-| NOTE: の行                   | 変わったもの                                     | 実行するもの               |
-| ---------------------------- | ------------------------------------------------ | -------------------------- |
-| lock の更新と rebuild が要る | `crates/`、`nix/`、`claude-settings.json`、flake | rebuild と claude-sync     |
-| claude-sync が要る（だけ）   | `claude/`、`config/`、共通の辞書の規則           | claude-sync と lock の更新 |
-
-`claude-sync` だけで効く変更（スキル、スクリプト、CLAUDE.md、`crates/ja-terms/prh.yml` の規則）でも、lock は進める。lock が古いと、
-次の rebuild の activation が lock の版の中身に戻す。
+`post-merge-cleanup.sh` が `NOTE:` の行（lock の更新と rebuild が要る、claude-sync が要る）を出したとき。どの `NOTE:` でも下の
+手順は同じで、lock を進めて rebuild し、claude-sync で main の版を入れる。スキル、スクリプト、CLAUDE.md、共通の辞書の規則は
+`claude-sync` だけで効くが、lock は進める（lock が古いと、次の rebuild の activation が lock の版の中身に戻す）。
 
 ## 手順
 
-1. main が origin/main と一致していることを確かめる（`git -C ~/nix/claude-harness status -sb`）
+1. 2 つのリポジトリが main にいて、ハーネスが origin/main と一致していることを確かめる（`nix-rebuild update` は nixfiles が
+   main でないと止まる）
+
+   ```bash
+   git -C ~/nix/claude-harness status -sb | head -1 && git -C ~/nix/nixfiles status -sb | head -1
+   ```
+
 2. 配備する。`run_in_background=true` の Bash で 1 本にし、終わりの通知を待つ（数分のビルドがある）
 
    ```bash
-   set -o pipefail && nix-rebuild update claude-harness && claude-sync ~/nix/claude-harness
+   nix-rebuild update claude-harness && claude-sync ~/nix/claude-harness
    ```
 
-   - 排他の `timed` の Slurm のジョブが走っている間は hook（guard-exclusive-slurm）が止める。その指示に従う
    - lock が既に進んでいれば「No changes to commit」で終わる（正常）
+   - rebuild が止まり（下の「止まったとき」）、マージした変更が `claude/`、`config/`、共通の辞書の規則だけなら、
+     `claude-sync ~/nix/claude-harness` だけを実行して先に効かせ、rebuild は原因を直してからやり直す。`crates/` か `nix/` の
+     変更を含むときは、スキルと hook の版がずれるので、rebuild が通るまで claude-sync も実行しない
 3. 確かめる
 
    ```bash
-   grep -A12 '"claude-harness"' ~/nix/nixfiles/flake.lock | grep '"rev"'   # マージコミットの hash
+   jq -r '.nodes["claude-harness"].locked.rev' ~/nix/nixfiles/flake.lock        # マージコミットの hash
    cmp ~/.config/ja-terms/prh.yml ~/nix/claude-harness/crates/ja-terms/prh.yml  # 共通の辞書が main と同じ
    ```
 
@@ -44,10 +46,13 @@ description: claude-harness の PR をマージした後に、lock の更新、r
 
 ## 止まったとき
 
-- `Harness contract check failed`: nixfiles の `modules/home/parts/tests/harness-contract.sh` が、進めた lock の版のハーネスを
-  動かして、nixfiles との約束（自動コミットの件名、Slurm の名前、目印のファイル）を確かめている。出力の `✗` の行が食い違いで、
-  lock は元に戻されている（配備は前の版のまま）。ハーネスの側が約束を変えたなら nixfiles を合わせる PR を先に出し、
-  検査の側の前提が古ければ検査を直す
+どの場合も、nix-rebuild は lock を元に戻して終わり、配備は前の版のまま。
+
+- hook（guard-exclusive-slurm）の拒否: 排他の `timed` の Slurm のジョブが走っている。拒否の文言の指示に従う
+- `Harness contract check failed` で、出力に `✗` の行がある: nixfiles の `modules/home/parts/tests/harness-contract.sh` が、
+  進めた lock の版のハーネスを動かして、nixfiles との約束を確かめている（確かめる約束はそのスクリプトの冒頭）。`✗` の行が
+  食い違い。ハーネスの側が約束を変えたなら nixfiles を合わせる PR を先に出し、検査の側の前提が古ければ検査を直す
+- 同じ文言で `✗` の行が無い: 進めた lock で、この機械の構成を評価できない（nix の error の行が原因）
 - ビルドの中のテストの失敗: 手元の `run-checks.sh` と CI が通っていれば、Nix のサンドボックスでだけ落ちる形（PATH に git が無い、
   ホームに辞書が無いなど）を疑う。同じ失敗は `nix flake check` で再現する
 

@@ -19,9 +19,7 @@ description: claude-harness を新しい機械に入れるとき、入れた機�
 
 ## Windows
 
-- 入れる、更新する: `docs/windows.md` を上から実行する。前もって入れるもの、`cargo install`、`claude-setup sync`、
-  `claude-setup settings`、`claude-setup git-hooks`、PATH の順。更新は、clone を pull して `cargo install --force` の行から
-  再実行する
+- 入れる、更新する: `docs/windows.md` を上から実行する。更新は、clone を pull して同じ手順を再実行する
 - crate を入れ直したのに `claude-setup sync` を流していないと、`ja-terms` が共通の辞書が無いとして検査を止め、コミットが
   通らない（辞書は sync が配る）
 
@@ -36,5 +34,5 @@ git config --global core.hooksPath                  # ~/.config/git/hooks
 
 - hook が効いていること: Claude Code のセッションで、止められるはずのコマンドを 1 つ試す（`git add -A` は guard-git-add が
   拒否する）
-- 辞書が効いていること: 一時のファイルに、辞書の specs の `from` の例を 1 つ書き、`ja-terms check <ファイル>` が止めることを見る
+- 辞書が効いていること: 一時のファイルに、辞書（`crates/ja-terms/prh.yml`）の specs のうち `from` と `to` が違う例の `from` を 1 つ書き、`ja-terms check <ファイル>` が止めることを見る
 - どれかが無いか効かなければ、入れる手順のうち、そのファイルを置くステップ（上の入口の文書）に戻る
