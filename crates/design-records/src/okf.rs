@@ -10,6 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+
 use crate::check::{Finding, Severity, is_date};
 use crate::{Kind, is_adr_path, record_name};
 
@@ -121,37 +123,37 @@ fn expected_entries(
 /// 索引の 1 行（`* [題](リンク) - 説明`）。
 struct Entry<'a> {
     line: usize,
-    title: &'a str,
-    url: &'a str,
+    /// 題の表示の文字列（`plain_text`）
+    title: String,
+    url: String,
     description: Option<&'a str>,
+    /// Markdown がこの行を `url` へのリンクと読むか
+    markdown: bool,
 }
 
 fn entries(text: &str) -> Vec<Entry<'_>> {
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
-        let Some(rest) = line
+        let Some(item) = line
             .strip_prefix("* ")
             .or_else(|| line.strip_prefix("- "))
-            .filter(|rest| rest.starts_with('['))
+            .filter(|item| item.starts_with('['))
         else {
             continue;
         };
-        let (title, url, after) = match link_at(rest, 0) {
-            Some((text_end, end)) => (
-                &rest[1..text_end],
-                &rest[text_end + 2..end - 1],
-                &rest[end..],
-            ),
+        let (title, url, after, markdown) = match leading_link(item) {
+            Some((title, url, end)) => (title, url, &item[end..], true),
             // Markdown のリンクとして読めない手書きの行（対にならない `[`、説明まで続くバッククォート）は、題の中の
-            // 最初の `](` で切る読み方で読めていたので、その行にだけ残す
+            // 最初の `](` で切る読み方で読めていた。読めなくすると文書を「索引に載っていない」とし、index が行を足し直すので、
+            // その行にだけ残して注意を出す
             None => {
-                let Some((title, rest)) = rest[1..].split_once("](") else {
+                let Some((title, rest)) = item[1..].split_once("](") else {
                     continue;
                 };
                 let Some((url, after)) = rest.split_once(')') else {
                     continue;
                 };
-                (title, url, after)
+                (plain_text(title), url.to_string(), after, false)
             }
         };
         out.push(Entry {
@@ -159,141 +161,144 @@ fn entries(text: &str) -> Vec<Entry<'_>> {
             title,
             url,
             description: after.strip_prefix(" - ").map(str::trim),
+            markdown,
         });
     }
     out
 }
 
-// 題と索引の行は Markdown のインライン（OKF v0.3 §6.1、§8）なので、エスケープ、コードスパン、リンク、画像を CommonMark の
-// 規則（§2.4、§6.1、§6.3、§6.4）で読む。区切りの文字はすべて ASCII なので、バイトの位置で切っても UTF-8 の文字を割らない。
-
-fn backtick_run(md: &str, at: usize) -> usize {
-    md.as_bytes()[at..]
-        .iter()
-        .take_while(|&&c| c == b'`')
-        .count()
-}
-
-/// `md[i]` から始まるバッククォートの並びと同じ長さの並びで閉じるコードスパンの終わり。閉じなければ `None`（並びはただの文字）。
-fn code_span_end(md: &str, i: usize) -> Option<usize> {
-    let n = backtick_run(md, i);
-    let mut j = i + n;
-    while let Some(k) = md[j..].find('`') {
-        let m = backtick_run(md, j + k);
-        if m == n {
-            return Some(j + k + m);
-        }
-        j += k + m;
-    }
-    None
-}
-
-/// `md[i..]` がバックスラッシュのエスケープ（`\` と ASCII の記号）かバッククォートの並びで始まれば、その終わり（閉じた
-/// コードスパンはその後、閉じない並びは並びの後）。
-fn skip_literal(md: &str, i: usize) -> Option<usize> {
-    let b = md.as_bytes();
-    match b[i] {
-        b'\\' if b.get(i + 1).is_some_and(u8::is_ascii_punctuation) => Some(i + 2),
-        b'`' => Some(code_span_end(md, i).unwrap_or(i + backtick_run(md, i))),
-        _ => None,
-    }
-}
-
-/// `[` の次の `start` から読んだリンクの文字列を閉じる `]` の位置。エスケープとコードスパンの中を飛ばし、対になった角括弧を
-/// 文字列の一部として数える。
-fn link_text_end(md: &str, start: usize) -> Option<usize> {
-    let b = md.as_bytes();
-    let mut depth = 0usize;
-    let mut i = start;
-    while i < b.len() {
-        if let Some(end) = skip_literal(md, i) {
-            i = end;
-            continue;
-        }
-        match b[i] {
-            b'[' => depth += 1,
-            b']' if depth == 0 => return Some(i),
-            b']' => depth -= 1,
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
-/// `md[i]` の `[` で始まるインラインのリンク `[文字列](リンク先)` の、文字列を閉じる `]` の位置と、リンクの終わり。
-fn link_at(md: &str, i: usize) -> Option<(usize, usize)> {
-    let text_end = link_text_end(md, i + 1)?;
-    let b = md.as_bytes();
-    if b.get(text_end + 1) != Some(&b'(') {
+/// `md` の先頭から始まるインラインのリンクの、表示の文字列（`plain_text`）、リンク先、`md` の中のリンクの終わり。
+fn leading_link(md: &str) -> Option<(String, String, usize)> {
+    let mut events = Parser::new(md)
+        .into_offset_iter()
+        .filter(|(e, _)| !matches!(e, Event::Start(Tag::Paragraph)));
+    let (Event::Start(Tag::Link { dest_url, .. }), range) = events.next()? else {
+        return None;
+    };
+    if range.start != 0 {
         return None;
     }
-    let mut depth = 0usize;
-    let mut j = text_end + 2;
-    while j < b.len() {
-        match b[j] {
-            b'\\' if b.get(j + 1).is_some_and(u8::is_ascii_punctuation) => j += 1,
-            // 空白を含むリンク先は Markdown でリンクにならない。リンクの title（`(url "t")`）は題の見出しで使わないので読まない
-            c if c.is_ascii_whitespace() => return None,
-            b'(' => depth += 1,
-            b')' if depth == 0 => return Some((text_end, j + 1)),
-            b')' => depth -= 1,
-            _ => {}
+    let mut title = String::new();
+    for (event, _) in events {
+        if event == Event::End(TagEnd::Link) {
+            return Some((title, dest_url.into_string(), range.end));
         }
-        j += 1;
+        push_plain(&mut title, &event);
     }
     None
 }
 
-/// 索引の行に書く題と、題がリンクを含むか。リンクの文字列にリンクは入れられない（入れると外側の行がリンクにならない）ので、
-/// 題のリンクをその文字列に置き換える（画像は入れてよいので残す）。残る角括弧は、対になっていなければ行のリンクの文字列を
-/// 閉じ、対でも参照のリンクに読まれうるのですべてエスケープする。閉じないバッククォートは説明のバッククォートと
-/// コードスパンになって行の `]` を隠し、末尾のバックスラッシュは行の `]` をエスケープするので、どちらもエスケープする。
-/// エスケープとコードスパンはそのまま残す（表示は題と同じ）。書いた題にもう一度かけても変わらない。
-fn entry_title(md: &str) -> (String, bool) {
-    let b = md.as_bytes();
+/// 題（見出しの文字列か、フロントマターの `title`）を見出しのインラインとして読んだ事象。見出しとして読むのは、題だけを
+/// 読むと `1. 手順` のような題を一覧の行と読むため。
+fn title_events(md: &str) -> Vec<Event<'static>> {
+    Parser::new(&format!("# {md}"))
+        .filter(|e| {
+            !matches!(
+                e,
+                Event::Start(Tag::Heading { .. }) | Event::End(TagEnd::Heading(_))
+            )
+        })
+        .map(Event::into_static)
+        .collect()
+}
+
+fn push_plain(out: &mut String, event: &Event<'_>) {
+    match event {
+        Event::Text(t) | Event::Code(t) => out.push_str(t),
+        Event::SoftBreak | Event::HardBreak => out.push(' '),
+        _ => {}
+    }
+}
+
+/// 題の表示の文字列。リンク、強調、コードスパン、画像の印を外し、文字（画像は代わりの文字列）だけを残す。
+fn plain_text(md: &str) -> String {
+    let mut out = String::new();
+    for event in title_events(md) {
+        push_plain(&mut out, &event);
+    }
+    out
+}
+
+/// 索引の行に書く題。題を CommonMark で読み、Markdown に書き直す。リンクの文字列にリンクは入れられない（入れると外側の
+/// 行がリンクにならない）ので、題のリンク（自動リンクを含む）はその文字列にする。文字のうち、行のリンクの文字列を閉じるか、
+/// ほかの構文（コードスパン、強調、HTML、文字参照、エスケープ）を始めうる記号はエスケープする。コードスパン、強調、画像、
+/// HTML は残す（表示は題と同じ）。
+fn entry_title(md: &str) -> String {
     let mut out = String::with_capacity(md.len());
-    let mut has_link = false;
-    let mut bang = None;
-    let mut plain = 0;
-    let mut i = 0;
-    while i < b.len() {
-        let c = b[i];
-        if c == b'`' && code_span_end(md, i).is_none() {
-            let n = backtick_run(md, i);
-            out.push_str(&md[plain..i]);
-            out.push_str(&"\\`".repeat(n));
-            i += n;
-            plain = i;
-        } else if let Some(end) = skip_literal(md, i) {
-            i = end;
-        } else if c == b'['
-            && let Some((text_end, end)) = link_at(md, i)
-        {
-            if i > 0 && bang == Some(i - 1) {
-                i = end;
-                continue;
+    let mut images = Vec::new();
+    for event in title_events(md) {
+        match event {
+            Event::Text(t) => escape_text(&mut out, &t),
+            Event::Code(c) => code_span(&mut out, &c),
+            Event::InlineHtml(h) | Event::Html(h) => out.push_str(&h),
+            Event::SoftBreak | Event::HardBreak => out.push(' '),
+            Event::Start(Tag::Emphasis) | Event::End(TagEnd::Emphasis) => out.push('*'),
+            Event::Start(Tag::Strong) | Event::End(TagEnd::Strong) => out.push_str("**"),
+            Event::Start(Tag::Image {
+                dest_url, title, ..
+            }) => {
+                out.push_str("![");
+                images.push((dest_url, title));
             }
-            out.push_str(&md[plain..i]);
-            out.push_str(&entry_title(&md[i + 1..text_end]).0);
-            has_link = true;
-            i = end;
-            plain = i;
-        } else if c == b'[' || c == b']' || (c == b'\\' && i + 1 == b.len()) {
-            out.push_str(&md[plain..i]);
-            out.push('\\');
-            out.push(c as char);
-            i += 1;
-            plain = i;
-        } else {
-            if c == b'!' {
-                bang = Some(i);
+            Event::End(TagEnd::Image) => {
+                // パーサーは画像の終わりを始まりの後にだけ出す
+                let Some((dest, title)) = images.pop() else {
+                    continue;
+                };
+                out.push_str("](");
+                for c in dest.chars() {
+                    match c {
+                        '(' | ')' | '<' | '>' | '\\' => {
+                            out.push('\\');
+                            out.push(c);
+                        }
+                        c if c.is_whitespace() => out.push_str("%20"),
+                        c => out.push(c),
+                    }
+                }
+                if !title.is_empty() {
+                    out.push_str(" \"");
+                    out.push_str(&title.replace('\\', r"\\").replace('"', "\\\""));
+                    out.push('"');
+                }
+                out.push(')');
             }
-            i += 1;
+            _ => {}
         }
     }
-    out.push_str(&md[plain..]);
-    (out, has_link)
+    out
+}
+
+fn escape_text(out: &mut String, text: &str) {
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        // `&` は、続く文字が文字参照（`&amp;`、`&#38;`）になりうるときだけエスケープする（`A & B` を読みやすく残す）
+        let entity = c == '&'
+            && chars
+                .peek()
+                .is_some_and(|n| n.is_ascii_alphanumeric() || *n == '#');
+        if "\\`*_[]<".contains(c) || entity {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+}
+
+/// コードスパンを書く。中身のバッククォートの並びより長い並びで囲み、中身の端がバッククォートか、両端が空白なら、
+/// CommonMark が読むときに 1 つずつ外す空白を足す。
+fn code_span(out: &mut String, code: &str) {
+    let mut longest = 0;
+    let mut run = 0;
+    for c in code.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest + 1);
+    let pad = code.starts_with('`')
+        || code.ends_with('`')
+        || (code.starts_with(' ') && code.ends_with(' ') && !code.trim().is_empty());
+    let space = if pad { " " } else { "" };
+    out.push_str(&format!("{fence}{space}{code}{space}{fence}"));
 }
 
 /// 索引（`index_dir` のもの）のリンクが指す、バンドルの中のパス。ディレクトリなら末尾に `/` を付ける。外部のリンク
@@ -367,7 +372,7 @@ fn percent_encode(name: &str) -> String {
 fn listed(index_dir: &str, text: &str) -> BTreeSet<String> {
     entries(text)
         .iter()
-        .filter_map(|e| resolve(index_dir, e.url))
+        .filter_map(|e| resolve(index_dir, &e.url))
         .filter_map(|p| {
             let rest = p.strip_prefix(index_dir)?.strip_prefix('/')?;
             (!rest.is_empty()).then(|| rest.to_string())
@@ -517,7 +522,19 @@ fn check_index(
         }
     }
     for entry in entries(index) {
-        let Some(target) = resolve(dir, entry.url) else {
+        if !entry.markdown {
+            out.push(finding(
+                Severity::Warning,
+                index_path,
+                Some(entry.line),
+                format!(
+                    "Markdown does not read the entry of `{}` as a link to it \
+                     (remove the line and run `design-records index`, which writes a line Markdown reads)",
+                    entry.url
+                ),
+            ));
+        }
+        let Some(target) = resolve(dir, &entry.url) else {
             continue;
         };
         let exists = match target.strip_suffix('/') {
@@ -538,24 +555,12 @@ fn check_index(
         };
         let title = title_of(&target, text);
         let description = description_of(text);
-        let (entry_form, has_link) = entry_title(entry.title);
-        if has_link {
-            out.push(finding(
-                Severity::Warning,
-                index_path,
-                Some(entry.line),
-                format!(
-                    "the entry of `{}` has a link in its title, so Markdown does not read the entry as a link \
-                     (remove the line and run `design-records index`, which writes the title without links)",
-                    entry.url
-                ),
-            ));
-        }
         let mut mismatches = Vec::new();
-        // 題は表示が同じなら合うとする（手で書いた対の角括弧と、index がエスケープした角括弧を同じに見る）
-        if entry_form != entry_title(&title).0 {
+        // 題は表示の文字列で比べる（手で書いた対の角括弧と、index がエスケープした角括弧を同じに見る）
+        let shown = plain_text(&title);
+        if entry.title != shown {
             mismatches.push(format!(
-                "title {:?} but the document's is {title:?}",
+                "title {:?} but the document's is {shown:?}",
                 entry.title
             ));
         }
@@ -658,7 +663,7 @@ fn entry_line(files: &BTreeMap<String, String>, dir: &str, name: &str) -> String
         return format!("* [{sub}]({url})");
     }
     let text = &files[&format!("{dir}/{name}")];
-    let (title, _) = entry_title(&title_of(name, text));
+    let title = entry_title(&title_of(name, text));
     match description_of(text) {
         Some(description) => format!("* [{title}]({url}) - {description}"),
         None => format!("* [{title}]({url})"),

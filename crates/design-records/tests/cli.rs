@@ -3244,10 +3244,10 @@ fn index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them() {
             r"![logo](x.png) と \[a\](b c)",
         ),
         ("b9.md", "![a [l](u)](i.png)", "![a l](i.png)"),
-        ("b10.md", "![a](x]y)", "![a](x]y)"),
-        ("b11.md", r#"[a](u "t") の件"#, "a の件"),
-        ("b12.md", "<http://a]b> を見る", r"http://a\]b を見る"),
-        ("b13.md", "*強調* と <b>x</b>", "*強調* と <b>x</b>"),
+        ("c1.md", "![a](x]y)", "![a](x]y)"),
+        ("c2.md", r#"[a](u "t") の件"#, "a の件"),
+        ("c3.md", "<http://a]b> を見る", r"http://a\]b を見る"),
+        ("c4.md", "*強調* と <b>x</b>", "*強調* と <b>x</b>"),
     ];
     let mut expected = format!("{OKF_ROOT_INDEX}\n");
     for (name, heading, entry) in titles {
