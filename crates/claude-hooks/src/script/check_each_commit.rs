@@ -364,18 +364,12 @@ fn inspect(command: &[String], wt: &Path) -> i32 {
     // Windows では、コマンドを呼んだ Git Bash の sh を通して起動する。CreateProcess は .sh と .cmd を起動せず、相対の
     // パス（./scripts/check.sh）を worktree でなく呼んだ側の作業ディレクトリから引く。ネイティブの exe から起動された
     // MSYS のプログラムは、引数のワイルドカードを自分で展開するので、MSYS の noglob で止める（呼んだ Git Bash は、
-    // 引数を展開した後で渡している）
+    // 引数を展開した後で渡している）。sh の文は標準入力で渡す（引数に書くと、ネイティブの exe から MSYS のプログラムに
+    // 渡すときに引用符が崩れる。Windows の CI で `[: missing ]'` を見た）
     #[cfg(windows)]
-    let (mut cmd, program) = {
+    let (mut cmd, program, script) = {
         let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            r#"if [ -n "${CHECK_EACH_COMMIT_MSYS+set}" ]; then MSYS=$CHECK_EACH_COMMIT_MSYS; export MSYS; else unset MSYS; fi
-unset CHECK_EACH_COMMIT_MSYS
-exec "$@""#,
-            "check-each-commit.sh",
-        ]);
-        cmd.args(command);
+        cmd.args(["-s", "--"]).args(command);
         // noglob は、検査のコマンドを起動する sh にだけ効かせ、検査のコマンドには呼んだ側の MSYS を戻して渡す
         match std::env::var_os("MSYS") {
             Some(msys) => {
@@ -387,21 +381,32 @@ exec "$@""#,
                 .env("MSYS", "noglob")
                 .env_remove("CHECK_EACH_COMMIT_MSYS"),
         };
-        (cmd, "sh")
+        (cmd, "sh", Some(WINDOWS_LAUNCHER))
     };
     #[cfg(not(windows))]
-    let (mut cmd, program) = {
+    let (mut cmd, program, script) = {
         let mut cmd = Command::new(&command[0]);
         cmd.args(&command[1..]);
-        (cmd, command[0].as_str())
+        (cmd, command[0].as_str(), None::<&str>)
     };
     cmd.current_dir(wt)
-        .stdin(Stdio::null())
+        .stdin(if script.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(std::io::stderr());
     for name in REPO_ENV {
         cmd.env_remove(name);
     }
-    match cmd.status() {
+    let status = cmd.spawn().and_then(|mut child| {
+        if let (Some(script), Some(mut stdin)) = (script, child.stdin.take()) {
+            // 短い文なのでパイプに収まり、sh が読む前に書き終える。書けなくても（sh が先に終わった）終わりを待つ
+            let _ = stdin.write_all(script.as_bytes());
+        }
+        child.wait()
+    });
+    match status {
         Ok(status) => crate::child::exit_code(status),
         Err(e) => {
             warn!("check-each-commit.sh: {program}: {e}");
@@ -409,6 +414,13 @@ exec "$@""#,
         }
     }
 }
+
+/// Windows で検査のコマンドを起動する sh の文。呼んだ側の MSYS に戻し、標準入力を渡さずに exec する
+#[cfg(windows)]
+const WINDOWS_LAUNCHER: &str = r#"if [ -n "${CHECK_EACH_COMMIT_MSYS+set}" ]; then MSYS=$CHECK_EACH_COMMIT_MSYS; export MSYS; else unset MSYS; fi
+unset CHECK_EACH_COMMIT_MSYS
+exec "$@" </dev/null
+"#;
 
 #[cfg(test)]
 mod tests {
