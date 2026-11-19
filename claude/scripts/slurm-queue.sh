@@ -1,6 +1,6 @@
 #!/bin/sh
 # slurm-queue.sh — Slurm の待ち行列を、slurm-run.sh がコメントに入れた区分と目的つきで、走る順に並べる。中身は
-# claude-hooks script slurm-queue（並べ方を Rust の単体のテストで確かめる。ADR-0101）。スキルの文と slurm-run.sh は
+# claude-hooks script slurm-queue（並べ方を、起動せずに Rust の単体のテストで確かめるため）。スキルの文と slurm-run.sh は
 # このスクリプトの名前とパスで呼ぶので、ファイルは残して呼ぶ
 #
 # Usage: slurm-queue.sh                           # 一覧
