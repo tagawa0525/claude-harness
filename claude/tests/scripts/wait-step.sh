@@ -33,8 +33,9 @@ assert_contains "$out" "$shown /wt/b $log で呼び直し"
 assert_contains "$out" "$shown --end /wt/b"
 
 it "wait-step: 途中の報告から間隔を超えると、REPORT と親に送る文面を出して 3 で返る"
-WAIT_STEP_REPORT=2 "$WAIT" /wt/c "$log" >/dev/null
-out=$(WAIT_STEP_SECONDS=2 WAIT_STEP_REPORT=2 "$WAIT" /wt/c "$log")
+# 時刻を渡して壁の時計の進みに頼らない。100 秒に待ち始めて 101 秒に WAIT で返り、続けて呼ぶと 102 秒に REPORT
+WAIT_STEP_NOW=100 WAIT_STEP_REPORT=2 "$WAIT" /wt/c "$log" >/dev/null
+out=$(WAIT_STEP_NOW=101 WAIT_STEP_SECONDS=2 WAIT_STEP_REPORT=2 "$WAIT" /wt/c "$log")
 assert_eq 3 $?
 assert_contains "$out" "REPORT:"
 assert_contains "$out" "<待つもの> の待ちが 55 分を超えた。終わり次第、残りの作業を続ける"
