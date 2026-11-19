@@ -227,6 +227,9 @@ fn message_reads_its_input_before_it_stops_on_a_missing_dictionary() {
             stderr(&out)
         );
     }
+    // 共通の辞書が無いときの修正方法も、読み切った後に出る
+    let out = ja_terms(&scratch, &scratch.0, &home, None, &["message"], &body);
+    assert!(stderr(&out).contains("claude-sync"), "{}", stderr(&out));
 }
 
 #[test]
