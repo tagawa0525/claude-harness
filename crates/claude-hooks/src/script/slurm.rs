@@ -195,6 +195,11 @@ impl JobState {
     }
 }
 
+/// JSON の状態の配列から、文字の出力と同じ 1 語を作る
+fn state_word(states: &Value) -> &str {
+    states[0].as_str().unwrap_or("")
+}
+
 /// 終わった State だけを列挙する。それ以外（PENDING、CONFIGURING、RUNNING、SUSPENDED、COMPLETING、REQUEUED など今後増える
 /// 非終端の State を含む）は、終わりが届くまで待つ
 fn is_final(state: &str) -> bool {
@@ -264,7 +269,7 @@ fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
             .filter(|p| !p.is_empty())
             .map(|p| p == UNINTERRUPTED),
         suspended: time["suspended"].as_i64(),
-        state: JobState::from_slurm(found["state"]["current"][0].as_str().unwrap_or("")),
+        state: JobState::from_slurm(state_word(&found["state"]["current"])),
     })
 }
 
@@ -275,12 +280,12 @@ pub fn controller_state(job: &str) -> Option<JobState> {
 
 fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
     let value: Value = serde_json::from_str(json).ok()?;
-    value["jobs"]
+    let found = value["jobs"]
         .as_array()?
         .iter()
-        .find(|j| id_text(&j["job_id"]) == job)?["job_state"][0]
-        .as_str()
-        .map(JobState::from_slurm)
+        .find(|j| id_text(&j["job_id"]) == job)?;
+    found["job_state"][0].as_str()?;
+    Some(JobState::from_slurm(state_word(&found["job_state"])))
 }
 
 /// ジョブの番号（数か文字列）を文字列に
@@ -382,6 +387,29 @@ mod tests {
         for good in ["90", "1:30:00", "1-00", "1-12:00", "2-12:00:00"] {
             assert!(valid_time_limit(good), "{good}");
         }
+    }
+
+    #[test]
+    #[ignore = "RED: 旗の語を先に読む形は未実装"]
+    fn the_state_word_is_the_flag_before_the_base_state_like_the_text_output() {
+        // 文字の出力（sacct の State、scontrol の JobState）は、旗（COMPLETING など）があればそれを、無ければ土台の状態を
+        // 出す。JSON の配列は土台が先で旗が後ろなので、先頭だけを読むと、終わりかけのジョブが終わったことになる
+        for (states, word) in [
+            (json!(["COMPLETED"]), "COMPLETED"),
+            (json!(["COMPLETED", "COMPLETING"]), "COMPLETING"),
+            (json!(["RUNNING", "STOPPED"]), "STOPPED"),
+            (json!(["CANCELLED", "REVOKED"]), "REVOKED"),
+            (json!(["PENDING", "REQUEUED", "SPECIAL_EXIT"]), "REQUEUED"),
+            (json!(["RUNNING", "FUTURE_FLAG"]), "RUNNING"),
+            (json!([]), ""),
+            (json!(null), ""),
+        ] {
+            assert_eq!(super::state_word(&states), word, "{states}");
+        }
+        let finishing = json!({"jobs": [{"job_id": 42, "job_state": ["COMPLETED", "COMPLETING"]}]});
+        assert!(!scontrol_state(&finishing.to_string(), "42").unwrap().ended);
+        let stopped = json!({"jobs": [{"job_id": 42, "job_state": ["RUNNING", "STOPPED"]}]});
+        assert!(scontrol_state(&stopped.to_string(), "42").unwrap().ended);
     }
 
     #[test]
