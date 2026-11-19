@@ -14,8 +14,9 @@
 //!   `--user-prompt-submit` のバイナリ（claude-hooks）を渡すと、同じ 1 件の shell form の `date` の後に、引数
 //!   `user-prompt-submit`（既定ブランチの進みの知らせ。#363）でそのバイナリも呼ぶ。ほかのバイナリの hook と違い exec form に
 //!   しないのは、`date` の行を Windows でも Git Bash の `date` のまま出すため（UserPromptSubmit はプロンプトごとで、Git Bash の
-//!   起動は前から `date` が払っている）。バイナリの終了コードは 1 に寄せる（UserPromptSubmit の 2 はプロンプトを止めて消し、
-//!   前の版の claude-hooks は知らないサブコマンドに 2 で終わる）
+//!   起動は前から `date` が払っている）。バイナリが失敗したら、その 1 行を出して終了コード 0 で終える（UserPromptSubmit の
+//!   2 はプロンプトを止めて消し、0 のほかでは標準出力の `date` の行も文脈に入らない。前の版の claude-hooks は知らない
+//!   サブコマンドに 2 で終わる）
 //! - 渡さない hook の登録には触らない。読めないか壊れた settings.json は書き換えずに止める
 
 use std::fs;
@@ -125,7 +126,9 @@ fn prompt_entry(bin: Option<&str>) -> Value {
         None => json!({"hooks": [{"type": "command", "command": PROMPT_DATE}]}),
         Some(bin) => {
             let quoted = format!("'{}'", bin.replace('\'', r"'\''"));
-            let command = format!("{PROMPT_DATE}; {quoted} user-prompt-submit || exit 1");
+            let command = format!(
+                r#"{PROMPT_DATE}; {quoted} user-prompt-submit || echo "claude-hooks user-prompt-submit が終了コード $? で終わりました（既定ブランチの進みを確かめていません）""#
+            );
             json!({"hooks": [{"type": "command", "command": command, "timeout": PROMPT_TIMEOUT}]})
         }
     }

@@ -3,11 +3,13 @@
 //! 時点から進んでいたら、新しいコミットの件名を標準出力に出す（標準出力はモデルの文脈に足される。#363）。
 //!
 //! - 前の先端は、clone の共通の git ディレクトリの [`STATE_DIR`] に、セッションの ID の名前のファイルで覚える（セッションと
-//!   clone の組ごと。同じ clone の worktree は同じ組）。初めてのプロンプトは覚えるだけで、何も出さない
+//!   clone の組ごと。同じ clone の worktree は同じ組）。初めてのプロンプトは覚えるだけで、何も出さない。先端を書き直すとき、
+//!   [`STALE_AFTER`] を超えて書き直していない記録を消す（終わったセッションの記録が clone に溜まらないように）
 //! - fetch はしない（プロンプトのたびの fetch は遅い。同じ機械のほかのセッションは同じ clone の ref を進める）
 //! - 件名は first-parent で新しい順に [`MAX_SUBJECTS`] 件まで、超えた分は「ほか N 件」の 1 行
-//! - git のリポジトリの外、既定ブランチが分からない、git の失敗では何も出さない。終了コードは常に 0（UserPromptSubmit の
-//!   2 はプロンプトを止める）。プロンプトのたびに走るので、git の呼び出しは 4 回まで
+//! - git のリポジトリの外、既定ブランチが分からない、git の失敗では何も出さない。記録を書けない理由は標準エラーに出す
+//!   （文脈に出すと、書けない間はプロンプトのたびに同じ行が入る）。終了コードは常に 0（UserPromptSubmit の 2 はプロンプトを
+//!   止める）。プロンプトのたびに走るので、git の呼び出しは 4 回まで
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -18,6 +20,9 @@ use std::process::{Command, Stdio};
 const STATE_DIR: &str = "claude-prompt-heads";
 /// 出す件名の数
 const MAX_SUBJECTS: usize = 5;
+/// これより長く書き直していない記録は、終わったセッションのものとみなして消す。消した後に戻ったセッションは、次の
+/// プロンプトを初めてのプロンプトとして覚え直す（その 1 回の進みを知らせないだけ）
+const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
 
 pub fn main() -> i32 {
     let mut raw = String::new();
@@ -58,14 +63,16 @@ fn notice(dir: &Path, session: &str) -> Option<String> {
         return None;
     }
     if let Err(e) = write_tips(&state, &tips) {
-        return Some(format!(
-            "claude-hooks: 既定ブランチの先端を {} に覚えられません（次のプロンプトで進みを知らせられません）: {e}\n",
+        eprintln!(
+            "claude-hooks: 既定ブランチの先端を {} に覚えられません（次のプロンプトで進みを知らせられません）: {e}",
             state.display()
-        ));
+        );
+        return None;
     }
+    remove_stale(&state);
     let previous = previous?;
     let subjects = new_subjects(dir, &tips, &previous)?;
-    (!subjects.is_empty()).then(|| render(&tips, &subjects))
+    (!subjects.is_empty()).then(|| render(&tips, &previous, &subjects))
 }
 
 /// ref の完全な名前 → 先端のオブジェクトの名前
@@ -147,10 +154,12 @@ fn new_subjects(dir: &Path, tips: &Tips, previous: &Tips) -> Option<Vec<String>>
     Some(out.lines().map(str::to_string).collect())
 }
 
-fn render(tips: &Tips, subjects: &[String]) -> String {
+/// 知らせ。見出しには、前の先端から動いた ref だけを書く
+fn render(tips: &Tips, previous: &Tips, subjects: &[String]) -> String {
     let names: Vec<&str> = tips
-        .keys()
-        .map(|r| {
+        .iter()
+        .filter(|(r, oid)| previous.get(*r) != Some(*oid))
+        .map(|(r, _)| {
             r.strip_prefix("refs/remotes/")
                 .or_else(|| r.strip_prefix("refs/heads/"))
                 .unwrap_or(r)
@@ -169,23 +178,54 @@ fn render(tips: &Tips, subjects: &[String]) -> String {
     text
 }
 
-/// 覚えた先端（1 行に `<ref> <オブジェクトの名前>`）。ファイルが無いか読めなければ None（初めてのプロンプト）
+/// 覚えた先端（1 行に `<ref> <オブジェクトの名前>`）。ファイルが無いか読めないか、読める行が無ければ None（初めての
+/// プロンプト）。空の記録を前の先端にすると、除く先端の無い `git log` が履歴のすべてを新しいコミットとして出す
 fn read_tips(path: &Path) -> Option<Tips> {
     let text = std::fs::read_to_string(path).ok()?;
-    Some(
-        text.lines()
-            .filter_map(|l| l.split_once(' '))
-            .map(|(r, oid)| (r.to_string(), oid.to_string()))
-            .collect(),
-    )
+    let tips: Tips = text
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .map(|(r, oid)| (r.to_string(), oid.to_string()))
+        .collect();
+    (!tips.is_empty()).then_some(tips)
 }
 
+/// 隣の一時のファイルに書いてから名前を付け替える（途中で止まっても、前の記録か新しい記録のどちらかが残る）
 fn write_tips(path: &Path, tips: &Tips) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+    let dir = path.parent().expect("記録のパスは置き場の下");
+    std::fs::create_dir_all(dir)?;
     let text: String = tips.iter().map(|(r, oid)| format!("{r} {oid}\n")).collect();
-    std::fs::write(path, text)
+    let mut name = path
+        .file_name()
+        .expect("記録のパスはファイルの名前で終わる")
+        .to_os_string();
+    name.push(".tmp");
+    let tmp = dir.join(name);
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// keep の隣の記録のうち、[`STALE_AFTER`] を超えて書き直していないものを消す。片付けは補助なので、失敗は無視する
+fn remove_stale(keep: &Path) {
+    let Some(dir) = keep.parent() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .is_some_and(|age| age > STALE_AFTER);
+        if stale && path != keep {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// `git <args>` を dir で実行し、成功なら標準出力（末尾の改行を除く）。リポジトリを指す GIT_* を継承しない（git の hook
