@@ -20,6 +20,37 @@ use crate::shell::Shell;
 
 pub struct DelegateReportFields;
 
+/// 報告の最初の節の名前
+const SUMMARY: &str = "親が先に読む要点";
+/// その直後に置く節の名前
+const DEFERRED: &str = "外したもの、後回しにしたもの";
+
+/// 見出しの名前の部分（`## ` の後）が、name か name に `（…）` の限定を続けたものか
+fn is_named(title: &str, name: &str) -> bool {
+    title
+        .strip_prefix(name)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('（'))
+}
+
+/// コードブロックの外の `## ` の見出しの、行の位置と名前の部分
+fn section_titles<'a>(lines: &[&'a str]) -> Vec<(usize, &'a str)> {
+    let mut fenced = false;
+    let mut found = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        if let Some(title) = line.strip_prefix("## ") {
+            found.push((i, title.trim_end()));
+        }
+    }
+    found
+}
+
 impl Rule for DelegateReportFields {
     fn name(&self) -> &'static str {
         "delegate-report-fields"
@@ -29,8 +60,34 @@ impl Rule for DelegateReportFields {
         &["SendMessage", "SubagentHandback"]
     }
 
-    fn check(&self, _input: &Input, _shell: &Shell) -> Vec<Finding> {
-        Vec::new()
+    fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
+        let lines: Vec<&str> = input.message.lines().collect();
+        let titles = section_titles(&lines);
+        let Some(summary) = titles.iter().position(|(_, t)| is_named(t, SUMMARY)) else {
+            return Vec::new();
+        };
+        let next = titles.get(summary + 1);
+        let problem = match next {
+            Some((at, title)) if is_named(title, DEFERRED) => {
+                let end = titles.get(summary + 2).map_or(lines.len(), |(e, _)| *e);
+                if lines[at + 1..end].iter().all(|l| l.trim().is_empty()) {
+                    format!("「{DEFERRED}」の節の中身が空です")
+                } else {
+                    return Vec::new();
+                }
+            }
+            _ if titles.iter().any(|(_, t)| is_named(t, DEFERRED)) => format!(
+                "「{DEFERRED}」の節が「{SUMMARY}」の直後にありません（直後は「{}」）",
+                next.map_or("なし", |(_, t)| t)
+            ),
+            _ => format!("「{DEFERRED}」の節がありません"),
+        };
+        vec![Finding::Deny(format!(
+            "/delegate の担当の報告（`## {SUMMARY}` で始まる節を持つメッセージ）で、{problem}。\n\
+             外して通した対処が成功の報告に埋もれないよう、報告は「{SUMMARY}」の直後に「{DEFERRED}」の節を置きます（~/.claude/skills/delegate/references/working.md の手順 9。ADR-0098）。\n\
+             判定: コードブロックの外の、行頭の `## ` の見出しを節とし、`## {SUMMARY}` の次の節が `## {DEFERRED}`（後ろに「（…）」が続いてもよい）で、中身が空白だけでないことを見ます。\n\
+             修正方法: `## {SUMMARY}` の節の直後に `## {DEFERRED}` の節を置き、検査や対象から外したもの、skip、条件を狭めて通したもの、issue にして残したレビューの指摘、測らずに置いた値や組を書いて（無ければ「なし」と書いて）、送り直してください。報告の書式を引用するだけのメッセージなら、引用をコードブロック（```）に入れてください。"
+        ))]
     }
 }
 
