@@ -482,8 +482,11 @@ fn run_writes_the_body_of_the_cleanup_issue() {
         // 作業ディレクトリと控え
         workdir.display().to_string(),
         f.out["ORIGINAL"].clone(),
-        // 直した語（辞書、追加の規則の中身、除くパス）
-        "ja-terms".to_string(),
+        // 直した語（辞書、追加の規則の中身、除くパス）。辞書は、run がコピーした ja-terms の共通の辞書（ADR-0097）
+        format!(
+            "ja-terms の共通の辞書（run が読んだ中身を {} にコピーしたもの）",
+            workdir.join("common-prh.yml").display()
+        ),
         "pattern: 旧称".to_string(),
         "**/terms.yml".to_string(),
         // 掃除のコマンド
