@@ -192,7 +192,7 @@ commit-msg hook の判定は `nix/tests/commit-msg-conventions.sh` が検証す�
 リテラルの相対パスだけに絞った（`.gitignore` のパターンは受け付けない）。決定は ADR-0016。
 
 ```text
-# 核データと DVC のキャッシュ
+# 大きな参照データとキャッシュ
 references
 ```
 

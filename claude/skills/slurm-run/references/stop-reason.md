@@ -6,9 +6,9 @@
 使い切ったときのカーネルの OOM killer である。
 
 1. `sacct -j <番号> -X -o JobID,State,ExitCode,Start,End`（`-X` が無いと `.batch` と `.extern` の行も出る）。`ExitCode` は `--wrap` の
-   一番外のコマンドの値で、中のプログラムの値でない（`dvc repro` の中で `lattice` が SIGKILL で止まっても、ジョブは `FAILED` の
-   `255:0`）。Slurm がメモリで止めた形（`OUT_OF_MEMORY`）は、この設定では出ない
-2. ログの末尾。中のプログラムの終わり方（`強制終了`、dvc の `exited with 137`）が出る。137 は SIGKILL で、OOM killer に限らない
+   一番外のコマンドの値で、中のプログラムの値でない（外のコマンドが起動したプログラムが SIGKILL で止まっても、ジョブの値は
+   外のコマンドが返した終了コードで、`FAILED` の `255:0` のようにシグナルの形にならないことがある）。Slurm がメモリで止めた形（`OUT_OF_MEMORY`）は、この設定では出ない
+2. ログの末尾。中のプログラムの終わり方（`強制終了`、`Killed`、`exited with 137` など）が出る。137 は SIGKILL で、OOM killer に限らない
 3. r995 で `journalctl _TRANSPORT=kernel --since '<Start>' --until '<End>' | grep -E 'oom-kill:|Out of memory'`（時刻は 1 の `Start` と
    `End`。`-k` は今の起動だけを読むので使わない）
    - カーネルの OOM killer なら、`global_oom` と `task=<プログラム名>,pid=<番号>` の行と、`Killed process <番号> (<名前>)` の
