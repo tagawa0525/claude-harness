@@ -696,9 +696,10 @@ elif grep -q "^REPLACED: 確認 .*ぴよぴよ" "$WORK/out"; then
 else
   ng "pre-commit: 共通の規則を外すリポジトリの辞書のコミットで、外れる規則を知らせない"
 fi
-# 下の memory-index で使うので、辞書を戻す
+# 下の memory-index で使うので、辞書を戻す（上でコミットした辞書も、コミットで戻す）
 printf '%s\n' "$REPO_RULES" > "$REPO/.ja-terms/prh.yml"
-git -C "$REPO" reset -q
+git -C "$REPO" add .ja-terms/prh.yml
+git -C "$REPO" commit -q --no-verify -m "chore: restore the repository dictionary"
 
 # --- 5. fork では飛ばす ------------------------------------------------------------------------------
 REPO="$WORK/fork"
