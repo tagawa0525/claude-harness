@@ -545,9 +545,15 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
             "NOTE: lock の更新と rebuild が要る（crates、nix、claude-settings.json か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
         );
     }
-    // 配る元は claude と config（ADR-0094 より前の版と、ハーネスを分ける前の nixfiles は .claude）。同期のコマンドを
-    // 持たないリポジトリの .claude はプロジェクトの指示で、その場で読まれる
-    if has_sync && changed(&["claude", "config", ".claude"]) {
+    // 配る元は claude と config。claude を持たないリポジトリ（ADR-0094 より前の版と、ハーネスを分ける前の nixfiles）は
+    // .claude が配る元。claude を持つリポジトリの .claude と、同期のコマンドを持たないリポジトリの .claude は、その
+    // リポジトリだけの指示とスキルで、その場で読まれる
+    let sources: &[&str] = if has("claude/CLAUDE.md")? {
+        &["claude", "config"]
+    } else {
+        &["claude", "config", ".claude"]
+    };
+    if has_sync && changed(sources) {
         // 引数なしの claude-sync は既定の clone を読む。pull したのがそこと限らないので、このリポジトリを元に渡す形で示す
         let sync_cmd = format!(
             "claude-sync {}",
