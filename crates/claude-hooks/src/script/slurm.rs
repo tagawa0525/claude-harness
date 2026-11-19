@@ -76,8 +76,8 @@ fn submit_args(job: &Submission) -> Vec<String> {
             "-J",
             job.name,
             "-o",
-            // %x はジョブの名前、%j は番号（log_file と同じ形）
-            &format!("{}/%x-%j.out", job.log_dir),
+            // %x はジョブの名前、%j は番号に置き換わる
+            &format!("{}/{}", job.log_dir, log_file("%x", "%j")),
             "--time",
             job.estimate,
             "--comment",
@@ -497,12 +497,11 @@ mod tests {
     }
 
     #[test]
-    fn the_log_file_is_the_name_and_the_number_like_the_pattern_given_to_sbatch() {
+    fn the_log_file_is_the_name_and_the_number_and_sbatch_gets_the_same_form() {
         assert_eq!(log_file("xlc-2G", "42"), "xlc-2G-42.out");
-        let pattern = submit_args(&job(None, false))[7].clone();
-        assert_eq!(
-            pattern.replace("%x", "xlc-2G").replace("%j", "42"),
-            format!("/home/u/github/slurm-logs/{}", log_file("xlc-2G", "42"))
+        assert!(
+            submit_args(&job(None, false))
+                .contains(&"/home/u/github/slurm-logs/%x-%j.out".to_string())
         );
     }
 }
