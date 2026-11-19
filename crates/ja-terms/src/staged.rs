@@ -7,6 +7,9 @@
 //! - ステージした `.textlintignore` に挙げたファイルを外す。書き方は gitignore と同じなので、git 自身に当てさせる
 //! - 辞書を渡されなければ、ステージしたリポジトリの辞書（`.ja-terms/prh.yml`）に共通の辞書を重ねる（ADR-0096）。コミットに
 //!   入る中身を、そのコミットに入る辞書で検査する（作業ツリーの辞書は読まない）
+//! - リポジトリの辞書を変えるコミットでは、重ねると外れる共通の規則のうち、リポジトリの辞書に同じ pattern の規則の無い
+//!   もの（[`ja_terms::overrides`] の `REPLACED: ` の行）を知らせる。置き換えは意図したものでもありうる（ADR-0096）ので
+//!   止めず、辞書を変えないコミットでは、同じ知らせを繰り返さないよう出さない
 //!
 //! 出力は `ja-terms check` と同じ形で、パスはリポジトリの直下からのもの（どのディレクトリで呼んでも同じ）。終了コード: 0 = 崩れた語が無い、
 //! 1 = 崩れた語がある、2 = 検査できなかった
@@ -19,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ja_terms::Dictionary;
+use ja_terms::overrides::overridden;
 use ja_terms::repo::{REPO_DICTIONARY, path_from_git};
 use ja_terms::report::{self, TEXT_EXTENSIONS};
 
@@ -118,8 +122,8 @@ fn is_regular(mode: &str) -> bool {
     matches!(mode, "100644" | "100755")
 }
 
-/// ステージしたリポジトリの辞書に共通の辞書を重ねた辞書（ADR-0096）
-fn staged_dictionary(top: &Path) -> Result<Dictionary, Failure> {
+/// ステージしたリポジトリの辞書に共通の辞書を重ねた辞書（ADR-0096）と、重ねて外れた共通の規則のうち置き換えの行
+fn staged_dictionary(top: &Path) -> Result<(Dictionary, Vec<String>), Failure> {
     let repo = match staged_mode(top, REPO_DICTIONARY)? {
         None => None,
         Some(mode) if is_regular(&mode) => {
@@ -136,7 +140,37 @@ fn staged_dictionary(top: &Path) -> Result<Dictionary, Failure> {
             )));
         }
     };
-    Dictionary::layered(repo).map_err(|e| Failure(e.to_string()))
+    // Dictionary::layered と同じ重ね方。外れる規則を、重ねる前の 2 つの辞書から数える
+    let common = Dictionary::common().map_err(|e| Failure(e.to_string()))?;
+    Ok(match repo {
+        Some(mut repo) => {
+            let replaced = overridden(&repo, &common)
+                .iter()
+                .filter(|o| o.is_replaced())
+                .map(|o| o.line())
+                .collect();
+            repo.merge(common);
+            (repo, replaced)
+        }
+        None => (common, Vec::new()),
+    })
+}
+
+/// このコミットがリポジトリの辞書を変えるか（ステージした版が HEAD と違う。最初のコミットでは、ステージしていれば）
+fn changes_dictionary(top: &Path) -> Result<bool, Failure> {
+    let changed = git(
+        Some(top),
+        &[
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--",
+            &format!(":(top,literal){REPO_DICTIONARY}"),
+        ],
+    )?;
+    Ok(!changed.is_empty())
 }
 
 /// ステージした .textlintignore に当たる、インデックスのファイルのパス
@@ -204,7 +238,16 @@ pub(crate) fn run(given: Option<Dictionary>) -> Result<u8, Failure> {
     // 辞書は、検査するファイルが無くても読む（壊れた辞書をステージしたコミットを止める）
     let dictionary = match given {
         Some(given) => given,
-        None => staged_dictionary(&top)?,
+        None => {
+            let (dictionary, replaced) = staged_dictionary(&top)?;
+            if !replaced.is_empty() && changes_dictionary(&top)? {
+                print(&format!(
+                    "⚠️  ステージした {REPO_DICTIONARY} が、共通の辞書の規則を、同じ expected で pattern の違う規則で外します。置き換えるつもりが無ければ、外れる共通の規則もリポジトリの辞書にコピーしてください（ja-terms overrides で一覧を出す）\n{}\n",
+                    replaced.join("\n")
+                ))?;
+            }
+            dictionary
+        }
     };
     let dictionary = &dictionary;
     let files = staged_files(&top)?;

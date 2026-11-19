@@ -16,6 +16,7 @@ mod autolink;
 pub mod common;
 mod inline;
 pub mod message;
+pub mod overrides;
 mod pragma;
 pub mod repo;
 pub mod report;
@@ -62,8 +63,14 @@ pub struct Diff {
 struct Rule {
     expected: String,
     regex: Regex,
+    /// regex の source（prh の pattern を正規表現にしたもの。重ねたときに外れた規則の比較と表示に使う）
+    source: String,
+    /// specs の (from, to)
+    specs: Vec<(String, String)>,
     /// どの一致にも含まれる固定の文字列。文に無ければ regex を当てない（[`required_literal`]）
     needle: Option<String>,
+    /// 辞書の中の何番目の規則か（1 から数える）
+    position: usize,
     /// 辞書のファイルと規則の位置（理由の表示に使う）
     origin: String,
 }
@@ -145,9 +152,15 @@ impl Dictionary {
         let kept: Vec<Rule> = other
             .rules
             .into_iter()
-            .filter(|rule| self.rules.iter().all(|r| r.expected != rule.expected))
+            .filter(|rule| !self.has_expected(&rule.expected))
             .collect();
         self.rules.extend(kept);
+    }
+
+    /// expected の規則があるか。[`Dictionary::merge`] が後の辞書の規則を外す条件で、外れる規則の一覧
+    /// （[`overrides::overridden`]）も同じ条件で数える
+    fn has_expected(&self, expected: &str) -> bool {
+        self.rules.iter().any(|r| r.expected == expected)
     }
 
     pub fn len(&self) -> usize {
@@ -219,7 +232,7 @@ fn parse_rules(yaml: &str, name: &str) -> Result<Vec<Rule>, DictionaryError> {
     raw_rules
         .iter()
         .enumerate()
-        .map(|(i, raw)| load_rule(raw, &format!("{name} の {} 番目の規則", i + 1)))
+        .map(|(i, raw)| load_rule(raw, i + 1, &format!("{name} の {} 番目の規則", i + 1)))
         .collect()
 }
 
@@ -238,7 +251,7 @@ fn describe(value: &Yaml) -> String {
     }
 }
 
-fn load_rule(raw: &Yaml, origin: &str) -> Result<Rule, DictionaryError> {
+fn load_rule(raw: &Yaml, position: usize, origin: &str) -> Result<Rule, DictionaryError> {
     let fail = |reason: &str| DictionaryError(format!("{origin}: {reason}"));
     let Yaml::Hash(raw) = raw else {
         return Err(fail("pattern の無い規則（文字列だけの規則）は扱わない"));
@@ -280,13 +293,16 @@ fn load_rule(raw: &Yaml, origin: &str) -> Result<Rule, DictionaryError> {
             "/{source}/ を u フラグの正規表現として読めない: {e}"
         ))
     })?;
-    let rule = Rule {
+    let mut rule = Rule {
         expected: expected.clone(),
         regex,
         needle: required_literal(&source),
+        source,
+        specs: Vec::new(),
+        position,
         origin: origin.to_string(),
     };
-    check_specs(&rule, raw.get(&key("specs")))?;
+    rule.specs = check_specs(&rule, raw.get(&key("specs")))?;
     Ok(rule)
 }
 
@@ -459,13 +475,18 @@ fn repeated_flag(flags: &str) -> Option<char> {
         .map(|(_, c)| c)
 }
 
-fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError> {
+/// specs を確かめ、(from, to) の並びを返す
+fn check_specs(
+    rule: &Rule,
+    specs: Option<&Yaml>,
+) -> Result<Vec<(String, String)>, DictionaryError> {
     let fail = |reason: String| DictionaryError(format!("{}: {reason}", rule.origin));
     let specs = match specs {
-        None | Some(Yaml::Null) => return Ok(()),
+        None | Some(Yaml::Null) => return Ok(Vec::new()),
         Some(Yaml::Array(specs)) => specs,
         Some(_) => return Err(fail("specs が並びでない".into())),
     };
+    let mut checked = Vec::new();
     for spec in specs {
         let pair = match spec {
             Yaml::Hash(h) if h.len() == 2 => (h.get(&key("from")), h.get(&key("to"))),
@@ -488,8 +509,9 @@ fn check_specs(rule: &Rule, specs: Option<&Yaml>) -> Result<(), DictionaryError>
                 "specs が合わない: {from:?} は {to:?} のはずが {got:?}"
             )));
         }
+        checked.push((from.clone(), to.clone()));
     }
-    Ok(())
+    Ok(checked)
 }
 
 /// 段落 piece（文の中の位置 offset）にすべての規則を当てた一致（prh の Paragraph の、指示で外す前の diffs）

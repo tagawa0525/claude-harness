@@ -12,14 +12,18 @@
 //! - `ja-terms commit-msg [--dictionary <辞書>] <メッセージのファイル>`: git の commit-msg の hook と claude-hooks の
 //!   git commit と git merge のルールが呼ぶ、件名の形と長さと本文の語の検査。理由は標準出力に出す
 //! - `ja-terms staged [--dictionary <辞書>]`: グローバルの pre-commit がリポジトリの直下で呼ぶ、ステージした中身の
-//!   検査（[`staged`]）
+//!   検査（[`staged`]）。リポジトリの辞書を変えるコミットでは、下の overrides の `REPLACED: ` の行も出す（判定は変えない）
+//! - `ja-terms overrides`: 今のディレクトリの作業ツリーで、リポジトリの辞書を重ねると外れる共通の辞書の規則を出す
+//!   （[`ja_terms::overrides`]）。`REPO: ` と `COMMON: ` の行に辞書のパスと規則の数、外れる規則ごとに、リポジトリの辞書に
+//!   同じ pattern の規則が無ければ `REPLACED: `、あれば `SAME: ` の行。置き換えは意図したものでもありうる（ADR-0096）ので、
+//!   検査でなく一覧として、読めれば 0 で終わる
 //!
 //! 辞書の既定は、今のディレクトリを含む作業ツリーの直下の `.ja-terms/prh.yml`（リポジトリの辞書。あれば）に、共通の辞書を
 //! 重ねたもの（ADR-0096。`ja-terms staged` はステージしたリポジトリの辞書を読む）。共通の辞書は、`claude-setup sync` が
 //! 配った `~/.config/ja-terms/prh.yml`（環境変数 `JA_TERMS_COMMON_DICTIONARY` があればそのパス）を読む（ADR-0097）。
 //! `--dictionary` を渡せば、その辞書だけを当てる。
 //!
-//! 終了コード: 0 = 崩れた語が無い（commit-msg は規約に従う）、1 = 崩れた語がある（commit-msg は規約に反する）、
+//! 終了コード: 0 = 崩れた語が無い（commit-msg は規約に従う。overrides は一覧を出せた）、1 = 崩れた語がある（commit-msg は規約に反する）、
 //! 2 = 検査できなかった（使い方の誤り、読めないファイル、対象でない拡張子、辞書が無いか読めない、作業ツリーの中で git が失敗した、
 //! prh と同じ意味で当てられない文）
 
@@ -30,14 +34,17 @@ use std::process::ExitCode;
 
 mod staged;
 
-use ja_terms::Dictionary;
 use ja_terms::message::{self, Subject};
+use ja_terms::overrides::overridden;
+use ja_terms::repo::{self, REPO_DICTIONARY};
 use ja_terms::report::{self, Syntax, TEXT_EXTENSIONS};
+use ja_terms::{Dictionary, common};
 
 const USAGE: &str = "Usage: ja-terms check [--dictionary <辞書>] <ファイル>...
        ja-terms message [--dictionary <辞書>] < <メッセージ>
        ja-terms commit-msg [--dictionary <辞書>] <メッセージのファイル>
-       ja-terms staged [--dictionary <辞書>]";
+       ja-terms staged [--dictionary <辞書>]
+       ja-terms overrides";
 
 /// 検査できなかった理由
 pub(crate) struct Failure(pub(crate) String);
@@ -63,6 +70,7 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
         [option, ..] if option == "--dictionary" => return Err(usage()),
         rest => (None, rest),
     };
+    let has_given = given.is_some();
     let given = || {
         given
             .map(Dictionary::load)
@@ -90,8 +98,49 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
         }
         (Some("commit-msg"), [path]) => commit_msg(&dictionary()?, Path::new(path)),
         (Some("staged"), []) => staged::run(given()?),
+        (Some("overrides"), []) if !has_given => overrides(),
         _ => Err(usage()),
     }
+}
+
+/// ja-terms overrides。今のディレクトリの作業ツリーの辞書の組と、重ねると外れる共通の規則を出す
+fn overrides() -> Result<u8, Failure> {
+    let failure = |e: ja_terms::DictionaryError| Failure(e.to_string());
+    let (repo_line, repo) = match repo::work_tree_top(Path::new(".")).map_err(failure)? {
+        None => ("REPO: なし（作業ツリーの外）".to_string(), None),
+        Some(top) => match repo::dictionary_at(&top).map_err(failure)? {
+            None => (
+                format!(
+                    "REPO: なし（{} が無い）",
+                    top.join(REPO_DICTIONARY).display()
+                ),
+                None,
+            ),
+            Some(path) => {
+                let dictionary = Dictionary::load(&path).map_err(failure)?;
+                let line = format!("REPO: {}（{} 規則）", path.display(), dictionary.len());
+                (line, Some(dictionary))
+            }
+        },
+    };
+    let (path, text) = common::read().map_err(failure)?;
+    let common = Dictionary::parse(&text, &path.display().to_string()).map_err(failure)?;
+    let lines: Vec<String> = repo
+        .as_ref()
+        .map(|repo| overridden(repo, &common).iter().map(|o| o.line()).collect())
+        .unwrap_or_default();
+    let mut out = format!(
+        "{repo_line}\nCOMMON: {}（{} 規則。うち {} 規則を、同じ expected のリポジトリの規則が外す）\n",
+        path.display(),
+        common.len(),
+        lines.len()
+    );
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    print(&out)?;
+    Ok(0)
 }
 
 /// 報告を標準出力に書く。読み手が先に閉じても検査は済んでいるので、誤りにしない
