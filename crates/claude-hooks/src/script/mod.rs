@@ -32,6 +32,8 @@ mod resume_state;
 mod review_level;
 mod run_checks;
 mod session_events;
+mod slurm_class;
+mod slurm_queue;
 mod time;
 mod usage_report;
 mod wait_step;
@@ -72,6 +74,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("review-level", review_level::main),
     ("run-checks", run_checks::main),
     ("session-events", session_events::main),
+    ("slurm-queue", slurm_queue::main),
     ("usage-report", usage_report::main),
     ("wait-step", wait_step::main),
     ("worktree-add", worktree_add::main),

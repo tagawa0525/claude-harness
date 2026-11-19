@@ -3,6 +3,8 @@
 #
 # 実行: bash claude/tests/scripts/slurm-run.sh（まとめて実行: bash claude/tests/scripts.sh）
 
+# 並べ直しで呼ぶ slurm-queue.sh の中身は claude-hooks script slurm-queue（ADR-0101）。ブランチでビルドしたバイナリで確かめる
+source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
 # sbatch、scontrol、sacct、hostname の偽物。sbatch は引数を記録し、-o の %x と %j を埋めたログに書き、
