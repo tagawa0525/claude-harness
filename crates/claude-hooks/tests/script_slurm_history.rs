@@ -199,13 +199,26 @@ fn at(hour: i64, minute: i64) -> i64 {
 }
 
 /// UNIX の秒の、JST の `%FT%T`
+/// （date の TZ は、nix のビルドの砂場に時間帯のデータが無く UTC になるので使わない。暦は Howard Hinnant の
+/// civil_from_days）
 fn text(t: i64) -> String {
-    let out = Command::new("date")
-        .args(["-d", &format!("@{t}"), "+%FT%T"])
-        .env("TZ", "Asia/Tokyo")
-        .output()
-        .unwrap();
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    let local = t + 9 * 3600;
+    let (days, secs) = (local.div_euclid(86_400), local.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
 }
 
 /// slurm-run が投げた形の SubmitLine（資源の引数、連絡先、コマンド）
