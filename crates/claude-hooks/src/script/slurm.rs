@@ -107,6 +107,12 @@ pub fn valid_time_limit(estimate: &str) -> bool {
     TIME_LIMIT.is_match(estimate)
 }
 
+/// 見積もり（[`valid_time_limit`] の形）の分。秒は分に切り上げる（見込みを短くしない）。形が違えば None
+pub fn estimate_minutes(estimate: &str) -> Option<u64> {
+    let _ = estimate;
+    None
+}
+
 /// 待ち行列の先頭に、list（`,` でつないだ番号）をその順に出す
 pub fn move_to_front(list: &str) -> bool {
     Command::new("scontrol")
@@ -199,6 +205,10 @@ pub struct QueuedJob {
     /// 開始の見込みか走り始めた時刻（`2026-11-19T17:45:36`。無ければ `N/A`）
     pub start: String,
     pub comment: String,
+    /// 開始の見込みか走り始めた時刻の UNIX の秒（見込みが無ければ None）
+    pub start_at: Option<i64>,
+    /// 見積もりの分（無制限か、パーティションの上限に任せたものは None）
+    pub limit_minutes: Option<u64>,
 }
 
 /// 待ち行列を読めなかった理由
@@ -308,6 +318,8 @@ fn queued_job(job: &Value) -> Result<QueuedJob, String> {
         // NO_VAL と INFINITE だけなので、squeue と同じく 1970 年の時刻で書く
         start: start_text(start as i64).ok_or_else(|| missing("start_time"))?,
         comment: printed("comment")?,
+        start_at: None,
+        limit_minutes: None,
     })
 }
 
@@ -804,6 +816,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: start_at と limit_minutes を読まない"]
     fn squeue_json_gives_the_queued_job_with_the_fields_as_the_listing_shows_them() {
         assert_eq!(
             queued(json!({})),
@@ -820,9 +833,62 @@ mod tests {
                 limit: "2:55:00".to_string(),
                 start: "2026-11-19T17:45:36".to_string(),
                 comment: "decision | #0131 | p | c".to_string(),
+                start_at: Some(1795077936),
+                limit_minutes: Some(175),
             })
         );
         assert_eq!(queue_jobs(r#"{"jobs": []}"#), Ok(vec![]));
+    }
+
+    #[test]
+    #[ignore = "RED: start_at と limit_minutes を読まない"]
+    fn the_start_and_the_limit_are_numbers_only_when_they_are_estimates() {
+        // 一覧が時刻として書かない値（N/A、Unknown、None）と、1970 年の時刻になる無い値と無制限は、見込みが無い
+        for (start, at) in [
+            (set(1795077936), Some(1795077936)),
+            (set(0), None),
+            (set(0xffff_ffff), None),
+            (set(0xffff_fffe), None),
+            (unset(), None),
+            (infinite(), None),
+        ] {
+            assert_eq!(
+                queued(json!({"start_time": start})).unwrap().start_at,
+                at,
+                "{start}"
+            );
+        }
+        for (limit, minutes) in [
+            (set(30), Some(30)),
+            (set(0), Some(0)),
+            (infinite(), None),
+            (unset(), None),
+        ] {
+            assert_eq!(
+                queued(json!({"time_limit": limit})).unwrap().limit_minutes,
+                minutes,
+                "{limit}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "RED: estimate_minutes が未実装"]
+    fn the_estimate_in_minutes_rounds_seconds_up() {
+        for (estimate, minutes) in [
+            ("90", Some(90)),
+            ("0", Some(0)),
+            ("1:30:00", Some(90)),
+            ("0:00:01", Some(1)),
+            ("1-00", Some(1440)),
+            ("1-12:30", Some(2190)),
+            ("2-01:00:30", Some(2941)),
+            ("25m", None),
+            ("1:30", None),
+            ("", None),
+        ] {
+            assert_eq!(super::estimate_minutes(estimate), minutes, "{estimate}");
+        }
     }
 
     #[test]

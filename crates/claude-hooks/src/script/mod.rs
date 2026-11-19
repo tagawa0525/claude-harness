@@ -5,6 +5,7 @@
 mod base_moved;
 mod branch_topics;
 mod decide_next;
+pub(crate) mod delegate_wait;
 pub(crate) mod dictionary_preview;
 mod fix_markdown_lint;
 mod get_latest_review;
@@ -32,7 +33,7 @@ mod resume_state;
 mod review_level;
 mod run_checks;
 mod session_events;
-mod slurm;
+pub(crate) mod slurm;
 mod slurm_class;
 mod slurm_queue;
 mod slurm_run;

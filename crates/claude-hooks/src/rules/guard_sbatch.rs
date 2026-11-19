@@ -27,18 +27,23 @@ use crate::unwrap::basename;
 
 pub struct GuardSbatch;
 
-const SCRIPT: &str = "slurm-run.sh";
-const TEST: &str = "claude/tests/scripts/slurm-run.sh";
+pub(super) const SCRIPT: &str = "slurm-run.sh";
+pub(super) const WAIT_SCRIPT: &str = "slurm-wait.sh";
 
 /// slurm-run.sh か。同名のテスト（`claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で走り、Slurm に
 /// 触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、除くのはテストの
 /// 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
-fn is_slurm_run(program: &str) -> bool {
-    basename(program) == SCRIPT && !is_own_test(program)
+pub(super) fn is_slurm_run(program: &str) -> bool {
+    basename(program) == SCRIPT && !is_own_test(program, SCRIPT)
 }
 
-fn is_own_test(path: &str) -> bool {
-    path.strip_suffix(TEST)
+/// slurm-wait.sh か（同名のテストを除くのは [`is_slurm_run`] と同じ）
+pub(super) fn is_slurm_wait(program: &str) -> bool {
+    basename(program) == WAIT_SCRIPT && !is_own_test(program, WAIT_SCRIPT)
+}
+
+fn is_own_test(path: &str, script: &str) -> bool {
+    path.strip_suffix(&format!("claude/tests/scripts/{script}"))
         .is_some_and(|dir| dir.is_empty() || dir.ends_with('/'))
 }
 

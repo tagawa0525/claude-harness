@@ -426,6 +426,8 @@ mod tests {
             limit: "10:00".to_string(),
             start: "N/A".to_string(),
             comment: C.to_string(),
+            start_at: None,
+            limit_minutes: Some(10),
         }
     }
 

@@ -24,6 +24,9 @@ pub struct Input {
     pub cwd: PathBuf,
     /// Claude Code のセッションの ID。scratchpad のパス（`…/<session_id>/scratchpad`）を見分けるのに使う。無ければ空
     pub session_id: String,
+    /// 呼んだサブエージェントの ID（hook の入力の共通の欄。サブエージェントのツールの呼び出しにだけある）。メインの
+    /// セッションの呼び出しでは欄が無いか空なので、どちらも空にする
+    pub agent_id: String,
 }
 
 impl Input {
@@ -51,6 +54,7 @@ impl Input {
             message: s("/tool_input/message").unwrap_or_default(),
             cwd,
             session_id: s("/session_id").unwrap_or_default(),
+            agent_id: s("/agent_id").unwrap_or_default(),
         })
     }
 }
