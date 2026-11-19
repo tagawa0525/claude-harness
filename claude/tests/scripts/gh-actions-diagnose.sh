@@ -19,7 +19,7 @@ make_repo "$REPO"
 git -C "$REPO" switch -q -c feat/x
 cd "$REPO" || exit 1
 
-RUN_FAIL='[{"databaseId":100,"name":"CI","status":"completed","conclusion":"failure","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/100"}]'
+RUN_FAIL='[{"databaseId":100,"name":"CI","workflowDatabaseId":1,"event":"pull_request","headSha":"abc","status":"completed","conclusion":"failure","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/100"}]'
 JOBS_FAIL='{"attempt":1,"jobs":[{"name":"build","conclusion":"failure","steps":[{"name":"Setup","conclusion":"success"},{"name":"Test","conclusion":"failure"}]}]}'
 
 it "gh-actions-diagnose: run がなければ CAUSE: NONE と未設定の旨を出す"
@@ -114,7 +114,7 @@ assert_contains "$out" "BRANCH: other"
 # diagnose は GitHub Actions の run に加えて、head SHA の check-run（GitHub Actions 以外の App）と
 # commit status（Buildkite 等の外部 CI）も見る。以下の偽 gh はその呼び出しをまとめて用意する
 
-RUN_OK='[{"databaseId":100,"name":"CI","status":"completed","conclusion":"success","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/100"}]'
+RUN_OK='[{"databaseId":100,"name":"CI","workflowDatabaseId":1,"event":"pull_request","headSha":"abc","status":"completed","conclusion":"success","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/100"}]'
 JOBS_FAIL_ATTEMPT2='{"attempt":2,"jobs":[{"name":"build","conclusion":"failure","steps":[{"name":"Test","conclusion":"failure"}]}]}'
 
 # fake_gh_actions <runs_json> <jobs_json> <log_printf> [check_runs_lines] [status_json]
@@ -190,5 +190,12 @@ fake_gh_actions "$RUN_FAIL" "$JOBS_FAIL" 'build\tTest\t##[error]test_login faile
 out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
 assert_contains "$out" "CAUSE: CODE"
 assert_contains "$out" "EXTERNAL_CHECK: buildkite/app"
+
+it "gh-actions-diagnose: head の SHA でほかのワークフローが失敗していれば、後から終わったワークフローの成功で NONE にしない"
+LINT_OK='{"databaseId":101,"name":"Lint","workflowDatabaseId":2,"event":"pull_request","headSha":"abc","status":"completed","conclusion":"success","createdAt":"2026-09-01T00:01:00Z","url":"https://example/run/101"}'
+fake_gh_actions "[$LINT_OK,${RUN_FAIL#[}" "$JOBS_FAIL" 'build\tTest\t##[error]test_login failed\n'
+out=$("$SCRIPTS_DIR/gh-actions-diagnose.sh")
+assert_contains "$out" "RUN: 100"
+assert_contains "$out" "CAUSE: CODE"
 
 finish
