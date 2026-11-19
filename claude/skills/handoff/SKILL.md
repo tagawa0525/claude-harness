@@ -6,7 +6,12 @@ allowed-tools:
   - Bash(~/.claude/scripts/git-info.sh)
   - Bash(~/.claude/scripts/slurm-queue.sh)
   - Bash(~/.claude/skills/retro/scripts/memory-index.sh:*)
+  - Bash(gh issue *)
+  - Bash(gh pr comment *)
+  - Bash(gh pr view *)
   - Read
+  - Edit
+  - Write
   - Glob
   - Grep
 ---
