@@ -605,3 +605,107 @@ fn findings_without_their_text_stop_before_gh() {
         assert_eq!(fake.log(), "", "{args:?}");
     }
 }
+
+#[test]
+#[ignore = "RED: --finding は未実装"]
+fn each_finding_is_a_line_under_the_record() {
+    // 要旨は引数で受ける。ファイルを読んでコメントに書く形は、確認なしで通るこのスクリプトが、手元の任意のファイルを
+    // PR に出す経路になる
+    let fake = FakeGh::new();
+    let out = run(
+        &fake,
+        &[
+            URL,
+            HEAD,
+            "0",
+            "1",
+            "1",
+            "--finding",
+            "Medium a.rs:12 引数が空のときに落ちる（再現なし）",
+            "--unlogged",
+            "PR の URL を渡した",
+            "--finding",
+            " Low b.md:3 語の揺れ（再現なし） ",
+        ],
+        "true\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        fake.log().contains(&format!(
+            "gh pr comment 42 --body <!-- local-review sha={HEAD} high=0 medium=1 low=1 -->\n\
+             ローカルの /code-review で def5678 を確かめた: High 0 / Medium 1 / Low 1\n\
+             \n\
+             指摘:\n\
+             - Medium a.rs:12 引数が空のときに落ちる（再現なし）\n\
+             - Low b.md:3 語の揺れ（再現なし）\n"
+        )),
+        "{}",
+        fake.log()
+    );
+}
+
+#[test]
+#[ignore = "RED: --finding は未実装"]
+fn the_findings_must_be_as_many_as_the_counts() {
+    // 件数だけの記録では、セッションが替わると、対応しなかった指摘をマージの本文に書けない
+    for args in [
+        &[URL, HEAD, "0", "1", "0"][..],
+        &[URL, HEAD, "1", "0", "1", "--finding", "High a.rs:1 落ちる"][..],
+        &[URL, HEAD, "0", "0", "0", "--finding", "Low a.rs:1 語"][..],
+        &[URL, HEAD, "1", "0", "0", "--unlogged", "PR の URL を渡した"][..],
+        // 足すと u64 を超える件数も、0 件に見せない
+        &[URL, HEAD, "18446744073709551615", "1", "0"][..],
+    ] {
+        let fake = FakeGh::new();
+        let out = run(&fake, args, "true\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            stderr(&out).contains("--finding"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.log(), "", "{args:?}");
+    }
+}
+
+#[test]
+#[ignore = "RED: --finding は未実装"]
+fn a_malformed_option_is_a_usage_error() {
+    for args in [
+        // 値が無い、空、複数行（1 件を 1 行で読めるように）
+        &[URL, HEAD, "0", "1", "0", "--finding"][..],
+        &[URL, HEAD, "0", "1", "0", "--finding", " "][..],
+        &[
+            URL,
+            HEAD,
+            "0",
+            "1",
+            "0",
+            "--finding",
+            "Low a.rs:1 語\n- 2 行目",
+        ][..],
+        // 知らないフラグ、2 度目の --unlogged
+        &[URL, HEAD, "0", "0", "0", "--force", "x"][..],
+        &[
+            URL,
+            HEAD,
+            "0",
+            "0",
+            "0",
+            "--unlogged",
+            "a",
+            "--unlogged",
+            "b",
+        ][..],
+    ] {
+        let fake = FakeGh::new();
+        let out = run(&fake, args, "true\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            stderr(&out).contains("Usage: record-local-review.sh"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.log(), "", "{args:?}");
+    }
+}
