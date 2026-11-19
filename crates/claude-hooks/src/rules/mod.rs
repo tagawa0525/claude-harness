@@ -111,7 +111,6 @@ pub(crate) use pre_merge_check::local_review_mark;
 mod pre_pr_create_check;
 mod require_background_wait;
 mod require_pipefail;
-mod restart_wait_clock;
 mod scratchpad_repo;
 #[cfg(test)]
 mod test_util;
@@ -149,7 +148,6 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &delegate_request_fields::DelegateRequestFields,
         &delegate_report_fields::DelegateReportFields,
         &count_review_rounds::CountReviewRounds,
-        &restart_wait_clock::RestartWaitClock,
     ]
 }
 
@@ -184,15 +182,9 @@ mod tests {
     }
 
     #[test]
-    fn report_tools_run_the_delegate_report_check_and_restart_the_wait_clock() {
-        assert_eq!(
-            names_for("SendMessage"),
-            ["delegate-report-fields", "restart-wait-clock"]
-        );
-        assert_eq!(
-            names_for("SubagentHandback"),
-            ["delegate-report-fields", "restart-wait-clock"]
-        );
+    fn report_tools_run_only_the_delegate_report_check() {
+        assert_eq!(names_for("SendMessage"), ["delegate-report-fields"]);
+        assert_eq!(names_for("SubagentHandback"), ["delegate-report-fields"]);
     }
 
     #[test]

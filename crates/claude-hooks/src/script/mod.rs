@@ -40,7 +40,7 @@ mod slurm_run;
 mod slurm_wait;
 mod time;
 mod usage_report;
-pub(crate) mod wait_step;
+mod wait_step;
 mod worktree_add;
 
 /// スクリプトの中身（引数を受けて終了コードを返す）

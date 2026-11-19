@@ -238,7 +238,6 @@ mod tests {
             args: String::new(),
             file_path: String::new(),
             message: String::new(),
-            to: String::new(),
             cwd: work.to_path_buf(),
             session_id: String::new(),
             agent_id: String::new(),

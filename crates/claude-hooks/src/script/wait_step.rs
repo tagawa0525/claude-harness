@@ -6,19 +6,26 @@
 //! 通知（/code-review の終わり、親の返事など）は、呼び出しが返った後に担当に渡る。
 //!
 //! 時計は担当ごとに 1 つで、worktree のパスで分ける（並行する担当どうしで、リポジトリやブランチの名前が重なっても取り合わ
-//! ない）。親に最後に送った時刻（初めは待ち始め）と、最後に呼んだ時刻を `<一時のディレクトリ>/claude-wait-step/<鍵のハッシュ>` に
-//! 残す。親に最後に送ってから線（55 分。[`delegate_wait::LIMIT_SECS`]。投げる前の見込みの線と同じ）を超えたら END を出し、
-//! 時計を消す（担当は待ちをやめ、投げたジョブは止めずに、残りの作業を報告に書いて終える。線は親のキャッシュの 1 時間が切れる
-//! 前に終えるためのもの。ADR-0078 の 2026-11-20 の変更）。親に送った時刻は、担当の SendMessage と SubagentHandback の前に hook の
-//! restart-wait-clock が [`restart_from_contact`] で書く（担当の判断に任せない）。前の呼び出しから線を超えて空いていれば、
-//! 終わった待ち（--end の忘れ、中断した担当）の時計なので数え直す。待ちが済んだら --end で消す。DONE は、渡したファイルのうち
-//! 終わったものの 1 つを出す。
+//! ない）。待つだけになった時刻と、最後に呼んだ時刻を `<一時のディレクトリ>/claude-wait-step/<鍵のハッシュ>` に残す。待つだけ
+//! （キャッシュを保つ 1 ステップの呼び直し）が線（55 分。[`delegate_wait::LIMIT_SECS`]。投げる前の見込みの線と同じ）を超えて
+//! 続いたら END を出し、時計を消す（担当は待ちをやめ、投げたジョブは止めずに、残りの作業を報告に書いて終える。ADR-0078 の
+//! 2026-11-20 の変更）。親が作業中か、親に送ったかは見ない（親が作業を続けると、担当が待ちを延々と続ける）。
+//!
+//! 時計は、待ちのほかのことが起きたら数え直す。機械で分かるものだけで決める:
+//! - DONE を返した（渡した出力が終わった。担当はその結果を取り込んで作業する）
+//! - --end で消した
+//! - 前の呼び出しに無かった出力のファイルを渡した（新しく投げた。投げる前の見込みの線と同じく、そこから 55 分）
+//! - 前の呼び出しが返ってから 1 ステップ（WAIT_STEP_SECONDS）を超えて空いた。待つだけの担当は返った結果を読んですぐ呼び直す
+//!   （応答の数秒から数十秒）ので、1 ステップを超える空きは待ちのほかの作業をしたとみなす。1 ステップを閾値にするのは、
+//!   担当のキャッシュ（5 分）を保つ間隔がそれで、それより長く空けて呼び直すのは待つだけの呼び直しの形でないため
+//!
+//! DONE は、渡したファイルのうち終わったものの 1 つを出す。
 //!
 //! 出力と終了コード:
 //! - `DONE: <ファイル>` 0: 渡した background の出力のどれかが終わった（Claude Code が最後の行に `[exited with code N]` か
 //!   `[killed]` を書く）
-//! - `WAIT: 親に最後に送ってから <経過> 分` 2: 1 ステップの時間がたった
-//! - `END: 親に最後に送ってから <経過> 分を超えた…` 3: 親に最後に送ってから線を超えた
+//! - `WAIT: 待つだけで <経過> 分` 2: 1 ステップの時間がたった
+//! - `END: 待つだけで <経過> 分を超えた…` 3: 待つだけが線を超えて続いた
 //! - 使い方の誤り、渡した出力のファイルが無い（パスのコピーミス）、状態を書けないときは、理由を出して 1
 //!
 //! DONE、WAIT、END の行の後には、担当の次の行動を `NEXT:` の行で出す（DONE は、残りのファイルで呼び直すコマンドと
@@ -148,51 +155,35 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     h
 }
 
-/// 担当（hook の入力の agent_id）が最後に呼んだ wait-step の鍵を残すファイル。hook の restart-wait-clock が、担当が親に
-/// 送ったときに、その鍵の時計を数え直すのに使う
-fn agent_file(agent_id: &str) -> PathBuf {
-    std::env::temp_dir()
-        .join("claude-wait-step")
-        .join("agents")
-        .join(format!("{:016x}", fnv1a(agent_id.as_bytes())))
-}
-
-/// 担当 agent_id が鍵 key で待っていることを残す（hook が wait-step.sh の呼び出しの前に呼ぶ。失敗は無視する: 残せなければ
-/// 数え直さず、線が早めに来るだけ）
-pub(crate) fn note_waiter(agent_id: &str, key: &str) {
-    let path = agent_file(agent_id);
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(path, key);
-}
-
-/// 担当 agent_id が親に送った時刻 now から、その担当の待ちの時計を数え直す（hook が SendMessage と SubagentHandback の
-/// 前に呼ぶ）。待っていなければ何もしない
-pub(crate) fn restart_from_contact(agent_id: &str, now: u64) {
-    let Ok(key) = std::fs::read_to_string(agent_file(agent_id)) else {
-        return;
-    };
-    let state = state_of(&key);
-    if let Some((_, called)) = read_state(&state) {
-        let _ = save(&state, now, called);
-    }
-}
-
-/// 状態（親に最後に送った時刻（初めは待ち始め）, 最後に呼んだ時刻）。無いか読めなければ None
-fn read_state(path: &Path) -> Option<(u64, u64)> {
+/// 状態（待つだけになった時刻, 最後に呼んだ時刻）。無いか読めなければ None
+/// と、前の呼び出しで待った出力のファイル（パスのハッシュ。書いていない古い形なら None）
+fn read_state(path: &Path) -> Option<(u64, u64, Option<Vec<u64>>)> {
     let text = std::fs::read_to_string(path).ok()?;
-    let mut it = text.split_whitespace().map(|v| v.parse::<u64>().ok());
-    Some((it.next()??, it.next()??))
+    let mut it = text.split_whitespace();
+    let mut number = || it.next()?.parse::<u64>().ok();
+    let (started, called) = (number()?, number()?);
+    let files = it.next().map(|list| {
+        list.split(',')
+            .filter_map(|h| u64::from_str_radix(h, 16).ok())
+            .collect()
+    });
+    Some((started, called, files))
 }
 
-/// 状態に、親に最後に送った時刻と、最後に呼んだ時刻 called を残す
-fn save(path: &Path, started: u64, called: u64) -> Result<(), i32> {
+/// 出力のファイルのパスのハッシュ
+fn file_hashes(files: &[String]) -> Vec<u64> {
+    files.iter().map(|f| fnv1a(f.as_bytes())).collect()
+}
+
+/// 状態に、待つだけになった時刻と、最後に呼んだ時刻 called と、待った出力のファイル files を残す
+fn save(path: &Path, started: u64, called: u64, files: &[u64]) -> Result<(), i32> {
     let write = || -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, format!("{started} {called}\n"))
+        let files: Vec<String> = files.iter().map(|h| format!("{h:x}")).collect();
+        // ファイルの無い待ちも 3 つ目の欄を書く（空の欄を「書いていない古い形」と見分ける）
+        std::fs::write(path, format!("{started} {called} ,{}\n", files.join(",")))
     };
     write().map_err(|_| {
         eprintln!("ERROR: 待ちの状態を書けません: {}", path.display());
@@ -288,13 +279,23 @@ fn wait(key: &str, files: &[String]) -> i32 {
     };
     let mut clock = Clock { fake };
     let start = clock.now();
-    // 前の呼び出しから線を超えて空いていれば、終わった待ちの時計なので数え直す
+    // 前の呼び出しが返ってから 1 ステップを超えて空いていれば、待ちのほかの作業をしたので数え直す。前の呼び出しに無かった
+    // 出力のファイルを渡したら、新しく投げた（待ちのほかのこと）ので数え直す
+    let hashes = file_hashes(files);
     let started = match read_state(&state) {
-        // 親に送った時刻が今より後なら、時計が戻ったので数え直す（戻った分だけ END が遅れないように）
-        Some((s, last)) if start.saturating_sub(last) <= limit && s <= start => s,
+        // 待つだけになった時刻が今より後なら、時計が戻ったので数え直す（戻った分だけ END が遅れないように）
+        Some((s, last, before))
+            if start.saturating_sub(last) <= step
+                && s <= start
+                && before
+                    .as_ref()
+                    .is_none_or(|b| hashes.iter().all(|h| b.contains(h))) =>
+        {
+            s
+        }
         _ => start,
     };
-    if let Err(code) = save(&state, started, start) {
+    if let Err(code) = save(&state, started, start, &hashes) {
         return code;
     }
     // 1 秒ごとに、終わり、線、1 ステップの時刻の順に見る（終わったものに待ちの終わりを出さない）。返る前に最後に
@@ -303,7 +304,8 @@ fn wait(key: &str, files: &[String]) -> i32 {
     loop {
         let t = clock.now();
         if let Some(done) = files.iter().find(|f| finished(f)) {
-            if let Err(code) = save(&state, started, t) {
+            // 結果を取り込む作業が待ちのほかのことなので、ここから数え直す
+            if let Err(code) = save(&state, t, t, &hashes) {
                 return code;
             }
             print_done(key, files, done);
@@ -314,7 +316,7 @@ fn wait(key: &str, files: &[String]) -> i32 {
             // 終える担当の時計は消す（--end を忘れても、同じ worktree の次の担当が古い時刻を受け継がない）
             let _ = std::fs::remove_file(&state);
             println!(
-                "END: 親に最後に送ってから {elapsed} 分を超えた（線は {} 分）。待ちをやめて、報告して終える",
+                "END: 待つだけで {elapsed} 分を超えた（線は {} 分）。待ちをやめて、報告して終える",
                 limit / 60
             );
             println!(
@@ -324,10 +326,10 @@ fn wait(key: &str, files: &[String]) -> i32 {
             return 3;
         }
         if t >= deadline {
-            if let Err(code) = save(&state, started, t) {
+            if let Err(code) = save(&state, started, t, &hashes) {
                 return code;
             }
-            println!("WAIT: 親に最後に送ってから {elapsed} 分");
+            println!("WAIT: 待つだけで {elapsed} 分");
             println!(
                 "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ。呼び出しの後に通知（終わりの通知、親の返事）が届いていれば、それで続け、待つものがすべて済んだら {} で待ちを消す。線を超えると END を出す",
                 command(&["--end", key])
