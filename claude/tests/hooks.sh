@@ -7,7 +7,7 @@
 #       block-secret-commit / block-no-verify / guard-git-add / guard-gh-run-rerun / guard-gh-api /
 #       block-main-commit / require-background-wait / guard-branch-base / pre-git-merge-check /
 #       guard-git-merge / guard-sbatch / guard-git-stash / guard-git-reset-hard / guard-exclusive-slurm /
-#       guard-git-amend / block-nested-heredoc-same-delimiter
+#       guard-git-amend / block-nested-heredoc-same-delimiter / guard-memory-bash-write
 
 # hook はリポジトリの Rust クレート（claude-hooks）をビルドした 1 バイナリ。
 # lib.sh が HOME を差し替える前にビルドする（~/.cargo/config.toml の sccache 等を使うため）。
@@ -3809,5 +3809,54 @@ for cmd in 'set -o errexit -o pipefail; cargo test | tail' '/bin/bash -o pipefai
   out=$(run_hook require-pipefail "$cmd")
   assert_eq allow "$(decision "$out")"
 done
+
+# ===========================================================================
+# guard-memory-bash-write: 自動メモリのディレクトリのファイルを Bash で書き換えるもの
+# ===========================================================================
+# Bash で書くと Claude Code が Read した状態と食い違い、次の Edit が古い内容の上に書く（#356）
+
+# 実行する人の環境で設定の場所を移していても、~/.claude の下を memory として読む
+unset CLAUDE_CONFIG_DIR
+MEM_DIR="$HOME/.claude/projects/-work-repo/memory"
+
+it "guard-memory-bash-write: memory のファイルを書き込み先にする形は deny し、Read と Write か Edit を示す"
+for cmd in "sed -i 's/a/b/' ~/.claude/projects/-work-repo/memory/MEMORY.md" \
+  'echo "- x" >> $HOME/.claude/projects/-work-repo/memory/MEMORY.md' \
+  "echo x | tee -a $MEM_DIR/a.md" \
+  "perl -pi -e 's/a/b/' $MEM_DIR/MEMORY.md" \
+  "cp /tmp/a.md $MEM_DIR/" "mv /tmp/a.md $MEM_DIR/a.md" "install -m 644 /tmp/a.md $MEM_DIR/a.md" \
+  "rm $MEM_DIR/a.md" "truncate -s 0 $MEM_DIR/a.md" \
+  "cd $MEM_DIR && echo x >> MEMORY.md"; do
+  out=$(run_hook guard-memory-bash-write "$cmd")
+  assert_eq deny "$(decision "$out")"
+  assert_contains "$(reason "$out")" "Read"
+  assert_contains "$(reason "$out")" "Edit"
+done
+
+it "guard-memory-bash-write: memory でないパスと、読むだけのコマンドは通す"
+for cmd in "echo x >> $HOME/.claude/projects/-work-repo/notes.md" \
+  "echo x >> $TEST_ROOT/repo/memory/MEMORY.md" \
+  "cat $MEM_DIR/MEMORY.md" "grep -n x $MEM_DIR/MEMORY.md" "ls $MEM_DIR" \
+  "wc -l < $MEM_DIR/MEMORY.md" "cp $MEM_DIR/a.md /tmp/a.md" \
+  "$HOME/.claude/skills/retro/scripts/memory-index.sh $MEM_DIR" \
+  "sed -n 1,5p $MEM_DIR/MEMORY.md"; do
+  out=$(run_hook guard-memory-bash-write "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
+it "guard-memory-bash-write: CLAUDE_CONFIG_DIR で設定の場所を移したら、その下の memory を見る"
+out=$(CLAUDE_CONFIG_DIR="$TEST_ROOT/config" run_hook guard-memory-bash-write \
+  "echo x >> $TEST_ROOT/config/projects/-p/memory/MEMORY.md")
+assert_eq deny "$(decision "$out")"
+out=$(CLAUDE_CONFIG_DIR="$TEST_ROOT/config" run_hook guard-memory-bash-write \
+  "echo x >> $MEM_DIR/MEMORY.md")
+assert_eq allow "$(decision "$out")"
+
+it "guard-memory-bash-write: 理由を値にしたエスケープで通し、短い値には理由を求める"
+out=$(run_hook guard-memory-bash-write "ALLOW_MEMORY_BASH_WRITE='済んだ引き継ぎを消す' rm $MEM_DIR/a.md")
+assert_eq allow "$(decision "$out")"
+out=$(run_hook guard-memory-bash-write "ALLOW_MEMORY_BASH_WRITE=1 rm $MEM_DIR/a.md")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "理由を記載"
 
 finish
