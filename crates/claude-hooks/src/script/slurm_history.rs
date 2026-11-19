@@ -1566,28 +1566,14 @@ mod tests {
     }
 
     #[test]
-    fn a_step_with_zero_bytes_of_memory_stops_with_its_sacct_line_number() {
-        // 0 バイトは読めない値として止まる（直すのは #376）。丸めて 0 になる数バイトは読める
+    fn a_step_of_0_mib_enters_the_table_as_0m() {
         let accounting = accounted(
-            sacct_job(
-                "201",
-                "lattice",
-                "2026-11-01T10:00:00",
-                "2026-11-01T10:30:00",
-            ),
-            Allocation::Exclusive,
-            &[MaxRss::Mib(512.0), MaxRss::Zero],
-        );
-        assert_eq!(
-            table(&accounting, &[], false).unwrap_err(),
-            "ERROR: sacct の 3 行目を読めません（MaxRSS を読めません）"
-        );
-        let tiny = accounted(
             sacct_job("201", "tiny", "2026-11-01T10:00:00", "2026-11-01T10:30:00"),
             Allocation::Exclusive,
             &[MaxRss::Mib(0.0)],
         );
-        assert!(row(&table(&tiny, &[], false).unwrap(), "201").ends_with(" 0M"));
+        let out = table(&accounting, &[], false).unwrap();
+        assert!(row(&out, "201").ends_with(" 0M"), "{out}");
     }
 
     #[test]

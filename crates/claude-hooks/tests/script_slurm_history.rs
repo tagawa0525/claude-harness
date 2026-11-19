@@ -302,28 +302,31 @@ fn sacct_is_read_as_json_with_steps_since_the_accounting_started_and_merged_with
 }
 
 #[test]
-fn a_step_with_a_few_bytes_of_memory_is_read_as_0m_rather_than_stopping() {
-    // 1 ページ（4096 バイト）は、sacct --units=M の文字の出力で 0.00M。単位の無い 0（0 バイト）と違い、読める値
-    let h = History::new();
-    let jobs = json!({"jobs": [{
-        "job_id": 201,
-        "name": "tiny",
-        "partition": "timed",
-        "state": {"current": ["COMPLETED"]},
-        "time": {"start": 1_761_958_800, "end": 1_761_960_600, "limit": {"set": true, "infinite": false, "number": 60}},
-        "submit_line": "/nix/store/x/bin/sbatch --exclusive --partition=timed --wrap run",
-        "steps": [{"step": {"id": "201.extern"}, "tres": {"requested": {"max": [{"type": "mem", "count": 4096}]}}}],
-    }]});
-    std::fs::write(h.root.join("all.json"), jobs.to_string()).unwrap();
-    std::fs::write(h.root.join("jc"), "").unwrap();
-    let out = h.run(&["--sacct", &h.path("jc")]);
-    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert!(
-        stdout(&out)
-            .contains("    201  tiny                        1:00:00    0:30:00    0.50       0M"),
-        "{}",
-        stdout(&out)
-    );
+fn a_step_with_zero_or_a_few_bytes_of_memory_is_read_as_0m_rather_than_stopping() {
+    // 0 バイトは sacct の文字の出力で単位の無い 0、1 ページ（4096 バイト）は --units=M で 0.00M。どちらも 0M と読む
+    for bytes in [0, 4096] {
+        let h = History::new();
+        let jobs = json!({"jobs": [{
+            "job_id": 201,
+            "name": "tiny",
+            "partition": "timed",
+            "state": {"current": ["COMPLETED"]},
+            "time": {"start": 1_761_958_800, "end": 1_761_960_600, "limit": {"set": true, "infinite": false, "number": 60}},
+            "submit_line": "/nix/store/x/bin/sbatch --exclusive --partition=timed --wrap run",
+            "steps": [{"step": {"id": "201.extern"}, "tres": {"requested": {"max": [{"type": "mem", "count": bytes}]}}}],
+        }]});
+        std::fs::write(h.root.join("all.json"), jobs.to_string()).unwrap();
+        std::fs::write(h.root.join("jc"), "").unwrap();
+        let out = h.run(&["--sacct", &h.path("jc")]);
+        assert_eq!(out.status.code(), Some(0), "{bytes}: {}", stderr(&out));
+        assert!(
+            stdout(&out).contains(
+                "    201  tiny                        1:00:00    0:30:00    0.50       0M"
+            ),
+            "{bytes}: {}",
+            stdout(&out)
+        );
+    }
 }
 
 #[test]

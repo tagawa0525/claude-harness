@@ -1819,7 +1819,7 @@ mod tests {
             (Some(8_990_720), MaxRss::Mib(8.57)),
             (Some(1 << 30), MaxRss::Mib(1024.0)),
             (Some(4096), MaxRss::Mib(0.0)),
-            (Some(0), MaxRss::Zero),
+            (Some(0), MaxRss::Mib(0.0)),
             (Some(0xffff_ffff_ffff_fffe), MaxRss::Missing),
             (Some(u64::MAX), MaxRss::Missing),
             (None, MaxRss::Missing),
