@@ -44,7 +44,36 @@ use crate::git;
 use crate::git_args::git_flag;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Arg, Escape, Shell, has_flag, opt_value};
+use crate::shell::{Arg, Escape, Shell, asks_help, has_flag, opt_value};
+
+/// gh pr create の、値を次の語で取るフラグ
+const VALUE_FLAGS: &[&str] = &[
+    "-a",
+    "--assignee",
+    "-B",
+    "--base",
+    "-b",
+    "--body",
+    "-F",
+    "--body-file",
+    "-H",
+    "--head",
+    "-l",
+    "--label",
+    "-m",
+    "--milestone",
+    "-p",
+    "--project",
+    "--recover",
+    "-r",
+    "--reviewer",
+    "-T",
+    "--template",
+    "-t",
+    "--title",
+    "-R",
+    "--repo",
+];
 use crate::unwrap::env_value;
 
 pub struct PrePrCreateCheck;
@@ -167,6 +196,9 @@ impl Rule for PrePrCreateCheck {
             let Some(args) = cmd.gh_subcommand(&["pr", "create"]) else {
                 continue;
             };
+            if asks_help(args, VALUE_FLAGS) {
+                continue;
+            }
             let mut reasons: Vec<String> = Vec::new();
 
             // gh / git の実行コンテキストをコマンドに合わせる（`cd <path> && gh pr create`）

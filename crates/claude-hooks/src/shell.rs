@@ -1164,6 +1164,23 @@ pub fn has_flag(args: &[Arg], names: &[&str]) -> bool {
     })
 }
 
+/// `--help` か `-h` がフラグとして現れるか（gh はヘルプを表示して終わり、サブコマンドの動作をしない）。
+/// `value_flags`（値を次の語で取るフラグ）の値としての `--help` は数えない（`--body --help` は本文が `--help` の実行になる）
+pub fn asks_help(args: &[Arg], value_flags: &[&str]) -> bool {
+    let mut skip = false;
+    for a in args {
+        let t = a.text.as_str();
+        if skip {
+            skip = false;
+        } else if value_flags.contains(&t) {
+            skip = true;
+        } else if t == "--help" || t == "-h" {
+            return true;
+        }
+    }
+    false
+}
+
 /// フラグの値（`--x value` / `--x=value`）。最初に現れたもの
 pub fn opt_value<'a>(args: &'a [Arg], names: &[&str]) -> Option<&'a Arg> {
     let mut it = args.iter();
