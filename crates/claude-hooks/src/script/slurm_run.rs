@@ -654,10 +654,11 @@ fn refuse_same_worktree(pwd: &str, local: impl Fn(&str) -> String) -> Option<i32
     Some(1)
 }
 
-/// 作業ディレクトリの worktree の直下（git の外ならそのディレクトリ）
+/// 作業ディレクトリの worktree の直下（git の外ならそのディレクトリ）。crate::git::git は起動の失敗を、slurm-run が
+/// 出さない通知の置き場に入れるので使わない
 fn worktree_of(dir: &str) -> String {
-    crate::git::git(std::path::Path::new(dir), &["rev-parse", "--show-toplevel"])
-        .unwrap_or_else(|| dir.to_string())
+    let out = git(&["-C", dir, "rev-parse", "--show-toplevel"]);
+    if out.ok { out.stdout } else { dir.to_string() }
 }
 
 /// running のうち、作業ディレクトリの worktree が here と同じ最初のジョブの番号
