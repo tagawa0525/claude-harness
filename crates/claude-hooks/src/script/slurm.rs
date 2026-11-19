@@ -252,7 +252,8 @@ pub fn queued_jobs_within(timeout: std::time::Duration) -> Result<Vec<QueuedJob>
         .arg(JSON)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        // 失敗の理由（slurmctld に届かない、など）を見せるため、queued_jobs と同じく流す
+        .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| QueueError::Spawn {
             code: if error.kind() == std::io::ErrorKind::NotFound {
@@ -271,24 +272,22 @@ pub fn queued_jobs_within(timeout: std::time::Duration) -> Result<Vec<QueuedJob>
     let deadline = std::time::Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
+            Ok(Some(status)) => break Ok(status),
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(20))
             }
-            _ => {
+            waited => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break None;
+                break Err(match waited {
+                    Err(e) => format!("squeue の終わりを受けられない: {e}"),
+                    _ => format!("squeue が {} 秒で終わらない", timeout.as_secs()),
+                });
             }
         }
     };
     let bytes = reader.join().ok().and_then(Result::ok).unwrap_or_default();
-    let Some(status) = status else {
-        return Err(QueueError::Unreadable(format!(
-            "squeue が {} 秒で終わらない",
-            timeout.as_secs()
-        )));
-    };
+    let status = status.map_err(QueueError::Unreadable)?;
     if !status.success() {
         return Err(QueueError::Failed(crate::child::exit_code(status)));
     }
