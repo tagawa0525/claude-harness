@@ -9,7 +9,6 @@ allowed-tools:
   - Bash(~/.claude/scripts/rename-branch.sh*)
   - Read
   - Glob
-  - AskUserQuestion
 ---
 
 # Git Branch Command
@@ -39,7 +38,7 @@ allowed-tools:
 - mainブランチ: `git diff --cached --name-only` と `git diff --name-only` のファイルの内容
 - featureブランチ: `git log --oneline main..HEAD` のコミットメッセージと、`git diff --name-only` のファイルの内容
 
-### Step 3: 命名規則に従い候補を生成
+### Step 3: 命名規則に従い名前を決める
 
 - `feat/xxx` - 新機能
 - `fix/xxx` - バグ修正
@@ -47,23 +46,14 @@ allowed-tools:
 - `docs/xxx` - ドキュメント
 - `chore/xxx` - その他
 
-### Step 4: AskUserQuestion で候補を提示
-
-2-3個の候補を示し、ユーザーに選択させる（「Other」で自由入力）。
+名前は 1 つに決めてそのまま使い、完了確認で伝える。
 
 ## mainブランチの場合: ブランチ作成
 
 ### 起点の確認
 
-上の `HEAD..origin/main` のログに出力があれば（ローカルmainが遅れている）、警告して選ばせる:
-
-```text
-⚠️ ローカルmainがorigin/mainより遅れています。
-
-1. pullしてから分岐 (推奨)
-2. origin/mainから直接分岐
-3. このまま続行
-```
+上の `HEAD..origin/main` のログに出力があれば（ローカルmainが遅れている）、origin/main から分岐し、完了確認でそう伝える
+（ローカルの main は動かさない）。
 
 ### ブランチ作成コマンド
 
