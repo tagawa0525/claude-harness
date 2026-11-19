@@ -5,7 +5,7 @@ date: 2026-11-19
 requires: [ADR-0087, ADR-0089]
 supersedes: []
 superseded-by:
-issues: ["#350", "#169"]
+issues: ["#350", "#169", "#353"]
 description: Slurm の 4 本と check-each-commit.sh の中身を claude-hooks のサブコマンドに移し、sh は呼ぶだけにする。中断の後片付けは ctrlc で受ける
 ---
 
@@ -72,6 +72,7 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
   確かめた）。版を固定するのは、Slurm の更新で形が変わったときに、読み違えずに起動の失敗で気付くため。`--format` の
   文字の列を読むと、数の読み方（小数や指数の優先度）と区切りの扱いを自分で持つことになる。jobcomp のファイル
   （`/var/log/slurm/job_completions`）は Slurm が書くテキストなので、文字の列のまま読む
+- Slurm のコマンドを呼ぶ所と、その出力を解く所は 1 つのモジュールに集め、判定は、スケジューラの名前や出力の形を含まない型を受ける関数にする。会社の環境のスケジューラは Sun Grid Engine で、後で差し替えの実装を足す（#353）。差し替えの口（trait）は、2 つ目の実装を足すときに、2 つを比べて切り出す
 - 中断（INT、TERM、HUP）は `ctrlc`（`termination` の feature）で受け、後片付けをしてから終わる
   - 後片付けを登録する関数を `claude-hooks` の中に 1 つ置き、用途の名前を付ける（中断のときの後片付け）。`slurm-run` と
     `check-each-commit` はその関数だけを呼び、`ctrlc` の語は関数の中にだけ出す。crate の名前は Ctrl-C だけを指すが、
