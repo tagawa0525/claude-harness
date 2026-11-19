@@ -77,6 +77,11 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
   - 後片付けを登録する関数を `claude-hooks` の中に 1 つ置き、用途の名前を付ける（中断のときの後片付け）。`slurm-run` と
     `check-each-commit` はその関数だけを呼び、`ctrlc` の語は関数の中にだけ出す。crate の名前は Ctrl-C だけを指すが、
     受けるのは TERM と HUP を含む中断なので、呼ぶ側のコードから crate の名前で用途を読ませない
+  - Unix では、起動したときに無視するよう引き継いだシグナル（nohup の HUP、ジョブ制御の無いシェルが `&` で起動した
+    コマンドの INT）を無視したままにし、終わりまで待つ子（`sbatch --wait`）には端末の INT と QUIT を無視させる。sh の
+    `trap` と `&` の振る舞いで、`ctrlc` は 3 つのシグナルを受ける形に書き換えるので、今の設定を `libc` の `sigaction` で読み、
+    登録の後に `signal` で無視へ戻す。この 2 つの呼び出しは unsafe で、後片付けを登録する関数のファイル
+    （`crates/claude-hooks/src/interrupt.rs`）の中にだけ置く。`libc` は Unix だけの依存で、`ctrlc` が既に使っている
 - 移すだけで、振る舞いは足さない。#350 の待つかの判定は、`slurm-run` を移した後に、別の決定として足す
 
 理由:
@@ -96,7 +101,10 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
 
 ### 帰結
 
-- `claude-hooks` の依存に `ctrlc` が増える
+- `claude-hooks` の依存に `ctrlc` と、Unix だけ `libc` が増える（`libc` は `ctrlc` が既に引いていて、lock に増えるのは
+  `claude-hooks` の依存の 1 行）
+- 案 丁で避けた unsafe のうち、シグナルを受けるハンドラを自分で持つ部分は持たない。持つのは、今の設定を読む
+  `sigaction` と、無視に替える `signal` の呼び出しだけ（Unix だけ。`interrupt.rs` の中）
 - 中断されたときの終了コードは、シグナルによらず 130 になる（今の `check-each-commit.sh` は INT 130、TERM 143、HUP 129。
   `ctrlc` はどのシグナルかを渡さない）。この 3 つを見分けて読む呼び出しは、リポジトリの中に無い（確かめるのは実装の PR）
 - sh のテスト（`claude/tests/scripts/slurm-*.sh`）のうち、判定を確かめるものは Rust の単体のテストに移り、sh のテストは
