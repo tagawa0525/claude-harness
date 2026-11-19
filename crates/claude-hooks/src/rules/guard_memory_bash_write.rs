@@ -42,14 +42,19 @@ impl Rule for GuardMemoryBashWrite {
         if paths.is_empty() {
             return Vec::new();
         }
-        let paths: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
-        vec![Finding::Deny(format!(
-            "{} は自動メモリ（memory）のファイルです。Bash で書き換えると、Claude Code が Read で読んだ状態と\
-             食い違い、次の Edit が古い内容の上に書きます。Read で読んでから、Write か Edit で直してください。{}",
-            paths.join("、"),
-            escape_hint(ESCAPE)
-        ))]
+        vec![Finding::Deny(message(&paths))]
     }
+}
+
+/// 止める文言（何を止めたか、正規の修正方法、エスケープの付け方）
+fn message(paths: &[PathBuf]) -> String {
+    let paths: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    format!(
+        "{} は自動メモリ（memory）のファイルです。Bash で書き換えると、Claude Code が Read で読んだ状態と\
+         食い違い、次の Edit が古い内容の上に書きます。Read で読んでから、Write か Edit で直してください。{}",
+        paths.join("、"),
+        escape_hint(ESCAPE)
+    )
 }
 
 /// shell のコマンドが書き込み先にする、memory のディレクトリの下のパス（文書順、重複なし）。`config` は
@@ -415,17 +420,9 @@ mod tests {
 
     #[test]
     fn the_message_names_the_path_and_the_tools_to_use() {
-        let raw = serde_json::json!({
-            "tool_name": "Bash",
-            "tool_input": {"command": format!("sed -i 's/a/b/' {MEM}/MEMORY.md")},
-            "cwd": "/work/repo",
-        })
-        .to_string();
-        let input = Input::parse(&raw).unwrap();
-        let f = GuardMemoryBashWrite.check(&input, &Shell::parse(&input.command));
-        let [Finding::Deny(msg)] = f.as_slice() else {
-            panic!("{} 件", f.len())
-        };
+        // check は hook の環境の CLAUDE_CONFIG_DIR を読むので、実行する人の環境によらない message で確かめる
+        let paths = writes_with(&format!("sed -i 's/a/b/' {MEM}/MEMORY.md"), None);
+        let msg = message(&paths);
         assert!(msg.contains("MEMORY.md"), "{msg}");
         assert!(msg.contains("Read"), "{msg}");
         assert!(msg.contains("Write") && msg.contains("Edit"), "{msg}");
