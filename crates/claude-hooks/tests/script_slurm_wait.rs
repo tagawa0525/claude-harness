@@ -15,26 +15,36 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// scontrol show job の偽物。FAKE_FORGOTTEN なら覚えていない（空の jobs）。ほかは、呼ばれて FAKE_RUNNING 回までは
-/// RUNNING、その後は FAKE_STATE（既定 COMPLETED）と FAKE_EXIT（既定 0）の終わったジョブを返す
+/// scontrol show job <番号> の偽物。FAKE_FORGOTTEN なら覚えていない（空の jobs）。ほかは、その番号で呼ばれて FAKE_RUNNING
+/// 回（番号ごとの FAKE_RUNNING_<番号> があればそれ）までは RUNNING、その後は FAKE_STATE（既定 COMPLETED）と終了コード
+/// FAKE_EXIT_<番号>（無ければ FAKE_EXIT、既定 0）の終わったジョブを返す。FAKE_FAILING 回までは失敗する（制御のデーモンの
+/// 一時の不調）。呼ばれた番号は scontrol.count に足す
 const SCONTROL: &str = r#"#!/bin/sh
-n=$(($(cat "$T/scontrol.count" 2>/dev/null || echo 0) + 1))
-echo "$n" >"$T/scontrol.count"
+job=$3
+n=$(($(cat "$T/scontrol.$job" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$T/scontrol.$job"
+echo "$job" >>"$T/scontrol.count"
+[ "$n" -gt "${FAKE_FAILING:-0}" ] || { echo 'slurm_load_jobs error: Socket timed out' >&2; exit 1; }
 if [ -n "$FAKE_FORGOTTEN" ]; then
   echo '{"jobs":[]}'
   exit 0
 fi
+eval "running=\${FAKE_RUNNING_$job:-\${FAKE_RUNNING:-0}}"
+eval "exit=\${FAKE_EXIT_$job:-\${FAKE_EXIT:-0}}"
 state=${FAKE_STATE:-COMPLETED}
-[ "$n" -gt "${FAKE_RUNNING:-0}" ] || state=RUNNING
-printf '{"jobs":[{"job_id":42,"name":"xlc-2G","comment":"%s","stdout_expanded":"%s/github/slurm-logs/xlc-2G-42.out","job_state":["%s"],"exit_code":{"status":["X"],"return_code":{"set":true,"infinite":false,"number":%s},"signal":{"id":{"set":false,"infinite":false,"number":0},"name":""}}}]}\n' \
-  "${FAKE_COMMENT-trial | #1 | 試験の目的 | feat/x /w commit=abc}" "$HOME" "$state" "${FAKE_EXIT:-0}"
+[ "$n" -gt "$running" ] || state=RUNNING
+printf '{"jobs":[{"job_id":%s,"name":"xlc-2G","comment":"%s","stdout_expanded":"%s/github/slurm-logs/xlc-2G-%s.out","job_state":["%s"],"exit_code":{"status":["X"],"return_code":{"set":true,"infinite":false,"number":%s},"signal":{"id":{"set":false,"infinite":false,"number":0},"name":""}}}]}\n' \
+  "$job" "${FAKE_COMMENT-trial | #1 | 試験の目的 | feat/x /w commit=abc}" "$HOME" "$job" "$state" "$exit"
 "#;
 
-/// sacct の偽物。FAKE_UNKNOWN なら記録が無い。ほかは FAKE_STATE と FAKE_EXIT の終わった記録を返す
+/// sacct の偽物（最後の引数が番号）。FAKE_UNKNOWN なら記録が無い。ほかは FAKE_STATE と FAKE_EXIT_<番号>（無ければ
+/// FAKE_EXIT）の終わった記録を返す
 const SACCT: &str = r#"#!/bin/sh
+for job; do :; done
 [ -z "$FAKE_UNKNOWN" ] || { echo '{"jobs":[]}'; exit 0; }
-printf '{"jobs":[{"job_id":42,"name":"xlc-2G","partition":"main","stdout_expanded":"%s/github/slurm-logs/xlc-2G-42.out","state":{"current":["%s"]},"exit_code":{"status":["X"],"return_code":{"set":true,"infinite":false,"number":%s},"signal":{"id":{"set":false,"infinite":false,"number":0},"name":""}},"time":{"elapsed":754,"limit":{"set":true,"infinite":false,"number":30},"suspended":0}}]}\n' \
-  "$HOME" "${FAKE_STATE:-COMPLETED}" "${FAKE_EXIT:-0}"
+eval "exit=\${FAKE_EXIT_$job:-\${FAKE_EXIT:-0}}"
+printf '{"jobs":[{"job_id":%s,"name":"xlc-2G","partition":"main","stdout_expanded":"%s/github/slurm-logs/xlc-2G-%s.out","state":{"current":["%s"]},"exit_code":{"status":["X"],"return_code":{"set":true,"infinite":false,"number":%s},"signal":{"id":{"set":false,"infinite":false,"number":0},"name":""}},"time":{"elapsed":754,"limit":{"set":true,"infinite":false,"number":30},"suspended":0}}]}\n' \
+  "$job" "$HOME" "$job" "${FAKE_STATE:-COMPLETED}" "$exit"
 "#;
 
 const HOSTNAME: &str = "#!/bin/sh\necho r995\n";
@@ -99,9 +109,18 @@ impl Slurm {
         cmd.output().unwrap()
     }
 
-    fn polls(&self) -> u32 {
+    /// scontrol の呼ばれた番号を順に
+    fn polls(&self) -> Vec<String> {
         std::fs::read_to_string(self.root.join("scontrol.count"))
-            .map_or(0, |n| n.trim().parse().unwrap())
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn log_of(&self, job: &str) -> PathBuf {
+        self.root
+            .join(format!("home/github/slurm-logs/xlc-2G-{job}.out"))
     }
 }
 
@@ -121,7 +140,7 @@ fn a_running_job_is_waited_for_and_ends_with_the_lines_of_slurm_run() {
     let text = stdout(&out);
     assert_eq!(out.status.code(), Some(0), "{text}{}", stderr(&out));
     // 走っている間は見続け、終わった 4 回目で止める（終わりの後に State を確かめる読み直しは数えない）
-    assert!(s.polls() >= 4, "{}", s.polls());
+    assert!(s.polls().len() >= 4, "{:?}", s.polls());
     let log = sh_path(&s.log());
     assert!(
         text.starts_with(&format!("JOB: 42\nLOG: {log}\n")),
@@ -248,7 +267,7 @@ fn an_unknown_job_exits_1_with_the_reason_and_a_result_line() {
 #[test]
 fn a_missing_or_non_numeric_job_prints_the_usage() {
     let s = Slurm::new();
-    for args in [&[][..], &["x42"][..], &["42", "43"][..], &[""][..]] {
+    for args in [&[][..], &["x42"][..], &["42", "x"][..], &[""][..]] {
         let out = s.run(args, &[]);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         assert!(
@@ -256,6 +275,83 @@ fn a_missing_or_non_numeric_job_prints_the_usage() {
             "{args:?}: {}",
             stderr(&out)
         );
-        assert_eq!(s.polls(), 0);
+        assert!(s.polls().is_empty());
     }
+}
+
+#[test]
+#[ignore = "RED: 番号を 1 つしか受けない"]
+fn several_jobs_end_once_with_their_lines_in_number_order_and_fail_if_one_fails() {
+    let s = Slurm::new();
+    for job in ["964", "965", "1000"] {
+        std::fs::write(s.log_of(job), format!("output of {job}\n")).unwrap();
+    }
+    // 965 は 3 回、1000 は 1 回、964 はすぐ終わる。965 だけ失敗する
+    let out = s.run(
+        &["965", "1000", "964", "965"],
+        &[
+            ("FAKE_RUNNING_965", "3"),
+            ("FAKE_RUNNING_1000", "1"),
+            ("FAKE_EXIT_965", "4"),
+        ],
+    );
+    let text = stdout(&out);
+    assert_eq!(out.status.code(), Some(4), "{text}{}", stderr(&out));
+    // 待っている間も、終わったジョブを読み直さない
+    let polls = s.polls();
+    assert_eq!(polls.iter().filter(|j| *j == "964").count(), 1, "{polls:?}");
+    assert!(
+        polls.iter().filter(|j| *j == "965").count() >= 4,
+        "{polls:?}"
+    );
+    // 終わりの行は番号の順に、ジョブごとに 1 組
+    let results: Vec<&str> = text.lines().filter(|l| l.starts_with("RESULT:")).collect();
+    assert_eq!(
+        results,
+        [
+            "RESULT: job=964 name=xlc-2G exit=0 state=COMPLETED",
+            "RESULT: job=965 name=xlc-2G exit=4 state=COMPLETED",
+            "RESULT: job=1000 name=xlc-2G exit=0 state=COMPLETED",
+        ],
+        "{text}"
+    );
+    assert_eq!(text.matches("EXIT: ").count(), 3, "{text}");
+    for job in ["964", "965", "1000"] {
+        assert_eq!(
+            text.matches(&format!("TIME: job={job} ")).count(),
+            1,
+            "{text}"
+        );
+    }
+    let order: Vec<usize> = ["output of 964", "output of 965", "output of 1000"]
+        .iter()
+        .map(|t| text.find(t).unwrap())
+        .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{text}");
+}
+
+#[test]
+#[ignore = "RED: scontrol の失敗を、覚えていないと読む"]
+fn a_failing_scontrol_is_read_again_instead_of_taken_as_a_forgotten_job() {
+    let s = Slurm::new();
+    std::fs::write(s.log(), "job output\n").unwrap();
+    let out = s.run(
+        &["42"],
+        &[
+            ("FAKE_FAILING", "2"),
+            ("FAKE_EXIT", "3"),
+            ("FAKE_STATE", "FAILED"),
+        ],
+    );
+    // 会計の記録に頼らず、制御のデーモンの終了コードで終わる
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("読み直す"), "{}", stderr(&out));
+    assert!(s.polls().len() >= 3, "{:?}", s.polls());
+    assert!(stdout(&out).contains("class=trial"), "{}", stdout(&out));
 }
