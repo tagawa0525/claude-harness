@@ -5,7 +5,7 @@ date: 2026-11-17
 requires: [ADR-0009]
 supersedes: []
 superseded-by:
-issues: []
+issues: ["#332", "#339"]
 ---
 
 # ADR-0092: docs/ を OKF のバンドルとして design-records check で検査する
@@ -68,7 +68,13 @@ OKF は未知のキーと値を許す（SPEC §11）。
 - `design-records index` が、索引に載っていない文書と下位のディレクトリの行を足す（説明は文書の `description` から取る。
   リンク先はパーセントエンコードする。題は、文書の題を CommonMark で読み、リンク（自動リンクを含む）と強調をその文字
   にし、文字の中の構文を始めうる記号（角括弧、バッククォート、バックスラッシュ、`&` など）をエスケープし、コードスパン、
-  画像、HTML を残して書き直す。ディレクトリの名前は文字としてエスケープする。既にある行とルートのフロントマターは直さない、§8.1）。`index.md` が無ければ作る
+  画像、HTML を残して書き直す。ディレクトリの名前は文字としてエスケープする。ルートのフロントマターは直さない、§8.1）。`index.md` が無ければ作る。既にある行は、
+  文書を指す行の説明だけを文書の `description` に合わせ（足す、替える、消す）、題とリンク先は直さない。Markdown がリンクと
+  読まない行と、リンクの後ろが空白と `- 説明` の形でない行は直さない（手で書いた続きを消さない）。`design-records new` が
+  足す索引の行は、記録の行だけにする（既にある行の修正を記録のコミットに混ぜない）
+- ADR のフロントマターに、OKF の `description`（1 文の要約、§4.1）を任意のキーとして許し、確定した後も直してよいキーにする。
+  説明は決めた時点の記録でなく今の中身の要約で、「## 変更」で決定が変われば説明も変わる。必須にはしない（既存の ADR の
+  全件に足す作業になる。OKF でも任意）。`design-records new` のテンプレートには書かない（必須のキーと `type` だけを書く）
 - `design-records new` が作る ADR のテンプレートに `type: ADR` を足す。`type` は ADR の任意のキーで、確定した後も直して
   よいキーにする（既存の ADR に足すため）
 - ADR の `status` は、この ADR では今のキーと 7 値のままにする。OKF の `status` は文書の鮮度の合図で、ADR の `status` は
@@ -82,6 +88,8 @@ OKF は未知のキーと値を許す（SPEC §11）。
 ### 帰結
 
 - 既存の ADR 76 件に `type: ADR` を足す 1 つのコミットが要る（`type` は凍結する部分ではないので、`AMENDABLE_KEYS` に足す）
+- ADR の索引の行に説明を載せるには、ADR に `description` を書いて `design-records index` を実行する。このリポジトリの既存の
+  ADR には、まだ説明を書いていない
 - `docs/issues/` の新しい issue は、バンドルでは `design-records new --kind issue` が `type: Issue`、`status: open`、`opened`、
   必須の節を書く（ADR-0018 の「## 変更」の 2026-11-19 の項。#331）
 
@@ -98,7 +106,12 @@ OKF は未知のキーと値を許す（SPEC §11）。
   `check_reports_an_entry_with_a_link_in_its_title_and_index_adds_a_readable_one`、
   `index_escapes_a_lone_backtick_so_that_a_description_cannot_close_it`、
   `check_lists_hand_written_entries_that_markdown_does_not_read_as_links_and_warns`、
-  `index_escapes_a_directory_name_so_that_check_reads_the_entry`）
+  `index_escapes_a_directory_name_so_that_check_reads_the_entry`。ADR の `description` と既にある行の説明は
+  `check_accepts_an_adr_description_and_index_lists_it`、
+  `index_writes_a_description_added_to_a_listed_adr_and_check_then_passes`、
+  `index_follows_a_changed_or_removed_description_and_keeps_the_rest_of_the_line`、
+  `new_in_a_bundle_leaves_the_descriptions_of_existing_lines_to_index`、
+  `check_lets_a_description_be_added_to_a_decided_adr_on_main`）
 - このリポジトリの `docs/` で `design-records check` が違反なしで通る
 
 ## 各案の長所と短所
@@ -135,3 +148,9 @@ OKF は未知のキーと値を許す（SPEC §11）。
   普通の行（角括弧もエスケープも無い題）の読み方と比べ方は変わらない。先頭がリンクにならない手書きの行は前の読み方で読み、
   注意を出す（読めなくすると、その文書を「索引に載っていない」とし、index が同じ文書の行を足し直す）。前の index が書いた、
   題にリンクを含む行は、Markdown ではその文書へのリンクにならないので、載っていないとし、index が読める行を足す
+- 2026-11-19: ADR のフロントマターに `description` を許し、`design-records index` が既にある行の説明を文書に合わせるように
+  した（決定と理由の、`design-records index` の項と、`description` の項）。前は「既にある行とルートのフロントマターは
+  直さない」で、ADR の `description` は知らないキーとして check の違反になった（#332）。ADR の索引の行に説明を載せる方法が
+  無く、OKF は索引の行に文書の `description` を載せるよう勧める（§8）。ADR に `description` を許すのはユーザーの決定
+  （2026-11-19）。check は行と文書の説明の違いを注意にするので、index が既にある行を直さないと、行の後に文書へ足した説明は
+  手で行を直すまで注意のまま残る。題の違いも同じく注意になるが、既にある行の題の書き直しは手で書いた題の表記を変えうるので、この変更では直さない（#339）
