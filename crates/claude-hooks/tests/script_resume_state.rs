@@ -173,8 +173,8 @@ fn a_tip_without_a_session_trailer_shows_no_session() {
     );
 }
 
-/// 印の無い open の issue の行に続く、一覧を出すコマンド（status を design-records と同じ読み方で読む）
-const LIST: &str = "一覧（リポジトリの root で実行）: for f in docs/issues/*.md; do if [ \"$(design-records status < \"$f\")\" = open ]; then echo \"$f\"; fi; done";
+/// unmarked= の数に続く、印のある issue も含む open の一覧を出すコマンド（status を design-records と同じ読み方で読む）
+const LIST: &str = "open の一覧（印のある issue も含む。リポジトリの root で実行）: for f in docs/issues/*.md; do if [ \"$(design-records status < \"$f\")\" = open ]; then echo \"$f\"; fi; done";
 
 #[test]
 fn unmarked_open_issues_are_counted_with_the_list_command_instead_of_listed() {

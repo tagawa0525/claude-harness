@@ -8,7 +8,7 @@
 //! - `== prs`: gh pr list の開いている PR（GitHub の URL を持つ remote と gh があるときだけ。remote の名前は問わない）
 //! - `== slurm`: squeue の自分のジョブ
 //! - `== issues`: docs/issues の status: open の issue のうち、下の印の付くものを 1 行ずつ（blocked-by があれば添える）。
-//!   印の無いものは行を出さず、`unmarked=<数> 一覧（…）: <コマンド>` の 1 行に数と、一覧を出すコマンドを出す
+//!   印の無いものは行を出さず、`unmarked=<数> open の一覧（…）: <コマンド>` の 1 行に数と、印のある issue も含む open の一覧を出すコマンドを出す
 //!   （印の無いものが無ければ出さない。何も出す行が無ければ `(なし)`）。blocked-by の `#NNNN` の相手を
 //!   docs/issues の同じ番号の記録で引き、閉じていない相手（duplicate で閉じた相手は開いている重複先）を `blocked=`、閉じたかを確かめられない相手（記録が無い、
 //!   status が open でも closed でもない、duplicate の重複先を読めない、たどると自分に戻る、`#NNNN` の形でない、
@@ -387,10 +387,9 @@ fn issues(root: &Path) {
         found = true;
     }
     if unmarked > 0 {
-        // status は design-records と同じ読み方で読む（grep '^status: open$' は、フロントマターの外の行に当たり、
-        // 引用符、末尾の空白、コメントの付いた値を落とす）
+        // grep でなく design-records status で、ここの数と同じ読み方で status を読む（理由は issue #357 のコメント）
         println!(
-            "unmarked={unmarked} 一覧（リポジトリの root で実行）: for f in {dir}/*.md; do if [ \"$(design-records status < \"$f\")\" = open ]; then echo \"$f\"; fi; done"
+            "unmarked={unmarked} open の一覧（印のある issue も含む。リポジトリの root で実行）: for f in {dir}/*.md; do if [ \"$(design-records status < \"$f\")\" = open ]; then echo \"$f\"; fi; done"
         );
     } else if !found {
         println!("(なし)");
