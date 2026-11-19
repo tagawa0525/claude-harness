@@ -216,6 +216,45 @@ fn a_failing_remap_keeps_the_input_for_a_manual_retry() {
 }
 
 #[test]
+fn a_warning_from_remap_keeps_the_input_and_says_how_to_retry() {
+    let repo = Repo::new();
+    repo.opt_in();
+    let old = repo.head();
+    let out = repo.amend(
+        &[(
+            "FAKE_TOOL_ERR",
+            "WARN: 追跡していないファイルは読まないので、旧の番号を付け直していない: memo.md\nNEXT: 付け直すなら\n",
+        )],
+        &[],
+    );
+    let said = hook_output(&out);
+    // remap の警告はそのまま見せる
+    assert!(said.contains("WARN: 追跡していない"), "{said}");
+    assert!(said.contains("NEXT: 付け直すなら"), "{said}");
+    // 成功の出力と、コミットの確認も変わらない
+    assert!(said.contains("REFS: 2"), "{said}");
+    assert!(said.contains("hash の置き換えだけ"), "{said}");
+    let saved = std::fs::read_to_string(repo.saved()).unwrap();
+    assert!(saved.starts_with(&old), "{saved}");
+    // 失敗のときと同じ形で、残した対応を渡す再実行のコマンドを示す
+    let top = repo.git(&["rev-parse", "--show-toplevel"], &repo.work());
+    let top = String::from_utf8_lossy(&top.stdout).trim().to_string();
+    assert!(
+        said.contains(&format!("cd {top} && commit-refs remap")),
+        "{said}"
+    );
+    assert!(said.contains("commit-refs-remap.input"), "{said}");
+}
+
+#[test]
+fn a_remap_without_warnings_keeps_nothing() {
+    let repo = Repo::new();
+    repo.opt_in();
+    repo.amend(&[("FAKE_TOOL_ERR", "note: WARN: は行の先頭だけ\n")], &[]);
+    assert!(!repo.saved().exists());
+}
+
+#[test]
 fn an_amend_inside_a_rebase_waits_for_the_end_of_the_rebase() {
     let repo = Repo::new();
     repo.opt_in();
