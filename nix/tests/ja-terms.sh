@@ -687,6 +687,15 @@ elif grep -qF ".ja-terms/prh.yml" "$WORK/out"; then
 else
   ng "pre-commit: 読めないリポジトリの辞書で止めたが、辞書の名前を示さない"
 fi
+git -C "$REPO" reset -q
+# 共通の規則を、同じ expected で pattern の違う規則で外す辞書のコミットは、止めずに知らせる（ja-terms overrides と同じ行）
+if ! commits "$REPO" .ja-terms/prh.yml "$(printf 'version: 1\nrules:\n  - expected: 確認\n    pattern: ぴよぴよ\n')"; then
+  ng "pre-commit: 共通の規則を外すリポジトリの辞書のコミットを止めた"
+elif grep -q "^REPLACED: 確認 .*ぴよぴよ" "$WORK/out"; then
+  ok "pre-commit: 共通の規則を外すリポジトリの辞書のコミットで、外れる規則を知らせる"
+else
+  ng "pre-commit: 共通の規則を外すリポジトリの辞書のコミットで、外れる規則を知らせない"
+fi
 # 下の memory-index で使うので、辞書を戻す
 printf '%s\n' "$REPO_RULES" > "$REPO/.ja-terms/prh.yml"
 git -C "$REPO" reset -q
