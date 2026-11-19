@@ -38,19 +38,10 @@ fn top_level(text: &str) -> Option<BTreeMap<String, String>> {
         }
         if let Some((key, value)) = line.split_once(':') {
             let value = value.trim();
-            // 引用符の値は閉じる引用符まで、ほかは ` #` からの YAML のコメントを除いた値（エスケープは読まない）
             let value = ['"', '\'']
                 .iter()
-                .find_map(|q| {
-                    let rest = value.strip_prefix(*q)?;
-                    rest.find(*q).map(|end| &rest[..end])
-                })
-                .unwrap_or_else(|| {
-                    value
-                        .find(" #")
-                        .or_else(|| value.find("\t#"))
-                        .map_or(value, |end| value[..end].trim_end())
-                });
+                .find_map(|q| value.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
+                .unwrap_or(value);
             keys.insert(key.trim().to_string(), value.to_string());
         }
     }
@@ -62,9 +53,18 @@ pub fn is_bundle_index(text: &str) -> bool {
     top_level(text).is_some_and(|front| front.contains_key("okf_version"))
 }
 
-/// バンドルの `okf_version` の値。バンドルでなければ `None`。
+/// バンドルの `okf_version` の値（後ろの YAML のコメントと引用符を除く）。バンドルでなければ `None`。
 fn version(files: &BTreeMap<String, String>) -> Option<String> {
-    top_level(files.get(&format!("{BUNDLE_ROOT}/{INDEX}"))?)?.remove("okf_version")
+    let raw = top_level(files.get(&format!("{BUNDLE_ROOT}/{INDEX}"))?)?.remove("okf_version")?;
+    // コメントを除くのは版の値だけ。top_level は title などの引用符の無い `#12` を消さないよう、# を値の一部として読む
+    let value = raw.split('#').next().unwrap_or("").trim();
+    Some(
+        ['"', '\'']
+            .iter()
+            .find_map(|q| value.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
+            .unwrap_or(value)
+            .to_string(),
+    )
 }
 
 /// リポジトリの直下からのパスが、バンドルの一部か（名前が `.` で始まるファイルとディレクトリの下でない、OKF v0.3 §3.2）。
