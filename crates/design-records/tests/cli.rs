@@ -3146,3 +3146,16 @@ fn index_percent_encodes_link_targets_and_check_decodes_them() {
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
+
+#[test]
+fn check_treats_index_links_to_dot_paths_as_outside_the_bundle() {
+    let t = TempRepo::new("okf-dot-link");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [idea](.notes/idea.md)\n",
+    );
+    t.write("docs/.notes/idea.md", "no front matter\n");
+    t.commit_all("docs: a link to a dot path");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
