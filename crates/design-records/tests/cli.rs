@@ -3159,3 +3159,15 @@ fn check_treats_index_links_to_dot_paths_as_outside_the_bundle() {
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
+
+#[test]
+fn check_reads_an_okf_version_followed_by_a_yaml_comment() {
+    let t = TempRepo::new("okf-version-comment");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\" # the spec version\n---\n\n# docs\n",
+    );
+    t.commit_all("docs: okf_version with a comment");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
