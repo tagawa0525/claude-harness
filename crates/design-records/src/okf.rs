@@ -135,7 +135,11 @@ fn entries(text: &str) -> Vec<Entry<'_>> {
         else {
             continue;
         };
-        let Some((title, rest)) = rest.split_once("](") else {
+        let Some(end) = link_text_end(rest, 0) else {
+            continue;
+        };
+        let title = &rest[..end];
+        let Some(rest) = rest[end + 1..].strip_prefix('(') else {
             continue;
         };
         let Some((url, rest)) = rest.split_once(')') else {
@@ -149,6 +153,135 @@ fn entries(text: &str) -> Vec<Entry<'_>> {
         });
     }
     out
+}
+
+// 題と索引の行は Markdown のインライン（OKF v0.3 §6.1、§8）なので、エスケープ、コードスパン、リンクを CommonMark の
+// 規則（§2.4、§6.1、§6.3）で読む。区切りの文字はすべて ASCII なので、バイトの位置で切っても UTF-8 の文字を割らない。
+
+/// `md[i..]` がバックスラッシュのエスケープ（`\` と ASCII の記号）かバッククォートで始まれば、その終わり。コードスパンは
+/// 同じ長さのバッククォートの並びで閉じた後、閉じなければ並びの後（並びはただの文字になる）。
+fn skip_literal(md: &str, i: usize) -> Option<usize> {
+    let b = md.as_bytes();
+    match b[i] {
+        b'\\' if b.get(i + 1).is_some_and(u8::is_ascii_punctuation) => Some(i + 2),
+        b'`' => {
+            let run = |at: usize| b[at..].iter().take_while(|&&c| c == b'`').count();
+            let n = run(i);
+            let mut j = i + n;
+            while let Some(k) = md[j..].find('`') {
+                let m = run(j + k);
+                if m == n {
+                    return Some(j + k + m);
+                }
+                j += k + m;
+            }
+            Some(i + n)
+        }
+        _ => None,
+    }
+}
+
+/// `[` の次の `start` から読んだリンクの文字列を閉じる `]` の位置。エスケープとコードスパンの中を飛ばし、対になった角括弧を
+/// 文字列の一部として数える。
+fn link_text_end(md: &str, start: usize) -> Option<usize> {
+    let b = md.as_bytes();
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < b.len() {
+        if let Some(end) = skip_literal(md, i) {
+            i = end;
+            continue;
+        }
+        match b[i] {
+            b'[' => depth += 1,
+            b']' if depth == 0 => return Some(i),
+            b']' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `md[i]` の `[` で始まるインラインのリンク `[文字列](リンク先)` の、文字列を閉じる `]` の位置と、リンクの終わり。
+fn link_at(md: &str, i: usize) -> Option<(usize, usize)> {
+    let text_end = link_text_end(md, i + 1)?;
+    let b = md.as_bytes();
+    if b.get(text_end + 1) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut j = text_end + 2;
+    while j < b.len() {
+        match b[j] {
+            b'\\' if b.get(j + 1).is_some_and(u8::is_ascii_punctuation) => j += 1,
+            b'(' => depth += 1,
+            b')' if depth == 0 => return Some((text_end, j + 1)),
+            b')' => depth -= 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    None
+}
+
+/// 索引の行に書く題。リンクの文字列にリンクは入れられない（入れると外側の行がリンクにならない）ので、題のリンクを
+/// その文字列に置き換える。残る角括弧は、対になっていなければ行のリンクの文字列を閉じ、対でも参照のリンクに読まれうるので
+/// すべてエスケープし、末尾のバックスラッシュは行の `]` をエスケープしないようエスケープする。エスケープとコードスパンは
+/// そのまま残す（表示は題と同じ）。書いた題にもう一度かけても変わらない。
+fn entry_title(md: &str) -> String {
+    let b = md.as_bytes();
+    let mut out = String::with_capacity(md.len());
+    let mut plain = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if let Some(end) = skip_literal(md, i) {
+            i = end;
+            continue;
+        }
+        let at_end = i + 1 == b.len();
+        match b[i] {
+            b'[' | b']' => {
+                out.push_str(&md[plain..i]);
+                match link_at(md, i).filter(|_| b[i] == b'[') {
+                    Some((text_end, end)) => {
+                        out.push_str(&entry_title(&md[i + 1..text_end]));
+                        i = end;
+                    }
+                    None => {
+                        out.push('\\');
+                        out.push(b[i] as char);
+                        i += 1;
+                    }
+                }
+                plain = i;
+            }
+            b'\\' if at_end => {
+                out.push_str(&md[plain..=i]);
+                out.push('\\');
+                i += 1;
+                plain = i;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&md[plain..]);
+    out
+}
+
+/// 題がリンクを含むか（前の版の `design-records index` は、題のリンクをそのまま索引の行に書いていた）。
+fn has_link(md: &str) -> bool {
+    let mut i = 0;
+    while i < md.len() {
+        if let Some(end) = skip_literal(md, i) {
+            i = end;
+        } else if md.as_bytes()[i] == b'[' && link_at(md, i).is_some() {
+            return true;
+        } else {
+            i += 1;
+        }
+    }
+    false
 }
 
 /// 索引（`index_dir` のもの）のリンクが指す、バンドルの中のパス。ディレクトリなら末尾に `/` を付ける。外部のリンク
@@ -393,8 +526,21 @@ fn check_index(
         };
         let title = title_of(&target, text);
         let description = description_of(text);
+        if has_link(entry.title) {
+            out.push(finding(
+                Severity::Warning,
+                index_path,
+                Some(entry.line),
+                format!(
+                    "the entry of `{}` has a link in its title, so Markdown does not read the entry as a link \
+                     (remove the line and run `design-records index`, which writes the title without links)",
+                    entry.url
+                ),
+            ));
+        }
         let mut mismatches = Vec::new();
-        if entry.title != title {
+        // 題は表示が同じなら合うとする（手で書いた対の角括弧と、index がエスケープした角括弧を同じに見る）
+        if entry_title(entry.title) != entry_title(&title) {
             mismatches.push(format!(
                 "title {:?} but the document's is {title:?}",
                 entry.title
@@ -499,7 +645,7 @@ fn entry_line(files: &BTreeMap<String, String>, dir: &str, name: &str) -> String
         return format!("* [{sub}]({url})");
     }
     let text = &files[&format!("{dir}/{name}")];
-    let title = title_of(name, text);
+    let title = entry_title(&title_of(name, text));
     match description_of(text) {
         Some(description) => format!("* [{title}]({url}) - {description}"),
         None => format!("* [{title}]({url})"),
