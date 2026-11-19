@@ -19,7 +19,7 @@ description: claude-harness を新しい機械に入れるとき、入れた機�
 
 ## Windows
 
-- 入れる、更新する: `docs/windows.md` を上から実行する。更新は、clone を pull して同じ手順を再実行する
+- 入れる、更新する: `docs/windows.md` を上から実行する（clone から入れる部分は `scripts/install-windows.sh`）。更新は、clone を pull してスクリプトを再実行する
 
 ## 入れた後の確認
 
