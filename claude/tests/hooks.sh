@@ -3796,10 +3796,24 @@ it "require-pipefail: 書き換えても、入力のほかの欄（run_in_backgr
 out=$(run_hook require-pipefail 'cargo test | tail' true)
 assert_eq "$(rewritten 'cargo test | tail' true)" "$(updated_input "$out")"
 
-it "require-pipefail: bash -c や ssh の文字列の中のビルドも、外側のパイプが tail / head なら書き換える"
-for cmd in "bash -c 'cargo test' | tail" "ssh host cargo test | tail" "bash -c 'cd x && nix build .#y' 2>&1 | head -5"; do
+it "require-pipefail: 書き換えても、Input が読まない入力の欄（description、timeout）はそのまま返す"
+input=$(jq -n --arg cwd "$PWD" '{hook_event_name: "PreToolUse", tool_name: "Bash", cwd: $cwd,
+  tool_input: {command: "cargo test | tail", description: "d", timeout: 5000}}')
+out=$("$CLAUDE_HOOKS_BIN" pre-tool-use --rule require-pipefail <<<"$input")
+assert_eq '{"command":"set -o pipefail; cargo test | tail","description":"d","timeout":5000}' "$(updated_input "$out")"
+
+it "require-pipefail: bash -c や ssh の文字列で実行するビルドは、外に付けた pipefail が効かないことがあるので、書き換えずに deny する"
+for cmd in "bash -c 'cargo test | tail'" "ssh host 'cargo test | tail'" "bash -c 'cargo test' | tail" \
+  "ssh host cargo test | tail" "bash -c 'cd x && nix build .#y' 2>&1 | head -5"; do
   out=$(run_hook require-pipefail "$cmd")
-  assert_eq none "$(decision "$out" none)"
+  assert_eq deny "$(decision "$out")"
+  assert_eq "" "$(updated_input "$out")"
+done
+assert_contains "$(reason "$out")" "文字列の中"
+
+it "require-pipefail: (…) と \$(…) の中のビルドは、外の pipefail を受け継ぐので書き換える"
+for cmd in '(cd wt && cargo test 2>&1 | tail)' 'x=$(cargo test 2>&1 | tail -1); echo "$x"'; do
+  out=$(run_hook require-pipefail "$cmd")
   assert_eq "$(rewritten "$cmd")" "$(updated_input "$out")"
 done
 
