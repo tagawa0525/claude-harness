@@ -234,6 +234,28 @@ fn state_files_of_sessions_idle_for_a_month_are_removed() {
 }
 
 #[test]
+fn a_live_session_in_a_quiet_repository_keeps_its_record() {
+    // 既定ブランチが 30 日動かなくても、プロンプトを続けるセッションの記録は、ほかのセッションの片付けで消えない
+    let work = Work::new();
+    let repo = work.repo("main");
+    work.stdout(SESSION, &repo);
+    let record = repo.join(".git/claude-prompt-heads").join(SESSION);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 60 * 60);
+    std::fs::File::options()
+        .write(true)
+        .open(&record)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    assert_eq!(work.stdout(SESSION, &repo), "");
+    work.commit(&repo, "Merge: after a quiet month");
+    // OTHER の初めてのプロンプトが記録を書き、古い記録を片付ける
+    work.stdout(OTHER, &repo);
+    let out = work.stdout(SESSION, &repo);
+    assert!(out.contains("Merge: after a quiet month"), "{out}");
+}
+
+#[test]
 fn a_state_that_cannot_be_written_puts_nothing_in_the_context() {
     // 書けない理由を毎回のプロンプトの文脈に出さない（標準エラーに出す）
     let work = Work::new();
