@@ -45,10 +45,13 @@ pub fn is_bundle_index(text: &str) -> bool {
     top_level(text).is_some_and(|front| front.contains_key("okf_version"))
 }
 
+/// バンドルの `okf_version` の値。バンドルでなければ `None`。
+fn version(files: &BTreeMap<String, String>) -> Option<String> {
+    top_level(files.get(&format!("{BUNDLE_ROOT}/{INDEX}"))?)?.remove("okf_version")
+}
+
 fn is_bundle(files: &BTreeMap<String, String>) -> bool {
-    files
-        .get(&format!("{BUNDLE_ROOT}/{INDEX}"))
-        .is_some_and(|text| is_bundle_index(text))
+    version(files).is_some()
 }
 
 fn dir_of(path: &str) -> &str {
@@ -203,13 +206,13 @@ fn finding(severity: Severity, path: &str, line: Option<usize>, message: impl To
 /// `files`（リポジトリの直下からのパスと、`docs/` 以下の追跡している .md の中身）の OKF の形の違反と注意。
 /// バンドルでなければ（`docs/index.md` が `okf_version` を持たなければ）空。
 pub fn check_bundle(files: &BTreeMap<String, String>) -> Vec<Finding> {
-    if !is_bundle(files) {
+    let Some(version) = version(files) else {
         return Vec::new();
-    }
+    };
     let mut out = Vec::new();
     for (path, text) in files {
         match name_of(path) {
-            INDEX => check_index_front(path, text, &mut out),
+            INDEX => check_index_front(path, text, &version, &mut out),
             LOG => check_log(path, text, &mut out),
             _ => check_concept(path, text, &mut out),
         }
@@ -232,20 +235,21 @@ pub fn check_bundle(files: &BTreeMap<String, String>) -> Vec<Finding> {
     out
 }
 
-/// `index.md` のフロントマターは、バンドルのルートの `okf_version` だけ。
-fn check_index_front(path: &str, text: &str, out: &mut Vec<Finding>) {
+/// `index.md` のフロントマターは、バンドルのルートだけが持つ（OKF v0.3 §8）。ルートのキーは v0.3 では
+/// `okf_version`、`title`、`description`、`license` と拡張のキー（§8.1）で、v0.2 では `okf_version` だけ（v0.2 §8）。
+fn check_index_front(path: &str, text: &str, version: &str, out: &mut Vec<Finding>) {
     let Some(front) = top_level(text) else {
         return;
     };
-    let root = path == format!("{BUNDLE_ROOT}/{INDEX}");
-    if !root || front.keys().any(|k| k != "okf_version") {
-        out.push(finding(
-            Severity::Error,
-            path,
-            None,
-            "an index.md has no front matter except `okf_version` in the bundle root",
-        ));
-    }
+    let message = if path != format!("{BUNDLE_ROOT}/{INDEX}") {
+        "an index.md outside the bundle root has no front matter"
+    } else if version == "0.2" && front.keys().any(|k| k != "okf_version") {
+        "the bundle-root index.md of an `okf_version: \"0.2\"` bundle has no front matter except \
+         `okf_version` (OKF v0.3 permits `title`, `description` and `license`)"
+    } else {
+        return;
+    };
+    out.push(finding(Severity::Error, path, None, message));
 }
 
 /// `log.md` の日付の見出し。
@@ -551,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn an_index_has_no_front_matter_except_the_root_okf_version() {
+    fn only_the_root_index_has_front_matter_and_a_v0_2_root_only_okf_version() {
         let found = errors(&with(
             "docs/adr/index.md",
             "---\ntype: Index\n---\n\n* [ADR-0001: foo](0001-foo.md)\n",
