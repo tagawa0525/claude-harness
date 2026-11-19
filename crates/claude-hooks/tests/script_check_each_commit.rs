@@ -278,19 +278,26 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
-    // 作れなかった理由（OS の文）も出す。置き場の書き方は OS が決める（Windows の temp_dir は末尾に \ を付ける）
+    // 作れなかった理由（OS の文）も出す。Windows の置き場は std::env::temp_dir が決め、末尾に \ を付ける
     let reason = std::fs::create_dir(missing.join("x")).unwrap_err();
-    let err = stderr(&out);
-    assert!(err.starts_with("一時ディレクトリを作れません: "), "{err}");
-    assert!(err.contains(missing.to_str().unwrap()), "{err}");
-    assert!(err.ends_with(&format!("（{reason}）\n")), "{err}");
+    let root = format!(
+        "{}{}",
+        missing.to_str().unwrap(),
+        if cfg!(windows) { "\\" } else { "" }
+    );
+    assert_eq!(
+        stderr(&out),
+        format!("一時ディレクトリを作れません: {root}（{reason}）\n")
+    );
     assert!(!missing.exists());
 }
 
 /// Windows では、検査のコマンドを Git Bash の sh を通して起動する（.sh を起動でき、相対のパスを worktree から引き、
-/// 引数のワイルドカードを展開しない。展開を止める MSYS の設定は、検査のコマンドに渡さない）
+/// 引数のワイルドカードを展開せず、引用符と空白を含む引数を崩さない。展開を止める MSYS の設定は、検査のコマンドに
+/// 渡さない）
 #[cfg(windows)]
 #[test]
+#[ignore = "RED: 実装の前"]
 fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the_arguments_as_given()
  {
     let repo = Repo::empty();
@@ -298,13 +305,15 @@ fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the
     let log = common::sh_path(&repo.root.join("ran.log"));
     repo.commit(
         "check.sh",
-        &format!("#!/bin/sh\nprintf '%s\\n' \"$1\" \"$(pwd)\" \"${{MSYS-unset}}\" >> '{log}'"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" \"$2\" \"$(pwd)\" \"${{MSYS-unset}}\" >> '{log}'"
+        ),
         "feat: add check.sh",
     );
     // 呼んだ側の MSYS が無いときと、あるときの両方で、検査のコマンドはその MSYS を受ける
     for msys in [None, Some("winsymlinks:nativestrict")] {
         let _ = std::fs::remove_file(repo.root.join("ran.log"));
-        let mut cmd = repo.command(&["main", "--", "./check.sh", "*.sh"]);
+        let mut cmd = repo.command(&["main", "--", "./check.sh", "*.sh", "a \"b\" c\\"]);
         match msys {
             Some(value) => cmd.env("MSYS", value),
             None => cmd.env_remove("MSYS"),
@@ -313,11 +322,27 @@ fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the
         assert_eq!(out.status.code(), Some(0), "{msys:?}: {}", stderr(&out));
         let ran = std::fs::read_to_string(repo.root.join("ran.log")).unwrap();
         let lines: Vec<&str> = ran.lines().collect();
-        assert_eq!(lines.len(), 3, "{msys:?}: {ran}");
+        assert_eq!(lines.len(), 4, "{msys:?}: {ran}");
         assert_eq!(lines[0], "*.sh", "{msys:?}: {ran}");
-        assert!(lines[1].ends_with("/wt"), "{msys:?}: {ran}");
-        assert_eq!(lines[2], msys.unwrap_or("unset"), "{ran}");
+        assert_eq!(lines[1], "a \"b\" c\\", "{msys:?}: {ran}");
+        assert!(lines[2].ends_with("/wt"), "{msys:?}: {ran}");
+        assert_eq!(lines[3], msys.unwrap_or("unset"), "{ran}");
     }
+}
+
+/// Windows でも、- で始まる検査のコマンドは、Unix と同じく名前として引く（sh の exec の旗に読まない）
+#[cfg(windows)]
+#[test]
+#[ignore = "RED: 実装の前"]
+fn a_command_starting_with_a_dash_is_looked_up_as_a_name() {
+    let repo = Repo::new();
+    let out = repo.run(&["main", "--", "-c", "true"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stdout(&out).lines().all(|l| l.ends_with(" exit=127")),
+        "{}",
+        stdout(&out)
+    );
 }
 
 #[cfg(unix)]
@@ -325,9 +350,9 @@ mod unix {
     use super::*;
     use common::{sh_path, write_executable};
 
-    /// 検査のコマンドが、テストの作る $GO のファイルを待つ（10 秒で諦め、壊れたときにテストを止め続けない）
-    const WAIT_FOR_GO: &str =
-        r#"i=0; while [ ! -e "$GO" ] && [ "$i" -lt 1000 ]; do sleep 0.01; i=$((i + 1)); done"#;
+    /// 検査のコマンドが、テストの作る $GO のファイルを待つ。1,000 回（少なくとも 10 秒）で諦めて 99 で終わり、壊れた
+    /// ときにテストを止め続けず、待ちの失敗を通ったと見せない（`a || {WAIT_FOR_GO}` で使えるよう、1 つの組にする）
+    const WAIT_FOR_GO: &str = r#"{ i=0; while [ ! -e "$GO" ] && [ "$i" -lt 1000 ]; do sleep 0.01; i=$((i + 1)); done; [ -e "$GO" ] || exit 99; }"#;
 
     #[test]
     fn the_command_sees_the_tree_of_each_commit() {
