@@ -517,6 +517,19 @@ fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) 
     )
 }
 
+/// 示すコマンドに埋める値を、シェルが 1 語として読む形にする。展開も区切りもしない文字だけならそのまま、ほかは
+/// 単一引用符で囲む
+fn sh_word(s: &str) -> String {
+    let plain = !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/._-+@%:=,".contains(&b));
+    if plain {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
 /// head のブランチ（`head_ref`）を base にした開いている PR があれば、その base を先に付け替えさせる deny の理由。
 /// 探せなければ、確認できない理由（ほかの GitHub の読み取りと同じく止める）
 fn stacked_prs_reason(
@@ -564,7 +577,13 @@ fn stacked_prs_reason(
     let listed: Vec<String> = numbers.iter().map(|n| format!("#{n}")).collect();
     let commands: Vec<String> = numbers
         .iter()
-        .map(|n| format!("  gh pr edit {n} --base {base} -R {repo}"))
+        .map(|n| {
+            format!(
+                "  gh pr edit {n} --base {} -R {}",
+                sh_word(base),
+                sh_word(&repo)
+            )
+        })
         .collect();
     Some(format!(
         "head のブランチ {head_ref} を base にした開いている PR があります（{}）。--delete-branch でマージすると {head_ref} が消え、\
