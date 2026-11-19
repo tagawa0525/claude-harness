@@ -97,7 +97,8 @@ OKF は未知のキーと値を許す（SPEC §11）。
   `index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them`、
   `check_reports_an_entry_with_a_link_in_its_title_and_index_adds_a_readable_one`、
   `index_escapes_a_lone_backtick_so_that_a_description_cannot_close_it`、
-  `check_lists_hand_written_entries_that_markdown_does_not_read_as_links_and_warns`）
+  `check_lists_hand_written_entries_that_markdown_does_not_read_as_links_and_warns`、
+  `index_escapes_a_directory_name_so_that_check_reads_the_entry`）
 - このリポジトリの `docs/` で `design-records check` が違反なしで通る
 
 ## 各案の長所と短所
