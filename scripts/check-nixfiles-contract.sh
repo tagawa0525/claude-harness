@@ -47,7 +47,8 @@ if [[ -n "$(git -C "$repo" status --porcelain)" ]]; then
   echo "NOTE: 作業ツリーに変更があります。検査するのはコミットした版（${head:0:8}）だけです"
 fi
 
-git -C "$repo" fetch -q origin 2>/dev/null || echo "NOTE: ハーネスの origin を fetch できません。手元の origin の版と比べます"
+# fetch できないまま手元の origin の版と比べると、遅れたブランチを通しうるので止める
+git -C "$repo" fetch -q origin || die "ハーネスの origin を fetch できません（$repo）。既定ブランチからの遅れを確かめられないので、検査していません"
 if harness_base=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
   git -C "$repo" merge-base --is-ancestor "$harness_base" "$head" ||
     die "このブランチは $harness_base から遅れています。配備されるのはマージの結果なので、rebase してから実行してください"
