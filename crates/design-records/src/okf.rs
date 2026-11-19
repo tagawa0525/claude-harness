@@ -1,4 +1,9 @@
-//! docs/ を OKF（Open Knowledge Format）v0.2 のバンドルとして検査する（ADR-0092）。
+//! docs/ を OKF（Open Knowledge Format）v0.3 のバンドルとして検査する（ADR-0092）。`okf_version` が "0.2" のバンドルには、
+//! v0.2 と違うルートの `index.md` の規則だけを v0.2 のものにする。
+//!
+//! 節の番号は v0.3 の仕様のもの。仕様は https://github.com/open-knowledge-format/open-knowledge-format の `SPEC.md`
+//! （コミット 527e81af、2026-11-19 取得）。v0.2 は https://github.com/GoogleCloudPlatform/open-knowledge-format の
+//! `SPEC.md`（コミット 8a8ff87b、2026-11-19 取得）。
 //!
 //! `docs/index.md` のフロントマターに `okf_version` を持つリポジトリだけが対象で、ほかのリポジトリの `docs/` は見ない。
 //! フロントマターは OKF が許す YAML 全体（入れ子、複数行の一覧）を読めるよう、字下げのない `key: value` の行だけを見る。
