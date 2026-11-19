@@ -346,9 +346,3 @@ fn appended_rules_overlap_like_one_dictionary() {
     dictionary.append(rule("長", "abc"));
     assert_eq!(apply(&dictionary, "abcd"), "長d");
 }
-
-#[test]
-fn the_built_in_dictionary_is_the_ja_terms_dictionary() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml");
-    assert_eq!(ja_terms::DICTIONARY, std::fs::read_to_string(path).unwrap());
-}

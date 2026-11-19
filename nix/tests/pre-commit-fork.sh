@@ -17,6 +17,9 @@
 
 set -euo pipefail
 
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 
 if ! command -v markdownlint >/dev/null 2>&1; then
   echo "✗ markdownlint が PATH にない。自動修正の有無を比べられないので、このテストは成立しない"

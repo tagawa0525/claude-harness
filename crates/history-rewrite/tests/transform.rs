@@ -1,5 +1,5 @@
 //! `history-rewrite transform [語の指定] FILE...` が、作業ツリーのファイルの語を、run のステージ 1 と同じ変換で直すこと
-//! （ADR-0045、ADR-0088）。既定の辞書は ja-terms の辞書（ビルドに埋めたもの）。
+//! （ADR-0045、ADR-0088）。既定の辞書は ja-terms の共通の辞書（テストは ja-terms の crate の辞書を渡す。ADR-0097）。
 //!
 //! 辞書の語（崩れた語）をわざと含むので、.textlintignore で ja-terms の検査から外す。
 
@@ -16,6 +16,13 @@ impl Drop for Work {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
+
+/// ja-terms の共通の辞書（ビルドに埋めず、ホームの下か、この環境変数のパスから読む。ADR-0097）。テストは ja-terms の
+/// crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    ja_terms::common::COMMON_DICTIONARY_ENV,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../ja-terms/prh.yml"),
+);
 
 fn forget_git_env(cmd: &mut Command) -> &mut Command {
     for (key, _) in std::env::vars_os() {
@@ -66,6 +73,7 @@ impl Work {
             .arg("transform")
             .args(args)
             .current_dir(self.repo())
+            .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-config"))
             .output()
             .unwrap()

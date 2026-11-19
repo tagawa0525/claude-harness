@@ -31,7 +31,8 @@ jobs:
       # run-checks.sh と同じ clippy を流し、実機の Windows の run-checks.sh が失敗する前にここで止める
       - run: cargo clippy --locked --all-targets -- -D warnings
       # Windows の claude-hooks は、環境変数の無いとき ja-terms を名前で起動する（#115。隣に無ければ PATH）。cargo install で入れた ja-terms と
-      # 辞書で、git merge と git commit のメッセージを止めることを、Linux の install check と同じ sh のテストで確かめる
+      # 辞書で、git merge と git commit のメッセージを止めることを、Linux の install check と同じ sh のテストで確かめる。
+      # 共通の辞書は、claude-setup sync の無いこのジョブでは、Linux の install check と同じくソースの辞書を環境変数で渡す（ADR-0097）
       - if: matrix.crate == 'claude-hooks'
         run: cargo install --locked --path ../ja-terms
       - if: matrix.crate == 'claude-hooks'
@@ -39,6 +40,7 @@ jobs:
         run: |
           # 環境変数の無いときの、PATH の ja-terms の経路を確かめる
           unset CLAUDE_HOOKS_JA_TERMS
+          export JA_TERMS_COMMON_DICTIONARY="$PWD/../ja-terms/prh.yml"
           cargo build --locked
           bash tests/merge-ja-terms.sh target/debug/claude-hooks.exe
           bash tests/commit-message.sh target/debug/claude-hooks.exe

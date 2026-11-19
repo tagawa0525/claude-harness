@@ -1,4 +1,4 @@
-//! リポジトリの辞書（作業ツリーの直下の `.ja-terms/prh.yml`）を、共通の辞書（ビルドに埋めた prh.yml）に重ねて当てること
+//! リポジトリの辞書（作業ツリーの直下の `.ja-terms/prh.yml`）を、共通の辞書（テストは crate の prh.yml を渡す）に重ねて当てること
 //! （ADR-0096）。
 //!
 //! 辞書の語を 1 行に書くと、このファイルが pre-commit の語の検査に掛かるので、崩れた語は分けて書いてつなぐ。
@@ -7,6 +7,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// 共通の辞書（ビルドに埋めず、ja-terms はホームの下か、この環境変数のパスから読む。ADR-0097）。テストは crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    ja_terms::common::COMMON_DICTIONARY_ENV,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml"),
+);
 
 /// 共通の辞書の崩れた語（最初の規則の、名詞の用法の語。直す語は「確認」）
 const COMMON: &str = concat!("確か", "め");
@@ -68,6 +74,7 @@ impl Repo {
         without_outer_repository(&mut command);
         command
             .current_dir(dir)
+            .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
             .env("GIT_CONFIG_GLOBAL", self.0.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_AUTHOR_NAME", "test")

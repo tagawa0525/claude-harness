@@ -7,7 +7,8 @@
 //! - 引数なしは既定の clone（ホームの下の nix/claude-harness）を、既定のブランチで、同期する場所に未コミットの変更が
 //!   無ければ `git pull --ff-only` してから同期する。どれかに当たれば、~/.claude を変えずに 1 で止まる
 //! - 引数を渡せば pull せず、その場所の今の中身を同期する
-//! - ソースの config/markdownlint/config は、ソースが正として ~/.config/markdownlint/config に置く（ADR-0093）
+//! - ソースの config/markdownlint/config は、ソースが正として ~/.config/markdownlint/config に置く（ADR-0093）。
+//!   crates/ja-terms/prh.yml（ja-terms の共通の辞書）も同じく ~/.config/ja-terms/prh.yml に置く（ADR-0097）
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -731,5 +732,42 @@ fn without_arguments_stops_on_a_draft_of_the_markdownlint_source() {
     home.sync_default();
     let clone = home.clone_dir();
     write(&clone.join("config/markdownlint/config"), "draft");
+    home.stops(&format!("claude-sync {}", clone.display()));
+}
+
+impl Home {
+    /// ホームの下の、ja-terms が読む共通の辞書の置き場所（ADR-0097）
+    fn ja_terms_dictionary(&self) -> PathBuf {
+        self.home().join(".config/ja-terms/prh.yml")
+    }
+}
+
+#[test]
+fn delivers_the_ja_terms_dictionary_outside_claude() {
+    // 規則を足した辞書を sync だけで配り直せば、ビルドし直さない ja-terms がそれを読む
+    let home = Home::new();
+    let src = home.0.join("src");
+    write(&src.join("claude/CLAUDE.md"), "x");
+    write(
+        &src.join("crates/ja-terms/prh.yml"),
+        "version: 1\nrules: []\n",
+    );
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.ja_terms_dictionary()), "version: 1\nrules: []\n");
+    let added = "version: 1\nrules:\n  - expected: ほげ\n    pattern: ふがふが\n";
+    write(&src.join("crates/ja-terms/prh.yml"), added);
+    let out = home.sync(Some(&src));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(read(&home.ja_terms_dictionary()), added);
+}
+
+#[test]
+fn without_arguments_stops_on_a_draft_of_the_ja_terms_dictionary() {
+    let home = Home::new();
+    let _other = clones(&home);
+    home.sync_default();
+    let clone = home.clone_dir();
+    write(&clone.join("crates/ja-terms/prh.yml"), "draft");
     home.stops(&format!("claude-sync {}", clone.display()));
 }

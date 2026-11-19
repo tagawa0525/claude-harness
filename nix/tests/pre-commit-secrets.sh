@@ -14,6 +14,9 @@
 
 set -euo pipefail
 
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 ROOT=$(git rev-parse --show-toplevel)
 
 if ! command -v markdownlint >/dev/null 2>&1; then

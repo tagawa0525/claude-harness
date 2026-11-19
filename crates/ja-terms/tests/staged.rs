@@ -7,6 +7,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// 共通の辞書（ビルドに埋めず、ja-terms はホームの下か、この環境変数のパスから読む。ADR-0097）。テストは crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    ja_terms::common::COMMON_DICTIONARY_ENV,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml"),
+);
+
 /// 崩れた語（辞書の最初の規則の、名詞の用法の語。直す語は「確認」）
 const BROKEN: &str = concat!("確か", "め");
 
@@ -59,6 +65,7 @@ impl Repo {
         without_outer_repository(&mut command);
         command
             .current_dir(&self.0)
+            .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
             .env(
                 "GIT_CONFIG_GLOBAL",
                 self.0.parent().unwrap().join("gitconfig"),
@@ -283,6 +290,7 @@ fn outside_a_repository_is_a_failure() {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ja-terms"));
     without_outer_repository(&mut command);
     let out = command
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
         .arg("staged")
         .current_dir(&dir)
         .env("GIT_CEILING_DIRECTORIES", dir.parent().unwrap())

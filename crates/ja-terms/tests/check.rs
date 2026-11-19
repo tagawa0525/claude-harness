@@ -6,6 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// 共通の辞書（ビルドに埋めず、ja-terms はホームの下か、この環境変数のパスから読む。ADR-0097）。テストは crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    ja_terms::common::COMMON_DICTIONARY_ENV,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml"),
+);
+
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/textlint")
 }
@@ -197,6 +203,7 @@ fn the_ja_terms_dictionary_is_used_by_default() {
     // 辞書の語を 1 行に書くと、このファイルが pre-commit の語の検査に掛かる
     let path = scratch("default.md", concat!("確か", "めの結果\n"));
     let out = Command::new(env!("CARGO_BIN_EXE_ja-terms"))
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
         .args(["check", path.to_str().unwrap()])
         .output()
         .unwrap();

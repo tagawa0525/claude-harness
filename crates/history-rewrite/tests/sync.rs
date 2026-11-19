@@ -24,6 +24,13 @@ type State = (
 /// 履歴に無いコミットの番号。対応表で「消えた」（新が 0）にすると、それを指す文書で commit-refs remap が止まる
 const VANISHED: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
+/// ja-terms の共通の辞書（ビルドに埋めず、ホームの下か、この環境変数のパスから読む。ADR-0097）。テストは ja-terms の
+/// crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    ja_terms::common::COMMON_DICTIONARY_ENV,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../ja-terms/prh.yml"),
+);
+
 fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -33,6 +40,7 @@ fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {
     cmd.env("HOME", root.join("home"))
         .env("USERPROFILE", root.join("home"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
 }
 
 #[derive(Clone)]
@@ -927,4 +935,125 @@ fn run_records_the_repository_dictionary_of_the_source_and_sync_uses_it() {
 fn sync_with_the_same_words_as_run_accepts_the_recorded_repository_dictionary() {
     // run が見つけたリポジトリの辞書は、run と同じ指定（辞書を渡さない）の sync-worktrees でも記録と同じとみなす
     run_and_sync_with_the_repository_dictionary("same", &["--exclude", "**/prh.yml"]);
+}
+
+/// 共通の辞書（JA_TERMS_COMMON_DICTIONARY で渡す）が「旧称 => 新称」の 1 つの規則の run の後に、共通の辞書を「旧称 =>
+/// 別称」に変えて（claude-sync が配り直したのと同じ）sync_words で sync-worktrees を流す。run が作業ディレクトリにコピー
+/// した辞書で直すことを確かめる（ADR-0097）
+fn run_and_sync_after_the_common_dictionary_changes(name: &str, sync_words: &[&str]) {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "sync-words-common-dictionary-{name}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::write(
+        root.join("home").join(".gitconfig"),
+        "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n[commit]\n\tgpgsign = false\n",
+    )
+    .unwrap();
+    let common = root.join("common.yml");
+    let rules = "version: 1\nrules:\n  - expected: 新称\n    pattern: 旧称\n";
+    std::fs::write(&common, rules).unwrap();
+    let common_s = common.display().to_string();
+    let repo = Repo {
+        root: root.clone(),
+        path: root.join("source"),
+    };
+    std::fs::create_dir_all(&repo.path).unwrap();
+    repo.git(&["init", "-q"]);
+    repo.write("a.md", "旧称の記録\n");
+    let old = repo.commit("docs: a\n");
+    let workdir = root.join("work");
+    let (source, work) = (
+        repo.path.display().to_string(),
+        workdir.display().to_string(),
+    );
+    let run = history_rewrite(
+        &root,
+        &[
+            "run",
+            "--source",
+            &source,
+            "--workdir",
+            &work,
+            "--exclude",
+            "**/never.md",
+        ],
+        &[(COMMON_DICTIONARY.0, &common_s)],
+    );
+    assert!(run.status.success(), "{}", text(&run.stderr));
+    // 記録は、作業ディレクトリにコピーした共通の辞書を --dictionary として持つ（実体のパス）
+    let copy = history_rewrite::real_path(&workdir)
+        .unwrap()
+        .join("common-prh.yml");
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), rules);
+    let record = std::fs::read_to_string(workdir.join("words")).unwrap();
+    assert_eq!(
+        record,
+        format!("dictionary\t{}\nexclude\t**/never.md\n", copy.display())
+    );
+    let rewritten = workdir.join("rewritten").display().to_string();
+    repo.git(&["fetch", "-q", &rewritten, "+refs/heads/*:refs/rewritten/*"]);
+    let new = repo.git(&["rev-parse", "refs/rewritten/main"]);
+    assert_eq!(
+        repo.git(&["show", &format!("{}:a.md", new.trim())]),
+        "新称の記録\n"
+    );
+
+    repo.write("a.md", "旧称の記録\n旧称の追記\n");
+    let patch = workdir.join("worktree-1.patch");
+    std::fs::write(&patch, repo.git(&["diff", "HEAD"])).unwrap();
+    std::fs::write(
+        workdir.join("worktree-state"),
+        format!("{source}\t{old}\t{}\n", patch.display()),
+    )
+    .unwrap();
+    repo.git(&["update-ref", "refs/heads/main", new.trim(), &old]);
+    std::fs::write(
+        &common,
+        "version: 1\nrules:\n  - expected: 別称\n    pattern: 旧称\n",
+    )
+    .unwrap();
+    let out = history_rewrite(
+        &root,
+        &[&["sync-worktrees", "--workdir", &work][..], sync_words].concat(),
+        &[(COMMON_DICTIONARY.0, &common_s)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(repo.read("a.md"), "新称の記録\n新称の追記\n");
+}
+
+#[test]
+fn sync_uses_the_common_dictionary_that_run_copied_even_after_it_changes() {
+    run_and_sync_after_the_common_dictionary_changes("recorded", &[]);
+}
+
+#[test]
+fn sync_with_the_same_words_as_run_accepts_the_copied_common_dictionary() {
+    // 辞書を渡さない sync-worktrees の指定は、run と同じく、記録したコピーの辞書を渡したものとみなす
+    run_and_sync_after_the_common_dictionary_changes("same", &["--exclude", "**/never.md"]);
+}
+
+#[test]
+fn run_without_the_common_dictionary_stops_before_creating_the_workdir() {
+    let m = moved_with_extra_rules("no-common");
+    let workdir = m.root.join("work-no-common");
+    let (source, work) = (
+        m.repo.path.display().to_string(),
+        workdir.display().to_string(),
+    );
+    let missing = m.root.join("missing/prh.yml").display().to_string();
+    let out = history_rewrite(
+        &m.root,
+        &["run", "--source", &source, "--workdir", &work],
+        &[(COMMON_DICTIONARY.0, &missing)],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("claude-sync"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!workdir.exists());
 }

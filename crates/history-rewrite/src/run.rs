@@ -9,6 +9,7 @@
 
 use crate::{Stop, Transformer, Words, git};
 use commit_refs::object::{CatFile, Header, split_command, split_object, strip_signature, values};
+use ja_terms::Dictionary;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -41,6 +42,10 @@ const FAKE_TAGGER: &[u8] = b"Unspecified Tagger <unspecified-tagger> 0 +0000";
 
 /// run が語の指定を記録し、sync-worktrees が読む、作業ディレクトリの中のファイルの名前
 pub const WORDS_RECORD: &str = "words";
+
+/// `--dictionary` の無い run が、読んだ共通の辞書の中身を書く、作業ディレクトリのファイル（ADR-0097）。記録には
+/// `--dictionary` としてこのパスを書く
+pub const COMMON_COPY: &str = "common-prh.yml";
 
 /// 元の番号から新しい番号への対応表
 pub type CommitMap = HashMap<String, String>;
@@ -1072,7 +1077,19 @@ fn resolve(path: &Path) -> Result<PathBuf, Stop> {
 
 /// run の本体。出力は main.rs の冒頭
 pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
-    let mut transformer = Transformer::new(words)?;
+    // --dictionary が無ければ、共通の辞書を 1 度だけ読み、その中身で変換を作り、同じ中身を作業ディレクトリにコピーして
+    // 記録する（sync-worktrees までに claude-sync が辞書を配り直しても、同じ変換を当てる。ADR-0097）
+    let common = if words.dictionaries.is_empty() {
+        Some(ja_terms::common::read().map_err(|e| Stop(e.to_string()))?)
+    } else {
+        None
+    };
+    let common_dictionary = common
+        .as_ref()
+        .map(|(path, text)| Dictionary::parse(text, &path.display().to_string()))
+        .transpose()
+        .map_err(|e| Stop(e.to_string()))?;
+    let mut transformer = Transformer::with_common(words, common_dictionary)?;
     let source =
         crate::real_path(source).map_err(|e| Stop(format!("{}: {e}", source.display())))?;
     let workdir = resolve(workdir)?;
@@ -1098,9 +1115,17 @@ pub fn run(words: &Words, source: &Path, workdir: &Path) -> Result<(), Stop> {
         )));
     }
     refuse_unreachable_detached(&source)?;
-    let resolved = words.resolved()?;
+    let mut resolved = words.resolved()?;
+    let common_copy = workdir.join(COMMON_COPY);
+    if common.is_some() {
+        resolved.dictionaries = vec![common_copy.clone()];
+    }
     let words_record = resolved.record()?;
     std::fs::create_dir_all(&workdir).map_err(|e| Stop(format!("{}: {e}", workdir.display())))?;
+    if let Some((_, text)) = &common {
+        std::fs::write(&common_copy, text)
+            .map_err(|e| Stop(format!("{}: 書けない: {e}", common_copy.display())))?;
+    }
     let original = workdir.join("original.git");
     let rewritten = workdir.join("rewritten");
     let (original_s, rewritten_s, source_s) = (

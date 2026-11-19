@@ -14,6 +14,9 @@
 
 set -euo pipefail
 
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 
 if ! command -v ruff >/dev/null 2>&1; then
   echo "✗ ruff が PATH にない。既定の検査が走ったかを確かめられないので、このテストは成立しない"

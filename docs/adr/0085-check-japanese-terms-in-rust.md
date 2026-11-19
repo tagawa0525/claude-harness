@@ -124,6 +124,10 @@ ADR-0084 は、Nix の包む store のパスと `ja-terms-files` を Windows で
   （#115。Windows の CI が、cargo install した ja-terms で git merge と git commit のメッセージを止め、README の手順の
   git hook が PATH に無い隣の ja-terms で止めることを確かめる）。実装がまだ決定に追いついて
   いないのは、履歴の書き換えの mode と `prh_rules.py` の置き換え（#101 の段階 7）。進みは #101 に書く
+- 2026-11-19: 共通の辞書（`crates/ja-terms/prh.yml`）は、ja-terms のビルドに埋めず、`claude-setup sync` が
+  `~/.config/ja-terms/prh.yml` に配ったものを読む（ADR-0097）。Windows と Linux は同じ sync で同じ中身を置くので、同じ文に
+  同じ判定をする（決定の要因）のは変わらない。Windows も、辞書だけの変更は `cargo install` を流し直さずに `claude-setup sync`
+  で効く
 
 ### 確認
 

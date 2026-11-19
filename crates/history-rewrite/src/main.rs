@@ -12,7 +12,8 @@
 //!       4. 照合: 元のすべてのコミットと書き換えた後を 1 対 1 で突き合わせる（作者と日時、親、本文、すべてのファイル）
 //!       5. ステージ 2: commit-refs rewrite-history（ADR-0013）で、文書と本文の番号を最後の番号に付け直す
 //!       6. 元の番号から最後の番号への対応表を DIR/commit-map に、語の指定（辞書と追加の規則は実体のパス）を
-//!          DIR/words に書く
+//!          DIR/words に書く。--dictionary が無ければ、始めに読んだ共通の辞書の中身を DIR/common-prh.yml にコピーし、
+//!          --dictionary DIR/common-prh.yml として記録する（sync-worktrees までに辞書が配り直されても、同じ変換を当てる）
 //!   history-rewrite transform [語の指定] FILE...
 //!       作業ツリーのファイルの語を、run のステージ 1 と同じ変換で直す（コミットはしない）
 //!   history-rewrite sync-worktrees --workdir DIR [語の指定]
@@ -30,7 +31,8 @@
 //!         パスの増減を含む書き換え、変換か remap が止まるファイル）は、何も変えずに LEFT に出す
 //!
 //! 語の指定:
-//!   --dictionary FILE   辞書（prh の形）。省くと ja-terms の共通の辞書（ADR-0014。ビルドに埋めたもの）。重ねて渡せる
+//!   --dictionary FILE   辞書（prh の形）。省くと ja-terms の共通の辞書（ADR-0014。claude-setup sync が
+//!                       ~/.config/ja-terms/prh.yml に配ったもの。ADR-0097）。重ねて渡せる
 //!   --repo-dictionary FILE
 //!                       共通の辞書（--dictionary があればそれ）に重ねるリポジトリの辞書（prh の形。ADR-0096）。同じ
 //!                       expected の規則は、こちらのものだけを残す。--dictionary も --repo-dictionary も省くと、run は

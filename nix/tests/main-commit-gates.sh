@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 ROOT=$(git rev-parse --show-toplevel)
 # PreToolUse hook バイナリ。CLAUDE_HOOKS_BIN（絶対パス）で差し替え可（既定は nix build の成果物）
 HOOK_BIN="${CLAUDE_HOOKS_BIN:-$(nix build --no-link --print-out-paths --option warn-dirty false "$ROOT#claude-hooks")/bin/claude-hooks}"

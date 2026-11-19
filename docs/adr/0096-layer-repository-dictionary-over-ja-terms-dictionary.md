@@ -146,3 +146,11 @@ claude-harness（`crates/ja-terms/prh.yml`）だけだった（2026-11-19、`git
 - `history-rewrite` の `transform` がリポジトリの辞書を重ね、`--dictionary` では重ねず、`--repo-dictionary` で明示でき、読めない
   辞書で止まり、`run` が `--source` の辞書を記録に残して `sync-worktrees` がそれで直すこと（`crates/history-rewrite/tests/transform.rs`、
   `sync.rs`）
+
+## 変更
+
+- 2026-11-19: 共通の辞書の出どころを、ja-terms のビルドに埋めたものから、`claude-setup sync` が `~/.config/ja-terms/prh.yml`
+  に配ったものに変えた（ADR-0097）。前は背景に「ja-terms がビルドに埋め、どのリポジトリでも同じ規則を当てる」、
+  「`--dictionary` が無ければ埋めた辞書」。辞書を重ねる決定（案 C、案 1、案 X）は変わらない。規則を足してから効くまでを、
+  rebuild でなく `claude-sync` にするため。`history-rewrite run` は、`--dictionary` が無ければ共通の辞書を作業ディレクトリに
+  コピーして `dictionary` の行で記録する

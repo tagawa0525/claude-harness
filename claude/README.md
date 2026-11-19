@@ -6,8 +6,11 @@ Claude Code のグローバル設定。`claude-sync`（または home-manager �
 ブランチのコミットされた最新だけで、別のブランチや、同期する場所に書きかけの編集がある clone では止まる。worktree の直しや作業中の中身を
 入れるときは、パスを渡す（`claude-sync <worktree>`。pull しない）。
 
-`~/.claude` の外へ置くファイルは、リポジトリの `config/markdownlint/config`（markdownlint のグローバルの設定）だけで、
-`~/.config/markdownlint/config` に置く（ADR-0093）。ソースが正で、中身が違えば上書きする。
+`~/.claude` の外へ置くファイルは、リポジトリの `config/markdownlint/config`（markdownlint のグローバルの設定）を
+`~/.config/markdownlint/config` に（ADR-0093）、`crates/ja-terms/prh.yml`（崩れた日本語の語の共通の辞書）を
+`~/.config/ja-terms/prh.yml` に置く（ADR-0097）。ソースが正で、中身が違えば上書きする。ja-terms は共通の辞書をビルドに埋めず
+この場所から読むので、辞書の規則を足したら、マージの後に `claude-sync` で効く（rebuild を待たない）。配っていない機械では、
+ja-terms は辞書が無いとして検査を止める。
 
 配る元のディレクトリは dot なしの `claude/` と `config/` で、このリポジトリは追跡する Claude Code のプロジェクトの設定（`.claude/`）を
 持たない（ADR-0094）。このリポジトリのセッションも、配られた `~/.claude` の指示とスキルを読む。worktree で直した指示や

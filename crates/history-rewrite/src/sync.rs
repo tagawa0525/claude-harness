@@ -589,6 +589,13 @@ fn recorded_words(given: &Words, workdir: &Path) -> Result<Words, Stop> {
     if given.dictionaries.is_empty() && given.repo_dictionaries.is_empty() {
         given.repo_dictionaries = recorded.repo_dictionaries.clone();
     }
+    // --dictionary の無い run は、共通の辞書を作業ディレクトリにコピーして --dictionary として記録した（ADR-0097）。
+    // 辞書を渡さない指定は、そのコピーを渡したものとみなす
+    if given.dictionaries.is_empty()
+        && recorded.dictionaries == [workdir.join(crate::run::COMMON_COPY)]
+    {
+        given.dictionaries = recorded.dictionaries.clone();
+    }
     if given.resolved()?.same(&recorded) {
         return Ok(recorded);
     }

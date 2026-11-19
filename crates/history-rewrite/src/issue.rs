@@ -33,10 +33,14 @@ pub fn body(source: &Path, workdir: &Path, words: &Words) -> Result<String, Stop
             .collect::<Vec<_>>()
             .join("、")
     };
-    let dictionaries = if words.dictionaries.is_empty() {
-        "ja-terms の共通の辞書（history-rewrite のビルドに埋めたもの）".to_string()
-    } else {
-        shown(&words.dictionaries)
+    // --dictionary の無い run は、共通の辞書を作業ディレクトリにコピーして記録する（ADR-0097）
+    let common_copy = workdir.join(crate::run::COMMON_COPY);
+    let dictionaries = match words.dictionaries.as_slice() {
+        [only] if *only == common_copy => format!(
+            "ja-terms の共通の辞書（run が読んだ中身を {} にコピーしたもの）",
+            only.display()
+        ),
+        _ => shown(&words.dictionaries),
     };
     out.push_str(&format!("- 辞書: {dictionaries}\n"));
     if !words.repo_dictionaries.is_empty() {

@@ -29,6 +29,13 @@ fn scratch(name: &str) -> PathBuf {
     root
 }
 
+/// ja-terms の共通の辞書（ビルドに埋めず、ホームの下か、この環境変数のパスから読む。ADR-0097）。テストは ja-terms の
+/// crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    ja_terms::common::COMMON_DICTIONARY_ENV,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../ja-terms/prh.yml"),
+);
+
 fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -38,6 +45,7 @@ fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {
     cmd.env("HOME", root.join("home"))
         .env("USERPROFILE", root.join("home"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
 }
 
 struct Repo {
@@ -474,8 +482,11 @@ fn run_writes_the_body_of_the_cleanup_issue() {
         // 作業ディレクトリと控え
         workdir.display().to_string(),
         f.out["ORIGINAL"].clone(),
-        // 直した語（辞書、追加の規則の中身、除くパス）
-        "ja-terms".to_string(),
+        // 直した語（辞書、追加の規則の中身、除くパス）。辞書は、run がコピーした ja-terms の共通の辞書（ADR-0097）
+        format!(
+            "ja-terms の共通の辞書（run が読んだ中身を {} にコピーしたもの）",
+            workdir.join("common-prh.yml").display()
+        ),
         "pattern: 旧称".to_string(),
         "**/terms.yml".to_string(),
         // 掃除のコマンド
@@ -504,7 +515,9 @@ fn run_writes_the_body_of_the_cleanup_issue() {
 fn words(f: &Fixture, extra: &[PathBuf]) -> Words {
     let mut extra_rules = vec![f.extra.clone()];
     extra_rules.extend_from_slice(extra);
+    // テストのプロセスはホームの共通の辞書を持たないので、run が読むのと同じ共通の辞書を渡す
     Words {
+        dictionaries: vec![PathBuf::from(COMMON_DICTIONARY.1)],
         extra_rules,
         excludes: vec!["**/terms.yml".to_string()],
         ..Words::default()
@@ -947,7 +960,7 @@ fn a_latin1_message_with_c1_bytes_is_read() {
 fn hook_findings(repo: &Repo, commits: &[&String], extra: &Path) -> usize {
     use ja_terms::Dictionary;
     use ja_terms::report::{Syntax, check, syntax_of};
-    let mut dictionary = Dictionary::parse(ja_terms::DICTIONARY, "prh.yml").unwrap();
+    let mut dictionary = Dictionary::load(COMMON_DICTIONARY.1).unwrap();
     dictionary.append(Dictionary::load(extra).unwrap());
     let mut found = 0;
     for commit in commits {

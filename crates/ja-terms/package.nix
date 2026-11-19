@@ -11,7 +11,7 @@
 rustPlatform.buildRustPackage {
   pname = "ja-terms";
   version = "0.1.0";
-  # prh.yml は CLI がビルドに埋め、テストも読む
+  # prh.yml（共通の辞書）はテストが読む。CLI は埋めず、claude-setup sync が ~/.config/ja-terms/prh.yml に配ったものを読む（ADR-0097）
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [

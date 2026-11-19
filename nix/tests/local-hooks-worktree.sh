@@ -14,6 +14,9 @@
 
 set -euo pipefail
 
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 ROOT=$(git rev-parse --show-toplevel)
 
 WORK=$(mktemp -d)

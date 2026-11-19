@@ -57,6 +57,10 @@ Markdown の検査（`run-checks.sh`、pre-commit）が呼ぶ `markdownlint` は
 SKIP になる）。設定を持たないリポジトリで効くグローバルの設定は、`claude-setup sync` が `config/markdownlint/config` から
 `~/.config/markdownlint/config` に置く。Windows の `%USERPROFILE%` の下で markdownlint がこの場所を読むかは、実機で確かめていない（ADR-0093）。
 
+崩れた日本語の語の共通の辞書も、`claude-setup sync` が `crates/ja-terms/prh.yml` から `%USERPROFILE%\.config\ja-terms\prh.yml` に
+置き、`ja-terms` はそこを読む（ADR-0097。ビルドに埋めない）。上の手順の `claude-setup sync` を流す前は、`ja-terms` が辞書が無い
+として検査を止め、コミットが通らない。辞書の規則だけが変わったときは、clone を更新して `claude-setup sync` を流せば効く。
+
 `~/.claude/bin` に初めて入れたとき（前の手順の `~/.cargo/bin` から移るときを含む）は、Git Bash の `~/.bashrc` で `~/.claude/bin` を PATH の先頭に足し、Git Bash を開き直す（Claude Code の
 Bash ツールも `~/.bashrc` を読む）。スキルと hook の修正方法の文は `claude-setup` と `commit-refs` を名前で呼ぶ。前の手順で
 `~/.cargo/bin` に入れていたら、古い版が残らないよう外す:
