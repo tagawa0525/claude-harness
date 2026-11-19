@@ -55,6 +55,7 @@ dependencies = [
  "ctrlc",
  "design-records",
  "fix-markdown-lint",
+ "libc",
  "regex",
  "serde_json",
  "tree-sitter",

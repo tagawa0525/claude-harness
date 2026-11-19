@@ -10,8 +10,9 @@ pub const INTERRUPTED: i32 = 130;
 /// スレッドと分け合う状態は Mutex などで守る。1 つのプロセスで 1 回だけ呼べる（2 回目は Err）。
 ///
 /// 起動したときに無視するよう引き継いだシグナル（nohup の HUP、ジョブ制御の無いシェルが `&` で起動したコマンドの
-/// INT）は、無視したままにする。ctrlc は 3 つとも受ける形に書き換えるので、登録の後に無視へ戻す。sh の trap と同じく、
-/// 無視して起動されたコマンドが、親が無視させた中断で止まらないため
+/// INT）は、無視したままにする。ctrlc は 3 つとも受ける形に書き換えるので、登録の後に無視へ戻す（登録から戻すまでの
+/// 間に届いたものは、後片付けをして終わる）。sh の trap と同じく、無視して起動されたコマンドが、親が無視させた中断で
+/// 止まらないため
 pub fn cleanup_on_interrupt(cleanup: impl Fn() + Send + 'static) -> Result<(), String> {
     #[cfg(unix)]
     let ignored = unix::ignored();
@@ -45,40 +46,26 @@ pub fn ignore_terminal_interrupt(cmd: &mut std::process::Command) {
 
 #[cfg(unix)]
 mod unix {
-    use std::ffi::c_int;
+    use libc::{SIG_IGN, SIGHUP, SIGTERM, c_int};
+    pub use libc::{SIGINT, SIGQUIT};
 
-    unsafe extern "C" {
-        fn signal(signum: c_int, handler: usize) -> usize;
-    }
-
-    // Linux、macOS、BSD で同じ値（signal.h）
-    const SIGHUP: c_int = 1;
-    pub const SIGINT: c_int = 2;
-    pub const SIGQUIT: c_int = 3;
-    const SIGTERM: c_int = 15;
-    const SIG_IGN: usize = 1;
-
-    /// 中断のシグナルのうち、無視するよう引き継いだもの。調べるには一度無視に替えて前の値を受けるしか無いので、
-    /// 無視でなかったものは前の値に戻す（ハンドラを登録する前で、前の値は既定か無視のどちらか）
+    /// 中断のシグナルのうち、無視するよう引き継いだもの（設定は変えずに読む）
     pub fn ignored() -> Vec<c_int> {
-        let mut ignored = Vec::new();
-        for sig in [SIGHUP, SIGINT, SIGTERM] {
-            // SAFETY: 既定か無視の値を出し入れするだけで、ハンドラの関数は渡さない
-            let old = unsafe { signal(sig, SIG_IGN) };
-            if old == SIG_IGN {
-                ignored.push(sig);
-            } else {
-                // SAFETY: 同上（今の前の値に戻す）
-                unsafe { signal(sig, old) };
-            }
-        }
-        ignored
+        [SIGHUP, SIGINT, SIGTERM]
+            .into_iter()
+            .filter(|&sig| {
+                // SAFETY: 新しい設定に null を渡し、今の設定を old に読むだけで、何も変えない
+                let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+                let read = unsafe { libc::sigaction(sig, std::ptr::null(), &mut old) };
+                read == 0 && old.sa_sigaction == SIG_IGN
+            })
+            .collect()
     }
 
     pub fn ignore(sigs: &[c_int]) {
         for &sig in sigs {
-            // SAFETY: 無視に替えるだけで、ハンドラの関数は渡さない
-            unsafe { signal(sig, SIG_IGN) };
+            // SAFETY: 無視に替えるだけで、ハンドラの関数は渡さない（fork の後の子でも呼べる）
+            unsafe { libc::signal(sig, SIG_IGN) };
         }
     }
 }

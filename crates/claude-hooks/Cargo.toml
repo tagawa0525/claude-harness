@@ -25,3 +25,7 @@ fix-markdown-lint = { path = "../fix-markdown-lint" }
 # 中断（INT、TERM、HUP）のときの後片付け（script slurm-run。ADR-0101）。termination は TERM と HUP も受ける。
 # 呼ぶのは src/interrupt.rs だけ
 ctrlc = { version = "3.5.3", features = ["termination"] }
+
+[target.'cfg(unix)'.dependencies]
+# 中断のシグナルを、起動のときに無視するよう引き継いだかを、設定を変えずに読む（sigaction。src/interrupt.rs）
+libc = "0.2"
