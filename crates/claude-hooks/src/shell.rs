@@ -1164,6 +1164,27 @@ pub fn has_flag(args: &[Arg], names: &[&str]) -> bool {
     })
 }
 
+/// 引数が `--help` か `-h` の 1 語だけか（gh はヘルプを表示して終わり、サブコマンドの動作をしない）。
+/// ほかの引数と並ぶ `--help` は数えない。前の語が値を取るフラグ（`--body --help`、まとめた短いフラグの `-sdb --help`、
+/// 変数から展開されるフラグ）か `--` なら、gh は `--help` を値か位置引数として読んで実行に進む。それを見分けるには
+/// gh のフラグの表をコピーすることになり、表が古くなると検査を飛ばす側に倒れる
+/// 表を持つ形を試して捨てた経緯と反例は issue #309
+pub fn asks_help(args: &[Arg]) -> bool {
+    matches!(args, [a] if a.text == "--help" || a.text == "-h")
+}
+
+/// ほかの引数と並ぶ `--help` / `-h` を拒否するときに、拒否の理由に添える 1 行（無ければ None）。
+/// 理由が挙げる不足のフラグを足すと実行の試みになるので、ヘルプを見る形を示す
+pub fn help_hint(args: &[Arg], subcommand: &str) -> Option<String> {
+    args.iter()
+        .any(|a| a.text == "--help" || a.text == "-h")
+        .then(|| {
+            format!(
+                "ヘルプを見るなら、ほかの引数を付けずに `{subcommand} --help` と書いてください（ほかの引数と並ぶ --help は、gh がフラグの値として読んで実行に進むことがあるので検査します）"
+            )
+        })
+}
+
 /// フラグの値（`--x value` / `--x=value`）。最初に現れたもの
 pub fn opt_value<'a>(args: &'a [Arg], names: &[&str]) -> Option<&'a Arg> {
     let mut it = args.iter();

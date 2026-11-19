@@ -37,7 +37,7 @@ use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::script::pr_url;
-use crate::shell::{Arg, Cmd, Escape, Shell, has_flag, opt_value};
+use crate::shell::{Arg, Cmd, Escape, Shell, asks_help, has_flag, help_hint, opt_value};
 use crate::unwrap::basename;
 use design_records::is_adr_path;
 use serde_json::Value;
@@ -594,6 +594,9 @@ impl Rule for PreMergeCheck {
             let Some(args) = cmd.gh_subcommand(&["pr", "merge"]) else {
                 continue;
             };
+            if asks_help(args) {
+                continue;
+            }
             let mut reasons: Vec<String> = Vec::new();
 
             let mut dir = shell.target_dir(cmd, &input.cwd);
@@ -1076,6 +1079,9 @@ impl Rule for PreMergeCheck {
             }
 
             if !reasons.is_empty() {
+                if let Some(hint) = help_hint(args, "gh pr merge") {
+                    return vec![Finding::Deny(format!("{}\n{hint}", reasons.join("\n")))];
+                }
                 // 診断は cwd のリポジトリで読むので、PR が分かれば URL で渡す（ADR-0032）
                 let target = match pr_number.as_deref() {
                     Some(number) if !owner.is_empty() && !name.is_empty() => {
