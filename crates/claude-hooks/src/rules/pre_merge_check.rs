@@ -23,8 +23,12 @@
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
+//! 10. PR の head のブランチを base にした、同じリポジトリの開いている PR（積み重ねた PR）が無い。2 でマージの後に
+//!     head のブランチは消え、GitHub はそれを base にした開いている PR を閉じる（閉じた PR は base を付け替えられない）
+//!     ので、上の PR ごとに `gh pr edit <番号> --base <base>` を示して止める。fork からの PR は、消えるのが fork の
+//!     側のブランチなので検査しない
 //!
-//! 1〜3 はコマンド文字列だけで判定する。4〜9 は gh で GitHub に問い合わせ、
+//! 1〜3 はコマンド文字列だけで判定する。4〜10 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
@@ -45,7 +49,7 @@ use serde_json::Value;
 pub struct PreMergeCheck;
 
 /// 同じコマンドで gh pr merge より前に走るはずだったコマンドを挙げ、分けて投げ直す方法を示す。
-/// 4〜9 は実行する前の GitHub とブランチの状態で判定するので、前のコマンド（ローカルレビューの記録、push）が
+/// 4〜10 は実行する前の GitHub とブランチの状態で判定するので、前のコマンド（ローカルレビューの記録、push）が
 /// 変える状態は反映されず、拒むとそれらも実行されない。git と gh はサブコマンドまで挙げる（`gh issue` と
 /// `gh pr` を区別する）
 fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
@@ -513,6 +517,64 @@ fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) 
     )
 }
 
+/// head のブランチ（`head_ref`）を base にした開いている PR があれば、その base を先に付け替えさせる deny の理由。
+/// 探せなければ、確認できない理由（ほかの GitHub の読み取りと同じく止める）
+fn stacked_prs_reason(
+    dir: &std::path::Path,
+    owner: &str,
+    name: &str,
+    head_ref: &str,
+    base_ref: &str,
+) -> Option<String> {
+    let repo = format!("{owner}/{name}");
+    let Ok(out) = gh::gh(
+        dir,
+        &[
+            "pr",
+            "list",
+            "-R",
+            &repo,
+            "--base",
+            head_ref,
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--jq",
+            ".[].number",
+        ],
+    ) else {
+        return Some(format!(
+            "{head_ref} を base にした開いている PR を確認できません（gh pr list が失敗）"
+        ));
+    };
+    let numbers: Vec<&str> = out
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if numbers.is_empty() {
+        return None;
+    }
+    let base = if base_ref.is_empty() {
+        "<マージする PR の base>"
+    } else {
+        base_ref
+    };
+    let listed: Vec<String> = numbers.iter().map(|n| format!("#{n}")).collect();
+    let commands: Vec<String> = numbers
+        .iter()
+        .map(|n| format!("  gh pr edit {n} --base {base} -R {repo}"))
+        .collect();
+    Some(format!(
+        "head のブランチ {head_ref} を base にした開いている PR があります（{}）。--delete-branch でマージすると {head_ref} が消え、\
+         GitHub はそれを base にした開いている PR を閉じます。閉じた PR は base を付け替えられず、出し直すしかありません。\
+         先に次のコマンドで上の PR の base を付け替えてから、マージしてください:\n{}",
+        listed.join(", "),
+        commands.join("\n")
+    ))
+}
+
 /// head がレビューに覆われていない PR に伝える文。`bot` は失敗していない bot のレビューの対象、`local` は最後の
 /// ローカルレビューの記録の SHA と High の有無。伝えることが無ければ None（変わったのが挙動を変えないファイルだけ）
 fn stale_review_context(
@@ -683,7 +745,11 @@ impl Rule for PreMergeCheck {
             if let Some(r) = selector.as_deref() {
                 view_args.push(r);
             }
-            view_args.extend(["--json", "number,headRefOid,reviewDecision,baseRefName,url"]);
+            // 項目は末尾に足す（テストの偽 gh が `--json` の値の前方一致で応答する）
+            view_args.extend([
+                "--json",
+                "number,headRefOid,reviewDecision,baseRefName,url,headRefName,isCrossRepository",
+            ]);
             let pr_meta: Option<Value> = gh::gh(&dir, &view_args)
                 .ok()
                 .and_then(|s| serde_json::from_str(&s).ok());
@@ -1075,6 +1141,22 @@ impl Rule for PreMergeCheck {
                             .collect(),
                         ));
                     }
+                }
+            }
+
+            // --- 10. head のブランチを base にした開いている PR（積み重ねた PR）---
+            // fork からの PR は数えない。--delete-branch で消えるのは fork の側のブランチで、base のリポジトリの
+            // 同じ名前のブランチを base にした PR は閉じられない
+            if !owner.is_empty()
+                && !name.is_empty()
+                && let Some(meta) = pr_meta.as_ref()
+                && meta["isCrossRepository"].as_bool() != Some(true)
+            {
+                let head_ref = meta["headRefName"].as_str().unwrap_or("");
+                if head_ref.is_empty() {
+                    reasons.push("head のブランチ名を取得できず、それを base にした開いている PR を確認できません（gh pr view の headRefName が空）".to_string());
+                } else {
+                    reasons.extend(stacked_prs_reason(&dir, &owner, &name, head_ref, &base_ref));
                 }
             }
 
