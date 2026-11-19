@@ -517,8 +517,9 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         }
         Ok(false)
     };
-    let has_sync =
-        has("crates/claude-setup/Cargo.toml")? || has("modules/home/scripts/claude-sync.sh")?;
+    // 同期のコマンドを持つのは、ハーネス（claude-setup の crate）と、ハーネスを分ける前の nixfiles（claude-sync.sh）
+    let harness = has("crates/claude-setup/Cargo.toml")?;
+    let has_sync = harness || has("modules/home/scripts/claude-sync.sh")?;
     let has_rebuild = has("modules/home/scripts/nix-rebuild.sh")?;
     let changed = |paths: &[&str]| {
         let mut args = vec!["diff", "--name-only", before.as_str(), "HEAD", "--"];
@@ -545,12 +546,11 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
             "NOTE: lock の更新と rebuild が要る（crates、nix、claude-settings.json か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
         );
     }
-    // 配る元（claude-setup sync が置くもの）は claude、config、共通の辞書。claude を持たないリポジトリ（ADR-0094 より前の
-    // 版と、ハーネスを分ける前の nixfiles）は .claude が配る元。claude を持つリポジトリの .claude と、同期のコマンドを
-    // 持たないリポジトリの .claude は、そのリポジトリだけの指示とスキルで、その場で読まれる
-    let sources: &[&str] = if !has_sync {
-        &[]
-    } else if has("claude")? {
+    // 配る元（同期のコマンドが置くもの）。ハーネスは claude、config、共通の辞書で、.claude はこのリポジトリだけの指示と
+    // スキル（その場で読まれ、配らない）。crate が crates/ にある版は、どれも claude/ を持つ（.claude から claude への
+    // 移動が先）。ハーネスを分ける前の nixfiles は .claude が配る元。同期のコマンドを持たないリポジトリの .claude は
+    // プロジェクトの指示で、何も知らせない
+    let sources: &[&str] = if harness {
         &["claude", "config", "crates/ja-terms/prh.yml"]
     } else {
         &["claude", "config", ".claude"]
