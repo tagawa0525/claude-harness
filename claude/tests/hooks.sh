@@ -3771,44 +3771,66 @@ done
 # require-pipefail
 # ===========================================================================
 
-it "require-pipefail: 成否を判断するコマンドを pipefail なしで tail / head につなぐ形は deny する"
+# 書き換えた後の入力: 前に set -o pipefail; を付けた command と、ほかの欄はそのまま
+rewritten() {
+  jq -cn --arg cmd "set -o pipefail; $1" --argjson bg "${2:-false}" '{command: $cmd, run_in_background: $bg}'
+}
+
+it "require-pipefail: 成否を判断するコマンドを pipefail なしで tail / head につなぐ形は、止めずに set -o pipefail; を前に付けて通す"
 # shellcheck disable=SC2088  # 展開前のコマンド文字列をそのまま hook に渡す
 for cmd in 'nix build .#x 2>&1 | tail -20' 'nix flake check | tail' 'cargo test 2>&1 | tail -5' \
   'cargo clippy | head -50' '~/.claude/skills/language-checks/scripts/run-checks.sh -C wt | tail' \
   'cd wt && cargo test 2>&1 | tail' 'cargo test | tee log | tail'; do
   out=$(run_hook require-pipefail "$cmd")
-  assert_eq deny "$(decision "$out")"
+  assert_eq none "$(decision "$out" none)"
+  assert_eq "$(rewritten "$cmd")" "$(updated_input "$out")"
 done
-assert_contains "$(reason "$out")" "pipefail"
 
-it "require-pipefail: bash -c や ssh の文字列の中のビルドも、外側のパイプが tail / head なら deny する"
+it "require-pipefail: 書き換えたことと、終了コードがパイプの途中の失敗を映すこと、141 になりうることを Claude に知らせる"
+out=$(run_hook require-pipefail 'cargo test | tail')
+assert_contains "$(additional_context "$out")" "set -o pipefail; "
+assert_contains "$(additional_context "$out")" "パイプの途中"
+assert_contains "$(additional_context "$out")" "141"
+
+it "require-pipefail: 書き換えても、入力のほかの欄（run_in_background）はそのまま返す"
+out=$(run_hook require-pipefail 'cargo test | tail' true)
+assert_eq "$(rewritten 'cargo test | tail' true)" "$(updated_input "$out")"
+
+it "require-pipefail: bash -c や ssh の文字列の中のビルドも、外側のパイプが tail / head なら書き換える"
 for cmd in "bash -c 'cargo test' | tail" "ssh host cargo test | tail" "bash -c 'cd x && nix build .#y' 2>&1 | head -5"; do
   out=$(run_hook require-pipefail "$cmd")
-  assert_eq deny "$(decision "$out")"
+  assert_eq none "$(decision "$out" none)"
+  assert_eq "$(rewritten "$cmd")" "$(updated_input "$out")"
 done
 
-it "require-pipefail: pipefail を設けた形と、対象外の形は通す"
+it "require-pipefail: pipefail を設けた形と、対象外の形は何も返さない"
 for cmd in 'set -o pipefail; cargo test 2>&1 | tail -5' "bash -o pipefail -c 'nix build .#x | tail'" \
   'cargo test' 'cargo test > log 2>&1; tail log' 'git log | tail' 'cargo test | grep ok' 'echo x | cargo run'; do
   out=$(run_hook require-pipefail "$cmd")
-  assert_eq allow "$(decision "$out")"
+  assert_eq "" "$out"
 done
 
-it "require-pipefail: pipefail の語が文字列にあるだけの形は deny する"
+it "require-pipefail: pipefail の語が文字列にあるだけの形は書き換える"
 for cmd in 'cargo test 2>&1 | tail # pipefail' 'echo pipefail; cargo test | tail' 'cargo test --features pipefail | tail'; do
   out=$(run_hook require-pipefail "$cmd")
-  assert_eq deny "$(decision "$out")"
+  assert_eq "$(rewritten "$cmd")" "$(updated_input "$out")"
 done
 for cmd in 'set -eo pipefail; cargo test | tail' 'set -euo pipefail; cargo test | tail' "bash -o pipefail -c 'cargo test | tail'"; do
   out=$(run_hook require-pipefail "$cmd")
-  assert_eq allow "$(decision "$out")"
+  assert_eq "" "$out"
 done
 
 it "require-pipefail: -o <名前> を挟んだ set と、パスつきの bash でも pipefail を読む"
 for cmd in 'set -o errexit -o pipefail; cargo test | tail' '/bin/bash -o pipefail -c "cargo test | tail"'; do
   out=$(run_hook require-pipefail "$cmd")
-  assert_eq allow "$(decision "$out")"
+  assert_eq "" "$out"
 done
+
+it "require-pipefail: ほかのルールが止める呼び出しでは、止める判定だけを返し、書き換えない"
+out=$(run_hook "require-pipefail block-no-verify" 'git commit --no-verify -m x && cargo test | tail')
+assert_eq deny "$(decision "$out")"
+assert_eq "" "$(updated_input "$out")"
+assert_not_contains "$(additional_context "$out")" "pipefail"
 
 # ===========================================================================
 # guard-memory-bash-write: 自動メモリのディレクトリのファイルを Bash で書き換えるもの
