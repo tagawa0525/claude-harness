@@ -2807,7 +2807,7 @@ fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
     assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
 }
 
-const OKF_ROOT_INDEX: &str = "---\nokf_version: \"0.2\"\n---\n\n# docs\n";
+const OKF_ROOT_INDEX: &str = "---\nokf_version: \"0.3\"\n---\n\n# docs\n";
 
 #[test]
 fn check_reports_okf_findings_only_in_a_bundle() {

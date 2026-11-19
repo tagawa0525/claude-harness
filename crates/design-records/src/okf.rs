@@ -431,7 +431,7 @@ mod tests {
     }
 
     const ROOT_INDEX: &str =
-        "---\nokf_version: \"0.2\"\n---\n\n# docs\n\n* [adr](adr/) - 決定の記録\n";
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [adr](adr/) - 決定の記録\n";
     const ADR_INDEX: &str = "# adr\n\n* [ADR-0001: foo](0001-foo.md)\n";
     const ADR: &str = "---\ntype: ADR\nstatus: accepted\n---\n\n# ADR-0001: foo\n";
 
@@ -530,7 +530,7 @@ mod tests {
         files.retain(|(p, _)| *p != "docs/index.md");
         files.push((
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n* [adr](adr/)\n* [issues](issues/)\n",
+            "---\nokf_version: \"0.3\"\n---\n\n* [adr](adr/)\n* [issues](issues/)\n",
         ));
         let found = errors(&files);
         assert_eq!(found.len(), 1, "{found:?}");
@@ -571,7 +571,7 @@ mod tests {
         assert!(found[0].contains("0001-foo.md") && found[0].contains("not listed"));
         let found = errors(&with(
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n# docs\n",
+            "---\nokf_version: \"0.3\"\n---\n\n# docs\n",
         ));
         assert!(
             found[0].contains("adr/") && found[0].contains("not listed"),
@@ -597,7 +597,7 @@ mod tests {
         files.retain(|(p, _)| *p != "docs/index.md");
         files.push((
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n* [adr](adr/)\n* [Windows](windows.md) - 入れ方\n",
+            "---\nokf_version: \"0.3\"\n---\n\n* [adr](adr/)\n* [Windows](windows.md) - 入れ方\n",
         ));
         assert_eq!(errors(&files), Vec::<String>::new());
         assert_eq!(warnings(&files), Vec::<String>::new());
@@ -605,7 +605,7 @@ mod tests {
         files.retain(|(p, _)| *p != "docs/index.md");
         files.push((
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n* [adr](adr/)\n* [Win](windows.md) - 別\n",
+            "---\nokf_version: \"0.3\"\n---\n\n* [adr](adr/)\n* [Win](windows.md) - 別\n",
         ));
         let found = warnings(&files);
         assert_eq!(found.len(), 4, "{found:?}");
@@ -637,7 +637,7 @@ mod tests {
         let files = bundle(&[
             (
                 "docs/index.md",
-                "---\nokf_version: \"0.2\"\n---\n\n# docs\n",
+                "---\nokf_version: \"0.3\"\n---\n\n# docs\n",
             ),
             ("docs/adr/0001-foo.md", ADR),
             (
@@ -648,7 +648,7 @@ mod tests {
         let done = complete_indexes(&files);
         assert_eq!(
             done["docs/index.md"],
-            "---\nokf_version: \"0.2\"\n---\n\n# docs\n\n\
+            "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n\
              * [adr](adr/)\n\
              * [Windows](windows.md) - 入れ方\n"
         );
@@ -697,7 +697,7 @@ type: Guide
             (
                 "docs/index.md",
                 "---
-okf_version: \"0.2\"
+okf_version: \"0.3\"
 ---
 
 - [Real](a.md)
