@@ -86,9 +86,9 @@ fn memory_writes(shell: &Shell, cwd: &Path, home: &Path, config: Option<&str>) -
             if t.is_empty() {
                 continue;
             }
-            // bash はクォートで始まる語の先頭の字面の `~` を展開しない（`resolve` は字面の `~/` をホームにする）。
+            // bash はクォートかバックスラッシュで始まる語の先頭の字面の `~` を展開しない（`resolve` は字面の `~/` をホームにする）。
             // 変数の値の先頭の `~`（`d=~/x` の代入で bash が展開済み）は当たらない
-            let quoted_tilde = target.raw.starts_with(['"', '\''])
+            let quoted_tilde = target.raw.starts_with(['"', '\'', '\\'])
                 && matches!(
                     // 二重引用符の値は、開きの引用符と最初の子の間の字面（空のことがある）から始まる
                     target.pieces.iter().find(|p| **p != Piece::Lit(String::new())),
@@ -200,6 +200,7 @@ fn targets(cmd: &Cmd) -> Vec<Arg> {
                 valued: "efl",
                 attached: "i",
                 long_valued: &["--expression", "--file", "--line-length"],
+                ..Spec::default()
             };
             let p = parse(args, &spec);
             if p.has(&["-i", "--in-place"]) {
@@ -208,10 +209,12 @@ fn targets(cmd: &Cmd) -> Vec<Arg> {
             }
         }
         "perl" => {
-            // 値を続けて書く短いオプション（-i の拡張子、-I のディレクトリ、-M のモジュールなど）は、まとめた残りを値に取る
+            // 値を続けて書く短いオプション（-i の拡張子、-I のディレクトリ、-M のモジュールなど）は、まとめた残りを値に取る。
+            // -0 と -l は続く 8 進の数字だけを取る（`-0777pi` の -i を読む）
             let spec = Spec {
                 valued: "eE",
-                attached: "iIMmx0CdDFV",
+                attached: "iIMmxCdDFV",
+                digits: "0l",
                 long_valued: &[],
             };
             let p = parse(args, &spec);
@@ -226,12 +229,13 @@ fn targets(cmd: &Cmd) -> Vec<Arg> {
 }
 
 /// オプションの読み方。`valued` は値を取る短いオプション（まとめた残りか、次の引数）、`attached` は、まとめた残りを
-/// 値に取る短いオプション（空でもよく、次の引数は取らない）、`long_valued` は、`=` が無ければ次の引数を値に取る長い
-/// オプション
+/// 値に取る短いオプション（空でもよく、次の引数は取らない）、`digits` は、続く 8 進の数字だけを値に取り、まとめた残りを
+/// オプションとして読み続ける短いオプション、`long_valued` は、`=` が無ければ次の引数を値に取る長いオプション
 #[derive(Default)]
 struct Spec {
     valued: &'static str,
     attached: &'static str,
+    digits: &'static str,
     long_valued: &'static [&'static str],
 }
 
@@ -277,9 +281,15 @@ fn parse(args: &[Arg], spec: &Spec) -> Parsed {
             continue;
         }
         if t.len() > 1 && t.starts_with('-') {
-            for (i, ch) in t.char_indices().skip(1) {
+            let mut chars = t.char_indices().skip(1).peekable();
+            while let Some((i, ch)) = chars.next() {
                 let rest = i + ch.len_utf8();
                 let name = format!("-{ch}");
+                if spec.digits.contains(ch) {
+                    while chars.next_if(|(_, c)| c.is_digit(8)).is_some() {}
+                    p.opts.push((name, None));
+                    continue;
+                }
                 if spec.attached.contains(ch) {
                     p.opts.push((name, Some(after(a, rest))));
                     break;
@@ -320,8 +330,16 @@ fn after(a: &Arg, n: usize) -> Arg {
             }
         }
     }
+    let mut text = a.text.get(n..).unwrap_or_default().to_string();
+    // bash は語の先頭でない `~`（オプションの名前の後）を展開しない。`resolve` がホームと読まないよう相対にする
+    if let Some(Piece::Lit(s)) = pieces.iter_mut().find(|p| **p != Piece::Lit(String::new()))
+        && s.starts_with('~')
+    {
+        s.insert_str(0, "./");
+        text.insert_str(0, "./");
+    }
     Arg {
-        text: a.text.get(n..).unwrap_or_default().to_string(),
+        text,
         raw: a.raw.clone(),
         pieces,
     }
