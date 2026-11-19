@@ -30,11 +30,73 @@ const HEAD_NOTE: &str = "worktree の HEAD の動き（ブランチの切り替�
 const REPO_UNKNOWN: &str = "本体のリポジトリが分からない（WorkDir が消えた。--repo で渡す）";
 
 pub fn main(args: &[String]) -> i32 {
-    todo!("RED")
+    match args.first().map(String::as_str) {
+        Some("--job") => job_main(&args[1..]),
+        _ => table_main(args),
+    }
 }
 
 fn table_main(args: &[String]) -> i32 {
-    todo!("RED")
+    let mut by_name = false;
+    let mut sacct = false;
+    let mut file = "";
+    for arg in args {
+        match arg.as_str() {
+            "--by-name" => by_name = true,
+            "--sacct" => sacct = true,
+            option if option.starts_with('-') => {
+                eprintln!("ERROR: 不明なオプション: {option}");
+                return 1;
+            }
+            path => {
+                if !file.is_empty() {
+                    eprintln!("ERROR: ファイルは 1 つだけ渡せます: {file} と {path}");
+                    return 1;
+                }
+                file = path;
+            }
+        }
+    }
+    // ファイルだけを渡したときは、終わったジョブの記録だけを読み、sacct を呼ばない
+    let sacct = sacct || file.is_empty();
+    let file = if file.is_empty() {
+        slurm::COMPLETIONS
+    } else {
+        file
+    };
+    let Ok(bytes) = std::fs::read(file) else {
+        eprintln!("ERROR: ファイルを読めません: {file}");
+        return 1;
+    };
+    let accounting = if sacct {
+        match slurm::accounting_since(SACCT_SINCE) {
+            Ok(rows) => rows,
+            Err(AccountingError::Failed) => {
+                eprintln!("ERROR: sacct を読めませんでした");
+                return 1;
+            }
+            Err(AccountingError::Unreadable(reason)) => {
+                eprintln!("ERROR: sacct を読めませんでした（{reason}）");
+                return 1;
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let completions: Vec<CompletionLine> = String::from_utf8_lossy(&bytes)
+        .split('\n')
+        .map(slurm::completion_line)
+        .collect();
+    match table(&accounting, &completions, by_name) {
+        Ok(out) => {
+            print!("{out}");
+            0
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    }
 }
 
 /// 表に入れなかったものの数
@@ -68,12 +130,62 @@ fn table(
     completions: &[CompletionLine],
     by_name: bool,
 ) -> Result<String, String> {
-    todo!("RED")
+    let preempt_since = slurm::wall_clock(PREEMPT_SINCE).expect("PREEMPT_SINCE は時刻の形");
+    let mut counts = Counts::default();
+    let mut accounted: HashSet<&str> = HashSet::new();
+    let mut memory: HashMap<&str, f64> = HashMap::new();
+    let mut later: Vec<Entry> = Vec::new();
+    for (i, row) in accounting.iter().enumerate() {
+        let bad = |why: &str| format!("ERROR: sacct の {} 行目を読めません（{why}）", i + 1);
+        match row {
+            AccountingRow::Step { job, max_rss } => {
+                // 0 は、sacct の文字の出力が単位を付けない値で、sh の版が読めずに止まった（同じく止める。#376）
+                if *max_rss == Some(0.0) {
+                    return Err(bad("MaxRSS を読めません"));
+                }
+                // 無いものは -1 として比べる（sh の版と同じく、無い値のステップだけなら -）
+                let m = max_rss.unwrap_or(-1.0);
+                let held = memory.entry(job.as_str()).or_insert(m);
+                if m > *held {
+                    *held = m;
+                }
+            }
+            AccountingRow::Job(job) => {
+                accounted.insert(&job.id);
+                if shared(job.allocation.as_ref()) {
+                    counts.shared += 1;
+                    continue;
+                }
+                if let Some(entry) = take(job, preempt_since, &mut counts).map_err(bad)? {
+                    later.push(entry);
+                }
+            }
+        }
+    }
+    let mut out = Table::new(by_name);
+    for (i, line) in completions.iter().enumerate() {
+        let bad = |why: &str| format!("ERROR: {} 行目を読めません（{why}）", i + 1);
+        match line {
+            CompletionLine::Blank => {}
+            CompletionLine::Unreadable(why) => return Err(bad(why)),
+            CompletionLine::Job { id, .. } if accounted.contains(id.as_str()) => {}
+            CompletionLine::Job { record, .. } => {
+                let job = record.as_ref().map_err(|why| bad(why))?;
+                if let Some(entry) = take(job, preempt_since, &mut counts).map_err(bad)? {
+                    out.add(&entry, -1.0);
+                }
+            }
+        }
+    }
+    for entry in &later {
+        out.add(entry, memory.get(entry.id).copied().unwrap_or(-1.0));
+    }
+    Ok(out.render(&counts))
 }
 
 /// 排他でないか（CPU の数を取って投げた）。排他か読めない（slurm-run を通らない）ジョブは、排他として表に入れる
 fn shared(allocation: Option<&Allocation>) -> bool {
-    todo!("RED")
+    matches!(allocation, Some(Allocation::Cpus(_)))
 }
 
 /// 表に入れるかを決める。最後まで走っていないものと、割り込みを入れた後に割り込まれないパーティションの外で終わった
@@ -84,7 +196,31 @@ fn take<'a>(
     preempt_since: i64,
     counts: &mut Counts,
 ) -> Result<Option<Entry<'a>>, &'static str> {
-    todo!("RED")
+    if !job.completed {
+        counts.skipped += 1;
+        return Ok(None);
+    }
+    let start = job.start.ok_or("StartTime がありません")?;
+    let end = job.end.ok_or("EndTime がありません")?;
+    if end < start {
+        return Err("EndTime が StartTime より前です");
+    }
+    if end >= preempt_since {
+        match job.uninterrupted {
+            None => return Err("Partition がありません"),
+            Some(false) => {
+                counts.untimed += 1;
+                return Ok(None);
+            }
+            Some(true) => {}
+        }
+    }
+    Ok(Some(Entry {
+        id: &job.id,
+        name: &job.name,
+        estimate: job.limit_minutes.map(|m| m as i64 * 60),
+        elapsed: end - start,
+    }))
 }
 
 /// ジョブ名ごとの集計
@@ -108,36 +244,309 @@ enum Table {
 
 impl Table {
     fn new(by_name: bool) -> Table {
-        todo!("RED")
+        if by_name {
+            Table::Names(Vec::new())
+        } else {
+            Table::Jobs(Vec::new())
+        }
     }
 
     /// 1 本を加える（rss はメモリの最大の MiB、無ければ負）
     fn add(&mut self, entry: &Entry, rss: f64) {
-        todo!("RED")
+        let ratio = entry.estimate.map(|e| entry.elapsed as f64 / e as f64);
+        match self {
+            Table::Jobs(rows) => rows.push(format!(
+                "{:>7}  {:<24} {:>10} {:>10} {:>7} {:>8}",
+                entry.id,
+                entry.name,
+                entry.estimate.map_or("-".to_string(), |e| hms(e as f64)),
+                hms(entry.elapsed as f64),
+                ratio.map_or("-".to_string(), |r| format!("{r:.2}")),
+                rss_text(rss),
+            )),
+            Table::Names(groups) => {
+                let at = match groups.iter().position(|(n, _)| n == entry.name) {
+                    Some(at) => at,
+                    None => {
+                        groups.push((entry.name.to_string(), Group::default()));
+                        groups.len() - 1
+                    }
+                };
+                let group = &mut groups[at].1;
+                group.runs += 1;
+                if rss > group.max_rss {
+                    group.max_rss = rss;
+                }
+                if let (Some(estimate), Some(ratio)) = (entry.estimate, ratio) {
+                    group.estimate_sum += estimate;
+                    group.elapsed_sum += entry.elapsed;
+                    group.timed_runs += 1;
+                    if group.timed_runs == 1 || ratio > group.max_ratio {
+                        group.max_ratio = ratio;
+                    }
+                }
+            }
+        }
     }
 
     fn render(&self, counts: &Counts) -> String {
-        todo!("RED")
+        let mut out = String::new();
+        match self {
+            Table::Jobs(rows) => {
+                out.push_str(&format!(
+                    "{:>7}  {:<24} {:>10} {:>10} {:>7} {:>8}\n",
+                    "JOBID", "NAME", "ESTIMATE", "ELAPSED", "RATIO", "MAX_RSS"
+                ));
+                for row in rows {
+                    out.push_str(row);
+                    out.push('\n');
+                }
+            }
+            Table::Names(groups) => {
+                out.push_str(&format!(
+                    "{:<24} {:>5} {:>10} {:>10} {:>7} {:>9} {:>8}\n",
+                    "NAME", "RUNS", "ESTIMATE", "ELAPSED", "RATIO", "MAX_RATIO", "MAX_RSS"
+                ));
+                for (name, g) in groups {
+                    let (estimate, elapsed, ratio, max_ratio) = if g.timed_runs > 0 {
+                        let n = g.timed_runs as f64;
+                        (
+                            hms(g.estimate_sum as f64 / n),
+                            hms(g.elapsed_sum as f64 / n),
+                            format!("{:.2}", g.elapsed_sum as f64 / g.estimate_sum as f64),
+                            format!("{:.2}", g.max_ratio),
+                        )
+                    } else {
+                        let dash = || "-".to_string();
+                        (dash(), dash(), dash(), dash())
+                    };
+                    out.push_str(&format!(
+                        "{:<24} {:>5} {:>10} {:>10} {:>7} {:>9} {:>8}\n",
+                        name,
+                        g.runs,
+                        estimate,
+                        elapsed,
+                        ratio,
+                        max_ratio,
+                        rss_text(g.max_rss)
+                    ));
+                }
+            }
+        }
+        out.push_str(&format!("SKIPPED: {}\n", counts.skipped));
+        out.push_str(&format!("UNTIMED: {}\n", counts.untimed));
+        out.push_str(&format!("SHARED: {}\n", counts.shared));
+        if counts.untimed + counts.shared > 0 {
+            out.push_str(NEXT);
+            out.push('\n');
+        }
+        out
     }
 }
 
 /// 秒を `時:分:秒`（時は 24 を超えても積み上げる）。端数の秒は四捨五入する
 fn hms(secs: f64) -> String {
-    todo!("RED")
+    let s = (secs + 0.5) as i64;
+    format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
 }
 
 /// メモリの MiB を、1 GiB 以上は G で小数 1 桁、未満は M で整数に。負は無い値
 fn rss_text(mib: f64) -> String {
-    todo!("RED")
+    if mib < 0.0 {
+        "-".to_string()
+    } else if mib >= 1024.0 {
+        format!("{:.1}G", mib / 1024.0)
+    } else {
+        format!("{mib:.0}M")
+    }
 }
 
 fn job_main(args: &[String]) -> i32 {
-    todo!("RED")
+    let mut repo: Option<&str> = None;
+    let mut ids: Vec<&str> = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--repo" => match rest.next() {
+                Some(path) => repo = Some(path),
+                None => {
+                    eprintln!("ERROR: --repo に本体のリポジトリのパスを渡す");
+                    return 1;
+                }
+            },
+            option if option.starts_with('-') => {
+                eprintln!("ERROR: 不明なオプション: {option}");
+                return 1;
+            }
+            id => ids.push(id),
+        }
+    }
+    if ids.is_empty() {
+        eprintln!("ERROR: --job にジョブ番号を 1 つ以上渡す");
+        return 1;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let mut rc = 0;
+    let mut first = true;
+    for id in ids {
+        if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+            eprintln!("ERROR: ジョブ番号の形でない: {id}");
+            rc = 1;
+            continue;
+        }
+        // 前のジョブを出した後は、読めなかったジョブの前にも空行を置く（sh の版と同じ）
+        if !first {
+            println!();
+        }
+        match one_job(id, repo, now) {
+            Ok(text) => {
+                print!("{text}");
+                first = false;
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                rc = 1;
+            }
+        }
+    }
+    rc
 }
 
 /// 1 本のジョブの行（`JOB:` から `COMMAND` まで）。読めなければエラーの 1 行
 fn one_job(id: &str, repo_opt: Option<&str>, now: i64) -> Result<String, String> {
-    todo!("RED")
+    let job = match slurm::accounted_job(id) {
+        Ok(Some(job)) => job,
+        Ok(None) => {
+            return Err(format!(
+                "ERROR: sacct にジョブ {id} が無い（番号の誤りか、sacct の記録より前のジョブ）"
+            ));
+        }
+        Err(AccountingError::Failed) => {
+            return Err(format!("ERROR: sacct がジョブ {id} を読めなかった"));
+        }
+        Err(AccountingError::Unreadable(reason)) => {
+            return Err(format!(
+                "ERROR: sacct がジョブ {id} を読めなかった（{reason}）"
+            ));
+        }
+    };
+    if job.id != id {
+        return Err(format!(
+            "ERROR: sacct がジョブ {id} の代わりに {} を返した",
+            job.id
+        ));
+    }
+    let contact = contact(&job.submitted.contact);
+    let place = locate(repo_opt, &job.workdir, contact.branch);
+    let branch_log = match (&place.git_dir, contact.branch) {
+        (Some(git_dir), Some(branch))
+            if git_ok(&[
+                &format!("--git-dir={git_dir}"),
+                "reflog",
+                "exists",
+                &format!("refs/heads/{branch}"),
+            ]) =>
+        {
+            reflog(
+                &[&format!("--git-dir={git_dir}")],
+                &format!("refs/heads/{branch}"),
+            )
+        }
+        _ => Vec::new(),
+    };
+    let head_log = place
+        .worktree
+        .as_deref()
+        .map_or_else(Vec::new, |wt| reflog(&["-C", wt], "HEAD"));
+    let commit_hash = match (&place.git_dir, contact.commit) {
+        (Some(git_dir), Some(commit)) => git_text(&[
+            &format!("--git-dir={git_dir}"),
+            "rev-parse",
+            "-q",
+            "--verify",
+            &format!(
+                "{}^{{commit}}",
+                commit.strip_suffix("-dirty").unwrap_or(commit)
+            ),
+        ]),
+        _ => None,
+    };
+    let version = decide(&Evidence {
+        branch: contact.branch,
+        commit: contact.commit,
+        repo_known: place.git_dir.is_some(),
+        commit_hash: commit_hash.as_deref(),
+        branch_log: &branch_log,
+        head_log: &head_log,
+        submitted: job.submit.at,
+        started: job.start.at,
+        ended: job.end.at,
+        now,
+    });
+
+    // rev-parse --show-toplevel は --git-dir を渡しても cwd の作業ツリーを返すので、共通の git dir の名前から読む
+    let repo = place
+        .git_dir
+        .as_deref()
+        .map_or("-", |d| d.strip_suffix("/.git").unwrap_or(d));
+    let exclusive = match &job.submitted.allocation {
+        Allocation::Exclusive => "yes".to_string(),
+        Allocation::Cpus(cpus) => format!("no (--cpus-per-task={cpus})"),
+        Allocation::Unknown(word) => format!("unknown ({word})"),
+    };
+    let mut out = String::new();
+    let mut line = |text: String| {
+        out.push_str(&text);
+        out.push('\n');
+    };
+    line(format!("JOB: {} {}", job.id, job.name));
+    line(format!("STATE: {}", job.state));
+    line(format!("ELAPSED: {}", job.elapsed));
+    line(format!(
+        "TIMES: submit={} start={} end={}",
+        job.submit.text, job.start.text, job.end.text
+    ));
+    line(format!("EXCLUSIVE: {exclusive}"));
+    line(format!("WORKDIR: {}", job.workdir));
+    line(format!("BRANCH: {}", contact.branch.unwrap_or("-")));
+    line(format!("COMMIT: {}", contact.commit.unwrap_or("-")));
+    line(format!("REPO: {repo}"));
+    match version {
+        Version::Unknown { reasons } => {
+            line("VERSION: -".to_string());
+            for reason in reasons {
+                line(format!("REASON: {reason}"));
+            }
+        }
+        Version::Ran {
+            hash,
+            from_reflog,
+            notes,
+        } => {
+            match from_reflog {
+                Some(at) => line(format!(
+                    "VERSION: {hash}（reflog の {}@{{{}}}）",
+                    contact.branch.unwrap_or(""),
+                    clock(at)
+                )),
+                None => line(format!("VERSION: {hash}")),
+            }
+            for note in notes {
+                line(format!("NOTE: {note}"));
+            }
+        }
+    }
+    let command = job.submitted.command.as_deref().unwrap_or("-");
+    for (i, text) in command.split('\n').enumerate() {
+        if i == 0 {
+            line(format!("COMMAND: {text}"));
+        } else {
+            line(format!("COMMAND+ {text}"));
+        }
+    }
+    Ok(out)
 }
 
 /// 連絡先（`<ブランチ> <$PWD> <キー=値>…`）のブランチと commit=（-dirty を含む）
@@ -148,7 +557,25 @@ struct Contact<'a> {
 }
 
 fn contact(text: &str) -> Contact<'_> {
-    todo!("RED")
+    let words: Vec<&str> = text
+        .split('\n')
+        .next()
+        .unwrap_or("")
+        .split([' ', '\t'])
+        .filter(|w| !w.is_empty())
+        .collect();
+    Contact {
+        branch: words
+            .first()
+            .copied()
+            .filter(|w| !w.starts_with('/') && !w.contains('=')),
+        // 最後の commit= を読む。値が空なら commit= が無いものとする
+        commit: words
+            .iter()
+            .rev()
+            .find_map(|w| w.strip_prefix("commit="))
+            .filter(|c| !c.is_empty()),
+    }
 }
 
 /// 本体のリポジトリの共通の git dir と、残っている worktree の最上位
@@ -160,16 +587,68 @@ struct Place {
 /// 本体のリポジトリを、--repo、残っている WorkDir の git の共通のディレクトリ、worktree-add.sh の名前
 /// （<本体>-<ブランチの / を - に>）の順に探す。worktree は後片付けで消えるが、reflog は本体の共通の git dir に残る
 fn locate(repo_opt: Option<&str>, workdir: &str, branch: Option<&str>) -> Place {
-    todo!("RED")
+    let common = |dir: &str| {
+        git_text(&[
+            "-C",
+            dir,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])
+    };
+    let is_repo = |dir: &str| git_ok(&["-C", dir, "rev-parse", "--git-dir"]);
+    let workdir_exists = std::path::Path::new(workdir).is_dir();
+    let git_dir = if let Some(repo) = repo_opt {
+        common(repo)
+    } else if workdir_exists && is_repo(workdir) {
+        common(workdir)
+    } else if let Some(branch) = branch {
+        let suffix = format!("-{}", branch.replace('/', "-"));
+        let mut found = None;
+        let mut p = workdir;
+        while p.len() >= 2 && p.starts_with('/') {
+            let cut = p.rfind('/').unwrap_or(0);
+            let (parent, base) = (&p[..cut], &p[cut + 1..]);
+            if base.len() > suffix.len() && base.ends_with(&suffix) {
+                let candidate = format!("{parent}/{}", &base[..base.len() - suffix.len()]);
+                if is_repo(&candidate) {
+                    found = common(&candidate);
+                    break;
+                }
+            }
+            p = parent;
+        }
+        found
+    } else {
+        None
+    };
+    // 同じパスに後から別のリポジトリが置かれていれば、その reflog はこのジョブのものでない
+    let worktree = match &git_dir {
+        Some(g) if workdir_exists && common(workdir).as_ref() == Some(g) => {
+            git_text(&["-C", workdir, "rev-parse", "--show-toplevel"]).filter(|t| !t.is_empty())
+        }
+        _ => None,
+    };
+    Place { git_dir, worktree }
 }
 
 /// git を起動し、成功すれば標準出力（末尾の改行を除く）。標準エラーは捨てる
 fn git_text(args: &[&str]) -> Option<String> {
-    todo!("RED")
+    let out = Command::new("git")
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    out.status.success().then(|| {
+        String::from_utf8_lossy(&out.stdout)
+            .trim_end_matches('\n')
+            .to_string()
+    })
 }
 
 fn git_ok(args: &[&str]) -> bool {
-    todo!("RED")
+    git_text(args).is_some()
 }
 
 /// reflog の 1 項
@@ -185,12 +664,43 @@ struct ReflogEntry {
 /// コミットの日付で選ぶので rebase や amend の後は走った版でないコミットを返し、`rev-parse '<ブランチ>@{<時刻>}'` は
 /// reflog がその時刻まで届かなくても警告だけで別のコミットを返す
 fn reflog(git_args: &[&str], reference: &str) -> Vec<ReflogEntry> {
-    todo!("RED")
+    let mut args = git_args.to_vec();
+    args.extend([
+        "log",
+        "-g",
+        "--date=unix",
+        "--format=%gd%x09%H%x09%gs",
+        reference,
+    ]);
+    let Ok(out) = Command::new("git")
+        .args(&args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(reflog_entry)
+        .collect()
 }
 
 /// `<ref>@{<UNIX の秒>}\t<hash>\t<件名>` の 1 行
 fn reflog_entry(line: &str) -> Option<ReflogEntry> {
-    todo!("RED")
+    let (selector, rest) = line.split_once('\t')?;
+    let at = selector
+        .strip_suffix('}')?
+        .rsplit_once("@{")?
+        .1
+        .parse()
+        .ok()?;
+    let (hash, subject) = rest.split_once('\t').unwrap_or((rest, ""));
+    Some(ReflogEntry {
+        at,
+        hash: hash.to_string(),
+        subject: subject.trim_matches('\t').to_string(),
+    })
 }
 
 /// 走った版を決める材料
@@ -232,12 +742,127 @@ enum Version {
 /// 版を取った時点から終わり（走っている間は今）までに、ブランチか worktree の HEAD の reflog に、版と違うコミットへ
 /// 移る項があれば決めない
 fn decide(e: &Evidence) -> Version {
-    todo!("RED")
+    let cutoff = e.now - REFLOG_DAYS * 86_400;
+    let reaches = |log: &[ReflogEntry], t: i64| log.last().is_some_and(|oldest| oldest.at <= t);
+    let mut reasons: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    let mut version: Option<&str> = None;
+    let mut version_at: Option<i64> = None;
+    let mut since: Option<i64> = None;
+    if let Some(commit) = e.commit {
+        // 投げた時刻の無い記録は、sh の版の文字の比べ方（`Unknown` はどの時刻より後）と同じく、どの項より後とする
+        let at = e.submitted.unwrap_or(i64::MAX);
+        since = Some(at);
+        if commit.ends_with("-dirty") {
+            reasons.push("コミットしていない変更で走った（commit= の -dirty）".to_string());
+        }
+        if !e.repo_known {
+            reasons.push(REPO_UNKNOWN.to_string());
+        } else if let Some(hash) = e.commit_hash {
+            version = Some(hash);
+        } else {
+            reasons.push(format!(
+                "commit= のコミット {} が本体のリポジトリに無い（rebase で外れ、gc で消えた）",
+                commit.strip_suffix("-dirty").unwrap_or(commit)
+            ));
+        }
+        if e.branch_log.is_empty() && e.head_log.is_empty() {
+            notes.push(
+                "投げた後の変化は確かめていない（ブランチと worktree の reflog が無い）"
+                    .to_string(),
+            );
+        } else if at < cutoff {
+            notes.push(format!("投げた後の変化は確かめていない（版を取った時点が {REFLOG_DAYS} 日より前で、rebase で外れたコミットの reflog の項は黙って消えうる）"));
+        } else if !reaches(e.branch_log, at) && !reaches(e.head_log, at) {
+            notes.push(
+                "投げた後の変化は確かめていない（reflog が版を取った時点まで届かない）".to_string(),
+            );
+        } else {
+            notes.push("投げた後のコミットしない編集は確かめていない（reflog はコミットしない編集を記録せず、-dirty は投げた時点しか示さない）".to_string());
+            if !reaches(e.head_log, at) {
+                notes.push(HEAD_NOTE.to_string());
+            }
+        }
+    } else if e.branch.is_none() {
+        reasons.push(
+            "commit= もブランチも無い（HEAD を切り離して投げたか、git の外から投げた）".to_string(),
+        );
+    } else if !e.repo_known {
+        reasons.push(REPO_UNKNOWN.to_string());
+    } else if e.branch_log.is_empty() {
+        reasons.push(format!(
+            "ブランチ {} か、その reflog が無い（消えた）",
+            e.branch.unwrap_or("")
+        ));
+    } else if let Some(start) = e.started {
+        since = Some(start);
+        if start < cutoff {
+            reasons.push(format!("Start が {REFLOG_DAYS} 日より前（rebase で外れたコミットの reflog の項は黙って消えうる）"));
+        }
+        let oldest = e.branch_log.last().map_or(i64::MIN, |o| o.at);
+        if oldest > start {
+            reasons.push(format!(
+                "reflog が Start まで届かない（最も古い項は {}）",
+                clock(oldest)
+            ));
+        } else {
+            if let Some(entry) = e.branch_log.iter().find(|x| x.at <= start) {
+                version = Some(&entry.hash);
+                version_at = Some(entry.at);
+            }
+            // ブランチの版でも、投げてから Start までに worktree が別のコミットへ移っていれば、ジョブはそちらを読む
+            if let Some(entry) = e.head_log.iter().find(|x| x.at <= start)
+                && Some(entry.hash.as_str()) != version
+            {
+                reasons.push(format!(
+                    "Start の時点の worktree の HEAD がブランチの版と違う（{} {}）",
+                    clock(entry.at),
+                    entry.subject
+                ));
+            }
+        }
+        notes.push(
+            "コミットしていない変更の有無は確かめていない（nix を通らないジョブには dirty の印が出ない）"
+                .to_string(),
+        );
+        if !reaches(e.head_log, start) {
+            notes.push(HEAD_NOTE.to_string());
+        }
+    } else {
+        reasons.push("Start が無い（走り始めていない）".to_string());
+    }
+
+    if let (Some(hash), Some(since)) = (version, since) {
+        let until = e.ended.unwrap_or(e.now);
+        let mut moves: Vec<String> = e
+            .branch_log
+            .iter()
+            .chain(e.head_log)
+            .filter(|x| since <= x.at && x.at <= until && x.hash != hash)
+            .map(|x| format!("{} {}", clock(x.at), x.subject))
+            .collect();
+        moves.sort();
+        moves.dedup();
+        for m in moves {
+            reasons.push(format!(
+                "版を取った時点（{}）から End までに reflog の項がある: {m}",
+                clock(since)
+            ));
+        }
+    }
+    match version {
+        Some(hash) if reasons.is_empty() => Version::Ran {
+            hash: hash.to_string(),
+            from_reflog: if e.commit.is_some() { None } else { version_at },
+            notes,
+        },
+        _ => Version::Unknown { reasons },
+    }
 }
 
 /// UNIX の秒を、会計の記録と同じ JST の `%FT%T` で
 fn clock(at: i64) -> String {
-    todo!("RED")
+    slurm::clock_text(at).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -320,7 +945,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn each_job_gets_its_estimate_elapsed_ratio_and_memory_in_columns() {
         let out = jobs(vec![
             done(
@@ -350,7 +974,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn jobs_that_did_not_run_to_the_end_are_counted_as_skipped_without_reading_their_times() {
         let out = jobs(vec![
             done(
@@ -369,7 +992,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_elapsed_time_crosses_days_and_stacks_hours_past_24() {
         let night = jobs(vec![done(
             "5",
@@ -392,7 +1014,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_job_without_an_estimate_has_dashes_for_the_estimate_and_ratio() {
         let out = jobs(vec![done(
             "7",
@@ -409,7 +1030,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn by_name_gives_runs_averages_the_total_ratio_and_the_largest_ratio() {
         // メモリの値の無いジョブだけのジョブ名の MAX_RSS は、sh の版のまま 0M（直すのは #375）
         let out = names(vec![
@@ -452,7 +1072,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn by_name_averages_only_jobs_with_an_estimate_but_counts_every_run() {
         let out = names(vec![
             done(
@@ -491,7 +1110,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn by_name_takes_the_largest_ratio_even_after_a_first_ratio_of_0() {
         let out = names(vec![
             done(
@@ -515,7 +1133,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_finished_line_whose_end_is_before_its_start_or_lacks_a_time_stops_with_its_line_number() {
         let error = |job: PastJob| {
             table(
@@ -571,7 +1188,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn an_unreadable_line_stops_with_its_line_number_and_reason() {
         let completions = vec![
             CompletionLine::Blank,
@@ -597,7 +1213,6 @@ mod tests {
 
     // 割り込まれうるのは、割り込みを r995 に反映した時刻（2026-10-23T21:40）より後に終わったジョブ
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn after_preemption_only_uninterrupted_jobs_enter_the_table_and_the_rest_are_untimed() {
         let out = jobs(vec![
             done(
@@ -631,7 +1246,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn before_preemption_jobs_of_any_partition_enter_the_table() {
         let out = jobs(vec![
             done(
@@ -667,7 +1281,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_default_job_that_started_before_preemption_and_ended_after_is_untimed() {
         let out = jobs(vec![
             done(
@@ -692,7 +1305,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn by_name_does_not_mix_untimed_jobs_into_the_totals() {
         let out = names(vec![
             done(
@@ -720,7 +1332,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn jobs_that_did_not_finish_are_skipped_rather_than_untimed_after_preemption() {
         let out = jobs(vec![
             done(
@@ -737,7 +1348,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_job_that_ended_after_preemption_without_a_partition_stops_with_its_line_number() {
         assert_eq!(
             table(
@@ -774,7 +1384,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn next_shows_how_to_read_untimed_and_shared_jobs_only_when_there_are_some() {
         let next = "NEXT: UNTIMED と SHARED のジョブ（main か -c で走り、時間が当てにならない）の実績は sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,State,MaxRSS,Suspended で読む（Elapsed は止められていた時間を除く）";
         let bench = || {
@@ -814,7 +1423,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn accounted_jobs_get_the_largest_step_memory_after_the_jobcomp_rows() {
         let accounting = accounted(
             sacct_job(
@@ -846,7 +1454,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_job_in_both_records_is_read_once_from_the_accounting() {
         let accounting = accounted(
             sacct_job(
@@ -882,7 +1489,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn shared_jobs_are_counted_and_jobs_of_unknown_allocation_enter_the_table() {
         let mut accounting = accounted(
             sacct_job(
@@ -911,7 +1517,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_step_with_zero_memory_stops_with_its_sacct_line_number_like_the_sh_version() {
         // sacct の文字の出力は 0 バイトに単位を付けず、sh の版はそれを読めずに止まった（直すのは #376）
         let accounting = accounted(
@@ -931,7 +1536,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn an_unreadable_accounted_job_stops_before_the_jobcomp_lines_are_read() {
         let accounting = accounted(
             PastJob {
@@ -1000,7 +1604,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_commit_in_the_contact_is_the_version_when_the_reflogs_do_not_move_while_it_runs() {
         let log = branch_log();
         let e = Evidence {
@@ -1022,7 +1625,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_dirty_or_missing_commit_or_an_unknown_repository_leaves_the_version_undecided() {
         let log = branch_log();
         let base = Evidence {
@@ -1055,7 +1657,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_reflog_entry_to_another_commit_between_submission_and_end_leaves_the_version_undecided() {
         let mut log = branch_log();
         log.insert(0, entry(T9 + 90 * 60, "c2", "commit: c"));
@@ -1105,7 +1706,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn with_a_commit_the_notes_say_what_the_reflogs_could_not_show() {
         let log = branch_log();
         let base = Evidence {
@@ -1146,7 +1746,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn without_a_commit_the_version_is_the_last_branch_entry_before_the_start() {
         let log = branch_log();
         assert_eq!(
@@ -1162,7 +1761,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn without_a_commit_a_move_after_the_start_or_a_reflog_that_does_not_reach_it_leaves_it_undecided()
      {
         let mut moved = branch_log();
@@ -1193,7 +1791,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn without_a_commit_the_branch_repository_log_and_start_must_be_known() {
         let log = branch_log();
         let base = evidence(&log, &log);
@@ -1237,7 +1834,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_contact_gives_the_branch_first_and_the_last_commit() {
         assert_eq!(
             contact("feat/x /w commit=abc claude=s"),
@@ -1265,7 +1861,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_reflog_line_gives_the_time_the_hash_and_the_subject() {
         assert_eq!(
             reflog_entry("feat/x@{1795107430}\tabc\tcommit: b"),

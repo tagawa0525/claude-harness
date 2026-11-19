@@ -751,11 +751,46 @@ pub struct Submitted {
 /// 区分のあるコメントは 3 つの ` | ` の後から次の「 --wrap 」までを連絡先とする。自分の --comment の無い行では、
 /// --wrap のコマンドの中の「 --comment 」を読まない
 pub fn submitted(line: &str) -> Submitted {
-    todo!("RED")
+    const COMMENT: &str = " --comment ";
+    const WRAP: &str = " --wrap ";
+    let (contact, command) = match line.split_once(COMMENT) {
+        Some((before, mut comment)) if !before.contains(WRAP) => {
+            let labelled = super::slurm_class::CLASSES
+                .iter()
+                .any(|class| comment.starts_with(&format!("{class} | ")));
+            if labelled {
+                for _ in 0..3 {
+                    if let Some((_, rest)) = comment.split_once(" | ") {
+                        comment = rest;
+                    }
+                }
+            }
+            match comment.split_once(WRAP) {
+                Some((contact, command)) => (contact, Some(command)),
+                None => (comment, None),
+            }
+        }
+        _ => ("", line.split_once(WRAP).map(|(_, command)| command)),
+    };
+    Submitted {
+        allocation: allocation(line),
+        contact: contact.to_string(),
+        command: command.map(str::to_string),
+    }
 }
 
 fn allocation(line: &str) -> Allocation {
-    todo!("RED")
+    let word = match line.split_once("sbatch ") {
+        Some((_, rest)) => rest.split(char::is_whitespace).next().unwrap_or(""),
+        None => "-",
+    };
+    if word == "--exclusive" {
+        Allocation::Exclusive
+    } else if let Some(cpus) = word.strip_prefix("--cpus-per-task=") {
+        Allocation::Cpus(cpus.to_string())
+    } else {
+        Allocation::Unknown(word.to_string())
+    }
 }
 
 /// 終わったジョブ（会計の記録では、待っているものと走っているものを含む）の、見積もりと実績を比べるための記録
@@ -801,18 +836,73 @@ pub enum AccountingError {
 
 /// since（`YYYY-MM-DD`）以降の会計の記録の、ジョブとステップの行。sacct の標準エラーはそのまま流す
 pub fn accounting_since(since: &str) -> Result<Vec<AccountingRow>, AccountingError> {
-    todo!("RED")
+    let out = Command::new("sacct")
+        .args([JSON, "-S", since])
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            eprintln!("sacct を起動できない: {e}");
+            AccountingError::Failed
+        })?;
+    if !out.status.success() {
+        return Err(AccountingError::Failed);
+    }
+    accounting_rows(&String::from_utf8_lossy(&out.stdout)).map_err(AccountingError::Unreadable)
 }
 
 fn accounting_rows(json: &str) -> Result<Vec<AccountingRow>, String> {
-    todo!("RED")
+    let mut rows = Vec::new();
+    for job in json_jobs("sacct", json)? {
+        let id = job["job_id"]
+            .as_u64()
+            .ok_or("sacct の出力のジョブに数の job_id が無い")?
+            .to_string();
+        let time = &job["time"];
+        let limit = &time["limit"];
+        let partition = job["partition"].as_str().unwrap_or("");
+        rows.push(AccountingRow::Job(PastJob {
+            id: id.clone(),
+            name: job["name"].as_str().unwrap_or("").to_string(),
+            completed: state_word(&job["state"]["current"]) == "COMPLETED",
+            limit_minutes: (limit["set"].as_bool() == Some(true)
+                && limit["infinite"].as_bool() != Some(true))
+            .then(|| limit["number"].as_u64())
+            .flatten()
+            .filter(|m| *m > 0),
+            start: moment(&time["start"]).at.map(|t| t + super::time::JST),
+            end: moment(&time["end"]).at.map(|t| t + super::time::JST),
+            uninterrupted: (!partition.is_empty()).then(|| partition == UNINTERRUPTED),
+            allocation: Some(allocation(job["submit_line"].as_str().unwrap_or(""))),
+        }));
+        for step in job["steps"].as_array().into_iter().flatten() {
+            rows.push(AccountingRow::Step {
+                job: id.clone(),
+                max_rss: max_rss(step),
+            });
+        }
+    }
+    Ok(rows)
 }
 
 /// ステップのメモリの最大の MiB。sacct の MaxRSS の文字の出力（26.05.6 の src/sacct/print.c の PRINT_MAXRSS と、
 /// src/common/slurm_protocol_api.c の convert_num_unit2。2026-11-20 に slurm-26-05-6-1 のタグで読んだ）と同じく、
 /// 割り切れれば整数、割り切れなければ小数 2 桁に丸める。0 バイトは単位の無い `0` で、0 になる
 fn max_rss(step: &Value) -> Option<f64> {
-    todo!("RED")
+    let bytes = step["tres"]["requested"]["max"]
+        .as_array()?
+        .iter()
+        .find(|tres| tres["type"].as_str() == Some("mem"))?["count"]
+        .as_u64()?;
+    // 記録が無い値（NO_VAL64、INFINITE64）は空の欄
+    if bytes >= NO_VAL64 {
+        return None;
+    }
+    let mib = bytes as f64 / 1024.0 / 1024.0;
+    if mib.fract() == 0.0 {
+        Some(mib)
+    } else {
+        format!("{mib:.2}").parse().ok()
+    }
 }
 
 /// 終わったジョブの記録のファイルの 1 行
@@ -832,13 +922,80 @@ pub enum CompletionLine {
 /// 終わったジョブの記録のファイルの 1 行を読む。行は `キー=値` の空白区切りで、値に `=` や `,` を含む欄（Tres）が
 /// あるので最初の `=` で分ける。`=` を含まない語は直前の値の続き（空白のあるジョブ名）として読む
 pub fn completion_line(line: &str) -> CompletionLine {
-    todo!("RED")
+    let mut fields: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let mut key: Option<&str> = None;
+    let mut words = line.split([' ', '\t']).filter(|w| !w.is_empty()).peekable();
+    if words.peek().is_none() {
+        return CompletionLine::Blank;
+    }
+    for word in words {
+        if let Some((k, v)) = word.split_once('=') {
+            fields.insert(k, v.to_string());
+            key = (!k.is_empty()).then_some(k);
+        } else if let Some(value) = key.and_then(|k| fields.get_mut(k)) {
+            value.push(' ');
+            value.push_str(word);
+        }
+    }
+    let Some(id) = fields.get("JobId") else {
+        return CompletionLine::Unreadable("JobId がありません");
+    };
+    let text = |k: &str| fields.get(k).map(String::as_str);
+    let record = (|| {
+        let state = text("JobState").ok_or("JobState がありません")?;
+        let limit = text("TimeLimit").ok_or("TimeLimit がありません")?;
+        let nodes = text("NodeCnt").unwrap_or("");
+        if nodes.is_empty() || !nodes.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("NodeCnt が数値ではありません");
+        }
+        let partition = text("Partition").unwrap_or("");
+        Ok(PastJob {
+            id: id.clone(),
+            name: text("Name").unwrap_or("").to_string(),
+            completed: state == "COMPLETED" && nodes.bytes().any(|b| b != b'0'),
+            limit_minutes: (!limit.is_empty() && limit.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| limit.parse().ok())
+                .flatten()
+                .filter(|m| *m > 0),
+            start: wall_clock(text("StartTime").unwrap_or("")),
+            end: wall_clock(text("EndTime").unwrap_or("")),
+            uninterrupted: (!partition.is_empty()).then(|| partition == UNINTERRUPTED),
+            allocation: None,
+        })
+    })();
+    CompletionLine::Job {
+        id: id.clone(),
+        record,
+    }
 }
 
 /// `YYYY-MM-DDTHH:MM:SS` の時刻を、時間帯を数えずに 1970-01-01T00:00:00 から数えた秒に。月は 1〜12、日は
 /// 1〜31、時は 23、分と秒は 59 まで（月の日数は見ない）。形が違えば None
 pub fn wall_clock(text: &str) -> Option<i64> {
-    todo!("RED")
+    let b = text.as_bytes();
+    let shape = b.len() == 19
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b'T',
+            13 | 16 => *c == b':',
+            _ => c.is_ascii_digit(),
+        });
+    if !shape {
+        return None;
+    }
+    let num = |from: usize, len: usize| text[from..from + len].parse::<i64>().ok();
+    let (y, mo, d, h, mi, s) = (
+        num(0, 4)?,
+        num(5, 2)?,
+        num(8, 2)?,
+        num(11, 2)?,
+        num(14, 2)?,
+        num(17, 2)?,
+    );
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 59 {
+        return None;
+    }
+    Some(super::time::days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + s)
 }
 
 /// 会計の記録の時刻
@@ -853,12 +1010,38 @@ pub struct Moment {
 /// JSON の時刻（UNIX の秒）を、sacct の文字の出力（src/common/parse_time.c の `_make_time_str_internal`）の形と
 /// 合わせて。0 と INFINITE は Unknown、NO_VAL は None
 fn moment(value: &Value) -> Moment {
-    todo!("RED")
+    match value.as_i64() {
+        None | Some(0) => Moment {
+            text: "Unknown".to_string(),
+            at: None,
+        },
+        Some(t) if t == INFINITE as i64 => Moment {
+            text: "Unknown".to_string(),
+            at: None,
+        },
+        Some(t) if t == NO_VAL as i64 => Moment {
+            text: "None".to_string(),
+            at: None,
+        },
+        Some(t) => Moment {
+            text: clock_text(t).unwrap_or_default(),
+            at: Some(t),
+        },
+    }
 }
 
 /// 経過の秒を、sacct の Elapsed の文字の出力（src/common/parse_time.c の `secs2time_str`）の形で
 fn elapsed_text(secs: u64) -> String {
-    todo!("RED")
+    if secs == INFINITE {
+        return "UNLIMITED".to_string();
+    }
+    let (days, hours, minutes, seconds) =
+        (secs / 86_400, secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    if days > 0 {
+        format!("{days}-{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    }
 }
 
 /// 会計の記録の 1 本のジョブ。文字列の欄は、出力に書く形（sacct の文字の出力と同じ）
@@ -882,11 +1065,49 @@ pub struct AccountedJob {
 /// 取り消した利用者を名前（`kill_request_user`。26.05.6 の data_parser の v0.0.45 の parsers.c の DUMP_FUNC(USER_ID)）で
 /// しか持たず、uid の数を持たない
 pub fn accounted_job(job: &str) -> Result<Option<AccountedJob>, AccountingError> {
-    todo!("RED")
+    let run = |args: &[&str]| -> Result<String, AccountingError> {
+        let out = Command::new("sacct")
+            .args(args)
+            .stderr(Stdio::inherit())
+            .output()
+            .map_err(|e| {
+                eprintln!("sacct を起動できない: {e}");
+                AccountingError::Failed
+            })?;
+        if !out.status.success() {
+            return Err(AccountingError::Failed);
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let json = run(&[JSON, "-X", "-j", job])?;
+    let state = run(&["-j", job, "-X", "-P", "-n", "-o", "State"])?;
+    accounted_job_json(&json, state.lines().next().unwrap_or(""))
+        .map_err(AccountingError::Unreadable)
 }
 
 fn accounted_job_json(json: &str, state: &str) -> Result<Option<AccountedJob>, String> {
-    todo!("RED")
+    let jobs = json_jobs("sacct", json)?;
+    let found = match jobs.as_slice() {
+        [] => return Ok(None),
+        [found] => found,
+        _ => return Err(format!("記録が {} 件ある", jobs.len())),
+    };
+    let time = &found["time"];
+    let text = |key: &str| found[key].as_str().unwrap_or("").to_string();
+    Ok(Some(AccountedJob {
+        id: id_text(&found["job_id"]),
+        name: text("name"),
+        state: state.to_string(),
+        elapsed: time["elapsed"]
+            .as_u64()
+            .map(elapsed_text)
+            .unwrap_or_default(),
+        submit: moment(&time["submission"]),
+        start: moment(&time["start"]),
+        end: moment(&time["end"]),
+        workdir: text("working_directory"),
+        submitted: submitted(found["submit_line"].as_str().unwrap_or("")),
+    }))
 }
 
 #[cfg(test)]
@@ -1429,7 +1650,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_submit_line_gives_the_allocation_the_contact_after_the_labels_and_the_command() {
         assert_eq!(
             super::submitted(&submit_line(
@@ -1448,7 +1668,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_purpose_with_wrap_does_not_cut_the_contact_and_an_old_comment_is_all_contact() {
         // 参照と目的は | を含まないが「 --wrap 」を含みうるので、区分のあるコメントは 3 つの | の後から読む
         let purpose = super::submitted(&submit_line(
@@ -1474,7 +1693,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_comment_inside_the_wrapped_command_is_not_the_contact() {
         let line =
             super::submitted("/x/sbatch --exclusive --wrap tool --comment feat/y /x commit=abc");
@@ -1489,7 +1707,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_submit_line_not_from_slurm_run_has_an_unknown_allocation_and_may_lack_the_command() {
         assert_eq!(
             super::submitted("/usr/bin/sbatch --wrap run").allocation,
@@ -1543,7 +1760,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn sacct_json_gives_each_job_row_followed_by_its_step_rows_like_the_text_output() {
         use super::{AccountingRow, Allocation, PastJob};
         assert_eq!(
@@ -1576,7 +1792,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_max_rss_is_mib_rounded_to_2_decimals_unless_whole_like_sacct_units_m() {
         // sacct --units=M の文字の出力（1861193728 バイトは 1774.97M、1 GiB は 1024M、0 バイトは単位の無い 0）
         for (bytes, mib) in [
@@ -1601,7 +1816,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn sacct_json_reads_the_limit_times_partition_state_and_allocation_of_the_job() {
         let job = |changes: serde_json::Value| match rows(&[sacct_job(changes, &[])]).remove(0) {
             super::AccountingRow::Job(job) => job,
@@ -1639,7 +1853,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn sacct_json_without_jobs_or_a_job_number_is_unreadable() {
         assert!(super::accounting_rows("not json").is_err());
         assert!(super::accounting_rows("{}").is_err());
@@ -1670,7 +1883,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_jobcomp_line_gives_the_job_with_its_times_limit_and_partition() {
         assert_eq!(
             completion(&jobcomp(
@@ -1700,7 +1912,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_jobcomp_name_with_spaces_continues_the_value_and_values_split_at_the_first_equals() {
         let job = completion(&jobcomp(
             "8",
@@ -1716,7 +1927,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn only_completed_jobcomp_lines_with_a_node_have_run_to_the_end() {
         let at = |state: &str, nodes: &str| {
             completion(&jobcomp(
@@ -1739,7 +1949,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_jobcomp_limit_that_is_not_a_positive_number_is_no_estimate() {
         for limit in ["UNLIMITED", "0", "Partition_Limit", ""] {
             assert_eq!(
@@ -1754,7 +1963,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_jobcomp_line_without_an_id_state_limit_or_node_count_is_unreadable() {
         use super::CompletionLine;
         assert_eq!(super::completion_line(""), CompletionLine::Blank);
@@ -1790,7 +1998,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_wall_clock_counts_seconds_across_days_and_months_and_rejects_impossible_fields() {
         let at = super::wall_clock;
         assert_eq!(at("1970-01-01T09:00:00"), Some(32_400));
@@ -1815,7 +2022,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_sacct_job_gives_the_fields_as_the_text_output_writes_them() {
         let json = json!({"jobs": [{
             "job_id": 963,
@@ -1855,7 +2061,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_elapsed_time_is_hh_mm_ss_with_days_in_front() {
         for (secs, text) in [
             (0, "00:00:00"),
@@ -1869,7 +2074,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_sacct_job_that_is_missing_or_ambiguous_is_none_or_an_error() {
         assert_eq!(super::accounted_job_json(r#"{"jobs": []}"#, ""), Ok(None));
         let two = json!({"jobs": [{"job_id": 5}, {"job_id": 6}]}).to_string();

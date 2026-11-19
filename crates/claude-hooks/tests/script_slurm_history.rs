@@ -231,7 +231,6 @@ fn jobcomp(id: u64, name: &str, start: &str, end: &str) -> String {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_file_alone_is_read_without_calling_sacct() {
     let h = History::new();
     std::fs::write(
@@ -256,7 +255,6 @@ fn a_file_alone_is_read_without_calling_sacct() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn sacct_is_read_as_json_with_steps_since_the_accounting_started_and_merged_with_the_file() {
     let h = History::new();
     let jobs = json!({"jobs": [{
@@ -291,7 +289,6 @@ fn sacct_is_read_as_json_with_steps_since_the_accounting_started_and_merged_with
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_failing_sacct_or_an_unreadable_output_ends_with_1() {
     let h = History::new();
     std::fs::write(h.root.join("jc"), "").unwrap();
@@ -314,7 +311,6 @@ fn a_failing_sacct_or_an_unreadable_output_ends_with_1() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn an_unreadable_line_of_the_file_ends_with_1_and_its_line_number() {
     let h = History::new();
     std::fs::write(
@@ -335,7 +331,6 @@ fn an_unreadable_line_of_the_file_ends_with_1_and_its_line_number() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_missing_file_two_files_and_an_unknown_option_end_with_1() {
     let h = History::new();
     std::fs::write(h.root.join("jc"), "").unwrap();
@@ -367,7 +362,6 @@ fn a_missing_file_two_files_and_an_unknown_option_end_with_1() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_reads_the_job_from_sacct_and_writes_its_lines_and_the_version_of_the_commit() {
     let h = History::new();
     let (c1, short) = h.setup_repo();
@@ -412,7 +406,6 @@ fn job_reads_the_job_from_sacct_and_writes_its_lines_and_the_version_of_the_comm
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_writes_shared_cpus_a_cancelled_state_and_a_multiline_command_as_sacct_has_them() {
     let h = History::new();
     let (_, short) = h.setup_repo();
@@ -439,7 +432,6 @@ fn job_writes_shared_cpus_a_cancelled_state_and_a_multiline_command_as_sacct_has
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_separates_jobs_with_a_blank_line_and_reports_missing_ones_after_the_others() {
     let h = History::new();
     h.record(
@@ -469,7 +461,6 @@ fn job_separates_jobs_with_a_blank_line_and_reports_missing_ones_after_the_other
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_with_a_failing_sacct_a_bad_number_or_no_number_ends_with_1() {
     let h = History::new();
     let out = h.run_env(&["--job", "101"], &[("FAKE_SACCT_FAIL", "1")]);
@@ -527,7 +518,6 @@ fn branch_job(h: &History, id: u64, times: [i64; 3]) {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_with_a_commit_reads_moves_of_the_branch_and_of_the_worktree_head_while_it_runs() {
     let h = History::new();
     let (_, short) = h.setup_repo();
@@ -567,7 +557,6 @@ fn job_with_a_commit_reads_moves_of_the_branch_and_of_the_worktree_head_while_it
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_finds_the_repository_by_the_worktree_name_or_by_repo_after_the_worktree_is_gone() {
     let h = History::new();
     let (c1, short) = h.setup_repo();
@@ -600,7 +589,6 @@ fn job_finds_the_repository_by_the_worktree_name_or_by_repo_after_the_worktree_i
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_with_a_commit_that_the_repository_lacks_or_a_recreated_branch_says_so() {
     let h = History::new();
     let (c1, _) = h.setup_repo();
@@ -625,7 +613,6 @@ fn job_with_a_commit_that_the_repository_lacks_or_a_recreated_branch_says_so() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_with_a_commit_notes_an_unchecked_worktree_head_only_when_the_worktree_is_gone() {
     let h = History::new();
     let (_, short) = h.setup_repo();
@@ -639,7 +626,6 @@ fn job_with_a_commit_notes_an_unchecked_worktree_head_only_when_the_worktree_is_
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_without_a_commit_takes_the_branch_entry_before_the_start() {
     let h = History::new();
     let (c1, _) = h.setup_repo();
@@ -696,7 +682,6 @@ fn job_without_a_commit_takes_the_branch_entry_before_the_start() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn job_without_a_commit_reads_a_worktree_head_that_moved_before_the_start() {
     let h = History::new();
     h.setup_repo();
