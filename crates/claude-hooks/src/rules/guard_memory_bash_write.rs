@@ -356,11 +356,15 @@ mod tests {
             format!("sed --in-place 's/a/b/' {MEM}/MEMORY.md"),
             format!("perl -pi -e 's/a/b/' {MEM}/MEMORY.md"),
             format!("perl -i -pe 's/a/b/' {MEM}/MEMORY.md"),
+            // -0 と -l は続く数字だけを値に取り、まとめた残りのオプションは読み続ける
+            format!("perl -0pi -e 's/a/b/' {MEM}/MEMORY.md"),
+            format!("perl -0777pi -e 's/a/b/' {MEM}/MEMORY.md"),
+            format!("perl -lpi -e 's/a/b/' {MEM}/MEMORY.md"),
             format!("cp /tmp/a.md {MEM}/a.md"),
             format!("cp /tmp/a.md {MEM}/"),
             format!("cp -t {MEM} /tmp/a.md"),
             format!("mv /tmp/a.md {MEM}/a.md"),
-            format!("mv --target-directory={MEM} /tmp/a.md"),
+            "mv --target-directory=$HOME/.claude/projects/-work-repo/memory /tmp/a.md".to_string(),
             format!("install -m 644 /tmp/a.md {MEM}/a.md"),
             format!("truncate -s 0 {MEM}/a.md"),
             format!("cd {MEM} && echo x >> MEMORY.md"),
@@ -398,6 +402,10 @@ mod tests {
             // クォートした `~` を bash は展開せず、cwd の下の `~` というディレクトリに書く
             "echo x >> \"~/.claude/projects/-work-repo/memory/MEMORY.md\"",
             "tee '~/.claude/projects/-work-repo/memory/a.md'",
+            "echo x >> \\~/.claude/projects/-work-repo/memory/a.md",
+            // 語の先頭でない `~`（オプションの名前の後）も bash は展開しない
+            "cp --target-directory=~/.claude/projects/-work-repo/memory /tmp/a.md",
+            "cp -t~/.claude/projects/-work-repo/memory /tmp/a.md",
         ] {
             assert!(!denied(src), "{src}");
         }
