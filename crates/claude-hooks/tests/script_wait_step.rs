@@ -83,12 +83,13 @@ impl Dir {
 }
 
 #[test]
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
 fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     let (code, out) = d.wait(1, 60, &["/wt/a", &log]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("WAIT: 親に最後に送ってから 0 分"), "{out}");
+    assert!(out.contains("WAIT: 待つだけで 0 分"), "{out}");
     assert!(
         out.contains("NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ"),
         "{out}"
@@ -102,6 +103,7 @@ fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
 }
 
 #[test]
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
 fn an_injected_time_takes_the_steps_without_sleeping() {
     // 時刻を渡すと、1 ステップの 270 秒を眠らずに進め、経過はその時計で数える
     let d = Dir::new();
@@ -109,7 +111,7 @@ fn an_injected_time_takes_the_steps_without_sleeping() {
     let start = Instant::now();
     let (code, out) = d.wait_at(1000, 270, 3300, &["/wt/fake", &log]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("WAIT: 親に最後に送ってから 4 分"), "{out}");
+    assert!(out.contains("WAIT: 待つだけで 4 分"), "{out}");
     // 1 ステップの 270 秒より十分に短い（負荷の下でも起動と 270 回の見回りは収まる）
     assert!(start.elapsed() < Duration::from_secs(60), "{out}");
 }
@@ -180,6 +182,7 @@ fn done_of_the_last_file_shows_the_call_without_files() {
 }
 
 #[test]
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
 fn past_the_limit_the_wait_ends_with_the_next_action_and_removes_the_clock() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -187,10 +190,7 @@ fn past_the_limit_the_wait_ends_with_the_next_action_and_removes_the_clock() {
     d.wait_at(100, 2, 3, &["/wt/c", &log]);
     let (code, out) = d.wait_at(102, 2, 3, &["/wt/c", &log]);
     assert_eq!(code, 3, "{out}");
-    assert!(
-        out.contains("END: 親に最後に送ってから 0 分を超えた"),
-        "{out}"
-    );
+    assert!(out.contains("END: 待つだけで 0 分を超えた"), "{out}");
     assert!(out.contains("NEXT: 待つのをやめる"), "{out}");
     assert!(
         out.contains("投げたジョブと、その background の slurm-run.sh は止めない"),
@@ -208,42 +208,8 @@ fn past_the_limit_the_wait_ends_with_the_next_action_and_removes_the_clock() {
     assert_eq!(d.wait_at(103, 2, 3, &["/wt/c", &log]).0, 2);
 }
 
-/// hook の restart-wait-clock に、担当 agent の tool_name の呼び出し（tool_input は input）を掛ける
-fn hook(d: &Dir, agent: &str, tool_name: &str, input: serde_json::Value) {
-    use std::io::Write;
-    let json = serde_json::json!({
-        "tool_name": tool_name,
-        "tool_input": input,
-        "cwd": d.root,
-        "agent_id": agent,
-    });
-    let mut child = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
-        .args(["pre-tool-use", "--rule", "restart-wait-clock"])
-        .env("TMPDIR", d.root.join("tmp"))
-        .env("TMP", d.root.join("tmp"))
-        .env("TEMP", d.root.join("tmp"))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(json.to_string().as_bytes())
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success());
-    // ゲートではないので、何も出さない
-    assert!(
-        out.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-}
-
-/// 状態のファイルの、親に最後に送った時刻
-fn reported(d: &Dir) -> u64 {
+/// 状態のファイルの、待つだけになった時刻
+fn started(d: &Dir) -> u64 {
     let dir = d.root.join("tmp").join("claude-wait-step");
     let state = std::fs::read_dir(&dir)
         .unwrap()
@@ -260,52 +226,7 @@ fn reported(d: &Dir) -> u64 {
 }
 
 #[test]
-fn a_message_of_the_agent_to_the_parent_restarts_its_clock() {
-    let d = Dir::new();
-    let log = d.file("job.out", "");
-    // sh の文字列の中の `\` は消えるので、Windows のパスも `/` で区切って書く
-    let wt = d.root.join("wt").display().to_string().replace('\\', "/");
-    let log = log.replace('\\', "/");
-    hook(
-        &d,
-        "a1",
-        "Bash",
-        serde_json::json!({"command": format!("~/.claude/scripts/wait-step.sh {wt} {log}")}),
-    );
-    d.wait_at(100, 1, 3300, &[&wt, &log]);
-    assert_eq!(reported(&d), 100);
-    // ほかの担当の送信と、親でない宛先は数え直さない
-    hook(
-        &d,
-        "a2",
-        "SendMessage",
-        serde_json::json!({"to": "main", "message": "x"}),
-    );
-    hook(
-        &d,
-        "a1",
-        "SendMessage",
-        serde_json::json!({"to": "code-review", "message": "x"}),
-    );
-    assert_eq!(reported(&d), 100);
-    hook(
-        &d,
-        "a1",
-        "SendMessage",
-        serde_json::json!({"to": "main", "message": "x"}),
-    );
-    let restarted = reported(&d);
-    assert!(restarted > 1_000_000, "{restarted}");
-    hook(
-        &d,
-        "a1",
-        "SubagentHandback",
-        serde_json::json!({"message": "x"}),
-    );
-    assert!(reported(&d) >= restarted);
-}
-
-#[test]
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
 fn the_default_limit_is_55_minutes_from_the_start_of_the_wait() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -333,20 +254,22 @@ fn the_default_limit_is_55_minutes_from_the_start_of_the_wait() {
     let (code, out) = wait(12 * 270);
     assert_eq!(code, 3, "{out}");
     assert!(
-        out.contains("END: 親に最後に送ってから 55 分を超えた（線は 55 分）"),
+        out.contains("END: 待つだけで 55 分を超えた（線は 55 分）"),
         "{out}"
     );
 }
 
 #[test]
-fn the_clock_continues_from_the_start_after_a_done() {
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
+fn a_done_restarts_the_clock() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     let ended = d.file("ended.out", "[exited with code 0]\n");
     d.wait_at(100, 2, 5, &["/wt/d", &log]);
     d.wait_at(102, 2, 5, &["/wt/d", &log, &ended]);
-    // 待ち始めから 4 秒、線の 5 秒の手前。次の 1 ステップで線に届く
-    assert_eq!(d.wait_at(104, 2, 5, &["/wt/d", &log]).0, 3);
+    // 102 秒の DONE（待ちのほかのこと）から数え直すので、待ち始めから 6 秒の 106 秒でも線の 5 秒に届かない
+    assert_eq!(started(&d), 102);
+    assert_eq!(d.wait_at(104, 2, 5, &["/wt/d", &log]).0, 2);
 }
 
 #[test]
@@ -360,12 +283,34 @@ fn done_comes_before_the_end_of_the_wait() {
 }
 
 #[test]
-fn a_gap_longer_than_the_interval_restarts_the_clock() {
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
+fn a_new_output_file_restarts_the_clock_and_the_remaining_files_do_not() {
+    let d = Dir::new();
+    let a = d.file("a.out", "");
+    let b = d.file("b.out", "");
+    d.wait_at(100, 2, 10, &["/wt/new", &a]);
+    d.wait_at(102, 2, 10, &["/wt/new", &a]);
+    assert_eq!(started(&d), 100);
+    // 新しく投げたジョブの出力を足した（待ちのほかのこと）ので、104 秒から数え直す
+    d.wait_at(104, 2, 10, &["/wt/new", &a, &b]);
+    assert_eq!(started(&d), 104);
+    // 残りのファイルだけで呼び直しても、数え直さない
+    d.wait_at(106, 2, 10, &["/wt/new", &b]);
+    assert_eq!(started(&d), 104);
+}
+
+#[test]
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
+fn a_gap_longer_than_a_step_restarts_the_clock_and_a_shorter_one_does_not() {
     let d = Dir::new();
     let log = d.file("job.out", "");
-    d.wait_at(100, 1, 3, &["/wt/f", &log]);
-    // 101 秒に返った後、4 秒空ける
-    assert_eq!(d.wait_at(105, 1, 3, &["/wt/f", &log]).0, 2);
+    d.wait_at(100, 2, 10, &["/wt/f", &log]);
+    // 102 秒に返った後、1 ステップ（2 秒）までの間は待つだけの続き
+    d.wait_at(104, 2, 10, &["/wt/f", &log]);
+    assert_eq!(started(&d), 100);
+    // 106 秒に返った後、3 秒空けた（待ちのほかの作業をした）ので、109 秒から数え直す
+    d.wait_at(109, 2, 10, &["/wt/f", &log]);
+    assert_eq!(started(&d), 109);
 }
 
 #[test]
@@ -471,6 +416,7 @@ fn usage_errors_exit_1() {
 }
 
 #[test]
+#[ignore = "RED: 親に送った時刻から測り、待ちのほかのことで数え直さない"]
 fn a_start_time_later_than_now_does_not_break_the_wait() {
     // 時計が戻った（NTP の補正）後も、経過を負にせず WAIT を返す
     let d = Dir::new();
@@ -487,7 +433,7 @@ fn a_start_time_later_than_now_does_not_break_the_wait() {
     std::fs::write(&state, "131 101\n").unwrap();
     let (code, out) = d.wait_at(101, 1, 60, &["/wt/clock", &log]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("WAIT: 親に最後に送ってから 0 分"), "{out}");
+    assert!(out.contains("WAIT: 待つだけで 0 分"), "{out}");
 }
 
 #[cfg(unix)]
