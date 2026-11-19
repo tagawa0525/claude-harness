@@ -5,7 +5,9 @@
 //! Read してから Write か Edit で直させる。
 //!
 //! 見る書き込み先は、モデルが普通に書く形（ADR-0042）: 出力のリダイレクト（`>`、`>>` など）の先、`tee` の引数、
-//! `sed -i` と `perl -i` の対象のファイル、`cp`、`mv`、`install` の行き先、`rm` と `truncate` の対象。
+//! `sed -i` と `perl -i` の対象のファイル、`cp`、`mv`、`install` の行き先、`truncate` の対象。
+//! 消すこと（`rm`、元が memory の `mv`）は見ない: 読んだ状態との食い違いを作らず（次の Edit は無いファイルで失敗する）、
+//! /handoff は済んだ引き継ぎのファイルを消す手順を持ち、Write と Edit ではファイルを消せない。
 //! パスは、同じ呼び出しで字面のまま決まる変数と `HOME`、`CLAUDE_CONFIG_DIR` で展開し、コマンドの行き先
 //! （前の `cd` と `env -C`。[`Shell::target_dir`] が書いたままの `~` と絶対パスで解き、変数は展開しない）からの
 //! 相対で解き、`.` と `..` を字面で解く。値の決まらない展開を
@@ -152,7 +154,7 @@ fn targets(cmd: &Cmd) -> Vec<Arg> {
     let mut out = cmd.writes.clone();
     let args = &cmd.args;
     match basename(cmd.program()) {
-        "tee" | "rm" => out.extend(parse(args, &Spec::default()).operands),
+        "tee" => out.extend(parse(args, &Spec::default()).operands),
         "truncate" => {
             let spec = Spec {
                 valued: "sr",
