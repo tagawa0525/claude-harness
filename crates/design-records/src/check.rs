@@ -233,9 +233,10 @@ pub const ISSUE_RESOLUTIONS: [&str; 7] = [
 ];
 
 /// 閉じた issue の `resolution` の読み方。決まった語（理由を添えてもよい）か、根拠（決めた ADR か解決したコミット）を
-/// 書く形（xlc の docs/issues の形）。どちらも閉じた理由を機械で辿れるので通す（ADR-0099）。
+/// 書く形（xlc の docs/issues の形）。どちらも閉じた理由を機械で辿れるので通す（ADR-0099）。`resolution` を読むほかの
+/// コード（/resume の resume-state）もこれで読み、形の解釈を 1 か所に置く。
 #[derive(Debug, PartialEq, Eq)]
-enum Resolution<'a> {
+pub enum Resolution<'a> {
     /// [`ISSUE_RESOLUTIONS`] の語。`<語>: <理由>` の理由は読まない
     Word(&'a str),
     /// `ADR-NNNN`
@@ -245,7 +246,8 @@ enum Resolution<'a> {
 }
 
 impl<'a> Resolution<'a> {
-    fn parse(value: &'a str) -> Option<Self> {
+    /// どの形でもなければ `None`。
+    pub fn parse(value: &'a str) -> Option<Self> {
         if let Some(hash) = value.strip_prefix("コミット ") {
             let hex = hash
                 .bytes()

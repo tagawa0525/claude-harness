@@ -19,6 +19,7 @@
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
 
 use design_records::Kind;
+use design_records::check::Resolution;
 use design_records::parse::{FrontMatter, Value, numbered_refs, parse_front_matter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -219,9 +220,13 @@ struct Entry {
     text: Result<String, String>,
 }
 
-/// 閉じた記録の重複先。duplicate で閉じたのに重複先を読めなければ None
+/// 閉じた記録の重複先。duplicate で閉じた（`duplicate: <理由>` を含む）のに重複先を読めなければ None
 fn duplicate_targets(front: &FrontMatter) -> Option<Vec<u32>> {
-    if front.get("resolution") != Some(&Value::Scalar("duplicate".into())) {
+    let duplicate = matches!(
+        front.get("resolution"),
+        Some(Value::Scalar(s)) if Resolution::parse(s) == Some(Resolution::Word("duplicate"))
+    );
+    if !duplicate {
         return Some(Vec::new());
     }
     let items = front
