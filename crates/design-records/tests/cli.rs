@@ -3230,7 +3230,11 @@ fn index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them() {
         ("b1.md", "[x] の件", r"\[x\] の件"),
         ("b2.md", "(x) の件", "(x) の件"),
         ("b3.md", "a ] b", r"a \] b"),
-        ("b4.md", r"a\b と \[c\] と末尾 \", r"a\b と \[c\] と末尾 \\"),
+        (
+            "b4.md",
+            r"a\b と \[c\] と末尾 \",
+            r"a\\b と \[c\] と末尾 \\",
+        ),
         ("b5.md", "`](` を含む", "`](` を含む"),
         ("b6.md", "a ` b ]", r"a \` b \]"),
         ("b7.md", "[a](b) と [`c]`](d)", "a と `c]`"),
@@ -3239,6 +3243,11 @@ fn index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them() {
             "![logo](x.png) と [a](b c)",
             r"![logo](x.png) と \[a\](b c)",
         ),
+        ("b9.md", "![a [l](u)](i.png)", "![a l](i.png)"),
+        ("b10.md", "![a](x]y)", "![a](x]y)"),
+        ("b11.md", r#"[a](u "t") の件"#, "a の件"),
+        ("b12.md", "<http://a]b> を見る", r"http://a\]b を見る"),
+        ("b13.md", "*強調* と <b>x</b>", "*強調* と <b>x</b>"),
     ];
     let mut expected = format!("{OKF_ROOT_INDEX}\n");
     for (name, heading, entry) in titles {
@@ -3261,30 +3270,34 @@ fn index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them() {
 }
 
 #[test]
-fn check_lists_an_entry_whose_title_has_a_link_but_warns_about_it() {
+fn check_reports_an_entry_with_a_link_in_its_title_and_index_adds_a_readable_one() {
     let t = TempRepo::new("okf-title-nested-link");
-    t.write(
-        "docs/index.md",
-        &format!("{OKF_ROOT_INDEX}\n* [[a](http://x) の件](a.md)\n"),
-    );
+    let old = format!("{OKF_ROOT_INDEX}\n* [[a](http://x) の件](a.md)\n");
+    t.write("docs/index.md", &old);
     t.write(
         "docs/a.md",
         "---\ntype: Guide\n---\n\n# [a](http://x) の件\n",
     );
     t.commit_all("docs: an entry written by an older index");
     let out = t.run(&["check"]);
-    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(!out.status.success());
     let findings = entry_findings(&out);
     assert!(
-        !findings.iter().any(|l| l.contains("not listed")),
+        findings.iter().any(|l| l.contains("`a.md` is not listed")),
         "{findings:?}"
     );
     assert!(
         findings
             .iter()
-            .any(|l| l.contains("docs/index.md:7: warning:") && l.contains("link")),
+            .any(|l| l.contains("docs/index.md:7: warning:") && l.contains("not read")),
         "{findings:?}"
     );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.read("docs/index.md"), format!("{old}* [a の件](a.md)\n"));
+    t.commit_all("docs: index adds a readable entry");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
 
 #[test]
@@ -3295,11 +3308,17 @@ fn index_escapes_a_lone_backtick_so_that_a_description_cannot_close_it() {
         "docs/f.md",
         "---\ntype: Guide\ndescription: uses `x`\n---\n\n# a ` b\n",
     );
+    t.write(
+        "docs/g.md",
+        "---\ntype: Guide\ndescription: uses `x`\n---\n\n# ![a`b](i.png)\n",
+    );
     let out = t.run(&["index"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         t.read("docs/index.md"),
-        format!("{OKF_ROOT_INDEX}\n* [a \\` b](f.md) - uses `x`\n")
+        format!(
+            "{OKF_ROOT_INDEX}\n* [a \\` b](f.md) - uses `x`\n* [![a\\`b](i.png)](g.md) - uses `x`\n"
+        )
     );
     t.commit_all("docs: a title with a lone backtick");
     let out = t.run(&["check"]);
@@ -3308,7 +3327,7 @@ fn index_escapes_a_lone_backtick_so_that_a_description_cannot_close_it() {
 }
 
 #[test]
-fn check_still_lists_hand_written_entries_with_a_lone_bracket_backtick_or_image() {
+fn check_lists_hand_written_entries_that_markdown_does_not_read_as_links_and_warns() {
     let t = TempRepo::new("okf-title-hand-written");
     let index = format!(
         "{OKF_ROOT_INDEX}\n* [a [ b](a.md)\n* [![logo](x.png) Foo](i.md)\n* [use ` quoting](q.md) - see `foo`\n"
@@ -3326,7 +3345,19 @@ fn check_still_lists_hand_written_entries_with_a_lone_bracket_backtick_or_image(
     t.commit_all("docs: hand-written entries");
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
-    assert_eq!(entry_findings(&out), Vec::<String>::new());
+    let warned: Vec<String> = entry_findings(&out)
+        .into_iter()
+        .filter(|l| l.contains("not read"))
+        .collect();
+    assert_eq!(warned.len(), 2, "{warned:?}");
+    assert!(
+        warned[0].starts_with("docs/index.md:7: warning:"),
+        "{warned:?}"
+    );
+    assert!(
+        warned[1].starts_with("docs/index.md:9: warning:"),
+        "{warned:?}"
+    );
     let out = t.run(&["index"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(t.read("docs/index.md"), index);
