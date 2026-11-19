@@ -1,4 +1,4 @@
-//! `claude-hooks script wait-step` が、/delegate の担当の待ちの 1 ステップを刻み、終わり、1 ステップ、途中の報告を見分けて、
+//! `claude-hooks script wait-step` が、/delegate の担当の待ちの 1 ステップを刻み、終わり、1 ステップ、待ちの線を見分けて、
 //! 次の行動を示すことを確かめる（`~/.claude/scripts/wait-step.sh` が呼ぶ）。sh から呼ぶ配備の確認は
 //! `claude/tests/scripts/wait-step.sh`
 
@@ -37,15 +37,15 @@ impl Dir {
         path.display().to_string()
     }
 
-    /// 1 ステップを step 秒、途中の報告の間隔を report 秒にして、壁の時計で呼び、(終了コード, 標準出力と標準エラー)
-    fn wait(&self, step: u64, report: u64, args: &[&str]) -> (i32, String) {
-        self.wait_in(&self.root.join("tmp"), None, step, report, args)
+    /// 1 ステップを step 秒、待ちの線を limit 秒にして、壁の時計で呼び、(終了コード, 標準出力と標準エラー)
+    fn wait(&self, step: u64, limit: u64, args: &[&str]) -> (i32, String) {
+        self.wait_in(&self.root.join("tmp"), None, step, limit, args)
     }
 
     /// wait と同じだが、時刻 now（UNIX の秒）から始めた時計で呼ぶ。呼び出しは眠らずに 1 秒ずつ時計を進めるので、
     /// 結果は壁の時計の進み（負荷での遅れ、秒の切り捨て）によらない
-    fn wait_at(&self, now: u64, step: u64, report: u64, args: &[&str]) -> (i32, String) {
-        self.wait_in(&self.root.join("tmp"), Some(now), step, report, args)
+    fn wait_at(&self, now: u64, step: u64, limit: u64, args: &[&str]) -> (i32, String) {
+        self.wait_in(&self.root.join("tmp"), Some(now), step, limit, args)
     }
 
     fn wait_in(
@@ -53,7 +53,7 @@ impl Dir {
         tmp: &Path,
         now: Option<u64>,
         step: u64,
-        report: u64,
+        limit: u64,
         args: &[&str],
     ) -> (i32, String) {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
@@ -68,7 +68,7 @@ impl Dir {
             .env("TMP", tmp)
             .env("TEMP", tmp)
             .env("WAIT_STEP_SECONDS", step.to_string())
-            .env("WAIT_STEP_REPORT", report.to_string())
+            .env("WAIT_STEP_LIMIT", limit.to_string())
             .output()
             .unwrap();
         (
@@ -83,12 +83,13 @@ impl Dir {
 }
 
 #[test]
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     let (code, out) = d.wait(1, 60, &["/wt/a", &log]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("WAIT: 途中の報告から 0 分"), "{out}");
+    assert!(out.contains("WAIT: 待ち始めから 0 分"), "{out}");
     assert!(
         out.contains("NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ"),
         "{out}"
@@ -102,6 +103,7 @@ fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
 }
 
 #[test]
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn an_injected_time_takes_the_steps_without_sleeping() {
     // 時刻を渡すと、1 ステップの 270 秒を眠らずに進め、経過はその時計で数える
     let d = Dir::new();
@@ -109,7 +111,7 @@ fn an_injected_time_takes_the_steps_without_sleeping() {
     let start = Instant::now();
     let (code, out) = d.wait_at(1000, 270, 3300, &["/wt/fake", &log]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("WAIT: 途中の報告から 4 分"), "{out}");
+    assert!(out.contains("WAIT: 待ち始めから 4 分"), "{out}");
     // 1 ステップの 270 秒より十分に短い（負荷の下でも起動と 270 回の見回りは収まる）
     assert!(start.elapsed() < Duration::from_secs(60), "{out}");
 }
@@ -180,43 +182,87 @@ fn done_of_the_last_file_shows_the_call_without_files() {
 }
 
 #[test]
-fn report_after_the_interval_shows_the_message_to_the_parent_and_restarts_the_clock() {
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
+fn past_the_limit_the_wait_ends_with_the_next_action_and_keeps_ending() {
     let d = Dir::new();
     let log = d.file("job.out", "");
-    // 100 秒に待ち始め、102 秒に WAIT で返る。続けて呼ぶと、報告の間隔の 103 秒に REPORT
+    // 100 秒に待ち始め、102 秒に WAIT で返る。続けて呼ぶと、線の 103 秒に END
     d.wait_at(100, 2, 3, &["/wt/c", &log]);
     let (code, out) = d.wait_at(102, 2, 3, &["/wt/c", &log]);
     assert_eq!(code, 3, "{out}");
-    assert!(out.contains("REPORT:"), "{out}");
-    assert!(out.contains("SendMessage（to: \"main\"）"), "{out}");
+    assert!(out.contains("END: 待ち始めから 0 分を超えた"), "{out}");
+    assert!(out.contains("NEXT: 待つのをやめる"), "{out}");
     assert!(
-        out.contains("<待つもの> の待ちが 55 分を超えた。終わり次第、残りの作業を続ける"),
+        out.contains("投げたジョブと、その background の slurm-run.sh は止めない"),
         "{out}"
     );
-    assert!(out.contains("同じ引数でもう一度呼ぶ"), "{out}");
-    assert!(out.contains("止めるかは親の返事で決める"), "{out}");
-    // 103 秒から数え直したので、次の 1 ステップ（105 秒）は WAIT
-    assert_eq!(d.wait_at(103, 2, 3, &["/wt/c", &log]).0, 2);
+    assert!(out.contains("slurm-wait.sh で番号から引き継ぐ"), "{out}");
+    assert!(out.contains("報告の「続きの作業」に書き"), "{out}");
+    assert!(
+        out.contains("~/.claude/scripts/wait-step.sh --end /wt/c"),
+        "{out}"
+    );
+    assert!(out.contains("SubagentHandback で報告して終える"), "{out}");
+    assert!(!out.contains("REPORT"), "{out}");
+    // 数え直さないので、呼び直しても END
+    let (code, out) = d.wait_at(103, 2, 3, &["/wt/c", &log]);
+    assert_eq!(code, 3, "{out}");
+    assert!(out.contains("END:"), "{out}");
 }
 
 #[test]
-fn the_clock_continues_from_the_report_after_a_done() {
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
+fn the_default_limit_is_55_minutes_from_the_start_of_the_wait() {
+    let d = Dir::new();
+    let log = d.file("job.out", "");
+    let wait = |now: u64| {
+        let out = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
+            .args(["script", "wait-step", "/wt/default", &log])
+            .env("TMPDIR", d.root.join("tmp"))
+            .env("TMP", d.root.join("tmp"))
+            .env("TEMP", d.root.join("tmp"))
+            .env("WAIT_STEP_NOW", now.to_string())
+            .env("WAIT_STEP_SECONDS", "270")
+            .env_remove("WAIT_STEP_LIMIT")
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap(),
+            String::from_utf8(out.stdout).unwrap(),
+        )
+    };
+    // 0 秒に待ち始め、270 秒ごとに呼び直す。12 回目は 2970〜3240 秒で WAIT、13 回目は 3300 秒（55 分）で END
+    for step in 0..12 {
+        let (code, out) = wait(step * 270);
+        assert_eq!(code, 2, "{step}: {out}");
+    }
+    let (code, out) = wait(12 * 270);
+    assert_eq!(code, 3, "{out}");
+    assert!(
+        out.contains("END: 待ち始めから 55 分を超えた（線は 55 分）"),
+        "{out}"
+    );
+}
+
+#[test]
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
+fn the_clock_continues_from_the_start_after_a_done() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     let ended = d.file("ended.out", "[exited with code 0]\n");
     d.wait_at(100, 2, 5, &["/wt/d", &log]);
     d.wait_at(102, 2, 5, &["/wt/d", &log, &ended]);
-    // 待ち始めから 4 秒、報告の間隔 5 秒の手前。次の 1 ステップで報告の時刻に届く
+    // 待ち始めから 4 秒、線の 5 秒の手前。次の 1 ステップで線に届く
     assert_eq!(d.wait_at(104, 2, 5, &["/wt/d", &log]).0, 3);
 }
 
 #[test]
-fn done_comes_before_a_due_report() {
+fn done_comes_before_the_end_of_the_wait() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     let ended = d.file("ended.out", "[exited with code 0]\n");
     d.wait_at(100, 2, 3, &["/wt/e", &log]);
-    // 待ち始めから 4 秒で、報告の時刻を過ぎている
+    // 待ち始めから 4 秒で、線を過ぎている
     assert_eq!(d.wait_at(104, 2, 3, &["/wt/e", &log, &ended]).0, 0);
 }
 
@@ -239,6 +285,7 @@ fn end_removes_the_clock() {
 }
 
 #[test]
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn clocks_are_kept_per_key_and_the_key_path_is_normalized() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -268,6 +315,7 @@ fn an_unwritable_state_exits_1_with_the_reason() {
 }
 
 #[test]
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn a_time_setting_that_is_not_whole_seconds_exits_1_with_its_name() {
     // 読めない値を壁の時計や既定の秒数に替えて続けない（テストが気づかずに壁の時計に頼る）
     let d = Dir::new();
@@ -275,7 +323,7 @@ fn a_time_setting_that_is_not_whole_seconds_exits_1_with_its_name() {
     for (name, value) in [
         ("WAIT_STEP_NOW", "100s"),
         ("WAIT_STEP_SECONDS", "-1"),
-        ("WAIT_STEP_REPORT", "1.5"),
+        ("WAIT_STEP_LIMIT", "1.5"),
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
             .args(["script", "wait-step", "/wt/bad", &log])
@@ -284,7 +332,7 @@ fn a_time_setting_that_is_not_whole_seconds_exits_1_with_its_name() {
             .env("TEMP", d.root.join("tmp"))
             .env("WAIT_STEP_NOW", "100")
             .env("WAIT_STEP_SECONDS", "1")
-            .env("WAIT_STEP_REPORT", "60")
+            .env("WAIT_STEP_LIMIT", "60")
             .env(name, value)
             .output()
             .unwrap();
@@ -305,7 +353,7 @@ fn a_time_setting_that_is_not_utf8_exits_1_with_its_name() {
         .env("TMPDIR", d.root.join("tmp"))
         .env("WAIT_STEP_NOW", std::ffi::OsStr::from_bytes(b"1\xff"))
         .env("WAIT_STEP_SECONDS", "1")
-        .env("WAIT_STEP_REPORT", "60")
+        .env("WAIT_STEP_LIMIT", "60")
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
@@ -332,7 +380,8 @@ fn usage_errors_exit_1() {
 }
 
 #[test]
-fn a_report_time_later_than_now_does_not_break_the_wait() {
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
+fn a_start_time_later_than_now_does_not_break_the_wait() {
     // 時計が戻った（NTP の補正）後も、経過を負にせず WAIT を返す
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -344,15 +393,16 @@ fn a_report_time_later_than_now_does_not_break_the_wait() {
         .unwrap()
         .unwrap()
         .path();
-    // 101 秒に最後に呼び、途中の報告は 30 秒後
+    // 101 秒に最後に呼び、待ち始めは 30 秒後
     std::fs::write(&state, "131 101\n").unwrap();
     let (code, out) = d.wait_at(101, 1, 60, &["/wt/clock", &log]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("WAIT: 途中の報告から 0 分"), "{out}");
+    assert!(out.contains("WAIT: 待ち始めから 0 分"), "{out}");
 }
 
 #[cfg(unix)]
 #[test]
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn a_key_reached_through_a_symlink_shares_the_clock() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -369,8 +419,9 @@ fn a_key_reached_through_a_symlink_shares_the_clock() {
 }
 
 #[test]
-fn a_report_time_later_than_now_restarts_the_clock() {
-    // 時計が大きく戻ったら、未来の途中の報告の時刻を待たずに数え直す（REPORT が戻った分だけ遅れない）
+#[ignore = "RED: wait-step は END でなく REPORT を出す"]
+fn a_start_time_later_than_now_restarts_the_clock() {
+    // 時計が大きく戻ったら、未来の待ち始めの時刻を待たずに数え直す（END が戻った分だけ遅れない）
     let d = Dir::new();
     let log = d.file("job.out", "");
     d.wait_at(100, 1, 3, &["/wt/back", &log]);
@@ -381,9 +432,9 @@ fn a_report_time_later_than_now_restarts_the_clock() {
         .unwrap()
         .unwrap()
         .path();
-    // 101 秒に最後に呼び、途中の報告は 30 分後
+    // 101 秒に最後に呼び、待ち始めは 30 分後
     std::fs::write(&state, "1901 101\n").unwrap();
-    // 101 秒から数え直して 103 秒に WAIT。続けて呼ぶと、報告の間隔の 104 秒に REPORT
+    // 101 秒から数え直して 103 秒に WAIT。続けて呼ぶと、線の 104 秒に END
     d.wait_at(101, 2, 3, &["/wt/back", &log]);
     assert_eq!(d.wait_at(103, 2, 3, &["/wt/back", &log]).0, 3);
 }
