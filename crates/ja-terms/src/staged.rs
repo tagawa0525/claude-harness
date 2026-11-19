@@ -5,6 +5,8 @@
 //!   [`ja_terms::report::syntax_of`]。大文字と小文字を問わない）。prh の辞書（prh.yml）は誤った語を並べるので外す
 //! - symlink の行き先とサブモジュール（gitlink）は文章ではないので外す
 //! - ステージした `.textlintignore` に挙げたファイルを外す。書き方は gitignore と同じなので、git 自身に当てさせる
+//! - 辞書を渡されなければ、ステージしたリポジトリの辞書（`.ja-terms/prh.yml`）に共通の辞書を重ねる（ADR-0096）。コミットに
+//!   入る中身を、そのコミットに入る辞書で検査する（作業ツリーの辞書は読まない）
 //!
 //! 出力は `ja-terms check` と同じ形で、パスはリポジトリの直下からのもの（どのディレクトリで呼んでも同じ）。終了コード: 0 = 崩れた語が無い、
 //! 1 = 崩れた語がある、2 = 検査できなかった
@@ -17,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ja_terms::Dictionary;
+use ja_terms::repo::{REPO_DICTIONARY, path_from_git};
 use ja_terms::report::{self, TEXT_EXTENSIONS};
 
 use crate::{Failure, print};
@@ -43,24 +46,6 @@ fn git<S: AsRef<OsStr>>(top: Option<&Path>, args: &[S]) -> Result<Vec<u8>, Failu
         )));
     }
     Ok(out.stdout)
-}
-
-/// git rev-parse が出すパス（git が足す末尾の改行を除く）。Unix ではバイトのまま（UTF-8 でない名前のディレクトリも同じパスに
-/// する）、Windows では git は UTF-8 で出す
-fn path_from_git(mut out: Vec<u8>) -> PathBuf {
-    // git は改行を 1 つ足す（名前が改行で終わるディレクトリもあるので、1 つだけ外す）
-    if out.last() == Some(&b'\n') {
-        out.pop();
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStringExt;
-        PathBuf::from(std::ffi::OsString::from_vec(out))
-    }
-    #[cfg(not(unix))]
-    {
-        PathBuf::from(String::from_utf8_lossy(&out).into_owned())
-    }
 }
 
 /// ステージしたファイルの (パス, ブロブ)。symlink とサブモジュールを除く
@@ -105,11 +90,11 @@ fn staged_files(top: &Path) -> Result<Vec<(String, String)>, Failure> {
     Ok(files)
 }
 
-/// ステージした .textlintignore に当たる、インデックスのファイルのパス
-fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
+/// インデックスの、直下からのパス name の項目のモード。載っていなければ None
+fn staged_mode(top: &Path, name: &str) -> Result<Option<String>, Failure> {
     // 無いことと git の誤り（壊れたインデックスなど）を分けるため、cat-file -e の失敗でなく、インデックスに載って
     // いるかで見る。pathspec はその名前のディレクトリの下のファイルにも当たるので、--stage の項目のパスが
-    // .textlintignore そのもので、普通のファイル（100644 か 100755）のものだけを数える
+    // name そのもののものだけを見る
     let listed = git(
         Some(top),
         &[
@@ -117,15 +102,47 @@ fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
             "-z",
             "--stage",
             "--",
-            ":(top,literal).textlintignore",
+            &format!(":(top,literal){name}"),
         ],
     )?;
-    let is_file = listed.split(|&b| b == 0).any(|entry| {
+    let suffix = format!("\t{name}");
+    Ok(listed
+        .split(|&b| b == 0)
         // 「モード ブロブ ステージ\tパス」
-        entry.ends_with(b"\t.textlintignore")
-            && (entry.starts_with(b"100644 ") || entry.starts_with(b"100755 "))
-    });
-    if !is_file {
+        .find(|entry| entry.ends_with(suffix.as_bytes()))
+        .map(|entry| String::from_utf8_lossy(&entry[..6]).into_owned()))
+}
+
+/// 普通のファイル（100644 か 100755）のモードか
+fn is_regular(mode: &str) -> bool {
+    matches!(mode, "100644" | "100755")
+}
+
+/// ステージしたリポジトリの辞書に共通の辞書を重ねた辞書（ADR-0096）
+fn staged_dictionary(top: &Path) -> Result<Dictionary, Failure> {
+    let repo = match staged_mode(top, REPO_DICTIONARY)? {
+        None => None,
+        Some(mode) if is_regular(&mode) => {
+            let yaml = git(Some(top), &["show", &format!(":{REPO_DICTIONARY}")])?;
+            let name = format!("{REPO_DICTIONARY}（ステージした版）");
+            Some(
+                Dictionary::parse(&String::from_utf8_lossy(&yaml), &name)
+                    .map_err(|e| Failure(e.to_string()))?,
+            )
+        }
+        Some(mode) => {
+            return Err(Failure(format!(
+                "ステージした {REPO_DICTIONARY} が普通のファイルでない（モード {mode}）"
+            )));
+        }
+    };
+    Dictionary::layered(repo).map_err(|e| Failure(e.to_string()))
+}
+
+/// ステージした .textlintignore に当たる、インデックスのファイルのパス
+fn ignored(top: &Path) -> Result<HashSet<String>, Failure> {
+    // 普通のファイルの .textlintignore だけを読む
+    if !staged_mode(top, ".textlintignore")?.is_some_and(|mode| is_regular(&mode)) {
         return Ok(HashSet::new());
     }
     let patterns = git(Some(top), &["show", ":.textlintignore"])?;
@@ -178,11 +195,18 @@ fn private_file(top: &Path) -> Result<(PathBuf, File), Failure> {
     unreachable!("名前の数は尽きない")
 }
 
-pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
+/// given は渡された辞書。無ければステージしたリポジトリの辞書に共通の辞書を重ねる
+pub(crate) fn run(given: Option<Dictionary>) -> Result<u8, Failure> {
     // git diff --cached --raw は直下からのパスを出すが、pathspec と git ls-files は今のディレクトリから読むので、
     // どの git も直下で実行する
     let top = git(None, &["rev-parse", "--show-toplevel"])?;
     let top = path_from_git(top);
+    // 辞書は、検査するファイルが無くても読む（壊れた辞書をステージしたコミットを止める）
+    let dictionary = match given {
+        Some(given) => given,
+        None => staged_dictionary(&top)?,
+    };
+    let dictionary = &dictionary;
     let files = staged_files(&top)?;
     if files.is_empty() {
         return Ok(0);
@@ -234,7 +258,7 @@ pub(crate) fn run(dictionary: &Dictionary) -> Result<u8, Failure> {
     let plural = if total == 1 { "" } else { "s" };
     out.push_str(&format!("\n{total} problem{plural}\n"));
     out.push_str(
-        "❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: claude-harness の crates/ja-terms/prh.yml）\n",
+        "❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: claude-harness の crates/ja-terms/prh.yml と、あればリポジトリの .ja-terms/prh.yml）\n",
     );
     print(&out)?;
     Ok(1)

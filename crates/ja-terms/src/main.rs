@@ -14,10 +14,13 @@
 //! - `ja-terms staged [--dictionary <辞書>]`: グローバルの pre-commit がリポジトリの直下で呼ぶ、ステージした中身の
 //!   検査（[`staged`]）
 //!
-//! 辞書の既定は、ビルドに埋めた prh.yml。
+//! 辞書の既定は、今のディレクトリを含む作業ツリーの直下の `.ja-terms/prh.yml`（リポジトリの辞書。あれば）に、ビルドに埋めた
+//! prh.yml（共通の辞書）を重ねたもの（ADR-0096。`ja-terms staged` はステージしたリポジトリの辞書を読む）。`--dictionary` を
+//! 渡せば、その辞書だけを当てる。
 //!
 //! 終了コード: 0 = 崩れた語が無い（commit-msg は規約に従う）、1 = 崩れた語がある（commit-msg は規約に反する）、
-//! 2 = 検査できなかった（使い方の誤り、読めないファイル、対象でない拡張子、辞書を読めない、prh と同じ意味で当てられない文）
+//! 2 = 検査できなかった（使い方の誤り、読めないファイル、対象でない拡張子、辞書を読めない、作業ツリーの中で git が失敗した、
+//! prh と同じ意味で当てられない文）
 
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -26,9 +29,9 @@ use std::process::ExitCode;
 
 mod staged;
 
+use ja_terms::Dictionary;
 use ja_terms::message::{self, Subject};
 use ja_terms::report::{self, Syntax, TEXT_EXTENSIONS};
-use ja_terms::{DICTIONARY, Dictionary};
 
 const USAGE: &str = "Usage: ja-terms check [--dictionary <辞書>] <ファイル>...
        ja-terms message [--dictionary <辞書>] < <メッセージ>
@@ -54,15 +57,24 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
     let mut args = args.into_iter();
     let command = args.next().ok_or_else(usage)?;
     let args: Vec<OsString> = args.collect();
-    let (dictionary, args) = match args.as_slice() {
-        [option, path, rest @ ..] if option == "--dictionary" => (Dictionary::load(path), rest),
+    let (given, args) = match args.as_slice() {
+        [option, path, rest @ ..] if option == "--dictionary" => (Some(path), rest),
         [option, ..] if option == "--dictionary" => return Err(usage()),
-        rest => (Dictionary::parse(DICTIONARY, "prh.yml"), rest),
+        rest => (None, rest),
     };
-    let dictionary = dictionary.map_err(|e| Failure(e.to_string()))?;
+    let given = given
+        .map(Dictionary::load)
+        .transpose()
+        .map_err(|e| Failure(e.to_string()))?;
+    // 渡した辞書が無ければ、今のディレクトリの作業ツリーの辞書の組（staged はステージしたものを staged::run が読む）
+    let dictionary = |given: Option<Dictionary>| match given {
+        Some(given) => Ok(given),
+        None => Dictionary::for_dir(Path::new(".")).map_err(|e| Failure(e.to_string())),
+    };
     match (command.to_str(), args) {
-        (Some("check"), [_, ..]) => check(&dictionary, args),
+        (Some("check"), [_, ..]) => check(&dictionary(given)?, args),
         (Some("message"), []) => {
+            let dictionary = dictionary(given)?;
             let mut input = Vec::new();
             std::io::stdin()
                 .read_to_end(&mut input)
@@ -71,8 +83,8 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
             print(&reports)?;
             Ok(u8::from(!reports.is_empty()))
         }
-        (Some("commit-msg"), [path]) => commit_msg(&dictionary, Path::new(path)),
-        (Some("staged"), []) => staged::run(&dictionary),
+        (Some("commit-msg"), [path]) => commit_msg(&dictionary(given)?, Path::new(path)),
+        (Some("staged"), []) => staged::run(given),
         _ => Err(usage()),
     }
 }

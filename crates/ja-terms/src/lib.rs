@@ -16,6 +16,7 @@ mod autolink;
 mod inline;
 pub mod message;
 mod pragma;
+pub mod repo;
 pub mod report;
 pub mod strs;
 
@@ -25,8 +26,9 @@ use std::path::Path;
 use regress::Regex;
 use yaml_rust2::{Yaml, YamlLoader};
 
-/// 崩れた日本語の語の辞書（prh.yml）。CLI の既定と、history-rewrite の既定の辞書（ビルドに埋めるので、置き場を
-/// 探さずに Windows でも同じ辞書を使う）
+/// 崩れた日本語の語の、全リポジトリに共通の辞書（prh.yml）。CLI と history-rewrite の既定の辞書で、リポジトリの辞書
+/// （[`repo::REPO_DICTIONARY`]）があれば、その後ろに重ねる（ADR-0096）。ビルドに埋めるので、置き場を探さずに Windows でも
+/// 同じ辞書を使う
 pub const DICTIONARY: &str = include_str!("../prh.yml");
 
 /// 辞書を読めない、prh が読めない書き方がある、specs が合わない
@@ -92,9 +94,8 @@ const LINE_TERMINATORS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
 const RULE_KEYS: [&str; 4] = ["expected", "pattern", "patterns", "specs"];
 
 impl Dictionary {
-    /// 辞書のファイルを読む。どの規則も specs を確かめる（prh が辞書を読むときと同じ）。textlint-rule-prh は
-    /// 複数の辞書を prh の Engine.merge でつなぎ、前の辞書と同じ expected の規則を外すが、辞書は 1 つだけなので
-    /// 1 つのファイルだけを読む
+    /// 辞書のファイルを 1 つ読む。どの規則も specs を確かめる（prh が辞書を読むときと同じ）。複数の辞書は
+    /// [`Dictionary::merge`] でつなぐ
     pub fn load(path: impl AsRef<Path>) -> Result<Self, DictionaryError> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path)
@@ -109,10 +110,60 @@ impl Dictionary {
         })
     }
 
+    /// ビルドに埋めた共通の辞書（[`DICTIONARY`]）
+    pub fn common() -> Result<Self, DictionaryError> {
+        Self::parse(DICTIONARY, "ja-terms の prh.yml")
+    }
+
+    /// リポジトリの辞書（あれば）の後ろに、共通の辞書を [`Dictionary::merge`] でつないだ辞書（ADR-0096）
+    pub fn layered(repo: Option<Dictionary>) -> Result<Self, DictionaryError> {
+        let common = Self::common()?;
+        Ok(match repo {
+            Some(mut repo) => {
+                repo.merge(common);
+                repo
+            }
+            None => common,
+        })
+    }
+
+    /// dir を含む作業ツリーの辞書の組。作業ツリーの直下に [`repo::REPO_DICTIONARY`] があればそれに共通の辞書を重ね、
+    /// 無いか作業ツリーの外なら共通の辞書だけ
+    pub fn for_dir(dir: &Path) -> Result<Self, DictionaryError> {
+        let repo = match repo::work_tree_top(dir)? {
+            Some(top) => Self::load_if_exists(&top.join(repo::REPO_DICTIONARY))?,
+            None => None,
+        };
+        Self::layered(repo)
+    }
+
+    /// path の辞書。ファイルが無ければ None（ほかの読めない理由は誤り）
+    pub fn load_if_exists(path: &Path) -> Result<Option<Self>, DictionaryError> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => Self::parse(&text, &path.display().to_string()).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(DictionaryError(format!(
+                "{}: 読めない: {e}",
+                path.display()
+            ))),
+        }
+    }
+
     /// other の規則を、この辞書の規則の後ろに並べる。prh の Engine.merge と違い、同じ expected の規則を外さない
     /// （history-rewrite が --dictionary と --extra-rules を渡した順に並べる。ADR-0045）
     pub fn append(&mut self, other: Dictionary) {
         self.rules.extend(other.rules);
+    }
+
+    /// other の規則のうち、この辞書に同じ expected の規則が無いものを後ろに並べる（prh の Engine.merge。prh の imports と
+    /// textlint-rule-prh の rulePaths が辞書をつなぐ意味）。other の中の同じ expected の規則どうしは外さない
+    pub fn merge(&mut self, other: Dictionary) {
+        let kept: Vec<Rule> = other
+            .rules
+            .into_iter()
+            .filter(|rule| self.rules.iter().all(|r| r.expected != rule.expected))
+            .collect();
+        self.rules.extend(kept);
     }
 
     pub fn len(&self) -> usize {

@@ -140,7 +140,7 @@ fn broken_terms_are_reported_with_the_staged_path() {
         stdout(&out),
         format!(
             "🔍 Checking Japanese terms...\ndoc.md:3:1: {BROKEN} => 確認 [Error/prh]\n\n1 problem\n\
-             ❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: claude-harness の crates/ja-terms/prh.yml）\n"
+             ❌ 崩れた日本語の語があります。上の「誤り => 正しい語」に直してください（辞書: claude-harness の crates/ja-terms/prh.yml と、あればリポジトリの .ja-terms/prh.yml）\n"
         )
     );
 }
