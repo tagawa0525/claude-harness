@@ -47,10 +47,12 @@ pub fn main(args: &[String]) -> i32 {
             {
                 unlogged = Some(reason.trim())
             }
-            // 1 件を 1 行で読めるように、複数行の値は受けない
-            [flag, finding]
-                if flag == "--finding" && !finding.trim().is_empty() && !finding.contains('\n') =>
-            {
+            // 1 件を 1 行で読めるように、改行（CR だけのものも Markdown では改行）などの制御文字を含む値は受けない
+            [flag, finding] if flag == "--finding" => {
+                if finding.trim().is_empty() || finding.chars().any(char::is_control) {
+                    eprintln!("{USAGE}（--finding の値は、空でない 1 行: {finding:?}）");
+                    return 1;
+                }
                 findings.push(finding.trim())
             }
             _ => {

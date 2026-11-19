@@ -587,7 +587,7 @@ fn the_findings_must_be_as_many_as_the_counts() {
         let out = run(&fake, args, "true\n");
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         assert!(
-            stderr(&out).contains("--finding"),
+            stderr(&out).contains("件なのに、要旨（--finding）が"),
             "{args:?}: {}",
             stderr(&out)
         );
@@ -637,7 +637,6 @@ fn a_malformed_option_is_a_usage_error() {
 }
 
 #[test]
-#[ignore = "RED: 値の検査の文は未実装"]
 fn a_bad_finding_names_the_value() {
     // 何件も渡した要旨のどれが悪いかを、使い方の行だけでは見分けられない。CR だけの改行も 1 行に数えない
     for value in [" ", "Low a.rs:1 語\n- 2 行目", "Low a.rs:1 語\r2 行目"] {
