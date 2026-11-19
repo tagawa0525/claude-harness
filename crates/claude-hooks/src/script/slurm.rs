@@ -144,12 +144,7 @@ pub fn running_default_jobs() -> Result<Vec<RunningJob>, String> {
 }
 
 fn running_jobs(json: &str) -> Result<Vec<RunningJob>, String> {
-    let value: Value = serde_json::from_str(json)
-        .map_err(|e| format!("squeue の出力を JSON として読めない: {e}"))?;
-    let jobs = value["jobs"]
-        .as_array()
-        .ok_or("squeue の出力に jobs が無い")?;
-    Ok(jobs
+    Ok(json_jobs("squeue", json)?
         .iter()
         .map(|job| RunningJob {
             id: id_text(&job["job_id"]),
@@ -238,14 +233,7 @@ pub fn queued_jobs() -> Result<Vec<QueuedJob>, QueueError> {
 }
 
 fn queue_jobs(json: &str) -> Result<Vec<QueuedJob>, String> {
-    let value: Value = serde_json::from_str(json)
-        .map_err(|e| format!("squeue の出力を JSON として読めない: {e}"))?;
-    value["jobs"]
-        .as_array()
-        .ok_or("squeue の出力に jobs が無い")?
-        .iter()
-        .map(queued_job)
-        .collect()
+    json_jobs("squeue", json)?.iter().map(queued_job).collect()
 }
 
 /// Slurm の C の値で「無い」と「無制限」を表す数（slurm/slurm.h の NO_VAL、INFINITE、NO_VAL64、INFINITE64）
@@ -491,11 +479,8 @@ pub fn accounting_record(job: &str) -> Option<JobRecord> {
 }
 
 fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
-    let value: Value = serde_json::from_str(json).ok()?;
-    let found = value["jobs"]
-        .as_array()?
-        .iter()
-        .find(|j| id_text(&j["job_id"]) == job)?;
+    let jobs = json_jobs("sacct", json).ok()?;
+    let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
     let time = &found["time"];
     let limit = &time["limit"];
     Some(JobRecord {
@@ -522,13 +507,20 @@ pub fn controller_state(job: &str) -> Option<JobState> {
 }
 
 fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
-    let value: Value = serde_json::from_str(json).ok()?;
-    let found = value["jobs"]
-        .as_array()?
-        .iter()
-        .find(|j| id_text(&j["job_id"]) == job)?;
+    let jobs = json_jobs("scontrol", json).ok()?;
+    let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
     found["job_state"][0].as_str()?;
     Some(JobState::from_slurm(state_word(&found["job_state"])))
+}
+
+/// コマンドの JSON の出力の jobs の配列。読めなければ理由
+fn json_jobs(command: &str, json: &str) -> Result<Vec<Value>, String> {
+    let mut value: Value = serde_json::from_str(json)
+        .map_err(|e| format!("{command} の出力を JSON として読めない: {e}"))?;
+    match value.get_mut("jobs").map(Value::take) {
+        Some(Value::Array(jobs)) => Ok(jobs),
+        _ => Err(format!("{command} の出力に jobs が無い")),
+    }
 }
 
 /// ジョブの番号（数か文字列）を文字列に
@@ -947,7 +939,7 @@ mod tests {
 
     #[test]
     fn an_unexpected_shape_is_an_error() {
-        for bad in ["not json", "{}", r#"{"jobs": {}}"#] {
+        for bad in ["not json", "{}", "[]", r#""jobs""#, r#"{"jobs": {}}"#] {
             assert!(queue_jobs(bad).is_err(), "{bad}");
         }
         for changes in [
