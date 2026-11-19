@@ -23,6 +23,9 @@ const MAX_SUBJECTS: usize = 5;
 /// これより長く書き直していない記録は、終わったセッションのものとみなして消す。消した後に戻ったセッションは、次の
 /// プロンプトを初めてのプロンプトとして覚え直す（その 1 回の進みを知らせないだけ）
 const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+/// 先端が動かないプロンプトで、記録の更新の時刻をこれより古ければ今にする（動かないリポジトリで続くセッションの記録を
+/// [`STALE_AFTER`] で消さないため。プロンプトごとには書かない）
+const REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 pub fn main() -> i32 {
     let mut raw = String::new();
@@ -60,11 +63,12 @@ fn notice(dir: &Path, session: &str) -> Option<String> {
     let state = Path::new(&common).join(STATE_DIR).join(session);
     let previous = read_tips(&state);
     if previous.as_ref() == Some(&tips) {
+        keep_fresh(&state);
         return None;
     }
     if let Err(e) = write_tips(&state, &tips) {
         eprintln!(
-            "claude-hooks: 既定ブランチの先端を {} に覚えられません（次のプロンプトで進みを知らせられません）: {e}",
+            "claude-hooks: 既定ブランチの先端を {} に覚えられません（書けるまで進みを知らせません）: {e}",
             state.display()
         );
         return None;
@@ -203,6 +207,19 @@ fn write_tips(path: &Path, tips: &Tips) -> std::io::Result<()> {
     let tmp = dir.join(name);
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)
+}
+
+/// 記録の更新の時刻が [`REFRESH_AFTER`] より古ければ今にする。補助なので、失敗は無視する
+fn keep_fresh(path: &Path) {
+    let now = std::time::SystemTime::now();
+    let old = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| now.duration_since(t).ok())
+        .is_some_and(|age| age > REFRESH_AFTER);
+    if old && let Ok(file) = std::fs::File::options().write(true).open(path) {
+        let _ = file.set_modified(now);
+    }
 }
 
 /// keep の隣の記録のうち、[`STALE_AFTER`] を超えて書き直していないものを消す。片付けは補助なので、失敗は無視する
