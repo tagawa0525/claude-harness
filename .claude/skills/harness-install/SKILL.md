@@ -20,8 +20,6 @@ description: claude-harness を新しい機械に入れるとき、入れた機�
 ## Windows
 
 - 入れる、更新する: `docs/windows.md` を上から実行する。更新は、clone を pull して同じ手順を再実行する
-- crate を入れ直したのに `claude-setup sync` を流していないと、`ja-terms` が共通の辞書が無いとして検査を止め、コミットが
-  通らない（辞書は sync が配る）
 
 ## 入れた後の確認
 
