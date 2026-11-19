@@ -3232,8 +3232,13 @@ fn index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them() {
         ("b3.md", "a ] b", r"a \] b"),
         ("b4.md", r"a\b と \[c\] と末尾 \", r"a\b と \[c\] と末尾 \\"),
         ("b5.md", "`](` を含む", "`](` を含む"),
-        ("b6.md", "a ` b ]", r"a ` b \]"),
+        ("b6.md", "a ` b ]", r"a \` b \]"),
         ("b7.md", "[a](b) と [`c]`](d)", "a と `c]`"),
+        (
+            "b8.md",
+            "![logo](x.png) と [a](b c)",
+            r"![logo](x.png) と \[a\](b c)",
+        ),
     ];
     let mut expected = format!("{OKF_ROOT_INDEX}\n");
     for (name, heading, entry) in titles {
@@ -3280,4 +3285,49 @@ fn check_lists_an_entry_whose_title_has_a_link_but_warns_about_it() {
             .any(|l| l.contains("docs/index.md:7: warning:") && l.contains("link")),
         "{findings:?}"
     );
+}
+
+#[test]
+fn index_escapes_a_lone_backtick_so_that_a_description_cannot_close_it() {
+    let t = TempRepo::new("okf-title-backtick");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/f.md",
+        "---\ntype: Guide\ndescription: uses `x`\n---\n\n# a ` b\n",
+    );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{OKF_ROOT_INDEX}\n* [a \\` b](f.md) - uses `x`\n")
+    );
+    t.commit_all("docs: a title with a lone backtick");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(entry_findings(&out), Vec::<String>::new());
+}
+
+#[test]
+fn check_still_lists_hand_written_entries_with_a_lone_bracket_backtick_or_image() {
+    let t = TempRepo::new("okf-title-hand-written");
+    let index = format!(
+        "{OKF_ROOT_INDEX}\n* [a [ b](a.md)\n* [![logo](x.png) Foo](i.md)\n* [use ` quoting](q.md) - see `foo`\n"
+    );
+    t.write("docs/index.md", &index);
+    t.write("docs/a.md", "---\ntype: Guide\n---\n\n# a [ b\n");
+    t.write(
+        "docs/i.md",
+        "---\ntype: Guide\n---\n\n# ![logo](x.png) Foo\n",
+    );
+    t.write(
+        "docs/q.md",
+        "---\ntype: Guide\ndescription: see `foo`\n---\n\n# use ` quoting\n",
+    );
+    t.commit_all("docs: hand-written entries");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(entry_findings(&out), Vec::<String>::new());
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.read("docs/index.md"), index);
 }
