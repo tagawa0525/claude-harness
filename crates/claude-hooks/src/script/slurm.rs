@@ -195,9 +195,38 @@ impl JobState {
     }
 }
 
-/// JSON の状態の配列から、文字の出力と同じ 1 語を作る
+/// 文字の出力（sacct の State、scontrol の JobState）が、土台の状態より先に出す旗。並びは Slurm の `job_state_string`
+/// （26.05.6 の `src/common/slurm_protocol_defs.c`。2026-11-19 に slurm-26-05-6-1 のタグで読んだ）の、旗を見る順
+const STATE_FLAGS: &[&str] = &[
+    "COMPLETING",
+    "STAGE_OUT",
+    "CONFIGURING",
+    "EXPEDITING",
+    "RESIZING",
+    "REQUEUED",
+    "REQUEUE_FED",
+    "REQUEUE_HOLD",
+    "SPECIAL_EXIT",
+    "STOPPED",
+    "REVOKED",
+    "RESV_DEL_HOLD",
+    "SIGNALING",
+];
+
+/// JSON の状態の配列（土台の状態が先で、旗が後ろ）から、文字の出力と同じ 1 語を作る。旗があればその語、無ければ土台の状態。
+/// 先頭だけを読むと、終わりかけのジョブ（`["COMPLETED", "COMPLETING"]`）が終わったことになる
 fn state_word(states: &Value) -> &str {
-    states[0].as_str().unwrap_or("")
+    let has = |flag: &str| {
+        states
+            .as_array()
+            .is_some_and(|all| all.iter().any(|s| s.as_str() == Some(flag)))
+    };
+    STATE_FLAGS
+        .iter()
+        .copied()
+        .find(|flag| has(flag))
+        .or(states[0].as_str())
+        .unwrap_or("")
 }
 
 /// 終わった State だけを列挙する。それ以外（PENDING、CONFIGURING、RUNNING、SUSPENDED、COMPLETING、REQUEUED など今後増える
@@ -390,7 +419,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 旗の語を先に読む形は未実装"]
     fn the_state_word_is_the_flag_before_the_base_state_like_the_text_output() {
         // 文字の出力（sacct の State、scontrol の JobState）は、旗（COMPLETING など）があればそれを、無ければ土台の状態を
         // 出す。JSON の配列は土台が先で旗が後ろなので、先頭だけを読むと、終わりかけのジョブが終わったことになる
