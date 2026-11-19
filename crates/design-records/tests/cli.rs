@@ -3126,3 +3126,23 @@ fn check_treats_index_links_outside_the_bundle_as_external() {
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
+
+#[test]
+fn index_percent_encodes_link_targets_and_check_decodes_them() {
+    let t = TempRepo::new("okf-percent");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/my note (draft).md",
+        "---\ntype: Guide\ntitle: My note\n---\n",
+    );
+    t.write("docs/手順.md", "---\ntype: Guide\ntitle: 手順\n---\n");
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{OKF_ROOT_INDEX}\n* [My note](my%20note%20%28draft%29.md)\n* [手順](手順.md)\n")
+    );
+    t.commit_all("docs: names to encode");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
