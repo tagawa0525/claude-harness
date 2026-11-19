@@ -5,7 +5,8 @@
 //! パイプの途中に置いた形。コマンドに `set -o pipefail` / `bash -o pipefail` のシェルのオプションがあれば何もしない。
 //! pipefail が実際に効く位置かは読まない（ADR-0042: 普通に書く形だけを見る）。対象の形は止めずに、command の前に
 //! `set -o pipefail; ` を付けた入力で実行させ、付けたことを Claude に知らせる（ADR-0102。許可の判断は返さないので、
-//! 許可の確認は書き換えた後のコマンドに対して残る。ほかのルールが止めるときは止める判定が勝つ）
+//! 許可の確認は書き換えた後のコマンドに対して残る。ほかのルールが止めるときは止める判定が勝つ）。対象のコマンドが
+//! `bash -c` や `ssh` の文字列の中にあれば、外に付けた pipefail が効かないことがあるので、書き換えずに止める
 
 use super::Rule;
 use crate::input::Input;
@@ -48,19 +49,36 @@ impl Rule for RequirePipefail {
         if sets_pipefail(&input.command) {
             return Vec::new();
         }
-        let piped = shell.commands().iter().any(|cmd| {
-            judges_success(cmd)
-                && cmd
-                    .piped_into
-                    .iter()
-                    .any(|n| matches!(basename(n), "tail" | "head"))
-        });
-        if !piped {
+        let commands = shell.commands();
+        let piped: Vec<&Cmd> = commands
+            .iter()
+            .filter(|cmd| {
+                judges_success(cmd)
+                    && cmd
+                        .piped_into
+                        .iter()
+                        .any(|n| matches!(basename(n), "tail" | "head"))
+            })
+            .collect();
+        if piped.is_empty() {
             return Vec::new();
+        }
+        // `bash -c` や `ssh` の文字列で実行するコマンドは別のシェルで走り、外の `set -o pipefail` を受け継がない。
+        // パイプが文字列の中か外かは piped_into から分からないので、文字列の中のコマンドは書き換えずに止める
+        // （外に付けると、効かないのに「終了コードが失敗を映す」と知らせることになる）。`(…)` と `$(…)` は
+        // シェルのオプションを受け継ぐので書き換える
+        let strings: Vec<usize> = commands.iter().filter_map(|c| c.spawns).collect();
+        if piped
+            .iter()
+            .any(|cmd| cmd.scope.iter().any(|s| strings.contains(s)))
+        {
+            return vec![Finding::Deny(
+                "`bash -c` や `ssh` の文字列で実行するビルドやチェックの出力が tail / head につながっていて、パイプの終了コードが tail / head のものになり、失敗を見落とします。文字列の中のシェルは外の `set -o pipefail` を受け継がないので、パイプを書いたシェル（文字列の中のパイプなら文字列の中）に `set -o pipefail;` を付けるか、出力をファイルに書いて tail で読んでください".to_string(),
+            )];
         }
         vec![Finding::Prepend {
             prefix: "set -o pipefail; ".to_string(),
-            context: "[require-pipefail] ビルドやチェックの出力を tail / head につなぐ形なので、hook がコマンドの前に `set -o pipefail; ` を付けました（打ち直しは要りません）。終了コードは、パイプの途中のコマンドの失敗を映します。head などが先に読むのをやめると、前のコマンドが SIGPIPE で止まり、終了コードが 141 になることがあります".to_string(),
+            context: "[require-pipefail] ビルドやチェックの出力を tail / head につなぐ形なので、hook がコマンドの前に `set -o pipefail; ` を付けました（打ち直しは要りません）。終了コードは、パイプの途中のコマンドの失敗を映します。head などが先に読むのをやめると、前のコマンドが SIGPIPE で止まり、終了コードが 141 になることがあります。auto mode が、hook が入力を変えたことを理由にこの呼び出しを止めたら、`set -o pipefail; ` を付けた後のコマンドを打ってください（そのコマンドは書き換えません）".to_string(),
         }]
     }
 }
