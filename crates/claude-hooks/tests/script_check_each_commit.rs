@@ -162,7 +162,6 @@ fn fake_tool_command(repo: &Repo, args: &[&str], exits: &[(usize, &str)]) -> Com
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn each_commit_is_checked_oldest_first_and_a_failing_one_makes_the_whole_fail() {
     let repo = Repo::new();
     let tool = common::fake_tool();
@@ -188,7 +187,6 @@ fn each_commit_is_checked_oldest_first_and_a_failing_one_makes_the_whole_fail() 
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn all_commits_passing_ends_with_0() {
     let repo = Repo::new();
     let tool = common::fake_tool();
@@ -200,7 +198,6 @@ fn all_commits_passing_ends_with_0() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn the_output_of_the_command_goes_to_stderr_and_stdout_has_one_line_per_commit() {
     let repo = Repo::new();
     let tool = common::fake_tool();
@@ -218,7 +215,6 @@ fn the_output_of_the_command_goes_to_stderr_and_stdout_has_one_line_per_commit()
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn the_current_worktree_and_head_are_not_touched() {
     let repo = Repo::new();
     let head = repo.git(&["rev-parse", "HEAD"]);
@@ -238,7 +234,6 @@ fn the_current_worktree_and_head_are_not_touched() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn arguments_without_the_separator_are_a_usage_error() {
     let repo = Repo::new();
     let out = repo.run(&["main", "true"]);
@@ -253,7 +248,6 @@ fn arguments_without_the_separator_are_a_usage_error() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_base_that_cannot_be_resolved_is_a_usage_error() {
     let repo = Repo::new();
     let out = repo.run(&["nosuchref", "--", "true"]);
@@ -264,7 +258,6 @@ fn a_base_that_cannot_be_resolved_is_a_usage_error() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn no_commit_in_the_range_is_a_usage_error() {
     let repo = Repo::empty();
     let out = repo.run(&["main", "--", "true"]);
@@ -274,7 +267,6 @@ fn no_commit_in_the_range_is_a_usage_error() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
     let repo = Repo::new();
     let missing = repo.root.join("missing");
@@ -300,7 +292,6 @@ mod unix {
     use common::{sh_path, write_executable};
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_command_sees_the_tree_of_each_commit() {
         let repo = Repo::new();
         let out = repo.run(&["main", "--", "test", "!", "-e", "BAD"]);
@@ -316,7 +307,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_command_killed_by_a_signal_gives_128_plus_the_signal_and_the_temporary_files_are_removed()
     {
         let repo = Repo::new();
@@ -332,7 +322,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_command_that_is_not_found_gives_127() {
         let repo = Repo::new();
         let out = repo.run(&["main", "--", "no-such-command-of-check-each-commit"]);
@@ -345,7 +334,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn what_the_command_leaves_does_not_reach_the_next_commit() {
         let repo = Repo::new();
         let out = repo.run(&[
@@ -360,7 +348,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn read_only_files_left_by_the_command_are_removed() {
         let repo = Repo::new();
         let out = repo.run(&[
@@ -376,7 +363,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_read_only_directory_left_by_the_previous_commit_can_be_changed_by_the_next() {
         let repo = Repo::empty();
         repo.commit("d/f", "1", "feat: add d/f");
@@ -400,7 +386,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_command_does_not_inherit_stdin() {
         let repo = Repo::new();
         // 標準入力のパイプを開いたままにする。cat が継承すれば、入力の終わりを待って終わらない
@@ -427,7 +412,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn git_and_the_command_do_not_touch_the_repository_that_git_dir_points_to() {
         let repo = Repo::new();
         let other = Repo::empty();
@@ -454,7 +438,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn git_variables_that_do_not_point_to_a_repository_reach_the_command() {
         let repo = Repo::new();
         let log = repo.root.join("env.log");
@@ -471,7 +454,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_checkout_of_the_temporary_worktree_runs_no_hook() {
         let repo = Repo::new();
         let log = repo.root.join("hook.log");
@@ -510,7 +492,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_failing_rev_list_ends_with_3_and_says_why() {
         let repo = Repo::new();
         let out = run_failing(&repo, "rev-list");
@@ -523,7 +504,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_failing_worktree_add_ends_with_3_and_leaves_nothing() {
         let repo = Repo::new();
         let out = run_failing(&repo, "add");
@@ -533,7 +513,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_failing_checkout_ends_with_3_and_leaves_nothing() {
         let repo = Repo::new();
         let out = run_failing(&repo, "checkout");
@@ -544,7 +523,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_failing_clean_ends_with_3_without_checking_that_commit() {
         let repo = Repo::new();
         let out = run_failing(&repo, "clean");
@@ -559,7 +537,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn an_interrupt_waits_for_the_command_removes_the_temporary_worktree_and_ends_with_130() {
         for signal in ["INT", "TERM", "HUP"] {
             let repo = Repo::new();
