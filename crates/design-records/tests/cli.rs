@@ -3062,3 +3062,18 @@ fn check_rejects_front_matter_in_a_log() {
         stdout(&out)
     );
 }
+
+#[test]
+fn check_and_index_leave_dot_paths_out_of_the_bundle() {
+    let t = TempRepo::new("okf-dot");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write("docs/.draft.md", "no front matter\n");
+    t.write("docs/.notes/idea.md", "no front matter\n");
+    t.commit_all("docs: dot paths");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert!(!t.dir.join("docs/.notes/index.md").exists());
+}
