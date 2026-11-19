@@ -286,6 +286,25 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
     assert!(!missing.exists());
 }
 
+/// Windows では、検査のコマンドを Git Bash の sh を通して起動する（.sh を起動でき、相対のパスを worktree から引く）
+#[cfg(windows)]
+#[test]
+#[ignore = "RED: 実装の前"]
+fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree() {
+    let repo = Repo::empty();
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    let log = common::sh_path(&repo.root.join("ran.log"));
+    repo.commit(
+        "check.sh",
+        &format!("#!/bin/sh\npwd >> '{log}'"),
+        "feat: add check.sh",
+    );
+    let out = repo.run(&["main", "--", "./check.sh"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let ran = std::fs::read_to_string(repo.root.join("ran.log")).unwrap();
+    assert!(ran.trim_end().ends_with("/wt"), "{ran}");
+}
+
 #[cfg(unix)]
 mod unix {
     use super::*;
