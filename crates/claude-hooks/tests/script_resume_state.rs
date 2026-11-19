@@ -625,10 +625,8 @@ fn open_count_is_compared_with_the_commit_from_14_days_before() {
         issues.contains("\nopen-count now=4 14d-ago=1 diff=+3\n"),
         "{issues}"
     );
-    assert!(
-        issues.contains("NEXT: open の issue が 14 日前より 3 件増えた。"),
-        "{issues}"
-    );
+    // 増えていても、数を出すだけで行動は指示しない（開く数と閉じる数を比べる規則は無い）
+    assert!(!issues.contains("NEXT: open の issue が"), "{issues}");
 }
 
 #[test]
