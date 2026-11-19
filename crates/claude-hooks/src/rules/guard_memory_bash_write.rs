@@ -70,8 +70,13 @@ fn memory_writes(shell: &Shell, cwd: &Path, home: &Path, config: Option<&str>) -
         if shell.runs_under_ssh_or_login(cmd) {
             continue;
         }
+        // target_dir は前のコマンドを全部たどるので、書き込み先のあるコマンドだけで求める
+        let targets = targets(cmd);
+        if targets.is_empty() {
+            continue;
+        }
         let dir = shell.target_dir(cmd, cwd);
-        for target in targets(cmd) {
+        for target in targets {
             let Expanded::Known(t) = target.expand(&vars) else {
                 continue;
             };
