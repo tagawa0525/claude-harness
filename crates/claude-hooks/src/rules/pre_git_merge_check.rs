@@ -7,12 +7,13 @@
 //!
 //! 対象はローカルのブランチ（refs/heads/）を既定ブランチの上でマージするときだけ。今のブランチは
 //! 同じコマンドの前の git switch / checkout を反映し（branch_at）、移り先が分からなければ確かめる。
+//! その switch / checkout の後の `-` と `@{-N}` は確かめずに飛ばす（guard-git-merge が止める）。
 //! リモート追跡ブランチの取り込み（`git merge origin/main`）は別々にマージ済みのトピックの
 //! 集まりなので対象外。docs/adr の無いリポジトリでは数える ADR が無いので何もしない。
 //! エスケープ: `ALLOW_MULTI_TOPIC=<理由>`（1 つの決定を複数の ADR に分けて書いたときと、
 //! 決定前の案（status: proposed）の ADR をまとめて加えるときだけ）
 
-use super::guard_branch_base::branch_at;
+use super::guard_branch_base::{branch_at, switches_before};
 use super::{Rule, escape_hint};
 use crate::git;
 use crate::git_args::{Item, items};
@@ -163,8 +164,11 @@ pub(super) struct DefaultBranchMerge {
     pub dir: PathBuf,
     /// ローカルの既定ブランチ名（`main`）
     pub default: String,
-    /// マージ対象の指定（ブランチ名、`-`、`--stdin`）
+    /// マージ対象の指定（ブランチ名、`-`、`--stdin`）。`after_switch` に分けたものは含めない
     pub targets: Vec<String>,
+    /// 同じコマンドの前の git switch / checkout で指す先が変わる `-` と `@{-N}`。hook の時点の履歴で解くと、git が
+    /// マージするのと別のブランチを確かめるので、解かずに分ける（guard-git-merge が止める）
+    pub after_switch: Vec<String>,
     /// `--no-ff` で、fast-forward や squash になる指定がない
     pub no_ff: bool,
     /// `merge` の後の引数（本文の `-m` / `-F` を読む）
@@ -194,15 +198,26 @@ pub(super) fn default_branch_merges(input: &Input, shell: &Shell) -> Vec<Default
         if branch_at(shell, cmd, &input.cwd, &dir).is_some_and(|b| b != default) {
             continue;
         }
+        let (after_switch, targets) = if switches_before(shell, cmd, &input.cwd, &dir) {
+            targets.into_iter().partition(|t| is_previous_branch(t))
+        } else {
+            (Vec::new(), targets)
+        };
         out.push(DefaultBranchMerge {
             dir,
             default,
             targets,
+            after_switch,
             no_ff,
             args,
         });
     }
     out
+}
+
+/// 前に居たブランチを指すマージ対象の指定（`-`、`@{-N}`）か。git は reflog の移動の履歴で解く
+pub(super) fn is_previous_branch(target: &str) -> bool {
+    target == "-" || target.starts_with("@{-")
 }
 
 /// マージ対象の指定をローカルのブランチの完全な ref（`refs/heads/feat/x`）にする。

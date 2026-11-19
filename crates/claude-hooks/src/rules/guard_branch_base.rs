@@ -249,6 +249,17 @@ pub(super) fn branch_at(shell: &Shell, cmd: &Cmd, base: &Path, dir: &Path) -> Op
     branch
 }
 
+/// cmd より前に（[`branch_at`] と同じ範囲で）、同じディレクトリでブランチを移る（移り先が分からないものを含む）
+/// git switch / checkout があるか。git は今のブランチへの switch も reflog に移動として書くので、どれも `-` と
+/// `@{-N}` の指す先を変える
+pub(super) fn switches_before(shell: &Shell, cmd: &Cmd, base: &Path, dir: &Path) -> bool {
+    shell.commands_before(cmd).any(|c| {
+        shell.target_dir(c, base) == dir
+            && c.git_subcommand()
+                .is_some_and(|(sub, args)| !matches!(switched_to(dir, sub, args), Ok(None)))
+    })
+}
+
 impl Rule for GuardBranchBase {
     fn name(&self) -> &'static str {
         "guard-branch-base"
