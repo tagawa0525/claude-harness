@@ -284,16 +284,17 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
         stderr(&out),
         format!(
             "一時ディレクトリを作れません: {}（{reason}）\n",
-            missing.display()
+            missing.to_str().unwrap()
         )
     );
     assert!(!missing.exists());
 }
 
 /// Windows では、検査のコマンドを Git Bash の sh を通して起動する（.sh を起動でき、相対のパスを worktree から引き、
-/// 引数のワイルドカードを展開しない）
+/// 引数のワイルドカードを展開しない。展開を止める MSYS の設定は、検査のコマンドに渡さない）
 #[cfg(windows)]
 #[test]
+#[ignore = "RED: 実装の前"]
 fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the_arguments_as_given()
  {
     let repo = Repo::empty();
@@ -301,16 +302,18 @@ fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the
     let log = common::sh_path(&repo.root.join("ran.log"));
     repo.commit(
         "check.sh",
-        &format!("#!/bin/sh\nprintf '%s\\n' \"$1\" \"$(pwd)\" >> '{log}'"),
+        &format!("#!/bin/sh\nprintf '%s\\n' \"$1\" \"$(pwd)\" \"${{MSYS-unset}}\" >> '{log}'"),
         "feat: add check.sh",
     );
     let out = repo.run(&["main", "--", "./check.sh", "*.sh"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let ran = std::fs::read_to_string(repo.root.join("ran.log")).unwrap();
     let lines: Vec<&str> = ran.lines().collect();
-    assert_eq!(lines.len(), 2, "{ran}");
+    assert_eq!(lines.len(), 3, "{ran}");
     assert_eq!(lines[0], "*.sh", "{ran}");
     assert!(lines[1].ends_with("/wt"), "{ran}");
+    let msys = std::env::var("MSYS").unwrap_or_else(|_| "unset".to_string());
+    assert_eq!(lines[2], msys, "{ran}");
 }
 
 #[cfg(unix)]
@@ -653,23 +656,71 @@ mod unix {
 
     #[test]
     fn a_reader_that_closes_stdout_early_still_gets_the_temporary_worktree_removed() {
-        // `check-each-commit.sh ... | head -1` と同じく、最初の行を読んで閉じる
+        // `check-each-commit.sh ... | head -1` と同じく、最初の行を読んで閉じる。2 つ目のコミットの検査は、閉じた後に
+        // 終わらせる（閉じる前に残りの行がパイプに収まると、書き込みが失敗しない）
         use std::io::{BufRead, BufReader};
         let repo = Repo::new();
+        let calls = sh_path(&repo.root.join("calls"));
+        let go = repo.root.join("go");
+        let script = format!(
+            "echo >> {calls}; [ \"$(wc -l < {calls})\" -eq 1 ] || while [ ! -e {} ]; do sleep 0.01; done",
+            sh_path(&go)
+        );
         let mut child = repo
-            .command(&["main", "--", "sh", "-c", "sleep 0.2"])
+            .command(&["main", "--", "sh", "-c", &script])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
         let mut first = String::new();
-        BufReader::new(child.stdout.take().unwrap())
-            .read_line(&mut first)
-            .unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap());
+        reader.read_line(&mut first).unwrap();
         assert!(first.ends_with("feat: first exit=0\n"), "{first}");
+        drop(reader);
+        std::fs::write(&go, "").unwrap();
         let status = child.wait().unwrap();
         // シェルが閉じたパイプへの書き込みで終わったと読む 128 + SIGPIPE
         assert_eq!(status.code(), Some(141), "{status}");
+        assert!(repo.left_in_tmp().is_empty(), "{:?}", repo.left_in_tmp());
+        assert_eq!(repo.worktrees(), 1);
+    }
+
+    #[test]
+    #[ignore = "RED: 実装の前"]
+    fn a_reader_that_closes_stderr_early_still_gets_the_temporary_worktree_removed() {
+        // `check-each-commit.sh ... 2>&1 | head -1` と同じく、標準エラーの最初の行を読んで閉じる。閉じた後に、
+        // 検査のコマンドが見つからないという文を書かせる（2 つ目のコミットで check.sh を消す）
+        use std::io::{BufRead, BufReader};
+        let repo = Repo::empty();
+        repo.git(&["switch", "-q", "-c", "feat/x"]);
+        let go = repo.root.join("go");
+        repo.commit(
+            "check.sh",
+            &format!(
+                "#!/bin/sh\necho started >&2; while [ ! -e {} ]; do sleep 0.01; done",
+                sh_path(&go)
+            ),
+            "feat: add check.sh",
+        );
+        repo.git(&["update-index", "--chmod=+x", "check.sh"]);
+        repo.git(&["commit", "-q", "--amend", "--no-edit"]);
+        repo.git(&["rm", "-qf", "check.sh"]);
+        repo.git(&["commit", "-q", "-m", "feat: remove check.sh"]);
+        let mut child = repo
+            .command(&["main", "--", "./check.sh"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut first = String::new();
+        let mut reader = BufReader::new(child.stderr.take().unwrap());
+        reader.read_line(&mut first).unwrap();
+        assert_eq!(first, "started\n");
+        drop(reader);
+        std::fs::write(&go, "").unwrap();
+        let status = child.wait().unwrap();
+        // 2 つ目のコミットの検査は失敗する（check.sh が無い）
+        assert_eq!(status.code(), Some(1), "{status}");
         assert!(repo.left_in_tmp().is_empty(), "{:?}", repo.left_in_tmp());
         assert_eq!(repo.worktrees(), 1);
     }
