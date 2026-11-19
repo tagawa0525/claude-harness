@@ -689,121 +689,194 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         }
     }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
-    // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる
+    // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる。上の PR が
+    // あれば、push の後に消すだけでも閉じるので、ここでも示す
+    let stacked = stacked_prs(branch, remote);
     if !ok(&[
         "merge-base",
         "--is-ancestor",
         &format!("{remote}/{branch}"),
         &format!("{remote}/{default}"),
     ]) {
-        println!(
-            "REMOTE_BRANCH: kept ({remote}/{default} がブランチの先端をまだ含まない。{default} を push してから消す)"
-        );
+        let unpushed = format!("{remote}/{default} がブランチの先端をまだ含まない");
+        match stacked {
+            // push していない既定のブランチへ付け替えると、上の PR の差分にこのブランチのコミットが入るので、push を先に書く
+            Stacked::Found(found) => println!(
+                "REMOTE_BRANCH: kept ({unpushed}。{}の base でもある。{default} を push し、次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、ブランチを消す)\n{}",
+                listed(&found),
+                commands(&found, branch, remote, default)
+            ),
+            Stacked::Unknown(why) => println!(
+                "REMOTE_BRANCH: kept ({unpushed}。{default} を push してから消す。{branch} を base にした open PR の有無も確認できない: {why})"
+            ),
+            Stacked::None => {
+                println!("REMOTE_BRANCH: kept ({unpushed}。{default} を push してから消す)")
+            }
+        }
         return Ok(());
     }
-    // 上の PR の付け替えは、push の確認の後に示す。push していない既定のブランチへ付け替えると、上の PR の差分に
-    // このブランチのコミットが入る
-    if github && let Some(kept) = stacked_prs(branch, remote, default) {
-        println!("{kept}");
-        return Ok(());
+    match stacked {
+        Stacked::Found(found) => {
+            println!(
+                "REMOTE_BRANCH: kept ({}の base。削除すると GitHub がそれらの PR を閉じ、閉じた PR は base を付け替えられない。\
+                 次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、ブランチを消す)\n{}",
+                listed(&found),
+                commands(&found, branch, remote, default)
+            );
+            Ok(())
+        }
+        Stacked::Unknown(why) => {
+            println!(
+                "REMOTE_BRANCH: kept ({branch} を base にした open PR の有無を確認できない: {why})"
+            );
+            Ok(())
+        }
+        Stacked::None => {
+            step(&["push", "-q", remote, "--delete", branch])?;
+            println!("REMOTE_BRANCH: deleted");
+            Ok(())
+        }
     }
-    step(&["push", "-q", remote, "--delete", branch])?;
-    println!("REMOTE_BRANCH: deleted");
-    Ok(())
 }
 
-/// remote の branch を base にした開いている PR（積み重ねた上の PR）があるか、確認できなければ、残す理由の行（上の PR が
-/// あれば、PR ごとの base の付け替えと、その後にブランチを消すコマンドの行を続ける）。API でブランチを消すと GitHub は
-/// それを base にした開いている PR を閉じ、閉じた PR は base を付け替えられない。探し方と付け替えのコマンドは
-/// pre-merge-check の検査 10（`stacked_prs_reason`）と揃える
-fn stacked_prs(branch: &str, remote: &str, default: &str) -> Option<String> {
-    let unknown = |why: &str| {
-        Some(format!(
-            "REMOTE_BRANCH: kept ({branch} を base にした open PR の有無を確認できない: {why})"
-        ))
-    };
-    // 上の PR は、消すブランチを持つリポジトリにある。gh の既定のリポジトリ（fork の clone では親）ではなく、remote の
-    // URL のリポジトリを探す。URL は設定の値を読む（git remote get-url は insteadOf で書き換えた先を返す。書き換えは
-    // 転送の手段を替えるもので、リポジトリは同じ）
-    let url = git(&["config", "--get", &format!("remote.{remote}.url")]).unwrap_or_default();
-    let Some(repo) = github_repo(&url) else {
-        if url.contains("github.com") {
-            return unknown(&format!(
-                "{remote} の URL（{url}）から GitHub のリポジトリを読めない"
-            ));
+/// remote の branch を base にした開いている PR（積み重ねた上の PR）。API でブランチを消すと GitHub はそれを base にした
+/// 開いている PR を閉じ、閉じた PR は base を付け替えられない
+enum Stacked {
+    /// 無い（push 先に GitHub のリポジトリが無ければ、消しても GitHub の PR は閉じない）
+    None,
+    /// 確かめられない理由
+    Unknown(String),
+    /// push 先の GitHub のリポジトリ（owner/name）ごとの、上の PR の番号（空のものは入れない）
+    Found(Vec<(String, Vec<String>)>),
+}
+
+/// 探し方は pre-merge-check の検査 10（`stacked_prs_reason`）と揃える。上の PR は、消すブランチを持つリポジトリにある
+/// ので、gh の既定のリポジトリ（fork の clone では親）ではなく、git push --delete が消しに行く URL（pushurl があれば
+/// その全部、無ければ url の全部）のリポジトリを探す。URL は設定の値を読む（git remote get-url と git remote -v は
+/// insteadOf で書き換えた先を返す。書き換えは転送の手段を替えるもので、リポジトリは同じ）
+fn stacked_prs(branch: &str, remote: &str) -> Stacked {
+    let urls = [
+        format!("remote.{remote}.pushurl"),
+        format!("remote.{remote}.url"),
+    ]
+    .iter()
+    .filter_map(|key| git(&["config", "--get-all", key]))
+    .find(|v| !v.is_empty())
+    .unwrap_or_default();
+    let mut repos: Vec<String> = Vec::new();
+    for url in urls.lines() {
+        match github_repo(url) {
+            Some(repo) if !repos.contains(&repo) => repos.push(repo),
+            Some(_) => {}
+            None if url.to_ascii_lowercase().contains("github.com") => {
+                return Stacked::Unknown(format!(
+                    "{remote} の URL（{url}）から GitHub のリポジトリを読めない"
+                ));
+            }
+            None => {}
         }
-        // GitHub でないリモートのブランチを消しても、GitHub の PR は閉じない
-        return None;
-    };
-    let out = gh()
-        .args([
-            "pr",
-            "list",
-            "-R",
-            &repo,
-            "--base",
-            branch,
-            "--state",
-            "open",
-            "--json",
-            "number",
-            "--jq",
-            ".[].number",
-        ])
-        .output();
-    let Some(out) = out.ok().filter(|o| o.status.success()) else {
-        return unknown("gh pr list が失敗");
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let numbers: Vec<&str> = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    if numbers.is_empty() {
-        return None;
     }
-    let listed: Vec<String> = numbers.iter().map(|n| format!("#{n}")).collect();
-    let mut commands: Vec<String> = numbers
+    if repos.is_empty() {
+        return Stacked::None;
+    }
+    if !gh_available() {
+        return Stacked::Unknown("gh がない".to_string());
+    }
+    let mut found = Vec::new();
+    for repo in repos {
+        let out = gh()
+            .args([
+                "pr",
+                "list",
+                "-R",
+                &repo,
+                "--base",
+                branch,
+                "--state",
+                "open",
+                "--json",
+                "number",
+                "--jq",
+                ".[].number",
+            ])
+            .output();
+        let Some(out) = out.ok().filter(|o| o.status.success()) else {
+            return Stacked::Unknown("gh pr list が失敗".to_string());
+        };
+        let numbers: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        if !numbers.is_empty() {
+            found.push((repo, numbers));
+        }
+    }
+    if found.is_empty() {
+        Stacked::None
+    } else {
+        Stacked::Found(found)
+    }
+}
+
+/// 上の PR の件数と番号（`open PR 2 件（#12, #13）`）
+fn listed(found: &[(String, Vec<String>)]) -> String {
+    let numbers: Vec<String> = found
         .iter()
-        .map(|n| {
-            format!(
-                "  gh pr edit {n} --base {} -R {}",
-                sh_word(default),
-                sh_word(&repo)
-            )
+        .flat_map(|(_, numbers)| numbers.iter().map(|n| format!("#{n}")))
+        .collect();
+    format!("open PR {} 件（{}）", numbers.len(), numbers.join(", "))
+}
+
+/// 上の PR ごとの base の付け替えと、その後にブランチを消すコマンドの行（行頭に空白 2 つ）。付け替えは検査 10 と同じ形
+fn commands(found: &[(String, Vec<String>)], branch: &str, remote: &str, default: &str) -> String {
+    let mut lines: Vec<String> = found
+        .iter()
+        .flat_map(|(repo, numbers)| {
+            numbers.iter().map(move |n| {
+                format!(
+                    "  gh pr edit {n} --base {} -R {}",
+                    sh_word(default),
+                    sh_word(repo)
+                )
+            })
         })
         .collect();
     // このスクリプトのやり直しでなく、削除のコマンドを示す。ローカルのブランチを消した後は branch.<name>.remote が
     // 読めず、やり直しは origin 以外のリモートを探せない
-    commands.push(format!(
+    lines.push(format!(
         "  git push {} --delete {}",
         sh_word(remote),
         sh_word(branch)
     ));
-    Some(format!(
-        "REMOTE_BRANCH: kept (open PR {} 件（{}）の base。削除すると GitHub がそれらの PR を閉じ、閉じた PR は base を付け替えられない。\
-         次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、ブランチを消す)\n{}",
-        numbers.len(),
-        listed.join(", "),
-        commands.join("\n")
-    ))
+    lines.join("\n")
 }
 
-/// リモートの URL が GitHub のリポジトリを指すなら、その owner/name（`https://`、`ssh://`、`git@github.com:` の形）
+/// リモートの URL が GitHub のリポジトリを指すなら、その owner/name（`<scheme>://[<user>@]github.com[:<port>]/` の形と、
+/// git の scp の形 `[<user>@]github.com:`）。ホストの大文字と小文字は区別しない
 fn github_repo(url: &str) -> Option<String> {
-    let path = match url.strip_prefix("git@github.com:") {
-        Some(path) => path,
+    let (host, path) = match url.split_once("://") {
+        Some((_, rest)) => {
+            let (authority, path) = rest.split_once('/')?;
+            let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+            (host.split_once(':').map_or(host, |(h, _)| h), path)
+        }
         None => {
-            let (_, rest) = url.split_once("://")?;
-            let (host, path) = rest.split_once('/')?;
-            let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
-            if host != "github.com" {
+            // git は、最初の / より前に : があるものを scp の形と読む（無ければローカルのパス）
+            let (authority, path) = url.split_once(':')?;
+            if authority.contains('/') {
                 return None;
             }
-            path
+            (
+                authority.rsplit_once('@').map_or(authority, |(_, h)| h),
+                path,
+            )
         }
     };
+    if !host.eq_ignore_ascii_case("github.com") {
+        return None;
+    }
     let path = path.trim_end_matches('/');
     let path = path.strip_suffix(".git").unwrap_or(path);
     match path.split('/').collect::<Vec<_>>().as_slice() {
