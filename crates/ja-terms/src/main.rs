@@ -63,29 +63,33 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
         [option, ..] if option == "--dictionary" => return Err(usage()),
         rest => (None, rest),
     };
-    let given = given
-        .map(Dictionary::load)
-        .transpose()
-        .map_err(|e| Failure(e.to_string()))?;
+    let given = || {
+        given
+            .map(Dictionary::load)
+            .transpose()
+            .map_err(|e| Failure(e.to_string()))
+    };
     // 渡した辞書が無ければ、今のディレクトリの作業ツリーの辞書の組（staged はステージしたものを staged::run が読む）
-    let dictionary = |given: Option<Dictionary>| match given {
+    let dictionary = || match given()? {
         Some(given) => Ok(given),
         None => Dictionary::for_dir(Path::new(".")).map_err(|e| Failure(e.to_string())),
     };
     match (command.to_str(), args) {
-        (Some("check"), [_, ..]) => check(&dictionary(given)?, args),
+        (Some("check"), [_, ..]) => check(&dictionary()?, args),
         (Some("message"), []) => {
-            let dictionary = dictionary(given)?;
+            // 辞書より先に標準入力を読み切る。辞書を読めずに止まるときに読まずに終わると、本文を書いている呼ぶ側が
+            // 閉じた管への書き込みの失敗を受け、ここで出す理由と修正方法を捨てる
             let mut input = Vec::new();
             std::io::stdin()
                 .read_to_end(&mut input)
                 .map_err(|e| Failure(format!("標準入力を読めない: {e}")))?;
+            let dictionary = dictionary()?;
             let reports = message_reports(&dictionary, &String::from_utf8_lossy(&input))?;
             print(&reports)?;
             Ok(u8::from(!reports.is_empty()))
         }
-        (Some("commit-msg"), [path]) => commit_msg(&dictionary(given)?, Path::new(path)),
-        (Some("staged"), []) => staged::run(given),
+        (Some("commit-msg"), [path]) => commit_msg(&dictionary()?, Path::new(path)),
+        (Some("staged"), []) => staged::run(given()?),
         _ => Err(usage()),
     }
 }

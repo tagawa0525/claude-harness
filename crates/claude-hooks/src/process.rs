@@ -20,12 +20,18 @@ pub fn output_with_input(cmd: &mut Command, input: &[u8]) -> Result<Output, Unfi
         .map_err(Unfinished::NotStarted)?;
     let stdin = child.stdin.take();
     std::thread::scope(|scope| {
-        if let Some(mut stdin) = stdin {
-            scope.spawn(move || {
-                let _ = stdin.write_all(input);
-            });
+        let written = stdin.map(|mut stdin| {
+            scope.spawn(move || match stdin.write_all(input) {
+                Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+                _ => Ok(()),
+            })
+        });
+        let out = child.wait_with_output()?;
+        // EPIPE のほかの書き込みの失敗は、子が入力の途中までを見て終わったかもしれないので、結果を使わない
+        match written.map(|w| w.join()) {
+            Some(Ok(Err(e))) => Err(e),
+            _ => Ok(out),
         }
-        child.wait_with_output()
     })
     .map_err(Unfinished::Lost)
 }
