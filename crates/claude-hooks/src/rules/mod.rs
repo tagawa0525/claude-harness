@@ -88,6 +88,7 @@ pub(crate) use check_merge_body_ja_terms::ja_terms;
 mod check_merge_review;
 mod count_review_rounds;
 pub(crate) use count_review_rounds::round_ran_at;
+mod delegate_report_fields;
 mod delegate_request_fields;
 mod guard_branch_base;
 mod guard_exclusive_slurm;
@@ -143,6 +144,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_exclusive_slurm::GuardExclusiveSlurm,
         &block_nested_heredoc_same_delimiter::BlockNestedHeredocSameDelimiter,
         &delegate_request_fields::DelegateRequestFields,
+        &delegate_report_fields::DelegateReportFields,
         &count_review_rounds::CountReviewRounds,
     ]
 }
@@ -175,6 +177,12 @@ mod tests {
     #[test]
     fn agent_tool_runs_only_the_delegate_request_check() {
         assert_eq!(names_for("Agent"), ["delegate-request-fields"]);
+    }
+
+    #[test]
+    fn report_tools_run_only_the_delegate_report_check() {
+        assert_eq!(names_for("SendMessage"), ["delegate-report-fields"]);
+        assert_eq!(names_for("SubagentHandback"), ["delegate-report-fields"]);
     }
 
     #[test]

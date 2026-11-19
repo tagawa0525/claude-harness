@@ -18,6 +18,8 @@ pub struct Input {
     pub args: String,
     /// Edit / Write ツールの tool_input.file_path（ほかのツールでは空）
     pub file_path: String,
+    /// SendMessage と SubagentHandback ツールの tool_input.message（ほかのツールでは空）
+    pub message: String,
     /// hook 実行時のカレントディレクトリ。JSON の cwd が無ければプロセスの cwd
     pub cwd: PathBuf,
     /// Claude Code のセッションの ID。scratchpad のパス（`…/<session_id>/scratchpad`）を見分けるのに使う。無ければ空
@@ -46,6 +48,7 @@ impl Input {
             skill: s("/tool_input/skill").unwrap_or_default(),
             args: s("/tool_input/args").unwrap_or_default(),
             file_path: s("/tool_input/file_path").unwrap_or_default(),
+            message: s("/tool_input/message").unwrap_or_default(),
             cwd,
             session_id: s("/session_id").unwrap_or_default(),
         })

@@ -11,7 +11,11 @@
 //!   docs/issues の同じ番号の記録で引き、閉じていない相手（duplicate で閉じた相手は開いている重複先）を `blocked=`、閉じたかを確かめられない相手（記録が無い、
 //!   status が open でも closed でもない、duplicate の重複先を読めない、たどると自分に戻る、`#NNNN` の形でない、
 //!   blocked-by を読めない）を `blocker-unknown=` で添え、読めないファイルは `unreadable=` で出し、印があれば節の最後に、
-//!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる
+//!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる。docs/issues が
+//!   あれば、一覧の後に `open-count now=<作業ツリーの open の数 | unknown（読めないファイルがある）>
+//!   14d-ago=<HEAD の第 1 親の履歴で 14 日より前の最も新しいコミットの数 | unknown（理由）> diff=<差>`（どちらかが unknown
+//!   なら diff は出さない）を出し、増えていれば棚卸しを先にする `NEXT:` を出す（issue は 1 つの
+//!   トピックを閉じるための置き場で、積み上がったまま新しい作業に進まないため）
 //!
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
 
@@ -306,6 +310,7 @@ fn issues(root: &Path) {
     }
     let (mut found, mut any_blocked, mut any_unknown, mut any_unreadable) =
         (false, false, false, false);
+    let mut open_now = 0usize;
     for e in &entries {
         let text = match &e.text {
             Ok(text) => text,
@@ -367,9 +372,39 @@ fn issues(root: &Path) {
         }
         println!("{line}");
         found = true;
+        open_now += 1;
     }
     if !found {
         println!("(なし)");
+    }
+    // 読めないファイルは open かを決められないので、今の数を決めず、比べない（過去の数は git の中身を全部数える）
+    let now = if any_unreadable {
+        Err("読めないファイルがある")
+    } else {
+        Ok(open_now)
+    };
+    let grown = match (now, open_count_before(root, dir)) {
+        (Ok(now), Ok(past)) => {
+            let diff = now as i64 - past as i64;
+            println!("open-count now={now} {COUNT_AGO}={past} diff={diff:+}");
+            (diff > 0).then_some(diff)
+        }
+        (now, past) => {
+            let show = |v: Result<usize, String>| {
+                v.map_or_else(|why| format!("unknown（{why}）"), |n| n.to_string())
+            };
+            println!(
+                "open-count now={} {COUNT_AGO}={}",
+                show(now.map_err(str::to_string)),
+                show(past)
+            );
+            None
+        }
+    };
+    if let Some(diff) = grown {
+        println!(
+            "NEXT: open の issue が 14 日前より {diff} 件増えた。新しい作業の前に棚卸しをする（済んだもの、重複、同じトピックの直し残しを集めたものを閉じるか、まとめる）"
+        );
     }
     if any_blocked {
         println!("NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない");
@@ -384,4 +419,69 @@ fn issues(root: &Path) {
             "NEXT: blocker-unknown= の issue は、相手が閉じたかを確かめられない（相手の記録が無い、status か duplicate-of を読めない、#NNNN の形でない、たどると自分に戻る、blocked-by を読めない）。着手の前に blocked-by か相手の記録を直すか、ユーザーに確かめる"
         );
     }
+}
+
+/// 比べる過去の数の名前と、git の日付の指定（`--before` に渡す）
+const COUNT_AGO: &str = "14d-ago";
+const COUNT_BEFORE: &str = "--before=14.days.ago";
+
+/// HEAD の第 1 親の履歴で 14 日より前の最も新しいコミットの、dir の下の status: open の issue の数。dir が無ければ 0。
+/// 作業ツリーでなくコミットの中身を数えるので、ファイルは `git cat-file --batch` でまとめて読む（1 件ずつ git を
+/// 起動すると、数百件の issue で再開が遅れる）
+fn open_count_before(root: &Path, dir: &str) -> Result<usize, String> {
+    let rev = crate::git::git(
+        root,
+        &["rev-list", "-1", "--first-parent", COUNT_BEFORE, "HEAD"],
+    )
+    .ok_or("git rev-list に失敗")?;
+    if rev.is_empty() {
+        return Err("14 日より前のコミットが無い".into());
+    }
+    // -z で区切る（無いと、ASCII の外の文字や空白を含む名前を git が引用符で囲み、`.md` で終わらなくなる）
+    let names = crate::git::git(
+        root,
+        &["ls-tree", "-z", "--name-only", &rev, &format!("{dir}/")],
+    )
+    .ok_or("git ls-tree に失敗")?;
+    let input: String = names
+        .split('\0')
+        .filter(|n| n.ends_with(".md"))
+        .map(|n| format!("{rev}:{n}\n"))
+        .collect();
+    if input.is_empty() {
+        return Ok(0);
+    }
+    let out = crate::git::run(root, &["cat-file", "--batch"], Some(input.as_bytes()))
+        .filter(|o| o.status.success())
+        .ok_or("git cat-file に失敗")?;
+    let mut rest: &[u8] = &out.stdout;
+    let mut count = 0;
+    while !rest.is_empty() {
+        let end = rest
+            .iter()
+            .position(|b| *b == b'\n')
+            .ok_or("git cat-file の出力を読めない")?;
+        let header = String::from_utf8_lossy(&rest[..end]).into_owned();
+        rest = &rest[end + 1..];
+        // `<oid> <type> <size>`。ls-tree の名前の中のサブディレクトリ（tree）も同じ形で来るので、blob だけを数える
+        let mut fields = header.split(' ');
+        let (Some(_), Some(kind), Some(size)) = (fields.next(), fields.next(), fields.next())
+        else {
+            return Err(format!("git cat-file の出力を読めない: {header}"));
+        };
+        let size: usize = size
+            .parse()
+            .map_err(|_| format!("git cat-file の出力を読めない: {header}"))?;
+        if rest.len() < size + 1 {
+            return Err("git cat-file の出力が途中で切れた".into());
+        }
+        if kind == "blob"
+            && design_records::status(&String::from_utf8_lossy(&rest[..size])).as_deref()
+                == Some("open")
+        {
+            count += 1;
+        }
+        rest = &rest[size + 1..];
+    }
+    Ok(count)
 }
