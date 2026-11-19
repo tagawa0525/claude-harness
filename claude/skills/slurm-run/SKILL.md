@@ -1,6 +1,6 @@
 ---
 name: slurm-run
-description: 重い計算を r995 の Slurm に投げる。流すかの判断、区分と目的（--class、--ref、--purpose。必須）、見積もり（-t）と名前の付け方、待ち行列での順番（区分の順、slurm-queue.sh）、時間を記録するジョブと急ぐ計算の投げ方（--timed。割り込まれない）、複数ジョブの待ち方、ログと TIME 行、排他でない投げ方（-c）。
+description: 重い計算を r995 の Slurm に投げるとき、投げる前に読む。流すかの判断、投げ方（区分と目的は必須）、待ち方。
 allowed-tools:
   - Bash(~/.claude/scripts/slurm-run.sh*)
   - Bash(~/.claude/scripts/slurm-history.sh*)

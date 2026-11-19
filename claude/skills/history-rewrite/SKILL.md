@@ -1,6 +1,6 @@
 ---
 name: history-rewrite
-description: リポジトリの履歴の中の崩れた語を ja-terms の辞書で直し、文書のコミットの番号を付け直して、生きているリポジトリと worktree に移す。履歴を書き換えるとき（過去のコミットの語を直す、記録の番号を付け直す）に使う。
+description: 履歴を書き換えるとき（過去のコミットの崩れた語を ja-terms の辞書で直す、文書のコミットの番号を付け直す）に使う。書き換えた履歴を、生きているリポジトリと worktree に移す。
 argument-hint: <リポジトリのパス>
 allowed-tools:
   - Bash(history-rewrite run:*)

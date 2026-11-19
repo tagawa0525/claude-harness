@@ -1,6 +1,6 @@
 ---
 name: retro
-description: 同じ失敗が 2 回出たときと、ユーザーに訂正されたときの振り返り。文章（memory・skill・CLAUDE.md）は消す・縮める方向、hook・script は足してよい方向で洗い出し、実際のファイルで裏取りして実行する。「ここまでの作業で改善したほうが良いものは」と頼まれたときにも使う。
+description: 同じ失敗が 2 回出たときと、ユーザーに訂正されたときの振り返り。「ここまでの作業で改善したほうが良いものは」と頼まれたときにも使う。
 argument-hint: "[見る範囲や観点の補足]"
 allowed-tools:
   - Bash(~/.claude/skills/retro/scripts/*)

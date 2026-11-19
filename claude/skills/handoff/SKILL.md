@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: セッションの引き継ぎ。/clear やセッションの終わりの前に、次のセッションへ渡すものを書く。セッションの開始、compact の後、/clear の後に、開いている PR・worktree・Slurm のジョブ・docs/issues の issue をスクリプトで集め、引き継ぎを読んでから動く。
+description: セッションの引き継ぎ。/clear やセッションの終わりの前に、次のセッションへ渡すものを書く。セッションの開始、compact の後、/clear の後に、状態を集め、引き継ぎを読んでから動く。
 allowed-tools:
   - Bash(~/.claude/skills/handoff/scripts/resume-state.sh)
   - Bash(~/.claude/scripts/git-info.sh)
