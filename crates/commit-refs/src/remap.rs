@@ -85,7 +85,7 @@ fn warn_untracked(top: &Path, tracked: &[Vec<u8>], map: &Map, map_path: Option<&
             sh_quote(&path.display().to_string())
         ),
         Some(Err(_)) => "同じ対応表で commit-refs remap を実行する".to_string(),
-        None => "標準入力に同じ対応を渡して commit-refs remap を実行する（対応が残っていなければ、挙げたファイルの番号を手で直す）".to_string(),
+        None => "標準入力に同じ対応を渡して commit-refs remap を実行する（post-rewrite の hook が呼んだときは、hook が対応を残して示すコマンドで行う。対応が残っていなければ、挙げたファイルの番号を手で直す）".to_string(),
     };
     eprintln!(
         "NEXT: 付け直すなら、リポジトリの直下で git add {} をしてから、もう一度 {again}。付け直した番号は対応表の旧に当たらないので、2 度目は変えない",

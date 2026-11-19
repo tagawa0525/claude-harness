@@ -123,20 +123,24 @@ fn local_command(hook: &Path, args: &[String]) -> Command {
     cmd
 }
 
-/// cmd に input を標準入力で渡して実行し、終了コードと標準出力を返す（標準エラーは git に渡す）。終わりを受けられ
-/// なければ、理由を出して Unfinished
+/// cmd に input を標準入力で渡して実行し、終了コードと標準出力と標準エラーを返す。capture のときは標準出力と標準
+/// エラーを受け、標準エラーはすぐに git に渡す（後に続けるこの hook の表示より先に見せる）。capture でなければ、
+/// どちらも git に渡して空を返す。終わりを受けられなければ、理由を出して Unfinished
 fn run_with_input(
     cmd: &mut Command,
     input: &[u8],
     capture: bool,
     what: &str,
-) -> Result<(i32, Vec<u8>), Unfinished> {
+) -> Result<(i32, Vec<u8>, Vec<u8>), Unfinished> {
     if capture {
-        cmd.stdout(Stdio::piped());
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
     match crate::process::output_with_input(cmd, input) {
-        // シグナルで終わったら（code が無い）失敗とする
-        Ok(out) => Ok((out.status.code().unwrap_or(1), out.stdout)),
+        Ok(out) => {
+            let _ = std::io::stderr().lock().write_all(&out.stderr);
+            // シグナルで終わったら（code が無い）失敗とする
+            Ok((out.status.code().unwrap_or(1), out.stdout, out.stderr))
+        }
         Err(Unfinished::NotStarted(e)) => {
             eprintln!("❌ {what} を起動できません（{e}）");
             Err(Unfinished::NotStarted(e))
@@ -173,7 +177,7 @@ fn post_rewrite(args: &[String]) -> i32 {
         Some(hook) => {
             let what = hook.display().to_string();
             run_with_input(&mut local_command(&hook, args), &input, false, &what)
-                .map_or(1, |(code, _)| code)
+                .map_or(1, |(code, _, _)| code)
         }
         None => 0,
     };
@@ -194,7 +198,8 @@ fn post_rewrite(args: &[String]) -> i32 {
         );
         return 1;
     };
-    // 失敗したときに対応を残す場所。書き換えは済んでいて、この対応は二度と渡されないので、直してから手で呼び直せるようにする
+    // 失敗したときと、remap が WARN: を出したときに対応を残す場所。書き換えは済んでいて、この対応は二度と渡されない
+    // ので、直してから手で呼び直せるようにする
     let saved = Path::new(&git_dir).join("commit-refs-remap.input");
     println!("🔁 文書の中のコミットの番号を付け直します（remap.commitRefs）");
     let out = match crate::tools::find(COMMIT_REFS, "commit-refs") {
@@ -213,16 +218,10 @@ fn post_rewrite(args: &[String]) -> i32 {
         "commit-refs remap {}",
         sh_quote(&saved.display().to_string())
     );
-    let stdout = match out {
-        Ok((0, stdout)) => stdout,
+    let (stdout, stderr) = match out {
+        Ok((0, stdout, stderr)) => (stdout, stderr),
         failed => {
-            let kept = match std::fs::write(&saved, &input) {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("❌ 対応を {} に残せません（{e}）", saved.display());
-                    false
-                }
-            };
+            let kept = keep_input(&saved, &input);
             match failed {
                 Ok(_) => {
                     println!(
@@ -248,14 +247,8 @@ fn post_rewrite(args: &[String]) -> i32 {
                     );
                 }
             }
-            // commit-refs remap は cwd の作業ツリーの文書を書き換える。hook は書き換えた worktree の直下で動くので、
-            // その場所を示す（別の worktree や既定ブランチの作業ツリーから呼び直すと、そこの文書を書き換える）
-            // 対応を残せなかったときは、渡すファイルが無いので示さない
-            if kept && let Some(top) = git::git(dir, &["rev-parse", "--show-toplevel"]) {
-                println!(
-                    "   やり直すときは cd {} && {retry} で行う（対応は二度と渡されないので、残した対応を渡す）。終えたら、成功したときと同じく git diff で確認してコミットする",
-                    sh_quote(&top)
-                );
+            if kept {
+                say_where_to_retry(dir, &retry);
             }
             return 1;
         }
@@ -274,7 +267,46 @@ fn post_rewrite(args: &[String]) -> i32 {
             "   確認: git diff が旧と新のコミットの hash の置き換えだけであることを確かめ、きっかけを書いた件名（chore: remap the commit refs after the {kind} など）でコミットする。ほかの変更が混ざっていれば、コミットせずに原因を調べる"
         );
     }
+    // WARN: は、書き換えた後に付け直せなかったもの（追跡していないファイル）か、それを調べられなかったことを示す。
+    // remap の NEXT: の再実行には同じ対応が要るので、失敗のときと同じく残す
+    if stderr
+        .split(|b| *b == b'\n')
+        .any(|line| line.starts_with(b"WARN:"))
+        && keep_input(&saved, &input)
+    {
+        println!(
+            "⚠️ commit-refs remap が WARN: を出したので、対応を {} に残しました",
+            saved.display()
+        );
+        println!(
+            "   修正方法: 上の NEXT: のとおり git add してから（NEXT: が無ければ WARN: の原因を直してから）、{retry}"
+        );
+        say_where_to_retry(dir, &retry);
+    }
     local_rc
+}
+
+/// 対応を saved に書く。書けなければ理由を出して false
+fn keep_input(saved: &Path, input: &[u8]) -> bool {
+    match std::fs::write(saved, input) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("❌ 対応を {} に残せません（{e}）", saved.display());
+            false
+        }
+    }
+}
+
+/// 残した対応で呼び直す場所を示す。commit-refs remap は cwd の作業ツリーの文書を書き換える。hook は書き換えた
+/// worktree の直下で動くので、その場所を示す（別の worktree や既定ブランチの作業ツリーから呼び直すと、そこの文書を
+/// 書き換える）。対応を残せなかったときは、渡すファイルが無いので呼ばない
+fn say_where_to_retry(dir: &Path, retry: &str) {
+    if let Some(top) = git::git(dir, &["rev-parse", "--show-toplevel"]) {
+        println!(
+            "   やり直すときは cd {} && {retry} で行う（対応は二度と渡されないので、残した対応を渡す）。終えたら、成功したときと同じく git diff で確認してコミットする",
+            sh_quote(&top)
+        );
+    }
 }
 
 /// rebase の途中か（rebase-merge か rebase-apply のディレクトリがある）
