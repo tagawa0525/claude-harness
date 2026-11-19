@@ -33,7 +33,12 @@ struct Waited {
     /// 終わったら Some（中は制御のデーモンの終了コード。覚えていなかったら None）
     ended: Option<Option<i32>>,
     progress: Arc<Mutex<Progress>>,
+    /// 続けて読めなかった回数
+    failures: u32,
 }
+
+/// 続けて読めない回数の上限（既定の間隔の 30 秒で 10 分。slurmctld の再起動を越えて待つ）
+const MAX_FAILURES: u32 = 20;
 
 pub fn main(args: &[String]) -> i32 {
     let jobs = match parse_args(args) {
@@ -55,6 +60,7 @@ pub fn main(args: &[String]) -> i32 {
             job,
             origin: None,
             ended: None,
+            failures: 0,
         })
         .collect();
     let shared: Vec<_> = waited.iter().map(|w| Arc::clone(&w.progress)).collect();
@@ -129,6 +135,7 @@ fn run(waited: &mut [Waited]) -> i32 {
         for w in waited.iter_mut().filter(|w| w.ended.is_none()) {
             match slurm::controller_job(&w.job) {
                 Ok(Some(found)) => {
+                    w.failures = 0;
                     if w.origin.is_none() {
                         announce(&w.job, &found.name, &found.log, &w.progress);
                         w.origin = Some((found.name, found.log, found.comment));
@@ -142,6 +149,15 @@ fn run(waited: &mut [Waited]) -> i32 {
                 Ok(None) => w.ended = Some(None),
                 // 一時の失敗は、sbatch --wait と同じく読み直す（覚えていないと読むと、走っているジョブを終わったことにする）
                 Err(slurm::ControllerError::Failed(reason)) => {
+                    w.failures += 1;
+                    // 続けて読めないなら、一時の不調でないとみなして終える（終わらない background を残さない）
+                    if w.failures >= MAX_FAILURES {
+                        eprintln!(
+                            "ERROR: ジョブ {} の状態を {MAX_FAILURES} 回続けて読めない: {reason}",
+                            w.job
+                        );
+                        return 1;
+                    }
                     eprintln!(
                         "WARN: ジョブ {} の状態を読めない。読み直す: {reason}",
                         w.job

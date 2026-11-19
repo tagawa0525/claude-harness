@@ -396,7 +396,6 @@ fn a_failing_scontrol_is_read_again_instead_of_taken_as_a_forgotten_job() {
 }
 
 #[test]
-#[ignore = "RED: 読めない scontrol を読み直し続ける"]
 fn a_scontrol_that_keeps_failing_ends_after_the_limit_of_tries() {
     let s = Slurm::new();
     let out = s.run(&["42"], &[("FAKE_FAILING", "1000")]);

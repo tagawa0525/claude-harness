@@ -160,7 +160,7 @@ fn scancel_filters(cmd: &Cmd) -> bool {
 fn hides_slurm_run_output(shell: &Shell) -> bool {
     let cmds = shell.commands();
     cmds.iter()
-        .filter(|c| is_slurm_run(c.program()))
+        .filter(|c| is_slurm_run(c.program()) || is_slurm_wait(c.program()))
         .any(|run| {
             !run.piped_into.is_empty()
                 || cmds.iter().any(|c| {
