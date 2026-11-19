@@ -34,8 +34,25 @@
 //!
 //! squeue が失敗したら、その終了コードで終わる。使い方の誤りは 1。
 
+use super::slurm_class;
+use std::process::{Command, Stdio};
+
+const USAGE: &str = "Usage: slurm-queue.sh [--order [--first <番号>]]";
+
+/// squeue の欄。名前は slurm-run.sh が英数字と . _ - に限り、ほかの固定の欄も | を含まないので、最後の欄（コメント）の
+/// 前までを | で分けられる
+const FORMAT: &str = "%i|%P|%j|%T|%Q|%l|%S|%k";
+
+const NOTE_DIRTY: &str = "NOTE: commit= の末尾が -dirty のジョブは、コミットしていない変更のある版で走り、結果は hash のコミットから再現できない";
+const NOTE_UNCLASSED_BEHIND: &str = "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無く、並べ直されずに区分のあるジョブの後ろに回る";
+const NOTE_UNCLASSED: &str =
+    "NOTE: 区分が - のジョブは slurm-run.sh の外から投げたもので、区分と目的が無い";
+const NOTE_UNMOVABLE: &str = "NOTE: （動かせない）は保留（優先度が 1 以下）か配列の親ジョブで、scontrol top で並べ直せず、並べ直したジョブの後ろに回る";
+const NOTE_SUSPENDED: &str =
+    "NOTE: SUSPENDED は timed のジョブに止められた main のジョブで、それが終わると続きから再開する";
+const NEXT: &str = "NEXT: 上の scontrol top を、番号を分けずに 1 回で実行する（1 本ずつ分けると最後に出したジョブが先頭になる）。ほかのセッションのジョブを含んでいても実行してよい";
+
 #[derive(Debug, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
 enum Mode {
     List,
     /// first は、自分の区分の先頭に置くジョブの番号（無ければ空）
@@ -45,27 +62,344 @@ enum Mode {
 }
 
 pub fn main(args: &[String]) -> i32 {
-    let _ = parse_args(args);
-    1
-}
-
-fn parse_args(_args: &[String]) -> Option<Mode> {
-    None
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn render(_squeue_out: &str, _mode: &Mode) -> String {
-    String::new()
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn leading_integer(_text: &str) -> i64 {
+    let Some(mode) = parse_args(args) else {
+        eprintln!("{USAGE}");
+        return 1;
+    };
+    let out = match Command::new("squeue")
+        .args(["--noheader", "--format", FORMAT])
+        .stderr(Stdio::inherit())
+        .output()
+    {
+        Ok(out) => out,
+        Err(e) => {
+            // sh と同じく、無いコマンドは 127、起動できないコマンドは 126 とする
+            let code = if e.kind() == std::io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            };
+            eprintln!("squeue を起動できない: {e}");
+            eprintln!("ERROR: squeue が失敗した（終了コード {code}）");
+            return code;
+        }
+    };
+    if !out.status.success() {
+        let code = crate::child::exit_code(out.status);
+        eprintln!("ERROR: squeue が失敗した（終了コード {code}）");
+        return code;
+    }
+    print!("{}", render(&String::from_utf8_lossy(&out.stdout), &mode));
     0
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn same_job(_id: &str, _first: &str) -> bool {
-    false
+/// 引数を読む。使い方に合わなければ None
+fn parse_args(args: &[String]) -> Option<Mode> {
+    match args {
+        [] => Some(Mode::List),
+        [order, rest @ ..] if order == "--order" => match rest {
+            [] => Some(Mode::Order {
+                first: String::new(),
+            }),
+            [flag, first] if flag == "--first" => Some(Mode::Order {
+                first: first.clone(),
+            }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// squeue の出力（[`FORMAT`] の行）から、標準出力に書く全文を作る
+fn render(squeue_out: &str, mode: &Mode) -> String {
+    let (order, first) = match mode {
+        Mode::List => (false, ""),
+        Mode::Order { first } => (true, first.as_str()),
+    };
+    // sh のコマンド置換と同じく、末尾の改行だけを落とす（途中の空行も 1 行として読む）
+    let lines = squeue_out.trim_end_matches('\n');
+    if lines.is_empty() {
+        return if order {
+            String::new()
+        } else {
+            "待ち行列にジョブが無い\n".to_string()
+        };
+    }
+    let jobs = running_order(lines);
+    let mut out = String::new();
+    if !order {
+        for job in &jobs {
+            out.push_str(&job.listing());
+        }
+        for note in notes(&jobs) {
+            out.push_str(note);
+            out.push('\n');
+        }
+    }
+    let plan = plan(&jobs, first);
+    if plan.list == plan.now && !plan.unclassed_ahead {
+        return out;
+    }
+    let list = plan.list.join(",");
+    if order {
+        out.push_str(&list);
+        out.push('\n');
+        return out;
+    }
+    let note = if plan.unclassed.is_empty() {
+        String::new()
+    } else {
+        format!("（区分の無い {} は後ろに回る）", plan.unclassed.join(","))
+    };
+    out.push_str(&format!(
+        "ORDER: main: {}で待っている。scontrol top {list}{note}\n",
+        plan.behind.join("、")
+    ));
+    out.push_str(NEXT);
+    out.push('\n');
+    out
+}
+
+/// squeue の 1 行
+struct Job<'a> {
+    /// 並べ替えで鍵が同じときに比べる、元の行
+    line: &'a str,
+    id: &'a str,
+    partition: &'a str,
+    name: &'a str,
+    state: &'a str,
+    priority: &'a str,
+    limit: &'a str,
+    start: &'a str,
+    /// 区分（コメントが区分で始まる 4 つ以上の欄でなければ None）
+    class: Option<&'a str>,
+    reference: &'a str,
+    purpose: &'a str,
+    contact: &'a str,
+}
+
+impl<'a> Job<'a> {
+    fn parse(line: &'a str) -> Job<'a> {
+        let mut fields = line.splitn(8, '|');
+        let mut next = || fields.next().unwrap_or("");
+        let (id, partition, name, state, priority, limit, start) =
+            (next(), next(), next(), next(), next(), next(), next());
+        let comment = next();
+        let parts: Vec<&str> = comment.split(" | ").collect();
+        let (class, reference, purpose, contact) = match parts.as_slice() {
+            [class, reference, purpose, _, ..] if slurm_class::rank(class).is_some() => (
+                Some(*class),
+                *reference,
+                *purpose,
+                drop_field(drop_field(drop_field(comment))),
+            ),
+            _ => (None, "-", "（無い）", comment),
+        };
+        Job {
+            line,
+            id,
+            partition,
+            name,
+            state,
+            priority,
+            limit,
+            start,
+            class,
+            reference,
+            purpose,
+            contact,
+        }
+    }
+
+    /// 走る順の鍵（パーティション、状態、優先度、番号）。sh の版が sort -n で比べた整数と同じ
+    fn sort_key(&self) -> (i64, i64, i64, i64) {
+        let partition = if self.partition == "timed" { 0 } else { 1 };
+        let state = match self.state {
+            "PENDING" => 2,
+            "SUSPENDED" => 1,
+            _ => 0,
+        };
+        (
+            partition,
+            state,
+            -leading_integer(self.priority),
+            leading_integer(self.id),
+        )
+    }
+
+    /// 優先度 1 以下は保留（保留のジョブの優先度は 0 か 1 で、scontrol top は優先度 1 以下のジョブを動かせない）、
+    /// [ のある番号は配列の親ジョブ
+    fn unmovable(&self) -> bool {
+        self.state == "PENDING" && (leading_integer(self.priority) <= 1 || self.id.contains('['))
+    }
+
+    fn rank(&self) -> Option<usize> {
+        self.class.and_then(slurm_class::rank)
+    }
+
+    /// 一覧の 3 行
+    fn listing(&self) -> String {
+        format!(
+            "{} {}{} {} {} {} {} {} {} {}\n  目的: {}\n  連絡先: {}\n",
+            self.id,
+            self.state,
+            if self.unmovable() {
+                "（動かせない）"
+            } else {
+                ""
+            },
+            self.partition,
+            self.priority,
+            self.class.unwrap_or("-"),
+            self.limit,
+            self.start,
+            self.name,
+            self.reference,
+            self.purpose,
+            self.contact,
+        )
+    }
+
+    fn dirty(&self) -> bool {
+        self.contact.split(' ').any(|w| {
+            w.len() >= "commit=-dirty".len() && w.starts_with("commit=") && w.ends_with("-dirty")
+        })
+    }
+}
+
+/// コメントの先頭の 1 欄と区切りの ` | ` を外す。最初の | の前後が空白でなければ（参照か目的が | を含む）外さない。
+/// sh の版の awk の `sub(/^[^|]* \| /, "", contact)` と同じにする（区切りで分けた欄と食い違っても、連絡先は前の版と同じ文字列）
+fn drop_field(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    match text.find('|') {
+        Some(p) if p >= 1 && bytes[p - 1] == b' ' && bytes.get(p + 1) == Some(&b' ') => {
+            &text[p + 2..]
+        }
+        _ => text,
+    }
+}
+
+/// 先頭の空白を飛ばした、符号つきの 10 進の整数の部分（無ければ 0）。awk が文字列を数として読むのと同じく、`12_[1-3]` は 12。
+/// 小数と指数は読まない（squeue の番号と優先度は整数）
+fn leading_integer(text: &str) -> i64 {
+    let text = text.trim_start_matches([' ', '\t', '\n']);
+    let (negative, digits) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let value = digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0i64, |n, d| {
+            n.saturating_mul(10).saturating_add(i64::from(d - b'0'))
+        });
+    if negative { -value } else { value }
+}
+
+/// 番号が --first と同じジョブか。awk は数に見える文字列どうしを数で比べる（`042` と `42` は同じ）ので、整数に見えるもの
+/// どうしは整数で比べる
+fn same_job(id: &str, first: &str) -> bool {
+    let integer = |s: &str| {
+        let s = s.trim_matches([' ', '\t', '\n']);
+        let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+    };
+    if integer(id) && integer(first) {
+        leading_integer(id) == leading_integer(first)
+    } else {
+        id == first
+    }
+}
+
+/// 走る順に並べたジョブ。鍵が同じなら元の行で比べる（sh の版の sort の最後の比べ方。ロケールの照合順でなくバイトの順）
+fn running_order(lines: &str) -> Vec<Job<'_>> {
+    let mut jobs: Vec<Job> = lines.split('\n').map(Job::parse).collect();
+    jobs.sort_by(|a, b| {
+        a.sort_key()
+            .cmp(&b.sort_key())
+            .then_with(|| a.line.cmp(b.line))
+    });
+    jobs
+}
+
+/// 一覧の印のうち、当たる行があるものの意味
+fn notes(jobs: &[Job]) -> Vec<&'static str> {
+    let mut notes = Vec::new();
+    if jobs.iter().any(Job::dirty) {
+        notes.push(NOTE_DIRTY);
+    }
+    let unclassed: Vec<&Job> = jobs.iter().filter(|j| j.class.is_none()).collect();
+    // 並べ直されずに後ろに回るのは、待っている main のジョブだけ
+    if unclassed
+        .iter()
+        .any(|j| j.state == "PENDING" && j.partition == "main")
+    {
+        notes.push(NOTE_UNCLASSED_BEHIND);
+    } else if !unclassed.is_empty() {
+        notes.push(NOTE_UNCLASSED);
+    }
+    if jobs.iter().any(Job::unmovable) {
+        notes.push(NOTE_UNMOVABLE);
+    }
+    if jobs.iter().any(|j| j.state == "SUSPENDED") {
+        notes.push(NOTE_SUSPENDED);
+    }
+    notes
+}
+
+/// main の待っているジョブの並べ直し
+#[derive(Debug, PartialEq)]
+struct Plan<'a> {
+    /// 区分のある動かせるジョブを、区分の順（同じ区分は今の順、--first のジョブは区分の先頭）に並べた列
+    list: Vec<&'a str>,
+    /// 同じジョブの今の順
+    now: Vec<&'a str>,
+    /// ジョブごとの「<番号>（<区分>）が <番号>（<区分>）の後ろ」（ORDER: の行の理由）
+    behind: Vec<String>,
+    /// 区分の無い動かせる待っているジョブ（列のジョブの後ろに回る）
+    unclassed: Vec<&'a str>,
+    /// 区分の無いジョブが、列のジョブより前にいる（列を渡すと列のジョブが前に出るので、並べ直しが要る）
+    unclassed_ahead: bool,
+}
+
+/// jobs は走る順に並べたもの
+fn plan<'a>(jobs: &[Job<'a>], first: &str) -> Plan<'a> {
+    let mut pending: Vec<(&'a str, &'a str, usize)> = Vec::new();
+    let mut behind = Vec::new();
+    let mut unclassed = Vec::new();
+    let mut unclassed_ahead = false;
+    for job in jobs {
+        if job.state != "PENDING" || job.partition != "main" || job.unmovable() {
+            continue;
+        }
+        let (Some(class), Some(rank)) = (job.class, job.rank()) else {
+            unclassed.push(job.id);
+            continue;
+        };
+        let last_unclassed = unclassed.last();
+        if last_unclassed.is_some() {
+            unclassed_ahead = true;
+        }
+        // 先に並ぶ、より下の区分のジョブのうち最も近いもの（無ければ、先に並ぶ区分の無いジョブ）
+        if let Some((id, lower, _)) = pending.iter().rev().find(|(_, _, r)| *r > rank) {
+            behind.push(format!("{}（{class}）が {id}（{lower}）の後ろ", job.id));
+        } else if let Some(id) = last_unclassed {
+            behind.push(format!("{}（{class}）が区分の無い {id} の後ろ", job.id));
+        }
+        pending.push((job.id, class, rank));
+    }
+    let now: Vec<&str> = pending.iter().map(|(id, _, _)| *id).collect();
+    let mut sorted: Vec<(usize, &(&str, &str, usize))> = pending.iter().enumerate().collect();
+    // 安定な並べ替えなので、同じ区分は今の順のまま
+    sorted.sort_by_key(|(i, (id, _, rank))| (*rank, if same_job(id, first) { 0 } else { i + 1 }));
+    Plan {
+        list: sorted.iter().map(|(_, (id, _, _))| *id).collect(),
+        now,
+        behind,
+        unclassed,
+        unclassed_ahead,
+    }
 }
 
 #[cfg(test)]
@@ -110,7 +444,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn each_job_shows_its_fields_class_reference_purpose_and_contact() {
         let out = list(&[format!(
             "601|main|xlc-small-core|PENDING|10030|2:30:00|2026-10-30T03:00:00|decision | #0200 | 平衡キセノンで振動が消えるかで、修正方法を決める | {C}"
@@ -124,7 +457,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn everything_after_the_third_separator_is_the_contact_even_with_a_bar() {
         let out = list(&[
             "601|main|x|PENDING|10030|30:00|N/A|trial | - 環境の確認 | 確認だけ | feat/a|b /p"
@@ -138,7 +470,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn a_bar_inside_the_reference_keeps_it_in_the_contact_like_the_sh_version() {
         // sh の版の awk は、最初の | の前後が空白でなければ区切りを外さない（slurm-run.sh は参照と目的の | を拒む）
         let out = list(&["601|main|x|RUNNING|10030|30:00|N/A|trial | #1|x | p | c".to_string()]);
@@ -147,7 +478,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn a_job_without_a_class_shows_dash_and_its_comment_as_the_contact() {
         let out = list(&[format!(
             "590|main|old-job|RUNNING|10000|20:00|2026-10-29T08:43:25|{C}"
@@ -161,7 +491,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn a_comment_starting_with_an_unknown_word_has_no_class() {
         let out = list(&["5|main|x|RUNNING|10|1:00|N/A|other | #1 | p | c".to_string()]);
         assert!(out.contains("5 RUNNING main 10 - 1:00 N/A x -\n"), "{out}");
@@ -169,7 +498,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn timed_first_then_running_suspended_pending_by_priority_then_number() {
         let out = list(&[
             job("12", "main", "m-pend-low", "PENDING", "10001", "trial"),
@@ -184,7 +512,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn jobs_that_started_like_configuring_come_before_pending_ones() {
         let out = list(&[
             job("80", "main", "pend", "PENDING", "10050", "trial"),
@@ -195,7 +522,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn an_array_job_sorts_by_the_number_before_the_underscore() {
         let out = list(&[
             job("13", "main", "b", "PENDING", "10030", "trial"),
@@ -205,7 +531,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn a_higher_class_behind_a_lower_one_gets_an_order_line() {
         let out = list(&[
             job("20", "main", "trial-job", "PENDING", "10010", "trial"),
@@ -220,7 +545,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn the_class_order_is_timed_record_decision_trial() {
         let out = list(&[
             job("30", "main", "a", "PENDING", "10040", "trial"),
@@ -236,7 +560,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn the_order_does_not_let_a_job_overtake_a_higher_class_ahead_of_it() {
         // record が先頭で、その後ろの decision が trial の後ろにある。decision だけを前に出すと record を追い越す
         let out = list(&[
@@ -251,7 +574,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn with_the_same_priority_the_number_decides_who_is_behind() {
         let out = list(&[
             job("41", "main", "record-job", "PENDING", "10005", "record"),
@@ -266,7 +588,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn jobs_already_in_class_order_get_no_order_line() {
         let out = list(&[
             job("50", "main", "record-job", "PENDING", "10010", "record"),
@@ -276,7 +597,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn running_jobs_other_partitions_and_unclassed_jobs_behind_are_not_compared() {
         let out = list(&[
             job("60", "main", "trial-run", "RUNNING", "10000", "trial"),
@@ -288,7 +608,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn the_order_line_names_the_unclassed_pending_jobs_that_fall_behind() {
         let out = list(&[
             unclassed("90", "main", "PENDING", "10060"),
@@ -302,7 +621,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn an_empty_queue_says_so_in_the_list_and_prints_nothing_for_order() {
         assert_eq!(render("", &Mode::List), "待ち行列にジョブが無い\n");
         assert_eq!(render("\n\n", &Mode::List), "待ち行列にジョブが無い\n");
@@ -310,7 +628,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn timed_jobs_are_not_reordered_by_class() {
         let lines = [
             job("20", "timed", "quick", "PENDING", "10010", "decision"),
@@ -321,7 +638,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn held_and_array_parent_jobs_are_unmovable_and_left_out_of_the_order() {
         let out = list(&[
             job("10", "main", "t", "PENDING", "10050", "trial"),
@@ -337,7 +653,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn only_unmovable_jobs_out_of_class_order_get_no_order_line() {
         let out = list(&[
             job("10", "main", "t", "PENDING", "10050", "trial"),
@@ -347,7 +662,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn order_prints_the_list_only_when_main_needs_reordering() {
         let needs = [
             job("20", "main", "t", "PENDING", "10010", "trial"),
@@ -362,7 +676,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn order_first_puts_the_job_at_the_head_of_its_class_without_passing_higher_ones() {
         let lines = [
             job("21", "main", "r", "PENDING", "10030", "record"),
@@ -379,7 +692,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn order_first_compares_numbers_as_awk_does() {
         let lines = [
             job("20", "main", "t1", "PENDING", "10020", "trial"),
@@ -389,7 +701,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn an_unclassed_pending_job_ahead_of_a_classed_one_needs_the_order() {
         let ahead = [
             unclassed("90", "main", "PENDING", "10060"),
@@ -409,7 +720,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn notes_follow_the_jobs_only_for_the_marks_that_appear() {
         let out = list(&[
             "10|main|s|SUSPENDED|10050|10:00|N/A|trial | #1 | p | feat/x /p commit=abc1234-dirty"
@@ -436,7 +746,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn dirty_is_a_whole_commit_word_ending_in_dirty() {
         let dirty = |contact: &str| {
             list(&[format!(
@@ -452,7 +761,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn order_prints_no_notes() {
         let out = order(
             &[
@@ -465,7 +773,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn the_order_line_is_followed_by_how_to_run_it_at_once() {
         let out = list(&[
             job("20", "main", "trial-job", "PENDING", "10010", "trial"),
@@ -481,7 +788,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn the_unclassed_note_says_falling_behind_only_for_pending_main_jobs() {
         let out = list(&[unclassed("590", "main", "RUNNING", "10000")]);
         assert!(
@@ -494,7 +800,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn only_order_and_order_first_are_accepted() {
         assert_eq!(parse_args(&[]), Some(Mode::List));
         assert_eq!(
@@ -521,7 +826,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: slurm-queue は未実装"]
     fn numbers_are_read_like_awk() {
         assert_eq!(leading_integer("10030"), 10030);
         assert_eq!(leading_integer("12_[1-3]"), 12);

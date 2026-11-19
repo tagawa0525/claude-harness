@@ -32,6 +32,7 @@ mod resume_state;
 mod review_level;
 mod run_checks;
 mod session_events;
+mod slurm_class;
 mod slurm_queue;
 mod time;
 mod usage_report;

@@ -88,7 +88,6 @@ fn out_of_order() -> String {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は未実装"]
 fn reads_squeue_without_a_header_in_the_field_order() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], "", 0);
@@ -100,7 +99,6 @@ fn reads_squeue_without_a_header_in_the_field_order() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は未実装"]
 fn lists_the_jobs_with_the_order_line() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], &out_of_order(), 0);
@@ -121,7 +119,6 @@ fn lists_the_jobs_with_the_order_line() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は未実装"]
 fn order_first_prints_the_list_to_pass_to_scontrol_top() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&["--order", "--first", "20"], &out_of_order(), 0);
@@ -130,7 +127,6 @@ fn order_first_prints_the_list_to_pass_to_scontrol_top() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は未実装"]
 fn an_empty_queue_says_so_and_order_prints_nothing() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], "", 0);
@@ -142,7 +138,6 @@ fn an_empty_queue_says_so_and_order_prints_nothing() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は未実装"]
 fn a_failing_squeue_ends_with_its_exit_code() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], &out_of_order(), 3);
@@ -156,7 +151,6 @@ fn a_failing_squeue_ends_with_its_exit_code() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は未実装"]
 fn a_missing_squeue_ends_with_127_like_sh() {
     let fake = FakeSqueue::new();
     let out = fake.run(&[], "", 0);
@@ -169,7 +163,6 @@ fn a_missing_squeue_ends_with_127_like_sh() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は未実装"]
 fn other_arguments_print_the_usage_without_reading_squeue() {
     let fake = FakeSqueue::new().with_squeue();
     for bad in [
