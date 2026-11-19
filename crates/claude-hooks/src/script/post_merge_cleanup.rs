@@ -853,6 +853,11 @@ fn commands(found: &[(String, Vec<String>)], branch: &str, remote: &str, default
     lines.join("\n")
 }
 
+/// リモートの URL のホストが GitHub か
+fn on_github(_url: &str) -> bool {
+    false
+}
+
 /// リモートの URL が GitHub のリポジトリを指すなら、その owner/name（`<scheme>://[<user>@]github.com[:<port>]/` の形と、
 /// git の scp の形 `[<user>@]github.com:`）。ホストの大文字と小文字は区別しない
 fn github_repo(url: &str) -> Option<String> {
@@ -887,7 +892,17 @@ fn github_repo(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::github_repo;
+    use super::{github_repo, on_github};
+
+    #[test]
+    fn on_github_matches_the_host_not_a_substring() {
+        assert!(on_github("https://github.com/octo"));
+        assert!(on_github("git@GitHub.com:octo"));
+        assert!(!on_github(
+            "https://github.com.mirror.example/octo/repo.git"
+        ));
+        assert!(!on_github("/srv/github.com/repo.git"));
+    }
 
     #[test]
     fn github_repo_reads_https_ssh_and_scp_like_urls() {
