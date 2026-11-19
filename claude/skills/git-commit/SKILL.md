@@ -85,9 +85,11 @@ EOF
 
 ## 失敗時の対応
 
-pre-commit hookエラー等で失敗した場合、原因を直して（フォーマッタ等の `--fix` があればそれで、
-なければ手で）再ステージし、再試行する。直せなければ、迂回せずにエラー内容と原因を報告して止まる。Markdown で「unfixable issues remain」と出たら
-language-checks の markdown-checks.md を見て手で直す。
+pre-commit hookエラー等で失敗した場合、原因を直して再試行する。ファイルの中身の失敗は、フォーマッタ等の
+`--fix` があればそれで、なければ手で直して再ステージし、メッセージの形式の失敗はメッセージを直す。
+直すのはステージした変更が原因のものだけで、ほかの原因（もとからある違反など）は /topic-triage で振り分ける。
+直せなければ、迂回せずにエラー内容と原因を報告して止まる。
+Markdown で「unfixable issues remain」と出たら language-checks の markdown-checks.md を見て手で直す。
 
 ## 完了確認
 
