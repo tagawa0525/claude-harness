@@ -104,11 +104,13 @@ fn ja_terms(
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    // 共通の辞書を読めないサブコマンドは標準入力を読む前に終わるので、閉じた入力に書く失敗は誤りにしない
-    match child.stdin.take().unwrap().write_all(stdin.as_bytes()) {
-        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("標準入力に書けない: {e}"),
-        _ => {}
-    }
+    // 書けなければ落とす（message は、辞書を読めずに止まるときも標準入力を読み切ってから終わる）
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
     child.wait_with_output().unwrap()
 }
 
@@ -202,6 +204,28 @@ fn a_missing_common_dictionary_stops_every_subcommand_with_how_to_deliver_it() {
         assert!(why.contains("prh.yml"), "{name}: {why}");
         assert!(why.contains("claude-sync"), "{name}: {why}");
         assert!(!why.contains("ふがふが => ほげ"), "{name}: {why}");
+    }
+}
+
+#[test]
+fn message_reads_its_input_before_it_stops_on_a_missing_dictionary() {
+    // 呼ぶ側（claude-hooks の git merge のルール、テストの補助）は本文を書いてから終わりを待つ。読まずに終わると、書く側は
+    // 閉じた管への書き込みの失敗を受け、辞書の無い理由と修正方法を捨てる。管の容量を超える本文で、読み切ることを確かめる
+    let scratch = Scratch::new("missing-large-input");
+    let home = scratch.0.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let body = "ふがふがの値\n".repeat(100_000);
+    for args in [
+        &["message"][..],
+        &["--dictionary", "nonexistent/prh.yml", "message"][..],
+    ] {
+        let out = ja_terms(&scratch, &scratch.0, &home, None, args, &body);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stdout(&out));
+        assert!(
+            stderr(&out).contains("prh.yml"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
     }
 }
 
