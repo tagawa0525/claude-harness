@@ -23,7 +23,7 @@
 # （`git bisect` が使えなくなる）。例:
 #   check-each-commit.sh origin/main -- nix build .#default
 #
-# 現在の worktree と stash には触れず、`git worktree add --detach` の一時 worktree（Unix は ${TMPDIR:-/tmp}、Windows は TEMP の下）で
+# 現在の worktree と stash には触れず、`git worktree add --detach` の一時 worktree（Unix は ${TMPDIR:-/tmp}、Windows は TMP か TEMP の下）で
 # 調べる。一時 worktree は終了時（失敗、中断を含む）に必ず消す（SIGKILL では消せず残る）。
 # 呼び出し元の GIT_DIR、GIT_WORK_TREE などは git と検査コマンドに渡さず、一時 worktree の checkout ではフックを止める。
 #
