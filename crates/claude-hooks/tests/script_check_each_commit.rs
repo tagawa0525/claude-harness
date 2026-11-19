@@ -267,6 +267,7 @@ fn no_commit_in_the_range_is_a_usage_error() {
 }
 
 #[test]
+#[ignore = "RED: 実装の前"]
 fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
     let repo = Repo::new();
     let missing = repo.root.join("missing");
@@ -278,10 +279,14 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("一時ディレクトリを作れません"),
-        "{}",
-        stderr(&out)
+    // 作れなかった理由（OS の文）も出す
+    let reason = std::fs::create_dir(missing.join("x")).unwrap_err();
+    assert_eq!(
+        stderr(&out),
+        format!(
+            "一時ディレクトリを作れません: {}（{reason}）\n",
+            missing.display()
+        )
     );
     assert!(!missing.exists());
 }
