@@ -3039,3 +3039,26 @@ fn check_rejects_an_okf_version_it_does_not_know() {
         }
     }
 }
+
+#[test]
+fn check_rejects_front_matter_in_a_log() {
+    let t = TempRepo::new("okf-log");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write("docs/log.md", "# Log\n\n## 2026-11-19\n* **Update**: x\n");
+    t.commit_all("docs: log");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+
+    t.write(
+        "docs/log.md",
+        "---\ntype: Log\n---\n\n# Log\n\n## 2026-11-19\n* **Update**: x\n",
+    );
+    t.commit_all("docs: log with front matter");
+    let out = t.run(&["check"]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out).contains("docs/log.md: error") && stdout(&out).contains("front matter"),
+        "{}",
+        stdout(&out)
+    );
+}
