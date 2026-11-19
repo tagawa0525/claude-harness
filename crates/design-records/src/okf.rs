@@ -144,6 +144,7 @@ fn resolve(index_dir: &str, url: &str) -> Option<String> {
     if url.contains("://") || !(url.ends_with(".md") || url.ends_with('/')) {
         return None;
     }
+    let url = percent_decode(url);
     let joined = match url.strip_prefix('/') {
         Some(rest) => format!("{BUNDLE_ROOT}/{rest}"),
         None => format!("{index_dir}/{url}"),
@@ -166,6 +167,40 @@ fn resolve(index_dir: &str, url: &str) -> Option<String> {
         path.push('/');
     }
     Some(path)
+}
+
+/// リンク先の `%XX` を復号する（OKF v0.3 §6）。復号して UTF-8 にならなければ、そのまま返す。
+fn percent_decode(url: &str) -> String {
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    let bytes = url.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if let [b'%', hi, lo, ..] = bytes[i..]
+            && let (Some(hi), Some(lo)) = (hex(hi), hex(lo))
+        {
+            out.push(hi << 4 | lo);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| url.to_string())
+}
+
+/// 索引の行のリンク先に書く形。ASCII の英数字と `-._~/` のほかの ASCII の文字をパーセントエンコードする（OKF v0.3 §6）。
+/// ASCII でない文字は、§6 がエンコードを求める空白と予約文字に当たらず、日本語の名前を読めるよう、そのまま書く。
+fn percent_encode(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if !c.is_ascii() || c.is_ascii_alphanumeric() || "-._~/".contains(c) {
+            out.push(c);
+        } else {
+            out.push_str(&format!("%{:02X}", c as u32));
+        }
+    }
+    out
 }
 
 /// 索引に載っている行のリンク先（`index_dir` からの名前。`name.md` か `name/`）。
@@ -444,14 +479,15 @@ pub fn complete_indexes(files: &BTreeMap<String, String>) -> BTreeMap<String, St
 
 /// `dir` の索引に足す、`name`（`sub/` か `file.md`）の行。
 fn entry_line(files: &BTreeMap<String, String>, dir: &str, name: &str) -> String {
+    let url = percent_encode(name);
     if let Some(sub) = name.strip_suffix('/') {
-        return format!("* [{sub}]({name})");
+        return format!("* [{sub}]({url})");
     }
     let text = &files[&format!("{dir}/{name}")];
     let title = title_of(name, text);
     match description_of(text) {
-        Some(description) => format!("* [{title}]({name}) - {description}"),
-        None => format!("* [{title}]({name})"),
+        Some(description) => format!("* [{title}]({url}) - {description}"),
+        None => format!("* [{title}]({url})"),
     }
 }
 
