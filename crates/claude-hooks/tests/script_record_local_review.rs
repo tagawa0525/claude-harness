@@ -447,3 +447,111 @@ fn bad_arguments_stop_before_gh() {
         assert_eq!(fake.log(), "", "{args:?}");
     }
 }
+
+/// 指摘の要旨を書いたファイルを、起動するディレクトリに置く
+fn findings_file(fake: &FakeGh, text: &str) -> String {
+    let path = fake.dir().join("findings.md");
+    std::fs::write(&path, text).unwrap();
+    path.display().to_string()
+}
+
+#[test]
+#[ignore = "RED: --findings は未実装"]
+fn the_findings_are_written_under_the_record() {
+    // 件数だけの記録では、レビューの途中でセッションが替わると、対応しなかった指摘の中身が会話にしか残らない
+    let fake = FakeGh::new();
+    let path = findings_file(
+        &fake,
+        "- Medium a.rs:12 引数が空のときに落ちる（再現なし）\n- Low b.md:3 語の揺れ（再現なし）\n\n",
+    );
+    let out = run(
+        &fake,
+        &[URL, HEAD, "0", "1", "1", "--findings", &path],
+        "true\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        fake.log().contains(&format!(
+            "gh pr comment 42 --body <!-- local-review sha={HEAD} high=0 medium=1 low=1 -->\n\
+             ローカルの /code-review で def5678 を確かめた: High 0 / Medium 1 / Low 1\n\
+             \n\
+             指摘:\n\
+             - Medium a.rs:12 引数が空のときに落ちる（再現なし）\n\
+             - Low b.md:3 語の揺れ（再現なし）\n"
+        )),
+        "{}",
+        fake.log()
+    );
+}
+
+#[test]
+#[ignore = "RED: --findings は未実装"]
+fn the_findings_follow_the_reason_of_an_unlogged_review() {
+    let fake = FakeGh::new();
+    let path = findings_file(&fake, "- Low b.md:3 語の揺れ（再現なし）\n");
+    let reason = "PR の URL を渡した";
+    for args in [
+        &[
+            URL,
+            HEAD,
+            "0",
+            "0",
+            "1",
+            "--unlogged",
+            reason,
+            "--findings",
+            &path,
+        ][..],
+        &[
+            URL,
+            HEAD,
+            "0",
+            "0",
+            "1",
+            "--findings",
+            &path,
+            "--unlogged",
+            reason,
+        ][..],
+    ] {
+        let fake_run = FakeGh::new();
+        let out = run_as_is(&fake_run, args, "true\n");
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", stderr(&out));
+        assert!(
+            fake_run.log().contains(
+                "回した記録を確かめていない理由: PR の URL を渡した\n\
+                 \n\
+                 指摘:\n\
+                 - Low b.md:3 語の揺れ（再現なし）\n"
+            ),
+            "{args:?}: {}",
+            fake_run.log()
+        );
+    }
+}
+
+#[test]
+#[ignore = "RED: --findings は未実装"]
+fn findings_without_their_text_stop_before_gh() {
+    let files = FakeGh::new();
+    let empty = findings_file(&files, " \n\n");
+    let missing = files.dir().join("no-such-file.md").display().to_string();
+    for args in [
+        // 指摘があるのに、要旨のファイルを渡していない
+        &[URL, HEAD, "0", "1", "0"][..],
+        &[URL, HEAD, "1", "0", "0", "--unlogged", "PR の URL を渡した"][..],
+        // ファイルが無い、空
+        &[URL, HEAD, "0", "1", "0", "--findings", &missing][..],
+        &[URL, HEAD, "0", "1", "0", "--findings", &empty][..],
+    ] {
+        let fake = FakeGh::new();
+        let out = run(&fake, args, "true\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            stderr(&out).contains("--findings"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.log(), "", "{args:?}");
+    }
+}
