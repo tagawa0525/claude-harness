@@ -1,6 +1,6 @@
 #!/bin/sh
 # slurm-history.sh — jobcomp と sacct の記録から、ジョブの見積もり（--time）と実績とメモリの最大を比べる。--job は sacct から
-# 1 本ずつ読む。中身は claude-hooks script slurm-history（判定を、起動せずに Rust の単体のテストで確かめるため。ADR-0101）。
+# 1 本ずつ読む。中身は claude-hooks script slurm-history（判定を、起動せずに Rust の単体のテストで確かめるため）。
 # スキルの文と許可の設定はこのスクリプトの名前とパスで呼ぶので、ファイルは残して呼ぶ
 #
 # Usage: slurm-history.sh [--by-name] [--sacct] [FILE]
