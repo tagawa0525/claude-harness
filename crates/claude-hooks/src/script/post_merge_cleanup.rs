@@ -12,12 +12,14 @@
 //! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
-//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head のときは残す）
+//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head か base のときは残す）
 //!
 //! git と gh の失敗のうち、続けられないものは、その標準エラーを出したまま、その終了コードで終える
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
+
+use crate::shell::sh_word;
 
 const USAGE: &str = "Usage: post-merge-cleanup.sh <branch> [<マージの前の既定のブランチ>]";
 
@@ -658,10 +660,10 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         println!("REMOTE_BRANCH: none");
         return Ok(());
     }
-    if git(&["remote", "-v"])
+    let github = git(&["remote", "-v"])
         .unwrap_or_default()
-        .contains("github.com")
-    {
+        .contains("github.com");
+    if github {
         if !gh_available() {
             println!("REMOTE_BRANCH: kept (gh がないため open PR の有無を確認できない)");
             return Ok(());
@@ -687,19 +689,262 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         }
     }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
-    // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる
+    // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる。上の PR が
+    // あれば、push の後に消すだけでも閉じるので、ここでも示す
+    let stacked = stacked_prs(branch, remote);
     if !ok(&[
         "merge-base",
         "--is-ancestor",
         &format!("{remote}/{branch}"),
         &format!("{remote}/{default}"),
     ]) {
-        println!(
-            "REMOTE_BRANCH: kept ({remote}/{default} がブランチの先端をまだ含まない。{default} を push してから消す)"
-        );
+        let unpushed = format!("{remote}/{default} がブランチの先端をまだ含まない");
+        match stacked {
+            // push していない既定のブランチへ付け替えると、上の PR の差分にこのブランチのコミットが入るので、push を先に書く
+            Stacked::Found(found) => println!(
+                "REMOTE_BRANCH: kept ({unpushed}。{}の base でもある。{default} を push し、次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、ブランチを消す)\n{}",
+                listed(&found),
+                commands(&found, branch, remote, default)
+            ),
+            Stacked::Unknown(why) => println!(
+                "REMOTE_BRANCH: kept ({unpushed}。{default} を push してから消す。{branch} を base にした open PR の有無も確認できない: {why})"
+            ),
+            Stacked::None => {
+                println!("REMOTE_BRANCH: kept ({unpushed}。{default} を push してから消す)")
+            }
+        }
         return Ok(());
     }
-    step(&["push", "-q", remote, "--delete", branch])?;
-    println!("REMOTE_BRANCH: deleted");
-    Ok(())
+    match stacked {
+        Stacked::Found(found) => {
+            println!(
+                "REMOTE_BRANCH: kept ({}の base。削除すると GitHub がそれらの PR を閉じ、閉じた PR は base を付け替えられない。\
+                 次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、ブランチを消す)\n{}",
+                listed(&found),
+                commands(&found, branch, remote, default)
+            );
+            Ok(())
+        }
+        Stacked::Unknown(why) => {
+            println!(
+                "REMOTE_BRANCH: kept ({branch} を base にした open PR の有無を確認できない: {why})"
+            );
+            Ok(())
+        }
+        Stacked::None => {
+            step(&["push", "-q", remote, "--delete", branch])?;
+            println!("REMOTE_BRANCH: deleted");
+            Ok(())
+        }
+    }
+}
+
+/// remote の branch を base にした開いている PR（積み重ねた上の PR）。API でブランチを消すと GitHub はそれを base にした
+/// 開いている PR を閉じ、閉じた PR は base を付け替えられない
+enum Stacked {
+    /// 無い（push 先に GitHub のリポジトリが無ければ、消しても GitHub の PR は閉じない）
+    None,
+    /// 確かめられない理由
+    Unknown(String),
+    /// push 先の GitHub のリポジトリ（owner/name）ごとの、上の PR の番号（空のものは入れない）
+    Found(Vec<(String, Vec<String>)>),
+}
+
+/// 探し方は pre-merge-check の検査 10（`stacked_prs_reason`）と揃える。上の PR は、消すブランチを持つリポジトリにある
+/// ので、gh の既定のリポジトリ（fork の clone では親）ではなく、git push --delete が消しに行く URL（pushurl があれば
+/// その全部、無ければ url の全部）のリポジトリを探す。URL は、insteadOf と pushInsteadOf で書き換えた先
+/// （git remote get-url --push --all）と、書き換える前の設定の値の両方を読む。書き換えた先だけでは略記（gh: など）
+/// でない GitHub の URL をミラーへ書き換えた設定を、書き換える前だけでは略記を読めない。両方を読むと、書き換えた先が
+/// ミラーのときに残しすぎるが、上の PR を閉じる側には倒れない
+fn stacked_prs(branch: &str, remote: &str) -> Stacked {
+    let configured = [
+        format!("remote.{remote}.pushurl"),
+        format!("remote.{remote}.url"),
+    ]
+    .iter()
+    .filter_map(|key| git(&["config", "--get-all", key]))
+    .find(|v| !v.is_empty())
+    .unwrap_or_default();
+    let rewritten = git(&["remote", "get-url", "--push", "--all", remote]).unwrap_or_default();
+    let mut repos: Vec<String> = Vec::new();
+    for url in configured.lines().chain(rewritten.lines()) {
+        match github_repo(url) {
+            // GitHub の owner と name は大文字と小文字を区別しない
+            Some(repo) if !repos.iter().any(|r| r.eq_ignore_ascii_case(&repo)) => repos.push(repo),
+            Some(_) => {}
+            None if on_github(url) => {
+                return Stacked::Unknown(format!(
+                    "{remote} の URL（{url}）から GitHub のリポジトリを読めない"
+                ));
+            }
+            None => {}
+        }
+    }
+    if repos.is_empty() {
+        return Stacked::None;
+    }
+    if !gh_available() {
+        return Stacked::Unknown("gh がない".to_string());
+    }
+    let mut found = Vec::new();
+    for repo in repos {
+        let out = gh()
+            .args([
+                "pr",
+                "list",
+                "-R",
+                &repo,
+                "--base",
+                branch,
+                "--state",
+                "open",
+                "--json",
+                "number",
+                "--jq",
+                ".[].number",
+            ])
+            .output();
+        let Some(out) = out.ok().filter(|o| o.status.success()) else {
+            return Stacked::Unknown("gh pr list が失敗".to_string());
+        };
+        let numbers: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        if !numbers.is_empty() {
+            found.push((repo, numbers));
+        }
+    }
+    if found.is_empty() {
+        Stacked::None
+    } else {
+        Stacked::Found(found)
+    }
+}
+
+/// 上の PR の件数と番号（`open PR 2 件（#12, #13）`。リポジトリが複数なら `owner/name#12`）
+fn listed(found: &[(String, Vec<String>)]) -> String {
+    let numbers: Vec<String> = found
+        .iter()
+        .flat_map(|(repo, numbers)| {
+            let prefix = if found.len() > 1 { repo.as_str() } else { "" };
+            numbers.iter().map(move |n| format!("{prefix}#{n}"))
+        })
+        .collect();
+    format!("open PR {} 件（{}）", numbers.len(), numbers.join(", "))
+}
+
+/// 上の PR ごとの base の付け替えと、その後にブランチを消すコマンドの行（行頭に空白 2 つ）。付け替えは検査 10 と同じ形
+fn commands(found: &[(String, Vec<String>)], branch: &str, remote: &str, default: &str) -> String {
+    let mut lines: Vec<String> = found
+        .iter()
+        .flat_map(|(repo, numbers)| {
+            numbers.iter().map(move |n| {
+                format!(
+                    "  gh pr edit {n} --base {} -R {}",
+                    sh_word(default),
+                    sh_word(repo)
+                )
+            })
+        })
+        .collect();
+    // このスクリプトのやり直しでなく、削除のコマンドを示す。ローカルのブランチを消した後は branch.<name>.remote が
+    // 読めず、やり直しは origin 以外のリモートを探せない
+    lines.push(format!(
+        "  git push {} --delete {}",
+        sh_word(remote),
+        sh_word(branch)
+    ));
+    lines.join("\n")
+}
+
+/// URL のホストとパス（`<scheme>://[<user>@]<host>[:<port>]/<path>` の形と、git の scp の形 `[<user>@]<host>:<path>`）
+fn host_and_path(url: &str) -> Option<(&str, &str)> {
+    match url.split_once("://") {
+        Some((_, rest)) => {
+            let (authority, path) = rest.split_once('/')?;
+            let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+            Some((host.split_once(':').map_or(host, |(h, _)| h), path))
+        }
+        None => {
+            // git は、最初の / より前に : があるものを scp の形と読む（無ければローカルのパス）
+            let (authority, path) = url.split_once(':')?;
+            if authority.contains('/') {
+                return None;
+            }
+            Some((
+                authority.rsplit_once('@').map_or(authority, |(_, h)| h),
+                path,
+            ))
+        }
+    }
+}
+
+/// リモートの URL のホストが GitHub か（大文字と小文字は区別しない）
+fn on_github(url: &str) -> bool {
+    host_and_path(url).is_some_and(|(host, _)| host.eq_ignore_ascii_case("github.com"))
+}
+
+/// リモートの URL が GitHub のリポジトリを指すなら、その owner/name
+fn github_repo(url: &str) -> Option<String> {
+    if !on_github(url) {
+        return None;
+    }
+    let (_, path) = host_and_path(url)?;
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    match path.split('/').collect::<Vec<_>>().as_slice() {
+        [owner, name] if !owner.is_empty() && !name.is_empty() => Some(format!("{owner}/{name}")),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{github_repo, on_github};
+
+    #[test]
+    fn on_github_matches_the_host_not_a_substring() {
+        assert!(on_github("https://github.com/octo"));
+        assert!(on_github("git@GitHub.com:octo"));
+        assert!(!on_github(
+            "https://github.com.mirror.example/octo/repo.git"
+        ));
+        assert!(!on_github("/srv/github.com/repo.git"));
+    }
+
+    #[test]
+    fn github_repo_reads_https_ssh_and_scp_like_urls() {
+        for url in [
+            "https://github.com/octo/repo.git",
+            "https://github.com/octo/repo",
+            "https://github.com/octo/repo/",
+            "https://user@github.com/octo/repo.git",
+            "ssh://git@github.com/octo/repo.git",
+            "git@github.com:octo/repo.git",
+            "git@github.com:octo/repo",
+            "org-123@github.com:octo/repo.git",
+            "github.com:octo/repo.git",
+            "ssh://git@github.com:22/octo/repo",
+            "https://GitHub.com/octo/repo",
+        ] {
+            assert_eq!(github_repo(url).as_deref(), Some("octo/repo"), "{url}");
+        }
+    }
+
+    #[test]
+    fn github_repo_is_none_for_other_hosts_paths_and_partial_urls() {
+        for url in [
+            "/srv/git/repo.git",
+            "https://gitlab.com/octo/repo.git",
+            "https://github.com.evil.example/octo/repo.git",
+            "https://github.com/octo",
+            "https://github.com/octo/repo/extra",
+            "git@github.com:repo.git",
+        ] {
+            assert_eq!(github_repo(url), None, "{url}");
+        }
+    }
 }
