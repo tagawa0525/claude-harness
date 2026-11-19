@@ -297,8 +297,13 @@ pub fn next_number<'a>(kind: Kind, paths: impl IntoIterator<Item = &'a str>) -> 
 }
 
 /// 新しい issue のテンプレート。フロントマターと節の形は各リポジトリが決めるので、表題の行だけを書く（ADR-0018）。
-pub fn issue_template(title: &str) -> String {
-    format!("# {title}\n")
+/// OKF のバンドルでは、検査が求める `type` と、フロントマターを持つ issue に求める `status` を前に置く（ADR-0092）。
+pub fn issue_template(title: &str, bundle: bool) -> String {
+    if bundle {
+        format!("---\ntype: Issue\nstatus: open\n---\n\n# {title}\n")
+    } else {
+        format!("# {title}\n")
+    }
 }
 
 /// 新しい ADR のテンプレート。status は proposed、フロントマターのキーは空、必須と推奨の見出しを持つ。

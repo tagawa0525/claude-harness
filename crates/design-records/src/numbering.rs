@@ -167,7 +167,12 @@ pub fn new(kind: Kind, slug: &str, title: &str, date: &str) -> Result<String> {
     let path = kind.path(number, slug);
     let text = match kind {
         Kind::Adr => design_records::template(number, title, date),
-        Kind::Issue => design_records::issue_template(title),
+        Kind::Issue => {
+            // 読めない docs/index.md はバンドルでないとして扱う（番号はもう予約したので、ここで止めない。形は check が見る）
+            let bundle = fs::read_to_string(root.join("docs/index.md"))
+                .is_ok_and(|text| design_records::okf::is_bundle_index(&text));
+            design_records::issue_template(title, bundle)
+        }
     };
     fs::create_dir_all(root.join(kind.dir())).map_err(|e| format!("{}: {e}", kind.dir()))?;
     fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;
