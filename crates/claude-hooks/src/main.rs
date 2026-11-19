@@ -209,13 +209,7 @@ fn main() {
             panic_message(&*payload)
         )),
     }
-    // 書き換え（Finding::Prepend）は updatedInput に入力の全体を返すので、Input が読まない欄も残すよう元の JSON を渡す。
-    // raw は Input::parse が JSON として読めたので、ここでも読める
-    let tool_input = serde_json::from_str::<serde_json::Value>(&raw)
-        .ok()
-        .and_then(|v| v.get("tool_input").cloned())
-        .unwrap_or(serde_json::Value::Null);
-    if let Some(json) = output::render(&findings, &output::take_notices(), &tool_input) {
+    if let Some(json) = output::render(&findings, &output::take_notices(), &input.tool_input) {
         println!("{json}");
     }
 }

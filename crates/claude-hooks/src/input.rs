@@ -27,6 +27,9 @@ pub struct Input {
     /// 呼んだサブエージェントの ID（hook の入力の共通の欄。サブエージェントのツールの呼び出しにだけある）。メインの
     /// セッションの呼び出しでは欄が無いか空なので、どちらも空にする
     pub agent_id: String,
+    /// hook の入力の tool_input の全体（無ければ Null）。入力を書き換える出力（updatedInput）は入力の全体を置き換えるので、
+    /// 上の欄に読まない欄（Bash の description、timeout など）も残すために持つ
+    pub tool_input: serde_json::Value,
 }
 
 impl Input {
@@ -55,6 +58,7 @@ impl Input {
             cwd,
             session_id: s("/session_id").unwrap_or_default(),
             agent_id: s("/agent_id").unwrap_or_default(),
+            tool_input: v.get("tool_input").cloned().unwrap_or_default(),
         })
     }
 }

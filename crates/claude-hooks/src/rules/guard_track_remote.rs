@@ -241,6 +241,7 @@ mod tests {
             cwd: work.to_path_buf(),
             session_id: String::new(),
             agent_id: String::new(),
+            tool_input: serde_json::Value::Null,
         };
         GuardTrackRemote.check(&input, &Shell::parse(cmd))
     }
