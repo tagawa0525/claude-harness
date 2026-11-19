@@ -1,4 +1,4 @@
-//! `record-local-review.sh <PR の URL> <SHA> <high> <medium> <low>`: ローカルの /code-review の結果を、PR の head の
+//! `record-local-review.sh <PR の URL> <SHA> <high> <medium> <low> [--finding <要旨>]...`: ローカルの /code-review の結果を、PR の head の
 //! 記録としてコメントに残す（/gh-pr-review の Step 6）。SHA は /code-review を回したコミットで、PR の head と一致
 //! しなければ記録しない（レビューの後に head が動いたなら、その head はレビューしていない）。件数は、その head で
 //! 確かめて正しいと判断した指摘の数で、後に Copilot が出した数と比べるために残す。
@@ -13,15 +13,16 @@
 //! `--unlogged <理由>` で理由を記録のコメントに残して付ける。前の記録が覆う head（rebase だけの head）かは、ここでは
 //! 確かめず、拒否の文で decide-next.sh を示す（比べた案は claude-harness の issue 281）
 //!
-//! 指摘が 1 件でもあれば、その要旨を書いたファイルを `--findings <ファイル>` で受けて、記録のコメントにコピーする。件数だけの
-//! 記録では、対応しなかった指摘の中身が会話にしか残らず、セッションが替わるとマージの本文に書けない。読む側の hook は
-//! コメントの 1 行目だけを見るので、要旨は印の形を変えない
+//! 指摘は、1 件ごとに要旨を `--finding <1 行>` で受けて、記録のコメントに書く。件数だけの記録では、対応しなかった指摘の
+//! 中身が会話にしか残らず、セッションが替わるとマージの本文に書けない。数が件数の合計と合わなければ記録しない。
+//! 要旨をファイルで受けない理由は、このスクリプトが確認なしで通る許可を持ち、任意のファイルを PR に出す経路になるため
+//! （claude-harness の issue 346）。読む側の hook はコメントの 1 行目だけを見るので、要旨は印の形を変えない
 
 use super::pr_url;
 use regex::Regex;
 use std::sync::LazyLock;
 
-const USAGE: &str = "Usage: record-local-review.sh <PR の URL> <レビューした SHA> <high> <medium> <low> [--findings <指摘の要旨のファイル>] [--unlogged <回した記録が clone に無い理由>]";
+const USAGE: &str = "Usage: record-local-review.sh <PR の URL> <レビューした SHA> <high> <medium> <low> [--finding <指摘 1 件の要旨（1 行）>]... [--unlogged <回した記録が clone に無い理由>]";
 
 static SHA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]{7,40}$").unwrap());
 /// 読む側は `high=0 ` の字面で比べるので、先頭の 0 を許さない
@@ -37,7 +38,8 @@ pub fn main(args: &[String]) -> i32 {
         return 1;
     };
     let counts = [h, m, l];
-    let (mut unlogged, mut findings_path) = (None, None);
+    let mut unlogged = None;
+    let mut findings = Vec::new();
     for option in options.chunks(2) {
         match option {
             [flag, reason]
@@ -45,8 +47,11 @@ pub fn main(args: &[String]) -> i32 {
             {
                 unlogged = Some(reason.trim())
             }
-            [flag, path] if flag == "--findings" && findings_path.is_none() => {
-                findings_path = Some(path)
+            // 1 件を 1 行で読めるように、複数行の値は受けない
+            [flag, finding]
+                if flag == "--finding" && !finding.trim().is_empty() && !finding.contains('\n') =>
+            {
+                findings.push(finding.trim())
             }
             _ => {
                 eprintln!("{USAGE}");
@@ -72,29 +77,15 @@ pub fn main(args: &[String]) -> i32 {
         }
     }
     let [high, medium, low] = n;
-    let findings = match findings_path {
-        Some(path) => match std::fs::read_to_string(path) {
-            Ok(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
-            Ok(_) => {
-                eprintln!("ERROR: --findings のファイルが空です: {path}（記録を付けていません）");
-                return 1;
-            }
-            Err(e) => {
-                eprintln!(
-                    "ERROR: --findings のファイルを読めません: {path}（{e}。記録を付けていません）"
-                );
-                return 1;
-            }
-        },
-        None if high + medium + low > 0 => {
-            eprintln!(
-                "ERROR: 指摘が {} 件あるのに、要旨がありません（記録を付けていません）。指摘ごとに 1 行（重大度、ファイルと行、要旨、直すか `再現なし` か）を書いたファイルを、末尾に --findings <ファイル> で渡してください（記録のコメントにコピーする。件数だけでは、セッションが替わると対応しなかった指摘をマージの本文に書けない）",
-                high + medium + low
-            );
-            return 1;
-        }
-        None => None,
-    };
+    // 足すと u64 を超える件数を、0 件に見せない
+    let total = high.saturating_add(medium).saturating_add(low);
+    if u64::try_from(findings.len()).ok() != Some(total) {
+        eprintln!(
+            "ERROR: 指摘が {total} 件なのに、要旨（--finding）が {} 件です（記録を付けていません）。指摘 1 件ごとに、末尾に --finding '<重大度 ファイル:行 要旨（直すか `再現なし` か）>' を付けてください（記録のコメントに書く。件数だけでは、セッションが替わると対応しなかった指摘をマージの本文に書けない）",
+            findings.len()
+        );
+        return 1;
+    }
 
     let head = match crate::gh::output_for_repo(
         &pr.repo,
@@ -196,8 +187,11 @@ pub fn main(args: &[String]) -> i32 {
     if let Some(reason) = unlogged.filter(|_| !logged) {
         body.push_str(&format!("\n回した記録を確かめていない理由: {reason}"));
     }
-    if let Some(findings) = &findings {
-        body.push_str(&format!("\n\n指摘:\n{findings}"));
+    if !findings.is_empty() {
+        body.push_str("\n\n指摘:");
+        for finding in &findings {
+            body.push_str(&format!("\n- {finding}"));
+        }
     }
     let code = crate::gh::run_for_repo(&pr.repo, &["pr", "comment", &pr.number, "--body", &body]);
     if code != 0 {
@@ -211,7 +205,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     // 回した行は /code-review を呼んだことしか示さない（count-review-rounds は結果を見ない）ので、対象を読めなかった回の
     // 0 件と指摘ゼロの 0 件は、返答を読んだ人にしか見分けられない
-    if high + medium + low == 0 {
+    if total == 0 {
         println!(
             "NOTE: 0 件の記録が正しいのは、/code-review の返答に見たファイルや確かめた点が書かれているときだけ。対象が見つからない（「ブランチが存在しない」など）、エラー、`[]` だけの返答は未実施なので、対象を直して回し直し、同じ head にもう一度記録する（最後の記録で決まる）"
         );

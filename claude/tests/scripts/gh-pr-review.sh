@@ -246,8 +246,8 @@ it "record-local-review: レビューした SHA と重大度ごとの件数を�
 make_fake_gh '"pr view 1 --json headRefOid"*) echo def5678 ;;
   "api repos/{owner}/{repo} --jq .permissions.push"*) echo true ;;
   "pr comment 1 --body"*) ;;'
-echo "- High a.rs:12 引数が空のときに落ちる" >"$TEST_ROOT/findings.md"
-"$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 2 0 --findings "$TEST_ROOT/findings.md"
+"$REVIEW_SCRIPTS/record-local-review.sh" "$PR_URL" def5678 1 2 0 \
+  --finding "High a.rs:12 引数が空のときに落ちる" --finding "Medium b.rs:3 語" --finding "Medium c.rs:9 重複"
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "<!-- local-review sha=def5678 high=1 medium=2 low=0 -->"
 assert_contains "$(fake_log gh)" "- High a.rs:12 引数が空のときに落ちる"
