@@ -650,4 +650,28 @@ mod unix {
             assert_eq!(repo.worktrees(), 1, "{round}");
         }
     }
+
+    #[test]
+    #[ignore = "RED: 実装の前"]
+    fn a_reader_that_closes_stdout_early_still_gets_the_temporary_worktree_removed() {
+        // `check-each-commit.sh ... | head -1` と同じく、最初の行を読んで閉じる
+        use std::io::{BufRead, BufReader};
+        let repo = Repo::new();
+        let mut child = repo
+            .command(&["main", "--", "sh", "-c", "sleep 0.2"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut first = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut first)
+            .unwrap();
+        assert!(first.ends_with("feat: first exit=0\n"), "{first}");
+        let status = child.wait().unwrap();
+        // シェルが閉じたパイプへの書き込みで終わったと読む 128 + SIGPIPE
+        assert_eq!(status.code(), Some(141), "{status}");
+        assert!(repo.left_in_tmp().is_empty(), "{:?}", repo.left_in_tmp());
+        assert_eq!(repo.worktrees(), 1);
+    }
 }
