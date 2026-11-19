@@ -332,11 +332,7 @@ fn issues(root: &Path) {
         if design_records::status(text).as_deref() != Some("open") {
             continue;
         }
-        let mut line = format!("{dir}/{}", e.name);
         let raw = raw_value(text, "blocked-by");
-        if let Some(blocked) = raw.filter(|v| !v.is_empty() && *v != "[]") {
-            line.push_str(&format!(" blocked-by={blocked}"));
-        }
         let (mut open, mut unknown) = (Vec::new(), Vec::new());
         match parse_front_matter(text) {
             Ok(front) => {
@@ -369,6 +365,16 @@ fn issues(root: &Path) {
             Err(_) if raw.is_some_and(|v| v != "[]") => unknown.push("unparsed".into()),
             Err(_) => {}
         }
+        open_now += 1;
+        // 印の無い issue は着手を止めないので、行を出さずに数える（一覧は数百行になり、再開のたびに文脈に入る）
+        if open.is_empty() && unknown.is_empty() {
+            unmarked += 1;
+            continue;
+        }
+        let mut line = format!("{dir}/{}", e.name);
+        if let Some(blocked) = raw.filter(|v| !v.is_empty() && *v != "[]") {
+            line.push_str(&format!(" blocked-by={blocked}"));
+        }
         if !open.is_empty() {
             line.push_str(&format!(" blocked={}", open.join(",")));
             any_blocked = true;
@@ -376,12 +382,6 @@ fn issues(root: &Path) {
         if !unknown.is_empty() {
             line.push_str(&format!(" blocker-unknown={}", unknown.join(",")));
             any_unknown = true;
-        }
-        open_now += 1;
-        // 印の無い issue は着手を止めないので、行を出さずに数える（一覧は数百行になり、再開のたびに文脈に入る）
-        if open.is_empty() && unknown.is_empty() {
-            unmarked += 1;
-            continue;
         }
         println!("{line}");
         found = true;
