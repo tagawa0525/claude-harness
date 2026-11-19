@@ -734,6 +734,28 @@ exit 0
         assert!(r.contains("誤語 => 正語"), "{r}");
     }
 
+    /// 本文を読まずに終わる検査（辞書が無い、使い方の誤り、版の違い）でも、検査の出した理由を残す。管の容量を超える
+    /// 本文で、書き込みが必ず閉じた管に当たるようにする
+    #[cfg(unix)]
+    #[test]
+    fn keeps_the_reason_of_a_check_that_ends_before_reading_the_message() {
+        let dir = TempDir::new("early-exit");
+        let path = dir.0.join("ja-terms");
+        write_fake_command(
+            &path,
+            "#!/bin/sh\n[ \"$1\" = probe ] && exit 0\necho \"ERROR: 辞書が無い\" >&2\nexit 2\n",
+            &["probe"],
+        );
+        let body = "本文の行\n".repeat(100_000);
+        match lint(&path.to_string_lossy(), &dir.0, &body) {
+            Lint::Failed(why) => {
+                assert!(why.contains("辞書が無い"), "{why}");
+                assert!(!why.contains("渡せません"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn denies_broken_term_in_message_file_under_cd() {
