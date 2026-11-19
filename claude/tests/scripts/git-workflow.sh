@@ -757,6 +757,17 @@ assert_not_contains "$out" "NOTE: rebuild が要る"
 assert_not_contains "$out" "NOTE: claude-sync が要る"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: 配る元の claude を持つハーネスでは、.claude の下（このリポジトリだけのスキル）が変わっても claude-sync の NOTE を出さない"
+setup_claude_sync_source "$TEST_ROOT/cleanup14b"
+commit_file "$TEST_ROOT/cleanup14b/app" claude/CLAUDE.md "docs: claude"
+git -C "$TEST_ROOT/cleanup14b/app" push -q origin main
+advance_origin_main "$TEST_ROOT/cleanup14b/app" .claude/skills/harness-deploy/SKILL.md >/dev/null
+cd "$TEST_ROOT/cleanup14b/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_not_contains "$out" "NOTE: claude-sync が要る"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: ハーネスで pull で nix の下（モジュール）か claude-settings.json が変わっても、lock の更新と rebuild が要ると NOTE で知らせる"
 i=0
 for path in nix/git-hooks.nix claude-settings.json; do
