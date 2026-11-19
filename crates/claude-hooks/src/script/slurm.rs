@@ -256,7 +256,10 @@ const INFINITE64: u64 = u64::MAX;
 
 /// squeue の 1 本のジョブ。一覧の欄は、squeue の --format の文字の出力（26.05.6 の src/squeue/print.c の
 /// `_print_job_*`。2026-11-19 に slurm-26-05-6-1 のタグで読んだ）と同じ形にする。そのため JSON の
-/// `{set, infinite, number}` を C の値（NO_VAL、INFINITE を含む）に戻してから、print.c と同じ分け方で書く
+/// `{set, infinite, number}` を C の値（NO_VAL、INFINITE を含む）に戻してから、print.c と同じ分け方で書く。
+///
+/// 文字の出力が表示の前に行う、待っている配列のタスクをまとめた記録に戻す処理（`_combine_pending_array_tasks`）と、
+/// 番号の欄の 32 バイトでの切り詰めは行わない。slurm-run は配列のジョブを投げない（#361）
 fn queued_job(job: &Value) -> Result<QueuedJob, String> {
     let job_id = job["job_id"]
         .as_u64()
