@@ -2,13 +2,14 @@
 //!
 //! sbatch を直接投げると、名前・ログ・見積もり・連絡先が抜け、待ち行列から誰の何の計算かが
 //! 読めなくなる（docs/adr/0007）。slurm-run.sh はジョブが終わるまで戻らず、待ち行列の長さ次第で
-//! Bash ツールのフォアグラウンドの上限を超えるので、run_in_background=true でのみ許可する。
+//! Bash ツールのフォアグラウンドの上限を超えるので、run_in_background=true でのみ許可する。既にあるジョブの終わりを待つ
+//! slurm-wait.sh も同じく background でのみ許可する。
 //! `env`・`command`・`sudo` などで包んでも、`bash -x <path>` や `bash -c '…'` の形でも、shell.rs がほどいた中の
 //! プログラムで判定する。実行するプログラムを決められない形（`$CMD`、`source`）は、対象語が文字列にあれば
 //! 止める側に倒す（ADR-0025）。
 //! slurm-run.sh が扱わない投げ方（ジョブの配列、依存など。排他にしない投げ方は `-c`、ADR-0029）や、空いた待ち行列での
 //! 短い計算のために、わかって外すときのエスケープを設ける: `ALLOW_RAW_SBATCH=<理由>`（sbatch の直接の投入）、
-//! `ALLOW_FOREGROUND_SLURM=<理由>`（slurm-run.sh のフォアグラウンド実行）。
+//! `ALLOW_FOREGROUND_SLURM=<理由>`（slurm-run.sh と slurm-wait.sh のフォアグラウンド実行）。
 //! `echo sbatch` や `grep sbatch …` のように引数に現れるだけの場合は対象外。
 //!
 //! /slurm-run の「順番」と「複数のジョブを待つ」で使わない操作も止め、代わりの手を示す:
@@ -27,18 +28,23 @@ use crate::unwrap::basename;
 
 pub struct GuardSbatch;
 
-const SCRIPT: &str = "slurm-run.sh";
-const TEST: &str = "claude/tests/scripts/slurm-run.sh";
+pub(super) const SCRIPT: &str = "slurm-run.sh";
+pub(super) const WAIT_SCRIPT: &str = "slurm-wait.sh";
 
 /// slurm-run.sh か。同名のテスト（`claude/tests/scripts/slurm-run.sh`）は偽物の sbatch で走り、Slurm に
 /// 触れないので除く。本物の書き方は `~`、`$HOME`、相対、nix store など数え切れないので、除くのはテストの
 /// 1 つだけにして、見落とした書き方は止める側に倒す（docs/adr/0020）
-fn is_slurm_run(program: &str) -> bool {
-    basename(program) == SCRIPT && !is_own_test(program)
+pub(super) fn is_slurm_run(program: &str) -> bool {
+    basename(program) == SCRIPT && !is_own_test(program, SCRIPT)
 }
 
-fn is_own_test(path: &str) -> bool {
-    path.strip_suffix(TEST)
+/// slurm-wait.sh か（同名のテストを除くのは [`is_slurm_run`] と同じ）
+pub(super) fn is_slurm_wait(program: &str) -> bool {
+    basename(program) == WAIT_SCRIPT && !is_own_test(program, WAIT_SCRIPT)
+}
+
+fn is_own_test(path: &str, script: &str) -> bool {
+    path.strip_suffix(&format!("claude/tests/scripts/{script}"))
         .is_some_and(|dir| dir.is_empty() || dir.ends_with('/'))
 }
 
@@ -148,13 +154,13 @@ fn scancel_filters(cmd: &Cmd) -> bool {
         })
 }
 
-/// slurm-run.sh の出力をパイプにつなぐか、後ろに表示のコマンドが続くか。後ろのコマンドは、slurm-run.sh と同じか外側の
+/// slurm-run.sh か slurm-wait.sh の出力をパイプにつなぐか、後ろに表示のコマンドが続くか。後ろのコマンドは、slurm-run.sh と同じか外側の
 /// スコープのものだけを数える（サブシェルや `bash -c` の中の slurm-run.sh も、外の `| tail` や `; cat` が隠す）。
 /// 内側のスコープは slurm-run.sh の引数の `$(cat …)` なので数えない
 fn hides_slurm_run_output(shell: &Shell) -> bool {
     let cmds = shell.commands();
     cmds.iter()
-        .filter(|c| is_slurm_run(c.program()))
+        .filter(|c| is_slurm_run(c.program()) || is_slurm_wait(c.program()))
         .any(|run| {
             !run.piped_into.is_empty()
                 || cmds.iter().any(|c| {
@@ -192,7 +198,7 @@ impl Rule for GuardSbatch {
         );
         if hides_slurm_run_output(shell) {
             findings.push(Finding::Deny(
-                "slurm-run.sh の出力はパイプや、後ろに ; && || でつないだ表示のコマンド（tail、head、grep、cat）に渡さず、そのまま受けてください（終了コードと TIME: の行が消えるか、表示のコマンドの終了コードになります）。表示は、通知の後に別の呼び出しで読んでください（複数のファイルの末尾は tail -n 3 a.txt b.txt）".to_string(),
+                "slurm-run.sh と slurm-wait.sh の出力はパイプや、後ろに ; && || でつないだ表示のコマンド（tail、head、grep、cat）に渡さず、そのまま受けてください（終了コードと TIME: の行が消えるか、表示のコマンドの終了コードになります）。表示は、通知の後に別の呼び出しで読んでください（複数のファイルの末尾は tail -n 3 a.txt b.txt）".to_string(),
             ));
         }
         // 2 つの検査は別々のエスケープで外す
@@ -211,9 +217,17 @@ impl Rule for GuardSbatch {
                 return findings;
             }
         }
-        if !input.run_in_background && shell.runs_program(SCRIPT, is_slurm_run) {
+        let foreground = [
+            (SCRIPT, is_slurm_run as fn(&str) -> bool),
+            (WAIT_SCRIPT, is_slurm_wait),
+        ]
+        .into_iter()
+        .find(|(word, is)| shell.runs_program(word, is));
+        if !input.run_in_background
+            && let Some((script, _)) = foreground
+        {
             let deny = Finding::Deny(format!(
-                "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
+                "{script} はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
                 escape_hint("ALLOW_FOREGROUND_SLURM")
             ));
             findings.extend(apply_escape(

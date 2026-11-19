@@ -240,6 +240,7 @@ mod tests {
             message: String::new(),
             cwd: work.to_path_buf(),
             session_id: String::new(),
+            agent_id: String::new(),
         };
         GuardTrackRemote.check(&input, &Shell::parse(cmd))
     }

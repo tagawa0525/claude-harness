@@ -132,6 +132,7 @@
       "Bash(~/.claude/scripts/base-moved.sh:*)",
       "Bash(~/.claude/scripts/kept-sentences.sh:*)",
       "Bash(~/.claude/scripts/slurm-run.sh:*)",
+      "Bash(~/.claude/scripts/slurm-wait.sh:*)",
       "Bash(~/.claude/scripts/slurm-history.sh:*)",
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:claude.ai)",

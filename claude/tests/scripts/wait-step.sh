@@ -11,7 +11,7 @@ source "$(dirname "$0")/../lib.sh"
 WAIT="$SCRIPTS_DIR/wait-step.sh"
 export TMPDIR="$TEST_ROOT/tmp"
 mkdir -p "$TMPDIR"
-export WAIT_STEP_SECONDS=1 WAIT_STEP_REPORT=60
+export WAIT_STEP_SECONDS=1 WAIT_STEP_LIMIT=60
 log="$TEST_ROOT/job.out"
 : >"$log"
 # NEXT の行は ~ を展開しない形でコマンドを出す
@@ -32,13 +32,13 @@ assert_contains "$out" "DONE: $TEST_ROOT/done.out"
 assert_contains "$out" "$shown /wt/b $log で呼び直し"
 assert_contains "$out" "$shown --end /wt/b"
 
-it "wait-step: 途中の報告から間隔を超えると、REPORT と親に送る文面を出して 3 で返る"
-# 時刻を渡して壁の時計の進みに頼らない。100 秒に待ち始めて 101 秒に WAIT で返り、続けて呼ぶと 102 秒に REPORT
-WAIT_STEP_NOW=100 WAIT_STEP_REPORT=2 "$WAIT" /wt/c "$log" >/dev/null
-out=$(WAIT_STEP_NOW=101 WAIT_STEP_SECONDS=2 WAIT_STEP_REPORT=2 "$WAIT" /wt/c "$log")
+it "wait-step: 待ち始めから線を超えると、END と、待ちをやめて報告して終える次の行動を出して 3 で返る"
+# 時刻を渡して壁の時計の進みに頼らない。100 秒に待ち始めて 101 秒に WAIT で返り、続けて呼ぶと 102 秒に END
+WAIT_STEP_NOW=100 WAIT_STEP_LIMIT=2 "$WAIT" /wt/c "$log" >/dev/null
+out=$(WAIT_STEP_NOW=101 WAIT_STEP_SECONDS=2 WAIT_STEP_LIMIT=2 "$WAIT" /wt/c "$log")
 assert_eq 3 $?
-assert_contains "$out" "REPORT:"
-assert_contains "$out" "<待つもの> の待ちが 55 分を超えた。終わり次第、残りの作業を続ける"
+assert_contains "$out" "END:"
+assert_contains "$out" "NEXT: 待つのをやめる"
 
 it "wait-step: --end で待ちを消して 0 で返る"
 "$WAIT" --end /wt/c

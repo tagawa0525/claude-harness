@@ -91,6 +91,7 @@ pub(crate) use count_review_rounds::round_ran_at;
 mod delegate_report_fields;
 mod delegate_request_fields;
 mod guard_branch_base;
+mod guard_delegate_wait;
 mod guard_exclusive_slurm;
 pub(crate) use guard_exclusive_slurm::exclusive_job;
 mod guard_gh_api;
@@ -121,6 +122,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &require_background_wait::RequireBackgroundWait,
         &require_pipefail::RequirePipefail,
         &guard_sbatch::GuardSbatch,
+        &guard_delegate_wait::GuardDelegateWait,
         &block_main_commit::BlockMainCommit,
         &warn_large_commit::WarnLargeCommit,
         &guard_git_add::GuardGitAdd,

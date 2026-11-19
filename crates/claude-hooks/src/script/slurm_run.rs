@@ -74,11 +74,11 @@ struct Refusal {
     message: String,
 }
 
-/// RESULT: の行に要る、ここまでに分かったこと。中断を受けたスレッドと分け合う
+/// RESULT: の行に要る、ここまでに分かったこと。中断を受けたスレッドと分け合う（slurm-wait も使う）
 #[derive(Default)]
-struct Progress {
-    name: Option<String>,
-    job: Option<String>,
+pub(super) struct Progress {
+    pub(super) name: Option<String>,
+    pub(super) job: Option<String>,
     reported: bool,
 }
 
@@ -95,7 +95,7 @@ impl Progress {
     }
 
     /// 終わりの状態が分からないまま終えるときの RESULT: の行（投げる前なら NOT_SUBMITTED、投げた後なら unknown）
-    fn report_unfinished(&mut self, exit: i32) {
+    pub(super) fn report_unfinished(&mut self, exit: i32) {
         let state = if self.job.is_some() {
             "unknown"
         } else {
@@ -105,7 +105,7 @@ impl Progress {
     }
 }
 
-fn lock(progress: &Mutex<Progress>) -> std::sync::MutexGuard<'_, Progress> {
+pub(super) fn lock(progress: &Mutex<Progress>) -> std::sync::MutexGuard<'_, Progress> {
     progress.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -152,12 +152,8 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
 
     // ジョブの走る r995 の側のパスと、このホストから読むパス。r995 の ~/github と、ほかのホストの NFS の入口は同じ場所
     // （走っているジョブの作業ディレクトリを、このホストの書き方に直すのにも使う）
-    let remote_root = format!("{}/github", crate::shell::home().display());
+    let (remote_root, nfs_entry) = roots();
     let remote_logs = format!("{remote_root}/slurm-logs");
-    let nfs_entry = std::env::var("SLURM_RUN_NFS_ENTRY")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| NFS_ENTRY.to_string());
     let on_r995 = hostname() == "r995";
     let local_logs = if on_r995 {
         remote_logs.clone()
@@ -251,7 +247,7 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
 
     // 残りの出力は読み捨て、閉じるまで読んでから終わりを受ける（パイプが埋まって子が止まらないように）
     let _ = std::io::copy(&mut submit_out, &mut std::io::sink());
-    let mut status = match child.wait() {
+    let status = match child.wait() {
         Ok(status) => crate::child::exit_code(status),
         Err(e) => {
             eprintln!("WARN: sbatch の終わりを受けられなかった: {e}");
@@ -259,9 +255,51 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
         }
     };
 
+    finish(
+        &job,
+        &log,
+        &req.labels(),
+        status,
+        (tries, interval),
+        progress,
+    )
+}
+
+/// TIME: の行の区分、参照、目的と、-c のコア数（投げたときの引数か、ジョブのコメントから）
+#[derive(Debug, PartialEq)]
+pub(super) struct Labels<'a> {
+    pub(super) class: &'a str,
+    pub(super) reference: &'a str,
+    pub(super) purpose: &'a str,
+    pub(super) cpus: Option<&'a str>,
+}
+
+impl Request {
+    fn labels(&self) -> Labels<'_> {
+        Labels {
+            class: &self.class,
+            reference: &self.reference,
+            purpose: &self.purpose,
+            cpus: self.cpus.as_deref(),
+        }
+    }
+}
+
+/// 終わったジョブの結果を出す（slurm-run と slurm-wait の終わり）。会計の記録（終わった状態）が届くまで待ち
+/// （[`wait_record`]）、届かなければ制御のデーモンの状態で確かめる。TIME: の行は、ログにまだ無ければ書き足す（slurm-run
+/// が書いた後のジョブを slurm-wait が待っても重ねない）。ログの末尾、印の NEXT:、RESULT:、EXIT: を出し、終了コードを返す。
+/// status は、待ったコマンドが受けたジョブの終了コード（sbatch --wait の終了コードと同じ形）
+pub(super) fn finish(
+    job: &str,
+    log: &str,
+    labels: &Labels,
+    status: i32,
+    (tries, interval): (u32, std::time::Duration),
+    progress: &Mutex<Progress>,
+) -> i32 {
     let record = wait_record(
         tries,
-        || slurm::accounting_record(&job),
+        || slurm::accounting_record(job),
         || std::thread::sleep(interval),
     );
 
@@ -273,7 +311,7 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
             );
             // 終わりの状態を確かめられないまま 0 を返すと、取り消されたジョブでも && の次が走る。終わった直後なら
             // 制御のデーモンが覚えているので、その状態で確かめる。これも読めなければ、成功とは言えないので失敗にする
-            match slurm::controller_state(&job).filter(|state| state.ended) {
+            match slurm::controller_state(job).filter(|state| state.ended) {
                 Some(state) => state,
                 None => {
                     eprintln!(
@@ -284,20 +322,22 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
             }
         }
         Some(record) => {
-            let timing = time_line(&job, record, &req);
+            let timing = time_line(job, record, labels);
             for warning in &timing.warnings {
                 eprintln!("{warning}");
             }
             marked = timing.marked;
-            if let Err(e) = append_line(&log, &timing.line) {
+            if !has_time_line(log, job)
+                && let Err(e) = append_line(log, &timing.line)
+            {
                 eprintln!("WARN: ジョブ {job} の実際の時間をログに書き足せなかった: {log}（{e}）");
                 println!("{}", timing.line);
             }
             record.state.clone()
         }
     };
-    status = final_status(status, &state);
-    if let Ok(text) = file_tail(&log, TAIL_LINES) {
+    let status = final_status(status, &state);
+    if let Ok(text) = file_tail(log, TAIL_LINES) {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(tail_lines(&text, TAIL_LINES));
         let _ = out.flush();
@@ -308,6 +348,16 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
     lock(progress).report(status, &state.name);
     println!("{}", exit_line(status, &state));
     status
+}
+
+/// ログの末尾に、このジョブの TIME: の行があるか（読めなければ無いとみなす）
+fn has_time_line(log: &str, job: &str) -> bool {
+    let head = format!("TIME: job={job} ");
+    file_tail(log, TAIL_LINES).is_ok_and(|text| {
+        String::from_utf8_lossy(&text)
+            .lines()
+            .any(|line| line.starts_with(&head))
+    })
 }
 
 /// 引数を読んで確かめる。確かめる順は、使い方の誤り、区分、参照、目的、-c、-t、コマンド、名前（先に当たった理由だけを出す）
@@ -455,7 +505,7 @@ fn usage() -> String {
 }
 
 /// 会計の記録を待つ回数と間隔（SLURM_RUN_SACCT_TRIES、SLURM_RUN_SACCT_INTERVAL。テストが短くする）
-fn record_wait() -> Result<(u32, std::time::Duration), String> {
+pub(super) fn record_wait() -> Result<(u32, std::time::Duration), String> {
     let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
     let tries = match var("SLURM_RUN_SACCT_TRIES") {
         None => 10,
@@ -493,7 +543,7 @@ fn working_dir() -> std::io::Result<String> {
     Ok(cwd.display().to_string())
 }
 
-fn hostname() -> String {
+pub(super) fn hostname() -> String {
     Command::new("hostname")
         .output()
         .map(|out| {
@@ -504,6 +554,16 @@ fn hostname() -> String {
         .unwrap_or_default()
 }
 
+/// r995 の ~/github と、ほかのホストから見たその NFS の入口
+pub(super) fn roots() -> (String, String) {
+    let remote_root = format!("{}/github", crate::shell::home().display());
+    let nfs_entry = std::env::var("SLURM_RUN_NFS_ENTRY")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| NFS_ENTRY.to_string());
+    (remote_root, nfs_entry)
+}
+
 /// path が dir の下か（dir そのものを含む）
 fn under(path: &str, dir: &str) -> bool {
     format!("{path}/").starts_with(&format!("{dir}/"))
@@ -511,7 +571,7 @@ fn under(path: &str, dir: &str) -> bool {
 
 /// ジョブの作業ディレクトリ（r995 から投げたら ~/github の下、ほかのホストからなら NFS の入口の下）を、このホストの
 /// 書き方に直す
-fn local_path(path: &str, on_r995: bool, nfs_entry: &str, remote_root: &str) -> String {
+pub(super) fn local_path(path: &str, on_r995: bool, nfs_entry: &str, remote_root: &str) -> String {
     let (from, to) = if on_r995 {
         (nfs_entry, remote_root)
     } else {
@@ -760,7 +820,7 @@ struct Timing {
 
 /// 終わったジョブの TIME: の行。印は、-c のとき、割り込まれないパーティションで走らなかったとき、止められていたとき
 /// （確かめられないときも）に付く
-fn time_line(job: &str, record: &JobRecord, req: &Request) -> Timing {
+fn time_line(job: &str, record: &JobRecord, labels: &Labels) -> Timing {
     let mut warnings = Vec::new();
     let plain = format!(
         "TIME: job={job} elapsed={} estimate={}",
@@ -768,7 +828,7 @@ fn time_line(job: &str, record: &JobRecord, req: &Request) -> Timing {
         limit_text(&record.limit)
     );
     let mut line = plain.clone();
-    if let Some(cpus) = &req.cpus {
+    if let Some(cpus) = labels.cpus {
         line.push_str(&format!(" shared (-c {cpus}): 時間は当てにならない"));
     }
     // 止められたかによらず付ける。止められなかったジョブも、割り込まれうる条件で走った値で、付け忘れた --timed を見分けるため。
@@ -808,7 +868,7 @@ fn time_line(job: &str, record: &JobRecord, req: &Request) -> Timing {
     // 目的は利用者の書く文なので、末尾に置く
     line.push_str(&format!(
         " class={} ref={} purpose={}",
-        req.class, req.reference, req.purpose
+        labels.class, labels.reference, labels.purpose
     ));
     Timing {
         line,
@@ -941,6 +1001,9 @@ mod tests {
             uninterrupted,
             suspended,
             state,
+            name: "xlc-2G".to_string(),
+            log: String::new(),
+            exit: Some(0),
         }
     }
 
@@ -1335,7 +1398,11 @@ mod tests {
     #[test]
     fn the_time_line_has_the_job_elapsed_estimate_state_class_reference_and_purpose() {
         let req = request(&["--timed", "-t", "30", "xlc-bench", "true"]);
-        let timing = time_line("42", &record(Some(true), Some(0), completed()), &req);
+        let timing = time_line(
+            "42",
+            &record(Some(true), Some(0), completed()),
+            &req.labels(),
+        );
         assert_eq!(
             timing.line,
             "TIME: job=42 elapsed=00:12:34 estimate=00:30:00 state=COMPLETED class=trial ref=#1 purpose=試験の目的"
@@ -1347,7 +1414,11 @@ mod tests {
     #[test]
     fn a_job_that_ran_interruptible_is_marked_preemptible_whatever_the_flag() {
         let req = request(&["--timed", "-t", "30", "xlc-bench", "true"]);
-        let timing = time_line("42", &record(Some(false), Some(0), completed()), &req);
+        let timing = time_line(
+            "42",
+            &record(Some(false), Some(0), completed()),
+            &req.labels(),
+        );
         assert!(
             timing.line.contains(" estimate=00:30:00 preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed） state="),
             "{}",
@@ -1356,16 +1427,24 @@ mod tests {
         assert!(timing.marked);
         let main = request(&["-t", "30", "xlc-2G", "true"]);
         assert!(
-            !time_line("42", &record(Some(true), Some(0), completed()), &main)
-                .line
-                .contains("preemptible")
+            !time_line(
+                "42",
+                &record(Some(true), Some(0), completed()),
+                &main.labels()
+            )
+            .line
+            .contains("preemptible")
         );
     }
 
     #[test]
     fn shared_suspended_and_preemptible_marks_add_up_in_order() {
         let req = request(&["-c", "8", "-t", "30", "openmc-2G-shared", "true"]);
-        let timing = time_line("42", &record(Some(false), Some(600), completed()), &req);
+        let timing = time_line(
+            "42",
+            &record(Some(false), Some(600), completed()),
+            &req.labels(),
+        );
         assert!(
             timing.line.starts_with("TIME: job=42 elapsed=00:12:34 estimate=00:30:00 shared (-c 8): 時間は当てにならない preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed） suspended: 止められていたので時間は当てにならない state=COMPLETED"),
             "{}",
@@ -1373,7 +1452,11 @@ mod tests {
         );
         assert!(timing.marked);
         let timed = request(&["--timed", "-t", "30", "xlc-bench", "true"]);
-        let suspended = time_line("42", &record(Some(true), Some(1), completed()), &timed);
+        let suspended = time_line(
+            "42",
+            &record(Some(true), Some(1), completed()),
+            &timed.labels(),
+        );
         assert!(
             suspended
                 .line
@@ -1385,7 +1468,7 @@ mod tests {
     #[test]
     fn a_record_without_the_partition_or_the_suspended_time_is_marked_unknown_with_warnings() {
         let req = request(&["-t", "30", "xlc-2G", "true"]);
-        let timing = time_line("42", &record(None, None, completed()), &req);
+        let timing = time_line("42", &record(None, None, completed()), &req.labels());
         assert!(timing.line.contains(
             " partition=unknown: 割り込まれうるかを確かめられないので時間は記録に使わない"
         ));
@@ -1411,7 +1494,7 @@ mod tests {
         bare.elapsed = None;
         bare.limit = None;
         assert!(
-            time_line("42", &bare, &req)
+            time_line("42", &bare, &req.labels())
                 .line
                 .starts_with("TIME: job=42 elapsed= estimate= state=CANCELLED class=")
         );

@@ -107,6 +107,35 @@ pub fn valid_time_limit(estimate: &str) -> bool {
     TIME_LIMIT.is_match(estimate)
 }
 
+/// 見積もり（[`valid_time_limit`] の形）の分。秒は分に切り上げる（見込みを短くしない）。形が違えば None
+pub fn estimate_minutes(estimate: &str) -> Option<u64> {
+    if !valid_time_limit(estimate) {
+        return None;
+    }
+    let (days, clock) = match estimate.split_once('-') {
+        Some((days, clock)) => (days.parse::<u64>().ok()?, Some(clock)),
+        None => (0, None),
+    };
+    let parts: Vec<u64> = clock
+        .unwrap_or(estimate)
+        .split(':')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
+    // 日の無い形は、分か時:分:秒。日のある形は、時、時:分、時:分:秒
+    let (hours, minutes, seconds) = match (clock.is_some(), parts.as_slice()) {
+        (false, [m]) => (0, *m, 0),
+        (false, [h, m, s]) | (true, [h, m, s]) => (*h, *m, *s),
+        (true, [h]) => (*h, 0, 0),
+        (true, [h, m]) => (*h, *m, 0),
+        _ => return None,
+    };
+    days.checked_mul(24)?
+        .checked_add(hours)?
+        .checked_mul(60)?
+        .checked_add(minutes)?
+        .checked_add(seconds.div_ceil(60))
+}
+
 /// 待ち行列の先頭に、list（`,` でつないだ番号）をその順に出す
 pub fn move_to_front(list: &str) -> bool {
     Command::new("scontrol")
@@ -199,6 +228,10 @@ pub struct QueuedJob {
     /// 開始の見込みか走り始めた時刻（`2026-11-19T17:45:36`。無ければ `N/A`）
     pub start: String,
     pub comment: String,
+    /// 開始の見込みか走り始めた時刻の UNIX の秒（見込みが無ければ None）
+    pub start_at: Option<i64>,
+    /// 見積もりの分（無制限か、パーティションの上限に任せたものは None）
+    pub limit_minutes: Option<u64>,
 }
 
 /// 待ち行列を読めなかった理由
@@ -210,6 +243,55 @@ pub enum QueueError {
     Failed(i32),
     /// 出力を解けない
     Unreadable(String),
+}
+
+/// 待ち行列のジョブを、timeout までに読む（hook が使う。slurmctld が応答しないと、hook の時間切れで判定を飛ばされる）。
+/// 時間内に終わらなければ squeue を止めて Unreadable
+pub fn queued_jobs_within(timeout: std::time::Duration) -> Result<Vec<QueuedJob>, QueueError> {
+    let mut child = Command::new("squeue")
+        .arg(JSON)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        // 失敗の理由（slurmctld に届かない、など）を見せるため、queued_jobs と同じく流す
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| QueueError::Spawn {
+            code: if error.kind() == std::io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            },
+            error,
+        })?;
+    // 読まない間に squeue がパイプを満たして終われないので、別のスレッドで読む
+    let mut pipe = child.stdout.take().expect("stdout はパイプ");
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut pipe, &mut bytes).map(|_| bytes)
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            waited => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(match waited {
+                    Err(e) => format!("squeue の終わりを受けられない: {e}"),
+                    _ => format!("squeue が {} 秒で終わらない", timeout.as_secs()),
+                });
+            }
+        }
+    };
+    let bytes = reader.join().ok().and_then(Result::ok).unwrap_or_default();
+    let status = status.map_err(QueueError::Unreadable)?;
+    if !status.success() {
+        return Err(QueueError::Failed(crate::child::exit_code(status)));
+    }
+    queue_jobs(&String::from_utf8_lossy(&bytes)).map_err(QueueError::Unreadable)
 }
 
 /// 待ち行列のジョブ（squeue の既定の絞り込み）。squeue の標準エラーはそのまま流す
@@ -293,6 +375,7 @@ fn queued_job(job: &Value) -> Result<QueuedJob, String> {
     };
     let start =
         c_number(&job["start_time"], NO_VAL64, INFINITE64).ok_or_else(|| missing("start_time"))?;
+    let time_limit = number("time_limit")?;
     Ok(QueuedJob {
         id,
         group,
@@ -303,12 +386,20 @@ fn queued_job(job: &Value) -> Result<QueuedJob, String> {
         state,
         phase,
         priority: number("priority")?,
-        limit: limit_text(number("time_limit")?),
+        limit: limit_text(time_limit),
         // C の time_t に戻す。NO_VAL64 と INFINITE64 は -2 と -1 になり、slurm_make_time_str が比べるのは 32 ビットの
         // NO_VAL と INFINITE だけなので、squeue と同じく 1970 年の時刻で書く
         start: start_text(start as i64).ok_or_else(|| missing("start_time"))?,
         comment: printed("comment")?,
+        start_at: start_time(start),
+        limit_minutes: (time_limit != INFINITE && time_limit != NO_VAL).then_some(time_limit),
     })
+}
+
+/// 開始の時刻の C の値（[`start_text`] が時刻として書くもの）のうち、見込みとして使える UNIX の秒。0（N/A）、
+/// INFINITE（Unknown）、NO_VAL（None）と、32 ビットを超える値（NO_VAL64 と INFINITE64 の 1970 年の時刻）は見込みが無い
+fn start_time(start: u64) -> Option<i64> {
+    (start != 0 && start < NO_VAL).then_some(start as i64)
 }
 
 /// `{set, infinite, number}` を C の値に（data_parser の UINT32_NO_VAL と UINT64_NO_VAL の DUMP の逆）
@@ -358,13 +449,16 @@ fn start_text(time: i64) -> Option<String> {
         0 => Some("N/A".to_string()),
         t if t == INFINITE as i64 => Some("Unknown".to_string()),
         t if t == NO_VAL as i64 => Some("None".to_string()),
-        t => {
-            let (y, mo, d, h, mi, s, _) = super::time::jst_fields(super::time::Time {
-                micros: t.checked_mul(1_000_000)?,
-            });
-            Some(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}"))
-        }
+        t => clock_text(t),
     }
+}
+
+/// 時刻（UNIX の秒）を JST の %FT%T で。範囲の外なら None
+pub fn clock_text(time: i64) -> Option<String> {
+    let (y, mo, d, h, mi, s, _) = super::time::jst_fields(super::time::Time {
+        micros: time.checked_mul(1_000_000)?,
+    });
+    Some(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}"))
 }
 
 /// ジョブの状態
@@ -473,6 +567,12 @@ pub struct JobRecord {
     /// 止められていた秒数（記録に無ければ None）
     pub suspended: Option<i64>,
     pub state: JobState,
+    /// ジョブの名前（記録に無ければ空）
+    pub name: String,
+    /// ログのパス（ジョブの走るホストの書き方。記録に無ければ空）
+    pub log: String,
+    /// ジョブの終了コード（[`exit_status`]。記録に無ければ None）
+    pub exit: Option<i32>,
 }
 
 /// 会計の記録（sacct）。読めない、記録がまだ届いていないなら None。標準エラーは捨てる（読めないことは呼ぶ側が警告する）
@@ -500,19 +600,95 @@ fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
             .map(|p| p == UNINTERRUPTED),
         suspended: time["suspended"].as_i64(),
         state: JobState::from_slurm(state_word(&found["state"]["current"])),
+        name: found["name"].as_str().unwrap_or("").to_string(),
+        log: found["stdout_expanded"].as_str().unwrap_or("").to_string(),
+        exit: exit_status(&found["exit_code"]),
     })
+}
+
+/// ジョブの終了コードを、sbatch --wait が返す形で（26.05.6 の src/sbatch/sbatch.c の `_job_wait`。2026-11-20 に
+/// slurm-26-05-6-1 のタグで読んだ）。普通に終わればその終了コード、シグナルで終われば 1。記録に無ければ None
+fn exit_status(exit_code: &Value) -> Option<i32> {
+    if exit_code["signal"]["id"]["set"].as_bool() == Some(true)
+        && exit_code["signal"]["id"]["number"].as_u64() != Some(0)
+    {
+        return Some(1);
+    }
+    let code = &exit_code["return_code"];
+    if code["set"].as_bool() != Some(true) {
+        return None;
+    }
+    code["number"].as_i64().and_then(|n| i32::try_from(n).ok())
 }
 
 /// 制御のデーモン（scontrol）が覚えている状態。終わった直後（MinJobAge の 300 秒の間）だけ読める
 pub fn controller_state(job: &str) -> Option<JobState> {
-    scontrol_state(&quiet_output(&["scontrol", "show", "job", job, JSON])?, job)
+    controller_job(job).ok().flatten().map(|found| found.state)
 }
 
+/// 制御のデーモンが覚えているジョブ（待っているもの、走っているもの、終わった直後のもの）
+#[derive(Debug, PartialEq)]
+pub struct ControllerJob {
+    pub name: String,
+    /// 投げたときのコメント（会計の記録には残らない。r995 の AccountingStoreFlags は job_comment を含まない）
+    pub comment: String,
+    /// ログのパス（ジョブの走るホストの書き方）
+    pub log: String,
+    pub state: JobState,
+    /// ジョブの終了コード（[`exit_status`]。終わる前は意味を持たない）
+    pub exit: Option<i32>,
+}
+
+/// 制御のデーモンのジョブを読めなかった理由
+#[derive(Debug)]
+pub enum ControllerError {
+    /// scontrol を起動できない（読み直しても変わらない）
+    Spawn(String),
+    /// scontrol が失敗した、出力を読めない（一時の不調でありうる）
+    Failed(String),
+}
+
+/// 制御のデーモンが覚えているジョブ。覚えていなければ（知らない番号と、終わってから MinJobAge を過ぎたものは、scontrol が
+/// 空の jobs を 0 で返す）None。読めなければ理由（一時の失敗を、覚えていないと読み違えない）
+pub fn controller_job(job: &str) -> Result<Option<ControllerJob>, ControllerError> {
+    let out = Command::new("scontrol")
+        .args(["show", "job", job, JSON])
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| ControllerError::Spawn(format!("scontrol を起動できない: {e}")))?;
+    if !out.status.success() {
+        return Err(ControllerError::Failed(format!(
+            "scontrol が終了コード {} で失敗した",
+            crate::child::exit_code(out.status)
+        )));
+    }
+    scontrol_job(&String::from_utf8_lossy(&out.stdout), job).map_err(ControllerError::Failed)
+}
+
+fn scontrol_job(json: &str, job: &str) -> Result<Option<ControllerJob>, String> {
+    let jobs = json_jobs("scontrol", json)?;
+    let Some(found) = jobs.iter().find(|j| id_text(&j["job_id"]) == job) else {
+        return Ok(None);
+    };
+    if found["job_state"][0].as_str().is_none() {
+        return Err(format!("scontrol の出力のジョブ {job} に状態が無い"));
+    }
+    let text = |key: &str| found[key].as_str().unwrap_or("").to_string();
+    Ok(Some(ControllerJob {
+        name: text("name"),
+        comment: text("comment"),
+        log: text("stdout_expanded"),
+        state: JobState::from_slurm(state_word(&found["job_state"])),
+        exit: exit_status(&found["exit_code"]),
+    }))
+}
+
+#[cfg(test)]
 fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
-    let jobs = json_jobs("scontrol", json).ok()?;
-    let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
-    found["job_state"][0].as_str()?;
-    Some(JobState::from_slurm(state_word(&found["job_state"])))
+    scontrol_job(json, job)
+        .ok()
+        .flatten()
+        .map(|found| found.state)
 }
 
 /// コマンドの JSON の出力の jobs の配列。読めなければ理由
@@ -688,8 +864,11 @@ mod tests {
     fn sacct_json_gives_the_times_the_partition_kind_and_the_first_state() {
         let json = json!({"jobs": [{
             "job_id": 42,
+            "name": "openmc-endfb70-1B-1D-2B",
             "partition": "main",
             "state": {"current": ["CANCELLED"], "reason": "None"},
+            "stdout_expanded": "/home/u/github/slurm-logs/openmc-endfb70-1B-1D-2B-42.out",
+            "exit_code": exit_code(0, None),
             "time": {"elapsed": 465, "suspended": 0, "limit": {"set": true, "infinite": false, "number": 175}},
         }]})
         .to_string();
@@ -701,6 +880,9 @@ mod tests {
                 uninterrupted: Some(false),
                 suspended: Some(0),
                 state: JobState::from_slurm("CANCELLED"),
+                name: "openmc-endfb70-1B-1D-2B".to_string(),
+                log: "/home/u/github/slurm-logs/openmc-endfb70-1B-1D-2B-42.out".to_string(),
+                exit: Some(0),
             })
         );
         assert_eq!(sacct_record(&json, "43"), None);
@@ -820,9 +1002,107 @@ mod tests {
                 limit: "2:55:00".to_string(),
                 start: "2026-11-19T17:45:36".to_string(),
                 comment: "decision | #0131 | p | c".to_string(),
+                start_at: Some(1795077936),
+                limit_minutes: Some(175),
             })
         );
         assert_eq!(queue_jobs(r#"{"jobs": []}"#), Ok(vec![]));
+    }
+
+    #[test]
+    fn the_start_and_the_limit_are_numbers_only_when_they_are_estimates() {
+        // 一覧が時刻として書かない値（N/A、Unknown、None）と、1970 年の時刻になる無い値と無制限は、見込みが無い
+        for (start, at) in [
+            (set(1795077936), Some(1795077936)),
+            (set(0), None),
+            (set(0xffff_ffff), None),
+            (set(0xffff_fffe), None),
+            (unset(), None),
+            (infinite(), None),
+        ] {
+            assert_eq!(
+                queued(json!({"start_time": start})).unwrap().start_at,
+                at,
+                "{start}"
+            );
+        }
+        for (limit, minutes) in [
+            (set(30), Some(30)),
+            (set(0), Some(0)),
+            (infinite(), None),
+            (unset(), None),
+        ] {
+            assert_eq!(
+                queued(json!({"time_limit": limit})).unwrap().limit_minutes,
+                minutes,
+                "{limit}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_estimate_in_minutes_rounds_seconds_up() {
+        for (estimate, minutes) in [
+            ("90", Some(90)),
+            ("0", Some(0)),
+            ("1:30:00", Some(90)),
+            ("0:00:01", Some(1)),
+            ("1-00", Some(1440)),
+            ("1-12:30", Some(2190)),
+            ("2-01:00:30", Some(2941)),
+            ("25m", None),
+            ("1:30", None),
+            ("", None),
+            // 数として大きすぎるものは読めない（桁あふれで小さな見積もりにしない）
+            ("20000000000000000-00", None),
+            ("99999999999999999999", None),
+        ] {
+            assert_eq!(super::estimate_minutes(estimate), minutes, "{estimate}");
+        }
+    }
+
+    /// 会計の記録と制御のデーモンの exit_code（return_code と、シグナルの番号。シグナルで終わらなければ None）
+    fn exit_code(code: u64, signal: Option<u64>) -> serde_json::Value {
+        json!({
+            "status": [if signal.is_some() { "SIGNALED" } else if code == 0 { "SUCCESS" } else { "ERROR" }],
+            "return_code": set(code),
+            "signal": {"id": signal.map_or_else(unset, set), "name": ""},
+        })
+    }
+
+    #[test]
+    fn the_exit_status_is_the_return_code_or_1_for_a_signal_like_sbatch_wait() {
+        assert_eq!(super::exit_status(&exit_code(0, None)), Some(0));
+        assert_eq!(super::exit_status(&exit_code(137, None)), Some(137));
+        assert_eq!(super::exit_status(&exit_code(0, Some(9))), Some(1));
+        assert_eq!(super::exit_status(&json!({"return_code": unset()})), None);
+        assert_eq!(super::exit_status(&json!(null)), None);
+    }
+
+    #[test]
+    fn scontrol_json_gives_the_name_comment_log_state_and_exit_of_the_job() {
+        let json = json!({"jobs": [{
+            "job_id": 962,
+            "name": "openmc-0293",
+            "comment": "decision | #0293 | p | c",
+            "stdout_expanded": "/home/u/github/slurm-logs/openmc-0293-962.out",
+            "job_state": ["RUNNING"],
+            "exit_code": exit_code(0, None),
+        }]})
+        .to_string();
+        assert_eq!(
+            super::scontrol_job(&json, "962"),
+            Ok(Some(super::ControllerJob {
+                name: "openmc-0293".to_string(),
+                comment: "decision | #0293 | p | c".to_string(),
+                log: "/home/u/github/slurm-logs/openmc-0293-962.out".to_string(),
+                state: JobState::from_slurm("RUNNING"),
+                exit: Some(0),
+            }))
+        );
+        assert_eq!(super::scontrol_job(&json, "7"), Ok(None));
+        assert!(super::scontrol_job("not json", "962").is_err());
+        assert!(super::scontrol_job(r#"{"jobs": [{"job_id": 962}]}"#, "962").is_err());
     }
 
     #[test]
