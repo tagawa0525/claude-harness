@@ -886,7 +886,8 @@ fn run_and_sync_with_the_repository_dictionary(name: &str, sync_words: &[&str]) 
     );
     assert!(run.status.success(), "{}", text(&run.stderr));
     let record = std::fs::read_to_string(workdir.join("words")).unwrap();
-    let dictionary = std::fs::canonicalize(repo.path.join(".ja-terms/prh.yml")).unwrap();
+    // 記録は実体のパス（Windows では \\?\ を外したもの）
+    let dictionary = history_rewrite::real_path(&repo.path.join(".ja-terms/prh.yml")).unwrap();
     assert!(
         record.contains(&format!("repo-dictionary\t{}\n", dictionary.display())),
         "{record}"
