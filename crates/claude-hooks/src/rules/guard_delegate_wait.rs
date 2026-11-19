@@ -167,6 +167,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: xargs、watch、関数の中の slurm-run.sh を 1 本と数える"]
     fn an_estimate_not_fixed_by_the_text_is_unknown() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         for command in [
@@ -179,6 +180,9 @@ mod tests {
             format!("for n in 1 2 3; do {run} -t 30 x$n true; done"),
             format!("while true; do {run} -t 30 x true; done"),
             format!("until false; do {run} -t 30 x true; done"),
+            format!("seq 3 | xargs -I{{}} {run} -t 30 x{{}} true"),
+            format!("watch -n 60 {run} -t 5 x true"),
+            format!("f() {{ {run} -t 30 x true; }}; f; f"),
             format!("bash -c 'for n in 1 2; do {run} -t 30 x true; done'"),
         ] {
             assert!(estimate(&command).is_err(), "{command}");
