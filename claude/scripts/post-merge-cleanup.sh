@@ -39,10 +39,10 @@
 #      （fork の upstream）を追うとき
 #   4. ローカルブランチを削除（-d。0 で確かめたあとの安全網）
 #   5. リモートブランチを削除。ただし、リモートの既定ブランチがブランチの先端を含まないとき（push 前）と、
-#      GitHub リモートでそのブランチを head とする open PR（fork からの upstream PR 等）か、base とする open PR
-#      （積み重ねた上の PR）があるとき（削除で PR が閉じる）と、それらを確かめられないときは、削除せず残す。
-#      base とする PR があれば、PR ごとに base を既定ブランチへ付け替えるコマンドを示す（pre-merge-check の
-#      検査 10 と同じ形）。付け替えてから同じコマンドをもう一度呼ぶと、リモートブランチを消す
+#      GitHub リモートでそのブランチを head とする open PR（fork からの upstream PR 等）があるとき、消すリモートが
+#      GitHub でそのリポジトリにブランチを base とする open PR（積み重ねた上の PR）があるとき（削除で PR が閉じる）と、
+#      それらを確かめられないときは、削除せず残す。base とする PR があれば、PR ごとに base を既定ブランチへ付け替える
+#      コマンド（pre-merge-check の検査 10 と同じ形）と、付け替えの後にリモートブランチを消すコマンドを示す
 #
 # 出力:
 #   NOTE: <branch> は手元にもリモートにも無く、マージ済みの PR <url> を痕跡として...（マージ済みの PR だけが痕跡のとき）
@@ -52,8 +52,8 @@
 #   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
 #   LOCAL_BRANCH: deleted|none
 #   REMOTE_BRANCH: deleted|kept (...)|none
-#     gh pr edit <番号> --base <既定ブランチ> -R <owner/name>（base とする open PR で残したときだけ。PR ごとに 1 行。
-#     行頭に空白 2 つ）
+#     gh pr edit <番号> --base <既定ブランチ> -R <owner/name>（base とする open PR で残したときだけ。PR ごとに 1 行）
+#     git push <remote> --delete <branch>（同じく、その後に 1 行。どちらも行頭に空白 2 つ）
 
 . "$(dirname "$0")/lib/claude-hooks-script.sh"
 claude_hooks_script post-merge-cleanup "$@"

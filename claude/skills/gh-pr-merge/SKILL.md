@@ -89,7 +89,8 @@ gh pr merge [PR番号または URL] --merge --delete-branch \
 
 worktree の削除、main の最新化、ローカルとリモートのブランチの削除を行う（残したときは `REMOTE_BRANCH: kept` に理由が出る）。
 ブランチを base にした開いている PR で残したときは、続く `gh pr edit` の行で上の PR の base を付け替え（要らない PR なら閉じ）、
-同じコマンドをもう一度呼んでリモートのブランチを消す（消すと GitHub が上の PR を閉じ、閉じた PR は base を付け替えられない）。
+その後の `git push <remote> --delete` の行でリモートのブランチを消す（付け替える前に消すと GitHub が上の PR を閉じ、閉じた PR は
+base を付け替えられない）。
 PR のリポジトリと cwd が違えば、`cd <PR のリポジトリ> && ~/.claude/scripts/post-merge-cleanup.sh [headRefName]` で呼ぶ。
 ERROR で止まったら、出力の原因を直してやり直す。未コミットの変更や履歴の分岐で失敗したとき（git のメッセージだけで、
 ERROR の行は出ない）も、原因を確認して対処する。
