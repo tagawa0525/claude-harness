@@ -20,6 +20,8 @@ pub struct Input {
     pub file_path: String,
     /// SendMessage と SubagentHandback ツールの tool_input.message（ほかのツールでは空）
     pub message: String,
+    /// SendMessage ツールの tool_input.to（送り先。ほかのツールでは空）
+    pub to: String,
     /// hook 実行時のカレントディレクトリ。JSON の cwd が無ければプロセスの cwd
     pub cwd: PathBuf,
     /// Claude Code のセッションの ID。scratchpad のパス（`…/<session_id>/scratchpad`）を見分けるのに使う。無ければ空
@@ -52,6 +54,7 @@ impl Input {
             args: s("/tool_input/args").unwrap_or_default(),
             file_path: s("/tool_input/file_path").unwrap_or_default(),
             message: s("/tool_input/message").unwrap_or_default(),
+            to: s("/tool_input/to").unwrap_or_default(),
             cwd,
             session_id: s("/session_id").unwrap_or_default(),
             agent_id: s("/agent_id").unwrap_or_default(),

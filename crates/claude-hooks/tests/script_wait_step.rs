@@ -83,7 +83,6 @@ impl Dir {
 }
 
 #[test]
-#[ignore = "RED: 時計を待ち始めから測り、親に送っても数え直さない"]
 fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -103,7 +102,6 @@ fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
 }
 
 #[test]
-#[ignore = "RED: 時計を待ち始めから測り、親に送っても数え直さない"]
 fn an_injected_time_takes_the_steps_without_sleeping() {
     // 時刻を渡すと、1 ステップの 270 秒を眠らずに進め、経過はその時計で数える
     let d = Dir::new();
@@ -182,7 +180,6 @@ fn done_of_the_last_file_shows_the_call_without_files() {
 }
 
 #[test]
-#[ignore = "RED: 時計を待ち始めから測り、親に送っても数え直さない"]
 fn past_the_limit_the_wait_ends_with_the_next_action_and_removes_the_clock() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -263,7 +260,6 @@ fn reported(d: &Dir) -> u64 {
 }
 
 #[test]
-#[ignore = "RED: 時計を待ち始めから測り、親に送っても数え直さない"]
 fn a_message_of_the_agent_to_the_parent_restarts_its_clock() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -310,7 +306,6 @@ fn a_message_of_the_agent_to_the_parent_restarts_its_clock() {
 }
 
 #[test]
-#[ignore = "RED: 時計を待ち始めから測り、親に送っても数え直さない"]
 fn the_default_limit_is_55_minutes_from_the_start_of_the_wait() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -476,7 +471,6 @@ fn usage_errors_exit_1() {
 }
 
 #[test]
-#[ignore = "RED: 時計を待ち始めから測り、親に送っても数え直さない"]
 fn a_start_time_later_than_now_does_not_break_the_wait() {
     // 時計が戻った（NTP の補正）後も、経過を負にせず WAIT を返す
     let d = Dir::new();
