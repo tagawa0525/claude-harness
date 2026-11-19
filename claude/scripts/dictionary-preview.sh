@@ -13,6 +13,8 @@
 # （specs は書いた人が思いついた例しか見ない）。比較元は、変える前の辞書を書き出して渡す。例:
 #   git show origin/main:crates/ja-terms/prh.yml > "$TMPDIR/base.yml"
 #   dictionary-preview.sh --dictionary crates/ja-terms/prh.yml --base "$TMPDIR/base.yml"
+# リポジトリの辞書（.ja-terms/prh.yml。ADR-0096）を変える PR でも、そのファイルを --dictionary に渡す。渡した辞書だけを
+# かけ、共通の辞書とリポジトリの辞書を重ねない（版どうしの差を見るため）。発言とメモリは、どのリポジトリのものも読む
 #
 # 出力:
 #   SOURCES: transcripts=<記録の数> utterances=<発言の行の数> memory=<メモリのファイルの数>
