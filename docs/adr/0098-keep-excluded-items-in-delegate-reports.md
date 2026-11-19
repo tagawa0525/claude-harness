@@ -1,6 +1,6 @@
 ---
 type: ADR
-status: proposed
+status: accepted
 date: 2026-11-19
 requires: [ADR-0044, ADR-0061, ADR-0066]
 supersedes: []
@@ -82,7 +82,9 @@ xlc の 2026-11-19 の会話の記録（`~/.claude/projects/-home-tagawa-github-
 
 ### 確認
 
-- `crates/claude-hooks/src/rules/delegate_report_fields.rs` のテスト（欄の有無、位置、空の中身、コードブロックの中の見出し、
-  対象外のツールとメッセージ）
-- `crates/claude-setup/tests/settings.rs`（matcher）
-- 2026-11-19 の xlc の記録から取り出した 141 件の呼び出しを `claude-hooks pre-tool-use` に流した結果（PR の本文）
+- `crates/claude-hooks/src/rules/delegate_report_fields.rs` のテスト 22 件（欄の有無、位置、空の中身、括弧の限定と入れ子、
+  ATX の見出しの形と字下げ、` と ~ のフェンス、行頭のコードスパン、閉じないフェンス、拒否の文に ADR の番号が無いこと）と、
+  `rules::tests::report_tools_run_only_the_delegate_report_check`、`crates/claude-setup/tests/settings.rs`（matcher）が通る
+- 2026-11-19 の xlc の記録から取り出した 141 件の呼び出しを、このブランチでビルドした `claude-hooks pre-tool-use` に
+  流すと、`## 親が先に読む要点` を持つ 12 件だけが止まり、ほかの 129 件は止まらない。12 件の要点の節の直後に
+  `## 外したもの、後回しにしたもの` と「なし」を足すと、12 件とも通る
