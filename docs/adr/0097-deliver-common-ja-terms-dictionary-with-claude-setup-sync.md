@@ -164,6 +164,12 @@ history-rewrite の記録:
   package.nix、Windows の CI、`nix/tests/`）
 - 悪い点: rebuild は flake の lock の版の辞書を配るので、`claude-sync` で入れた新しい辞書を、lock の古い版で上書きする
   （スキルと CLAUDE.md と同じ）
+- 悪い点: 新しい ja-terms の読み方（扱う項目、当て方）を使う規則を、ja-terms の変更と同じ PR で足すと、マージの後に
+  `claude-sync` を rebuild より先に流した機械では、古い ja-terms が辞書を読めずに、rebuild まで全リポジトリのコミットが
+  止まる（黙って誤った判定はしない）。そうした規則は、ja-terms の変更をマージして rebuild した後の PR で足す
+- 悪い点: ja-terms と history-rewrite のパッケージはテストのために辞書をソースに含め、claude-hooks の install check も
+  辞書を渡すので、辞書だけの変更でも rebuild はこれらをビルドし直す（効くのは sync で、rebuild を待たない。ビルドの中の
+  テストが、辞書の specs を確かめる）
 - `HOME_FILES` から外しても、配った辞書は消えない（ADR-0093 の帰結と同じ）
 - ADR-0085 と ADR-0096 の背景の「ビルドに埋めた共通の辞書」は、この ADR の前の事実になった（ADR-0096 の「## 変更」と、
   proposed の ADR-0085 の帰結に書いた）
