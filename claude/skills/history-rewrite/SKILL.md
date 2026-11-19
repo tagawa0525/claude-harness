@@ -29,10 +29,11 @@ worktree ごとのブランチの `Claude-Session:` を見て、作業中のセ�
 
 ## 2. 語の指定を決める
 
-- 辞書: 省くと ja-terms の辞書。辞書に無い 1 回限りの置き換えは、prh の形のファイルにして `--extra-rules` で足す
-  （`version: 1` と `rules:` の下に `expected` と `pattern`）
+- 辞書: 省くと ja-terms の辞書で、対象のリポジトリに `.ja-terms/prh.yml`（リポジトリの辞書）があれば、pre-commit と同じく
+  それを重ねる（`run` の出力の `WORDS:` の記録に `repo-dictionary` の行で残る）。辞書に無い 1 回限りの置き換えは、prh の
+  形のファイルにして `--extra-rules` で足す（`version: 1` と `rules:` の下に `expected` と `pattern`）
 - 除くパス（`--exclude`、PurePosixPath.full_match の書き方）: 辞書の語を例として挙げるファイル。対象のリポジトリの
-  `.textlintignore` に挙げたファイルと、辞書そのもの（claude-harness なら `**/prh.yml`）を渡す。語を論じる文書でも、
+  `.textlintignore` に挙げたファイルと、辞書そのもの（`**/prh.yml`。リポジトリの辞書にも当たる）を渡す。語を論じる文書でも、
   その語が直す対象の造語なら除かない
 
 ## 3. 書き換えて照合する

@@ -505,9 +505,9 @@ fn words(f: &Fixture, extra: &[PathBuf]) -> Words {
     let mut extra_rules = vec![f.extra.clone()];
     extra_rules.extend_from_slice(extra);
     Words {
-        dictionaries: Vec::new(),
         extra_rules,
         excludes: vec!["**/terms.yml".to_string()],
+        ..Words::default()
     }
 }
 

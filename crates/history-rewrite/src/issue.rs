@@ -26,17 +26,25 @@ pub fn body(source: &Path, workdir: &Path, words: &Words) -> Result<String, Stop
         "- 番号の対応表: {}\n",
         workdir.join("commit-map").display()
     ));
-    let dictionaries = if words.dictionaries.is_empty() {
-        "ja-terms の辞書（history-rewrite のビルドに埋めたもの）".to_string()
-    } else {
-        words
-            .dictionaries
+    let shown = |paths: &[std::path::PathBuf]| {
+        paths
             .iter()
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
             .join("、")
     };
+    let dictionaries = if words.dictionaries.is_empty() {
+        "ja-terms の共通の辞書（history-rewrite のビルドに埋めたもの）".to_string()
+    } else {
+        shown(&words.dictionaries)
+    };
     out.push_str(&format!("- 辞書: {dictionaries}\n"));
+    if !words.repo_dictionaries.is_empty() {
+        out.push_str(&format!(
+            "- リポジトリの辞書（辞書に重ねたもの）: {}\n",
+            shown(&words.repo_dictionaries)
+        ));
+    }
     let excludes = if words.excludes.is_empty() {
         "なし".to_string()
     } else {

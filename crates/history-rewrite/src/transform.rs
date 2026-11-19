@@ -3,26 +3,51 @@
 use crate::Stop;
 use crate::glob::Glob;
 use ja_terms::Dictionary;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// git の buffer_is_binary（xdiff-interface.c の FIRST_FEW_BYTES）と同じ、テキストかどうかを見る先頭のバイト数。
 /// commit-refs rewrite-history（ADR-0013）も同じ判定を使う
 pub const FIRST_FEW_BYTES: usize = 8000;
 
-/// 語の指定（`--dictionary`、`--extra-rules`、`--exclude`）
+/// 語の指定（`--dictionary`、`--repo-dictionary`、`--extra-rules`、`--exclude`）
 #[derive(Debug, Default, Clone)]
 pub struct Words {
     pub dictionaries: Vec<PathBuf>,
+    /// 共通の辞書（`--dictionary` があればそれ）に重ねるリポジトリの辞書（ADR-0096）。[`Words::with_repo_dictionary`] が
+    /// 作業ツリーから見つけるか、`--repo-dictionary` で渡す
+    pub repo_dictionaries: Vec<PathBuf>,
     pub extra_rules: Vec<PathBuf>,
     pub excludes: Vec<String>,
 }
 
 /// 記録の行の種類と、Words の列
-const RECORD_KEYS: [&str; 3] = ["dictionary", "extra-rules", "exclude"];
+const RECORD_KEYS: [&str; 4] = ["dictionary", "repo-dictionary", "extra-rules", "exclude"];
 
 impl Words {
     pub fn is_empty(&self) -> bool {
-        self.dictionaries.is_empty() && self.extra_rules.is_empty() && self.excludes.is_empty()
+        self.dictionaries.is_empty()
+            && self.repo_dictionaries.is_empty()
+            && self.extra_rules.is_empty()
+            && self.excludes.is_empty()
+    }
+
+    /// 辞書を渡されていなければ（`--dictionary` も `--repo-dictionary` も無い）、dir を含む作業ツリーの直下の
+    /// リポジトリの辞書（ja-terms の検査と同じ `.ja-terms/prh.yml`）を足す。作業ツリーの外か、辞書が無ければそのまま
+    pub fn with_repo_dictionary(mut self, dir: &Path) -> Result<Words, Stop> {
+        if !self.dictionaries.is_empty() || !self.repo_dictionaries.is_empty() {
+            return Ok(self);
+        }
+        let Some(top) = ja_terms::repo::work_tree_top(dir).map_err(|e| Stop(e.to_string()))? else {
+            return Ok(self);
+        };
+        let path = top.join(ja_terms::repo::REPO_DICTIONARY);
+        if path
+            .try_exists()
+            .map_err(|e| Stop(format!("{}: 有無を確かめられない: {e}", path.display())))?
+        {
+            self.repo_dictionaries.push(path);
+        }
+        Ok(self)
     }
 
     /// 辞書と追加の規則を実体のパスにした指定（cwd の違う run と sync-worktrees で、同じファイルを同じと比べるため）
@@ -35,6 +60,7 @@ impl Words {
         };
         Ok(Words {
             dictionaries: real(&self.dictionaries)?,
+            repo_dictionaries: real(&self.repo_dictionaries)?,
             extra_rules: real(&self.extra_rules)?,
             excludes: self.excludes.clone(),
         })
@@ -48,14 +74,16 @@ impl Words {
             e
         };
         self.dictionaries == other.dictionaries
+            && self.repo_dictionaries == other.repo_dictionaries
             && self.extra_rules == other.extra_rules
             && sorted(self) == sorted(other)
     }
 
-    fn columns(&self) -> [Vec<String>; 3] {
+    fn columns(&self) -> [Vec<String>; 4] {
         let shown = |paths: &[PathBuf]| paths.iter().map(|p| p.display().to_string()).collect();
         [
             shown(&self.dictionaries),
+            shown(&self.repo_dictionaries),
             shown(&self.extra_rules),
             self.excludes.clone(),
         ]
@@ -101,6 +129,7 @@ impl Words {
         for (k, line) in text.lines().enumerate() {
             match line.split_once('\t') {
                 Some(("dictionary", v)) => words.dictionaries.push(PathBuf::from(v)),
+                Some(("repo-dictionary", v)) => words.repo_dictionaries.push(PathBuf::from(v)),
                 Some(("extra-rules", v)) => words.extra_rules.push(PathBuf::from(v)),
                 Some(("exclude", v)) => words.excludes.push(v.to_string()),
                 _ => {
@@ -123,17 +152,31 @@ pub struct Transformer {
 }
 
 impl Transformer {
-    /// 辞書を渡した順に読む。`--dictionary` が無ければ ja-terms の辞書（ビルドに埋めたもの）
+    /// 辞書を渡した順に読む。`--dictionary` が無ければ ja-terms の共通の辞書（ビルドに埋めたもの）。リポジトリの辞書が
+    /// あれば、その後ろに共通の辞書を prh の Engine.merge でつなぎ（ja-terms の検査と同じ。ADR-0096）、追加の規則は
+    /// 最後に並べる
     pub fn new(words: &Words) -> Result<Transformer, Stop> {
         let load = |path: &PathBuf| Dictionary::load(path).map_err(|e| Stop(e.to_string()));
-        let mut given = words.dictionaries.iter().chain(&words.extra_rules);
-        let mut dictionary = if words.dictionaries.is_empty() {
-            Dictionary::parse(ja_terms::DICTIONARY, "ja-terms の prh.yml")
-                .map_err(|e| Stop(e.to_string()))?
-        } else {
-            load(given.next().expect("dictionaries が空でない"))?
+        let mut given = words.dictionaries.iter();
+        let mut base = match given.next() {
+            None => Dictionary::common().map_err(|e| Stop(e.to_string()))?,
+            Some(first) => load(first)?,
         };
         for path in given {
+            base.append(load(path)?);
+        }
+        let mut dictionary = match words.repo_dictionaries.split_first() {
+            None => base,
+            Some((first, rest)) => {
+                let mut repo = load(first)?;
+                for path in rest {
+                    repo.merge(load(path)?);
+                }
+                repo.merge(base);
+                repo
+            }
+        };
+        for path in &words.extra_rules {
             dictionary.append(load(path)?);
         }
         Ok(Transformer {
