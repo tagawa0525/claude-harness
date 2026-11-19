@@ -8,7 +8,7 @@
 //! - 対象: SendMessage と SubagentHandback の `message` に、行頭（3 つまでの空白を許す）の `## 親が先に読む要点`（後ろに
 //!   括弧の限定を 1 つ続けてもよい）がある呼び出し。途中の報告、親の指示、マージの結果はこの見出しを持たないので見ない
 //! - コードブロック（` か ~ のフェンスの間）の中の行は見出しとして数えない（報告を引用する文を止めない）。閉じない
-//!   フェンスがあれば、フェンスを見ずに数える（後ろの全部が隠れて、欄の無い報告が通るのを避ける）
+//!   フェンスの開きの行はフェンスと見なさない（後ろの全部が隠れて、欄の無い報告が通るのを避ける）
 //! - 判定: その次の `##` の見出しが `## 外したもの、後回しにしたもの`（同じく限定を続けてよい）で、その中身
 //!   （次の `##` の見出しか終わりまで）が空白だけでないこと
 //!
@@ -27,8 +27,8 @@ const SUMMARY: &str = "親が先に読む要点";
 /// その直後に置く節の名前
 const DEFERRED: &str = "外したもの、後回しにしたもの";
 
-/// 見出しの名前の部分（`## ` の後）が、name か、name に括弧（`（…）` か `(…)`）の限定を 1 つ続けたものか。閉じた限定の
-/// 後に文が続く行は、その節の見出しとしない
+/// 見出しの名前の部分（`## ` の後）が、name か、name に括弧（`（…）` か `(…)`）の限定を 1 つ続けたものか。限定の中の
+/// 括弧の入れ子は許し、限定が閉じた後に文が続く行は、その節の見出しとしない
 fn is_named(title: &str, name: &str) -> bool {
     let Some(rest) = title.strip_prefix(name).map(str::trim_start) else {
         return false;
@@ -36,48 +36,84 @@ fn is_named(title: &str, name: &str) -> bool {
     if rest.is_empty() {
         return true;
     }
-    [('（', '）'), ('(', ')')].iter().any(|&(open, close)| {
-        rest.starts_with(open) && rest.find(close) == Some(rest.len() - close.len_utf8())
-    })
+    if !rest.starts_with(['（', '(']) {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '（' | '(' => depth += 1,
+            '）' | ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return i + c.len_utf8() == rest.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
-/// 行が `## ` の見出しなら、その名前の部分。Markdown と同じく、行頭の 3 つまでの空白を許す
-fn heading_title(line: &str) -> Option<&str> {
+/// 行の頭の空白が 3 つまでなら、それを外した残り（Markdown の見出しとフェンスは 4 つ以上の字下げで字下げのコードになる）
+fn unindented(line: &str) -> Option<&str> {
     let body = line.trim_start_matches(' ');
-    (line.len() - body.len() <= 3)
-        .then(|| body.strip_prefix("## "))
-        .flatten()
-        .map(str::trim_end)
+    (line.len() - body.len() <= 3).then_some(body)
 }
 
-/// `## ` の見出しの、行の位置と名前の部分。fences が真なら、コードブロック（` か ~ を 3 つ以上並べたフェンスの間）の
-/// 中の行を数えない
-fn section_titles<'a>(lines: &[&'a str], fences: bool) -> Option<Vec<(usize, &'a str)>> {
-    let mut open: Option<(char, usize)> = None;
-    let mut found = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if fences {
+/// 行が `##` の ATX 見出しなら、その名前の部分（`##` の後の空白かタブと、閉じの `#` の並びを外す）
+fn heading_title(line: &str) -> Option<&str> {
+    let rest = unindented(line)?.strip_prefix("##")?;
+    if !rest.starts_with([' ', '\t']) {
+        return None;
+    }
+    let title = rest.trim();
+    // 閉じの `#` の並びは、前に空白があるときだけ（`## C#` の `#` は名前の一部）
+    let open = title.trim_end_matches('#');
+    Some(
+        if open.len() < title.len() && (open.is_empty() || open.ends_with([' ', '\t'])) {
+            open.trim_end()
+        } else {
+            title
+        },
+    )
+}
+
+/// `## ` の見出しの、行の位置と名前の部分。コードブロック（` か ~ を 3 つ以上並べたフェンスの間）の中の行は数えない。
+/// 閉じないフェンスは後ろの全部を中身にして、欄の無い報告を見えなくするので、閉じないフェンスの開きの行をフェンスと
+/// 見なさずに数え直す（閉じたコードブロックの引用は引用のまま）
+fn section_titles<'a>(lines: &[&'a str]) -> Vec<(usize, &'a str)> {
+    let mut not_fences: Vec<usize> = Vec::new();
+    loop {
+        let mut open: Option<(usize, char, usize)> = None;
+        let mut found = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
             // フェンスの見分け方は dictionary_preview の文書の読み方と同じ（閉じるのは同じ文字で、開いたもの以上の長さの、
             // 後ろに何も無い行。` のフェンスの後ろに ` があれば、行頭のコードスパン）
-            match (open, fence(line.trim())) {
-                (Some((c, n)), Some((d, m, rest))) if c == d && m >= n && rest.is_empty() => {
+            let mark = unindented(line).and_then(|l| fence(l.trim_end()));
+            match (open, mark) {
+                (Some((_, c, n)), Some((d, m, rest))) if c == d && m >= n && rest.is_empty() => {
                     open = None;
                     continue;
                 }
                 (Some(_), _) => continue,
-                (None, Some((c, n, rest))) if c != '`' || !rest.contains('`') => {
-                    open = Some((c, n));
+                (None, Some((c, n, rest)))
+                    if (c != '`' || !rest.contains('`')) && !not_fences.contains(&i) =>
+                {
+                    open = Some((i, c, n));
                     continue;
                 }
                 (None, _) => {}
             }
+            if let Some(title) = heading_title(line) {
+                found.push((i, title));
+            }
         }
-        if let Some(title) = heading_title(line) {
-            found.push((i, title));
+        match open {
+            Some((at, _, _)) => not_fences.push(at),
+            None => return found,
         }
     }
-    // 閉じないフェンスは、後ろの全部を中身にして報告を見えなくする。その形では止める側に倒し、フェンスを見ずに数える
-    open.is_none().then_some(found)
 }
 
 impl Rule for DelegateReportFields {
@@ -91,9 +127,7 @@ impl Rule for DelegateReportFields {
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
         let lines: Vec<&str> = input.message.lines().collect();
-        let titles = section_titles(&lines, true)
-            .or_else(|| section_titles(&lines, false))
-            .unwrap_or_default();
+        let titles = section_titles(&lines);
         let Some(summary) = titles.iter().position(|(_, t)| is_named(t, SUMMARY)) else {
             return Vec::new();
         };
