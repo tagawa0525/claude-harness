@@ -74,7 +74,7 @@ struct Refusal {
     message: String,
 }
 
-/// RESULT: の行に要る、ここまでに分かったこと。中断を受けたスレッドと分け合う
+/// RESULT: の行に要る、ここまでに分かったこと。中断を受けたスレッドと分け合う（slurm-wait も使う）
 #[derive(Default)]
 pub(super) struct Progress {
     pub(super) name: Option<String>,
@@ -285,8 +285,9 @@ impl Request {
     }
 }
 
-/// 終わったジョブの結果を出す。会計の記録（終わった状態）が届くまで待ち（[`wait_record`]）、届かなければ制御のデーモンの
-/// 状態で確かめる。TIME: の行をログに書き足し、ログの末尾、印の NEXT:、RESULT:、EXIT: を出し、終了コードを返す。
+/// 終わったジョブの結果を出す（slurm-run と slurm-wait の終わり）。会計の記録（終わった状態）が届くまで待ち
+/// （[`wait_record`]）、届かなければ制御のデーモンの状態で確かめる。TIME: の行は、ログにまだ無ければ書き足す（slurm-run
+/// が書いた後のジョブを slurm-wait が待っても重ねない）。ログの末尾、印の NEXT:、RESULT:、EXIT: を出し、終了コードを返す。
 /// status は、待ったコマンドが受けたジョブの終了コード（sbatch --wait の終了コードと同じ形）
 pub(super) fn finish(
     job: &str,
@@ -326,7 +327,9 @@ pub(super) fn finish(
                 eprintln!("{warning}");
             }
             marked = timing.marked;
-            if let Err(e) = append_line(log, &timing.line) {
+            if !has_time_line(log, job)
+                && let Err(e) = append_line(log, &timing.line)
+            {
                 eprintln!("WARN: ジョブ {job} の実際の時間をログに書き足せなかった: {log}（{e}）");
                 println!("{}", timing.line);
             }
@@ -345,6 +348,16 @@ pub(super) fn finish(
     lock(progress).report(status, &state.name);
     println!("{}", exit_line(status, &state));
     status
+}
+
+/// ログの末尾に、このジョブの TIME: の行があるか（読めなければ無いとみなす）
+fn has_time_line(log: &str, job: &str) -> bool {
+    let head = format!("TIME: job={job} ");
+    file_tail(log, TAIL_LINES).is_ok_and(|text| {
+        String::from_utf8_lossy(&text)
+            .lines()
+            .any(|line| line.starts_with(&head))
+    })
 }
 
 /// 引数を読んで確かめる。確かめる順は、使い方の誤り、区分、参照、目的、-c、-t、コマンド、名前（先に当たった理由だけを出す）

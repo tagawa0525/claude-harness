@@ -545,8 +545,8 @@ fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
             .map(|p| p == UNINTERRUPTED),
         suspended: time["suspended"].as_i64(),
         state: JobState::from_slurm(state_word(&found["state"]["current"])),
-        name: String::new(),
-        log: String::new(),
+        name: found["name"].as_str().unwrap_or("").to_string(),
+        log: found["stdout_expanded"].as_str().unwrap_or("").to_string(),
         exit: exit_status(&found["exit_code"]),
     })
 }
@@ -554,8 +554,16 @@ fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
 /// ジョブの終了コードを、sbatch --wait が返す形で（26.05.6 の src/sbatch/sbatch.c の `_job_wait`。2026-11-20 に
 /// slurm-26-05-6-1 のタグで読んだ）。普通に終わればその終了コード、シグナルで終われば 1。記録に無ければ None
 fn exit_status(exit_code: &Value) -> Option<i32> {
-    let _ = exit_code;
-    None
+    if exit_code["signal"]["id"]["set"].as_bool() == Some(true)
+        && exit_code["signal"]["id"]["number"].as_u64() != Some(0)
+    {
+        return Some(1);
+    }
+    let code = &exit_code["return_code"];
+    if code["set"].as_bool() != Some(true) {
+        return None;
+    }
+    code["number"].as_i64().and_then(|n| i32::try_from(n).ok())
 }
 
 /// 制御のデーモン（scontrol）が覚えている状態。終わった直後（MinJobAge の 300 秒の間）だけ読める
@@ -585,10 +593,7 @@ fn scontrol_job(json: &str, job: &str) -> Option<ControllerJob> {
     let jobs = json_jobs("scontrol", json).ok()?;
     let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
     found["job_state"][0].as_str()?;
-    let text = |key: &str| {
-        let _ = key;
-        String::new()
-    };
+    let text = |key: &str| found[key].as_str().unwrap_or("").to_string();
     Some(ControllerJob {
         name: text("name"),
         comment: text("comment"),
@@ -773,7 +778,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 名前、ログ、終了コードを読まない"]
     fn sacct_json_gives_the_times_the_partition_kind_and_the_first_state() {
         let json = json!({"jobs": [{
             "job_id": 42,
@@ -981,7 +985,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: exit_status が未実装"]
     fn the_exit_status_is_the_return_code_or_1_for_a_signal_like_sbatch_wait() {
         assert_eq!(super::exit_status(&exit_code(0, None)), Some(0));
         assert_eq!(super::exit_status(&exit_code(137, None)), Some(137));
@@ -991,7 +994,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 名前、コメント、ログ、終了コードを読まない"]
     fn scontrol_json_gives_the_name_comment_log_state_and_exit_of_the_job() {
         let json = json!({"jobs": [{
             "job_id": 962,

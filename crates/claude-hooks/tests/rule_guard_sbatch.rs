@@ -182,7 +182,6 @@ fn every_reason_is_told_at_once() {
 }
 
 #[test]
-#[ignore = "RED: guard-sbatch が slurm-wait.sh を見ない"]
 fn slurm_wait_runs_only_in_the_background_like_slurm_run() {
     for command in [
         "~/.claude/scripts/slurm-wait.sh 42",

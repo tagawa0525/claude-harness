@@ -114,7 +114,6 @@ fn stderr(out: &Output) -> String {
 }
 
 #[test]
-#[ignore = "RED: slurm-wait が未実装"]
 fn a_running_job_is_waited_for_and_ends_with_the_lines_of_slurm_run() {
     let s = Slurm::new();
     std::fs::write(s.log(), "job output\n").unwrap();
@@ -149,7 +148,6 @@ fn a_running_job_is_waited_for_and_ends_with_the_lines_of_slurm_run() {
 }
 
 #[test]
-#[ignore = "RED: slurm-wait が未実装"]
 fn the_exit_code_is_the_job_exit_code_and_a_job_not_completed_fails() {
     let s = Slurm::new();
     std::fs::write(s.log(), "job output\n").unwrap();
@@ -170,7 +168,6 @@ fn the_exit_code_is_the_job_exit_code_and_a_job_not_completed_fails() {
 }
 
 #[test]
-#[ignore = "RED: slurm-wait が未実装"]
 fn a_time_line_already_written_by_slurm_run_is_not_written_again() {
     let s = Slurm::new();
     let written = "job output\nTIME: job=42 elapsed=00:12:34 estimate=00:30:00 state=COMPLETED class=trial ref=#1 purpose=試験の目的\n";
@@ -188,7 +185,6 @@ fn a_time_line_already_written_by_slurm_run_is_not_written_again() {
 }
 
 #[test]
-#[ignore = "RED: slurm-wait が未実装"]
 fn a_shared_job_gets_the_shared_mark_from_its_comment() {
     let s = Slurm::new();
     let out = s.run(
@@ -206,7 +202,6 @@ fn a_shared_job_gets_the_shared_mark_from_its_comment() {
 }
 
 #[test]
-#[ignore = "RED: slurm-wait が未実装"]
 fn a_job_the_controller_forgot_is_read_from_the_accounting_record() {
     let s = Slurm::new();
     std::fs::write(s.log(), "job output\n").unwrap();
@@ -234,7 +229,6 @@ fn a_job_the_controller_forgot_is_read_from_the_accounting_record() {
 }
 
 #[test]
-#[ignore = "RED: slurm-wait が未実装"]
 fn an_unknown_job_exits_1_with_the_reason_and_a_result_line() {
     let s = Slurm::new();
     let out = s.run(&["42"], &[("FAKE_FORGOTTEN", "1"), ("FAKE_UNKNOWN", "1")]);
@@ -252,7 +246,6 @@ fn an_unknown_job_exits_1_with_the_reason_and_a_result_line() {
 }
 
 #[test]
-#[ignore = "RED: slurm-wait が未実装"]
 fn a_missing_or_non_numeric_job_prints_the_usage() {
     let s = Slurm::new();
     for args in [&[][..], &["x42"][..], &["42", "43"][..], &[""][..]] {

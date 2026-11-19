@@ -2,13 +2,14 @@
 //!
 //! sbatch を直接投げると、名前・ログ・見積もり・連絡先が抜け、待ち行列から誰の何の計算かが
 //! 読めなくなる（docs/adr/0007）。slurm-run.sh はジョブが終わるまで戻らず、待ち行列の長さ次第で
-//! Bash ツールのフォアグラウンドの上限を超えるので、run_in_background=true でのみ許可する。
+//! Bash ツールのフォアグラウンドの上限を超えるので、run_in_background=true でのみ許可する。既にあるジョブの終わりを待つ
+//! slurm-wait.sh も同じく background でのみ許可する。
 //! `env`・`command`・`sudo` などで包んでも、`bash -x <path>` や `bash -c '…'` の形でも、shell.rs がほどいた中の
 //! プログラムで判定する。実行するプログラムを決められない形（`$CMD`、`source`）は、対象語が文字列にあれば
 //! 止める側に倒す（ADR-0025）。
 //! slurm-run.sh が扱わない投げ方（ジョブの配列、依存など。排他にしない投げ方は `-c`、ADR-0029）や、空いた待ち行列での
 //! 短い計算のために、わかって外すときのエスケープを設ける: `ALLOW_RAW_SBATCH=<理由>`（sbatch の直接の投入）、
-//! `ALLOW_FOREGROUND_SLURM=<理由>`（slurm-run.sh のフォアグラウンド実行）。
+//! `ALLOW_FOREGROUND_SLURM=<理由>`（slurm-run.sh と slurm-wait.sh のフォアグラウンド実行）。
 //! `echo sbatch` や `grep sbatch …` のように引数に現れるだけの場合は対象外。
 //!
 //! /slurm-run の「順番」と「複数のジョブを待つ」で使わない操作も止め、代わりの手を示す:
@@ -216,9 +217,17 @@ impl Rule for GuardSbatch {
                 return findings;
             }
         }
-        if !input.run_in_background && shell.runs_program(SCRIPT, is_slurm_run) {
+        let foreground = [
+            (SCRIPT, is_slurm_run as fn(&str) -> bool),
+            (WAIT_SCRIPT, is_slurm_wait),
+        ]
+        .into_iter()
+        .find(|(word, is)| shell.runs_program(word, is));
+        if !input.run_in_background
+            && let Some((script, _)) = foreground
+        {
             let deny = Finding::Deny(format!(
-                "slurm-run.sh はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
+                "{script} はジョブが終わるまで待つので、Bash ツールの run_in_background=true で実行してください（関係するジョブはまとめて 1 つのコマンドで待ちます）。{}",
                 escape_hint("ALLOW_FOREGROUND_SLURM")
             ));
             findings.extend(apply_escape(
