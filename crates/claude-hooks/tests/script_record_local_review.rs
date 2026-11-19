@@ -635,3 +635,24 @@ fn a_malformed_option_is_a_usage_error() {
         assert_eq!(fake.log(), "", "{args:?}");
     }
 }
+
+#[test]
+#[ignore = "RED: 値の検査の文は未実装"]
+fn a_bad_finding_names_the_value() {
+    // 何件も渡した要旨のどれが悪いかを、使い方の行だけでは見分けられない。CR だけの改行も 1 行に数えない
+    for value in [" ", "Low a.rs:1 語\n- 2 行目", "Low a.rs:1 語\r2 行目"] {
+        let fake = FakeGh::new();
+        let out = run(
+            &fake,
+            &[URL, HEAD, "0", "0", "1", "--finding", value],
+            "true\n",
+        );
+        assert_eq!(out.status.code(), Some(1), "{value:?}");
+        assert!(
+            stderr(&out).contains("--finding の値は、空でない 1 行"),
+            "{value:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.log(), "", "{value:?}");
+    }
+}
