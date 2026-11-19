@@ -36,6 +36,7 @@ mod run_checks;
 mod session_events;
 pub(crate) mod slurm;
 mod slurm_class;
+mod slurm_history;
 mod slurm_queue;
 mod slurm_run;
 mod slurm_wait;
@@ -80,6 +81,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("review-level", review_level::main),
     ("run-checks", run_checks::main),
     ("session-events", session_events::main),
+    ("slurm-history", slurm_history::main),
     ("slurm-queue", slurm_queue::main),
     ("slurm-run", slurm_run::main),
     ("slurm-wait", slurm_wait::main),
