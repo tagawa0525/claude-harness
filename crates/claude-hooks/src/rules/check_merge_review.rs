@@ -726,6 +726,7 @@ mod tests {
             r.iter()
                 .map(|f| match f {
                     Finding::Deny(s) | Finding::Context(s) => s.clone(),
+                    Finding::Prepend { context, .. } => context.clone(),
                 })
                 .collect::<Vec<_>>()
         );

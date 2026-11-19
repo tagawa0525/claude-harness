@@ -86,3 +86,4 @@
 * [ADR-0099: 閉じた issue の resolution に、決まった語のほか、根拠（ADR、コミット）と理由を書く形も通す](0099-accept-evidence-in-issue-resolution.md)
 * [ADR-0100: セッションの引き継ぎを /handoff にまとめ、置き場の無いものだけを memory に書く](0100-write-session-handoff-to-memory-in-handoff-skill.md) - セッションの引き継ぎは /handoff の 1 本で渡して受け、issue、計画、PR に置き場の無いものだけを memory に書く
 * [ADR-0101: 残る sh のロジック（Slurm の 4 本と check-each-commit）を claude-hooks のサブコマンドに移し、中断の後片付けは ctrlc で受ける](0101-move-remaining-shell-logic-into-claude-hooks.md) - Slurm の 4 本と check-each-commit.sh の中身を claude-hooks のサブコマンドに移し、sh は呼ぶだけにする。中断の後片付けは ctrlc で受ける
+* [ADR-0102: require-pipefail は、止める形を拒否せず、判断を返さない updatedInput で set -o pipefail; を前に付けて通し、additionalContext で知らせる](0102-rewrite-pipefail-commands-in-hook-instead-of-denying.md) - require-pipefail は止める形を拒否せず、許可の判断を返さない updatedInput で command の前に set -o pipefail; を付けて通し、付けたことを additionalContext で知らせる。ほかのルールが拒否する呼び出しでは拒否だけを返す

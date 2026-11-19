@@ -1,10 +1,13 @@
-//! require-pipefail: 成否を判断するコマンドを、pipefail なしで tail / head につなぐ形を止める
+//! require-pipefail: 成否を判断するコマンドを、pipefail なしで tail / head につなぐ形に pipefail を付けて通す
 //!
 //! パイプの終了コードは最後のステージ（tail / head）のものになり、`nix build | tail` のビルドの失敗を見落とす。
 //! 対象は `nix build`、`nix flake check`、`cargo`、`run-checks.sh` を、後ろのステージに tail か head がある
-//! パイプの途中に置いた形。コマンドに `set -o pipefail` / `bash -o pipefail` のシェルのオプションがあれば通す。
-//! pipefail が実際に効く位置かは読まない（ADR-0042: 普通に書く形だけを止める）。エスケープは設けない
-//! （出力を絞りたいなら、ファイルに書いて tail で読むか、pipefail を付ける）
+//! パイプの途中に置いた形。コマンドに `set -o pipefail` / `bash -o pipefail` のシェルのオプションがあれば何もしない。
+//! pipefail が実際に効く位置かは読まない（ADR-0042: 普通に書く形だけを見る）。対象の形は止めずに、command の前に
+//! `set -o pipefail; ` を付けた入力で実行させ、付けたことを Claude に知らせる（ADR-0102。許可の判断は返さないので、
+//! 許可の確認は書き換えた後のコマンドに対して残る。ほかのルールが止めるときは止める判定が勝つ）。対象のコマンドが
+//! `bash -c` や `ssh` などの、子のシェルで実行する文字列の中にあれば、外に付けた pipefail が効くかを読まないので、
+//! 書き換えずに止める
 
 use super::Rule;
 use crate::input::Input;
@@ -38,6 +41,24 @@ fn judges_success(cmd: &Cmd) -> bool {
     }
 }
 
+fn pipes_to_tail(stages: &[String]) -> bool {
+    stages
+        .iter()
+        .any(|n| matches!(basename(n), "tail" | "head"))
+}
+
+/// 子のシェルで実行する文字列（`bash -c`、`ssh`、`script -c`、`watch` など。`eval` は今のシェルで実行するので
+/// 除く）の中のコマンドか。子のシェルは外の `set -o pipefail` を受け継がず、文字列の外にパイプがあっても、文字列の
+/// 終了コードが対象のコマンドのものか（最後のコマンドか、中にパイプが無いか、包むコマンドが中の終了コードで終わる
+/// か）は決まらないので、外に付けて効くかを読まない（ADR-0102）。`(…)` と `$(…)` は文字列のスコープでない
+fn in_child_shell(cmd: &Cmd, commands: &[Cmd]) -> bool {
+    cmd.scope.iter().any(|id| {
+        commands
+            .iter()
+            .any(|c| c.spawns == Some(*id) && basename(&c.name) != "eval")
+    })
+}
+
 impl Rule for RequirePipefail {
     fn name(&self) -> &'static str {
         "require-pipefail"
@@ -47,18 +68,22 @@ impl Rule for RequirePipefail {
         if sets_pipefail(&input.command) {
             return Vec::new();
         }
-        let piped = shell.commands().iter().any(|cmd| {
-            judges_success(cmd)
-                && cmd
-                    .piped_into
-                    .iter()
-                    .any(|n| matches!(basename(n), "tail" | "head"))
-        });
-        if !piped {
+        let commands = shell.commands();
+        let piped: Vec<&Cmd> = commands
+            .iter()
+            .filter(|cmd| judges_success(cmd) && pipes_to_tail(&cmd.piped_into))
+            .collect();
+        if piped.is_empty() {
             return Vec::new();
         }
-        vec![Finding::Deny(
-            "ビルドやチェックの出力を tail / head につなぐと、パイプの終了コードが tail / head のものになり、失敗を見落とします。`set -o pipefail;` を前に付けるか、出力をファイルに書いて tail で読んでください".to_string(),
-        )]
+        if piped.iter().any(|cmd| in_child_shell(cmd, commands)) {
+            return vec![Finding::Deny(
+                "`bash -c` や `ssh` などの文字列で実行するビルドやチェックの出力が tail / head につながっていて、パイプの終了コードが tail / head のものになり、失敗を見落とします。文字列を実行するシェルは外の `set -o pipefail` を受け継がず、hook は外に付けて効くかを読まないので、書き換えていません。パイプを書いたシェル（文字列の中のパイプなら文字列の中の先頭、外のパイプなら外の先頭）に `set -o pipefail;` を付けるか、出力をファイルに書いて tail で読んでください".to_string(),
+            )];
+        }
+        vec![Finding::Prepend {
+            prefix: "set -o pipefail; ".to_string(),
+            context: "[require-pipefail] ビルドやチェックの出力を tail / head につなぐ形なので、hook がコマンドの前に `set -o pipefail; ` を付けました（打ち直しは要りません）。終了コードは、パイプの途中のコマンドの失敗を映します。head などが先に読むのをやめると、前のコマンドが SIGPIPE で止まり、終了コードが 141 になることがあります。auto mode が、hook が入力を変えたことを理由にこの呼び出しを止めたら、`set -o pipefail; ` を付けた後のコマンドを打ってください（そのコマンドは書き換えません）".to_string(),
+        }]
     }
 }

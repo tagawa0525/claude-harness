@@ -27,17 +27,20 @@ pub struct Input {
     /// 呼んだサブエージェントの ID（hook の入力の共通の欄。サブエージェントのツールの呼び出しにだけある）。メインの
     /// セッションの呼び出しでは欄が無いか空なので、どちらも空にする
     pub agent_id: String,
+    /// hook の入力の tool_input の全体（無ければ Null）。入力を書き換える出力（updatedInput）は入力の全体を置き換えるので、
+    /// 上の欄に読まない欄（Bash の description、timeout など）も残すために持つ
+    pub tool_input: serde_json::Value,
 }
 
 impl Input {
     pub fn parse(raw: &str) -> Option<Input> {
-        let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+        let mut v: serde_json::Value = serde_json::from_str(raw).ok()?;
         let s = |ptr: &str| v.pointer(ptr).and_then(|x| x.as_str()).map(str::to_string);
         let cwd = s("/cwd")
             .filter(|c| !c.is_empty())
             .map(PathBuf::from)
             .or_else(|| std::env::current_dir().ok())?;
-        Some(Input {
+        let mut input = Input {
             tool_name: s("/tool_name").unwrap_or_default(),
             command: s("/tool_input/command").unwrap_or_default(),
             run_in_background: v
@@ -55,6 +58,13 @@ impl Input {
             cwd,
             session_id: s("/session_id").unwrap_or_default(),
             agent_id: s("/agent_id").unwrap_or_default(),
-        })
+            tool_input: serde_json::Value::Null,
+        };
+        // Write の content や Agent の prompt は大きいので、コピーせずに移す
+        input.tool_input = v
+            .get_mut("tool_input")
+            .map(serde_json::Value::take)
+            .unwrap_or_default();
+        Some(input)
     }
 }

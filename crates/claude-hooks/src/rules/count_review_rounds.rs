@@ -237,6 +237,7 @@ mod tests {
             match f {
                 Finding::Deny(s) => panic!("周の数では止めないはず: {s}"),
                 Finding::Context(s) => context = Some(s),
+                Finding::Prepend { .. } => panic!("周の数ではコマンドを書き換えないはず"),
             }
         }
         context.expect("周の数を伝えるはず")

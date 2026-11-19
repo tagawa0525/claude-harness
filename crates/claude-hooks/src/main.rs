@@ -166,7 +166,7 @@ fn main() {
             "claude-hooks: hook の入力を読めません。このツールの呼び出しを判定していません"
                 .to_string(),
         );
-        if let Some(json) = output::render(&[], &output::take_notices()) {
+        if let Some(json) = output::render(&[], &output::take_notices(), &serde_json::Value::Null) {
             println!("{json}");
         }
         return;
@@ -209,7 +209,7 @@ fn main() {
             panic_message(&*payload)
         )),
     }
-    if let Some(json) = output::render(&findings, &output::take_notices()) {
+    if let Some(json) = output::render(&findings, &output::take_notices(), &input.tool_input) {
         println!("{json}");
     }
 }
