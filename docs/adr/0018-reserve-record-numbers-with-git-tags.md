@@ -103,7 +103,8 @@ rebase した後の番号の重複は作業ツリーのファイルどうしで�
 今の CLI は `check --changed` のように、サブコマンドの後ろのオプションで振る舞いを変えている。`design-records issue
 new` のように種類ごとのサブコマンドの木にすると、`check`、`status`、`prune`（種類を問わない）と形が揃わない。
 issue の `new` は、表題の行（`# <title>`）だけを書く（フロントマターと節の形は #270 で決める）。OKF のバンドル
-（`docs/index.md` が `okf_version` を持つ）では、その前にフロントマター（`type: Issue` と `status: open`）を書く。
+（`docs/index.md` が `okf_version` を持つ）では、フロントマター（`type: Issue`、`status: open`、`opened`）と、必須の節
+（「問題」と、項目を 1 つ持つ「完了の条件」）も書く。
 
 どのコマンドも、前に `-C <dir>` を付けると `<dir>` で走る（git の `-C` と同じ）。/git-merge は対象のブランチの
 worktree を `git -C` で指して操作するので、`check` と `renumber` も同じ形で呼ぶ。
@@ -147,5 +148,7 @@ worktree を `git -C` で指して操作するので、`check` と `renumber` �
   同じ番号を予約し直していれば、触らない
 - 2026-11-19: バンドルでの issue の `new`。前は「issue の `new` は、表題の行（`# <title>`）だけを書く（フロントマターと節の形は
   #270 で決める）。」。OKF のバンドルでは `index.md` と `log.md` のほかの文書に `type` が要り（ADR-0092）、表題の行だけの
-  issue は作ったままでは `check` が止めた（#331。xlc のリポジトリで見つかった）。`status: open` も書くのは、`check` が
-  フロントマターを持つ issue に `status` を求めるため。バンドルでないリポジトリの出力は変えない
+  issue は作ったままでは `check` が止めた（#331。xlc のリポジトリで見つかった）。`status`、`opened`、必須の節も書くのは、
+  `check` がフロントマターを持つ issue に `status` と節を求め、`type` だけを足すと注意が 3 つ出るため。作ったままで違反も
+  注意も出ない形にした。バンドルかどうかは番号を予約する前に決め、`docs/index.md` があるのに読めなければ、予約せずに止まる。
+  バンドルでないリポジトリの出力は変えない

@@ -13,7 +13,8 @@ allowed-tools:
 # docs/issues
 
 GitHub の issue があるリポジトリでは、そこに書く。ない場合だけ `docs/issues/` に置く。番号と下書きは
-`design-records new --kind issue <slug> "<表題>"`（表題の行だけを書く）で作り、下の形を足す。
+`design-records new --kind issue <slug> "<表題>"` で作る。OKF のバンドル（`docs/index.md` が `okf_version` を持つ）では、
+フロントマターと必須の節が入った形で出来るので、中身を書く。ほかのリポジトリでは表題の行だけが出来るので、下の形を足す。
 
 ## 形
 

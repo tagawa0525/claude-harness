@@ -296,13 +296,15 @@ pub fn next_number<'a>(kind: Kind, paths: impl IntoIterator<Item = &'a str>) -> 
     numbers_in(kind, paths).max().map_or(1, |n| n + 1)
 }
 
-/// 新しい issue のテンプレート。フロントマターと節の形は各リポジトリが決めるので、表題の行だけを書く（ADR-0018）。
-/// OKF のバンドルでは、検査が求める `type` と、フロントマターを持つ issue に求める `status` を前に置く（ADR-0092）。
-pub fn issue_template(title: &str, bundle: bool) -> String {
-    if bundle {
-        format!("---\ntype: Issue\nstatus: open\n---\n\n# {title}\n")
-    } else {
-        format!("# {title}\n")
+/// 新しい issue のテンプレート。バンドルでないリポジトリでは、フロントマターと節の形を各リポジトリが決めるので、表題の
+/// 行だけを書く（ADR-0018）。OKF のバンドルでは、検査が求める `type` と、フロントマターを持つ issue に求める `status` と
+/// 必須の節を書き、作ったままで `check` に違反も注意も出ないようにする（ADR-0092）。
+pub fn issue_template(title: &str, bundle: Option<&str>) -> String {
+    match bundle {
+        Some(date) => format!(
+            "---\ntype: Issue\nstatus: open\nopened: {date}\n---\n\n# {title}\n\n## 問題\n\n## 完了の条件\n\n- [ ]\n"
+        ),
+        None => format!("# {title}\n"),
     }
 }
 
