@@ -83,7 +83,8 @@ repos:
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く
   - `issues`: きっかけの issue と、解決した issue（`["#12"]`）
   - `description`: ADR の 1 文の要約（`new` は書かない）。OKF のバンドルでは、`index` が索引の行の説明に載せる。
-    今の中身の要約なので、確定した後も足して直す
+    今の中身の要約なので、確定した後も足して直す。1 行で書き、ASCII の `"` と先頭の `[` は使わない（`check` が読めない
+    値として違反にする。引用は「」で書く）
   - 既存の ADR に残る `amends` / `amended-by`（決定の一部を別の ADR で置き換えていたころの結び）は、新しくは書かず、
     既にあるものは消さない
 - **status** は `proposed`、`accepted`、`rejected`、`withdrawn`（決める前に取り下げた）、`deferred`（後回しにした）、

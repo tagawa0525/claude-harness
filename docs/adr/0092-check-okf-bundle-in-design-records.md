@@ -90,6 +90,7 @@ OKF は未知のキーと値を許す（SPEC §11）。
 - 既存の ADR 76 件に `type: ADR` を足す 1 つのコミットが要る（`type` は凍結する部分ではないので、`AMENDABLE_KEYS` に足す）
 - ADR の索引の行に説明を載せるには、ADR に `description` を書いて `design-records index` を実行する。このリポジトリの既存の
   ADR には、まだ説明を書いていない
+- 実装が決定に追いついていない点: 文書の題を変えても、index は既にある行の題を直さず、check の注意が残る（#339）
 - `docs/issues/` の新しい issue は、バンドルでは `design-records new --kind issue` が `type: Issue`、`status: open`、`opened`、
   必須の節を書く（ADR-0018 の「## 変更」の 2026-11-19 の項。#331）
 
