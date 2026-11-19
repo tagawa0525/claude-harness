@@ -37,6 +37,7 @@ pub(crate) mod slurm;
 mod slurm_class;
 mod slurm_queue;
 mod slurm_run;
+mod slurm_wait;
 mod time;
 mod usage_report;
 mod wait_step;
@@ -79,6 +80,7 @@ const SCRIPTS: &[(&str, Script)] = &[
     ("session-events", session_events::main),
     ("slurm-queue", slurm_queue::main),
     ("slurm-run", slurm_run::main),
+    ("slurm-wait", slurm_wait::main),
     ("usage-report", usage_report::main),
     ("wait-step", wait_step::main),
     ("worktree-add", worktree_add::main),

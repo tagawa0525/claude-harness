@@ -988,6 +988,9 @@ mod tests {
             uninterrupted,
             suspended,
             state,
+            name: "xlc-2G".to_string(),
+            log: String::new(),
+            exit: Some(0),
         }
     }
 

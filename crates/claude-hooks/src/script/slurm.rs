@@ -512,6 +512,12 @@ pub struct JobRecord {
     /// 止められていた秒数（記録に無ければ None）
     pub suspended: Option<i64>,
     pub state: JobState,
+    /// ジョブの名前（記録に無ければ空）
+    pub name: String,
+    /// ログのパス（ジョブの走るホストの書き方。記録に無ければ空）
+    pub log: String,
+    /// ジョブの終了コード（[`exit_status`]。記録に無ければ None）
+    pub exit: Option<i32>,
 }
 
 /// 会計の記録（sacct）。読めない、記録がまだ届いていないなら None。標準エラーは捨てる（読めないことは呼ぶ側が警告する）
@@ -539,19 +545,62 @@ fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
             .map(|p| p == UNINTERRUPTED),
         suspended: time["suspended"].as_i64(),
         state: JobState::from_slurm(state_word(&found["state"]["current"])),
+        name: String::new(),
+        log: String::new(),
+        exit: exit_status(&found["exit_code"]),
     })
+}
+
+/// ジョブの終了コードを、sbatch --wait が返す形で（26.05.6 の src/sbatch/sbatch.c の `_job_wait`。2026-11-20 に
+/// slurm-26-05-6-1 のタグで読んだ）。普通に終わればその終了コード、シグナルで終われば 1。記録に無ければ None
+fn exit_status(exit_code: &Value) -> Option<i32> {
+    let _ = exit_code;
+    None
 }
 
 /// 制御のデーモン（scontrol）が覚えている状態。終わった直後（MinJobAge の 300 秒の間）だけ読める
 pub fn controller_state(job: &str) -> Option<JobState> {
-    scontrol_state(&quiet_output(&["scontrol", "show", "job", job, JSON])?, job)
+    controller_job(job).map(|found| found.state)
 }
 
-fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
+/// 制御のデーモンが覚えているジョブ（待っているもの、走っているもの、終わった直後のもの）
+#[derive(Debug, PartialEq)]
+pub struct ControllerJob {
+    pub name: String,
+    /// 投げたときのコメント（会計の記録には残らない。r995 の AccountingStoreFlags は job_comment を含まない）
+    pub comment: String,
+    /// ログのパス（ジョブの走るホストの書き方）
+    pub log: String,
+    pub state: JobState,
+    /// ジョブの終了コード（[`exit_status`]。終わる前は意味を持たない）
+    pub exit: Option<i32>,
+}
+
+/// 制御のデーモンが覚えているジョブ。覚えていない、読めないなら None
+pub fn controller_job(job: &str) -> Option<ControllerJob> {
+    scontrol_job(&quiet_output(&["scontrol", "show", "job", job, JSON])?, job)
+}
+
+fn scontrol_job(json: &str, job: &str) -> Option<ControllerJob> {
     let jobs = json_jobs("scontrol", json).ok()?;
     let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
     found["job_state"][0].as_str()?;
-    Some(JobState::from_slurm(state_word(&found["job_state"])))
+    let text = |key: &str| {
+        let _ = key;
+        String::new()
+    };
+    Some(ControllerJob {
+        name: text("name"),
+        comment: text("comment"),
+        log: text("stdout_expanded"),
+        state: JobState::from_slurm(state_word(&found["job_state"])),
+        exit: exit_status(&found["exit_code"]),
+    })
+}
+
+#[cfg(test)]
+fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
+    scontrol_job(json, job).map(|found| found.state)
 }
 
 /// コマンドの JSON の出力の jobs の配列。読めなければ理由
@@ -724,11 +773,15 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: 名前、ログ、終了コードを読まない"]
     fn sacct_json_gives_the_times_the_partition_kind_and_the_first_state() {
         let json = json!({"jobs": [{
             "job_id": 42,
+            "name": "openmc-endfb70-1B-1D-2B",
             "partition": "main",
             "state": {"current": ["CANCELLED"], "reason": "None"},
+            "stdout_expanded": "/home/u/github/slurm-logs/openmc-endfb70-1B-1D-2B-42.out",
+            "exit_code": exit_code(0, None),
             "time": {"elapsed": 465, "suspended": 0, "limit": {"set": true, "infinite": false, "number": 175}},
         }]})
         .to_string();
@@ -740,6 +793,9 @@ mod tests {
                 uninterrupted: Some(false),
                 suspended: Some(0),
                 state: JobState::from_slurm("CANCELLED"),
+                name: "openmc-endfb70-1B-1D-2B".to_string(),
+                log: "/home/u/github/slurm-logs/openmc-endfb70-1B-1D-2B-42.out".to_string(),
+                exit: Some(0),
             })
         );
         assert_eq!(sacct_record(&json, "43"), None);
@@ -913,6 +969,50 @@ mod tests {
         ] {
             assert_eq!(super::estimate_minutes(estimate), minutes, "{estimate}");
         }
+    }
+
+    /// 会計の記録と制御のデーモンの exit_code（return_code と、シグナルの番号。シグナルで終わらなければ None）
+    fn exit_code(code: u64, signal: Option<u64>) -> serde_json::Value {
+        json!({
+            "status": [if signal.is_some() { "SIGNALED" } else if code == 0 { "SUCCESS" } else { "ERROR" }],
+            "return_code": set(code),
+            "signal": {"id": signal.map_or_else(unset, set), "name": ""},
+        })
+    }
+
+    #[test]
+    #[ignore = "RED: exit_status が未実装"]
+    fn the_exit_status_is_the_return_code_or_1_for_a_signal_like_sbatch_wait() {
+        assert_eq!(super::exit_status(&exit_code(0, None)), Some(0));
+        assert_eq!(super::exit_status(&exit_code(137, None)), Some(137));
+        assert_eq!(super::exit_status(&exit_code(0, Some(9))), Some(1));
+        assert_eq!(super::exit_status(&json!({"return_code": unset()})), None);
+        assert_eq!(super::exit_status(&json!(null)), None);
+    }
+
+    #[test]
+    #[ignore = "RED: 名前、コメント、ログ、終了コードを読まない"]
+    fn scontrol_json_gives_the_name_comment_log_state_and_exit_of_the_job() {
+        let json = json!({"jobs": [{
+            "job_id": 962,
+            "name": "openmc-0293",
+            "comment": "decision | #0293 | p | c",
+            "stdout_expanded": "/home/u/github/slurm-logs/openmc-0293-962.out",
+            "job_state": ["RUNNING"],
+            "exit_code": exit_code(0, None),
+        }]})
+        .to_string();
+        assert_eq!(
+            super::scontrol_job(&json, "962"),
+            Some(super::ControllerJob {
+                name: "openmc-0293".to_string(),
+                comment: "decision | #0293 | p | c".to_string(),
+                log: "/home/u/github/slurm-logs/openmc-0293-962.out".to_string(),
+                state: JobState::from_slurm("RUNNING"),
+                exit: Some(0),
+            })
+        );
+        assert_eq!(super::scontrol_job(&json, "7"), None);
     }
 
     #[test]

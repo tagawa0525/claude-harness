@@ -180,3 +180,27 @@ fn every_reason_is_told_at_once() {
     assert!(reason.contains("別の呼び出し"), "{reason}");
     assert!(reason.contains("run_in_background=true"), "{reason}");
 }
+
+#[test]
+#[ignore = "RED: guard-sbatch が slurm-wait.sh を見ない"]
+fn slurm_wait_runs_only_in_the_background_like_slurm_run() {
+    for command in [
+        "~/.claude/scripts/slurm-wait.sh 42",
+        "cd ~/github/xlc && bash ~/.claude/scripts/slurm-wait.sh 42",
+    ] {
+        let reason =
+            deny_reason_in(command, false).unwrap_or_else(|| panic!("{command} が止まらない"));
+        assert!(
+            reason.contains("] slurm-wait.sh はジョブが終わるまで待つ"),
+            "{reason}"
+        );
+        assert!(reason.contains("run_in_background=true"), "{reason}");
+        assert!(reason.contains("ALLOW_FOREGROUND_SLURM"), "{reason}");
+        assert_eq!(deny_reason(command), None, "{command}");
+    }
+    // 同名のテストは Slurm を待たない
+    assert_eq!(
+        deny_reason_in("bash claude/tests/scripts/slurm-wait.sh", false),
+        None
+    );
+}
