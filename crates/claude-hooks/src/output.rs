@@ -31,6 +31,9 @@ pub enum Finding {
     Deny(String),
     /// 止めずに情報だけ渡す（warn-large-commit）
     Context(String),
+    /// 止めずに、Bash の command の前に `prefix` を付けた入力で実行させ、付けたことを `context` で Claude に知らせる
+    /// （require-pipefail。ADR-0102）。許可の判断は返さず、許可の規則は書き換えた後の入力に対して評価される
+    Prepend { prefix: String, context: String },
 }
 
 /// 止める理由の先頭にルールの名前を `[<name>] ` として付ける。振り返り（session-events）が、本文の番号やパスの違いに
@@ -46,8 +49,11 @@ pub fn label_denies(name: &str, findings: Vec<Finding>) -> Vec<Finding> {
 }
 
 /// 判定結果を 1 つの hookSpecificOutput に、判定できなかった理由を最上位の systemMessage にまとめる。
-/// どちらもなければ None（= 許可、出力なし）
-pub fn render(findings: &[Finding], notices: &[String]) -> Option<Value> {
+/// `tool_input` は hook の入力の tool_input で、書き換え（Prepend）があれば、その command の前に前置きを評価の順に
+/// 付け、ほかの欄はそのままにして updatedInput にする（updatedInput は入力の全体を置き換えるため）。止める判定が
+/// あれば書き換えは返さない（止めた呼び出しは走らないので、付けたという知らせも誤りになる）。
+/// どれもなければ None（= 許可、出力なし）
+pub fn render(findings: &[Finding], notices: &[String], tool_input: &Value) -> Option<Value> {
     let denies: Vec<&str> = findings
         .iter()
         .filter_map(|f| match f {
@@ -55,12 +61,24 @@ pub fn render(findings: &[Finding], notices: &[String]) -> Option<Value> {
             _ => None,
         })
         .collect();
+    let prepends: Vec<(&str, &str)> = if denies.is_empty() {
+        findings
+            .iter()
+            .filter_map(|f| match f {
+                Finding::Prepend { prefix, context } => Some((prefix.as_str(), context.as_str())),
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let contexts: Vec<&str> = findings
         .iter()
         .filter_map(|f| match f {
             Finding::Context(s) => Some(s.as_str()),
             _ => None,
         })
+        .chain(prepends.iter().map(|(_, context)| *context))
         .collect();
     if denies.is_empty() && contexts.is_empty() && notices.is_empty() {
         return None;
@@ -71,6 +89,13 @@ pub fn render(findings: &[Finding], notices: &[String]) -> Option<Value> {
         if !denies.is_empty() {
             out["permissionDecision"] = json!("deny");
             out["permissionDecisionReason"] = json!(denies.join("\n\n"));
+        }
+        if !prepends.is_empty() {
+            let command = tool_input["command"].as_str().unwrap_or_default();
+            let prefix: String = prepends.iter().map(|(prefix, _)| *prefix).collect();
+            let mut updated = tool_input.clone();
+            updated["command"] = json!(format!("{prefix}{command}"));
+            out["updatedInput"] = updated;
         }
         if !contexts.is_empty() {
             out["additionalContext"] = json!(contexts.join("\n\n"));
@@ -89,12 +114,12 @@ mod tests {
 
     #[test]
     fn nothing_means_allow() {
-        assert!(render(&[], &[]).is_none());
+        assert!(render(&[], &[], &json!({})).is_none());
     }
 
     #[test]
     fn notices_alone_become_system_message_without_decision() {
-        let v = render(&[], &["n".into()]).unwrap();
+        let v = render(&[], &["n".into()], &json!({})).unwrap();
         assert_eq!(v["systemMessage"], "n");
         assert!(v.get("hookSpecificOutput").is_none());
     }
@@ -118,11 +143,63 @@ mod tests {
                 Finding::Deny("b".into()),
             ],
             &[],
+            &json!({}),
         )
         .unwrap();
         let o = &v["hookSpecificOutput"];
         assert_eq!(o["permissionDecision"], "deny");
         assert_eq!(o["permissionDecisionReason"], "a\n\nb");
         assert_eq!(o["additionalContext"], "c");
+    }
+
+    fn prepend(prefix: &str, context: &str) -> Finding {
+        Finding::Prepend {
+            prefix: prefix.into(),
+            context: context.into(),
+        }
+    }
+
+    #[test]
+    fn prepend_rewrites_the_command_and_keeps_other_fields_without_a_decision() {
+        let input = json!({ "command": "cargo test | tail", "run_in_background": true });
+        let v = render(&[prepend("set -o pipefail; ", "p")], &[], &input).unwrap();
+        let o = &v["hookSpecificOutput"];
+        assert!(o.get("permissionDecision").is_none());
+        assert_eq!(
+            o["updatedInput"],
+            json!({ "command": "set -o pipefail; cargo test | tail", "run_in_background": true })
+        );
+        assert_eq!(o["additionalContext"], "p");
+    }
+
+    #[test]
+    fn prepend_joins_its_context_with_other_contexts() {
+        let input = json!({ "command": "c" });
+        let v = render(
+            &[Finding::Context("c1".into()), prepend("a; ", "p")],
+            &[],
+            &input,
+        )
+        .unwrap();
+        assert_eq!(v["hookSpecificOutput"]["additionalContext"], "c1\n\np");
+    }
+
+    #[test]
+    fn deny_drops_the_prepend_and_its_context() {
+        let input = json!({ "command": "c" });
+        let v = render(
+            &[
+                prepend("a; ", "p"),
+                Finding::Deny("d".into()),
+                Finding::Context("c1".into()),
+            ],
+            &[],
+            &input,
+        )
+        .unwrap();
+        let o = &v["hookSpecificOutput"];
+        assert_eq!(o["permissionDecision"], "deny");
+        assert!(o.get("updatedInput").is_none());
+        assert_eq!(o["additionalContext"], "c1");
     }
 }

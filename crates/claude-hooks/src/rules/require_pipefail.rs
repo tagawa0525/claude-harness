@@ -1,10 +1,11 @@
-//! require-pipefail: 成否を判断するコマンドを、pipefail なしで tail / head につなぐ形を止める
+//! require-pipefail: 成否を判断するコマンドを、pipefail なしで tail / head につなぐ形に pipefail を付けて通す
 //!
 //! パイプの終了コードは最後のステージ（tail / head）のものになり、`nix build | tail` のビルドの失敗を見落とす。
 //! 対象は `nix build`、`nix flake check`、`cargo`、`run-checks.sh` を、後ろのステージに tail か head がある
-//! パイプの途中に置いた形。コマンドに `set -o pipefail` / `bash -o pipefail` のシェルのオプションがあれば通す。
-//! pipefail が実際に効く位置かは読まない（ADR-0042: 普通に書く形だけを止める）。エスケープは設けない
-//! （出力を絞りたいなら、ファイルに書いて tail で読むか、pipefail を付ける）
+//! パイプの途中に置いた形。コマンドに `set -o pipefail` / `bash -o pipefail` のシェルのオプションがあれば何もしない。
+//! pipefail が実際に効く位置かは読まない（ADR-0042: 普通に書く形だけを見る）。対象の形は止めずに、command の前に
+//! `set -o pipefail; ` を付けた入力で実行させ、付けたことを Claude に知らせる（ADR-0102。許可の判断は返さないので、
+//! 許可の確認は書き換えた後のコマンドに対して残る。ほかのルールが止めるときは止める判定が勝つ）
 
 use super::Rule;
 use crate::input::Input;
@@ -57,8 +58,9 @@ impl Rule for RequirePipefail {
         if !piped {
             return Vec::new();
         }
-        vec![Finding::Deny(
-            "ビルドやチェックの出力を tail / head につなぐと、パイプの終了コードが tail / head のものになり、失敗を見落とします。`set -o pipefail;` を前に付けるか、出力をファイルに書いて tail で読んでください".to_string(),
-        )]
+        vec![Finding::Prepend {
+            prefix: "set -o pipefail; ".to_string(),
+            context: "[require-pipefail] ビルドやチェックの出力を tail / head につなぐ形なので、hook がコマンドの前に `set -o pipefail; ` を付けました（打ち直しは要りません）。終了コードは、パイプの途中のコマンドの失敗を映します。head などが先に読むのをやめると、前のコマンドが SIGPIPE で止まり、終了コードが 141 になることがあります".to_string(),
+        }]
     }
 }
