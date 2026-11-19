@@ -1,5 +1,6 @@
-//! `claude-hooks script wait-step` が、/delegate の担当の待ちの 1 歩を刻み、終わり、1 歩、途中の報告を見分けて、次の行動を
-//! 示すことを確かめる（`~/.claude/scripts/wait-step.sh` が呼ぶ）。sh から呼ぶ配備の確認は `claude/tests/scripts/wait-step.sh`
+//! `claude-hooks script wait-step` が、/delegate の担当の待ちの 1 ステップを刻み、終わり、1 ステップ、途中の報告を見分けて、
+//! 次の行動を示すことを確かめる（`~/.claude/scripts/wait-step.sh` が呼ぶ）。sh から呼ぶ配備の確認は
+//! `claude/tests/scripts/wait-step.sh`
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,7 +37,7 @@ impl Dir {
         path.display().to_string()
     }
 
-    /// 1 歩を step 秒、途中の報告の間隔を report 秒にして、壁の時計で呼び、(終了コード, 標準出力と標準エラー)
+    /// 1 ステップを step 秒、途中の報告の間隔を report 秒にして、壁の時計で呼び、(終了コード, 標準出力と標準エラー)
     fn wait(&self, step: u64, report: u64, args: &[&str]) -> (i32, String) {
         self.wait_in(&self.root.join("tmp"), None, step, report, args)
     }
@@ -102,14 +103,14 @@ fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
 
 #[test]
 fn an_injected_time_takes_the_steps_without_sleeping() {
-    // 時刻を渡すと、1 歩の 270 秒を眠らずに進め、経過はその時計で数える
+    // 時刻を渡すと、1 ステップの 270 秒を眠らずに進め、経過はその時計で数える
     let d = Dir::new();
     let log = d.file("job.out", "");
     let start = Instant::now();
     let (code, out) = d.wait_at(1000, 270, 3300, &["/wt/fake", &log]);
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("WAIT: 途中の報告から 4 分"), "{out}");
-    // 1 歩の 270 秒より十分に短い（負荷の下でも起動と 270 回の見回りは収まる）
+    // 1 ステップの 270 秒より十分に短い（負荷の下でも起動と 270 回の見回りは収まる）
     assert!(start.elapsed() < Duration::from_secs(60), "{out}");
 }
 
@@ -194,7 +195,7 @@ fn report_after_the_interval_shows_the_message_to_the_parent_and_restarts_the_cl
     );
     assert!(out.contains("同じ引数でもう一度呼ぶ"), "{out}");
     assert!(out.contains("止めるかは親の返事で決める"), "{out}");
-    // 103 秒から数え直したので、次の 1 歩（105 秒）は WAIT
+    // 103 秒から数え直したので、次の 1 ステップ（105 秒）は WAIT
     assert_eq!(d.wait_at(103, 2, 3, &["/wt/c", &log]).0, 2);
 }
 
@@ -205,7 +206,7 @@ fn the_clock_continues_from_the_report_after_a_done() {
     let ended = d.file("ended.out", "[exited with code 0]\n");
     d.wait_at(100, 2, 5, &["/wt/d", &log]);
     d.wait_at(102, 2, 5, &["/wt/d", &log, &ended]);
-    // 待ち始めから 4 秒、報告の間隔 5 秒の手前。次の 1 歩で報告の時刻に届く
+    // 待ち始めから 4 秒、報告の間隔 5 秒の手前。次の 1 ステップで報告の時刻に届く
     assert_eq!(d.wait_at(104, 2, 5, &["/wt/d", &log]).0, 3);
 }
 

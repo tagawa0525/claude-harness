@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude/scripts/wait-step.sh（/delegate の担当が、ターンを終えずに待つ 1 歩）の配備の確認
+# claude/scripts/wait-step.sh（/delegate の担当が、ターンを終えずに待つ 1 ステップ）の配備の確認
 #
 # 実行: bash claude/tests/scripts/wait-step.sh（まとめて実行: bash claude/tests/scripts.sh）
 
@@ -18,7 +18,7 @@ log="$TEST_ROOT/job.out"
 # shellcheck disable=SC2088
 shown='~/.claude/scripts/wait-step.sh'
 
-it "wait-step: 待つものが終わらなければ、1 歩の時間で WAIT と次の行動を出して 2 で返る"
+it "wait-step: 待つものが終わらなければ、1 ステップの時間で WAIT と次の行動を出して 2 で返る"
 out=$("$WAIT" /wt/a "$log")
 assert_eq 2 $?
 assert_contains "$out" "WAIT:"
