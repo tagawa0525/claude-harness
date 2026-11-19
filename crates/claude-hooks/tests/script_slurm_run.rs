@@ -10,8 +10,7 @@
 
 mod common;
 
-use common::{forget_git_env, sh_path, write_executable};
-use serde_json::json;
+use common::{forget_git_env, sh_path, squeue_json, write_executable};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -97,31 +96,20 @@ const HOSTNAME: &str = r#"#!/bin/sh
 echo "${FAKE_HOST:-r995}"
 "#;
 
-/// 待っているジョブ（番号、パーティション、優先度、区分、連絡先）の待ち行列を、`squeue --json=v0.0.45` の形で
+/// 待っているジョブ（番号、パーティション、優先度、区分、連絡先）の待ち行列
 fn queue(jobs: &[(u64, &str, u64, &str, &str)]) -> String {
-    let number = |n: u64| json!({"set": true, "infinite": false, "number": n});
-    let unset = json!({"set": false, "infinite": false, "number": 0});
+    let comments: Vec<String> = jobs
+        .iter()
+        .map(|(_, _, _, class, contact)| format!("{class} | #1 | p | {contact}"))
+        .collect();
     let jobs: Vec<_> = jobs
         .iter()
-        .map(|(id, partition, priority, class, contact)| {
-            json!({
-                "job_id": id,
-                "name": format!("j{id}"),
-                "job_state": ["PENDING"],
-                "partition": partition,
-                "priority": number(*priority),
-                "time_limit": number(10),
-                "start_time": number(0),
-                "comment": format!("{class} | #1 | p | {contact}"),
-                "array_job_id": number(0),
-                "array_task_id": unset,
-                "array_task_string": "",
-                "het_job_id": number(0),
-                "het_job_offset": unset,
-            })
+        .zip(&comments)
+        .map(|((id, partition, priority, _, _), comment)| {
+            (*id, "j", *partition, *priority, comment.as_str())
         })
         .collect();
-    json!({"jobs": jobs}).to_string()
+    squeue_json(&jobs)
 }
 
 /// 偽の Slurm と HOME を置いた一時のディレクトリ

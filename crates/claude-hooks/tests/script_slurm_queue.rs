@@ -5,8 +5,7 @@
 
 mod common;
 
-use common::{fake_tool, place_fake_tool};
-use serde_json::json;
+use common::{fake_tool, place_fake_tool, squeue_json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -81,31 +80,18 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// main で待つジョブ（番号、名前、優先度、区分）の待ち行列を、`squeue --json=v0.0.45` の形で
+/// main で待つジョブ（番号、名前、優先度、区分）の待ち行列
 fn queue(jobs: &[(u64, &str, u64, &str)]) -> String {
-    let number = |n: u64| json!({"set": true, "infinite": false, "number": n});
-    let unset = json!({"set": false, "infinite": false, "number": 0});
+    let comments: Vec<String> = jobs
+        .iter()
+        .map(|(_, _, _, class)| format!("{class} | #1 | p | {C}"))
+        .collect();
     let jobs: Vec<_> = jobs
         .iter()
-        .map(|(id, name, priority, class)| {
-            json!({
-                "job_id": id,
-                "name": name,
-                "job_state": ["PENDING"],
-                "partition": "main",
-                "priority": number(*priority),
-                "time_limit": number(10),
-                "start_time": number(0),
-                "comment": format!("{class} | #1 | p | {C}"),
-                "array_job_id": number(0),
-                "array_task_id": unset,
-                "array_task_string": "",
-                "het_job_id": number(0),
-                "het_job_offset": unset,
-            })
-        })
+        .zip(&comments)
+        .map(|((id, name, priority, _), comment)| (*id, *name, "main", *priority, comment.as_str()))
         .collect();
-    json!({"jobs": jobs}).to_string()
+    squeue_json(&jobs)
 }
 
 /// main で待つ trial の 20 と、その後ろの record の 21（並べ直しが要る）
