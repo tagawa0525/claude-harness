@@ -37,14 +37,7 @@ impl Words {
         if !self.dictionaries.is_empty() || !self.repo_dictionaries.is_empty() {
             return Ok(self);
         }
-        let Some(top) = ja_terms::repo::work_tree_top(dir).map_err(|e| Stop(e.to_string()))? else {
-            return Ok(self);
-        };
-        let path = top.join(ja_terms::repo::REPO_DICTIONARY);
-        if path
-            .try_exists()
-            .map_err(|e| Stop(format!("{}: 有無を確かめられない: {e}", path.display())))?
-        {
+        if let Some(path) = ja_terms::repo::dictionary_path(dir).map_err(|e| Stop(e.to_string()))? {
             self.repo_dictionaries.push(path);
         }
         Ok(self)

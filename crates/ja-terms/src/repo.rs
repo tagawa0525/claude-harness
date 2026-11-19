@@ -15,8 +15,9 @@ pub const REPO_DICTIONARY: &str = ".ja-terms/prh.yml";
 /// 外かどうかを git の失敗の文言（言語の設定で変わる）で分けず、`.git` の有無で見る。作業ツリーの中と見たのに git が
 /// 失敗すれば誤りにする（共通の辞書だけに黙ってすり替えない）
 pub fn work_tree_top(dir: &Path) -> Result<Option<PathBuf>, DictionaryError> {
-    let absolute = std::path::absolute(dir)
-        .map_err(|e| DictionaryError(format!("{}: 絶対パスにできない: {e}", dir.display())))?;
+    // git と同じく symlink を辿った実体のパスで上る（symlink の置き場の上でなく、行き先の上の .git を見る）
+    let absolute = std::fs::canonicalize(dir)
+        .map_err(|e| DictionaryError(format!("{}: 実体のパスにできない: {e}", dir.display())))?;
     let has_git = |d: &Path| match d.join(".git").symlink_metadata() {
         Ok(_) => true,
         Err(e) => e.kind() != std::io::ErrorKind::NotFound,
@@ -39,6 +40,24 @@ pub fn work_tree_top(dir: &Path) -> Result<Option<PathBuf>, DictionaryError> {
         )));
     }
     Ok(Some(path_from_git(out.stdout)))
+}
+
+/// dir を含む作業ツリーのリポジトリの辞書のパス。作業ツリーの外か、辞書が無ければ None
+///
+/// 有無は symlink を辿らずに見る（行き先の無い symlink を「無い」とせず、読む側で読めない辞書として止める）
+pub fn dictionary_path(dir: &Path) -> Result<Option<PathBuf>, DictionaryError> {
+    let Some(top) = work_tree_top(dir)? else {
+        return Ok(None);
+    };
+    let path = top.join(REPO_DICTIONARY);
+    match path.symlink_metadata() {
+        Ok(_) => Ok(Some(path)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(DictionaryError(format!(
+            "{}: 有無を確かめられない: {e}",
+            path.display()
+        ))),
+    }
 }
 
 /// git rev-parse が出すパス（git が足す末尾の改行を除く）。Unix ではバイトのまま（UTF-8 でない名前のディレクトリも同じパスに

@@ -130,23 +130,8 @@ impl Dictionary {
     /// dir を含む作業ツリーの辞書の組。作業ツリーの直下に [`repo::REPO_DICTIONARY`] があればそれに共通の辞書を重ね、
     /// 無いか作業ツリーの外なら共通の辞書だけ
     pub fn for_dir(dir: &Path) -> Result<Self, DictionaryError> {
-        let repo = match repo::work_tree_top(dir)? {
-            Some(top) => Self::load_if_exists(&top.join(repo::REPO_DICTIONARY))?,
-            None => None,
-        };
+        let repo = repo::dictionary_path(dir)?.map(Self::load).transpose()?;
         Self::layered(repo)
-    }
-
-    /// path の辞書。ファイルが無ければ None（ほかの読めない理由は誤り）
-    pub fn load_if_exists(path: &Path) -> Result<Option<Self>, DictionaryError> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Self::parse(&text, &path.display().to_string()).map(Some),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(DictionaryError(format!(
-                "{}: 読めない: {e}",
-                path.display()
-            ))),
-        }
     }
 
     /// other の規則を、この辞書の規則の後ろに並べる。prh の Engine.merge と違い、同じ expected の規則を外さない

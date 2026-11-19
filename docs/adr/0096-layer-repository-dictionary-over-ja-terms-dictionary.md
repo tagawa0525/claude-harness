@@ -80,8 +80,8 @@ claude-harness（`crates/ja-terms/prh.yml`）だけだった（2026-11-19、`git
 
 - リポジトリの辞書は、作業ツリーの直下の `.ja-terms/prh.yml`。形は共通の辞書と同じ prh の辞書（`version` と `rules`）
 - どのリポジトリの辞書を読むかは、ja-terms を実行する今のディレクトリを含む作業ツリー（`git rev-parse --show-toplevel`）で
-  決める。worktree はそれぞれの直下のファイルを読む。作業ツリーの外（今のディレクトリから根までに `.git` が無く、`GIT_DIR` も
-  無い）なら、共通の辞書だけを当てる
+  決める。worktree はそれぞれの直下のファイルを読む。作業ツリーの外（今のディレクトリの実体のパスから根までに `.git` が無く、
+  `GIT_DIR` も無い）なら、共通の辞書だけを当てる。辞書のパスが行き先の無い symlink なら、無いとせず読めない辞書とする
   - `ja-terms staged` は、ステージした `.ja-terms/prh.yml`（インデックスの版）を読む。ステージした `.textlintignore` を読むのと
     同じく、コミットに入る中身を、そのコミットに入る辞書で検査する
   - ほかの経路は作業ツリーのファイルを読む。claude-hooks の git commit と git merge のルールはコマンドの行き先のディレクトリで、
@@ -134,9 +134,9 @@ claude-harness（`crates/ja-terms/prh.yml`）だけだった（2026-11-19、`git
 
 - ja-terms の `check`、`message`、`commit-msg`、`staged` が、`.ja-terms/prh.yml` のあるリポジトリでその規則を当て、作業ツリーの
   外と辞書の無いリポジトリで共通の辞書だけを当て、下の階層の `.ja-terms/prh.yml` を読まず、worktree でその worktree の辞書を当て、
-  staged がステージした辞書を読み、読めない辞書（YAML の誤り、`imports`、specs の失敗）と作業ツリーの中での git の失敗で 2 で
-  終わること。同じ expected の規則は、リポジトリの辞書のものだけが当たること（`crates/ja-terms/tests/repo_dictionary.rs` の
-  14 件。2026-11-19 に通った）
+  staged がステージした辞書を読み、読めない辞書（YAML の誤り、`imports`、specs の失敗、UTF-8 でないステージした辞書、行き先の
+  無い symlink）と作業ツリーの中での git の失敗で 2 で終わり、symlink を辿って入ったディレクトリでも作業ツリーの辞書を読むこと。同じ expected の規則は、リポジトリの辞書のものだけが当たること（`crates/ja-terms/tests/repo_dictionary.rs` の
+  17 件。2026-11-19 に通った）
 - claude-hooks の git commit と git merge のルールが、hook の cwd と違う行き先（`git -C`、`cd`）のリポジトリの辞書で止め、辞書の
   無いリポジトリでは止めないこと（`crates/claude-hooks/tests/merge-ja-terms.sh`、`commit-message.sh`。package.nix の
   installCheckPhase と Windows の CI が流す。main の ja-terms では失敗することを手元で確かめた）
