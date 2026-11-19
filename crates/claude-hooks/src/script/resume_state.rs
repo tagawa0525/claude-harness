@@ -12,8 +12,9 @@
 //!   status が open でも closed でもない、duplicate の重複先を読めない、たどると自分に戻る、`#NNNN` の形でない、
 //!   blocked-by を読めない）を `blocker-unknown=` で添え、読めないファイルは `unreadable=` で出し、印があれば節の最後に、
 //!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる。docs/issues が
-//!   あれば、一覧の後に `open-count now=<作業ツリーの open の数> 14d-ago=<HEAD の第 1 親の履歴で 14 日より前の最も新しい
-//!   コミットの数 | unknown（理由）> diff=<差>` を出し、増えていれば棚卸しを先にする `NEXT:` を出す（issue は 1 つの
+//!   あれば、一覧の後に `open-count now=<作業ツリーの open の数 | unknown（読めないファイルがある）>
+//!   14d-ago=<HEAD の第 1 親の履歴で 14 日より前の最も新しいコミットの数 | unknown（理由）> diff=<差>`（どちらかが unknown
+//!   なら diff は出さない）を出し、増えていれば棚卸しを先にする `NEXT:` を出す（issue は 1 つの
 //!   トピックを閉じるための置き場で、積み上がったまま新しい作業に進まないため）
 //!
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
@@ -376,14 +377,27 @@ fn issues(root: &Path) {
     if !found {
         println!("(なし)");
     }
-    let grown = match open_count_before(root, dir) {
-        Ok(past) => {
-            let diff = open_now as i64 - past as i64;
-            println!("open-count now={open_now} {COUNT_AGO}={past} diff={diff:+}");
+    // 読めないファイルは open かを決められないので、今の数を決めず、比べない（過去の数は git の中身を全部数える）
+    let now = if any_unreadable {
+        Err("読めないファイルがある")
+    } else {
+        Ok(open_now)
+    };
+    let grown = match (now, open_count_before(root, dir)) {
+        (Ok(now), Ok(past)) => {
+            let diff = now as i64 - past as i64;
+            println!("open-count now={now} {COUNT_AGO}={past} diff={diff:+}");
             (diff > 0).then_some(diff)
         }
-        Err(why) => {
-            println!("open-count now={open_now} {COUNT_AGO}=unknown（{why}）");
+        (now, past) => {
+            let show = |v: Result<usize, String>| {
+                v.map_or_else(|why| format!("unknown（{why}）"), |n| n.to_string())
+            };
+            println!(
+                "open-count now={} {COUNT_AGO}={}",
+                show(now.map_err(str::to_string)),
+                show(past)
+            );
             None
         }
     };
@@ -423,10 +437,14 @@ fn open_count_before(root: &Path, dir: &str) -> Result<usize, String> {
     if rev.is_empty() {
         return Err("14 日より前のコミットが無い".into());
     }
-    let names = crate::git::git(root, &["ls-tree", "--name-only", &rev, &format!("{dir}/")])
-        .ok_or("git ls-tree に失敗")?;
+    // -z で区切る（無いと、ASCII の外の文字や空白を含む名前を git が引用符で囲み、`.md` で終わらなくなる）
+    let names = crate::git::git(
+        root,
+        &["ls-tree", "-z", "--name-only", &rev, &format!("{dir}/")],
+    )
+    .ok_or("git ls-tree に失敗")?;
     let input: String = names
-        .lines()
+        .split('\0')
         .filter(|n| n.ends_with(".md"))
         .map(|n| format!("{rev}:{n}\n"))
         .collect();

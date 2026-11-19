@@ -5,10 +5,11 @@
 //! 埋もれないよう、親が先に読む位置に置き、無ければ「なし」と書かせる。欄の有無は報告の文字列だけで決まるので、
 //! 送る前にここで判定する。
 //!
-//! - 対象: SendMessage と SubagentHandback の `message` に、行頭の `## 親が先に読む要点`（後ろに `（…）` の限定が続いても
-//!   よい）がある呼び出し。途中の報告、親の指示、マージの結果はこの見出しを持たないので見ない
-//! - コードブロック（行頭の ```` ``` ````）の中の行は見出しとして数えない（報告を引用する文を止めない）
-//! - 判定: その次の `##` の見出しが `## 外したもの、後回しにしたもの`（後ろに `（…）` が続いてもよい）で、その中身
+//! - 対象: SendMessage と SubagentHandback の `message` に、行頭（3 つまでの空白を許す）の `## 親が先に読む要点`（後ろに
+//!   括弧の限定を 1 つ続けてもよい）がある呼び出し。途中の報告、親の指示、マージの結果はこの見出しを持たないので見ない
+//! - コードブロック（` か ~ のフェンスの間）の中の行は見出しとして数えない（報告を引用する文を止めない）。閉じない
+//!   フェンスがあれば、フェンスを見ずに数える（後ろの全部が隠れて、欄の無い報告が通るのを避ける）
+//! - 判定: その次の `##` の見出しが `## 外したもの、後回しにしたもの`（同じく限定を続けてよい）で、その中身
 //!   （次の `##` の見出しか終わりまで）が空白だけでないこと
 //!
 //! 中身が外したものを全部書いているかは判定しない。エスケープはない（欄を足す以外に直す方法が無いため）。
@@ -16,6 +17,7 @@
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
+use crate::script::dictionary_preview::fence;
 use crate::shell::Shell;
 
 pub struct DelegateReportFields;
@@ -25,30 +27,57 @@ const SUMMARY: &str = "親が先に読む要点";
 /// その直後に置く節の名前
 const DEFERRED: &str = "外したもの、後回しにしたもの";
 
-/// 見出しの名前の部分（`## ` の後）が、name か name に `（…）` の限定を続けたものか
+/// 見出しの名前の部分（`## ` の後）が、name か、name に括弧（`（…）` か `(…)`）の限定を 1 つ続けたものか。閉じた限定の
+/// 後に文が続く行は、その節の見出しとしない
 fn is_named(title: &str, name: &str) -> bool {
-    title
-        .strip_prefix(name)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('（'))
+    let Some(rest) = title.strip_prefix(name).map(str::trim_start) else {
+        return false;
+    };
+    if rest.is_empty() {
+        return true;
+    }
+    [('（', '）'), ('(', ')')].iter().any(|&(open, close)| {
+        rest.starts_with(open) && rest.find(close) == Some(rest.len() - close.len_utf8())
+    })
 }
 
-/// コードブロックの外の `## ` の見出しの、行の位置と名前の部分
-fn section_titles<'a>(lines: &[&'a str]) -> Vec<(usize, &'a str)> {
-    let mut fenced = false;
+/// 行が `## ` の見出しなら、その名前の部分。Markdown と同じく、行頭の 3 つまでの空白を許す
+fn heading_title(line: &str) -> Option<&str> {
+    let body = line.trim_start_matches(' ');
+    (line.len() - body.len() <= 3)
+        .then(|| body.strip_prefix("## "))
+        .flatten()
+        .map(str::trim_end)
+}
+
+/// `## ` の見出しの、行の位置と名前の部分。fences が真なら、コードブロック（` か ~ を 3 つ以上並べたフェンスの間）の
+/// 中の行を数えない
+fn section_titles<'a>(lines: &[&'a str], fences: bool) -> Option<Vec<(usize, &'a str)>> {
+    let mut open: Option<(char, usize)> = None;
     let mut found = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-            continue;
+        if fences {
+            // フェンスの見分け方は dictionary_preview の文書の読み方と同じ（閉じるのは同じ文字で、開いたもの以上の長さの、
+            // 後ろに何も無い行。` のフェンスの後ろに ` があれば、行頭のコードスパン）
+            match (open, fence(line.trim())) {
+                (Some((c, n)), Some((d, m, rest))) if c == d && m >= n && rest.is_empty() => {
+                    open = None;
+                    continue;
+                }
+                (Some(_), _) => continue,
+                (None, Some((c, n, rest))) if c != '`' || !rest.contains('`') => {
+                    open = Some((c, n));
+                    continue;
+                }
+                (None, _) => {}
+            }
         }
-        if fenced {
-            continue;
-        }
-        if let Some(title) = line.strip_prefix("## ") {
-            found.push((i, title.trim_end()));
+        if let Some(title) = heading_title(line) {
+            found.push((i, title));
         }
     }
-    found
+    // 閉じないフェンスは、後ろの全部を中身にして報告を見えなくする。その形では止める側に倒し、フェンスを見ずに数える
+    open.is_none().then_some(found)
 }
 
 impl Rule for DelegateReportFields {
@@ -62,7 +91,9 @@ impl Rule for DelegateReportFields {
 
     fn check(&self, input: &Input, _shell: &Shell) -> Vec<Finding> {
         let lines: Vec<&str> = input.message.lines().collect();
-        let titles = section_titles(&lines);
+        let titles = section_titles(&lines, true)
+            .or_else(|| section_titles(&lines, false))
+            .unwrap_or_default();
         let Some(summary) = titles.iter().position(|(_, t)| is_named(t, SUMMARY)) else {
             return Vec::new();
         };
@@ -84,8 +115,8 @@ impl Rule for DelegateReportFields {
         };
         vec![Finding::Deny(format!(
             "/delegate の担当の報告（`## {SUMMARY}` で始まる節を持つメッセージ）で、{problem}。\n\
-             外して通した対処が成功の報告に埋もれないよう、報告は「{SUMMARY}」の直後に「{DEFERRED}」の節を置きます（~/.claude/skills/delegate/references/working.md の手順 9。ADR-0098）。\n\
-             判定: コードブロックの外の、行頭の `## ` の見出しを節とし、`## {SUMMARY}` の次の節が `## {DEFERRED}`（後ろに「（…）」が続いてもよい）で、中身が空白だけでないことを見ます。\n\
+             外して通した対処が成功の報告に埋もれないよう、報告は「{SUMMARY}」の直後に「{DEFERRED}」の節を置きます（~/.claude/skills/delegate/references/working.md の手順 9）。\n\
+             判定: コードブロック（``` か ~~~ のフェンスの間）の外の、行頭の `## ` の見出しを節とし、`## {SUMMARY}` の次の節が `## {DEFERRED}`（後ろに括弧の限定を 1 つ続けてもよい）で、中身が空白だけでないことを見ます。\n\
              修正方法: `## {SUMMARY}` の節の直後に `## {DEFERRED}` の節を置き、検査や対象から外したもの、skip、条件を狭めて通したもの、issue にして残したレビューの指摘、測らずに置いた値や組を書いて（無ければ「なし」と書いて）、送り直してください。報告の書式を引用するだけのメッセージなら、引用をコードブロック（```）に入れてください。"
         ))]
     }

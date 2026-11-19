@@ -5,7 +5,7 @@
 mod base_moved;
 mod branch_topics;
 mod decide_next;
-mod dictionary_preview;
+pub(crate) mod dictionary_preview;
 mod fix_markdown_lint;
 mod get_latest_review;
 mod get_pr_info;

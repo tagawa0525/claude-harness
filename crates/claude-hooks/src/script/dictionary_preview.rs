@@ -315,7 +315,7 @@ fn prose_lines(text: &str) -> Vec<&str> {
 }
 
 /// 行の頭の、3 つ以上続く ` か ~（フェンスの印）の文字と長さと、その後ろ（前後の空白を外す）
-fn fence(line: &str) -> Option<(char, usize, &str)> {
+pub(crate) fn fence(line: &str) -> Option<(char, usize, &str)> {
     let c = line.chars().next().filter(|c| matches!(c, '`' | '~'))?;
     let n = line.chars().take_while(|&d| d == c).count();
     (n >= 3).then(|| (c, n, line[n..].trim()))
