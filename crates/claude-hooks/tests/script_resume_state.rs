@@ -385,6 +385,39 @@ fn a_blocker_closed_as_a_duplicate_of_an_open_issue_still_blocks() {
 }
 
 #[test]
+fn a_blocker_closed_as_a_duplicate_with_a_reason_is_read_as_a_duplicate() {
+    // design-records check が通す `duplicate: <理由>` も duplicate として重複先をたどる
+    let repo = Repo::new();
+    repo.issue(
+        "0001-b.md",
+        "---\nstatus: closed\nresolution: \"duplicate: #0005 と同じ\"\nduplicate-of: \"#0005\"\n---\n\n# b\n",
+    );
+    repo.issue("0005-e.md", "---\nstatus: open\n---\n\n# e\n");
+    repo.issue(
+        "0002-a.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\"]\n---\n\n# a\n",
+    );
+    repo.issue(
+        "0003-c.md",
+        "---\nstatus: closed\nresolution: \"duplicate: 理由だけ\"\n---\n\n# c\n",
+    );
+    repo.issue(
+        "0004-d.md",
+        "---\nstatus: open\nblocked-by: [\"#0003\"]\n---\n\n# d\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    let issues = section(&text, "issues");
+    assert!(
+        issues.contains("docs/issues/0002-a.md blocked-by=[\"#0001\"] blocked=#0005\n"),
+        "{text}"
+    );
+    assert!(
+        issues.contains("docs/issues/0004-d.md blocked-by=[\"#0003\"] blocker-unknown=#0003\n"),
+        "{text}"
+    );
+}
+
+#[test]
 fn an_open_record_among_records_of_the_same_number_blocks_even_if_another_is_unreadable() {
     let repo = Repo::new();
     repo.issue("0003-a.md", "---\nstatus: open\n---\n\n# a\n");

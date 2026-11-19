@@ -11,7 +11,8 @@
 //!   docs/issues の同じ番号の記録で引き、閉じていない相手（duplicate で閉じた相手は開いている重複先）を `blocked=`、閉じたかを確かめられない相手（記録が無い、
 //!   status が open でも closed でもない、duplicate の重複先を読めない、たどると自分に戻る、`#NNNN` の形でない、
 //!   blocked-by を読めない）を `blocker-unknown=` で添え、読めないファイルは `unreadable=` で出し、印があれば節の最後に、
-//!   その印の issue の扱いを `NEXT:` で出す。status、番号、参照の読み方は design-records に合わせる。docs/issues が
+//!   その印の issue の扱いを `NEXT:` で出す。status、resolution（`duplicate: <理由>` も duplicate）、番号、参照の読み方は
+//!   design-records に合わせる。docs/issues が
 //!   あれば、一覧の後に `open-count now=<作業ツリーの open の数 | unknown（読めないファイルがある）>
 //!   14d-ago=<HEAD の第 1 親の履歴で 14 日より前の最も新しいコミットの数 | unknown（理由）> diff=<差>`（どちらかが unknown
 //!   なら diff は出さない）を出す。数を知らせるだけで、増えていても行動は指示しない
@@ -19,6 +20,7 @@
 //! AWS の監視など、プロジェクト固有の状態は集めない（そのリポジトリの README か計画に従う）。
 
 use design_records::Kind;
+use design_records::check::Resolution;
 use design_records::parse::{FrontMatter, Value, numbered_refs, parse_front_matter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -219,9 +221,13 @@ struct Entry {
     text: Result<String, String>,
 }
 
-/// 閉じた記録の重複先。duplicate で閉じたのに重複先を読めなければ None
+/// 閉じた記録の重複先。duplicate で閉じた（`duplicate: <理由>` を含む）のに重複先を読めなければ None
 fn duplicate_targets(front: &FrontMatter) -> Option<Vec<u32>> {
-    if front.get("resolution") != Some(&Value::Scalar("duplicate".into())) {
+    let duplicate = matches!(
+        front.get("resolution"),
+        Some(Value::Scalar(s)) if Resolution::parse(s) == Some(Resolution::Word("duplicate"))
+    );
+    if !duplicate {
         return Some(Vec::new());
     }
     let items = front

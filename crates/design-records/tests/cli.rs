@@ -516,10 +516,121 @@ fn check_warns_about_the_format_of_issues_with_front_matter() {
     assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
     assert_eq!(
         stdout(&out),
-        "docs/issues/0002-bad.md: warning: a closed issue needs `resolution` \
-         (done | wontfix | by-design | external | cannot-reproduce | duplicate | obsolete)\n\
-         docs/issues/0002-bad.md: warning: no section `完了の条件`\n\
-         docs/issues/0003-state.md: warning: `status` must be open or closed\n"
+        format!(
+            "docs/issues/0002-bad.md: warning: {RESOLUTION_FORMS}\n\
+             docs/issues/0002-bad.md: warning: no section `完了の条件`\n\
+             docs/issues/0003-state.md: warning: `status` must be open or closed\n"
+        )
+    );
+}
+
+/// 閉じた issue の `resolution` が形に合わないときの注意の文
+const RESOLUTION_FORMS: &str = "a closed issue needs `resolution`: one of done | wontfix | \
+     by-design | external | cannot-reproduce | duplicate | obsolete (optionally followed by \
+     `: <reason>`), `ADR-NNNN` (the deciding ADR), or `コミット <hash>` (the resolving commit, \
+     7 to 40 lowercase hex digits)";
+
+#[test]
+fn check_accepts_resolutions_that_are_a_word_or_name_the_evidence() {
+    let t = TempRepo::new("issue-resolution-forms");
+    t.run(&["new", "use-a", "a を使う"]);
+    let resolutions = [
+        "done",
+        "wontfix",
+        "by-design",
+        "external",
+        "cannot-reproduce",
+        "obsolete",
+        // 根拠を書く形（xlc の docs/issues の README の形）
+        "ADR-0001",
+        "コミット 1a2b3c4",
+        "コミット 0123456789abcdef0123456789abcdef01234567",
+        "wontfix: 測ると差が無い",
+        "\"wontfix: 前提の: が値に入る\"",
+        "obsolete: 対象のコードを消した",
+    ];
+    for (i, resolution) in resolutions.iter().enumerate() {
+        t.write(
+            &format!("docs/issues/{:04}-closed.md", i + 1),
+            &issue(&format!("status: closed\nresolution: {resolution}")),
+        );
+    }
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn check_warns_about_resolutions_in_neither_form() {
+    let t = TempRepo::new("issue-resolution-bad");
+    let resolutions = [
+        "",
+        "fixed",
+        "wontfix:",
+        "fixed: 理由",
+        "ADR-12",
+        "コミット 1a2b3c",
+        "コミット 1A2B3C4",
+        "コミット 1a2b3c4 で直した",
+        "1a2b3c4",
+    ];
+    for (i, resolution) in resolutions.iter().enumerate() {
+        t.write(
+            &format!("docs/issues/{:04}-closed.md", i + 1),
+            &issue(&format!("status: closed\nresolution: {resolution}")),
+        );
+    }
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    let expected: String = (1..=resolutions.len())
+        .map(|i| format!("docs/issues/{i:04}-closed.md: warning: {RESOLUTION_FORMS}\n"))
+        .collect();
+    assert_eq!(stdout(&out), expected);
+}
+
+#[test]
+fn check_follows_the_links_of_resolutions_that_name_the_evidence() {
+    let t = TempRepo::new("issue-resolution-links");
+    t.run(&["new", "use-a", "a を使う"]);
+    // resolved-by と同じく、ADR は docs/adr にあるかを見て、コミットの hash は探さない
+    t.write(
+        "docs/issues/0001-missing-adr.md",
+        &issue("status: closed\nresolution: ADR-0009"),
+    );
+    t.write(
+        "docs/issues/0002-commit.md",
+        &issue("status: closed\nresolution: コミット ffffffff"),
+    );
+    // 理由を添えた duplicate も duplicate として duplicate-of を求める
+    t.write(
+        "docs/issues/0003-dup.md",
+        &issue("status: closed\nresolution: \"duplicate: #0002 と同じ\""),
+    );
+    t.write(
+        "docs/issues/0004-dup-linked.md",
+        &issue("status: closed\nresolution: \"duplicate: #0002 と同じ\"\nduplicate-of: \"#0002\""),
+    );
+    // 閉じるときのキーなので、開いている issue に書けば注意する
+    t.write(
+        "docs/issues/0005-open.md",
+        &issue("status: open\nresolution: ADR-0001"),
+    );
+    t.write(
+        "docs/issues/0006-open-empty.md",
+        &issue("status: open\nresolution:"),
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert_eq!(
+        stdout(&out),
+        "docs/issues/0001-missing-adr.md: warning: `resolution` names ADR-0009, which is not an \
+         ADR in docs/adr\n\
+         docs/issues/0003-dup.md: warning: a duplicate issue needs `duplicate-of`\n\
+         docs/issues/0005-open.md: warning: an open issue has `resolution`; write them when \
+         closing it\n"
     );
 }
 

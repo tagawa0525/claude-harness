@@ -83,3 +83,4 @@
 * [ADR-0096: 崩れた語の辞書を、共通の辞書と、リポジトリの .ja-terms/prh.yml の 2 つに分けて重ねる](0096-layer-repository-dictionary-over-ja-terms-dictionary.md)
 * [ADR-0097: ja-terms の共通の辞書を、ビルドに埋めず、claude-setup sync がホームの下に配るファイルから読む](0097-deliver-common-ja-terms-dictionary-with-claude-setup-sync.md)
 * [ADR-0098: 担当の報告に外したもの、後回しにしたものの欄を置き、hook で確かめる](0098-keep-excluded-items-in-delegate-reports.md)
+* [ADR-0099: 閉じた issue の resolution に、決まった語のほか、根拠（ADR、コミット）と理由を書く形も通す](0099-accept-evidence-in-issue-resolution.md)
