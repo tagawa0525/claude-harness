@@ -57,18 +57,18 @@ OKF は未知のキーと値を許す（SPEC §11）。
   - 下位のディレクトリの `index.md` はフロントマターを持たない。バンドルのルートの `index.md` のフロントマターは、
     `okf_version`、`title`、`description`、`license` と拡張のキー（§8.1）。`"0.2"` のバンドルでは `okf_version` だけ
   - `index.md` の `* [題](パス) - 説明` の行のリンク先が実在し、同じディレクトリの文書と下位のディレクトリがすべて載っている。
-    題は Markdown のリンクの文字列として、バックスラッシュのエスケープとコードスパンの中を飛ばし、対になった角括弧を含めて読む（§8）。
-    Markdown のリンクとして読めない行（対にならない `[`、説明まで続くバッククォート）は、前と同じく題の中の最初の `](` で切って読む
+    行は CommonMark（`pulldown-cmark`）で読み、行の先頭のリンクの文字列を題、リンク先を行のリンク先とする（§8）。先頭が
+    リンクにならない手書きの行（対にならない `[`、説明まで続くバッククォート）は、題の中の最初の `](` で切って読み、注意を出す。
     リンク先はパーセントエンコードを復号し、先頭が `/` ならバンドルのルートから、ほかは索引のディレクトリから解く（§6）。
     バンドルのルートの外と、`.` で始まるパスの下に解けるリンクは、URL と同じく外部のリンクとして見ない
   - `log.md` はフロントマターを持たず（§9）、日付の見出しが `YYYY-MM-DD`
 - 索引の題と説明が、リンク先のフロントマターの `title` と `description` と違うときは注意（warning）にする。ADR は
-  フロントマターに `title` を持たないので、題は最初の 1 段目の見出しと比べる。題は両方を `design-records index` の書く形に
-  揃えて比べる（表示が同じなら合う）。索引の行の題がリンクを含むときも注意にする（Markdown はリンクの文字列の中のリンクを
-  許さず、その行はリンクにならない）
+  フロントマターに `title` を持たないので、題は最初の 1 段目の見出しと比べる。題は両方を CommonMark で読んだ表示の文字列で
+  比べる（表示が同じなら合う）
 - `design-records index` が、索引に載っていない文書と下位のディレクトリの行を足す（説明は文書の `description` から取る。
-  リンク先はパーセントエンコードする。題は、文書の題のリンクをその文字列に置き換え（画像は残す）、残る角括弧、閉じない
-  バッククォート、末尾のバックスラッシュをエスケープして書く。既にある行とルートのフロントマターは直さない、§8.1）。`index.md` が無ければ作る
+  リンク先はパーセントエンコードする。題は、文書の題を CommonMark で読み、リンク（自動リンクを含む）をその文字列に
+  置き換え、文字の中の構文を始めうる記号（角括弧、バッククォート、バックスラッシュなど）をエスケープし、コードスパン、強調、
+  画像、HTML を残して書き直す。既にある行とルートのフロントマターは直さない、§8.1）。`index.md` が無ければ作る
 - `design-records new` が作る ADR のテンプレートに `type: ADR` を足す。`type` は ADR の任意のキーで、確定した後も直して
   よいキーにする（既存の ADR に足すため）
 - ADR の `status` は、この ADR では今のキーと 7 値のままにする。OKF の `status` は文書の鮮度の合図で、ADR の `status` は
@@ -95,9 +95,9 @@ OKF は未知のキーと値を許す（SPEC §11）。
   `check_reads_an_okf_version_followed_by_a_yaml_comment`、`index_percent_encodes_link_targets_and_check_decodes_them`、
   `index_unwraps_a_link_in_a_title_and_check_reads_the_entry`、
   `index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them`、
-  `check_lists_an_entry_whose_title_has_a_link_but_warns_about_it`、
+  `check_reports_an_entry_with_a_link_in_its_title_and_index_adds_a_readable_one`、
   `index_escapes_a_lone_backtick_so_that_a_description_cannot_close_it`、
-  `check_still_lists_hand_written_entries_with_a_lone_bracket_backtick_or_image`）
+  `check_lists_hand_written_entries_that_markdown_does_not_read_as_links_and_warns`）
 - このリポジトリの `docs/` で `design-records check` が違反なしで通る
 
 ## 各案の長所と短所
@@ -127,6 +127,10 @@ OKF は未知のキーと値を許す（SPEC §11）。
   この行はほかの Markdown の読み手にもリンクにならないので、index が題のリンクを外して書く。check が入れ子の角括弧を読む
   だけの案は、index の行を check とだけ合わせ、ほかの読み手には壊れた行を残すので採らなかった。題のリンクを外さずに角括弧を
   すべてエスケープする案（`\[a\](http://x) の件`）は、表示が文書の題と違い、xlc のリポジトリが手で書いた行（リンクを
-  外した題）とも違うので採らなかった。手で書いた普通の行（角括弧もエスケープも無い題）の読み方と比べ方は変わらず、
-  Markdown のリンクとして読めない手書きの行も前の読み方で読む（読めなくすると、その文書を「索引に載っていない」とし、
-  index が同じ文書の行を足し直す）
+  外した題）とも違うので採らなかった。題と行の読み書きは、CommonMark のパーサーの `pulldown-cmark`（ja-terms も使う）に
+  任せる。初めは、エスケープ、コードスパン、対の角括弧、画像を手で数える走査で書いたが、レビューで、画像の中の閉じない
+  バッククォートとリンク、画像のリンク先の `]`、title 付きのリンク、自動リンクのそれぞれで、index の書いた行を check が
+  別のリンク先と読むか、ほかの読み手と違う表示になる反例が出て、規則を 1 つずつ足すより保守が小さいので替えた。手で書いた
+  普通の行（角括弧もエスケープも無い題）の読み方と比べ方は変わらない。先頭がリンクにならない手書きの行は前の読み方で読み、
+  注意を出す（読めなくすると、その文書を「索引に載っていない」とし、index が同じ文書の行を足し直す）。前の index が書いた、
+  題にリンクを含む行は、Markdown ではその文書へのリンクにならないので、載っていないとし、index が読める行を足す
