@@ -826,6 +826,10 @@ mod tests {
             "ssh://git@github.com/octo/repo.git",
             "git@github.com:octo/repo.git",
             "git@github.com:octo/repo",
+            "org-123@github.com:octo/repo.git",
+            "github.com:octo/repo.git",
+            "ssh://git@github.com:22/octo/repo",
+            "https://GitHub.com/octo/repo",
         ] {
             assert_eq!(github_repo(url).as_deref(), Some("octo/repo"), "{url}");
         }
