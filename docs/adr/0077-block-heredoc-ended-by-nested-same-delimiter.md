@@ -64,7 +64,7 @@ claude-hooks（`modules/home/parts/claude-hooks`）の `src/shell.rs` は、ヒ�
   （`[A-Za-z_][A-Za-z0-9_]*`）だけで読む。`<<123` の本文の区切りだけの行を余りに数えて止め、`<<END-MSG` を `END` と
   読んで閉じを探し続け、余った閉じを飛ばして通す。本文の中の開きは区切りごとに別の正規表現で、区切り全体の引用符
   （`'D'`、`"D"`、`\D`）だけを受け、`<<E'OF'` を数えなかった
-- 案 C2（案 C1 の直しで試して捨てた）: 後ろのヒアドキュメントの範囲を、tree-sitter-bash の木の `heredoc_redirect`
+- 案 C2（案 C1 の修正で試して捨てた）: 後ろのヒアドキュメントの範囲を、tree-sitter-bash の木の `heredoc_redirect`
   から取る。内側の閉じに文字が続く入れ子（`EOF''','''cat > f <<'EOF'`）の後ろのコミットの `$(cat <<'EOF' … EOF)` で、
   木は外側の本文を bash と違う所で切って後ろの開きを本文の中に入れ、その閉じの `EOF` を余りに数えて止めた
   （`.claude/tests/hooks.sh` の QUOTED_CLOSE）

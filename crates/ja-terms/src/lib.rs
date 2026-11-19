@@ -51,7 +51,7 @@ impl fmt::Display for TextError {
 impl std::error::Error for DictionaryError {}
 impl std::error::Error for TextError {}
 
-/// 文の中の 1 つの直し（位置は文の UTF-8 のバイト）
+/// 文の中の 1 つの修正（位置は文の UTF-8 のバイト）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diff {
     pub start: usize,
@@ -171,7 +171,7 @@ impl Dictionary {
         self.rules.is_empty()
     }
 
-    /// text を段落に分けて規則を当て、重なりを外した直しを先頭から並べる（prh の makeChangeSet の diffs から、
+    /// text を段落に分けて規則を当て、重なりを外した修正を先頭から並べる（prh の makeChangeSet の diffs から、
     /// prh:disable の指示で外す前のもの）。textlint-rule-prh と同じ報告は [`Dictionary::check`] が作る
     pub fn diffs(&self, text: &str) -> Result<Vec<Diff>, TextError> {
         let mut found = Vec::new();
@@ -548,11 +548,11 @@ fn matches(rules: &[Rule], offset: usize, piece: &str) -> Result<Vec<Diff>, Text
     Ok(found)
 }
 
-/// textlint-rule-prh の forEachChange。直しを先頭から当てながら、誤りを当てた後の文から切る。重なりは 1 度しか
-/// 外していないので、前の直しと重なる一致の誤りは、前の直しの一部になる。JavaScript と同じく UTF-16 の位置で
-/// 切る（UTF-8 のバイトで切ると、前の直しの中で切る位置が変わる）
+/// textlint-rule-prh の forEachChange。修正を先頭から当てながら、誤りを当てた後の文から切る。重なりは 1 度しか
+/// 外していないので、前の修正と重なる一致の誤りは、前の修正の一部になる。JavaScript と同じく UTF-16 の位置で
+/// 切る（UTF-8 のバイトで切ると、前の修正の中で切る位置が変わる）
 fn report_changes(text: &str, diffs: &[Diff]) -> Vec<Finding> {
-    // ほとんどの Str に直しは無い
+    // ほとんどの Str に修正は無い
     if diffs.is_empty() {
         return Vec::new();
     }
