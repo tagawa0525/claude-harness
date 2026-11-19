@@ -1,6 +1,6 @@
 ---
 name: git-merge
-description: featureブランチをローカルでmainにマージ。GitHubを経由しないリポジトリ用。チェック・レビュー・rebase・マージコミット・後片付けまで行う。
+description: featureブランチをローカルでmainにマージ。GitHubを経由しないリポジトリ用。
 # model 未指定: レビュー指摘への対応、コンフリクト解決、マージコミットメッセージの判断が必要なためセッションモデルを継承する
 argument-hint: [branch]
 allowed-tools:

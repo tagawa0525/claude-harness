@@ -1,6 +1,6 @@
 ---
 name: harness-deploy
-description: claude-harness の PR をマージした後に、lock の更新、rebuild、claude-sync で配備し、配備された版を確かめる。post-merge-cleanup.sh が「NOTE: lock の更新と rebuild が要る」か「NOTE: claude-sync が要る」を出したときに使う。
+description: claude-harness の PR をマージした後の配備。post-merge-cleanup.sh が「NOTE: lock の更新と rebuild が要る」か「NOTE: claude-sync が要る」を出したときに使う。
 ---
 
 # ハーネスの配備

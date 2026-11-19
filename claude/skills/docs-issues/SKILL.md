@@ -1,6 +1,6 @@
 ---
 name: docs-issues
-description: GitHub の issue を使わないリポジトリの docs/issues/ に、issue を書く・閉じるときの形（フロントマター、節、関係）。
+description: GitHub の issue を使わないリポジトリの docs/issues/ に、issue を書く・閉じるときの形。
 allowed-tools:
   - Bash(design-records new:*)
   - Bash(design-records check:*)
