@@ -143,7 +143,8 @@ fn entries(text: &str) -> Vec<Entry<'_>> {
 }
 
 /// 索引（`index_dir` のもの）のリンクが指す、バンドルの中のパス。ディレクトリなら末尾に `/` を付ける。外部のリンク
-/// （バンドルのルートの外に解けるものを含む、OKF v0.3 §6）と、文書でもディレクトリでもないリンクは `None`。
+/// （バンドルのルートの外に解けるものと、名前が `.` で始まるパスの下を含む、OKF v0.3 §3.2、§6）と、文書でもディレクトリでもない
+/// リンクは `None`。
 fn resolve(index_dir: &str, url: &str) -> Option<String> {
     let url = url.split('#').next().unwrap_or("");
     if url.contains("://") || !(url.ends_with(".md") || url.ends_with('/')) {
@@ -164,7 +165,7 @@ fn resolve(index_dir: &str, url: &str) -> Option<String> {
             part => parts.push(part),
         }
     }
-    if parts.first() != Some(&BUNDLE_ROOT) {
+    if parts.first() != Some(&BUNDLE_ROOT) || parts.iter().any(|p| p.starts_with('.')) {
         return None;
     }
     let mut path = parts.join("/");
