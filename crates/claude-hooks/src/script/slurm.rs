@@ -1,14 +1,12 @@
 //! Slurm のコマンド（sbatch、squeue、sacct、scontrol）を呼ぶ所と、その出力を解く所（ADR-0101）。
 //!
-//! 判定（slurm_run の待ち、印、終了コード）は、ここが返す、Slurm の名前や出力の形を含まない型（[`JobRecord`]、
-//! [`JobState`]、[`RunningJob`]、[`Submission`]）を受ける。会社の環境のスケジューラ（Sun Grid Engine）の実装を後で足す
-//! ため、Slurm に依る所をこのモジュールに集める（#353）。差し替えの口（trait）は、2 つ目の実装を足すときに 2 つを比べて
-//! 切り出す。
+//! 判定（slurm_run の待ち、印、終了コード、slurm_queue の走る順と並べ直す列）は、ここが返す、Slurm の名前や出力の形を
+//! 含まない型（[`JobRecord`]、[`JobState`]、[`RunningJob`]、[`Submission`]、[`QueuedJob`]）を受ける。会社の環境の
+//! スケジューラ（Sun Grid Engine）の実装を後で足すため、Slurm に依る所をこのモジュールに集める（#353）。差し替えの口
+//! （trait）は、2 つ目の実装を足すときに 2 つを比べて切り出す。
 //!
 //! 状態は `--json=v0.0.45` の形で読む。版を固定するのは、Slurm の更新で形が変わったときに、読み違えずに起動の失敗で
 //! 気付くため。r995 の Slurm は 26.05.6 で、選べる形の版は v0.0.42〜v0.0.45（2026-11-19 に確かめた）。
-//! 待ち行列を区分の順に並べる列は、まだ slurm_queue が `squeue --format` の文字の列で読む（ADR-0101 の帰結の順の 3 で
-//! JSON に替える）。
 
 use regex::Regex;
 use serde_json::Value;

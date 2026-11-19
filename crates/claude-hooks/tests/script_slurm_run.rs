@@ -438,7 +438,6 @@ fn a_log_that_cannot_be_appended_to_gets_a_warning_and_the_time_line_on_stdout()
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn a_main_job_reorders_the_queue_by_class_and_reads_it_again_after_each_top() {
     let slurm = Slurm::new();
     let q = "feat/x /p";
@@ -477,7 +476,6 @@ fn a_main_job_reorders_the_queue_by_class_and_reads_it_again_after_each_top() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn top_puts_the_main_job_first_in_its_class_and_an_unreadable_queue_only_warns() {
     let slurm = Slurm::new();
     let q = "feat/x /p";

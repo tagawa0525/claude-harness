@@ -118,7 +118,6 @@ fn empty() -> String {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn reads_squeue_as_json_of_the_fixed_version() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], &empty(), 0);
@@ -127,7 +126,6 @@ fn reads_squeue_as_json_of_the_fixed_version() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn an_unreadable_squeue_output_is_an_error_with_exit_code_1() {
     let fake = FakeSqueue::new().with_squeue();
     for bad in [
@@ -147,7 +145,6 @@ fn an_unreadable_squeue_output_is_an_error_with_exit_code_1() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn lists_the_jobs_with_the_order_line() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], &out_of_order(), 0);
@@ -168,7 +165,6 @@ fn lists_the_jobs_with_the_order_line() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn order_first_prints_the_list_to_pass_to_scontrol_top() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&["--order", "--first", "20"], &out_of_order(), 0);
@@ -177,7 +173,6 @@ fn order_first_prints_the_list_to_pass_to_scontrol_top() {
 }
 
 #[test]
-#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn an_empty_queue_says_so_and_order_prints_nothing() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], &empty(), 0);
