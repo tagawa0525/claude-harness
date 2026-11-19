@@ -289,7 +289,6 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
 /// Windows では、検査のコマンドを Git Bash の sh を通して起動する（.sh を起動でき、相対のパスを worktree から引く）
 #[cfg(windows)]
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree() {
     let repo = Repo::empty();
     repo.git(&["switch", "-q", "-c", "feat/x"]);

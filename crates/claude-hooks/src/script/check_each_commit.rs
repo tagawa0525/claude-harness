@@ -336,8 +336,21 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
 /// 検査のコマンドを worktree の根で実行し、終了コードを返す。出力は標準エラーに回し（標準出力は 1 コミット 1 行に
 /// する）、標準入力を渡さない（パイプラインやエージェントのシェルの入力を食わない）
 fn inspect(command: &[String], wt: &Path) -> i32 {
-    let mut cmd = Command::new(&command[0]);
-    cmd.args(&command[1..]);
+    // Windows では、コマンドを呼んだ Git Bash の sh を通して起動する。CreateProcess は .sh と .cmd を起動せず、相対の
+    // パス（./scripts/check.sh）を worktree でなく呼んだ側の作業ディレクトリから引く
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "exec \"$@\"", "check-each-commit.sh"]);
+        cmd.args(command);
+        cmd
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut cmd = Command::new(&command[0]);
+        cmd.args(&command[1..]);
+        cmd
+    };
     cmd.current_dir(wt)
         .stdin(Stdio::null())
         .stdout(std::io::stderr());
