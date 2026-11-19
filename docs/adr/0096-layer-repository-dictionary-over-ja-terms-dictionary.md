@@ -1,6 +1,6 @@
 ---
 type: ADR
-status: proposed
+status: accepted
 date: 2026-11-19
 requires: [ADR-0014, ADR-0045, ADR-0050, ADR-0074, ADR-0085]
 supersedes: []
@@ -90,7 +90,7 @@ claude-harness（`crates/ja-terms/prh.yml`）だけだった（2026-11-19、`git
     そのリポジトリのコミットにコピーされる）
   - `history-rewrite` は、`--dictionary` が無ければ、`run` が `--source` のリポジトリの、`transform` が今のディレクトリの
     リポジトリの辞書を読み、`run` の記録（`DIR/words`）に残す。`sync-worktrees` は記録の辞書を使う。`--repo-dictionary FILE` で
-    明示もできる
+    明示もできる（重ねて渡すと、前のものから `Engine.merge` でつなぐ）
 - 重ね方は、リポジトリの辞書の規則を先に、共通の辞書の規則のうち、同じ expected の規則がリポジトリの辞書に無いものを後ろに
   並べる（prh の `Engine.merge`）
 - `--dictionary` を渡したときは、渡した辞書だけを当て、リポジトリの辞書を重ねない（今と同じ）。`dictionary-preview.sh` は、渡した
@@ -130,8 +130,16 @@ claude-harness（`crates/ja-terms/prh.yml`）だけだった（2026-11-19、`git
 ### 確認
 
 - ja-terms の `check`、`message`、`commit-msg`、`staged` が、`.ja-terms/prh.yml` のあるリポジトリでその規則を当て、作業ツリーの
-  外と辞書の無いリポジトリで共通の辞書だけを当て、worktree でその worktree の辞書を当て、読めない辞書で 2 で終わること。
-  同じ expected の規則は、リポジトリの辞書のものだけが当たること（`crates/ja-terms/tests/repo_dictionary.rs`）
-- claude-hooks の git commit と git merge のルールが、行き先のリポジトリの辞書で止めること（`crates/claude-hooks/tests/merge-ja-terms.sh`）。
-  /retro の `memory-index.sh` が、今のディレクトリのリポジトリの辞書で `TERMS:` を出すこと（`crates/claude-hooks/tests/script_memory_index.rs`）
-- `history-rewrite` の `transform` と `run` が、リポジトリの辞書を当て、`run` の記録に残すこと（`crates/history-rewrite/tests/`）
+  外と辞書の無いリポジトリで共通の辞書だけを当て、下の階層の `.ja-terms/prh.yml` を読まず、worktree でその worktree の辞書を当て、
+  staged がステージした辞書を読み、読めない辞書（YAML の誤り、`imports`、specs の失敗）と作業ツリーの中での git の失敗で 2 で
+  終わること。同じ expected の規則は、リポジトリの辞書のものだけが当たること（`crates/ja-terms/tests/repo_dictionary.rs` の
+  14 件。2026-11-19 に通った）
+- claude-hooks の git commit と git merge のルールが、hook の cwd と違う行き先（`git -C`、`cd`）のリポジトリの辞書で止め、辞書の
+  無いリポジトリでは止めないこと（`crates/claude-hooks/tests/merge-ja-terms.sh`、`commit-message.sh`。package.nix の
+  installCheckPhase と Windows の CI が流す。main の ja-terms では失敗することを手元で確かめた）
+- 本物の git hook の pre-commit と commit-msg、/retro の `memory-index.sh` が、リポジトリの辞書を当て、worktree でその worktree の
+  辞書を読み、壊れた辞書をステージしたコミットを止め、`memory-index.sh` がリポジトリの外で共通の辞書だけを当てること
+  （`nix/tests/ja-terms.sh` の 4d と 7。2026-11-19 に 392 件が通った）
+- `history-rewrite` の `transform` がリポジトリの辞書を重ね、`--dictionary` では重ねず、`--repo-dictionary` で明示でき、読めない
+  辞書で止まり、`run` が `--source` の辞書を記録に残して `sync-worktrees` がそれで直すこと（`crates/history-rewrite/tests/transform.rs`、
+  `sync.rs`）

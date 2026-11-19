@@ -54,7 +54,8 @@ issues: ["#290"]
 
 検査の範囲と置き場所:
 
-- 辞書は `modules/home/parts/ja-terms/prh.yml`。ja-terms がビルドに埋め、hook は ja-terms を Nix store のパスで呼ぶ
+- 辞書は `modules/home/parts/ja-terms/prh.yml`。ja-terms がビルドに埋め、hook は ja-terms を Nix store のパスで呼ぶ。
+  リポジトリに固有の語は、作業ツリーの直下の `.ja-terms/prh.yml` に書き、ja-terms が共通の辞書に重ねる（ADR-0096）
 - 辞書に入れるのは、どの文脈でも 1 つの語に直せるものだけ（prh は 1 つの語にしか直せない）。`効き` は「影響」「効果」
   「効くか」のどれにもなり、nixfiles の ADR-0010 の「設定の効き」を「影響」にすると意味が変わるので入れない
 - 崩れた語を例として書くときは、インラインのコードにする（ja-terms は textlint と同じく Markdown のコードを検査しない）。崩れた語を
@@ -177,3 +178,6 @@ issues: ["#290"]
   検査し、出力を元のパスに戻す」と、commit-msg の「textlint の起動は重いので」も直した。Windows の機械に Node.js を
   入れずに同じ判定にするため（ADR-0085。辞書の形式と意味、検査する範囲は同じ）。拡張子の一覧の置き場の「`git.nix` の
   一覧」も、ja-terms の `TEXT_EXTENSIONS` に直した
+- 2026-11-19: 辞書の置き場の項に、リポジトリに固有の語の辞書（作業ツリーの直下の `.ja-terms/prh.yml`）を共通の辞書に
+  重ねることを足した。前は「辞書は `modules/home/parts/ja-terms/prh.yml`。ja-terms がビルドに埋め、hook は ja-terms を
+  Nix store のパスで呼ぶ」だけ。xlc でしか使わない語を、ほかのリポジトリに当てずに止めるため（ADR-0096）
