@@ -154,7 +154,7 @@ fn scancel_filters(cmd: &Cmd) -> bool {
         })
 }
 
-/// slurm-run.sh の出力をパイプにつなぐか、後ろに表示のコマンドが続くか。後ろのコマンドは、slurm-run.sh と同じか外側の
+/// slurm-run.sh か slurm-wait.sh の出力をパイプにつなぐか、後ろに表示のコマンドが続くか。後ろのコマンドは、slurm-run.sh と同じか外側の
 /// スコープのものだけを数える（サブシェルや `bash -c` の中の slurm-run.sh も、外の `| tail` や `; cat` が隠す）。
 /// 内側のスコープは slurm-run.sh の引数の `$(cat …)` なので数えない
 fn hides_slurm_run_output(shell: &Shell) -> bool {
@@ -198,7 +198,7 @@ impl Rule for GuardSbatch {
         );
         if hides_slurm_run_output(shell) {
             findings.push(Finding::Deny(
-                "slurm-run.sh の出力はパイプや、後ろに ; && || でつないだ表示のコマンド（tail、head、grep、cat）に渡さず、そのまま受けてください（終了コードと TIME: の行が消えるか、表示のコマンドの終了コードになります）。表示は、通知の後に別の呼び出しで読んでください（複数のファイルの末尾は tail -n 3 a.txt b.txt）".to_string(),
+                "slurm-run.sh と slurm-wait.sh の出力はパイプや、後ろに ; && || でつないだ表示のコマンド（tail、head、grep、cat）に渡さず、そのまま受けてください（終了コードと TIME: の行が消えるか、表示のコマンドの終了コードになります）。表示は、通知の後に別の呼び出しで読んでください（複数のファイルの末尾は tail -n 3 a.txt b.txt）".to_string(),
             ));
         }
         // 2 つの検査は別々のエスケープで外す
