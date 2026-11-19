@@ -67,6 +67,11 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
 - `sbatch`、`squeue`、`sacct`、`scontrol`、`scancel`、`git` は子プロセスで呼ぶ。判定（区分の順、並べ直す列、終わった
   State、見積もりの読み方、版の決め方）は、入力の文字列を受けて結果を返す関数にし、単体のテストで確かめる。丸ごとの
   振る舞いは、`claude-hooks` の結合テストの偽のコマンド（`tests/common`）で確かめる
+- Slurm の状態（`squeue`、`sacct`、`scontrol show job`）は、`--json=v0.0.45` で読み、serde_json で解く。r995 の Slurm は
+  26.05.6 で、選べる形の版（data_parser）は v0.0.42〜v0.0.45（2026-11-19 に `squeue --version` と `squeue --json=list` で
+  確かめた）。版を固定するのは、Slurm の更新で形が変わったときに、読み違えずに起動の失敗で気付くため。`--format` の
+  文字の列を読むと、数の読み方（小数や指数の優先度）と区切りの扱いを自分で持つことになる。jobcomp のファイル
+  （`/var/log/slurm/job_completions`）は Slurm が書くテキストなので、文字の列のまま読む
 - 中断（INT、TERM、HUP）は `ctrlc`（`termination` の feature）で受け、後片付けをしてから終わる
   - 後片付けを登録する関数を `claude-hooks` の中に 1 つ置き、用途の名前を付ける（中断のときの後片付け）。`slurm-run` と
     `check-each-commit` はその関数だけを呼び、`ctrlc` の語は関数の中にだけ出す。crate の名前は Ctrl-C だけを指すが、
@@ -100,10 +105,12 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
   `claude/tests/scripts/` を変えるので、1 つがマージされてから次に進む）。全部が移るまで、この ADR は proposed のまま、
   移したものに PR の番号を書く
   1. `slurm-queue`（最も小さく、`slurm-run` が並べ直しで呼ぶ。区分の一覧をここに置く）: #351
-  2. `slurm-run`（投げる、並べ直す、待つ、結果を出す。`ctrlc` をここで足す。振る舞いは変えない）:
-  3. #350 の待つかの判定（形は別の決定として書いてから実装する。失敗が実際に起きているので、`slurm-history` より先）:
-  4. `slurm-history` と `lib/slurm-job.sh`:
-  5. `check-each-commit`（この PR で accepted にする）:
+  2. `slurm-run`（投げる、並べ直す、待つ、結果を出す。`ctrlc` をここで足す。振る舞いは変えない。Slurm の状態は JSON で読む）:
+  3. `slurm-queue` の読み取りを JSON に替える（#351 は sh と同じく `squeue --format` の文字の列を読み、awk の数の読み方を
+     再現している。出力の行は変えない）:
+  4. #350 の待つかの判定（形は別の決定として書いてから実装する。失敗が実際に起きているので、`slurm-history` より先）:
+  5. `slurm-history` と `lib/slurm-job.sh`:
+  6. `check-each-commit`（この PR で accepted にする）:
 
 ### 確認
 
