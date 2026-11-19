@@ -55,6 +55,17 @@ pub fn is_bundle_index(text: &str) -> bool {
     top_level(text).is_some_and(|front| front.contains_key("okf_version"))
 }
 
+/// リポジトリの直下 `root` の `docs/` が OKF のバンドルか。`docs/index.md` が無ければバンドルでない。あるのに読めなければ
+/// 誤りにする（バンドルでないものとして進めると、後の索引の読み取りと判定が食い違う）。
+pub fn is_bundle_at(root: &std::path::Path) -> Result<bool, String> {
+    let path = format!("{BUNDLE_ROOT}/{INDEX}");
+    match std::fs::read_to_string(root.join(&path)) {
+        Ok(text) => Ok(is_bundle_index(&text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("{path}: {e}")),
+    }
+}
+
 /// バンドルの `okf_version` の値（後ろの YAML のコメントと引用符を除く）。バンドルでなければ `None`。
 fn version(files: &BTreeMap<String, String>) -> Option<String> {
     let raw = top_level(files.get(&format!("{BUNDLE_ROOT}/{INDEX}"))?)?.remove("okf_version")?;

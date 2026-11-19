@@ -36,7 +36,7 @@ design-records index
 - `new`: `docs/adr/NNNN-<slug>.md` を、次の番号、フロントマター、必須と推奨の見出しつきで作る。slug は決めたことを動詞で
   始めた英語の kebab-case。番号は CLI が予約のタグ（`adr-NNNN`）を打って振り、origin があれば push する（origin に
   届かなければ、記録を作らずに止まる）。予約して使わなかった番号は欠番にする。docs/issues の issue の番号も
-  `--kind issue` で振る（タグは `issue-NNNN`、表題の行だけを書く。フロントマターと節の形は各リポジトリの README に従う）
+  `--kind issue` で振る（タグは `issue-NNNN`。形は /docs-issues）
 - `renumber`: rebase の後に `check` が番号の重複を示したときに、このブランチで足した記録の番号を振り直す。ファイル名、
   表題、このブランチで足した行の参照を付け替えて 1 つのコミットにするので、作業ツリーの変更（追跡していないファイルを
   含む）を先に片付ける。main から来た行の参照と、振り直す記録のフロントマターの参照は、main の記録を指すので

@@ -82,8 +82,8 @@ OKF は未知のキーと値を許す（SPEC §11）。
 ### 帰結
 
 - 既存の ADR 76 件に `type: ADR` を足す 1 つのコミットが要る（`type` は凍結する部分ではないので、`AMENDABLE_KEYS` に足す）
-- `docs/issues/` の新しい issue には、手で `type: Issue` を足す（`design-records new --kind issue` の下書きは表題の行だけのまま。
-  フロントマターの形は各リポジトリが決める、ADR-0018）
+- `docs/issues/` の新しい issue は、バンドルでは `design-records new --kind issue` が `type: Issue`、`status: open`、`opened`、
+  必須の節を書く（ADR-0018 の「## 変更」の 2026-11-19 の項。#331）
 
 ### 確認
 

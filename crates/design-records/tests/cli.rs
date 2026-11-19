@@ -2893,6 +2893,64 @@ fn new_in_a_bundle_adds_the_index_lines_and_names_them_to_commit() {
 }
 
 #[test]
+fn new_issue_in_a_bundle_writes_the_type_so_that_check_accepts_it() {
+    // バンドルでは、index.md と log.md のほかの文書に type が要る。表題の行だけの issue は、作ったままでは check が止める
+    let t = TempRepo::new("okf-new-issue");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.commit_all("docs: bundle root");
+    let out = t.run(&["new", "--kind", "issue", "fix-bar", "bar を直す"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let issue = t.read("docs/issues/0001-fix-bar.md");
+    assert!(
+        issue.starts_with("---\ntype: Issue\nstatus: open\nopened: 20"),
+        "{issue}"
+    );
+    assert!(
+        issue.ends_with("\n---\n\n# bar を直す\n\n## 問題\n\n## 完了の条件\n\n- [ ]\n\n## 経緯\n"),
+        "{issue}"
+    );
+    assert_eq!(
+        t.read("docs/issues/index.md"),
+        "# issues\n\n* [bar を直す](0001-fix-bar.md)\n"
+    );
+    t.git(&["add", "docs"]);
+    let out = t.run(&["check"]);
+    // 作ったままの issue に、違反も注意も出ない（フロントマターを持つ issue には、節の形の注意が掛かる）
+    assert!(
+        !stderr(&out).contains("0001-fix-bar.md"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
+fn new_issue_stops_before_reserving_when_the_bundle_root_index_cannot_be_read() {
+    // バンドルかどうかを決められないまま番号を予約して、バンドルでない形の issue を書かない
+    let t = TempRepo::new("okf-new-issue-unreadable");
+    fs::create_dir_all(t.dir.join("docs")).unwrap();
+    fs::write(
+        t.dir.join("docs/index.md"),
+        b"---\nokf_version: \"0.3\"\n---\n\xff\n",
+    )
+    .unwrap();
+    t.commit_all("docs: bundle root");
+    let out = t.run(&["new", "--kind", "issue", "fix-bar", "bar を直す"]);
+    assert!(!out.status.success(), "{}", stdout(&out));
+    assert!(stderr(&out).contains("docs/index.md"), "{}", stderr(&out));
+    assert!(!t.dir.join("docs/issues/0001-fix-bar.md").exists());
+    assert_eq!(t.tag_message("issue-0001"), "");
+    // ADR の形はバンドルかどうかで変わらないので、ADR の new は前のとおり番号を予約して記録を書く
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert_eq!(
+        stdout(&out),
+        "docs/adr/0001-use-foo.md\n",
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
 fn new_in_a_bundle_leaves_untracked_drafts_out_of_the_index() {
     let t = TempRepo::new("okf-new-draft");
     t.write("docs/index.md", OKF_ROOT_INDEX);
