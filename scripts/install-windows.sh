@@ -15,12 +15,14 @@ done
 
 hook=$(cygpath -w ~/.claude/bin/claude-hooks.exe)
 ~/.claude/bin/claude-setup sync "$repo"
-~/.claude/bin/claude-setup settings --static claude-settings.json --pre-tool-use "$hook" --stop "$hook"
+~/.claude/bin/claude-setup settings --static claude-settings.json --pre-tool-use "$hook" --stop "$hook" --user-prompt-submit "$hook"
 
 # スキルと hook の修正方法の文は claude-setup と commit-refs を名前で呼ぶ。Claude Code の Bash ツールも ~/.bashrc を読む
 path_line='export PATH="$HOME/.claude/bin:$PATH"'
 if ! grep -qsxF "$path_line" ~/.bashrc; then
   echo "$path_line" >>~/.bashrc
+  # 知らせの文の ~ は、利用者に見せるパスの表記で、展開しない
+  # shellcheck disable=SC2088
   echo "~/.bashrc で ~/.claude/bin を PATH の先頭に足しました。Git Bash を開き直してください"
 fi
 
@@ -31,6 +33,7 @@ top=$(git -C ~/.claude rev-parse --show-toplevel 2>/dev/null) || top=""
 if [ -z "$top" ]; then
   git init -q -b main ~/.claude
 elif ! [ "$top" -ef ~/.claude ]; then
+  # shellcheck disable=SC2088 # 知らせの文の ~ は、利用者に見せるパスの表記で、展開しない
   echo "~/.claude は $top のリポジトリの下にあるので、自動メモリの退避のリポジトリを作りません（docs/windows.md）" >&2
 fi
 if [ -z "$top" ] || [ "$top" -ef ~/.claude ]; then

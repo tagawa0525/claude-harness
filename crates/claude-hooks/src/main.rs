@@ -15,6 +15,9 @@
 //!        claude-hooks stop [claude-dir]
 //!   Stop の hook。自動メモリを claude-dir（省くと ~/.claude）の git の ref refs/memory-backup にコミットする（src/stop.rs。
 //!   ADR-0089）。0 と 1 のほかで終えない（Stop の hook の 2 は応答を続けさせる）
+//!        claude-hooks user-prompt-submit
+//!   UserPromptSubmit の hook。既定ブランチが同じセッションの前のプロンプトから進んでいたら、新しいコミットの件名を出す
+//!   （src/user_prompt_submit.rs。#363）。終了コードは常に 0
 //!        claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>
 //!   head がローカルレビューの記録で覆われているか（記録の後に rebase だけした head を含む）を pre-merge-check と同じ
 //!   判定で確かめる。rebase だけかは cwd の clone で比べる。覆われていれば終了コード 0、いなければ 1、引数の数の誤りは 2、
@@ -38,6 +41,7 @@ mod staged_checks;
 mod stop;
 mod tools;
 mod unwrap;
+mod user_prompt_submit;
 
 use std::io::Read;
 
@@ -53,6 +57,7 @@ fn usage() -> ! {
     eprintln!("       claude-hooks git-hook <hook の名前> [引数]...");
     eprintln!("       claude-hooks script <名前> [引数]...");
     eprintln!("       claude-hooks stop [claude-dir]");
+    eprintln!("       claude-hooks user-prompt-submit");
     eprintln!("       claude-hooks local-review-covers <owner>/<repo> <PR 番号> <head の SHA>");
     eprintln!("rules: {}", rules::names().join(", "));
     eprintln!("{}", OLDER_THAN_CALLER);
@@ -127,6 +132,9 @@ fn main() {
         }
         Some("git-hook") => std::process::exit(git_hook::main(&args[1..])),
         Some("stop") => std::process::exit(stop::main(&args[1..])),
+        Some("user-prompt-submit") if args.len() == 1 => {
+            std::process::exit(user_prompt_submit::main())
+        }
         Some("script") => {
             restore_sigpipe();
             std::process::exit(script::main(&args[1..]))

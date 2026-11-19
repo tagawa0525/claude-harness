@@ -320,3 +320,151 @@ fn a_settings_file_with_a_utf8_bom_is_read() {
     assert_eq!(got["theme"], json!("dark"));
     assert_eq!(got["language"], json!("Japanese"));
 }
+
+/// UserPromptSubmit の登録（現在時刻の `date` と、`--user-prompt-submit` のバイナリの既定ブランチの進みの知らせ。#363）
+fn prompt(command: &str) -> Value {
+    json!({"hooks": [{"type": "command", "command": command, "timeout": 10}]})
+}
+
+/// バイナリが失敗したときに出す行。終了コードは 0 のまま（0 のほかでは Claude Code が標準出力の date の行も文脈に入れない）
+const FAILED: &str = r#"|| echo "claude-hooks user-prompt-submit が終了コード $? で終わりました（既定ブランチの進みを確かめていません）""#;
+
+/// HOOKS を渡したときの登録のコマンド
+fn prompt_command() -> String {
+    format!("date '+現在時刻: %F %H:%M %Z'; '{HOOKS}' user-prompt-submit {FAILED}")
+}
+
+#[test]
+fn the_prompt_hook_runs_the_date_and_the_binary_in_one_registration() {
+    let home = Home::new();
+    let got = home.ok(&json!({}), &["--user-prompt-submit", HOOKS]);
+    assert_eq!(
+        got["hooks"]["UserPromptSubmit"],
+        json!([prompt(&prompt_command())])
+    );
+}
+
+#[test]
+fn the_date_only_registration_is_replaced_by_the_prompt_hook() {
+    // 前の登録（現在時刻だけ）の上に流すと、新しい登録 1 件になる。もう 1 度流しても 1 件のまま
+    let home = Home::new();
+    let other = json!({"hooks": [{"type": "command", "command": "/opt/prompt-hook"}]});
+    home.write_settings(&json!({"hooks": {"UserPromptSubmit": [date(), other]}}));
+    let args = [
+        "--pre-tool-use",
+        HOOKS,
+        "--stop",
+        HOOKS,
+        "--user-prompt-submit",
+        HOOKS,
+    ];
+    let got = home.ok(&json!({}), &args);
+    assert_eq!(
+        got["hooks"]["UserPromptSubmit"],
+        json!([other, prompt(&prompt_command())])
+    );
+    let again = home.ok(&json!({}), &args);
+    assert_eq!(again, got);
+}
+
+#[test]
+fn the_prompt_hook_quotes_a_windows_path_for_git_bash() {
+    // Windows の shell form は Git Bash で走る。`\` を残すよう単一引用符で括り、パスの中の `'` は閉じて書き直す
+    let home = Home::new();
+    let windows = r"C:\Users\o'neil\.claude\bin\claude-hooks.exe";
+    let got = home.ok(&json!({}), &["--user-prompt-submit", windows]);
+    assert_eq!(
+        got["hooks"]["UserPromptSubmit"],
+        json!([prompt(&format!(
+            r"date '+現在時刻: %F %H:%M %Z'; 'C:\Users\o'\''neil\.claude\bin\claude-hooks.exe' user-prompt-submit {FAILED}"
+        ))])
+    );
+}
+
+/// 登録したコマンドを、Claude Code と同じく sh -c で、標準入力に hook の入力を渡して実行する
+#[cfg(unix)]
+fn run_prompt_hook(home: &Home, bin: &Path) -> Output {
+    use std::io::Write;
+    let got = home.ok(&json!({}), &["--user-prompt-submit", bin.to_str().unwrap()]);
+    let command = got["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"session_id":"s","cwd":"/"}"#)
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// body を本文にした偽のバイナリ（空白を含むパスに置き、引用を確かめる）
+#[cfg(unix)]
+fn fake_binary(home: &Home, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = home.0.join("bin dir/claude-hooks");
+    std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    std::fs::write(&bin, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // 並行するテストが書き込みの間に fork した子は、exec まで書き込みに開いた fd を持ち、その間の起動は ETXTBSY で
+    // 失敗する。起動できるまで待つ（本文は引数の probe では何もしないか、2 で終わるだけ）
+    for _ in 0..200 {
+        match Command::new(&bin)
+            .arg("probe")
+            .stdin(std::process::Stdio::null())
+            .output()
+        {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            _ => return bin,
+        }
+    }
+    panic!("{} が 2 秒たっても起動できない（ETXTBSY）", bin.display());
+}
+
+#[cfg(unix)]
+#[test]
+fn the_registered_prompt_hook_prints_the_date_line_then_the_binary_output() {
+    let home = Home::new();
+    // バイナリは hook の入力を標準入力で受ける（date は読まない）
+    let bin = fake_binary(
+        &home,
+        r#"test "$1" = user-prompt-submit && echo "got: $(cat)""#,
+    );
+    let out = run_prompt_hook(&home, &bin);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(lines[0].starts_with("現在時刻: "), "{stdout}");
+    assert_eq!(lines[1], r#"got: {"session_id":"s","cwd":"/"}"#);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failing_binary_keeps_the_date_line_and_says_it_failed() {
+    // UserPromptSubmit の終了コード 2 はプロンプトを止めて消し、0 のほかでは標準出力（date の行）を文脈に入れない。
+    // 前の版のバイナリは知らないサブコマンドに 2 で終わる
+    let home = Home::new();
+    let bin = fake_binary(&home, "echo usage >&2; exit 2");
+    let out = run_prompt_hook(&home, &bin);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(lines[0].starts_with("現在時刻: "), "{stdout}");
+    assert_eq!(
+        lines[1],
+        "claude-hooks user-prompt-submit が終了コード 2 で終わりました（既定ブランチの進みを確かめていません）"
+    );
+}

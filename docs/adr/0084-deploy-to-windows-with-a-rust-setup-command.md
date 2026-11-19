@@ -92,8 +92,9 @@ hook の登録の形:
     form は `~` も `$HOME` も展開しない）。Linux の activation は `~/.claude/bin/` の `claude-hooks`（PreToolUse）と
     `claude-memory-backup`（Stop）を渡す。Windows は `cargo install` の置き場の、入れたバイナリだけを渡す（Stop の
     `claude-memory-backup` は jq と flock に頼る sh で、#101 の段階 8 で移すまで Windows には無い）。UserPromptSubmit
-    の現在時刻（`date` の shell form）は、どちらの OS でも今の文字列のまま登録する（Windows では Git Bash の `date` が
-    走る）
+    は、どちらの OS も同じ 1 件の shell form で、現在時刻の `date` の後に `claude-hooks user-prompt-submit`（既定ブランチの
+    進みの知らせ。#363）を呼ぶ（Windows では Git Bash で走る）。バイナリが失敗しても、`|| echo` で失敗の 1 行を出して
+    終了コード 0 で終える
   - git hook の設置（Windows だけ）: hook のファイルを、Rust のバイナリを呼ぶだけの sh にして置き、`core.hooksPath`
     を向ける。中身の Rust は #101 の段階 4 で書くので、設置もその段階で足す。Linux は `git-hooks.nix` のまま
 - Windows の手順: clone を `git pull` し、`cargo install` で設置のコマンドとほかの crate を入れ、clone のパスを渡して
@@ -106,7 +107,8 @@ hook の登録の形:
   それまでに PreToolUse hook を登録すると、`gitleaks` の無い Windows では機密情報の検査ができず、`block_secret_commit.rs`
   がすべての `git commit` を止める
 - hook の登録: バイナリの hook は exec form にし、Linux も同じ形に揃える（例: `command` に
-  `/home/<user>/.claude/bin/claude-hooks`、`args` に `["pre-tool-use"]`）
+  `/home/<user>/.claude/bin/claude-hooks`、`args` に `["pre-tool-use"]`）。UserPromptSubmit だけは、上の `date` と並べる
+  shell form にする
 
 理由:
 
@@ -124,6 +126,10 @@ hook の登録の形:
 - 案 X は、Bash ツールの呼び出しのたびに走る PreToolUse hook が、Git Bash を経ずに直接起動する。案 Y は、呼び出し
   ごとに Git Bash の起動を 1 つ足し、Windows のパス（`C:\Users\…`）をシェルの文字列に引用して書く必要がある。
   Linux も同じ形にするのは、settings.json の更新を OS で分けないため
+- UserPromptSubmit を shell form にするのは、`date` の行を両方の OS で同じバイトのまま出すため。Git Bash の起動は前から
+  `date` が払っているので、プロンプトごとの起動は増えない。終了コードを常に 0 にするのは、前の版の `claude-hooks` が知らない
+  サブコマンドに 2 で終わり、UserPromptSubmit の 2 はプロンプトを止めて消し、0 のほかでは標準出力の `date` の行も文脈に
+  入らないため（<https://code.claude.com/docs/en/hooks>、2026-11-20 に閲覧）
 
 ### 帰結
 
@@ -183,3 +189,10 @@ hook の登録の形:
   `claude-memory-backup` は jq と flock に頼る sh で、#101 の段階 8 で移すまで Windows には無い）」。退避の中身を
   `claude-hooks stop` に移し、Windows にも置けるようになったため。前の `claude-memory-backup` の登録は `claude-setup` が外す
 - 2026-11-16: 同期の「消さない」を、ソースから消えた物だけを消す形に変えた（ADR-0091）。前は「commands は既存を残す、消さない、引数なしは既定の clone を `pull --ff-only` してからコピーする」。消さないと、リポジトリから消したスクリプトが `~/.claude/scripts` に残り続けたため（#24）。手で足したファイルは一覧に載らないので残る
+- 2026-11-20: UserPromptSubmit の登録を、現在時刻の `date` の後に `claude-hooks user-prompt-submit` を呼ぶ 1 件の shell form に
+  した（`claude-setup settings --user-prompt-submit`。#363）。前は「UserPromptSubmit の現在時刻（`date` の shell form）は、
+  どちらの OS でも今の文字列のまま登録する（Windows では Git Bash の `date` が走る）」と「バイナリの hook は exec form にし、
+  Linux も同じ形に揃える」。長く続くセッションが、ほかのセッションの既定ブランチへのマージに気付くよう、プロンプトごとに
+  知らせを足したため。比べた案の exec form（`claude-hooks` が時刻の行も作る）は採らなかった。`claude-hooks` の依存で地方時を
+  書けるのは unix だけの `libc`（`localtime_r` と `strftime`）で、Windows には別の実装が要り、`%Z` が Git Bash の `date` と
+  同じ表記になるかを確かめていない（行が OS で変わりうる）
