@@ -2893,6 +2893,28 @@ fn new_in_a_bundle_adds_the_index_lines_and_names_them_to_commit() {
 }
 
 #[test]
+fn new_issue_in_a_bundle_writes_the_type_so_that_check_accepts_it() {
+    // バンドルでは、index.md と log.md のほかの文書に type が要る。表題の行だけの issue は、作ったままでは check が止める
+    let t = TempRepo::new("okf-new-issue");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.commit_all("docs: bundle root");
+    let out = t.run(&["new", "--kind", "issue", "fix-bar", "bar を直す"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/issues/0001-fix-bar.md"),
+        "---\ntype: Issue\nstatus: open\n---\n\n# bar を直す\n"
+    );
+    assert_eq!(
+        t.read("docs/issues/index.md"),
+        "# issues\n\n* [bar を直す](0001-fix-bar.md)\n"
+    );
+    t.git(&["add", "docs"]);
+    let out = t.run(&["check"]);
+    assert!(!stderr(&out).contains("error:"), "{}", stderr(&out));
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
 fn new_in_a_bundle_leaves_untracked_drafts_out_of_the_index() {
     let t = TempRepo::new("okf-new-draft");
     t.write("docs/index.md", OKF_ROOT_INDEX);
