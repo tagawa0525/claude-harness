@@ -46,6 +46,9 @@ static NAME: LazyLock<Regex> =
 static CPUS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[1-9][0-9]*$").expect("正規表現は正しい"));
 
+/// 終わった後に出す、ログの末尾の行数
+const TAIL_LINES: usize = 20;
+
 const NEXT_MARKED: &str = "NEXT: TIME 行に印があるので、この時間（elapsed も、プログラムが自分で測った時間も）は記録に使わない。時間を記録する計算なら、-c を付けずに区分 timed で投げ直して測る（時間を記録しない計算は投げ直さない）";
 
 /// 投げるジョブ（引数を確かめた後）
@@ -294,9 +297,9 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
         }
     };
     status = final_status(status, &state);
-    if let Ok(text) = file_tail(&log, 20) {
+    if let Ok(text) = file_tail(&log, TAIL_LINES) {
         let mut out = std::io::stdout().lock();
-        let _ = out.write_all(tail_lines(&text, 20));
+        let _ = out.write_all(tail_lines(&text, TAIL_LINES));
         let _ = out.flush();
     }
     if marked {
@@ -849,24 +852,26 @@ fn exit_line(status: i32, state: &JobState) -> String {
     }
 }
 
-/// path の末尾の、n 行を含むだけのバイト（大きなログを全部読まないよう、後ろから塊で読む）
+/// path の末尾の、n 行を含むだけのバイト（大きなログを全部読まないよう、後ろから塊で読む）。読む間にログが縮んだら、
+/// 読めた所までを返す
 fn file_tail(path: &str, n: usize) -> std::io::Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
     const CHUNK: u64 = 64 * 1024;
     let mut file = std::fs::File::open(path)?;
     let mut end = file.seek(SeekFrom::End(0))?;
-    let mut tail = Vec::new();
+    let mut chunks = std::collections::VecDeque::new();
+    let mut newlines = 0;
     // 末尾の改行の後は行に数えないので、改行が n 個を超えれば n 行がそろう
-    while end > 0 && tail.iter().filter(|b| **b == b'\n').count() <= n {
+    while end > 0 && newlines <= n {
         let start = end.saturating_sub(CHUNK);
-        let mut chunk = vec![0; (end - start) as usize];
+        let mut chunk = Vec::new();
         file.seek(SeekFrom::Start(start))?;
-        file.read_exact(&mut chunk)?;
-        chunk.extend_from_slice(&tail);
-        tail = chunk;
+        (&mut file).take(end - start).read_to_end(&mut chunk)?;
+        newlines += chunk.iter().filter(|b| **b == b'\n').count();
+        chunks.push_front(chunk);
         end = start;
     }
-    Ok(tail)
+    Ok(chunks.into_iter().flatten().collect())
 }
 
 /// text の最後の n 行（n は 1 以上。tail -n と同じく、末尾の改行の後は行に数えない）
