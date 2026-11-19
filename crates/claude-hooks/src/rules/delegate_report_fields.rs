@@ -308,4 +308,54 @@ mod tests {
         let findings = check("SendMessage", &report);
         assert!(!deny_reason(&findings).contains("ADR-"));
     }
+
+    #[test]
+    fn an_unclosed_fence_does_not_reopen_a_quote_in_a_closed_code_block() {
+        let message =
+            "前の報告:\n\n```markdown\n## 親が先に読む要点\n- x\n```\n\n```bash で実行した\n";
+        assert!(check("SendMessage", message).is_empty());
+    }
+
+    #[test]
+    fn qualifier_may_nest_one_level_of_parentheses() {
+        let report = REPORT
+            .replace(
+                "## 親が先に読む要点",
+                "## 親が先に読む要点（ADR-0098（案）の分）",
+            )
+            .replace(
+                "## 外したもの、後回しにしたもの",
+                "## 外したもの、後回しにしたもの（PR (1) の分）",
+            );
+        assert!(check("SendMessage", &report).is_empty());
+        let unfielded = REPORT
+            .replace("## 外したもの、後回しにしたもの\nなし\n\n", "")
+            .replace(
+                "## 親が先に読む要点",
+                "## 親が先に読む要点（ADR-0098（案）の分）",
+            );
+        assert_eq!(check("SendMessage", &unfielded).len(), 1);
+    }
+
+    #[test]
+    fn atx_heading_variants_count() {
+        let unfielded = REPORT.replace("## 外したもの、後回しにしたもの\nなし\n\n", "");
+        for summary in ["## 親が先に読む要点 ##", "##\t親が先に読む要点"] {
+            let report = unfielded.replace("## 親が先に読む要点", summary);
+            assert_eq!(check("SendMessage", &report).len(), 1, "{summary}");
+        }
+        let closed = REPORT.replace(
+            "## 外したもの、後回しにしたもの",
+            "## 外したもの、後回しにしたもの ##",
+        );
+        assert!(check("SendMessage", &closed).is_empty());
+    }
+
+    #[test]
+    fn backquotes_indented_four_spaces_do_not_open_a_fence() {
+        let report = REPORT
+            .replace("- 完成の形を満たした", "    ```\n    字下げのコード")
+            .replace("なし\n", "なし\n    ```\n");
+        assert!(check("SendMessage", &report).is_empty());
+    }
 }
