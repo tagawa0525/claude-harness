@@ -36,7 +36,8 @@ pub fn place_fake_tool(dest: &Path) {
         .unwrap_or_else(|e| panic!("{} にリンクできない: {e}", dest.display()));
 }
 
-/// sh に書くパス（Windows の `\` は sh の中で消えるので `/` にする）
+/// sh に書くパスと、git の書くパス（Windows でも `/` で区切る）と比べるパス。Windows の `Path::display()` は `\` で
+/// 区切り、`\` は sh の中で消えるので `/` にする（tests/test_source_paths.rs が、format! に display() を直に使う形を止める）
 #[allow(dead_code)]
 pub fn sh_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")

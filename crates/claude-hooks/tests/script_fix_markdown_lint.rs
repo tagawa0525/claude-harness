@@ -69,10 +69,9 @@ fn a_fixed_file_is_reported_as_fixed_and_a_clean_one_as_ok() {
     let good = dir.write("good.md", b"# ok\n");
     let out = fix(&[bad.as_os_str(), good.as_os_str()]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        stdout(&out),
-        format!("Fixed: {}\nOK: {}\n", bad.display(), good.display())
-    );
+    // 出力は渡したパスをそのまま返すので、渡した文字列（Windows では \ 区切り）と比べる
+    let (bad, good) = (bad.to_str().unwrap(), good.to_str().unwrap());
+    assert_eq!(stdout(&out), format!("Fixed: {bad}\nOK: {good}\n"));
 }
 
 #[test]
