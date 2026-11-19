@@ -12,11 +12,6 @@
 
 set -euo pipefail
 
-# 本物の git hook が呼ぶ ja-terms は、共通の辞書を claude-setup sync が配ったホームの下から読む。このテストは配らないので、
-# ソースの辞書を渡す（ADR-0097）
-JA_TERMS_COMMON_DICTIONARY="$(git rev-parse --show-toplevel)/crates/ja-terms/prh.yml"
-export JA_TERMS_COMMON_DICTIONARY
-
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
