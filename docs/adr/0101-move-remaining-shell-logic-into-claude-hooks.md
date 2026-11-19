@@ -126,7 +126,7 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
   3. `slurm-queue` の読み取りを JSON に替える（#351 は sh と同じく `squeue --format` の文字の列を読み、awk の数の読み方を
      再現している。出力の行は変えない）: #367（#362 の出し直し）
   4. #350 の待つかの判定（形は別の決定として書いてから実装する。失敗が実際に起きているので、`slurm-history` より先）: #371
-  5. `slurm-history` と `lib/slurm-job.sh`（この PR で accepted にする）:
+  5. `slurm-history` と `lib/slurm-job.sh`（この PR で accepted にする）: #379
   6. `check-each-commit`: #369
 
 ### 確認
