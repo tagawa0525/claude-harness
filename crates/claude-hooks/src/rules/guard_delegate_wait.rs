@@ -22,6 +22,7 @@ use crate::output::Finding;
 use crate::script::delegate_wait::{self, LIMIT_SECS, Outlook};
 use crate::script::slurm;
 use crate::shell::{Cmd, Piece, Shell};
+use crate::unwrap::basename;
 
 pub struct GuardDelegateWait;
 
@@ -74,8 +75,17 @@ fn total_estimate(shell: &Shell) -> Result<u64, String> {
     if runs.is_empty() || shell.commands().iter().any(|c| c.opaque) {
         return Err("実行するプログラムを字面から決められない".to_string());
     }
-    if shell.has_loop() {
-        return Err("繰り返しの中で投げる本数が字面から決まらない".to_string());
+    // xargs と watch はほどいた中のコマンドを何度も実行する（parallel はほどかないので、実行するプログラムを決められない形になる）
+    let repeated = runs.iter().any(|c| {
+        c.wrappers
+            .iter()
+            .any(|w| matches!(basename(w), "xargs" | "watch"))
+    });
+    if repeated || shell.may_repeat() {
+        return Err(
+            "繰り返し（for、while、関数、xargs、watch）の中で投げる本数が字面から決まらない"
+                .to_string(),
+        );
     }
     runs.iter()
         .map(|cmd| estimate_of(cmd))
@@ -167,7 +177,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: xargs、watch、関数の中の slurm-run.sh を 1 本と数える"]
     fn an_estimate_not_fixed_by_the_text_is_unknown() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         for command in [

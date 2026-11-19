@@ -330,7 +330,6 @@ fn several_jobs_end_once_with_their_lines_in_number_order_and_fail_if_one_fails(
 }
 
 #[test]
-#[ignore = "RED: 先頭の 0 を外さない"]
 fn a_job_number_with_leading_zeros_is_the_same_job() {
     let s = Slurm::new();
     std::fs::write(s.log(), "job output\n").unwrap();
@@ -351,7 +350,6 @@ fn a_job_number_with_leading_zeros_is_the_same_job() {
 }
 
 #[test]
-#[ignore = "RED: 起動できない scontrol を読み直し続ける"]
 fn a_missing_scontrol_fails_at_once_instead_of_waiting_forever() {
     let s = Slurm::new();
     std::fs::remove_file(s.root.join("bin/scontrol")).unwrap();

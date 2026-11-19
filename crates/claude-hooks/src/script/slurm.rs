@@ -587,21 +587,30 @@ pub struct ControllerJob {
     pub exit: Option<i32>,
 }
 
+/// 制御のデーモンのジョブを読めなかった理由
+#[derive(Debug)]
+pub enum ControllerError {
+    /// scontrol を起動できない（読み直しても変わらない）
+    Spawn(String),
+    /// scontrol が失敗した、出力を読めない（一時の不調でありうる）
+    Failed(String),
+}
+
 /// 制御のデーモンが覚えているジョブ。覚えていなければ（知らない番号と、終わってから MinJobAge を過ぎたものは、scontrol が
-/// 空の jobs を 0 で返す）None。scontrol が失敗した、出力を読めないなら理由（一時の失敗を、覚えていないと読み違えない）
-pub fn controller_job(job: &str) -> Result<Option<ControllerJob>, String> {
+/// 空の jobs を 0 で返す）None。読めなければ理由（一時の失敗を、覚えていないと読み違えない）
+pub fn controller_job(job: &str) -> Result<Option<ControllerJob>, ControllerError> {
     let out = Command::new("scontrol")
         .args(["show", "job", job, JSON])
         .stderr(Stdio::null())
         .output()
-        .map_err(|e| format!("scontrol を起動できない: {e}"))?;
+        .map_err(|e| ControllerError::Spawn(format!("scontrol を起動できない: {e}")))?;
     if !out.status.success() {
-        return Err(format!(
+        return Err(ControllerError::Failed(format!(
             "scontrol が終了コード {} で失敗した",
             crate::child::exit_code(out.status)
-        ));
+        )));
     }
-    scontrol_job(&String::from_utf8_lossy(&out.stdout), job)
+    scontrol_job(&String::from_utf8_lossy(&out.stdout), job).map_err(ControllerError::Failed)
 }
 
 fn scontrol_job(json: &str, job: &str) -> Result<Option<ControllerJob>, String> {

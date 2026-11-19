@@ -76,7 +76,7 @@ pub fn main(args: &[String]) -> i32 {
     code
 }
 
-/// 番号（重ねたものは 1 つに）を数の順に。番号でないものがあれば使い方
+/// 番号（重ねたものは 1 つに。先頭の 0 は外す）を数の順に。番号でないものがあれば使い方
 fn parse_args(args: &[String]) -> Result<Vec<String>, String> {
     if args.is_empty() {
         return Err(USAGE.to_string());
@@ -87,10 +87,17 @@ fn parse_args(args: &[String]) -> Result<Vec<String>, String> {
     {
         return Err(format!("ERROR: ジョブの番号は数: '{bad}'\n{USAGE}"));
     }
-    let mut jobs: Vec<String> = args.to_vec();
-    jobs.sort_by_key(|j| (j.len(), j.clone()));
+    // scontrol と sacct の job_id は数で、`0962` の文字列とは一致しないので、数に直す
+    let mut jobs: Vec<u64> = args
+        .iter()
+        .map(|a| {
+            a.parse()
+                .map_err(|_| format!("ERROR: ジョブの番号が大きすぎる: '{a}'\n{USAGE}"))
+        })
+        .collect::<Result<_, _>>()?;
+    jobs.sort_unstable();
     jobs.dedup();
-    Ok(jobs)
+    Ok(jobs.into_iter().map(|j| j.to_string()).collect())
 }
 
 /// 待つ間隔（SLURM_WAIT_INTERVAL。テストが短くする）
@@ -134,11 +141,16 @@ fn run(waited: &mut [Waited]) -> i32 {
                 // 会計の記録の終了コードを使う（終わりの State で、成功以外は finish が 1 にする）
                 Ok(None) => w.ended = Some(None),
                 // 一時の失敗は、sbatch --wait と同じく読み直す（覚えていないと読むと、走っているジョブを終わったことにする）
-                Err(reason) => {
+                Err(slurm::ControllerError::Failed(reason)) => {
                     eprintln!(
                         "WARN: ジョブ {} の状態を読めない。読み直す: {reason}",
                         w.job
                     );
+                }
+                // 起動できないものは読み直しても変わらないので、待たずに失敗する（終わらない background を残さない）
+                Err(slurm::ControllerError::Spawn(reason)) => {
+                    eprintln!("ERROR: {reason}");
+                    return 1;
                 }
             }
         }
@@ -160,27 +172,35 @@ fn run(waited: &mut [Waited]) -> i32 {
 /// 終わったジョブ 1 本の終わりの行を出し、そのジョブの終了コードを返す
 fn finish_one(w: &mut Waited, record_wait: (u32, std::time::Duration)) -> i32 {
     let job = w.job.as_str();
+    // 会計の記録は、要るときに 1 度だけ読む（終わりの State と時間は、finish が届くまで読み直す）
+    let mut record = None;
     let (log, comment) = match w.origin.take() {
         Some((_, log, comment)) => (log, comment),
         None => {
-            let Some(record) = slurm::accounting_record(job) else {
+            let Some(found) = slurm::accounting_record(job) else {
                 eprintln!(
                     "ERROR: ジョブ {job} が制御のデーモンにも会計の記録にも無い（番号の誤りか、記録がまだ届いていない）"
                 );
                 lock(&w.progress).report_unfinished(1);
                 return 1;
             };
-            announce(job, &record.name, &record.log, &w.progress);
+            announce(job, &found.name, &found.log, &w.progress);
             eprintln!(
                 "WARN: ジョブ {job} は終わってから時間がたち、投げたときのコメントを読めない。TIME: の行の区分、参照、目的は {UNKNOWN}"
             );
-            (record.log, String::new())
+            let log = found.log.clone();
+            record = Some(found);
+            (log, String::new())
         }
     };
     let status = w
         .ended
         .flatten()
-        .or_else(|| slurm::accounting_record(job).and_then(|r| r.exit))
+        .or_else(|| {
+            record
+                .or_else(|| slurm::accounting_record(job))
+                .and_then(|r| r.exit)
+        })
         .unwrap_or(0);
     slurm_run::finish(
         job,
