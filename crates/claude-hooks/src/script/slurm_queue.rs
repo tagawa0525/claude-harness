@@ -212,6 +212,11 @@ impl<'a> Job<'a> {
         self.queued.phase == Phase::Pending
     }
 
+    /// 既定のパーティション（main）で待っている
+    fn pending_main(&self) -> bool {
+        self.pending() && self.queued.partition_kind == Partition::Default
+    }
+
     /// 走る順の鍵（パーティション、段階、優先度の高い順、番号の先頭の数）
     fn sort_key(&self) -> (u8, u8, std::cmp::Reverse<u64>, u64) {
         let job = self.queued;
@@ -287,8 +292,8 @@ fn same_job(id: &str, first: &str) -> bool {
 }
 
 /// 走る順に並べたジョブ。鍵が同じ（配列か異種のジョブの、同じ番号の部分）なら番号の文字の順で、ほかの番号を先頭に
-/// 含む番号を先に置く（`12_10` を `12_1` より先）。一覧の行のバイトの順で比べていた slurm-queue.sh と同じ順にする
-/// （ADR-0101 は出力の行を変えない）
+/// 含む番号を先に置く（`12_10` を `12_1` より先）。番号だけで比べないのは、`squeue --format` の一覧の行（番号の後ろが
+/// 欄の区切りの `|`）をバイトの順で並べたときと同じ順にするため（ADR-0101 は slurm-queue.sh の出力の行を変えない）
 fn running_order(queue: &[QueuedJob]) -> Vec<Job<'_>> {
     let mut jobs: Vec<Job> = queue.iter().map(Job::new).collect();
     jobs.sort_by_cached_key(|job| (job.sort_key(), format!("{}|", job.id())));
@@ -303,10 +308,7 @@ fn notes(jobs: &[Job]) -> Vec<&'static str> {
     }
     let unclassed: Vec<&Job> = jobs.iter().filter(|j| j.class.is_none()).collect();
     // 並べ直されずに後ろに回るのは、待っている main のジョブだけ
-    if unclassed
-        .iter()
-        .any(|j| j.pending() && j.queued.partition_kind == Partition::Default)
-    {
+    if unclassed.iter().any(|j| j.pending_main()) {
         notes.push(NOTE_UNCLASSED_BEHIND);
     } else if !unclassed.is_empty() {
         notes.push(NOTE_UNCLASSED);
@@ -342,7 +344,7 @@ fn plan<'a>(jobs: &[Job<'a>], first: &str) -> Plan<'a> {
     let mut unclassed = Vec::new();
     let mut unclassed_ahead = false;
     for job in jobs {
-        if !job.pending() || job.queued.partition_kind != Partition::Default || job.unmovable() {
+        if !job.pending_main() || job.unmovable() {
             continue;
         }
         let Some((class, rank)) = job.class else {
