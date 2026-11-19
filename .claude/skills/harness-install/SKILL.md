@@ -32,5 +32,5 @@ git config --global core.hooksPath                  # ~/.config/git/hooks
 
 - hook が効いていること: Claude Code のセッションで、止められるはずのコマンドを 1 つ試す（`git add -A` は guard-git-add が
   拒否する）
-- 辞書が効いていること: 一時のファイルに、辞書（`crates/ja-terms/prh.yml`）の specs のうち `from` と `to` が違う例の `from` を 1 つ書き、`ja-terms check <ファイル>` が止めることを見る
+- 辞書が効いていること: 一時のファイルに、辞書（`crates/ja-terms/prh.yml`）の specs のうち `from` と `to` が違う例の `from` を 1 つ書き、`~/.claude/bin/ja-terms check <ファイル>` が止めることを見る
 - どれかが無いか効かなければ、入れる手順のうち、そのファイルを置くステップ（上の入口の文書）に戻る

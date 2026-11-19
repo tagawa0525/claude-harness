@@ -17,7 +17,7 @@ description: claude-harness の PR をマージした後に、lock の更新、r
 ## 手順
 
 1. 2 つのリポジトリが main にいて、ハーネスが origin/main と一致していることを確かめる（`nix-rebuild update` は nixfiles が
-   main でないと止まる）。どちらの出力も `## main...origin/main` だけで、`[ahead` も `[behind` も無いこと
+   main でないと止まる）。ハーネスの出力は `## main...origin/main` だけで、`[ahead` も `[behind` も無いこと。nixfiles は main にいればよい（遅れは `nix-rebuild update` が自分で取り込む）
 
    ```bash
    git -C ~/nix/claude-harness fetch -q && git -C ~/nix/claude-harness status -sb
@@ -33,8 +33,9 @@ description: claude-harness の PR をマージした後に、lock の更新、r
    - lock が既に進んでいれば「No changes to commit」で終わる（正常）
    - rebuild が止まり（下の「止まったとき」）、マージした変更が `claude-setup sync` の配るもの（`claude/`、`config/`、
      共通の辞書 `crates/ja-terms/prh.yml`）だけなら、`claude-sync ~/nix/claude-harness` だけを実行して先に効かせ、rebuild は
-     原因を直してからやり直す。ほかの `crates/` か `nix/` の変更を含むときは、スキルと hook の版がずれるので、rebuild が
-     通るまで claude-sync も実行しない
+     原因を直してからやり直す。lock が古い間に rebuild すると、activation が lock の版に戻すので、やり直すまでほかの
+     rebuild を挟まない。ほかの `crates/` か `nix/` の変更を含むときは、スキルと hook の版がずれるので、rebuild が通るまで
+     claude-sync も実行しない
 3. 確かめる
 
    ```bash
