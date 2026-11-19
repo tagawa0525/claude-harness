@@ -42,7 +42,7 @@ impl Dir {
     }
 
     /// wait と同じだが、時刻 now（UNIX の秒）から始めた時計で呼ぶ。呼び出しは眠らずに 1 秒ずつ時計を進めるので、
-    /// 結果は壁の時計の進み（負荷での遅れ、秒の切り上げ）によらない
+    /// 結果は壁の時計の進み（負荷での遅れ、秒の切り捨て）によらない
     fn wait_at(&self, now: u64, step: u64, report: u64, args: &[&str]) -> (i32, String) {
         self.wait_in(&self.root.join("tmp"), Some(now), step, report, args)
     }
@@ -109,7 +109,8 @@ fn an_injected_time_takes_the_steps_without_sleeping() {
     let (code, out) = d.wait_at(1000, 270, 3300, &["/wt/fake", &log]);
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("WAIT: 途中の報告から 4 分"), "{out}");
-    assert!(start.elapsed() < Duration::from_secs(5), "{out}");
+    // 1 歩の 270 秒より十分に短い（負荷の下でも起動と 270 回の見回りは収まる）
+    assert!(start.elapsed() < Duration::from_secs(60), "{out}");
 }
 
 #[test]
