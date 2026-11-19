@@ -14,6 +14,9 @@ pub const BUNDLE_ROOT: &str = "docs";
 const INDEX: &str = "index.md";
 const LOG: &str = "log.md";
 
+/// 検査の規則を知っている `okf_version` の値。
+const KNOWN_VERSIONS: [&str; 2] = ["0.2", "0.3"];
+
 /// フロントマターの字下げのない `key: value`（引用符は外す）。フロントマターが無いか閉じていなければ `None`。
 fn top_level(text: &str) -> Option<BTreeMap<String, String>> {
     let mut lines = text.lines();
@@ -210,6 +213,20 @@ pub fn check_bundle(files: &BTreeMap<String, String>) -> Vec<Finding> {
         return Vec::new();
     };
     let mut out = Vec::new();
+    // OKF §12 は consumer に知らない版のバンドルを拒まないよう求めるが、これは書く側のコミットの検査で、知らない版に
+    // 今の規則を黙って当てると合否を誤る。違反にして、ほかの検査は v0.3 の規則で続ける
+    if !KNOWN_VERSIONS.contains(&version.as_str()) {
+        out.push(finding(
+            Severity::Error,
+            &format!("{BUNDLE_ROOT}/{INDEX}"),
+            None,
+            format!(
+                "design-records knows the rules of `okf_version` {} but not {version:?}; fix the \
+                 version or update design-records",
+                KNOWN_VERSIONS.map(|v| format!("{v:?}")).join(" and ")
+            ),
+        ));
+    }
     for (path, text) in files {
         match name_of(path) {
             INDEX => check_index_front(path, text, &version, &mut out),
