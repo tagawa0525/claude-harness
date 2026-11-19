@@ -96,7 +96,7 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
 - 実装は、スクリプトごとに 1 つの PR で、次の順に進める（どれも `crates/claude-hooks/src/script/` と
   `claude/tests/scripts/` を変えるので、1 つがマージされてから次に進む）。全部が移るまで、この ADR は proposed のまま、
   移したものに PR の番号を書く
-  1. `slurm-queue`（最も小さく、`slurm-run` が並べ直しで呼ぶ。区分の一覧をここに置く）:
+  1. `slurm-queue`（最も小さく、`slurm-run` が並べ直しで呼ぶ。区分の一覧をここに置く）: #351
   2. `slurm-run`（投げる、並べ直す、待つ、結果を出す。`ctrlc` をここで足す。振る舞いは変えない）:
   3. #350 の待つかの判定（形は別の決定として書いてから実装する。失敗が実際に起きているので、`slurm-history` より先）:
   4. `slurm-history` と `lib/slurm-job.sh`:
