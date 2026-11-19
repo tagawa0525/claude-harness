@@ -12,7 +12,8 @@ let
   # 文書の中のコミットの番号の付け直し（ADR-0012）。post-rewrite hook の中身は claude-hooks が包むものを呼ぶ。
   # 手で呼べるよう PATH に入れる
   commit-refs = pkgs.callPackage ../crates/commit-refs/package.nix { };
-  # 履歴の中の崩れた語を辞書（../crates/ja-terms/prh.yml）で直し、番号を commit-refs で付け直す（ADR-0045）。
+  # 履歴の中の崩れた語を辞書（../crates/ja-terms/prh.yml を claude-setup sync が ~/.config/ja-terms/prh.yml に配ったもの。
+  # ADR-0097）で直し、番号を commit-refs で付け直す（ADR-0045）。
   # 手で呼ぶツールなので PATH に入れる
   history-rewrite = pkgs.callPackage ../crates/history-rewrite/package.nix { inherit commit-refs; };
   # git hook の中身（ADR-0086）。PreToolUse hook と同じバイナリ（claude-code.nix）
