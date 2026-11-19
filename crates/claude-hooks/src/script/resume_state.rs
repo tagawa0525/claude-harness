@@ -7,13 +7,15 @@
 //! - `== worktrees`: `<パス> <ブランチ> [dirty] [session=<Claude-Session>]`（先端のコミットの trailer。無ければ省く）
 //! - `== prs`: gh pr list の開いている PR（GitHub の URL を持つ remote と gh があるときだけ。remote の名前は問わない）
 //! - `== slurm`: squeue の自分のジョブ
-//! - `== issues`: docs/issues の status: open の issue（blocked-by があれば添える）。blocked-by の `#NNNN` の相手を
+//! - `== issues`: docs/issues の status: open の issue のうち、下の印の付くものを 1 行ずつ（blocked-by があれば添える）。
+//!   印の無いものは行を出さず、`unmarked=<数> 一覧（…）: <コマンド>` の 1 行に数と、一覧を出すコマンドを出す
+//!   （印の無いものが無ければ出さない。何も出す行が無ければ `(なし)`）。blocked-by の `#NNNN` の相手を
 //!   docs/issues の同じ番号の記録で引き、閉じていない相手（duplicate で閉じた相手は開いている重複先）を `blocked=`、閉じたかを確かめられない相手（記録が無い、
 //!   status が open でも closed でもない、duplicate の重複先を読めない、たどると自分に戻る、`#NNNN` の形でない、
 //!   blocked-by を読めない）を `blocker-unknown=` で添え、読めないファイルは `unreadable=` で出し、印があれば節の最後に、
 //!   その印の issue の扱いを `NEXT:` で出す。status、resolution（`duplicate: <理由>` も duplicate）、番号、参照の読み方は
 //!   design-records に合わせる。docs/issues が
-//!   あれば、一覧の後に `open-count now=<作業ツリーの open の数 | unknown（読めないファイルがある）>
+//!   あれば、印の行と unmarked= の後に `open-count now=<作業ツリーの open の数 | unknown（読めないファイルがある）>
 //!   14d-ago=<HEAD の第 1 親の履歴で 14 日より前の最も新しいコミットの数 | unknown（理由）> diff=<差>`（どちらかが unknown
 //!   なら diff は出さない）を出す。数を知らせるだけで、増えていても行動は指示しない
 //!
@@ -315,7 +317,7 @@ fn issues(root: &Path) {
     }
     let (mut found, mut any_blocked, mut any_unknown, mut any_unreadable) =
         (false, false, false, false);
-    let mut open_now = 0usize;
+    let (mut open_now, mut unmarked) = (0usize, 0usize);
     for e in &entries {
         let text = match &e.text {
             Ok(text) => text,
@@ -375,11 +377,22 @@ fn issues(root: &Path) {
             line.push_str(&format!(" blocker-unknown={}", unknown.join(",")));
             any_unknown = true;
         }
+        open_now += 1;
+        // 印の無い issue は着手を止めないので、行を出さずに数える（一覧は数百行になり、再開のたびに文脈に入る）
+        if open.is_empty() && unknown.is_empty() {
+            unmarked += 1;
+            continue;
+        }
         println!("{line}");
         found = true;
-        open_now += 1;
     }
-    if !found {
+    if unmarked > 0 {
+        // status は design-records と同じ読み方で読む（grep '^status: open$' は、フロントマターの外の行に当たり、
+        // 引用符、末尾の空白、コメントの付いた値を落とす）
+        println!(
+            "unmarked={unmarked} 一覧（リポジトリの root で実行）: for f in {dir}/*.md; do if [ \"$(design-records status < \"$f\")\" = open ]; then echo \"$f\"; fi; done"
+        );
+    } else if !found {
         println!("(なし)");
     }
     // 読めないファイルは open かを決められないので、今の数を決めず、比べない（過去の数は git の中身を全部数える）

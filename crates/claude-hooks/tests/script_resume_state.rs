@@ -176,7 +176,6 @@ fn a_tip_without_a_session_trailer_shows_no_session() {
 /// 印の無い open の issue の行に続く、一覧を出すコマンド（status を design-records と同じ読み方で読む）
 const LIST: &str = "一覧（リポジトリの root で実行）: for f in docs/issues/*.md; do if [ \"$(design-records status < \"$f\")\" = open ]; then echo \"$f\"; fi; done";
 
-#[ignore = "RED: 印の無い open の issue を数だけにする実装の前"]
 #[test]
 fn unmarked_open_issues_are_counted_with_the_list_command_instead_of_listed() {
     let repo = Repo::new();
@@ -199,7 +198,6 @@ fn unmarked_open_issues_are_counted_with_the_list_command_instead_of_listed() {
     );
 }
 
-#[ignore = "RED: 印の無い open の issue を数だけにする実装の前"]
 #[test]
 fn only_the_open_issues_are_counted() {
     let repo = Repo::new();
@@ -271,7 +269,6 @@ fn a_github_remote_of_any_name_lists_the_open_prs() {
     assert_eq!(section(&text, "prs"), "#7 feat/x title\n");
 }
 
-#[ignore = "RED: 印の無い open の issue を数だけにする実装の前"]
 #[test]
 fn an_issue_blocked_by_an_open_issue_is_marked_blocked_with_the_next_step() {
     let repo = Repo::new();
@@ -296,7 +293,6 @@ fn an_issue_blocked_by_an_open_issue_is_marked_blocked_with_the_next_step() {
     );
 }
 
-#[ignore = "RED: 印の無い open の issue を数だけにする実装の前"]
 #[test]
 fn an_issue_whose_blockers_are_all_closed_is_not_marked() {
     let repo = Repo::new();
@@ -374,7 +370,6 @@ fn a_blocked_by_that_cannot_be_parsed_is_unknown() {
     );
 }
 
-#[ignore = "RED: 印の無い open の issue を数だけにする実装の前"]
 #[test]
 fn a_status_with_a_trailing_space_or_a_comment_is_read_like_design_records() {
     let repo = Repo::new();
@@ -543,7 +538,6 @@ fn an_issue_is_not_marked_blocked_by_itself() {
     );
 }
 
-#[ignore = "RED: 印の無い open の issue を数だけにする実装の前"]
 #[test]
 fn an_empty_blocked_by_in_an_unparsable_front_matter_is_not_a_blocker() {
     let repo = Repo::new();
