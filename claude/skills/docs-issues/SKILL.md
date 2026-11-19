@@ -36,6 +36,8 @@ closed: 2026-10-11
 - `type`: `Issue`（`docs/index.md` が `okf_version` を持つリポジトリでは必須）
 - `status`: `open` か `closed`
 - `resolution`: closed のとき。`done`、`wontfix`、`by-design`、`external`、`cannot-reproduce`、`duplicate`、`obsolete`
+  のどれか（`wontfix: 理由` のように理由を添えてもよい）。根拠を書く形の `ADR-NNNN`（決めた ADR）と `コミット <hash>`
+  （解決したコミット。7〜40 桁の英小文字の16進）も通る。どれも閉じた理由を辿れるので、リポジトリの既にある形に揃える
 - `resolved-by`: done のとき。ADR の番号かコミットの hash。任意
 - `duplicate-of`: duplicate のとき
 - `blocked-by`: 片方向。逆向きは grep で引く
