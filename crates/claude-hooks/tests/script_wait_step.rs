@@ -267,6 +267,41 @@ fn an_unwritable_state_exits_1_with_the_reason() {
 }
 
 #[test]
+fn a_time_setting_that_is_not_whole_seconds_exits_1_with_its_name() {
+    // 読めない値を壁の時計や既定の秒数に替えて続けない（テストが気づかずに壁の時計に頼る）
+    let d = Dir::new();
+    let log = d.file("job.out", "");
+    for (name, value) in [
+        ("WAIT_STEP_NOW", "100s"),
+        ("WAIT_STEP_SECONDS", "-1"),
+        ("WAIT_STEP_REPORT", "1.5"),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
+            .args(["script", "wait-step", "/wt/bad", &log])
+            .env("TMPDIR", d.root.join("tmp"))
+            .env("TMP", d.root.join("tmp"))
+            .env("TEMP", d.root.join("tmp"))
+            .env("WAIT_STEP_NOW", "100")
+            .env("WAIT_STEP_SECONDS", "1")
+            .env("WAIT_STEP_REPORT", "60")
+            .env(name, value)
+            .output()
+            .unwrap();
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{name}={value}: {err}");
+        assert!(err.contains(name) && err.contains(value), "{err}");
+    }
+}
+
+#[test]
+fn an_injected_time_at_the_end_of_the_range_does_not_overflow() {
+    let d = Dir::new();
+    let log = d.file("job.out", "");
+    let (code, out) = d.wait_at(u64::MAX - 1, 270, 3300, &["/wt/max", &log]);
+    assert_eq!(code, 2, "{out}");
+}
+
+#[test]
 fn usage_errors_exit_1() {
     let d = Dir::new();
     for args in [&[][..], &[""][..], &["--end"][..], &["--end", "a", "b"][..]] {
