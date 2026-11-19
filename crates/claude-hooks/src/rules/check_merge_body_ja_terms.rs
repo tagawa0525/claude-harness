@@ -274,7 +274,9 @@ fn lint(check: &str, dir: &Path, message: &str) -> Lint {
             ));
         }
         Err(Unfinished::Lost(e)) => {
-            return Lint::Failed(format!("{check} の終わりを待てません（{e}）"));
+            return Lint::Failed(format!(
+                "{check} に本文を渡せないか、終わりを待てません（{e}）"
+            ));
         }
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -743,7 +745,7 @@ exit 0
         match lint(&path.to_string_lossy(), &dir.0, &body) {
             Lint::Failed(why) => {
                 assert!(why.contains("辞書が無い"), "{why}");
-                assert!(!why.contains("渡せません"), "{why}");
+                assert!(why.contains("exit status: 2"), "{why}");
             }
             other => panic!("{other:?}"),
         }
