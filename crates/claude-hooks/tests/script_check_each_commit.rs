@@ -267,7 +267,6 @@ fn no_commit_in_the_range_is_a_usage_error() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
     let repo = Repo::new();
     let missing = repo.root.join("missing");

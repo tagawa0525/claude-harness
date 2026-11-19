@@ -280,8 +280,8 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
     let root = temp_root(std::env::var_os("TMPDIR").as_deref());
     let dir = match make_temp_dir(&root) {
         Ok(dir) => dir,
-        Err(_) => {
-            eprintln!("一時ディレクトリを作れません: {}", root.display());
+        Err(e) => {
+            eprintln!("一時ディレクトリを作れません: {}（{e}）", root.display());
             return ENVIRONMENT;
         }
     };
