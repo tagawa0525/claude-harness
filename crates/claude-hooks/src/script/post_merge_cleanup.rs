@@ -752,10 +752,12 @@ enum Stacked {
 
 /// 探し方は pre-merge-check の検査 10（`stacked_prs_reason`）と揃える。上の PR は、消すブランチを持つリポジトリにある
 /// ので、gh の既定のリポジトリ（fork の clone では親）ではなく、git push --delete が消しに行く URL（pushurl があれば
-/// その全部、無ければ url の全部）のリポジトリを探す。URL は設定の値を読む（git remote get-url と git remote -v は
-/// insteadOf で書き換えた先を返す。書き換えは転送の手段を替えるもので、リポジトリは同じ）
+/// その全部、無ければ url の全部）のリポジトリを探す。URL は、insteadOf と pushInsteadOf で書き換えた先
+/// （git remote get-url --push --all）と、書き換える前の設定の値の両方を読む。書き換えた先だけでは略記（gh: など）
+/// でない GitHub の URL をミラーへ書き換えた設定を、書き換える前だけでは略記を読めない。両方を読むと、書き換えた先が
+/// ミラーのときに残しすぎるが、上の PR を閉じる側には倒れない
 fn stacked_prs(branch: &str, remote: &str) -> Stacked {
-    let urls = [
+    let configured = [
         format!("remote.{remote}.pushurl"),
         format!("remote.{remote}.url"),
     ]
@@ -763,12 +765,14 @@ fn stacked_prs(branch: &str, remote: &str) -> Stacked {
     .filter_map(|key| git(&["config", "--get-all", key]))
     .find(|v| !v.is_empty())
     .unwrap_or_default();
+    let rewritten = git(&["remote", "get-url", "--push", "--all", remote]).unwrap_or_default();
     let mut repos: Vec<String> = Vec::new();
-    for url in urls.lines() {
+    for url in configured.lines().chain(rewritten.lines()) {
         match github_repo(url) {
-            Some(repo) if !repos.contains(&repo) => repos.push(repo),
+            // GitHub の owner と name は大文字と小文字を区別しない
+            Some(repo) if !repos.iter().any(|r| r.eq_ignore_ascii_case(&repo)) => repos.push(repo),
             Some(_) => {}
-            None if url.to_ascii_lowercase().contains("github.com") => {
+            None if on_github(url) => {
                 return Stacked::Unknown(format!(
                     "{remote} の URL（{url}）から GitHub のリポジトリを読めない"
                 ));
@@ -820,11 +824,14 @@ fn stacked_prs(branch: &str, remote: &str) -> Stacked {
     }
 }
 
-/// 上の PR の件数と番号（`open PR 2 件（#12, #13）`）
+/// 上の PR の件数と番号（`open PR 2 件（#12, #13）`。リポジトリが複数なら `owner/name#12`）
 fn listed(found: &[(String, Vec<String>)]) -> String {
     let numbers: Vec<String> = found
         .iter()
-        .flat_map(|(_, numbers)| numbers.iter().map(|n| format!("#{n}")))
+        .flat_map(|(repo, numbers)| {
+            let prefix = if found.len() > 1 { repo.as_str() } else { "" };
+            numbers.iter().map(move |n| format!("{prefix}#{n}"))
+        })
         .collect();
     format!("open PR {} 件（{}）", numbers.len(), numbers.join(", "))
 }
@@ -853,19 +860,13 @@ fn commands(found: &[(String, Vec<String>)], branch: &str, remote: &str, default
     lines.join("\n")
 }
 
-/// リモートの URL のホストが GitHub か
-fn on_github(_url: &str) -> bool {
-    false
-}
-
-/// リモートの URL が GitHub のリポジトリを指すなら、その owner/name（`<scheme>://[<user>@]github.com[:<port>]/` の形と、
-/// git の scp の形 `[<user>@]github.com:`）。ホストの大文字と小文字は区別しない
-fn github_repo(url: &str) -> Option<String> {
-    let (host, path) = match url.split_once("://") {
+/// URL のホストとパス（`<scheme>://[<user>@]<host>[:<port>]/<path>` の形と、git の scp の形 `[<user>@]<host>:<path>`）
+fn host_and_path(url: &str) -> Option<(&str, &str)> {
+    match url.split_once("://") {
         Some((_, rest)) => {
             let (authority, path) = rest.split_once('/')?;
             let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-            (host.split_once(':').map_or(host, |(h, _)| h), path)
+            Some((host.split_once(':').map_or(host, |(h, _)| h), path))
         }
         None => {
             // git は、最初の / より前に : があるものを scp の形と読む（無ければローカルのパス）
@@ -873,15 +874,25 @@ fn github_repo(url: &str) -> Option<String> {
             if authority.contains('/') {
                 return None;
             }
-            (
+            Some((
                 authority.rsplit_once('@').map_or(authority, |(_, h)| h),
                 path,
-            )
+            ))
         }
-    };
-    if !host.eq_ignore_ascii_case("github.com") {
+    }
+}
+
+/// リモートの URL のホストが GitHub か（大文字と小文字は区別しない）
+fn on_github(url: &str) -> bool {
+    host_and_path(url).is_some_and(|(host, _)| host.eq_ignore_ascii_case("github.com"))
+}
+
+/// リモートの URL が GitHub のリポジトリを指すなら、その owner/name
+fn github_repo(url: &str) -> Option<String> {
+    if !on_github(url) {
         return None;
     }
+    let (_, path) = host_and_path(url)?;
     let path = path.trim_end_matches('/');
     let path = path.strip_suffix(".git").unwrap_or(path);
     match path.split('/').collect::<Vec<_>>().as_slice() {
