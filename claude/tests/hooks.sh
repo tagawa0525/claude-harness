@@ -1110,7 +1110,8 @@ make_fake_gh_merge_stacked 'echo 7'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "#7"
-assert_contains "$(reason "$out")" "gh pr edit 7 --base main"
+# -R を付ける（番号は cwd のリポジトリで解かれるので、別のリポジトリで実行すると別の PR を付け替える）
+assert_contains "$(reason "$out")" "gh pr edit 7 --base main -R example/heredoc"
 
 it "pre-merge-check: head のブランチを base にした PR が複数あれば、すべての番号に手順を示す"
 make_fake_gh_merge_stacked 'printf "7\n9\n"'
@@ -1140,6 +1141,7 @@ it "pre-merge-check: fork からの PR は、同じ名前のブランチを base
 make_fake_gh_merge_stacked 'echo 7' ',\"headRefName\":\"feat/x\",\"isCrossRepository\":true'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
+assert_not_contains "$(cat "$FAKE_GH_LOG")" "pr list"
 
 # ===========================================================================
 # block-secret-commit: グローバルの git の hook を使わないリポジトリの git commit を gitleaks で止める
