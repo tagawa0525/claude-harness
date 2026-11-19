@@ -1,14 +1,12 @@
 //! Slurm のコマンド（sbatch、squeue、sacct、scontrol）を呼ぶ所と、その出力を解く所（ADR-0101）。
 //!
-//! 判定（slurm_run の待ち、印、終了コード）は、ここが返す、Slurm の名前や出力の形を含まない型（[`JobRecord`]、
-//! [`JobState`]、[`RunningJob`]、[`Submission`]）を受ける。会社の環境のスケジューラ（Sun Grid Engine）の実装を後で足す
-//! ため、Slurm に依る所をこのモジュールに集める（#353）。差し替えの口（trait）は、2 つ目の実装を足すときに 2 つを比べて
-//! 切り出す。
+//! 判定（slurm_run の待ち、印、終了コード、slurm_queue の走る順と並べ直す列）は、ここが返す、Slurm の名前や出力の形を
+//! 含まない型（[`JobRecord`]、[`JobState`]、[`RunningJob`]、[`Submission`]、[`QueuedJob`]）を受ける。会社の環境の
+//! スケジューラ（Sun Grid Engine）の実装を後で足すため、Slurm に依る所をこのモジュールに集める（#353）。差し替えの口
+//! （trait）は、2 つ目の実装を足すときに 2 つを比べて切り出す。
 //!
 //! 状態は `--json=v0.0.45` の形で読む。版を固定するのは、Slurm の更新で形が変わったときに、読み違えずに起動の失敗で
 //! 気付くため。r995 の Slurm は 26.05.6 で、選べる形の版は v0.0.42〜v0.0.45（2026-11-19 に確かめた）。
-//! 待ち行列を区分の順に並べる列は、まだ slurm_queue が `squeue --format` の文字の列で読む（ADR-0101 の帰結の順の 3 で
-//! JSON に替える）。
 
 use regex::Regex;
 use serde_json::Value;
@@ -146,12 +144,7 @@ pub fn running_default_jobs() -> Result<Vec<RunningJob>, String> {
 }
 
 fn running_jobs(json: &str) -> Result<Vec<RunningJob>, String> {
-    let value: Value = serde_json::from_str(json)
-        .map_err(|e| format!("squeue の出力を JSON として読めない: {e}"))?;
-    let jobs = value["jobs"]
-        .as_array()
-        .ok_or("squeue の出力に jobs が無い")?;
-    Ok(jobs
+    Ok(json_jobs("squeue", json)?
         .iter()
         .map(|job| RunningJob {
             id: id_text(&job["job_id"]),
@@ -161,6 +154,217 @@ fn running_jobs(json: &str) -> Result<Vec<RunningJob>, String> {
                 .to_string(),
         })
         .collect())
+}
+
+/// 待ち行列のパーティションの種類
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Partition {
+    /// 割り込まれない（時間を記録するジョブの）パーティション
+    Uninterrupted,
+    /// 既定のパーティション
+    Default,
+    /// ほか（複数のパーティションに投げて、まだ決まっていないものを含む）
+    Other,
+}
+
+/// 待ち行列のジョブの段階
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Phase {
+    /// 走り始めた（走っている、走る準備をしている、終わりかけている、など）
+    Started,
+    /// 止められた
+    Suspended,
+    /// 走るのを待っている
+    Pending,
+}
+
+/// 待ち行列のジョブ。文字列の欄は、一覧に出す形
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueuedJob {
+    /// 番号（配列のまとめて待っているものは `12_[1-3]`、配列の 1 つは `12_1`、異種のジョブの部分は `5+1`）
+    pub id: String,
+    /// 番号の先頭の数（配列と異種のジョブは、まとめた番号）
+    pub group: u64,
+    /// 配列のまとめて待っているもの（1 つのジョブとして動かせない）
+    pub array: bool,
+    pub partition: String,
+    pub partition_kind: Partition,
+    pub name: String,
+    pub state: String,
+    pub phase: Phase,
+    /// 大きいほど先に走る
+    pub priority: u64,
+    /// 見積もり（`10:00`、`2:55:00`、`1-00:00:00`、`UNLIMITED` など）
+    pub limit: String,
+    /// 開始の見込みか走り始めた時刻（`2026-11-19T17:45:36`。無ければ `N/A`）
+    pub start: String,
+    pub comment: String,
+}
+
+/// 待ち行列を読めなかった理由
+#[derive(Debug)]
+pub enum QueueError {
+    /// コマンドを起動できない。code は sh と同じく、無いコマンドは 127、起動できないコマンドは 126
+    Spawn { code: i32, error: std::io::Error },
+    /// コマンドが失敗した（その終了コード）
+    Failed(i32),
+    /// 出力を解けない
+    Unreadable(String),
+}
+
+/// 待ち行列のジョブ（squeue の既定の絞り込み）。squeue の標準エラーはそのまま流す
+pub fn queued_jobs() -> Result<Vec<QueuedJob>, QueueError> {
+    let out = Command::new("squeue")
+        .arg(JSON)
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| QueueError::Spawn {
+            code: if error.kind() == std::io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            },
+            error,
+        })?;
+    if !out.status.success() {
+        return Err(QueueError::Failed(crate::child::exit_code(out.status)));
+    }
+    queue_jobs(&String::from_utf8_lossy(&out.stdout)).map_err(QueueError::Unreadable)
+}
+
+fn queue_jobs(json: &str) -> Result<Vec<QueuedJob>, String> {
+    json_jobs("squeue", json)?.iter().map(queued_job).collect()
+}
+
+/// Slurm の C の値で「無い」と「無制限」を表す数（slurm/slurm.h の NO_VAL、INFINITE、NO_VAL64、INFINITE64）
+const NO_VAL: u64 = 0xffff_fffe;
+const INFINITE: u64 = 0xffff_ffff;
+const NO_VAL64: u64 = 0xffff_ffff_ffff_fffe;
+const INFINITE64: u64 = u64::MAX;
+
+/// squeue の 1 本のジョブ。一覧の欄は、squeue の --format の文字の出力（26.05.6 の src/squeue/print.c の
+/// `_print_job_*`。2026-11-19 に slurm-26-05-6-1 のタグで読んだ）と同じ形にする。そのため JSON の
+/// `{set, infinite, number}` を C の値（NO_VAL、INFINITE を含む）に戻してから、print.c と同じ分け方で書く。
+///
+/// 文字の出力が表示の前に行う、待っている配列のタスクをまとめた記録に戻す処理（`_combine_pending_array_tasks`）と、
+/// 番号の欄の 32 バイトでの切り詰めは行わない。slurm-run は配列のジョブを投げない（#361）
+fn queued_job(job: &Value) -> Result<QueuedJob, String> {
+    let job_id = job["job_id"]
+        .as_u64()
+        .ok_or("squeue の出力のジョブに数の job_id が無い")?;
+    let missing = |key: &str| format!("squeue の出力のジョブ {job_id} の {key} を読めない");
+    let number = |key: &str| c_number(&job[key], NO_VAL, INFINITE).ok_or_else(|| missing(key));
+    // %s の文字列。C の NULL は JSON で空の文字列になり、squeue は glibc の printf の (null) を書く
+    let printed = |key: &str| {
+        job[key]
+            .as_str()
+            .map(|s| if s.is_empty() { "(null)" } else { s }.to_string())
+            .ok_or_else(|| missing(key))
+    };
+    let tasks = job["array_task_string"]
+        .as_str()
+        .ok_or_else(|| missing("array_task_string"))?;
+    let array_job = number("array_job_id")?;
+    let array_task = number("array_task_id")?;
+    let het_job = number("het_job_id")?;
+    let (id, group) = if !tasks.is_empty() {
+        (format!("{array_job}_[{tasks}]"), array_job)
+    } else if array_task != NO_VAL {
+        (format!("{array_job}_{array_task}"), array_job)
+    } else if het_job != 0 {
+        (format!("{het_job}+{}", number("het_job_offset")?), het_job)
+    } else {
+        (job_id.to_string(), job_id)
+    };
+    if job["job_state"][0].as_str().is_none() {
+        return Err(missing("job_state"));
+    }
+    let state = state_word(&job["job_state"]).to_string();
+    let phase = match state.as_str() {
+        "PENDING" => Phase::Pending,
+        "SUSPENDED" => Phase::Suspended,
+        _ => Phase::Started,
+    };
+    let partition = printed("partition")?;
+    let partition_kind = match partition.as_str() {
+        UNINTERRUPTED => Partition::Uninterrupted,
+        DEFAULT => Partition::Default,
+        _ => Partition::Other,
+    };
+    let start =
+        c_number(&job["start_time"], NO_VAL64, INFINITE64).ok_or_else(|| missing("start_time"))?;
+    Ok(QueuedJob {
+        id,
+        group,
+        array: !tasks.is_empty(),
+        partition,
+        partition_kind,
+        name: printed("name")?,
+        state,
+        phase,
+        priority: number("priority")?,
+        limit: limit_text(number("time_limit")?),
+        // C の time_t に戻す。NO_VAL64 と INFINITE64 は -2 と -1 になり、slurm_make_time_str が比べるのは 32 ビットの
+        // NO_VAL と INFINITE だけなので、squeue と同じく 1970 年の時刻で書く
+        start: start_text(start as i64).ok_or_else(|| missing("start_time"))?,
+        comment: printed("comment")?,
+    })
+}
+
+/// `{set, infinite, number}` を C の値に（data_parser の UINT32_NO_VAL と UINT64_NO_VAL の DUMP の逆）
+fn c_number(value: &Value, no_val: u64, infinite: u64) -> Option<u64> {
+    if value["infinite"].as_bool()? {
+        Some(infinite)
+    } else if value["set"].as_bool()? {
+        value["number"].as_u64()
+    } else {
+        Some(no_val)
+    }
+}
+
+/// 見積もり（分）。print.c の `_print_job_time_limit` と `_print_secs`
+fn limit_text(minutes: u64) -> String {
+    match minutes {
+        INFINITE => "UNLIMITED".to_string(),
+        NO_VAL => "NOT_SET".to_string(),
+        // C は uint32_t のまま 60 を掛ける
+        _ => secs_text((minutes as u32).wrapping_mul(60)),
+    }
+}
+
+fn secs_text(secs: u32) -> String {
+    const YEAR_SECONDS: u32 = 365 * 86_400;
+    let (days, hours, minutes, seconds) =
+        (secs / 86_400, secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    if secs > YEAR_SECONDS {
+        "INVALID".to_string()
+    } else if days > 0 {
+        format!("{days}-{hours:02}:{minutes:02}:{seconds:02}")
+    } else if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
+/// 時刻（UNIX の秒）。print.c の `_print_time` と src/common/parse_time.c の `slurm_make_time_str`（0 は N/A、
+/// INFINITE は Unknown、NO_VAL は None、ほかは %FT%T）。範囲の外なら None
+///
+/// slurm_make_time_str は機械の時間帯（localtime_r）と SLURM_TIME_FORMAT で書くが、ここは JST の %FT%T に
+/// 固定する。r995 の時間帯は Asia/Tokyo で、SLURM_TIME_FORMAT は設定していない（2026-11-19 に確かめた）。機械の
+/// 時間帯を読むには chrono を足すか localtime_r を unsafe で呼ぶことになり、どちらも一覧の 1 欄のためには重い
+fn start_text(time: i64) -> Option<String> {
+    match time {
+        0 => Some("N/A".to_string()),
+        t if t == INFINITE as i64 => Some("Unknown".to_string()),
+        t if t == NO_VAL as i64 => Some("None".to_string()),
+        t => {
+            let (y, mo, d, h, mi, s, _) = super::time::jst_fields(super::time::Time {
+                micros: t.checked_mul(1_000_000)?,
+            });
+            Some(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}"))
+        }
+    }
 }
 
 /// ジョブの状態
@@ -277,11 +481,8 @@ pub fn accounting_record(job: &str) -> Option<JobRecord> {
 }
 
 fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
-    let value: Value = serde_json::from_str(json).ok()?;
-    let found = value["jobs"]
-        .as_array()?
-        .iter()
-        .find(|j| id_text(&j["job_id"]) == job)?;
+    let jobs = json_jobs("sacct", json).ok()?;
+    let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
     let time = &found["time"];
     let limit = &time["limit"];
     Some(JobRecord {
@@ -308,13 +509,20 @@ pub fn controller_state(job: &str) -> Option<JobState> {
 }
 
 fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
-    let value: Value = serde_json::from_str(json).ok()?;
-    let found = value["jobs"]
-        .as_array()?
-        .iter()
-        .find(|j| id_text(&j["job_id"]) == job)?;
+    let jobs = json_jobs("scontrol", json).ok()?;
+    let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
     found["job_state"][0].as_str()?;
     Some(JobState::from_slurm(state_word(&found["job_state"])))
+}
+
+/// コマンドの JSON の出力の jobs の配列。読めなければ理由
+fn json_jobs(command: &str, json: &str) -> Result<Vec<Value>, String> {
+    let mut value: Value = serde_json::from_str(json)
+        .map_err(|e| format!("{command} の出力を JSON として読めない: {e}"))?;
+    match value.get_mut("jobs").map(Value::take) {
+        Some(Value::Array(jobs)) => Ok(jobs),
+        _ => Err(format!("{command} の出力に jobs が無い")),
+    }
 }
 
 /// ジョブの番号（数か文字列）を文字列に
@@ -341,8 +549,9 @@ fn quiet_output(argv: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        JobRecord, JobState, Limit, RunningJob, Submission, log_file, running_jobs, sacct_record,
-        scontrol_state, submit_args, submitted_job, valid_time_limit,
+        JobRecord, JobState, Limit, Partition, Phase, QueuedJob, RunningJob, Submission, log_file,
+        queue_jobs, running_jobs, sacct_record, scontrol_state, submit_args, submitted_job,
+        valid_time_limit,
     };
     use serde_json::json;
 
@@ -550,6 +759,210 @@ mod tests {
         );
         assert!(running_jobs("not json").is_err());
         assert!(running_jobs("{}").is_err());
+    }
+
+    /// `{set, infinite, number}` の形の数
+    fn set(number: u64) -> serde_json::Value {
+        json!({"set": true, "infinite": false, "number": number})
+    }
+
+    fn infinite() -> serde_json::Value {
+        json!({"set": false, "infinite": true, "number": 0})
+    }
+
+    fn unset() -> serde_json::Value {
+        json!({"set": false, "infinite": false, "number": 0})
+    }
+
+    /// 2026-11-19 に r995 の `squeue --json=v0.0.45` が出したジョブ（961）の、読む欄。changes の欄で置き換える
+    fn squeue_job(changes: serde_json::Value) -> serde_json::Value {
+        let mut job = json!({
+            "job_id": 961,
+            "name": "openmc-endfb70-1B-1D-2B",
+            "job_state": ["RUNNING"],
+            "partition": "main",
+            "priority": set(10000),
+            "time_limit": set(175),
+            "start_time": set(1795077936),
+            "comment": "decision | #0131 | p | c",
+            "array_job_id": set(0),
+            "array_task_id": unset(),
+            "array_task_string": "",
+            "het_job_id": set(0),
+            "het_job_offset": unset(),
+        });
+        for (key, value) in changes.as_object().unwrap() {
+            job[key] = value.clone();
+        }
+        job
+    }
+
+    /// 1 本のジョブの待ち行列を読む
+    fn queued(changes: serde_json::Value) -> Result<QueuedJob, String> {
+        let json = json!({"jobs": [squeue_job(changes)]}).to_string();
+        queue_jobs(&json).map(|mut jobs| jobs.remove(0))
+    }
+
+    #[test]
+    fn squeue_json_gives_the_queued_job_with_the_fields_as_the_listing_shows_them() {
+        assert_eq!(
+            queued(json!({})),
+            Ok(QueuedJob {
+                id: "961".to_string(),
+                group: 961,
+                array: false,
+                partition: "main".to_string(),
+                partition_kind: Partition::Default,
+                name: "openmc-endfb70-1B-1D-2B".to_string(),
+                state: "RUNNING".to_string(),
+                phase: Phase::Started,
+                priority: 10000,
+                limit: "2:55:00".to_string(),
+                start: "2026-11-19T17:45:36".to_string(),
+                comment: "decision | #0131 | p | c".to_string(),
+            })
+        );
+        assert_eq!(queue_jobs(r#"{"jobs": []}"#), Ok(vec![]));
+    }
+
+    #[test]
+    fn the_limit_is_written_like_squeue_in_minutes_hours_and_days() {
+        for (limit, text) in [
+            (set(1), "1:00"),
+            (set(10), "10:00"),
+            (set(59), "59:00"),
+            (set(60), "1:00:00"),
+            (set(175), "2:55:00"),
+            (set(1440), "1-00:00:00"),
+            (set(2 * 1440 + 61), "2-01:01:00"),
+            (set(0), "0:00"),
+            // 1 年を超える見積もりは、squeue と同じく INVALID
+            (set(365 * 1440), "365-00:00:00"),
+            (set(365 * 1440 + 1), "INVALID"),
+            (infinite(), "UNLIMITED"),
+            (unset(), "NOT_SET"),
+        ] {
+            assert_eq!(
+                queued(json!({"time_limit": limit})).unwrap().limit,
+                text,
+                "{limit}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_start_is_the_local_time_or_na_when_there_is_no_estimate() {
+        for (start, text) in [
+            (set(1795077936), "2026-11-19T17:45:36"),
+            (set(1767193199), "2025-12-31T23:59:59"),
+            (set(1767193200), "2026-01-01T00:00:00"),
+            (set(0), "N/A"),
+            (set(0xffff_ffff), "Unknown"),
+            (set(0xffff_fffe), "None"),
+            (unset(), "1970-01-01T08:59:58"),
+            (infinite(), "1970-01-01T08:59:59"),
+        ] {
+            assert_eq!(
+                queued(json!({"start_time": start})).unwrap().start,
+                text,
+                "{start}"
+            );
+        }
+    }
+
+    #[test]
+    fn array_and_heterogeneous_jobs_get_the_id_and_the_group_number_squeue_shows() {
+        let parent =
+            queued(json!({"job_id": 14, "array_job_id": set(12), "array_task_string": "1-3"}))
+                .unwrap();
+        assert_eq!(
+            (parent.id.as_str(), parent.group, parent.array),
+            ("12_[1-3]", 12, true)
+        );
+        let task = queued(json!({"job_id": 13, "array_job_id": set(12), "array_task_id": set(1)}))
+            .unwrap();
+        assert_eq!(
+            (task.id.as_str(), task.group, task.array),
+            ("12_1", 12, false)
+        );
+        let het =
+            queued(json!({"job_id": 6, "het_job_id": set(5), "het_job_offset": set(1)})).unwrap();
+        assert_eq!((het.id.as_str(), het.group, het.array), ("5+1", 5, false));
+    }
+
+    #[test]
+    fn the_state_word_decides_the_phase_and_the_partition_name_its_kind() {
+        for (states, word, phase) in [
+            (json!(["PENDING"]), "PENDING", Phase::Pending),
+            (json!(["SUSPENDED"]), "SUSPENDED", Phase::Suspended),
+            (json!(["RUNNING"]), "RUNNING", Phase::Started),
+            (
+                json!(["RUNNING", "CONFIGURING"]),
+                "CONFIGURING",
+                Phase::Started,
+            ),
+            (
+                json!(["COMPLETED", "COMPLETING"]),
+                "COMPLETING",
+                Phase::Started,
+            ),
+            // 一覧の語が旗なら、待っているジョブとして扱わない
+            (json!(["PENDING", "REQUEUED"]), "REQUEUED", Phase::Started),
+        ] {
+            let job = queued(json!({"job_state": states})).unwrap();
+            assert_eq!((job.state.as_str(), job.phase), (word, phase), "{states}");
+        }
+        for (name, kind) in [
+            ("timed", Partition::Uninterrupted),
+            ("main", Partition::Default),
+            ("main,timed", Partition::Other),
+            ("debug", Partition::Other),
+        ] {
+            assert_eq!(
+                queued(json!({"partition": name})).unwrap().partition_kind,
+                kind,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_priority_is_the_number_and_an_empty_comment_is_shown_as_null() {
+        assert_eq!(queued(json!({"priority": set(0)})).unwrap().priority, 0);
+        // squeue は C の %u と %s で書くので、無い値は NO_VAL と INFINITE の数、無い文字列は (null)
+        assert_eq!(
+            queued(json!({"priority": unset()})).unwrap().priority,
+            0xffff_fffe
+        );
+        assert_eq!(
+            queued(json!({"priority": infinite()})).unwrap().priority,
+            0xffff_ffff
+        );
+        assert_eq!(queued(json!({"comment": ""})).unwrap().comment, "(null)");
+    }
+
+    #[test]
+    fn a_job_without_a_state_is_an_error_like_scontrol() {
+        // squeue の文字の出力は、どのジョブにも土台の状態の語を書く
+        assert!(queued(json!({"job_state": []})).is_err());
+        assert!(queued(json!({"job_state": [1]})).is_err());
+    }
+
+    #[test]
+    fn an_unexpected_shape_is_an_error() {
+        for bad in ["not json", "{}", "[]", r#""jobs""#, r#"{"jobs": {}}"#] {
+            assert!(queue_jobs(bad).is_err(), "{bad}");
+        }
+        for changes in [
+            json!({"job_id": "961"}),
+            json!({"priority": 10000}),
+            json!({"time_limit": null}),
+            json!({"start_time": {"set": true}}),
+            json!({"job_state": "RUNNING"}),
+            json!({"comment": null}),
+        ] {
+            assert!(queued(changes.clone()).is_err(), "{changes}");
+        }
     }
 
     #[test]

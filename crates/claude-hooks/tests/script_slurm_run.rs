@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{forget_git_env, sh_path, write_executable};
+use common::{forget_git_env, sh_path, squeue_json, write_executable};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -43,7 +43,7 @@ exit "${FAKE_JOB_EXIT:-0}"
 
 /// squeue の偽物。走っている main のジョブの問い合わせ（--timed の投げる前の確認）には FAKE_SQUEUE_RUNNING（JSON。
 /// 無ければ空の jobs）を出し、FAKE_SQUEUE_RUNNING_ERR を標準エラーに出す。ほかは並べ直しの読み取りで、投げてから n 回目に
-/// FAKE_SQUEUE_OUT_<n> を出し（無ければ空。並べ直しが済んだ状態）、FAKE_SQUEUE_EXIT で終わる
+/// FAKE_SQUEUE_OUT_<n> を出し（無ければ空の jobs。並べ直しが済んだ状態）、FAKE_SQUEUE_EXIT で終わる
 const SQUEUE: &str = r#"#!/bin/sh
 case " $* " in
   *" --states=RUNNING,SUSPENDED,CONFIGURING "*)
@@ -56,7 +56,8 @@ esac
 n=$(($(cat "$T/squeue.count" 2>/dev/null || echo 0) + 1))
 echo "$n" >"$T/squeue.count"
 eval "out=\${FAKE_SQUEUE_OUT_$n-}"
-[ -z "$out" ] || printf '%s\n' "$out"
+[ -n "$out" ] || out='{"jobs":[]}'
+printf '%s\n' "$out"
 exit "${FAKE_SQUEUE_EXIT:-0}"
 "#;
 
@@ -94,6 +95,22 @@ exit "${FAKE_TOP_EXIT:-0}"
 const HOSTNAME: &str = r#"#!/bin/sh
 echo "${FAKE_HOST:-r995}"
 "#;
+
+/// 待っているジョブ（番号、パーティション、優先度、区分、連絡先）の待ち行列
+fn queue(jobs: &[(u64, &str, u64, &str, &str)]) -> String {
+    let comments: Vec<String> = jobs
+        .iter()
+        .map(|(_, _, _, class, contact)| format!("{class} | #1 | p | {contact}"))
+        .collect();
+    let jobs: Vec<_> = jobs
+        .iter()
+        .zip(&comments)
+        .map(|((id, partition, priority, _, _), comment)| {
+            (*id, "j", *partition, *priority, comment.as_str())
+        })
+        .collect();
+    squeue_json(&jobs)
+}
 
 /// 偽の Slurm と HOME を置いた一時のディレクトリ
 struct Slurm {
@@ -412,13 +429,16 @@ fn a_log_that_cannot_be_appended_to_gets_a_warning_and_the_time_line_on_stdout()
 fn a_main_job_reorders_the_queue_by_class_and_reads_it_again_after_each_top() {
     let slurm = Slurm::new();
     let q = "feat/x /p";
-    let first = format!(
-        "20|main|t|PENDING|10010|10:00|N/A|trial | #1 | p | {q}\n42|main|a|PENDING|10000|10:00|N/A|record | #1 | p | {q}"
-    );
+    let first = queue(&[
+        (20, "main", 10010, "trial", q),
+        (42, "main", 10000, "record", q),
+    ]);
     // 42,20 を渡した後、同時に投げた 43 の列が先に通っていて、43 が trial の後ろに残った状態
-    let second = format!(
-        "42|main|a|PENDING|10010|10:00|N/A|record | #1 | p | {q}\n20|main|t|PENDING|10009|10:00|N/A|trial | #1 | p | {q}\n43|main|b|PENDING|10000|10:00|N/A|record | #1 | p | {q}"
-    );
+    let second = queue(&[
+        (42, "main", 10010, "record", q),
+        (20, "main", 10009, "trial", q),
+        (43, "main", 10000, "record", q),
+    ]);
     let out = slurm.run_in(
         &slurm.proj(),
         &[
@@ -447,9 +467,11 @@ fn a_main_job_reorders_the_queue_by_class_and_reads_it_again_after_each_top() {
 fn top_puts_the_main_job_first_in_its_class_and_an_unreadable_queue_only_warns() {
     let slurm = Slurm::new();
     let q = "feat/x /p";
-    let queue = format!(
-        "21|main|r|PENDING|10030|10:00|N/A|record | #1 | p | {q}\n20|main|t|PENDING|10020|10:00|N/A|trial | #1 | p | {q}\n42|main|new|PENDING|10000|10:00|N/A|trial | #1 | p | {q}"
-    );
+    let queue = queue(&[
+        (21, "main", 10030, "record", q),
+        (20, "main", 10020, "trial", q),
+        (42, "main", 10000, "trial", q),
+    ]);
     slurm.run(
         &["--top", "-t", "5", "xlc-0005-1B", "true"],
         &[("FAKE_SQUEUE_OUT_1", &queue)],
@@ -473,7 +495,10 @@ fn top_puts_the_main_job_first_in_its_class_and_an_unreadable_queue_only_warns()
 #[test]
 fn a_timed_job_is_not_reordered_by_class_and_top_moves_only_itself() {
     let slurm = Slurm::new();
-    let queue = "21|timed|bench|PENDING|10030|60:00|N/A|timed | #1 | p | c\n42|timed|quick|PENDING|10000|5:00|N/A|decision | #1 | p | c";
+    let queue = queue(&[
+        (21, "timed", 10030, "timed", "c"),
+        (42, "timed", 10000, "decision", "c"),
+    ]);
     let args = [
         "--class",
         "decision",
@@ -487,7 +512,7 @@ fn a_timed_job_is_not_reordered_by_class_and_top_moves_only_itself() {
         "xlc-quick",
         "true",
     ];
-    slurm.run_in(&slurm.proj(), &args, &[("FAKE_SQUEUE_OUT_1", queue)]);
+    slurm.run_in(&slurm.proj(), &args, &[("FAKE_SQUEUE_OUT_1", &queue)]);
     assert_eq!(slurm.read("scontrol.calls"), "");
     assert!(slurm.read("sbatch.args").contains("--partition=timed\n"));
     let mut top = args.to_vec();

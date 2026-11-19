@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{fake_tool, place_fake_tool};
+use common::{fake_tool, place_fake_tool, squeue_json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80,22 +80,54 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+/// main で待つジョブ（番号、名前、優先度、区分）の待ち行列
+fn queue(jobs: &[(u64, &str, u64, &str)]) -> String {
+    let comments: Vec<String> = jobs
+        .iter()
+        .map(|(_, _, _, class)| format!("{class} | #1 | p | {C}"))
+        .collect();
+    let jobs: Vec<_> = jobs
+        .iter()
+        .zip(&comments)
+        .map(|((id, name, priority, _), comment)| (*id, *name, "main", *priority, comment.as_str()))
+        .collect();
+    squeue_json(&jobs)
+}
+
 /// main で待つ trial の 20 と、その後ろの record の 21（並べ直しが要る）
 fn out_of_order() -> String {
-    format!(
-        "20|main|t|PENDING|10010|10:00|N/A|trial | #1 | p | {C}\n21|main|r|PENDING|10005|10:00|N/A|record | #1 | p | {C}\n"
-    )
+    queue(&[(20, "t", 10010, "trial"), (21, "r", 10005, "record")])
+}
+
+fn empty() -> String {
+    queue(&[])
 }
 
 #[test]
-fn reads_squeue_without_a_header_in_the_field_order() {
+fn reads_squeue_as_json_of_the_fixed_version() {
     let fake = FakeSqueue::new().with_squeue();
-    let out = fake.run(&[], "", 0);
+    let out = fake.run(&[], &empty(), 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert_eq!(
-        fake.log(),
-        "squeue --noheader --format %i|%P|%j|%T|%Q|%l|%S|%k\n"
-    );
+    assert_eq!(fake.log(), "squeue --json=v0.0.45\n");
+}
+
+#[test]
+fn an_unreadable_squeue_output_is_an_error_with_exit_code_1() {
+    let fake = FakeSqueue::new().with_squeue();
+    for bad in [
+        "",
+        "20|main|t|PENDING|10010|10:00|N/A|c",
+        r#"{"jobs": [{"job_id": 20}]}"#,
+    ] {
+        let out = fake.run(&[], bad, 0);
+        assert_eq!(out.status.code(), Some(1), "{bad}");
+        assert_eq!(stdout(&out), "", "{bad}");
+        assert!(
+            stderr(&out).contains("ERROR: squeue の出力を読めない: "),
+            "{bad}: {}",
+            stderr(&out)
+        );
+    }
 }
 
 #[test]
@@ -129,10 +161,10 @@ fn order_first_prints_the_list_to_pass_to_scontrol_top() {
 #[test]
 fn an_empty_queue_says_so_and_order_prints_nothing() {
     let fake = FakeSqueue::new().with_squeue();
-    let out = fake.run(&[], "", 0);
+    let out = fake.run(&[], &empty(), 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(stdout(&out), "待ち行列にジョブが無い\n");
-    let out = fake.run(&["--order"], "", 0);
+    let out = fake.run(&["--order"], &empty(), 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");
 }
