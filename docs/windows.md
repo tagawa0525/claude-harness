@@ -8,7 +8,7 @@ description: ネイティブの Windows（WSL を使わない）で、cargo inst
 
 ネイティブの Windows（WSL を使わない）では、Nix の代わりに `cargo install` と `claude-setup` で入れる（ADR-0084）。
 今入るのは、`~/.claude` の中身（CLAUDE.md、スキル、スクリプト）、settings.json の静的な設定、PreToolUse hook、
-現在時刻の UserPromptSubmit hook、自動メモリを退避する Stop の hook、グローバルの git hook（pre-commit、pre-merge-commit、
+現在時刻と既定ブランチの進みを出す UserPromptSubmit hook、自動メモリを退避する Stop の hook、グローバルの git hook（pre-commit、pre-merge-commit、
 commit-msg、post-rewrite。`~/.config/git/hooks` に置き、グローバルの `core.hooksPath` を向ける）。グローバルの
 `core.hooksPath` をほかの置き場にしていれば、`claude-setup git-hooks` は奪わずに止まる。
 
