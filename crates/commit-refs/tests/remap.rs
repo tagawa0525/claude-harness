@@ -213,7 +213,7 @@ fn an_untracked_file_with_an_old_hash_is_warned_with_git_add() {
 
 #[test]
 fn the_warning_for_a_map_from_stdin_says_the_same_input_is_needed() {
-    // post-rewrite の hook は対応を標準入力で渡し、成功したときは残さない
+    // post-rewrite の hook は対応を標準入力で渡し、WARN: を受けたら対応を残して、それを渡すコマンドを示す
     let t = TempRepo::new("untracked-stdin");
     let old = t.commit_file("src.txt", "feat: measured");
     t.write("untracked.md", &format!("untracked {}\n", &old[..8]));
@@ -230,6 +230,8 @@ fn the_warning_for_a_map_from_stdin_says_the_same_input_is_needed() {
         .unwrap_or_default();
     assert!(next.contains("git add untracked.md"), "{err}");
     assert!(next.contains("標準入力"), "{err}");
+    // hook から呼ばれたときは、hook の示す残した対応のコマンドを指す
+    assert!(next.contains("post-rewrite の hook"), "{err}");
 }
 
 #[test]
