@@ -1,5 +1,5 @@
 //! `claude-hooks script resume-state` が、再開時に worktree、開いている PR、Slurm のジョブ、docs/issues の開いている
-//! issue を節ごとに集めることを確かめる（`~/.claude/skills/resume/scripts/resume-state.sh` が呼ぶ）。sh から呼ぶ配備の
+//! issue を節ごとに集めることを確かめる（`~/.claude/skills/handoff/scripts/resume-state.sh` が呼ぶ）。sh から呼ぶ配備の
 //! 確認は `claude/tests/scripts/resume-state.sh`
 
 mod common;
