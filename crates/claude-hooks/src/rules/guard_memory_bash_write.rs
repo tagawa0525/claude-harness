@@ -78,6 +78,15 @@ fn memory_writes(shell: &Shell, cwd: &Path, home: &Path, config: Option<&str>) -
             if t.is_empty() {
                 continue;
             }
+            // bash はクォートで始まる語の先頭の字面の `~` を展開しない（`resolve` は字面の `~/` をホームにする）。
+            // 変数の値の先頭の `~`（`d=~/x` の代入で bash が展開済み）は当たらない
+            let quoted_tilde = target.raw.starts_with(['"', '\''])
+                && matches!(
+                    // 二重引用符の値は、開きの引用符と最初の子の間の字面（空のことがある）から始まる
+                    target.pieces.iter().find(|p| **p != Piece::Lit(String::new())),
+                    Some(Piece::Lit(s)) if s.starts_with('~')
+                );
+            let t = if quoted_tilde { format!("./{t}") } else { t };
             let path = normalize(&resolve(home, &dir, &t));
             if in_memory(&path, &config_dir) && !found.contains(&path) {
                 found.push(path);
@@ -356,6 +365,7 @@ mod tests {
             "echo x >> $HOME/.claude/projects/-work-repo/memory/MEMORY.md".to_string(),
             "echo x >> \"${HOME}/.claude/projects/-work-repo/memory/MEMORY.md\"".to_string(),
             "d=~/.claude/projects/-work-repo/memory; echo x >> $d/MEMORY.md".to_string(),
+            "d=~/.claude/projects/-work-repo/memory; echo x >> \"$d/MEMORY.md\"".to_string(),
             format!("echo x >> {MEM}/../memory/./MEMORY.md"),
             format!("/usr/bin/sed -i 's/a/b/' {MEM}/MEMORY.md"),
         ] {
