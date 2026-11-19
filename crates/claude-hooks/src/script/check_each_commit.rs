@@ -4,9 +4,9 @@
 //! 引数、出力の行、終了コードの意味は `claude/scripts/check-each-commit.sh` の先頭に書く。ここには、その形を作る流れを置く。
 //!
 //! 中断（INT、TERM、HUP）は、走っている子のプロセス（git と検査のコマンド）が終わるのを待ってから後片付けをして 130 で
-//! 終える。sh の版の trap と同じく、子には中断を送らない（端末の Ctrl-C は、同じプロセスグループの子にも届く）。待つのは、
-//! 子が一時の worktree の中で走っている間に worktree を消さないため。子を実行する間は [`Cleanup`] の Mutex を持ち、中断を
-//! 受けたスレッドはそれを取ってから片付ける。
+//! 終える。子には中断を送らない（端末の Ctrl-C は、同じプロセスグループの子にも届く）。待つのは、子が一時の worktree の
+//! 中で走っている間に worktree を消さないためと、中断されたコミットの行（検査を終えていない結果）を出さないため。子を
+//! 実行する間は [`Cleanup`] の Mutex を持ち、中断を受けたスレッドはそれを取ってから片付ける。
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -51,8 +51,8 @@ fn parse_args(args: &[String]) -> Option<Request<'_>> {
     }
 }
 
-/// 一時のディレクトリを作る親。sh の `${TMPDIR:-/tmp}` と同じく、TMPDIR が空なら /tmp にする（Unix の
-/// std::env::temp_dir は空の TMPDIR をそのまま返す）。Windows は TMPDIR を読まない（Git Bash の /tmp の形のパスは
+/// 一時のディレクトリを作る親。Unix は TMPDIR で、空か無ければ /tmp にする（std::env::temp_dir は空の TMPDIR を
+/// そのまま返す）。Windows は TMPDIR を読まない（Git Bash の /tmp の形のパスは
 /// ネイティブの exe が読めない）ので、std::env::temp_dir（TMP、TEMP）にする
 fn temp_root(tmpdir: Option<&OsStr>) -> PathBuf {
     if cfg!(unix) {
@@ -65,7 +65,7 @@ fn temp_root(tmpdir: Option<&OsStr>) -> PathBuf {
     }
 }
 
-/// 検査のコマンドを起動できなかったときの終了コード。sh と同じく、見つからなければ 127、ほか（実行の権限が無いなど）は 126
+/// 検査のコマンドを起動できなかったときの終了コード。シェルと同じく、見つからなければ 127、ほか（実行の権限が無いなど）は 126
 fn spawn_failure_code(kind: std::io::ErrorKind) -> i32 {
     if kind == std::io::ErrorKind::NotFound {
         127
@@ -125,7 +125,7 @@ impl Cleanup {
     }
 
     /// 子を実行する。中断された後なら、実行せずに（実行した後なら、結果を使わずに）止まり、中断を受けたスレッドが
-    /// 片付けて終えるのを待つ（sh は、フォアグラウンドの子が終わってから trap を実行する）
+    /// 片付けて終えるのを待つ
     fn child<T>(&self, run: impl FnOnce() -> T) -> T {
         let guard = self.lock();
         if self.interrupted.load(Ordering::SeqCst) {
@@ -157,7 +157,7 @@ fn git(args: &[&str]) -> Command {
     cmd
 }
 
-/// `chmod -R u+w`（symlinkはたどらない）。失敗しても続ける
+/// `chmod -R u+w`（symlink はたどらない。書き込める項目の権限は変えない）。失敗しても続ける
 fn make_writable(path: &Path) {
     let Ok(meta) = std::fs::symlink_metadata(path) else {
         return;
@@ -167,14 +167,22 @@ fn make_writable(path: &Path) {
     }
     let mut perms = meta.permissions();
     #[cfg(unix)]
-    {
+    let writable = {
         use std::os::unix::fs::PermissionsExt;
+        let writable = perms.mode() & 0o200 != 0;
         perms.set_mode(perms.mode() | 0o200);
-    }
+        writable
+    };
     #[cfg(not(unix))]
-    #[allow(clippy::permissions_set_readonly_false)]
-    perms.set_readonly(false);
-    let _ = std::fs::set_permissions(path, perms);
+    let writable = {
+        let writable = !perms.readonly();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        writable
+    };
+    if !writable {
+        let _ = std::fs::set_permissions(path, perms);
+    }
     if meta.is_dir()
         && let Ok(entries) = std::fs::read_dir(path)
     {
@@ -329,8 +337,8 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
 /// する）、標準入力を渡さない（パイプラインやエージェントのシェルの入力を食わない）
 fn inspect(command: &[String], wt: &Path) -> i32 {
     let mut cmd = Command::new(&command[0]);
-    cmd.args(&command[1..])
-        .current_dir(wt)
+    cmd.args(&command[1..]);
+    cmd.current_dir(wt)
         .stdin(Stdio::null())
         .stdout(std::io::stderr());
     for name in REPO_ENV {
