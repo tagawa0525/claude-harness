@@ -6,6 +6,7 @@
 mod common;
 
 use common::{fake_tool, place_fake_tool};
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80,25 +81,73 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+/// main で待つジョブ（番号、名前、優先度、区分）の待ち行列を、`squeue --json=v0.0.45` の形で
+fn queue(jobs: &[(u64, &str, u64, &str)]) -> String {
+    let number = |n: u64| json!({"set": true, "infinite": false, "number": n});
+    let unset = json!({"set": false, "infinite": false, "number": 0});
+    let jobs: Vec<_> = jobs
+        .iter()
+        .map(|(id, name, priority, class)| {
+            json!({
+                "job_id": id,
+                "name": name,
+                "job_state": ["PENDING"],
+                "partition": "main",
+                "priority": number(*priority),
+                "time_limit": number(10),
+                "start_time": number(0),
+                "comment": format!("{class} | #1 | p | {C}"),
+                "array_job_id": number(0),
+                "array_task_id": unset,
+                "array_task_string": "",
+                "het_job_id": number(0),
+                "het_job_offset": unset,
+            })
+        })
+        .collect();
+    json!({"jobs": jobs}).to_string()
+}
+
 /// main で待つ trial の 20 と、その後ろの record の 21（並べ直しが要る）
 fn out_of_order() -> String {
-    format!(
-        "20|main|t|PENDING|10010|10:00|N/A|trial | #1 | p | {C}\n21|main|r|PENDING|10005|10:00|N/A|record | #1 | p | {C}\n"
-    )
+    queue(&[(20, "t", 10010, "trial"), (21, "r", 10005, "record")])
+}
+
+fn empty() -> String {
+    queue(&[])
 }
 
 #[test]
-fn reads_squeue_without_a_header_in_the_field_order() {
+#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
+fn reads_squeue_as_json_of_the_fixed_version() {
     let fake = FakeSqueue::new().with_squeue();
-    let out = fake.run(&[], "", 0);
+    let out = fake.run(&[], &empty(), 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert_eq!(
-        fake.log(),
-        "squeue --noheader --format %i|%P|%j|%T|%Q|%l|%S|%k\n"
-    );
+    assert_eq!(fake.log(), "squeue --json=v0.0.45\n");
 }
 
 #[test]
+#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
+fn an_unreadable_squeue_output_is_an_error_with_exit_code_1() {
+    let fake = FakeSqueue::new().with_squeue();
+    for bad in [
+        "",
+        "20|main|t|PENDING|10010|10:00|N/A|c",
+        r#"{"jobs": [{"job_id": 20}]}"#,
+    ] {
+        let out = fake.run(&[], bad, 0);
+        assert_eq!(out.status.code(), Some(1), "{bad}");
+        assert_eq!(stdout(&out), "", "{bad}");
+        assert!(
+            stderr(&out).contains("ERROR: squeue の出力を読めない: "),
+            "{bad}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn lists_the_jobs_with_the_order_line() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&[], &out_of_order(), 0);
@@ -119,6 +168,7 @@ fn lists_the_jobs_with_the_order_line() {
 }
 
 #[test]
+#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn order_first_prints_the_list_to_pass_to_scontrol_top() {
     let fake = FakeSqueue::new().with_squeue();
     let out = fake.run(&["--order", "--first", "20"], &out_of_order(), 0);
@@ -127,12 +177,13 @@ fn order_first_prints_the_list_to_pass_to_scontrol_top() {
 }
 
 #[test]
+#[ignore = "RED: slurm-queue は squeue の JSON をまだ読まない"]
 fn an_empty_queue_says_so_and_order_prints_nothing() {
     let fake = FakeSqueue::new().with_squeue();
-    let out = fake.run(&[], "", 0);
+    let out = fake.run(&[], &empty(), 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(stdout(&out), "待ち行列にジョブが無い\n");
-    let out = fake.run(&["--order"], "", 0);
+    let out = fake.run(&["--order"], &empty(), 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");
 }
