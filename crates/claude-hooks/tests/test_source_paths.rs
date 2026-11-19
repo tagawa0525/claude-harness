@@ -2,10 +2,12 @@
 //!
 //! Windows の `Path::display()` は `\` で区切る。sh のコマンドに埋めると `\` が sh の解析で消え（#301）、git の書く
 //! `/` 区切りのパスと比べると合わない（#304）。どちらも Linux では通るので、手元のチェックで見つけるために、
-//! テストのソースを読んで調べる。パスは `common::sh_path` を通して埋める。
+//! テストのソースを読んで調べる。パスは `common::sh_path` を通して埋める。出力が渡したパスをそのまま返すなら、
+//! 渡した文字列（`to_str()`）と比べる。
 //!
-//! 調べるのは `format!` の引数だけで、範囲はこの crate の `tests/` だけにする。panic や assert の失敗の文、
-//! コマンドの引数に渡す `display().to_string()`、ほかの crate のテストを調べない理由は #305 に書いた。
+//! 調べるのは `format!(` の引数だけで（使い道によらない。`.expect(&format!(…))` の文も見つける）、範囲はこの crate の
+//! `tests/` だけにする。`panic!` や `assert!` の引数に直に書いた失敗の文、`display().to_string()` で作った文字列、
+//! `write!` などのほかのマクロ、ほかの crate のテストを調べない理由は #305 に書いた。
 
 use std::path::{Path, PathBuf};
 
@@ -245,7 +247,7 @@ fn the_tests_of_this_crate_embed_paths_through_sh_path() {
         found.is_empty(),
         "format! の引数に Path::display() を直に使っています（Windows では \\ で区切り、sh のコマンドの中で消え、\
          git の書く / 区切りのパスと合いません）。common::sh_path を通してください。出力が渡したパスをそのまま返す\
-         なら、渡す側も sh_path にそろえます:\n{}",
+         なら、渡した文字列（to_str()）と比べます。失敗の文なら panic! や assert! の引数に直に書きます:\n{}",
         found.join("\n")
     );
 }
