@@ -266,7 +266,9 @@ pub fn main(args: &[String]) -> i32 {
     run(&req, &cleanup)
 }
 
-/// 抜けるときに一時のディレクトリを消す（中断のときは、中断を受けたスレッドが消してプロセスを終える）
+/// 抜けるときに一時のディレクトリを消す（中断のときは、中断を受けたスレッドが消してプロセスを終える）。`let _ =` で
+/// 受けるとその場で消すので、名前の付いた束縛で持つ
+#[must_use]
 struct RemoveAtEnd<'a>(&'a Cleanup);
 
 impl Drop for RemoveAtEnd<'_> {
@@ -364,12 +366,17 @@ fn inspect(command: &[String], wt: &Path) -> i32 {
     // Windows では、コマンドを呼んだ Git Bash の sh を通して起動する。CreateProcess は .sh と .cmd を起動せず、相対の
     // パス（./scripts/check.sh）を worktree でなく呼んだ側の作業ディレクトリから引く。ネイティブの exe から起動された
     // MSYS のプログラムは、引数のワイルドカードを自分で展開するので、MSYS の noglob で止める（呼んだ Git Bash は、
-    // 引数を展開した後で渡している）。sh の文は標準入力で渡す（引数に書くと、ネイティブの exe から MSYS のプログラムに
-    // 渡すときに引用符が崩れる。Windows の CI で `[: missing ]'` を見た）
+    // 引数を展開した後で渡している）。sh の文は標準入力で、検査のコマンドとその引数は環境変数で渡す（コマンドラインに
+    // 書くと、ネイティブの exe から MSYS のプログラムに渡すときに引用符と \ が崩れる。Windows の CI で `[: missing ]'`
+    // を見た）
     #[cfg(windows)]
     let (mut cmd, program, script) = {
         let mut cmd = Command::new("sh");
-        cmd.args(["-s", "--"]).args(command);
+        cmd.arg("-s")
+            .env("CHECK_EACH_COMMIT_ARGC", command.len().to_string());
+        for (i, arg) in command.iter().enumerate() {
+            cmd.env(format!("CHECK_EACH_COMMIT_ARG_{i}"), arg);
+        }
         // noglob は、検査のコマンドを起動する sh にだけ効かせ、検査のコマンドには呼んだ側の MSYS を戻して渡す
         match std::env::var_os("MSYS") {
             Some(msys) => {
@@ -415,11 +422,20 @@ fn inspect(command: &[String], wt: &Path) -> i32 {
     }
 }
 
-/// Windows で検査のコマンドを起動する sh の文。呼んだ側の MSYS に戻し、標準入力を渡さずに exec する
+/// Windows で検査のコマンドを起動する sh の文。環境変数からコマンドと引数を組み、呼んだ側の MSYS に戻し、標準入力を
+/// 渡さずに exec する（`--` で、- で始まるコマンドを exec の旗に読ませない）
 #[cfg(windows)]
-const WINDOWS_LAUNCHER: &str = r#"if [ -n "${CHECK_EACH_COMMIT_MSYS+set}" ]; then MSYS=$CHECK_EACH_COMMIT_MSYS; export MSYS; else unset MSYS; fi
+const WINDOWS_LAUNCHER: &str = r#"set --
+i=0
+while [ "$i" -lt "$CHECK_EACH_COMMIT_ARGC" ]; do
+  eval "set -- \"\$@\" \"\$CHECK_EACH_COMMIT_ARG_$i\""
+  unset "CHECK_EACH_COMMIT_ARG_$i"
+  i=$((i + 1))
+done
+unset CHECK_EACH_COMMIT_ARGC
+if [ -n "${CHECK_EACH_COMMIT_MSYS+set}" ]; then MSYS=$CHECK_EACH_COMMIT_MSYS; export MSYS; else unset MSYS; fi
 unset CHECK_EACH_COMMIT_MSYS
-exec "$@" </dev/null
+exec -- "$@" </dev/null
 "#;
 
 #[cfg(test)]

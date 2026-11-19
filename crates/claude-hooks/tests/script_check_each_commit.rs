@@ -297,7 +297,6 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
 /// 渡さない）
 #[cfg(windows)]
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the_arguments_as_given()
  {
     let repo = Repo::empty();
@@ -333,7 +332,6 @@ fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the
 /// Windows でも、- で始まる検査のコマンドは、Unix と同じく名前として引く（sh の exec の旗に読まない）
 #[cfg(windows)]
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_command_starting_with_a_dash_is_looked_up_as_a_name() {
     let repo = Repo::new();
     let out = repo.run(&["main", "--", "-c", "true"]);
