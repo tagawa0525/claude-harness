@@ -839,12 +839,13 @@ fn sync_with_words_other_than_run_stops_before_changing_a_worktree() {
     assert_eq!(m.repo.read("a.md"), "旧称の記録\n旧称の追記\n");
 }
 
-#[test]
-fn run_records_the_repository_dictionary_of_the_source_and_sync_uses_it() {
-    // run は --source のリポジトリの辞書（.ja-terms/prh.yml。ADR-0096）を共通の辞書に重ね、記録に残す。sync-worktrees は
-    // 語の指定を省けば、記録の辞書で直す
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("sync-words-repo-dictionary-{}", std::process::id()));
+/// run は --source のリポジトリの辞書（.ja-terms/prh.yml。ADR-0096）を共通の辞書に重ね、記録に残す。その後に sync_words で
+/// sync-worktrees を流し、記録の辞書で直すことを確かめる
+fn run_and_sync_with_the_repository_dictionary(name: &str, sync_words: &[&str]) {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "sync-words-repo-dictionary-{name}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("home")).unwrap();
     std::fs::write(
@@ -907,7 +908,22 @@ fn run_records_the_repository_dictionary_of_the_source_and_sync_uses_it() {
     )
     .unwrap();
     repo.git(&["update-ref", "refs/heads/main", new.trim(), &old]);
-    let out = history_rewrite(&root, &["sync-worktrees", "--workdir", &work], &[]);
+    let out = history_rewrite(
+        &root,
+        &[&["sync-worktrees", "--workdir", &work][..], sync_words].concat(),
+        &[],
+    );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(repo.read("a.md"), "新称の記録\n新称の追記\n");
+}
+
+#[test]
+fn run_records_the_repository_dictionary_of_the_source_and_sync_uses_it() {
+    run_and_sync_with_the_repository_dictionary("recorded", &[]);
+}
+
+#[test]
+fn sync_with_the_same_words_as_run_accepts_the_recorded_repository_dictionary() {
+    // run が見つけたリポジトリの辞書は、run と同じ指定（辞書を渡さない）の sync-worktrees でも記録と同じとみなす
+    run_and_sync_with_the_repository_dictionary("same", &["--exclude", "**/prh.yml"]);
 }

@@ -352,3 +352,24 @@ fn an_unreadable_repository_dictionary_stops_every_command() {
         }
     }
 }
+
+#[test]
+fn a_staged_dictionary_that_is_not_utf8_stops_like_the_work_tree_one() {
+    // ステージした辞書も、作業ツリーの辞書（Dictionary::load）と同じく、UTF-8 でなければ読めないとして止める
+    let repo = Repo::new();
+    let path = repo.top().join(".ja-terms/prh.yml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        b"version: 1\nrules:\n  - expected: \x82\xd9\n    pattern: \x82\xd3\n",
+    )
+    .unwrap();
+    repo.write("doc.md", "# 題\n");
+    repo.git(&["add", "."]);
+    for args in [&["staged"][..], &["check", "doc.md"]] {
+        let out = repo.ja_terms(&repo.top(), args, "");
+        let said = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {said}");
+        assert!(said.contains(".ja-terms/prh.yml"), "{args:?}: {said}");
+    }
+}
