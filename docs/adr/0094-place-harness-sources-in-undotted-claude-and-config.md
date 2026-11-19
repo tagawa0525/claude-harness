@@ -75,13 +75,15 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
   `~/.config/markdownlint/config` に置く。ソースのパスと置き先のパスは、同期のコードが対で持つ（ADR-0093 の「同じ相対パス」は
   やめる。ADR-0093 の「## 変更」）。`.claude/` を持つ古い版のソースは読まない（古い名前を探す分岐を残すと、名前が 2 つ
   ある状態が続く）
-- `.claude/settings.json`（`claudeMdExcludes`）は消す。このリポジトリは、追跡するプロジェクトの設定を持たない。
+- `.claude/settings.json`（`claudeMdExcludes`）は消す。このリポジトリが追跡するプロジェクトの設定は、このリポジトリだけの
+  規則（直下の `CLAUDE.md`）とスキル（`.claude/skills/`）だけで、配る元（`claude/`）と同じ中身は置かない。
   `.gitignore` の `.claude/settings.local.json` は残す（Claude Code は、このリポジトリのセッションで許可を選ぶと、
   `.claude/` が無くてもこのファイルを作る。2026-11-17、Claude Code 2.1.326 で、main の作業ツリーに作られた）
 - 変更の後のレビューの要否とレビューのレベルを決める「規則の文書」の判定（`check-merge-review`、`review-level.sh`）、
   `/retro` の `prose-size.sh` のスキルの判定は、リポジトリの先頭の `claude/` を `.claude/` と同じに数える（ほかの
   リポジトリの `.claude/` はそのまま数える）。`guard-sbatch` が通すテストは `claude/tests/scripts/slurm-run.sh`、
-  `post-merge-cleanup.sh` が `claude-sync` を知らせる変更は `claude/` と `config/`（古い版の clone のために `.claude/` も見る）
+  `post-merge-cleanup.sh` が `claude-sync` を知らせる変更は `claude/`、`config/`、共通の辞書（`crates/ja-terms/prh.yml`。
+  ADR-0097）。`claude-sync.sh` を持つ版（古い版のハーネスと、ハーネスを分ける前の nixfiles）では `.claude/` も見る
 - 案 B は、要因の 1 つ目を満たさない。ADR-0080 が改名を採らなかった理由（変更の範囲が指示の重複 1 つに見合わない）は、
   要因が 2 つになったので当たらない
 - 案 C は、`config/` の中身が 1 ファイルで、対で持つコードは 1 行で済む。名前の付け方を揃える方を取る
@@ -89,7 +91,8 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
 
 ### 帰結
 
-- 良い点: 配る元が `ls` に出る。このリポジトリに、追跡する Claude Code のプロジェクトの設定が無くなる
+- 良い点: 配る元が `ls` に出る。このリポジトリが追跡するプロジェクトの設定は、配る中身と重ならない、このリポジトリ
+  だけの規則とスキルだけになる（「## 変更」の 2026-11-19 の項）
 - 悪い点: このリポジトリの worktree で指示やスキルを直しても、そのセッションには効かない。試すときは
   `claude-sync <worktree>` で `~/.claude` に入れる（ほかのセッションにも効く。試し終えたら引数なしの `claude-sync` で main の
   版に戻す）。ADR-0080 の「指示を直すブランチでは、同期しなくてもその worktree のセッションに効く」は無くなる
@@ -109,6 +112,22 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
   `~/.config/markdownlint/config` に配る。`.claude/` だけを持つソースでは止まる
 - `modules/home/parts/claude-hooks/tests/script_prose_size.rs`、`script_review_level.rs`、
   `modules/home/parts/claude-hooks/src/rules/check_merge_review.rs` と `guard_sbatch.rs` のテスト: `claude/` の下の判定
-- `claude/tests/scripts/git-workflow.sh`: `claude/` か `config/` が変わる pull の後に `claude-sync` を知らせる
+- `claude/tests/scripts/git-workflow.sh`: `claude/` か `config/` が変わる pull の後に `claude-sync` を知らせる。共通の辞書の変更でも知らせ、
+  ハーネスの `.claude/` の変更では知らせない
 - このリポジトリのセッションが指示を 1 回だけ読むことの自動のテストは無い（確かめるには Claude Code を起動して API を呼ぶ
   必要がある）。疑うときは、main の作業ツリーで `claude -p` に見出し「# グローバル開発指針」の回数を聞く
+
+## 変更
+
+- 2026-11-19: 追跡するプロジェクトの設定。前は「このリポジトリは、追跡するプロジェクトの設定を持たない。」。配る元を
+  `claude/` に移したので、`.claude/` と直下の `CLAUDE.md` は、配る中身と重ならずにこのリポジトリのセッションだけが読む
+  置き場として使える。配備と導入の手順をスキル（`.claude/skills/harness-deploy`、`harness-install`）に、このリポジトリだけの
+  規則を直下の `CLAUDE.md` に置く（ユーザー 2026-11-19 の指示）。決定の要因の「指示とスキルを 1 か所からだけ読み」は、
+  配る中身について保つ: このリポジトリだけの規則とスキルは配る元（`claude/`）に置かないので、同じ中身が 2 か所から届く
+  ことは無い。`.claude/` と直下の `CLAUDE.md` に足してよいのは、配る元に無い、このリポジトリだけのものに限る。表題の
+  「このリポジトリのセッションは ~/.claude だけを読む」（凍結するので直さない）は、この項のとおり、配る中身についてのものとして読む
+- 2026-11-19: `post-merge-cleanup.sh` が `claude-sync` を知らせる変更。前は「`post-merge-cleanup.sh` が `claude-sync` を知らせる
+  変更は `claude/` と `config/`（古い版の clone のために `.claude/` も見る）」。`.claude/` にこのリポジトリだけのスキルを置いた
+  ので、ハーネスでは `.claude/` の変更を配る元の変更に数えない（配るものが無い。crate が `crates/` にある版はどれも
+  `claude/` を持つ。`.claude/` が配る元の古い版のハーネスは `claude-sync.sh` を持ち、前と同じく `.claude/` を見る）。共通の辞書は `claude-setup sync` が配るように
+  なった（ADR-0097）ので、配る元に数える

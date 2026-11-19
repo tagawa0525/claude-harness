@@ -517,8 +517,8 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         }
         Ok(false)
     };
-    let has_sync =
-        has("crates/claude-setup/Cargo.toml")? || has("modules/home/scripts/claude-sync.sh")?;
+    let harness = has("crates/claude-setup/Cargo.toml")?;
+    let has_sync = harness || has("modules/home/scripts/claude-sync.sh")?;
     let has_rebuild = has("modules/home/scripts/nix-rebuild.sh")?;
     let changed = |paths: &[&str]| {
         let mut args = vec!["diff", "--name-only", before.as_str(), "HEAD", "--"];
@@ -545,9 +545,16 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
             "NOTE: lock の更新と rebuild が要る（crates、nix、claude-settings.json か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
         );
     }
-    // 配る元は claude と config（ADR-0094 より前の版と、ハーネスを分ける前の nixfiles は .claude）。同期のコマンドを
-    // 持たないリポジトリの .claude はプロジェクトの指示で、その場で読まれる
-    if has_sync && changed(&["claude", "config", ".claude"]) {
+    // 配る元（同期のコマンドが置くもの）。claude-setup の crate を crates/ に持つ版のハーネスは claude、config、共通の
+    // 辞書で、.claude はこのリポジトリだけの指示とスキル（その場で読まれ、配らない。この版はどれも claude/ を持つ）。
+    // claude-sync.sh を持つ版（古い版のハーネスと、ハーネスを分ける前の nixfiles）は .claude が配る元。同期のコマンドを
+    // 持たないリポジトリの .claude はプロジェクトの指示で、何も知らせない
+    let sources: &[&str] = if harness {
+        &["claude", "config", "crates/ja-terms/prh.yml"]
+    } else {
+        &["claude", "config", ".claude"]
+    };
+    if has_sync && changed(sources) {
         // 引数なしの claude-sync は既定の clone を読む。pull したのがそこと限らないので、このリポジトリを元に渡す形で示す
         let sync_cmd = format!(
             "claude-sync {}",
