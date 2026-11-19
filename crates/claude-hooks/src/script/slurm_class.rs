@@ -1,5 +1,7 @@
 //! slurm-run.sh が `--class` で受け、ジョブのコメントの先頭に書く区分（ADR-0101）。並べ直す順に並べる（先のものが
-//! 先に走る）。slurm-queue の並べ直しと一覧はこの一覧だけを読む（区分を足すときに、置き場の食い違いを作らない）
+//! 先に走る）。slurm-queue の並べ直しと一覧はこの一覧を読む。slurm-run.sh の --class の検査（case の並び）は、
+//! slurm-run を claude-hooks に移すまで別に持つので、区分を変えるときは両方を合わせる（ADR-0101 の帰結の順の 2 で
+//! こちらに寄せる）
 
 /// 区分。timed（時間を記録する測定）、record（記録に載せる本番）、decision（決定に要る確認）、trial（検討）の順に優先する
 pub const CLASSES: [&str; 4] = ["timed", "record", "decision", "trial"];
