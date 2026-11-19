@@ -223,20 +223,26 @@ trap 'exit 1' USR1
 # 出力が 1 つの JSON の object でなければ、
 # 空の出力を allow と読まずに、テストの全体を止める
 run_hook() {
-  local hook="$1" command="$2" bg="${3:-false}" input out status=0 rule
-  local -a rule_args=()
-  for rule in $hook; do
-    rule_args+=(--rule "$rule")
-  done
+  local hook="$1" command="$2" bg="${3:-false}" input
   input=$(hook_input "$command" "$bg") || {
     echo "hook の入力を組めません: $command" >&2
     kill -USR1 "$$"
     exit 1
   }
+  run_hook_input "$hook" "$input"
+}
+
+# run_hook_input <rule> <入力の JSON>: run_hook と同じ検査で、hook_input が組まない欄を持つ入力を渡す
+run_hook_input() {
+  local hook="$1" input="$2" out status=0 rule
+  local -a rule_args=()
+  for rule in $hook; do
+    rule_args+=(--rule "$rule")
+  done
   out=$("$CLAUDE_HOOKS_BIN" pre-tool-use "${rule_args[@]}" <<<"$input" 2>"$TEST_ROOT/hook-stderr") || status=$?
   if ((status != 0)) || [[ -s "$TEST_ROOT/hook-stderr" ]] ||
     { [[ -n "$out" ]] && ! jq -se 'length == 1 and (.[0] | type == "object" and (has("systemMessage") | not))' <<<"$out" >/dev/null; }; then
-    echo "claude-hooks が失敗しました（${rule_args[*]}、終了コード $status）: $command" >&2
+    echo "claude-hooks が失敗しました（${rule_args[*]}、終了コード $status）: $input" >&2
     cat "$TEST_ROOT/hook-stderr" >&2
     [[ -z "$out" ]] || printf '%s\n' "$out" >&2
     kill -USR1 "$$"
