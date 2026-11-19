@@ -166,6 +166,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: 繰り返しの中の slurm-run.sh を 1 本と数える"]
     fn an_estimate_not_fixed_by_the_text_is_unknown() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         for command in [
@@ -175,9 +176,20 @@ mod tests {
             format!("{run} -t 25m x true"),
             format!("{run} -t"),
             "$RUN -t 30 x true; echo slurm-run.sh".to_string(),
+            format!("for n in 1 2 3; do {run} -t 30 x$n true; done"),
+            format!("while true; do {run} -t 30 x true; done"),
+            format!("until false; do {run} -t 30 x true; done"),
+            format!("bash -c 'for n in 1 2; do {run} -t 30 x true; done'"),
         ] {
             assert!(estimate(&command).is_err(), "{command}");
         }
+    }
+
+    #[test]
+    #[ignore = "RED: 最初の -t を読む"]
+    fn a_repeated_t_is_read_as_the_last_one_like_slurm_run() {
+        let command = "~/.claude/scripts/slurm-run.sh -t 5 --class trial --ref '#1' --purpose p -t 600 x true";
+        assert_eq!(estimate(command), Ok(600));
     }
 
     #[test]

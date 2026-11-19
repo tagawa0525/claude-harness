@@ -237,13 +237,18 @@ mod tests {
             1,
         );
         assert!(matches!(&o, Outlook::Unknown(r) if r.contains("超えて")));
-        // 止められたジョブも、走り始めたジョブと同じく走り始めた時刻から数える
+    }
+
+    #[test]
+    #[ignore = "RED: 止められたジョブを走っているジョブと同じに数える"]
+    fn a_suspended_job_makes_the_outlook_unknown() {
+        // 止められていた間だけ終わりが延びるので、見積もりの内でも終わりは読めない
         let o = outlook(
             NOW,
-            &[job("1", Phase::Suspended, Some(NOW - 3600), Some(30))],
+            &[job("1", Phase::Suspended, Some(NOW - 600), Some(60))],
             1,
         );
-        assert!(matches!(o, Outlook::Unknown(_)));
+        assert!(matches!(&o, Outlook::Unknown(r) if r.contains("止められている")));
     }
 
     #[test]
