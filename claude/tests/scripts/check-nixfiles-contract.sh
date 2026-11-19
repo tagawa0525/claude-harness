@@ -141,4 +141,13 @@ assert_contains "$out" "ERROR: "
 assert_contains "$out" "rebase"
 assert_not_contains "$out" "host=testhost"
 
+it "ハーネスの origin を fetch できなければ、古い版と比べて通さず、ERROR を出して 2 で終わる"
+git -C "$REPO" rebase -q origin/main
+git -C "$REPO" remote set-url origin "$TEST_ROOT/gone.git"
+out=$("$CHECK" testhost 2>&1)
+assert_eq 2 $?
+assert_contains "$out" "ERROR: "
+assert_contains "$out" "fetch"
+assert_not_contains "$out" "host=testhost"
+
 finish
