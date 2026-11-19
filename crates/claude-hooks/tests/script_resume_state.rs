@@ -173,8 +173,33 @@ fn a_tip_without_a_session_trailer_shows_no_session() {
     );
 }
 
+/// unmarked= の数に続く、印のある issue も含む open の一覧を出すコマンド（status を design-records と同じ読み方で読む）
+const LIST: &str = "open の一覧（印のある issue も含む。リポジトリの root で実行）: for f in docs/issues/*.md; do if [ \"$(design-records status < \"$f\")\" = open ]; then echo \"$f\"; fi; done";
+
 #[test]
-fn issues_show_only_the_open_ones_with_their_blocked_by() {
+fn unmarked_open_issues_are_counted_with_the_list_command_instead_of_listed() {
+    let repo = Repo::new();
+    for n in 1..=5 {
+        repo.issue(&format!("000{n}-x.md"), "---\nstatus: open\n---\n\n# x\n");
+    }
+    repo.issue(
+        "0006-f.md",
+        "---\nstatus: open\nblocked-by: [\"#0001\"]\n---\n\n# f\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert_eq!(
+        section(&text, "issues"),
+        format!(
+            "docs/issues/0006-f.md blocked-by=[\"#0001\"] blocked=#0001\n\
+             unmarked=5 {LIST}\n\
+             open-count now=6 14d-ago=unknown（14 日より前のコミットが無い）\n\
+             NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない\n"
+        )
+    );
+}
+
+#[test]
+fn only_the_open_issues_are_counted() {
     let repo = Repo::new();
     repo.issue(
         "0002-a.md",
@@ -192,12 +217,23 @@ fn issues_show_only_the_open_ones_with_their_blocked_by() {
     repo.issue("0004-n.md", "# n\n\nstatus: open\n");
     let text = stdout(&repo.run(&[]));
     assert!(
-        section(&text, "issues")
-            .starts_with("docs/issues/0002-a.md blocked-by=[\"#0001\"]\ndocs/issues/0003-q.md\n"),
+        section(&text, "issues").starts_with(&format!("unmarked=2 {LIST}\nopen-count now=2 ")),
         "{text}"
     );
-    assert!(!text.contains("0001-b.md"), "{text}");
-    assert!(!text.contains("0004-n.md"), "{text}");
+}
+
+#[test]
+fn closed_issues_alone_are_none_without_the_list_command() {
+    let repo = Repo::new();
+    repo.issue(
+        "0001-b.md",
+        "---\nstatus: closed\nresolution: done\n---\n\n# b\n",
+    );
+    let text = stdout(&repo.run(&[]));
+    assert_eq!(
+        section(&text, "issues"),
+        "(なし)\nopen-count now=0 14d-ago=unknown（14 日より前のコミットが無い）\n"
+    );
 }
 
 #[test]
@@ -248,10 +284,12 @@ fn an_issue_blocked_by_an_open_issue_is_marked_blocked_with_the_next_step() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0001-b.md\n\
-         docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"] blocked=#0001\n\
-         open-count now=2 14d-ago=unknown（14 日より前のコミットが無い）\n\
-         NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない\n"
+        format!(
+            "docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"] blocked=#0001\n\
+             unmarked=1 {LIST}\n\
+             open-count now=2 14d-ago=unknown（14 日より前のコミットが無い）\n\
+             NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない\n"
+        )
     );
 }
 
@@ -269,8 +307,9 @@ fn an_issue_whose_blockers_are_all_closed_is_not_marked() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0002-a.md blocked-by=[\"#0001\"]\n\
-         open-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
+        format!(
+            "unmarked=1 {LIST}\nopen-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
+        )
     );
 }
 
@@ -343,8 +382,9 @@ fn a_status_with_a_trailing_space_or_a_comment_is_read_like_design_records() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"]\n\
-         open-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
+        format!(
+            "unmarked=1 {LIST}\nopen-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
+        )
     );
 }
 
@@ -508,7 +548,9 @@ fn an_empty_blocked_by_in_an_unparsable_front_matter_is_not_a_blocker() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0005-x.md\nopen-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
+        format!(
+            "unmarked=1 {LIST}\nopen-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
+        )
     );
 }
 
