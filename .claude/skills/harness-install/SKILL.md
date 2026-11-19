@@ -14,7 +14,7 @@ description: claude-harness を新しい機械に入れるとき、入れた機�
   rebuild する。Claude Code の本体は取り込む側で入れる
 - 更新する: 取り込む側で lock を進めて rebuild する（この機械では /harness-deploy）。activation が `claude-setup sync` を呼び、
   `~/.claude` と `~/.config` の配るファイルを置く
-- スキル、スクリプト、CLAUDE.md、共通の辞書の規則だけを急いで入れるときは `claude-sync`（引数なしは既定の clone
+- `claude-setup sync` の配るもの（`crates/claude-setup/src/sync.rs` の冒頭に一覧）だけを急いで入れるときは `claude-sync`（引数なしは既定の clone
   `~/nix/claude-harness` を pull してから同期する）
 
 ## Windows

@@ -82,8 +82,8 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
 - 変更の後のレビューの要否とレビューのレベルを決める「規則の文書」の判定（`check-merge-review`、`review-level.sh`）、
   `/retro` の `prose-size.sh` のスキルの判定は、リポジトリの先頭の `claude/` を `.claude/` と同じに数える（ほかの
   リポジトリの `.claude/` はそのまま数える）。`guard-sbatch` が通すテストは `claude/tests/scripts/slurm-run.sh`、
-  `post-merge-cleanup.sh` が `claude-sync` を知らせる変更は `claude/` と `config/`（`claude/` を持たない古い版の clone では
-  `.claude/` も見る）
+  `post-merge-cleanup.sh` が `claude-sync` を知らせる変更は `claude/`、`config/`、共通の辞書（`crates/ja-terms/prh.yml`。
+  ADR-0097）。ハーネスを分ける前の nixfiles（`claude-sync.sh` を持つ）では `.claude/` も見る
 - 案 B は、要因の 1 つ目を満たさない。ADR-0080 が改名を採らなかった理由（変更の範囲が指示の重複 1 つに見合わない）は、
   要因が 2 つになったので当たらない
 - 案 C は、`config/` の中身が 1 ファイルで、対で持つコードは 1 行で済む。名前の付け方を揃える方を取る
@@ -112,8 +112,8 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
   `~/.config/markdownlint/config` に配る。`.claude/` だけを持つソースでは止まる
 - `modules/home/parts/claude-hooks/tests/script_prose_size.rs`、`script_review_level.rs`、
   `modules/home/parts/claude-hooks/src/rules/check_merge_review.rs` と `guard_sbatch.rs` のテスト: `claude/` の下の判定
-- `claude/tests/scripts/git-workflow.sh`: `claude/` か `config/` が変わる pull の後に `claude-sync` を知らせる。`claude/` を持つ
-  リポジトリの `.claude/` の変更では知らせず、`claude/` を持たない古い版では知らせる
+- `claude/tests/scripts/git-workflow.sh`: `claude/` か `config/` が変わる pull の後に `claude-sync` を知らせる。共通の辞書の変更でも知らせ、
+  ハーネスの `.claude/` の変更では知らせない
 - このリポジトリのセッションが指示を 1 回だけ読むことの自動のテストは無い（確かめるには Claude Code を起動して API を呼ぶ
   必要がある）。疑うときは、main の作業ツリーで `claude -p` に見出し「# グローバル開発指針」の回数を聞く
 
@@ -125,9 +125,11 @@ ADR-0080 は、ディレクトリの名前を変える案（案 D）を、パス
   規則を直下の `CLAUDE.md` に置く（ユーザー 2026-11-19 の指示）。決定の要因の「指示とスキルを 1 か所からだけ読み」は、
   配る中身について保つ: このリポジトリだけの規則とスキルは配る元（`claude/`）に置かないので、同じ中身が 2 か所から届く
   ことは無い。`.claude/` と直下の `CLAUDE.md` に足してよいのは、配る元に無い、このリポジトリだけのものに限る
-- 2026-11-19: `post-merge-cleanup.sh` が `.claude/` の変更を見る条件。前は「`post-merge-cleanup.sh` が `claude-sync` を知らせる
+- 2026-11-19: `post-merge-cleanup.sh` が `claude-sync` を知らせる変更。前は「`post-merge-cleanup.sh` が `claude-sync` を知らせる
   変更は `claude/` と `config/`（古い版の clone のために `.claude/` も見る）」。`.claude/` にこのリポジトリだけのスキルを置いた
-  ので、`claude/` を持つリポジトリでは `.claude/` の変更を配る元の変更に数えない（配るものが無い）
-- 2026-11-19: 表題の「このリポジトリのセッションは ~/.claude だけを読む」は、配る中身（全プロジェクトの指示とスキル）について
-  のもの。このリポジトリだけの規則とスキルは、直下の `CLAUDE.md` と `.claude/skills/` から読む（上の項）。配る元の置き場の
-  決定は変わらないので、新しい ADR で置き換えず、ここに書く
+  ので、ハーネスでは `.claude/` の変更を配る元の変更に数えない（配るものが無い。crate が `crates/` にある版はどれも
+  `claude/` を持つので、`.claude/` が配る元の版のハーネスは、この判定に来ない）。共通の辞書は `claude-setup sync` が配るように
+  なった（ADR-0097）ので、配る元に数える
+- 2026-11-19: 表題の読み方。前は「このリポジトリのセッションは ~/.claude だけを読む」（表題。凍結するので直さない）。これは
+  配る中身（全プロジェクトの指示とスキル）についてのもので、このリポジトリだけの規則とスキルは、直下の `CLAUDE.md` と
+  `.claude/skills/` から読む（最初の項）。配る元の置き場の決定は変わらないので、新しい ADR で置き換えず、ここに書く

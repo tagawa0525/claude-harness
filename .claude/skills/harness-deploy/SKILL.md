@@ -1,6 +1,6 @@
 ---
 name: harness-deploy
-description: claude-harness の PR をマージした後に、lock の更新、rebuild、claude-sync で配備し、配備された版を確かめる。post-merge-cleanup.sh が NOTE:（rebuild か claude-sync が要る）を出したときに使う。
+description: claude-harness の PR をマージした後に、lock の更新、rebuild、claude-sync で配備し、配備された版を確かめる。post-merge-cleanup.sh が「NOTE: lock の更新と rebuild が要る」か「NOTE: claude-sync が要る」を出したときに使う。
 ---
 
 # ハーネスの配備
@@ -10,7 +10,7 @@ description: claude-harness の PR をマージした後に、lock の更新、r
 
 ## いつ実行するか
 
-`post-merge-cleanup.sh` が `NOTE:` の行（lock の更新と rebuild が要る、claude-sync が要る）を出したとき。どの `NOTE:` でも下の
+このリポジトリの `post-merge-cleanup.sh` が `NOTE: lock の更新と rebuild が要る` か `NOTE: claude-sync が要る` を出したとき。どの `NOTE:` でも下の
 手順は同じで、lock を進めて rebuild し、claude-sync で main の版を入れる。スキル、スクリプト、CLAUDE.md、共通の辞書の規則は
 `claude-sync` だけで効くが、lock は進める（lock が古いと、次の rebuild の activation が lock の版の中身に戻す）。
 
@@ -21,7 +21,7 @@ description: claude-harness の PR をマージした後に、lock の更新、r
 
    ```bash
    git -C ~/nix/claude-harness fetch -q && git -C ~/nix/claude-harness status -sb
-   git -C ~/nix/nixfiles status -sb
+   git -C ~/nix/nixfiles fetch -q && git -C ~/nix/nixfiles status -sb
    ```
 
 2. 配備する。`run_in_background=true` の Bash で 1 本にし、終わりの通知を待つ（数分のビルドがある）
