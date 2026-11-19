@@ -397,7 +397,6 @@ fn a_failing_scontrol_is_read_again_instead_of_taken_as_a_forgotten_job() {
 }
 
 #[test]
-#[ignore = "RED: 回数で打ち切る"]
 fn a_scontrol_that_keeps_failing_gives_up_on_that_job_after_the_time_limit() {
     let s = Slurm::new();
     // 読めないまま SLURM_WAIT_GIVE_UP 秒（既定 600）たったら、そのジョブを待つのをやめる
@@ -415,7 +414,6 @@ fn a_scontrol_that_keeps_failing_gives_up_on_that_job_after_the_time_limit() {
 }
 
 #[test]
-#[ignore = "RED: 1 本が読めないと全部の待ちをやめる"]
 fn a_job_that_cannot_be_read_does_not_stop_the_wait_for_the_others() {
     let s = Slurm::new();
     for job in ["962", "963"] {

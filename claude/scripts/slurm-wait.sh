@@ -17,9 +17,11 @@
 #   RESULT: job=<番号> name=<名前> exit=<終了コード> state=<State>
 #   EXIT: <終了コード>（COMPLETED 以外で終わったときは、後ろに (State=<State>) を付ける）
 # ジョブごとの終了コードは slurm-run.sh と同じく、ジョブの終了コード（シグナルで終われば 1）で、COMPLETED でなく 0 なら 1。
-# 制御のデーモンにも会計の記録にも無いジョブは 1。全体の終了コードは、番号の順で最初の 0 でないもの。番号の誤りは 1。
+# 制御のデーモンにも会計の記録にも無いジョブと、読めないまま SLURM_WAIT_GIVE_UP 秒（既定 600）たったジョブは 1（ほかの
+# ジョブは待ち続ける）。全体の終了コードは、番号の順で最初の 0 でないもの。番号の誤りは 1。
 # 中断（INT、TERM、HUP）されたら 130。
-# 終わりは制御のデーモン（scontrol show job）を SLURM_WAIT_INTERVAL 秒（既定 30）ごとに読んで待つ（読めなければ読み直す）。
+# 終わりは制御のデーモン（scontrol show job）を SLURM_WAIT_INTERVAL 秒（既定 30）ごとに読んで待つ（読めなければ、上限の
+# 時間まで読み直す。scontrol を起動できなければ、待たずに 1）。
 
 . "$(dirname "$0")/lib/claude-hooks-script.sh"
 claude_hooks_script slurm-wait "$@"

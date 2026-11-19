@@ -9,7 +9,8 @@
 //!
 //! 1. 番号を確かめる。番号でなければ、理由を標準エラーに出して 1 で終える
 //! 2. 制御のデーモンが覚えているジョブを SLURM_WAIT_INTERVAL 秒（既定 30）ごとに読み、どれもが終わるか覚えていなくなるまで
-//!    待つ（sbatch --wait の `_job_wait` と同じ見方。読めないときは読み直し、終わりの終了コードもそれと同じ形）。初めて読めた
+//!    待つ（sbatch --wait の `_job_wait` と同じ見方。読めないときは読み直し、終わりの終了コードもそれと同じ形。読めないまま
+//!    SLURM_WAIT_GIVE_UP 秒（既定 600）たったジョブは待つのをやめ、そのジョブだけを 1 にする）。初めて読めた
 //!    ジョブの名前とログとコメントを控え、`JOB:`、`LOG:` を出す
 //! 3. 番号の順に、終わりの処理（会計の記録の待ち、`TIME:` の行、ログの末尾、`RESULT:`、`EXIT:`）を slurm-run と同じ
 //!    [`slurm_run::finish`] で出す。制御のデーモンが初めから覚えていなかったジョブは、会計の記録から名前とログを読む（どちらにも
@@ -33,12 +34,11 @@ struct Waited {
     /// 終わったら Some（中は制御のデーモンの終了コード。覚えていなかったら None）
     ended: Option<Option<i32>>,
     progress: Arc<Mutex<Progress>>,
-    /// 続けて読めなかった回数
-    failures: u32,
+    /// 続けて読めなくなった時刻
+    failing_since: Option<std::time::Instant>,
+    /// 読めないまま見限った
+    unreadable: bool,
 }
-
-/// 続けて読めない回数の上限（既定の間隔の 30 秒で 10 分。slurmctld の再起動を越えて待つ）
-const MAX_FAILURES: u32 = 20;
 
 pub fn main(args: &[String]) -> i32 {
     let jobs = match parse_args(args) {
@@ -60,7 +60,8 @@ pub fn main(args: &[String]) -> i32 {
             job,
             origin: None,
             ended: None,
-            failures: 0,
+            failing_since: None,
+            unreadable: false,
         })
         .collect();
     let shared: Vec<_> = waited.iter().map(|w| Arc::clone(&w.progress)).collect();
@@ -106,6 +107,21 @@ fn parse_args(args: &[String]) -> Result<Vec<String>, String> {
     Ok(jobs.into_iter().map(|j| j.to_string()).collect())
 }
 
+/// 読めないまま待つ上限（SLURM_WAIT_GIVE_UP。既定 600 秒は slurmctld の再起動を越えて待ち、終わらない background を残さない。
+/// 回数でなく時間にするのは、間隔を縮めても同じ時間だけ待つため）
+fn give_up_after() -> Result<std::time::Duration, String> {
+    match std::env::var("SLURM_WAIT_GIVE_UP")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        None => Ok(std::time::Duration::from_secs(600)),
+        Some(v) => v
+            .parse::<u64>()
+            .map(std::time::Duration::from_secs)
+            .map_err(|_| format!("SLURM_WAIT_GIVE_UP は秒: '{v}'")),
+    }
+}
+
 /// 待つ間隔（SLURM_WAIT_INTERVAL。テストが短くする）
 fn poll_interval() -> Result<std::time::Duration, String> {
     match std::env::var("SLURM_WAIT_INTERVAL")
@@ -123,19 +139,20 @@ fn poll_interval() -> Result<std::time::Duration, String> {
 }
 
 fn run(waited: &mut [Waited]) -> i32 {
-    let (record_wait, interval) = match (slurm_run::record_wait(), poll_interval()) {
-        (Ok(record_wait), Ok(interval)) => (record_wait, interval),
-        (Err(e), _) | (_, Err(e)) => {
-            eprintln!("ERROR: {e}");
-            return 1;
-        }
-    };
+    let (record_wait, interval, give_up) =
+        match (slurm_run::record_wait(), poll_interval(), give_up_after()) {
+            (Ok(record_wait), Ok(interval), Ok(give_up)) => (record_wait, interval, give_up),
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
+                eprintln!("ERROR: {e}");
+                return 1;
+            }
+        };
 
     while waited.iter().any(|w| w.ended.is_none()) {
         for w in waited.iter_mut().filter(|w| w.ended.is_none()) {
             match slurm::controller_job(&w.job) {
                 Ok(Some(found)) => {
-                    w.failures = 0;
+                    w.failing_since = None;
                     if w.origin.is_none() {
                         announce(&w.job, &found.name, &found.log, &w.progress);
                         w.origin = Some((found.name, found.log, found.comment));
@@ -149,14 +166,18 @@ fn run(waited: &mut [Waited]) -> i32 {
                 Ok(None) => w.ended = Some(None),
                 // 一時の失敗は、sbatch --wait と同じく読み直す（覚えていないと読むと、走っているジョブを終わったことにする）
                 Err(slurm::ControllerError::Failed(reason)) => {
-                    w.failures += 1;
-                    // 続けて読めないなら、一時の不調でないとみなして終える（終わらない background を残さない）
-                    if w.failures >= MAX_FAILURES {
+                    let since = *w.failing_since.get_or_insert_with(std::time::Instant::now);
+                    // 読めないまま上限の時間がたったら、一時の不調でないとみなし、そのジョブだけを見限る（ほかのジョブは
+                    // 待ち続ける）
+                    if since.elapsed() >= give_up {
                         eprintln!(
-                            "ERROR: ジョブ {} の状態を {MAX_FAILURES} 回続けて読めない: {reason}",
-                            w.job
+                            "ERROR: ジョブ {} の状態を読めないまま {} 秒たった。このジョブを待つのをやめる: {reason}",
+                            w.job,
+                            give_up.as_secs()
                         );
-                        return 1;
+                        w.unreadable = true;
+                        w.ended = Some(None);
+                        continue;
                     }
                     eprintln!(
                         "WARN: ジョブ {} の状態を読めない。読み直す: {reason}",
@@ -188,6 +209,10 @@ fn run(waited: &mut [Waited]) -> i32 {
 /// 終わったジョブ 1 本の終わりの行を出し、そのジョブの終了コードを返す
 fn finish_one(w: &mut Waited, record_wait: (u32, std::time::Duration)) -> i32 {
     let job = w.job.as_str();
+    if w.unreadable {
+        lock(&w.progress).report_unfinished(1);
+        return 1;
+    }
     // 会計の記録は、要るときに 1 度だけ読む（終わりの State と時間は、finish が届くまで読み直す）
     let mut record = None;
     let (log, comment) = match w.origin.take() {
