@@ -82,3 +82,4 @@
 * [ADR-0095: Rust の crate は crates/ に、Nix のモジュールは nix/ に置き、modules/home/parts/ をやめる](0095-place-crates-and-nix-modules-at-top-level.md)
 * [ADR-0096: 崩れた語の辞書を、共通の辞書と、リポジトリの .ja-terms/prh.yml の 2 つに分けて重ねる](0096-layer-repository-dictionary-over-ja-terms-dictionary.md)
 * [ADR-0097: ja-terms の共通の辞書を、ビルドに埋めず、claude-setup sync がホームの下に配るファイルから読む](0097-deliver-common-ja-terms-dictionary-with-claude-setup-sync.md)
+* [ADR-0098: 担当の報告に外したもの、後回しにしたものの欄を置き、hook で確かめる](0098-keep-excluded-items-in-delegate-reports.md)
