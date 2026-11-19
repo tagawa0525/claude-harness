@@ -269,8 +269,16 @@ fn check_index_front(path: &str, text: &str, version: &str, out: &mut Vec<Findin
     out.push(finding(Severity::Error, path, None, message));
 }
 
-/// `log.md` の日付の見出し。
+/// `log.md` はフロントマターを持たず（OKF v0.3 §9）、日付の見出しが `YYYY-MM-DD`。
 fn check_log(path: &str, text: &str, out: &mut Vec<Finding>) {
+    if text.lines().next().is_some_and(|l| l.trim_end() == "---") {
+        out.push(finding(
+            Severity::Error,
+            path,
+            None,
+            "a log.md has no front matter",
+        ));
+    }
     for (i, line) in text.lines().enumerate() {
         if let Some(date) = line.strip_prefix("## ")
             && !is_date(date.trim())
