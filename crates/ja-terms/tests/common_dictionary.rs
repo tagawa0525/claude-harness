@@ -217,7 +217,7 @@ fn message_reads_its_input_before_it_stops_on_a_missing_dictionary() {
     let body = "ふがふがの値\n".repeat(100_000);
     for args in [
         &["message"][..],
-        &["--dictionary", "nonexistent/prh.yml", "message"][..],
+        &["message", "--dictionary", "nonexistent/prh.yml"][..],
     ] {
         let out = ja_terms(&scratch, &scratch.0, &home, None, args, &body);
         assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stdout(&out));
