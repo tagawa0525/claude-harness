@@ -1,5 +1,6 @@
-//! `claude-hooks script wait-step` が、/delegate の担当の待ちの 1 ステップを刻み、終わり、1 ステップ、途中の報告を見分けて、次の行動を
-//! 示すことを確かめる（`~/.claude/scripts/wait-step.sh` が呼ぶ）。sh から呼ぶ配備の確認は `claude/tests/scripts/wait-step.sh`
+//! `claude-hooks script wait-step` が、/delegate の担当の待ちの 1 ステップを刻み、終わり、1 ステップ、途中の報告を見分けて、
+//! 次の行動を示すことを確かめる（`~/.claude/scripts/wait-step.sh` が呼ぶ）。sh から呼ぶ配備の確認は
+//! `claude/tests/scripts/wait-step.sh`
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
