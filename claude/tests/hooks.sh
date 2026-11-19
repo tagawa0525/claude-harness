@@ -3802,21 +3802,21 @@ input=$(jq -n --arg cwd "$PWD" '{hook_event_name: "PreToolUse", tool_name: "Bash
 out=$(run_hook_input require-pipefail "$input")
 assert_eq '{"command":"set -o pipefail; cargo test | tail","description":"d","timeout":5000}' "$(updated_input "$out")"
 
-it "require-pipefail: bash -c や ssh の文字列の中のパイプは、外に付けた pipefail が効かないので、書き換えずに deny する"
+it "require-pipefail: bash -c や ssh などの文字列で実行するビルドは、外に付けた pipefail が効くかを読まないので、書き換えずに deny する"
 for cmd in "bash -c 'cargo test | tail'" "ssh host 'cargo test | tail'" "bash -c 'cargo test | tail' | tail" \
-  "bash -c \"bash -c 'cargo test' | tail\""; do
+  "bash -c \"bash -c 'cargo test' | tail\"" "bash -c 'cargo test' | tail" "ssh host cargo test | tail" \
+  "bash -c 'cd x && nix build .#y' 2>&1 | head -5" "bash -c 'cargo test 2>&1 | grep -v warn' | tail" \
+  "bash -c \"eval 'cargo test | tail'\"" "bash -c 'cargo build; echo done' | tail" "script -qc 'cargo test' /dev/null | tail"; do
   out=$(run_hook require-pipefail "$cmd")
   assert_eq deny "$(decision "$out")"
   assert_eq "" "$(updated_input "$out")"
-  assert_contains "$(reason "$out")" "文字列の中"
+  assert_contains "$(reason "$out")" "文字列"
 done
 
-it "require-pipefail: bash -c や ssh の文字列を外でパイプにつなぐ形と、eval の文字列の中のパイプは書き換える"
-for cmd in "bash -c 'cargo test' | tail" "ssh host cargo test | tail" "bash -c 'cd x && nix build .#y' 2>&1 | head -5" \
-  "eval 'cargo test | tail'"; do
-  out=$(run_hook require-pipefail "$cmd")
-  assert_eq "$(rewritten "$cmd")" "$(updated_input "$out")"
-done
+it "require-pipefail: 今のシェルで実行する eval の文字列の中のパイプは書き換える"
+cmd="eval 'cargo test | tail'"
+out=$(run_hook require-pipefail "$cmd")
+assert_eq "$(rewritten "$cmd")" "$(updated_input "$out")"
 
 it "require-pipefail: (…) と \$(…) の中のビルドは、外の pipefail を受け継ぐので書き換える"
 for cmd in '(cd wt && cargo test 2>&1 | tail)' 'x=$(cargo test 2>&1 | tail -1); echo "$x"'; do
