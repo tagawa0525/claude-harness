@@ -172,6 +172,80 @@ fn new_commits_on_the_local_default_branch_are_listed() {
 }
 
 #[test]
+fn the_notice_names_only_the_refs_that_moved() {
+    let work = Work::new();
+    let repo = work.repo("main");
+    let head = work.git(&repo, &["rev-parse", "HEAD"]);
+    work.git(&repo, &["update-ref", "refs/remotes/origin/main", &head]);
+    work.stdout(SESSION, &repo);
+    work.advance_origin(&repo, "main", "Merge: only on origin");
+    let header = work
+        .stdout(SESSION, &repo)
+        .lines()
+        .next()
+        .unwrap()
+        .to_string();
+    assert!(header.contains("（origin/main）"), "{header}");
+    work.commit(&repo, "feat: only on the local branch");
+    let header = work
+        .stdout(SESSION, &repo)
+        .lines()
+        .next()
+        .unwrap()
+        .to_string();
+    assert!(header.contains("（main）"), "{header}");
+}
+
+#[test]
+fn an_empty_state_file_counts_as_the_first_prompt() {
+    // 書く途中で止まった（空の）記録から、履歴のすべてを新しいコミットとして出さない
+    let work = Work::new();
+    let repo = work.repo("main");
+    work.commit(&repo, "feat: old history");
+    work.stdout(SESSION, &repo);
+    let state = repo.join(".git/claude-prompt-heads").join(SESSION);
+    std::fs::write(&state, "").unwrap();
+    assert_eq!(work.stdout(SESSION, &repo), "");
+    work.commit(&repo, "Merge: after the reset");
+    let out = work.stdout(SESSION, &repo);
+    assert!(out.contains("Merge: after the reset"), "{out}");
+    assert!(!out.contains("feat: old history"), "{out}");
+}
+
+#[test]
+fn state_files_of_sessions_idle_for_a_month_are_removed() {
+    let work = Work::new();
+    let repo = work.repo("main");
+    work.stdout(SESSION, &repo);
+    work.stdout(OTHER, &repo);
+    let dir = repo.join(".git/claude-prompt-heads");
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 60 * 60);
+    std::fs::File::options()
+        .write(true)
+        .open(dir.join(OTHER))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    // 覚えた先端を書き直すとき（先端が動いたとき）に、古い記録を片付ける
+    work.commit(&repo, "Merge: moved");
+    work.stdout(SESSION, &repo);
+    assert!(dir.join(SESSION).exists());
+    assert!(!dir.join(OTHER).exists());
+}
+
+#[test]
+fn a_state_that_cannot_be_written_puts_nothing_in_the_context() {
+    // 書けない理由を毎回のプロンプトの文脈に出さない（標準エラーに出す）
+    let work = Work::new();
+    let repo = work.repo("main");
+    std::fs::write(repo.join(".git/claude-prompt-heads"), "not a directory").unwrap();
+    let out = work.prompt(SESSION, &repo);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    assert!(!out.stderr.is_empty());
+}
+
+#[test]
 fn a_move_of_only_the_origin_tracking_branch_is_listed() {
     let work = Work::new();
     let repo = work.repo("main");

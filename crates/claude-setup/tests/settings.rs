@@ -326,7 +326,13 @@ fn prompt(command: &str) -> Value {
     json!({"hooks": [{"type": "command", "command": command, "timeout": 10}]})
 }
 
-const PROMPT: &str = "date '+現在時刻: %F %H:%M %Z'; '/home/u/.claude/bin/claude-hooks' user-prompt-submit || exit 1";
+/// バイナリが失敗したときに出す行。終了コードは 0 のまま（0 のほかでは Claude Code が標準出力の date の行も文脈に入れない）
+const FAILED: &str = r#"|| echo "claude-hooks user-prompt-submit が終了コード $? で終わりました（既定ブランチの進みを確かめていません）""#;
+
+const PROMPT: &str = concat!(
+    "date '+現在時刻: %F %H:%M %Z'; '/home/u/.claude/bin/claude-hooks' user-prompt-submit ",
+    r#"|| echo "claude-hooks user-prompt-submit が終了コード $? で終わりました（既定ブランチの進みを確かめていません）""#
+);
 
 #[test]
 fn the_prompt_hook_runs_the_date_and_the_binary_in_one_registration() {
@@ -366,9 +372,9 @@ fn the_prompt_hook_quotes_a_windows_path_for_git_bash() {
     let got = home.ok(&json!({}), &["--user-prompt-submit", windows]);
     assert_eq!(
         got["hooks"]["UserPromptSubmit"],
-        json!([prompt(
-            r"date '+現在時刻: %F %H:%M %Z'; 'C:\Users\o'\''neil\.claude\bin\claude-hooks.exe' user-prompt-submit || exit 1"
-        )])
+        json!([prompt(&format!(
+            r"date '+現在時刻: %F %H:%M %Z'; 'C:\Users\o'\''neil\.claude\bin\claude-hooks.exe' user-prompt-submit {FAILED}"
+        ))])
     );
 }
 
@@ -443,15 +449,19 @@ fn the_registered_prompt_hook_prints_the_date_line_then_the_binary_output() {
 
 #[cfg(unix)]
 #[test]
-fn a_failing_binary_does_not_block_the_prompt() {
-    // UserPromptSubmit の終了コード 2 はプロンプトを止めて消す。前の版のバイナリは知らないサブコマンドに 2 で終わる
+fn a_failing_binary_keeps_the_date_line_and_says_it_failed() {
+    // UserPromptSubmit の終了コード 2 はプロンプトを止めて消し、0 のほかでは標準出力（date の行）を文脈に入れない。
+    // 前の版のバイナリは知らないサブコマンドに 2 で終わる
     let home = Home::new();
     let bin = fake_binary(&home, "echo usage >&2; exit 2");
     let out = run_prompt_hook(&home, &bin);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(
-        String::from_utf8(out.stdout)
-            .unwrap()
-            .starts_with("現在時刻: ")
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(lines[0].starts_with("現在時刻: "), "{stdout}");
+    assert_eq!(
+        lines[1],
+        "claude-hooks user-prompt-submit が終了コード 2 で終わりました（既定ブランチの進みを確かめていません）"
     );
 }
