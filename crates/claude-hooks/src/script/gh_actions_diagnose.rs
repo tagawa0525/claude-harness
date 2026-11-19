@@ -2,8 +2,10 @@
 //! ブランチ。PR なら head のブランチと head の SHA を解く。PR の URL なら、gh を URL のリポジトリに向け、NEXT の gh の
 //! 手順に -R を付ける。PR 番号、ブランチ名、省いたときは cwd のリポジトリで読む。
 //!
-//! 見るもの: GitHub Actions の run（失敗ならジョブ、ステップ、ログから原因を分類する）と、head の SHA の check-run のうち
+//! 見るもの: head の SHA の GitHub Actions の run のうち、ワークフローと event ごとの最新（どれかが失敗なら、その 1 つの
+//! ジョブ、ステップ、ログから原因を分類する。失敗が無く実行中があれば IN_PROGRESS）と、head の SHA の check-run のうち
 //! GitHub Actions でない App（外部の CI）と commit status（gh run では見えず、gh run rerun でも再実行できない）。
+//! head の SHA を読めなければ（未 push か API の失敗）、ブランチの最新の run の SHA で判定する。
 //!
 //! 出力: `BRANCH:`、`PR:`、`RUNS:`（直近 5 件）、`RUN:`、`STATUS:`、`ATTEMPT:`、`FAILED_JOB:`、`FAILED_STEP:`、
 //! `--- errors ---`（失敗したステップのログのエラーの行）、`EXTERNAL_CHECKS:`、`EXTERNAL_CHECK:`、`CAUSE:`、`NEXT:`、
@@ -18,6 +20,7 @@
 use super::pr_url;
 use regex::Regex;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::process::Command;
 use std::sync::LazyLock;
 
@@ -148,9 +151,6 @@ fn diagnose(target: &str) -> Result<(), i32> {
     let mut cause = "NONE";
     let mut next = String::new();
     let mut report = Report::default();
-    // 最新の run の結論（NONE の NEXT で、skipped と neutral を成功と書かないため）
-    let mut latest_conclusion = String::new();
-    let mut latest_name = String::new();
     let runs = json(
         "gh run list",
         &gh.output(&[
@@ -158,10 +158,12 @@ fn diagnose(target: &str) -> Result<(), i32> {
             "list",
             "--branch",
             &branch,
+            // RUNS に出すのは 5 件だが、head の SHA の run をワークフローごとに拾うために多めに読む（新しい順なので、
+            // head の run は先頭に並ぶ）
             "--limit",
-            "5",
+            "100",
             "--json",
-            "databaseId,name,status,conclusion,createdAt,url",
+            "databaseId,name,workflowDatabaseId,event,headSha,status,conclusion,createdAt,url",
         ])?,
     )?;
     let Value::Array(runs) = runs else {
@@ -172,7 +174,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
         println!("RUNS: 0");
     } else {
         println!("RUNS:");
-        for r in &runs {
+        for r in runs.iter().take(5) {
             println!(
                 "- {} {} {}/{} {} {}",
                 text(&r["databaseId"]),
@@ -183,13 +185,52 @@ fn diagnose(target: &str) -> Result<(), i32> {
                 text(&r["url"])
             );
         }
-        // gh run list は新しい順
-        let latest = &runs[0];
-        let id = text(&latest["databaseId"]);
-        let status = text(&latest["status"]);
-        let conclusion = text(&latest["conclusion"]);
-        latest_conclusion = conclusion.clone();
-        latest_name = text(&latest["name"]);
+    }
+    if head_sha.is_empty() {
+        head_sha = gh
+            .quiet(&[
+                "api",
+                &format!("repos/{{owner}}/{{repo}}/git/ref/heads/{branch}"),
+                "--jq",
+                ".object.sha",
+            ])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+    }
+    let sha_of = |r: &Value| r["headSha"].as_str().unwrap_or("").to_string();
+    // head を読めなければ（未 push か API の失敗）最新の run の commit で判定する。外部の CI は head_sha が空なら読まない
+    let actions_sha = if head_sha.is_empty() {
+        runs.first().map(sha_of).unwrap_or_default()
+    } else {
+        head_sha.clone()
+    };
+    // ワークフローと event ごとの最新の run（gh run list は新しい順）。同じワークフローでも push と pull_request の run は
+    // 別々に走り、片方の成功で他方の失敗を隠さないように event でも分ける
+    let mut seen = HashSet::new();
+    let head_runs: Vec<&Value> = runs
+        .iter()
+        .filter(|r| sha_of(r) == actions_sha)
+        .filter(|r| seen.insert((text(&r["workflowDatabaseId"]), text(&r["event"]))))
+        .collect();
+    let finished_ok = |r: &Value| {
+        r["status"] == "completed" && not_failed(r["conclusion"].as_str().unwrap_or(""))
+    };
+    let unfinished_or_failed: Vec<&Value> = head_runs
+        .iter()
+        .copied()
+        .filter(|r| !finished_ok(r))
+        .collect();
+    // 失敗を先に診断する（実行中の run を待っても、失敗した run の結果は変わらない）
+    let target = unfinished_or_failed
+        .iter()
+        .find(|r| r["status"] == "completed")
+        .or(unfinished_or_failed.first())
+        .or(head_runs.first())
+        .copied();
+    if let Some(run) = target {
+        let id = text(&run["databaseId"]);
+        let status = text(&run["status"]);
+        let conclusion = text(&run["conclusion"]);
         println!("RUN: {id}");
         println!("STATUS: {status}/{conclusion}");
         report.run = id.clone();
@@ -197,7 +238,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
         if status != "completed" {
             cause = "IN_PROGRESS";
             next = "実行中です。完了を待ってから再確認してください".to_string();
-        } else if !matches!(conclusion.as_str(), "success" | "skipped" | "neutral") {
+        } else if !not_failed(&conclusion) {
             let view = json(
                 "gh run view",
                 &gh.output(&["run", "view", &id, "--json", "jobs,attempt"])?,
@@ -256,21 +297,29 @@ fn diagnose(target: &str) -> Result<(), i32> {
                     "エラー行を読んで原因を修正してください（全文: gh run view {id}{repo_flag} --log-failed）"
                 );
             }
+            let others: Vec<String> = unfinished_or_failed
+                .iter()
+                .filter(|r| !std::ptr::eq(**r, run))
+                .map(|r| {
+                    format!(
+                        "{} {} {}/{}",
+                        text(&r["name"]),
+                        text(&r["databaseId"]),
+                        text(&r["status"]),
+                        text(&r["conclusion"])
+                    )
+                })
+                .collect();
+            if !others.is_empty() {
+                next.push_str(&format!(
+                    "。ほかのワークフローにも失敗か実行中の run があります: {}",
+                    others.join(", ")
+                ));
+            }
         }
     }
 
     // --- 2. 外部の CI（GitHub Actions でない App の check-run と commit status） ---
-    if head_sha.is_empty() {
-        head_sha = gh
-            .quiet(&[
-                "api",
-                &format!("repos/{{owner}}/{{repo}}/git/ref/heads/{branch}"),
-                "--jq",
-                ".object.sha",
-            ])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-    }
     let mut external: Option<Vec<Value>> = None;
     if !head_sha.is_empty() {
         // gh の成否で先に分ける（gh が失敗したのを「外部の CI なし」と取り違えない）
@@ -366,15 +415,24 @@ fn diagnose(target: &str) -> Result<(), i32> {
         } else if runs.is_empty() {
             next = "ワークフローが未設定か未実行であると報告してください".to_string();
         } else {
-            // 判定したのは最新の 1 run（runs[0]）だけなので、CI 全体を言い切らない。RUNS は全ワークフローの直近 5 件で、
-            // 同じワークフローの古い run も並ぶので、読み手に RUNS から判定させない（ワークフローごとの判定は #300）
-            let head = if latest_conclusion == "success" {
+            // skipped と neutral は成功と書かせない
+            let not_success: Vec<String> = head_runs
+                .iter()
+                .filter(|r| r["conclusion"] != "success")
+                .map(|r| format!("{}: {}", text(&r["name"]), text(&r["conclusion"])))
+                .collect();
+            let head = if head_runs.is_empty() {
                 format!(
-                    "GitHub Actions の最新の run（{latest_name}）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください"
+                    "head の SHA（{actions_sha}）の GitHub Actions の run はまだありません（RUNS はそれより前の commit の run）。起動を待って再確認し、それでも無ければ、この commit ではワークフローが走っていないと報告してください"
+                )
+            } else if not_success.is_empty() {
+                format!(
+                    "head の SHA（{actions_sha}）の GitHub Actions の run は、ワークフローごとの最新がすべて success です。そう報告してください"
                 )
             } else {
                 format!(
-                    "GitHub Actions の最新の run（{latest_name}）は {latest_conclusion} です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください"
+                    "head の SHA（{actions_sha}）の GitHub Actions の run に失敗と実行中はありません。success でない run（{}）を添え、成功とは書かずに報告してください",
+                    not_success.join(", ")
                 )
             };
             let unchecked = if external.is_none() {
@@ -392,6 +450,12 @@ fn diagnose(target: &str) -> Result<(), i32> {
     println!("NEXT: {next}");
     report.print(cause, &next);
     Ok(())
+}
+
+/// 終わった GitHub Actions の run の結論が、診断する失敗でないか。cancelled は取り消しでログに失敗が無く、コードの誤りと
+/// 診断しない（成功とも書かせず、NONE の NEXT に success でない run として並べる）
+fn not_failed(conclusion: &str) -> bool {
+    matches!(conclusion, "success" | "skipped" | "neutral" | "cancelled")
 }
 
 /// 報告の形（/gh-actions-check の報告）にまとめる値。読めなかったものは空のまま「なし」と出す

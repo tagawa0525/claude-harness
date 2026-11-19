@@ -8,7 +8,7 @@ use common::fake_gh::{FakeGh, stderr};
 
 const URL: &str = "https://github.com/octo/repo/pull/7";
 const PR: &str = r#"{"headRefName":"feat/y","headRefOid":"abc"}"#;
-const RUN_FAIL: &str = r#"[{"databaseId":100,"name":"CI","status":"completed","conclusion":"failure","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/100"}]"#;
+const RUN_FAIL: &str = r#"[{"databaseId":100,"name":"CI","workflowDatabaseId":1,"event":"pull_request","headSha":"abc","status":"completed","conclusion":"failure","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/100"}]"#;
 const JOBS_FAIL: &str = r#"{"attempt":1,"jobs":[{"name":"build","conclusion":"failure","steps":[{"name":"Setup","conclusion":"success"},{"name":"Test","conclusion":"failure"}]}]}"#;
 
 fn stdout(out: &std::process::Output) -> String {
@@ -110,8 +110,8 @@ fn a_run_list_that_is_not_an_array_stops_instead_of_reporting_no_run() {
     }
 }
 
-const RUN_OK: &str = r#"[{"databaseId":101,"name":"CI","status":"completed","conclusion":"success","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/101"}]"#;
-const RUN_GOING: &str = r#"[{"databaseId":102,"name":"CI","status":"in_progress","conclusion":"","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/102"}]"#;
+const RUN_OK: &str = r#"[{"databaseId":101,"name":"CI","workflowDatabaseId":1,"event":"pull_request","headSha":"abc","status":"completed","conclusion":"success","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/101"}]"#;
+const RUN_GOING: &str = r#"[{"databaseId":102,"name":"CI","workflowDatabaseId":1,"event":"pull_request","headSha":"abc","status":"in_progress","conclusion":"","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/102"}]"#;
 
 /// `--- report ---` から最後までの行
 fn report(text: &str) -> &str {
@@ -145,7 +145,7 @@ fn a_successful_run_tells_to_report_success_and_whether_external_ci_was_seen() {
     );
     let text = stdout(&out);
     assert!(
-        text.contains("CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください\n"),
+        text.contains("CAUSE: NONE\nNEXT: head の SHA（abc）の GitHub Actions の run は、ワークフローごとの最新がすべて success です。そう報告してください\n"),
         "{text}"
     );
 
@@ -155,7 +155,7 @@ fn a_successful_run_tells_to_report_success_and_whether_external_ci_was_seen() {
     let text = stdout(&out);
     assert!(
         text.contains(
-            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は success です。ほかのワークフローの run は判定していないので、そのことを添えて報告してください。外部 CI は確認できていないと添えてください\n"
+            "CAUSE: NONE\nNEXT: head の SHA（abc）の GitHub Actions の run は、ワークフローごとの最新がすべて success です。そう報告してください。外部 CI は確認できていないと添えてください\n"
         ),
         "{text}"
     );
@@ -271,7 +271,7 @@ fn a_skipped_latest_run_is_not_reported_as_a_success() {
     let text = stdout(&out);
     assert!(
         text.contains(
-            "CAUSE: NONE\nNEXT: GitHub Actions の最新の run（CI）は skipped です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください\n"
+            "CAUSE: NONE\nNEXT: head の SHA（abc）の GitHub Actions の run に失敗と実行中はありません。success でない run（CI: skipped）を添え、成功とは書かずに報告してください\n"
         ),
         "{text}"
     );
@@ -289,7 +289,268 @@ fn a_skipped_latest_run_without_external_ci_says_it_was_not_checked() {
     let text = stdout(&out);
     assert!(
         text.contains(
-            "NEXT: GitHub Actions の最新の run（CI）は skipped です。成功とは書かず、ほかのワークフローの run は判定していないことを添えて報告してください。外部 CI は確認できていないと添えてください\n"
+            "NEXT: head の SHA（abc）の GitHub Actions の run に失敗と実行中はありません。success でない run（CI: skipped）を添え、成功とは書かずに報告してください。外部 CI は確認できていないと添えてください\n"
+        ),
+        "{text}"
+    );
+}
+
+/// gh run list の 1 件（新しい順に並べて配列にする）
+fn run(
+    id: u64,
+    name: &str,
+    workflow: u64,
+    event: &str,
+    sha: &str,
+    status: &str,
+    conclusion: &str,
+) -> String {
+    format!(
+        r#"{{"databaseId":{id},"name":"{name}","workflowDatabaseId":{workflow},"event":"{event}","headSha":"{sha}","status":"{status}","conclusion":"{conclusion}","createdAt":"2026-09-01T00:00:00Z","url":"https://example/run/{id}"}}"#
+    )
+}
+
+fn runs(list: &[String]) -> String {
+    format!("[{}]", list.join(","))
+}
+
+/// ブランチを渡し、run の一覧、head の SHA（abc）、失敗した run のジョブとログ、check-run、commit status の順に答える
+fn diagnose_branch_with_a_failure(list: &str) -> String {
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[
+            (list, 0),
+            ("abc\n", 0),
+            (JOBS_FAIL, 0),
+            ("##[error]test_login failed\n", 0),
+            ("", 0),
+            ("[]", 0),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    stdout(&out)
+}
+
+#[test]
+fn a_failed_workflow_at_the_head_is_diagnosed_even_when_another_workflow_finished_later() {
+    let list = runs(&[
+        run(
+            201,
+            "Lint",
+            2,
+            "pull_request",
+            "abc",
+            "completed",
+            "success",
+        ),
+        run(100, "CI", 1, "pull_request", "abc", "completed", "failure"),
+    ]);
+    let text = diagnose_branch_with_a_failure(&list);
+    assert!(
+        text.contains("RUN: 100\nSTATUS: completed/failure\n"),
+        "{text}"
+    );
+    assert!(text.contains("CAUSE: CODE\n"), "{text}");
+    assert!(text.contains("gh run view 100 --log-failed"), "{text}");
+}
+
+#[test]
+fn a_running_workflow_at_the_head_is_in_progress_even_when_another_workflow_succeeded() {
+    let list = runs(&[
+        run(
+            201,
+            "Lint",
+            2,
+            "pull_request",
+            "abc",
+            "completed",
+            "success",
+        ),
+        run(202, "CI", 1, "pull_request", "abc", "in_progress", ""),
+    ]);
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&list, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(text.contains("RUN: 202\nSTATUS: in_progress/\n"), "{text}");
+    assert!(text.contains("CAUSE: IN_PROGRESS\n"), "{text}");
+}
+
+#[test]
+fn only_the_latest_run_of_each_workflow_and_event_at_the_head_counts() {
+    // 300 は同じワークフローと event の新しい run（301）に置き換わり、299 は head でない commit の run
+    let list = runs(&[
+        run(301, "CI", 1, "pull_request", "abc", "completed", "success"),
+        run(300, "CI", 1, "pull_request", "abc", "completed", "failure"),
+        run(
+            299,
+            "Lint",
+            2,
+            "pull_request",
+            "old",
+            "completed",
+            "failure",
+        ),
+    ]);
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&list, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "RUN: 301\nSTATUS: completed/success\nEXTERNAL_CHECKS: 0\nCAUSE: NONE\n\
+             NEXT: head の SHA（abc）の GitHub Actions の run は、ワークフローごとの最新がすべて success です。そう報告してください\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn runs_of_one_workflow_for_push_and_for_pull_request_are_judged_separately() {
+    let list = runs(&[
+        run(401, "CI", 1, "pull_request", "abc", "completed", "success"),
+        run(100, "CI", 1, "push", "abc", "completed", "failure"),
+    ]);
+    let text = diagnose_branch_with_a_failure(&list);
+    assert!(text.contains("RUN: 100\n"), "{text}");
+    assert!(text.contains("CAUSE: CODE\n"), "{text}");
+}
+
+#[test]
+fn the_next_step_names_the_other_workflows_that_failed_or_are_running() {
+    let list = runs(&[
+        run(
+            100,
+            "Lint",
+            2,
+            "pull_request",
+            "abc",
+            "completed",
+            "failure",
+        ),
+        run(500, "CI", 1, "pull_request", "abc", "completed", "failure"),
+        run(501, "Docs", 3, "pull_request", "abc", "queued", ""),
+        run(
+            502,
+            "Build",
+            4,
+            "pull_request",
+            "abc",
+            "completed",
+            "success",
+        ),
+    ]);
+    let text = diagnose_branch_with_a_failure(&list);
+    assert!(text.contains("RUN: 100\n"), "{text}");
+    assert!(
+        text.contains(
+            "。ほかのワークフローにも失敗か実行中の run があります: CI 500 completed/failure, Docs 501 queued/\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn runs_of_older_commits_do_not_decide_the_cause_of_a_head_without_runs() {
+    let list = runs(&[run(
+        600,
+        "CI",
+        1,
+        "pull_request",
+        "old",
+        "completed",
+        "failure",
+    )]);
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&list, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    let text = stdout(&out);
+    assert!(!text.contains("RUN: "), "{text}");
+    assert!(
+        text.contains(
+            "CAUSE: NONE\nNEXT: head の SHA（abc）の GitHub Actions の run はまだありません（RUNS はそれより前の commit の run）。起動を待って再確認し、それでも無ければ、この commit ではワークフローが走っていないと報告してください\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn without_the_head_of_the_branch_the_commit_of_the_latest_run_is_judged() {
+    // git/ref を読めない（未 push か API の失敗）。外部の CI は読まずに確認できずとする
+    let list = runs(&[
+        run(
+            201,
+            "Lint",
+            2,
+            "pull_request",
+            "abc",
+            "completed",
+            "success",
+        ),
+        run(100, "CI", 1, "pull_request", "abc", "completed", "failure"),
+    ]);
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[
+            (&list, 0),
+            ("", 1),
+            (JOBS_FAIL, 0),
+            ("##[error]test_login failed\n", 0),
+        ],
+    );
+    let text = stdout(&out);
+    assert!(text.contains("RUN: 100\n"), "{text}");
+    assert!(text.contains("EXTERNAL_CHECKS: unavailable\n"), "{text}");
+    assert!(text.contains("CAUSE: CODE\n"), "{text}");
+}
+
+#[test]
+fn a_cancelled_workflow_at_the_head_is_not_diagnosed_as_a_code_failure() {
+    // 取り消した run はログに失敗が無く、コードの誤りでもない。成功と書かせずに並べる
+    let list = runs(&[
+        run(
+            701,
+            "Lint",
+            2,
+            "pull_request",
+            "abc",
+            "completed",
+            "success",
+        ),
+        run(
+            700,
+            "CI",
+            1,
+            "pull_request",
+            "abc",
+            "completed",
+            "cancelled",
+        ),
+    ]);
+    let fake = FakeGh::new();
+    let out = fake.run_calls(
+        "gh-actions-diagnose",
+        &["feat/x"],
+        &[(&list, 0), ("abc\n", 0), ("", 0), ("[]", 0)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "CAUSE: NONE\nNEXT: head の SHA（abc）の GitHub Actions の run に失敗と実行中はありません。success でない run（CI: cancelled）を添え、成功とは書かずに報告してください\n"
         ),
         "{text}"
     );
