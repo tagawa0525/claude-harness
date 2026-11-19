@@ -3825,7 +3825,7 @@ for cmd in "sed -i 's/a/b/' ~/.claude/projects/-work-repo/memory/MEMORY.md" \
   "echo x | tee -a $MEM_DIR/a.md" \
   "perl -pi -e 's/a/b/' $MEM_DIR/MEMORY.md" \
   "cp /tmp/a.md $MEM_DIR/" "mv /tmp/a.md $MEM_DIR/a.md" "install -m 644 /tmp/a.md $MEM_DIR/a.md" \
-  "rm $MEM_DIR/a.md" "truncate -s 0 $MEM_DIR/a.md" \
+  "truncate -s 0 $MEM_DIR/a.md" \
   "cd $MEM_DIR && echo x >> MEMORY.md"; do
   out=$(run_hook guard-memory-bash-write "$cmd")
   assert_eq deny "$(decision "$out")"
@@ -3844,6 +3844,14 @@ for cmd in "echo x >> $HOME/.claude/projects/-work-repo/notes.md" \
   assert_eq allow "$(decision "$out")"
 done
 
+# 消すことは読んだ状態との食い違いを作らず、/handoff は済んだ引き継ぎのファイルを消す（Write と Edit では消せない）
+it "guard-memory-bash-write: memory のファイルを消す rm と、memory から出す mv は通す"
+for cmd in "rm $MEM_DIR/handoff-2026-11-20.md" "rm -f $MEM_DIR/a.md" "cd $MEM_DIR && rm a.md" \
+  "mv $MEM_DIR/a.md /tmp/"; do
+  out=$(run_hook guard-memory-bash-write "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "guard-memory-bash-write: CLAUDE_CONFIG_DIR で設定の場所を移したら、その下の memory を見る"
 out=$(CLAUDE_CONFIG_DIR="$TEST_ROOT/config" run_hook guard-memory-bash-write \
   "echo x >> $TEST_ROOT/config/projects/-p/memory/MEMORY.md")
@@ -3853,9 +3861,9 @@ out=$(CLAUDE_CONFIG_DIR="$TEST_ROOT/config" run_hook guard-memory-bash-write \
 assert_eq allow "$(decision "$out")"
 
 it "guard-memory-bash-write: 理由を値にしたエスケープで通し、短い値には理由を求める"
-out=$(run_hook guard-memory-bash-write "ALLOW_MEMORY_BASH_WRITE='済んだ引き継ぎを消す' rm $MEM_DIR/a.md")
+out=$(run_hook guard-memory-bash-write "ALLOW_MEMORY_BASH_WRITE='古い索引を作り直す' truncate -s 0 $MEM_DIR/MEMORY.md")
 assert_eq allow "$(decision "$out")"
-out=$(run_hook guard-memory-bash-write "ALLOW_MEMORY_BASH_WRITE=1 rm $MEM_DIR/a.md")
+out=$(run_hook guard-memory-bash-write "ALLOW_MEMORY_BASH_WRITE=1 truncate -s 0 $MEM_DIR/MEMORY.md")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "理由を記載"
 

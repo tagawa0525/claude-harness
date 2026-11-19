@@ -360,13 +360,10 @@ mod tests {
             format!("mv /tmp/a.md {MEM}/a.md"),
             format!("mv --target-directory={MEM} /tmp/a.md"),
             format!("install -m 644 /tmp/a.md {MEM}/a.md"),
-            format!("rm {MEM}/a.md"),
-            format!("rm -f -- {MEM}/a.md"),
-            format!("rm -r {MEM}"),
             format!("truncate -s 0 {MEM}/a.md"),
             format!("cd {MEM} && echo x >> MEMORY.md"),
             format!("cd {MEM} && sed -i 's/a/b/' MEMORY.md"),
-            "cd ~/.claude/projects/-work-repo && rm memory/a.md".to_string(),
+            "cd ~/.claude/projects/-work-repo && echo x > memory/a.md".to_string(),
             format!("bash -c 'echo x >> {MEM}/MEMORY.md'"),
             "echo x >> $HOME/.claude/projects/-work-repo/memory/MEMORY.md".to_string(),
             "echo x >> \"${HOME}/.claude/projects/-work-repo/memory/MEMORY.md\"".to_string(),
@@ -398,9 +395,23 @@ mod tests {
             "ssh r995 'echo x >> ~/.claude/projects/-work-repo/memory/MEMORY.md'",
             // クォートした `~` を bash は展開せず、cwd の下の `~` というディレクトリに書く
             "echo x >> \"~/.claude/projects/-work-repo/memory/MEMORY.md\"",
-            "rm '~/.claude/projects/-work-repo/memory/a.md'",
+            "tee '~/.claude/projects/-work-repo/memory/a.md'",
         ] {
             assert!(!denied(src), "{src}");
+        }
+    }
+
+    /// 消すことは、Claude Code が読んだ状態と書き換えた内容の食い違いを作らない（次の Edit は無いファイルで失敗する）。
+    /// /handoff は済んだ引き継ぎのファイルを消す手順を持ち、Write と Edit では消せない
+    #[test]
+    fn removing_memory_files_is_allowed() {
+        for src in [
+            format!("rm {MEM}/a.md"),
+            format!("rm -f -- {MEM}/a.md"),
+            format!("rm -r {MEM}"),
+            format!("cd {MEM} && rm handoff-2026-11-20.md"),
+        ] {
+            assert!(!denied(&src), "{src}");
         }
     }
 
