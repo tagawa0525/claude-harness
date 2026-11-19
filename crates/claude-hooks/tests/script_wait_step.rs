@@ -293,6 +293,25 @@ fn a_time_setting_that_is_not_whole_seconds_exits_1_with_its_name() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_time_setting_that_is_not_utf8_exits_1_with_its_name() {
+    use std::os::unix::ffi::OsStrExt;
+    let d = Dir::new();
+    let log = d.file("job.out", "");
+    let out = Command::new(env!("CARGO_BIN_EXE_claude-hooks"))
+        .args(["script", "wait-step", "/wt/bad", &log])
+        .env("TMPDIR", d.root.join("tmp"))
+        .env("WAIT_STEP_NOW", std::ffi::OsStr::from_bytes(b"1\xff"))
+        .env("WAIT_STEP_SECONDS", "1")
+        .env("WAIT_STEP_REPORT", "60")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("WAIT_STEP_NOW"), "{err}");
+}
+
 #[test]
 fn an_injected_time_at_the_end_of_the_range_does_not_overflow() {
     let d = Dir::new();
