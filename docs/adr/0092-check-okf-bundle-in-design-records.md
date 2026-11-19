@@ -57,13 +57,17 @@ OKF は未知のキーと値を許す（SPEC §11）。
   - 下位のディレクトリの `index.md` はフロントマターを持たない。バンドルのルートの `index.md` のフロントマターは、
     `okf_version`、`title`、`description`、`license` と拡張のキー（§8.1）。`"0.2"` のバンドルでは `okf_version` だけ
   - `index.md` の `* [題](パス) - 説明` の行のリンク先が実在し、同じディレクトリの文書と下位のディレクトリがすべて載っている。
+    題は Markdown のリンクの文字列として、バックスラッシュのエスケープとコードスパンの中を飛ばし、対になった角括弧を含めて読む（§8）。
     リンク先はパーセントエンコードを復号し、先頭が `/` ならバンドルのルートから、ほかは索引のディレクトリから解く（§6）。
     バンドルのルートの外と、`.` で始まるパスの下に解けるリンクは、URL と同じく外部のリンクとして見ない
   - `log.md` はフロントマターを持たず（§9）、日付の見出しが `YYYY-MM-DD`
 - 索引の題と説明が、リンク先のフロントマターの `title` と `description` と違うときは注意（warning）にする。ADR は
-  フロントマターに `title` を持たないので、題は最初の 1 段目の見出しと比べる
+  フロントマターに `title` を持たないので、題は最初の 1 段目の見出しと比べる。題は両方を `design-records index` の書く形に
+  揃えて比べる（表示が同じなら合う）。索引の行の題がリンクを含むときも注意にする（Markdown はリンクの文字列の中のリンクを
+  許さず、その行はリンクにならない）
 - `design-records index` が、索引に載っていない文書と下位のディレクトリの行を足す（説明は文書の `description` から取る。
-  リンク先はパーセントエンコードする。既にある行とルートのフロントマターは直さない、§8.1）。`index.md` が無ければ作る
+  リンク先はパーセントエンコードする。題は、文書の題のリンクをその文字列に置き換え、残る角括弧と末尾のバックスラッシュを
+  エスケープして書く。既にある行とルートのフロントマターは直さない、§8.1）。`index.md` が無ければ作る
 - `design-records new` が作る ADR のテンプレートに `type: ADR` を足す。`type` は ADR の任意のキーで、確定した後も直して
   よいキーにする（既存の ADR に足すため）
 - ADR の `status` は、この ADR では今のキーと 7 値のままにする。OKF の `status` は文書の鮮度の合図で、ADR の `status` は
@@ -87,7 +91,10 @@ OKF は未知のキーと値を許す（SPEC §11）。
   `check_rejects_front_matter_in_a_log`、`check_and_index_leave_dot_paths_out_of_the_bundle`、
   `check_resolves_index_links_from_the_index_directory_and_slash_from_the_bundle_root`、
   `check_treats_index_links_outside_the_bundle_as_external`、`check_treats_index_links_to_dot_paths_as_outside_the_bundle`、
-  `check_reads_an_okf_version_followed_by_a_yaml_comment`、`index_percent_encodes_link_targets_and_check_decodes_them`）
+  `check_reads_an_okf_version_followed_by_a_yaml_comment`、`index_percent_encodes_link_targets_and_check_decodes_them`、
+  `index_unwraps_a_link_in_a_title_and_check_reads_the_entry`、
+  `index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them`、
+  `check_lists_an_entry_whose_title_has_a_link_but_warns_about_it`）
 - このリポジトリの `docs/` で `design-records check` が違反なしで通る
 
 ## 各案の長所と短所
@@ -109,3 +116,12 @@ OKF は未知のキーと値を許す（SPEC §11）。
   リポジトリにコピーしない（原典をコミットで固定でき、コピーは片方だけが古くなる。検査が使うのは節の番号だけ）。v0.3 の
   §5.4 は、OKF の `status` の未知の値（ADR の 7 値）を `stable` でないものとし、`superseded_by` を足した。ADR の `status`
   のキーを改名する理由（#261）に加わるが、この変更では改名しない
+- 2026-11-19: 索引の行の題の書き方と読み方を決めた（決定と理由の、索引の行、題と説明の注意、`design-records index` の項）。
+  前は「`index.md` の `* [題](パス) - 説明` の行のリンク先が実在し、同じディレクトリの文書と下位のディレクトリがすべて
+  載っている」で、題の形を決めておらず、index は文書の題をそのまま書き、check は題の中の最初の `](` で行を切っていた。
+  題にリンクを含む文書（`# [a](http://x) の件`）で、index の書いた行 `* [[a](http://x) の件](0001-a.md)` を check が
+  「索引に載っていない」とした（#330）。§8 の行は Markdown のリンクで、CommonMark はリンクの文字列の中のリンクを許さず、
+  この行はほかの Markdown の読み手にもリンクにならないので、index が題のリンクを外して書く。check が入れ子の角括弧を読む
+  だけの案は、index の行を check とだけ合わせ、ほかの読み手には壊れた行を残すので採らなかった。題のリンクを外さずに角括弧を
+  すべてエスケープする案（`\[a\](http://x) の件`）は、表示が文書の題と違い、xlc のリポジトリが手で書いた行（リンクを
+  外した題）とも違うので採らなかった。手で書いた普通の行（角括弧もエスケープも無い題）の読み方と比べ方は変わらない
