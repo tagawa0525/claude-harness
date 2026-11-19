@@ -3187,3 +3187,97 @@ fn index_keeps_a_hash_in_an_unquoted_title_and_description() {
         format!("{OKF_ROOT_INDEX}\n* [issue #12 を直す](fix.md) - 手順 #3 まで\n")
     );
 }
+
+/// `check` の出力のうち、索引の行と題についての指摘
+fn entry_findings(out: &Output) -> Vec<String> {
+    stdout(out)
+        .lines()
+        .chain(stderr(out).lines())
+        .filter(|l| l.contains("index") || l.contains("entry"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn index_unwraps_a_link_in_a_title_and_check_reads_the_entry() {
+    let t = TempRepo::new("okf-title-link");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [issues](issues/) - x\n",
+    );
+    t.write(
+        "docs/issues/0001-a.md",
+        "---\ntype: Issue\n---\n\n# [a](http://x) の件\n",
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/issues/index.md"),
+        "# issues\n\n* [a の件](0001-a.md)\n"
+    );
+    t.git(&["add", "-A"]);
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(entry_findings(&out), Vec::<String>::new());
+}
+
+#[test]
+fn index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them() {
+    let t = TempRepo::new("okf-title-escape");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    let titles = [
+        ("b1.md", "[x] の件", r"\[x\] の件"),
+        ("b2.md", "(x) の件", "(x) の件"),
+        ("b3.md", "a ] b", r"a \] b"),
+        ("b4.md", r"a\b と \[c\] と末尾 \", r"a\b と \[c\] と末尾 \\"),
+        ("b5.md", "`](` を含む", "`](` を含む"),
+        ("b6.md", "a ` b ]", r"a ` b \]"),
+        ("b7.md", "[a](b) と [`c]`](d)", "a と `c]`"),
+    ];
+    let mut expected = format!("{OKF_ROOT_INDEX}\n");
+    for (name, heading, entry) in titles {
+        t.write(
+            &format!("docs/{name}"),
+            &format!("---\ntype: Guide\n---\n\n# {heading}\n"),
+        );
+        expected.push_str(&format!("* [{entry}]({name})\n"));
+    }
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.read("docs/index.md"), expected);
+    t.commit_all("docs: titles with brackets");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(entry_findings(&out), Vec::<String>::new());
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(t.read("docs/index.md"), expected);
+}
+
+#[test]
+fn check_lists_an_entry_whose_title_has_a_link_but_warns_about_it() {
+    let t = TempRepo::new("okf-title-nested-link");
+    t.write(
+        "docs/index.md",
+        &format!("{OKF_ROOT_INDEX}\n* [[a](http://x) の件](a.md)\n"),
+    );
+    t.write(
+        "docs/a.md",
+        "---\ntype: Guide\n---\n\n# [a](http://x) の件\n",
+    );
+    t.commit_all("docs: an entry written by an older index");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let findings = entry_findings(&out);
+    assert!(
+        !findings.iter().any(|l| l.contains("not listed")),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|l| l.contains("docs/index.md:7: warning:") && l.contains("link")),
+        "{findings:?}"
+    );
+}
