@@ -75,7 +75,7 @@ issues: []
 - /delegate の受ける側の手順（`.claude/skills/delegate/references/working.md`）に、手順 8 の rebase と push、手順 9 の
   SendMessage で許可を求めて `wait-step.sh` で待つこと、手順 10 の親の許可だけで進めること、許可の後の rebase、チェック、range-diff、
   /gh-pr-merge か /git-merge でのマージ、`post-merge-cleanup.sh` の後片付け、55 分ごとの途中の報告がある。頼む側
-  （`requesting.md`）に、親が確かめて許可か直しの指示を送り、rebase とマージを行わないことがある
+  （`requesting.md`）に、親が確かめて許可か修正の指示を送り、rebase とマージを行わないことがある
 - 担当が動いたまま SendMessage（`to: "main"`）で親に 1 行を送り、送れた（`Message queued for the main conversation's next turn.`。
   2026-11-11 にこの変更の担当が試した）。親の返事が動いている担当に届くかは、この形の最初の依頼で確かめる
 - 実際に依頼を 1 件この形で出し、報告が見出しどおりに返ること
@@ -113,7 +113,7 @@ issues: []
   - 2026-10-30: slurm-run.sh の `--class`、`--ref`、`--purpose` を必須にした依頼が「変える範囲」を slurm-run.sh、スキル、テスト、ADR に限って「hook は変えない」と書き、担当は古い形の呼び出し（グローバルの CLAUDE.md、guard-sbatch の拒否の文言、`modules/slurm/common.nix` のコメント）を直さず、親が範囲を広げて続きを頼んだ（古い形の呼び出しを grep して範囲に入れる）
   - 2026-10-31: xlc の担当が、別の担当の退避が既にあった scratchpad の `old/` に前の出力を退避した（`<scratchpad>/<ブランチ名>/` に置く）
   - 2026-11-03: xlc の追加の指示の「差分に 1 周」のもとで、担当がその周の指摘を直した 2 コミットを読まれないまま残して報告した（周の数は回し始める数）
-  - 2026-11-03: xlc の依頼が実装する ADR の status を書かず、担当の周の後に親が accept を指示して、accept の周と直しの周 3 周が要った（#0093 のマージの本文。依頼に status の条件を書く）
+  - 2026-11-03: xlc の依頼が実装する ADR の status を書かず、担当の周の後に親が accept を指示して、accept の周と修正の周 3 周が要った（#0093 のマージの本文。依頼に status の条件を書く）
 
 ## 変更
 

@@ -11,7 +11,7 @@
 //! - 引数なし: ホームの下の nix/claude-harness（ハーネスの clone）から同期する。clone なら、既定のブランチで、同期する
 //!   場所に未コミットの変更が無ければ `git pull --ff-only` で最新にしてから同期し、どれかに当たれば止める（古い版や
 //!   書きかけで、rebuild の配った新しい版を黙って上書きしない）。clone でなければ（.git が無い）、そのまま同期する
-//! - 引数あり: pull せず、その場所の今の中身を同期する（worktree で直しを試す、activation、pull できないとき）
+//! - 引数あり: pull せず、その場所の今の中身を同期する（worktree で修正を試す、activation、pull できないとき）
 //!
 //! - HOME_FILES（markdownlint の設定、ja-terms の共通の辞書）: ~/.claude の外のホームの下に置く。ソースが正で、中身が
 //!   違えば上書きする（ADR-0093、ADR-0097）
