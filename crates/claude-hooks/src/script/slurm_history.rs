@@ -233,7 +233,7 @@ struct Group {
     elapsed_sum: i64,
     timed_runs: usize,
     max_ratio: f64,
-    /// メモリの最大の MiB。無い値は負なので、無い値だけのジョブ名は負のまま（表は -）
+    /// メモリの最大の MiB。無い値（負）から比べ、無い値だけのジョブ名は負のまま（表は -）
     max_rss: f64,
 }
 
@@ -269,15 +269,17 @@ impl Table {
                 let at = match groups.iter().position(|(n, _)| n == entry.name) {
                     Some(at) => at,
                     None => {
-                        groups.push((entry.name.to_string(), Group::default()));
+                        let group = Group {
+                            max_rss: -1.0,
+                            ..Group::default()
+                        };
+                        groups.push((entry.name.to_string(), group));
                         groups.len() - 1
                     }
                 };
                 let group = &mut groups[at].1;
                 group.runs += 1;
-                if group.runs == 1 || rss > group.max_rss {
-                    group.max_rss = rss;
-                }
+                group.max_rss = group.max_rss.max(rss);
                 if let (Some(estimate), Some(ratio)) = (entry.estimate, ratio) {
                     group.estimate_sum += estimate;
                     group.elapsed_sum += entry.elapsed;
