@@ -108,3 +108,32 @@ pub fn forget_git_env(cmd: &mut Command) -> &mut Command {
     }
     cmd
 }
+
+/// 待っているジョブ（番号、名前、パーティション、優先度、コメント）の待ち行列を、`squeue --json=v0.0.45` の形で
+/// （slurm-queue と slurm-run の偽の squeue の出力）。見積もりは 10 分、開始の見込みは無い
+#[allow(dead_code)]
+pub fn squeue_json(jobs: &[(u64, &str, &str, u64, &str)]) -> String {
+    let number = |n: u64| serde_json::json!({"set": true, "infinite": false, "number": n});
+    let unset = serde_json::json!({"set": false, "infinite": false, "number": 0});
+    let jobs: Vec<_> = jobs
+        .iter()
+        .map(|(id, name, partition, priority, comment)| {
+            serde_json::json!({
+                "job_id": id,
+                "name": name,
+                "job_state": ["PENDING"],
+                "partition": partition,
+                "priority": number(*priority),
+                "time_limit": number(10),
+                "start_time": number(0),
+                "comment": comment,
+                "array_job_id": number(0),
+                "array_task_id": unset,
+                "array_task_string": "",
+                "het_job_id": number(0),
+                "het_job_offset": unset,
+            })
+        })
+        .collect();
+    serde_json::json!({"jobs": jobs}).to_string()
+}
