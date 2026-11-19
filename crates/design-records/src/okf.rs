@@ -174,7 +174,7 @@ fn resolve(index_dir: &str, url: &str) -> Option<String> {
             part => parts.push(part),
         }
     }
-    if parts.first() != Some(&BUNDLE_ROOT) || parts.iter().any(|p| p.starts_with('.')) {
+    if parts.first() != Some(&BUNDLE_ROOT) || !in_bundle(&parts.join("/")) {
         return None;
     }
     let mut path = parts.join("/");
