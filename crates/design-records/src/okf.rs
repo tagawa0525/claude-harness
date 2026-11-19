@@ -38,10 +38,19 @@ fn top_level(text: &str) -> Option<BTreeMap<String, String>> {
         }
         if let Some((key, value)) = line.split_once(':') {
             let value = value.trim();
+            // 引用符の値は閉じる引用符まで、ほかは ` #` からの YAML のコメントを除いた値（エスケープは読まない）
             let value = ['"', '\'']
                 .iter()
-                .find_map(|q| value.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
-                .unwrap_or(value);
+                .find_map(|q| {
+                    let rest = value.strip_prefix(*q)?;
+                    rest.find(*q).map(|end| &rest[..end])
+                })
+                .unwrap_or_else(|| {
+                    value
+                        .find(" #")
+                        .or_else(|| value.find("\t#"))
+                        .map_or(value, |end| value[..end].trim_end())
+                });
             keys.insert(key.trim().to_string(), value.to_string());
         }
     }
