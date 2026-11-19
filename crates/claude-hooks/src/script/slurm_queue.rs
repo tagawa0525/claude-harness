@@ -638,6 +638,23 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: 小数と指数の優先度は整数の部分しか読まない"]
+    fn priorities_with_a_fraction_or_an_exponent_are_read_as_their_whole_number() {
+        // 1.5 は 1 より大きいので動かせ、1e3 は 1000 で 1.5 より先に並ぶ
+        let out = list(&[
+            job("20", "main", "t", "PENDING", "1.5", "trial"),
+            job("21", "main", "r", "PENDING", "1e3", "record"),
+        ]);
+        assert_eq!(ids(&out), ["21", "20"]);
+        assert!(!out.contains("動かせない"), "{out}");
+        let behind = [
+            job("20", "main", "t", "PENDING", "1e3", "trial"),
+            job("21", "main", "r", "PENDING", "1.5", "record"),
+        ];
+        assert_eq!(order(&behind, ""), "21,20\n");
+    }
+
+    #[test]
     fn held_and_array_parent_jobs_are_unmovable_and_left_out_of_the_order() {
         let out = list(&[
             job("10", "main", "t", "PENDING", "10050", "trial"),
