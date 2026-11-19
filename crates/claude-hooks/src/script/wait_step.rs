@@ -23,7 +23,7 @@
 //! --end のコマンドを、引数を埋めて出す）。
 //!
 //! テストは WAIT_STEP_SECONDS（1 歩、既定 270）と WAIT_STEP_REPORT（途中の報告の間隔の秒、既定 3300）で時間を縮め、
-//! WAIT_STEP_NOW（UNIX の秒）で時計を差し替える
+//! WAIT_STEP_NOW（UNIX の秒）で時計を差し替える。どれも 0 以上の整数でなければ、理由を出して 1
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
@@ -52,29 +52,25 @@ fn usage() -> i32 {
     1
 }
 
-fn env_secs(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+/// 秒の環境変数。無ければ None、読めなければ理由を出して Err（黙って壁の時計や既定の秒数に替えると、テストが
+/// 気づかずに壁の時計に頼る）
+fn env_secs(name: &str) -> Result<Option<u64>, ()> {
+    match std::env::var(name) {
+        Ok(v) => v.parse().map(Some).map_err(|_| {
+            eprintln!("ERROR: {name} は 0 以上の整数の秒にしてください: {v}");
+        }),
+        Err(_) => Ok(None),
+    }
 }
 
-/// 1 回の呼び出しの時計。WAIT_STEP_NOW があれば、その時刻から始め、眠らずに 1 歩ごとに 1 秒進める。壁の時計は秒に
-/// 切り捨てて約 1 秒ごとに読むので、起動の遅れや眠りの延びが秒の境目をまたぐと、秒の差の小さい 1 歩と途中の報告の
-/// 順が入れ替わる。テストはこの時計で時刻の並びを決める
+/// 1 回の呼び出しの時計。WAIT_STEP_NOW があれば、その時刻から始め、眠らずに 1 秒の見回りごとに 1 秒進める。壁の
+/// 時計は秒に切り捨てて約 1 秒ごとに読むので、起動の遅れや眠りの延びが秒の境目をまたぐと、秒の差の小さい 1 歩と
+/// 途中の報告の順が入れ替わる。テストはこの時計で時刻の並びを決める
 struct Clock {
     fake: Option<u64>,
 }
 
 impl Clock {
-    fn from_env() -> Clock {
-        Clock {
-            fake: std::env::var("WAIT_STEP_NOW")
-                .ok()
-                .and_then(|v| v.parse().ok()),
-        }
-    }
-
     fn now(&self) -> u64 {
         self.fake.unwrap_or_else(|| {
             SystemTime::now()
@@ -86,7 +82,7 @@ impl Clock {
 
     fn sleep(&mut self) {
         match &mut self.fake {
-            Some(t) => *t += 1,
+            Some(t) => *t = t.saturating_add(1),
             None => std::thread::sleep(Duration::from_secs(1)),
         }
     }
@@ -232,9 +228,15 @@ fn wait(key: &str, files: &[String]) -> i32 {
         return 1;
     }
     let state = state_of(key);
-    let step = env_secs("WAIT_STEP_SECONDS", 270);
-    let report = env_secs("WAIT_STEP_REPORT", 3300);
-    let mut clock = Clock::from_env();
+    let (step, report, fake) = match (
+        env_secs("WAIT_STEP_SECONDS"),
+        env_secs("WAIT_STEP_REPORT"),
+        env_secs("WAIT_STEP_NOW"),
+    ) {
+        (Ok(step), Ok(report), Ok(fake)) => (step.unwrap_or(270), report.unwrap_or(3300), fake),
+        _ => return 1,
+    };
+    let mut clock = Clock { fake };
     let start = clock.now();
     // 前の呼び出しから報告の間隔を超えて空いていれば、終わった待ちの時計なので数え直す
     let mut reported = match read_state(&state) {
@@ -247,7 +249,7 @@ fn wait(key: &str, files: &[String]) -> i32 {
     }
     // 1 秒ごとに、終わり、途中の報告の時刻、1 歩の時刻の順に見る（終わったものに途中の報告を出さない）。返る前に最後に
     // 呼んだ時刻を残す
-    let deadline = start + step;
+    let deadline = start.saturating_add(step);
     loop {
         let t = clock.now();
         if let Some(done) = files.iter().find(|f| finished(f)) {
