@@ -42,7 +42,9 @@ use design_records::check::{
     check_issue_numbers, check_reservations, decision_changed_without_change_item,
     superseded_dependents,
 };
-use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, in_bundle, is_bundle_at};
+use design_records::okf::{
+    BUNDLE_ROOT, Existing, check_bundle, complete_indexes, in_bundle, is_bundle_at,
+};
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
     numbers_in, record_name,
@@ -518,7 +520,7 @@ fn bundle_files(
     Ok(files)
 }
 
-/// バンドルの索引に載っていない行を足し、書いたパスを出す（ADR-0092）。
+/// バンドルの索引に載っていない行を足し、既にある行の説明を文書に合わせ、書いたパスを出す（ADR-0092）。
 fn index() -> Result<ExitCode> {
     let Some(written) = write_indexes(&repo_root()?, None)? else {
         eprintln!(
@@ -533,6 +535,7 @@ fn index() -> Result<ExitCode> {
 }
 
 /// バンドルの索引に、追跡していないものを含めて載っていない文書と下位のディレクトリの行を足し、書いた索引のパスを返す。
+/// `record` を渡さなければ（index）、既にある行の説明も文書の `description` に合わせる。
 /// `record` を渡すと（new）、追跡していない文書は、その記録と、記録の上のディレクトリの索引（先の new が書いた、まだ
 /// コミットしていない索引）だけを数える。ほかの下書き（索引まで書いたディレクトリを含む）を索引に載せると、コミットしない
 /// ファイルへの行を記録と一緒にコミットさせる。バンドルでなければ何も書かずに `None`。
@@ -565,8 +568,13 @@ fn write_indexes(root: &Path, record: Option<&str>) -> Result<Option<Vec<String>
         return Ok(None);
     }
     let mut written = Vec::new();
-    // new は上の索引だけを書く。ほかの索引（追跡していない、手で直したものを含む）は読んでいないので、作り直すと上書きする
-    for (path, text) in complete_indexes(&files)
+    // new は上の索引だけを書く。ほかの索引（追跡していない、手で直したものを含む）は読んでいないので、作り直すと上書きする。
+    // new は行を足すだけにする（既にある行の説明の修正を、記録のコミットに混ぜない）
+    let existing = match record {
+        Some(_) => Existing::Keep,
+        None => Existing::SyncDescriptions,
+    };
+    for (path, text) in complete_indexes(&files, existing)
         .into_iter()
         .filter(|(path, _)| record.is_none() || indexes.contains(path))
     {

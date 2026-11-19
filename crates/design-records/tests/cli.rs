@@ -703,8 +703,8 @@ fn check_warns_when_the_body_of_a_decided_adr_on_main_changes() {
     assert_eq!(
         stdout(&out),
         "docs/adr/0002-use-b.md: warning: the decided sections changed although the ADR is \
-         accepted on main; the title, the front matter other than type, status, superseded-by, date, \
-         amends, amended-by, issues, and the context, decision drivers, considered options, \
+         accepted on main; the title, the front matter other than type, description, status, \
+         superseded-by, date, amends, amended-by, issues, and the context, decision drivers, considered options, \
          decision outcome and pros and cons of the options record the decision as made, so \
          change them only to fix typos, grammar, markup and broken links or to replace words \
          with meaning-preserving ones from the Japanese dictionary (consequences, confirmation, \
