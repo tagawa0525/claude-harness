@@ -12,12 +12,16 @@
 //! hook が行を書かない回し方（対象に PR の URL を渡した、detached HEAD の worktree、ユーザーが打った /code-review）は、
 //! `--unlogged <理由>` で理由を記録のコメントに残して付ける。前の記録が覆う head（rebase だけの head）かは、ここでは
 //! 確かめず、拒否の文で decide-next.sh を示す（比べた案は claude-harness の issue 281）
+//!
+//! 指摘が 1 件でもあれば、その要旨を書いたファイルを `--findings <ファイル>` で受けて、記録のコメントにコピーする。件数だけの
+//! 記録では、対応しなかった指摘の中身が会話にしか残らず、セッションが替わるとマージの本文に書けない。読む側の hook は
+//! コメントの 1 行目だけを見るので、要旨は印の形を変えない
 
 use super::pr_url;
 use regex::Regex;
 use std::sync::LazyLock;
 
-const USAGE: &str = "Usage: record-local-review.sh <PR の URL> <レビューした SHA> <high> <medium> <low> [--unlogged <回した記録が clone に無い理由>]";
+const USAGE: &str = "Usage: record-local-review.sh <PR の URL> <レビューした SHA> <high> <medium> <low> [--findings <指摘の要旨のファイル>] [--unlogged <回した記録が clone に無い理由>]";
 
 static SHA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]{7,40}$").unwrap());
 /// 読む側は `high=0 ` の字面で比べるので、先頭の 0 を許さない
@@ -28,16 +32,28 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 1;
     };
-    let (counts, unlogged) = match counts {
-        [h, m, l] => ([h, m, l], None),
-        [h, m, l, flag, reason] if flag == "--unlogged" && !reason.trim().is_empty() => {
-            ([h, m, l], Some(reason.trim()))
-        }
-        _ => {
-            eprintln!("{USAGE}");
-            return 1;
-        }
+    let [h, m, l, options @ ..] = counts else {
+        eprintln!("{USAGE}");
+        return 1;
     };
+    let counts = [h, m, l];
+    let (mut unlogged, mut findings_path) = (None, None);
+    for option in options.chunks(2) {
+        match option {
+            [flag, reason]
+                if flag == "--unlogged" && unlogged.is_none() && !reason.trim().is_empty() =>
+            {
+                unlogged = Some(reason.trim())
+            }
+            [flag, path] if flag == "--findings" && findings_path.is_none() => {
+                findings_path = Some(path)
+            }
+            _ => {
+                eprintln!("{USAGE}");
+                return 1;
+            }
+        }
+    }
     let Some(pr) = pr_url::or_usage(pr_url::parse(url), USAGE) else {
         return 1;
     };
@@ -56,6 +72,29 @@ pub fn main(args: &[String]) -> i32 {
         }
     }
     let [high, medium, low] = n;
+    let findings = match findings_path {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+            Ok(_) => {
+                eprintln!("ERROR: --findings のファイルが空です: {path}（記録を付けていません）");
+                return 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "ERROR: --findings のファイルを読めません: {path}（{e}。記録を付けていません）"
+                );
+                return 1;
+            }
+        },
+        None if high + medium + low > 0 => {
+            eprintln!(
+                "ERROR: 指摘が {} 件あるのに、要旨がありません（記録を付けていません）。指摘ごとに 1 行（重大度、ファイルと行、要旨、直すか `再現なし` か）を書いたファイルを、末尾に --findings <ファイル> で渡してください（記録のコメントにコピーする。件数だけでは、セッションが替わると対応しなかった指摘をマージの本文に書けない）",
+                high + medium + low
+            );
+            return 1;
+        }
+        None => None,
+    };
 
     let head = match crate::gh::output_for_repo(
         &pr.repo,
@@ -156,6 +195,9 @@ pub fn main(args: &[String]) -> i32 {
     );
     if let Some(reason) = unlogged.filter(|_| !logged) {
         body.push_str(&format!("\n回した記録を確かめていない理由: {reason}"));
+    }
+    if let Some(findings) = &findings {
+        body.push_str(&format!("\n\n指摘:\n{findings}"));
     }
     let code = crate::gh::run_for_repo(&pr.repo, &["pr", "comment", &pr.number, "--body", &body]);
     if code != 0 {

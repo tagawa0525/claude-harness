@@ -176,8 +176,12 @@ Step 2 に戻る（コンテキストが要約されても処置の履歴を残�
   High / Medium / Low で付ける（decline した指摘は数えない）
 
 ```bash
-cd <worktree> && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low}
+cd <worktree> && ~/.claude/skills/gh-pr-review/scripts/record-local-review.sh "{pr_url}" {sha} {high} {medium} {low} --findings {file}
 ```
+
+- 指摘が 1 件でもあれば、指摘ごとに 1 行（重大度、ファイルと行、要旨、直すか `再現なし` か）を scratchpad のファイルに書き、
+  `--findings` で渡す（記録のコメントにコピーされる。件数だけでは、セッションが替わると対応しなかった指摘をマージの本文に
+  書けない）。0 件なら `--findings` は付けない
 
 - PR の URL を対象に渡した周（`WORKTREE` が none）は、`cd` を付けずに、末尾に `--unlogged '<その回し方>'` を付ける
 - 記録は回した head とその回の指摘の数の組。指摘を直したら、直した head を push して回し直し、その head に記録する。
