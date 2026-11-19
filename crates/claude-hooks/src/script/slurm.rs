@@ -163,6 +163,86 @@ fn running_jobs(json: &str) -> Result<Vec<RunningJob>, String> {
         .collect())
 }
 
+/// 待ち行列のパーティションの種類
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Partition {
+    /// 割り込まれない（時間を記録するジョブの）パーティション
+    Uninterrupted,
+    /// 既定のパーティション
+    Default,
+    /// ほか（複数のパーティションに投げて、まだ決まっていないものを含む）
+    Other,
+}
+
+/// 待ち行列のジョブの段階
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Phase {
+    /// 走り始めた（走っている、走る準備をしている、終わりかけている、など）
+    Started,
+    /// 止められた
+    Suspended,
+    /// 走るのを待っている
+    Pending,
+}
+
+/// 待ち行列のジョブ。文字列の欄は、一覧に出す形
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueuedJob {
+    /// 番号（配列のまとめて待っているものは `12_[1-3]`、配列の 1 つは `12_1`、異種のジョブの部分は `5+1`）
+    pub id: String,
+    /// 番号の先頭の数（配列と異種のジョブは、まとめた番号）
+    pub group: u64,
+    /// 配列のまとめて待っているもの（1 つのジョブとして動かせない）
+    pub array: bool,
+    pub partition: String,
+    pub partition_kind: Partition,
+    pub name: String,
+    pub state: String,
+    pub phase: Phase,
+    /// 大きいほど先に走る
+    pub priority: u64,
+    /// 見積もり（`10:00`、`2:55:00`、`1-00:00:00`、`UNLIMITED` など）
+    pub limit: String,
+    /// 開始の見込みか走り始めた時刻（`2026-11-19T17:45:36`。無ければ `N/A`）
+    pub start: String,
+    pub comment: String,
+}
+
+/// 待ち行列を読めなかった理由
+#[derive(Debug)]
+pub enum QueueError {
+    /// コマンドを起動できない。code は sh と同じく、無いコマンドは 127、起動できないコマンドは 126
+    Spawn { code: i32, error: std::io::Error },
+    /// コマンドが失敗した（その終了コード）
+    Failed(i32),
+    /// 出力を解けない
+    Unreadable(String),
+}
+
+/// 待ち行列のジョブ（squeue の既定の絞り込み）。squeue の標準エラーはそのまま流す
+pub fn queued_jobs() -> Result<Vec<QueuedJob>, QueueError> {
+    let out = Command::new("squeue")
+        .arg(JSON)
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| QueueError::Spawn {
+            code: if error.kind() == std::io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            },
+            error,
+        })?;
+    if !out.status.success() {
+        return Err(QueueError::Failed(crate::child::exit_code(out.status)));
+    }
+    queue_jobs(&String::from_utf8_lossy(&out.stdout)).map_err(QueueError::Unreadable)
+}
+
+fn queue_jobs(_json: &str) -> Result<Vec<QueuedJob>, String> {
+    Err("未実装".to_string())
+}
+
 /// ジョブの状態
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobState {
@@ -341,8 +421,9 @@ fn quiet_output(argv: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        JobRecord, JobState, Limit, RunningJob, Submission, log_file, running_jobs, sacct_record,
-        scontrol_state, submit_args, submitted_job, valid_time_limit,
+        JobRecord, JobState, Limit, Partition, Phase, QueuedJob, RunningJob, Submission, log_file,
+        queue_jobs, running_jobs, sacct_record, scontrol_state, submit_args, submitted_job,
+        valid_time_limit,
     };
     use serde_json::json;
 
@@ -550,6 +631,208 @@ mod tests {
         );
         assert!(running_jobs("not json").is_err());
         assert!(running_jobs("{}").is_err());
+    }
+
+    /// `{set, infinite, number}` の形の数
+    fn set(number: u64) -> serde_json::Value {
+        json!({"set": true, "infinite": false, "number": number})
+    }
+
+    fn infinite() -> serde_json::Value {
+        json!({"set": false, "infinite": true, "number": 0})
+    }
+
+    fn unset() -> serde_json::Value {
+        json!({"set": false, "infinite": false, "number": 0})
+    }
+
+    /// 2026-11-19 に r995 の `squeue --json=v0.0.45` が出したジョブ（961）の、読む欄。changes の欄で置き換える
+    fn squeue_job(changes: serde_json::Value) -> serde_json::Value {
+        let mut job = json!({
+            "job_id": 961,
+            "name": "openmc-endfb70-1B-1D-2B",
+            "job_state": ["RUNNING"],
+            "partition": "main",
+            "priority": set(10000),
+            "time_limit": set(175),
+            "start_time": set(1795077936),
+            "comment": "decision | #0131 | p | c",
+            "array_job_id": set(0),
+            "array_task_id": unset(),
+            "array_task_string": "",
+            "het_job_id": set(0),
+            "het_job_offset": unset(),
+        });
+        for (key, value) in changes.as_object().unwrap() {
+            job[key] = value.clone();
+        }
+        job
+    }
+
+    /// 1 本のジョブの待ち行列を読む
+    fn queued(changes: serde_json::Value) -> Result<QueuedJob, String> {
+        let json = json!({"jobs": [squeue_job(changes)]}).to_string();
+        queue_jobs(&json).map(|mut jobs| jobs.remove(0))
+    }
+
+    #[test]
+    #[ignore = "RED: squeue の JSON を読む形は未実装"]
+    fn squeue_json_gives_the_queued_job_with_the_fields_as_the_listing_shows_them() {
+        assert_eq!(
+            queued(json!({})),
+            Ok(QueuedJob {
+                id: "961".to_string(),
+                group: 961,
+                array: false,
+                partition: "main".to_string(),
+                partition_kind: Partition::Default,
+                name: "openmc-endfb70-1B-1D-2B".to_string(),
+                state: "RUNNING".to_string(),
+                phase: Phase::Started,
+                priority: 10000,
+                limit: "2:55:00".to_string(),
+                start: "2026-11-19T17:45:36".to_string(),
+                comment: "decision | #0131 | p | c".to_string(),
+            })
+        );
+        assert_eq!(queue_jobs(r#"{"jobs": []}"#), Ok(vec![]));
+    }
+
+    #[test]
+    #[ignore = "RED: squeue の JSON を読む形は未実装"]
+    fn the_limit_is_written_like_squeue_in_minutes_hours_and_days() {
+        for (limit, text) in [
+            (set(1), "1:00"),
+            (set(10), "10:00"),
+            (set(59), "59:00"),
+            (set(60), "1:00:00"),
+            (set(175), "2:55:00"),
+            (set(1440), "1-00:00:00"),
+            (set(2 * 1440 + 61), "2-01:01:00"),
+            (set(0), "0:00"),
+            // 1 年を超える見積もりは、squeue と同じく INVALID
+            (set(365 * 1440), "365-00:00:00"),
+            (set(365 * 1440 + 1), "INVALID"),
+            (infinite(), "UNLIMITED"),
+            (unset(), "NOT_SET"),
+        ] {
+            assert_eq!(
+                queued(json!({"time_limit": limit})).unwrap().limit,
+                text,
+                "{limit}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "RED: squeue の JSON を読む形は未実装"]
+    fn the_start_is_the_local_time_or_na_when_there_is_no_estimate() {
+        for (start, text) in [
+            (set(1795077936), "2026-11-19T17:45:36"),
+            (set(1767193199), "2025-12-31T23:59:59"),
+            (set(1767193200), "2026-01-01T00:00:00"),
+            (set(0), "N/A"),
+            (set(0xffff_ffff), "Unknown"),
+            (set(0xffff_fffe), "None"),
+        ] {
+            assert_eq!(
+                queued(json!({"start_time": start})).unwrap().start,
+                text,
+                "{start}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "RED: squeue の JSON を読む形は未実装"]
+    fn array_and_heterogeneous_jobs_get_the_id_and_the_group_number_squeue_shows() {
+        let parent =
+            queued(json!({"job_id": 14, "array_job_id": set(12), "array_task_string": "1-3"}))
+                .unwrap();
+        assert_eq!(
+            (parent.id.as_str(), parent.group, parent.array),
+            ("12_[1-3]", 12, true)
+        );
+        let task = queued(json!({"job_id": 13, "array_job_id": set(12), "array_task_id": set(1)}))
+            .unwrap();
+        assert_eq!(
+            (task.id.as_str(), task.group, task.array),
+            ("12_1", 12, false)
+        );
+        let het =
+            queued(json!({"job_id": 6, "het_job_id": set(5), "het_job_offset": set(1)})).unwrap();
+        assert_eq!((het.id.as_str(), het.group, het.array), ("5+1", 5, false));
+    }
+
+    #[test]
+    #[ignore = "RED: squeue の JSON を読む形は未実装"]
+    fn the_state_word_decides_the_phase_and_the_partition_name_its_kind() {
+        for (states, word, phase) in [
+            (json!(["PENDING"]), "PENDING", Phase::Pending),
+            (json!(["SUSPENDED"]), "SUSPENDED", Phase::Suspended),
+            (json!(["RUNNING"]), "RUNNING", Phase::Started),
+            (
+                json!(["RUNNING", "CONFIGURING"]),
+                "CONFIGURING",
+                Phase::Started,
+            ),
+            (
+                json!(["COMPLETED", "COMPLETING"]),
+                "COMPLETING",
+                Phase::Started,
+            ),
+            // 一覧の語が旗なら、待っているジョブとして扱わない
+            (json!(["PENDING", "REQUEUED"]), "REQUEUED", Phase::Started),
+        ] {
+            let job = queued(json!({"job_state": states})).unwrap();
+            assert_eq!((job.state.as_str(), job.phase), (word, phase), "{states}");
+        }
+        for (name, kind) in [
+            ("timed", Partition::Uninterrupted),
+            ("main", Partition::Default),
+            ("main,timed", Partition::Other),
+            ("debug", Partition::Other),
+        ] {
+            assert_eq!(
+                queued(json!({"partition": name})).unwrap().partition_kind,
+                kind,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "RED: squeue の JSON を読む形は未実装"]
+    fn the_priority_is_the_number_and_an_empty_comment_is_shown_as_null() {
+        assert_eq!(queued(json!({"priority": set(0)})).unwrap().priority, 0);
+        // squeue は C の %u と %s で書くので、無い値は NO_VAL と INFINITE の数、無い文字列は (null)
+        assert_eq!(
+            queued(json!({"priority": unset()})).unwrap().priority,
+            0xffff_fffe
+        );
+        assert_eq!(
+            queued(json!({"priority": infinite()})).unwrap().priority,
+            0xffff_ffff
+        );
+        assert_eq!(queued(json!({"comment": ""})).unwrap().comment, "(null)");
+    }
+
+    #[test]
+    #[ignore = "RED: squeue の JSON を読む形は未実装"]
+    fn an_unexpected_shape_is_an_error() {
+        for bad in ["not json", "{}", r#"{"jobs": {}}"#] {
+            assert!(queue_jobs(bad).is_err(), "{bad}");
+        }
+        for changes in [
+            json!({"job_id": "961"}),
+            json!({"priority": 10000}),
+            json!({"time_limit": null}),
+            json!({"start_time": {"set": true}}),
+            json!({"job_state": "RUNNING"}),
+            json!({"comment": null}),
+        ] {
+            assert!(queued(changes.clone()).is_err(), "{changes}");
+        }
     }
 
     #[test]
