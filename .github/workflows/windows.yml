@@ -74,7 +74,7 @@ jobs:
           rc=0
           "$HOME/.claude/bin/claude-hooks" local-review-covers || rc=$?
           test "$rc" -eq 2
-          # スキルと修正方法の文が名前で呼ぶコマンドは、docs/windows.md が ~/.bashrc で PATH に足す ~/.claude/bin のもの。CI の
+          # スキルと修正方法の文が名前で呼ぶコマンドは、scripts/install-windows.sh が ~/.bashrc で PATH に足す ~/.claude/bin のもの。CI の
           # step は ~/.bashrc を読まない（後の git hook の確認は、PATH に無い ja-terms を claude-hooks の隣で見つける）
           for name in claude-setup commit-refs ja-terms design-records; do
             found=$(bash -c 'source ~/.bashrc && command -v "$1"' _ "$name")

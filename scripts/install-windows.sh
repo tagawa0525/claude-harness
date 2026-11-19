@@ -16,8 +16,6 @@ done
 hook=$(cygpath -w ~/.claude/bin/claude-hooks.exe)
 ~/.claude/bin/claude-setup sync "$repo"
 ~/.claude/bin/claude-setup settings --static claude-settings.json --pre-tool-use "$hook" --stop "$hook"
-# グローバルの core.hooksPath がほかの置き場を向いていれば、奪わずに止まる
-~/.claude/bin/claude-setup git-hooks --bin "$hook"
 
 # スキルと hook の修正方法の文は claude-setup と commit-refs を名前で呼ぶ。Claude Code の Bash ツールも ~/.bashrc を読む
 path_line='export PATH="$HOME/.claude/bin:$PATH"'
@@ -39,3 +37,6 @@ if [ -z "$top" ] || [ "$top" -ef ~/.claude ]; then
   [ -e ~/.claude/.gitignore ] || printf '%s\n' '/*' '!/.gitignore' '!/CLAUDE.md' '!/skills/' '!/scripts/' \
     '!/projects/' '/projects/*/*' '!/projects/*/memory/' >~/.claude/.gitignore
 fi
+
+# グローバルの core.hooksPath がほかの置き場を向いていれば、奪わずに止まる。止まってもほかの手順が済んでいるよう最後に置く
+~/.claude/bin/claude-setup git-hooks --bin "$hook"

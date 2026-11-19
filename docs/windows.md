@@ -56,7 +56,7 @@ SKIP になる）。設定を持たないリポジトリで効くグローバル
 `~/.config/markdownlint/config` に置く。Windows の `%USERPROFILE%` の下で markdownlint がこの場所を読むかは、実機で確かめていない（ADR-0093）。
 
 崩れた日本語の語の共通の辞書も、`claude-setup sync` が `crates/ja-terms/prh.yml` から `%USERPROFILE%\.config\ja-terms\prh.yml` に
-置き、`ja-terms` はそこを読む（ADR-0097。ビルドに埋めない）。上の手順の `claude-setup sync` を流す前は、`ja-terms` が辞書が無い
+置き、`ja-terms` はそこを読む（ADR-0097。ビルドに埋めない）。スクリプトが `claude-setup sync` を流す前は、`ja-terms` が辞書が無い
 として検査を止め、コミットが通らない。辞書の規則だけが変わったときは、clone を更新して `claude-setup sync` を流せば効く。
 
 スクリプトは、Git Bash の `~/.bashrc` で `~/.claude/bin` を PATH の先頭に足す（Claude Code の Bash ツールも `~/.bashrc` を
