@@ -6,7 +6,17 @@
 # nix と nixfiles は偽物にする。偽の nixfiles の検査は、環境変数で渡した行を出し、渡した終了コードで終わる
 source "$(dirname "$0")/../lib.sh"
 
-REPO=$(cd "$CLAUDE_DIR/.." && pwd)
+# スクリプトは自分のある worktree を検査するので、一時のハーネスのリポジトリにコピーして呼ぶ（このリポジトリのブランチの
+# 状態と、.git の無いコピーからの実行に左右されない）
+REPO="$TEST_ROOT/harness"
+make_repo "$REPO"
+make_remote "$REPO"
+git -C "$REPO" remote set-head origin main
+git -C "$REPO" switch -q -c feat/x main
+mkdir -p "$REPO/scripts"
+cp "$CLAUDE_DIR/../scripts/check-nixfiles-contract.sh" "$REPO/scripts/"
+git -C "$REPO" add scripts
+git -C "$REPO" commit -q -m "feat: x"
 CHECK="$REPO/scripts/check-nixfiles-contract.sh"
 HEAD_SHA=$(git -C "$REPO" rev-parse HEAD)
 
@@ -91,5 +101,33 @@ it "無い NIXFILES_REF は、ERROR を出して 2 で終わる"
 out=$(NIXFILES_REF=no-such-branch "$CHECK" testhost 2>&1)
 assert_eq 2 $?
 assert_contains "$out" "ERROR: "
+
+it "host を省くと、配備と同じく HOSTNAME の構成を検査する"
+out=$(HOSTNAME=fromenv "$CHECK" 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "host=fromenv"
+
+it "git の hook から呼ばれても（GIT_DIR が渡っても）、nixfiles と自分のリポジトリを取り違えない"
+out=$(GIT_DIR="$TEST_ROOT/elsewhere/.git" "$CHECK" testhost 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "OK: "
+
+it "作業ツリーに変更があれば、検査するのがコミットした版だけだと知らせる"
+echo x >"$REPO/untracked"
+out=$("$CHECK" testhost 2>&1)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: 作業ツリーに変更があります"
+rm "$REPO/untracked"
+
+it "既定ブランチから遅れたブランチは、検査せずに ERROR を出して 2 で終わる（配備されるのはマージの結果）"
+git -C "$REPO" switch -q main
+commit_file "$REPO" other.txt "feat: other"
+git -C "$REPO" push -q origin main
+git -C "$REPO" switch -q feat/x
+out=$("$CHECK" testhost 2>&1)
+assert_eq 2 $?
+assert_contains "$out" "ERROR: "
+assert_contains "$out" "rebase"
+assert_not_contains "$out" "host=testhost"
 
 finish
