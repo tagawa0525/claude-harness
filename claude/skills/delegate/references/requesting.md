@@ -102,7 +102,7 @@
 頼む。
 
 - 計算: 報告の「続きの作業」のコマンド（`slurm-run.sh` と、担当が待ちをやめた投げ済みのジョブを番号から引き継いで待つ
-  `slurm-wait.sh <番号>`）を、報告の行ごとに 1 本の `run_in_background=true` の Bash で、そのまま実行する（依存の
+  `slurm-wait.sh <番号>...`。すべてが終わってから 1 度だけ通知が来る）を、報告の行ごとに 1 本の `run_in_background=true` の Bash で、そのまま実行する（依存の
   無いジョブは 1 行 1 本、`a && b` の行はそのまま）。投げる直前に、担当の項と同じく `base-moved.sh` で比較元を fetch してから
   `git -C <worktree> rev-list --count HEAD..<base>` を見て、結果を変える変更（コード、入力、環境）が既定ブランチに入っていれば、
   投げずに続きの担当に rebase を先に頼む。すべての background の終わりの通知を待ってから、すべての出力のファイルのパスだけを
