@@ -171,8 +171,8 @@ struct Job<'a> {
     priority: &'a str,
     limit: &'a str,
     start: &'a str,
-    /// 区分（コメントが区分で始まる 4 つ以上の欄でなければ None）
-    class: Option<&'a str>,
+    /// 区分とその順（コメントが区分で始まる 4 つ以上の欄でなければ None）
+    class: Option<(&'a str, usize)>,
     reference: &'a str,
     purpose: &'a str,
     contact: &'a str,
@@ -186,14 +186,20 @@ impl<'a> Job<'a> {
             (next(), next(), next(), next(), next(), next(), next());
         let comment = next();
         let parts: Vec<&str> = comment.split(" | ").collect();
-        let (class, reference, purpose, contact) = match parts.as_slice() {
-            [class, reference, purpose, _, ..] if slurm_class::rank(class).is_some() => (
-                Some(*class),
-                *reference,
-                *purpose,
+        let classed = match parts.as_slice() {
+            [class, reference, purpose, _, ..] => {
+                slurm_class::rank(class).map(|rank| ((*class, rank), *reference, *purpose))
+            }
+            _ => None,
+        };
+        let (class, reference, purpose, contact) = match classed {
+            Some((class, reference, purpose)) => (
+                Some(class),
+                reference,
+                purpose,
                 drop_field(drop_field(drop_field(comment))),
             ),
-            _ => (None, "-", "（無い）", comment),
+            None => (None, "-", "（無い）", comment),
         };
         Job {
             line,
@@ -211,7 +217,7 @@ impl<'a> Job<'a> {
         }
     }
 
-    /// 走る順の鍵（パーティション、状態、優先度、番号）。sh の版が sort -n で比べた整数と同じ
+    /// 走る順の鍵（パーティション、状態、優先度の高い順、番号）。優先度と番号は、数として読んだ値の整数の部分で比べる
     fn sort_key(&self) -> (i64, i64, i64, i64) {
         let partition = if self.partition == "timed" { 0 } else { 1 };
         let state = match self.state {
@@ -222,19 +228,16 @@ impl<'a> Job<'a> {
         (
             partition,
             state,
-            -leading_integer(self.priority),
-            leading_integer(self.id),
+            // 符号を変えてから整数の部分を取る（優先度 1.5 の鍵は -1）
+            (-number(self.priority).0) as i64,
+            number(self.id).0 as i64,
         )
     }
 
     /// 優先度 1 以下は保留（保留のジョブの優先度は 0 か 1 で、scontrol top は優先度 1 以下のジョブを動かせない）、
     /// [ のある番号は配列の親ジョブ
     fn unmovable(&self) -> bool {
-        self.state == "PENDING" && (leading_integer(self.priority) <= 1 || self.id.contains('['))
-    }
-
-    fn rank(&self) -> Option<usize> {
-        self.class.and_then(slurm_class::rank)
+        self.state == "PENDING" && (number(self.priority).0 <= 1.0 || self.id.contains('['))
     }
 
     /// 一覧の 3 行
@@ -250,7 +253,7 @@ impl<'a> Job<'a> {
             },
             self.partition,
             self.priority,
-            self.class.unwrap_or("-"),
+            self.class.map_or("-", |(class, _)| class),
             self.limit,
             self.start,
             self.name,
@@ -268,7 +271,8 @@ impl<'a> Job<'a> {
 }
 
 /// コメントの先頭の 1 欄と区切りの ` | ` を外す。最初の | の前後が空白でなければ（参照か目的が | を含む）外さない。
-/// sh の版の awk の `sub(/^[^|]* \| /, "", contact)` と同じにする（区切りで分けた欄と食い違っても、連絡先は前の版と同じ文字列）
+/// その | を区切りとみなすと、連絡先が欄の分け方によって変わり、slurm-run.sh の外から投げた形の崩れたコメントで
+/// どこまでが連絡先かを決められないため、区切りとみなさずにコメントの残りをそのまま連絡先にする
 fn drop_field(text: &str) -> &str {
     let bytes = text.as_bytes();
     match text.find('|') {
@@ -279,47 +283,53 @@ fn drop_field(text: &str) -> &str {
     }
 }
 
-/// 先頭の空白を飛ばした、符号つきの 10 進の整数の部分（無ければ 0）。awk が文字列を数として読むのと同じく、`12_[1-3]` は 12。
-/// 小数と指数は読まない（squeue の番号と優先度は整数）
-fn leading_integer(text: &str) -> i64 {
+/// 文字列の先頭の 10 進の数（先頭の空白を飛ばし、符号、小数、指数を含む）と、その数が文字列の空白を除いた全体か。
+/// 数が無ければ 0。配列のジョブの番号 `12_[1-3]` は 12 で、番号の順に並べる
+fn number(text: &str) -> (f64, bool) {
     let text = text.trim_start_matches([' ', '\t', '\n']);
-    let (negative, digits) = match text.as_bytes().first() {
-        Some(b'-') => (true, &text[1..]),
-        Some(b'+') => (false, &text[1..]),
-        _ => (false, text),
+    let bytes = text.as_bytes();
+    let digits_from = |mut i: usize| {
+        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        i
     };
-    let value = digits
-        .bytes()
-        .take_while(u8::is_ascii_digit)
-        .fold(0i64, |n, d| {
-            n.saturating_mul(10).saturating_add(i64::from(d - b'0'))
-        });
-    if negative { -value } else { value }
+    let mut end = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let int_end = digits_from(end);
+    let mut has_digits = int_end > end;
+    end = int_end;
+    if bytes.get(end) == Some(&b'.') {
+        let frac_end = digits_from(end + 1);
+        has_digits |= frac_end > end + 1;
+        end = frac_end;
+    }
+    if !has_digits {
+        return (0.0, false);
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+        let exp_end = digits_from(end + 1 + sign);
+        if exp_end > end + 1 + sign {
+            end = exp_end;
+        }
+    }
+    let whole = text[end..].trim_end_matches([' ', '\t', '\n']).is_empty();
+    (text[..end].parse().unwrap_or(0.0), whole)
 }
 
-/// 番号が --first と同じジョブか。awk は数に見える文字列どうしを数で比べる（`042` と `42` は同じ）ので、整数に見えるもの
-/// どうしは整数で比べる
+/// 番号が --first と同じジョブか。どちらも全体が数なら数で比べる（`--first 042` は 42 のジョブ。slurm-run.sh が
+/// 渡す番号の書き方によらず同じジョブを指す）。ほかは文字列で比べる（配列のジョブ `12_[1-3]` は 12 と別）
 fn same_job(id: &str, first: &str) -> bool {
-    let integer = |s: &str| {
-        let s = s.trim_matches([' ', '\t', '\n']);
-        let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
-        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
-    };
-    if integer(id) && integer(first) {
-        leading_integer(id) == leading_integer(first)
-    } else {
-        id == first
+    match (number(id), number(first)) {
+        ((a, true), (b, true)) => a == b,
+        _ => id == first,
     }
 }
 
-/// 走る順に並べたジョブ。鍵が同じなら元の行で比べる（sh の版の sort の最後の比べ方。ロケールの照合順でなくバイトの順）
+/// 走る順に並べたジョブ。鍵が同じなら元の行のバイトの順で比べる（ロケールの照合順に頼らず、どの機械でも同じ順にする）
 fn running_order(lines: &str) -> Vec<Job<'_>> {
     let mut jobs: Vec<Job> = lines.split('\n').map(Job::parse).collect();
-    jobs.sort_by(|a, b| {
-        a.sort_key()
-            .cmp(&b.sort_key())
-            .then_with(|| a.line.cmp(b.line))
-    });
+    jobs.sort_by_cached_key(|job| (job.sort_key(), job.line));
     jobs
 }
 
@@ -373,7 +383,7 @@ fn plan<'a>(jobs: &[Job<'a>], first: &str) -> Plan<'a> {
         if job.state != "PENDING" || job.partition != "main" || job.unmovable() {
             continue;
         }
-        let (Some(class), Some(rank)) = (job.class, job.rank()) else {
+        let Some((class, rank)) = job.class else {
             unclassed.push(job.id);
             continue;
         };
@@ -404,7 +414,7 @@ fn plan<'a>(jobs: &[Job<'a>], first: &str) -> Plan<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode, leading_integer, parse_args, render, same_job};
+    use super::{Mode, number, parse_args, render, same_job};
 
     const C: &str = "feat/x /home/u/github/xlc-feat-x claude=abc";
 
@@ -470,8 +480,8 @@ mod tests {
     }
 
     #[test]
-    fn a_bar_inside_the_reference_keeps_it_in_the_contact_like_the_sh_version() {
-        // sh の版の awk は、最初の | の前後が空白でなければ区切りを外さない（slurm-run.sh は参照と目的の | を拒む）
+    fn a_bar_inside_the_reference_keeps_the_rest_of_the_comment_as_the_contact() {
+        // 最初の | の前後が空白でなければ区切りとみなさない（slurm-run.sh は参照と目的の | を拒む）
         let out = list(&["601|main|x|RUNNING|10030|30:00|N/A|trial | #1|x | p | c".to_string()]);
         assert!(out.contains(" x #1|x\n"), "{out}");
         assert!(out.contains("  連絡先: #1|x | p | c\n"), "{out}");
@@ -638,7 +648,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 小数と指数の優先度は整数の部分しか読まない"]
     fn priorities_with_a_fraction_or_an_exponent_are_read_as_their_whole_number() {
         // 1.5 は 1 より大きいので動かせ、1e3 は 1000 で 1.5 より先に並ぶ
         let out = list(&[
@@ -709,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn order_first_compares_numbers_as_awk_does() {
+    fn order_first_names_the_same_job_however_the_number_is_written() {
         let lines = [
             job("20", "main", "t1", "PENDING", "10020", "trial"),
             job("42", "main", "new", "PENDING", "10000", "trial"),
@@ -843,12 +852,17 @@ mod tests {
     }
 
     #[test]
-    fn numbers_are_read_like_awk() {
-        assert_eq!(leading_integer("10030"), 10030);
-        assert_eq!(leading_integer("12_[1-3]"), 12);
-        assert_eq!(leading_integer(" -5x"), -5);
-        assert_eq!(leading_integer(""), 0);
-        assert_eq!(leading_integer("N/A"), 0);
+    fn numbers_are_the_leading_decimal_number_of_the_field() {
+        assert_eq!(number("10030"), (10030.0, true));
+        assert_eq!(number("12_[1-3]"), (12.0, false));
+        assert_eq!(number(" -5x"), (-5.0, false));
+        assert_eq!(number("1.5"), (1.5, true));
+        assert_eq!(number("1e3 "), (1000.0, true));
+        assert_eq!(number("2e"), (2.0, false));
+        assert_eq!(number(".5"), (0.5, true));
+        assert_eq!(number(""), (0.0, false));
+        assert_eq!(number("N/A"), (0.0, false));
+        assert!(same_job("42", "42.0"));
         assert!(same_job("42", "042"));
         assert!(!same_job("12_[1-3]", "12"));
         assert!(!same_job("42", ""));
