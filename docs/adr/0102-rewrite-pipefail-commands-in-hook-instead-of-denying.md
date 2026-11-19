@@ -53,8 +53,8 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
 案 2 を採る。require-pipefail が対象にする形で、ほかのルールが拒否しないときは、拒否の代わりに、入力のほかの欄を
 そのままにして `command` の前に `set -o pipefail;` と空白 1 つを付けた `updatedInput` と、付けたことを知らせる
 `additionalContext` を返す。`permissionDecision` は返さない。ほかのルールが同じ呼び出しを拒否するときは、拒否だけを
-返し、書き換えは返さない（書き換えの文も入れない）。tail / head へのパイプが `bash -c` や `ssh` の文字列の中に
-あれば、書き換えずに前と同じく拒否する。
+返し、書き換えは返さない（書き換えの文も入れない）。対象のコマンドが、子のシェルで実行する文字列（`bash -c`、
+`ssh`、`script -c`、`watch` など。`eval` を除く）の中にあれば、パイプが文字列の外でも、書き換えずに前と同じく拒否する。
 
 - 案 1 は、拒否の文を読んで同じ前置きを付けるだけの 1 往復が、毎回残る
 - 案 3 は、`allow` が許可の確認を飛ばすので、`set -o pipefail;` を付けるだけの書き換えで、元のコマンドの確認まで
@@ -65,13 +65,13 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
 - 拒否を優先するのは、拒否された呼び出しは走らず、書き換えに意味が無いため。書き換えの文を拒否と一緒に返すと、
   走らなかったコマンドに「付けた」と知らせることになる。モデルが拒否の後に直したコマンドは、require-pipefail が
   もう一度見て書き換える
-- 文字列の中のパイプを拒否のままにするのは、文字列で実行するシェルが外の `set -o pipefail` を受け継がないため。
-  `bash -c 'cargo test | tail'` の外に付けても、失敗の終了コードは 0 のままで、知らせる文が誤りになる。パイプが
-  文字列の中か外かは、claude-hooks のシェルの読みが文字列の中のコマンドの `piped_into` を「文字列の中の後ろの
-  ステージ」に「文字列を実行するコマンドの `piped_into`」をつないで作るので、その長さの差で分かる。文字列を外で
-  パイプにつなぐ形（`ssh host cargo test | tail`、`bash -c '…' | tail`）は、`bash -c` と `ssh` が中の終了コードで
-  終わるので、外に付けて効く。`eval` は文字列を今のシェルで実行し、`(…)` と `$(…)` はシェルのオプションを受け継ぐ
-  ので、どれも書き換える
+- 子のシェルの文字列の中を拒否のままにするのは、外に付けた `set -o pipefail` が効くかを決められないため。子の
+  シェルは外のオプションを受け継がず（`bash -c 'cargo test | tail'` の外に付けても、失敗の終了コードは 0 のまま）、
+  パイプが文字列の外にあっても、文字列の終了コードが対象のコマンドのものとは限らない（`bash -c 'cargo build; echo done' | tail`、
+  `bash -c 'cargo test | grep x' | tail`、中の終了コードで終わらない `script -c` と `watch`）。効かないのに書き換えると、
+  知らせる文（終了コードが失敗を映す）が誤りになる。`eval` は文字列を今のシェルで実行し、`(…)` と `$(…)` は
+  シェルのオプションを受け継ぐので、書き換える。文字列を外でパイプにつなぐ形のうち効くもの（`ssh host cargo test | tail`）
+  も拒否するので、その形では打ち直しの 1 往復が残る
 
 ### 帰結
 
@@ -98,8 +98,19 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
 - `claude/tests/hooks.sh` の require-pipefail のテスト: 対象の形で拒否でなく、`set -o pipefail;` と空白 1 つを付けた
   `updatedInput`（`run_in_background` はそのまま）と `additionalContext` を返し、`permissionDecision` を返さない。
   pipefail がある形と対象でない形は何も返さない。ほかのルール（block-no-verify）が拒否する呼び出しでは、拒否だけを返す。
-  `bash -c` と `ssh` の文字列の中のパイプは拒否し、文字列を外でパイプにつなぐ形、`eval` の文字列の中、`(…)` と
-  `$(…)` の中の形は書き換える。`Input` が読まない欄
+  子のシェルの文字列の中の形（`bash -c`、`ssh`、`script -c`、入れ子の `eval`、文字列を外でパイプにつなぐ形を含む）は
+  拒否し、今のシェルの `eval` の文字列の中、`(…)` と `$(…)` の中の形は書き換える。`Input` が読まない欄
   （`description`、`timeout`）も `updatedInput` に残る
 - `crates/claude-hooks/src/output.rs` の単体テスト: 書き換えと拒否、書き換えとほかの知らせの組み合わせの出力
 - 配備の後の実際のセッションで、`cargo --version | tail -1` が打ち直しなしで通ること（PR の報告に手順を書く）
+
+## 補足
+
+- 2026-11-20: このブランチのレビューの途中で、子のシェルの文字列の扱いを 2 度作り直した。1 周目の指摘
+  （`bash -c 'cargo test | tail'` の外に付けても効かない）の後、文字列の中の対象を全部拒否した。2 周目の指摘
+  （`ssh host cargo test | tail` のように外に付けて効く形まで拒否する）の後、文字列の中のコマンドの `piped_into` と、
+  文字列を実行するコマンドの `piped_into` の長さの差で文字列の中の後ろのステージを出し、その中に tail / head が
+  あるときだけ拒否する形にした。3 周目で、その形が効かない pipefail を付けて書き換える反例が出たので捨て、全部
+  拒否する形に戻した。反例: `bash -c 'cargo test 2>&1 | grep -v warn' | tail`（文字列の中のパイプが tail でない）、
+  `bash -c 'cargo build; echo done' | tail`（対象が文字列の最後でない）、`bash -c "eval 'cargo test | tail'"`
+  （`eval` の文字列の段を飛ばして数えた）、`script -qc 'cargo test' /dev/null | tail`（中の終了コードで終わらない）
