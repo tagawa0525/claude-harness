@@ -74,4 +74,13 @@ $subject
 EOF"
 done
 
+# リポジトリの辞書（.ja-terms/prh.yml。ADR-0096）は、コマンドの行き先のリポジトリのものを当てる（hook の cwd のものでない）
+OTHER=$(mktemp -d)
+trap 'rm -rf "$REPO" "$REPO.gitconfig" "$OTHER"' EXIT
+git -C "$OTHER" init -q
+mkdir "$OTHER/.ja-terms"
+printf 'version: 1\nrules:\n  - expected: ほげ\n    pattern: ふがふが\n' >"$OTHER/.ja-terms/prh.yml"
+expect_deny "行き先のリポジトリの辞書の語" "git -C '$OTHER' commit -m 'feat: a' -m 'ふがふがを足す'" "ふがふが => ほげ"
+expect_pass "辞書の無いリポジトリでの、ほかのリポジトリの辞書の語" "git commit -m 'feat: a' -m 'ふがふがを足す'"
+
 echo "ok: check-commit-message"

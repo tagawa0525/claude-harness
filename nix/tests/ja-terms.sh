@@ -5,7 +5,7 @@
 # =============================================================================
 # pre-commit はステージした中身（作業ツリーではなく）の Markdown、テキスト、コードを、commit-msg は
 # Claude Code のセッションのコミットの本文を ja-terms（prh の辞書を Rust で当てる。ADR-0085）で検査する。辞書の項目は、名詞の用法を
-# 止め、動詞や別の語を通すことも確かめる。ファイルの全体の検査（ja-terms check）と、それを使う /retro の
+# 止め、動詞や別の語を通すことも確かめる。リポジトリの辞書（.ja-terms/prh.yml）を重ねること（ADR-0096）と、ファイルの全体の検査（ja-terms check）と、それを使う /retro の
 # memory-index.sh（claude-hooks script memory-index）の TERMS: の行も、同じ辞書で確かめる（ADR-0074）。発言とメモリに辞書を
 # かける dictionary-preview.sh（#284）も、本物の ja-terms と辞書で確かめる。
 #
@@ -619,6 +619,60 @@ else
   ng ".textlintignore に挙げた、] を含む名前のファイルで止めた"
 fi
 
+# --- 4d. リポジトリの辞書（.ja-terms/prh.yml。ADR-0096）を共通の辞書に重ねる ------------------------------
+REPO_RULES=$(printf 'version: 1\nrules:\n  - expected: ほげ\n    pattern: ふがふが\n')
+REPO="$WORK/repo-dictionary"
+new_repo "$REPO"
+mkdir -p "$REPO/.ja-terms"
+printf '%s\n' "$REPO_RULES" > "$REPO/.ja-terms/prh.yml"
+git -C "$REPO" add .ja-terms/prh.yml
+git -C "$REPO" commit -q --no-verify -m "chore: add the repository dictionary"
+if commits "$REPO" doc.md "$(printf '# t\n\nふがふがの値。\n')"; then
+  ng "pre-commit: リポジトリの辞書の語で止まらない"
+elif grep -qF "ふがふが => ほげ" "$WORK/out"; then
+  ok "pre-commit: リポジトリの辞書の語で止め、直す語を示す"
+else
+  ng "pre-commit: リポジトリの辞書の語で止めたが、直す語を示さない"
+fi
+if commits "$REPO" doc.md "$(printf '# t\n\n確かめの結果。\n')"; then
+  ng "pre-commit: リポジトリの辞書のあるリポジトリで、共通の辞書の語で止まらない"
+else
+  ok "pre-commit: リポジトリの辞書のあるリポジトリでも、共通の辞書の語で止める"
+fi
+# 止まったコミットのステージを外す（commit-msg の前に pre-commit が止めないように）
+git -C "$REPO" reset -q
+echo y > "$REPO/y.txt"
+git -C "$REPO" add y.txt
+if CLAUDECODE=1 git -C "$REPO" commit -q -m "docs: add" -m "ふがふがを書く" >"$WORK/out" 2>&1; then
+  ng "commit-msg: 本文のリポジトリの辞書の語で止まらない"
+elif grep -qF "ふがふが => ほげ" "$WORK/out"; then
+  ok "commit-msg: 本文のリポジトリの辞書の語で止め、直す語を示す"
+else
+  ng "commit-msg: 本文のリポジトリの辞書の語で止めたが、直す語を示さない"
+fi
+git -C "$REPO" reset -q
+# worktree は、その worktree の辞書を読む（辞書を消した worktree では、元のリポジトリの辞書の語を止めない）
+git -C "$REPO" worktree add -q -b feat/no-dictionary "$WORK/repo-dictionary-wt"
+git -C "$WORK/repo-dictionary-wt" rm -q .ja-terms/prh.yml
+git -C "$WORK/repo-dictionary-wt" commit -q --no-verify -m "chore: drop the repository dictionary"
+if commits "$WORK/repo-dictionary-wt" doc.md "$(printf '# t\n\nふがふがの値。\n')"; then
+  ok "pre-commit: worktree は、その worktree の辞書を読む"
+else
+  ng "pre-commit: 辞書を消した worktree で、元のリポジトリの辞書の語で止めた"
+fi
+# 壊れた辞書をステージしたコミットは止める（黙って共通の辞書だけにしない）
+printf 'version: 1\nrules: [\n' > "$REPO/.ja-terms/prh.yml"
+if commits "$REPO" .ja-terms/prh.yml "$(cat "$REPO/.ja-terms/prh.yml")"; then
+  ng "pre-commit: 読めないリポジトリの辞書をステージしたコミットを通した"
+elif grep -qF ".ja-terms/prh.yml" "$WORK/out"; then
+  ok "pre-commit: 読めないリポジトリの辞書をステージしたコミットを、辞書の名前を示して止める"
+else
+  ng "pre-commit: 読めないリポジトリの辞書で止めたが、辞書の名前を示さない"
+fi
+# 下の memory-index で使うので、辞書を戻す
+printf '%s\n' "$REPO_RULES" > "$REPO/.ja-terms/prh.yml"
+git -C "$REPO" reset -q
+
 # --- 5. fork では飛ばす ------------------------------------------------------------------------------
 REPO="$WORK/fork"
 new_repo "$REPO"
@@ -808,6 +862,23 @@ if [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "ENTRIES: 2" ]; then
   ok "memory-index: 崩れた語が無ければ TERMS: の行を出さない"
 else
   ng "memory-index: 崩れた語の無いメモリで TERMS: の行か食い違いを出した（終了コード $rc）"
+fi
+
+# memory-index は、呼んだ今のディレクトリのリポジトリの辞書を重ねる（ADR-0096。メモリはリポジトリの外にある）
+printf -- '---\nname: a\n---\n\nふがふがを書く。\n' > "$MEM/a.md"
+rc=0
+(cd "$WORK/repo-dictionary" && "$MEMORY_INDEX" "$MEM") >"$WORK/out" 2>&1 || rc=$?
+if [ "$rc" = 0 ] && [ "$(grep '^TERMS: ' "$WORK/out")" = "TERMS: a.md:5 ふがふが => ほげ" ]; then
+  ok "memory-index: 今のディレクトリのリポジトリの辞書の語を TERMS: で出す"
+else
+  ng "memory-index: 今のディレクトリのリポジトリの辞書の語の TERMS: の行が違う（終了コード $rc）"
+fi
+rc=0
+(cd "$WORK" && "$MEMORY_INDEX" "$MEM") >"$WORK/out" 2>&1 || rc=$?
+if [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "ENTRIES: 2" ]; then
+  ok "memory-index: リポジトリの外では、共通の辞書だけを当てる"
+else
+  ng "memory-index: リポジトリの外で、リポジトリの辞書の語を出した（終了コード $rc）"
 fi
 
 # --- dictionary-preview: 発言とメモリに辞書をかけ、置き換えを例つきで出す（#284） -----------------------------
