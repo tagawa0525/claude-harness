@@ -32,18 +32,47 @@ const FLAGS: &[&str] = &["--top", "--timed"];
 
 /// 1 つの slurm-run.sh の呼び出しの見積もり（分）。字面で決まらなければ理由
 fn estimate_of(cmd: &Cmd) -> Result<u64, String> {
-    let _ = (cmd, VALUED, FLAGS, Piece::Other);
-    Err(String::new())
+    let mut i = 0;
+    while let Some(arg) = cmd.args.get(i) {
+        let text = arg.text.as_str();
+        if FLAGS.contains(&text) {
+            i += 1;
+            continue;
+        }
+        if !VALUED.contains(&text) {
+            break;
+        }
+        if text == "-t" {
+            let Some(value) = cmd.args.get(i + 1) else {
+                return Err("-t の値が無い".to_string());
+            };
+            if !value.pieces.iter().all(|p| matches!(p, Piece::Lit(_))) {
+                return Err(format!(
+                    "-t の値 {} が字面で決まらない（変数や置き換え）",
+                    value.raw
+                ));
+            }
+            return slurm::estimate_minutes(&value.text)
+                .ok_or_else(|| format!("-t の値 '{}' を見積もりとして読めない", value.text));
+        }
+        i += 2;
+    }
+    Err("-t が無い".to_string())
 }
 
 /// コマンドの slurm-run.sh の見積もりの合計（分）。どれかが字面で決まらなければ理由
 fn total_estimate(shell: &Shell) -> Result<u64, String> {
-    let _ = (
-        shell,
-        estimate_of as fn(&Cmd) -> Result<u64, String>,
-        is_slurm_run as fn(&str) -> bool,
-    );
-    Err(String::new())
+    let runs: Vec<&Cmd> = shell
+        .commands()
+        .iter()
+        .filter(|c| is_slurm_run(c.program()))
+        .collect();
+    if runs.is_empty() || shell.commands().iter().any(|c| c.opaque) {
+        return Err("実行するプログラムを字面から決められない".to_string());
+    }
+    runs.iter()
+        .map(|cmd| estimate_of(cmd))
+        .sum::<Result<u64, String>>()
 }
 
 fn now() -> i64 {
@@ -87,18 +116,20 @@ impl Rule for GuardDelegateWait {
     }
 
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
-        let _ = (
-            input,
-            shell,
-            run_outlook as fn(&Shell) -> Outlook,
-            deny_run as fn(&Outlook) -> String,
-            DENY_WAIT,
-            SCRIPT,
-            WAIT_SCRIPT,
-            is_slurm_wait as fn(&str) -> bool,
-            LIMIT_SECS,
-        );
-        Vec::new()
+        if input.agent_id.is_empty() {
+            return Vec::new();
+        }
+        let mut findings = Vec::new();
+        if shell.runs_program(WAIT_SCRIPT, is_slurm_wait) {
+            findings.push(Finding::Deny(DENY_WAIT.to_string()));
+        }
+        if shell.runs_program(SCRIPT, is_slurm_run) {
+            let outlook = run_outlook(shell);
+            if !outlook.within_limit() {
+                findings.push(Finding::Deny(deny_run(&outlook)));
+            }
+        }
+        findings
     }
 }
 
@@ -112,7 +143,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: -t を読まない"]
     fn the_estimate_is_read_from_the_literal_t_option() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         assert_eq!(estimate(&format!("{run} -t 30 x true")), Ok(30));
@@ -127,7 +157,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: -t を読まない"]
     fn estimates_of_jobs_in_one_command_are_added() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         assert_eq!(
@@ -152,7 +181,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: -t を読まない"]
     fn the_purpose_that_looks_like_an_option_is_skipped_as_a_value() {
         let command =
             "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose -t -t 5 x true";

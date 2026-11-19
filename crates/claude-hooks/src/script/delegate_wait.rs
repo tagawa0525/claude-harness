@@ -46,14 +46,76 @@ impl Outlook {
 /// 見積もりの無いジョブ（無制限、パーティションの上限に任せたもの）、見積もりを超えて走っているジョブ（終わりが読めない）が
 /// あるとき
 pub fn outlook(now: i64, queue: &[QueuedJob], estimate_minutes: u64) -> Outlook {
-    let _ = (now, queue, estimate_minutes, Phase::Pending);
-    Outlook::Unknown(String::new())
+    let mut queue_end = now;
+    let mut last_job = None;
+    for job in queue {
+        let Some(start) = job.start_at else {
+            return Outlook::Unknown(format!(
+                "待ち行列のジョブ {} に開始の見込みが無い（{}）",
+                job.id, job.start
+            ));
+        };
+        let Some(limit) = job.limit_minutes else {
+            return Outlook::Unknown(format!(
+                "待ち行列のジョブ {} の見積もりが無い（{}）",
+                job.id, job.limit
+            ));
+        };
+        let span = (limit as i64).saturating_mul(60);
+        let end = if job.phase == Phase::Pending {
+            start.max(now).saturating_add(span)
+        } else {
+            let end = start.saturating_add(span);
+            if end < now {
+                return Outlook::Unknown(format!(
+                    "走っているジョブ {} が見積もり（{}）を超えて走っている（終わりが読めない）",
+                    job.id, job.limit
+                ));
+            }
+            end
+        };
+        if end > queue_end {
+            queue_end = end;
+            last_job = Some(job.id.clone());
+        }
+    }
+    Outlook::Known {
+        now,
+        queue_end,
+        last_job,
+        estimate_minutes,
+        finish: queue_end.saturating_add((estimate_minutes as i64).saturating_mul(60)),
+    }
 }
 
 /// 見込みの値と内訳の 1 文
 pub fn describe(outlook: &Outlook) -> String {
-    let _ = (outlook, minutes_from(0, 0), clock(0));
-    String::new()
+    match outlook {
+        Outlook::Known {
+            now,
+            queue_end,
+            last_job,
+            estimate_minutes,
+            finish,
+        } => {
+            let queue = match last_job {
+                Some(id) => format!(
+                    "待ち行列の最も遅い終わり {}（ジョブ {id}。今から {} 分）",
+                    clock(*queue_end),
+                    minutes_from(*now, *queue_end)
+                ),
+                None => "待ち行列の終わり 今（待っているジョブが無い）".to_string(),
+            };
+            format!(
+                "終わりの見込みは {}（今 {} から {} 分）= {queue} + 見積もり（-t）の合計 {estimate_minutes} 分。線は {} 分",
+                clock(*finish),
+                clock(*now),
+                minutes_from(*now, *finish),
+                LIMIT_SECS / 60
+            )
+        }
+        Outlook::Unknown(reason) => format!("終わりの見込みが分からない: {reason}"),
+    }
 }
 
 /// 今から then までの分（切り上げ。線を超えた分を 55 分と書かない）
@@ -105,7 +167,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn an_empty_queue_ends_now_so_the_job_ends_after_its_estimate() {
         let o = outlook(NOW, &[], 30);
         assert_eq!(finish(&o), NOW + 30 * 60);
@@ -113,7 +174,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn a_running_job_ends_at_its_start_plus_its_estimate() {
         // 10 分前に走り始めた 60 分のジョブは 50 分後に終わり、その後に 5 分のジョブが走る
         let o = outlook(
@@ -126,7 +186,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn the_latest_end_of_running_and_pending_jobs_comes_before_the_job() {
         let queue = [
             job("1", Phase::Started, Some(NOW - 600), Some(30)),
@@ -143,7 +202,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn a_pending_job_whose_start_estimate_passed_starts_now() {
         let o = outlook(
             NOW,
@@ -154,7 +212,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn a_job_without_a_start_estimate_makes_the_outlook_unknown() {
         let o = outlook(NOW, &[job("2", Phase::Pending, None, Some(20))], 10);
         assert!(
@@ -164,7 +221,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn an_unlimited_or_unset_estimate_makes_the_outlook_unknown() {
         let o = outlook(NOW, &[job("1", Phase::Started, Some(NOW - 60), None)], 10);
         assert!(
@@ -174,7 +230,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn a_job_running_past_its_estimate_makes_the_outlook_unknown() {
         let o = outlook(
             NOW,
@@ -192,7 +247,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: outlook が未実装"]
     fn exactly_55_minutes_is_within_the_limit_and_one_second_more_is_not() {
         let at = |secs: i64| {
             outlook(
@@ -209,7 +263,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: describe が未実装"]
     fn the_description_shows_the_finish_and_its_breakdown() {
         let o = outlook(
             NOW,

@@ -109,8 +109,28 @@ pub fn valid_time_limit(estimate: &str) -> bool {
 
 /// 見積もり（[`valid_time_limit`] の形）の分。秒は分に切り上げる（見込みを短くしない）。形が違えば None
 pub fn estimate_minutes(estimate: &str) -> Option<u64> {
-    let _ = estimate;
-    None
+    if !valid_time_limit(estimate) {
+        return None;
+    }
+    let (days, clock) = match estimate.split_once('-') {
+        Some((days, clock)) => (days.parse::<u64>().ok()?, Some(clock)),
+        None => (0, None),
+    };
+    let parts: Vec<u64> = clock
+        .unwrap_or(estimate)
+        .split(':')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
+    // 日の無い形は、分か時:分:秒。日のある形は、時、時:分、時:分:秒
+    let (hours, minutes, seconds) = match (clock.is_some(), parts.as_slice()) {
+        (false, [m]) => (0, *m, 0),
+        (false, [h, m, s]) | (true, [h, m, s]) => (*h, *m, *s),
+        (true, [h]) => (*h, 0, 0),
+        (true, [h, m]) => (*h, *m, 0),
+        _ => return None,
+    };
+    let minutes = ((days * 24 + hours) * 60 + minutes).checked_add(seconds.div_ceil(60))?;
+    Some(minutes)
 }
 
 /// 待ち行列の先頭に、list（`,` でつないだ番号）をその順に出す
@@ -303,6 +323,7 @@ fn queued_job(job: &Value) -> Result<QueuedJob, String> {
     };
     let start =
         c_number(&job["start_time"], NO_VAL64, INFINITE64).ok_or_else(|| missing("start_time"))?;
+    let time_limit = number("time_limit")?;
     Ok(QueuedJob {
         id,
         group,
@@ -313,14 +334,20 @@ fn queued_job(job: &Value) -> Result<QueuedJob, String> {
         state,
         phase,
         priority: number("priority")?,
-        limit: limit_text(number("time_limit")?),
+        limit: limit_text(time_limit),
         // C の time_t に戻す。NO_VAL64 と INFINITE64 は -2 と -1 になり、slurm_make_time_str が比べるのは 32 ビットの
         // NO_VAL と INFINITE だけなので、squeue と同じく 1970 年の時刻で書く
         start: start_text(start as i64).ok_or_else(|| missing("start_time"))?,
         comment: printed("comment")?,
-        start_at: None,
-        limit_minutes: None,
+        start_at: start_time(start),
+        limit_minutes: (time_limit != INFINITE && time_limit != NO_VAL).then_some(time_limit),
     })
+}
+
+/// 開始の時刻の C の値（[`start_text`] が時刻として書くもの）のうち、見込みとして使える UNIX の秒。0（N/A）、
+/// INFINITE（Unknown）、NO_VAL（None）と、32 ビットを超える値（NO_VAL64 と INFINITE64 の 1970 年の時刻）は見込みが無い
+fn start_time(start: u64) -> Option<i64> {
+    (start != 0 && start < NO_VAL).then_some(start as i64)
 }
 
 /// `{set, infinite, number}` を C の値に（data_parser の UINT32_NO_VAL と UINT64_NO_VAL の DUMP の逆）
@@ -816,7 +843,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: start_at と limit_minutes を読まない"]
     fn squeue_json_gives_the_queued_job_with_the_fields_as_the_listing_shows_them() {
         assert_eq!(
             queued(json!({})),
@@ -841,7 +867,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: start_at と limit_minutes を読まない"]
     fn the_start_and_the_limit_are_numbers_only_when_they_are_estimates() {
         // 一覧が時刻として書かない値（N/A、Unknown、None）と、1970 年の時刻になる無い値と無制限は、見込みが無い
         for (start, at) in [
@@ -873,7 +898,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: estimate_minutes が未実装"]
     fn the_estimate_in_minutes_rounds_seconds_up() {
         for (estimate, minutes) in [
             ("90", Some(90)),

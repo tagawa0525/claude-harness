@@ -155,7 +155,6 @@ fn an_agent_job_that_ends_within_55_minutes_passes() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: guard-delegate-wait が未実装"]
 fn an_agent_job_that_ends_after_55_minutes_is_denied_with_the_outlook_and_what_to_do() {
     let bin = Bin::new();
     bin.squeue(&queue(&[
@@ -189,7 +188,6 @@ fn an_agent_job_that_ends_after_55_minutes_is_denied_with_the_outlook_and_what_t
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: guard-delegate-wait が未実装"]
 fn an_agent_job_with_an_unknown_outlook_is_denied_with_the_reason() {
     let bin = Bin::new();
     for (json, why) in [
@@ -218,7 +216,6 @@ fn an_agent_job_with_an_unknown_outlook_is_denied_with_the_reason() {
 }
 
 #[test]
-#[ignore = "RED: guard-delegate-wait が未実装"]
 fn an_agent_job_without_squeue_is_denied() {
     let bin = Bin::new();
     let reason = bin
@@ -228,7 +225,6 @@ fn an_agent_job_without_squeue_is_denied() {
 }
 
 #[test]
-#[ignore = "RED: guard-delegate-wait が未実装"]
 fn an_agent_calling_slurm_wait_is_denied_and_told_to_use_wait_step() {
     let bin = Bin::new();
     for command in [
