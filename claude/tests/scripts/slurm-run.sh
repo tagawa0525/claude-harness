@@ -10,7 +10,7 @@
 source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
-# sbatch、squeue、sacct、hostname の偽物。sbatch は番号を出してログに書き、sacct は終わったジョブの記録を JSON で返す
+# sbatch、squeue、sacct、hostname の偽物。sbatch は番号を出してログに書き、squeue は空の待ち行列を、sacct は終わったジョブの記録を JSON で返す
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/sbatch" <<'EOF'
@@ -31,7 +31,7 @@ echo "job output" >"$log"
 EOF
 cat >"$FAKE_BIN/squeue" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+echo '{"jobs":[]}'
 EOF
 cat >"$FAKE_BIN/sacct" <<'EOF'
 #!/usr/bin/env bash

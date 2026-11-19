@@ -9,7 +9,7 @@
 source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
-# squeue の偽物。FAKE_SQUEUE_OUT を出して FAKE_SQUEUE_EXIT で終わる
+# squeue の偽物。FAKE_SQUEUE_OUT（squeue --json=v0.0.45 の形）を出して FAKE_SQUEUE_EXIT で終わる
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/squeue" <<'EOF'
@@ -22,9 +22,13 @@ export PATH="$FAKE_BIN:$PATH"
 
 QUEUE="$SCRIPTS_DIR/slurm-queue.sh"
 C="feat/x /home/u/github/xlc-feat-x claude=abc"
-LINES="$(printf '%s\n' \
-  "20|main|trial-job|PENDING|10010|10:00|N/A|trial | #1 | p | $C" \
-  "21|main|record-job|PENDING|10005|10:00|N/A|record | #2 | p | $C")"
+# squeue --json=v0.0.45 の形の 1 本のジョブ（main で待つ）。引数は番号、名前、優先度、コメント
+squeue_job() {
+  local n='{"set":true,"infinite":false,"number":' u='{"set":false,"infinite":false,"number":0}'
+  printf '{"job_id":%s,"name":"%s","job_state":["PENDING"],"partition":"main","priority":%s%s},"time_limit":%s10},"start_time":%s0},"comment":"%s","array_job_id":%s0},"array_task_id":%s,"array_task_string":"","het_job_id":%s0},"het_job_offset":%s}' \
+    "$1" "$2" "$n" "$3" "$n" "$n" "$4" "$n" "$u" "$n" "$u"
+}
+LINES="{\"jobs\":[$(squeue_job 20 trial-job 10010 "trial | #1 | p | $C"),$(squeue_job 21 record-job 10005 "record | #2 | p | $C")]}"
 
 it "slurm-queue: sh から、ジョブの行と、区分の順に並べる ORDER: の行を出す"
 out=$(FAKE_SQUEUE_OUT="$LINES" "$QUEUE")
