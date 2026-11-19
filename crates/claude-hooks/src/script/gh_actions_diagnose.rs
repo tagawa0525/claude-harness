@@ -213,11 +213,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
         .filter(|r| seen.insert((text(&r["workflowDatabaseId"]), text(&r["event"]))))
         .collect();
     let finished_ok = |r: &Value| {
-        r["status"] == "completed"
-            && matches!(
-                r["conclusion"].as_str(),
-                Some("success" | "skipped" | "neutral")
-            )
+        r["status"] == "completed" && not_failed(r["conclusion"].as_str().unwrap_or(""))
     };
     let unfinished_or_failed: Vec<&Value> = head_runs
         .iter()
@@ -242,7 +238,7 @@ fn diagnose(target: &str) -> Result<(), i32> {
         if status != "completed" {
             cause = "IN_PROGRESS";
             next = "実行中です。完了を待ってから再確認してください".to_string();
-        } else if !matches!(conclusion.as_str(), "success" | "skipped" | "neutral") {
+        } else if !not_failed(&conclusion) {
             let view = json(
                 "gh run view",
                 &gh.output(&["run", "view", &id, "--json", "jobs,attempt"])?,
@@ -454,6 +450,12 @@ fn diagnose(target: &str) -> Result<(), i32> {
     println!("NEXT: {next}");
     report.print(cause, &next);
     Ok(())
+}
+
+/// 終わった GitHub Actions の run の結論が、診断する失敗でないか。cancelled は取り消しでログに失敗が無く、コードの誤りと
+/// 診断しない（成功とも書かせず、NONE の NEXT に success でない run として並べる）
+fn not_failed(conclusion: &str) -> bool {
+    matches!(conclusion, "success" | "skipped" | "neutral" | "cancelled")
 }
 
 /// 報告の形（/gh-actions-check の報告）にまとめる値。読めなかったものは空のまま「なし」と出す
