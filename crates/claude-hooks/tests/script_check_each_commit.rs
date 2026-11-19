@@ -567,7 +567,7 @@ mod unix {
             assert!(status.success());
             let out = child.wait_with_output().unwrap();
             assert_eq!(out.status.code(), Some(130), "{signal}");
-            // sh の trap と同じく、走っている検査のコマンドが終わってから片付ける。中断されたコミットの行は出さない
+            // 走っている検査のコマンドが終わってから片付ける。中断されたコミットの行は出さない
             assert!(
                 finished.exists(),
                 "{signal}: 検査のコマンドを待たずに終わった"
@@ -579,6 +579,48 @@ mod unix {
                 repo.left_in_tmp()
             );
             assert_eq!(repo.worktrees(), 1, "{signal}");
+        }
+    }
+
+    #[test]
+    fn a_ctrl_c_that_also_ends_the_command_prints_no_line_and_checks_no_further_commit() {
+        // 端末の Ctrl-C と同じく、プロセスグループ全体に INT を送る（検査のコマンドも INT で終わる）
+        use std::os::unix::process::CommandExt;
+        for round in 0..5 {
+            let repo = Repo::new();
+            let started = repo.root.join("started");
+            let script = format!("echo >> {}; exec sleep 5", sh_path(&started));
+            let mut child = repo
+                .command(&["main", "--", "sh", "-c", &script])
+                .process_group(0)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            while !started.exists() {
+                if let Some(status) = child.try_wait().unwrap() {
+                    panic!("{round}: 検査のコマンドを起動する前に終わった（{status}）");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            // sh が sleep に替わるまで待つ
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let status = Command::new("kill")
+                .args(["-INT", "--", &format!("-{}", child.id())])
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let out = child.wait_with_output().unwrap();
+            assert_eq!(out.status.code(), Some(130), "{round}");
+            assert_eq!(stdout(&out), "", "{round}");
+            let runs = std::fs::read_to_string(&started).unwrap();
+            assert_eq!(
+                runs.lines().count(),
+                1,
+                "{round}: 次のコミットの検査を始めた"
+            );
+            assert!(repo.left_in_tmp().is_empty(), "{round}");
+            assert_eq!(repo.worktrees(), 1, "{round}");
         }
     }
 }
