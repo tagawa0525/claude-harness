@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude/skills/resume/scripts/resume-state.sh（再開時の状態の収集）の配備の確認
+# claude/skills/handoff/scripts/resume-state.sh（再開時の状態の収集）の配備の確認
 #
 # 実行: bash claude/tests/scripts/resume-state.sh（まとめて実行: bash claude/tests/scripts.sh）
 
@@ -8,7 +8,7 @@
 source "$(dirname "$0")/../claude-hooks-bin.sh"
 source "$(dirname "$0")/../lib.sh"
 
-SCRIPT="$CLAUDE_DIR/skills/resume/scripts/resume-state.sh"
+SCRIPT="$CLAUDE_DIR/skills/handoff/scripts/resume-state.sh"
 
 REPO="$TEST_ROOT/resume/app"
 make_repo "$REPO"

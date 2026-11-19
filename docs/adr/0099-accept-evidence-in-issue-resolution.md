@@ -58,7 +58,7 @@ xlc のリポジトリ（/home/tagawa/github/xlc）は、docs/issues の README 
   挙げているかは見ない（`resolved-by` でも見ていない。xlc は自分の検査で見る）
 - `コミット <hash>` の hash は、`resolved-by` のコミットと同じく探さない。hash は rebase で変わり、探すと正しい記録を誤って
   示す
-- `duplicate: <理由>` は `duplicate` と同じく `duplicate-of` を求める。/resume（resume-state）も同じく重複先をたどる。
+- `duplicate: <理由>` は `duplicate` と同じく `duplicate-of` を求める。/handoff（resume-state。決めた時点の名前は /resume）も同じく重複先をたどる。
   `resolution` の形の解釈は design-records の `Resolution` の 1 か所に置き、両方から使う
 - 開いている issue の `resolution` は、形によらず閉じるときのキーとして注意する（空の `resolution:` は書いていないものとする）
 
