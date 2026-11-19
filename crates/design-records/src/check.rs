@@ -1147,7 +1147,7 @@ fn is_path_like(span: &str) -> bool {
 }
 
 /// 決定と理由が `old`（分岐点の版）から変わったのに、`new` の「## 変更」に `old` に無い項が足されていないか。
-/// 誤字の修正など、決定の意味を変えない直しにも当たる（機械では区別できない）ので、注意に使う。項の形（日付、引用、理由）は
+/// 誤字の修正など、決定の意味を変えない修正にも当たる（機械では区別できない）ので、注意に使う。項の形（日付、引用、理由）は
 /// 見ない（#65。形の検査は書き方の揺れで誤検出が多く、レビューで見る）。
 pub fn decision_changed_without_change_item(old: &str, new: &str) -> bool {
     let decision = |t| section_lines(t, &[DECISION_SECTION.ja, DECISION_SECTION.en]);
