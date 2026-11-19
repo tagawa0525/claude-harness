@@ -5,8 +5,8 @@
 //! パイプの途中に置いた形。コマンドに `set -o pipefail` / `bash -o pipefail` のシェルのオプションがあれば何もしない。
 //! pipefail が実際に効く位置かは読まない（ADR-0042: 普通に書く形だけを見る）。対象の形は止めずに、command の前に
 //! `set -o pipefail; ` を付けた入力で実行させ、付けたことを Claude に知らせる（ADR-0102。許可の判断は返さないので、
-//! 許可の確認は書き換えた後のコマンドに対して残る。ほかのルールが止めるときは止める判定が勝つ）。対象のコマンドが
-//! `bash -c` や `ssh` の文字列の中にあれば、外に付けた pipefail が効かないことがあるので、書き換えずに止める
+//! 許可の確認は書き換えた後のコマンドに対して残る。ほかのルールが止めるときは止める判定が勝つ）。tail / head への
+//! パイプが `bash -c` や `ssh` の文字列の中にあれば、外に付けた pipefail が効かないので、書き換えずに止める
 
 use super::Rule;
 use crate::input::Input;
@@ -40,6 +40,38 @@ fn judges_success(cmd: &Cmd) -> bool {
     }
 }
 
+fn pipes_to_tail(stages: &[String]) -> bool {
+    stages
+        .iter()
+        .any(|n| matches!(basename(n), "tail" | "head"))
+}
+
+/// tail / head へのパイプが、`bash -c` や `ssh` の文字列の中（外の `set -o pipefail` を受け継がない子のシェル）に
+/// あるか。shell.rs は文字列の中のコマンドの piped_into を、文字列の中の後ろのステージに、文字列を実行するコマンドの
+/// piped_into をつないで作るので、その長さの差が文字列の中のステージになる。`eval` は文字列を今のシェルで実行し、
+/// `(…)` と `$(…)` は文字列のスコープでないので、どちらも外のオプションを受け継ぐ側に数える
+fn piped_inside_child_shell(cmd: &Cmd, commands: &[Cmd]) -> bool {
+    let mut current = cmd;
+    loop {
+        let spawner = current
+            .scope
+            .iter()
+            .rev()
+            .find_map(|id| commands.iter().find(|c| c.spawns == Some(*id)));
+        let Some(spawner) = spawner else {
+            return false;
+        };
+        let inner = current
+            .piped_into
+            .len()
+            .saturating_sub(spawner.piped_into.len());
+        if basename(&spawner.name) != "eval" && pipes_to_tail(&current.piped_into[..inner]) {
+            return true;
+        }
+        current = spawner;
+    }
+}
+
 impl Rule for RequirePipefail {
     fn name(&self) -> &'static str {
         "require-pipefail"
@@ -52,28 +84,17 @@ impl Rule for RequirePipefail {
         let commands = shell.commands();
         let piped: Vec<&Cmd> = commands
             .iter()
-            .filter(|cmd| {
-                judges_success(cmd)
-                    && cmd
-                        .piped_into
-                        .iter()
-                        .any(|n| matches!(basename(n), "tail" | "head"))
-            })
+            .filter(|cmd| judges_success(cmd) && pipes_to_tail(&cmd.piped_into))
             .collect();
         if piped.is_empty() {
             return Vec::new();
         }
-        // `bash -c` や `ssh` の文字列で実行するコマンドは別のシェルで走り、外の `set -o pipefail` を受け継がない。
-        // パイプが文字列の中か外かは piped_into から分からないので、文字列の中のコマンドは書き換えずに止める
-        // （外に付けると、効かないのに「終了コードが失敗を映す」と知らせることになる）。`(…)` と `$(…)` は
-        // シェルのオプションを受け継ぐので書き換える
-        let strings: Vec<usize> = commands.iter().filter_map(|c| c.spawns).collect();
         if piped
             .iter()
-            .any(|cmd| cmd.scope.iter().any(|s| strings.contains(s)))
+            .any(|cmd| piped_inside_child_shell(cmd, commands))
         {
             return vec![Finding::Deny(
-                "`bash -c` や `ssh` の文字列で実行するビルドやチェックの出力が tail / head につながっていて、パイプの終了コードが tail / head のものになり、失敗を見落とします。文字列の中のシェルは外の `set -o pipefail` を受け継がないので、パイプを書いたシェル（文字列の中のパイプなら文字列の中）に `set -o pipefail;` を付けるか、出力をファイルに書いて tail で読んでください".to_string(),
+                "`bash -c` や `ssh` の文字列の中で、ビルドやチェックの出力が tail / head につながっていて、パイプの終了コードが tail / head のものになり、失敗を見落とします。文字列で実行するシェルは外の `set -o pipefail` を受け継がないので、文字列の中の先頭に `set -o pipefail;` を付けるか、出力をファイルに書いて tail で読んでください".to_string(),
             )];
         }
         vec![Finding::Prepend {
