@@ -3247,7 +3247,10 @@ fn index_escapes_brackets_and_backslashes_in_titles_and_check_reads_them() {
         ("c1.md", "![a](x]y)", "![a](x]y)"),
         ("c2.md", r#"[a](u "t") の件"#, "a の件"),
         ("c3.md", "<http://a]b> を見る", r"http://a\]b を見る"),
-        ("c4.md", "*強調* と <b>x</b>", "*強調* と <b>x</b>"),
+        ("c4.md", "*強調* と <b>x</b>", "強調 と <b>x</b>"),
+        ("c5.md", "&amp;amp; と R&D", r"\&amp; と R\&D"),
+        ("c6.md", "_a_*b*", "ab"),
+        ("c7.md", "Issue #", "Issue #"),
     ];
     let mut expected = format!("{OKF_ROOT_INDEX}\n");
     for (name, heading, entry) in titles {
@@ -3361,4 +3364,21 @@ fn check_lists_hand_written_entries_that_markdown_does_not_read_as_links_and_war
     let out = t.run(&["index"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(t.read("docs/index.md"), index);
+}
+
+#[test]
+fn index_escapes_a_directory_name_so_that_check_reads_the_entry() {
+    let t = TempRepo::new("okf-dir-escape");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write("docs/a]b/c.md", "---\ntype: Guide\n---\n\n# c\n");
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{OKF_ROOT_INDEX}\n* [a\\]b](a%5Db/)\n")
+    );
+    t.commit_all("docs: a directory name with a bracket");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert_eq!(entry_findings(&out), Vec::<String>::new());
 }
