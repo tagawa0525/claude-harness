@@ -250,6 +250,7 @@ fn an_issue_blocked_by_an_open_issue_is_marked_blocked_with_the_next_step() {
         section(&text, "issues"),
         "docs/issues/0001-b.md\n\
          docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"] blocked=#0001\n\
+         open-count now=2 14d-ago=unknown（14 日より前のコミットが無い）\n\
          NEXT: blocked= の issue は、そこに挙げた issue が閉じるまで着手しない\n"
     );
 }
@@ -268,7 +269,8 @@ fn an_issue_whose_blockers_are_all_closed_is_not_marked() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0002-a.md blocked-by=[\"#0001\"]\n"
+        "docs/issues/0002-a.md blocked-by=[\"#0001\"]\n\
+         open-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
     );
 }
 
@@ -283,6 +285,7 @@ fn a_blocker_that_is_not_in_docs_issues_is_marked_unknown() {
     assert_eq!(
         section(&text, "issues"),
         "docs/issues/0002-a.md blocked-by=[\"#0009\"] blocker-unknown=#0009\n\
+         open-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n\
          NEXT: blocker-unknown= の issue は、相手が閉じたかを確かめられない（相手の記録が無い、status か duplicate-of を読めない、#NNNN の形でない、たどると自分に戻る、blocked-by を読めない）。着手の前に blocked-by か相手の記録を直すか、ユーザーに確かめる\n"
     );
 }
@@ -340,7 +343,8 @@ fn a_status_with_a_trailing_space_or_a_comment_is_read_like_design_records() {
     let text = stdout(&repo.run(&[]));
     assert_eq!(
         section(&text, "issues"),
-        "docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"]\n"
+        "docs/issues/0002-a.md blocked-by=[\"#0001\", \"#0003\"]\n\
+         open-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
     );
 }
 
@@ -469,7 +473,10 @@ fn an_empty_blocked_by_in_an_unparsable_front_matter_is_not_a_blocker() {
         "---\nstatus: open\nblocked-by: []\ntags: a\ntags: b\n---\n\n# x\n",
     );
     let text = stdout(&repo.run(&[]));
-    assert_eq!(section(&text, "issues"), "docs/issues/0005-x.md\n");
+    assert_eq!(
+        section(&text, "issues"),
+        "docs/issues/0005-x.md\nopen-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"
+    );
 }
 
 #[test]
