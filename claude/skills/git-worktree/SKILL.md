@@ -1,6 +1,6 @@
 ---
 name: git-worktree
-description: 並行作業用に別ディレクトリで作業環境を作成。複数PRの同時進行に最適。
+description: 並行作業用に別ディレクトリで作業環境を作成。
 model: haiku
 argument-hint: <branch-name> [--remove]
 allowed-tools:

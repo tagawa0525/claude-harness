@@ -1,6 +1,6 @@
 ---
 name: git-commit
-description: ステージされた変更をConventional Commits形式でコミット。メッセージ省略時は自動生成。
+description: ステージされた変更をコミット。
 model: sonnet
 argument-hint: [message]
 allowed-tools:

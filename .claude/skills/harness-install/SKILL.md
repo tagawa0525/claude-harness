@@ -1,6 +1,6 @@
 ---
 name: harness-install
-description: claude-harness を新しい機械に入れるとき、入れた機械を更新するとき、入れた後に動いているかを確かめるときに使う。NixOS（flake input）と Windows（cargo install と claude-setup）の入口と確認。
+description: claude-harness を新しい機械に入れるとき、入れた機械を更新するとき、入れた後に動いているかを確かめるときに使う。
 ---
 
 # ハーネスの導入と更新

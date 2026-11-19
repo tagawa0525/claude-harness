@@ -1,6 +1,6 @@
 ---
 name: adr
-description: ADR（docs/adr/）を書く・直すときに使う。MADR を基準にした形、フロントマター、確定後の運用。
+description: ADR（docs/adr/）を書く・直すときに使う。
 allowed-tools:
   - Bash(design-records new:*)
   - Bash(design-records renumber:*)
