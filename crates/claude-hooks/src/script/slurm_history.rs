@@ -141,9 +141,7 @@ fn table(
         let bad = |why: &str| format!("ERROR: sacct の {} 行目を読めません（{why}）", i + 1);
         match row {
             AccountingRow::Step { job, max_rss } => {
-                // 0 バイトは読めない値として止める（直すのは #376）
                 let m = match max_rss {
-                    MaxRss::Zero => return Err(bad("MaxRSS を読めません")),
                     // 無いものは -1 として比べる（無い値のステップだけなら -）
                     MaxRss::Missing => -1.0,
                     MaxRss::Mib(m) => *m,
@@ -235,7 +233,7 @@ struct Group {
     elapsed_sum: i64,
     timed_runs: usize,
     max_ratio: f64,
-    /// メモリの最大の MiB。0 から比べる（無い値だけのジョブ名も 0M と出る。直すのは #375）
+    /// メモリの最大の MiB。無い値（負）から比べ、無い値だけのジョブ名は負のまま（表は -）
     max_rss: f64,
 }
 
@@ -271,15 +269,17 @@ impl Table {
                 let at = match groups.iter().position(|(n, _)| n == entry.name) {
                     Some(at) => at,
                     None => {
-                        groups.push((entry.name.to_string(), Group::default()));
+                        let group = Group {
+                            max_rss: -1.0,
+                            ..Group::default()
+                        };
+                        groups.push((entry.name.to_string(), group));
                         groups.len() - 1
                     }
                 };
                 let group = &mut groups[at].1;
                 group.runs += 1;
-                if rss > group.max_rss {
-                    group.max_rss = rss;
-                }
+                group.max_rss = group.max_rss.max(rss);
                 if let (Some(estimate), Some(ratio)) = (entry.estimate, ratio) {
                     group.estimate_sum += estimate;
                     group.elapsed_sum += entry.elapsed;
@@ -1032,7 +1032,6 @@ mod tests {
 
     #[test]
     fn by_name_gives_runs_averages_the_total_ratio_and_the_largest_ratio() {
-        // メモリの値の無いジョブだけのジョブ名の MAX_RSS は 0M（直すのは #375）
         let out = names(vec![
             done(
                 "73",
@@ -1066,7 +1065,7 @@ mod tests {
         );
         assert_eq!(
             row(&out, "openmc-2A"),
-            "openmc-2A                    2    0:45:00    0:44:30    0.99      1.12       0M"
+            "openmc-2A                    2    0:45:00    0:44:30    0.99      1.12        -"
         );
         assert!(out.contains("other") && !out.contains("gone"), "{out}");
         assert!(out.contains("SKIPPED: 1"), "{out}");
@@ -1094,7 +1093,7 @@ mod tests {
         ]);
         assert_eq!(
             row(&out, "a"),
-            "a                            2    0:10:00    0:05:00    0.50      0.50       0M"
+            "a                            2    0:10:00    0:05:00    0.50      0.50        -"
         );
         let untimed = names(vec![done(
             "1",
@@ -1106,7 +1105,7 @@ mod tests {
         )]);
         assert_eq!(
             row(&untimed, "b"),
-            "b                            1          -          -       -         -       0M"
+            "b                            1          -          -       -         -        -"
         );
     }
 
@@ -1490,6 +1489,55 @@ mod tests {
     }
 
     #[test]
+    fn by_name_memory_is_the_largest_of_the_jobs_with_a_value_and_a_dash_without_any() {
+        let job = |id: &str, name: &str| {
+            sacct_job(id, name, "2026-11-01T10:00:00", "2026-11-01T10:30:00")
+        };
+        let mut accounting = accounted(
+            job("201", "none"),
+            Allocation::Exclusive,
+            &[MaxRss::Missing],
+        );
+        accounting.extend(accounted(
+            job("202", "mixed"),
+            Allocation::Exclusive,
+            &[MaxRss::Mib(300.0)],
+        ));
+        accounting.extend(accounted(
+            job("203", "mixed"),
+            Allocation::Exclusive,
+            &[MaxRss::Missing],
+        ));
+        accounting.extend(accounted(
+            job("204", "zero"),
+            Allocation::Exclusive,
+            &[MaxRss::Mib(0.0)],
+        ));
+        let completions = lines(vec![
+            done(
+                "100",
+                "none",
+                Some(60),
+                "2026-10-05T10:00:00",
+                "2026-10-05T10:10:00",
+                "timed",
+            ),
+            done(
+                "101",
+                "zero",
+                Some(60),
+                "2026-10-05T10:00:00",
+                "2026-10-05T10:10:00",
+                "timed",
+            ),
+        ]);
+        let out = table(&accounting, &completions, true).unwrap();
+        assert!(row(&out, "none").ends_with("        -"), "{out}");
+        assert!(row(&out, "mixed").ends_with("     300M"), "{out}");
+        assert!(row(&out, "zero").ends_with("       0M"), "{out}");
+    }
+
+    #[test]
     fn shared_jobs_are_counted_and_jobs_of_unknown_allocation_enter_the_table() {
         let mut accounting = accounted(
             sacct_job(
@@ -1518,28 +1566,14 @@ mod tests {
     }
 
     #[test]
-    fn a_step_with_zero_bytes_of_memory_stops_with_its_sacct_line_number() {
-        // 0 バイトは読めない値として止まる（直すのは #376）。丸めて 0 になる数バイトは読める
+    fn a_step_of_0_mib_enters_the_table_as_0m() {
         let accounting = accounted(
-            sacct_job(
-                "201",
-                "lattice",
-                "2026-11-01T10:00:00",
-                "2026-11-01T10:30:00",
-            ),
-            Allocation::Exclusive,
-            &[MaxRss::Mib(512.0), MaxRss::Zero],
-        );
-        assert_eq!(
-            table(&accounting, &[], false).unwrap_err(),
-            "ERROR: sacct の 3 行目を読めません（MaxRSS を読めません）"
-        );
-        let tiny = accounted(
             sacct_job("201", "tiny", "2026-11-01T10:00:00", "2026-11-01T10:30:00"),
             Allocation::Exclusive,
             &[MaxRss::Mib(0.0)],
         );
-        assert!(row(&table(&tiny, &[], false).unwrap(), "201").ends_with(" 0M"));
+        let out = table(&accounting, &[], false).unwrap();
+        assert!(row(&out, "201").ends_with(" 0M"), "{out}");
     }
 
     #[test]

@@ -34,7 +34,7 @@
 #       パーティションによらず表に入れる。
 #
 #   MAX_RSS  sacct のジョブのステップ（.batch など）の MaxRSS の最大。jobcomp は持たないので、sacct に無いジョブは -。
-#            ジョブ名ごとは、ジョブの MAX_RSS の最大。M（MiB）か G（GiB）
+#            ジョブ名ごとは、値のあるジョブの MAX_RSS の最大で、値のあるジョブが無ければ -。M（MiB）か G（GiB）
 # sacct: 2026-10-12（sacct の記録を始めた日）以降を読む。jobcomp にも sacct にもある JobId は sacct のほうを使う
 #       （jobcomp の行を数えない）。SubmitLine の sbatch の直後の語が --cpus-per-task=N のジョブ（slurm-run.sh -c）は
 #       排他でないので、時間が当てにならず、表に入れずに SHARED に数える。--exclusive か、読めない（slurm-run.sh を
