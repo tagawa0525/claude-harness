@@ -10,7 +10,8 @@
 # かける dictionary-preview.sh（#284）も、本物の ja-terms と辞書で確かめる。
 #
 # hook のファイルを nix build で作る（hook が呼ぶ claude-hooks と、それが包む ja-terms も一緒にビルドされる）。
-# ja-terms は、claude-code.nix が置く ~/.claude/bin の形のまま、home-manager の home-files から取る。
+# ja-terms は、claude-code.nix が置く ~/.claude/bin の形のまま、home-manager の home-files から取る。共通の辞書は、
+# 差し替えた HOME に home-files の claude-sync で配り、規則を足して配り直すと効くことと、無ければ止まることも確かめる（ADR-0097）。
 #
 # 使い方（リポジトリルートで実行）:
 #   ./nix/tests/ja-terms.sh
@@ -43,9 +44,11 @@ export CLAUDE_HOOKS_BIN="$home_files/.claude/bin/claude-hooks"
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 swap_home "$WORK/home"
-# 本物の git hook が呼ぶ ja-terms は、共通の辞書を claude-setup sync が配ったホームの下から読む。このテストは配らないので、
-# ソースの辞書を渡す（ADR-0097）
-export JA_TERMS_COMMON_DICTIONARY="$ROOT/crates/ja-terms/prh.yml"
+# ja-terms は共通の辞書を、claude-setup sync が配ったホームの下（~/.config/ja-terms/prh.yml）から読む（ADR-0097）。
+# 利用者の機械と同じく、home-files の claude-sync でこのリポジトリから配る（環境変数の差し替えは使わない）
+unset JA_TERMS_COMMON_DICTIONARY
+CLAUDE_SYNC="$home_files/.local/bin/claude-sync"
+"$CLAUDE_SYNC" "$ROOT" >/dev/null
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test
@@ -937,6 +940,40 @@ if [ "$rc" = 0 ] && grep -qx 'GONE: 1 確かめ => 確認' "$WORK/out"; then
   ok "dictionary-preview: 比較元だけにある指摘を GONE: で出す"
 else
   ng "dictionary-preview: GONE: の行が無い（終了コード $rc）"
+fi
+
+# --- 共通の辞書を配り直す: 規則を足して claude-setup sync だけを流すと、ビルドし直さずに効く（ADR-0097） -----------
+ADDED="$WORK/added"
+mkdir -p "$ADDED/claude" "$ADDED/crates/ja-terms"
+cp "$ROOT/claude/CLAUDE.md" "$ADDED/claude/CLAUDE.md"
+{
+  cat "$ROOT/crates/ja-terms/prh.yml"
+  printf '  - expected: ほげ\n    pattern: ふがふが\n'
+} >"$ADDED/crates/ja-terms/prh.yml"
+printf '# 題\n\nふがふがの値\n' >"$WORK/added.md"
+rc=0
+"$JA_TERMS" check "$WORK/added.md" >"$WORK/out" 2>&1 || rc=$?
+if [ "$rc" = 0 ]; then
+  ok "共通の辞書を配り直す前は、足す規則の語を止めない"
+else
+  ng "共通の辞書を配り直す前に、足す規則の語で止めた（終了コード $rc）"
+fi
+"$CLAUDE_SYNC" "$ADDED" >/dev/null
+rc=0
+"$JA_TERMS" check "$WORK/added.md" >"$WORK/out" 2>&1 || rc=$?
+if [ "$rc" = 1 ] && grep -qF 'ふがふが => ほげ' "$WORK/out"; then
+  ok "共通の辞書に足した規則は、claude-setup sync だけで、ビルドし直さない ja-terms に効く"
+else
+  ng "共通の辞書に足した規則が、claude-setup sync の後に効かない（終了コード $rc）"
+fi
+# 配った辞書が無ければ、黙って通さず、配り方を示して止める
+rm "$HOME/.config/ja-terms/prh.yml"
+rc=0
+"$JA_TERMS" check "$WORK/added.md" >"$WORK/out" 2>&1 || rc=$?
+if [ "$rc" = 2 ] && grep -qF 'claude-sync' "$WORK/out"; then
+  ok "共通の辞書が無ければ、claude-sync で配るよう示して 2 で止める"
+else
+  ng "共通の辞書が無いときの止まり方が違う（終了コード $rc）"
 fi
 
 echo
