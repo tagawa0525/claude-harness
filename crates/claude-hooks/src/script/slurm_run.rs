@@ -294,7 +294,7 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
         }
     };
     status = final_status(status, &state);
-    if let Ok(text) = std::fs::read(&log) {
+    if let Ok(text) = file_tail(&log, 20) {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(tail_lines(&text, 20));
         let _ = out.flush();
@@ -857,6 +857,26 @@ fn exit_line(status: i32, state: &JobState) -> String {
     }
 }
 
+/// path の末尾の、n 行を含むだけのバイト（大きなログを全部読まないよう、後ろから塊で読む）
+fn file_tail(path: &str, n: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::{Seek, SeekFrom};
+    const CHUNK: u64 = 64 * 1024;
+    let mut file = std::fs::File::open(path)?;
+    let mut end = file.seek(SeekFrom::End(0))?;
+    let mut tail = Vec::new();
+    // 末尾の改行の後は行に数えないので、改行が n 個を超えれば n 行がそろう
+    while end > 0 && tail.iter().filter(|b| **b == b'\n').count() <= n {
+        let start = end.saturating_sub(CHUNK);
+        let mut chunk = vec![0; (end - start) as usize];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut chunk)?;
+        chunk.extend_from_slice(&tail);
+        tail = chunk;
+        end = start;
+    }
+    Ok(tail)
+}
+
 /// text の最後の n 行（n は 1 以上。tail -n と同じく、末尾の改行の後は行に数えない）
 fn tail_lines(text: &[u8], n: usize) -> &[u8] {
     let body = text.strip_suffix(b"\n").unwrap_or(text);
@@ -873,7 +893,7 @@ fn tail_lines(text: &[u8], n: usize) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::{
-        JobRecord, JobState, Limit, Refusal, Request, RunningJob, duration, exit_line,
+        JobRecord, JobState, Limit, Refusal, Request, RunningJob, duration, exit_line, file_tail,
         final_status, limit_text, local_path, parse_args, reorder, result_line, same_worktree_job,
         tail_lines, time_line, under, unknown_state, wait_record,
     };
@@ -1572,5 +1592,19 @@ mod tests {
         assert_eq!(tail_lines(b"a\nb\n", 20), b"a\nb\n");
         assert_eq!(tail_lines(b"", 20), b"");
         assert_eq!(tail_lines(b"\n\n", 1), b"\n");
+    }
+
+    #[test]
+    fn the_file_tail_reads_back_from_the_end_until_it_has_the_lines() {
+        let path = std::env::temp_dir().join(format!("slurm-run-tail-{}", std::process::id()));
+        // 64 KiB の塊を何度もまたぐ長さ
+        let text: String = (0..30000).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(&path, &text).unwrap();
+        let tail = file_tail(path.to_str().unwrap(), 20).unwrap();
+        assert!(tail.len() < text.len());
+        assert_eq!(tail_lines(&tail, 20), tail_lines(text.as_bytes(), 20));
+        std::fs::write(&path, "a\nb").unwrap();
+        assert_eq!(file_tail(path.to_str().unwrap(), 20).unwrap(), b"a\nb");
+        let _ = std::fs::remove_file(&path);
     }
 }
