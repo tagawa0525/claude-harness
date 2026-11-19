@@ -203,3 +203,15 @@ fn slurm_wait_runs_only_in_the_background_like_slurm_run() {
         None
     );
 }
+
+#[test]
+#[ignore = "RED: slurm-wait.sh の出力の隠し方を見ない"]
+fn slurm_wait_output_into_a_pipe_or_a_display_command_is_denied_like_slurm_run() {
+    for command in [
+        "~/.claude/scripts/slurm-wait.sh 962 963 | tail -n 5",
+        "~/.claude/scripts/slurm-wait.sh 962; tail -n 3 x.log",
+    ] {
+        let reason = deny_reason(command).unwrap_or_else(|| panic!("{command} が止まらない"));
+        assert!(reason.contains("別の呼び出し"), "{reason}");
+    }
+}

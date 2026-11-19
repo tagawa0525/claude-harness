@@ -394,3 +394,22 @@ fn a_failing_scontrol_is_read_again_instead_of_taken_as_a_forgotten_job() {
     assert!(s.polls().len() >= 3, "{:?}", s.polls());
     assert!(stdout(&out).contains("class=trial"), "{}", stdout(&out));
 }
+
+#[test]
+#[ignore = "RED: 読めない scontrol を読み直し続ける"]
+fn a_scontrol_that_keeps_failing_ends_after_the_limit_of_tries() {
+    let s = Slurm::new();
+    let out = s.run(&["42"], &[("FAKE_FAILING", "1000")]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("20 回続けて読めない"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(s.polls().len(), 20);
+    assert!(
+        stdout(&out).contains("RESULT: job=42 name=- exit=1 state=unknown"),
+        "{}",
+        stdout(&out)
+    );
+}

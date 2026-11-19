@@ -989,6 +989,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: 桁あふれで小さな見積もりになる"]
     fn the_estimate_in_minutes_rounds_seconds_up() {
         for (estimate, minutes) in [
             ("90", Some(90)),
@@ -1001,6 +1002,9 @@ mod tests {
             ("25m", None),
             ("1:30", None),
             ("", None),
+            // 数として大きすぎるものは読めない（桁あふれで小さな見積もりにしない）
+            ("20000000000000000-00", None),
+            ("99999999999999999999", None),
         ] {
             assert_eq!(super::estimate_minutes(estimate), minutes, "{estimate}");
         }

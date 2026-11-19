@@ -247,6 +247,20 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: 配列を 1 本と数える"]
+    fn a_pending_array_makes_the_outlook_unknown() {
+        let mut array = job("12", Phase::Pending, Some(NOW + 300), Some(10));
+        array.array = true;
+        assert!(matches!(outlook(NOW, &[array], 1), Outlook::Unknown(r) if r.contains("配列")));
+    }
+
+    #[test]
+    #[ignore = "RED: 大きな見積もりが負の秒になる"]
+    fn a_huge_estimate_is_not_within_the_limit() {
+        assert!(!outlook(NOW, &[], u64::MAX).within_limit());
+    }
+
+    #[test]
     fn a_suspended_job_makes_the_outlook_unknown() {
         // 止められていた間だけ終わりが延びるので、見積もりの内でも終わりは読めない
         let o = outlook(

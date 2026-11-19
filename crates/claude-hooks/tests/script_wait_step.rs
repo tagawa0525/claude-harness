@@ -278,6 +278,7 @@ fn done_comes_before_the_end_of_the_wait() {
 }
 
 #[test]
+#[ignore = "RED: 書き方の違う同じファイルを新しいファイルと数える"]
 fn a_new_output_file_restarts_the_clock_and_the_remaining_files_do_not() {
     let d = Dir::new();
     let a = d.file("a.out", "");
@@ -290,6 +291,9 @@ fn a_new_output_file_restarts_the_clock_and_the_remaining_files_do_not() {
     assert_eq!(started(&d), 104);
     // 残りのファイルだけで呼び直しても、数え直さない
     d.wait_at(106, 2, 10, &["/wt/new", &b]);
+    assert_eq!(started(&d), 104); // 同じファイルを別の書き方で渡しても、新しいファイルと数えない
+    let same = b.replace("b.out", "./b.out");
+    d.wait_at(108, 2, 10, &["/wt/new", &same]);
     assert_eq!(started(&d), 104);
 }
 

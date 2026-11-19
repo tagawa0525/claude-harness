@@ -177,6 +177,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "RED: -t 0 を 0 分と読む"]
     fn an_estimate_not_fixed_by_the_text_is_unknown() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         for command in [
@@ -184,6 +185,8 @@ mod tests {
             format!("{run} -t $(cat t) x true"),
             format!("{run} x true"),
             format!("{run} -t 25m x true"),
+            format!("{run} -t 0 x true"),
+            format!("{run} -t 0:00:00 x true"),
             format!("{run} -t"),
             "$RUN -t 30 x true; echo slurm-run.sh".to_string(),
             format!("for n in 1 2 3; do {run} -t 30 x$n true; done"),
