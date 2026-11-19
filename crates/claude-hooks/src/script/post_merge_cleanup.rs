@@ -12,7 +12,7 @@
 //! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
-//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head のときは残す）
+//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head か base のときは残す）
 //!
 //! git と gh の失敗のうち、続けられないものは、その標準エラーを出したまま、その終了コードで終える
 
@@ -685,6 +685,10 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
             println!("REMOTE_BRANCH: kept (open PR {n} 件の head。削除すると PR が閉じる)");
             return Ok(());
         }
+        if let Some(kept) = stacked_prs(branch, default) {
+            println!("{kept}");
+            return Ok(());
+        }
     }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
     // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる
@@ -702,4 +706,75 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
     step(&["push", "-q", remote, "--delete", branch])?;
     println!("REMOTE_BRANCH: deleted");
     Ok(())
+}
+
+/// branch を base にした開いている PR（積み重ねた上の PR）があるか、確認できなければ、残す理由の行（上の PR があれば、
+/// PR ごとの base の付け替えのコマンドの行を続ける）。API でブランチを消すと GitHub はそれを base にした開いている PR を
+/// 閉じ、閉じた PR は base を付け替えられない。探し方とコマンドは pre-merge-check の検査 10（`stacked_prs_reason`）と
+/// 揃える
+fn stacked_prs(branch: &str, default: &str) -> Option<String> {
+    let unknown = |what: &str| {
+        Some(format!(
+            "REMOTE_BRANCH: kept ({branch} を base にした open PR の有無を確認できない: {what} が失敗)"
+        ))
+    };
+    // head の PR を探したのと同じ cwd のリポジトリ（gh がリモートから選ぶ）を、探す対象と付け替えのコマンドの -R に使う
+    let repo = gh()
+        .args([
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner",
+            "--jq",
+            ".nameWithOwner",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|r| !r.is_empty());
+    let Some(repo) = repo else {
+        return unknown("gh repo view");
+    };
+    let out = gh()
+        .args([
+            "pr",
+            "list",
+            "-R",
+            &repo,
+            "--base",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--jq",
+            ".[].number",
+        ])
+        .output();
+    let Some(out) = out.ok().filter(|o| o.status.success()) else {
+        return unknown("gh pr list");
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let numbers: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if numbers.is_empty() {
+        return None;
+    }
+    let listed: Vec<String> = numbers.iter().map(|n| format!("#{n}")).collect();
+    // default は main か master、repo は GitHub の owner/name（英数字と . _ -）なので、検査 10 の sh_word の引用は要らない
+    let commands: Vec<String> = numbers
+        .iter()
+        .map(|n| format!("  gh pr edit {n} --base {default} -R {repo}"))
+        .collect();
+    Some(format!(
+        "REMOTE_BRANCH: kept (open PR {} 件（{}）の base。削除すると GitHub がそれらの PR を閉じ、閉じた PR は base を付け替えられない。\
+         次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、同じコマンドをもう一度実行すると消す)\n{}",
+        numbers.len(),
+        listed.join(", "),
+        commands.join("\n")
+    ))
 }
