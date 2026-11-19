@@ -71,6 +71,9 @@ trap 'rm -rf "$REPO" "$REPO.gitconfig" "$OTHER"' EXIT
 git -C "$OTHER" init -q
 mkdir "$OTHER/.ja-terms"
 printf 'version: 1\nrules:\n  - expected: ほげ\n    pattern: ふがふが\n' >"$OTHER/.ja-terms/prh.yml"
+# コマンドの文字列の中のパスは claude-hooks が読む。Windows（Git Bash）の /tmp の形は claude-hooks.exe に通じないので、
+# Windows の形にする
+if command -v cygpath >/dev/null; then OTHER=$(cygpath -m "$OTHER"); fi
 out=$(run "git -C '$OTHER' merge --no-ff feat/a -m 'Merge: a' -m 'ふがふがと掃引'")
 reason=$(jq -r '.hookSpecificOutput.permissionDecisionReason // empty' <<<"$out")
 for term in "ふがふが => ほげ" "掃引 => スイープ"; do
