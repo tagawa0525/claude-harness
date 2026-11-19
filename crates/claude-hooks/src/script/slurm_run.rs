@@ -82,66 +82,452 @@ struct Progress {
 impl Progress {
     /// RESULT: の行を、まだ出していなければ出す
     fn report(&mut self, exit: i32, state: &str) {
-        todo!("RED")
+        if !self.reported {
+            println!(
+                "{}",
+                result_line(self.job.as_deref(), self.name.as_deref(), exit, state)
+            );
+            self.reported = true;
+        }
     }
 
     /// 終わりの状態が分からないまま終えるときの RESULT: の行（投げる前なら NOT_SUBMITTED、投げた後なら unknown）
     fn report_unfinished(&mut self, exit: i32) {
-        todo!("RED")
+        let state = if self.job.is_some() {
+            "unknown"
+        } else {
+            "NOT_SUBMITTED"
+        };
+        self.report(exit, state);
     }
 }
 
 fn lock(progress: &Mutex<Progress>) -> std::sync::MutexGuard<'_, Progress> {
-    todo!("RED")
+    progress.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub fn main(args: &[String]) -> i32 {
-    todo!("RED")
+    let progress = Arc::new(Mutex::new(Progress::default()));
+    let shared = Arc::clone(&progress);
+    if let Err(e) = crate::interrupt::cleanup_on_interrupt(move || {
+        lock(&shared).report_unfinished(crate::interrupt::INTERRUPTED)
+    }) {
+        eprintln!("ERROR: 中断のときの後片付けを登録できない（RESULT: の行を出せない）: {e}");
+        lock(&progress).report_unfinished(1);
+        return 1;
+    }
+    let code = run(args, &progress);
+    lock(&progress).report_unfinished(code);
+    code
 }
 
 /// 投げて待つ。RESULT: の行は、終わりの状態が分かったときだけここで出す（ほかは呼ぶ側が出す）
 fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
-    todo!("RED")
+    let req = match parse_args(args) {
+        Ok(req) => req,
+        Err(refusal) => {
+            lock(progress).name = refusal.name;
+            eprint!("{}", refusal.message);
+            return 1;
+        }
+    };
+    lock(progress).name = Some(req.name.clone());
+    let (tries, interval) = match record_wait() {
+        Ok(wait) => wait,
+        Err(e) => {
+            eprintln!("ERROR: {e}");
+            return 1;
+        }
+    };
+    let pwd = match working_dir() {
+        Ok(pwd) => pwd,
+        Err(e) => {
+            eprintln!("ERROR: 作業ディレクトリを読めない: {e}");
+            return 1;
+        }
+    };
+
+    // ジョブの走る r995 の側のパスと、このホストから読むパス。r995 の ~/github と、ほかのホストの NFS の入口は同じ場所
+    // （走っているジョブの作業ディレクトリを、このホストの書き方に直すのにも使う）
+    let remote_root = format!("{}/github", crate::shell::home().display());
+    let remote_logs = format!("{remote_root}/slurm-logs");
+    let nfs_entry = std::env::var("SLURM_RUN_NFS_ENTRY")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| NFS_ENTRY.to_string());
+    let on_r995 = hostname() == "r995";
+    let local_logs = if on_r995 {
+        remote_logs.clone()
+    } else {
+        if !under(&pwd, &nfs_entry) {
+            eprintln!(
+                "ERROR: r995 以外では {nfs_entry} の下で投げる（ジョブは投げたときのパスで r995 の上で走る）: {pwd}"
+            );
+            return 1;
+        }
+        format!("{nfs_entry}/slurm-logs")
+    };
+    if let Err(e) = std::fs::create_dir_all(&local_logs) {
+        eprintln!("ERROR: ログの置き場 {local_logs} を作れない: {e}");
+        return 1;
+    }
+
+    let mut contact = contact(&pwd);
+    if let Some(cpus) = &req.cpus {
+        // 排他でないジョブが走っていると、排他のジョブが始まらない理由を待ち行列の一覧で読めるようにする
+        contact.push_str(&format!(" shared-cpus={cpus}"));
+    }
+
+    if req.timed {
+        let local = |dir: &str| local_path(dir, on_r995, &nfs_entry, &remote_root);
+        if let Some(code) = refuse_same_worktree(&pwd, local) {
+            return code;
+        }
+    }
+
+    // 終わるまで戻らないので、子のプロセスで起動し、最初の行から番号を読む
+    let comment = format!(
+        "{} | {} | {} | {contact}",
+        req.class, req.reference, req.purpose
+    );
+    let submission = Submission {
+        cpus: req.cpus.as_deref(),
+        uninterrupted: req.timed,
+        name: &req.name,
+        log_dir: &remote_logs,
+        estimate: &req.estimate,
+        comment: &comment,
+        command: &req.command,
+    };
+    let mut child = match slurm::submit(&submission) {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("sbatch を起動できない: {e}");
+            eprintln!("ERROR: sbatch がジョブを投げられなかった:");
+            return 1;
+        }
+    };
+    let mut submit_out = BufReader::new(child.stdout.take().expect("stdout はパイプ"));
+    let mut first = Vec::new();
+    let _ = submit_out.read_until(b'\n', &mut first);
+    let Some(job) = slurm::submitted_job(&String::from_utf8_lossy(&first)) else {
+        let _ = submit_out.read_to_end(&mut first);
+        let _ = child.wait();
+        eprintln!("ERROR: sbatch がジョブを投げられなかった:");
+        let _ = std::io::stderr().write_all(&first);
+        return 1;
+    };
+    lock(progress).job = Some(job.clone());
+    println!("JOB: {job}");
+    let log = format!("{local_logs}/{}-{job}.out", req.name);
+    println!("LOG: {log}");
+    // ジョブは投げたときの場所で走る。`cd d && a & b` の b のように、cd が届かずに別の場所から投げたものを、終わる前に見つける
+    println!(
+        "NEXT: ジョブは {pwd} で走る。意図した worktree でなければ scancel {job} で取り消し、cd <worktree> && で投げ直す"
+    );
+
+    // main は投げるたびに区分の順に並べ直す（並べ方は slurm-queue と同じ関数。--top のジョブは自分の区分の先頭、無ければ
+    // 末尾）。timed は投げた順に実行し、--top のときだけ投げたジョブを先頭に出す。並べ替えに失敗しても、投げたジョブは
+    // 待ち行列にあるので、終わりまで待つ
+    if req.timed {
+        if req.top && !slurm::move_to_front(&job) {
+            eprintln!("WARN: ジョブ {job} を待ち行列の先頭に移せなかった。投げた順に走る");
+        }
+    } else {
+        let first = if req.top { job.as_str() } else { "" };
+        let warning = reorder(
+            || slurm_queue::order(first),
+            |list| {
+                slurm::move_to_front(list);
+            },
+        );
+        if let Some(warning) = warning {
+            eprintln!("{warning}");
+        }
+    }
+
+    // 残りの出力は読み捨て、閉じるまで読んでから終わりを受ける（パイプが埋まって子が止まらないように）
+    let _ = std::io::copy(&mut submit_out, &mut std::io::sink());
+    let mut status = match child.wait() {
+        Ok(status) => crate::child::exit_code(status),
+        Err(e) => {
+            eprintln!("WARN: sbatch の終わりを受けられなかった: {e}");
+            1
+        }
+    };
+
+    let record = wait_record(
+        tries,
+        || slurm::accounting_record(&job),
+        || std::thread::sleep(interval),
+    );
+
+    let mut marked = false;
+    let state = match &record {
+        None => {
+            eprintln!(
+                "WARN: ジョブ {job} の記録が sacct から読めなかった（{tries} 回。実際の時間は確かめられない）"
+            );
+            // 終わりの状態を確かめられないまま 0 を返すと、取り消されたジョブでも && の次が走る。終わった直後なら
+            // 制御のデーモンが覚えているので、その状態で確かめる。これも読めなければ、成功とは言えないので失敗にする
+            match slurm::controller_state(&job).filter(|state| state.ended) {
+                Some(state) => state,
+                None => {
+                    eprintln!(
+                        "WARN: ジョブ {job} の終わりの State を sacct からも scontrol からも確かめられなかった"
+                    );
+                    unknown_state()
+                }
+            }
+        }
+        Some(record) => {
+            let timing = time_line(&job, record, &req);
+            for warning in &timing.warnings {
+                eprintln!("{warning}");
+            }
+            marked = timing.marked;
+            if let Err(e) = append_line(&log, &timing.line) {
+                eprintln!("WARN: ジョブ {job} の実際の時間をログに書き足せなかった: {log}（{e}）");
+                println!("{}", timing.line);
+            }
+            record.state.clone()
+        }
+    };
+    status = final_status(status, &state);
+    if let Ok(text) = std::fs::read(&log) {
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(tail_lines(&text, 20));
+        let _ = out.flush();
+    }
+    if marked {
+        println!("{NEXT_MARKED}");
+    }
+    lock(progress).report(status, &state.name);
+    println!("{}", exit_line(status, &state));
+    status
 }
 
 /// 終わりを確かめられなかった状態
 fn unknown_state() -> JobState {
-    todo!("RED")
+    JobState {
+        name: "unknown".to_string(),
+        ended: false,
+        completed: false,
+    }
 }
 
 /// 引数を読んで確かめる。確かめる順と理由の文は sh の版と同じ（使い方の誤り、区分、参照、目的、-c、-t、コマンド、名前）
 fn parse_args(args: &[String]) -> Result<Request, Refusal> {
-    todo!("RED")
+    let refuse = |name: Option<&str>, message: String| Refusal {
+        name: name.map(str::to_string),
+        message,
+    };
+    let wrong = || refuse(None, format!("{}\n", usage()));
+    let missing = |flag: &str| {
+        refuse(
+            None,
+            format!(
+                "ERROR: {flag} が無い（待ち行列で順を確かめるため、区分、参照、目的は必須）\n{}\n",
+                usage()
+            ),
+        )
+    };
+    let mut class = String::new();
+    let mut reference = None;
+    let mut purpose = None;
+    let mut top = false;
+    let mut timed = false;
+    let mut estimate = String::new();
+    let mut cpus = None;
+    let mut i = 0;
+    while i < args.len() {
+        let value = args.get(i + 1).cloned();
+        match args[i].as_str() {
+            "--class" => class = value.ok_or_else(wrong)?,
+            "--ref" => {
+                // 囲まない #0200 は、# から後ろ（後ろの引数を含む）がシェルの注釈になり、ここには値の無い --ref だけが届く
+                reference = Some(value.ok_or_else(|| refuse(None, format!(
+                    "ERROR: --ref の値が無い。# で始まる参照は引用符で囲む（--ref '#0200'。囲まないと # から後ろがシェルの注釈になり、後ろの引数も消える）\n{}\n",
+                    usage()
+                )))?);
+            }
+            "--purpose" => purpose = Some(value.ok_or_else(wrong)?),
+            "--top" => {
+                top = true;
+                i += 1;
+                continue;
+            }
+            "--timed" => {
+                timed = true;
+                i += 1;
+                continue;
+            }
+            "-t" => estimate = value.ok_or_else(wrong)?,
+            "-c" => cpus = Some(value.ok_or_else(wrong)?),
+            flag if flag.starts_with('-') => {
+                return Err(refuse(
+                    None,
+                    format!(
+                        "ERROR: 知らないオプション: {flag}（時間を記録するジョブと急ぐ計算は --timed）\n"
+                    ),
+                ));
+            }
+            _ => break,
+        }
+        i += 2;
+    }
+    if class.is_empty() {
+        return Err(missing("--class"));
+    }
+    let Some(reference) = reference else {
+        return Err(missing("--ref"));
+    };
+    let Some(purpose) = purpose else {
+        return Err(missing("--purpose"));
+    };
+    let [name, command] = &args[i..] else {
+        return Err(wrong());
+    };
+    if estimate.is_empty() {
+        return Err(wrong());
+    }
+    let named = |message: String| Err(refuse(Some(name), message));
+
+    match slurm_class::rank(&class) {
+        Some(_) if class == "timed" => timed = true,
+        Some(_) => {}
+        None => {
+            return named(format!(
+                "ERROR: 知らない区分: '{class}'（{} のどれか）\n",
+                slurm_class::CLASSES.join(" ")
+            ));
+        }
+    }
+    // 改行と | はコメントの区切りを壊すので先に除く
+    if reference.contains(['\n', '|']) || !REFERENCE.is_match(&reference) {
+        return named(format!(
+            "ERROR: 参照は #NNNN か ADR-NNNN（複数はカンマで区切る）、無いときは「- <理由>」: '{reference}'\n"
+        ));
+    }
+    if purpose.contains(['\n', '|']) || purpose.chars().all(char::is_whitespace) {
+        return named(format!(
+            "ERROR: 目的は結果が何を決めるかの 1 文で、空にせず、改行と | を含めない: '{purpose}'\n"
+        ));
+    }
+    if timed && cpus.is_some() {
+        return named("ERROR: --timed と区分 timed は -c と組めない（排他でないジョブの時間は記録に使えない）。時間を記録するなら -c を外し、記録しないなら --timed を外す（区分 timed なら区分を変える）\n".to_string());
+    }
+    if let Some(cpus) = cpus.as_deref().filter(|c| !CPUS.is_match(c)) {
+        return named(format!("ERROR: -c のコア数は正の整数: '{cpus}'\n"));
+    }
+    // 投げてから拒まれると、理由がスケジューラの英語の 1 行だけになるので、先に確かめて修正方法を示す
+    if !slurm::valid_time_limit(&estimate) {
+        return named(format!(
+            "ERROR: -t は分の数（-t 90）か H:MM:SS（-t 1:30:00）。25m や 1h の形は sbatch が受け付けず、1:30 は sbatch が 1 分 30 秒と読む: '{estimate}'\n"
+        ));
+    }
+    if USR_BIN_TIME.is_match(command) {
+        return named("ERROR: /usr/bin/time は r995 に無く、ジョブが 0 秒で失敗する。ジョブの時間とメモリは TIME: 行と sacct -j <番号>.batch -o Elapsed,MaxRSS で取る。プログラムだけの時間が要るなら、ジョブの PATH に GNU time があることを type -P time で確かめてから command time -o <ファイル> -f \"%e s %M KB\" <コマンド> と書く\n".to_string());
+    }
+    if !NAME.is_match(name) {
+        return named(format!(
+            "ERROR: 名前はファイル名に使える英数字と . _ - だけにする: {name}\n"
+        ));
+    }
+    // 会計の記録を手で読むときに、名前で排他のジョブと見分ける（slurm-history.sh も古い jobcomp では名前で分ける）
+    if cpus.is_some() && !name.ends_with("-shared") {
+        return named(format!(
+            "ERROR: -c のジョブの名前は末尾に -shared を付ける（{name}-shared）。sacct で排他のジョブと見分けるため: {name}\n"
+        ));
+    }
+    Ok(Request {
+        class,
+        reference,
+        purpose,
+        top,
+        timed,
+        cpus,
+        estimate,
+        name: name.clone(),
+        command: command.clone(),
+    })
 }
 
 fn usage() -> String {
-    todo!("RED")
+    format!(
+        "Usage: slurm-run.sh --class <{}> --ref <#NNNN|ADR-NNNN|- 理由> --purpose <結果が何を決めるか> [--top] [--timed | -c <コア数>] -t <見積もり> <name> <command>",
+        slurm_class::CLASSES.join("|")
+    )
 }
 
 /// 会計の記録を待つ回数と間隔（SLURM_RUN_SACCT_TRIES、SLURM_RUN_SACCT_INTERVAL。テストが短くする）
 fn record_wait() -> Result<(u32, std::time::Duration), String> {
-    todo!("RED")
+    let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    let tries = match var("SLURM_RUN_SACCT_TRIES") {
+        None => 10,
+        Some(v) => v
+            .parse()
+            .map_err(|_| format!("SLURM_RUN_SACCT_TRIES は回数: '{v}'"))?,
+    };
+    let interval = match var("SLURM_RUN_SACCT_INTERVAL") {
+        None => 1.0,
+        Some(v) => v
+            .parse::<f64>()
+            .ok()
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .ok_or_else(|| format!("SLURM_RUN_SACCT_INTERVAL は秒: '{v}'"))?,
+    };
+    Ok((tries, std::time::Duration::from_secs_f64(interval)))
 }
 
 /// sh の $PWD と同じ作業ディレクトリ。環境の PWD が今の場所を指していればそれ（symlink をたどる前の書き方）、
 /// 指していなければ OS の今の場所。連絡先とジョブの走る場所の案内は、利用者が cd したときの書き方で出す
 fn working_dir() -> std::io::Result<String> {
-    todo!("RED")
+    let cwd = std::env::current_dir()?;
+    #[cfg(unix)]
+    if let Some(pwd) = std::env::var_os("PWD").map(std::path::PathBuf::from) {
+        use std::os::unix::fs::MetadataExt;
+        let same =
+            |a: &std::fs::Metadata, b: &std::fs::Metadata| a.dev() == b.dev() && a.ino() == b.ino();
+        if pwd.is_absolute()
+            && let (Ok(p), Ok(c)) = (std::fs::metadata(&pwd), std::fs::metadata(&cwd))
+            && same(&p, &c)
+        {
+            return Ok(pwd.display().to_string());
+        }
+    }
+    Ok(cwd.display().to_string())
 }
 
 fn hostname() -> String {
-    todo!("RED")
+    Command::new("hostname")
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .trim_end_matches('\n')
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 /// path が dir の下か（dir そのものを含む）
 fn under(path: &str, dir: &str) -> bool {
-    todo!("RED")
+    format!("{path}/").starts_with(&format!("{dir}/"))
 }
 
 /// ジョブの作業ディレクトリ（r995 から投げたら ~/github の下、ほかのホストからなら NFS の入口の下）を、このホストの
 /// 書き方に直す
 fn local_path(path: &str, on_r995: bool, nfs_entry: &str, remote_root: &str) -> String {
-    todo!("RED")
+    let (from, to) = if on_r995 {
+        (nfs_entry, remote_root)
+    } else {
+        (remote_root, nfs_entry)
+    };
+    if under(path, from) {
+        format!("{to}{}", &path[from.len()..])
+    } else {
+        path.to_string()
+    }
 }
 
 /// git を起動した結果（起動できなければ ok が false で、理由を stderr に入れる）
@@ -158,11 +544,24 @@ impl GitOut {
 }
 
 fn git(args: &[&str]) -> GitOut {
-    todo!("RED")
+    run_git(Command::new("git").args(args))
 }
 
 fn run_git(cmd: &mut Command) -> GitOut {
-    todo!("RED")
+    match cmd.output() {
+        Ok(out) => GitOut {
+            ok: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout)
+                .trim_end_matches('\n')
+                .to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        },
+        Err(e) => GitOut {
+            ok: false,
+            stdout: String::new(),
+            stderr: format!("git を起動できない: {e}\n"),
+        },
+    }
 }
 
 /// 連絡先（git のブランチ、投げた場所、commit=、claude=）。警告は標準エラーに出す。
@@ -177,7 +576,65 @@ fn run_git(cmd: &mut Command) -> GitOut {
 /// ジョブを止めない。黙って付けないと、付かない理由が分からないので、警告に出す。コミットの無いリポジトリは、
 /// rev-parse -q が何も出さずに失敗するので警告しない
 fn contact(pwd: &str) -> String {
-    todo!("RED")
+    let mut contact = pwd.to_string();
+    let branch = git(&["symbolic-ref", "--short", "-q", "HEAD"]);
+    if branch.ok {
+        contact = format!("{} {pwd}", branch.stdout);
+    }
+    // メッセージの言語に依らず「git の外」を見分けるため LC_ALL=C で読む。外なら黙って付けず、外でない失敗は警告する
+    let inside = run_git(
+        Command::new("git")
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .env("LC_ALL", "C"),
+    );
+    if !inside.ok {
+        if !inside.stderr.contains("not a git repository") {
+            eprintln!(
+                "WARN: commit= を付けません（git rev-parse --is-inside-work-tree が失敗）: {}",
+                inside.first_error_line()
+            );
+        }
+    } else if inside.stdout != "true" {
+        eprintln!(
+            "WARN: commit= を付けません（作業ツリーの外。bare リポジトリか .git の中）: {pwd}"
+        );
+    } else {
+        let head = git(&["rev-parse", "-q", "--verify", "--short", "HEAD"]);
+        if head.ok {
+            let status = git(&[
+                "--no-optional-locks",
+                "status",
+                "--porcelain",
+                "--untracked-files=normal",
+                "--ignore-submodules=none",
+            ]);
+            if status.ok {
+                let dirty = if status.stdout.is_empty() {
+                    ""
+                } else {
+                    "-dirty"
+                };
+                contact.push_str(&format!(" commit={}{dirty}", head.stdout));
+            } else {
+                eprintln!(
+                    "WARN: commit= を付けません（git status が失敗）: {}",
+                    status.first_error_line()
+                );
+            }
+        } else if !head.stderr.is_empty() {
+            eprintln!(
+                "WARN: commit= を付けません（git rev-parse HEAD が失敗）: {}",
+                head.first_error_line()
+            );
+        }
+    }
+    if let Some(session) = std::env::var("CLAUDE_CODE_SESSION_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        contact.push_str(&format!(" claude={session}"));
+    }
+    contact
 }
 
 /// timed のジョブは走っている main のジョブを止め、止められたジョブは持っているロック（cargo のビルドディレクトリ、
@@ -186,12 +643,30 @@ fn contact(pwd: &str) -> String {
 /// 場所はジョブの作業ディレクトリ（投げたときの場所）で読む。コメントの連絡先と違い、slurm-run.sh の外から投げた
 /// ジョブにもある。同じ worktree のジョブがあれば、理由を出して終了コード 1 を返す
 fn refuse_same_worktree(pwd: &str, local: impl Fn(&str) -> String) -> Option<i32> {
-    todo!("RED")
+    let running = match slurm::running_default_jobs() {
+        Ok(running) => running,
+        Err(reason) => {
+            eprintln!(
+                "WARN: 走っている main のジョブを読めず、同じ worktree で走っているかを確かめられなかった（squeue が失敗）: {reason}"
+            );
+            return None;
+        }
+    };
+    let here = worktree_of(pwd);
+    let id = same_worktree_job(&running, &here, |dir| worktree_of(&local(dir)))?;
+    eprintln!(
+        "ERROR: 走っている main のジョブ {id} が同じ worktree（{here}）で走っている。timed のジョブはそれを止め、止められたジョブはロック（cargo のビルドディレクトリ、DVC の lock）を持ったまま止まるので、同じロックを取るとどちらも進まない"
+    );
+    eprintln!(
+        "NEXT: 別の worktree（git worktree add）から投げるか、ジョブ {id} が終わってから投げる"
+    );
+    Some(1)
 }
 
 /// 作業ディレクトリの worktree の直下（git の外ならそのディレクトリ）
 fn worktree_of(dir: &str) -> String {
-    todo!("RED")
+    let out = git(&["-C", dir, "rev-parse", "--show-toplevel"]);
+    if out.ok { out.stdout } else { dir.to_string() }
 }
 
 /// running のうち、作業ディレクトリの worktree が here と同じ最初のジョブの番号
@@ -200,7 +675,11 @@ fn same_worktree_job<'a>(
     here: &str,
     worktree_of: impl Fn(&str) -> String,
 ) -> Option<&'a str> {
-    todo!("RED")
+    running
+        .iter()
+        .filter(|job| !job.id.is_empty() && !job.dir.is_empty())
+        .find(|job| worktree_of(&job.dir) == here)
+        .map(|job| job.id.as_str())
 }
 
 /// 並べ直す。read は slurm-queue の --order と同じ列（要らなければ空、読めなければ None）、top は待ち行列の先頭に列を
@@ -211,7 +690,25 @@ fn same_worktree_job<'a>(
 /// 成功しても待ち行列を読み直し、並べ直しが要らなくなるまで繰り返す（拒まれたときも、読み直せば消えた番号は列から外れる）。
 /// 3 回で収まらなければ、待ち行列が動き続けているので投げた順に任せる
 fn reorder(mut read: impl FnMut() -> Option<String>, mut top: impl FnMut(&str)) -> Option<String> {
-    todo!("RED")
+    let mut tops = 0;
+    loop {
+        let Some(list) = read() else {
+            return Some(
+                "WARN: 待ち行列を読めず、区分の順に並べ直せなかった。投げた順に走る".to_string(),
+            );
+        };
+        let list = list.trim_end_matches('\n');
+        if list.is_empty() {
+            return None;
+        }
+        if tops == 3 {
+            return Some(format!(
+                "WARN: 3 回並べ直しても区分の順（{list}）にならなかった。投げた順に走る"
+            ));
+        }
+        top(list);
+        tops += 1;
+    }
 }
 
 /// 終わりが届くまで、会計の記録を tries 回まで読む（間に pause）。終わった記録が無ければ None。
@@ -223,17 +720,39 @@ fn wait_record(
     mut read: impl FnMut() -> Option<JobRecord>,
     mut pause: impl FnMut(),
 ) -> Option<JobRecord> {
-    todo!("RED")
+    for attempt in 1..=tries {
+        if let Some(record) = read().filter(|r| r.state.ended) {
+            return Some(record);
+        }
+        if attempt != tries {
+            pause();
+        }
+    }
+    None
 }
 
 /// 秒を [日-]時:分:秒 にする（sh の版が sacct の Elapsed から読んでいた書き方）
 fn duration(secs: i64) -> String {
-    todo!("RED")
+    if secs < 0 {
+        return "INVALID".to_string();
+    }
+    let (days, hours, minutes, seconds) =
+        (secs / 86400, secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    if days > 0 {
+        format!("{days}-{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    }
 }
 
 /// 見積もりを sh の版が sacct の Timelimit から読んでいた書き方にする
 fn limit_text(limit: &Option<Limit>) -> String {
-    todo!("RED")
+    match limit {
+        Some(Limit::Minutes(minutes)) => duration(minutes * 60),
+        Some(Limit::Unlimited) => "UNLIMITED".to_string(),
+        Some(Limit::Unset) => "Partition_Limit".to_string(),
+        None => String::new(),
+    }
 }
 
 /// TIME: の行と、印が付いたか、行を作る前に出す警告
@@ -247,31 +766,108 @@ struct Timing {
 /// 終わったジョブの TIME: の行。印は、-c のとき、割り込まれないパーティションで走らなかったとき、止められていたとき
 /// （確かめられないときも）に付く
 fn time_line(job: &str, record: &JobRecord, req: &Request) -> Timing {
-    todo!("RED")
+    let mut warnings = Vec::new();
+    let plain = format!(
+        "TIME: job={job} elapsed={} estimate={}",
+        record.elapsed.map(duration).unwrap_or_default(),
+        limit_text(&record.limit)
+    );
+    let mut line = plain.clone();
+    if let Some(cpus) = &req.cpus {
+        line.push_str(&format!(" shared (-c {cpus}): 時間は当てにならない"));
+    }
+    // 止められたかによらず付ける。止められなかったジョブも、割り込まれうる条件で走った値で、付け忘れた --timed を見分けるため。
+    // flag でなく実際に走ったパーティションで決める（SBATCH_PARTITION などで変わりうる。slurm-history.sh も jobcomp の
+    // Partition で決める）
+    match record.uninterrupted {
+        None => {
+            warnings.push(format!(
+                "WARN: ジョブ {job} の sacct の記録に Partition が無く、割り込まれうるかを確かめられなかった"
+            ));
+            line.push_str(
+                " partition=unknown: 割り込まれうるかを確かめられないので時間は記録に使わない",
+            );
+        }
+        Some(true) => {}
+        Some(false) => line.push_str(
+            " preemptible: 割り込まれうるので時間は記録に使わない（記録するなら排他の --timed）",
+        ),
+    }
+    // 割り込まれないジョブに止められた印が付けば、設定か運用（scontrol suspend）の誤り。走った時間は止められていた時間を
+    // 除く（End - Start = Elapsed + Suspended。r995 のジョブ 498、656 で確かめた）が、再開後のキャッシュの冷えと、
+    // プログラムが自分で測る経過時間（止められていた間を含む）が残るので、止められていれば当てにならない
+    match record.suspended {
+        None => {
+            warnings.push(format!(
+                "WARN: ジョブ {job} の sacct の記録に Suspended が無く、止められていたかを確かめられなかった"
+            ));
+            line.push_str(
+                " suspended=unknown: 止められたかを確かめられないので時間は当てにならない",
+            );
+        }
+        Some(0) => {}
+        Some(_) => line.push_str(" suspended: 止められていたので時間は当てにならない"),
+    }
+    let marked = line != plain;
+    line.push_str(&format!(" state={}", record.state.name));
+    // 目的は利用者の書く文なので、末尾に置く
+    line.push_str(&format!(
+        " class={} ref={} purpose={}",
+        req.class, req.reference, req.purpose
+    ));
+    Timing {
+        line,
+        marked,
+        warnings,
+    }
 }
 
 fn append_line(path: &str, line: &str) -> std::io::Result<()> {
-    todo!("RED")
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    file.write_all(format!("{line}\n").as_bytes())
 }
 
 /// 終了コード。終わるまで待つ形の投げ方は、取り消したジョブでも 0 を返しうる。成功以外（取り消し、時間切れ、
 /// 確かめられないものなど）で終わったジョブは失敗として扱い、&& の次を実行しない
 fn final_status(status: i32, state: &JobState) -> i32 {
-    todo!("RED")
+    if !state.completed && status == 0 {
+        1
+    } else {
+        status
+    }
 }
 
 /// & と wait で同時に待った複数のジョブは、EXIT: の行がどのジョブのものか分からないので、1 行で番号と名前を添える
 fn result_line(job: Option<&str>, name: Option<&str>, exit: i32, state: &str) -> String {
-    todo!("RED")
+    format!(
+        "RESULT: job={} name={} exit={exit} state={state}",
+        job.unwrap_or("-"),
+        name.unwrap_or("-")
+    )
 }
 
 fn exit_line(status: i32, state: &JobState) -> String {
-    todo!("RED")
+    if state.completed {
+        format!("EXIT: {status}")
+    } else {
+        format!("EXIT: {status} (State={})", state.name)
+    }
 }
 
 /// text の最後の n 行（n は 1 以上。tail -n と同じく、末尾の改行の後は行に数えない）
 fn tail_lines(text: &[u8], n: usize) -> &[u8] {
-    todo!("RED")
+    let body = text.strip_suffix(b"\n").unwrap_or(text);
+    let start = body
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, b)| **b == b'\n')
+        .nth(n - 1)
+        .map_or(0, |(i, _)| i + 1);
+    &text[start..]
 }
 
 #[cfg(test)]
@@ -332,7 +928,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_class_reference_purpose_estimate_name_and_command_make_the_request() {
         assert_eq!(
             request(&["-t", "30", "xlc-2G", "cargo run --release"]),
@@ -353,7 +948,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_missing_class_reference_or_purpose_prints_the_usage_without_a_name() {
         for missing in ["--class", "--ref", "--purpose"] {
             let mut given = Vec::new();
@@ -377,7 +971,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_ref_without_a_value_shows_how_to_quote_a_hash() {
         let refusal = refused(&args(&["--class", "trial", "--ref"]));
         assert!(
@@ -394,7 +987,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_missing_estimate_name_command_or_option_value_prints_the_usage() {
         for rest in [
             &["xlc-2G", "true"][..],
@@ -422,7 +1014,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn an_unknown_option_is_refused_by_its_name_without_the_usage() {
         for opt in ["--urgent", "-x"] {
             let refusal = refused(&with_purpose(&["-t", "5", opt, "xlc-quick", "true"]));
@@ -436,7 +1027,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn an_unknown_class_lists_the_classes() {
         let refusal = refused(&args(&[
             "--class",
@@ -458,7 +1048,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_class_timed_goes_uninterrupted_and_other_classes_keep_their_class_with_timed() {
         let timed = parse_args(&args(&[
             "--class",
@@ -494,7 +1083,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn references_are_numbers_adrs_their_comma_list_or_a_dash_and_a_reason() {
         for good in [
             "#0200",
@@ -553,7 +1141,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_purpose_must_be_one_non_blank_line_without_a_bar() {
         for bad in ["", "   ", "1 行目\n2 行目", "a | b"] {
             let words = args(&[
@@ -580,7 +1167,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn timed_and_the_class_timed_cannot_go_with_cores_and_the_error_says_which_to_drop() {
         let with_flag = refused(&with_purpose(&[
             "--timed",
@@ -620,7 +1206,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn cores_must_be_a_positive_integer() {
         for bad in ["0", "-1", "abc", "1.5", ""] {
             let refusal = refused(&with_purpose(&[
@@ -645,7 +1230,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn an_estimate_in_another_form_is_refused_with_the_forms_to_use() {
         for bad in ["25m", "1h", "1.5", "abc", "1:30", "30:00"] {
             let refusal = refused(&with_purpose(&["-t", bad, "xlc-2G", "true"]));
@@ -663,7 +1247,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_command_running_usr_bin_time_is_refused_with_how_to_take_the_time() {
         for cmd in [
             "/usr/bin/time -v xs run.toml",
@@ -699,7 +1282,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_name_is_file_name_characters_and_a_shared_job_ends_with_shared() {
         let refusal = refused(&with_purpose(&["-t", "1", "xlc 2G/a", "true"]));
         assert!(
@@ -718,7 +1300,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn refusals_after_the_name_is_read_carry_the_name_for_the_result_line() {
         assert_eq!(
             refused(&with_purpose(&["-t", "25m", "xlc-early", "true"]))
@@ -735,7 +1316,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_time_line_has_the_job_elapsed_estimate_state_class_reference_and_purpose() {
         let req = request(&["--timed", "-t", "30", "xlc-bench", "true"]);
         let timing = time_line("42", &record(Some(true), Some(0), completed()), &req);
@@ -748,7 +1328,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_job_that_ran_interruptible_is_marked_preemptible_whatever_the_flag() {
         let req = request(&["--timed", "-t", "30", "xlc-bench", "true"]);
         let timing = time_line("42", &record(Some(false), Some(0), completed()), &req);
@@ -767,7 +1346,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn shared_suspended_and_preemptible_marks_add_up_in_order() {
         let req = request(&["-c", "8", "-t", "30", "openmc-2G-shared", "true"]);
         let timing = time_line("42", &record(Some(false), Some(600), completed()), &req);
@@ -788,7 +1366,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_record_without_the_partition_or_the_suspended_time_is_marked_unknown_with_warnings() {
         let req = request(&["-t", "30", "xlc-2G", "true"]);
         let timing = time_line("42", &record(None, None, completed()), &req);
@@ -811,7 +1388,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_record_without_times_leaves_them_empty() {
         let req = request(&["-t", "30", "xlc-2G", "true"]);
         let mut bare = record(Some(true), Some(0), state("CANCELLED", true, false));
@@ -825,7 +1401,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn durations_are_written_with_days_when_over_a_day() {
         assert_eq!(duration(754), "00:12:34");
         assert_eq!(duration(0), "00:00:00");
@@ -838,7 +1413,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_wait_reads_the_record_until_an_ended_state_arrives() {
         // 2 回は記録が届かず、1 回は走っていて、4 回目に終わった
         let answers = [None, None, Some(false), Some(true)];
@@ -857,7 +1431,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_wait_gives_up_after_the_tries_without_pausing_after_the_last() {
         let (mut reads, mut pauses) = (0, 0);
         let got = wait_record(
@@ -877,7 +1450,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_job_that_did_not_complete_fails_even_when_submission_returned_zero() {
         assert_eq!(final_status(0, &completed()), 0);
         assert_eq!(final_status(0, &state("CANCELLED", true, false)), 1);
@@ -887,7 +1459,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_exit_line_adds_the_state_unless_completed_and_the_result_line_names_the_job() {
         assert_eq!(exit_line(0, &completed()), "EXIT: 0");
         assert_eq!(
@@ -917,13 +1488,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_queue_already_in_class_order_is_not_touched() {
         assert_eq!(reorder_with(&[Some("")]), (None, vec![]));
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_queue_is_read_again_after_each_top_until_no_reordering_is_needed() {
         // 並べ直しが拒まれても、同時に投げたジョブが列を上書きしても、読み直して並べ直す
         assert_eq!(
@@ -933,7 +1502,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn after_three_tops_the_order_is_left_to_the_queue_with_a_warning() {
         let (warning, tops) = reorder_with(&[Some("42,20"); 5]);
         assert_eq!(tops.len(), 3);
@@ -944,7 +1512,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn an_unreadable_queue_warns_and_does_not_reorder() {
         let (warning, tops) = reorder_with(&[None]);
         assert!(tops.is_empty());
@@ -955,7 +1522,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_running_job_in_the_same_worktree_is_found_through_the_worktree_of_its_directory() {
         let job = |id: &str, dir: &str| RunningJob {
             id: id.to_string(),
@@ -973,7 +1539,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn paths_are_rewritten_between_the_r995_home_and_the_nfs_entry() {
         let (nfs, root) = ("/mnt/r995/github", "/home/u/github");
         assert_eq!(
@@ -1001,7 +1566,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_tail_is_the_last_lines_like_tail_n() {
         assert_eq!(tail_lines(b"a\nb\nc\n", 2), b"b\nc\n");
         assert_eq!(tail_lines(b"a\nb\nc", 1), b"c");

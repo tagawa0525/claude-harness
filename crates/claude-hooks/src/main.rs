@@ -28,6 +28,7 @@ mod git_args;
 mod git_hook;
 mod gitleaks;
 mod input;
+mod interrupt;
 mod output;
 mod process;
 mod rules;

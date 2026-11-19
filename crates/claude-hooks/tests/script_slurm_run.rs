@@ -245,7 +245,6 @@ fn committed(slurm: &Slurm) -> (PathBuf, String) {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_completed_job_prints_the_job_log_next_tail_time_result_and_exit_lines_in_order() {
     let slurm = Slurm::new();
     git(
@@ -280,7 +279,6 @@ fn a_completed_job_prints_the_job_log_next_tail_time_result_and_exit_lines_in_or
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_failed_job_ends_with_its_exit_code_and_the_state() {
     let slurm = Slurm::new();
     let out = slurm.run(
@@ -300,7 +298,6 @@ fn a_failed_job_ends_with_its_exit_code_and_the_state() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_cancelled_job_after_sbatch_returned_zero_ends_with_one() {
     let slurm = Slurm::new();
     let out = slurm.run(
@@ -316,7 +313,6 @@ fn a_cancelled_job_after_sbatch_returned_zero_ends_with_one() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn the_record_is_awaited_until_sacct_returns_a_final_state() {
     let slurm = Slurm::new();
     let out = slurm.run(
@@ -329,7 +325,6 @@ fn the_record_is_awaited_until_sacct_returns_a_final_state() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn without_a_record_the_state_comes_from_scontrol_and_no_time_line_is_written() {
     let slurm = Slurm::new();
     let completed = slurm.run(
@@ -388,7 +383,6 @@ fn without_a_record_the_state_comes_from_scontrol_and_no_time_line_is_written() 
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_log_that_cannot_be_appended_to_gets_a_warning_and_the_time_line_on_stdout() {
     let slurm = Slurm::new();
     let out = slurm.run(
@@ -410,7 +404,6 @@ fn a_log_that_cannot_be_appended_to_gets_a_warning_and_the_time_line_on_stdout()
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_main_job_reorders_the_queue_by_class_and_reads_it_again_after_each_top() {
     let slurm = Slurm::new();
     let q = "feat/x /p";
@@ -446,7 +439,6 @@ fn a_main_job_reorders_the_queue_by_class_and_reads_it_again_after_each_top() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn top_puts_the_main_job_first_in_its_class_and_an_unreadable_queue_only_warns() {
     let slurm = Slurm::new();
     let q = "feat/x /p";
@@ -474,7 +466,6 @@ fn top_puts_the_main_job_first_in_its_class_and_an_unreadable_queue_only_warns()
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_timed_job_is_not_reordered_by_class_and_top_moves_only_itself() {
     let slurm = Slurm::new();
     let queue = "21|timed|bench|PENDING|10030|60:00|N/A|timed | #1 | p | c\n42|timed|quick|PENDING|10000|5:00|N/A|decision | #1 | p | c";
@@ -504,7 +495,6 @@ fn a_timed_job_is_not_reordered_by_class_and_top_moves_only_itself() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn the_contact_has_the_branch_place_commit_dirty_mark_and_session() {
     let slurm = Slurm::new();
     let (dir, head) = committed(&slurm);
@@ -556,7 +546,6 @@ fn the_contact_has_the_branch_place_commit_dirty_mark_and_session() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_new_submodule_commit_is_dirty_even_when_diff_ignores_submodules() {
     let slurm = Slurm::new();
     let (dir, _) = committed(&slurm);
@@ -600,7 +589,6 @@ fn a_new_submodule_commit_is_dirty_even_when_diff_ignores_submodules() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn outside_git_and_without_commits_no_commit_is_added_and_broken_git_warns() {
     let slurm = Slurm::new();
     let plain = slurm.home().join("github/plain");
@@ -648,7 +636,6 @@ fn outside_git_and_without_commits_no_commit_is_added_and_broken_git_warns() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn off_r995_jobs_are_submitted_under_the_nfs_entry_with_logs_there() {
     let slurm = Slurm::new();
     let nfs = slurm.root.join("mnt/r995/github");
@@ -683,7 +670,6 @@ fn off_r995_jobs_are_submitted_under_the_nfs_entry_with_logs_there() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_timed_job_is_refused_while_a_main_job_runs_in_the_same_worktree() {
     let slurm = Slurm::new();
     let (dir, _) = committed(&slurm);
@@ -735,7 +721,6 @@ fn a_timed_job_is_refused_while_a_main_job_runs_in_the_same_worktree() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn the_same_worktree_is_matched_across_the_r995_home_and_the_nfs_entry() {
     let slurm = Slurm::new();
     let nfs = slurm.root.join("mnt/r995/github");
@@ -773,7 +758,6 @@ fn the_same_worktree_is_matched_across_the_r995_home_and_the_nfs_entry() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn an_unreadable_list_of_running_jobs_warns_with_the_reason_and_submits() {
     let slurm = Slurm::new();
     let out = slurm.run(
@@ -796,7 +780,6 @@ fn an_unreadable_list_of_running_jobs_warns_with_the_reason_and_submits() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn refusals_print_one_not_submitted_result_and_a_submitted_job_prints_one_result() {
     let slurm = Slurm::new();
     let out = slurm.run(&["-t", "25m", "xlc-early", "true"], &[]);
@@ -817,7 +800,6 @@ fn refusals_print_one_not_submitted_result_and_a_submitted_job_prints_one_result
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_failed_submission_shows_sbatch_output_and_a_not_submitted_result() {
     let slurm = Slurm::new();
     write_executable(
@@ -837,7 +819,6 @@ fn a_failed_submission_shows_sbatch_output_and_a_not_submitted_result() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn an_interrupted_run_prints_the_result_leaves_no_temporary_file_and_ends_with_130() {
     let slurm = Slurm::new();
     for signal in ["INT", "TERM", "HUP"] {

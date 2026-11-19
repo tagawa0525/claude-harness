@@ -41,13 +41,46 @@ pub struct Submission<'a> {
 
 /// 終わりまで待つ形で投げる子のプロセス（標準出力はパイプ。最初の行を [`submitted_job`] で読む）
 pub fn submit(job: &Submission) -> std::io::Result<Child> {
-    todo!("RED")
+    Command::new("sbatch")
+        .args(submit_args(job))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
 }
 
 /// sbatch の引数。排他（既定）か CPU の数、パーティション、終わるまで待つ、環境を引き継ぐ、名前、ログ、見積もり、
 /// コメント、コマンド
 fn submit_args(job: &Submission) -> Vec<String> {
-    todo!("RED")
+    let mut args = vec![match job.cpus {
+        Some(cpus) => format!("--cpus-per-task={cpus}"),
+        None => "--exclusive".to_string(),
+    }];
+    // 既定のパーティションも明示する。コマンド行の --partition は SBATCH_PARTITION より強く、環境から割り込まれない
+    // パーティションに入った -c のジョブが、時間を記録するジョブとして数えられることを防ぐ
+    let partition = if job.uninterrupted {
+        UNINTERRUPTED
+    } else {
+        DEFAULT
+    };
+    args.push(format!("--partition={partition}"));
+    args.extend(
+        [
+            "--wait",
+            "--export=ALL",
+            "-J",
+            job.name,
+            "-o",
+            &format!("{}/%x-%j.out", job.log_dir),
+            "--time",
+            job.estimate,
+            "--comment",
+            job.comment,
+            "--wrap",
+            job.command,
+        ]
+        .map(str::to_string),
+    );
+    args
 }
 
 static SUBMITTED: LazyLock<Regex> =
@@ -55,7 +88,7 @@ static SUBMITTED: LazyLock<Regex> =
 
 /// 投げた子の最初の行から、受けたジョブの番号
 pub fn submitted_job(line: &str) -> Option<String> {
-    todo!("RED")
+    SUBMITTED.captures(line).map(|c| c[1].to_string())
 }
 
 static TIME_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
@@ -66,12 +99,15 @@ static TIME_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
 /// 見積もりの形（sbatch --time のうち、分、時:分:秒、日-時[:分[:秒]]）か。分:秒（1:30）は sbatch が受けるが、時:分の
 /// つもりで書くと 60 分の 1 の見積もりになるので受けない
 pub fn valid_time_limit(estimate: &str) -> bool {
-    todo!("RED")
+    TIME_LIMIT.is_match(estimate)
 }
 
 /// 待ち行列の先頭に、list（`,` でつないだ番号）をその順に出す
 pub fn move_to_front(list: &str) -> bool {
-    todo!("RED")
+    Command::new("scontrol")
+        .args(["top", list])
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// 走っているジョブ（止められたものと走り始めたものを含む）
@@ -84,11 +120,40 @@ pub struct RunningJob {
 
 /// 既定のパーティションで走っているジョブ。読めなければ理由（コマンドの標準エラーの最初の行か、解けない理由）
 pub fn running_default_jobs() -> Result<Vec<RunningJob>, String> {
-    todo!("RED")
+    let out = Command::new("squeue")
+        .args([
+            JSON,
+            &format!("--partition={DEFAULT}"),
+            "--states=RUNNING,SUSPENDED,CONFIGURING",
+        ])
+        .output()
+        .map_err(|e| format!("squeue を起動できない: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string());
+    }
+    running_jobs(&String::from_utf8_lossy(&out.stdout))
 }
 
 fn running_jobs(json: &str) -> Result<Vec<RunningJob>, String> {
-    todo!("RED")
+    let value: Value = serde_json::from_str(json)
+        .map_err(|e| format!("squeue の出力を JSON として読めない: {e}"))?;
+    let jobs = value["jobs"]
+        .as_array()
+        .ok_or("squeue の出力に jobs が無い")?;
+    Ok(jobs
+        .iter()
+        .map(|job| RunningJob {
+            id: id_text(&job["job_id"]),
+            dir: job["current_working_directory"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect())
 }
 
 /// ジョブの状態
@@ -105,7 +170,12 @@ pub struct JobState {
 impl JobState {
     /// Slurm の State（`CANCELLED by 1000` のように後ろが付くものは最初の語で見る）から
     pub fn from_slurm(state: &str) -> JobState {
-        todo!("RED")
+        let name = state.split(' ').next().unwrap_or("");
+        JobState {
+            name: name.to_string(),
+            ended: is_final(name),
+            completed: name == "COMPLETED",
+        }
     }
 }
 
@@ -153,20 +223,48 @@ pub struct JobRecord {
 
 /// 会計の記録（sacct）。読めない、記録がまだ届いていないなら None。標準エラーは捨てる（読めないことは呼ぶ側が警告する）
 pub fn accounting_record(job: &str) -> Option<JobRecord> {
-    todo!("RED")
+    sacct_record(&quiet_output(&["sacct", JSON, "-X", "-j", job])?, job)
 }
 
 fn sacct_record(json: &str, job: &str) -> Option<JobRecord> {
-    todo!("RED")
+    let value: Value = serde_json::from_str(json).ok()?;
+    let found = value["jobs"]
+        .as_array()?
+        .iter()
+        .find(|j| id_text(&j["job_id"]) == job)?;
+    let time = &found["time"];
+    let limit = &time["limit"];
+    Some(JobRecord {
+        elapsed: time["elapsed"].as_i64(),
+        limit: if limit["infinite"].as_bool() == Some(true) {
+            Some(Limit::Unlimited)
+        } else if limit["set"].as_bool() == Some(false) {
+            Some(Limit::Unset)
+        } else {
+            limit["number"].as_i64().map(Limit::Minutes)
+        },
+        uninterrupted: found["partition"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .map(|p| p == UNINTERRUPTED),
+        suspended: time["suspended"].as_i64(),
+        state: JobState::from_slurm(found["state"]["current"][0].as_str().unwrap_or("")),
+    })
 }
 
 /// 制御のデーモン（scontrol）が覚えている状態。終わった直後（MinJobAge の 300 秒の間）だけ読める
 pub fn controller_state(job: &str) -> Option<JobState> {
-    todo!("RED")
+    scontrol_state(&quiet_output(&["scontrol", "show", "job", job, JSON])?, job)
 }
 
 fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
-    todo!("RED")
+    let value: Value = serde_json::from_str(json).ok()?;
+    value["jobs"]
+        .as_array()?
+        .iter()
+        .find(|j| id_text(&j["job_id"]) == job)?["job_state"][0]
+        .as_str()
+        .map(JobState::from_slurm)
 }
 
 /// ジョブの番号（数か文字列）を文字列に
@@ -211,7 +309,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_job_waits_exclusively_on_main_with_the_environment_name_log_estimate_comment_and_command()
     {
         assert_eq!(
@@ -236,7 +333,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_shared_job_takes_cpus_and_an_uninterrupted_job_goes_to_timed() {
         assert_eq!(
             submit_args(&job(Some("8"), false))[..2],
@@ -249,7 +345,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_job_number_is_read_from_the_first_line() {
         assert_eq!(
             submitted_job("Submitted batch job 42\n").as_deref(),
@@ -264,7 +359,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn the_estimate_is_minutes_or_h_mm_ss_or_days_hours() {
         for bad in ["25m", "1h", "1.5", "abc", "1:30", "30:00", ""] {
             assert!(!valid_time_limit(bad), "{bad}");
@@ -275,7 +369,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn only_final_states_end_by_their_first_word_and_only_completed_succeeds() {
         for state in [
             "COMPLETED",
@@ -311,7 +404,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn sacct_json_gives_the_times_the_partition_kind_and_the_first_state() {
         let json = json!({"jobs": [{
             "job_id": 42,
@@ -337,7 +429,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn sacct_json_reads_timed_unlimited_unset_and_missing_fields() {
         let record = |job: serde_json::Value| {
             sacct_record(&json!({"jobs": [job]}).to_string(), "42").unwrap()
@@ -362,7 +453,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn scontrol_json_gives_the_first_state_of_the_job() {
         let json = json!({"jobs": [{"job_id": 42, "job_state": ["CANCELLED"]}]}).to_string();
         assert_eq!(
@@ -375,7 +465,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn squeue_json_gives_the_running_jobs_and_their_working_directories() {
         let json =
             json!({"jobs": [{"job_id": 961, "current_working_directory": "/home/u/github/xlc"}]})
