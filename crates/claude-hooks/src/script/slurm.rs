@@ -41,11 +41,12 @@ pub struct Submission<'a> {
 
 /// 終わりまで待つ形で投げる子のプロセス（標準出力はパイプ。最初の行を [`submitted_job`] で読む）
 pub fn submit(job: &Submission) -> std::io::Result<Child> {
-    Command::new("sbatch")
-        .args(submit_args(job))
+    let mut cmd = Command::new("sbatch");
+    cmd.args(submit_args(job))
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .spawn()
+        .stdout(Stdio::piped());
+    crate::interrupt::ignore_terminal_interrupt(&mut cmd);
+    cmd.spawn()
 }
 
 /// sbatch の引数。排他（既定）か CPU の数、パーティション、終わるまで待つ、環境を引き継ぐ、名前、ログ、見積もり、

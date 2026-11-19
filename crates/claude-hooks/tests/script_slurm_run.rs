@@ -33,6 +33,7 @@ echo "Submitted batch job 42"
 log=$(printf '%s' "$log" | sed "s/%x/$name/; s/%j/42/")
 echo "job output" >"$log"
 [ -z "$FAKE_LOG_READONLY" ] || chmod 444 "$log"
+[ -z "$FAKE_SBATCH_SIGIGN" ] || grep SigIgn /proc/$$/status >"$FAKE_SBATCH_SIGIGN"
 if [ -n "$FAKE_SBATCH_PID" ]; then
   echo $$ >"$FAKE_SBATCH_PID"
   exec sleep 30
@@ -151,10 +152,15 @@ impl Slurm {
     /// 起動の形（cwd、環境）。PATH は偽のコマンドの置き場を先にし、git と sh のツールは手元のものを使う
     fn command(&self, cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
-        forget_git_env(&mut cmd);
-        cmd.args(["script", "slurm-run"])
-            .args(args)
-            .current_dir(cwd)
+        cmd.args(["script", "slurm-run"]).args(args);
+        self.prepare(&mut cmd, cwd, env);
+        cmd
+    }
+
+    /// cmd の cwd と環境を、偽の Slurm と HOME を使う形にする
+    fn prepare(&self, cmd: &mut Command, cwd: &Path, env: &[(&str, &str)]) {
+        forget_git_env(cmd);
+        cmd.current_dir(cwd)
             .env("PWD", cwd)
             .env(
                 "PATH",
@@ -176,7 +182,6 @@ impl Slurm {
         for (key, value) in env {
             cmd.env(key, value);
         }
-        cmd
     }
 
     fn run_in(&self, cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
@@ -821,44 +826,20 @@ fn a_failed_submission_shows_sbatch_output_and_a_not_submitted_result() {
 #[test]
 fn an_interrupted_run_prints_the_result_leaves_no_temporary_file_and_ends_with_130() {
     let slurm = Slurm::new();
+    let pid_file = slurm.root.join("sbatch.pid");
     for signal in ["INT", "TERM", "HUP"] {
-        let pid_file = slurm.root.join("sbatch.pid");
-        let _ = std::fs::remove_file(&pid_file);
-        let mut child = slurm
-            .command(
-                &slurm.proj(),
-                &with_purpose(&["-t", "5", "xlc-2G", "true"]),
-                &[("FAKE_SBATCH_PID", &sh_path(&pid_file))],
-            )
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        let mut seen = Vec::new();
+        let cmd = slurm.command(
+            &slurm.proj(),
+            &with_purpose(&["-t", "5", "xlc-2G", "true"]),
+            &[("FAKE_SBATCH_PID", &sh_path(&pid_file))],
+        );
         // 番号を読んで並べ直した後の、sbatch の終わりを待つところで中断する
-        for line in lines.by_ref() {
-            let line = line.unwrap();
-            let next = line.starts_with("NEXT:");
-            seen.push(line);
-            if next {
-                break;
-            }
-        }
-        while !pid_file.exists() {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let status = Command::new("kill")
-            .arg(format!("-{signal}"))
-            .arg(child.id().to_string())
-            .status()
-            .unwrap();
-        assert!(status.success());
+        let (mut child, mut seen, lines) = start_waiting(cmd, &pid_file);
+        kill(signal, &child.id().to_string());
         seen.extend(lines.map(Result::unwrap));
         let code = child.wait().unwrap().code();
         let sbatch = std::fs::read_to_string(&pid_file).unwrap();
-        let _ = Command::new("kill").arg(sbatch.trim()).status();
+        kill("TERM", sbatch.trim());
         assert_eq!(code, Some(130), "{signal}");
         assert_eq!(
             seen.first().map(String::as_str),
@@ -874,4 +855,97 @@ fn an_interrupted_run_prints_the_result_leaves_no_temporary_file_and_ends_with_1
         let left: Vec<_> = std::fs::read_dir(slurm.root.join("tmp")).unwrap().collect();
         assert!(left.is_empty(), "{signal}: {left:?}");
     }
+}
+
+/// 起動して、番号を読んで並べ直した後の、sbatch の終わりを待つところまで進める。返すのは子と、そこまでの行
+fn start_waiting(
+    mut cmd: Command,
+    pid_file: &Path,
+) -> (
+    std::process::Child,
+    Vec<String>,
+    std::io::Lines<BufReader<std::process::ChildStdout>>,
+) {
+    let _ = std::fs::remove_file(pid_file);
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut seen = Vec::new();
+    for line in lines.by_ref() {
+        let line = line.unwrap();
+        let next = line.starts_with("NEXT:");
+        seen.push(line);
+        if next {
+            break;
+        }
+    }
+    while !pid_file.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    (child, seen, lines)
+}
+
+fn kill(signal: &str, pid: &str) {
+    let status = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(pid)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn a_signal_ignored_at_start_stays_ignored_like_a_background_command_of_sh() {
+    let slurm = Slurm::new();
+    let pid_file = slurm.root.join("sbatch.pid");
+    // ジョブ制御の無いシェルが & で起動したコマンドと同じく、INT を無視して起動する
+    let mut sh = Command::new("sh");
+    sh.arg("-c")
+        .arg("trap '' INT; exec \"$0\" \"$@\"")
+        .arg(env!("CARGO_BIN_EXE_claude-hooks"))
+        .args(["script", "slurm-run"])
+        .args(with_purpose(&["-t", "5", "xlc-2G", "true"]));
+    slurm.prepare(
+        &mut sh,
+        &slurm.proj(),
+        &[("FAKE_SBATCH_PID", &sh_path(&pid_file))],
+    );
+    let (mut child, _, lines) = start_waiting(sh, &pid_file);
+    let pid = child.id().to_string();
+    kill("INT", &pid);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "無視した INT で終わった"
+    );
+    kill("TERM", &pid);
+    let rest: Vec<String> = lines.map(Result::unwrap).collect();
+    let code = child.wait().unwrap().code();
+    let sbatch = std::fs::read_to_string(&pid_file).unwrap();
+    kill("TERM", sbatch.trim());
+    assert_eq!(code, Some(130));
+    assert_eq!(
+        rest.last().map(String::as_str),
+        Some("RESULT: job=42 name=xlc-2G exit=130 state=unknown")
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn sbatch_ignores_the_terminal_interrupt_like_a_background_command_of_sh() {
+    let slurm = Slurm::new();
+    let mask_file = slurm.root.join("sigign");
+    let out = slurm.run(
+        &["-t", "5", "xlc-2G", "true"],
+        &[("FAKE_SBATCH_SIGIGN", &sh_path(&mask_file))],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let line = std::fs::read_to_string(&mask_file).unwrap();
+    let mask = u64::from_str_radix(line.trim().trim_start_matches("SigIgn:").trim(), 16).unwrap();
+    // INT は 2、QUIT は 3（ビットは番号 - 1）
+    assert_eq!(mask & 0b110, 0b110, "{line}");
 }
