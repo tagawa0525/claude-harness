@@ -47,7 +47,7 @@ assert_contains "$out" "SKIPPED: 0"
 it "slurm-history: sh から、--by-name でジョブ名ごとに集計する"
 out=$("$HISTORY" --by-name "$LOG")
 assert_eq 0 $?
-assert_contains "$out" "openmc-2A                    2    0:45:00    0:44:30    0.99      1.12"
+assert_contains "$out" "openmc-2A                    2    0:45:00    0:44:30    0.99      1.12        -"
 
 it "slurm-history: 読めない行は、行番号を出して exit 1"
 {

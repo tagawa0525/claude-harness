@@ -1032,7 +1032,6 @@ mod tests {
 
     #[test]
     fn by_name_gives_runs_averages_the_total_ratio_and_the_largest_ratio() {
-        // メモリの値の無いジョブだけのジョブ名の MAX_RSS は 0M（直すのは #375）
         let out = names(vec![
             done(
                 "73",
@@ -1066,7 +1065,7 @@ mod tests {
         );
         assert_eq!(
             row(&out, "openmc-2A"),
-            "openmc-2A                    2    0:45:00    0:44:30    0.99      1.12       0M"
+            "openmc-2A                    2    0:45:00    0:44:30    0.99      1.12        -"
         );
         assert!(out.contains("other") && !out.contains("gone"), "{out}");
         assert!(out.contains("SKIPPED: 1"), "{out}");
@@ -1094,7 +1093,7 @@ mod tests {
         ]);
         assert_eq!(
             row(&out, "a"),
-            "a                            2    0:10:00    0:05:00    0.50      0.50       0M"
+            "a                            2    0:10:00    0:05:00    0.50      0.50        -"
         );
         let untimed = names(vec![done(
             "1",
@@ -1106,7 +1105,7 @@ mod tests {
         )]);
         assert_eq!(
             row(&untimed, "b"),
-            "b                            1          -          -       -         -       0M"
+            "b                            1          -          -       -         -        -"
         );
     }
 
@@ -1487,6 +1486,55 @@ mod tests {
             "{out}"
         );
         assert!(row(&out, "lattice").ends_with("2.0G"), "{out}");
+    }
+
+    #[test]
+    fn by_name_memory_is_the_largest_of_the_jobs_with_a_value_and_a_dash_without_any() {
+        let job = |id: &str, name: &str| {
+            sacct_job(id, name, "2026-11-01T10:00:00", "2026-11-01T10:30:00")
+        };
+        let mut accounting = accounted(
+            job("201", "none"),
+            Allocation::Exclusive,
+            &[MaxRss::Missing],
+        );
+        accounting.extend(accounted(
+            job("202", "mixed"),
+            Allocation::Exclusive,
+            &[MaxRss::Mib(300.0)],
+        ));
+        accounting.extend(accounted(
+            job("203", "mixed"),
+            Allocation::Exclusive,
+            &[MaxRss::Missing],
+        ));
+        accounting.extend(accounted(
+            job("204", "zero"),
+            Allocation::Exclusive,
+            &[MaxRss::Mib(0.0)],
+        ));
+        let completions = lines(vec![
+            done(
+                "100",
+                "none",
+                Some(60),
+                "2026-10-05T10:00:00",
+                "2026-10-05T10:10:00",
+                "timed",
+            ),
+            done(
+                "101",
+                "zero",
+                Some(60),
+                "2026-10-05T10:00:00",
+                "2026-10-05T10:10:00",
+                "timed",
+            ),
+        ]);
+        let out = table(&accounting, &completions, true).unwrap();
+        assert!(row(&out, "none").ends_with("        -"), "{out}");
+        assert!(row(&out, "mixed").ends_with("     300M"), "{out}");
+        assert!(row(&out, "zero").ends_with("       0M"), "{out}");
     }
 
     #[test]
