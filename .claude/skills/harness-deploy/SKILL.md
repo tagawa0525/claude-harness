@@ -55,6 +55,7 @@ description: claude-harness の PR をマージした後の配備。post-merge-c
 - `Harness contract check failed` で、出力に `✗` の行がある: nixfiles の `modules/home/parts/tests/harness-contract.sh` が、
   進めた lock の版のハーネスを動かして、nixfiles との約束を確かめている（確かめる約束はそのスクリプトの冒頭）。`✗` の行が
   食い違い。ハーネスの側が約束を変えたなら nixfiles を合わせる PR を先に出し、検査の側の前提が古ければ検査を直す
+  （マージの前に同じ検査を実行するのは `scripts/check-nixfiles-contract.sh`。直した後の確認にも使える）
 - 同じ文言で `✗` の行が無い: 進めた lock で、この機械の構成を評価できない（nix の error の行が原因）
 - ビルドの中のテストの失敗: 手元の `run-checks.sh` と CI が通っていれば、Nix のサンドボックスでだけ落ちる形（PATH に git が無い、
   ホームに辞書が無いなど）を疑う。同じ失敗は `nix flake check` で再現する
