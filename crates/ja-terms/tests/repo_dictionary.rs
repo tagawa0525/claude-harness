@@ -349,7 +349,13 @@ fn an_unreadable_repository_dictionary_stops_every_command() {
             &["commit-msg", file.to_str().unwrap()],
             &["staged"],
         ] {
-            let out = repo.ja_terms(&repo.top(), args, "feat: 足す\n\n本文。\n");
+            // 標準入力を読むのは message だけ。ほかは読まずに止まるので、入力を渡すと閉じた管に書いて run が落ちうる
+            let stdin = if args == ["message"] {
+                "feat: 足す\n\n本文。\n"
+            } else {
+                ""
+            };
+            let out = repo.ja_terms(&repo.top(), args, stdin);
             let said = format!("{}{}", stdout(&out), stderr(&out));
             assert_eq!(out.status.code(), Some(2), "{args:?} {yaml:?}: {said}");
             assert!(
