@@ -15,8 +15,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-/// 標準エラーに 1 行書く。SIGPIPE を無視にしているので、eprintln! は読む側が閉じた標準エラーで panic し、後片付けの
-/// 前に終わる。書けなければ捨てる
+/// 標準エラーに 1 行書き、書けなければ捨てる。eprintln! は読む側が閉じた標準エラーで panic する（Unix は SIGPIPE を
+/// 無視にしているため、Windows は SIGPIPE が無いため）
 macro_rules! warn {
     ($($arg:tt)*) => {{
         let _ = writeln!(std::io::stderr(), $($arg)*);
@@ -261,9 +261,18 @@ pub fn main(args: &[String]) -> i32 {
         warn!("ERROR: 中断のときの後片付けを登録できない（一時の worktree を消せない）: {e}");
         return ENVIRONMENT;
     }
-    let code = run(&req, &cleanup);
-    cleanup.remove();
-    code
+    // panic で抜けても片付ける
+    let _remove = RemoveAtEnd(&cleanup);
+    run(&req, &cleanup)
+}
+
+/// 抜けるときに一時のディレクトリを消す（中断のときは、中断を受けたスレッドが消してプロセスを終える）
+struct RemoveAtEnd<'a>(&'a Cleanup);
+
+impl Drop for RemoveAtEnd<'_> {
+    fn drop(&mut self) {
+        self.0.remove();
+    }
 }
 
 fn run(req: &Request, cleanup: &Cleanup) -> i32 {
@@ -368,17 +377,15 @@ exec "$@""#,
         ]);
         cmd.args(command);
         // noglob は、検査のコマンドを起動する sh にだけ効かせ、検査のコマンドには呼んだ側の MSYS を戻して渡す
-        let msys = std::env::var_os("MSYS");
-        let mut noglob = msys.clone().unwrap_or_default();
-        noglob.push(if noglob.is_empty() {
-            "noglob"
-        } else {
-            " noglob"
-        });
-        cmd.env("MSYS", noglob);
-        match msys {
-            Some(msys) => cmd.env("CHECK_EACH_COMMIT_MSYS", msys),
-            None => cmd.env_remove("CHECK_EACH_COMMIT_MSYS"),
+        match std::env::var_os("MSYS") {
+            Some(msys) => {
+                let mut noglob = msys.clone();
+                noglob.push(" noglob");
+                cmd.env("MSYS", noglob).env("CHECK_EACH_COMMIT_MSYS", msys)
+            }
+            None => cmd
+                .env("MSYS", "noglob")
+                .env_remove("CHECK_EACH_COMMIT_MSYS"),
         };
         (cmd, "sh")
     };
