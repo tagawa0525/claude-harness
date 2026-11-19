@@ -78,6 +78,11 @@ cd "$work/nixfiles" || die "一時の worktree に移れません"
 echo "==> nixfiles（$ref $(git rev-parse --short HEAD)）の lock のハーネスを、$repo の ${head:0:8} に向ける"
 nix flake lock --option warn-dirty false --override-input claude-harness "git+file://$repo?rev=$head" ||
   die "lock のハーネスをこの版に向けられません（nix flake lock の失敗。上の nix の error の行が原因）"
+# nix は、上書きする input が flake に無いと、警告だけで lock を変えずに 0 で終わる。前の lock の版を検査して OK を
+# 出さないよう、向いた先を確かめる
+locked=$(jq -r '.nodes["claude-harness"].locked.rev // ""' flake.lock) || die "nixfiles の flake.lock を読めません"
+[[ "$locked" == "$head" ]] ||
+  die "lock のハーネスがこの版に向いていません（lock は ${locked:-なし}）。nixfiles の flake の input の名前が claude-harness でなくなっていれば、このスクリプトを合わせてください"
 
 if bash "$contract" "$host" 2>&1 | tee "$work/contract.out"; then
   echo "OK: nixfiles の検査が、${head:0:8} の版で通りました"
