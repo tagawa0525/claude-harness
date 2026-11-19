@@ -768,6 +768,27 @@ assert_eq 0 $?
 assert_not_contains "$out" "NOTE: claude-sync が要る"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: 配る元の claude を持たない古い版のハーネスでは、.claude の下の変更に claude-sync の NOTE を出す"
+setup_claude_sync_source "$TEST_ROOT/cleanup14c"
+advance_origin_main "$TEST_ROOT/cleanup14c/app" .claude/skills/x/SKILL.md >/dev/null
+cd "$TEST_ROOT/cleanup14c/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: claude-sync が要る"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: ハーネスで pull で共通の辞書（crates/ja-terms/prh.yml）が変われば、claude-sync も NOTE で知らせる"
+setup_claude_sync_source "$TEST_ROOT/cleanup14d"
+commit_file "$TEST_ROOT/cleanup14d/app" claude/CLAUDE.md "docs: claude"
+git -C "$TEST_ROOT/cleanup14d/app" push -q origin main
+advance_origin_main "$TEST_ROOT/cleanup14d/app" crates/ja-terms/prh.yml >/dev/null
+cd "$TEST_ROOT/cleanup14d/app" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "NOTE: lock の更新と rebuild が要る"
+assert_contains "$out" "NOTE: claude-sync が要る"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: ハーネスで pull で nix の下（モジュール）か claude-settings.json が変わっても、lock の更新と rebuild が要ると NOTE で知らせる"
 i=0
 for path in nix/git-hooks.nix claude-settings.json; do
