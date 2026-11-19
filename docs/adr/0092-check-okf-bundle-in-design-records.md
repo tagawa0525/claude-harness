@@ -58,7 +58,7 @@ OKF は未知のキーと値を許す（SPEC §11）。
     `okf_version`、`title`、`description`、`license` と拡張のキー（§8.1）。`"0.2"` のバンドルでは `okf_version` だけ
   - `index.md` の `* [題](パス) - 説明` の行のリンク先が実在し、同じディレクトリの文書と下位のディレクトリがすべて載っている。
     リンク先はパーセントエンコードを復号し、先頭が `/` ならバンドルのルートから、ほかは索引のディレクトリから解く（§6）。
-    バンドルのルートの外に解けるリンクは、URL と同じく外部のリンクとして見ない
+    バンドルのルートの外と、`.` で始まるパスの下に解けるリンクは、URL と同じく外部のリンクとして見ない
   - `log.md` はフロントマターを持たず（§9）、日付の見出しが `YYYY-MM-DD`
 - 索引の題と説明が、リンク先のフロントマターの `title` と `description` と違うときは注意（warning）にする。ADR は
   フロントマターに `title` を持たないので、題は最初の 1 段目の見出しと比べる
@@ -86,7 +86,8 @@ OKF は未知のキーと値を許す（SPEC §11）。
   `check_accepts_bundle_metadata_in_a_v0_3_root_index_and_index_keeps_it`、`check_rejects_an_okf_version_it_does_not_know`、
   `check_rejects_front_matter_in_a_log`、`check_and_index_leave_dot_paths_out_of_the_bundle`、
   `check_resolves_index_links_from_the_index_directory_and_slash_from_the_bundle_root`、
-  `check_treats_index_links_outside_the_bundle_as_external`、`index_percent_encodes_link_targets_and_check_decodes_them`）
+  `check_treats_index_links_outside_the_bundle_as_external`、`check_treats_index_links_to_dot_paths_as_outside_the_bundle`、
+  `check_reads_an_okf_version_followed_by_a_yaml_comment`、`index_percent_encodes_link_targets_and_check_decodes_them`）
 - このリポジトリの `docs/` で `design-records check` が違反なしで通る
 
 ## 各案の長所と短所
