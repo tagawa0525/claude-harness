@@ -7,6 +7,12 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
+/// 共通の辞書（ビルドに埋めず、ja-terms はホームの下か、この環境変数のパスから読む。ADR-0097）。テストは crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    "JA_TERMS_COMMON_DICTIONARY",
+    concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml"),
+);
+
 /// 崩れた語（辞書の最初の規則の、名詞の用法の語。直す語は「確認」）
 const BROKEN: &str = concat!("確か", "め");
 
@@ -17,6 +23,7 @@ fn broken(text: &str) -> String {
 /// メッセージを標準入力で ja-terms message に渡す
 fn message(text: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ja-terms"))
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
         .arg("message")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -39,6 +46,7 @@ fn commit_msg(name: &str, text: &str) -> Output {
     let path = dir.join(name);
     std::fs::write(&path, text).unwrap();
     Command::new(env!("CARGO_BIN_EXE_ja-terms"))
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
         .arg("commit-msg")
         .arg(&path)
         .output()
