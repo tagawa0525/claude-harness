@@ -3,7 +3,7 @@
 //! 使い方:
 //!
 //! - `claude-setup sync [<ソースのリポジトリ>]`: ハーネスの claude を ~/.claude に同期する（[`sync`]）
-//! - `claude-setup settings --static <JSON> [--pre-tool-use <バイナリ>] [--stop <バイナリ>] [--legacy <ファイル名>]...`:
+//! - `claude-setup settings --static <JSON> [--pre-tool-use <バイナリ>] [--stop <バイナリ>] [--user-prompt-submit <バイナリ>] [--legacy <ファイル名>]...`:
 //!   ~/.claude/settings.json に静的な設定を重ね、ハーネスの hook を登録する（[`settings`]）
 //! - `claude-setup git-hooks --bin <claude-hooks>`: グローバルの git hook を置き、core.hooksPath を向ける（[`git_hooks`]）
 //!
@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "Usage: claude-setup sync [source-repo]
-       claude-setup settings --static <json> [--pre-tool-use <binary>] [--stop <binary>] [--legacy <file-name>]...
+       claude-setup settings --static <json> [--pre-tool-use <binary>] [--stop <binary>] [--user-prompt-submit <binary>] [--legacy <file-name>]...
        claude-setup git-hooks --bin <claude-hooks>";
 
 fn main() -> ExitCode {
@@ -89,7 +89,8 @@ fn fail(lines: &[String]) -> ExitCode {
 
 /// settings の引数（--static は 1 つ要る。どのオプションも値を 1 つ取る）
 fn settings_options(args: &[OsString]) -> Option<settings::Options> {
-    let (mut statics, mut pre_tool_use, mut stop, mut legacy) = (None, None, None, Vec::new());
+    let (mut statics, mut pre_tool_use, mut stop, mut user_prompt_submit, mut legacy) =
+        (None, None, None, None, Vec::new());
     let mut args = args.iter();
     while let Some(option) = args.next() {
         let value = args.next()?;
@@ -97,6 +98,9 @@ fn settings_options(args: &[OsString]) -> Option<settings::Options> {
             "--static" => statics = Some(PathBuf::from(value)),
             "--pre-tool-use" => pre_tool_use = Some(value.to_string_lossy().into_owned()),
             "--stop" => stop = Some(value.to_string_lossy().into_owned()),
+            "--user-prompt-submit" => {
+                user_prompt_submit = Some(value.to_string_lossy().into_owned())
+            }
             "--legacy" => legacy.push(value.to_string_lossy().into_owned()),
             _ => return None,
         }
@@ -105,6 +109,7 @@ fn settings_options(args: &[OsString]) -> Option<settings::Options> {
         statics: statics?,
         pre_tool_use,
         stop,
+        user_prompt_submit,
         legacy,
     })
 }

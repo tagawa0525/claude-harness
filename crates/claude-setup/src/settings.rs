@@ -1,4 +1,5 @@
-//! `claude-setup settings --static <JSON> [--pre-tool-use <バイナリ>] [--stop <バイナリ>] [--legacy <ファイル名>]...`:
+//! `claude-setup settings --static <JSON> [--pre-tool-use <バイナリ>] [--stop <バイナリ>] [--user-prompt-submit <バイナリ>]
+//! [--legacy <ファイル名>]...`:
 //! ~/.claude/settings.json に、ハーネスの静的な設定を重ね、ハーネスの hook の登録を 1 件ずつに揃える（ADR-0084）。
 //!
 //! - 静的な設定: JSON のファイルのいちばん上のキーごとに置き換える（ほかのキーとその順は残す）
@@ -9,7 +10,12 @@
 //! - Stop: `--stop` のバイナリ（claude-hooks）を、引数 `stop`（自動メモリの退避。ADR-0089）で exec form で 1 件
 //!   だけ登録する。前の claude-hooks stop の登録と、前の退避のバイナリ claude-memory-backup の登録を外す。async に
 //!   しないのは、async の hook の失敗の文が利用者に見えず（Claude にだけ次のターンで渡る）、退避の失敗に気づけないため
-//! - UserPromptSubmit: 現在時刻を 1 行出すコマンドを 1 件だけ登録する（どちらの OS も同じ文字列の shell form）
+//! - UserPromptSubmit: 現在時刻を 1 行出すコマンドを 1 件だけ登録する（どちらの OS も同じ文字列の shell form）。
+//!   `--user-prompt-submit` のバイナリ（claude-hooks）を渡すと、同じ 1 件の shell form の `date` の後に、引数
+//!   `user-prompt-submit`（既定ブランチの進みの知らせ。#363）でそのバイナリも呼ぶ。ほかのバイナリの hook と違い exec form に
+//!   しないのは、`date` の行を Windows でも Git Bash の `date` のまま出すため（UserPromptSubmit はプロンプトごとで、Git Bash の
+//!   起動は前から `date` が払っている）。バイナリの終了コードは 1 に寄せる（UserPromptSubmit の 2 はプロンプトを止めて消し、
+//!   前の版の claude-hooks は知らないサブコマンドに 2 で終わる）
 //! - 渡さない hook の登録には触らない。読めないか壊れた settings.json は書き換えずに止める
 
 use std::fs;
@@ -28,14 +34,18 @@ const PRE_TOOL_USE_TIMEOUT: u64 = 60;
 const STOP_TIMEOUT: u64 = 60;
 /// 報告とメモリに書く時刻を推測しないため、ターンごとに現在時刻を 1 行、文脈に入れる（標準出力が文脈に足される）
 const PROMPT_DATE: &str = "date '+現在時刻: %F %H:%M %Z'";
-/// 現在時刻の登録を見分ける先頭（コマンドを変えても古い登録を消せるように）
+/// 現在時刻の登録を見分ける先頭（コマンドを変えても古い登録を消せるように）。バイナリも呼ぶ登録も同じ先頭で始まる
 const PROMPT_DATE_PREFIX: &str = "date '+現在時刻";
+/// 知らせは git を 4 回まで呼ぶだけで、手元で 1 回 0.01 秒ほど（2026-11-20 にこのリポジトリの clone で測定。#363）。
+/// git が止まってもプロンプトを長く待たせない
+const PROMPT_TIMEOUT: u64 = 10;
 
 /// 登録するもの
 pub struct Options {
     pub statics: PathBuf,
     pub pre_tool_use: Option<String>,
     pub stop: Option<String>,
+    pub user_prompt_submit: Option<String>,
     pub legacy: Vec<String>,
 }
 
@@ -94,7 +104,7 @@ pub fn run(home: &Path, options: &Options) -> Result<(), String> {
         &path,
         hooks,
         "UserPromptSubmit",
-        json!({"hooks": [{"type": "command", "command": PROMPT_DATE}]}),
+        prompt_entry(options.user_prompt_submit.as_deref()),
         |hook| command(hook).is_some_and(|c| c.starts_with(PROMPT_DATE_PREFIX)),
     )?;
     if let Some(bin) = &options.stop {
@@ -107,6 +117,18 @@ pub fn run(home: &Path, options: &Options) -> Result<(), String> {
         })?;
     }
     write_json(&path, &Value::Object(settings))
+}
+
+/// UserPromptSubmit の登録。bin があれば `date` の後に呼ぶ（sh と Git Bash の単一引用符で括り、`'` は閉じて書き直す）
+fn prompt_entry(bin: Option<&str>) -> Value {
+    match bin {
+        None => json!({"hooks": [{"type": "command", "command": PROMPT_DATE}]}),
+        Some(bin) => {
+            let quoted = format!("'{}'", bin.replace('\'', r"'\''"));
+            let command = format!("{PROMPT_DATE}; {quoted} user-prompt-submit || exit 1");
+            json!({"hooks": [{"type": "command", "command": command, "timeout": PROMPT_TIMEOUT}]})
+        }
+    }
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {

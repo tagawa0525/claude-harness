@@ -223,7 +223,8 @@ fn only_first_parent_subjects_are_counted() {
     let out = work.stdout(SESSION, &repo);
     assert!(out.contains("Merge: feat/a"), "{out}");
     assert!(!out.contains("feat: inner"), "{out}");
-    assert!(!out.contains("ほか"), "{out}");
+    // 「ほか N 件」の行は無い（見出しの「ほかのセッション」は数えない）
+    assert!(!out.contains("- ほか"), "{out}");
 }
 
 #[test]
