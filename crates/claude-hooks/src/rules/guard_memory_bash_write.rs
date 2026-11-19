@@ -380,6 +380,9 @@ mod tests {
             "echo x >> ~/.claude/projects/-work-repo/memory/../notes.md",
             "echo x >> $UNKNOWN/MEMORY.md",
             "ssh r995 'echo x >> ~/.claude/projects/-work-repo/memory/MEMORY.md'",
+            // クォートした `~` を bash は展開せず、cwd の下の `~` というディレクトリに書く
+            "echo x >> \"~/.claude/projects/-work-repo/memory/MEMORY.md\"",
+            "rm '~/.claude/projects/-work-repo/memory/a.md'",
         ] {
             assert!(!denied(src), "{src}");
         }
