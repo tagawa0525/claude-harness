@@ -102,6 +102,7 @@ mod guard_git_merge;
 mod guard_git_push;
 mod guard_git_reset_hard;
 mod guard_git_stash;
+mod guard_memory_bash_write;
 mod guard_sbatch;
 mod guard_track_remote;
 mod pre_git_merge_check;
@@ -119,6 +120,7 @@ mod warn_large_commit;
 pub fn all() -> &'static [&'static dyn Rule] {
     &[
         &block_claude_generated_write::BlockClaudeGeneratedWrite,
+        &guard_memory_bash_write::GuardMemoryBashWrite,
         &require_background_wait::RequireBackgroundWait,
         &require_pipefail::RequirePipefail,
         &guard_sbatch::GuardSbatch,
