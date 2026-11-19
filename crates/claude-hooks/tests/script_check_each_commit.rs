@@ -294,7 +294,6 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
 /// 引数のワイルドカードを展開しない。展開を止める MSYS の設定は、検査のコマンドに渡さない）
 #[cfg(windows)]
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the_arguments_as_given()
  {
     let repo = Repo::empty();
@@ -686,7 +685,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_reader_that_closes_stderr_early_still_gets_the_temporary_worktree_removed() {
         // `check-each-commit.sh ... 2>&1 | head -1` と同じく、標準エラーの最初の行を読んで閉じる。閉じた後に、
         // 検査のコマンドが見つからないという文を書かせる（2 つ目のコミットで check.sh を消す）

@@ -15,6 +15,14 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+/// 標準エラーに 1 行書く。SIGPIPE を無視にしているので、eprintln! は読む側が閉じた標準エラーで panic し、後片付けの
+/// 前に終わる。書けなければ捨てる
+macro_rules! warn {
+    ($($arg:tt)*) => {{
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 /// 使い方の誤り（引数、base を解決できない、コミットが無い）
 const USAGE: i32 = 2;
 /// 実行時の環境の失敗（rev-list、一時のディレクトリ、worktree の作成、checkout、clean、標準出力への書き込み）
@@ -95,7 +103,7 @@ impl Temp {
         let _ = std::fs::remove_dir_all(&self.dir);
         let _ = git(&["worktree", "prune"]).status();
         if std::fs::symlink_metadata(&self.dir).is_ok() {
-            eprintln!("一時ディレクトリを消せませんでした: {}", self.dir.display());
+            warn!("一時ディレクトリを消せませんでした: {}", self.dir.display());
         }
     }
 }
@@ -243,14 +251,14 @@ fn status_ok(cleanup: &Cleanup, cmd: &mut Command) -> bool {
 
 pub fn main(args: &[String]) -> i32 {
     let Some(req) = parse_args(args) else {
-        eprintln!("Usage: check-each-commit.sh <base> -- <コマンド…>");
+        warn!("Usage: check-each-commit.sh <base> -- <コマンド…>");
         return USAGE;
     };
     crate::interrupt::broken_pipe_as_error();
     let cleanup = Arc::new(Cleanup::default());
     let shared = Arc::clone(&cleanup);
     if let Err(e) = crate::interrupt::cleanup_on_interrupt(move || shared.on_interrupt()) {
-        eprintln!("ERROR: 中断のときの後片付けを登録できない（一時の worktree を消せない）: {e}");
+        warn!("ERROR: 中断のときの後片付けを登録できない（一時の worktree を消せない）: {e}");
         return ENVIRONMENT;
     }
     let code = run(&req, &cleanup);
@@ -265,19 +273,17 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
         git(&["rev-parse", "--verify", "-q", &format!("{base}^{{commit}}")]).stdout(Stdio::null()),
     );
     if !resolved {
-        eprintln!("base を解決できません: {base}");
+        warn!("base を解決できません: {base}");
         return USAGE;
     }
     let range = format!("{base}..HEAD");
     let Some(list) = git_output(cleanup, &["rev-list", "--topo-order", "--reverse", &range]) else {
-        eprintln!(
-            "git rev-list に失敗しました（shallow clone や壊れたオブジェクトの可能性）: {range}"
-        );
+        warn!("git rev-list に失敗しました（shallow clone や壊れたオブジェクトの可能性）: {range}");
         return ENVIRONMENT;
     };
     let commits: Vec<&str> = list.lines().filter(|l| !l.is_empty()).collect();
     if commits.is_empty() {
-        eprintln!("{range} にコミットがありません");
+        warn!("{range} にコミットがありません");
         return USAGE;
     }
 
@@ -285,7 +291,7 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
     let dir = match make_temp_dir(&root) {
         Ok(dir) => dir,
         Err(e) => {
-            eprintln!("一時ディレクトリを作れません: {}（{e}）", root.display());
+            warn!("一時ディレクトリを作れません: {}（{e}）", root.display());
             return ENVIRONMENT;
         }
     };
@@ -323,7 +329,7 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
         // 検査の副産物（ビルド結果など）が次のコミットに残らないようにする
         let cleaned = status_ok(cleanup, git(&["-C"]).arg(&wt).args(["clean", "-qffdx"]));
         if !cleaned {
-            eprintln!("git clean に失敗したので {sha} を検査しません");
+            warn!("git clean に失敗したので {sha} を検査しません");
             return ENVIRONMENT;
         }
         let status = cleanup.child(|| inspect(req.command, &wt));
@@ -336,7 +342,7 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
             if e.kind() == std::io::ErrorKind::BrokenPipe {
                 return BROKEN_PIPE;
             }
-            eprintln!("標準出力に書けません: {e}");
+            warn!("標準出力に書けません: {e}");
             return ENVIRONMENT;
         }
     }
@@ -353,10 +359,27 @@ fn inspect(command: &[String], wt: &Path) -> i32 {
     #[cfg(windows)]
     let (mut cmd, program) = {
         let mut cmd = Command::new("sh");
-        cmd.args(["-c", "exec \"$@\"", "check-each-commit.sh"]);
+        cmd.args([
+            "-c",
+            r#"if [ -n "${CHECK_EACH_COMMIT_MSYS+set}" ]; then MSYS=$CHECK_EACH_COMMIT_MSYS; export MSYS; else unset MSYS; fi
+unset CHECK_EACH_COMMIT_MSYS
+exec "$@""#,
+            "check-each-commit.sh",
+        ]);
         cmd.args(command);
-        let msys = std::env::var("MSYS").unwrap_or_default();
-        cmd.env("MSYS", format!("{msys} noglob").trim_start());
+        // noglob は、検査のコマンドを起動する sh にだけ効かせ、検査のコマンドには呼んだ側の MSYS を戻して渡す
+        let msys = std::env::var_os("MSYS");
+        let mut noglob = msys.clone().unwrap_or_default();
+        noglob.push(if noglob.is_empty() {
+            "noglob"
+        } else {
+            " noglob"
+        });
+        cmd.env("MSYS", noglob);
+        match msys {
+            Some(msys) => cmd.env("CHECK_EACH_COMMIT_MSYS", msys),
+            None => cmd.env_remove("CHECK_EACH_COMMIT_MSYS"),
+        };
         (cmd, "sh")
     };
     #[cfg(not(windows))]
@@ -374,7 +397,7 @@ fn inspect(command: &[String], wt: &Path) -> i32 {
     match cmd.status() {
         Ok(status) => crate::child::exit_code(status),
         Err(e) => {
-            eprintln!("check-each-commit.sh: {program}: {e}");
+            warn!("check-each-commit.sh: {program}: {e}");
             spawn_failure_code(e.kind())
         }
     }
