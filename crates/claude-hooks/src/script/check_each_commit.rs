@@ -337,19 +337,23 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
 /// する）、標準入力を渡さない（パイプラインやエージェントのシェルの入力を食わない）
 fn inspect(command: &[String], wt: &Path) -> i32 {
     // Windows では、コマンドを呼んだ Git Bash の sh を通して起動する。CreateProcess は .sh と .cmd を起動せず、相対の
-    // パス（./scripts/check.sh）を worktree でなく呼んだ側の作業ディレクトリから引く
+    // パス（./scripts/check.sh）を worktree でなく呼んだ側の作業ディレクトリから引く。ネイティブの exe から起動された
+    // MSYS のプログラムは、引数のワイルドカードを自分で展開するので、MSYS の noglob で止める（呼んだ Git Bash は、
+    // 引数を展開した後で渡している）
     #[cfg(windows)]
-    let mut cmd = {
+    let (mut cmd, program) = {
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "exec \"$@\"", "check-each-commit.sh"]);
         cmd.args(command);
-        cmd
+        let msys = std::env::var("MSYS").unwrap_or_default();
+        cmd.env("MSYS", format!("{msys} noglob").trim_start());
+        (cmd, "sh")
     };
     #[cfg(not(windows))]
-    let mut cmd = {
+    let (mut cmd, program) = {
         let mut cmd = Command::new(&command[0]);
         cmd.args(&command[1..]);
-        cmd
+        (cmd, command[0].as_str())
     };
     cmd.current_dir(wt)
         .stdin(Stdio::null())
@@ -360,7 +364,7 @@ fn inspect(command: &[String], wt: &Path) -> i32 {
     match cmd.status() {
         Ok(status) => crate::child::exit_code(status),
         Err(e) => {
-            eprintln!("check-each-commit.sh: {}: {e}", command[0]);
+            eprintln!("check-each-commit.sh: {program}: {e}");
             spawn_failure_code(e.kind())
         }
     }

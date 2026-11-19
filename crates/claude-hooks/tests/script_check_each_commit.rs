@@ -290,7 +290,6 @@ fn a_temporary_directory_that_cannot_be_made_ends_with_3() {
 /// 引数のワイルドカードを展開しない）
 #[cfg(windows)]
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the_arguments_as_given()
  {
     let repo = Repo::empty();
