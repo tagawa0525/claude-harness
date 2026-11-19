@@ -1,6 +1,6 @@
 ---
 type: ADR
-status: proposed
+status: accepted
 date: 2026-11-19
 requires: [ADR-0045, ADR-0084, ADR-0085, ADR-0093, ADR-0096]
 supersedes: []
@@ -165,15 +165,19 @@ history-rewrite の記録:
 - 悪い点: rebuild は flake の lock の版の辞書を配るので、`claude-sync` で入れた新しい辞書を、lock の古い版で上書きする
   （スキルと CLAUDE.md と同じ）
 - `HOME_FILES` から外しても、配った辞書は消えない（ADR-0093 の帰結と同じ）
-- ADR-0085 と ADR-0096 の背景の「ビルドに埋めた共通の辞書」は、この ADR の前の事実になった（両方の「## 変更」に書く）
+- ADR-0085 と ADR-0096 の背景の「ビルドに埋めた共通の辞書」は、この ADR の前の事実になった（ADR-0096 の「## 変更」と、
+  proposed の ADR-0085 の帰結に書いた）
 
 ### 確認
 
 - `crates/ja-terms/tests/common_dictionary.rs`: 4 つのサブコマンドが `JA_TERMS_COMMON_DICTIONARY` の辞書と、無ければ
   ホームの下の `.config/ja-terms/prh.yml` を読み、辞書が無い、YAML が読めない、specs が合わないときに 2 で終わり、
   無いときの理由に `claude-sync` を書き、`--dictionary` では共通の辞書を読まないこと
-- `crates/claude-setup/tests/sync.rs`: `claude-setup sync` が `crates/ja-terms/prh.yml` を `~/.config/ja-terms/prh.yml` に置くこと
-- `crates/history-rewrite/tests/`: `run` が共通の辞書を `DIR/common-prh.yml` にコピーして記録し、`run` の後に共通の辞書を
-  変えても `sync-worktrees` がコピーの規則で直し、共通の辞書が無ければ止まること
-- 一時のホームで、辞書に規則を 1 つ足して `claude-setup sync` だけを流すと、ビルドし直さない ja-terms がその規則を当てる
-  こと（実装の PR の手順と出力）
+- `crates/claude-setup/tests/sync.rs`: `claude-setup sync` が `crates/ja-terms/prh.yml` を `~/.config/ja-terms/prh.yml` に置き、
+  引数なしの同期が辞書の書きかけで止まること
+- `crates/history-rewrite/tests/sync.rs`: `run` が共通の辞書を `DIR/common-prh.yml` にコピーして記録し、`run` の後に共通の
+  辞書を変えても `sync-worktrees` がコピーの規則で直し、共通の辞書が無ければ作業ディレクトリを作らずに止まること
+- `nix/tests/ja-terms.sh`: 差し替えた HOME に home-files の `claude-sync` で辞書を配って本物の git hook の検査を流し、規則を
+  足したソースから `claude-sync` だけで配り直すと、ビルドし直さない ja-terms がその規則で止め、配った辞書を消すと
+  `claude-sync` を示して 2 で止まること（2026-11-19 に 407 件が通った）。`nix/tests/` のほかの本物の git hook でコミットする
+  9 本は、辞書を渡さないと「共通の辞書が無い」で落ち、渡すと通った
