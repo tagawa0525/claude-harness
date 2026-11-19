@@ -125,10 +125,10 @@ fn staged_dictionary(top: &Path) -> Result<Dictionary, Failure> {
         Some(mode) if is_regular(&mode) => {
             let yaml = git(Some(top), &["show", &format!(":{REPO_DICTIONARY}")])?;
             let name = format!("{REPO_DICTIONARY}（ステージした版）");
-            Some(
-                Dictionary::parse(&String::from_utf8_lossy(&yaml), &name)
-                    .map_err(|e| Failure(e.to_string()))?,
-            )
+            // 作業ツリーの辞書（Dictionary::load）と同じく、UTF-8 でなければ読めないとして止める
+            let yaml = String::from_utf8(yaml)
+                .map_err(|e| Failure(format!("{name}: 読めない: UTF-8 でない（{e}）")))?;
+            Some(Dictionary::parse(&yaml, &name).map_err(|e| Failure(e.to_string()))?)
         }
         Some(mode) => {
             return Err(Failure(format!(

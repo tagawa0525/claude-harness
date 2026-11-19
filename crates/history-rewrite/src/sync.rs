@@ -580,7 +580,16 @@ fn recorded_words(given: &Words, workdir: &Path) -> Result<Words, Stop> {
         Err(e) => return Err(Stop(format!("{}: 読めない: {e}", path.display()))),
     };
     let recorded = Words::parse_record(&text, &path.display().to_string())?;
-    if given.is_empty() || given.resolved()?.same(&recorded) {
+    if given.is_empty() {
+        return Ok(recorded);
+    }
+    // 辞書を渡さない指定では、run は --source の作業ツリーからリポジトリの辞書を見つけて記録した。sync-worktrees は
+    // --source を持たないので、同じ指定なら記録のリポジトリの辞書を見つけたものとみなす
+    let mut given = given.clone();
+    if given.dictionaries.is_empty() && given.repo_dictionaries.is_empty() {
+        given.repo_dictionaries = recorded.repo_dictionaries.clone();
+    }
+    if given.resolved()?.same(&recorded) {
         return Ok(recorded);
     }
     Err(Stop(format!(
