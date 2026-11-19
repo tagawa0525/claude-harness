@@ -568,8 +568,8 @@ fn stacked_prs_reason(
         .collect();
     Some(format!(
         "head のブランチ {head_ref} を base にした開いている PR があります（{}）。--delete-branch でマージすると {head_ref} が消え、\
-         GitHub はそれを base にした開いている PR を閉じます。閉じた PR は base を付け替えられず、出し直すしかありません。\
-         先に次のコマンドで上の PR の base を付け替えてから、マージしてください:\n{}",
+         GitHub はそれを base にした開いている PR を閉じます。閉じた PR は、消えたブランチを戻さない限り開き直せず、base を付け替えられません。\
+         先に次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、マージしてください:\n{}",
         listed.join(", "),
         commands.join("\n")
     ))
