@@ -304,21 +304,33 @@ fn a_relative_shell_script_of_the_commit_runs_in_the_temporary_worktree_with_the
         &format!("#!/bin/sh\nprintf '%s\\n' \"$1\" \"$(pwd)\" \"${{MSYS-unset}}\" >> '{log}'"),
         "feat: add check.sh",
     );
-    let out = repo.run(&["main", "--", "./check.sh", "*.sh"]);
-    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    let ran = std::fs::read_to_string(repo.root.join("ran.log")).unwrap();
-    let lines: Vec<&str> = ran.lines().collect();
-    assert_eq!(lines.len(), 3, "{ran}");
-    assert_eq!(lines[0], "*.sh", "{ran}");
-    assert!(lines[1].ends_with("/wt"), "{ran}");
-    let msys = std::env::var("MSYS").unwrap_or_else(|_| "unset".to_string());
-    assert_eq!(lines[2], msys, "{ran}");
+    // 呼んだ側の MSYS が無いときと、あるときの両方で、検査のコマンドはその MSYS を受ける
+    for msys in [None, Some("winsymlinks:nativestrict")] {
+        let _ = std::fs::remove_file(repo.root.join("ran.log"));
+        let mut cmd = repo.command(&["main", "--", "./check.sh", "*.sh"]);
+        match msys {
+            Some(value) => cmd.env("MSYS", value),
+            None => cmd.env_remove("MSYS"),
+        };
+        let out = cmd.output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{msys:?}: {}", stderr(&out));
+        let ran = std::fs::read_to_string(repo.root.join("ran.log")).unwrap();
+        let lines: Vec<&str> = ran.lines().collect();
+        assert_eq!(lines.len(), 3, "{msys:?}: {ran}");
+        assert_eq!(lines[0], "*.sh", "{msys:?}: {ran}");
+        assert!(lines[1].ends_with("/wt"), "{msys:?}: {ran}");
+        assert_eq!(lines[2], msys.unwrap_or("unset"), "{ran}");
+    }
 }
 
 #[cfg(unix)]
 mod unix {
     use super::*;
     use common::{sh_path, write_executable};
+
+    /// 検査のコマンドが、テストの作る $GO のファイルを待つ（10 秒で諦め、壊れたときにテストを止め続けない）
+    const WAIT_FOR_GO: &str =
+        r#"i=0; while [ ! -e "$GO" ] && [ "$i" -lt 1000 ]; do sleep 0.01; i=$((i + 1)); done"#;
 
     #[test]
     fn the_command_sees_the_tree_of_each_commit() {
@@ -661,12 +673,11 @@ mod unix {
         let repo = Repo::new();
         let calls = sh_path(&repo.root.join("calls"));
         let go = repo.root.join("go");
-        let script = format!(
-            "echo >> {calls}; [ \"$(wc -l < {calls})\" -eq 1 ] || while [ ! -e {} ]; do sleep 0.01; done",
-            sh_path(&go)
-        );
+        let script =
+            format!("echo >> '{calls}'; [ \"$(wc -l < '{calls}')\" -eq 1 ] || {WAIT_FOR_GO}");
         let mut child = repo
             .command(&["main", "--", "sh", "-c", &script])
+            .env("GO", &go)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -694,10 +705,7 @@ mod unix {
         let go = repo.root.join("go");
         repo.commit(
             "check.sh",
-            &format!(
-                "#!/bin/sh\necho started >&2; while [ ! -e {} ]; do sleep 0.01; done",
-                sh_path(&go)
-            ),
+            &format!("#!/bin/sh\necho started >&2; {WAIT_FOR_GO}"),
             "feat: add check.sh",
         );
         repo.git(&["update-index", "--chmod=+x", "check.sh"]);
@@ -706,6 +714,7 @@ mod unix {
         repo.git(&["commit", "-q", "-m", "feat: remove check.sh"]);
         let mut child = repo
             .command(&["main", "--", "./check.sh"])
+            .env("GO", &go)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
