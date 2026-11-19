@@ -69,6 +69,13 @@ it "pre-pr-create: gh pr create 以外は対象外"
 out=$(run_hook pre-pr-create-check "gh pr view 12")
 assert_eq allow "$(decision "$out")"
 
+it "pre-pr-create: --help と -h は PR を作らないので検査しない"
+assert_eq allow "$(decision "$(run_hook pre-pr-create-check "gh pr create --help")")"
+assert_eq allow "$(decision "$(run_hook pre-pr-create-check "gh pr create -h")")"
+
+it "pre-pr-create: 値を取るフラグの値としての --help は、ヘルプの表示でないので検査する"
+assert_eq deny "$(decision "$(run_hook pre-pr-create-check "gh pr create --title --help")")"
+
 it "pre-pr-create: --web は deny"
 out=$(run_hook pre-pr-create-check "$GOOD_CMD --web")
 assert_eq deny "$(decision "$out")"
@@ -1040,6 +1047,14 @@ make_fake_gh_merge_selector '-R a/b https://github.com/octo/repo/pull/34'
 out=$(run_hook pre-merge-check "${MERGE_CMD/gh pr merge 1/gh pr merge -R a/b https://github.com/octo/repo/pull/34}")
 assert_eq allow "$(decision "$out")"
 assert_contains "$(cat "$FAKE_GH_LOG")" "repos/octo/repo/pulls/34/reviews"
+
+it "pre-merge-check: --help と -h は何もマージしないので検査しない"
+make_fake_gh_merge 'exit 1'
+assert_eq allow "$(decision "$(run_hook pre-merge-check "gh pr merge --help")")"
+assert_eq allow "$(decision "$(run_hook pre-merge-check "gh pr merge 1 --squash -h")")"
+
+it "pre-merge-check: 値を取るフラグの値としての --help は、ヘルプの表示でないので検査する"
+assert_eq deny "$(decision "$(run_hook pre-merge-check "gh pr merge 1 --squash --body --help")")"
 
 it "pre-merge-check: base との差を取得できなければ deny"
 make_fake_gh_merge 'echo "error connecting to api.github.com" >&2; exit 1'
