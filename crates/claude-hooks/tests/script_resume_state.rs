@@ -44,9 +44,23 @@ impl Repo {
     }
 
     fn git(&self, args: &[&str]) -> String {
+        self.git_env(args, &[])
+    }
+
+    /// docs/issues の今の中身をコミットする。date があれば、作者と記録の日時をその値にする（14 日前の数を作る）
+    fn commit_issues(&self, message: &str, date: Option<&str>) {
+        let env: Vec<(&str, &str)> = date
+            .map(|d| vec![("GIT_AUTHOR_DATE", d), ("GIT_COMMITTER_DATE", d)])
+            .unwrap_or_default();
+        self.git_env(&["add", "docs/issues"], &[]);
+        self.git_env(&["commit", "-q", "-m", message], &env);
+    }
+
+    fn git_env(&self, args: &[&str], env: &[(&str, &str)]) -> String {
         let out = forget_git_env(&mut Command::new("git"))
             .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
             .args(args)
+            .envs(env.iter().copied())
             .current_dir(self.app())
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-config"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -581,4 +595,79 @@ fn a_dangling_symlink_in_docs_issues_is_reported_as_unreadable() {
         section(&text, "issues").starts_with("docs/issues/0005-x.md unreadable="),
         "{text}"
     );
+}
+
+const OPEN: &str = "---\nstatus: open\n---\n\n# x\n";
+const CLOSED: &str = "---\nstatus: closed\nresolution: done\n---\n\n# x\n";
+/// 14 日より前の日時（テストの日付によらず前になる）
+const LONG_AGO: &str = "2000-01-01T00:00:00+0000";
+
+#[test]
+fn open_count_is_compared_with_the_commit_from_14_days_before() {
+    let repo = Repo::new();
+    repo.issue("0001-a.md", OPEN);
+    repo.issue("0002-b.md", CLOSED);
+    repo.commit_issues("old", Some(LONG_AGO));
+    repo.issue("0002-b.md", OPEN);
+    repo.issue("0003-c.md", OPEN);
+    repo.commit_issues("new", None);
+    // 作業ツリーの中身を今の数にする
+    repo.issue("0004-d.md", OPEN);
+    let issues = section(&stdout(&repo.run(&[])), "issues");
+    assert!(
+        issues.contains("\nopen-count now=4 14d-ago=1 diff=+3\n"),
+        "{issues}"
+    );
+    assert!(
+        issues.contains("NEXT: open の issue が 14 日前より 3 件増えた。"),
+        "{issues}"
+    );
+}
+
+#[test]
+fn open_count_that_did_not_grow_gives_no_next_line() {
+    let repo = Repo::new();
+    repo.issue("0001-a.md", OPEN);
+    repo.issue("0002-b.md", OPEN);
+    repo.commit_issues("old", Some(LONG_AGO));
+    repo.issue("0002-b.md", CLOSED);
+    repo.commit_issues("new", None);
+    let issues = section(&stdout(&repo.run(&[])), "issues");
+    assert!(
+        issues.contains("\nopen-count now=1 14d-ago=2 diff=-1\n"),
+        "{issues}"
+    );
+    assert!(!issues.contains("増えた"), "{issues}");
+}
+
+#[test]
+fn docs_issues_absent_14_days_before_counts_as_zero() {
+    let repo = Repo::new();
+    std::fs::write(repo.app().join("b.txt"), "b\n").unwrap();
+    repo.git(&["add", "b.txt"]);
+    repo.git_env(
+        &["commit", "-q", "-m", "old"],
+        &[
+            ("GIT_AUTHOR_DATE", LONG_AGO),
+            ("GIT_COMMITTER_DATE", LONG_AGO),
+        ],
+    );
+    repo.issue("0001-a.md", OPEN);
+    let issues = section(&stdout(&repo.run(&[])), "issues");
+    assert!(
+        issues.contains("open-count now=1 14d-ago=0 diff=+1\n"),
+        "{issues}"
+    );
+}
+
+#[test]
+fn open_count_without_a_commit_from_14_days_before_says_so() {
+    let repo = Repo::new();
+    repo.issue("0001-a.md", OPEN);
+    let issues = section(&stdout(&repo.run(&[])), "issues");
+    assert!(
+        issues.contains("open-count now=1 14d-ago=unknown（14 日より前のコミットが無い）\n"),
+        "{issues}"
+    );
+    assert!(!issues.contains("増えた"), "{issues}");
 }
