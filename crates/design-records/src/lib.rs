@@ -137,8 +137,9 @@ pub const KEYS: [&str; 6] = [
 /// 書いてもよいフロントマターのキー。`type` は OKF の概念の種類で、テンプレートが `ADR` を書く（ADR-0092）。`amends` はこの ADR が一部を置き換えた ADR、`amended-by` はこの ADR の一部を
 /// 置き換えた ADR で、check は両方向の一致を確かめる（ADR-0051）。既存の ADR に残る結びを読むために受け付ける。一部の
 /// 変更は同じ ADR の「## 変更」に書くので、既定ブランチとの分岐点から `amends` に足した ADR は、check が（FILE によらず）
-/// 違反にする（ADR-0067）。結びの無い ADR が大半なので、すべての ADR には求めない。
-pub const OPTIONAL_KEYS: [&str; 3] = ["type", "amends", "amended-by"];
+/// 違反にする（ADR-0067）。結びの無い ADR が大半なので、すべての ADR には求めない。`description` は OKF の 1 文の要約で、
+/// バンドルの索引の行の説明になる（ADR-0092。OKF v0.3 §4.1 でも任意）。
+pub const OPTIONAL_KEYS: [&str; 4] = ["type", "description", "amends", "amended-by"];
 
 /// `status` の値。
 pub const STATUSES: [&str; 7] = [
@@ -157,9 +158,11 @@ pub const OPEN_STATUSES: [&str; 2] = ["proposed", "deferred"];
 /// 確定した後も直してよいフロントマターのキー。
 /// `amends` と `amended-by` は、一部の置き換えを別の ADR で結んでいたころの既存の結びで、相手の ADR との一致は check が
 /// 確かめる（ADR-0051。新しくは書かない。ADR-0067。分岐点から `amends` に足すと check が違反にする）。`issues` は、
-/// 確定した後も直す帰結に書いた残りの issue を足す（ADR-0067）。
-pub const AMENDABLE_KEYS: [&str; 7] = [
+/// 確定した後も直す帰結に書いた残りの issue を足す（ADR-0067）。`description` は決めた時点の記録でなく今の中身の
+/// 要約で、確定した ADR にも後から足す（ADR-0092）。
+pub const AMENDABLE_KEYS: [&str; 8] = [
     "type",
+    "description",
     "status",
     "superseded-by",
     "date",

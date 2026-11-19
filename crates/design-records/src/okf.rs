@@ -138,6 +138,9 @@ struct Entry<'a> {
     title: String,
     url: String,
     description: Option<&'a str>,
+    /// 行のうち、リンクの終わりまで（行頭の記号を含む）と、その後ろ
+    head: &'a str,
+    tail: &'a str,
     /// Markdown がこの行を `url` へのリンクと読むか
     markdown: bool,
 }
@@ -166,11 +169,14 @@ fn entries(text: &str) -> Vec<Entry<'_>> {
                 (plain_text(title), url.to_string(), after, false)
             }
         };
+        let (head, tail) = line.split_at(line.len() - after.len());
         out.push(Entry {
             line: i + 1,
             title,
             url,
-            description: after.strip_prefix(" - ").map(str::trim),
+            description: tail.strip_prefix(" - ").map(str::trim),
+            head,
+            tail,
             markdown,
         });
     }
@@ -626,9 +632,22 @@ fn check_concept(path: &str, text: &str, out: &mut Vec<Finding>) {
     }
 }
 
+/// 索引に既にある行の扱い。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Existing {
+    /// 直さない
+    Keep,
+    /// 文書を指す行の説明を、文書の `description` に合わせる（足す、替える、消す）
+    SyncDescriptions,
+}
+
 /// `files` の索引（`index.md`）に載っていない文書と下位のディレクトリの行を足した、索引のパスと新しい中身。
-/// バンドルでなければ空。`index.md` が無いディレクトリは新しく作る。既にある行は直さない。変わらない索引は含めない。
-pub fn complete_indexes(files: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+/// バンドルでなければ空。`index.md` が無いディレクトリは新しく作る。既にある行は `existing` のとおりに扱う。変わらない
+/// 索引は含めない。
+pub fn complete_indexes(
+    files: &BTreeMap<String, String>,
+    existing: Existing,
+) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     if !is_bundle(files) {
         return out;
@@ -636,19 +655,21 @@ pub fn complete_indexes(files: &BTreeMap<String, String>) -> BTreeMap<String, St
     let dirs = directories(files);
     for dir in &dirs {
         let index_path = format!("{dir}/{INDEX}");
-        let existing = files.get(&index_path);
-        let listed = existing.map(|t| listed(dir, t)).unwrap_or_default();
+        let current = files.get(&index_path);
+        let listed = current.map(|t| listed(dir, t)).unwrap_or_default();
         let lines: Vec<String> = expected_entries(files, &dirs, dir)
             .into_iter()
             .filter(|name| !listed.contains(name))
             .map(|name| entry_line(files, dir, &name))
             .collect();
-        if lines.is_empty() && existing.is_some() {
+        let synced = current.map(|t| match existing {
+            Existing::Keep => t.clone(),
+            Existing::SyncDescriptions => sync_descriptions(files, dir, t),
+        });
+        if lines.is_empty() && current.is_some() && synced.as_ref() == current {
             continue;
         }
-        let mut text = existing
-            .cloned()
-            .unwrap_or_else(|| format!("# {}\n", name_of(dir)));
+        let mut text = synced.unwrap_or_else(|| format!("# {}\n", name_of(dir)));
         if !text.ends_with('\n') {
             text.push('\n');
         }
@@ -662,6 +683,37 @@ pub fn complete_indexes(files: &BTreeMap<String, String>) -> BTreeMap<String, St
             text.push('\n');
         }
         out.insert(index_path, text);
+    }
+    out
+}
+
+/// `dir` の索引 `index` の、文書を指す行の説明を文書の `description` に合わせた中身。Markdown がリンクと読まない行と、
+/// リンクの後ろが説明の形（` - 説明`）でない行は直さない（手で書いた続きを消さない。check の注意は残る）。行の終わりの
+/// 改行（CRLF を含む）は保つ。
+fn sync_descriptions(files: &BTreeMap<String, String>, dir: &str, index: &str) -> String {
+    let fixes: BTreeMap<usize, String> = entries(index)
+        .into_iter()
+        .filter(|e| e.markdown && (e.tail.trim().is_empty() || e.description.is_some()))
+        .filter_map(|e| {
+            let want = description_of(files.get(&resolve(dir, &e.url)?)?);
+            (e.description != want.as_deref())
+                .then(|| match want {
+                    Some(description) => format!("{} - {description}", e.head),
+                    None => e.head.to_string(),
+                })
+                .map(|line| (e.line, line))
+        })
+        .collect();
+    let mut out = String::with_capacity(index.len());
+    for (i, line) in index.split_inclusive('\n').enumerate() {
+        match fixes.get(&(i + 1)) {
+            Some(fixed) => {
+                let content = line.trim_end_matches('\n').trim_end_matches('\r');
+                out.push_str(fixed);
+                out.push_str(&line[content.len()..]);
+            }
+            None => out.push_str(line),
+        }
     }
     out
 }
@@ -910,7 +962,7 @@ mod tests {
                 "---\ntype: Guide\ntitle: Windows\ndescription: 入れ方\n---\n",
             ),
         ]);
-        let done = complete_indexes(&files);
+        let done = complete_indexes(&files, Existing::Keep);
         assert_eq!(
             done["docs/index.md"],
             "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n\
@@ -935,18 +987,18 @@ mod tests {
     #[test]
     fn complete_indexes_keeps_existing_lines_and_ignores_non_bundles() {
         let files = bundle(&valid().into_iter().collect::<Vec<_>>());
-        assert!(complete_indexes(&files).is_empty());
+        assert!(complete_indexes(&files, Existing::Keep).is_empty());
         let mut more = files.clone();
         more.insert(
             "docs/adr/0002-bar.md".to_string(),
             ADR.replace("0001: foo", "0002: bar"),
         );
-        let done = complete_indexes(&more);
+        let done = complete_indexes(&more, Existing::Keep);
         assert_eq!(
             done["docs/adr/index.md"],
             "# adr\n\n* [ADR-0001: foo](0001-foo.md)\n* [ADR-0002: bar](0002-bar.md)\n"
         );
-        assert!(complete_indexes(&bundle(&[("docs/a.md", "x")])).is_empty());
+        assert!(complete_indexes(&bundle(&[("docs/a.md", "x")]), Existing::Keep).is_empty());
     }
 
     #[test]

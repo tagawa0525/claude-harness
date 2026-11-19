@@ -42,7 +42,8 @@ design-records index
   含む）を先に片付ける。main から来た行の参照と、振り直す記録のフロントマターの参照は、main の記録を指すので
   そのまま残る。マージした後の予約のタグは `post-merge-cleanup.sh` が消す
 - `index`: `docs/index.md` のフロントマターに `okf_version` を持つリポジトリ（`docs/` 全体が OKF のバンドル）で、索引に
-  載っていない文書の行を足す。そのリポジトリでは `check` が
+  載っていない文書の行を足し、既にある行の説明を文書の `description` に合わせる（`new` は記録の行を足すだけ）。
+  そのリポジトリでは `check` が
   `type`（ADR は `type: ADR`、`docs/issues/` の issue は `type: Issue`）、各ディレクトリの `index.md`（文書と下位のディレクトリがすべて載り、
   リンク先が実在すること）、`log.md` の形も検査する。規則は OKF v0.3 の仕様（
   [open-knowledge-format/open-knowledge-format の `SPEC.md`](https://github.com/open-knowledge-format/open-knowledge-format/blob/527e81aff55992be21507e97004286789126f88c/SPEC.md)、
@@ -76,10 +77,14 @@ repos:
 - **見出しは日本語**（英語の原文でもよい）: 背景、決定の要因、検討した案、決定と理由、帰結、確認、各案の長所と短所、
   補足。必須は背景・検討した案・決定と理由、推奨は帰結・確認（`rejected` の ADR には推奨の節を求めない。採らない理由を
   書く節はプロジェクトの運用に従う）。ほかの節を足してもよい
-- **フロントマター**のキーは `type: ADR`（`new` が書く）、`status`、`date` と次の 4 つ。一覧は `[a, b]` の形で 1 行に書く
+- **フロントマター**のキーは `type: ADR`（`new` が書く）、`status`、`date` と次の 4 つ（その下の `description` と
+  `amends` / `amended-by` は任意）。一覧は `[a, b]` の形で 1 行に書く
   - `requires`: 前提にしている ADR（`[ADR-NNNN]`）
   - `supersedes` / `superseded-by`: 置き換えた ADR と、置き換えられた ADR。両方の ADR に書く
   - `issues`: きっかけの issue と、解決した issue（`["#12"]`）
+  - `description`: ADR の 1 文の要約（`new` は書かない）。OKF のバンドルでは、`index` が索引の行の説明に載せる。
+    今の中身の要約なので、確定した後も足して直す。1 行で書き、ASCII の `"` と先頭の `[` は使わない（`check` が読めない
+    値として違反にする。引用は「」で書く）
   - 既存の ADR に残る `amends` / `amended-by`（決定の一部を別の ADR で置き換えていたころの結び）は、新しくは書かず、
     既にあるものは消さない
 - **status** は `proposed`、`accepted`、`rejected`、`withdrawn`（決める前に取り下げた）、`deferred`（後回しにした）、
@@ -102,7 +107,7 @@ repos:
     日本語の辞書に合わせた、意味を変えない語の置き換えだけ
   - 直してよい部分: 帰結と確認（今の事実を書く節。マージの後の実装の進み、測った値、issue への結びをその場で書き直す）、
     補足の節への日付つきの追記（`- YYYY-MM-DD: …`）、末尾の「## 変更」、フロントマターの `status` / `superseded-by` /
-    `date` / `issues`（帰結に書いた残りの issue）/ `amends` / `amended-by`
+    `date` / `issues`（帰結に書いた残りの issue）/ `description` / `amends` / `amended-by`
 - **決定の一部を変える**: 新しい ADR を作らず、同じ ADR の決定と理由を今の決定に直し、末尾の「## 変更」の節（無ければ
   足す）に 1 項を足す。項の形は `- YYYY-MM-DD: <変えた部分>。前は「<前の文の引用>」。<理由>`。比べた案があれば、
   その項に書くか issue に書いて項から指す
