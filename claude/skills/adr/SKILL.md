@@ -44,7 +44,10 @@ design-records index
 - `index`: `docs/index.md` のフロントマターに `okf_version` を持つリポジトリ（`docs/` 全体が OKF のバンドル）で、索引に
   載っていない文書の行を足す。そのリポジトリでは `check` が
   `type`（ADR は `type: ADR`、`docs/issues/` の issue は `type: Issue`）、各ディレクトリの `index.md`（文書と下位のディレクトリがすべて載り、
-  リンク先が実在すること）、`log.md` の日付の見出しも検査する
+  リンク先が実在すること）、`log.md` の形も検査する。規則は OKF v0.3 の仕様（
+  [open-knowledge-format/open-knowledge-format の `SPEC.md`](https://github.com/open-knowledge-format/open-knowledge-format/blob/527e81aff55992be21507e97004286789126f88c/SPEC.md)、
+  コミット 527e81af、2026-11-19 取得）に従う。`okf_version` は `"0.3"` か `"0.2"` だけを通す（ほかの版は規則が違いうるので、
+  違反にして止める）
 - `check`: 追跡している ADR の形、ADR どうしの参照、ADR と docs/issues の番号の重複を確かめ、違反（error）があれば失敗する。
   注意（warning）では止まらないので、文言に従って確かめる。FILE を渡すと、置き換えられた ADR への参照と、確定した ADR の
   凍結する部分（下の「確定後の運用」）の変更も、FILE の分だけ注意する

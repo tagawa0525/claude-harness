@@ -1,4 +1,9 @@
-//! docs/ を OKF（Open Knowledge Format）v0.2 のバンドルとして検査する（ADR-0092）。
+//! docs/ を OKF（Open Knowledge Format）v0.3 のバンドルとして検査する（ADR-0092）。`okf_version` が "0.2" のバンドルには、
+//! v0.2 と違うルートの `index.md` の規則だけを v0.2 のものにする。
+//!
+//! 節の番号は v0.3 の仕様のもの。仕様は https://github.com/open-knowledge-format/open-knowledge-format の `SPEC.md`
+//! （コミット 527e81af、2026-11-19 取得）。v0.2 は https://github.com/GoogleCloudPlatform/open-knowledge-format の
+//! `SPEC.md`（コミット 8a8ff87b、2026-11-19 取得）。
 //!
 //! `docs/index.md` のフロントマターに `okf_version` を持つリポジトリだけが対象で、ほかのリポジトリの `docs/` は見ない。
 //! フロントマターは OKF が許す YAML 全体（入れ子、複数行の一覧）を読めるよう、字下げのない `key: value` の行だけを見る。
@@ -13,6 +18,9 @@ pub const BUNDLE_ROOT: &str = "docs";
 
 const INDEX: &str = "index.md";
 const LOG: &str = "log.md";
+
+/// 検査の規則を知っている `okf_version` の値。
+const KNOWN_VERSIONS: [&str; 2] = ["0.2", "0.3"];
 
 /// フロントマターの字下げのない `key: value`（引用符は外す）。フロントマターが無いか閉じていなければ `None`。
 fn top_level(text: &str) -> Option<BTreeMap<String, String>> {
@@ -45,10 +53,27 @@ pub fn is_bundle_index(text: &str) -> bool {
     top_level(text).is_some_and(|front| front.contains_key("okf_version"))
 }
 
+/// バンドルの `okf_version` の値（後ろの YAML のコメントと引用符を除く）。バンドルでなければ `None`。
+fn version(files: &BTreeMap<String, String>) -> Option<String> {
+    let raw = top_level(files.get(&format!("{BUNDLE_ROOT}/{INDEX}"))?)?.remove("okf_version")?;
+    // コメントを除くのは版の値だけ。top_level は title などの引用符の無い `#12` を消さないよう、# を値の一部として読む
+    let value = raw.split('#').next().unwrap_or("").trim();
+    Some(
+        ['"', '\'']
+            .iter()
+            .find_map(|q| value.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
+            .unwrap_or(value)
+            .to_string(),
+    )
+}
+
+/// リポジトリの直下からのパスが、バンドルの一部か（名前が `.` で始まるファイルとディレクトリの下でない、OKF v0.3 §3.2）。
+pub fn in_bundle(path: &str) -> bool {
+    !path.split('/').any(|part| part.starts_with('.'))
+}
+
 fn is_bundle(files: &BTreeMap<String, String>) -> bool {
-    files
-        .get(&format!("{BUNDLE_ROOT}/{INDEX}"))
-        .is_some_and(|text| is_bundle_index(text))
+    version(files).is_some()
 }
 
 fn dir_of(path: &str) -> &str {
@@ -126,13 +151,15 @@ fn entries(text: &str) -> Vec<Entry<'_>> {
     out
 }
 
-/// 索引（`index_dir` のもの）のリンクが指す、バンドルの中のパス。ディレクトリなら末尾に `/` を付ける。外部のリンクと
-/// 文書でもディレクトリでもないリンクは `None`。
+/// 索引（`index_dir` のもの）のリンクが指す、バンドルの中のパス。ディレクトリなら末尾に `/` を付ける。外部のリンク
+/// （バンドルのルートの外に解けるものと、名前が `.` で始まるパスの下を含む、OKF v0.3 §3.2、§6）と、文書でもディレクトリでもない
+/// リンクは `None`。
 fn resolve(index_dir: &str, url: &str) -> Option<String> {
     let url = url.split('#').next().unwrap_or("");
     if url.contains("://") || !(url.ends_with(".md") || url.ends_with('/')) {
         return None;
     }
+    let url = percent_decode(url);
     let joined = match url.strip_prefix('/') {
         Some(rest) => format!("{BUNDLE_ROOT}/{rest}"),
         None => format!("{index_dir}/{url}"),
@@ -142,16 +169,53 @@ fn resolve(index_dir: &str, url: &str) -> Option<String> {
         match part {
             "" | "." => {}
             ".." => {
-                parts.pop();
+                parts.pop()?;
             }
             part => parts.push(part),
         }
+    }
+    if parts.first() != Some(&BUNDLE_ROOT) || !in_bundle(&parts.join("/")) {
+        return None;
     }
     let mut path = parts.join("/");
     if url.ends_with('/') {
         path.push('/');
     }
     Some(path)
+}
+
+/// リンク先の `%XX` を復号する（OKF v0.3 §6）。復号して UTF-8 にならなければ、そのまま返す。
+fn percent_decode(url: &str) -> String {
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    let bytes = url.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if let [b'%', hi, lo, ..] = bytes[i..]
+            && let (Some(hi), Some(lo)) = (hex(hi), hex(lo))
+        {
+            out.push(hi << 4 | lo);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| url.to_string())
+}
+
+/// 索引の行のリンク先に書く形。ASCII の英数字と `-._~/` のほかの ASCII の文字をパーセントエンコードする（OKF v0.3 §6）。
+/// ASCII でない文字は、§6 がエンコードを求める空白と予約文字に当たらず、日本語の名前を読めるよう、そのまま書く。
+fn percent_encode(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if !c.is_ascii() || c.is_ascii_alphanumeric() || "-._~/".contains(c) {
+            out.push(c);
+        } else {
+            out.push_str(&format!("%{:02X}", c as u32));
+        }
+    }
+    out
 }
 
 /// 索引に載っている行のリンク先（`index_dir` からの名前。`name.md` か `name/`）。
@@ -203,13 +267,27 @@ fn finding(severity: Severity, path: &str, line: Option<usize>, message: impl To
 /// `files`（リポジトリの直下からのパスと、`docs/` 以下の追跡している .md の中身）の OKF の形の違反と注意。
 /// バンドルでなければ（`docs/index.md` が `okf_version` を持たなければ）空。
 pub fn check_bundle(files: &BTreeMap<String, String>) -> Vec<Finding> {
-    if !is_bundle(files) {
+    let Some(version) = version(files) else {
         return Vec::new();
-    }
+    };
     let mut out = Vec::new();
+    // OKF §12 は consumer に知らない版のバンドルを拒まないよう求めるが、これは書く側のコミットの検査で、知らない版に
+    // 今の規則を黙って当てると合否を誤る。違反にして、ほかの検査は v0.3 の規則で続ける
+    if !KNOWN_VERSIONS.contains(&version.as_str()) {
+        out.push(finding(
+            Severity::Error,
+            &format!("{BUNDLE_ROOT}/{INDEX}"),
+            None,
+            format!(
+                "design-records knows the rules of `okf_version` {} but not {version:?}; fix the \
+                 version or update design-records",
+                KNOWN_VERSIONS.map(|v| format!("{v:?}")).join(" and ")
+            ),
+        ));
+    }
     for (path, text) in files {
         match name_of(path) {
-            INDEX => check_index_front(path, text, &mut out),
+            INDEX => check_index_front(path, text, &version, &mut out),
             LOG => check_log(path, text, &mut out),
             _ => check_concept(path, text, &mut out),
         }
@@ -232,24 +310,33 @@ pub fn check_bundle(files: &BTreeMap<String, String>) -> Vec<Finding> {
     out
 }
 
-/// `index.md` のフロントマターは、バンドルのルートの `okf_version` だけ。
-fn check_index_front(path: &str, text: &str, out: &mut Vec<Finding>) {
+/// `index.md` のフロントマターは、バンドルのルートだけが持つ（OKF v0.3 §8）。ルートのキーは v0.3 では
+/// `okf_version`、`title`、`description`、`license` と拡張のキー（§8.1）で、v0.2 では `okf_version` だけ（v0.2 §8）。
+fn check_index_front(path: &str, text: &str, version: &str, out: &mut Vec<Finding>) {
     let Some(front) = top_level(text) else {
         return;
     };
-    let root = path == format!("{BUNDLE_ROOT}/{INDEX}");
-    if !root || front.keys().any(|k| k != "okf_version") {
+    let message = if path != format!("{BUNDLE_ROOT}/{INDEX}") {
+        "an index.md outside the bundle root has no front matter"
+    } else if version == "0.2" && front.keys().any(|k| k != "okf_version") {
+        "the bundle-root index.md of an `okf_version: \"0.2\"` bundle has no front matter except \
+         `okf_version` (OKF v0.3 permits `title`, `description` and `license`)"
+    } else {
+        return;
+    };
+    out.push(finding(Severity::Error, path, None, message));
+}
+
+/// `log.md` はフロントマターを持たず（OKF v0.3 §9）、日付の見出しが `YYYY-MM-DD`。
+fn check_log(path: &str, text: &str, out: &mut Vec<Finding>) {
+    if text.lines().next().is_some_and(|l| l.trim_end() == "---") {
         out.push(finding(
             Severity::Error,
             path,
             None,
-            "an index.md has no front matter except `okf_version` in the bundle root",
+            "a log.md has no front matter",
         ));
     }
-}
-
-/// `log.md` の日付の見出し。
-fn check_log(path: &str, text: &str, out: &mut Vec<Finding>) {
     for (i, line) in text.lines().enumerate() {
         if let Some(date) = line.strip_prefix("## ")
             && !is_date(date.trim())
@@ -407,14 +494,15 @@ pub fn complete_indexes(files: &BTreeMap<String, String>) -> BTreeMap<String, St
 
 /// `dir` の索引に足す、`name`（`sub/` か `file.md`）の行。
 fn entry_line(files: &BTreeMap<String, String>, dir: &str, name: &str) -> String {
+    let url = percent_encode(name);
     if let Some(sub) = name.strip_suffix('/') {
-        return format!("* [{sub}]({name})");
+        return format!("* [{sub}]({url})");
     }
     let text = &files[&format!("{dir}/{name}")];
     let title = title_of(name, text);
     match description_of(text) {
-        Some(description) => format!("* [{title}]({name}) - {description}"),
-        None => format!("* [{title}]({name})"),
+        Some(description) => format!("* [{title}]({url}) - {description}"),
+        None => format!("* [{title}]({url})"),
     }
 }
 
@@ -431,7 +519,7 @@ mod tests {
     }
 
     const ROOT_INDEX: &str =
-        "---\nokf_version: \"0.2\"\n---\n\n# docs\n\n* [adr](adr/) - 決定の記録\n";
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [adr](adr/) - 決定の記録\n";
     const ADR_INDEX: &str = "# adr\n\n* [ADR-0001: foo](0001-foo.md)\n";
     const ADR: &str = "---\ntype: ADR\nstatus: accepted\n---\n\n# ADR-0001: foo\n";
 
@@ -530,7 +618,7 @@ mod tests {
         files.retain(|(p, _)| *p != "docs/index.md");
         files.push((
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n* [adr](adr/)\n* [issues](issues/)\n",
+            "---\nokf_version: \"0.3\"\n---\n\n* [adr](adr/)\n* [issues](issues/)\n",
         ));
         let found = errors(&files);
         assert_eq!(found.len(), 1, "{found:?}");
@@ -551,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn an_index_has_no_front_matter_except_the_root_okf_version() {
+    fn only_the_root_index_has_front_matter_and_a_v0_2_root_only_okf_version() {
         let found = errors(&with(
             "docs/adr/index.md",
             "---\ntype: Index\n---\n\n* [ADR-0001: foo](0001-foo.md)\n",
@@ -571,7 +659,7 @@ mod tests {
         assert!(found[0].contains("0001-foo.md") && found[0].contains("not listed"));
         let found = errors(&with(
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n# docs\n",
+            "---\nokf_version: \"0.3\"\n---\n\n# docs\n",
         ));
         assert!(
             found[0].contains("adr/") && found[0].contains("not listed"),
@@ -597,7 +685,7 @@ mod tests {
         files.retain(|(p, _)| *p != "docs/index.md");
         files.push((
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n* [adr](adr/)\n* [Windows](windows.md) - 入れ方\n",
+            "---\nokf_version: \"0.3\"\n---\n\n* [adr](adr/)\n* [Windows](windows.md) - 入れ方\n",
         ));
         assert_eq!(errors(&files), Vec::<String>::new());
         assert_eq!(warnings(&files), Vec::<String>::new());
@@ -605,7 +693,7 @@ mod tests {
         files.retain(|(p, _)| *p != "docs/index.md");
         files.push((
             "docs/index.md",
-            "---\nokf_version: \"0.2\"\n---\n\n* [adr](adr/)\n* [Win](windows.md) - 別\n",
+            "---\nokf_version: \"0.3\"\n---\n\n* [adr](adr/)\n* [Win](windows.md) - 別\n",
         ));
         let found = warnings(&files);
         assert_eq!(found.len(), 4, "{found:?}");
@@ -637,7 +725,7 @@ mod tests {
         let files = bundle(&[
             (
                 "docs/index.md",
-                "---\nokf_version: \"0.2\"\n---\n\n# docs\n",
+                "---\nokf_version: \"0.3\"\n---\n\n# docs\n",
             ),
             ("docs/adr/0001-foo.md", ADR),
             (
@@ -648,7 +736,7 @@ mod tests {
         let done = complete_indexes(&files);
         assert_eq!(
             done["docs/index.md"],
-            "---\nokf_version: \"0.2\"\n---\n\n# docs\n\n\
+            "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n\
              * [adr](adr/)\n\
              * [Windows](windows.md) - 入れ方\n"
         );
@@ -697,7 +785,7 @@ type: Guide
             (
                 "docs/index.md",
                 "---
-okf_version: \"0.2\"
+okf_version: \"0.3\"
 ---
 
 - [Real](a.md)

@@ -2807,7 +2807,7 @@ fn retries_see_records_merged_and_pruned_after_the_push_is_rejected() {
     assert_eq!(stdout(&out), "docs/adr/0002-use-b.md\n");
 }
 
-const OKF_ROOT_INDEX: &str = "---\nokf_version: \"0.2\"\n---\n\n# docs\n";
+const OKF_ROOT_INDEX: &str = "---\nokf_version: \"0.3\"\n---\n\n# docs\n";
 
 #[test]
 fn check_reports_okf_findings_only_in_a_bundle() {
@@ -2982,4 +2982,208 @@ fn new_outside_a_bundle_writes_no_index() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stderr(&out), "");
     assert!(!t.dir.join("docs/adr/index.md").exists());
+}
+
+#[test]
+fn check_accepts_bundle_metadata_in_a_v0_3_root_index_and_index_keeps_it() {
+    let t = TempRepo::new("okf-metadata");
+    let front = "---\nokf_version: \"0.3\"\ntitle: docs\ndescription: 決定の記録と手順\n\
+                 license: Apache-2.0\nx-acme-owner: team:a\n---\n";
+    t.write("docs/index.md", &format!("{front}\n# docs\n"));
+    t.write(
+        "docs/windows.md",
+        "---\ntype: Guide\ntitle: Windows\ndescription: 入れ方\n---\n",
+    );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{front}\n# docs\n\n* [Windows](windows.md) - 入れ方\n")
+    );
+    t.commit_all("docs: bundle with metadata");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
+
+#[test]
+fn check_rejects_an_okf_version_it_does_not_know() {
+    let t = TempRepo::new("okf-version");
+    for (version, known) in [
+        ("\"0.2\"", true),
+        ("\"0.3\"", true),
+        ("0.3", true),
+        ("\"0.4\"", false),
+        ("\"1.0\"", false),
+        ("", false),
+    ] {
+        t.write(
+            "docs/index.md",
+            &format!("---\nokf_version: {version}\n---\n\n# docs\n"),
+        );
+        t.commit_all(&format!("docs: okf_version {version}"));
+        let out = t.run(&["check"]);
+        assert_eq!(
+            out.status.success(),
+            known,
+            "{version}: {}{}",
+            stdout(&out),
+            stderr(&out)
+        );
+        if !known {
+            assert!(
+                stdout(&out).contains("docs/index.md: error")
+                    && stdout(&out).contains("okf_version"),
+                "{version}: {}",
+                stdout(&out)
+            );
+        }
+    }
+}
+
+#[test]
+fn check_rejects_front_matter_in_a_log() {
+    let t = TempRepo::new("okf-log");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write("docs/log.md", "# Log\n\n## 2026-11-19\n* **Update**: x\n");
+    t.commit_all("docs: log");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+
+    t.write(
+        "docs/log.md",
+        "---\ntype: Log\n---\n\n# Log\n\n## 2026-11-19\n* **Update**: x\n",
+    );
+    t.commit_all("docs: log with front matter");
+    let out = t.run(&["check"]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out).contains("docs/log.md: error") && stdout(&out).contains("front matter"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_and_index_leave_dot_paths_out_of_the_bundle() {
+    let t = TempRepo::new("okf-dot");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write("docs/.draft.md", "no front matter\n");
+    t.write("docs/.notes/idea.md", "no front matter\n");
+    t.commit_all("docs: dot paths");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert!(!t.dir.join("docs/.notes/index.md").exists());
+}
+
+#[test]
+fn check_resolves_index_links_from_the_index_directory_and_slash_from_the_bundle_root() {
+    let t = TempRepo::new("okf-resolve");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [adr](/adr/)\n* [Windows](./windows.md)\n",
+    );
+    t.write("docs/windows.md", "---\ntype: Guide\ntitle: Windows\n---\n");
+    t.write(
+        "docs/adr/0001-use-foo.md",
+        &design_records::template(1, "foo を使う", &today()),
+    );
+    t.write(
+        "docs/adr/index.md",
+        "# adr\n\n* [ADR-0001: foo を使う](/adr/0001-use-foo.md)\n* [Windows](../windows.md)\n",
+    );
+    t.commit_all("docs: links from the root and from the index");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+
+    // 先頭に / の無いパスは、バンドルのルートでなく索引のディレクトリから解く
+    t.write(
+        "docs/adr/index.md",
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n* [Windows](windows.md)\n",
+    );
+    t.commit_all("docs: a bare path to the root");
+    let out = t.run(&["check"]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out)
+            .contains("docs/adr/index.md:4: error: the link target `windows.md` does not exist"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn check_treats_index_links_outside_the_bundle_as_external() {
+    let t = TempRepo::new("okf-external");
+    t.write("README.md", "# repo\n");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [README](../README.md)\n* [gone](../../gone.md)\n",
+    );
+    t.commit_all("docs: links out of the bundle");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
+
+#[test]
+fn index_percent_encodes_link_targets_and_check_decodes_them() {
+    let t = TempRepo::new("okf-percent");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/my note (draft).md",
+        "---\ntype: Guide\ntitle: My note\n---\n",
+    );
+    t.write("docs/手順.md", "---\ntype: Guide\ntitle: 手順\n---\n");
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{OKF_ROOT_INDEX}\n* [My note](my%20note%20%28draft%29.md)\n* [手順](手順.md)\n")
+    );
+    t.commit_all("docs: names to encode");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
+
+#[test]
+fn check_treats_index_links_to_dot_paths_as_outside_the_bundle() {
+    let t = TempRepo::new("okf-dot-link");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [idea](.notes/idea.md)\n",
+    );
+    t.write("docs/.notes/idea.md", "no front matter\n");
+    t.commit_all("docs: a link to a dot path");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
+
+#[test]
+fn check_reads_an_okf_version_followed_by_a_yaml_comment() {
+    let t = TempRepo::new("okf-version-comment");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\" # the spec version\n---\n\n# docs\n",
+    );
+    t.commit_all("docs: okf_version with a comment");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
+
+#[test]
+fn index_keeps_a_hash_in_an_unquoted_title_and_description() {
+    let t = TempRepo::new("okf-hash");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/fix.md",
+        "---\ntype: Guide\ntitle: issue #12 を直す\ndescription: 手順 #3 まで\n---\n",
+    );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{OKF_ROOT_INDEX}\n* [issue #12 を直す](fix.md) - 手順 #3 まで\n")
+    );
 }
