@@ -276,7 +276,7 @@ fn queued_job(job: &Value) -> Result<QueuedJob, String> {
     } else {
         (job_id.to_string(), job_id)
     };
-    if !job["job_state"].is_array() {
+    if job["job_state"][0].as_str().is_none() {
         return Err(missing("job_state"));
     }
     let state = state_word(&job["job_state"]).to_string();
@@ -938,7 +938,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 空の状態の配列を受けてしまう"]
     fn a_job_without_a_state_is_an_error_like_scontrol() {
         // squeue の文字の出力は、どのジョブにも土台の状態の語を書く
         assert!(queued(json!({"job_state": []})).is_err());
