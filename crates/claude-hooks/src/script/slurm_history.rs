@@ -235,7 +235,7 @@ struct Group {
     elapsed_sum: i64,
     timed_runs: usize,
     max_ratio: f64,
-    /// メモリの最大の MiB。0 から比べる（無い値だけのジョブ名も 0M と出る。直すのは #375）
+    /// メモリの最大の MiB。無い値は負なので、無い値だけのジョブ名は負のまま（表は -）
     max_rss: f64,
 }
 
@@ -277,7 +277,7 @@ impl Table {
                 };
                 let group = &mut groups[at].1;
                 group.runs += 1;
-                if rss > group.max_rss {
+                if group.runs == 1 || rss > group.max_rss {
                     group.max_rss = rss;
                 }
                 if let (Some(estimate), Some(ratio)) = (entry.estimate, ratio) {
