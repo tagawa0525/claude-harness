@@ -3171,3 +3171,19 @@ fn check_reads_an_okf_version_followed_by_a_yaml_comment() {
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
+
+#[test]
+fn index_keeps_a_hash_in_an_unquoted_title_and_description() {
+    let t = TempRepo::new("okf-hash");
+    t.write("docs/index.md", OKF_ROOT_INDEX);
+    t.write(
+        "docs/fix.md",
+        "---\ntype: Guide\ntitle: issue #12 を直す\ndescription: 手順 #3 まで\n---\n",
+    );
+    let out = t.run(&["index"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        t.read("docs/index.md"),
+        format!("{OKF_ROOT_INDEX}\n* [issue #12 を直す](fix.md) - 手順 #3 まで\n")
+    );
+}
