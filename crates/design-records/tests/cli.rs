@@ -3077,3 +3077,39 @@ fn check_and_index_leave_dot_paths_out_of_the_bundle() {
     assert_eq!(stdout(&out), "");
     assert!(!t.dir.join("docs/.notes/index.md").exists());
 }
+
+#[test]
+fn check_resolves_index_links_from_the_index_directory_and_slash_from_the_bundle_root() {
+    let t = TempRepo::new("okf-resolve");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [adr](/adr/)\n* [Windows](./windows.md)\n",
+    );
+    t.write("docs/windows.md", "---\ntype: Guide\ntitle: Windows\n---\n");
+    t.write(
+        "docs/adr/0001-use-foo.md",
+        &design_records::template(1, "foo を使う", &today()),
+    );
+    t.write(
+        "docs/adr/index.md",
+        "# adr\n\n* [ADR-0001: foo を使う](/adr/0001-use-foo.md)\n* [Windows](../windows.md)\n",
+    );
+    t.commit_all("docs: links from the root and from the index");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+
+    // 先頭に / の無いパスは、バンドルのルートでなく索引のディレクトリから解く
+    t.write(
+        "docs/adr/index.md",
+        "# adr\n\n* [ADR-0001: foo を使う](0001-use-foo.md)\n* [Windows](windows.md)\n",
+    );
+    t.commit_all("docs: a bare path to the root");
+    let out = t.run(&["check"]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out)
+            .contains("docs/adr/index.md:4: error: the link target `windows.md` does not exist"),
+        "{}",
+        stdout(&out)
+    );
+}
