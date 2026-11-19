@@ -10,3 +10,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# 索引の行の題とリンクを、ほかの Markdown の読み手と同じく CommonMark で読み書きする。Rust の CommonMark のパーサーとして
+# 事実上の標準（ja-terms も使う）
+pulldown-cmark = { version = "0.13", default-features = false }
