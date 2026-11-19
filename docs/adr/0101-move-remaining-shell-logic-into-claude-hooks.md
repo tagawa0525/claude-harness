@@ -1,6 +1,6 @@
 ---
 type: ADR
-status: proposed
+status: accepted
 date: 2026-11-19
 requires: [ADR-0087, ADR-0089]
 supersedes: []
@@ -107,29 +107,47 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
   `claude-hooks` の依存の 1 行）
 - 案 丁で避けた unsafe のうち、シグナルを受けるハンドラを自分で持つ部分は持たない。持つのは、今の設定を読む
   `sigaction` と、無視に替える `signal` の呼び出しだけ（Unix だけ。`interrupt.rs` の中）
-- 中断されたときの終了コードは、シグナルによらず 130 になる（今の `check-each-commit.sh` は INT 130、TERM 143、HUP 129。
-  `ctrlc` はどのシグナルかを渡さない）。この 3 つを見分けて読む呼び出しは、リポジトリの中に無い（確かめるのは実装の PR）
+- 中断されたときの終了コードは、シグナルによらず 130 になる（移す前の `check-each-commit.sh` は INT 130、TERM 143、
+  HUP 129。`ctrlc` はどのシグナルかを渡さない）。この 3 つを見分けて読む呼び出しは、リポジトリの中に無い（#369 と、
+  5 の PR の時点の `git grep` で確かめた）
 - sh のテスト（`claude/tests/scripts/slurm-*.sh`）のうち、判定を確かめるものは Rust の単体のテストに移り、sh のテストは
   「sh から呼べること」だけを確かめる（ADR-0087 と同じ分け方）
 - ADR-0087 の「`check-each-commit.sh` は移さず、sh のまま残す」は、この ADR で変わる（ADR-0087 の補足に書く）
+- `slurm-history` は、sacct の記録を `--json=v0.0.45` で読む。`--job` の State だけは `sacct -o State` の文字の出力で
+  読む。取り消したジョブの文字の出力は `CANCELLED by <uid>` で、JSON は取り消した利用者を名前（`kill_request_user`）で
+  しか持たず、uid の数を持たない（Slurm 26.05.6 の data_parser の v0.0.45 の `DUMP_FUNC(USER_ID)`）
+- 移すときに見つけた sh の版の誤り（`slurm-history --by-name` で、メモリの値の無いジョブ名が `0M` になる。MaxRSS が
+  0 バイトのステップで表を出さずに止まる）は、直さずに同じ振る舞いで移した（#375、#376）
 - 実装は、スクリプトごとに 1 つの PR で、次の順に進める（どれも `crates/claude-hooks/src/script/` と
-  `claude/tests/scripts/` を変えるので、1 つがマージされてから次に進む）。全部が移るまで、この ADR は proposed のまま、
-  移したものに PR の番号を書く
+  `claude/tests/scripts/` を変えるので、1 つがマージされてから次に進む）。移したものに PR の番号を書く。5 本が移った
+  5 の PR で、この ADR を accepted にした
   1. `slurm-queue`（最も小さく、`slurm-run` が並べ直しで呼ぶ。区分の一覧をここに置く）: #351
   2. `slurm-run`（投げる、並べ直す、待つ、結果を出す。`ctrlc` をここで足す。振る舞いは変えない。Slurm の状態は JSON で読む）: #359
   3. `slurm-queue` の読み取りを JSON に替える（#351 は sh と同じく `squeue --format` の文字の列を読み、awk の数の読み方を
      再現している。出力の行は変えない）: #367（#362 の出し直し）
   4. #350 の待つかの判定（形は別の決定として書いてから実装する。失敗が実際に起きているので、`slurm-history` より先）: #371
-  5. `slurm-history` と `lib/slurm-job.sh`（この PR で accepted にする）:
+  5. `slurm-history` と `lib/slurm-job.sh`（この PR で accepted にする）: #379
   6. `check-each-commit`: #369
 
 ### 確認
 
+各項の後ろに、5 の PR（2026-11-20）で確かめた結果を書く。
+
 - `git ls-files '*.sh'` のうち、テストでない sh が、`lib/claude-hooks-script.sh` を除いてすべて 3 行以下（コメントと
   空行を除く）
+  - 結果: テストでない sh（パスに `/tests/` を含まないもの）は 39 本。`claude/` の下の 38 本は、`lib/claude-hooks-script.sh`
+    （13 行）を除いてすべて 3 行以下（`grep -cv '^\s*#\|^\s*$'`）。残る `scripts/install-windows.sh`（25 行）は、この
+    ADR の後（2026-11-19 の 3579f187）に足した Windows の導入の手順で、背景の表の 38 本の外
 - `claude-hooks` の単体のテストに、区分の順、並べ直す列、終わった State、版の決め方のテストがある
+  - 結果: 区分の順は `slurm_class.rs` と `slurm_queue.rs`、並べ直す列は `slurm_queue.rs`、終わった State は `slurm.rs`
+    （`only_final_states_end_by_their_first_word_and_only_completed_succeeds`）、版の決め方は `slurm_history.rs`
+    （`decide` のテスト）にある
 - r995 で、移した後の `slurm-run.sh` で 1 本投げて、`JOB:`、`TIME`、`RESULT:`、`EXIT:` の行が前と同じ形で出る
+  - 結果: 2 の PR（#359）の実機の確認で、Rust の版（Slurm 964）と sh の版（965）で同じジョブを投げ、行の形が同じ
+    だった（2026-11-20。マージコミット 2880d886 の本文）
 - 中断（`kill -INT`）の後に、`check-each-commit` の一時の worktree が `git worktree list` に残らない
+  - 結果: 一時のリポジトリで `claude-hooks script check-each-commit main -- sleep 20` に `kill -INT` を送り、130 で
+    終わり、一時の worktree が `git worktree list` に残らなかった
 
 ## 各案の長所と短所
 

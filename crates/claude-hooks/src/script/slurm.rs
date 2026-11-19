@@ -722,6 +722,413 @@ fn quiet_output(argv: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// 終わったジョブの記録のファイル（jobcomp/filetxt）の置き場。r995 の JobCompLoc
+pub const COMPLETIONS: &str = "/var/log/slurm/job_completions";
+
+/// 投げたときの資源の取り方（コマンド行の sbatch の直後の語。slurm-run は排他のときだけそこに --exclusive を置き、-c の
+/// ときは --cpus-per-task=N を置く。会計の記録の CPU の数は、-c 32 でも排他でも 32 なので見分けられない）
+#[derive(Clone, Debug, PartialEq)]
+pub enum Allocation {
+    Exclusive,
+    /// 排他にせず取った CPU の数（`--cpus-per-task=` の後ろのまま）
+    Cpus(String),
+    /// どちらでもない（slurm-run を通らずに投げた）。sbatch の直後の語（コマンド行に sbatch が無ければ `-`）
+    Unknown(String),
+}
+
+/// 投げたときのコマンド行（sacct の SubmitLine）から読んだもの
+#[derive(Debug, PartialEq)]
+pub struct Submitted {
+    pub allocation: Allocation,
+    /// コメントの連絡先（slurm-run の「<区分> | <参照> | <目的> | <連絡先>」の連絡先。区分の無い古いコメントは全体）。
+    /// コメントが無ければ空
+    pub contact: String,
+    /// --wrap のコマンド（無ければ None）
+    pub command: Option<String>,
+}
+
+/// コマンド行から、資源の取り方、連絡先、コマンドを読む。参照と目的は ` | ` を含まないが「 --wrap 」を含みうるので、
+/// 区分のあるコメントは 3 つの ` | ` の後から次の「 --wrap 」までを連絡先とする。自分の --comment の無い行では、
+/// --wrap のコマンドの中の「 --comment 」を読まない
+pub fn submitted(line: &str) -> Submitted {
+    const COMMENT: &str = " --comment ";
+    const WRAP: &str = " --wrap ";
+    let (contact, command) = match line.split_once(COMMENT) {
+        Some((before, mut comment)) if !before.contains(WRAP) => {
+            let labelled = super::slurm_class::CLASSES
+                .iter()
+                .any(|class| comment.starts_with(&format!("{class} | ")));
+            if labelled {
+                for _ in 0..3 {
+                    if let Some((_, rest)) = comment.split_once(" | ") {
+                        comment = rest;
+                    }
+                }
+            }
+            match comment.split_once(WRAP) {
+                Some((contact, command)) => (contact, Some(command)),
+                None => (comment, None),
+            }
+        }
+        _ => ("", line.split_once(WRAP).map(|(_, command)| command)),
+    };
+    Submitted {
+        allocation: allocation(line),
+        contact: contact.to_string(),
+        command: command.map(str::to_string),
+    }
+}
+
+fn allocation(line: &str) -> Allocation {
+    let word = match line.split_once("sbatch ") {
+        Some((_, rest)) => rest.split(char::is_whitespace).next().unwrap_or(""),
+        None => "-",
+    };
+    if word == "--exclusive" {
+        Allocation::Exclusive
+    } else if let Some(cpus) = word.strip_prefix("--cpus-per-task=") {
+        Allocation::Cpus(cpus.to_string())
+    } else {
+        Allocation::Unknown(word.to_string())
+    }
+}
+
+/// 終わったジョブ（会計の記録では、待っているものと走っているものを含む）の、見積もりと実績を比べるための記録
+#[derive(Debug, PartialEq)]
+pub struct PastJob {
+    pub id: String,
+    pub name: String,
+    /// 最後まで走って成功した（会計の記録は State が COMPLETED、ファイルはそれに加えてノードを 1 つ以上取った）
+    pub completed: bool,
+    /// 見積もりの分。無い、0、無制限、パーティションの上限に任せたものは None
+    pub limit_minutes: Option<u64>,
+    /// 走り始めた時刻（JST）を、時間帯を数えずに数えた秒（[`wall_clock`]）。記録に無いか読めなければ None
+    pub start: Option<i64>,
+    /// 終わった時刻（start と同じ形）
+    pub end: Option<i64>,
+    /// 割り込まれないパーティションで走ったか（パーティションが無ければ None）
+    pub uninterrupted: Option<bool>,
+    /// 投げたときの資源の取り方（終わったジョブの記録のファイルは持たないので None）
+    pub allocation: Option<Allocation>,
+}
+
+/// 会計の記録の 1 行。並びは sacct の文字の出力と同じ（ジョブの行の後に、そのステップの行）
+#[derive(Debug, PartialEq)]
+pub enum AccountingRow {
+    Job(PastJob),
+    /// ジョブのステップ（.batch など）
+    Step {
+        job: String,
+        max_rss: MaxRss,
+    },
+}
+
+/// ステップのメモリの最大（MaxRSS）
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MaxRss {
+    /// 記録に無い（sacct の文字の出力は空の欄）
+    Missing,
+    /// 0 バイト（sacct の文字の出力は単位の無い `0`）
+    Zero,
+    /// MiB。sacct の `--units=M` の文字の出力と同じく、整数でなければ小数 2 桁に丸めた値（数バイトは 0.0）
+    Mib(f64),
+}
+
+/// 会計の記録を読めなかった理由
+#[derive(Debug, PartialEq)]
+pub enum AccountingError {
+    /// sacct を起動できないか、失敗した（理由は sacct の標準エラーに出る）
+    Failed,
+    /// 出力を解けない
+    Unreadable(String),
+}
+
+/// since（`YYYY-MM-DD`）以降の会計の記録の、ジョブとステップの行。sacct の標準エラーはそのまま流す
+pub fn accounting_since(since: &str) -> Result<Vec<AccountingRow>, AccountingError> {
+    let out = Command::new("sacct")
+        .args([JSON, "-S", since])
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            eprintln!("sacct を起動できない: {e}");
+            AccountingError::Failed
+        })?;
+    if !out.status.success() {
+        return Err(AccountingError::Failed);
+    }
+    accounting_rows(&String::from_utf8_lossy(&out.stdout)).map_err(AccountingError::Unreadable)
+}
+
+fn accounting_rows(json: &str) -> Result<Vec<AccountingRow>, String> {
+    let mut rows = Vec::new();
+    for job in json_jobs("sacct", json)? {
+        let id = job["job_id"]
+            .as_u64()
+            .ok_or("sacct の出力のジョブに数の job_id が無い")?
+            .to_string();
+        let time = &job["time"];
+        let limit = &time["limit"];
+        let partition = job["partition"].as_str().unwrap_or("");
+        rows.push(AccountingRow::Job(PastJob {
+            id: id.clone(),
+            name: job["name"].as_str().unwrap_or("").to_string(),
+            completed: state_word(&job["state"]["current"]) == "COMPLETED",
+            limit_minutes: (limit["set"].as_bool() == Some(true)
+                && limit["infinite"].as_bool() != Some(true))
+            .then(|| limit["number"].as_u64())
+            .flatten()
+            .filter(|m| *m > 0),
+            start: moment(&time["start"]).at.map(|t| t + super::time::JST),
+            end: moment(&time["end"]).at.map(|t| t + super::time::JST),
+            uninterrupted: (!partition.is_empty()).then(|| partition == UNINTERRUPTED),
+            allocation: Some(allocation(job["submit_line"].as_str().unwrap_or(""))),
+        }));
+        for step in job["steps"].as_array().into_iter().flatten() {
+            rows.push(AccountingRow::Step {
+                job: id.clone(),
+                max_rss: max_rss(step),
+            });
+        }
+    }
+    Ok(rows)
+}
+
+/// ステップのメモリの最大の MiB。sacct の MaxRSS の文字の出力（26.05.6 の src/sacct/print.c の PRINT_MAXRSS と、
+/// src/common/slurm_protocol_api.c の convert_num_unit2。2026-11-20 に slurm-26-05-6-1 のタグで読んだ）と同じく、
+/// 割り切れれば整数、割り切れなければ小数 2 桁に丸める。0 バイトは、丸めて 0 になる数バイトと分ける（文字の出力が違う）
+fn max_rss(step: &Value) -> MaxRss {
+    let bytes = step["tres"]["requested"]["max"]
+        .as_array()
+        .and_then(|all| all.iter().find(|tres| tres["type"].as_str() == Some("mem")))
+        .and_then(|mem| mem["count"].as_u64());
+    match bytes {
+        // 記録が無い値（NO_VAL64、INFINITE64）は空の欄
+        None => MaxRss::Missing,
+        Some(b) if b >= NO_VAL64 => MaxRss::Missing,
+        Some(0) => MaxRss::Zero,
+        Some(b) => {
+            let mib = b as f64 / 1024.0 / 1024.0;
+            if mib.fract() == 0.0 {
+                MaxRss::Mib(mib)
+            } else {
+                format!("{mib:.2}")
+                    .parse()
+                    .map_or(MaxRss::Missing, MaxRss::Mib)
+            }
+        }
+    }
+}
+
+/// 終わったジョブの記録のファイルの 1 行
+#[derive(Debug, PartialEq)]
+pub enum CompletionLine {
+    /// 空の行
+    Blank,
+    /// JobId の無い行（理由）
+    Unreadable(&'static str),
+    /// JobId のある行。ほかの欄が無いか壊れていれば、その理由
+    Job {
+        id: String,
+        record: Result<PastJob, &'static str>,
+    },
+}
+
+/// 終わったジョブの記録のファイルの 1 行を読む。行は `キー=値` の空白区切りで、値に `=` や `,` を含む欄（Tres）が
+/// あるので最初の `=` で分ける。`=` を含まない語は直前の値の続き（空白のあるジョブ名）として読む
+pub fn completion_line(line: &str) -> CompletionLine {
+    let mut fields: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let mut key: Option<&str> = None;
+    let mut words = line.split([' ', '\t']).filter(|w| !w.is_empty()).peekable();
+    if words.peek().is_none() {
+        return CompletionLine::Blank;
+    }
+    for word in words {
+        if let Some((k, v)) = word.split_once('=') {
+            fields.insert(k, v.to_string());
+            key = (!k.is_empty()).then_some(k);
+        } else if let Some(value) = key.and_then(|k| fields.get_mut(k)) {
+            value.push(' ');
+            value.push_str(word);
+        }
+    }
+    let Some(id) = fields.get("JobId") else {
+        return CompletionLine::Unreadable("JobId がありません");
+    };
+    let text = |k: &str| fields.get(k).map(String::as_str);
+    let record = (|| {
+        let state = text("JobState").ok_or("JobState がありません")?;
+        let limit = text("TimeLimit").ok_or("TimeLimit がありません")?;
+        let nodes = text("NodeCnt").unwrap_or("");
+        if nodes.is_empty() || !nodes.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("NodeCnt が数値ではありません");
+        }
+        let partition = text("Partition").unwrap_or("");
+        Ok(PastJob {
+            id: id.clone(),
+            name: text("Name").unwrap_or("").to_string(),
+            completed: state == "COMPLETED" && nodes.bytes().any(|b| b != b'0'),
+            limit_minutes: (!limit.is_empty() && limit.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| limit.parse().ok())
+                .flatten()
+                .filter(|m| *m > 0),
+            start: wall_clock(text("StartTime").unwrap_or("")),
+            end: wall_clock(text("EndTime").unwrap_or("")),
+            uninterrupted: (!partition.is_empty()).then(|| partition == UNINTERRUPTED),
+            allocation: None,
+        })
+    })();
+    CompletionLine::Job {
+        id: id.clone(),
+        record,
+    }
+}
+
+/// `YYYY-MM-DDTHH:MM:SS` の時刻を、時間帯を数えずに 1970-01-01T00:00:00 から数えた秒に。月は 1〜12、日は
+/// 1〜31、時は 23、分と秒は 59 まで（月の日数は見ない）。形が違えば None
+pub fn wall_clock(text: &str) -> Option<i64> {
+    let b = text.as_bytes();
+    let shape = b.len() == 19
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b'T',
+            13 | 16 => *c == b':',
+            _ => c.is_ascii_digit(),
+        });
+    if !shape {
+        return None;
+    }
+    let num = |from: usize, len: usize| text[from..from + len].parse::<i64>().ok();
+    let (y, mo, d, h, mi, s) = (
+        num(0, 4)?,
+        num(5, 2)?,
+        num(8, 2)?,
+        num(11, 2)?,
+        num(14, 2)?,
+        num(17, 2)?,
+    );
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 59 {
+        return None;
+    }
+    Some(super::time::days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + s)
+}
+
+/// 会計の記録の時刻
+#[derive(Clone, Debug, PartialEq)]
+pub struct Moment {
+    /// 出力に書く形（sacct の文字の出力と同じ。JST の `%FT%T`、無い時刻は `Unknown` か `None`）
+    pub text: String,
+    /// UNIX の秒（無い時刻は None）
+    pub at: Option<i64>,
+}
+
+/// JSON の時刻（UNIX の秒）を、sacct の文字の出力（src/common/parse_time.c の `_make_time_str_internal`）の形と
+/// 合わせて。0 と INFINITE は Unknown、NO_VAL は None
+fn moment(value: &Value) -> Moment {
+    match value.as_i64() {
+        None | Some(0) => Moment {
+            text: "Unknown".to_string(),
+            at: None,
+        },
+        Some(t) if t == INFINITE as i64 => Moment {
+            text: "Unknown".to_string(),
+            at: None,
+        },
+        Some(t) if t == NO_VAL as i64 => Moment {
+            text: "None".to_string(),
+            at: None,
+        },
+        Some(t) => Moment {
+            text: clock_text(t).unwrap_or_default(),
+            at: Some(t),
+        },
+    }
+}
+
+/// 経過の秒を、sacct の Elapsed の文字の出力（src/common/parse_time.c の `secs2time_str`）の形で
+fn elapsed_text(secs: u64) -> String {
+    if secs == INFINITE {
+        return "UNLIMITED".to_string();
+    }
+    let (days, hours, minutes, seconds) =
+        (secs / 86_400, secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    if days > 0 {
+        format!("{days}-{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    }
+}
+
+/// 会計の記録の 1 本のジョブ。文字列の欄は、出力に書く形（sacct の文字の出力と同じ）
+#[derive(Debug, PartialEq)]
+pub struct AccountedJob {
+    pub id: String,
+    pub name: String,
+    /// sacct の State の文字の出力のまま（取り消したジョブは `CANCELLED by <uid>`）
+    pub state: String,
+    pub elapsed: String,
+    pub submit: Moment,
+    pub start: Moment,
+    pub end: Moment,
+    pub workdir: String,
+    pub submitted: Submitted,
+}
+
+/// 会計の記録の、番号 job のジョブ（ステップを除く）。記録が無ければ None。sacct の標準エラーはそのまま流す。
+///
+/// 状態だけは文字の出力（`-o State`）で読む。取り消したジョブの文字の出力は `CANCELLED by <取り消した uid>` で、JSON は
+/// 取り消した利用者を名前（`kill_request_user`。26.05.6 の data_parser の v0.0.45 の parsers.c の DUMP_FUNC(USER_ID)）で
+/// しか持たず、uid の数を持たない
+pub fn accounted_job(job: &str) -> Result<Option<AccountedJob>, AccountingError> {
+    let run = |args: &[&str]| -> Result<String, AccountingError> {
+        let out = Command::new("sacct")
+            .args(args)
+            .stderr(Stdio::inherit())
+            .output()
+            .map_err(|e| {
+                eprintln!("sacct を起動できない: {e}");
+                AccountingError::Failed
+            })?;
+        if !out.status.success() {
+            return Err(AccountingError::Failed);
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let json = run(&[JSON, "-X", "-j", job])?;
+    let Some(mut found) = accounted_job_json(&json, "").map_err(AccountingError::Unreadable)?
+    else {
+        return Ok(None);
+    };
+    // 記録のあるジョブだけ、状態を読み足す
+    let state = run(&["-j", job, "-X", "-P", "-n", "-o", "State"])?;
+    found.state = state.lines().next().unwrap_or("").to_string();
+    Ok(Some(found))
+}
+
+fn accounted_job_json(json: &str, state: &str) -> Result<Option<AccountedJob>, String> {
+    let jobs = json_jobs("sacct", json)?;
+    let found = match jobs.as_slice() {
+        [] => return Ok(None),
+        [found] => found,
+        _ => return Err(format!("記録が {} 件ある", jobs.len())),
+    };
+    let time = &found["time"];
+    let text = |key: &str| found[key].as_str().unwrap_or("").to_string();
+    Ok(Some(AccountedJob {
+        id: id_text(&found["job_id"]),
+        name: text("name"),
+        state: state.to_string(),
+        elapsed: time["elapsed"]
+            .as_u64()
+            .map(elapsed_text)
+            .unwrap_or_default(),
+        submit: moment(&time["submission"]),
+        start: moment(&time["start"]),
+        end: moment(&time["end"]),
+        workdir: text("working_directory"),
+        submitted: submitted(found["submit_line"].as_str().unwrap_or("")),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1252,5 +1659,449 @@ mod tests {
             submit_args(&job(None, false))
                 .contains(&"/home/u/github/slurm-logs/%x-%j.out".to_string())
         );
+    }
+
+    /// slurm-run が投げた形のコマンド行（資源の引数、コメント、コマンド）
+    fn submit_line(resources: &str, comment: &str, command: &str) -> String {
+        format!(
+            "/nix/store/x-slurm/bin/sbatch {resources} --partition=main --wait --export=ALL -J j -o /logs/%x-%j.out --time 10 --comment {comment} --wrap {command}"
+        )
+    }
+
+    #[test]
+    fn the_submit_line_gives_the_allocation_the_contact_after_the_labels_and_the_command() {
+        assert_eq!(
+            super::submitted(&submit_line(
+                "--exclusive",
+                "decision | #1 | 結果で方式を決める | feat/x /w commit=abc claude=s",
+                "lattice input.toml > out.txt"
+            )),
+            super::Submitted {
+                allocation: super::Allocation::Exclusive,
+                contact: "feat/x /w commit=abc claude=s".to_string(),
+                command: Some("lattice input.toml > out.txt".to_string()),
+            }
+        );
+        let shared = super::submitted(&submit_line("--cpus-per-task=8", "trial | - | p | c", "x"));
+        assert_eq!(shared.allocation, super::Allocation::Cpus("8".to_string()));
+    }
+
+    #[test]
+    fn a_purpose_with_wrap_does_not_cut_the_contact_and_an_old_comment_is_all_contact() {
+        // 参照と目的は | を含まないが「 --wrap 」を含みうるので、区分のあるコメントは 3 つの | の後から読む
+        let purpose = super::submitted(&submit_line(
+            "--exclusive",
+            "decision | #1 | --wrap の扱いで方式を決める | feat/x /w",
+            "lattice input.toml",
+        ));
+        assert_eq!(
+            (purpose.contact.as_str(), purpose.command.as_deref()),
+            ("feat/x /w", Some("lattice input.toml"))
+        );
+        // 区分の無い古いコメントは、全体が連絡先
+        let old = super::submitted(
+            "/x/sbatch --cpus-per-task=8 --wait -J j --time 10 --comment feat/x /w claude=s shared-cpus=8 --wrap lattice input.toml",
+        );
+        assert_eq!(
+            (old.contact.as_str(), old.command.as_deref()),
+            (
+                "feat/x /w claude=s shared-cpus=8",
+                Some("lattice input.toml")
+            )
+        );
+    }
+
+    #[test]
+    fn a_comment_inside_the_wrapped_command_is_not_the_contact() {
+        let line =
+            super::submitted("/x/sbatch --exclusive --wrap tool --comment feat/y /x commit=abc");
+        assert_eq!(
+            line,
+            super::Submitted {
+                allocation: super::Allocation::Exclusive,
+                contact: String::new(),
+                command: Some("tool --comment feat/y /x commit=abc".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_submit_line_not_from_slurm_run_has_an_unknown_allocation_and_may_lack_the_command() {
+        assert_eq!(
+            super::submitted("/usr/bin/sbatch --wrap run").allocation,
+            super::Allocation::Unknown("--wrap".to_string())
+        );
+        let script = super::submitted("salloc job.sh");
+        assert_eq!(
+            script.allocation,
+            super::Allocation::Unknown("-".to_string())
+        );
+        assert_eq!(script.command, None);
+        assert_eq!(script.contact, "");
+        // 改行でも語は切れる
+        assert_eq!(
+            super::submitted("/x/sbatch --exclusive\n--wrap x").allocation,
+            super::Allocation::Exclusive
+        );
+    }
+
+    /// 2026-11-20 に r995 の `sacct --json=v0.0.45 -S 2026-10-12` が出したジョブの、読む欄（changes で置き換える）と、
+    /// ステップのメモリの最大（バイト。None なら mem の欄が無い）
+    fn sacct_job(changes: serde_json::Value, steps: &[(&str, Option<u64>)]) -> serde_json::Value {
+        let steps: Vec<_> = steps
+            .iter()
+            .map(|(id, bytes)| {
+                let max: Vec<_> = bytes
+                    .iter()
+                    .map(|b| json!({"type": "mem", "name": "", "id": 2, "count": b, "task": 0, "node": "r995"}))
+                    .chain([json!({"type": "cpu", "name": "", "id": 1, "count": 0, "task": 0, "node": "r995"})])
+                    .collect();
+                json!({"step": {"id": id, "name": "batch"}, "tres": {"requested": {"max": max}}})
+            })
+            .collect();
+        let mut job = json!({
+            "job_id": 128,
+            "name": "xlc-2G",
+            "partition": "timed",
+            "state": {"current": ["COMPLETED"], "reason": "None"},
+            "time": {"start": 1795077405, "end": 1795077870, "limit": set(60)},
+            "submit_line": "/nix/store/x/bin/sbatch --exclusive --partition=timed --wrap run",
+            "steps": steps,
+        });
+        for (key, value) in changes.as_object().unwrap() {
+            job[key] = value.clone();
+        }
+        job
+    }
+
+    fn rows(jobs: &[serde_json::Value]) -> Vec<super::AccountingRow> {
+        super::accounting_rows(&json!({"jobs": jobs}).to_string()).unwrap()
+    }
+
+    #[test]
+    fn sacct_json_gives_each_job_row_followed_by_its_step_rows_like_the_text_output() {
+        use super::{AccountingRow, Allocation, PastJob};
+        assert_eq!(
+            rows(&[sacct_job(
+                json!({}),
+                &[("128.batch", Some(1_861_193_728)), ("128.extern", None)]
+            )]),
+            vec![
+                AccountingRow::Job(PastJob {
+                    id: "128".to_string(),
+                    name: "xlc-2G".to_string(),
+                    completed: true,
+                    limit_minutes: Some(60),
+                    // 2026-11-19T17:36:45 と 2026-11-19T17:44:30（JST）
+                    start: super::wall_clock("2026-11-19T17:36:45"),
+                    end: super::wall_clock("2026-11-19T17:44:30"),
+                    uninterrupted: Some(true),
+                    allocation: Some(Allocation::Exclusive),
+                }),
+                AccountingRow::Step {
+                    job: "128".to_string(),
+                    max_rss: super::MaxRss::Mib(1774.97),
+                },
+                AccountingRow::Step {
+                    job: "128".to_string(),
+                    max_rss: super::MaxRss::Missing,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn the_max_rss_is_mib_rounded_to_2_decimals_unless_whole_like_sacct_units_m() {
+        use super::MaxRss;
+        // sacct --units=M の文字の出力（1861193728 バイトは 1774.97M、1 GiB は 1024M、4096 バイトは 0.00M、0 バイトは単位の無い 0）
+        for (bytes, mib) in [
+            (Some(1_861_193_728), MaxRss::Mib(1774.97)),
+            (Some(8_990_720), MaxRss::Mib(8.57)),
+            (Some(1 << 30), MaxRss::Mib(1024.0)),
+            (Some(4096), MaxRss::Mib(0.0)),
+            (Some(0), MaxRss::Zero),
+            (Some(0xffff_ffff_ffff_fffe), MaxRss::Missing),
+            (Some(u64::MAX), MaxRss::Missing),
+            (None, MaxRss::Missing),
+        ] {
+            let got = rows(&[sacct_job(json!({}), &[("1.batch", bytes)])]);
+            assert_eq!(
+                got[1],
+                super::AccountingRow::Step {
+                    job: "128".to_string(),
+                    max_rss: mib
+                },
+                "{bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sacct_json_reads_the_limit_times_partition_state_and_allocation_of_the_job() {
+        let job = |changes: serde_json::Value| match rows(&[sacct_job(changes, &[])]).remove(0) {
+            super::AccountingRow::Job(job) => job,
+            row => panic!("{row:?}"),
+        };
+        for (limit, minutes) in [
+            (set(45), Some(45)),
+            (set(0), None),
+            (infinite(), None),
+            (unset(), None),
+        ] {
+            assert_eq!(
+                job(json!({"time": {"start": 1, "end": 2, "limit": limit}})).limit_minutes,
+                minutes,
+                "{limit}"
+            );
+        }
+        // 文字の出力が Unknown（0 と INFINITE）か None（NO_VAL）と書く時刻は、時刻として読めない
+        for start in [0u64, 0xffff_ffff, 0xffff_fffe] {
+            assert_eq!(
+                job(json!({"time": {"start": start, "end": 2, "limit": set(1)}})).start,
+                None,
+                "{start}"
+            );
+        }
+        assert_eq!(job(json!({"partition": ""})).uninterrupted, None);
+        assert_eq!(job(json!({"partition": "main"})).uninterrupted, Some(false));
+        // 終わりかけ（COMPLETING の旗）は、文字の出力でも COMPLETED でない
+        assert!(!job(json!({"state": {"current": ["COMPLETED", "COMPLETING"]}})).completed);
+        assert!(!job(json!({"state": {"current": ["CANCELLED"]}})).completed);
+        assert_eq!(
+            job(json!({"submit_line": "/x/sbatch --cpus-per-task=4 --wrap run"})).allocation,
+            Some(super::Allocation::Cpus("4".to_string()))
+        );
+    }
+
+    #[test]
+    fn sacct_json_without_jobs_or_a_job_number_is_unreadable() {
+        assert!(super::accounting_rows("not json").is_err());
+        assert!(super::accounting_rows("{}").is_err());
+        assert!(super::accounting_rows(&json!({"jobs": [{"name": "x"}]}).to_string()).is_err());
+        assert_eq!(super::accounting_rows(r#"{"jobs": []}"#), Ok(vec![]));
+    }
+
+    /// jobcomp/filetxt の 1 行（r995 の /var/log/slurm/job_completions の形）
+    fn jobcomp(
+        id: &str,
+        name: &str,
+        state: &str,
+        limit: &str,
+        start: &str,
+        end: &str,
+        nodes: &str,
+    ) -> String {
+        format!(
+            "JobId={id} UserId=tagawa(1000) GroupId=users(100) Name={name} JobState={state} Partition=main TimeLimit={limit} StartTime={start} EndTime={end} NodeList=r995 NodeCnt={nodes} ProcCnt=32 WorkDir=/w ReservationName= Tres=cpu=1,mem=86000M,node=1,billing=1 Account= QOS= WcKey= Cluster=unknown SubmitTime=2026-10-11T12:00:00 EligibleTime=2026-10-11T12:00:00 DerivedExitCode=0:0 ExitCode=0:0 "
+        )
+    }
+
+    fn completion(line: &str) -> super::PastJob {
+        match super::completion_line(line) {
+            super::CompletionLine::Job { record, .. } => record.unwrap(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_jobcomp_line_gives_the_job_with_its_times_limit_and_partition() {
+        assert_eq!(
+            completion(&jobcomp(
+                "73",
+                "openmc-2A",
+                "COMPLETED",
+                "45",
+                "2026-10-11T13:45:32",
+                "2026-10-11T14:24:05",
+                "1"
+            )),
+            super::PastJob {
+                id: "73".to_string(),
+                name: "openmc-2A".to_string(),
+                completed: true,
+                limit_minutes: Some(45),
+                start: super::wall_clock("2026-10-11T13:45:32"),
+                end: super::wall_clock("2026-10-11T14:24:05"),
+                uninterrupted: Some(false),
+                allocation: None,
+            }
+        );
+        let timed =
+            completion("JobId=1 Name=a JobState=COMPLETED Partition=timed TimeLimit=10 NodeCnt=1");
+        assert_eq!(timed.uninterrupted, Some(true));
+        assert_eq!((timed.start, timed.end), (None, None));
+    }
+
+    #[test]
+    fn a_jobcomp_name_with_spaces_continues_the_value_and_values_split_at_the_first_equals() {
+        let job = completion(&jobcomp(
+            "8",
+            "my job",
+            "COMPLETED",
+            "10",
+            "2026-10-11T10:00:00",
+            "2026-10-11T10:05:00",
+            "1",
+        ));
+        assert_eq!(job.name, "my job");
+        assert_eq!(job.limit_minutes, Some(10));
+    }
+
+    #[test]
+    fn only_completed_jobcomp_lines_with_a_node_have_run_to_the_end() {
+        let at = |state: &str, nodes: &str| {
+            completion(&jobcomp(
+                "1",
+                "a",
+                state,
+                "10",
+                "2026-10-11T10:00:00",
+                "2026-10-11T10:05:00",
+                nodes,
+            ))
+            .completed
+        };
+        assert!(at("COMPLETED", "1"));
+        assert!(at("COMPLETED", "02"));
+        assert!(!at("COMPLETED", "0"));
+        assert!(!at("FAILED", "1"));
+        assert!(!at("TIMEOUT", "1"));
+        assert!(!at("CANCELLED", "0"));
+    }
+
+    #[test]
+    fn a_jobcomp_limit_that_is_not_a_positive_number_is_no_estimate() {
+        for limit in ["UNLIMITED", "0", "Partition_Limit", ""] {
+            assert_eq!(
+                completion(&format!(
+                    "JobId=1 JobState=COMPLETED TimeLimit={limit} NodeCnt=1"
+                ))
+                .limit_minutes,
+                None,
+                "{limit}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_jobcomp_line_without_an_id_state_limit_or_node_count_is_unreadable() {
+        use super::CompletionLine;
+        assert_eq!(super::completion_line(""), CompletionLine::Blank);
+        assert_eq!(super::completion_line(" \t "), CompletionLine::Blank);
+        assert_eq!(
+            super::completion_line("Name=x JobState=COMPLETED"),
+            CompletionLine::Unreadable("JobId がありません")
+        );
+        for (line, why) in [
+            ("JobId=2 TimeLimit=10 NodeCnt=1", "JobState がありません"),
+            (
+                "JobId=2 JobState=COMPLETED NodeCnt=1",
+                "TimeLimit がありません",
+            ),
+            (
+                "JobId=2 JobState=COMPLETED TimeLimit=10",
+                "NodeCnt が数値ではありません",
+            ),
+            (
+                "JobId=2 JobState=COMPLETED TimeLimit=10 NodeCnt=x",
+                "NodeCnt が数値ではありません",
+            ),
+        ] {
+            assert_eq!(
+                super::completion_line(line),
+                CompletionLine::Job {
+                    id: "2".to_string(),
+                    record: Err(why)
+                },
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_wall_clock_counts_seconds_across_days_and_months_and_rejects_impossible_fields() {
+        let at = super::wall_clock;
+        assert_eq!(at("1970-01-01T09:00:00"), Some(32_400));
+        assert_eq!(
+            at("2026-10-01T00:30:00").unwrap() - at("2026-09-30T23:30:00").unwrap(),
+            3600
+        );
+        // 月の日数は見ない（31 日の無い月の 31 日は、次の月の 1 日と同じ）
+        assert_eq!(at("2026-09-31T00:00:00"), at("2026-10-01T00:00:00"));
+        for bad in [
+            "2026-13-01T10:00:00",
+            "2026-10-11T25:00:00",
+            "2026-10-11T10:60:00",
+            "2026-10-00T10:00:00",
+            "2026-10-11 10:00:00",
+            "2026-10-11T10:00",
+            "Unknown",
+            "",
+        ] {
+            assert_eq!(at(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_sacct_job_gives_the_fields_as_the_text_output_writes_them() {
+        let json = json!({"jobs": [{
+            "job_id": 963,
+            "name": "probe",
+            "time": {"elapsed": 93_784, "submission": 1795084999, "start": 4294967294u64, "end": 0},
+            "working_directory": "/home/u/github/xlc",
+            "submit_line": "/x/sbatch --cpus-per-task=1 --comment trial | - | p | feat/x /w --wrap sleep 1",
+        }]})
+        .to_string();
+        let job = super::accounted_job_json(&json, "CANCELLED by 1000")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (job.id.as_str(), job.name.as_str(), job.state.as_str()),
+            ("963", "probe", "CANCELLED by 1000")
+        );
+        assert_eq!(job.elapsed, "1-02:03:04");
+        assert_eq!(
+            job.submit,
+            super::Moment {
+                text: "2026-11-19T19:43:19".to_string(),
+                at: Some(1795084999)
+            }
+        );
+        // 走り始めなかったジョブの Start は None、終わっていないジョブの End は Unknown
+        assert_eq!(
+            (
+                job.start.text.as_str(),
+                job.start.at,
+                job.end.text.as_str(),
+                job.end.at
+            ),
+            ("None", None, "Unknown", None)
+        );
+        assert_eq!(job.workdir, "/home/u/github/xlc");
+        assert_eq!(job.submitted.contact, "feat/x /w");
+    }
+
+    #[test]
+    fn the_elapsed_time_is_hh_mm_ss_with_days_in_front() {
+        for (secs, text) in [
+            (0, "00:00:00"),
+            (600, "00:10:00"),
+            (22_302, "06:11:42"),
+            (86_400, "1-00:00:00"),
+            (0xffff_ffff, "UNLIMITED"),
+        ] {
+            assert_eq!(super::elapsed_text(secs), text, "{secs}");
+        }
+    }
+
+    #[test]
+    fn a_sacct_job_that_is_missing_or_ambiguous_is_none_or_an_error() {
+        assert_eq!(super::accounted_job_json(r#"{"jobs": []}"#, ""), Ok(None));
+        let two = json!({"jobs": [{"job_id": 5}, {"job_id": 6}]}).to_string();
+        assert_eq!(
+            super::accounted_job_json(&two, ""),
+            Err("記録が 2 件ある".to_string())
+        );
+        assert!(super::accounted_job_json("not json", "").is_err());
     }
 }

@@ -13,7 +13,7 @@ sacct -S <日付> -X -P -n -o JobID,JobName,State,Elapsed,Submit,Start,End,WorkD
 
 sacct で番号を探し、`--job` に渡す（sacct はジョブ 126 より前を持たない）。`--job` はジョブごとに `STATE:`、`ELAPSED:`、`TIMES:`、
 `EXCLUSIVE:`、`WORKDIR:`、`BRANCH:`、`COMMIT:`、`REPO:`、`VERSION:`、`COMMAND:`（2 行目からは `COMMAND+`）の行を出す（行の意味と
-版の決め方は `~/.claude/scripts/lib/slurm-job.sh` の先頭）。
+版の決め方は `~/.claude/scripts/slurm-history.sh` の先頭）。
 
 - 比べるのは、`STATE: COMPLETED` で `EXCLUSIVE: yes` のジョブ。`-c` のジョブ（`no (--cpus-per-task=N)`）の時間は、同じ仕事なら
   上限としてだけ使う
