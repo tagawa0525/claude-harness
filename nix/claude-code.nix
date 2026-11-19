@@ -98,7 +98,8 @@ in
     # .claude ディレクトリを作成
     mkdir -p "$CLAUDE_DIR"
 
-    # CLAUDE.md/commands/skills/scripts の同期（claude-sync コマンドと共通実装の claude-setup sync）
+    # CLAUDE.md/commands/skills/scripts と、ホームの下の markdownlint の設定と ja-terms の共通の辞書（HOME_FILES。
+    # ADR-0093、ADR-0097）の同期（claude-sync コマンドと共通実装の claude-setup sync）
     $DRY_RUN_CMD ${claude-setup}/bin/claude-setup sync "${claudeCodeSource}"
 
 

@@ -13,8 +13,8 @@
 //!   書きかけで、rebuild の配った新しい版を黙って上書きしない）。clone でなければ（.git が無い）、そのまま同期する
 //! - 引数あり: pull せず、その場所の今の中身を同期する（worktree で直しを試す、activation、pull できないとき）
 //!
-//! - HOME_FILES（markdownlint の設定）: ~/.claude の外のホームの下に置く。ソースが正で、中身が違えば上書きする
-//!   （ADR-0093）
+//! - HOME_FILES（markdownlint の設定、ja-terms の共通の辞書）: ~/.claude の外のホームの下に置く。ソースが正で、中身が
+//!   違えば上書きする（ADR-0093、ADR-0097）
 //!
 //! ソースのディレクトリは dot なしの claude と config（ADR-0094）。ソースのリポジトリの .claude は、そのリポジトリの
 //! プロジェクトの設定なので読まない
@@ -40,9 +40,13 @@ const PLACES: [(&str, bool); 4] = [
 /// ~/.claude の外に置くファイル（ソースのリポジトリの先頭からの相対パスと、ホームからの相対パス。`/` 区切り）。
 /// ソースが正で、中身が違えば上書きする。行き先が symlink（home-manager が置いていた store への link）なら、辿らず
 /// 通常のファイルに置き換える。ソースが無ければ何もしない。markdownlint の設定は ~/.config/markdownlint/config を
-/// markdownlint-cli が読む（0.50.0 で確認。config.json は読まれない。ADR-0093）
-const HOME_FILES: [(&str, &str); 1] =
-    [("config/markdownlint/config", ".config/markdownlint/config")];
+/// markdownlint-cli が読む（0.50.0 で確認。config.json は読まれない。ADR-0093）。ja-terms の共通の辞書は、ja-terms が
+/// ビルドに埋めずにここから読む（規則を足すと、ビルドし直さずに sync だけで効く。ソースは crate のテストも読むので
+/// crate の中に置く。ADR-0097）
+const HOME_FILES: [(&str, &str); 2] = [
+    ("config/markdownlint/config", ".config/markdownlint/config"),
+    ("crates/ja-terms/prh.yml", ".config/ja-terms/prh.yml"),
+];
 
 /// 配ったファイルの一覧（~/.claude の下。1 行 1 パス、~/.claude からの相対で `/` 区切り）
 const MANIFEST: &str = ".claude-sync-manifest";
