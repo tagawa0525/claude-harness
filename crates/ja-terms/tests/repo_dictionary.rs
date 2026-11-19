@@ -348,8 +348,15 @@ fn an_unreadable_repository_dictionary_stops_every_command() {
             &["message"],
             &["commit-msg", file.to_str().unwrap()],
             &["staged"],
+            &["overrides"],
         ] {
-            let out = repo.ja_terms(&repo.top(), args, "feat: 足す\n\n本文。\n");
+            // 標準入力を読むのは message だけ。ほかは読まずに止まるので、入力を渡すと閉じた管に書いて run が落ちうる
+            let stdin = if args == ["message"] {
+                "feat: 足す\n\n本文。\n"
+            } else {
+                ""
+            };
+            let out = repo.ja_terms(&repo.top(), args, stdin);
             let said = format!("{}{}", stdout(&out), stderr(&out));
             assert_eq!(out.status.code(), Some(2), "{args:?} {yaml:?}: {said}");
             assert!(
@@ -409,4 +416,203 @@ fn a_directory_reached_through_a_symlink_reads_the_dictionary_of_its_work_tree()
     let out = repo.ja_terms(&link, &["check", "doc.md"], "");
     let _ = std::fs::remove_dir_all(&outside);
     assert_eq!(findings(&out), [common_finding(), REPO_FINDING.to_string()]);
+}
+
+/// 共通の辞書（crate の prh.yml）の、expected の最初の規則の YAML（`  - expected:` の行から次の規則の前まで）
+fn common_rule(expected: &str) -> String {
+    let yaml = std::fs::read_to_string(COMMON_DICTIONARY.1).unwrap();
+    let start = yaml.find(&format!("\n  - expected: {expected}\n")).unwrap() + 1;
+    let end = yaml[start + 1..]
+        .find("\n  - expected:")
+        .map_or(yaml.len(), |i| start + 1 + i + 1);
+    yaml[start..end].to_string()
+}
+
+/// 規則の YAML を並べたリポジトリの辞書
+fn repo_dictionary(rules: &str) -> String {
+    format!("version: 1\nrules:\n{rules}")
+}
+
+/// 出力のうち、prefix で始まる行
+fn lines_of(out: &Output, prefix: &str) -> Vec<String> {
+    stdout(out)
+        .lines()
+        .filter(|l| l.starts_with(prefix))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn overrides_reports_a_common_rule_that_a_different_pattern_replaces() {
+    let repo = Repo::new();
+    repo.write(".ja-terms/prh.yml", SAME_EXPECTED);
+    let out = repo.ja_terms(&repo.top(), &["overrides"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let replaced = lines_of(&out, "REPLACED: ");
+    assert_eq!(replaced.len(), 1, "{}", stdout(&out));
+    assert!(
+        replaced[0].contains("確認") && replaced[0].contains("ぴよぴよ"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(lines_of(&out, "SAME: ").is_empty(), "{}", stdout(&out));
+    let repo_line = lines_of(&out, "REPO: ");
+    assert!(
+        repo_line.len() == 1 && repo_line[0].contains(".ja-terms/prh.yml"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(lines_of(&out, "COMMON: ").len(), 1, "{}", stdout(&out));
+}
+
+#[test]
+fn overrides_tells_a_copied_rule_from_a_rule_dropped_with_it() {
+    // 共通の辞書の「比較」の 2 規則のうち 1 つだけを、そのままリポジトリの辞書に移すと、もう 1 つも外れる
+    let repo = Repo::new();
+    let copied = common_rule("比較");
+    repo.write(".ja-terms/prh.yml", &repo_dictionary(&copied));
+    let out = repo.ja_terms(&repo.top(), &["overrides"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let same = lines_of(&out, "SAME: ");
+    let replaced = lines_of(&out, "REPLACED: ");
+    assert_eq!((same.len(), replaced.len()), (1, 1), "{}", stdout(&out));
+    assert!(same[0].contains("比較"), "{}", stdout(&out));
+    assert!(!same[0].contains("specs"), "{}", stdout(&out));
+    // 外れたのは、移していない方の規則（pattern の先頭の後読み）
+    assert!(
+        replaced[0].contains("比較") && replaced[0].contains("(?<=[の、])"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn overrides_counts_a_rule_with_the_same_pattern_and_other_specs_as_the_same() {
+    // 当たり方は同じなので置き換えとしないが、specs の違いを示す
+    let repo = Repo::new();
+    let copied = format!(
+        "version: 1\nrules:\n  - expected: 確認\n    pattern: /{COMMON}(?=[のでをだ：:）」]|が(?!たい|ち|てら))/\n"
+    );
+    repo.write(".ja-terms/prh.yml", &copied);
+    let out = repo.ja_terms(&repo.top(), &["overrides"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let same = lines_of(&out, "SAME: ");
+    assert!(
+        same.len() == 1 && same[0].contains("specs"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(lines_of(&out, "REPLACED: ").is_empty(), "{}", stdout(&out));
+}
+
+#[test]
+fn overrides_lists_nothing_when_no_expected_is_shared() {
+    let repo = Repo::new();
+    repo.write(".ja-terms/prh.yml", REPO_RULES);
+    let out = repo.ja_terms(&repo.top(), &["overrides"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(lines_of(&out, "REPLACED: ").is_empty(), "{}", stdout(&out));
+    assert!(lines_of(&out, "SAME: ").is_empty(), "{}", stdout(&out));
+    assert!(
+        lines_of(&out, "REPO: ")
+            .first()
+            .is_some_and(|l| l.contains(".ja-terms/prh.yml")),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn overrides_without_a_repository_dictionary_says_so() {
+    let repo = Repo::new();
+    let out = repo.ja_terms(&repo.top(), &["overrides"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        lines_of(&out, "REPO: ")
+            .first()
+            .is_some_and(|l| l.contains("なし") && l.contains(".ja-terms/prh.yml")),
+        "{}",
+        stdout(&out)
+    );
+    assert!(lines_of(&out, "REPLACED: ").is_empty(), "{}", stdout(&out));
+    assert_eq!(lines_of(&out, "COMMON: ").len(), 1, "{}", stdout(&out));
+}
+
+#[test]
+fn overrides_outside_a_work_tree_says_so() {
+    let repo = Repo::new();
+    let outside = scratch(&std::env::temp_dir(), "outside");
+    write(&outside.join(".ja-terms/prh.yml"), SAME_EXPECTED);
+    let out = repo.ja_terms(&outside, &["overrides"], "");
+    let _ = std::fs::remove_dir_all(&outside);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        lines_of(&out, "REPO: ")
+            .first()
+            .is_some_and(|l| l.contains("なし") && l.contains("作業ツリーの外")),
+        "{}",
+        stdout(&out)
+    );
+    assert!(lines_of(&out, "REPLACED: ").is_empty(), "{}", stdout(&out));
+}
+
+#[test]
+fn overrides_does_not_take_a_dictionary() {
+    // 渡した辞書だけを当てるときは重ねないので、外れる規則は無い
+    let repo = Repo::new();
+    let given = repo.0.join("given.yml");
+    write(&given, SAME_EXPECTED);
+    let out = repo.ja_terms(
+        &repo.top(),
+        &["overrides", "--dictionary", given.to_str().unwrap()],
+        "",
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", stdout(&out));
+}
+
+#[test]
+fn staged_warns_when_the_staged_dictionary_replaces_a_common_rule() {
+    // 辞書だけのコミット（検査するファイルが無い）でも知らせ、検査の判定は変えない
+    let repo = Repo::new();
+    repo.write(".ja-terms/prh.yml", SAME_EXPECTED);
+    repo.git(&["add", ".ja-terms/prh.yml"]);
+    let out = repo.ja_terms(&repo.top(), &["staged"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let replaced = lines_of(&out, "REPLACED: ");
+    assert!(
+        replaced.len() == 1 && replaced[0].contains("ぴよぴよ"),
+        "{}",
+        stdout(&out)
+    );
+
+    repo.write("doc.md", &both());
+    repo.git(&["add", "doc.md"]);
+    let out = repo.ja_terms(&repo.top(), &["staged"], "");
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(findings(&out), ["ぴよぴよ => 確認"]);
+    assert_eq!(lines_of(&out, "REPLACED: ").len(), 1, "{}", stdout(&out));
+}
+
+#[test]
+fn staged_does_not_warn_for_a_copied_rule() {
+    let repo = Repo::new();
+    repo.write(".ja-terms/prh.yml", &repo_dictionary(&common_rule("確認")));
+    repo.git(&["add", ".ja-terms/prh.yml"]);
+    let out = repo.ja_terms(&repo.top(), &["staged"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn staged_does_not_warn_when_the_commit_does_not_change_the_dictionary() {
+    // 置き換えを知らせるのは、辞書を変えるコミットだけ（ほかのコミットのたびに同じ知らせを出さない）
+    let repo = Repo::new();
+    repo.write(".ja-terms/prh.yml", SAME_EXPECTED);
+    repo.git(&["add", ".ja-terms/prh.yml"]);
+    repo.git(&["commit", "-q", "-m", "init"]);
+    repo.write("doc.md", &both());
+    repo.git(&["add", "doc.md"]);
+    let out = repo.ja_terms(&repo.top(), &["staged"], "");
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(lines_of(&out, "REPLACED: ").is_empty(), "{}", stdout(&out));
 }

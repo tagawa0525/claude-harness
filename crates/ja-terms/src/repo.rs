@@ -49,6 +49,11 @@ pub fn dictionary_path(dir: &Path) -> Result<Option<PathBuf>, DictionaryError> {
     let Some(top) = work_tree_top(dir)? else {
         return Ok(None);
     };
+    dictionary_at(&top)
+}
+
+/// 作業ツリーの直下 top の、リポジトリの辞書のパス。無ければ None（有無の見方は [`dictionary_path`] と同じ）
+pub fn dictionary_at(top: &Path) -> Result<Option<PathBuf>, DictionaryError> {
     let path = top.join(REPO_DICTIONARY);
     match path.symlink_metadata() {
         Ok(_) => Ok(Some(path)),
