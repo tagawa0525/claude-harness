@@ -304,6 +304,8 @@ fn queued_job(job: &Value) -> Result<QueuedJob, String> {
         phase,
         priority: number("priority")?,
         limit: limit_text(number("time_limit")?),
+        // C の time_t に戻す。NO_VAL64 と INFINITE64 は -2 と -1 になり、slurm_make_time_str が比べるのは 32 ビットの
+        // NO_VAL と INFINITE だけなので、squeue と同じく 1970 年の時刻で書く
         start: start_text(start as i64).ok_or_else(|| missing("start_time"))?,
         comment: printed("comment")?,
     })
@@ -857,6 +859,8 @@ mod tests {
             (set(0), "N/A"),
             (set(0xffff_ffff), "Unknown"),
             (set(0xffff_fffe), "None"),
+            (unset(), "1970-01-01T08:59:58"),
+            (infinite(), "1970-01-01T08:59:59"),
         ] {
             assert_eq!(
                 queued(json!({"start_time": start})).unwrap().start,
