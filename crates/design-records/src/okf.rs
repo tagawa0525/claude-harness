@@ -143,9 +143,8 @@ fn entries(text: &str) -> Vec<Entry<'_>> {
         };
         let (title, url, after, markdown) = match leading_link(item) {
             Some((title, url, end)) => (title, url, &item[end..], true),
-            // Markdown のリンクとして読めない手書きの行（対にならない `[`、説明まで続くバッククォート）は、題の中の
-            // 最初の `](` で切る読み方で読めていた。読めなくすると文書を「索引に載っていない」とし、index が行を足し直すので、
-            // その行にだけ残して注意を出す
+            // Markdown のリンクとして読めない手書きの行（対にならない `[`、説明まで続くバッククォート）も、題の中の
+            // 最初の `](` で切って載っているとし、注意を出す。載っていないとすると、index が同じ文書の行を足し直す
             None => {
                 let Some((title, rest)) = item[1..].split_once("](") else {
                     continue;
@@ -189,9 +188,9 @@ fn leading_link(md: &str) -> Option<(String, String, usize)> {
 }
 
 /// 題（見出しの文字列か、フロントマターの `title`）を見出しのインラインとして読んだ事象。見出しとして読むのは、題だけを
-/// 読むと `1. 手順` のような題を一覧の行と読むため。
+/// 読むと `1. 手順` のような題を一覧の行と読むため。末尾の ` #` は閉じの列として外す（題の末尾の ` #` を残す）。
 fn title_events(md: &str) -> Vec<Event<'static>> {
-    Parser::new(&format!("# {md}"))
+    Parser::new(&format!("# {md} #"))
         .filter(|e| {
             !matches!(
                 e,
@@ -220,9 +219,9 @@ fn plain_text(md: &str) -> String {
 }
 
 /// 索引の行に書く題。題を CommonMark で読み、Markdown に書き直す。リンクの文字列にリンクは入れられない（入れると外側の
-/// 行がリンクにならない）ので、題のリンク（自動リンクを含む）はその文字列にする。文字のうち、行のリンクの文字列を閉じるか、
-/// ほかの構文（コードスパン、強調、HTML、文字参照、エスケープ）を始めうる記号はエスケープする。コードスパン、強調、画像、
-/// HTML は残す（表示は題と同じ）。
+/// 行がリンクにならない）ので、題のリンク（自動リンクを含む）はその文字列にする。強調も文字だけにする（区切りを書き直すと、
+/// 隣り合う強調の区切りが 1 つの並びになり、別の強調に読まれる）。文字のうち、行のリンクの文字列を閉じるか、ほかの構文
+/// （コードスパン、強調、HTML、文字参照、エスケープ）を始めうる記号はエスケープする。コードスパン、画像、HTML は残す。
 fn entry_title(md: &str) -> String {
     let mut out = String::with_capacity(md.len());
     let mut images = Vec::new();
@@ -232,8 +231,6 @@ fn entry_title(md: &str) -> String {
             Event::Code(c) => code_span(&mut out, &c),
             Event::InlineHtml(h) | Event::Html(h) => out.push_str(&h),
             Event::SoftBreak | Event::HardBreak => out.push(' '),
-            Event::Start(Tag::Emphasis) | Event::End(TagEnd::Emphasis) => out.push('*'),
-            Event::Start(Tag::Strong) | Event::End(TagEnd::Strong) => out.push_str("**"),
             Event::Start(Tag::Image {
                 dest_url, title, ..
             }) => {
@@ -248,17 +245,23 @@ fn entry_title(md: &str) -> String {
                 out.push_str("](");
                 for c in dest.chars() {
                     match c {
-                        '(' | ')' | '<' | '>' | '\\' => {
+                        '(' | ')' | '<' | '>' | '\\' | '&' => {
                             out.push('\\');
                             out.push(c);
                         }
-                        c if c.is_whitespace() => out.push_str("%20"),
+                        // リンク先に書けない空白は ASCII のものだけ（ほかの空白はそのまま書ける）
+                        c if c.is_ascii_whitespace() => out.push_str(&format!("%{:02X}", c as u32)),
                         c => out.push(c),
                     }
                 }
                 if !title.is_empty() {
                     out.push_str(" \"");
-                    out.push_str(&title.replace('\\', r"\\").replace('"', "\\\""));
+                    for c in title.chars() {
+                        if matches!(c, '\\' | '"' | '&') {
+                            out.push('\\');
+                        }
+                        out.push(c);
+                    }
                     out.push('"');
                 }
                 out.push(')');
@@ -269,15 +272,11 @@ fn entry_title(md: &str) -> String {
     out
 }
 
+// `&` は続く文字によらずエスケープする。パーサーは文字を文字参照やリンクの境で別の事象に切るので、続く文字を 1 つの
+// 事象の中で見ても、次の事象の文字と文字参照になるかは分からない
 fn escape_text(out: &mut String, text: &str) {
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        // `&` は、続く文字が文字参照（`&amp;`、`&#38;`）になりうるときだけエスケープする（`A & B` を読みやすく残す）
-        let entity = c == '&'
-            && chars
-                .peek()
-                .is_some_and(|n| n.is_ascii_alphanumeric() || *n == '#');
-        if "\\`*_[]<".contains(c) || entity {
+    for c in text.chars() {
+        if "\\`*_[]<&".contains(c) {
             out.push('\\');
         }
         out.push(c);
@@ -660,7 +659,10 @@ pub fn complete_indexes(files: &BTreeMap<String, String>) -> BTreeMap<String, St
 fn entry_line(files: &BTreeMap<String, String>, dir: &str, name: &str) -> String {
     let url = percent_encode(name);
     if let Some(sub) = name.strip_suffix('/') {
-        return format!("* [{sub}]({url})");
+        // ディレクトリの名前は Markdown でなく文字なので、文字としてエスケープする
+        let mut text = String::new();
+        escape_text(&mut text, sub);
+        return format!("* [{text}]({url})");
     }
     let text = &files[&format!("{dir}/{name}")];
     let title = entry_title(&title_of(name, text));
