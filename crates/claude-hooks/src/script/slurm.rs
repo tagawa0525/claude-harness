@@ -828,7 +828,7 @@ pub enum AccountingRow {
 pub enum MaxRss {
     /// 記録に無い（sacct の文字の出力は空の欄）
     Missing,
-    /// MiB。sacct の `--units=M` の文字の出力と同じく、整数でなければ小数 2 桁に丸めた値（数バイトは 0.0）
+    /// MiB。sacct の `--units=M` の文字の出力と同じく、整数でなければ小数 2 桁に丸めた値（0 バイトと数バイトは 0.0）
     Mib(f64),
 }
 
@@ -1810,7 +1810,7 @@ mod tests {
     #[test]
     fn the_max_rss_is_mib_rounded_to_2_decimals_unless_whole_like_sacct_units_m() {
         use super::MaxRss;
-        // sacct --units=M の文字の出力（1861193728 バイトは 1774.97M、1 GiB は 1024M、4096 バイトは 0.00M、0 バイトは単位の無い 0）
+        // sacct --units=M の文字の出力（1861193728 バイトは 1774.97M、1 GiB は 1024M、4096 バイトは 0.00M、0 バイトは単位の無い 0 で、どちらも 0 MiB）
         for (bytes, mib) in [
             (Some(1_861_193_728), MaxRss::Mib(1774.97)),
             (Some(8_990_720), MaxRss::Mib(8.57)),
