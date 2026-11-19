@@ -15,11 +15,16 @@
 //! 既定ブランチでない HEAD で、そのブランチ自身をマージするコマンドも止める。既定ブランチの worktree でなく対象の
 //! ブランチの worktree で実行すると、git は「Already up to date」で何もせずに 0 で終わり、マージしたと読み違える。
 //! ほかのブランチを取り込むマージ（main を feature ブランチへ、など）は普通の操作なので止めない
+//!
+//! 既定ブランチへのマージで、同じコマンドの前の git switch / checkout の後に置いた `-` と `@{-N}` も止める。git はそれを
+//! switch の後の reflog で解くので、hook の時点の履歴で解くと別のブランチを確かめる（pre-git-merge-check と
+//! check-merge-review はそれを確かめずに飛ばし、このルールが止める）
 
 use super::Rule;
 use super::guard_branch_base::branch_at;
 use super::pre_git_merge_check::{
-    commit_ish, default_branch_merges, local_branch_ref, merge_source, merge_targets,
+    commit_ish, default_branch_merges, is_previous_branch, local_branch_ref, merge_source,
+    merge_targets,
 };
 use crate::git;
 use crate::input::Input;
@@ -122,10 +127,9 @@ fn self_merges(input: &Input, shell: &Shell) -> Vec<Finding> {
         let head_ref = format!("refs/heads/{head}");
         // `-` と `@{-N}`（前に居たブランチ）は、同じコマンドの前の switch で変わる。hook の時点で解くと、switch の
         // 前の履歴を指して誤るので見ない（それが今のブランチ自身を指すことは、普通の操作では無い）
-        let previous = |t: &str| t == "-" || t.starts_with("@{-");
         if targets
             .iter()
-            .filter(|t| !previous(t))
+            .filter(|t| !is_previous_branch(t))
             .any(|t| local_branch_ref(&dir, t).as_deref() == Some(head_ref.as_str()))
         {
             out.push(Finding::Deny(format!(
@@ -135,6 +139,20 @@ fn self_merges(input: &Input, shell: &Shell) -> Vec<Finding> {
         }
     }
     out
+}
+
+/// 同じコマンドの前の git switch / checkout の後の `-` / `@{-N}`（target）の deny の理由
+fn after_switch_reason(dir: &Path, default: &str, target: &str) -> String {
+    // 前の switch が 1 つなら、target はコマンドを始める時点のブランチを指す。名前で書くときの手掛かりに示す
+    let start = git::current_branch(dir);
+    let start = if start.is_empty() || start == default {
+        String::new()
+    } else {
+        format!("（このコマンドを始める時点のブランチは {start}）")
+    };
+    format!(
+        "同じコマンドの前の git switch / checkout で、git merge の {target} が指すブランチ（前に居たブランチ）が変わるので、マージするブランチを確かめられません（今のブランチへの switch も {target} を変えます）。マージするブランチを名前で書いてください{start}: git switch {default} && git merge --no-ff <ブランチ名>"
+    )
 }
 
 pub struct GuardGitMerge;
@@ -147,6 +165,13 @@ impl Rule for GuardGitMerge {
     fn check(&self, input: &Input, shell: &Shell) -> Vec<Finding> {
         let mut out = self_merges(input, shell);
         for merge in default_branch_merges(input, shell) {
+            let default = &merge.default;
+            out.extend(
+                merge
+                    .after_switch
+                    .iter()
+                    .map(|t| Finding::Deny(after_switch_reason(&merge.dir, default, t))),
+            );
             let branches: Vec<(&str, String)> = merge
                 .targets
                 .iter()
@@ -155,7 +180,6 @@ impl Rule for GuardGitMerge {
             if branches.is_empty() {
                 continue;
             }
-            let default = &merge.default;
             if !merge.no_ff {
                 out.push(Finding::Deny(format!(
                     "{default} へのマージは --no-ff を付けてマージコミットを作ってください（--ff / --ff-only / --squash は併用できません。fast-forward や squash では、ブランチの履歴とマージの単位が残りません）"

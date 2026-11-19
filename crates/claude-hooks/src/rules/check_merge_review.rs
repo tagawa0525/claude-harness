@@ -907,6 +907,27 @@ mod tests {
     }
 
     #[test]
+    fn does_not_check_the_previous_branch_of_the_hook_time_after_a_switch() {
+        let repo = Repo::new("dash-after-switch");
+        // feat/old から feat/x に移った worktree。hook の時点の @{-1} は feat/old
+        git(&repo.dir(), &["switch", "-q", "-c", "feat/old", "main"]);
+        repo.write("src/old.rs", "o\n");
+        repo.commit("feat: old");
+        git(&repo.dir(), &["switch", "-q", "feat/x"]);
+        let msg = repo.root.0.join("msg.txt");
+        std::fs::write(&msg, body(&repo.tip(), FINDINGS)).unwrap();
+        // git は switch の後の直前のブランチ（feat/x）をマージする。feat/old の Reviewed: と照合しない
+        // （このマージは guard-git-merge が止める）
+        for target in ["-", "@{-1}"] {
+            let cmd = format!(
+                "git switch main && git merge --no-ff {target} -F {}",
+                sh(&msg)
+            );
+            assert!(denies(&repo.check(&cmd)).is_empty(), "{cmd}");
+        }
+    }
+
+    #[test]
     fn ignores_merges_outside_the_default_branch_and_merge_control() {
         let repo = Repo::new("ignore");
         for cmd in [

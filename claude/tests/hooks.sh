@@ -2406,6 +2406,16 @@ git switch -q feat/two && git switch -q main
 out=$(run_hook pre-git-merge-check 'git merge --no-ff -')
 assert_eq deny "$(decision "$out")"
 
+it "pre-git-merge-check: 同じコマンドの前の git switch の後の - と @{-N} は、hook の時点の直前のブランチで判定しない"
+# feat/two（新しい ADR が 2 件）から feat/one に移った worktree。git は switch の後の直前のブランチ（feat/one）を
+# マージする（このマージは guard-git-merge が止める）
+git switch -q feat/two && git switch -q feat/one
+for target in - '@{-1}'; do
+  out=$(run_hook pre-git-merge-check "git switch main && git merge --no-ff $target")
+  assert_eq allow "$(decision "$out")"
+done
+git switch -q main
+
 it "pre-git-merge-check: -C / cd で指定したリポジトリで判定する"
 cd "$TEST_ROOT" || exit 1
 out=$(run_hook pre-git-merge-check "git -C $REPO merge --no-ff feat/two")
@@ -2568,6 +2578,26 @@ it "guard-git-merge: git merge - は直前のブランチとして判定する"
 git switch -q feat/behind && git switch -q main
 out=$(run_hook guard-git-merge 'git merge --no-ff -')
 assert_eq deny "$(decision "$out")"
+
+it "guard-git-merge: 同じコマンドの前の git switch の後の - と @{-N} は、hook の時点の直前のブランチで解かずに deny"
+# feat/behind から feat/rebased に移った worktree。git は switch の後の直前のブランチ（feat/rebased）をマージする
+git switch -q feat/behind && git switch -q feat/rebased
+for target in - '@{-1}'; do
+  out=$(run_hook guard-git-merge "git switch main && git merge --no-ff $target -m 'Merge: rebased'")
+  assert_eq deny "$(decision "$out")"
+  assert_not_contains "$(reason "$out")" "feat/behind は main より遅れて"
+  assert_contains "$(reason "$out")" "マージするブランチを名前で"
+  assert_contains "$(reason "$out")" "feat/rebased"
+done
+# 同じブランチへの switch も直前のブランチを変える（git switch main の後の - は main 自身）
+git switch -q feat/rebased && git switch -q main
+out=$(run_hook guard-git-merge "git switch main && git merge --no-ff - -m 'Merge: rebased'")
+assert_eq deny "$(decision "$out")"
+# switch の無い - と、ブランチを移らない checkout（ファイルを戻す）の後の - は、今の直前のブランチで判定する
+for cmd in "git merge --no-ff - -m 'Merge: rebased'" "git checkout -- README.md && git merge --no-ff - -m 'Merge: rebased'"; do
+  out=$(run_hook guard-git-merge "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
 
 it "guard-git-merge: -C / cd で指定したリポジトリで判定する"
 cd "$TEST_ROOT" || exit 1
