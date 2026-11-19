@@ -9,6 +9,7 @@
 //! 実行する間は [`Cleanup`] の Mutex を持ち、中断を受けたスレッドはそれを取ってから片付ける。
 
 use std::ffi::OsStr;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,8 +17,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 /// 使い方の誤り（引数、base を解決できない、コミットが無い）
 const USAGE: i32 = 2;
-/// 実行時の環境の失敗（rev-list、一時のディレクトリ、worktree の作成、checkout、clean）
+/// 実行時の環境の失敗（rev-list、一時のディレクトリ、worktree の作成、checkout、clean、標準出力への書き込み）
 const ENVIRONMENT: i32 = 3;
+/// 読む側が標準出力を先に閉じた（シェルが SIGPIPE で終わったと読む 128 + 13）。後片付けをしてから終える
+const BROKEN_PIPE: i32 = 141;
 
 /// git の hook や GIT_DIR を export したシェルから呼ばれると、一時の worktree の checkout と clean が呼び出し元の作業
 /// ツリーに作用して消しうるので、git と検査のコマンドに渡さない。リポジトリと作業ツリーを指す変数だけを消す。
@@ -243,6 +246,7 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("Usage: check-each-commit.sh <base> -- <コマンド…>");
         return USAGE;
     };
+    crate::interrupt::broken_pipe_as_error();
     let cleanup = Arc::new(Cleanup::default());
     let shared = Arc::clone(&cleanup);
     if let Err(e) = crate::interrupt::cleanup_on_interrupt(move || shared.on_interrupt()) {
@@ -328,7 +332,13 @@ fn run(req: &Request, cleanup: &Cleanup) -> i32 {
         }
         let short = git_output(cleanup, &["rev-parse", "--short", sha]).unwrap_or_default();
         let subject = git_output(cleanup, &["log", "-1", "--format=%s", sha]).unwrap_or_default();
-        println!("{short} {subject} exit={status}");
+        if let Err(e) = writeln!(std::io::stdout(), "{short} {subject} exit={status}") {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                return BROKEN_PIPE;
+            }
+            eprintln!("標準出力に書けません: {e}");
+            return ENVIRONMENT;
+        }
     }
     rc
 }

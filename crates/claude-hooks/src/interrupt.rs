@@ -44,10 +44,18 @@ pub fn ignore_terminal_interrupt(cmd: &mut std::process::Command) {
     let _ = cmd;
 }
 
+/// 読む側が先に閉じたパイプ（`| head -1`）に書いても SIGPIPE で終わらず、書き込みのエラー（BrokenPipe）として受ける。
+/// 書いた側が後片付けをしてから終えるため。起動する子は、std が SIGPIPE を既定に戻して起動するので変わらない
+/// （Windows には SIGPIPE が無く、何もしない）
+pub fn broken_pipe_as_error() {
+    #[cfg(unix)]
+    unix::ignore(&[unix::SIGPIPE]);
+}
+
 #[cfg(unix)]
 mod unix {
     use libc::{SIG_IGN, SIGHUP, SIGTERM, c_int};
-    pub use libc::{SIGINT, SIGQUIT};
+    pub use libc::{SIGINT, SIGPIPE, SIGQUIT};
 
     /// 中断のシグナルのうち、無視するよう引き継いだもの（設定は変えずに読む）
     pub fn ignored() -> Vec<c_int> {

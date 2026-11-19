@@ -652,7 +652,6 @@ mod unix {
     }
 
     #[test]
-    #[ignore = "RED: 実装の前"]
     fn a_reader_that_closes_stdout_early_still_gets_the_temporary_worktree_removed() {
         // `check-each-commit.sh ... | head -1` と同じく、最初の行を読んで閉じる
         use std::io::{BufRead, BufReader};
