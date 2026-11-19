@@ -6,25 +6,26 @@
 //! 通知（/code-review の終わり、親の返事など）は、呼び出しが返った後に担当に渡る。
 //!
 //! 時計は担当ごとに 1 つで、worktree のパスで分ける（並行する担当どうしで、リポジトリやブランチの名前が重なっても取り合わ
-//! ない）。親に最後に途中の報告を送った時刻（初めは待ち始め）と、最後に呼んだ時刻を `<一時のディレクトリ>/claude-wait-step/<鍵の
-//! ハッシュ>` に残す。途中の報告から 55 分を超えたら REPORT を出して数え直す（担当は親に 1 通送って待ちを続ける。親のキャッシュの
-//! 1 時間が切れる前に、親に 1 回だけ応答させる。止めるかは親が決める）。前の呼び出しから 55 分を超えて空いていれば、終わった
-//! 待ち（--end の忘れ、中断した担当）の時計なので数え直す。待ちが済んだら --end で消す。DONE は、渡したファイルのうち終わった
-//! ものの 1 つを出す。
+//! ない）。待ち始めの時刻と、最後に呼んだ時刻を `<一時のディレクトリ>/claude-wait-step/<鍵のハッシュ>` に残す。待ち始めから
+//! 線（55 分。[`delegate_wait::LIMIT_SECS`]。投げる前の見込みの線と同じ）を超えたら END を出す（担当は待ちをやめ、投げたジョブは
+//! 止めずに、残りの作業を報告に書いて終える。ADR-0078 の 2026-11-20 の変更）。END の後も数え直さないので、呼び直しても END を
+//! 出す。前の呼び出しから線を超えて空いていれば、終わった待ち（--end の忘れ、中断した担当）の時計なので数え直す。待ちが済んだら
+//! --end で消す。DONE は、渡したファイルのうち終わったものの 1 つを出す。
 //!
 //! 出力と終了コード:
 //! - `DONE: <ファイル>` 0: 渡した background の出力のどれかが終わった（Claude Code が最後の行に `[exited with code N]` か
 //!   `[killed]` を書く）
-//! - `WAIT: 途中の報告から <経過> 分` 2: 1 ステップの時間がたった
-//! - `REPORT: 途中の報告から <経過> 分を超えた…` 3: 途中の報告から 55 分を超えた（数え直した）
+//! - `WAIT: 待ち始めから <経過> 分` 2: 1 ステップの時間がたった
+//! - `END: 待ち始めから <経過> 分を超えた…` 3: 待ち始めから線を超えた
 //! - 使い方の誤り、渡した出力のファイルが無い（パスのコピーミス）、状態を書けないときは、理由を出して 1
 //!
-//! DONE、WAIT、REPORT の行の後には、担当の次の行動を `NEXT:` の行で出す（DONE は、残りのファイルで呼び直すコマンドと
+//! DONE、WAIT、END の行の後には、担当の次の行動を `NEXT:` の行で出す（DONE は、残りのファイルで呼び直すコマンドと
 //! --end のコマンドを、引数を埋めて出す）。
 //!
-//! テストは WAIT_STEP_SECONDS（1 ステップ、既定 270）と WAIT_STEP_REPORT（途中の報告の間隔の秒、既定 3300）で時間を縮め、
+//! テストは WAIT_STEP_SECONDS（1 ステップ、既定 270）と WAIT_STEP_LIMIT（線の秒、既定 3300）で時間を縮め、
 //! WAIT_STEP_NOW（UNIX の秒）で時計を差し替える。どれも 0 以上の整数でなければ、理由を出して 1
 
+use super::delegate_wait;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -140,20 +141,20 @@ fn state_of(key: &str) -> PathBuf {
         .join(format!("{h:016x}"))
 }
 
-/// 状態（途中の報告の時刻, 最後に呼んだ時刻）。無いか読めなければ None
+/// 状態（待ち始めの時刻, 最後に呼んだ時刻）。無いか読めなければ None
 fn read_state(path: &Path) -> Option<(u64, u64)> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut it = text.split_whitespace().map(|v| v.parse::<u64>().ok());
     Some((it.next()??, it.next()??))
 }
 
-/// 状態に、途中の報告の時刻と、最後に呼んだ時刻 called を残す
-fn save(path: &Path, reported: u64, called: u64) -> Result<(), i32> {
+/// 状態に、待ち始めの時刻と、最後に呼んだ時刻 called を残す
+fn save(path: &Path, started: u64, called: u64) -> Result<(), i32> {
     let write = || -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, format!("{reported} {called}\n"))
+        std::fs::write(path, format!("{started} {called}\n"))
     };
     write().map_err(|_| {
         eprintln!("ERROR: 待ちの状態を書けません: {}", path.display());
@@ -235,61 +236,63 @@ fn wait(key: &str, files: &[String]) -> i32 {
         return 1;
     }
     let state = state_of(key);
-    let (step, report, fake) = match (
+    let (step, limit, fake) = match (
         env_secs("WAIT_STEP_SECONDS"),
-        env_secs("WAIT_STEP_REPORT"),
+        env_secs("WAIT_STEP_LIMIT"),
         env_secs("WAIT_STEP_NOW"),
     ) {
-        (Ok(step), Ok(report), Ok(fake)) => (step.unwrap_or(270), report.unwrap_or(3300), fake),
+        (Ok(step), Ok(limit), Ok(fake)) => (
+            step.unwrap_or(270),
+            limit.unwrap_or(delegate_wait::LIMIT_SECS),
+            fake,
+        ),
         _ => return 1,
     };
     let mut clock = Clock { fake };
     let start = clock.now();
-    // 前の呼び出しから報告の間隔を超えて空いていれば、終わった待ちの時計なので数え直す
-    let mut reported = match read_state(&state) {
-        // 途中の報告の時刻が今より後なら、時計が戻ったので数え直す（戻った分だけ REPORT が遅れないように）
-        Some((r, last)) if start.saturating_sub(last) <= report && r <= start => r,
+    // 前の呼び出しから線を超えて空いていれば、終わった待ちの時計なので数え直す
+    let started = match read_state(&state) {
+        // 待ち始めの時刻が今より後なら、時計が戻ったので数え直す（戻った分だけ END が遅れないように）
+        Some((s, last)) if start.saturating_sub(last) <= limit && s <= start => s,
         _ => start,
     };
-    if let Err(code) = save(&state, reported, start) {
+    if let Err(code) = save(&state, started, start) {
         return code;
     }
-    // 1 秒ごとに、終わり、途中の報告の時刻、1 ステップの時刻の順に見る（終わったものに途中の報告を出さない）。返る前に最後に
+    // 1 秒ごとに、終わり、線、1 ステップの時刻の順に見る（終わったものに待ちの終わりを出さない）。返る前に最後に
     // 呼んだ時刻を残す
     let deadline = start.saturating_add(step);
     loop {
         let t = clock.now();
         if let Some(done) = files.iter().find(|f| finished(f)) {
-            if let Err(code) = save(&state, reported, t) {
+            if let Err(code) = save(&state, started, t) {
                 return code;
             }
             print_done(key, files, done);
             return 0;
         }
-        if t.saturating_sub(reported) >= report {
-            let elapsed = t.saturating_sub(reported) / 60;
-            reported = t;
-            if let Err(code) = save(&state, reported, t) {
+        let elapsed = t.saturating_sub(started) / 60;
+        if t.saturating_sub(started) >= limit {
+            if let Err(code) = save(&state, started, t) {
                 return code;
             }
             println!(
-                "REPORT: 途中の報告から {elapsed} 分を超えた。親に途中の報告を送ってから、もう一度呼ぶ"
+                "END: 待ち始めから {elapsed} 分を超えた（線は {} 分）。待ちをやめて、報告して終える",
+                limit / 60
             );
             println!(
-                "NEXT: SendMessage（to: \"main\"）で「<待つもの> の待ちが 55 分を超えた。終わり次第、残りの作業を続ける」とだけ送り、待つのも作業もやめずに、ターンを終えずに同じ引数でもう一度呼ぶ。<待つもの> には、止まって通知の来ない /code-review と返事の来ない許可も入れる（止めるかは親の返事で決める）"
+                "NEXT: 待つのをやめる。投げたジョブと、その background の slurm-run.sh は止めない（scancel も TaskStop もしない。親が slurm-wait.sh で番号から引き継ぐ）。待っていたもの（ジョブの番号と background の出力のファイル、レビュー、返事の来ない許可）と残りの作業を報告の「続きの作業」に書き、{} で待ちを消してから、/delegate の手順 9 のとおり SubagentHandback で報告して終える",
+                command(&["--end", key])
             );
             return 3;
         }
         if t >= deadline {
-            if let Err(code) = save(&state, reported, t) {
+            if let Err(code) = save(&state, started, t) {
                 return code;
             }
+            println!("WAIT: 待ち始めから {elapsed} 分");
             println!(
-                "WAIT: 途中の報告から {} 分",
-                t.saturating_sub(reported) / 60
-            );
-            println!(
-                "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ。呼び出しの後に通知（終わりの通知、親の返事）が届いていれば、それで続け、待つものがすべて済んだら {} で待ちを消す。途中で親に報告するのは REPORT の後だけ",
+                "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ。呼び出しの後に通知（終わりの通知、親の返事）が届いていれば、それで続け、待つものがすべて済んだら {} で待ちを消す。線を超えると END を出す",
                 command(&["--end", key])
             );
             return 2;

@@ -83,7 +83,6 @@ impl Dir {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -103,7 +102,6 @@ fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn an_injected_time_takes_the_steps_without_sleeping() {
     // 時刻を渡すと、1 ステップの 270 秒を眠らずに進め、経過はその時計で数える
     let d = Dir::new();
@@ -182,7 +180,6 @@ fn done_of_the_last_file_shows_the_call_without_files() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn past_the_limit_the_wait_ends_with_the_next_action_and_keeps_ending() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -211,7 +208,6 @@ fn past_the_limit_the_wait_ends_with_the_next_action_and_keeps_ending() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn the_default_limit_is_55_minutes_from_the_start_of_the_wait() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -245,7 +241,6 @@ fn the_default_limit_is_55_minutes_from_the_start_of_the_wait() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn the_clock_continues_from_the_start_after_a_done() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -285,7 +280,6 @@ fn end_removes_the_clock() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn clocks_are_kept_per_key_and_the_key_path_is_normalized() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -315,7 +309,6 @@ fn an_unwritable_state_exits_1_with_the_reason() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn a_time_setting_that_is_not_whole_seconds_exits_1_with_its_name() {
     // 読めない値を壁の時計や既定の秒数に替えて続けない（テストが気づかずに壁の時計に頼る）
     let d = Dir::new();
@@ -380,7 +373,6 @@ fn usage_errors_exit_1() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn a_start_time_later_than_now_does_not_break_the_wait() {
     // 時計が戻った（NTP の補正）後も、経過を負にせず WAIT を返す
     let d = Dir::new();
@@ -402,7 +394,6 @@ fn a_start_time_later_than_now_does_not_break_the_wait() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn a_key_reached_through_a_symlink_shares_the_clock() {
     let d = Dir::new();
     let log = d.file("job.out", "");
@@ -419,7 +410,6 @@ fn a_key_reached_through_a_symlink_shares_the_clock() {
 }
 
 #[test]
-#[ignore = "RED: wait-step は END でなく REPORT を出す"]
 fn a_start_time_later_than_now_restarts_the_clock() {
     // 時計が大きく戻ったら、未来の待ち始めの時刻を待たずに数え直す（END が戻った分だけ遅れない）
     let d = Dir::new();
