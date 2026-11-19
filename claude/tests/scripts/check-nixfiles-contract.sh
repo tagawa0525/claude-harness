@@ -35,8 +35,13 @@ make_remote "$NIXFILES"
 git -C "$NIXFILES" remote set-head origin main
 export NIXFILES_DIR="$NIXFILES"
 
+# 偽の nix flake lock は、渡された rev を cwd の flake.lock に書く（FAKE_NIX_KEEP_LOCK があれば書かずに 0 で終わる。
+# 本物の nix は、上書きする input が flake に無いと、警告だけで lock を変えずに 0 で終わる）
 # shellcheck disable=SC2016  # 偽物の本文の中で展開する
-make_fake_tool nix '"flake lock "*) exit "${FAKE_NIX_EXIT:-0}" ;;'
+make_fake_tool nix '"flake lock "*)
+    [[ "${FAKE_NIX_EXIT:-0}" == 0 ]] || exit "$FAKE_NIX_EXIT"
+    args="$*"
+    [[ -n "${FAKE_NIX_KEEP_LOCK:-}" ]] || printf "{\"nodes\":{\"claude-harness\":{\"locked\":{\"rev\":\"%s\"}}}}\n" "${args##*rev=}" >flake.lock ;;'
 PATH="$TEST_ROOT/fakebin:$PATH"
 
 it "検査が通れば OK を出して 0 で終わり、lock のハーネスをこのリポジトリの HEAD に向ける"
@@ -72,6 +77,12 @@ assert_eq 2 $?
 assert_contains "$out" "ERROR: "
 assert_not_contains "$out" "host=testhost"
 assert_eq 1 "$(git -C "$NIXFILES" worktree list | wc -l)"
+
+it "lock のハーネスがこの HEAD にならなければ、古い版を検査して OK を出さず、ERROR を出して 2 で終わる"
+out=$(FAKE_NIX_KEEP_LOCK=1 "$CHECK" testhost 2>&1)
+assert_eq 2 $?
+assert_contains "$out" "ERROR: "
+assert_not_contains "$out" "host=testhost"
 
 it "nixfiles の clone が無ければ、通ったことにせず ERROR を出して 2 で終わる"
 out=$(NIXFILES_DIR="$TEST_ROOT/missing" "$CHECK" testhost 2>&1)
