@@ -545,11 +545,13 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
             "NOTE: lock の更新と rebuild が要る（crates、nix、claude-settings.json か flake が変わった）。取り込む側（nixfiles）で nix-rebuild update を実行するまで hook や設定は古い版のまま動く"
         );
     }
-    // 配る元は claude と config。claude を持たないリポジトリ（ADR-0094 より前の版と、ハーネスを分ける前の nixfiles）は
-    // .claude が配る元。claude を持つリポジトリの .claude と、同期のコマンドを持たないリポジトリの .claude は、その
-    // リポジトリだけの指示とスキルで、その場で読まれる
-    let sources: &[&str] = if has("claude/CLAUDE.md")? {
-        &["claude", "config"]
+    // 配る元（claude-setup sync が置くもの）は claude、config、共通の辞書。claude を持たないリポジトリ（ADR-0094 より前の
+    // 版と、ハーネスを分ける前の nixfiles）は .claude が配る元。claude を持つリポジトリの .claude と、同期のコマンドを
+    // 持たないリポジトリの .claude は、そのリポジトリだけの指示とスキルで、その場で読まれる
+    let sources: &[&str] = if !has_sync {
+        &[]
+    } else if has("claude")? {
+        &["claude", "config", "crates/ja-terms/prh.yml"]
     } else {
         &["claude", "config", ".claude"]
     };
