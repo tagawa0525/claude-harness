@@ -42,9 +42,7 @@ use design_records::check::{
     check_issue_numbers, check_reservations, decision_changed_without_change_item,
     superseded_dependents,
 };
-use design_records::okf::{
-    BUNDLE_ROOT, check_bundle, complete_indexes, in_bundle, is_bundle_index,
-};
+use design_records::okf::{BUNDLE_ROOT, check_bundle, complete_indexes, in_bundle, is_bundle_at};
 use design_records::{
     ADR_DIR, AMENDABLE_KEYS, ISSUE_DIR, Kind, OPEN_STATUSES, is_adr_path, is_slug, is_title,
     numbers_in, record_name,
@@ -507,12 +505,7 @@ fn bundle_files(
 ) -> Result<BTreeMap<String, String>> {
     let mut files = BTreeMap::new();
     // バンドルでなければ（docs/index.md が okf_version を持たなければ）、ほかの docs/ のファイルを読まない
-    let root_index = match fs::read_to_string(root.join(BUNDLE_ROOT).join("index.md")) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(files),
-        Err(e) => return Err(format!("{BUNDLE_ROOT}/index.md: {e}")),
-    };
-    if !is_bundle_index(&root_index) {
+    if !is_bundle_at(root)? {
         return Ok(files);
     }
     for path in markdown_under(root, BUNDLE_ROOT, untracked)?

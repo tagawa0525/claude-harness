@@ -163,13 +163,14 @@ fn reserve(root: &Path, kind: Kind, slug: &str, wanted: Option<u32>) -> Result<u
 /// `new`: 番号を予約し、テンプレートを書いて、リポジトリの直下からのパスを返す。
 pub fn new(kind: Kind, slug: &str, title: &str, date: &str) -> Result<String> {
     let root = repo_root()?;
-    // 番号を予約する前に決める（読めない docs/index.md で止まるとき、予約を残さない）
-    let bundle = design_records::okf::is_bundle_at(&root)?;
+    // issue の形はバンドルかどうかで変わる。番号を予約する前に決める（読めない docs/index.md で止まるとき、予約を
+    // 残さない）。ADR の形は変わらないので見ない
+    let bundle = kind == Kind::Issue && design_records::okf::is_bundle_at(&root)?;
     let number = reserve(&root, kind, slug, None)?;
     let path = kind.path(number, slug);
     let text = match kind {
         Kind::Adr => design_records::template(number, title, date),
-        Kind::Issue => design_records::issue_template(title, bundle.then_some(date)),
+        Kind::Issue => design_records::issue_template(title, bundle, date),
     };
     fs::create_dir_all(root.join(kind.dir())).map_err(|e| format!("{}: {e}", kind.dir()))?;
     fs::write(root.join(&path), text).map_err(|e| format!("{path}: {e}"))?;

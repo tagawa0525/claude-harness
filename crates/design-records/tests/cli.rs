@@ -2906,7 +2906,7 @@ fn new_issue_in_a_bundle_writes_the_type_so_that_check_accepts_it() {
         "{issue}"
     );
     assert!(
-        issue.contains("\n---\n\n# bar を直す\n\n## 問題\n"),
+        issue.ends_with("\n---\n\n# bar を直す\n\n## 問題\n\n## 完了の条件\n\n- [ ]\n\n## 経緯\n"),
         "{issue}"
     );
     assert_eq!(
@@ -2940,6 +2940,14 @@ fn new_issue_stops_before_reserving_when_the_bundle_root_index_cannot_be_read() 
     assert!(stderr(&out).contains("docs/index.md"), "{}", stderr(&out));
     assert!(!t.dir.join("docs/issues/0001-fix-bar.md").exists());
     assert_eq!(t.tag_message("issue-0001"), "");
+    // ADR の形はバンドルかどうかで変わらないので、ADR の new は前のとおり番号を予約して記録を書く
+    let out = t.run(&["new", "use-foo", "foo を使う"]);
+    assert_eq!(
+        stdout(&out),
+        "docs/adr/0001-use-foo.md\n",
+        "{}",
+        stderr(&out)
+    );
 }
 
 #[test]

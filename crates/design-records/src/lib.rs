@@ -297,14 +297,15 @@ pub fn next_number<'a>(kind: Kind, paths: impl IntoIterator<Item = &'a str>) -> 
 }
 
 /// 新しい issue のテンプレート。バンドルでないリポジトリでは、フロントマターと節の形を各リポジトリが決めるので、表題の
-/// 行だけを書く（ADR-0018）。OKF のバンドルでは、検査が求める `type` と、フロントマターを持つ issue に求める `status` と
-/// 必須の節を書き、作ったままで `check` に違反も注意も出ないようにする（ADR-0092）。
-pub fn issue_template(title: &str, bundle: Option<&str>) -> String {
-    match bundle {
-        Some(date) => format!(
-            "---\ntype: Issue\nstatus: open\nopened: {date}\n---\n\n# {title}\n\n## 問題\n\n## 完了の条件\n\n- [ ]\n"
-        ),
-        None => format!("# {title}\n"),
+/// 行だけを書く。OKF のバンドル（`bundle`）では、検査が求める `type`、フロントマターを持つ issue に求める `status` と
+/// 必須の節、推奨の節を書く（`date` は `opened`。理由は ADR-0018 の「## 変更」の 2026-11-19 の項）。
+pub fn issue_template(title: &str, bundle: bool, date: &str) -> String {
+    if bundle {
+        format!(
+            "---\ntype: Issue\nstatus: open\nopened: {date}\n---\n\n# {title}\n\n## 問題\n\n## 完了の条件\n\n- [ ]\n\n## 経緯\n"
+        )
+    } else {
+        format!("# {title}\n")
     }
 }
 
