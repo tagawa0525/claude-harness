@@ -3004,3 +3004,38 @@ fn check_accepts_bundle_metadata_in_a_v0_3_root_index_and_index_keeps_it() {
     let out = t.run(&["check"]);
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
 }
+
+#[test]
+fn check_rejects_an_okf_version_it_does_not_know() {
+    let t = TempRepo::new("okf-version");
+    for (version, known) in [
+        ("\"0.2\"", true),
+        ("\"0.3\"", true),
+        ("0.3", true),
+        ("\"0.4\"", false),
+        ("\"1.0\"", false),
+        ("", false),
+    ] {
+        t.write(
+            "docs/index.md",
+            &format!("---\nokf_version: {version}\n---\n\n# docs\n"),
+        );
+        t.commit_all(&format!("docs: okf_version {version}"));
+        let out = t.run(&["check"]);
+        assert_eq!(
+            out.status.success(),
+            known,
+            "{version}: {}{}",
+            stdout(&out),
+            stderr(&out)
+        );
+        if !known {
+            assert!(
+                stdout(&out).contains("docs/index.md: error")
+                    && stdout(&out).contains("okf_version"),
+                "{version}: {}",
+                stdout(&out)
+            );
+        }
+    }
+}
