@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const VARIABLE: &str = "JA_TERMS_COMMON_DICTIONARY";
+const VARIABLE: &str = ja_terms::common::COMMON_DICTIONARY_ENV;
 
 /// ビルドした ja-terms が知らない規則（ふがふが => ほげ）だけの辞書
 const RULES: &str = "version: 1\nrules:\n  - expected: ほげ\n    pattern: ふがふが\n";

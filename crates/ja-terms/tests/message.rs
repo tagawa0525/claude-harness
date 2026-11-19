@@ -9,7 +9,7 @@ use std::process::{Command, Output, Stdio};
 
 /// 共通の辞書（ビルドに埋めず、ja-terms はホームの下か、この環境変数のパスから読む。ADR-0097）。テストは crate の辞書を渡す
 const COMMON_DICTIONARY: (&str, &str) = (
-    "JA_TERMS_COMMON_DICTIONARY",
+    ja_terms::common::COMMON_DICTIONARY_ENV,
     concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml"),
 );
 
@@ -259,7 +259,9 @@ fn the_form_is_checked_before_the_terms() {
 
 #[test]
 fn a_missing_message_file_is_a_failure() {
+    // 辞書を読めないことでなく、ファイルが無いことで止まるよう、辞書を渡す
     let out = Command::new(env!("CARGO_BIN_EXE_ja-terms"))
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
         .args(["commit-msg", "/nonexistent/COMMIT_EDITMSG"])
         .output()
         .unwrap();

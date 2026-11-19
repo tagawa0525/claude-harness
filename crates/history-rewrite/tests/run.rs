@@ -32,7 +32,7 @@ fn scratch(name: &str) -> PathBuf {
 /// ja-terms の共通の辞書（ビルドに埋めず、ホームの下か、この環境変数のパスから読む。ADR-0097）。テストは ja-terms の
 /// crate の辞書を渡す
 const COMMON_DICTIONARY: (&str, &str) = (
-    "JA_TERMS_COMMON_DICTIONARY",
+    ja_terms::common::COMMON_DICTIONARY_ENV,
     concat!(env!("CARGO_MANIFEST_DIR"), "/../ja-terms/prh.yml"),
 );
 

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// 共通の辞書（ビルドに埋めず、ja-terms はホームの下か、この環境変数のパスから読む。ADR-0097）。テストは crate の辞書を渡す
 const COMMON_DICTIONARY: (&str, &str) = (
-    "JA_TERMS_COMMON_DICTIONARY",
+    ja_terms::common::COMMON_DICTIONARY_ENV,
     concat!(env!("CARGO_MANIFEST_DIR"), "/prh.yml"),
 );
 
