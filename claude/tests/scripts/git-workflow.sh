@@ -585,10 +585,37 @@ assert_contains "$out" "REMOTE_BRANCH: kept"
 it "post-merge-cleanup: GitHub リモートで open PR がなければリモートも削除する"
 setup_merged_branch "$TEST_ROOT/cleanup4" github
 cd "$TEST_ROOT/cleanup4/app" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;'
+make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+  "repo view --json nameWithOwner"*) echo example/app ;;
+  "pr list -R example/app --base feat/x --state open"*) ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq "" "$(git ls-remote --heads origin feat/x)"
 assert_contains "$out" "REMOTE_BRANCH: deleted"
+assert_contains "$(fake_log gh)" "pr list -R example/app --base feat/x --state open --json number --jq .[].number"
+
+it "post-merge-cleanup: リモートブランチを base とする open PR があれば削除せず、PR ごとに base の付け替えを示す"
+setup_merged_branch "$TEST_ROOT/cleanup51" github
+cd "$TEST_ROOT/cleanup51/app" || exit 1
+make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+  "repo view --json nameWithOwner"*) echo example/app ;;
+  "pr list -R example/app --base feat/x --state open"*) printf "12\n13\n" ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR 2 件（#12, #13）の base。"
+assert_contains "$out" "  gh pr edit 12 --base main -R example/app"
+assert_contains "$out" "  gh pr edit 13 --base main -R example/app"
+
+it "post-merge-cleanup: base とする open PR を確認できなければ削除しない"
+setup_merged_branch "$TEST_ROOT/cleanup52" github
+cd "$TEST_ROOT/cleanup52/app" || exit 1
+make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+  "repo view --json nameWithOwner"*) echo example/app ;;
+  "pr list -R example/app --base feat/x --state open"*) exit 1 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (feat/x を base にした open PR の有無を確認できない: gh pr list が失敗)"
 
 it "post-merge-cleanup: リモートのないリポジトリ（/git-merge の後）でも worktree とブランチを片付ける"
 REPO="$TEST_ROOT/cleanup6/app"
