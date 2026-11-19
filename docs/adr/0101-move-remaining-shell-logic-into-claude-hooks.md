@@ -5,7 +5,7 @@ date: 2026-11-19
 requires: [ADR-0087, ADR-0089]
 supersedes: []
 superseded-by:
-issues: ["#350", "#169"]
+issues: ["#350", "#169", "#353"]
 description: Slurm の 4 本と check-each-commit.sh の中身を claude-hooks のサブコマンドに移し、sh は呼ぶだけにする。中断の後片付けは ctrlc で受ける
 ---
 
@@ -67,7 +67,23 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
 - `sbatch`、`squeue`、`sacct`、`scontrol`、`scancel`、`git` は子プロセスで呼ぶ。判定（区分の順、並べ直す列、終わった
   State、見積もりの読み方、版の決め方）は、入力の文字列を受けて結果を返す関数にし、単体のテストで確かめる。丸ごとの
   振る舞いは、`claude-hooks` の結合テストの偽のコマンド（`tests/common`）で確かめる
+- Slurm の状態（`squeue`、`sacct`、`scontrol show job`）は、`--json=v0.0.45` で読み、serde_json で解く。r995 の Slurm は
+  26.05.6 で、選べる形の版（data_parser）は v0.0.42〜v0.0.45（2026-11-19 に `squeue --version` と `squeue --json=list` で
+  確かめた）。版を固定するのは、Slurm の更新で形が変わったときに、読み違えずに起動の失敗で気付くため。`--format` の
+  文字の列を読むと、数の読み方（小数や指数の優先度）と区切りの扱いを自分で持つことになる。jobcomp のファイル
+  （`/var/log/slurm/job_completions`）は Slurm が書くテキストなので、文字の列のまま読む
+- Slurm のコマンドを呼ぶ所と、その出力を解く所は 1 つのモジュールに集め、判定は、スケジューラの名前や出力の形を含まない型を受ける関数にする。会社の環境のスケジューラは Sun Grid Engine で、後で差し替えの実装を足す（#353）。差し替えの口（trait）は、2 つ目の実装を足すときに、2 つを比べて切り出す
+  - 出力とエラーの文に書く Slurm の語（`sacct`、`scontrol`、State の語、パーティションの名前）は、出力の行を変えない
+    ために、判定の側（`slurm_run.rs`）の文字列に残る。口を切り出すときに、文をどちらに置くかを合わせて決める
 - 中断（INT、TERM、HUP）は `ctrlc`（`termination` の feature）で受け、後片付けをしてから終わる
+  - 後片付けを登録する関数を `claude-hooks` の中に 1 つ置き、用途の名前を付ける（中断のときの後片付け）。`slurm-run` と
+    `check-each-commit` はその関数だけを呼び、`ctrlc` の語は関数の中にだけ出す。crate の名前は Ctrl-C だけを指すが、
+    受けるのは TERM と HUP を含む中断なので、呼ぶ側のコードから crate の名前で用途を読ませない
+  - Unix では、起動したときに無視するよう引き継いだシグナル（nohup の HUP、ジョブ制御の無いシェルが `&` で起動した
+    コマンドの INT）を無視したままにし、終わりまで待つ子（`sbatch --wait`）には端末の INT と QUIT を無視させる。sh の
+    `trap` と `&` の振る舞いで、`ctrlc` は 3 つのシグナルを受ける形に書き換えるので、今の設定を `libc` の `sigaction` で読み、
+    登録の後に `signal` で無視へ戻す。この 2 つの呼び出しは unsafe で、後片付けを登録する関数のファイル
+    （`crates/claude-hooks/src/interrupt.rs`）の中にだけ置く。`libc` は Unix だけの依存で、`ctrlc` が既に使っている
 - 移すだけで、振る舞いは足さない。#350 の待つかの判定は、`slurm-run` を移した後に、別の決定として足す
 
 理由:
@@ -87,7 +103,10 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
 
 ### 帰結
 
-- `claude-hooks` の依存に `ctrlc` が増える
+- `claude-hooks` の依存に `ctrlc` と、Unix だけ `libc` が増える（`libc` は `ctrlc` が既に引いていて、lock に増えるのは
+  `claude-hooks` の依存の 1 行）
+- 案 丁で避けた unsafe のうち、シグナルを受けるハンドラを自分で持つ部分は持たない。持つのは、今の設定を読む
+  `sigaction` と、無視に替える `signal` の呼び出しだけ（Unix だけ。`interrupt.rs` の中）
 - 中断されたときの終了コードは、シグナルによらず 130 になる（今の `check-each-commit.sh` は INT 130、TERM 143、HUP 129。
   `ctrlc` はどのシグナルかを渡さない）。この 3 つを見分けて読む呼び出しは、リポジトリの中に無い（確かめるのは実装の PR）
 - sh のテスト（`claude/tests/scripts/slurm-*.sh`）のうち、判定を確かめるものは Rust の単体のテストに移り、sh のテストは
@@ -97,10 +116,12 @@ ADR-0087 と ADR-0089 で、作業手順のスクリプトの中身を `claude-h
   `claude/tests/scripts/` を変えるので、1 つがマージされてから次に進む）。全部が移るまで、この ADR は proposed のまま、
   移したものに PR の番号を書く
   1. `slurm-queue`（最も小さく、`slurm-run` が並べ直しで呼ぶ。区分の一覧をここに置く）: #351
-  2. `slurm-run`（投げる、並べ直す、待つ、結果を出す。`ctrlc` をここで足す。振る舞いは変えない）:
-  3. #350 の待つかの判定（形は別の決定として書いてから実装する。失敗が実際に起きているので、`slurm-history` より先）:
-  4. `slurm-history` と `lib/slurm-job.sh`:
-  5. `check-each-commit`（この PR で accepted にする）:
+  2. `slurm-run`（投げる、並べ直す、待つ、結果を出す。`ctrlc` をここで足す。振る舞いは変えない。Slurm の状態は JSON で読む）: #359
+  3. `slurm-queue` の読み取りを JSON に替える（#351 は sh と同じく `squeue --format` の文字の列を読み、awk の数の読み方を
+     再現している。出力の行は変えない）:
+  4. #350 の待つかの判定（形は別の決定として書いてから実装する。失敗が実際に起きているので、`slurm-history` より先）:
+  5. `slurm-history` と `lib/slurm-job.sh`:
+  6. `check-each-commit`（この PR で accepted にする）:
 
 ### 確認
 

@@ -66,6 +66,27 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 1;
     };
+    match read_queue() {
+        Ok(queue) => {
+            print!("{}", render(&queue, &mode));
+            0
+        }
+        Err(code) => code,
+    }
+}
+
+/// `--order [--first <first>]` と同じ、main を区分の順に並べる番号の列（要らなければ空）。slurm-run が投げた後に
+/// `scontrol top` に渡す。squeue が失敗したら、slurm-queue.sh と同じ ERROR: を標準エラーに出して None
+pub(super) fn order(first: &str) -> Option<String> {
+    let queue = read_queue().ok()?;
+    let mode = Mode::Order {
+        first: first.to_string(),
+    };
+    Some(render(&queue, &mode))
+}
+
+/// squeue の出力（[`FORMAT`] の行）。失敗したら ERROR: を標準エラーに出し、終了コードを返す
+fn read_queue() -> Result<String, i32> {
     let out = match Command::new("squeue")
         .args(["--noheader", "--format", FORMAT])
         .stderr(Stdio::inherit())
@@ -81,16 +102,15 @@ pub fn main(args: &[String]) -> i32 {
             };
             eprintln!("squeue を起動できない: {e}");
             eprintln!("ERROR: squeue が失敗した（終了コード {code}）");
-            return code;
+            return Err(code);
         }
     };
     if !out.status.success() {
         let code = crate::child::exit_code(out.status);
         eprintln!("ERROR: squeue が失敗した（終了コード {code}）");
-        return code;
+        return Err(code);
     }
-    print!("{}", render(&String::from_utf8_lossy(&out.stdout), &mode));
-    0
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// 引数を読む。使い方に合わなければ None
