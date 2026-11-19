@@ -3,7 +3,8 @@
 //! （ADR-0087。`~/.claude/skills/gh-pr-review/scripts/record-local-review.sh` が呼ぶ）。記録はマージの hook が Copilot
 //! のレビューの代わりに数えるので、head でない SHA、push できないリポジトリ、形の崩れた件数では付けない。その head で
 //! /code-review を回した記録（count-review-rounds の hook が clone に書く行）が、起動したディレクトリの clone に無いときも付けない
-//! （hook が書かない回し方をしたときは、`--unlogged <理由>` で理由を記録に残して付ける）
+//! （hook が書かない回し方をしたときは、`--unlogged <理由>` で理由を記録に残して付ける）。指摘は 1 件ごとに
+//! `--finding <要旨>` で受けて記録に書き、数が件数の合計と合わなければ付けない
 
 mod common;
 
@@ -12,6 +13,7 @@ use common::forget_git_env;
 
 const URL: &str = "https://github.com/octo/repo/pull/42";
 const HEAD: &str = "def5678def5678def5678def5678def5678def56";
+const FINDING: &str = "Medium a.rs:12 引数が空のときに落ちる（再現なし）";
 
 fn stdout(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -57,7 +59,23 @@ fn run_as_is(fake: &FakeGh, args: &[&str], push: &str) -> std::process::Output {
 #[test]
 fn comments_the_record_of_the_head_on_the_pr() {
     let fake = FakeGh::new();
-    let out = run(&fake, &[URL, "def5678", "1", "2", "0"], "true\n");
+    let out = run(
+        &fake,
+        &[
+            URL,
+            "def5678",
+            "1",
+            "2",
+            "0",
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+        ],
+        "true\n",
+    );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         fake.log(),
@@ -65,7 +83,12 @@ fn comments_the_record_of_the_head_on_the_pr() {
             "gh pr view 42 --json headRefOid -q .headRefOid\n\
              gh api repos/{{owner}}/{{repo}} --jq .permissions.push\n\
              gh pr comment 42 --body <!-- local-review sha={HEAD} high=1 medium=2 low=0 -->\n\
-             ローカルの /code-review で def5678 を確かめた: High 1 / Medium 2 / Low 0\n"
+             ローカルの /code-review で def5678 を確かめた: High 1 / Medium 2 / Low 0\n\
+             \n\
+             指摘:\n\
+             - {FINDING}\n\
+             - {FINDING}\n\
+             - {FINDING}\n"
         )
     );
     assert_eq!(
@@ -84,7 +107,25 @@ fn comments_the_record_of_the_head_on_the_pr() {
 #[test]
 fn a_record_without_high_has_no_note() {
     let fake = FakeGh::new();
-    let out = run(&fake, &[URL, HEAD, "0", "3", "1"], "true\n");
+    let out = run(
+        &fake,
+        &[
+            URL,
+            HEAD,
+            "0",
+            "3",
+            "1",
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+        ],
+        "true\n",
+    );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
         stdout(&out).ends_with(&format!("RECORDED: {HEAD}\n")),
@@ -113,7 +154,27 @@ fn a_head_without_a_review_round_in_this_clone_records_nothing() {
     const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
     let fake = FakeGh::new();
     reviewed_at(&fake, &[EARLIER]);
-    let out = run_as_is(&fake, &[URL, "def5678", "0", "1", "4"], "true\n");
+    let out = run_as_is(
+        &fake,
+        &[
+            URL,
+            "def5678",
+            "0",
+            "1",
+            "4",
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+        ],
+        "true\n",
+    );
     assert_eq!(out.status.code(), Some(1));
     assert!(
         stderr(&out).contains("def5678 で /code-review を回した記録が"),
@@ -180,6 +241,8 @@ fn an_unlogged_review_is_recorded_with_its_reason() {
             "0",
             "--unlogged",
             "対象に PR の URL を渡して回した",
+            "--finding",
+            FINDING,
         ],
         "true\n",
     );
@@ -246,7 +309,21 @@ fn a_refusal_never_ends_as_a_success() {
     const EARLIER: &str = "abc1234abc1234abc1234abc1234abc1234abc12";
     let fake = FakeGh::new();
     reviewed_at(&fake, &[EARLIER]);
-    let out = run_as_is(&fake, &[URL, "def5678", "2", "0", "0"], "true\n");
+    let out = run_as_is(
+        &fake,
+        &[
+            URL,
+            "def5678",
+            "2",
+            "0",
+            "0",
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+        ],
+        "true\n",
+    );
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(stdout(&out), "");
     assert!(
@@ -267,7 +344,17 @@ fn the_rebase_hint_is_for_a_head_that_was_not_reviewed_again() {
     reviewed_at(&fake, &[EARLIER]);
     let out = run_as_is(
         &fake,
-        &[&format!("{URL}/files?a=1"), "def5678", "2", "0", "0"],
+        &[
+            &format!("{URL}/files?a=1"),
+            "def5678",
+            "2",
+            "0",
+            "0",
+            "--finding",
+            FINDING,
+            "--finding",
+            FINDING,
+        ],
         "true\n",
     );
     let err = stderr(&out);
@@ -445,5 +532,126 @@ fn bad_arguments_stop_before_gh() {
             stderr(&out)
         );
         assert_eq!(fake.log(), "", "{args:?}");
+    }
+}
+
+#[test]
+fn each_finding_is_a_line_under_the_record() {
+    // 要旨は引数で受ける。ファイルを読んでコメントに書く形は、確認なしで通るこのスクリプトが、手元の任意のファイルを
+    // PR に出す経路になる
+    let fake = FakeGh::new();
+    let out = run(
+        &fake,
+        &[
+            URL,
+            HEAD,
+            "0",
+            "1",
+            "1",
+            "--finding",
+            "Medium a.rs:12 引数が空のときに落ちる（再現なし）",
+            "--unlogged",
+            "PR の URL を渡した",
+            "--finding",
+            " Low b.md:3 語の揺れ（再現なし） ",
+        ],
+        "true\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        fake.log().contains(&format!(
+            "gh pr comment 42 --body <!-- local-review sha={HEAD} high=0 medium=1 low=1 -->\n\
+             ローカルの /code-review で def5678 を確かめた: High 0 / Medium 1 / Low 1\n\
+             \n\
+             指摘:\n\
+             - Medium a.rs:12 引数が空のときに落ちる（再現なし）\n\
+             - Low b.md:3 語の揺れ（再現なし）\n"
+        )),
+        "{}",
+        fake.log()
+    );
+}
+
+#[test]
+fn the_findings_must_be_as_many_as_the_counts() {
+    // 件数だけの記録では、セッションが替わると、対応しなかった指摘をマージの本文に書けない
+    for args in [
+        &[URL, HEAD, "0", "1", "0"][..],
+        &[URL, HEAD, "1", "0", "1", "--finding", "High a.rs:1 落ちる"][..],
+        &[URL, HEAD, "0", "0", "0", "--finding", "Low a.rs:1 語"][..],
+        &[URL, HEAD, "1", "0", "0", "--unlogged", "PR の URL を渡した"][..],
+        // 足すと u64 を超える件数も、0 件に見せない
+        &[URL, HEAD, "18446744073709551615", "1", "0"][..],
+    ] {
+        let fake = FakeGh::new();
+        let out = run(&fake, args, "true\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            stderr(&out).contains("件なのに、要旨（--finding）が"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.log(), "", "{args:?}");
+    }
+}
+
+#[test]
+fn a_malformed_option_is_a_usage_error() {
+    for args in [
+        // 値が無い、空、複数行（1 件を 1 行で読めるように）
+        &[URL, HEAD, "0", "1", "0", "--finding"][..],
+        &[URL, HEAD, "0", "1", "0", "--finding", " "][..],
+        &[
+            URL,
+            HEAD,
+            "0",
+            "1",
+            "0",
+            "--finding",
+            "Low a.rs:1 語\n- 2 行目",
+        ][..],
+        // 知らないフラグ、2 度目の --unlogged
+        &[URL, HEAD, "0", "0", "0", "--force", "x"][..],
+        &[
+            URL,
+            HEAD,
+            "0",
+            "0",
+            "0",
+            "--unlogged",
+            "a",
+            "--unlogged",
+            "b",
+        ][..],
+    ] {
+        let fake = FakeGh::new();
+        let out = run(&fake, args, "true\n");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            stderr(&out).contains("Usage: record-local-review.sh"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.log(), "", "{args:?}");
+    }
+}
+
+#[test]
+fn a_bad_finding_names_the_value() {
+    // 何件も渡した要旨のどれが悪いかを、使い方の行だけでは見分けられない。CR だけの改行も 1 行に数えない
+    for value in [" ", "Low a.rs:1 語\n- 2 行目", "Low a.rs:1 語\r2 行目"] {
+        let fake = FakeGh::new();
+        let out = run(
+            &fake,
+            &[URL, HEAD, "0", "0", "1", "--finding", value],
+            "true\n",
+        );
+        assert_eq!(out.status.code(), Some(1), "{value:?}");
+        assert!(
+            stderr(&out).contains("--finding の値は、空でない 1 行"),
+            "{value:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(fake.log(), "", "{value:?}");
     }
 }

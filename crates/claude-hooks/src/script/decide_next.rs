@@ -277,7 +277,7 @@ fn next_step(verdict: &str, url: &str) -> String {
     let path = |p: &str| root.join(p).display().to_string().replace('\\', "/");
     let scripts = path("skills/gh-pr-review/scripts");
     let record = format!(
-        "Step 6 の「ローカルレビュー」の回し方で /code-review を回し、PR の worktree で {scripts}/record-local-review.sh {url} <SHA> <high> <medium> <low> で記録して、{scripts}/decide-next.sh {url} を再実行する"
+        "Step 6 の「ローカルレビュー」の回し方で /code-review を回し、PR の worktree で {scripts}/record-local-review.sh {url} <SHA> <high> <medium> <low> [--finding <指摘 1 件の要旨>]... で記録して、{scripts}/decide-next.sh {url} を再実行する"
     );
     match verdict {
         "ACT" => "Step 3〜5 で未解決のスレッドに対応する".to_string(),
