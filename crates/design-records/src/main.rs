@@ -4,8 +4,8 @@
 //!   design-records new [--kind adr|issue] <slug> <title>
 //!                                      番号を予約して <dir>/NNNN-<slug>.md を作り、リポジトリの直下からのパスを出す
 //!                                      （dir は docs/adr か docs/issues。省けば adr）。ADR の slug は決めたことを
-//!                                      動詞で始めた英語の kebab-case。OKF のバンドルでは index と同じく索引の行も
-//!                                      足し、一緒にコミットする索引を標準エラーの NEXT: に出す
+//!                                      動詞で始めた英語の kebab-case。OKF のバンドルでは記録の上の索引に記録の行も
+//!                                      足し（既にある行は直さない）、一緒にコミットする索引を標準エラーの NEXT: に出す
 //!   design-records renumber [--kind adr|issue] <old> [<new>]
 //!                                      このブランチで足した記録 <old> を <new>（省けば次の番号）に振り直し、
 //!                                      ファイル名と参照を付け替えて 1 コミットにする。新しいパスを出す
@@ -23,7 +23,8 @@
 //!                                      --changed を渡すと、warning は FILE のものだけ（--changed は FILE が 0 件の
 //!                                      ときも。pre-commit で使う）
 //!   design-records index               OKF のバンドル（docs/index.md が okf_version を持つ docs/）の索引に、載っていない文書と下位の
-//!                                      ディレクトリの行を足し、書いたパスを出す（ADR-0092）。`check` が同じバンドルの type と索引を検査する
+//!                                      ディレクトリの行を足し、既にある行の説明を文書の description に合わせ、書いたパスを
+//!                                      出す（ADR-0092）。`check` が同じバンドルの type と索引を検査する
 //!   design-records status              標準入力の文書のフロントマターの status を出す（無ければ -）
 //!
 //! 終了コード: 0 = 成功（注意だけのときも）、1 = 違反か失敗、2 = 使い方の誤り
