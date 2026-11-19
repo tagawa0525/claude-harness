@@ -1,40 +1,96 @@
-//! `slurm-wait.sh <番号>`: 既にある Slurm のジョブの終わりを待ち、slurm-run.sh の終わりと同じ行を出す（ADR-0078 の
+//! `slurm-wait.sh <番号>...`: 既にある Slurm のジョブの終わりを待ち、slurm-run.sh の終わりと同じ行を出す（ADR-0078 の
 //! 2026-11-20 の変更。`~/.claude/scripts/slurm-wait.sh` が呼ぶ）。
 //!
-//! /delegate の担当が待ちの線を超えて終えた後に、担当が投げたジョブを親が番号から引き継いで待つ。出力の行と終了コードの意味は
+//! /delegate の担当が待ちの線を超えて終えた後に、担当が投げたジョブを親が番号から引き継いで待つ。番号を複数受け、すべてが
+//! 終わってから 1 度だけ終わる（親の background の終わりの通知を、ジョブごとでなく 1 回にする）。出力の行と終了コードの意味は
 //! `claude/scripts/slurm-wait.sh` の先頭に書く。
 //!
 //! 流れ:
 //!
 //! 1. 番号を確かめる。番号でなければ、理由を標準エラーに出して 1 で終える
-//! 2. 制御のデーモンが覚えているジョブを SLURM_WAIT_INTERVAL 秒（既定 30）ごとに読み、終わるか覚えていなくなるまで待つ
-//!    （sbatch --wait の `_job_wait` と同じ見方。終わりの終了コードもそれと同じ形）。初めに名前とログとコメントを読み、
-//!    `JOB:`、`LOG:` を出す。制御のデーモンが初めから覚えていなければ、会計の記録から名前とログを読む（どちらにも無ければ 1）
-//! 3. 終わりの処理（会計の記録の待ち、`TIME:` の行、ログの末尾、`RESULT:`、`EXIT:`）は slurm-run と同じ [`slurm_run::finish`]。
-//!    `TIME:` の行の区分、参照、目的、-c のコア数は、slurm-run がジョブのコメントに入れたものを読む（[`labels`]）
+//! 2. 制御のデーモンが覚えているジョブを SLURM_WAIT_INTERVAL 秒（既定 30）ごとに読み、どれもが終わるか覚えていなくなるまで
+//!    待つ（sbatch --wait の `_job_wait` と同じ見方。読めないときは読み直し、終わりの終了コードもそれと同じ形）。初めて読めた
+//!    ジョブの名前とログとコメントを控え、`JOB:`、`LOG:` を出す
+//! 3. 番号の順に、終わりの処理（会計の記録の待ち、`TIME:` の行、ログの末尾、`RESULT:`、`EXIT:`）を slurm-run と同じ
+//!    [`slurm_run::finish`] で出す。制御のデーモンが初めから覚えていなかったジョブは、会計の記録から名前とログを読む（どちらにも
+//!    無ければ、そのジョブは 1）。`TIME:` の行の区分、参照、目的、-c のコア数は、slurm-run がジョブのコメントに入れたものを
+//!    読む（[`labels`]）。終了コードは、番号の順で最初の 0 でないもの
 
 use super::slurm;
 use super::slurm_run::{self, Labels, Progress, lock};
 use std::sync::{Arc, Mutex};
 
-const USAGE: &str = "Usage: slurm-wait.sh <ジョブの番号>";
+const USAGE: &str = "Usage: slurm-wait.sh <ジョブの番号>...";
 
 /// 名前とコメントを読めなかったときの欄
 const UNKNOWN: &str = "-";
 
+/// 待つジョブ 1 本
+struct Waited {
+    job: String,
+    /// 制御のデーモンから読んだ（名前, ログ, コメント）
+    origin: Option<(String, String, String)>,
+    /// 終わったら Some（中は制御のデーモンの終了コード。覚えていなかったら None）
+    ended: Option<Option<i32>>,
+    progress: Arc<Mutex<Progress>>,
+}
+
 pub fn main(args: &[String]) -> i32 {
-    let progress = Arc::new(Mutex::new(Progress::default()));
-    let shared = Arc::clone(&progress);
+    let jobs = match parse_args(args) {
+        Ok(jobs) => jobs,
+        Err(message) => {
+            eprintln!("{message}");
+            Progress::default().report_unfinished(1);
+            return 1;
+        }
+    };
+    let mut waited: Vec<Waited> = jobs
+        .into_iter()
+        .map(|job| Waited {
+            progress: {
+                let mut progress = Progress::default();
+                progress.job = Some(job.clone());
+                Arc::new(Mutex::new(progress))
+            },
+            job,
+            origin: None,
+            ended: None,
+        })
+        .collect();
+    let shared: Vec<_> = waited.iter().map(|w| Arc::clone(&w.progress)).collect();
     if let Err(e) = crate::interrupt::cleanup_on_interrupt(move || {
-        lock(&shared).report_unfinished(crate::interrupt::INTERRUPTED)
+        for progress in &shared {
+            lock(progress).report_unfinished(crate::interrupt::INTERRUPTED);
+        }
     }) {
         eprintln!("ERROR: 中断のときの後片付けを登録できない（RESULT: の行を出せない）: {e}");
-        lock(&progress).report_unfinished(1);
+        for w in &waited {
+            lock(&w.progress).report_unfinished(1);
+        }
         return 1;
     }
-    let code = run(args, &progress);
-    lock(&progress).report_unfinished(code);
+    let code = run(&mut waited);
+    for w in &waited {
+        lock(&w.progress).report_unfinished(code);
+    }
     code
+}
+
+/// 番号（重ねたものは 1 つに）を数の順に。番号でないものがあれば使い方
+fn parse_args(args: &[String]) -> Result<Vec<String>, String> {
+    if args.is_empty() {
+        return Err(USAGE.to_string());
+    }
+    if let Some(bad) = args
+        .iter()
+        .find(|a| a.is_empty() || !a.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(format!("ERROR: ジョブの番号は数: '{bad}'\n{USAGE}"));
+    }
+    let mut jobs: Vec<String> = args.to_vec();
+    jobs.sort_by_key(|j| (j.len(), j.clone()));
+    jobs.dedup();
+    Ok(jobs)
 }
 
 /// 待つ間隔（SLURM_WAIT_INTERVAL。テストが短くする）
@@ -53,16 +109,7 @@ fn poll_interval() -> Result<std::time::Duration, String> {
     }
 }
 
-fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
-    let [job] = args else {
-        eprintln!("{USAGE}");
-        return 1;
-    };
-    if job.is_empty() || !job.bytes().all(|b| b.is_ascii_digit()) {
-        eprintln!("ERROR: ジョブの番号は数: '{job}'\n{USAGE}");
-        return 1;
-    }
-    lock(progress).job = Some(job.clone());
+fn run(waited: &mut [Waited]) -> i32 {
     let (record_wait, interval) = match (slurm_run::record_wait(), poll_interval()) {
         (Ok(record_wait), Ok(interval)) => (record_wait, interval),
         (Err(e), _) | (_, Err(e)) => {
@@ -71,51 +118,77 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
         }
     };
 
-    let mut origin: Option<(String, String, String)> = None;
-    let status = loop {
-        let Some(found) = slurm::controller_job(job) else {
-            // 覚えていない（終わってから MinJobAge を過ぎた）。sbatch --wait は終了コードを読めずに 0 を返すが、ここは
-            // 会計の記録の終了コードを使う（終わりの State で、成功以外は finish が 1 にする）
-            break None;
-        };
-        if origin.is_none() {
-            let first = (found.name.clone(), found.log.clone(), found.comment.clone());
-            announce(job, &first.0, &first.1, progress);
-            origin = Some(first);
+    while waited.iter().any(|w| w.ended.is_none()) {
+        for w in waited.iter_mut().filter(|w| w.ended.is_none()) {
+            match slurm::controller_job(&w.job) {
+                Ok(Some(found)) => {
+                    if w.origin.is_none() {
+                        announce(&w.job, &found.name, &found.log, &w.progress);
+                        w.origin = Some((found.name, found.log, found.comment));
+                    }
+                    if found.state.ended {
+                        w.ended = Some(Some(found.exit.unwrap_or(0)));
+                    }
+                }
+                // 覚えていない（終わってから MinJobAge を過ぎた）。sbatch --wait は終了コードを読めずに 0 を返すが、ここは
+                // 会計の記録の終了コードを使う（終わりの State で、成功以外は finish が 1 にする）
+                Ok(None) => w.ended = Some(None),
+                // 一時の失敗は、sbatch --wait と同じく読み直す（覚えていないと読むと、走っているジョブを終わったことにする）
+                Err(reason) => {
+                    eprintln!(
+                        "WARN: ジョブ {} の状態を読めない。読み直す: {reason}",
+                        w.job
+                    );
+                }
+            }
         }
-        if found.state.ended {
-            break Some(found.exit.unwrap_or(0));
+        if waited.iter().any(|w| w.ended.is_none()) {
+            std::thread::sleep(interval);
         }
-        std::thread::sleep(interval);
-    };
+    }
 
-    let (_, log, comment) = match origin {
-        Some(origin) => origin,
+    let mut code = 0;
+    for w in waited.iter_mut() {
+        let status = finish_one(w, record_wait);
+        if code == 0 {
+            code = status;
+        }
+    }
+    code
+}
+
+/// 終わったジョブ 1 本の終わりの行を出し、そのジョブの終了コードを返す
+fn finish_one(w: &mut Waited, record_wait: (u32, std::time::Duration)) -> i32 {
+    let job = w.job.as_str();
+    let (log, comment) = match w.origin.take() {
+        Some((_, log, comment)) => (log, comment),
         None => {
             let Some(record) = slurm::accounting_record(job) else {
                 eprintln!(
                     "ERROR: ジョブ {job} が制御のデーモンにも会計の記録にも無い（番号の誤りか、記録がまだ届いていない）"
                 );
+                lock(&w.progress).report_unfinished(1);
                 return 1;
             };
-            announce(job, &record.name, &record.log, progress);
+            announce(job, &record.name, &record.log, &w.progress);
             eprintln!(
                 "WARN: ジョブ {job} は終わってから時間がたち、投げたときのコメントを読めない。TIME: の行の区分、参照、目的は {UNKNOWN}"
             );
-            (record.name, record.log, String::new())
+            (record.log, String::new())
         }
     };
-    let status = status
+    let status = w
+        .ended
+        .flatten()
         .or_else(|| slurm::accounting_record(job).and_then(|r| r.exit))
         .unwrap_or(0);
-    let labels = labels(&comment);
     slurm_run::finish(
         job,
         &local_log(&log),
-        &labels,
+        &labels(&comment),
         status,
         record_wait,
-        progress,
+        &w.progress,
     )
 }
 

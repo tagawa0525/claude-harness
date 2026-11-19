@@ -571,7 +571,7 @@ fn exit_status(exit_code: &Value) -> Option<i32> {
 
 /// 制御のデーモン（scontrol）が覚えている状態。終わった直後（MinJobAge の 300 秒の間）だけ読める
 pub fn controller_state(job: &str) -> Option<JobState> {
-    controller_job(job).map(|found| found.state)
+    controller_job(job).ok().flatten().map(|found| found.state)
 }
 
 /// 制御のデーモンが覚えているジョブ（待っているもの、走っているもの、終わった直後のもの）
@@ -587,28 +587,47 @@ pub struct ControllerJob {
     pub exit: Option<i32>,
 }
 
-/// 制御のデーモンが覚えているジョブ。覚えていない、読めないなら None
-pub fn controller_job(job: &str) -> Option<ControllerJob> {
-    scontrol_job(&quiet_output(&["scontrol", "show", "job", job, JSON])?, job)
+/// 制御のデーモンが覚えているジョブ。覚えていなければ（知らない番号と、終わってから MinJobAge を過ぎたものは、scontrol が
+/// 空の jobs を 0 で返す）None。scontrol が失敗した、出力を読めないなら理由（一時の失敗を、覚えていないと読み違えない）
+pub fn controller_job(job: &str) -> Result<Option<ControllerJob>, String> {
+    let out = Command::new("scontrol")
+        .args(["show", "job", job, JSON])
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| format!("scontrol を起動できない: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "scontrol が終了コード {} で失敗した",
+            crate::child::exit_code(out.status)
+        ));
+    }
+    scontrol_job(&String::from_utf8_lossy(&out.stdout), job)
 }
 
-fn scontrol_job(json: &str, job: &str) -> Option<ControllerJob> {
-    let jobs = json_jobs("scontrol", json).ok()?;
-    let found = jobs.iter().find(|j| id_text(&j["job_id"]) == job)?;
-    found["job_state"][0].as_str()?;
+fn scontrol_job(json: &str, job: &str) -> Result<Option<ControllerJob>, String> {
+    let jobs = json_jobs("scontrol", json)?;
+    let Some(found) = jobs.iter().find(|j| id_text(&j["job_id"]) == job) else {
+        return Ok(None);
+    };
+    if found["job_state"][0].as_str().is_none() {
+        return Err(format!("scontrol の出力のジョブ {job} に状態が無い"));
+    }
     let text = |key: &str| found[key].as_str().unwrap_or("").to_string();
-    Some(ControllerJob {
+    Ok(Some(ControllerJob {
         name: text("name"),
         comment: text("comment"),
         log: text("stdout_expanded"),
         state: JobState::from_slurm(state_word(&found["job_state"])),
         exit: exit_status(&found["exit_code"]),
-    })
+    }))
 }
 
 #[cfg(test)]
 fn scontrol_state(json: &str, job: &str) -> Option<JobState> {
-    scontrol_job(json, job).map(|found| found.state)
+    scontrol_job(json, job)
+        .ok()
+        .flatten()
+        .map(|found| found.state)
 }
 
 /// コマンドの JSON の出力の jobs の配列。読めなければ理由
@@ -1009,15 +1028,17 @@ mod tests {
         .to_string();
         assert_eq!(
             super::scontrol_job(&json, "962"),
-            Some(super::ControllerJob {
+            Ok(Some(super::ControllerJob {
                 name: "openmc-0293".to_string(),
                 comment: "decision | #0293 | p | c".to_string(),
                 log: "/home/u/github/slurm-logs/openmc-0293-962.out".to_string(),
                 state: JobState::from_slurm("RUNNING"),
                 exit: Some(0),
-            })
+            }))
         );
-        assert_eq!(super::scontrol_job(&json, "7"), None);
+        assert_eq!(super::scontrol_job(&json, "7"), Ok(None));
+        assert!(super::scontrol_job("not json", "962").is_err());
+        assert!(super::scontrol_job(r#"{"jobs": [{"job_id": 962}]}"#, "962").is_err());
     }
 
     #[test]

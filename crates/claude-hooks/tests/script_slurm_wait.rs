@@ -280,7 +280,6 @@ fn a_missing_or_non_numeric_job_prints_the_usage() {
 }
 
 #[test]
-#[ignore = "RED: 番号を 1 つしか受けない"]
 fn several_jobs_end_once_with_their_lines_in_number_order_and_fail_if_one_fails() {
     let s = Slurm::new();
     for job in ["964", "965", "1000"] {
@@ -331,7 +330,6 @@ fn several_jobs_end_once_with_their_lines_in_number_order_and_fail_if_one_fails(
 }
 
 #[test]
-#[ignore = "RED: scontrol の失敗を、覚えていないと読む"]
 fn a_failing_scontrol_is_read_again_instead_of_taken_as_a_forgotten_job() {
     let s = Slurm::new();
     std::fs::write(s.log(), "job output\n").unwrap();
