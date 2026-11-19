@@ -61,6 +61,13 @@ pub fn outlook(now: i64, queue: &[QueuedJob], estimate_minutes: u64) -> Outlook 
                 job.id, job.limit
             ));
         };
+        // まとめて待っている配列は、何本のタスクがどの順に走るかが 1 行から読めない
+        if job.array {
+            return Outlook::Unknown(format!(
+                "待ち行列のジョブ {} は配列のまとめて待っているもの（走る本数が読めない）",
+                job.id
+            ));
+        }
         if job.phase == Phase::Suspended {
             return Outlook::Unknown(format!(
                 "ジョブ {} が止められている（再開の時刻が読めない）",
@@ -90,7 +97,11 @@ pub fn outlook(now: i64, queue: &[QueuedJob], estimate_minutes: u64) -> Outlook 
         queue_end,
         last_job,
         estimate_minutes,
-        finish: queue_end.saturating_add((estimate_minutes as i64).saturating_mul(60)),
+        finish: queue_end.saturating_add(
+            i64::try_from(estimate_minutes)
+                .unwrap_or(i64::MAX)
+                .saturating_mul(60),
+        ),
     }
 }
 
@@ -247,7 +258,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 配列を 1 本と数える"]
     fn a_pending_array_makes_the_outlook_unknown() {
         let mut array = job("12", Phase::Pending, Some(NOW + 300), Some(10));
         array.array = true;
@@ -255,7 +265,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 大きな見積もりが負の秒になる"]
     fn a_huge_estimate_is_not_within_the_limit() {
         assert!(!outlook(NOW, &[], u64::MAX).within_limit());
     }

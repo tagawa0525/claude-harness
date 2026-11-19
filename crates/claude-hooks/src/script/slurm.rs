@@ -129,8 +129,11 @@ pub fn estimate_minutes(estimate: &str) -> Option<u64> {
         (true, [h, m]) => (*h, *m, 0),
         _ => return None,
     };
-    let minutes = ((days * 24 + hours) * 60 + minutes).checked_add(seconds.div_ceil(60))?;
-    Some(minutes)
+    days.checked_mul(24)?
+        .checked_add(hours)?
+        .checked_mul(60)?
+        .checked_add(minutes)?
+        .checked_add(seconds.div_ceil(60))
 }
 
 /// 待ち行列の先頭に、list（`,` でつないだ番号）をその順に出す
@@ -240,6 +243,56 @@ pub enum QueueError {
     Failed(i32),
     /// 出力を解けない
     Unreadable(String),
+}
+
+/// 待ち行列のジョブを、timeout までに読む（hook が使う。slurmctld が応答しないと、hook の時間切れで判定を飛ばされる）。
+/// 時間内に終わらなければ squeue を止めて Unreadable
+pub fn queued_jobs_within(timeout: std::time::Duration) -> Result<Vec<QueuedJob>, QueueError> {
+    let mut child = Command::new("squeue")
+        .arg(JSON)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| QueueError::Spawn {
+            code: if error.kind() == std::io::ErrorKind::NotFound {
+                127
+            } else {
+                126
+            },
+            error,
+        })?;
+    // 読まない間に squeue がパイプを満たして終われないので、別のスレッドで読む
+    let mut pipe = child.stdout.take().expect("stdout はパイプ");
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut pipe, &mut bytes).map(|_| bytes)
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let bytes = reader.join().ok().and_then(Result::ok).unwrap_or_default();
+    let Some(status) = status else {
+        return Err(QueueError::Unreadable(format!(
+            "squeue が {} 秒で終わらない",
+            timeout.as_secs()
+        )));
+    };
+    if !status.success() {
+        return Err(QueueError::Failed(crate::child::exit_code(status)));
+    }
+    queue_jobs(&String::from_utf8_lossy(&bytes)).map_err(QueueError::Unreadable)
 }
 
 /// 待ち行列のジョブ（squeue の既定の絞り込み）。squeue の標準エラーはそのまま流す
@@ -989,7 +1042,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: 桁あふれで小さな見積もりになる"]
     fn the_estimate_in_minutes_rounds_seconds_up() {
         for (estimate, minutes) in [
             ("90", Some(90)),

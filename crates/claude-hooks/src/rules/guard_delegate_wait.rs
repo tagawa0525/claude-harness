@@ -26,6 +26,9 @@ use crate::unwrap::basename;
 
 pub struct GuardDelegateWait;
 
+/// squeue を待つ上限。hook の時間切れ（60 秒）の前に、見込みが分からないものとして止める（時間切れの hook は止めずに通す）
+const SQUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// slurm-run.sh の、値を取るオプション（slurm_run.rs の parse_args と同じ）
 const VALUED: &[&str] = &["--class", "--ref", "--purpose", "-t", "-c"];
 /// 値を取らないオプション
@@ -55,10 +58,13 @@ fn estimate_of(cmd: &Cmd) -> Result<u64, String> {
                     value.raw
                 ));
             }
-            estimate = Some(
-                slurm::estimate_minutes(&value.text)
-                    .ok_or_else(|| format!("-t の値 '{}' を見積もりとして読めない", value.text))?,
-            );
+            let minutes = slurm::estimate_minutes(&value.text)
+                .ok_or_else(|| format!("-t の値 '{}' を見積もりとして読めない", value.text))?;
+            // Slurm は 0 の時間の上限を上限なしと読む
+            if minutes == 0 {
+                return Err("-t 0 は Slurm で上限なしになる".to_string());
+            }
+            estimate = Some(minutes);
         }
         i += 2;
     }
@@ -87,9 +93,11 @@ fn total_estimate(shell: &Shell) -> Result<u64, String> {
                 .to_string(),
         );
     }
-    runs.iter()
-        .map(|cmd| estimate_of(cmd))
-        .sum::<Result<u64, String>>()
+    runs.iter().try_fold(0u64, |total, cmd| {
+        total
+            .checked_add(estimate_of(cmd)?)
+            .ok_or_else(|| "見積もりの合計が大きすぎる".to_string())
+    })
 }
 
 /// 見込みを計算する（待ち行列を読む）
@@ -98,7 +106,7 @@ fn run_outlook(shell: &Shell) -> Outlook {
         Ok(minutes) => minutes,
         Err(reason) => return Outlook::Unknown(reason),
     };
-    match slurm::queued_jobs() {
+    match slurm::queued_jobs_within(SQUEUE_TIMEOUT) {
         Ok(queue) => delegate_wait::outlook(delegate_wait::now(), &queue, estimate),
         Err(slurm::QueueError::Spawn { error, .. }) => {
             Outlook::Unknown(format!("squeue を起動できない（{error}）"))
@@ -177,7 +185,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "RED: -t 0 を 0 分と読む"]
     fn an_estimate_not_fixed_by_the_text_is_unknown() {
         let run = "~/.claude/scripts/slurm-run.sh --class trial --ref '#1' --purpose 'p'";
         for command in [
