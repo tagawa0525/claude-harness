@@ -30,7 +30,8 @@
 //!         パスの増減を含む書き換え、変換か remap が止まるファイル）は、何も変えずに LEFT に出す
 //!
 //! 語の指定:
-//!   --dictionary FILE   辞書（prh の形）。省くと ja-terms の共通の辞書（ADR-0014。ビルドに埋めたもの）。重ねて渡せる
+//!   --dictionary FILE   辞書（prh の形）。省くと ja-terms の共通の辞書（ADR-0014。claude-setup sync が
+//!                       ~/.config/ja-terms/prh.yml に配ったもの。ADR-0097）。重ねて渡せる
 //!   --repo-dictionary FILE
 //!                       共通の辞書（--dictionary があればそれ）に重ねるリポジトリの辞書（prh の形。ADR-0096）。同じ
 //!                       expected の規則は、こちらのものだけを残す。--dictionary も --repo-dictionary も省くと、run は

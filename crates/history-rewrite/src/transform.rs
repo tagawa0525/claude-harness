@@ -145,7 +145,7 @@ pub struct Transformer {
 }
 
 impl Transformer {
-    /// 辞書を渡した順に読む。`--dictionary` が無ければ ja-terms の共通の辞書（ビルドに埋めたもの）。リポジトリの辞書が
+    /// 辞書を渡した順に読む。`--dictionary` が無ければ ja-terms の共通の辞書（`claude-setup sync` が配ったもの。ADR-0097）。リポジトリの辞書が
     /// あれば、その後ろに共通の辞書を prh の Engine.merge でつなぎ（ja-terms の検査と同じ。ADR-0096）、追加の規則は
     /// 最後に並べる
     pub fn new(words: &Words) -> Result<Transformer, Stop> {

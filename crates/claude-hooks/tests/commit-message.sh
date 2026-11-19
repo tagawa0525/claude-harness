@@ -4,6 +4,8 @@
 # 形式と長さを問わない Merge / fixup! / squash! / Revert の件名を通すことを確かめる（package.nix の installCheckPhase と、Windows の CI の windows.yml が呼ぶ）。
 # メッセージの取り出しは、偽の検査を使うユニットテスト（src/rules/check_commit_message.rs）が見る。
 #
+# 共通の辞書の渡し方は merge-ja-terms.sh と同じ（ADR-0097）
+#
 # 使い方: commit-message.sh <claude-hooks の実行ファイル>
 set -euo pipefail
 

@@ -13,6 +13,7 @@
 //! pattern は JavaScript の正規表現として、prh と同じ u と m のフラグで regress に読ませる。
 
 mod autolink;
+pub mod common;
 mod inline;
 pub mod message;
 mod pragma;
@@ -25,11 +26,6 @@ use std::path::Path;
 
 use regress::Regex;
 use yaml_rust2::{Yaml, YamlLoader};
-
-/// 崩れた日本語の語の、全リポジトリに共通の辞書（prh.yml）。CLI と history-rewrite の既定の辞書で、リポジトリの辞書
-/// （[`repo::REPO_DICTIONARY`]）があれば、その後ろに重ねる（ADR-0096）。ビルドに埋めるので、置き場を探さずに Windows でも
-/// 同じ辞書を使う
-pub const DICTIONARY: &str = include_str!("../prh.yml");
 
 /// 辞書を読めない、prh が読めない書き方がある、specs が合わない
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,9 +106,12 @@ impl Dictionary {
         })
     }
 
-    /// ビルドに埋めた共通の辞書（[`DICTIONARY`]）
+    /// 崩れた日本語の語の、全リポジトリに共通の辞書。CLI と history-rewrite の既定の辞書で、リポジトリの辞書
+    /// （[`repo::REPO_DICTIONARY`]）があれば、その後ろに重ねる（ADR-0096）。ビルドに埋めず、`claude-setup sync` が配った
+    /// ファイル（[`common::path`]）を読む（ADR-0097）
     pub fn common() -> Result<Self, DictionaryError> {
-        Self::parse(DICTIONARY, "ja-terms の prh.yml")
+        let (path, text) = common::read()?;
+        Self::parse(&text, &path.display().to_string())
     }
 
     /// リポジトリの辞書（あれば）の後ろに、共通の辞書を [`Dictionary::merge`] でつないだ辞書（ADR-0096）

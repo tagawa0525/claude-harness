@@ -43,6 +43,9 @@ export CLAUDE_HOOKS_BIN="$home_files/.claude/bin/claude-hooks"
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 swap_home "$WORK/home"
+# 本物の git hook が呼ぶ ja-terms は、共通の辞書を claude-setup sync が配ったホームの下から読む。このテストは配らないので、
+# ソースの辞書を渡す（ADR-0097）
+export JA_TERMS_COMMON_DICTIONARY="$ROOT/crates/ja-terms/prh.yml"
 export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
 git config --global user.name test

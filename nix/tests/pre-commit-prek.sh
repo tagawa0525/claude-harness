@@ -14,6 +14,11 @@
 
 set -euo pipefail
 
+# 本物の git hook が呼ぶ ja-terms は、共通の辞書を claude-setup sync が配ったホームの下から読む。このテストは配らないので、
+# ソースの辞書を渡す（ADR-0097）
+JA_TERMS_COMMON_DICTIONARY="$(git rev-parse --show-toplevel)/crates/ja-terms/prh.yml"
+export JA_TERMS_COMMON_DICTIONARY
+
 
 if ! command -v ruff >/dev/null 2>&1; then
   echo "✗ ruff が PATH にない。既定の検査が走ったかを確かめられないので、このテストは成立しない"

@@ -75,7 +75,9 @@ stdenvNoCC.mkDerivation {
     runHook postInstall
   '';
   # 包んだ ja-terms と辞書で git merge の本文の崩れた語を、同じ ja-terms で git commit の
-  # 件名を止めることと、/code-review の周を数えることを確かめる（ユニットテストは偽の検査を使う）
+  # 件名を止めることと、/code-review の周を数えることを確かめる（ユニットテストは偽の検査を使う）。ja-terms は共通の
+  # 辞書を claude-setup sync が配ったホームの下から読むので、ホームに辞書の無い sandbox ではソースの辞書を環境変数で
+  # 渡す（ADR-0097）
   doInstallCheck = true;
   nativeInstallCheckInputs = [
     git
@@ -84,6 +86,7 @@ stdenvNoCC.mkDerivation {
   installCheckPhase = ''
     runHook preInstallCheck
     ${gitCheckConfig.preCheck}
+    export JA_TERMS_COMMON_DICTIONARY=${../ja-terms/prh.yml}
     bash ${./tests/merge-ja-terms.sh} $out/bin/claude-hooks
     bash ${./tests/commit-message.sh} $out/bin/claude-hooks
     bash ${./tests/review-rounds.sh} $out/bin/claude-hooks

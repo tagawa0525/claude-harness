@@ -6,6 +6,9 @@
 # ユニットテスト（src/rules/check_merge_body_ja_terms.rs）が見る。
 # 崩れた語をわざと含むので、語の検査から外す（.textlintignore）
 #
+# ja-terms は共通の辞書をホームの下（claude-setup sync が配る ~/.config/ja-terms/prh.yml）か、環境変数
+# JA_TERMS_COMMON_DICTIONARY のパスから読む。ホームに辞書の無い所では、呼ぶ側がソースの辞書を渡す（ADR-0097）
+#
 # 使い方: merge-ja-terms.sh <claude-hooks の実行ファイル>
 set -euo pipefail
 

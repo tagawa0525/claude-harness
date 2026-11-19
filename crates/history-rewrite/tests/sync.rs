@@ -24,6 +24,13 @@ type State = (
 /// 履歴に無いコミットの番号。対応表で「消えた」（新が 0）にすると、それを指す文書で commit-refs remap が止まる
 const VANISHED: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
+/// ja-terms の共通の辞書（ビルドに埋めず、ホームの下か、この環境変数のパスから読む。ADR-0097）。テストは ja-terms の
+/// crate の辞書を渡す
+const COMMON_DICTIONARY: (&str, &str) = (
+    "JA_TERMS_COMMON_DICTIONARY",
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../ja-terms/prh.yml"),
+);
+
 fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -33,6 +40,7 @@ fn env<'a>(cmd: &'a mut Command, root: &Path) -> &'a mut Command {
     cmd.env("HOME", root.join("home"))
         .env("USERPROFILE", root.join("home"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(COMMON_DICTIONARY.0, COMMON_DICTIONARY.1)
 }
 
 #[derive(Clone)]

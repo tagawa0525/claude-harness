@@ -15,7 +15,7 @@ in
 rustPlatform.buildRustPackage {
   pname = "history-rewrite";
   version = "0.1.0";
-  # パス依存の ../ja-terms（辞書と prh の当て方。既定の辞書の prh.yml をビルドに埋める）、../fix-markdown-lint
+  # パス依存の ../ja-terms（辞書と prh の当て方。共通の辞書の prh.yml はテストが読む）、../fix-markdown-lint
   # （表の揃え方）、../commit-refs（オブジェクトの読み方）もソースに入れ、history-rewrite の中でビルドする
   src = lib.fileset.toSource {
     root = ../.;
