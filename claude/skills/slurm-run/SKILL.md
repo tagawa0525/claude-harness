@@ -49,8 +49,8 @@ cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh --class <区分>
 例:
 
 ```bash
-cd ~/github/xlc && ~/.claude/scripts/slurm-run.sh --class decision --ref '#0200' --purpose '平衡キセノンで軸方向の振動が消えるかで、#0200 の修正方法を決める' \
-  -t 150 xlc-small-core-equilibrium 'dvc repro examples/small-core/dvc.yaml'
+cd ~/github/solver && ~/.claude/scripts/slurm-run.sh --class decision --ref '#0200' --purpose '大きい入力で反復が収束するかで、#0200 の修正方法を決める' \
+  -t 150 solver-large-grid 'target/release/solver cases/large-grid.toml'
 ```
 
 出力の `ERROR:`、`WARN:`、`NEXT:` の行に従う。
@@ -62,8 +62,8 @@ cd ~/github/xlc && ~/.claude/scripts/slurm-run.sh --class decision --ref '#0200'
 ### 区分と目的
 
 - `--class` は次の 4 つで、上ほど先に流す。結果の使い道で選び、迷ったら下の区分にする
-  - `timed`: 時間を記録する測定（検証の記録に書く時間、高速化の測定）。`--timed` を付けなくてもパーティション `timed` に投げる
-  - `record`: 記録に載せる本番（検証の記録の数値、本番の燃焼、ライブラリの作り直し、参照解）
+  - `timed`: 時間を記録する測定（記録に書く時間、高速化の測定）。`--timed` を付けなくてもパーティション `timed` に投げる
+  - `record`: 記録に載せる本番（記録に書く数値を出す計算と、その入力になる成果物の作り直し）
   - `decision`: 決定に要る確認（方式を選ぶ、原因を確かめる、issue を閉じるかを決める計算）
   - `trial`: 検討（結論を変えない試行、開発中の確認）
 - `--ref` は、きっかけの issue か ADR の番号（`'#0200'`、`ADR-NNNN`、複数は `'#0200,ADR-NNNN'`）。無いときは `'- <理由>'`（`'- nixfiles の実機の確認で、記録の番号が無い'`）
@@ -78,7 +78,7 @@ cd ~/github/xlc && ~/.claude/scripts/slurm-run.sh --class decision --ref '#0200'
 - 過去のジョブの測定（時間、`MaxRSS` などのメモリ）を、見積もりに使う、「前は同じ入力で X だった」と比べる、依頼の前提に書くときは、
   先に `~/.claude/skills/slurm-run/references/past-jobs.md` を読み、取るジョブがコマンドと中身の同じ排他のジョブかを確かめる
   （`--by-name` の表は名前でしか結ばず、名前の似たジョブが同じ仕事をしたとは限らない）
-- 名前は `<ツール>-<題材>`（`openmc-2K`、`xlc-2K-swap-water`、`vera-reference-stages`）。
+- 名前は `<ツール>-<題材>`（`solver-large-grid`、`bench-sort-radix`）。
 - ジョブは `slurm-run.sh` を呼んだときの `$PWD` で、`--export=ALL`（今の環境変数、nix の開発シェルの PATH を含む）で走り、
   連絡先にもその `$PWD` が入る。必ず `cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh ...` の形で呼ぶ
   （`cd ... &` と `&` で切ると、ジョブは cd の前の場所で走る。クォートしたコマンドの中の `cd` は連絡先に反映されない）。
@@ -110,12 +110,12 @@ cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh --class timed --
 cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh --class decision --ref '<参照>' --purpose '<目的>' --timed -t <見積もり> <名前> '<コマンド>'   # 数分の急ぐ計算
 ```
 
-時間を記録するジョブ（検証の記録に書く時間、高速化の測定）は区分 `timed` で投げる。
+時間を記録するジョブ（記録に書く時間、高速化の測定）は区分 `timed` で投げる。
 数分の急ぐ計算は、区分をそのままにして `--timed` を付ける。どちらもパーティション `timed` に排他で入り、待っている `main` の
 ジョブより先に走り、走っている `main` のジョブをすべて止めて（`SUSPENDED`）実行し、自分は止められない。止められたジョブは、
 `timed` のジョブが終わると続きから再開する。
 
-- 時間を記録せず、数分で終わらないジョブ（テーブル作成、精度の記録、確認の計算、参照解）は、区分 `timed` も `--timed` も付けずに
+- 時間を記録せず、数分で終わらないジョブ（成果物の作り直し、精度の記録、確認の計算）は、区分 `timed` も `--timed` も付けずに
   `main` へ投げる（付けると、追い越された `main` のジョブが待ち続ける）
 - `timed` のジョブどうしは止め合わず、投げた順に走る。長い `timed` のジョブが走っている間は、測定も
   急ぐ計算も待つ。待っている `timed` のジョブの中で先に出すのは `--timed --top`
@@ -161,7 +161,7 @@ cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh <区分と目的
 - 手元のビルドや 1 コアの計算、Slurm 外のプロセス（nix-daemon のビルドなど）との重なりは、数 % のブレとして受け入れ、追加の隔離の
   仕組み（測定から物理コアを外す、手元の計算を止める hook）は作らない（`--timed` の一時停止は、経過時間を壊すので残す）
 - 測定の時間を比べるときは、同じ時間帯の手元の計算と Slurm 外のプロセスを、差の原因の候補に先に挙げる。高速化の判断は、同じ
-  ジョブの中の A/B、`seconds` の内訳、反復や自己遮蔽の回数で比べる
+  ジョブの中の A/B、プログラムが出す時間の内訳、反復の回数で比べる
 
 ## ログと時間
 
@@ -184,9 +184,9 @@ sacct -S <日付> --name=<名前> -o JobID,JobName,Partition,Elapsed,TimeLimit,S
 cd <作業ディレクトリ> && ~/.claude/scripts/slurm-run.sh <区分と目的> -c <コア数> -t <見積もり> <名前>-shared '<コマンド>'
 ```
 
-`--exclusive` を付けず、`<コア数>` の CPU だけを取る。時間を記録しない長い計算（何時間もの参照解、開発中の試行）向け。
+`--exclusive` を付けず、`<コア数>` の CPU だけを取る。時間を記録しない長い計算（何時間もかかる計算、開発中の試行）向け。
 
-- コア数は Slurm の CPU（ハードウェアスレッド）で数える。OpenMC を 16 スレッドで実行するなら `-c 16`（物理コア 8）
+- コア数は Slurm の CPU（ハードウェアスレッド）で数える。プログラムを 16 スレッドで実行するなら `-c 16`（物理コア 8）
 - r995 は 16 物理コア × SMT で論理 32。Slurm はスレッドを CPU に束縛しないので、共有ジョブは物理コアを SMT で共有する。
   長い共有ジョブと開発の共有ジョブを重ねるときは `-c 16` + `-c 16` を基本にする（`-c 24` + `-c 8` のように偏ると、少ない側が
   極端に遅くなる）
