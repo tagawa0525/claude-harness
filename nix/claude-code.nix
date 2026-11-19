@@ -2,7 +2,7 @@
 # Claude Code の設定
 # =============================================================================
 # グローバル CLAUDE.md/skills/commands/scripts の同期、PreToolUse hook、
-# （../crates/claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻）と Stop hook（自動メモリの退避）の登録、settings.json 管理
+# （../crates/claude-hooks、Rust 製 1 バイナリ）の配置、UserPromptSubmit hook（現在時刻と既定ブランチの進み）と Stop hook（自動メモリの退避）の登録、settings.json 管理
 # =============================================================================
 # flake.nix が lib.modules.importApply で 1 つ目の引数を束ねる。モジュールの引数（_module.args、specialArgs）で
 # 受けないのは、利用する側が同じ名前を specialArgs で渡すと、黙ってそちらが勝つため
@@ -122,6 +122,7 @@ in
     $DRY_RUN_CMD ${claude-setup}/bin/claude-setup settings --static ${../claude-settings.json} \
       --pre-tool-use "$HOME/${claudeHooksBinRel}" \
       --stop "$HOME/${claudeHooksBinRel}" \
+      --user-prompt-submit "$HOME/${claudeHooksBinRel}" \
       ${lib.concatMapStringsSep " " (f: "--legacy ${f}") legacyHookFiles}
 
     # 旧 bash hook の残骸を消す（claude-sync は --delete を使わないため残り続ける）。

@@ -15,7 +15,7 @@ done
 
 hook=$(cygpath -w ~/.claude/bin/claude-hooks.exe)
 ~/.claude/bin/claude-setup sync "$repo"
-~/.claude/bin/claude-setup settings --static claude-settings.json --pre-tool-use "$hook" --stop "$hook"
+~/.claude/bin/claude-setup settings --static claude-settings.json --pre-tool-use "$hook" --stop "$hook" --user-prompt-submit "$hook"
 
 # スキルと hook の修正方法の文は claude-setup と commit-refs を名前で呼ぶ。Claude Code の Bash ツールも ~/.bashrc を読む
 path_line='export PATH="$HOME/.claude/bin:$PATH"'
