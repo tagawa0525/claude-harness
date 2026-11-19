@@ -54,8 +54,9 @@ mod unix {
         [SIGHUP, SIGINT, SIGTERM]
             .into_iter()
             .filter(|&sig| {
-                // SAFETY: 新しい設定に null を渡し、今の設定を old に読むだけで、何も変えない
+                // SAFETY: sigaction は整数とポインタだけの C の構造体で、全部が 0 の値も正しい値（書き込み先に使うだけ）
                 let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+                // SAFETY: 新しい設定に null を渡し、今の設定を old に読むだけで、何も変えない
                 let read = unsafe { libc::sigaction(sig, std::ptr::null(), &mut old) };
                 read == 0 && old.sa_sigaction == SIG_IGN
             })
