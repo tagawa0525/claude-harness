@@ -219,7 +219,7 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
     };
     lock(progress).job = Some(job.clone());
     println!("JOB: {job}");
-    let log = format!("{local_logs}/{}-{job}.out", req.name);
+    let log = format!("{local_logs}/{}", slurm::log_file(&req.name, &job));
     println!("LOG: {log}");
     // ジョブは投げたときの場所で走る。`cd d && a & b` の b のように、cd が届かずに別の場所から投げたものを、終わる前に見つける
     println!(
@@ -276,7 +276,7 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
                     eprintln!(
                         "WARN: ジョブ {job} の終わりの State を sacct からも scontrol からも確かめられなかった"
                     );
-                    unknown_state()
+                    JobState::unknown()
                 }
             }
         }
@@ -307,16 +307,7 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
     status
 }
 
-/// 終わりを確かめられなかった状態
-fn unknown_state() -> JobState {
-    JobState {
-        name: "unknown".to_string(),
-        ended: false,
-        completed: false,
-    }
-}
-
-/// 引数を読んで確かめる。確かめる順と理由の文は sh の版と同じ（使い方の誤り、区分、参照、目的、-c、-t、コマンド、名前）
+/// 引数を読んで確かめる。確かめる順は、使い方の誤り、区分、参照、目的、-c、-t、コマンド、名前（先に当たった理由だけを出す）
 fn parse_args(args: &[String]) -> Result<Request, Refusal> {
     let refuse = |name: Option<&str>, message: String| Refusal {
         name: name.map(str::to_string),
@@ -480,7 +471,7 @@ fn record_wait() -> Result<(u32, std::time::Duration), String> {
     Ok((tries, std::time::Duration::from_secs_f64(interval)))
 }
 
-/// sh の $PWD と同じ作業ディレクトリ。環境の PWD が今の場所を指していればそれ（symlink をたどる前の書き方）、
+/// 作業ディレクトリ。環境の PWD が今の場所を指していればそれ（シェルの $PWD と同じく、symlink をたどる前の書き方）、
 /// 指していなければ OS の今の場所。連絡先とジョブの走る場所の案内は、利用者が cd したときの書き方で出す
 fn working_dir() -> std::io::Result<String> {
     let cwd = std::env::current_dir()?;
@@ -665,8 +656,8 @@ fn refuse_same_worktree(pwd: &str, local: impl Fn(&str) -> String) -> Option<i32
 
 /// 作業ディレクトリの worktree の直下（git の外ならそのディレクトリ）
 fn worktree_of(dir: &str) -> String {
-    let out = git(&["-C", dir, "rev-parse", "--show-toplevel"]);
-    if out.ok { out.stdout } else { dir.to_string() }
+    crate::git::git(std::path::Path::new(dir), &["rev-parse", "--show-toplevel"])
+        .unwrap_or_else(|| dir.to_string())
 }
 
 /// running のうち、作業ディレクトリの worktree が here と同じ最初のジョブの番号
@@ -731,7 +722,7 @@ fn wait_record(
     None
 }
 
-/// 秒を [日-]時:分:秒 にする（sh の版が sacct の Elapsed から読んでいた書き方）
+/// 秒を [日-]時:分:秒 にする（1 日に満たなければ時:分:秒。sacct の Elapsed と同じ書き方）
 fn duration(secs: i64) -> String {
     if secs < 0 {
         return "INVALID".to_string();
@@ -745,7 +736,7 @@ fn duration(secs: i64) -> String {
     }
 }
 
-/// 見積もりを sh の版が sacct の Timelimit から読んでいた書き方にする
+/// 見積もりを、TIME: の行の書き方（sacct の Timelimit と同じ）にする
 fn limit_text(limit: &Option<Limit>) -> String {
     match limit {
         Some(Limit::Minutes(minutes)) => duration(minutes * 60),
@@ -895,7 +886,7 @@ mod tests {
     use super::{
         JobRecord, JobState, Limit, Refusal, Request, RunningJob, duration, exit_line, file_tail,
         final_status, limit_text, local_path, parse_args, reorder, result_line, same_worktree_job,
-        tail_lines, time_line, under, unknown_state, wait_record,
+        tail_lines, time_line, under, wait_record,
     };
 
     fn args(words: &[&str]) -> Vec<String> {
@@ -1473,9 +1464,9 @@ mod tests {
     fn a_job_that_did_not_complete_fails_even_when_submission_returned_zero() {
         assert_eq!(final_status(0, &completed()), 0);
         assert_eq!(final_status(0, &state("CANCELLED", true, false)), 1);
-        assert_eq!(final_status(0, &unknown_state()), 1);
+        assert_eq!(final_status(0, &JobState::unknown()), 1);
         assert_eq!(final_status(3, &state("FAILED", true, false)), 3);
-        assert_eq!(final_status(3, &unknown_state()), 3);
+        assert_eq!(final_status(3, &JobState::unknown()), 3);
     }
 
     #[test]
@@ -1485,7 +1476,10 @@ mod tests {
             exit_line(1, &state("CANCELLED", true, false)),
             "EXIT: 1 (State=CANCELLED)"
         );
-        assert_eq!(exit_line(1, &unknown_state()), "EXIT: 1 (State=unknown)");
+        assert_eq!(
+            exit_line(1, &JobState::unknown()),
+            "EXIT: 1 (State=unknown)"
+        );
         assert_eq!(
             result_line(Some("42"), Some("xlc-2G"), 3, "FAILED"),
             "RESULT: job=42 name=xlc-2G exit=3 state=FAILED"

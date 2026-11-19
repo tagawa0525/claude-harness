@@ -30,7 +30,7 @@ pub struct Submission<'a> {
     /// 割り込まれないパーティションに投げる
     pub uninterrupted: bool,
     pub name: &'a str,
-    /// ログを書くディレクトリ（ジョブの走るホストの書き方）。ファイル名は `<name>-<番号>.out`
+    /// ログを書くディレクトリ（ジョブの走るホストの書き方）。ファイル名は [`log_file`]
     pub log_dir: &'a str,
     /// 見積もり（[`valid_time_limit`] の形）
     pub estimate: &'a str,
@@ -47,6 +47,11 @@ pub fn submit(job: &Submission) -> std::io::Result<Child> {
         .stdout(Stdio::piped());
     crate::interrupt::ignore_terminal_interrupt(&mut cmd);
     cmd.spawn()
+}
+
+/// ジョブのログのファイル名（[`Submission::log_dir`] の下）。投げるときに渡す名前の形と同じ
+pub fn log_file(name: &str, job: &str) -> String {
+    format!("{name}-{job}.out")
 }
 
 /// sbatch の引数。排他（既定）か CPU の数、パーティション、終わるまで待つ、環境を引き継ぐ、名前、ログ、見積もり、
@@ -71,6 +76,7 @@ fn submit_args(job: &Submission) -> Vec<String> {
             "-J",
             job.name,
             "-o",
+            // %x はジョブの名前、%j は番号（log_file と同じ形）
             &format!("{}/%x-%j.out", job.log_dir),
             "--time",
             job.estimate,
@@ -169,6 +175,15 @@ pub struct JobState {
 }
 
 impl JobState {
+    /// 終わりを確かめられなかった状態
+    pub fn unknown() -> JobState {
+        JobState {
+            name: "unknown".to_string(),
+            ended: false,
+            completed: false,
+        }
+    }
+
     /// Slurm の State（`CANCELLED by 1000` のように後ろが付くものは最初の語で見る）から
     pub fn from_slurm(state: &str) -> JobState {
         let name = state.split(' ').next().unwrap_or("");
@@ -292,7 +307,7 @@ fn quiet_output(argv: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        JobRecord, JobState, Limit, RunningJob, Submission, running_jobs, sacct_record,
+        JobRecord, JobState, Limit, RunningJob, Submission, log_file, running_jobs, sacct_record,
         scontrol_state, submit_args, submitted_job, valid_time_limit,
     };
     use serde_json::json;
@@ -479,5 +494,15 @@ mod tests {
         );
         assert!(running_jobs("not json").is_err());
         assert!(running_jobs("{}").is_err());
+    }
+
+    #[test]
+    fn the_log_file_is_the_name_and_the_number_like_the_pattern_given_to_sbatch() {
+        assert_eq!(log_file("xlc-2G", "42"), "xlc-2G-42.out");
+        let pattern = submit_args(&job(None, false))[7].clone();
+        assert_eq!(
+            pattern.replace("%x", "xlc-2G").replace("%j", "42"),
+            format!("/home/u/github/slurm-logs/{}", log_file("xlc-2G", "42"))
+        );
     }
 }
