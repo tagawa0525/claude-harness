@@ -227,3 +227,6 @@ crate の分け方は、#101 の「決まっていないこと」で、段階 5 
   インド系の文字の結合記号など、まれな文字）でしか違わず、結合の濁点つきの「か」、ZWJ の列、国旗、肌の色、keycap、
   ZWSP、soft hyphen は揃う。表の 122 の範囲を持つより、標準的な crate のほうが保守が小さい（Unicode の版は crate が上げる）。
   書記素に分ける `unicode-segmentation` は要らない（`unicode-width` が絵文字の列をまとめて数える）
+- 2026-11-19: `check-each-commit.sh` の扱い。前は「`check-each-commit.sh` は移さず、sh のまま残す（案 戊。#169）」。
+  Slurm のスクリプトを移すと、中断の後片付けを Rust で受ける手段（`ctrlc`）が入り、残す理由が無くなる。sh に残るロジックを
+  すべて移す決定は ADR-0101 に書き、移すまではこの ADR の決定のとおり sh に残る
