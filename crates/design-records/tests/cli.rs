@@ -3113,3 +3113,16 @@ fn check_resolves_index_links_from_the_index_directory_and_slash_from_the_bundle
         stdout(&out)
     );
 }
+
+#[test]
+fn check_treats_index_links_outside_the_bundle_as_external() {
+    let t = TempRepo::new("okf-external");
+    t.write("README.md", "# repo\n");
+    t.write(
+        "docs/index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# docs\n\n* [README](../README.md)\n* [gone](../../gone.md)\n",
+    );
+    t.commit_all("docs: links out of the bundle");
+    let out = t.run(&["check"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+}
