@@ -53,7 +53,8 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
 案 2 を採る。require-pipefail が対象にする形で、ほかのルールが拒否しないときは、拒否の代わりに、入力のほかの欄を
 そのままにして `command` の前に `set -o pipefail;` と空白 1 つを付けた `updatedInput` と、付けたことを知らせる
 `additionalContext` を返す。`permissionDecision` は返さない。ほかのルールが同じ呼び出しを拒否するときは、拒否だけを
-返し、書き換えは返さない（書き換えの文も入れない）。
+返し、書き換えは返さない（書き換えの文も入れない）。対象のコマンドが `bash -c` や `ssh` の文字列の中にあれば、
+書き換えずに前と同じく拒否する。
 
 - 案 1 は、拒否の文を読んで同じ前置きを付けるだけの 1 往復が、毎回残る
 - 案 3 は、`allow` が許可の確認を飛ばすので、`set -o pipefail;` を付けるだけの書き換えで、元のコマンドの確認まで
@@ -64,18 +65,27 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
 - 拒否を優先するのは、拒否された呼び出しは走らず、書き換えに意味が無いため。書き換えの文を拒否と一緒に返すと、
   走らなかったコマンドに「付けた」と知らせることになる。モデルが拒否の後に直したコマンドは、require-pipefail が
   もう一度見て書き換える
+- 文字列の中のコマンドを拒否のままにするのは、文字列で実行するシェルが外の `set -o pipefail` を受け継がないため。
+  `bash -c 'cargo test | tail'` の外に付けても、失敗の終了コードは 0 のままで、知らせる文が誤りになる。パイプが
+  文字列の中か外かは、claude-hooks のシェルの読み（`Cmd::piped_into`）から分からないので、文字列の中のものは
+  全部拒否する（`bash -c 'cargo test' | tail` のように外に付ければ効く形も拒否する）。`(…)` と `$(…)` は
+  シェルのオプションを受け継ぐので書き換える
 
 ### 帰結
 
 - ルールの結果に、入力を書き換える種類（`Finding::Prepend`。`command` の前に付ける文字列と、知らせる文）を足す。
-  hook が入力を書き換えるのはこのハーネスで初めてで、ほかのルールが同じ形で書き換えるときもこの種類を使う
+  hook が入力を書き換えるのはこのハーネスで初めてで、ほかのルールが同じ形で書き換えるときもこの種類を使う。
+  `updatedInput` は入力の全体を置き換えるので、hook の入力の `tool_input` の全体を `Input` に持たせ、ほかの欄
+  （`description`、`timeout` など）をそのまま返す
 - 書き換えは拒否でないので、拒否の記録（`deny_log`）と、振り返りが数える `[<ルール名>]` の拒否には入らない
 - 判定が誤って対象にする形（`cargo metadata | head`、`cargo test --help | head`。#37）は、拒否の代わりに pipefail が
   付く。head が先に閉じると、前のコマンドが SIGPIPE で止まり、終了コードが 141 になりうる。今のモデルが拒否の後に
   `set -o pipefail;` を付けて打ち直した結果と同じなので、この決定では扱わず、知らせる文に 1 文入れる
 - `set -o pipefail` の部分は、許可の規則に無いと確認になる（段 1）。打ち直しでも同じだったので、書き換えで増える
   確認ではない。`claude-settings.json` に許可を足すかは #387
-- auto mode では、文書のとおり、書き換えた呼び出しが拒否されうる（試していない）
+- auto mode では、文書のとおり、書き換えた呼び出しが拒否されうる（試していない）。同じ元のコマンドを打ち直すと
+  毎回書き換えて同じく拒否されるので、知らせる文に、そのときは付けた後のコマンドを打つよう 1 文入れる（付けた後の
+  コマンドは pipefail があるので書き換えない）
 - 複数の hook が同じ呼び出しに `updatedInput` を返したときの扱いは、文書に無い。PreToolUse の hook は claude-hooks の
   1 件だけ（ADR-0084）なので、今は当たらない。claude-hooks の中では、書き換えの前置きを評価の順につなぐ
 
@@ -83,6 +93,8 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
 
 - `claude/tests/hooks.sh` の require-pipefail のテスト: 対象の形で拒否でなく、`set -o pipefail;` と空白 1 つを付けた
   `updatedInput`（`run_in_background` はそのまま）と `additionalContext` を返し、`permissionDecision` を返さない。
-  pipefail がある形と対象でない形は何も返さない。ほかのルール（block-no-verify）が拒否する呼び出しでは、拒否だけを返す
+  pipefail がある形と対象でない形は何も返さない。ほかのルール（block-no-verify）が拒否する呼び出しでは、拒否だけを返す。
+  `bash -c` と `ssh` の文字列の中の形は拒否し、`(…)` と `$(…)` の中の形は書き換える。`Input` が読まない欄
+  （`description`、`timeout`）も `updatedInput` に残る
 - `crates/claude-hooks/src/output.rs` の単体テスト: 書き換えと拒否、書き換えとほかの知らせの組み合わせの出力
 - 配備の後の実際のセッションで、`cargo --version | tail -1` が打ち直しなしで通ること（PR の報告に手順を書く）
