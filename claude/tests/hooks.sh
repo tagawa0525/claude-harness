@@ -1554,7 +1554,7 @@ assert_eq deny "$(decision "$out")"
 it "guard-gh-api: GraphQL の resolveReviewThread は deny し、resolve-thread.sh を示す"
 out=$(run_hook guard-gh-api "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
 assert_eq deny "$(decision "$out")"
-assert_contains "$(reason "$out")" "resolve-thread.sh <PR の URL> <comment_id>"
+assert_contains "$(reason "$out")" "resolve-thread.sh <PR の URL> <comment_id | thread_id>"
 out=$(run_hook guard-gh-api "gh api graphql -f query='mutation { unresolveReviewThread(input: {threadId: \"x\"}) { thread { id } } }'")
 assert_eq deny "$(decision "$out")"
 
