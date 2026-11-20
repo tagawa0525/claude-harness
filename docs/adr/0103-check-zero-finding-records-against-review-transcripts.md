@@ -98,7 +98,7 @@ Claude Code の公開の仕様ではない。
   （`<HEAD> <UNIX 秒> <セッション> <worktree>`。worktree は空白を含みうるので行の残り）。前の版の行（2 つの欄）も読む
 - **記録を探す**: 0 件の記録のとき、その head の行のセッションの `subagents/` から、`.forked-skill.json` の `skillName` が
   `code-review` で、その head の周の行の 60 秒以内に始まった記録を取る。依頼文の対象（`Review target:` の後の
-  /code-review の引数の全体（複数の行でも、行の終わりの backtick まで）を count-review-rounds が引数を切るのと同じ字で切った語のうち、行の worktree と同じく最初の、在るディレクトリの絶対パス）の
+  /code-review の引数の全体（`` ` `` で始まり、行の終わりの backtick まで。複数の行でもよい。終わりが無ければ 1 行目だけ）を count-review-rounds が引数を切るのと同じ字で切った語のうち、行の worktree と同じく最初の、在るディレクトリの絶対パス）の
   git の worktree の根が行の worktree の根と違えば、別の worktree の周として除く（対象のディレクトリが無い周（対象を書かない、
   PR の番号を渡した、消えた worktree を渡した）と、対象が git の worktree の中に無い周（焦点の文の `/`）は除かない）（設定の場所は
   `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`）。前の周の記録、差分を書いた担当などほかのサブエージェントの記録、同じ
@@ -131,6 +131,9 @@ Claude Code の公開の仕様ではない。
 
 ### 帰結
 
+- 依頼文から引数を読み戻すので、引数の中の行の終わりに backtick がある（焦点の文の終わりの `` `名前` ``）と、引数を短く読み、
+  その後に書いた worktree を対象と読まない（同じ頃の別の worktree の周と見分けない側に倒れる）
+- `NEXT:` の対象は、worktree の中の依頼文の対象のディレクトリ、無ければ周の行の worktree、それも無ければ起動したディレクトリ
 - 対象に絶対パスを書かない周（対象を書かない、PR の番号を渡した）は、同じセッションで 60 秒以内に回した別の worktree の周と
   見分けない。その周の記録も、PR の差分の追加行が全部入っているときだけ数える。/git-merge と /gh-pr-review の回し方は
   `review-level.sh` の `WORKTREE`（絶対パス）を渡すので、普段の周は見分ける
@@ -163,7 +166,7 @@ Claude Code の公開の仕様ではない。
 - 2026-11-20 の測り方: `~/.claude/projects/-home-tagawa-nix-claude-harness/` の 4 つのセッション（0a87f718、7633dbf6、
   a8d9e415、0e216681）の、`.forked-skill.json` が `code-review` の記録 97 件を、1 件ずつコピーして置いた設定の場所で、
   ビルドした `claude-hooks script record-local-review`（このブランチのコミット 8317c481、1 周目のレビューの修正の d9d5bd86、
-  2 周目の ca32aa89、3 周目の 3a17a559、4 周目の 7ceadde9、5 周目の bffdc395、対象を 1 行目から読む b79e7b54、6 周目の 412e2d1a。判定は 97 件とも同じ。ca32aa89 から後では、周の行に worktree を書かない形と、
+  2 周目の ca32aa89、3 周目の 3a17a559、4 周目の 7ceadde9、5 周目の bffdc395、対象を 1 行目から読む b79e7b54、6 周目の 412e2d1a、7 周目の 9300ac88。判定は 97 件とも同じ。ca32aa89 から後では、周の行に worktree を書かない形と、
   依頼文の対象を worktree として書く形の両方で測った。hook が書く cwd の worktree と対象が違う周は、テストの
   `a_review_without_a_worktree_in_its_target_counts_for_the_worktree_of_the_line` で確かめた）にかけた。周の head は、記録の始まりの
   90 秒前までの `claude-review-rounds` の行で決め、PR の差分は、そのブランチのマージコミットの第 1 親との merge-base からの
