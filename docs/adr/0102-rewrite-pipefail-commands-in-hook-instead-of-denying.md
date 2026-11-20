@@ -87,7 +87,8 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
   確認になる。段 1）。完全一致の規則で、hook が付ける形と同じ綴りだけに当たる。`set -euo pipefail` や、後ろに引数を
   足した `set -o pipefail +o pipefail` は当たらず、確認になる。`;`、`&&`、改行でつないだ後ろのコマンドと、付けた
   リダイレクトの確認は飛ばない（2026-11-20、Claude Code 2.1.328、`claude -p --permission-mode default`。形ごとの
-  結果は PR #389 の本文。対話のセッションでは確かめていない）
+  結果は PR #389 の本文）。対話のセッションでは、同じ版で `set -o pipefail; cargo --version | sort` が、この許可が
+  無いと確認になり、あると `;` でも `&&` でも確認なしで通った
 - コマンドのどこかに pipefail のシェルのオプションがあれば何もしないのは前のとおり（位置は読まない。ADR-0042）で、
   `set -o pipefail; bash -c 'cargo test | tail'` は、文字列の中に効かないまま通る
 - auto mode では、文書のとおり、書き換えた呼び出しが拒否されうる（試していない）。同じ元のコマンドを打ち直すと
