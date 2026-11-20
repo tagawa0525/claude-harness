@@ -27,10 +27,15 @@ pub struct CountReviewRounds;
 /// 数を置く、共通の git ディレクトリの下のディレクトリ
 const STATE_DIR: &str = "claude-review-rounds";
 
-/// 文字列の中で最初の、ディレクトリとして在る絶対パス。囲みの `` ` ``、引用符、括弧、和文の句読点で切る
+/// 引数の中のパスを切る字（空白、囲みの `` ` ``、引用符、括弧、和文の句読点）。record-local-review が /code-review の依頼文の
+/// 対象を同じ字で切り、周の行の worktree と比べる
+pub(crate) fn is_word_stop(c: char) -> bool {
+    c.is_whitespace() || "`'\"「」（）()。、,;".contains(c)
+}
+
+/// 文字列の中で最初の、ディレクトリとして在る絶対パス（[`is_word_stop`] で切る）
 fn first_directory(text: &str) -> Option<PathBuf> {
-    let stop = |c: char| c.is_whitespace() || "`'\"「」（）()。、,;".contains(c);
-    text.split(stop)
+    text.split(is_word_stop)
         .map(|w| PathBuf::from(crate::shell::native(w).as_ref()))
         .filter(|p| p.is_absolute())
         .find(|p| p.is_dir())

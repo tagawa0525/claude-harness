@@ -302,11 +302,12 @@ struct Transcript {
     text: String,
 }
 
-/// 周の行が示す、その周の記録が始まる窓（UNIX のマイクロ秒の [from, to)）と、回した worktree
+/// 周の行が示す、その周の記録が始まる窓（UNIX のマイクロ秒の [from, to)）と、回した worktree の根（git の toplevel。
+/// 引けなければ行の worktree のまま）
 struct Window {
     from: i64,
     to: i64,
-    dir: Option<PathBuf>,
+    tree: Option<PathBuf>,
 }
 
 /// 比べる行の先頭の文字数。Read は 2000 文字を超える行を切って返すので、長い行の後ろの欠けを読んでいないと数えない
@@ -344,7 +345,7 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
                 windows.push(Window {
                     from,
                     to,
-                    dir: round.dir.clone(),
+                    tree: round.dir.clone().map(|d| toplevel(&d).unwrap_or(d)),
                 });
             }
         }
@@ -686,9 +687,9 @@ fn review_transcripts(
 /// 残りの行を読まずに None（窓に worktree が無い前の版の行では対象を問わない）
 fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
     let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
-    let mut first = String::new();
-    reader.read_line(&mut first).ok()?;
-    let head = serde_json::from_str::<Value>(&first).ok()?;
+    let mut first = Vec::new();
+    reader.read_until(b'\n', &mut first).ok()?;
+    let head = serde_json::from_str::<Value>(&String::from_utf8_lossy(&first)).ok()?;
     let started = head
         .get("timestamp")
         .and_then(Value::as_str)
@@ -701,14 +702,16 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
         .and_then(review_target);
     if !windows.iter().any(|w| {
         (w.from..w.to).contains(&started)
-            && w.dir
+            && w.tree
                 .as_deref()
-                .is_none_or(|d| !other_tree(d, target.as_deref()))
+                .is_none_or(|t| !other_tree(t, target.as_deref()))
     }) {
         return None;
     }
-    let mut rest = String::new();
-    reader.read_to_string(&mut rest).ok()?;
+    // 大きな tool の結果に UTF-8 でないバイトが残っても、ほかの行は読む
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).ok()?;
+    let rest = String::from_utf8_lossy(&bytes);
     let mut results = String::new();
     for line in rest.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
@@ -734,10 +737,11 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
     })
 }
 
-/// 依頼文の対象が、周の行の worktree（dir）と別のディレクトリを指すか。対象が絶対パスでない（書かない、PR の番号を渡した）
-/// なら分からないので別としない。dir の下とその上は同じとする（cwd の下のディレクトリで回した周、worktree の下を渡した周）。
-/// 字面でなく実在のパスで比べる（Windows のドライブの文字の大小、symlink）
-fn other_tree(dir: &Path, target: Option<&str>) -> bool {
+/// 依頼文の対象が、周の行の worktree の根（tree）と別の worktree を指すか。対象が絶対パスでない（書かない、PR の番号を
+/// 渡した）なら分からないので別としない。パスの上下でなく git の worktree の根で比べる（本体の下の `.claude/worktrees/<名前>`
+/// は別の worktree、本体の下のディレクトリは同じ worktree。ドライブの文字の大小と symlink は git が揃える）。対象の根を
+/// 引けなければ、対象が tree の下にあるかで比べる
+fn other_tree(tree: &Path, target: Option<&str>) -> bool {
     let Some(target) = target else {
         return false;
     };
@@ -745,16 +749,25 @@ fn other_tree(dir: &Path, target: Option<&str>) -> bool {
     if !target.is_absolute() {
         return false;
     }
-    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let (dir, target) = (real(dir), real(&target));
-    !(target.starts_with(&dir) || dir.starts_with(&target))
+    match toplevel(&target) {
+        Some(top) => top != tree,
+        None => !target.starts_with(tree),
+    }
 }
 
+/// path（無ければ在る一番近い上のディレクトリ）を含む git の worktree の根
+fn toplevel(path: &Path) -> Option<PathBuf> {
+    let dir = path.ancestors().find(|p| p.is_dir())?;
+    git_out(dir, &["rev-parse", "--show-toplevel"]).map(|s| PathBuf::from(s.trim()))
+}
+
+/// 依頼文の対象（`Review target: ` の後の最初の語）。周の行の worktree を引数から取る count-review-rounds と同じ字で切る
 fn review_target(prompt: &str) -> Option<String> {
     prompt
-        .split_once("Review target: `")
-        .and_then(|(_, rest)| rest.split('`').next())
-        .and_then(|t| t.split_whitespace().next())
+        .split_once("Review target: ")?
+        .1
+        .split(crate::rules::is_word_stop)
+        .find(|w| !w.is_empty())
         .map(str::to_string)
 }
 

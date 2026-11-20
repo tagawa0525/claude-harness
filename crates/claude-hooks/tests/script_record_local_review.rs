@@ -1236,12 +1236,31 @@ fn a_review_whose_children_read_the_diff_needs_a_reason() {
 fn a_review_of_another_worktree_started_at_the_same_time_does_not_count() {
     // /delegate の担当は親のセッションを共有し、同じ頃に別の PR を回す。周の行に書いた worktree と依頼文の対象で分ける
     let fake = FakeGh::new();
-    reviewed_in_session(&fake, &[HEAD]);
-    transcript(&fake, "a1", "code-review", "low", AFTER, &["nothing"]);
+    reviewed_at(&fake, &[]);
+    let [own, other] = ["wt-a", "wt-b"].map(|name| {
+        let dir = fake.dir().join(name);
+        let mut cmd = std::process::Command::new("git");
+        let ok = forget_git_env(&mut cmd)
+            .args(["init", "-q"])
+            .arg(&dir)
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git init");
+        dir.to_string_lossy().into_owned()
+    });
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{HEAD} 1794900000 {SESSION} {own}\n"),
+    )
+    .unwrap();
+    transcript_of(&fake, "a1", &own, "code-review", "low", AFTER, &["nothing"]);
     transcript_of(
         &fake,
         "b1",
-        "/work/other-pr",
+        &other,
         "code-review",
         "max",
         AFTER,
@@ -1251,7 +1270,7 @@ fn a_review_of_another_worktree_started_at_the_same_time_does_not_count() {
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(!fake.log().contains("pr comment"), "{}", fake.log());
     assert!(
-        stdout(&out).contains(&format!("NEXT: /code-review medium {TARGET} ")),
+        stdout(&out).contains(&format!("NEXT: /code-review medium {own} ")),
         "{}",
         stdout(&out)
     );
