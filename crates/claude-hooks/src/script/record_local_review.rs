@@ -702,21 +702,26 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
         .pointer("/message/content")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let hits: Vec<&Window> = windows
+        .iter()
+        .filter(|w| (w.from..w.to).contains(&started))
+        .collect();
+    if hits.is_empty() {
+        return None;
+    }
+    // 対象の worktree の根は、時刻の入った記録だけで 1 度引く
     let target_dir = review_dir(prompt);
-    // 対象の worktree の根は、窓ごとでなく 1 度引く
     let target_tree = target_dir.as_deref().and_then(toplevel);
-    if !windows.iter().any(|w| {
-        (w.from..w.to).contains(&started)
-            && match (&w.tree, &target_tree) {
-                // 対象が git の worktree の中に無い（`/` など）なら分からないので除かない
-                (Some(tree), Some(top)) => top == tree,
-                _ => true,
-            }
+    // 対象が git の worktree の中に無い（`/` など）なら分からないので除かない
+    if !hits.iter().any(|w| match (&w.tree, &target_tree) {
+        (Some(tree), Some(top)) => top == tree,
+        _ => true,
     }) {
         return None;
     }
-    let target = target_dir
-        .as_deref()
+    // NEXT: の対象は worktree の中のディレクトリか、依頼文の最初の語（PR の番号など）
+    let target = target_tree
+        .and(target_dir)
         .map(|d| d.display().to_string())
         .or_else(|| review_words(prompt).next().map(str::to_string));
     // 大きな tool の結果に UTF-8 でないバイトが残っても、ほかの行は読む
@@ -755,12 +760,13 @@ fn toplevel(path: &Path) -> Option<PathBuf> {
         .map(|s| PathBuf::from(s.strip_suffix('\n').unwrap_or(&s)))
 }
 
-/// 依頼文の `Review target: ` の後の、その行（/code-review の引数）の語。続く手順の文のパスは対象でない。
-/// count-review-rounds が引数を切るのと同じ字で切る
+/// 依頼文の `` Review target: `<引数>` `` の引数の語。count-review-rounds が行の worktree を引数の全体から取るので、引数が
+/// 複数の行でも全体を読む（引数の終わりは、行の終わりの backtick）。続く手順の文のパスは対象でない。count-review-rounds が
+/// 引数を切るのと同じ字で切る
 fn review_words(prompt: &str) -> impl Iterator<Item = &str> {
     prompt
-        .split_once("Review target: ")
-        .map_or("", |(_, rest)| rest.lines().next().unwrap_or_default())
+        .split_once("Review target: `")
+        .map_or("", |(_, rest)| rest.split("`\n").next().unwrap_or_default())
         .split(crate::rules::is_word_stop)
         .filter(|w| !w.is_empty())
 }
