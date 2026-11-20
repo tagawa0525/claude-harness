@@ -1514,3 +1514,85 @@ fn the_target_is_the_first_directory_like_the_round_line() {
         assert_eq!(out.status.code(), Some(0), "{target}: {}", stderr(&out));
     }
 }
+
+/// 起動するディレクトリの clone の下に、名前ごとの git のリポジトリを作る（別々の worktree の根）
+fn repos(fake: &FakeGh, names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| {
+            let dir = fake.dir().join(name);
+            let mut cmd = std::process::Command::new("git");
+            let ok = forget_git_env(&mut cmd)
+                .args(["init", "-q"])
+                .arg(&dir)
+                .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git init");
+            dir.to_string_lossy().into_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn the_target_is_read_from_the_whole_arguments_like_the_round_line() {
+    // count-review-rounds は引数の全体から最初の在るディレクトリを取る。PR の番号の後や次の行に書いた worktree を、依頼文の
+    // 対象として行の worktree と比べる
+    for (args, recorded) in [
+        ("340 焦点: {wt} の差分", true),
+        ("340\n{wt}", true),
+        ("340\n{other}", false),
+        ("340 焦点: {other} との違い", false),
+    ] {
+        let fake = FakeGh::new();
+        reviewed_at(&fake, &[]);
+        let [wt, other] = <[String; 2]>::try_from(repos(&fake, &["wt", "other"])).unwrap();
+        std::fs::write(
+            fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+            format!("{HEAD} 1794900000 {SESSION} {wt}\n"),
+        )
+        .unwrap();
+        let target = args.replace("{wt}", &wt).replace("{other}", &other);
+        transcript_of(
+            &fake,
+            "a1",
+            &target,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(
+            out.status.code() == Some(0),
+            recorded,
+            "{args}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn the_next_round_is_not_aimed_at_a_directory_outside_the_worktree() {
+    // 焦点の文の `/` は在るディレクトリだが worktree でない。NEXT: の対象にしない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript_of(
+        &fake,
+        "a1",
+        "340 焦点: searched / failed",
+        "code-review",
+        "low",
+        AFTER,
+        &["nothing"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("NEXT: /code-review medium 340 "),
+        "{}",
+        stdout(&out)
+    );
+}
