@@ -174,6 +174,7 @@ fn output_of_gh_that_is_not_the_threads_is_an_error() {
 fn threads_with_node_ids() -> String {
     THREADS.replace(r#""id":"T"#, r#""id":"PRRT_T"#)
 }
+const RESOLVED_BY_ID: &str = "resolved: PRRT_T1 (isResolved=true)\n";
 
 #[test]
 fn resolves_the_bot_thread_given_its_thread_id() {
@@ -181,9 +182,10 @@ fn resolves_the_bot_thread_given_its_thread_id() {
     let out = fake.run_calls(
         "resolve-thread",
         &[URL, "PRRT_T1"],
-        &[(&threads_with_node_ids(), 0), (RESOLVED, 0)],
+        &[(&threads_with_node_ids(), 0), (RESOLVED_BY_ID, 0)],
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), RESOLVED_BY_ID);
     let calls = gh_calls(&fake);
     assert_eq!(calls.len(), 2, "{calls:?}");
     // スレッドの ID でも、URL の PR のスレッドの一覧から探す
