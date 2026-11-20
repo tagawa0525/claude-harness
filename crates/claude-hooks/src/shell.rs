@@ -100,7 +100,8 @@ pub struct Shell {
     tree: Tree,
     /// 全コマンド（文書順）。parse のときに一度だけ読む。`bash -c` などの文字列の中のコマンドも、その位置に含む
     cmds: Vec<Cmd>,
-    /// 複合文に付けた出力のリダイレクト（[`Shell::compound_writes`]）。文字列の中のものも、その位置に含む
+    /// 単純コマンドに掛からない出力のリダイレクト（[`Shell::compound_redirect`]）を文書順に。文字列の中のものも、
+    /// その位置に含む
     compound_writes: Vec<Cmd>,
     /// `bash -c` などの文字列を解析した内側のシェル。コマンドは `cmds` に移してある。代入・unset・エスケープの
     /// 走査に使い、スコープにノード ID を使うので木を生かしておく
@@ -162,7 +163,7 @@ impl Arg {
 }
 
 /// 単純コマンド 1 つ（`command` ノード）。ラッパー（env など）はほどいてある
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Cmd {
     pub name: String,
     pub args: Vec<Arg>,
@@ -248,6 +249,8 @@ impl Shell {
         let collected = shell.collect_commands(depth, expanded);
         shell.cmds = collected.cmds;
         shell.compound_writes = collected.compound_writes;
+        // 文字列の中のものは、その文字列のコマンドを読むときに足すので、外側の後ろの複合文より後に並ぶことがある
+        shell.compound_writes.sort_by_key(|c| c.start);
         shell.inner = collected.inner;
         shell
     }
@@ -393,45 +396,46 @@ impl Shell {
         &self.cmds
     }
 
-    /// 複合文（`{ …; } > f`、`( … ) > f`、`if … fi > f` など）に付けた出力のリダイレクト（文書順）。名前は複合文の
-    /// 始まりと終わりの語で、引数を持たず、`writes` だけを持つ。位置とスコープは複合文の外側のシェルのもので、
+    /// 書き込み先を持ちうるもの（文書順）: 全コマンドと、単純コマンドに掛からない出力のリダイレクト
+    /// （`{ …; } > f`、`( … ) > f`、`if … fi > f`、`> f` など）。後者は `writes` だけを持ち、名前は複合文の始まりと
+    /// 終わりの語（[`Shell::compound_redirect`]）。位置とスコープは複合文の外側のシェルのもので、
     /// [`Shell::target_dir`] が行き先を、[`Cmd::runs_before`] が前後を決める。[`Shell::commands`] には含めない
     /// （プログラムを実行しない）
-    pub fn compound_writes(&self) -> &[Cmd] {
-        &self.compound_writes
+    pub fn writers(&self) -> Vec<&Cmd> {
+        let mut all: Vec<&Cmd> = self.cmds.iter().chain(&self.compound_writes).collect();
+        all.sort_by_key(|c| c.start);
+        all
     }
 
     /// `cmd` より前に走る、`cmd` と同じか外側のスコープのコマンド（文書順）。前のコマンドの `$(…)` の中のもの、
     /// `cmd` を文字列で実行するラッパー（`bash -c` や `ssh`）、カレントディレクトリを変えるだけの `cd` は除く
     pub fn commands_before<'a>(&'a self, cmd: &'a Cmd) -> impl Iterator<Item = &'a Cmd> {
-        self.cmds.iter().filter(move |c| {
-            c.runs_before(cmd)
-                && !c.changes_dir()
-                && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
-        })
+        self.cmds.iter().filter(move |c| precedes(c, cmd))
     }
 
-    /// `cmd` より前に走るコマンド（[`Shell::commands_before`]）と複合文のリダイレクト（[`Shell::compound_writes`]）の
-    /// うち、`path` を引数に取るか、出力のリダイレクトで書くもの（最初のもの）。引数とリダイレクトの先は、[`Shell::literal_vars`] の変数を展開し、そのコマンドの
+    /// `cmd` より前に走るもの（[`Shell::writers`] のうち、[`Shell::commands_before`] と同じ条件のもの）のうち、
+    /// `path` を引数に取るか、出力のリダイレクトで書くもの（最初のもの）。引数とリダイレクトの先は、[`Shell::literal_vars`] の変数を展開し、そのコマンドの
     /// 行き先（`base` から [`Shell::target_dir`]）からの相対で比べる。値の決まらない展開を含むものは、最後の
     /// 決まらない展開の後ろの字面が `/` で始まり、その後ろのパスの要素で `path` が終われば数える（`$TMP/msg.txt`。
     /// `$VERSION.txt` は `msg.txt` と比べない）。引数に取るだけで読むだけのもの（`cat`、`test -f`）も数える
     pub fn writer_before<'a>(&'a self, cmd: &'a Cmd, base: &Path, path: &Path) -> Option<&'a Cmd> {
         let home = home();
         let vars = self.literal_vars();
-        let compounds = self.compound_writes.iter().filter(|c| c.runs_before(cmd));
-        self.commands_before(cmd).chain(compounds).find(|c| {
-            let dir = self.target_dir(c, base);
-            c.args
-                .iter()
-                .chain(&c.writes)
-                .any(|a| match a.expand(&vars) {
-                    Expanded::Known(t) => resolve(&home, &dir, &t) == path,
-                    Expanded::Tail(t) => t
-                        .strip_prefix('/')
-                        .is_some_and(|rest| !rest.is_empty() && path.ends_with(rest)),
-                })
-        })
+        self.writers()
+            .into_iter()
+            .filter(|c| precedes(c, cmd))
+            .find(|c| {
+                let dir = self.target_dir(c, base);
+                c.args
+                    .iter()
+                    .chain(&c.writes)
+                    .any(|a| match a.expand(&vars) {
+                        Expanded::Known(t) => resolve(&home, &dir, &t) == path,
+                        Expanded::Tail(t) => t
+                            .strip_prefix('/')
+                            .is_some_and(|rest| !rest.is_empty() && path.ends_with(rest)),
+                    })
+            })
     }
 
     /// 値が字面だけで 1 つに決まる変数（[`Shell::assignments`] の値が展開を含まず、同じ名前の代入がどれも同じ値）。
@@ -503,7 +507,12 @@ impl Shell {
         for child in node.children_by_field_name("argument", &mut cursor) {
             args.push(self.unquote(child));
         }
-        let redirects = statement_redirects(node);
+        // 前置きのリダイレクト（`> f echo x`、`x=1 > f`）は command の子
+        let mut cursor = node.walk();
+        let mut redirects: Vec<Node> = node
+            .children_by_field_name("redirect", &mut cursor)
+            .collect();
+        redirects.extend(statement_redirects(node));
         let heredocs: Vec<Node> = redirects
             .iter()
             .copied()
@@ -586,30 +595,23 @@ impl Shell {
             });
         }
         let mut shell = Shell::parse_at(&source, depth + 1, &expanded);
-        // 複合文のリダイレクトの位置とスコープも、中のコマンドと同じく外側のものに直す
-        let compound_writes: Vec<Cmd> = std::mem::take(&mut shell.compound_writes)
-            .into_iter()
-            .map(|mut c| {
-                c.start += node.start_byte() + 1;
-                c.scope = cmd
-                    .scope
-                    .iter()
-                    .copied()
-                    .chain([node.id()])
-                    .chain(c.scope)
-                    .collect();
-                c
-            })
-            .collect();
+        // 文字列は外側のコマンドの原文より短いので、位置は外側のコマンドの後ろ、次の外側のコマンドの前に収まる。
+        // 文字列の中は 1 つのスコープ。外側の cd は効き、中の cd は外に漏れない
+        let relocate = |c: &mut Cmd| {
+            c.start += node.start_byte() + 1;
+            c.scope = cmd
+                .scope
+                .iter()
+                .copied()
+                .chain([node.id()])
+                .chain(std::mem::take(&mut c.scope))
+                .collect();
+        };
+        let mut compound_writes = std::mem::take(&mut shell.compound_writes);
+        compound_writes.iter_mut().for_each(relocate);
         let mut cmds = Vec::with_capacity(1 + shell.cmds.len());
         for mut c in std::mem::take(&mut shell.cmds) {
-            // 文字列は外側のコマンドの原文より短いので、位置は外側のコマンドの後ろ、次の外側のコマンドの前に収まる
-            c.start += node.start_byte() + 1;
-            // 文字列の中は 1 つのスコープ。外側の cd は効き、中の cd は外に漏れない
-            let mut scope = cmd.scope.clone();
-            scope.push(node.id());
-            scope.extend(c.scope);
-            c.scope = scope;
+            relocate(&mut c);
             // 外側の環境変数の変更は、中のコマンドにも効く（ディレクトリは target_dir が、外側の `env -C` を
             // 中の `cd` より前に当てる）
             c.env = cmd.env.iter().cloned().chain(c.env).collect();
@@ -629,24 +631,16 @@ impl Shell {
         })
     }
 
-    /// 複合文（`{ …; }`、`( … )`、`if`、`while` / `until`、`for`、`case`、`[[ … ]]` など、単純コマンドでない文）に
-    /// 付けた出力のリダイレクトを、書き込み先だけを持つコマンド（名前は複合文の始まりと終わりの語）にしたもの。
-    /// パイプラインと並びの最後のステージが複合文のものも含む（`a | { b; } > f`）。bash はリダイレクトを複合文の
-    /// 前に、複合文の外側のシェルで開くので、位置は複合文の始まりで、スコープは複合文の外のもの（中の `cd`、
-    /// `( … )` のスコープ、`env -C` などのラッパーは当たらない）
+    /// 単純コマンドに掛からない `redirected_statement` の出力のリダイレクトを、書き込み先だけを持つコマンドにしたもの。
+    /// 複合文（`{ …; }`、`( … )`、`if`、`while` / `until`、`for`、`case`、`[[ … ]]`）、`export` などの宣言、
+    /// 本体の無いもの（`> f`）で、パイプラインと並びの最後のステージのものも含む（`a | { b; } > f`）。bash は
+    /// リダイレクトを複合文の前に、複合文の外側のシェルで開くので、位置は複合文の始まりで、スコープは複合文の外の
+    /// もの（中の `cd`、`( … )` のスコープ、`env -C` などのラッパーは当たらない）
     fn compound_redirect(&self, node: Node) -> Option<Cmd> {
-        let mut body = node.child_by_field_name("body")?;
-        loop {
-            body = match body.kind() {
-                "list" | "pipeline" => {
-                    body.named_child(body.named_child_count().checked_sub(1)?)?
-                }
-                "negated_command" => body.named_child(0)?,
-                "redirected_statement" => body.child_by_field_name("body")?,
-                // 単純コマンドに掛かるものは、そのコマンドの writes が持つ（statement_redirects）
-                "command" => return None,
-                _ => break,
-            };
+        let target = redirect_target(node);
+        // 単純コマンドに掛かるものは、そのコマンドの writes が持つ（statement_redirects）
+        if target.is_some_and(|t| t.kind() == "command") {
+            return None;
         }
         let mut cursor = node.walk();
         let redirects: Vec<Node> = node
@@ -656,30 +650,33 @@ impl Shell {
         if writes.is_empty() {
             return None;
         }
+        // 本体の無い `cd x && > f` の位置は、redirected_statement の始まり（並びの前の cd より後ろ）
+        let at = target.unwrap_or(node);
         Some(Cmd {
-            name: self.outline(body),
-            args: Vec::new(),
+            name: self.outline(at),
             // 並びの前のコマンド（`cd x && { …; } > f` の cd）より後ろ
-            start: body.start_byte(),
+            start: at.start_byte(),
             has_error: node.has_error(),
             scope: scope_of(node),
-            opaque: false,
-            spawns: None,
-            env: Vec::new(),
-            wrappers: Vec::new(),
-            dirs: Vec::new(),
-            login_home: None,
-            remote: None,
-            pinned_to_one_cpu: false,
-            git: None,
-            stdin_heredoc: None,
             writes,
-            piped_into: Vec::new(),
+            ..Cmd::default()
         })
     }
 
-    /// 複合文の始まりと終わりの語（`{ … }`、`while … done`）。ルールの文言で、書くコマンドの名前の代わりに示す
+    /// 複合文の始まりと終わりの語（`{ … }`、`while … done`）か、ほかの文の始まりの語（`export`、`>`）。ルールの文言で、
+    /// 書くコマンドの名前の代わりに示す
     fn outline(&self, node: Node) -> String {
+        let closed = matches!(
+            node.kind(),
+            "compound_statement"
+                | "subshell"
+                | "if_statement"
+                | "while_statement"
+                | "for_statement"
+                | "c_style_for_statement"
+                | "case_statement"
+                | "test_command"
+        );
         let leaf = |mut n: Node, last: bool| {
             while n.child_count() > 0 {
                 let i = if last { n.child_count() - 1 } else { 0 };
@@ -690,11 +687,11 @@ impl Shell {
             }
             self.text(n).to_string()
         };
-        let (first, last) = (leaf(node, false), leaf(node, true));
-        if first == last {
-            first
+        let first = leaf(node, false);
+        if closed {
+            format!("{first} … {}", leaf(node, true))
         } else {
-            format!("{first} … {last}")
+            first
         }
     }
 
@@ -1027,27 +1024,44 @@ impl Shell {
     }
 }
 
-/// コマンドに掛かるリダイレクト。tree-sitter-bash は、並び（`a && b <<EOF`）とパイプライン（`a | b > f`）の
-/// 後ろに書いたリダイレクトを並びとパイプラインに付けるが、bash では最後のコマンドに掛かるので、並びと
-/// パイプラインの最後のコマンドからはたどる。`! a > f` も `a` に掛かる。複合文に付けたものは
-/// [`Shell::compound_redirect`] が読む
+/// コマンドの外側の文に付けた、コマンドに掛かるリダイレクト（[`redirect_target`] がそのコマンドのもの）
 fn statement_redirects(node: Node) -> Vec<Node> {
     let mut out = Vec::new();
     let mut cur = node;
     while let Some(p) = cur.parent() {
-        match p.kind() {
-            "redirected_statement" if p.child_by_field_name("body") == Some(cur) => {
-                let mut cursor = p.walk();
-                out.extend(p.children_by_field_name("redirect", &mut cursor));
-            }
-            "list" | "pipeline"
-                if p.named_child(p.named_child_count().saturating_sub(1)) == Some(cur) => {}
-            "negated_command" => {}
-            _ => break,
+        if !matches!(
+            p.kind(),
+            "redirected_statement" | "list" | "pipeline" | "negated_command"
+        ) {
+            break;
+        }
+        if p.kind() == "redirected_statement" && redirect_target(p) == Some(node) {
+            let mut cursor = p.walk();
+            out.extend(p.children_by_field_name("redirect", &mut cursor));
         }
         cur = p;
     }
     out
+}
+
+/// `redirected_statement` のリダイレクトが掛かる文。tree-sitter-bash は、並び（`a && b <<EOF`）とパイプライン
+/// （`a | b > f`）の後ろに書いたリダイレクトを並びとパイプラインに付けるが、bash では最後の文に掛かる。
+/// `! a > f` は `a` に掛かる。本体の無いもの（`> f`）は None
+fn redirect_target(stmt: Node) -> Option<Node> {
+    let mut body = stmt.child_by_field_name("body")?;
+    loop {
+        body = match body.kind() {
+            "list" | "pipeline" => body.named_child(body.named_child_count().checked_sub(1)?)?,
+            "negated_command" => body.named_child(0)?,
+            "redirected_statement" => body.child_by_field_name("body")?,
+            _ => return Some(body),
+        };
+    }
+}
+
+/// `c` が `cmd` より前に走る、`cmd` と同じか外側のスコープのものか（[`Shell::commands_before`]）
+fn precedes(c: &Cmd, cmd: &Cmd) -> bool {
+    c.runs_before(cmd) && !c.changes_dir() && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
 }
 
 /// 集めたコマンドと複合文のリダイレクト（文書順）と、文字列を解析した内側のシェル
