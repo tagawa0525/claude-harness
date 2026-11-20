@@ -524,6 +524,9 @@ assert_contains "$out" "PR_STATUS_OUTPUT"
 # post-merge-cleanup.sh
 # ===========================================================================
 
+# gh の既定のリポジトリと -R のホストは、GH_REPO と GH_HOST でも決まる。テストを実行する人の環境によらないよう外す
+unset GH_REPO GH_HOST
+
 setup_merged_branch() {
   # <root>/app に main と、main へマージ済みで origin にも存在する feat/x を用意し、
   # feat/x を <root>/app-feat-x の worktree にチェックアウトした状態を作る
@@ -686,6 +689,18 @@ setup_merged_branch "$TEST_ROOT/cleanup62" github
 github_origin "$TEST_ROOT/cleanup62/app" git@github-work:fork-owner/app.git
 cd "$TEST_ROOT/cleanup62/app" || exit 1
 make_fake_gh '"pr list --head feat/x --state open --json url --jq .[].url") echo https://github.com/example/app/pull/3 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR 1 件の head。"
+
+it "post-merge-cleanup: GitHub のホストを含む別名（github.com-work）の push 先でも、gh の既定のリポジトリで head とする PR を探す"
+# gh は ssh の設定から別名の実のホストを読む。github.com と読めないホストを含む URL でも、既定のリポジトリを探して残す側に倒す
+setup_merged_branch "$TEST_ROOT/cleanup63"
+REPO="$TEST_ROOT/cleanup63/app"
+git -C "$REPO" remote set-url --add --push origin git@github.com-work:fork-owner/app.git
+cd "$REPO" || exit 1
+make_fake_gh '"pr list --head feat/x --state open --json url --jq .[].url") echo https://github.com/fork-owner/app/pull/3 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
