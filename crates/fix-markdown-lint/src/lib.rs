@@ -3,7 +3,7 @@
 //!
 //! - MD060: 表の桁を揃える。全角の文字を 2 桁に、結合文字を 0 桁に数える（[`display_width`]）。最初の行の字下げ（空白とタブ）は、
 //!   揃えた行に付け直す（リストの項の中の表の字下げを外すと、表が項の外に出て、その後の項が別のリストになる）。
-//!   行頭の全角の空白などは Markdown の字下げでないので外す
+//!   行頭の全角の空白などは Markdown の字下げでなくセルの中身なので、それで始まる行は表の範囲に入れない
 //! - MD040: 言語の無いコードの塊の開きのフェンスに、中身から推定した言語を付ける（`guess_language`）
 //!
 //! どこが表とフェンスかは、Markdown のブロックの構造（リストの項、引用、字下げしたコードブロック、フェンス、HTML の
@@ -39,16 +39,15 @@ pub fn fix_file(path: &Path) -> Result<Option<bool>, String> {
     Ok(Some(true))
 }
 
+/// content の表とフェンスを直す。行は `\n` で区切る（揃えた表の行は `\r` を外すので、[`fix_file`] は改行を `\n` に
+/// 揃えてから呼ぶ）
 pub fn fix_markdown(content: &str) -> String {
-    let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
+    let src: Vec<&str> = content.split('\n').collect();
+    let mut lines: Vec<String> = src.iter().map(|l| l.to_string()).collect();
     let targets = Targets::parse(content);
     for range in targets.tables {
-        let rows: Vec<&str> = content
-            .split('\n')
-            .skip(range.start)
-            .take(range.len())
-            .collect();
-        for (k, row) in format_table(&rows).into_iter().enumerate() {
+        let rows = &src[range.clone()];
+        for (k, row) in format_table(rows).into_iter().enumerate() {
             lines[range.start + k] = row;
         }
     }
@@ -60,7 +59,8 @@ pub fn fix_markdown(content: &str) -> String {
     lines.join("\n")
 }
 
-/// 揃え直す表の行の範囲（`content.split('\n')` の行の番号。半開き）。行末の `\r` は改行の一部として読む
+/// 揃え直す表の行の範囲（`content.split('\n')` の行の番号。半開き）。`\r\n` の行末の `\r` は改行の一部として読む。
+/// `\r` だけで区切った文書は 1 行と数え、表の範囲を返さない
 pub fn tables(content: &str) -> Vec<Range<usize>> {
     Targets::parse(content).tables
 }
@@ -106,11 +106,13 @@ impl Targets {
                         && is_separator_row(lines[first + 1])
                     {
                         let indent = leading_blanks(lines[first]);
-                        let end = first
-                            + lines[first..=last]
-                                .iter()
-                                .take_while(|l| is_table_row(l) && leading_blanks(l) == indent)
-                                .count();
+                        // 字下げの後ろが `|` の行だけ。is_table_row は行頭の全角の空白なども外すが、それはセルの中身
+                        let row = |l: &&&str| {
+                            is_table_row(l)
+                                && leading_blanks(l) == indent
+                                && l[indent.len()..].starts_with('|')
+                        };
+                        let end = first + lines[first..=last].iter().take_while(row).count();
                         if end - first >= 2 {
                             targets.tables.push(first..end);
                         }
