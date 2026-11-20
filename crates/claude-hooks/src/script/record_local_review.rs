@@ -683,8 +683,10 @@ fn review_transcripts(
     found
 }
 
-/// 記録を読む。最初の行（依頼文）の時刻が windows のどれにも入らないか、入った窓の worktree と別のディレクトリが対象なら、
-/// 残りの行を読まずに None（窓に worktree が無い前の版の行では対象を問わない）
+/// 記録を読む。最初の行（依頼文）の時刻が windows のどれにも入らないか、入った窓の worktree と別の worktree が対象なら、残りの
+/// 行を読まずに None。別の worktree かは git の worktree の根で比べ（本体の下の `.claude/worktrees/<名前>` は別、本体の下の
+/// ディレクトリは同じ。ドライブの文字の大小と symlink は git が揃える）、対象の根を引けなければ対象が行の worktree の下にあるかで
+/// 比べる。窓に worktree が無い前の版の行と、対象のディレクトリが無い依頼文では問わない
 fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
     let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
     let mut first = Vec::new();
@@ -696,18 +698,29 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
         .and_then(parse_time)
         .map(|t| t.micros)?;
     // 最初の行は依頼文（/code-review が渡す `Review target: `<対象> <焦点>``）
-    let target = head
+    let prompt = head
         .pointer("/message/content")
         .and_then(Value::as_str)
-        .and_then(review_target);
+        .unwrap_or_default();
+    let target_dir = review_dir(prompt);
+    // 対象の worktree の根は、窓ごとでなく 1 度引く
+    let target_tree = target_dir.as_deref().map(|d| (d, toplevel(d)));
     if !windows.iter().any(|w| {
         (w.from..w.to).contains(&started)
-            && w.tree
-                .as_deref()
-                .is_none_or(|t| !other_tree(t, target.as_deref()))
+            && match (&w.tree, &target_tree) {
+                (Some(tree), Some((dir, top))) => match top {
+                    Some(top) => top == tree,
+                    None => dir.starts_with(tree),
+                },
+                _ => true,
+            }
     }) {
         return None;
     }
+    let target = target_dir
+        .as_deref()
+        .map(|d| d.display().to_string())
+        .or_else(|| review_words(prompt).next().map(str::to_string));
     // 大きな tool の結果に UTF-8 でないバイトが残っても、ほかの行は読む
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes).ok()?;
@@ -737,38 +750,29 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
     })
 }
 
-/// 依頼文の対象が、周の行の worktree の根（tree）と別の worktree を指すか。対象が絶対パスでない（書かない、PR の番号を
-/// 渡した）なら分からないので別としない。パスの上下でなく git の worktree の根で比べる（本体の下の `.claude/worktrees/<名前>`
-/// は別の worktree、本体の下のディレクトリは同じ worktree。ドライブの文字の大小と symlink は git が揃える）。対象の根を
-/// 引けなければ、対象が tree の下にあるかで比べる
-fn other_tree(tree: &Path, target: Option<&str>) -> bool {
-    let Some(target) = target else {
-        return false;
-    };
-    let target = PathBuf::from(crate::shell::native(target).as_ref());
-    if !target.is_absolute() {
-        return false;
-    }
-    match toplevel(&target) {
-        Some(top) => top != tree,
-        None => !target.starts_with(tree),
-    }
-}
-
 /// path（無ければ在る一番近い上のディレクトリ）を含む git の worktree の根
 fn toplevel(path: &Path) -> Option<PathBuf> {
     let dir = path.ancestors().find(|p| p.is_dir())?;
-    git_out(dir, &["rev-parse", "--show-toplevel"]).map(|s| PathBuf::from(s.trim()))
+    git_out(dir, &["rev-parse", "--show-toplevel"])
+        .map(|s| PathBuf::from(s.strip_suffix('\n').unwrap_or(&s)))
 }
 
-/// 依頼文の対象（`Review target: ` の後の最初の語）。周の行の worktree を引数から取る count-review-rounds と同じ字で切る
-fn review_target(prompt: &str) -> Option<String> {
+/// 依頼文の `Review target: ` の後の語。count-review-rounds が引数を切るのと同じ字で切る
+fn review_words(prompt: &str) -> impl Iterator<Item = &str> {
     prompt
-        .split_once("Review target: ")?
-        .1
+        .split_once("Review target: ")
+        .map_or("", |(_, rest)| rest)
         .split(crate::rules::is_word_stop)
-        .find(|w| !w.is_empty())
-        .map(str::to_string)
+        .filter(|w| !w.is_empty())
+}
+
+/// 依頼文の対象のディレクトリ。count-review-rounds が行の worktree を決めるのと同じく、語のうち最初の、在るディレクトリの
+/// 絶対パス（在るディレクトリでない語（和文が続いた、空白で切れた）は飛ばす）。無ければ None（対象を書かない、PR の番号を
+/// 渡した、消えた worktree を渡した周）
+fn review_dir(prompt: &str) -> Option<PathBuf> {
+    review_words(prompt)
+        .map(|w| PathBuf::from(crate::shell::native(w).as_ref()))
+        .find(|p| p.is_absolute() && p.is_dir())
 }
 
 /// tool の結果の本文（文字列か、text の項目の配列）
@@ -863,11 +867,7 @@ mod tests {
             "Review target: `/repo/wt。焦点`",
             "Review target: `\"/repo/wt\" 焦点`",
         ] {
-            assert_eq!(
-                review_target(prompt).as_deref(),
-                Some("/repo/wt"),
-                "{prompt}"
-            );
+            assert_eq!(review_words(prompt).next(), Some("/repo/wt"), "{prompt}");
         }
     }
 }
