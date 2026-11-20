@@ -12,7 +12,8 @@
 //! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
-//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head か base のときは残す）
+//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head か base のときは残す。
+//!   PR は push 先の GitHub のリポジトリで探し、head は gh の既定のリポジトリでも探す）
 //!
 //! git と gh の失敗のうち、続けられないものは、その標準エラーを出したまま、その終了コードで終える
 
@@ -660,38 +661,38 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         println!("REMOTE_BRANCH: none");
         return Ok(());
     }
-    let github = git(&["remote", "-v"])
-        .unwrap_or_default()
-        .contains("github.com");
-    if github {
+    let repos = match push_repos(remote) {
+        Ok(repos) => repos,
+        Err(why) => {
+            println!("REMOTE_BRANCH: kept (open PR の有無を確認できない: {why})");
+            return Ok(());
+        }
+    };
+    // gh の既定のリポジトリは、push 先を GitHub と読めなくても探す。ssh の Host の別名（git@github-work:...）は
+    // GitHub と読めないが、消すと GitHub の PR が閉じる。ローカルのミラーを消すときにも探して残しすぎるが、消しすぎない。
+    // base は push 先のリポジトリだけを探す（上の PR の付け替えのコマンドに -R のリポジトリが要る）
+    let in_default = gh_has_default();
+    if !repos.is_empty() || in_default {
         if !gh_available() {
             println!("REMOTE_BRANCH: kept (gh がないため open PR の有無を確認できない)");
             return Ok(());
         }
-        let open = gh()
-            .args([
-                "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--jq",
-                "length",
-            ])
-            .output();
-        let Some(n) = open.ok().filter(|o| o.status.success()).and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .trim()
-                .parse::<u64>()
-                .ok()
-        }) else {
-            println!("REMOTE_BRANCH: kept (open PR の有無を確認できない: gh pr list が失敗)");
-            return Ok(());
-        };
-        if n > 0 {
-            println!("REMOTE_BRANCH: kept (open PR {n} 件の head。削除すると PR が閉じる)");
-            return Ok(());
+        match head_prs(branch, &repos, in_default) {
+            None => {
+                println!("REMOTE_BRANCH: kept (open PR の有無を確認できない: gh pr list が失敗)");
+                return Ok(());
+            }
+            Some(0) => {}
+            Some(n) => {
+                println!("REMOTE_BRANCH: kept (open PR {n} 件の head。削除すると PR が閉じる)");
+                return Ok(());
+            }
         }
     }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
     // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる。上の PR が
     // あれば、push の後に消すだけでも閉じるので、ここでも示す
-    let stacked = stacked_prs(branch, remote);
+    let stacked = stacked_prs(branch, &repos);
     if !ok(&[
         "merge-base",
         "--is-ancestor",
@@ -732,31 +733,57 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
             Ok(())
         }
         Stacked::None => {
-            step(&["push", "-q", remote, "--delete", branch])?;
+            delete_remote_branch(branch, remote)?;
             println!("REMOTE_BRANCH: deleted");
             Ok(())
         }
     }
 }
 
-/// remote の branch を base にした開いている PR（積み重ねた上の PR）。API でブランチを消すと GitHub はそれを base にした
-/// 開いている PR を閉じ、閉じた PR は base を付け替えられない
-enum Stacked {
-    /// 無い（push 先に GitHub のリポジトリが無ければ、消しても GitHub の PR は閉じない）
-    None,
-    /// 確かめられない理由
-    Unknown(String),
-    /// push 先の GitHub のリポジトリ（owner/name）ごとの、上の PR の番号（空のものは入れない）
-    Found(Vec<(String, Vec<String>)>),
+/// git push --delete は pushurl の全部へ送り、ブランチの無い push 先があると、ほかの push 先から消した後で失敗する。
+/// 失敗の文言（ロケールで変わる）では見分けず、どの push 先にもブランチが残っていないことを確かめたときだけ、
+/// 消せたとして続ける。確かめられなければ、push の標準エラーを出してその終了コードで終える
+fn delete_remote_branch(branch: &str, remote: &str) -> Result<(), i32> {
+    let out = match Command::new("git")
+        .args(["push", "-q", remote, "--delete", branch])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("ERROR: git を起動できません: {e}");
+            return Err(1);
+        }
+    };
+    let err = String::from_utf8_lossy(&out.stderr);
+    if out.status.success() {
+        eprint!("{err}");
+        return Ok(());
+    }
+    let refname = format!("refs/heads/{branch}");
+    // 書き換えた先の URL を渡すと、ls-remote は insteadOf をもう一度かけうる（書き換えた先が別の insteadOf の接頭辞に
+    // 当たる設定だけ）。そのときは別の場所を見て消せたと知らせうるが、消しすぎる側には倒れない
+    let urls = git(&["remote", "get-url", "--push", "--all", remote]).unwrap_or_default();
+    let gone = !urls.is_empty()
+        && urls
+            .lines()
+            .all(|url| git(&["ls-remote", "--heads", url, &refname]).is_some_and(|s| s.is_empty()));
+    if !gone {
+        eprint!("{err}");
+        return Err(crate::child::exit_code(out.status));
+    }
+    println!(
+        "NOTE: git push {remote} --delete {branch} は失敗したが（{}）、どの push 先にも {branch} が無いことを確かめた",
+        err.trim().replace('\n', " ")
+    );
+    Ok(())
 }
 
-/// 探し方は pre-merge-check の検査 10（`stacked_prs_reason`）と揃える。上の PR は、消すブランチを持つリポジトリにある
-/// ので、gh の既定のリポジトリ（fork の clone では親）ではなく、git push --delete が消しに行く URL（pushurl があれば
-/// その全部、無ければ url の全部）のリポジトリを探す。URL は、insteadOf と pushInsteadOf で書き換えた先
-/// （git remote get-url --push --all）と、書き換える前の設定の値の両方を読む。書き換えた先だけでは略記（gh: など）
-/// でない GitHub の URL をミラーへ書き換えた設定を、書き換える前だけでは略記を読めない。両方を読むと、書き換えた先が
-/// ミラーのときに残しすぎるが、上の PR を閉じる側には倒れない
-fn stacked_prs(branch: &str, remote: &str) -> Stacked {
+/// git push --delete が消しに行く URL（pushurl があればその全部、無ければ url の全部）の GitHub のリポジトリ
+/// （owner/name）。URL は、insteadOf と pushInsteadOf で書き換えた先（git remote get-url --push --all）と、書き換える
+/// 前の設定の値の両方を読む。書き換えた先だけでは略記（gh: など）でない GitHub の URL をミラーへ書き換えた設定を、
+/// 書き換える前だけでは略記を読めない。両方を読むと、書き換えた先がミラーのときに残しすぎるが、PR を閉じる側には
+/// 倒れない。GitHub の URL からリポジトリを読めなければ、その理由
+fn push_repos(remote: &str) -> Result<Vec<String>, String> {
     let configured = [
         format!("remote.{remote}.pushurl"),
         format!("remote.{remote}.url"),
@@ -773,48 +800,94 @@ fn stacked_prs(branch: &str, remote: &str) -> Stacked {
             Some(repo) if !repos.iter().any(|r| r.eq_ignore_ascii_case(&repo)) => repos.push(repo),
             Some(_) => {}
             None if on_github(url) => {
-                return Stacked::Unknown(format!(
+                return Err(format!(
                     "{remote} の URL（{url}）から GitHub のリポジトリを読めない"
                 ));
             }
             None => {}
         }
     }
-    if repos.is_empty() {
-        return Stacked::None;
+    Ok(repos)
+}
+
+/// gh が既定のリポジトリを決められそうか。gh は git remote -v の GitHub の URL か GH_REPO（空なら使わない）から
+/// 決め、決められないと gh pr list は -R なしではいつも失敗する。URL はホストの一致（on_github）でなく、github.com を
+/// 含むか（大文字と小文字を区別しない）で見る。gh は ssh の設定から別名（github.com-work）の実のホストを読むので、
+/// ホストの一致では探さずに消しうる。決められない URL を含めても、gh が失敗して残す側に倒れる
+fn gh_has_default() -> bool {
+    std::env::var_os("GH_REPO").is_some_and(|v| !v.is_empty())
+        || git(&["remote", "-v"])
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .contains("github.com")
+}
+
+/// repo（None なら gh の既定のリポジトリ）で、branch を filter（--head か --base）にした開いている PR の field の値
+/// （空行を除く）。gh pr list が失敗すれば None。-R の owner/name のホストは環境の GH_HOST で決まるので、push 先の
+/// URL から読んだ github.com に固定する（crate::gh の for_repo と同じ）
+fn open_prs(repo: Option<&str>, filter: &str, branch: &str, field: &str) -> Option<Vec<String>> {
+    let mut cmd = gh();
+    cmd.args(["pr", "list"]);
+    if let Some(repo) = repo {
+        cmd.args(["-R", repo]).env("GH_HOST", "github.com");
     }
-    if !gh_available() {
-        return Stacked::Unknown("gh がない".to_string());
-    }
-    let mut found = Vec::new();
-    for repo in repos {
-        let out = gh()
-            .args([
-                "pr",
-                "list",
-                "-R",
-                &repo,
-                "--base",
-                branch,
-                "--state",
-                "open",
-                "--json",
-                "number",
-                "--jq",
-                ".[].number",
-            ])
-            .output();
-        let Some(out) = out.ok().filter(|o| o.status.success()) else {
-            return Stacked::Unknown("gh pr list が失敗".to_string());
-        };
-        let numbers: Vec<String> = String::from_utf8_lossy(&out.stdout)
+    let jq = format!(".[].{field}");
+    cmd.args([
+        filter, branch, "--state", "open", "--json", field, "--jq", &jq,
+    ]);
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    Some(
+        String::from_utf8_lossy(&out.stdout)
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(str::to_string)
-            .collect();
+            .collect(),
+    )
+}
+
+/// branch を head にした開いている PR の数（確かめられなければ None）。head のブランチを消すと GitHub はその PR を
+/// 閉じる。push 先のリポジトリ（repos）と、in_default なら gh の既定のリポジトリ（fork の clone では親）を探す。fork
+/// から親へ出した PR は、head が fork のブランチでも、親のリポジトリにある。同じ PR が push 先と既定のリポジトリの
+/// 両方から返るので、URL で数える
+fn head_prs(branch: &str, repos: &[String], in_default: bool) -> Option<usize> {
+    let targets = repos
+        .iter()
+        .map(|r| Some(r.as_str()))
+        .chain(in_default.then_some(None));
+    let mut urls: Vec<String> = Vec::new();
+    for repo in targets {
+        for url in open_prs(repo, "--head", branch, "url")? {
+            if !urls.iter().any(|u| u.eq_ignore_ascii_case(&url)) {
+                urls.push(url);
+            }
+        }
+    }
+    Some(urls.len())
+}
+
+/// remote の branch を base にした開いている PR（積み重ねた上の PR）。API でブランチを消すと GitHub はそれを base にした
+/// 開いている PR を閉じ、閉じた PR は base を付け替えられない
+enum Stacked {
+    /// 無い（push 先に GitHub のリポジトリが無ければ、消しても GitHub の PR は閉じない）
+    None,
+    /// 確かめられない理由
+    Unknown(String),
+    /// push 先の GitHub のリポジトリ（owner/name）ごとの、上の PR の番号（空のものは入れない）
+    Found(Vec<(String, Vec<String>)>),
+}
+
+/// 探し方は pre-merge-check の検査 10（`stacked_prs_reason`）と揃える。上の PR は、消すブランチを持つリポジトリにある
+/// ので、gh の既定のリポジトリ（fork の clone では親）ではなく、push 先のリポジトリ（`push_repos`）を探す。repos が
+/// 空でなければ、呼ぶ側が gh のあることを確かめている
+fn stacked_prs(branch: &str, repos: &[String]) -> Stacked {
+    let mut found = Vec::new();
+    for repo in repos {
+        let Some(numbers) = open_prs(Some(repo), "--base", branch, "number") else {
+            return Stacked::Unknown("gh pr list が失敗".to_string());
+        };
         if !numbers.is_empty() {
-            found.push((repo, numbers));
+            found.push((repo.clone(), numbers));
         }
     }
     if found.is_empty() {
