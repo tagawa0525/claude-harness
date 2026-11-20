@@ -179,11 +179,19 @@ impl Home {
         )
     }
 
-    /// /clear で始まる記録（前のセッションの記録は別のファイルで、ここには無い）
+    /// /clear で始まる記録（前のセッションの記録は別のファイルで、ここには無い）。実物と同じく、timestamp の無い
+    /// 見出しの行と、/clear より後の timestamp の isMeta の行が /clear の前に並ぶ
     fn clear_session(&self) -> String {
         self.write_lines(
             &self.root.join("clear").join("s.jsonl"),
             &[
+                json!({"type": "mode", "mode": "normal"}),
+                json!({"type": "bridge-session", "bridgeSessionId": "cse_x"}),
+                at(
+                    json!({"type": "user", "isMeta": true, "message": {"role": "user",
+                        "content": "<local-command-caveat>The command below was run directly</local-command-caveat>"}}),
+                    "2026-11-05T15:00:00.031Z",
+                ),
                 at(
                     user_text("<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"),
                     "2026-11-05T15:00:00.000Z",
@@ -853,6 +861,23 @@ fn a_range_from_the_clear_on_or_without_a_range_has_no_note_of_the_previous_sess
         assert!(lines_with(&out, "WARN: ").is_empty(), "{args:?}: {out}");
         assert!(lines_with(&out, "NEXT: ").is_empty(), "{args:?}: {out}");
     }
+}
+
+#[test]
+fn a_clear_after_the_first_user_message_does_not_start_the_transcript() {
+    let home = Home::new();
+    let path = home.write_lines(
+        &home.root.join("clear-later.jsonl"),
+        &[
+            at(user_text("最初の発言"), "2026-11-05T15:00:00.000Z"),
+            at(
+                user_text("<command-name>/clear</command-name>\n<command-args></command-args>"),
+                "2026-11-05T15:10:00.000Z",
+            ),
+        ],
+    );
+    let out = stdout(&home.run(&["--since", "2026-11-05T14:00Z", &path]));
+    assert!(lines_with(&out, "WARN: ").is_empty(), "{out}");
 }
 
 #[test]
