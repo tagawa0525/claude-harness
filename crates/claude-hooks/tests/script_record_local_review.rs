@@ -1364,3 +1364,24 @@ diff --git a/src/b.rs b/src/b.rs\n\
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(!fake.log().contains("pr comment"), "{}", fake.log());
 }
+
+#[test]
+fn a_review_without_a_worktree_in_its_target_counts_for_the_worktree_of_the_line() {
+    // 対象を書かない、PR の番号を渡した、worktree の下のディレクトリを渡した /code-review は、依頼文の対象が周の行の worktree と
+    // 字面で合わない。別の worktree と分かるのは、対象がほかのディレクトリを指すときだけ
+    for target in ["", "340", "/work/app-feat-x/crates"] {
+        let fake = FakeGh::new();
+        reviewed_in_session(&fake, &[HEAD]);
+        transcript_of(
+            &fake,
+            "a1",
+            target,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(out.status.code(), Some(0), "{target:?}: {}", stderr(&out));
+    }
+}
