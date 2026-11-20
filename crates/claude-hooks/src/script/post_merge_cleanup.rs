@@ -732,11 +732,49 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
             Ok(())
         }
         Stacked::None => {
-            step(&["push", "-q", remote, "--delete", branch])?;
+            delete_remote_branch(branch, remote)?;
             println!("REMOTE_BRANCH: deleted");
             Ok(())
         }
     }
+}
+
+/// git push --delete は pushurl の全部へ送り、ブランチの無い push 先があると、ほかの push 先から消した後で失敗する。
+/// 失敗の文言（ロケールで変わる）では見分けず、どの push 先にもブランチが残っていないことを確かめたときだけ、
+/// 消せたとして続ける。確かめられなければ、push の標準エラーを出してその終了コードで終える
+fn delete_remote_branch(branch: &str, remote: &str) -> Result<(), i32> {
+    let out = match Command::new("git")
+        .args(["push", "-q", remote, "--delete", branch])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("ERROR: git を起動できません: {e}");
+            return Err(1);
+        }
+    };
+    let err = String::from_utf8_lossy(&out.stderr);
+    if out.status.success() {
+        eprint!("{err}");
+        return Ok(());
+    }
+    let refname = format!("refs/heads/{branch}");
+    // 書き換えた先の URL を渡すと、ls-remote は insteadOf をもう一度かけうる（書き換えた先が別の insteadOf の接頭辞に
+    // 当たる設定だけ）。そのときは別の場所を見て消せたと知らせうるが、消しすぎる側には倒れない
+    let urls = git(&["remote", "get-url", "--push", "--all", remote]).unwrap_or_default();
+    let gone = !urls.is_empty()
+        && urls
+            .lines()
+            .all(|url| git(&["ls-remote", "--heads", url, &refname]).is_some_and(|s| s.is_empty()));
+    if !gone {
+        eprint!("{err}");
+        return Err(crate::child::exit_code(out.status));
+    }
+    println!(
+        "NOTE: git push {remote} --delete {branch} は失敗したが（{}）、どの push 先にも {branch} が無いことを確かめた",
+        err.trim().replace('\n', " ")
+    );
+    Ok(())
 }
 
 /// git push --delete が消しに行く URL（pushurl があればその全部、無ければ url の全部）の GitHub のリポジトリ

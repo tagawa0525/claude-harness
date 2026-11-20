@@ -45,7 +45,9 @@
 #      リポジトリ（fork からの upstream PR 等）でも探す。push 先に GitHub のリポジトリが無ければ、base とする PR は探さない。
 #      base とする PR があれば
 #      （push 前でも）、PR ごとに base を既定ブランチへ付け替えるコマンド（pre-merge-check の検査 10 と同じ形）と、
-#      付け替えの後にリモートブランチを消すコマンドを示す（push 前なら、既定ブランチの push を先にする）
+#      付け替えの後にリモートブランチを消すコマンドを示す（push 前なら、既定ブランチの push を先にする）。
+#      pushurl が複数で、一部の push 先にブランチが無く git push --delete が失敗しても、どの push 先にもブランチが
+#      無いことを確かめれば、NOTE を出して削除できたとする
 #
 # 出力:
 #   NOTE: <branch> は手元にもリモートにも無く、マージ済みの PR <url> を痕跡として...（マージ済みの PR だけが痕跡のとき）
@@ -54,6 +56,8 @@
 #     （該当するときだけ。0 行以上）
 #   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
 #   LOCAL_BRANCH: deleted|none
+#   NOTE: git push <remote> --delete <branch> は失敗したが（...）、どの push 先にも <branch> が無いことを確かめた
+#     （一部の push 先にブランチが無かったときだけ）
 #   REMOTE_BRANCH: deleted|kept (...)|none
 #     gh pr edit <番号> --base <既定ブランチ> -R <owner/name>（base とする open PR で残したときだけ。PR ごとに 1 行）
 #     git push <remote> --delete <branch>（同じく、その後に 1 行。どちらも行頭に空白 2 つ）
