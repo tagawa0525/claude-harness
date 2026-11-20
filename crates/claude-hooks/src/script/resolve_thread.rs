@@ -132,7 +132,7 @@ pub fn main(args: &[String]) -> i32 {
                 pr.number
             ),
             Target::Thread(thread_id) => eprintln!(
-                "ERROR: スレッド {thread_id} が PR #{} に見つかりません（別の PR のスレッドは resolve しません）",
+                "ERROR: スレッド {thread_id} が PR #{} に見つかりません（ID の誤りか、別の PR のスレッド。別の PR のスレッドは resolve しません）",
                 pr.number
             ),
         }
