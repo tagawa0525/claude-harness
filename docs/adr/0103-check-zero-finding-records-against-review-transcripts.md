@@ -65,9 +65,12 @@ Claude Code の公開の仕様ではない。
   周を数え（/delegate の担当は親のセッションを共有する）、`NEXT:` の対象にもした（このブランチの 1 周目のレビューの指摘）
 - 行のセッションの、周の行の 60 秒以内に始まったすべての記録（実装の 2 番目の版）: 同じセッションで同じ頃に回した別の
   worktree の周を分けられない（このブランチの 2 周目のレビューの指摘）
-- count-review-rounds の行に回したセッションの ID と worktree を書き、そのセッションの、周の行の 60 秒以内に始まり、依頼文の
-  対象がその worktree の記録を取る（採用）: hook は Skill の呼び出しの入力の `session_id` と、数えるブランチの worktree を
-  持っている。2026-11-20 に、記録 199 件の始まりが周の行の 1 秒以内だった
+- 依頼文の対象が行の worktree と字面で同じ記録だけを取る（実装の 3 番目の版）: 行の worktree は引数の最初の絶対パスの
+  ディレクトリか cwd で、対象を書かない、PR の番号を渡した、worktree の下を渡した周の読んだ記録を除く（3 周目のレビューの指摘）
+- count-review-rounds の行に回したセッションの ID と worktree を書き、そのセッションの、周の行の 60 秒以内に始まった記録のうち、
+  依頼文の対象が行の worktree の下でも上でもない絶対パスのものを除いて取る（採用）: hook は Skill の呼び出しの入力の
+  `session_id` と、数えるブランチの worktree（引数の最初の絶対パスのディレクトリか cwd）を持っている。2026-11-20 に、記録
+  199 件の始まりが周の行の 1 秒以内だった
 
 前の周から変わった行の決め方で比べた案:
 
@@ -82,10 +85,11 @@ Claude Code の公開の仕様ではない。
 
 案 D と基準 D4 にする。
 
-- **行**: count-review-rounds は、周の行に回したセッションの ID と worktree を足す（`<HEAD> <UNIX 秒> <セッション> <worktree>`。
-  worktree は空白を含みうるので行の残り）。前の版の行（2 つの欄）も読む
+- **行**: count-review-rounds は、周の行に回したセッションの ID と worktree（引数の最初の絶対パスのディレクトリか cwd）を足す
+  （`<HEAD> <UNIX 秒> <セッション> <worktree>`。worktree は空白を含みうるので行の残り）。前の版の行（2 つの欄）も読む
 - **記録を探す**: 0 件の記録のとき、その head の行のセッションの `subagents/` から、`.forked-skill.json` の `skillName` が
-  `code-review` で、その head の周の行の 60 秒以内に始まり、依頼文の対象がその行の worktree の記録を取る（設定の場所は
+  `code-review` で、その head の周の行の 60 秒以内に始まった記録を取る。依頼文の対象が、行の worktree の下でも上でもない
+  絶対パスなら別の worktree の周として除く（実在のパスで比べる。対象を書かない周と PR の番号を渡した周は除かない）（設定の場所は
   `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`）。前の周の記録、差分を書いた担当などほかのサブエージェントの記録、同じ
   セッションで回した別の worktree の周の記録は、この周に読んだことを示さないので数えない
 - **求める行**: PR の差分（`gh pr diff`）の追加行のうち、前の周の head（同じブランチの行で、この head の最初の行の前にある
@@ -132,8 +136,8 @@ Claude Code の公開の仕様ではない。
   ファイルを開かない周は記録せず `NEXT:` を出す、テストだけの差分はテストの行を求める、前の周の記録とほかのスキルの記録を
   数えない、記録を引けなければ `--unlogged` を求める、読んでいない周は `--unlogged` でも通さない、直した後は前の周から
   変わった行を求める、rebase の後は base が足した行を PR の変更と数えない、同じ head の周を合わせて数える、xhigh と max の
-  周は `--unlogged` を求める、レベルの読めない周は確かめる、別の worktree の同じ頃の周を数えない、壊れた時刻の行で
-  溢れない
+  周は `--unlogged` を求める、レベルの読めない周は確かめる、別の worktree の同じ頃の周を数えない、対象に worktree を書かない
+  周は行の worktree の周と数える、壊れた時刻の行で溢れない
 - 同じファイルの単体テスト: テストのファイルの形、英数字が 3 字に満たない行を比べないこと、引用したパスを戻すこと
 - `crates/claude-hooks/src/rules/count_review_rounds.rs` の `the_line_names_the_session_that_ran_the_round`
 
@@ -141,8 +145,10 @@ Claude Code の公開の仕様ではない。
 
 - 2026-11-20 の測り方: `~/.claude/projects/-home-tagawa-nix-claude-harness/` の 4 つのセッション（0a87f718、7633dbf6、
   a8d9e415、0e216681）の、`.forked-skill.json` が `code-review` の記録 97 件を、1 件ずつコピーして置いた設定の場所で、
-  ビルドした `claude-hooks script record-local-review`（このブランチのコミット 83f4b92d と、1 周目のレビューの修正の
-  2477df0d、2 周目の修正の dfdd0652。判定は 97 件とも同じ。dfdd0652 では周の行に依頼文の対象の worktree も書いた）にかけた。周の head は、記録の始まりの
+  ビルドした `claude-hooks script record-local-review`（このブランチのコミット 8317c481、1 周目のレビューの修正の d9d5bd86、
+  2 周目の ca32aa89、3 周目の 3a17a559。判定は 97 件とも同じ。ca32aa89 と 3a17a559 では、周の行に worktree を書かない形と、
+  依頼文の対象を worktree として書く形の両方で測った。hook が書く cwd の worktree と対象が違う周は、テストの
+  `a_review_without_a_worktree_in_its_target_counts_for_the_worktree_of_the_line` で確かめた）にかけた。周の head は、記録の始まりの
   90 秒前までの `claude-review-rounds` の行で決め、PR の差分は、そのブランチのマージコミットの第 1 親との merge-base からの
   差分を偽の gh で返した（base の SHA は第 1 親）。記録ごとの結果は #340 のコメントにある
 - 「読んでいない」とした 0 件の周: a037d03（大きな出力のファイルを開かずに `(none)`）、a0c5c67 と a4e6aec（大きな出力の後、
