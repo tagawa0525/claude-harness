@@ -909,5 +909,11 @@ mod tests {
             review_words(prompt).collect::<Vec<_>>(),
             vec!["/repo/wt", "焦点"]
         );
+        // 依頼文の終わりで閉じた引数も、複数の行を読む
+        let prompt = "Review target: `340\n/repo/wt`";
+        assert_eq!(
+            review_words(prompt).collect::<Vec<_>>(),
+            vec!["340", "/repo/wt"]
+        );
     }
 }
