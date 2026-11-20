@@ -841,12 +841,39 @@ fn zero_findings_from_a_review_that_did_not_read_the_diff_record_nothing_and_nam
     let err = stderr(&out);
     assert!(err.contains("src/a.rs"), "{err}");
     assert!(err.contains("記録を付けていません"), "{err}");
-    // 次の手はレベルを上げて同じ対象を回し直すこと
+    // 次の手はレベルを上げて同じ対象を、欠けたファイルを焦点に回し直すこと
     assert!(
-        stdout(&out).contains(&format!("NEXT: /code-review medium {TARGET} ")),
+        stdout(&out).contains(&format!(
+            "NEXT: /code-review medium {TARGET} 焦点: src/a.rs の差分"
+        )),
         "{}",
         stdout(&out)
     );
+}
+
+#[test]
+fn the_rounds_of_a_head_together_can_cover_the_diff() {
+    // 欠けたファイルを焦点に回し直した周は、そのファイルだけを読む。同じ head の周が合わせて読んでいれば記録する
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn checked(x: u8) -> bool {"],
+    );
+    transcript(
+        &fake,
+        "a2",
+        "code-review",
+        "medium",
+        "2026-11-17T07:30:00.000Z",
+        &["+    x > 0\n+}"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
 
 #[test]
