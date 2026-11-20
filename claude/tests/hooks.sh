@@ -3876,13 +3876,37 @@ for cmd in "sed -i 's/a/b/' ~/.claude/projects/-work-repo/memory/MEMORY.md" \
   assert_contains "$(reason "$out")" "Edit"
 done
 
+it "guard-memory-bash-write: パイプラインの後ろと複合文に付けたリダイレクトで memory に書く形は deny する"
+for cmd in "sort -u $MEM_DIR/MEMORY.md | uniq > $MEM_DIR/MEMORY.md" \
+  "echo x | cat >> $MEM_DIR/a.md" \
+  "{ echo a; echo b; } >> $MEM_DIR/MEMORY.md" \
+  "( echo a ) > $MEM_DIR/a.md" \
+  "if true; then echo a; fi > $MEM_DIR/a.md" \
+  "for i in 1 2; do echo \$i; done >> $MEM_DIR/a.md" \
+  "{ x=1; } > $MEM_DIR/a.md" "{ ssh h cat x; } > $MEM_DIR/a.md" \
+  "cd $MEM_DIR && { env -C /tmp ls; } > a.md" \
+  "> $MEM_DIR/MEMORY.md" "cd $MEM_DIR && > MEMORY.md" ">> $MEM_DIR/a.md echo x"; do
+  out=$(run_hook guard-memory-bash-write "$cmd")
+  assert_eq deny "$(decision "$out")"
+done
+
+# 複合文のリダイレクトは、複合文の外のシェルが開く（中の cd の先ではない）
+it "guard-memory-bash-write: 中で memory に cd した複合文の、外の行き先へのリダイレクトは通す"
+for cmd in "( cd $MEM_DIR; cat MEMORY.md ) > notes.md" "{ cd $MEM_DIR && cat MEMORY.md; } > notes.md"; do
+  out=$(run_hook guard-memory-bash-write "$cmd")
+  assert_eq allow "$(decision "$out")"
+done
+
 it "guard-memory-bash-write: memory でないパスと、読むだけのコマンドは通す"
 for cmd in "echo x >> $HOME/.claude/projects/-work-repo/notes.md" \
   "echo x >> $TEST_ROOT/repo/memory/MEMORY.md" \
   "cat $MEM_DIR/MEMORY.md" "grep -n x $MEM_DIR/MEMORY.md" "ls $MEM_DIR" \
   "wc -l < $MEM_DIR/MEMORY.md" "cp $MEM_DIR/a.md /tmp/a.md" \
   "$HOME/.claude/skills/retro/scripts/memory-index.sh $MEM_DIR" \
-  "sed -n 1,5p $MEM_DIR/MEMORY.md"; do
+  "sed -n 1,5p $MEM_DIR/MEMORY.md" \
+  "sort -u /tmp/a.md | uniq > /tmp/b.md" "echo x | cat >> /tmp/a.md" \
+  "{ echo a; echo b; } >> /tmp/a.md" "cat $MEM_DIR/a.md | sort > /tmp/x" \
+  "{ cat $MEM_DIR/a.md; } > /tmp/x" "while read l; do echo \"\$l\"; done < $MEM_DIR/a.md"; do
   out=$(run_hook guard-memory-bash-write "$cmd")
   assert_eq allow "$(decision "$out")"
 done

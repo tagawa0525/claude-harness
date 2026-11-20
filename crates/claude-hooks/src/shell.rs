@@ -100,6 +100,9 @@ pub struct Shell {
     tree: Tree,
     /// 全コマンド（文書順）。parse のときに一度だけ読む。`bash -c` などの文字列の中のコマンドも、その位置に含む
     cmds: Vec<Cmd>,
+    /// 単純コマンドに掛からない出力のリダイレクト（[`Shell::compound_redirect`]）。文字列の中のものも含む。
+    /// 文字列の中のものはその文字列のコマンドを読むときに足すので、文書順ではない（[`Shell::writers`] が並べる）
+    compound_writes: Vec<Cmd>,
     /// `bash -c` などの文字列を解析した内側のシェル。コマンドは `cmds` に移してある。代入・unset・エスケープの
     /// 走査に使い、スコープにノード ID を使うので木を生かしておく
     inner: Vec<Shell>,
@@ -160,7 +163,7 @@ impl Arg {
 }
 
 /// 単純コマンド 1 つ（`command` ノード）。ラッパー（env など）はほどいてある
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Cmd {
     pub name: String,
     pub args: Vec<Arg>,
@@ -240,11 +243,13 @@ impl Shell {
             src: src.to_string(),
             tree,
             cmds: Vec::new(),
+            compound_writes: Vec::new(),
             inner: Vec::new(),
         };
-        let (cmds, inner) = shell.collect_commands(depth, expanded);
-        shell.cmds = cmds;
-        shell.inner = inner;
+        let collected = shell.collect_commands(depth, expanded);
+        shell.cmds = collected.cmds;
+        shell.compound_writes = collected.compound_writes;
+        shell.inner = collected.inner;
         shell
     }
 
@@ -389,36 +394,46 @@ impl Shell {
         &self.cmds
     }
 
+    /// 書き込み先を持ちうるもの（文書順）: 全コマンドと、単純コマンドに掛からない出力のリダイレクト
+    /// （`{ …; } > f`、`( … ) > f`、`if … fi > f`、`> f` など）。後者は `writes` だけを持ち、名前は複合文の始まりと
+    /// 終わりの語（[`Shell::compound_redirect`]）。位置とスコープは複合文の外側のシェルのもので、
+    /// [`Shell::target_dir`] が行き先を、[`Cmd::runs_before`] が前後を決める。[`Shell::commands`] には含めない
+    /// （プログラムを実行しない）
+    pub fn writers(&self) -> Vec<&Cmd> {
+        let mut all: Vec<&Cmd> = self.cmds.iter().chain(&self.compound_writes).collect();
+        all.sort_by_key(|c| c.start);
+        all
+    }
+
     /// `cmd` より前に走る、`cmd` と同じか外側のスコープのコマンド（文書順）。前のコマンドの `$(…)` の中のもの、
     /// `cmd` を文字列で実行するラッパー（`bash -c` や `ssh`）、カレントディレクトリを変えるだけの `cd` は除く
     pub fn commands_before<'a>(&'a self, cmd: &'a Cmd) -> impl Iterator<Item = &'a Cmd> {
-        self.cmds.iter().filter(move |c| {
-            c.runs_before(cmd)
-                && !c.changes_dir()
-                && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
-        })
+        self.cmds.iter().filter(move |c| precedes(c, cmd))
     }
 
-    /// `cmd` より前に走るコマンド（[`Shell::commands_before`]）のうち、`path` を引数に取るか、出力のリダイレクトで
-    /// 書くもの（最初のもの）。引数とリダイレクトの先は、[`Shell::literal_vars`] の変数を展開し、そのコマンドの
+    /// `cmd` より前に走るもの（[`Shell::writers`] のうち、[`Shell::commands_before`] と同じ条件のもの）のうち、
+    /// `path` を引数に取るか、出力のリダイレクトで書くもの（最初のもの）。引数とリダイレクトの先は、[`Shell::literal_vars`] の変数を展開し、そのコマンドの
     /// 行き先（`base` から [`Shell::target_dir`]）からの相対で比べる。値の決まらない展開を含むものは、最後の
     /// 決まらない展開の後ろの字面が `/` で始まり、その後ろのパスの要素で `path` が終われば数える（`$TMP/msg.txt`。
     /// `$VERSION.txt` は `msg.txt` と比べない）。引数に取るだけで読むだけのもの（`cat`、`test -f`）も数える
     pub fn writer_before<'a>(&'a self, cmd: &'a Cmd, base: &Path, path: &Path) -> Option<&'a Cmd> {
         let home = home();
         let vars = self.literal_vars();
-        self.commands_before(cmd).find(|c| {
-            let dir = self.target_dir(c, base);
-            c.args
-                .iter()
-                .chain(&c.writes)
-                .any(|a| match a.expand(&vars) {
-                    Expanded::Known(t) => resolve(&home, &dir, &t) == path,
-                    Expanded::Tail(t) => t
-                        .strip_prefix('/')
-                        .is_some_and(|rest| !rest.is_empty() && path.ends_with(rest)),
-                })
-        })
+        self.writers()
+            .into_iter()
+            .filter(|c| precedes(c, cmd))
+            .find(|c| {
+                let dir = self.target_dir(c, base);
+                c.args
+                    .iter()
+                    .chain(&c.writes)
+                    .any(|a| match a.expand(&vars) {
+                        Expanded::Known(t) => resolve(&home, &dir, &t) == path,
+                        Expanded::Tail(t) => t
+                            .strip_prefix('/')
+                            .is_some_and(|rest| !rest.is_empty() && path.ends_with(rest)),
+                    })
+            })
     }
 
     /// 値が字面だけで 1 つに決まる変数（[`Shell::assignments`] の値が展開を含まず、同じ名前の代入がどれも同じ値）。
@@ -443,30 +458,16 @@ impl Shell {
             .collect()
     }
 
-    /// 全コマンド（文字列の中のものを含む）と、文字列を解析した内側のシェル
-    fn collect_commands(&self, depth: usize, expanded: &[String]) -> (Vec<Cmd>, Vec<Shell>) {
-        let mut cmds = Vec::new();
-        let mut inner = Vec::new();
-        self.collect_into(
-            self.tree.root_node(),
-            depth,
-            expanded,
-            &mut cmds,
-            &mut inner,
-        );
-        (cmds, inner)
+    /// 全コマンドと複合文のリダイレクト（文字列の中のものを含む）と、文字列を解析した内側のシェル
+    fn collect_commands(&self, depth: usize, expanded: &[String]) -> Collected {
+        let mut out = Collected::default();
+        self.collect_into(self.tree.root_node(), depth, expanded, &mut out);
+        out
     }
 
     /// `heredoc_body` を除く全ノードを文書順に走査してコマンドを集める。外側のシェルが展開する置換
     /// （`expanded`。原文が同じもの）は外側で読んでいるので降りない（二重に数えない）
-    fn collect_into(
-        &self,
-        node: Node,
-        depth: usize,
-        expanded: &[String],
-        cmds: &mut Vec<Cmd>,
-        inner: &mut Vec<Shell>,
-    ) {
+    fn collect_into(&self, node: Node, depth: usize, expanded: &[String], out: &mut Collected) {
         if node.kind() == "heredoc_body" {
             return;
         }
@@ -474,20 +475,26 @@ impl Shell {
             return;
         }
         if node.kind() == "command"
-            && let Some((cs, shell)) = self.command(node, depth)
+            && let Some(collected) = self.command(node, depth)
         {
-            cmds.extend(cs);
-            inner.extend(shell);
+            out.cmds.extend(collected.cmds);
+            out.compound_writes.extend(collected.compound_writes);
+            out.inner.extend(collected.inner);
+        }
+        if node.kind() == "redirected_statement"
+            && let Some(c) = self.compound_redirect(node)
+        {
+            out.compound_writes.push(c);
         }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.collect_into(child, depth, expanded, cmds, inner);
+            self.collect_into(child, depth, expanded, out);
         }
     }
 
-    /// `command` ノードのコマンドと、それが sh -c で実行する文字列の中のコマンド（文書順）。文字列を解析した
-    /// 内側のシェルも返す
-    fn command(&self, node: Node, depth: usize) -> Option<(Vec<Cmd>, Option<Shell>)> {
+    /// `command` ノードのコマンドと、それが sh -c で実行する文字列の中のコマンド（文書順）と複合文のリダイレクト。
+    /// 文字列を解析した内側のシェルも返す
+    fn command(&self, node: Node, depth: usize) -> Option<Collected> {
         let name_node = node.child_by_field_name("name")?;
         let name = match name_node.child(0) {
             Some(inner) => self.unquote(inner).text,
@@ -498,7 +505,12 @@ impl Shell {
         for child in node.children_by_field_name("argument", &mut cursor) {
             args.push(self.unquote(child));
         }
-        let redirects = statement_redirects(node);
+        // 前置きのリダイレクト（`> f echo x`、`x=1 > f`）と here string（`cat <<< x`）は command の子
+        let mut cursor = node.walk();
+        let mut redirects: Vec<Node> = node
+            .children_by_field_name("redirect", &mut cursor)
+            .collect();
+        redirects.extend(statement_redirects(node));
         let heredocs: Vec<Node> = redirects
             .iter()
             .copied()
@@ -521,38 +533,9 @@ impl Shell {
             [one] => self.heredoc(*one),
             _ => None,
         };
-        // ヒアドキュメントの演算子の後ろに書いたリダイレクト（`cat <<'EOF' > msg.txt`）は、heredoc_redirect の中にある
-        let mut file_redirects: Vec<Node> = Vec::new();
-        for r in &redirects {
-            match r.kind() {
-                "file_redirect" => file_redirects.push(*r),
-                "heredoc_redirect" => {
-                    let mut cursor = r.walk();
-                    file_redirects.extend(
-                        r.children_by_field_name("redirect", &mut cursor)
-                            .filter(|c| c.kind() == "file_redirect"),
-                    );
-                }
-                _ => {}
-            }
-        }
-        let writes = file_redirects
-            .iter()
-            .filter_map(|r| self.write_target(*r))
-            .collect();
+        let writes = self.write_targets(&redirects);
         let trailing_error = node.next_sibling().is_some_and(|n| n.kind() == "ERROR");
-        let mut scope = Vec::new();
-        let mut p = node.parent();
-        while let Some(n) = p {
-            if matches!(
-                n.kind(),
-                "command_substitution" | "subshell" | "process_substitution"
-            ) {
-                scope.push(n.id());
-            }
-            p = n.parent();
-        }
-        scope.reverse();
+        let scope = scope_of(node);
         let mut env = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
@@ -591,11 +574,11 @@ impl Shell {
             piped_into: self.later_pipeline_stages(node),
         };
         let Some(source) = unwrapped.source else {
-            return Some((vec![cmd], None));
+            return Some(Collected::one(cmd));
         };
         if depth >= MAX_DEPTH {
             cmd.opaque = true;
-            return Some((vec![cmd], None));
+            return Some(Collected::one(cmd));
         }
         cmd.spawns = Some(node.id());
         // 引数の中の置換（二重引用符の中の `$(…)`）は、このシェルが展開してから文字列を渡す。この走査で読むので、
@@ -610,15 +593,23 @@ impl Shell {
             });
         }
         let mut shell = Shell::parse_at(&source, depth + 1, &expanded);
+        // 文字列は外側のコマンドの原文より短いので、位置は外側のコマンドの後ろ、次の外側のコマンドの前に収まる。
+        // 文字列の中は 1 つのスコープ。外側の cd は効き、中の cd は外に漏れない
+        let relocate = |c: &mut Cmd| {
+            c.start += node.start_byte() + 1;
+            c.scope = cmd
+                .scope
+                .iter()
+                .copied()
+                .chain([node.id()])
+                .chain(std::mem::take(&mut c.scope))
+                .collect();
+        };
+        let mut compound_writes = std::mem::take(&mut shell.compound_writes);
+        compound_writes.iter_mut().for_each(relocate);
         let mut cmds = Vec::with_capacity(1 + shell.cmds.len());
         for mut c in std::mem::take(&mut shell.cmds) {
-            // 文字列は外側のコマンドの原文より短いので、位置は外側のコマンドの後ろ、次の外側のコマンドの前に収まる
-            c.start += node.start_byte() + 1;
-            // 文字列の中は 1 つのスコープ。外側の cd は効き、中の cd は外に漏れない
-            let mut scope = cmd.scope.clone();
-            scope.push(node.id());
-            scope.extend(c.scope);
-            c.scope = scope;
+            relocate(&mut c);
             // 外側の環境変数の変更は、中のコマンドにも効く（ディレクトリは target_dir が、外側の `env -C` を
             // 中の `cd` より前に当てる）
             c.env = cmd.env.iter().cloned().chain(c.env).collect();
@@ -631,7 +622,98 @@ impl Shell {
             cmds.push(c);
         }
         cmds.insert(0, cmd);
-        Some((cmds, Some(shell)))
+        Some(Collected {
+            cmds,
+            compound_writes,
+            inner: vec![shell],
+        })
+    }
+
+    /// 単純コマンドに掛からない `redirected_statement` の出力のリダイレクトを、書き込み先だけを持つコマンドにしたもの。
+    /// 複合文（`{ …; }`、`( … )`、`if`、`while` / `until`、`for`、`case`、`[[ … ]]`）、`export` などの宣言、
+    /// 本体の無いもの（`> f`）で、パイプラインと並びの最後のステージのものも含む（`a | { b; } > f`）。bash は
+    /// リダイレクトを複合文の前に、複合文の外側のシェルで開くので、位置は複合文の始まりで、スコープは複合文の外の
+    /// もの（中の `cd`、`( … )` のスコープ、`env -C` などのラッパーは当たらない）
+    fn compound_redirect(&self, node: Node) -> Option<Cmd> {
+        let target = redirect_target(node);
+        // 単純コマンドに掛かるものは、そのコマンドの writes が持つ（statement_redirects）
+        if target.is_some_and(|t| t.kind() == "command") {
+            return None;
+        }
+        let mut cursor = node.walk();
+        let redirects: Vec<Node> = node
+            .children_by_field_name("redirect", &mut cursor)
+            .collect();
+        let writes = self.write_targets(&redirects);
+        if writes.is_empty() {
+            return None;
+        }
+        // 本体の無い `cd x && > f` の位置は、redirected_statement の始まり（並びの前の cd より後ろ）
+        let at = target.unwrap_or(node);
+        Some(Cmd {
+            name: self.outline(at),
+            // 並びの前のコマンド（`cd x && { …; } > f` の cd）より後ろ
+            start: at.start_byte(),
+            has_error: node.has_error(),
+            scope: scope_of(node),
+            writes,
+            ..Cmd::default()
+        })
+    }
+
+    /// 複合文の始まりと終わりの語（`{ … }`、`while … done`）か、ほかの文の始まりの語（`export`、`>`）。ルールの文言で、
+    /// 書くコマンドの名前の代わりに示す
+    fn outline(&self, node: Node) -> String {
+        let closed = matches!(
+            node.kind(),
+            "compound_statement"
+                | "subshell"
+                | "if_statement"
+                | "while_statement"
+                | "for_statement"
+                | "c_style_for_statement"
+                | "case_statement"
+                | "test_command"
+        );
+        let leaf = |mut n: Node, last: bool| {
+            while n.child_count() > 0 {
+                let i = if last { n.child_count() - 1 } else { 0 };
+                match n.child(i) {
+                    Some(c) => n = c,
+                    None => break,
+                }
+            }
+            self.text(n).to_string()
+        };
+        let first = leaf(node, false);
+        if closed {
+            format!("{first} … {}", leaf(node, true))
+        } else {
+            first
+        }
+    }
+
+    /// リダイレクトの出力の書き先。ヒアドキュメントの演算子の後ろに書いたリダイレクト（`cat <<'EOF' > msg.txt`）は、
+    /// heredoc_redirect の中にある
+    fn write_targets(&self, redirects: &[Node]) -> Vec<Arg> {
+        let mut file_redirects: Vec<Node> = Vec::new();
+        for r in redirects {
+            match r.kind() {
+                "file_redirect" => file_redirects.push(*r),
+                "heredoc_redirect" => {
+                    let mut cursor = r.walk();
+                    file_redirects.extend(
+                        r.children_by_field_name("redirect", &mut cursor)
+                            .filter(|c| c.kind() == "file_redirect"),
+                    );
+                }
+                _ => {}
+            }
+        }
+        file_redirects
+            .iter()
+            .filter_map(|r| self.write_target(*r))
+            .collect()
     }
 
     /// `command` ノードがパイプラインのステージなら、後ろのステージのコマンドの名前
@@ -940,23 +1022,78 @@ impl Shell {
     }
 }
 
-/// コマンドに掛かるリダイレクト。`a && b <<EOF` のように並びの後ろに書いたリダイレクトを、tree-sitter-bash は
-/// 並び（`list`）に付けるが、bash では最後のコマンドに掛かるので、並びの最後のコマンドからはたどる
+/// コマンドの外側の文に付けた、コマンドに掛かるリダイレクト（[`redirect_target`] がそのコマンドのもの）
 fn statement_redirects(node: Node) -> Vec<Node> {
     let mut out = Vec::new();
     let mut cur = node;
     while let Some(p) = cur.parent() {
-        match p.kind() {
-            "redirected_statement" if p.child_by_field_name("body") == Some(cur) => {
-                let mut cursor = p.walk();
-                out.extend(p.children_by_field_name("redirect", &mut cursor));
-            }
-            "list" if p.named_child(p.named_child_count().saturating_sub(1)) == Some(cur) => {}
-            _ => break,
+        if !matches!(
+            p.kind(),
+            "redirected_statement" | "list" | "pipeline" | "negated_command"
+        ) {
+            break;
+        }
+        if p.kind() == "redirected_statement" && redirect_target(p) == Some(node) {
+            let mut cursor = p.walk();
+            out.extend(p.children_by_field_name("redirect", &mut cursor));
         }
         cur = p;
     }
     out
+}
+
+/// `redirected_statement` のリダイレクトが掛かる文。tree-sitter-bash は、並び（`a && b <<EOF`）とパイプライン
+/// （`a | b > f`）の後ろに書いたリダイレクトを並びとパイプラインに付けるが、bash では最後の文に掛かる。
+/// `! a > f` は `a` に掛かる。本体の無いもの（`> f`）は None
+fn redirect_target(stmt: Node) -> Option<Node> {
+    let mut body = stmt.child_by_field_name("body")?;
+    loop {
+        body = match body.kind() {
+            "list" | "pipeline" => body.named_child(body.named_child_count().checked_sub(1)?)?,
+            "negated_command" => body.named_child(0)?,
+            "redirected_statement" => body.child_by_field_name("body")?,
+            _ => return Some(body),
+        };
+    }
+}
+
+/// `c` が `cmd` より前に走る、`cmd` と同じか外側のスコープのものか（[`Shell::commands_before`]）
+fn precedes(c: &Cmd, cmd: &Cmd) -> bool {
+    c.runs_before(cmd) && !c.changes_dir() && !c.spawns.is_some_and(|id| cmd.scope.contains(&id))
+}
+
+/// 集めたコマンドと複合文のリダイレクト（文書順）と、文字列を解析した内側のシェル
+#[derive(Default)]
+struct Collected {
+    cmds: Vec<Cmd>,
+    compound_writes: Vec<Cmd>,
+    inner: Vec<Shell>,
+}
+
+impl Collected {
+    fn one(cmd: Cmd) -> Collected {
+        Collected {
+            cmds: vec![cmd],
+            ..Collected::default()
+        }
+    }
+}
+
+/// ノードの属するシェルのスコープ（[`Cmd::scope`]。この文字列の中のもの）
+fn scope_of(node: Node) -> Vec<usize> {
+    let mut scope = Vec::new();
+    let mut p = node.parent();
+    while let Some(n) = p {
+        if matches!(
+            n.kind(),
+            "command_substitution" | "subshell" | "process_substitution"
+        ) {
+            scope.push(n.id());
+        }
+        p = n.parent();
+    }
+    scope.reverse();
+    scope
 }
 
 fn strip(s: &str, open: &str, close: &str) -> String {
@@ -1380,6 +1517,202 @@ mod tests {
         let cs = cmds("echo x >> 'a b' 2>&1 && sort < in &> out");
         assert_eq!(texts(&cs[0].writes), ["a b"]);
         assert_eq!(texts(&cs[1].writes), ["out"]);
+    }
+
+    /// コマンドの名前と書き込み先（文書順）
+    fn writes_by_name(sh: &Shell) -> Vec<(&str, Vec<&str>)> {
+        sh.commands()
+            .iter()
+            .map(|c| (c.name.as_str(), texts(&c.writes)))
+            .collect()
+    }
+
+    /// 複合文のリダイレクトの名前と書き込み先（文書順）
+    fn compound_writes(sh: &Shell) -> Vec<(&str, Vec<&str>)> {
+        sh.compound_writes
+            .iter()
+            .map(|c| (c.name.as_str(), texts(&c.writes)))
+            .collect()
+    }
+
+    #[test]
+    fn redirect_after_a_pipeline_writes_from_its_last_stage() {
+        let sh = Shell::parse("sort -u a | uniq > f");
+        assert_eq!(writes_by_name(&sh), [("sort", vec![]), ("uniq", vec!["f"])]);
+        assert!(sh.compound_writes.is_empty());
+        let sh = Shell::parse("echo x | cat >> a.md 2>&1 < in");
+        assert_eq!(
+            writes_by_name(&sh),
+            [("echo", vec![]), ("cat", vec!["a.md"])]
+        );
+        let sh = Shell::parse("! a | b > f");
+        assert_eq!(writes_by_name(&sh), [("a", vec![]), ("b", vec!["f"])]);
+    }
+
+    #[test]
+    fn redirect_on_a_compound_statement_is_a_write_of_its_own() {
+        for (src, name) in [
+            ("{ a; b && c | d; } >> f", "{ … }"),
+            ("( a; b && c | d ) > f", "( … )"),
+            ("if a; then b && c | d; fi > f", "if … fi"),
+            ("if a; then b; elif c; then d; else e; fi > f", "if … fi"),
+            ("while a; do b && c | d; done < in > f", "while … done"),
+            ("until a; do b; c | d; done > f", "until … done"),
+            ("for i in 1 2; do a; b && c | d; done > f", "for … done"),
+            ("for ((i=0; i<2; i++)); do a; done > f", "for … done"),
+            ("case x in y) a; b;; *) c | d;; esac > f", "case … esac"),
+            // 単純コマンドの無い文も、ファイルを開く
+            ("{ x=1; } > f", "{ … }"),
+            ("[[ -f a ]] > f", "[[ … ]]"),
+            // パイプラインと並びの最後のステージの複合文
+            ("a | { b; c; } > f", "{ … }"),
+            ("a && { b; } > f", "{ … }"),
+            ("{ a; } > f | b", "{ … }"),
+        ] {
+            let sh = Shell::parse(src);
+            assert_eq!(compound_writes(&sh), [(name, vec!["f"])], "{src}");
+            // 中のコマンドの書き込み先には入れない
+            assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
+        }
+        // 中のコマンドのリダイレクトは、そのコマンドのもの
+        let sh = Shell::parse("{ a > g; b; } > f");
+        assert_eq!(writes_by_name(&sh), [("a", vec!["g"]), ("b", vec![])]);
+        assert_eq!(compound_writes(&sh), [("{ … }", vec!["f"])]);
+        // 文字列の中の複合文も、その位置に読む
+        let sh = Shell::parse("bash -c '{ a; } > f; b'; c");
+        assert_eq!(names(sh.commands()), ["bash", "a", "b", "c"]);
+        assert_eq!(compound_writes(&sh), [("{ … }", vec!["f"])]);
+        let w = &sh.compound_writes[0];
+        assert!(w.runs_before(&sh.commands()[1]));
+        assert!(w.runs_before(&sh.commands()[2]));
+        assert!(!w.runs_before(&sh.commands()[3]));
+    }
+
+    #[test]
+    fn compound_redirect_opens_in_the_shell_outside_it() {
+        // 中の `cd`、ラッパーの行き先は当たらず、前の `cd` は当たる
+        for src in [
+            "( cd /mm; cat a ) > f",
+            "{ cd /mm && cat a; } > f",
+            "{ env -C /mm ls; } > f",
+            "{ git -C /mm log; } > f",
+        ] {
+            let sh = Shell::parse(src);
+            let w = &sh.compound_writes[0];
+            assert_eq!(
+                sh.target_dir(w, Path::new("/ww")),
+                PathBuf::from("/ww"),
+                "{src}"
+            );
+        }
+        for src in ["cd /dd; ( cd /mm; cat a ) > f", "cd /dd && { cat a; } > f"] {
+            let sh = Shell::parse(src);
+            let w = &sh.compound_writes[0];
+            assert_eq!(
+                sh.target_dir(w, Path::new("/ww")),
+                PathBuf::from("/dd"),
+                "{src}"
+            );
+        }
+        // ssh の中のコマンドの外で開く
+        let sh = Shell::parse("{ ssh h cat x; } > f");
+        assert!(!sh.runs_under_ssh_or_login(&sh.compound_writes[0]));
+        // 後ろの `( … )` の外のコマンドより前に開く
+        for (src, writer) in [
+            ("( echo a ) > m.txt && git commit -F m.txt", "( … )"),
+            ("{ echo a; } > m.txt; git commit -F m.txt", "{ … }"),
+            (
+                "if true; then echo a; fi > m.txt; git commit -F m.txt",
+                "if … fi",
+            ),
+        ] {
+            assert_eq!(
+                writer_of(src, "/ww/m.txt").as_deref(),
+                Some(writer),
+                "{src}"
+            );
+        }
+        // 中のコマンドより前に開く（`>` は空にする）
+        assert_eq!(
+            writer_of("{ git commit -F m.txt; } > m.txt", "/ww/m.txt").as_deref(),
+            Some("{ … }")
+        );
+    }
+
+    #[test]
+    fn redirects_without_a_command_after_them_are_writes_of_their_own() {
+        for (src, name) in [
+            ("> f", ">"),
+            ("cd /dd && > f", ">"),
+            ("export X=1 > f", "export"),
+        ] {
+            let sh = Shell::parse(src);
+            assert_eq!(compound_writes(&sh), [(name, vec!["f"])], "{src}");
+            assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
+        }
+        // 並びの前の cd は当たる
+        let sh = Shell::parse("cd /dd && > f");
+        let w = &sh.compound_writes[0];
+        assert_eq!(sh.target_dir(w, Path::new("/ww")), PathBuf::from("/dd"));
+    }
+
+    #[test]
+    fn prefix_redirects_belong_to_their_command() {
+        let sh = Shell::parse(">> f echo x");
+        assert_eq!(writes_by_name(&sh), [("echo", vec!["f"])]);
+        let sh = Shell::parse("> f cat a > g");
+        assert_eq!(writes_by_name(&sh), [("cat", vec!["f", "g"])]);
+        // 名前の無いコマンド（代入とリダイレクトだけ）も書く
+        let sh = Shell::parse("x=1 > f");
+        assert_eq!(texts(&sh.commands()[0].writes), ["f"]);
+        assert_eq!(
+            writer_of("> m.txt printf x; git commit -F m.txt", "/ww/m.txt").as_deref(),
+            Some("printf")
+        );
+    }
+
+    #[test]
+    fn writers_are_in_document_order() {
+        let sh = Shell::parse("bash -c '{ a; } > g' | { b; } > f");
+        let writers: Vec<(&str, Vec<&str>)> = sh
+            .writers()
+            .iter()
+            .map(|c| (c.name.as_str(), texts(&c.writes)))
+            .collect();
+        assert_eq!(
+            writers,
+            [
+                ("bash", vec![]),
+                ("{ … }", vec!["g"]),
+                ("a", vec![]),
+                ("{ … }", vec!["f"]),
+                ("b", vec![]),
+            ]
+        );
+        // 前に開いた複合文を、後の単純コマンドより先に示す
+        assert_eq!(
+            writer_of(
+                "{ echo a; } > m.txt; cat m.txt; git commit -F m.txt",
+                "/ww/m.txt"
+            )
+            .as_deref(),
+            Some("{ … }")
+        );
+    }
+
+    #[test]
+    fn compound_writes_skip_inputs_fd_copies_and_function_definitions() {
+        for src in [
+            "{ a; b; } < in 2>&1 | c",
+            "while read l; do a; done < in",
+            "a | b < in",
+            // 関数の定義に付けたリダイレクトは、呼んだときに開く
+            "g() { a; } > f",
+        ] {
+            let sh = Shell::parse(src);
+            assert!(sh.compound_writes.is_empty(), "{src}");
+            assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
+        }
     }
 
     /// 最初の `git commit` より前に `path` を引数に取るか書くコマンドの名前。行き先は `/w`
