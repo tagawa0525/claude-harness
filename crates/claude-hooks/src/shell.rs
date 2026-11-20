@@ -1517,7 +1517,7 @@ mod tests {
 
     /// 複合文のリダイレクトの名前と書き込み先（文書順）
     fn compound_writes(sh: &Shell) -> Vec<(&str, Vec<&str>)> {
-        sh.compound_writes()
+        sh.compound_writes
             .iter()
             .map(|c| (c.name.as_str(), texts(&c.writes)))
             .collect()
@@ -1527,7 +1527,7 @@ mod tests {
     fn redirect_after_a_pipeline_writes_from_its_last_stage() {
         let sh = Shell::parse("sort -u a | uniq > f");
         assert_eq!(writes_by_name(&sh), [("sort", vec![]), ("uniq", vec!["f"])]);
-        assert!(sh.compound_writes().is_empty());
+        assert!(sh.compound_writes.is_empty());
         let sh = Shell::parse("echo x | cat >> a.md 2>&1 < in");
         assert_eq!(
             writes_by_name(&sh),
@@ -1570,7 +1570,7 @@ mod tests {
         let sh = Shell::parse("bash -c '{ a; } > f; b'; c");
         assert_eq!(names(sh.commands()), ["bash", "a", "b", "c"]);
         assert_eq!(compound_writes(&sh), [("{ … }", vec!["f"])]);
-        let w = &sh.compound_writes()[0];
+        let w = &sh.compound_writes[0];
         assert!(w.runs_before(&sh.commands()[1]));
         assert!(w.runs_before(&sh.commands()[2]));
         assert!(!w.runs_before(&sh.commands()[3]));
@@ -1586,7 +1586,7 @@ mod tests {
             "{ git -C /mm log; } > f",
         ] {
             let sh = Shell::parse(src);
-            let w = &sh.compound_writes()[0];
+            let w = &sh.compound_writes[0];
             assert_eq!(
                 sh.target_dir(w, Path::new("/ww")),
                 PathBuf::from("/ww"),
@@ -1595,7 +1595,7 @@ mod tests {
         }
         for src in ["cd /dd; ( cd /mm; cat a ) > f", "cd /dd && { cat a; } > f"] {
             let sh = Shell::parse(src);
-            let w = &sh.compound_writes()[0];
+            let w = &sh.compound_writes[0];
             assert_eq!(
                 sh.target_dir(w, Path::new("/ww")),
                 PathBuf::from("/dd"),
@@ -1604,7 +1604,7 @@ mod tests {
         }
         // ssh の中のコマンドの外で開く
         let sh = Shell::parse("{ ssh h cat x; } > f");
-        assert!(!sh.runs_under_ssh_or_login(&sh.compound_writes()[0]));
+        assert!(!sh.runs_under_ssh_or_login(&sh.compound_writes[0]));
         // 後ろの `( … )` の外のコマンドより前に開く
         for (src, writer) in [
             ("( echo a ) > m.txt && git commit -F m.txt", "( … )"),
@@ -1628,6 +1628,58 @@ mod tests {
     }
 
     #[test]
+    fn redirects_without_a_command_after_them_are_writes_of_their_own() {
+        for (src, name) in [
+            ("> f", ">"),
+            ("cd /dd && > f", ">"),
+            ("export X=1 > f", "export"),
+        ] {
+            let sh = Shell::parse(src);
+            assert_eq!(compound_writes(&sh), [(name, vec!["f"])], "{src}");
+            assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
+        }
+        // 並びの前の cd は当たる
+        let sh = Shell::parse("cd /dd && > f");
+        let w = &sh.compound_writes[0];
+        assert_eq!(sh.target_dir(w, Path::new("/ww")), PathBuf::from("/dd"));
+    }
+
+    #[test]
+    fn prefix_redirects_belong_to_their_command() {
+        let sh = Shell::parse(">> f echo x");
+        assert_eq!(writes_by_name(&sh), [("echo", vec!["f"])]);
+        let sh = Shell::parse("> f cat a > g");
+        assert_eq!(writes_by_name(&sh), [("cat", vec!["f", "g"])]);
+        // 名前の無いコマンド（代入とリダイレクトだけ）も書く
+        let sh = Shell::parse("x=1 > f");
+        assert_eq!(texts(&sh.commands()[0].writes), ["f"]);
+        assert_eq!(
+            writer_of("> m.txt printf x; git commit -F m.txt", "/ww/m.txt").as_deref(),
+            Some("printf")
+        );
+    }
+
+    #[test]
+    fn writers_are_in_document_order() {
+        let sh = Shell::parse("bash -c '{ a; } > g' | { b; } > f");
+        assert_eq!(
+            compound_writes(&sh),
+            [("{ … }", vec!["g"]), ("{ … }", vec!["f"])]
+        );
+        let names: Vec<&str> = sh.writers().iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["bash", "{ … }", "a", "{ … }", "b"]);
+        // 前に開いた複合文を、後の単純コマンドより先に示す
+        assert_eq!(
+            writer_of(
+                "{ echo a; } > m.txt; cat m.txt; git commit -F m.txt",
+                "/ww/m.txt"
+            )
+            .as_deref(),
+            Some("{ … }")
+        );
+    }
+
+    #[test]
     fn compound_writes_skip_inputs_fd_copies_and_function_definitions() {
         for src in [
             "{ a; b; } < in 2>&1 | c",
@@ -1637,7 +1689,7 @@ mod tests {
             "g() { a; } > f",
         ] {
             let sh = Shell::parse(src);
-            assert!(sh.compound_writes().is_empty(), "{src}");
+            assert!(sh.compound_writes.is_empty(), "{src}");
             assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
         }
     }

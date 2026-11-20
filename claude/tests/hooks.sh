@@ -3884,7 +3884,8 @@ for cmd in "sort -u $MEM_DIR/MEMORY.md | uniq > $MEM_DIR/MEMORY.md" \
   "if true; then echo a; fi > $MEM_DIR/a.md" \
   "for i in 1 2; do echo \$i; done >> $MEM_DIR/a.md" \
   "{ x=1; } > $MEM_DIR/a.md" "{ ssh h cat x; } > $MEM_DIR/a.md" \
-  "cd $MEM_DIR && { env -C /tmp ls; } > a.md"; do
+  "cd $MEM_DIR && { env -C /tmp ls; } > a.md" \
+  "> $MEM_DIR/MEMORY.md" "cd $MEM_DIR && > MEMORY.md" ">> $MEM_DIR/a.md echo x"; do
   out=$(run_hook guard-memory-bash-write "$cmd")
   assert_eq deny "$(decision "$out")"
 done
