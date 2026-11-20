@@ -881,6 +881,32 @@ fn a_clear_after_the_first_user_message_does_not_start_the_transcript() {
 }
 
 #[test]
+fn a_first_message_that_only_quotes_a_clear_or_is_left_out_of_the_messages_does_not_start_with_clear()
+ {
+    let home = Home::new();
+    let clear = "<command-name>/clear</command-name>\n<command-args></command-args>";
+    let firsts = [
+        // /clear のタグを本文に貼った発言
+        user_text(&format!("この記録を見て: {clear}")),
+        // 発言に出さない最初の発言（bash の入力）
+        user_text("<bash-input>ls</bash-input>"),
+        // 形の違う最初の発言（区間の外なので、発言の読みは止めない）
+        json!({"type": "user", "message": {"role": "user", "content": 1}}),
+    ];
+    for (i, first) in firsts.into_iter().enumerate() {
+        let path = home.write_lines(
+            &home.root.join(format!("first-{i}.jsonl")),
+            &[
+                at(first, "2026-11-05T13:00:00.000Z"),
+                at(user_text(clear), "2026-11-05T15:10:00.000Z"),
+            ],
+        );
+        let out = stdout(&home.run(&["--since", "2026-11-05T14:00Z", &path]));
+        assert!(lines_with(&out, "WARN: ").is_empty(), "{i}: {out}");
+    }
+}
+
+#[test]
 fn a_range_before_a_transcript_without_a_clear_has_no_note_of_the_previous_session() {
     let home = Home::new();
     let main = home.range_session();
