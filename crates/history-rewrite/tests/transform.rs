@@ -199,6 +199,31 @@ fn a_table_shaped_row_in_an_indented_code_block_is_left_alone() {
 }
 
 #[test]
+fn a_table_shaped_code_block_in_a_list_item_is_left_alone() {
+    // 項の中身の桁（3）から 4 桁以上の字下げはコードブロック（#347）
+    let work = Work::new();
+    let src = "1. item\n\n        | a | b |\n        | - | - |\n        | 掃引 | x |\n";
+    work.write("code.md", src.as_bytes());
+    ok(&work.transform(&["code.md"]));
+    assert_eq!(work.read("code.md"), src.replace("掃引", "スイープ"));
+}
+
+#[test]
+fn a_table_in_a_list_item_opened_by_a_marker_only_line_is_realigned_keeping_crlf() {
+    // 印だけの行（`-\r\n`）の次の行が中身なら項の中で、中身の桁（2）から 2 桁の字下げの表
+    let work = Work::new();
+    work.write(
+        "crlf.md",
+        "-\r\n  text\r\n\r\n    | a | b |\r\n    | - | - |\r\n    | 掃引 | x |\r\n".as_bytes(),
+    );
+    ok(&work.transform(&["crlf.md"]));
+    assert_eq!(
+        work.read("crlf.md"),
+        "-\r\n  text\r\n\r\n    | a        | b |\r\n    | -------- | - |\r\n    | スイープ | x |\r\n"
+    );
+}
+
+#[test]
 fn an_escaped_pipe_stays_in_its_cell_but_a_pipe_in_code_is_a_separator() {
     // \| は列を切らない。コードスパンの中のエスケープしていない | は GFM でも区切り
     let work = Work::new();

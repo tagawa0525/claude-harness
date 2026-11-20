@@ -15,3 +15,6 @@ edition = "2024"
 regex = "1"
 # 表示の桁（string-width と同じ数え方）。Unicode の表を自分で持たずに済む標準的な crate
 unicode-width = "0.2"
+# ブロックの構造（リストの項、字下げしたコードブロック、フェンス、HTML のブロック、GFM の表）を読む。ja-terms と
+# design-records と同じ版と feature（ADR-0104）
+pulldown-cmark = { version = "0.13", default-features = false }

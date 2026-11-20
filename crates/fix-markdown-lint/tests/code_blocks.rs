@@ -47,3 +47,24 @@ fn a_fence_in_a_list_item_without_a_language_gets_one_and_closes_at_its_indent()
         "- item\n\n    ```rust\n    let x = 1;\n    ```\n"
     );
 }
+
+#[test]
+fn table_shaped_rows_indented_deeper_than_the_table_are_left_alone() {
+    // 表の後ろの 4 桁以上深い字下げの行は、cmark-gfm が表を閉じて始める字下げしたコードブロック。字下げの違う行は
+    // 揃えない
+    let src = "text\n\n| a | b |\n| - | - |\n| xxx | y |\n    | c | d |\n    | - | - |\n    | eee | f |\n";
+    assert_eq!(
+        fix_markdown(src),
+        "text\n\n| a   | b |\n| --- | - |\n| xxx | y |\n    | c | d |\n    | - | - |\n    | eee | f |\n"
+    );
+}
+
+#[test]
+fn a_table_stops_before_a_row_starting_with_an_ideographic_space() {
+    // 全角の空白は字下げでなくセルの中身。外して揃えると、行のセルが変わる
+    let src = "| a | b |\n| - | - |\n| xxx | y |\n\u{3000}| ccc | d |\n";
+    assert_eq!(
+        fix_markdown(src),
+        "| a   | b |\n| --- | - |\n| xxx | y |\n\u{3000}| ccc | d |\n"
+    );
+}
