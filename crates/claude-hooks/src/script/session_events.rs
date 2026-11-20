@@ -297,7 +297,9 @@ struct FileEvents {
     /// ユーザーの発言（本体だけ。サブエージェントの記録の発言は親からの依頼文）
     users: Vec<String>,
     bad_user: Option<String>,
-    /// 本体の最初の /clear の timestamp。/clear の前のセッションは別の記録にある
+    /// 本体の最初の発言を読んだか（区間に依らない）
+    first_user_seen: bool,
+    /// 本体の最初の発言が /clear なら、その timestamp。/clear の前のセッションは別の記録にある
     clear_at: Option<String>,
 }
 
@@ -322,8 +324,18 @@ fn read_file(path: &str, bytes: &[u8], is_main: bool, range: &Range) -> FileEven
         if line.get("timestamp").is_some() {
             f.stamped += 1;
         }
-        if is_main && f.clear_at.is_none() {
-            f.clear_at = clear_time(&line);
+        // 途中の発言に /clear のタグが入っても、記録の始まりとみなさない
+        if is_main
+            && !f.first_user_seen
+            && let Ok(Some(text)) = user_message(&line)
+        {
+            f.first_user_seen = true;
+            if text == "/clear" {
+                f.clear_at = line
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+            }
         }
         if range.given()
             && f.bad_time.is_none()
@@ -354,18 +366,6 @@ fn read_file(path: &str, bytes: &[u8], is_main: bool, range: &Range) -> FileEven
         }
     }
     f
-}
-
-/// 行が /clear のコマンドなら、その timestamp。形の違う行は発言の読みが止めるので、ここでは None にする
-fn clear_time(line: &Value) -> Option<String> {
-    if !is(line, "type", "user") || !unflagged(line, "isMeta") {
-        return None;
-    }
-    let text = text_of(message_content(line).ok()?).ok()?;
-    if COMMAND_NAME.captures(&text)?.get(1)?.as_str() != "/clear" {
-        return None;
-    }
-    line.get("timestamp")?.as_str().map(str::to_string)
 }
 
 fn is(v: &Value, key: &str, want: &str) -> bool {
