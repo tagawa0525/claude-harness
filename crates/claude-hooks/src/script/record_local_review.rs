@@ -27,7 +27,7 @@ use super::time::parse_time;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::BufRead;
+use std::io::{BufRead, Read as _};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -682,59 +682,48 @@ fn review_transcripts(
     found
 }
 
-/// 記録を読む。最初の行の時刻が windows のどれにも入らなければ、残りの行を読まずに None。依頼文の対象が、時刻の入った窓の
-/// worktree と違えば None（窓に worktree が無い前の版の行では問わない）
+/// 記録を読む。最初の行（依頼文）の時刻が windows のどれにも入らないか、入った窓の worktree と別のディレクトリが対象なら、
+/// 残りの行を読まずに None（窓に worktree が無い前の版の行では対象を問わない）
 fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
     let mut first = String::new();
-    std::io::BufReader::new(std::fs::File::open(path).ok()?)
-        .read_line(&mut first)
-        .ok()?;
-    let started = serde_json::from_str::<Value>(&first)
-        .ok()
-        .and_then(|v| {
-            v.get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_time)
-        })
+    reader.read_line(&mut first).ok()?;
+    let head = serde_json::from_str::<Value>(&first).ok()?;
+    let started = head
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(parse_time)
         .map(|t| t.micros)?;
-    let hits: Vec<&Window> = windows
-        .iter()
-        .filter(|w| (w.from..w.to).contains(&started))
-        .collect();
-    if hits.is_empty() {
+    // 最初の行は依頼文（/code-review が渡す `Review target: `<対象> <焦点>``）
+    let target = head
+        .pointer("/message/content")
+        .and_then(Value::as_str)
+        .and_then(review_target);
+    if !windows.iter().any(|w| {
+        (w.from..w.to).contains(&started)
+            && w.dir
+                .as_deref()
+                .is_none_or(|d| !other_tree(d, target.as_deref()))
+    }) {
         return None;
     }
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut target = None;
+    let mut rest = String::new();
+    reader.read_to_string(&mut rest).ok()?;
     let mut results = String::new();
-    for line in text.lines() {
+    for line in rest.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         if v.get("type").and_then(Value::as_str) != Some("user") {
             continue;
         }
-        match v.pointer("/message/content") {
-            // 最初の依頼文（/code-review が渡す `Review target: `<対象> <焦点>``）から対象を取る
-            Some(Value::String(s)) if target.is_none() => target = review_target(s),
-            Some(Value::Array(items)) => {
-                for item in items {
-                    if item.get("type").and_then(Value::as_str) == Some("tool_result") {
-                        push_text(item.get("content"), &mut results);
-                    }
+        if let Some(Value::Array(items)) = v.pointer("/message/content") {
+            for item in items {
+                if item.get("type").and_then(Value::as_str) == Some("tool_result") {
+                    push_text(item.get("content"), &mut results);
                 }
             }
-            _ => {}
         }
-    }
-    let dir_of = |t: &str| PathBuf::from(crate::shell::native(t).as_ref());
-    let matches = |w: &&Window| match (&w.dir, &target) {
-        (None, _) => true,
-        (Some(d), Some(t)) => *d == dir_of(t),
-        (Some(_), None) => false,
-    };
-    if !hits.iter().any(matches) {
-        return None;
     }
     Some(Transcript {
         path: path.to_path_buf(),
@@ -743,6 +732,22 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
         target,
         text: results,
     })
+}
+
+/// 依頼文の対象が、周の行の worktree（dir）と別のディレクトリを指すか。対象が絶対パスでない（書かない、PR の番号を渡した）
+/// なら分からないので別としない。dir の下とその上は同じとする（cwd の下のディレクトリで回した周、worktree の下を渡した周）。
+/// 字面でなく実在のパスで比べる（Windows のドライブの文字の大小、symlink）
+fn other_tree(dir: &Path, target: Option<&str>) -> bool {
+    let Some(target) = target else {
+        return false;
+    };
+    let target = PathBuf::from(crate::shell::native(target).as_ref());
+    if !target.is_absolute() {
+        return false;
+    }
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let (dir, target) = (real(dir), real(&target));
+    !(target.starts_with(&dir) || dir.starts_with(&target))
 }
 
 fn review_target(prompt: &str) -> Option<String> {
