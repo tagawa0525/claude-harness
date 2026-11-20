@@ -685,8 +685,8 @@ fn review_transcripts(
 
 /// 記録を読む。最初の行（依頼文）の時刻が windows のどれにも入らないか、入った窓の worktree と別の worktree が対象なら、残りの
 /// 行を読まずに None。別の worktree かは git の worktree の根で比べ（本体の下の `.claude/worktrees/<名前>` は別、本体の下の
-/// ディレクトリは同じ。ドライブの文字の大小と symlink は git が揃える）、対象の根を引けなければ対象が行の worktree の下にあるかで
-/// 比べる。窓に worktree が無い前の版の行と、対象のディレクトリが無い依頼文では問わない
+/// ディレクトリは同じ。ドライブの文字の大小と symlink は git が揃える）。窓に worktree が無い前の版の行、対象のディレクトリが無い
+/// 依頼文、対象が git の worktree の中に無い依頼文では問わない
 fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
     let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
     let mut first = Vec::new();
@@ -704,14 +704,12 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
         .unwrap_or_default();
     let target_dir = review_dir(prompt);
     // 対象の worktree の根は、窓ごとでなく 1 度引く
-    let target_tree = target_dir.as_deref().map(|d| (d, toplevel(d)));
+    let target_tree = target_dir.as_deref().and_then(toplevel);
     if !windows.iter().any(|w| {
         (w.from..w.to).contains(&started)
             && match (&w.tree, &target_tree) {
-                (Some(tree), Some((dir, top))) => match top {
-                    Some(top) => top == tree,
-                    None => dir.starts_with(tree),
-                },
+                // 対象が git の worktree の中に無い（`/` など）なら分からないので除かない
+                (Some(tree), Some(top)) => top == tree,
                 _ => true,
             }
     }) {
@@ -757,11 +755,12 @@ fn toplevel(path: &Path) -> Option<PathBuf> {
         .map(|s| PathBuf::from(s.strip_suffix('\n').unwrap_or(&s)))
 }
 
-/// 依頼文の `Review target: ` の後の語。count-review-rounds が引数を切るのと同じ字で切る
+/// 依頼文の `Review target: ` の後の、その行（/code-review の引数）の語。続く手順の文のパスは対象でない。
+/// count-review-rounds が引数を切るのと同じ字で切る
 fn review_words(prompt: &str) -> impl Iterator<Item = &str> {
     prompt
         .split_once("Review target: ")
-        .map_or("", |(_, rest)| rest)
+        .map_or("", |(_, rest)| rest.lines().next().unwrap_or_default())
         .split(crate::rules::is_word_stop)
         .filter(|w| !w.is_empty())
 }
