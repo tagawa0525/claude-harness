@@ -9,7 +9,7 @@
 //!   担当が呼ぶ Skill で数える。Agent の prompt は見ない（自然文から「/code-review を頼む」を見分ける判定は、
 //!   否定や別のスキルを呼ぶ文に当たるか、頼む文を落とした）
 //! - 置き場: リポジトリの共通の git ディレクトリの `claude-review-rounds/<ブランチ名>`（`/` は `%2F`）。1 行が 1 周で、
-//!   回したときの HEAD と時刻を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る。ブランチの
+//!   回したときの HEAD と時刻と、呼んだセッションの ID を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る。ブランチの
 //!   reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして数えない（ブランチを消すと reflog も
 //!   消え、作り直すと新しく始まる。rebase では続く。マージの前に rebase した HEAD は既定ブランチの祖先にならないので、
 //!   祖先かでは見分けられない）
@@ -90,19 +90,46 @@ fn state_dir(dir: &Path) -> Option<PathBuf> {
     (out.status.success() && !common.is_empty()).then(|| Path::new(common).join(STATE_DIR))
 }
 
+/// 置き場の 1 行（1 周）。`at` は呼んだときの UNIX 秒、`session` は呼んだ Claude Code のセッションの ID（セッションを
+/// 書く前の版の行と、ID の無い入力では None）
+pub(crate) struct Round {
+    pub(crate) head: String,
+    pub(crate) at: Option<u64>,
+    pub(crate) session: Option<String>,
+}
+
+/// dir の clone の、周の数の置き場と、ファイル（ブランチ）ごとの行（書いた順）。dir が git のリポジトリの中でなければ None
+pub(crate) fn rounds(dir: &Path) -> Option<(PathBuf, Vec<Vec<Round>>)> {
+    let state_dir = state_dir(dir)?;
+    let files = std::fs::read_dir(&state_dir)
+        .map(|files| {
+            files
+                .flatten()
+                .filter_map(|file| std::fs::read_to_string(file.path()).ok())
+                .map(|text| {
+                    text.lines()
+                        .filter_map(|l| {
+                            let mut fields = l.split_whitespace();
+                            Some(Round {
+                                head: fields.next()?.to_string(),
+                                at: fields.next().and_then(|t| t.parse().ok()),
+                                session: fields.next().map(str::to_string),
+                            })
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((state_dir, files))
+}
+
 /// dir の clone の、周の数の置き場と、そこに head を HEAD にして /code-review を呼んだ行があるか。ブランチは問わない
 /// （同じ SHA なら同じコミット。ブランチの名前を変えても引ける）。dir が git のリポジトリの中でなければ None。
 /// 行があるのは呼んだことで、レビューが対象を読めたことまでは示さない（[`CountReviewRounds`] は結果を見ない）
 pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<(PathBuf, bool)> {
-    let state_dir = state_dir(dir)?;
-    let found = std::fs::read_dir(&state_dir).is_ok_and(|files| {
-        files.flatten().any(|file| {
-            std::fs::read_to_string(file.path()).is_ok_and(|text| {
-                text.lines()
-                    .any(|l| l.split_whitespace().next() == Some(head))
-            })
-        })
-    });
+    let (state_dir, files) = rounds(dir)?;
+    let found = files.iter().flatten().any(|r| r.head == head);
     Some((state_dir, found))
 }
 
@@ -142,7 +169,14 @@ impl Rule for CountReviewRounds {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        lines.push(format!("{head} {now}"));
+        // セッションは、record-local-review が 0 件の記録の前に、この周の /code-review の記録（サブエージェントの
+        // transcript）を探すのに使う。空白を含む値は行の区切りを崩すので書かない
+        let session = &input.session_id;
+        if session.is_empty() || session.contains(char::is_whitespace) {
+            lines.push(format!("{head} {now}"));
+        } else {
+            lines.push(format!("{head} {now} {session}"));
+        }
         let written = std::fs::create_dir_all(&state_dir)
             .and_then(|()| std::fs::write(&path, lines.join("\n") + "\n"));
         if let Err(e) = written {
