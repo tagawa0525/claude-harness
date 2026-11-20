@@ -1,8 +1,9 @@
 //! `post-merge-cleanup.sh <branch>`: PR のマージの後（または /git-merge の後）に、ブランチと worktree を片付ける。
 //! 順は gh-pr-merge のスキルの「クリーンアップ」と、`claude/scripts/post-merge-cleanup.sh` の説明に書く:
 //!
-//! - （0 の前）cwd のリポジトリに branch の痕跡（ローカルのブランチ、リモート追跡の ref、リモートのブランチ、GitHub の
-//!   リモートではそのブランチを head とするマージ済みの PR）が無ければ、何も変えずに止める。確かめられないときも止める
+//! - （0 の前）cwd のリポジトリに branch の痕跡（ローカルのブランチ、リモート追跡の ref、リモートのブランチ、そのブランチを
+//!   head とするマージ済みの PR（段階 5 の head と同じく、push 先の GitHub のリポジトリと gh の既定のリポジトリで探す））が
+//!   無ければ、何も変えずに止める。確かめられないときも止める
 //! - 段階 0: ローカルの branch の先端が既定のブランチ（無ければ、追うリモートの既定のブランチを fetch したもの）の祖先で
 //!   なければ、何も消さずに止める。第 2 引数（マージの前の既定のブランチ。/git-merge が渡す）を受けたら、その後の
 //!   既定のブランチの第 1 親の列に、branch の先端を 2 番目以降の親に持つマージコミットが無ければ、何も消さずに止める
@@ -295,18 +296,20 @@ fn trace(branch: &str, remote: &str, main_root: &str) -> Result<(), i32> {
     if found {
         return Ok(());
     }
-    // マージ済みの PR は、段階 5 の head の確認と同じリポジトリ（push 先と gh の既定）で探す。読めないリポジトリと
-    // gh pr list が失敗したリポジトリは、見つからなかったと数える。どこにも見つからなければ止まるので、確かめられない
-    // ときに続けない
+    // マージ済みの PR は、段階 5 の head の確認と同じリポジトリ（push 先と gh の既定）で探す。gh pr list が失敗した
+    // リポジトリは見つからなかったと数え、push 先の URL に GitHub のリポジトリと読めないものがあれば、読めた push 先も
+    // 探さない（push_repos は最初の読めない URL で理由を返す）。どちらも見つからない側に倒れ、どこにも見つからなければ
+    // 理由を添えて止まるので、確かめられないときに続けない
     let (repos, mut failed) = match push_repos(remote) {
         Ok(repos) => (repos, Vec::new()),
         Err(why) => (Vec::new(), vec![why]),
     };
     let in_default = gh_has_default();
-    if repos.is_empty() && !in_default {
+    let searched = !repos.is_empty() || in_default;
+    if !searched && failed.is_empty() {
         return no_trace("");
     }
-    if !gh_available() {
+    if searched && !gh_available() {
         return cannot_check(
             "マージ済みの PR を確かめられない（gh が無い）",
             "gh を PATH に置く",
@@ -847,9 +850,14 @@ fn prs(
     ]);
     let out = cmd.output().map_err(|e| e.to_string())?;
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr)
+        let err = String::from_utf8_lossy(&out.stderr)
             .trim()
-            .replace('\n', " "));
+            .replace('\n', " ");
+        return Err(if err.is_empty() {
+            format!("標準エラーは空、{}", out.status)
+        } else {
+            err
+        });
     }
     Ok(String::from_utf8_lossy(&out.stdout)
         .lines()
