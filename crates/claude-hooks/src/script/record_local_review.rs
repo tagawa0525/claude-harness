@@ -26,7 +26,7 @@ use super::pr_url;
 use super::time::parse_time;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::{BufRead, Read as _};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -409,7 +409,11 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
         ));
     }
     // 欠けたファイルを焦点に回し直した周はそのファイルだけを読むので、その head の周が合わせて読んだ差分で数える
-    let read: String = transcripts.iter().map(|t| t.text.as_str()).collect();
+    let read: HashSet<String> = transcripts
+        .iter()
+        .flat_map(|t| t.text.lines())
+        .flat_map(line_forms)
+        .collect();
     let missed: Vec<(&String, &String)> = required
         .iter()
         .flat_map(|(file, lines)| lines.iter().map(move |l| (file, l)))
@@ -554,6 +558,43 @@ fn added_lines(diff: &str) -> BTreeMap<String, BTreeSet<String>> {
     }
     out
 }
+
+/// tool の結果の 1 行が示しうる元の行（[`added_lines`] と同じく前後の空白を除いた先頭の [`LINE_CHARS`] 文字）。そのままの行、
+/// diff の印（`+`、`-`、空白）を 1 字除いた行、Read の行番号（`12\t`、`12→`）を除いた行、grep の位置（`path:12:`、`path-12-`）を
+/// 除いた行。求める行は、このどれかと一致するときだけ読んだとする（長い行の一部や、行をまたぐ文字列は読んだことを示さない）
+fn line_forms(line: &str) -> Vec<String> {
+    let cut = |t: &str| -> String { t.trim().chars().take(LINE_CHARS).collect() };
+    let trimmed = line.trim_start();
+    let digits = trimmed.len()
+        - trimmed
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .len();
+    // 位置の接頭辞（Read の行番号、grep の位置）を除いた行
+    let mut bodies = vec![line];
+    if digits > 0
+        && let Some(rest) = trimmed[digits..]
+            .strip_prefix('\t')
+            .or_else(|| trimmed[digits..].strip_prefix('→'))
+    {
+        bodies.push(rest);
+    }
+    if let Some(m) = GREP_POSITION.find(line) {
+        bodies.push(&line[m.end()..]);
+    }
+    // それぞれから、diff の印（`+`、`-`、空白）を 1 字除いた行
+    let mut forms = Vec::new();
+    for body in bodies {
+        forms.push(cut(body));
+        if let Some(rest) = body.strip_prefix(['+', '-', ' ']) {
+            forms.push(cut(rest));
+        }
+    }
+    forms
+}
+
+/// grep -n の行の先頭の位置（`path:12:`、`12:`、前後の行の `path-12-`、`12-`）
+static GREP_POSITION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([^\s:]+:)?[0-9]+[:-]|^[^\s:]+-[0-9]+-").unwrap());
 
 /// git が引用したパス（`"b/\346\227\245.md"`。C の文字列の形で、ASCII でないバイトは 8 進）を元の字面に戻す。引用の無い
 /// パスはそのまま
@@ -920,5 +961,25 @@ mod tests {
             review_words(prompt).collect::<Vec<_>>(),
             vec!["340", "/repo/wt"]
         );
+    }
+
+    #[test]
+    fn a_tool_result_line_stands_for_the_line_without_its_prefixes() {
+        // 2026-11-20 の記録に出た形: diff の `+`、Read の行番号、grep -n の位置（ファイルを 1 つ渡すと名前が付かない）と diff の印
+        for line in [
+            "+fn ab() {}",
+            "    12\tfn ab() {}",
+            "    12→fn ab() {}",
+            "src/a.rs:12:fn ab() {}",
+            "10:+fn ab() {}",
+            "11-+fn ab() {}",
+        ] {
+            assert!(
+                line_forms(line).contains(&"fn ab() {}".to_string()),
+                "{line}"
+            );
+        }
+        // 長い行の一部は、その行を読んだことを示さない
+        assert!(!line_forms("// fn ab() {} を呼ぶ").contains(&"fn ab() {}".to_string()));
     }
 }
