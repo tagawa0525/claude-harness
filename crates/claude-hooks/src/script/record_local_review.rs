@@ -13,7 +13,7 @@
 //! `--unlogged <理由>` で理由を記録のコメントに残して付ける。前の記録が覆う head（rebase だけの head）かは、ここでは
 //! 確かめず、拒否の文で decide-next.sh を示す（比べた案は claude-harness の issue 281）
 //!
-//! 0 件の記録は、行に書かれたセッションの /code-review のサブエージェントの記録（その head の最初の行より後に始まったもの）
+//! 0 件の記録は、行に書かれたセッションの /code-review のサブエージェントの記録（その head の周の行の直後に始まったもの）
 //! の tool の結果に、PR の差分の追加行が入っているときだけ付ける。入っていなければ付けず、レベルを上げて欠けたファイルを
 //! 焦点にした周を NEXT: で示す。記録か差分を引けなければ、`--unlogged <理由>` で理由を残して付ける
 //!
@@ -209,11 +209,10 @@ pub fn main(args: &[String]) -> i32 {
                     missed.files.join("、")
                 );
                 println!(
-                    "NEXT: /code-review {} {} 焦点: {} の差分 を回し、その head にもう一度記録する（{} の周までに、このファイルの追加行を読んでいない）",
+                    "NEXT: /code-review {} {} 焦点: {} の差分 を回し、その head にもう一度記録する（この head の周は、このファイルの追加行を読んでいない）",
                     raised(&missed.effort),
                     missed.target,
-                    missed.files.join("、"),
-                    missed.effort
+                    missed.files.join("、")
                 );
                 return 1;
             }
@@ -296,7 +295,8 @@ struct Transcript {
     /// 最初の行の時刻（UNIX のマイクロ秒）
     started: i64,
     effort: String,
-    target: String,
+    /// 依頼文の対象（読めなければ None）
+    target: Option<String>,
     /// tool の結果の本文をつないだもの
     text: String,
 }
@@ -304,12 +304,20 @@ struct Transcript {
 /// 比べる行の先頭の文字数。Read は 2000 文字を超える行を切って返すので、長い行の後ろの欠けを読んでいないと数えない
 const LINE_CHARS: usize = 200;
 
+/// 周の行の時刻から、その周の /code-review のサブエージェントの記録が始まるまでの上限（秒）。2026-11-20 に、記録 199 件の
+/// 始まりが周の行の 1 秒以内だった。同じセッションで後に回したほかの PR の周を数えないための窓
+const START_WINDOW: i64 = 60;
+
+/// 子のエージェントを起動せず、自分の tool の結果で差分を読む /code-review のレベル。xhigh と max は子に読ませ、子の記録は
+/// `.forked-skill.json` を持たないので数えない
+const SELF_READING: [&str; 3] = ["low", "medium", "high"];
+
 fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     let Some((_, files)) = crate::rules::rounds(dir) else {
         return Read::Unknown("clone の周の置き場を引けない".to_string());
     };
     let mut sessions = BTreeSet::new();
-    let mut since: Option<u64> = None;
+    let mut windows = Vec::new();
     let mut previous = BTreeSet::new();
     for file in &files {
         let Some(first) = file.iter().position(|r| r.head == head) else {
@@ -320,8 +328,8 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
         }
         for round in file.iter().filter(|r| r.head == head) {
             sessions.extend(round.session.clone());
-            if let Some(at) = round.at {
-                since = Some(since.map_or(at, |s| s.min(at)));
+            if let Some(at) = round.at.and_then(|at| i64::try_from(at).ok()) {
+                windows.push((at * 1_000_000, (at + START_WINDOW) * 1_000_000));
             }
         }
     }
@@ -332,13 +340,10 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
         ));
     }
     let config = config_dir();
-    let since_micros = i64::try_from(since.unwrap_or(0))
-        .unwrap_or(i64::MAX)
-        .saturating_mul(1_000_000);
-    let transcripts = review_transcripts(&config, &sessions, since_micros);
+    let transcripts = review_transcripts(&config, &sessions, &windows);
     let Some(latest) = transcripts.last() else {
         return Read::Unknown(format!(
-            "{} の周の後に始まった /code-review の記録が {} の下のセッション {} に無い",
+            "{} の周の行の {START_WINDOW} 秒以内に始まった /code-review の記録が {} の下のセッション {} に無い",
             short(head),
             config.join("projects").display(),
             sessions.iter().cloned().collect::<Vec<_>>().join("、")
@@ -349,19 +354,29 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     else {
         return Read::Unknown(format!("PR #{} の差分を gh で取れない", pr.number));
     };
-    let mut changed: Option<BTreeSet<(String, String)>> = None;
-    for prev in &previous {
-        if let Some(d) = git_diff(dir, prev, head) {
-            let set = changed.get_or_insert_with(BTreeSet::new);
-            for (file, lines) in added_lines(&d) {
-                set.extend(lines.into_iter().map(|l| (file.clone(), l)));
-            }
-        }
-    }
-    let required = required_lines(
-        added_lines(&String::from_utf8_lossy(&diff)),
-        changed.as_ref(),
-    );
+    let pr_lines = added_lines(&String::from_utf8_lossy(&diff));
+    // 前の周の PR の差分は、PR の base との分かれ目から引く（rebase の後も、base の変更を PR の変更と数えない）
+    let base = if previous.is_empty() {
+        None
+    } else {
+        crate::gh::output_for_repo(
+            &pr.repo,
+            &[
+                "pr",
+                "view",
+                &pr.number,
+                "--json",
+                "baseRefOid",
+                "-q",
+                ".baseRefOid",
+            ],
+        )
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+        .filter(|b| !b.is_empty())
+    };
+    let changed = changed_since(dir, &pr_lines, &previous, head, base.as_deref());
+    let required = required_lines(pr_lines, changed);
     let total: usize = required.values().map(BTreeSet::len).sum();
     if total == 0 {
         return Read::Unknown(format!(
@@ -379,44 +394,89 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     if missed.is_empty() {
         return Read::Yes;
     }
+    if let Some(t) = transcripts
+        .iter()
+        .find(|t| !SELF_READING.contains(&t.effort.as_str()))
+    {
+        return Read::Unknown(format!(
+            "{} の周の /code-review は子のエージェントに差分を読ませ、子の記録は数えない",
+            if t.effort.is_empty() {
+                "レベルの分からない"
+            } else {
+                &t.effort
+            }
+        ));
+    }
     let files: BTreeSet<String> = missed.iter().map(|(f, _)| (*f).clone()).collect();
     Read::No(Missed {
         transcripts: transcripts.len(),
         latest: latest.path.clone(),
         effort: latest.effort.clone(),
-        target: latest.target.clone(),
+        target: latest
+            .target
+            .clone()
+            .unwrap_or_else(|| dir.display().to_string()),
         required: total,
         lines: missed.len(),
         files: files.into_iter().collect(),
     })
 }
 
-/// 読んだかを比べる追加行（ファイルごと）。前の周の head から変わった行があればそれに絞る（直した後の周は、直した差分を
+/// pr の追加行のうち、前の周の head から変わったもの。前の周が無ければ None。base（PR の base の SHA）を引ければ、前の周の
+/// PR の差分（分かれ目から前の head まで）に無い行。引けなければ、前の head が祖先のとき `git diff <前の head> <head>` の
+/// 追加行と重なる行で、rebase した head（祖先でない）は None（base の変更と PR の変更を分けられないので、PR の差分の全部を
+/// 求める）
+fn changed_since(
+    dir: &Path,
+    pr: &BTreeMap<String, BTreeSet<String>>,
+    previous: &BTreeSet<String>,
+    head: &str,
+    base: Option<&str>,
+) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    if previous.is_empty() {
+        return None;
+    }
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for prev in previous {
+        let old = base
+            .and_then(|b| git_out(dir, &["merge-base", prev, b]))
+            .and_then(|fork| git_diff(dir, fork.trim(), prev));
+        let (since, keep_if_found) = match old {
+            Some(old) => (added_lines(&old), false),
+            None if git_out(dir, &["merge-base", "--is-ancestor", prev, head]).is_some() => {
+                (added_lines(&git_diff(dir, prev, head)?), true)
+            }
+            None => return None,
+        };
+        for (file, lines) in pr {
+            let seen = since.get(file);
+            let kept = lines
+                .iter()
+                .filter(|l| seen.is_some_and(|s| s.contains(*l)) == keep_if_found);
+            out.entry(file.clone()).or_default().extend(kept.cloned());
+        }
+    }
+    out.retain(|_, lines| !lines.is_empty());
+    Some(out)
+}
+
+/// 読んだかを比べる追加行（ファイルごと）。前の周から変わった行（changed）があればそれに絞る（直した後の周は、直した差分を
 /// 焦点に読む）。lock のファイルは読まないので外す。テストのファイル（/code-review の low が外す）は、ほかのファイルの行が
-/// あれば外す。テストの名前の範囲を広めに取るのは、low が外すファイルを自分で選び（`':!*test*'` を渡した周があった）、
-/// 狭い範囲では外して読まなかったテストの行を欠けと数えるため
+/// あれば外す
 fn required_lines(
     pr: BTreeMap<String, BTreeSet<String>>,
-    changed: Option<&BTreeSet<(String, String)>>,
+    changed: Option<BTreeMap<String, BTreeSet<String>>>,
 ) -> BTreeMap<String, BTreeSet<String>> {
-    let pr: BTreeMap<_, _> = pr.into_iter().filter(|(f, _)| !is_lock(f)).collect();
-    let narrowed: BTreeMap<String, BTreeSet<String>> = match changed {
-        Some(changed) => pr
-            .iter()
-            .map(|(f, lines)| {
-                let kept = lines
-                    .iter()
-                    .filter(|l| changed.contains(&(f.clone(), (*l).clone())))
-                    .cloned()
-                    .collect::<BTreeSet<_>>();
-                (f.clone(), kept)
-            })
-            .filter(|(_, lines)| !lines.is_empty())
-            .collect(),
-        None => BTreeMap::new(),
+    let not_lock = |m: BTreeMap<String, BTreeSet<String>>| -> BTreeMap<String, BTreeSet<String>> {
+        m.into_iter().filter(|(f, _)| !is_lock(f)).collect()
     };
+    let narrowed = changed.map(not_lock).unwrap_or_default();
     // 前の周から変わった行が無い（rebase だけ、消すだけの修正）なら、PR の差分の全部を求める
-    let lines = if narrowed.is_empty() { pr } else { narrowed };
+    let lines = if narrowed.is_empty() {
+        not_lock(pr)
+    } else {
+        narrowed
+    };
     let body: BTreeMap<_, _> = lines
         .iter()
         .filter(|(f, _)| !is_test(f))
@@ -425,9 +485,19 @@ fn required_lines(
     if body.is_empty() { lines } else { body }
 }
 
+/// /code-review の low が外すと書くテストの形（`test/`、`spec/`、`__tests__/`、`*_test.*`、`*.test.*`、`fixtures/`、
+/// `testdata/`）に、`tests/` と `test_*` を足したもの。名前に test を含むだけの本体（`latest.rs`）は外さない（外すと、
+/// 本体を読まない周を通す。low が `':!*test*'` で外して読まなかったなら、読んでいないとして回し直す）
 fn is_test(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    lower.contains("test") || lower.contains("fixture") || lower.split('/').any(|c| c == "spec")
+    let mut parts: Vec<&str> = path.split('/').collect();
+    let name = parts.pop().unwrap_or_default();
+    parts
+        .iter()
+        .any(|d| ["test", "tests", "spec", "__tests__", "fixtures", "testdata"].contains(d))
+        || name.starts_with("test_")
+        || name.contains("_test.")
+        || name.contains(".test.")
+        || name.contains("_spec.")
 }
 
 fn is_lock(path: &str) -> bool {
@@ -435,7 +505,8 @@ fn is_lock(path: &str) -> bool {
     name.ends_with(".lock") || name.ends_with("-lock.json") || name.ends_with("-lock.yaml")
 }
 
-/// unified diff の追加行（前後の空白を除き、空の行を除いた先頭の [`LINE_CHARS`] 文字）を、追加した側のパスごとに
+/// unified diff の追加行（前後の空白を除き、先頭の [`LINE_CHARS`] 文字）を、追加した側のパスごとに。英数字（漢字と
+/// かなを含む）が 3 字に満たない行（`}`、`Ok(())`）は、ほとんどの tool の結果に入り、読んだことを示さないので比べない
 fn added_lines(diff: &str) -> BTreeMap<String, BTreeSet<String>> {
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut file: Option<String> = None;
@@ -445,13 +516,12 @@ fn added_lines(diff: &str) -> BTreeMap<String, BTreeSet<String>> {
             file = None;
             in_hunk = false;
         } else if !in_hunk && let Some(path) = line.strip_prefix("+++ ") {
-            let path = path.trim_matches('"');
-            file = path.strip_prefix("b/").map(str::to_string);
+            file = unquote(path).strip_prefix("b/").map(str::to_string);
         } else if line.starts_with("@@") {
             in_hunk = true;
         } else if in_hunk && let (Some(f), Some(text)) = (&file, line.strip_prefix('+')) {
             let text: String = text.trim().chars().take(LINE_CHARS).collect();
-            if !text.is_empty() {
+            if text.chars().filter(|c| c.is_alphanumeric()).count() >= 3 {
                 out.entry(f.clone()).or_default().insert(text);
             }
         }
@@ -459,20 +529,47 @@ fn added_lines(diff: &str) -> BTreeMap<String, BTreeSet<String>> {
     out
 }
 
-/// `git diff from to`。起動したディレクトリの clone で引く（hook の中で渡る GIT_DIR に向かない）。接頭辞は、利用者の
-/// diff.noprefix に依らず a/ と b/ にする
-fn git_diff(dir: &Path, from: &str, to: &str) -> Option<String> {
+/// git が引用したパス（`"b/\346\227\245.md"`。C の文字列の形で、ASCII でないバイトは 8 進）を元の字面に戻す。引用の無い
+/// パスはそのまま
+fn unquote(path: &str) -> String {
+    let Some(inner) = path.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
+        return path.to_string();
+    };
+    let mut bytes = Vec::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        match chars.next() {
+            Some(d @ '0'..='7') => {
+                let mut value = d.to_digit(8).unwrap_or(0);
+                for _ in 0..2 {
+                    if let Some(next) = chars.peek().and_then(|c| c.to_digit(8)) {
+                        value = value * 8 + next;
+                        chars.next();
+                    }
+                }
+                bytes.push(u8::try_from(value).unwrap_or(b'?'));
+            }
+            Some('t') => bytes.push(b'\t'),
+            Some('n') => bytes.push(b'\n'),
+            Some(other) => {
+                let mut buf = [0; 4];
+                bytes.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+            None => {}
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// `git <args>` を、起動したディレクトリの clone で実行する（hook の中で渡る GIT_DIR に向かない）。成功なら標準出力
+fn git_out(dir: &Path, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new("git")
-        .args([
-            "diff",
-            "--no-color",
-            "--no-ext-diff",
-            "--src-prefix=a/",
-            "--dst-prefix=b/",
-            "-U0",
-            from,
-            to,
-        ])
+        .args(args)
         .current_dir(dir)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
@@ -485,6 +582,23 @@ fn git_diff(dir: &Path, from: &str, to: &str) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// `git diff from to`。接頭辞は利用者の diff.noprefix に依らず a/ と b/ にし、パスは引用しても [`unquote`] で戻す
+fn git_diff(dir: &Path, from: &str, to: &str) -> Option<String> {
+    git_out(
+        dir,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "-U0",
+            from,
+            to,
+        ],
+    )
+}
+
 /// Claude Code の設定の場所（`CLAUDE_CONFIG_DIR`、無ければ `~/.claude`）
 fn config_dir() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -493,10 +607,14 @@ fn config_dir() -> PathBuf {
         .unwrap_or_else(|| crate::shell::home().join(".claude"))
 }
 
-/// sessions のサブエージェントの記録のうち、/code-review が起動し、since（UNIX のマイクロ秒）より後に始まったもの
-/// （始まった順）。記録の形は Claude Code の公開の仕様ではないので、読めない行と記録は飛ばす（飛ばした結果、記録が
-/// 無ければ、確かめられないとして理由を求める）
-fn review_transcripts(config: &Path, sessions: &BTreeSet<String>, since: i64) -> Vec<Transcript> {
+/// sessions のサブエージェントの記録のうち、/code-review が起動し、windows（UNIX のマイクロ秒の [始まり, 終わり)）の
+/// どれかの中で始まったもの（始まった順）。記録の形は Claude Code の公開の仕様ではないので、読めない行と記録は飛ばす
+/// （飛ばした結果、記録が無ければ、確かめられないとして理由を求める）
+fn review_transcripts(
+    config: &Path,
+    sessions: &BTreeSet<String>,
+    windows: &[(i64, i64)],
+) -> Vec<Transcript> {
     let mut found = Vec::new();
     let Ok(projects) = std::fs::read_dir(config.join("projects")) else {
         return found;
@@ -525,12 +643,9 @@ fn review_transcripts(config: &Path, sessions: &BTreeSet<String>, since: i64) ->
                     continue;
                 }
                 let jsonl = PathBuf::from(format!("{stem}.jsonl"));
-                let Some(mut t) = read_transcript(&jsonl) else {
+                let Some(mut t) = read_transcript(&jsonl, windows) else {
                     continue;
                 };
-                if t.started < since {
-                    continue;
-                }
                 t.effort = meta
                     .get("effort")
                     .and_then(Value::as_str)
@@ -544,29 +659,37 @@ fn review_transcripts(config: &Path, sessions: &BTreeSet<String>, since: i64) ->
     found
 }
 
-fn read_transcript(path: &Path) -> Option<Transcript> {
+/// 記録を読む。最初の行の時刻が windows のどれにも入らなければ、残りの行を読まずに None
+fn read_transcript(path: &Path, windows: &[(i64, i64)]) -> Option<Transcript> {
     let text = std::fs::read_to_string(path).ok()?;
-    let mut started = None;
+    let mut lines = text.lines();
+    let started = lines
+        .next()
+        .and_then(|l| serde_json::from_str::<Value>(l).ok())
+        .and_then(|v| {
+            v.get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(parse_time)
+        })
+        .map(|t| t.micros)?;
+    if !windows
+        .iter()
+        .any(|(from, to)| (*from..*to).contains(&started))
+    {
+        return None;
+    }
     let mut target = None;
     let mut results = String::new();
     for line in text.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if started.is_none() {
-            started = v
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_time)
-                .map(|t| t.micros);
-        }
         if v.get("type").and_then(Value::as_str) != Some("user") {
             continue;
         }
-        let content = v.pointer("/message/content");
-        match content {
+        match v.pointer("/message/content") {
             // 最初の依頼文（/code-review が渡す `Review target: `<対象> <焦点>``）から対象を取る
-            Some(Value::String(s)) if target.is_none() => target = Some(review_target(s)),
+            Some(Value::String(s)) if target.is_none() => target = review_target(s),
             Some(Value::Array(items)) => {
                 for item in items {
                     if item.get("type").and_then(Value::as_str) == Some("tool_result") {
@@ -579,20 +702,19 @@ fn read_transcript(path: &Path) -> Option<Transcript> {
     }
     Some(Transcript {
         path: path.to_path_buf(),
-        started: started?,
+        started,
         effort: String::new(),
-        target: target.unwrap_or_else(|| "<WORKTREE>".to_string()),
+        target,
         text: results,
     })
 }
 
-fn review_target(prompt: &str) -> String {
+fn review_target(prompt: &str) -> Option<String> {
     prompt
         .split_once("Review target: `")
         .and_then(|(_, rest)| rest.split('`').next())
         .and_then(|t| t.split_whitespace().next())
-        .unwrap_or("<WORKTREE>")
-        .to_string()
+        .map(str::to_string)
 }
 
 /// tool の結果の本文（文字列か、text の項目の配列）
@@ -616,11 +738,7 @@ fn push_text(content: Option<&Value>, out: &mut String) {
 
 /// 読んでいなかった周の次のレベル（xhigh と max は頼まれたときだけ回すので、high の上に上げない）
 fn raised(effort: &str) -> &str {
-    match effort {
-        "low" => "medium",
-        "medium" | "high" | "" => "high",
-        other => other,
-    }
+    if effort == "low" { "medium" } else { "high" }
 }
 
 #[cfg(test)]
