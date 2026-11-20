@@ -19,6 +19,11 @@ const USAGE: &str = "Usage: session-events.sh [--since <日時>] [--until <日�
 /// 区間に行が無いときの次の手。区間をずらして行を拾うと、指定と違う期間を数えたまま報告に載る
 const EMPTY_RANGE_NEXT: &str = "NEXT: 年と時差の書き誤りを直すか、区間が /clear の前など別のセッションにあれば、その記録を TRANSCRIPT に渡して再実行する。区間はずらさない（ずらすと、ほかの期間を数える）";
 
+/// 区間が /clear の前に掛かるときの次の手。前のセッションの記録は読まない。記録には /clear の前の記録を指す欄が無く、
+/// 行の session_id は /clear のチェーンの最初のセッションか自分を指し、並行するセッションは時刻が重なるので、推測で
+/// 選ぶと別の作業のセッションを足す（#348）
+const CLEAR_NEXT: &str = "NEXT: /clear の前の分も要るなら、前のセッションの記録を TRANSCRIPT に渡し、同じ区間で再実行して数を足す。どの記録が前のセッションかは記録から決まらないので、時刻と発言で確かめる（別の作業のセッションを足さない）";
+
 /// 記録の timestamp の形。区間の端と文字列で比べるので、この形でなければ黙って区間の外に落ちる
 static RECORD_TIME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$").unwrap()
@@ -42,6 +47,9 @@ static TOOL_USE_ERROR_TAG: LazyLock<Regex> =
 static NEWLINE_SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\n\s*").unwrap());
 static COMMAND_NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("<command-name>([^<]*)</command-name>").unwrap());
+static COMMAND_TAGS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new("<command-(?:name|message|args)>[^<]*</command-(?:name|message|args)>").unwrap()
+});
 // `.` は改行に当たらない（jq の版の capture と同じく、複数行の引数は取らない）
 static COMMAND_ARGS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("<command-args>(.*?)</command-args>").unwrap());
@@ -226,6 +234,14 @@ fn run(args: &[String]) -> Result<String, Fail> {
         out += &format!("UNTIL: {u}\n");
     }
     out += &format!("TRANSCRIPTS: {}\n", 1 + subs.len());
+    if range.given()
+        && let Some(clear) = &main.clear_at
+        && range.since.as_deref().is_none_or(|s| s < clear.as_str())
+    {
+        out += &format!(
+            "WARN: 区間が、この記録の始まりの /clear（{clear}）より前に掛かる。数はこの記録の分だけで、/clear の前のセッションの記録は数えていない\n{CLEAR_NEXT}\n"
+        );
+    }
 
     let mut counts: HashMap<(Kind, String), usize> = HashMap::new();
     for failure in all().flat_map(|f| f.failures.iter()) {
@@ -284,6 +300,10 @@ struct FileEvents {
     /// ユーザーの発言（本体だけ。サブエージェントの記録の発言は親からの依頼文）
     users: Vec<String>,
     bad_user: Option<String>,
+    /// 本体の最初の発言を読んだか（区間に依らない）
+    first_user_seen: bool,
+    /// 本体の最初の発言が /clear なら、その timestamp。/clear の前のセッションは別の記録にある
+    clear_at: Option<String>,
 }
 
 fn read_file(path: &str, bytes: &[u8], is_main: bool, range: &Range) -> FileEvents {
@@ -306,6 +326,12 @@ fn read_file(path: &str, bytes: &[u8], is_main: bool, range: &Range) -> FileEven
         count_shape(&mut f, &line, is_main);
         if line.get("timestamp").is_some() {
             f.stamped += 1;
+        }
+        // 最初の発言の行だけを見る。発言に出さない行（bash の入力、形の違う行）も最初の発言に数え、後の行の /clear の
+        // タグを始まりとみなさない
+        if is_main && !f.first_user_seen && prompt_line(&line) {
+            f.first_user_seen = true;
+            f.clear_at = clear_time(&line);
         }
         if range.given()
             && f.bad_time.is_none()
@@ -560,9 +586,9 @@ fn unflagged(line: &Value, key: &str) -> bool {
     matches!(line.get(key), None | Some(Value::Null | Value::Bool(false)))
 }
 
-/// 本体の行がユーザーの発言なら、出す形（改行を空白に、300 文字まで）
-fn user_message(line: &Value) -> Result<Option<String>, &'static str> {
-    let text = if is(line, "type", "user")
+/// 人が入力した user の行（スキルの本文、要約などの印の付いた行を除く）
+fn prompt_line(line: &Value) -> bool {
+    is(line, "type", "user")
         && [
             "isMeta",
             "isSidechain",
@@ -571,7 +597,23 @@ fn user_message(line: &Value) -> Result<Option<String>, &'static str> {
         ]
         .iter()
         .all(|k| unflagged(line, k))
+}
+
+/// 行が /clear のコマンドだけなら、その timestamp。コマンドのタグのほかに本文があれば、/clear を貼った発言とみなす。
+/// 形の違う行は、区間に入れば発言の読みが止めるので、ここでは None にする
+fn clear_time(line: &Value) -> Option<String> {
+    let text = text_of(message_content(line).ok()?).ok()?;
+    if COMMAND_NAME.captures(&text)?.get(1)?.as_str() != "/clear"
+        || has_text(&COMMAND_TAGS.replace_all(&text, ""))
     {
+        return None;
+    }
+    line.get("timestamp")?.as_str().map(str::to_string)
+}
+
+/// 本体の行がユーザーの発言なら、出す形（改行を空白に、300 文字まで）
+fn user_message(line: &Value) -> Result<Option<String>, &'static str> {
+    let text = if prompt_line(line) {
         match command(text_of(message_content(line)?)?) {
             Some(t) => t,
             None => return Ok(None),

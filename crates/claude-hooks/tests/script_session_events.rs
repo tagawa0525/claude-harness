@@ -179,6 +179,32 @@ impl Home {
         )
     }
 
+    /// /clear で始まる記録（前のセッションの記録は別のファイルで、ここには無い）。実物と同じく、timestamp の無い
+    /// 見出しの行と、/clear より後の timestamp の isMeta の行が /clear の前に並ぶ
+    fn clear_session(&self) -> String {
+        self.write_lines(
+            &self.root.join("clear").join("s.jsonl"),
+            &[
+                json!({"type": "mode", "mode": "normal"}),
+                json!({"type": "bridge-session", "bridgeSessionId": "cse_x"}),
+                at(
+                    json!({"type": "user", "isMeta": true, "message": {"role": "user",
+                        "content": "<local-command-caveat>The command below was run directly</local-command-caveat>"}}),
+                    "2026-11-05T15:00:00.031Z",
+                ),
+                at(
+                    user_text("<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"),
+                    "2026-11-05T15:00:00.000Z",
+                ),
+                at(
+                    tool_error("PreToolUse:Bash hook error: /clear の後の拒否"),
+                    "2026-11-05T15:10:00.000Z",
+                ),
+                at(user_text("/clear の後の発言"), "2026-11-05T15:20:00.000Z"),
+            ],
+        )
+    }
+
     fn run_in(&self, args: &[&str], session: Option<&str>, dir: Option<&Path>) -> Output {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
         cmd.args(["script", "session-events"])
@@ -775,6 +801,118 @@ fn lines_of_a_subagent_count_when_the_transcript_has_none_in_the_range() {
     ]));
     assert_eq!(lines_with(&out, "HOOK: "), ["HOOK: 1 区間の拒否"]);
     assert_eq!(lines_with(&out, "TRANSCRIPTS: "), ["TRANSCRIPTS: 2"]);
+}
+
+const CLEAR_WARN: &str = "WARN: 区間が、この記録の始まりの /clear（2026-11-05T15:00:00.000Z）より前に掛かる。数はこの記録の分だけで、/clear の前のセッションの記録は数えていない";
+const CLEAR_NEXT: &str = "NEXT: /clear の前の分も要るなら、前のセッションの記録を TRANSCRIPT に渡し、同じ区間で再実行して数を足す。どの記録が前のセッションかは記録から決まらないので、時刻と発言で確かめる（別の作業のセッションを足さない）";
+
+#[test]
+fn a_range_before_the_clear_that_starts_the_transcript_says_the_previous_session_is_not_counted() {
+    let home = Home::new();
+    let main = home.clear_session();
+    let out = stdout(&home.run(&[
+        "--since",
+        "2026-11-05T14:00Z",
+        "--until",
+        "2026-11-05T16:00Z",
+        &main,
+    ]));
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        [
+            format!("TRANSCRIPT: {main}").as_str(),
+            "SINCE: 2026-11-05T14:00:00.000Z",
+            "UNTIL: 2026-11-05T16:00:00.000Z",
+            "TRANSCRIPTS: 1",
+            CLEAR_WARN,
+            CLEAR_NEXT,
+            "HOOK: 1 /clear の後の拒否",
+            "USER: /clear",
+            "USER: /clear の後の発言",
+        ]
+    );
+}
+
+#[test]
+fn a_range_open_at_the_start_also_says_the_previous_session_is_not_counted() {
+    let home = Home::new();
+    let main = home.clear_session();
+    let out = stdout(&home.run(&["--until", "2026-11-05T16:00Z", &main]));
+    assert_eq!(lines_with(&out, "WARN: "), [CLEAR_WARN]);
+    assert_eq!(lines_with(&out, "NEXT: "), [CLEAR_NEXT]);
+}
+
+#[test]
+fn a_range_from_the_clear_on_or_without_a_range_has_no_note_of_the_previous_session() {
+    let home = Home::new();
+    let main = home.clear_session();
+    for args in [
+        vec!["--since", "2026-11-05T15:00Z", main.as_str()],
+        vec![
+            "--since",
+            "2026-11-05T15:05Z",
+            "--until",
+            "2026-11-05T16:00Z",
+            &main,
+        ],
+        vec![main.as_str()],
+    ] {
+        let out = stdout(&home.run(&args));
+        assert!(lines_with(&out, "WARN: ").is_empty(), "{args:?}: {out}");
+        assert!(lines_with(&out, "NEXT: ").is_empty(), "{args:?}: {out}");
+    }
+}
+
+#[test]
+fn a_clear_after_the_first_user_message_does_not_start_the_transcript() {
+    let home = Home::new();
+    let path = home.write_lines(
+        &home.root.join("clear-later.jsonl"),
+        &[
+            at(user_text("最初の発言"), "2026-11-05T15:00:00.000Z"),
+            at(
+                user_text("<command-name>/clear</command-name>\n<command-args></command-args>"),
+                "2026-11-05T15:10:00.000Z",
+            ),
+        ],
+    );
+    let out = stdout(&home.run(&["--since", "2026-11-05T14:00Z", &path]));
+    assert!(lines_with(&out, "WARN: ").is_empty(), "{out}");
+}
+
+#[test]
+fn a_first_message_that_only_quotes_a_clear_or_is_left_out_of_the_messages_does_not_start_with_clear()
+ {
+    let home = Home::new();
+    let clear = "<command-name>/clear</command-name>\n<command-args></command-args>";
+    let firsts = [
+        // /clear のタグを本文に貼った発言
+        user_text(&format!("この記録を見て: {clear}")),
+        // 発言に出さない最初の発言（bash の入力）
+        user_text("<bash-input>ls</bash-input>"),
+        // 形の違う最初の発言（区間の外なので、発言の読みは止めない）
+        json!({"type": "user", "message": {"role": "user", "content": 1}}),
+    ];
+    for (i, first) in firsts.into_iter().enumerate() {
+        let path = home.write_lines(
+            &home.root.join(format!("first-{i}.jsonl")),
+            &[
+                at(first, "2026-11-05T13:00:00.000Z"),
+                at(user_text(clear), "2026-11-05T15:10:00.000Z"),
+            ],
+        );
+        let out = stdout(&home.run(&["--since", "2026-11-05T14:00Z", &path]));
+        assert!(lines_with(&out, "WARN: ").is_empty(), "{i}: {out}");
+    }
+}
+
+#[test]
+fn a_range_before_a_transcript_without_a_clear_has_no_note_of_the_previous_session() {
+    let home = Home::new();
+    let main = home.range_session();
+    let out = stdout(&home.run(&["--until", "2026-11-06T02:05Z", &main]));
+    assert!(lines_with(&out, "WARN: ").is_empty(), "{out}");
+    assert!(lines_with(&out, "NEXT: ").is_empty(), "{out}");
 }
 
 #[test]
