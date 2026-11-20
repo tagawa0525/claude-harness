@@ -176,7 +176,6 @@ fn threads_with_node_ids() -> String {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn resolves_the_bot_thread_given_its_thread_id() {
     let fake = FakeGh::new();
     let out = fake.run_calls(
@@ -202,7 +201,6 @@ fn resolves_the_bot_thread_given_its_thread_id() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_human_thread_given_its_thread_id_is_not_resolved_without_allow_human() {
     let threads = threads_with_node_ids();
     let fake = FakeGh::new();
@@ -227,7 +225,6 @@ fn a_human_thread_given_its_thread_id_is_not_resolved_without_allow_human() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn an_already_resolved_thread_given_its_thread_id_is_reported_without_the_mutation() {
     let fake = FakeGh::new();
     let out = fake.run_calls(
@@ -244,7 +241,6 @@ fn an_already_resolved_thread_given_its_thread_id_is_reported_without_the_mutati
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_thread_id_of_another_pr_is_an_error() {
     // URL の PR のスレッドの一覧に無い ID は、別の PR のスレッドを閉じないよう resolve しない
     let fake = FakeGh::new();
@@ -260,7 +256,6 @@ fn a_thread_id_of_another_pr_is_an_error() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_thread_with_no_comments_is_not_resolved_by_default() {
     // スレッドの ID で探すと、コメントを含むことは保証されない。起こした人が分からないので bot と確かめられない
     let threads = r#"{"pageInfo":{"hasNextPage":false},"nodes":[
@@ -278,7 +273,6 @@ fn a_thread_with_no_comments_is_not_resolved_by_default() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn an_id_that_is_neither_a_number_nor_a_thread_id_names_both_forms() {
     // コメントの node_id（PRRC_）、接頭辞だけの PRRT_、URL の断片
     for id in ["PRRC_C1", "PRRT_", "discussion_r11"] {

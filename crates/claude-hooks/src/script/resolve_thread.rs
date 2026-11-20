@@ -1,6 +1,7 @@
-//! `resolve-thread.sh <PR の URL> <comment_id> [--allow-human]`: comment_id（スレッド内の任意のレビューコメントの数の
-//! ID）を含むレビュースレッドを resolve する（/gh-pr-review の Step 5）。REST には resolve の API が無いので、GraphQL の
-//! resolveReviewThread を使う。
+//! `resolve-thread.sh <PR の URL> <comment_id | thread_id> [--allow-human]`: comment_id（スレッド内の任意のレビュー
+//! コメントの数の ID）を含むか、thread_id（スレッドの node ID。`PRRT_…`）の一致するレビュースレッドを resolve する
+//! （/gh-pr-review の Step 5）。どちらの ID も、URL の PR のスレッドの一覧から探す。REST には resolve の API が無いので、
+//! GraphQL の resolveReviewThread を使う。
 //!
 //! スレッドを閉じるのはレビュアーの権限。bot（Copilot 等）が起こしたスレッドは対応後に resolve するが、人間が起こした
 //! スレッドは返信だけにして相手に委ねる。人間のスレッドは既定で拒み、ユーザーが明示的に求めたときだけ
@@ -10,7 +11,18 @@
 use super::pr_url;
 use serde_json::Value;
 
-const USAGE: &str = "Usage: resolve-thread.sh <PR の URL> <comment_id> [--allow-human]";
+const USAGE: &str = "Usage: resolve-thread.sh <PR の URL> <comment_id | thread_id> [--allow-human]";
+
+/// 渡されたスレッドの探し方
+enum Target {
+    /// スレッド内のレビューコメントの数の ID（URL の #discussion_r の後ろ）
+    Comment(u64),
+    /// スレッドの node ID（get-review-comments.sh の thread_id）
+    Thread(String),
+}
+
+/// スレッドの node ID の接頭辞
+const THREAD_ID_PREFIX: &str = "PRRT_";
 
 /// スレッド 100 件、スレッド内のコメント 100 件まで
 const THREADS_QUERY: &str = "
@@ -55,14 +67,18 @@ pub fn main(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let Some(comment_id) = id
-        .bytes()
-        .all(|b| b.is_ascii_digit())
-        .then(|| id.parse::<u64>().ok())
-        .flatten()
-    else {
+    let target = if id.bytes().all(|b| b.is_ascii_digit())
+        && let Ok(comment_id) = id.parse::<u64>()
+    {
+        Target::Comment(comment_id)
+    } else if id
+        .strip_prefix(THREAD_ID_PREFIX)
+        .is_some_and(|rest| !rest.is_empty())
+    {
+        Target::Thread(id.clone())
+    } else {
         eprintln!(
-            "ERROR: comment_id は数値で指定してください（URL の #discussion_r の後ろの数字）: '{id}'"
+            "ERROR: comment_id（数値。URL の #discussion_r の後ろの数字）か thread_id（PRRT_…）で指定してください: '{id}'"
         );
         return 1;
     };
@@ -102,15 +118,24 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("ERROR: レビュースレッドが 100 件を超えています（未対応）");
         return 1;
     }
-    let Some(thread) = nodes.iter().find(|thread| {
-        comments(thread)
+    // スレッドの ID も URL の PR の一覧の中だけで探し、別の PR のスレッドを閉じない
+    let found = nodes.iter().find(|thread| match &target {
+        Target::Comment(comment_id) => comments(thread)
             .iter()
-            .any(|c| c["databaseId"].as_u64() == Some(comment_id))
-    }) else {
-        eprintln!(
-            "ERROR: コメント {comment_id} を含むスレッドが PR #{} に見つかりません",
-            pr.number
-        );
+            .any(|c| c["databaseId"].as_u64() == Some(*comment_id)),
+        Target::Thread(thread_id) => thread["id"].as_str() == Some(thread_id),
+    });
+    let Some(thread) = found else {
+        match &target {
+            Target::Comment(comment_id) => eprintln!(
+                "ERROR: コメント {comment_id} を含むスレッドが PR #{} に見つかりません",
+                pr.number
+            ),
+            Target::Thread(thread_id) => eprintln!(
+                "ERROR: スレッド {thread_id} が PR #{} に見つかりません（別の PR のスレッドは resolve しません）",
+                pr.number
+            ),
+        }
         return 1;
     };
     let thread_id = thread["id"].as_str().unwrap_or("");
@@ -118,9 +143,11 @@ pub fn main(args: &[String]) -> i32 {
         println!("already resolved: {thread_id}");
         return 0;
     }
-    // スレッドを起こした人（先頭のコメントの投稿者）が bot でなければ既定で拒む。消えたアカウント（author が null）も
-    // bot と確かめられないので拒む
-    let starter = &comments(thread)[0]["author"];
+    // スレッドを起こした人（先頭のコメントの投稿者）が bot でなければ既定で拒む。消えたアカウント（author が null）と、
+    // スレッドの ID で見つけたコメントの無いスレッドも、bot と確かめられないので拒む
+    let starter = comments(thread)
+        .first()
+        .map_or(&Value::Null, |c| &c["author"]);
     let starter_type = starter["__typename"].as_str().unwrap_or("unknown");
     let starter_login = starter["login"].as_str().unwrap_or("unknown");
     if starter_type != "Bot" && !allow_human {
@@ -147,7 +174,7 @@ pub fn main(args: &[String]) -> i32 {
     )
 }
 
-/// スレッドのコメント（見つけたスレッドは comment_id を含むので空でない）
+/// スレッドのコメント
 fn comments(thread: &Value) -> &[Value] {
     thread["comments"]["nodes"]
         .as_array()
