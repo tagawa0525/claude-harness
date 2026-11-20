@@ -302,11 +302,12 @@ struct Transcript {
     text: String,
 }
 
-/// 周の行が示す、その周の記録が始まる窓（UNIX のマイクロ秒の [from, to)）と、回した worktree の根（git の toplevel。
-/// 引けなければ行の worktree のまま）
+/// 周の行が示す、その周の記録が始まる窓（UNIX のマイクロ秒の [from, to)）と、回した worktree（dir）とその根（tree。git の
+/// toplevel。引けなければ行の worktree のまま）
 struct Window {
     from: i64,
     to: i64,
+    dir: Option<PathBuf>,
     tree: Option<PathBuf>,
 }
 
@@ -345,6 +346,7 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
                 windows.push(Window {
                     from,
                     to,
+                    dir: round.dir.clone(),
                     tree: round.dir.clone().map(|d| toplevel(&d).unwrap_or(d)),
                 });
             }
@@ -709,9 +711,13 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
     if hits.is_empty() {
         return None;
     }
-    // 対象の worktree の根は、時刻の入った記録だけで 1 度引く
+    // 対象の worktree の根は、時刻の入った記録で、窓に worktree があるときだけ 1 度引く
     let target_dir = review_dir(prompt);
-    let target_tree = target_dir.as_deref().and_then(toplevel);
+    let target_tree = if hits.iter().any(|w| w.tree.is_some()) {
+        target_dir.as_deref().and_then(toplevel)
+    } else {
+        None
+    };
     // 対象が git の worktree の中に無い（`/` など）なら分からないので除かない
     if !hits.iter().any(|w| match (&w.tree, &target_tree) {
         (Some(tree), Some(top)) => top == tree,
@@ -719,11 +725,12 @@ fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
     }) {
         return None;
     }
-    // NEXT: の対象は worktree の中のディレクトリか、依頼文の最初の語（PR の番号など）
-    let target = target_tree
-        .and(target_dir)
-        .map(|d| d.display().to_string())
-        .or_else(|| review_words(prompt).next().map(str::to_string));
+    // NEXT: の対象は worktree の中のディレクトリ。無ければ周の行の worktree、それも無ければ None で起動したディレクトリにする
+    // （依頼文の最初の語は、焦点の文やオプションでありうる）
+    let target = target_dir
+        .filter(|d| toplevel(d).is_some())
+        .or_else(|| hits.iter().find_map(|w| w.dir.clone()))
+        .map(|d| d.display().to_string());
     // 大きな tool の結果に UTF-8 でないバイトが残っても、ほかの行は読む
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes).ok()?;
@@ -764,10 +771,18 @@ fn toplevel(path: &Path) -> Option<PathBuf> {
 /// 複数の行でも全体を読む（引数の終わりは、行の終わりの backtick）。続く手順の文のパスは対象でない。count-review-rounds が
 /// 引数を切るのと同じ字で切る
 fn review_words(prompt: &str) -> impl Iterator<Item = &str> {
-    prompt
-        .split_once("Review target: `")
-        .map_or("", |(_, rest)| rest.split("`\n").next().unwrap_or_default())
-        .split(crate::rules::is_word_stop)
+    let rest = prompt
+        .split_once("Review target: ")
+        .map_or("", |(_, rest)| rest);
+    // 引数の終わりが見つからない（backtick が無い、別の字が続く）なら、手順の文を引数と読まないよう 1 行目だけ
+    let args = match rest.strip_prefix('`') {
+        Some(quoted) => match quoted.split_once("`\n") {
+            Some((args, _)) => args,
+            None => quoted.split(['`', '\n']).next().unwrap_or_default(),
+        },
+        None => rest.lines().next().unwrap_or_default(),
+    };
+    args.split(crate::rules::is_word_stop)
         .filter(|w| !w.is_empty())
 }
 
