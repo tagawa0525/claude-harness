@@ -242,7 +242,7 @@ impl Transformer {
 }
 
 /// new のうち、old から直した行を含む表だけを揃え直す（ほかの表の崩れは、この書き換えの範囲の外）。
-/// fix-markdown-lint の表の処理と同じく、コードフェンスの中を飛ばし、区切りの行が続く行から表とみなす
+/// 表の範囲は fix-markdown-lint と同じ読み方で決める（[`fix_markdown_lint::tables`]）
 fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
     let old_lines: Vec<&str> = old.split('\n').collect();
     let lines: Vec<&str> = new.split('\n').collect();
@@ -252,43 +252,17 @@ fn realign_tables(name: &str, old: &str, new: &str) -> Result<String, Stop> {
             "{name}: 置き換えで行の数が変わる（表の揃え直しは、行の数を変えない置き換えだけを扱う）"
         )));
     }
-    let changed = |k: usize| old_lines[k] != lines[k];
-    let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    let mut i = 0;
-    while i < lines.len() {
-        if fix_markdown_lint::fence_open(&lines, i).is_some() {
-            let end = fix_markdown_lint::fence_end(&lines, i);
-            let stop = (end + 1).min(lines.len());
-            out.extend(lines[i..stop].iter().map(|l| l.to_string()));
-            i = stop;
-            continue;
-        }
-        if !(fix_markdown_lint::is_table_row(lines[i])
-            && i + 1 < lines.len()
-            && fix_markdown_lint::is_separator_row(lines[i + 1])
-            && !fix_markdown_lint::is_indented_code(&lines, i))
-        {
-            out.push(lines[i].to_string());
-            i += 1;
-            continue;
-        }
-        let mut j = i;
-        while j < lines.len() && fix_markdown_lint::is_table_row(lines[j]) {
-            j += 1;
-        }
-        let rows = &lines[i..j];
-        if !(i..j).any(changed) {
-            out.extend(rows.iter().map(|l| l.to_string()));
-            i = j;
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    for range in fix_markdown_lint::tables(new) {
+        if !range.clone().any(|k| old_lines[k] != lines[k]) {
             continue;
         }
         // 表の揃え方は行の両端の空白とともに CRLF の CR も外すので、元の行の CR を戻す
-        let formatted = fix_markdown_lint::format_table(rows);
-        for (row, original) in formatted.into_iter().zip(rows) {
-            let cr = if original.ends_with('\r') { "\r" } else { "" };
-            out.push(format!("{row}{cr}"));
+        let rows = &lines[range.clone()];
+        for (k, row) in range.zip(fix_markdown_lint::format_table(rows)) {
+            let cr = if lines[k].ends_with('\r') { "\r" } else { "" };
+            out[k] = format!("{row}{cr}");
         }
-        i = j;
     }
     Ok(out.join("\n"))
 }

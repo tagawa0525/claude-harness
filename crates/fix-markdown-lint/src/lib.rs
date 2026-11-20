@@ -6,8 +6,9 @@
 //!   行頭の全角の空白などは Markdown の字下げでないので外す
 //! - MD040: 言語の無いコードの塊の開きのフェンスに、中身から推定した言語を付ける（`guess_language`）
 //!
-//! フェンスは CommonMark に従い、開きのフェンスの文字（` か ~）と本数を覚え、同じ文字が同じ本数以上で後ろが空白
-//! だけの行で閉じる。その間の行は、短いフェンスや別の文字のフェンスも中身で、表の桁揃えも言語の推定もしない。
+//! どこが表とフェンスかは、Markdown のブロックの構造（リストの項、引用、字下げしたコードブロック、フェンス、HTML の
+//! ブロック、GFM の表）を pulldown-cmark で読んで決める（[`tables`]。ADR-0104）。表の揃え直しは表の範囲の行だけに、
+//! 言語の付け足しは言語の無いフェンスの開きの行だけに当て、コードブロックの中身は書き換えない。
 //!
 //! ファイルは改行を `\n` に揃えて読み（`\r\n` と `\r` も `\n` にする）、直したものだけを `\n` で書く（[`fix_file`]）。
 //!
@@ -15,7 +16,9 @@
 //! `\s`、`\b` は Rust の Unicode の定義のままで、Python と非 ASCII の一部の文字（結合文字、\x1c〜\x1f など）で食い違う。
 //! 推定が外れても付く言語が変わるだけで、文書は壊れないので合わせない
 
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use regex::Regex;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
 use unicode_width::UnicodeWidthStr;
@@ -37,61 +40,103 @@ pub fn fix_file(path: &Path) -> Result<Option<bool>, String> {
 }
 
 pub fn fix_markdown(content: &str) -> String {
-    let lines: Vec<&str> = content.split('\n').collect();
-
-    // 表の桁を揃える。フェンスの中は飛ばす
-    let mut tabled: Vec<String> = Vec::with_capacity(lines.len());
-    let mut i = 0;
-    while i < lines.len() {
-        if fence_open(&lines, i).is_some() {
-            let end = fence_end(&lines, i);
-            tabled.extend(
-                lines[i..(end + 1).min(lines.len())]
-                    .iter()
-                    .map(|l| l.to_string()),
-            );
-            i = end + 1;
-            continue;
+    let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
+    let targets = Targets::parse(content);
+    for range in targets.tables {
+        let rows: Vec<&str> = content
+            .split('\n')
+            .skip(range.start)
+            .take(range.len())
+            .collect();
+        for (k, row) in format_table(&rows).into_iter().enumerate() {
+            lines[range.start + k] = row;
         }
-        if is_table_row(lines[i])
-            && i + 1 < lines.len()
-            && is_separator_row(lines[i + 1])
-            && !is_indented_code(&lines, i)
-        {
-            let j = i + lines[i..].iter().take_while(|l| is_table_row(l)).count();
-            tabled.extend(format_table(&lines[i..j]));
-            i = j;
-            continue;
-        }
-        tabled.push(lines[i].to_string());
-        i += 1;
     }
+    for fence in targets.bare_fences {
+        let body: Vec<&str> = fence.body.lines().collect();
+        let open = format!("{}{}", rstrip(&lines[fence.line]), guess_language(&body));
+        lines[fence.line] = open;
+    }
+    lines.join("\n")
+}
 
-    // 言語の無い開きのフェンスに言語を付ける。閉じのフェンスとそこまでの行はそのままコピーする
-    let lines: Vec<&str> = tabled.iter().map(String::as_str).collect();
-    let mut output: Vec<String> = Vec::with_capacity(lines.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let Some((_, _, info)) = fence_open(&lines, i) else {
-            output.push(lines[i].to_string());
-            i += 1;
-            continue;
+/// 揃え直す表の行の範囲（`content.split('\n')` の行の番号。半開き）。行末の `\r` は改行の一部として読む
+pub fn tables(content: &str) -> Vec<Range<usize>> {
+    Targets::parse(content).tables
+}
+
+/// 言語の無いフェンスの開きの行と、その中身（コンテナの字下げを外した、pulldown-cmark の読んだ中身）
+struct BareFence {
+    line: usize,
+    body: String,
+}
+
+/// 書き換える行の位置
+struct Targets {
+    /// GFM の表のうち、見出しの行が表の行（[`is_table_row`]）で次の行が区切りの行のもの。範囲は見出しの行から、表の
+    /// 範囲の中で、見出しと同じ字下げの表の行が続くところまで。GFM が表に数える `|` の無い行は揃えない。字下げの違う
+    /// 行で止めるのは、[`format_table`] が見出しの字下げを全部の行に付け直し、行をリストの項の中や外に動かすため。
+    /// pulldown-cmark は表の後ろの 4 桁以上深く字下げした行も表の行に読むが、cmark-gfm はそこで表を閉じて字下げした
+    /// コードブロックを始める（ADR-0104 の確認）
+    tables: Vec<Range<usize>>,
+    /// 言語の無いフェンスの開き（info string が空のもの）
+    bare_fences: Vec<BareFence>,
+}
+
+impl Targets {
+    fn parse(content: &str) -> Targets {
+        let starts: Vec<usize> = std::iter::once(0)
+            .chain(content.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        let line_of = |offset: usize| starts.partition_point(|&s| s <= offset) - 1;
+        let lines: Vec<&str> = content.split('\n').collect();
+        let mut targets = Targets {
+            tables: Vec::new(),
+            bare_fences: Vec::new(),
         };
-        let end = fence_end(&lines, i);
-        if info.is_empty() {
-            let lang = guess_language(&lines[i + 1..end.min(lines.len())]);
-            output.push(format!("{}{lang}", rstrip(lines[i])));
-        } else {
-            output.push(lines[i].to_string());
+        let mut fence: Option<BareFence> = None;
+        for (event, range) in Parser::new_ext(content, Options::ENABLE_TABLES).into_offset_iter() {
+            match event {
+                Event::Start(Tag::Table(_)) => {
+                    let first = line_of(range.start);
+                    let last = line_of(range.end.saturating_sub(1).max(range.start));
+                    // 引用やリストの印の行の表は、行の頭が表の行でないので is_table_row が外す
+                    if first < last
+                        && is_table_row(lines[first])
+                        && is_separator_row(lines[first + 1])
+                    {
+                        let indent = leading_blanks(lines[first]);
+                        let end = first
+                            + lines[first..=last]
+                                .iter()
+                                .take_while(|l| is_table_row(l) && leading_blanks(l) == indent)
+                                .count();
+                        if end - first >= 2 {
+                            targets.tables.push(first..end);
+                        }
+                    }
+                }
+                Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
+                    if info.trim().is_empty() =>
+                {
+                    fence = Some(BareFence {
+                        line: line_of(range.start),
+                        body: String::new(),
+                    });
+                }
+                Event::Text(text) => {
+                    if let Some(f) = fence.as_mut() {
+                        f.body.push_str(&text);
+                    }
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    targets.bare_fences.extend(fence.take());
+                }
+                _ => {}
+            }
         }
-        output.extend(
-            lines[i + 1..(end + 1).min(lines.len())]
-                .iter()
-                .map(|l| l.to_string()),
-        );
-        i = end + 1;
+        targets
     }
-    output.join("\n")
 }
 
 /// Python の str.isspace と同じ空白。Rust の char::is_whitespace（Unicode の White_Space）に、Python が空白に数える
@@ -118,14 +163,19 @@ pub fn display_width(s: &str) -> usize {
     s.split(char::is_control).map(UnicodeWidthStr::width).sum()
 }
 
+/// 行頭の字下げ（空白とタブ）
+fn leading_blanks(line: &str) -> &str {
+    &line[..line.len() - line.trim_start_matches([' ', '\t']).len()]
+}
+
 /// 表の行（両端の空白を外すと | で始まって | で終わり、間にも | がある）
-pub fn is_table_row(line: &str) -> bool {
+fn is_table_row(line: &str) -> bool {
     let s = strip(line);
     s.len() >= 2 && s.starts_with('|') && s.ends_with('|') && s[1..s.len() - 1].contains('|')
 }
 
 /// 表の区切りの行（どのセルも `-` の並びで、両端に `:` を置ける）
-pub fn is_separator_row(line: &str) -> bool {
+fn is_separator_row(line: &str) -> bool {
     static DASHES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^:?-+:?$").unwrap());
     if !is_table_row(line) {
         return false;
@@ -185,9 +235,7 @@ impl Align {
 /// 表の行の桁を揃える。2 行目（区切りの行）の : で寄せ方を決め、足りないセルは空のセルで埋める。見出しより多い
 /// セルの行がある表は、GFM が余分なセルを描かず markdownlint（MD056）が知らせるので、揃えずにそのまま返す
 pub fn format_table(table: &[&str]) -> Vec<String> {
-    let indent: &str = table.first().map_or("", |l| {
-        &l[..l.len() - l.trim_start_matches([' ', '\t']).len()]
-    });
+    let indent: &str = table.first().map_or("", |l| leading_blanks(l));
     let rows: Vec<Vec<&str>> = table.iter().map(|l| cells(l)).collect();
     if rows.len() < 2 {
         return table.iter().map(|l| l.to_string()).collect();
@@ -258,86 +306,6 @@ pub fn format_table(table: &[&str]) -> Vec<String> {
             format!("{indent}|{}|", parts.join("|"))
         })
         .collect()
-}
-
-/// 行頭の空白の桁（タブは次の 4 の倍数まで進める）
-fn indent_width(line: &str) -> usize {
-    let mut width = 0;
-    for c in line.chars() {
-        match c {
-            ' ' => width += 1,
-            '\t' => width += 4 - width % 4,
-            _ => break,
-        }
-    }
-    width
-}
-
-/// lines[i] が、リストの項に属さない 4 桁以上の字下げ（フェンスの無いコードブロック）か。字下げした行は、前へ
-/// たどって最初の字下げの浅い行がリストの項の開き（`-`、`*`、`+`、`1.`）ならその項の中身で、そうでなければコード
-pub fn is_indented_code(lines: &[&str], i: usize) -> bool {
-    static MARKER: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^ {0,3}([-*+]|\d{1,9}[.)])([ \t]|$)").unwrap());
-    if indent_width(lines[i]) < 4 {
-        return false;
-    }
-    for line in lines[..i].iter().rev() {
-        if strip(line).is_empty() || indent_width(line) >= 4 {
-            continue;
-        }
-        if MARKER.is_match(line) {
-            return false;
-        }
-        // 項の中身の続き（字下げが 1〜3 桁）は項の一部。字下げの無い行は、リストを閉じる段落
-        if indent_width(line) == 0 {
-            return true;
-        }
-    }
-    true
-}
-
-/// lines[i] が開きのフェンス（CommonMark）なら、フェンスの文字、本数、両端の空白を外した info string。` のフェンスで
-/// info string に ` があれば、フェンスでない。開きの字下げは 0〜3 桁で、4 桁以上はリストの項の中（項の字下げに
-/// 従う）のときだけ。項に属さない 4 桁以上の字下げはコードブロックの文字
-pub fn fence_open<'a>(lines: &[&'a str], i: usize) -> Option<(char, usize, &'a str)> {
-    static OPEN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^[ \t]*(`{3,}|~{3,})(.*)$").unwrap());
-    let line = lines[i];
-    let caps = OPEN.captures(line)?;
-    let fence = caps.get(1)?.as_str();
-    let info = caps.get(2)?.as_str();
-    let ch = fence.chars().next()?;
-    if ch == '`' && info.contains('`') {
-        return None;
-    }
-    if is_indented_code(lines, i) {
-        return None;
-    }
-    Some((ch, fence.len(), strip(info)))
-}
-
-/// line が、ch を length 本以上並べ、open_indent 桁の字下げで開いたフェンスを閉じるか。閉じのフェンスは同じ文字で、
-/// 本数は同じ以上で、後ろは空白だけで、字下げは開きより 4 桁以上深くない（深ければ中身）。短いフェンスと別の文字の
-/// フェンスも中身
-fn fence_close(line: &str, ch: char, length: usize, open_indent: usize) -> bool {
-    // 後ろの空白は Python の \s（str.isspace）と同じく \x1c〜\x1f を含める
-    static CLOSE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^[ \t]*(`{3,}|~{3,})[\s\x1c-\x1f]*$").unwrap());
-    CLOSE.captures(line).is_some_and(|caps| {
-        let fence = &caps[1];
-        fence.starts_with(ch) && fence.len() >= length && indent_width(line) < open_indent + 4
-    })
-}
-
-/// start で開いたフェンスを閉じる行の番号。閉じなければ lines.len()
-pub fn fence_end(lines: &[&str], start: usize) -> usize {
-    let Some((ch, length, _)) = fence_open(lines, start) else {
-        return start;
-    };
-    let open_indent = indent_width(lines[start]);
-    (start + 1..lines.len())
-        .find(|&j| fence_close(lines[j], ch, length, open_indent))
-        .unwrap_or(lines.len())
 }
 
 macro_rules! found {
