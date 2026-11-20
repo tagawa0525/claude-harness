@@ -1596,3 +1596,71 @@ fn the_next_round_is_not_aimed_at_a_directory_outside_the_worktree() {
         stdout(&out)
     );
 }
+
+#[test]
+fn the_previous_round_is_taken_from_the_branch_of_the_clone() {
+    // 置き場は clone で 1 つで、ほかのブランチのファイルにも同じ head の行がありうる（同じコミットを別のブランチで回した）。
+    // 前の周は、起動したディレクトリのブランチの行から決める。そのブランチで前の周が無ければ、PR の差分の全部を求める
+    let fake = FakeGh::new();
+    let (base, second) = two_heads(&fake);
+    let rounds = fake.dir().join(".git/claude-review-rounds");
+    let other = std::fs::read_to_string(rounds.join("feat%2Fx")).unwrap();
+    std::fs::remove_file(rounds.join("feat%2Fx")).unwrap();
+    std::fs::write(rounds.join("other"), other).unwrap();
+    let mut cmd = std::process::Command::new("git");
+    let out = forget_git_env(&mut cmd)
+        .args(["branch", "--show-current"])
+        .current_dir(fake.dir())
+        .output()
+        .unwrap();
+    let branch = String::from_utf8(out.stdout)
+        .unwrap()
+        .trim()
+        .replace('/', "%2F");
+    std::fs::write(
+        rounds.join(&branch),
+        format!("{second} 1794900000 {SESSION}\n"),
+    )
+    .unwrap();
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn second() {}"],
+    );
+    let out = record_zero_with_base(&fake, &second, TWO_HEADS_DIFF, &base);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+}
+
+#[test]
+fn a_required_line_must_be_a_whole_line_of_a_tool_result() {
+    // 長い行の一部や、行をまたぐ文字列は、その行を読んだことを示さない。diff の `+` と Read の行番号の接頭辞は除いて比べる
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["// x > 0 は fn checked(x: u8) -> bool { の中で、}\n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["    12\tfn checked(x: u8) -> bool {\n    13→    x > 0\n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
