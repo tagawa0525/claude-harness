@@ -14,11 +14,11 @@ use serde_json::Value;
 const USAGE: &str = "Usage: resolve-thread.sh <PR の URL> <comment_id | thread_id> [--allow-human]";
 
 /// 渡されたスレッドの探し方
-enum Target {
+enum Target<'a> {
     /// スレッド内のレビューコメントの数の ID（URL の #discussion_r の後ろ）
     Comment(u64),
     /// スレッドの node ID（get-review-comments.sh の thread_id）
-    Thread(String),
+    Thread(&'a str),
 }
 
 /// スレッドの node ID の接頭辞
@@ -75,7 +75,7 @@ pub fn main(args: &[String]) -> i32 {
         .strip_prefix(THREAD_ID_PREFIX)
         .is_some_and(|rest| !rest.is_empty())
     {
-        Target::Thread(id.clone())
+        Target::Thread(id)
     } else {
         eprintln!(
             "ERROR: comment_id（数値。URL の #discussion_r の後ろの数字）か thread_id（PRRT_…）で指定してください: '{id}'"
@@ -123,7 +123,7 @@ pub fn main(args: &[String]) -> i32 {
         Target::Comment(comment_id) => comments(thread)
             .iter()
             .any(|c| c["databaseId"].as_u64() == Some(*comment_id)),
-        Target::Thread(thread_id) => thread["id"].as_str() == Some(thread_id),
+        Target::Thread(thread_id) => thread["id"].as_str() == Some(*thread_id),
     });
     let Some(thread) = found else {
         match &target {
