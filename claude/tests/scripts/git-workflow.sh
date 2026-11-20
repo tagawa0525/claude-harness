@@ -1449,6 +1449,19 @@ assert_eq "" "$(fake_log gh)"
 assert_file_exists "$TEST_ROOT/cleanup70/app-feat-x"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: GitHub のリモートが無くても、GH_REPO（gh の既定のリポジトリ）にマージ済みの PR があれば片付けを続ける"
+# 段階 5 の head の確認と同じく、gh の既定のリポジトリは GH_REPO でも決まる
+setup_merged_branch "$TEST_ROOT/cleanup71"
+gh_merged_and_deleted "$TEST_ROOT/cleanup71"
+cd "$TEST_ROOT/cleanup71/app" || exit 1
+git fetch -q --prune origin
+make_fake_gh '"pr list --head feat/x --state merged --json url --jq .[].url") echo https://github.com/example/app/pull/12 ;;'
+out=$(GH_REPO=example/app "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "https://github.com/example/app/pull/12"
+assert_contains "$(fake_gh_repos)" "(unset)/example/app"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: 手元に痕跡が無くリモートに届かなければ、確かめられないとして ERROR で止まる"
 setup_merged_branch "$TEST_ROOT/cleanup33"
 cd "$TEST_ROOT/cleanup33/app" || exit 1
