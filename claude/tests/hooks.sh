@@ -3882,9 +3882,18 @@ for cmd in "sort -u $MEM_DIR/MEMORY.md | uniq > $MEM_DIR/MEMORY.md" \
   "{ echo a; echo b; } >> $MEM_DIR/MEMORY.md" \
   "( echo a ) > $MEM_DIR/a.md" \
   "if true; then echo a; fi > $MEM_DIR/a.md" \
-  "for i in 1 2; do echo \$i; done >> $MEM_DIR/a.md"; do
+  "for i in 1 2; do echo \$i; done >> $MEM_DIR/a.md" \
+  "{ x=1; } > $MEM_DIR/a.md" "{ ssh h cat x; } > $MEM_DIR/a.md" \
+  "cd $MEM_DIR && { env -C /tmp ls; } > a.md"; do
   out=$(run_hook guard-memory-bash-write "$cmd")
   assert_eq deny "$(decision "$out")"
+done
+
+# 複合文のリダイレクトは、複合文の外のシェルが開く（中の cd の先ではない）
+it "guard-memory-bash-write: 中で memory に cd した複合文の、外の行き先へのリダイレクトは通す"
+for cmd in "( cd $MEM_DIR; cat MEMORY.md ) > notes.md" "{ cd $MEM_DIR && cat MEMORY.md; } > notes.md"; do
+  out=$(run_hook guard-memory-bash-write "$cmd")
+  assert_eq allow "$(decision "$out")"
 done
 
 it "guard-memory-bash-write: memory でないパスと、読むだけのコマンドは通す"

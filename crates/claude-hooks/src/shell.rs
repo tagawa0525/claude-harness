@@ -1425,93 +1425,138 @@ mod tests {
     }
 
     /// コマンドの名前と書き込み先（文書順）
-    fn writes_by_name(src: &str) -> Vec<(String, Vec<String>)> {
-        cmds(src)
+    fn writes_by_name(sh: &Shell) -> Vec<(&str, Vec<&str>)> {
+        sh.commands()
             .iter()
-            .map(|c| {
-                let w = c.writes.iter().map(|a| a.text.clone()).collect();
-                (c.name.clone(), w)
-            })
+            .map(|c| (c.name.as_str(), texts(&c.writes)))
             .collect()
     }
 
-    fn owned(pairs: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
-        pairs
+    /// 複合文のリダイレクトの名前と書き込み先（文書順）
+    fn compound_writes(sh: &Shell) -> Vec<(&str, Vec<&str>)> {
+        sh.compound_writes()
             .iter()
-            .map(|(n, w)| (n.to_string(), w.iter().map(|s| s.to_string()).collect()))
+            .map(|c| (c.name.as_str(), texts(&c.writes)))
             .collect()
     }
 
     #[test]
     fn redirect_after_a_pipeline_writes_from_its_last_stage() {
+        let sh = Shell::parse("sort -u a | uniq > f");
+        assert_eq!(writes_by_name(&sh), [("sort", vec![]), ("uniq", vec!["f"])]);
+        assert!(sh.compound_writes().is_empty());
+        let sh = Shell::parse("echo x | cat >> a.md 2>&1 < in");
         assert_eq!(
-            writes_by_name("sort -u a | uniq > f"),
-            owned(&[("sort", &[]), ("uniq", &["f"])])
+            writes_by_name(&sh),
+            [("echo", vec![]), ("cat", vec!["a.md"])]
         );
-        assert_eq!(
-            writes_by_name("echo x | cat >> a.md 2>&1 < in"),
-            owned(&[("echo", &[]), ("cat", &["a.md"])])
-        );
-        // 最後のステージが複合文なら、その中のコマンドの全部
-        assert_eq!(
-            writes_by_name("a | { b; c; } > f"),
-            owned(&[("a", &[]), ("b", &["f"]), ("c", &["f"])])
-        );
-        // パイプラインの前のステージに付けたリダイレクトは、そのステージのもの
-        assert_eq!(
-            writes_by_name("{ a; } > f | b"),
-            owned(&[("a", &["f"]), ("b", &[])])
-        );
-        assert_eq!(
-            writes_by_name("! a | b > f"),
-            owned(&[("a", &[]), ("b", &["f"])])
-        );
+        let sh = Shell::parse("! a | b > f");
+        assert_eq!(writes_by_name(&sh), [("a", vec![]), ("b", vec!["f"])]);
     }
 
     #[test]
-    fn redirect_on_a_compound_statement_writes_from_every_command_inside() {
-        for src in [
-            "{ a; b && c | d; } >> f",
-            "( a; b && c | d ) > f",
-            "if a; then b && c | d; fi > f",
-            "if a; then b; elif c; then d; fi > f",
-            "if a; then b; else c && d; fi > f",
-            "while a; do b && c | d; done < in > f",
-            "until a; do b; c | d; done > f",
-            "for i in 1 2; do a; b && c | d; done > f",
-            "for ((i=0; i<2; i++)); do a; b && c | d; done > f",
-            "case x in y) a; b;; *) c | d;; esac > f",
+    fn redirect_on_a_compound_statement_is_a_write_of_its_own() {
+        for (src, name) in [
+            ("{ a; b && c | d; } >> f", "{ … }"),
+            ("( a; b && c | d ) > f", "( … )"),
+            ("if a; then b && c | d; fi > f", "if … fi"),
+            ("if a; then b; elif c; then d; else e; fi > f", "if … fi"),
+            ("while a; do b && c | d; done < in > f", "while … done"),
+            ("until a; do b; c | d; done > f", "until … done"),
+            ("for i in 1 2; do a; b && c | d; done > f", "for … done"),
+            ("for ((i=0; i<2; i++)); do a; done > f", "for … done"),
+            ("case x in y) a; b;; *) c | d;; esac > f", "case … esac"),
+            // 単純コマンドの無い文も、ファイルを開く
+            ("{ x=1; } > f", "{ … }"),
+            ("[[ -f a ]] > f", "[[ … ]]"),
+            // パイプラインと並びの最後のステージの複合文
+            ("a | { b; c; } > f", "{ … }"),
+            ("a && { b; } > f", "{ … }"),
+            ("{ a; } > f | b", "{ … }"),
         ] {
-            let ws = writes_by_name(src);
-            assert!(!ws.is_empty(), "{src}");
-            for (name, w) in ws {
-                assert_eq!(w, ["f"], "{src}: {name}");
-            }
+            let sh = Shell::parse(src);
+            assert_eq!(compound_writes(&sh), [(name, vec!["f"])], "{src}");
+            // 中のコマンドの書き込み先には入れない
+            assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
         }
-        // 中のコマンドのリダイレクトは残し、外側のものを足す
+        // 中のコマンドのリダイレクトは、そのコマンドのもの
+        let sh = Shell::parse("{ a > g; b; } > f");
+        assert_eq!(writes_by_name(&sh), [("a", vec!["g"]), ("b", vec![])]);
+        assert_eq!(compound_writes(&sh), [("{ … }", vec!["f"])]);
+        // 文字列の中の複合文も、その位置に読む
+        let sh = Shell::parse("bash -c '{ a; } > f; b'; c");
+        assert_eq!(names(sh.commands()), ["bash", "a", "b", "c"]);
+        assert_eq!(compound_writes(&sh), [("{ … }", vec!["f"])]);
+        let w = &sh.compound_writes()[0];
+        assert!(w.runs_before(&sh.commands()[1]));
+        assert!(w.runs_before(&sh.commands()[2]));
+        assert!(!w.runs_before(&sh.commands()[3]));
+    }
+
+    #[test]
+    fn compound_redirect_opens_in_the_shell_outside_it() {
+        // 中の `cd`、ラッパーの行き先は当たらず、前の `cd` は当たる
+        for src in [
+            "( cd /mm; cat a ) > f",
+            "{ cd /mm && cat a; } > f",
+            "{ env -C /mm ls; } > f",
+            "{ git -C /mm log; } > f",
+        ] {
+            let sh = Shell::parse(src);
+            let w = &sh.compound_writes()[0];
+            assert_eq!(
+                sh.target_dir(w, Path::new("/ww")),
+                PathBuf::from("/ww"),
+                "{src}"
+            );
+        }
+        for src in ["cd /dd; ( cd /mm; cat a ) > f", "cd /dd && { cat a; } > f"] {
+            let sh = Shell::parse(src);
+            let w = &sh.compound_writes()[0];
+            assert_eq!(
+                sh.target_dir(w, Path::new("/ww")),
+                PathBuf::from("/dd"),
+                "{src}"
+            );
+        }
+        // ssh の中のコマンドの外で開く
+        let sh = Shell::parse("{ ssh h cat x; } > f");
+        assert!(!sh.runs_under_ssh_or_login(&sh.compound_writes()[0]));
+        // 後ろの `( … )` の外のコマンドより前に開く
+        for (src, writer) in [
+            ("( echo a ) > m.txt && git commit -F m.txt", "( … )"),
+            ("{ echo a; } > m.txt; git commit -F m.txt", "{ … }"),
+            (
+                "if true; then echo a; fi > m.txt; git commit -F m.txt",
+                "if … fi",
+            ),
+        ] {
+            assert_eq!(
+                writer_of(src, "/ww/m.txt").as_deref(),
+                Some(writer),
+                "{src}"
+            );
+        }
+        // 中のコマンドより前に開く（`>` は空にする）
         assert_eq!(
-            writes_by_name("{ a > g; b; } > f"),
-            owned(&[("a", &["g", "f"]), ("b", &["f"])])
+            writer_of("{ git commit -F m.txt; } > m.txt", "/ww/m.txt").as_deref(),
+            Some("{ … }")
         );
     }
 
     #[test]
-    fn outer_redirects_skip_inputs_fd_copies_substitutions_and_function_bodies() {
-        assert_eq!(
-            writes_by_name("{ a; b; } < in 2>&1 | c"),
-            owned(&[("a", &[]), ("b", &[]), ("c", &[])])
-        );
-        assert_eq!(
-            writes_by_name("a | b < in"),
-            owned(&[("a", &[]), ("b", &[])])
-        );
-        // 置換の中の出力はシェルが受け取る
-        assert_eq!(
-            writes_by_name("{ x=$(cat a); echo \"$x\"; } > f"),
-            owned(&[("cat", &[]), ("echo", &["f"])])
-        );
-        // 関数の定義に付けたリダイレクトは、呼んだときに開く
-        assert_eq!(writes_by_name("g() { a; } > f"), owned(&[("a", &[])]));
+    fn compound_writes_skip_inputs_fd_copies_and_function_definitions() {
+        for src in [
+            "{ a; b; } < in 2>&1 | c",
+            "while read l; do a; done < in",
+            "a | b < in",
+            // 関数の定義に付けたリダイレクトは、呼んだときに開く
+            "g() { a; } > f",
+        ] {
+            let sh = Shell::parse(src);
+            assert!(sh.compound_writes().is_empty(), "{src}");
+            assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
+        }
     }
 
     /// 最初の `git commit` より前に `path` を引数に取るか書くコマンドの名前。行き先は `/w`
