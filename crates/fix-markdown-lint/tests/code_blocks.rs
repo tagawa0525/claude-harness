@@ -58,3 +58,13 @@ fn table_shaped_rows_indented_deeper_than_the_table_are_left_alone() {
         "text\n\n| a   | b |\n| --- | - |\n| xxx | y |\n    | c | d |\n    | - | - |\n    | eee | f |\n"
     );
 }
+
+#[test]
+fn a_table_stops_before_a_row_starting_with_an_ideographic_space() {
+    // 全角の空白は字下げでなくセルの中身。外して揃えると、行のセルが変わる
+    let src = "| a | b |\n| - | - |\n| xxx | y |\n\u{3000}| ccc | d |\n";
+    assert_eq!(
+        fix_markdown(src),
+        "| a   | b |\n| --- | - |\n| xxx | y |\n\u{3000}| ccc | d |\n"
+    );
+}
