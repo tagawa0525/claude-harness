@@ -760,6 +760,8 @@ mod tests {
             "test_a.py",
             "data/fixtures/a.json",
             "x/testdata/a.txt",
+            "web/a.spec.ts",
+            "App/Tests/A.cs",
         ] {
             assert!(is_test(path), "{path}");
         }
@@ -795,5 +797,7 @@ mod tests {
             "{:?}",
             added_lines(diff)
         );
+        // C の文字列の形のほかの文字（`\r` など）も戻す
+        assert_eq!(unquote(r#""b/a\rb\\c""#), "b/a\rb\\c");
     }
 }

@@ -723,12 +723,12 @@ fn config(fake: &FakeGh) -> std::path::PathBuf {
     fake.dir().join("claude-config")
 }
 
-/// count-review-rounds が書く形の行（`<HEAD> <UNIX 秒> <セッション>`）で、rounds の HEAD を回した記録を置く
+/// count-review-rounds が書く形の行（`<HEAD> <UNIX 秒> <セッション> <回した worktree>`）で、rounds の HEAD を回した記録を置く
 fn reviewed_in_session(fake: &FakeGh, rounds: &[&str]) {
     reviewed_at(fake, &[]);
     let text: String = rounds
         .iter()
-        .map(|h| format!("{h} 1794900000 {SESSION}\n"))
+        .map(|h| format!("{h} 1794900000 {SESSION} {TARGET}\n"))
         .collect();
     std::fs::write(fake.dir().join(".git/claude-review-rounds/feat%2Fx"), text).unwrap();
 }
@@ -736,6 +736,19 @@ fn reviewed_in_session(fake: &FakeGh, rounds: &[&str]) {
 /// /code-review が起動したサブエージェントの記録を、Claude Code が置く形で置く（`<設定>/projects/<プロジェクト>/<セッション>/
 /// subagents/agent-<id>.jsonl` と、隣の `.forked-skill.json`）。tool の結果は、文字列と text の配列の両方の形で入れる
 fn transcript(fake: &FakeGh, id: &str, skill: &str, effort: &str, started: &str, results: &[&str]) {
+    transcript_of(fake, id, TARGET, skill, effort, started, results);
+}
+
+/// [`transcript`] と同じだが、依頼文の対象を target にする
+fn transcript_of(
+    fake: &FakeGh,
+    id: &str,
+    target: &str,
+    skill: &str,
+    effort: &str,
+    started: &str,
+    results: &[&str],
+) {
     let dir = config(fake).join(format!("projects/-work-app/{SESSION}/subagents"));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -747,7 +760,7 @@ fn transcript(fake: &FakeGh, id: &str, skill: &str, effort: &str, started: &str,
     let mut lines = vec![serde_json::json!({
         "type": "user",
         "timestamp": started,
-        "message": {"role": "user", "content": format!("Review target: `{TARGET} 焦点: 直した差分`\n\n## Turn 1 — read\n")},
+        "message": {"role": "user", "content": format!("Review target: `{target} 焦点: 直した差分`\n\n## Turn 1 — read\n")},
     })];
     for (i, result) in results.iter().enumerate() {
         let content = if i % 2 == 0 {
@@ -860,7 +873,11 @@ fn the_rounds_of_a_head_together_can_cover_the_diff() {
     // 回し直した周の行（10 分後）
     let rounds = fake.dir().join(".git/claude-review-rounds/feat%2Fx");
     let text = std::fs::read_to_string(&rounds).unwrap();
-    std::fs::write(&rounds, format!("{text}{HEAD} 1794900600 {SESSION}\n")).unwrap();
+    std::fs::write(
+        &rounds,
+        format!("{text}{HEAD} 1794900600 {SESSION} {TARGET}\n"),
+    )
+    .unwrap();
     transcript(
         &fake,
         "a1",
@@ -1213,4 +1230,137 @@ fn a_review_whose_children_read_the_diff_needs_a_reason() {
     );
     let out = record_zero(&fake, HEAD, PR_DIFF, &["--unlogged", "max の周"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_review_of_another_worktree_started_at_the_same_time_does_not_count() {
+    // /delegate の担当は親のセッションを共有し、同じ頃に別の PR を回す。周の行に書いた worktree と依頼文の対象で分ける
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "a1", "code-review", "low", AFTER, &["nothing"]);
+    transcript_of(
+        &fake,
+        "b1",
+        "/work/other-pr",
+        "code-review",
+        "max",
+        AFTER,
+        &[READ_DIFF],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+    assert!(
+        stdout(&out).contains(&format!("NEXT: /code-review medium {TARGET} ")),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_review_whose_level_is_unknown_is_still_checked() {
+    // 子に読ませるのは xhigh と max だけ。レベルが読めない記録を、確かめられないとして --unlogged で通さない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "a1", "code-review", "", AFTER, &["nothing"]);
+    let out = record_zero(&fake, HEAD, PR_DIFF, &["--unlogged", "念のため"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("NEXT: /code-review"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_round_line_with_a_broken_time_is_not_a_window() {
+    // 手で直して壊れた時刻で、窓の計算を溢れさせない
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{HEAD} 99999999999999 {SESSION}\n"),
+    )
+    .unwrap();
+    transcript(&fake, "a1", "code-review", "low", AFTER, &[READ_DIFF]);
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("--unlogged"), "{}", stderr(&out));
+}
+
+/// 前の周の head に base を merge した head を作る（rebase でなく merge で base に追いついた形。前の head は祖先のまま）
+fn merged_heads(fake: &FakeGh) -> String {
+    let git = |args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        let out = forget_git_env(&mut cmd)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(fake.dir())
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    reviewed_at(fake, &[]);
+    std::fs::create_dir_all(fake.dir().join("src")).unwrap();
+    std::fs::write(fake.dir().join("src/a.rs"), "fn base() {}\n").unwrap();
+    git(&["add", "src/a.rs"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        fake.dir().join("src/a.rs"),
+        "let shared = 1;\nfn first() {}\nfn base() {}\n",
+    )
+    .unwrap();
+    git(&["commit", "-q", "-am", "pr"]);
+    let prev = git(&["rev-parse", "HEAD"]);
+    git(&["checkout", "-q", "-b", "main-moved", &base]);
+    std::fs::write(fake.dir().join("src/b.rs"), "let shared = 1;\n").unwrap();
+    git(&["add", "src/b.rs"]);
+    git(&["commit", "-q", "-m", "main"]);
+    git(&["checkout", "-q", &prev]);
+    git(&["merge", "-q", "--no-edit", "main-moved"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{prev} 1794800000 {SESSION}\n{head} 1794900000 {SESSION}\n"),
+    )
+    .unwrap();
+    head
+}
+
+#[test]
+fn after_merging_the_base_lines_the_base_added_do_not_stand_for_the_pr() {
+    // base を引けず、前の head が祖先でも、base を merge した head の `git diff <前の head> <head>` は base の変更を含む
+    const DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n\
+--- a/src/a.rs\n\
++++ b/src/a.rs\n\
+@@ -0,0 +1,2 @@\n\
++let shared = 1;\n\
++fn first() {}\n\
+diff --git a/src/b.rs b/src/b.rs\n\
+--- a/src/b.rs\n\
++++ b/src/b.rs\n\
+@@ -0,0 +1 @@\n\
++let shared = 1;\n";
+    let fake = FakeGh::new();
+    let head = merged_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;"],
+    );
+    let out = record_zero_with_base(
+        &fake,
+        &head,
+        DIFF,
+        "0000000000000000000000000000000000000000",
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
 }

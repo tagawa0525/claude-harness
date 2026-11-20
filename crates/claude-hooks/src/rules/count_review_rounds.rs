@@ -310,6 +310,8 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].head, head);
         assert_eq!(lines[0].session.as_deref(), Some("0a87f718-session"));
+        // 回した worktree（空白を含んでもよい）。record-local-review が、同じ頃に回したほかの worktree の周と分ける
+        assert_eq!(lines[0].dir.as_deref(), Some(r.dir.as_path()));
         // 前の版の hook が書いた、セッションの無い行も読む
         let state = state_dir(&r.dir).unwrap();
         std::fs::write(state.join("old"), format!("{head} 1794900000\n")).unwrap();
