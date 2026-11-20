@@ -1382,6 +1382,96 @@ mod tests {
         assert_eq!(texts(&cs[1].writes), ["out"]);
     }
 
+    /// コマンドの名前と書き込み先（文書順）
+    fn writes_by_name(src: &str) -> Vec<(String, Vec<String>)> {
+        cmds(src)
+            .iter()
+            .map(|c| {
+                let w = c.writes.iter().map(|a| a.text.clone()).collect();
+                (c.name.clone(), w)
+            })
+            .collect()
+    }
+
+    fn owned(pairs: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+        pairs
+            .iter()
+            .map(|(n, w)| (n.to_string(), w.iter().map(|s| s.to_string()).collect()))
+            .collect()
+    }
+
+    #[test]
+    fn redirect_after_a_pipeline_writes_from_its_last_stage() {
+        assert_eq!(
+            writes_by_name("sort -u a | uniq > f"),
+            owned(&[("sort", &[]), ("uniq", &["f"])])
+        );
+        assert_eq!(
+            writes_by_name("echo x | cat >> a.md 2>&1 < in"),
+            owned(&[("echo", &[]), ("cat", &["a.md"])])
+        );
+        // 最後のステージが複合文なら、その中のコマンドの全部
+        assert_eq!(
+            writes_by_name("a | { b; c; } > f"),
+            owned(&[("a", &[]), ("b", &["f"]), ("c", &["f"])])
+        );
+        // パイプラインの前のステージに付けたリダイレクトは、そのステージのもの
+        assert_eq!(
+            writes_by_name("{ a; } > f | b"),
+            owned(&[("a", &["f"]), ("b", &[])])
+        );
+        assert_eq!(
+            writes_by_name("! a | b > f"),
+            owned(&[("a", &[]), ("b", &["f"])])
+        );
+    }
+
+    #[test]
+    fn redirect_on_a_compound_statement_writes_from_every_command_inside() {
+        for src in [
+            "{ a; b && c | d; } >> f",
+            "( a; b && c | d ) > f",
+            "if a; then b && c | d; fi > f",
+            "if a; then b; elif c; then d; fi > f",
+            "if a; then b; else c && d; fi > f",
+            "while a; do b && c | d; done < in > f",
+            "until a; do b; c | d; done > f",
+            "for i in 1 2; do a; b && c | d; done > f",
+            "for ((i=0; i<2; i++)); do a; b && c | d; done > f",
+            "case x in y) a; b;; *) c | d;; esac > f",
+        ] {
+            let ws = writes_by_name(src);
+            assert!(!ws.is_empty(), "{src}");
+            for (name, w) in ws {
+                assert_eq!(w, ["f"], "{src}: {name}");
+            }
+        }
+        // 中のコマンドのリダイレクトは残し、外側のものを足す
+        assert_eq!(
+            writes_by_name("{ a > g; b; } > f"),
+            owned(&[("a", &["g", "f"]), ("b", &["f"])])
+        );
+    }
+
+    #[test]
+    fn outer_redirects_skip_inputs_fd_copies_substitutions_and_function_bodies() {
+        assert_eq!(
+            writes_by_name("{ a; b; } < in 2>&1 | c"),
+            owned(&[("a", &[]), ("b", &[]), ("c", &[])])
+        );
+        assert_eq!(
+            writes_by_name("a | b < in"),
+            owned(&[("a", &[]), ("b", &[])])
+        );
+        // 置換の中の出力はシェルが受け取る
+        assert_eq!(
+            writes_by_name("{ x=$(cat a); echo \"$x\"; } > f"),
+            owned(&[("cat", &[]), ("echo", &["f"])])
+        );
+        // 関数の定義に付けたリダイレクトは、呼んだときに開く
+        assert_eq!(writes_by_name("g() { a; } > f"), owned(&[("a", &[])]));
+    }
+
     /// 最初の `git commit` より前に `path` を引数に取るか書くコマンドの名前。行き先は `/w`
     fn writer_of(src: &str, path: &str) -> Option<String> {
         let sh = Shell::parse(src);
