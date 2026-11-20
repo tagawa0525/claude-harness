@@ -1436,6 +1436,19 @@ assert_contains "$out" "HTTP 404"
 assert_file_exists "$TEST_ROOT/cleanup69/app-feat-x"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: push 先の URL を GitHub のリポジトリと読めず、gh の既定のリポジトリも無ければ、痕跡が無いとせず理由を添えて ERROR で止まる"
+# insteadOf がローカルの bare へ書き換えるので git remote -v に github.com が出ず、gh の既定のリポジトリは決まらない
+setup_merged_branch "$TEST_ROOT/cleanup70"
+github_origin "$TEST_ROOT/cleanup70/app" https://github.com/fork-owner
+cd "$TEST_ROOT/cleanup70/app" || exit 1
+make_fake_gh ''
+out=$(GH_REPO='' "$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "GitHub のリポジトリを読めない"
+assert_eq "" "$(fake_log gh)"
+assert_file_exists "$TEST_ROOT/cleanup70/app-feat-x"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: 手元に痕跡が無くリモートに届かなければ、確かめられないとして ERROR で止まる"
 setup_merged_branch "$TEST_ROOT/cleanup33"
 cd "$TEST_ROOT/cleanup33/app" || exit 1
