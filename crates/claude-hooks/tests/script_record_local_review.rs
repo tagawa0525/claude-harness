@@ -683,8 +683,9 @@ fn a_bad_finding_names_the_value() {
 
 const SESSION: &str = "0a87f718-test-session";
 const TARGET: &str = "/work/app-feat-x";
-/// 周の行の時刻（1794900000 = 2026-11-17T07:20:00Z）より後
-const AFTER: &str = "2026-11-17T07:21:00.000Z";
+/// 周の行の時刻（1794900000 = 2026-11-17T07:20:00Z）の直後（/code-review のサブエージェントは、Skill の呼び出しの
+/// 1 秒以内に始まる）
+const AFTER: &str = "2026-11-17T07:20:01.000Z";
 const BEFORE: &str = "2026-11-17T07:19:00.000Z";
 
 /// PR の差分。本体（src/a.rs）のほかに、テストと lock のファイルの追加行がある
@@ -856,6 +857,10 @@ fn the_rounds_of_a_head_together_can_cover_the_diff() {
     // 欠けたファイルを焦点に回し直した周は、そのファイルだけを読む。同じ head の周が合わせて読んでいれば記録する
     let fake = FakeGh::new();
     reviewed_in_session(&fake, &[HEAD]);
+    // 回し直した周の行（10 分後）
+    let rounds = fake.dir().join(".git/claude-review-rounds/feat%2Fx");
+    let text = std::fs::read_to_string(&rounds).unwrap();
+    std::fs::write(&rounds, format!("{text}{HEAD} 1794900600 {SESSION}\n")).unwrap();
     transcript(
         &fake,
         "a1",
@@ -869,7 +874,7 @@ fn the_rounds_of_a_head_together_can_cover_the_diff() {
         "a2",
         "code-review",
         "medium",
-        "2026-11-17T07:30:00.000Z",
+        "2026-11-17T07:30:00.500Z",
         &["+    x > 0\n+}"],
     );
     let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
@@ -914,11 +919,21 @@ fn a_test_only_diff_must_be_read_in_its_test_files() {
 
 #[test]
 fn only_code_review_transcripts_started_after_the_round_count() {
-    // 前の周の記録と、ほかのサブエージェント（差分を書いた担当など）の記録は、この周に読んだことを示さない
+    // 前の周の記録、ほかのサブエージェント（差分を書いた担当など）の記録、周の行の直後に始まっていない記録は、この周に
+    // 読んだことを示さない
     let fake = FakeGh::new();
     reviewed_in_session(&fake, &[HEAD]);
     transcript(&fake, "old", "code-review", "low", BEFORE, &[READ_DIFF]);
     transcript(&fake, "other", "simplify", "low", AFTER, &[READ_DIFF]);
+    // 同じセッションで後に回した、別の PR の周（/delegate の担当は親のセッションを共有する）
+    transcript(
+        &fake,
+        "later",
+        "code-review",
+        "low",
+        "2026-11-17T07:30:00.000Z",
+        &[READ_DIFF],
+    );
     transcript(&fake, "a1", "code-review", "low", AFTER, &["nothing"]);
     let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
@@ -971,7 +986,7 @@ fn a_reason_does_not_pass_a_review_that_did_not_read_the_diff() {
     assert!(!fake.log().contains("pr comment"), "{}", fake.log());
 }
 
-/// 起動するディレクトリの clone に、main の上の 2 つのコミット（前の周の head と、直した head）を作る
+/// 起動するディレクトリの clone に、base の上の 2 つのコミット（前の周の head と、直した head）を作る。返すのは base と直した head
 fn two_heads(fake: &FakeGh) -> (String, String) {
     let git = |args: &[&str]| {
         let mut cmd = std::process::Command::new("git");
@@ -991,6 +1006,7 @@ fn two_heads(fake: &FakeGh) -> (String, String) {
     std::fs::write(fake.dir().join("src/a.rs"), "fn base() {}\n").unwrap();
     git(&["add", "src/a.rs"]);
     git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
     std::fs::write(fake.dir().join("src/a.rs"), "fn base() {}\nfn first() {}\n").unwrap();
     git(&["commit", "-q", "-am", "first"]);
     let first = git(&["rev-parse", "HEAD"]);
@@ -1006,7 +1022,7 @@ fn two_heads(fake: &FakeGh) -> (String, String) {
         format!("{first} 1794800000 {SESSION}\n{second} 1794900000 {SESSION}\n"),
     )
     .unwrap();
-    (first, second)
+    (base, second)
 }
 
 const TWO_HEADS_DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n\
@@ -1045,4 +1061,156 @@ fn after_a_fix_the_lines_changed_since_the_previous_round_must_be_read() {
     let out = record_zero(&fake, &second, TWO_HEADS_DIFF, &[]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+}
+
+/// 0 件で記録する。前の周があるときは、PR の base の SHA も gh で引く（head、権限、差分、base、コメントの順）
+fn record_zero_with_base(
+    fake: &FakeGh,
+    head: &str,
+    diff: &str,
+    base: &str,
+) -> std::process::Output {
+    let config = config(fake).to_string_lossy().into_owned();
+    fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, head, "0", "0", "0"],
+        &[
+            (&format!("{head}\n"), 0),
+            ("true\n", 0),
+            (diff, 0),
+            (&format!("{base}\n"), 0),
+            ("https://github.com/octo/repo/pull/42#issuecomment-1\n", 0),
+        ],
+        &[("CLAUDE_CONFIG_DIR", &config)],
+    )
+}
+
+/// 前の周の head を base の上に、直した head を base の進んだ先（main が同じ行を足した）の上に作る（rebase の後の形）
+fn rebased_heads(fake: &FakeGh) -> (String, String) {
+    let git = |args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        let out = forget_git_env(&mut cmd)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(fake.dir())
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let write = |text: &str| std::fs::write(fake.dir().join("src/a.rs"), text).unwrap();
+    reviewed_at(fake, &[]);
+    std::fs::create_dir_all(fake.dir().join("src")).unwrap();
+    write("fn base() {}\n");
+    git(&["add", "src/a.rs"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    write("let shared = 1;\nfn first() {}\nfn base() {}\n");
+    git(&["commit", "-q", "-am", "pr"]);
+    let prev = git(&["rev-parse", "HEAD"]);
+    git(&["checkout", "-q", &base]);
+    write("fn base() {}\nlet shared = 1;\n");
+    git(&["commit", "-q", "-am", "main"]);
+    let main = git(&["rev-parse", "HEAD"]);
+    write("let shared = 1;\nfn first() {}\nfn base() {}\nlet shared = 1;\n");
+    git(&["commit", "-q", "-am", "pr rebased"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{prev} 1794800000 {SESSION}\n{head} 1794900000 {SESSION}\n"),
+    )
+    .unwrap();
+    (main, head)
+}
+
+const REBASED_DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n\
+--- a/src/a.rs\n\
++++ b/src/a.rs\n\
+@@ -0,0 +1,2 @@\n\
++let shared = 1;\n\
++fn first() {}\n";
+
+#[test]
+fn after_a_rebase_lines_the_base_also_added_do_not_stand_for_the_pr() {
+    // rebase の後の `git diff <前の head> <head>` は base の変更を含む。PR が足した行と字面が同じ base の行だけを求めると、
+    // PR の変更を読まない周を通す。前の周から PR の差分が変わっていなければ、PR の差分の全部を求める
+    let fake = FakeGh::new();
+    let (main, head) = rebased_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;"],
+    );
+    let out = record_zero_with_base(&fake, &head, REBASED_DIFF, &main);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+
+    // base を引けない（手元に無い）ときも、rebase した head には PR の差分の全部を求める
+    let fake = FakeGh::new();
+    let (_, head) = rebased_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;"],
+    );
+    let out = record_zero_with_base(
+        &fake,
+        &head,
+        REBASED_DIFF,
+        "0000000000000000000000000000000000000000",
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+
+    let fake = FakeGh::new();
+    let (main, head) = rebased_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;\n+fn first() {}"],
+    );
+    let out = record_zero_with_base(&fake, &head, REBASED_DIFF, &main);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_review_whose_children_read_the_diff_needs_a_reason() {
+    // xhigh と max の /code-review は、子のエージェントに読ませる。子の記録は数えないので、読んだかを確かめられない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "max",
+        AFTER,
+        &["summary of reviewers"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("--unlogged"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("NEXT:"), "{}", stdout(&out));
+
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "max",
+        AFTER,
+        &["summary of reviewers"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &["--unlogged", "max の周"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }

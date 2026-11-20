@@ -622,3 +622,60 @@ fn raised(effort: &str) -> &str {
         other => other,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_files_are_named_by_the_patterns_code_review_skips() {
+        // /code-review の low が外すと書く形（test/、spec/、__tests__/、*_test.*、*.test.*、fixtures/、testdata/）と tests/、
+        // test_*。名前に test を含むだけのファイルは本体として求める（外すと、本体を読まない周を通す）
+        for path in [
+            "tests/a.rs",
+            "crates/x/tests/common/mod.rs",
+            "claude/tests/scripts/x.sh",
+            "src/__tests__/a.js",
+            "spec/a_spec.rb",
+            "pkg/a_test.go",
+            "web/a.test.ts",
+            "test_a.py",
+            "data/fixtures/a.json",
+            "x/testdata/a.txt",
+        ] {
+            assert!(is_test(path), "{path}");
+        }
+        for path in [
+            "src/latest.rs",
+            "src/attest.rs",
+            "contest/a.rs",
+            "docs/testimony.md",
+        ] {
+            assert!(!is_test(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn lines_without_three_letters_or_digits_are_not_compared() {
+        // `}` や `Ok(())` はほとんどの tool の結果に入り、読んだことを示さない
+        let diff = "diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -1 +1,4 @@\n+}\n+Ok(())\n+    ];\n+fn ab() {}\n";
+        let lines = added_lines(diff);
+        assert_eq!(
+            lines
+                .get("a.rs")
+                .map(|l| l.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["fn ab() {}".to_string()])
+        );
+    }
+
+    #[test]
+    fn quoted_paths_are_read_as_utf8() {
+        // git は core.quotePath で ASCII でないパスを 8 進で引用する。gh の差分のパスと同じ字面にそろえる
+        let diff = "diff --git \"a/docs/\\346\\227\\245.md\" \"b/docs/\\346\\227\\245.md\"\n+++ \"b/docs/\\346\\227\\245.md\"\n@@ -1 +1 @@\n+本文の行\n";
+        assert!(
+            added_lines(diff).contains_key("docs/日.md"),
+            "{:?}",
+            added_lines(diff)
+        );
+    }
+}
