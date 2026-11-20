@@ -1355,6 +1355,113 @@ assert_contains "$out" "HTTP 401"
 assert_file_exists "$TEST_ROOT/cleanup32/app-feat-x"
 cd "$TEST_ROOT" || exit 1
 
+it "post-merge-cleanup: 手元にもリモートにも無くても、push 先のリポジトリ（gh の既定と違う）にマージ済みの PR があれば片付けを続ける"
+setup_merged_branch "$TEST_ROOT/cleanup64" github
+github_origin "$TEST_ROOT/cleanup64/app" https://github.com/fork-owner/app.git
+gh_merged_and_deleted "$TEST_ROOT/cleanup64"
+cd "$TEST_ROOT/cleanup64/app" || exit 1
+git fetch -q --prune origin
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state merged --json url --jq .[].url") echo https://github.com/fork-owner/app/pull/8 ;;
+  "pr list --head feat/x --state merged --json url --jq .[].url") ;;'
+# -R の owner/name のホストは GH_HOST で決まるので、環境が GitHub Enterprise を指していても github.com を探す
+out=$(GH_HOST=ghe.example "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "https://github.com/fork-owner/app/pull/8"
+assert_contains "$out" "LOCAL_BRANCH: none"
+assert_contains "$(fake_gh_repos)" "github.com/(unset)"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: git remote -v に github.com が出なくても（insteadOf）、push 先の設定の URL が GitHub ならマージ済みの PR を探す"
+setup_merged_branch "$TEST_ROOT/cleanup65"
+github_origin "$TEST_ROOT/cleanup65/app" https://github.com/fork-owner/app.git
+gh_merged_and_deleted "$TEST_ROOT/cleanup65"
+cd "$TEST_ROOT/cleanup65/app" || exit 1
+git fetch -q --prune origin
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state merged --json url --jq .[].url") echo https://github.com/fork-owner/app/pull/9 ;;'
+out=$(GH_REPO='' "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "https://github.com/fork-owner/app/pull/9"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: ホストを GitHub.com と書いた push 先でも、マージ済みの PR を探す"
+setup_merged_branch "$TEST_ROOT/cleanup66"
+git -C "$TEST_ROOT/cleanup66/app" remote set-url --add --push origin https://GitHub.com/Fork-Owner/app.git
+gh_merged_and_deleted "$TEST_ROOT/cleanup66"
+cd "$TEST_ROOT/cleanup66/app" || exit 1
+git fetch -q --prune origin
+make_fake_gh '"pr list -R Fork-Owner/app --head feat/x --state merged --json url --jq .[].url") echo https://github.com/Fork-Owner/app/pull/10 ;;
+  "pr list --head feat/x --state merged --json url --jq .[].url") ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "https://github.com/Fork-Owner/app/pull/10"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: push 先にも gh の既定のリポジトリにもマージ済みの PR が無ければ ERROR で止まる"
+setup_merged_branch "$TEST_ROOT/cleanup67" github
+github_origin "$TEST_ROOT/cleanup67/app" https://github.com/fork-owner/app.git
+cd "$TEST_ROOT/cleanup67/app" || exit 1
+make_fake_gh '"pr list -R fork-owner/app --head docs/other-repo --state merged --json url --jq .[].url") ;;
+  "pr list --head docs/other-repo --state merged --json url --jq .[].url") ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "ERROR: docs/other-repo の痕跡"
+assert_contains "$out" "マージ済みの PR"
+assert_eq 2 "$(fake_log gh | grep -c -- '--state merged')"
+assert_file_exists "$TEST_ROOT/cleanup67/app-feat-x"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: push 先で gh pr list が失敗しても、gh の既定のリポジトリにマージ済みの PR があれば片付けを続ける"
+setup_merged_branch "$TEST_ROOT/cleanup68" github
+github_origin "$TEST_ROOT/cleanup68/app" https://github.com/fork-owner/app.git
+gh_merged_and_deleted "$TEST_ROOT/cleanup68"
+cd "$TEST_ROOT/cleanup68/app" || exit 1
+git fetch -q --prune origin
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state merged"*) echo "HTTP 404" >&2; exit 1 ;;
+  "pr list --head feat/x --state merged --json url --jq .[].url") echo https://github.com/example/app/pull/11 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "https://github.com/example/app/pull/11"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: push 先で gh pr list が失敗し、gh の既定のリポジトリにもマージ済みの PR が無ければ、理由を添えて ERROR で止まる"
+setup_merged_branch "$TEST_ROOT/cleanup69" github
+github_origin "$TEST_ROOT/cleanup69/app" https://github.com/fork-owner/app.git
+cd "$TEST_ROOT/cleanup69/app" || exit 1
+make_fake_gh '"pr list -R fork-owner/app --head docs/other-repo --state merged"*) echo "HTTP 404" >&2; exit 1 ;;
+  "pr list --head docs/other-repo --state merged --json url --jq .[].url") ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "gh pr list が失敗"
+assert_contains "$out" "HTTP 404"
+assert_file_exists "$TEST_ROOT/cleanup69/app-feat-x"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: push 先の URL を GitHub のリポジトリと読めず、gh の既定のリポジトリも無ければ、痕跡が無いとせず理由を添えて ERROR で止まる"
+# insteadOf がローカルの bare へ書き換えるので git remote -v に github.com が出ず、gh の既定のリポジトリは決まらない
+setup_merged_branch "$TEST_ROOT/cleanup70"
+github_origin "$TEST_ROOT/cleanup70/app" https://github.com/fork-owner
+cd "$TEST_ROOT/cleanup70/app" || exit 1
+make_fake_gh ''
+out=$(GH_REPO='' "$SCRIPTS_DIR/post-merge-cleanup.sh" docs/other-repo 2>&1)
+assert_eq 1 $?
+assert_contains "$out" "GitHub のリポジトリを読めない"
+assert_eq "" "$(fake_log gh)"
+assert_file_exists "$TEST_ROOT/cleanup70/app-feat-x"
+cd "$TEST_ROOT" || exit 1
+
+it "post-merge-cleanup: GitHub のリモートが無くても、GH_REPO（gh の既定のリポジトリ）にマージ済みの PR があれば片付けを続ける"
+# 段階 5 の head の確認と同じく、gh の既定のリポジトリは GH_REPO でも決まる
+setup_merged_branch "$TEST_ROOT/cleanup71"
+gh_merged_and_deleted "$TEST_ROOT/cleanup71"
+cd "$TEST_ROOT/cleanup71/app" || exit 1
+git fetch -q --prune origin
+make_fake_gh '"pr list --head feat/x --state merged --json url --jq .[].url") echo https://github.com/example/app/pull/12 ;;'
+out=$(GH_REPO=example/app "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$out" "https://github.com/example/app/pull/12"
+assert_contains "$(fake_gh_repos)" "(unset)/example/app"
+cd "$TEST_ROOT" || exit 1
+
 it "post-merge-cleanup: 手元に痕跡が無くリモートに届かなければ、確かめられないとして ERROR で止まる"
 setup_merged_branch "$TEST_ROOT/cleanup33"
 cd "$TEST_ROOT/cleanup33/app" || exit 1

@@ -1,8 +1,9 @@
 //! `post-merge-cleanup.sh <branch>`: PR のマージの後（または /git-merge の後）に、ブランチと worktree を片付ける。
 //! 順は gh-pr-merge のスキルの「クリーンアップ」と、`claude/scripts/post-merge-cleanup.sh` の説明に書く:
 //!
-//! - （0 の前）cwd のリポジトリに branch の痕跡（ローカルのブランチ、リモート追跡の ref、リモートのブランチ、GitHub の
-//!   リモートではそのブランチを head とするマージ済みの PR）が無ければ、何も変えずに止める。確かめられないときも止める
+//! - （0 の前）cwd のリポジトリに branch の痕跡（ローカルのブランチ、リモート追跡の ref、リモートのブランチ、そのブランチを
+//!   head とするマージ済みの PR（段階 5 の head と同じく、push 先の GitHub のリポジトリと gh の既定のリポジトリで探す））が
+//!   無ければ、何も変えずに止める。確かめられないときも止める
 //! - 段階 0: ローカルの branch の先端が既定のブランチ（無ければ、追うリモートの既定のブランチを fetch したもの）の祖先で
 //!   なければ、何も消さずに止める。第 2 引数（マージの前の既定のブランチ。/git-merge が渡す）を受けたら、その後の
 //!   既定のブランチの第 1 親の列に、branch の先端を 2 番目以降の親に持つマージコミットが無ければ、何も消さずに止める
@@ -295,13 +296,20 @@ fn trace(branch: &str, remote: &str, main_root: &str) -> Result<(), i32> {
     if found {
         return Ok(());
     }
-    if !git(&["remote", "-v"])
-        .unwrap_or_default()
-        .contains("github.com")
-    {
+    // マージ済みの PR は、段階 5 の head の確認と同じリポジトリ（push 先と gh の既定）で探す。gh pr list が失敗した
+    // リポジトリは見つからなかったと数え、push 先の URL に GitHub のリポジトリと読めないものがあれば、読めた push 先も
+    // 探さない（push_repos は最初の読めない URL で理由を返す）。どちらも見つからない側に倒れ、どこにも見つからなければ
+    // 理由を添えて止まるので、確かめられないときに続けない
+    let (repos, mut failed) = match push_repos(remote) {
+        Ok(repos) => (repos, Vec::new()),
+        Err(why) => (Vec::new(), vec![why]),
+    };
+    let in_default = gh_has_default();
+    let searched = !repos.is_empty() || in_default;
+    if !searched && failed.is_empty() {
         return no_trace("");
     }
-    if !gh_available() {
+    if searched && !gh_available() {
         return cannot_check(
             "マージ済みの PR を確かめられない（gh が無い）",
             "gh を PATH に置く",
@@ -309,35 +317,34 @@ fn trace(branch: &str, remote: &str, main_root: &str) -> Result<(), i32> {
     }
     // gh pr list は新しい順に返す。名前だけで照らすので、別のリポジトリのブランチと同じ名前の古い PR でも通る。どの PR
     // を痕跡にしたかを NOTE で見せ、呼ぶ側が自分の PR かを読めるようにする
-    let out = gh()
-        .args([
-            "pr",
-            "list",
-            "--head",
-            branch,
-            "--state",
-            "merged",
-            "--json",
-            "url",
-            "--jq",
-            ".[0].url // empty",
-        ])
-        .output();
-    let merged_pr = match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        other => {
-            let err = other
-                .map(|o| String::from_utf8_lossy(&o.stderr).replace('\n', " "))
-                .unwrap_or_default();
-            return cannot_check(
-                &format!("マージ済みの PR を確かめられない（gh pr list が失敗: {err}）"),
-                "gh の失敗の原因（ネットワークや認証）を直す",
-            );
+    let targets = repos
+        .iter()
+        .map(|r| Some(r.as_str()))
+        .chain(in_default.then_some(None));
+    let mut merged_pr = None;
+    for repo in targets {
+        match prs(repo, "--head", branch, "merged", "url") {
+            Ok(urls) => {
+                merged_pr = urls.into_iter().next();
+                if merged_pr.is_some() {
+                    break;
+                }
+            }
+            Err(err) => failed.push(format!(
+                "{} で gh pr list が失敗: {err}",
+                repo.unwrap_or("gh の既定のリポジトリ")
+            )),
         }
-    };
-    if merged_pr.is_empty() {
-        return no_trace("、マージ済みの PR");
     }
+    let Some(merged_pr) = merged_pr else {
+        if failed.is_empty() {
+            return no_trace("、マージ済みの PR");
+        }
+        return cannot_check(
+            &format!("マージ済みの PR を確かめられない（{}）", failed.join("。")),
+            "失敗の原因（ネットワーク、認証、リモートの URL）を直す",
+        );
+    };
     println!(
         "NOTE: {branch} は手元にもリモートにも無く、マージ済みの PR {merged_pr} を痕跡として片付けを続ける。自分の PR でなければ、別のリポジトリのブランチを渡している（cd <そのリポジトリ> && post-merge-cleanup.sh {branch}）"
     );
@@ -822,10 +829,16 @@ fn gh_has_default() -> bool {
             .contains("github.com")
 }
 
-/// repo（None なら gh の既定のリポジトリ）で、branch を filter（--head か --base）にした開いている PR の field の値
-/// （空行を除く）。gh pr list が失敗すれば None。-R の owner/name のホストは環境の GH_HOST で決まるので、push 先の
-/// URL から読んだ github.com に固定する（crate::gh の for_repo と同じ）
-fn open_prs(repo: Option<&str>, filter: &str, branch: &str, field: &str) -> Option<Vec<String>> {
+/// repo（None なら gh の既定のリポジトリ）で、branch を filter（--head か --base）にした state（open か merged）の PR
+/// の field の値（gh の返す新しい順。空行を除く）。gh pr list が失敗すれば、その標準エラー。-R の owner/name のホストは
+/// 環境の GH_HOST で決まるので、push 先の URL から読んだ github.com に固定する（crate::gh の for_repo と同じ）
+fn prs(
+    repo: Option<&str>,
+    filter: &str,
+    branch: &str,
+    state: &str,
+    field: &str,
+) -> Result<Vec<String>, String> {
     let mut cmd = gh();
     cmd.args(["pr", "list"]);
     if let Some(repo) = repo {
@@ -833,17 +846,25 @@ fn open_prs(repo: Option<&str>, filter: &str, branch: &str, field: &str) -> Opti
     }
     let jq = format!(".[].{field}");
     cmd.args([
-        filter, branch, "--state", "open", "--json", field, "--jq", &jq,
+        filter, branch, "--state", state, "--json", field, "--jq", &jq,
     ]);
-    let out = cmd.output().ok().filter(|o| o.status.success())?;
-    Some(
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect(),
-    )
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr)
+            .trim()
+            .replace('\n', " ");
+        return Err(if err.is_empty() {
+            format!("標準エラーは空、{}", out.status)
+        } else {
+            err
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 /// branch を head にした開いている PR の数（確かめられなければ None）。head のブランチを消すと GitHub はその PR を
@@ -857,7 +878,7 @@ fn head_prs(branch: &str, repos: &[String], in_default: bool) -> Option<usize> {
         .chain(in_default.then_some(None));
     let mut urls: Vec<String> = Vec::new();
     for repo in targets {
-        for url in open_prs(repo, "--head", branch, "url")? {
+        for url in prs(repo, "--head", branch, "open", "url").ok()? {
             if !urls.iter().any(|u| u.eq_ignore_ascii_case(&url)) {
                 urls.push(url);
             }
@@ -883,7 +904,7 @@ enum Stacked {
 fn stacked_prs(branch: &str, repos: &[String]) -> Stacked {
     let mut found = Vec::new();
     for repo in repos {
-        let Some(numbers) = open_prs(Some(repo), "--base", branch, "number") else {
+        let Ok(numbers) = prs(Some(repo), "--base", branch, "open", "number") else {
             return Stacked::Unknown("gh pr list が失敗".to_string());
         };
         if !numbers.is_empty() {
