@@ -9,7 +9,7 @@
 //!   担当が呼ぶ Skill で数える。Agent の prompt は見ない（自然文から「/code-review を頼む」を見分ける判定は、
 //!   否定や別のスキルを呼ぶ文に当たるか、頼む文を落とした）
 //! - 置き場: リポジトリの共通の git ディレクトリの `claude-review-rounds/<ブランチ名>`（`/` は `%2F`）。1 行が 1 周で、
-//!   回したときの HEAD と時刻と、呼んだセッションの ID を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る。ブランチの
+//!   回したときの HEAD と時刻と、呼んだセッションの ID と、回した worktree を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る。ブランチの
 //!   reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして数えない（ブランチを消すと reflog も
 //!   消え、作り直すと新しく始まる。rebase では続く。マージの前に rebase した HEAD は既定ブランチの祖先にならないので、
 //!   祖先かでは見分けられない）
@@ -90,12 +90,13 @@ fn state_dir(dir: &Path) -> Option<PathBuf> {
     (out.status.success() && !common.is_empty()).then(|| Path::new(common).join(STATE_DIR))
 }
 
-/// 置き場の 1 行（1 周）。`at` は呼んだときの UNIX 秒、`session` は呼んだ Claude Code のセッションの ID（セッションを
-/// 書く前の版の行と、ID の無い入力では None）
+/// 置き場の 1 行（1 周）。`at` は呼んだときの UNIX 秒、`session` は呼んだ Claude Code のセッションの ID、`dir` は回した
+/// worktree（どちらも、書く前の版の行と、ID の無い入力では None）
 pub(crate) struct Round {
     pub(crate) head: String,
     pub(crate) at: Option<u64>,
     pub(crate) session: Option<String>,
+    pub(crate) dir: Option<PathBuf>,
 }
 
 /// dir の clone の、周の数の置き場と、ファイル（ブランチ）ごとの行（書いた順）。dir が git のリポジトリの中でなければ None
@@ -109,11 +110,16 @@ pub(crate) fn rounds(dir: &Path) -> Option<(PathBuf, Vec<Vec<Round>>)> {
                 .map(|text| {
                     text.lines()
                         .filter_map(|l| {
-                            let mut fields = l.split_whitespace();
+                            // worktree は空白を含みうるので、最後の欄として行の残りを取る
+                            let mut fields = l.splitn(4, ' ');
                             Some(Round {
                                 head: fields.next()?.to_string(),
                                 at: fields.next().and_then(|t| t.parse().ok()),
-                                session: fields.next().map(str::to_string),
+                                session: fields
+                                    .next()
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string),
+                                dir: fields.next().filter(|d| !d.is_empty()).map(PathBuf::from),
                             })
                         })
                         .collect()
@@ -175,7 +181,7 @@ impl Rule for CountReviewRounds {
         if session.is_empty() || session.contains(char::is_whitespace) {
             lines.push(format!("{head} {now}"));
         } else {
-            lines.push(format!("{head} {now} {session}"));
+            lines.push(format!("{head} {now} {session} {}", dir.display()));
         }
         let written = std::fs::create_dir_all(&state_dir)
             .and_then(|()| std::fs::write(&path, lines.join("\n") + "\n"));

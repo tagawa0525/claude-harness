@@ -27,6 +27,7 @@ use super::time::parse_time;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -301,6 +302,13 @@ struct Transcript {
     text: String,
 }
 
+/// 周の行が示す、その周の記録が始まる窓（UNIX のマイクロ秒の [from, to)）と、回した worktree
+struct Window {
+    from: i64,
+    to: i64,
+    dir: Option<PathBuf>,
+}
+
 /// 比べる行の先頭の文字数。Read は 2000 文字を超える行を切って返すので、長い行の後ろの欠けを読んでいないと数えない
 const LINE_CHARS: usize = 200;
 
@@ -308,9 +316,9 @@ const LINE_CHARS: usize = 200;
 /// 始まりが周の行の 1 秒以内だった。同じセッションで後に回したほかの PR の周を数えないための窓
 const START_WINDOW: i64 = 60;
 
-/// 子のエージェントを起動せず、自分の tool の結果で差分を読む /code-review のレベル。xhigh と max は子に読ませ、子の記録は
-/// `.forked-skill.json` を持たないので数えない
-const SELF_READING: [&str; 3] = ["low", "medium", "high"];
+/// 子のエージェントに差分を読ませる /code-review のレベル。子の記録は `.forked-skill.json` を持たないので数えない。
+/// レベルの読めない記録はここに入れない（読んだかを確かめられないとして --unlogged で通すと、未実施を通す）
+const CHILD_READING: [&str; 2] = ["xhigh", "max"];
 
 fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     let Some((_, files)) = crate::rules::rounds(dir) else {
@@ -328,8 +336,16 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
         }
         for round in file.iter().filter(|r| r.head == head) {
             sessions.extend(round.session.clone());
-            if let Some(at) = round.at.and_then(|at| i64::try_from(at).ok()) {
-                windows.push((at * 1_000_000, (at + START_WINDOW) * 1_000_000));
+            let micros = |secs: i64| secs.checked_mul(1_000_000);
+            if let Some(at) = round.at.and_then(|at| i64::try_from(at).ok())
+                && let (Some(from), Some(to)) =
+                    (micros(at), at.checked_add(START_WINDOW).and_then(micros))
+            {
+                windows.push(Window {
+                    from,
+                    to,
+                    dir: round.dir.clone(),
+                });
             }
         }
     }
@@ -396,15 +412,11 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     }
     if let Some(t) = transcripts
         .iter()
-        .find(|t| !SELF_READING.contains(&t.effort.as_str()))
+        .find(|t| CHILD_READING.contains(&t.effort.as_str()))
     {
         return Read::Unknown(format!(
             "{} の周の /code-review は子のエージェントに差分を読ませ、子の記録は数えない",
-            if t.effort.is_empty() {
-                "レベルの分からない"
-            } else {
-                &t.effort
-            }
+            t.effort
         ));
     }
     let files: BTreeSet<String> = missed.iter().map(|(f, _)| (*f).clone()).collect();
@@ -424,7 +436,7 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
 
 /// pr の追加行のうち、前の周の head から変わったもの。前の周が無ければ None。base（PR の base の SHA）を引ければ、前の周の
 /// PR の差分（分かれ目から前の head まで）に無い行。引けなければ、前の head が祖先のとき `git diff <前の head> <head>` の
-/// 追加行と重なる行で、rebase した head（祖先でない）は None（base の変更と PR の変更を分けられないので、PR の差分の全部を
+/// 追加行と重なる行で、rebase した head（祖先でない）と base を merge した head は None（base の変更と PR の変更を分けられないので、PR の差分の全部を
 /// 求める）
 fn changed_since(
     dir: &Path,
@@ -443,7 +455,11 @@ fn changed_since(
             .and_then(|fork| git_diff(dir, fork.trim(), prev));
         let (since, keep_if_found) = match old {
             Some(old) => (added_lines(&old), false),
-            None if git_out(dir, &["merge-base", "--is-ancestor", prev, head]).is_some() => {
+            // base を merge した head は、祖先でも `git diff <前の head> <head>` に base の変更を含む
+            None if git_out(dir, &["merge-base", "--is-ancestor", prev, head]).is_some()
+                && git_out(dir, &["rev-list", "--merges", &format!("{prev}..{head}")])
+                    .is_some_and(|m| m.trim().is_empty()) =>
+            {
                 (added_lines(&git_diff(dir, prev, head)?), true)
             }
             None => return None,
@@ -486,10 +502,11 @@ fn required_lines(
 }
 
 /// /code-review の low が外すと書くテストの形（`test/`、`spec/`、`__tests__/`、`*_test.*`、`*.test.*`、`fixtures/`、
-/// `testdata/`）に、`tests/` と `test_*` を足したもの。名前に test を含むだけの本体（`latest.rs`）は外さない（外すと、
+/// `testdata/`）に、`tests/`、`test_*`、`*_spec.*`、`*.spec.*` を足したもの（大文字と小文字を区別しない）。名前に test を含むだけの本体（`latest.rs`）は外さない（外すと、
 /// 本体を読まない周を通す。low が `':!*test*'` で外して読まなかったなら、読んでいないとして回し直す）
 fn is_test(path: &str) -> bool {
-    let mut parts: Vec<&str> = path.split('/').collect();
+    let lower = path.to_lowercase();
+    let mut parts: Vec<&str> = lower.split('/').collect();
     let name = parts.pop().unwrap_or_default();
     parts
         .iter()
@@ -498,6 +515,7 @@ fn is_test(path: &str) -> bool {
         || name.contains("_test.")
         || name.contains(".test.")
         || name.contains("_spec.")
+        || name.contains(".spec.")
 }
 
 fn is_lock(path: &str) -> bool {
@@ -554,7 +572,12 @@ fn unquote(path: &str) -> String {
                 }
                 bytes.push(u8::try_from(value).unwrap_or(b'?'));
             }
+            Some('a') => bytes.push(0x07),
+            Some('b') => bytes.push(0x08),
             Some('t') => bytes.push(b'\t'),
+            Some('v') => bytes.push(0x0b),
+            Some('f') => bytes.push(0x0c),
+            Some('r') => bytes.push(b'\r'),
             Some('n') => bytes.push(b'\n'),
             Some(other) => {
                 let mut buf = [0; 4];
@@ -608,12 +631,12 @@ fn config_dir() -> PathBuf {
 }
 
 /// sessions のサブエージェントの記録のうち、/code-review が起動し、windows（UNIX のマイクロ秒の [始まり, 終わり)）の
-/// どれかの中で始まったもの（始まった順）。記録の形は Claude Code の公開の仕様ではないので、読めない行と記録は飛ばす
+/// どれかの中で、その窓の worktree を対象に始まったもの（始まった順）。記録の形は Claude Code の公開の仕様ではないので、読めない行と記録は飛ばす
 /// （飛ばした結果、記録が無ければ、確かめられないとして理由を求める）
 fn review_transcripts(
     config: &Path,
     sessions: &BTreeSet<String>,
-    windows: &[(i64, i64)],
+    windows: &[Window],
 ) -> Vec<Transcript> {
     let mut found = Vec::new();
     let Ok(projects) = std::fs::read_dir(config.join("projects")) else {
@@ -659,25 +682,29 @@ fn review_transcripts(
     found
 }
 
-/// 記録を読む。最初の行の時刻が windows のどれにも入らなければ、残りの行を読まずに None
-fn read_transcript(path: &Path, windows: &[(i64, i64)]) -> Option<Transcript> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut lines = text.lines();
-    let started = lines
-        .next()
-        .and_then(|l| serde_json::from_str::<Value>(l).ok())
+/// 記録を読む。最初の行の時刻が windows のどれにも入らなければ、残りの行を読まずに None。依頼文の対象が、時刻の入った窓の
+/// worktree と違えば None（窓に worktree が無い前の版の行では問わない）
+fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
+    let mut first = String::new();
+    std::io::BufReader::new(std::fs::File::open(path).ok()?)
+        .read_line(&mut first)
+        .ok()?;
+    let started = serde_json::from_str::<Value>(&first)
+        .ok()
         .and_then(|v| {
             v.get("timestamp")
                 .and_then(Value::as_str)
                 .and_then(parse_time)
         })
         .map(|t| t.micros)?;
-    if !windows
+    let hits: Vec<&Window> = windows
         .iter()
-        .any(|(from, to)| (*from..*to).contains(&started))
-    {
+        .filter(|w| (w.from..w.to).contains(&started))
+        .collect();
+    if hits.is_empty() {
         return None;
     }
+    let text = std::fs::read_to_string(path).ok()?;
     let mut target = None;
     let mut results = String::new();
     for line in text.lines() {
@@ -699,6 +726,15 @@ fn read_transcript(path: &Path, windows: &[(i64, i64)]) -> Option<Transcript> {
             }
             _ => {}
         }
+    }
+    let dir_of = |t: &str| PathBuf::from(crate::shell::native(t).as_ref());
+    let matches = |w: &&Window| match (&w.dir, &target) {
+        (None, _) => true,
+        (Some(d), Some(t)) => *d == dir_of(t),
+        (Some(_), None) => false,
+    };
+    if !hits.iter().any(matches) {
+        return None;
     }
     Some(Transcript {
         path: path.to_path_buf(),
