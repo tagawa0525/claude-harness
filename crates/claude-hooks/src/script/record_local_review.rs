@@ -869,5 +869,8 @@ mod tests {
         ] {
             assert_eq!(review_words(prompt).next(), Some("/repo/wt"), "{prompt}");
         }
+        // 対象は依頼文の 1 行目（/code-review の引数）だけ。続く手順の文に出るパスを対象と読まない
+        let prompt = "Review target: `340`\n\nRead /tmp and `test/`";
+        assert_eq!(review_words(prompt).collect::<Vec<_>>(), vec!["340"]);
     }
 }
