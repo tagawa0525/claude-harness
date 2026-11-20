@@ -224,6 +224,12 @@ out=$("$REVIEW_SCRIPTS/resolve-thread.sh" "$PR_URL" 22 --allow-human)
 assert_eq 0 $?
 assert_contains "$(fake_log gh)" "-F id=T2"
 
+it "resolve-thread: get-review-comments の thread_id（PRRT_…）でも、その PR のスレッドを resolve する"
+fake_gh_threads "${THREADS//\"T/\"PRRT_T}"
+out=$("$REVIEW_SCRIPTS/resolve-thread.sh" "$PR_URL" PRRT_T1)
+assert_eq 0 $?
+assert_contains "$(fake_log gh)" "-F id=PRRT_T1"
+
 # ===========================================================================
 # gh-pr-review/scripts/request-rereview.sh: 要求の手順と記録の判定は、claude-hooks の結合テスト
 # （tests/script_request_rereview.rs）が確かめる。ここでは sh から呼べることを、引数と URL の検査（上の繰り返し）と
