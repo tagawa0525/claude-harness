@@ -154,13 +154,10 @@ fn a_backtick_fence_whose_info_has_a_backtick_is_not_a_fence() {
 }
 
 #[test]
-fn a_closing_fence_may_be_followed_by_python_whitespace() {
-    // .py の \s は str.isspace で、\x1c〜\x1f を含む（Rust の char::is_whitespace は含まない）
+fn a_fence_followed_by_a_control_character_does_not_close_the_fence() {
+    // CommonMark の閉じのフェンスの後ろは空白とタブだけで、\x1c は閉じない。後ろの表の形の行もフェンスの中身
     let text = "```text\n| a | b |\n| --- | --- |\n```\u{1c}\n| a | b |\n| --- | --- |\n";
-    assert_eq!(
-        fixed(text),
-        "```text\n| a | b |\n| --- | --- |\n```\u{1c}\n| a | b |\n| - | - |\n"
-    );
+    assert_eq!(fixed(text), text);
 }
 
 #[test]
@@ -196,11 +193,10 @@ fn an_indented_table_keeps_its_spaces_and_tabs() {
 }
 
 #[test]
-fn a_leading_ideographic_space_is_not_kept_as_indent() {
-    assert_eq!(
-        fixed("\u{3000}| a | b |\n| --- | --- |\n| ccc | d |\n"),
-        "| a   | b |\n| --- | - |\n| ccc | d |\n"
-    );
+fn a_line_starting_with_an_ideographic_space_does_not_head_a_table() {
+    // 全角の空白は字下げでなくセルの中身で、見出しの行のセル（3 つ）が区切りの行（2 つ）と合わないので、GFM の表でない
+    let text = "\u{3000}| a | b |\n| --- | --- |\n| ccc | d |\n";
+    assert_eq!(fixed(text), text);
 }
 
 #[test]

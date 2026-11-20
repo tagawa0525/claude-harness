@@ -729,11 +729,12 @@ printf '1. step\n\n   | a | b |\n   | --- | --- |\n   | ccc | d |\n\n2. next\n' 
 "$MD_FIXER" "$MD_DIR/indented.md" >/dev/null
 assert_eq $'1. step\n\n   | a   | b |\n   | --- | - |\n   | ccc | d |\n\n2. next' "$(cat "$MD_DIR/indented.md")"
 
-it "fix-markdown-lint: 字下げとして保つのは空白とタブだけで、行頭の全角の空白は外す"
-# Markdown の字下げは空白とタブだけ。全角の空白を残すと、区切りの行が表の行でなくなり、表として描かれない
+it "fix-markdown-lint: 行頭に全角の空白のある表の形の行は、GFM の表でないので書き換えない"
+# Markdown の字下げは空白とタブだけで、全角の空白はセルの中身。見出しの行のセル（3 つ）が区切りの行（2 つ）と
+# 合わないので、GFM は表に読まない。表の範囲は pulldown-cmark で読む（ADR-0104）
 printf '\xe3\x80\x80| a | b |\n| --- | --- |\n| ccc | d |\n' > "$MD_DIR/zenkaku.md"
 "$MD_FIXER" "$MD_DIR/zenkaku.md" >/dev/null
-assert_eq $'| a   | b |\n| --- | - |\n| ccc | d |' "$(cat "$MD_DIR/zenkaku.md")"
+assert_eq $'\xe3\x80\x80| a | b |\n| --- | --- |\n| ccc | d |' "$(cat "$MD_DIR/zenkaku.md")"
 
 it "fix-markdown-lint: タブで字下げした表は、タブを保ったまま整形する"
 printf -- '- item\n\n\t| a | b |\n\t| --- | --- |\n\t| ccc | d |\n' > "$MD_DIR/tab.md"
