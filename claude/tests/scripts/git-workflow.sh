@@ -691,6 +691,19 @@ assert_eq 0 $?
 assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
 assert_contains "$out" "REMOTE_BRANCH: kept (open PR 1 件の head。"
 
+it "post-merge-cleanup: pushurl が複数で、一部の push 先にブランチが無くても、どの push 先からも消えれば削除できたとする"
+setup_merged_branch "$TEST_ROOT/cleanup61"
+REPO="$TEST_ROOT/cleanup61/app"
+git init -q --bare "$TEST_ROOT/cleanup61/mirror.git"
+git -C "$REPO" remote set-url --add --push origin "$TEST_ROOT/cleanup61/mirror.git"
+git -C "$REPO" remote set-url --add --push origin "$REPO.git"
+cd "$REPO" || exit 1
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_eq "" "$(git ls-remote --heads origin feat/x)"
+assert_contains "$out" "REMOTE_BRANCH: deleted"
+assert_contains "$out" "NOTE: git push origin --delete feat/x は失敗したが"
+
 it "post-merge-cleanup: リモートブランチを base とする open PR があれば削除せず、PR ごとに base の付け替えと削除のコマンドを示す"
 setup_merged_branch "$TEST_ROOT/cleanup51" github
 # fork の clone: ブランチは origin（fork）にあり、上の PR も fork にある。gh の既定のリポジトリ（github の remote）ではなく、
