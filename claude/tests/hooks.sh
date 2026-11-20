@@ -3029,7 +3029,7 @@ assert_eq allow "$(decision "$out")"
 # ===========================================================================
 # guard-git-stash: git stash はリポジトリの全 worktree と全セッションで共有なので止める
 # ===========================================================================
-# 読むだけの list / show は通す。退避は WIP のコミットか、テストの部分だけのステージで行う
+# 読むだけの list / show は通す。代わりの手順は、拒否の文言（guard_git_stash.rs の DENY）にだけ書く
 
 it "guard-git-stash: stash の書き込み系は deny し、代わりの手順を示す"
 for cmd in 'git stash' 'git stash push' 'git stash push -m wip' 'git stash -u' 'git stash save wip' 'git stash pop' \
@@ -3043,10 +3043,11 @@ for cmd in 'git stash' 'git stash push' 'git stash push -m wip' 'git stash -u' '
   assert_contains "$(reason "$out")" "共有"
 done
 
-it "guard-git-stash: 実装を外してテストの失敗を見る手順（差分の書き出しと git apply）を示す"
+it "guard-git-stash: 実装の無い状態でテストの失敗を見る手順は、worktree を変えない形（テストだけのコミットを一時の worktree で実行）で示す"
 out=$(run_hook guard-git-stash 'git stash push -q src/lib.rs')
-assert_contains "$(reason "$out")" "git diff -- <実装のファイル>"
-assert_contains "$(reason "$out")" "git apply"
+assert_contains "$(reason "$out")" "テストだけを先にコミット"
+assert_contains "$(reason "$out")" "check-each-commit.sh HEAD~1 -- <テストのコマンド>"
+assert_not_contains "$(reason "$out")" "git checkout"
 
 it "guard-git-stash: list と show は通す"
 for cmd in 'git stash list' 'git stash show' 'git stash show -p stash@{0}' 'git -C /tmp/repo stash list'; do
