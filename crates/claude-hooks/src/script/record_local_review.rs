@@ -13,16 +13,25 @@
 //! `--unlogged <理由>` で理由を記録のコメントに残して付ける。前の記録が覆う head（rebase だけの head）かは、ここでは
 //! 確かめず、拒否の文で decide-next.sh を示す（比べた案は claude-harness の issue 281）
 //!
+//! 0 件の記録は、行に書かれたセッションの /code-review のサブエージェントの記録（その head の周の行の直後に始まったもの）
+//! の tool の結果に、PR の差分の追加行が入っているときだけ付ける。入っていなければ付けず、レベルを上げて欠けたファイルを
+//! 焦点にした周を NEXT: で示す。記録か差分を引けなければ、`--unlogged <理由>` で理由を残して付ける
+//!
 //! 指摘は、1 件ごとに要旨を `--finding <1 行>` で受けて、記録のコメントに書く。件数だけの記録では、対応しなかった指摘の
 //! 中身が会話にしか残らず、セッションが替わるとマージの本文に書けない。数が件数の合計と合わなければ記録しない。
 //! 要旨をファイルで受けない理由は、このスクリプトが確認なしで通る許可を持ち、任意のファイルを PR に出す経路になるため
 //! （claude-harness の issue 346）。読む側の hook はコメントの 1 行目だけを見るので、要旨は印の形を変えない
 
 use super::pr_url;
+use super::time::parse_time;
 use regex::Regex;
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{BufRead, Read as _};
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-const USAGE: &str = "Usage: record-local-review.sh <PR の URL> <レビューした SHA> <high> <medium> <low> [--finding <指摘 1 件の要旨（1 行）>]... [--unlogged <回した記録が clone に無い理由>]";
+const USAGE: &str = "Usage: record-local-review.sh <PR の URL> <レビューした SHA> <high> <medium> <low> [--finding <指摘 1 件の要旨（1 行）>]... [--unlogged <回した記録を確かめられない理由>]";
 
 static SHA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]{7,40}$").unwrap());
 /// 読む側は `high=0 ` の字面で比べるので、先頭の 0 を許さない
@@ -181,12 +190,51 @@ pub fn main(args: &[String]) -> i32 {
         );
         return 1;
     }
+    // 0 件の記録は、指摘ゼロの周と何も読まずに返した周（大きな出力のファイルを開かない、テストだけの差分でテストを外す）を
+    // 返答からは見分けられないので、その周の記録の tool の結果に差分が入ったかで確かめる（ADR-0103）
+    let mut unverified = false;
+    if total == 0
+        && logged
+        && let Ok(dir) = cwd.as_deref()
+    {
+        match read_check(&pr, &head, dir) {
+            Read::Yes => {}
+            Read::No(missed) => {
+                eprintln!(
+                    "ERROR: {} で回した /code-review の記録（{} 件。最後は {}）の tool の結果に、PR の差分の追加行が {} 行のうち {} 行入っていません（{}。記録を付けていません）。0 件の返答は、差分を読んだ周でなければ未実施です",
+                    short(&head),
+                    missed.transcripts,
+                    missed.latest.display(),
+                    missed.required,
+                    missed.lines,
+                    missed.files.join("、")
+                );
+                println!(
+                    "NEXT: /code-review {} {} 焦点: {} の差分 を回し、その head にもう一度記録する（この head の周は、このファイルの追加行を読んでいない）",
+                    raised(&missed.effort),
+                    missed.target,
+                    missed.files.join("、")
+                );
+                return 1;
+            }
+            Read::Unknown(why) => {
+                if unlogged.is_none() {
+                    eprintln!(
+                        "ERROR: {why}ので、{} で回した /code-review が差分を読んだかを確かめられません（記録を付けていません）。別の機械で回した、記録が消えたなど、確かめられない理由が分かっているなら、末尾に --unlogged '<その理由>' を付ける（記録のコメントに残る）",
+                        short(&head)
+                    );
+                    return 1;
+                }
+                unverified = true;
+            }
+        }
+    }
     let mut body = format!(
         "{}\nローカルの /code-review で {} を確かめた: High {high} / Medium {medium} / Low {low}",
         crate::rules::local_review_mark(&head, high, medium, low),
         short(&head)
     );
-    if let Some(reason) = unlogged.filter(|_| !logged) {
+    if let Some(reason) = unlogged.filter(|_| !logged || unverified) {
         body.push_str(&format!("\n回した記録を確かめていない理由: {reason}"));
     }
     if !findings.is_empty() {
@@ -205,9 +253,8 @@ pub fn main(args: &[String]) -> i32 {
             "NOTE: High の残る記録は、レビュー済みとして数えない。直して push し、回し直して記録する"
         );
     }
-    // 回した行は /code-review を呼んだことしか示さない（count-review-rounds は結果を見ない）ので、対象を読めなかった回の
-    // 0 件と指摘ゼロの 0 件は、返答を読んだ人にしか見分けられない
-    if total == 0 {
+    // 差分を読んだかを確かめていない 0 件の記録（--unlogged）は、返答を読んだ人にしか未実施と見分けられない
+    if total == 0 && (!logged || unverified) {
         println!(
             "NOTE: 0 件の記録が正しいのは、/code-review の返答に見たファイルや確かめた点が書かれているときだけ。対象が見つからない（「ブランチが存在しない」など）、エラー、`[]` だけの返答は未実施なので、対象を直して回し直し、同じ head にもう一度記録する（最後の記録で決まる）"
         );
@@ -217,4 +264,682 @@ pub fn main(args: &[String]) -> i32 {
 
 fn short(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
+}
+
+/// 0 件の記録の前に確かめた、その周の /code-review が差分を読んだか
+enum Read {
+    /// その head の周の /code-review の記録の tool の結果に、求める追加行が全部ある
+    Yes,
+    /// 記録はあるが、その head の周を合わせても追加行が欠ける
+    No(Missed),
+    /// 記録か差分を引けない（理由。拒否の文で「ので」を続ける）
+    Unknown(String),
+}
+
+struct Missed {
+    /// 見た記録の数と、最後に始まった記録（レベルと対象は、この記録のもの）
+    transcripts: usize,
+    latest: PathBuf,
+    effort: String,
+    target: String,
+    /// 求めた追加行の数と、そのうち欠けた数
+    required: usize,
+    lines: usize,
+    /// 欠けた行のあるファイル
+    files: Vec<String>,
+}
+
+/// サブエージェントの記録（`<設定>/projects/<プロジェクト>/<セッション>/subagents/agent-<id>.jsonl`）のうち、
+/// /code-review が起動したもの（隣の `.forked-skill.json` の skillName が `code-review`）
+struct Transcript {
+    path: PathBuf,
+    /// 最初の行の時刻（UNIX のマイクロ秒）
+    started: i64,
+    effort: String,
+    /// 依頼文の対象（読めなければ None）
+    target: Option<String>,
+    /// tool の結果の本文をつないだもの
+    text: String,
+}
+
+/// 周の行が示す、その周の記録が始まる窓（UNIX のマイクロ秒の [from, to)）と、回した worktree（dir）とその根（tree。git の
+/// toplevel。引けなければ行の worktree のまま）
+struct Window {
+    from: i64,
+    to: i64,
+    dir: Option<PathBuf>,
+    tree: Option<PathBuf>,
+}
+
+/// 端末の色と装飾の符号（CSI）
+static ANSI_ESCAPE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("\x1b\\[[0-9;]*[A-Za-z]").unwrap());
+
+/// 比べる行の先頭の文字数。Read は 2000 文字を超える行を切って返すので、長い行の後ろの欠けを読んでいないと数えない
+const LINE_CHARS: usize = 200;
+
+/// 周の行の時刻から、その周の /code-review のサブエージェントの記録が始まるまでの上限（秒）。2026-11-20 に、記録 199 件の
+/// 始まりが周の行の 1 秒以内だった。同じセッションで後に回したほかの PR の周を数えないための窓
+const START_WINDOW: i64 = 60;
+
+/// 子のエージェントに差分を読ませる /code-review のレベル。子の記録は `.forked-skill.json` を持たないので数えない。
+/// レベルの読めない記録はここに入れない（読んだかを確かめられないとして --unlogged で通すと、未実施を通す）
+const CHILD_READING: [&str; 2] = ["xhigh", "max"];
+
+fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
+    let Some((_, files)) = crate::rules::rounds(dir) else {
+        return Read::Unknown("clone の周の置き場を引けない".to_string());
+    };
+    let mut sessions = BTreeSet::new();
+    let mut windows = Vec::new();
+    let mut previous = BTreeSet::new();
+    // 前の周は、起動したディレクトリのブランチの行から決める。置き場は clone で 1 つで、ほかのブランチのファイルにも同じ head の
+    // 行がありうる（同じコミットを別のブランチで回した）。その行の前の周は、このブランチの PR の前の周ではない
+    // ブランチは、置き場と同じく起動したディレクトリの clone から引く（渡った GIT_DIR に向かない）
+    let branch = git_out(dir, &["branch", "--show-current"]).unwrap_or_default();
+    let branch = crate::rules::branch_file_name(branch.trim_end());
+    for (name, file) in &files {
+        let Some(first) = file.iter().position(|r| r.head == head) else {
+            continue;
+        };
+        if *name == branch
+            && let Some(prev) = file[..first].last()
+        {
+            previous.insert(prev.head.clone());
+        }
+        for round in file.iter().filter(|r| r.head == head) {
+            sessions.extend(round.session.clone());
+            let micros = |secs: i64| secs.checked_mul(1_000_000);
+            if let Some(at) = round.at.and_then(|at| i64::try_from(at).ok())
+                && let (Some(from), Some(to)) =
+                    (micros(at), at.checked_add(START_WINDOW).and_then(micros))
+            {
+                windows.push(Window {
+                    from,
+                    to,
+                    dir: round.dir.clone(),
+                    tree: round.dir.clone().map(|d| toplevel(&d).unwrap_or(d)),
+                });
+            }
+        }
+    }
+    if sessions.is_empty() {
+        return Read::Unknown(format!(
+            "{} の周の行に、回したセッションが書かれていない（セッションを書く前の版の hook で回した）",
+            short(head)
+        ));
+    }
+    let config = config_dir();
+    let transcripts = review_transcripts(&config, &sessions, &windows);
+    let Some(latest) = transcripts.last() else {
+        return Read::Unknown(format!(
+            "{} の周の行の {START_WINDOW} 秒以内に始まった /code-review の記録が {} の下のセッション {} に無い",
+            short(head),
+            config.join("projects").display(),
+            sessions.iter().cloned().collect::<Vec<_>>().join("、")
+        ));
+    };
+    let Ok(diff) =
+        crate::gh::output_for_repo(&pr.repo, &["pr", "diff", &pr.number, "--color", "never"])
+    else {
+        return Read::Unknown(format!("PR #{} の差分を gh で取れない", pr.number));
+    };
+    let pr_lines = added_lines(&String::from_utf8_lossy(&diff));
+    // 前の周の PR の差分は、PR の base との分かれ目から引く（rebase の後も、base の変更を PR の変更と数えない）
+    let base = if previous.is_empty() {
+        None
+    } else {
+        crate::gh::output_for_repo(
+            &pr.repo,
+            &[
+                "pr",
+                "view",
+                &pr.number,
+                "--json",
+                "baseRefOid",
+                "-q",
+                ".baseRefOid",
+            ],
+        )
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+        .filter(|b| !b.is_empty())
+    };
+    let changed = changed_since(dir, &pr_lines, &previous, head, base.as_deref());
+    let required = required_lines(pr_lines, changed);
+    let total: usize = required.values().map(BTreeSet::len).sum();
+    if total == 0 {
+        return Read::Unknown(format!(
+            "PR #{} の差分に、読んだかを比べる追加行が無い",
+            pr.number
+        ));
+    }
+    // 欠けたファイルを焦点に回し直した周はそのファイルだけを読むので、その head の周が合わせて読んだ差分で数える
+    // 求める行は、tool の結果のどれかの行の終わりと合うときだけ読んだとする（長い行の途中の一部は読んだことを示さない）。
+    // 接頭辞（diff の印、Read の行番号、grep の位置など）は結果の形ごとに違うので問わない。先頭の [`LINE_CHARS`] 文字で
+    // 切った行は、続きがあるので終わりを問わない
+    // 色の符号（color.ui=always の git diff が行の終わりに付ける）は、行の終わりを隠すので除く
+    let mut read = String::new();
+    for line in transcripts.iter().flat_map(|t| t.text.lines()) {
+        read.push_str(ANSI_ESCAPE.replace_all(line, "").trim_end());
+        read.push('\n');
+    }
+    let missed: Vec<(&String, &String)> = required
+        .iter()
+        .flat_map(|(file, lines)| lines.iter().map(move |l| (file, l)))
+        .filter(|(_, l)| {
+            let found = if l.chars().count() >= LINE_CHARS {
+                read.contains(l.as_str())
+            } else {
+                read.contains(&format!("{l}\n"))
+            };
+            !found
+        })
+        .collect();
+    if missed.is_empty() {
+        return Read::Yes;
+    }
+    if let Some(t) = transcripts
+        .iter()
+        .find(|t| CHILD_READING.contains(&t.effort.as_str()))
+    {
+        return Read::Unknown(format!(
+            "{} の周の /code-review は子のエージェントに差分を読ませ、子の記録は数えない",
+            t.effort
+        ));
+    }
+    let files: BTreeSet<String> = missed.iter().map(|(f, _)| (*f).clone()).collect();
+    Read::No(Missed {
+        transcripts: transcripts.len(),
+        latest: latest.path.clone(),
+        effort: latest.effort.clone(),
+        target: latest
+            .target
+            .clone()
+            .unwrap_or_else(|| dir.display().to_string()),
+        required: total,
+        lines: missed.len(),
+        files: files.into_iter().collect(),
+    })
+}
+
+/// pr の追加行のうち、前の周の head から変わったもの。前の周が無ければ None。base（PR の base の SHA）を引ければ、前の周の
+/// PR の差分（分かれ目から前の head まで）に無い行。引けなければ、前の head が祖先のとき `git diff <前の head> <head>` の
+/// 追加行と重なる行で、rebase した head（祖先でない）と base を merge した head は None（base の変更と PR の変更を分けられないので、PR の差分の全部を
+/// 求める）
+fn changed_since(
+    dir: &Path,
+    pr: &BTreeMap<String, BTreeSet<String>>,
+    previous: &BTreeSet<String>,
+    head: &str,
+    base: Option<&str>,
+) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    if previous.is_empty() {
+        return None;
+    }
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for prev in previous {
+        let old = base
+            .and_then(|b| git_out(dir, &["merge-base", prev, b]))
+            .and_then(|fork| git_diff(dir, fork.trim(), prev));
+        let (since, keep_if_found) = match old {
+            Some(old) => (added_lines(&old), false),
+            // base を merge した head は、祖先でも `git diff <前の head> <head>` に base の変更を含む
+            None if git_out(dir, &["merge-base", "--is-ancestor", prev, head]).is_some()
+                && git_out(dir, &["rev-list", "--merges", &format!("{prev}..{head}")])
+                    .is_some_and(|m| m.trim().is_empty()) =>
+            {
+                (added_lines(&git_diff(dir, prev, head)?), true)
+            }
+            None => return None,
+        };
+        for (file, lines) in pr {
+            let seen = since.get(file);
+            let kept = lines
+                .iter()
+                .filter(|l| seen.is_some_and(|s| s.contains(*l)) == keep_if_found);
+            out.entry(file.clone()).or_default().extend(kept.cloned());
+        }
+    }
+    out.retain(|_, lines| !lines.is_empty());
+    Some(out)
+}
+
+/// 読んだかを比べる追加行（ファイルごと）。前の周から変わった行（changed）があればそれに絞る（直した後の周は、直した差分を
+/// 焦点に読む）。lock のファイルは読まないので外す。テストのファイル（/code-review の low が外す）は、ほかのファイルの行が
+/// あれば外す
+fn required_lines(
+    pr: BTreeMap<String, BTreeSet<String>>,
+    changed: Option<BTreeMap<String, BTreeSet<String>>>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let not_lock = |m: BTreeMap<String, BTreeSet<String>>| -> BTreeMap<String, BTreeSet<String>> {
+        m.into_iter().filter(|(f, _)| !is_lock(f)).collect()
+    };
+    let narrowed = changed.map(not_lock).unwrap_or_default();
+    // 前の周から変わった行が無い（rebase だけ、消すだけの修正）なら、PR の差分の全部を求める
+    let lines = if narrowed.is_empty() {
+        not_lock(pr)
+    } else {
+        narrowed
+    };
+    let body: BTreeMap<_, _> = lines
+        .iter()
+        .filter(|(f, _)| !is_test(f))
+        .map(|(f, l)| (f.clone(), l.clone()))
+        .collect();
+    if body.is_empty() { lines } else { body }
+}
+
+/// /code-review の low が外すと書くテストの形（`test/`、`spec/`、`__tests__/`、`*_test.*`、`*.test.*`、`fixtures/`、
+/// `testdata/`）に、`tests/`、`test_*`、`*_spec.*`、`*.spec.*` を足したもの（大文字と小文字を区別しない）。名前に test を含むだけの本体（`latest.rs`）は外さない（外すと、
+/// 本体を読まない周を通す。low が `':!*test*'` で外して読まなかったなら、読んでいないとして回し直す）
+fn is_test(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    let mut parts: Vec<&str> = lower.split('/').collect();
+    let name = parts.pop().unwrap_or_default();
+    parts
+        .iter()
+        .any(|d| ["test", "tests", "spec", "__tests__", "fixtures", "testdata"].contains(d))
+        || name.starts_with("test_")
+        || name.contains("_test.")
+        || name.contains(".test.")
+        || name.contains("_spec.")
+        || name.contains(".spec.")
+}
+
+fn is_lock(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.ends_with(".lock") || name.ends_with("-lock.json") || name.ends_with("-lock.yaml")
+}
+
+/// unified diff の追加行（前後の空白を除き、先頭の [`LINE_CHARS`] 文字）を、追加した側のパスごとに。英数字（漢字と
+/// かなを含む）が 3 字に満たない行（`}`、`Ok(())`）は、ほとんどの tool の結果に入り、読んだことを示さないので比べない
+fn added_lines(diff: &str) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut file: Option<String> = None;
+    let mut in_hunk = false;
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            file = None;
+            in_hunk = false;
+        } else if !in_hunk && let Some(path) = line.strip_prefix("+++ ") {
+            file = unquote(path).strip_prefix("b/").map(str::to_string);
+        } else if line.starts_with("@@") {
+            in_hunk = true;
+        } else if in_hunk && let (Some(f), Some(text)) = (&file, line.strip_prefix('+')) {
+            let text: String = text.trim().chars().take(LINE_CHARS).collect();
+            if text.chars().filter(|c| c.is_alphanumeric()).count() >= 3 {
+                out.entry(f.clone()).or_default().insert(text);
+            }
+        }
+    }
+    out
+}
+
+/// git が引用したパス（`"b/\346\227\245.md"`。C の文字列の形で、ASCII でないバイトは 8 進）を元の字面に戻す。引用の無い
+/// パスはそのまま
+fn unquote(path: &str) -> String {
+    let Some(inner) = path.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
+        return path.to_string();
+    };
+    let mut bytes = Vec::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        match chars.next() {
+            Some(d @ '0'..='7') => {
+                let mut value = d.to_digit(8).unwrap_or(0);
+                for _ in 0..2 {
+                    if let Some(next) = chars.peek().and_then(|c| c.to_digit(8)) {
+                        value = value * 8 + next;
+                        chars.next();
+                    }
+                }
+                bytes.push(u8::try_from(value).unwrap_or(b'?'));
+            }
+            Some('a') => bytes.push(0x07),
+            Some('b') => bytes.push(0x08),
+            Some('t') => bytes.push(b'\t'),
+            Some('v') => bytes.push(0x0b),
+            Some('f') => bytes.push(0x0c),
+            Some('r') => bytes.push(b'\r'),
+            Some('n') => bytes.push(b'\n'),
+            Some(other) => {
+                let mut buf = [0; 4];
+                bytes.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+            }
+            None => {}
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// `git <args>` を、起動したディレクトリの clone で実行する（hook の中で渡る GIT_DIR に向かない）。成功なら標準出力
+fn git_out(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// `git diff from to`。接頭辞は利用者の diff.noprefix に依らず a/ と b/ にし、パスは引用しても [`unquote`] で戻す
+fn git_diff(dir: &Path, from: &str, to: &str) -> Option<String> {
+    git_out(
+        dir,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "-U0",
+            from,
+            to,
+        ],
+    )
+}
+
+/// Claude Code の設定の場所（`CLAUDE_CONFIG_DIR`、無ければ `~/.claude`）
+fn config_dir() -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::shell::home().join(".claude"))
+}
+
+/// sessions のサブエージェントの記録のうち、/code-review が起動し、windows（UNIX のマイクロ秒の [始まり, 終わり)）の
+/// どれかの中で、その窓の worktree を対象に始まったもの（始まった順）。記録の形は Claude Code の公開の仕様ではないので、読めない行と記録は飛ばす
+/// （飛ばした結果、記録が無ければ、確かめられないとして理由を求める）
+fn review_transcripts(
+    config: &Path,
+    sessions: &BTreeSet<String>,
+    windows: &[Window],
+) -> Vec<Transcript> {
+    let mut found = Vec::new();
+    let Ok(projects) = std::fs::read_dir(config.join("projects")) else {
+        return found;
+    };
+    for project in projects.flatten() {
+        for session in sessions {
+            let Ok(entries) = std::fs::read_dir(project.path().join(session).join("subagents"))
+            else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(stem) = path
+                    .to_str()
+                    .and_then(|p| p.strip_suffix(".forked-skill.json"))
+                else {
+                    continue;
+                };
+                let Some(meta) = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                else {
+                    continue;
+                };
+                if meta.get("skillName").and_then(Value::as_str) != Some("code-review") {
+                    continue;
+                }
+                let jsonl = PathBuf::from(format!("{stem}.jsonl"));
+                let Some(mut t) = read_transcript(&jsonl, windows) else {
+                    continue;
+                };
+                t.effort = meta
+                    .get("effort")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                found.push(t);
+            }
+        }
+    }
+    found.sort_by_key(|t| t.started);
+    found
+}
+
+/// 記録を読む。最初の行（依頼文）の時刻が windows のどれにも入らないか、入った窓の worktree と別の worktree が対象なら、残りの
+/// 行を読まずに None。別の worktree かは git の worktree の根で比べ（本体の下の `.claude/worktrees/<名前>` は別、本体の下の
+/// ディレクトリは同じ。ドライブの文字の大小と symlink は git が揃える）。窓に worktree が無い前の版の行、対象のディレクトリが無い
+/// 依頼文、対象が git の worktree の中に無い依頼文では問わない
+fn read_transcript(path: &Path, windows: &[Window]) -> Option<Transcript> {
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    let mut first = Vec::new();
+    reader.read_until(b'\n', &mut first).ok()?;
+    let head = serde_json::from_str::<Value>(&String::from_utf8_lossy(&first)).ok()?;
+    let started = head
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(parse_time)
+        .map(|t| t.micros)?;
+    // 最初の行は依頼文（/code-review が渡す `Review target: `<対象> <焦点>``）
+    let prompt = head
+        .pointer("/message/content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let hits: Vec<&Window> = windows
+        .iter()
+        .filter(|w| (w.from..w.to).contains(&started))
+        .collect();
+    if hits.is_empty() {
+        return None;
+    }
+    // 対象の worktree の根は、時刻の入った記録で、窓に worktree があるときだけ 1 度引く
+    let target_dir = review_dir(prompt);
+    let target_tree = if hits.iter().any(|w| w.tree.is_some()) {
+        target_dir.as_deref().and_then(toplevel)
+    } else {
+        None
+    };
+    // 対象が git の worktree の中に無い（`/` など）なら分からないので除かない
+    if !hits.iter().any(|w| match (&w.tree, &target_tree) {
+        (Some(tree), Some(top)) => top == tree,
+        _ => true,
+    }) {
+        return None;
+    }
+    // NEXT: の対象は worktree の中のディレクトリ。無ければ周の行の worktree、それも無ければ None で起動したディレクトリにする
+    // （依頼文の最初の語は、焦点の文やオプションでありうる）
+    let target = target_dir
+        .filter(|d| toplevel(d).is_some())
+        .or_else(|| hits.iter().find_map(|w| w.dir.clone()))
+        .map(|d| d.display().to_string());
+    // 大きな tool の結果に UTF-8 でないバイトが残っても、ほかの行は読む
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).ok()?;
+    let rest = String::from_utf8_lossy(&bytes);
+    let mut results = String::new();
+    for line in rest.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        if let Some(Value::Array(items)) = v.pointer("/message/content") {
+            for item in items {
+                if item.get("type").and_then(Value::as_str) == Some("tool_result") {
+                    push_text(item.get("content"), &mut results);
+                }
+            }
+        }
+    }
+    Some(Transcript {
+        path: path.to_path_buf(),
+        started,
+        effort: String::new(),
+        target,
+        text: results,
+    })
+}
+
+/// path（無ければ在る一番近い上のディレクトリ）を含む git の worktree の根
+fn toplevel(path: &Path) -> Option<PathBuf> {
+    let dir = path.ancestors().find(|p| p.is_dir())?;
+    git_out(dir, &["rev-parse", "--show-toplevel"])
+        .map(|s| PathBuf::from(s.strip_suffix('\n').unwrap_or(&s)))
+}
+
+/// 依頼文の `` Review target: `<引数>` `` の引数の語。count-review-rounds が行の worktree を引数の全体から取るので、引数が
+/// 複数の行でも全体を読む（引数の終わりは、行の終わりの backtick）。続く手順の文のパスは対象でない。count-review-rounds が
+/// 引数を切るのと同じ字で切る
+fn review_words(prompt: &str) -> impl Iterator<Item = &str> {
+    let rest = prompt
+        .split_once("Review target: ")
+        .map_or("", |(_, rest)| rest);
+    // 引数の終わりは行の終わりか依頼文の終わりの backtick。見つからない（backtick が無い、別の字が続く）なら、手順の文を
+    // 引数と読まないよう 1 行目だけ
+    let args = match rest.strip_prefix('`') {
+        Some(quoted) => match quoted.split_once("`\n") {
+            Some((args, _)) => args,
+            None => quoted
+                .trim_end()
+                .strip_suffix('`')
+                .unwrap_or_else(|| quoted.split(['`', '\n']).next().unwrap_or_default()),
+        },
+        None => rest.lines().next().unwrap_or_default(),
+    };
+    args.split(crate::rules::is_word_stop)
+        .filter(|w| !w.is_empty())
+}
+
+/// 依頼文の対象のディレクトリ。count-review-rounds が行の worktree を決めるのと同じく、語のうち最初の、在るディレクトリの
+/// 絶対パス（在るディレクトリでない語（和文が続いた、空白で切れた）は飛ばす）。無ければ None（対象を書かない、PR の番号を
+/// 渡した、消えた worktree を渡した周）
+fn review_dir(prompt: &str) -> Option<PathBuf> {
+    review_words(prompt)
+        .map(|w| PathBuf::from(crate::shell::native(w).as_ref()))
+        .find(|p| p.is_absolute() && p.is_dir())
+}
+
+/// tool の結果の本文（文字列か、text の項目の配列）
+fn push_text(content: Option<&Value>, out: &mut String) {
+    match content {
+        Some(Value::String(s)) => {
+            out.push_str(s);
+            out.push('\n');
+        }
+        Some(Value::Array(items)) => {
+            for item in items {
+                if let Some(s) = item.get("text").and_then(Value::as_str) {
+                    out.push_str(s);
+                    out.push('\n');
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 読んでいなかった周の次のレベル（xhigh と max は頼まれたときだけ回すので、high の上に上げない）
+fn raised(effort: &str) -> &str {
+    if effort == "low" { "medium" } else { "high" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_files_are_named_by_the_patterns_code_review_skips() {
+        // /code-review の low が外すと書く形（test/、spec/、__tests__/、*_test.*、*.test.*、fixtures/、testdata/）と tests/、
+        // test_*。名前に test を含むだけのファイルは本体として求める（外すと、本体を読まない周を通す）
+        for path in [
+            "tests/a.rs",
+            "crates/x/tests/common/mod.rs",
+            "claude/tests/scripts/x.sh",
+            "src/__tests__/a.js",
+            "spec/a_spec.rb",
+            "pkg/a_test.go",
+            "web/a.test.ts",
+            "test_a.py",
+            "data/fixtures/a.json",
+            "x/testdata/a.txt",
+            "web/a.spec.ts",
+            "App/Tests/A.cs",
+        ] {
+            assert!(is_test(path), "{path}");
+        }
+        for path in [
+            "src/latest.rs",
+            "src/attest.rs",
+            "contest/a.rs",
+            "docs/testimony.md",
+        ] {
+            assert!(!is_test(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn lines_without_three_letters_or_digits_are_not_compared() {
+        // `}` や `Ok(())` はほとんどの tool の結果に入り、読んだことを示さない
+        let diff = "diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -1 +1,4 @@\n+}\n+Ok(())\n+    ];\n+fn ab() {}\n";
+        let lines = added_lines(diff);
+        assert_eq!(
+            lines
+                .get("a.rs")
+                .map(|l| l.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["fn ab() {}".to_string()])
+        );
+    }
+
+    #[test]
+    fn quoted_paths_are_read_as_utf8() {
+        // git は core.quotePath で ASCII でないパスを 8 進で引用する。gh の差分のパスと同じ字面にそろえる
+        let diff = "diff --git \"a/docs/\\346\\227\\245.md\" \"b/docs/\\346\\227\\245.md\"\n+++ \"b/docs/\\346\\227\\245.md\"\n@@ -1 +1 @@\n+本文の行\n";
+        assert!(
+            added_lines(diff).contains_key("docs/日.md"),
+            "{:?}",
+            added_lines(diff)
+        );
+        // C の文字列の形のほかの文字（`\r` など）も戻す
+        assert_eq!(unquote(r#""b/a\rb\\c""#), "b/a\rb\\c");
+    }
+
+    #[test]
+    fn the_review_target_is_cut_like_the_directory_of_the_round_line() {
+        // count-review-rounds が行の worktree を引数から取るときと同じ字で切る（和文の括弧と句読点、引用符）
+        for prompt in [
+            "Review target: `/repo/wt（焦点: a）`",
+            "Review target: `/repo/wt。焦点`",
+            "Review target: `\"/repo/wt\" 焦点`",
+        ] {
+            assert_eq!(review_words(prompt).next(), Some("/repo/wt"), "{prompt}");
+        }
+        // 対象は /code-review の引数（行の終わりの backtick まで。複数の行でもよい）。続く手順の文に出るパスを対象と読まない
+        let prompt = "Review target: `340`\n\nRead /tmp and `test/`";
+        assert_eq!(review_words(prompt).collect::<Vec<_>>(), vec!["340"]);
+        let prompt = "Review target: `340\n/repo/wt`\n\nRead /tmp";
+        assert_eq!(
+            review_words(prompt).collect::<Vec<_>>(),
+            vec!["340", "/repo/wt"]
+        );
+        // 引数の終わりが見つからなければ 1 行目だけ。backtick の無い依頼文も読む
+        let prompt = "Review target: `340`. Read /tmp";
+        assert_eq!(review_words(prompt).collect::<Vec<_>>(), vec!["340"]);
+        let prompt = "Review target: /repo/wt 焦点\nRead /tmp";
+        assert_eq!(
+            review_words(prompt).collect::<Vec<_>>(),
+            vec!["/repo/wt", "焦点"]
+        );
+        // 依頼文の終わりで閉じた引数も、複数の行を読む
+        let prompt = "Review target: `340\n/repo/wt`";
+        assert_eq!(
+            review_words(prompt).collect::<Vec<_>>(),
+            vec!["340", "/repo/wt"]
+        );
+    }
 }

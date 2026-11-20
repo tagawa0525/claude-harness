@@ -9,7 +9,7 @@
 //!   担当が呼ぶ Skill で数える。Agent の prompt は見ない（自然文から「/code-review を頼む」を見分ける判定は、
 //!   否定や別のスキルを呼ぶ文に当たるか、頼む文を落とした）
 //! - 置き場: リポジトリの共通の git ディレクトリの `claude-review-rounds/<ブランチ名>`（`/` は `%2F`）。1 行が 1 周で、
-//!   回したときの HEAD と時刻を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る。ブランチの
+//!   回したときの HEAD と時刻と、呼んだセッションの ID と、回した worktree を書く。worktree を消して作り直しても、rebase で HEAD が変わっても数は残る。ブランチの
 //!   reflog の最も古い時刻より前の行は、消した前の同じ名前のブランチのものとして数えない（ブランチを消すと reflog も
 //!   消え、作り直すと新しく始まる。rebase では続く。マージの前に rebase した HEAD は既定ブランチの祖先にならないので、
 //!   祖先かでは見分けられない）
@@ -27,17 +27,22 @@ pub struct CountReviewRounds;
 /// 数を置く、共通の git ディレクトリの下のディレクトリ
 const STATE_DIR: &str = "claude-review-rounds";
 
-/// 文字列の中で最初の、ディレクトリとして在る絶対パス。囲みの `` ` ``、引用符、括弧、和文の句読点で切る
+/// 引数の中のパスを切る字（空白、囲みの `` ` ``、引用符、括弧、和文の句読点）。record-local-review が /code-review の依頼文の
+/// 対象を同じ字で切り、周の行の worktree と比べる
+pub(crate) fn is_word_stop(c: char) -> bool {
+    c.is_whitespace() || "`'\"「」（）()。、,;".contains(c)
+}
+
+/// 文字列の中で最初の、ディレクトリとして在る絶対パス（[`is_word_stop`] で切る）
 fn first_directory(text: &str) -> Option<PathBuf> {
-    let stop = |c: char| c.is_whitespace() || "`'\"「」（）()。、,;".contains(c);
-    text.split(stop)
+    text.split(is_word_stop)
         .map(|w| PathBuf::from(crate::shell::native(w).as_ref()))
         .filter(|p| p.is_absolute())
         .find(|p| p.is_dir())
 }
 
 /// ブランチ名をファイル名にする（`%` と `/` を符号にする）
-fn state_file_name(branch: &str) -> String {
+pub(crate) fn branch_file_name(branch: &str) -> String {
     branch.replace('%', "%25").replace('/', "%2F")
 }
 
@@ -90,19 +95,61 @@ fn state_dir(dir: &Path) -> Option<PathBuf> {
     (out.status.success() && !common.is_empty()).then(|| Path::new(common).join(STATE_DIR))
 }
 
+/// 置き場の 1 行（1 周）。`at` は呼んだときの UNIX 秒、`session` は呼んだ Claude Code のセッションの ID、`dir` は回した
+/// worktree（どちらも、書く前の版の行と、ID の無い入力では None）
+pub(crate) struct Round {
+    pub(crate) head: String,
+    pub(crate) at: Option<u64>,
+    pub(crate) session: Option<String>,
+    pub(crate) dir: Option<PathBuf>,
+}
+
+/// 置き場の 1 つのファイル（ブランチ）の名前と行
+pub(crate) type BranchRounds = (String, Vec<Round>);
+
+/// dir の clone の、周の数の置き場と、ファイルの名前（[`branch_file_name`]）ごとの行（書いた順）。dir が git のリポジトリの
+/// 中でなければ None
+pub(crate) fn rounds(dir: &Path) -> Option<(PathBuf, Vec<BranchRounds>)> {
+    let state_dir = state_dir(dir)?;
+    let files = std::fs::read_dir(&state_dir)
+        .map(|files| {
+            files
+                .flatten()
+                .filter_map(|file| {
+                    let name = file.file_name().to_string_lossy().into_owned();
+                    Some((name, std::fs::read_to_string(file.path()).ok()?))
+                })
+                .map(|(name, text)| {
+                    let lines = text
+                        .lines()
+                        .filter_map(|l| {
+                            // worktree は空白を含みうるので、最後の欄として行の残りを取る
+                            let mut fields = l.splitn(4, ' ');
+                            Some(Round {
+                                head: fields.next()?.to_string(),
+                                at: fields.next().and_then(|t| t.parse().ok()),
+                                session: fields
+                                    .next()
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string),
+                                dir: fields.next().filter(|d| !d.is_empty()).map(PathBuf::from),
+                            })
+                        })
+                        .collect();
+                    (name, lines)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((state_dir, files))
+}
+
 /// dir の clone の、周の数の置き場と、そこに head を HEAD にして /code-review を呼んだ行があるか。ブランチは問わない
 /// （同じ SHA なら同じコミット。ブランチの名前を変えても引ける）。dir が git のリポジトリの中でなければ None。
 /// 行があるのは呼んだことで、レビューが対象を読めたことまでは示さない（[`CountReviewRounds`] は結果を見ない）
 pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<(PathBuf, bool)> {
-    let state_dir = state_dir(dir)?;
-    let found = std::fs::read_dir(&state_dir).is_ok_and(|files| {
-        files.flatten().any(|file| {
-            std::fs::read_to_string(file.path()).is_ok_and(|text| {
-                text.lines()
-                    .any(|l| l.split_whitespace().next() == Some(head))
-            })
-        })
-    });
+    let (state_dir, files) = rounds(dir)?;
+    let found = files.iter().flat_map(|(_, f)| f).any(|r| r.head == head);
     Some((state_dir, found))
 }
 
@@ -135,14 +182,21 @@ impl Rule for CountReviewRounds {
         let Some(state_dir) = state_dir(&dir) else {
             return Vec::new();
         };
-        let path = state_dir.join(state_file_name(&branch));
+        let path = state_dir.join(branch_file_name(&branch));
         let mut lines = live_rounds(&dir, &branch, &path);
         let head = git::git(&dir, &["rev-parse", "HEAD"]).unwrap_or_default();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        lines.push(format!("{head} {now}"));
+        // セッションは、record-local-review が 0 件の記録の前に、この周の /code-review の記録（サブエージェントの
+        // transcript）を探すのに使う。空白を含む値は行の区切りを崩すので書かない
+        let session = &input.session_id;
+        if session.is_empty() || session.contains(char::is_whitespace) {
+            lines.push(format!("{head} {now}"));
+        } else {
+            lines.push(format!("{head} {now} {session} {}", dir.display()));
+        }
         let written = std::fs::create_dir_all(&state_dir)
             .and_then(|()| std::fs::write(&path, lines.join("\n") + "\n"));
         if let Err(e) = written {
@@ -260,6 +314,44 @@ mod tests {
         let args = format!("high {}", crate::shell::to_msys(&r.dir));
         let context = round(&skill("code-review", &args, Path::new(r"C:\")));
         assert!(context.contains("feat/msys"), "{context}");
+    }
+
+    #[test]
+    fn the_line_names_the_session_that_ran_the_round() {
+        // record-local-review は、0 件の記録の前に、このセッションの /code-review の記録（サブエージェントの transcript）を
+        // 探して差分を読んだかを確かめる
+        let r = repo("feat/s");
+        let mut input = review(&r);
+        input.session_id = "0a87f718-session".into();
+        round(&input);
+        let head = git_out(&r.dir, &["rev-parse", "HEAD"]);
+        let (_, files) = rounds(&r.dir).expect("clone の中");
+        let lines: Vec<&Round> = files.iter().flat_map(|(_, f)| f).collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].head, head);
+        assert_eq!(lines[0].session.as_deref(), Some("0a87f718-session"));
+        // 回した worktree（空白を含んでもよい）。record-local-review が、同じ頃に回したほかの worktree の周と分ける
+        assert_eq!(lines[0].dir.as_deref(), Some(r.dir.as_path()));
+        // 前の版の hook が書いた、セッションの無い行も読む
+        let state = state_dir(&r.dir).unwrap();
+        std::fs::write(state.join("old"), format!("{head} 1794900000\n")).unwrap();
+        let (_, files) = rounds(&r.dir).unwrap();
+        let old: Vec<&Round> = files
+            .iter()
+            .flat_map(|(_, f)| f)
+            .filter(|l| l.session.is_none())
+            .collect();
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0].at, Some(1794900000));
+    }
+
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
     }
 
     #[test]

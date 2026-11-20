@@ -4,7 +4,8 @@
 //! のレビューの代わりに数えるので、head でない SHA、push できないリポジトリ、形の崩れた件数では付けない。その head で
 //! /code-review を回した記録（count-review-rounds の hook が clone に書く行）が、起動したディレクトリの clone に無いときも付けない
 //! （hook が書かない回し方をしたときは、`--unlogged <理由>` で理由を記録に残して付ける）。指摘は 1 件ごとに
-//! `--finding <要旨>` で受けて記録に書き、数が件数の合計と合わなければ付けない
+//! `--finding <要旨>` で受けて記録に書き、数が件数の合計と合わなければ付けない。0 件の記録は、その head で回した
+//! /code-review の記録（サブエージェントの transcript）の tool の結果に、PR の差分の追加行が入っているときだけ付ける
 
 mod common;
 
@@ -220,7 +221,11 @@ fn a_round_on_any_branch_of_the_clone_counts() {
         format!("{HEAD} 1794900000\n"),
     )
     .unwrap();
-    let out = run_as_is(&fake, &[URL, HEAD, "0", "0", "0"], "true\n");
+    let out = run_as_is(
+        &fake,
+        &[URL, HEAD, "0", "0", "1", "--finding", FINDING],
+        "true\n",
+    );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
 
@@ -287,10 +292,16 @@ fn the_unlogged_way_out_says_it_needs_no_cd_into_a_worktree() {
 }
 
 #[test]
-fn a_record_with_no_findings_notes_that_the_reply_must_show_the_diff_was_read() {
-    // 対象を見つけられなかった、エラーで終わった、`[]` だけの返答の周は未実施で、0 件の記録はレビュー済みに見える
+fn an_unverified_record_with_no_findings_notes_that_the_reply_must_show_the_diff_was_read() {
+    // --unlogged の 0 件の記録は、差分を読んだかを機械で確かめていない。対象を見つけられなかった、エラーで終わった、
+    // `[]` だけの返答の周は未実施で、0 件の記録はレビュー済みに見える
     let fake = FakeGh::new();
-    let out = run(&fake, &[URL, HEAD, "0", "0", "0"], "true\n");
+    reviewed_at(&fake, &["abc1234abc1234abc1234abc1234abc1234abc12"]);
+    let out = run_as_is(
+        &fake,
+        &[URL, HEAD, "0", "0", "0", "--unlogged", "PR の URL を渡した"],
+        "true\n",
+    );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let text = stdout(&out);
     let note = text
@@ -437,7 +448,17 @@ fn a_reason_is_dropped_when_the_round_is_logged() {
     let fake = FakeGh::new();
     let out = run(
         &fake,
-        &[URL, "def5678", "0", "0", "0", "--unlogged", "念のため"],
+        &[
+            URL,
+            "def5678",
+            "0",
+            "0",
+            "1",
+            "--finding",
+            FINDING,
+            "--unlogged",
+            "念のため",
+        ],
         "true\n",
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
@@ -654,4 +675,1077 @@ fn a_bad_finding_names_the_value() {
         );
         assert_eq!(fake.log(), "", "{value:?}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 0 件の記録: その head で回した /code-review の記録に、PR の差分の追加行が入っているか
+// ---------------------------------------------------------------------------
+
+const SESSION: &str = "0a87f718-test-session";
+const TARGET: &str = "/work/app-feat-x";
+/// 周の行の時刻（1794900000 = 2026-11-17T07:20:00Z）の直後（/code-review のサブエージェントは、Skill の呼び出しの
+/// 1 秒以内に始まる）
+const AFTER: &str = "2026-11-17T07:20:01.000Z";
+const BEFORE: &str = "2026-11-17T07:19:00.000Z";
+
+/// PR の差分。本体（src/a.rs）のほかに、テストと lock のファイルの追加行がある
+const PR_DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n\
+index 1111111..2222222 100644\n\
+--- a/src/a.rs\n\
++++ b/src/a.rs\n\
+@@ -1,0 +2,3 @@\n\
++fn checked(x: u8) -> bool {\n\
++    x > 0\n\
++}\n\
+diff --git a/tests/a.rs b/tests/a.rs\n\
+index 1111111..2222222 100644\n\
+--- a/tests/a.rs\n\
++++ b/tests/a.rs\n\
+@@ -1,0 +2,1 @@\n\
++assert!(checked(1));\n\
+diff --git a/Cargo.lock b/Cargo.lock\n\
+index 1111111..2222222 100644\n\
+--- a/Cargo.lock\n\
++++ b/Cargo.lock\n\
+@@ -1,0 +2,1 @@\n\
++version = \"9.9.9\"\n";
+
+/// テストのファイルだけの PR の差分
+const TEST_ONLY_DIFF: &str = "diff --git a/tests/a.rs b/tests/a.rs\n\
+index 1111111..2222222 100644\n\
+--- a/tests/a.rs\n\
++++ b/tests/a.rs\n\
+@@ -1,0 +2,1 @@\n\
++assert!(checked(1));\n";
+
+/// 偽の Claude Code の設定の場所（CLAUDE_CONFIG_DIR）
+fn config(fake: &FakeGh) -> std::path::PathBuf {
+    fake.dir().join("claude-config")
+}
+
+/// count-review-rounds が書く形の行（`<HEAD> <UNIX 秒> <セッション> <回した worktree>`）で、rounds の HEAD を回した記録を置く
+fn reviewed_in_session(fake: &FakeGh, rounds: &[&str]) {
+    reviewed_at(fake, &[]);
+    let text: String = rounds
+        .iter()
+        .map(|h| format!("{h} 1794900000 {SESSION} {TARGET}\n"))
+        .collect();
+    std::fs::write(fake.dir().join(".git/claude-review-rounds/feat%2Fx"), text).unwrap();
+}
+
+/// /code-review が起動したサブエージェントの記録を、Claude Code が置く形で置く（`<設定>/projects/<プロジェクト>/<セッション>/
+/// subagents/agent-<id>.jsonl` と、隣の `.forked-skill.json`）。tool の結果は、文字列と text の配列の両方の形で入れる
+fn transcript(fake: &FakeGh, id: &str, skill: &str, effort: &str, started: &str, results: &[&str]) {
+    transcript_of(fake, id, TARGET, skill, effort, started, results);
+}
+
+/// [`transcript`] と同じだが、依頼文の対象を target にする
+fn transcript_of(
+    fake: &FakeGh,
+    id: &str,
+    target: &str,
+    skill: &str,
+    effort: &str,
+    started: &str,
+    results: &[&str],
+) {
+    let dir = config(fake).join(format!("projects/-work-app/{SESSION}/subagents"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("agent-{id}.forked-skill.json")),
+        serde_json::json!({"skillName": skill, "attributionName": skill, "effort": effort})
+            .to_string(),
+    )
+    .unwrap();
+    let mut lines = vec![serde_json::json!({
+        "type": "user",
+        "timestamp": started,
+        "message": {"role": "user", "content": format!("Review target: `{target} 焦点: 直した差分`\n\n## Turn 1 — read\n")},
+    })];
+    for (i, result) in results.iter().enumerate() {
+        let content = if i % 2 == 0 {
+            serde_json::json!(result)
+        } else {
+            serde_json::json!([{"type": "text", "text": result}])
+        };
+        lines.push(serde_json::json!({
+            "type": "user",
+            "timestamp": started,
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": content}]},
+        }));
+    }
+    lines.push(serde_json::json!({
+        "type": "assistant",
+        "timestamp": started,
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "(none)"}]},
+    }));
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    std::fs::write(dir.join(format!("agent-{id}.jsonl")), text).unwrap();
+}
+
+/// 0 件で記録する（gh は head、権限、PR の差分、コメントの順に呼ばれる）
+fn record_zero(fake: &FakeGh, head: &str, diff: &str, extra: &[&str]) -> std::process::Output {
+    let mut args = vec![URL, head, "0", "0", "0"];
+    args.extend_from_slice(extra);
+    let config = config(fake).to_string_lossy().into_owned();
+    fake.run_calls_with_env(
+        "record-local-review",
+        &args,
+        &[
+            (&format!("{head}\n"), 0),
+            ("true\n", 0),
+            (diff, 0),
+            ("https://github.com/octo/repo/pull/42#issuecomment-1\n", 0),
+        ],
+        &[("CLAUDE_CONFIG_DIR", &config)],
+    )
+}
+
+/// 読んだ周の tool の結果（git diff の出力）
+const READ_DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n@@ -1,0 +2,3 @@\n+fn checked(x: u8) -> bool {\n+    x > 0\n+}\n";
+
+#[test]
+fn zero_findings_from_a_review_that_read_the_diff_are_recorded() {
+    // テストのファイル（/code-review の low は外す）と lock のファイルの行は、読んでいなくてよい
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "a1", "code-review", "low", AFTER, &["", READ_DIFF]);
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        fake.log().contains("gh pr diff 42 --color never\n"),
+        "{}",
+        fake.log()
+    );
+    assert!(
+        fake.log().contains(&format!(
+            "gh pr comment 42 --body <!-- local-review sha={HEAD} high=0 medium=0 low=0 -->\n\
+             ローカルの /code-review で def5678 を確かめた: High 0 / Medium 0 / Low 0\n"
+        )),
+        "{}",
+        fake.log()
+    );
+    assert!(
+        !fake.log().contains("回した記録を確かめていない理由"),
+        "{}",
+        fake.log()
+    );
+    // 読んだことを機械で確かめた記録には、返答の読み方の注意を出さない
+    assert!(!stdout(&out).contains("NOTE:"), "{}", stdout(&out));
+}
+
+#[test]
+fn zero_findings_from_a_review_that_did_not_read_the_diff_record_nothing_and_name_the_next_round() {
+    // 大きな出力はファイルに置かれ、tool の結果は先頭の 2KB だけになる。そのファイルを読まずに `(none)` を返した周は未実施
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &[
+            "<persisted-output>\nOutput too large (50KB).\n\nPreview (first 2KB):\ndiff --git a/src/a.rs b/src/a.rs\n",
+        ],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+    let err = stderr(&out);
+    assert!(err.contains("src/a.rs"), "{err}");
+    assert!(err.contains("記録を付けていません"), "{err}");
+    // 次の手はレベルを上げて同じ対象を、欠けたファイルを焦点に回し直すこと
+    assert!(
+        stdout(&out).contains(&format!(
+            "NEXT: /code-review medium {TARGET} 焦点: src/a.rs の差分"
+        )),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn the_rounds_of_a_head_together_can_cover_the_diff() {
+    // 欠けたファイルを焦点に回し直した周は、そのファイルだけを読む。同じ head の周が合わせて読んでいれば記録する
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    // 回し直した周の行（10 分後）
+    let rounds = fake.dir().join(".git/claude-review-rounds/feat%2Fx");
+    let text = std::fs::read_to_string(&rounds).unwrap();
+    std::fs::write(
+        &rounds,
+        format!("{text}{HEAD} 1794900600 {SESSION} {TARGET}\n"),
+    )
+    .unwrap();
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn checked(x: u8) -> bool {"],
+    );
+    transcript(
+        &fake,
+        "a2",
+        "code-review",
+        "medium",
+        "2026-11-17T07:30:00.500Z",
+        &["+    x > 0\n+}"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_test_only_diff_must_be_read_in_its_test_files() {
+    // 差分がテストだけなら、テストを外して何も読まない周は未実施。テストを読んだ周は記録する
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "medium",
+        AFTER,
+        &["no diff outside tests"],
+    );
+    let out = record_zero(&fake, HEAD, TEST_ONLY_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("tests/a.rs"), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains(&format!("NEXT: /code-review high {TARGET} ")),
+        "{}",
+        stdout(&out)
+    );
+
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "medium",
+        AFTER,
+        &["+assert!(checked(1));"],
+    );
+    let out = record_zero(&fake, HEAD, TEST_ONLY_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn only_code_review_transcripts_started_after_the_round_count() {
+    // 前の周の記録、ほかのサブエージェント（差分を書いた担当など）の記録、周の行の直後に始まっていない記録は、この周に
+    // 読んだことを示さない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "old", "code-review", "low", BEFORE, &[READ_DIFF]);
+    transcript(&fake, "other", "simplify", "low", AFTER, &[READ_DIFF]);
+    // 同じセッションで後に回した、別の PR の周（/delegate の担当は親のセッションを共有する）
+    transcript(
+        &fake,
+        "later",
+        "code-review",
+        "low",
+        "2026-11-17T07:30:00.000Z",
+        &[READ_DIFF],
+    );
+    transcript(&fake, "a1", "code-review", "low", AFTER, &["nothing"]);
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+    assert!(
+        stdout(&out).contains("NEXT: /code-review medium"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_round_whose_transcript_cannot_be_found_needs_a_reason() {
+    // 別の機械で回した、記録が消えた、前の版の hook が書いたセッションの無い行は、読んだかを確かめられない。--unlogged と
+    // 同じく、理由を記録に残して付ける
+    for setup in [
+        // セッションの無い行
+        (|fake: &FakeGh| reviewed_at(fake, &[HEAD])) as fn(&FakeGh),
+        // セッションはあるが、その記録が無い
+        |fake: &FakeGh| reviewed_in_session(fake, &[HEAD]),
+    ] {
+        let fake = FakeGh::new();
+        setup(&fake);
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert!(stderr(&out).contains("--unlogged"), "{}", stderr(&out));
+        assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+
+        let fake = FakeGh::new();
+        setup(&fake);
+        let out = record_zero(&fake, HEAD, PR_DIFF, &["--unlogged", "別の機械で回した"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert!(
+            fake.log()
+                .contains("回した記録を確かめていない理由: 別の機械で回した\n"),
+            "{}",
+            fake.log()
+        );
+    }
+}
+
+#[test]
+fn a_reason_does_not_pass_a_review_that_did_not_read_the_diff() {
+    // --unlogged は記録を確かめられないときの口で、読んでいないと分かった周を通さない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "a1", "code-review", "low", AFTER, &["nothing"]);
+    let out = record_zero(&fake, HEAD, PR_DIFF, &["--unlogged", "念のため"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+}
+
+/// 起動するディレクトリの clone に、base の上の 2 つのコミット（前の周の head と、直した head）を作る。返すのは base と直した head
+fn two_heads(fake: &FakeGh) -> (String, String) {
+    let git = |args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        let out = forget_git_env(&mut cmd)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(fake.dir())
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    reviewed_at(fake, &[]);
+    std::fs::create_dir_all(fake.dir().join("src")).unwrap();
+    std::fs::write(fake.dir().join("src/a.rs"), "fn base() {}\n").unwrap();
+    git(&["add", "src/a.rs"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    std::fs::write(fake.dir().join("src/a.rs"), "fn base() {}\nfn first() {}\n").unwrap();
+    git(&["commit", "-q", "-am", "first"]);
+    let first = git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        fake.dir().join("src/a.rs"),
+        "fn base() {}\nfn first() {}\nfn second() {}\n",
+    )
+    .unwrap();
+    git(&["commit", "-q", "-am", "second"]);
+    let second = git(&["rev-parse", "HEAD"]);
+    // 周の行は、起動したディレクトリのブランチのファイルに置く
+    git(&["checkout", "-q", "-B", "feat/x"]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{first} 1794800000 {SESSION}\n{second} 1794900000 {SESSION}\n"),
+    )
+    .unwrap();
+    (base, second)
+}
+
+const TWO_HEADS_DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n\
+--- a/src/a.rs\n\
++++ b/src/a.rs\n\
+@@ -1,0 +2,2 @@\n\
++fn first() {}\n\
++fn second() {}\n";
+
+#[test]
+fn after_a_fix_the_lines_changed_since_the_previous_round_must_be_read() {
+    // 直した後の周は、直した差分を焦点に読む。前の周から変わらない行は前の周が読んだ
+    let fake = FakeGh::new();
+    let (_, second) = two_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn second() {}"],
+    );
+    let out = record_zero(&fake, &second, TWO_HEADS_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+
+    let fake = FakeGh::new();
+    let (_, second) = two_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn first() {}"],
+    );
+    let out = record_zero(&fake, &second, TWO_HEADS_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+}
+
+/// 0 件で記録する。前の周があるときは、PR の base の SHA も gh で引く（head、権限、差分、base、コメントの順）
+fn record_zero_with_base(
+    fake: &FakeGh,
+    head: &str,
+    diff: &str,
+    base: &str,
+) -> std::process::Output {
+    let config = config(fake).to_string_lossy().into_owned();
+    fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, head, "0", "0", "0"],
+        &[
+            (&format!("{head}\n"), 0),
+            ("true\n", 0),
+            (diff, 0),
+            (&format!("{base}\n"), 0),
+            ("https://github.com/octo/repo/pull/42#issuecomment-1\n", 0),
+        ],
+        &[("CLAUDE_CONFIG_DIR", &config)],
+    )
+}
+
+/// 前の周の head を base の上に、直した head を base の進んだ先（main が同じ行を足した）の上に作る（rebase の後の形）
+fn rebased_heads(fake: &FakeGh) -> (String, String) {
+    let git = |args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        let out = forget_git_env(&mut cmd)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(fake.dir())
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let write = |text: &str| std::fs::write(fake.dir().join("src/a.rs"), text).unwrap();
+    reviewed_at(fake, &[]);
+    std::fs::create_dir_all(fake.dir().join("src")).unwrap();
+    write("fn base() {}\n");
+    git(&["add", "src/a.rs"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    write("let shared = 1;\nfn first() {}\nfn base() {}\n");
+    git(&["commit", "-q", "-am", "pr"]);
+    let prev = git(&["rev-parse", "HEAD"]);
+    git(&["checkout", "-q", &base]);
+    write("fn base() {}\nlet shared = 1;\n");
+    git(&["commit", "-q", "-am", "main"]);
+    let main = git(&["rev-parse", "HEAD"]);
+    write("let shared = 1;\nfn first() {}\nfn base() {}\nlet shared = 1;\n");
+    git(&["commit", "-q", "-am", "pr rebased"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    // 周の行は、起動したディレクトリのブランチのファイルに置く
+    git(&["checkout", "-q", "-B", "feat/x"]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{prev} 1794800000 {SESSION}\n{head} 1794900000 {SESSION}\n"),
+    )
+    .unwrap();
+    (main, head)
+}
+
+const REBASED_DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n\
+--- a/src/a.rs\n\
++++ b/src/a.rs\n\
+@@ -0,0 +1,2 @@\n\
++let shared = 1;\n\
++fn first() {}\n";
+
+#[test]
+fn after_a_rebase_lines_the_base_also_added_do_not_stand_for_the_pr() {
+    // rebase の後の `git diff <前の head> <head>` は base の変更を含む。PR が足した行と字面が同じ base の行だけを求めると、
+    // PR の変更を読まない周を通す。前の周から PR の差分が変わっていなければ、PR の差分の全部を求める
+    let fake = FakeGh::new();
+    let (main, head) = rebased_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;"],
+    );
+    let out = record_zero_with_base(&fake, &head, REBASED_DIFF, &main);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+
+    // base を引けない（手元に無い）ときも、rebase した head には PR の差分の全部を求める
+    let fake = FakeGh::new();
+    let (_, head) = rebased_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;"],
+    );
+    let out = record_zero_with_base(
+        &fake,
+        &head,
+        REBASED_DIFF,
+        "0000000000000000000000000000000000000000",
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+
+    let fake = FakeGh::new();
+    let (main, head) = rebased_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;\n+fn first() {}"],
+    );
+    let out = record_zero_with_base(&fake, &head, REBASED_DIFF, &main);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_review_whose_children_read_the_diff_needs_a_reason() {
+    // xhigh と max の /code-review は、子のエージェントに読ませる。子の記録は数えないので、読んだかを確かめられない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "max",
+        AFTER,
+        &["summary of reviewers"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("--unlogged"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("NEXT:"), "{}", stdout(&out));
+
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "max",
+        AFTER,
+        &["summary of reviewers"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &["--unlogged", "max の周"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_review_of_another_worktree_started_at_the_same_time_does_not_count() {
+    // /delegate の担当は親のセッションを共有し、同じ頃に別の PR を回す。周の行に書いた worktree と依頼文の対象で分ける
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[]);
+    let [own, other] = ["wt-a", "wt-b"].map(|name| {
+        let dir = fake.dir().join(name);
+        let mut cmd = std::process::Command::new("git");
+        let ok = forget_git_env(&mut cmd)
+            .args(["init", "-q"])
+            .arg(&dir)
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git init");
+        dir.to_string_lossy().into_owned()
+    });
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{HEAD} 1794900000 {SESSION} {own}\n"),
+    )
+    .unwrap();
+    transcript_of(&fake, "a1", &own, "code-review", "low", AFTER, &["nothing"]);
+    transcript_of(
+        &fake,
+        "b1",
+        &other,
+        "code-review",
+        "max",
+        AFTER,
+        &[READ_DIFF],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+    assert!(
+        stdout(&out).contains(&format!("NEXT: /code-review medium {own} ")),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_review_whose_level_is_unknown_is_still_checked() {
+    // 子に読ませるのは xhigh と max だけ。レベルが読めない記録を、確かめられないとして --unlogged で通さない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "a1", "code-review", "", AFTER, &["nothing"]);
+    let out = record_zero(&fake, HEAD, PR_DIFF, &["--unlogged", "念のため"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("NEXT: /code-review"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_round_line_with_a_broken_time_is_not_a_window() {
+    // 手で直して壊れた時刻で、窓の計算を溢れさせない
+    let fake = FakeGh::new();
+    reviewed_at(&fake, &[]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{HEAD} 99999999999999 {SESSION}\n"),
+    )
+    .unwrap();
+    transcript(&fake, "a1", "code-review", "low", AFTER, &[READ_DIFF]);
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("--unlogged"), "{}", stderr(&out));
+}
+
+/// 前の周の head に base を merge した head を作る（rebase でなく merge で base に追いついた形。前の head は祖先のまま）
+fn merged_heads(fake: &FakeGh) -> String {
+    let git = |args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        let out = forget_git_env(&mut cmd)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(fake.dir())
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    reviewed_at(fake, &[]);
+    std::fs::create_dir_all(fake.dir().join("src")).unwrap();
+    std::fs::write(fake.dir().join("src/a.rs"), "fn base() {}\n").unwrap();
+    git(&["add", "src/a.rs"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        fake.dir().join("src/a.rs"),
+        "let shared = 1;\nfn first() {}\nfn base() {}\n",
+    )
+    .unwrap();
+    git(&["commit", "-q", "-am", "pr"]);
+    let prev = git(&["rev-parse", "HEAD"]);
+    git(&["checkout", "-q", "-b", "main-moved", &base]);
+    std::fs::write(fake.dir().join("src/b.rs"), "let shared = 1;\n").unwrap();
+    git(&["add", "src/b.rs"]);
+    git(&["commit", "-q", "-m", "main"]);
+    git(&["checkout", "-q", &prev]);
+    git(&["merge", "-q", "--no-edit", "main-moved"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    // 周の行は、起動したディレクトリのブランチのファイルに置く
+    git(&["checkout", "-q", "-B", "feat/x"]);
+    std::fs::write(
+        fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+        format!("{prev} 1794800000 {SESSION}\n{head} 1794900000 {SESSION}\n"),
+    )
+    .unwrap();
+    head
+}
+
+#[test]
+fn after_merging_the_base_lines_the_base_added_do_not_stand_for_the_pr() {
+    // base を引けず、前の head が祖先でも、base を merge した head の `git diff <前の head> <head>` は base の変更を含む
+    const DIFF: &str = "diff --git a/src/a.rs b/src/a.rs\n\
+--- a/src/a.rs\n\
++++ b/src/a.rs\n\
+@@ -0,0 +1,2 @@\n\
++let shared = 1;\n\
++fn first() {}\n\
+diff --git a/src/b.rs b/src/b.rs\n\
+--- a/src/b.rs\n\
++++ b/src/b.rs\n\
+@@ -0,0 +1 @@\n\
++let shared = 1;\n";
+    let fake = FakeGh::new();
+    let head = merged_heads(&fake);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+let shared = 1;"],
+    );
+    let out = record_zero_with_base(
+        &fake,
+        &head,
+        DIFF,
+        "0000000000000000000000000000000000000000",
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+}
+
+#[test]
+fn a_review_without_a_worktree_in_its_target_counts_for_the_worktree_of_the_line() {
+    // 対象を書かない、PR の番号を渡した、worktree の下のディレクトリを渡した /code-review は、依頼文の対象が周の行の worktree と
+    // 字面で合わない。別の worktree と分かるのは、対象がほかのディレクトリを指すときだけ
+    // `/` は在るが git の worktree の中に無く、どの worktree かを決められない（焦点の文の「a / b」から取った語）
+    for target in ["", "340", "/work/app-feat-x/crates", "/"] {
+        let fake = FakeGh::new();
+        reviewed_in_session(&fake, &[HEAD]);
+        transcript_of(
+            &fake,
+            "a1",
+            target,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(out.status.code(), Some(0), "{target:?}: {}", stderr(&out));
+    }
+}
+
+#[test]
+fn a_worktree_nested_in_the_checkout_of_the_line_is_another_worktree() {
+    // Claude Code の `isolation: "worktree"` は、worktree を本体の `.claude/worktrees/<名前>` に置く。パスの上下でなく、git の
+    // worktree の根で分ける。本体の下のディレクトリを渡した周は、本体の周と数える
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        let ok = forget_git_env(&mut cmd)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", dir.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    for (target, recorded) in [(".claude/worktrees/x", false), ("src", true)] {
+        let fake = FakeGh::new();
+        reviewed_at(&fake, &[]);
+        std::fs::create_dir_all(fake.dir().join("src")).unwrap();
+        std::fs::write(fake.dir().join("src/a.rs"), "fn a() {}\n").unwrap();
+        git(fake.dir(), &["add", "src/a.rs"]);
+        git(fake.dir(), &["commit", "-q", "-m", "a"]);
+        git(
+            fake.dir(),
+            &["worktree", "add", "-q", "-b", "x", ".claude/worktrees/x"],
+        );
+        let root = fake.dir().to_string_lossy().into_owned();
+        std::fs::write(
+            fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+            format!("{HEAD} 1794900000 {SESSION} {root}\n"),
+        )
+        .unwrap();
+        let path = fake.dir().join(target).to_string_lossy().into_owned();
+        transcript_of(
+            &fake,
+            "a1",
+            &path,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(
+            out.status.code() == Some(0),
+            recorded,
+            "{target}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn a_transcript_with_bytes_that_are_not_utf8_is_still_read() {
+    // 大きな tool の結果に UTF-8 でないバイトが残っても、ほかの行の tool の結果は読む
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "a1", "code-review", "low", AFTER, &[READ_DIFF]);
+    let path = config(&fake).join(format!(
+        "projects/-work-app/{SESSION}/subagents/agent-a1.jsonl"
+    ));
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(b"{\"type\":\"user\",\"message\":\"\xff\xfe\"}\n");
+    std::fs::write(&path, bytes).unwrap();
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn the_target_is_the_first_directory_like_the_round_line() {
+    // count-review-rounds は引数の中で最初の、在るディレクトリの絶対パスを行の worktree にする。和文が続いて在るディレクトリで
+    // ない語や、空白で切れた語を対象と読まない
+    for suffix in ["", "の差分"] {
+        let fake = FakeGh::new();
+        reviewed_at(&fake, &[]);
+        let dir = fake.dir().join("wt a");
+        let mut cmd = std::process::Command::new("git");
+        let ok = forget_git_env(&mut cmd)
+            .args(["init", "-q"])
+            .arg(&dir)
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git init");
+        let own = dir.to_string_lossy().into_owned();
+        std::fs::write(
+            fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+            format!("{HEAD} 1794900000 {SESSION} {own}\n"),
+        )
+        .unwrap();
+        let target = format!("{own}{suffix}");
+        transcript_of(
+            &fake,
+            "a1",
+            &target,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(out.status.code(), Some(0), "{target}: {}", stderr(&out));
+    }
+}
+
+/// 起動するディレクトリの clone の下に、名前ごとの git のリポジトリを作る（別々の worktree の根）
+fn repos(fake: &FakeGh, names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| {
+            let dir = fake.dir().join(name);
+            let mut cmd = std::process::Command::new("git");
+            let ok = forget_git_env(&mut cmd)
+                .args(["init", "-q"])
+                .arg(&dir)
+                .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git init");
+            dir.to_string_lossy().into_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn the_target_is_read_from_the_whole_arguments_like_the_round_line() {
+    // count-review-rounds は引数の全体から最初の在るディレクトリを取る。PR の番号の後や次の行に書いた worktree を、依頼文の
+    // 対象として行の worktree と比べる
+    for (args, recorded) in [
+        ("340 焦点: {wt} の差分", true),
+        ("340\n{wt}", true),
+        ("340\n{other}", false),
+        ("340 焦点: {other} との違い", false),
+    ] {
+        let fake = FakeGh::new();
+        reviewed_at(&fake, &[]);
+        let [wt, other] = <[String; 2]>::try_from(repos(&fake, &["wt", "other"])).unwrap();
+        std::fs::write(
+            fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+            format!("{HEAD} 1794900000 {SESSION} {wt}\n"),
+        )
+        .unwrap();
+        let target = args.replace("{wt}", &wt).replace("{other}", &other);
+        transcript_of(
+            &fake,
+            "a1",
+            &target,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(
+            out.status.code() == Some(0),
+            recorded,
+            "{args}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn the_next_round_is_not_aimed_at_a_directory_outside_the_worktree() {
+    // 焦点の文の `/` は在るディレクトリだが worktree でない。NEXT: の対象にせず、周の行の worktree を対象にする
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript_of(
+        &fake,
+        "a1",
+        "340 焦点: searched / failed",
+        "code-review",
+        "low",
+        AFTER,
+        &["nothing"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains(&format!("NEXT: /code-review medium {TARGET} ")),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn the_previous_round_is_taken_from_the_branch_of_the_clone() {
+    // 置き場は clone で 1 つで、ほかのブランチのファイルにも同じ head の行がありうる（同じコミットを別のブランチで回した）。
+    // 前の周は、起動したディレクトリのブランチの行から決める。そのブランチで前の周が無ければ、PR の差分の全部を求める
+    let fake = FakeGh::new();
+    let (base, second) = two_heads(&fake);
+    let rounds = fake.dir().join(".git/claude-review-rounds");
+    let other = std::fs::read_to_string(rounds.join("feat%2Fx")).unwrap();
+    std::fs::remove_file(rounds.join("feat%2Fx")).unwrap();
+    std::fs::write(rounds.join("other"), other).unwrap();
+    let mut cmd = std::process::Command::new("git");
+    let out = forget_git_env(&mut cmd)
+        .args(["branch", "--show-current"])
+        .current_dir(fake.dir())
+        .output()
+        .unwrap();
+    let branch = String::from_utf8(out.stdout)
+        .unwrap()
+        .trim()
+        .replace('/', "%2F");
+    std::fs::write(
+        rounds.join(&branch),
+        format!("{second} 1794900000 {SESSION}\n"),
+    )
+    .unwrap();
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn second() {}"],
+    );
+    let out = record_zero_with_base(&fake, &second, TWO_HEADS_DIFF, &base);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+    // 前の周が無いので PR の差分の全部を求め、前の周の行が欠ける（記録を引けないのではない）
+    assert!(stderr(&out).contains("入っていません"), "{}", stderr(&out));
+}
+
+#[test]
+fn an_inherited_git_dir_does_not_pick_the_branch_of_the_previous_round() {
+    // git の hook の中や、そこから起動したセッションでは GIT_DIR が渡る。前の周を決めるブランチは、起動したディレクトリの
+    // clone のブランチ（置き場と同じ clone）
+    let fake = FakeGh::new();
+    let (base, second) = two_heads(&fake);
+    let other = fake.dir().join("other");
+    let mut cmd = std::process::Command::new("git");
+    let ok = forget_git_env(&mut cmd)
+        .args(["init", "-q", "-b", "elsewhere"])
+        .arg(&other)
+        .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git init");
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn second() {}"],
+    );
+    let config = config(&fake).to_string_lossy().into_owned();
+    let git_dir = other.join(".git").to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, &second, "0", "0", "0"],
+        &[
+            (&format!("{second}\n"), 0),
+            ("true\n", 0),
+            (TWO_HEADS_DIFF, 0),
+            (&format!("{base}\n"), 0),
+            ("https://github.com/octo/repo/pull/42#issuecomment-1\n", 0),
+        ],
+        &[("CLAUDE_CONFIG_DIR", &config), ("GIT_DIR", &git_dir)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn colors_in_a_tool_result_do_not_hide_the_end_of_a_line() {
+    // color.ui=always の git diff は、行の終わりに色を戻す符号を付ける
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["\u{1b}[32m+fn checked(x: u8) -> bool {\u{1b}[m\n\u{1b}[32m+    x > 0\u{1b}[m\n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_required_line_must_end_a_line_of_a_tool_result() {
+    // 長い行の途中の一部は、その行を読んだことを示さない。diff の `+` と Read の行番号の接頭辞は問わない
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["// x > 0 は fn checked(x: u8) -> bool { の中で、}\n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["    12\tfn checked(x: u8) -> bool {\n    13→    x > 0\n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_required_line_may_follow_any_prefix_of_a_tool_result_line() {
+    // tool の結果の形（git grep の tree の名前、combined diff の 2 つの印、列の番号）ごとに接頭辞の規則を持たない。行の終わりが
+    // 求める行の終わりと合えば読んだとする
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["origin/pr:src/a.rs:2:5:fn checked(x: u8) -> bool {\n++    x > 0   \n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }

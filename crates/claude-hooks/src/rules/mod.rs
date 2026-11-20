@@ -87,7 +87,7 @@ mod check_merge_body_ja_terms;
 pub(crate) use check_merge_body_ja_terms::ja_terms;
 mod check_merge_review;
 mod count_review_rounds;
-pub(crate) use count_review_rounds::round_ran_at;
+pub(crate) use count_review_rounds::{branch_file_name, is_word_stop, round_ran_at, rounds};
 mod delegate_report_fields;
 mod delegate_request_fields;
 mod guard_branch_base;
