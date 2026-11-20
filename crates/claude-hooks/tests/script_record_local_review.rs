@@ -1474,3 +1474,42 @@ fn a_transcript_with_bytes_that_are_not_utf8_is_still_read() {
     let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
+
+#[test]
+fn the_target_is_the_first_directory_like_the_round_line() {
+    // count-review-rounds は引数の中で最初の、在るディレクトリの絶対パスを行の worktree にする。和文が続いて在るディレクトリで
+    // ない語や、空白で切れた語を対象と読まない
+    for suffix in ["", "の差分"] {
+        let fake = FakeGh::new();
+        reviewed_at(&fake, &[]);
+        let dir = fake.dir().join("wt a");
+        let mut cmd = std::process::Command::new("git");
+        let ok = forget_git_env(&mut cmd)
+            .args(["init", "-q"])
+            .arg(&dir)
+            .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git init");
+        let own = dir.to_string_lossy().into_owned();
+        std::fs::write(
+            fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+            format!("{HEAD} 1794900000 {SESSION} {own}\n"),
+        )
+        .unwrap();
+        let target = format!("{own}{suffix}");
+        transcript_of(
+            &fake,
+            "a1",
+            &target,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(out.status.code(), Some(0), "{target}: {}", stderr(&out));
+    }
+}
