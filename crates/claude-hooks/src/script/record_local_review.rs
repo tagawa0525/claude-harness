@@ -841,4 +841,20 @@ mod tests {
         // C の文字列の形のほかの文字（`\r` など）も戻す
         assert_eq!(unquote(r#""b/a\rb\\c""#), "b/a\rb\\c");
     }
+
+    #[test]
+    fn the_review_target_is_cut_like_the_directory_of_the_round_line() {
+        // count-review-rounds が行の worktree を引数から取るときと同じ字で切る（和文の括弧と句読点、引用符）
+        for prompt in [
+            "Review target: `/repo/wt（焦点: a）`",
+            "Review target: `/repo/wt。焦点`",
+            "Review target: `\"/repo/wt\" 焦点`",
+        ] {
+            assert_eq!(
+                review_target(prompt).as_deref(),
+                Some("/repo/wt"),
+                "{prompt}"
+            );
+        }
+    }
 }

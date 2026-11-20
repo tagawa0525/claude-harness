@@ -1385,3 +1385,73 @@ fn a_review_without_a_worktree_in_its_target_counts_for_the_worktree_of_the_line
         assert_eq!(out.status.code(), Some(0), "{target:?}: {}", stderr(&out));
     }
 }
+
+#[test]
+fn a_worktree_nested_in_the_checkout_of_the_line_is_another_worktree() {
+    // Claude Code の `isolation: "worktree"` は、worktree を本体の `.claude/worktrees/<名前>` に置く。パスの上下でなく、git の
+    // worktree の根で分ける。本体の下のディレクトリを渡した周は、本体の周と数える
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let mut cmd = std::process::Command::new("git");
+        let ok = forget_git_env(&mut cmd)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", dir.join("no-global-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    for (target, recorded) in [(".claude/worktrees/x", false), ("src", true)] {
+        let fake = FakeGh::new();
+        reviewed_at(&fake, &[]);
+        std::fs::create_dir_all(fake.dir().join("src")).unwrap();
+        std::fs::write(fake.dir().join("src/a.rs"), "fn a() {}\n").unwrap();
+        git(fake.dir(), &["add", "src/a.rs"]);
+        git(fake.dir(), &["commit", "-q", "-m", "a"]);
+        git(
+            fake.dir(),
+            &["worktree", "add", "-q", "-b", "x", ".claude/worktrees/x"],
+        );
+        let root = fake.dir().to_string_lossy().into_owned();
+        std::fs::write(
+            fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
+            format!("{HEAD} 1794900000 {SESSION} {root}\n"),
+        )
+        .unwrap();
+        let path = fake.dir().join(target).to_string_lossy().into_owned();
+        transcript_of(
+            &fake,
+            "a1",
+            &path,
+            "code-review",
+            "low",
+            AFTER,
+            &[READ_DIFF],
+        );
+        let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+        assert_eq!(
+            out.status.code() == Some(0),
+            recorded,
+            "{target}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn a_transcript_with_bytes_that_are_not_utf8_is_still_read() {
+    // 大きな tool の結果に UTF-8 でないバイトが残っても、ほかの行の tool の結果は読む
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(&fake, "a1", "code-review", "low", AFTER, &[READ_DIFF]);
+    let path = config(&fake).join(format!(
+        "projects/-work-app/{SESSION}/subagents/agent-a1.jsonl"
+    ));
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(b"{\"type\":\"user\",\"message\":\"\xff\xfe\"}\n");
+    std::fs::write(&path, bytes).unwrap();
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
