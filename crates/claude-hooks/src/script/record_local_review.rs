@@ -774,11 +774,15 @@ fn review_words(prompt: &str) -> impl Iterator<Item = &str> {
     let rest = prompt
         .split_once("Review target: ")
         .map_or("", |(_, rest)| rest);
-    // 引数の終わりが見つからない（backtick が無い、別の字が続く）なら、手順の文を引数と読まないよう 1 行目だけ
+    // 引数の終わりは行の終わりか依頼文の終わりの backtick。見つからない（backtick が無い、別の字が続く）なら、手順の文を
+    // 引数と読まないよう 1 行目だけ
     let args = match rest.strip_prefix('`') {
         Some(quoted) => match quoted.split_once("`\n") {
             Some((args, _)) => args,
-            None => quoted.split(['`', '\n']).next().unwrap_or_default(),
+            None => quoted
+                .trim_end()
+                .strip_suffix('`')
+                .unwrap_or_else(|| quoted.split(['`', '\n']).next().unwrap_or_default()),
         },
         None => rest.lines().next().unwrap_or_default(),
     };
