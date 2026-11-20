@@ -1,8 +1,8 @@
 //! guard-git-stash: `git stash`（`list` と `show` を除く）を止める
 //!
 //! stash はリポジトリの全 worktree と全セッションで共有なので、並行して作業するほかのセッションの退避と
-//! 混ざり、pop や drop が他の作業の退避を取り込む・消す。退避は WIP のコミットか、対象の部分だけの
-//! ステージで行う。読むだけの `list` / `show` は通す。サブコマンドの直後が `list` / `show` でなければ
+//! 混ざり、pop や drop が他の作業の退避を取り込む・消す。代わりの手順は拒否の文言（`DENY`）に書く。
+//! 読むだけの `list` / `show` は通す。サブコマンドの直後が `list` / `show` でなければ
 //! （`git stash -u`、`git stash push`、サブコマンド省略の `git stash` を含め）すべて止める。エスケープはない。
 //! 実行するプログラムを決められない形も、文字列に `stash` があれば止める。
 
@@ -13,7 +13,7 @@ use crate::shell::Shell;
 
 pub struct GuardGitStash;
 
-const DENY: &str = "git stash は使えません。stash はリポジトリの全 worktree と全セッションで共有なので、ほかの作業の退避と混ざります。\n退避したいときは WIP をコミットするか、テストの部分だけなど必要なファイルだけをステージしてください（git add <file>）。stash の中身を読むだけなら git stash list / git stash show は使えます。";
+const DENY: &str = "git stash は使えません。stash はリポジトリの全 worktree と全セッションで共有なので、ほかの作業の退避と混ざります。\n退避したいときは WIP をコミットするか、テストの部分だけなど必要なファイルだけをステージしてください（git add <file>）。\n実装の無い状態でテストの失敗を見たいときは、テストだけを先にコミットし、そのコミットを一時の worktree で実行します: ~/.claude/scripts/check-each-commit.sh <テストのコミット>~1 -- sh -c '<テストのコマンド>'（今の worktree の未コミットの実装には触れません。一時の worktree には追跡していないファイルが無く、ビルドは最初からになります。exit=0 でない行は、標準エラーの出力でテストの失敗かを確かめてください）。\nstash の中身を読むだけなら git stash list / git stash show は使えます。";
 
 impl Rule for GuardGitStash {
     fn name(&self) -> &'static str {
