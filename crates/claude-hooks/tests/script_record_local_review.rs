@@ -1670,3 +1670,21 @@ fn a_required_line_must_be_a_whole_line_of_a_tool_result() {
     let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
+
+#[test]
+fn a_required_line_may_follow_any_prefix_of_a_tool_result_line() {
+    // tool の結果の形（git grep の tree の名前、combined diff の 2 つの印、列の番号）ごとに接頭辞の規則を持たない。行の終わりが
+    // 求める行の終わりと合えば読んだとする
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["origin/pr:src/a.rs:2:5:fn checked(x: u8) -> bool {\n++    x > 0   \n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
