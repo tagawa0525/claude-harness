@@ -63,32 +63,39 @@ Claude Code の公開の仕様ではない。
   引き継いだ後）と引けない
 - 行のセッションの、その head の最初の行より後に始まったすべての記録（実装の最初の版）: 同じセッションで後に回した別の PR の
   周を数え（/delegate の担当は親のセッションを共有する）、`NEXT:` の対象にもした（このブランチの 1 周目のレビューの指摘）
-- count-review-rounds の行に回したセッションの ID を書き、そのセッションの、周の行の 60 秒以内に始まった記録を取る（採用）:
-  hook は Skill の呼び出しの入力の `session_id` を持っている。2026-11-20 に、記録 199 件の始まりが周の行の 1 秒以内だった
+- 行のセッションの、周の行の 60 秒以内に始まったすべての記録（実装の 2 番目の版）: 同じセッションで同じ頃に回した別の
+  worktree の周を分けられない（このブランチの 2 周目のレビューの指摘）
+- count-review-rounds の行に回したセッションの ID と worktree を書き、そのセッションの、周の行の 60 秒以内に始まり、依頼文の
+  対象がその worktree の記録を取る（採用）: hook は Skill の呼び出しの入力の `session_id` と、数えるブランチの worktree を
+  持っている。2026-11-20 に、記録 199 件の始まりが周の行の 1 秒以内だった
 
 前の周から変わった行の決め方で比べた案:
 
 - `git diff <前の head> <head>` の追加行と PR の追加行の重なり（実装の最初の版）: rebase の後は base の変更を含み、PR が
   足した行と字面が同じ base の行（`}`、`use std::path::Path;` など）だけを求めて、PR の変更を読まない周を通す（1 周目の
   レビューの指摘。テストの `after_a_rebase_lines_the_base_also_added_do_not_stand_for_the_pr`）
-- 前の周の PR の差分（PR の base との分かれ目から前の head まで）に無い PR の追加行（採用）
+- 前の周の PR の差分（PR の base との分かれ目から前の head まで）に無い PR の追加行（採用）。base を引けないときの祖先の
+  扱いは、base を merge した head も base の変更を含むので、merge の無い head に限る（2 周目のレビューの指摘。テストの
+  `after_merging_the_base_lines_the_base_added_do_not_stand_for_the_pr`）
 
 ## 決定と理由
 
 案 D と基準 D4 にする。
 
-- **行**: count-review-rounds は、周の行に回したセッションの ID を足す（`<HEAD> <UNIX 秒> <セッション>`）。前の版の行
-  （2 つの欄）も読む
+- **行**: count-review-rounds は、周の行に回したセッションの ID と worktree を足す（`<HEAD> <UNIX 秒> <セッション> <worktree>`。
+  worktree は空白を含みうるので行の残り）。前の版の行（2 つの欄）も読む
 - **記録を探す**: 0 件の記録のとき、その head の行のセッションの `subagents/` から、`.forked-skill.json` の `skillName` が
-  `code-review` で、その head の周の行の 60 秒以内に始まった記録を取る（設定の場所は `CLAUDE_CONFIG_DIR`、無ければ
-  `~/.claude`）。前の周の記録、差分を書いた担当などほかのサブエージェントの記録、同じセッションで後に回した別の PR の周の
-  記録は、この周に読んだことを示さないので数えない
+  `code-review` で、その head の周の行の 60 秒以内に始まり、依頼文の対象がその行の worktree の記録を取る（設定の場所は
+  `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`）。前の周の記録、差分を書いた担当などほかのサブエージェントの記録、同じ
+  セッションで回した別の worktree の周の記録は、この周に読んだことを示さないので数えない
 - **求める行**: PR の差分（`gh pr diff`）の追加行のうち、前の周の head（同じブランチの行で、この head の最初の行の前にある
   別の head）から変わった行。前の周の PR の差分（PR の base の SHA（`baseRefOid`）との分かれ目から前の head まで）に無い行で、
-  base を引けなければ、前の head が祖先のときだけ `git diff <前の head> <head>` の追加行と重なる行。前の周が無い、変わった
-  行が無い（rebase だけ、消すだけの修正）、base を引けず rebase した head なら、PR の差分の追加行の全部。lock のファイル
+  base を引けなければ、前の head が祖先で、その間に merge が無いときだけ `git diff <前の head> <head>` の追加行と重なる行。
+  前の周が無い、変わった行が無い（rebase だけ、消すだけの修正）、base を引けず rebase か base の merge をした head なら、PR の
+  差分の追加行の全部。lock のファイル
   （`*.lock`、`*-lock.json`、`*-lock.yaml`）は外す。テストのファイル（/code-review が low で外すと書く `test/`、`spec/`、
-  `__tests__/`、`*_test.*`、`*.test.*`、`fixtures/`、`testdata/` に、`tests/`、`test_*`、`*_spec.*` を足したもの）は、
+  `__tests__/`、`*_test.*`、`*.test.*`、`fixtures/`、`testdata/` に、`tests/`、`test_*`、`*_spec.*`、`*.spec.*` を足したもの。
+  大文字と小文字を区別しない）は、
   ほかのファイルの行があれば外す。行は前後の空白を除き、先頭の 200 文字で比べる（Read は 2000 文字を超える行を切る）。
   英数字が 3 字に満たない行（`}`、`Ok(())`）は、ほとんどの tool の結果に入り読んだことを示さないので比べない
 - **判定**: その head の周の記録の tool の結果を合わせたものに、求める行が全部あれば記録する。1 行でも欠ければ記録せず、
@@ -97,7 +104,7 @@ Claude Code の公開の仕様ではない。
 - **引けないとき**: 行にセッションが無い、記録が無い（別の機械で回した、記録が消えた）、PR の差分を取れない、比べる追加行が
   無い、欠けがあるが xhigh か max の周を含む（子のエージェントに読ませ、子の記録は `.forked-skill.json` を持たないので
   数えない）ときは、`--unlogged <理由>` を求め、理由を記録のコメントに残して付ける（行の無い head の `--unlogged` と同じ
-  考え方）。low、medium、high の周だけで読んでいないと分かった周は、`--unlogged` を付けても付けない
+  考え方）。xhigh と max の周を含まずに読んでいないと分かった周（レベルの読めない記録を含む）は、`--unlogged` を付けても付けない
 - **変えないもの**: 指摘が 1 件以上の記録と、行の無い head の `--unlogged` の記録は、今までどおり付ける。指摘のある周は、
   指摘が読んだことを示す
 
@@ -125,7 +132,8 @@ Claude Code の公開の仕様ではない。
   ファイルを開かない周は記録せず `NEXT:` を出す、テストだけの差分はテストの行を求める、前の周の記録とほかのスキルの記録を
   数えない、記録を引けなければ `--unlogged` を求める、読んでいない周は `--unlogged` でも通さない、直した後は前の周から
   変わった行を求める、rebase の後は base が足した行を PR の変更と数えない、同じ head の周を合わせて数える、xhigh と max の
-  周は `--unlogged` を求める
+  周は `--unlogged` を求める、レベルの読めない周は確かめる、別の worktree の同じ頃の周を数えない、壊れた時刻の行で
+  溢れない
 - 同じファイルの単体テスト: テストのファイルの形、英数字が 3 字に満たない行を比べないこと、引用したパスを戻すこと
 - `crates/claude-hooks/src/rules/count_review_rounds.rs` の `the_line_names_the_session_that_ran_the_round`
 
@@ -134,7 +142,7 @@ Claude Code の公開の仕様ではない。
 - 2026-11-20 の測り方: `~/.claude/projects/-home-tagawa-nix-claude-harness/` の 4 つのセッション（0a87f718、7633dbf6、
   a8d9e415、0e216681）の、`.forked-skill.json` が `code-review` の記録 97 件を、1 件ずつコピーして置いた設定の場所で、
   ビルドした `claude-hooks script record-local-review`（このブランチのコミット 83f4b92d と、1 周目のレビューの修正の
-  2477df0d。判定は 97 件とも同じ）にかけた。周の head は、記録の始まりの
+  2477df0d、2 周目の修正の dfdd0652。判定は 97 件とも同じ。dfdd0652 では周の行に依頼文の対象の worktree も書いた）にかけた。周の head は、記録の始まりの
   90 秒前までの `claude-review-rounds` の行で決め、PR の差分は、そのブランチのマージコミットの第 1 親との merge-base からの
   差分を偽の gh で返した（base の SHA は第 1 親）。記録ごとの結果は #340 のコメントにある
 - 「読んでいない」とした 0 件の周: a037d03（大きな出力のファイルを開かずに `(none)`）、a0c5c67 と a4e6aec（大きな出力の後、
