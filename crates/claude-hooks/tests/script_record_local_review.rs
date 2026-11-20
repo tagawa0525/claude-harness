@@ -1642,8 +1642,8 @@ fn the_previous_round_is_taken_from_the_branch_of_the_clone() {
 }
 
 #[test]
-fn a_required_line_must_be_a_whole_line_of_a_tool_result() {
-    // 長い行の一部や、行をまたぐ文字列は、その行を読んだことを示さない。diff の `+` と Read の行番号の接頭辞は除いて比べる
+fn a_required_line_must_end_a_line_of_a_tool_result() {
+    // 長い行の途中の一部は、その行を読んだことを示さない。diff の `+` と Read の行番号の接頭辞は問わない
     let fake = FakeGh::new();
     reviewed_in_session(&fake, &[HEAD]);
     transcript(
