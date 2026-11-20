@@ -329,11 +329,16 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     let mut sessions = BTreeSet::new();
     let mut windows = Vec::new();
     let mut previous = BTreeSet::new();
-    for file in &files {
+    // 前の周は、起動したディレクトリのブランチの行から決める。置き場は clone で 1 つで、ほかのブランチのファイルにも同じ head の
+    // 行がありうる（同じコミットを別のブランチで回した）。その行の前の周は、このブランチの PR の前の周ではない
+    let branch = crate::rules::branch_file_name(&crate::git::current_branch(dir));
+    for (name, file) in &files {
         let Some(first) = file.iter().position(|r| r.head == head) else {
             continue;
         };
-        if let Some(prev) = file[..first].iter().rev().find(|r| r.head != head) {
+        if *name == branch
+            && let Some(prev) = file[..first].iter().rev().find(|r| r.head != head)
+        {
             previous.insert(prev.head.clone());
         }
         for round in file.iter().filter(|r| r.head == head) {

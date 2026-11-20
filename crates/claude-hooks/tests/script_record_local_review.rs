@@ -1034,6 +1034,8 @@ fn two_heads(fake: &FakeGh) -> (String, String) {
     .unwrap();
     git(&["commit", "-q", "-am", "second"]);
     let second = git(&["rev-parse", "HEAD"]);
+    // 周の行は、起動したディレクトリのブランチのファイルに置く
+    git(&["checkout", "-q", "-B", "feat/x"]);
     std::fs::write(
         fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
         format!("{first} 1794800000 {SESSION}\n{second} 1794900000 {SESSION}\n"),
@@ -1134,6 +1136,8 @@ fn rebased_heads(fake: &FakeGh) -> (String, String) {
     write("let shared = 1;\nfn first() {}\nfn base() {}\nlet shared = 1;\n");
     git(&["commit", "-q", "-am", "pr rebased"]);
     let head = git(&["rev-parse", "HEAD"]);
+    // 周の行は、起動したディレクトリのブランチのファイルに置く
+    git(&["checkout", "-q", "-B", "feat/x"]);
     std::fs::write(
         fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
         format!("{prev} 1794800000 {SESSION}\n{head} 1794900000 {SESSION}\n"),
@@ -1342,6 +1346,8 @@ fn merged_heads(fake: &FakeGh) -> String {
     git(&["checkout", "-q", &prev]);
     git(&["merge", "-q", "--no-edit", "main-moved"]);
     let head = git(&["rev-parse", "HEAD"]);
+    // 周の行は、起動したディレクトリのブランチのファイルに置く
+    git(&["checkout", "-q", "-B", "feat/x"]);
     std::fs::write(
         fake.dir().join(".git/claude-review-rounds/feat%2Fx"),
         format!("{prev} 1794800000 {SESSION}\n{head} 1794900000 {SESSION}\n"),

@@ -42,7 +42,7 @@ fn first_directory(text: &str) -> Option<PathBuf> {
 }
 
 /// ブランチ名をファイル名にする（`%` と `/` を符号にする）
-fn state_file_name(branch: &str) -> String {
+pub(crate) fn branch_file_name(branch: &str) -> String {
     branch.replace('%', "%25").replace('/', "%2F")
 }
 
@@ -104,16 +104,24 @@ pub(crate) struct Round {
     pub(crate) dir: Option<PathBuf>,
 }
 
-/// dir の clone の、周の数の置き場と、ファイル（ブランチ）ごとの行（書いた順）。dir が git のリポジトリの中でなければ None
-pub(crate) fn rounds(dir: &Path) -> Option<(PathBuf, Vec<Vec<Round>>)> {
+/// 置き場の 1 つのファイル（ブランチ）の名前と行
+pub(crate) type BranchRounds = (String, Vec<Round>);
+
+/// dir の clone の、周の数の置き場と、ファイルの名前（[`branch_file_name`]）ごとの行（書いた順）。dir が git のリポジトリの
+/// 中でなければ None
+pub(crate) fn rounds(dir: &Path) -> Option<(PathBuf, Vec<BranchRounds>)> {
     let state_dir = state_dir(dir)?;
     let files = std::fs::read_dir(&state_dir)
         .map(|files| {
             files
                 .flatten()
-                .filter_map(|file| std::fs::read_to_string(file.path()).ok())
-                .map(|text| {
-                    text.lines()
+                .filter_map(|file| {
+                    let name = file.file_name().to_string_lossy().into_owned();
+                    Some((name, std::fs::read_to_string(file.path()).ok()?))
+                })
+                .map(|(name, text)| {
+                    let lines = text
+                        .lines()
                         .filter_map(|l| {
                             // worktree は空白を含みうるので、最後の欄として行の残りを取る
                             let mut fields = l.splitn(4, ' ');
@@ -127,7 +135,8 @@ pub(crate) fn rounds(dir: &Path) -> Option<(PathBuf, Vec<Vec<Round>>)> {
                                 dir: fields.next().filter(|d| !d.is_empty()).map(PathBuf::from),
                             })
                         })
-                        .collect()
+                        .collect();
+                    (name, lines)
                 })
                 .collect()
         })
@@ -140,7 +149,7 @@ pub(crate) fn rounds(dir: &Path) -> Option<(PathBuf, Vec<Vec<Round>>)> {
 /// 行があるのは呼んだことで、レビューが対象を読めたことまでは示さない（[`CountReviewRounds`] は結果を見ない）
 pub(crate) fn round_ran_at(dir: &Path, head: &str) -> Option<(PathBuf, bool)> {
     let (state_dir, files) = rounds(dir)?;
-    let found = files.iter().flatten().any(|r| r.head == head);
+    let found = files.iter().flat_map(|(_, f)| f).any(|r| r.head == head);
     Some((state_dir, found))
 }
 
@@ -173,7 +182,7 @@ impl Rule for CountReviewRounds {
         let Some(state_dir) = state_dir(&dir) else {
             return Vec::new();
         };
-        let path = state_dir.join(state_file_name(&branch));
+        let path = state_dir.join(branch_file_name(&branch));
         let mut lines = live_rounds(&dir, &branch, &path);
         let head = git::git(&dir, &["rev-parse", "HEAD"]).unwrap_or_default();
         let now = std::time::SystemTime::now()
@@ -317,7 +326,7 @@ mod tests {
         round(&input);
         let head = git_out(&r.dir, &["rev-parse", "HEAD"]);
         let (_, files) = rounds(&r.dir).expect("clone の中");
-        let lines: Vec<&Round> = files.iter().flatten().collect();
+        let lines: Vec<&Round> = files.iter().flat_map(|(_, f)| f).collect();
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].head, head);
         assert_eq!(lines[0].session.as_deref(), Some("0a87f718-session"));
@@ -329,7 +338,7 @@ mod tests {
         let (_, files) = rounds(&r.dir).unwrap();
         let old: Vec<&Round> = files
             .iter()
-            .flatten()
+            .flat_map(|(_, f)| f)
             .filter(|l| l.session.is_none())
             .collect();
         assert_eq!(old.len(), 1);
