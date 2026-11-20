@@ -13,7 +13,7 @@ use crate::shell::Shell;
 
 pub struct GuardGitStash;
 
-const DENY: &str = "git stash は使えません。stash はリポジトリの全 worktree と全セッションで共有なので、ほかの作業の退避と混ざります。\n退避したいときは WIP をコミットするか、テストの部分だけなど必要なファイルだけをステージしてください（git add <file>）。stash の中身を読むだけなら git stash list / git stash show は使えます。";
+const DENY: &str = "git stash は使えません。stash はリポジトリの全 worktree と全セッションで共有なので、ほかの作業の退避と混ざります。\n退避したいときは WIP をコミットするか、テストの部分だけなど必要なファイルだけをステージしてください（git add <file>）。\n実装を外した状態でテストの失敗を見たいときは、実装の差分をファイルに書き出して戻します: git diff -- <実装のファイル> > <scratchpad のファイル> && git checkout -- <実装のファイル> でテストを実行し、git apply <scratchpad のファイル> で戻す。\nstash の中身を読むだけなら git stash list / git stash show は使えます。";
 
 impl Rule for GuardGitStash {
     fn name(&self) -> &'static str {
