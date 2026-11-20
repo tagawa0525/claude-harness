@@ -14,8 +14,8 @@
 //! 確かめず、拒否の文で decide-next.sh を示す（比べた案は claude-harness の issue 281）
 //!
 //! 0 件の記録は、行に書かれたセッションの /code-review のサブエージェントの記録（その head の最初の行より後に始まったもの）
-//! の tool の結果に、PR の差分の追加行が入っているときだけ付ける。入っていなければ付けず、レベルを上げた周を NEXT: で
-//! 示す。記録か差分を引けなければ、`--unlogged <理由>` で理由を残して付ける
+//! の tool の結果に、PR の差分の追加行が入っているときだけ付ける。入っていなければ付けず、レベルを上げて欠けたファイルを
+//! 焦点にした周を NEXT: で示す。記録か差分を引けなければ、`--unlogged <理由>` で理由を残して付ける
 //!
 //! 指摘は、1 件ごとに要旨を `--finding <1 行>` で受けて、記録のコメントに書く。件数だけの記録では、対応しなかった指摘の
 //! 中身が会話にしか残らず、セッションが替わるとマージの本文に書けない。数が件数の合計と合わなければ記録しない。
@@ -200,17 +200,19 @@ pub fn main(args: &[String]) -> i32 {
             Read::Yes => {}
             Read::No(missed) => {
                 eprintln!(
-                    "ERROR: {} で回した /code-review の記録（{}）の tool の結果に、PR の差分の追加行が {} 行のうち {} 行入っていません（{}。記録を付けていません）。0 件の返答は、差分を読んだ周でなければ未実施です",
+                    "ERROR: {} で回した /code-review の記録（{} 件。最後は {}）の tool の結果に、PR の差分の追加行が {} 行のうち {} 行入っていません（{}。記録を付けていません）。0 件の返答は、差分を読んだ周でなければ未実施です",
                     short(&head),
-                    missed.transcript.display(),
+                    missed.transcripts,
+                    missed.latest.display(),
                     missed.required,
                     missed.lines,
                     missed.files.join("、")
                 );
                 println!(
-                    "NEXT: /code-review {} {} を回し直し、その head にもう一度記録する（{} の周は上のファイルの追加行を読んでいない）",
+                    "NEXT: /code-review {} {} 焦点: {} の差分 を回し、その head にもう一度記録する（{} の周までに、このファイルの追加行を読んでいない）",
                     raised(&missed.effort),
                     missed.target,
+                    missed.files.join("、"),
                     missed.effort
                 );
                 return 1;
@@ -266,16 +268,18 @@ fn short(sha: &str) -> &str {
 
 /// 0 件の記録の前に確かめた、その周の /code-review が差分を読んだか
 enum Read {
-    /// その周の /code-review の記録のどれかの tool の結果に、求める追加行が全部ある
+    /// その head の周の /code-review の記録の tool の結果に、求める追加行が全部ある
     Yes,
-    /// 記録はあるが、追加行が欠ける（最後に始まった記録の欠け）
+    /// 記録はあるが、その head の周を合わせても追加行が欠ける
     No(Missed),
     /// 記録か差分を引けない（理由。拒否の文で「ので」を続ける）
     Unknown(String),
 }
 
 struct Missed {
-    transcript: PathBuf,
+    /// 見た記録の数と、最後に始まった記録（レベルと対象は、この記録のもの）
+    transcripts: usize,
+    latest: PathBuf,
     effort: String,
     target: String,
     /// 求めた追加行の数と、そのうち欠けた数
@@ -365,20 +369,20 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
             pr.number
         ));
     }
-    let missing = |t: &Transcript| -> Vec<(&String, &String)> {
-        required
-            .iter()
-            .flat_map(|(file, lines)| lines.iter().map(move |l| (file, l)))
-            .filter(|(_, l)| !t.text.contains(l.as_str()))
-            .collect()
-    };
-    if transcripts.iter().any(|t| missing(t).is_empty()) {
+    // 欠けたファイルを焦点に回し直した周はそのファイルだけを読むので、その head の周が合わせて読んだ差分で数える
+    let read: String = transcripts.iter().map(|t| t.text.as_str()).collect();
+    let missed: Vec<(&String, &String)> = required
+        .iter()
+        .flat_map(|(file, lines)| lines.iter().map(move |l| (file, l)))
+        .filter(|(_, l)| !read.contains(l.as_str()))
+        .collect();
+    if missed.is_empty() {
         return Read::Yes;
     }
-    let missed = missing(latest);
     let files: BTreeSet<String> = missed.iter().map(|(f, _)| (*f).clone()).collect();
     Read::No(Missed {
-        transcript: latest.path.clone(),
+        transcripts: transcripts.len(),
+        latest: latest.path.clone(),
         effort: latest.effort.clone(),
         target: latest.target.clone(),
         required: total,
