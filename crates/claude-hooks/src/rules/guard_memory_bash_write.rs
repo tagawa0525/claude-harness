@@ -4,7 +4,8 @@
 //! ファイルを Bash で書き換えると、Claude Code が Read で読んだ状態と食い違い、次の Edit が古い内容の上に書く（#356）。
 //! Read してから Write か Edit で直させる。
 //!
-//! 見る書き込み先は、モデルが普通に書く形（ADR-0042）: 出力のリダイレクト（`>`、`>>` など）の先、`tee` の引数、
+//! 見る書き込み先は、モデルが普通に書く形（ADR-0042）: 出力のリダイレクト（`>`、`>>` など。パイプラインと複合文に
+//! 付けたもの（[`Shell::compound_writes`]）を含む）の先、`tee` の引数、
 //! `sed -i` と `perl -i` の対象のファイル、`cp`、`mv`、`install` の行き先、`truncate` の対象。
 //! 消すこと（`rm`、元が memory の `mv`）は見ない: 読んだ状態との食い違いを作らず（次の Edit は無いファイルで失敗する）、
 //! /handoff は済んだ引き継ぎのファイルを消す手順を持ち、Write と Edit ではファイルを消せない。
@@ -69,7 +70,7 @@ fn memory_writes(shell: &Shell, cwd: &Path, home: &Path, config: Option<&str>) -
     });
     let vars = vars(shell, home, config);
     let mut found = Vec::new();
-    for cmd in shell.commands() {
+    for cmd in shell.commands().iter().chain(shell.compound_writes()) {
         if shell.runs_under_ssh_or_login(cmd) {
             continue;
         }
