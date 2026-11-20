@@ -47,6 +47,9 @@ static TOOL_USE_ERROR_TAG: LazyLock<Regex> =
 static NEWLINE_SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\n\s*").unwrap());
 static COMMAND_NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("<command-name>([^<]*)</command-name>").unwrap());
+static COMMAND_TAGS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new("<command-(?:name|message|args)>[^<]*</command-(?:name|message|args)>").unwrap()
+});
 // `.` は改行に当たらない（jq の版の capture と同じく、複数行の引数は取らない）
 static COMMAND_ARGS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new("<command-args>(.*?)</command-args>").unwrap());
@@ -324,18 +327,11 @@ fn read_file(path: &str, bytes: &[u8], is_main: bool, range: &Range) -> FileEven
         if line.get("timestamp").is_some() {
             f.stamped += 1;
         }
-        // 途中の発言に /clear のタグが入っても、記録の始まりとみなさない
-        if is_main
-            && !f.first_user_seen
-            && let Ok(Some(text)) = user_message(&line)
-        {
+        // 最初の発言の行だけを見る。発言に出さない行（bash の入力、形の違う行）も最初の発言に数え、後の行の /clear の
+        // タグを始まりとみなさない
+        if is_main && !f.first_user_seen && prompt_line(&line) {
             f.first_user_seen = true;
-            if text == "/clear" {
-                f.clear_at = line
-                    .get("timestamp")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-            }
+            f.clear_at = clear_time(&line);
         }
         if range.given()
             && f.bad_time.is_none()
@@ -590,9 +586,9 @@ fn unflagged(line: &Value, key: &str) -> bool {
     matches!(line.get(key), None | Some(Value::Null | Value::Bool(false)))
 }
 
-/// 本体の行がユーザーの発言なら、出す形（改行を空白に、300 文字まで）
-fn user_message(line: &Value) -> Result<Option<String>, &'static str> {
-    let text = if is(line, "type", "user")
+/// 人が入力した user の行（スキルの本文、要約などの印の付いた行を除く）
+fn prompt_line(line: &Value) -> bool {
+    is(line, "type", "user")
         && [
             "isMeta",
             "isSidechain",
@@ -601,7 +597,23 @@ fn user_message(line: &Value) -> Result<Option<String>, &'static str> {
         ]
         .iter()
         .all(|k| unflagged(line, k))
+}
+
+/// 行が /clear のコマンドだけなら、その timestamp。コマンドのタグのほかに本文があれば、/clear を貼った発言とみなす。
+/// 形の違う行は、区間に入れば発言の読みが止めるので、ここでは None にする
+fn clear_time(line: &Value) -> Option<String> {
+    let text = text_of(message_content(line).ok()?).ok()?;
+    if COMMAND_NAME.captures(&text)?.get(1)?.as_str() != "/clear"
+        || has_text(&COMMAND_TAGS.replace_all(&text, ""))
     {
+        return None;
+    }
+    line.get("timestamp")?.as_str().map(str::to_string)
+}
+
+/// 本体の行がユーザーの発言なら、出す形（改行を空白に、300 文字まで）
+fn user_message(line: &Value) -> Result<Option<String>, &'static str> {
+    let text = if prompt_line(line) {
         match command(text_of(message_content(line)?)?) {
             Some(t) => t,
             None => return Ok(None),
