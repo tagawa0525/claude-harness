@@ -84,7 +84,8 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
   付く。head が先に閉じると、前のコマンドが SIGPIPE で止まり、終了コードが 141 になりうる。今のモデルが拒否の後に
   `set -o pipefail;` を付けて打ち直した結果と同じなので、この決定では扱わず、知らせる文に 1 文入れる
 - `set -o pipefail` の部分は、許可の規則に無いと確認になる（段 1）。打ち直しでも同じだったので、書き換えで増える
-  確認ではない。`claude-settings.json` に許可を足すかは #387
+  確認ではない。`claude-settings.json` の許可に `Bash(set -o pipefail:*)` を足した（#387。後ろにつないだコマンドの確認は
+  飛ばない）
 - コマンドのどこかに pipefail のシェルのオプションがあれば何もしないのは前のとおり（位置は読まない。ADR-0042）で、
   `set -o pipefail; bash -c 'cargo test | tail'` は、文字列の中に効かないまま通る
 - auto mode では、文書のとおり、書き換えた呼び出しが拒否されうる（試していない）。同じ元のコマンドを打ち直すと
