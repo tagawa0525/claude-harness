@@ -3043,6 +3043,11 @@ for cmd in 'git stash' 'git stash push' 'git stash push -m wip' 'git stash -u' '
   assert_contains "$(reason "$out")" "共有"
 done
 
+it "guard-git-stash: 実装を外してテストの失敗を見る手順（差分の書き出しと git apply）を示す"
+out=$(run_hook guard-git-stash 'git stash push -q src/lib.rs')
+assert_contains "$(reason "$out")" "git diff -- <実装のファイル>"
+assert_contains "$(reason "$out")" "git apply"
+
 it "guard-git-stash: list と show は通す"
 for cmd in 'git stash list' 'git stash show' 'git stash show -p stash@{0}' 'git -C /tmp/repo stash list'; do
   out=$(run_hook guard-git-stash "$cmd")
