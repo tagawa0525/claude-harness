@@ -1639,6 +1639,67 @@ fn the_previous_round_is_taken_from_the_branch_of_the_clone() {
     let out = record_zero_with_base(&fake, &second, TWO_HEADS_DIFF, &base);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(!fake.log().contains("pr comment"), "{}", fake.log());
+    // 前の周が無いので PR の差分の全部を求め、前の周の行が欠ける（記録を引けないのではない）
+    assert!(stderr(&out).contains("入っていません"), "{}", stderr(&out));
+}
+
+#[test]
+fn an_inherited_git_dir_does_not_pick_the_branch_of_the_previous_round() {
+    // git の hook の中や、そこから起動したセッションでは GIT_DIR が渡る。前の周を決めるブランチは、起動したディレクトリの
+    // clone のブランチ（置き場と同じ clone）
+    let fake = FakeGh::new();
+    let (base, second) = two_heads(&fake);
+    let other = fake.dir().join("other");
+    let mut cmd = std::process::Command::new("git");
+    let ok = forget_git_env(&mut cmd)
+        .args(["init", "-q", "-b", "elsewhere"])
+        .arg(&other)
+        .env("GIT_CONFIG_GLOBAL", fake.dir().join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git init");
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["+fn second() {}"],
+    );
+    let config = config(&fake).to_string_lossy().into_owned();
+    let git_dir = other.join(".git").to_string_lossy().into_owned();
+    let out = fake.run_calls_with_env(
+        "record-local-review",
+        &[URL, &second, "0", "0", "0"],
+        &[
+            (&format!("{second}\n"), 0),
+            ("true\n", 0),
+            (TWO_HEADS_DIFF, 0),
+            (&format!("{base}\n"), 0),
+            ("https://github.com/octo/repo/pull/42#issuecomment-1\n", 0),
+        ],
+        &[("CLAUDE_CONFIG_DIR", &config), ("GIT_DIR", &git_dir)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn colors_in_a_tool_result_do_not_hide_the_end_of_a_line() {
+    // color.ui=always の git diff は、行の終わりに色を戻す符号を付ける
+    let fake = FakeGh::new();
+    reviewed_in_session(&fake, &[HEAD]);
+    transcript(
+        &fake,
+        "a1",
+        "code-review",
+        "low",
+        AFTER,
+        &["\u{1b}[32m+fn checked(x: u8) -> bool {\u{1b}[m\n\u{1b}[32m+    x > 0\u{1b}[m\n"],
+    );
+    let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
 
 #[test]
