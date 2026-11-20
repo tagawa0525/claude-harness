@@ -263,6 +263,42 @@ mod tests {
     }
 
     #[test]
+    fn the_line_names_the_session_that_ran_the_round() {
+        // record-local-review は、0 件の記録の前に、このセッションの /code-review の記録（サブエージェントの transcript）を
+        // 探して差分を読んだかを確かめる
+        let r = repo("feat/s");
+        let mut input = review(&r);
+        input.session_id = "0a87f718-session".into();
+        round(&input);
+        let head = git_out(&r.dir, &["rev-parse", "HEAD"]);
+        let (_, files) = rounds(&r.dir).expect("clone の中");
+        let lines: Vec<&Round> = files.iter().flatten().collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].head, head);
+        assert_eq!(lines[0].session.as_deref(), Some("0a87f718-session"));
+        // 前の版の hook が書いた、セッションの無い行も読む
+        let state = state_dir(&r.dir).unwrap();
+        std::fs::write(state.join("old"), format!("{head} 1794900000\n")).unwrap();
+        let (_, files) = rounds(&r.dir).unwrap();
+        let old: Vec<&Round> = files
+            .iter()
+            .flatten()
+            .filter(|l| l.session.is_none())
+            .collect();
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0].at, Some(1794900000));
+    }
+
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    #[test]
     fn agent_is_not_counted() {
         let r = repo("docs/y");
         let wt = r.dir.display();
