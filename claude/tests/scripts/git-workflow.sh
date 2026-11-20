@@ -573,32 +573,6 @@ assert_eq "" "$(git -C "$TEST_ROOT/cleanup7/app" branch --list feat/x)"
 assert_eq "feat/other" "$(git branch --show-current)"
 cd "$TEST_ROOT" || exit 1
 
-it "post-merge-cleanup: リモートブランチを head とする open PR があれば削除しない"
-setup_merged_branch "$TEST_ROOT/cleanup3" github
-cd "$TEST_ROOT/cleanup3/app" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 1 ;;'
-out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
-assert_eq 0 $?
-assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
-assert_contains "$out" "REMOTE_BRANCH: kept"
-
-it "post-merge-cleanup: GitHub リモートで open PR がなければリモートも削除する"
-setup_merged_branch "$TEST_ROOT/cleanup4" github
-cd "$TEST_ROOT/cleanup4/app" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;'
-out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
-assert_eq "" "$(git ls-remote --heads origin feat/x)"
-assert_contains "$out" "REMOTE_BRANCH: deleted"
-
-it "post-merge-cleanup: 消すリモートが GitHub でなければ、それを base とする PR を探さずに消す"
-# origin はローカルの bare。そのブランチを消しても、GitHub の PR は閉じない
-setup_merged_branch "$TEST_ROOT/cleanup56" github
-cd "$TEST_ROOT/cleanup56/app" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;'
-out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
-assert_contains "$out" "REMOTE_BRANCH: deleted"
-assert_not_contains "$(fake_log gh)" "--base"
-
 # github_origin <repo> <url>: origin の URL を GitHub の <url> にし、git の読み書きは insteadOf でローカルの bare に向ける。
 # insteadOf はほかのリモートの同じ URL も書き換え、git remote -v から github.com が消えるので、<url> は github の remote
 # （example/<repo>）と違うものにする
@@ -607,13 +581,123 @@ github_origin() {
   git -C "$1" remote set-url origin "$2"
 }
 
+it "post-merge-cleanup: gh の既定のリポジトリにリモートブランチを head とする open PR があれば削除しない（fork から親への PR）"
+# fork の clone: origin は fork、gh の既定のリポジトリは親（github の remote）。fork のブランチを head にした PR は親にある
+setup_merged_branch "$TEST_ROOT/cleanup3" github
+github_origin "$TEST_ROOT/cleanup3/app" https://github.com/fork-owner/app.git
+cd "$TEST_ROOT/cleanup3/app" || exit 1
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state open"*) ;;
+  "pr list --head feat/x --state open --json url --jq .[].url") echo https://github.com/example/app/pull/3 ;;
+  "pr list -R fork-owner/app --base feat/x --state open"*) ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR 1 件の head。"
+
+it "post-merge-cleanup: GitHub の push 先にも gh の既定のリポジトリにも open PR がなければリモートも削除する"
+setup_merged_branch "$TEST_ROOT/cleanup4" github
+github_origin "$TEST_ROOT/cleanup4/app" https://github.com/fork-owner/app.git
+cd "$TEST_ROOT/cleanup4/app" || exit 1
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state open --json url --jq .[].url") ;;
+  "pr list --head feat/x --state open --json url --jq .[].url") ;;
+  "pr list -R fork-owner/app --base feat/x --state open"*) ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq "" "$(git ls-remote --heads origin feat/x)"
+assert_contains "$out" "REMOTE_BRANCH: deleted"
+
+it "post-merge-cleanup: push 先の GitHub のリポジトリ（gh の既定と違う）にリモートブランチを head とする open PR があれば削除しない"
+setup_merged_branch "$TEST_ROOT/cleanup57" github
+REPO="$TEST_ROOT/cleanup57/app"
+# 取ってくるのは url（ローカルの bare）、消すのは pushurl の全部。残すので GitHub の pushurl には届かなくてよい
+git -C "$REPO" remote set-url --add --push origin "$REPO.git"
+git -C "$REPO" remote set-url --add --push origin https://github.com/fork-owner/app.git
+git -C "$REPO" remote set-url --add --push origin https://github.com/other-owner/app.git
+cd "$REPO" || exit 1
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state open"*) ;;
+  "pr list -R other-owner/app --head feat/x --state open --json url --jq .[].url") echo https://github.com/other-owner/app/pull/5 ;;
+  "pr list --head feat/x --state open"*) ;;
+  "pr list -R "*" --base feat/x --state open"*) ;;'
+# -R の owner/name のホストは GH_HOST で決まるので、環境が GitHub Enterprise を指していても github.com を探す
+out=$(GH_HOST=ghe.example "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR 1 件の head。"
+assert_eq 2 "$(fake_log gh | grep -c -- '^pr list -R .* --head')"
+assert_contains "$(fake_gh_repos)" "github.com/(unset)"
+
+it "post-merge-cleanup: git remote -v に github.com が出なくても、消すリモートの設定の URL が GitHub なら head とする PR を探す"
+# insteadOf がミラー（ここではローカルの bare）へ書き換える。gh の既定のリポジトリは git remote -v の GitHub の URL から
+# 決まり（空の GH_REPO は使わない）、それが無いので、既定のリポジトリは探さない（探すと gh が失敗して、いつも残す）
+REPO="$TEST_ROOT/cleanup58/app"
+make_repo "$REPO"
+make_remote "$REPO"
+github_origin "$REPO" https://github.com/fork-owner/app.git
+git -C "$REPO" switch -q -c feat/x
+commit_file "$REPO" a.txt "feat: a"
+git -C "$REPO" push -q -u origin feat/x
+git -C "$REPO" switch -q main
+git -C "$REPO" merge -q --no-ff -m "Merge: feat/x" feat/x
+git -C "$REPO" push -q origin main
+cd "$REPO" || exit 1
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state open --json url --jq .[].url") echo https://github.com/fork-owner/app/pull/4 ;;
+  "pr list -R fork-owner/app --base feat/x --state open"*) ;;'
+out=$(GH_REPO='' "$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR 1 件の head。"
+
+it "post-merge-cleanup: ホストを GitHub.com と書いた push 先でも head とする PR を探し、同じ PR は 1 件に数える"
+setup_merged_branch "$TEST_ROOT/cleanup59"
+REPO="$TEST_ROOT/cleanup59/app"
+# gh の既定のリポジトリも GitHub.com の URL から決まり、push 先と同じリポジトリなので、同じ PR が両方から返る
+git -C "$REPO" remote set-url --add --push origin https://GitHub.com/Fork-Owner/app.git
+cd "$REPO" || exit 1
+make_fake_gh '"pr list -R Fork-Owner/app --head feat/x --state open --json url --jq .[].url") echo https://github.com/Fork-Owner/app/pull/3 ;;
+  "pr list --head feat/x --state open --json url --jq .[].url") echo https://github.com/Fork-Owner/app/pull/3 ;;
+  "pr list -R Fork-Owner/app --base feat/x --state open"*) echo 12 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR 1 件の head。"
+
+it "post-merge-cleanup: push 先で head とする open PR を確認できなければ削除しない"
+setup_merged_branch "$TEST_ROOT/cleanup60" github
+github_origin "$TEST_ROOT/cleanup60/app" https://github.com/fork-owner/app.git
+cd "$TEST_ROOT/cleanup60/app" || exit 1
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state open"*) exit 1 ;;
+  "pr list --head feat/x --state open"*) ;;
+  "pr list -R fork-owner/app --base feat/x --state open"*) ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR の有無を確認できない: gh pr list が失敗)"
+
+it "post-merge-cleanup: 消すリモートが GitHub でなければ、それを base とする PR を探さず、gh の既定のリポジトリにも head とする PR が無ければ消す"
+# origin はローカルの bare。そのブランチを消しても、GitHub の PR は閉じない
+setup_merged_branch "$TEST_ROOT/cleanup56" github
+cd "$TEST_ROOT/cleanup56/app" || exit 1
+make_fake_gh '"pr list --head feat/x --state open --json url --jq .[].url") ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_contains "$out" "REMOTE_BRANCH: deleted"
+assert_not_contains "$(fake_log gh)" "--base"
+
+it "post-merge-cleanup: push 先を GitHub と読めなくても（ssh の Host の別名）、gh の既定のリポジトリに head とする PR があれば削除しない"
+setup_merged_branch "$TEST_ROOT/cleanup62" github
+github_origin "$TEST_ROOT/cleanup62/app" git@github-work:fork-owner/app.git
+cd "$TEST_ROOT/cleanup62/app" || exit 1
+make_fake_gh '"pr list --head feat/x --state open --json url --jq .[].url") echo https://github.com/example/app/pull/3 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (open PR 1 件の head。"
+
 it "post-merge-cleanup: リモートブランチを base とする open PR があれば削除せず、PR ごとに base の付け替えと削除のコマンドを示す"
 setup_merged_branch "$TEST_ROOT/cleanup51" github
 # fork の clone: ブランチは origin（fork）にあり、上の PR も fork にある。gh の既定のリポジトリ（github の remote）ではなく、
 # 消すリモートのリポジトリを探す
 github_origin "$TEST_ROOT/cleanup51/app" https://github.com/fork-owner/app.git
 cd "$TEST_ROOT/cleanup51/app" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+make_fake_gh '"pr list "*"--head feat/x --state open"*) ;;
   "pr list -R fork-owner/app --base feat/x --state open --json number --jq .[].number") printf "12\n13\n" ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
@@ -628,7 +712,7 @@ it "post-merge-cleanup: base とする open PR を確認できなければ削除
 setup_merged_branch "$TEST_ROOT/cleanup52" github
 github_origin "$TEST_ROOT/cleanup52/app" https://github.com/fork-owner/app.git
 cd "$TEST_ROOT/cleanup52/app" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+make_fake_gh '"pr list "*"--head feat/x --state open"*) ;;
   "pr list -R fork-owner/app --base feat/x --state open"*) exit 1 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
@@ -648,7 +732,7 @@ git -C "$REPO" push -q -u origin feat/x
 git -C "$REPO" switch -q main
 git -C "$REPO" merge -q --no-ff -m "Merge: feat/x" feat/x
 cd "$REPO" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+make_fake_gh '"pr list "*"--head feat/x --state open"*) ;;
   "pr list -R fork-owner/app --base feat/x --state open"*) echo 12 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
@@ -670,7 +754,7 @@ git -C "$REPO" remote set-url --add --push origin git@github.com:Fork-Owner/app.
 git -C "$REPO" remote set-url --add --push origin https://github.com/other-owner/app.git
 git -C "$REPO" remote set-url --add --push origin gh:alias-owner/app
 cd "$REPO" || exit 1
-make_fake_gh '"pr list --head feat/x --state open"*) echo 0 ;;
+make_fake_gh '"pr list "*"--head feat/x --state open"*) ;;
   "pr list -R fork-owner/app --base feat/x --state open"*) echo 12 ;;
   "pr list -R other-owner/app --base feat/x --state open"*) echo 7 ;;
   "pr list -R alias-owner/app --base feat/x --state open"*) ;;'
@@ -696,7 +780,8 @@ git -C "$REPO" switch -q main
 git -C "$REPO" merge -q --no-ff -m "Merge: feat/x" feat/x
 git -C "$REPO" push -q origin main
 cd "$REPO" || exit 1
-make_fake_gh '"pr list -R fork-owner/app --base feat/x --state open"*) echo 12 ;;'
+make_fake_gh '"pr list -R fork-owner/app --head feat/x --state open"*) ;;
+  "pr list -R fork-owner/app --base feat/x --state open"*) echo 12 ;;'
 out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
 assert_eq 0 $?
 assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
