@@ -125,8 +125,8 @@ usage-report の日時:
   UTF-8 でない符号化を宣言した本文に直す語があるかは、`encoding_rs`（Rust の符号化の事実上の標準。WHATWG の符号化の名前で
   引く）で読んで確かめる（Python の版は codecs で読んでいた）
 - 表の揃え直し（案 ア）: `fix_markdown_lint.rs` をライブラリの crate `fix-markdown-lint`（`modules/home/parts/fix-markdown-lint/`）に
-  移す。`claude-hooks script fix-markdown-lint` と `staged-checks` はそれを呼ぶ。history-rewrite は fence の判定、表の行の
-  判定、`format_table` を呼ぶ
+  移す。`claude-hooks script fix-markdown-lint` と `staged-checks` はそれを呼ぶ。history-rewrite は表の範囲（`tables`）と
+  `format_table` を呼ぶ
 - 署名の外し方と cat-file の読み方（案 甲）は commit-refs のライブラリに移し、commit-refs の `rewrite-history` と
   history-rewrite が同じ関数を呼ぶ
 - `--exclude`（案 は）: Python の `full_match` と同じく、`glob.translate` の規則（`*` と `?` と `[…]` は `/` をまたがず、
@@ -198,3 +198,9 @@ usage-report の日時:
 - 付け替えた後、`git ls-files '*.py'` に history-rewrite、usage-report、kept-sentences、fix-markdown-lint の .py が無く、
   `history-rewrite/package.nix` が Python を参照しない
 - `~/.claude/scripts/usage-report.sh` と `kept-sentences.sh` が、`.claude/tests/scripts/` の今のテストの期待値で通る
+
+## 変更
+
+- 2026-11-20: history-rewrite の呼ぶ関数を、表の範囲（`tables`）と `format_table` にした。前は「history-rewrite は fence の
+  判定、表の行の判定、`format_table` を呼ぶ」。fix-markdown-lint が表とフェンスの範囲を pulldown-cmark で読む形にし
+  （ADR-0104）、行ごとに呼ぶ fence の判定と字下げしたコードの判定（`fence_open`、`fence_end`、`is_indented_code`）を消した
