@@ -874,8 +874,21 @@ mod tests {
         ] {
             assert_eq!(review_words(prompt).next(), Some("/repo/wt"), "{prompt}");
         }
-        // 対象は依頼文の 1 行目（/code-review の引数）だけ。続く手順の文に出るパスを対象と読まない
+        // 対象は /code-review の引数（行の終わりの backtick まで。複数の行でもよい）。続く手順の文に出るパスを対象と読まない
         let prompt = "Review target: `340`\n\nRead /tmp and `test/`";
         assert_eq!(review_words(prompt).collect::<Vec<_>>(), vec!["340"]);
+        let prompt = "Review target: `340\n/repo/wt`\n\nRead /tmp";
+        assert_eq!(
+            review_words(prompt).collect::<Vec<_>>(),
+            vec!["340", "/repo/wt"]
+        );
+        // 引数の終わりが見つからなければ 1 行目だけ。backtick の無い依頼文も読む
+        let prompt = "Review target: `340`. Read /tmp";
+        assert_eq!(review_words(prompt).collect::<Vec<_>>(), vec!["340"]);
+        let prompt = "Review target: /repo/wt 焦点\nRead /tmp";
+        assert_eq!(
+            review_words(prompt).collect::<Vec<_>>(),
+            vec!["/repo/wt", "焦点"]
+        );
     }
 }

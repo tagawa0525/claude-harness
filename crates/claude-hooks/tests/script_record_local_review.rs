@@ -1576,7 +1576,7 @@ fn the_target_is_read_from_the_whole_arguments_like_the_round_line() {
 
 #[test]
 fn the_next_round_is_not_aimed_at_a_directory_outside_the_worktree() {
-    // 焦点の文の `/` は在るディレクトリだが worktree でない。NEXT: の対象にしない
+    // 焦点の文の `/` は在るディレクトリだが worktree でない。NEXT: の対象にせず、周の行の worktree を対象にする
     let fake = FakeGh::new();
     reviewed_in_session(&fake, &[HEAD]);
     transcript_of(
@@ -1591,7 +1591,7 @@ fn the_next_round_is_not_aimed_at_a_directory_outside_the_worktree() {
     let out = record_zero(&fake, HEAD, PR_DIFF, &[]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(
-        stdout(&out).contains("NEXT: /code-review medium 340 "),
+        stdout(&out).contains(&format!("NEXT: /code-review medium {TARGET} ")),
         "{}",
         stdout(&out)
     );
