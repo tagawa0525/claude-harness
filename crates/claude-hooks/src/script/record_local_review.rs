@@ -311,6 +311,10 @@ struct Window {
     tree: Option<PathBuf>,
 }
 
+/// 端末の色と装飾の符号（CSI）
+static ANSI_ESCAPE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("\x1b\\[[0-9;]*[A-Za-z]").unwrap());
+
 /// 比べる行の先頭の文字数。Read は 2000 文字を超える行を切って返すので、長い行の後ろの欠けを読んでいないと数えない
 const LINE_CHARS: usize = 200;
 
@@ -331,13 +335,15 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     let mut previous = BTreeSet::new();
     // 前の周は、起動したディレクトリのブランチの行から決める。置き場は clone で 1 つで、ほかのブランチのファイルにも同じ head の
     // 行がありうる（同じコミットを別のブランチで回した）。その行の前の周は、このブランチの PR の前の周ではない
-    let branch = crate::rules::branch_file_name(&crate::git::current_branch(dir));
+    // ブランチは、置き場と同じく起動したディレクトリの clone から引く（渡った GIT_DIR に向かない）
+    let branch = git_out(dir, &["branch", "--show-current"]).unwrap_or_default();
+    let branch = crate::rules::branch_file_name(branch.trim_end());
     for (name, file) in &files {
         let Some(first) = file.iter().position(|r| r.head == head) else {
             continue;
         };
         if *name == branch
-            && let Some(prev) = file[..first].iter().rev().find(|r| r.head != head)
+            && let Some(prev) = file[..first].last()
         {
             previous.insert(prev.head.clone());
         }
@@ -412,11 +418,12 @@ fn read_check(pr: &pr_url::Pr, head: &str, dir: &Path) -> Read {
     // 求める行は、tool の結果のどれかの行の終わりと合うときだけ読んだとする（長い行の途中の一部は読んだことを示さない）。
     // 接頭辞（diff の印、Read の行番号、grep の位置など）は結果の形ごとに違うので問わない。先頭の [`LINE_CHARS`] 文字で
     // 切った行は、続きがあるので終わりを問わない
-    let read: String = transcripts
-        .iter()
-        .flat_map(|t| t.text.lines())
-        .flat_map(|l| [l.trim_end(), "\n"])
-        .collect();
+    // 色の符号（color.ui=always の git diff が行の終わりに付ける）は、行の終わりを隠すので除く
+    let mut read = String::new();
+    for line in transcripts.iter().flat_map(|t| t.text.lines()) {
+        read.push_str(ANSI_ESCAPE.replace_all(line, "").trim_end());
+        read.push('\n');
+    }
     let missed: Vec<(&String, &String)> = required
         .iter()
         .flat_map(|(file, lines)| lines.iter().map(move |l| (file, l)))
