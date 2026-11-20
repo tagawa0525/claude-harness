@@ -69,7 +69,9 @@ Claude Code の公開の仕様ではない。
   ディレクトリか cwd で、対象を書かない、PR の番号を渡した、worktree の下を渡した周の読んだ記録を除く（3 周目のレビューの指摘）
 - 依頼文の `Review target:` の後をすべて語に切る（実装の 6 番目の版）: 続く手順の文と焦点の文に出る在るディレクトリ（`/tmp`、
   「searched / failed」の `/`）を対象と読む。2026-11-20 の記録に、周の行に worktree を書いて当てると、97 件のすべてを「記録が
-  無い」とした。対象の根を引けないときに対象が行の worktree の下にあるかで比べる版も、`/` で 3 件を除いた
+  無い」とした。対象の根を引けないときに対象が行の worktree の下にあるかで比べる版も、`/` で 3 件を除いた。次の版の、
+  1 行目だけを読む形は、count-review-rounds が引数の全体から行の worktree を取るので、次の行に書いた別の worktree の周を
+  数えた（6 周目のレビューの指摘）
 - 依頼文の対象を最初の語で取る（実装の 5 番目の版まで）: 空白を含む worktree のパスと和文が続いたパス（`/repo/wtの差分`）で、
   行の worktree と違うディレクトリになり、読んだ周を除く（5 周目のレビューの指摘）
 - 依頼文の対象が行の worktree の下でも上でもない絶対パスの記録を除く（実装の 4 番目の版）: 本体の下の
@@ -95,8 +97,8 @@ Claude Code の公開の仕様ではない。
 - **行**: count-review-rounds は、周の行に回したセッションの ID と worktree（引数の最初の絶対パスのディレクトリか cwd）を足す
   （`<HEAD> <UNIX 秒> <セッション> <worktree>`。worktree は空白を含みうるので行の残り）。前の版の行（2 つの欄）も読む
 - **記録を探す**: 0 件の記録のとき、その head の行のセッションの `subagents/` から、`.forked-skill.json` の `skillName` が
-  `code-review` で、その head の周の行の 60 秒以内に始まった記録を取る。依頼文の対象（`Review target:` の行（/code-review の
-  引数）を count-review-rounds が引数を切るのと同じ字で切った語のうち、行の worktree と同じく最初の、在るディレクトリの絶対パス）の
+  `code-review` で、その head の周の行の 60 秒以内に始まった記録を取る。依頼文の対象（`Review target:` の後の
+  /code-review の引数の全体（複数の行でも、行の終わりの backtick まで）を count-review-rounds が引数を切るのと同じ字で切った語のうち、行の worktree と同じく最初の、在るディレクトリの絶対パス）の
   git の worktree の根が行の worktree の根と違えば、別の worktree の周として除く（対象のディレクトリが無い周（対象を書かない、
   PR の番号を渡した、消えた worktree を渡した）と、対象が git の worktree の中に無い周（焦点の文の `/`）は除かない）（設定の場所は
   `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`）。前の周の記録、差分を書いた担当などほかのサブエージェントの記録、同じ
@@ -161,7 +163,7 @@ Claude Code の公開の仕様ではない。
 - 2026-11-20 の測り方: `~/.claude/projects/-home-tagawa-nix-claude-harness/` の 4 つのセッション（0a87f718、7633dbf6、
   a8d9e415、0e216681）の、`.forked-skill.json` が `code-review` の記録 97 件を、1 件ずつコピーして置いた設定の場所で、
   ビルドした `claude-hooks script record-local-review`（このブランチのコミット 8317c481、1 周目のレビューの修正の d9d5bd86、
-  2 周目の ca32aa89、3 周目の 3a17a559、4 周目の 7ceadde9、5 周目の bffdc395、対象を 1 行目から読む b79e7b54。判定は 97 件とも同じ。ca32aa89 から後では、周の行に worktree を書かない形と、
+  2 周目の ca32aa89、3 周目の 3a17a559、4 周目の 7ceadde9、5 周目の bffdc395、対象を 1 行目から読む b79e7b54、6 周目の 412e2d1a。判定は 97 件とも同じ。ca32aa89 から後では、周の行に worktree を書かない形と、
   依頼文の対象を worktree として書く形の両方で測った。hook が書く cwd の worktree と対象が違う周は、テストの
   `a_review_without_a_worktree_in_its_target_counts_for_the_worktree_of_the_line` で確かめた）にかけた。周の head は、記録の始まりの
   90 秒前までの `claude-review-rounds` の行で決め、PR の差分は、そのブランチのマージコミットの第 1 親との merge-base からの
