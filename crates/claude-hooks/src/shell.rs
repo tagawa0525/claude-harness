@@ -100,8 +100,8 @@ pub struct Shell {
     tree: Tree,
     /// 全コマンド（文書順）。parse のときに一度だけ読む。`bash -c` などの文字列の中のコマンドも、その位置に含む
     cmds: Vec<Cmd>,
-    /// 単純コマンドに掛からない出力のリダイレクト（[`Shell::compound_redirect`]）を文書順に。文字列の中のものも、
-    /// その位置に含む
+    /// 単純コマンドに掛からない出力のリダイレクト（[`Shell::compound_redirect`]）。文字列の中のものも含む。
+    /// 文字列の中のものはその文字列のコマンドを読むときに足すので、文書順ではない（[`Shell::writers`] が並べる）
     compound_writes: Vec<Cmd>,
     /// `bash -c` などの文字列を解析した内側のシェル。コマンドは `cmds` に移してある。代入・unset・エスケープの
     /// 走査に使い、スコープにノード ID を使うので木を生かしておく
@@ -249,8 +249,6 @@ impl Shell {
         let collected = shell.collect_commands(depth, expanded);
         shell.cmds = collected.cmds;
         shell.compound_writes = collected.compound_writes;
-        // 文字列の中のものは、その文字列のコマンドを読むときに足すので、外側の後ろの複合文より後に並ぶことがある
-        shell.compound_writes.sort_by_key(|c| c.start);
         shell.inner = collected.inner;
         shell
     }
@@ -507,7 +505,7 @@ impl Shell {
         for child in node.children_by_field_name("argument", &mut cursor) {
             args.push(self.unquote(child));
         }
-        // 前置きのリダイレクト（`> f echo x`、`x=1 > f`）は command の子
+        // 前置きのリダイレクト（`> f echo x`、`x=1 > f`）と here string（`cat <<< x`）は command の子
         let mut cursor = node.walk();
         let mut redirects: Vec<Node> = node
             .children_by_field_name("redirect", &mut cursor)
@@ -1676,12 +1674,21 @@ mod tests {
     #[test]
     fn writers_are_in_document_order() {
         let sh = Shell::parse("bash -c '{ a; } > g' | { b; } > f");
+        let writers: Vec<(&str, Vec<&str>)> = sh
+            .writers()
+            .iter()
+            .map(|c| (c.name.as_str(), texts(&c.writes)))
+            .collect();
         assert_eq!(
-            compound_writes(&sh),
-            [("{ … }", vec!["g"]), ("{ … }", vec!["f"])]
+            writers,
+            [
+                ("bash", vec![]),
+                ("{ … }", vec!["g"]),
+                ("a", vec![]),
+                ("{ … }", vec!["f"]),
+                ("b", vec![]),
+            ]
         );
-        let names: Vec<&str> = sh.writers().iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["bash", "{ … }", "a", "{ … }", "b"]);
         // 前に開いた複合文を、後の単純コマンドより先に示す
         assert_eq!(
             writer_of(
