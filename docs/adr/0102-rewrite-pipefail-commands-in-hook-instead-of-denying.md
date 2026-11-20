@@ -83,8 +83,12 @@ hook の文書（https://code.claude.com/docs/en/hooks の PreToolUse decision c
 - 判定が誤って対象にする形（`cargo metadata | head`、`cargo test --help | head`。#37）は、拒否の代わりに pipefail が
   付く。head が先に閉じると、前のコマンドが SIGPIPE で止まり、終了コードが 141 になりうる。今のモデルが拒否の後に
   `set -o pipefail;` を付けて打ち直した結果と同じなので、この決定では扱わず、知らせる文に 1 文入れる
-- `set -o pipefail` の部分は、許可の規則に無いと確認になる（段 1）。打ち直しでも同じだったので、書き換えで増える
-  確認ではない。`claude-settings.json` に許可を足すかは #387
+- `set -o pipefail` の部分は、`claude-settings.json` の許可の `Bash(set -o pipefail)` で通る（#387。許可が無いと
+  確認になる。段 1）。完全一致の規則で、hook が付ける形と同じ綴りだけに当たる。`set -euo pipefail` や、後ろに引数を
+  足した `set -o pipefail +o pipefail` は当たらず、確認になる。`;`、`&&`、改行でつないだ後ろのコマンドと、付けた
+  リダイレクトの確認は飛ばない（2026-11-20、Claude Code 2.1.328、`claude -p --permission-mode default`。形ごとの
+  結果は PR #389 の本文）。対話のセッションでは、同じ版で `set -o pipefail; cargo --version | sort` が、この許可が
+  無いと確認になり、あると `;` でも `&&` でも確認なしで通った
 - コマンドのどこかに pipefail のシェルのオプションがあれば何もしないのは前のとおり（位置は読まない。ADR-0042）で、
   `set -o pipefail; bash -c 'cargo test | tail'` は、文字列の中に効かないまま通る
 - auto mode では、文書のとおり、書き換えた呼び出しが拒否されうる（試していない）。同じ元のコマンドを打ち直すと

@@ -99,6 +99,7 @@
       "Bash(curl:*)",
       "Bash(hash:*)",
       "Bash(env)",
+      "Bash(set -o pipefail)",
       "Bash(~/.claude/skills/gh-pr-review/scripts/get-pr-info.sh:*)",
       "Bash(~/.claude/skills/gh-pr-review/scripts/get-review-comments.sh:*)",
       "Bash(~/.claude/skills/gh-pr-review/scripts/get-latest-review.sh:*)",
