@@ -189,8 +189,8 @@ tool の結果と求める行の比べ方で比べた案:
 
 - 2026-11-20 の測り方: `~/.claude/projects/-home-tagawa-nix-claude-harness/` の 4 つのセッション（0a87f718、7633dbf6、
   a8d9e415、0e216681）の、`.forked-skill.json` が `code-review` の記録 97 件を、1 件ずつコピーして置いた設定の場所で、
-  ビルドした `claude-hooks script record-local-review`（このブランチのコミット 8317c481、1 周目のレビューの修正の d9d5bd86、
-  2 周目の ca32aa89、3 周目の 3a17a559、4 周目の 7ceadde9、5 周目の bffdc395、対象を 1 行目から読む b79e7b54、6 周目の 412e2d1a、7 周目の 9300ac88、Copilot の指摘の修正の後の版。判定は 97 件とも同じ。ca32aa89 から後では、周の行に worktree を書かない形と、
+  ビルドした `claude-hooks script record-local-review`（このブランチのコミット 73a28f26、1 周目のレビューの修正の 49b03c7e、
+  2 周目の 5c5d91f8、3 周目の d03a90ac、4 周目の 50fa582b、5 周目の 57dec237、対象を 1 行目から読む 1995043b、6 周目の 4180d806、7 周目の 37ee82c0、Copilot の指摘の修正の後の版。判定は 97 件とも同じ。5c5d91f8 から後では、周の行に worktree を書かない形と、
   依頼文の対象を worktree として書く形の両方で測った。hook が書く cwd の worktree と対象が違う周は、テストの
   `a_review_without_a_worktree_in_its_target_counts_for_the_worktree_of_the_line` で確かめた）にかけた。周の head は、記録の始まりの
   90 秒前までの `claude-review-rounds` の行で決め、PR の差分は、そのブランチのマージコミットの第 1 親との merge-base からの
