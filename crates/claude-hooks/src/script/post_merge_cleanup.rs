@@ -669,7 +669,8 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         }
     };
     // gh の既定のリポジトリは、push 先を GitHub と読めなくても探す。ssh の Host の別名（git@github-work:...）は
-    // GitHub と読めないが、消すと GitHub の PR が閉じる。ローカルのミラーを消すときにも探して残しすぎるが、消しすぎない
+    // GitHub と読めないが、消すと GitHub の PR が閉じる。ローカルのミラーを消すときにも探して残しすぎるが、消しすぎない。
+    // base は push 先のリポジトリだけを探す（上の PR の付け替えのコマンドに -R のリポジトリが要る）
     let in_default = gh_has_default();
     if !repos.is_empty() || in_default {
         if !gh_available() {
@@ -809,14 +810,16 @@ fn push_repos(remote: &str) -> Result<Vec<String>, String> {
     Ok(repos)
 }
 
-/// gh が既定のリポジトリを決められるか。gh は git remote -v の GitHub の URL か GH_REPO（空なら使わない）から決め、
-/// 決められないと gh pr list は -R なしではいつも失敗する
+/// gh が既定のリポジトリを決められそうか。gh は git remote -v の GitHub の URL か GH_REPO（空なら使わない）から
+/// 決め、決められないと gh pr list は -R なしではいつも失敗する。URL はホストの一致（on_github）でなく、github.com を
+/// 含むか（大文字と小文字を区別しない）で見る。gh は ssh の設定から別名（github.com-work）の実のホストを読むので、
+/// ホストの一致では探さずに消しうる。決められない URL を含めても、gh が失敗して残す側に倒れる
 fn gh_has_default() -> bool {
     std::env::var_os("GH_REPO").is_some_and(|v| !v.is_empty())
         || git(&["remote", "-v"])
             .unwrap_or_default()
-            .lines()
-            .any(|l| l.split_whitespace().nth(1).is_some_and(on_github))
+            .to_ascii_lowercase()
+            .contains("github.com")
 }
 
 /// repo（None なら gh の既定のリポジトリ）で、branch を filter（--head か --base）にした開いている PR の field の値
