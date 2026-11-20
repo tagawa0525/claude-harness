@@ -195,7 +195,8 @@ pub struct Cmd {
     pub git: Option<GitInvocation>,
     /// 標準入力に渡すヒアドキュメント（`<<EOF` / `<<-EOF`）。本文を決められないものは None
     pub stdin_heredoc: Option<Heredoc>,
-    /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`）
+    /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`）。外側のパイプラインと複合文に付けたものを
+    /// 含む（[`output_redirects`]）
     pub writes: Vec<Arg>,
     /// パイプラインの後ろのステージのコマンドの名前（書いたまま。順に）。パイプの途中でなければ空
     pub piped_into: Vec<String>,
@@ -523,7 +524,7 @@ impl Shell {
         };
         // ヒアドキュメントの演算子の後ろに書いたリダイレクト（`cat <<'EOF' > msg.txt`）は、heredoc_redirect の中にある
         let mut file_redirects: Vec<Node> = Vec::new();
-        for r in &redirects {
+        for r in &output_redirects(node) {
             match r.kind() {
                 "file_redirect" => file_redirects.push(*r),
                 "heredoc_redirect" => {
@@ -952,6 +953,47 @@ fn statement_redirects(node: Node) -> Vec<Node> {
                 out.extend(p.children_by_field_name("redirect", &mut cursor));
             }
             "list" if p.named_child(p.named_child_count().saturating_sub(1)) == Some(cur) => {}
+            _ => break,
+        }
+        cur = p;
+    }
+    out
+}
+
+/// コマンドの出力に掛かりうるリダイレクト（[`statement_redirects`] に、パイプラインと複合文に付けたものを足す）。
+/// tree-sitter-bash は `a | b > f` のリダイレクトをパイプラインに付けるが、bash では最後のステージに掛かる。
+/// 複合文（`{ …; } > f`、`( … )`、`if`、`while` / `until`、`for`、`case`）に付けたものは、中のコマンドの全部に
+/// 帰す: 中のどのコマンドが書くかは fd と中のリダイレクトで決まるが、ファイルは複合文の前に開く（`>` は空にする）。
+/// 置換の中（出力はシェルが受け取る）と関数の定義（呼んだときに開く）は越えない。ヒアドキュメントは
+/// 複合文の中の 1 つのコマンドだけが読むので、[`statement_redirects`] に残す
+fn output_redirects(node: Node) -> Vec<Node> {
+    let mut out = Vec::new();
+    // 今のノードが、親に付けたリダイレクトの掛かる文か（並びとパイプラインの最後でないものは掛からない）
+    let mut applies = true;
+    let mut cur = node;
+    while let Some(p) = cur.parent() {
+        match p.kind() {
+            "redirected_statement" => {
+                if applies && p.child_by_field_name("body") == Some(cur) {
+                    let mut cursor = p.walk();
+                    out.extend(p.children_by_field_name("redirect", &mut cursor));
+                }
+            }
+            "list" | "pipeline" => {
+                applies &= p.named_child(p.named_child_count().saturating_sub(1)) == Some(cur);
+            }
+            "negated_command" => {}
+            "compound_statement"
+            | "subshell"
+            | "if_statement"
+            | "elif_clause"
+            | "else_clause"
+            | "while_statement"
+            | "for_statement"
+            | "c_style_for_statement"
+            | "case_statement"
+            | "case_item"
+            | "do_group" => applies = true,
             _ => break,
         }
         cur = p;
