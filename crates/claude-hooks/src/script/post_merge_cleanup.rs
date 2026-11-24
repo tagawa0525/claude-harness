@@ -223,7 +223,7 @@ fn main_worktree_can_switch(
             "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。何も変えていません"
         );
         eprintln!(
-            "  修正方法: 残す変更は、cd {main_root} && ~/.claude/scripts/worktree-add.sh <新しいブランチ> --carry-changes で {default} から作った worktree へ移し、要らない変更は捨ててから、もう一度実行する。stash は全 worktree で共有され、hook が止めるので使わない。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる"
+            "  修正方法: 残す変更は、cd {main_root} && ~/.claude/scripts/worktree-add.sh <新しいブランチ> --from {branch} --carry-changes で別の worktree へ移し、要らない変更は捨ててから、もう一度実行する。起点を {branch} にするのは、変更がその上で書かれていて、{default} はローカルとリモートのどちらがマージを含むかが流れで違うため（{branch} は {default} に入っているので、新しいブランチの差分は移した変更だけになる）。stash は全 worktree で共有され、hook が止めるので使わない。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる"
         );
         return Err(1);
     }
