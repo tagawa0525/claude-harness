@@ -223,7 +223,7 @@ fn main_worktree_can_switch(
             "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。何も変えていません"
         );
         eprintln!(
-            "  修正方法: 変更を退避する（git stash、または {default} から作った新しいブランチにコミットする）か捨ててから、もう一度実行する。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる"
+            "  修正方法: 残す変更は、cd {main_root} && ~/.claude/scripts/worktree-add.sh <新しいブランチ> --carry-changes で {default} から作った worktree へ移し、要らない変更は捨ててから、もう一度実行する。stash は全 worktree で共有され、hook が止めるので使わない。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる"
         );
         return Err(1);
     }
