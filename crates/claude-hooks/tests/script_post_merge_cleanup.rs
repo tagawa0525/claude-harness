@@ -217,6 +217,54 @@ fn uncommitted_changes_in_the_main_worktree_stop_the_cleanup() {
 }
 
 #[test]
+fn following_the_fix_for_uncommitted_changes_lets_the_rerun_clean_up() {
+    // /git-merge の流れ: GitHub でない origin があり、マージはローカルの main にだけある（push の前）。origin/main は
+    // マージを含まないので、そこから作ると変更の土台が無い。示す手順で変更を移せば、再実行が片付けまで進む
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&["push", "-q", "-u", "origin", "main"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "Merge feat/x", "feat/x"]);
+    repo.git(&["switch", "-q", "feat/x"]);
+    // マージしたブランチの上で書いた、残す変更
+    repo.write("b.txt", "b\nmore\n");
+
+    let out = repo.run(&["feat/x"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("--from feat/x --carry-changes"), "{err}");
+
+    let carry = forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+        .args([
+            "script",
+            "worktree-add",
+            "fix/y",
+            "--from",
+            "feat/x",
+            "--carry-changes",
+        ])
+        .current_dir(repo.app())
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert_eq!(carry.status.code(), Some(0), "{}", text(&carry.stderr));
+    assert_eq!(
+        std::fs::read_to_string(repo.root.join("app-fix-y/b.txt")).unwrap(),
+        "b\nmore\n"
+    );
+
+    let rerun = repo.run(&["feat/x"]);
+    assert_eq!(rerun.status.code(), Some(0), "{}", text(&rerun.stderr));
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}
+
+#[test]
 fn a_main_worktree_branch_with_the_default_branch_elsewhere_stops_before_changing_anything() {
     // 既定のブランチは別の worktree にあるので、メインの worktree をそこへ切り替えられない
     let repo = Repo::new();
