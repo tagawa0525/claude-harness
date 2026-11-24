@@ -207,8 +207,11 @@ fn uncommitted_changes_in_the_main_worktree_stop_the_cleanup() {
     assert_eq!(out.status.code(), Some(1));
     let err = text(&out.stderr);
     assert!(err.contains("未コミットの変更"), "{err}");
-    // マージ済みのブランチにコミットすると次の実行が止まるので、退避を勧める
-    assert!(err.contains("git stash"), "{err}");
+    // マージ済みのブランチにコミットすると次の実行が止まるので、既定のブランチから作る worktree への移動を勧める。
+    // git stash は guard-git-stash が止めるので勧めない
+    assert!(err.contains("worktree-add.sh"), "{err}");
+    assert!(err.contains("--carry-changes"), "{err}");
+    assert!(!err.contains("git stash"), "{err}");
     assert_eq!(repo.git(&["branch", "--show-current"]), "feat/dirty");
     assert_eq!(text(&out.stdout), "");
 }
