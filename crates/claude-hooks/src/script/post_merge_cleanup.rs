@@ -223,7 +223,9 @@ fn main_worktree_can_switch(
             "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。何も変えていません"
         );
         eprintln!(
-            "  修正方法: 残す変更は、cd {main_root} && ~/.claude/scripts/worktree-add.sh <新しいブランチ> --from {branch} --carry-changes で別の worktree へ移し、要らない変更は捨ててから、もう一度実行する。起点を {branch} にするのは、変更がその上で書かれていて、{default} はローカルとリモートのどちらがマージを含むかが流れで違うため（{branch} は {default} に入っているので、新しいブランチの差分は移した変更だけになる）。stash は全 worktree で共有され、hook が止めるので使わない。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる"
+            "  修正方法: 残す変更は、cd {} && ~/.claude/scripts/worktree-add.sh <新しいブランチ> --from {} --carry-changes で別の worktree へ移し、要らない変更は捨ててから、もう一度実行する。起点を {branch} にするのは、変更がその上で書かれていて、{default} はローカルとリモートのどちらがマージを含むかが流れで違うため（{branch} は {default} に入っているので、新しいブランチの差分は移した変更だけになる）。stash は全 worktree で共有され、hook が止めるので使わない。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる",
+            sh_word(main_root),
+            sh_word(branch)
         );
         return Err(1);
     }
@@ -232,7 +234,8 @@ fn main_worktree_can_switch(
             "ERROR: {branch} はメインの worktree（{main_root}）でチェックアウトされ、{default} は別の worktree（{other}）にあるので、メインの worktree を {branch} から外せません。何も変えていません"
         );
         eprintln!(
-            "  修正方法: メインの worktree で別のブランチに切り替える（git -C {main_root} switch --detach など）か、{other} を片付けてから、もう一度実行する"
+            "  修正方法: メインの worktree で別のブランチに切り替える（git -C {} switch --detach など）か、{other} を片付けてから、もう一度実行する",
+            sh_word(main_root)
         );
         return Err(1);
     }
