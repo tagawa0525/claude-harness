@@ -217,6 +217,18 @@ fn uncommitted_changes_in_the_main_worktree_stop_the_cleanup() {
 }
 
 #[test]
+fn the_fix_command_quotes_a_branch_name_the_shell_would_expand() {
+    // 修正方法のコマンドはそのまま貼って打つので、git が許す $ を含むブランチ名を展開させない
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/a$b"]);
+    repo.write("a.txt", "changed\n");
+    let out = repo.run(&["feat/a$b"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("--from 'feat/a$b' --carry-changes"), "{err}");
+}
+
+#[test]
 fn following_the_fix_for_uncommitted_changes_lets_the_rerun_clean_up() {
     // /git-merge の流れ: GitHub でない origin があり、マージはローカルの main にだけある（push の前）。origin/main は
     // マージを含まないので、そこから作ると変更の土台が無い。示す手順で変更を移せば、再実行が片付けまで進む
