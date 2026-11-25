@@ -2,14 +2,22 @@
 //!
 //! CLAUDE.md の「main ブランチに直接コミットしない」をツールレベルで強制する。リモートの有無によらず止める
 //! （GitHub のリモートが無いリポジトリも、ブランチは /git-merge でローカルの main にマージする）。
-//! 判定は git の pre-commit（crate::git_hook）と同じ関数（[`main_commit_blocked`]）。2 つの層が渡す入力（ブランチと
-//! ステージしたファイル）の一致は nix/tests/main-commit-gates.sh が確かめる:
+//! 判定は git の pre-commit（crate::git_hook）と同じ規則（[`main_commit_blocked`]）。同じコマンドの前に switch の無い
+//! git commit で、2 つの層が渡す入力（ブランチとステージしたファイル）の一致は nix/tests/main-commit-gates.sh が確かめる:
 //! - flake.lock だけの変更（M 1 件）は nix-rebuild update の正規フローなので通す
 //! - マージを締めるコミット（MERGE_HEAD がある）は、/git-merge で本文の語に拒まれた後や競合を解決した後に
 //!   `git commit` でマージを終える形なので通す
 //! - HEAD の無いリポジトリの最初のコミットは、分けるブランチの起点が無いので通す
+//!
+//! PreToolUse hook はコマンドの実行の前に走るので、ブランチは同じコマンドの前の git switch / checkout を反映した
+//! コミットの時点のもの（[`branch_at`]。ほかの規則と同じ数え方）で決める。移った先が分からなければ、今の HEAD の
+//! ブランチで決める（main なら止める。`git switch -` で main に戻る形は通る）。前の switch は、失敗したもの
+//! （`;` でつなぎ、後の commit は走る）と走らなかったもの（`||` の右辺）も、移ったものとして数える。これらの形で main に入る
+//! コミットは、グローバルの git の hook を使うリポジトリでは、git の pre-commit が本当の HEAD で止める（ローカルの
+//! core.hooksPath を持つリポジトリでは止めない）
 
 use super::Rule;
+use super::guard_branch_base::branch_at;
 use crate::git;
 use crate::input::Input;
 use crate::output::Finding;
@@ -37,7 +45,9 @@ impl Rule for BlockMainCommit {
                 continue;
             }
             let dir = shell.target_dir(cmd, &input.cwd);
-            if main_commit_blocked(&dir) {
+            let branch = branch_at(shell, cmd, &input.cwd, &dir)
+                .unwrap_or_else(|| git::current_branch(&dir));
+            if blocked_on(&dir, &branch) {
                 return vec![Finding::Deny(DENY_MESSAGE.to_string())];
             }
         }
@@ -50,7 +60,11 @@ impl Rule for BlockMainCommit {
 /// flake.lock だけの変更（M 1 件。削除やリネームは通さない）、マージを締めるコミット（MERGE_HEAD がある）、HEAD の
 /// 無いリポジトリの最初のコミット
 pub(crate) fn main_commit_blocked(dir: &std::path::Path) -> bool {
-    let branch = git::current_branch(dir);
+    blocked_on(dir, &git::current_branch(dir))
+}
+
+/// [`main_commit_blocked`] を、コミットする時点のブランチ（branch）で決める
+fn blocked_on(dir: &std::path::Path, branch: &str) -> bool {
     if branch != "main" && branch != "master" {
         return false;
     }
