@@ -189,7 +189,7 @@ fn new_branch(sub: &str, args: &[Arg]) -> Option<NewBranch> {
     }
 }
 
-/// `git switch` / `git checkout` で移る先のブランチ。ブランチを変えなければ Ok(None)、
+/// `git switch` / `git checkout` で移る先のブランチ。ブランチを変えなければ（パスを付けた checkout を含む）Ok(None)、
 /// 移った先が分からなければ（`-`、`--detach`、ローカルにないブランチやファイルの名前）Err(())
 fn switched_to(dir: &Path, sub: &str, args: &[Arg]) -> Result<Option<String>, ()> {
     let create: &[&str] = match sub {
