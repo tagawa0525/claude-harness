@@ -142,7 +142,6 @@ fn a_commit_after_a_switch_to_an_unknown_target_is_judged_on_the_current_head() 
 
 /// `git checkout <branch> <paths>` はファイルを戻すだけで、HEAD は main のまま
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_commit_after_restoring_files_from_a_feature_branch_is_denied() {
     let repo = Repo::new();
     repo.git(&["branch", "feat/x"]);

@@ -209,8 +209,8 @@ fn switched_to(dir: &Path, sub: &str, args: &[Arg]) -> Result<Option<String>, ()
         }
     }
     let p = read(args, &[], &[]);
-    if sub == "checkout" && args.iter().any(|a| a.text == "--") {
-        // `git checkout [<tree-ish>] -- <paths>` はファイルを戻すだけ
+    if sub == "checkout" && (args.iter().any(|a| a.text == "--") || p.positional.len() > 1) {
+        // `git checkout [<tree-ish>] [--] <paths>` はファイルを戻すだけ（`--` を省いても、2 つ目の引数からはパス）
         return Ok(None);
     }
     if has_any(&p.flags, &["--detach", "-d"]) {
