@@ -97,7 +97,6 @@ fn a_commit_on_main_without_a_switch_is_denied() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_commit_after_creating_a_feature_branch_in_the_same_command_is_allowed() {
     let repo = Repo::new();
     for rest in [
@@ -109,7 +108,6 @@ fn a_commit_after_creating_a_feature_branch_in_the_same_command_is_allowed() {
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_commit_after_switching_to_an_existing_feature_branch_in_the_same_command_is_allowed() {
     let repo = Repo::new();
     repo.git(&["branch", "feat/x"]);
@@ -117,7 +115,6 @@ fn a_commit_after_switching_to_an_existing_feature_branch_in_the_same_command_is
 }
 
 #[test]
-#[ignore = "RED: 実装の前"]
 fn a_commit_after_switching_to_main_in_the_same_command_is_denied() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/x"]);
