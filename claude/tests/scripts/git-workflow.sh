@@ -770,6 +770,31 @@ assert_contains "$out" "
   gh pr edit 12 --base main -R fork-owner/app
   git push origin --delete feat/x"
 
+it "post-merge-cleanup: 手元の main に無いコミットを持つリモートのブランチを残すときも、base とする PR を示す"
+# 消す前に確かめるよう知らせるだけだと、要らないと決めて消したときに上の PR が閉じる
+REPO="$TEST_ROOT/cleanup53-moved/app"
+make_repo "$REPO"
+make_remote "$REPO" github
+github_origin "$REPO" https://github.com/fork-owner/app.git
+git -C "$REPO" switch -q -c feat/x
+commit_file "$REPO" a.txt "feat: a"
+git -C "$REPO" push -q -u origin feat/x
+git -C "$REPO" switch -q main
+git -C "$REPO" merge -q --no-ff -m "Merge: feat/x" feat/x
+git -C "$REPO" push -q origin main
+OTHER="$TEST_ROOT/cleanup53-moved/other"
+git clone -q -b feat/x "$(git -C "$REPO" remote get-url origin)" "$OTHER"
+commit_file "$OTHER" c.txt "feat: c"
+git -C "$OTHER" push -q origin feat/x
+cd "$REPO" || exit 1
+make_fake_gh '"pr list "*"--head feat/x --state open"*) ;;
+  "pr list -R fork-owner/app --base feat/x --state open"*) echo 12 ;;'
+out=$("$SCRIPTS_DIR/post-merge-cleanup.sh" feat/x)
+assert_eq 0 $?
+assert_contains "$(git ls-remote --heads origin feat/x)" "refs/heads/feat/x"
+assert_contains "$out" "REMOTE_BRANCH: kept (origin/feat/x に main に無いコミットがある。"
+assert_contains "$out" "open PR 1 件（#12）の base でもある"
+
 it "post-merge-cleanup: push 先の URL（pushurl。複数なら全部）のリポジトリで base とする PR を探す"
 setup_merged_branch "$TEST_ROOT/cleanup54" github
 REPO="$TEST_ROOT/cleanup54/app"
