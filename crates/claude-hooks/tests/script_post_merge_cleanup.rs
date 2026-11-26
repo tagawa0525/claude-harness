@@ -320,6 +320,228 @@ fn the_default_branch_is_updated_without_depending_on_fetch_head() {
 }
 
 #[test]
+fn a_default_branch_without_an_upstream_skips_the_update_and_deletes_the_branch() {
+    // GitHub でないリモートを足しただけで、main に上流を設定していないリポジトリ（#406）
+    let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
+    let wt = repo.root.join("app-feat-x");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/x",
+        wt.to_str().unwrap(),
+    ]);
+    std::fs::write(wt.join("b.txt"), "b\n").unwrap();
+    repo.git(&["-C", wt.to_str().unwrap(), "add", "-A"]);
+    repo.git(&["-C", wt.to_str().unwrap(), "commit", "-q", "-m", "feat: b"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(stdout.contains("LOCAL_BRANCH: deleted"), "{stdout}");
+    // 送るためだけのリモートは意図した構成なので、マージのたびに上流を設定するよう知らせない
+    assert!(!stdout.contains("リモートの上流が無い"), "{stdout}");
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}
+
+#[test]
+fn a_remote_that_cannot_be_read_keeps_the_branch_instead_of_reporting_none() {
+    let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["push", "-q", "-u", "r995", "feat/x"]);
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    // 届かないリモート（SSH の先が落ちている）の代わりに、リモートのリポジトリを移す
+    std::fs::rename(&bare, repo.root.join("moved.git")).unwrap();
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains("REMOTE_BRANCH: kept (r995 のブランチを確かめられない"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_default_branch_tracking_a_local_branch_is_not_updated() {
+    // 最新にする先はリモートの追跡ブランチだけ。手元のブランチを上流にした main を、後片付けで進めない
+    let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
+    repo.git(&["branch", "develop"]);
+    repo.git(&["branch", "-u", "develop", "main"]);
+    repo.git(&["switch", "-q", "develop"]);
+    repo.write("d.txt", "d\n");
+    repo.commit("develop only");
+    repo.git(&["switch", "-q", "-c", "feat/x", "main"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    let merged = repo.git(&["rev-parse", "HEAD"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(repo.git(&["rev-parse", "main"]), merged);
+    // 意図して手元のブランチを上流にしているので、リモートの上流を設定する NOTE は出さない
+    assert!(
+        !text(&out.stdout).contains("リモートの上流が無い"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}
+
+#[test]
+fn an_origin_without_an_upstream_on_the_default_branch_is_noted() {
+    // -u を付けずに push した clone では、GitHub でマージした main が手元に来ないまま配備の NOTE も出ない
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&["push", "-q", "origin", "main"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains("NOTE: main にリモートの上流が無いので、main の更新を省いた"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("git fetch origin && git branch -u origin/main main"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_remote_branch_moved_past_the_unfetched_tracking_ref_is_kept() {
+    // main に上流が無いと fetch しないので、追跡ブランチ（r995/feat/x）は古いまま。ほかの clone が feat/x に
+    // push したコミットを、古い追跡ブランチの比較で消さない
+    let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["push", "-q", "-u", "r995", "feat/x"]);
+    let other = repo.root.join("other-clone");
+    repo.git(&[
+        "clone",
+        "-q",
+        "-b",
+        "feat/x",
+        bare.to_str().unwrap(),
+        other.to_str().unwrap(),
+    ]);
+    std::fs::write(other.join("c.txt"), "c\n").unwrap();
+    repo.git(&["-C", other.to_str().unwrap(), "add", "c.txt"]);
+    repo.git(&[
+        "-C",
+        other.to_str().unwrap(),
+        "commit",
+        "-q",
+        "-m",
+        "feat: c",
+    ]);
+    repo.git(&[
+        "-C",
+        other.to_str().unwrap(),
+        "push",
+        "-q",
+        "origin",
+        "feat/x",
+    ]);
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    repo.git(&["push", "-q", "r995", "main"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains("REMOTE_BRANCH: kept (r995/feat/x に main に無いコミットがある"),
+        "{stdout}"
+    );
+    // c は fetch していないので、確かめる前に取ってくる手順を示す
+    assert!(stdout.contains("git fetch r995 で取ってから"), "{stdout}");
+    // main を push しても c は入らないので、push してから消す手順を示さない
+    assert!(!stdout.contains("push してから"), "{stdout}");
+    assert_ne!(
+        repo.git(&["ls-remote", "--heads", "r995", "refs/heads/feat/x"]),
+        ""
+    );
+}
+
+#[test]
+fn a_remote_default_branch_missing_locally_keeps_the_branch_and_asks_to_fetch() {
+    // main に上流が無いと fetch しないので、ほかの clone が進めたリモートの main は手元に無い。push を勧めると
+    // non-fast-forward で拒まれる
+    let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["push", "-q", "-u", "r995", "feat/x"]);
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    repo.git(&["push", "-q", "r995", "main"]);
+    let other = repo.root.join("other-clone");
+    repo.git(&[
+        "clone",
+        "-q",
+        "-b",
+        "main",
+        bare.to_str().unwrap(),
+        other.to_str().unwrap(),
+    ]);
+    std::fs::write(other.join("c.txt"), "c\n").unwrap();
+    repo.git(&["-C", other.to_str().unwrap(), "add", "c.txt"]);
+    repo.git(&["-C", other.to_str().unwrap(), "commit", "-q", "-m", "c"]);
+    repo.git(&[
+        "-C",
+        other.to_str().unwrap(),
+        "push",
+        "-q",
+        "origin",
+        "main",
+    ]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains("REMOTE_BRANCH: kept (r995/main（"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("が手元に無い。git fetch r995 で取ってから"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("push してから"), "{stdout}");
+}
+
+#[test]
 fn a_local_merge_without_a_remote_notes_the_rebuild_from_the_given_base() {
     let repo = Repo::new();
     // marker は before にも要るので、先に main へ入れる

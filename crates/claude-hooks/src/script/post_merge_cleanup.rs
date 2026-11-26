@@ -10,10 +10,11 @@
 //! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）。メインの worktree
 //!   なら消さずに、段階 2 で既定のブランチへ切り替える（未コミットの変更があるか、既定のブランチが別の worktree にあれば、
 //!   何も変えずに止まる）
-//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
+//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（既定のブランチの上流がリモートの追跡ブランチでなければ省き、上流が無く origin があれば NOTE）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
-//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head か base のときは残す。
+//! - 段階 5: リモートのブランチを消す（ls-remote の今の先端で比べ、リモートの既定のブランチが先端を含まないとき、手元の既定のブランチに
+//!   無いコミットがあるとき、リモートの既定のブランチが手元に無いとき、リモートを読めないときと、open の PR の head か base のときは残す。
 //!   PR は push 先の GitHub のリポジトリで探し、head は gh の既定のリポジトリでも探す）
 //!
 //! git と gh の失敗のうち、続けられないものは、その標準エラーを出したまま、その終了コードで終える
@@ -494,6 +495,24 @@ fn merge_commit_of(branch: &str, default: &str, before: &str) -> Result<(), i32>
 /// 見ると差が空になる）。渡されなければ pull の前の HEAD（reflog から取らないのは、reflog はマージのほかの更新も含み、
 /// 期限で消え、どのエントリが今回のマージの前かを決められないため。#4）
 fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
+    // 既定のブランチがリモートの追跡ブランチを上流にしていないリポジトリ（リモートが無いか、送るためだけのリモートを
+    // 足した。/git-merge でローカルにマージした後）では最新にする先が無い。リモートの有無で決めると、上流の無い
+    // merge --ff-only @{upstream} で止まる。手元のブランチの上流は、段階 0 と同じく追わない
+    // for-each-ref の失敗は上流が無いことにせず止める（更新を黙って省き、NOTE も出さずに続けてしまう）。既定のブランチへ
+    // 切り替える前に読み、止めるときに出力に無い切り替えを残さない
+    let Some(upstream) = git(&[
+        "for-each-ref",
+        "--format=%(upstream)",
+        &format!("refs/heads/{default}"),
+    ]) else {
+        eprintln!(
+            "ERROR: {default} の上流を確かめられません（git for-each-ref が失敗）。ここまでの出力の段階は済み、ローカルのブランチは残っています"
+        );
+        eprintln!(
+            "  修正方法: git for-each-ref が失敗する原因（ref の破損など）を直して、もう一度実行する"
+        );
+        return Err(1);
+    };
     if git(&["branch", "--show-current"]).as_deref() != Some(default) {
         step(&["switch", "-q", default])?;
     }
@@ -501,8 +520,7 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         .map(str::to_string)
         .or_else(|| git(&["rev-parse", "HEAD"]))
         .unwrap_or_default();
-    // リモートの無いリポジトリ（/git-merge でローカルにマージした後）では最新にする先が無い
-    if !git(&["remote"]).unwrap_or_default().is_empty() {
+    if upstream.starts_with("refs/remotes/") {
         step(&["fetch", "-q", "--prune"])?;
         if base.is_none() {
             before = git(&["rev-parse", "HEAD"]).unwrap_or_default();
@@ -510,6 +528,13 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         // pull は FETCH_HEAD を読み、同じ clone の別の fetch が書き換えると Cannot rebase onto multiple branches で止まる。
         // fetch の後の追跡ブランチへ進める merge は FETCH_HEAD に頼らない
         step(&["merge", "-q", "--ff-only", "@{upstream}"])?;
+    } else if upstream.is_empty() && ok(&["remote", "get-url", "origin"]) {
+        // -u を付けずに push した clone では、GitHub でマージした既定のブランチが手元に来ないまま古く残る。origin に
+        // 絞るのは、ほかの名前の送るためだけのリモート（バックアップや別のホスト）は上流にしない構成で、マージの
+        // たびに知らせると要らない NOTE になるため（予約のタグも origin を取ってくる先にしている）
+        println!(
+            "NOTE: {default} にリモートの上流が無いので、{default} の更新を省いた（origin で {default} を進めたなら、git fetch origin && git branch -u origin/{default} {default} で上流を設定して pull する。NOTE の配備の判定は手元の {default} の差だけを見た）"
+        );
     }
     // ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup の crate。古い版の clone と、ハーネスを分ける前の
     // nixfiles は claude-sync.sh）を持ち、rebuild する構成のリポジトリ（nixfiles）は nix-rebuild.sh を持つ
@@ -659,18 +684,42 @@ fn design_records_available() -> bool {
 
 /// 段階 5: リモートのブランチを消す
 fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
-    let on_remote = ok(&["remote", "get-url", remote])
-        && git(&[
-            "ls-remote",
-            "--heads",
-            remote,
-            &format!("refs/heads/{branch}"),
-        ])
-        .is_some_and(|s| !s.is_empty());
-    if !on_remote {
+    // 消すかの判定は、追跡ブランチでなく ls-remote が返す今の先端で行う。追跡ブランチは、既定のブランチに上流が無いと
+    // 段階 2 で fetch されず、ほかの clone が push した後も古いまま残る
+    let branch_ref = format!("refs/heads/{branch}");
+    let default_ref = format!("refs/heads/{default}");
+    if !ok(&["remote", "get-url", remote]) {
         println!("REMOTE_BRANCH: none");
         return Ok(());
     }
+    // 失敗を空の出力にすると、届かないリモートに残るブランチを none と報告する
+    let heads = match run(&["ls-remote", "--heads", remote, &branch_ref, &default_ref]) {
+        Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        other => {
+            let err = other
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stderr)
+                        .trim_end()
+                        .replace('\n', " ")
+                })
+                .unwrap_or_default();
+            println!(
+                "REMOTE_BRANCH: kept ({remote} のブランチを確かめられない（git ls-remote が失敗: {err}）。届かない原因（ネットワークや認証）を直してから、残っていれば消す)"
+            );
+            return Ok(());
+        }
+    };
+    let tip = |name: &str| {
+        heads.lines().find_map(|l| {
+            let (sha, r) = l.split_once('\t')?;
+            (r == name).then(|| sha.to_string())
+        })
+    };
+    let Some(branch_tip) = tip(&branch_ref) else {
+        println!("REMOTE_BRANCH: none");
+        return Ok(());
+    };
+    let default_tip = tip(&default_ref);
     let repos = match push_repos(remote) {
         Ok(repos) => repos,
         Err(why) => {
@@ -699,16 +748,44 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
             }
         }
     }
+    // リモートのブランチの先端が手元の既定のブランチに無ければ、マージした後のほかの clone の push か、squash か rebase の
+    // マージか、fetch していない先端（既定のブランチに上流が無い）。既定のブランチを push してもそのコミットは入らない
+    // ので、下の push してから消す手順を示さずに残す
+    let stacked = stacked_prs(branch, &repos);
+    let has_commit = |sha: &str| ok(&["cat-file", "-e", &format!("{sha}^{{commit}}")]);
+    // 手元を確かめて要らないと決めて消しても上の PR が閉じるので、残す理由に上の PR も添える
+    let on_top = match &stacked {
+        Stacked::Found(found) => format!(
+            "。{}の base でもある（消すと GitHub がそれらの PR を閉じる。消す前に付け替えるか閉じる）",
+            listed(found)
+        ),
+        Stacked::Unknown(why) => {
+            format!("。{branch} を base にした open PR の有無も確認できない: {why}")
+        }
+        Stacked::None => String::new(),
+    };
+    let fetched = has_commit(&branch_tip);
+    if !(fetched && ok(&["merge-base", "--is-ancestor", &branch_tip, &default_ref])) {
+        let fetch_first = if fetched {
+            String::new()
+        } else {
+            format!("git fetch {remote} で取ってから、")
+        };
+        println!(
+            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後のほかの clone の push、squash か rebase のマージ、fetch していない先端のどれかなので、{fetch_first}取り込むか要らないかを確かめてから消す{on_top})"
+        );
+        return Ok(());
+    }
+    if let Some(d) = default_tip.as_deref().filter(|d| !has_commit(d)) {
+        println!(
+            "REMOTE_BRANCH: kept ({remote}/{default}（{d}）が手元に無い。git fetch {remote} で取ってから、含むかを確かめて消す{on_top})"
+        );
+        return Ok(());
+    }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
     // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる。上の PR が
     // あれば、push の後に消すだけでも閉じるので、ここでも示す
-    let stacked = stacked_prs(branch, &repos);
-    if !ok(&[
-        "merge-base",
-        "--is-ancestor",
-        &format!("{remote}/{branch}"),
-        &format!("{remote}/{default}"),
-    ]) {
+    if !default_tip.is_some_and(|d| ok(&["merge-base", "--is-ancestor", &branch_tip, &d])) {
         let unpushed = format!("{remote}/{default} がブランチの先端をまだ含まない");
         match stacked {
             // push していない既定のブランチへ付け替えると、上の PR の差分にこのブランチのコミットが入るので、push を先に書く
