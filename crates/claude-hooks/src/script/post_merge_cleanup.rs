@@ -10,7 +10,7 @@
 //! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）。メインの worktree
 //!   なら消さずに、段階 2 で既定のブランチへ切り替える（未コミットの変更があるか、既定のブランチが別の worktree にあれば、
 //!   何も変えずに止まる）
-//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（既定のブランチの上流がリモートの追跡ブランチでなければ省き、上流が無くリモートがあれば NOTE）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
+//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（既定のブランチの上流がリモートの追跡ブランチでなければ省き、上流が無く origin があれば NOTE）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
 //! - 段階 5: リモートのブランチを消す（ls-remote の今の先端で比べ、リモートの既定のブランチが先端を含まないとき、手元の既定のブランチに
@@ -528,10 +528,12 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         // pull は FETCH_HEAD を読み、同じ clone の別の fetch が書き換えると Cannot rebase onto multiple branches で止まる。
         // fetch の後の追跡ブランチへ進める merge は FETCH_HEAD に頼らない
         step(&["merge", "-q", "--ff-only", "@{upstream}"])?;
-    } else if upstream.is_empty() && !git(&["remote"]).unwrap_or_default().is_empty() {
-        // -u を付けずに push した clone では、リモートの既定のブランチが進んでいても手元は古いまま残る
+    } else if upstream.is_empty() && ok(&["remote", "get-url", "origin"]) {
+        // -u を付けずに push した clone では、GitHub でマージした既定のブランチが手元に来ないまま古く残る。origin に
+        // 絞るのは、ほかの名前の送るためだけのリモート（バックアップや別のホスト）は上流にしない構成で、マージの
+        // たびに知らせると要らない NOTE になるため（予約のタグも origin を取ってくる先にしている）
         println!(
-            "NOTE: {default} にリモートの上流が無いので、{default} の更新を省いた（リモートで {default} を進めたなら、git branch -u <remote>/{default} {default} で上流を設定して pull する。NOTE の配備の判定は手元の {default} の差だけを見た）"
+            "NOTE: {default} にリモートの上流が無いので、{default} の更新を省いた（origin で {default} を進めたなら、git fetch origin && git branch -u origin/{default} {default} で上流を設定して pull する。NOTE の配備の判定は手元の {default} の差だけを見た）"
         );
     }
     // ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup の crate。古い版の clone と、ハーネスを分ける前の

@@ -55,7 +55,7 @@
 # 出力:
 #   NOTE: <branch> は手元にもリモートにも無く、マージ済みの PR <url> を痕跡として...（マージ済みの PR だけが痕跡のとき）
 #   WORKTREE_REMOVED: <path>|none
-#   NOTE: <default> にリモートの上流が無いので、<default> の更新を省いた（...）（上流が無く、リモートがあるとき）
+#   NOTE: <default> にリモートの上流が無いので、<default> の更新を省いた（...）（上流が無く、origin があるとき）
 #   NOTE: rebuild が要る（...）。... / NOTE: lock の更新と rebuild が要る（...）。... / NOTE: claude-sync が要る（...）。...
 #     （該当するときだけ。0 行以上）
 #   RESERVATIONS_RELEASED: <tag>...|none|skipped (...)|kept (...)
