@@ -10,7 +10,7 @@
 //! - 段階 1: branch をチェックアウトしている worktree を消す（既定のブランチの worktree に移ってから）。メインの worktree
 //!   なら消さずに、段階 2 で既定のブランチへ切り替える（未コミットの変更があるか、既定のブランチが別の worktree にあれば、
 //!   何も変えずに止まる）
-//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートが無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
+//! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（既定のブランチに上流が無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
 //! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head か base のときは残す。
@@ -501,8 +501,15 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         .map(str::to_string)
         .or_else(|| git(&["rev-parse", "HEAD"]))
         .unwrap_or_default();
-    // リモートの無いリポジトリ（/git-merge でローカルにマージした後）では最新にする先が無い
-    if !git(&["remote"]).unwrap_or_default().is_empty() {
+    // 既定のブランチに上流が無いリポジトリ（リモートが無いか、送るためだけのリモートを足した。/git-merge でローカルに
+    // マージした後）では最新にする先が無い。リモートの有無で決めると、上流の無い merge --ff-only @{upstream} で止まる
+    let upstream = git(&[
+        "for-each-ref",
+        "--format=%(upstream)",
+        &format!("refs/heads/{default}"),
+    ])
+    .unwrap_or_default();
+    if !upstream.is_empty() {
         step(&["fetch", "-q", "--prune"])?;
         if base.is_none() {
             before = git(&["rev-parse", "HEAD"]).unwrap_or_default();
