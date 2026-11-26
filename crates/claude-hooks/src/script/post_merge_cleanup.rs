@@ -212,25 +212,46 @@ fn cleanup(branch: &str, base: Option<&str>) -> Result<(), i32> {
 
 /// メインの worktree でチェックアウトしているブランチは、段階 2 でメインの worktree を既定のブランチへ切り替えて外す。
 /// 未コミットの変更があると既定のブランチへ持ち込むので、linked worktree の remove と同じく止める。既定のブランチが別の
-/// worktree にあると切り替えられず、後の branch -d で止まるので、先に止めて外し方を示す（どちらも何も変えない）
+/// worktree にあると切り替えられず、後の branch -d で止まるので、先に止めて外し方を示す（どちらも何も変えない）。
+/// 1 つ目で返すと、それを直して再実行した後に 2 つ目を知るので、両方を見てから止める
 fn main_worktree_can_switch(
     branch: &str,
     default: &str,
     main_root: &str,
     default_root: Option<&str>,
 ) -> Result<(), i32> {
-    if git(&["-C", main_root, "status", "--porcelain"]).is_none_or(|s| !s.is_empty()) {
-        eprintln!(
-            "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。何も変えていません"
-        );
-        eprintln!(
-            "  修正方法: 残す変更は、cd {} && ~/.claude/scripts/worktree-add.sh <新しいブランチ> --from {} --carry-changes で別の worktree へ移し、要らない変更は捨ててから、もう一度実行する。起点を {branch} にするのは、変更がその上で書かれていて、{default} はローカルとリモートのどちらがマージを含むかが流れで違うため（{branch} は {default} に入っているので、新しいブランチの差分は移した変更だけになる）。stash は全 worktree で共有され、hook が止めるので使わない。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる",
-            sh_word(main_root),
-            sh_word(branch)
-        );
-        return Err(1);
+    let mut stop = false;
+    let status = run(&["-C", main_root, "status", "--porcelain"]);
+    match status.as_ref().filter(|o| o.status.success()) {
+        Some(o) if o.stdout.is_empty() => {}
+        Some(_) => {
+            stop = true;
+            eprintln!(
+                "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）に未コミットの変更があります。何も変えていません"
+            );
+            eprintln!(
+                "  修正方法: 残す変更は、cd {} && ~/.claude/scripts/worktree-add.sh <新しいブランチ> --from {} --carry-changes で別の worktree へ移し、要らない変更は捨ててから、もう一度実行する。起点を {branch} にするのは、変更がその上で書かれていて、{default} はローカルとリモートのどちらがマージを含むかが流れで違うため（{branch} は {default} に入っているので、新しいブランチの差分は移した変更だけになる）。stash は全 worktree で共有され、hook が止めるので使わない。マージ済みの {branch} にコミットすると、マージしていないブランチになって次の実行が止まる",
+                sh_word(main_root),
+                sh_word(branch)
+            );
+        }
+        None => {
+            stop = true;
+            let why = match &status {
+                Some(o) => String::from_utf8_lossy(&o.stderr).trim().replace('\n', " "),
+                None => "git を起動できない".to_string(),
+            };
+            eprintln!(
+                "ERROR: {branch} をチェックアウトしているメインの worktree（{main_root}）で git status が失敗し、切り替えてよい状態かを確かめられません（{why}）。何も変えていません"
+            );
+            eprintln!(
+                "  修正方法: git -C {} status で原因を確かめて直してから、もう一度実行する",
+                sh_word(main_root)
+            );
+        }
     }
     if let Some(other) = default_root {
+        stop = true;
         eprintln!(
             "ERROR: {branch} はメインの worktree（{main_root}）でチェックアウトされ、{default} は別の worktree（{other}）にあるので、メインの worktree を {branch} から外せません。何も変えていません"
         );
@@ -238,9 +259,8 @@ fn main_worktree_can_switch(
             "  修正方法: メインの worktree で別のブランチに切り替える（git -C {} switch --detach など）か、{other} を片付けてから、もう一度実行する",
             sh_word(main_root)
         );
-        return Err(1);
     }
-    Ok(())
+    if stop { Err(1) } else { Ok(()) }
 }
 
 /// 手元（ローカルのブランチ、リモート追跡の ref）を先に見て、無いときだけネットワークに行く
