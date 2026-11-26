@@ -13,7 +13,8 @@
 //! - 段階 2: 既定のブランチへ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（既定のブランチに上流が無ければ省く）。配置するものが変われば NOTE（差の起点は第 2 引数か、pull の前の HEAD）
 //! - 段階 3: origin から予約のタグを取り、既定のブランチの履歴に記録が入った番号のタグを消す（design-records prune）
 //! - 段階 4: ローカルのブランチを消す（-d）
-//! - 段階 5: リモートのブランチを消す（リモートの既定のブランチが先端を含まないときと、open の PR の head か base のときは残す。
+//! - 段階 5: リモートのブランチを消す（ls-remote の今の先端で比べ、リモートの既定のブランチが先端を含まないとき、手元の既定のブランチに
+//!   無いコミットがあるとき、リモートの既定のブランチが手元に無いとき、リモートを読めないときと、open の PR の head か base のときは残す。
 //!   PR は push 先の GitHub のリポジトリで探し、head は gh の既定のリポジトリでも探す）
 //!
 //! git と gh の失敗のうち、続けられないものは、その標準エラーを出したまま、その終了コードで終える
@@ -511,7 +512,7 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         &format!("refs/heads/{default}"),
     ]) else {
         eprintln!(
-            "ERROR: {default} の上流を確かめられません（git for-each-ref が失敗）。worktree は消した後で、ブランチは残っています"
+            "ERROR: {default} の上流を確かめられません（git for-each-ref が失敗）。ここまでの出力の段階は済み、ローカルのブランチは残っています"
         );
         eprintln!(
             "  修正方法: git for-each-ref が失敗する原因（ref の破損など）を直して、もう一度実行する"
@@ -744,13 +745,14 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
             }
         }
     }
-    // リモートのブランチの先端が手元の既定のブランチに無ければ、マージした後にほかの clone が push している。既定の
+    // リモートのブランチの先端が手元の既定のブランチに無ければ、マージした後のほかの clone の push か、squash か rebase の
+    // マージか、fetch していない先端（既定のブランチに上流が無い）。既定の
     // ブランチを push してもそのコミットは入らないので、下の push してから消す手順を示さずに残す
     let has_commit = |sha: &str| ok(&["cat-file", "-e", &format!("{sha}^{{commit}}")]);
     if !(has_commit(&branch_tip) && ok(&["merge-base", "--is-ancestor", &branch_tip, &default_ref]))
     {
         println!(
-            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後にほかの clone が push したかもしれないので、取り込むか要らないかを確かめてから消す)"
+            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後のほかの clone の push、squash か rebase のマージ、fetch していない先端のどれかなので、取り込むか要らないかを確かめてから消す)"
         );
         return Ok(());
     }
