@@ -481,6 +481,8 @@ fn a_remote_branch_moved_past_the_unfetched_tracking_ref_is_kept() {
         stdout.contains("REMOTE_BRANCH: kept (r995/feat/x に main に無いコミットがある"),
         "{stdout}"
     );
+    // c は fetch していないので、確かめる前に取ってくる手順を示す
+    assert!(stdout.contains("git fetch r995 で取ってから"), "{stdout}");
     // main を push しても c は入らないので、push してから消す手順を示さない
     assert!(!stdout.contains("push してから"), "{stdout}");
     assert_ne!(
