@@ -342,10 +342,12 @@ fn a_default_branch_without_an_upstream_skips_the_update_and_deletes_the_branch(
     repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
     let out = repo.run(&["feat/x", &before]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(stdout.contains("LOCAL_BRANCH: deleted"), "{stdout}");
+    // リモートがあるのに更新を省いたことを、黙らずに知らせる
     assert!(
-        text(&out.stdout).contains("LOCAL_BRANCH: deleted"),
-        "{}",
-        text(&out.stdout)
+        stdout.contains("NOTE: main にリモートの上流が無いので、main の更新を省いた"),
+        "{stdout}"
     );
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
 }
