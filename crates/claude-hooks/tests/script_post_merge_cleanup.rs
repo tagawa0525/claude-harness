@@ -351,6 +351,28 @@ fn a_default_branch_without_an_upstream_skips_the_update_and_deletes_the_branch(
 }
 
 #[test]
+fn a_default_branch_tracking_a_local_branch_is_not_updated() {
+    // 最新にする先はリモートの追跡ブランチだけ。手元のブランチを上流にした main を、後片付けで進めない
+    let repo = Repo::new();
+    repo.git(&["branch", "develop"]);
+    repo.git(&["branch", "-u", "develop", "main"]);
+    repo.git(&["switch", "-q", "develop"]);
+    repo.write("d.txt", "d\n");
+    repo.commit("develop only");
+    repo.git(&["switch", "-q", "-c", "feat/x", "main"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    let merged = repo.git(&["rev-parse", "HEAD"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(repo.git(&["rev-parse", "main"]), merged);
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}
+
+#[test]
 fn a_remote_branch_moved_past_the_unfetched_tracking_ref_is_kept() {
     // main に上流が無いと fetch しないので、追跡ブランチ（r995/feat/x）は古いまま。ほかの clone が feat/x に
     // push したコミットを、古い追跡ブランチの比較で消さない
