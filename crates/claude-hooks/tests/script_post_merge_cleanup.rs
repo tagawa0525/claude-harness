@@ -466,6 +466,56 @@ fn a_remote_branch_moved_past_the_unfetched_tracking_ref_is_kept() {
 }
 
 #[test]
+fn a_remote_default_branch_missing_locally_keeps_the_branch_and_asks_to_fetch() {
+    // main に上流が無いと fetch しないので、ほかの clone が進めたリモートの main は手元に無い。push を勧めると
+    // non-fast-forward で拒まれる
+    let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["push", "-q", "-u", "r995", "feat/x"]);
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    repo.git(&["push", "-q", "r995", "main"]);
+    let other = repo.root.join("other-clone");
+    repo.git(&[
+        "clone",
+        "-q",
+        "-b",
+        "main",
+        bare.to_str().unwrap(),
+        other.to_str().unwrap(),
+    ]);
+    std::fs::write(other.join("c.txt"), "c\n").unwrap();
+    repo.git(&["-C", other.to_str().unwrap(), "add", "c.txt"]);
+    repo.git(&["-C", other.to_str().unwrap(), "commit", "-q", "-m", "c"]);
+    repo.git(&[
+        "-C",
+        other.to_str().unwrap(),
+        "push",
+        "-q",
+        "origin",
+        "main",
+    ]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains("REMOTE_BRANCH: kept (r995/main（"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("が手元に無い。git fetch r995 で取ってから"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("push してから"), "{stdout}");
+}
+
+#[test]
 fn a_local_merge_without_a_remote_notes_the_rebuild_from_the_given_base() {
     let repo = Repo::new();
     // marker は before にも要るので、先に main へ入れる
