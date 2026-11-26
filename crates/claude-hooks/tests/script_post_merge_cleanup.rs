@@ -308,6 +308,8 @@ fn uncommitted_changes_and_the_default_branch_elsewhere_are_reported_together() 
     let err = text(&out.stderr);
     assert!(err.contains("未コミットの変更"), "{err}");
     assert!(err.contains("は別の worktree"), "{err}");
+    // 変更を残したまま切り替えると、次の実行はメインの worktree を確かめずにブランチを消すので、変更を先に移させる
+    assert!(err.contains("上の ERROR を先に直してから"), "{err}");
     assert_eq!(repo.git(&["branch", "--show-current"]), "feat/both");
     assert_eq!(text(&out.stdout), "");
 }
