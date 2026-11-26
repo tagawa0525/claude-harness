@@ -320,6 +320,37 @@ fn the_default_branch_is_updated_without_depending_on_fetch_head() {
 }
 
 #[test]
+fn a_default_branch_without_an_upstream_skips_the_update_and_deletes_the_branch() {
+    // GitHub でないリモートを足しただけで、main に上流を設定していないリポジトリ（#406）
+    let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
+    let wt = repo.root.join("app-feat-x");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/x",
+        wt.to_str().unwrap(),
+    ]);
+    std::fs::write(wt.join("b.txt"), "b\n").unwrap();
+    repo.git(&["-C", wt.to_str().unwrap(), "add", "-A"]);
+    repo.git(&["-C", wt.to_str().unwrap(), "commit", "-q", "-m", "feat: b"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("LOCAL_BRANCH: deleted"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}
+
+#[test]
 fn a_local_merge_without_a_remote_notes_the_rebuild_from_the_given_base() {
     let repo = Repo::new();
     // marker は before にも要るので、先に main へ入れる
