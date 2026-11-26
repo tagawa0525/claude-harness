@@ -526,6 +526,11 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         // pull は FETCH_HEAD を読み、同じ clone の別の fetch が書き換えると Cannot rebase onto multiple branches で止まる。
         // fetch の後の追跡ブランチへ進める merge は FETCH_HEAD に頼らない
         step(&["merge", "-q", "--ff-only", "@{upstream}"])?;
+    } else if !git(&["remote"]).unwrap_or_default().is_empty() {
+        // -u を付けずに push した clone では、リモートの既定のブランチが進んでいても手元は古いまま残る
+        println!(
+            "NOTE: {default} にリモートの上流が無いので、{default} の更新を省いた（リモートで {default} を進めたなら、git branch -u <remote>/{default} {default} で上流を設定して pull する。NOTE の配備の判定は手元の {default} の差だけを見た）"
+        );
     }
     // ~/.claude の配置の元（ハーネス）は同期のコマンド（claude-setup の crate。古い版の clone と、ハーネスを分ける前の
     // nixfiles は claude-sync.sh）を持ち、rebuild する構成のリポジトリ（nixfiles）は nix-rebuild.sh を持つ
