@@ -396,7 +396,12 @@ fn a_remote_branch_moved_past_the_unfetched_tracking_ref_is_kept() {
     let out = repo.run(&["feat/x", &before]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let stdout = text(&out.stdout);
-    assert!(stdout.contains("REMOTE_BRANCH: kept"), "{stdout}");
+    assert!(
+        stdout.contains("REMOTE_BRANCH: kept (r995/feat/x に main に無いコミットがある"),
+        "{stdout}"
+    );
+    // main を push しても c は入らないので、push してから消す手順を示さない
+    assert!(!stdout.contains("push してから"), "{stdout}");
     assert_ne!(
         repo.git(&["ls-remote", "--heads", "r995", "refs/heads/feat/x"]),
         ""
