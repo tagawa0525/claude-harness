@@ -666,18 +666,26 @@ fn design_records_available() -> bool {
 
 /// 段階 5: リモートのブランチを消す
 fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
-    let on_remote = ok(&["remote", "get-url", remote])
-        && git(&[
-            "ls-remote",
-            "--heads",
-            remote,
-            &format!("refs/heads/{branch}"),
-        ])
-        .is_some_and(|s| !s.is_empty());
-    if !on_remote {
+    // 消すかの判定は、追跡ブランチでなく ls-remote が返す今の先端で行う。追跡ブランチは、既定のブランチに上流が無いと
+    // 段階 2 で fetch されず、ほかの clone が push した後も古いまま残る
+    let branch_ref = format!("refs/heads/{branch}");
+    let default_ref = format!("refs/heads/{default}");
+    let heads = if ok(&["remote", "get-url", remote]) {
+        git(&["ls-remote", "--heads", remote, &branch_ref, &default_ref]).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let tip = |name: &str| {
+        heads.lines().find_map(|l| {
+            let (sha, r) = l.split_once('\t')?;
+            (r == name).then(|| sha.to_string())
+        })
+    };
+    let Some(branch_tip) = tip(&branch_ref) else {
         println!("REMOTE_BRANCH: none");
         return Ok(());
-    }
+    };
+    let default_tip = tip(&default_ref);
     let repos = match push_repos(remote) {
         Ok(repos) => repos,
         Err(why) => {
@@ -708,14 +716,10 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
     }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
     // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる。上の PR が
-    // あれば、push の後に消すだけでも閉じるので、ここでも示す
+    // あれば、push の後に消すだけでも閉じるので、ここでも示す。先端が手元に無い（ほかの clone が push した）ときも、
+    // is-ancestor が失敗して残す
     let stacked = stacked_prs(branch, &repos);
-    if !ok(&[
-        "merge-base",
-        "--is-ancestor",
-        &format!("{remote}/{branch}"),
-        &format!("{remote}/{default}"),
-    ]) {
+    if !default_tip.is_some_and(|d| ok(&["merge-base", "--is-ancestor", &branch_tip, &d])) {
         let unpushed = format!("{remote}/{default} がブランチの先端をまだ含まない");
         match stacked {
             // push していない既定のブランチへ付け替えると、上の PR の差分にこのブランチのコミットが入るので、push を先に書く
