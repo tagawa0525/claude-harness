@@ -380,6 +380,9 @@ fn a_remote_that_cannot_be_read_keeps_the_branch_instead_of_reporting_none() {
 fn a_default_branch_tracking_a_local_branch_is_not_updated() {
     // 最新にする先はリモートの追跡ブランチだけ。手元のブランチを上流にした main を、後片付けで進めない
     let repo = Repo::new();
+    let bare = repo.root.join("other-host.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "r995", bare.to_str().unwrap()]);
     repo.git(&["branch", "develop"]);
     repo.git(&["branch", "-u", "develop", "main"]);
     repo.git(&["switch", "-q", "develop"]);
@@ -395,6 +398,12 @@ fn a_default_branch_tracking_a_local_branch_is_not_updated() {
     let out = repo.run(&["feat/x", &before]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(repo.git(&["rev-parse", "main"]), merged);
+    // 意図して手元のブランチを上流にしているので、リモートの上流を設定する NOTE は出さない
+    assert!(
+        !text(&out.stdout).contains("リモートの上流が無い"),
+        "{}",
+        text(&out.stdout)
+    );
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
 }
 
