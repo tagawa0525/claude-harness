@@ -746,26 +746,37 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         }
     }
     // リモートのブランチの先端が手元の既定のブランチに無ければ、マージした後のほかの clone の push か、squash か rebase の
-    // マージか、fetch していない先端（既定のブランチに上流が無い）。既定の
-    // ブランチを push してもそのコミットは入らないので、下の push してから消す手順を示さずに残す
+    // マージか、fetch していない先端（既定のブランチに上流が無い）。既定のブランチを push してもそのコミットは入らない
+    // ので、下の push してから消す手順を示さずに残す
+    let stacked = stacked_prs(branch, &repos);
     let has_commit = |sha: &str| ok(&["cat-file", "-e", &format!("{sha}^{{commit}}")]);
+    // 手元を確かめて要らないと決めて消しても上の PR が閉じるので、残す理由に上の PR も添える
+    let on_top = match &stacked {
+        Stacked::Found(found) => format!(
+            "。{}の base でもある（消すと GitHub がそれらの PR を閉じる。消す前に付け替えるか閉じる）",
+            listed(found)
+        ),
+        Stacked::Unknown(why) => {
+            format!("。{branch} を base にした open PR の有無も確認できない: {why}")
+        }
+        Stacked::None => String::new(),
+    };
     if !(has_commit(&branch_tip) && ok(&["merge-base", "--is-ancestor", &branch_tip, &default_ref]))
     {
         println!(
-            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後のほかの clone の push、squash か rebase のマージ、fetch していない先端のどれかなので、取り込むか要らないかを確かめてから消す)"
+            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後のほかの clone の push、squash か rebase のマージ、fetch していない先端のどれかなので、取り込むか要らないかを確かめてから消す{on_top})"
         );
         return Ok(());
     }
     if let Some(d) = default_tip.as_deref().filter(|d| !has_commit(d)) {
         println!(
-            "REMOTE_BRANCH: kept ({remote}/{default}（{d}）が手元に無い。git fetch {remote} で取ってから、含むかを確かめて消す)"
+            "REMOTE_BRANCH: kept ({remote}/{default}（{d}）が手元に無い。git fetch {remote} で取ってから、含むかを確かめて消す{on_top})"
         );
         return Ok(());
     }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
     // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる。上の PR が
     // あれば、push の後に消すだけでも閉じるので、ここでも示す
-    let stacked = stacked_prs(branch, &repos);
     if !default_tip.is_some_and(|d| ok(&["merge-base", "--is-ancestor", &branch_tip, &d])) {
         let unpushed = format!("{remote}/{default} がブランチの先端をまだ含まない");
         match stacked {
