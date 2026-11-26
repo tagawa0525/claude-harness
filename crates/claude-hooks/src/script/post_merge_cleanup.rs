@@ -510,7 +510,12 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         "--format=%(upstream)",
         &format!("refs/heads/{default}"),
     ]) else {
-        eprintln!("ERROR: {default} の上流を確かめられません（git for-each-ref が失敗）");
+        eprintln!(
+            "ERROR: {default} の上流を確かめられません（git for-each-ref が失敗）。worktree は消した後で、ブランチは残っています"
+        );
+        eprintln!(
+            "  修正方法: git for-each-ref が失敗する原因（ref の破損など）を直して、もう一度実行する"
+        );
         return Err(1);
     };
     if upstream.starts_with("refs/remotes/") {
