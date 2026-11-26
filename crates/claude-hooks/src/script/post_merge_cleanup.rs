@@ -503,12 +503,15 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         .unwrap_or_default();
     // 既定のブランチに上流が無いリポジトリ（リモートが無いか、送るためだけのリモートを足した。/git-merge でローカルに
     // マージした後）では最新にする先が無い。リモートの有無で決めると、上流の無い merge --ff-only @{upstream} で止まる
-    let upstream = git(&[
+    // for-each-ref の失敗は上流が無いことにせず止める（更新を黙って省き、NOTE も出さずに続けてしまう）
+    let Some(upstream) = git(&[
         "for-each-ref",
         "--format=%(upstream)",
         &format!("refs/heads/{default}"),
-    ])
-    .unwrap_or_default();
+    ]) else {
+        eprintln!("ERROR: {default} の上流を確かめられません（git for-each-ref が失敗）");
+        return Err(1);
+    };
     if !upstream.is_empty() {
         step(&["fetch", "-q", "--prune"])?;
         if base.is_none() {
