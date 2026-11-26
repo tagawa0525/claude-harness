@@ -764,10 +764,15 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
         }
         Stacked::None => String::new(),
     };
-    if !(has_commit(&branch_tip) && ok(&["merge-base", "--is-ancestor", &branch_tip, &default_ref]))
-    {
+    let fetched = has_commit(&branch_tip);
+    if !(fetched && ok(&["merge-base", "--is-ancestor", &branch_tip, &default_ref])) {
+        let fetch_first = if fetched {
+            String::new()
+        } else {
+            format!("git fetch {remote} で取ってから、")
+        };
         println!(
-            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後のほかの clone の push、squash か rebase のマージ、fetch していない先端のどれかなので、取り込むか要らないかを確かめてから消す{on_top})"
+            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後のほかの clone の push、squash か rebase のマージ、fetch していない先端のどれかなので、{fetch_first}取り込むか要らないかを確かめてから消す{on_top})"
         );
         return Ok(());
     }
