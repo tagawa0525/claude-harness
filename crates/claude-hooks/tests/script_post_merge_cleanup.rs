@@ -344,11 +344,8 @@ fn a_default_branch_without_an_upstream_skips_the_update_and_deletes_the_branch(
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let stdout = text(&out.stdout);
     assert!(stdout.contains("LOCAL_BRANCH: deleted"), "{stdout}");
-    // リモートがあるのに更新を省いたことを、黙らずに知らせる
-    assert!(
-        stdout.contains("NOTE: main にリモートの上流が無いので、main の更新を省いた"),
-        "{stdout}"
-    );
+    // 送るためだけのリモートは意図した構成なので、マージのたびに上流を設定するよう知らせない
+    assert!(!stdout.contains("リモートの上流が無い"), "{stdout}");
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
 }
 
@@ -405,6 +402,33 @@ fn a_default_branch_tracking_a_local_branch_is_not_updated() {
         text(&out.stdout)
     );
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
+}
+
+#[test]
+fn an_origin_without_an_upstream_on_the_default_branch_is_noted() {
+    // -u を付けずに push した clone では、GitHub でマージした main が手元に来ないまま配備の NOTE も出ない
+    let repo = Repo::new();
+    let bare = repo.root.join("origin.git");
+    repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    repo.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+    repo.git(&["push", "-q", "origin", "main"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    repo.git(&["switch", "-q", "main"]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains("NOTE: main にリモートの上流が無いので、main の更新を省いた"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("git fetch origin && git branch -u origin/main main"),
+        "{stdout}"
+    );
 }
 
 #[test]
