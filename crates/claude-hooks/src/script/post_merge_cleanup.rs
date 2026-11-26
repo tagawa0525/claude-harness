@@ -717,10 +717,25 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
             }
         }
     }
+    // リモートのブランチの先端が手元の既定のブランチに無ければ、マージした後にほかの clone が push している。既定の
+    // ブランチを push してもそのコミットは入らないので、下の push してから消す手順を示さずに残す
+    let has_commit = |sha: &str| ok(&["cat-file", "-e", &format!("{sha}^{{commit}}")]);
+    if !(has_commit(&branch_tip) && ok(&["merge-base", "--is-ancestor", &branch_tip, &default_ref]))
+    {
+        println!(
+            "REMOTE_BRANCH: kept ({remote}/{branch} に {default} に無いコミットがある。マージの後にほかの clone が push したかもしれないので、取り込むか要らないかを確かめてから消す)"
+        );
+        return Ok(());
+    }
+    if let Some(d) = default_tip.as_deref().filter(|d| !has_commit(d)) {
+        println!(
+            "REMOTE_BRANCH: kept ({remote}/{default}（{d}）が手元に無い。git fetch {remote} で取ってから、含むかを確かめて消す)"
+        );
+        return Ok(());
+    }
     // リモートの既定のブランチがブランチの先端を含まなければ、消すとマージした内容がリモートのどの ref にも残らない
     // （ローカルでマージしただけで push していない）。push するかはユーザーが決めるので、残して知らせる。上の PR が
-    // あれば、push の後に消すだけでも閉じるので、ここでも示す。先端が手元に無い（ほかの clone が push した）ときも、
-    // is-ancestor が失敗して残す
+    // あれば、push の後に消すだけでも閉じるので、ここでも示す
     let stacked = stacked_prs(branch, &repos);
     if !default_tip.is_some_and(|d| ok(&["merge-base", "--is-ancestor", &branch_tip, &d])) {
         let unpushed = format!("{remote}/{default} がブランチの先端をまだ含まない");
