@@ -501,8 +501,9 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         .map(str::to_string)
         .or_else(|| git(&["rev-parse", "HEAD"]))
         .unwrap_or_default();
-    // 既定のブランチに上流が無いリポジトリ（リモートが無いか、送るためだけのリモートを足した。/git-merge でローカルに
-    // マージした後）では最新にする先が無い。リモートの有無で決めると、上流の無い merge --ff-only @{upstream} で止まる
+    // 既定のブランチがリモートの追跡ブランチを上流にしていないリポジトリ（リモートが無いか、送るためだけのリモートを
+    // 足した。/git-merge でローカルにマージした後）では最新にする先が無い。リモートの有無で決めると、上流の無い
+    // merge --ff-only @{upstream} で止まる。手元のブランチの上流は、段階 0 と同じく追わない
     // for-each-ref の失敗は上流が無いことにせず止める（更新を黙って省き、NOTE も出さずに続けてしまう）
     let Some(upstream) = git(&[
         "for-each-ref",
@@ -512,7 +513,7 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         eprintln!("ERROR: {default} の上流を確かめられません（git for-each-ref が失敗）");
         return Err(1);
     };
-    if !upstream.is_empty() {
+    if upstream.starts_with("refs/remotes/") {
         step(&["fetch", "-q", "--prune"])?;
         if base.is_none() {
             before = git(&["rev-parse", "HEAD"]).unwrap_or_default();
