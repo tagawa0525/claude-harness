@@ -495,17 +495,11 @@ fn merge_commit_of(branch: &str, default: &str, before: &str) -> Result<(), i32>
 /// 見ると差が空になる）。渡されなければ pull の前の HEAD（reflog から取らないのは、reflog はマージのほかの更新も含み、
 /// 期限で消え、どのエントリが今回のマージの前かを決められないため。#4）
 fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
-    if git(&["branch", "--show-current"]).as_deref() != Some(default) {
-        step(&["switch", "-q", default])?;
-    }
-    let mut before = base
-        .map(str::to_string)
-        .or_else(|| git(&["rev-parse", "HEAD"]))
-        .unwrap_or_default();
     // 既定のブランチがリモートの追跡ブランチを上流にしていないリポジトリ（リモートが無いか、送るためだけのリモートを
     // 足した。/git-merge でローカルにマージした後）では最新にする先が無い。リモートの有無で決めると、上流の無い
     // merge --ff-only @{upstream} で止まる。手元のブランチの上流は、段階 0 と同じく追わない
-    // for-each-ref の失敗は上流が無いことにせず止める（更新を黙って省き、NOTE も出さずに続けてしまう）
+    // for-each-ref の失敗は上流が無いことにせず止める（更新を黙って省き、NOTE も出さずに続けてしまう）。既定のブランチへ
+    // 切り替える前に読み、止めるときに出力に無い切り替えを残さない
     let Some(upstream) = git(&[
         "for-each-ref",
         "--format=%(upstream)",
@@ -519,6 +513,13 @@ fn update_default(default: &str, base: Option<&str>) -> Result<(), i32> {
         );
         return Err(1);
     };
+    if git(&["branch", "--show-current"]).as_deref() != Some(default) {
+        step(&["switch", "-q", default])?;
+    }
+    let mut before = base
+        .map(str::to_string)
+        .or_else(|| git(&["rev-parse", "HEAD"]))
+        .unwrap_or_default();
     if upstream.starts_with("refs/remotes/") {
         step(&["fetch", "-q", "--prune"])?;
         if base.is_none() {
