@@ -684,10 +684,26 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
     // 段階 2 で fetch されず、ほかの clone が push した後も古いまま残る
     let branch_ref = format!("refs/heads/{branch}");
     let default_ref = format!("refs/heads/{default}");
-    let heads = if ok(&["remote", "get-url", remote]) {
-        git(&["ls-remote", "--heads", remote, &branch_ref, &default_ref]).unwrap_or_default()
-    } else {
-        String::new()
+    if !ok(&["remote", "get-url", remote]) {
+        println!("REMOTE_BRANCH: none");
+        return Ok(());
+    }
+    // 失敗を空の出力にすると、届かないリモートに残るブランチを none と報告する
+    let heads = match run(&["ls-remote", "--heads", remote, &branch_ref, &default_ref]) {
+        Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        other => {
+            let err = other
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stderr)
+                        .trim_end()
+                        .replace('\n', " ")
+                })
+                .unwrap_or_default();
+            println!(
+                "REMOTE_BRANCH: kept ({remote} のブランチを確かめられない（git ls-remote が失敗: {err}）。届かない原因（ネットワークや認証）を直してから、残っていれば消す)"
+            );
+            return Ok(());
+        }
     };
     let tip = |name: &str| {
         heads.lines().find_map(|l| {
