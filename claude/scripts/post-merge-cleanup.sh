@@ -27,9 +27,9 @@
 #      どの worktree から実行しても、既定ブランチの worktree に移ってから行う。メインの worktree でチェックアウトして
 #      いれば削除せず、2 で既定ブランチへ切り替える（未コミットの変更があるか、既定ブランチが別の worktree にあれば、
 #      何も変えずに ERROR で止まる）
-#   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（リモートがなければ省く）
+#   2. 既定ブランチ（main / master）へ切り替え、fetch --prune、追跡ブランチへ merge --ff-only（既定ブランチに上流がなければ省く）
 #      （ローカルとリモートの履歴が分岐していれば ff できずに失敗し、気づける）
-#      merge で配置するものが変われば NOTE で知らせる（リモートが無くても、第 2 引数があれば見る。判定の目印のファイルは、差の起点と HEAD のどちらかにあればよい）。ハーネス（同期のコマンドの claude-setup か claude-sync.sh を持つ）では、crates、nix、claude-settings.json か flake なら取り込む側の
+#      merge で配置するものが変われば NOTE で知らせる（上流が無くても、第 2 引数があれば見る。判定の目印のファイルは、差の起点と HEAD のどちらかにあればよい）。ハーネス（同期のコマンドの claude-setup か claude-sync.sh を持つ）では、crates、nix、claude-settings.json か flake なら取り込む側の
 #      lock の更新と rebuild、配る元（claude、config、共通の辞書の crates/ja-terms/prh.yml。claude-sync.sh を持つ古い版は .claude）なら claude-sync。rebuild する構成のリポジトリ（nix-rebuild.sh を持つ）では、
 #      modules、hosts、secrets、flake なら rebuild。両方を持つリポジトリ（自分の配る元を配り、自分で rebuild する）では、
 #      rebuild と claude-sync
