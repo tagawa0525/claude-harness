@@ -296,6 +296,38 @@ fn a_main_worktree_branch_with_the_default_branch_elsewhere_stops_before_changin
 }
 
 #[test]
+fn uncommitted_changes_and_the_default_branch_elsewhere_are_reported_together() {
+    // 変更を移して再実行した後に、2 つ目の止まる理由を初めて知ることがないよう、1 度の実行で両方を示す
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/both"]);
+    let wt = repo.root.join("app-main");
+    repo.git(&["worktree", "add", "-q", wt.to_str().unwrap(), "main"]);
+    repo.write("a.txt", "changed\n");
+    let out = repo.run(&["feat/both"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("未コミットの変更"), "{err}");
+    assert!(err.contains("は別の worktree"), "{err}");
+    assert_eq!(repo.git(&["branch", "--show-current"]), "feat/both");
+    assert_eq!(text(&out.stdout), "");
+}
+
+#[test]
+fn a_failing_git_status_is_not_reported_as_uncommitted_changes() {
+    // 読めない index では移す変更があるか分からないので、変更を移す手順でなく、git status の失敗として示す
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/broken-index"]);
+    std::fs::write(repo.app().join(".git/index"), "not an index").unwrap();
+    let out = repo.run(&["feat/broken-index"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("git status"), "{err}");
+    assert!(!err.contains("未コミットの変更"), "{err}");
+    assert!(!err.contains("--carry-changes"), "{err}");
+    assert_eq!(text(&out.stdout), "");
+}
+
+#[test]
 fn the_default_branch_is_updated_without_depending_on_fetch_head() {
     // pull.rebase の pull は FETCH_HEAD のマージの対象が 2 つ以上あると止まる（同じ clone の別の fetch が
     // FETCH_HEAD を書き換えたときに出た）。同じ症状を、branch.main.merge を 2 つにして作る
