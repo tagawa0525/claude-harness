@@ -238,7 +238,10 @@ fn main_worktree_can_switch(
         None => {
             stop = true;
             let why = match &status {
-                Some(o) => String::from_utf8_lossy(&o.stderr).trim().replace('\n', " "),
+                Some(o) => match String::from_utf8_lossy(&o.stderr).trim() {
+                    "" => o.status.to_string(),
+                    err => err.replace('\n', " "),
+                },
                 None => "git を起動できない".to_string(),
             };
             eprintln!(
@@ -251,12 +254,18 @@ fn main_worktree_can_switch(
         }
     }
     if let Some(other) = default_root {
+        // 変更を残したまま外すと、次の実行は in_main でなくなってこの検査を通らず、変更を確かめずにブランチを消す
+        let first = if stop {
+            "上の ERROR を先に直してから（変更を残したまま外すと、次の実行はメインの worktree を確かめずにブランチを消す）、"
+        } else {
+            ""
+        };
         stop = true;
         eprintln!(
             "ERROR: {branch} はメインの worktree（{main_root}）でチェックアウトされ、{default} は別の worktree（{other}）にあるので、メインの worktree を {branch} から外せません。何も変えていません"
         );
         eprintln!(
-            "  修正方法: メインの worktree で別のブランチに切り替える（git -C {} switch --detach など）か、{other} を片付けてから、もう一度実行する",
+            "  修正方法: {first}メインの worktree で別のブランチに切り替える（git -C {} switch --detach など）か、{other} を片付けてから、もう一度実行する",
             sh_word(main_root)
         );
     }
