@@ -700,6 +700,55 @@ fn off_r995_jobs_are_submitted_under_the_nfs_entry_with_logs_there() {
 }
 
 #[test]
+fn off_r995_without_the_nfs_entry_the_ssh_form_on_an_r995_worktree_is_shown() {
+    let slurm = Slurm::new();
+    let missing = sh_path(&slurm.root.join("no-nfs"));
+    let env = [
+        ("FAKE_HOST", "win-pc"),
+        ("SLURM_RUN_NFS_ENTRY", missing.as_str()),
+    ];
+    let out = slurm.run(&["-t", "1", "xlc-2G", "true"], &env);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!("ERROR: r995 以外では {missing} の下で投げる")),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!(
+            "NEXT: {missing} のあるホストは、その下に cd して投げ直す。無いホストでは、"
+        )),
+        "{err}"
+    );
+    assert!(
+        err.contains(
+            "ssh r995 'cd ~/github/<worktree> && ~/.claude/scripts/slurm-run.sh <同じ引数>'"
+        ),
+        "{err}"
+    );
+    assert!(!slurm.submitted());
+}
+
+#[test]
+fn the_ssh_form_names_what_differs_from_submitting_here() {
+    let slurm = Slurm::new();
+    let out = slurm.run(&["-t", "1", "xlc-2G", "true"], &[("FAKE_HOST", "win-pc")]);
+    assert_eq!(out.status.code(), Some(1));
+    let next = stderr(&out)
+        .lines()
+        .find(|l| l.starts_with("NEXT: "))
+        .unwrap_or_default()
+        .to_string();
+    assert!(!next.contains("  "), "{next}");
+    assert!(next.contains("nix develop -c"), "{next}");
+    assert!(next.contains("CLAUDE_CODE_SESSION_ID="), "{next}");
+    // NFS の入口のあるホストは、入口の下に cd して投げ直せばよい
+    assert!(next.contains("の下に cd して投げ直す"), "{next}");
+    // 元の引数の単一引用符は、外側の単一引用符を閉じる
+    assert!(next.contains(r"'\''"), "{next}");
+}
+
+#[test]
 fn a_timed_job_is_refused_while_a_main_job_runs_in_the_same_worktree() {
     let slurm = Slurm::new();
     let (dir, _) = committed(&slurm);

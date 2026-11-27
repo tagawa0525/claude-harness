@@ -6,6 +6,7 @@
 # Usage: slurm-queue.sh                           # 一覧
 #        slurm-queue.sh --order [--first <番号>]  # main を区分の順に並べる番号の列（slurm-run.sh が投げた後に使う）
 #
-# 一覧の行、NOTE:、ORDER:、NEXT: の形と並べ方は crates/claude-hooks/src/script/slurm_queue.rs の先頭に書く。
+# 一覧の行、NOTE:、ORDER:、NEXT: の形と並べ方は crates/claude-hooks/src/script/slurm_queue.rs の先頭に書く。squeue の無いホスト
+# （Windows の PC など）では、ssh で r995 の同じスクリプトを呼ぶ（届かなければ ssh の終了コード 255。同じファイルの先頭）。
 . "$(dirname "$0")/lib/claude-hooks-script.sh"
 claude_hooks_script slurm-queue "$@"

@@ -34,9 +34,18 @@
 //!
 //! 待ち行列は [`slurm::queued_jobs`] が読む。squeue が失敗したら、その終了コードで終わる。squeue の出力を解けなければ
 //! 1、使い方の誤りも 1。
+//!
+//! squeue の無いホスト（Slurm の入っていない Windows の PC など）では、ssh で r995 の同じスクリプトを呼び、出力と
+//! 終了コードをそのまま返す。待ち行列を読むだけなので、どのホストから読んでも同じ一覧になる。一覧の後には、Slurm の
+//! コマンドを ssh で r995 で実行する NOTE: を足す（--order の番号の列には足さない）。ssh が r995 に届かなければ（255）
+//! ERROR: を、r995 の側が失敗すれば r995 で起きたことの NOTE: を、標準エラーに足す。ssh も無いときと、ssh で呼ばれた
+//! r995 の側（SLURM_QUEUE_NO_SSH=1。非対話の ssh の PATH に squeue が無いと、自分を呼び続ける）では、squeue の無いことを
+//! 127 で返す。
 
 use super::slurm::{self, Partition, Phase, QueueError, QueuedJob};
 use super::slurm_class;
+use super::wait_step::quote;
+use std::process::Command;
 
 const USAGE: &str = "Usage: slurm-queue.sh [--order [--first <番号>]]";
 
@@ -47,6 +56,7 @@ const NOTE_UNCLASSED: &str =
 const NOTE_UNMOVABLE: &str = "NOTE: （動かせない）は保留（優先度が 1 以下）か配列の親ジョブで、scontrol top で並べ直せず、並べ直したジョブの後ろに回る";
 const NOTE_SUSPENDED: &str =
     "NOTE: SUSPENDED は timed のジョブに止められた main のジョブで、それが終わると続きから再開する";
+const NOTE_OVER_SSH: &str = "NOTE: このホストに squeue が無いので、ssh で r995 の一覧を読んだ。上の scontrol などの Slurm のコマンドは、ssh r995 '<コマンド>' で r995 で実行する";
 const NEXT: &str = "NEXT: 上の scontrol top を、番号を分けずに 1 回で実行する（1 本ずつ分けると最後に出したジョブが先頭になる）。ほかのセッションのジョブを含んでいても実行してよい";
 
 #[derive(Debug, PartialEq)]
@@ -63,13 +73,69 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 1;
     };
-    match read_queue() {
+    match slurm::queued_jobs() {
         Ok(queue) => {
             print!("{}", render(&queue, &mode));
             0
         }
-        Err(code) => code,
+        Err(QueueError::Spawn { code: 127, error })
+            if std::env::var("SLURM_QUEUE_NO_SSH").as_deref() != Ok("1") =>
+        {
+            from_r995(args, &mode).unwrap_or_else(|| report(QueueError::Spawn { code: 127, error }))
+        }
+        Err(e) => report(e),
     }
+}
+
+/// r995 の slurm-queue.sh を ssh で呼び、その終了コードを返す（出力はそのまま流す）。ssh を起動できなければ None。
+/// BatchMode は、鍵の無いときに、スキルの読み込みでパスワードの入力を待って止まらないため。-n は、呼び出し元の標準入力を
+/// 読まないため。ServerAlive は、止まった接続を待ち続けないため（ConnectTimeout は接続までしか見ない）。パスは ~ でなく
+/// $HOME で書く: Git for Windows の ssh（MSYS のプログラム）は、Windows のプロセスから起動されると、引用符で囲まれない
+/// （空白の無い）引数を glob にかけ、~ を手元のホームに展開する（今の引数は空白を含んで囲まれるが、印を外すなどして空白が
+/// 無くなっても壊れないよう、$HOME にしておく。$HOME は glob が展開しないので、r995 の側のシェルが展開する）
+fn from_r995(args: &[String], mode: &Mode) -> Option<i32> {
+    let remote = [
+        "SLURM_QUEUE_NO_SSH=1",
+        "$HOME/.claude/scripts/slurm-queue.sh",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .chain(args.iter().map(|a| quote(a)))
+    .collect::<Vec<_>>()
+    .join(" ");
+    let status = Command::new("ssh")
+        .args([
+            "-n",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=10",
+            "-o",
+            "ServerAliveCountMax=3",
+            "r995",
+            &remote,
+        ])
+        .status()
+        .ok()?;
+    let code = crate::child::exit_code(status);
+    match code {
+        // --order の標準出力は scontrol top に渡す番号の列なので、知らせは標準エラーに出す
+        0 => match mode {
+            Mode::List => println!("{NOTE_OVER_SSH}"),
+            Mode::Order { .. } => eprintln!("{NOTE_OVER_SSH}"),
+        },
+        // ssh は自分の失敗（接続、認証）を 255 で返し、r995 の側がシグナルか 255 で終わったときも 255 を返す
+        255 => eprintln!(
+            "ERROR: このホストに squeue が無く、ssh で r995 の slurm-queue.sh を読めなかった（ssh の終了コード 255。接続か認証の失敗か、r995 の側がシグナルか 255 で終わった）"
+        ),
+        // 128 を超えるのは、手元の ssh がシグナルで止められたとき（Ctrl-C など）もある
+        _ => eprintln!(
+            "NOTE: 上は、このホストに squeue が無いので ssh で呼んだ r995 の slurm-queue.sh の失敗（終了コード {code}。128 を超えれば、手元の ssh がシグナルで止められたこともある）"
+        ),
+    }
+    Some(code)
 }
 
 /// `--order [--first <first>]` と同じ、main を区分の順に並べる番号の列（要らなければ空）。slurm-run が投げた後に
@@ -84,7 +150,12 @@ pub(super) fn order(first: &str) -> Option<String> {
 
 /// 待ち行列のジョブ。読めなければ ERROR: を標準エラーに出し、終了コードを返す
 fn read_queue() -> Result<Vec<QueuedJob>, i32> {
-    slurm::queued_jobs().map_err(|e| match e {
+    slurm::queued_jobs().map_err(report)
+}
+
+/// 待ち行列を読めない理由を ERROR: で標準エラーに出し、終了コードを返す
+fn report(e: QueueError) -> i32 {
+    match e {
         QueueError::Spawn { code, error } => {
             eprintln!("squeue を起動できない: {error}");
             eprintln!("ERROR: squeue が失敗した（終了コード {code}）");
@@ -98,7 +169,7 @@ fn read_queue() -> Result<Vec<QueuedJob>, i32> {
             eprintln!("ERROR: squeue の出力を読めない: {reason}");
             1
         }
-    })
+    }
 }
 
 /// 引数を読む。使い方に合わなければ None
