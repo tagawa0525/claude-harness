@@ -298,12 +298,10 @@ fn a_global_value_at_the_same_place_wins_over_a_system_value_elsewhere() {
     assert_eq!(std::fs::read_to_string(home.attributes()).unwrap(), SOURCE);
 }
 
+// Windows のファイルシステムは大文字と小文字を区別しないので、git は同じファイルを読む
+#[cfg(windows)]
 #[test]
 fn a_global_attributes_file_spelled_with_another_case_is_the_same_place_on_windows() {
-    // Windows のファイルシステムは大文字と小文字を区別しないので、git は同じファイルを読む
-    if !cfg!(windows) {
-        return;
-    }
     let home = Home::new();
     let spelled = home
         .attributes()
