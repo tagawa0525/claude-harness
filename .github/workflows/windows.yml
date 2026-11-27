@@ -66,25 +66,38 @@ jobs:
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\gitleaks"
       - name: Follow docs/windows.md
         run: bash scripts/install-windows.sh
-      # ほかのセッションの hook が claude-hooks.exe を動かしている間も、更新（スクリプトの再実行）が終わりまで通り、前の回が
-      # 残した、使われていない古い exe を消す（#414）。hook は、stdin を閉じるまで終わらない pre-tool-use で動かしたままにする
+      # ほかのセッションの hook が claude-hooks.exe を動かしている間も、更新（スクリプトの再実行）が終わりまで通り、退けた
+      # exe と、前の回が止まって残した退けた exe を残さない（#414）。hook は、stdin を閉じるまで終わらない pre-tool-use で
+      # 動かしたままにする。tasklist の出力は変数に受けてから調べる（grep -q が先に読むのをやめると、pipefail で
+      # tasklist の SIGPIPE が失敗になる）
       - name: Update while a hook is running
         run: |
           set -euo pipefail
+          running() {
+            local out
+            out=$(tasklist //FI "IMAGENAME eq claude-hooks.exe")
+            grep -qF claude-hooks.exe <<<"$out"
+          }
           touch ~/.claude/bin/claude-hooks.exe.old-0
           coproc HOLD { "$HOME/.claude/bin/claude-hooks.exe" pre-tool-use; }
           for _ in $(seq 50); do
-            tasklist //FI "IMAGENAME eq claude-hooks.exe" | grep -q claude-hooks.exe && break
+            if running; then
+              break
+            fi
             sleep 0.2
           done
-          tasklist //FI "IMAGENAME eq claude-hooks.exe" | grep -q claude-hooks.exe
+          running
           bash scripts/install-windows.sh
+          running
           # 空の入力に hook が返す終了コードは、ここで確かめることでないので見ない
           exec {HOLD[1]}>&-
           wait "$HOLD_PID" || true
-          test ! -e ~/.claude/bin/claude-hooks.exe.old-0
-          # 動いていた exe は、置き換えの前にリネームした名前で残る（使うプロセスが終わるまで消せない）
-          test "$(find ~/.claude/bin -name 'claude-hooks.exe.old-*' | wc -l)" -eq 1
+          left=$(find ~/.claude/bin -name '*.exe.old-*')
+          if [ -n "$left" ]; then
+            echo "退けた exe が残っています:"
+            echo "$left"
+            exit 1
+          fi
           rc=0
           "$HOME/.claude/bin/claude-hooks" local-review-covers || rc=$?
           test "$rc" -eq 2
