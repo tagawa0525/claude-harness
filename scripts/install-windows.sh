@@ -16,12 +16,19 @@ crates=(claude-hooks ja-terms commit-refs claude-setup history-rewrite design-re
 # 失敗したときも、途中で止められたとき（Git Bash は SIGINT、SIGTERM、SIGHUP でも EXIT の trap を実行する）も、退けた exe を戻す
 pending=""
 build=""
+put_back() {
+  mv "$1" "${1%.old-*}" || {
+    echo "退けた exe を戻せませんでした。$1 を ${1%.old-*} に戻してください" >&2
+    return 1
+  }
+}
 restore() {
   if [ -n "$pending" ] && ! [ -e "${pending%.old-*}" ]; then
-    mv "$pending" "${pending%.old-*}" || echo "退けた exe を戻せませんでした。$pending を ${pending%.old-*} に戻してください" >&2
+    put_back "$pending" || true
   fi
 }
-trap 'restore; [ -z "$build" ] || rm -rf "$build"' EXIT
+# 一時の置き場を消せなくても入れ直しは済んでいるので、終了コードを変えずに知らせる
+trap 'restore; [ -z "$build" ] || rm -rf "$build" || echo "一時の置き場を消せませんでした: $build" >&2' EXIT
 # 消せなくても入れ直しは済んでいるので、止めずに知らせる（次の回にまた消す）
 remove_old() {
   rm -f "$1" || echo "退けた exe を消せませんでした（次の回にまた消します）: $1" >&2
@@ -37,7 +44,7 @@ for ((i = ${#olds[@]} - 1; i >= 0; i--)); do
   elif [ -e "${old%.old-*}" ]; then
     remove_old "$old"
   else
-    mv "$old" "${old%.old-*}"
+    put_back "$old"
   fi
 done
 
