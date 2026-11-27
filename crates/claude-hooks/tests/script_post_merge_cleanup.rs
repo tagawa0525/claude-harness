@@ -692,3 +692,112 @@ fn with_a_base_the_merge_commit_of_the_branch_passes_even_after_later_commits() 
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "");
 }
+
+#[test]
+fn a_push_url_with_a_newer_tip_than_the_judged_one_keeps_the_branch() {
+    // 先端は url（fetch 先）で読んで判定し、削除は pushurl へ送る。pushurl の先端が判定に使った先端と違えば
+    // （判定の後のほかの clone の push、同期していないミラー）、そのコミットを消さずに残す
+    let repo = Repo::new();
+    let mirror = repo.root.join("mirror.git");
+    let primary = repo.root.join("primary.git");
+    for bare in [&mirror, &primary] {
+        repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    }
+    repo.git(&["remote", "add", "origin", mirror.to_str().unwrap()]);
+    repo.git(&[
+        "remote",
+        "set-url",
+        "--push",
+        "origin",
+        primary.to_str().unwrap(),
+    ]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    for bare in [&mirror, &primary] {
+        repo.git(&["push", "-q", bare.to_str().unwrap(), "feat/x"]);
+    }
+    // ほかの clone が primary にだけ push したコミット
+    repo.git(&["switch", "-q", "-c", "other"]);
+    repo.write("c.txt", "c\n");
+    repo.commit("feat: c");
+    let newer = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["push", "-q", primary.to_str().unwrap(), "other:feat/x"]);
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["branch", "-q", "-D", "other"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    repo.git(&["push", "-q", mirror.to_str().unwrap(), "main"]);
+
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(stdout.contains("REMOTE_BRANCH: kept"), "{stdout}");
+    assert!(!stdout.contains("REMOTE_BRANCH: deleted"), "{stdout}");
+    assert_eq!(
+        repo.git(&["ls-remote", primary.to_str().unwrap(), "refs/heads/feat/x"]),
+        format!("{newer}\trefs/heads/feat/x")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failing_for_each_ref_in_the_merge_check_stops_before_changing_anything() {
+    // 上流を読めないことを上流が無いと読むと、マージ済みのブランチを未マージと報告する
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let bin = repo.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let wrapper = bin.join("git");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = for-each-ref ] && {{ echo 'fatal: broken ref' >&2; exit 128; }}; done\nexec {} \"$@\"\n",
+            real_git.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let wt = repo.root.join("app-feat-x");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/x",
+        wt.to_str().unwrap(),
+    ]);
+    std::fs::write(wt.join("b.txt"), "b\n").unwrap();
+    repo.git(&["-C", wt.to_str().unwrap(), "add", "-A"]);
+    repo.git(&["-C", wt.to_str().unwrap(), "commit", "-q", "-m", "feat: b"]);
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
+        .args(["script", "post-merge-cleanup", "feat/x"])
+        .current_dir(repo.app())
+        .env("GIT_CONFIG_GLOBAL", repo.root.join("no-global-config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("for-each-ref"), "{stderr}");
+    assert!(stderr.contains("broken ref"), "{stderr}");
+    assert!(!stderr.contains("ブランチの先端が無い"), "{stderr}");
+    assert!(wt.exists());
+    assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "+ feat/x");
+    assert_eq!(text(&out.stdout), "");
+}
