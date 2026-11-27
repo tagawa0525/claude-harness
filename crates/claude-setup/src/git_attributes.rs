@@ -27,7 +27,7 @@ pub fn run(home: &Path, from: &Path) -> Result<(), String> {
         && !same_path(home, &value, &path)
     {
         return Err(format!(
-            "❌ {scope} の core.attributesFile は {value} を指しています。git はそこだけを読み、{} に置いても効かないので、ここで止めます\n   修正方法: そのファイルの規則をリポジトリの .gitattributes か $GIT_DIR/info/attributes に移し、git config {scope} --unset core.attributesFile のあと、もう一度実行してください",
+            "❌ {scope} の core.attributesFile は {value} を指しています。git はそこだけを読み、{} に置いても効かないので、ここで止めます\n   修正方法: そのファイルの規則をリポジトリの .gitattributes か $GIT_DIR/info/attributes に移し、その設定を外して（書いてある場所は git config --show-origin --get-all core.attributesFile で分かる。include した設定の中にもありうる）、もう一度実行してください",
             path.display()
         ));
     }
