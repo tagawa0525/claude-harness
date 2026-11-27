@@ -715,7 +715,9 @@ fn off_r995_without_the_nfs_entry_the_ssh_form_on_an_r995_worktree_is_shown() {
         "{err}"
     );
     assert!(
-        err.contains(&format!("NEXT: {missing} の無いホストでは、")),
+        err.contains(&format!(
+            "NEXT: {missing} のあるホストは、その下に cd して投げ直す。無いホストでは、"
+        )),
         "{err}"
     );
     assert!(
@@ -740,6 +742,10 @@ fn the_ssh_form_names_what_differs_from_submitting_here() {
     assert!(!next.contains("  "), "{next}");
     assert!(next.contains("nix develop -c"), "{next}");
     assert!(next.contains("CLAUDE_CODE_SESSION_ID="), "{next}");
+    // NFS の入口のあるホストは、入口の下に cd して投げ直せばよい
+    assert!(next.contains("の下に cd して投げ直す"), "{next}");
+    // 元の引数の単一引用符は、外側の単一引用符を閉じる
+    assert!(next.contains(r"'\''"), "{next}");
 }
 
 #[test]
