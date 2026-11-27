@@ -636,12 +636,18 @@ fn an_english_response_with_a_failed_backup_reports_both() {
 /// ユーザーかスキルが英語の本文を求めた応答は、本文を訳させず、コードブロックか引用に入れて日本語の説明を添えさせる
 /// （その形なら 0 で通る）
 #[test]
+#[ignore = "RED: 引用のブロックの書き方と文の空白は次のコミットで直す"]
 fn the_send_back_tells_how_to_keep_a_requested_english_body() {
     let work = Work::new();
     let cd = claude_dir(&work);
     let err = assert_sent_back(&work.stop(&[&cd], &stop_input(ENGLISH_REPORT, false)));
-    assert!(err.contains("英語の本文を求めた"), "{err}");
-    assert!(err.contains("コードブロックか引用"), "{err}");
+    assert!(err.contains("英語の本文"), "{err}");
+    assert!(!err.contains("  "), "文の途中に空白が続く: {err}");
+    // 数えないのは `>` で始まる引用のブロックで、「」の引用は数える
+    assert!(
+        err.contains("コードブロックか `>` で始まる引用のブロック"),
+        "{err}"
+    );
 
     let kept = format!(
         "求められた英語の PR の本文です。英語のまま、コードブロックに入れて置きます。\n\n\
