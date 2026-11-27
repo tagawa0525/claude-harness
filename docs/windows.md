@@ -86,6 +86,11 @@ git の ref `refs/memory-backup` にコミットする。`~/.claude` が git の
 `cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
 `--force` で入れ直すときに使うので消さない。
 
+ほかのセッションが動いていても、スクリプトを流してよい。Windows は動いている exe の上へ置き換えるのを拒む（os error 5）ので、
+スクリプトは先に一時の置き場でビルドを済ませ、入っている exe を退けてから入れ直し、退けた exe を消す（#414。`scripts/install-windows.sh`）。
+exe の無い間は、ビルド済みのものを置く間だけ（手元の測定で 1 秒未満）で、その間に呼ばれた hook は失敗しうる。
+入れるのに失敗したときと、途中で止めたときは、退けた exe を戻す。
+
 clone を更新したら、スクリプトをもう一度流す（crate の版は変えないので `--force` で入れ直す）。Windows の CI
 （`.github/workflows/windows.yml` の `setup`）が、スクリプトを流し、登録した PreToolUse hook と git hook が main への
 `git commit` を止めること、Stop の hook がメモリを退避することを確かめる。

@@ -66,6 +66,74 @@ jobs:
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\gitleaks"
       - name: Follow docs/windows.md
         run: bash scripts/install-windows.sh
+      # ほかのセッションの hook が claude-hooks.exe を動かしている間も、更新（スクリプトの再実行）が終わりまで通り、退けた
+      # exe と、前の回が止まって残した退けた exe を残さない（#414）。hook は、stdin を閉じるまで終わらない pre-tool-use で
+      # 動かしたままにする。tasklist の出力は変数に受けてから調べる（grep -q が先に読むのをやめると、pipefail で
+      # tasklist の SIGPIPE が失敗になる）
+      - name: Update while a hook is running
+        run: |
+          set -euo pipefail
+          running() {
+            local out
+            out=$(tasklist //FI "IMAGENAME eq claude-hooks.exe")
+            grep -qF claude-hooks.exe <<<"$out"
+          }
+          touch ~/.claude/bin/claude-hooks.exe.old-0
+          # 置き換わったかは file ID で比べる（cargo install のコピーは、更新時刻をビルドのときのまま残す）
+          before=$(stat -c %i ~/.claude/bin/claude-hooks.exe)
+          coproc HOLD { "$HOME/.claude/bin/claude-hooks.exe" pre-tool-use; }
+          # bash は終わった coproc を回収すると HOLD_PID を消すので、先に控える
+          hold_pid=$HOLD_PID
+          for _ in $(seq 50); do
+            if running; then
+              break
+            fi
+            sleep 0.2
+          done
+          running
+          bash scripts/install-windows.sh
+          running
+          # 空の入力に hook が返す終了コードは、ここで確かめることでないので見ない
+          exec {HOLD[1]}>&-
+          wait "$hold_pid" || true
+          left=$(find ~/.claude/bin -name '*.exe.old-*')
+          if [ -n "$left" ]; then
+            echo "退けた exe が残っています:"
+            echo "$left"
+            exit 1
+          fi
+          test "$(stat -c %i ~/.claude/bin/claude-hooks.exe)" != "$before"
+      # 入れるのに失敗したとき、退けた exe を戻す。前の回が戻す前に止まって残した退けた exe は、対の exe が無ければ、
+      # 新しいほうを戻し、古いほうを消す（#414）。cargo は失敗する偽のものに置き換え、HOME は一時の場所にする
+      - name: Restore the moved-aside exe
+        run: |
+          set -euo pipefail
+          fake=$(mktemp -d)
+          # FAIL_ROOT が空ならどの install も、空でなければその --root への install だけが失敗する
+          printf '%s\n' '#!/usr/bin/env bash' '[ -n "$FAIL_ROOT" ] || exit 101' \
+            'case " $* " in *" --root $FAIL_ROOT "*) exit 101 ;; esac' >"$fake/cargo"
+          chmod +x "$fake/cargo"
+          install_fails() {
+            if HOME="$1" FAIL_ROOT="$2" PATH="$fake:$PATH" bash scripts/install-windows.sh; then
+              echo "偽の cargo が失敗したのに、スクリプトが通りました"
+              exit 1
+            fi
+          }
+          # ~/.claude への install が失敗する: 入っていた exe が戻る
+          home=$(mktemp -d)
+          mkdir -p "$home/.claude/bin"
+          echo cur >"$home/.claude/bin/claude-hooks.exe"
+          install_fails "$home" "$home/.claude"
+          test "$(cat "$home/.claude/bin/claude-hooks.exe")" = cur
+          test -z "$(find "$home/.claude/bin" -name '*.old-*')"
+          # ビルドも失敗する: 前の回が残した、対の無い退けた exe の新しいほうが戻る
+          home=$(mktemp -d)
+          mkdir -p "$home/.claude/bin"
+          echo older >"$home/.claude/bin/claude-hooks.exe.old-1700000000-1"
+          echo newer >"$home/.claude/bin/claude-hooks.exe.old-1700000500-2"
+          install_fails "$home" ""
+          test "$(cat "$home/.claude/bin/claude-hooks.exe")" = newer
+          test -z "$(find "$home/.claude/bin" -name '*.old-*')"
       # スキルの sh のスクリプトは、Linux と同じ "$HOME/.claude/bin/claude-hooks" で呼ぶ（ADR-0087）。Git Bash がこのパスに
       # .exe を補って起動することを、引数の足りない呼び出しの使い方の誤り（2）で確かめる（見つからなければ 127）
       - name: Check the paths the scripts and messages use
