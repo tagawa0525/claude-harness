@@ -10,38 +10,56 @@ cd "$repo"
 
 crates=(claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records)
 
+# Windows は動いている exe の上へ置き換えるのを拒む（os error 5）が、リネームと、Git Bash の rm での削除は許す（動いている
+# プロセスはそのまま動く）。ほかのセッションの hook が動かしている間も入れ直せるよう、入っている exe を退けてから入れ、
+# 入れた後に消す。settings.json が指す exe が無くなると、すべてのセッションの hook が動かなくなるので、入れるのに
+# 失敗したときも、途中で止められたときも、EXIT の trap で退けた exe を戻す。bash は SIGTERM と SIGHUP（ウィンドウを
+# 閉じる）で EXIT の trap を実行しないので、exit に変える
+pending=""
+build=""
+restore() {
+  if [ -n "$pending" ] && ! [ -e "${pending%.old-*}" ]; then
+    mv "$pending" "${pending%.old-*}"
+  fi
+}
+trap 'restore; [ -z "$build" ] || rm -rf "$build"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+# 消せなくても入れ直しは済んでいるので、止めずに知らせる（次の回にまた消す）
+remove_old() {
+  rm -f "$1" || echo "退けた exe を消せませんでした（次の回にまた消します）: $1" >&2
+}
+
+# 前の回が戻す前に止まって残した退けた exe は、対の exe が無ければそれが唯一の版なので戻し、あれば消す
+for old in ~/.claude/bin/*.exe.old-*; do
+  if ! [ -e "$old" ]; then
+    continue
+  elif [ -e "${old%.old-*}" ]; then
+    remove_old "$old"
+  else
+    mv "$old" "${old%.old-*}"
+  fi
+done
+
 # 入っている exe に触れる前に、一時の置き場でビルドを済ませる（失敗しても、入っている版はそのまま動く）。下の ~/.claude
 # への install は同じ target-dir を使うので、ビルド済みのものを置くだけで終わり、exe の無い間は短い
 build=$(mktemp -d)
-trap 'rm -rf "$build"' EXIT
 for crate in "${crates[@]}"; do
   cargo install --locked --force --root "$build/root" --target-dir "$build/target" --path "crates/$crate"
 done
 
-# Windows は動いている exe の上へ置き換えるのを拒む（os error 5）が、リネームと、Git Bash の rm での削除は許す（動いている
-# プロセスはそのまま動く）。ほかのセッションの hook が動かしている間も入れ直せるよう、入っている exe を退けてから入れ、
-# 入れた後に消す。入れるのに失敗したら、hook が exe を失わないよう戻して止める。前の回が止まって残した退けた exe も消す
 # claude-hooks を Linux と同じ ~/.claude/bin に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため
-for old in ~/.claude/bin/*.exe.old-*; do
-  if [ -e "$old" ]; then
-    rm -f "$old"
-  fi
-done
 for crate in "${crates[@]}"; do
   exe=~/.claude/bin/$crate.exe
-  old=""
   if [ -e "$exe" ]; then
-    old="$exe.old-$(date +%s)-$$"
-    mv "$exe" "$old"
+    pending="$exe.old-$(date +%s)-$$"
+    mv "$exe" "$pending"
   fi
-  if ! cargo install --locked --force --root ~/.claude --target-dir "$build/target" --path "crates/$crate"; then
-    if [ -n "$old" ] && ! [ -e "$exe" ]; then
-      mv "$old" "$exe"
-    fi
-    exit 1
-  fi
-  if [ -n "$old" ]; then
-    rm -f "$old"
+  cargo install --locked --force --root ~/.claude --target-dir "$build/target" --path "crates/$crate"
+  if [ -n "$pending" ]; then
+    old=$pending
+    pending=""
+    remove_old "$old"
   fi
 done
 
