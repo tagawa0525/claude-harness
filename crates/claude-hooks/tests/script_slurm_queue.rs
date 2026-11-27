@@ -17,8 +17,8 @@ struct FakeSqueue {
     root: PathBuf,
     /// 偽の ssh が書く標準出力と終了コード（with_ssh で置いたときだけ）
     ssh: Option<(String, i32)>,
-    /// r995 の側の呼び出しの印（SLURM_QUEUE_NO_SSH=1）を付けて起動するか
-    no_ssh: bool,
+    /// r995 の側の呼び出しの印 SLURM_QUEUE_NO_SSH の値（付けなければ None）
+    no_ssh: Option<&'static str>,
 }
 
 impl Drop for FakeSqueue {
@@ -45,7 +45,7 @@ impl FakeSqueue {
         FakeSqueue {
             root,
             ssh: None,
-            no_ssh: false,
+            no_ssh: None,
         }
     }
 
@@ -68,8 +68,13 @@ impl FakeSqueue {
     }
 
     /// ssh で呼ばれた r995 の側として起動する（SLURM_QUEUE_NO_SSH=1）
-    fn called_over_ssh(mut self) -> FakeSqueue {
-        self.no_ssh = true;
+    fn called_over_ssh(self) -> FakeSqueue {
+        self.with_no_ssh("1")
+    }
+
+    /// SLURM_QUEUE_NO_SSH に value を入れて起動する
+    fn with_no_ssh(mut self, value: &'static str) -> FakeSqueue {
+        self.no_ssh = Some(value);
         self
     }
 
@@ -86,8 +91,8 @@ impl FakeSqueue {
     /// 起動する。PATH は偽の squeue の置き場だけにする（手元の本物の squeue を読まない）
     fn run(&self, args: &[&str], squeue_out: &str, squeue_exit: i32) -> Output {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_claude-hooks"));
-        if self.no_ssh {
-            cmd.env("SLURM_QUEUE_NO_SSH", "1");
+        if let Some(value) = self.no_ssh {
+            cmd.env("SLURM_QUEUE_NO_SSH", value);
         } else {
             cmd.env_remove("SLURM_QUEUE_NO_SSH");
         }
@@ -263,6 +268,8 @@ fn over_ssh_order_prints_only_the_numbers_from_r995() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(stdout(&out), "21,20\n");
     assert_eq!(fake.ssh_log(), format!("{SSH} --order --first 20\n"));
+    // 番号は r995 の待ち行列のもので、scontrol top も r995 で実行することを、標準エラーで知らせる
+    assert!(stderr(&out).contains("ssh r995"), "{}", stderr(&out));
 }
 
 #[test]
@@ -280,7 +287,7 @@ fn over_ssh_a_failing_remote_script_ends_with_its_exit_code_and_says_it_ran_on_r
     assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
     assert!(
         stderr(&out).contains(
-            "NOTE: 上は、このホストに squeue が無いので ssh で呼んだ r995 の slurm-queue.sh の失敗（終了コード 3）"
+            "NOTE: 上は、このホストに squeue が無いので ssh で呼んだ r995 の slurm-queue.sh の失敗（終了コード 3。"
         ),
         "{}",
         stderr(&out)
@@ -294,7 +301,7 @@ fn an_unreachable_r995_is_an_error_naming_the_missing_squeue() {
     assert_eq!(out.status.code(), Some(255), "{}", stderr(&out));
     assert!(
         stderr(&out).contains(
-            "ERROR: このホストに squeue が無く、ssh で r995 の slurm-queue.sh を読めなかった（ssh の終了コード 255）"
+            "ERROR: このホストに squeue が無く、ssh で r995 の slurm-queue.sh を読めなかった（ssh の終了コード 255。接続か認証の失敗か、r995 の側がシグナルか 255 で終わった）"
         ),
         "{}",
         stderr(&out)
@@ -308,6 +315,17 @@ fn called_over_ssh_a_missing_squeue_is_not_read_over_ssh_again() {
     let out = fake.run(&[], "", 0);
     assert_eq!(out.status.code(), Some(127), "{}", stderr(&out));
     assert_eq!(fake.ssh_log(), "");
+}
+
+#[test]
+fn only_the_marker_value_1_stops_reading_over_ssh() {
+    // 空や 0 を受け継いだ呼び出しは、r995 の側でない
+    for value in ["", "0"] {
+        let fake = FakeSqueue::new().with_ssh("", 0).with_no_ssh(value);
+        let out = fake.run(&[], "", 0);
+        assert_eq!(out.status.code(), Some(0), "{value:?}: {}", stderr(&out));
+        assert_eq!(fake.ssh_log(), format!("{SSH}\n"), "{value:?}");
+    }
 }
 
 #[test]
