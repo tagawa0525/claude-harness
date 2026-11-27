@@ -81,6 +81,7 @@ git の ref `refs/memory-backup` にコミットする。`~/.claude` が git の
 上の階層のリポジトリの下にあれば作らずに知らせる。`.gitignore` は、同期した CLAUDE.md、スキル、スクリプトと自動メモリだけを
 除外から外す。すべてを除外（`/*`）すると、Claude Code の Grep（ripgrep）が `.gitignore` に従って、`~/.claude` の中の
 スキルも自動メモリも見つけなくなる（実機の Windows で確かめた）。`.credentials.json`、会話の記録、`bin` は除外のまま残る。
+退避の後に、最後の応答が英語で書かれていれば、日本語で書き直すよう応答を続けさせる（ADR-0108）。
 
 `cargo install --root ~/.claude` は、入れた crate の記録（`.crates.toml`、`.crates2.json`）を `~/.claude` に置く。
 `--force` で入れ直すときに使うので消さない。

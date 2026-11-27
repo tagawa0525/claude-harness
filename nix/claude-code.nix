@@ -78,7 +78,8 @@ in
   home.file.".claude/skills/lsp-det-dogfood".source = "${lsp-det}/dogfood/claude-plugin";
 
   # PreToolUse と Stop の hook のバイナリ（settings.json はこの固定パスを参照する。Stop は claude-hooks stop で自動メモリを
-  # ~/.claude の git の ref refs/memory-backup にコミットする。ADR-0076、ADR-0089）
+  # ~/.claude の git の ref refs/memory-backup にコミットし、英語で書いた最後の応答を書き直させる。ADR-0076、ADR-0089、
+  # ADR-0108）
   home.file.${claudeHooksBinRel}.source = "${claude-hooks}/bin/claude-hooks";
   home.file.".claude/bin/ja-terms".source = "${ja-terms}/bin/ja-terms";
 
