@@ -636,7 +636,6 @@ fn an_english_response_with_a_failed_backup_reports_both() {
 /// ユーザーかスキルが英語の本文を求めた応答は、本文を訳させず、コードブロックか引用に入れて日本語の説明を添えさせる
 /// （その形なら 0 で通る）
 #[test]
-#[ignore = "RED: 引用のブロックの書き方と文の空白は次のコミットで直す"]
 fn the_send_back_tells_how_to_keep_a_requested_english_body() {
     let work = Work::new();
     let cd = claude_dir(&work);
