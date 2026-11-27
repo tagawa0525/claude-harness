@@ -76,10 +76,13 @@ PR: #[番号]
 ## マージ実行
 
 ```bash
-gh pr merge [PR番号または URL] --merge --delete-branch \
+gh pr merge [PR番号または URL] --merge \
   --subject "Merge: [subject]" \
   --body "[body]"
 ```
+
+ブランチは下の post-merge-cleanup が消す。`--delete-branch` は付けない（feature の worktree で付けると、gh が手元を base の
+ブランチに切り替えようとして、それを取り出したメインの worktree とぶつかり、マージが済んでも終了コード 1 で終わる）。
 
 ## クリーンアップ
 
