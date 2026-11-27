@@ -1143,6 +1143,18 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 assert_not_contains "$(cat "$FAKE_GH_LOG")" "pr list"
 
+it "pre-merge-check: --delete-branch の無いマージも通す（マージの後のブランチは post-merge-cleanup が消す）"
+make_fake_gh_merge_stacked 'true'
+out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
+assert_eq allow "$(decision "$out")"
+
+it "pre-merge-check: --delete-branch の無いマージは、head のブランチを base にした PR があっても止めない"
+# マージは head のブランチを消さないので、上の PR は閉じられない（base の付け替えは post-merge-cleanup が示す）
+make_fake_gh_merge_stacked 'echo 7'
+out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
+assert_eq allow "$(decision "$out")"
+assert_not_contains "$(cat "$FAKE_GH_LOG")" "pr list"
+
 # ===========================================================================
 # block-secret-commit: グローバルの git の hook を使わないリポジトリの git commit を gitleaks で止める
 # ===========================================================================
