@@ -76,7 +76,8 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
   バイナリと判定したファイルを変えない
 - 置く場所: git が既定で読む `$XDG_CONFIG_HOME/git/attributes`（無いか空なら `~/.config/git/attributes`）。
   `core.attributesFile` は書かない（書かなくても git が読み、利用者の gitconfig を増やさない）
-- Windows（`claude-setup git-attributes`）は、次のときに止まり、何も書かない
+- Windows（`claude-setup git-attributes`）は、次のときに止まり、attributes のファイルを書かない（置く場所の親の
+  ディレクトリは、まだ無いファイルの場所を正規化して比べるために先に作る）
   - global か system の `core.attributesFile`（include した設定を含む。`GIT_CONFIG_NOSYSTEM` のときは system を見ない）が、
     置く場所と違う場所を指す。git はそこを読み、置く場所は読まないので、置いても効かず、そこを書き換えると利用者の規則を
     奪う
@@ -101,7 +102,8 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
 - 利用者が自分の規則を足すときは、Windows ではハーネスのファイルを直さず（次の設置で上書きされる）、リポジトリの
   `.gitattributes` か `$GIT_DIR/info/attributes` に書く
 - 配る中身の 1 行目は変えない（変えると、Windows の前の版のファイルを、ハーネスのものと見分けられなくなる）
-- 見ない `core.attributesFile` がある: Linux の system の gitconfig（NixOS の `programs.git.config`）、Git for Windows の
+- 見ない `core.attributesFile` がある: Linux の、home-manager の外で書いた `~/.gitconfig` と `programs.git.includes` の
+  先、Linux の system の gitconfig（NixOS の `programs.git.config`）、Git for Windows の
   `C:\ProgramData\Git\config`、global の `includeIf` の条件つきの include。そこで別の場所を指すと、置いたファイルは
   黙って効かない。Linux で `xdg.configHome` を既定から変え、`XDG_CONFIG_HOME` を出さない構成でも、git の読まない場所に
   置かれる（git hook の `core.hooksPath` も `~/.config/git/hooks` を書くので同じ前提）。今の構成（nixfiles と、この PC）は
