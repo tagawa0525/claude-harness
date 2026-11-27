@@ -85,7 +85,7 @@ cd ~/github/solver && ~/.claude/scripts/slurm-run.sh --class decision --ref '#02
   （`cd ... &` と `&` で切ると、ジョブは cd の前の場所で走る。クォートしたコマンドの中の `cd` は連絡先に反映されない）。
 - r995 以外のホストは `/mnt/r995/github` の下で投げる。その入口の無いホスト（Windows の PC など）は、`slurm-run.sh` の ERROR に続く
   `NEXT:` のとおり、push したブランチの worktree を r995 に用意し、ssh 越しに r995 の `slurm-run.sh` を呼ぶ（ジョブは r995 の
-  worktree の版で走る）。待ち方と出力の行は同じ
+  worktree の版で走る）。待ち方と出力の行は同じで、ジョブの環境（開発シェルの PATH、連絡先の `claude=`）の違いと補い方は `NEXT:` に出る
 - ジョブの中のプログラムの時間とメモリは、`TIME:` 行と `sacct -j <番号>.batch -o Elapsed,MaxRSS`（MaxRSS は `.batch` の行に
   だけ入る）で取る。
 
