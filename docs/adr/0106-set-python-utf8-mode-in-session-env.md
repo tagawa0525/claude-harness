@@ -1,6 +1,6 @@
 ---
 type: ADR
-status: proposed
+status: accepted
 date: 2026-11-27
 requires: [ADR-0084]
 supersedes: []
@@ -23,7 +23,13 @@ Windows のユーザーの環境変数（`setx PYTHONUTF8 1`）は、ハーネ�
 Python にも効くが、ほかの機械と新しく入れる機械には入らない。
 
 静的な設定は、`claude-setup settings` が `~/.claude/settings.json` の最上位のキーごとに置き換える（ADR-0084、
-`crates/claude-setup/src/settings.rs`）。
+`crates/claude-setup/src/settings.rs`）。settings.json の `env` を書くのはこれだけで、ハーネスを取り込む nixfiles は
+`env` も `PYTHONUTF8` も書かない（nixfiles `bf8b3677`、2026-11-25 を grep）。
+
+測った値は、Windows 11 Pro 10.0.26100 の Python 3.13.1 で、`PYTHONUTF8=1` と無しで次を実行したもの（2026-11-27）:
+`sys.flags.utf8_mode`、`sys.stdout.encoding`、`locale.getpreferredencoding(False)`、`open("t.txt", "w").write("a
+")` の
+バイト列、`subprocess.run(["cmd", "/d", "/c", "echo あ"], capture_output=True, text=True)`。
 
 ## 検討した案
 
@@ -49,11 +55,16 @@ Python にも効くが、ほかの機械と新しく入れる機械には入ら�
   絵文字の print が通る。`open(..., "w")` の改行の変換は変わらず CRLF のまま（`b'a\r\n'`。2026-11-27 に測った）
 - cp932 で書く Windows のツール（`cmd /c echo あ` など）の出力を `subprocess.run(..., text=True)` で読むと、
   `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x82` で落ちる（同じ版で 2026-11-27 に測った）。cp932 のファイルを
-  `encoding=` なしで読むときも同じ。そうしたコードは `encoding="cp932"` を明示する
+  `encoding=` なしで読むときも同じ。そうしたコードは `encoding="cp932"` を明示する。このリポジトリに Python のファイルは
+  無く（`git ls-files '*.py'` が空、2026-11-27）、hook は Rust なので、ハーネスの中に直す呼び出しは無い
 - セッションの中では、`encoding=` を書き忘れたコードも UTF-8 で通る。PYTHONUTF8 の無い環境（CI、ほかの人の機械）では
-  cp932 で動くので、配るコードは `encoding=` を明示する
+  cp932 で動くので、配るコードは `encoding=` を明示する。セッションが投げる Slurm のジョブも env を受け継ぐ
+  （sbatch の既定の `--export=ALL`）ので、同じスクリプトをセッションの外で動かすと既定の符号化が違いうる
+- Python 3.15 からは UTF-8 モードが既定になる（PEP 686）。すべての機械の Python が 3.15 以降になれば、この設定は効果が
+  無くなり外せる
 - `env` は最上位のキーなので、配備のたびに `~/.claude/settings.json` の `env` 全体がこの値に置き換わる。機械ごとの変数を
-  手で `env` に足しても、次の配備で消える。2026-11-27 の時点で、この Windows の機械の `~/.claude/settings.json` に `env` は無い
+  手で `env` に足しても、次の配備で消える。2026-11-27 の時点で、この Windows の機械の `~/.claude/settings.json` に `env` は無い。
+  ほかの機械（r995 など）の `env` は確かめていない
 
 ### 確認
 
