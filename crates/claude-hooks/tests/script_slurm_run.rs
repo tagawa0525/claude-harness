@@ -715,7 +715,7 @@ fn off_r995_without_the_nfs_entry_the_ssh_form_on_an_r995_worktree_is_shown() {
         "{err}"
     );
     assert!(
-        err.contains(&format!("NEXT: このホストには {missing} が無い。")),
+        err.contains(&format!("NEXT: {missing} の無いホストでは、")),
         "{err}"
     );
     assert!(
@@ -728,18 +728,18 @@ fn off_r995_without_the_nfs_entry_the_ssh_form_on_an_r995_worktree_is_shown() {
 }
 
 #[test]
-fn off_r995_with_the_nfs_entry_no_ssh_form_is_shown() {
+fn the_ssh_form_names_what_differs_from_submitting_here() {
     let slurm = Slurm::new();
-    let nfs = slurm.root.join("mnt/r995/github");
-    std::fs::create_dir_all(&nfs).unwrap();
-    let nfs_text = sh_path(&nfs);
-    let env = [
-        ("FAKE_HOST", "t14g4"),
-        ("SLURM_RUN_NFS_ENTRY", nfs_text.as_str()),
-    ];
-    let out = slurm.run(&["-t", "1", "xlc-2G", "true"], &env);
+    let out = slurm.run(&["-t", "1", "xlc-2G", "true"], &[("FAKE_HOST", "win-pc")]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(!stderr(&out).contains("ssh r995"), "{}", stderr(&out));
+    let next = stderr(&out)
+        .lines()
+        .find(|l| l.starts_with("NEXT: "))
+        .unwrap_or_default()
+        .to_string();
+    assert!(!next.contains("  "), "{next}");
+    assert!(next.contains("nix develop -c"), "{next}");
+    assert!(next.contains("CLAUDE_CODE_SESSION_ID="), "{next}");
 }
 
 #[test]

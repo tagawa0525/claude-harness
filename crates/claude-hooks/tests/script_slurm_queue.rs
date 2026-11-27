@@ -15,6 +15,8 @@ const C: &str = "feat/x /home/u/github/xlc-feat-x claude=abc";
 /// 偽の squeue を置いた一時のディレクトリ
 struct FakeSqueue {
     root: PathBuf,
+    /// 偽の ssh が書く標準出力と終了コード（with_ssh で置いたときだけ）
+    ssh: Option<(String, i32)>,
 }
 
 impl Drop for FakeSqueue {
@@ -38,7 +40,7 @@ impl FakeSqueue {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("bin")).unwrap();
-        FakeSqueue { root }
+        FakeSqueue { root, ssh: None }
     }
 
     /// 偽の squeue を置く。置かなければ、PATH に squeue が無い
@@ -53,16 +55,26 @@ impl FakeSqueue {
     }
 
     /// 偽の ssh を置く。r995 の slurm-queue.sh の代わりに ssh_out を書いて ssh_exit で終わる
-    fn with_ssh(self, ssh_out: &str, ssh_exit: i32) -> FakeSqueue {
+    fn with_ssh(mut self, ssh_out: &str, ssh_exit: i32) -> FakeSqueue {
+        self.place("ssh");
+        self.ssh = Some((ssh_out.to_string(), ssh_exit));
+        self
+    }
+
+    /// hostname が host を出すようにする（置かなければ、hostname は無い）
+    fn on_host(self, host: &str) -> FakeSqueue {
+        self.place("hostname");
+        std::fs::write(self.root.join("hostname.out"), format!("{host}\n")).unwrap();
+        self
+    }
+
+    fn place(&self, name: &str) {
         place_fake_tool(
             &self
                 .root
                 .join("bin")
-                .join(format!("ssh{}", std::env::consts::EXE_SUFFIX)),
+                .join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
         );
-        std::fs::write(self.root.join("ssh.out"), ssh_out).unwrap();
-        std::fs::write(self.root.join("ssh.exit"), ssh_exit.to_string()).unwrap();
-        self
     }
 
     /// 偽の squeue が squeue_out を標準出力に書いて squeue_exit で終わるとき、`claude-hooks script slurm-queue <args>` を
@@ -78,11 +90,15 @@ impl FakeSqueue {
             .env("FAKE_SSH_LOG", self.root.join("ssh.log"))
             .env(
                 "FAKE_SSH_OUT",
-                std::fs::read_to_string(self.root.join("ssh.out")).unwrap_or_default(),
+                self.ssh.as_ref().map_or("", |(out, _)| out.as_str()),
             )
             .env(
                 "FAKE_SSH_EXIT",
-                std::fs::read_to_string(self.root.join("ssh.exit")).unwrap_or("0".into()),
+                self.ssh.as_ref().map_or(0, |(_, exit)| *exit).to_string(),
+            )
+            .env(
+                "FAKE_HOSTNAME_OUT",
+                std::fs::read_to_string(self.root.join("hostname.out")).unwrap_or_default(),
             )
             .output()
             .unwrap()
@@ -221,25 +237,17 @@ fn without_squeue_or_ssh_it_ends_with_127_like_sh() {
     );
 }
 
+const SSH: &str =
+    "ssh -n -o BatchMode=yes -o ConnectTimeout=10 r995 $HOME/.claude/scripts/slurm-queue.sh";
+const NOTE_OVER_SSH: &str = "NOTE: このホストに squeue が無いので、ssh で r995 の一覧を読んだ。上の scontrol などの Slurm のコマンドは、ssh r995 '<コマンド>' で r995 で実行する\n";
+
 #[test]
 fn without_squeue_the_same_script_on_r995_is_read_over_ssh() {
-    let fake = FakeSqueue::new().with_ssh(
-        "1 RUNNING main
-",
-        0,
-    );
+    let fake = FakeSqueue::new().with_ssh("1 RUNNING main\n", 0);
     let out = fake.run(&["--order", "--first", "20"], "", 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert_eq!(
-        stdout(&out),
-        "1 RUNNING main
-"
-    );
-    assert_eq!(
-        fake.ssh_log(),
-        "ssh -o BatchMode=yes -o ConnectTimeout=10 r995 $HOME/.claude/scripts/slurm-queue.sh --order --first 20
-"
-    );
+    assert_eq!(stdout(&out), format!("1 RUNNING main\n{NOTE_OVER_SSH}"));
+    assert_eq!(fake.ssh_log(), format!("{SSH} --order --first 20\n"));
 }
 
 #[test]
@@ -247,18 +255,37 @@ fn over_ssh_the_arguments_reach_the_remote_shell_as_single_words() {
     let fake = FakeSqueue::new().with_ssh("", 0);
     let out = fake.run(&["--order", "--first", "1; rm x"], "", 0);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert_eq!(
-        fake.ssh_log(),
-        "ssh -o BatchMode=yes -o ConnectTimeout=10 r995 $HOME/.claude/scripts/slurm-queue.sh --order --first '1; rm x'
-"
+    assert_eq!(fake.ssh_log(), format!("{SSH} --order --first '1; rm x'\n"));
+}
+
+#[test]
+fn over_ssh_a_failing_remote_script_ends_with_its_exit_code_and_its_own_error() {
+    let fake = FakeSqueue::new().with_ssh("", 3);
+    let out = fake.run(&[], "", 0);
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("ERROR"), "{}", stderr(&out));
+}
+
+#[test]
+fn an_unreachable_r995_is_an_error_naming_the_missing_squeue() {
+    let fake = FakeSqueue::new().with_ssh("", 255);
+    let out = fake.run(&[], "", 0);
+    assert_eq!(out.status.code(), Some(255), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains(
+            "ERROR: このホストに squeue が無く、ssh で r995 の slurm-queue.sh を読めなかった（ssh の終了コード 255）"
+        ),
+        "{}",
+        stderr(&out)
     );
 }
 
 #[test]
-fn over_ssh_the_exit_code_of_ssh_is_returned() {
-    let fake = FakeSqueue::new().with_ssh("", 255);
+fn on_r995_a_missing_squeue_is_not_read_over_ssh() {
+    let fake = FakeSqueue::new().with_ssh("", 0).on_host("r995");
     let out = fake.run(&[], "", 0);
-    assert_eq!(out.status.code(), Some(255), "{}", stderr(&out));
+    assert_eq!(out.status.code(), Some(127), "{}", stderr(&out));
+    assert_eq!(fake.ssh_log(), "");
 }
 
 #[test]
