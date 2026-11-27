@@ -781,7 +781,7 @@ fn a_failing_for_each_ref_in_the_merge_check_stops_before_changing_anything() {
 
     let path = format!(
         "{}:{}",
-        bin.display(),
+        common::sh_path(&bin),
         std::env::var("PATH").unwrap_or_default()
     );
     let out = forget_git_env(&mut Command::new(env!("CARGO_BIN_EXE_claude-hooks")))
