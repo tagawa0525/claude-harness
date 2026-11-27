@@ -79,7 +79,7 @@ pub fn main(args: &[String]) -> i32 {
             0
         }
         Err(QueueError::Spawn { code: 127, error })
-            if std::env::var_os("SLURM_QUEUE_NO_SSH").is_none() =>
+            if std::env::var("SLURM_QUEUE_NO_SSH").as_deref() != Ok("1") =>
         {
             from_r995(args, &mode).unwrap_or_else(|| report(QueueError::Spawn { code: 127, error }))
         }
@@ -90,8 +90,9 @@ pub fn main(args: &[String]) -> i32 {
 /// r995 の slurm-queue.sh を ssh で呼び、その終了コードを返す（出力はそのまま流す）。ssh を起動できなければ None。
 /// BatchMode は、鍵の無いときに、スキルの読み込みでパスワードの入力を待って止まらないため。-n は、呼び出し元の標準入力を
 /// 読まないため。ServerAlive は、止まった接続を待ち続けないため（ConnectTimeout は接続までしか見ない）。パスは ~ でなく
-/// $HOME で書く: Git for Windows の ssh（MSYS のプログラム）は、Windows のプロセスから起動されると引用符の無い引数を glob に
-/// かけ、~ を手元のホームに展開する（$HOME は展開しないので、r995 の側のシェルが展開する）
+/// $HOME で書く: Git for Windows の ssh（MSYS のプログラム）は、Windows のプロセスから起動されると、引用符で囲まれない
+/// （空白の無い）引数を glob にかけ、~ を手元のホームに展開する（今の引数は空白を含んで囲まれるが、印を外すなどして空白が
+/// 無くなっても壊れないよう、$HOME にしておく。$HOME は glob が展開しないので、r995 の側のシェルが展開する）
 fn from_r995(args: &[String], mode: &Mode) -> Option<i32> {
     let remote = [
         "SLURM_QUEUE_NO_SSH=1",
@@ -120,17 +121,18 @@ fn from_r995(args: &[String], mode: &Mode) -> Option<i32> {
         .ok()?;
     let code = crate::child::exit_code(status);
     match code {
-        0 => {
-            if matches!(mode, Mode::List) {
-                println!("{NOTE_OVER_SSH}");
-            }
-        }
-        // ssh は自分の失敗（接続、認証）を 255 で返す
+        // --order の標準出力は scontrol top に渡す番号の列なので、知らせは標準エラーに出す
+        0 => match mode {
+            Mode::List => println!("{NOTE_OVER_SSH}"),
+            Mode::Order { .. } => eprintln!("{NOTE_OVER_SSH}"),
+        },
+        // ssh は自分の失敗（接続、認証）を 255 で返し、r995 の側がシグナルか 255 で終わったときも 255 を返す
         255 => eprintln!(
-            "ERROR: このホストに squeue が無く、ssh で r995 の slurm-queue.sh を読めなかった（ssh の終了コード 255）"
+            "ERROR: このホストに squeue が無く、ssh で r995 の slurm-queue.sh を読めなかった（ssh の終了コード 255。接続か認証の失敗か、r995 の側がシグナルか 255 で終わった）"
         ),
+        // 128 を超えるのは、手元の ssh がシグナルで止められたとき（Ctrl-C など）もある
         _ => eprintln!(
-            "NOTE: 上は、このホストに squeue が無いので ssh で呼んだ r995 の slurm-queue.sh の失敗（終了コード {code}）"
+            "NOTE: 上は、このホストに squeue が無いので ssh で呼んだ r995 の slurm-queue.sh の失敗（終了コード {code}。128 を超えれば、手元の ssh がシグナルで止められたこともある）"
         ),
     }
     Some(code)
