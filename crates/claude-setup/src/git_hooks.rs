@@ -26,16 +26,16 @@ pub fn run(home: &Path, bin: &str) -> Result<(), String> {
     }
     let dir = home.join(".config/git/hooks");
     // system の値も git は使い、global に書くと上書きしてしまうので、同じく奪わない
-    if let Some(system) = hooks_path("--system")?
-        && !same_dir(home, &system, &dir)
+    if let Some(system) = config_value("--system", "core.hooksPath")?
+        && !same_path(home, &system, &dir)
     {
         return Err(format!(
             "❌ system の core.hooksPath は {system} を指しています。global に書くと、そこの hook が走らなくなるので、ここで止めます\n   修正方法: system の設定を管理する人に、その hook の扱いを確かめてください（system の設定を読ませないなら GIT_CONFIG_NOSYSTEM=1）"
         ));
     }
-    let current = hooks_path("--global")?;
+    let current = config_value("--global", "core.hooksPath")?;
     if let Some(current) = &current
-        && !same_dir(home, current, &dir)
+        && !same_path(home, current, &dir)
     {
         return Err(format!(
             "❌ グローバルの core.hooksPath は {current} を指しています。ハーネスの git hook（{}）に向けると、そこの hook が走らなくなるので、ここで止めます\n   修正方法: そこの hook を移すか外してから、git config --global --unset core.hooksPath のあと、もう一度実行してください",
@@ -99,15 +99,15 @@ fn git() -> Command {
     Command::new("git")
 }
 
-/// scope（--global、--system）の core.hooksPath（無ければ None）
-fn hooks_path(scope: &str) -> Result<Option<String>, String> {
+/// scope（--global、--system）の key の値（無ければ None）
+pub(crate) fn config_value(scope: &str, key: &str) -> Result<Option<String>, String> {
     // GIT_CONFIG_NOSYSTEM では git は system の設定を読まないが、--system を付けた git config は読むので、ここで外す
     if scope == "--system" && nosystem() {
         return Ok(None);
     }
     let out = git()
         // include した設定の値も git は使うので、--includes で読む（scope を付けると include を辿らない）
-        .args(["config", scope, "--includes", "--get", "core.hooksPath"])
+        .args(["config", scope, "--includes", "--get", key])
         .output()
         .map_err(|e| format!("❌ git を起動できません（{e}）"))?;
     match out.status.code() {
@@ -117,27 +117,48 @@ fn hooks_path(scope: &str) -> Result<Option<String>, String> {
         // 1 は「設定が無い」
         Some(1) => Ok(None),
         _ => Err(format!(
-            "❌ {scope} の core.hooksPath を読めません（{}）",
+            "❌ {scope} の {key} を読めません（{}）",
             String::from_utf8_lossy(&out.stderr).trim()
         )),
     }
 }
 
-/// core.hooksPath の値（`~/` は git と同じくホームとして読む）が dir と同じ場所か。git は `~` を HOME で読む（Windows で
-/// HOME が USERPROFILE と違うこともある）ので、HOME があればそれを使う
-fn same_dir(home: &Path, value: &str, dir: &Path) -> bool {
-    let git_home = std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.to_path_buf());
-    let path = match value.strip_prefix("~/") {
-        Some(rest) => git_home.join(rest),
+/// git の設定のパスの値（`~/` は git と同じくホームとして読む）が path と同じ場所か。git は `~` を HOME で読む（Windows で
+/// HOME が USERPROFILE と違うこともある）ので、[`git_home`] で読む
+pub(crate) fn same_path(home: &Path, value: &str, path: &Path) -> bool {
+    let value = match value.strip_prefix("~/") {
+        Some(rest) => git_home(home).join(rest),
         None => PathBuf::from(value),
     };
-    match (std::fs::canonicalize(&path), std::fs::canonicalize(dir)) {
+    match (std::fs::canonicalize(&value), std::fs::canonicalize(path)) {
         (Ok(a), Ok(b)) => a == b,
-        _ => path == dir,
+        // まだ無い場所（初めて置くファイル）は、親を正規化して名前と比べる（Windows の大文字と小文字の違いと junction を
+        // 同じと読む）。Windows のファイルシステムは名前の大文字と小文字を区別しない
+        _ => match (
+            value.parent().map(std::fs::canonicalize),
+            path.parent().map(std::fs::canonicalize),
+            value.file_name(),
+            path.file_name(),
+        ) {
+            (Some(Ok(a)), Some(Ok(b)), Some(x), Some(y)) if a == b => {
+                if cfg!(windows) {
+                    x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase()
+                } else {
+                    x == y
+                }
+            }
+            _ => value == path,
+        },
     }
+}
+
+/// git がホームとして読む場所。git は HOME を使う（Windows で HOME が USERPROFILE と違うこともある）ので、HOME が
+/// あればそれ、無ければ home
+pub(crate) fn git_home(home: &Path) -> PathBuf {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.to_path_buf())
 }
 
 /// sh の 1 つの引数として書く

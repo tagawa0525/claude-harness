@@ -41,5 +41,9 @@ if [ -z "$top" ] || [ "$top" -ef ~/.claude ]; then
     '!/projects/' '/projects/*/*' '!/projects/*/memory/' >~/.claude/.gitignore
 fi
 
-# グローバルの core.hooksPath がほかの置き場を向いていれば、奪わずに止まる。止まってもほかの手順が済んでいるよう最後に置く
-~/.claude/bin/claude-setup git-hooks --bin "$hook"
+# 利用者の attributes と core.hooksPath を奪わずに止まりうる 2 つは、止まってもほかの手順が済んでいるよう最後に置き、
+# 片方が止まっても、もう片方は流す
+rc=0
+~/.claude/bin/claude-setup git-attributes --from config/git/attributes || rc=1
+~/.claude/bin/claude-setup git-hooks --bin "$hook" || rc=1
+exit "$rc"

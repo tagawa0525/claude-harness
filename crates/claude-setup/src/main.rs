@@ -6,9 +6,11 @@
 //! - `claude-setup settings --static <JSON> [--pre-tool-use <バイナリ>] [--stop <バイナリ>] [--user-prompt-submit <バイナリ>] [--legacy <ファイル名>]...`:
 //!   ~/.claude/settings.json に静的な設定を重ね、ハーネスの hook を登録する（[`settings`]）
 //! - `claude-setup git-hooks --bin <claude-hooks>`: グローバルの git hook を置き、core.hooksPath を向ける（[`git_hooks`]）
+//! - `claude-setup git-attributes --from <ファイル>`: git のグローバルの attributes を置く（[`git_attributes`]）
 //!
 //! 終了コード: 0 = 済んだ、1 = 止めた（理由は標準エラー）、2 = 使い方の誤り
 
+mod git_attributes;
 mod git_hooks;
 mod settings;
 mod sync;
@@ -19,7 +21,8 @@ use std::process::ExitCode;
 
 const USAGE: &str = "Usage: claude-setup sync [source-repo]
        claude-setup settings --static <json> [--pre-tool-use <binary>] [--stop <binary>] [--user-prompt-submit <binary>] [--legacy <file-name>]...
-       claude-setup git-hooks --bin <claude-hooks>";
+       claude-setup git-hooks --bin <claude-hooks>
+       claude-setup git-attributes --from <file>";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -66,6 +69,21 @@ fn main() -> ExitCode {
             match git_hooks::run(&home, &bin.to_string_lossy()) {
                 Ok(()) => {
                     println!("✅ git hook を置き、core.hooksPath を向けました");
+                    ExitCode::SUCCESS
+                }
+                Err(line) => fail(&[line]),
+            }
+        }
+        Some((command, rest)) if command == "git-attributes" => {
+            let [flag, from] = rest else {
+                return usage();
+            };
+            if flag != "--from" {
+                return usage();
+            }
+            match git_attributes::run(&home, Path::new(from)) {
+                Ok(()) => {
+                    println!("✅ git のグローバルの attributes を置きました");
                     ExitCode::SUCCESS
                 }
                 Err(line) => fail(&[line]),

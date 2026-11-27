@@ -1,0 +1,11 @@
+# claude-harness が置く、git のグローバルの attributes
+# 1 行目は変えない（Windows の claude-setup git-attributes が、ハーネスの置いたファイルを 1 行目で見分ける）。
+# 元は claude-harness の config/git/attributes。置くのは、Windows では claude-setup git-attributes、Linux では
+# nix/git-attributes.nix（home-manager）。ここを直しても次の設置で上書きされる。
+# リポジトリの .gitattributes と $GIT_DIR/info/attributes が、ここより優先される。
+#
+# .gitattributes の無いリポジトリでも、テキストを LF で index に入れ、LF で取り出す（バイナリは text=auto が変えない）
+* text=auto eol=lf
+# cmd.exe は LF の行のバッチを読み違えることがあるので、作業ツリーでは CRLF にする（index は LF）
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -9,9 +9,10 @@ Claude Code のハーネス。PC 全体のセッションが読む指示、ス�
 | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `CLAUDE.md`、`.claude/skills/`                                             | このリポジトリだけの規則とスキル（配備の /harness-deploy、導入の /harness-install。このリポジトリのセッションが読み、配らない）  |
 | `claude/`                                                                  | グローバルの指示（`CLAUDE.md`）、スキル、スクリプト、それらのテスト。`~/.claude` に配る元（ADR-0094）。構成は `claude/README.md` |
-| `config/`                                                                  | `~/.config` に配る元（markdownlint のグローバルの設定。ADR-0093）                                                                |
+| `config/`                                                                  | `~/.config` に配る元（markdownlint のグローバルの設定（ADR-0093）、git のグローバルの attributes（ADR-0105））                   |
 | `nix/claude-code.nix`                                                      | `~/.claude` への同期、`settings.json`、PreToolUse hook の登録                                                                    |
 | `nix/git-hooks.nix`                                                        | git のグローバルの hook（pre-commit、pre-merge-commit、commit-msg、post-rewrite）                                                |
+| `nix/git-attributes.nix`                                                   | git のグローバルの attributes（改行を LF にそろえる。ADR-0105）                                                                  |
 | `crates/claude-hooks/`                                                     | PreToolUse hook（Rust 製の 1 バイナリ）                                                                                          |
 | `crates/claude-setup/`                                                     | `~/.claude` への同期と `settings.json` の更新（Linux の activation と Windows の設置が呼ぶ）                                     |
 | `crates/commit-refs/`、`crates/design-records/`、`crates/history-rewrite/` | hook とスキルが使う CLI                                                                                                          |

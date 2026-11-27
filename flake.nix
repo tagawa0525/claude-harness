@@ -46,7 +46,7 @@
       pkgs = nixpkgs.legacyPackages.${system};
     in
     {
-      # ~/.claude の中身と settings.json、PreToolUse hook、git のグローバルの hook。
+      # ~/.claude の中身と settings.json、PreToolUse hook、git のグローバルの hook と attributes。
       # Claude Code の本体は入れない（版は利用する側の構成が決める）
       homeManagerModules.default = {
         _file = ./flake.nix;
@@ -57,6 +57,7 @@
             inherit mattpocock-skills lsp-det;
           })
           ./nix/git-hooks.nix
+          ./nix/git-attributes.nix
         ];
       };
 
