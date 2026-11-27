@@ -873,13 +873,21 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
     }
 }
 
-/// 判定に使った先端（tip）を lease にして消す。先端は url から読むので、判定の後の push と、url と食い違う pushurl の
-/// 新しいコミットは lease で拒まれる。消したら true、push 先に tip と違う先端が残って残したら false。
-/// git push --delete は pushurl の全部へ送り、ブランチの無い push 先があると、ほかの push 先から消した後で失敗する。
-/// 失敗の文言（ロケールで変わる）では見分けず、push 先ごとの今の先端で決める。どこにも無ければ消せたとし、tip と違う
-/// 先端があれば残す。確かめられなければ、push の標準エラーを出してその終了コードで終える
+/// 判定に使った先端（tip）を lease にして消す。消したら true、push 先に tip と違う先端があって残したら false。
+/// 先端は url から読むので、url と食い違う pushurl は push の前に push 先ごとの先端で見つけ、どこへも送らずに残す。
+/// git push は push 先ごとに送り、拒まれた先があっても残りへ送るので、送ってから見つけると一部の push 先だけが消える。
+/// 前の確認と push の間の push は lease で拒まれる（そのときは消えた push 先も知らせる）。
+/// ブランチの無い push 先があると、ほかの push 先から消した後で git push は失敗する。失敗の文言（ロケールで変わる）
+/// では見分けず、push 先ごとの今の先端で決める。どこにも無ければ消せたとし、確かめられなければ、push の標準エラーを
+/// 出してその終了コードで終える
 fn delete_remote_branch(branch: &str, remote: &str, tip: &str) -> Result<bool, i32> {
     let refname = format!("refs/heads/{branch}");
+    // 読めない push 先があれば、前の確認を省いて lease に任せる
+    if let Some(tips) = push_tips(remote, &refname)
+        && kept_for_moved(&tips, branch, remote, tip, false)
+    {
+        return Ok(false);
+    }
     let lease = format!("--force-with-lease={refname}:{tip}");
     let out = match Command::new("git")
         .args(["push", "-q", &lease, remote, "--delete", branch])
@@ -896,35 +904,10 @@ fn delete_remote_branch(branch: &str, remote: &str, tip: &str) -> Result<bool, i
         eprint!("{err}");
         return Ok(true);
     }
-    // 書き換えた先の URL を渡すと、ls-remote は insteadOf をもう一度かけうる（書き換えた先が別の insteadOf の接頭辞に
-    // 当たる設定だけ）。そのときは別の場所を見て消せたと知らせうるが、消しすぎる側には倒れない
-    let urls = git(&["remote", "get-url", "--push", "--all", remote]).unwrap_or_default();
-    // push 先ごとの先端（空ならブランチが無い）。読めない push 先があれば None
-    let tips: Option<Vec<(&str, String)>> = urls
-        .lines()
-        .map(|url| {
-            let heads = git(&["ls-remote", "--heads", url, &refname])?;
-            let sha = heads
-                .lines()
-                .find_map(|l| {
-                    let (sha, r) = l.split_once('\t')?;
-                    (r == refname).then(|| sha.to_string())
-                })
-                .unwrap_or_default();
-            Some((url, sha))
-        })
-        .collect();
-    if let Some(tips) = tips.filter(|t| !t.is_empty()) {
-        let moved: Vec<String> = tips
-            .iter()
-            .filter(|(_, sha)| !sha.is_empty() && sha != tip)
-            .map(|(url, sha)| format!("{url} は {sha}"))
-            .collect();
-        if !moved.is_empty() {
-            println!(
-                "REMOTE_BRANCH: kept (push 先の {branch} の先端が、判定に使った {remote} の先端（{tip}）と違う（{}）。判定の後のほかの clone の push か、{remote} の url と pushurl の食い違いなので、取り込むか要らないかを確かめてから消す)",
-                moved.join("、")
-            );
+    if let Some(tips) = push_tips(remote, &refname) {
+        if kept_for_moved(&tips, branch, remote, tip, true) {
+            // ほかの push 先の lease でない失敗（認証など）も、ここで見せる
+            eprint!("{err}");
             return Ok(false);
         }
         if tips.iter().all(|(_, sha)| sha.is_empty()) {
@@ -937,6 +920,62 @@ fn delete_remote_branch(branch: &str, remote: &str, tip: &str) -> Result<bool, i
     }
     eprint!("{err}");
     Err(crate::child::exit_code(out.status))
+}
+
+/// push 先（git remote get-url --push --all）ごとの refname の先端（空ならブランチが無い）。push 先が無いか、
+/// 読めない push 先があれば None。書き換えた先の URL を渡すと、ls-remote は insteadOf をもう一度かけうる（書き換えた
+/// 先が別の insteadOf の接頭辞に当たる設定だけ）。そのときは別の場所を見て消せたと知らせうるが、消しすぎる側には
+/// 倒れない
+fn push_tips(remote: &str, refname: &str) -> Option<Vec<(String, String)>> {
+    let urls = git(&["remote", "get-url", "--push", "--all", remote])?;
+    let tips: Vec<(String, String)> = urls
+        .lines()
+        .map(|url| {
+            let heads = git(&["ls-remote", "--heads", url, refname])?;
+            let sha = heads
+                .lines()
+                .find_map(|l| {
+                    let (sha, r) = l.split_once('\t')?;
+                    (r == refname).then(|| sha.to_string())
+                })
+                .unwrap_or_default();
+            Some((url.to_string(), sha))
+        })
+        .collect::<Option<_>>()?;
+    (!tips.is_empty()).then_some(tips)
+}
+
+/// push 先に tip と違う先端があれば、残す理由を出して true。pushed（push を送った後）なら、もう消えた push 先も添える
+fn kept_for_moved(
+    tips: &[(String, String)],
+    branch: &str,
+    remote: &str,
+    tip: &str,
+    pushed: bool,
+) -> bool {
+    let moved: Vec<String> = tips
+        .iter()
+        .filter(|(_, sha)| !sha.is_empty() && sha != tip)
+        .map(|(url, sha)| format!("{} は {sha}", shown_url(url)))
+        .collect();
+    if moved.is_empty() {
+        return false;
+    }
+    let gone: Vec<String> = tips
+        .iter()
+        .filter(|(_, sha)| pushed && sha.is_empty())
+        .map(|(url, _)| shown_url(url))
+        .collect();
+    let gone = if gone.is_empty() {
+        String::new()
+    } else {
+        format!("。{} からはもう消えた", gone.join("、"))
+    };
+    println!(
+        "REMOTE_BRANCH: kept (push 先の {branch} の先端が、判定に使った {remote} の先端（{tip}）と違う（{}）{gone}。判定の後のほかの clone の push か、{remote} の url と pushurl の食い違いなので、取り込むか要らないかを確かめてから消す)",
+        moved.join("、")
+    );
+    true
 }
 
 /// git push --delete が消しに行く URL（pushurl があればその全部、無ければ url の全部）の GitHub のリポジトリ
@@ -962,7 +1001,8 @@ fn push_repos(remote: &str) -> Result<Vec<String>, String> {
             Some(_) => {}
             None if on_github(url) => {
                 return Err(format!(
-                    "{remote} の URL（{url}）から GitHub のリポジトリを読めない"
+                    "{remote} の URL（{}）から GitHub のリポジトリを読めない",
+                    shown_url(url)
                 ));
             }
             None => {}
@@ -1149,8 +1189,16 @@ fn github_repo(url: &str) -> Option<String> {
     }
 }
 
-/// 出力に書く URL
+/// 出力に書く URL。scheme のある URL の userinfo（https://user:token@host の user:token）は、セッションの記録に
+/// 残さないよう外す（git push も、エラーに書く URL から外す）。scp 形式（git@host:path）の user は認証情報でないので残す
 fn shown_url(url: &str) -> String {
+    if let Some(i) = url.find("://") {
+        let rest = &url[i + 3..];
+        let authority = &rest[..rest.find('/').unwrap_or(rest.len())];
+        if let Some(at) = authority.rfind('@') {
+            return format!("{}{}", &url[..i + 3], &rest[at + 1..]);
+        }
+    }
     url.to_string()
 }
 
