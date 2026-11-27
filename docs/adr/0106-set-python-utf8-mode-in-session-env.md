@@ -27,8 +27,7 @@ Python にも効くが、ほかの機械と新しく入れる機械には入ら�
 `env` も `PYTHONUTF8` も書かない（nixfiles `bf8b3677`、2026-11-25 を grep）。
 
 測った値は、Windows 11 Pro 10.0.26100 の Python 3.13.1 で、`PYTHONUTF8=1` と無しで次を実行したもの（2026-11-27）:
-`sys.flags.utf8_mode`、`sys.stdout.encoding`、`locale.getpreferredencoding(False)`、`open("t.txt", "w").write("a
-")` の
+`sys.flags.utf8_mode`、`sys.stdout.encoding`、`locale.getpreferredencoding(False)`、`open("t.txt", "w").write("a\n")` の
 バイト列、`subprocess.run(["cmd", "/d", "/c", "echo あ"], capture_output=True, text=True)`。
 
 ## 検討した案
