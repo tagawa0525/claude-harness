@@ -1,6 +1,6 @@
 ---
 type: ADR
-status: proposed
+status: accepted
 date: 2026-11-27
 requires: [ADR-0084, ADR-0086, ADR-0093, ADR-0094]
 supersedes: []
@@ -110,4 +110,6 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
 - `nix/tests/git-attributes.sh`: home-manager の構成が置くファイルが `config/git/attributes` と同じこと、home-manager の
   checkLinkTargets が利用者のファイルで止まること、`core.attributesFile` を別の場所にすると評価が止まること、置いた
   ファイルで CRLF のファイルが LF で index に入ること
-- Windows の CI（`setup`）: `scripts/install-windows.sh` が置いたファイルが `config/git/attributes` と同じこと
+- Windows の CI（`setup` の Check the global git attributes）: `scripts/install-windows.sh` が置いたファイルが
+  `config/git/attributes` と同じで、runner の `core.autocrlf=true` のもとでも、`.gitattributes` の無いリポジトリのテキストを
+  LF で index に入れて LF で取り出し、`*.bat` を CRLF で取り出すこと
