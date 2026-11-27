@@ -80,6 +80,8 @@ jobs:
           }
           touch ~/.claude/bin/claude-hooks.exe.old-0
           coproc HOLD { "$HOME/.claude/bin/claude-hooks.exe" pre-tool-use; }
+          # bash は終わった coproc を回収すると HOLD_PID を消すので、先に控える
+          hold_pid=$HOLD_PID
           for _ in $(seq 50); do
             if running; then
               break
@@ -91,16 +93,13 @@ jobs:
           running
           # 空の入力に hook が返す終了コードは、ここで確かめることでないので見ない
           exec {HOLD[1]}>&-
-          wait "$HOLD_PID" || true
+          wait "$hold_pid" || true
           left=$(find ~/.claude/bin -name '*.exe.old-*')
           if [ -n "$left" ]; then
             echo "退けた exe が残っています:"
             echo "$left"
             exit 1
           fi
-          rc=0
-          "$HOME/.claude/bin/claude-hooks" local-review-covers || rc=$?
-          test "$rc" -eq 2
       # スキルの sh のスクリプトは、Linux と同じ "$HOME/.claude/bin/claude-hooks" で呼ぶ（ADR-0087）。Git Bash がこのパスに
       # .exe を補って起動することを、引数の足りない呼び出しの使い方の誤り（2）で確かめる（見つからなければ 127）
       - name: Check the paths the scripts and messages use
