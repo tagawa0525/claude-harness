@@ -11,9 +11,6 @@
 
 set -euo pipefail
 
-echo "SKIP: RED（git-attributes.nix はまだ無い）"
-exit 0
-
 ROOT=$(git rev-parse --show-toplevel)
 # shellcheck source=nix/tests/lib.sh
 source "$ROOT/nix/tests/lib.sh"
