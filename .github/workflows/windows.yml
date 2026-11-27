@@ -234,15 +234,16 @@ jobs:
           fi
           cat "$repo.err"
           grep -qF "機密情報らしき内容" "$repo.err"
-      # スクリプトが置いたグローバルの attributes（ADR-0105）が配る中身と同じで、runner の core.autocrlf=true のもとでも、
-      # .gitattributes の無いリポジトリのテキストを LF で index に入れて LF で取り出し、*.bat を CRLF で取り出す
+      # スクリプトが置いたグローバルの attributes（ADR-0105）が配る中身と同じで、core.autocrlf=true（Git for Windows の既定。
+      # runner の system の値が変わっても確かめるよう、一時のリポジトリに書く）のもとでも、.gitattributes の無いリポジトリの
+      # テキストを LF で index に入れて LF で取り出し、*.bat を CRLF で取り出す
       - name: Check the global git attributes
         run: |
           set -euo pipefail
           cmp ~/.config/git/attributes config/git/attributes
-          git config --show-origin --get-all core.autocrlf || true
           repo=$(mktemp -d)
           git -C "$repo" init -q -b main
+          git -C "$repo" config core.autocrlf true
           printf 'x\r\ny\r\n' >"$repo/a.txt"
           printf 'echo\n' >"$repo/run.bat"
           git -C "$repo" add a.txt run.bat
