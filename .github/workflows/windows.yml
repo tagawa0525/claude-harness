@@ -79,7 +79,8 @@ jobs:
             grep -qF claude-hooks.exe <<<"$out"
           }
           touch ~/.claude/bin/claude-hooks.exe.old-0
-          before=$(mktemp)
+          # 置き換わったかは file ID で比べる（cargo install のコピーは、更新時刻をビルドのときのまま残す）
+          before=$(stat -c %i ~/.claude/bin/claude-hooks.exe)
           coproc HOLD { "$HOME/.claude/bin/claude-hooks.exe" pre-tool-use; }
           # bash は終わった coproc を回収すると HOLD_PID を消すので、先に控える
           hold_pid=$HOLD_PID
@@ -101,7 +102,7 @@ jobs:
             echo "$left"
             exit 1
           fi
-          test ~/.claude/bin/claude-hooks.exe -nt "$before"
+          test "$(stat -c %i ~/.claude/bin/claude-hooks.exe)" != "$before"
       # 入れるのに失敗したとき、退けた exe を戻す。前の回が戻す前に止まって残した退けた exe は、対の exe が無ければ、
       # 新しいほうを戻し、古いほうを消す（#414）。cargo は失敗する偽のものに置き換え、HOME は一時の場所にする
       - name: Restore the moved-aside exe
