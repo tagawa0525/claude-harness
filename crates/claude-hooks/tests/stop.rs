@@ -632,3 +632,21 @@ fn an_english_response_with_a_failed_backup_reports_both() {
     let err = assert_sent_back(&work.stop(&[&norepo], &stop_input(ENGLISH_REPORT, false)));
     assert!(err.contains("コミットできませんでした"), "{err}");
 }
+
+/// ユーザーかスキルが英語の本文を求めた応答は、本文を訳させず、コードブロックか引用に入れて日本語の説明を添えさせる
+/// （その形なら 0 で通る）
+#[test]
+#[ignore = "RED: 英語の本文を求められたときの修正方法は次のコミットで足す"]
+fn the_send_back_tells_how_to_keep_a_requested_english_body() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    let err = assert_sent_back(&work.stop(&[&cd], &stop_input(ENGLISH_REPORT, false)));
+    assert!(err.contains("英語の本文を求めた"), "{err}");
+    assert!(err.contains("コードブロックか引用"), "{err}");
+
+    let kept = format!(
+        "求められた英語の PR の本文です。英語のまま、コードブロックに入れて置きます。\n\n\
+         ```markdown\n{ENGLISH_REPORT}\n```"
+    );
+    assert_ok(&work.stop(&[&cd], &stop_input(&kept, false)));
+}
