@@ -801,3 +801,56 @@ fn a_failing_for_each_ref_in_the_merge_check_stops_before_changing_anything() {
     assert_eq!(repo.git(&["branch", "--list", "feat/x"]), "+ feat/x");
     assert_eq!(text(&out.stdout), "");
 }
+
+#[test]
+fn a_push_url_with_a_newer_tip_keeps_the_branch_on_every_push_url() {
+    // git push は push 先ごとに送り、lease で拒まれた先があっても残りへ送る。先端が判定のままの push 先だけを
+    // 消すと、残したと報告しながら push 先が食い違うので、どれかが違えばどこへも送らない
+    let repo = Repo::new();
+    let mirror = repo.root.join("mirror.git");
+    let same = repo.root.join("same.git");
+    let moved = repo.root.join("moved.git");
+    for bare in [&mirror, &same, &moved] {
+        repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    }
+    repo.git(&["remote", "add", "origin", mirror.to_str().unwrap()]);
+    repo.git(&[
+        "remote",
+        "set-url",
+        "--push",
+        "origin",
+        same.to_str().unwrap(),
+    ]);
+    repo.git(&[
+        "remote",
+        "set-url",
+        "--add",
+        "--push",
+        "origin",
+        moved.to_str().unwrap(),
+    ]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    let tip = repo.git(&["rev-parse", "HEAD"]);
+    for bare in [&mirror, &same, &moved] {
+        repo.git(&["push", "-q", bare.to_str().unwrap(), "feat/x"]);
+    }
+    repo.git(&["switch", "-q", "-c", "other"]);
+    repo.write("c.txt", "c\n");
+    repo.commit("feat: c");
+    repo.git(&["push", "-q", moved.to_str().unwrap(), "other:feat/x"]);
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["branch", "-q", "-D", "other"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    repo.git(&["push", "-q", mirror.to_str().unwrap(), "main"]);
+
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("REMOTE_BRANCH: kept"));
+    assert_eq!(
+        repo.git(&["ls-remote", same.to_str().unwrap(), "refs/heads/feat/x"]),
+        format!("{tip}\trefs/heads/feat/x")
+    );
+}

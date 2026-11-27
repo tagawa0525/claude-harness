@@ -1149,9 +1149,39 @@ fn github_repo(url: &str) -> Option<String> {
     }
 }
 
+/// 出力に書く URL
+fn shown_url(url: &str) -> String {
+    url.to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{github_repo, on_github};
+    use super::{github_repo, on_github, shown_url};
+
+    #[test]
+    fn shown_url_drops_the_userinfo_of_urls_with_a_scheme() {
+        assert_eq!(
+            shown_url("https://x-access-token:ghp_x@github.com/o/r.git"),
+            "https://github.com/o/r.git"
+        );
+        assert_eq!(
+            shown_url("https://ghp_x@github.com/o/r.git"),
+            "https://github.com/o/r.git"
+        );
+        assert_eq!(
+            shown_url("ssh://git@example.com/srv/r.git"),
+            "ssh://example.com/srv/r.git"
+        );
+        // userinfo の無い URL、scp 形式、パスの中の @ は変えない
+        for url in [
+            "https://github.com/o/r.git",
+            "git@github.com:o/r.git",
+            "/srv/a@b/r.git",
+            "https://example.com/a@b/r.git",
+        ] {
+            assert_eq!(shown_url(url), url);
+        }
+    }
 
     #[test]
     fn on_github_matches_the_host_not_a_substring() {
