@@ -8,27 +8,40 @@ set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo"
 
-# Windows は動いている exe の上書きを拒む（os error 5）がリネームは許すので、ほかのセッションの hook が動かしている間も
-# 入れ直せるよう、入っている exe を退けてから入れる。入れるのに失敗したら、hook が exe を失わないよう戻す。
-# 退けた exe は使うプロセスが終わるまで消せないので、次の回に、消せるものだけ消す（消せないものは使用中で、残してよい）
-for old in ~/.claude/bin/*.exe.old-*; do
-  [ -e "$old" ] || continue
-  rm -f "$old" 2>/dev/null || echo "使用中なので残します: $old"
+crates=(claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records)
+
+# 入っている exe に触れる前に、一時の置き場でビルドを済ませる（失敗しても、入っている版はそのまま動く）。下の ~/.claude
+# への install は同じ target-dir を使うので、ビルド済みのものを置くだけで終わり、exe の無い間は短い
+build=$(mktemp -d)
+trap 'rm -rf "$build"' EXIT
+for crate in "${crates[@]}"; do
+  cargo install --locked --force --root "$build/root" --target-dir "$build/target" --path "crates/$crate"
 done
 
+# Windows は動いている exe の上へ置き換えるのを拒む（os error 5）が、リネームと、Git Bash の rm での削除は許す（動いている
+# プロセスはそのまま動く）。ほかのセッションの hook が動かしている間も入れ直せるよう、入っている exe を退けてから入れ、
+# 入れた後に消す。入れるのに失敗したら、hook が exe を失わないよう戻して止める。前の回が止まって残した退けた exe も消す
 # claude-hooks を Linux と同じ ~/.claude/bin に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため
-for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records; do
+for old in ~/.claude/bin/*.exe.old-*; do
+  if [ -e "$old" ]; then
+    rm -f "$old"
+  fi
+done
+for crate in "${crates[@]}"; do
   exe=~/.claude/bin/$crate.exe
   old=""
   if [ -e "$exe" ]; then
     old="$exe.old-$(date +%s)-$$"
     mv "$exe" "$old"
   fi
-  if ! cargo install --locked --force --root ~/.claude --path "crates/$crate"; then
+  if ! cargo install --locked --force --root ~/.claude --target-dir "$build/target" --path "crates/$crate"; then
     if [ -n "$old" ] && ! [ -e "$exe" ]; then
       mv "$old" "$exe"
     fi
     exit 1
+  fi
+  if [ -n "$old" ]; then
+    rm -f "$old"
   fi
 done
 
