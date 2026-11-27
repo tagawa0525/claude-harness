@@ -298,3 +298,16 @@ fn a_repository_without_gitattributes_stores_crlf_files_as_lf() {
     git(&["checkout", "--", "run.bat"]);
     assert_eq!(std::fs::read(repo.join("run.bat")).unwrap(), b"echo\r\n");
 }
+
+#[test]
+#[ignore = "RED: claude-setup git-attributes はまだ無い"]
+fn a_global_value_at_the_same_place_wins_over_a_system_value_elsewhere() {
+    // git は global の値を使い、system の値は読まない
+    let home = Home::new();
+    home.set_global("core.attributesFile", "~/.config/git/attributes");
+    let system = home.0.join("system.gitconfig");
+    std::fs::write(&system, "[core]\n\tattributesFile = /opt/corp/attributes\n").unwrap();
+    let out = home.run_with(&[("GIT_CONFIG_SYSTEM", &system)]);
+    assert!(out.status.success(), "{}", said(&out));
+    assert_eq!(std::fs::read_to_string(home.attributes()).unwrap(), SOURCE);
+}
