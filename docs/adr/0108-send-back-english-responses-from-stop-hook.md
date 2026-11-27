@@ -1,6 +1,6 @@
 ---
 type: ADR
-status: proposed
+status: accepted
 date: 2026-11-27
 requires: [ADR-0076, ADR-0089]
 supersedes: []
@@ -114,3 +114,5 @@ Stop の hook の入力と出力（Claude Code の hooks の文書の Stop の�
   `true` の入力は 0 で終える。退避が失敗した回の英語の応答は 2 で終え、退避の失敗の行も出す
 - 数え方の単体テスト（`src/response_language.rs`）: コードブロック、インラインのコード、引用のブロック、パスと識別子を
   数えない
+- 実装したバイナリに、手元の記録の最後の応答 881 件（2026-11-27。上の 877 件に、数えた後の同じ日の 4 件が加わったもの）を
+  `last_assistant_message` として渡すと、2 で返したのは上と同じ 12 件で、ほかは返さなかった
