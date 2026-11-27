@@ -132,7 +132,23 @@ pub(crate) fn same_path(home: &Path, value: &str, path: &Path) -> bool {
     };
     match (std::fs::canonicalize(&value), std::fs::canonicalize(path)) {
         (Ok(a), Ok(b)) => a == b,
-        _ => value == path,
+        // まだ無い場所（初めて置くファイル）は、親を正規化して名前と比べる（Windows の大文字と小文字の違いと junction を
+        // 同じと読む）。Windows のファイルシステムは名前の大文字と小文字を区別しない
+        _ => match (
+            value.parent().map(std::fs::canonicalize),
+            path.parent().map(std::fs::canonicalize),
+            value.file_name(),
+            path.file_name(),
+        ) {
+            (Some(Ok(a)), Some(Ok(b)), Some(x), Some(y)) if a == b => {
+                if cfg!(windows) {
+                    x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase()
+                } else {
+                    x == y
+                }
+            }
+            _ => value == path,
+        },
     }
 }
 

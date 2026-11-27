@@ -13,6 +13,11 @@ pub fn run(home: &Path, from: &Path) -> Result<(), String> {
     let text = std::fs::read_to_string(from)
         .map_err(|e| format!("❌ {} を読めません（{e}）", from.display()))?;
     let path = target(home);
+    // 置く場所の親を先に作る: core.attributesFile の値と比べるとき、まだ無いファイルは親を正規化して比べる
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("❌ {} を作れません（{e}）", dir.display()))?;
+    }
     // git が使うのは global の値で、無ければ system の値
     let set = match config_value("--global", "core.attributesFile")? {
         Some(value) => Some(("--global", value)),
@@ -29,19 +34,14 @@ pub fn run(home: &Path, from: &Path) -> Result<(), String> {
     }
     match std::fs::symlink_metadata(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Ok(meta) if !meta.file_type().is_symlink() && ours(&path, &text) => {}
-        // symlink（Linux の home-manager が store に置くもの）、読めないファイル、利用者の書いたファイルは持ち主のもの
-        _ => {
-            return Err(format!(
-                "❌ {} に、ハーネスのものでない attributes があります。上書きするとその規則が効かなくなるので、ここで止めます\n   修正方法: その規則をリポジトリの .gitattributes か $GIT_DIR/info/attributes に移してファイルを外すか、改行の規則（{}）を自分でそのファイルに足して、この手順を飛ばしてください",
-                path.display(),
-                from.display()
-            ));
-        }
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("❌ {} を作れません（{e}）", dir.display()))?;
+        Ok(meta) if !meta.file_type().is_symlink() => match std::fs::read_to_string(&path) {
+            Ok(old) if old == text => return Ok(()),
+            Ok(old) if same_first_line(&old, &text) => {}
+            // 読めないファイルと、利用者の書いたファイルは持ち主のもの
+            _ => return Err(foreign(&path, from)),
+        },
+        // symlink（Linux の home-manager が store に置くもの）は持ち主のもの
+        _ => return Err(foreign(&path, from)),
     }
     crate::sync::replace_with(&path, |tmp| std::fs::write(tmp, &text))
         .map_err(|e| format!("❌ {} を書けません（{e}）", path.display()))
@@ -57,8 +57,14 @@ fn target(home: &Path) -> PathBuf {
 }
 
 /// ハーネスが置いたファイルか。配る中身の 1 行目（変えない約束。ADR-0105）で見分ける
-fn ours(path: &Path, text: &str) -> bool {
-    let first = |t: &str| t.lines().next().map(str::to_owned);
-    std::fs::read_to_string(path)
-        .is_ok_and(|old| first(&old).is_some() && first(&old) == first(text))
+fn same_first_line(old: &str, text: &str) -> bool {
+    matches!((old.lines().next(), text.lines().next()), (Some(a), Some(b)) if a == b)
+}
+
+fn foreign(path: &Path, from: &Path) -> String {
+    format!(
+        "❌ {} に、ハーネスのものでない attributes があります。上書きするとその規則が効かなくなるので、ここで止めます\n   修正方法: その規則をリポジトリの .gitattributes か $GIT_DIR/info/attributes に移してファイルを外すか、改行の規則（{}）を自分でそのファイルに足して、この手順を飛ばしてください",
+        path.display(),
+        from.display()
+    )
 }

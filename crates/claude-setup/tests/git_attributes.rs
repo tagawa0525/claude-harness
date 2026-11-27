@@ -299,7 +299,6 @@ fn a_global_value_at_the_same_place_wins_over_a_system_value_elsewhere() {
 }
 
 #[test]
-#[ignore = "RED: まだ直していない"]
 fn a_global_attributes_file_spelled_with_another_case_is_the_same_place_on_windows() {
     // Windows のファイルシステムは大文字と小文字を区別しないので、git は同じファイルを読む
     if !cfg!(windows) {
@@ -317,7 +316,6 @@ fn a_global_attributes_file_spelled_with_another_case_is_the_same_place_on_windo
 }
 
 #[test]
-#[ignore = "RED: まだ直していない"]
 fn the_same_content_is_left_untouched() {
     // 中身が同じなら書き直さない（読むだけの属性も、更新の時刻も変えない）
     let home = Home::new();
