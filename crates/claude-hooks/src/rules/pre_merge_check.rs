@@ -2,7 +2,6 @@
 //!
 //! CLAUDE.md の必須ゲートをツールレベルで強制する:
 //! 1. マージ方式は --merge のみ（--squash / --rebase は禁止）
-//! 2. --delete-branch でマージ後のブランチを削除する
 //! 3. マージコミット本文に ## Why / ## What / ## Impact が揃っている
 //! 4. CI チェックが未完了・失敗していない
 //! 5. reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
@@ -23,12 +22,12 @@
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
-//! 10. PR の head のブランチを base にした、同じリポジトリの開いている PR（積み重ねた PR）が無い。2 でマージの後に
-//!     head のブランチは消え、GitHub はそれを base にした開いている PR を閉じる（閉じた PR は base を付け替えられない）
-//!     ので、上の PR ごとに `gh pr edit <番号> --base <base>` を示して止める。fork からの PR は、消えるのが fork の
-//!     側のブランチなので検査しない
+//! 10. マージで head のブランチが消えるとき（--delete-branch か、リポジトリの delete_branch_on_merge。設定を読めなければ
+//!     消えるとみなす）、PR の head のブランチを base にした、同じリポジトリの開いている PR（積み重ねた PR）が無い。GitHub は
+//!     消えたブランチを base にした開いている PR を閉じる（閉じた PR は base を付け替えられない）ので、上の PR ごとに
+//!     `gh pr edit <番号> --base <base>` を示して止める。fork からの PR は、消えるのが fork の側のブランチなので検査しない
 //!
-//! 1〜3 はコマンド文字列だけで判定する。4〜10 は gh で GitHub に問い合わせ、
+//! 1 と 3 はコマンド文字列だけで判定する。4〜10 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
@@ -517,6 +516,60 @@ fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) 
     )
 }
 
+/// マージで head のブランチが消える理由
+enum Deletion {
+    /// --delete-branch（false を表す値でない）
+    Flag,
+    /// リポジトリの delete_branch_on_merge が true
+    Setting,
+    /// 設定を読めない（null を含む）。積み重ねた PR を確かめる側に倒し、消えるとみなす
+    Unknown,
+}
+
+/// マージで head のブランチが消えるか。消えなければ None。--delete-branch の値は、gh（strconv.ParseBool）が false と読む
+/// 値のときだけ消さないとみなす。変数から展開される形（$D）は数えない: 語だけでは --body の値などと見分けられず、数えると
+/// 積み重ねた PR の無いマージにも検査の問い合わせを足す
+fn branch_deletion(
+    dir: &std::path::Path,
+    args: &[Arg],
+    owner: &str,
+    name: &str,
+) -> Option<Deletion> {
+    let flag = args.iter().any(|a| {
+        let t = a.text.as_str();
+        match t
+            .strip_prefix("--delete-branch")
+            .or_else(|| t.strip_prefix("-d"))
+        {
+            Some("") => true,
+            Some(v) => match v.strip_prefix('=') {
+                Some(value) => !matches!(value, "false" | "0" | "f" | "F" | "FALSE" | "False"),
+                None => false,
+            },
+            None => false,
+        }
+    });
+    if flag {
+        return Some(Deletion::Flag);
+    }
+    match gh::gh(
+        dir,
+        &[
+            "api",
+            &format!("repos/{owner}/{name}"),
+            "--jq",
+            ".delete_branch_on_merge",
+        ],
+    )
+    .as_deref()
+    .map(str::trim)
+    {
+        Ok("false") => None,
+        Ok("true") => Some(Deletion::Setting),
+        _ => Some(Deletion::Unknown),
+    }
+}
+
 /// head のブランチ（`head_ref`）を base にした開いている PR があれば、その base を先に付け替えさせる deny の理由。
 /// 探せなければ、確認できない理由（ほかの GitHub の読み取りと同じく止める）
 fn stacked_prs_reason(
@@ -525,6 +578,7 @@ fn stacked_prs_reason(
     name: &str,
     head_ref: &str,
     base_ref: &str,
+    deletion: &Deletion,
 ) -> Option<String> {
     let repo = format!("{owner}/{name}");
     let Ok(out) = gh::gh(
@@ -572,8 +626,17 @@ fn stacked_prs_reason(
             )
         })
         .collect();
+    let cause = match deletion {
+        Deletion::Flag => "このマージでは --delete-branch で",
+        Deletion::Setting => {
+            "このリポジトリはマージで head のブランチを消す設定（delete_branch_on_merge）なので"
+        }
+        Deletion::Unknown => {
+            "リポジトリの delete_branch_on_merge の設定を読めないので、消えるとみなすと"
+        }
+    };
     Some(format!(
-        "head のブランチ {head_ref} を base にした開いている PR があります（{}）。--delete-branch でマージすると {head_ref} が消え、\
+        "head のブランチ {head_ref} を base にした開いている PR があります（{}）。{cause} {head_ref} が消え、\
          GitHub はそれを base にした開いている PR を閉じます。閉じた PR は、消えたブランチを戻さない限り開き直せず、base を付け替えられません。\
          先に次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、マージしてください:\n{}",
         listed.join(", "),
@@ -710,15 +773,6 @@ impl Rule for PreMergeCheck {
             } else if !has_flag(args, &["--merge", "-m"]) {
                 reasons.push(
                     "--merge を明示してください（マージ方式の既定値に依存しない）".to_string(),
-                );
-                text_reasons += 1;
-            }
-
-            // --- 2. ブランチ削除 ---
-            if !has_flag(args, &["--delete-branch", "-d"]) {
-                reasons.push(
-                    "--delete-branch を付けてください（マージ後のブランチは速やかに削除する）"
-                        .to_string(),
                 );
                 text_reasons += 1;
             }
@@ -1152,17 +1206,21 @@ impl Rule for PreMergeCheck {
 
             // --- 10. head のブランチを base にした開いている PR（積み重ねた PR）---
             // fork からの PR は数えない。--delete-branch で消えるのは fork の側のブランチで、base のリポジトリの
-            // 同じ名前のブランチを base にした PR は閉じられない
+            // 同じ名前のブランチを base にした PR は閉じられない。head のブランチを消さないマージでは、上の PR の付け替えの
+            // コマンドは post-merge-cleanup が示す
             if !owner.is_empty()
                 && !name.is_empty()
                 && let Some(meta) = pr_meta.as_ref()
                 && meta["isCrossRepository"].as_bool() != Some(true)
+                && let Some(deletion) = branch_deletion(&dir, args, &owner, &name)
             {
                 let head_ref = meta["headRefName"].as_str().unwrap_or("");
                 if head_ref.is_empty() {
                     reasons.push("head のブランチ名を取得できず、それを base にした開いている PR を確認できません（gh pr view の headRefName が空）".to_string());
                 } else {
-                    reasons.extend(stacked_prs_reason(&dir, &owner, &name, head_ref, &base_ref));
+                    reasons.extend(stacked_prs_reason(
+                        &dir, &owner, &name, head_ref, &base_ref, &deletion,
+                    ));
                 }
             }
 

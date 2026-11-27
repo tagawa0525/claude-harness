@@ -18,7 +18,7 @@ allowed-tools:
 
 # GitHub PR Merge Command
 
-GitHub の PR をマージする。機械的に判定できる条件（マージ方式、本文の見出し、CI、未解決スレッド、head の遅れ、head のブランチを base にした開いている PR）は
+GitHub の PR をマージする。機械的に判定できる条件（マージ方式、本文の見出し、CI、未解決スレッド、head の遅れ、マージで head のブランチが消えるリポジトリでの、それを base にした開いている PR）は
 `pre-merge-check` hook が deny して修正方法を示すので、ここでは判断が要るものだけを扱う。/delegate の担当の PR は、
 親の許可の後に担当がマージする（/delegate の受ける側の手順 10）。
 
@@ -76,10 +76,13 @@ PR: #[番号]
 ## マージ実行
 
 ```bash
-gh pr merge [PR番号または URL] --merge --delete-branch \
+gh pr merge [PR番号または URL] --merge \
   --subject "Merge: [subject]" \
   --body "[body]"
 ```
+
+ブランチは下の post-merge-cleanup が消す。`--delete-branch` は付けない（feature の worktree で付けると、gh が手元を base の
+ブランチに切り替えようとして、それを取り出したメインの worktree とぶつかり、マージが済んでも終了コード 1 で終わる）。
 
 ## クリーンアップ
 
