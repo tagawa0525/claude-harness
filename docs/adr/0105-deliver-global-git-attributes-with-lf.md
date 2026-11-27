@@ -6,7 +6,7 @@ requires: [ADR-0084, ADR-0086, ADR-0093, ADR-0094]
 supersedes: []
 superseded-by:
 issues: []
-description: git のグローバルの attributes に「* text=auto eol=lf」と、*.bat と *.cmd の CRLF を置く。正は config/git/attributes で、Windows は claude-setup git-attributes、Linux は home-manager の programs.git.attributes が置き、利用者のファイルと core.attributesFile は奪わない
+description: git のグローバルの attributes に、すべてのパスの text=auto eol=lf と、拡張子 bat と cmd の eol=crlf を置く。正は config/git/attributes で、Windows は claude-setup git-attributes、Linux は home-manager の programs.git.attributes が置き、利用者のファイルと core.attributesFile は奪わない
 ---
 
 # ADR-0105: git のグローバルの attributes に、改行を LF にそろえる規則を、Windows は claude-setup、Linux は home-manager の programs.git.attributes で置く
