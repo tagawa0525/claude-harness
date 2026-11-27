@@ -38,8 +38,11 @@ GitHub リモートの無いリポジトリで、feature ブランチをロー�
 $ARGUMENTS のブランチ（省略時は今のブランチ）が対象。`ERROR:` の行があれば、その指示に従って止まる。
 
 ブランチの操作は `git -C [TARGET_WORKTREE]`、マージは `git -C [DEFAULT_WORKTREE]` で行う（別の worktree にあるブランチへは
-switch できない）。`TARGET_WORKTREE` が none なら `git -C [DEFAULT_WORKTREE] switch [branch]` で取り出して以降はそこを指し、
-マージの前に `git -C [DEFAULT_WORKTREE] switch main` で戻す。`DEFAULT_WORKTREE` も none なら今の worktree を使う。
+switch できない）。`DEFAULT_WORKTREE` が none（main をどの worktree も取り出していない）なら、主の worktree の隣に
+`git worktree add <主の worktree>-main main` で作り、以降はそこを `DEFAULT_WORKTREE` とする（今の worktree と主の worktree は
+switch しない。ほかのセッションが作業中のブランチを取り出していることがある）。`TARGET_WORKTREE` が none なら
+`git -C [DEFAULT_WORKTREE] switch [branch]` で取り出して以降はそこを指し、マージの前に `git -C [DEFAULT_WORKTREE] switch main` で
+戻す。
 
 ## 止まる条件
 
@@ -245,8 +248,8 @@ Branch: [branch]
 
 ### マージ
 
-`git merge` は main の worktree から実行する。`DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う。
-直前に `git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD`（none なら今の worktree）が main であることを確かめ、違えば止まる:
+`git merge` は main の worktree（`DEFAULT_WORKTREE`。none だったときは上で作ったもの）から実行する。直前に
+`git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD` が main であることを確かめ、違えば止まる:
 
 ```bash
 git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'
@@ -271,7 +274,7 @@ git で書き込まない。通ったら後片付けに進む。hook に拒ま�
 ~/.claude/scripts/post-merge-cleanup.sh [branch] "$(git -C [DEFAULT_WORKTREE] rev-parse HEAD^1)"
 ```
 
-第 2 引数はマージの前の main（マージコミットの第 1 親。`DEFAULT_WORKTREE` が none なら今の worktree）で、省かない（`NOTE:` の
+第 2 引数はマージの前の main（マージコミットの第 1 親）で、省かない（`NOTE:` の
 判定の起点と、このブランチのマージコミットの確認に使う）。対象の worktree とブランチを削除する。cwd のリポジトリのブランチを片付けるので、別のリポジトリのブランチなら
 `cd <そのリポジトリ> &&` を付けて呼ぶ。未マージなら何も消さずに止まり、変更が残っていれば失敗する（確認して対処する）。出力の `NOTE:` の行は、完了メッセージでそのまま
 ユーザーに伝える。マージ済みの PR を痕跡にした `NOTE:` の行は、別のリポジトリのブランチを渡しているので、マージした
