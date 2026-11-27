@@ -79,9 +79,9 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
   `core.attributesFile` は書かない（書かなくても git が読み、利用者の gitconfig を増やさない）
 - Windows（`claude-setup git-attributes`）は、次のときに止まり、attributes のファイルを書かない（置く場所の親の
   ディレクトリは、まだ無いファイルの場所を正規化して比べるために先に作る）
-  - git が使う `core.attributesFile`（global の値、無ければ system の値。include した設定を含む。`GIT_CONFIG_NOSYSTEM`
-    のときは system を見ない）が、置く場所と違う場所を指す。git はそこを読み、置く場所は読まないので、置いても効かず、そこを書き換えると利用者の規則を
-    奪う
+  - git が使う `core.attributesFile`（global の値、無ければ system の値。include した設定を含む。
+    `GIT_CONFIG_NOSYSTEM` のときは system を見ない）が、置く場所と違う場所を指す。git はそこを読み、置く場所は
+    読まないので、置いても効かず、そこを書き換えると利用者の規則を奪う
   - 置く場所に、ハーネスの置いたものでないファイルか symlink がある。ハーネスの置いたものは、1 行目が配る中身の 1 行目と
     同じファイルで、上書きして新しい中身にする（中身が同じなら何もしない）
 - Linux（`nix/git-attributes.nix`）は、配る行を `lib.mkBefore` で `programs.git.attributes` の先に置く。git は、同じパスに
@@ -91,14 +91,20 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
 
 ### 帰結
 
-- `.gitattributes` の無いリポジトリで、CRLF のファイルを add すると index は LF になる。既に CRLF で index にあるファイルは、
-  git が変えない（`git status` に差分は出ない。2026-11-27、Git for Windows で、CRLF をコミットしたリポジトリに後から
-  attributes を置いて確かめた）
-- git は属性ごとに決めるので、`.gitattributes` があっても、そこが決めない属性にはこの規則が効く。たとえば `* text=auto`
-  だけのリポジトリでは、`eol` をこの規則が決め、テキストを LF（`*.bat` と `*.cmd` は CRLF）で取り出す（2026-11-27、
-  `git check-attr -a` で確かめた）
+- `.gitattributes` の無いリポジトリで、CRLF のファイルを add すると index は LF になる。既に CRLF で index にある
+  ファイルは、`text=auto` の規則では git が変えない（`git status` に差分は出ない）。`text` を付ける `*.bat` と `*.cmd`
+  は変える: CRLF でコミットした `run.bat` は、attributes を置いた後に触ると `git status` に変更として出て、次の add で
+  LF で index に入る（どちらも 2026-11-27、Git for Windows で、CRLF をコミットしたリポジトリに後から attributes を
+  置いて確かめた）
+- git は属性ごとに決めるので、`.gitattributes` があっても、そこが決めない属性にはこの規則が効く。たとえば
+  `* text=auto` だけのリポジトリでは、`eol` をこの規則が決め、テキストを LF（`*.bat` と `*.cmd` は CRLF）で取り出す
+  （2026-11-27、`core.autocrlf=true` の一時のリポジトリで、`git check-attr -a` と取り出した後の `git ls-files --eol`
+  で確かめた）。リポジトリが書かなかった属性を決めることは、決定の要因の「リポジトリの規則に逆らわない」に反しないと
+  読む（リポジトリが改行を OS に任せる意図で `* text=auto` だけを書いていても、その意図は区別できない）
 - `eol` の属性は `core.autocrlf` と `core.eol` より優先される。Git for Windows の既定の `core.autocrlf=true` の機械（CI の
-  runner など）でも、`eol` を決めないリポジトリのテキストは CRLF でなく LF で取り出される
+  runner など）でも、`eol` を決めず `text` を外さない（`-text`、`binary` でない）リポジトリのテキストは、CRLF でなく LF
+  で取り出される。その機械の既存の clone は、作業ツリーの CRLF のファイルが git が書き直すまで CRLF のまま残り、取り出す
+  たびに変わったファイルだけが LF になる（改行の混ざった作業ツリーになる）
 - Linux でも、CRLF で書いたファイルの add が LF になり、`*.bat` と `*.cmd` は CRLF で取り出される。`core.autocrlf` か
   `core.eol` を設定した機械では、上と同じくその設定より `eol=lf` が勝つ
 - Linux で `home-manager.backupFileExtension` を設定した構成（nixfiles）は、利用者が手で置いた `~/.config/git/attributes` を
@@ -107,8 +113,8 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
 - 利用者が自分の規則を足すときは、Windows ではハーネスのファイルを直さず（次の設置で上書きされる）、リポジトリの
   `.gitattributes` か `$GIT_DIR/info/attributes` に書く
 - 配る中身の 1 行目は変えない（変えると、Windows の前の版のファイルを、ハーネスのものと見分けられなくなる）
-- 見ない `core.attributesFile` がある: Linux の、home-manager の外で書いた `~/.gitconfig` と `programs.git.includes` の
-  先、Linux の system の gitconfig（NixOS の `programs.git.config`）、Git for Windows の
+- 見ない `core.attributesFile` がある: リポジトリの `.git/config` と `git -c`、Linux の、home-manager の外で書いた
+  `~/.gitconfig` と `programs.git.includes` の先、Linux の system の gitconfig（NixOS の `programs.git.config`）、Git for Windows の
   `C:\ProgramData\Git\config`、global の `includeIf` の条件つきの include。そこで別の場所を指すと、置いたファイルは
   黙って効かない。Linux で `xdg.configHome` を既定から変え、`XDG_CONFIG_HOME` を出さない構成でも、git の読まない場所に
   置かれる（git hook の `core.hooksPath` も `~/.config/git/hooks` を書くので同じ前提）。今の構成（nixfiles と、この PC）は
@@ -123,6 +129,6 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
   checkLinkTargets が利用者のファイルで止まること、`core.attributesFile` を別の場所にすると評価が止まること、置いた
   ファイルで CRLF のファイルが LF で index に入ること
 - Windows の CI（`setup` の Check the global git attributes）: `scripts/install-windows.sh` が置いたファイルが
-  `config/git/attributes` と同じで、runner の `core.autocrlf`（2026-11-27 の runner では true。run 45981747999。step は値を出すだけで
-  確かめない）のもとで、`.gitattributes` の無いリポジトリのテキストを
-  LF で index に入れて LF で取り出し、`*.bat` を CRLF で取り出すこと
+  `config/git/attributes` と同じで、`core.autocrlf=true`（step が一時のリポジトリに書く。runner の system の値も
+  2026-11-27 に true だった。run 45981747999）のもとで、`.gitattributes` の無いリポジトリのテキストを LF で index に
+  入れて LF で取り出し、`*.bat` を CRLF で取り出すこと
