@@ -10,8 +10,14 @@
 //!   git -C ~/.claude log --stat refs/memory-backup -- projects/<プロジェクト>/memory/<ファイル>
 //!   git -C ~/.claude show refs/memory-backup~3:projects/<プロジェクト>/memory/<ファイル>
 //!
-//! 失敗したときは、1 行目に理由を書いて終了コード 1 で終わる。Claude Code は Stop の hook の 0 と 2 のほかの終了コードを
-//! 止めない失敗として扱い、標準エラーの 1 行目を通知に出す。2 は応答を続けさせるので、引数の誤りでも使わない
+//! 退避の後に、hook の JSON の `last_assistant_message`（最後の応答の本文）が英語で書かれていれば、1 行目に理由を、
+//! 続けて日本語で書き直す修正方法を書いて終了コード 2 で終わる（ADR-0108。判定は src/response_language.rs）。2 は応答を
+//! 続けさせ、標準エラーが Claude に渡る。JSON が読めない、本文が無い、`stop_hook_active` が true のときは見ない。
+//! 登録を別にしないのは、settings.json と claude-hooks の版がずれたとき、前の版が知らないサブコマンドに 2 で終え、
+//! 応答の終わりごとに続けさせるため
+//!
+//! 退避に失敗したときは、1 行目に理由を書いて終了コード 1 で終わる。Claude Code は Stop の hook の 0 と 2 のほかの
+//! 終了コードを止めない失敗として扱い、標準エラーの 1 行目を通知に出す。引数の誤りでも 2 は使わない
 
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal, Read};
@@ -36,23 +42,60 @@ pub fn main(args: &[String]) -> i32 {
         }
     };
     let input = read_input();
-    match backup(&dir, &input) {
-        Ok(()) => 0,
-        Err(reason) => {
-            eprintln!(
-                "claude-hooks stop: メモリを {} の {REF} にコミットできませんでした（この応答の版は残っていません）",
-                dir.display()
-            );
-            eprintln!("{reason}");
-            1
-        }
+    let backup = backup(&dir, &input);
+    let english = english_response(&input);
+    if let Some(counts) = &english {
+        eprintln!(
+            "claude-hooks stop: 最後の応答が日本語で書かれていません（英語の語 {}、かなと漢字 {} 字）",
+            counts.english_words, counts.japanese_chars
+        );
+        eprintln!(
+            "ユーザーへの応答は日本語で書く指示があります（settings の language と、システムプロンプトの Language の節）。\
+             同じ内容を日本語で書き直して、応答し直してください。コード、パス、識別子は元のままでかまいません"
+        );
+        eprintln!(
+            "英語のまま残す文（ユーザーかスキルが求めた英語の本文、ログ、英語の引用）は訳さず、コードブロックか `>` で\
+             始まる引用のブロックに入れ、日本語の説明を添えてください"
+        );
+        eprintln!(
+            "（英語の語が {} 以上で、かなと漢字が {} 字未満の応答を英語と見ています。コードブロック、インラインのコード、\
+             引用のブロックは数えていません）",
+            crate::response_language::MIN_ENGLISH_WORDS,
+            crate::response_language::MIN_JAPANESE_CHARS
+        );
+    }
+    if let Err(reason) = &backup {
+        eprintln!(
+            "claude-hooks stop: メモリを {} の {REF} にコミットできませんでした（この応答の版は残っていません）",
+            dir.display()
+        );
+        eprintln!("{reason}");
+    }
+    // 2 では標準エラーが Claude に渡り、利用者の通知には出ない。退避の失敗が重なっても、書き直した応答の Stop で退避を
+    // やり直し、失敗すれば 1 で通知に出る
+    match (english, backup) {
+        (Some(_), _) => 2,
+        (None, Ok(())) => 0,
+        (None, Err(_)) => 1,
     }
 }
 
-/// hook の JSON の session_id と cwd
+/// 最後の応答が英語なら、その数え方の結果。Stop の hook が応答を続けさせた後（stop_hook_active）は見ない。書き直しても
+/// 英語のままなら、続けて止めても直る見込みが小さく、手戻りだけが増える
+fn english_response(input: &Input) -> Option<crate::response_language::Counts> {
+    if input.stop_hook_active {
+        return None;
+    }
+    let counts = crate::response_language::count(input.message.as_deref()?);
+    counts.is_english().then_some(counts)
+}
+
+/// hook の JSON の session_id、cwd、stop_hook_active、last_assistant_message
 struct Input {
     session: String,
     cwd: String,
+    stop_hook_active: bool,
+    message: Option<String>,
 }
 
 fn read_input() -> Input {
@@ -72,6 +115,14 @@ fn read_input() -> Input {
     Input {
         session: field("session_id"),
         cwd: field("cwd"),
+        stop_hook_active: value
+            .get("stop_hook_active")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        message: value
+            .get("last_assistant_message")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
     }
 }
 

@@ -78,7 +78,9 @@ retro のスクリプト:
 - 退避: `claude-hooks stop [claude-dir]` に、今の `claude-memory-backup.sh` の振る舞い（退避の範囲、symlink のメモリの
   ディレクトリと上の階層のリポジトリでの失敗、`commit-tree` と古い値つきの `update-ref`、失敗の 1 行目と終了コード）を
   移す。失敗の 1 行目の名前は `claude-hooks stop:` にする（通知で、どのコマンドの失敗かが分かるように）。git は今と同じく子のプロセスで呼び、`--local-env-vars` の変数は子の環境から外す。hook の JSON は serde_json で読む。
-  引数の誤りを含め、0 と 1 のほかで終えない（Stop の hook の 2 は応答を続けさせる）
+  引数の誤りは 1 で終える。退避の失敗は、最後の応答を英語と見ない回（日本語の応答、本文の無い応答、`stop_hook_active`
+  の後）は 1 で終え、英語と見た回は 2 で終える（ADR-0108。Stop の hook の 2 は応答を続けさせる）。0、1、2 のほかでは
+  終えない
 - 登録: `claude-setup settings` は Stop に `claude-hooks`（`~/.claude/bin/claude-hooks`）を引数 `stop` で登録し、前の
   `claude-memory-backup` の登録を外す。Linux は `claude-code.nix` の `writeShellApplication` と `~/.claude/bin/claude-memory-backup`
   を消す。Windows は、`cargo install` で入れた `claude-hooks` をそのまま登録する（手順の追加は無い）
@@ -139,3 +141,10 @@ retro のスクリプト:
 - 移した後、retro のスクリプトのファイル（`memory-index.sh`、`prose-size.sh`、`session-events.sh`）は `lib/claude-hooks-script.sh` を
   読んで `claude_hooks_script <名前>` を呼ぶだけになり、jq を使わない。`.claude/tests/scripts/retro.sh` は、それらをブランチの
   バイナリで呼ぶ配備の確認として通る
+
+## 変更
+
+- 2026-11-27: `claude-hooks stop` が、退避の後に最後の応答の言語を検査し、日本語で書かれていなければ 2 で終える
+  （ADR-0108）。前は「引数の誤りを含め、0 と 1 のほかで終えない（Stop の hook の 2 は応答を続けさせる）」。登録を
+  変えずに検査を足し、`claude-setup` と `claude-hooks` の版がずれても応答の終わりごとに止めないため。引数の誤りと、
+  最後の応答が日本語の回の退避の失敗の終了コードは変えていない

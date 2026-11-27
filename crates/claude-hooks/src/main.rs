@@ -14,7 +14,8 @@
 //!   スキルが呼ぶ作業手順のスクリプトの中身（src/script/。ADR-0087）
 //!        claude-hooks stop [claude-dir]
 //!   Stop の hook。自動メモリを claude-dir（省くと ~/.claude）の git の ref refs/memory-backup にコミットする（src/stop.rs。
-//!   ADR-0089）。0 と 1 のほかで終えない（Stop の hook の 2 は応答を続けさせる）
+//!   ADR-0089）。最後の応答を英語と見たら、書き直させるため 2 で終える（退避の失敗が重なっても。ADR-0108）。英語と
+//!   見ない回の退避の失敗と、引数の誤りは 1 で終える
 //!        claude-hooks user-prompt-submit
 //!   UserPromptSubmit の hook。既定ブランチが同じセッションの前のプロンプトから進んでいたら、新しいコミットの件名を出す
 //!   （src/user_prompt_submit.rs。#363）。終了コードは常に 0
@@ -34,6 +35,7 @@ mod input;
 mod interrupt;
 mod output;
 mod process;
+mod response_language;
 mod rules;
 mod script;
 mod shell;

@@ -7,9 +7,10 @@
 //!   exec form で 1 件だけ登録する。前の claude-hooks の登録（shell form と exec form。Windows の `\` 区切りのパスも）と、
 //!   `--legacy` の名前の旧 bash hook の登録を外し、ほかの hook は残す。バイナリだけの組にするのは、ほかの hook と同じ組に置くと、その組の matcher を
 //!   変えたときにほかの hook も Agent で走るため
-//! - Stop: `--stop` のバイナリ（claude-hooks）を、引数 `stop`（自動メモリの退避。ADR-0089）で exec form で 1 件
-//!   だけ登録する。前の claude-hooks stop の登録と、前の退避のバイナリ claude-memory-backup の登録を外す。async に
-//!   しないのは、async の hook の失敗の文が利用者に見えず（Claude にだけ次のターンで渡る）、退避の失敗に気づけないため
+//! - Stop: `--stop` のバイナリ（claude-hooks）を、引数 `stop`（自動メモリの退避と、最後の応答の言語の検査。ADR-0089、
+//!   ADR-0108）で exec form で 1 件だけ登録する。前の claude-hooks stop の登録と、前の退避のバイナリ
+//!   claude-memory-backup の登録を外す。async にしないのは、async の hook の失敗の文が利用者に見えず（Claude にだけ
+//!   次のターンで渡る）、退避の失敗に気づけないため
 //! - UserPromptSubmit: 現在時刻を 1 行出すコマンドを 1 件だけ登録する（どちらの OS も同じ文字列の shell form）。
 //!   `--user-prompt-submit` のバイナリ（claude-hooks）を渡すと、同じ 1 件の shell form の `date` の後に、引数
 //!   `user-prompt-submit`（既定ブランチの進みの知らせ。#363）でそのバイナリも呼ぶ。ほかのバイナリの hook と違い exec form に
