@@ -41,7 +41,7 @@ impl Home {
     }
 
     fn attributes(&self) -> PathBuf {
-        self.0.join(".config/git/attributes")
+        self.0.join(".config").join("git").join("attributes")
     }
 
     /// 利用者の git の設定と環境を見せない command。env は足す環境変数
@@ -100,7 +100,6 @@ fn said(out: &Output) -> String {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn the_source_is_placed_where_git_reads_global_attributes() {
     let home = Home::new();
     let out = home.run();
@@ -116,7 +115,6 @@ fn the_source_is_placed_where_git_reads_global_attributes() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn xdg_config_home_decides_the_place_like_git() {
     let home = Home::new();
     let xdg = home.0.join("xdg");
@@ -130,7 +128,6 @@ fn xdg_config_home_decides_the_place_like_git() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn running_twice_keeps_the_same_file() {
     let home = Home::new();
     assert!(home.run().status.success());
@@ -140,7 +137,6 @@ fn running_twice_keeps_the_same_file() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn an_older_harness_file_is_updated() {
     // 1 行目が配る中身と同じファイルは、ハーネスが前に置いたもの
     let home = Home::new();
@@ -152,7 +148,6 @@ fn an_older_harness_file_is_updated() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_users_own_attributes_file_is_not_replaced() {
     let home = Home::new();
     std::fs::create_dir_all(home.attributes().parent().unwrap()).unwrap();
@@ -173,7 +168,6 @@ fn a_users_own_attributes_file_is_not_replaced() {
 // Windows の symlink は作るのに権限が要る
 #[cfg(unix)]
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn an_attributes_symlink_is_left_to_its_owner() {
     // 中身がハーネスのものでも、リンクの先は持ち主（home-manager など）が管理する
     let home = Home::new();
@@ -192,7 +186,6 @@ fn an_attributes_symlink_is_left_to_its_owner() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_global_attributes_file_elsewhere_stops_without_writing() {
     // git はそこを読み、既定の場所は読まないので、置いても効かない
     let home = Home::new();
@@ -208,7 +201,6 @@ fn a_global_attributes_file_elsewhere_stops_without_writing() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_global_attributes_file_at_the_same_place_is_fine() {
     let home = Home::new();
     home.set_global("core.attributesFile", "~/.config/git/attributes");
@@ -218,7 +210,6 @@ fn a_global_attributes_file_at_the_same_place_is_fine() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_system_attributes_file_elsewhere_stops_without_writing() {
     let home = Home::new();
     let system = home.0.join("system.gitconfig");
@@ -234,7 +225,6 @@ fn a_system_attributes_file_elsewhere_stops_without_writing() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_system_attributes_file_is_ignored_when_git_ignores_the_system_file() {
     let home = Home::new();
     let system = home.0.join("system.gitconfig");
@@ -248,7 +238,6 @@ fn a_system_attributes_file_is_ignored_when_git_ignores_the_system_file() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_missing_source_is_refused() {
     let home = Home::new();
     std::fs::remove_file(home.source()).unwrap();
@@ -258,7 +247,6 @@ fn a_missing_source_is_refused() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn wrong_arguments_are_usage_errors() {
     for args in [
         vec!["git-attributes"],
@@ -274,7 +262,6 @@ fn wrong_arguments_are_usage_errors() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_repository_without_gitattributes_stores_crlf_files_as_lf() {
     // 置いた attributes を git が読み、.gitattributes の無いリポジトリでも index は LF、*.bat は CRLF で取り出す
     let home = Home::new();
@@ -300,7 +287,6 @@ fn a_repository_without_gitattributes_stores_crlf_files_as_lf() {
 }
 
 #[test]
-#[ignore = "RED: claude-setup git-attributes はまだ無い"]
 fn a_global_value_at_the_same_place_wins_over_a_system_value_elsewhere() {
     // git は global の値を使い、system の値は読まない
     let home = Home::new();
