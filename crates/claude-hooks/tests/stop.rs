@@ -509,3 +509,128 @@ fn backs_up_beside_a_name_that_is_not_utf8() {
         "{names:?}"
     );
 }
+
+// 最後の応答の言語の検査（ADR-0108）。英語で書いた応答だけを 2 で返し、日本語の応答は止めない
+
+/// Stop の hook の入力（last_assistant_message と stop_hook_active）
+fn stop_input(message: &str, active: bool) -> String {
+    serde_json::json!({
+        "session_id": "s1",
+        "cwd": "/w",
+        "hook_event_name": "Stop",
+        "stop_hook_active": active,
+        "last_assistant_message": message,
+    })
+    .to_string()
+}
+
+/// 英語の応答を返すときは、1 行目に理由を書いて 2 で終える（2 は応答を続けさせ、標準エラーが Claude に渡る）
+fn assert_sent_back(out: &Output) -> String {
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(out));
+    let err = stderr(out);
+    assert!(
+        err.lines()
+            .next()
+            .unwrap_or_default()
+            .starts_with("claude-hooks stop: 最後の応答が日本語で書かれていません"),
+        "1 行目が理由でない: {err}"
+    );
+    assert!(err.contains("日本語で書き直"), "修正方法が無い: {err}");
+    err
+}
+
+const ENGLISH_REPORT: &str = "I've finished adding `pid` to the observation record. The fourth review round \
+found no runtime bugs. It flagged one misplaced doc comment, which I fixed. The checks passed, and all 194 Rust \
+tests pass.\n\nI'm waiting on two answers before I merge:\n\n1. **Merge as is?** Seven review findings are \
+written up in issue 0025 instead of fixed here.";
+
+#[test]
+#[ignore = "RED: 応答の言語の検査（ADR-0108）は次のコミットで足す"]
+fn an_english_response_is_sent_back_and_the_memory_is_still_backed_up() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    assert_sent_back(&work.stop(&[&cd], &stop_input(ENGLISH_REPORT, false)));
+    assert_eq!(
+        work.git(&cd, &["ls-tree", "-r", "--name-only", REF]),
+        "projects/-a/memory/MEMORY.md\nprojects/-b/memory/note.md"
+    );
+}
+
+#[test]
+#[ignore = "RED: 応答の言語の検査（ADR-0108）は次のコミットで足す"]
+fn an_english_response_quoting_a_short_japanese_phrase_is_sent_back() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    let message = "The user asked 「日本語で」 earlier, and I have now rewritten the summary of the \
+analysis so that every section of the report follows the same structure as before.";
+    assert_sent_back(&work.stop(&[&cd], &stop_input(message, false)));
+}
+
+#[test]
+fn a_japanese_response_full_of_code_paths_and_identifiers_passes() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    let message = "`feat/stop-hook-japanese-response` を main にマージしました（PR #420、c0ffee12）。\n\n\
+## 変えたもの\n\n\
+- crates/claude-hooks/src/stop.rs: read_input が last_assistant_message と stop_hook_active を読む\n\
+- C:\\Users\\u\\.claude\\bin\\claude-hooks.exe と ~/.claude/settings.json は変えていない\n\
+- LockFileEx、File::try_lock、serde_json::Value、GIT_INDEX_FILE はそのまま\n\n\
+```text\n\
+running 42 tests\n\
+test an_english_response_is_sent_back ... ok\n\
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n\
+```\n\n\
+確認: https://github.com/example/repo/actions/runs/123 の Windows の CI が pass。`cargo test --test stop` も pass。";
+    assert_ok(&work.stop(&[&cd], &stop_input(message, false)));
+}
+
+#[test]
+fn a_japanese_response_quoting_a_long_english_passage_passes() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    let message = "hooks の文書の Stop の節には、次のように書かれています。\n\n\
+> The `last_assistant_message` field contains the text content of Claude's final response, so hooks can \
+access it without parsing the transcript file. For hooks that act on the just-completed turn, use this \
+field rather than reading the transcript.\n\n\
+なので、記録のファイルは読みません。";
+    assert_ok(&work.stop(&[&cd], &stop_input(message, false)));
+}
+
+#[test]
+fn a_short_english_response_passes() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    let message = "The checks passed. Waiting for the review.";
+    assert_ok(&work.stop(&[&cd], &stop_input(message, false)));
+}
+
+#[test]
+fn a_response_without_text_passes() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    assert_ok(&work.stop(&[&cd], &stop_input("", false)));
+    assert_ok(&work.stop(&[&cd], r#"{"stop_hook_active":false}"#));
+    assert_ok(&work.stop(
+        &[&cd],
+        r#"{"stop_hook_active":false,"last_assistant_message":null}"#,
+    ));
+}
+
+/// 書き直させた後の Stop は、英語のままでも続けて止めない（直る見込みが小さく、手戻りだけが増える）
+#[test]
+fn a_response_after_a_stop_hook_continued_passes() {
+    let work = Work::new();
+    let cd = claude_dir(&work);
+    assert_ok(&work.stop(&[&cd], &stop_input(ENGLISH_REPORT, true)));
+}
+
+/// 退避の失敗と英語の応答が重なったら、2 で返し、退避の失敗の行も Claude に渡す
+#[test]
+#[ignore = "RED: 応答の言語の検査（ADR-0108）は次のコミットで足す"]
+fn an_english_response_with_a_failed_backup_reports_both() {
+    let work = Work::new();
+    let norepo = work.path("norepo");
+    write(&norepo.join("projects/-a/memory/MEMORY.md"), "x\n");
+    let err = assert_sent_back(&work.stop(&[&norepo], &stop_input(ENGLISH_REPORT, false)));
+    assert!(err.contains("コミットできませんでした"), "{err}");
+}

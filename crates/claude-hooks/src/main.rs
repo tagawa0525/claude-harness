@@ -34,6 +34,9 @@ mod input;
 mod interrupt;
 mod output;
 mod process;
+// RED の間は stop が呼ばない
+#[allow(dead_code)]
+mod response_language;
 mod rules;
 mod script;
 mod shell;
