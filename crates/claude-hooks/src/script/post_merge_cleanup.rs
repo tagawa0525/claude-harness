@@ -883,24 +883,27 @@ fn remote_branch(branch: &str, remote: &str, default: &str) -> Result<(), i32> {
 /// 出してその終了コードで終える
 fn delete_remote_branch(branch: &str, remote: &str, tip: &str) -> Result<bool, i32> {
     let refname = format!("refs/heads/{branch}");
-    // push 先の一覧を読めなければ、前の確認を省いて lease に任せる
-    let before = push_tips(remote, &refname);
-    if let Some(before) = &before {
-        if kept_for_moved(before, None, branch, remote, tip) {
-            return Ok(false);
-        }
-        let unread: Vec<String> = before
-            .iter()
-            .filter(|(_, sha)| sha.is_none())
-            .map(|(url, _)| shown_url(url))
-            .collect();
-        if !unread.is_empty() {
-            println!(
-                "REMOTE_BRANCH: kept (push 先の {} を読めない（git ls-remote が失敗）。git push は読める push 先からだけ消すので、届かない原因（ネットワークや認証）を直してから消す)",
-                unread.join("、")
-            );
-            return Ok(false);
-        }
+    // push 先の一覧を読めなければ、確かめずに送ると一部の push 先だけが消えうるので残す
+    let Some(before) = push_tips(remote, &refname) else {
+        println!(
+            "REMOTE_BRANCH: kept ({remote} の push 先を読めない（git remote get-url --push --all が失敗）。push 先ごとの先端を確かめられないので、原因を直してから消す)"
+        );
+        return Ok(false);
+    };
+    if kept_for_moved(&before, None, branch, remote, tip) {
+        return Ok(false);
+    }
+    let unread: Vec<String> = before
+        .iter()
+        .filter(|(_, sha)| sha.is_none())
+        .map(|(url, _)| shown_url(url))
+        .collect();
+    if !unread.is_empty() {
+        println!(
+            "REMOTE_BRANCH: kept (push 先の {} を読めない（git ls-remote が失敗）。git push は読める push 先からだけ消すので、届かない原因（ネットワークや認証）を直してから消す)",
+            unread.join("、")
+        );
+        return Ok(false);
     }
     let lease = format!("--force-with-lease={refname}:{tip}");
     let out = match Command::new("git")
@@ -920,7 +923,7 @@ fn delete_remote_branch(branch: &str, remote: &str, tip: &str) -> Result<bool, i
     }
     if let Some(after) = push_tips(remote, &refname).filter(|t| t.iter().all(|(_, s)| s.is_some()))
     {
-        if kept_for_moved(&after, before.as_deref(), branch, remote, tip) {
+        if kept_for_moved(&after, Some(&before), branch, remote, tip) {
             // ほかの push 先の lease でない失敗（認証など）も、ここで見せる
             eprint!("{err}");
             return Ok(false);
