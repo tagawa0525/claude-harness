@@ -28,7 +28,7 @@ in
   assertions = [
     {
       assertion = readsPlaced;
-      message = "programs.git の core.attributesFile は ${toString attributesFile} を指しています。git はそこだけを読み、ハーネスの attributes（~/${placed}。ADR-0105）が効きません。そのファイルの規則を programs.git.attributes に移して core.attributesFile を外してください";
+      message = "programs.git の core.attributesFile は ${toString attributesFile} を指しています。git はそこだけを読み、ハーネスが置く改行の規則（~/${placed}）が効きません。そのファイルの規則を programs.git.attributes に移して core.attributesFile を外してください";
     }
   ];
 }
