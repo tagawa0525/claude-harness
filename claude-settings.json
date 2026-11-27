@@ -161,5 +161,6 @@
     ]
   },
   "plansDirectory": "docs/plans",
+  "remoteControlAtStartup": true,
   "skipDangerousModePermissionPrompt": true
 }
