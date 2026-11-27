@@ -68,7 +68,7 @@ impl FakeSqueue {
     }
 
     /// ssh で呼ばれた r995 の側として起動する（SLURM_QUEUE_NO_SSH=1）
-    fn as_called_over_ssh(mut self) -> FakeSqueue {
+    fn called_over_ssh(mut self) -> FakeSqueue {
         self.no_ssh = true;
         self
     }
@@ -304,7 +304,7 @@ fn an_unreachable_r995_is_an_error_naming_the_missing_squeue() {
 #[test]
 fn called_over_ssh_a_missing_squeue_is_not_read_over_ssh_again() {
     // r995 の非対話の ssh の PATH に squeue が無いと、r995 の側も ssh に回し、自分を呼び続ける
-    let fake = FakeSqueue::new().with_ssh("", 0).as_called_over_ssh();
+    let fake = FakeSqueue::new().with_ssh("", 0).called_over_ssh();
     let out = fake.run(&[], "", 0);
     assert_eq!(out.status.code(), Some(127), "{}", stderr(&out));
     assert_eq!(fake.ssh_log(), "");

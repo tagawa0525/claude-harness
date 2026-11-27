@@ -166,12 +166,13 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
             // 含まない）が黙って走るので、自動では回さず、r995 の worktree で投げる形を示す。入口があるかは stat しない
             // （ハードマウントの NFS は、r995 が落ちていると stat で止まる）
             eprintln!(
-                "NEXT: {nfs_entry} の無いホストでは、ブランチを push し、r995 の ~/github の下にその worktree を用意して、\
-                 r995 の slurm-run.sh を ssh で呼ぶ（run_in_background で）: \
-                 ssh r995 'cd ~/github/<worktree> && ~/.claude/scripts/slurm-run.sh <同じ引数>'。\
-                 外側を二重引用符で囲むと、~ と $HOME が手元のパスに展開され、ジョブが r995 で失敗する。\
-                 ジョブは r995 の ssh の環境で走るので、開発シェルの PATH が要るコマンドは nix develop -c で包み、\
-                 連絡先に claude= を付けるには slurm-run.sh の前に CLAUDE_CODE_SESSION_ID=<この会話の ID> を置く"
+                "NEXT: {nfs_entry} のあるホストは、その下に cd して投げ直す。無いホストでは、ブランチを push し、r995 の \
+                 ~/github の下にその worktree を用意して、r995 の slurm-run.sh を ssh で呼ぶ（run_in_background で）: \
+                 ssh r995 'cd ~/github/<worktree> && ~/.claude/scripts/slurm-run.sh <同じ引数>'。元の引数の単一引用符は、\
+                 外側の単一引用符を閉じるので '\\'' と書く。外側を二重引用符で囲むと、~ と $HOME が手元のパスに展開され、\
+                 ジョブが r995 で失敗する。ジョブは r995 の ssh の環境で走るので、開発シェルの PATH が要るコマンドは \
+                 nix develop -c で包み、連絡先に claude= を付けるには slurm-run.sh の前に \
+                 CLAUDE_CODE_SESSION_ID=<この会話の ID> を置く"
             );
             return 1;
         }
