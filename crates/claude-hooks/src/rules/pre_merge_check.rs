@@ -25,12 +25,12 @@
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
-//! 10. --delete-branch を付けたとき、PR の head のブランチを base にした、同じリポジトリの開いている PR（積み重ねた PR）が
-//!     無い。マージの後に head のブランチは消え、GitHub はそれを base にした開いている PR を閉じる（閉じた PR は base を付け替えられない）
-//!     ので、上の PR ごとに `gh pr edit <番号> --base <base>` を示して止める。fork からの PR は、消えるのが fork の
-//!     側のブランチなので検査しない
+//! 10. マージで head のブランチが消えるとき（--delete-branch か、リポジトリの delete_branch_on_merge。設定を読めなければ
+//!     消えるとみなす）、PR の head のブランチを base にした、同じリポジトリの開いている PR（積み重ねた PR）が無い。GitHub は
+//!     消えたブランチを base にした開いている PR を閉じる（閉じた PR は base を付け替えられない）ので、上の PR ごとに
+//!     `gh pr edit <番号> --base <base>` を示して止める。fork からの PR は、消えるのが fork の側のブランチなので検査しない
 //!
-//! 1〜3 はコマンド文字列だけで判定する。4〜10 は gh で GitHub に問い合わせ、
+//! 1 と 3 はコマンド文字列だけで判定する。4〜10 は gh で GitHub に問い合わせ、
 //! 問い合わせに失敗したら deny する（確認できない状態でマージさせない）。
 //! gh の引数列は bash 版と同一に保つ（テストの偽 gh が引数の前方一致で応答する）
 
@@ -521,6 +521,27 @@ fn never_reviewed_reason(head_sha: &str, copilot_check_failed: bool, url: &str) 
 
 /// head のブランチ（`head_ref`）を base にした開いている PR があれば、その base を先に付け替えさせる deny の理由。
 /// 探せなければ、確認できない理由（ほかの GitHub の読み取りと同じく止める）
+/// マージで head のブランチが消えるか: --delete-branch（`=false` は消さない）か、リポジトリの delete_branch_on_merge。
+/// 設定を読めなければ消えるとみなす（積み重ねた PR を確かめる側に倒す）
+fn merge_deletes_branch(dir: &std::path::Path, args: &[Arg], owner: &str, name: &str) -> bool {
+    let flag = args.iter().any(|a| {
+        matches!(
+            a.text.as_str(),
+            "--delete-branch" | "-d" | "--delete-branch=true" | "-d=true"
+        )
+    });
+    flag || gh::gh(
+        dir,
+        &[
+            "api",
+            &format!("repos/{owner}/{name}"),
+            "--jq",
+            ".delete_branch_on_merge",
+        ],
+    )
+    .map_or(true, |out| out.trim() != "false")
+}
+
 fn stacked_prs_reason(
     dir: &std::path::Path,
     owner: &str,
@@ -575,9 +596,11 @@ fn stacked_prs_reason(
         })
         .collect();
     Some(format!(
-        "head のブランチ {head_ref} を base にした開いている PR があります（{}）。--delete-branch でマージすると {head_ref} が消え、\
-         GitHub はそれを base にした開いている PR を閉じます。閉じた PR は、消えたブランチを戻さない限り開き直せず、base を付け替えられません。\
-         先に次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、マージしてください:\n{}",
+        "head のブランチ {head_ref} を base にした開いている PR があります（{}）。このマージでは {head_ref} が消え（--delete-branch か、\
+         リポジトリのマージで head のブランチを消す設定）、GitHub はそれを base にした開いている PR を閉じます。閉じた PR は、消えたブランチを\
+         戻さない限り開き直せず、base を付け替えられません。先に次のコマンドで上の PR の base を付け替えてから（要らない PR なら閉じてから）、\
+         マージしてください。リポジトリの設定でなく --delete-branch で消えるときは、--delete-branch を外してマージしてもよく、post-merge-cleanup が\
+         上の PR の付け替えを示してからブランチを消します:\n{}",
         listed.join(", "),
         commands.join("\n")
     ))
@@ -1145,13 +1168,13 @@ impl Rule for PreMergeCheck {
 
             // --- 10. head のブランチを base にした開いている PR（積み重ねた PR）---
             // fork からの PR は数えない。--delete-branch で消えるのは fork の側のブランチで、base のリポジトリの
-            // 同じ名前のブランチを base にした PR は閉じられない。--delete-branch の無いマージは head のブランチを消さず、
-            // 上の PR の base は post-merge-cleanup が付け替えを示す
-            if has_flag(args, &["--delete-branch", "-d"])
-                && !owner.is_empty()
+            // 同じ名前のブランチを base にした PR は閉じられない。head のブランチを消さないマージは、上の PR の base を
+            // post-merge-cleanup が付け替えを示す
+            if !owner.is_empty()
                 && !name.is_empty()
                 && let Some(meta) = pr_meta.as_ref()
                 && meta["isCrossRepository"].as_bool() != Some(true)
+                && merge_deletes_branch(&dir, args, &owner, &name)
             {
                 let head_ref = meta["headRefName"].as_str().unwrap_or("");
                 if head_ref.is_empty() {
