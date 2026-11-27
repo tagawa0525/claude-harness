@@ -48,7 +48,8 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
   `~/.config/git/attributes` に置く
 - 長所: 正が 1 ファイル。Linux は home-manager の宣言のままで、既存のファイルとの衝突は home-manager の検査
   （checkLinkTargets）が扱う。利用者が `programs.git.attributes` に足した行とも衝突せずに 1 つのファイルにまとまる
-- 短所: 仕組みが Windows と Linux で 2 つ
+- 短所: 仕組みが Windows と Linux で 2 つ。Windows では、利用者が自分のグローバルの規則を足す場所が無い（ハーネスの
+  ファイルは次の設置で上書きされ、`core.attributesFile` をほかに向けると設置が止まる）
 
 ### 案 B: `claude-setup sync` の、ホームの下に置くファイル（ADR-0093 の markdownlint の設定と同じ）に足す
 
@@ -78,8 +79,8 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
   `core.attributesFile` は書かない（書かなくても git が読み、利用者の gitconfig を増やさない）
 - Windows（`claude-setup git-attributes`）は、次のときに止まり、attributes のファイルを書かない（置く場所の親の
   ディレクトリは、まだ無いファイルの場所を正規化して比べるために先に作る）
-  - global か system の `core.attributesFile`（include した設定を含む。`GIT_CONFIG_NOSYSTEM` のときは system を見ない）が、
-    置く場所と違う場所を指す。git はそこを読み、置く場所は読まないので、置いても効かず、そこを書き換えると利用者の規則を
+  - git が使う `core.attributesFile`（global の値、無ければ system の値。include した設定を含む。`GIT_CONFIG_NOSYSTEM`
+    のときは system を見ない）が、置く場所と違う場所を指す。git はそこを読み、置く場所は読まないので、置いても効かず、そこを書き換えると利用者の規則を
     奪う
   - 置く場所に、ハーネスの置いたものでないファイルか symlink がある。ハーネスの置いたものは、1 行目が配る中身の 1 行目と
     同じファイルで、上書きして新しい中身にする（中身が同じなら何もしない）
@@ -93,9 +94,13 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
 - `.gitattributes` の無いリポジトリで、CRLF のファイルを add すると index は LF になる。既に CRLF で index にあるファイルは、
   git が変えない（`git status` に差分は出ない。2026-11-27、Git for Windows で、CRLF をコミットしたリポジトリに後から
   attributes を置いて確かめた）
-- `.gitattributes` があっても、そこに `*` の行が無いリポジトリでは、その規則に当たらないファイルにこの規則が効く
-- Linux でも、CRLF で書いたファイルの add が LF になり、`*.bat` と `*.cmd` は CRLF で取り出される。改行の既定が LF の
-  Linux では、ほかに変わる点は無い
+- git は属性ごとに決めるので、`.gitattributes` があっても、そこが決めない属性にはこの規則が効く。たとえば `* text=auto`
+  だけのリポジトリでは、`eol` をこの規則が決め、テキストを LF（`*.bat` と `*.cmd` は CRLF）で取り出す（2026-11-27、
+  `git check-attr -a` で確かめた）
+- `eol` の属性は `core.autocrlf` と `core.eol` より優先される。Git for Windows の既定の `core.autocrlf=true` の機械（CI の
+  runner など）でも、`eol` を決めないリポジトリのテキストは CRLF でなく LF で取り出される
+- Linux でも、CRLF で書いたファイルの add が LF になり、`*.bat` と `*.cmd` は CRLF で取り出される。`core.autocrlf` か
+  `core.eol` を設定した機械では、上と同じくその設定より `eol=lf` が勝つ
 - Linux で `home-manager.backupFileExtension` を設定した構成（nixfiles）は、利用者が手で置いた `~/.config/git/attributes` を
   `.backup` に退避して置き換え、activation の警告だけを出す。止まらないので、退避したファイルの規則は自分で
   `programs.git.attributes` に移す
@@ -118,5 +123,6 @@ markdownlint の設定は両方で `claude-setup sync` が置く（ADR-0093）�
   checkLinkTargets が利用者のファイルで止まること、`core.attributesFile` を別の場所にすると評価が止まること、置いた
   ファイルで CRLF のファイルが LF で index に入ること
 - Windows の CI（`setup` の Check the global git attributes）: `scripts/install-windows.sh` が置いたファイルが
-  `config/git/attributes` と同じで、runner の `core.autocrlf=true` のもとでも、`.gitattributes` の無いリポジトリのテキストを
+  `config/git/attributes` と同じで、runner の `core.autocrlf`（2026-11-27 の runner では true。run 45981747999。step は値を出すだけで
+  確かめない）のもとで、`.gitattributes` の無いリポジトリのテキストを
   LF で index に入れて LF で取り出し、`*.bat` を CRLF で取り出すこと
