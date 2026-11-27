@@ -9,8 +9,10 @@ description: ネイティブの Windows（WSL を使わない）で、cargo inst
 ネイティブの Windows（WSL を使わない）では、Nix の代わりに `cargo install` と `claude-setup` で入れる（ADR-0084）。
 今入るのは、`~/.claude` の中身（CLAUDE.md、スキル、スクリプト）、settings.json の静的な設定、PreToolUse hook、
 現在時刻と既定ブランチの進みを出す UserPromptSubmit hook、自動メモリを退避する Stop の hook、グローバルの git hook（pre-commit、pre-merge-commit、
-commit-msg、post-rewrite。`~/.config/git/hooks` に置き、グローバルの `core.hooksPath` を向ける）。グローバルの
-`core.hooksPath` をほかの置き場にしていれば、`claude-setup git-hooks` は奪わずに止まる。
+commit-msg、post-rewrite。`~/.config/git/hooks` に置き、グローバルの `core.hooksPath` を向ける）、改行を LF にそろえる
+グローバルの git の attributes（`config/git/attributes` を `~/.config/git/attributes` に置く。ADR-0105）。グローバルの
+`core.hooksPath` をほかの置き場にしていれば、`claude-setup git-hooks` は奪わずに止まる。`core.attributesFile` がほかの
+ファイルを指すか、`~/.config/git/attributes` に自分のファイルがあれば、`claude-setup git-attributes` は奪わずに止まる。
 
 前もって、Git for Windows、rustup、MSVC の toolchain が使う Visual Studio の Build Tools（C++ の workload。linker と
 Windows SDK）、gh、[gitleaks](https://github.com/gitleaks/gitleaks) を入れ、PATH に置く。入れたら、PATH が反映されるよう
@@ -35,7 +37,7 @@ symlink を作れるよう、Windows の開発者モードを有効にする（�
 symlink を作れずに失敗する（`claude-hooks` の `cargo test` も 1 件が失敗した。#213）。
 
 Git Bash で、clone を作るか更新してから、`scripts/install-windows.sh` を流す。スクリプトは、crate を `~/.claude/bin` に
-入れ、clone を同期し、settings.json の hook と git hook を置き、`~/.bashrc` の PATH と、下の `~/.claude` の退避のリポジトリを
+入れ、clone を同期し、settings.json の hook と git hook と git の attributes を置き、`~/.bashrc` の PATH と、下の `~/.claude` の退避のリポジトリを
 作る。clone の場所はスクリプトの位置から決めるので、`~/nix/claude-harness` 以外に clone した機械でも同じに流せる。
 何度流してもよい:
 
