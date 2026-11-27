@@ -66,6 +66,28 @@ jobs:
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\gitleaks"
       - name: Follow docs/windows.md
         run: bash scripts/install-windows.sh
+      # ほかのセッションの hook が claude-hooks.exe を動かしている間も、更新（スクリプトの再実行）が終わりまで通り、前の回が
+      # 残した、使われていない古い exe を消す（#414）。hook は、stdin を閉じるまで終わらない pre-tool-use で動かしたままにする
+      - name: Update while a hook is running
+        run: |
+          set -euo pipefail
+          touch ~/.claude/bin/claude-hooks.exe.old-0
+          coproc HOLD { "$HOME/.claude/bin/claude-hooks.exe" pre-tool-use; }
+          for _ in $(seq 50); do
+            tasklist //FI "IMAGENAME eq claude-hooks.exe" | grep -q claude-hooks.exe && break
+            sleep 0.2
+          done
+          tasklist //FI "IMAGENAME eq claude-hooks.exe" | grep -q claude-hooks.exe
+          bash scripts/install-windows.sh
+          # 空の入力に hook が返す終了コードは、ここで確かめることでないので見ない
+          exec {HOLD[1]}>&-
+          wait "$HOLD_PID" || true
+          test ! -e ~/.claude/bin/claude-hooks.exe.old-0
+          # 動いていた exe は、置き換えの前にリネームした名前で残る（使うプロセスが終わるまで消せない）
+          test "$(find ~/.claude/bin -name 'claude-hooks.exe.old-*' | wc -l)" -eq 1
+          rc=0
+          "$HOME/.claude/bin/claude-hooks" local-review-covers || rc=$?
+          test "$rc" -eq 2
       # スキルの sh のスクリプトは、Linux と同じ "$HOME/.claude/bin/claude-hooks" で呼ぶ（ADR-0087）。Git Bash がこのパスに
       # .exe を補って起動することを、引数の足りない呼び出しの使い方の誤り（2）で確かめる（見つからなければ 127）
       - name: Check the paths the scripts and messages use
