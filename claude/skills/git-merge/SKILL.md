@@ -38,9 +38,18 @@ GitHub リモートの無いリポジトリで、feature ブランチをロー�
 $ARGUMENTS のブランチ（省略時は今のブランチ）が対象。`ERROR:` の行があれば、その指示に従って止まる。
 
 ブランチの操作は `git -C [TARGET_WORKTREE]`、マージは `git -C [DEFAULT_WORKTREE]` で行う（別の worktree にあるブランチへは
-switch できない）。`DEFAULT_WORKTREE` が none（main をどの worktree も取り出していない）なら、主の worktree の隣に
-`git worktree add <主の worktree>-main main` で作り、以降はそこを `DEFAULT_WORKTREE` とする（今の worktree と主の worktree は
-switch しない。ほかのセッションが作業中のブランチを取り出していることがある）。`TARGET_WORKTREE` が none なら
+switch できない）。`DEFAULT_WORKTREE` が none（main をどの worktree も取り出していない）なら、main がある状態で（無ければ
+「main がまだない」の節の後で）、ブランチの操作の前に、main を取り出す worktree を次で決め、以降はそこを `DEFAULT_WORKTREE` とする。
+メインの worktree は `git worktree list --porcelain` の最初の `worktree` の行:
+
+- `TARGET_WORKTREE` がメインの worktree なら、マージの前に `git -C [TARGET_WORKTREE] switch main` する（後片付けは、メインの
+  worktree が main を取り出していれば、対象のブランチを消せる）
+- それ以外は、メインの worktree と今の worktree を switch しない（ほかのセッションが作業中のブランチを取り出していることが
+  ある）。`git worktree add <メインの worktree>-main main` で作り、「後片付け」の後に `git worktree remove <メインの worktree>-main`
+  で消す（残すと、次にメインの worktree のブランチをマージするとき、後片付けが main を別の worktree に見て止まる）。そのパスが
+  既にあれば、作らずにユーザーに確かめる
+
+`TARGET_WORKTREE` が none なら
 `git -C [DEFAULT_WORKTREE] switch [branch]` で取り出して以降はそこを指し、マージの前に `git -C [DEFAULT_WORKTREE] switch main` で
 戻す。
 
@@ -274,6 +283,7 @@ git で書き込まない。通ったら後片付けに進む。hook に拒ま�
 ~/.claude/scripts/post-merge-cleanup.sh [branch] "$(git -C [DEFAULT_WORKTREE] rev-parse HEAD^1)"
 ```
 
+冒頭の手順で `<メインの worktree>-main` を作ったときは、この後に `git worktree remove <メインの worktree>-main` で消す。
 第 2 引数はマージの前の main（マージコミットの第 1 親）で、省かない（`NOTE:` の
 判定の起点と、このブランチのマージコミットの確認に使う）。対象の worktree とブランチを削除する。cwd のリポジトリのブランチを片付けるので、別のリポジトリのブランチなら
 `cd <そのリポジトリ> &&` を付けて呼ぶ。未マージなら何も消さずに止まり、変更が残っていれば失敗する（確認して対処する）。出力の `NOTE:` の行は、完了メッセージでそのまま
