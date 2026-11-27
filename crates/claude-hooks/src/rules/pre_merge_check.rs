@@ -2,7 +2,9 @@
 //!
 //! CLAUDE.md の必須ゲートをツールレベルで強制する:
 //! 1. マージ方式は --merge のみ（--squash / --rebase は禁止）
-//! 2. --delete-branch でマージ後のブランチを削除する
+//! 2. --delete-branch は求めない（マージの後のブランチは post-merge-cleanup.sh が消す）。feature の worktree で
+//!    --delete-branch を付けると、gh が手元を base のブランチに切り替えようとして、base を取り出したメインの worktree と
+//!    ぶつかり、マージが済んでも終了コード 1 で終わる
 //! 3. マージコミット本文に ## Why / ## What / ## Impact が揃っている
 //! 4. CI チェックが未完了・失敗していない
 //! 5. reviewDecision が CHANGES_REQUESTED / REVIEW_REQUIRED でない
@@ -23,8 +25,8 @@
 //! 9. PR が新しい ADR を 2 件以上加えていない（1 ブランチ 1 トピック。判定はローカルの
 //!    git merge の pre-git-merge-check と共有）。1 つの決定を複数の ADR に分けたときと、
 //!    決定前の案（status: proposed）の ADR をまとめて加えるときだけ ALLOW_MULTI_TOPIC=<理由> で外す
-//! 10. PR の head のブランチを base にした、同じリポジトリの開いている PR（積み重ねた PR）が無い。2 でマージの後に
-//!     head のブランチは消え、GitHub はそれを base にした開いている PR を閉じる（閉じた PR は base を付け替えられない）
+//! 10. --delete-branch を付けたとき、PR の head のブランチを base にした、同じリポジトリの開いている PR（積み重ねた PR）が
+//!     無い。マージの後に head のブランチは消え、GitHub はそれを base にした開いている PR を閉じる（閉じた PR は base を付け替えられない）
 //!     ので、上の PR ごとに `gh pr edit <番号> --base <base>` を示して止める。fork からの PR は、消えるのが fork の
 //!     側のブランチなので検査しない
 //!
@@ -714,15 +716,6 @@ impl Rule for PreMergeCheck {
                 text_reasons += 1;
             }
 
-            // --- 2. ブランチ削除 ---
-            if !has_flag(args, &["--delete-branch", "-d"]) {
-                reasons.push(
-                    "--delete-branch を付けてください（マージ後のブランチは速やかに削除する）"
-                        .to_string(),
-                );
-                text_reasons += 1;
-            }
-
             // --- 3. 本文形式 ---
             match body_text(args, &["--body", "-b"], &["--body-file", "-F"]) {
                 Err(path) => reasons.push(unreadable_body_file(&path)),
@@ -1152,8 +1145,10 @@ impl Rule for PreMergeCheck {
 
             // --- 10. head のブランチを base にした開いている PR（積み重ねた PR）---
             // fork からの PR は数えない。--delete-branch で消えるのは fork の側のブランチで、base のリポジトリの
-            // 同じ名前のブランチを base にした PR は閉じられない
-            if !owner.is_empty()
+            // 同じ名前のブランチを base にした PR は閉じられない。--delete-branch の無いマージは head のブランチを消さず、
+            // 上の PR の base は post-merge-cleanup が付け替えを示す
+            if has_flag(args, &["--delete-branch", "-d"])
+                && !owner.is_empty()
                 && !name.is_empty()
                 && let Some(meta) = pr_meta.as_ref()
                 && meta["isCrossRepository"].as_bool() != Some(true)
