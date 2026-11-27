@@ -8,9 +8,28 @@ set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo"
 
+# Windows は動いている exe の上書きを拒む（os error 5）がリネームは許すので、ほかのセッションの hook が動かしている間も
+# 入れ直せるよう、入っている exe を退けてから入れる。入れるのに失敗したら、hook が exe を失わないよう戻す。
+# 退けた exe は使うプロセスが終わるまで消せないので、次の回に、消せるものだけ消す（消せないものは使用中で、残してよい）
+for old in ~/.claude/bin/*.exe.old-*; do
+  [ -e "$old" ] || continue
+  rm -f "$old" 2>/dev/null || echo "使用中なので残します: $old"
+done
+
 # claude-hooks を Linux と同じ ~/.claude/bin に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため
 for crate in claude-hooks ja-terms commit-refs claude-setup history-rewrite design-records; do
-  cargo install --locked --force --root ~/.claude --path "crates/$crate"
+  exe=~/.claude/bin/$crate.exe
+  old=""
+  if [ -e "$exe" ]; then
+    old="$exe.old-$(date +%s)-$$"
+    mv "$exe" "$old"
+  fi
+  if ! cargo install --locked --force --root ~/.claude --path "crates/$crate"; then
+    if [ -n "$old" ] && ! [ -e "$exe" ]; then
+      mv "$old" "$exe"
+    fi
+    exit 1
+  fi
 done
 
 hook=$(cygpath -w ~/.claude/bin/claude-hooks.exe)
