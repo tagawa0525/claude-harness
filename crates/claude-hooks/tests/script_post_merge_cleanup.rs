@@ -854,3 +854,54 @@ fn a_push_url_with_a_newer_tip_keeps_the_branch_on_every_push_url() {
         format!("{tip}\trefs/heads/feat/x")
     );
 }
+
+#[test]
+fn an_unreadable_push_url_keeps_the_branch_on_every_push_url() {
+    // 読めない push 先では先端を確かめられず、git push は読める push 先からだけ消すので、どこへも送らずに残す
+    let repo = Repo::new();
+    let mirror = repo.root.join("mirror.git");
+    let same = repo.root.join("same.git");
+    let missing = repo.root.join("missing.git");
+    for bare in [&mirror, &same] {
+        repo.git(&["init", "-q", "--bare", bare.to_str().unwrap()]);
+    }
+    repo.git(&["remote", "add", "origin", mirror.to_str().unwrap()]);
+    repo.git(&[
+        "remote",
+        "set-url",
+        "--push",
+        "origin",
+        same.to_str().unwrap(),
+    ]);
+    repo.git(&[
+        "remote",
+        "set-url",
+        "--add",
+        "--push",
+        "origin",
+        missing.to_str().unwrap(),
+    ]);
+    let before = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-q", "-c", "feat/x"]);
+    repo.write("b.txt", "b\n");
+    repo.commit("feat: b");
+    let tip = repo.git(&["rev-parse", "HEAD"]);
+    for bare in [&mirror, &same] {
+        repo.git(&["push", "-q", bare.to_str().unwrap(), "feat/x"]);
+    }
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "feat/x"]);
+    repo.git(&["push", "-q", mirror.to_str().unwrap(), "main"]);
+
+    let out = repo.run(&["feat/x", &before]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("REMOTE_BRANCH: kept"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(
+        repo.git(&["ls-remote", same.to_str().unwrap(), "refs/heads/feat/x"]),
+        format!("{tip}\trefs/heads/feat/x")
+    );
+}
