@@ -13,25 +13,25 @@ crates=(claude-hooks ja-terms commit-refs claude-setup history-rewrite design-re
 # Windows は動いている exe の上へ置き換えるのを拒む（os error 5）が、リネームと、Git Bash の rm での削除は許す（動いている
 # プロセスはそのまま動く）。ほかのセッションの hook が動かしている間も入れ直せるよう、入っている exe を退けてから入れ、
 # 入れた後に消す。settings.json が指す exe が無くなると、すべてのセッションの hook が動かなくなるので、入れるのに
-# 失敗したときも、途中で止められたときも、EXIT の trap で退けた exe を戻す。bash は SIGTERM と SIGHUP（ウィンドウを
-# 閉じる）で EXIT の trap を実行しないので、exit に変える
+# 失敗したときも、途中で止められたとき（Git Bash は SIGINT、SIGTERM、SIGHUP でも EXIT の trap を実行する）も、退けた exe を戻す
 pending=""
 build=""
 restore() {
   if [ -n "$pending" ] && ! [ -e "${pending%.old-*}" ]; then
-    mv "$pending" "${pending%.old-*}"
+    mv "$pending" "${pending%.old-*}" || echo "退けた exe を戻せませんでした。$pending を ${pending%.old-*} に戻してください" >&2
   fi
 }
 trap 'restore; [ -z "$build" ] || rm -rf "$build"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM HUP
 # 消せなくても入れ直しは済んでいるので、止めずに知らせる（次の回にまた消す）
 remove_old() {
   rm -f "$1" || echo "退けた exe を消せませんでした（次の回にまた消します）: $1" >&2
 }
 
-# 前の回が戻す前に止まって残した退けた exe は、対の exe が無ければそれが唯一の版なので戻し、あれば消す
-for old in ~/.claude/bin/*.exe.old-*; do
+# 前の回が戻す前に止まって残した退けた exe は、対の exe が無ければそれが唯一の版なので戻し、あれば消す。
+# 同じ exe の残りが複数あれば、新しいもの（名前の時刻が大きく、glob の順で後のもの）を戻す
+olds=(~/.claude/bin/*.exe.old-*)
+for ((i = ${#olds[@]} - 1; i >= 0; i--)); do
+  old=${olds[i]}
   if ! [ -e "$old" ]; then
     continue
   elif [ -e "${old%.old-*}" ]; then
@@ -41,11 +41,12 @@ for old in ~/.claude/bin/*.exe.old-*; do
   fi
 done
 
-# 入っている exe に触れる前に、一時の置き場でビルドを済ませる（失敗しても、入っている版はそのまま動く）。下の ~/.claude
-# への install は同じ target-dir を使うので、ビルド済みのものを置くだけで終わり、exe の無い間は短い
+# 入っている exe に触れる前に、一時の置き場へ入れてビルドを済ませる（失敗しても、入っている版はそのまま動く）。
+# --path の install は crate の target（crates/<crate>/target）でビルドするので、下の ~/.claude への install は
+# ビルド済みのものを置くだけで終わり（手元の測定で 0.07 秒）、exe の無い間は短い。target は回をまたいで残る
 build=$(mktemp -d)
 for crate in "${crates[@]}"; do
-  cargo install --locked --force --root "$build/root" --target-dir "$build/target" --path "crates/$crate"
+  cargo install --locked --force --root "$build" --path "crates/$crate"
 done
 
 # claude-hooks を Linux と同じ ~/.claude/bin に置くのは、スキルの sh のスクリプトがこのパスで呼ぶため
@@ -55,7 +56,7 @@ for crate in "${crates[@]}"; do
     pending="$exe.old-$(date +%s)-$$"
     mv "$exe" "$pending"
   fi
-  cargo install --locked --force --root ~/.claude --target-dir "$build/target" --path "crates/$crate"
+  cargo install --locked --force --root ~/.claude --path "crates/$crate"
   if [ -n "$pending" ]; then
     old=$pending
     pending=""
