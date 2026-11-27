@@ -27,9 +27,8 @@ pub fn run(home: &Path, from: &Path) -> Result<(), String> {
         && !same_path(home, &value, &path)
     {
         return Err(format!(
-            "❌ {scope} の core.attributesFile は {value} を指しています。git はそこだけを読み、{} に置いても効かないので、ここで止めます\n   修正方法: 改行の規則（{}）をそのファイルに足すか、そのファイルの規則を移してから core.attributesFile を外し、もう一度実行してください",
-            path.display(),
-            from.display()
+            "❌ {scope} の core.attributesFile は {value} を指しています。git はそこだけを読み、{} に置いても効かないので、ここで止めます\n   修正方法: そのファイルの規則をリポジトリの .gitattributes か $GIT_DIR/info/attributes に移し、git config {scope} --unset core.attributesFile のあと、もう一度実行してください",
+            path.display()
         ));
     }
     match std::fs::symlink_metadata(&path) {
@@ -38,10 +37,10 @@ pub fn run(home: &Path, from: &Path) -> Result<(), String> {
             Ok(old) if old == text => return Ok(()),
             Ok(old) if same_first_line(&old, &text) => {}
             // 読めないファイルと、利用者の書いたファイルは持ち主のもの
-            _ => return Err(foreign(&path, from)),
+            _ => return Err(foreign(&path)),
         },
         // symlink（Linux の home-manager が store に置くもの）は持ち主のもの
-        _ => return Err(foreign(&path, from)),
+        _ => return Err(foreign(&path)),
     }
     crate::sync::replace_with(&path, |tmp| std::fs::write(tmp, &text))
         .map_err(|e| format!("❌ {} を書けません（{e}）", path.display()))
@@ -61,10 +60,9 @@ fn same_first_line(old: &str, text: &str) -> bool {
     matches!((old.lines().next(), text.lines().next()), (Some(a), Some(b)) if a == b)
 }
 
-fn foreign(path: &Path, from: &Path) -> String {
+fn foreign(path: &Path) -> String {
     format!(
-        "❌ {} に、ハーネスのものでない attributes があります。上書きするとその規則が効かなくなるので、ここで止めます\n   修正方法: その規則をリポジトリの .gitattributes か $GIT_DIR/info/attributes に移してファイルを外すか、改行の規則（{}）を自分でそのファイルに足して、この手順を飛ばしてください",
-        path.display(),
-        from.display()
+        "❌ {} に、ハーネスのものでない attributes があります。上書きするとその規則が効かなくなるので、ここで止めます\n   修正方法: その規則をリポジトリの .gitattributes か $GIT_DIR/info/attributes に移してファイルを外し、もう一度実行してください",
+        path.display()
     )
 }
