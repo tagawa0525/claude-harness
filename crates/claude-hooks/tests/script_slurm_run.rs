@@ -700,6 +700,49 @@ fn off_r995_jobs_are_submitted_under_the_nfs_entry_with_logs_there() {
 }
 
 #[test]
+fn off_r995_without_the_nfs_entry_the_ssh_form_on_an_r995_worktree_is_shown() {
+    let slurm = Slurm::new();
+    let missing = sh_path(&slurm.root.join("no-nfs"));
+    let env = [
+        ("FAKE_HOST", "win-pc"),
+        ("SLURM_RUN_NFS_ENTRY", missing.as_str()),
+    ];
+    let out = slurm.run(&["-t", "1", "xlc-2G", "true"], &env);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!("ERROR: r995 以外では {missing} の下で投げる")),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!("NEXT: このホストには {missing} が無い。")),
+        "{err}"
+    );
+    assert!(
+        err.contains(
+            "ssh r995 'cd ~/github/<worktree> && ~/.claude/scripts/slurm-run.sh <同じ引数>'"
+        ),
+        "{err}"
+    );
+    assert!(!slurm.submitted());
+}
+
+#[test]
+fn off_r995_with_the_nfs_entry_no_ssh_form_is_shown() {
+    let slurm = Slurm::new();
+    let nfs = slurm.root.join("mnt/r995/github");
+    std::fs::create_dir_all(&nfs).unwrap();
+    let nfs_text = sh_path(&nfs);
+    let env = [
+        ("FAKE_HOST", "t14g4"),
+        ("SLURM_RUN_NFS_ENTRY", nfs_text.as_str()),
+    ];
+    let out = slurm.run(&["-t", "1", "xlc-2G", "true"], &env);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!stderr(&out).contains("ssh r995"), "{}", stderr(&out));
+}
+
+#[test]
 fn a_timed_job_is_refused_while_a_main_job_runs_in_the_same_worktree() {
     let slurm = Slurm::new();
     let (dir, _) = committed(&slurm);
