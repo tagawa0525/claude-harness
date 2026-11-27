@@ -237,7 +237,7 @@ fn without_squeue_the_same_script_on_r995_is_read_over_ssh() {
     );
     assert_eq!(
         fake.ssh_log(),
-        "ssh -o BatchMode=yes -o ConnectTimeout=10 r995 ~/.claude/scripts/slurm-queue.sh --order --first 20
+        "ssh -o BatchMode=yes -o ConnectTimeout=10 r995 $HOME/.claude/scripts/slurm-queue.sh --order --first 20
 "
     );
 }
@@ -249,7 +249,7 @@ fn over_ssh_the_arguments_reach_the_remote_shell_as_single_words() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         fake.ssh_log(),
-        "ssh -o BatchMode=yes -o ConnectTimeout=10 r995 ~/.claude/scripts/slurm-queue.sh --order --first '1; rm x'
+        "ssh -o BatchMode=yes -o ConnectTimeout=10 r995 $HOME/.claude/scripts/slurm-queue.sh --order --first '1; rm x'
 "
     );
 }
