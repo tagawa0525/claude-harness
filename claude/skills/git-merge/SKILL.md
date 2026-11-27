@@ -38,8 +38,20 @@ GitHub リモートの無いリポジトリで、feature ブランチをロー�
 $ARGUMENTS のブランチ（省略時は今のブランチ）が対象。`ERROR:` の行があれば、その指示に従って止まる。
 
 ブランチの操作は `git -C [TARGET_WORKTREE]`、マージは `git -C [DEFAULT_WORKTREE]` で行う（別の worktree にあるブランチへは
-switch できない）。`TARGET_WORKTREE` が none なら `git -C [DEFAULT_WORKTREE] switch [branch]` で取り出して以降はそこを指し、
-マージの前に `git -C [DEFAULT_WORKTREE] switch main` で戻す。`DEFAULT_WORKTREE` も none なら今の worktree を使う。
+switch できない）。`DEFAULT_WORKTREE` が none（main をどの worktree も取り出していない）なら、main がある状態で（無ければ
+「main がまだない」の節の後で）、ブランチの操作の前に、main を取り出す worktree を次で決め、以降はそこを `DEFAULT_WORKTREE` とする。
+メインの worktree は `git worktree list --porcelain` の最初の `worktree` の行:
+
+- `TARGET_WORKTREE` がメインの worktree なら、マージの前に `git -C [TARGET_WORKTREE] switch main` する（後片付けは、メインの
+  worktree が main を取り出していれば、対象のブランチを消せる）
+- それ以外は、メインの worktree と今の worktree を switch しない（ほかのセッションが作業中のブランチを取り出していることが
+  ある）。`git worktree add <メインの worktree>-main main` で作り、「後片付け」の後に `git worktree remove <メインの worktree>-main`
+  で消す（残すと、次にメインの worktree のブランチをマージするとき、後片付けが main を別の worktree に見て止まる）。そのパスが
+  既にあれば、作らずにユーザーに確かめる
+
+`TARGET_WORKTREE` が none なら
+`git -C [DEFAULT_WORKTREE] switch [branch]` で取り出して以降はそこを指し、マージの前に `git -C [DEFAULT_WORKTREE] switch main` で
+戻す。
 
 ## 止まる条件
 
@@ -245,8 +257,8 @@ Branch: [branch]
 
 ### マージ
 
-`git merge` は main の worktree から実行する。`DEFAULT_WORKTREE` が none なら、今の worktree で `git switch main` してから行う。
-直前に `git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD`（none なら今の worktree）が main であることを確かめ、違えば止まる:
+`git merge` は main の worktree（`DEFAULT_WORKTREE`。none だったときは上で作ったもの）から実行する。直前に
+`git -C [DEFAULT_WORKTREE] symbolic-ref --short HEAD` が main であることを確かめ、違えば止まる:
 
 ```bash
 git -C [DEFAULT_WORKTREE] merge --no-ff [branch] -m "$(cat <<'EOF'
@@ -271,7 +283,8 @@ git で書き込まない。通ったら後片付けに進む。hook に拒ま�
 ~/.claude/scripts/post-merge-cleanup.sh [branch] "$(git -C [DEFAULT_WORKTREE] rev-parse HEAD^1)"
 ```
 
-第 2 引数はマージの前の main（マージコミットの第 1 親。`DEFAULT_WORKTREE` が none なら今の worktree）で、省かない（`NOTE:` の
+冒頭の手順で `<メインの worktree>-main` を作ったときは、この後に `git worktree remove <メインの worktree>-main` で消す。
+第 2 引数はマージの前の main（マージコミットの第 1 親）で、省かない（`NOTE:` の
 判定の起点と、このブランチのマージコミットの確認に使う）。対象の worktree とブランチを削除する。cwd のリポジトリのブランチを片付けるので、別のリポジトリのブランチなら
 `cd <そのリポジトリ> &&` を付けて呼ぶ。未マージなら何も消さずに止まり、変更が残っていれば失敗する（確認して対処する）。出力の `NOTE:` の行は、完了メッセージでそのまま
 ユーザーに伝える。マージ済みの PR を痕跡にした `NOTE:` の行は、別のリポジトリのブランチを渡しているので、マージした
