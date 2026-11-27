@@ -297,3 +297,40 @@ fn a_global_value_at_the_same_place_wins_over_a_system_value_elsewhere() {
     assert!(out.status.success(), "{}", said(&out));
     assert_eq!(std::fs::read_to_string(home.attributes()).unwrap(), SOURCE);
 }
+
+#[test]
+#[ignore = "RED: まだ直していない"]
+fn a_global_attributes_file_spelled_with_another_case_is_the_same_place_on_windows() {
+    // Windows のファイルシステムは大文字と小文字を区別しないので、git は同じファイルを読む
+    if !cfg!(windows) {
+        return;
+    }
+    let home = Home::new();
+    let spelled = home
+        .attributes()
+        .display()
+        .to_string()
+        .replace("attributes", "ATTRIBUTES");
+    home.set_global("core.attributesFile", &spelled);
+    let out = home.run();
+    assert!(out.status.success(), "{}", said(&out));
+}
+
+#[test]
+#[ignore = "RED: まだ直していない"]
+fn the_same_content_is_left_untouched() {
+    // 中身が同じなら書き直さない（読むだけの属性も、更新の時刻も変えない）
+    let home = Home::new();
+    assert!(home.run().status.success());
+    let mut perms = std::fs::metadata(home.attributes()).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(home.attributes(), perms).unwrap();
+    let out = home.run();
+    assert!(out.status.success(), "{}", said(&out));
+    let after = std::fs::metadata(home.attributes()).unwrap();
+    assert!(after.permissions().readonly());
+    let mut perms = after.permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(home.attributes(), perms).unwrap();
+}
