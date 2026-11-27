@@ -1,5 +1,6 @@
 //! `claude-hooks stop [claude-dir]`（Claude Code の Stop の hook）が、自動メモリ（`<claude-dir>/projects/*/memory/`）だけを
-//! `<claude-dir>` の git の ref `refs/memory-backup` にコミットすることを確かめる（ADR-0076、ADR-0089）
+//! `<claude-dir>` の git の ref `refs/memory-backup` にコミットし、英語で書いた最後の応答を 2 で返すことを確かめる
+//! （ADR-0076、ADR-0089、ADR-0108）
 
 mod common;
 
@@ -545,7 +546,6 @@ tests pass.\n\nI'm waiting on two answers before I merge:\n\n1. **Merge as is?**
 written up in issue 0025 instead of fixed here.";
 
 #[test]
-#[ignore = "RED: 応答の言語の検査（ADR-0108）は次のコミットで足す"]
 fn an_english_response_is_sent_back_and_the_memory_is_still_backed_up() {
     let work = Work::new();
     let cd = claude_dir(&work);
@@ -557,7 +557,6 @@ fn an_english_response_is_sent_back_and_the_memory_is_still_backed_up() {
 }
 
 #[test]
-#[ignore = "RED: 応答の言語の検査（ADR-0108）は次のコミットで足す"]
 fn an_english_response_quoting_a_short_japanese_phrase_is_sent_back() {
     let work = Work::new();
     let cd = claude_dir(&work);
@@ -626,7 +625,6 @@ fn a_response_after_a_stop_hook_continued_passes() {
 
 /// 退避の失敗と英語の応答が重なったら、2 で返し、退避の失敗の行も Claude に渡す
 #[test]
-#[ignore = "RED: 応答の言語の検査（ADR-0108）は次のコミットで足す"]
 fn an_english_response_with_a_failed_backup_reports_both() {
     let work = Work::new();
     let norepo = work.path("norepo");

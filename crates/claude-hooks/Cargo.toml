@@ -18,6 +18,9 @@ tree-sitter-bash = "0.25.1"
 serde_json = { version = "1", features = ["preserve_order"] }
 # 機密情報パターンと GraphQL mutation の検出。tree-sitter が既に依存している
 regex = "1"
+# Stop の hook が最後の応答の Markdown からコードと引用を除く（src/response_language.rs）。事実上の標準で、design-records
+# などが既に使う
+pulldown-cmark = { version = "0.13", default-features = false }
 # ADR のパスの判定。ADR の形を持つのは design-records だけにする（ADR-0009）
 design-records = { path = "../design-records" }
 # markdownlint --fix の直せない違反を直す（script fix-markdown-lint と staged-checks）
