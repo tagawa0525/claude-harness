@@ -1081,17 +1081,20 @@ assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
 
 # ===========================================================================
-# pre-merge-check: head のブランチを base にした開いている PR があれば deny（積み重ねた PR）
+# pre-merge-check: マージで head のブランチが消えるとき、それを base にした開いている PR があれば deny（積み重ねた PR）
 # ===========================================================================
-# --delete-branch でマージすると head のブランチが消え、GitHub はそれを base にした開いている PR を閉じる。
-# 閉じた PR は base を付け替えられないので、上の PR の base を先に付け替えさせる
+# --delete-branch か、リポジトリの設定（delete_branch_on_merge）でマージすると head のブランチが消え、GitHub はそれを
+# base にした開いている PR を閉じる。閉じた PR は base を付け替えられないので、上の PR の base を先に付け替えさせる
 
-# make_fake_gh_merge_stacked <pr list の応答のコマンド> [pr view の JSON に足す項目]: マージできる PR #1（head は
-# feat/x）の gh。pr list は head のブランチを base にした開いている PR の番号を 1 行に 1 つ返す
+# make_fake_gh_merge_stacked <pr list の応答のコマンド> [pr view の JSON に足す項目] [delete_branch_on_merge の応答のコマンド]:
+# マージできる PR #1（head は feat/x）の gh。pr list は head のブランチを base にした開いている PR の番号を 1 行に 1 つ返す。
+# リポジトリの delete_branch_on_merge は、既定で false を返す
 make_fake_gh_merge_stacked() {
   # 偽 gh の中では echo "…" の中に置くので、" は \" で書く
   local extra=',\"headRefName\":\"feat/x\",\"isCrossRepository\":false'
-  if [[ $# -ge 2 ]]; then extra="$2"; fi
+  if [[ $# -ge 2 && -n "$2" ]]; then extra="$2"; fi
+  local auto_delete='echo false'
+  if [[ $# -ge 3 ]]; then auto_delete="$3"; fi
   make_fake_gh '"pr view 1 --json number,headRefOid,reviewDecision,baseRefName"*) echo "{\"number\":1,\"headRefOid\":\"abc\",\"reviewDecision\":\"\",\"baseRefName\":\"main\"'"$extra"'}" ;;
   "repo view --json owner"*) echo example ;;
   "repo view --json name"*) echo heredoc ;;
@@ -1102,7 +1105,8 @@ make_fake_gh_merge_stacked() {
   "api --paginate repos/example/heredoc/pulls/1/files"*) true ;;
   "api --paginate repos/example/heredoc/issues/1/comments"*) true ;;
   "api graphql"*) echo "[]" ;;
-  "pr list -R example/heredoc --base feat/x --state open "*) '"$1"' ;;'
+  "pr list -R example/heredoc --base feat/x --state open "*) '"$1"' ;;
+  "api repos/example/heredoc --jq .delete_branch_on_merge"*) '"$auto_delete"' ;;'
 }
 
 it "pre-merge-check: head のブランチを base にした開いている PR があれば deny し、base を付け替える手順を示す"
@@ -1131,7 +1135,7 @@ make_fake_gh_merge_stacked 'exit 1'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "確認できません"
-make_fake_gh_merge_stacked 'true' ''
+make_fake_gh_merge_stacked 'true' ',\"isCrossRepository\":false'
 out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "head のブランチ名"
@@ -1143,17 +1147,32 @@ out=$(run_hook pre-merge-check "$MERGE_CMD")
 assert_eq allow "$(decision "$out")"
 assert_not_contains "$(cat "$FAKE_GH_LOG")" "pr list"
 
-it "pre-merge-check: --delete-branch の無いマージも通す（マージの後のブランチは post-merge-cleanup が消す）"
-make_fake_gh_merge_stacked 'true'
-out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
-assert_eq allow "$(decision "$out")"
-
 it "pre-merge-check: --delete-branch の無いマージは、head のブランチを base にした PR があっても止めない"
 # マージは head のブランチを消さないので、上の PR は閉じられない（base の付け替えは post-merge-cleanup が示す）
 make_fake_gh_merge_stacked 'echo 7'
 out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
 assert_eq allow "$(decision "$out")"
 assert_not_contains "$(cat "$FAKE_GH_LOG")" "pr list"
+out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/ --delete-branch=false}")
+assert_eq allow "$(decision "$out")"
+assert_not_contains "$(cat "$FAKE_GH_LOG")" "pr list"
+
+it "pre-merge-check: リポジトリがマージで head のブランチを消す設定なら、--delete-branch が無くても積み重ねた PR を止める"
+make_fake_gh_merge_stacked 'echo 7' '' 'echo true'
+out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "gh pr edit 7 --base main -R example/heredoc"
+
+it "pre-merge-check: リポジトリの設定を読めなければ、--delete-branch が無くても積み重ねた PR を確かめる"
+make_fake_gh_merge_stacked 'echo 7' '' 'exit 1'
+out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "#7"
+
+it "pre-merge-check: 積み重ねた PR で止めるときは、--delete-branch を外してマージする道も示す"
+make_fake_gh_merge_stacked 'echo 7'
+out=$(run_hook pre-merge-check "$MERGE_CMD")
+assert_contains "$(reason "$out")" "--delete-branch を外して"
 
 # ===========================================================================
 # block-secret-commit: グローバルの git の hook を使わないリポジトリの git commit を gitleaks で止める
