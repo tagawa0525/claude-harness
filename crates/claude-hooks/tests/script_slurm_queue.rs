@@ -280,6 +280,8 @@ fn an_unreachable_r995_is_an_error_naming_the_missing_squeue() {
     );
 }
 
+// Windows の Command は PATH より先に System32 を探し、偽の hostname でなく本物の hostname.exe を起動する。r995 は Linux
+#[cfg(unix)]
 #[test]
 fn on_r995_a_missing_squeue_is_not_read_over_ssh() {
     let fake = FakeSqueue::new().with_ssh("", 0).on_host("r995");

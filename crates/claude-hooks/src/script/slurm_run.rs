@@ -163,12 +163,16 @@ fn run(args: &[String], progress: &Mutex<Progress>) -> i32 {
                 "ERROR: r995 以外では {nfs_entry} の下で投げる（ジョブは投げたときのパスで r995 の上で走る）: {pwd}"
             );
             // 手元の worktree を r995 の側のパスに読み替えて ssh で投げると、r995 の側の版（push していない変更を
-            // 含まない）が黙って走るので、自動では回さず、r995 の worktree で投げる形を示す
-            if !std::path::Path::new(&nfs_entry).is_dir() {
-                eprintln!(
-                    "NEXT: このホストには {nfs_entry} が無い。ブランチを push し、r995 の ~/github の下にその worktree を用意して、                     r995 の slurm-run.sh を ssh で呼ぶ（run_in_background で）:                      ssh r995 'cd ~/github/<worktree> && ~/.claude/scripts/slurm-run.sh <同じ引数>'。                     外側を二重引用符で囲むと、~ と $HOME が手元のパスに展開され、ジョブが r995 で失敗する"
-                );
-            }
+            // 含まない）が黙って走るので、自動では回さず、r995 の worktree で投げる形を示す。入口があるかは stat しない
+            // （ハードマウントの NFS は、r995 が落ちていると stat で止まる）
+            eprintln!(
+                "NEXT: {nfs_entry} の無いホストでは、ブランチを push し、r995 の ~/github の下にその worktree を用意して、\
+                 r995 の slurm-run.sh を ssh で呼ぶ（run_in_background で）: \
+                 ssh r995 'cd ~/github/<worktree> && ~/.claude/scripts/slurm-run.sh <同じ引数>'。\
+                 外側を二重引用符で囲むと、~ と $HOME が手元のパスに展開され、ジョブが r995 で失敗する。\
+                 ジョブは r995 の ssh の環境で走るので、開発シェルの PATH が要るコマンドは nix develop -c で包み、\
+                 連絡先に claude= を付けるには slurm-run.sh の前に CLAUDE_CODE_SESSION_ID=<この会話の ID> を置く"
+            );
             return 1;
         }
         format!("{nfs_entry}/slurm-logs")
