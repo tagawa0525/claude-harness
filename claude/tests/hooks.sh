@@ -1169,10 +1169,18 @@ out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
 assert_eq deny "$(decision "$out")"
 assert_contains "$(reason "$out")" "#7"
 
-it "pre-merge-check: 積み重ねた PR で止めるときは、--delete-branch を外してマージする道も示す"
+it "pre-merge-check: --delete-branch=1 など、false でない値の --delete-branch はブランチを消すとみなす"
 make_fake_gh_merge_stacked 'echo 7'
-out=$(run_hook pre-merge-check "$MERGE_CMD")
-assert_contains "$(reason "$out")" "--delete-branch を外して"
+for flag in --delete-branch=1 --delete-branch=t --delete-branch=TRUE -d; do
+  out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/ $flag}")
+  assert_eq deny "$(decision "$out")"
+done
+
+it "pre-merge-check: リポジトリの設定を読めず止めるときは、設定を読めなかったことを示す"
+make_fake_gh_merge_stacked 'echo 7' '' 'echo null'
+out=$(run_hook pre-merge-check "${MERGE_CMD/ --delete-branch/}")
+assert_eq deny "$(decision "$out")"
+assert_contains "$(reason "$out")" "設定を読めない"
 
 # ===========================================================================
 # block-secret-commit: グローバルの git の hook を使わないリポジトリの git commit を gitleaks で止める
