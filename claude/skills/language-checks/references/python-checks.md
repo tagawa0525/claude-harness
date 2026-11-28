@@ -35,4 +35,4 @@ run-checks.sh は、テストを次の順に探し、最初に当たったもの
    無い。`python3` も `python` も PATH に無ければ SKIP、PATH にあってどれも起動できなければ失敗
 4. テストが 1 つも無ければ SKIP
 
-3 のテストを手で流すときも、インタープリタを同じく選ぶ（Windows では `python3 -m pytest` でなく `python -m pytest`）。
+3 のテストを手で流すときも、インタープリタを同じく選ぶ（Windows で `python3` がスタブなら、`python3 -m pytest` でなく `python -m pytest`）。
