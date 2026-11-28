@@ -169,8 +169,7 @@ Step 2 に戻る（コンテキストが要約されても処置の履歴を残�
 - 最初の head は必ず回す。対応を push した head に回すかは、/git-merge の「直す指摘の基準」の「終わり」の項で決め、
   回さないなら理由をマージの本文に書く
 - 回し方: `cd <worktree> && ~/.claude/scripts/review-level.sh <ブランチ名>`（積み重なった PR は `--base <土台のブランチ>` を
-  付ける）の `LEVEL` と `WORKTREE` で `/code-review <LEVEL> <WORKTREE>`（対応の後の周のレベルと焦点は、/git-merge の
-  「直す指摘の基準」の「終わり」の項で決める）。対象はブランチ名でなく `WORKTREE` で渡し
+  付ける）の `LEVEL` と `WORKTREE` で `/code-review <LEVEL> <WORKTREE>`。対象はブランチ名でなく `WORKTREE` で渡し
   （ブランチ名は cwd のリポジトリで解かれる）、`WORKTREE` が none なら PR の URL を渡す。見るのは PR の差分（対応の後なら、
   直した差分と、同じ種類の問題が他に残っていないか）
 - 記録: 回した head（`git rev-parse HEAD`。push 済みで PR の head と同じ）に、その回で検証して正しいと判断した指摘の数を
