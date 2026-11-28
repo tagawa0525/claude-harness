@@ -25,6 +25,7 @@
       "Skill(delegate)",
       "Skill(handoff)",
       "Skill(docs-issues)",
+      "Read",
       "Bash(git add:*)",
       "Bash(git branch:*)",
       "Bash(git checkout:*)",
