@@ -1547,6 +1547,25 @@ mod tests {
         assert!(cs.iter().all(|c| c.reads.is_empty()));
     }
 
+    /// 複合文に掛かる入力のリダイレクト（`while read …; done < f`）は、書き込み先と同じく複合文の分を持つ
+    #[test]
+    fn input_redirect_on_a_compound_statement_is_a_read_of_its_own() {
+        let sh = Shell::parse("while read -r l; do echo \"$l\"; done < in");
+        let reads: Vec<(&str, Vec<&str>)> = sh
+            .writers()
+            .into_iter()
+            .map(|c| (c.name.as_str(), texts(&c.reads)))
+            .collect();
+        assert_eq!(
+            reads,
+            [
+                ("while … done", vec!["in"]),
+                ("read", vec![]),
+                ("echo", vec![])
+            ]
+        );
+    }
+
     /// コマンドの名前と書き込み先（文書順）
     fn writes_by_name(sh: &Shell) -> Vec<(&str, Vec<&str>)> {
         sh.commands()
