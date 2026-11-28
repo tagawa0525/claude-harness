@@ -817,6 +817,34 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn denial_says_to_rerun_from_the_earlier_steps_that_did_not_run() {
+        // 拒むとコマンド全体が止まり、前段も走らない。git merge だけを実行し直すと、前段の切り替えを飛ばす
+        for prefix in ["git switch main && ", "git switch main; "] {
+            let r = deny_for(prefix);
+            assert!(
+                r.contains("前段（git switch）も実行されていません"),
+                "{prefix}: {r}"
+            );
+            assert!(r.contains("前段から実行し直して"), "{prefix}: {r}");
+        }
+        // 本文の語だけを見る形（fast-forward になりうる）の文言も同じ
+        let r = only_deny(&check(
+            "git switch main && git merge feat/a -m 'Merge: a' -m '誤語'",
+        ));
+        assert!(r.contains("誤語 => 正語"), "{r}");
+        assert!(r.contains("前段（git switch）も実行されていません"), "{r}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denial_without_earlier_steps_does_not_mention_them() {
+        // deny_for は cd でリポジトリに入る。cd は作業の前段に数えない
+        assert!(!deny_for("").contains("前段"));
+        assert!(!only_deny(&check("git merge feat/a -m 'Merge: a' -m '誤語'")).contains("前段"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn denies_wrapped_merge_without_split_calls_hint() {
         let r = deny_for("true && bash -c 'git status' && ");
         assert!(!r.contains("分けてください"), "{r}");

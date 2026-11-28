@@ -779,6 +779,45 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn denial_says_to_rerun_from_the_earlier_steps_that_did_not_run() {
+        // 拒むとコマンド全体が止まり、前段の git add も走らない。git commit だけを実行し直すと
+        // no changes added to commit で失敗する（#435）
+        let fake = Fake::new("earlier");
+        std::fs::write(fake.dir.0.join("msg.txt"), format!("{LONG}\n")).unwrap();
+        for prefix in ["git add a.txt && ", "git add a.txt; ", "git add a.txt\n"] {
+            let cmd = format!("{prefix}git commit -q -F msg.txt");
+            let r = only_deny(&fake.check(&cmd));
+            assert!(r.contains("❌"), "{cmd}: {r}");
+            assert!(
+                r.contains("前段（git add）も実行されていません"),
+                "{cmd}: {r}"
+            );
+            assert!(r.contains("前段から実行し直して"), "{cmd}: {r}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denial_without_earlier_steps_does_not_mention_them() {
+        let fake = Fake::new("lone");
+        std::fs::write(fake.dir.0.join("msg.txt"), format!("{LONG}\n")).unwrap();
+        let d = fake.dir.0.display();
+        // cd は作業の前段に数えない（実行し直す git commit を同じディレクトリで実行すれば足りる）
+        for (cmd, cwd) in [
+            ("git commit -q -F msg.txt".to_string(), fake.dir.0.as_path()),
+            (
+                format!("cd {d} && git commit -q -F msg.txt"),
+                Path::new("/"),
+            ),
+        ] {
+            let r = only_deny(&check_in(&cmd, cwd, Some(&fake.path)));
+            assert!(r.contains("❌"), "{cmd}: {r}");
+            assert!(!r.contains("前段"), "{cmd}: {r}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_rejection_without_a_reason_is_undecided() {
         // 何を直すかを示せないので、止めずに判定できなかった理由を出す（commit-msg が同じ検査で止める）
         let _lock = NOTICES.lock().unwrap_or_else(|e| e.into_inner());
