@@ -264,7 +264,8 @@ impl Shell {
         shell
     }
 
-    /// 解析した原文。[`HeredocSpan`] の `line` と `rest` はこの文字列の中を指す
+    /// 解析した原文。[`Shell::heredocs`] のうち、トップレベルのもの（`bash -c` などの文字列の中のものでない）の
+    /// `line` と `rest` は、この文字列の中を指す
     pub fn src(&self) -> &str {
         &self.src
     }
