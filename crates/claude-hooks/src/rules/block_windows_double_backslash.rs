@@ -213,18 +213,24 @@ mod tests {
         }
     }
 
-    /// 本文の位置を決められないヒアドキュメント、閉じが多バイトの文字で終わるもの、コメントらしく見える語の中は、
-    /// 二重引用符の中として通さない
+    /// 本文の位置を決められないヒアドキュメントと、コメントらしく見える語の中は、二重引用符の中として通さない
     #[test]
     fn a_run_whose_quoting_is_not_certain_is_not_passed() {
         for src in [
             "cat <<A <<'B'\nx\nA\nprint(\"C:\\\\Users\")\nB",
-            "cat <<'終'\nC:\\\\Users\n終",
             "echo \\ #'a\\\\b'",
             "# a\\\\b\necho a",
         ] {
             assert!(changes(src), "{src}");
         }
+    }
+
+    /// 区切りが ASCII でないヒアドキュメントは、tree-sitter が構文の誤りとして読むので、本文の 2 つも通さない（閉じの
+    /// 行が多バイトの文字で終わっても panic しない）
+    #[test]
+    fn a_heredoc_with_a_non_ascii_delimiter_is_not_passed() {
+        assert!(changes("cat <<終\nfoo\\\\|bar\n終"));
+        assert!(changes("cat <<'終'\nC:\\\\Users\n終"));
     }
 
     #[test]
