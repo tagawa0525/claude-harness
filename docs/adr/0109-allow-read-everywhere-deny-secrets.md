@@ -6,7 +6,7 @@ requires: []
 supersedes: []
 superseded-by:
 issues: ["#428"]
-description: 静的な設定（claude-settings.json）の permissions.allow に範囲を付けない Read を置き、Read、Grep、Glob をどのパスでも確認なしにする。秘密の置き場（SSH、AWS、gh、GnuPG、sops の age 鍵、git と netrc の資格情報、Claude の資格情報、.env）の Read は deny で拒む
+description: 静的な設定（claude-settings.json）の permissions.allow に範囲を付けない Read を置き、Read、Grep、Glob をどのパスでも確認なしにする。分かっている秘密の置き場（SSH、AWS、gh、GnuPG、sops の age 鍵と復号した秘密、git と netrc の資格情報、Claude の資格情報、.env）の Read は deny で拒む
 ---
 
 # ADR-0109: 読み取りはどのパスでも確認なしにし、秘密の置き場だけ deny で拒む
@@ -34,8 +34,9 @@ Read をどこでも確認なしにすると、プロンプトインジェクシ
 
 ## 決定と理由
 
-C を採る。ユーザーの指示（どこでも読める）を満たしたまま、Read で増える経路のうち、外へ出ると取り返せない秘密の置き場を塞ぐ。
-deny にする置き場は `claude-settings.json` の `permissions.deny` の `Read(...)` の行。E は Bash の経路も塞ぐが、前からある経路の
+C を採る。ユーザーの指示（どこでも読める）を満たしたまま、Read で増える経路のうち、外へ出ると取り返せない秘密の置き場で、
+分かっているものを塞ぐ。deny にする置き場は `claude-settings.json` の `permissions.deny` の `Read(...)` の行。一覧は
+すべての置き場を網羅しない。E は Bash の経路も塞ぐが、前からある経路の
 話で、この決定と別に #428 で扱う。
 
 ### 帰結
@@ -44,7 +45,10 @@ deny にする置き場は `claude-settings.json` の `permissions.deny` の `Re
 - deny は Read の規則なので、Bash の `cat ~/.ssh/id_ed25519` は塞がない（#428）
 - deny の一覧に無い資格情報の置き場（`~/.docker/config.json`、`~/.kube/config` など）は、Read で確認なしに読める。使い始めたら
   一覧に足す
-- `.env` と `.env.*` を拒む。`.envrc`（direnv）は秘密を置かない慣例なので拒まない
+- deny はパスの文字列で照らすので、symlinkや大文字と小文字を変えた書き方（Windows）で同じファイルを指すと、
+  すり抜けうる
+- `.env` と `.env.*` を拒む。`.env.example` のような秘密を持たないテンプレートも拒まれ、読ませるには手で渡す。`.envrc`（direnv）は
+  秘密を置かない慣例なので拒まない
 
 ### 確認
 
