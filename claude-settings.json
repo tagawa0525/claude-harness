@@ -77,6 +77,7 @@
       "Bash(rustc:*)",
       "Bash(rustup:*)",
       "Bash(markdownlint:*)",
+      "Bash(python:*)",
       "Bash(python3:*)",
       "Bash(node:*)",
       "Bash(npx:*)",
