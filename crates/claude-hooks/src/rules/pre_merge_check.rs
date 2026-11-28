@@ -34,14 +34,13 @@
 use super::check_merge_review::{is_dvc_record, is_plain_document};
 use super::pre_git_merge_check::multi_topic_reason;
 use super::pre_pr_create_check::{body_text, missing_headings, unreadable_body_file};
-use super::{Rule, apply_escape_to_reasons};
+use super::{Rule, apply_escape_to_reasons, earlier_step_names};
 use crate::gh;
 use crate::git::git;
 use crate::input::Input;
 use crate::output::Finding;
 use crate::script::pr_url;
 use crate::shell::{Arg, Cmd, Escape, Shell, asks_help, has_flag, help_hint, opt_value};
-use crate::unwrap::basename;
 use design_records::is_adr_path;
 use serde_json::Value;
 
@@ -52,25 +51,7 @@ pub struct PreMergeCheck;
 /// 変える状態は反映されず、拒むとそれらも実行されない。git と gh はサブコマンドまで挙げる（`gh issue` と
 /// `gh pr` を区別する）
 fn earlier_commands_hint(shell: &Shell, merge: &Cmd) -> String {
-    let mut names: Vec<String> = Vec::new();
-    for c in shell.commands_before(merge) {
-        let program = basename(c.program());
-        let name = match program {
-            "git" => match c.git_subcommand() {
-                Some((sub, _)) => format!("git {sub}"),
-                None => program.to_string(),
-            },
-            // gh は `gh pr checks` と `gh pr merge` を分けるために 2 語まで
-            "gh" => std::iter::once("gh")
-                .chain(c.args.iter().take(2).map(|a| a.text.as_str()))
-                .collect::<Vec<_>>()
-                .join(" "),
-            _ => program.to_string(),
-        };
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
+    let names = earlier_step_names(shell, merge);
     if names.is_empty() {
         return String::new();
     }

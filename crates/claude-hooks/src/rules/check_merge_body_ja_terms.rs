@@ -15,8 +15,8 @@
 //! 検査を起動できないか、検査に失敗したときは、判定できなかった理由を利用者に見せて通す（ADR-0033。
 //! commit-msg が同じ検査で止める）。エスケープは設けない（メッセージを直せば通る）
 
-use super::Rule;
 use super::check_commit_message::{Verdict, run_check};
+use super::{Rule, earlier_step_names};
 use crate::git;
 use crate::git_args::{Item, items, items_with_values};
 use crate::input::Input;
@@ -354,20 +354,10 @@ pub(super) fn earlier_writer_reason(
 }
 
 /// 本文を直して実行し直す案内に続ける文。拒むとコマンド全体が止まり、`cmd`（git の `sub`）より前に走る同じ
-/// コマンドの前段も走っていないので、前段があればその名前（git なら `git <サブコマンド>`）を挙げて前段から実行し直す
-/// ことを示す（git add を飛ばした git commit は no changes added to commit で失敗する。#435）。無ければ空。前段の数え方は
-/// [`Shell::commands_before`]（`cd` は数えない）
+/// コマンドの前段（[`earlier_step_names`]）も走っていないので、前段があればそれを挙げて前段から実行し直すことを
+/// 示す（git add を飛ばした git commit は no changes added to commit で失敗する。#435）。無ければ空
 pub(super) fn earlier_steps_note(shell: &Shell, cmd: &Cmd, sub: &str) -> String {
-    let mut names: Vec<String> = Vec::new();
-    for c in shell.commands_before(cmd) {
-        let name = match c.git_subcommand() {
-            Some((s, _)) => format!("git {s}"),
-            None => c.name.clone(),
-        };
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
+    let names = earlier_step_names(shell, cmd);
     if names.is_empty() {
         return String::new();
     }
