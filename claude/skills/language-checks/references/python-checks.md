@@ -31,8 +31,8 @@ run-checks.sh は、テストを次の順に探し、最初に当たったもの
 3. git が追跡している `test_*.py` / `*_test.py` がサブディレクトリにあれば、そのディレクトリごとに、追跡している
    ファイルだけを渡して実行する。インタープリタは、`python3`、`python` の順に、Python 3 として起動できるもののうち、
    `-m pytest` が使える最初のもの（どれにも無ければ、起動できる最初のもので `-m unittest <モジュール>`）。Windows の
-   Git Bash の `python3` は Microsoft Store のスタブで、何を渡しても失敗し、venv には `python` しか無い。`python3` も
-   `python` も PATH に無ければ SKIP、PATH にあってどれも起動できなければ失敗
+   Git Bash の `python3` は Microsoft Store のスタブ（何を渡しても失敗する）のことがあり、venv には `python` しか
+   無い。`python3` も `python` も PATH に無ければ SKIP、PATH にあってどれも起動できなければ失敗
 4. テストが 1 つも無ければ SKIP
 
 3 のテストを手で流すときも、インタープリタを同じく選ぶ（Windows では `python3 -m pytest` でなく `python -m pytest`）。
