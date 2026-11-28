@@ -102,7 +102,7 @@ fn stdout(out: &Output) -> String {
 }
 
 #[test]
-fn documents_only_is_medium() {
+fn documents_only_is_low() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/docs"]);
     repo.commit("docs/plans/x.md", "plan");
@@ -118,8 +118,8 @@ fn documents_only_is_medium() {
     assert_eq!(
         stdout(&out),
         format!(
-            "BASE: main\nTARGET: feat/docs\nWORKTREE: {root}\nFILES: 2\nLEVEL: medium\n\
-             NEXT: /code-review medium {root}（1 周目はこの LEVEL で回す。直した後の周のレベルは /git-merge の「直す指摘の基準」の「終わり」の項で決める）\n",
+            "BASE: main\nTARGET: feat/docs\nWORKTREE: {root}\nFILES: 2\nLEVEL: low\n\
+             NEXT: /code-review low {root}（1 周目はこの LEVEL で回す。直した後の周のレベルは /git-merge の「直す指摘の基準」の「終わり」の項で決める）\n",
             root = root.trim()
         )
     );
@@ -181,7 +181,7 @@ fn a_branch_checked_out_nowhere_is_reviewed_by_the_pr_url() {
 }
 
 #[test]
-fn documents_under_the_harness_source_directory_are_medium() {
+fn documents_under_the_harness_source_directory_are_low() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/rule-docs"]);
     repo.commit("claude/README.md", "readme");
@@ -189,7 +189,7 @@ fn documents_under_the_harness_source_directory_are_medium() {
     let out = repo.run(&["feat/rule-docs", "--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
     assert!(
-        stdout(&out).contains("FILES: 2\nLEVEL: medium\n"),
+        stdout(&out).contains("FILES: 2\nLEVEL: low\n"),
         "{}",
         stdout(&out)
     );
@@ -234,7 +234,7 @@ fn bad_arguments_are_errors() {
 
 #[test]
 fn a_change_to_a_frozen_section_of_an_adr_is_high_from_a_subdirectory() {
-    // 差分のパスはリポジトリの直下から。cwd からの相対で読むと差分が空になり、medium に倒れる
+    // 差分のパスはリポジトリの直下から。cwd からの相対で読むと差分が空になり、low に倒れる
     let repo = Repo::new();
     repo.commit("src/main.rs", "src");
     repo.git(&["switch", "-q", "main"]);
@@ -251,7 +251,7 @@ fn a_change_to_a_frozen_section_of_an_adr_is_high_from_a_subdirectory() {
 
 #[test]
 fn a_change_to_a_frozen_section_of_an_adr_is_high_with_colored_diffs() {
-    // 利用者の設定の色で hunk の見出しを読めなくなっても、medium に倒れない
+    // 利用者の設定の色で hunk の見出しを読めなくなっても、low に倒れない
     let repo = Repo::new();
     repo.git(&["config", "color.ui", "always"]);
     repo.adr_with_a_frozen_change("docs/adr/0001-x.md");
@@ -277,5 +277,51 @@ fn a_document_with_a_japanese_name_is_a_document() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(stdout(&out).contains("LEVEL: medium\n"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("LEVEL: low\n"), "{}", stdout(&out));
+}
+
+#[test]
+fn a_small_change_to_settings_files_is_medium() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/settings"]);
+    repo.commit("claude-settings.json", "allow");
+    repo.commit(".worktreelink", "references");
+    repo.commit("docs/plans/x.md", "plan");
+    let out = repo.run(&[]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout(&out).contains("FILES: 3\nLEVEL: medium\n"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_change_of_more_than_twenty_lines_to_settings_files_is_high() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/settings"]);
+    repo.commit("a.toml", "a");
+    let lines: String = (0..20).map(|i| format!("k{i} = {i}\n")).collect();
+    std::fs::write(repo.root.join("b.yaml"), lines).unwrap();
+    repo.git(&["add", "b.yaml"]);
+    repo.git(&["commit", "-q", "-m", "b"]);
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout(&out).contains("LEVEL: high\n"), "{}", stdout(&out));
+}
+
+#[test]
+fn a_github_workflow_is_not_a_settings_file() {
+    // CI の手順はゲートの挙動を変えるので、短くても設定に数えない
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/ci"]);
+    repo.commit(".github/workflows/ci.yml", "ci");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout(&out).contains("LEVEL: high\n"), "{}", stdout(&out));
 }

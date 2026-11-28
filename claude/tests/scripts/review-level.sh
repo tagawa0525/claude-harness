@@ -11,13 +11,13 @@ REPO="$TEST_ROOT/rl/app"
 make_repo "$REPO"
 cd "$REPO" || exit 1
 
-it "review-level: docs/ の ADR でない文書だけの変更は medium"
+it "review-level: docs/ の ADR でない文書だけの変更は low"
 git switch -q -c feat/docs
 commit_file "$REPO" docs/plans/x.md "docs: plan"
 commit_file "$REPO" docs/issues/y.md "docs: issue"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_eq 0 $?
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 assert_contains "$out" "TARGET: feat/docs"
 assert_contains "$out" "BASE: main"
 assert_contains "$out" "FILES: 2"
@@ -63,7 +63,7 @@ git switch -q main
 out=$("$SCRIPTS_DIR/review-level.sh" feat/docs)
 assert_eq 0 $?
 assert_contains "$out" "TARGET: feat/docs"
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 it "review-level: 存在しないブランチは exit 1"
 out=$("$SCRIPTS_DIR/review-level.sh" no/such 2>&1)
@@ -118,7 +118,7 @@ git rebase -q origin/main feat/doc
 out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
 assert_contains "$out" "BASE: origin/main"
 assert_contains "$out" "FILES: 1"
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 it "review-level: ローカルの main が origin/main より進んでいれば main を比較元にする（git-merge の流れ）"
 git switch -q main
@@ -129,7 +129,7 @@ commit_file "$STALE" docs/plans/y.md "docs: plan2"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "BASE: main"
 assert_contains "$out" "FILES: 1"
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 # 既定ブランチが main でないリポジトリ（master など）でも使える。
 # 既定ブランチの探し方は worktree-add.sh / branch-topics.sh と同じ順
@@ -147,7 +147,7 @@ commit_file "$MASTER" docs/plans/x.md "docs: plan"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_eq 0 $?
 assert_contains "$out" "BASE: master"
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 it "review-level: master のローカルが origin/master より古ければ origin/master を比較元にする"
 git init -q --bare "$MASTER.git"
@@ -161,14 +161,14 @@ git rebase -q origin/master feat/doc
 out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
 assert_contains "$out" "BASE: origin/master"
 assert_contains "$out" "FILES: 1"
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 it "review-level: origin/HEAD が指すブランチを既定ブランチにする"
 git remote set-head origin master
 out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
 assert_contains "$out" "BASE: origin/master"
 
-# LEVEL は、挙動を変えない文書と規則の文書だけのブランチで medium、ほかは high
+# LEVEL は、挙動を変えない文書と規則の文書だけのブランチで low、ほかは high
 LEVEL_REPO="$TEST_ROOT/rl/level"
 make_repo "$LEVEL_REPO"
 cd "$LEVEL_REPO" || exit 1
@@ -202,21 +202,21 @@ ADR
 git add docs/adr
 git commit -q -m "docs: adr"
 
-it "review-level: スキルの文書と CLAUDE.md だけの変更は medium"
+it "review-level: スキルの文書と CLAUDE.md だけの変更は low"
 git switch -q -c feat/rule-docs main
 commit_file "$LEVEL_REPO" claude/skills/x/SKILL.md "docs(skills): x"
 commit_file "$LEVEL_REPO" claude/skills/x/references/r.md "docs(skills): r"
 commit_file "$LEVEL_REPO" CLAUDE.md "docs: claude"
 commit_file "$LEVEL_REPO" claude/README.md "docs: readme"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 it "review-level: 規則の文書の判定は check-merge-review と同じ（どこかの .claude の下、SKILL.md）"
 git switch -q -c feat/rule-docs-elsewhere main
 commit_file "$LEVEL_REPO" skills/b/SKILL.md "docs(skills): b"
 commit_file "$LEVEL_REPO" sub/.claude/c.md "docs: c"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 it "review-level: スキルの中のスクリプトを含む変更は high"
 git switch -q -c feat/skill-script main
@@ -237,20 +237,20 @@ commit_file "$LEVEL_REPO" docs/adr/0003-z.md "docs: adr"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "LEVEL: high"
 
-it "review-level: 既存の ADR の「## 変更」の節への追記だけなら medium"
+it "review-level: 既存の ADR の「## 変更」の節への追記だけなら low"
 git switch -q -c feat/adr-change main
 echo "- 2026-02-01: 次の変更" >>docs/adr/0001-x.md
 git commit -q -am "docs(adr): change"
 commit_file "$LEVEL_REPO" docs/issues/i.md "docs: issue"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
-it "review-level: 「## 変更」の節の中の行を書き換えるだけなら medium"
+it "review-level: 「## 変更」の節の中の行を書き換えるだけなら low"
 git switch -q -c feat/adr-change-edit main
 sed -i 's/最初の変更/最初の変更（直した）/' docs/adr/0001-x.md
 git commit -q -am "docs(adr): fix change"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 it "review-level: ADR の決定の節も変えるなら high"
 git switch -q -c feat/adr-decision main
@@ -280,11 +280,11 @@ commit_file "$LEVEL_REPO" docs/patches/x.patch "fix: patch"
 out=$("$SCRIPTS_DIR/review-level.sh")
 assert_contains "$out" "LEVEL: high"
 
-it "review-level: docs/adr の ADR でない文書（README.md）は medium"
+it "review-level: docs/adr の ADR でない文書（README.md）は low"
 git switch -q -c feat/adr-readme main
 commit_file "$LEVEL_REPO" docs/adr/README.md "docs: adr readme"
 out=$("$SCRIPTS_DIR/review-level.sh")
-assert_contains "$out" "LEVEL: medium"
+assert_contains "$out" "LEVEL: low"
 
 
 it "review-level: claude-hooks が無ければ、入れ方を示して 127 で止まる"
