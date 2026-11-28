@@ -82,12 +82,19 @@ impl Dir {
     }
 }
 
+/// 「まだ待つ」の結果。終了コードは DONE と同じ 0 で（失敗に見せない）、WAIT の行で見分ける
+fn assert_wait(code: i32, out: &str) {
+    assert_eq!(code, 0, "{out}");
+    assert!(out.starts_with("WAIT: "), "{out}");
+    assert!(!out.contains("DONE:") && !out.contains("END:"), "{out}");
+}
+
 #[test]
-fn wait_is_printed_with_exit_2_after_a_step_with_the_next_action() {
+fn wait_is_printed_with_exit_0_after_a_step_with_the_next_action() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     let (code, out) = d.wait(1, 60, &["/wt/a", &log]);
-    assert_eq!(code, 2, "{out}");
+    assert_wait(code, &out);
     assert!(out.contains("WAIT: 待つだけで 0 分"), "{out}");
     assert!(
         out.contains("NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ"),
@@ -108,7 +115,7 @@ fn an_injected_time_takes_the_steps_without_sleeping() {
     let log = d.file("job.out", "");
     let start = Instant::now();
     let (code, out) = d.wait_at(1000, 270, 3300, &["/wt/fake", &log]);
-    assert_eq!(code, 2, "{out}");
+    assert_wait(code, &out);
     assert!(out.contains("WAIT: 待つだけで 4 分"), "{out}");
     // 1 ステップの 270 秒より十分に短い（負荷の下でも起動と 270 回の見回りは収まる）
     assert!(start.elapsed() < Duration::from_secs(60), "{out}");
@@ -132,7 +139,8 @@ fn a_finished_or_killed_output_returns_done_at_once() {
 fn the_end_mark_counts_only_on_the_last_line() {
     let d = Dir::new();
     let mid = d.file("mid.out", "[exited with code 0]\nstill running\n");
-    assert_eq!(d.wait(1, 60, &["/wt/mid", &mid]).0, 2);
+    let (code, out) = d.wait(1, 60, &["/wt/mid", &mid]);
+    assert_wait(code, &out);
 }
 
 #[test]
@@ -202,7 +210,8 @@ fn past_the_limit_the_wait_ends_with_the_next_action_and_removes_the_clock() {
     assert!(out.contains("SubagentHandback で報告して終える"), "{out}");
     assert!(!out.contains("REPORT"), "{out}");
     // 終える担当の時計を消すので、同じ worktree の次の担当は今から数える
-    assert_eq!(d.wait_at(103, 2, 3, &["/wt/c", &log]).0, 2);
+    let (code, out) = d.wait_at(103, 2, 3, &["/wt/c", &log]);
+    assert_wait(code, &out);
 }
 
 /// 状態のファイルの、待つだけになった時刻
@@ -245,7 +254,7 @@ fn the_default_limit_is_55_minutes_from_the_start_of_the_wait() {
     // 0 秒に待ち始め、270 秒ごとに呼び直す。12 回目は 2970〜3240 秒で WAIT、13 回目は 3300 秒（55 分）で END
     for step in 0..12 {
         let (code, out) = wait(step * 270);
-        assert_eq!(code, 2, "{step}: {out}");
+        assert_wait(code, &out);
     }
     let (code, out) = wait(12 * 270);
     assert_eq!(code, 3, "{out}");
@@ -264,7 +273,8 @@ fn a_done_restarts_the_clock() {
     d.wait_at(102, 2, 5, &["/wt/d", &log, &ended]);
     // 102 秒の DONE（待ちのほかのこと）から数え直すので、待ち始めから 6 秒の 106 秒でも線の 5 秒に届かない
     assert_eq!(started(&d), 102);
-    assert_eq!(d.wait_at(104, 2, 5, &["/wt/d", &log]).0, 2);
+    let (code, out) = d.wait_at(104, 2, 5, &["/wt/d", &log]);
+    assert_wait(code, &out);
 }
 
 #[test]
@@ -315,7 +325,8 @@ fn end_removes_the_clock() {
     let log = d.file("job.out", "");
     d.wait_at(100, 2, 3, &["/wt/g", &log]);
     assert_eq!(d.wait_at(102, 2, 3, &["--end", "/wt/g"]).0, 0);
-    assert_eq!(d.wait_at(102, 2, 3, &["/wt/g", &log]).0, 2);
+    let (code, out) = d.wait_at(102, 2, 3, &["/wt/g", &log]);
+    assert_wait(code, &out);
 }
 
 #[test]
@@ -323,7 +334,8 @@ fn clocks_are_kept_per_key_and_the_key_path_is_normalized() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     d.wait_at(100, 2, 3, &["/実験/x", &log]);
-    assert_eq!(d.wait_at(102, 2, 3, &["/計算/x", &log]).0, 2);
+    let (code, out) = d.wait_at(102, 2, 3, &["/計算/x", &log]);
+    assert_wait(code, &out);
     d.wait_at(100, 2, 3, &["/wt/n", &log]);
     assert_eq!(d.wait_at(102, 2, 3, &["/wt/n/", &log]).0, 3);
 }
@@ -398,7 +410,7 @@ fn an_injected_time_at_the_end_of_the_range_does_not_overflow() {
     let d = Dir::new();
     let log = d.file("job.out", "");
     let (code, out) = d.wait_at(u64::MAX - 1, 270, 3300, &["/wt/max", &log]);
-    assert_eq!(code, 2, "{out}");
+    assert_wait(code, &out);
 }
 
 #[test]
@@ -427,7 +439,7 @@ fn a_start_time_later_than_now_does_not_break_the_wait() {
     // 101 秒に最後に呼び、待ち始めは 30 秒後
     std::fs::write(&state, "131 101\n").unwrap();
     let (code, out) = d.wait_at(101, 1, 60, &["/wt/clock", &log]);
-    assert_eq!(code, 2, "{out}");
+    assert_wait(code, &out);
     assert!(out.contains("WAIT: 待つだけで 0 分"), "{out}");
 }
 
