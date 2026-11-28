@@ -638,14 +638,25 @@ impl Checks {
         } else if Path::new("tests").is_dir() || root_has_test_file() {
             self.command_stage("python", "test", "pytest", "", &argv(&["pytest"]))?;
         } else if let Some(files) = python_test_files().filter(|f| !f.is_empty()) {
-            let Some(python) = working_python() else {
-                println!("SKIP: python test (動く python3 も python も無い)");
-                return Ok(true);
+            let python = match choose_python() {
+                PythonChoice::Missing => {
+                    println!("SKIP: python test (python3 も python も無い)");
+                    return Ok(true);
+                }
+                PythonChoice::Broken(paths) => {
+                    // スタブや壊れた環境で、追跡しているテストを流さないまま通さない
+                    println!(
+                        "FAILED: python test: PATH の python3 も python も動かない（Python 3 として起動できない: {}）",
+                        paths.join(", ")
+                    );
+                    return Err(1);
+                }
+                PythonChoice::Found(python) => python,
             };
             let mut display = vec!["python_subdir_tests".to_string()];
             display.extend(files.iter().cloned());
-            self.stage("python", "test", python, "", &display, || {
-                python_subdir_tests(python, &files)
+            self.stage("python", "test", python.name, "", &display, || {
+                python_subdir_tests(&python, &files)
             })?;
         } else {
             println!("SKIP: python test (テストが見つからない)");
@@ -816,37 +827,84 @@ fn python_test_files() -> Option<Vec<String>> {
     })
 }
 
-/// PATH にあって `--version` が通る最初のインタープリタの名前（python3、python の順）。PATH にあるかだけで選ばないのは、
-/// Windows の python3 が Microsoft Store のスタブ（WindowsApps の下。何を渡しても失敗する）に当たり、本物は python で
-/// 呼ぶため。WindowsApps のパスで除かないのは、Store から入れた本物の Python も同じ置き場の名前で呼ぶため
-fn working_python() -> Option<&'static str> {
-    ["python3", "python"].into_iter().find(|name| {
-        find_on_path(name).is_some_and(|path| {
-            Command::new(path)
-                .arg("--version")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
+/// サブディレクトリのテストを流すインタープリタ。name は RUN の行に出す名前、path は起動する実体
+struct Python {
+    name: &'static str,
+    path: PathBuf,
+    pytest: bool,
+}
+
+enum PythonChoice {
+    /// python3 も python も PATH に無い
+    Missing,
+    /// PATH にあるが、どれも Python 3 として起動できない（そのパス）
+    Broken(Vec<String>),
+    Found(Python),
+}
+
+/// python3、python の順に、PATH にあって Python 3 として起動できるものから、pytest が使える最初のものを選ぶ。どれにも
+/// pytest が無ければ、起動できる最初のもの。PATH にあるかだけで選ばないのは、Windows の python3 が Microsoft Store の
+/// スタブ（WindowsApps の下。何を渡しても失敗する）に当たり、本物は python で呼ぶため。WindowsApps のパスで除かない
+/// のは、Store から入れた本物の Python も同じ置き場の名前で呼ぶため。pytest のある方を先にするのは、Windows の venv
+/// には python しか無く、PATH の先の python3 が venv の外の Python になるため。版を見るのは、python が Python 2 の
+/// 機械で、Python 3 のテストを Python 2 で流さないため
+fn choose_python() -> PythonChoice {
+    let on_path: Vec<(&'static str, PathBuf)> = ["python3", "python"]
+        .into_iter()
+        .filter_map(|name| find_on_path(name).map(|path| (name, path)))
+        .collect();
+    if on_path.is_empty() {
+        return PythonChoice::Missing;
+    }
+    let broken = || {
+        on_path
+            .iter()
+            .map(|(_, path)| path.display().to_string())
+            .collect()
+    };
+    let running: Vec<&(&'static str, PathBuf)> = on_path
+        .iter()
+        .filter(|(_, path)| {
+            succeeds(
+                path,
+                &["-c", "import sys; sys.exit(sys.version_info < (3,))"],
+            )
         })
-    })
+        .collect();
+    let with_pytest = running
+        .iter()
+        .find(|(_, path)| succeeds(path, &["-m", "pytest", "--version"]));
+    match (with_pytest, running.first()) {
+        (Some((name, path)), _) => PythonChoice::Found(Python {
+            name,
+            path: path.clone(),
+            pytest: true,
+        }),
+        (None, Some((name, path))) => PythonChoice::Found(Python {
+            name,
+            path: path.clone(),
+            pytest: false,
+        }),
+        (None, None) => PythonChoice::Broken(broken()),
+    }
+}
+
+/// program を args で起動し、0 で終わるか（出力は捨てる）
+fn succeeds(program: &Path, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// 追跡しているテストを、ディレクトリごとに実行する。テストは隣の .py を import するので、そのディレクトリを起点に
 /// する。ディレクトリやパターンでなく追跡しているファイルだけを渡すのは、子のディレクトリのテストを親と子で二重に
 /// 実行せず、追跡していないファイルを拾わないため。pytest がそのインタープリタから使えれば pytest、無ければ標準の unittest
 /// （pytest を足さない環境で、テストが走らないまま通るのを避ける）
-fn python_subdir_tests(python: &str, files: &[String]) -> bool {
-    let pytest_ok = find_on_path(python).is_some_and(|python| {
-        Command::new(python)
-            .args(["-m", "pytest", "--version"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    });
+fn python_subdir_tests(python: &Python, files: &[String]) -> bool {
     // スラッシュの無いパス（ルート直下）は . とみなす
     let split = |f: &str| -> (String, String) {
         match f.rsplit_once('/') {
@@ -862,8 +920,8 @@ fn python_subdir_tests(python: &str, files: &[String]) -> bool {
             .filter(|(d, _)| *d == dir)
             .map(|(_, name)| name)
             .collect();
-        let mut cmd = vec![python.to_string(), "-m".to_string()];
-        if pytest_ok {
+        let mut cmd = vec![python.name.to_string(), "-m".to_string()];
+        if python.pytest {
             cmd.push("pytest".to_string());
             cmd.extend(names);
         } else {
@@ -876,7 +934,9 @@ fn python_subdir_tests(python: &str, files: &[String]) -> bool {
         }
         let line = format!("cd {} && {}", shell_quote(&dir), cmd.join(" "));
         println!("RUN: python test: {line}");
-        let argv: Vec<OsString> = cmd.iter().map(OsString::from).collect();
+        // 選んだときに確かめた実体を起動する（名前で PATH を探し直さない）
+        let mut argv: Vec<OsString> = vec![python.path.clone().into_os_string()];
+        argv.extend(cmd[1..].iter().map(OsString::from));
         if !spawn(&argv, Some(Path::new(&dir))) {
             println!("FAILED: python test: {line}");
             return false;
