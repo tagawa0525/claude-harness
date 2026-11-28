@@ -638,10 +638,14 @@ impl Checks {
         } else if Path::new("tests").is_dir() || root_has_test_file() {
             self.command_stage("python", "test", "pytest", "", &argv(&["pytest"]))?;
         } else if let Some(files) = python_test_files().filter(|f| !f.is_empty()) {
+            let Some(python) = working_python() else {
+                println!("SKIP: python test (動く python3 も python も無い)");
+                return Ok(true);
+            };
             let mut display = vec!["python_subdir_tests".to_string()];
             display.extend(files.iter().cloned());
-            self.stage("python", "test", "python3", "", &display, || {
-                python_subdir_tests(&files)
+            self.stage("python", "test", python, "", &display, || {
+                python_subdir_tests(python, &files)
             })?;
         } else {
             println!("SKIP: python test (テストが見つからない)");
@@ -812,12 +816,29 @@ fn python_test_files() -> Option<Vec<String>> {
     })
 }
 
+/// PATH にあって `--version` が通る最初のインタープリタの名前（python3、python の順）。PATH にあるかだけで選ばないのは、
+/// Windows の python3 が Microsoft Store のスタブ（WindowsApps の下。何を渡しても失敗する）に当たり、本物は python で
+/// 呼ぶため。WindowsApps のパスで除かないのは、Store から入れた本物の Python も同じ置き場の名前で呼ぶため
+fn working_python() -> Option<&'static str> {
+    ["python3", "python"].into_iter().find(|name| {
+        find_on_path(name).is_some_and(|path| {
+            Command::new(path)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+    })
+}
+
 /// 追跡しているテストを、ディレクトリごとに実行する。テストは隣の .py を import するので、そのディレクトリを起点に
 /// する。ディレクトリやパターンでなく追跡しているファイルだけを渡すのは、子のディレクトリのテストを親と子で二重に
-/// 実行せず、追跡していないファイルを拾わないため。pytest が python3 から使えれば pytest、無ければ標準の unittest
+/// 実行せず、追跡していないファイルを拾わないため。pytest がそのインタープリタから使えれば pytest、無ければ標準の unittest
 /// （pytest を足さない環境で、テストが走らないまま通るのを避ける）
-fn python_subdir_tests(files: &[String]) -> bool {
-    let pytest_ok = find_on_path("python3").is_some_and(|python| {
+fn python_subdir_tests(python: &str, files: &[String]) -> bool {
+    let pytest_ok = find_on_path(python).is_some_and(|python| {
         Command::new(python)
             .args(["-m", "pytest", "--version"])
             .stdin(Stdio::null())
@@ -841,7 +862,7 @@ fn python_subdir_tests(files: &[String]) -> bool {
             .filter(|(d, _)| *d == dir)
             .map(|(_, name)| name)
             .collect();
-        let mut cmd = vec!["python3".to_string(), "-m".to_string()];
+        let mut cmd = vec![python.to_string(), "-m".to_string()];
         if pytest_ok {
             cmd.push("pytest".to_string());
             cmd.extend(names);
