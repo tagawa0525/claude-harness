@@ -18,11 +18,14 @@ log="$TEST_ROOT/job.out"
 # shellcheck disable=SC2088
 shown='~/.claude/scripts/wait-step.sh'
 
-it "wait-step: 待つものが終わらなければ、1 ステップの時間で WAIT と次の行動を出して 2 で返る"
+it "wait-step: 待つものが終わらなければ、1 ステップの時間で WAIT と次の行動を出して 0 で返る（失敗に見せない）"
 out=$("$WAIT" /wt/a "$log")
-assert_eq 2 $?
+assert_eq 0 $?
 assert_contains "$out" "WAIT:"
 assert_contains "$out" "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ"
+# DONE と同じ 0 で返るので、行で見分けられることを確かめる
+assert_not_contains "$out" "DONE:"
+assert_not_contains "$out" "END:"
 
 it "wait-step: 待っている background の出力が終わると、DONE と残りの呼び直しと --end のコマンドを出して 0 で返る"
 printf 'job output\n[exited with code 0]\n' >"$TEST_ROOT/done.out"
