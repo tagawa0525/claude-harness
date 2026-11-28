@@ -8,8 +8,9 @@
 //!   渡すと /code-review は cwd のリポジトリでブランチを解くので、cwd が別のリポジトリ（や main の worktree）だと対象を
 //!   見つけられず、「指摘なし」と同じ形の空の結果が返る。none はどこにもチェックアウトされていない
 //! - `FILES: <変更ファイルの数>`
-//! - `LEVEL: medium | high`: 差分のどのファイルも下の「文書」なら medium、ほかは high。指摘の上限が高いと文書の周ごとに
-//!   8〜10 件が出て、指摘の数が収束の目安にならない
+//! - `LEVEL: low | medium | high`: 差分のどのファイルも下の「文書」なら low。文書のほかが設定のファイル（`is_settings`）
+//!   だけで、その足した行と消した行が合わせて `SMALL_SETTINGS_LINES` 以下なら medium。ほかは high。指摘の上限が高いと
+//!   文書の周ごとに 8〜10 件が出て、指摘の数が収束の目安にならない（ADR-0066）
 //! - `NEXT: /code-review <LEVEL> <WORKTREE>（…）`: 回す 1 行。WORKTREE が none なら対象を `<PR の URL>` にし、PR が無い
 //!   ときの取り出し方を添える
 //!
@@ -102,7 +103,8 @@ pub fn main(args: &[String]) -> i32 {
             return 1;
         }
     }
-    let files = git(
+    // パスと行数を 1 回の差分で読む（パスを pathspec に渡して引き直すと、`[` などの文字で別のファイルにも当たる）
+    let numstat = git(
         dir,
         &[
             // ASCII でない文字のパス（日本語の名前の文書）を引用せずに読む
@@ -110,12 +112,13 @@ pub fn main(args: &[String]) -> i32 {
             "core.quotePath=false",
             "diff",
             "--no-renames",
-            "--name-only",
+            "--numstat",
             &format!("{base}...{target}"),
         ],
     )
     .unwrap_or_default();
-    let files: Vec<&str> = files.lines().filter(|l| !l.is_empty()).collect();
+    let changes: Vec<(&str, Option<usize>)> = numstat.lines().filter_map(parse_numstat).collect();
+    let files: Vec<&str> = changes.iter().map(|(path, _)| *path).collect();
     if files.is_empty() {
         eprintln!(
             "ERROR: {base} と {target} の差分が空です。ブランチが別の worktree にあるなら、cwd ではなくブランチ名で渡してください"
@@ -123,10 +126,17 @@ pub fn main(args: &[String]) -> i32 {
         return 1;
     }
     let merge_base = git(dir, &["merge-base", &base, &target]).unwrap_or_default();
-    let level = if files
+    let rest: Vec<(&str, Option<usize>)> = changes
         .iter()
-        .all(|path| is_document(dir, &merge_base, &target, path))
-    {
+        .copied()
+        .filter(|(path, _)| !is_document(dir, &merge_base, &target, path))
+        .collect();
+    // 行数の読めないファイル（バイナリ）が 1 つでもあれば合計は None になり、high に倒れる
+    let settings_only = rest.iter().all(|(path, _)| is_settings(path));
+    let settings_lines: Option<usize> = rest.iter().map(|(_, lines)| *lines).sum();
+    let level = if rest.is_empty() {
+        "low"
+    } else if settings_only && settings_lines.is_some_and(|n| n <= SMALL_SETTINGS_LINES) {
         "medium"
     } else {
         "high"
@@ -189,6 +199,36 @@ fn is_document(dir: &Path, merge_base: &str, target: &str, path: &str) -> bool {
             && path.ends_with(".md"))
         || name == "CLAUDE.md"
         || name == "SKILL.md"
+}
+
+/// 設定の差分を medium に数える、足した行と消した行の合計の上限。設定の数行（許可の 1 行、.worktreelink の 1 行）を
+/// 拾い、構成を組み替える変更は high に残す
+const SMALL_SETTINGS_LINES: usize = 20;
+
+/// ゲートもビルドも変えない設定のファイル: 配る設定（claude-settings.json）、どこかの .claude/ の下の Claude Code の
+/// 設定、worktree が共有する一覧、git の無視の一覧、エディタの設定。拡張子（.json、.yaml、.toml）では見分けない。
+/// .pre-commit-config.yaml、Cargo.toml、prh.yml、CI の手順のように、ゲートやビルドの挙動を変えるファイルも同じ
+/// 拡張子を持つ。.gitattributes は改行の扱い（`eol=lf`）で Windows の sh の実行を変えるので入れない
+fn is_settings(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let in_claude_dir = path.starts_with(".claude/") || path.contains("/.claude/");
+    match name {
+        "claude-settings.json" | ".worktreelink" | ".gitignore" | ".editorconfig" => true,
+        "settings.json" | "settings.local.json" => in_claude_dir,
+        _ => false,
+    }
+}
+
+/// `git diff --numstat` の 1 行（`<足した行>\t<消した行>\t<パス>`）。バイナリの行数（`-`）は None
+fn parse_numstat(line: &str) -> Option<(&str, Option<usize>)> {
+    let mut cols = line.splitn(3, '\t');
+    let (added, deleted, path) = (cols.next()?, cols.next()?, cols.next()?);
+    let lines = added
+        .parse::<usize>()
+        .ok()
+        .zip(deleted.parse::<usize>().ok())
+        .map(|(a, d)| a + d);
+    Some((path, lines))
 }
 
 /// ADR の「## 変更」の見出しの行の番号（1 から）

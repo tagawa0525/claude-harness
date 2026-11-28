@@ -102,7 +102,7 @@ fn stdout(out: &Output) -> String {
 }
 
 #[test]
-fn documents_only_is_medium() {
+fn documents_only_is_low() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/docs"]);
     repo.commit("docs/plans/x.md", "plan");
@@ -118,8 +118,8 @@ fn documents_only_is_medium() {
     assert_eq!(
         stdout(&out),
         format!(
-            "BASE: main\nTARGET: feat/docs\nWORKTREE: {root}\nFILES: 2\nLEVEL: medium\n\
-             NEXT: /code-review medium {root}（1 周目はこの LEVEL で回す。直した後の周のレベルは /git-merge の「直す指摘の基準」の「終わり」の項で決める）\n",
+            "BASE: main\nTARGET: feat/docs\nWORKTREE: {root}\nFILES: 2\nLEVEL: low\n\
+             NEXT: /code-review low {root}（1 周目はこの LEVEL で回す。直した後の周のレベルは /git-merge の「直す指摘の基準」の「終わり」の項で決める）\n",
             root = root.trim()
         )
     );
@@ -181,7 +181,7 @@ fn a_branch_checked_out_nowhere_is_reviewed_by_the_pr_url() {
 }
 
 #[test]
-fn documents_under_the_harness_source_directory_are_medium() {
+fn documents_under_the_harness_source_directory_are_low() {
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/rule-docs"]);
     repo.commit("claude/README.md", "readme");
@@ -189,7 +189,7 @@ fn documents_under_the_harness_source_directory_are_medium() {
     let out = repo.run(&["feat/rule-docs", "--base", "main"]);
     assert_eq!(out.status.code(), Some(0));
     assert!(
-        stdout(&out).contains("FILES: 2\nLEVEL: medium\n"),
+        stdout(&out).contains("FILES: 2\nLEVEL: low\n"),
         "{}",
         stdout(&out)
     );
@@ -234,7 +234,7 @@ fn bad_arguments_are_errors() {
 
 #[test]
 fn a_change_to_a_frozen_section_of_an_adr_is_high_from_a_subdirectory() {
-    // 差分のパスはリポジトリの直下から。cwd からの相対で読むと差分が空になり、medium に倒れる
+    // 差分のパスはリポジトリの直下から。cwd からの相対で読むと差分が空になり、low に倒れる
     let repo = Repo::new();
     repo.commit("src/main.rs", "src");
     repo.git(&["switch", "-q", "main"]);
@@ -251,7 +251,7 @@ fn a_change_to_a_frozen_section_of_an_adr_is_high_from_a_subdirectory() {
 
 #[test]
 fn a_change_to_a_frozen_section_of_an_adr_is_high_with_colored_diffs() {
-    // 利用者の設定の色で hunk の見出しを読めなくなっても、medium に倒れない
+    // 利用者の設定の色で hunk の見出しを読めなくなっても、low に倒れない
     let repo = Repo::new();
     repo.git(&["config", "color.ui", "always"]);
     repo.adr_with_a_frozen_change("docs/adr/0001-x.md");
@@ -277,5 +277,124 @@ fn a_document_with_a_japanese_name_is_a_document() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(stdout(&out).contains("LEVEL: medium\n"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("LEVEL: low\n"), "{}", stdout(&out));
+}
+
+#[test]
+fn a_small_change_to_settings_files_is_medium() {
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/settings"]);
+    repo.commit("claude-settings.json", "allow");
+    repo.commit(".worktreelink", "references");
+    repo.commit("docs/plans/x.md", "plan");
+    let out = repo.run(&[]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout(&out).contains("FILES: 3\nLEVEL: medium\n"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+impl Repo {
+    /// path（リポジトリの直下からの相対）に n 行を書いて add する
+    fn write_lines(&self, path: &str, n: usize) {
+        let lines: String = (0..n).map(|i| format!("line{i}\n")).collect();
+        let file = self.root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, lines).unwrap();
+        self.git(&["add", path]);
+    }
+
+    fn level(&self) -> String {
+        let out = self.run(&[]);
+        assert_eq!(out.status.code(), Some(0));
+        stdout(&out)
+            .lines()
+            .find_map(|l| l.strip_prefix("LEVEL: "))
+            .unwrap_or_else(|| panic!("{}", stdout(&out)))
+            .to_string()
+    }
+
+    /// feat/settings で path に n 行を書いてコミットし、LEVEL を返す
+    fn level_after_writing_lines(&self, path: &str, n: usize) -> String {
+        self.git(&["switch", "-q", "-c", "feat/settings"]);
+        self.write_lines(path, n);
+        self.git(&["commit", "-q", "-m", "settings"]);
+        self.level()
+    }
+}
+
+#[test]
+fn twenty_changed_lines_of_settings_files_is_medium() {
+    assert_eq!(
+        Repo::new().level_after_writing_lines(".gitignore", 20),
+        "medium"
+    );
+}
+
+#[test]
+fn more_than_twenty_changed_lines_of_settings_files_is_high() {
+    assert_eq!(
+        Repo::new().level_after_writing_lines(".gitignore", 21),
+        "high"
+    );
+}
+
+#[test]
+fn files_that_change_gates_or_builds_are_not_settings_files() {
+    // 同じ拡張子（.yaml、.toml、.yml、.json）でも、ゲートやビルドの挙動を変えるファイルは短くても high
+    for path in [
+        ".pre-commit-config.yaml",
+        ".gitattributes",
+        "crates/x/Cargo.toml",
+        "crates/ja-terms/prh.yml",
+        "package.json",
+        "src/settings.json",
+    ] {
+        assert_eq!(
+            Repo::new().level_after_writing_lines(path, 1),
+            "high",
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn claude_code_settings_under_any_claude_directory_are_settings_files() {
+    for path in [".claude/settings.json", "sub/.claude/settings.json"] {
+        assert_eq!(
+            Repo::new().level_after_writing_lines(path, 1),
+            "medium",
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn a_path_with_pathspec_characters_counts_only_its_own_lines() {
+    // パスを pathspec として引き直すと、`a[1]` が a1 にも当たり、a1 の 15 行を 2 度数えて 31 行（high）になる。
+    // 正しく数えれば 15 + 1 = 16 行で medium
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/settings"]);
+    repo.write_lines("a1/.gitignore", 15);
+    repo.write_lines("a[1]/.gitignore", 1);
+    repo.git(&["commit", "-q", "-m", "settings"]);
+    assert_eq!(repo.level(), "medium");
+}
+
+#[test]
+fn a_github_workflow_is_not_a_settings_file() {
+    // CI の手順はゲートの挙動を変えるので、短くても設定に数えない
+    let repo = Repo::new();
+    repo.git(&["switch", "-q", "-c", "feat/ci"]);
+    repo.commit(".github/workflows/ci.yml", "ci");
+    let out = repo.run(&[]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout(&out).contains("LEVEL: high\n"), "{}", stdout(&out));
 }

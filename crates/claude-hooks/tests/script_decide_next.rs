@@ -161,7 +161,7 @@ fn docs_reviewed_is_followed_by_step_7_and_a_local_review_before_pushing_later_f
     assert_next(
         &text,
         "STOP_DOCS_REVIEWED",
-        &["Step 7", "/code-review medium", "push"],
+        &["Step 7", "/code-review low", "push"],
     );
 }
 
