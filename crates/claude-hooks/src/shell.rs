@@ -100,7 +100,7 @@ pub struct Shell {
     tree: Tree,
     /// 全コマンド（文書順）。parse のときに一度だけ読む。`bash -c` などの文字列の中のコマンドも、その位置に含む
     cmds: Vec<Cmd>,
-    /// 単純コマンドに掛からない出力のリダイレクト（[`Shell::compound_redirect`]）。文字列の中のものも含む。
+    /// 単純コマンドに掛からない出力と入力のリダイレクト（[`Shell::compound_redirect`]）。文字列の中のものも含む。
     /// 文字列の中のものはその文字列のコマンドを読むときに足すので、文書順ではない（[`Shell::writers`] が並べる）
     compound_writes: Vec<Cmd>,
     /// `bash -c` などの文字列を解析した内側のシェル。コマンドは `cmds` に移してある。代入・unset・エスケープの
@@ -200,6 +200,8 @@ pub struct Cmd {
     pub stdin_heredoc: Option<Heredoc>,
     /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`）
     pub writes: Vec<Arg>,
+    /// 入力のリダイレクトの読み元（`<`）
+    pub reads: Vec<Arg>,
     /// パイプラインの後ろのステージのコマンドの名前（書いたまま。順に）。パイプの途中でなければ空
     pub piped_into: Vec<String>,
 }
@@ -361,6 +363,20 @@ impl Shell {
         writes.then(|| self.unquote(dest))
     }
 
+    /// 入力のリダイレクト（`<`）の読み元。`<&` は記述子の複製、`<<<` と `<<` は file_redirect ではない
+    fn read_targets(&self, redirects: &[Node]) -> Vec<Arg> {
+        redirects
+            .iter()
+            .filter(|r| r.kind() == "file_redirect")
+            .filter_map(|r| {
+                let dest = r.child_by_field_name("destination")?;
+                let mut cursor = r.walk();
+                let op = r.children(&mut cursor).find(|c| !c.is_named())?.kind();
+                (op == "<").then(|| self.unquote(dest))
+            })
+            .collect()
+    }
+
     /// `heredoc_body` を除く全ノードを文書順（先行順）で走査する
     fn walk(&self, node: Node, visit: &mut dyn FnMut(Node)) {
         if node.kind() == "heredoc_body" {
@@ -394,8 +410,8 @@ impl Shell {
         &self.cmds
     }
 
-    /// 書き込み先を持ちうるもの（文書順）: 全コマンドと、単純コマンドに掛からない出力のリダイレクト
-    /// （`{ …; } > f`、`( … ) > f`、`if … fi > f`、`> f` など）。後者は `writes` だけを持ち、名前は複合文の始まりと
+    /// 書き込み先か読み元を持ちうるもの（文書順）: 全コマンドと、単純コマンドに掛からない出力と入力のリダイレクト
+    /// （`{ …; } > f`、`( … ) > f`、`if … fi > f`、`> f` など）。後者は `writes` と `reads` だけを持ち、名前は複合文の始まりと
     /// 終わりの語（[`Shell::compound_redirect`]）。位置とスコープは複合文の外側のシェルのもので、
     /// [`Shell::target_dir`] が行き先を、[`Cmd::runs_before`] が前後を決める。[`Shell::commands`] には含めない
     /// （プログラムを実行しない）
@@ -571,6 +587,7 @@ impl Shell {
             git,
             stdin_heredoc,
             writes,
+            reads: self.read_targets(&redirects),
             piped_into: self.later_pipeline_stages(node),
         };
         let Some(source) = unwrapped.source else {
@@ -629,7 +646,7 @@ impl Shell {
         })
     }
 
-    /// 単純コマンドに掛からない `redirected_statement` の出力のリダイレクトを、書き込み先だけを持つコマンドにしたもの。
+    /// 単純コマンドに掛からない `redirected_statement` の出力と入力のリダイレクトを、書き込み先と読み元だけを持つコマンドにしたもの。
     /// 複合文（`{ …; }`、`( … )`、`if`、`while` / `until`、`for`、`case`、`[[ … ]]`）、`export` などの宣言、
     /// 本体の無いもの（`> f`）で、パイプラインと並びの最後のステージのものも含む（`a | { b; } > f`）。bash は
     /// リダイレクトを複合文の前に、複合文の外側のシェルで開くので、位置は複合文の始まりで、スコープは複合文の外の
@@ -645,7 +662,8 @@ impl Shell {
             .children_by_field_name("redirect", &mut cursor)
             .collect();
         let writes = self.write_targets(&redirects);
-        if writes.is_empty() {
+        let reads = self.read_targets(&redirects);
+        if writes.is_empty() && reads.is_empty() {
             return None;
         }
         // 本体の無い `cd x && > f` の位置は、redirected_statement の始まり（並びの前の cd より後ろ）
@@ -657,6 +675,7 @@ impl Shell {
             has_error: node.has_error(),
             scope: scope_of(node),
             writes,
+            reads,
             ..Cmd::default()
         })
     }
@@ -1519,6 +1538,36 @@ mod tests {
         assert_eq!(texts(&cs[1].writes), ["out"]);
     }
 
+    #[test]
+    fn reads_lists_input_redirect_targets() {
+        let cs = cmds("wc -l < in.txt && cat 0< 'a b' > out");
+        assert_eq!(texts(&cs[0].reads), ["in.txt"]);
+        assert_eq!(texts(&cs[1].reads), ["a b"]);
+        assert_eq!(texts(&cs[1].writes), ["out"]);
+        // here string、ヒアドキュメント、記述子の複製はファイルを読まない
+        let cs = cmds("cat <<< x; cat <<'EOF'\nx\nEOF\ncat <&3");
+        assert!(cs.iter().all(|c| c.reads.is_empty()));
+    }
+
+    /// 複合文に掛かる入力のリダイレクト（`while read …; done < f`）は、書き込み先と同じく複合文の分を持つ
+    #[test]
+    fn input_redirect_on_a_compound_statement_is_a_read_of_its_own() {
+        let sh = Shell::parse("while read -r l; do echo \"$l\"; done < in");
+        let reads: Vec<(&str, Vec<&str>)> = sh
+            .writers()
+            .into_iter()
+            .map(|c| (c.name.as_str(), texts(&c.reads)))
+            .collect();
+        assert_eq!(
+            reads,
+            [
+                ("while … done", vec!["in"]),
+                ("read", vec![]),
+                ("echo", vec![])
+            ]
+        );
+    }
+
     /// コマンドの名前と書き込み先（文書順）
     fn writes_by_name(sh: &Shell) -> Vec<(&str, Vec<&str>)> {
         sh.commands()
@@ -1710,7 +1759,11 @@ mod tests {
             "g() { a; } > f",
         ] {
             let sh = Shell::parse(src);
-            assert!(sh.compound_writes.is_empty(), "{src}");
+            // 入力のリダイレクトは読み元だけを持つ（書き込み先は無い）
+            assert!(
+                sh.compound_writes.iter().all(|c| c.writes.is_empty()),
+                "{src}"
+            );
             assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
         }
     }
