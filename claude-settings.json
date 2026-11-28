@@ -158,7 +158,13 @@
     ],
     "defaultMode": "default",
     "deny": [
-      "Bash(sudo:*)"
+      "Bash(sudo:*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.claude/.credentials.json)",
+      "Read(**/.env*)"
     ]
   },
   "plansDirectory": "docs/plans",
