@@ -162,9 +162,15 @@
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)",
       "Read(~/.config/gh/**)",
+      "Read(~/AppData/Roaming/GitHub CLI/**)",
       "Read(~/.gnupg/**)",
+      "Read(~/AppData/Roaming/gnupg/**)",
+      "Read(~/.config/sops/age/**)",
+      "Read(~/.git-credentials)",
+      "Read(~/.netrc)",
       "Read(~/.claude/.credentials.json)",
-      "Read(**/.env*)"
+      "Read(//**/.env)",
+      "Read(//**/.env.*)"
     ]
   },
   "plansDirectory": "docs/plans",
