@@ -707,7 +707,9 @@ fn python_on_path_that_does_not_run_fails_the_subdirectory_tests() {
     );
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     assert!(
-        stdout(&out).contains("FAILED: python test: PATH の python3 も python も動かない"),
+        stdout(&out).contains(
+            "FAILED: python test: PATH の python3 / python が Python 3 として起動できない: "
+        ),
         "{}",
         said(&out)
     );
@@ -716,6 +718,51 @@ fn python_on_path_that_does_not_run_fails_the_subdirectory_tests() {
         !repo.calls().iter().any(|c| c.contains("-m ")),
         "{:?}",
         repo.calls()
+    );
+}
+
+/// 失敗の行には、PATH にあって起動できなかったものだけを挙げる（無い python を試したように見せない）
+#[test]
+fn the_failure_names_only_the_interpreters_on_path() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    let out = repo.run(&[], &[("FAKE_PYTHON3_EXIT", "49")]);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    let line = stdout(&out)
+        .lines()
+        .find(|l| l.starts_with("FAILED: python test: "))
+        .unwrap_or_else(|| panic!("{}", said(&out)))
+        .to_string();
+    let python3 = format!("python3{}", std::env::consts::EXE_SUFFIX);
+    assert!(line.ends_with(&python3), "{line}");
+    assert!(!line.contains(", "), "{line}");
+}
+
+/// Python 3 かの確認で落ちるもの（python が Python 2 の機械）は、pytest が使えても選ばない
+#[test]
+fn an_interpreter_that_fails_only_the_version_check_is_not_chosen() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    repo.tool("python");
+    let calls = repo.root.join("python3.calls");
+    let out = repo.run(
+        &[],
+        &[
+            ("FAKE_PYTHON3_CALLS", calls.to_str().unwrap()),
+            ("FAKE_PYTHON3_EXIT_1", "1"),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("RUN: python test: cd pkg && python -m pytest test_a.py"),
+        "{}",
+        said(&out)
     );
 }
 
