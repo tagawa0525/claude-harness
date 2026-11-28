@@ -7,20 +7,22 @@
 //! Python の文字列（`'C:\\Users'` が `'C:\Users'` になり unicodeescape で落ちる）や、ファイルに書いた本文が崩れる。
 //!
 //! 止めるのは、書き換えで bash の結果が変わる並びだけ。1 つだけのバックスラッシュと `"` の直前の並びは書き換わらない。
-//! 二重引用符の中（`$(…)` と `` `…` `` の中を除く）と引用符なしのヒアドキュメントの本文の、ちょうど 2 つの並びは、
+//! 二重引用符の文字列と引用符なしのヒアドキュメントの本文の地の文（展開とコマンド置換の外）の、ちょうど 2 つの並びは、
 //! bash が特別に読む文字（`$`、`` ` ``、改行）の前でなければ、1 つにされても bash が同じ 1 つにするので通す
-//! （`grep "foo\\|bar"`）。コメントの中は通す。引用の読み取りが閉じないまま終わったときは、二重引用符の中として通した
-//! 並びも止める（読み違えた引用で通さない）。Windows でない機械では止めない（Linux の Bash ツールは確かめていない）。
-//! エスケープは置かない（止めるときは、書いたとおりに届かないことが決まっている）。止めずに入力を書き換えて並びを
-//! 倍にしない（hook の後の書き換えは、Bash ツールの公開されない挙動に頼る。直ると、倍にした並びがそのまま届いて
-//! 壊れる。#437）
+//! （`grep "foo\\|bar"`）。地の文かは tree-sitter の木で決め（`Shell::literal_at`）、木に構文の誤りがあるときと、
+//! ヒアドキュメントの本文が bash の読む本文（`Shell::heredocs`）と合わないときは通さない。手で引用を追う走査にしない
+//! （`case` の `)`、`${…}`、本文の中の `$(…)` で読み違えた。#437）。バッククォートの中とコメントは、2 つでも止める
+//! （バッククォートの中の読み方を追わない。tree-sitter はエスケープした空白の後の `#` をコメントと読む）。
+//! Windows でない機械では止めない（Linux の Bash ツールは確かめていない）。エスケープは置かない（止めるときは、
+//! 書いたとおりに届かないことが決まっている）。止めずに入力を書き換えて並びを倍にしない（hook の後の書き換えは、
+//! Bash ツールの公開されない挙動に頼る。直ると、倍にした並びがそのまま届いて壊れる。#437）
 
 use std::ops::Range;
 
 use super::Rule;
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::Shell;
+use crate::shell::{Literal, Shell};
 
 pub struct BlockWindowsDoubleBackslash;
 
@@ -30,7 +32,7 @@ impl Rule for BlockWindowsDoubleBackslash {
     }
 
     fn check(&self, _input: &Input, shell: &Shell) -> Vec<Finding> {
-        if cfg!(windows) && changes_result(shell.src(), &heredoc_bodies(shell)) {
+        if cfg!(windows) && changes_result(shell) {
             vec![Finding::Deny(DENY.to_string())]
         } else {
             Vec::new()
@@ -38,12 +40,10 @@ impl Rule for BlockWindowsDoubleBackslash {
     }
 }
 
-/// ヒアドキュメントの本文 1 つの、原文の中の位置
+/// bash が読むヒアドキュメントの本文 1 つの、原文の中の位置
 struct Body {
     /// 本文（閉じの行を除く）
     text: Range<usize>,
-    /// 閉じの行の後（走査を続ける位置）
-    resume: usize,
     /// 区切りを引用したか（本文を bash が読まない）
     quoted: bool,
 }
@@ -69,136 +69,60 @@ fn heredoc_bodies(shell: &Shell) -> Vec<Body> {
                 offset(span.rest)?
             };
             let start = (line + span.line.len() + 1).min(resume);
-            // 閉じの行の始まり（resume の前の改行の次）
-            let end = src[..resume.saturating_sub(1)]
-                .rfind('\n')
+            // 閉じの行の始まり（その前の改行の次）。閉じの行が多バイトの文字で終わりうるので、バイトで探す
+            let end = src.as_bytes()[..resume.saturating_sub(1)]
+                .iter()
+                .rposition(|b| *b == b'\n')
                 .map_or(start, |i| i + 1)
                 .max(start);
             Some(Body {
                 text: start..end,
-                resume,
                 quoted: span.heredoc.quoted,
             })
         })
         .collect()
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Ctx {
-    /// 引用符の外
-    Plain,
-    /// `$(…)`（入れ子の括弧の深さ）
-    Subst(u32),
-    Single,
-    /// `$'…'`
-    AnsiC,
-    Double,
-    Backtick,
-    Comment,
-}
-
 /// bash が二重引用符の中と引用符なしのヒアドキュメントで、バックスラッシュの後ろを特別に読む文字（`"` は書き換わらない
-/// ので除く）
+/// ので除く）。None はコマンドの終わり
 fn special_after_backslash(c: Option<u8>) -> bool {
     matches!(c, None | Some(b'$' | b'`' | b'\n'))
 }
 
 /// Windows の Bash ツールの書き換えで、bash の結果が変わる並びがあるか
-fn changes_result(src: &str, bodies: &[Body]) -> bool {
-    let bytes = src.as_bytes();
-    let mut stack = vec![Ctx::Plain];
-    // 二重引用符の中として通した並びがあったか（引用の読み取りが閉じなければ止める）
-    let mut passed_as_double = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        if let Some(body) = bodies.iter().find(|b| b.text.start == i && b.resume > i) {
-            for (n, next) in runs(&bytes[body.text.clone()], bytes.get(body.text.end).copied()) {
-                if body.quoted || n != 2 || special_after_backslash(next) {
-                    return true;
-                }
-            }
-            i = body.resume;
-            continue;
-        }
-        let ctx = *stack.last().expect("Plain は外さない");
-        let b = bytes[i];
-        let next = |k: usize| bytes.get(i + k).copied();
-        if b == b'\\' {
-            let n = bytes[i..].iter().take_while(|c| **c == b'\\').count();
-            let after = next(n);
-            if n >= 2 && after != Some(b'"') {
-                match ctx {
-                    Ctx::Comment => {}
-                    Ctx::Double if n == 2 && !special_after_backslash(after) => {
-                        passed_as_double = true;
-                    }
-                    _ => return true,
-                }
-            }
-            // 奇数の並びの最後の 1 つは、次の 1 文字を引用する（単引用符とコメントの中を除く）
-            let escapes_next = n % 2 == 1 && !matches!(ctx, Ctx::Single | Ctx::Comment);
-            i += n + usize::from(escapes_next && after.is_some());
-            continue;
-        }
-        let word_start = i == 0
-            || matches!(
-                bytes[i - 1],
-                b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')'
-            );
-        match (ctx, b) {
-            (Ctx::Plain | Ctx::Subst(_), b'#') if word_start => stack.push(Ctx::Comment),
-            (Ctx::Comment, b'\n') => {
-                stack.pop();
-            }
-            (Ctx::Plain | Ctx::Subst(_) | Ctx::Backtick, b'\'') => stack.push(Ctx::Single),
-            (Ctx::Single | Ctx::AnsiC, b'\'') => {
-                stack.pop();
-            }
-            (Ctx::Plain | Ctx::Subst(_), b'$') if next(1) == Some(b'\'') => {
-                stack.push(Ctx::AnsiC);
-                i += 1;
-            }
-            (Ctx::Plain | Ctx::Subst(_) | Ctx::Double, b'$') if next(1) == Some(b'(') => {
-                stack.push(Ctx::Subst(0));
-                i += 1;
-            }
-            (Ctx::Plain | Ctx::Subst(_) | Ctx::Backtick, b'"') => stack.push(Ctx::Double),
-            (Ctx::Double, b'"') => {
-                stack.pop();
-            }
-            (Ctx::Backtick, b'`') => {
-                stack.pop();
-            }
-            (Ctx::Plain | Ctx::Subst(_) | Ctx::Double, b'`') => stack.push(Ctx::Backtick),
-            (Ctx::Subst(depth), b'(') => {
-                *stack.last_mut().expect("Subst がある") = Ctx::Subst(depth + 1)
-            }
-            (Ctx::Subst(0), b')') => {
-                stack.pop();
-            }
-            (Ctx::Subst(depth), b')') => {
-                *stack.last_mut().expect("Subst がある") = Ctx::Subst(depth - 1)
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    passed_as_double && !matches!(stack.as_slice(), [Ctx::Plain] | [Ctx::Plain, Ctx::Comment])
+fn changes_result(shell: &Shell) -> bool {
+    let bodies = heredoc_bodies(shell);
+    runs(shell.src().as_bytes())
+        .into_iter()
+        .any(|(at, n, next)| !same_after_rewrite(shell, &bodies, at..at + n, next))
 }
 
-/// text の中の、2 つ以上で `"` の直前でないバックスラッシュの並びの（長さ, 次の文字）。after は text の後ろの文字
-fn runs(text: &[u8], after: Option<u8>) -> Vec<(usize, Option<u8>)> {
+/// 書き換わる並び（at..at+n。次の文字は next）を 1 つにされても、bash が同じ結果にするか
+fn same_after_rewrite(shell: &Shell, bodies: &[Body], run: Range<usize>, next: Option<u8>) -> bool {
+    if run.len() != 2 || special_after_backslash(next) {
+        return false;
+    }
+    let body = bodies.iter().find(|b| b.text.contains(&run.start));
+    match (shell.literal_at(run.clone()), body) {
+        (Literal::DoubleQuoted, None) => true,
+        (Literal::HeredocBody, Some(body)) => !body.quoted && run.end <= body.text.end,
+        _ => false,
+    }
+}
+
+/// Bash ツールが書き換える並び（2 つ以上で、`"` の直前でない）の（位置, 長さ, 次の文字）
+fn runs(src: &[u8]) -> Vec<(usize, usize, Option<u8>)> {
     let mut found = Vec::new();
     let mut i = 0;
-    while i < text.len() {
-        if text[i] != b'\\' {
+    while i < src.len() {
+        if src[i] != b'\\' {
             i += 1;
             continue;
         }
-        let n = text[i..].iter().take_while(|c| **c == b'\\').count();
-        let next = text.get(i + n).copied().or(after);
+        let n = src[i..].iter().take_while(|c| **c == b'\\').count();
+        let next = src.get(i + n).copied();
         if n >= 2 && next != Some(b'"') {
-            found.push((n, next));
+            found.push((i, n, next));
         }
         i += n;
     }
@@ -216,8 +140,7 @@ mod tests {
     use super::*;
 
     fn changes(src: &str) -> bool {
-        let shell = Shell::parse(src);
-        changes_result(shell.src(), &heredoc_bodies(&shell))
+        changes_result(&Shell::parse(src))
     }
 
     #[test]
