@@ -433,4 +433,6 @@ Copilot の周の回数も書かないまま）。どちらの ADR も、ほか�
   （ユーザー 2026-11-28 の判断。NC のセッションの報告では、1 行の `.worktreelink` を足すだけのブランチに high が出て、文書だけの
   ブランチの 2 周目以降の多くは言い回しの指摘か前提の誤った再出だった）。設定のファイルと行数の境は
   `crates/claude-hooks/src/script/review_level.rs` の `is_settings` と `SMALL_SETTINGS_LINES`。比べた案のうち、2 周目を既定で
-  焦点を絞った low にする案は採らなかった（ユーザーが選ばなかった。終わりの項は前のまま、モデルが決めてよい）
+  焦点を絞った low にする案は採らなかった（ユーザーが選ばなかった。終わりの項は前のまま、モデルが決めてよい）。設定のファイルを
+  拡張子（.json、.toml、.yaml、.yml）で見分ける版を先に書き、ローカルの /code-review で捨てた。`.pre-commit-config.yaml`、
+  `Cargo.toml`、`prh.yml` のように、ゲートやビルドを変えるファイルも同じ拡張子を持ち、短い変更で medium に落ちる
