@@ -301,18 +301,111 @@ fn a_small_change_to_settings_files_is_medium() {
     );
 }
 
+impl Repo {
+    /// feat/settings で path に n 行を書いてコミットし、LEVEL を返す
+    fn level_after_writing_lines(&self, path: &str, n: usize) -> String {
+        self.git(&["switch", "-q", "-c", "feat/settings"]);
+        let lines: String = (0..n)
+            .map(|i| {
+                format!(
+                    "line{i}
+"
+                )
+            })
+            .collect();
+        let file = self.root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, lines).unwrap();
+        self.git(&["add", path]);
+        self.git(&["commit", "-q", "-m", "settings"]);
+        let out = self.run(&[]);
+        assert_eq!(out.status.code(), Some(0));
+        stdout(&out)
+            .lines()
+            .find_map(|l| l.strip_prefix("LEVEL: "))
+            .unwrap_or_else(|| panic!("{}", stdout(&out)))
+            .to_string()
+    }
+}
+
 #[test]
-fn a_change_of_more_than_twenty_lines_to_settings_files_is_high() {
+fn twenty_changed_lines_of_settings_files_is_medium() {
+    assert_eq!(
+        Repo::new().level_after_writing_lines(".gitignore", 20),
+        "medium"
+    );
+}
+
+#[test]
+fn more_than_twenty_changed_lines_of_settings_files_is_high() {
+    assert_eq!(
+        Repo::new().level_after_writing_lines(".gitignore", 21),
+        "high"
+    );
+}
+
+#[test]
+fn files_that_change_gates_or_builds_are_not_settings_files() {
+    // 同じ拡張子（.yaml、.toml、.yml、.json）でも、ゲートやビルドの挙動を変えるファイルは短くても high
+    for path in [
+        ".pre-commit-config.yaml",
+        "crates/x/Cargo.toml",
+        "crates/ja-terms/prh.yml",
+        "package.json",
+        "src/settings.json",
+    ] {
+        assert_eq!(
+            Repo::new().level_after_writing_lines(path, 1),
+            "high",
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn claude_code_settings_under_any_claude_directory_are_settings_files() {
+    for path in [".claude/settings.json", "sub/.claude/settings.json"] {
+        assert_eq!(
+            Repo::new().level_after_writing_lines(path, 1),
+            "medium",
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn a_path_with_pathspec_characters_counts_only_its_own_lines() {
+    // パスを pathspec として引き直すと、`[1]` が別のファイル（1.gitignore の形）にも当たって行数を取り違える
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/settings"]);
-    repo.commit("a.toml", "a");
-    let lines: String = (0..20).map(|i| format!("k{i} = {i}\n")).collect();
-    std::fs::write(repo.root.join("b.yaml"), lines).unwrap();
-    repo.git(&["add", "b.yaml"]);
-    repo.git(&["commit", "-q", "-m", "b"]);
+    let lines: String = (0..30)
+        .map(|i| {
+            format!(
+                "line{i}
+"
+            )
+        })
+        .collect();
+    std::fs::create_dir_all(repo.root.join("a1")).unwrap();
+    std::fs::write(repo.root.join("a1/.gitignore"), lines).unwrap();
+    std::fs::create_dir_all(repo.root.join("a[1]")).unwrap();
+    std::fs::write(
+        repo.root.join("a[1]/.gitignore"),
+        "x
+",
+    )
+    .unwrap();
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "-q", "-m", "settings"]);
     let out = repo.run(&[]);
-    assert_eq!(out.status.code(), Some(0));
-    assert!(stdout(&out).contains("LEVEL: high\n"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains(
+            "LEVEL: high
+"
+        ),
+        "{}",
+        stdout(&out)
+    );
 }
 
 #[test]
