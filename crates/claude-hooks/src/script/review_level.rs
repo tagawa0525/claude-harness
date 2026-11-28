@@ -206,18 +206,14 @@ fn is_document(dir: &Path, merge_base: &str, target: &str, path: &str) -> bool {
 const SMALL_SETTINGS_LINES: usize = 20;
 
 /// ゲートもビルドも変えない設定のファイル: 配る設定（claude-settings.json）、どこかの .claude/ の下の Claude Code の
-/// 設定、worktree が共有する一覧、git の無視と属性、エディタの設定。拡張子（.json、.yaml、.toml）では見分けない。
+/// 設定、worktree が共有する一覧、git の無視の一覧、エディタの設定。拡張子（.json、.yaml、.toml）では見分けない。
 /// .pre-commit-config.yaml、Cargo.toml、prh.yml、CI の手順のように、ゲートやビルドの挙動を変えるファイルも同じ
-/// 拡張子を持つ
+/// 拡張子を持つ。.gitattributes は改行の扱い（`eol=lf`）で Windows の sh の実行を変えるので入れない
 fn is_settings(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     let in_claude_dir = path.starts_with(".claude/") || path.contains("/.claude/");
     match name {
-        "claude-settings.json"
-        | ".worktreelink"
-        | ".gitignore"
-        | ".gitattributes"
-        | ".editorconfig" => true,
+        "claude-settings.json" | ".worktreelink" | ".gitignore" | ".editorconfig" => true,
         "settings.json" | "settings.local.json" => in_claude_dir,
         _ => false,
     }
