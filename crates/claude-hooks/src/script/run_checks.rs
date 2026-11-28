@@ -646,7 +646,7 @@ impl Checks {
                 PythonChoice::Broken(paths) => {
                     // スタブや壊れた環境で、追跡しているテストを流さないまま通さない
                     println!(
-                        "FAILED: python test: PATH の python3 も python も動かない（Python 3 として起動できない: {}）",
+                        "FAILED: python test: PATH の python3 / python が Python 3 として起動できない: {}",
                         paths.join(", ")
                     );
                     return Err(1);
@@ -849,43 +849,36 @@ enum PythonChoice {
 /// には python しか無く、PATH の先の python3 が venv の外の Python になるため。版を見るのは、python が Python 2 の
 /// 機械で、Python 3 のテストを Python 2 で流さないため
 fn choose_python() -> PythonChoice {
-    let on_path: Vec<(&'static str, PathBuf)> = ["python3", "python"]
-        .into_iter()
-        .filter_map(|name| find_on_path(name).map(|path| (name, path)))
-        .collect();
-    if on_path.is_empty() {
-        return PythonChoice::Missing;
-    }
-    let broken = || {
-        on_path
-            .iter()
-            .map(|(_, path)| path.display().to_string())
-            .collect()
-    };
-    let running: Vec<&(&'static str, PathBuf)> = on_path
-        .iter()
-        .filter(|(_, path)| {
-            succeeds(
+    let mut on_path = Vec::new();
+    let mut first_running = None;
+    for name in ["python3", "python"] {
+        let Some(path) = find_on_path(name) else {
+            continue;
+        };
+        on_path.push(path.display().to_string());
+        if !succeeds(
+            &path,
+            &["-c", "import sys; sys.exit(sys.version_info < (3,))"],
+        ) {
+            continue;
+        }
+        if succeeds(&path, &["-m", "pytest", "--version"]) {
+            return PythonChoice::Found(Python {
+                name,
                 path,
-                &["-c", "import sys; sys.exit(sys.version_info < (3,))"],
-            )
-        })
-        .collect();
-    let with_pytest = running
-        .iter()
-        .find(|(_, path)| succeeds(path, &["-m", "pytest", "--version"]));
-    match (with_pytest, running.first()) {
-        (Some((name, path)), _) => PythonChoice::Found(Python {
+                pytest: true,
+            });
+        }
+        first_running.get_or_insert(Python {
             name,
-            path: path.clone(),
-            pytest: true,
-        }),
-        (None, Some((name, path))) => PythonChoice::Found(Python {
-            name,
-            path: path.clone(),
+            path,
             pytest: false,
-        }),
-        (None, None) => PythonChoice::Broken(broken()),
+        });
+    }
+    match first_running {
+        Some(python) => PythonChoice::Found(python),
+        None if on_path.is_empty() => PythonChoice::Missing,
+        None => PythonChoice::Broken(on_path),
     }
 }
 

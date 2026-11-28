@@ -737,7 +737,8 @@ fn the_failure_names_only_the_interpreters_on_path() {
         .unwrap_or_else(|| panic!("{}", said(&out)))
         .to_string();
     let python3 = format!("python3{}", std::env::consts::EXE_SUFFIX);
-    assert!(line.ends_with(&python3), "{line}");
+    // Windows は PATHEXT の大文字の拡張子（.EXE）で見つける
+    assert!(line.to_lowercase().ends_with(&python3), "{line}");
     assert!(!line.contains(", "), "{line}");
 }
 
