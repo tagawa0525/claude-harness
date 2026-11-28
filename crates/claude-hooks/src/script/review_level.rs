@@ -103,7 +103,8 @@ pub fn main(args: &[String]) -> i32 {
             return 1;
         }
     }
-    let files = git(
+    // パスと行数を 1 回の差分で読む（パスを pathspec に渡して引き直すと、`[` などの文字で別のファイルにも当たる）
+    let numstat = git(
         dir,
         &[
             // ASCII でない文字のパス（日本語の名前の文書）を引用せずに読む
@@ -111,12 +112,13 @@ pub fn main(args: &[String]) -> i32 {
             "core.quotePath=false",
             "diff",
             "--no-renames",
-            "--name-only",
+            "--numstat",
             &format!("{base}...{target}"),
         ],
     )
     .unwrap_or_default();
-    let files: Vec<&str> = files.lines().filter(|l| !l.is_empty()).collect();
+    let changes: Vec<(&str, Option<usize>)> = numstat.lines().filter_map(parse_numstat).collect();
+    let files: Vec<&str> = changes.iter().map(|(path, _)| *path).collect();
     if files.is_empty() {
         eprintln!(
             "ERROR: {base} と {target} の差分が空です。ブランチが別の worktree にあるなら、cwd ではなくブランチ名で渡してください"
@@ -124,16 +126,17 @@ pub fn main(args: &[String]) -> i32 {
         return 1;
     }
     let merge_base = git(dir, &["merge-base", &base, &target]).unwrap_or_default();
-    let rest: Vec<&str> = files
+    let rest: Vec<(&str, Option<usize>)> = changes
         .iter()
         .copied()
-        .filter(|path| !is_document(dir, &merge_base, &target, path))
+        .filter(|(path, _)| !is_document(dir, &merge_base, &target, path))
         .collect();
+    // 行数の読めないファイル（バイナリ）が 1 つでもあれば合計は None になり、high に倒れる
+    let settings_only = rest.iter().all(|(path, _)| is_settings(path));
+    let settings_lines: Option<usize> = rest.iter().map(|(_, lines)| *lines).sum();
     let level = if rest.is_empty() {
         "low"
-    } else if rest.iter().all(|path| is_settings(path))
-        && changed_lines(dir, &base, &target, &rest).is_some_and(|n| n <= SMALL_SETTINGS_LINES)
-    {
+    } else if settings_only && settings_lines.is_some_and(|n| n <= SMALL_SETTINGS_LINES) {
         "medium"
     } else {
         "high"
@@ -202,46 +205,34 @@ fn is_document(dir: &Path, merge_base: &str, target: &str, path: &str) -> bool {
 /// 拾い、構成を組み替える変更は high に残す
 const SMALL_SETTINGS_LINES: usize = 20;
 
-/// コードでない設定のファイル。.github/ の下（CI の手順）はゲートの挙動を変えるので数えない
+/// ゲートもビルドも変えない設定のファイル: 配る設定（claude-settings.json）、どこかの .claude/ の下の Claude Code の
+/// 設定、worktree が共有する一覧、git の無視と属性、エディタの設定。拡張子（.json、.yaml、.toml）では見分けない。
+/// .pre-commit-config.yaml、Cargo.toml、prh.yml、CI の手順のように、ゲートやビルドの挙動を変えるファイルも同じ
+/// 拡張子を持つ
 fn is_settings(path: &str) -> bool {
-    if path.starts_with(".github/") {
-        return false;
-    }
     let name = path.rsplit('/').next().unwrap_or(path);
-    [
-        ".worktreelink",
-        ".gitignore",
-        ".gitattributes",
-        ".editorconfig",
-    ]
-    .contains(&name)
-        || [".json", ".toml", ".yaml", ".yml"]
-            .iter()
-            .any(|ext| name.ends_with(ext))
+    let in_claude_dir = path.starts_with(".claude/") || path.contains("/.claude/");
+    match name {
+        "claude-settings.json"
+        | ".worktreelink"
+        | ".gitignore"
+        | ".gitattributes"
+        | ".editorconfig" => true,
+        "settings.json" | "settings.local.json" => in_claude_dir,
+        _ => false,
+    }
 }
 
-/// paths の足した行と消した行の合計。バイナリ（numstat が `-`）や読めない差分は None（high に倒す）
-fn changed_lines(dir: &Path, base: &str, target: &str, paths: &[&str]) -> Option<usize> {
-    let mut args = vec![
-        "-c",
-        "core.quotePath=false",
-        "diff",
-        "--no-renames",
-        "--numstat",
-    ];
-    let range = format!("{base}...{target}");
-    args.push(&range);
-    args.push("--");
-    args.extend_from_slice(paths);
-    let out = git(dir, &args)?;
-    out.lines()
-        .filter(|l| !l.is_empty())
-        .try_fold(0, |sum, line| {
-            let mut cols = line.split('\t');
-            let added: usize = cols.next()?.parse().ok()?;
-            let deleted: usize = cols.next()?.parse().ok()?;
-            Some(sum + added + deleted)
-        })
+/// `git diff --numstat` の 1 行（`<足した行>\t<消した行>\t<パス>`）。バイナリの行数（`-`）は None
+fn parse_numstat(line: &str) -> Option<(&str, Option<usize>)> {
+    let mut cols = line.splitn(3, '\t');
+    let (added, deleted, path) = (cols.next()?, cols.next()?, cols.next()?);
+    let lines = added
+        .parse::<usize>()
+        .ok()
+        .zip(deleted.parse::<usize>().ok())
+        .map(|(a, d)| a + d);
+    Some((path, lines))
 }
 
 /// ADR の「## 変更」の見出しの行の番号（1 から）
