@@ -89,7 +89,7 @@ Copilot の指摘も、直すかは /git-merge の「レビュー」の節の「
 - decline: 競合状態・エッジケースなど実装の細部、言い回しや網羅性の指摘。
   `This will be settled with tests in the implementation PR.` か、不要な理由の事実を添えて返信する
 - レビューは最初の 1 周で止まる（`STOP_DOCS_REVIEWED`）。その後に直した文は GitHub のレビューを受けないので、fix の
-  コミットを push する前に、Step 6 の「ローカルレビュー」の回し方で `/code-review medium` を回す
+  コミットを push する前に、Step 6 の「ローカルレビュー」の回し方で `/code-review low` を回す
 
 重大度は Copilot の本文のまま High / Medium / Low で数える。ローカルの `/code-review` の指摘は、「直す指摘の基準」の
 blocking を High、non-blocking を Medium か Low（表記・好み）として数える。対応順は High（誤動作・セキュリティ・

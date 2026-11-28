@@ -43,7 +43,7 @@ ADR や文書の PR で、自動レビューが何周も続く。文章は細部
 - **受け入れる弱点**: 最初のレビューの後に直した文は、GitHub の自動レビューを受けない。ADR の決定を後から
   書き換えても通る。決定はユーザーが下すもので、レビューの主な役割は事実の確認なので受け入れる。補うために:
   - PR を出す前にローカルの `/code-review` で事実の誤りを取り切る（`gh-pr-create`）
-  - 文書の PR でレビューの指摘を直した後は、ローカルで `/code-review medium` を一度だけ回してから push する
+  - 文書の PR でレビューの指摘を直した後は、ローカルで `/code-review low` を一度だけ回してから push する
     （`gh-pr-review`）
 - **指摘の選別**: 文書の指摘のうち直すのは、検証できる誤り（コードや事実と食い違う記述、壊れた参照）と
   方針に関わるものだけ。実装の細部や言い回しは decline する。文書にはコードの挙動を重複して書かず、コードへの
@@ -53,7 +53,13 @@ ADR や文書の PR で、自動レビューが何周も続く。文章は細部
 
 - `.claude/tests/hooks.sh` と `.claude/tests/scripts/gh-pr-review.sh` に、ADR だけの PR、`docs/` に似た別の場所、
   移動の旧パスのテストを足した
-- `.claude/tests/scripts/review-level.sh` に、ローカルレビューのレベル判定（docs/ だけは medium、似た別の場所と
+- `.claude/tests/scripts/review-level.sh` に、ローカルレビューのレベル判定（docs/ だけは low（2026-11-28 までは medium）、似た別の場所と
   移動は high、差分が空ならエラー、古い main の扱い）のテストを足した。`docs/` の前方一致は
   `pre-merge-check`、`decide-next.sh`、`review-level.sh` の 3 か所にあり、Rust と bash で共有できないため、
   それぞれのテストで同じ規則を確かめている
+
+## 変更
+
+- 2026-11-28: 文書の PR で指摘を直した後に回すローカルのレビューのレベル。前は「ローカルで `/code-review medium` を一度だけ
+  回してから push する」。`review-level.sh` が文書だけの差分の 1 周目に low を出すようにしたので（ADR-0066 の「## 変更」の
+  同じ日の項）、直した箇所を確かめる周がそれより重くならないよう low に合わせる
