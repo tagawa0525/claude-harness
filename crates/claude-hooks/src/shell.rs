@@ -100,7 +100,7 @@ pub struct Shell {
     tree: Tree,
     /// 全コマンド（文書順）。parse のときに一度だけ読む。`bash -c` などの文字列の中のコマンドも、その位置に含む
     cmds: Vec<Cmd>,
-    /// 単純コマンドに掛からない出力のリダイレクト（[`Shell::compound_redirect`]）。文字列の中のものも含む。
+    /// 単純コマンドに掛からない出力と入力のリダイレクト（[`Shell::compound_redirect`]）。文字列の中のものも含む。
     /// 文字列の中のものはその文字列のコマンドを読むときに足すので、文書順ではない（[`Shell::writers`] が並べる）
     compound_writes: Vec<Cmd>,
     /// `bash -c` などの文字列を解析した内側のシェル。コマンドは `cmds` に移してある。代入・unset・エスケープの
@@ -200,7 +200,7 @@ pub struct Cmd {
     pub stdin_heredoc: Option<Heredoc>,
     /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`）
     pub writes: Vec<Arg>,
-    /// 入力のリダイレクトの読み元（`<`）。単純コマンドに掛かるものだけ
+    /// 入力のリダイレクトの読み元（`<`）
     pub reads: Vec<Arg>,
     /// パイプラインの後ろのステージのコマンドの名前（書いたまま。順に）。パイプの途中でなければ空
     pub piped_into: Vec<String>,
@@ -410,8 +410,8 @@ impl Shell {
         &self.cmds
     }
 
-    /// 書き込み先を持ちうるもの（文書順）: 全コマンドと、単純コマンドに掛からない出力のリダイレクト
-    /// （`{ …; } > f`、`( … ) > f`、`if … fi > f`、`> f` など）。後者は `writes` だけを持ち、名前は複合文の始まりと
+    /// 書き込み先か読み元を持ちうるもの（文書順）: 全コマンドと、単純コマンドに掛からない出力と入力のリダイレクト
+    /// （`{ …; } > f`、`( … ) > f`、`if … fi > f`、`> f` など）。後者は `writes` と `reads` だけを持ち、名前は複合文の始まりと
     /// 終わりの語（[`Shell::compound_redirect`]）。位置とスコープは複合文の外側のシェルのもので、
     /// [`Shell::target_dir`] が行き先を、[`Cmd::runs_before`] が前後を決める。[`Shell::commands`] には含めない
     /// （プログラムを実行しない）
@@ -646,7 +646,7 @@ impl Shell {
         })
     }
 
-    /// 単純コマンドに掛からない `redirected_statement` の出力のリダイレクトを、書き込み先だけを持つコマンドにしたもの。
+    /// 単純コマンドに掛からない `redirected_statement` の出力と入力のリダイレクトを、書き込み先と読み元だけを持つコマンドにしたもの。
     /// 複合文（`{ …; }`、`( … )`、`if`、`while` / `until`、`for`、`case`、`[[ … ]]`）、`export` などの宣言、
     /// 本体の無いもの（`> f`）で、パイプラインと並びの最後のステージのものも含む（`a | { b; } > f`）。bash は
     /// リダイレクトを複合文の前に、複合文の外側のシェルで開くので、位置は複合文の始まりで、スコープは複合文の外の
@@ -662,7 +662,8 @@ impl Shell {
             .children_by_field_name("redirect", &mut cursor)
             .collect();
         let writes = self.write_targets(&redirects);
-        if writes.is_empty() {
+        let reads = self.read_targets(&redirects);
+        if writes.is_empty() && reads.is_empty() {
             return None;
         }
         // 本体の無い `cd x && > f` の位置は、redirected_statement の始まり（並びの前の cd より後ろ）
@@ -674,6 +675,7 @@ impl Shell {
             has_error: node.has_error(),
             scope: scope_of(node),
             writes,
+            reads,
             ..Cmd::default()
         })
     }
@@ -1757,7 +1759,11 @@ mod tests {
             "g() { a; } > f",
         ] {
             let sh = Shell::parse(src);
-            assert!(sh.compound_writes.is_empty(), "{src}");
+            // 入力のリダイレクトは読み元だけを持つ（書き込み先は無い）
+            assert!(
+                sh.compound_writes.iter().all(|c| c.writes.is_empty()),
+                "{src}"
+            );
             assert!(sh.commands().iter().all(|c| c.writes.is_empty()), "{src}");
         }
     }

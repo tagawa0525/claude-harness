@@ -168,26 +168,42 @@ fn secret_reads(
         add(name, value.clone());
     }
     add("HOME", home.display().to_string());
+    let known = |path: PathBuf| {
+        let parts = components(&path);
+        patterns
+            .iter()
+            .find(|p| glob(&p.parts, &parts))
+            .map(|p| (path, p.rule.clone()))
+    };
     let mut found: Vec<(PathBuf, String)> = Vec::new();
-    for cmd in shell.commands() {
-        if shell.runs_under_ssh_or_login(cmd) {
-            continue;
-        }
-        let args = read_args(cmd);
+    for cmd in shell.writers() {
+        let under = shell.runs_under_ssh_or_login(cmd);
+        // ssh と `sudo -i` の先のコマンドは見ない。そのラッパー自身の入力のリダイレクトは、手元のシェルが手元の
+        // ディレクトリで開く
+        let own_wrapper = cmd.remote.is_some() || cmd.login_home.is_some();
+        let args = match (under, own_wrapper) {
+            (false, _) => read_args(cmd),
+            (true, true) => cmd.reads.iter().collect(),
+            (true, false) => continue,
+        };
         if args.is_empty() {
             continue;
         }
         // target_dir は前のコマンドを全部たどるので、読むパスのあるコマンドだけで求める
-        let dir = shell.target_dir(cmd, cwd);
+        let dir = if under {
+            let mut local = cmd.clone();
+            local.remote = None;
+            local.login_home = None;
+            shell.target_dir(&local, cwd)
+        } else {
+            shell.target_dir(cmd, cwd)
+        };
         for arg in args {
-            let hit = match arg.expand(&vars) {
+            let hits: Vec<(PathBuf, String)> = match arg.expand(&vars) {
                 Expanded::Known(t) if !t.is_empty() => {
-                    let path = resolve(home, &dir, &literal_tilde(arg, t));
-                    let parts = components(&path);
-                    patterns
-                        .iter()
-                        .find(|p| glob(&p.parts, &parts))
-                        .map(|p| (path, p.rule.clone()))
+                    let mut paths = vec![resolve(home, &dir, &literal_tilde(arg, t.clone()))];
+                    paths.extend(option_value(arg, &t).map(|v| resolve(home, &dir, &v)));
+                    paths.into_iter().filter_map(known).collect()
                 }
                 // 決まらない展開は任意のディレクトリとみなす（`"$(echo ~)/.ssh"` の `/.ssh`）
                 Expanded::Tail(t) if t.starts_with('/') => {
@@ -200,17 +216,42 @@ fn secret_reads(
                             glob(&any, &parts)
                         })
                         .map(|p| (PathBuf::from(&arg.text), p.rule.clone()))
+                        .into_iter()
+                        .collect()
                 }
-                _ => None,
+                _ => Vec::new(),
             };
-            if let Some(hit) = hit
-                && !found.iter().any(|(path, _)| *path == hit.0)
-            {
-                found.push(hit);
+            for hit in hits {
+                if !found.iter().any(|(path, _)| *path == hit.0) {
+                    found.push(hit);
+                }
             }
         }
     }
     found
+}
+
+/// オプションの値のパス（`if=/x`、`--input=/x`、`@/x`、`f=@/x`）。絶対のパスかホームのものだけを返す（相対の値は、置き場の
+/// 名前を語として書くもの（`--exclude=.env`）と見分けない）。bash は名前の形の語の最初の `=` の直後の、クォートしない `~` を
+/// 展開し（`dd if=~/x`）、`@` の後ろと名前の形でない語（`--input=~/x`）の `~` は展開しない
+fn option_value(arg: &Arg, value: &str) -> Option<String> {
+    let (v, tilde) = match value.split_once('=') {
+        Some((name, v)) => {
+            let is_name = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            let unquoted = arg.raw.contains("=~") && !arg.raw.starts_with(['"', '\'', '\\']);
+            match v.strip_prefix('@') {
+                Some(rest) => (rest, false),
+                None => (v, is_name && unquoted),
+            }
+        }
+        None => (value.strip_prefix('@')?, false),
+    };
+    if tilde && v.starts_with("~/") {
+        return Some(v.to_string());
+    }
+    let absolute = v.starts_with('/') || Path::new(crate::shell::native(v).as_ref()).is_absolute();
+    absolute.then(|| v.to_string())
 }
 
 /// bash はクォートかバックスラッシュで始まる語の先頭の字面の `~` を展開しない（`resolve` は字面の `~/` をホームにする）。
