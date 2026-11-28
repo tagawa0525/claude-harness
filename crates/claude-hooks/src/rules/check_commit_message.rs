@@ -797,6 +797,19 @@ exit 0
             );
             assert!(r.contains("前段から実行し直して"), "{cmd}: {r}");
         }
+        // 前段の案内は、直す理由（このまま実行すると拒まれる）の後に置き、理由がやり直しを指すと読ませない
+        let r = only_deny(&fake.check("git add a.txt && git commit -q -F msg.txt"));
+        let (reason, note) = (
+            r.find("このまま実行すると").unwrap(),
+            r.find("前段").unwrap(),
+        );
+        assert!(reason < note, "{r}");
+        // cd は前段に挙げないが、実行し直すときに外させない（呼び出しごとに cwd が戻るスレッドがある）
+        let d = fake.dir.0.display();
+        let cmd = format!("cd {d} && git add a.txt && git commit -q -F msg.txt");
+        let r = only_deny(&check_in(&cmd, Path::new("/"), Some(&fake.path)));
+        assert!(r.contains("前段（git add）"), "{r}");
+        assert!(r.contains("cd があれば、それも付けて"), "{r}");
     }
 
     #[cfg(unix)]
