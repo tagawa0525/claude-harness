@@ -23,6 +23,9 @@ out=$("$WAIT" /wt/a "$log")
 assert_eq 0 $?
 assert_contains "$out" "WAIT:"
 assert_contains "$out" "NEXT: ターンを終えずに、同じ引数でもう一度呼ぶ"
+# DONE と同じ 0 で返るので、行で見分けられることを確かめる
+assert_not_contains "$out" "DONE:"
+assert_not_contains "$out" "END:"
 
 it "wait-step: 待っている background の出力が終わると、DONE と残りの呼び直しと --end のコマンドを出して 0 で返る"
 printf 'job output\n[exited with code 0]\n' >"$TEST_ROOT/done.out"

@@ -283,8 +283,10 @@ fn done_comes_before_the_end_of_the_wait() {
     let log = d.file("job.out", "");
     let ended = d.file("ended.out", "[exited with code 0]\n");
     d.wait_at(100, 2, 3, &["/wt/e", &log]);
-    // 待ち始めから 4 秒で、線を過ぎている
-    assert_eq!(d.wait_at(104, 2, 3, &["/wt/e", &log, &ended]).0, 0);
+    // 待ち始めから 4 秒で、線を過ぎている。WAIT も 0 で返るので、終了コードでなく DONE の行で見分ける
+    let (code, out) = d.wait_at(104, 2, 3, &["/wt/e", &log, &ended]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.starts_with(&format!("DONE: {ended}\n")), "{out}");
 }
 
 #[test]
