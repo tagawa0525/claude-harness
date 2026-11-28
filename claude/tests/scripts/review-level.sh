@@ -168,7 +168,8 @@ git remote set-head origin master
 out=$("$SCRIPTS_DIR/review-level.sh" feat/doc)
 assert_contains "$out" "BASE: origin/master"
 
-# LEVEL は、挙動を変えない文書と規則の文書だけのブランチで low、ほかは high
+# LEVEL は、挙動を変えない文書と規則の文書だけのブランチで low、ほかは high（小さい設定の差分の medium は
+# crates/claude-hooks/tests/script_review_level.rs が確かめる）
 LEVEL_REPO="$TEST_ROOT/rl/level"
 make_repo "$LEVEL_REPO"
 cd "$LEVEL_REPO" || exit 1
