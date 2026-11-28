@@ -353,17 +353,18 @@ pub(super) fn earlier_writer_reason(
     })
 }
 
-/// 本文を直して実行し直す案内に続ける文。拒むとコマンド全体が止まり、`cmd`（git の `sub`）より前に走る同じ
-/// コマンドの前段（[`earlier_step_names`]）も走っていないので、前段があればそれを挙げて前段から実行し直すことを
-/// 示す（git add を飛ばした git commit は no changes added to commit で失敗する。#435）。無ければ空
+/// 本文を直して実行し直す案内の後に置く段落。拒むとコマンド全体が止まり、`cmd`（git の `sub`）より前に走る同じ
+/// コマンドの前段（[`earlier_step_names`]）も走っていないので、前段があればそれを挙げて前段から実行し直すことを示す
+/// （git add を飛ばした git commit は no changes added to commit で失敗する。#435）。無ければ空
 pub(super) fn earlier_steps_note(shell: &Shell, cmd: &Cmd, sub: &str) -> String {
     let names = earlier_step_names(shell, cmd);
     if names.is_empty() {
         return String::new();
     }
     format!(
-        "拒んだときはコマンド全体が止まるので、同じコマンドの前段（{}）も実行されていません。git {sub} だけでなく、\
-         前段から実行し直してください。",
+        "\n拒んだときはコマンド全体が止まるので、同じコマンドの前段（{}）も実行されていません。直した後は、\
+         git {sub} だけでなく、前段から実行し直してください（先頭に cd があれば、それも付けて）",
+        // cd を外させない: 担当のスレッドは呼び出しごとに cwd が戻り、cd の無い git は別のリポジトリで走る
         names.join("、")
     )
 }
@@ -373,8 +374,8 @@ fn terms_reason(terms: &[String], earlier: &str) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
     format!(
         "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
-         本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。{earlier}このまま実行すると、\
-         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます",
+         本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
+         数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます{earlier}",
         list.join("\n")
     )
 }
@@ -384,8 +385,8 @@ fn deny_reason(output: &str, earlier: &str) -> String {
     format!(
         "git merge のメッセージが、commit-msg の hook と同じ検査に通りません:\n{output}\n\
          上の ❌ の行のとおりにメッセージを直してから（崩れた語は「誤り => 正しい語」のとおりに置き換えてから）、\
-         もう一度実行してください。{earlier}このまま実行すると、数分かかる pre-merge-commit の品質チェックの後で、\
-         commit-msg の hook が同じ検査で拒みます"
+         もう一度実行してください。このまま実行すると、数分かかる pre-merge-commit の品質チェックの後で、\
+         commit-msg の hook が同じ検査で拒みます{earlier}"
     )
 }
 

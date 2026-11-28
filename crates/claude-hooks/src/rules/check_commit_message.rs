@@ -215,11 +215,11 @@ pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
 fn deny_reason(output: &str, earlier: &str) -> String {
     format!(
         "git commit のメッセージが、commit-msg の hook と同じ検査に通りません:\n{output}\n\
-         上の ❌ の行のとおりにメッセージを直してから、もう一度実行してください。{earlier}このまま実行すると、pre-commit の検査\
+         上の ❌ の行のとおりにメッセージを直してから、もう一度実行してください。このまま実行すると、pre-commit の検査\
          （マージを終える commit では数分の品質チェック）の後で commit-msg の hook が同じ検査で拒み、同じコマンドで\
          commit の後に `;` や改行でつないだコマンドは、コミットされていない古い HEAD のまま走ります（拒まれた commit の\
          後の品質チェックが古い HEAD で通ったと出たことと、続けた git commit --amend が既定ブランチのマージコミットを\
-         書き換えたことがあります）"
+         書き換えたことがあります）{earlier}"
     )
 }
 
