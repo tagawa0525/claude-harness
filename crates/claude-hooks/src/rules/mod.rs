@@ -109,6 +109,7 @@ pub(crate) use block_main_commit::main_commit_blocked;
 mod block_nested_heredoc_same_delimiter;
 mod block_no_verify;
 mod block_secret_commit;
+mod block_windows_double_backslash;
 mod check_commit_message;
 mod check_merge_body_ja_terms;
 pub(crate) use check_merge_body_ja_terms::ja_terms;
@@ -174,6 +175,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_git_amend::GuardGitAmend,
         &guard_exclusive_slurm::GuardExclusiveSlurm,
         &block_nested_heredoc_same_delimiter::BlockNestedHeredocSameDelimiter,
+        &block_windows_double_backslash::BlockWindowsDoubleBackslash,
         &delegate_request_fields::DelegateRequestFields,
         &delegate_report_fields::DelegateReportFields,
         &count_review_rounds::CountReviewRounds,

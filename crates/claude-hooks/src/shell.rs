@@ -204,6 +204,17 @@ pub struct Cmd {
     pub piped_into: Vec<String>,
 }
 
+/// 原文の範囲のバックスラッシュを、bash がどこで読むか（[`Shell::literal_at`]）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Literal {
+    /// 二重引用符の文字列の地の文（展開とコマンド置換の外）
+    DoubleQuoted,
+    /// ヒアドキュメントの本文の地の文（展開とコマンド置換の外。区切りを引用したかは見ない）
+    HeredocBody,
+    /// そのほか（引用符の外、単引用符、`$'…'`、展開とコマンド置換の中、コメント）と、木に構文の誤りがあるとき
+    Other,
+}
+
 /// ヒアドキュメント 1 つ
 #[derive(Debug, Clone, PartialEq)]
 pub struct Heredoc {
@@ -251,6 +262,29 @@ impl Shell {
         shell.compound_writes = collected.compound_writes;
         shell.inner = collected.inner;
         shell
+    }
+
+    /// 解析した原文。[`Shell::heredocs`] のうち、トップレベルのもの（`bash -c` などの文字列の中のものでない）の
+    /// `line` と `rest` は、この文字列の中を指す
+    pub fn src(&self) -> &str {
+        &self.src
+    }
+
+    /// 原文の range を含む最も小さいノードから、そこを bash がどこで読むかを決める。木に構文の誤りがあれば
+    /// [`Literal::Other`]（誤りから立て直した木は、引用の範囲を誤りうる）
+    pub fn literal_at(&self, range: std::ops::Range<usize>) -> Literal {
+        let root = self.tree.root_node();
+        if root.has_error() {
+            return Literal::Other;
+        }
+        let Some(node) = root.descendant_for_byte_range(range.start, range.end) else {
+            return Literal::Other;
+        };
+        match (node.kind(), node.parent().map(|p| p.kind())) {
+            ("string_content", Some("string")) => Literal::DoubleQuoted,
+            ("heredoc_body", _) | ("heredoc_content", Some("heredoc_body")) => Literal::HeredocBody,
+            _ => Literal::Other,
+        }
     }
 
     fn text(&self, node: Node) -> &str {
