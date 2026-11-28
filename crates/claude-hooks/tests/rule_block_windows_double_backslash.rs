@@ -64,7 +64,6 @@ fn a_double_backslash_that_does_not_change_what_bash_runs_passes() {
         r#"python -c "print(r'C:\\Users')""#,
         "cat <<EOF\nfoo\\\\|bar\nEOF",
         "python - <<EOF\nprint('C:\\\\Users')\nEOF",
-        "# a\\\\b\necho a",
     ] {
         assert!(command.contains(r"\\"), "{command}");
         assert_eq!(deny_reason(command), None, "{command}");

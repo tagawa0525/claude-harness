@@ -272,11 +272,35 @@ mod tests {
             r#"grep -n "foo\\|bar" f"#,
             r#"python -c "print(r'C:\\Users')""#,
             r#"echo "a\\.b" "$(echo x)" "c\\d""#,
-            "# a\\\\b\necho a",
-            "echo a # it's a\\\\b",
             "echo a",
         ] {
             assert!(!changes(src), "{src}");
+        }
+    }
+
+    /// 二重引用符の中でも、展開（`${…}`）とコマンド置換（`case` の `)` を含む）の中は、bash が引用符の外と同じに読む
+    #[test]
+    fn a_run_inside_an_expansion_in_double_quotes_changes_the_result() {
+        for src in [
+            r#"p='C:\Users/x'; echo "${p//\\//}""#,
+            r#"x="$(case a in a) printf '%s' 'a\\b';; esac)""#,
+            "cat <<EOF\n$(printf '%s' 'a\\\\b')\nEOF",
+        ] {
+            assert!(changes(src), "{src}");
+        }
+    }
+
+    /// 本文の位置を決められないヒアドキュメント、閉じが多バイトの文字で終わるもの、コメントらしく見える語の中は、
+    /// 二重引用符の中として通さない
+    #[test]
+    fn a_run_whose_quoting_is_not_certain_is_not_passed() {
+        for src in [
+            "cat <<A <<'B'\nx\nA\nprint(\"C:\\\\Users\")\nB",
+            "cat <<'終'\nC:\\\\Users\n終",
+            "echo \\ #'a\\\\b'",
+            "# a\\\\b\necho a",
+        ] {
+            assert!(changes(src), "{src}");
         }
     }
 
