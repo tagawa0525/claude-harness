@@ -60,7 +60,10 @@ REAL_PY=$(python3 -c 'import sys; print(sys.executable)')
 # 空のまま進むと、偽の python3 が `exec -m unittest …` になって必ず落ち、「落ちれば失敗する」のテストだけが通る
 [[ -x "$REAL_PY" ]] || { echo "ERROR: 本物の python3 の実体が分からない: '$REAL_PY'" >&2; exit 1; }
 # 実体のパスは、空白があっても割れないよう、シェルの語にしてから偽のスクリプトに埋める
-make_fake_tool python3 '"-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$(printf '%q' "$REAL_PY")"' "$@" ;;'
+make_fake_tool python3 '"-c "*) exit 0 ;; "-m pytest --version"*) exit 1 ;; "-m unittest "*) exec '"$(printf '%q' "$REAL_PY")"' "$@" ;;'
+# run-checks は python3 に pytest が無ければ、pytest のある python を選ぶ。host の python を選ばないよう、動かない
+# python を前に置く
+make_fake_tool python ''
 mkdir -p pkg/sub
 printf 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.assertEqual(1, 2)\n' > pkg/test_a.py
 git add pkg/test_a.py
@@ -76,14 +79,15 @@ out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
 assert_eq 0 $?
 assert_contains "$out" "OK: python test"
 remove_fake_tool python3
+remove_fake_tool python
 
 it "run-checks: python3 から pytest が使えれば、そのディレクトリの追跡ファイルだけを渡す（子のディレクトリを重ねない）"
 cp pkg/test_a.py pkg/sub/test_b.py
 git add pkg/sub/test_b.py
-make_fake_tool python3 '"-m pytest --version"*) exit 0 ;; "-m pytest "*) exit 0 ;;'
+make_fake_tool python3 '"-c "*) exit 0 ;; "-m pytest --version"*) exit 0 ;; "-m pytest "*) exit 0 ;;'
 out=$("$LANG_SCRIPTS/run-checks.sh" 2>&1)
 assert_eq 0 $?
-assert_eq $'-m pytest --version\n-m pytest test_a.py\n-m pytest test_b.py' "$(fake_log python3)"
+assert_eq $'-c import sys; sys.exit(sys.version_info < (3,))\n-m pytest --version\n-m pytest test_a.py\n-m pytest test_b.py' "$(fake_log python3)"
 remove_fake_tool python3
 
 it "run-checks: scripts/run-python-tests.sh があれば自動検出より優先し、その終了コードで判定する"
