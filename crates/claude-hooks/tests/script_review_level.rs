@@ -302,22 +302,16 @@ fn a_small_change_to_settings_files_is_medium() {
 }
 
 impl Repo {
-    /// feat/settings で path に n 行を書いてコミットし、LEVEL を返す
-    fn level_after_writing_lines(&self, path: &str, n: usize) -> String {
-        self.git(&["switch", "-q", "-c", "feat/settings"]);
-        let lines: String = (0..n)
-            .map(|i| {
-                format!(
-                    "line{i}
-"
-                )
-            })
-            .collect();
+    /// path（リポジトリの直下からの相対）に n 行を書いて add する
+    fn write_lines(&self, path: &str, n: usize) {
+        let lines: String = (0..n).map(|i| format!("line{i}\n")).collect();
         let file = self.root.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, lines).unwrap();
         self.git(&["add", path]);
-        self.git(&["commit", "-q", "-m", "settings"]);
+    }
+
+    fn level(&self) -> String {
         let out = self.run(&[]);
         assert_eq!(out.status.code(), Some(0));
         stdout(&out)
@@ -325,6 +319,14 @@ impl Repo {
             .find_map(|l| l.strip_prefix("LEVEL: "))
             .unwrap_or_else(|| panic!("{}", stdout(&out)))
             .to_string()
+    }
+
+    /// feat/settings で path に n 行を書いてコミットし、LEVEL を返す
+    fn level_after_writing_lines(&self, path: &str, n: usize) -> String {
+        self.git(&["switch", "-q", "-c", "feat/settings"]);
+        self.write_lines(path, n);
+        self.git(&["commit", "-q", "-m", "settings"]);
+        self.level()
     }
 }
 
@@ -349,6 +351,7 @@ fn files_that_change_gates_or_builds_are_not_settings_files() {
     // 同じ拡張子（.yaml、.toml、.yml、.json）でも、ゲートやビルドの挙動を変えるファイルは短くても high
     for path in [
         ".pre-commit-config.yaml",
+        ".gitattributes",
         "crates/x/Cargo.toml",
         "crates/ja-terms/prh.yml",
         "package.json",
@@ -375,37 +378,14 @@ fn claude_code_settings_under_any_claude_directory_are_settings_files() {
 
 #[test]
 fn a_path_with_pathspec_characters_counts_only_its_own_lines() {
-    // パスを pathspec として引き直すと、`[1]` が別のファイル（1.gitignore の形）にも当たって行数を取り違える
+    // パスを pathspec として引き直すと、`a[1]` が a1 にも当たり、a1 の 15 行を 2 度数えて 31 行（high）になる。
+    // 正しく数えれば 15 + 1 = 16 行で medium
     let repo = Repo::new();
     repo.git(&["switch", "-q", "-c", "feat/settings"]);
-    let lines: String = (0..30)
-        .map(|i| {
-            format!(
-                "line{i}
-"
-            )
-        })
-        .collect();
-    std::fs::create_dir_all(repo.root.join("a1")).unwrap();
-    std::fs::write(repo.root.join("a1/.gitignore"), lines).unwrap();
-    std::fs::create_dir_all(repo.root.join("a[1]")).unwrap();
-    std::fs::write(
-        repo.root.join("a[1]/.gitignore"),
-        "x
-",
-    )
-    .unwrap();
-    repo.git(&["add", "-A"]);
+    repo.write_lines("a1/.gitignore", 15);
+    repo.write_lines("a[1]/.gitignore", 1);
     repo.git(&["commit", "-q", "-m", "settings"]);
-    let out = repo.run(&[]);
-    assert!(
-        stdout(&out).contains(
-            "LEVEL: high
-"
-        ),
-        "{}",
-        stdout(&out)
-    );
+    assert_eq!(repo.level(), "medium");
 }
 
 #[test]
