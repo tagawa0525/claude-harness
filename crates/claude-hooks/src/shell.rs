@@ -363,6 +363,20 @@ impl Shell {
         writes.then(|| self.unquote(dest))
     }
 
+    /// 入力のリダイレクト（`<`）の読み元。`<&` は記述子の複製、`<<<` と `<<` は file_redirect ではない
+    fn read_targets(&self, redirects: &[Node]) -> Vec<Arg> {
+        redirects
+            .iter()
+            .filter(|r| r.kind() == "file_redirect")
+            .filter_map(|r| {
+                let dest = r.child_by_field_name("destination")?;
+                let mut cursor = r.walk();
+                let op = r.children(&mut cursor).find(|c| !c.is_named())?.kind();
+                (op == "<").then(|| self.unquote(dest))
+            })
+            .collect()
+    }
+
     /// `heredoc_body` を除く全ノードを文書順（先行順）で走査する
     fn walk(&self, node: Node, visit: &mut dyn FnMut(Node)) {
         if node.kind() == "heredoc_body" {
@@ -573,7 +587,7 @@ impl Shell {
             git,
             stdin_heredoc,
             writes,
-            reads: Vec::new(),
+            reads: self.read_targets(&redirects),
             piped_into: self.later_pipeline_stages(node),
         };
         let Some(source) = unwrapped.source else {
