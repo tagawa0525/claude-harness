@@ -353,23 +353,48 @@ pub(super) fn earlier_writer_reason(
     })
 }
 
-/// 崩れた語を止める文言
-fn terms_reason(terms: &[String]) -> String {
+/// 本文を直して実行し直す案内に続ける文。拒むとコマンド全体が止まり、`cmd`（git の `sub`）より前に走る同じ
+/// コマンドの前段も走っていないので、前段があればその名前（git なら `git <サブコマンド>`）を挙げて前段から実行し直す
+/// ことを示す（git add を飛ばした git commit は no changes added to commit で失敗する。#435）。無ければ空。前段の数え方は
+/// [`Shell::commands_before`]（`cd` は数えない）
+pub(super) fn earlier_steps_note(shell: &Shell, cmd: &Cmd, sub: &str) -> String {
+    let mut names: Vec<String> = Vec::new();
+    for c in shell.commands_before(cmd) {
+        let name = match c.git_subcommand() {
+            Some((s, _)) => format!("git {s}"),
+            None => c.name.clone(),
+        };
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    if names.is_empty() {
+        return String::new();
+    }
+    format!(
+        "拒んだときはコマンド全体が止まるので、同じコマンドの前段（{}）も実行されていません。git {sub} だけでなく、\
+         前段から実行し直してください。",
+        names.join("、")
+    )
+}
+
+/// 崩れた語を止める文言。`earlier` は [`earlier_steps_note`]
+fn terms_reason(terms: &[String], earlier: &str) -> String {
     let list: Vec<String> = terms.iter().map(|t| format!("  {t}")).collect();
     format!(
         "git merge の本文に、崩れた日本語の語があります（ja-terms の辞書）:\n{}\n\
-         本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。このまま実行すると、\
+         本文の語を「誤り => 正しい語」のとおりに置き換えてから、もう一度実行してください。{earlier}このまま実行すると、\
          数分かかる pre-merge-commit の品質チェックの後で、commit-msg の hook が同じ検査で拒みます",
         list.join("\n")
     )
 }
 
-/// commit-msg の検査に通らないメッセージを止める文言
-fn deny_reason(output: &str) -> String {
+/// commit-msg の検査に通らないメッセージを止める文言。`earlier` は [`earlier_steps_note`]
+fn deny_reason(output: &str, earlier: &str) -> String {
     format!(
         "git merge のメッセージが、commit-msg の hook と同じ検査に通りません:\n{output}\n\
          上の ❌ の行のとおりにメッセージを直してから（崩れた語は「誤り => 正しい語」のとおりに置き換えてから）、\
-         もう一度実行してください。このまま実行すると、数分かかる pre-merge-commit の品質チェックの後で、\
+         もう一度実行してください。{earlier}このまま実行すると、数分かかる pre-merge-commit の品質チェックの後で、\
          commit-msg の hook が同じ検査で拒みます"
     )
 }
@@ -454,7 +479,10 @@ impl CheckMergeBodyJaTerms {
             if !makes_merge_commit(args) {
                 match lint(check, &dir, &message) {
                     Lint::Clean => {}
-                    Lint::Terms(terms) => out.push(Finding::Deny(terms_reason(&terms))),
+                    Lint::Terms(terms) => out.push(Finding::Deny(terms_reason(
+                        &terms,
+                        &earlier_steps_note(shell, cmd, "merge"),
+                    ))),
                     Lint::Failed(why) => notice(format!(
                         "check-merge-body-ja-terms: git merge の本文の語を判定していません: {why}"
                     )),
@@ -463,7 +491,10 @@ impl CheckMergeBodyJaTerms {
             }
             match run_check(check, &dir, &message) {
                 Verdict::Pass => {}
-                Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(&output))),
+                Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(
+                    &output,
+                    &earlier_steps_note(shell, cmd, "merge"),
+                ))),
                 Verdict::Failed(why) => notice(format!(
                     "check-merge-body-ja-terms: git merge のメッセージを判定していません: {why}"
                 )),
