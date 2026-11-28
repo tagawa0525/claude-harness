@@ -664,3 +664,55 @@ fn an_empty_directory_option_checks_the_current_directory() {
     assert_eq!(out.status.code(), Some(0), "{}", said(&out));
     assert_eq!(repo.calls(), ["shellcheck -S warning -- a.sh"]);
 }
+
+/// Windows の Git Bash では python3 が Microsoft Store のスタブ（何を渡しても失敗する）に当たり、本物は python で呼ぶ
+#[test]
+fn a_python3_that_does_not_run_falls_back_to_python_for_subdirectory_tests() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    repo.tool("python");
+    let out = repo.run(&[], &[("FAKE_PYTHON3_EXIT", "49")]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("RUN: python test: cd pkg && python -m pytest test_a.py\n"),
+        "{}",
+        said(&out)
+    );
+    let calls = repo.calls();
+    assert!(
+        calls.contains(&"python -m pytest test_a.py".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.starts_with("python3 -m")),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn no_working_python_skips_subdirectory_tests() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    repo.tool("python");
+    let out = repo.run(
+        &[],
+        &[("FAKE_PYTHON3_EXIT", "49"), ("FAKE_PYTHON_EXIT", "9009")],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("SKIP: python test (動く python3 も python も無い)\n"),
+        "{}",
+        said(&out)
+    );
+    assert!(
+        !repo.calls().iter().any(|c| c.contains("-m ")),
+        "{:?}",
+        repo.calls()
+    );
+}
