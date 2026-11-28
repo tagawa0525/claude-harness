@@ -109,6 +109,7 @@ pub(crate) use block_main_commit::main_commit_blocked;
 mod block_nested_heredoc_same_delimiter;
 mod block_no_verify;
 mod block_secret_commit;
+mod block_secret_read;
 mod check_commit_message;
 mod check_merge_body_ja_terms;
 pub(crate) use check_merge_body_ja_terms::ja_terms;
@@ -159,6 +160,7 @@ pub fn all() -> &'static [&'static dyn Rule] {
         &guard_branch_base::GuardBranchBase,
         &guard_track_remote::GuardTrackRemote,
         &block_secret_commit::BlockSecretCommit,
+        &block_secret_read::BlockSecretRead,
         &block_no_verify::BlockNoVerify,
         &guard_gh_run_rerun::GuardGhRunRerun,
         &guard_gh_api::GuardGhApi,
