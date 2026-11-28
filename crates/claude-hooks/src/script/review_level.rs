@@ -8,8 +8,9 @@
 //!   渡すと /code-review は cwd のリポジトリでブランチを解くので、cwd が別のリポジトリ（や main の worktree）だと対象を
 //!   見つけられず、「指摘なし」と同じ形の空の結果が返る。none はどこにもチェックアウトされていない
 //! - `FILES: <変更ファイルの数>`
-//! - `LEVEL: medium | high`: 差分のどのファイルも下の「文書」なら medium、ほかは high。指摘の上限が高いと文書の周ごとに
-//!   8〜10 件が出て、指摘の数が収束の目安にならない
+//! - `LEVEL: low | medium | high`: 差分のどのファイルも下の「文書」なら low。文書のほかが設定のファイル（`is_settings`）
+//!   だけで、その足した行と消した行が合わせて `SMALL_SETTINGS_LINES` 以下なら medium。ほかは high。指摘の上限が高いと
+//!   文書の周ごとに 8〜10 件が出て、指摘の数が収束の目安にならない（ADR-0066）
 //! - `NEXT: /code-review <LEVEL> <WORKTREE>（…）`: 回す 1 行。WORKTREE が none なら対象を `<PR の URL>` にし、PR が無い
 //!   ときの取り出し方を添える
 //!
@@ -123,9 +124,15 @@ pub fn main(args: &[String]) -> i32 {
         return 1;
     }
     let merge_base = git(dir, &["merge-base", &base, &target]).unwrap_or_default();
-    let level = if files
+    let rest: Vec<&str> = files
         .iter()
-        .all(|path| is_document(dir, &merge_base, &target, path))
+        .copied()
+        .filter(|path| !is_document(dir, &merge_base, &target, path))
+        .collect();
+    let level = if rest.is_empty() {
+        "low"
+    } else if rest.iter().all(|path| is_settings(path))
+        && changed_lines(dir, &base, &target, &rest).is_some_and(|n| n <= SMALL_SETTINGS_LINES)
     {
         "medium"
     } else {
@@ -189,6 +196,52 @@ fn is_document(dir: &Path, merge_base: &str, target: &str, path: &str) -> bool {
             && path.ends_with(".md"))
         || name == "CLAUDE.md"
         || name == "SKILL.md"
+}
+
+/// 設定の差分を medium に数える、足した行と消した行の合計の上限。設定の数行（許可の 1 行、.worktreelink の 1 行）を
+/// 拾い、構成を組み替える変更は high に残す
+const SMALL_SETTINGS_LINES: usize = 20;
+
+/// コードでない設定のファイル。.github/ の下（CI の手順）はゲートの挙動を変えるので数えない
+fn is_settings(path: &str) -> bool {
+    if path.starts_with(".github/") {
+        return false;
+    }
+    let name = path.rsplit('/').next().unwrap_or(path);
+    [
+        ".worktreelink",
+        ".gitignore",
+        ".gitattributes",
+        ".editorconfig",
+    ]
+    .contains(&name)
+        || [".json", ".toml", ".yaml", ".yml"]
+            .iter()
+            .any(|ext| name.ends_with(ext))
+}
+
+/// paths の足した行と消した行の合計。バイナリ（numstat が `-`）や読めない差分は None（high に倒す）
+fn changed_lines(dir: &Path, base: &str, target: &str, paths: &[&str]) -> Option<usize> {
+    let mut args = vec![
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--no-renames",
+        "--numstat",
+    ];
+    let range = format!("{base}...{target}");
+    args.push(&range);
+    args.push("--");
+    args.extend_from_slice(paths);
+    let out = git(dir, &args)?;
+    out.lines()
+        .filter(|l| !l.is_empty())
+        .try_fold(0, |sum, line| {
+            let mut cols = line.split('\t');
+            let added: usize = cols.next()?.parse().ok()?;
+            let deleted: usize = cols.next()?.parse().ok()?;
+            Some(sum + added + deleted)
+        })
 }
 
 /// ADR の「## 変更」の見出しの行の番号（1 から）

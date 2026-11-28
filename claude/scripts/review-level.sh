@@ -6,7 +6,7 @@
 # Usage: review-level.sh [branch] [--base BASE]
 #
 # 出力: BASE、TARGET、WORKTREE（TARGET をチェックアウトしている worktree のパスか none。/code-review の対象に渡す）、
-#   FILES、LEVEL（medium | high）、NEXT（回す /code-review の 1 行。WORKTREE が none なら対象は PR の URL）。
+#   FILES、LEVEL（low | medium | high）、NEXT（回す /code-review の 1 行。WORKTREE が none なら対象は PR の URL）。
 #   差分が空、または refs を解決できないときは exit 1
 . "$(dirname "$0")/lib/claude-hooks-script.sh"
 claude_hooks_script review-level "$@"
