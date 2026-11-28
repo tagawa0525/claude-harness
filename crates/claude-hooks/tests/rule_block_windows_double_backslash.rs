@@ -1,7 +1,7 @@
-//! block-windows-double-backslash が、Windows で 2 つ続きのバックスラッシュを含む Bash のコマンドを止め、1 つだけの
-//! バックスラッシュと、Windows でない機械のコマンドを通すこと。Windows の Bash ツールは、コマンドの文字列の `\\` を
-//! bash に渡す前に `\` 1 つにする（引用符つきのヒアドキュメント、引用符なしのヒアドキュメント、python -c、単引用符の
-//! 引数のどれでも。#437）
+//! block-windows-double-backslash が、Windows で、Bash ツールの書き換えで bash の結果が変わる 2 つ続きのバックスラッシュを
+//! 止め、結果が変わらないものと、Windows でない機械のコマンドを通すこと。Windows の Bash ツールは、コマンドの文字列の
+//! `"` の直前でないバックスラッシュの並びを、bash に渡す前に 2 つごとに 1 つにする（引用符つきのヒアドキュメント、
+//! 引用符なしのヒアドキュメント、python -c、単引用符の引数のどれでも。#437）
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -44,7 +44,29 @@ const COLLAPSED: &[&str] = &[
     "python -c \"print('C:\\\\Users')\"",
     "echo 'a\\\\b'",
     "sed 's/\\\\/\\//g' f",
+    // 二重引用符の中でも、bash が特別に読む文字（$）の前と、3 つ以上の並びは、bash の結果が変わる
+    r#"echo "a\\$HOME""#,
+    r#"echo "a\\\x""#,
+    // 二重引用符の中の $(…) は、引用符の外と同じに読む
+    r#"x="$(grep 'a\\b' f)""#,
 ];
+
+/// 書き換えられても bash の結果が変わらない書き方（Bash ツールは " の直前の並びを変えない。二重引用符の中の 2 つは、
+/// bash が特別に読まない文字の前なら、1 つにされても bash が同じ 1 つにする）
+#[cfg(windows)]
+#[test]
+fn a_double_backslash_that_does_not_change_what_bash_runs_passes() {
+    for command in [
+        r#"printf '%s\n' 'c\\"d'"#,
+        r#"bash -c "echo \\\"hi\\\"""#,
+        r#"grep -n "foo\\|bar" f"#,
+        "cat <<EOF\nfoo\\\\|bar\nEOF",
+        "# a\\\\b\necho a",
+    ] {
+        assert!(command.contains(r"\\"), "{command}");
+        assert_eq!(deny_reason(command), None, "{command}");
+    }
+}
 
 #[cfg(windows)]
 #[test]
