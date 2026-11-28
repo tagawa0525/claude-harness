@@ -40,8 +40,9 @@ fn deny_reason(command: &str) -> Option<String> {
 /// この機械で `\\` が `\` 1 つになると確かめた書き方
 const COLLAPSED: &[&str] = &[
     "python - <<'EOF'\nprint(r'C:\\\\Users')\nEOF",
-    "python - <<EOF\nprint('C:\\\\Users')\nEOF",
-    "python -c \"print('C:\\\\Users')\"",
+    // 引用符なしのヒアドキュメントの 4 つ（bash が 2 つにして Python に渡すつもり）は、Bash ツールが 2 つにし、bash が 1 つにする
+    "python - <<EOF\nprint('C:\\\\\\\\Users')\nEOF",
+    "python -c 'print(\"C:\\\\Users\")'",
     "echo 'a\\\\b'",
     "sed 's/\\\\/\\//g' f",
     // 二重引用符の中でも、bash が特別に読む文字（$）の前と、3 つ以上の並びは、bash の結果が変わる
@@ -60,7 +61,9 @@ fn a_double_backslash_that_does_not_change_what_bash_runs_passes() {
         r#"printf '%s\n' 'c\\"d'"#,
         r#"bash -c "echo \\\"hi\\\"""#,
         r#"grep -n "foo\\|bar" f"#,
+        r#"python -c "print(r'C:\\Users')""#,
         "cat <<EOF\nfoo\\\\|bar\nEOF",
+        "python - <<EOF\nprint('C:\\\\Users')\nEOF",
         "# a\\\\b\necho a",
     ] {
         assert!(command.contains(r"\\"), "{command}");
