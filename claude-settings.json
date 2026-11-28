@@ -166,8 +166,12 @@
       "Read(~/.gnupg/**)",
       "Read(~/AppData/Roaming/gnupg/**)",
       "Read(~/.config/sops/age/**)",
+      "Read(~/AppData/Roaming/sops/age/**)",
+      "Read(//run/secrets/**)",
       "Read(~/.git-credentials)",
+      "Read(~/.config/git/credentials)",
       "Read(~/.netrc)",
+      "Read(~/_netrc)",
       "Read(~/.claude/.credentials.json)",
       "Read(//**/.env)",
       "Read(//**/.env.*)"
