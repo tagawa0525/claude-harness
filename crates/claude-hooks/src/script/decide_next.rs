@@ -285,7 +285,7 @@ fn next_step(verdict: &str, url: &str) -> String {
             "回すかを Step 6 の「ローカルレビュー」のとおり決める。回すなら{record}。回さないなら Step 7 へ"
         ),
         "STOP_LOCAL_REVIEWED" => "Copilot を要求も待ちもせず Step 7 へ".to_string(),
-        "STOP_DOCS_REVIEWED" => "再レビューを要求せず Step 7 へ。この後に直す文は GitHub のレビューを受けないので、fix のコミットを push する前に、Step 6 の「ローカルレビュー」の回し方で /code-review medium を回す".to_string(),
+        "STOP_DOCS_REVIEWED" => "再レビューを要求せず Step 7 へ。この後に直す文は GitHub のレビューを受けないので、fix のコミットを push する前に、Step 6 の「ローカルレビュー」の回し方で /code-review low を回す".to_string(),
         "STOP_DECLINED" => "再レビューを要求せず Step 7 へ".to_string(),
         "STOP_PREVIOUSLY_MISSED" => "下の --- previously missed --- の本文を読んで Step 3 で処置を決める。fix するなら Step 4 で直して push し、次の判定はローカルレビューから。しないなら台帳に理由を書いて Step 7 へ".to_string(),
         "STOP_SUPPRESSED_ONLY" => "下の --- suppressed --- の本文を読み、Step 6 の「Suppressed comments」のとおり要否を決める。対応するなら Step 3〜5 → push → 再レビュー、しないなら Step 7 へ".to_string(),
