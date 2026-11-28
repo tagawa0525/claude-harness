@@ -200,6 +200,8 @@ pub struct Cmd {
     pub stdin_heredoc: Option<Heredoc>,
     /// 出力のリダイレクトの書き先（`>`、`>>`、`>|`、`&>`、`&>>`）
     pub writes: Vec<Arg>,
+    /// 入力のリダイレクトの読み元（`<`）。単純コマンドに掛かるものだけ
+    pub reads: Vec<Arg>,
     /// パイプラインの後ろのステージのコマンドの名前（書いたまま。順に）。パイプの途中でなければ空
     pub piped_into: Vec<String>,
 }
@@ -571,6 +573,7 @@ impl Shell {
             git,
             stdin_heredoc,
             writes,
+            reads: Vec::new(),
             piped_into: self.later_pipeline_stages(node),
         };
         let Some(source) = unwrapped.source else {
@@ -1517,6 +1520,17 @@ mod tests {
         let cs = cmds("echo x >> 'a b' 2>&1 && sort < in &> out");
         assert_eq!(texts(&cs[0].writes), ["a b"]);
         assert_eq!(texts(&cs[1].writes), ["out"]);
+    }
+
+    #[test]
+    fn reads_lists_input_redirect_targets() {
+        let cs = cmds("wc -l < in.txt && cat 0< 'a b' > out");
+        assert_eq!(texts(&cs[0].reads), ["in.txt"]);
+        assert_eq!(texts(&cs[1].reads), ["a b"]);
+        assert_eq!(texts(&cs[1].writes), ["out"]);
+        // here string、ヒアドキュメント、記述子の複製はファイルを読まない
+        let cs = cmds("cat <<< x; cat <<'EOF'\nx\nEOF\ncat <&3");
+        assert!(cs.iter().all(|c| c.reads.is_empty()));
     }
 
     /// コマンドの名前と書き込み先（文書順）
