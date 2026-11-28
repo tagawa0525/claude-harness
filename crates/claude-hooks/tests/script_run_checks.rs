@@ -692,8 +692,9 @@ fn a_python3_that_does_not_run_falls_back_to_python_for_subdirectory_tests() {
     );
 }
 
+/// PATH にあっても動かない（スタブ、壊れた環境）なら、テストを流さないまま通さない
 #[test]
-fn no_working_python_skips_subdirectory_tests() {
+fn python_on_path_that_does_not_run_fails_the_subdirectory_tests() {
     let repo = Repo::new();
     repo.write("pyproject.toml", "");
     repo.commit("pkg/test_a.py", "");
@@ -704,15 +705,100 @@ fn no_working_python_skips_subdirectory_tests() {
         &[],
         &[("FAKE_PYTHON3_EXIT", "49"), ("FAKE_PYTHON_EXIT", "9009")],
     );
-    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     assert!(
-        stdout(&out).contains("SKIP: python test (動く python3 も python も無い)\n"),
+        stdout(&out).contains("FAILED: python test: PATH の python3 も python も動かない"),
         "{}",
         said(&out)
     );
+    assert!(!stdout(&out).contains("ALL_OK"), "{}", said(&out));
     assert!(
         !repo.calls().iter().any(|c| c.contains("-m ")),
         "{:?}",
         repo.calls()
+    );
+}
+
+#[test]
+fn no_python_on_path_skips_the_subdirectory_tests() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("SKIP: python test (python3 も python も無い)\n"),
+        "{}",
+        said(&out)
+    );
+}
+
+/// Windows の venv には python しか無く、PATH の python3（Store から入れた本物）より先に、pytest のある venv の
+/// python を選ぶ
+#[test]
+fn the_interpreter_with_pytest_wins_over_an_earlier_one_without_it() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    repo.tool("python");
+    let calls = repo.root.join("python3.calls");
+    let out = repo.run(
+        &[],
+        &[
+            ("FAKE_PYTHON3_CALLS", calls.to_str().unwrap()),
+            ("FAKE_PYTHON3_EXIT_2", "1"),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("RUN: python test: cd pkg && python -m pytest test_a.py\n"),
+        "{}",
+        said(&out)
+    );
+}
+
+#[test]
+fn python3_is_chosen_when_both_run_with_pytest() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    repo.tool("python");
+    let out = repo.run(&[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("RUN: python test: cd pkg && python3 -m pytest test_a.py\n"),
+        "{}",
+        said(&out)
+    );
+}
+
+/// どちらにも pytest が無ければ、動く方の unittest で流す（python3 がスタブなら python）
+#[test]
+fn without_pytest_the_running_interpreter_runs_unittest() {
+    let repo = Repo::new();
+    repo.write("pyproject.toml", "");
+    repo.commit("pkg/test_a.py", "");
+    repo.tool("ruff");
+    repo.tool("python3");
+    repo.tool("python");
+    let calls = repo.root.join("python.calls");
+    let out = repo.run(
+        &[],
+        &[
+            ("FAKE_PYTHON3_EXIT", "49"),
+            ("FAKE_PYTHON_CALLS", calls.to_str().unwrap()),
+            ("FAKE_PYTHON_EXIT_2", "1"),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        stdout(&out).contains("RUN: python test: cd pkg && python -m unittest test_a\n"),
+        "{}",
+        said(&out)
     );
 }
