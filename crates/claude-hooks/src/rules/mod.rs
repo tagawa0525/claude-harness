@@ -2,7 +2,8 @@
 
 use crate::input::Input;
 use crate::output::Finding;
-use crate::shell::{Escape, Shell};
+use crate::shell::{Cmd, Escape, Shell};
+use crate::unwrap::basename;
 
 pub trait Rule: Sync {
     fn name(&self) -> &'static str;
@@ -67,6 +68,32 @@ pub fn apply_escape_to_reasons(esc: Escape, name: &str, mut reasons: Vec<String>
 /// 値が短いエスケープを止める文言。しきい値は書かない（長さに合わせた無意味な値を誘うため）
 pub fn reason_required(name: &str) -> String {
     format!("{name} には理由を記載してください（{name}=<理由> の形で、値はそのまま記録に残ります）")
+}
+
+/// 同じコマンドで `cmd` より前に走る前段（[`Shell::commands_before`]。`cd` は数えない）の名前を、重ねずに順に。
+/// 拒むとコマンド全体が止まり、これらも走らないことを文言で示すのに使う。git と gh はサブコマンドまで挙げる
+/// （`git add` と `git switch`、`gh issue` と `gh pr` を区別する）
+pub(super) fn earlier_step_names(shell: &Shell, cmd: &Cmd) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for c in shell.commands_before(cmd) {
+        let program = basename(c.program());
+        let name = match program {
+            "git" => match c.git_subcommand() {
+                Some((sub, _)) => format!("git {sub}"),
+                None => program.to_string(),
+            },
+            // gh は `gh pr checks` と `gh pr merge` を分けるために 2 語まで
+            "gh" => std::iter::once("gh")
+                .chain(c.args.iter().take(2).map(|a| a.text.as_str()))
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => program.to_string(),
+        };
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
 }
 
 /// deny 文言の末尾に置く、エスケープの付け方の案内。「〜なら付けてよい」の条件は列挙しない

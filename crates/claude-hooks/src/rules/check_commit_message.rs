@@ -16,8 +16,8 @@
 
 use super::Rule;
 use super::check_merge_body_ja_terms::{
-    JA_TERMS, Undecided, Vars, commit_msg_skips, earlier_writer_reason, file_path, heredoc_expands,
-    ja_terms, literal,
+    JA_TERMS, Undecided, Vars, commit_msg_skips, earlier_steps_note, earlier_writer_reason,
+    file_path, heredoc_expands, ja_terms, literal,
 };
 use crate::git;
 use crate::git_args::{Item, items_with_values};
@@ -211,15 +211,15 @@ pub(super) fn run_check(check: &str, dir: &Path, message: &str) -> Verdict {
     }
 }
 
-/// 規約に反するメッセージを止める文言
-fn deny_reason(output: &str) -> String {
+/// 規約に反するメッセージを止める文言。`earlier` は [`earlier_steps_note`]
+fn deny_reason(output: &str, earlier: &str) -> String {
     format!(
         "git commit のメッセージが、commit-msg の hook と同じ検査に通りません:\n{output}\n\
          上の ❌ の行のとおりにメッセージを直してから、もう一度実行してください。このまま実行すると、pre-commit の検査\
          （マージを終える commit では数分の品質チェック）の後で commit-msg の hook が同じ検査で拒み、同じコマンドで\
          commit の後に `;` や改行でつないだコマンドは、コミットされていない古い HEAD のまま走ります（拒まれた commit の\
          後の品質チェックが古い HEAD で通ったと出たことと、続けた git commit --amend が既定ブランチのマージコミットを\
-         書き換えたことがあります）"
+         書き換えたことがあります）{earlier}"
     )
 }
 
@@ -285,7 +285,10 @@ impl CheckCommitMessage {
             };
             match run_check(check, &dir, &message) {
                 Verdict::Pass => {}
-                Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(&output))),
+                Verdict::Reject(output) => out.push(Finding::Deny(deny_reason(
+                    &output,
+                    &earlier_steps_note(shell, cmd, "commit"),
+                ))),
                 Verdict::Failed(why) => notice(format!(
                     "check-commit-message: git commit のメッセージを判定していません: {why}"
                 )),
@@ -775,6 +778,58 @@ exit 0
                 .is_empty()
         );
         assert_eq!(fake.seen().unwrap(), "feat: a\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denial_says_to_rerun_from_the_earlier_steps_that_did_not_run() {
+        // 拒むとコマンド全体が止まり、前段の git add も走らない。git commit だけを実行し直すと
+        // no changes added to commit で失敗する（#435）
+        let fake = Fake::new("earlier");
+        std::fs::write(fake.dir.0.join("msg.txt"), format!("{LONG}\n")).unwrap();
+        for prefix in ["git add a.txt && ", "git add a.txt; ", "git add a.txt\n"] {
+            let cmd = format!("{prefix}git commit -q -F msg.txt");
+            let r = only_deny(&fake.check(&cmd));
+            assert!(r.contains("❌"), "{cmd}: {r}");
+            assert!(
+                r.contains("前段（git add）も実行されていません"),
+                "{cmd}: {r}"
+            );
+            assert!(r.contains("前段から実行し直して"), "{cmd}: {r}");
+        }
+        // 前段の案内は、直す理由（このまま実行すると拒まれる）の後に置き、理由がやり直しを指すと読ませない
+        let r = only_deny(&fake.check("git add a.txt && git commit -q -F msg.txt"));
+        let (reason, note) = (
+            r.find("このまま実行すると").unwrap(),
+            r.find("前段").unwrap(),
+        );
+        assert!(reason < note, "{r}");
+        // cd は前段に挙げないが、実行し直すときに外させない（呼び出しごとに cwd が戻るスレッドがある）
+        let d = fake.dir.0.display();
+        let cmd = format!("cd {d} && git add a.txt && git commit -q -F msg.txt");
+        let r = only_deny(&check_in(&cmd, Path::new("/"), Some(&fake.path)));
+        assert!(r.contains("前段（git add）"), "{r}");
+        assert!(r.contains("cd があれば、それも付けて"), "{r}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn denial_without_earlier_steps_does_not_mention_them() {
+        let fake = Fake::new("lone");
+        std::fs::write(fake.dir.0.join("msg.txt"), format!("{LONG}\n")).unwrap();
+        let d = fake.dir.0.display();
+        // cd は作業の前段に数えない（実行し直す git commit を同じディレクトリで実行すれば足りる）
+        for (cmd, cwd) in [
+            ("git commit -q -F msg.txt".to_string(), fake.dir.0.as_path()),
+            (
+                format!("cd {d} && git commit -q -F msg.txt"),
+                Path::new("/"),
+            ),
+        ] {
+            let r = only_deny(&check_in(&cmd, cwd, Some(&fake.path)));
+            assert!(r.contains("❌"), "{cmd}: {r}");
+            assert!(!r.contains("前段"), "{cmd}: {r}");
+        }
     }
 
     #[cfg(unix)]
